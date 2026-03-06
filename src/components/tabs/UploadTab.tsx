@@ -1888,104 +1888,110 @@ const StepMetadata: React.FC = () => {
         </div>
       )}
 
-      {/* Shopping Tags — 마스터 지침서 6단계 */}
+      {/* Shopping Tags — YouTube 선택 시 전체 표시, 미선택 시 안내만 */}
       <div className="border-t border-gray-700 pt-4">
-        <div className="flex items-center justify-between mb-3">
-          <label className="text-sm font-semibold text-gray-300 flex items-center gap-2">
-            쇼핑 태그
-            <span className="text-[11px] bg-blue-500/20 text-blue-300 border border-blue-500/30 px-2 py-0.5 rounded-full">6단계</span>
+        {selectedPlatforms.includes('youtube') ? (
+          <>
+            <div className="flex items-center justify-between mb-3">
+              <label className="text-sm font-semibold text-gray-300 flex items-center gap-2">
+                쇼핑 태그
+                <span className="text-[10px] bg-red-900/15 text-red-400 px-1.5 py-0.5 rounded border border-red-500/20">YouTube 설명에 삽입</span>
+                {shoppingTags.length > 0 && (
+                  <span className="text-[11px] bg-green-500/20 text-green-400 border border-green-500/30 px-2 py-0.5 rounded-full">
+                    {shoppingTags.length}개
+                  </span>
+                )}
+              </label>
+              <button
+                type="button"
+                onClick={handleExtractShoppingTags}
+                disabled={isExtractingTags}
+                className="text-sm text-blue-400 hover:text-blue-300 bg-gray-700 px-3 py-1.5 rounded-lg border border-gray-600 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+              >
+                <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path d="M10 2a1 1 0 011 1v1.323l3.954 1.582 1.599-.8a1 1 0 01.894 1.79l-1.233.616 1.738 5.42a1 1 0 01-.285 1.05A3.989 3.989 0 0115 15a3.989 3.989 0 01-2.667-1.019 1 1 0 01-.285-1.05l1.715-5.349L11 6.477V16h2a1 1 0 110 2H7a1 1 0 110-2h2V6.477L6.237 7.582l1.715 5.349a1 1 0 01-.285 1.05A3.989 3.989 0 015 15a3.989 3.989 0 01-2.667-1.019 1 1 0 01-.285-1.05l1.738-5.42-1.233-.617a1 1 0 01.894-1.788l1.599.799L9 4.323V3a1 1 0 011-1z"/></svg>
+                {isExtractingTags ? '추출 중...' : shoppingTags.length > 0 ? '재추출' : 'AI 추출'}
+              </button>
+            </div>
+
+            <p className="text-sm text-gray-500 mb-3">
+              {shoppingTags.length > 0
+                ? '대본에서 추출된 제품/브랜드. 쿠팡 파트너스 링크를 입력하면 YouTube 설명에 자동 삽입됩니다.'
+                : 'AI 전체 생성 시 자동 추출됩니다. 또는 우측 버튼으로 개별 추출할 수 있습니다.'}
+            </p>
+
+            {/* Shopping tag chips */}
             {shoppingTags.length > 0 && (
-              <span className="text-[11px] bg-green-500/20 text-green-400 border border-green-500/30 px-2 py-0.5 rounded-full">
-                {shoppingTags.length}개
-              </span>
-            )}
-          </label>
-          <button
-            type="button"
-            onClick={handleExtractShoppingTags}
-            disabled={isExtractingTags}
-            className="text-sm text-blue-400 hover:text-blue-300 bg-gray-700 px-3 py-1.5 rounded-lg border border-gray-600 transition-colors disabled:opacity-50 flex items-center gap-1.5"
-          >
-            <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path d="M10 2a1 1 0 011 1v1.323l3.954 1.582 1.599-.8a1 1 0 01.894 1.79l-1.233.616 1.738 5.42a1 1 0 01-.285 1.05A3.989 3.989 0 0115 15a3.989 3.989 0 01-2.667-1.019 1 1 0 01-.285-1.05l1.715-5.349L11 6.477V16h2a1 1 0 110 2H7a1 1 0 110-2h2V6.477L6.237 7.582l1.715 5.349a1 1 0 01-.285 1.05A3.989 3.989 0 015 15a3.989 3.989 0 01-2.667-1.019 1 1 0 01-.285-1.05l1.738-5.42-1.233-.617a1 1 0 01.894-1.788l1.599.799L9 4.323V3a1 1 0 011-1z"/></svg>
-            {isExtractingTags ? '추출 중...' : shoppingTags.length > 0 ? '재추출' : 'AI 추출'}
-          </button>
-        </div>
-
-        <p className="text-sm text-gray-500 mb-2">
-          {shoppingTags.length > 0
-            ? '대본에서 추출된 제품/브랜드. 어필리에이트 링크를 입력하면 설명에 자동 삽입됩니다.'
-            : 'AI 전체 생성 시 자동 추출됩니다. 또는 우측 버튼으로 개별 추출할 수 있습니다.'}
-        </p>
-        {/* 플랫폼별 쇼핑 태그 활용 안내 */}
-        <div className="flex flex-wrap gap-1.5 mb-3">
-          {selectedPlatforms.includes('youtube') && (
-            <span className="text-[10px] bg-red-900/15 text-red-400 px-1.5 py-0.5 rounded border border-red-500/20">YouTube: 설명란에 쿠팡 링크 삽입</span>
-          )}
-          {selectedPlatforms.includes('tiktok') && (
-            <span className="text-[10px] bg-cyan-900/15 text-cyan-400/70 px-1.5 py-0.5 rounded border border-cyan-500/20">TikTok: TikTok Shop은 별도 설정</span>
-          )}
-          {selectedPlatforms.includes('instagram') && (
-            <span className="text-[10px] bg-pink-900/15 text-pink-400/70 px-1.5 py-0.5 rounded border border-pink-500/20">Instagram: Shopping 태그는 별도 기능</span>
-          )}
-          {(selectedPlatforms.includes('threads') || selectedPlatforms.includes('naver-clip')) && (
-            <span className="text-[10px] bg-gray-700/50 text-gray-500 px-1.5 py-0.5 rounded border border-gray-600/30">Threads/Naver: 쇼핑 태그 미지원</span>
-          )}
-        </div>
-
-        {/* Shopping tag chips */}
-        {shoppingTags.length > 0 && (
-          <div className="space-y-2 mb-3">
-            {shoppingTags.map((tag, idx) => (
-              <div key={`shop-${idx}`} className="flex items-center gap-2 bg-gray-900/50 rounded-lg px-3 py-2 border border-gray-700/50">
-                <span className="text-sm text-white font-bold flex-shrink-0">{tag.keyword}</span>
-                <span className="text-xs bg-blue-600/20 text-blue-300 px-1.5 py-0.5 rounded border border-blue-500/30 flex-shrink-0">
-                  {tag.category}
-                </span>
-                <input
-                  type="text"
-                  value={tag.link || ''}
-                  onChange={(e) => updateShoppingTag(idx, { link: e.target.value })}
-                  placeholder="링크 입력 (선택)..."
-                  className="flex-1 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-gray-300 placeholder-gray-600 focus:outline-none focus:border-blue-500/50"
-                />
-                <button
-                  type="button"
-                  onClick={() => removeShoppingTag(idx)}
-                  className="text-gray-500 hover:text-red-400 text-sm"
-                >{'\u2715'}</button>
+              <div className="space-y-2 mb-3">
+                {shoppingTags.map((tag, idx) => (
+                  <div key={`shop-${idx}`} className="flex items-center gap-2 bg-gray-900/50 rounded-lg px-3 py-2 border border-gray-700/50">
+                    <span className="text-sm text-white font-bold flex-shrink-0">{tag.keyword}</span>
+                    <span className="text-xs bg-blue-600/20 text-blue-300 px-1.5 py-0.5 rounded border border-blue-500/30 flex-shrink-0">
+                      {tag.category}
+                    </span>
+                    <input
+                      type="text"
+                      value={tag.link || ''}
+                      onChange={(e) => updateShoppingTag(idx, { link: e.target.value })}
+                      placeholder="쿠팡 파트너스 링크..."
+                      className="flex-1 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-gray-300 placeholder-gray-600 focus:outline-none focus:border-blue-500/50"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removeShoppingTag(idx)}
+                      className="text-gray-500 hover:text-red-400 text-sm"
+                    >{'\u2715'}</button>
+                  </div>
+                ))}
               </div>
-            ))}
+            )}
+
+            {/* Manual add */}
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={newTagKeyword}
+                onChange={(e) => setNewTagKeyword(e.target.value)}
+                placeholder="수동 추가: 제품/브랜드명"
+                className="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-blue-500/50"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && newTagKeyword.trim()) {
+                    addShoppingTag({ keyword: newTagKeyword.trim(), category: '기타' });
+                    setNewTagKeyword('');
+                  }
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  if (newTagKeyword.trim()) {
+                    addShoppingTag({ keyword: newTagKeyword.trim(), category: '기타' });
+                    setNewTagKeyword('');
+                  }
+                }}
+                className="text-sm text-blue-400 hover:text-blue-300 bg-gray-700 px-3 py-2 rounded-lg border border-gray-600 transition-colors"
+              >
+                추가
+              </button>
+            </div>
+          </>
+        ) : (
+          /* YouTube 미선택 시 — 쇼핑 연동 준비 중 안내 */
+          <div className="bg-gray-800/50 border border-gray-700/50 rounded-lg p-4">
+            <div className="flex items-start gap-3">
+              <div className="w-8 h-8 rounded-lg bg-blue-600/15 flex items-center justify-center flex-shrink-0 mt-0.5">
+                <svg className="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-gray-300 mb-1">쇼핑 태그 / 쿠팡 파트너스</p>
+                <p className="text-xs text-gray-500 leading-relaxed">
+                  현재 쇼핑 태그는 <strong className="text-red-400">YouTube</strong> 설명란에 쿠팡 파트너스 링크를 삽입하는 용도로 지원됩니다.
+                  TikTok Shop, Instagram Shopping 등 다른 플랫폼의 커머스 API 연동은 추후 지원 예정입니다.
+                </p>
+                <p className="text-[11px] text-gray-600 mt-2">YouTube를 플랫폼에 추가하면 쇼핑 태그 기능이 활성화됩니다.</p>
+              </div>
+            </div>
           </div>
         )}
-
-        {/* Manual add */}
-        <div className="flex items-center gap-2">
-          <input
-            type="text"
-            value={newTagKeyword}
-            onChange={(e) => setNewTagKeyword(e.target.value)}
-            placeholder="수동 추가: 제품/브랜드명"
-            className="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-blue-500/50"
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && newTagKeyword.trim()) {
-                addShoppingTag({ keyword: newTagKeyword.trim(), category: '기타' });
-                setNewTagKeyword('');
-              }
-            }}
-          />
-          <button
-            type="button"
-            onClick={() => {
-              if (newTagKeyword.trim()) {
-                addShoppingTag({ keyword: newTagKeyword.trim(), category: '기타' });
-                setNewTagKeyword('');
-              }
-            }}
-            className="text-sm text-blue-400 hover:text-blue-300 bg-gray-700 px-3 py-2 rounded-lg border border-gray-600 transition-colors"
-          >
-            추가
-          </button>
-        </div>
       </div>
 
       {/* 플랫폼별 미리보기 */}
