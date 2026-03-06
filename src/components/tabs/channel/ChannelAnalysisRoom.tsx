@@ -147,7 +147,7 @@ const ChannelAnalysisRoom: React.FC = () => {
     setTopicError('');
 
     const styleInfo = channelGuideline
-      ? `[채널 스타일]\n채널명: ${channelGuideline.channelName}\n말투: ${channelGuideline.tone}\n구조: ${channelGuideline.structure}\n주제: ${channelGuideline.topics.join(', ')}\n도입패턴: ${channelGuideline.hookPattern}\n마무리패턴: ${channelGuideline.closingPattern}`
+      ? `[채널 스타일]\n채널명: ${channelGuideline.channelName}\n말투: ${channelGuideline.tone}\n구조: ${channelGuideline.structure}\n주제: ${(Array.isArray(channelGuideline.topics) ? channelGuideline.topics : []).join(', ')}\n도입패턴: ${channelGuideline.hookPattern}\n마무리패턴: ${channelGuideline.closingPattern}`
       : '';
 
     try {
