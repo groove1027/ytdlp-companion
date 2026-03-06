@@ -57,6 +57,7 @@ const ChannelInputPanel: React.FC<ChannelInputPanelProps> = ({
 
   // 파일 파싱 처리
   const processFiles = useCallback(async (fileList: FileList | File[]) => {
+    if (fileLoading) return;
     const files = Array.from(fileList);
     if (uploadedFiles.length + files.length > MAX_FILES) {
       showToast(`최대 ${MAX_FILES}개까지 업로드할 수 있습니다.`);

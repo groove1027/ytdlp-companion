@@ -49,8 +49,8 @@ const EditRoomExportBar: React.FC<EditRoomExportBarProps> = ({
   const scenes = useProjectStore((s) => s.scenes);
   const config = useProjectStore((s) => s.config);
   const hasVideos = scenes.some((s) => !!s.videoUrl);
-  const imgLabel = IMAGE_MODEL_LABELS[config.imageModel] ?? config.imageModel;
-  const vidLabel = VIDEO_MODEL_LABELS[config.videoModel] ?? config.videoModel;
+  const imgLabel = config ? (IMAGE_MODEL_LABELS[config.imageModel] ?? config.imageModel) : '';
+  const vidLabel = config ? (VIDEO_MODEL_LABELS[config.videoModel] ?? config.videoModel) : '';
 
   return (
     <div className="fixed bottom-0 left-56 right-0 z-30 bg-gray-900/95 backdrop-blur border-t border-gray-700">

@@ -335,9 +335,14 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, on
   const nextProjectName = `새 프로젝트 ${summaries.length + 1}`;
 
   const handleNewProjectClick = async () => {
-    if (!(await canCreateNewProject())) {
-      showToast('저장 공간이 가득 찼습니다. 기존 프로젝트를 삭제 후 생성해주세요.', 5000);
-      return;
+    try {
+      if (!(await canCreateNewProject())) {
+        showToast('저장 공간이 가득 찼습니다. 기존 프로젝트를 삭제 후 생성해주세요.', 5000);
+        return;
+      }
+    } catch (e) {
+      console.error('[ProjectDashboard] 저장 공간 확인 실패:', e);
+      // 확인 실패 시에도 생성은 허용 (저장 시 다시 체크됨)
     }
     setShowNewProjectModal(true);
   };
