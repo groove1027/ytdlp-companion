@@ -182,11 +182,15 @@ function parseTranscriptionResult(raw: Record<string, unknown>): WhisperTranscri
     const endTime = (w.end as number) ?? (w.end_time as number) ?? 0;
     const confidence = (w.confidence as number) ?? 1;
 
-    currentWords.push({ word: wordText, startTime, endTime, confidence });
+    // 공백 토큰은 sentenceText에만 반영하고 words 배열에서 제외
+    // (ElevenLabs Scribe는 " "를 별도 토큰으로 반환 → findWordBoundaryTime 오차 원인)
     sentenceText += wordText;
+    const trimmed = wordText.trim();
+    if (trimmed) {
+      currentWords.push({ word: trimmed, startTime, endTime, confidence });
+    }
 
     // 문장 종결 부호로 세그먼트 분리
-    const trimmed = wordText.trim();
     if (/[.!?。！？]$/.test(trimmed) || idx === rawWords.length - 1) {
       if (currentWords.length > 0 && sentenceText.trim()) {
         segments.push({

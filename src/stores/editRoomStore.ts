@@ -147,7 +147,12 @@ async function tryWhisperTranscribe(audioUrl: string): Promise<WhisperWord[] | n
     useCostStore.getState().addCost(PRICING.STT_SCRIBE_PER_CALL, 'tts');
     const allWords: WhisperWord[] = [];
     for (const seg of result.segments) {
-      if (seg.words) allWords.push(...seg.words);
+      if (seg.words) {
+        // 공백 토큰 필터링 (ElevenLabs Scribe는 " "를 별도 토큰으로 반환)
+        for (const w of seg.words) {
+          if (w.word.trim()) allWords.push({ ...w, word: w.word.trim() });
+        }
+      }
     }
     return allWords.length > 0 ? allWords : null;
   } catch {
@@ -194,6 +199,9 @@ interface EditRoomStore {
   // 자막 세그먼트
   charsPerLine: number;
   activeSubtitleText: string;
+
+  // Whisper 단어 타임스탬프 캐시 (sceneId → WhisperWord[])
+  _whisperCache: Record<string, WhisperWord[]>;
 
   // 모션 루핑 (ON=반복, OFF=장면 길이에 맞춰 1회)
   motionLooping: boolean;
@@ -333,6 +341,7 @@ const INITIAL_STATE = {
   } as RenderSettings,
   charsPerLine: 20,
   activeSubtitleText: '',
+  _whisperCache: {},
   motionLooping: false,
   bottomFade: 0,
   isTimelinePlaying: false,
@@ -626,14 +635,22 @@ export const useEditRoomStore = create<EditRoomStore>((set, get) => ({
     const ratio = textBefore.length / subtitle.text.length;
     let audioSplitSec = totalDuration * ratio;
 
-    // 2차: 나레이션 오디오 무음 구간 감지로 정밀 보정
     const soundLines = useSoundStudioStore.getState().lines;
     const scenes = useProjectStore.getState().scenes;
     const sceneIdx = scenes.findIndex((s) => s.id === sceneId);
     if (sceneIdx < 0) return;
     const earlyMatchedLine = soundLines.find((l) => l.sceneId === sceneId) || soundLines[sceneIdx] || null;
 
-    if (earlyMatchedLine?.audioUrl && !earlyMatchedLine.audioUrl.startsWith('blob:invalid')) {
+    // 2차: Whisper 단어 경계 캐시 활용 (createSubtitleSegments에서 저장된 데이터)
+    let usedWordBoundary = false;
+    const cachedWords = state._whisperCache[sceneId];
+    if (cachedWords && cachedWords.length > 0) {
+      audioSplitSec = findWordBoundaryTime(cachedWords, splitPoint, subtitle.text);
+      usedWordBoundary = true;
+    }
+
+    // 3차: 나레이션 오디오 무음 구간 감지로 보정 (Whisper 캐시 없을 때 폴백)
+    if (!usedWordBoundary && earlyMatchedLine?.audioUrl && !earlyMatchedLine.audioUrl.startsWith('blob:invalid')) {
       const lineDuration = earlyMatchedLine.duration || totalDuration;
       const estimated = lineDuration * ratio;
       audioSplitSec = await findNearestSilenceGap(earlyMatchedLine.audioUrl, estimated, lineDuration);
@@ -1131,8 +1148,11 @@ export const useEditRoomStore = create<EditRoomStore>((set, get) => ({
 
       const boundaries: number[] = [0];
 
-      // Whisper 전사 시도 (단어별 타임스탬프)
+      // Whisper 전사 시도 (단어별 타임스탬프) + 캐시 저장
       const whisperWords = audioUrl ? await tryWhisperTranscribe(audioUrl) : null;
+      if (whisperWords) {
+        set(prev => ({ _whisperCache: { ...prev._whisperCache, [sceneId]: whisperWords } }));
+      }
 
       for (const sp of splitPoints) {
         if (whisperWords) {
