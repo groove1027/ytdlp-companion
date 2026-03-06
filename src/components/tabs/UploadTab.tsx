@@ -1975,22 +1975,7 @@ const StepMetadata: React.FC = () => {
             </div>
           </>
         ) : (
-          /* YouTube 미선택 시 — 쇼핑 연동 준비 중 안내 */
-          <div className="bg-gray-800/50 border border-gray-700/50 rounded-lg p-4">
-            <div className="flex items-start gap-3">
-              <div className="w-8 h-8 rounded-lg bg-blue-600/15 flex items-center justify-center flex-shrink-0 mt-0.5">
-                <svg className="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-              </div>
-              <div>
-                <p className="text-sm font-semibold text-gray-300 mb-1">쇼핑 태그 / 쿠팡 파트너스</p>
-                <p className="text-xs text-gray-500 leading-relaxed">
-                  현재 쇼핑 태그는 <strong className="text-red-400">YouTube</strong> 설명란에 쿠팡 파트너스 링크를 삽입하는 용도로 지원됩니다.
-                  TikTok Shop, Instagram Shopping 등 다른 플랫폼의 커머스 API 연동은 추후 지원 예정입니다.
-                </p>
-                <p className="text-[11px] text-gray-600 mt-2">YouTube를 플랫폼에 추가하면 쇼핑 태그 기능이 활성화됩니다.</p>
-              </div>
-            </div>
-          </div>
+          <p className="text-sm text-gray-500">쿠팡 파트너스 API와 연동하여 쿠팡 링크를 쉽게 생성하는 기능을 준비 중입니다.</p>
         )}
       </div>
 
