@@ -512,6 +512,7 @@ ${instinctPrompt}
       setStreamingText('');
     } catch (err) {
       setGenError(err instanceof Error ? err.message : '대본 생성 실패');
+      setStreamingText('');
     } finally {
       finishGeneration();
     }
@@ -565,7 +566,8 @@ ${instinctPrompt}
       const raw = res.choices?.[0]?.message?.content || '';
       if (!raw.trim()) throw new Error('AI 응답이 비어있습니다. 다시 시도해주세요.');
       const jsonStr = extractJsonFromText(raw);
-      const parsed = JSON.parse(jsonStr || '{}');
+      let parsed: { title?: string; content?: string; estimatedDuration?: string; structure?: string[] };
+      try { parsed = JSON.parse(jsonStr || '{}'); } catch { throw new Error('AI 응답을 파싱할 수 없습니다. 다시 시도해주세요.'); }
       const content = parsed.content || '';
       if (!content.trim()) throw new Error('생성된 대본이 비어있습니다. 다시 시도해주세요.');
       setGeneratedScript({

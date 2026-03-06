@@ -2,6 +2,7 @@ import React, { useRef, useState } from 'react';
 import VisualStylePicker, { getVisualStyleLabel } from '../../VisualStylePicker';
 import { resizeImage } from '../../../services/imageProcessingService';
 import { analyzeCharacterImage } from '../../../services/characterAnalysisService';
+import { showToast } from '../../../stores/uiStore';
 import ReferencePanel from './ReferencePanel';
 
 export interface SetupState {
@@ -75,11 +76,13 @@ const SetupPanel: React.FC<SetupPanelProps> = ({
         setSetup(prev => ({ ...prev, charDescription: analysis.combined }));
       } catch (err) {
         console.error('Character analysis failed', err);
+        showToast('캐릭터 분석에 실패했습니다. API 키를 확인해주세요.', 4000);
       } finally {
         onSetCharAnalyzing(false);
       }
     } catch (e) {
       console.error('Image processing failed', e);
+      showToast('이미지 처리에 실패했습니다.', 3000);
     }
   };
 

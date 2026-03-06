@@ -156,11 +156,13 @@ const ChannelAnalysisRoom: React.FC = () => {
       );
 
       const raw = res.choices?.[0]?.message?.content || '';
+      if (!raw.trim()) throw new Error('AI 응답이 비어있습니다.');
       let jsonStr = raw;
       const codeBlock = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
       if (codeBlock) jsonStr = codeBlock[1].trim();
 
-      const parsed = JSON.parse(jsonStr) as (LegacyTopicRecommendation & { instinctAnalysis?: TopicInstinctAnalysis })[];
+      let parsed: (LegacyTopicRecommendation & { instinctAnalysis?: TopicInstinctAnalysis })[];
+      try { parsed = JSON.parse(jsonStr); } catch { throw new Error('AI 응답을 파싱할 수 없습니다. 다시 시도해주세요.'); }
       if (Array.isArray(parsed) && parsed.length > 0) {
         setTopics(parsed.map((t, i) => {
           const ia = t.instinctAnalysis;

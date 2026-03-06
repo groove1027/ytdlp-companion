@@ -100,20 +100,22 @@ function estimateProjectSizeMB(project: ProjectData): number {
 }
 
 function extractSummary(project: ProjectData): ProjectSummary {
+  const scenes = project.scenes || [];
+  const config = project.config || {} as ProjectData['config'];
   return {
     id: project.id,
-    title: project.title,
+    title: project.title || '제목 없음',
     createdAt: project.createdAt,
     lastModified: project.lastModified,
-    mode: project.config.mode,
-    aspectRatio: project.config.aspectRatio,
-    atmosphere: project.config.atmosphere,
-    sceneCount: project.scenes.length,
-    completedImages: project.scenes.filter(s => s.imageUrl).length,
-    completedVideos: project.scenes.filter(s => s.videoUrl).length,
+    mode: config.mode,
+    aspectRatio: config.aspectRatio,
+    atmosphere: config.atmosphere,
+    sceneCount: scenes.length,
+    completedImages: scenes.filter(s => s.imageUrl).length,
+    completedVideos: scenes.filter(s => s.videoUrl).length,
     // [FIX] 첫 번째 이미지를 썸네일로 사용 (URL 우선, base64 폴백)
-    thumbnailUrl: project.scenes.find(s => s.imageUrl && !s.imageUrl.startsWith('data:'))?.imageUrl
-      || project.scenes.find(s => s.imageUrl)?.imageUrl,
+    thumbnailUrl: scenes.find(s => s.imageUrl && !s.imageUrl.startsWith('data:'))?.imageUrl
+      || scenes.find(s => s.imageUrl)?.imageUrl,
     estimatedSizeMB: estimateProjectSizeMB(project),
   };
 }

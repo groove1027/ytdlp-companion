@@ -87,7 +87,12 @@ ${scriptSummaries}
       const codeBlock = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
       if (codeBlock) jsonStr = codeBlock[1].trim();
 
-      const parsed: LegacyTopicRecommendation[] = JSON.parse(jsonStr);
+      let parsed: LegacyTopicRecommendation[];
+      try {
+        parsed = JSON.parse(jsonStr);
+      } catch {
+        throw new Error('AI 응답을 파싱할 수 없습니다. 다시 시도해주세요.');
+      }
       if (Array.isArray(parsed) && parsed.length > 0) {
         setTopics(parsed.map((t, i) => ({
           id: t.id || i + 1,

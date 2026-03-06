@@ -321,7 +321,12 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, on
   const [loadingProjectId, setLoadingProjectId] = useState<string | null>(null);
 
   const loadSummaries = useCallback(async () => {
-    setSummaries(await getAllProjectSummaries());
+    try {
+      setSummaries(await getAllProjectSummaries());
+    } catch (e) {
+      console.error('[ProjectDashboard] 프로젝트 목록 로드 실패:', e);
+      showToast('프로젝트 목록을 불러오지 못했습니다.', 4000);
+    }
   }, []);
 
   useEffect(() => { loadSummaries(); }, [loadSummaries, refreshTrigger]);
@@ -345,7 +350,12 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, on
   const handleBulkDelete = async () => {
     if (selectedIds.size === 0) return;
     if (!confirm(`${selectedIds.size}개의 프로젝트를 삭제하시겠습니까?`)) return;
-    for (const id of selectedIds) await deleteProject(id);
+    try {
+      for (const id of selectedIds) await deleteProject(id);
+    } catch (e) {
+      console.error('[ProjectDashboard] 삭제 실패:', e);
+      showToast('일부 프로젝트 삭제에 실패했습니다.', 4000);
+    }
     setSelectedIds(new Set());
     loadSummaries();
   };
@@ -377,7 +387,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, on
   // 필터 + 정렬
   const filtered = useMemo(() => {
     return summaries
-      .filter(s => s.title.toLowerCase().includes(searchQuery.toLowerCase()))
+      .filter(s => (s.title || '').toLowerCase().includes(searchQuery.toLowerCase()))
       .sort((a, b) => {
         if (sortMode === 'name') return a.title.localeCompare(b.title, 'ko');
         if (sortMode === 'progress') return b.sceneCount - a.sceneCount;

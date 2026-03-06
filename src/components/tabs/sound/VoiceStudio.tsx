@@ -623,6 +623,9 @@ const VoiceStudio: React.FC = () => {
     } catch (err) {
       console.error('[VoiceStudio] TTS 생성 실패:', err);
       updateLine(lineId, { ttsStatus: 'error' });
+      const errMsg = err instanceof Error ? err.message : String(err);
+      useUIStore.getState().setToast({ show: true, message: `TTS 생성 실패: ${errMsg}` });
+      setTimeout(() => useUIStore.getState().setToast(null), 4000);
     } finally {
       setIsGeneratingLine(null);
     }

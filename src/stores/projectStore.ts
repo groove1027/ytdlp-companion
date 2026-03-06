@@ -195,9 +195,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   }),
 
   loadProject: (project) => {
+    const scenes = project.scenes || [];
     const sanitizedScenes = project.config?.allowInfographics === true
-      ? project.scenes
-      : project.scenes.map((s) => ({ ...s, isInfographic: false }));
+      ? scenes
+      : scenes.map((s) => ({ ...s, isInfographic: false }));
 
     // [FIX] 이전 프로젝트의 찌꺼기 방지 — 먼저 관련 스토어 초기화
     try { useEditRoomStore.getState().reset(); } catch { /* 미초기화 시 무시 */ }
