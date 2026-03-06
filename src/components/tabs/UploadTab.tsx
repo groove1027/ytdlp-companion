@@ -209,6 +209,7 @@ const StepAuth: React.FC = () => {
   const [ttEditingClient, setTtEditingClient] = useState(!tiktokAuth.clientKey);
   const [ttIsExchanging, setTtIsExchanging] = useState(false);
   const [ttAuthError, setTtAuthError] = useState('');
+  const [ttShowGuide, setTtShowGuide] = useState(false);
 
   // Instagram OAuth 상태
   const [igAppId, setIgAppId] = useState(instagramAuth.appId || '');
@@ -216,6 +217,7 @@ const StepAuth: React.FC = () => {
   const [igEditingClient, setIgEditingClient] = useState(!instagramAuth.appId);
   const [igIsExchanging, setIgIsExchanging] = useState(false);
   const [igAuthError, setIgAuthError] = useState('');
+  const [igShowGuide, setIgShowGuide] = useState(false);
 
   // Threads OAuth 상태
   const [thAppId, setThAppId] = useState(threadsAuth.appId || '');
@@ -223,9 +225,11 @@ const StepAuth: React.FC = () => {
   const [thEditingClient, setThEditingClient] = useState(!threadsAuth.appId);
   const [thIsExchanging, setThIsExchanging] = useState(false);
   const [thAuthError, setThAuthError] = useState('');
+  const [thShowGuide, setThShowGuide] = useState(false);
 
   // Naver Clip 상태
   const [ncInput, setNcInput] = useState(naverClipAuth.username || '');
+  const [ncShowGuide, setNcShowGuide] = useState(false);
 
   // 팝업에서 보낸 OAuth 코드를 수신하는 postMessage 리스너
   const autoExchangeRef = useRef<string | null>(null);
@@ -849,7 +853,100 @@ const StepAuth: React.FC = () => {
             ) : platform.id === 'tiktok' ? (
               /* TikTok OAuth 인증 */
               <div className="space-y-4">
-                <p className="text-sm text-gray-400">TikTok Developer Portal에서 앱을 생성하고 Client Key/Secret을 입력하세요</p>
+                <p className="text-sm text-gray-400">TikTok 영상 업로드 기능을 사용하려면 TikTok Developer 앱 연동이 필요합니다</p>
+
+                {/* TikTok 상세 설정 가이드 (접이식) */}
+                <div className="bg-gray-900/60 rounded-lg border border-gray-700/50 overflow-hidden">
+                  <button type="button" onClick={() => setTtShowGuide(!ttShowGuide)}
+                    className="w-full flex items-center justify-between px-4 py-3 text-sm font-bold text-cyan-400 hover:text-cyan-300 transition-colors">
+                    <span className="flex items-center gap-2">
+                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" /><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3" /><line x1="12" y1="17" x2="12.01" y2="17" /></svg>
+                      처음이신가요? TikTok Developer 설정 가이드
+                    </span>
+                    <svg className={`w-4 h-4 transition-transform ${ttShowGuide ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9" /></svg>
+                  </button>
+
+                  {ttShowGuide && (
+                    <div className="px-4 pb-4 space-y-4 border-t border-gray-700/50">
+                      {/* STEP 1 */}
+                      <div className="mt-4 space-y-2">
+                        <div className="flex items-center gap-2">
+                          <span className="flex-shrink-0 w-6 h-6 rounded-full bg-cyan-600/30 border border-cyan-500/40 text-cyan-400 text-xs font-bold flex items-center justify-center">1</span>
+                          <h5 className="text-sm font-bold text-gray-200">TikTok for Developers 가입</h5>
+                        </div>
+                        <div className="ml-8 space-y-1.5 text-xs text-gray-400">
+                          <p>아래 링크에서 TikTok Developer Portal에 접속하여 개발자 계정을 만듭니다.</p>
+                          <a href="https://developers.tiktok.com/" target="_blank" rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1.5 text-cyan-400 hover:text-cyan-300 transition-colors border border-cyan-500/30 rounded-lg px-3 py-1.5 bg-cyan-600/10 hover:bg-cyan-600/20">
+                            <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" /><polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" /></svg>
+                            TikTok for Developers
+                          </a>
+                          <p className="text-gray-500">우측 상단 <strong className="text-gray-300">"Log in"</strong> → TikTok 계정으로 로그인 후 개발자 등록을 완료합니다.</p>
+                        </div>
+                      </div>
+
+                      {/* STEP 2 */}
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <span className="flex-shrink-0 w-6 h-6 rounded-full bg-cyan-600/30 border border-cyan-500/40 text-cyan-400 text-xs font-bold flex items-center justify-center">2</span>
+                          <h5 className="text-sm font-bold text-gray-200">새 앱 만들기</h5>
+                        </div>
+                        <div className="ml-8 space-y-1.5 text-xs text-gray-400">
+                          <a href="https://developers.tiktok.com/apps/" target="_blank" rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1.5 text-cyan-400 hover:text-cyan-300 transition-colors border border-cyan-500/30 rounded-lg px-3 py-1.5 bg-cyan-600/10 hover:bg-cyan-600/20">
+                            <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" /><polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" /></svg>
+                            TikTok App 관리 페이지
+                          </a>
+                          <p className="text-gray-500"><strong className="text-gray-300">"Manage apps"</strong> → <strong className="text-gray-300">"Connect an app"</strong> 클릭</p>
+                          <p className="text-gray-500">앱 이름을 자유롭게 입력 (예: "Video Upload") 후 생성합니다.</p>
+                        </div>
+                      </div>
+
+                      {/* STEP 3 */}
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <span className="flex-shrink-0 w-6 h-6 rounded-full bg-cyan-600/30 border border-cyan-500/40 text-cyan-400 text-xs font-bold flex items-center justify-center">3</span>
+                          <h5 className="text-sm font-bold text-gray-200">Content Posting API 권한 추가</h5>
+                        </div>
+                        <div className="ml-8 space-y-1.5 text-xs text-gray-400">
+                          <p className="text-gray-500">생성된 앱에서 <strong className="text-gray-300">"Add products"</strong> → <strong className="text-gray-300">"Content Posting API"</strong>를 추가합니다.</p>
+                          <p className="text-gray-500">권한: <strong className="text-green-400">video.upload</strong>, <strong className="text-green-400">video.publish</strong>을 선택합니다.</p>
+                          <div className="bg-amber-600/10 border border-amber-500/20 rounded-lg px-2.5 py-1.5 text-amber-500/90 mt-1">
+                            <strong>중요!</strong> "Sandbox" 모드에서는 본인 계정에만 업로드 가능합니다. 상용화하려면 TikTok 앱 심사를 통과해야 합니다.
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* STEP 4 */}
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <span className="flex-shrink-0 w-6 h-6 rounded-full bg-cyan-600/30 border border-cyan-500/40 text-cyan-400 text-xs font-bold flex items-center justify-center">4</span>
+                          <h5 className="text-sm font-bold text-gray-200">Client Key / Secret 확인</h5>
+                        </div>
+                        <div className="ml-8 space-y-1.5 text-xs text-gray-400">
+                          <div className="bg-gray-800/80 rounded-lg p-3 space-y-2 border border-gray-700/50 mt-1">
+                            <p>앱 상세 페이지에서 <strong className="text-gray-200">Client Key</strong>와 <strong className="text-gray-200">Client Secret</strong>을 확인할 수 있습니다.</p>
+                            <p><strong className="text-gray-200">Redirect URI</strong>에 아래 주소를 추가하세요:</p>
+                            <div className="flex items-center gap-2">
+                              <code className="bg-gray-900 px-2 py-1 rounded text-green-400 font-mono text-[11px] border border-green-500/20">{window.location.origin}</code>
+                              <button type="button" onClick={() => { navigator.clipboard.writeText(window.location.origin); showToast('복사됨!', 1500); }}
+                                className="text-[10px] text-gray-500 hover:text-gray-300 transition-colors px-1.5 py-0.5 rounded bg-gray-700/50 hover:bg-gray-600/50">복사</button>
+                            </div>
+                          </div>
+                          <p className="text-gray-500">Client Key와 Secret을 아래에 붙여넣으세요!</p>
+                        </div>
+                      </div>
+
+                      <div className="border-t border-gray-700/30 pt-3">
+                        <p className="text-[11px] text-gray-500 leading-relaxed">
+                          * Sandbox 모드에서는 자신의 TikTok 계정에만 업로드할 수 있으며, 하루 업로드 횟수 제한이 있습니다.
+                          공개 배포를 위해서는 TikTok 앱 심사(App Review)를 받아야 합니다.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 <div className="bg-gray-900/60 rounded-lg border border-gray-700/50 p-4 space-y-3">
                   <div className="flex items-center justify-between">
                     <h4 className="text-sm font-bold text-gray-300">TikTok App 설정</h4>
@@ -897,7 +994,106 @@ const StepAuth: React.FC = () => {
             ) : platform.id === 'instagram' ? (
               /* Instagram OAuth 인증 */
               <div className="space-y-4">
-                <p className="text-sm text-gray-400">Meta Developer Portal에서 앱을 생성하고 Instagram Graph API 권한을 추가하세요. Professional 계정(비즈니스/크리에이터)이 필요합니다.</p>
+                <p className="text-sm text-gray-400">Instagram 릴스/피드 업로드를 사용하려면 Meta 앱 연동이 필요합니다. Professional 계정(비즈니스/크리에이터)이 필요합니다.</p>
+
+                {/* Instagram 상세 설정 가이드 (접이식) */}
+                <div className="bg-gray-900/60 rounded-lg border border-gray-700/50 overflow-hidden">
+                  <button type="button" onClick={() => setIgShowGuide(!igShowGuide)}
+                    className="w-full flex items-center justify-between px-4 py-3 text-sm font-bold text-pink-400 hover:text-pink-300 transition-colors">
+                    <span className="flex items-center gap-2">
+                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" /><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3" /><line x1="12" y1="17" x2="12.01" y2="17" /></svg>
+                      처음이신가요? Instagram API 설정 가이드
+                    </span>
+                    <svg className={`w-4 h-4 transition-transform ${igShowGuide ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9" /></svg>
+                  </button>
+
+                  {igShowGuide && (
+                    <div className="px-4 pb-4 space-y-4 border-t border-gray-700/50">
+                      {/* 사전 준비 */}
+                      <div className="mt-4 bg-amber-600/10 border border-amber-500/20 rounded-lg px-3 py-2 text-xs text-amber-500/90">
+                        <strong>사전 준비:</strong> Instagram 계정을 <strong className="text-amber-300">Professional 계정</strong>(비즈니스 또는 크리에이터)으로 전환해야 합니다.
+                        Instagram 앱 → 설정 → 계정 → 프로페셔널 계정으로 전환
+                      </div>
+
+                      {/* STEP 1 */}
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <span className="flex-shrink-0 w-6 h-6 rounded-full bg-pink-600/30 border border-pink-500/40 text-pink-400 text-xs font-bold flex items-center justify-center">1</span>
+                          <h5 className="text-sm font-bold text-gray-200">Meta for Developers 가입</h5>
+                        </div>
+                        <div className="ml-8 space-y-1.5 text-xs text-gray-400">
+                          <p>Meta Developer Portal에 접속하여 개발자 계정을 만듭니다.</p>
+                          <a href="https://developers.facebook.com/" target="_blank" rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1.5 text-pink-400 hover:text-pink-300 transition-colors border border-pink-500/30 rounded-lg px-3 py-1.5 bg-pink-600/10 hover:bg-pink-600/20">
+                            <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" /><polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" /></svg>
+                            Meta for Developers
+                          </a>
+                          <p className="text-gray-500">Facebook 계정으로 로그인 → <strong className="text-gray-300">"시작하기"</strong>를 클릭하여 개발자 등록을 완료합니다.</p>
+                        </div>
+                      </div>
+
+                      {/* STEP 2 */}
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <span className="flex-shrink-0 w-6 h-6 rounded-full bg-pink-600/30 border border-pink-500/40 text-pink-400 text-xs font-bold flex items-center justify-center">2</span>
+                          <h5 className="text-sm font-bold text-gray-200">새 앱 만들기</h5>
+                        </div>
+                        <div className="ml-8 space-y-1.5 text-xs text-gray-400">
+                          <a href="https://developers.facebook.com/apps/create/" target="_blank" rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1.5 text-pink-400 hover:text-pink-300 transition-colors border border-pink-500/30 rounded-lg px-3 py-1.5 bg-pink-600/10 hover:bg-pink-600/20">
+                            <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" /><polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" /></svg>
+                            Meta App 만들기
+                          </a>
+                          <p className="text-gray-500">사용 사례: <strong className="text-gray-300">"기타"</strong> 선택 → 앱 유형: <strong className="text-gray-300">"비즈니스"</strong> 선택</p>
+                          <p className="text-gray-500">앱 이름을 자유롭게 입력 (예: "Video Upload") 후 <strong className="text-gray-300">"앱 만들기"</strong> 클릭</p>
+                        </div>
+                      </div>
+
+                      {/* STEP 3 */}
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <span className="flex-shrink-0 w-6 h-6 rounded-full bg-pink-600/30 border border-pink-500/40 text-pink-400 text-xs font-bold flex items-center justify-center">3</span>
+                          <h5 className="text-sm font-bold text-gray-200">Instagram Graph API 제품 추가</h5>
+                        </div>
+                        <div className="ml-8 space-y-1.5 text-xs text-gray-400">
+                          <p className="text-gray-500">앱 대시보드에서 <strong className="text-gray-300">"제품 추가"</strong> → <strong className="text-gray-300">"Instagram Graph API"</strong>의 <strong className="text-gray-300">"설정"</strong>을 클릭합니다.</p>
+                          <p className="text-gray-500">필요한 권한: <strong className="text-green-400">instagram_basic</strong>, <strong className="text-green-400">instagram_content_publish</strong>, <strong className="text-green-400">pages_read_engagement</strong></p>
+                          <div className="bg-amber-600/10 border border-amber-500/20 rounded-lg px-2.5 py-1.5 text-amber-500/90 mt-1">
+                            <strong>중요!</strong> Instagram 계정이 Facebook 페이지와 연결되어 있어야 합니다. Instagram 앱 → 설정 → 계정 → 연결된 계정 → Facebook에서 연결하세요.
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* STEP 4 */}
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <span className="flex-shrink-0 w-6 h-6 rounded-full bg-pink-600/30 border border-pink-500/40 text-pink-400 text-xs font-bold flex items-center justify-center">4</span>
+                          <h5 className="text-sm font-bold text-gray-200">App ID / Secret 확인 및 설정</h5>
+                        </div>
+                        <div className="ml-8 space-y-1.5 text-xs text-gray-400">
+                          <div className="bg-gray-800/80 rounded-lg p-3 space-y-2 border border-gray-700/50 mt-1">
+                            <p>앱 대시보드 → <strong className="text-gray-200">"설정"</strong> → <strong className="text-gray-200">"기본 설정"</strong>에서 App ID와 App Secret을 확인합니다.</p>
+                            <p><strong className="text-gray-200">유효한 OAuth 리디렉션 URI</strong>에 아래 주소를 추가하세요:</p>
+                            <div className="flex items-center gap-2">
+                              <code className="bg-gray-900 px-2 py-1 rounded text-green-400 font-mono text-[11px] border border-green-500/20">{window.location.origin}</code>
+                              <button type="button" onClick={() => { navigator.clipboard.writeText(window.location.origin); showToast('복사됨!', 1500); }}
+                                className="text-[10px] text-gray-500 hover:text-gray-300 transition-colors px-1.5 py-0.5 rounded bg-gray-700/50 hover:bg-gray-600/50">복사</button>
+                            </div>
+                          </div>
+                          <p className="text-gray-500">App ID와 App Secret을 아래에 붙여넣으세요!</p>
+                        </div>
+                      </div>
+
+                      <div className="border-t border-gray-700/30 pt-3">
+                        <p className="text-[11px] text-gray-500 leading-relaxed">
+                          * 개발 모드에서는 본인 계정과 앱에 추가된 테스트 사용자만 사용할 수 있습니다.
+                          공개 배포를 위해서는 Meta 앱 심사(App Review)를 통과해야 합니다.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 <div className="bg-gray-900/60 rounded-lg border border-gray-700/50 p-4 space-y-3">
                   <div className="flex items-center justify-between">
                     <h4 className="text-sm font-bold text-gray-300">Meta App 설정</h4>
@@ -945,7 +1141,105 @@ const StepAuth: React.FC = () => {
             ) : platform.id === 'threads' ? (
               /* Threads OAuth 인증 */
               <div className="space-y-4">
-                <p className="text-sm text-gray-400">Meta Developer Portal에서 Threads API 권한을 추가하세요. Instagram과 동일한 Meta App을 사용할 수 있습니다.</p>
+                <p className="text-sm text-gray-400">Threads 게시물 업로드를 사용하려면 Meta 앱 연동이 필요합니다. Instagram과 동일한 Meta App을 사용할 수 있습니다.</p>
+
+                {/* Threads 상세 설정 가이드 (접이식) */}
+                <div className="bg-gray-900/60 rounded-lg border border-gray-700/50 overflow-hidden">
+                  <button type="button" onClick={() => setThShowGuide(!thShowGuide)}
+                    className="w-full flex items-center justify-between px-4 py-3 text-sm font-bold text-gray-300 hover:text-gray-200 transition-colors">
+                    <span className="flex items-center gap-2">
+                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" /><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3" /><line x1="12" y1="17" x2="12.01" y2="17" /></svg>
+                      처음이신가요? Threads API 설정 가이드
+                    </span>
+                    <svg className={`w-4 h-4 transition-transform ${thShowGuide ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9" /></svg>
+                  </button>
+
+                  {thShowGuide && (
+                    <div className="px-4 pb-4 space-y-4 border-t border-gray-700/50">
+                      {/* 사전 안내 */}
+                      <div className="mt-4 bg-blue-600/10 border border-blue-500/20 rounded-lg px-3 py-2 text-xs text-blue-400/90">
+                        <strong>팁:</strong> Instagram 가이드에서 이미 Meta App을 만들었다면, 같은 앱에 Threads API를 추가하기만 하면 됩니다. STEP 3부터 진행하세요!
+                      </div>
+
+                      {/* STEP 1 */}
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <span className="flex-shrink-0 w-6 h-6 rounded-full bg-gray-600/30 border border-gray-500/40 text-gray-300 text-xs font-bold flex items-center justify-center">1</span>
+                          <h5 className="text-sm font-bold text-gray-200">Meta for Developers 가입</h5>
+                        </div>
+                        <div className="ml-8 space-y-1.5 text-xs text-gray-400">
+                          <p>아래 링크에서 Meta Developer Portal에 접속합니다.</p>
+                          <a href="https://developers.facebook.com/" target="_blank" rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1.5 text-gray-300 hover:text-gray-200 transition-colors border border-gray-500/30 rounded-lg px-3 py-1.5 bg-gray-600/10 hover:bg-gray-600/20">
+                            <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" /><polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" /></svg>
+                            Meta for Developers
+                          </a>
+                          <p className="text-gray-500">Facebook 계정으로 로그인 → 개발자 등록을 완료합니다.</p>
+                        </div>
+                      </div>
+
+                      {/* STEP 2 */}
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <span className="flex-shrink-0 w-6 h-6 rounded-full bg-gray-600/30 border border-gray-500/40 text-gray-300 text-xs font-bold flex items-center justify-center">2</span>
+                          <h5 className="text-sm font-bold text-gray-200">새 앱 만들기 (또는 기존 앱 사용)</h5>
+                        </div>
+                        <div className="ml-8 space-y-1.5 text-xs text-gray-400">
+                          <a href="https://developers.facebook.com/apps/create/" target="_blank" rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1.5 text-gray-300 hover:text-gray-200 transition-colors border border-gray-500/30 rounded-lg px-3 py-1.5 bg-gray-600/10 hover:bg-gray-600/20">
+                            <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" /><polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" /></svg>
+                            Meta App 만들기
+                          </a>
+                          <p className="text-gray-500">사용 사례: <strong className="text-gray-300">"기타"</strong> → 앱 유형: <strong className="text-gray-300">"비즈니스"</strong> 선택 후 생성합니다.</p>
+                          <p className="text-gray-500">Instagram용으로 이미 만든 앱이 있다면 그 앱을 그대로 사용할 수 있습니다.</p>
+                        </div>
+                      </div>
+
+                      {/* STEP 3 */}
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <span className="flex-shrink-0 w-6 h-6 rounded-full bg-gray-600/30 border border-gray-500/40 text-gray-300 text-xs font-bold flex items-center justify-center">3</span>
+                          <h5 className="text-sm font-bold text-gray-200">Threads API 제품 추가</h5>
+                        </div>
+                        <div className="ml-8 space-y-1.5 text-xs text-gray-400">
+                          <p className="text-gray-500">앱 대시보드에서 <strong className="text-gray-300">"제품 추가"</strong> → <strong className="text-gray-300">"Threads API"</strong>의 <strong className="text-gray-300">"설정"</strong>을 클릭합니다.</p>
+                          <p className="text-gray-500">필요한 권한: <strong className="text-green-400">threads_basic</strong>, <strong className="text-green-400">threads_content_publish</strong>, <strong className="text-green-400">threads_manage_replies</strong></p>
+                          <div className="bg-amber-600/10 border border-amber-500/20 rounded-lg px-2.5 py-1.5 text-amber-500/90 mt-1">
+                            <strong>중요!</strong> Threads API를 사용하려면 Threads 프로필이 공개 상태여야 합니다. Threads 앱에서 프로필 → 설정 → 비공개 프로필 해제
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* STEP 4 */}
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <span className="flex-shrink-0 w-6 h-6 rounded-full bg-gray-600/30 border border-gray-500/40 text-gray-300 text-xs font-bold flex items-center justify-center">4</span>
+                          <h5 className="text-sm font-bold text-gray-200">App ID / Secret 확인 및 설정</h5>
+                        </div>
+                        <div className="ml-8 space-y-1.5 text-xs text-gray-400">
+                          <div className="bg-gray-800/80 rounded-lg p-3 space-y-2 border border-gray-700/50 mt-1">
+                            <p>앱 대시보드 → <strong className="text-gray-200">"설정"</strong> → <strong className="text-gray-200">"기본 설정"</strong>에서 App ID와 App Secret을 확인합니다.</p>
+                            <p><strong className="text-gray-200">Threads 설정</strong>의 <strong className="text-gray-200">"리디렉션 콜백 URL"</strong>에 아래 주소를 추가하세요:</p>
+                            <div className="flex items-center gap-2">
+                              <code className="bg-gray-900 px-2 py-1 rounded text-green-400 font-mono text-[11px] border border-green-500/20">{window.location.origin}</code>
+                              <button type="button" onClick={() => { navigator.clipboard.writeText(window.location.origin); showToast('복사됨!', 1500); }}
+                                className="text-[10px] text-gray-500 hover:text-gray-300 transition-colors px-1.5 py-0.5 rounded bg-gray-700/50 hover:bg-gray-600/50">복사</button>
+                            </div>
+                          </div>
+                          <p className="text-gray-500">App ID와 App Secret을 아래에 붙여넣으세요!</p>
+                        </div>
+                      </div>
+
+                      <div className="border-t border-gray-700/30 pt-3">
+                        <p className="text-[11px] text-gray-500 leading-relaxed">
+                          * 개발 모드에서는 본인과 테스트 사용자만 사용할 수 있습니다.
+                          Instagram과 같은 Meta App을 공유하면 별도 심사 없이 Threads API도 함께 사용할 수 있습니다.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 <div className="bg-gray-900/60 rounded-lg border border-gray-700/50 p-4 space-y-3">
                   <div className="flex items-center justify-between">
                     <h4 className="text-sm font-bold text-gray-300">Threads App 설정</h4>
@@ -997,6 +1291,94 @@ const StepAuth: React.FC = () => {
                   <p className="text-sm text-amber-400 font-bold mb-2">Naver Clip은 공식 API가 제공되지 않습니다</p>
                   <p className="text-xs text-gray-400">자동 업로드 대신 파일 다운로드 후 Naver Clip Creator Studio에서 수동 업로드하는 방식을 안내합니다.</p>
                 </div>
+
+                {/* Naver Clip 수동 업로드 가이드 (접이식) */}
+                <div className="bg-gray-900/60 rounded-lg border border-gray-700/50 overflow-hidden">
+                  <button type="button" onClick={() => setNcShowGuide(!ncShowGuide)}
+                    className="w-full flex items-center justify-between px-4 py-3 text-sm font-bold text-green-400 hover:text-green-300 transition-colors">
+                    <span className="flex items-center gap-2">
+                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" /><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3" /><line x1="12" y1="17" x2="12.01" y2="17" /></svg>
+                      처음이신가요? Naver Clip 업로드 가이드
+                    </span>
+                    <svg className={`w-4 h-4 transition-transform ${ncShowGuide ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9" /></svg>
+                  </button>
+
+                  {ncShowGuide && (
+                    <div className="px-4 pb-4 space-y-4 border-t border-gray-700/50">
+                      {/* STEP 1 */}
+                      <div className="mt-4 space-y-2">
+                        <div className="flex items-center gap-2">
+                          <span className="flex-shrink-0 w-6 h-6 rounded-full bg-green-600/30 border border-green-500/40 text-green-400 text-xs font-bold flex items-center justify-center">1</span>
+                          <h5 className="text-sm font-bold text-gray-200">Naver Clip Creator Studio 접속</h5>
+                        </div>
+                        <div className="ml-8 space-y-1.5 text-xs text-gray-400">
+                          <p>네이버 계정으로 로그인한 상태에서 아래 링크로 접속합니다.</p>
+                          <a href="https://clip.studio.naver.com/" target="_blank" rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1.5 text-green-400 hover:text-green-300 transition-colors border border-green-500/30 rounded-lg px-3 py-1.5 bg-green-600/10 hover:bg-green-600/20">
+                            <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" /><polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" /></svg>
+                            Naver Clip Creator Studio
+                          </a>
+                          <p className="text-gray-500">처음 이용 시 네이버 클립 크리에이터 가입이 필요할 수 있습니다.</p>
+                        </div>
+                      </div>
+
+                      {/* STEP 2 */}
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <span className="flex-shrink-0 w-6 h-6 rounded-full bg-green-600/30 border border-green-500/40 text-green-400 text-xs font-bold flex items-center justify-center">2</span>
+                          <h5 className="text-sm font-bold text-gray-200">영상 파일 다운로드</h5>
+                        </div>
+                        <div className="ml-8 space-y-1.5 text-xs text-gray-400">
+                          <p className="text-gray-500">이 앱의 <strong className="text-gray-300">"업로드"</strong> 단계에서 <strong className="text-gray-300">"영상 다운로드"</strong> 버튼을 눌러 MP4 파일을 저장합니다.</p>
+                          <div className="bg-gray-800/80 rounded-lg p-3 space-y-1.5 border border-gray-700/50 mt-1">
+                            <p><strong className="text-gray-200">권장 사양:</strong></p>
+                            <p className="text-gray-500">• 해상도: 1080×1920 (세로) 또는 1920×1080 (가로)</p>
+                            <p className="text-gray-500">• 파일 형식: MP4 (H.264)</p>
+                            <p className="text-gray-500">• 최대 파일 크기: 4GB</p>
+                            <p className="text-gray-500">• 최대 길이: 60초 (숏폼) / 20분 (일반)</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* STEP 3 */}
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <span className="flex-shrink-0 w-6 h-6 rounded-full bg-green-600/30 border border-green-500/40 text-green-400 text-xs font-bold flex items-center justify-center">3</span>
+                          <h5 className="text-sm font-bold text-gray-200">Creator Studio에서 업로드</h5>
+                        </div>
+                        <div className="ml-8 space-y-1.5 text-xs text-gray-400">
+                          <p className="text-gray-500">Clip Creator Studio에서 <strong className="text-gray-300">"클립 올리기"</strong> → 다운로드한 MP4 파일을 드래그 또는 선택합니다.</p>
+                          <p className="text-gray-500">이 앱에서 생성한 제목, 설명, 태그를 복사하여 붙여넣으세요.</p>
+                        </div>
+                      </div>
+
+                      {/* STEP 4 */}
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <span className="flex-shrink-0 w-6 h-6 rounded-full bg-green-600/30 border border-green-500/40 text-green-400 text-xs font-bold flex items-center justify-center">4</span>
+                          <h5 className="text-sm font-bold text-gray-200">메타데이터 입력 후 게시</h5>
+                        </div>
+                        <div className="ml-8 space-y-1.5 text-xs text-gray-400">
+                          <div className="bg-gray-800/80 rounded-lg p-3 space-y-1.5 border border-gray-700/50 mt-1">
+                            <p><strong className="text-gray-200">제목:</strong> 메타데이터 탭에서 생성된 제목을 복사</p>
+                            <p><strong className="text-gray-200">설명:</strong> 설명 영역에 붙여넣기</p>
+                            <p><strong className="text-gray-200">태그:</strong> 해시태그를 # 포함하여 입력</p>
+                            <p><strong className="text-gray-200">커버 이미지:</strong> 썸네일 탭에서 다운로드한 이미지 사용</p>
+                          </div>
+                          <p className="text-gray-500"><strong className="text-gray-300">"게시하기"</strong> 또는 <strong className="text-gray-300">"예약 게시"</strong>를 클릭하면 완료!</p>
+                        </div>
+                      </div>
+
+                      <div className="border-t border-gray-700/30 pt-3">
+                        <p className="text-[11px] text-gray-500 leading-relaxed">
+                          * Naver Clip은 현재 공식 업로드 API를 제공하지 않아 수동 업로드만 가능합니다.
+                          향후 API가 공개되면 자동 업로드를 지원할 예정입니다.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 <div className="space-y-2">
                   <label className="text-xs text-gray-500">Naver 아이디 (메모용)</label>
                   <input type="text" value={ncInput} onChange={(e) => setNcInput(e.target.value)} placeholder="네이버 아이디"
