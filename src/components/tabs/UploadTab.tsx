@@ -2388,14 +2388,8 @@ const UploadTab: React.FC = () => {
   const thumbnailUrl = useUploadStore((s) => s.thumbnailUrl);
   const platformProgress = useUploadStore((s) => s.platformProgress);
 
-  // Section refs for scroll-to
-  const sectionRefs = useRef<Record<UploadStep, HTMLDivElement | null>>({
-    auth: null, video: null, metadata: null, thumbnail: null, settings: null, upload: null,
-  });
-
-  const scrollToSection = (stepId: UploadStep) => {
-    sectionRefs.current[stepId]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  };
+  // 위저드 스텝 네비게이션
+  const [currentStep, setCurrentStep] = useState(0);
 
   // 연결 카운트
   const connectedCount = [
@@ -2415,7 +2409,7 @@ const UploadTab: React.FC = () => {
   const getStepStatus = (stepId: UploadStep): StepStatus => {
     switch (stepId) {
       case 'auth':
-        return connectedCount > 0 ? 'done' : 'pending';
+        return selectedPlatforms.length > 0 && connectedCount > 0 ? 'done' : 'pending';
       case 'video':
         return videoFile ? 'done' : 'pending';
       case 'metadata':
@@ -2423,7 +2417,7 @@ const UploadTab: React.FC = () => {
       case 'thumbnail':
         return thumbnailUrl ? 'done' : 'pending';
       case 'settings':
-        return 'done'; // 기본값 존재
+        return 'done';
       case 'upload':
         return platformProgress.length > 0 && platformProgress.every(p => p.status === 'done')
           ? 'done' : 'pending';
@@ -2432,19 +2426,71 @@ const UploadTab: React.FC = () => {
     }
   };
 
-  // 첫 번째 미완료 스텝을 active로 표시
+  // 현재 스텝 기준 상태 표시
   const getDisplayStatus = (stepId: UploadStep): StepStatus => {
+    const stepIndex = STEPS.findIndex(s => s.id === stepId);
     const raw = getStepStatus(stepId);
     if (raw === 'done') return 'done';
-    // 첫 번째 pending 스텝이면 active
-    const firstPending = STEPS.find(s => getStepStatus(s.id) !== 'done');
-    if (firstPending?.id === stepId) return 'active';
+    if (stepIndex === currentStep) return 'active';
     return 'pending';
+  };
+
+  // 스텝별 유효성 검사
+  const canProceedFromStep = (stepIndex: number): { ok: boolean; message: string } => {
+    const stepId = STEPS[stepIndex].id;
+    switch (stepId) {
+      case 'auth':
+        if (selectedPlatforms.length === 0) return { ok: false, message: '플랫폼을 1개 이상 선택해주세요.' };
+        if (connectedCount === 0) return { ok: false, message: '선택한 플랫폼 중 1개 이상 인증을 완료해주세요.' };
+        return { ok: true, message: '' };
+      case 'video':
+        if (!videoFile) return { ok: false, message: '업로드할 영상 파일을 선택해주세요.' };
+        return { ok: true, message: '' };
+      case 'metadata':
+        return { ok: true, message: '' };
+      case 'thumbnail':
+        return { ok: true, message: '' };
+      case 'settings':
+        return { ok: true, message: '' };
+      default:
+        return { ok: true, message: '' };
+    }
+  };
+
+  // 스텝 인디케이터 클릭 — 뒤로는 자유, 앞으로는 검증
+  const handleStepClick = (targetIndex: number) => {
+    if (targetIndex <= currentStep) {
+      setCurrentStep(targetIndex);
+      return;
+    }
+    for (let i = currentStep; i < targetIndex; i++) {
+      const { ok, message } = canProceedFromStep(i);
+      if (!ok) {
+        showToast(message);
+        setCurrentStep(i);
+        return;
+      }
+    }
+    setCurrentStep(targetIndex);
+  };
+
+  const handleNextStep = () => {
+    if (currentStep >= STEPS.length - 1) return;
+    const { ok, message } = canProceedFromStep(currentStep);
+    if (!ok) {
+      showToast(message);
+      return;
+    }
+    setCurrentStep(currentStep + 1);
+  };
+
+  const handlePrevStep = () => {
+    if (currentStep > 0) setCurrentStep(currentStep - 1);
   };
 
   const handleStartUpload = useCallback(async () => {
     startUpload();
-    scrollToSection('upload');
+    setCurrentStep(STEPS.length - 1);
 
     const store = useUploadStore.getState();
     const file = store.videoFile;
@@ -2607,7 +2653,7 @@ const UploadTab: React.FC = () => {
 
     await Promise.allSettled(uploads);
     useUploadStore.getState().finishUpload();
-  }, [startUpload, scrollToSection, selectedPlatforms, youtubeAuth, tiktokAuth, instagramAuth, threadsAuth, naverClipAuth]);
+  }, [startUpload, selectedPlatforms, youtubeAuth, tiktokAuth, instagramAuth, threadsAuth, naverClipAuth]);
 
   const isOptionalStep = (stepId: UploadStep) => stepId === 'thumbnail';
 
@@ -2688,7 +2734,7 @@ const UploadTab: React.FC = () => {
               <React.Fragment key={step.id}>
                 <button
                   type="button"
-                  onClick={() => scrollToSection(step.id)}
+                  onClick={() => handleStepClick(idx)}
                   className="flex flex-col items-center gap-1.5 group flex-shrink-0"
                 >
                   <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${
@@ -2721,91 +2767,73 @@ const UploadTab: React.FC = () => {
           })}
         </div>
 
-        {/* 4. 모든 섹션 수직 나열 */}
-        <SectionCard
-          ref={(el) => { sectionRefs.current.auth = el; }}
-          icon={STEPS[0].icon}
-          iconGradient={accent.iconGradient}
-          title="인증"
-          subtitle="플랫폼 계정을 연결합니다"
-          status={getDisplayStatus('auth')}
-        >
-          <StepAuth />
-        </SectionCard>
+        {/* 4. 현재 스텝 콘텐츠 (위저드) */}
+        <div className="bg-gray-800/60 border border-gray-700/50 rounded-2xl overflow-hidden mb-6">
+          <div className="flex items-center gap-3 px-6 py-4 border-b border-gray-700/30">
+            <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${accent.iconGradient} flex items-center justify-center text-white shadow-md`}>
+              {STEPS[currentStep].icon}
+            </div>
+            <div className="flex-1">
+              <div className="flex items-center gap-2">
+                <h3 className="text-lg font-bold text-white">{STEPS[currentStep].label}</h3>
+                <StatusBadge status={getDisplayStatus(STEPS[currentStep].id)} optional={STEPS[currentStep].id === 'thumbnail'} />
+                <span className="text-xs text-gray-500 ml-auto">{currentStep + 1} / {STEPS.length}</span>
+              </div>
+              <p className="text-sm text-gray-500">{STEPS[currentStep].sub}</p>
+            </div>
+          </div>
+          <div className="p-6">
+            {STEPS[currentStep].id === 'auth' && <StepAuth />}
+            {STEPS[currentStep].id === 'video' && <StepVideo />}
+            {STEPS[currentStep].id === 'metadata' && <StepMetadata />}
+            {STEPS[currentStep].id === 'thumbnail' && <StepThumbnail />}
+            {STEPS[currentStep].id === 'settings' && <StepSettings />}
+            {STEPS[currentStep].id === 'upload' && <StepUpload />}
+          </div>
+        </div>
 
-        <SectionCard
-          ref={(el) => { sectionRefs.current.video = el; }}
-          icon={STEPS[1].icon}
-          iconGradient={accent.iconGradient}
-          title="영상"
-          subtitle="업로드할 영상 파일을 선택합니다"
-          status={getDisplayStatus('video')}
-        >
-          <StepVideo />
-        </SectionCard>
-
-        <SectionCard
-          ref={(el) => { sectionRefs.current.metadata = el; }}
-          icon={STEPS[2].icon}
-          iconGradient={accent.iconGradient}
-          title="메타데이터"
-          subtitle="제목, 설명, 태그를 설정합니다"
-          status={getDisplayStatus('metadata')}
-        >
-          <StepMetadata />
-        </SectionCard>
-
-        <SectionCard
-          ref={(el) => { sectionRefs.current.thumbnail = el; }}
-          icon={STEPS[3].icon}
-          iconGradient={accent.iconGradient}
-          title="썸네일"
-          subtitle="커버 이미지를 설정합니다 (선택사항)"
-          status={getDisplayStatus('thumbnail')}
-          optional
-        >
-          <StepThumbnail />
-        </SectionCard>
-
-        <SectionCard
-          ref={(el) => { sectionRefs.current.settings = el; }}
-          icon={STEPS[4].icon}
-          iconGradient={accent.iconGradient}
-          title="설정"
-          subtitle="공개 범위와 예약 시간을 설정합니다"
-          status={getDisplayStatus('settings')}
-        >
-          <StepSettings />
-        </SectionCard>
-
-        <SectionCard
-          ref={(el) => { sectionRefs.current.upload = el; }}
-          icon={STEPS[5].icon}
-          iconGradient={accent.iconGradient}
-          title="업로드"
-          subtitle="모든 준비 완료 후 업로드를 실행합니다"
-          status={getDisplayStatus('upload')}
-        >
-          <StepUpload />
-        </SectionCard>
-
-        {/* 5. 하단 CTA */}
-        <div className="sticky bottom-4 z-10">
-          <button
-            type="button"
-            onClick={handleStartUpload}
-            disabled={isUploading || selectedPlatforms.length === 0 || connectedCount === 0 || !videoFile}
-            className={`w-full py-4 rounded-2xl text-base font-bold transition-all shadow-2xl flex items-center justify-center gap-3 ${
-              isUploading || selectedPlatforms.length === 0 || connectedCount === 0 || !videoFile
-                ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
-                : `bg-gradient-to-r ${accent.btnGradient} hover:opacity-90 text-white transform hover:scale-[1.01]`
-            }`}
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-            </svg>
-            일괄 업로드 시작 ({connectedCount}/{selectedPlatforms.length} 플랫폼)
-          </button>
+        {/* 5. 네비게이션 버튼 */}
+        <div className="flex items-center gap-3">
+          {currentStep > 0 && (
+            <button
+              type="button"
+              onClick={handlePrevStep}
+              className="flex-1 py-3.5 rounded-2xl text-base font-bold bg-gray-700 hover:bg-gray-600 text-gray-200 border border-gray-600 transition-all flex items-center justify-center gap-2"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7"/></svg>
+              {STEPS[currentStep - 1].label}
+            </button>
+          )}
+          {currentStep < STEPS.length - 1 ? (
+            <button
+              type="button"
+              onClick={handleNextStep}
+              className={`flex-1 py-3.5 rounded-2xl text-base font-bold transition-all shadow-lg flex items-center justify-center gap-2 ${
+                canProceedFromStep(currentStep).ok
+                  ? `bg-gradient-to-r ${accent.btnGradient} hover:opacity-90 text-white`
+                  : 'bg-gray-700 text-gray-500 cursor-not-allowed opacity-60'
+              }`}
+            >
+              {STEPS[currentStep + 1].label}
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7"/></svg>
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={handleStartUpload}
+              disabled={isUploading || selectedPlatforms.length === 0 || connectedCount === 0 || !videoFile}
+              className={`flex-1 py-3.5 rounded-2xl text-base font-bold transition-all shadow-2xl flex items-center justify-center gap-3 ${
+                isUploading || selectedPlatforms.length === 0 || connectedCount === 0 || !videoFile
+                  ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                  : `bg-gradient-to-r ${accent.btnGradient} hover:opacity-90 text-white`
+              }`}
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+              </svg>
+              일괄 업로드 시작 ({connectedCount}/{selectedPlatforms.length} 플랫폼)
+            </button>
+          )}
         </div>
       </div>
     </div>
