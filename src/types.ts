@@ -959,6 +959,11 @@ export interface UploadSettings {
   scheduledAt?: string;        // ISO 8601 예약 시간
   madeForKids: boolean;
   notifySubscribers: boolean;
+  // TikTok 전용
+  tiktokPrivacy: 'PUBLIC_TO_EVERYONE' | 'MUTUAL_FOLLOW_FRIENDS' | 'FOLLOWER_OF_CREATOR' | 'SELF_ONLY';
+  tiktokDisableDuet: boolean;
+  tiktokDisableStitch: boolean;
+  tiktokDisableComment: boolean;
 }
 
 export type OutputMode = 'mp4' | 'srt-image' | 'srt-video';

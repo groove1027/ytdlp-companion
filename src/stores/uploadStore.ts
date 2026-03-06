@@ -104,6 +104,10 @@ const DEFAULT_UPLOAD_SETTINGS: UploadSettings = {
   privacy: 'private',
   madeForKids: false,
   notifySubscribers: true,
+  tiktokPrivacy: 'SELF_ONLY',
+  tiktokDisableDuet: false,
+  tiktokDisableStitch: false,
+  tiktokDisableComment: false,
 };
 
 const DEFAULT_EXPORT_CONFIG: ExportConfig = {

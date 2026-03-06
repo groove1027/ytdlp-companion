@@ -1653,8 +1653,13 @@ const StepMetadata: React.FC = () => {
 
       {/* Title selection */}
       <div>
-        <label className="text-sm font-semibold text-gray-300 mb-2 block">
-          제목 선택 <span className="text-red-400">*</span>
+        <label className="text-sm font-semibold text-gray-300 mb-2 flex items-center gap-2 flex-wrap">
+          <span>제목 선택 <span className="text-red-400">*</span></span>
+          <span className="text-[10px] text-gray-500 font-normal">
+            {selectedPlatforms.includes('youtube') && 'YouTube 100자'}
+            {selectedPlatforms.includes('tiktok') && (selectedPlatforms.includes('youtube') ? ' · ' : '') + 'TikTok 150자'}
+            {selectedPlatforms.includes('threads') && ' · Threads 텍스트에 포함'}
+          </span>
         </label>
         <div className="space-y-2">
           {defaultTitles.map((title, idx) => (
@@ -1695,7 +1700,12 @@ const StepMetadata: React.FC = () => {
       {/* Description */}
       <div>
         <label className="text-sm font-semibold text-gray-300 mb-1.5 flex items-center justify-between">
-          <span>설명</span>
+          <span className="flex items-center gap-2 flex-wrap">
+            설명
+            {selectedPlatforms.includes('youtube') && <span className="text-[10px] bg-red-600/15 text-red-400 px-1.5 py-0.5 rounded border border-red-500/20">YouTube 5000자</span>}
+            {selectedPlatforms.includes('instagram') && <span className="text-[10px] bg-pink-600/15 text-pink-400 px-1.5 py-0.5 rounded border border-pink-500/20">Instagram 캡션에 포함</span>}
+            {selectedPlatforms.includes('tiktok') && <span className="text-[10px] bg-cyan-600/15 text-cyan-400 px-1.5 py-0.5 rounded border border-cyan-500/20">TikTok 미사용</span>}
+          </span>
           {description && (
             <button
               type="button"
@@ -1747,11 +1757,14 @@ const StepMetadata: React.FC = () => {
         </div>
       )}
 
-      {/* Public Hashtags (exactly 5, no #shorts) */}
+      {/* Public Hashtags */}
       <div>
-        <label className="text-sm font-semibold text-gray-300 mb-1.5 flex items-center gap-2">
+        <label className="text-sm font-semibold text-gray-300 mb-1.5 flex items-center gap-2 flex-wrap">
           공개 해시태그
-          <span className="text-[11px] text-cyan-400 bg-cyan-900/20 px-2 py-0.5 rounded border border-cyan-500/20">설명 하단 표시 · 5개</span>
+          {selectedPlatforms.includes('youtube') && <span className="text-[10px] text-red-400 bg-red-900/20 px-1.5 py-0.5 rounded border border-red-500/20">YouTube 설명 하단 5개</span>}
+          {selectedPlatforms.includes('instagram') && <span className="text-[10px] text-pink-400 bg-pink-900/20 px-1.5 py-0.5 rounded border border-pink-500/20">Instagram 캡션 내 30개</span>}
+          {selectedPlatforms.includes('threads') && <span className="text-[10px] text-gray-400 bg-gray-700/50 px-1.5 py-0.5 rounded border border-gray-600/30">Threads 텍스트 내</span>}
+          {selectedPlatforms.includes('tiktok') && <span className="text-[10px] text-cyan-400 bg-cyan-900/20 px-1.5 py-0.5 rounded border border-cyan-500/20">TikTok 미사용</span>}
           {metadata?.publicHashtags && metadata.publicHashtags.length > 0 && (
             <button
               type="button"
@@ -1783,14 +1796,19 @@ const StepMetadata: React.FC = () => {
           placeholder="키워드1, 키워드2, 키워드3, 키워드4, 키워드5 (정확히 5개, #shorts 금지)"
           className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-2.5 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-cyan-500/50"
         />
-        <p className="text-sm text-gray-600 mt-1">설명란 최하단에 표시되는 공개 해시태그. #shorts는 사용하지 않습니다.</p>
+        <p className="text-sm text-gray-600 mt-1">
+          {selectedPlatforms.includes('youtube') && 'YouTube 설명 하단에 표시. '}
+          {selectedPlatforms.includes('instagram') && 'Instagram 캡션에 #태그 형태로 포함. '}
+          {selectedPlatforms.includes('threads') && 'Threads 텍스트에 #태그 형태로 포함.'}
+          {selectedPlatforms.length === 0 && '공개 해시태그를 입력하세요.'}
+        </p>
       </div>
 
-      {/* Hidden Tags (Korean only, full capacity) */}
-      <div>
+      {/* Hidden Tags — YouTube 전용 (다른 플랫폼은 비공개 태그 미지원) */}
+      {selectedPlatforms.includes('youtube') && <div>
         <label className="text-sm font-semibold text-gray-300 mb-1.5 flex items-center gap-2">
           비공개 태그
-          <span className="text-[11px] text-orange-400 bg-orange-900/20 px-2 py-0.5 rounded border border-orange-500/20">YouTube Studio 태그 박스</span>
+          <span className="text-[11px] text-orange-400 bg-orange-900/20 px-2 py-0.5 rounded border border-orange-500/20">YouTube 전용</span>
           {hiddenTagsText.trim() && (
             <button
               type="button"
@@ -1813,10 +1831,10 @@ const StepMetadata: React.FC = () => {
           YouTube Studio 태그 박스에 붙여넣을 비공개 태그. 한국어만, 용량 끝까지 채움.
           {metadata?.hiddenTags && <span className="text-orange-400 ml-1">{metadata.hiddenTags.length}개</span>}
         </p>
-      </div>
+      </div>}
 
-      {/* 채널분석 추천 태그 */}
-      {suggestedTags.length > 0 && (
+      {/* 채널분석 추천 태그 — YouTube 비공개 태그에 추가용 */}
+      {selectedPlatforms.includes('youtube') && suggestedTags.length > 0 && (
         <div className="mt-3">
           <p className="text-xs text-gray-500 mb-1.5 flex items-center gap-1">
             <span>&#x1F4CA;</span> 채널분석 추천 태그
@@ -1952,6 +1970,71 @@ const StepMetadata: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* 플랫폼별 미리보기 */}
+      {metadata && (
+        <div className="border-t border-gray-700 pt-4 mt-2">
+          <h4 className="text-sm font-semibold text-gray-300 mb-3">플랫폼별 업로드 미리보기</h4>
+          <div className="space-y-3">
+            {selectedPlatforms.includes('youtube') && (
+              <div className="bg-red-900/10 border border-red-500/20 rounded-lg p-3 space-y-1">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-sm font-bold text-red-400">YouTube</span>
+                </div>
+                <p className="text-xs text-gray-400"><span className="text-gray-500">제목:</span> {(metadata.selectedTitle || metadata.titles?.[0] || '').slice(0, 100)}</p>
+                <p className="text-xs text-gray-400"><span className="text-gray-500">설명:</span> {(description || '').slice(0, 80)}...</p>
+                <p className="text-xs text-gray-400"><span className="text-gray-500">태그:</span> {[...(metadata.publicHashtags || []), ...(metadata.hiddenTags || [])].slice(0, 8).join(', ')}{(metadata.hiddenTags?.length || 0) > 8 ? '...' : ''}</p>
+              </div>
+            )}
+            {selectedPlatforms.includes('tiktok') && (
+              <div className="bg-cyan-900/10 border border-cyan-500/20 rounded-lg p-3 space-y-1">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-sm font-bold text-cyan-400">TikTok</span>
+                  <span className="text-[10px] text-gray-500">제목만 전송 (150자), 설명/태그 미사용</span>
+                </div>
+                <p className="text-xs text-gray-400"><span className="text-gray-500">제목:</span> {(metadata.selectedTitle || metadata.titles?.[0] || '').slice(0, 150)}</p>
+              </div>
+            )}
+            {selectedPlatforms.includes('instagram') && (() => {
+              const caption = `${metadata.selectedTitle || metadata.titles?.[0] || ''}\n\n${description || ''}\n\n${(metadata.publicHashtags || []).map(t => `#${t.replace(/^#/, '')}`).join(' ')}`;
+              return (
+                <div className="bg-pink-900/10 border border-pink-500/20 rounded-lg p-3 space-y-1">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-sm font-bold text-pink-400">Instagram</span>
+                    <span className="text-[10px] text-gray-500">캡션 1개로 통합 (2200자)</span>
+                    <span className={`text-[10px] font-mono ${caption.length > 2200 ? 'text-red-400' : 'text-gray-500'}`}>{caption.length}자</span>
+                  </div>
+                  <p className="text-xs text-gray-400 whitespace-pre-line line-clamp-3">{caption.slice(0, 200)}{caption.length > 200 ? '...' : ''}</p>
+                </div>
+              );
+            })()}
+            {selectedPlatforms.includes('threads') && (() => {
+              const text = `${metadata.selectedTitle || metadata.titles?.[0] || ''}\n\n${(metadata.publicHashtags || []).map(t => `#${t.replace(/^#/, '')}`).join(' ')}`;
+              return (
+                <div className="bg-gray-800/60 border border-gray-600/30 rounded-lg p-3 space-y-1">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-sm font-bold text-gray-300">Threads</span>
+                    <span className="text-[10px] text-gray-500">텍스트 1개 (500자), 설명 미포함</span>
+                    <span className={`text-[10px] font-mono ${text.length > 500 ? 'text-red-400' : 'text-gray-500'}`}>{text.length}자</span>
+                  </div>
+                  <p className="text-xs text-gray-400 whitespace-pre-line line-clamp-3">{text.slice(0, 200)}{text.length > 200 ? '...' : ''}</p>
+                </div>
+              );
+            })()}
+            {selectedPlatforms.includes('naver-clip') && (
+              <div className="bg-green-900/10 border border-green-500/20 rounded-lg p-3 space-y-1">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-sm font-bold text-green-400">Naver Clip</span>
+                  <span className="text-[10px] text-gray-500">수동 업로드 — Creator Studio에서 아래 내용 복사 붙여넣기</span>
+                </div>
+                <p className="text-xs text-gray-400"><span className="text-gray-500">제목:</span> {metadata.selectedTitle || metadata.titles?.[0] || ''}</p>
+                <p className="text-xs text-gray-400"><span className="text-gray-500">설명:</span> {(description || '').slice(0, 80)}...</p>
+                <p className="text-xs text-gray-400"><span className="text-gray-500">태그:</span> {(metadata.publicHashtags || []).map(t => `#${t}`).join(' ')}</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -2033,42 +2116,123 @@ const StepSettings: React.FC = () => {
   const setUploadSettings = useUploadStore((s) => s.setUploadSettings);
   const selectedPlatforms = useUploadStore((s) => s.selectedPlatforms);
 
+  const hasYt = selectedPlatforms.includes('youtube');
+  const hasTt = selectedPlatforms.includes('tiktok');
+  const hasIg = selectedPlatforms.includes('instagram');
+  const hasTh = selectedPlatforms.includes('threads');
+
   return (
     <div className="space-y-4">
       <div className="bg-gray-800 border border-gray-700 rounded-xl p-6 space-y-5">
         <h3 className="text-xl font-bold text-white mb-1">업로드 설정</h3>
-        <p className="text-sm text-gray-400 mb-3">영상의 공개 범위와 예약 시간을 설정합니다.</p>
+        <p className="text-sm text-gray-400 mb-3">각 플랫폼별 공개 범위와 옵션을 설정합니다.</p>
 
-        {/* Privacy */}
-        <div>
-          <label className="text-sm font-semibold text-gray-300 mb-2 block">공개 범위</label>
-          <div className="grid grid-cols-3 gap-2">
-            {([
-              { id: 'public' as const, label: '공개', icon: '🌐' },
-              { id: 'unlisted' as const, label: '미등록', icon: '🔗' },
-              { id: 'private' as const, label: '비공개', icon: '🔒' },
-            ]).map((opt) => (
-              <button
-                key={opt.id}
-                type="button"
-                onClick={() => setUploadSettings({ privacy: opt.id })}
-                className={`py-2.5 px-3 rounded-lg text-sm font-medium border transition-all ${
-                  settings.privacy === opt.id
-                    ? 'border-purple-500/50 bg-purple-500/10 text-purple-300'
-                    : 'border-gray-700 bg-gray-900/50 text-gray-400 hover:border-gray-600'
-                }`}
-              >
-                <span className="mr-1.5">{opt.icon}</span>{opt.label}
-              </button>
-            ))}
+        {/* YouTube Privacy */}
+        {hasYt && (
+          <div className="space-y-3">
+            <label className="text-sm font-semibold text-gray-300 flex items-center gap-2">
+              <span className="text-red-400">YouTube</span> 공개 범위
+            </label>
+            <div className="grid grid-cols-3 gap-2">
+              {([
+                { id: 'public' as const, label: '공개', icon: '\uD83C\uDF10' },
+                { id: 'unlisted' as const, label: '미등록', icon: '\uD83D\uDD17' },
+                { id: 'private' as const, label: '비공개', icon: '\uD83D\uDD12' },
+              ]).map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => setUploadSettings({ privacy: opt.id })}
+                  className={`py-2.5 px-3 rounded-lg text-sm font-medium border transition-all ${
+                    settings.privacy === opt.id
+                      ? 'border-red-500/50 bg-red-500/10 text-red-300'
+                      : 'border-gray-700 bg-gray-900/50 text-gray-400 hover:border-gray-600'
+                  }`}
+                >
+                  <span className="mr-1.5">{opt.icon}</span>{opt.label}
+                </button>
+              ))}
+            </div>
+            <ToggleRow
+              label="아동용 콘텐츠"
+              checked={settings.madeForKids}
+              onChange={(v) => setUploadSettings({ madeForKids: v })}
+            />
+            <ToggleRow
+              label="구독자 알림"
+              checked={settings.notifySubscribers}
+              onChange={(v) => setUploadSettings({ notifySubscribers: v })}
+            />
           </div>
-          {settings.privacy === 'unlisted' && selectedPlatforms.some(p => p !== 'youtube') && (
-            <p className="text-sm text-yellow-400 mt-2">TikTok/Instagram에는 '미등록' 옵션이 없어 '비공개'로 업로드됩니다.</p>
-          )}
-        </div>
+        )}
 
-        {/* Schedule */}
-        <div>
+        {/* TikTok Privacy + Options */}
+        {hasTt && (
+          <div className="space-y-3">
+            {hasYt && <div className="border-t border-gray-700 pt-4" />}
+            <label className="text-sm font-semibold text-gray-300 flex items-center gap-2">
+              <span className="text-cyan-400">TikTok</span> 공개 범위
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              {([
+                { id: 'PUBLIC_TO_EVERYONE' as const, label: '\uD83C\uDF10 전체 공개' },
+                { id: 'MUTUAL_FOLLOW_FRIENDS' as const, label: '\uD83E\uDD1D 맞팔 친구' },
+                { id: 'FOLLOWER_OF_CREATOR' as const, label: '\uD83D\uDC65 팔로워만' },
+                { id: 'SELF_ONLY' as const, label: '\uD83D\uDD12 나만 보기' },
+              ]).map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => setUploadSettings({ tiktokPrivacy: opt.id })}
+                  className={`py-2.5 px-3 rounded-lg text-sm font-medium border transition-all text-left ${
+                    settings.tiktokPrivacy === opt.id
+                      ? 'border-cyan-500/50 bg-cyan-500/10 text-cyan-300'
+                      : 'border-gray-700 bg-gray-900/50 text-gray-400 hover:border-gray-600'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            <ToggleRow
+              label="듀엣 허용"
+              checked={!settings.tiktokDisableDuet}
+              onChange={(v) => setUploadSettings({ tiktokDisableDuet: !v })}
+            />
+            <ToggleRow
+              label="스티치 허용"
+              checked={!settings.tiktokDisableStitch}
+              onChange={(v) => setUploadSettings({ tiktokDisableStitch: !v })}
+            />
+            <ToggleRow
+              label="댓글 허용"
+              checked={!settings.tiktokDisableComment}
+              onChange={(v) => setUploadSettings({ tiktokDisableComment: !v })}
+            />
+          </div>
+        )}
+
+        {/* Instagram / Threads — 공개 설정 없음 안내 */}
+        {(hasIg || hasTh) && (
+          <div className="space-y-2">
+            {(hasYt || hasTt) && <div className="border-t border-gray-700 pt-4" />}
+            {hasIg && (
+              <div className="flex items-center gap-2 text-sm text-gray-400 bg-pink-900/10 border border-pink-500/15 rounded-lg px-3 py-2">
+                <span className="text-pink-400 font-semibold">Instagram</span>
+                <span>— Reels는 항상 공개로 게시됩니다</span>
+              </div>
+            )}
+            {hasTh && (
+              <div className="flex items-center gap-2 text-sm text-gray-400 bg-gray-800/60 border border-gray-600/30 rounded-lg px-3 py-2">
+                <span className="text-gray-300 font-semibold">Threads</span>
+                <span>— 게시물은 항상 공개로 게시됩니다</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Schedule — 전체 공통 */}
+        <div className="border-t border-gray-700 pt-4">
           <label className="text-sm font-semibold text-gray-300 mb-1.5 block">예약 업로드</label>
           <input
             type="datetime-local"
@@ -2076,24 +2240,11 @@ const StepSettings: React.FC = () => {
             onChange={(e) => setUploadSettings({ scheduledAt: e.target.value || undefined })}
             className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-2.5 text-sm text-gray-200 focus:outline-none focus:border-purple-500/50"
           />
-        </div>
-
-        {/* Toggles */}
-        <div className="space-y-3">
-          {selectedPlatforms.includes('youtube') && (
-            <>
-              <ToggleRow
-                label="아동용 콘텐츠 (YouTube)"
-                checked={settings.madeForKids}
-                onChange={(v) => setUploadSettings({ madeForKids: v })}
-              />
-              <ToggleRow
-                label="구독자 알림 (YouTube)"
-                checked={settings.notifySubscribers}
-                onChange={(v) => setUploadSettings({ notifySubscribers: v })}
-              />
-            </>
-          )}
+          <p className="text-xs text-gray-600 mt-1">
+            {hasYt && 'YouTube 예약 게시 지원. '}
+            {hasTt && 'TikTok은 예약 업로드를 지원하지 않아 즉시 게시됩니다. '}
+            {(hasIg || hasTh) && 'Instagram/Threads는 API 예약을 지원하지 않습니다.'}
+          </p>
         </div>
       </div>
 
@@ -2355,12 +2506,14 @@ const UploadTab: React.FC = () => {
               return;
             }
           }
-          const privacyMap: Record<string, string> = { public: 'PUBLIC_TO_EVERYONE', unlisted: 'SELF_ONLY', private: 'SELF_ONLY' };
           const result = await uploadVideoToTikTok({
             accessToken: token,
             file,
             title: meta?.selectedTitle || meta?.titles?.[0] || 'Untitled Video',
-            privacy: (privacyMap[settings.privacy] || 'SELF_ONLY') as 'PUBLIC_TO_EVERYONE' | 'MUTUAL_FOLLOW_FRIENDS' | 'FOLLOWER_OF_CREATOR' | 'SELF_ONLY',
+            privacy: settings.tiktokPrivacy || 'SELF_ONLY',
+            disableDuet: settings.tiktokDisableDuet,
+            disableStitch: settings.tiktokDisableStitch,
+            disableComment: settings.tiktokDisableComment,
             onProgress: (pct) => setPP('tiktok', { progress: pct, status: 'uploading' }),
           });
           setPP('tiktok', { progress: 100, status: 'done', resultUrl: `https://www.tiktok.com/@${tiktokAuth.username}` });
