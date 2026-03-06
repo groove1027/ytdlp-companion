@@ -1569,7 +1569,7 @@ const StepMetadata: React.FC = () => {
             </div>
             <h4 className="text-base font-bold text-white mb-2">Gemini로 한방에 생성</h4>
             <div className="flex flex-wrap gap-1">
-              {['제목 5개', '설명', '해시태그', '비공개 태그', '쇼핑 태그'].map((item) => (
+              {['제목 5개', '설명', '해시태그', ...(selectedPlatforms.includes('youtube') ? ['비공개 태그'] : []), '쇼핑 태그'].map((item) => (
                 <span key={item} className="text-[10px] bg-violet-500/20 text-violet-300 border border-violet-500/20 px-1.5 py-0.5 rounded">
                   {item}
                 </span>
@@ -1612,7 +1612,7 @@ const StepMetadata: React.FC = () => {
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            {['1. 정책 검사', '2. 제목 5개', '3. 설명 700자', '4. 공개 해시태그', '5. 비공개 태그', '6. 쇼핑 태그'].map((step) => (
+            {['1. 정책 검사', '2. 제목 5개', '3. 설명', '4. 공개 해시태그', ...(selectedPlatforms.includes('youtube') ? ['5. 비공개 태그'] : []), '6. 쇼핑 태그'].map((step) => (
               <span key={step} className="text-[11px] bg-violet-500/15 text-violet-300/80 border border-violet-500/20 px-2 py-0.5 rounded">
                 {step}
               </span>
@@ -1793,7 +1793,9 @@ const StepMetadata: React.FC = () => {
           type="text"
           value={publicHashtagsText}
           onChange={(e) => handlePublicHashtagsChange(e.target.value)}
-          placeholder="키워드1, 키워드2, 키워드3, 키워드4, 키워드5 (정확히 5개, #shorts 금지)"
+          placeholder={selectedPlatforms.includes('youtube') && !selectedPlatforms.some(p => p !== 'youtube')
+            ? '키워드1, 키워드2, 키워드3, 키워드4, 키워드5 (YouTube 5개 권장)'
+            : '키워드1, 키워드2, 키워드3, ... (쉼표로 구분)'}
           className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-2.5 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-cyan-500/50"
         />
         <p className="text-sm text-gray-600 mt-1">
@@ -1909,11 +1911,26 @@ const StepMetadata: React.FC = () => {
           </button>
         </div>
 
-        <p className="text-sm text-gray-500 mb-3">
+        <p className="text-sm text-gray-500 mb-2">
           {shoppingTags.length > 0
-            ? '쿠팡 파트너스 연계용 쇼핑 태그. 어필리에이트 링크를 입력하세요.'
+            ? '대본에서 추출된 제품/브랜드. 어필리에이트 링크를 입력하면 설명에 자동 삽입됩니다.'
             : 'AI 전체 생성 시 자동 추출됩니다. 또는 우측 버튼으로 개별 추출할 수 있습니다.'}
         </p>
+        {/* 플랫폼별 쇼핑 태그 활용 안내 */}
+        <div className="flex flex-wrap gap-1.5 mb-3">
+          {selectedPlatforms.includes('youtube') && (
+            <span className="text-[10px] bg-red-900/15 text-red-400 px-1.5 py-0.5 rounded border border-red-500/20">YouTube: 설명란에 쿠팡 링크 삽입</span>
+          )}
+          {selectedPlatforms.includes('tiktok') && (
+            <span className="text-[10px] bg-cyan-900/15 text-cyan-400/70 px-1.5 py-0.5 rounded border border-cyan-500/20">TikTok: TikTok Shop은 별도 설정</span>
+          )}
+          {selectedPlatforms.includes('instagram') && (
+            <span className="text-[10px] bg-pink-900/15 text-pink-400/70 px-1.5 py-0.5 rounded border border-pink-500/20">Instagram: Shopping 태그는 별도 기능</span>
+          )}
+          {(selectedPlatforms.includes('threads') || selectedPlatforms.includes('naver-clip')) && (
+            <span className="text-[10px] bg-gray-700/50 text-gray-500 px-1.5 py-0.5 rounded border border-gray-600/30">Threads/Naver: 쇼핑 태그 미지원</span>
+          )}
+        </div>
 
         {/* Shopping tag chips */}
         {shoppingTags.length > 0 && (
@@ -1983,7 +2000,11 @@ const StepMetadata: React.FC = () => {
                 </div>
                 <p className="text-xs text-gray-400"><span className="text-gray-500">제목:</span> {(metadata.selectedTitle || metadata.titles?.[0] || '').slice(0, 100)}</p>
                 <p className="text-xs text-gray-400"><span className="text-gray-500">설명:</span> {(description || '').slice(0, 80)}...</p>
-                <p className="text-xs text-gray-400"><span className="text-gray-500">태그:</span> {[...(metadata.publicHashtags || []), ...(metadata.hiddenTags || [])].slice(0, 8).join(', ')}{(metadata.hiddenTags?.length || 0) > 8 ? '...' : ''}</p>
+                <p className="text-xs text-gray-400"><span className="text-gray-500">공개 해시태그:</span> {(metadata.publicHashtags || []).map(h => `#${h}`).join(' ') || '없음'}</p>
+                <p className="text-xs text-gray-400"><span className="text-gray-500">비공개 태그:</span> {(metadata.hiddenTags || []).slice(0, 8).join(', ')}{(metadata.hiddenTags?.length || 0) > 8 ? `... (총 ${metadata.hiddenTags!.length}개)` : ''}</p>
+                {shoppingTags.filter(t => t.link).length > 0 && (
+                  <p className="text-xs text-blue-400"><span className="text-gray-500">쇼핑 링크:</span> {shoppingTags.filter(t => t.link).map(t => t.keyword).join(', ')}</p>
+                )}
               </div>
             )}
             {selectedPlatforms.includes('tiktok') && (
@@ -2059,7 +2080,13 @@ const StepThumbnail: React.FC = () => {
   return (
     <div className="bg-gray-800 border border-gray-700 rounded-xl p-6">
       <h3 className="text-xl font-bold text-white mb-2">썸네일</h3>
-      <p className="text-sm text-gray-400 mb-4">YouTube/Instagram 커버 이미지. 권장 크기: 1280x720px (16:9). TikTok은 영상 첫 프레임이 자동 적용됩니다.</p>
+      <div className="flex flex-wrap gap-1.5 mb-4">
+        <span className="text-[10px] bg-red-900/15 text-red-400 px-1.5 py-0.5 rounded border border-red-500/20">YouTube: 1280x720 썸네일 업로드</span>
+        <span className="text-[10px] bg-pink-900/15 text-pink-400 px-1.5 py-0.5 rounded border border-pink-500/20">Instagram: Reels 커버 (API 미지원, 자동 선택)</span>
+        <span className="text-[10px] bg-cyan-900/15 text-cyan-400/70 px-1.5 py-0.5 rounded border border-cyan-500/20">TikTok: 영상 첫 프레임 자동</span>
+        <span className="text-[10px] bg-gray-700/50 text-gray-500 px-1.5 py-0.5 rounded border border-gray-600/30">Threads: 커버 미지원</span>
+        <span className="text-[10px] bg-green-900/15 text-green-400/70 px-1.5 py-0.5 rounded border border-green-500/20">Naver Clip: Creator Studio에서 직접 설정</span>
+      </div>
 
       {/* 썸네일 선택 영역 */}
       <div
@@ -2472,12 +2499,19 @@ const UploadTab: React.FC = () => {
               return;
             }
           }
+          // 쇼핑 태그 링크를 설명에 추가
+          const shopLinks = store.shoppingTags.filter(t => t.link).map(t => `${t.keyword}: ${t.link}`);
+          const ytDesc = [
+            meta?.description || '',
+            ...(meta?.publicHashtags?.length ? ['\n' + meta.publicHashtags.map(h => `#${h}`).join(' ')] : []),
+            ...(shopLinks.length ? ['\n\n--- 추천 제품 ---', ...shopLinks] : []),
+          ].join('\n');
           const result = await uploadVideoToYouTube({
             accessToken: token,
             file,
             title: meta?.selectedTitle || meta?.titles?.[0] || 'Untitled Video',
-            description: meta?.description || '',
-            tags: [...(meta?.publicHashtags || []), ...(meta?.hiddenTags || meta?.tags || [])],
+            description: ytDesc,
+            tags: [...(meta?.hiddenTags || meta?.tags || [])],
             privacy: settings.privacy as 'public' | 'unlisted' | 'private',
             madeForKids: settings.madeForKids,
             onProgress: (pct) => setPP('youtube', { progress: pct, status: 'uploading' }),
