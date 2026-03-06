@@ -1,0 +1,503 @@
+/**
+ * Advanced CSS Text-Shadow Effect Recipes for Subtitle Text
+ * Optimized for 48-64px font size on dark backgrounds
+ * Usage: text-shadow: [effect-value]; color: [base-color];
+ *
+ * All effects tested at:
+ * - Font size: 48-64px
+ * - Font weight: 600-700
+ * - Background: #0a0a0a or dark
+ * - Color space: rgba() with transparency
+ */
+
+/* ============================================================================
+   1. GOLD METALLIC 3D — Realistic golden raised text (6+ layers)
+   ============================================================================ */
+.text-shadow-gold-metallic-3d {
+  color: #ffd700;
+  text-shadow:
+    /* Layer 1: Base shadow depth */
+    2px 2px 0px rgba(139, 69, 19, 0.8),
+    /* Layer 2: Deep shadow */
+    4px 4px 0px rgba(101, 50, 15, 0.7),
+    /* Layer 3: Gold glow interior */
+    -1px -1px 3px rgba(255, 250, 205, 0.6),
+    /* Layer 4: Mid-tone gold highlight */
+    0px 0px 8px rgba(255, 215, 0, 0.5),
+    /* Layer 5: Outer glow */
+    0px 0px 16px rgba(218, 165, 32, 0.3),
+    /* Layer 6: Ambient reflection */
+    6px 6px 20px rgba(0, 0, 0, 0.6);
+}
+
+/* ============================================================================
+   2. CHROME SILVER — Cool metallic reflective look
+   ============================================================================ */
+.text-shadow-chrome-silver {
+  color: #e8e8e8;
+  text-shadow:
+    /* Deep metallic base */
+    1px 1px 0px rgba(50, 50, 50, 0.9),
+    3px 3px 0px rgba(30, 30, 30, 0.8),
+    /* Inner bright highlight */
+    -2px -2px 4px rgba(255, 255, 255, 0.5),
+    /* Mid-tone reflection */
+    0px 0px 6px rgba(200, 200, 200, 0.4),
+    /* Cool blue-tinted outer glow */
+    0px 0px 12px rgba(150, 180, 200, 0.25),
+    /* Distance shadow */
+    4px 4px 16px rgba(0, 0, 0, 0.7);
+}
+
+/* ============================================================================
+   3. ROSE GOLD — Warm pink metallic
+   ============================================================================ */
+.text-shadow-rose-gold {
+  color: #f4a4d4;
+  text-shadow:
+    /* Warm brown base shadows */
+    2px 2px 0px rgba(139, 69, 69, 0.8),
+    4px 4px 0px rgba(101, 50, 50, 0.7),
+    /* Pink inner glow */
+    -1px -1px 3px rgba(255, 228, 225, 0.6),
+    /* Mid-tone rose highlight */
+    0px 0px 8px rgba(255, 182, 193, 0.5),
+    /* Warm outer glow */
+    0px 0px 14px rgba(219, 112, 147, 0.3),
+    /* Ambient */
+    5px 5px 18px rgba(0, 0, 0, 0.6);
+}
+
+/* ============================================================================
+   4. BRONZE ANCIENT — Aged bronze patina feel
+   ============================================================================ */
+.text-shadow-bronze-ancient {
+  color: #cd7f32;
+  text-shadow:
+    /* Dark patina base */
+    2px 2px 0px rgba(70, 50, 30, 0.85),
+    4px 4px 0px rgba(50, 35, 20, 0.75),
+    /* Verdigris green tint */
+    -1px -1px 2px rgba(0, 100, 100, 0.4),
+    /* Aged bronze mid-tone */
+    0px 0px 7px rgba(184, 115, 51, 0.45),
+    /* Oxidized blue-green outer */
+    0px 0px 12px rgba(64, 150, 150, 0.2),
+    /* Heavy distance shadow */
+    6px 6px 22px rgba(0, 0, 0, 0.7);
+}
+
+/* ============================================================================
+   5. NEON TUBE — Realistic neon sign (inner glow + outer spread)
+   ============================================================================ */
+.text-shadow-neon-tube {
+  color: #00ff88;
+  text-shadow:
+    /* Intense inner glow - bright core */
+    0px 0px 4px rgba(0, 255, 136, 0.9),
+    /* Primary neon spread */
+    0px 0px 10px rgba(0, 255, 136, 0.8),
+    /* Mid-radius glow */
+    0px 0px 20px rgba(0, 200, 100, 0.6),
+    /* Far glow with color shift */
+    0px 0px 30px rgba(0, 150, 80, 0.4),
+    /* Very far ambient */
+    0px 0px 50px rgba(0, 100, 60, 0.15),
+    /* Tube glass reflection (white) */
+    0px 0px 8px rgba(255, 255, 255, 0.3);
+}
+
+/* ============================================================================
+   6. CYBERPUNK GLITCH — Offset colored shadows creating glitch effect
+   ============================================================================ */
+.text-shadow-cyberpunk-glitch {
+  color: #00ffff;
+  text-shadow:
+    /* Cyan primary offset */
+    3px 0px 0px rgba(0, 255, 255, 0.8),
+    /* Magenta offset opposite */
+    -3px -2px 0px rgba(255, 0, 255, 0.8),
+    /* Yellow accent offset */
+    2px -3px 0px rgba(255, 255, 0, 0.6),
+    /* Blue glitch depth */
+    -2px 3px 4px rgba(0, 100, 255, 0.5),
+    /* Cyan glow */
+    0px 0px 12px rgba(0, 255, 255, 0.4),
+    /* Magenta glow blend */
+    0px 0px 8px rgba(255, 0, 255, 0.3);
+}
+
+/* ============================================================================
+   7. HOLOGRAPHIC RAINBOW — Multi-colored scattered glow
+   ============================================================================ */
+.text-shadow-holographic-rainbow {
+  color: #ffffff;
+  text-shadow:
+    /* Red component */
+    -2px -2px 8px rgba(255, 0, 100, 0.5),
+    /* Blue component */
+    2px -2px 8px rgba(0, 100, 255, 0.5),
+    /* Green component */
+    -2px 2px 8px rgba(0, 255, 100, 0.5),
+    /* Yellow component */
+    2px 2px 8px rgba(255, 255, 0, 0.5),
+    /* Magenta component */
+    0px 3px 8px rgba(255, 0, 255, 0.4),
+    /* Cyan component */
+    3px 0px 8px rgba(0, 255, 255, 0.4),
+    /* Unified white glow center */
+    0px 0px 15px rgba(255, 255, 255, 0.3);
+}
+
+/* ============================================================================
+   8. FIRE/MAGMA — Orange-red-yellow flames rising
+   ============================================================================ */
+.text-shadow-fire-magma {
+  color: #ffaa00;
+  text-shadow:
+    /* Deep red base */
+    2px 3px 0px rgba(139, 0, 0, 0.8),
+    /* Magma brown mid-layer */
+    0px 6px 0px rgba(180, 50, 20, 0.7),
+    /* Deep orange glow rising */
+    -3px -6px 8px rgba(255, 140, 0, 0.6),
+    /* Mid-flame yellow */
+    0px -8px 12px rgba(255, 200, 0, 0.5),
+    /* Hot yellow-white top */
+    2px -12px 16px rgba(255, 255, 100, 0.4),
+    /* Ambient fire spread */
+    0px 0px 25px rgba(255, 100, 0, 0.25);
+}
+
+/* ============================================================================
+   9. ICE CRYSTAL — Blue-white-cyan frozen sparkle
+   ============================================================================ */
+.text-shadow-ice-crystal {
+  color: #b4f8f8;
+  text-shadow:
+    /* Dark blue-gray base */
+    2px 2px 0px rgba(30, 60, 100, 0.85),
+    /* Mid-blue shadow */
+    4px 4px 0px rgba(20, 40, 80, 0.75),
+    /* Bright cyan inner sparkle */
+    -1px -1px 4px rgba(0, 255, 255, 0.6),
+    /* Light blue-white glow */
+    0px 0px 8px rgba(173, 216, 230, 0.5),
+    /* Cyan frost spread */
+    0px 0px 14px rgba(0, 200, 200, 0.3),
+    /* Icy distance shadow */
+    5px 5px 20px rgba(0, 20, 40, 0.6);
+}
+
+/* ============================================================================
+   10. ELECTRIC LIGHTNING — Bright electric blue with jagged feel
+   ============================================================================ */
+.text-shadow-electric-lightning {
+  color: #00d4ff;
+  text-shadow:
+    /* Bright electric core */
+    0px 0px 6px rgba(0, 212, 255, 0.9),
+    /* Jagged offset - cyan */
+    -2px -1px 0px rgba(0, 255, 255, 0.7),
+    /* Jagged offset - blue */
+    2px 1px 0px rgba(0, 150, 255, 0.7),
+    /* Electric primary spread */
+    0px 0px 12px rgba(0, 212, 255, 0.7),
+    /* Outer blue glow */
+    0px 0px 20px rgba(0, 150, 200, 0.5),
+    /* Far white-blue ambient */
+    0px 0px 35px rgba(100, 200, 255, 0.2);
+}
+
+/* ============================================================================
+   11. DEEP OCEAN — Dark blue with bioluminescent glow
+   ============================================================================ */
+.text-shadow-deep-ocean {
+  color: #4dd9ff;
+  text-shadow:
+    /* Deep navy base */
+    2px 2px 0px rgba(0, 50, 100, 0.9),
+    /* Dark teal shadow */
+    4px 4px 0px rgba(0, 40, 80, 0.8),
+    /* Bioluminescent cyan glow */
+    0px 0px 8px rgba(0, 255, 200, 0.6),
+    /* Mid-depth glow */
+    0px 0px 16px rgba(0, 200, 180, 0.45),
+    /* Deep water spread */
+    0px 0px 24px rgba(0, 150, 150, 0.3),
+    /* Abyssal ambient */
+    6px 6px 25px rgba(0, 20, 40, 0.7);
+}
+
+/* ============================================================================
+   12. SUNSET GRADIENT — Warm orange to purple layered
+   ============================================================================ */
+.text-shadow-sunset-gradient {
+  color: #ff9d5c;
+  text-shadow:
+    /* Orange base shadow */
+    2px 2px 0px rgba(180, 80, 40, 0.8),
+    /* Deep orange mid-layer */
+    4px 4px 0px rgba(140, 50, 30, 0.7),
+    /* Warm orange glow */
+    -1px -1px 4px rgba(255, 165, 0, 0.6),
+    /* Red-orange mid glow */
+    0px 0px 10px rgba(255, 100, 60, 0.5),
+    /* Purple-pink transition */
+    0px 0px 16px rgba(200, 100, 150, 0.35),
+    /* Deep purple far glow */
+    0px 0px 24px rgba(100, 50, 150, 0.2);
+}
+
+/* ============================================================================
+   13. NORTHERN LIGHTS — Green to purple aurora glow
+   ============================================================================ */
+.text-shadow-northern-lights {
+  color: #00ff99;
+  text-shadow:
+    /* Deep green-black base */
+    2px 2px 0px rgba(0, 80, 40, 0.85),
+    /* Dark teal shadow */
+    4px 4px 0px rgba(0, 60, 50, 0.75),
+    /* Bright aurora green */
+    0px 0px 8px rgba(0, 255, 127, 0.7),
+    /* Green-cyan wave */
+    0px 0px 14px rgba(0, 200, 150, 0.55),
+    /* Purple aurora transition */
+    0px 0px 20px rgba(150, 100, 200, 0.4),
+    /* Far blue-purple ambient */
+    0px 0px 32px rgba(100, 80, 180, 0.2);
+}
+
+/* ============================================================================
+   14. VINTAGE LETTERPRESS — Classic inked impression
+   ============================================================================ */
+.text-shadow-vintage-letterpress {
+  color: #3d2817;
+  text-shadow:
+    /* Hard-pressed impression left-top */
+    -1px -1px 0px rgba(200, 150, 100, 0.7),
+    /* Hard-pressed impression right-bottom */
+    2px 2px 0px rgba(0, 0, 0, 0.9),
+    /* Ink bleed subtle */
+    -2px 0px 3px rgba(100, 70, 40, 0.4),
+    /* Paper texture shadow right */
+    1px 2px 2px rgba(80, 50, 30, 0.5),
+    /* Subtle emboss light */
+    0px -2px 4px rgba(220, 180, 140, 0.3),
+    /* Aged paper ambient */
+    3px 3px 12px rgba(0, 0, 0, 0.4);
+}
+
+/* ============================================================================
+   15. MODERN EMBOSS — Raised 3D on dark background
+   ============================================================================ */
+.text-shadow-modern-emboss {
+  color: #e0e0e0;
+  text-shadow:
+    /* Shadow bottom-right primary */
+    3px 3px 0px rgba(0, 0, 0, 0.9),
+    /* Shadow bottom-right secondary */
+    5px 5px 0px rgba(0, 0, 0, 0.7),
+    /* Bright highlight top-left inner */
+    -2px -2px 3px rgba(255, 255, 255, 0.5),
+    /* Subtle inner white line */
+    -1px -1px 0px rgba(255, 255, 255, 0.4),
+    /* Glow from light source */
+    0px 0px 8px rgba(200, 200, 200, 0.3),
+    /* Distance shadow */
+    6px 6px 18px rgba(0, 0, 0, 0.8);
+}
+
+/* ============================================================================
+   16. COMIC BOOK — Bold pop art style with halftone feel
+   ============================================================================ */
+.text-shadow-comic-book {
+  color: #ff1a8f;
+  text-shadow:
+    /* Yellow outline left */
+    -2px 0px 0px rgba(255, 255, 0, 0.9),
+    /* Blue outline right */
+    2px 0px 0px rgba(0, 0, 255, 0.9),
+    /* Yellow outline top */
+    0px -2px 0px rgba(255, 200, 0, 0.8),
+    /* Dark shadow bottom */
+    0px 3px 0px rgba(0, 0, 0, 0.8),
+    /* Bold comic glow */
+    0px 0px 8px rgba(255, 100, 200, 0.6),
+    /* Pop art halftone dots effect (subtle) */
+    1px 1px 4px rgba(255, 255, 0, 0.4);
+}
+
+/* ============================================================================
+   17. CHALKBOARD — Chalk-on-board texture feel
+   ============================================================================ */
+.text-shadow-chalkboard {
+  color: #e8d5b7;
+  text-shadow:
+    /* Rough chalk shadow bottom-right */
+    1px 2px 0px rgba(50, 50, 50, 0.8),
+    /* Rough chalk shadow offset */
+    2px 3px 0px rgba(30, 30, 30, 0.7),
+    /* Chalk dusty glow */
+    -1px -1px 3px rgba(200, 180, 150, 0.4),
+    /* Chalk texture spread */
+    0px 0px 6px rgba(150, 130, 100, 0.35),
+    /* Slight blur for chalk dust */
+    3px 3px 8px rgba(50, 50, 50, 0.5),
+    /* Chalkboard green-black ambient */
+    4px 4px 15px rgba(0, 0, 0, 0.6);
+}
+
+/* ============================================================================
+   18. CANDY POP — Sweet pastel with 3D depth
+   ============================================================================ */
+.text-shadow-candy-pop {
+  color: #ff69f0;
+  text-shadow:
+    /* Soft pink shadow base */
+    2px 2px 0px rgba(200, 100, 150, 0.8),
+    /* Deeper pink shadow */
+    4px 4px 0px rgba(150, 60, 120, 0.7),
+    /* Light pastel glow inner */
+    -1px -1px 3px rgba(255, 200, 220, 0.5),
+    /* Candy sweet mid-glow */
+    0px 0px 8px rgba(255, 150, 200, 0.5),
+    /* Soft pastel outer glow */
+    0px 0px 16px rgba(255, 100, 180, 0.3),
+    /* Ambient candy sweetness */
+    5px 5px 20px rgba(100, 20, 60, 0.4);
+}
+
+/* ============================================================================
+   19. DARK MODE SUBTLE — Minimal glow for dark backgrounds
+   ============================================================================ */
+.text-shadow-dark-mode-subtle {
+  color: #c0c0c0;
+  text-shadow:
+    /* Very subtle base shadow */
+    1px 1px 0px rgba(0, 0, 0, 0.7),
+    /* Minimal soft glow */
+    0px 0px 4px rgba(200, 200, 200, 0.25),
+    /* Barely-there mid glow */
+    0px 0px 8px rgba(180, 180, 180, 0.12),
+    /* Ambient light touch */
+    2px 2px 6px rgba(0, 0, 0, 0.4);
+}
+
+/* ============================================================================
+   20. ULTRA DEEP 3D — Extreme 8+ layer extrusion
+   ============================================================================ */
+.text-shadow-ultra-deep-3d {
+  color: #00d9ff;
+  text-shadow:
+    /* Layer 1 */
+    1px 1px 0px rgba(0, 150, 200, 0.9),
+    /* Layer 2 */
+    2px 2px 0px rgba(0, 120, 180, 0.85),
+    /* Layer 3 */
+    3px 3px 0px rgba(0, 100, 160, 0.8),
+    /* Layer 4 */
+    4px 4px 0px rgba(0, 80, 140, 0.75),
+    /* Layer 5 */
+    5px 5px 0px rgba(0, 60, 120, 0.7),
+    /* Layer 6 */
+    6px 6px 0px rgba(0, 40, 100, 0.65),
+    /* Layer 7 */
+    7px 7px 0px rgba(0, 20, 80, 0.6),
+    /* Layer 8 */
+    8px 8px 0px rgba(0, 0, 60, 0.5),
+    /* Glow wrap-up */
+    0px 0px 12px rgba(0, 212, 255, 0.5),
+    /* Ultimate depth shadow */
+    10px 10px 30px rgba(0, 0, 0, 0.9);
+}
+
+/* ============================================================================
+   USAGE GUIDE & TESTING
+   ============================================================================ */
+
+/*
+   RECOMMENDED FONT SETTINGS:
+   - Font size: 48px-64px
+   - Font weight: 600-700 (semi-bold to bold)
+   - Font family: sans-serif (Helvetica, Roboto, Arial) works best
+   - Line height: 1.2-1.4
+   - Letter spacing: 0-0.05em for clarity
+
+   DARK BACKGROUND RECOMMENDED:
+   - #0a0a0a (deep black)
+   - #1a1a1a (dark gray)
+   - #0d1117 (GitHub dark)
+   - Linear gradients from dark colors
+
+   PERFORMANCE NOTES:
+   - Text-shadow is GPU-accelerated in modern browsers
+   - 6-10 shadows is optimal (no noticeable performance hit)
+   - Avoid animating text-shadow with transitions/keyframes
+   - Use will-change: text-shadow; sparingly for heavy text
+
+   BROWSER COMPATIBILITY:
+   - All modern browsers (Chrome 26+, Firefox 3.1+, Safari 5.1+)
+   - rgba() color space fully supported
+   - Multiple shadows fully supported
+
+   ACCESSIBILITY:
+   - Ensure sufficient contrast (WCAG AA: 4.5:1 minimum)
+   - Test with color blindness simulators for glitch/neon effects
+   - Keep font readable even with heavy shadows
+   - Use text-shadow for effects, not primary information
+
+   RESPONSIVE SCALING:
+   For responsive text-shadow, multiply all px values by:
+   - Mobile (320px): 0.6x
+   - Tablet (768px): 0.8x
+   - Desktop (1024px+): 1x
+
+   EXAMPLE HTML:
+   <h2 class="text-shadow-gold-metallic-3d"
+       style="font-size: 56px; font-weight: 700;">
+     Your Subtitle Here
+   </h2>
+ */
+
+/* ============================================================================
+   ADVANCED: COMBINATION EFFECTS
+   ============================================================================ */
+
+/* Neon + Glitch hybrid */
+.text-shadow-neon-glitch {
+  color: #00ff88;
+  text-shadow:
+    0px 0px 6px rgba(0, 255, 136, 0.9),
+    0px 0px 15px rgba(0, 255, 136, 0.8),
+    /* Glitch offset magenta */
+    -2px -1px 0px rgba(255, 0, 255, 0.6),
+    /* Glitch offset yellow */
+    2px 1px 0px rgba(255, 255, 0, 0.5),
+    0px 0px 25px rgba(0, 150, 80, 0.4);
+}
+
+/* Fire + Sunset blend */
+.text-shadow-fire-sunset {
+  color: #ffbb33;
+  text-shadow:
+    2px 3px 0px rgba(139, 0, 0, 0.8),
+    0px 6px 0px rgba(180, 50, 20, 0.7),
+    -3px -6px 8px rgba(255, 140, 0, 0.6),
+    0px -8px 12px rgba(255, 200, 0, 0.5),
+    0px 0px 20px rgba(255, 100, 60, 0.25),
+    0px 0px 30px rgba(200, 100, 150, 0.2);
+}
+
+/* Chrome + Emboss luxury */
+.text-shadow-chrome-emboss {
+  color: #e8e8e8;
+  text-shadow:
+    1px 1px 0px rgba(50, 50, 50, 0.9),
+    3px 3px 0px rgba(30, 30, 30, 0.8),
+    -2px -2px 4px rgba(255, 255, 255, 0.5),
+    5px 5px 0px rgba(0, 0, 0, 0.7),
+    0px 0px 12px rgba(150, 180, 200, 0.25),
+    7px 7px 20px rgba(0, 0, 0, 0.8);
+}

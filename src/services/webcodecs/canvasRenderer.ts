@@ -1,0 +1,354 @@
+/**
+ * Canvas Renderer — OffscreenCanvas 프레임 렌더러
+ * Ken Burns + 전환 + 자막을 단일 파이프라인으로 통합
+ */
+
+import type {
+  UnifiedSceneTiming,
+  SubtitleStyle,
+  SceneTransitionConfig,
+  EffectPresetId,
+} from '../../types';
+import { computeKenBurns, drawKenBurnsFrame, OVERSCALE } from './kenBurnsEngine';
+import { renderTransition } from './transitionEngine';
+import { drawSubtitle } from './subtitleRenderer';
+
+export interface CanvasRendererConfig {
+  width: number;
+  height: number;
+  fps: number;
+  timeline: UnifiedSceneTiming[];
+  /** sceneId → ImageBitmap (이미지 장면용) */
+  imageBitmaps: Map<string, ImageBitmap>;
+  /** sceneId → HTMLVideoElement 대신 프레임 추출 함수 (비디오 장면용) */
+  videoFrameExtractors: Map<string, VideoFrameExtractor>;
+  subtitleStyle?: SubtitleStyle | null;
+  sceneTransitions?: Record<string, SceneTransitionConfig>;
+}
+
+/** 비디오 장면에서 특정 시간의 프레임을 추출하는 인터페이스 */
+export interface VideoFrameExtractor {
+  getFrameAt(timeSec: number): Promise<ImageBitmap>;
+  duration: number;
+}
+
+interface FrameInfo {
+  /** 현재 프레임이 속하는 장면 인덱스 */
+  sceneIndex: number;
+  /** 장면 내 로컬 시간 (초) */
+  localTime: number;
+  /** 전환 구간인 경우: 전환 progress 0..1, 아니면 null */
+  transitionProgress: number | null;
+  /** 전환 구간인 경우: 이전 장면 인덱스 */
+  prevSceneIndex: number | null;
+  /** 현재 자막 텍스트 (없으면 null) */
+  subtitleText: string | null;
+}
+
+/**
+ * 전체 타임라인의 프레임을 순차적으로 렌더링
+ * 제너레이터 패턴: 각 프레임을 캔버스에 그리고 콜백 호출
+ */
+export async function renderAllFrames(
+  config: CanvasRendererConfig,
+  onFrame: (canvas: OffscreenCanvas, frameIndex: number) => void,
+  signal?: AbortSignal,
+  onProgress?: (percent: number) => void,
+): Promise<number> {
+  const { width, height, fps, timeline, imageBitmaps, videoFrameExtractors, subtitleStyle, sceneTransitions } = config;
+
+  // 전체 영상 길이 계산
+  const totalDuration = computeTotalDuration(timeline, sceneTransitions);
+  const totalFrames = Math.ceil(totalDuration * fps);
+
+  const canvas = new OffscreenCanvas(width, height);
+  const ctx = canvas.getContext('2d')!;
+
+  // 전환 프레임용 보조 캔버스
+  const auxCanvas = new OffscreenCanvas(width, height);
+  const auxCtx = auxCanvas.getContext('2d')!;
+
+  for (let f = 0; f < totalFrames; f++) {
+    // AbortSignal 체크 (매 30프레임마다 = ~1초)
+    if (f % fps === 0 && signal?.aborted) {
+      throw new DOMException('Aborted', 'AbortError');
+    }
+
+    const timeSec = f / fps;
+    const frameInfo = resolveFrame(timeSec, timeline, sceneTransitions);
+
+    ctx.clearRect(0, 0, width, height);
+
+    if (frameInfo.transitionProgress != null && frameInfo.prevSceneIndex != null) {
+      // 전환 구간: 이전 장면과 현재 장면을 각각 렌더링 후 블렌딩
+      const prevTiming = timeline[frameInfo.prevSceneIndex];
+      const currTiming = timeline[frameInfo.sceneIndex];
+      const transConfig = sceneTransitions?.[prevTiming.sceneId];
+      const transDur = transConfig?.duration ?? 0.5;
+
+      // ★ 이전 장면의 로컬 시간 계산 (수정됨)
+      // 이전 장면은 끝에서 transDur만큼 겹침 → 전환 시작 시 prevLocalTime = prevDur - transDur
+      // 전환 진행에 따라 prevLocalTime = prevDur - transDur + frameInfo.localTime
+      const prevLocalTime = prevTiming.imageDuration - transDur + frameInfo.localTime;
+      renderSceneFrame(auxCtx, prevTiming, Math.max(0, prevLocalTime), imageBitmaps, videoFrameExtractors, width, height, fps);
+      const prevFrame = await createImageBitmap(auxCanvas);
+
+      // 현재 장면 프레임
+      const currLocalTime = frameInfo.localTime;
+      renderSceneFrame(ctx, currTiming, currLocalTime, imageBitmaps, videoFrameExtractors, width, height, fps);
+      const currFrame = await createImageBitmap(canvas);
+
+      // 전환 블렌딩
+      ctx.clearRect(0, 0, width, height);
+      renderTransition(
+        ctx,
+        prevFrame,
+        currFrame,
+        frameInfo.transitionProgress,
+        transConfig?.preset ?? 'fade',
+      );
+
+      prevFrame.close();
+      currFrame.close();
+
+      // 전환 구간 자막: progress < 0.5이면 이전 장면 자막, 아니면 현재 장면 자막
+      const transSubText = frameInfo.transitionProgress < 0.5
+        ? findSubtitle(prevTiming, prevLocalTime, prevTiming.imageStartTime)
+        : frameInfo.subtitleText;
+      if (transSubText && subtitleStyle?.template) {
+        drawSubtitle(ctx, transSubText, subtitleStyle.template, width, height);
+      }
+    } else {
+      // 일반 장면 프레임
+      const timing = timeline[frameInfo.sceneIndex];
+      renderSceneFrame(ctx, timing, frameInfo.localTime, imageBitmaps, videoFrameExtractors, width, height, fps);
+
+      // 자막 렌더링
+      if (frameInfo.subtitleText && subtitleStyle?.template) {
+        drawSubtitle(ctx, frameInfo.subtitleText, subtitleStyle.template, width, height);
+      }
+    }
+
+    onFrame(canvas, f);
+
+    // 진행률
+    if (f % 30 === 0) {
+      onProgress?.((f / totalFrames) * 100);
+    }
+  }
+
+  onProgress?.(100);
+  return totalFrames;
+}
+
+/**
+ * 전체 영상 총 재생 시간 계산 (전환 오버랩 고려)
+ */
+export function computeTotalDuration(
+  timeline: UnifiedSceneTiming[],
+  sceneTransitions?: Record<string, SceneTransitionConfig>,
+): number {
+  if (timeline.length === 0) return 0;
+
+  let total = 0;
+  for (let i = 0; i < timeline.length; i++) {
+    total += timeline[i].imageDuration;
+  }
+
+  // 전환 오버랩 차감
+  if (sceneTransitions) {
+    for (let i = 0; i < timeline.length - 1; i++) {
+      const trans = sceneTransitions[timeline[i].sceneId];
+      if (trans && trans.preset !== 'none') {
+        total -= trans.duration;
+      }
+    }
+  }
+
+  return Math.max(0, total);
+}
+
+// ─── 내부 헬퍼 ─────────────────────────────────────
+
+/** 전역 시간 → 장면/전환/자막 정보 매핑 */
+function resolveFrame(
+  timeSec: number,
+  timeline: UnifiedSceneTiming[],
+  sceneTransitions?: Record<string, SceneTransitionConfig>,
+): FrameInfo {
+  if (timeline.length === 0) {
+    return { sceneIndex: 0, localTime: 0, transitionProgress: null, prevSceneIndex: null, subtitleText: null };
+  }
+
+  // 1. 장면별 렌더 시작 시각 계산
+  const sceneStarts: number[] = [0];
+  for (let i = 0; i < timeline.length - 1; i++) {
+    const transDur = getNextTransDur(i, timeline, sceneTransitions);
+    sceneStarts.push(sceneStarts[i] + timeline[i].imageDuration - transDur);
+  }
+
+  // 2. 전환 구간 우선 검사
+  for (let i = 0; i < timeline.length - 1; i++) {
+    const transDur = getNextTransDur(i, timeline, sceneTransitions);
+    if (transDur <= 0) continue;
+
+    const transStart = sceneStarts[i + 1]; // 다음 장면 시작 = 전환 시작
+    const transEnd = transStart + transDur;
+
+    if (timeSec >= transStart && timeSec < transEnd) {
+      const progress = (timeSec - transStart) / transDur;
+      const localTime = timeSec - transStart;
+      const nextTiming = timeline[i + 1];
+
+      return {
+        sceneIndex: i + 1,
+        localTime,
+        transitionProgress: Math.max(0, Math.min(1, progress)),
+        prevSceneIndex: i,
+        subtitleText: findSubtitle(nextTiming, localTime, nextTiming.imageStartTime),
+      };
+    }
+  }
+
+  // 3. 일반 장면 구간
+  for (let i = 0; i < timeline.length; i++) {
+    const sceneEnd = sceneStarts[i] + timeline[i].imageDuration;
+    if (timeSec < sceneEnd || i === timeline.length - 1) {
+      const localTime = Math.max(0, timeSec - sceneStarts[i]);
+      return {
+        sceneIndex: i,
+        localTime,
+        transitionProgress: null,
+        prevSceneIndex: null,
+        subtitleText: findSubtitle(timeline[i], localTime, timeline[i].imageStartTime),
+      };
+    }
+  }
+
+  // 폴백: 마지막 장면
+  const last = timeline[timeline.length - 1];
+  return {
+    sceneIndex: timeline.length - 1,
+    localTime: last.imageDuration,
+    transitionProgress: null,
+    prevSceneIndex: null,
+    subtitleText: null,
+  };
+}
+
+function getNextTransDur(
+  i: number,
+  timeline: UnifiedSceneTiming[],
+  sceneTransitions?: Record<string, SceneTransitionConfig>,
+): number {
+  if (!sceneTransitions || i >= timeline.length - 1) return 0;
+  const trans = sceneTransitions[timeline[i].sceneId];
+  if (trans && trans.preset !== 'none') return trans.duration;
+  return 0;
+}
+
+/** 특정 장면 로컬 시간에 해당하는 자막 텍스트 찾기 */
+function findSubtitle(
+  timing: UnifiedSceneTiming,
+  localTime: number,
+  sceneGlobalStart: number,
+): string | null {
+  if (!timing.subtitleSegments?.length) return null;
+
+  const globalTime = sceneGlobalStart + localTime;
+  for (const seg of timing.subtitleSegments) {
+    if (globalTime >= seg.startTime && globalTime <= seg.endTime) {
+      return seg.text;
+    }
+  }
+  return null;
+}
+
+/** panZoom 프리셋 → CSS filter 매핑 (프리뷰와 1:1 매칭) */
+const PRESET_FILTERS: Record<string, string> = {
+  vintage: 'sepia(0.15)',
+  noir: 'grayscale(0.6) contrast(1.2)',
+};
+
+/** motionEffect → CSS filter 매핑 */
+const MOTION_FILTERS: Record<string, string> = {
+  film: 'sepia(0.35) contrast(1.15) brightness(0.95)',
+  sepia: 'sepia(0.65)',
+  'high-contrast': 'contrast(1.4) saturate(1.2)',
+  'multi-bright': 'brightness(1.3) saturate(1.3)',
+  rain: 'brightness(0.85) saturate(0.7) contrast(1.1)',
+  'vintage-style': 'sepia(0.3) contrast(1.1) saturate(0.8)',
+};
+
+/** 단일 장면 프레임을 캔버스에 렌더 (Ken Burns + motionEffect + CSS filter) */
+function renderSceneFrame(
+  ctx: OffscreenCanvasRenderingContext2D,
+  timing: UnifiedSceneTiming,
+  localTime: number,
+  imageBitmaps: Map<string, ImageBitmap>,
+  videoFrameExtractors: Map<string, VideoFrameExtractor>,
+  canvasW: number,
+  canvasH: number,
+  fps: number = 30,
+): void {
+  const bitmap = imageBitmaps.get(timing.sceneId);
+  const videoExtractor = videoFrameExtractors.get(timing.sceneId);
+
+  if (bitmap) {
+    // CSS filter 적용 (panZoom + motionEffect)
+    const filters: string[] = [];
+    const pzFilter = PRESET_FILTERS[timing.effectPreset];
+    if (pzFilter) filters.push(pzFilter);
+    const moFilter = timing.motionEffect ? MOTION_FILTERS[timing.motionEffect] : undefined;
+    if (moFilter) filters.push(moFilter);
+    if (filters.length > 0) ctx.filter = filters.join(' ');
+
+    // 이미지 장면: Ken Burns 효과 (panZoom)
+    const totalFrames = Math.ceil(timing.imageDuration * fps);
+    const frameN = Math.min(Math.floor(localTime * fps), totalFrames - 1);
+
+    const panZoomTransform = computeKenBurns(
+      (timing.effectPreset || 'smooth') as EffectPresetId,
+      Math.max(0, frameN),
+      totalFrames,
+      canvasW,
+      canvasH,
+      timing.anchorX ?? 50,
+      timing.anchorY ?? 50,
+      fps,
+    );
+
+    // motionEffect 트랜스폼 합성 (있으면)
+    const motionEffect = timing.motionEffect;
+    if (motionEffect && motionEffect !== 'none' && motionEffect !== 'static') {
+      const motionTransform = computeKenBurns(
+        motionEffect,
+        Math.max(0, frameN),
+        totalFrames,
+        canvasW,
+        canvasH,
+        timing.anchorX ?? 50,
+        timing.anchorY ?? 50,
+        fps,
+      );
+      // CSS 다중 animation 합성: 스케일 곱, 이동 합, 회전 합
+      panZoomTransform.scale *= motionTransform.scale;
+      panZoomTransform.translateX += motionTransform.translateX;
+      panZoomTransform.translateY += motionTransform.translateY;
+      panZoomTransform.rotate += motionTransform.rotate;
+    }
+
+    drawKenBurnsFrame(ctx, bitmap, panZoomTransform, canvasW, canvasH, timing.anchorX ?? 50, timing.anchorY ?? 50);
+
+    // filter 초기화
+    if (filters.length > 0) ctx.filter = 'none';
+  } else if (videoExtractor) {
+    // 비디오 장면: 현재 시간의 프레임을 직접 그리기
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, canvasW, canvasH);
+  } else {
+    // 에셋 없음: 검은 화면
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, canvasW, canvasH);
+  }
+}

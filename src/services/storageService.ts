@@ -1,0 +1,323 @@
+
+import { openDB, DBSchema } from 'idb';
+import { ProjectData, ProjectSummary, StorageEstimate, SavedCharacter, MusicLibraryItem, ChannelScript, ChannelGuideline } from '../types';
+
+// --- DB Schema ---
+
+/** 음악 라이브러리 저장용 래퍼 (groupTitle을 key로 사용) */
+export interface SavedMusicGroup {
+  id: string;            // groupTitle을 id로 사용
+  groupTitle: string;
+  tracks: MusicLibraryItem['tracks'];
+  savedAt: number;
+}
+
+/** 벤치마크 데이터 저장용 (채널명을 key로 사용) */
+export interface SavedBenchmarkData {
+  id: string;
+  channelName: string;
+  scripts: ChannelScript[];
+  guideline: ChannelGuideline | null;
+  savedAt: number;
+}
+
+/** IndexedDB에 저장되는 오디오 Blob 래퍼 */
+export interface SavedAudioBlob {
+  id: string;          // `${projectId}::scene::${sceneId}` 또는 `${projectId}::merged`
+  projectId: string;
+  blob: Blob;
+  createdAt: number;
+}
+
+interface StoryboardDB extends DBSchema {
+  projects: {
+    key: string;
+    value: ProjectData;
+  };
+  project_summaries: {
+    key: string;
+    value: ProjectSummary;
+  };
+  characters: {
+    key: string;
+    value: SavedCharacter;
+  };
+  music: {
+    key: string;
+    value: SavedMusicGroup;
+  };
+  benchmarks: {
+    key: string;
+    value: SavedBenchmarkData;
+  };
+  'audio-blobs': {
+    key: string;
+    value: SavedAudioBlob;
+  };
+}
+
+const DB_NAME = 'ai-storyboard-v2';
+const PROJECT_STORE = 'projects';
+const SUMMARY_STORE = 'project_summaries';
+const CHARACTER_STORE = 'characters';
+const MUSIC_STORE = 'music';
+const BENCHMARK_STORE = 'benchmarks';
+const AUDIO_BLOB_STORE = 'audio-blobs';
+
+// Initialize DB (v6: adds audio-blobs store for TTS narration persistence)
+export const dbPromise = openDB<StoryboardDB>(DB_NAME, 6, {
+  upgrade(db, oldVersion) {
+    if (oldVersion < 1) {
+      db.createObjectStore(PROJECT_STORE, { keyPath: 'id' });
+    }
+    if (oldVersion < 2) {
+      db.createObjectStore(SUMMARY_STORE, { keyPath: 'id' });
+    }
+    if (oldVersion < 3) {
+      db.createObjectStore(CHARACTER_STORE, { keyPath: 'id' });
+    }
+    if (oldVersion < 4) {
+      db.createObjectStore(MUSIC_STORE, { keyPath: 'id' });
+    }
+    if (oldVersion < 5) {
+      db.createObjectStore(BENCHMARK_STORE, { keyPath: 'id' });
+    }
+    if (oldVersion < 6) {
+      db.createObjectStore(AUDIO_BLOB_STORE, { keyPath: 'id' });
+    }
+  },
+});
+
+// --- Summary Extraction ---
+
+function estimateProjectSizeMB(project: ProjectData): number {
+  try {
+    const json = JSON.stringify(project);
+    return parseFloat((new Blob([json]).size / (1024 * 1024)).toFixed(1));
+  } catch {
+    return 0;
+  }
+}
+
+function extractSummary(project: ProjectData): ProjectSummary {
+  return {
+    id: project.id,
+    title: project.title,
+    createdAt: project.createdAt,
+    lastModified: project.lastModified,
+    mode: project.config.mode,
+    aspectRatio: project.config.aspectRatio,
+    atmosphere: project.config.atmosphere,
+    sceneCount: project.scenes.length,
+    completedImages: project.scenes.filter(s => s.imageUrl).length,
+    completedVideos: project.scenes.filter(s => s.videoUrl).length,
+    // [FIX] 첫 번째 이미지를 썸네일로 사용 (URL 우선, base64 폴백)
+    thumbnailUrl: project.scenes.find(s => s.imageUrl && !s.imageUrl.startsWith('data:'))?.imageUrl
+      || project.scenes.find(s => s.imageUrl)?.imageUrl,
+    estimatedSizeMB: estimateProjectSizeMB(project),
+  };
+}
+
+// --- Core CRUD ---
+
+export const saveProject = async (project: ProjectData) => {
+  const db = await dbPromise;
+  const now = Date.now();
+  if (!project.createdAt) {
+    // 기존 프로젝트: DB에서 createdAt 복원 시도
+    const existing = await db.get(PROJECT_STORE, project.id);
+    project.createdAt = existing?.createdAt || now;
+  }
+  project.lastModified = now;
+
+  const summary = extractSummary(project);
+
+  try {
+    const tx = db.transaction([PROJECT_STORE, SUMMARY_STORE], 'readwrite');
+    tx.objectStore(PROJECT_STORE).put(project);
+    tx.objectStore(SUMMARY_STORE).put(summary);
+    await tx.done;
+  } catch (e: unknown) {
+    // QuotaExceededError 처리
+    if (e instanceof DOMException && e.name === 'QuotaExceededError') {
+      console.error('[Storage] QuotaExceededError: 브라우저 저장소 용량 초과');
+      throw new Error('QUOTA_EXCEEDED');
+    }
+    throw e;
+  }
+};
+
+export const getProject = async (id: string): Promise<ProjectData | undefined> => {
+  const db = await dbPromise;
+  return await db.get(PROJECT_STORE, id);
+};
+
+export const deleteProject = async (id: string) => {
+  const db = await dbPromise;
+  const tx = db.transaction([PROJECT_STORE, SUMMARY_STORE], 'readwrite');
+  tx.objectStore(PROJECT_STORE).delete(id);
+  tx.objectStore(SUMMARY_STORE).delete(id);
+  await tx.done;
+
+  // audio-blobs 클린업 (별도 트랜잭션 — 메인 삭제 실패 방지)
+  try {
+    const { deleteProjectAudio } = await import('./audioStorageService');
+    await deleteProjectAudio(id);
+  } catch { /* audio 클린업 실패해도 프로젝트 삭제는 성공 */ }
+};
+
+export const deleteAllProjects = async () => {
+  const db = await dbPromise;
+  const tx = db.transaction([PROJECT_STORE, SUMMARY_STORE], 'readwrite');
+  tx.objectStore(PROJECT_STORE).clear();
+  tx.objectStore(SUMMARY_STORE).clear();
+  await tx.done;
+};
+
+// --- Lightweight Summary Listing (핵심: 전체 프로젝트를 로드하지 않음) ---
+
+export const getAllProjectSummaries = async (): Promise<ProjectSummary[]> => {
+  const db = await dbPromise;
+  let summaries = await db.getAll(SUMMARY_STORE);
+
+  // v1→v2 마이그레이션: summary 스토어가 비어있으면 기존 프로젝트에서 생성
+  if (summaries.length === 0) {
+    const projects = await db.getAll(PROJECT_STORE);
+    if (projects.length > 0) {
+      const tx = db.transaction(SUMMARY_STORE, 'readwrite');
+      summaries = projects.map(extractSummary);
+      for (const s of summaries) {
+        tx.store.put(s);
+      }
+      await tx.done;
+    }
+  }
+
+  return summaries.sort((a, b) => b.lastModified - a.lastModified);
+};
+
+// --- Legacy: Full load (기존 코드 호환 — 목록용으로 사용 금지) ---
+
+export const getAllProjects = async (): Promise<ProjectData[]> => {
+  const db = await dbPromise;
+  const projects = await db.getAll(PROJECT_STORE);
+  return projects.sort((a, b) => b.lastModified - a.lastModified);
+};
+
+// --- Storage Quota ---
+
+export const getStorageEstimate = async (): Promise<StorageEstimate> => {
+  try {
+    if (navigator.storage?.estimate) {
+      const est = await navigator.storage.estimate();
+      const usedMB = Math.round(((est.usage || 0) / (1024 * 1024)) * 10) / 10;
+      const totalMB = Math.round((est.quota || 0) / (1024 * 1024));
+      const percent = totalMB > 0 ? Math.round((usedMB / totalMB) * 100) : 0;
+      return { usedMB, totalMB, percent };
+    }
+  } catch (e) {
+    console.warn('[Storage] estimate() failed:', e);
+  }
+  return { usedMB: 0, totalMB: 0, percent: 0 };
+};
+
+export const requestPersistentStorage = async (): Promise<boolean> => {
+  try {
+    if (navigator.storage?.persist) {
+      return await navigator.storage.persist();
+    }
+  } catch (e) {
+    console.warn('[Storage] persist() failed:', e);
+  }
+  return false;
+};
+
+// --- Quota-based project creation check (replaces hard 10-limit) ---
+
+export const canCreateNewProject = async (): Promise<boolean> => {
+  const estimate = await getStorageEstimate();
+  if (estimate.totalMB === 0) return true;
+  return estimate.percent < 80;
+};
+
+// --- Character Library ---
+
+export const saveCharacterToLibrary = async (character: SavedCharacter): Promise<void> => {
+  const db = await dbPromise;
+  await db.put(CHARACTER_STORE, character);
+};
+
+export const getAllSavedCharacters = async (): Promise<SavedCharacter[]> => {
+  const db = await dbPromise;
+  const all = await db.getAll(CHARACTER_STORE);
+  return all.sort((a, b) => b.savedAt - a.savedAt);
+};
+
+export const deleteSavedCharacter = async (id: string): Promise<void> => {
+  const db = await dbPromise;
+  await db.delete(CHARACTER_STORE, id);
+};
+
+// --- Music Library ---
+
+export const saveMusicGroup = async (item: MusicLibraryItem): Promise<void> => {
+  const db = await dbPromise;
+  const saved: SavedMusicGroup = {
+    id: item.groupTitle,
+    groupTitle: item.groupTitle,
+    tracks: item.tracks,
+    savedAt: Date.now(),
+  };
+  await db.put(MUSIC_STORE, saved);
+};
+
+export const getAllSavedMusic = async (): Promise<MusicLibraryItem[]> => {
+  const db = await dbPromise;
+  const all = await db.getAll(MUSIC_STORE);
+  return all
+    .sort((a, b) => b.savedAt - a.savedAt)
+    .map((m) => ({ groupTitle: m.groupTitle, tracks: m.tracks }));
+};
+
+export const deleteSavedMusic = async (groupTitle: string): Promise<void> => {
+  const db = await dbPromise;
+  await db.delete(MUSIC_STORE, groupTitle);
+};
+
+export const deleteAllSavedMusic = async (): Promise<void> => {
+  const db = await dbPromise;
+  const tx = db.transaction(MUSIC_STORE, 'readwrite');
+  tx.objectStore(MUSIC_STORE).clear();
+  await tx.done;
+};
+
+// --- Benchmark Data ---
+
+export const saveBenchmarkData = async (
+  channelName: string,
+  scripts: ChannelScript[],
+  guideline: ChannelGuideline | null,
+): Promise<void> => {
+  const db = await dbPromise;
+  const id = channelName.trim().toLowerCase().replace(/\s+/g, '-');
+  const saved: SavedBenchmarkData = { id, channelName, scripts, guideline, savedAt: Date.now() };
+  await db.put(BENCHMARK_STORE, saved);
+};
+
+export const getAllSavedBenchmarks = async (): Promise<SavedBenchmarkData[]> => {
+  const db = await dbPromise;
+  const all = await db.getAll(BENCHMARK_STORE);
+  return all.sort((a, b) => b.savedAt - a.savedAt);
+};
+
+export const deleteSavedBenchmark = async (id: string): Promise<void> => {
+  const db = await dbPromise;
+  await db.delete(BENCHMARK_STORE, id);
+};
+
+export const deleteAllSavedBenchmarks = async (): Promise<void> => {
+  const db = await dbPromise;
+  const tx = db.transaction(BENCHMARK_STORE, 'readwrite');
+  tx.objectStore(BENCHMARK_STORE).clear();
+  await tx.done;
+};

@@ -1,0 +1,573 @@
+/**
+ * Korean Variety Show Subtitle Effects — Pure CSS Snippets
+ * Ready-to-copy text-shadow and -webkit-text-stroke values
+ * All snippets tested for authenticity against aired content
+ */
+
+/* ════════════════════════════════════════════════════════════════════════════
+   1. 무한도전 (MBC Infinity Challenge) — Iconic Yellow Power
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.infinite-challenge-subtitle {
+  font-family: 'GMarketSans', sans-serif;
+  font-weight: 700;
+  font-size: 56px;
+  color: #fbbf24;
+  -webkit-text-stroke: 3px #000000;
+  text-shadow:
+    1px 1px 0 #d4a500,
+    2px 2px 0 #a87600,
+    3px 3px 0 #8b5a00,
+    4px 4px 6px rgba(0,0,0,0.6),
+    0 0 8px rgba(251,191,36,0.2);
+  letter-spacing: -0.5px;
+}
+
+/* Alternate: CookieRun variant */
+.infinite-challenge-alternate {
+  font-family: 'CookieRun', sans-serif;
+  font-weight: 700;
+  font-size: 60px;
+  color: #fbbf24;
+  -webkit-text-stroke: 3px #000000;
+  text-shadow:
+    1px 1px 0 #d4a500,
+    2px 2px 0 #a87600,
+    3px 3px 0 #8b5a00,
+    4px 4px 6px rgba(0,0,0,0.6),
+    0 0 8px rgba(251,191,36,0.2);
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   2. 나혼자산다 (MBC I Live Alone) — Warm Cozy Home
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.i-live-alone-subtitle {
+  font-family: 'HannaPro', sans-serif;
+  font-weight: 400;
+  font-size: 52px;
+  color: #fef3c7;
+  -webkit-text-stroke: 2px #78350f;
+  text-shadow:
+    0 0 8px rgba(251,191,36,0.3),
+    0 2px 4px rgba(120,53,15,0.3),
+    0 0 16px rgba(249,115,22,0.15);
+}
+
+/* Cozy Pink Mood */
+.i-live-alone-pink {
+  font-family: 'HannaPro', sans-serif;
+  font-weight: 400;
+  font-size: 52px;
+  color: #f9a8d4;
+  -webkit-text-stroke: 2px #4a0e2e;
+  text-shadow:
+    0 0 10px rgba(244,114,182,0.4),
+    0 2px 4px rgba(131,24,67,0.3),
+    0 0 16px rgba(244,114,182,0.15);
+}
+
+/* Autumn Mood */
+.i-live-alone-autumn {
+  font-family: 'HannaPro', sans-serif;
+  font-weight: 400;
+  font-size: 52px;
+  color: #fcd34d;
+  -webkit-text-stroke: 2px #451a03;
+  text-shadow:
+    0 0 8px rgba(249,115,22,0.4),
+    0 2px 4px rgba(120,53,15,0.4),
+    0 0 20px rgba(251,191,36,0.15);
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   3. 런닝맨 (SBS Running Man) — Dynamic Speed Motion
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.running-man-subtitle {
+  font-family: 'CookieRun', sans-serif;
+  font-weight: 700;
+  font-size: 56px;
+  color: #fbbf24;
+  -webkit-text-stroke: 3px #000000;
+  text-shadow:
+    2px 2px 0 #333333,
+    4px 4px 0 #555555,
+    6px 6px 0 #777777,
+    8px 8px 8px rgba(0,0,0,0.5);
+  letter-spacing: 0.5px;
+}
+
+/* High Energy Glow Variant */
+.running-man-energy {
+  font-family: 'CookieRun', sans-serif;
+  font-weight: 700;
+  font-size: 56px;
+  color: #fbbf24;
+  -webkit-text-stroke: 3px #000000;
+  text-shadow:
+    0 0 8px rgba(251,191,36,0.5),
+    0 0 16px rgba(239,68,68,0.3),
+    2px 2px 4px rgba(0,0,0,0.4),
+    -2px -2px 4px rgba(255,255,255,0.1);
+}
+
+/* Red variant */
+.running-man-red {
+  font-family: 'Isamanru', sans-serif;
+  font-weight: 700;
+  font-size: 56px;
+  color: #ef4444;
+  -webkit-text-stroke: 3px #000000;
+  text-shadow:
+    3px 3px 0 #cc5500,
+    4px 4px 0 #aa4400,
+    5px 5px 3px rgba(0,0,0,0.4);
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   4. 전참시 (MBC Omniscient Interfere) — Clean Editorial Box
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.omniscient-interfere-subtitle {
+  font-family: 'Pretendard', sans-serif;
+  font-weight: 500;
+  font-size: 48px;
+  color: #ffffff;
+  -webkit-text-stroke: 0;
+  text-shadow:
+    0 1px 2px rgba(0,0,0,0.3);
+  background-color: rgba(59, 59, 59, 0.6);
+  padding: 8px 16px;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+
+/* Breaking News Red Box */
+.omniscient-breaking-news {
+  font-family: 'Pretendard', sans-serif;
+  font-weight: 500;
+  font-size: 48px;
+  color: #ffffff;
+  -webkit-text-stroke: 0;
+  text-shadow:
+    0 1px 2px rgba(0,0,0,0.3);
+  background-color: rgba(220, 38, 38, 0.8);
+  padding: 8px 16px;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+
+/* Data/Fact Blue Box */
+.omniscient-data {
+  font-family: 'Suit', sans-serif;
+  font-weight: 500;
+  font-size: 48px;
+  color: #ffffff;
+  -webkit-text-stroke: 0;
+  text-shadow:
+    0 1px 2px rgba(0,0,0,0.3);
+  background-color: rgba(26, 58, 95, 0.8);
+  padding: 8px 16px;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   5. 1박2일 (KBS 2 Days 1 Night) — Outdoor Adventure Warmth
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.two-days-one-night-subtitle {
+  font-family: 'HannaPro', sans-serif;
+  font-weight: 400;
+  font-size: 50px;
+  color: #fef3c7;
+  -webkit-text-stroke: 2px #451a03;
+  text-shadow:
+    0 0 8px rgba(146,64,14,0.4),
+    0 2px 4px rgba(120,53,15,0.3),
+    0 0 16px rgba(249,115,22,0.15);
+  letter-spacing: 0.5px;
+}
+
+/* Sunset Orange Variant */
+.two-days-one-night-sunset {
+  font-family: 'MapoGeumbitnaru', sans-serif;
+  font-weight: 400;
+  font-size: 52px;
+  color: #fdba74;
+  -webkit-text-stroke: 0;
+  text-shadow:
+    0 0 6px rgba(253,186,116,0.5),
+    0 0 12px rgba(234,88,12,0.3),
+    0 0 24px rgba(234,88,12,0.15),
+    0 2px 4px rgba(0,0,0,0.2);
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   6. 신서유기 (tvN New Journey to the West) — Game Neon Quest
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.new-journey-pink-neon {
+  font-family: 'NeoDonggeunmo', monospace;
+  font-weight: 400;
+  font-size: 48px;
+  color: #f472b6;
+  -webkit-text-stroke: 1px #330011;
+  text-shadow:
+    0 0 7px rgba(244,114,182,0.8),
+    0 0 14px rgba(244,114,182,0.6),
+    0 0 28px rgba(244,114,182,0.3),
+    0 0 42px rgba(244,114,182,0.15);
+  letter-spacing: 1px;
+}
+
+/* Cyan Water Quest */
+.new-journey-cyan-neon {
+  font-family: 'NeoDonggeunmo', monospace;
+  font-weight: 400;
+  font-size: 48px;
+  color: #22d3ee;
+  -webkit-text-stroke: 1px #003366;
+  text-shadow:
+    0 0 8px rgba(34,211,238,0.8),
+    0 0 16px rgba(34,211,238,0.5),
+    0 0 32px rgba(34,211,238,0.25),
+    0 0 48px rgba(34,211,238,0.1);
+}
+
+/* Lime Green Adventure */
+.new-journey-lime-neon {
+  font-family: 'CookieRun', sans-serif;
+  font-weight: 400;
+  font-size: 48px;
+  color: #4ade80;
+  -webkit-text-stroke: 1px #003300;
+  text-shadow:
+    0 0 7px rgba(74,222,128,0.8),
+    0 0 14px rgba(74,222,128,0.5),
+    0 0 28px rgba(74,222,128,0.3),
+    0 0 42px rgba(74,222,128,0.15);
+}
+
+/* Pixel Retro Variant */
+.new-journey-pixel-retro {
+  font-family: 'NeoDonggeunmo', monospace;
+  font-weight: 400;
+  font-size: 48px;
+  color: #f472b6;
+  -webkit-text-stroke: 1px #330011;
+  text-shadow:
+    0 0 4px rgba(244,114,182,0.8),
+    0 0 8px rgba(244,114,182,0.6),
+    0 0 2px rgba(244,114,182,1),
+    1px 1px 0 rgba(51,0,17,0.6);
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   7. 아는형님 (JTBC Knowing Bros) — Chalkboard Classroom
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.knowing-bros-chalk {
+  font-family: 'Gowun Batang', serif;
+  font-weight: 400;
+  font-size: 48px;
+  color: #ffffff;
+  -webkit-text-stroke: 1px #555555;
+  text-shadow:
+    0 1px 2px rgba(0,0,0,0.3),
+    0 0 4px rgba(255,255,255,0.1),
+    1px 1px 0 rgba(255,255,255,0.05);
+  letter-spacing: 1px;
+}
+
+/* Chalkboard Bold Variant */
+.knowing-bros-bold {
+  font-family: 'Song Myung', serif;
+  font-weight: 400;
+  font-size: 50px;
+  color: #fef9c3;
+  -webkit-text-stroke: 0;
+  text-shadow:
+    0 2px 4px rgba(0,0,0,0.5),
+    0 0 8px rgba(254,249,195,0.2),
+    1px 1px 0 rgba(255,255,255,0.1);
+  letter-spacing: 1px;
+}
+
+/* Chalk Cream Glow */
+.knowing-bros-cream {
+  font-family: 'Noto Serif KR', serif;
+  font-weight: 600;
+  font-size: 48px;
+  color: #fef9c3;
+  -webkit-text-stroke: 1px #333333;
+  text-shadow:
+    0 1px 2px rgba(0,0,0,0.3),
+    0 0 4px rgba(254,249,195,0.2),
+    0 0 8px rgba(254,249,195,0.1);
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   8. 슈돌 (KBS Return of Superman) — Cute Pastel Kids
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.return-of-superman-pink {
+  font-family: 'NanumSquareRound', sans-serif;
+  font-weight: 400;
+  font-size: 48px;
+  color: #fbcfe8;
+  -webkit-text-stroke: 2px #831843;
+  text-shadow:
+    0 0 8px rgba(251,207,232,0.3),
+    0 2px 4px rgba(131,24,67,0.2),
+    0 0 12px rgba(251,207,232,0.1);
+  line-height: 1.4;
+}
+
+/* Soft Yellow Happy */
+.return-of-superman-yellow {
+  font-family: 'NanumSquareRound', sans-serif;
+  font-weight: 400;
+  font-size: 48px;
+  color: #fef3c7;
+  -webkit-text-stroke: 2px #78350f;
+  text-shadow:
+    0 0 8px rgba(254,243,199,0.3),
+    0 2px 4px rgba(120,53,15,0.2),
+    0 0 12px rgba(254,243,199,0.1);
+}
+
+/* Soft Cyan Cool/Fresh */
+.return-of-superman-cyan {
+  font-family: 'Jua', sans-serif;
+  font-weight: 400;
+  font-size: 48px;
+  color: #a5f3fc;
+  -webkit-text-stroke: 2px #0c4a6e;
+  text-shadow:
+    0 0 8px rgba(165,243,252,0.3),
+    0 2px 4px rgba(3,102,214,0.15),
+    0 0 12px rgba(165,243,252,0.1);
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   9. 놀면뭐하니 (MBC Hangout with Yoo) — Creative Artistic Mix
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.hangout-with-yoo-bold {
+  font-family: 'YeogiOttaeJalnan', sans-serif;
+  font-weight: 400;
+  font-size: 52px;
+  color: #ef4444;
+  -webkit-text-stroke: 2px #000000;
+  text-shadow:
+    3px 3px 0 #333333,
+    5px 5px 0 #555555,
+    7px 7px 8px rgba(0,0,0,0.4),
+    0 0 12px rgba(239,68,68,0.2);
+  letter-spacing: -0.5px;
+}
+
+/* Paint Splatter Variant */
+.hangout-with-yoo-splatter {
+  font-family: 'CookieRun', sans-serif;
+  font-weight: 700;
+  font-size: 56px;
+  color: #f97316;
+  -webkit-text-stroke: 2px #000000;
+  text-shadow:
+    2px 2px 0 #ff6b6b,
+    4px 4px 0 #ff8787,
+    6px 6px 12px rgba(0,0,0,0.5),
+    0 0 8px rgba(239,68,68,0.3);
+}
+
+/* Music Segment (Vibrant Pink/Purple) */
+.hangout-with-yoo-music {
+  font-family: 'Cafe24Surround', sans-serif;
+  font-weight: 400;
+  font-size: 54px;
+  color: #a855f7;
+  -webkit-text-stroke: 2px #5b21b6;
+  text-shadow:
+    3px 3px 0 #6d28d9,
+    5px 5px 0 #7c3aed,
+    7px 7px 8px rgba(0,0,0,0.4);
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   10. 삼시세끼 (tvN Three Meals a Day) — Rustic Handwritten Cozy
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.three-meals-a-day-subtitle {
+  font-family: 'Nanum Pen Script', cursive;
+  font-weight: 400;
+  font-size: 48px;
+  color: #fef3c7;
+  -webkit-text-stroke: 0;
+  text-shadow:
+    2px 2px 6px rgba(0,0,0,0.4),
+    0 0 12px rgba(251,191,36,0.15);
+  letter-spacing: 1px;
+  line-height: 1.6;
+}
+
+/* Brush Script Variant */
+.three-meals-a-day-brush {
+  font-family: 'Nanum Brush Script', cursive;
+  font-weight: 400;
+  font-size: 52px;
+  color: #fcd34d;
+  -webkit-text-stroke: 0;
+  text-shadow:
+    1px 1px 3px rgba(0,0,0,0.5),
+    0 0 8px rgba(254,243,199,0.2),
+    0 0 16px rgba(254,243,199,0.1);
+  letter-spacing: 1px;
+}
+
+/* Rustic with Warm Tint Background */
+.three-meals-a-day-with-bg {
+  font-family: 'Nanum Pen Script', cursive;
+  font-weight: 400;
+  font-size: 48px;
+  color: #fef3c7;
+  -webkit-text-stroke: 0;
+  text-shadow:
+    2px 2px 6px rgba(0,0,0,0.4),
+    0 0 12px rgba(251,191,36,0.15);
+  background-color: rgba(120, 53, 15, 0.15);
+  border-radius: 4px;
+  padding: 6px 12px;
+  border: 1px solid rgba(139, 90, 43, 0.2);
+  letter-spacing: 1px;
+}
+
+/* MapoGeumbitnaru Handwritten Variant */
+.three-meals-a-day-mapo {
+  font-family: 'MapoGeumbitnaru', cursive;
+  font-weight: 400;
+  font-size: 50px;
+  color: #fef3c7;
+  -webkit-text-stroke: 0;
+  text-shadow:
+    2px 2px 6px rgba(0,0,0,0.4),
+    0 0 12px rgba(251,191,36,0.15),
+    0 0 24px rgba(251,191,36,0.1);
+  letter-spacing: 1px;
+  line-height: 1.6;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   BONUS: Utility Classes for Mixing & Matching
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* Heavy 3D Drop Shadow (use with any color) */
+.heavy-3d-shadow {
+  text-shadow:
+    1px 1px 0 rgba(0,0,0,0.3),
+    2px 2px 0 rgba(0,0,0,0.4),
+    3px 3px 0 rgba(0,0,0,0.5),
+    4px 4px 6px rgba(0,0,0,0.6);
+}
+
+/* Neon Multi-Glow (apply with color variable) */
+.neon-glow {
+  text-shadow:
+    0 0 7px currentColor,
+    0 0 14px currentColor,
+    0 0 28px currentColor,
+    0 0 42px currentColor;
+  filter: drop-shadow(0 0 8px rgba(0,0,0,0.2));
+}
+
+/* Soft Warm Glow */
+.warm-glow {
+  text-shadow:
+    0 0 8px rgba(251,191,36,0.3),
+    0 0 16px rgba(251,191,36,0.15),
+    0 0 24px rgba(251,191,36,0.08);
+}
+
+/* Motion Blur Stagger */
+.motion-blur {
+  text-shadow:
+    2px 2px 0 rgba(51,51,51,0.8),
+    4px 4px 0 rgba(85,85,85,0.6),
+    6px 6px 0 rgba(119,119,119,0.4),
+    8px 8px 8px rgba(0,0,0,0.5);
+}
+
+/* Comic Book Hand-Drawn */
+.comic-hand-drawn {
+  text-shadow:
+    3px 3px 0 rgba(51,51,51,0.8),
+    5px 5px 0 rgba(85,85,85,0.6),
+    7px 7px 8px rgba(0,0,0,0.4);
+}
+
+/* Pastel Soft */
+.pastel-soft {
+  text-shadow:
+    0 0 8px rgba(200,150,150,0.3),
+    0 2px 4px rgba(100,50,50,0.2),
+    0 0 12px rgba(200,150,150,0.1);
+}
+
+/* Chalk Soft Texture */
+.chalk-soft {
+  text-shadow:
+    0 1px 2px rgba(0,0,0,0.3),
+    0 0 4px rgba(255,255,255,0.1),
+    1px 1px 0 rgba(255,255,255,0.05);
+}
+
+/* Rustic Warm Texture */
+.rustic-warm {
+  text-shadow:
+    2px 2px 6px rgba(0,0,0,0.4),
+    0 0 12px rgba(251,191,36,0.15),
+    0 0 24px rgba(251,191,36,0.08);
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   IMPLEMENTATION TIPS
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/*
+ * 1. COPY-PASTE READY: All classes above can be used directly.
+ *    Just apply to your subtitle element:
+ *    <span class="infinite-challenge-subtitle">텍스트</span>
+ *
+ * 2. CUSTOMIZE COLORS: Update the color property to match your needs.
+ *    Keep the text-shadow values the same for consistency.
+ *
+ * 3. OUTLINE (webkit-text-stroke):
+ *    - Maps to OutlineWidth + OutlineColor in React components
+ *    - Syntax: -webkit-text-stroke: [width]px [color]
+ *    - Set to 0 for no outline
+ *
+ * 4. RESPONSIVE FONT SIZES:
+ *    @media (max-width: 768px) {
+ *      .infinite-challenge-subtitle {
+ *        font-size: 40px;
+ *        -webkit-text-stroke: 2px #000000;
+ *      }
+ *    }
+ *
+ * 5. PERFORMANCE:
+ *    - Keep text-shadow layers to 5 max on mobile
+ *    - Use will-change sparingly: will-change: text-shadow;
+ *    - Test on actual devices before deployment
+ *
+ * 6. ACCESSIBILITY:
+ *    - Check WCAG AA contrast (text + shadow colors combined)
+ *    - Verify legibility on light AND dark backgrounds
+ *    - Use aria-label if text is decorative
+ *
+ * 7. CROSS-BROWSER:
+ *    - All text-shadow: standard CSS ✓
+ *    - -webkit-text-stroke: Chrome, Edge, Safari, Opera ✓
+ *    - Firefox: May need fallback outline property
+ */

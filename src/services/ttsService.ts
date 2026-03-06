@@ -1,0 +1,647 @@
+
+import { monitoredFetch, getKieKey } from './apiService';
+import { logger } from './LoggerService';
+import { generateSpeech as generateSupertonicSpeech } from './supertonicService';
+
+import type { TTSEngine, TTSLanguage } from '../types';
+
+// === CONFIGURATION ===
+const KIE_BASE_URL = 'https://api.kie.ai/api/v1';
+const TTS_MAX_CHUNK_CHARS = 4500; // ElevenLabs 5000자 제한 대비 안전 마진
+
+// === TEXT SPLITTING ===
+
+/**
+ * 한국어 종결어미 + 구두점 기반 문장 분할 (나레이션 TTS용)
+ * 장면 분할(이미지용)과 독립적으로 사용됨
+ */
+export const splitBySentenceEndings = (text: string): string[] => {
+  if (!text.trim()) return [];
+
+  // 1순위: 구두점 (.!?。！？) 뒤에서 분할
+  // 2순위: 한국어 종결어미 + 공백/줄바꿈에서 분할
+  const KOREAN_ENDINGS = /(?<=(?:습니다|합니다|됩니다|입니다|었습니다|였습니다|하세요|으세요|세요|어요|아요|해요|이에요|예요|잖아요|더라고요|거든요|네요|군요|이죠|거죠|죠|요|다|까))[.!?。！？]?\s+/g;
+  const PUNCTUATION = /(?<=[.!?。！？])\s+/g;
+
+  // 먼저 줄바꿈으로 단락 분리
+  const paragraphs = text.split(/\n+/).filter(p => p.trim());
+  const sentences: string[] = [];
+
+  for (const para of paragraphs) {
+    // 구두점 분할 시도
+    let parts = para.split(PUNCTUATION).filter(s => s.trim());
+    if (parts.length <= 1) {
+      // 구두점 없으면 종결어미 분할 시도
+      parts = para.split(KOREAN_ENDINGS).filter(s => s.trim());
+    }
+    if (parts.length <= 1) {
+      // 종결어미도 없으면 그대로 유지
+      sentences.push(para.trim());
+    } else {
+      sentences.push(...parts.map(s => s.trim()).filter(s => s));
+    }
+  }
+
+  // 5자 미만 문장은 이전 문장에 병합
+  const merged: string[] = [];
+  for (const s of sentences) {
+    if (s.length < 5 && merged.length > 0) {
+      merged[merged.length - 1] += ' ' + s;
+    } else {
+      merged.push(s);
+    }
+  }
+
+  return merged.length > 0 ? merged : [text.trim()];
+};
+
+/**
+ * 긴 텍스트를 TTS 생성용으로 문장 경계에서 분할
+ * ElevenLabs 5000자 제한, 기타 엔진의 안정성을 위해 사용
+ */
+export const splitTextForTTS = (text: string, maxChars: number = TTS_MAX_CHUNK_CHARS): string[] => {
+    if (text.length <= maxChars) return [text];
+
+    const chunks: string[] = [];
+    let remaining = text;
+
+    while (remaining.length > 0) {
+        if (remaining.length <= maxChars) {
+            chunks.push(remaining);
+            break;
+        }
+
+        const searchRange = remaining.slice(0, maxChars);
+        let splitIdx = -1;
+
+        // 1순위: 문장 종결 부호 (.!?。！？) 뒤
+        const sentenceEndRegex = /[.!?。！？]\s/g;
+        let match;
+        while ((match = sentenceEndRegex.exec(searchRange)) !== null) {
+            splitIdx = match.index + match[0].length;
+        }
+
+        // 2순위: 쉼표/구분자 뒤
+        if (splitIdx === -1) {
+            const commaRegex = /[,，、]\s/g;
+            while ((match = commaRegex.exec(searchRange)) !== null) {
+                splitIdx = match.index + match[0].length;
+            }
+        }
+
+        // 3순위: 공백
+        if (splitIdx === -1) {
+            splitIdx = searchRange.lastIndexOf(' ');
+            if (splitIdx > 0) splitIdx += 1;
+        }
+
+        // 4순위: 줄바꿈
+        if (splitIdx <= 0) {
+            splitIdx = searchRange.lastIndexOf('\n');
+            if (splitIdx > 0) splitIdx += 1;
+        }
+
+        // 최후 수단: 강제 분할
+        if (splitIdx <= 0) {
+            splitIdx = maxChars;
+        }
+
+        chunks.push(remaining.slice(0, splitIdx).trim());
+        remaining = remaining.slice(splitIdx).trim();
+    }
+
+    return chunks.filter(c => c.length > 0);
+};
+
+// === TYPES ===
+
+export interface VoiceOption {
+    id: string;
+    name: string;
+    language: TTSLanguage;
+    gender: 'male' | 'female' | 'neutral';
+    engine: TTSEngine;
+    preview?: string;      // 미리듣기 URL
+    description?: string;  // 음성 설명 (예: "Warm, Captivating Storyteller")
+    accent?: string;       // 악센트/국적 (예: "american", "british")
+}
+
+export interface TTSResult {
+    audioUrl: string;
+    duration?: number; // 초
+    format: 'mp3' | 'wav' | 'opus';
+}
+
+// === VOICE CATALOGS ===
+
+/* [Microsoft Edge TTS 비활성화] — ElevenLabs Dialogue V3로 대체됨
+const MICROSOFT_VOICES_FALLBACK: VoiceOption[] = [
+    { id: 'ko-KR-SunHiNeural', name: '선희 (여성, 표준)', language: 'ko', gender: 'female', engine: 'microsoft' },
+    { id: 'ko-KR-InJoonNeural', name: '인준 (남성, 표준)', language: 'ko', gender: 'male', engine: 'microsoft' },
+    { id: 'en-US-JennyNeural', name: 'Jenny (Female)', language: 'en', gender: 'female', engine: 'microsoft' },
+    { id: 'en-US-GuyNeural', name: 'Guy (Male)', language: 'en', gender: 'male', engine: 'microsoft' },
+    { id: 'ja-JP-NanamiNeural', name: '七海 (여성)', language: 'ja', gender: 'female', engine: 'microsoft' },
+];
+
+export const getSystemMicrosoftVoices = (): VoiceOption[] => {
+    if (typeof window === 'undefined' || !window.speechSynthesis) return MICROSOFT_VOICES_FALLBACK;
+    const sysVoices = window.speechSynthesis.getVoices();
+    if (sysVoices.length === 0) return MICROSOFT_VOICES_FALLBACK;
+    const result: VoiceOption[] = [];
+    const seen = new Set<string>();
+    for (const v of sysVoices) {
+        let lang: TTSLanguage | null = null;
+        const loc = v.lang.replace('_', '-');
+        if (loc === 'ko-KR' || loc === 'ko') lang = 'ko';
+        else if (loc === 'en-US' || loc === 'en') lang = 'en';
+        else if (loc === 'ja-JP' || loc === 'ja') lang = 'ja';
+        if (!lang) continue;
+        const key = v.voiceURI || v.name;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const gender: 'male' | 'female' | 'neutral' =
+            /yuna|sunhi|jimin|seo|yujin|jenny|aria|samantha|nanami|kyoko|karen|fiona|moira|victoria|zoe|susan|tessa|allison|ava|joana|female|여/i.test(v.name) ? 'female' :
+            /injoon|bong|gook|guy|davis|tony|keita|daniel|tom|fred|ralph|alex|lee|otoya|male|남/i.test(v.name) ? 'male' : 'neutral';
+        result.push({ id: key, name: v.name, language: lang, gender, engine: 'microsoft' as any });
+    }
+    return result.length > 0 ? result : MICROSOFT_VOICES_FALLBACK;
+};
+*/
+
+/**
+ * ElevenLabs Multilingual v2 음성 목록 (Kie API 경유)
+ * 모든 음성은 29개 언어를 자동 감지하여 지원 (한/영/일 포함)
+ * voice 파라미터에 음성 이름 문자열을 전달
+ */
+/* [ElevenLabs 비활성화] ELEVENLABS_VOICES 배열 — 복원 시 주석 해제
+const ELEVENLABS_VOICES: VoiceOption[] = [
+    // 공식 프리메이드 음성 (다국어)
+    { id: 'Rachel', name: 'Rachel (여성, 차분)', language: 'ko', gender: 'female', engine: 'elevenlabs', preview: '/audio/samples/elevenlabs/Rachel_ko.mp3' },
+    { id: 'Sarah', name: 'Sarah (여성, 부드러움)', language: 'ko', gender: 'female', engine: 'elevenlabs', preview: '/audio/samples/elevenlabs/Sarah_ko.mp3' },
+    { id: 'Aria', name: 'Aria (여성, 표준)', language: 'ko', gender: 'female', engine: 'elevenlabs', preview: '/audio/samples/elevenlabs/Aria_ko.mp3' },
+    { id: 'Charlotte', name: 'Charlotte (여성, 뉴스)', language: 'ko', gender: 'female', engine: 'elevenlabs', preview: '/audio/samples/elevenlabs/Charlotte_ko.mp3' },
+    { id: 'Laura', name: 'Laura (여성, 밝음)', language: 'ko', gender: 'female', engine: 'elevenlabs', preview: '/audio/samples/elevenlabs/Laura_ko.mp3' },
+    { id: 'Lily', name: 'Lily (여성, 내레이션)', language: 'ko', gender: 'female', engine: 'elevenlabs', preview: '/audio/samples/elevenlabs/Lily_ko.mp3' },
+    { id: 'Alice', name: 'Alice (여성, 또렷)', language: 'ko', gender: 'female', engine: 'elevenlabs', preview: '/audio/samples/elevenlabs/Alice_ko.mp3' },
+    { id: 'Matilda', name: 'Matilda (여성, 따뜻)', language: 'ko', gender: 'female', engine: 'elevenlabs', preview: '/audio/samples/elevenlabs/Matilda_ko.mp3' },
+    { id: 'Jessica', name: 'Jessica (여성, 밝음/유쾌)', language: 'ko', gender: 'female', engine: 'elevenlabs', preview: '/audio/samples/elevenlabs/Jessica_ko.mp3' },
+    { id: 'Roger', name: 'Roger (남성, 안정)', language: 'ko', gender: 'male', engine: 'elevenlabs', preview: '/audio/samples/elevenlabs/Roger_ko.mp3' },
+    { id: 'George', name: 'George (남성, 따뜻)', language: 'ko', gender: 'male', engine: 'elevenlabs', preview: '/audio/samples/elevenlabs/George_ko.mp3' },
+    { id: 'Charlie', name: 'Charlie (남성, 캐주얼)', language: 'ko', gender: 'male', engine: 'elevenlabs', preview: '/audio/samples/elevenlabs/Charlie_ko.mp3' },
+    { id: 'Callum', name: 'Callum (남성, 허스키)', language: 'ko', gender: 'male', engine: 'elevenlabs', preview: '/audio/samples/elevenlabs/Callum_ko.mp3' },
+    { id: 'Liam', name: 'Liam (남성, 에너지)', language: 'ko', gender: 'male', engine: 'elevenlabs', preview: '/audio/samples/elevenlabs/Liam_ko.mp3' },
+    { id: 'Will', name: 'Will (남성, 젊음)', language: 'ko', gender: 'male', engine: 'elevenlabs', preview: '/audio/samples/elevenlabs/Will_ko.mp3' },
+    { id: 'Eric', name: 'Eric (남성, 친근)', language: 'ko', gender: 'male', engine: 'elevenlabs', preview: '/audio/samples/elevenlabs/Eric_ko.mp3' },
+    { id: 'Chris', name: 'Chris (남성, 매력적)', language: 'ko', gender: 'male', engine: 'elevenlabs', preview: '/audio/samples/elevenlabs/Chris_ko.mp3' },
+    { id: 'Brian', name: 'Brian (남성, 깊음/편안)', language: 'ko', gender: 'male', engine: 'elevenlabs', preview: '/audio/samples/elevenlabs/Brian_ko.mp3' },
+    { id: 'Daniel', name: 'Daniel (남성, 영국식)', language: 'ko', gender: 'male', engine: 'elevenlabs', preview: '/audio/samples/elevenlabs/Daniel_ko.mp3' },
+    { id: 'River', name: 'River (중성, 내추럴)', language: 'ko', gender: 'neutral', engine: 'elevenlabs', preview: '/audio/samples/elevenlabs/River_ko.mp3' },
+    { id: 'Bill', name: 'Bill (남성, 성숙)', language: 'ko', gender: 'male', engine: 'elevenlabs', preview: '/audio/samples/elevenlabs/Bill_ko.mp3' },
+    // 커뮤니티 인기 음성 (ID로 접근)
+    { id: 'BIvP0GN1cAtSRTxNHnWS', name: 'Ellen (여성, 진지/자신감)', language: 'ko', gender: 'female', engine: 'elevenlabs', preview: '/audio/samples/elevenlabs/BIvP0GN1cAtSRTxNHnWS_ko.mp3' },
+    { id: 'aMSt68OGf4xUZAnLpTU8', name: 'Juniper (여성, 전문적)', language: 'ko', gender: 'female', engine: 'elevenlabs', preview: '/audio/samples/elevenlabs/aMSt68OGf4xUZAnLpTU8_ko.mp3' },
+    { id: 'RILOU7YmBhvwJGDGjNmP', name: 'Jane (여성, 오디오북)', language: 'ko', gender: 'female', engine: 'elevenlabs', preview: '/audio/samples/elevenlabs/RILOU7YmBhvwJGDGjNmP_ko.mp3' },
+    { id: 'tnSpp4vdxKPjI9w0GnoV', name: 'Hope (여성, 밝음/명확)', language: 'ko', gender: 'female', engine: 'elevenlabs', preview: '/audio/samples/elevenlabs/tnSpp4vdxKPjI9w0GnoV_ko.mp3' },
+    { id: 'NNl6r8mD7vthiJatiJt1', name: 'Bradford (남성, 표현력)', language: 'ko', gender: 'male', engine: 'elevenlabs', preview: '/audio/samples/elevenlabs/NNl6r8mD7vthiJatiJt1_ko.mp3' },
+    { id: 'KoQQbl9zjAdLgKZjm8Ol', name: 'Pro Narrator (남성, 스토리텔링)', language: 'ko', gender: 'male', engine: 'elevenlabs', preview: '/audio/samples/elevenlabs/KoQQbl9zjAdLgKZjm8Ol_ko.mp3' },
+    { id: 'DGTOOUoGpoP6UZ9uSWfA', name: 'Celian (남성, 다큐 내레이터)', language: 'ko', gender: 'male', engine: 'elevenlabs', preview: '/audio/samples/elevenlabs/DGTOOUoGpoP6UZ9uSWfA_ko.mp3' },
+    { id: 'hpp4J3VqNfWAUOO0d1Us', name: 'Bella (여성, 프로/따뜻)', language: 'ko', gender: 'female', engine: 'elevenlabs', preview: '/audio/samples/elevenlabs/hpp4J3VqNfWAUOO0d1Us_ko.mp3' },
+    { id: 'pNInz6obpgDQGcFmaJgB', name: 'Adam (남성, 강인/단호)', language: 'ko', gender: 'male', engine: 'elevenlabs', preview: '/audio/samples/elevenlabs/pNInz6obpgDQGcFmaJgB_ko.mp3' },
+];
+*/
+
+/**
+ * Supertonic 2 음성 목록 (브라우저 로컬 실행)
+ * Supertone 사의 오픈소스 TTS 모델 — ONNX 런타임 기반
+ * 모든 음성이 한/영/프/스/포 5개 언어를 지원 (언어 필터 불필요)
+ */
+const SUPERTONIC_VOICES: VoiceOption[] = [
+    // Female (F1~F5)
+    { id: 'F1', name: '수아', language: 'ko', gender: 'female', engine: 'supertonic', description: '차분하고 안정적인 낮은 톤' },
+    { id: 'F2', name: '하늘', language: 'ko', gender: 'female', engine: 'supertonic', description: '밝고 쾌활한 발랄한 목소리' },
+    { id: 'F3', name: '서연', language: 'ko', gender: 'female', engine: 'supertonic', description: '프로 아나운서, 또렷한 발음' },
+    { id: 'F4', name: '지현', language: 'ko', gender: 'female', engine: 'supertonic', description: '또렷하고 자신감 있는 표현력' },
+    { id: 'F5', name: '은서', language: 'ko', gender: 'female', engine: 'supertonic', description: '다정하고 부드러운 치유 목소리' },
+    // Male (M1~M5)
+    { id: 'M1', name: '준서', language: 'ko', gender: 'male', engine: 'supertonic', description: '활기차고 자신감 넘치는 에너지' },
+    { id: 'M2', name: '민호', language: 'ko', gender: 'male', engine: 'supertonic', description: '깊고 묵직한 진지하고 차분한' },
+    { id: 'M3', name: '현우', language: 'ko', gender: 'male', engine: 'supertonic', description: '세련된 권위감, 신뢰를 주는' },
+    { id: 'M4', name: '지훈', language: 'ko', gender: 'male', engine: 'supertonic', description: '부드럽고 중립적, 친근한 톤' },
+    { id: 'M5', name: '도윤', language: 'ko', gender: 'male', engine: 'supertonic', description: '따뜻하고 차분한 내레이션' },
+];
+
+// === TTS GENERATION FUNCTIONS ===
+
+/**
+ * ElevenLabs Multilingual v2 TTS 생성 (Kie API 경유)
+ * 세계 최고 수준의 AI 음성 합성 — 29개 언어 자동 감지
+ * Kie API의 elevenlabs/text-to-speech-multilingual-v2 모델 사용
+ *
+ * @param text 텍스트 (최대 5000자)
+ * @param voiceId 음성 이름 또는 ID (예: "Sarah", "BIvP0GN1cAtSRTxNHnWS")
+ * @param speed 속도 0.7~1.2 (기본 1.0)
+ * @param stability 안정성 0~1 (기본 0.5, 낮을수록 감정적)
+ * @param similarityBoost 유사도 0~1 (기본 0.75)
+ * @param style 스타일 강조 0~1 (기본 0, 높을수록 표현력 증가. 0 권장)
+ * @param useSpeakerBoost 스피커 부스트 (기본 true, 음성 선명도 향상)
+ */
+/* [ElevenLabs 비활성화] generateElevenLabsTTS 함수 — 복원 시 주석 해제
+export const generateElevenLabsTTS = async (
+    text: string,
+    voiceId: string,
+    speed: number = 1.0,
+    stability: number = 0.5,
+    similarityBoost: number = 0.75,
+    style: number = 0,
+    useSpeakerBoost: boolean = true
+): Promise<TTSResult> => {
+    const apiKey = getKieKey();
+    if (!apiKey) throw new Error('Kie API 키가 설정되지 않았습니다.');
+    if (!text.trim()) throw new Error('TTS 텍스트가 비어있습니다.');
+
+    // 5000자 초과 시 자동 청킹 → 개별 생성 → 오디오 병합
+    if (text.length > TTS_MAX_CHUNK_CHARS) {
+        const chunks = splitTextForTTS(text, TTS_MAX_CHUNK_CHARS);
+        logger.info('[TTS] ElevenLabs 자동 청킹', { totalLength: text.length, chunkCount: chunks.length });
+
+        const audioUrls: string[] = [];
+        for (let i = 0; i < chunks.length; i++) {
+            logger.info(`[TTS] 청크 ${i + 1}/${chunks.length} 생성 중 (${chunks[i].length}자)`);
+            const chunkResult = await generateElevenLabsSingleChunk(
+                chunks[i], voiceId, speed, stability, similarityBoost, style, useSpeakerBoost, apiKey
+            );
+            audioUrls.push(chunkResult.audioUrl);
+        }
+
+        if (audioUrls.length === 1) return { audioUrl: audioUrls[0], format: 'mp3' };
+        const mergedUrl = await mergeAudioFiles(audioUrls);
+        logger.success('[TTS] ElevenLabs 청크 병합 완료', { chunks: chunks.length });
+        return { audioUrl: mergedUrl, format: 'wav' };
+    }
+
+    return generateElevenLabsSingleChunk(text, voiceId, speed, stability, similarityBoost, style, useSpeakerBoost, apiKey);
+};
+*/
+
+/* [ElevenLabs 비활성화] generateElevenLabsSingleChunk 함수 — 복원 시 주석 해제
+const generateElevenLabsSingleChunk = async (
+    text: string,
+    voiceId: string,
+    speed: number,
+    stability: number,
+    similarityBoost: number,
+    style: number,
+    useSpeakerBoost: boolean,
+    apiKey: string
+): Promise<TTSResult> => {
+    const clampedSpeed = Math.max(0.7, Math.min(1.2, speed));
+
+    logger.info('[TTS] ElevenLabs 생성 요청 (Kie 경유)', { voiceId, textLength: text.length, speed: clampedSpeed });
+
+    const response = await monitoredFetch(`${KIE_BASE_URL}/jobs/createTask`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+            model: 'elevenlabs/text-to-speech-multilingual-v2',
+            input: {
+                text,
+                voice: voiceId,
+                stability,
+                similarity_boost: similarityBoost,
+                style: Math.max(0, Math.min(1, style)),
+                use_speaker_boost: useSpeakerBoost,
+                speed: clampedSpeed,
+                timestamps: false,
+                previous_text: '',
+                next_text: '',
+                language_code: ''
+            }
+        })
+    });
+
+    if (!response.ok) {
+        const errorText = await response.text();
+        if (response.status === 402) throw new Error('Kie 잔액 부족: 크레딧을 충전해주세요.');
+        if (response.status === 429) throw new Error('Kie 요청 제한 초과: 잠시 후 다시 시도해주세요.');
+        throw new Error(`ElevenLabs TTS 생성 오류 (${response.status}): ${errorText}`);
+    }
+
+    const data = await response.json();
+    const taskId = data.data?.taskId;
+    if (!taskId) throw new Error('ElevenLabs TTS 태스크 ID를 받지 못했습니다.');
+
+    const audioUrl = await pollKieTtsTask(taskId, apiKey);
+
+    logger.success('[TTS] ElevenLabs 생성 완료 (Kie 경유)', { voiceId });
+    return { audioUrl, format: 'mp3' };
+};
+*/
+
+/**
+ * Supertonic 2 TTS 생성 (브라우저 로컬)
+ * ONNX 런타임 기반 — API 키 불필요, 네트워크 비용 없음
+ */
+export const generateSupertonicTTS = async (
+    text: string,
+    voiceId: string,
+    language: TTSLanguage = 'ko',
+    speed: number = 1.0
+): Promise<TTSResult> => {
+    if (!text.trim()) throw new Error('TTS 텍스트가 비어있습니다.');
+
+    logger.info('[TTS] Supertonic 2 생성 요청 (로컬)', { voiceId, language, textLength: text.length, speed });
+
+    // Supertonic 2는 한/영/프/스/포 5개 언어 지원. 일본어 미지원 → 한국어로 폴백 (영어보다 발음 체계가 유사)
+    const langMap: Record<TTSLanguage, string> = {
+        'ko': 'ko',
+        'en': 'en',
+        'ja': 'ko'
+    };
+
+    const result = await generateSupertonicSpeech(text, langMap[language] || 'ko', voiceId, speed);
+
+    logger.success('[TTS] Supertonic 2 생성 완료 (로컬)', { voiceId });
+    return { audioUrl: result.audioUrl, format: result.format as 'wav' };
+};
+
+// === POLLING ===
+
+/**
+ * Kie TTS 태스크 폴링
+ * 표준 Kie 폴링 패턴 사용 (recordInfo 엔드포인트)
+ */
+const pollKieTtsTask = async (taskId: string, apiKey: string, maxAttempts: number = 60): Promise<string> => {
+    logger.info('[TTS] 폴링 시작', { taskId });
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        // 대기: 초기 2초, 이후 3초
+        const delay = attempt < 5 ? 2000 : 3000;
+        await new Promise(resolve => setTimeout(resolve, delay));
+
+        const response = await monitoredFetch(
+            `${KIE_BASE_URL}/jobs/recordInfo?taskId=${taskId}`,
+            {
+                headers: { 'Authorization': `Bearer ${apiKey}` }
+            }
+        );
+
+        if (!response.ok) {
+            if (response.status === 429) {
+                // Rate limit — 5초 대기 후 재시도
+                await new Promise(resolve => setTimeout(resolve, 5000));
+                continue;
+            }
+            throw new Error(`TTS 폴링 오류 (${response.status})`);
+        }
+
+        const data = await response.json();
+        const state = data.data?.state;
+
+        if (state === 'success') {
+            // 결과 URL 추출 (다양한 응답 형식 지원)
+            const resultJson = data.data?.resultJson;
+            let audioUrl: string | undefined;
+
+            if (typeof resultJson === 'string') {
+                try {
+                    const parsed = JSON.parse(resultJson);
+                    audioUrl = parsed.resultUrls?.[0] || parsed.audio_url || parsed.url;
+                } catch {
+                    audioUrl = resultJson;
+                }
+            } else if (resultJson) {
+                audioUrl = resultJson.resultUrls?.[0] || resultJson.audio_url || resultJson.url;
+            }
+
+            if (!audioUrl) throw new Error('TTS 결과에서 오디오 URL을 찾을 수 없습니다.');
+
+            logger.success('[TTS] 폴링 완료', { taskId, attempt });
+            return audioUrl;
+        }
+
+        if (state === 'fail') {
+            const failMsg = data.data?.failMsg || '알 수 없는 오류';
+            throw new Error(`TTS 생성 실패: ${failMsg}`);
+        }
+
+        // waiting, queuing, generating → 계속 폴링
+    }
+
+    throw new Error(`TTS 생성 시간 초과 (${maxAttempts}회 폴링 실패)`);
+};
+
+// === VOICE LIST ===
+
+/**
+ * 엔진+언어별 사용 가능한 음성 목록 반환
+ */
+export const getAvailableVoices = (
+    engine: TTSEngine,
+    language?: TTSLanguage
+): VoiceOption[] => {
+    let voices: VoiceOption[];
+
+    switch (engine) {
+        /* [Microsoft Edge TTS 비활성화] — ElevenLabs Dialogue V3로 대체됨
+        case 'microsoft':
+            voices = getSystemMicrosoftVoices();
+            break;
+        */
+        case 'elevenlabs':
+            // ElevenLabs 음성 목록은 elevenlabsService.ts에서 관리
+            // VoiceStudio에서 직접 ELEVENLABS_VOICES를 사용
+            voices = [];
+            break;
+        case 'supertonic':
+            voices = SUPERTONIC_VOICES;
+            break;
+        default:
+            voices = [];
+    }
+
+    // Supertonic은 다국어 지원이므로 언어 필터 미적용
+    if (language && engine !== 'supertonic') {
+        voices = voices.filter(v => v.language === language);
+    }
+
+    return voices;
+};
+
+// === AUDIO MERGE ===
+
+/**
+ * Web Audio API를 사용하여 여러 오디오 파일을 하나로 병합
+ * @param audioUrls 병합할 오디오 URL 배열 (순서대로 이어붙임)
+ * @returns 병합된 오디오 Blob URL
+ */
+export const mergeAudioFiles = async (audioUrls: string[]): Promise<string> => {
+    if (audioUrls.length === 0) throw new Error('병합할 오디오 파일이 없습니다.');
+    if (audioUrls.length === 1) return audioUrls[0];
+
+    logger.info('[TTS] 오디오 병합 시작', { fileCount: audioUrls.length });
+
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    const audioContext = new AudioCtx();
+
+    try {
+        // 모든 오디오 파일 다운로드 및 디코딩
+        const buffers: AudioBuffer[] = [];
+
+        for (const url of audioUrls) {
+            const response = await monitoredFetch(url);
+            if (!response.ok) {
+                logger.warn('[TTS] 오디오 파일 다운로드 실패, 건너뜀', { url });
+                continue;
+            }
+            const arrayBuffer = await response.arrayBuffer();
+            const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+            buffers.push(audioBuffer);
+        }
+
+        if (buffers.length === 0) throw new Error('디코딩된 오디오 버퍼가 없습니다.');
+
+        // 총 길이 계산
+        const totalLength = buffers.reduce((sum, buf) => sum + buf.length, 0);
+        const sampleRate = buffers[0].sampleRate;
+        const numberOfChannels = Math.max(...buffers.map(b => b.numberOfChannels));
+
+        // 병합 버퍼 생성
+        const mergedBuffer = audioContext.createBuffer(numberOfChannels, totalLength, sampleRate);
+
+        let offset = 0;
+        for (const buffer of buffers) {
+            for (let channel = 0; channel < numberOfChannels; channel++) {
+                const channelData = mergedBuffer.getChannelData(channel);
+                // 소스 버퍼의 채널이 부족하면 첫 번째 채널 사용
+                const sourceChannel = Math.min(channel, buffer.numberOfChannels - 1);
+                channelData.set(buffer.getChannelData(sourceChannel), offset);
+            }
+            offset += buffer.length;
+        }
+
+        // WAV 인코딩
+        const wavBlob = audioBufferToWav(mergedBuffer);
+        const mergedUrl = URL.createObjectURL(wavBlob);
+
+        logger.success('[TTS] 오디오 병합 완료', {
+            fileCount: buffers.length,
+            totalDuration: `${(totalLength / sampleRate).toFixed(1)}초`
+        });
+
+        return mergedUrl;
+    } finally {
+        await audioContext.close();
+    }
+};
+
+/**
+ * AudioBuffer → WAV Blob 변환
+ */
+export const audioBufferToWav = (buffer: AudioBuffer): Blob => {
+    const numChannels = buffer.numberOfChannels;
+    const sampleRate = buffer.sampleRate;
+    const format = 1; // PCM
+    const bitDepth = 16;
+
+    const bytesPerSample = bitDepth / 8;
+    const blockAlign = numChannels * bytesPerSample;
+    const dataLength = buffer.length * blockAlign;
+    const headerLength = 44;
+    const totalLength = headerLength + dataLength;
+
+    const arrayBuffer = new ArrayBuffer(totalLength);
+    const view = new DataView(arrayBuffer);
+
+    // WAV 헤더 작성
+    const writeString = (offset: number, str: string) => {
+        for (let i = 0; i < str.length; i++) {
+            view.setUint8(offset + i, str.charCodeAt(i));
+        }
+    };
+
+    writeString(0, 'RIFF');
+    view.setUint32(4, totalLength - 8, true);
+    writeString(8, 'WAVE');
+    writeString(12, 'fmt ');
+    view.setUint32(16, 16, true); // fmt chunk size
+    view.setUint16(20, format, true);
+    view.setUint16(22, numChannels, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * blockAlign, true);
+    view.setUint16(32, blockAlign, true);
+    view.setUint16(34, bitDepth, true);
+    writeString(36, 'data');
+    view.setUint32(40, dataLength, true);
+
+    // 인터리빙된 PCM 데이터
+    let offset = headerLength;
+    const channels: Float32Array[] = [];
+    for (let ch = 0; ch < numChannels; ch++) {
+        channels.push(buffer.getChannelData(ch));
+    }
+
+    for (let i = 0; i < buffer.length; i++) {
+        for (let ch = 0; ch < numChannels; ch++) {
+            const sample = Math.max(-1, Math.min(1, channels[ch][i]));
+            const intSample = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+            view.setInt16(offset, intSample, true);
+            offset += 2;
+        }
+    }
+
+    return new Blob([arrayBuffer], { type: 'audio/wav' });
+};
+
+/**
+ * 오디오를 지정 시간(초) 기준으로 두 개의 WAV blob URL로 분할
+ * 자막 분리 시 나레이션 오디오 싱크를 위해 사용
+ */
+export const splitAudioAtTime = async (
+  audioUrl: string,
+  splitTimeSeconds: number,
+): Promise<[string, string] | null> => {
+  try {
+    const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    const ctx = new AudioCtx();
+    const response = await fetch(audioUrl);
+    const arrayBuffer = await response.arrayBuffer();
+    const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+
+    const sampleRate = audioBuffer.sampleRate;
+    const numChannels = audioBuffer.numberOfChannels;
+    const splitSample = Math.min(
+      Math.max(0, Math.round(splitTimeSeconds * sampleRate)),
+      audioBuffer.length,
+    );
+
+    if (splitSample <= 0 || splitSample >= audioBuffer.length) {
+      ctx.close();
+      return null;
+    }
+
+    // 앞쪽 오디오
+    const buf1 = ctx.createBuffer(numChannels, splitSample, sampleRate);
+    for (let ch = 0; ch < numChannels; ch++) {
+      buf1.getChannelData(ch).set(audioBuffer.getChannelData(ch).subarray(0, splitSample));
+    }
+
+    // 뒤쪽 오디오
+    const remainingSamples = audioBuffer.length - splitSample;
+    const buf2 = ctx.createBuffer(numChannels, remainingSamples, sampleRate);
+    for (let ch = 0; ch < numChannels; ch++) {
+      buf2.getChannelData(ch).set(audioBuffer.getChannelData(ch).subarray(splitSample));
+    }
+
+    const blob1 = audioBufferToWav(buf1);
+    const blob2 = audioBufferToWav(buf2);
+    ctx.close();
+
+    return [URL.createObjectURL(blob1), URL.createObjectURL(blob2)];
+  } catch (e) {
+    console.warn('[splitAudioAtTime] Failed to split audio:', e);
+    return null;
+  }
+};

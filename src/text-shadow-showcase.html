@@ -1,0 +1,619 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Advanced Text-Shadow Effects Showcase</title>
+  <link rel="stylesheet" href="advanced-text-shadow-recipes.css">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background: #0a0a0a;
+      color: #ffffff;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      padding: 40px 20px;
+      line-height: 1.6;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 60px;
+    }
+
+    h1 {
+      font-size: 48px;
+      margin-bottom: 10px;
+      color: #00ffff;
+    }
+
+    .subtitle {
+      font-size: 18px;
+      color: #888;
+      margin-bottom: 30px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+      gap: 40px;
+      margin-bottom: 60px;
+    }
+
+    .effect-card {
+      background: linear-gradient(135deg, #1a1a1a 0%, #0d0d0d 100%);
+      border: 1px solid #222;
+      border-radius: 12px;
+      padding: 30px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 280px;
+      transition: border-color 0.3s ease;
+    }
+
+    .effect-card:hover {
+      border-color: #444;
+    }
+
+    .effect-name {
+      font-size: 14px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      color: #888;
+      margin-bottom: 20px;
+      text-align: center;
+    }
+
+    .effect-preview {
+      font-size: 56px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-align: center;
+      margin-bottom: 15px;
+      min-height: 90px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .effect-code {
+      font-size: 11px;
+      color: #666;
+      background: #000;
+      padding: 12px;
+      border-radius: 6px;
+      border: 1px solid #222;
+      max-height: 80px;
+      overflow-y: auto;
+      width: 100%;
+      font-family: 'Monaco', 'Courier New', monospace;
+      line-height: 1.3;
+    }
+
+    .effect-code::-webkit-scrollbar {
+      width: 4px;
+    }
+
+    .effect-code::-webkit-scrollbar-track {
+      background: #000;
+    }
+
+    .effect-code::-webkit-scrollbar-thumb {
+      background: #333;
+      border-radius: 2px;
+    }
+
+    /* Individual effect classes inline for demo */
+    .demo-1 {
+      color: #ffd700;
+      text-shadow:
+        2px 2px 0px rgba(139, 69, 19, 0.8),
+        4px 4px 0px rgba(101, 50, 15, 0.7),
+        -1px -1px 3px rgba(255, 250, 205, 0.6),
+        0px 0px 8px rgba(255, 215, 0, 0.5),
+        0px 0px 16px rgba(218, 165, 32, 0.3),
+        6px 6px 20px rgba(0, 0, 0, 0.6);
+    }
+
+    .demo-2 {
+      color: #e8e8e8;
+      text-shadow:
+        1px 1px 0px rgba(50, 50, 50, 0.9),
+        3px 3px 0px rgba(30, 30, 30, 0.8),
+        -2px -2px 4px rgba(255, 255, 255, 0.5),
+        0px 0px 6px rgba(200, 200, 200, 0.4),
+        0px 0px 12px rgba(150, 180, 200, 0.25),
+        4px 4px 16px rgba(0, 0, 0, 0.7);
+    }
+
+    .demo-3 {
+      color: #f4a4d4;
+      text-shadow:
+        2px 2px 0px rgba(139, 69, 69, 0.8),
+        4px 4px 0px rgba(101, 50, 50, 0.7),
+        -1px -1px 3px rgba(255, 228, 225, 0.6),
+        0px 0px 8px rgba(255, 182, 193, 0.5),
+        0px 0px 14px rgba(219, 112, 147, 0.3),
+        5px 5px 18px rgba(0, 0, 0, 0.6);
+    }
+
+    .demo-4 {
+      color: #cd7f32;
+      text-shadow:
+        2px 2px 0px rgba(70, 50, 30, 0.85),
+        4px 4px 0px rgba(50, 35, 20, 0.75),
+        -1px -1px 2px rgba(0, 100, 100, 0.4),
+        0px 0px 7px rgba(184, 115, 51, 0.45),
+        0px 0px 12px rgba(64, 150, 150, 0.2),
+        6px 6px 22px rgba(0, 0, 0, 0.7);
+    }
+
+    .demo-5 {
+      color: #00ff88;
+      text-shadow:
+        0px 0px 4px rgba(0, 255, 136, 0.9),
+        0px 0px 10px rgba(0, 255, 136, 0.8),
+        0px 0px 20px rgba(0, 200, 100, 0.6),
+        0px 0px 30px rgba(0, 150, 80, 0.4),
+        0px 0px 50px rgba(0, 100, 60, 0.15),
+        0px 0px 8px rgba(255, 255, 255, 0.3);
+    }
+
+    .demo-6 {
+      color: #00ffff;
+      text-shadow:
+        3px 0px 0px rgba(0, 255, 255, 0.8),
+        -3px -2px 0px rgba(255, 0, 255, 0.8),
+        2px -3px 0px rgba(255, 255, 0, 0.6),
+        -2px 3px 4px rgba(0, 100, 255, 0.5),
+        0px 0px 12px rgba(0, 255, 255, 0.4),
+        0px 0px 8px rgba(255, 0, 255, 0.3);
+    }
+
+    .demo-7 {
+      color: #ffffff;
+      text-shadow:
+        -2px -2px 8px rgba(255, 0, 100, 0.5),
+        2px -2px 8px rgba(0, 100, 255, 0.5),
+        -2px 2px 8px rgba(0, 255, 100, 0.5),
+        2px 2px 8px rgba(255, 255, 0, 0.5),
+        0px 3px 8px rgba(255, 0, 255, 0.4),
+        3px 0px 8px rgba(0, 255, 255, 0.4),
+        0px 0px 15px rgba(255, 255, 255, 0.3);
+    }
+
+    .demo-8 {
+      color: #ffaa00;
+      text-shadow:
+        2px 3px 0px rgba(139, 0, 0, 0.8),
+        0px 6px 0px rgba(180, 50, 20, 0.7),
+        -3px -6px 8px rgba(255, 140, 0, 0.6),
+        0px -8px 12px rgba(255, 200, 0, 0.5),
+        2px -12px 16px rgba(255, 255, 100, 0.4),
+        0px 0px 25px rgba(255, 100, 0, 0.25);
+    }
+
+    .demo-9 {
+      color: #b4f8f8;
+      text-shadow:
+        2px 2px 0px rgba(30, 60, 100, 0.85),
+        4px 4px 0px rgba(20, 40, 80, 0.75),
+        -1px -1px 4px rgba(0, 255, 255, 0.6),
+        0px 0px 8px rgba(173, 216, 230, 0.5),
+        0px 0px 14px rgba(0, 200, 200, 0.3),
+        5px 5px 20px rgba(0, 20, 40, 0.6);
+    }
+
+    .demo-10 {
+      color: #00d4ff;
+      text-shadow:
+        0px 0px 6px rgba(0, 212, 255, 0.9),
+        -2px -1px 0px rgba(0, 255, 255, 0.7),
+        2px 1px 0px rgba(0, 150, 255, 0.7),
+        0px 0px 12px rgba(0, 212, 255, 0.7),
+        0px 0px 20px rgba(0, 150, 200, 0.5),
+        0px 0px 35px rgba(100, 200, 255, 0.2);
+    }
+
+    .demo-11 {
+      color: #4dd9ff;
+      text-shadow:
+        2px 2px 0px rgba(0, 50, 100, 0.9),
+        4px 4px 0px rgba(0, 40, 80, 0.8),
+        0px 0px 8px rgba(0, 255, 200, 0.6),
+        0px 0px 16px rgba(0, 200, 180, 0.45),
+        0px 0px 24px rgba(0, 150, 150, 0.3),
+        6px 6px 25px rgba(0, 20, 40, 0.7);
+    }
+
+    .demo-12 {
+      color: #ff9d5c;
+      text-shadow:
+        2px 2px 0px rgba(180, 80, 40, 0.8),
+        4px 4px 0px rgba(140, 50, 30, 0.7),
+        -1px -1px 4px rgba(255, 165, 0, 0.6),
+        0px 0px 10px rgba(255, 100, 60, 0.5),
+        0px 0px 16px rgba(200, 100, 150, 0.35),
+        0px 0px 24px rgba(100, 50, 150, 0.2);
+    }
+
+    .demo-13 {
+      color: #00ff99;
+      text-shadow:
+        2px 2px 0px rgba(0, 80, 40, 0.85),
+        4px 4px 0px rgba(0, 60, 50, 0.75),
+        0px 0px 8px rgba(0, 255, 127, 0.7),
+        0px 0px 14px rgba(0, 200, 150, 0.55),
+        0px 0px 20px rgba(150, 100, 200, 0.4),
+        0px 0px 32px rgba(100, 80, 180, 0.2);
+    }
+
+    .demo-14 {
+      color: #3d2817;
+      text-shadow:
+        -1px -1px 0px rgba(200, 150, 100, 0.7),
+        2px 2px 0px rgba(0, 0, 0, 0.9),
+        -2px 0px 3px rgba(100, 70, 40, 0.4),
+        1px 2px 2px rgba(80, 50, 30, 0.5),
+        0px -2px 4px rgba(220, 180, 140, 0.3),
+        3px 3px 12px rgba(0, 0, 0, 0.4);
+    }
+
+    .demo-15 {
+      color: #e0e0e0;
+      text-shadow:
+        3px 3px 0px rgba(0, 0, 0, 0.9),
+        5px 5px 0px rgba(0, 0, 0, 0.7),
+        -2px -2px 3px rgba(255, 255, 255, 0.5),
+        -1px -1px 0px rgba(255, 255, 255, 0.4),
+        0px 0px 8px rgba(200, 200, 200, 0.3),
+        6px 6px 18px rgba(0, 0, 0, 0.8);
+    }
+
+    .demo-16 {
+      color: #ff1a8f;
+      text-shadow:
+        -2px 0px 0px rgba(255, 255, 0, 0.9),
+        2px 0px 0px rgba(0, 0, 255, 0.9),
+        0px -2px 0px rgba(255, 200, 0, 0.8),
+        0px 3px 0px rgba(0, 0, 0, 0.8),
+        0px 0px 8px rgba(255, 100, 200, 0.6),
+        1px 1px 4px rgba(255, 255, 0, 0.4);
+    }
+
+    .demo-17 {
+      color: #e8d5b7;
+      text-shadow:
+        1px 2px 0px rgba(50, 50, 50, 0.8),
+        2px 3px 0px rgba(30, 30, 30, 0.7),
+        -1px -1px 3px rgba(200, 180, 150, 0.4),
+        0px 0px 6px rgba(150, 130, 100, 0.35),
+        3px 3px 8px rgba(50, 50, 50, 0.5),
+        4px 4px 15px rgba(0, 0, 0, 0.6);
+    }
+
+    .demo-18 {
+      color: #ff69f0;
+      text-shadow:
+        2px 2px 0px rgba(200, 100, 150, 0.8),
+        4px 4px 0px rgba(150, 60, 120, 0.7),
+        -1px -1px 3px rgba(255, 200, 220, 0.5),
+        0px 0px 8px rgba(255, 150, 200, 0.5),
+        0px 0px 16px rgba(255, 100, 180, 0.3),
+        5px 5px 20px rgba(100, 20, 60, 0.4);
+    }
+
+    .demo-19 {
+      color: #c0c0c0;
+      text-shadow:
+        1px 1px 0px rgba(0, 0, 0, 0.7),
+        0px 0px 4px rgba(200, 200, 200, 0.25),
+        0px 0px 8px rgba(180, 180, 180, 0.12),
+        2px 2px 6px rgba(0, 0, 0, 0.4);
+    }
+
+    .demo-20 {
+      color: #00d9ff;
+      text-shadow:
+        1px 1px 0px rgba(0, 150, 200, 0.9),
+        2px 2px 0px rgba(0, 120, 180, 0.85),
+        3px 3px 0px rgba(0, 100, 160, 0.8),
+        4px 4px 0px rgba(0, 80, 140, 0.75),
+        5px 5px 0px rgba(0, 60, 120, 0.7),
+        6px 6px 0px rgba(0, 40, 100, 0.65),
+        7px 7px 0px rgba(0, 20, 80, 0.6),
+        8px 8px 0px rgba(0, 0, 60, 0.5),
+        0px 0px 12px rgba(0, 212, 255, 0.5),
+        10px 10px 30px rgba(0, 0, 0, 0.9);
+    }
+
+    .section-title {
+      font-size: 28px;
+      font-weight: 700;
+      margin: 60px 0 30px;
+      color: #00ffff;
+      border-bottom: 2px solid #222;
+      padding-bottom: 15px;
+    }
+
+    .info-box {
+      background: rgba(0, 255, 255, 0.05);
+      border-left: 4px solid #00ffff;
+      padding: 20px;
+      margin: 40px 0;
+      border-radius: 6px;
+      font-size: 14px;
+      line-height: 1.8;
+    }
+
+    .code-block {
+      background: #000;
+      border: 1px solid #222;
+      border-radius: 6px;
+      padding: 15px;
+      margin: 15px 0;
+      font-family: 'Monaco', 'Courier New', monospace;
+      font-size: 12px;
+      color: #0f0;
+      overflow-x: auto;
+    }
+
+    footer {
+      text-align: center;
+      margin-top: 80px;
+      padding-top: 40px;
+      border-top: 1px solid #222;
+      color: #666;
+      font-size: 12px;
+    }
+
+    @media (max-width: 768px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+
+      .effect-preview {
+        font-size: 40px;
+      }
+
+      h1 {
+        font-size: 32px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Advanced Text-Shadow Effects</h1>
+      <p class="subtitle">20 production-ready CSS recipes for subtitle text effects</p>
+      <p style="color: #666; font-size: 14px;">Optimized for 48-64px font size on dark backgrounds</p>
+    </header>
+
+    <div class="grid">
+      <div class="effect-card">
+        <div class="effect-name">1. Gold Metallic 3D</div>
+        <div class="effect-preview demo-1">Subtitle</div>
+        <div class="effect-code">color: #ffd700; 6-layer metallic stack with gold highlights</div>
+      </div>
+
+      <div class="effect-card">
+        <div class="effect-name">2. Chrome Silver</div>
+        <div class="effect-preview demo-2">Subtitle</div>
+        <div class="effect-code">color: #e8e8e8; reflective metallic with cool blue tint</div>
+      </div>
+
+      <div class="effect-card">
+        <div class="effect-name">3. Rose Gold</div>
+        <div class="effect-preview demo-3">Subtitle</div>
+        <div class="effect-code">color: #f4a4d4; warm pink metallic with depth</div>
+      </div>
+
+      <div class="effect-card">
+        <div class="effect-name">4. Bronze Ancient</div>
+        <div class="effect-preview demo-4">Subtitle</div>
+        <div class="effect-code">color: #cd7f32; aged patina with verdigris tint</div>
+      </div>
+
+      <div class="effect-card">
+        <div class="effect-name">5. Neon Tube</div>
+        <div class="effect-preview demo-5">Subtitle</div>
+        <div class="effect-code">color: #00ff88; realistic neon sign glow spread</div>
+      </div>
+
+      <div class="effect-card">
+        <div class="effect-name">6. Cyberpunk Glitch</div>
+        <div class="effect-preview demo-6">Subtitle</div>
+        <div class="effect-code">color: #00ffff; offset rgb shadows with glitch feel</div>
+      </div>
+
+      <div class="effect-card">
+        <div class="effect-name">7. Holographic Rainbow</div>
+        <div class="effect-preview demo-7">Subtitle</div>
+        <div class="effect-code">color: #ffffff; 6-color scattered glow blend</div>
+      </div>
+
+      <div class="effect-card">
+        <div class="effect-name">8. Fire/Magma</div>
+        <div class="effect-preview demo-8">Subtitle</div>
+        <div class="effect-code">color: #ffaa00; orange-red-yellow rising flames</div>
+      </div>
+
+      <div class="effect-card">
+        <div class="effect-name">9. Ice Crystal</div>
+        <div class="effect-preview demo-9">Subtitle</div>
+        <div class="effect-code">color: #b4f8f8; frozen sparkle cyan glow</div>
+      </div>
+
+      <div class="effect-card">
+        <div class="effect-name">10. Electric Lightning</div>
+        <div class="effect-preview demo-10">Subtitle</div>
+        <div class="effect-code">color: #00d4ff; bright electric with jagged feel</div>
+      </div>
+
+      <div class="effect-card">
+        <div class="effect-name">11. Deep Ocean</div>
+        <div class="effect-preview demo-11">Subtitle</div>
+        <div class="effect-code">color: #4dd9ff; bioluminescent cyan glow</div>
+      </div>
+
+      <div class="effect-card">
+        <div class="effect-name">12. Sunset Gradient</div>
+        <div class="effect-preview demo-12">Subtitle</div>
+        <div class="effect-code">color: #ff9d5c; orange to purple layered transition</div>
+      </div>
+
+      <div class="effect-card">
+        <div class="effect-name">13. Northern Lights</div>
+        <div class="effect-preview demo-13">Subtitle</div>
+        <div class="effect-code">color: #00ff99; aurora green to purple glow</div>
+      </div>
+
+      <div class="effect-card">
+        <div class="effect-name">14. Vintage Letterpress</div>
+        <div class="effect-preview demo-14">Subtitle</div>
+        <div class="effect-code">color: #3d2817; classic inked impression</div>
+      </div>
+
+      <div class="effect-card">
+        <div class="effect-name">15. Modern Emboss</div>
+        <div class="effect-preview demo-15">Subtitle</div>
+        <div class="effect-code">color: #e0e0e0; raised 3D with highlight top-left</div>
+      </div>
+
+      <div class="effect-card">
+        <div class="effect-name">16. Comic Book</div>
+        <div class="effect-preview demo-16">Subtitle</div>
+        <div class="effect-code">color: #ff1a8f; bold pop art multi-color outline</div>
+      </div>
+
+      <div class="effect-card">
+        <div class="effect-name">17. Chalkboard</div>
+        <div class="effect-preview demo-17">Subtitle</div>
+        <div class="effect-code">color: #e8d5b7; chalk texture dusty glow</div>
+      </div>
+
+      <div class="effect-card">
+        <div class="effect-name">18. Candy Pop</div>
+        <div class="effect-preview demo-18">Subtitle</div>
+        <div class="effect-code">color: #ff69f0; pastel sweet 3D depth</div>
+      </div>
+
+      <div class="effect-card">
+        <div class="effect-name">19. Dark Mode Subtle</div>
+        <div class="effect-preview demo-19">Subtitle</div>
+        <div class="effect-code">color: #c0c0c0; minimal glow for dark UI</div>
+      </div>
+
+      <div class="effect-card">
+        <div class="effect-name">20. Ultra Deep 3D</div>
+        <div class="effect-preview demo-20">Subtitle</div>
+        <div class="effect-code">color: #00d9ff; 8-layer extreme extrusion</div>
+      </div>
+    </div>
+
+    <div class="section-title">Implementation Guide</div>
+
+    <div class="info-box">
+      <strong>CSS Integration:</strong> Copy any effect from <code>advanced-text-shadow-recipes.css</code> and apply to your subtitle elements. Each effect is a self-contained CSS class.
+    </div>
+
+    <div class="code-block">
+&lt;h2 class="text-shadow-gold-metallic-3d" style="font-size: 56px; font-weight: 700;"&gt;
+  Your Subtitle Text
+&lt;/h2&gt;
+    </div>
+
+    <div class="info-box">
+      <strong>Font Recommendations:</strong>
+      <ul style="margin-top: 10px; margin-left: 20px;">
+        <li>Font size: 48px-64px (optimal for effect visibility)</li>
+        <li>Font weight: 600-700 (semi-bold to bold)</li>
+        <li>Font family: Sans-serif (Roboto, Helvetica, Arial)</li>
+        <li>Letter spacing: 0-0.05em</li>
+        <li>Line height: 1.2-1.4</li>
+      </ul>
+    </div>
+
+    <div class="info-box">
+      <strong>Background Optimization:</strong>
+      <ul style="margin-top: 10px; margin-left: 20px;">
+        <li>#0a0a0a — Deep black (recommended)</li>
+        <li>#1a1a1a — Dark gray</li>
+        <li>#0d1117 — GitHub dark</li>
+        <li>Dark gradients from #000 to #1a1a1a</li>
+      </ul>
+    </div>
+
+    <div class="info-box">
+      <strong>Performance Notes:</strong>
+      <ul style="margin-top: 10px; margin-left: 20px;">
+        <li>Text-shadow is GPU-accelerated (no performance impact)</li>
+        <li>6-10 shadows per element is optimal</li>
+        <li>Avoid animating text-shadow with transitions</li>
+        <li>All modern browsers fully supported (Chrome 26+, Firefox 3.1+, Safari 5.1+)</li>
+      </ul>
+    </div>
+
+    <div class="info-box">
+      <strong>Responsive Scaling:</strong> Multiply all px values in text-shadow by:
+      <ul style="margin-top: 10px; margin-left: 20px;">
+        <li>Mobile (320px): ×0.6</li>
+        <li>Tablet (768px): ×0.8</li>
+        <li>Desktop (1024px+): ×1.0</li>
+      </ul>
+    </div>
+
+    <div class="section-title">Accessibility Checklist</div>
+
+    <div class="info-box">
+      <ul style="margin: 10px 0 0 20px;">
+        <li>✓ Ensure 4.5:1 contrast ratio (WCAG AA minimum)</li>
+        <li>✓ Test with color blindness simulators (glitch/neon effects)</li>
+        <li>✓ Keep text readable with heavy shadows</li>
+        <li>✓ Use text-shadow for visual enhancement, not information</li>
+        <li>✓ Test on real dark backgrounds, not just white text</li>
+      </ul>
+    </div>
+
+    <div class="section-title">Advanced: Combination Effects</div>
+
+    <div class="grid" style="margin-top: 30px;">
+      <div class="effect-card">
+        <div class="effect-name">Neon + Glitch Hybrid</div>
+        <div class="effect-preview" style="color: #00ff88; text-shadow: 0px 0px 6px rgba(0, 255, 136, 0.9), 0px 0px 15px rgba(0, 255, 136, 0.8), -2px -1px 0px rgba(255, 0, 255, 0.6), 2px 1px 0px rgba(255, 255, 0, 0.5), 0px 0px 25px rgba(0, 150, 80, 0.4);">Subtitle</div>
+        <div class="effect-code">Neon glow + cyberpunk offset for sci-fi feel</div>
+      </div>
+
+      <div class="effect-card">
+        <div class="effect-name">Fire + Sunset Blend</div>
+        <div class="effect-preview" style="color: #ffbb33; text-shadow: 2px 3px 0px rgba(139, 0, 0, 0.8), 0px 6px 0px rgba(180, 50, 20, 0.7), -3px -6px 8px rgba(255, 140, 0, 0.6), 0px -8px 12px rgba(255, 200, 0, 0.5), 0px 0px 20px rgba(255, 100, 60, 0.25), 0px 0px 30px rgba(200, 100, 150, 0.2);">Subtitle</div>
+        <div class="effect-code">Flames + gradient transition for warm drama</div>
+      </div>
+
+      <div class="effect-card">
+        <div class="effect-name">Chrome + Emboss Luxury</div>
+        <div class="effect-preview" style="color: #e8e8e8; text-shadow: 1px 1px 0px rgba(50, 50, 50, 0.9), 3px 3px 0px rgba(30, 30, 30, 0.8), -2px -2px 4px rgba(255, 255, 255, 0.5), 5px 5px 0px rgba(0, 0, 0, 0.7), 0px 0px 12px rgba(150, 180, 200, 0.25), 7px 7px 20px rgba(0, 0, 0, 0.8);">Subtitle</div>
+        <div class="effect-code">Metallic + raised for premium look</div>
+      </div>
+    </div>
+
+    <footer>
+      <p>Advanced CSS Text-Shadow Recipes for Web Apps | Optimized for Dark UI Subtitle Text</p>
+      <p>Last updated: March 2026</p>
+    </footer>
+  </div>
+</body>
+</html>
