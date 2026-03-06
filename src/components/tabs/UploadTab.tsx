@@ -1437,6 +1437,7 @@ const StepMetadata: React.FC = () => {
   const [isAiMode, setIsAiMode] = useState(true);
   const [isExtractingTags, setIsExtractingTags] = useState(false);
   const [newTagKeyword, setNewTagKeyword] = useState('');
+  const [previewTab, setPreviewTab] = useState<UploadPlatform>(selectedPlatforms[0] || 'youtube');
 
   const defaultTitles = metadata?.titles ?? [
     '제목 옵션을 생성하려면 "AI 생성"을 클릭하세요',
@@ -1653,13 +1654,8 @@ const StepMetadata: React.FC = () => {
 
       {/* Title selection */}
       <div>
-        <label className="text-sm font-semibold text-gray-300 mb-2 flex items-center gap-2 flex-wrap">
-          <span>제목 선택 <span className="text-red-400">*</span></span>
-          <span className="text-[10px] text-gray-500 font-normal">
-            {selectedPlatforms.includes('youtube') && 'YouTube 100자'}
-            {selectedPlatforms.includes('tiktok') && (selectedPlatforms.includes('youtube') ? ' · ' : '') + 'TikTok 150자'}
-            {selectedPlatforms.includes('threads') && ' · Threads 텍스트에 포함'}
-          </span>
+        <label className="text-sm font-semibold text-gray-300 mb-2 block">
+          제목 선택 <span className="text-red-400">*</span>
         </label>
         <div className="space-y-2">
           {defaultTitles.map((title, idx) => (
@@ -1700,12 +1696,7 @@ const StepMetadata: React.FC = () => {
       {/* Description */}
       <div>
         <label className="text-sm font-semibold text-gray-300 mb-1.5 flex items-center justify-between">
-          <span className="flex items-center gap-2 flex-wrap">
-            설명
-            {selectedPlatforms.includes('youtube') && <span className="text-[10px] bg-red-600/15 text-red-400 px-1.5 py-0.5 rounded border border-red-500/20">YouTube 5000자</span>}
-            {selectedPlatforms.includes('instagram') && <span className="text-[10px] bg-pink-600/15 text-pink-400 px-1.5 py-0.5 rounded border border-pink-500/20">Instagram 캡션에 포함</span>}
-            {selectedPlatforms.includes('tiktok') && <span className="text-[10px] bg-cyan-600/15 text-cyan-400 px-1.5 py-0.5 rounded border border-cyan-500/20">TikTok 미사용</span>}
-          </span>
+          <span>설명</span>
           {description && (
             <button
               type="button"
@@ -1759,12 +1750,7 @@ const StepMetadata: React.FC = () => {
 
       {/* Public Hashtags */}
       <div>
-        <label className="text-sm font-semibold text-gray-300 mb-1.5 flex items-center gap-2 flex-wrap">
-          공개 해시태그
-          {selectedPlatforms.includes('youtube') && <span className="text-[10px] text-red-400 bg-red-900/20 px-1.5 py-0.5 rounded border border-red-500/20">YouTube 설명 하단 5개</span>}
-          {selectedPlatforms.includes('instagram') && <span className="text-[10px] text-pink-400 bg-pink-900/20 px-1.5 py-0.5 rounded border border-pink-500/20">Instagram 캡션 내 30개</span>}
-          {selectedPlatforms.includes('threads') && <span className="text-[10px] text-gray-400 bg-gray-700/50 px-1.5 py-0.5 rounded border border-gray-600/30">Threads 텍스트 내</span>}
-          {selectedPlatforms.includes('tiktok') && <span className="text-[10px] text-cyan-400 bg-cyan-900/20 px-1.5 py-0.5 rounded border border-cyan-500/20">TikTok 미사용</span>}
+        <label className="text-sm font-semibold text-gray-300 mb-1.5 flex items-center gap-2">
           {metadata?.publicHashtags && metadata.publicHashtags.length > 0 && (
             <button
               type="button"
@@ -1793,17 +1779,9 @@ const StepMetadata: React.FC = () => {
           type="text"
           value={publicHashtagsText}
           onChange={(e) => handlePublicHashtagsChange(e.target.value)}
-          placeholder={selectedPlatforms.includes('youtube') && !selectedPlatforms.some(p => p !== 'youtube')
-            ? '키워드1, 키워드2, 키워드3, 키워드4, 키워드5 (YouTube 5개 권장)'
-            : '키워드1, 키워드2, 키워드3, ... (쉼표로 구분)'}
+          placeholder="키워드1, 키워드2, 키워드3, ... (쉼표로 구분)"
           className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-2.5 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-cyan-500/50"
         />
-        <p className="text-sm text-gray-600 mt-1">
-          {selectedPlatforms.includes('youtube') && 'YouTube 설명 하단에 표시. '}
-          {selectedPlatforms.includes('instagram') && 'Instagram 캡션에 #태그 형태로 포함. '}
-          {selectedPlatforms.includes('threads') && 'Threads 텍스트에 #태그 형태로 포함.'}
-          {selectedPlatforms.length === 0 && '공개 해시태그를 입력하세요.'}
-        </p>
       </div>
 
       {/* Hidden Tags — YouTube 전용 (다른 플랫폼은 비공개 태그 미지원) */}
@@ -1979,74 +1957,96 @@ const StepMetadata: React.FC = () => {
         )}
       </div>
 
-      {/* 플랫폼별 미리보기 */}
-      {metadata && (
-        <div className="border-t border-gray-700 pt-4 mt-2">
-          <h4 className="text-sm font-semibold text-gray-300 mb-3">플랫폼별 업로드 미리보기</h4>
-          <div className="space-y-3">
-            {selectedPlatforms.includes('youtube') && (
-              <div className="bg-red-900/10 border border-red-500/20 rounded-lg p-3 space-y-1">
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="text-sm font-bold text-red-400">YouTube</span>
-                </div>
-                <p className="text-xs text-gray-400"><span className="text-gray-500">제목:</span> {(metadata.selectedTitle || metadata.titles?.[0] || '').slice(0, 100)}</p>
-                <p className="text-xs text-gray-400"><span className="text-gray-500">설명:</span> {(description || '').slice(0, 80)}...</p>
-                <p className="text-xs text-gray-400"><span className="text-gray-500">공개 해시태그:</span> {(metadata.publicHashtags || []).map(h => `#${h}`).join(' ') || '없음'}</p>
-                <p className="text-xs text-gray-400"><span className="text-gray-500">비공개 태그:</span> {(metadata.hiddenTags || []).slice(0, 8).join(', ')}{(metadata.hiddenTags?.length || 0) > 8 ? `... (총 ${metadata.hiddenTags!.length}개)` : ''}</p>
-                {shoppingTags.filter(t => t.link).length > 0 && (
-                  <p className="text-xs text-blue-400"><span className="text-gray-500">쇼핑 링크:</span> {shoppingTags.filter(t => t.link).map(t => t.keyword).join(', ')}</p>
-                )}
-              </div>
-            )}
-            {selectedPlatforms.includes('tiktok') && (
-              <div className="bg-cyan-900/10 border border-cyan-500/20 rounded-lg p-3 space-y-1">
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="text-sm font-bold text-cyan-400">TikTok</span>
-                  <span className="text-[10px] text-gray-500">제목만 전송 (150자), 설명/태그 미사용</span>
-                </div>
-                <p className="text-xs text-gray-400"><span className="text-gray-500">제목:</span> {(metadata.selectedTitle || metadata.titles?.[0] || '').slice(0, 150)}</p>
-              </div>
-            )}
-            {selectedPlatforms.includes('instagram') && (() => {
-              const caption = `${metadata.selectedTitle || metadata.titles?.[0] || ''}\n\n${description || ''}\n\n${(metadata.publicHashtags || []).map(t => `#${t.replace(/^#/, '')}`).join(' ')}`;
-              return (
-                <div className="bg-pink-900/10 border border-pink-500/20 rounded-lg p-3 space-y-1">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-sm font-bold text-pink-400">Instagram</span>
-                    <span className="text-[10px] text-gray-500">캡션 1개로 통합 (2200자)</span>
-                    <span className={`text-[10px] font-mono ${caption.length > 2200 ? 'text-red-400' : 'text-gray-500'}`}>{caption.length}자</span>
-                  </div>
-                  <p className="text-xs text-gray-400 whitespace-pre-line line-clamp-3">{caption.slice(0, 200)}{caption.length > 200 ? '...' : ''}</p>
-                </div>
-              );
-            })()}
-            {selectedPlatforms.includes('threads') && (() => {
-              const text = `${metadata.selectedTitle || metadata.titles?.[0] || ''}\n\n${(metadata.publicHashtags || []).map(t => `#${t.replace(/^#/, '')}`).join(' ')}`;
-              return (
-                <div className="bg-gray-800/60 border border-gray-600/30 rounded-lg p-3 space-y-1">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-sm font-bold text-gray-300">Threads</span>
-                    <span className="text-[10px] text-gray-500">텍스트 1개 (500자), 설명 미포함</span>
-                    <span className={`text-[10px] font-mono ${text.length > 500 ? 'text-red-400' : 'text-gray-500'}`}>{text.length}자</span>
-                  </div>
-                  <p className="text-xs text-gray-400 whitespace-pre-line line-clamp-3">{text.slice(0, 200)}{text.length > 200 ? '...' : ''}</p>
-                </div>
-              );
-            })()}
-            {selectedPlatforms.includes('naver-clip') && (
-              <div className="bg-green-900/10 border border-green-500/20 rounded-lg p-3 space-y-1">
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="text-sm font-bold text-green-400">Naver Clip</span>
-                  <span className="text-[10px] text-gray-500">수동 업로드 — Creator Studio에서 아래 내용 복사 붙여넣기</span>
-                </div>
-                <p className="text-xs text-gray-400"><span className="text-gray-500">제목:</span> {metadata.selectedTitle || metadata.titles?.[0] || ''}</p>
-                <p className="text-xs text-gray-400"><span className="text-gray-500">설명:</span> {(description || '').slice(0, 80)}...</p>
-                <p className="text-xs text-gray-400"><span className="text-gray-500">태그:</span> {(metadata.publicHashtags || []).map(t => `#${t}`).join(' ')}</p>
-              </div>
-            )}
+      {/* 플랫폼별 미리보기 — 가로 탭 */}
+      {metadata && selectedPlatforms.length > 0 && (() => {
+        const activeTab = selectedPlatforms.includes(previewTab) ? previewTab : selectedPlatforms[0];
+        const title = metadata.selectedTitle || metadata.titles?.[0] || '';
+        const igCaption = `${title}\n\n${description || ''}\n\n${(metadata.publicHashtags || []).map(t => `#${t.replace(/^#/, '')}`).join(' ')}`;
+        const thText = `${title}\n\n${(metadata.publicHashtags || []).map(t => `#${t.replace(/^#/, '')}`).join(' ')}`;
+
+        return (
+          <div className="border-t border-gray-700 pt-4 mt-2">
+            <h4 className="text-sm font-semibold text-gray-300 mb-2">플랫폼별 미리보기</h4>
+
+            {/* 탭 버튼 */}
+            <div className="flex gap-1 mb-3 border-b border-gray-700 pb-px">
+              {selectedPlatforms.map(pid => {
+                const p = PLATFORMS.find(x => x.id === pid);
+                if (!p) return null;
+                const isActive = activeTab === pid;
+                return (
+                  <button
+                    key={pid}
+                    type="button"
+                    onClick={() => setPreviewTab(pid)}
+                    className={`px-3 py-1.5 text-xs font-bold rounded-t-lg transition-colors border-b-2 ${
+                      isActive
+                        ? `text-white border-current ${pid === 'youtube' ? 'text-red-400' : pid === 'tiktok' ? 'text-cyan-400' : pid === 'instagram' ? 'text-pink-400' : pid === 'threads' ? 'text-gray-300' : 'text-green-400'}`
+                        : 'text-gray-500 border-transparent hover:text-gray-300'
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* 탭 내용 */}
+            <div className="bg-gray-900/50 border border-gray-700/50 rounded-lg p-4 space-y-2 min-h-[100px]">
+              {activeTab === 'youtube' && (
+                <>
+                  <p className="text-xs text-gray-400"><span className="text-gray-500 font-semibold">제목</span> <span className="text-gray-600">({title.length}/100자)</span></p>
+                  <p className="text-sm text-gray-200">{title.slice(0, 100)}</p>
+                  <p className="text-xs text-gray-400 mt-2"><span className="text-gray-500 font-semibold">설명</span> <span className="text-gray-600">({(description || '').length}/5000자)</span></p>
+                  <p className="text-sm text-gray-300 whitespace-pre-line line-clamp-3">{(description || '').slice(0, 200)}{(description || '').length > 200 ? '...' : ''}</p>
+                  <p className="text-xs text-gray-400 mt-2"><span className="text-gray-500 font-semibold">공개 해시태그</span></p>
+                  <p className="text-sm text-cyan-300">{(metadata.publicHashtags || []).map(h => `#${h}`).join(' ') || '-'}</p>
+                  <p className="text-xs text-gray-400 mt-2"><span className="text-gray-500 font-semibold">비공개 태그</span> <span className="text-gray-600">({(metadata.hiddenTags || []).length}개)</span></p>
+                  <p className="text-sm text-gray-300">{(metadata.hiddenTags || []).slice(0, 10).join(', ')}{(metadata.hiddenTags?.length || 0) > 10 ? '...' : '' }</p>
+                  {shoppingTags.filter(t => t.link).length > 0 && (
+                    <>
+                      <p className="text-xs text-gray-400 mt-2"><span className="text-gray-500 font-semibold">쇼핑 링크</span></p>
+                      <p className="text-sm text-blue-400">{shoppingTags.filter(t => t.link).map(t => t.keyword).join(', ')}</p>
+                    </>
+                  )}
+                </>
+              )}
+              {activeTab === 'tiktok' && (
+                <>
+                  <p className="text-xs text-gray-500 mb-1">제목만 전송됩니다. 설명/태그는 TikTok API에서 지원하지 않습니다.</p>
+                  <p className="text-xs text-gray-400"><span className="text-gray-500 font-semibold">제목</span> <span className="text-gray-600">({title.slice(0, 150).length}/150자)</span></p>
+                  <p className="text-sm text-gray-200">{title.slice(0, 150)}</p>
+                </>
+              )}
+              {activeTab === 'instagram' && (
+                <>
+                  <p className="text-xs text-gray-500 mb-1">제목 + 설명 + 해시태그가 하나의 캡션으로 합쳐집니다.</p>
+                  <p className="text-xs text-gray-400"><span className="text-gray-500 font-semibold">캡션</span> <span className={`font-mono ${igCaption.length > 2200 ? 'text-red-400' : 'text-gray-600'}`}>({igCaption.length}/2200자)</span></p>
+                  <p className="text-sm text-gray-300 whitespace-pre-line line-clamp-5">{igCaption.slice(0, 300)}{igCaption.length > 300 ? '...' : ''}</p>
+                </>
+              )}
+              {activeTab === 'threads' && (
+                <>
+                  <p className="text-xs text-gray-500 mb-1">제목 + 해시태그가 텍스트로 합쳐집니다. 설명은 포함되지 않습니다.</p>
+                  <p className="text-xs text-gray-400"><span className="text-gray-500 font-semibold">텍스트</span> <span className={`font-mono ${thText.length > 500 ? 'text-red-400' : 'text-gray-600'}`}>({thText.length}/500자)</span></p>
+                  <p className="text-sm text-gray-300 whitespace-pre-line line-clamp-5">{thText.slice(0, 300)}{thText.length > 300 ? '...' : ''}</p>
+                </>
+              )}
+              {activeTab === 'naver-clip' && (
+                <>
+                  <p className="text-xs text-gray-500 mb-1">수동 업로드 — 아래 내용을 Creator Studio에 복사하세요.</p>
+                  <p className="text-xs text-gray-400"><span className="text-gray-500 font-semibold">제목</span></p>
+                  <p className="text-sm text-gray-200">{title}</p>
+                  <p className="text-xs text-gray-400 mt-2"><span className="text-gray-500 font-semibold">설명</span></p>
+                  <p className="text-sm text-gray-300 whitespace-pre-line line-clamp-3">{(description || '').slice(0, 200)}{(description || '').length > 200 ? '...' : ''}</p>
+                  <p className="text-xs text-gray-400 mt-2"><span className="text-gray-500 font-semibold">태그</span></p>
+                  <p className="text-sm text-cyan-300">{(metadata.publicHashtags || []).map(t => `#${t}`).join(' ') || '-'}</p>
+                </>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 };
