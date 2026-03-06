@@ -1055,7 +1055,12 @@ const ScenePreviewPanel: React.FC<{
   const arMap: Record<string, string> = { '16:9': '16/9', '9:16': '9/16', '1:1': '1/1', '4:3': '4/3' };
   const cssAspect = arMap[aspectRatio] || '16/9';
 
-  if (scenes.length === 0) return null;
+  if (scenes.length === 0) return (
+    <div className="flex flex-col items-center justify-center h-64 text-gray-500">
+      <p className="text-base mb-1">장면이 없습니다</p>
+      <p className="text-sm">이미지/영상 탭에서 장면을 먼저 생성해주세요.</p>
+    </div>
+  );
 
   const formatDur = (sec: number) => {
     const m = Math.floor(sec / 60);

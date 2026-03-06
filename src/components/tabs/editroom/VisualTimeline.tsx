@@ -1017,13 +1017,47 @@ const VisualTimeline: React.FC = () => {
       return { startTime: t.imageStartTime, audioUrl: line?.audioUrl, duration: t.imageDuration };
     });
 
-    const startPlayback = (audio: HTMLAudioElement, offset: number, audioSeekTime?: number) => {
+    const stopAll = () => {
+      cancelAnimationFrame(animRef.current);
+      stopBgmAudio();
+      movePlayhead(totalDuration);
+      setIsPlaying(false);
+      useEditRoomStore.getState().setIsTimelinePlaying(false);
+      prevSubTextRef.current = '';
+      useEditRoomStore.getState().setActiveSubtitleText('');
+    };
+
+    // 개별 나레이션 오디오 체인 재생 (mergedAudioUrl 없을 때)
+    const playChain = (lineIdx: number, audioSeekTime?: number) => {
+      // 다음에 재생할 오디오가 있는 라인 찾기
+      let idx = lineIdx;
+      while (idx < orderedLines.length && !orderedLines[idx].audioUrl) idx++;
+      if (idx >= orderedLines.length) {
+        // 남은 오디오 없음 → 타이머 기반 나머지 재생
+        const remaining = totalDuration - (orderedLines[lineIdx]?.startTime ?? playheadTimeRef.current);
+        if (remaining > 0.1) {
+          const base = playheadTimeRef.current;
+          let startTs = 0;
+          const tick = (ts: number) => {
+            if (!startTs) startTs = ts;
+            const cur = base + (ts - startTs) / 1000;
+            if (cur >= totalDuration) { stopAll(); return; }
+            movePlayhead(cur);
+            animRef.current = requestAnimationFrame(tick);
+          };
+          animRef.current = requestAnimationFrame(tick);
+        } else {
+          stopAll();
+        }
+        return;
+      }
+
+      const entry = orderedLines[idx];
+      const audio = new Audio(entry.audioUrl!);
       audioRef.current = audio;
       connectAudioToAnalyser(audio);
-      setIsPlaying(true);
-      useEditRoomStore.getState().setIsTimelinePlaying(true);
-      // BGM 동시 재생
-      startBgmAudio(seekTime);
+
+      const offset = entry.startTime;
       const tick = () => {
         if (!audio.paused) {
           movePlayhead(offset + audio.currentTime);
@@ -1032,54 +1066,63 @@ const VisualTimeline: React.FC = () => {
       };
       audio.onended = () => {
         cancelAnimationFrame(animRef.current);
-        stopBgmAudio();
-        movePlayhead(totalDuration);
-        setIsPlaying(false);
-        useEditRoomStore.getState().setIsTimelinePlaying(false);
-        prevSubTextRef.current = '';
-        useEditRoomStore.getState().setActiveSubtitleText('');
+        // 다음 라인으로 체이닝
+        playChain(idx + 1);
       };
       audio.play().then(() => {
         if (audioSeekTime && audioSeekTime > 0) audio.currentTime = audioSeekTime;
+        animRef.current = requestAnimationFrame(tick);
+      }).catch(() => {
+        // 재생 실패 시 다음으로 넘어감
+        playChain(idx + 1);
+      });
+    };
+
+    const mergedAudioUrl = useProjectStore.getState().config?.mergedAudioUrl;
+    if (mergedAudioUrl) {
+      const audio = new Audio(mergedAudioUrl);
+      audioRef.current = audio;
+      connectAudioToAnalyser(audio);
+      setIsPlaying(true);
+      useEditRoomStore.getState().setIsTimelinePlaying(true);
+      startBgmAudio(seekTime);
+      const tick = () => {
+        if (!audio.paused) {
+          movePlayhead(audio.currentTime);
+          animRef.current = requestAnimationFrame(tick);
+        }
+      };
+      audio.onended = stopAll;
+      audio.play().then(() => {
+        if (seekTime > 0) audio.currentTime = seekTime;
         animRef.current = requestAnimationFrame(tick);
       }).catch(() => {
         stopBgmAudio();
         setIsPlaying(false);
         useEditRoomStore.getState().setIsTimelinePlaying(false);
       });
-    };
-
-    const mergedAudioUrl = useProjectStore.getState().config?.mergedAudioUrl;
-    if (mergedAudioUrl) {
-      startPlayback(new Audio(mergedAudioUrl), 0, seekTime);
       return;
     }
 
-    const targetLine = orderedLines.find(l => l.audioUrl && (l.startTime + (l.duration || 0)) > seekTime);
-    if (targetLine?.audioUrl) {
-      const audioOffset = Math.max(0, seekTime - targetLine.startTime);
-      startPlayback(new Audio(targetLine.audioUrl), targetLine.startTime, audioOffset);
+    // 개별 나레이션 체인 재생
+    setIsPlaying(true);
+    useEditRoomStore.getState().setIsTimelinePlaying(true);
+    startBgmAudio(seekTime);
+
+    const targetIdx = orderedLines.findIndex(l => l.audioUrl && (l.startTime + (l.duration || 0)) > seekTime);
+    if (targetIdx >= 0 && orderedLines[targetIdx].audioUrl) {
+      const audioOffset = Math.max(0, seekTime - orderedLines[targetIdx].startTime);
+      playChain(targetIdx, audioOffset);
       return;
     }
 
     // 오디오 없이 타이머 기반 플레이헤드 애니메이션 (BGM은 여전히 재생)
-    setIsPlaying(true);
-    useEditRoomStore.getState().setIsTimelinePlaying(true);
-    startBgmAudio(seekTime);
     let startTs = 0;
     const tick = (ts: number) => {
       if (!startTs) startTs = ts;
       const elapsed = (ts - startTs) / 1000;
       const currentTime = seekTime + elapsed;
-      if (currentTime >= totalDuration) {
-        movePlayhead(totalDuration);
-        stopBgmAudio();
-        setIsPlaying(false);
-        useEditRoomStore.getState().setIsTimelinePlaying(false);
-        prevSubTextRef.current = '';
-        useEditRoomStore.getState().setActiveSubtitleText('');
-        return;
-      }
+      if (currentTime >= totalDuration) { stopAll(); return; }
       movePlayhead(currentTime);
       animRef.current = requestAnimationFrame(tick);
     };
@@ -1155,7 +1198,12 @@ const VisualTimeline: React.FC = () => {
     };
   }, []);
 
-  if (timeline.length === 0) return null;
+  if (timeline.length === 0) return (
+    <div className="border border-gray-700 rounded-xl bg-gray-900/60 p-8 text-center text-gray-500">
+      <p className="text-base mb-1">타임라인이 비어있습니다</p>
+      <p className="text-sm">장면 분석 후 타임라인이 자동 생성됩니다.</p>
+    </div>
+  );
 
   const totalMinHeight = RULER_HEIGHT + IMAGE_TRACK_HEIGHT + TRANSITION_TRACK_HEIGHT + TRACK_HEIGHT
     + getAudioTrackHeight('origAudio') + getAudioTrackHeight('narration') + getAudioTrackHeight('bgm') + getAudioTrackHeight('sfx');

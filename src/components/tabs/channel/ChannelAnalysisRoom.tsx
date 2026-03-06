@@ -5,6 +5,7 @@ import { useScriptWriterStore } from '../../../stores/scriptWriterStore';
 import { showToast } from '../../../stores/uiStore';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
 import { getChannelInfo, getRecentVideosByFormat, getVideoTranscript, analyzeChannelStyle } from '../../../services/youtubeAnalysisService';
+import { getYoutubeApiKey } from '../../../services/apiService';
 import { evolinkChat } from '../../../services/evolinkService';
 import { buildInstinctTaxonomy } from '../../../data/instinctPromptUtils';
 import ChannelInputPanel from './ChannelInputPanel';
@@ -48,6 +49,10 @@ const ChannelAnalysisRoom: React.FC = () => {
   // YouTube 채널 분석
   const handleChannelAnalysis = useCallback(async () => {
     if (!channelUrl.trim()) return;
+    if (!getYoutubeApiKey()) {
+      setError('YouTube API 키가 설정되지 않았습니다. 설정에서 키를 입력해주세요.');
+      return;
+    }
     setError('');
     try {
       setProgress({ step: 1, message: '채널 정보 조회 중...' });
@@ -482,7 +487,7 @@ const ChannelAnalysisRoom: React.FC = () => {
                 <div className="bg-purple-900/10 rounded-lg p-3 border border-purple-800/30 space-y-2">
                   <label className="block text-sm font-medium text-purple-400">본능 기제 분석</label>
                   <div className="flex flex-wrap gap-1.5">
-                    {selectedTopic.instinctAnalysis.primaryInstincts.map((inst, i) => (
+                    {(Array.isArray(selectedTopic.instinctAnalysis.primaryInstincts) ? selectedTopic.instinctAnalysis.primaryInstincts : []).map((inst, i) => (
                       <span key={i} className="px-2 py-0.5 text-sm bg-purple-900/30 text-purple-300 rounded-full border border-purple-700/40">
                         {inst}
                       </span>

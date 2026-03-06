@@ -5,7 +5,7 @@ import { useChannelAnalysisStore } from '../../stores/channelAnalysisStore';
 import { useInstinctStore } from '../../stores/instinctStore';
 import { useSoundStudioStore } from '../../stores/soundStudioStore';
 import { useProjectStore } from '../../stores/projectStore';
-import { evolinkChat, evolinkChatStream } from '../../services/evolinkService';
+import { evolinkChat, evolinkChatStream, getEvolinkKey } from '../../services/evolinkService';
 import { recommendTopics } from '../../services/topicRecommendService';
 import { buildSelectedInstinctPrompt } from '../../data/instinctPromptUtils';
 import { SCRIPT_STYLE_PRESETS } from '../../data/scriptStylePresets';
@@ -152,6 +152,10 @@ export default function ScriptWriterTab() {
 
   const handleSceneAnalysis = useCallback(async () => {
     if (!scriptText.trim() || isAnalyzingScenes) return;
+    if (!getEvolinkKey()) {
+      setGenError('Evolink API 키가 설정되지 않았습니다. 설정에서 키를 입력해주세요.');
+      return;
+    }
 
     // 프로젝트가 없으면 자동 생성
     const projStore = useProjectStore.getState();
@@ -462,6 +466,10 @@ ${formatRules[formatLabel]}
 
   // -- 선택된 소재로 스트리밍 대본 생성
   const handleGenerateFromTopic = useCallback(async (topic: TopicRecommendation) => {
+    if (!getEvolinkKey()) {
+      setGenError('Evolink API 키가 설정되지 않았습니다. 설정에서 키를 입력해주세요.');
+      return;
+    }
     startGeneration();
     setStreamingText('');
     setGenError('');
@@ -520,6 +528,10 @@ ${instinctPrompt}
 
   const handleGenerateScript = useCallback(async () => {
     if (!title.trim() || !synopsis.trim()) return;
+    if (!getEvolinkKey()) {
+      setGenError('Evolink API 키가 설정되지 않았습니다. 설정에서 키를 입력해주세요.');
+      return;
+    }
     startGeneration();
     setGenError('');
 

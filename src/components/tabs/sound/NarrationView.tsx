@@ -2,6 +2,7 @@ import React, { useState, useCallback, useRef, Suspense, lazy } from 'react';
 import { useSoundStudioStore, registerAudio, unregisterAudio } from '../../../stores/soundStudioStore';
 import { useProjectStore } from '../../../stores/projectStore';
 import { useCostStore } from '../../../stores/costStore';
+import { showToast } from '../../../stores/uiStore';
 import type { Scene } from '../../../types';
 import { generateTypecastTTS } from '../../../services/typecastService';
 import { mergeAudioFiles, splitBySentenceEndings } from '../../../services/ttsService';
@@ -124,7 +125,10 @@ const NarrationView: React.FC = () => {
   // ===============================
   const handleGenerateAll = useCallback(async () => {
     if (isGeneratingTTS || lines.length === 0) return;
-    if (!activeSpeaker) return;
+    if (!activeSpeaker) {
+      showToast('음성을 먼저 선택해주세요.');
+      return;
+    }
 
     setIsGeneratingTTS(true);
     setTtsProgress({ current: 0, total: lines.length });

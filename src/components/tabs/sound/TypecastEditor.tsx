@@ -698,6 +698,15 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
 
   const formatTime = (sec: number) => `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
 
+  if (lines.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 text-gray-500">
+        <p className="text-lg mb-2">나레이션 대본이 없습니다</p>
+        <p className="text-sm">나레이션 탭에서 대본을 먼저 불러와주세요.</p>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-full">
       {/* CSS: 줄 호버 시 🔄 버튼 표시 */}

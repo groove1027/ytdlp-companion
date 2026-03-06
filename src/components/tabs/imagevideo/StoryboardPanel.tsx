@@ -1441,7 +1441,12 @@ const StoryboardPanel: React.FC = () => {
       )}
 
       {/* Scene list / grid / preview */}
-      {viewMode === 'preview' ? (
+      {totalScenes === 0 ? (
+        <div className="flex flex-col items-center justify-center py-20 text-gray-500">
+          <p className="text-lg mb-2">장면이 없습니다</p>
+          <p className="text-sm">대본작성 탭에서 장면 분석을 먼저 실행하세요.</p>
+        </div>
+      ) : viewMode === 'preview' ? (
         <div className="space-y-4">
           {/* 메인 미리보기 (현재 장면 크게) */}
           {scenes[previewIndex] && (

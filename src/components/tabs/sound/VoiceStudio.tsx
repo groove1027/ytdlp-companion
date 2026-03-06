@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { useSoundStudioStore, registerAudio, unregisterAudio } from '../../../stores/soundStudioStore';
-import { useUIStore } from '../../../stores/uiStore';
+import { useUIStore, showToast } from '../../../stores/uiStore';
 import { useScriptWriterStore } from '../../../stores/scriptWriterStore';
 import {
   getAvailableVoices,
@@ -544,10 +544,21 @@ const VoiceStudio: React.FC = () => {
 
   const handleGenerateLine = useCallback(async (lineId: string) => {
     const speaker = speakers[0];
-    if (!speaker?.voiceId) return;
+    if (!speaker?.voiceId) {
+      showToast('음성을 선택해주세요.');
+      return;
+    }
+    if (speaker.engine === 'typecast' && !getTypecastKey()) {
+      showToast('Typecast API 키가 설정되지 않았습니다. 설정에서 키를 입력해주세요.');
+      return;
+    }
     const lineIdx = lines.findIndex(l => l.id === lineId);
     if (lineIdx < 0) return;
     const line = lines[lineIdx];
+    if (!line.text?.trim()) {
+      showToast('텍스트가 비어있습니다.');
+      return;
+    }
 
     setIsGeneratingLine(lineId);
     updateLine(lineId, { ttsStatus: 'generating' });

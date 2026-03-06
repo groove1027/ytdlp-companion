@@ -62,9 +62,9 @@ const badgeStyle = (color: string) =>
 const getBadges = (s: ProjectSummary): { label: string; color: string }[] => {
   const list: { label: string; color: string }[] = [];
   if (s.atmosphere) list.push({ label: s.atmosphere, color: 'purple' });
-  list.push({ label: MODE_LABELS[s.mode] || s.mode, color: 'cyan' });
-  list.push({ label: ASPECT_LABELS[s.aspectRatio] || s.aspectRatio, color: 'yellow' });
-  list.push({ label: `${s.sceneCount}개`, color: 'green' });
+  if (s.mode) list.push({ label: MODE_LABELS[s.mode] || s.mode, color: 'cyan' });
+  if (s.aspectRatio) list.push({ label: ASPECT_LABELS[s.aspectRatio] || s.aspectRatio, color: 'yellow' });
+  list.push({ label: `${s.sceneCount ?? 0}개`, color: 'green' });
   const dur = estimateDurationFromVideos(s.completedVideos);
   if (dur) list.push({ label: dur, color: 'orange' });
   return list;
@@ -119,8 +119,8 @@ const ProjectCard: React.FC<CardProps> = ({ summary, isSelected, onToggleSelect,
       {/* 상단: 배지 + 체크박스 */}
       <div className="flex items-center justify-between px-2 py-1.5 bg-gray-900/60 border-b border-gray-700/50 gap-1">
         <div className="flex items-center gap-1 flex-wrap min-w-0 overflow-hidden">
-          <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-full bg-cyan-600/20 text-cyan-300 border border-cyan-500/30 whitespace-nowrap">{MODE_LABELS[summary.mode] || summary.mode}</span>
-          <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-full bg-yellow-600/20 text-yellow-300 border border-yellow-500/30 whitespace-nowrap">{ASPECT_LABELS[summary.aspectRatio] || summary.aspectRatio}</span>
+          {summary.mode && <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-full bg-cyan-600/20 text-cyan-300 border border-cyan-500/30 whitespace-nowrap">{MODE_LABELS[summary.mode] || summary.mode}</span>}
+          {summary.aspectRatio && <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-full bg-yellow-600/20 text-yellow-300 border border-yellow-500/30 whitespace-nowrap">{ASPECT_LABELS[summary.aspectRatio] || summary.aspectRatio}</span>}
           <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-full bg-green-600/20 text-green-300 border border-green-500/30 whitespace-nowrap">{summary.sceneCount}컷</span>
           {summary.completedVideos > 0 && (
             <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-full bg-orange-600/20 text-orange-300 border border-orange-500/30 whitespace-nowrap">{estimateDurationFromVideos(summary.completedVideos)}</span>

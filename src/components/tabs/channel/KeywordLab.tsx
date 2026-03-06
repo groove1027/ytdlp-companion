@@ -3,6 +3,7 @@ import { useChannelAnalysisStore } from '../../../stores/channelAnalysisStore';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
 import { showToast } from '../../../stores/uiStore';
 import { searchKeyword, getRelatedKeywords, getTopVideos, getVideoTags } from '../../../services/youtubeAnalysisService';
+import { getYoutubeApiKey } from '../../../services/apiService';
 import type { KeywordTag, TopVideo } from '../../../types';
 
 type ResultTab = 'related' | 'videos' | 'tags';
@@ -70,6 +71,10 @@ const KeywordLab: React.FC = () => {
 
   const handleAnalyze = useCallback(async () => {
     if (!keyword.trim() || isAnalyzing) return;
+    if (!getYoutubeApiKey()) {
+      setError('YouTube API 키가 설정되지 않았습니다. 설정에서 키를 입력해주세요.');
+      return;
+    }
     setIsAnalyzing(true);
     setError('');
 
