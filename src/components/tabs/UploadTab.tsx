@@ -1107,7 +1107,7 @@ const StepMetadata: React.FC = () => {
   const handleExtractShoppingTags = useCallback(async () => {
     const scriptText = getScriptText();
     if (!scriptText.trim()) {
-      alert('대본이 없어 쇼핑 태그를 추출할 수 없습니다.');
+      showToast('대본이 없어 쇼핑 태그를 추출할 수 없습니다.');
       return;
     }
     setIsExtractingTags(true);
@@ -1115,7 +1115,7 @@ const StepMetadata: React.FC = () => {
       const tags = await extractShoppingTags(scriptText, getSceneSummaries());
       setShoppingTags(tags);
     } catch {
-      alert('쇼핑 태그 추출 실패');
+      showToast('쇼핑 태그 추출 실패');
     } finally {
       setIsExtractingTags(false);
     }

@@ -1,6 +1,7 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react';
 import { useUploadStore } from '../../../stores/uploadStore';
 import { useEditRoomStore } from '../../../stores/editRoomStore';
+import { showToast } from '../../../stores/uiStore';
 
 const formatFileSize = (bytes: number): string => {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -44,7 +45,7 @@ const StepVideo: React.FC = () => {
 
   const processFile = useCallback((file: File) => {
     if (!ACCEPT_TYPES.includes(file.type)) {
-      alert('MP4, WebM, MOV 파일만 지원합니다.');
+      showToast('MP4, WebM, MOV 파일만 지원합니다.');
       return;
     }
     setVideoFile(file);

@@ -6,7 +6,7 @@ import { useCostStore } from '../../../stores/costStore';
 import { useUploadStore } from '../../../stores/uploadStore';
 import { useScriptWriterStore } from '../../../stores/scriptWriterStore';
 import { useProjectStore } from '../../../stores/projectStore';
-import { useUIStore } from '../../../stores/uiStore';
+import { useUIStore, showToast } from '../../../stores/uiStore';
 import { extractYouTubeVideoId, fetchYouTubeThumbnail } from '../../../utils/thumbnailUtils';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
 
@@ -57,14 +57,14 @@ const InlineThumbnailStudio: React.FC<InlineThumbnailStudioProps> = ({ onClose }
   // YouTube 썸네일 가져오기
   const handleFetchYouTube = useCallback(async () => {
     const videoId = extractYouTubeVideoId(youtubeUrl);
-    if (!videoId) { alert('유효한 YouTube URL을 입력해주세요.'); return; }
+    if (!videoId) { showToast('유효한 YouTube URL을 입력해주세요.'); return; }
     setIsFetchingThumb(true);
     try {
       const base64 = await fetchYouTubeThumbnail(videoId);
       setReferenceImage(base64);
       setExtractedStyle(undefined);
     } catch {
-      alert('YouTube 썸네일을 가져올 수 없습니다.');
+      showToast('YouTube 썸네일을 가져올 수 없습니다.');
     } finally {
       setIsFetchingThumb(false);
     }
@@ -79,7 +79,7 @@ const InlineThumbnailStudio: React.FC<InlineThumbnailStudioProps> = ({ onClose }
       setReferenceImage(resized);
       setExtractedStyle(undefined);
     } catch {
-      alert('이미지를 처리할 수 없습니다.');
+      showToast('이미지를 처리할 수 없습니다.');
     }
     if (fileRef.current) fileRef.current.value = '';
   }, []);
@@ -93,7 +93,7 @@ const InlineThumbnailStudio: React.FC<InlineThumbnailStudioProps> = ({ onClose }
       setExtractedStyle(analysis);
       // Cost is auto-tracked inside evolinkChat()
     } catch {
-      alert('스타일 분석에 실패했습니다.');
+      showToast('스타일 분석에 실패했습니다.');
     } finally {
       setIsAnalyzing(false);
     }
@@ -102,7 +102,7 @@ const InlineThumbnailStudio: React.FC<InlineThumbnailStudioProps> = ({ onClose }
   // 스튜디오 시작
   const handleStartStudio = useCallback(() => {
     if (mode === 'reference' && !extractedStyle && referenceImage) {
-      alert('레퍼런스 이미지를 먼저 AI 분석해주세요.');
+      showToast('레퍼런스 이미지를 먼저 AI 분석해주세요.');
       return;
     }
     setPhase('studio');
