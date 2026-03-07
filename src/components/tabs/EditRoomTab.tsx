@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, Suspense } from 'react';
 import { useProjectStore } from '../../stores/projectStore';
 import { useSoundStudioStore } from '../../stores/soundStudioStore';
 import { useEditRoomStore } from '../../stores/editRoomStore';
@@ -13,7 +13,9 @@ import EditRoomExportBar from './editroom/EditRoomExportBar';
 import VisualTimeline from './editroom/VisualTimeline';
 import RenderSettingsModal from './editroom/RenderSettingsModal';
 import OverlayPreviewLayer from './editroom/OverlayPreviewLayer';
-import type { SubtitleTemplate, SubtitleStyle, SceneEffectConfig, SceneTransitionPreset } from '../../types';
+import type { SubtitleTemplate, SubtitleStyle, SceneEffectConfig, SceneTransitionPreset, EditRoomSubTab } from '../../types';
+
+const EditPointMatchingPanel = React.lazy(() => import('./editroom/EditPointMatchingPanel'));
 import { getFontByFamily } from '../../constants/fontLibrary';
 import { loadFont } from '../../services/fontLoaderService';
 
@@ -1554,6 +1556,21 @@ const EditRoomTab: React.FC = () => {
   }, [timeline, scenes, lines, bgmTrack, setIsExporting, setExportProgress, buildOptimizedScenes, getExportDimensions, resolveSubtitleStyle, buildSceneFilename]);
 
   const sceneCount = sceneOrder.length || scenes.length;
+  const editRoomSubTab = useEditRoomStore((s) => s.editRoomSubTab);
+  const setEditRoomSubTab = useEditRoomStore((s) => s.setEditRoomSubTab);
+
+  const subTabs: { key: EditRoomSubTab; label: string; icon: React.ReactNode }[] = [
+    {
+      key: 'timeline',
+      label: '타임라인',
+      icon: <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z" /></svg>,
+    },
+    {
+      key: 'edit-point-matching',
+      label: '편집점 매칭',
+      icon: <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.121 14.121L19 19m-7-7l7-7m-7 7l-2.879 2.879M12 12L9.121 9.121m0 5.758a3 3 0 10-4.243 4.243 3 3 0 004.243-4.243zm0-5.758a3 3 0 10-4.243-4.243 3 3 0 004.243 4.243z" /></svg>,
+    },
+  ];
 
   return (
     <div className="min-h-screen bg-gray-900 text-white pb-20">
@@ -1566,53 +1583,84 @@ const EditRoomTab: React.FC = () => {
           onExportMp4={handleExportMp4Click}
         />
 
-        {/* 총 길이 표시 */}
-        {totalDuration > 0 && (
-          <div className="flex items-center gap-3 mb-4 text-sm text-gray-500">
-            <span>총 길이: <span className="text-amber-400 font-mono">{Math.floor(totalDuration / 60)}:{String(Math.floor(totalDuration % 60)).padStart(2, '0')}</span></span>
-            <span>|</span>
-            <span>{sceneCount}개 장면</span>
-          </div>
+        {/* 서브탭 네비게이션 */}
+        <div className="flex items-center gap-1 mb-5 border-b border-gray-800">
+          {subTabs.map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              onClick={() => setEditRoomSubTab(tab.key)}
+              className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-all -mb-px ${
+                editRoomSubTab === tab.key
+                  ? 'border-amber-500 text-amber-400'
+                  : 'border-transparent text-gray-500 hover:text-gray-300'
+              }`}
+            >
+              {tab.icon}
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {/* 타임라인 서브탭 */}
+        {editRoomSubTab === 'timeline' && (
+          <>
+            {/* 총 길이 표시 */}
+            {totalDuration > 0 && (
+              <div className="flex items-center gap-3 mb-4 text-sm text-gray-500">
+                <span>총 길이: <span className="text-amber-400 font-mono">{Math.floor(totalDuration / 60)}:{String(Math.floor(totalDuration % 60)).padStart(2, '0')}</span></span>
+                <span>|</span>
+                <span>{sceneCount}개 장면</span>
+              </div>
+            )}
+
+            {/* 미리보기 + 글로벌 패널 가로 배치 */}
+            <div className="flex gap-4 mb-4 items-stretch">
+              <div className="flex-1 min-w-0">
+                <ScenePreviewPanel
+                  scenes={scenes}
+                  timeline={timeline}
+                  expandedSceneId={expandedSceneId}
+                  onSelectScene={setExpandedSceneId}
+                  aspectRatio={projectAspectRatio}
+                />
+              </div>
+              <div className="w-80 flex-shrink-0 hidden lg:flex lg:flex-col">
+                <EditRoomGlobalPanel />
+              </div>
+            </div>
+
+            <div className="mb-4">
+              <VisualTimeline />
+            </div>
+          </>
         )}
 
-        {/* 대본 직접 입력 — 비활성화 (사운드 스튜디오 → 이미지/영상 파이프라인 사용) */}
-
-        {/* 미리보기 + 글로벌 패널 가로 배치 */}
-        <div className="flex gap-4 mb-4 items-stretch">
-          {/* 좌: 미리보기 패널 */}
-          <div className="flex-1 min-w-0">
-            <ScenePreviewPanel
-              scenes={scenes}
-              timeline={timeline}
-              expandedSceneId={expandedSceneId}
-              onSelectScene={setExpandedSceneId}
-              aspectRatio={projectAspectRatio}
-            />
-          </div>
-
-          {/* 우: 이미지효과 / 자막 / BGM 패널 — 미리보기 높이에 맞춤 */}
-          <div className="w-80 flex-shrink-0 hidden lg:flex lg:flex-col">
-            <EditRoomGlobalPanel />
-          </div>
-        </div>
-
-        {/* 타임라인 (Pixeling 스타일) — 미리보기 아래 배치 */}
-        <div className="mb-4">
-          <VisualTimeline />
-        </div>
-
-        {/* 장면 목록 — 현재 비활성화 (나중에 복원 가능)
-        <EditRoomSceneList />
-        */}
+        {/* 편집점 매칭 서브탭 */}
+        {editRoomSubTab === 'edit-point-matching' && (
+          <Suspense fallback={
+            <div className="flex items-center justify-center h-64 text-gray-500">
+              <svg className="w-5 h-5 animate-spin mr-2 border-t-amber-400" viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" className="opacity-20" />
+                <path d="M12 2a10 10 0 019.95 11" stroke="currentColor" strokeWidth="3" strokeLinecap="round" className="text-amber-400" />
+              </svg>
+              로딩 중...
+            </div>
+          }>
+            <EditPointMatchingPanel />
+          </Suspense>
+        )}
       </div>
 
-      {/* 하단 고정 내보내기 바 */}
-      <EditRoomExportBar
-        onExportSrt={handleExportSrt}
-        onExportZip={handleExportZip}
-        onExportMp4={handleExportMp4Click}
-        onCancelExport={handleCancelExport}
-      />
+      {/* 하단 고정 내보내기 바 (타임라인 탭에서만 표시) */}
+      {editRoomSubTab === 'timeline' && (
+        <EditRoomExportBar
+          onExportSrt={handleExportSrt}
+          onExportZip={handleExportZip}
+          onExportMp4={handleExportMp4Click}
+          onCancelExport={handleCancelExport}
+        />
+      )}
 
       {/* 렌더 설정 모달 */}
       {showRenderModal && (

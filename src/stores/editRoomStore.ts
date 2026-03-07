@@ -15,6 +15,7 @@ import {
   TrackAudioEffect,
   TrackMixerConfig,
   RenderSettings,
+  EditRoomSubTab,
 } from '../types';
 import { useProjectStore } from './projectStore';
 import { useSoundStudioStore } from './soundStudioStore';
@@ -212,6 +213,9 @@ interface EditRoomStore {
   // 타임라인 재생 상태
   isTimelinePlaying: boolean;
 
+  // 서브탭
+  editRoomSubTab: EditRoomSubTab;
+
   // 초기화 플래그
   initialized: boolean;
 
@@ -276,6 +280,7 @@ interface EditRoomStore {
   /** 프리뷰 전환 콜백 — ScenePreviewPanel이 등록, VisualTimeline이 호출 */
   _navigateToSceneFn: ((targetId: string) => void) | null;
   setNavigateToSceneFn: (fn: ((targetId: string) => void) | null) => void;
+  setEditRoomSubTab: (tab: EditRoomSubTab) => void;
 }
 
 const DEFAULT_BGM: BgmConfig = {
@@ -345,6 +350,7 @@ const INITIAL_STATE = {
   motionLooping: false,
   bottomFade: 0,
   isTimelinePlaying: false,
+  editRoomSubTab: 'timeline' as EditRoomSubTab,
   initialized: false,
   _navigateToSceneFn: null as ((targetId: string) => void) | null,
   _undoStack: [] as Array<{ sceneSubtitles: Record<string, SceneSubtitleConfig>; sceneOrder: string[]; scenesJson: string; linesJson: string }>,
@@ -882,6 +888,7 @@ export const useEditRoomStore = create<EditRoomStore>((set, get) => ({
 
   setExpandedSceneId: (id) => set({ expandedSceneId: id }),
   setNavigateToSceneFn: (fn) => set({ _navigateToSceneFn: fn }),
+  setEditRoomSubTab: (tab) => set({ editRoomSubTab: tab }),
   setActiveGlobalPanel: (panel) => set({ activeGlobalPanel: panel }),
   setFfmpegLoaded: (v) => set({ ffmpegLoaded: v }),
   setIsExporting: (v) => set({ isExporting: v }),

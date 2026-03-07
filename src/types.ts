@@ -1244,6 +1244,41 @@ export interface TrackMixerConfig {
   pan: number; // -100(L) ~ 0(C) ~ 100(R)
 }
 
+// --- 편집실 서브탭 ---
+export type EditRoomSubTab = 'timeline' | 'edit-point-matching';
+
+// --- 편집점 매칭 ---
+export type EditPointStep = 'register' | 'mapping' | 'export';
+
+export interface SourceVideoFile {
+  id: string;
+  sourceId: string;
+  file: File;
+  blobUrl: string;
+  fileName: string;
+  fileSizeMB: number;
+  durationSec: number | null;
+  thumbnailDataUrl?: string;
+}
+
+export interface EdlEntry {
+  id: string;
+  order: string;
+  narrationText: string;
+  sourceId: string;
+  sourceDescription: string;
+  speedFactor: number;
+  timecodeStart: number;
+  timecodeEnd: number;
+  note: string;
+  refinedTimecodeStart?: number;
+  refinedTimecodeEnd?: number;
+  refinedConfidence?: number;
+  referenceFrameUrl?: string;
+}
+
+export type EditPointExportMode = 'direct-mp4' | 'ffmpeg-script' | 'edl-file' | 'push-to-timeline';
+
 // --- evolink.ai 모델 ---
 export enum EvolinkImageModel {
   NANO_BANANA_2 = 'nano-banana-2',
