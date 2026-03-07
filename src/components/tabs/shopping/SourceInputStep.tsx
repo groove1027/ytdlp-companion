@@ -8,7 +8,7 @@ import {
   extractVideoMetadata,
   extractBlobVideoMetadata,
 } from '../../../services/videoDownloadService';
-import { extractFramesForAnalysis, analyzeVideoProduct, generateShoppingScripts } from '../../../services/shoppingScriptService';
+import { extractFramesForAnalysis, analyzeVideoProduct, generateShoppingScripts, detectNarration } from '../../../services/shoppingScriptService';
 import { showToast } from '../../../stores/uiStore';
 
 const SourceInputStep: React.FC = () => {
@@ -29,6 +29,7 @@ const SourceInputStep: React.FC = () => {
 
   const [showProxySettings, setShowProxySettings] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [analysisProgress, setAnalysisProgress] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const platform = sourceUrl ? detectPlatform(sourceUrl) : 'unknown';
@@ -101,16 +102,31 @@ const SourceInputStep: React.FC = () => {
 
     setIsAnalyzing(true);
     setAnalysisError(null);
+    setAnalysisProgress('나레이션 감지 중...');
     try {
-      // 프레임 추출
+      // 1. 나레이션 감지 (원본 영상에 나레이션이 있으면 전사)
+      const narrationText = await detectNarration(
+        sourceVideo.videoBlob,
+        (msg) => setAnalysisProgress(msg),
+      );
+
+      if (narrationText) {
+        setAnalysisProgress('나레이션 감지됨! 프레임 추출 중...');
+      } else {
+        setAnalysisProgress('나레이션 없음 — 프레임 기반 분석 진행...');
+      }
+
+      // 2. 프레임 추출
       const frames = await extractFramesForAnalysis(sourceVideo.videoBlob, 6);
 
-      // 상품 분석
-      const analysis = await analyzeVideoProduct(frames);
+      // 3. 상품 분석 (나레이션 있으면 함께 전달)
+      setAnalysisProgress('AI 상품 분석 중...');
+      const analysis = await analyzeVideoProduct(frames, narrationText);
       setProductAnalysis(analysis);
 
-      // 대본 생성
-      const scripts = await generateShoppingScripts(analysis, sourceVideo.duration, ctaPreset);
+      // 4. v31.0 대본 생성 (나레이션 참고)
+      setAnalysisProgress('v31.0 대본 생성 중...');
+      const scripts = await generateShoppingScripts(analysis, sourceVideo.duration, ctaPreset, narrationText);
       setGeneratedScripts(scripts);
       if (scripts.length > 0) setSelectedScriptId(scripts[0].id);
 
@@ -122,6 +138,7 @@ const SourceInputStep: React.FC = () => {
       showToast(`분석 실패: ${msg}`);
     } finally {
       setIsAnalyzing(false);
+      setAnalysisProgress('');
     }
   }, [sourceVideo, ctaPreset, setIsAnalyzing, setAnalysisError, setProductAnalysis, setGeneratedScripts, setSelectedScriptId, goToStep]);
 
@@ -252,9 +269,9 @@ const SourceInputStep: React.FC = () => {
             {isAnalyzing ? (
               <span className="flex items-center justify-center gap-2">
                 <span className="animate-spin h-5 w-5 border-2 border-white/30 border-t-white rounded-full" />
-                AI 분석 중... (프레임 추출 → 상품 분석 → 대본 생성)
+                {analysisProgress || 'AI 분석 중...'}
               </span>
-            ) : '분석 시작'}
+            ) : '분석 시작 (나레이션 감지 → 상품 분석 → 대본 생성)'}
           </button>
 
           {analysisError && (
