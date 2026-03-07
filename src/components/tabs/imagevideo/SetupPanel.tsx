@@ -6,7 +6,7 @@ import { useImageVideoStore } from '../../../stores/imageVideoStore';
 import { analyzeScriptContext, parseScriptToScenes, countScenesLocally, splitScenesLocally } from '../../../services/gemini/scriptAnalysis';
 import { analyzeCharacterImage } from '../../../services/characterAnalysisService';
 import { persistImage } from '../../../services/imageStorageService';
-import { removeBackground } from '../../../services/removeBgService';
+// import { removeBackground } from '../../../services/removeBgService';
 import { PRICING } from '../../../constants';
 import { VideoFormat, CharacterAppearance, AspectRatio } from '../../../types';
 import type { CharacterReference, SavedCharacter } from '../../../types';
@@ -175,27 +175,27 @@ const SetupPanel: React.FC = () => {
       useImageVideoStore.getState().updateCharacter(charId, { imageUrl: url });
     }).catch(() => {});
 
-    // 자동 누끼 제거 → 자동 분석 flow
-    let finalSrc = imageBase64;
-    try {
-      const resp = await fetch(imageBase64);
-      const blob = await resp.blob();
-      const file = new File([blob], `char-${charId}.png`, { type: blob.type || 'image/png' });
-      const processed = await removeBackground(file);
-      useCostStore.getState().addCost(PRICING.REMOVE_BG_PER_IMAGE, 'image');
-      const reader = new FileReader();
-      const bgRemovedBase64 = await new Promise<string>((resolve) => {
-        reader.onload = () => resolve(reader.result as string);
-        reader.readAsDataURL(processed);
-      });
-      finalSrc = bgRemovedBase64;
-      useImageVideoStore.getState().updateCharacter(charId, { imageBase64: bgRemovedBase64 });
-      persistImage(bgRemovedBase64).then(url => {
-        useImageVideoStore.getState().updateCharacter(charId, { imageUrl: url });
-      }).catch(() => {});
-    } catch {
-      // Remove.bg 실패 — 원본 이미지로 분석 진행
-    }
+    // [DISABLED] Remove.bg 배경 제거 비활성화
+    const finalSrc = imageBase64;
+    // try {
+    //   const resp = await fetch(imageBase64);
+    //   const blob = await resp.blob();
+    //   const file = new File([blob], `char-${charId}.png`, { type: blob.type || 'image/png' });
+    //   const processed = await removeBackground(file);
+    //   useCostStore.getState().addCost(PRICING.REMOVE_BG_PER_IMAGE, 'image');
+    //   const reader = new FileReader();
+    //   const bgRemovedBase64 = await new Promise<string>((resolve) => {
+    //     reader.onload = () => resolve(reader.result as string);
+    //     reader.readAsDataURL(processed);
+    //   });
+    //   finalSrc = bgRemovedBase64;
+    //   useImageVideoStore.getState().updateCharacter(charId, { imageBase64: bgRemovedBase64 });
+    //   persistImage(bgRemovedBase64).then(url => {
+    //     useImageVideoStore.getState().updateCharacter(charId, { imageUrl: url });
+    //   }).catch(() => {});
+    // } catch {
+    //   // Remove.bg 실패 — 원본 이미지로 분석 진행
+    // }
 
     // 자동 분석
     try {
@@ -240,7 +240,7 @@ const SetupPanel: React.FC = () => {
     for (const char of unanalyzed) await handleAnalyzeCharacter(char.id);
   }, [handleAnalyzeCharacter]);
 
-  // handleRemoveBg 제거됨 — 업로드 시 자동 Remove.bg 실행 (handleAddCharacter 내부)
+  // [DISABLED] handleRemoveBg & Remove.bg 기능 전체 비활성화
 
   const handleSaveCharacterToLibrary = useCallback(async (char: CharacterReference) => {
     try {

@@ -132,22 +132,7 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
                         </p>
                     </div>
 
-                    {/* 6. Remove.bg — 배경 제거 */}
-                    <div className="space-y-3 pb-4 border-b border-gray-700">
-                        <div className="flex flex-col">
-                            <h3 className="text-base font-bold text-orange-400 uppercase tracking-wider">✂️ REMOVE.BG</h3>
-                            <div className="flex items-center gap-2 mt-0.5">
-                                <span className="text-sm text-gray-400">이미지 배경 제거 (누끼) 자동화</span>
-                                <span className="text-[11px] text-white bg-red-600 px-1.5 py-0.5 rounded-full font-bold animate-pulse shadow-md">
-                                    ✨ 월 50회 무료
-                                </span>
-                            </div>
-                        </div>
-                        <input type={showPassword ? "text" : "password"} value={keys.removeBg} onChange={(e) => setKeys({...keys, removeBg: e.target.value})} placeholder="Remove.bg API Key" className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-base text-white" />
-                        <p className="text-sm text-gray-500 leading-tight">
-                            * 키 입력 시 이미지 업로드할 때 <strong>자동 누끼 처리</strong> + AI 분석 성능 향상
-                        </p>
-                    </div>
+                    {/* [DISABLED] 6. Remove.bg — 배경 제거 (기능 비활성화) */}
 
                     {/* 7. YouTube Data API */}
                     <div className="space-y-3">

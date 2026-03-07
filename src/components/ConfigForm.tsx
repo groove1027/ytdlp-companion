@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { ProjectConfig, CharacterDraft, ScriptModeState } from '../types';
-import { getCloudinaryConfig, getKieKey, getLaozhangKey, getApimartKey, getRemoveBgKey } from '../services/apiService';
+import { getCloudinaryConfig, getKieKey, getLaozhangKey, getApimartKey } from '../services/apiService';
 
 // [v4.5] CharacterMode/RemakeMode 주석처리됨 - 추후 복원 가능
 // const CharacterMode = lazy(() => import('./modes/CharacterMode'));
@@ -71,10 +71,11 @@ const ConfigForm: React.FC<ConfigFormProps> = ({
         missing.push("Apimart API Key (선택: Veo 1080p 영상)");
     }
 
-    if (!getRemoveBgKey()) {
-        missing.push("Remove.bg API Key (선택: 고품질 누끼 자동화)");
-    }
-    
+    // [DISABLED] Remove.bg 체크 비활성화
+    // if (!getRemoveBgKey()) {
+    //     missing.push("Remove.bg API Key (선택: 고품질 누끼 자동화)");
+    // }
+
     const cloudConfig = getCloudinaryConfig();
     if (!cloudConfig.cloudName || !cloudConfig.uploadPreset) {
         missing.push("Cloudinary (필수: 이미지 전송용)");

@@ -268,14 +268,7 @@ const CharacterUploadPanel: React.FC<CharacterUploadPanelProps> = ({
           </div>
         </div>
 
-        {/* 자동 누끼 안내 */}
-        <div className="mt-3 px-3 py-2 bg-green-900/15 border border-green-500/20 rounded-lg flex items-start gap-2">
-          <span className="text-green-400 text-sm flex-shrink-0">✅</span>
-          <div>
-            <p className="text-xs text-green-400/90 font-semibold">자동 누끼 제거 활성화됨: 이미지 업로드 시 AI가 자동으로 배경을 지워줍니다. (월 50회 무료)</p>
-            <p className="text-[10px] text-gray-500 mt-0.5">* 자주 사용하는 캐릭터는 PNG 저장을 눌러 보관해 주세요!</p>
-          </div>
-        </div>
+        {/* [DISABLED] 자동 누끼 안내 — Remove.bg 비활성화 */}
 
         <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileSelect} className="hidden" />
       </div>
@@ -478,14 +471,7 @@ const CharacterUploadPanel: React.FC<CharacterUploadPanelProps> = ({
         ))}
       </div>
 
-      {/* 자동 누끼 안내 */}
-      <div className="mt-3 px-3 py-2 bg-green-900/15 border border-green-500/20 rounded-lg flex items-start gap-2">
-        <span className="text-green-400 text-sm flex-shrink-0">✅</span>
-        <div>
-          <p className="text-xs text-green-400/90 font-semibold">자동 누끼 제거 활성화됨: 이미지 업로드 시 AI가 자동으로 배경을 지워줍니다. (월 50회 무료)</p>
-          <p className="text-[10px] text-gray-500 mt-0.5">* 자주 사용하는 캐릭터는 PNG 저장을 눌러 보관해 주세요!</p>
-        </div>
-      </div>
+      {/* [DISABLED] 자동 누끼 안내 — Remove.bg 비활성화 */}
 
       <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileSelect} className="hidden" />
     </div>

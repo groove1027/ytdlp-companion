@@ -182,17 +182,21 @@ const App: React.FC = () => {
     restoreLastProject();
   }, []);
 
-  // [FIX] 프로젝트 필요 탭인데 프로젝트 없으면 대시보드로 복귀
+  // [FIX] 프로젝트 필요 탭인데 프로젝트 없으면 대시보드로 복귀 + 안내 메시지
   useEffect(() => {
-    const projectRequiredTabs: AppTab[] = [
-      'channel-analysis', 'script-writer', 'sound-studio',
-      'image-video', 'edit-room', 'upload',
+    const projectRequiredTabs: { id: AppTab; label: string }[] = [
+      { id: 'channel-analysis', label: '채널분석' },
+      { id: 'script-writer', label: '대본작성' },
+      { id: 'sound-studio', label: '사운드스튜디오' },
+      { id: 'image-video', label: '이미지/영상' },
+      { id: 'edit-room', label: '편집실' },
     ];
-    if (projectRequiredTabs.includes(activeTab) && !config) {
+    const matched = projectRequiredTabs.find(t => t.id === activeTab);
+    if (matched && !config) {
       // 약간의 딜레이: 위의 restoreLastProject가 완료될 시간을 줌
       const timer = setTimeout(() => {
         if (!useProjectStore.getState().config) {
-          useNavigationStore.getState().goToDashboard();
+          useNavigationStore.getState().goToDashboardWithRedirect(matched.label);
         }
       }, 1500);
       return () => clearTimeout(timer);

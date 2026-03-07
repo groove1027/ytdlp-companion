@@ -6,8 +6,8 @@ import VisualStylePicker, { getVisualStyleLabel } from '../VisualStylePicker';
 import { estimateSceneCount, analyzeScriptContext, generateStylePreviewPrompts, generateSceneImage, analyzeImageUnified } from '../../services/geminiService';
 import { uploadMediaToHosting } from '../../services/uploadService';
 import { resizeImage, base64ToFile } from '../../services/imageProcessingService';
-import { getRemoveBgKey } from '../../services/apiService';
-import { removeBackground } from '../../services/removeBgService';
+// import { getRemoveBgKey } from '../../services/apiService';
+// import { removeBackground } from '../../services/removeBgService';
 import { showToast } from '../../stores/uiStore';
 import { useCostStore } from '../../stores/costStore';
 import { useElapsedTimer, formatElapsed } from '../../hooks/useElapsedTimer';
@@ -25,32 +25,32 @@ interface ScriptModeProps {
     onSaveState?: (state: ScriptModeState) => void;
 }
 
-// [NEW] Remove.bg Tip Component (Updated)
-const RemoveBgTip = () => {
-    const hasKey = !!getRemoveBgKey();
-    return (
-        <div className={`mt-3 border rounded-lg p-3 flex flex-col md:flex-row items-center justify-between gap-3 animate-fade-in ${hasKey ? 'bg-green-900/30 border-green-500/30' : 'bg-amber-900/30 border-amber-500/30'}`}>
-            <div className={`text-base leading-relaxed ${hasKey ? 'text-green-100/90' : 'text-amber-100/90'}`}>
-                <span className="text-lg mr-1">{hasKey ? '✅' : '💡'}</span>
-                {hasKey 
-                    ? <>
-                        <strong>자동 누끼 제거 활성화됨:</strong> 이미지 업로드 시 AI가 자동으로 배경을 지워줍니다. (월 50회 무료)<br/>
-                        <span className="block mt-1 text-base">* 자주 사용하는 캐릭터는 <strong>PNG 저장</strong>을 눌러 보관해 주세요!</span>
-                      </>
-                    : <><strong>꿀팁:</strong> 배경이 제거된 캐릭터 이미지를 사용하면, AI 인식률이 대폭 상승합니다! (API 설정에서 키 등록)</>
-                }
-            </div>
-            {!hasKey && (
-                <button 
-                    onClick={() => window.open('https://www.remove.bg/ko', '_blank')}
-                    className="flex-shrink-0 bg-amber-600 hover:bg-amber-500 text-white text-base font-bold px-4 py-2 rounded-full shadow-lg transition-colors flex items-center gap-1 whitespace-nowrap"
-                >
-                    ✂️ 무료 누끼 따기 (remove.bg)
-                </button>
-            )}
-        </div>
-    );
-};
+// [DISABLED] Remove.bg Tip Component — remove.bg 기능 비활성화
+// const RemoveBgTip = () => {
+//     const hasKey = !!getRemoveBgKey();
+//     return (
+//         <div className={`mt-3 border rounded-lg p-3 flex flex-col md:flex-row items-center justify-between gap-3 animate-fade-in ${hasKey ? 'bg-green-900/30 border-green-500/30' : 'bg-amber-900/30 border-amber-500/30'}`}>
+//             <div className={`text-base leading-relaxed ${hasKey ? 'text-green-100/90' : 'text-amber-100/90'}`}>
+//                 <span className="text-lg mr-1">{hasKey ? '✅' : '💡'}</span>
+//                 {hasKey
+//                     ? <>
+//                         <strong>자동 누끼 제거 활성화됨:</strong> 이미지 업로드 시 AI가 자동으로 배경을 지워줍니다. (월 50회 무료)<br/>
+//                         <span className="block mt-1 text-base">* 자주 사용하는 캐릭터는 <strong>PNG 저장</strong>을 눌러 보관해 주세요!</span>
+//                       </>
+//                     : <><strong>꿀팁:</strong> 배경이 제거된 캐릭터 이미지를 사용하면, AI 인식률이 대폭 상승합니다! (API 설정에서 키 등록)</>
+//                 }
+//             </div>
+//             {!hasKey && (
+//                 <button
+//                     onClick={() => window.open('https://www.remove.bg/ko', '_blank')}
+//                     className="flex-shrink-0 bg-amber-600 hover:bg-amber-500 text-white text-base font-bold px-4 py-2 rounded-full shadow-lg transition-colors flex items-center gap-1 whitespace-nowrap"
+//                 >
+//                     ✂️ 무료 누끼 따기 (remove.bg)
+//                 </button>
+//             )}
+//         </div>
+//     );
+// };
 
 const ScriptMode: React.FC<ScriptModeProps> = ({ 
     onNext, 
@@ -285,24 +285,22 @@ const ScriptMode: React.FC<ScriptModeProps> = ({
             const originalBase64 = await resizeImage(file, 768, 'image/png');
             setCharImageBase64(originalBase64);
 
-            let processedFile = file;
-            
-            // 2. 배경 제거 시도 (백그라운드 처리)
-            if (getRemoveBgKey()) {
-                setIsRemovingBgChar(true); // 로딩 오버레이 켜기 (이미지는 이미 보임)
-                try {
-                    processedFile = await removeBackground(file);
-                    useCostStore.getState().addCost(PRICING.REMOVE_BG_PER_IMAGE, 'image');
+            const processedFile = file;
 
-                    // [OPTIMISTIC UI] 3. 성공 시 처리된 이미지로 교체 (Silent Swap)
-                    const processedBase64 = await resizeImage(processedFile, 768, 'image/png');
-                    setCharImageBase64(processedBase64);
-                } catch (bgError) {
-                    console.warn("Background removal failed, using original.", bgError);
-                } finally {
-                    setIsRemovingBgChar(false); // 로딩 오버레이 끄기
-                }
-            }
+            // [DISABLED] Remove.bg 배경 제거 비활성화
+            // if (getRemoveBgKey()) {
+            //     setIsRemovingBgChar(true);
+            //     try {
+            //         processedFile = await removeBackground(file);
+            //         useCostStore.getState().addCost(PRICING.REMOVE_BG_PER_IMAGE, 'image');
+            //         const processedBase64 = await resizeImage(processedFile, 768, 'image/png');
+            //         setCharImageBase64(processedBase64);
+            //     } catch (bgError) {
+            //         console.warn("Background removal failed, using original.", bgError);
+            //     } finally {
+            //         setIsRemovingBgChar(false);
+            //     }
+            // }
 
             // 4. 분석 시작
             setIsAnalyzing(true); 
@@ -338,23 +336,22 @@ const ScriptMode: React.FC<ScriptModeProps> = ({
             const originalBase64 = await resizeImage(file, 768);
             setProdImageBase64(originalBase64);
 
-            let processedFile = file;
-            
-            // 2. 배경 제거 시도
-            if (getRemoveBgKey()) {
-                setIsRemovingBgProd(true);
-                try {
-                    processedFile = await removeBackground(file);
-                    useCostStore.getState().addCost(PRICING.REMOVE_BG_PER_IMAGE, 'image');
-                    // [OPTIMISTIC UI] 3. 이미지 교체
-                    const processedBase64 = await resizeImage(processedFile, 768);
-                    setProdImageBase64(processedBase64);
-                } catch (bgError) {
-                    console.warn("Background removal failed, using original.", bgError);
-                } finally {
-                    setIsRemovingBgProd(false);
-                }
-            }
+            const processedFile = file;
+
+            // [DISABLED] Remove.bg 배경 제거 비활성화
+            // if (getRemoveBgKey()) {
+            //     setIsRemovingBgProd(true);
+            //     try {
+            //         processedFile = await removeBackground(file);
+            //         useCostStore.getState().addCost(PRICING.REMOVE_BG_PER_IMAGE, 'image');
+            //         const processedBase64 = await resizeImage(processedFile, 768);
+            //         setProdImageBase64(processedBase64);
+            //     } catch (bgError) {
+            //         console.warn("Background removal failed, using original.", bgError);
+            //     } finally {
+            //         setIsRemovingBgProd(false);
+            //     }
+            // }
 
             // 4. 업로드
             setIsUploadingProd(true);
@@ -916,7 +913,7 @@ const ScriptMode: React.FC<ScriptModeProps> = ({
                                 )}
                             </div>
                             <input type="file" ref={fileInputRef} onChange={(e) => e.target.files?.[0] && processImageFile(e.target.files[0])} accept="image/*" className="hidden" />
-                            <RemoveBgTip />
+                            {/* [DISABLED] <RemoveBgTip /> */}
                         </div>
 
                         {/* [FIX: BUG-11] Product Image Upload Section */}

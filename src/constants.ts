@@ -27,7 +27,7 @@ export const PRICING = {
 
   // Post-Processing
   WAVESPEED_PER_SEC: 0.01,           // WaveSpeed 워터마크/자막 제거 ($0.01/sec, 최소 $0.05)
-  REMOVE_BG_PER_IMAGE: 0.20,         // Remove.bg 배경 제거 (~$0.20/image, 구독 기준)
+  // REMOVE_BG_PER_IMAGE: 0.20,      // [DISABLED] Remove.bg 배경 제거
 
   // Analysis — Gemini 3 Flash via Laozhang/Kie
   GEMINI_FLASH_INPUT_PER_1M: 0.50,   // Gemini 3 Flash Input ($0.50/1M tokens)

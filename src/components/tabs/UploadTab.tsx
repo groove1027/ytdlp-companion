@@ -8,7 +8,7 @@ import { extractShoppingTags } from '../../services/shoppingTagService';
 import { showToast } from '../../stores/uiStore';
 import StepVideo from './upload/StepVideo';
 import InlineThumbnailStudio from './upload/InlineThumbnailStudio';
-import type { UploadStep, UploadPlatform, ThreadsAuthState, NaverClipAuthState } from '../../types';
+import type { UploadStep, UploadPlatform, ThreadsAuthState, NaverClipAuthState, VideoMetadata } from '../../types';
 import { useElapsedTimer, formatElapsed } from '../../hooks/useElapsedTimer';
 
 // --- Platform Config ---
@@ -1289,7 +1289,7 @@ const StepAuth: React.FC = () => {
               <div className="space-y-4">
                 <div className="bg-amber-600/10 border border-amber-500/20 rounded-lg p-4">
                   <p className="text-sm text-amber-400 font-bold mb-2">Naver Clip은 공식 API가 제공되지 않습니다</p>
-                  <p className="text-xs text-gray-400">자동 업로드 대신 파일 다운로드 후 Naver Clip Creator Studio에서 수동 업로드하는 방식을 안내합니다.</p>
+                  <p className="text-xs text-gray-400">자동 업로드 대신 파일 다운로드 후 <strong>클립 크리에이터 앱</strong>(모바일)에서 수동 업로드하는 방식을 안내합니다.</p>
                 </div>
 
                 {/* Naver Clip 수동 업로드 가이드 (접이식) */}
@@ -1309,16 +1309,23 @@ const StepAuth: React.FC = () => {
                       <div className="mt-4 space-y-2">
                         <div className="flex items-center gap-2">
                           <span className="flex-shrink-0 w-6 h-6 rounded-full bg-green-600/30 border border-green-500/40 text-green-400 text-xs font-bold flex items-center justify-center">1</span>
-                          <h5 className="text-sm font-bold text-gray-200">Naver Clip Creator Studio 접속</h5>
+                          <h5 className="text-sm font-bold text-gray-200">클립 크리에이터 앱 설치</h5>
                         </div>
                         <div className="ml-8 space-y-1.5 text-xs text-gray-400">
-                          <p>네이버 계정으로 로그인한 상태에서 아래 링크로 접속합니다.</p>
-                          <a href="https://clip.studio.naver.com/" target="_blank" rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1.5 text-green-400 hover:text-green-300 transition-colors border border-green-500/30 rounded-lg px-3 py-1.5 bg-green-600/10 hover:bg-green-600/20">
-                            <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" /><polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" /></svg>
-                            Naver Clip Creator Studio
-                          </a>
-                          <p className="text-gray-500">처음 이용 시 네이버 클립 크리에이터 가입이 필요할 수 있습니다.</p>
+                          <p>네이버 클립은 모바일 앱으로만 업로드 가능합니다. 아래에서 앱을 설치하세요.</p>
+                          <div className="flex gap-2">
+                            <a href="https://apps.apple.com/kr/app/%ED%81%B4%EB%A6%BD-%ED%81%AC%EB%A6%AC%EC%97%90%EC%9D%B4%ED%84%B0/id925205585" target="_blank" rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1.5 text-green-400 hover:text-green-300 transition-colors border border-green-500/30 rounded-lg px-3 py-1.5 bg-green-600/10 hover:bg-green-600/20">
+                              <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" /><polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" /></svg>
+                              App Store
+                            </a>
+                            <a href="https://play.google.com/store/apps/details?id=com.nhn.android.naverplayer" target="_blank" rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1.5 text-green-400 hover:text-green-300 transition-colors border border-green-500/30 rounded-lg px-3 py-1.5 bg-green-600/10 hover:bg-green-600/20">
+                              <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" /><polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" /></svg>
+                              Google Play
+                            </a>
+                          </div>
+                          <p className="text-gray-500">네이버 계정으로 로그인 후, 클립 크리에이터 가입이 필요할 수 있습니다.</p>
                         </div>
                       </div>
 
@@ -1344,10 +1351,10 @@ const StepAuth: React.FC = () => {
                       <div className="space-y-2">
                         <div className="flex items-center gap-2">
                           <span className="flex-shrink-0 w-6 h-6 rounded-full bg-green-600/30 border border-green-500/40 text-green-400 text-xs font-bold flex items-center justify-center">3</span>
-                          <h5 className="text-sm font-bold text-gray-200">Creator Studio에서 업로드</h5>
+                          <h5 className="text-sm font-bold text-gray-200">클립 크리에이터 앱에서 업로드</h5>
                         </div>
                         <div className="ml-8 space-y-1.5 text-xs text-gray-400">
-                          <p className="text-gray-500">Clip Creator Studio에서 <strong className="text-gray-300">"클립 올리기"</strong> → 다운로드한 MP4 파일을 드래그 또는 선택합니다.</p>
+                          <p className="text-gray-500">앱 하단 <strong className="text-gray-300">"+"</strong> 버튼 → <strong className="text-gray-300">"클립 올리기"</strong> → 다운로드한 MP4 파일을 선택합니다.</p>
                           <p className="text-gray-500">이 앱에서 생성한 제목, 설명, 태그를 복사하여 붙여넣으세요.</p>
                         </div>
                       </div>
@@ -1365,7 +1372,7 @@ const StepAuth: React.FC = () => {
                             <p><strong className="text-gray-200">태그:</strong> 해시태그를 # 포함하여 입력</p>
                             <p><strong className="text-gray-200">커버 이미지:</strong> 썸네일 탭에서 다운로드한 이미지 사용</p>
                           </div>
-                          <p className="text-gray-500"><strong className="text-gray-300">"게시하기"</strong> 또는 <strong className="text-gray-300">"예약 게시"</strong>를 클릭하면 완료!</p>
+                          <p className="text-gray-500"><strong className="text-gray-300">"게시하기"</strong> 또는 <strong className="text-gray-300">"예약 게시"</strong>를 누르면 완료!</p>
                         </div>
                       </div>
 
@@ -1429,36 +1436,57 @@ const StepMetadata: React.FC = () => {
     return Array.from(tagSet).slice(0, 20);
   }, [channelTags, channelGuideline]);
 
-  const [selectedIdx, setSelectedIdx] = useState(0);
-  const [customTitle, setCustomTitle] = useState('');
+  // metadata가 이미 있으면 → AI모드였거나 직접입력으로 이미 생성된 것
+  const hasAiTitles = (metadata?.titles?.length ?? 0) > 0;
+  const [selectedIdx, setSelectedIdx] = useState(() => {
+    if (metadata?.selectedTitle && metadata.titles?.length) {
+      const idx = metadata.titles.indexOf(metadata.selectedTitle);
+      return idx >= 0 ? idx : 0;
+    }
+    return 0;
+  });
+  const [customTitle, setCustomTitle] = useState(() => {
+    // titles 배열에 없는 selectedTitle이면 customTitle로 복원
+    if (metadata?.selectedTitle && metadata.titles && !metadata.titles.includes(metadata.selectedTitle)) {
+      return metadata.selectedTitle;
+    }
+    return '';
+  });
   const [description, setDescription] = useState(metadata?.description ?? '');
   const [publicHashtagsText, setPublicHashtagsText] = useState(metadata?.publicHashtags?.join(', ') ?? '');
   const [hiddenTagsText, setHiddenTagsText] = useState(metadata?.hiddenTags?.join(', ') ?? metadata?.tags?.join(', ') ?? '');
-  const [isAiMode, setIsAiMode] = useState(true);
+  const [isAiMode, setIsAiMode] = useState(hasAiTitles);
   const [isExtractingTags, setIsExtractingTags] = useState(false);
   const [newTagKeyword, setNewTagKeyword] = useState('');
   const [previewTab, setPreviewTab] = useState<UploadPlatform>(selectedPlatforms[0] || 'youtube');
 
-  const defaultTitles = metadata?.titles ?? [
-    '제목 옵션을 생성하려면 "AI 생성"을 클릭하세요',
-  ];
+  // 단독 사용 시 붙여넣기용 대본
+  const [pastedScript, setPastedScript] = useState('');
 
-  // 대본 텍스트 가져오기 (scriptWriter 우선, 없으면 scenes에서 조합)
+  const defaultTitles = metadata?.titles ?? [];
+
+  // 대본 텍스트 가져오기 (파이프라인 우선 → 붙여넣기)
   const getScriptText = useCallback(() => {
     if (finalScript && finalScript.trim().length > 0) return finalScript;
-    if (scenes.length > 0) return scenes.map((s) => s.scriptText || '').filter(Boolean).join('\n');
-    return '';
-  }, [finalScript, scenes]);
+    if (scenes.length > 0) {
+      const joined = scenes.map((s) => s.scriptText || '').filter(Boolean).join('\n');
+      if (joined.trim()) return joined;
+    }
+    return pastedScript;
+  }, [finalScript, scenes, pastedScript]);
 
   const getSceneSummaries = useCallback(() => {
     return scenes.map((s) => s.scriptText || s.visualDescriptionKO || '').filter(Boolean);
   }, [scenes]);
 
+  // 파이프라인에서 넘어온 대본 존재 여부
+  const hasPipelineScript = !!(finalScript?.trim() || scenes.some(s => s.scriptText?.trim()));
+
   // AI 메타데이터 + 쇼핑 태그 일괄 생성 (마스터 지침서 1-6단계)
   const handleAiGenerate = useCallback(async () => {
     const scriptText = getScriptText();
     if (!scriptText.trim()) {
-      showToast('대본을 먼저 완성해주세요. 대본 작성 탭에서 대본을 생성하거나, 장면 분할 후 다시 시도하세요.');
+      showToast('대본을 입력해주세요. 위 입력란에 대본을 붙여넣거나, 대본 작성 탭에서 먼저 작성하세요.');
       return;
     }
 
@@ -1504,33 +1532,47 @@ const StepMetadata: React.FC = () => {
     }
   }, [getScriptText, getSceneSummaries, setShoppingTags]);
 
+  // 메타데이터가 없으면 빈 구조를 만들어서 반환하는 헬퍼
+  const getOrCreateMeta = useCallback((): VideoMetadata => {
+    return metadata ?? {
+      titles: [], selectedTitle: '', description: '',
+      publicHashtags: [], hiddenTags: [], tags: [],
+      category: '22', language: 'ko',
+    };
+  }, [metadata]);
+
   const handleSelectTitle = (idx: number) => {
     setSelectedIdx(idx);
-    if (metadata) {
-      setMetadata({ ...metadata, selectedTitle: defaultTitles[idx] });
-    }
+    const m = getOrCreateMeta();
+    setMetadata({ ...m, selectedTitle: defaultTitles[idx] });
   };
 
   const handleDescriptionChange = (val: string) => {
     setDescription(val);
-    if (metadata) {
-      setMetadata({ ...metadata, description: val });
-    }
+    const m = getOrCreateMeta();
+    setMetadata({ ...m, description: val });
   };
 
   const handlePublicHashtagsChange = (val: string) => {
     setPublicHashtagsText(val);
-    if (metadata) {
-      const parsed = val.split(',').map(t => t.trim().replace(/^#/, '')).filter(Boolean).slice(0, 5);
-      setMetadata({ ...metadata, publicHashtags: parsed });
-    }
+    const m = getOrCreateMeta();
+    const parsed = val.split(',').map(t => t.trim().replace(/^#/, '')).filter(Boolean).slice(0, 5);
+    setMetadata({ ...m, publicHashtags: parsed });
   };
 
   const handleHiddenTagsChange = (val: string) => {
     setHiddenTagsText(val);
-    if (metadata) {
-      const parsed = val.split(',').map(t => t.trim()).filter(Boolean);
-      setMetadata({ ...metadata, hiddenTags: parsed, tags: parsed });
+    const m = getOrCreateMeta();
+    const parsed = val.split(',').map(t => t.trim()).filter(Boolean);
+    setMetadata({ ...m, hiddenTags: parsed, tags: parsed });
+  };
+
+  // customTitle 변경 시 store에도 selectedTitle로 반영
+  const handleCustomTitleChange = (val: string) => {
+    setCustomTitle(val);
+    if (val.trim()) {
+      const m = getOrCreateMeta();
+      setMetadata({ ...m, selectedTitle: val });
     }
   };
 
@@ -1538,68 +1580,94 @@ const StepMetadata: React.FC = () => {
 
   return (
     <div className="space-y-5">
-      {/* 모드 선택 카드 — 메타데이터 미생성 & 생성중 아닐 때 표시 */}
-      {!metadata && !isGenerating && (
-        <div className="grid grid-cols-2 gap-4">
-          {/* 직접 입력 카드 */}
-          <button
-            type="button"
-            onClick={() => setIsAiMode(false)}
-            className={`relative p-5 rounded-xl border-2 transition-all text-left ${
-              !isAiMode
-                ? 'border-blue-500/50 bg-blue-500/10'
-                : 'border-gray-700 bg-gray-900/50 hover:border-gray-600'
-            }`}
-          >
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-600 flex items-center justify-center text-white mb-3 shadow-md">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
-            </div>
-            <h4 className="text-base font-bold text-white mb-1">직접 입력</h4>
-            <p className="text-sm text-gray-400">제목, 설명, 태그를 직접 작성합니다</p>
-          </button>
 
-          {/* AI 일괄 생성 카드 — 6개 항목 표시 */}
-          <button
-            type="button"
-            onClick={() => { setIsAiMode(true); handleAiGenerate(); }}
-            className="relative p-5 rounded-xl border-2 border-violet-500/50 bg-gradient-to-br from-violet-900/30 to-fuchsia-900/20 hover:from-violet-900/40 hover:to-fuchsia-900/30 transition-all text-left"
-          >
-            <span className="absolute top-3 right-3 text-[10px] font-bold bg-violet-500/30 text-violet-300 border border-violet-500/30 px-1.5 py-0.5 rounded">AI</span>
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500 to-fuchsia-600 flex items-center justify-center text-white mb-3 shadow-md">
+      {/* ============================================================
+          STEP 1: 대본 소스 영역
+          - 파이프라인에서 대본이 넘어왔으면 → 연동 상태 + AI 분석 버튼
+          - 대본이 없으면 → 붙여넣기 입력란
+          ============================================================ */}
+      {!isGenerating && !metadata && (
+        hasPipelineScript ? (
+          /* 파이프라인 대본 존재 → 큰 AI 분석 CTA */
+          <div className="rounded-xl border-2 border-green-500/30 bg-gradient-to-br from-green-900/15 to-emerald-900/10 p-5">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-8 h-8 rounded-lg bg-green-500/20 flex items-center justify-center">
+                <svg className="w-4.5 h-4.5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+              </div>
+              <div>
+                <p className="text-sm font-bold text-green-300">대본 연동됨</p>
+                <p className="text-xs text-gray-500">{getScriptText().length.toLocaleString()}자 / {scenes.length}개 장면</p>
+              </div>
+            </div>
+            <p className="text-sm text-gray-400 mb-4 leading-relaxed">
+              앞 단계에서 작성된 대본이 자동으로 연동되었습니다. 아래 버튼을 누르면 AI가 대본을 분석하여 제목, 설명, 태그를 한번에 생성합니다.
+            </p>
+            <button
+              type="button"
+              onClick={() => { setIsAiMode(true); handleAiGenerate(); }}
+              className="w-full py-3.5 rounded-xl text-base font-bold text-white bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500 transition-all shadow-lg shadow-violet-500/20 flex items-center justify-center gap-2.5"
+            >
               <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path d="M10 2a1 1 0 011 1v1.323l3.954 1.582 1.599-.8a1 1 0 01.894 1.79l-1.233.616 1.738 5.42a1 1 0 01-.285 1.05A3.989 3.989 0 0115 15a3.989 3.989 0 01-2.667-1.019 1 1 0 01-.285-1.05l1.715-5.349L11 6.477V16h2a1 1 0 110 2H7a1 1 0 110-2h2V6.477L6.237 7.582l1.715 5.349a1 1 0 01-.285 1.05A3.989 3.989 0 015 15a3.989 3.989 0 01-2.667-1.019 1 1 0 01-.285-1.05l1.738-5.42-1.233-.617a1 1 0 01.894-1.788l1.599.799L9 4.323V3a1 1 0 011-1z"/></svg>
+              AI 자동 분석 및 적용
+              <span className="text-xs opacity-70 ml-1">(제목 5개 + 설명 + 해시태그 + 태그 + 쇼핑 태그)</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setIsAiMode(false);
+                setMetadata({
+                  titles: [], selectedTitle: '', description: '',
+                  publicHashtags: [], hiddenTags: [], tags: [],
+                  category: '22', language: 'ko',
+                });
+              }}
+              className="w-full mt-2 py-2 text-sm text-gray-500 hover:text-gray-300 transition-colors"
+            >
+              AI 없이 직접 입력하기
+            </button>
+          </div>
+        ) : (
+          /* 파이프라인 대본 없음 → 붙여넣기 입력란 */
+          <div className="rounded-xl border border-gray-700 bg-gray-900/50 p-5">
+            <label className="text-sm font-bold text-gray-300 mb-2 block flex items-center gap-2">
+              <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+              대본 입력
+            </label>
+            <p className="text-xs text-gray-500 mb-3">업로드할 영상의 대본을 붙여넣으면 AI가 메타데이터를 자동으로 생성합니다.</p>
+            <textarea
+              rows={6}
+              value={pastedScript}
+              onChange={(e) => setPastedScript(e.target.value)}
+              placeholder="여기에 대본을 붙여넣으세요...&#10;&#10;예: 안녕하세요, 오늘은 ..."
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-violet-500/50 resize-none mb-3"
+            />
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => { setIsAiMode(true); handleAiGenerate(); }}
+                disabled={!pastedScript.trim()}
+                className="flex-1 py-3 rounded-xl text-sm font-bold text-white bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500 disabled:from-gray-700 disabled:to-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed transition-all shadow-lg shadow-violet-500/20 disabled:shadow-none flex items-center justify-center gap-2"
+              >
+                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path d="M10 2a1 1 0 011 1v1.323l3.954 1.582 1.599-.8a1 1 0 01.894 1.79l-1.233.616 1.738 5.42a1 1 0 01-.285 1.05A3.989 3.989 0 0115 15a3.989 3.989 0 01-2.667-1.019 1 1 0 01-.285-1.05l1.715-5.349L11 6.477V16h2a1 1 0 110 2H7a1 1 0 110-2h2V6.477L6.237 7.582l1.715 5.349a1 1 0 01-.285 1.05A3.989 3.989 0 015 15a3.989 3.989 0 01-2.667-1.019 1 1 0 01-.285-1.05l1.738-5.42-1.233-.617a1 1 0 01.894-1.788l1.599.799L9 4.323V3a1 1 0 011-1z"/></svg>
+                AI 자동 분석 및 적용
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsAiMode(false);
+                  setMetadata({
+                    titles: [], selectedTitle: '', description: '',
+                    publicHashtags: [], hiddenTags: [], tags: [],
+                    category: '22', language: 'ko',
+                  });
+                }}
+                className="py-3 px-4 rounded-xl text-sm text-gray-400 hover:text-gray-200 bg-gray-700 hover:bg-gray-600 border border-gray-600 transition-colors"
+              >
+                직접 입력
+              </button>
             </div>
-            <h4 className="text-base font-bold text-white mb-2">Gemini로 한방에 생성</h4>
-            <div className="flex flex-wrap gap-1">
-              {['제목 5개', '설명', '해시태그', ...(selectedPlatforms.includes('youtube') ? ['비공개 태그'] : []), '쇼핑 태그'].map((item) => (
-                <span key={item} className="text-[10px] bg-violet-500/20 text-violet-300 border border-violet-500/20 px-1.5 py-0.5 rounded">
-                  {item}
-                </span>
-              ))}
-            </div>
-          </button>
-        </div>
-      )}
-
-      {/* 메타데이터 생성 후 — 모드 전환 + 재생성 버튼 */}
-      {metadata && (
-        <div className="flex items-center justify-end gap-2">
-          <button
-            type="button"
-            onClick={() => setIsAiMode(!isAiMode)}
-            className="text-sm text-gray-400 hover:text-gray-200 bg-gray-700 px-3 py-1.5 rounded-lg border border-gray-600 transition-colors"
-          >
-            {isAiMode ? '직접 입력' : 'AI 생성'}
-          </button>
-          <button
-            type="button"
-            onClick={handleAiGenerate}
-            disabled={isGenerating}
-            className="text-sm font-bold text-violet-400 hover:text-violet-300 bg-violet-900/20 px-3 py-1.5 rounded-lg border border-violet-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
-          >
-            <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path d="M10 2a1 1 0 011 1v1.323l3.954 1.582 1.599-.8a1 1 0 01.894 1.79l-1.233.616 1.738 5.42a1 1 0 01-.285 1.05A3.989 3.989 0 0115 15a3.989 3.989 0 01-2.667-1.019 1 1 0 01-.285-1.05l1.715-5.349L11 6.477V16h2a1 1 0 110 2H7a1 1 0 110-2h2V6.477L6.237 7.582l1.715 5.349a1 1 0 01-.285 1.05A3.989 3.989 0 015 15a3.989 3.989 0 01-2.667-1.019 1 1 0 01-.285-1.05l1.738-5.42-1.233-.617a1 1 0 01.894-1.788l1.599.799L9 4.323V3a1 1 0 011-1z"/></svg>
-            {isGenerating ? '생성 중...' : '전체 재생성'}
-          </button>
-        </div>
+          </div>
+        )
       )}
 
       {/* AI 생성 로딩 — 6단계 표시 */}
@@ -1622,79 +1690,106 @@ const StepMetadata: React.FC = () => {
         </div>
       )}
 
-      {/* 대본 연동 상태 */}
-      {!isGenerating && (
-        <div className={`flex items-center gap-2 text-sm px-3 py-2 rounded-lg border ${
-          getScriptText().trim()
-            ? 'bg-green-900/10 border-green-500/20 text-green-400'
-            : 'bg-yellow-900/10 border-yellow-500/20 text-yellow-400'
-        }`}>
-          <span>{getScriptText().trim() ? '\u2713' : '!'}</span>
-          <span>
-            {getScriptText().trim()
-              ? `대본 연동됨 (${getScriptText().length}자, ${scenes.length}개 장면)`
-              : '대본이 없습니다. 대본 작성 탭에서 먼저 대본을 완성하세요.'}
-          </span>
+      {/* ============================================================
+          STEP 2: 메타데이터 결과/편집 — metadata가 있을 때만 표시
+          ============================================================ */}
+      {metadata && !isGenerating && (
+        <>
+          {/* 상단 바: 대본 소스 상태 + 재생성 버튼 */}
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-sm">
+              {hasPipelineScript || pastedScript.trim() ? (
+                <span className="flex items-center gap-1.5 text-green-400">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4"/></svg>
+                  대본 {getScriptText().length.toLocaleString()}자
+                </span>
+              ) : (
+                <span className="text-gray-500">직접 입력 모드</span>
+              )}
+              <span className="text-gray-600">|</span>
+              {selectedPlatforms.map(pid => {
+                const p = PLATFORMS.find(x => x.id === pid);
+                if (!p) return null;
+                return (
+                  <span key={pid} className={`text-xs font-bold px-1.5 py-0.5 rounded bg-gradient-to-r ${p.bgGradient} text-white`}>
+                    {p.label}
+                  </span>
+                );
+              })}
+            </div>
+            <div className="flex items-center gap-2">
+              {isAiMode && (
+                <button
+                  type="button"
+                  onClick={handleAiGenerate}
+                  disabled={isGenerating}
+                  className="text-sm font-bold text-violet-400 hover:text-violet-300 bg-violet-900/20 px-3 py-1.5 rounded-lg border border-violet-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+                >
+                  <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path d="M10 2a1 1 0 011 1v1.323l3.954 1.582 1.599-.8a1 1 0 01.894 1.79l-1.233.616 1.738 5.42a1 1 0 01-.285 1.05A3.989 3.989 0 0115 15a3.989 3.989 0 01-2.667-1.019 1 1 0 01-.285-1.05l1.715-5.349L11 6.477V16h2a1 1 0 110 2H7a1 1 0 110-2h2V6.477L6.237 7.582l1.715 5.349a1 1 0 01-.285 1.05A3.989 3.989 0 015 15a3.989 3.989 0 01-2.667-1.019 1 1 0 01-.285-1.05l1.738-5.42-1.233-.617a1 1 0 01.894-1.788l1.599.799L9 4.323V3a1 1 0 011-1z"/></svg>
+                  전체 재생성
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => { setMetadata(null); setIsAiMode(true); setPastedScript(pastedScript); }}
+                className="text-sm text-gray-500 hover:text-gray-300 bg-gray-800 px-3 py-1.5 rounded-lg border border-gray-700 transition-colors"
+              >
+                초기화
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Title selection — AI 제목이 있을 때 */}
+      {metadata && defaultTitles.length > 0 && (
+        <div>
+          <label className="text-sm font-semibold text-gray-300 mb-2 block">
+            제목 선택 <span className="text-red-400">*</span>
+          </label>
+          <div className="space-y-2">
+            {defaultTitles.map((title, idx) => (
+              <label
+                key={`title-${idx}`}
+                className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
+                  selectedIdx === idx && !customTitle.trim()
+                    ? 'border-purple-500/50 bg-purple-500/10'
+                    : 'border-gray-700 bg-gray-900/50 hover:border-gray-600'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="title-option"
+                  checked={selectedIdx === idx && !customTitle.trim()}
+                  onChange={() => { handleSelectTitle(idx); setCustomTitle(''); }}
+                  className="accent-purple-500"
+                />
+                <span className="text-sm text-gray-200 flex-1">{title}</span>
+                <span className="text-sm text-gray-500">{title.length}자</span>
+              </label>
+            ))}
+          </div>
         </div>
       )}
 
-      {/* Platform tags */}
-      <div className="flex items-center gap-2">
-        <span className="text-sm text-gray-500">적용 플랫폼:</span>
-        {selectedPlatforms.map(pid => {
-          const p = PLATFORMS.find(x => x.id === pid);
-          if (!p) return null;
-          return (
-            <span key={pid} className={`text-sm font-bold px-2 py-0.5 rounded-full bg-gradient-to-r ${p.bgGradient} text-white`}>
-              {p.label}
-            </span>
-          );
-        })}
-      </div>
-
-      {/* Title selection */}
-      <div>
-        <label className="text-sm font-semibold text-gray-300 mb-2 block">
-          제목 선택 <span className="text-red-400">*</span>
-        </label>
-        <div className="space-y-2">
-          {defaultTitles.map((title, idx) => (
-            <label
-              key={`title-${idx}`}
-              className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
-                selectedIdx === idx
-                  ? 'border-purple-500/50 bg-purple-500/10'
-                  : 'border-gray-700 bg-gray-900/50 hover:border-gray-600'
-              }`}
-            >
-              <input
-                type="radio"
-                name="title-option"
-                checked={selectedIdx === idx}
-                onChange={() => handleSelectTitle(idx)}
-                className="accent-purple-500"
-              />
-              <span className="text-sm text-gray-200 flex-1">{title}</span>
-              <span className="text-sm text-gray-500">{title.length}자</span>
-            </label>
-          ))}
+      {/* Custom title — 항상 표시 (직접 입력 모드에서는 유일한 제목 입력) */}
+      {metadata && (
+        <div>
+          <label className="text-sm font-semibold text-gray-300 mb-1.5 block">
+            {defaultTitles.length > 0 ? '또는 직접 입력:' : '제목'} <span className="text-red-400">*</span>
+          </label>
+          <input
+            type="text"
+            value={customTitle}
+            onChange={(e) => handleCustomTitleChange(e.target.value)}
+            placeholder="제목을 직접 입력하세요..."
+            className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-2.5 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-purple-500/50"
+          />
         </div>
-      </div>
-
-      {/* Custom title */}
-      <div>
-        <label className="text-sm text-gray-400 mb-1.5 block">또는 직접 입력:</label>
-        <input
-          type="text"
-          value={customTitle}
-          onChange={(e) => setCustomTitle(e.target.value)}
-          placeholder="제목을 직접 입력하세요..."
-          className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-2.5 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-purple-500/50"
-        />
-      </div>
+      )}
 
       {/* Description */}
-      <div>
+      {metadata && <div>
         <label className="text-sm font-semibold text-gray-300 mb-1.5 flex items-center justify-between">
           <span>설명</span>
           {description && (
@@ -1712,10 +1807,10 @@ const StepMetadata: React.FC = () => {
           rows={5}
           value={description}
           onChange={(e) => handleDescriptionChange(e.target.value)}
-          placeholder="AI가 생성한 설명이 표시됩니다..."
+          placeholder="설명을 입력하세요..."
           className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-purple-500/50 resize-none"
         />
-      </div>
+      </div>}
 
       {/* Policy Check Result */}
       {metadata?.policyCheck && (
@@ -1749,7 +1844,7 @@ const StepMetadata: React.FC = () => {
       )}
 
       {/* Public Hashtags */}
-      <div>
+      {metadata && <div>
         <label className="text-sm font-semibold text-gray-300 mb-1.5 flex items-center gap-2">
           {metadata?.publicHashtags && metadata.publicHashtags.length > 0 && (
             <button
@@ -1782,10 +1877,10 @@ const StepMetadata: React.FC = () => {
           placeholder="키워드1, 키워드2, 키워드3, ... (쉼표로 구분)"
           className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-2.5 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-cyan-500/50"
         />
-      </div>
+      </div>}
 
       {/* Hidden Tags — YouTube 전용 (다른 플랫폼은 비공개 태그 미지원) */}
-      {selectedPlatforms.includes('youtube') && <div>
+      {metadata && selectedPlatforms.includes('youtube') && <div>
         <label className="text-sm font-semibold text-gray-300 mb-1.5 flex items-center gap-2">
           비공개 태그
           <span className="text-[11px] text-orange-400 bg-orange-900/20 px-2 py-0.5 rounded border border-orange-500/20">YouTube 전용</span>
@@ -1814,7 +1909,7 @@ const StepMetadata: React.FC = () => {
       </div>}
 
       {/* 채널분석 추천 태그 — YouTube 비공개 태그에 추가용 */}
-      {selectedPlatforms.includes('youtube') && suggestedTags.length > 0 && (
+      {metadata && selectedPlatforms.includes('youtube') && suggestedTags.length > 0 && (
         <div className="mt-3">
           <p className="text-xs text-gray-500 mb-1.5 flex items-center gap-1">
             <span>&#x1F4CA;</span> 채널분석 추천 태그
@@ -1867,7 +1962,7 @@ const StepMetadata: React.FC = () => {
       )}
 
       {/* Shopping Tags — YouTube 선택 시 전체 표시, 미선택 시 안내만 */}
-      <div className="border-t border-gray-700 pt-4">
+      {metadata && <div className="border-t border-gray-700 pt-4">
         {selectedPlatforms.includes('youtube') ? (
           <>
             <div className="flex items-center justify-between mb-3">
@@ -1955,7 +2050,7 @@ const StepMetadata: React.FC = () => {
         ) : (
           <p className="text-sm text-gray-500">쿠팡 파트너스 API와 연동하여 쿠팡 링크를 쉽게 생성하는 기능을 준비 중입니다.</p>
         )}
-      </div>
+      </div>}
 
       {/* 플랫폼별 미리보기 — 가로 탭 */}
       {metadata && selectedPlatforms.length > 0 && (() => {
@@ -2034,7 +2129,7 @@ const StepMetadata: React.FC = () => {
               )}
               {activeTab === 'naver-clip' && (
                 <>
-                  <p className="text-xs text-gray-500 mb-1">수동 업로드 — 아래 내용을 Creator Studio에 복사하세요.</p>
+                  <p className="text-xs text-gray-500 mb-1">수동 업로드 — 아래 내용을 클립 크리에이터 앱에 복사하세요.</p>
                   <p className="text-xs text-gray-400"><span className="text-gray-500 font-semibold">제목</span></p>
                   <p className="text-sm text-gray-200">{title}</p>
                   <p className="text-xs text-gray-400 mt-2"><span className="text-gray-500 font-semibold">설명</span></p>
@@ -2076,7 +2171,7 @@ const StepThumbnail: React.FC = () => {
         <span className="text-[10px] bg-pink-900/15 text-pink-400 px-1.5 py-0.5 rounded border border-pink-500/20">Instagram: Reels 커버 (API 미지원, 자동 선택)</span>
         <span className="text-[10px] bg-cyan-900/15 text-cyan-400/70 px-1.5 py-0.5 rounded border border-cyan-500/20">TikTok: 영상 첫 프레임 자동</span>
         <span className="text-[10px] bg-gray-700/50 text-gray-500 px-1.5 py-0.5 rounded border border-gray-600/30">Threads: 커버 미지원</span>
-        <span className="text-[10px] bg-green-900/15 text-green-400/70 px-1.5 py-0.5 rounded border border-green-500/20">Naver Clip: Creator Studio에서 직접 설정</span>
+        <span className="text-[10px] bg-green-900/15 text-green-400/70 px-1.5 py-0.5 rounded border border-green-500/20">Naver Clip: 클립 크리에이터 앱에서 직접 설정</span>
       </div>
 
       {/* 썸네일 선택 영역 */}
@@ -2413,7 +2508,7 @@ const UploadTab: React.FC = () => {
       case 'video':
         return videoFile ? 'done' : 'pending';
       case 'metadata':
-        return metadata && (metadata.titles?.length ?? 0) > 0 ? 'done' : 'pending';
+        return metadata && (metadata.selectedTitle?.trim() || (metadata.titles?.length ?? 0) > 0) ? 'done' : 'pending';
       case 'thumbnail':
         return thumbnailUrl ? 'done' : 'pending';
       case 'settings':
@@ -2446,8 +2541,12 @@ const UploadTab: React.FC = () => {
       case 'video':
         if (!videoFile) return { ok: false, message: '업로드할 영상 파일을 선택해주세요.' };
         return { ok: true, message: '' };
-      case 'metadata':
+      case 'metadata': {
+        if (!metadata) return { ok: false, message: '메타데이터를 입력하거나 AI로 생성해주세요.' };
+        const hasTitle = (metadata.selectedTitle?.trim()) || (metadata.titles?.length && metadata.titles[0]?.trim());
+        if (!hasTitle) return { ok: false, message: '제목을 입력하거나 선택해주세요.' };
         return { ok: true, message: '' };
+      }
       case 'thumbnail':
         return { ok: true, message: '' };
       case 'settings':
@@ -2551,6 +2650,7 @@ const UploadTab: React.FC = () => {
             tags: [...(meta?.hiddenTags || meta?.tags || [])],
             privacy: settings.privacy as 'public' | 'unlisted' | 'private',
             madeForKids: settings.madeForKids,
+            thumbnailDataUrl: store.thumbnailUrl,
             onProgress: (pct) => setPP('youtube', { progress: pct, status: 'uploading' }),
           });
           setPP('youtube', { progress: 100, status: 'done', resultUrl: result.videoUrl });
@@ -2648,7 +2748,7 @@ const UploadTab: React.FC = () => {
     // Naver Clip — 수동 업로드 안내
     if (selectedPlatforms.includes('naver-clip') && naverClipAuth.isConnected) {
       setPP('naver-clip', { status: 'done', progress: 100, error: undefined, resultUrl: undefined });
-      showToast('Naver Clip: 영상 파일을 다운로드하여 Naver Clip Creator Studio에서 업로드해주세요.', 8000);
+      showToast('Naver Clip: 영상 파일을 다운로드하여 클립 크리에이터 앱에서 업로드해주세요.', 8000);
     }
 
     await Promise.allSettled(uploads);

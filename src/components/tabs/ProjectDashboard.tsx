@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { ProjectData, ProjectSummary } from '../../types';
 import { getAllProjectSummaries, deleteProject, canCreateNewProject, getProject } from '../../services/storageService';
 import { showToast } from '../../stores/uiStore';
+import { useNavigationStore } from '../../stores/navigationStore';
 
 interface ProjectDashboardProps {
   onSelectProject: (project: ProjectData) => void;
@@ -417,8 +418,57 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, on
   const iconBtnCls = (active: boolean) => `p-1.5 rounded-lg transition-colors ${active ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 border border-gray-700'}`;
   const sep = <div className="w-px h-5 bg-gray-700 mx-1" />;
 
+  const redirectedFrom = useNavigationStore((s) => s.redirectedFrom);
+  const clearRedirect = useNavigationStore((s) => s.clearRedirect);
+
+  // 리다이렉트 배너 자동 닫기 (10초)
+  useEffect(() => {
+    if (redirectedFrom) {
+      const timer = setTimeout(() => clearRedirect(), 10000);
+      return () => clearTimeout(timer);
+    }
+  }, [redirectedFrom, clearRedirect]);
+
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100 p-6">
+
+      {/* 프로젝트 미생성 리다이렉트 안내 배너 */}
+      {redirectedFrom && (
+        <div className="mb-5 relative overflow-hidden rounded-xl border-2 border-amber-500/50 bg-gradient-to-r from-amber-900/30 via-orange-900/20 to-amber-900/30">
+          <div className="absolute inset-0 bg-[repeating-linear-gradient(135deg,transparent,transparent_10px,rgba(245,158,11,0.03)_10px,rgba(245,158,11,0.03)_20px)]" />
+          <div className="relative px-5 py-4 flex items-start gap-4">
+            <div className="flex-shrink-0 w-11 h-11 rounded-full bg-amber-500/20 border-2 border-amber-500/40 flex items-center justify-center mt-0.5">
+              <svg className="w-6 h-6 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z"/></svg>
+            </div>
+            <div className="flex-1 min-w-0">
+              <h3 className="text-base font-bold text-amber-300 mb-1">
+                "{redirectedFrom}" 탭을 사용하려면 프로젝트가 필요합니다
+              </h3>
+              <p className="text-sm text-amber-200/80 leading-relaxed">
+                <strong className="text-amber-200">"{redirectedFrom}"</strong> 탭은 프로젝트 안에서만 작동합니다.
+                아래에서 <strong className="text-white">새 프로젝트를 만들거나</strong>, 기존 프로젝트를 선택한 뒤 다시 이동해주세요.
+              </p>
+              <div className="flex items-center gap-3 mt-3">
+                <button
+                  onClick={() => { clearRedirect(); handleNewProjectClick(); }}
+                  className="text-sm font-bold text-white bg-amber-600 hover:bg-amber-500 px-4 py-2 rounded-lg transition-colors shadow-md shadow-amber-500/20"
+                >
+                  + 새 프로젝트 만들기
+                </button>
+                <span className="text-xs text-amber-400/60">또는 아래 목록에서 기존 프로젝트를 선택하세요</span>
+              </div>
+            </div>
+            <button
+              onClick={clearRedirect}
+              className="flex-shrink-0 text-amber-500/60 hover:text-amber-300 transition-colors p-1"
+              title="닫기"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* 상단 바 */}
       <div className="flex items-center justify-between gap-4 mb-6">
         <input type="text" placeholder="프로젝트 검색..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)}

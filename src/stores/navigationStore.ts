@@ -35,13 +35,19 @@ interface NavigationStore {
   activeTab: AppTab;
   /** true이면 프로젝트 탭에서 대시보드 표시, false이면 ConfigForm/Storyboard 표시 */
   showProjectDashboard: boolean;
+  /** 프로젝트 미생성으로 리다이렉트된 경우 원래 탭 이름 */
+  redirectedFrom: string | null;
 
   // Actions
   setActiveTab: (tab: AppTab) => void;
   /** 대시보드로 돌아가기 (프로젝트 닫기) */
   goToDashboard: () => void;
+  /** 프로젝트 미생성으로 대시보드로 복귀 + 안내 메시지용 원래 탭 기록 */
+  goToDashboardWithRedirect: (fromTabLabel: string) => void;
   /** 대시보드 숨기고 프로젝트 편집 화면으로 */
   leaveDashboard: () => void;
+  /** 리다이렉트 안내 배너 닫기 */
+  clearRedirect: () => void;
 }
 
 const initialState = loadSavedState();
@@ -49,6 +55,7 @@ const initialState = loadSavedState();
 export const useNavigationStore = create<NavigationStore>((set) => ({
   activeTab: initialState.activeTab,
   showProjectDashboard: initialState.showProjectDashboard,
+  redirectedFrom: null,
 
   setActiveTab: (tab) => {
     // 프로젝트 탭 클릭 시 항상 대시보드 표시 (구버전 ConfigForm 방지)
@@ -66,6 +73,16 @@ export const useNavigationStore = create<NavigationStore>((set) => ({
     set({
       activeTab: 'project',
       showProjectDashboard: true,
+      redirectedFrom: null,
+    });
+  },
+
+  goToDashboardWithRedirect: (fromTabLabel) => {
+    saveState({ activeTab: 'project', showProjectDashboard: true });
+    set({
+      activeTab: 'project',
+      showProjectDashboard: true,
+      redirectedFrom: fromTabLabel,
     });
   },
 
@@ -73,6 +90,9 @@ export const useNavigationStore = create<NavigationStore>((set) => ({
     saveState({ showProjectDashboard: false });
     set({
       showProjectDashboard: false,
+      redirectedFrom: null,
     });
   },
+
+  clearRedirect: () => set({ redirectedFrom: null }),
 }));

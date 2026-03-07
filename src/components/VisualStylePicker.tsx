@@ -98,9 +98,11 @@ function VisualStyleThumbnail({ catIdx, itemIdx, label, onZoom }: {
 
 // ─── StylePreviewLightbox ───
 
-function StylePreviewLightbox({ state, onClose }: {
+function StylePreviewLightbox({ state, onClose, value, onChange }: {
   state: LightboxState;
   onClose: () => void;
+  value: string;
+  onChange: (prompt: string) => void;
 }) {
   const [current, setCurrent] = useState(state);
   const [imgError, setImgError] = useState(false);
@@ -176,6 +178,26 @@ function StylePreviewLightbox({ state, onClose }: {
           <div className="text-sm text-gray-400 mt-1">{currentItem.desc}</div>
         </div>
 
+        {value === currentItem.prompt ? (
+          <button
+            type="button"
+            onClick={() => { onChange(''); }}
+            className="w-full mb-3 py-2.5 rounded-xl bg-green-600/20 border border-green-500/50 text-green-300 font-bold text-sm flex items-center justify-center gap-2 hover:bg-green-600/30 transition-colors"
+          >
+            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+            적용됨 — 해제하기
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => { onChange(currentItem.prompt); onClose(); }}
+            className="w-full mb-3 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 text-white font-bold text-sm flex items-center justify-center gap-2 shadow-lg transition-all"
+          >
+            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14"/></svg>
+            이 스타일 적용하기
+          </button>
+        )}
+
         <div className="flex justify-between items-center">
           <button
             onClick={() => navigate(-1)}
@@ -248,18 +270,18 @@ export default function VisualStylePicker({ value, onChange, colorTheme, compact
   const renderItem = (item: { label: string; prompt: string; desc: string }, catIdx: number, itemIdx: number) => {
     const featured = isFeaturedStyle(item.label);
     const faved = isFav(item.prompt);
+    const isSelected = value === item.prompt;
     return (
-      <button
+      <div
         key={`${catIdx}-${itemIdx}`}
-        type="button"
-        onClick={() => onChange(value === item.prompt ? '' : item.prompt)}
-        className={`${itemPad} rounded-lg border text-left transition-all flex items-start gap-2 relative ${
-          value === item.prompt
-            ? `${c.selectedBg} ${c.selectedBorder} shadow-md`
+        className={`${itemPad} rounded-lg border text-left transition-all flex items-center gap-2 relative cursor-pointer ${
+          isSelected
+            ? 'bg-blue-600/15 border-blue-500/50 ring-1 ring-blue-500/30'
             : featured
               ? 'bg-gradient-to-r from-amber-900/30 to-orange-900/20 border-amber-500/70 hover:border-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.15)]'
-              : 'bg-gray-800 border-gray-600 hover:bg-gray-700'
+              : 'bg-gray-900/60 border-gray-700/50 hover:border-gray-500 hover:bg-gray-800/70'
         }`}
+        onClick={() => onChange(isSelected ? '' : item.prompt)}
       >
         {featured && (
           <span className="absolute -top-2 -right-2 bg-gradient-to-r from-amber-500 to-orange-500 text-white text-[11px] font-black px-1.5 py-0.5 rounded-full shadow-lg animate-pulse z-10">HOT</span>
@@ -274,11 +296,25 @@ export default function VisualStylePicker({ value, onChange, colorTheme, compact
           <div className={`${labelSize} font-bold mb-0.5 ${featured ? 'text-amber-200' : 'text-white'}`}>{item.label}</div>
           <div className={`${descSize} leading-tight ${featured ? 'text-amber-300/70' : 'text-gray-400'}`}>{item.desc}</div>
         </div>
+        {!isSelected ? (
+          <button
+            type="button"
+            className="text-xs text-gray-400 hover:text-cyan-400 bg-gray-800 border border-gray-700 hover:border-cyan-500/50 rounded-lg px-2.5 py-1.5 shrink-0 transition-colors font-bold"
+            title="이 스타일을 적용"
+            onClick={(e) => { e.stopPropagation(); onChange(item.prompt); }}
+          >
+            적용
+          </button>
+        ) : (
+          <span className="text-xs text-blue-400 bg-blue-600/20 border border-blue-500/30 rounded-lg px-2.5 py-1.5 shrink-0 font-bold">
+            적용됨
+          </span>
+        )}
         <span
           onClick={(e) => { e.stopPropagation(); toggleFav(item.prompt); }}
-          className={`shrink-0 text-base cursor-pointer hover:scale-125 transition-transform mt-0.5 ${faved ? 'text-yellow-400' : 'text-gray-600 hover:text-yellow-400'}`}
+          className={`shrink-0 text-base cursor-pointer hover:scale-125 transition-transform ${faved ? 'text-yellow-400' : 'text-gray-600 hover:text-yellow-400'}`}
         >★</span>
-      </button>
+      </div>
     );
   };
 
@@ -328,7 +364,7 @@ export default function VisualStylePicker({ value, onChange, colorTheme, compact
       </div>
 
       {lightbox && (
-        <StylePreviewLightbox state={lightbox} onClose={() => setLightbox(null)} />
+        <StylePreviewLightbox state={lightbox} onClose={() => setLightbox(null)} value={value} onChange={onChange} />
       )}
     </>
   );

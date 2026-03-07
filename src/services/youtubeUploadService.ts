@@ -14,6 +14,7 @@ import { logger } from './LoggerService';
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const YOUTUBE_UPLOAD_URL = 'https://www.googleapis.com/upload/youtube/v3/videos';
+const YOUTUBE_THUMBNAIL_URL = 'https://www.googleapis.com/upload/youtube/v3/thumbnails/set';
 const YOUTUBE_CHANNELS_URL = 'https://www.googleapis.com/youtube/v3/channels';
 
 const SCOPES = [
@@ -154,6 +155,42 @@ export const fetchChannelInfo = async (
   };
 };
 
+/** data URL → Blob 변환 헬퍼 */
+const dataUrlToBlob = (dataUrl: string): Blob => {
+  const [header, base64] = dataUrl.split(',');
+  const mime = header.match(/:(.*?);/)?.[1] || 'image/png';
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes], { type: mime });
+};
+
+/** YouTube 썸네일 업로드 */
+export const uploadThumbnailToYouTube = async (
+  accessToken: string,
+  videoId: string,
+  thumbnailDataUrl: string,
+): Promise<void> => {
+  const blob = dataUrlToBlob(thumbnailDataUrl);
+  const response = await fetch(
+    `${YOUTUBE_THUMBNAIL_URL}?videoId=${videoId}`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': blob.type,
+      },
+      body: blob,
+    }
+  );
+  if (!response.ok) {
+    const err = await response.text();
+    logger.warn('[YouTube] 썸네일 업로드 실패 (영상은 업로드됨)', err);
+  } else {
+    logger.success('[YouTube] 썸네일 업로드 완료');
+  }
+};
+
 /** YouTube 영상 업로드 (resumable upload) */
 export const uploadVideoToYouTube = async (opts: {
   accessToken: string;
@@ -164,9 +201,10 @@ export const uploadVideoToYouTube = async (opts: {
   privacy: 'public' | 'unlisted' | 'private';
   madeForKids: boolean;
   categoryId?: string;
+  thumbnailDataUrl?: string | null;
   onProgress?: (pct: number) => void;
 }): Promise<{ videoId: string; videoUrl: string }> => {
-  const { accessToken, file, title, description, tags, privacy, madeForKids, categoryId, onProgress } = opts;
+  const { accessToken, file, title, description, tags, privacy, madeForKids, categoryId, thumbnailDataUrl, onProgress } = opts;
 
   logger.info('[YouTube] 영상 업로드 시작', { title, size: file.size, privacy });
 
@@ -223,12 +261,20 @@ export const uploadVideoToYouTube = async (opts: {
       }
     };
 
-    xhr.onload = () => {
+    xhr.onload = async () => {
       if (xhr.status >= 200 && xhr.status < 300) {
         try {
           const result = JSON.parse(xhr.responseText);
           const videoId = result.id;
           logger.success('[YouTube] 영상 업로드 완료', { videoId });
+          // 썸네일이 있으면 업로드 (실패해도 영상 업로드 결과는 유지)
+          if (thumbnailDataUrl) {
+            try {
+              await uploadThumbnailToYouTube(accessToken, videoId, thumbnailDataUrl);
+            } catch (e) {
+              logger.warn('[YouTube] 썸네일 업로드 실패', e);
+            }
+          }
           resolve({
             videoId,
             videoUrl: `https://www.youtube.com/watch?v=${videoId}`,
