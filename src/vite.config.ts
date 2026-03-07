@@ -28,7 +28,6 @@ export default defineConfig(({ mode }) => {
         target: 'es2020',
         chunkSizeWarningLimit: 400,
         rollupOptions: {
-          external: ['onnxruntime-web'],
           output: {
             manualChunks: {
               'vendor-react': ['react', 'react-dom'],
