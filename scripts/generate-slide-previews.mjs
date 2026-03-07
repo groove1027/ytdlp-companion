@@ -18,47 +18,47 @@ const OUTPUT_DIR = path.resolve('src/public/slide-previews');
 const DESIGN_STYLES = [
   {
     id: 'neo-brutalism',
-    prompt: 'A presentation slide design in Neo-brutalism style, bold black outlines, high contrast vibrant yellow and red colors, thick typography saying "INNOVATION", floating geometric shapes, edgy modern tech aesthetic, white background, 16:9 aspect ratio',
+    prompt: '프레젠테이션 슬라이드 디자인, 네오 브루탈리즘 스타일, 굵은 검정 테두리, 선명한 노란색과 빨간색 고대비 배색, "혁신 전략" 한글 굵은 타이포그래피, 떠다니는 기하학적 도형, 힙하고 현대적인 테크 감성, 흰색 배경, 16:9 가로 비율',
   },
   {
     id: 'clean-minimal',
-    prompt: 'A minimalist presentation slide, Apple keynote style clean aesthetics, thin grey lines, vast negative space, soft blue accents, simple line icons, elegant professional design, white background, subtle gradient, 16:9 aspect ratio',
+    prompt: '미니멀리스트 프레젠테이션 슬라이드, 애플 키노트 스타일, 얇은 회색 선, 넓은 여백, 부드러운 파란색 포인트, 심플한 선형 아이콘, "핵심 요약" 한글 제목, 우아하고 전문적인 디자인, 흰색 배경, 16:9 가로 비율',
   },
   {
     id: 'glassmorphism',
-    prompt: 'A futuristic presentation slide design, Glassmorphism style, semi-transparent frosted glass cards overlapping, soft purple and pink background blur, glowing pastel gradients, floating 3D icons, high-end software aesthetic, 16:9',
+    prompt: '미래적 프레젠테이션 슬라이드, 글래스모피즘 스타일, 반투명 젖빛 유리 카드가 겹쳐진 구성, 보라색과 분홍색 배경 블러, 빛나는 파스텔 그라디언트, 떠다니는 3D 아이콘, "데이터 분석" 한글 텍스트, 16:9 가로 비율',
   },
   {
     id: 'bento-grid',
-    prompt: 'A bento grid layout presentation slide, organized rectangular sections like Japanese lunchbox, clean UI elements in each box, rounded corners, soft shadows, data visualization charts, modern web design trend, light background, 16:9',
+    prompt: '벤토 그리드 레이아웃 프레젠테이션 슬라이드, 도시락처럼 정리된 직사각형 구획, 각 칸에 깔끔한 UI 요소, 둥근 모서리, 부드러운 그림자, "분기별 실적" 한글 제목, 데이터 시각화 차트, 밝은 배경, 16:9 가로 비율',
   },
   {
     id: 'claymorphism',
-    prompt: 'A claymorphism style presentation slide, cute 3D soft plastic textures, rounded inflated shapes, friendly pastel pink and blue colors, 3D clay characters presenting data on a whiteboard, playful design, 16:9',
+    prompt: '클레이모피즘 스타일 프레젠테이션 슬라이드, 귀여운 3D 말랑한 플라스틱 질감, 둥글게 부풀어 오른 형태, 친근한 파스텔 핑크와 파란색, "우리의 목표" 한글 텍스트, 3D 클레이 캐릭터가 화이트보드에 발표하는 장면, 16:9 가로 비율',
   },
   {
     id: 'dark-tech',
-    prompt: 'A dark mode tech presentation slide, deep charcoal black background, neon cyan and violet glowing lines, futuristic HUD hologram elements, data stream visualizations, matrix-like digital rain, sophisticated AI network, 16:9',
+    prompt: '다크 모드 테크 프레젠테이션 슬라이드, 짙은 차콜 검정 배경, 네온 시안과 보라색 빛나는 선, 미래적 HUD 홀로그램 요소, "AI 기술 동향" 한글 텍스트, 데이터 스트림 시각화, 정교한 AI 네트워크, 16:9 가로 비율',
   },
   {
     id: 'gradient-mesh',
-    prompt: 'A presentation slide with vibrant mesh gradient background, organic flowing abstract shapes, soft dreamy transitions of deep blue purple and pink, minimalist white text placeholder area, ethereal creative design, 16:9',
+    prompt: '프레젠테이션 슬라이드, 선명한 메시 그라디언트 배경, 유기적으로 흐르는 추상 형태, 짙은 파란색 보라색 핑크색의 부드러운 전환, "창의적 접근" 한글 흰색 텍스트 영역, 몽환적이고 창의적인 디자인, 16:9 가로 비율',
   },
   {
     id: 'hand-drawn',
-    prompt: 'A creative presentation slide in hand-drawn sketch style, pencil doodles on white paper texture, scribbled arrows and lightbulb icons, organic handwritten typography, brainstorming mood board feel, warm and human, 16:9',
+    prompt: '창의적 프레젠테이션 슬라이드, 손으로 그린 스케치 스타일, 종이 질감 위 연필 낙서, 화살표와 전구 아이콘 스케치, "아이디어 회의" 한글 손글씨 타이포그래피, 브레인스토밍 무드보드 느낌, 따뜻하고 인간적인, 16:9 가로 비율',
   },
   {
     id: 'node-link',
-    prompt: 'A data science presentation slide, knowledge graph with interconnected glowing nodes and lines, connecting the dots concept, dark blue background, silver and cyan data points, professional network visualization, 16:9',
+    prompt: '데이터 사이언스 프레젠테이션 슬라이드, 서로 연결된 빛나는 노드와 선의 지식 그래프, 점을 잇는 개념, 짙은 파란 배경, 은색과 시안색 데이터 포인트, "연결 분석" 한글 텍스트, 전문적 네트워크 시각화, 16:9 가로 비율',
   },
   {
     id: 'retro-modern',
-    prompt: 'A retro-modern 80s tech presentation slide, grainy film texture, vintage muted orange and teal colors, geometric shapes, old CRT computer aesthetic meets modern AI, synthwave vaporwave, nostalgic design, 16:9',
+    prompt: '레트로 모던 80년대 테크 프레젠테이션 슬라이드, 필름 그레인 질감, 빈티지 오렌지와 틸 색상, 기하학적 형태, "미래 전망" 한글 텍스트, 옛날 CRT 컴퓨터 감성과 현대적 AI의 만남, 신스웨이브, 16:9 가로 비율',
   },
   {
     id: 'toss-style',
-    prompt: 'A Toss fintech app style clean presentation slide, iconic 3D glossy blue sphere icons, vivid blue accents on pure white background, extremely simple friendly layout, soft card shadows, premium mobile app UI aesthetic, 16:9',
+    prompt: '토스 핀테크 앱 스타일 깔끔한 프레젠테이션 슬라이드, 상징적인 3D 광택 파란 구형 아이콘, 순백색 배경 위 선명한 파란색 포인트, "간편 송금" 한글 텍스트, 극도로 심플하고 친근한 레이아웃, 프리미엄 모바일 앱 UI, 16:9 가로 비율',
   },
 ];
 
