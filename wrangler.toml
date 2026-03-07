@@ -1,0 +1,18 @@
+name = "all-in-one-production"
+compatibility_date = "2024-01-01"
+
+# Pages에서는 이 설정이 자동 적용되지만 로컬 개발 시 필요
+# 실제 ID는 위에서 생성 시 받은 값으로 교체
+
+[[d1_databases]]
+binding = "DB"
+database_name = "auth-db"
+database_id = "e578c1cf-2e08-4cf9-ae66-8067afa6dc00"
+
+[[kv_namespaces]]
+binding = "SESSIONS"
+id = "d30b7cd636014eb28167c3948296b32d"
+
+[[kv_namespaces]]
+binding = "INVITE_CODES"
+id = "245826094c12477c9793de17607d137b"

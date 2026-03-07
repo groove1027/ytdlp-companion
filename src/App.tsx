@@ -1,5 +1,5 @@
 
-import React, { useEffect, useCallback, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import ConfigForm from './components/ConfigForm';
 import { StoryboardScene } from './components/StoryboardScene';
 const ThumbnailGenerator = lazy(() => import('./components/ThumbnailGenerator'));
@@ -32,6 +32,8 @@ import { getGeminiKey } from './services/apiService';
 import { dataURLtoFile } from './utils/fileHelpers';
 import { splitVideoIntoSegments, getVideoDuration } from './utils/videoSegmentUtils';
 import { persistImage } from './services/imageStorageService';
+import { verifyToken, logout, AuthUser } from './services/authService';
+import AuthGate from './components/AuthGate';
 import { useUIStore } from './stores/uiStore';
 import { useCostStore } from './stores/costStore';
 import { useProjectStore } from './stores/projectStore';
@@ -120,6 +122,17 @@ class TabErrorBoundary extends React.Component<
 
 
 const App: React.FC = () => {
+  // --- Auth State ---
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [authChecking, setAuthChecking] = useState(true);
+
+  useEffect(() => {
+    verifyToken().then((user) => {
+      setAuthUser(user);
+      setAuthChecking(false);
+    });
+  }, []);
+
   // --- Navigation Store (v4.5) ---
   const activeTab = useNavigationStore((s) => s.activeTab);
   const setActiveTab = useNavigationStore((s) => s.setActiveTab);
@@ -882,6 +895,20 @@ const App: React.FC = () => {
   // const showConfigForm = !config || config.mode === 'CHARACTER';
   const showConfigForm = !config;
 
+  // 인증 체크 중
+  if (authChecking) {
+    return (
+      <div className="min-h-screen bg-gray-950 flex items-center justify-center">
+        <div className="w-8 h-8 border-2 border-violet-400 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  // 미인증 시 로그인 화면
+  if (!authUser) {
+    return <AuthGate onAuthenticated={setAuthUser} />;
+  }
+
   return (
     <div className="min-h-screen bg-gray-900 text-white font-sans selection:bg-blue-500 relative">
       <ProcessingOverlay message={processingMessage} progress={detailedStatus.percent} eta={detailedStatus.eta} mode={processingMode} />
@@ -956,6 +983,12 @@ const App: React.FC = () => {
             className="px-3.5 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-gray-300 hover:text-white rounded-lg text-sm font-bold transition-all flex items-center gap-1.5"
           >
             💬 피드백
+          </button>
+          <button
+            onClick={async () => { await logout(); setAuthUser(null); }}
+            className="text-sm text-gray-500 hover:text-gray-300"
+          >
+            로그아웃
           </button>
         </div>
       </header>
