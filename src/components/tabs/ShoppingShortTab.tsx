@@ -20,7 +20,7 @@ const StepFallback = () => (
 );
 
 const ShoppingShortTab: React.FC = () => {
-  const { currentStep, reset } = useShoppingShortStore();
+  const { currentStep, goToStep, reset } = useShoppingShortStore();
 
   const currentStepIndex = WIZARD_STEPS.findIndex(s => s.id === currentStep);
 
@@ -45,7 +45,7 @@ const ShoppingShortTab: React.FC = () => {
         </button>
       </div>
 
-      {/* 위저드 인디케이터 */}
+      {/* 위저드 인디케이터 — 클릭으로 자유 이동 */}
       <div className="flex items-center mb-8 px-4">
         {WIZARD_STEPS.map((step, i) => {
           const isDone = currentStepIndex > i;
@@ -53,22 +53,25 @@ const ShoppingShortTab: React.FC = () => {
 
           return (
             <React.Fragment key={step.id}>
-              <div className="flex items-center gap-2">
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition-all ${
+              <button
+                onClick={() => goToStep(step.id)}
+                className="flex items-center gap-2 group cursor-pointer"
+              >
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition-all group-hover:ring-2 group-hover:ring-lime-500/30 ${
                   isDone ? 'bg-green-600/30 text-green-400 border border-green-500/50' :
                   isCurrent ? 'bg-lime-600/30 text-lime-300 border border-lime-500/50' :
-                  'bg-gray-800/60 text-gray-600 border border-gray-700/40'
+                  'bg-gray-800/60 text-gray-600 border border-gray-700/40 group-hover:text-gray-400 group-hover:border-gray-600'
                 }`}>
                   {isDone ? '✓' : step.num}
                 </div>
-                <span className={`text-sm font-semibold ${
+                <span className={`text-sm font-semibold transition-colors ${
                   isDone ? 'text-green-400' :
                   isCurrent ? 'text-lime-300' :
-                  'text-gray-600'
+                  'text-gray-600 group-hover:text-gray-400'
                 }`}>
                   {step.label}
                 </span>
-              </div>
+              </button>
               {i < WIZARD_STEPS.length - 1 && (
                 <div className={`flex-1 h-0.5 mx-4 ${
                   isDone ? 'bg-green-500/50' : 'bg-gray-700/40'

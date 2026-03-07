@@ -22,7 +22,7 @@ const RenderStep: React.FC = () => {
     generatedScripts,
     selectedScriptId,
     ttsEngine, ttsVoiceId, ttsSpeed,
-    fontFamily, fontSize,
+    subtitleTemplate,
     subtitleRemovalMethod,
     ctaPreset, ctaText,
     renderProgress, setRenderProgress,
@@ -74,7 +74,13 @@ const RenderStep: React.FC = () => {
         sourceVideo.videoBlob,
         selectedScript,
         ttsAudioUrl,
-        { subtitleRemovalMethod, fontFamily, fontSize, ctaPreset, ctaText },
+        {
+          subtitleRemovalMethod,
+          fontFamily: subtitleTemplate?.fontFamily || 'Pretendard',
+          fontSize: subtitleTemplate?.fontSize || 40,
+          ctaPreset,
+          ctaText,
+        },
         (progress) => setRenderProgress(progress),
       );
 
@@ -90,7 +96,7 @@ const RenderStep: React.FC = () => {
     } finally {
       setIsRendering(false);
     }
-  }, [sourceVideo, selectedScript, ttsEngine, ttsVoiceId, ttsSpeed, fontFamily, fontSize, subtitleRemovalMethod, ctaPreset, ctaText, isRendering, setIsRendering, setResultBlobUrl, setRenderProgress]);
+  }, [sourceVideo, selectedScript, ttsEngine, ttsVoiceId, ttsSpeed, subtitleTemplate, subtitleRemovalMethod, ctaPreset, ctaText, isRendering, setIsRendering, setResultBlobUrl, setRenderProgress]);
 
   // 자동 시작 (렌더 스텝 진입 시 1회)
   useEffect(() => {
@@ -129,7 +135,6 @@ const RenderStep: React.FC = () => {
           {RENDER_PHASES.map((phase, i) => {
             const isDone = currentPhaseIndex > i;
             const isCurrent = currentPhaseIndex === i;
-            const isFuture = currentPhaseIndex < i;
 
             return (
               <React.Fragment key={phase.phase}>

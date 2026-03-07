@@ -8,6 +8,7 @@ import {
   ShoppingWizardStep,
   SubtitleRemovalMethod,
   TTSEngine,
+  SubtitleTemplate,
 } from '../types';
 
 interface ShoppingRenderProgress {
@@ -39,9 +40,8 @@ interface ShoppingShortStore {
   ttsVoiceId: string;
   ttsSpeed: number;
 
-  // Font & Subtitle
-  fontFamily: string;
-  fontSize: number;
+  // Subtitle Style (기존 140개 자막 템플릿 재활용)
+  subtitleTemplate: SubtitleTemplate | null;
   subtitleRemovalMethod: SubtitleRemovalMethod;
 
   // CTA
@@ -75,8 +75,7 @@ interface ShoppingShortStore {
   setTtsEngine: (engine: TTSEngine) => void;
   setTtsVoiceId: (id: string) => void;
   setTtsSpeed: (speed: number) => void;
-  setFontFamily: (family: string) => void;
-  setFontSize: (size: number) => void;
+  setSubtitleTemplate: (template: SubtitleTemplate | null) => void;
   setSubtitleRemovalMethod: (method: SubtitleRemovalMethod) => void;
   setCtaPreset: (preset: ShoppingCTAPreset) => void;
   setCtaText: (text: string) => void;
@@ -115,8 +114,7 @@ const initialState = {
   ttsEngine: 'typecast' as TTSEngine,
   ttsVoiceId: '',
   ttsSpeed: 1.0,
-  fontFamily: 'Pretendard',
-  fontSize: 40,
+  subtitleTemplate: null as SubtitleTemplate | null,
   subtitleRemovalMethod: 'blur' as SubtitleRemovalMethod,
   ctaPreset: 'comment' as ShoppingCTAPreset,
   ctaText: '댓글로 구매 링크 보내드려요!',
@@ -153,8 +151,7 @@ export const useShoppingShortStore = create<ShoppingShortStore>((set) => ({
   setTtsEngine: (engine) => set({ ttsEngine: engine }),
   setTtsVoiceId: (id) => set({ ttsVoiceId: id }),
   setTtsSpeed: (speed) => set({ ttsSpeed: speed }),
-  setFontFamily: (family) => set({ fontFamily: family }),
-  setFontSize: (size) => set({ fontSize: size }),
+  setSubtitleTemplate: (template) => set({ subtitleTemplate: template }),
   setSubtitleRemovalMethod: (method) => set({ subtitleRemovalMethod: method }),
   setCtaPreset: (preset) => {
     const ctaTexts: Record<ShoppingCTAPreset, string> = {
