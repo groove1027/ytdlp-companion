@@ -308,6 +308,48 @@ const ToolsTab: React.FC = () => {
   const [isAddingVocal, setIsAddingVocal] = useState(false);
   const [toolError, setToolError] = useState('');
   const [toolSuccess, setToolSuccess] = useState('');
+  const [uploadSepFile, setUploadSepFile] = useState<string>('');
+  const [uploadSepStatus, setUploadSepStatus] = useState('');
+  const [isUploadSeparating, setIsUploadSeparating] = useState(false);
+  const [uploadSepResult, setUploadSepResult] = useState<{ vocalUrl: string; instrumentalUrl: string } | null>(null);
+
+  // 파일 업로드 → 등록 → 보컬 분리 (자동 파이프라인)
+  const sepUpload = useFileUpload(
+    useCallback((url: string) => { setUploadSepFile(url); setToolSuccess('파일 업로드 완료! 분리 실행 버튼을 눌러주세요.'); }, []),
+    useCallback((msg: string) => setToolError(msg), [])
+  );
+
+  const handleUploadSeparation = useCallback(async () => {
+    if (!uploadSepFile || isUploadSeparating) return;
+    setIsUploadSeparating(true);
+    setUploadSepResult(null);
+    setToolError('');
+    try {
+      // Step 1: Suno에 반주로 등록
+      setUploadSepStatus('Suno에 트랙 등록 중...');
+      const regTaskId = await addInstrumental({ uploadUrl: uploadSepFile, title: 'Upload for Separation', tags: '' });
+
+      // Step 2: 등록 완료 대기 → audioId 획득
+      setUploadSepStatus('트랙 등록 대기 중...');
+      const registered = await pollMusicStatus(regTaskId);
+      if (!registered.audioId) throw new Error('등록된 트랙에서 audioId를 가져올 수 없습니다.');
+
+      // Step 3: 보컬/MR 분리 실행
+      setUploadSepStatus('보컬/MR 분리 중...');
+      const sepTaskId = await separateVocals({ taskId: registered.id, audioId: registered.audioId });
+
+      // Step 4: 분리 결과 대기
+      const result = await pollVocalSeparation(sepTaskId);
+      setUploadSepResult(result);
+      setUploadSepStatus('');
+      setToolSuccess('파일 보컬/MR 분리 완료!');
+    } catch (e: unknown) {
+      setToolError(e instanceof Error ? e.message : String(e));
+      setUploadSepStatus('');
+    } finally {
+      setIsUploadSeparating(false);
+    }
+  }, [uploadSepFile, isUploadSeparating]);
 
   // 파일 업로드 hooks
   const instUpload = useFileUpload(
@@ -368,9 +410,36 @@ const ToolsTab: React.FC = () => {
           <span>{toolSuccess}</span><button type="button" onClick={() => setToolSuccess('')} className="text-green-400/60 hover:text-green-300">&times;</button>
         </div>
       )}
-      {/* 보컬/MR 분리 */}
+      {/* 보컬/MR 분리 — 파일 업로드 */}
+      <div className="bg-gray-900/60 rounded-lg border border-teal-700/40 p-4 space-y-3">
+        <h4 className="text-sm font-bold text-gray-200">♻️ 보컬/MR 분리 — 파일 업로드</h4>
+        <p className="text-xs text-gray-500">내 오디오 파일을 업로드하면 보컬과 MR(반주)을 자동으로 분리합니다.</p>
+        <div className="flex gap-2">
+          <input type="text" value={uploadSepFile} onChange={(e) => setUploadSepFile(e.target.value)} placeholder="오디오 URL 또는 파일 업로드" className={`flex-1 ${inputCls}`} />
+          <input type="file" ref={sepUpload.inputRef} onChange={sepUpload.handleFile} accept="audio/*" className="hidden" />
+          <button type="button" onClick={() => sepUpload.inputRef.current?.click()} disabled={sepUpload.isUploading}
+            className="px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-600 hover:border-teal-500/50 hover:text-teal-300 text-xs font-semibold transition-all shrink-0 disabled:opacity-40">
+            {sepUpload.isUploading ? '업로드...' : '파일 선택'}
+          </button>
+        </div>
+        <button type="button" onClick={handleUploadSeparation} disabled={!uploadSepFile.trim() || isUploadSeparating}
+          className="w-full py-2 bg-teal-600/20 text-teal-300 border border-teal-500/30 hover:bg-teal-600/40 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg text-sm font-semibold transition-all flex items-center justify-center gap-2">
+          {isUploadSeparating ? (<><span className="w-3 h-3 border-2 border-teal-300/30 border-t-teal-300 rounded-full animate-spin" /> {uploadSepStatus || '처리 중...'}</>) : '보컬/MR 분리 실행'}
+        </button>
+        {uploadSepResult && (
+          <div className="space-y-2 mt-2">
+            <p className="text-xs font-semibold text-green-400">분리 완료!</p>
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-2"><span className="text-xs text-gray-400 shrink-0 w-20">🎤 보컬:</span><audio controls src={uploadSepResult.vocalUrl} className="flex-1 h-8" /></div>
+              <div className="flex items-center gap-2"><span className="text-xs text-gray-400 shrink-0 w-20">🎸 MR:</span><audio controls src={uploadSepResult.instrumentalUrl} className="flex-1 h-8" /></div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* 보컬/MR 분리 — 라이브러리 트랙 */}
       <div className="bg-gray-900/60 rounded-lg border border-gray-700 p-4 space-y-3">
-        <h4 className="text-sm font-bold text-gray-200">♻️ 보컬/MR 분리</h4>
+        <h4 className="text-sm font-bold text-gray-200">♻️ 보컬/MR 분리 — 라이브러리 트랙</h4>
         <p className="text-xs text-gray-500">생성된 라이브러리 트랙에서 보컬과 MR을 분리합니다.</p>
         <select value={vocalSepTarget?.id || ''} onChange={(e) => { const t = allTracks.find((t) => t.id === e.target.value) || null; setVocalSepTarget(t); setVocalSepResult(null); }} className={selectCls}>
           <option value="">{allTracks.length === 0 ? '라이브러리에 트랙이 없습니다' : '트랙 선택...'}</option>
