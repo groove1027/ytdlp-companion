@@ -30,9 +30,11 @@ interface ShoppingShortStore {
 
   // Analysis & Scripts
   productAnalysis: ShoppingProductAnalysis | null;
+  narrationText: string | null;
   generatedScripts: ShoppingScript[];
   selectedScriptId: string;
   isAnalyzing: boolean;
+  isGeneratingScripts: boolean;
   analysisError: string | null;
 
   // TTS Config
@@ -66,9 +68,11 @@ interface ShoppingShortStore {
 
   // Actions — Analysis
   setProductAnalysis: (analysis: ShoppingProductAnalysis | null) => void;
+  setNarrationText: (text: string | null) => void;
   setGeneratedScripts: (scripts: ShoppingScript[]) => void;
   setSelectedScriptId: (id: string) => void;
   setIsAnalyzing: (v: boolean) => void;
+  setIsGeneratingScripts: (v: boolean) => void;
   setAnalysisError: (err: string | null) => void;
 
   // Actions — Config
@@ -107,9 +111,11 @@ const initialState = {
   downloadError: null,
   proxyUrl: getInitialProxy(),
   productAnalysis: null,
+  narrationText: null,
   generatedScripts: [],
   selectedScriptId: '',
   isAnalyzing: false,
+  isGeneratingScripts: false,
   analysisError: null,
   ttsEngine: 'typecast' as TTSEngine,
   ttsVoiceId: '',
@@ -142,9 +148,11 @@ export const useShoppingShortStore = create<ShoppingShortStore>((set) => ({
 
   // Analysis
   setProductAnalysis: (analysis) => set({ productAnalysis: analysis }),
+  setNarrationText: (text) => set({ narrationText: text }),
   setGeneratedScripts: (scripts) => set({ generatedScripts: scripts }),
   setSelectedScriptId: (id) => set({ selectedScriptId: id }),
   setIsAnalyzing: (v) => set({ isAnalyzing: v }),
+  setIsGeneratingScripts: (v) => set({ isGeneratingScripts: v }),
   setAnalysisError: (err) => set({ analysisError: err }),
 
   // Config

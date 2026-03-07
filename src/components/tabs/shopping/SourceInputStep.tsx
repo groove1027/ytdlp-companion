@@ -22,6 +22,7 @@ const SourceInputStep: React.FC = () => {
     analysisError, setAnalysisError,
     ctaPreset,
     setProductAnalysis,
+    setNarrationText,
     setGeneratedScripts,
     setSelectedScriptId,
     goToStep,
@@ -105,12 +106,13 @@ const SourceInputStep: React.FC = () => {
     setAnalysisProgress('나레이션 감지 중...');
     try {
       // 1. 나레이션 감지 (원본 영상에 나레이션이 있으면 전사)
-      const narrationText = await detectNarration(
+      const narration = await detectNarration(
         sourceVideo.videoBlob,
         (msg) => setAnalysisProgress(msg),
       );
+      setNarrationText(narration);
 
-      if (narrationText) {
+      if (narration) {
         setAnalysisProgress('나레이션 감지됨! 프레임 추출 중...');
       } else {
         setAnalysisProgress('나레이션 없음 — 프레임 기반 분석 진행...');
@@ -119,18 +121,18 @@ const SourceInputStep: React.FC = () => {
       // 2. 프레임 추출
       const frames = await extractFramesForAnalysis(sourceVideo.videoBlob, 6);
 
-      // 3. 상품 분석 (나레이션 있으면 함께 전달)
-      setAnalysisProgress('AI 상품 분석 중...');
-      const analysis = await analyzeVideoProduct(frames, narrationText);
+      // 3. 상품 분석 → 프리셋 생성 (나레이션 있으면 함께 전달)
+      setAnalysisProgress('AI 상품 프리셋 생성 중...');
+      const analysis = await analyzeVideoProduct(frames, narration);
       setProductAnalysis(analysis);
 
       // 4. v31.0 대본 생성 (나레이션 참고)
       setAnalysisProgress('v31.0 대본 생성 중...');
-      const scripts = await generateShoppingScripts(analysis, sourceVideo.duration, ctaPreset, narrationText);
+      const scripts = await generateShoppingScripts(analysis, sourceVideo.duration, ctaPreset, narration);
       setGeneratedScripts(scripts);
       if (scripts.length > 0) setSelectedScriptId(scripts[0].id);
 
-      showToast('분석 완료! 대본을 선택해주세요.');
+      showToast('프리셋 + 대본 생성 완료!');
       goToStep('script');
     } catch (e) {
       const msg = (e as Error).message;
