@@ -4,10 +4,12 @@ import type { ChannelAnalysisSubTab } from '../../types';
 
 const KeywordLab = lazy(() => import('./channel/KeywordLab'));
 const ChannelAnalysisRoom = lazy(() => import('./channel/ChannelAnalysisRoom'));
+const VideoAnalysisRoom = lazy(() => import('./channel/VideoAnalysisRoom'));
 
 const SUB_TABS: { id: ChannelAnalysisSubTab; label: string; icon: string }[] = [
   { id: 'keyword-lab', label: '키워드 랩', icon: '🔍' },
   { id: 'channel-room', label: '채널 분석실', icon: '📊' },
+  { id: 'video-room', label: '영상 분석실', icon: '🎬' },
 ];
 
 const LoadingFallback: React.FC = () => (
@@ -39,7 +41,7 @@ const ChannelAnalysisTab: React.FC = () => {
               📡
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-white">채널 분석</h1>
+              <h1 className="text-2xl font-bold text-white">채널/영상 분석</h1>
               <p className="text-gray-400 text-sm">
                 키워드 리서치와 채널 벤치마킹으로 콘텐츠 전략을 수립하세요.
               </p>
@@ -85,6 +87,7 @@ const ChannelAnalysisTab: React.FC = () => {
         <Suspense fallback={<LoadingFallback />}>
           {subTab === 'keyword-lab' && <KeywordLab />}
           {subTab === 'channel-room' && <ChannelAnalysisRoom />}
+          {subTab === 'video-room' && <VideoAnalysisRoom />}
         </Suspense>
       </div>
     </div>
