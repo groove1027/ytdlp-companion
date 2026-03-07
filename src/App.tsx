@@ -129,6 +129,9 @@ const App: React.FC = () => {
   useEffect(() => {
     verifyToken().then((user) => {
       setAuthUser(user);
+    }).catch(() => {
+      setAuthUser(null);
+    }).finally(() => {
       setAuthChecking(false);
     });
   }, []);
@@ -155,6 +158,7 @@ const App: React.FC = () => {
   const refreshTrigger = useUIStore((s) => s.refreshTrigger);
   const setProcessing = useUIStore((s) => s.setProcessing);
   const setProcessingMessage = useUIStore((s) => s.setProcessingMessage);
+  const toolboxOpen = useUIStore((s) => s.toolboxOpen);
 
   // --- Cost Store ---
   const addCost = useCostStore((s) => s.addCost);
@@ -1023,20 +1027,20 @@ const App: React.FC = () => {
           {/* 도구모음 섹션 — 접이식 */}
           {(() => {
             const TOOL_TABS = ['thumbnail-studio', 'character-twist', 'image-script-upload'];
-            const toolboxOpen = useUIStore((s) => s.toolboxOpen) || TOOL_TABS.includes(activeTab);
+            const isToolboxOpen = toolboxOpen || TOOL_TABS.includes(activeTab);
             return (
           <div className="mt-4 pt-3 border-t-2 border-dashed border-gray-600/40">
             <button
-              onClick={() => useUIStore.getState().setToolboxOpen(!toolboxOpen)}
+              onClick={() => useUIStore.getState().setToolboxOpen(!isToolboxOpen)}
               className="flex items-center justify-between w-full px-4 py-3 rounded-lg text-base font-semibold text-gray-400 hover:text-gray-200 hover:bg-gray-800/60 transition-all"
             >
               <div className="flex items-center gap-3">
                 <span className="text-lg">🧰</span>
                 <span>도구모음</span>
               </div>
-              <span className={`text-xs text-gray-600 transition-transform ${toolboxOpen ? 'rotate-180' : ''}`}>▼</span>
+              <span className={`text-xs text-gray-600 transition-transform ${isToolboxOpen ? 'rotate-180' : ''}`}>▼</span>
             </button>
-            {toolboxOpen && (
+            {isToolboxOpen && (
               <div className="mt-1 space-y-1 pl-3">
                 <button
                   onClick={() => setActiveTab('thumbnail-studio')}
