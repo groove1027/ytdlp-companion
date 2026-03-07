@@ -79,6 +79,38 @@ const TabFallback = () => (
   </div>
 );
 
+// ErrorBoundary — lazy 컴포넌트 런타임 에러 캐치
+class TabErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { error: Error | null }
+> {
+  state: { error: Error | null } = { error: null };
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="p-8 text-center">
+          <p className="text-red-400 text-lg font-bold mb-2">탭 로딩 오류</p>
+          <pre className="text-red-300 text-sm bg-red-900/20 p-4 rounded-lg overflow-auto max-h-60 text-left">
+            {this.state.error.message}
+            {'\n'}
+            {this.state.error.stack}
+          </pre>
+          <button
+            className="mt-4 px-4 py-2 bg-red-600 hover:bg-red-500 rounded text-white"
+            onClick={() => this.setState({ error: null })}
+          >
+            다시 시도
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 // Utility functions moved to ./utils/fileHelpers.ts
 // CostDashboard moved to ./components/CostDashboard.tsx
 // HTML templates moved to ./templates/
@@ -1099,23 +1131,23 @@ const App: React.FC = () => {
 
           {/* [v4.5] 탭 기반 라우팅 */}
           {activeTab === 'channel-analysis' ? (
-              <Suspense fallback={<TabFallback />}><ChannelAnalysisTab /></Suspense>
+              <TabErrorBoundary><Suspense fallback={<TabFallback />}><ChannelAnalysisTab /></Suspense></TabErrorBoundary>
           ) : activeTab === 'script-writer' ? (
-              <Suspense fallback={<TabFallback />}><ScriptWriterTab /></Suspense>
+              <TabErrorBoundary><Suspense fallback={<TabFallback />}><ScriptWriterTab /></Suspense></TabErrorBoundary>
           ) : activeTab === 'sound-studio' ? (
-              <Suspense fallback={<TabFallback />}><SoundStudioTab /></Suspense>
+              <TabErrorBoundary><Suspense fallback={<TabFallback />}><SoundStudioTab /></Suspense></TabErrorBoundary>
           ) : activeTab === 'image-video' ? (
-              <Suspense fallback={<TabFallback />}><ImageVideoTab /></Suspense>
+              <TabErrorBoundary><Suspense fallback={<TabFallback />}><ImageVideoTab /></Suspense></TabErrorBoundary>
           ) : activeTab === 'edit-room' ? (
-              <Suspense fallback={<TabFallback />}><EditRoomTab /></Suspense>
+              <TabErrorBoundary><Suspense fallback={<TabFallback />}><EditRoomTab /></Suspense></TabErrorBoundary>
           ) : activeTab === 'upload' ? (
-              <Suspense fallback={<TabFallback />}><UploadTab /></Suspense>
+              <TabErrorBoundary><Suspense fallback={<TabFallback />}><UploadTab /></Suspense></TabErrorBoundary>
           ) : activeTab === 'thumbnail-studio' ? (
-              <Suspense fallback={<TabFallback />}><ThumbnailStudioTab /></Suspense>
+              <TabErrorBoundary><Suspense fallback={<TabFallback />}><ThumbnailStudioTab /></Suspense></TabErrorBoundary>
           ) : activeTab === 'character-twist' ? (
-              <Suspense fallback={<TabFallback />}><CharacterTwistLab /></Suspense>
+              <TabErrorBoundary><Suspense fallback={<TabFallback />}><CharacterTwistLab /></Suspense></TabErrorBoundary>
           ) : activeTab === 'image-script-upload' ? (
-              <Suspense fallback={<TabFallback />}><ImageScriptUploadLab /></Suspense>
+              <TabErrorBoundary><Suspense fallback={<TabFallback />}><ImageScriptUploadLab /></Suspense></TabErrorBoundary>
           ) : /* project tab (default) */ showProjectDashboard ? (
               /* [v4.5] 프로젝트 대시보드 — 카드 그리드 */
               <Suspense fallback={<TabFallback />}>
