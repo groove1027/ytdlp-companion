@@ -360,9 +360,7 @@ export default function PptMasterTab() {
 
   // ─── Render ───
 
-  const canProceed = step === 1 ? inputText.trim().length > 0
-    : step === 4 ? slideCount >= 3 && slideCount <= 30
-    : true;
+  const canGenerate = inputText.trim().length > 0 && slideCount >= 3 && slideCount <= 30;
 
   return (
     <div className="animate-fade-in max-w-6xl mx-auto">
@@ -381,14 +379,14 @@ export default function PptMasterTab() {
       <div className="flex items-center gap-1 mb-6 overflow-x-auto pb-2">
         {STEPS.map((s, i) => (
           <React.Fragment key={s.id}>
-            {i > 0 && <div className={`w-6 h-px ${step >= s.id ? 'bg-sky-500' : 'bg-gray-700'}`} />}
+            {i > 0 && <div className={`w-6 h-px ${s.id <= 4 || slides.length > 0 ? 'bg-sky-500/40' : 'bg-gray-700'}`} />}
             <button
-              onClick={() => s.id < step && setStep(s.id)}
-              disabled={s.id > step}
+              onClick={() => s.id <= 4 && setStep(s.id)}
+              disabled={s.id === 5 && slides.length === 0}
               className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-all ${
                 step === s.id
                   ? 'bg-sky-600/20 text-sky-400 border border-sky-500/30'
-                  : step > s.id
+                  : s.id <= 4 || slides.length > 0
                     ? 'bg-gray-800/50 text-gray-300 border border-gray-700 cursor-pointer hover:border-sky-500/30'
                     : 'bg-gray-800/30 text-gray-600 border border-gray-800 cursor-not-allowed'
               }`}
@@ -537,7 +535,9 @@ export default function PptMasterTab() {
               <div className="text-gray-500">슬라이드 장수</div>
               <div className="text-sky-300 font-medium">{slideCount}장</div>
               <div className="text-gray-500">입력 텍스트</div>
-              <div className="text-sky-300 font-medium">{inputText.length.toLocaleString()}자</div>
+              <div className={`font-medium ${inputText.trim() ? 'text-sky-300' : 'text-amber-400'}`}>
+                {inputText.trim() ? `${inputText.length.toLocaleString()}자` : '미입력 — Step 1에서 입력하세요'}
+              </div>
             </div>
           </div>
 
@@ -608,7 +608,7 @@ export default function PptMasterTab() {
             <button
               type="button"
               onClick={handleGenerate}
-              disabled={!canProceed || isGenerating}
+              disabled={!canGenerate || isGenerating}
               className="px-6 py-2.5 rounded-lg text-sm font-bold bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {isGenerating ? (
@@ -616,6 +616,8 @@ export default function PptMasterTab() {
                   <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                   생성 중... {elapsed > 0 && <span className="text-xs text-sky-200 tabular-nums">{formatElapsed(elapsed)}</span>}
                 </>
+              ) : !inputText.trim() ? (
+                '텍스트를 먼저 입력하세요'
               ) : (
                 '슬라이드 생성'
               )}
@@ -624,8 +626,7 @@ export default function PptMasterTab() {
             <button
               type="button"
               onClick={() => setStep((step + 1) as Step)}
-              disabled={!canProceed}
-              className="px-6 py-2.5 rounded-lg text-sm font-bold bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-6 py-2.5 rounded-lg text-sm font-bold bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white transition-all"
             >
               다음
             </button>
