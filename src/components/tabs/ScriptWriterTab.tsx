@@ -3,18 +3,15 @@ import { useScriptWriterStore } from '../../stores/scriptWriterStore';
 import { useNavigationStore } from '../../stores/navigationStore';
 import { useChannelAnalysisStore } from '../../stores/channelAnalysisStore';
 import { useInstinctStore } from '../../stores/instinctStore';
-import { useSoundStudioStore } from '../../stores/soundStudioStore';
 import { useProjectStore } from '../../stores/projectStore';
 import { evolinkChat, evolinkChatStream, getEvolinkKey } from '../../services/evolinkService';
 import { recommendTopics } from '../../services/topicRecommendService';
 import { buildSelectedInstinctPrompt } from '../../data/instinctPromptUtils';
 import { SCRIPT_STYLE_PRESETS } from '../../data/scriptStylePresets';
-import { VideoFormat, TopicRecommendation, Scene, AspectRatio } from '../../types';
-import { COMMUNITY_PRESETS } from '../../constants';
+import { TopicRecommendation } from '../../types';
 import { showToast } from '../../stores/uiStore';
-import { countScenesLocally, splitScenesLocally, extractJsonFromText } from '../../services/gemini/scriptAnalysis';
+import { extractJsonFromText } from '../../services/gemini/scriptAnalysis';
 import { parseFileToText, SUPPORTED_EXTENSIONS, SUPPORTED_FORMATS_LABEL } from '../../services/fileParserService';
-import { canCreateNewProject } from '../../services/storageService';
 import BenchmarkPanel from './script/BenchmarkPanel';
 import TopicRecommendCards from './script/TopicRecommendCards';
 import { useElapsedTimer, formatElapsed } from '../../hooks/useElapsedTimer';
@@ -34,31 +31,10 @@ function estimateTime(chars: number): string {
   return `약 ${m}분 ${s}초`;
 }
 
-const FORMAT_BUTTONS: { id: VideoFormat; label: string; color: string }[] = [
-  { id: VideoFormat.LONG, label: '롱폼', color: 'bg-blue-600' },
-  { id: VideoFormat.SHORT, label: '숏폼', color: 'bg-emerald-600' },
-  { id: VideoFormat.NANO, label: '나노', color: 'bg-pink-600' },
-  { id: VideoFormat.MANUAL, label: '수동', color: 'bg-gray-600' },
-];
-
-const FORMAT_DESC: Record<VideoFormat, string> = {
-  [VideoFormat.LONG]: '롱폼 — 하위 옵션(호흡/디테일)에 따라 분할 방식이 달라집니다',
-  [VideoFormat.SHORT]: '쇼츠/릴스 — 1문장 = 1장면, 빠른 컷 전환',
-  [VideoFormat.NANO]: '틱톡/도파민 — 쉼표 단위 초고속 분할',
-  [VideoFormat.MANUAL]: '사용자가 직접 입력한 줄바꿈을 기준으로 분할합니다',
-};
-
-const LONG_SPLIT: Record<'DEFAULT' | 'DETAILED', { label: string; desc: string }> = {
-  DEFAULT: { label: '호흡 중심', desc: '2~3문장 → 1장면 (적은 컷, 강의/설명)' },
-  DETAILED: { label: '디테일 중심', desc: '1문장 → 1장면 (많은 컷, 다큐/사연)' },
-};
-
-
 const STEPS = [
   { id: 1, label: '소재 준비', icon: '🎯' },
   { id: 2, label: '추천 소재 선택', icon: '🔍' },
   { id: 3, label: '대본 작성', icon: '✍️' },
-  { id: 4, label: '장면 설정', icon: '🎬' },
 ];
 
 const Spinner: React.FC = () => (
@@ -74,19 +50,14 @@ export default function ScriptWriterTab() {
     styledScript, styledStyleName, setStyledScript, clearStyledScript,
     isGenerating, startGeneration, finishGeneration,
     selectedTopic, benchmarkScript,
-    videoFormat, setVideoFormat,
-    longFormSplitType, setLongFormSplitType, smartSplit,
     targetCharCount, setTargetCharCount,
-    splitResult, setSplitResult,
   } = useScriptWriterStore();
 
   const setActiveTab = useNavigationStore((s) => s.setActiveTab);
   const channelGuideline = useChannelAnalysisStore((s) => s.channelGuideline);
-  const communityPresetId = useProjectStore((s) => s.config?.communityPresetId ?? null);
 
   const [openTool, setOpenTool] = useState<OpenTool>(null);
   const [showExpander, setShowExpander] = useState(false);
-  const [showSplitGuide, setShowSplitGuide] = useState(true);
   const [manualText, setManualText] = useState('');
   const [title, setTitle] = useState('');
   const [synopsis, setSynopsis] = useState('');
@@ -95,7 +66,6 @@ export default function ScriptWriterTab() {
   const [applyingStyle, setApplyingStyle] = useState<string | null>(null);
   const [selectedStyleId, setSelectedStyleId] = useState<string | null>(null);
   const [styleError, setStyleError] = useState('');
-  // showNavigationPrompt 제거됨 — splitResult.length > 0 으로 대체
   const [showChannelGuide, setShowChannelGuide] = useState(false);
 
   const instinctIds = useInstinctStore(s => s.selectedMechanismIds);
@@ -117,318 +87,21 @@ export default function ScriptWriterTab() {
   const scriptText = finalScript || generatedScript?.content || manualText || '';
   const displayScript = scriptText; // same source of truth as scriptText
 
-  const estimatedScenes = useMemo(() => {
-    if (!scriptText.trim()) return 0;
-    return countScenesLocally(scriptText, videoFormat, smartSplit,
-      videoFormat === VideoFormat.LONG ? longFormSplitType : undefined);
-  }, [scriptText, videoFormat, smartSplit, longFormSplitType]);
-
-  // 사용자 대본에서 가장 긴 구간을 찾아 분할 미리보기
-  const livePreviewData = useMemo(() => {
-    if (!scriptText.trim()) return { original: '', scenes: [] as string[] };
-    const paragraphs = scriptText.split(/\n+/).filter(p => p.trim());
-    if (paragraphs.length === 0) return { original: '', scenes: [] as string[] };
-    // 문장이 2개 이상인 단락 우선 선택 (모드 차이가 드러남)
-    const SENT_RE = /[.!?。！？]\s*/;
-    const multiSent = paragraphs
-      .filter(p => p.split(SENT_RE).filter(s => s.trim()).length >= 2)
-      .sort((a, b) => b.length - a.length);
-    const best = multiSent[0] || paragraphs.reduce((a, b) => a.length >= b.length ? a : b, '');
-    const scenes = splitScenesLocally(best, videoFormat, smartSplit,
-      videoFormat === VideoFormat.LONG ? longFormSplitType : undefined);
-    return { original: best, scenes };
-  }, [scriptText, videoFormat, smartSplit, longFormSplitType]);
-
-  const handleSelectPreset = useCallback((preset: typeof COMMUNITY_PRESETS[number]) => {
-    if (preset.id === 'custom') {
-      // 커스텀: 프리셋 해제만, 설정 변경 없음
-      useProjectStore.getState().setConfig((prev) =>
-        prev ? { ...prev, communityPresetId: undefined, imageAspectRatio: undefined } : prev
-      );
-      return;
-    }
-    setVideoFormat(preset.videoFormat);
-    useProjectStore.getState().setConfig((prev) =>
-      prev ? {
-        ...prev,
-        aspectRatio: preset.aspectRatio,
-        imageAspectRatio: preset.imageAspectRatio,
-        communityPresetId: preset.id,
-      } : prev
-    );
-    showToast(`${preset.label} 적용 — ${preset.videoFormat === VideoFormat.NANO ? '나노(초고속 분할)' : '숏폼'} + 이미지 ${preset.imageAspectRatio} / 영상 ${preset.aspectRatio}`);
-  }, [setVideoFormat]);
-
   const handleGoToSoundStudio = useCallback(() => {
-    // Always sync finalScript to the latest available content before navigating
     const latest = finalScript || styledScript || generatedScript?.content || manualText || '';
-    if (latest.trim()) {
-      setFinalScript(latest);
-    }
+    if (!latest.trim()) return;
+
+    // 1. 대본 저장
+    setFinalScript(latest);
+    useProjectStore.getState().setConfig((prev) =>
+      prev ? { ...prev, script: latest } : prev
+    );
+
+    // 2. 사운드 스튜디오 이동 (나레이션 라인은 VoiceStudio에서 자동 생성)
     setActiveTab('sound-studio');
   }, [generatedScript, manualText, finalScript, styledScript, setFinalScript, setActiveTab]);
 
-  const [isAnalyzingScenes, setIsAnalyzingScenes] = useState(false);
-  const [analysisProgress, setAnalysisProgress] = useState(0);
-  const elapsedAnalysis = useElapsedTimer(isAnalyzingScenes);
-
-  const handleSceneAnalysis = useCallback(async () => {
-    if (!scriptText.trim() || isAnalyzingScenes) return;
-    if (!getEvolinkKey()) {
-      setGenError('Evolink API 키가 설정되지 않았습니다. 설정에서 키를 입력해주세요.');
-      return;
-    }
-
-    // 프로젝트가 없으면 자동 생성
-    const projStore = useProjectStore.getState();
-    if (!projStore.currentProjectId) {
-      const ok = await canCreateNewProject();
-      if (!ok) {
-        setGenError('저장 공간이 부족합니다. 기존 프로젝트를 삭제해주세요.');
-        return;
-      }
-      const newId = `proj_${Date.now()}`;
-      projStore.setCurrentProjectId(newId);
-      if (!projStore.config) {
-        projStore.setConfig({
-          mode: 'SCRIPT',
-          script: scriptText.substring(0, 500),
-          videoFormat,
-          aspectRatio: 'LANDSCAPE' as never,
-          imageModel: 'NANO_COST' as never,
-          smartSplit: true,
-        } as never);
-      }
-      projStore.setProjectTitle(scriptText.trim().substring(0, 30) || '새 프로젝트');
-      showToast('새 프로젝트가 자동 생성되었습니다');
-    }
-
-    setIsAnalyzingScenes(true);
-    setAnalysisProgress(0);
-    setGenError('');
-
-    // 시뮬레이션 프로그레스 — 대본 길이에 비례하여 속도 조절
-    let simProgress = 0;
-    const len = scriptText.length;
-    const simInterval = setInterval(() => {
-      // 긴 대본일수록 느리게 진행 (8000자+ = 매우 느림)
-      const p1 = len > 8000 ? 0.8 : len > 5000 ? 1.2 : len > 3000 ? 2 : 3;
-      const p2 = len > 8000 ? 0.3 : len > 5000 ? 0.5 : len > 3000 ? 1 : 1.5;
-      const p3 = len > 8000 ? 0.1 : len > 5000 ? 0.2 : len > 3000 ? 0.3 : 0.5;
-      simProgress += simProgress < 40 ? p1 : simProgress < 70 ? p2 : p3;
-      simProgress = Math.min(simProgress, 88);
-      setAnalysisProgress((prev) => Math.max(prev, Math.round(simProgress)));
-    }, len > 8000 ? 800 : len > 5000 ? 500 : 300);
-
-    const latest = finalScript || styledScript || generatedScript?.content || manualText || '';
-    if (latest.trim()) setFinalScript(latest);
-
-    const formatLabel = videoFormat === VideoFormat.LONG
-      ? (longFormSplitType === 'DETAILED' ? '롱폼 디테일 중심' : '롱폼 호흡 중심')
-      : videoFormat === VideoFormat.SHORT ? '숏폼' : '나노';
-
-    const COMMON_RULES = `[절대 금지 — 위반 시 분할 품질 0점]
-- 문장 중간에서 끊기 금지: 관형절("~하는/~된/~할"), 인용절("~라고/~다고"), 부사절("~해서/~하며") 중간 절단 절대 금지
-- 주어와 서술어 분리 금지: "그는 ... 했습니다"를 "그는"과 "했습니다"로 나누지 마세요
-- 인용문 분할 금지: 따옴표("...") 안의 내용은 절대 쪼개지 마세요
-- 조사/어미 직전 절단 금지: "잠수함의" → "잠수함" / "의" ← 이런 분할 금지
-- 의미 없는 조각 생성 금지: 10자 미만의 무의미한 조각이 단독 장면이 되면 안 됩니다
-
-[핵심 원칙]
-- 각 장면은 한국어 화자가 소리 내어 읽었을 때 자연스럽고 완결된 의미를 가져야 합니다
-- 원문을 수정하거나 요약하지 마세요. 원문 텍스트를 그대로 유지하되 분할 지점만 결정하세요`;
-
-    const formatRules: Record<string, string> = {
-      '롱폼 호흡 중심': `[롱폼 호흡 중심 — 서사 흐름 기반 분할]
-${COMMON_RULES}
-
-[분할 기준]
-- 하나의 장면 = 하나의 "이야기 단위(narrative beat)"입니다
-- 같은 주제/맥락/감정의 문장 2~3개를 하나로 묶으세요
-- 장면이 바뀌는 자연스러운 지점:
-  · 시간 전환 ("이때", "150년 뒤", "1776년")
-  · 장소 이동 ("이탈리아로", "런던에서", "뉴욕 앞바다")
-  · 화제 전환 ("하지만", "그런데", "한편")
-  · 새로운 인물 등장
-  · 감정/분위기 전환 (서술 → 감탄, 설명 → 비유)
-- 원인+결과, 주장+근거, 질문+답변은 반드시 함께 묶으세요
-- 장면당 80~200자가 자연스럽습니다
-- 적합: 강의, 세미나, 설명 영상 (장면당 6~14초)`,
-
-      '롱폼 디테일 중심': `[롱폼 디테일 중심 — 세밀한 컷 분할]
-${COMMON_RULES}
-
-[분할 기준]
-- 기본: 1문장 = 1장면이되, 아래 예외를 반드시 적용하세요
-- 예외 1: 맥락상 분리하면 어색한 짧은 문장(40자 미만)은 앞이나 뒤 문장과 묶으세요
-  예: "이유는 아주 참담하고도 현실적이었습니다." + 다음 문장 → 함께 (단독으로는 의미 불완전)
-- 예외 2: 100자 초과 문장은 의미가 완결되는 절(clause) 단위로 분할하되, 반드시 각 조각이 독립적으로 읽힐 수 있어야 합니다
-  좋은 예: "그는 이력서에서 자신을 다연장 로켓포, 장갑차, 거대 석궁의 개발자라고 소개하며" / "공작의 극심한 불안감을 정확히 저격했죠."
-  나쁜 예: "그는 이력서에서 자신을" / "다연장 로켓포, 장갑차, 거대 석궁의 개발자라고 소개하며" ← 첫 조각이 불완전
-- 예외 3: "~였기 때문이죠", "~인 셈입니다" 같은 결론부가 매우 짧으면 앞 문장과 묶으세요
-- 적합: 다큐멘터리, 사연, 스토리텔링 (장면당 2~9초)`,
-
-      '숏폼': `[숏폼 — 빠른 컷 전환]
-${COMMON_RULES}
-
-[분할 기준]
-- 1문장 = 1장면, 빠른 컷 전환
-- 80자 초과 문장은 자연스러운 호흡/의미 단위에서 분할하되 각 조각이 독립적으로 읽혀야 합니다
-- 40자 미만 짧은 문장은 분할하지 마세요
-- 적합: 쇼츠, 릴스 (장면당 2~7초)`,
-
-      '나노': `[나노 — 도파민 편집, 의미 최소 단위]
-${COMMON_RULES}
-
-[분할 기준]
-- 의미가 완성되는 최소 단위(절/clause)로 분할하세요
-- 예: "이것만은 절대 하지 마세요, 왜냐하면 여러분의 건강에, 치명적인 영향을 줄 수 있기 때문입니다"
-  → "이것만은 절대 하지 마세요" / "왜냐하면 여러분의 건강에" / "치명적인 영향을 줄 수 있기 때문입니다"
-- 단, 2~5자짜리 무의미한 분할은 절대 금지 (예: "아니," 단독은 안 됨)
-- 짧은 대화체("아니, 이게 맞나요?")는 통째로 1장면 유지
-- 적합: 틱톡, 도파민 편집 (장면당 1~4초)`,
-    };
-
-    try {
-      // 예상 출력 길이 (원문 + JSON 오버헤드 — 긴 대본은 오버헤드 비율 ↑)
-      const overhead = scriptText.length > 8000 ? 1.8 : scriptText.length > 5000 ? 1.5 : 1.3;
-      const estimatedLen = scriptText.length * overhead;
-
-      console.log(`[SceneAnalysis] 시작: ${scriptText.length}자, 포맷: ${formatLabel}, 예상출력: ${Math.round(estimatedLen)}자`);
-      const startTime = Date.now();
-
-      const raw = await evolinkChatStream(
-        [
-          {
-            role: 'system',
-            content: `당신은 한국어 영상 대본을 장면(Scene) 단위로 분할하는 최고 전문가입니다.
-대본의 서사 흐름, 감정 전환, 주제 변화를 정확히 파악하여 각 장면이 자연스럽고 완결된 의미를 갖도록 분할하세요.
-
-${formatRules[formatLabel]}
-
-[출력 형식]
-- 반드시 JSON 배열로만 응답하세요: ["장면1 텍스트", "장면2 텍스트", ...]
-- 마크다운 코드 블록 없이 순수 JSON만 출력하세요
-- 원문 텍스트를 한 글자도 수정/요약/생략하지 마세요. 분할 지점만 결정하세요`
-          },
-          {
-            role: 'user',
-            content: `다음 대본을 "${formatLabel}" 모드로 장면 분할해주세요:\n\n${scriptText}`
-          }
-        ],
-        (_chunk, accumulated) => {
-          // 스트림 진행률: 40~97% 범위에 매핑 (시뮬레이션이 0~40% 담당)
-          const rawPct = accumulated.length / estimatedLen;
-          const pct = Math.min(97, 40 + Math.round(rawPct * 57));
-          setAnalysisProgress((prev) => Math.max(prev, pct));
-        },
-        { temperature: 0.2, maxTokens: Math.max(8000, scriptText.length * 2), responseFormat: { type: 'json_schema' } }
-      );
-
-      console.log(`[SceneAnalysis] 완료: ${((Date.now() - startTime) / 1000).toFixed(1)}초, 응답: ${raw.length}자`);
-      console.log(`[SceneAnalysis] 응답 앞 200자:`, raw.slice(0, 200));
-
-      clearInterval(simInterval);
-      setAnalysisProgress(100);
-      if (!raw.trim()) throw new Error('AI 응답이 비어있습니다.');
-
-      // 견고한 JSON 추출: 코드블록 → 배열 직접 추출 → 전체 파싱
-      let scenes: string[] = [];
-      try {
-        // 1차: 마크다운 코드블록 제거
-        let jsonStr = raw;
-        const codeBlock = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
-        if (codeBlock) jsonStr = codeBlock[1].trim();
-        // 2차: JSON 배열 직접 추출 (앞뒤 텍스트 무시)
-        const arrMatch = jsonStr.match(/\[[\s\S]*\]/);
-        if (arrMatch) jsonStr = arrMatch[0];
-        scenes = JSON.parse(jsonStr);
-      } catch (parseErr) {
-        console.error(`[SceneAnalysis] JSON 파싱 실패, extractJsonFromText 시도:`, parseErr);
-        // 3차: extractJsonFromText 유틸리티 사용 (string 반환 → JSON.parse 필요)
-        try {
-          const extractedStr = extractJsonFromText(raw);
-          if (extractedStr) {
-            const parsed = JSON.parse(extractedStr);
-            if (Array.isArray(parsed)) scenes = parsed;
-            else if (parsed && typeof parsed === 'object') {
-              const vals = Object.values(parsed);
-              const arr = vals.find(v => Array.isArray(v));
-              if (arr) scenes = arr as string[];
-            }
-          }
-        } catch {
-          console.error(`[SceneAnalysis] 모든 파싱 실패. raw 전체:`, raw);
-          throw new Error(`JSON 파싱 실패 — AI 응답을 해석할 수 없습니다. (응답 길이: ${raw.length}자)`);
-        }
-      }
-      if (!Array.isArray(scenes) || scenes.length === 0) throw new Error(`분할 결과가 비어있습니다. (응답 길이: ${raw.length}자)`);
-
-      setSplitResult(scenes);
-
-      // finalScript를 장면별 줄바꿈으로 재구성 (이미지/영상용)
-      const joinedScript = scenes.join('\n');
-      setFinalScript(joinedScript);
-
-      // 사운드 스튜디오에 AI 단락 분할 결과를 그대로 전달
-      const store = useSoundStudioStore.getState();
-      let speakerId = store.speakers[0]?.id || '';
-      if (!speakerId) {
-        const newSpeaker = {
-          id: `speaker-${Date.now()}`,
-          name: '화자 1',
-          color: '#6366f1',
-          engine: 'typecast' as const,
-          voiceId: '',
-          language: 'ko' as const,
-          speed: 1.0,
-          pitch: 0,
-          stability: 0.5,
-          similarityBoost: 0.75,
-          style: 0,
-          useSpeakerBoost: true,
-          lineCount: scenes.length,
-          totalDuration: 0,
-        };
-        store.addSpeaker(newSpeaker);
-        speakerId = newSpeaker.id;
-      }
-      const ts = Date.now();
-
-      // Scene[] + ScriptLine[] 동시 생성 (같은 ID로 1:1 연결)
-      const newScenes: Scene[] = scenes.map((text, i) => ({
-        id: `scene-${ts}-${i}`,
-        scriptText: text.trim(),
-        audioScript: text.trim(),
-        visualPrompt: '',
-        visualDescriptionKO: '',
-        characterPresent: false,
-        isGeneratingImage: false,
-        isGeneratingVideo: false,
-        isNativeHQ: false,
-      }));
-      useProjectStore.getState().setScenes(newScenes);
-
-      store.setLines(scenes.map((text, i) => ({
-        id: `line-${ts}-${i}`,
-        speakerId,
-        text: text.trim(),
-        index: i,
-        ttsStatus: 'idle' as const,
-        sceneId: `scene-${ts}-${i}`,
-      })));
-
-      // 결과가 splitResult에 저장되면 UI에 자동 표시됨
-    } catch (err) {
-      clearInterval(simInterval);
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[SceneAnalysis] 실패:`, msg, err);
-      setGenError(`장면 분석 실패: ${msg}`);
-    } finally {
-      clearInterval(simInterval);
-      setIsAnalyzingScenes(false);
-    }
-  }, [scriptText, videoFormat, longFormSplitType, isAnalyzingScenes, finalScript, styledScript, generatedScript, manualText, setFinalScript, setSplitResult]);
+  // [A방향 리팩토링] handleSceneAnalysis 제거됨 — 장면 분할은 이미지/영상 탭에서 나레이션 타이밍 기반으로 수행
 
   const [fileLoading, setFileLoading] = useState(false);
   const [fileError, setFileError] = useState('');
@@ -1088,252 +761,30 @@ ${instinctPrompt}
           </div>
         </div>
 
-        {/* ━━ Step 4: 장면 분할 설정 ━━ */}
-        <div className="px-6 py-4 border-b border-gray-700/30">
-          <div className="flex items-center gap-2 mb-3">
-            <span className="text-sm font-bold text-gray-500 uppercase tracking-wider">Step 4</span>
-            <span className="text-sm font-semibold text-gray-300">장면 분할</span>
-            {estimatedScenes > 0 && (
-              <span className="text-sm font-bold text-blue-300 bg-blue-900/30 px-2 py-0.5 rounded-lg border border-blue-700/40">
-                예상 약 {estimatedScenes}컷
-              </span>
-            )}
-            <span className="text-xs text-gray-500">장면 분석 실행 시 AI가 정확한 컷수를 산출합니다</span>
-          </div>
-
-          {/* 커뮤니티형 프리셋 원클릭 선택 */}
-          <div className="mb-4">
-            <label className="block text-sm font-bold text-gray-400 mb-2">커뮤니티형 프리셋 (원클릭 설정)</label>
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
-              {COMMUNITY_PRESETS.map(preset => {
-                const isActive = preset.id === 'custom'
-                  ? !communityPresetId
-                  : communityPresetId === preset.id;
-                return (
-                  <button
-                    key={preset.id}
-                    type="button"
-                    onClick={() => handleSelectPreset(preset)}
-                    className={`text-left p-3 rounded-xl border transition-all ${
-                      isActive
-                        ? 'bg-violet-600/20 border-violet-500/50 ring-1 ring-violet-500/30'
-                        : preset.id === 'custom'
-                          ? 'bg-gray-800 border-gray-600 hover:bg-gray-700'
-                          : 'bg-gray-800/50 border-gray-700 hover:border-violet-500/40 hover:bg-violet-900/10'
-                    }`}
-                  >
-                    <div className={`text-sm font-bold ${isActive ? 'text-violet-300' : 'text-gray-300'}`}>{preset.label}</div>
-                    <div className="text-xs text-gray-400 mt-1 leading-relaxed">{preset.description}</div>
-                    {preset.id !== 'custom' && (
-                      <div className="flex gap-1 mt-2 flex-wrap">
-                        <span className="text-[10px] bg-violet-900/40 text-violet-400 px-1.5 py-0.5 rounded">{preset.avgCutSec}s/컷</span>
-                        <span className="text-[10px] bg-gray-700 text-gray-300 px-1.5 py-0.5 rounded">
-                          SFX {preset.sfxDensity === 'high' ? '폭격' : preset.sfxDensity === 'medium' ? '보통' : '최소'}
-                        </span>
-                        <span className="text-[10px] bg-cyan-900/40 text-cyan-400 px-1.5 py-0.5 rounded">
-                          이미지 {preset.imageAspectRatio}
-                        </span>
-                      </div>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-            {communityPresetId && (() => {
-              const active = COMMUNITY_PRESETS.find(p => p.id === communityPresetId);
-              return active ? (
-                <div className="mt-2 px-3 py-2 bg-violet-900/15 border border-violet-600/25 rounded-lg">
-                  <p className="text-sm text-violet-300 font-medium">
-                    {active.label} 적용 중 — 이미지 {active.imageAspectRatio} / 영상 {active.aspectRatio} / {active.videoFormat === VideoFormat.NANO ? '나노(초고속 분할)' : '숏폼'}
-                  </p>
-                  <p className="text-xs text-gray-400 mt-1">
-                    포맷·비율은 아래에서 수동 변경 가능하며, 이미지/영상·편집실에서 장면별 비율을 바꿔 재생성할 수도 있습니다.
-                  </p>
-                </div>
-              ) : null;
-            })()}
-            {!communityPresetId && (
-              <p className="text-xs text-gray-500 mt-1.5">
-                프리셋 선택 시 포맷·비율·이미지 생성 비율이 자동 설정됩니다. 이후 수동 변경하거나, 이미지/영상·편집실에서 장면별로 바꿀 수도 있습니다.
-              </p>
-            )}
-          </div>
-
-          <div className="flex items-center gap-3 mb-2">
-            <div className="flex rounded-lg overflow-hidden border border-gray-600">
-              {FORMAT_BUTTONS.map(f => (
-                <button key={f.id} onClick={() => setVideoFormat(f.id)}
-                  className={`px-3 py-1.5 text-sm font-bold transition-all ${
-                    videoFormat === f.id ? `${f.color} text-white` : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
-                  }`}>{f.label}</button>
-              ))}
-            </div>
-            {videoFormat === VideoFormat.LONG && (
-              <div className="flex bg-gray-800/60 p-0.5 rounded-lg border border-gray-600">
-                {(['DEFAULT', 'DETAILED'] as const).map(type => (
-                  <button key={type} onClick={() => setLongFormSplitType(type)}
-                    className={`py-1 px-2.5 rounded-md text-sm font-bold transition-all ${
-                      longFormSplitType === type
-                        ? (type === 'DEFAULT' ? 'bg-violet-600 text-white' : 'bg-indigo-600 text-white')
-                        : 'text-gray-400 hover:text-gray-200'
-                    }`}>{LONG_SPLIT[type].label}</button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <p className="text-sm text-gray-400 mb-1">{FORMAT_DESC[videoFormat]}</p>
-          {videoFormat === VideoFormat.LONG && (
-            <p className="text-sm text-violet-400/80 mb-1">
-              <span className="font-bold text-violet-300">{LONG_SPLIT[longFormSplitType].label}</span>
-              {' — '}{LONG_SPLIT[longFormSplitType].desc}
-            </p>
-          )}
-
-          <p className="text-sm text-cyan-300/70 mt-1 mb-1 font-medium">
-            장면 분할은 영상 편집(이미지/영상 생성)을 위한 설정이며, 나레이션은 문장 단위(~다/~죠/~요)로 자연스럽게 읽힙니다.
-          </p>
-
-          {/* 실시간 단락 미리보기 (사용자 대본 기반) */}
-          <button onClick={() => setShowSplitGuide(!showSplitGuide)}
-            className="mt-2 flex items-center gap-1.5 text-sm text-blue-400 hover:text-blue-300 transition-colors">
-            <span>{showSplitGuide ? '▼' : '▶'}</span>
-            <span className="underline font-medium">
-              {livePreviewData.scenes.length > 0 ? `단락 미리보기 (예상 ${livePreviewData.scenes.length}컷)` : '단락 미리보기'}
-            </span>
-            {livePreviewData.scenes.length > 0 && (
-              <span className="text-xs text-yellow-400/70">예상치 — 아래 장면 분석에서 AI가 정확히 분할합니다</span>
-            )}
-          </button>
-
-          {showSplitGuide && (
-            <div className="mt-2">
-              {livePreviewData.scenes.length > 0 ? (
-                <div className="bg-gray-800/30 rounded-xl border border-blue-700/20 overflow-hidden">
-                  <div className="px-3 py-2 bg-blue-900/15 border-b border-blue-700/15">
-                    <div className="flex items-center justify-between mb-1.5">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-bold text-blue-300">예상 분할 미리보기</span>
-                        <span className="text-xs px-1.5 py-0.5 rounded bg-yellow-900/30 text-yellow-300 border border-yellow-600/20 font-medium">로컬 추정</span>
-                      </div>
-                      <span className="text-xs text-yellow-300/70 font-medium">장면 분석 실행 시 AI가 문맥을 이해하여 정확히 분할하며, 이후 수정도 가능합니다</span>
-                    </div>
-                    <p className="text-xs text-gray-400 leading-relaxed bg-gray-900/40 rounded px-2 py-1.5 border border-gray-700/20">
-                      <span className="text-yellow-400/80 font-medium">원문:</span> {livePreviewData.original}
-                    </p>
-                  </div>
-                  <div className="max-h-[300px] overflow-auto">
-                    {livePreviewData.scenes.map((scene, i) => (
-                      <div key={i}
-                        className={`flex items-start gap-3 px-3 py-2 ${i % 2 === 0 ? 'bg-gray-800/10' : 'bg-gray-800/30'} border-b border-gray-700/15 last:border-b-0`}>
-                        <span className="flex-shrink-0 w-7 h-7 rounded-md bg-blue-900/30 border border-blue-600/20 flex items-center justify-center text-xs font-bold text-blue-300">
-                          {i + 1}
-                        </span>
-                        <p className="text-sm text-gray-200 leading-relaxed pt-0.5">{scene}</p>
-                        <span className="flex-shrink-0 text-xs text-gray-500 pt-1 whitespace-nowrap">{scene.length}자</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <div className="bg-gray-800/30 rounded-lg border border-gray-700/20 p-4 text-center">
-                  <p className="text-sm text-gray-500">대본을 입력하면 가장 긴 구간의 분할 미리보기가 표시됩니다</p>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* ━━ Final CTA ━━ */}
+        {/* ━━ 사운드 스튜디오로 이동 ━━ */}
         <div className="px-6 py-5 space-y-3">
-          {/* 장면 분석 실행 버튼 */}
-          <button onClick={handleSceneAnalysis} disabled={!displayScript || isAnalyzingScenes}
-            className={`w-full relative overflow-hidden rounded-xl text-sm font-bold shadow-lg transition-all ${
-              isAnalyzingScenes
-                ? 'bg-gray-800 border border-gray-600 text-white'
-                : 'bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 disabled:opacity-25 disabled:cursor-not-allowed text-white border border-violet-400/40 shadow-violet-900/30'
-            }`}>
-            {isAnalyzingScenes && (
-              <div className="absolute inset-y-0 left-0 bg-gradient-to-r from-amber-500 via-orange-500 to-yellow-500 rounded-xl transition-all duration-300 ease-out"
-                style={{ width: `${analysisProgress}%` }} />
-            )}
-            <div className="relative py-3.5 flex items-center justify-center gap-2">
-              {isAnalyzingScenes ? (
-                <>
-                  <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  <span>AI가 장면을 분석하고 있습니다... ({scriptText.length.toLocaleString()}자)</span>
-                  <span className="font-black text-lg text-white drop-shadow-md">{analysisProgress}%</span>
-                  {elapsedAnalysis > 0 && <span className="text-xs text-gray-400 tabular-nums">{formatElapsed(elapsedAnalysis)}</span>}
-                </>
-              ) : (
-                <>🎬 장면 분석 실행</>
-              )}
-            </div>
+          <div className="bg-gray-800/30 rounded-xl border border-gray-700/30 p-4">
+            <p className="text-sm text-gray-300 mb-1 font-medium">
+              대본이 준비되면 사운드 스튜디오에서 자연스러운 문장 단위로 나레이션을 생성합니다.
+            </p>
+            <p className="text-xs text-gray-500">
+              나레이션 완료 후 이미지/영상 탭에서 컷 분할 스타일(숏폼/나노/커뮤형 등)을 선택하고 장면별 이미지를 생성합니다.
+            </p>
+          </div>
+
+          <button onClick={handleGoToSoundStudio} disabled={!displayScript.trim()}
+            className="w-full bg-gradient-to-r from-fuchsia-600 to-violet-600
+              hover:from-fuchsia-500 hover:to-violet-500 disabled:opacity-25 disabled:cursor-not-allowed
+              text-white rounded-xl text-sm font-bold border border-fuchsia-400/30 shadow-lg shadow-fuchsia-900/20
+              py-3.5 flex items-center justify-center gap-2 transition-all">
+            🎙 사운드 스튜디오로 대본 보내기
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
           </button>
 
-          {/* 장면 분석 에러 표시 */}
-          {genError && genError.includes('장면 분석') && (
-            <div className="bg-red-900/30 border border-red-500/40 rounded-xl px-4 py-3 animate-fade-in-up">
+          {genError && (
+            <div className="bg-red-900/30 border border-red-500/40 rounded-xl px-4 py-3">
               <p className="text-sm font-bold text-red-400">{genError}</p>
-              <p className="text-xs text-red-400/60 mt-1">콘솔(F12)에서 상세 로그를 확인하세요</p>
             </div>
-          )}
-
-          {/* 장면 분석 결과 */}
-          {splitResult.length > 0 && (
-            <div className="bg-gray-800/40 rounded-xl border border-amber-600/40 overflow-hidden animate-fade-in-up">
-              <div className="flex items-center justify-between px-4 py-3 bg-amber-900/25 border-b border-amber-700/30">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-bold text-amber-300">장면 분석 결과</span>
-                  <span className="text-sm px-2 py-0.5 rounded bg-amber-900/40 text-amber-200 border border-amber-500/40 font-bold">
-                    총 {splitResult.length}컷
-                  </span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button onClick={() => {
-                    const text = splitResult.map((s, i) => `[${i + 1}] ${s}`).join('\n');
-                    navigator.clipboard.writeText(text);
-                    showToast('장면 분석 결과가 클립보드에 복사되었습니다');
-                  }}
-                    className="text-sm text-gray-400 hover:text-amber-300 transition-colors p-1" title="결과 복사">
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" strokeWidth="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" strokeWidth="2"/></svg>
-                  </button>
-                  <button onClick={() => setSplitResult([])}
-                    className="text-sm text-gray-500 hover:text-gray-300 transition-colors">
-                    ✕
-                  </button>
-                </div>
-              </div>
-              <div className="max-h-[400px] overflow-auto">
-                {splitResult.map((scene, i) => (
-                  <div key={i}
-                    className={`flex items-start gap-3 px-4 py-2.5 ${i % 2 === 0 ? 'bg-gray-800/20' : 'bg-amber-900/10'} border-b border-gray-700/20 last:border-b-0`}>
-                    <span className="flex-shrink-0 w-8 h-8 rounded-lg bg-amber-900/40 border border-amber-600/40 flex items-center justify-center text-sm font-bold text-amber-300">
-                      {i + 1}
-                    </span>
-                    <p className="text-sm text-gray-100 leading-relaxed pt-1">{scene}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* 사운드 스튜디오로 대본 보내기 — 분석 완료 후에만 표시 */}
-          {splitResult.length > 0 && (
-            <button onClick={handleGoToSoundStudio}
-              className="w-full bg-gradient-to-r from-fuchsia-600 to-violet-600
-                hover:from-fuchsia-500 hover:to-violet-500
-                text-white rounded-xl text-sm font-bold border border-fuchsia-400/30 shadow-lg shadow-fuchsia-900/20
-                py-3.5 flex items-center justify-center gap-2 transition-all animate-fade-in-up">
-              🎙 사운드 스튜디오로 대본 보내기
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
-            </button>
-          )}
-
-          {!splitResult.length && !isAnalyzingScenes && (
-            <p className="text-center text-sm text-gray-500 font-medium">
-              Gemini AI가 대본을 의미/호흡 단위로 지능적으로 분할합니다
-            </p>
           )}
         </div>
       </div>

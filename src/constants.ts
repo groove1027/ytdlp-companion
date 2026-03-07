@@ -113,9 +113,9 @@ export interface CommunityPreset {
 
 export const COMMUNITY_PRESETS: CommunityPreset[] = [
   {
-    id: 'gunrimbo',
-    label: '군림보 스타일',
-    description: '1.8초/컷, 이라스토야+밈+AI이미지, 정보형 스토리텔링',
+    id: 'community-01',
+    label: '커뮤형 01',
+    description: '군림보 스타일 기반 — 이라스토야+밈+AI이미지 혼합, 정보형 스토리텔링. 궁금증 유발→데이터→반전 구조. 지도/인포그래픽 삽입.',
     videoFormat: VideoFormat.NANO,
     aspectRatio: AspectRatio.PORTRAIT,
     imageAspectRatio: AspectRatio.SQUARE,
@@ -126,9 +126,9 @@ export const COMMUNITY_PRESETS: CommunityPreset[] = [
     memeStrategy: '이라스토야 일러스트 + 페페 밈 + AI 생성 이미지 혼합, 지도/인포그래픽 삽입',
   },
   {
-    id: 'kangseokju',
-    label: '강석주 스타일',
-    description: '1.5초/컷, 밈 폭격형, 리액션 도파민 편집',
+    id: 'community-02',
+    label: '커뮤형 02',
+    description: '강석주 스타일 기반 — 밈 폭격형 도파민 편집. 바비힐/도지/디카프리오 짤로 감정 0.1초 전달. 효과음 폭격.',
     videoFormat: VideoFormat.NANO,
     aspectRatio: AspectRatio.PORTRAIT,
     imageAspectRatio: AspectRatio.SQUARE,
@@ -139,9 +139,9 @@ export const COMMUNITY_PRESETS: CommunityPreset[] = [
     memeStrategy: '감정 아웃소싱: 설명 대신 바비힐/도지/디카프리오 짤로 감정 0.1초 전달, 효과음 폭격',
   },
   {
-    id: 'kimsedal',
-    label: '김세달 스타일',
-    description: '2.1초/컷, 보도사진+풍자밈, 블랙코미디형',
+    id: 'community-03',
+    label: '커뮤형 03',
+    description: '김세달 스타일 기반 — 보도사진+풍자밈, 블랙코미디. 무거운 빌드업→합성짤로 터뜨림. 정적(Silence) 활용.',
     videoFormat: VideoFormat.NANO,
     aspectRatio: AspectRatio.PORTRAIT,
     imageAspectRatio: AspectRatio.SQUARE,
@@ -154,7 +154,7 @@ export const COMMUNITY_PRESETS: CommunityPreset[] = [
   {
     id: 'custom',
     label: '커스텀',
-    description: '직접 설정',
+    description: '직접 설정 — 포맷·비율·컷 속도를 자유롭게 조정',
     videoFormat: VideoFormat.SHORT,
     aspectRatio: AspectRatio.PORTRAIT,
     imageAspectRatio: AspectRatio.PORTRAIT,
