@@ -68,36 +68,48 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
                 <div className="space-y-6">
                     {/* 1. Evolink AI */}
                     <div className="space-y-3 pb-4 border-b border-gray-700">
-                        <div className="flex flex-col">
-                            <h3 className="text-base font-bold text-emerald-400 uppercase tracking-wider">🧬 EVOLINK AI API</h3>
-                            <span className="text-sm text-gray-400">Gemini 3.1 Pro 텍스트 분석(1순위), NanoBanana 2 이미지, Veo 3.1 1080p 영상</span>
+                        <div className="flex items-start justify-between">
+                            <div className="flex flex-col">
+                                <h3 className="text-base font-bold text-emerald-400 uppercase tracking-wider">🧬 EVOLINK AI API</h3>
+                                <span className="text-sm text-gray-400">Gemini 3.1 Pro 텍스트 분석(1순위), NanoBanana 2 이미지, Veo 3.1 1080p 영상</span>
+                            </div>
+                            <a href="https://evolink.ai/dashboard" target="_blank" rel="noopener noreferrer" className="shrink-0 ml-3 px-2.5 py-1 bg-emerald-600/20 hover:bg-emerald-600/40 border border-emerald-500/30 text-emerald-400 text-xs font-bold rounded-lg transition-all flex items-center gap-1">키 발급 ↗</a>
                         </div>
                         <input type={showPassword ? "text" : "password"} value={keys.evolink} onChange={(e) => setKeys({...keys, evolink: e.target.value})} placeholder="Evolink AI API Key" className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-base text-white" />
                     </div>
 
                     {/* 2. KIE */}
                     <div className="space-y-3 pb-4 border-b border-gray-700">
-                        <div className="flex flex-col">
-                            <h3 className="text-base font-bold text-purple-400 uppercase tracking-wider">🚀 KIE API</h3>
-                            <span className="text-sm text-gray-400">NanoBanana 2 이미지, Grok 영상, ElevenLabs TTS/STT, Suno 음악</span>
+                        <div className="flex items-start justify-between">
+                            <div className="flex flex-col">
+                                <h3 className="text-base font-bold text-purple-400 uppercase tracking-wider">🚀 KIE API</h3>
+                                <span className="text-sm text-gray-400">NanoBanana 2 이미지, Grok 영상, ElevenLabs TTS/STT, Suno 음악</span>
+                            </div>
+                            <a href="https://kie.ai/api-key" target="_blank" rel="noopener noreferrer" className="shrink-0 ml-3 px-2.5 py-1 bg-purple-600/20 hover:bg-purple-600/40 border border-purple-500/30 text-purple-400 text-xs font-bold rounded-lg transition-all flex items-center gap-1">키 발급 ↗</a>
                         </div>
                         <input type={showPassword ? "text" : "password"} value={keys.kie} onChange={(e) => setKeys({...keys, kie: e.target.value})} placeholder="Kie API Key" className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-base text-white" />
                     </div>
 
                     {/* 3. Laozhang */}
                     <div className="space-y-3 pb-4 border-b border-gray-700">
-                        <div className="flex flex-col">
-                            <h3 className="text-base font-bold text-indigo-400 uppercase tracking-wider">⚡ LAOZHANG API</h3>
-                            <span className="text-sm text-gray-400">이미지 생성/편집(Gemini 3 Pro Image), Gemini 텍스트 분석(2순위)</span>
+                        <div className="flex items-start justify-between">
+                            <div className="flex flex-col">
+                                <h3 className="text-base font-bold text-indigo-400 uppercase tracking-wider">⚡ LAOZHANG API</h3>
+                                <span className="text-sm text-gray-400">이미지 생성/편집(Gemini 3 Pro Image), Gemini 텍스트 분석(2순위)</span>
+                            </div>
+                            <a href="https://api.laozhang.ai" target="_blank" rel="noopener noreferrer" className="shrink-0 ml-3 px-2.5 py-1 bg-indigo-600/20 hover:bg-indigo-600/40 border border-indigo-500/30 text-indigo-400 text-xs font-bold rounded-lg transition-all flex items-center gap-1">키 발급 ↗</a>
                         </div>
                         <input type={showPassword ? "text" : "password"} value={keys.laozhang} onChange={(e) => setKeys({...keys, laozhang: e.target.value})} placeholder="Laozhang API Key" className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-base text-white" />
                     </div>
 
                     {/* 4. Cloudinary */}
                     <div className="space-y-3 pb-4 border-b border-gray-700">
-                        <div className="flex flex-col">
-                            <h3 className="text-base font-bold text-green-400 uppercase tracking-wider">☁️ CLOUDINARY</h3>
-                            <span className="text-sm text-gray-400">이미지/영상 업로드 호스팅 (영상 생성 시 필수)</span>
+                        <div className="flex items-start justify-between">
+                            <div className="flex flex-col">
+                                <h3 className="text-base font-bold text-green-400 uppercase tracking-wider">☁️ CLOUDINARY</h3>
+                                <span className="text-sm text-gray-400">이미지/영상 업로드 호스팅 (영상 생성 시 필수)</span>
+                            </div>
+                            <a href="https://console.cloudinary.com/pm/developer-dashboard" target="_blank" rel="noopener noreferrer" className="shrink-0 ml-3 px-2.5 py-1 bg-green-600/20 hover:bg-green-600/40 border border-green-500/30 text-green-400 text-xs font-bold rounded-lg transition-all flex items-center gap-1">대시보드 ↗</a>
                         </div>
                         <div className="grid grid-cols-2 gap-3">
                             <input type="text" value={keys.cloudName} onChange={(e) => setKeys({...keys, cloudName: e.target.value})} placeholder="Cloud Name" className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-base text-white" />
@@ -111,9 +123,12 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
                 <div className="space-y-6">
                     {/* 5. Typecast — TTS 음성 합성 */}
                     <div className="space-y-3 pb-4 border-b border-gray-700">
-                        <div className="flex flex-col">
-                            <h3 className="text-base font-bold text-blue-400 uppercase tracking-wider">🎭 TYPECAST API</h3>
-                            <span className="text-sm text-gray-400">AI 음성 합성 (TTS) — 542개 캐릭터</span>
+                        <div className="flex items-start justify-between">
+                            <div className="flex flex-col">
+                                <h3 className="text-base font-bold text-blue-400 uppercase tracking-wider">🎭 TYPECAST API</h3>
+                                <span className="text-sm text-gray-400">AI 음성 합성 (TTS) — 542개 캐릭터</span>
+                            </div>
+                            <a href="https://typecast.ai/developers" target="_blank" rel="noopener noreferrer" className="shrink-0 ml-3 px-2.5 py-1 bg-blue-600/20 hover:bg-blue-600/40 border border-blue-500/30 text-blue-400 text-xs font-bold rounded-lg transition-all flex items-center gap-1">키 발급 ↗</a>
                         </div>
                         <input type={showPassword ? "text" : "password"} value={keys.typecast}
                             onChange={(e) => {
@@ -127,18 +142,18 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
                             }}
                             placeholder="Typecast API Key (typecast.ai에서 발급)"
                             className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-base text-white" />
-                        <p className="text-sm text-gray-500 leading-tight">
-                            * <a href="https://typecast.ai" target="_blank" rel="noopener noreferrer" className="text-blue-400 underline">typecast.ai</a>에서 발급
-                        </p>
                     </div>
 
                     {/* [DISABLED] 6. Remove.bg — 배경 제거 (기능 비활성화) */}
 
                     {/* 7. YouTube Data API */}
                     <div className="space-y-3">
-                        <div className="flex flex-col">
-                            <h3 className="text-base font-bold text-rose-400 uppercase tracking-wider">📺 YOUTUBE API</h3>
-                            <span className="text-sm text-gray-400">YouTube Data API v3 — 채널분석, 키워드 검색</span>
+                        <div className="flex items-start justify-between">
+                            <div className="flex flex-col">
+                                <h3 className="text-base font-bold text-rose-400 uppercase tracking-wider">📺 YOUTUBE API</h3>
+                                <span className="text-sm text-gray-400">YouTube Data API v3 — 채널분석, 키워드 검색</span>
+                            </div>
+                            <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener noreferrer" className="shrink-0 ml-3 px-2.5 py-1 bg-rose-600/20 hover:bg-rose-600/40 border border-rose-500/30 text-rose-400 text-xs font-bold rounded-lg transition-all flex items-center gap-1">키 발급 ↗</a>
                         </div>
                         <input type={showPassword ? "text" : "password"} value={keys.youtubeApiKey} onChange={(e) => setKeys({...keys, youtubeApiKey: e.target.value})} placeholder="YouTube Data API v3 Key" className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-base text-white" />
                     </div>
