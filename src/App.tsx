@@ -32,8 +32,9 @@ import { getGeminiKey } from './services/apiService';
 import { dataURLtoFile } from './utils/fileHelpers';
 import { splitVideoIntoSegments, getVideoDuration } from './utils/videoSegmentUtils';
 import { persistImage } from './services/imageStorageService';
-import { verifyToken, logout, AuthUser } from './services/authService';
+import { verifyToken, AuthUser } from './services/authService';
 import AuthGate from './components/AuthGate';
+import ProfileModal from './components/ProfileModal';
 import { useUIStore } from './stores/uiStore';
 import { useCostStore } from './stores/costStore';
 import { useProjectStore } from './stores/projectStore';
@@ -239,12 +240,11 @@ const App: React.FC = () => {
   // [UX] 프로젝트 필요 탭인데 프로젝트 없으면 자동 생성 — 어떤 탭이든 바로 작업 시작 가능
   useEffect(() => {
     if (activeTab !== 'project' && !config) {
-      const timer = setTimeout(() => {
-        if (!useProjectStore.getState().config) {
-          useProjectStore.getState().newProject();
-        }
-      }, 300);
-      return () => clearTimeout(timer);
+      // navigationStore.setActiveTab에서 이미 처리하지만, 직접 URL 진입 등 엣지 케이스 대비
+      if (!useProjectStore.getState().config) {
+        useProjectStore.getState().newProject();
+        useNavigationStore.getState().leaveDashboard();
+      }
     }
   }, [activeTab, config]);
 
@@ -989,10 +989,10 @@ const App: React.FC = () => {
             💬 피드백
           </button>
           <button
-            onClick={async () => { await logout(); setAuthUser(null); }}
-            className="text-sm text-gray-500 hover:text-gray-300"
+            onClick={() => useUIStore.getState().setShowProfileModal(true)}
+            className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-gray-300 hover:text-white rounded-lg text-sm font-bold transition-all flex items-center gap-1.5"
           >
-            로그아웃
+            👤 {authUser.displayName}
           </button>
         </div>
       </header>
@@ -1387,6 +1387,11 @@ const App: React.FC = () => {
       </div>{/* flex wrapper 닫기 */}
 
       <FeedbackModal />
+      <ProfileModal
+        authUser={authUser}
+        onUserUpdate={setAuthUser}
+        onAccountDeleted={() => setAuthUser(null)}
+      />
 
       {/* 전역 Toast 알림 */}
       {toast && toast.show && !toast.current && !toast.total && (

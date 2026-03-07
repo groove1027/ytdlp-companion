@@ -43,7 +43,7 @@ interface ProjectStore {
 
   // Project lifecycle
   loadProject: (project: ProjectData) => void;
-  newProject: () => void;
+  newProject: (title?: string) => void;
 }
 
 // Scene fields that may contain base64 image data and should be migrated
@@ -351,10 +351,14 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     });
   },
 
-  newProject: () => {
+  newProject: (title?: string) => {
     // [FIX] 이전 프로젝트 찌꺼기 방지 — 모든 관련 스토어 초기화
     try { useEditRoomStore.getState().reset(); } catch { /* 미초기화 시 무시 */ }
     try { useSoundStudioStore.getState().reset(); } catch { /* 미초기화 시 무시 */ }
+
+    // 임시 제목 자동 생성: "임시 프로젝트 03/07 14:30"
+    const now = new Date();
+    const autoTitle = title || `임시 프로젝트 ${String(now.getMonth() + 1).padStart(2, '0')}/${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 
     set({
       config: {
@@ -368,7 +372,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       scenes: [],
       thumbnails: [],
       currentProjectId: null,
-      projectTitle: '',
+      projectTitle: autoTitle,
       batchGrokDuration: '6',
       batchGrokSpeech: false,
     });

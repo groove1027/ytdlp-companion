@@ -68,9 +68,13 @@ export const useNavigationStore = create<NavigationStore>((set) => ({
       const { config } = useProjectStore.getState();
       if (!config) {
         useProjectStore.getState().newProject();
+        // 대시보드 비활성화 — 자동 생성된 프로젝트로 바로 작업
+        saveState({ activeTab: tab, showProjectDashboard: false });
+        set({ activeTab: tab, showProjectDashboard: false });
+      } else {
+        saveState({ activeTab: tab });
+        set({ activeTab: tab });
       }
-      saveState({ activeTab: tab });
-      set({ activeTab: tab });
     }
   },
 
