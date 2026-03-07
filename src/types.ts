@@ -481,7 +481,46 @@ export interface ExportManifest {
 // ============================================================
 
 /** 앱 메인 탭 네비게이션 */
-export type AppTab = 'project' | 'channel-analysis' | 'script-writer' | 'sound-studio' | 'image-video' | 'edit-room' | 'upload' | 'thumbnail-studio' | 'character-twist' | 'image-script-upload' | 'ppt-master' | 'detail-page';
+export type AppTab = 'project' | 'channel-analysis' | 'script-writer' | 'sound-studio' | 'image-video' | 'edit-room' | 'upload' | 'thumbnail-studio' | 'character-twist' | 'image-script-upload' | 'ppt-master' | 'detail-page' | 'shopping-short';
+
+// --- 딸깍 영상 제작 (Shopping Short-form) ---
+
+export interface ShoppingSourceVideo {
+  originUrl?: string;
+  localFile?: File;
+  videoBlob?: Blob;
+  videoBlobUrl?: string;
+  duration: number;
+  width: number;
+  height: number;
+  thumbnailDataUrl?: string;
+}
+
+export interface ShoppingProductAnalysis {
+  productName: string;
+  category: string;
+  targetAudience: string;
+  keyFeatures: string[];
+  appealPoints: string[];
+}
+
+export interface ShoppingScript {
+  id: string;
+  title: string;
+  sections: {
+    hooking: string;
+    detail: string;
+    romance: string;
+    wit: string;
+  };
+  fullText: string;
+  estimatedDuration: number;
+}
+
+export type ShoppingCTAPreset = 'comment' | 'profile' | 'link';
+export type ShoppingRenderPhase = 'idle' | 'generating-tts' | 'removing-subtitles' | 'overlaying-subtitles' | 'mixing-audio' | 'encoding' | 'done' | 'error';
+export type ShoppingWizardStep = 'source' | 'script' | 'render';
+export type SubtitleRemovalMethod = 'blur' | 'crop' | 'none';
 
 // --- Detail Page Builder ---
 export interface DetailImageSegment {

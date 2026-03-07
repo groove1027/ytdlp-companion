@@ -1,0 +1,92 @@
+import React, { Suspense, lazy } from 'react';
+import { useShoppingShortStore } from '../../stores/shoppingShortStore';
+import type { ShoppingWizardStep } from '../../types';
+
+const SourceInputStep = lazy(() => import('./shopping/SourceInputStep'));
+const ScriptSelectStep = lazy(() => import('./shopping/ScriptSelectStep'));
+const RenderStep = lazy(() => import('./shopping/RenderStep'));
+
+const WIZARD_STEPS: { id: ShoppingWizardStep; label: string; num: number }[] = [
+  { id: 'source', label: '소스 입력', num: 1 },
+  { id: 'script', label: '대본 선택', num: 2 },
+  { id: 'render', label: '렌더링', num: 3 },
+];
+
+const StepFallback = () => (
+  <div className="flex items-center justify-center py-16">
+    <div className="animate-spin rounded-full h-7 w-7 border-b-2 border-lime-500" />
+    <span className="ml-3 text-gray-400 text-sm">로딩 중...</span>
+  </div>
+);
+
+const ShoppingShortTab: React.FC = () => {
+  const { currentStep, reset } = useShoppingShortStore();
+
+  const currentStepIndex = WIZARD_STEPS.findIndex(s => s.id === currentStep);
+
+  return (
+    <div className="max-w-4xl mx-auto">
+      {/* 헤더 */}
+      <div className="flex items-center justify-between mb-8">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-lime-500 to-green-700 flex items-center justify-center text-2xl shadow-lg shadow-lime-900/30">
+            🛍️
+          </div>
+          <div>
+            <h2 className="text-2xl font-black text-gray-100">딸깍 영상 제작</h2>
+            <p className="text-sm text-gray-500 mt-0.5">해외 쇼핑 영상 → AI 분석 → 한국어 숏폼 자동 제작</p>
+          </div>
+        </div>
+        <button
+          onClick={reset}
+          className="px-4 py-2 rounded-lg text-sm text-gray-400 hover:text-gray-200 hover:bg-gray-800/60 transition-all border border-gray-700/40"
+        >
+          초기화
+        </button>
+      </div>
+
+      {/* 위저드 인디케이터 */}
+      <div className="flex items-center mb-8 px-4">
+        {WIZARD_STEPS.map((step, i) => {
+          const isDone = currentStepIndex > i;
+          const isCurrent = currentStepIndex === i;
+
+          return (
+            <React.Fragment key={step.id}>
+              <div className="flex items-center gap-2">
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition-all ${
+                  isDone ? 'bg-green-600/30 text-green-400 border border-green-500/50' :
+                  isCurrent ? 'bg-lime-600/30 text-lime-300 border border-lime-500/50' :
+                  'bg-gray-800/60 text-gray-600 border border-gray-700/40'
+                }`}>
+                  {isDone ? '✓' : step.num}
+                </div>
+                <span className={`text-sm font-semibold ${
+                  isDone ? 'text-green-400' :
+                  isCurrent ? 'text-lime-300' :
+                  'text-gray-600'
+                }`}>
+                  {step.label}
+                </span>
+              </div>
+              {i < WIZARD_STEPS.length - 1 && (
+                <div className={`flex-1 h-0.5 mx-4 ${
+                  isDone ? 'bg-green-500/50' : 'bg-gray-700/40'
+                }`} />
+              )}
+            </React.Fragment>
+          );
+        })}
+      </div>
+
+      {/* 스텝 콘텐츠 */}
+      <Suspense fallback={<StepFallback />}>
+        {currentStep === 'source' && <SourceInputStep />}
+        {currentStep === 'script' && <ScriptSelectStep />}
+        {currentStep === 'render' && <RenderStep />}
+      </Suspense>
+    </div>
+  );
+};
+
+export default ShoppingShortTab;
