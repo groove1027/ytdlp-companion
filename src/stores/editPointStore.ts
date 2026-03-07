@@ -16,6 +16,8 @@ import {
   generateFFmpegScript,
   generateEdlFile,
   generateNarrationSrt,
+  estimateNarrationDuration,
+  calcAutoSpeedFactor,
 } from '../services/editPointService';
 import { showToast } from './uiStore';
 
@@ -54,6 +56,8 @@ interface EditPointStore {
   setSourceMapping: (sourceId: string, videoId: string) => void;
   updateEdlEntry: (id: string, partial: Partial<EdlEntry>) => void;
   refineTimecodes: () => Promise<void>;
+  autoCalcSpeed: () => void;
+  applyAutoSpeed: () => void;
   setExportMode: (mode: EditPointExportMode) => void;
   exportResult: () => void;
   reset: () => void;
@@ -304,6 +308,42 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
       set({ isProcessing: false, processingPhase: '', processingMessage: '' });
       showToast('타임코드 정제 실패: ' + (err instanceof Error ? err.message : '알 수 없는 오류'));
     }
+  },
+
+  autoCalcSpeed: () => {
+    const { edlEntries } = get();
+    const updated = edlEntries.map((entry) => {
+      const narDur = estimateNarrationDuration(entry.narrationText);
+      const start = entry.refinedTimecodeStart ?? entry.timecodeStart;
+      const end = entry.refinedTimecodeEnd ?? entry.timecodeEnd;
+      const autoFactor = calcAutoSpeedFactor(narDur, start, end);
+      return {
+        ...entry,
+        narrationDurationSec: Math.round(narDur * 10) / 10,
+        autoSpeedFactor: autoFactor,
+      };
+    });
+    set({ edlEntries: updated });
+
+    const adjusted = updated.filter((e) => e.autoSpeedFactor !== undefined && e.autoSpeedFactor < 1.0);
+    if (adjusted.length > 0) {
+      showToast(`${adjusted.length}개 클립에 슬로우 배속이 필요합니다. "적용" 버튼을 눌러 반영하세요.`);
+    } else {
+      showToast('모든 클립이 나레이션 길이 이내입니다. 속도 조절이 필요 없습니다.');
+    }
+  },
+
+  applyAutoSpeed: () => {
+    const { edlEntries } = get();
+    const updated = edlEntries.map((entry) => {
+      if (entry.autoSpeedFactor != null && entry.autoSpeedFactor < 1.0) {
+        return { ...entry, speedFactor: entry.autoSpeedFactor };
+      }
+      return entry;
+    });
+    set({ edlEntries: updated });
+    const count = updated.filter((e) => e.autoSpeedFactor != null && e.autoSpeedFactor < 1.0).length;
+    showToast(`${count}개 클립에 자동 슬로우 배속이 적용되었습니다.`);
   },
 
   setExportMode: (mode) => set({ exportMode: mode }),

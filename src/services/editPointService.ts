@@ -185,6 +185,57 @@ Return JSON: { "refinedStart": "MM:SS.sss", "refinedEnd": "MM:SS.sss", "confiden
 }
 
 /**
+ * 나레이션 텍스트 → 추정 재생 시간(초)
+ * 한국어: 평균 4글자/초, 영어: 평균 3단어/초(≈15글자/초), 혼합 시 글자 수 기반
+ * 쉼표/마침표 등 구두점에 0.3초 추가
+ */
+export function estimateNarrationDuration(text: string): number {
+  if (!text || !text.trim()) return 0;
+  const clean = text.trim();
+
+  // 구두점 기반 자연 휴지(pause) 추정
+  const pauseCount = (clean.match(/[.。!?…,，、;；:：\n]/g) || []).length;
+  const pauseSec = pauseCount * 0.3;
+
+  // 한글 글자 수
+  const koreanChars = (clean.match(/[\uAC00-\uD7AF\u3130-\u318F]/g) || []).length;
+  // 영문 단어 수
+  const englishWords = (clean.match(/[a-zA-Z]+/g) || []).length;
+  // 숫자 (숫자 읽기: 대략 1숫자 = 0.3초)
+  const digitGroups = (clean.match(/\d+/g) || []).length;
+
+  const koreanSec = koreanChars / 4;
+  const englishSec = englishWords / 3;
+  const digitSec = digitGroups * 0.5;
+
+  return Math.max(0.5, koreanSec + englishSec + digitSec + pauseSec);
+}
+
+/**
+ * 나레이션 길이 vs 클립 길이 비교 → 필요한 speedFactor 자동 계산
+ * - 나레이션이 더 길면 → 슬로우 (speedFactor < 1.0, 최소 0.25x)
+ * - 나레이션이 더 짧거나 같으면 → 정배속 유지 (1.0)
+ */
+export function calcAutoSpeedFactor(
+  narrationDuration: number,
+  clipStart: number,
+  clipEnd: number
+): number {
+  const clipDuration = clipEnd - clipStart;
+  if (clipDuration <= 0 || narrationDuration <= 0) return 1.0;
+
+  if (narrationDuration <= clipDuration) {
+    // 클립이 충분히 길면 정배속
+    return 1.0;
+  }
+
+  // 나레이션에 맞추려면 클립을 느리게 → speedFactor = clipDuration / narrationDuration
+  const factor = clipDuration / narrationDuration;
+  // 최소 0.25x (4배 슬로우까지만 허용)
+  return Math.max(0.25, Math.round(factor * 100) / 100);
+}
+
+/**
  * EdlEntry[] → FFmpeg bash 스크립트 생성 (대용량용)
  */
 export function generateFFmpegScript(
@@ -198,17 +249,35 @@ export function generateFFmpegScript(
     const videoFile = sourceMapping[entry.sourceId] || `source_${entry.sourceId}.mp4`;
     const start = entry.refinedTimecodeStart ?? entry.timecodeStart;
     const end = entry.refinedTimecodeEnd ?? entry.timecodeEnd;
-    const duration = end - start;
+    const clipDuration = end - start;
     const clipName = `clip_${String(i + 1).padStart(3, '0')}.mp4`;
+    const speed = entry.speedFactor;
 
-    let cmd = `ffmpeg -y -ss ${start.toFixed(3)} -i "${videoFile}" -t ${duration.toFixed(3)}`;
-    if (entry.speedFactor !== 1.0) {
-      const pts = (1 / entry.speedFactor).toFixed(4);
-      cmd += ` -filter:v "setpts=${pts}*PTS" -filter:a "atempo=${entry.speedFactor}"`;
+    if (speed !== 1.0) {
+      // 속도 변경: 원본 전체를 추출 → 속도 필터 적용
+      // 최종 출력 길이 = clipDuration / speed
+      const pts = (1 / speed).toFixed(4);
+      const outputDur = (clipDuration / speed).toFixed(3);
+
+      // atempo는 0.5~2.0 범위만 지원 → 체인 필터 생성
+      const atempoFilters = buildAtempoChain(speed);
+
+      lines.push(`# ${entry.order}: ${entry.narrationText.slice(0, 40)} (${speed}x → ${outputDur}s)`);
+      lines.push(
+        `ffmpeg -y -ss ${start.toFixed(3)} -i "${videoFile}" -t ${clipDuration.toFixed(3)} \\`
+      );
+      lines.push(
+        `  -filter:v "setpts=${pts}*PTS" -filter:a "${atempoFilters}" \\`
+      );
+      lines.push(
+        `  -c:v libx264 -preset fast -c:a aac "${clipName}"`
+      );
+    } else {
+      lines.push(`# ${entry.order}: ${entry.narrationText.slice(0, 40)}`);
+      lines.push(
+        `ffmpeg -y -ss ${start.toFixed(3)} -i "${videoFile}" -t ${clipDuration.toFixed(3)} -c:v libx264 -preset fast -c:a aac "${clipName}"`
+      );
     }
-    cmd += ` -c:v libx264 -preset fast -c:a aac "${clipName}"`;
-    lines.push(`# ${entry.order}: ${entry.narrationText.slice(0, 40)}`);
-    lines.push(cmd);
     lines.push('');
   });
 
@@ -224,6 +293,33 @@ export function generateFFmpegScript(
   lines.push('echo "Done! Output: output_final.mp4"');
 
   return lines.join('\n');
+}
+
+/**
+ * FFmpeg atempo 체인 생성 (0.5~2.0 범위 제한 우회)
+ * 예: speed=0.25 → "atempo=0.5,atempo=0.5"
+ */
+function buildAtempoChain(speed: number): string {
+  if (speed >= 0.5 && speed <= 2.0) return `atempo=${speed}`;
+
+  const filters: string[] = [];
+  let remaining = speed;
+
+  if (remaining < 0.5) {
+    while (remaining < 0.5) {
+      filters.push('atempo=0.5');
+      remaining /= 0.5;
+    }
+    filters.push(`atempo=${remaining.toFixed(4)}`);
+  } else {
+    while (remaining > 2.0) {
+      filters.push('atempo=2.0');
+      remaining /= 2.0;
+    }
+    filters.push(`atempo=${remaining.toFixed(4)}`);
+  }
+
+  return filters.join(',');
 }
 
 /**

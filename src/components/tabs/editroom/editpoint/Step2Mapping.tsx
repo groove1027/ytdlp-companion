@@ -26,6 +26,8 @@ const Step2Mapping: React.FC = () => {
   const setSourceMapping = useEditPointStore((s) => s.setSourceMapping);
   const updateEdlEntry = useEditPointStore((s) => s.updateEdlEntry);
   const refineTimecodes = useEditPointStore((s) => s.refineTimecodes);
+  const autoCalcSpeed = useEditPointStore((s) => s.autoCalcSpeed);
+  const applyAutoSpeed = useEditPointStore((s) => s.applyAutoSpeed);
   const setStep = useEditPointStore((s) => s.setStep);
   const isProcessing = useEditPointStore((s) => s.isProcessing);
   const processingProgress = useEditPointStore((s) => s.processingProgress);
@@ -55,6 +57,7 @@ const Step2Mapping: React.FC = () => {
                 <th className="text-left px-3 py-2.5 font-medium">소스</th>
                 <th className="text-left px-3 py-2.5 font-medium">소스 영상</th>
                 <th className="text-center px-3 py-2.5 font-medium">배속</th>
+                <th className="text-center px-3 py-2.5 font-medium">나레이션/클립</th>
                 <th className="text-center px-3 py-2.5 font-medium">타임코드</th>
                 <th className="text-center px-3 py-2.5 font-medium">보정</th>
                 <th className="text-left px-3 py-2.5 font-medium">비고</th>
@@ -87,15 +90,45 @@ const Step2Mapping: React.FC = () => {
                     </select>
                   </td>
                   <td className="px-3 py-2 text-center">
-                    <input
-                      type="number"
-                      value={entry.speedFactor}
-                      onChange={(e) => updateEdlEntry(entry.id, { speedFactor: parseFloat(e.target.value) || 1 })}
-                      min={0.1}
-                      max={5}
-                      step={0.1}
-                      className="w-14 bg-gray-900 border border-gray-600 rounded px-1.5 py-0.5 text-center text-[11px] text-gray-300 focus:border-amber-500 focus:outline-none"
-                    />
+                    <div className="flex items-center justify-center gap-1">
+                      <input
+                        type="number"
+                        value={entry.speedFactor}
+                        onChange={(e) => updateEdlEntry(entry.id, { speedFactor: parseFloat(e.target.value) || 1 })}
+                        min={0.1}
+                        max={5}
+                        step={0.1}
+                        className="w-14 bg-gray-900 border border-gray-600 rounded px-1.5 py-0.5 text-center text-[11px] text-gray-300 focus:border-amber-500 focus:outline-none"
+                      />
+                      {entry.autoSpeedFactor != null && entry.autoSpeedFactor < 1.0 && entry.speedFactor !== entry.autoSpeedFactor && (
+                        <span className="text-[9px] text-orange-400" title={`추천: ${entry.autoSpeedFactor}x`}>
+                          →{entry.autoSpeedFactor}x
+                        </span>
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-3 py-2 text-center font-mono text-[10px]">
+                    {entry.narrationDurationSec != null ? (() => {
+                      const start = entry.refinedTimecodeStart ?? entry.timecodeStart;
+                      const end = entry.refinedTimecodeEnd ?? entry.timecodeEnd;
+                      const clipDur = end - start;
+                      const narDur = entry.narrationDurationSec;
+                      const overflow = narDur > clipDur;
+                      return (
+                        <div className="flex flex-col items-center gap-0.5">
+                          <span className={overflow ? 'text-orange-400 font-bold' : 'text-green-400'}>
+                            {narDur.toFixed(1)}s / {clipDur.toFixed(1)}s
+                          </span>
+                          {overflow && (
+                            <span className="text-[9px] text-orange-300/70">
+                              +{(narDur - clipDur).toFixed(1)}s 초과
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })() : (
+                      <span className="text-gray-600">--</span>
+                    )}
                   </td>
                   <td className="px-3 py-2 text-center font-mono text-[10px]">
                     <span className="text-gray-400">
@@ -155,7 +188,38 @@ const Step2Mapping: React.FC = () => {
           이전 단계
         </button>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* 나레이션 배속 계산 */}
+          <button
+            type="button"
+            onClick={autoCalcSpeed}
+            disabled={isProcessing || edlEntries.length === 0}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${
+              !isProcessing && edlEntries.length > 0
+                ? 'bg-orange-600/20 text-orange-300 border border-orange-500/30 hover:bg-orange-600/30'
+                : 'bg-gray-700 text-gray-500 cursor-not-allowed'
+            }`}
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            배속 분석
+          </button>
+
+          {/* 자동 배속이 계산된 항목이 있으면 적용 버튼 표시 */}
+          {edlEntries.some((e) => e.autoSpeedFactor != null && e.autoSpeedFactor < 1.0 && e.speedFactor !== e.autoSpeedFactor) && (
+            <button
+              type="button"
+              onClick={applyAutoSpeed}
+              className="px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 bg-orange-600/30 text-orange-200 border border-orange-500/40 hover:bg-orange-600/40 animate-pulse"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+              슬로우 적용 ({edlEntries.filter((e) => e.autoSpeedFactor != null && e.autoSpeedFactor < 1.0 && e.speedFactor !== e.autoSpeedFactor).length}개)
+            </button>
+          )}
+
           <button
             type="button"
             onClick={refineTimecodes}

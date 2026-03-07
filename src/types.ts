@@ -1321,6 +1321,10 @@ export interface EdlEntry {
   refinedTimecodeEnd?: number;
   refinedConfidence?: number;
   referenceFrameUrl?: string;
+  /** 나레이션 텍스트 기반 추정 소요 시간(초) */
+  narrationDurationSec?: number;
+  /** 나레이션 길이에 맞춰 자동 계산된 배속 (< 1.0 = 슬로우) */
+  autoSpeedFactor?: number;
 }
 
 export type EditPointExportMode = 'direct-mp4' | 'ffmpeg-script' | 'edl-file' | 'push-to-timeline';
