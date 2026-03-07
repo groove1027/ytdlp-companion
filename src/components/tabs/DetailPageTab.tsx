@@ -403,7 +403,7 @@ const DetailPageTab: React.FC = () => {
   // ============================================================
 
   return (
-    <div className="animate-fade-in max-w-6xl mx-auto">
+    <div className="animate-fade-in max-w-6xl mx-auto pt-6">
       {/* Header */}
       <div className="mb-6">
         <div className="flex items-center gap-3 mb-2">

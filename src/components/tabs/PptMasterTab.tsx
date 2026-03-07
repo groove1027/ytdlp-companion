@@ -473,7 +473,7 @@ export default function PptMasterTab() {
   const remainingImages = slides.filter(s => !s.imageUrl && !s.isGeneratingImage).length;
 
   return (
-    <div className="animate-fade-in max-w-6xl mx-auto">
+    <div className="animate-fade-in max-w-6xl mx-auto pt-6">
       {/* Header */}
       <div className="flex items-center gap-3 mb-6">
         <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-sky-500 to-indigo-700 flex items-center justify-center text-xl">
