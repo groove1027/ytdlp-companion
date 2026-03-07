@@ -129,7 +129,7 @@ const FeedbackModal: React.FC = () => {
                 email: email.trim() || undefined,
                 timestamp: Date.now(),
                 userAgent: navigator.userAgent,
-                appVersion: 'v3.1',
+                appVersion: 'v4.5',
                 currentProjectId: currentProjectId || undefined,
                 screenshots: screenshots.length > 0 ? screenshots : undefined,
             };
@@ -351,7 +351,7 @@ const FeedbackModal: React.FC = () => {
                     <div className="bg-gray-900/50 rounded-lg p-3 border border-gray-700">
                         <p className="text-sm text-gray-400 font-bold mb-1.5">자동 수집 정보</p>
                         <div className="text-sm text-gray-500 space-y-0.5">
-                            <p>앱 버전: <span className="text-gray-400">v3.1</span></p>
+                            <p>앱 버전: <span className="text-gray-400">v4.5</span></p>
                             <p className="truncate">브라우저: <span className="text-gray-400">{navigator.userAgent.substring(0, 80)}...</span></p>
                         </div>
                     </div>
