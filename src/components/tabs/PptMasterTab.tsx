@@ -136,23 +136,22 @@ const DesignStyleLightbox: React.FC<{
 const DesignPreviewCard: React.FC<{
   style: DesignStyle;
   isActive: boolean;
-  onClick: () => void;
   onZoom: () => void;
-}> = ({ style, isActive, onClick, onZoom }) => {
+}> = ({ style, isActive, onZoom }) => {
   const [imgError, setImgError] = useState(false);
   const imgSrc = `/slide-previews/${style.id}.jpg`;
 
   return (
     <button
       type="button"
-      onClick={onClick}
-      className={`text-left rounded-xl border-2 overflow-hidden transition-all ${
+      onClick={onZoom}
+      className={`text-left rounded-xl border-2 overflow-hidden transition-all cursor-zoom-in ${
         isActive
           ? 'border-sky-500 ring-2 ring-sky-500/30 scale-[1.02]'
           : 'border-gray-700 hover:border-sky-500/40'
       }`}
     >
-      <div className="aspect-video relative group" style={{ backgroundColor: style.bgColor }}>
+      <div className="aspect-video relative" style={{ backgroundColor: style.bgColor }}>
         {!imgError ? (
           <img
             src={imgSrc}
@@ -169,15 +168,6 @@ const DesignPreviewCard: React.FC<{
             />
           </div>
         )}
-        {/* Zoom button */}
-        <div
-          onClick={(e) => { e.stopPropagation(); onZoom(); }}
-          className="absolute top-1.5 left-1.5 w-7 h-7 bg-black/60 hover:bg-black/80 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-zoom-in"
-        >
-          <svg className="w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7" />
-          </svg>
-        </div>
         {isActive && (
           <div className="absolute top-1.5 right-1.5 w-5 h-5 bg-sky-500 rounded-full flex items-center justify-center">
             <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
@@ -552,7 +542,6 @@ export default function PptMasterTab() {
                 key={ds.id}
                 style={ds}
                 isActive={selectedDesignStyle.id === ds.id}
-                onClick={() => setSelectedDesignStyle(ds)}
                 onZoom={() => setLightboxIdx(idx)}
               />
             ))}
