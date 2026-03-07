@@ -1,13 +1,13 @@
 import React, { useRef, useCallback, useEffect, useState, useMemo } from 'react';
 import JSZip from 'jszip';
 import { useSoundStudioStore, registerAudio, unregisterAudio } from '../../../stores/soundStudioStore';
-import { mergeAudioFiles } from '../../../services/ttsService';
+import { mergeAudioFiles, splitBySentenceEndings } from '../../../services/ttsService';
 import { fetchTypecastVoices, V30_EMOTIONS, V21_EMOTIONS } from '../../../services/typecastService';
 import type { TypecastVoice } from '../../../services/typecastService';
 import { ELEVENLABS_VOICES, elNameKo } from '../../../services/elevenlabsService';
 import type { ElevenLabsVoice } from '../../../services/elevenlabsService';
 import { generateSpeech as generateSupertonicSpeech, isModelLoaded as isSupertonicLoaded, initSupertonic } from '../../../services/supertonicService';
-import type { ScriptLine, TTSLanguage } from '../../../types';
+import type { ScriptLine, TTSLanguage, Speaker, TTSEngine } from '../../../types';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
 import { TYPECAST_EMOTIONS, TYPECAST_MODELS } from '../../../constants';
 import MiniWaveform from './MiniWaveform';
@@ -57,6 +57,7 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
   const updateLine = useSoundStudioStore(s => s.updateLine);
   const addLineAfter = useSoundStudioStore(s => s.addLineAfter);
   const removeLine = useSoundStudioStore(s => s.removeLine);
+  const addSpeaker = useSoundStudioStore(s => s.addSpeaker);
   const mergedAudioUrl = useSoundStudioStore(s => s.mergedAudioUrl);
   const setMergedAudio = useSoundStudioStore(s => s.setMergedAudio);
 
@@ -698,11 +699,52 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
 
   const formatTime = (sec: number) => `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
 
+  // 대본 직접 입력 state
+  const [directScript, setDirectScript] = useState('');
+
+  const handleApplyDirectScript = useCallback(() => {
+    if (!directScript.trim()) return;
+    const sentences = splitBySentenceEndings(directScript);
+    let speakerId = speakers[0]?.id || '';
+    if (!speakerId) {
+      const newSpeaker: Speaker = {
+        id: `speaker-${Date.now()}`, name: '화자 1', color: '#6366f1',
+        engine: 'typecast' as TTSEngine, voiceId: '', language: 'ko',
+        speed: 1.0, pitch: 0, stability: 0.5, similarityBoost: 0.75,
+        style: 0, useSpeakerBoost: true, lineCount: sentences.length, totalDuration: 0,
+      };
+      addSpeaker(newSpeaker);
+      speakerId = newSpeaker.id;
+    }
+    setLines(sentences.map((text, i) => ({
+      id: `line-${Date.now()}-${i}`, speakerId, text, index: i, ttsStatus: 'idle' as const,
+    })));
+    setDirectScript('');
+  }, [directScript, speakers, addSpeaker, setLines]);
+
   if (lines.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center h-64 text-gray-500">
-        <p className="text-lg mb-2">나레이션 대본이 없습니다</p>
-        <p className="text-sm">나레이션 탭에서 대본을 먼저 불러와주세요.</p>
+      <div className="flex flex-col items-center justify-center py-12 px-6">
+        <div className="w-full max-w-lg space-y-4">
+          <div className="text-center space-y-1.5">
+            <p className="text-lg font-bold text-gray-200">나레이션 대본이 없습니다</p>
+            <p className="text-sm text-gray-500">대본작성 탭에서 작업하면 자동으로 연동됩니다.<br/>나레이션만 사용하려면 아래에 대본을 직접 붙여넣으세요.</p>
+          </div>
+          <textarea
+            value={directScript}
+            onChange={e => setDirectScript(e.target.value)}
+            placeholder="대본을 여기에 붙여넣거나 직접 입력하세요..."
+            className="w-full h-40 bg-gray-800/80 border border-gray-600/50 rounded-lg p-3 text-sm text-gray-200 placeholder-gray-600 resize-none focus:outline-none focus:border-fuchsia-500/50 focus:ring-1 focus:ring-fuchsia-500/30"
+          />
+          <button
+            type="button"
+            onClick={handleApplyDirectScript}
+            disabled={!directScript.trim()}
+            className={`w-full py-2.5 rounded-lg font-bold text-sm transition-all ${directScript.trim() ? 'bg-gradient-to-r from-fuchsia-600 to-purple-600 hover:from-fuchsia-500 hover:to-purple-500 text-white shadow-lg' : 'bg-gray-700 text-gray-500 cursor-not-allowed'}`}
+          >
+            대본 적용
+          </button>
+        </div>
       </div>
     );
   }
