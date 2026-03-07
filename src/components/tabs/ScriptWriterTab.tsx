@@ -638,14 +638,22 @@ ${instinctPrompt}
                     </button>
                   )}
                 </div>
-                <button
-                  type="button"
-                  onClick={() => { navigator.clipboard.writeText(generatedScript?.content || manualText || '').then(() => showToast('대본이 클립보드에 복사되었습니다.')); }}
-                  className="text-sm text-gray-500 hover:text-gray-300 bg-gray-800/50 hover:bg-gray-700/50 px-2 py-1 rounded border border-gray-700/50 transition-colors"
-                  title="원본 대본 복사"
-                >
-                  📋 복사
-                </button>
+                <div className="flex items-center gap-2">
+                  <label className={`flex items-center gap-1.5 px-2.5 py-1
+                    ${fileLoading ? 'bg-blue-600/20 text-blue-300 border-blue-500/40' : 'bg-gray-800 hover:bg-gray-700 text-gray-300 border-gray-600'}
+                    rounded-lg text-sm cursor-pointer border font-medium transition-colors`}>
+                    {fileLoading ? (<><span className="animate-spin">⟳</span> 불러오는 중...</>) : (<>📁 파일 불러오기</>)}
+                    <input type="file" accept={SUPPORTED_EXTENSIONS} onChange={handleFileUpload} className="hidden" disabled={fileLoading} />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => { navigator.clipboard.writeText(generatedScript?.content || manualText || '').then(() => showToast('대본이 클립보드에 복사되었습니다.')); }}
+                    className="text-sm text-gray-500 hover:text-gray-300 bg-gray-800/50 hover:bg-gray-700/50 px-2 py-1 rounded border border-gray-700/50 transition-colors"
+                    title="원본 대본 복사"
+                  >
+                    📋 복사
+                  </button>
+                </div>
               </div>
               <textarea
                 value={displayScript}
@@ -671,12 +679,7 @@ ${instinctPrompt}
                   {scriptText.length.toLocaleString()}자 · {estimateTime(scriptText.length)}
                 </span>
               ) : <span />}
-              <label className={`flex items-center gap-1.5 px-3 py-2
-                ${fileLoading ? 'bg-blue-600/20 text-blue-300 border-blue-500/40' : 'bg-gray-800 hover:bg-gray-700 text-gray-300 border-gray-600'}
-                rounded-lg text-sm cursor-pointer border font-medium transition-colors`}>
-                {fileLoading ? (<><span className="animate-spin">⟳</span> 불러오는 중...</>) : (<>📁 파일 불러오기 <span className="text-gray-500">({SUPPORTED_FORMATS_LABEL})</span></>)}
-                <input type="file" accept={SUPPORTED_EXTENSIONS} onChange={handleFileUpload} className="hidden" disabled={fileLoading} />
-              </label>
+              <span className="text-xs text-gray-600">{SUPPORTED_FORMATS_LABEL}</span>
             </div>
 
             {/* 스타일 적용본 (스타일 적용 후에만 표시) */}

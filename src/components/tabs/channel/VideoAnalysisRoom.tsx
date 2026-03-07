@@ -1,6 +1,9 @@
 import React, { useState, useRef, useCallback } from 'react';
 import { evolinkChat } from '../../../services/evolinkService';
 import type { EvolinkChatMessage } from '../../../services/evolinkService';
+import { useNavigationStore } from '../../../stores/navigationStore';
+import { useEditPointStore } from '../../../stores/editPointStore';
+import { useEditRoomStore } from '../../../stores/editRoomStore';
 
 type AnalysisPreset = 'tikitaka' | 'snack';
 
@@ -371,7 +374,7 @@ const VideoAnalysisRoom: React.FC = () => {
           <span className="w-8 h-8 bg-gradient-to-br from-blue-500 to-blue-700 rounded-lg flex items-center justify-center text-sm">
             🎯
           </span>
-          분석 프리셋
+          리메이크 프리셋
         </h2>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -455,27 +458,49 @@ const VideoAnalysisRoom: React.FC = () => {
 
       {/* 결과 출력 */}
       {result && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* 대본 */}
-          <ResultBox
-            title="대본"
-            icon="📝"
-            content={result.script}
-            onCopy={() => handleCopy('script')}
-            isCopied={copiedField === 'script'}
-            accentColor="blue"
-          />
+        <>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* 대본 */}
+            <ResultBox
+              title="대본"
+              icon="📝"
+              content={result.script}
+              onCopy={() => handleCopy('script')}
+              isCopied={copiedField === 'script'}
+              accentColor="blue"
+            />
 
-          {/* 편집점 */}
-          <ResultBox
-            title="편집점"
-            icon="✂️"
-            content={result.editPoints}
-            onCopy={() => handleCopy('editpoints')}
-            isCopied={copiedField === 'editpoints'}
-            accentColor="blue"
-          />
-        </div>
+            {/* 편집점 */}
+            <ResultBox
+              title="편집점"
+              icon="✂️"
+              content={result.editPoints}
+              onCopy={() => handleCopy('editpoints')}
+              isCopied={copiedField === 'editpoints'}
+              accentColor="blue"
+            />
+          </div>
+
+          {/* 편집실로 보내기 */}
+          <div className="flex justify-center">
+            <button
+              type="button"
+              onClick={() => {
+                const epStore = useEditPointStore.getState();
+                epStore.reset();
+                epStore.setRawEditTable(result.editPoints);
+                epStore.setRawNarration(result.script);
+                useEditRoomStore.getState().setEditRoomSubTab('edit-point-matching');
+                useNavigationStore.getState().setActiveTab('edit-room');
+              }}
+              className="flex items-center gap-2 px-6 py-3 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white font-bold shadow-lg transition-all transform hover:scale-[1.02]"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14.121 14.121L19 19m-7-7l7-7m-7 7l-2.879 2.879M12 12L9.121 9.121m0 5.758a3 3 0 10-4.243 4.243 3 3 0 004.243-4.243zm0-5.758a3 3 0 10-4.243-4.243 3 3 0 004.243 4.243z" /></svg>
+              편집실로 보내기
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
+            </button>
+          </div>
+        </>
       )}
     </div>
   );

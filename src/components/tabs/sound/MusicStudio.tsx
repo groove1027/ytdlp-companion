@@ -6,10 +6,13 @@ import { useCostStore } from '../../../stores/costStore';
 import { useScriptWriterStore } from '../../../stores/scriptWriterStore';
 import {
   generateMusic, pollMusicStatus, analyzeMusicForScript, groupMusicByDate,
-  generateLyrics, pollLyricsResult, boostStyle, extendMusic,
+  boostStyle, extendMusic,
   separateVocals, pollVocalSeparation,
   addInstrumental, addVocals,
 } from '../../../services/musicService';
+import { evolinkChat } from '../../../services/evolinkService';
+import type { EvolinkChatMessage } from '../../../services/evolinkService';
+import { uploadMediaToHosting } from '../../../services/uploadService';
 import { PRICING } from '../../../constants';
 import type { MusicGenerationConfig, SunoModel, LyricsResult, GeneratedMusic } from '../../../types';
 import type { MusicAnalysisResult } from '../../../services/musicService';
@@ -170,8 +173,28 @@ const LyricsTab: React.FC = () => {
     if (!lyricsPrompt.trim() || isGeneratingLyrics) return;
     setIsGeneratingLyrics(true); setError('');
     try {
-      const taskId = await generateLyrics(lyricsPrompt);
-      const results = await pollLyricsResult(taskId);
+      const messages: EvolinkChatMessage[] = [
+        { role: 'system', content: `너는 전문 작사가다. 사용자의 요청을 바탕으로 Suno AI 음악 생성에 최적화된 가사를 작성한다.
+규칙:
+- [Verse 1], [Chorus], [Verse 2], [Bridge], [Outro] 등 구조 태그를 반드시 포함
+- 각 섹션은 4~8줄
+- 라임(Rhyme)과 리듬감을 살린다
+- 한국어 가사가 기본이며, 사용자가 영어를 요청하면 영어로 작성
+- 3가지 서로 다른 스타일의 가사 변형을 생성 (각각 제목 포함)
+- 출력 형식: 각 변형을 "---VARIATION---" 구분자로 나누고, 첫 줄에 "제목: [제목]"을 쓴 뒤 가사를 이어서 작성` },
+        { role: 'user', content: `다음 주제/분위기로 가사 3가지 변형을 작성해줘:\n\n${lyricsPrompt}` },
+      ];
+      const response = await evolinkChat(messages, { temperature: 0.8, maxTokens: 3000 });
+      const raw = response.choices[0]?.message?.content || '';
+      // 파싱: ---VARIATION--- 구분자로 나누기
+      const variations = raw.split(/---\s*VARIATION\s*---/i).map(s => s.trim()).filter(Boolean);
+      const results = variations.map(v => {
+        const titleMatch = v.match(/^제목:\s*(.+)/m);
+        const title = titleMatch ? titleMatch[1].trim() : '';
+        const text = titleMatch ? v.replace(/^제목:\s*.+\n?/m, '').trim() : v;
+        return { title, text };
+      });
+      if (results.length === 0) results.push({ title: '', text: raw });
       setGeneratedLyrics(results);
     } catch (e: unknown) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setIsGeneratingLyrics(false); }
@@ -243,6 +266,28 @@ const LyricsTab: React.FC = () => {
 };
 
 /* ═══════ 도구 탭 ═══════ */
+
+/** 파일 업로드 → Cloudinary → URL 반환 헬퍼 */
+const useFileUpload = (onUrl: (url: string) => void, onError: (msg: string) => void) => {
+  const [isUploading, setIsUploading] = React.useState(false);
+  const inputRef = React.useRef<HTMLInputElement>(null);
+  const handleFile = React.useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsUploading(true);
+    try {
+      const url = await uploadMediaToHosting(file);
+      onUrl(url);
+    } catch (err) {
+      onError(err instanceof Error ? err.message : '업로드 실패');
+    } finally {
+      setIsUploading(false);
+      if (inputRef.current) inputRef.current.value = '';
+    }
+  }, [onUrl, onError]);
+  return { inputRef, isUploading, handleFile };
+};
+
 const ToolsTab: React.FC = () => {
   const musicLibrary = useSoundStudioStore((s) => s.musicLibrary);
   const allTracks = useMemo(() => musicLibrary.flatMap((g) => g.tracks), [musicLibrary]);
@@ -263,6 +308,16 @@ const ToolsTab: React.FC = () => {
   const [isAddingVocal, setIsAddingVocal] = useState(false);
   const [toolError, setToolError] = useState('');
   const [toolSuccess, setToolSuccess] = useState('');
+
+  // 파일 업로드 hooks
+  const instUpload = useFileUpload(
+    useCallback((url: string) => { setInstrumentalUrl(url); setToolSuccess('음원 업로드 완료!'); }, []),
+    useCallback((msg: string) => setToolError(msg), [])
+  );
+  const vocalUpload = useFileUpload(
+    useCallback((url: string) => { setVocalUrl(url); setToolSuccess('음원 업로드 완료!'); }, []),
+    useCallback((msg: string) => setToolError(msg), [])
+  );
 
   const handleVocalSeparation = useCallback(async () => {
     if (!vocalSepTarget || isVocalSeparating) return;
@@ -316,19 +371,15 @@ const ToolsTab: React.FC = () => {
       {/* 보컬/MR 분리 */}
       <div className="bg-gray-900/60 rounded-lg border border-gray-700 p-4 space-y-3">
         <h4 className="text-sm font-bold text-gray-200">♻️ 보컬/MR 분리</h4>
-        <p className="text-xs text-gray-500">라이브러리 트랙에서 보컬과 MR을 분리합니다.</p>
-        {allTracks.length === 0 ? <p className="text-xs text-gray-600">라이브러리에 트랙이 없습니다.</p> : (
-          <>
-            <select value={vocalSepTarget?.id || ''} onChange={(e) => { const t = allTracks.find((t) => t.id === e.target.value) || null; setVocalSepTarget(t); setVocalSepResult(null); }} className={selectCls}>
-              <option value="">트랙 선택...</option>
-              {allTracks.map((t) => <option key={t.id} value={t.id}>{t.title} ({Math.floor(t.duration / 60)}:{String(Math.floor(t.duration % 60)).padStart(2, '0')})</option>)}
-            </select>
-            <button type="button" onClick={handleVocalSeparation} disabled={!vocalSepTarget || isVocalSeparating}
-              className="w-full py-2 bg-teal-600/20 text-teal-300 border border-teal-500/30 hover:bg-teal-600/40 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg text-sm font-semibold transition-all flex items-center justify-center gap-2">
-              {isVocalSeparating ? (<><span className="w-3 h-3 border-2 border-teal-300/30 border-t-teal-300 rounded-full animate-spin" /> 분리 중...</>) : '보컬/MR 분리 실행'}
-            </button>
-          </>
-        )}
+        <p className="text-xs text-gray-500">생성된 라이브러리 트랙에서 보컬과 MR을 분리합니다.</p>
+        <select value={vocalSepTarget?.id || ''} onChange={(e) => { const t = allTracks.find((t) => t.id === e.target.value) || null; setVocalSepTarget(t); setVocalSepResult(null); }} className={selectCls}>
+          <option value="">{allTracks.length === 0 ? '라이브러리에 트랙이 없습니다' : '트랙 선택...'}</option>
+          {allTracks.map((t) => <option key={t.id} value={t.id}>{t.title} ({Math.floor(t.duration / 60)}:{String(Math.floor(t.duration % 60)).padStart(2, '0')})</option>)}
+        </select>
+        <button type="button" onClick={handleVocalSeparation} disabled={!vocalSepTarget || isVocalSeparating}
+          className="w-full py-2 bg-teal-600/20 text-teal-300 border border-teal-500/30 hover:bg-teal-600/40 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg text-sm font-semibold transition-all flex items-center justify-center gap-2">
+          {isVocalSeparating ? (<><span className="w-3 h-3 border-2 border-teal-300/30 border-t-teal-300 rounded-full animate-spin" /> 분리 중...</>) : '보컬/MR 분리 실행'}
+        </button>
         {vocalSepResult && (
           <div className="space-y-2 mt-2">
             <p className="text-xs font-semibold text-green-400">분리 완료!</p>
@@ -342,7 +393,14 @@ const ToolsTab: React.FC = () => {
       {/* 반주 추가 */}
       <div className="bg-gray-900/60 rounded-lg border border-gray-700 p-4 space-y-3">
         <h4 className="text-sm font-bold text-gray-200">🎸 반주 추가</h4>
-        <input type="text" value={instrumentalUrl} onChange={(e) => setInstrumentalUrl(e.target.value)} placeholder="오디오 URL" className={`w-full ${inputCls}`} />
+        <div className="flex gap-2">
+          <input type="text" value={instrumentalUrl} onChange={(e) => setInstrumentalUrl(e.target.value)} placeholder="오디오 URL" className={`flex-1 ${inputCls}`} />
+          <input type="file" ref={instUpload.inputRef} onChange={instUpload.handleFile} accept="audio/*" className="hidden" />
+          <button type="button" onClick={() => instUpload.inputRef.current?.click()} disabled={instUpload.isUploading}
+            className="px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-600 hover:border-orange-500/50 hover:text-orange-300 text-xs font-semibold transition-all shrink-0 disabled:opacity-40">
+            {instUpload.isUploading ? '업로드...' : '파일 업로드'}
+          </button>
+        </div>
         <div className="grid grid-cols-2 gap-2">
           <input type="text" value={instrumentalTitle} onChange={(e) => setInstrumentalTitle(e.target.value)} placeholder="제목" className={inputCls} />
           <input type="text" value={instrumentalTags} onChange={(e) => setInstrumentalTags(e.target.value)} placeholder="스타일 태그" className={inputCls} />
@@ -354,7 +412,14 @@ const ToolsTab: React.FC = () => {
       {/* 보컬 추가 */}
       <div className="bg-gray-900/60 rounded-lg border border-gray-700 p-4 space-y-3">
         <h4 className="text-sm font-bold text-gray-200">🎤 보컬 추가</h4>
-        <input type="text" value={vocalUrl} onChange={(e) => setVocalUrl(e.target.value)} placeholder="인스트루멘탈 URL" className={`w-full ${inputCls}`} />
+        <div className="flex gap-2">
+          <input type="text" value={vocalUrl} onChange={(e) => setVocalUrl(e.target.value)} placeholder="인스트루멘탈 URL" className={`flex-1 ${inputCls}`} />
+          <input type="file" ref={vocalUpload.inputRef} onChange={vocalUpload.handleFile} accept="audio/*" className="hidden" />
+          <button type="button" onClick={() => vocalUpload.inputRef.current?.click()} disabled={vocalUpload.isUploading}
+            className="px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-600 hover:border-pink-500/50 hover:text-pink-300 text-xs font-semibold transition-all shrink-0 disabled:opacity-40">
+            {vocalUpload.isUploading ? '업로드...' : '파일 업로드'}
+          </button>
+        </div>
         <div className="grid grid-cols-2 gap-2">
           <input type="text" value={vocalTitle} onChange={(e) => setVocalTitle(e.target.value)} placeholder="제목" className={inputCls} />
           <input type="text" value={vocalStyleInput} onChange={(e) => setVocalStyleInput(e.target.value)} placeholder="보컬 스타일" className={inputCls} />
