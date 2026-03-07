@@ -65,6 +65,20 @@ const TAB_CONFIG: { id: AppTab; label: string; icon: string; activeClass: string
   { id: 'upload', label: '업로드', icon: '📤', activeClass: 'bg-green-600/20 text-green-400 border border-green-500/30' },
 ];
 
+// [v4.5] 파이프라인 단계 정의 (진행 표시기용)
+const PIPELINE_STEPS: { id: AppTab; label: string; num: number }[] = [
+  { id: 'project', label: '프로젝트', num: 0 },
+  { id: 'channel-analysis', label: '채널/영상 분석', num: 1 },
+  { id: 'script-writer', label: '대본', num: 2 },
+  { id: 'sound-studio', label: '사운드', num: 3 },
+  { id: 'image-video', label: '이미지/영상', num: 4 },
+  { id: 'edit-room', label: '편집실', num: 5 },
+  { id: 'upload', label: '업로드', num: 6 },
+];
+
+/** 도구모음 탭 ID 목록 — 파이프라인 표시기를 숨길 탭 */
+const TOOL_TABS = new Set<AppTab>(['thumbnail-studio', 'character-twist', 'image-script-upload', 'ppt-master', 'detail-page']);
+
 // 탭 로딩 fallback
 const TabFallback = () => (
   <div className="flex items-center justify-center py-20">
@@ -1110,6 +1124,71 @@ const App: React.FC = () => {
 
         {/* 메인 콘텐츠 영역 */}
         <main className="ml-56 flex-1 pb-12 px-8">
+          {/* [v4.5] 파이프라인 진행 표시기 (도구모음 탭에서는 숨김) */}
+          {!TOOL_TABS.has(activeTab) && (() => {
+            const currentStepIndex = PIPELINE_STEPS.findIndex(s => s.id === activeTab);
+            const isExperimental = currentStepIndex === -1;
+            return (
+              <div className="pt-4 pb-2">
+                <div className="flex items-center gap-1">
+                  {PIPELINE_STEPS.map((step, idx) => {
+                    const isCurrent = step.id === activeTab;
+                    const isCompleted = !isExperimental && idx < currentStepIndex;
+                    return (
+                      <React.Fragment key={step.id}>
+                        {idx > 0 && (
+                          <div className={`flex-1 h-px max-w-[40px] ${isCompleted ? 'bg-green-500/60' : isCurrent ? 'bg-blue-500/40' : 'bg-gray-700'}`} />
+                        )}
+                        <button
+                          onClick={() => setActiveTab(step.id)}
+                          className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-all whitespace-nowrap ${
+                            isCurrent
+                              ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30'
+                              : isCompleted
+                                ? 'text-green-400/80 hover:text-green-300'
+                                : 'text-gray-600 hover:text-gray-400'
+                          }`}
+                          title={step.label}
+                        >
+                          <span className={`w-5 h-5 flex items-center justify-center rounded-full text-[10px] font-bold ${
+                            isCurrent
+                              ? 'bg-blue-500 text-white'
+                              : isCompleted
+                                ? 'bg-green-500/70 text-white'
+                                : 'bg-gray-700 text-gray-500'
+                          }`}>
+                            {isCompleted ? '✓' : step.num}
+                          </span>
+                          <span className="hidden lg:inline">{step.label}</span>
+                        </button>
+                      </React.Fragment>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* [v4.5] 이전 단계 네비게이션 (도구모음 탭에서는 숨김) */}
+          {!TOOL_TABS.has(activeTab) && (() => {
+            const currentStepIndex = PIPELINE_STEPS.findIndex(s => s.id === activeTab);
+            if (currentStepIndex > 0) {
+              const prevStep = PIPELINE_STEPS[currentStepIndex - 1];
+              return (
+                <div className="pb-2">
+                  <button
+                    onClick={() => setActiveTab(prevStep.id)}
+                    className="text-xs text-gray-500 hover:text-gray-300 transition-colors flex items-center gap-1"
+                  >
+                    <span>←</span>
+                    <span>이전 단계: {prevStep.label}</span>
+                  </button>
+                </div>
+              );
+            }
+            return null;
+          })()}
+
           {/* [v4.5] 탭 기반 라우팅 */}
           {activeTab === 'channel-analysis' ? (
               <TabErrorBoundary><Suspense fallback={<TabFallback />}><ChannelAnalysisTab /></Suspense></TabErrorBoundary>
