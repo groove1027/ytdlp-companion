@@ -11,6 +11,7 @@ const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [inviteCode, setInviteCode] = useState('');
   const [displayName, setDisplayName] = useState('');
+  const [rememberMe, setRememberMe] = useState(true);
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
@@ -27,7 +28,7 @@ const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
     try {
       const { login, signup } = await import('../services/authService');
       if (mode === 'login') {
-        const result = await login(email, password);
+        const result = await login(email, password, rememberMe);
         onAuthenticated(result.user);
       } else {
         const result = await signup(email, password, inviteCode, displayName || undefined);
@@ -149,6 +150,19 @@ const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
                 </p>
               </div>
             </>
+          )}
+
+          {/* 로그인 유지 체크박스 (로그인 모드에서만) */}
+          {mode === 'login' && (
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={rememberMe}
+                onChange={(e) => setRememberMe(e.target.checked)}
+                className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-blue-500 focus:ring-blue-500/30 focus:ring-offset-0 cursor-pointer"
+              />
+              <span className="text-sm text-gray-400">로그인 상태 유지 (30일)</span>
+            </label>
           )}
 
           {/* 에러 메시지 */}

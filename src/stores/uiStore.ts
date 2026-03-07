@@ -15,6 +15,7 @@ interface UIStore {
   showFeedbackModal: boolean;
   showApiSettings: boolean;
   showWatermarkModal: boolean;
+  showProfileModal: boolean;
   toast: ToastState | null;
   isProcessing: boolean;
   processingMessage: string | null;
@@ -31,6 +32,7 @@ interface UIStore {
   setShowFeedbackModal: (show: boolean) => void;
   setShowApiSettings: (show: boolean) => void;
   setShowWatermarkModal: (show: boolean) => void;
+  setShowProfileModal: (show: boolean) => void;
   setToast: (toast: ToastState | null | ((prev: ToastState | null) => ToastState | null)) => void;
   setProcessing: (active: boolean, message?: string, mode?: string) => void;
   setProcessingMessage: (message: string) => void;
@@ -45,6 +47,7 @@ export const useUIStore = create<UIStore>((set) => ({
   showFeedbackModal: false,
   showApiSettings: false,
   showWatermarkModal: false,
+  showProfileModal: false,
   toast: null,
   isProcessing: false,
   processingMessage: null,
@@ -60,6 +63,7 @@ export const useUIStore = create<UIStore>((set) => ({
   setShowFeedbackModal: (show) => set({ showFeedbackModal: show }),
   setShowApiSettings: (show) => set({ showApiSettings: show }),
   setShowWatermarkModal: (show) => set({ showWatermarkModal: show }),
+  setShowProfileModal: (show) => set({ showProfileModal: show }),
   setToast: (toast) => set((state) => ({
     toast: typeof toast === 'function' ? toast(state.toast) : toast,
   })),

@@ -5,7 +5,9 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   const headers = { 'Content-Type': 'application/json' };
 
   try {
-    const { email, password } = await context.request.json() as { email: string; password: string };
+    const { email, password, rememberMe } = await context.request.json() as {
+      email: string; password: string; rememberMe?: boolean;
+    };
 
     if (!email || !password) {
       return new Response(
@@ -42,13 +44,14 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       "UPDATE users SET last_login = datetime('now') WHERE id = ?"
     ).bind(user.id).run();
 
-    // 세션 토큰 발급
+    // 세션 토큰 발급 (rememberMe: 30일, 미체크: 1일, 기본: 7일)
+    const ttlDays = rememberMe === true ? 30 : rememberMe === false ? 1 : 7;
     const token = generateToken();
     await context.env.SESSIONS.put(token, JSON.stringify({
       email: user.email,
       displayName: user.display_name || user.email.split('@')[0],
       createdAt: new Date().toISOString(),
-    }), { expirationTtl: 60 * 60 * 24 * 7 });
+    }), { expirationTtl: 60 * 60 * 24 * ttlDays });
 
     return new Response(
       JSON.stringify({
