@@ -95,7 +95,10 @@ export interface CommunityPreset {
   label: string;
   description: string;
   videoFormat: VideoFormat;
+  /** 영상 출력 비율 (최종 쇼츠 프레임) */
   aspectRatio: AspectRatio;
+  /** 이미지 생성 비율 (밈/짤/AI이미지 생성 시 — 세로 프레임 중앙에 배치) */
+  imageAspectRatio: AspectRatio;
   /** 우선 미디어 소스: klipy=밈/짤, irasutoya=일러스트, mixed=혼합, news=보도사진+밈 */
   mediaSource: 'klipy' | 'irasutoya' | 'mixed' | 'news';
   /** 평균 컷 전환 속도 (초/컷) */
@@ -115,6 +118,7 @@ export const COMMUNITY_PRESETS: CommunityPreset[] = [
     description: '1.8초/컷, 이라스토야+밈+AI이미지, 정보형 스토리텔링',
     videoFormat: VideoFormat.NANO,
     aspectRatio: AspectRatio.PORTRAIT,
+    imageAspectRatio: AspectRatio.SQUARE,
     mediaSource: 'mixed',
     avgCutSec: 1.8,
     sfxDensity: 'medium',
@@ -127,6 +131,7 @@ export const COMMUNITY_PRESETS: CommunityPreset[] = [
     description: '1.5초/컷, 밈 폭격형, 리액션 도파민 편집',
     videoFormat: VideoFormat.NANO,
     aspectRatio: AspectRatio.PORTRAIT,
+    imageAspectRatio: AspectRatio.SQUARE,
     mediaSource: 'klipy',
     avgCutSec: 1.5,
     sfxDensity: 'high',
@@ -139,6 +144,7 @@ export const COMMUNITY_PRESETS: CommunityPreset[] = [
     description: '2.1초/컷, 보도사진+풍자밈, 블랙코미디형',
     videoFormat: VideoFormat.NANO,
     aspectRatio: AspectRatio.PORTRAIT,
+    imageAspectRatio: AspectRatio.SQUARE,
     mediaSource: 'news',
     avgCutSec: 2.1,
     sfxDensity: 'medium',
@@ -151,6 +157,7 @@ export const COMMUNITY_PRESETS: CommunityPreset[] = [
     description: '직접 설정',
     videoFormat: VideoFormat.SHORT,
     aspectRatio: AspectRatio.PORTRAIT,
+    imageAspectRatio: AspectRatio.PORTRAIT,
     mediaSource: 'mixed',
     avgCutSec: 2.0,
     sfxDensity: 'medium',

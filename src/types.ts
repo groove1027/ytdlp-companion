@@ -373,6 +373,11 @@ export interface ProjectConfig {
   
   isMixedMedia?: boolean;
 
+  /** 이미지 생성 비율 (커뮤니티 프리셋: 1:1 이미지를 9:16 프레임 안에 배치) */
+  imageAspectRatio?: AspectRatio;
+  /** 적용된 커뮤니티 프리셋 ID */
+  communityPresetId?: string;
+
   estimatedScenes?: number; // [NEW] 예상 컷수 → parseScriptToScenes에 전달하여 강제 반영
   cachedContextData?: Record<string, any>; // [NEW] Pro/Thinking 분석 결과 캐시 → 프로젝트 생성 시 재활용
 

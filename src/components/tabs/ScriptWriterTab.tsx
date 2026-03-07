@@ -9,7 +9,8 @@ import { evolinkChat, evolinkChatStream, getEvolinkKey } from '../../services/ev
 import { recommendTopics } from '../../services/topicRecommendService';
 import { buildSelectedInstinctPrompt } from '../../data/instinctPromptUtils';
 import { SCRIPT_STYLE_PRESETS } from '../../data/scriptStylePresets';
-import { VideoFormat, TopicRecommendation, Scene } from '../../types';
+import { VideoFormat, TopicRecommendation, Scene, AspectRatio } from '../../types';
+import { COMMUNITY_PRESETS } from '../../constants';
 import { showToast } from '../../stores/uiStore';
 import { countScenesLocally, splitScenesLocally, extractJsonFromText } from '../../services/gemini/scriptAnalysis';
 import { parseFileToText, SUPPORTED_EXTENSIONS, SUPPORTED_FORMATS_LABEL } from '../../services/fileParserService';
@@ -81,6 +82,7 @@ export default function ScriptWriterTab() {
 
   const setActiveTab = useNavigationStore((s) => s.setActiveTab);
   const channelGuideline = useChannelAnalysisStore((s) => s.channelGuideline);
+  const communityPresetId = useProjectStore((s) => s.config?.communityPresetId ?? null);
 
   const [openTool, setOpenTool] = useState<OpenTool>(null);
   const [showExpander, setShowExpander] = useState(false);
@@ -136,6 +138,26 @@ export default function ScriptWriterTab() {
       videoFormat === VideoFormat.LONG ? longFormSplitType : undefined);
     return { original: best, scenes };
   }, [scriptText, videoFormat, smartSplit, longFormSplitType]);
+
+  const handleSelectPreset = useCallback((preset: typeof COMMUNITY_PRESETS[number]) => {
+    if (preset.id === 'custom') {
+      // 커스텀: 프리셋 해제만, 설정 변경 없음
+      useProjectStore.getState().setConfig((prev) =>
+        prev ? { ...prev, communityPresetId: undefined, imageAspectRatio: undefined } : prev
+      );
+      return;
+    }
+    setVideoFormat(preset.videoFormat);
+    useProjectStore.getState().setConfig((prev) =>
+      prev ? {
+        ...prev,
+        aspectRatio: preset.aspectRatio,
+        imageAspectRatio: preset.imageAspectRatio,
+        communityPresetId: preset.id,
+      } : prev
+    );
+    showToast(`${preset.label} 적용 — ${preset.videoFormat === VideoFormat.NANO ? '나노(초고속 분할)' : '숏폼'} + 이미지 ${preset.imageAspectRatio} / 영상 ${preset.aspectRatio}`);
+  }, [setVideoFormat]);
 
   const handleGoToSoundStudio = useCallback(() => {
     // Always sync finalScript to the latest available content before navigating
@@ -1077,6 +1099,64 @@ ${instinctPrompt}
               </span>
             )}
             <span className="text-xs text-gray-500">장면 분석 실행 시 AI가 정확한 컷수를 산출합니다</span>
+          </div>
+
+          {/* 커뮤니티형 프리셋 원클릭 선택 */}
+          <div className="mb-4">
+            <label className="block text-sm font-bold text-gray-400 mb-2">커뮤니티형 프리셋 (원클릭 설정)</label>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+              {COMMUNITY_PRESETS.map(preset => {
+                const isActive = preset.id === 'custom'
+                  ? !communityPresetId
+                  : communityPresetId === preset.id;
+                return (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => handleSelectPreset(preset)}
+                    className={`text-left p-3 rounded-xl border transition-all ${
+                      isActive
+                        ? 'bg-violet-600/20 border-violet-500/50 ring-1 ring-violet-500/30'
+                        : preset.id === 'custom'
+                          ? 'bg-gray-800 border-gray-600 hover:bg-gray-700'
+                          : 'bg-gray-800/50 border-gray-700 hover:border-violet-500/40 hover:bg-violet-900/10'
+                    }`}
+                  >
+                    <div className={`text-sm font-bold ${isActive ? 'text-violet-300' : 'text-gray-300'}`}>{preset.label}</div>
+                    <div className="text-xs text-gray-400 mt-1 leading-relaxed">{preset.description}</div>
+                    {preset.id !== 'custom' && (
+                      <div className="flex gap-1 mt-2 flex-wrap">
+                        <span className="text-[10px] bg-violet-900/40 text-violet-400 px-1.5 py-0.5 rounded">{preset.avgCutSec}s/컷</span>
+                        <span className="text-[10px] bg-gray-700 text-gray-300 px-1.5 py-0.5 rounded">
+                          SFX {preset.sfxDensity === 'high' ? '폭격' : preset.sfxDensity === 'medium' ? '보통' : '최소'}
+                        </span>
+                        <span className="text-[10px] bg-cyan-900/40 text-cyan-400 px-1.5 py-0.5 rounded">
+                          이미지 {preset.imageAspectRatio}
+                        </span>
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+            {communityPresetId && (() => {
+              const active = COMMUNITY_PRESETS.find(p => p.id === communityPresetId);
+              return active ? (
+                <div className="mt-2 px-3 py-2 bg-violet-900/15 border border-violet-600/25 rounded-lg">
+                  <p className="text-sm text-violet-300 font-medium">
+                    {active.label} 적용 중 — 이미지 {active.imageAspectRatio} / 영상 {active.aspectRatio} / {active.videoFormat === VideoFormat.NANO ? '나노(초고속 분할)' : '숏폼'}
+                  </p>
+                  <p className="text-xs text-gray-400 mt-1">
+                    포맷·비율은 아래에서 수동 변경 가능하며, 이미지/영상·편집실에서 장면별 비율을 바꿔 재생성할 수도 있습니다.
+                  </p>
+                </div>
+              ) : null;
+            })()}
+            {!communityPresetId && (
+              <p className="text-xs text-gray-500 mt-1.5">
+                프리셋 선택 시 포맷·비율·이미지 생성 비율이 자동 설정됩니다. 이후 수동 변경하거나, 이미지/영상·편집실에서 장면별로 바꿀 수도 있습니다.
+              </p>
+            )}
           </div>
 
           <div className="flex items-center gap-3 mb-2">
