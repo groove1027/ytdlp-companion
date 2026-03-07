@@ -1,7 +1,8 @@
 
 import { monitoredFetch, getYoutubeApiKey } from './apiService';
 import { logger } from './LoggerService';
-import { evolinkChat } from './evolinkService';
+import { evolinkChat, requestEvolinkNative } from './evolinkService';
+import type { EvolinkChatMessage, EvolinkContentPart } from './evolinkService';
 import type {
     ChannelInfo,
     ChannelScript,
@@ -34,6 +35,7 @@ const QUOTA_COSTS: Record<string, number> = {
     'videos.list': 1,
     'channels.list': 1,
     'captions.list': 50,
+    'commentThreads.list': 1,
 };
 
 /** 오늘 날짜 문자열 (YYYY-MM-DD) */
@@ -699,7 +701,7 @@ export const getRecentVideosByFormat = async (
 
     const results: ChannelScript[] = filtered.slice(0, targetCount).map((v: {
         id: string;
-        snippet?: { title?: string; description?: string; publishedAt?: string; thumbnails?: { high?: { url?: string }; medium?: { url?: string }; default?: { url?: string } } };
+        snippet?: { title?: string; description?: string; publishedAt?: string; tags?: string[]; thumbnails?: { high?: { url?: string }; medium?: { url?: string }; default?: { url?: string } } };
         statistics?: { viewCount?: string };
         contentDetails?: { duration?: string };
     }) => ({
@@ -711,6 +713,7 @@ export const getRecentVideosByFormat = async (
         viewCount: parseInt(v.statistics?.viewCount || '0'),
         duration: parseIsoDuration(v.contentDetails?.duration || 'PT0S'),
         thumbnailUrl: v.snippet?.thumbnails?.high?.url || v.snippet?.thumbnails?.medium?.url || v.snippet?.thumbnails?.default?.url || undefined,
+        tags: (v.snippet?.tags || []).slice(0, 30),
     }));
 
     logger.success('[YouTube] 포맷별 영상 조회 완료', { format, found: results.length });
@@ -904,6 +907,292 @@ ${combinedScripts}
         logger.error('[YouTube] 채널 스타일 분석 실패', msg);
         throw new Error(`채널 스타일 분석 실패: ${msg}`);
     }
+};
+
+// === CHANNEL STYLE DNA (3-Layer Analysis) ===
+
+/**
+ * YouTube 영상 상위 댓글 가져오기 (commentThreads.list = 1 unit)
+ */
+export const getVideoComments = async (videoId: string, maxResults: number = 30): Promise<string[]> => {
+    const apiKey = getYoutubeApiKey();
+    if (!apiKey) return [];
+    if (!trackQuota('commentThreads.list')) return [];
+    try {
+        const url = `${YOUTUBE_API_BASE}/commentThreads?part=snippet&videoId=${videoId}&maxResults=${maxResults}&order=relevance&textFormat=plainText&key=${apiKey}`;
+        const response = await monitoredFetch(url);
+        if (!response.ok) return [];
+        const data = await response.json();
+        return (data.items || [])
+            .map((item: { snippet?: { topLevelComment?: { snippet?: { textDisplay?: string } } } }) =>
+                item.snippet?.topLevelComment?.snippet?.textDisplay || ''
+            ).filter(Boolean);
+    } catch {
+        return [];
+    }
+};
+
+/**
+ * L2: 썸네일 시각 스타일 분석 (Gemini Vision — multimodal)
+ * 영상당 2장 (커스텀 썸네일 + 중간 캡처) → Gemini에 배치 전송
+ */
+const analyzeThumbnailStyle = async (scripts: ChannelScript[]): Promise<string> => {
+    const ytScripts = scripts.filter(s => s.videoId && !s.videoId.startsWith('manual-') && !s.videoId.startsWith('file-'));
+    if (ytScripts.length === 0) return '';
+
+    const imageParts: EvolinkContentPart[] = [];
+    for (const s of ytScripts.slice(0, 15)) {
+        imageParts.push({ type: 'image_url', image_url: { url: `https://img.youtube.com/vi/${s.videoId}/hqdefault.jpg` } });
+        imageParts.push({ type: 'image_url', image_url: { url: `https://img.youtube.com/vi/${s.videoId}/2.jpg` } });
+    }
+
+    const messages: EvolinkChatMessage[] = [
+        { role: 'system', content: 'YouTube 채널 시각 스타일 분석 전문가. 한국어로 응답.' },
+        {
+            role: 'user',
+            content: [
+                {
+                    type: 'text',
+                    text: `아래 이미지는 같은 YouTube 채널의 썸네일(홀수번째)과 영상 중간 캡처(짝수번째)입니다. ${ytScripts.length}개 영상의 시각적 스타일 패턴을 분석하세요.
+
+분석 항목:
+1. 색상 팔레트: 지배적 색상, 온난/냉온 경향, 대비/채도 수준
+2. 타이포그래피: 폰트 스타일, 크기, 배치, 텍스트 색상 체계
+3. 구도: 프레이밍, 3분할법, 대칭 패턴, 시선 유도 방향
+4. 인물: 얼굴 크기/위치, 표정 유형, 포즈 패턴
+5. 브랜딩: 반복 로고/색상, 레이아웃 템플릿
+6. 영상 내 시각: 자막 스타일, 오버레이, 그래픽 요소, 텍스처, 화풍
+
+이 채널의 시각적 스타일을 완벽히 복제할 수 있도록 각 항목을 매우 구체적으로 가이드를 작성하세요. 이미지 생성 프롬프트로 바로 사용 가능할 정도로 상세한 앵글, 구도, 연출, 색감, 텍스처, 화풍 지침을 포함하세요.`
+                },
+                ...imageParts
+            ] as EvolinkContentPart[]
+        }
+    ];
+
+    try {
+        const res = await evolinkChat(messages, { temperature: 0.3, maxTokens: 3000 });
+        return res.choices?.[0]?.message?.content || '';
+    } catch (e) {
+        logger.warn('[StyleDNA] L2 썸네일 분석 실패', e instanceof Error ? e.message : String(e));
+        return '';
+    }
+};
+
+/**
+ * L3: 딥 영상 분석 (Gemini v1beta — YouTube URL 직접 입력)
+ * 조회수 상위 2개 영상을 YouTube URL로 Gemini에 전달하여 편집/오디오 스타일 분석
+ */
+const analyzeDeepVideoStyle = async (scripts: ChannelScript[]): Promise<{ editGuide: string; audioGuide: string }> => {
+    const ytScripts = scripts.filter(s => s.videoId && !s.videoId.startsWith('manual-') && !s.videoId.startsWith('file-'));
+    if (ytScripts.length === 0) return { editGuide: '', audioGuide: '' };
+
+    const top2 = [...ytScripts].sort((a, b) => b.viewCount - a.viewCount).slice(0, 2);
+
+    const analyzeOne = async (script: ChannelScript): Promise<string> => {
+        const youtubeUrl = `https://www.youtube.com/watch?v=${script.videoId}`;
+        const googlePayload = {
+            contents: [{
+                role: 'user',
+                parts: [
+                    { fileData: { fileUri: youtubeUrl, mimeType: 'video/*' } },
+                    { text: `이 YouTube 영상("${script.title}")의 프로덕션 스타일을 종합 분석하세요:
+
+[편집 스타일]
+- 컷 빈도 (분당 추정), 전환 유형 (컷/디졸브/와이프 등 비율), B-roll 활용 빈도/방식
+- 장면 구성 패턴, 인서트컷 유형, 리액션컷 여부
+
+[카메라 워크]
+- 주요 앵글, 움직임 패턴, 프레이밍 일관성, 줌 사용
+
+[색보정]
+- 색온도, 채도, 대비, 전체적 색감 톤
+
+[자막/텍스트]
+- 폰트 스타일, 색상, 애니메이션, 등장 빈도, 배치 규칙, 크기
+
+[사운드 디자인]
+- BGM 장르/무드, 효과음 밀도/유형, 보이스 톤/에너지
+
+[페이싱]
+- 오프닝 훅 길이(초), 세그먼트 리듬, 아웃트로 구조
+
+한국어로 매우 구체적이고 상세하게 분석하세요. 이 영상의 스타일을 정확히 복제할 수 있을 정도여야 합니다.` }
+                ]
+            }],
+            generationConfig: { temperature: 0.3, maxOutputTokens: 4000 }
+        };
+
+        try {
+            const result = await requestEvolinkNative('gemini-3.1-pro-preview', googlePayload);
+            const data = result as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
+            return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        } catch (e) {
+            logger.warn('[StyleDNA] L3 딥 영상 분석 실패', e instanceof Error ? e.message : String(e));
+            return '';
+        }
+    };
+
+    const results = await Promise.allSettled(top2.map(analyzeOne));
+    const combined = results
+        .filter((r): r is PromiseFulfilledResult<string> => r.status === 'fulfilled' && !!r.value)
+        .map(r => r.value)
+        .join('\n\n---\n\n');
+
+    if (!combined) return { editGuide: '', audioGuide: '' };
+
+    // Gemini로 편집 가이드 / 오디오 가이드 분리
+    try {
+        const splitRes = await evolinkChat([
+            { role: 'system', content: '아래 영상 분석을 편집 가이드와 오디오 가이드로 분리. 반드시 JSON으로만 응답.' },
+            { role: 'user', content: `${combined}\n\n위 분석을 JSON으로 분리:\n{"editGuide": "편집 스타일 종합 (컷/전환/B-roll/카메라/색보정/자막/페이싱 — 구체적 수치 포함)", "audioGuide": "오디오 스타일 종합 (BGM 장르/무드, 효과음 유형/밀도, 보이스 톤/에너지 — 구체적 묘사)"}` }
+        ], { temperature: 0.1, maxTokens: 4000 });
+
+        const raw = splitRes.choices?.[0]?.message?.content || '';
+        let jsonStr = raw;
+        const cb = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+        if (cb) jsonStr = cb[1].trim();
+        const parsed = JSON.parse(jsonStr);
+        return { editGuide: parsed.editGuide || combined, audioGuide: parsed.audioGuide || '' };
+    } catch {
+        return { editGuide: combined, audioGuide: '' };
+    }
+};
+
+/**
+ * L4: 댓글 감성 분석 — 상위 5개 영상의 인기 댓글 수집 + AI 분석
+ */
+const analyzeCommentSentiment = async (scripts: ChannelScript[]): Promise<string> => {
+    const ytScripts = scripts.filter(s => s.videoId && !s.videoId.startsWith('manual-') && !s.videoId.startsWith('file-'));
+    if (ytScripts.length === 0) return '';
+
+    const top5 = [...ytScripts].sort((a, b) => b.viewCount - a.viewCount).slice(0, 5);
+    const commentResults = await Promise.allSettled(top5.map(s => getVideoComments(s.videoId, 20)));
+
+    const allComments: string[] = [];
+    commentResults.forEach((r, i) => {
+        if (r.status === 'fulfilled' && r.value.length > 0) {
+            allComments.push(`\n[${top5[i].title}]`);
+            allComments.push(...r.value.slice(0, 15));
+        }
+    });
+
+    if (allComments.length < 5) return '';
+
+    try {
+        const res = await evolinkChat([
+            { role: 'system', content: 'YouTube 시청자 댓글 분석 전문가. 한국어로 응답.' },
+            { role: 'user', content: `아래는 YouTube 채널의 시청자 댓글입니다.\n${allComments.join('\n')}\n\n분석:\n1. 핵심 반응: 시청자가 가장 좋아하는 점 (편집? 유머? 정보? 비주얼?)\n2. 요구사항: 원하는 콘텐츠/개선사항\n3. 감정 분포: 정보적 vs 재미 vs 감동 반응 비율\n4. 커뮤니티 문화: 밈, 인사이드 조크, 반복 문구\n5. 타겟 프로필: 추정 연령대, 관심사, 기대 콘텐츠 방향` }
+        ], { temperature: 0.3, maxTokens: 2000 });
+        return res.choices?.[0]?.message?.content || '';
+    } catch (e) {
+        logger.warn('[StyleDNA] L4 댓글 분석 실패', e instanceof Error ? e.message : String(e));
+        return '';
+    }
+};
+
+/**
+ * L5: 메타데이터 패턴 분석 — 제목 공식, 태그 전략, 챕터 구조
+ */
+const analyzeMetadataPatterns = async (scripts: ChannelScript[], channelInfo: ChannelInfo): Promise<string> => {
+    if (scripts.length === 0) return '';
+
+    const titles = scripts.map((s, i) => `${i + 1}. ${s.title} (조회수 ${s.viewCount.toLocaleString()})`).join('\n');
+
+    const tagCount = new Map<string, number>();
+    scripts.forEach(s => (s.tags || []).forEach(t => tagCount.set(t, (tagCount.get(t) || 0) + 1)));
+    const topTags = [...tagCount.entries()].sort((a, b) => b[1] - a[1]).slice(0, 30).map(([t, c]) => `${t}(${c})`).join(', ');
+
+    const chapterPattern = /(\d{1,2}:\d{2}(?::\d{2})?)\s*[-–—]?\s*(.+)/gm;
+    const chapterExamples: string[] = [];
+    scripts.slice(0, 5).forEach(s => {
+        const matches = [...(s.description || '').matchAll(chapterPattern)];
+        if (matches.length > 2) {
+            chapterExamples.push(`[${s.title}]: ${matches.map(m => `${m[1]} ${m[2]}`).join(' > ')}`);
+        }
+    });
+
+    try {
+        const res = await evolinkChat([
+            { role: 'system', content: '콘텐츠 전략 분석가. 한국어로 응답.' },
+            { role: 'user', content: `채널: ${channelInfo.title} (구독자 ${channelInfo.subscriberCount.toLocaleString()}명)\n\n[제목 목록]\n${titles}\n\n[태그 클라우드]\n${topTags || '(태그 없음)'}\n\n[챕터 구조]\n${chapterExamples.join('\n') || '(챕터 없음)'}\n\n분석:\n1. 제목 공식: 반복 패턴, 숫자 사용, 이모지, 클릭베이트 요소, 공식화 가능한 템플릿 5개\n2. 태그 전략: SEO 키워드 패턴, 주제 분포\n3. 챕터 구조: 표준 영상 구조, 평균 세그먼트 수\n4. 콘텐츠 패턴: 업로드 주기, 조회수 높은 영상의 공통점` }
+        ], { temperature: 0.3, maxTokens: 2000 });
+        return res.choices?.[0]?.message?.content || '';
+    } catch (e) {
+        logger.warn('[StyleDNA] L5 메타데이터 분석 실패', e instanceof Error ? e.message : String(e));
+        return '';
+    }
+};
+
+/**
+ * 채널 스타일 DNA 종합 분석 (5-Layer 병렬)
+ * L1: 텍스트 포렌식 (기존 analyzeChannelStyle)
+ * L2: 썸네일 시각 분석 (Gemini Vision multimodal)
+ * L3: 딥 영상 분석 (Gemini v1beta YouTube URL)
+ * L4: 댓글 감성 분석
+ * L5: 메타데이터 패턴 분석
+ */
+export const analyzeChannelStyleDNA = async (
+    scripts: ChannelScript[],
+    channelInfo: ChannelInfo
+): Promise<ChannelGuideline> => {
+    logger.info('[StyleDNA] 5-Layer 채널 스타일 DNA 분석 시작', {
+        channel: channelInfo.title,
+        scriptCount: scripts.length
+    });
+
+    // 모든 레이어 병렬 실행
+    const [textResult, thumbnailResult, deepVideoResult, commentResult, metadataResult] =
+        await Promise.allSettled([
+            analyzeChannelStyle(scripts, channelInfo),   // L1: 텍스트 포렌식
+            analyzeThumbnailStyle(scripts),              // L2: 썸네일 시각
+            analyzeDeepVideoStyle(scripts),              // L3: 딥 영상
+            analyzeCommentSentiment(scripts),            // L4: 댓글 감성
+            analyzeMetadataPatterns(scripts, channelInfo) // L5: 메타데이터
+        ]);
+
+    // L1 base guideline
+    const base: ChannelGuideline = textResult.status === 'fulfilled'
+        ? textResult.value
+        : {
+            channelName: channelInfo.title,
+            tone: '', structure: '', topics: [], keywords: [],
+            targetAudience: '', avgLength: 0, hookPattern: '', closingPattern: '',
+            fullGuidelineText: '(텍스트 분석 실패)'
+        };
+
+    // DNA 레이어 결과 수집
+    const visualGuide = thumbnailResult.status === 'fulfilled' ? thumbnailResult.value : '';
+    const { editGuide = '', audioGuide = '' } = deepVideoResult.status === 'fulfilled' ? deepVideoResult.value : {};
+    const audienceInsight = commentResult.status === 'fulfilled' ? commentResult.value : '';
+    const titleFormula = metadataResult.status === 'fulfilled' ? metadataResult.value : '';
+
+    // fullGuidelineText에 DNA 레이어 추가
+    const dnaAppendix = [
+        visualGuide && `\n\n=== 시각 스타일 DNA ===\n${visualGuide}`,
+        editGuide && `\n\n=== 편집 스타일 DNA ===\n${editGuide}`,
+        audioGuide && `\n\n=== 오디오 스타일 DNA ===\n${audioGuide}`,
+        titleFormula && `\n\n=== 제목/메타데이터 공식 ===\n${titleFormula}`,
+        audienceInsight && `\n\n=== 시청자 인사이트 ===\n${audienceInsight}`,
+    ].filter(Boolean).join('');
+
+    const enhanced: ChannelGuideline = {
+        ...base,
+        fullGuidelineText: base.fullGuidelineText + dnaAppendix,
+        visualGuide,
+        editGuide,
+        audioGuide,
+        titleFormula,
+        audienceInsight,
+    };
+
+    const layerStatus = {
+        L1: textResult.status, L2: thumbnailResult.status,
+        L3: deepVideoResult.status, L4: commentResult.status, L5: metadataResult.status
+    };
+    logger.success('[StyleDNA] 채널 스타일 DNA 분석 완료', layerStatus);
+
+    return enhanced;
 };
 
 // === UTILITY ===

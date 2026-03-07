@@ -30,6 +30,8 @@ interface ChannelInputPanelProps {
   onChannelUrlChange: (url: string) => void;
   contentFormat: ContentFormat;
   onContentFormatChange: (format: ContentFormat) => void;
+  videoCount: number;
+  onVideoCountChange: (count: number) => void;
   onYoutubeAnalyze: () => void;
   // File
   uploadedFiles: ParsedFileEntry[];
@@ -44,7 +46,7 @@ interface ChannelInputPanelProps {
 
 const ChannelInputPanel: React.FC<ChannelInputPanelProps> = ({
   inputSource, onInputSourceChange,
-  channelUrl, onChannelUrlChange, contentFormat, onContentFormatChange, onYoutubeAnalyze,
+  channelUrl, onChannelUrlChange, contentFormat, onContentFormatChange, videoCount, onVideoCountChange, onYoutubeAnalyze,
   uploadedFiles, onFilesChange,
   sourceName, onSourceNameChange, onFileManualAnalyze,
   isAnalyzing, error,
@@ -195,6 +197,25 @@ const ChannelInputPanel: React.FC<ChannelInputPanelProps> = ({
                 </button>
               ))}
             </div>
+          </div>
+          <div className="flex items-center gap-4 mb-4">
+            <label className="text-sm font-medium text-gray-400 flex-shrink-0">분석 영상 수</label>
+            <div className="flex gap-1.5">
+              {[5, 10, 15, 20, 30].map(n => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => onVideoCountChange(n)}
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all ${videoCount === n
+                    ? 'bg-orange-600/20 text-orange-400 border-orange-600/50'
+                    : 'bg-gray-900/50 text-gray-400 border-gray-700/50 hover:border-gray-500 hover:text-gray-200'
+                  }`}
+                >
+                  {n}개
+                </button>
+              ))}
+            </div>
+            <span className="text-xs text-gray-500">10개 미만 권장 (정확도 vs 속도 최적)</span>
           </div>
           <div className="flex gap-3">
             <input

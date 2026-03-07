@@ -4,7 +4,7 @@ import { useNavigationStore } from '../../../stores/navigationStore';
 import { useScriptWriterStore } from '../../../stores/scriptWriterStore';
 import { showToast } from '../../../stores/uiStore';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
-import { getChannelInfo, getRecentVideosByFormat, getVideoTranscript, analyzeChannelStyle } from '../../../services/youtubeAnalysisService';
+import { getChannelInfo, getRecentVideosByFormat, getVideoTranscript, analyzeChannelStyle, analyzeChannelStyleDNA } from '../../../services/youtubeAnalysisService';
 import { getYoutubeApiKey } from '../../../services/apiService';
 import { evolinkChat } from '../../../services/evolinkService';
 import { buildInstinctTaxonomy } from '../../../data/instinctPromptUtils';
@@ -35,6 +35,7 @@ const ChannelAnalysisRoom: React.FC = () => {
   const swSetTopics = useScriptWriterStore(s => s.setTopics);
 
   const [contentFormat, setContentFormat] = useState<ContentFormat>('long');
+  const [videoCount, setVideoCount] = useState(10);
   const [channelUrl, setChannelUrl] = useState('');
   const [progress, setProgress] = useState<{ step: number; message: string } | null>(null);
   const [error, setError] = useState('');
@@ -46,7 +47,7 @@ const ChannelAnalysisRoom: React.FC = () => {
   const progressElapsed = useElapsedTimer(!!progress);
   const [selectedTopic, setSelectedTopic] = useState<LegacyTopicRecommendation | null>(null);
 
-  // YouTube 채널 분석
+  // YouTube 채널 분석 (3-Layer DNA)
   const handleChannelAnalysis = useCallback(async () => {
     if (!channelUrl.trim()) return;
     if (!getYoutubeApiKey()) {
@@ -58,8 +59,8 @@ const ChannelAnalysisRoom: React.FC = () => {
       setProgress({ step: 1, message: '채널 정보 조회 중...' });
       const info = await getChannelInfo(channelUrl);
       setChannelInfo(info);
-      setProgress({ step: 2, message: '영상 목록 수집 중...' });
-      const filtered = await getRecentVideosByFormat(info.channelId, contentFormat, 10);
+      setProgress({ step: 2, message: `영상 ${videoCount}개 수집 중...` });
+      const filtered = await getRecentVideosByFormat(info.channelId, contentFormat, videoCount);
       if (!filtered.length) { setError('해당 형식에 맞는 영상이 없습니다.'); setProgress(null); return; }
       const scripts: ChannelScript[] = [];
       for (let i = 0; i < filtered.length; i++) {
@@ -67,17 +68,17 @@ const ChannelAnalysisRoom: React.FC = () => {
         scripts.push({ ...filtered[i], transcript: await getVideoTranscript(filtered[i].videoId) });
       }
       setChannelScripts(scripts);
-      setProgress({ step: 4, message: 'AI 스타일 역설계 분석 중...' });
-      setChannelGuideline(await analyzeChannelStyle(scripts, info));
+      setProgress({ step: 4, message: 'AI 채널 스타일 DNA 다층 분석 중... (텍스트 + 시각 + 편집 + 오디오 + 댓글)' });
+      setChannelGuideline(await analyzeChannelStyleDNA(scripts, info));
       setProgress(null);
-      showToast('채널 스타일 분석이 완료되었습니다.');
+      showToast('채널 스타일 DNA 분석이 완료되었습니다.');
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error('[ChannelAnalysis] 채널 분석 실패:', e);
       setError(`채널 분석 실패: ${msg}`);
       setProgress(null);
     }
-  }, [channelUrl, contentFormat, setChannelInfo, setChannelScripts, setChannelGuideline]);
+  }, [channelUrl, contentFormat, videoCount, setChannelInfo, setChannelScripts, setChannelGuideline]);
 
   // 파일/직접입력 스타일 분석
   const handleFileManualAnalyze = useCallback(async (scripts: ChannelScript[]) => {
@@ -219,6 +220,8 @@ const ChannelAnalysisRoom: React.FC = () => {
           onChannelUrlChange={setChannelUrl}
           contentFormat={contentFormat}
           onContentFormatChange={setContentFormat}
+          videoCount={videoCount}
+          onVideoCountChange={setVideoCount}
           onYoutubeAnalyze={handleChannelAnalysis}
           uploadedFiles={uploadedFiles}
           onFilesChange={setUploadedFiles}
@@ -364,6 +367,58 @@ const ChannelAnalysisRoom: React.FC = () => {
 
           <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-700/50 max-h-48 overflow-y-auto custom-scrollbar">
             <p className="text-sm text-gray-300 whitespace-pre-wrap">{channelGuideline.fullGuidelineText}</p>
+          </div>
+        </div>
+      )}
+
+      {/* 채널 스타일 DNA */}
+      {channelGuideline && !progress && (channelGuideline.visualGuide || channelGuideline.editGuide || channelGuideline.audioGuide || channelGuideline.titleFormula || channelGuideline.audienceInsight) && (
+        <div className={card}>
+          <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+            <span className="w-7 h-7 rounded-lg bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center text-white text-xs font-bold">D</span>
+            채널 스타일 DNA
+          </h3>
+          <div className="space-y-4">
+            {channelGuideline.visualGuide && (
+              <div>
+                <label className="block text-sm font-medium text-blue-400 mb-1.5">시각 스타일 (썸네일 + 영상 화면 분석)</label>
+                <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-700/50 max-h-48 overflow-y-auto custom-scrollbar">
+                  <p className="text-sm text-gray-300 whitespace-pre-wrap">{channelGuideline.visualGuide}</p>
+                </div>
+              </div>
+            )}
+            {channelGuideline.editGuide && (
+              <div>
+                <label className="block text-sm font-medium text-amber-400 mb-1.5">편집 스타일 (컷 리듬 / 전환 / 카메라 / 색보정)</label>
+                <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-700/50 max-h-48 overflow-y-auto custom-scrollbar">
+                  <p className="text-sm text-gray-300 whitespace-pre-wrap">{channelGuideline.editGuide}</p>
+                </div>
+              </div>
+            )}
+            {channelGuideline.audioGuide && (
+              <div>
+                <label className="block text-sm font-medium text-fuchsia-400 mb-1.5">오디오 스타일 (BGM / 효과음 / 보이스톤)</label>
+                <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-700/50 max-h-48 overflow-y-auto custom-scrollbar">
+                  <p className="text-sm text-gray-300 whitespace-pre-wrap">{channelGuideline.audioGuide}</p>
+                </div>
+              </div>
+            )}
+            {channelGuideline.titleFormula && (
+              <div>
+                <label className="block text-sm font-medium text-orange-400 mb-1.5">제목 / 메타데이터 공식</label>
+                <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-700/50 max-h-48 overflow-y-auto custom-scrollbar">
+                  <p className="text-sm text-gray-300 whitespace-pre-wrap">{channelGuideline.titleFormula}</p>
+                </div>
+              </div>
+            )}
+            {channelGuideline.audienceInsight && (
+              <div>
+                <label className="block text-sm font-medium text-cyan-400 mb-1.5">시청자 인사이트 (댓글 감성 분석)</label>
+                <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-700/50 max-h-48 overflow-y-auto custom-scrollbar">
+                  <p className="text-sm text-gray-300 whitespace-pre-wrap">{channelGuideline.audienceInsight}</p>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

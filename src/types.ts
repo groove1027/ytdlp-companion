@@ -586,6 +586,7 @@ export interface ChannelScript {
   viewCount: number;
   duration: string;
   thumbnailUrl?: string;       // 영상 썸네일
+  tags?: string[];              // YouTube 태그
 }
 
 export interface ChannelGuideline {
@@ -599,6 +600,12 @@ export interface ChannelGuideline {
   hookPattern: string;         // 도입부 패턴
   closingPattern: string;      // 마무리 패턴
   fullGuidelineText: string;   // AI 생성 전체 지침서
+  // Style DNA layers (3-Layer analysis)
+  visualGuide?: string;        // 시각 스타일 DNA (썸네일/영상 시각 분석)
+  editGuide?: string;          // 편집 스타일 DNA (컷 리듬/전환/B-roll)
+  audioGuide?: string;         // 오디오 스타일 DNA (BGM/효과음/보이스톤)
+  titleFormula?: string;       // 제목/메타데이터 공식 패턴
+  audienceInsight?: string;    // 시청자 인사이트 (댓글 분석)
 }
 
 // --- 채널 분석 입력 ---
