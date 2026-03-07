@@ -374,9 +374,9 @@ const VoiceStudio: React.FC = () => {
       return;
     }
 
-    // 2순위 폴백: storeScript 단락 분할 (기존 로직)
+    // 2순위 폴백: storeScript를 자연스러운 문장 단위로 분할 (나레이션 TTS용)
     if (!storeScript.trim()) return;
-    const rawParts = storeScript.split(/\n+/).map(s => s.trim()).filter(s => s.length > 0);
+    const rawParts = splitBySentenceEndings(storeScript);
     if (rawParts.length === 0) return;
     const MAX_LINE_CHARS = 4000;
     const parts: string[] = [];

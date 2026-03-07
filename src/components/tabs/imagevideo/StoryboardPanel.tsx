@@ -1501,6 +1501,46 @@ const StoryboardPanel: React.FC = () => {
         <p className="text-xs text-gray-500 mt-2">
           프리셋 선택 시 포맷·비율·이미지 비율이 자동 설정됩니다. 이후 장면별로 수동 변경하거나 편집실에서 재조정할 수 있습니다.
         </p>
+
+        {/* 수동 포맷·비율 조정 */}
+        <div className="mt-3 pt-3 border-t border-gray-700/30 flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs text-gray-500">포맷</span>
+            {([
+              { id: VideoFormat.NANO, label: '나노', desc: '~15s' },
+              { id: VideoFormat.SHORT, label: '숏폼', desc: '~60s' },
+              { id: VideoFormat.LONG, label: '롱폼', desc: '5m+' },
+            ] as const).map(f => (
+              <button key={f.id} type="button"
+                onClick={() => useProjectStore.getState().setConfig((prev) => prev ? { ...prev, videoFormat: f.id, communityPresetId: undefined } : prev)}
+                className={`text-[11px] px-2 py-1 rounded-lg border transition-all ${
+                  config?.videoFormat === f.id
+                    ? 'bg-orange-600/20 border-orange-500/50 text-orange-300 font-bold'
+                    : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:border-orange-500/30'
+                }`}>
+                {f.label} <span className="text-gray-500 font-normal">{f.desc}</span>
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs text-gray-500">영상 비율</span>
+            {([
+              { id: AspectRatio.PORTRAIT, label: '9:16' },
+              { id: AspectRatio.LANDSCAPE, label: '16:9' },
+              { id: AspectRatio.SQUARE, label: '1:1' },
+            ] as const).map(r => (
+              <button key={r.id} type="button"
+                onClick={() => useProjectStore.getState().setConfig((prev) => prev ? { ...prev, aspectRatio: r.id, communityPresetId: undefined } : prev)}
+                className={`text-[11px] px-2 py-1 rounded-lg border transition-all ${
+                  config?.aspectRatio === r.id
+                    ? 'bg-orange-600/20 border-orange-500/50 text-orange-300 font-bold'
+                    : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:border-orange-500/30'
+                }`}>
+                {r.label}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
       {/* Scene list / grid / preview */}
