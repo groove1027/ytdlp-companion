@@ -1,7 +1,8 @@
-import React, { useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, lazy, Suspense } from 'react';
 import type { SyntheticListenerMap } from '@dnd-kit/core/dist/hooks/utilities';
-import type { Scene, ScriptLine, UnifiedSceneTiming, SceneEffectConfig, SceneSubtitleConfig, SceneAudioConfig, SceneOverlayConfig } from '../../../types';
+import type { Scene, ScriptLine, UnifiedSceneTiming, SceneEffectConfig, SceneSubtitleConfig, SceneAudioConfig, SceneOverlayConfig, CommunityMediaItem } from '../../../types';
 import { useEditRoomStore } from '../../../stores/editRoomStore';
+import { useProjectStore } from '../../../stores/projectStore';
 import { useSoundStudioStore } from '../../../stores/soundStudioStore';
 import SceneMediaPreview from './SceneMediaPreview';
 import SceneTextInfo from './SceneTextInfo';
@@ -9,6 +10,8 @@ import SceneNarrationPlayer from './SceneNarrationPlayer';
 import SceneSubtitleEditor from './SceneSubtitleEditor';
 import SceneEffectPicker from './SceneEffectPicker';
 import OverlayPicker, { OVERLAY_PRESETS } from './OverlayPicker';
+
+const MediaSearchModal = lazy(() => import('../../MediaSearchModal'));
 
 // 접힌 상태 배지용 한국어 레이블
 const PZ_LABELS: Record<string, string> = {
@@ -47,6 +50,7 @@ const EditRoomSceneCard: React.FC<EditRoomSceneCardProps> = ({
   isLast,
   dragListeners,
 }) => {
+  const [showMediaSearch, setShowMediaSearch] = useState(false);
   const setSceneEffect = useEditRoomStore((s) => s.setSceneEffect);
   const setSceneSubtitle = useEditRoomStore((s) => s.setSceneSubtitle);
   const setSceneAudioSettings = useEditRoomStore((s) => s.setSceneAudioSettings);
@@ -237,8 +241,30 @@ const EditRoomSceneCard: React.FC<EditRoomSceneCardProps> = ({
                 🔗 다음 장면 병합
               </button>
             )}
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); setShowMediaSearch(true); }}
+              className="text-sm text-gray-500 hover:text-cyan-400 transition-colors px-2 py-1 rounded hover:bg-gray-700/50 ml-auto"
+            >
+              🔍 미디어 검색
+            </button>
           </div>
         </div>
+      )}
+      {showMediaSearch && (
+        <Suspense fallback={null}>
+          <MediaSearchModal
+            isOpen={showMediaSearch}
+            onClose={() => setShowMediaSearch(false)}
+            onSelect={(item: CommunityMediaItem) => {
+              useProjectStore.getState().updateScene(scene.id, {
+                imageUrl: item.type === 'image' ? item.url : scene.imageUrl,
+                communityMediaItem: item,
+              });
+            }}
+            initialQuery={scene.scriptText?.split(/[,.\s]+/).slice(0, 3).join(' ') || ''}
+          />
+        </Suspense>
       )}
     </div>
   );

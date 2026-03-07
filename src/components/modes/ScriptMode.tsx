@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { AspectRatio, ProjectConfig, VoiceName, ImageModel, VideoFormat, VideoModel, CharacterAppearance, PreGeneratedImage, Scene, ScriptModeState } from '../../types';
-import { RATIOS, IMAGE_MODELS, VIDEO_FORMATS, PRICING } from '../../constants';
+import { RATIOS, IMAGE_MODELS, VIDEO_FORMATS, PRICING, COMMUNITY_PRESETS } from '../../constants';
 import VisualStylePicker, { getVisualStyleLabel } from '../VisualStylePicker';
 import { estimateSceneCount, analyzeScriptContext, generateStylePreviewPrompts, generateSceneImage, analyzeImageUnified } from '../../services/geminiService';
 import { uploadMediaToHosting } from '../../services/uploadService';
@@ -995,6 +995,39 @@ const ScriptMode: React.FC<ScriptModeProps> = ({
             <div className="border border-gray-700 rounded-xl p-6 bg-gray-800 animate-fade-in-up">
                 <h3 className="text-2xl font-bold text-white mb-6 border-b border-gray-700 pb-3">2. 포맷 및 설정 (Format & Target)</h3>
                 <div className="space-y-6">
+                    {/* 커뮤니티형(썰형) 프리셋 퀵 선택 */}
+                    <div>
+                        <label className="block text-base font-bold text-gray-400 mb-2">썰형/커뮤형 프리셋 (원클릭 설정)</label>
+                        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+                            {COMMUNITY_PRESETS.map(preset => (
+                                <button
+                                    key={preset.id}
+                                    type="button"
+                                    onClick={() => {
+                                        if (preset.id !== 'custom') {
+                                            setVideoFormat(preset.videoFormat);
+                                            setAspectRatio(preset.aspectRatio);
+                                        }
+                                    }}
+                                    className={`text-left p-3 rounded-xl border transition-all ${
+                                        preset.id === 'custom'
+                                            ? 'bg-gray-800 border-gray-600 hover:bg-gray-700'
+                                            : 'bg-cyan-900/20 border-cyan-700/30 hover:bg-cyan-800/30 hover:border-cyan-500/50'
+                                    }`}
+                                >
+                                    <div className="text-sm font-bold text-cyan-300">{preset.label}</div>
+                                    <div className="text-xs text-gray-400 mt-1 leading-relaxed">{preset.description}</div>
+                                    {preset.id !== 'custom' && (
+                                        <div className="flex gap-1 mt-2 flex-wrap">
+                                            <span className="text-[10px] bg-cyan-900/40 text-cyan-400 px-1.5 py-0.5 rounded">{preset.avgCutSec}s/컷</span>
+                                            <span className="text-[10px] bg-gray-700 text-gray-300 px-1.5 py-0.5 rounded">SFX {preset.sfxDensity === 'high' ? '폭격' : preset.sfxDensity === 'medium' ? '보통' : '최소'}</span>
+                                        </div>
+                                    )}
+                                </button>
+                            ))}
+                        </div>
+                        <p className="text-xs text-gray-500 mt-1.5">프리셋 선택 시 포맷/비율이 자동 설정됩니다. 이미지/영상 스토리보드에서 🔍미디어 버튼으로 밈/짤/효과음을 장면에 할당하세요.</p>
+                    </div>
                     <div className="grid grid-cols-2 gap-6">
                         <div>
                             <label className="block text-base font-bold text-gray-400 mb-2">자동 단락 나누기</label>

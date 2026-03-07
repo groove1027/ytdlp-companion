@@ -205,6 +205,9 @@ export interface Scene {
   grokDuration?: '6' | '10';
   grokSpeechMode?: boolean;
 
+  /** 커뮤니티 미디어 (밈/짤/일러스트/효과음) — 기존 이미지 대신 사용 */
+  communityMediaItem?: CommunityMediaItem;
+
   startTime?: number;
   endTimeStamp?: number;
   audioScript?: string;
@@ -474,6 +477,31 @@ export interface ExportManifest {
 
 /** 앱 메인 탭 네비게이션 */
 export type AppTab = 'project' | 'channel-analysis' | 'script-writer' | 'sound-studio' | 'image-video' | 'edit-room' | 'upload' | 'thumbnail-studio' | 'character-twist' | 'image-script-upload';
+
+// --- Media Search (Community/Meme Integration) ---
+export type MediaSource = 'klipy' | 'irasutoya' | 'google' | 'myinstants' | 'sfx_lab';
+export type MediaType = 'image' | 'sfx';
+
+export interface CompactMediaRecord {
+  i: string;       // id
+  t: number;       // 0=image, 1=sfx
+  u: string;       // thumbnail or url
+  U: string;       // original url
+  n: string;       // title
+  g: string[];     // tags
+  f: string;       // format
+}
+
+export interface CommunityMediaItem {
+  id: string;
+  type: MediaType;
+  source: MediaSource;
+  url: string;
+  thumbnailUrl: string;
+  title: string;
+  tags: string[];
+  format: string;
+}
 
 /** 채널분석 서브 탭 */
 export type ChannelAnalysisSubTab = 'keyword-lab' | 'channel-room';

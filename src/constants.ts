@@ -80,6 +80,85 @@ export const VOICES = [
   { id: VoiceName.ZEPHYR, label: 'Zephyr (여성, 부드러움)' },
 ];
 
+/**
+ * 커뮤니티형(썰형) 영상 크리에이터 프리셋
+ *
+ * 분석 원본: YouTube Shorts 군림보/강석주/김세달 채널
+ * 공통 특징 (공장형 다채널 네트워크):
+ * - 동일한 AI TTS 남성 목소리 (클로바/타입캐스트 추정)
+ * - 100% 동일한 자막 프리셋: 초대형 흰색 폰트 + 두꺼운 검정 Stroke, 상단 노란색 대제목
+ * - 가우시안 블러 배경 + 중앙 이미지 레이아웃
+ * - 유튜브 쇼츠 UI 회피 안전영역(Safe Zone) 자막 배치
+ */
+export interface CommunityPreset {
+  id: string;
+  label: string;
+  description: string;
+  videoFormat: VideoFormat;
+  aspectRatio: AspectRatio;
+  /** 우선 미디어 소스: klipy=밈/짤, irasutoya=일러스트, mixed=혼합, news=보도사진+밈 */
+  mediaSource: 'klipy' | 'irasutoya' | 'mixed' | 'news';
+  /** 평균 컷 전환 속도 (초/컷) */
+  avgCutSec: number;
+  /** 효과음 밀도: low=최소한, medium=컷 전환마다, high=효과음 폭격 */
+  sfxDensity: 'low' | 'medium' | 'high';
+  /** 편집 톤 */
+  tone: string;
+  /** 밈 사용 전략 설명 */
+  memeStrategy: string;
+}
+
+export const COMMUNITY_PRESETS: CommunityPreset[] = [
+  {
+    id: 'gunrimbo',
+    label: '군림보 스타일',
+    description: '1.8초/컷, 이라스토야+밈+AI이미지, 정보형 스토리텔링',
+    videoFormat: VideoFormat.NANO,
+    aspectRatio: AspectRatio.PORTRAIT,
+    mediaSource: 'mixed',
+    avgCutSec: 1.8,
+    sfxDensity: 'medium',
+    tone: '정보형 스토리텔링 (궁금증 유발 → 데이터 → 반전)',
+    memeStrategy: '이라스토야 일러스트 + 페페 밈 + AI 생성 이미지 혼합, 지도/인포그래픽 삽입',
+  },
+  {
+    id: 'kangseokju',
+    label: '강석주 스타일',
+    description: '1.5초/컷, 밈 폭격형, 리액션 도파민 편집',
+    videoFormat: VideoFormat.NANO,
+    aspectRatio: AspectRatio.PORTRAIT,
+    mediaSource: 'klipy',
+    avgCutSec: 1.5,
+    sfxDensity: 'high',
+    tone: '리액션형 도파민 (위기→기회→대성공 + 밈 범벅)',
+    memeStrategy: '감정 아웃소싱: 설명 대신 바비힐/도지/디카프리오 짤로 감정 0.1초 전달, 효과음 폭격',
+  },
+  {
+    id: 'kimsedal',
+    label: '김세달 스타일',
+    description: '2.1초/컷, 보도사진+풍자밈, 블랙코미디형',
+    videoFormat: VideoFormat.NANO,
+    aspectRatio: AspectRatio.PORTRAIT,
+    mediaSource: 'news',
+    avgCutSec: 2.1,
+    sfxDensity: 'medium',
+    tone: '정보형 블랙코미디 (무거운 빌드업 → 마지막 합성짤로 터뜨림)',
+    memeStrategy: '보도사진/뉴스 캡처 중심 + 후반부 커뮤니티 합성짤로 풍자, 정적(Silence)으로 코미디 극대화',
+  },
+  {
+    id: 'custom',
+    label: '커스텀',
+    description: '직접 설정',
+    videoFormat: VideoFormat.SHORT,
+    aspectRatio: AspectRatio.PORTRAIT,
+    mediaSource: 'mixed',
+    avgCutSec: 2.0,
+    sfxDensity: 'medium',
+    tone: '자유',
+    memeStrategy: '',
+  },
+];
+
 export const VISUAL_STYLES = [
   {
     category: '영화 & 드라마 (Movie & Drama) [실사 / LIVE ACTION]',

@@ -1,8 +1,11 @@
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, lazy, Suspense } from 'react';
 import { Scene, AspectRatio, VideoFormat, VideoModel } from '../types';
+import type { CommunityMediaItem } from '../types';
 import { useProjectStore } from '../stores/projectStore';
 import { useUIStore } from '../stores/uiStore';
+
+const MediaSearchModal = lazy(() => import('./MediaSearchModal'));
 
 interface StoryboardSceneProps {
   scene: Scene;
@@ -44,6 +47,7 @@ const StoryboardSceneInner: React.FC<StoryboardSceneProps> = ({
 }) => {
   const [isAutoPrompting, setIsAutoPrompting] = useState(false);
   const [isEditingPrompt, setIsEditingPrompt] = useState(false);
+  const [showMediaSearch, setShowMediaSearch] = useState(false);
   const [editPromptText, setEditPromptText] = useState(scene.visualPrompt);
   const [showVisualPrompt, setShowVisualPrompt] = useState(false);
 
@@ -219,6 +223,7 @@ const StoryboardSceneInner: React.FC<StoryboardSceneProps> = ({
            )}
            {scene.isNativeHQ && <span className="text-sm bg-orange-600/20 text-orange-300 px-2 py-0.5 rounded border border-orange-500/30 font-bold flex-shrink-0">🚀 Native HQ</span>}
            {scene.isInfographic && <span className="text-sm bg-blue-600/20 text-blue-300 px-2 py-0.5 rounded border border-blue-500/30 font-bold flex-shrink-0">📊 Info</span>}
+           {scene.communityMediaItem && <span className="text-sm bg-cyan-600/20 text-cyan-300 px-2 py-0.5 rounded border border-cyan-500/30 font-bold flex-shrink-0" title={scene.communityMediaItem.title}>🎨 {scene.communityMediaItem.source}</span>}
            {scene.isLoopMode && <span className="text-sm bg-teal-600/20 text-teal-300 px-2 py-0.5 rounded border border-teal-500/30 font-bold flex-shrink-0 flex items-center gap-1">🔄 Loop</span>}
            {scene.v2vTotalSegments && scene.v2vTotalSegments > 1 && (
                <span className="text-sm bg-purple-600/20 text-purple-300 px-2 py-0.5 rounded border border-purple-500/30 font-bold flex-shrink-0">
@@ -279,6 +284,7 @@ const StoryboardSceneInner: React.FC<StoryboardSceneProps> = ({
                           <div className="absolute bottom-0 left-0 right-0 bg-black/80 backdrop-blur-sm p-2 flex justify-center gap-2 translate-y-full group-hover/image:translate-y-0 transition-transform duration-200 z-30">
                                <button onClick={(e) => { e.stopPropagation(); flushAndGenerate(); }} className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-white text-sm font-bold rounded flex items-center gap-1 border border-gray-600">🔄 재생성</button>
                                <button onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }} className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-white text-sm font-bold rounded flex items-center gap-1 border border-gray-600">📤 업로드</button>
+                               <button onClick={(e) => { e.stopPropagation(); setShowMediaSearch(true); }} className="px-3 py-1.5 bg-cyan-700 hover:bg-cyan-600 text-white text-sm font-bold rounded flex items-center gap-1 border border-cyan-500/50 shadow-lg">🔍 미디어</button>
                                <button onClick={(e) => { e.stopPropagation(); setEditPromptText(scene.visualPrompt); setIsEditingPrompt(true); }} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold rounded flex items-center gap-1 border border-blue-500 shadow-lg">✏️ 수정하기</button>
                           </div>
                       )}
@@ -298,7 +304,10 @@ const StoryboardSceneInner: React.FC<StoryboardSceneProps> = ({
                       ) : (
                           <span className="text-sm">이미지 없음</span>
                       )}
-                      <button onClick={(e) => { e.stopPropagation(); flushAndGenerate(); }} className="mt-2 px-3 py-1 bg-blue-900/30 hover:bg-blue-800/50 text-blue-300 text-sm rounded border border-blue-800">생성하기</button>
+                      <div className="flex gap-2 mt-2">
+                        <button onClick={(e) => { e.stopPropagation(); flushAndGenerate(); }} className="px-3 py-1 bg-blue-900/30 hover:bg-blue-800/50 text-blue-300 text-sm rounded border border-blue-800">생성하기</button>
+                        <button onClick={(e) => { e.stopPropagation(); setShowMediaSearch(true); }} className="px-3 py-1 bg-cyan-900/30 hover:bg-cyan-800/50 text-cyan-300 text-sm rounded border border-cyan-800">🔍 미디어</button>
+                      </div>
                   </div>
               )}
               <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={(e) => e.target.files?.[0] && onUploadImage(scene.id, e.target.files[0])} />
@@ -414,6 +423,21 @@ const StoryboardSceneInner: React.FC<StoryboardSceneProps> = ({
           <div className="flex justify-end gap-2 pt-1 flex-wrap"><button onClick={() => useProjectStore.getState().updateScene(scene.id, { requiresTextRendering: !scene.requiresTextRendering })} className={`px-2 py-1 rounded text-xs border ${scene.requiresTextRendering ? 'bg-green-900/30 border-green-600 text-green-400' : 'bg-gray-800 border-gray-600 text-gray-500'}`}>{scene.requiresTextRendering ? '텍스트 모드 ON' : '텍스트 모드 OFF'}</button><button onClick={() => onInjectCharacter(scene.id)} className="px-2 py-1 rounded text-xs border bg-gray-800 border-gray-600 text-gray-400 hover:text-white">캐릭터 고정</button></div>
       </div>
     </div>
+    {showMediaSearch && (
+      <Suspense fallback={null}>
+        <MediaSearchModal
+          isOpen={showMediaSearch}
+          onClose={() => setShowMediaSearch(false)}
+          onSelect={(item: CommunityMediaItem) => {
+            useProjectStore.getState().updateScene(scene.id, {
+              imageUrl: item.type === 'image' ? item.url : scene.imageUrl,
+              communityMediaItem: item,
+            });
+          }}
+          initialQuery={scene.scriptText.split(/[,.\s]+/).slice(0, 3).join(' ')}
+        />
+      </Suspense>
+    )}
   </div>
   );
 };
