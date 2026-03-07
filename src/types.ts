@@ -481,7 +481,21 @@ export interface ExportManifest {
 // ============================================================
 
 /** 앱 메인 탭 네비게이션 */
-export type AppTab = 'project' | 'channel-analysis' | 'script-writer' | 'sound-studio' | 'image-video' | 'edit-room' | 'upload' | 'thumbnail-studio' | 'character-twist' | 'image-script-upload';
+export type AppTab = 'project' | 'channel-analysis' | 'script-writer' | 'sound-studio' | 'image-video' | 'edit-room' | 'upload' | 'thumbnail-studio' | 'character-twist' | 'image-script-upload' | 'ppt-master' | 'detail-page';
+
+// --- Detail Page Builder ---
+export interface DetailImageSegment {
+  id: string;
+  title: string;
+  logicalSections: string[];
+  keyMessage: string;
+  visualPrompt: string;
+  imageUrl?: string;
+  isGenerating?: boolean;
+  generationStatus?: string;
+}
+
+export type PageLength = 5 | 7 | 9 | 'auto' | 'custom';
 
 // --- Media Search (Community/Meme Integration) ---
 export type MediaSource = 'klipy' | 'irasutoya' | 'google' | 'myinstants' | 'sfx_lab';
