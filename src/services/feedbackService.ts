@@ -27,7 +27,12 @@ async function uploadScreenshotToCloudinary(base64DataUri: string): Promise<stri
     return data.secure_url;
 }
 
-export const submitFeedback = async (data: FeedbackData): Promise<boolean> => {
+export interface FeedbackResult {
+    issueNumber: number;
+    issueUrl: string;
+}
+
+export const submitFeedback = async (data: FeedbackData): Promise<FeedbackResult> => {
     // 1. 스크린샷이 있으면 Cloudinary에 업로드
     let screenshotUrls: string[] = [];
     if (data.screenshots && data.screenshots.length > 0) {
@@ -61,5 +66,6 @@ export const submitFeedback = async (data: FeedbackData): Promise<boolean> => {
         throw new Error(`피드백 전송 실패: ${errorData.error || response.statusText}`);
     }
 
-    return true;
+    const result = await response.json() as { issueNumber: number; issueUrl: string };
+    return { issueNumber: result.issueNumber, issueUrl: result.issueUrl };
 };

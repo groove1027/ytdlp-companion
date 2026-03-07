@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useUIStore } from '../stores/uiStore';
 import { useProjectStore } from '../stores/projectStore';
-import { submitFeedback } from '../services/feedbackService';
+import { submitFeedback, FeedbackResult } from '../services/feedbackService';
 import { FeedbackType } from '../types';
 import type { FeedbackData, FeedbackScreenshot } from '../types';
 
@@ -37,6 +37,7 @@ const FeedbackModal: React.FC = () => {
     const [screenshots, setScreenshots] = useState<FeedbackScreenshot[]>([]);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isDragOver, setIsDragOver] = useState(false);
+    const [submitResult, setSubmitResult] = useState<FeedbackResult | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     // ESC 키로 닫기
@@ -112,6 +113,7 @@ const FeedbackModal: React.FC = () => {
         setEmail('');
         setScreenshots([]);
         setSelectedType(FeedbackType.BUG);
+        setSubmitResult(null);
     };
 
     const handleSubmit = async () => {
@@ -132,11 +134,8 @@ const FeedbackModal: React.FC = () => {
                 screenshots: screenshots.length > 0 ? screenshots : undefined,
             };
 
-            await submitFeedback(data);
-
-            setToast({ show: true, message: '피드백이 접수되었습니다' });
-            setTimeout(() => setToast(null), 3000);
-            handleClose();
+            const result = await submitFeedback(data);
+            setSubmitResult(result);
         } catch (e: unknown) {
             const errorMsg = e instanceof Error ? e.message : '알 수 없는 오류';
             setToast({ show: true, message: `피드백 전송 실패: ${errorMsg}` });
@@ -155,6 +154,46 @@ const FeedbackModal: React.FC = () => {
                 className="bg-gray-800 rounded-xl border border-gray-700 shadow-2xl w-full max-w-lg p-6 animate-fade-in-up max-h-[90vh] overflow-y-auto"
                 onClick={(e) => e.stopPropagation()}
             >
+                {/* 성공 화면 */}
+                {submitResult ? (
+                    <div className="text-center py-6 space-y-5">
+                        <div className="w-16 h-16 mx-auto rounded-full bg-emerald-500/20 border-2 border-emerald-400 flex items-center justify-center">
+                            <svg className="w-8 h-8 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                            </svg>
+                        </div>
+                        <div>
+                            <h2 className="text-xl font-bold text-white mb-2">피드백이 접수되었습니다!</h2>
+                            <p className="text-gray-400 text-sm leading-relaxed">
+                                소중한 의견 감사합니다.<br />
+                                전달해 주신 내용을 검토하여 빠르게 반영하겠습니다.
+                            </p>
+                        </div>
+                        <div className="bg-gray-900/70 rounded-lg p-4 border border-gray-700 text-left space-y-2">
+                            <div className="flex items-center gap-2 text-sm">
+                                <span className="text-gray-500">접수 번호:</span>
+                                <span className="text-blue-400 font-mono font-bold">#{submitResult.issueNumber}</span>
+                            </div>
+                            <div className="flex items-center gap-2 text-sm">
+                                <span className="text-gray-500">처리 상태:</span>
+                                <span className="inline-flex items-center gap-1 text-emerald-400 font-bold">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                                    접수 완료
+                                </span>
+                            </div>
+                            <p className="text-xs text-gray-600 pt-1 border-t border-gray-700/50">
+                                진행 상황은 접수 번호로 확인할 수 있습니다
+                            </p>
+                        </div>
+                        <button
+                            onClick={handleClose}
+                            className="w-full py-3 bg-gray-700 hover:bg-gray-600 text-gray-200 rounded-lg text-base font-bold transition-colors"
+                        >
+                            닫기
+                        </button>
+                    </div>
+                ) : <>
+
                 {/* Header */}
                 <div className="flex justify-between items-center mb-5">
                     <h2 className="text-xl font-bold text-white flex items-center gap-2">
@@ -339,6 +378,8 @@ const FeedbackModal: React.FC = () => {
                         </button>
                     </div>
                 </div>
+
+                </>}
             </div>
         </div>
     );
