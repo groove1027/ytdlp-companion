@@ -27,6 +27,9 @@ Thumbs.db
 *.tmp
 .temp/
 
+# Build output
+dist/
+
 # Node modules (if using Node.js projects)
 node_modules/
 
