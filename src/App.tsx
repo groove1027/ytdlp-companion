@@ -191,8 +191,13 @@ const App: React.FC = () => {
 
       const lastId = localStorage.getItem('last-project-id');
       if (!lastId) {
-        // 저장된 프로젝트 ID 없음 → 대시보드로 이동
-        useNavigationStore.getState().goToDashboard();
+        // 저장된 프로젝트 ID 없음 → 현재 탭이 프로젝트가 아니면 자동 생성, 아니면 대시보드
+        const currentTab = useNavigationStore.getState().activeTab;
+        if (currentTab !== 'project') {
+          useProjectStore.getState().newProject();
+        } else {
+          useNavigationStore.getState().goToDashboard();
+        }
         return;
       }
 
@@ -214,23 +219,14 @@ const App: React.FC = () => {
     restoreLastProject();
   }, []);
 
-  // [FIX] 프로젝트 필요 탭인데 프로젝트 없으면 대시보드로 복귀 + 안내 메시지
+  // [UX] 프로젝트 필요 탭인데 프로젝트 없으면 자동 생성 — 어떤 탭이든 바로 작업 시작 가능
   useEffect(() => {
-    const projectRequiredTabs: { id: AppTab; label: string }[] = [
-      { id: 'channel-analysis', label: '채널분석' },
-      { id: 'script-writer', label: '대본작성' },
-      { id: 'sound-studio', label: '사운드스튜디오' },
-      { id: 'image-video', label: '이미지/영상' },
-      { id: 'edit-room', label: '편집실' },
-    ];
-    const matched = projectRequiredTabs.find(t => t.id === activeTab);
-    if (matched && !config) {
-      // 약간의 딜레이: 위의 restoreLastProject가 완료될 시간을 줌
+    if (activeTab !== 'project' && !config) {
       const timer = setTimeout(() => {
         if (!useProjectStore.getState().config) {
-          useNavigationStore.getState().goToDashboardWithRedirect(matched.label);
+          useProjectStore.getState().newProject();
         }
-      }, 1500);
+      }, 300);
       return () => clearTimeout(timer);
     }
   }, [activeTab, config]);

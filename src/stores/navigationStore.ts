@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { AppTab } from '../types';
+import { useProjectStore } from './projectStore';
 
 const NAV_STORAGE_KEY = 'navigation-state';
 
@@ -63,6 +64,11 @@ export const useNavigationStore = create<NavigationStore>((set) => ({
       saveState({ activeTab: tab, showProjectDashboard: true });
       set({ activeTab: tab, showProjectDashboard: true });
     } else {
+      // [UX] 프로젝트 미생성 시 자동 생성 — 어떤 탭이든 바로 작업 시작 가능
+      const { config } = useProjectStore.getState();
+      if (!config) {
+        useProjectStore.getState().newProject();
+      }
       saveState({ activeTab: tab });
       set({ activeTab: tab });
     }
