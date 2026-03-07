@@ -8,12 +8,109 @@ interface ApiKeySettingsProps {
     onClose: () => void;
 }
 
+// KEY=VALUE 및 JSON 포맷 파싱 → keys 객체로 변환
+const KEY_ALIASES: Record<string, string> = {
+    evolink: 'evolink', evolink_ai: 'evolink',
+    kie: 'kie', kie_ai: 'kie',
+    laozhang: 'laozhang', laozhang_ai: 'laozhang',
+    cloud_name: 'cloudName', cloudname: 'cloudName', cloudinary_name: 'cloudName',
+    upload_preset: 'uploadPreset', uploadpreset: 'uploadPreset', cloudinary_preset: 'uploadPreset',
+    typecast: 'typecast', typecast_ai: 'typecast',
+    youtube: 'youtubeApiKey', youtube_api: 'youtubeApiKey', youtube_api_key: 'youtubeApiKey', youtubeapikey: 'youtubeApiKey',
+};
+
+const EXPORT_MAP: [string, string][] = [
+    ['EVOLINK', 'evolink'],
+    ['KIE', 'kie'],
+    ['LAOZHANG', 'laozhang'],
+    ['CLOUD_NAME', 'cloudName'],
+    ['UPLOAD_PRESET', 'uploadPreset'],
+    ['TYPECAST', 'typecast'],
+    ['YOUTUBE_API_KEY', 'youtubeApiKey'],
+];
+
+const parseBulkText = (text: string): Record<string, string> => {
+    const result: Record<string, string> = {};
+    const trimmed = text.trim();
+
+    // JSON 시도
+    if (trimmed.startsWith('{')) {
+        try {
+            const json = JSON.parse(trimmed);
+            for (const [k, v] of Object.entries(json)) {
+                if (typeof v !== 'string') continue;
+                const normalized = k.toLowerCase().replace(/[\s\-]/g, '_');
+                const mapped = KEY_ALIASES[normalized];
+                if (mapped) result[mapped] = v;
+            }
+            return result;
+        } catch { /* JSON 파싱 실패 시 KEY=VALUE로 시도 */ }
+    }
+
+    // KEY=VALUE 포맷 (한 줄에 하나)
+    for (const line of trimmed.split('\n')) {
+        const eqIdx = line.indexOf('=');
+        if (eqIdx < 1) continue;
+        const rawKey = line.slice(0, eqIdx).trim();
+        const value = line.slice(eqIdx + 1).trim();
+        if (!value) continue;
+        const normalized = rawKey.toLowerCase().replace(/[\s\-]/g, '_');
+        const mapped = KEY_ALIASES[normalized];
+        if (mapped) result[mapped] = value;
+    }
+    return result;
+};
+
 const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
     const [keys, setKeys] = useState({ kie: '', laozhang: '', cloudName: '', uploadPreset: '', gemini: '', apimart: '', removeBg: '', wavespeed: '', xai: '', evolink: '', youtubeApiKey: '', typecast: '' });
     const [showPassword, setShowPassword] = useState(false);
+    const [showBulk, setShowBulk] = useState(false);
+    const [bulkText, setBulkText] = useState('');
+    const [bulkMsg, setBulkMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+
+    const handleBulkImport = () => {
+        if (!bulkText.trim()) { setBulkMsg({ type: 'err', text: '내용을 입력해주세요.' }); return; }
+        const parsed = parseBulkText(bulkText);
+        const count = Object.keys(parsed).length;
+        if (count === 0) { setBulkMsg({ type: 'err', text: '인식된 키가 없습니다. 포맷을 확인해주세요.' }); return; }
+        setKeys(prev => ({ ...prev, ...parsed }));
+        setBulkMsg({ type: 'ok', text: `${count}개 키가 입력란에 반영되었습니다. "설정 저장 및 적용"을 눌러주세요.` });
+    };
+
+    const handleBulkExport = async () => {
+        const lines = EXPORT_MAP
+            .filter(([, field]) => keys[field as keyof typeof keys])
+            .map(([label, field]) => `${label}=${keys[field as keyof typeof keys]}`);
+        if (lines.length === 0) { showToast('내보낼 키가 없습니다.'); return; }
+        await navigator.clipboard.writeText(lines.join('\n'));
+        showToast(`${lines.length}개 키가 클립보드에 복사되었습니다.`);
+    };
+
+    const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+            const text = reader.result as string;
+            setBulkText(text);
+            const parsed = parseBulkText(text);
+            const count = Object.keys(parsed).length;
+            if (count > 0) {
+                setKeys(prev => ({ ...prev, ...parsed }));
+                setBulkMsg({ type: 'ok', text: `${file.name}에서 ${count}개 키를 불러왔습니다.` });
+            } else {
+                setBulkMsg({ type: 'err', text: '파일에서 인식된 키가 없습니다.' });
+            }
+        };
+        reader.readAsText(file);
+        e.target.value = '';
+    };
 
     useEffect(() => {
         if (isOpen) {
+            setShowBulk(false);
+            setBulkText('');
+            setBulkMsg(null);
             const stored = getStoredKeys();
             setKeys({
                 kie: stored.kie,
@@ -61,6 +158,46 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
                     <button onClick={() => setShowPassword(!showPassword)} className="text-sm text-gray-400 hover:text-white underline">
                         {showPassword ? '키 숨기기' : '키 표시하기'}
                     </button>
+                </div>
+
+                {/* ── 일괄 가져오기/내보내기 ── */}
+                <div className="mb-5">
+                    <button
+                        onClick={() => { setShowBulk(!showBulk); setBulkMsg(null); }}
+                        className="w-full flex items-center justify-between px-3 py-2 bg-gray-900 hover:bg-gray-850 border border-gray-700 rounded-lg text-sm text-gray-300 transition-all"
+                    >
+                        <span className="flex items-center gap-2 font-bold">📋 일괄 가져오기 / 내보내기</span>
+                        <span className={`text-gray-500 transition-transform ${showBulk ? 'rotate-180' : ''}`}>▼</span>
+                    </button>
+
+                    {showBulk && (
+                        <div className="mt-2 p-3 bg-gray-900 border border-gray-700 rounded-lg space-y-3">
+                            <p className="text-xs text-gray-500 leading-relaxed">
+                                텍스트 파일이나 메모에 저장해둔 키를 한번에 붙여넣으세요.<br/>
+                                <code className="text-gray-400">KEY=값</code> 형식 (줄당 하나) 또는 JSON을 지원합니다.
+                            </p>
+                            <textarea
+                                value={bulkText}
+                                onChange={(e) => { setBulkText(e.target.value); setBulkMsg(null); }}
+                                placeholder={`EVOLINK=sk-xxx\nKIE=xxx\nLAOZHANG=sk-xxx\nCLOUD_NAME=xxx\nUPLOAD_PRESET=xxx\nTYPECAST=xxx\nYOUTUBE_API_KEY=xxx`}
+                                rows={5}
+                                className="w-full bg-gray-950 border border-gray-600 rounded-lg p-2.5 text-sm text-gray-200 placeholder-gray-700 font-mono focus:outline-none focus:border-blue-500/50 resize-none"
+                            />
+                            {bulkMsg && (
+                                <p className={`text-xs ${bulkMsg.type === 'ok' ? 'text-green-400' : 'text-red-400'}`}>
+                                    {bulkMsg.type === 'ok' ? '✓' : '✗'} {bulkMsg.text}
+                                </p>
+                            )}
+                            <div className="flex gap-2">
+                                <button onClick={handleBulkImport} className="flex-1 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-bold transition-all">붙여넣기 적용</button>
+                                <label className="flex-1 py-2 bg-gray-700 hover:bg-gray-600 text-gray-200 rounded-lg text-sm font-bold transition-all text-center cursor-pointer">
+                                    파일 업로드
+                                    <input type="file" accept=".txt,.json,.env,.cfg" onChange={handleFileUpload} className="hidden" />
+                                </label>
+                                <button onClick={handleBulkExport} className="flex-1 py-2 bg-gray-700 hover:bg-gray-600 text-gray-200 rounded-lg text-sm font-bold transition-all">현재 설정 복사</button>
+                            </div>
+                        </div>
+                    )}
                 </div>
 
                 {/* ── 필수 API ── */}
