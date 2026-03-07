@@ -8,16 +8,23 @@ interface ApiKeySettingsProps {
     onClose: () => void;
 }
 
-// KEY=VALUE 및 JSON 포맷 파싱 → keys 객체로 변환
-const KEY_ALIASES: Record<string, string> = {
-    evolink: 'evolink', evolink_ai: 'evolink',
-    kie: 'kie', kie_ai: 'kie',
-    laozhang: 'laozhang', laozhang_ai: 'laozhang',
-    cloud_name: 'cloudName', cloudname: 'cloudName', cloudinary_name: 'cloudName',
-    upload_preset: 'uploadPreset', uploadpreset: 'uploadPreset', cloudinary_preset: 'uploadPreset',
-    typecast: 'typecast', typecast_ai: 'typecast',
-    youtube: 'youtubeApiKey', youtube_api: 'youtubeApiKey', youtube_api_key: 'youtubeApiKey', youtubeapikey: 'youtubeApiKey',
-};
+// ── 스마트 감지 시스템 ──
+
+interface DetectedKey {
+    value: string;
+    service: string; // keys field name or ''
+    method: 'label' | 'pattern' | 'guess';
+}
+
+const SERVICE_OPTIONS = [
+    { value: 'evolink', label: 'Evolink AI' },
+    { value: 'kie', label: 'KIE' },
+    { value: 'laozhang', label: 'Laozhang' },
+    { value: 'cloudName', label: 'Cloud Name' },
+    { value: 'uploadPreset', label: 'Upload Preset' },
+    { value: 'typecast', label: 'Typecast' },
+    { value: 'youtubeApiKey', label: 'YouTube API' },
+];
 
 const EXPORT_MAP: [string, string][] = [
     ['EVOLINK', 'evolink'],
@@ -29,55 +36,199 @@ const EXPORT_MAP: [string, string][] = [
     ['YOUTUBE_API_KEY', 'youtubeApiKey'],
 ];
 
-const parseBulkText = (text: string): Record<string, string> => {
-    const result: Record<string, string> = {};
+// 라벨→필드 매핑 (KEY=VALUE, JSON, 주변 텍스트 감지용)
+const LABEL_MAP: [RegExp, string][] = [
+    [/evolink/i, 'evolink'],
+    [/laozhang/i, 'laozhang'],
+    [/\bkie\b/i, 'kie'],
+    [/cloud[\s_.-]?name/i, 'cloudName'],
+    [/upload[\s_.-]?preset/i, 'uploadPreset'],
+    [/cloudinary/i, 'cloudName'],
+    [/typecast/i, 'typecast'],
+    [/youtube|google[\s_.-]?api/i, 'youtubeApiKey'],
+];
+
+// 패턴→서비스 규칙 (키 값 자체의 형태로 판별)
+const PATTERN_RULES: [RegExp, string][] = [
+    [/^AIzaSy[A-Za-z0-9_-]{25,}$/, 'youtubeApiKey'],   // Google API 키 — 고유 prefix
+    [/^[0-9a-f]{32}$/i, 'kie'],                          // 32자 hex — KIE 고유 포맷
+];
+
+const maskKey = (key: string): string => {
+    if (key.length <= 14) return key;
+    return `${key.slice(0, 8)}····${key.slice(-4)}`;
+};
+
+// 텍스트에서 키-like 토큰 여부 판별 (라벨 단어 제외)
+const LABEL_WORDS = /^(evolink|kie|laozhang|cloudinary|typecast|youtube|google|cloud|upload|preset|api|key|name|설정|필수|선택|ai|tts|stt)$/i;
+const isKeyToken = (s: string): boolean => s.length >= 8 && /^[A-Za-z0-9\-_]+$/.test(s) && !LABEL_WORDS.test(s);
+
+/**
+ * 스마트 감지: 어떤 형태의 텍스트든 분석하여 API 키를 추출하고 서비스를 추정
+ * 1) KEY=VALUE / JSON → 라벨 기반
+ * 2) 주변 텍스트에 서비스명 언급 → 컨텍스트 기반
+ * 3) 키 값의 패턴(AIzaSy, 32hex, sk-) → 패턴 기반
+ * 4) sk- 키가 여러 개면 순서대로 evolink → laozhang 할당
+ */
+const smartDetect = (text: string): DetectedKey[] => {
+    const results: DetectedKey[] = [];
+    const assigned = new Set<string>();
     const trimmed = text.trim();
 
-    // JSON 시도
+    // Phase 1: JSON 파싱 시도
     if (trimmed.startsWith('{')) {
         try {
             const json = JSON.parse(trimmed);
             for (const [k, v] of Object.entries(json)) {
-                if (typeof v !== 'string') continue;
-                const normalized = k.toLowerCase().replace(/[\s\-]/g, '_');
-                const mapped = KEY_ALIASES[normalized];
-                if (mapped) result[mapped] = v;
+                if (typeof v !== 'string' || v.length < 4) continue;
+                const norm = k.toLowerCase().replace(/[\s\-]/g, '_');
+                let service = '';
+                for (const [re, svc] of LABEL_MAP) {
+                    if (re.test(norm) && !assigned.has(svc)) { service = svc; break; }
+                }
+                if (service) assigned.add(service);
+                results.push({ value: v, service, method: service ? 'label' : 'guess' });
             }
-            return result;
-        } catch { /* JSON 파싱 실패 시 KEY=VALUE로 시도 */ }
+            if (results.length > 0) return assignRemaining(results, assigned);
+        } catch { /* JSON 파싱 실패 — 아래로 진행 */ }
     }
 
-    // KEY=VALUE 포맷 (한 줄에 하나)
-    for (const line of trimmed.split('\n')) {
-        const eqIdx = line.indexOf('=');
-        if (eqIdx < 1) continue;
-        const rawKey = line.slice(0, eqIdx).trim();
-        const value = line.slice(eqIdx + 1).trim();
-        if (!value) continue;
-        const normalized = rawKey.toLowerCase().replace(/[\s\-]/g, '_');
-        const mapped = KEY_ALIASES[normalized];
-        if (mapped) result[mapped] = value;
+    // Phase 2: 줄 단위 분석
+    for (const rawLine of trimmed.split('\n')) {
+        const line = rawLine.trim();
+        if (!line || line.length < 6) continue;
+
+        // KEY=VALUE 또는 KEY:VALUE 에서 값 추출 시도
+        const sepMatch = line.match(/^([^=:]+)[=:](.+)$/);
+        if (sepMatch) {
+            const label = sepMatch[1].trim();
+            const value = sepMatch[2].trim().replace(/^["'\s]+|["'\s]+$/g, '');
+            if (value.length < 4) continue;
+
+            let service = '';
+            const labelNorm = label.toLowerCase().replace(/[\s\-]/g, '_');
+            for (const [re, svc] of LABEL_MAP) {
+                if (re.test(labelNorm) && !assigned.has(svc)) { service = svc; break; }
+            }
+            if (service) assigned.add(service);
+            results.push({ value, service, method: service ? 'label' : 'guess' });
+            continue;
+        }
+
+        // 자유 형식: 토큰 분리 후 키-like 토큰 찾기
+        const tokens = line.split(/[\s,\t|"']+/).filter(Boolean);
+        const keyTokens = tokens.filter(isKeyToken);
+        if (keyTokens.length === 0) continue;
+
+        // 가장 긴 키-like 토큰 사용
+        const value = keyTokens.sort((a, b) => b.length - a.length)[0];
+
+        // 주변 텍스트(토큰 제외)에서 서비스명 찾기
+        const context = tokens.filter(t => t !== value).join(' ');
+        let service = '';
+        for (const [re, svc] of LABEL_MAP) {
+            if (re.test(context) && !assigned.has(svc)) { service = svc; break; }
+        }
+        if (service) assigned.add(service);
+        results.push({ value, service, method: service ? 'label' : 'guess' });
     }
-    return result;
+
+    return assignRemaining(results, assigned);
 };
+
+/** 미할당 키에 패턴 기반 + sk- 순서 할당 적용 */
+const assignRemaining = (entries: DetectedKey[], assigned: Set<string>): DetectedKey[] => {
+    // 패턴 기반 할당
+    for (const entry of entries) {
+        if (entry.service) continue;
+        for (const [re, svc] of PATTERN_RULES) {
+            if (re.test(entry.value) && !assigned.has(svc)) {
+                entry.service = svc;
+                entry.method = 'pattern';
+                assigned.add(svc);
+                break;
+            }
+        }
+    }
+
+    // sk- prefix 키: evolink → laozhang 순서 할당
+    const skOrder = ['evolink', 'laozhang'];
+    for (const entry of entries) {
+        if (entry.service) continue;
+        if (entry.value.startsWith('sk-')) {
+            for (const svc of skOrder) {
+                if (!assigned.has(svc)) {
+                    entry.service = svc;
+                    entry.method = 'guess';
+                    assigned.add(svc);
+                    break;
+                }
+            }
+        }
+    }
+
+    // 짧은 토큰(8~20자, sk-/AIza 아닌): cloudName → uploadPreset 순서
+    const shortOrder = ['cloudName', 'uploadPreset'];
+    for (const entry of entries) {
+        if (entry.service) continue;
+        if (entry.value.length <= 20 && !entry.value.startsWith('sk-') && !entry.value.startsWith('AIza')) {
+            for (const svc of shortOrder) {
+                if (!assigned.has(svc)) {
+                    entry.service = svc;
+                    entry.method = 'guess';
+                    assigned.add(svc);
+                    break;
+                }
+            }
+        }
+    }
+
+    return entries;
+};
+
+// ── 컴포넌트 ──
 
 const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
     const [keys, setKeys] = useState({ kie: '', laozhang: '', cloudName: '', uploadPreset: '', gemini: '', apimart: '', removeBg: '', wavespeed: '', xai: '', evolink: '', youtubeApiKey: '', typecast: '' });
     const [showPassword, setShowPassword] = useState(false);
     const [showBulk, setShowBulk] = useState(false);
     const [bulkText, setBulkText] = useState('');
+    const [detected, setDetected] = useState<DetectedKey[]>([]);
     const [bulkMsg, setBulkMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
 
-    const handleBulkImport = () => {
+    // 스마트 분석 실행
+    const handleAnalyze = () => {
         if (!bulkText.trim()) { setBulkMsg({ type: 'err', text: '내용을 입력해주세요.' }); return; }
-        const parsed = parseBulkText(bulkText);
-        const count = Object.keys(parsed).length;
-        if (count === 0) { setBulkMsg({ type: 'err', text: '인식된 키가 없습니다. 포맷을 확인해주세요.' }); return; }
-        setKeys(prev => ({ ...prev, ...parsed }));
-        setBulkMsg({ type: 'ok', text: `${count}개 키가 입력란에 반영되었습니다. "설정 저장 및 적용"을 눌러주세요.` });
+        const results = smartDetect(bulkText);
+        if (results.length === 0) { setBulkMsg({ type: 'err', text: '인식 가능한 API 키를 찾지 못했습니다.' }); return; }
+        setDetected(results);
+        setBulkMsg(null);
     };
 
-    const handleBulkExport = async () => {
+    // 감지 결과 적용
+    const handleApplyDetected = () => {
+        const updates: Record<string, string> = {};
+        let count = 0;
+        for (const entry of detected) {
+            if (entry.service) {
+                updates[entry.service] = entry.value;
+                count++;
+            }
+        }
+        if (count === 0) { setBulkMsg({ type: 'err', text: '적용할 키가 없습니다. 서비스를 선택해주세요.' }); return; }
+        setKeys(prev => ({ ...prev, ...updates }));
+        setDetected([]);
+        setBulkText('');
+        setBulkMsg({ type: 'ok', text: `${count}개 키가 반영되었습니다. "설정 저장 및 적용"을 눌러주세요.` });
+    };
+
+    // 감지 항목의 서비스 변경
+    const updateDetectedService = (idx: number, service: string) => {
+        setDetected(prev => prev.map((e, i) => i === idx ? { ...e, service, method: service ? 'label' as const : 'guess' as const } : e));
+    };
+
+    // 현재 설정 내보내기 (클립보드)
+    const handleExport = async () => {
         const lines = EXPORT_MAP
             .filter(([, field]) => keys[field as keyof typeof keys])
             .map(([label, field]) => `${label}=${keys[field as keyof typeof keys]}`);
@@ -86,6 +237,7 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
         showToast(`${lines.length}개 키가 클립보드에 복사되었습니다.`);
     };
 
+    // 파일 업로드
     const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (!file) return;
@@ -93,13 +245,12 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
         reader.onload = () => {
             const text = reader.result as string;
             setBulkText(text);
-            const parsed = parseBulkText(text);
-            const count = Object.keys(parsed).length;
-            if (count > 0) {
-                setKeys(prev => ({ ...prev, ...parsed }));
-                setBulkMsg({ type: 'ok', text: `${file.name}에서 ${count}개 키를 불러왔습니다.` });
+            const results = smartDetect(text);
+            if (results.length > 0) {
+                setDetected(results);
+                setBulkMsg(null);
             } else {
-                setBulkMsg({ type: 'err', text: '파일에서 인식된 키가 없습니다.' });
+                setBulkMsg({ type: 'err', text: '파일에서 인식 가능한 키를 찾지 못했습니다.' });
             }
         };
         reader.readAsText(file);
@@ -110,6 +261,7 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
         if (isOpen) {
             setShowBulk(false);
             setBulkText('');
+            setDetected([]);
             setBulkMsg(null);
             const stored = getStoredKeys();
             setKeys({
@@ -147,6 +299,13 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
 
     if (!isOpen) return null;
 
+    const methodLabel = (m: DetectedKey['method']) =>
+        m === 'label' ? '라벨' : m === 'pattern' ? '패턴' : '추정';
+    const methodColor = (m: DetectedKey['method']) =>
+        m === 'label' ? 'bg-green-600/20 text-green-400 border-green-500/30' :
+        m === 'pattern' ? 'bg-blue-600/20 text-blue-400 border-blue-500/30' :
+        'bg-amber-600/20 text-amber-400 border-amber-500/30';
+
     return (
         <div className="fixed inset-0 bg-black/80 z-[9999] flex items-center justify-center p-4" onClick={onClose}>
             <div className="bg-gray-800 rounded-xl border border-gray-700 shadow-2xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto animate-fade-in-up custom-scrollbar" onClick={(e) => e.stopPropagation()}>
@@ -163,7 +322,7 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
                 {/* ── 일괄 가져오기/내보내기 ── */}
                 <div className="mb-5">
                     <button
-                        onClick={() => { setShowBulk(!showBulk); setBulkMsg(null); }}
+                        onClick={() => { setShowBulk(!showBulk); setBulkMsg(null); setDetected([]); }}
                         className="w-full flex items-center justify-between px-3 py-2 bg-gray-900 hover:bg-gray-850 border border-gray-700 rounded-lg text-sm text-gray-300 transition-all"
                     >
                         <span className="flex items-center gap-2 font-bold">📋 일괄 가져오기 / 내보내기</span>
@@ -173,29 +332,73 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
                     {showBulk && (
                         <div className="mt-2 p-3 bg-gray-900 border border-gray-700 rounded-lg space-y-3">
                             <p className="text-xs text-gray-500 leading-relaxed">
-                                텍스트 파일이나 메모에 저장해둔 키를 한번에 붙여넣으세요.<br/>
-                                <code className="text-gray-400">KEY=값</code> 형식 (줄당 하나) 또는 JSON을 지원합니다.
+                                API 키를 아무 형태로 붙여넣으세요. 자동으로 어떤 서비스의 키인지 감지합니다.<br/>
+                                <span className="text-gray-600">KEY=값, JSON, 라벨+키, 키만 나열 — 모두 OK</span>
                             </p>
                             <textarea
                                 value={bulkText}
-                                onChange={(e) => { setBulkText(e.target.value); setBulkMsg(null); }}
-                                placeholder={`EVOLINK=sk-xxx\nKIE=xxx\nLAOZHANG=sk-xxx\nCLOUD_NAME=xxx\nUPLOAD_PRESET=xxx\nTYPECAST=xxx\nYOUTUBE_API_KEY=xxx`}
+                                onChange={(e) => { setBulkText(e.target.value); setDetected([]); setBulkMsg(null); }}
+                                placeholder={`예시 1) 라벨 형식:\nEVOLINK=sk-abc123...\nKIE=c1865a4b...\n\n예시 2) 그냥 키만:\nsk-gDTBC6cmqoo4IKU...\nc1865a4bce680c770...\nAIzaSyDCZ4kTRy3VR8...\n\n예시 3) 자유 형식:\nEvolink API 키 sk-abc123...`}
                                 rows={5}
                                 className="w-full bg-gray-950 border border-gray-600 rounded-lg p-2.5 text-sm text-gray-200 placeholder-gray-700 font-mono focus:outline-none focus:border-blue-500/50 resize-none"
                             />
+
+                            {/* 알림 메시지 */}
                             {bulkMsg && (
                                 <p className={`text-xs ${bulkMsg.type === 'ok' ? 'text-green-400' : 'text-red-400'}`}>
                                     {bulkMsg.type === 'ok' ? '✓' : '✗'} {bulkMsg.text}
                                 </p>
                             )}
-                            <div className="flex gap-2">
-                                <button onClick={handleBulkImport} className="flex-1 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-bold transition-all">붙여넣기 적용</button>
-                                <label className="flex-1 py-2 bg-gray-700 hover:bg-gray-600 text-gray-200 rounded-lg text-sm font-bold transition-all text-center cursor-pointer">
-                                    파일 업로드
-                                    <input type="file" accept=".txt,.json,.env,.cfg" onChange={handleFileUpload} className="hidden" />
-                                </label>
-                                <button onClick={handleBulkExport} className="flex-1 py-2 bg-gray-700 hover:bg-gray-600 text-gray-200 rounded-lg text-sm font-bold transition-all">현재 설정 복사</button>
-                            </div>
+
+                            {/* 감지 결과 미리보기 */}
+                            {detected.length > 0 && (
+                                <div className="space-y-2 pt-2 border-t border-gray-700">
+                                    <p className="text-xs font-bold text-amber-400">감지된 키 {detected.length}개 — 서비스 매핑을 확인하세요</p>
+                                    {detected.map((entry, i) => (
+                                        <div key={i} className="flex items-center gap-2 bg-gray-950 rounded-lg px-3 py-2">
+                                            <code className="text-xs text-gray-400 font-mono truncate min-w-0 flex-1" title={entry.value}>
+                                                {maskKey(entry.value)}
+                                            </code>
+                                            <span className="text-gray-600 text-xs">→</span>
+                                            <select
+                                                value={entry.service}
+                                                onChange={(e) => updateDetectedService(i, e.target.value)}
+                                                className={`bg-gray-800 border rounded px-2 py-1 text-xs font-bold cursor-pointer focus:outline-none ${
+                                                    entry.service
+                                                        ? 'border-gray-600 text-gray-200'
+                                                        : 'border-amber-500/50 text-amber-400'
+                                                }`}
+                                            >
+                                                <option value="">— 선택 —</option>
+                                                {SERVICE_OPTIONS.map(opt => (
+                                                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                                ))}
+                                            </select>
+                                            <span className={`text-[10px] px-1.5 py-0.5 rounded border shrink-0 ${methodColor(entry.method)}`}>
+                                                {methodLabel(entry.method)}
+                                            </span>
+                                        </div>
+                                    ))}
+                                    <button
+                                        onClick={handleApplyDetected}
+                                        className="w-full py-2 bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 text-white rounded-lg text-sm font-bold transition-all"
+                                    >
+                                        입력란에 적용하기
+                                    </button>
+                                </div>
+                            )}
+
+                            {/* 버튼 행 */}
+                            {detected.length === 0 && (
+                                <div className="flex gap-2">
+                                    <button onClick={handleAnalyze} className="flex-1 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-bold transition-all">자동 감지</button>
+                                    <label className="flex-1 py-2 bg-gray-700 hover:bg-gray-600 text-gray-200 rounded-lg text-sm font-bold transition-all text-center cursor-pointer">
+                                        파일 업로드
+                                        <input type="file" accept=".txt,.json,.env,.cfg" onChange={handleFileUpload} className="hidden" />
+                                    </label>
+                                    <button onClick={handleExport} className="flex-1 py-2 bg-gray-700 hover:bg-gray-600 text-gray-200 rounded-lg text-sm font-bold transition-all">현재 설정 복사</button>
+                                </div>
+                            )}
                         </div>
                     )}
                 </div>
