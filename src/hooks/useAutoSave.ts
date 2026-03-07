@@ -24,7 +24,6 @@ export const useAutoSave = () => {
         const { costStats } = useCostStore.getState();
 
         if (!currentProjectId || !config) return;
-        if (!(scenes.length > 0 || config.isThumbnailOnlyMode || config.mode === 'CHARACTER' || config.mode === 'THUMBNAIL')) return;
 
         // Dirty check: 장면 수, config, 이미지/영상 완료 수 변경 시에만 저장
         const completedImages = scenes.filter(s => s.imageUrl).length;

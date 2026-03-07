@@ -356,6 +356,9 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     try { useEditRoomStore.getState().reset(); } catch { /* 미초기화 시 무시 */ }
     try { useSoundStudioStore.getState().reset(); } catch { /* 미초기화 시 무시 */ }
 
+    // 고유 프로젝트 ID 즉시 생성 (auto-save가 작동하려면 필수)
+    const projectId = `proj_${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
     // 임시 제목 자동 생성: "임시 프로젝트 03/07 14:30"
     const now = new Date();
     const autoTitle = title || `임시 프로젝트 ${String(now.getMonth() + 1).padStart(2, '0')}/${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
@@ -371,14 +374,28 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       } as ProjectConfig,
       scenes: [],
       thumbnails: [],
-      currentProjectId: null,
+      currentProjectId: projectId,
       projectTitle: autoTitle,
       batchGrokDuration: '6',
       batchGrokSpeech: false,
     });
-    // [FIX] 새 프로젝트 시 마지막 프로젝트 ID 제거
-    try { localStorage.removeItem('last-project-id'); } catch { /* 무시 */ }
+    // 마지막 프로젝트 ID를 localStorage에 저장 (복구용)
+    try { localStorage.setItem('last-project-id', projectId); } catch { /* 무시 */ }
     useCostStore.getState().resetCosts();
+
+    // 즉시 IndexedDB에 초기 저장 (auto-save 조건과 무관하게 프로젝트 목록에 표시)
+    import('../services/storageService').then(({ saveProject }) => {
+      saveProject({
+        id: projectId,
+        title: autoTitle,
+        config: { mode: 'SCRIPT', script: '', videoFormat: VideoFormat.SHORT, aspectRatio: AspectRatio.LANDSCAPE, imageModel: ImageModel.NANO_COST, smartSplit: true } as ProjectConfig,
+        scenes: [],
+        thumbnails: [],
+        fullNarrationText: '',
+        lastModified: Date.now(),
+        costStats: useCostStore.getState().costStats,
+      }).catch(() => { /* 저장 실패 시 무시 — auto-save가 이후 재시도 */ });
+    }).catch(() => {});
 
     // [NEW] imageVideoStore 리셋 — 이전 프로젝트의 캐릭터/스타일이 남지 않도록
     try {
