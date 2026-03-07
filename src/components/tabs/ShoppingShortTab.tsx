@@ -19,31 +19,49 @@ const StepFallback = () => (
   </div>
 );
 
-const ShoppingShortTab: React.FC = () => {
+interface ShoppingShortTabProps {
+  hideHeader?: boolean;
+}
+
+const ShoppingShortTab: React.FC<ShoppingShortTabProps> = ({ hideHeader = false }) => {
   const { currentStep, goToStep, reset } = useShoppingShortStore();
 
   const currentStepIndex = WIZARD_STEPS.findIndex(s => s.id === currentStep);
 
   return (
     <div className="max-w-4xl mx-auto">
-      {/* 헤더 */}
-      <div className="flex items-center justify-between mb-8">
-        <div className="flex items-center gap-4">
-          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-lime-500 to-green-700 flex items-center justify-center text-2xl shadow-lg shadow-lime-900/30">
-            🛍️
+      {/* 헤더 — hideHeader일 때 숨김 */}
+      {!hideHeader && (
+        <div className="flex items-center justify-between mb-8">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-lime-500 to-green-700 flex items-center justify-center text-2xl shadow-lg shadow-lime-900/30">
+              🛍️
+            </div>
+            <div>
+              <h2 className="text-2xl font-black text-gray-100">쇼핑 숏폼 자동화</h2>
+              <p className="text-sm text-gray-500 mt-0.5">해외 쇼핑 영상 → AI 분석 → 한국어 숏폼 자동 제작</p>
+            </div>
           </div>
-          <div>
-            <h2 className="text-2xl font-black text-gray-100">딸깍 영상 제작</h2>
-            <p className="text-sm text-gray-500 mt-0.5">해외 쇼핑 영상 → AI 분석 → 한국어 숏폼 자동 제작</p>
-          </div>
+          <button
+            onClick={reset}
+            className="px-4 py-2 rounded-lg text-sm text-gray-400 hover:text-gray-200 hover:bg-gray-800/60 transition-all border border-gray-700/40"
+          >
+            초기화
+          </button>
         </div>
-        <button
-          onClick={reset}
-          className="px-4 py-2 rounded-lg text-sm text-gray-400 hover:text-gray-200 hover:bg-gray-800/60 transition-all border border-gray-700/40"
-        >
-          초기화
-        </button>
-      </div>
+      )}
+
+      {/* hideHeader 모드에서는 초기화 버튼만 우측 상단에 */}
+      {hideHeader && (
+        <div className="flex justify-end mb-4">
+          <button
+            onClick={reset}
+            className="px-3 py-1.5 rounded-lg text-xs text-gray-400 hover:text-gray-200 hover:bg-gray-800/60 transition-all border border-gray-700/40"
+          >
+            초기화
+          </button>
+        </div>
+      )}
 
       {/* 위저드 인디케이터 — 클릭으로 자유 이동 */}
       <div className="flex items-center mb-8 px-4">

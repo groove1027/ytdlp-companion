@@ -53,7 +53,7 @@ const CharacterTwistLab = lazy(() => import('./components/CharacterTwistLab'));
 const ImageScriptUploadLab = lazy(() => import('./components/ImageScriptUploadLab'));
 const PptMasterTab = lazy(() => import('./components/tabs/PptMasterTab'));
 const DetailPageTab = lazy(() => import('./components/tabs/DetailPageTab'));
-const ShoppingShortTab = lazy(() => import('./components/tabs/ShoppingShortTab'));
+// ShoppingShortTab은 DetailPageTab(쇼핑콘텐츠) 내부 서브탭으로 이동됨
 
 // [v4.5] 탭 정의
 const TAB_CONFIG: { id: AppTab; label: string; icon: string; activeClass: string }[] = [
@@ -78,7 +78,7 @@ const PIPELINE_STEPS: { id: AppTab; label: string; num: number }[] = [
 ];
 
 /** 도구모음 탭 ID 목록 — 파이프라인 표시기를 숨길 탭 */
-const TOOL_TABS = new Set<AppTab>(['thumbnail-studio', 'character-twist', 'image-script-upload', 'ppt-master', 'detail-page', 'shopping-short']);
+const TOOL_TABS = new Set<AppTab>(['thumbnail-studio', 'character-twist', 'image-script-upload', 'ppt-master', 'detail-page']);
 
 // 탭 로딩 fallback
 const TabFallback = () => (
@@ -1032,7 +1032,7 @@ const App: React.FC = () => {
           })}
           {/* 도구모음 섹션 — 접이식 */}
           {(() => {
-            const TOOL_TABS = ['thumbnail-studio', 'character-twist', 'image-script-upload', 'ppt-master', 'detail-page', 'shopping-short'];
+            const TOOL_TABS = ['thumbnail-studio', 'character-twist', 'image-script-upload', 'ppt-master', 'detail-page'];
             const isToolboxOpen = toolboxOpen || TOOL_TABS.includes(activeTab);
             return (
           <div className="mt-4 pt-3 border-t-2 border-dashed border-gray-600/40">
@@ -1101,18 +1101,7 @@ const App: React.FC = () => {
                   }`}
                 >
                   <span className="text-lg">🛒</span>
-                  <span>상세페이지</span>
-                </button>
-                <button
-                  onClick={() => setActiveTab('shopping-short')}
-                  className={`flex items-center gap-3 w-full px-4 py-3.5 rounded-lg text-base font-semibold transition-all ${
-                    activeTab === 'shopping-short'
-                      ? 'bg-lime-600/20 text-lime-400 border border-lime-500/30'
-                      : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/60'
-                  }`}
-                >
-                  <span className="text-lg">🛍️</span>
-                  <span>딸깍 영상 제작</span>
+                  <span>쇼핑콘텐츠</span>
                 </button>
               </div>
             )}
@@ -1224,8 +1213,6 @@ const App: React.FC = () => {
               <TabErrorBoundary><Suspense fallback={<TabFallback />}><PptMasterTab /></Suspense></TabErrorBoundary>
           ) : activeTab === 'detail-page' ? (
               <TabErrorBoundary><Suspense fallback={<TabFallback />}><DetailPageTab /></Suspense></TabErrorBoundary>
-          ) : activeTab === 'shopping-short' ? (
-              <TabErrorBoundary><Suspense fallback={<TabFallback />}><ShoppingShortTab /></Suspense></TabErrorBoundary>
           ) : /* project tab (default) */ showProjectDashboard ? (
               /* [v4.5] 프로젝트 대시보드 — 카드 그리드 */
               <Suspense fallback={<TabFallback />}>

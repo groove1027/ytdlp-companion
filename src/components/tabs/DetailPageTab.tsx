@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, Suspense, lazy } from 'react';
 import { evolinkChat, evolinkGenerateImage } from '../../services/evolinkService';
 import { uploadMediaToHosting } from '../../services/uploadService';
 import { showToast } from '../../stores/uiStore';
@@ -6,8 +6,10 @@ import { useElapsedTimer, formatElapsed } from '../../hooks/useElapsedTimer';
 import type { DetailImageSegment, PageLength } from '../../types';
 import type { EvolinkChatMessage } from '../../services/evolinkService';
 
+const ShoppingShortContent = lazy(() => import('./ShoppingShortTab'));
+
 // --- Sub-tab type ---
-type SubTab = 'detail' | 'thumbnail';
+type SubTab = 'detail' | 'thumbnail' | 'shopping-short';
 type Step = 1 | 2 | 3;
 
 // --- Constants ---
@@ -407,10 +409,10 @@ const DetailPageTab: React.FC = () => {
       {/* Header */}
       <div className="mb-6">
         <div className="flex items-center gap-3 mb-2">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-teal-500 to-teal-700 flex items-center justify-center text-white text-lg font-bold shadow-lg">D</div>
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-teal-500 to-teal-700 flex items-center justify-center text-white text-lg font-bold shadow-lg">🛒</div>
           <div>
-            <h1 className="text-2xl font-bold text-white">AI 상세페이지 & 썸네일 빌더</h1>
-            <p className="text-sm text-gray-400">상품 정보 입력 → AI 전략 기획 → 이미지 자동 생성</p>
+            <h1 className="text-2xl font-bold text-white">쇼핑콘텐츠</h1>
+            <p className="text-sm text-gray-400">상세페이지 · 썸네일 · 쇼핑 숏폼 자동화</p>
           </div>
         </div>
       </div>
@@ -436,6 +438,16 @@ const DetailPageTab: React.FC = () => {
           }`}
         >
           썸네일 제작
+        </button>
+        <button
+          onClick={() => setSubTab('shopping-short')}
+          className={`px-5 py-2.5 text-sm font-bold rounded-t-lg transition-all ${
+            subTab === 'shopping-short'
+              ? 'bg-gray-800 text-lime-400 border-b-2 border-lime-500'
+              : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/50'
+          }`}
+        >
+          쇼핑 숏폼 자동화
         </button>
       </div>
 
@@ -792,6 +804,20 @@ const DetailPageTab: React.FC = () => {
             </div>
           )}
         </div>
+      )}
+
+      {/* ============================================================ */}
+      {/* Sub-tab: 쇼핑 숏폼 자동화 */}
+      {/* ============================================================ */}
+      {subTab === 'shopping-short' && (
+        <Suspense fallback={
+          <div className="flex items-center justify-center py-16">
+            <div className="animate-spin rounded-full h-7 w-7 border-b-2 border-lime-500" />
+            <span className="ml-3 text-gray-400 text-sm">로딩 중...</span>
+          </div>
+        }>
+          <ShoppingShortContent hideHeader />
+        </Suspense>
       )}
     </div>
   );
