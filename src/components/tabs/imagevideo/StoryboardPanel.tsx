@@ -6,7 +6,7 @@ import { generateSceneImage } from '../../../services/gemini/imageGeneration';
 import { generatePromptFromScript } from '../../../services/gemini/imageAnalysis';
 import { persistImage } from '../../../services/imageStorageService';
 import { useVideoBatch } from '../../../hooks/useVideoBatch';
-import { PRICING, COMMUNITY_PRESETS } from '../../../constants';
+import { PRICING } from '../../../constants';
 import { AspectRatio, ImageModel, CharacterAppearance, VideoFormat } from '../../../types';
 import type { Scene } from '../../../types';
 import { showToast, useUIStore } from '../../../stores/uiStore';
@@ -720,25 +720,6 @@ const StoryboardPanel: React.FC = () => {
   const currentStyle = useImageVideoStore((s) => s.style);
   const enableWebSearch = useImageVideoStore((s) => s.enableWebSearch);
   const isMultiCharacter = useImageVideoStore((s) => s.isMultiCharacter);
-  const communityPresetId = config?.communityPresetId ?? null;
-
-  // 프리셋 선택 핸들러
-  const handleSelectPreset = useCallback((preset: typeof COMMUNITY_PRESETS[number]) => {
-    const ps = useProjectStore.getState();
-    if (preset.id === 'custom') {
-      ps.setConfig((prev) => prev ? { ...prev, communityPresetId: undefined, imageAspectRatio: undefined } : prev);
-      return;
-    }
-    ps.setConfig((prev) => prev ? {
-      ...prev,
-      videoFormat: preset.videoFormat,
-      aspectRatio: preset.aspectRatio,
-      imageAspectRatio: preset.imageAspectRatio,
-      communityPresetId: preset.id,
-    } : prev);
-    showToast(`${preset.label} 적용 — 이미지 ${preset.imageAspectRatio} / 영상 ${preset.aspectRatio} / ${preset.avgCutSec}s 컷`);
-  }, []);
-
   // 오디오 재생 상태
   const globalAudioRef = useRef<HTMLAudioElement | null>(null);
   const sceneAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -1463,96 +1444,11 @@ const StoryboardPanel: React.FC = () => {
         />
       )}
 
-      {/* 프로덕션 스타일 프리셋 선택 */}
-      <div className="mb-4 p-4 bg-gray-800/30 rounded-xl border border-gray-700/30">
-        <div className="flex items-center gap-2 mb-3">
-          <span className="text-sm font-bold text-orange-400">프로덕션 스타일</span>
-          {communityPresetId && (() => {
-            const active = COMMUNITY_PRESETS.find(p => p.id === communityPresetId);
-            return active ? (
-              <span className="text-xs px-2 py-0.5 bg-orange-900/30 text-orange-300 border border-orange-500/30 rounded-full font-medium">
-                {active.label} — 이미지 {active.imageAspectRatio} / 영상 {active.aspectRatio} / {active.avgCutSec}s/컷
-              </span>
-            ) : null;
-          })()}
-        </div>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
-          {COMMUNITY_PRESETS.map(preset => {
-            const isActive = preset.id === 'custom' ? !communityPresetId : communityPresetId === preset.id;
-            return (
-              <button key={preset.id} type="button" onClick={() => handleSelectPreset(preset)}
-                className={`text-left p-3 rounded-xl border transition-all ${
-                  isActive
-                    ? 'bg-orange-600/20 border-orange-500/50 ring-1 ring-orange-500/30'
-                    : 'bg-gray-800/50 border-gray-700 hover:border-orange-500/40 hover:bg-orange-900/10'
-                }`}>
-                <div className={`text-sm font-bold ${isActive ? 'text-orange-300' : 'text-gray-300'}`}>{preset.label}</div>
-                <div className="text-xs text-gray-400 mt-1 leading-relaxed line-clamp-2">{preset.description}</div>
-                {preset.id !== 'custom' && (
-                  <div className="flex gap-1 mt-2 flex-wrap">
-                    <span className="text-[10px] bg-orange-900/40 text-orange-400 px-1.5 py-0.5 rounded">{preset.avgCutSec}s/컷</span>
-                    <span className="text-[10px] bg-gray-700 text-gray-300 px-1.5 py-0.5 rounded">
-                      SFX {preset.sfxDensity === 'high' ? '폭격' : preset.sfxDensity === 'medium' ? '보통' : '최소'}
-                    </span>
-                    <span className="text-[10px] bg-cyan-900/40 text-cyan-400 px-1.5 py-0.5 rounded">
-                      이미지 {preset.imageAspectRatio}
-                    </span>
-                  </div>
-                )}
-              </button>
-            );
-          })}
-        </div>
-        <p className="text-xs text-gray-500 mt-2">
-          프리셋 선택 시 포맷·비율·이미지 비율이 자동 설정됩니다. 이후 장면별로 수동 변경하거나 편집실에서 재조정할 수 있습니다.
-        </p>
-
-        {/* 수동 포맷·비율 조정 */}
-        <div className="mt-3 pt-3 border-t border-gray-700/30 flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs text-gray-500">포맷</span>
-            {([
-              { id: VideoFormat.NANO, label: '나노', desc: '~15s' },
-              { id: VideoFormat.SHORT, label: '숏폼', desc: '~60s' },
-              { id: VideoFormat.LONG, label: '롱폼', desc: '5m+' },
-            ] as const).map(f => (
-              <button key={f.id} type="button"
-                onClick={() => useProjectStore.getState().setConfig((prev) => prev ? { ...prev, videoFormat: f.id, communityPresetId: undefined } : prev)}
-                className={`text-[11px] px-2 py-1 rounded-lg border transition-all ${
-                  config?.videoFormat === f.id
-                    ? 'bg-orange-600/20 border-orange-500/50 text-orange-300 font-bold'
-                    : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:border-orange-500/30'
-                }`}>
-                {f.label} <span className="text-gray-500 font-normal">{f.desc}</span>
-              </button>
-            ))}
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs text-gray-500">영상 비율</span>
-            {([
-              { id: AspectRatio.PORTRAIT, label: '9:16' },
-              { id: AspectRatio.LANDSCAPE, label: '16:9' },
-              { id: AspectRatio.SQUARE, label: '1:1' },
-            ] as const).map(r => (
-              <button key={r.id} type="button"
-                onClick={() => useProjectStore.getState().setConfig((prev) => prev ? { ...prev, aspectRatio: r.id, communityPresetId: undefined } : prev)}
-                className={`text-[11px] px-2 py-1 rounded-lg border transition-all ${
-                  config?.aspectRatio === r.id
-                    ? 'bg-orange-600/20 border-orange-500/50 text-orange-300 font-bold'
-                    : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:border-orange-500/30'
-                }`}>
-                {r.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-
       {/* Scene list / grid / preview */}
       {totalScenes === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-gray-500">
           <p className="text-lg mb-2">장면이 없습니다</p>
-          <p className="text-sm">사운드 스튜디오에서 나레이션을 생성한 후 전송하세요.</p>
+          <p className="text-sm">대본작성 탭에서 장면 분석을 먼저 실행하세요.</p>
         </div>
       ) : viewMode === 'preview' ? (
         <div className="space-y-4">
