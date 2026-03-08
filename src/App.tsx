@@ -61,8 +61,8 @@ const SubtitleRemoverTab = lazy(() => import('./components/tabs/SubtitleRemoverT
 // [v4.5] 탭 정의 — 메인 파이프라인
 const TAB_CONFIG: { id: AppTab; label: string; icon: string; activeClass: string }[] = [
   { id: 'project', label: '프로젝트', icon: '📁', activeClass: 'bg-gray-700/30 text-gray-200 border border-gray-500/30' },
-  { id: 'channel-analysis', label: '채널/영상 분석', icon: '🔍', activeClass: 'bg-blue-600/20 text-blue-400 border border-blue-500/30' },
-  { id: 'script-writer', label: '대본작성', icon: '✍️', activeClass: 'bg-violet-600/20 text-violet-400 border border-violet-500/30' },
+  { id: 'channel-analysis', label: '채널/영상 분석 🔥', icon: '🔍', activeClass: 'bg-blue-600/20 text-blue-400 border border-blue-500/30' },
+  { id: 'script-writer', label: '대본작성 🔥', icon: '✍️', activeClass: 'bg-violet-600/20 text-violet-400 border border-violet-500/30' },
 ];
 
 // [v4.5] 후반작업 하위 탭 (대본작성 아래 접이식)
