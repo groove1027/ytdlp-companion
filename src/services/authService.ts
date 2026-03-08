@@ -54,14 +54,15 @@ const updateSavedUser = (updates: Partial<AuthUser>): void => {
   }
 };
 
-/** 회원가입 */
+/** 회원가입 (전화번호 인증 포함) */
 export const signup = async (
-  email: string, password: string, inviteCode: string, displayName?: string
+  email: string, password: string, inviteCode: string, displayName?: string,
+  phoneNumber?: string, firebaseUid?: string
 ): Promise<{ token: string; user: AuthUser }> => {
   const res = await fetch('/api/auth/signup', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password, inviteCode, displayName }),
+    body: JSON.stringify({ email, password, inviteCode, displayName, phoneNumber, firebaseUid }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || '회원가입 실패');

@@ -1,8 +1,22 @@
-import React, { useState } from 'react';
+/**
+ * AuthGate — 로그인/회원가입 게이트
+ * 회원가입 시 전화번호 SMS 인증 필수 (초대코드 공유 방지)
+ */
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import {
+  isFirebaseConfigured,
+  setupRecaptcha,
+  sendPhoneOTP,
+  verifyPhoneOTP,
+  type ConfirmationResult,
+  type RecaptchaVerifier,
+} from '../services/firebaseAuthService';
 
 interface AuthGateProps {
   onAuthenticated: (user: { email: string; displayName: string }) => void;
 }
+
+type SignupStep = 'form' | 'phone' | 'otp';
 
 const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
   const [mode, setMode] = useState<'login' | 'signup'>('login');
@@ -15,36 +29,141 @@ const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // 전화번호 인증 상태
+  const [signupStep, setSignupStep] = useState<SignupStep>('form');
+  const [phone, setPhone] = useState('+82 ');
+  const [otpCode, setOtpCode] = useState('');
+  const [countdown, setCountdown] = useState(0);
+  const [verifiedPhone, setVerifiedPhone] = useState<{ phoneNumber: string; uid: string } | null>(null);
+
+  const confirmRef = useRef<ConfirmationResult | null>(null);
+  const recaptchaRef = useRef<RecaptchaVerifier | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // ── 카운트다운 ──
+  useEffect(() => {
+    if (countdown <= 0) return;
+    timerRef.current = setInterval(() => {
+      setCountdown(prev => {
+        if (prev <= 1) { if (timerRef.current) clearInterval(timerRef.current); return 0; }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [countdown]);
+
+  // ── 로그인 처리 ──
+  const handleLogin = useCallback(async () => {
     setError('');
-
-    if (mode === 'signup' && password !== confirmPassword) {
-      setError('비밀번호가 일치하지 않습니다.');
-      return;
-    }
-
     setIsLoading(true);
     try {
-      const { login, signup } = await import('../services/authService');
-      if (mode === 'login') {
-        const result = await login(email, password, rememberMe);
-        onAuthenticated(result.user);
-      } else {
-        const result = await signup(email, password, inviteCode, displayName || undefined);
-        onAuthenticated(result.user);
-      }
+      const { login } = await import('../services/authService');
+      const result = await login(email, password, rememberMe);
+      onAuthenticated(result.user);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : '오류가 발생했습니다.');
+      setError(err instanceof Error ? err.message : '로그인 실패');
     } finally {
       setIsLoading(false);
     }
+  }, [email, password, rememberMe, onAuthenticated]);
+
+  // ── 회원가입 폼 제출 → 전화번호 인증으로 이동 ──
+  const handleSignupFormSubmit = useCallback(() => {
+    setError('');
+    if (password !== confirmPassword) { setError('비밀번호가 일치하지 않습니다.'); return; }
+    if (password.length < 8) { setError('비밀번호는 8자 이상이어야 합니다.'); return; }
+    if (!inviteCode.trim()) { setError('초대 코드를 입력해주세요.'); return; }
+    if (!email.trim()) { setError('이메일을 입력해주세요.'); return; }
+
+    if (!isFirebaseConfigured()) {
+      // Firebase 미설정 시 전화인증 없이 진행
+      handleSignupComplete();
+      return;
+    }
+    setSignupStep('phone');
+  }, [password, confirmPassword, inviteCode, email]);
+
+  // ── OTP 전송 ──
+  const handleSendOTP = useCallback(async () => {
+    setError('');
+    const cleaned = phone.replace(/[\s-]/g, '');
+    if (cleaned.length < 10) { setError('전화번호를 정확히 입력해주세요. (예: +821012345678)'); return; }
+
+    setIsLoading(true);
+    try {
+      if (!recaptchaRef.current) {
+        recaptchaRef.current = setupRecaptcha('recaptcha-container');
+      }
+      if (!recaptchaRef.current) throw new Error('reCAPTCHA 초기화 실패');
+
+      confirmRef.current = await sendPhoneOTP(cleaned, recaptchaRef.current);
+      setSignupStep('otp');
+      setCountdown(60);
+    } catch (e) {
+      const msg = (e as Error).message;
+      if (msg.includes('too-many-requests')) setError('요청이 너무 많습니다. 잠시 후 다시 시도해주세요.');
+      else if (msg.includes('invalid-phone-number')) setError('유효하지 않은 전화번호입니다.');
+      else setError(`SMS 전송 실패: ${msg}`);
+      recaptchaRef.current = null;
+    } finally {
+      setIsLoading(false);
+    }
+  }, [phone]);
+
+  // ── OTP 검증 ──
+  const handleVerifyOTP = useCallback(async () => {
+    if (!confirmRef.current || otpCode.length < 6) { setError('인증번호 6자리를 입력해주세요.'); return; }
+    setError('');
+    setIsLoading(true);
+    try {
+      const result = await verifyPhoneOTP(confirmRef.current, otpCode);
+      setVerifiedPhone(result);
+      // 인증 성공 → 바로 회원가입 진행
+      await handleSignupComplete(result.phoneNumber, result.uid);
+    } catch (e) {
+      const msg = (e as Error).message;
+      if (msg.includes('invalid-verification-code')) setError('인증번호가 올바르지 않습니다.');
+      else setError(`인증 실패: ${msg}`);
+      setIsLoading(false);
+    }
+  }, [otpCode]);
+
+  // ── 최종 회원가입 API 호출 ──
+  const handleSignupComplete = useCallback(async (phoneNumber?: string, firebaseUid?: string) => {
+    setIsLoading(true);
+    setError('');
+    try {
+      const { signup } = await import('../services/authService');
+      const result = await signup(email, password, inviteCode, displayName || undefined, phoneNumber, firebaseUid);
+      onAuthenticated(result.user);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : '회원가입 실패');
+      // 에러 시 폼으로 돌아가기
+      setSignupStep('form');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [email, password, inviteCode, displayName, onAuthenticated]);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (mode === 'login') handleLogin();
+    else handleSignupFormSubmit();
   };
+
+  const resetToSignupForm = () => {
+    setSignupStep('form');
+    setOtpCode('');
+    setError('');
+    recaptchaRef.current = null;
+  };
+
+  const inputClass = 'w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-blue-500/50';
 
   return (
     <div className="min-h-screen bg-gray-950 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
-        {/* 로고/타이틀 */}
+        {/* 로고 */}
         <div className="text-center mb-8">
           <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-blue-600 to-violet-600 flex items-center justify-center shadow-xl shadow-violet-500/20">
             <span className="text-3xl">AI</span>
@@ -53,143 +172,175 @@ const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
           <p className="text-sm text-gray-500 mt-1">AI 기반 영상 제작 파이프라인</p>
         </div>
 
-        {/* 탭 전환 */}
-        <div className="flex mb-6 bg-gray-900 rounded-xl p-1 border border-gray-800">
-          <button
-            type="button"
-            onClick={() => { setMode('login'); setError(''); }}
-            className={`flex-1 py-2.5 rounded-lg text-sm font-bold transition-all ${
-              mode === 'login'
-                ? 'bg-blue-600 text-white shadow-md'
-                : 'text-gray-400 hover:text-gray-200'
-            }`}
-          >
-            로그인
-          </button>
-          <button
-            type="button"
-            onClick={() => { setMode('signup'); setError(''); }}
-            className={`flex-1 py-2.5 rounded-lg text-sm font-bold transition-all ${
-              mode === 'signup'
-                ? 'bg-violet-600 text-white shadow-md'
-                : 'text-gray-400 hover:text-gray-200'
-            }`}
-          >
-            회원가입
-          </button>
-        </div>
-
-        {/* 폼 */}
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {mode === 'signup' && (
-            <div>
-              <label className="text-sm text-gray-400 mb-1.5 block">닉네임 (선택)</label>
-              <input
-                type="text"
-                value={displayName}
-                onChange={(e) => setDisplayName(e.target.value)}
-                placeholder="표시될 이름"
-                className="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-violet-500/50"
-              />
-            </div>
-          )}
-
-          <div>
-            <label className="text-sm text-gray-400 mb-1.5 block">이메일</label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="email@example.com"
-              required
-              className="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-blue-500/50"
-            />
-          </div>
-
-          <div>
-            <label className="text-sm text-gray-400 mb-1.5 block">비밀번호</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder={mode === 'signup' ? '8자 이상' : '비밀번호 입력'}
-              required
-              minLength={mode === 'signup' ? 8 : undefined}
-              className="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-blue-500/50"
-            />
-          </div>
-
-          {mode === 'signup' && (
-            <>
-              <div>
-                <label className="text-sm text-gray-400 mb-1.5 block">비밀번호 확인</label>
+        {/* ── 전화번호 인증 단계 (회원가입 전용) ── */}
+        {mode === 'signup' && signupStep !== 'form' ? (
+          <div className="bg-gray-900/50 border border-gray-800 rounded-2xl p-6">
+            {signupStep === 'phone' && (
+              <>
+                <div className="text-center mb-5">
+                  <div className="w-12 h-12 mx-auto mb-3 rounded-xl bg-green-600/20 border border-green-500/30 flex items-center justify-center text-2xl">
+                    <svg className="w-6 h-6 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" /></svg>
+                  </div>
+                  <h2 className="text-lg font-bold text-white">본인 인증</h2>
+                  <p className="text-xs text-gray-400 mt-1">SMS로 인증번호가 발송됩니다</p>
+                </div>
                 <input
-                  type="password"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  placeholder="비밀번호 재입력"
-                  required
-                  className="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-blue-500/50"
+                  type="tel"
+                  value={phone}
+                  onChange={e => setPhone(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && !isLoading && handleSendOTP()}
+                  placeholder="+82 10-1234-5678"
+                  className={`${inputClass} text-lg tracking-wide text-center`}
+                  autoFocus
                 />
-              </div>
+                {error && <p className="text-red-400 text-xs mt-3 text-center">{error}</p>}
+                <button
+                  onClick={handleSendOTP}
+                  disabled={isLoading}
+                  className="w-full mt-4 py-3 rounded-xl text-sm font-bold text-white bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 disabled:from-gray-700 disabled:to-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed transition-all"
+                >
+                  {isLoading ? '전송 중...' : '인증번호 받기'}
+                </button>
+                <button onClick={resetToSignupForm} className="w-full mt-2 py-2 text-gray-500 hover:text-gray-300 text-xs transition-colors">
+                  이전으로 돌아가기
+                </button>
+              </>
+            )}
 
-              <div>
-                <label className="text-sm font-bold text-amber-400 mb-1.5 block">
-                  초대 코드 *
-                </label>
+            {signupStep === 'otp' && (
+              <>
+                <div className="text-center mb-5">
+                  <h2 className="text-lg font-bold text-white">인증번호 입력</h2>
+                  <p className="text-xs text-gray-400 mt-1">
+                    {phone.replace(/[\s-]/g, '')}(으)로 발송됨
+                    {countdown > 0 && <span className="text-green-400 ml-1">({countdown}초)</span>}
+                  </p>
+                </div>
                 <input
                   type="text"
-                  value={inviteCode}
-                  onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
-                  placeholder="초대 코드를 입력하세요"
-                  required
-                  className="w-full bg-amber-950/30 border-2 border-amber-500/30 rounded-xl px-4 py-3 text-sm text-amber-200 placeholder-amber-700 focus:outline-none focus:border-amber-500/50 font-mono tracking-wider"
+                  inputMode="numeric"
+                  maxLength={6}
+                  value={otpCode}
+                  onChange={e => setOtpCode(e.target.value.replace(/\D/g, ''))}
+                  onKeyDown={e => e.key === 'Enter' && !isLoading && handleVerifyOTP()}
+                  placeholder="000000"
+                  className={`${inputClass} text-2xl text-center tracking-[0.5em] font-mono`}
+                  autoFocus
                 />
-                <p className="text-xs text-gray-600 mt-1">
-                  구매 시 제공받은 초대 코드를 입력해주세요.
-                </p>
-              </div>
-            </>
-          )}
+                {error && <p className="text-red-400 text-xs mt-3 text-center">{error}</p>}
+                <button
+                  onClick={handleVerifyOTP}
+                  disabled={isLoading || otpCode.length < 6}
+                  className="w-full mt-4 py-3 rounded-xl text-sm font-bold text-white bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 disabled:from-gray-700 disabled:to-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed transition-all"
+                >
+                  {isLoading ? '확인 중...' : '인증 확인'}
+                </button>
+                <button
+                  onClick={() => { setSignupStep('phone'); setOtpCode(''); setError(''); recaptchaRef.current = null; }}
+                  className="w-full mt-2 py-2 text-gray-500 hover:text-gray-300 text-xs transition-colors"
+                >
+                  다른 번호로 시도
+                </button>
+              </>
+            )}
 
-          {/* 로그인 유지 체크박스 (로그인 모드에서만) */}
-          {mode === 'login' && (
-            <label className="flex items-center gap-2 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={rememberMe}
-                onChange={(e) => setRememberMe(e.target.checked)}
-                className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-blue-500 focus:ring-blue-500/30 focus:ring-offset-0 cursor-pointer"
-              />
-              <span className="text-sm text-gray-400">로그인 상태 유지 (30일)</span>
-            </label>
-          )}
-
-          {/* 에러 메시지 */}
-          {error && (
-            <div className="bg-red-900/20 border border-red-500/30 rounded-xl px-4 py-3 text-sm text-red-400">
-              {error}
+            {/* reCAPTCHA 컨테이너 (invisible) */}
+            <div id="recaptcha-container" />
+          </div>
+        ) : (
+          <>
+            {/* ── 기존 로그인/회원가입 폼 ── */}
+            <div className="flex mb-6 bg-gray-900 rounded-xl p-1 border border-gray-800">
+              <button
+                type="button"
+                onClick={() => { setMode('login'); setError(''); setSignupStep('form'); }}
+                className={`flex-1 py-2.5 rounded-lg text-sm font-bold transition-all ${
+                  mode === 'login' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-400 hover:text-gray-200'
+                }`}
+              >
+                로그인
+              </button>
+              <button
+                type="button"
+                onClick={() => { setMode('signup'); setError(''); setSignupStep('form'); }}
+                className={`flex-1 py-2.5 rounded-lg text-sm font-bold transition-all ${
+                  mode === 'signup' ? 'bg-violet-600 text-white shadow-md' : 'text-gray-400 hover:text-gray-200'
+                }`}
+              >
+                회원가입
+              </button>
             </div>
-          )}
 
-          <button
-            type="submit"
-            disabled={isLoading}
-            className="w-full py-3.5 rounded-xl text-base font-bold text-white bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 disabled:from-gray-700 disabled:to-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed transition-all shadow-lg shadow-violet-500/20"
-          >
-            {isLoading
-              ? '처리 중...'
-              : mode === 'login' ? '로그인' : '회원가입'
-            }
-          </button>
-        </form>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              {mode === 'signup' && (
+                <div>
+                  <label className="text-sm text-gray-400 mb-1.5 block">닉네임 (선택)</label>
+                  <input type="text" value={displayName} onChange={e => setDisplayName(e.target.value)}
+                    placeholder="표시될 이름" className={inputClass} />
+                </div>
+              )}
 
-        <p className="text-center text-xs text-gray-600 mt-6">
-          {mode === 'login'
-            ? '계정이 없으신가요? 상단 "회원가입" 탭을 클릭하세요.'
-            : '이미 계정이 있으신가요? 상단 "로그인" 탭을 클릭하세요.'
-          }
-        </p>
+              <div>
+                <label className="text-sm text-gray-400 mb-1.5 block">이메일</label>
+                <input type="email" value={email} onChange={e => setEmail(e.target.value)}
+                  placeholder="email@example.com" required className={inputClass} />
+              </div>
+
+              <div>
+                <label className="text-sm text-gray-400 mb-1.5 block">비밀번호</label>
+                <input type="password" value={password} onChange={e => setPassword(e.target.value)}
+                  placeholder={mode === 'signup' ? '8자 이상' : '비밀번호 입력'} required
+                  minLength={mode === 'signup' ? 8 : undefined} className={inputClass} />
+              </div>
+
+              {mode === 'signup' && (
+                <>
+                  <div>
+                    <label className="text-sm text-gray-400 mb-1.5 block">비밀번호 확인</label>
+                    <input type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)}
+                      placeholder="비밀번호 재입력" required className={inputClass} />
+                  </div>
+                  <div>
+                    <label className="text-sm font-bold text-amber-400 mb-1.5 block">초대 코드 *</label>
+                    <input type="text" value={inviteCode} onChange={e => setInviteCode(e.target.value.toUpperCase())}
+                      placeholder="초대 코드를 입력하세요" required
+                      className="w-full bg-amber-950/30 border-2 border-amber-500/30 rounded-xl px-4 py-3 text-sm text-amber-200 placeholder-amber-700 focus:outline-none focus:border-amber-500/50 font-mono tracking-wider" />
+                    <p className="text-xs text-gray-600 mt-1">구매 시 제공받은 초대 코드를 입력해주세요.</p>
+                  </div>
+                </>
+              )}
+
+              {mode === 'login' && (
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input type="checkbox" checked={rememberMe} onChange={e => setRememberMe(e.target.checked)}
+                    className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-blue-500 focus:ring-blue-500/30 focus:ring-offset-0 cursor-pointer" />
+                  <span className="text-sm text-gray-400">로그인 상태 유지 (30일)</span>
+                </label>
+              )}
+
+              {error && (
+                <div className="bg-red-900/20 border border-red-500/30 rounded-xl px-4 py-3 text-sm text-red-400">{error}</div>
+              )}
+
+              <button type="submit" disabled={isLoading}
+                className="w-full py-3.5 rounded-xl text-base font-bold text-white bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 disabled:from-gray-700 disabled:to-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed transition-all shadow-lg shadow-violet-500/20">
+                {isLoading ? '처리 중...' : mode === 'login' ? '로그인' : '다음 — 본인 인증'}
+              </button>
+            </form>
+
+            {mode === 'signup' && (
+              <p className="text-center text-xs text-gray-600 mt-4">
+                회원가입 시 전화번호 본인 인증이 필요합니다
+              </p>
+            )}
+
+            <p className="text-center text-xs text-gray-600 mt-3">
+              {mode === 'login'
+                ? '계정이 없으신가요? 상단 "회원가입" 탭을 클릭하세요.'
+                : '이미 계정이 있으신가요? 상단 "로그인" 탭을 클릭하세요.'}
+            </p>
+          </>
+        )}
       </div>
     </div>
   );
