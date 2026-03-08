@@ -17,14 +17,14 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
     if (!displayName || displayName.trim().length === 0) {
       return new Response(
-        JSON.stringify({ error: '닉네임을 입력해주세요.' }),
+        JSON.stringify({ error: '이름을 입력해주세요.' }),
         { status: 400, headers }
       );
     }
 
     if (displayName.trim().length > 30) {
       return new Response(
-        JSON.stringify({ error: '닉네임은 30자 이하로 입력해주세요.' }),
+        JSON.stringify({ error: '이름은 30자 이하로 입력해주세요.' }),
         { status: 400, headers }
       );
     }

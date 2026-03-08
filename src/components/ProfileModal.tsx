@@ -28,7 +28,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ authUser, onUserUpdate, onA
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
-  // 닉네임 변경
+  // 이름 변경
   const [newName, setNewName] = useState('');
 
   // 비밀번호 변경
@@ -78,15 +78,15 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ authUser, onUserUpdate, onA
   };
 
   const handleNicknameSubmit = async () => {
-    if (!newName.trim()) { setError('닉네임을 입력해주세요.'); return; }
+    if (!newName.trim()) { setError('이름을 입력해주세요.'); return; }
     setLoading(true); setError('');
     try {
       const updated = await updateDisplayName(newName);
       onUserUpdate({ ...authUser, displayName: updated });
-      setSuccess('닉네임이 변경되었습니다.');
+      setSuccess('이름이 변경되었습니다.');
       if (profile) setProfile({ ...profile, displayName: updated });
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : '닉네임 변경 실패');
+      setError(err instanceof Error ? err.message : '이름 변경 실패');
     } finally { setLoading(false); }
   };
 
@@ -127,7 +127,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ authUser, onUserUpdate, onA
 
   const menuItems: { key: Section; label: string; icon: string }[] = [
     { key: 'profile', label: '프로필 정보', icon: '👤' },
-    { key: 'nickname', label: '닉네임 변경', icon: '✏️' },
+    { key: 'nickname', label: '이름 변경', icon: '✏️' },
     { key: 'password', label: '비밀번호 변경', icon: '🔒' },
     { key: 'delete', label: '계정 삭제', icon: '🗑️' },
   ];
@@ -200,7 +200,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ authUser, onUserUpdate, onA
                 ) : profile ? (
                   <div className="space-y-3">
                     <div>
-                      <span className="text-xs text-gray-500">닉네임</span>
+                      <span className="text-xs text-gray-500">이름</span>
                       <p className="text-sm text-gray-200 mt-0.5">{profile.displayName}</p>
                     </div>
                     <div>
@@ -228,23 +228,23 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ authUser, onUserUpdate, onA
               </div>
             )}
 
-            {/* 닉네임 변경 */}
+            {/* 이름 변경 */}
             {section === 'nickname' && (
               <div className="space-y-4">
-                <h3 className="text-base font-bold text-gray-200 mb-4">닉네임 변경</h3>
+                <h3 className="text-base font-bold text-gray-200 mb-4">이름 변경</h3>
                 <div>
-                  <label className="text-sm text-gray-400 mb-1.5 block">새 닉네임</label>
+                  <label className="text-sm text-gray-400 mb-1.5 block">새 이름</label>
                   <input
                     type="text"
                     value={newName}
                     onChange={(e) => setNewName(e.target.value)}
-                    placeholder="새 닉네임 입력"
+                    placeholder="새 이름 입력"
                     maxLength={30}
                     className={inputClass}
                   />
                 </div>
                 <button onClick={handleNicknameSubmit} disabled={loading} className={btnPrimary}>
-                  {loading ? '변경 중...' : '닉네임 변경'}
+                  {loading ? '변경 중...' : '이름 변경'}
                 </button>
               </div>
             )}

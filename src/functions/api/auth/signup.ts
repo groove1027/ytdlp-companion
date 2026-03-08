@@ -5,7 +5,7 @@ interface SignupBody {
   email: string;
   password: string;
   inviteCode: string;
-  displayName?: string;
+  displayName: string;
   firebaseIdToken: string;
 }
 
@@ -49,9 +49,9 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     const { email, password, inviteCode, displayName, firebaseIdToken } = body;
 
     // 1. 입력 검증
-    if (!email || !password || !inviteCode) {
+    if (!email || !password || !inviteCode || !displayName?.trim()) {
       return new Response(
-        JSON.stringify({ error: '이메일, 비밀번호, 초대 코드를 모두 입력해주세요.' }),
+        JSON.stringify({ error: '이름, 이메일, 비밀번호, 초대 코드를 모두 입력해주세요.' }),
         { status: 400, headers }
       );
     }

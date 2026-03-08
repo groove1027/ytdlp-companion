@@ -41,7 +41,7 @@ export const getSavedUser = (): AuthUser | null => {
   } catch { return null; }
 };
 
-/** 저장된 사용자 정보 업데이트 (닉네임 변경 등) */
+/** 저장된 사용자 정보 업데이트 (이름 변경 등) */
 const updateSavedUser = (updates: Partial<AuthUser>): void => {
   const current = getSavedUser();
   if (!current) return;
@@ -165,7 +165,7 @@ export const getProfile = async (): Promise<ProfileData> => {
   return data;
 };
 
-/** 닉네임 변경 */
+/** 이름 변경 */
 export const updateDisplayName = async (displayName: string): Promise<string> => {
   const token = getToken();
   if (!token) throw new Error('로그인이 필요합니다.');
@@ -176,7 +176,7 @@ export const updateDisplayName = async (displayName: string): Promise<string> =>
     body: JSON.stringify({ token, displayName }),
   });
   const data = await res.json();
-  if (!res.ok) throw new Error(data.error || '닉네임 변경 실패');
+  if (!res.ok) throw new Error(data.error || '이름 변경 실패');
   updateSavedUser({ displayName: data.displayName });
   return data.displayName;
 };

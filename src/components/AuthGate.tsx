@@ -145,6 +145,7 @@ const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
     setError('');
     if (password !== confirmPassword) { setError('비밀번호가 일치하지 않습니다.'); return; }
     if (password.length < 8) { setError('비밀번호는 8자 이상이어야 합니다.'); return; }
+    if (!displayName.trim()) { setError('이름을 입력해주세요.'); return; }
     if (!inviteCode.trim()) { setError('초대 코드를 입력해주세요.'); return; }
     if (!email.trim()) { setError('이메일을 입력해주세요.'); return; }
     if (!isFirebaseConfigured()) { setError('본인 인증 시스템이 준비되지 않았습니다. 관리자에게 문의해주세요.'); return; }
@@ -194,7 +195,7 @@ const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
     setIsLoading(true); setError('');
     try {
       const { signup } = await import('../services/authService');
-      const result = await signup(email, password, inviteCode, displayName || undefined, firebaseIdToken);
+      const result = await signup(email, password, inviteCode, displayName.trim(), firebaseIdToken);
       onAuthenticated(result.user);
     } catch (err: unknown) { setError(err instanceof Error ? err.message : '회원가입 실패'); setSignupStep('form'); }
     finally { setIsLoading(false); }
@@ -316,9 +317,9 @@ const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
             <form onSubmit={handleSubmit} className="space-y-4">
               {mode === 'signup' && (
                 <div>
-                  <label className="text-sm text-gray-400 mb-1.5 block">닉네임 (선택)</label>
+                  <label className="text-sm text-gray-400 mb-1.5 block">이름 (실명) *</label>
                   <input type="text" value={displayName} onChange={e => setDisplayName(e.target.value)}
-                    placeholder="표시될 이름" className={inputClass} />
+                    placeholder="실명을 입력하세요" required className={inputClass} />
                 </div>
               )}
               <div>
