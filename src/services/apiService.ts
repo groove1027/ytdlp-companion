@@ -12,7 +12,8 @@ const DEFAULT_XAI_KEY = 'REDACTED_XAI_KEY';
 const DEFAULT_EVOLINK_KEY = 'REDACTED_EVOLINK_KEY';
 const DEFAULT_YOUTUBE_API_KEY = 'REDACTED_YOUTUBE_KEY';
 const DEFAULT_TYPECAST_KEY = '';
-const DEFAULT_REPLICATE_KEY = '';
+const DEFAULT_GHOSTCUT_APP_KEY = '';
+const DEFAULT_GHOSTCUT_APP_SECRET = '';
 const DEFAULT_CLOUD_NAME = 'dji3gtb5r';
 const DEFAULT_UPLOAD_PRESET = 'storyboard';
 // [FEEDBACK] Google Apps Script Web App URL — 개발자가 한 번 설정
@@ -71,9 +72,11 @@ export const getTypecastKey = (): string => {
     return sanitizeKey(key);
 };
 
-export const getReplicateKey = (): string => {
-    const key = localStorage.getItem('CUSTOM_REPLICATE_KEY') || DEFAULT_REPLICATE_KEY;
-    return sanitizeKey(key);
+export const getGhostCutKeys = (): { appKey: string; appSecret: string } => {
+    return {
+        appKey: sanitizeKey(localStorage.getItem('CUSTOM_GHOSTCUT_APP_KEY') || DEFAULT_GHOSTCUT_APP_KEY),
+        appSecret: sanitizeKey(localStorage.getItem('CUSTOM_GHOSTCUT_APP_SECRET') || DEFAULT_GHOSTCUT_APP_SECRET),
+    };
 };
 
 export const getCloudinaryConfig = () => {
@@ -87,7 +90,7 @@ export const getFeedbackUrl = (): string => {
     return DEFAULT_FEEDBACK_URL;
 };
 
-export const saveApiKeys = (kie: string, cloudName?: string, uploadPreset?: string, gemini?: string, apimart?: string, removeBg?: string, wavespeed?: string, xai?: string, evolink?: string, youtubeApiKey?: string, typecast?: string, replicate?: string) => {
+export const saveApiKeys = (kie: string, cloudName?: string, uploadPreset?: string, gemini?: string, apimart?: string, removeBg?: string, wavespeed?: string, xai?: string, evolink?: string, youtubeApiKey?: string, typecast?: string, ghostcutAppKey?: string, ghostcutAppSecret?: string) => {
     // Save raw input, but sanitized on retrieval
     if (kie.trim()) localStorage.setItem('CUSTOM_KIE_KEY', kie.trim());
     else localStorage.removeItem('CUSTOM_KIE_KEY');
@@ -125,8 +128,11 @@ export const saveApiKeys = (kie: string, cloudName?: string, uploadPreset?: stri
     if (typecast && typecast.trim()) localStorage.setItem('CUSTOM_TYPECAST_KEY', typecast.trim());
     else localStorage.removeItem('CUSTOM_TYPECAST_KEY');
 
-    if (replicate && replicate.trim()) localStorage.setItem('CUSTOM_REPLICATE_KEY', replicate.trim());
-    else localStorage.removeItem('CUSTOM_REPLICATE_KEY');
+    if (ghostcutAppKey && ghostcutAppKey.trim()) localStorage.setItem('CUSTOM_GHOSTCUT_APP_KEY', ghostcutAppKey.trim());
+    else localStorage.removeItem('CUSTOM_GHOSTCUT_APP_KEY');
+
+    if (ghostcutAppSecret && ghostcutAppSecret.trim()) localStorage.setItem('CUSTOM_GHOSTCUT_APP_SECRET', ghostcutAppSecret.trim());
+    else localStorage.removeItem('CUSTOM_GHOSTCUT_APP_SECRET');
 };
 
 export const getStoredKeys = () => {
@@ -142,7 +148,8 @@ export const getStoredKeys = () => {
         evolink: localStorage.getItem('CUSTOM_EVOLINK_KEY') || '',
         youtubeApiKey: localStorage.getItem('CUSTOM_YOUTUBE_API_KEY') || '',
         typecast: localStorage.getItem('CUSTOM_TYPECAST_KEY') || '',
-        replicate: localStorage.getItem('CUSTOM_REPLICATE_KEY') || ''
+        ghostcutAppKey: localStorage.getItem('CUSTOM_GHOSTCUT_APP_KEY') || '',
+        ghostcutAppSecret: localStorage.getItem('CUSTOM_GHOSTCUT_APP_SECRET') || ''
     };
 };
 

@@ -121,7 +121,7 @@ const initialState = {
   ttsVoiceId: '',
   ttsSpeed: 1.0,
   subtitleTemplate: null as SubtitleTemplate | null,
-  subtitleRemovalMethod: 'propainter' as SubtitleRemovalMethod,
+  subtitleRemovalMethod: 'ghostcut' as SubtitleRemovalMethod,
   ctaPreset: 'comment' as ShoppingCTAPreset,
   ctaText: '댓글로 구매 링크 보내드려요!',
   renderProgress: { phase: 'idle' as ShoppingRenderPhase, percent: 0, message: '' },

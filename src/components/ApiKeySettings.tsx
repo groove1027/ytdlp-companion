@@ -23,7 +23,8 @@ const SERVICE_OPTIONS = [
     { value: 'uploadPreset', label: 'Upload Preset' },
     { value: 'typecast', label: 'Typecast' },
     { value: 'youtubeApiKey', label: 'YouTube API' },
-    { value: 'replicate', label: 'Replicate' },
+    { value: 'ghostcutAppKey', label: 'GhostCut AppKey' },
+    { value: 'ghostcutAppSecret', label: 'GhostCut AppSecret' },
 ];
 
 const EXPORT_MAP: [string, string][] = [
@@ -33,7 +34,8 @@ const EXPORT_MAP: [string, string][] = [
     ['UPLOAD_PRESET', 'uploadPreset'],
     ['TYPECAST', 'typecast'],
     ['YOUTUBE_API_KEY', 'youtubeApiKey'],
-    ['REPLICATE', 'replicate'],
+    ['GHOSTCUT_APP_KEY', 'ghostcutAppKey'],
+    ['GHOSTCUT_APP_SECRET', 'ghostcutAppSecret'],
 ];
 
 // 라벨→필드 매핑 (KEY=VALUE, JSON, 주변 텍스트 감지용)
@@ -45,14 +47,15 @@ const LABEL_MAP: [RegExp, string][] = [
     [/cloudinary/i, 'cloudName'],
     [/typecast/i, 'typecast'],
     [/youtube|google[\s_.-]?api/i, 'youtubeApiKey'],
-    [/replicate/i, 'replicate'],
+    [/ghostcut[\s_.-]?app[\s_.-]?key/i, 'ghostcutAppKey'],
+    [/ghostcut[\s_.-]?app[\s_.-]?secret/i, 'ghostcutAppSecret'],
+    [/ghostcut/i, 'ghostcutAppKey'],
 ];
 
 // 패턴→서비스 규칙 (키 값 자체의 형태로 판별)
 const PATTERN_RULES: [RegExp, string][] = [
     [/^AIzaSy[A-Za-z0-9_-]{25,}$/, 'youtubeApiKey'],   // Google API 키 — 고유 prefix
     [/^[0-9a-f]{32}$/i, 'kie'],                          // 32자 hex — KIE 고유 포맷
-    [/^r8_[A-Za-z0-9]{20,}$/, 'replicate'],              // r8_ prefix — Replicate 고유 포맷
 ];
 
 const maskKey = (key: string): string => {
@@ -190,7 +193,7 @@ const assignRemaining = (entries: DetectedKey[], assigned: Set<string>): Detecte
 // ── 컴포넌트 ──
 
 const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
-    const [keys, setKeys] = useState({ kie: '', cloudName: '', uploadPreset: '', gemini: '', apimart: '', removeBg: '', wavespeed: '', xai: '', evolink: '', youtubeApiKey: '', typecast: '', replicate: '' });
+    const [keys, setKeys] = useState({ kie: '', cloudName: '', uploadPreset: '', gemini: '', apimart: '', removeBg: '', wavespeed: '', xai: '', evolink: '', youtubeApiKey: '', typecast: '', ghostcutAppKey: '', ghostcutAppSecret: '' });
     const [showPassword, setShowPassword] = useState(false);
     const [showBulk, setShowBulk] = useState(false);
     const [bulkText, setBulkText] = useState('');
@@ -277,7 +280,8 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
                 evolink: stored.evolink,
                 youtubeApiKey: stored.youtubeApiKey,
                 typecast: stored.typecast,
-                replicate: stored.replicate,
+                ghostcutAppKey: stored.ghostcutAppKey,
+                ghostcutAppSecret: stored.ghostcutAppSecret,
             });
         }
     }, [isOpen]);
@@ -293,7 +297,7 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
     }, [isOpen, onClose]);
 
     const handleSave = () => {
-        saveApiKeys(keys.kie, keys.cloudName, keys.uploadPreset, undefined, keys.apimart, keys.removeBg, keys.wavespeed, keys.xai, keys.evolink, keys.youtubeApiKey, keys.typecast, keys.replicate);
+        saveApiKeys(keys.kie, keys.cloudName, keys.uploadPreset, undefined, keys.apimart, keys.removeBg, keys.wavespeed, keys.xai, keys.evolink, keys.youtubeApiKey, keys.typecast, keys.ghostcutAppKey, keys.ghostcutAppSecret);
         showToast('설정이 저장되었습니다. 페이지를 새로고침합니다.', 1500);
         setTimeout(() => window.location.reload(), 1500);
     };
@@ -487,16 +491,19 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
                         <input type={showPassword ? "text" : "password"} value={keys.youtubeApiKey} onChange={(e) => setKeys({...keys, youtubeApiKey: e.target.value})} placeholder="YouTube Data API v3 Key" className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-base text-white" />
                     </div>
 
-                    {/* 8. Replicate — ProPainter 자막 제거 */}
+                    {/* 8. GhostCut — AI 자막 제거 */}
                     <div className="space-y-3">
                         <div className="flex items-start justify-between">
                             <div className="flex flex-col">
-                                <h3 className="text-base font-bold text-cyan-400 uppercase tracking-wider">🎨 REPLICATE API</h3>
-                                <span className="text-sm text-gray-400">ProPainter AI 자막/워터마크 제거</span>
+                                <h3 className="text-base font-bold text-cyan-400 uppercase tracking-wider">👻 GHOSTCUT API</h3>
+                                <span className="text-sm text-gray-400">AI 자막/워터마크 자동 제거 (OCR 기반)</span>
                             </div>
-                            <a href="https://replicate.com/account/api-tokens" target="_blank" rel="noopener noreferrer" className="shrink-0 ml-3 px-2.5 py-1 bg-cyan-600/20 hover:bg-cyan-600/40 border border-cyan-500/30 text-cyan-400 text-xs font-bold rounded-lg transition-all flex items-center gap-1">키 발급 ↗</a>
+                            <a href="https://jollytoday.com" target="_blank" rel="noopener noreferrer" className="shrink-0 ml-3 px-2.5 py-1 bg-cyan-600/20 hover:bg-cyan-600/40 border border-cyan-500/30 text-cyan-400 text-xs font-bold rounded-lg transition-all flex items-center gap-1">키 발급 ↗</a>
                         </div>
-                        <input type={showPassword ? "text" : "password"} value={keys.replicate} onChange={(e) => setKeys({...keys, replicate: e.target.value})} placeholder="Replicate API Token (r8_...)" className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-base text-white" />
+                        <div className="grid grid-cols-2 gap-3">
+                            <input type={showPassword ? "text" : "password"} value={keys.ghostcutAppKey} onChange={(e) => setKeys({...keys, ghostcutAppKey: e.target.value})} placeholder="AppKey" className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-base text-white" />
+                            <input type={showPassword ? "text" : "password"} value={keys.ghostcutAppSecret} onChange={(e) => setKeys({...keys, ghostcutAppSecret: e.target.value})} placeholder="AppSecret" className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-base text-white" />
+                        </div>
                     </div>
                 </div>
 

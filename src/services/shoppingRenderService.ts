@@ -7,14 +7,14 @@
 
 import { loadFFmpeg, downloadMp4 } from './ffmpegService';
 import { splitBySentenceEndings } from './ttsService';
-import { removeSubtitlesWithProPainter } from './replicateService';
+import { removeSubtitlesWithGhostCut } from './ghostcutService';
 import { logger } from './LoggerService';
 import type { ShoppingScript, ShoppingRenderPhase, ShoppingCTAPreset } from '../types';
 import type { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile } from '@ffmpeg/util';
 
 interface RenderConfig {
-  subtitleRemovalMethod: 'propainter' | 'none';
+  subtitleRemovalMethod: 'ghostcut' | 'none';
   videoWidth: number;
   videoHeight: number;
   fontFamily: string;
@@ -41,11 +41,11 @@ export const renderShoppingShort = async (
 ): Promise<Blob> => {
   logger.info('[ShoppingRender] 렌더 시작', { script: script.title });
 
-  // 0. ProPainter 자막 제거 (propainter 모드일 때)
+  // 0. GhostCut 자막 제거 (ghostcut 모드일 때)
   let videoBlob = sourceBlob;
-  if (config.subtitleRemovalMethod === 'propainter') {
-    onProgress({ phase: 'removing-subtitles', percent: 5, message: 'ProPainter AI 자막 제거 시작...' });
-    videoBlob = await removeSubtitlesWithProPainter(
+  if (config.subtitleRemovalMethod === 'ghostcut') {
+    onProgress({ phase: 'removing-subtitles', percent: 5, message: 'GhostCut AI 자막 제거 시작...' });
+    videoBlob = await removeSubtitlesWithGhostCut(
       sourceBlob,
       config.videoWidth,
       config.videoHeight,
@@ -142,7 +142,7 @@ const calculateSubtitleTimings = (
   });
 };
 
-/** FFmpeg 필터 체인 빌드 (자막 오버레이 + CTA만 담당, 자막 제거는 ProPainter가 선행 처리) */
+/** FFmpeg 필터 체인 빌드 (자막 오버레이 + CTA만 담당, 자막 제거는 GhostCut이 선행 처리) */
 const buildFilterChain = (
   subtitles: { text: string; start: number; end: number }[],
   fontSize: number,
@@ -151,7 +151,7 @@ const buildFilterChain = (
 ): string => {
   const filters: string[] = [];
 
-  // 패스스루 (ProPainter가 이미 처리했거나, 제거 없음)
+  // 패스스루 (GhostCut이 이미 처리했거나, 제거 없음)
   filters.push("null[desubbed]");
 
   // 2. 새 자막 drawtext 오버레이

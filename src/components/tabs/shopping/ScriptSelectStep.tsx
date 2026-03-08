@@ -6,7 +6,7 @@ import { showToast } from '../../../stores/uiStore';
 import type { SubtitleRemovalMethod } from '../../../types';
 
 const SUBTITLE_REMOVAL_OPTIONS: { id: SubtitleRemovalMethod; label: string; desc: string; icon: string }[] = [
-  { id: 'propainter', label: 'AI 제거', desc: 'ProPainter로 자막 영역 복원', icon: '🤖' },
+  { id: 'ghostcut', label: 'AI 제거', desc: 'GhostCut AI 자동 자막 제거', icon: '🤖' },
   { id: 'none', label: '없음', desc: '원본 유지 (자막 제거 안 함)', icon: '📋' },
 ];
 

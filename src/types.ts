@@ -520,7 +520,7 @@ export interface ShoppingScript {
 export type ShoppingCTAPreset = 'comment' | 'profile' | 'link';
 export type ShoppingRenderPhase = 'idle' | 'generating-tts' | 'removing-subtitles' | 'overlaying-subtitles' | 'mixing-audio' | 'encoding' | 'done' | 'error';
 export type ShoppingWizardStep = 'source' | 'script' | 'render';
-export type SubtitleRemovalMethod = 'propainter' | 'none';
+export type SubtitleRemovalMethod = 'ghostcut' | 'none';
 
 // --- Detail Page Builder ---
 export interface DetailImageSegment {
@@ -1305,7 +1305,7 @@ export interface SourceVideoFile {
   fileSizeMB: number;
   durationSec: number | null;
   thumbnailDataUrl?: string;
-  /** ProPainter로 자막 제거된 영상 Blob URL */
+  /** GhostCut으로 자막 제거된 영상 Blob URL */
   cleanedBlobUrl?: string;
 }
 

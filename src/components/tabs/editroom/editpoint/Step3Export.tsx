@@ -166,7 +166,7 @@ const Step3Export: React.FC = () => {
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
               <span className={`text-sm font-medium ${cleanSubtitles ? 'text-cyan-300' : 'text-gray-300'}`}>
-                AI 자막 제거 (ProPainter)
+                AI 자막 제거 (GhostCut)
               </span>
               {allCleaned && (
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-600/20 text-green-400 border border-green-500/30">
@@ -175,7 +175,7 @@ const Step3Export: React.FC = () => {
               )}
             </div>
             <p className="text-[11px] text-gray-500 mt-0.5">
-              소스 영상 하단의 자막/워터마크를 AI로 제거한 뒤 내보냅니다. Replicate API 키 필요.
+              소스 영상의 자막/워터마크를 GhostCut AI로 자동 제거한 뒤 내보냅니다.
             </p>
           </div>
         </button>

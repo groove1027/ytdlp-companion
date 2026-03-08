@@ -19,7 +19,7 @@ import {
   estimateNarrationDuration,
   calcAutoSpeedFactor,
 } from '../services/editPointService';
-import { removeSubtitlesWithProPainter } from '../services/replicateService';
+import { removeSubtitlesWithGhostCut } from '../services/ghostcutService';
 import { showToast } from './uiStore';
 
 interface EditPointStore {
@@ -412,7 +412,7 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
         const dims = await getVideoDimensions(video.file);
         const blob = new Blob([await video.file.arrayBuffer()], { type: video.file.type });
 
-        const cleanedBlob = await removeSubtitlesWithProPainter(
+        const cleanedBlob = await removeSubtitlesWithGhostCut(
           blob,
           dims.width,
           dims.height,
