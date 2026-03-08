@@ -486,6 +486,8 @@ export type AppTab = 'project' | 'channel-analysis' | 'script-writer' | 'sound-s
 
 // --- 딸깍 영상 제작 (Shopping Short-form) ---
 
+export type ShoppingSourceType = 'video' | 'coupang';
+
 export interface ShoppingSourceVideo {
   originUrl?: string;
   localFile?: File;
@@ -503,6 +505,47 @@ export interface ShoppingProductAnalysis {
   targetAudience: string;
   keyFeatures: string[];
   appealPoints: string[];
+  // 쿠팡 전용 확장 필드
+  price?: number;
+  originalPrice?: number;
+  discountRate?: string;
+  rating?: number;
+  reviewCount?: number;
+  isRocketDelivery?: boolean;
+}
+
+// --- 쿠팡 크롤링 / 파트너스 API ---
+
+export interface CoupangProduct {
+  productId: string;
+  productName: string;
+  price: number;
+  originalPrice?: number;
+  discountRate?: string;
+  mainImageUrl: string;
+  additionalImages: string[];
+  category: string;
+  description: string;
+  rating: number;
+  reviewCount: number;
+  isRocketDelivery: boolean;
+  productUrl: string;
+}
+
+export interface CoupangReview {
+  rating: number;
+  text: string;
+  photoUrls: string[];
+  createdAt?: string;
+  helpfulCount?: number;
+}
+
+export interface CoupangCrawlResult {
+  product: CoupangProduct;
+  reviews: CoupangReview[];
+  topPositiveReviews: string[];
+  topNegativeReviews: string[];
+  photoReviewKeywords: string[];
 }
 
 export interface ShoppingScript {

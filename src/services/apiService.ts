@@ -14,6 +14,9 @@ const DEFAULT_YOUTUBE_API_KEY = 'REDACTED_YOUTUBE_KEY';
 const DEFAULT_TYPECAST_KEY = '';
 const DEFAULT_GHOSTCUT_APP_KEY = '';
 const DEFAULT_GHOSTCUT_APP_SECRET = '';
+const DEFAULT_COUPANG_ACCESS_KEY = '';
+const DEFAULT_COUPANG_SECRET_KEY = '';
+const DEFAULT_COUPANG_PROXY_URL = '';
 const DEFAULT_CLOUD_NAME = 'dji3gtb5r';
 const DEFAULT_UPLOAD_PRESET = 'storyboard';
 // [FEEDBACK] Google Apps Script Web App URL — 개발자가 한 번 설정
@@ -79,6 +82,21 @@ export const getGhostCutKeys = (): { appKey: string; appSecret: string } => {
     };
 };
 
+export const getCoupangAccessKey = (): string => {
+    const key = localStorage.getItem('CUSTOM_COUPANG_ACCESS_KEY') || DEFAULT_COUPANG_ACCESS_KEY;
+    return sanitizeKey(key);
+};
+
+export const getCoupangSecretKey = (): string => {
+    const key = localStorage.getItem('CUSTOM_COUPANG_SECRET_KEY') || DEFAULT_COUPANG_SECRET_KEY;
+    return sanitizeKey(key);
+};
+
+export const getCoupangProxyUrl = (): string => {
+    const url = localStorage.getItem('CUSTOM_COUPANG_PROXY_URL') || DEFAULT_COUPANG_PROXY_URL;
+    return url.trim();
+};
+
 export const getCloudinaryConfig = () => {
     return {
         cloudName: sanitizeKey(localStorage.getItem('CUSTOM_CLOUD_NAME') || DEFAULT_CLOUD_NAME),
@@ -133,6 +151,17 @@ export const saveApiKeys = (kie: string, cloudName?: string, uploadPreset?: stri
 
     if (ghostcutAppSecret && ghostcutAppSecret.trim()) localStorage.setItem('CUSTOM_GHOSTCUT_APP_SECRET', ghostcutAppSecret.trim());
     else localStorage.removeItem('CUSTOM_GHOSTCUT_APP_SECRET');
+};
+
+export const saveCoupangKeys = (accessKey: string, secretKey: string, proxyUrl: string) => {
+    if (accessKey.trim()) localStorage.setItem('CUSTOM_COUPANG_ACCESS_KEY', accessKey.trim());
+    else localStorage.removeItem('CUSTOM_COUPANG_ACCESS_KEY');
+
+    if (secretKey.trim()) localStorage.setItem('CUSTOM_COUPANG_SECRET_KEY', secretKey.trim());
+    else localStorage.removeItem('CUSTOM_COUPANG_SECRET_KEY');
+
+    if (proxyUrl.trim()) localStorage.setItem('CUSTOM_COUPANG_PROXY_URL', proxyUrl.trim());
+    else localStorage.removeItem('CUSTOM_COUPANG_PROXY_URL');
 };
 
 export const getStoredKeys = () => {

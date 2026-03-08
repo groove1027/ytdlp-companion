@@ -13,7 +13,7 @@
 import { evolinkChat, type EvolinkChatMessage, type EvolinkContentPart } from './evolinkService';
 import { transcribeAudio } from './transcriptionService';
 import { logger } from './LoggerService';
-import type { ShoppingProductAnalysis, ShoppingScript, ShoppingCTAPreset } from '../types';
+import type { ShoppingProductAnalysis, ShoppingScript, ShoppingCTAPreset, CoupangCrawlResult } from '../types';
 
 // ═══════════════════════════════════════════════════════════════
 // v31.0 동적 타겟팅 기반 쇼핑형 대본 생성 지침서 (전문)
@@ -353,6 +353,193 @@ export const generateShoppingScripts = async (
     ...s,
     id: s.id || `script-${i + 1}`,
     estimatedDuration: s.estimatedDuration || targetDuration,
+  }));
+};
+
+// ═══════════════════════════════════════════════════════════════
+// 쿠팡 크롤링 데이터 기반 분석 (영상 없이)
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * 쿠팡 크롤링 데이터 → 상품 프리셋 생성
+ * 영상 프레임 대신 크롤링된 텍스트/이미지 데이터를 활용
+ */
+export const analyzeCoupangProduct = async (
+  crawlResult: CoupangCrawlResult,
+): Promise<ShoppingProductAnalysis> => {
+  const { product, topPositiveReviews, topNegativeReviews, photoReviewKeywords } = crawlResult;
+
+  logger.info('[ShoppingScript] 쿠팡 상품 분석 시작', {
+    name: product.productName,
+    reviewCount: crawlResult.reviews.length,
+  });
+
+  // 상품 이미지가 있으면 Vision 분석에 포함
+  const imageContent: EvolinkContentPart[] = product.mainImageUrl
+    ? [{ type: 'image_url' as const, image_url: { url: product.mainImageUrl } }]
+    : [];
+
+  const messages: EvolinkChatMessage[] = [
+    {
+      role: 'system',
+      content: `당신은 쿠팡 상품 데이터 전문 분석가입니다.
+크롤링된 상품 정보와 리뷰 데이터를 분석하여 최적의 쇼핑 숏폼 프리셋을 생성하세요.
+
+반드시 아래 JSON 형식으로만 응답하세요:
+{
+  "productName": "상품명 (한국어, 간결하게)",
+  "category": "카테고리",
+  "targetAudience": "최적 타겟 고객층",
+  "keyFeatures": ["핵심 기능 1", ...],
+  "appealPoints": ["매력 포인트 1", ...]
+}`,
+    },
+    {
+      role: 'user',
+      content: [
+        {
+          type: 'text',
+          text: `## 쿠팡 크롤링 데이터
+- 상품명: ${product.productName}
+- 가격: ${product.price.toLocaleString()}원${product.originalPrice ? ` (정가 ${product.originalPrice.toLocaleString()}원, ${product.discountRate} 할인)` : ''}
+- 카테고리: ${product.category}
+- 별점: ${product.rating} (${product.reviewCount.toLocaleString()}개)
+- 로켓배송: ${product.isRocketDelivery ? '예' : '아니오'}
+- 상세 설명: ${product.description}
+
+## 긍정 리뷰 TOP 5
+${topPositiveReviews.map((r, i) => `${i + 1}. ${r}`).join('\n')}
+
+## 부정 리뷰 TOP 3
+${topNegativeReviews.map((r, i) => `${i + 1}. ${r}`).join('\n')}
+
+## 포토리뷰 키워드
+${photoReviewKeywords.join(', ')}
+
+위 데이터를 종합 분석하여 쇼핑 숏폼 프리셋을 생성해주세요.
+리뷰에서 실제 구매자들이 어떤 점을 좋아하는지, 어떤 타겟이 주로 구매하는지 파악하세요.`,
+        },
+        ...imageContent,
+      ],
+    },
+  ];
+
+  const response = await evolinkChat(messages, {
+    temperature: 0.3,
+    maxTokens: 2048,
+  });
+
+  const text = response.choices[0]?.message?.content || '';
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) throw new Error('쿠팡 상품 분석 결과를 파싱할 수 없습니다.');
+
+  const analysis = JSON.parse(jsonMatch[0]) as ShoppingProductAnalysis;
+
+  // 쿠팡 전용 확장 필드 추가
+  analysis.price = product.price;
+  analysis.originalPrice = product.originalPrice;
+  analysis.discountRate = product.discountRate;
+  analysis.rating = product.rating;
+  analysis.reviewCount = product.reviewCount;
+  analysis.isRocketDelivery = product.isRocketDelivery;
+
+  logger.success('[ShoppingScript] 쿠팡 상품 프리셋 생성 완료', { productName: analysis.productName });
+  return analysis;
+};
+
+/**
+ * 쿠팡 상품 프리셋 → v31.0 지침서 기반 대본 5개 생성
+ * 크롤링 데이터의 가격/리뷰/할인 정보를 대본에 직접 반영
+ */
+export const generateCoupangShoppingScripts = async (
+  analysis: ShoppingProductAnalysis,
+  crawlResult: CoupangCrawlResult,
+  ctaPreset: ShoppingCTAPreset,
+): Promise<ShoppingScript[]> => {
+  logger.info('[ShoppingScript] 쿠팡 v31.0 대본 생성 시작', {
+    product: analysis.productName,
+  });
+
+  const ctaGuide: Record<ShoppingCTAPreset, string> = {
+    comment: '댓글로 구매 링크 보내드려요',
+    profile: '프로필 링크에서 확인하세요',
+    link: '하단 링크 클릭',
+  };
+
+  const { product, topPositiveReviews } = crawlResult;
+  const priceInfo = product.discountRate
+    ? `${product.price.toLocaleString()}원 (${product.discountRate} 할인)`
+    : `${product.price.toLocaleString()}원`;
+
+  const messages: EvolinkChatMessage[] = [
+    {
+      role: 'system',
+      content: `${V31_SYSTEM_PROMPT}
+
+## 추가 지시사항 — 쿠팡 쇼핑 콘텐츠 전용
+- CTA 문구: "${ctaGuide[ctaPreset]}" 를 4단계 마무리에 자연스럽게 삽입
+- 약 25~35초 분량 (한국어 기준 초당 3~4글자)
+- 한국어 구어체 (반말 + ~요체 자연스럽게 혼합)
+- 감탄사, 의성어 적극 활용
+- **가격 임팩트**: 할인율/가성비를 반드시 강조
+- **사회적 증거**: 별점 ${product.rating}, 리뷰 ${product.reviewCount.toLocaleString()}개를 자연스럽게 녹여라
+- **실사용 후기**: 리뷰 내용을 대본에 "실제 구매자" 느낌으로 인용해라
+${product.isRocketDelivery ? '- **로켓배송 멘트**: "내일 바로 도착" 느낌을 넣어라' : ''}
+- 절대 설명형 리뷰 영상 금지! Hook-first 바이럴 콘텐츠만!
+
+## 출력 형식 (반드시 JSON 배열로)
+[
+  {
+    "id": "script-1",
+    "title": "대본 접근법 이름",
+    "sections": {
+      "hooking": "1단계 후킹 텍스트",
+      "detail": "2단계 디테일 텍스트",
+      "romance": "3단계 로망 텍스트",
+      "wit": "4단계 위트+CTA 텍스트"
+    },
+    "fullText": "전체 나레이션 텍스트 (4단계 합본)",
+    "estimatedDuration": 30
+  }
+]
+
+5개를 생성하세요.`,
+    },
+    {
+      role: 'user',
+      content: `[쿠팡 상품 분석 결과 — 프리셋]
+- 상품명: ${analysis.productName}
+- 카테고리: ${analysis.category}
+- 가격: ${priceInfo}
+- 최적 타겟: ${analysis.targetAudience}
+- 핵심 기능: ${analysis.keyFeatures.join(', ')}
+- 매력 포인트: ${analysis.appealPoints.join(', ')}
+- 별점: ${product.rating} (리뷰 ${product.reviewCount.toLocaleString()}개)
+${product.isRocketDelivery ? '- 로켓배송 지원' : ''}
+
+[실제 구매 리뷰 발췌]
+${topPositiveReviews.slice(0, 3).map((r, i) => `${i + 1}. "${r}"`).join('\n')}
+
+위 프리셋과 리뷰를 기반으로 v31.0 지침서의 동적 타겟팅 + 4단계 구매 합리화 프로토콜을 적용한 쇼핑 숏폼 대본 5개를 생성해주세요.`,
+    },
+  ];
+
+  const response = await evolinkChat(messages, {
+    temperature: 0.8,
+    maxTokens: 6144,
+  });
+
+  const text = response.choices[0]?.message?.content || '';
+  const jsonMatch = text.match(/\[[\s\S]*\]/);
+  if (!jsonMatch) throw new Error('대본 생성 결과를 파싱할 수 없습니다.');
+
+  const scripts = JSON.parse(jsonMatch[0]) as ShoppingScript[];
+  logger.success('[ShoppingScript] 쿠팡 v31.0 대본 생성 완료', { count: scripts.length });
+
+  return scripts.map((s, i) => ({
+    ...s,
+    id: s.id || `script-${i + 1}`,
+    estimatedDuration: s.estimatedDuration || 30,
   }));
 };
 

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import {
   ShoppingSourceVideo,
+  ShoppingSourceType,
   ShoppingProductAnalysis,
   ShoppingScript,
   ShoppingCTAPreset,
@@ -9,6 +10,7 @@ import {
   SubtitleRemovalMethod,
   TTSEngine,
   SubtitleTemplate,
+  CoupangCrawlResult,
 } from '../types';
 
 interface ShoppingRenderProgress {
@@ -21,12 +23,22 @@ interface ShoppingShortStore {
   // Wizard
   currentStep: ShoppingWizardStep;
 
-  // Source
+  // Source Type (video or coupang)
+  sourceType: ShoppingSourceType;
+
+  // Source — Video
   sourceVideo: ShoppingSourceVideo | null;
   sourceUrl: string;
   isDownloading: boolean;
   downloadError: string | null;
   proxyUrl: string;
+
+  // Source — Coupang
+  coupangUrl: string;
+  coupangCrawlResult: CoupangCrawlResult | null;
+  isCrawling: boolean;
+  crawlError: string | null;
+  affiliateLink: string | null;
 
   // Analysis & Scripts
   productAnalysis: ShoppingProductAnalysis | null;
@@ -59,12 +71,22 @@ interface ShoppingShortStore {
   setCurrentStep: (step: ShoppingWizardStep) => void;
   goToStep: (step: ShoppingWizardStep) => void;
 
-  // Actions — Source
+  // Actions — Source Type
+  setSourceType: (type: ShoppingSourceType) => void;
+
+  // Actions — Source Video
   setSourceUrl: (url: string) => void;
   setSourceVideo: (video: ShoppingSourceVideo | null) => void;
   setIsDownloading: (v: boolean) => void;
   setDownloadError: (err: string | null) => void;
   setProxyUrl: (url: string) => void;
+
+  // Actions — Source Coupang
+  setCoupangUrl: (url: string) => void;
+  setCoupangCrawlResult: (result: CoupangCrawlResult | null) => void;
+  setIsCrawling: (v: boolean) => void;
+  setCrawlError: (err: string | null) => void;
+  setAffiliateLink: (link: string | null) => void;
 
   // Actions — Analysis
   setProductAnalysis: (analysis: ShoppingProductAnalysis | null) => void;
@@ -105,11 +127,17 @@ const getInitialProxy = (): string => {
 
 const initialState = {
   currentStep: 'source' as ShoppingWizardStep,
+  sourceType: 'video' as ShoppingSourceType,
   sourceVideo: null,
   sourceUrl: '',
   isDownloading: false,
   downloadError: null,
   proxyUrl: getInitialProxy(),
+  coupangUrl: '',
+  coupangCrawlResult: null as CoupangCrawlResult | null,
+  isCrawling: false,
+  crawlError: null as string | null,
+  affiliateLink: null as string | null,
   productAnalysis: null,
   narrationText: null,
   generatedScripts: [],
@@ -136,7 +164,10 @@ export const useShoppingShortStore = create<ShoppingShortStore>((set) => ({
   setCurrentStep: (step) => set({ currentStep: step }),
   goToStep: (step) => set({ currentStep: step }),
 
-  // Source
+  // Source Type
+  setSourceType: (type) => set({ sourceType: type }),
+
+  // Source Video
   setSourceUrl: (url) => set({ sourceUrl: url }),
   setSourceVideo: (video) => set({ sourceVideo: video }),
   setIsDownloading: (v) => set({ isDownloading: v }),
@@ -145,6 +176,13 @@ export const useShoppingShortStore = create<ShoppingShortStore>((set) => ({
     try { localStorage.setItem(PROXY_KEY, url); } catch { /* noop */ }
     set({ proxyUrl: url });
   },
+
+  // Source Coupang
+  setCoupangUrl: (url) => set({ coupangUrl: url }),
+  setCoupangCrawlResult: (result) => set({ coupangCrawlResult: result }),
+  setIsCrawling: (v) => set({ isCrawling: v }),
+  setCrawlError: (err) => set({ crawlError: err }),
+  setAffiliateLink: (link) => set({ affiliateLink: link }),
 
   // Analysis
   setProductAnalysis: (analysis) => set({ productAnalysis: analysis }),
