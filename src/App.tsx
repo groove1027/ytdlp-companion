@@ -1053,7 +1053,7 @@ const App: React.FC = () => {
                         }`}
                       >
                         <div className="flex items-center gap-3">
-                          <span className="text-lg">🎛️</span>
+                          <span className="text-lg">🎞️</span>
                           <span>후반작업</span>
                         </div>
                         <span className={`text-xs text-gray-600 transition-transform duration-200 ${isPostProdOpen ? 'rotate-180' : ''}`}>▼</span>
