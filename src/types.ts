@@ -477,7 +477,7 @@ export interface ExportManifest {
 // ============================================================
 
 /** 앱 메인 탭 네비게이션 */
-export type AppTab = 'project' | 'channel-analysis' | 'script-writer' | 'sound-studio' | 'image-video' | 'edit-room' | 'upload' | 'thumbnail-studio' | 'character-twist' | 'image-script-upload' | 'ppt-master' | 'detail-page';
+export type AppTab = 'project' | 'channel-analysis' | 'script-writer' | 'sound-studio' | 'image-video' | 'edit-room' | 'upload' | 'thumbnail-studio' | 'character-twist' | 'image-script-upload' | 'ppt-master' | 'detail-page' | 'subtitle-remover';
 
 // --- 딸깍 영상 제작 (Shopping Short-form) ---
 
