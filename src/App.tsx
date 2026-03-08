@@ -62,7 +62,6 @@ const TAB_CONFIG: { id: AppTab; label: string; icon: string; activeClass: string
   { id: 'project', label: '프로젝트', icon: '📁', activeClass: 'bg-gray-700/30 text-gray-200 border border-gray-500/30' },
   { id: 'channel-analysis', label: '채널/영상 분석', icon: '🔍', activeClass: 'bg-blue-600/20 text-blue-400 border border-blue-500/30' },
   { id: 'script-writer', label: '대본작성', icon: '✍️', activeClass: 'bg-violet-600/20 text-violet-400 border border-violet-500/30' },
-  { id: 'upload', label: '업로드', icon: '📤', activeClass: 'bg-green-600/20 text-green-400 border border-green-500/30' },
 ];
 
 // [v4.5] 후반작업 하위 탭 (대본작성 아래 접이식)
@@ -70,10 +69,11 @@ const POST_PRODUCTION_TABS: { id: AppTab; label: string; icon: string; activeCla
   { id: 'sound-studio', label: '사운드스튜디오', icon: '🎵', activeClass: 'bg-fuchsia-600/20 text-fuchsia-400 border border-fuchsia-500/30' },
   { id: 'image-video', label: '이미지/영상', icon: '🎬', activeClass: 'bg-orange-600/20 text-orange-400 border border-orange-500/30' },
   { id: 'edit-room', label: '편집실', icon: '✂️', activeClass: 'bg-amber-600/20 text-amber-400 border border-amber-500/30' },
+  { id: 'upload', label: '업로드', icon: '📤', activeClass: 'bg-green-600/20 text-green-400 border border-green-500/30' },
 ];
 
 /** 후반작업 탭 ID Set — 접이식 자동 열기 판단용 */
-const POST_PRODUCTION_TAB_IDS = new Set<AppTab>(['sound-studio', 'image-video', 'edit-room']);
+const POST_PRODUCTION_TAB_IDS = new Set<AppTab>(['sound-studio', 'image-video', 'edit-room', 'upload']);
 
 // [v4.5] 파이프라인 단계 정의 (진행 표시기용)
 const PIPELINE_STEPS: { id: AppTab; label: string; num: number }[] = [
@@ -1043,23 +1043,23 @@ const App: React.FC = () => {
                 {tab.id === 'script-writer' && (() => {
                   const isPostProdOpen = postProductionOpen || POST_PRODUCTION_TAB_IDS.has(activeTab);
                   return (
-                    <div className="ml-2 mt-0.5 mb-0.5">
+                    <div className="mt-0.5 mb-0.5">
                       <button
                         onClick={() => useUIStore.getState().setPostProductionOpen(!isPostProdOpen)}
-                        className={`flex items-center justify-between w-full px-3 py-2.5 rounded-lg text-sm font-semibold transition-all ${
+                        className={`flex items-center justify-between w-full px-4 py-3.5 rounded-lg text-base font-semibold transition-all ${
                           POST_PRODUCTION_TAB_IDS.has(activeTab)
                             ? 'text-gray-200 bg-gray-800/40'
-                            : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800/40'
+                            : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/60'
                         }`}
                       >
-                        <div className="flex items-center gap-2.5">
-                          <span className="text-base">🎛️</span>
+                        <div className="flex items-center gap-3">
+                          <span className="text-lg">🎛️</span>
                           <span>후반작업</span>
                         </div>
-                        <span className={`text-[10px] text-gray-600 transition-transform duration-200 ${isPostProdOpen ? 'rotate-180' : ''}`}>▼</span>
+                        <span className={`text-xs text-gray-600 transition-transform duration-200 ${isPostProdOpen ? 'rotate-180' : ''}`}>▼</span>
                       </button>
                       {isPostProdOpen && (
-                        <div className="mt-0.5 space-y-0.5 pl-2">
+                        <div className="mt-0.5 space-y-0.5 pl-3">
                           {POST_PRODUCTION_TABS.map(pp => {
                             const ppActive = activeTab === pp.id;
                             return (
