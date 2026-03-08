@@ -58,6 +58,8 @@ const LABEL_MAP: [RegExp, string][] = [
     [/youtube|google[\s_.-]?api/i, 'youtubeApiKey'],
     [/ghostcut[\s_.-]?app[\s_.-]?key/i, 'ghostcutAppKey'],
     [/ghostcut[\s_.-]?app[\s_.-]?secret/i, 'ghostcutAppSecret'],
+    [/ghostcut.*secret/i, 'ghostcutAppSecret'],
+    [/ghostcut.*key/i, 'ghostcutAppKey'],
     [/ghostcut/i, 'ghostcutAppKey'],
     [/remove[\s_.-]?bg|배경[\s_.-]?제거/i, 'removeBg'],
     [/apimart/i, 'apimart'],
@@ -135,13 +137,17 @@ const smartDetect = (text: string): DetectedKey[] => {
             if (value.length < 4) { pendingLabel = ''; continue; }
 
             let service = '';
-            const labelNorm = label.toLowerCase().replace(/[\s\-]/g, '_');
+            // pendingLabel + 현재 라벨을 합쳐서 컨텍스트로 사용
+            const fullLabel = pendingLabel ? `${pendingLabel} ${label}` : label;
+            const labelNorm = fullLabel.toLowerCase().replace(/[\s\-]/g, '_');
             for (const [re, svc] of LABEL_MAP) {
                 if (re.test(labelNorm) && !assigned.has(svc)) { service = svc; break; }
             }
             if (service) assigned.add(service);
             results.push({ value, service, method: service ? 'label' : 'guess' });
-            pendingLabel = '';
+            // GhostCut처럼 같은 라벨 아래 Key/Secret이 연속되면 pendingLabel 유지
+            if (pendingLabel && /key|app\s*key/i.test(label)) { /* pendingLabel 유지 */ }
+            else { pendingLabel = ''; }
             continue;
         }
 
