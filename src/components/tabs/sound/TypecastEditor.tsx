@@ -989,12 +989,13 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
               onInput={() => syncEditorToStore()}
               onKeyDown={(e) => {
                 if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); handlePlayAll(); }
-                // 전체 선택 후 Delete/Backspace — contenteditable="false" 자식 때문에 네이티브 삭제 불가 → 수동 처리
+                // Delete/Backspace — contenteditable="false" 자식 때문에 네이티브 삭제 불가 → 선택 있으면 항상 수동 처리
                 if (e.key === 'Backspace' || e.key === 'Delete') {
                   const sel = window.getSelection();
                   if (sel && sel.rangeCount > 0 && editorRef.current && !sel.isCollapsed) {
+                    e.preventDefault();
                     const range = sel.getRangeAt(0);
-                    // Range API로 전체 선택 여부 확인 (contenteditable="false" 자식이 있어도 정확)
+                    // Range API로 전체 선택 여부 확인
                     const fullRange = document.createRange();
                     fullRange.selectNodeContents(editorRef.current);
                     const isFullSelection =
@@ -1005,20 +1006,20 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
                     const selText = sel.toString().replace(/\s/g, '');
                     const isTextFullSelection = editorText.length > 0 && selText.length >= editorText.length * 0.8;
                     if (isFullSelection || isTextFullSelection) {
-                      e.preventDefault();
                       const spId = lines[0]?.speakerId || speakers[0]?.id || '';
                       setLines([{ id: `line-${Date.now()}-0`, speakerId: spId, text: '', index: 0, ttsStatus: 'idle' as const }]);
                       setTimeout(() => forceRebuildEditor(), 30);
                       return;
                     }
-                    // 부분 선택이 contenteditable="false" 요소를 포함하면 네이티브 삭제 불가 → 수동 처리
-                    const fragment = range.cloneContents();
-                    if (fragment.querySelector('[contenteditable="false"]')) {
-                      e.preventDefault();
-                      range.deleteContents();
-                      setTimeout(() => syncEditorToStore(), 30);
-                      return;
+                    // 부분 선택 — 브라우저 네이티브가 contenteditable="false" 때문에 실패하므로 수동 삭제
+                    range.deleteContents();
+                    // 빈 <p>가 남지 않도록 정리
+                    const ps = editorRef.current.querySelectorAll('p');
+                    if (ps.length === 0) {
+                      editorRef.current.innerHTML = '<p class="py-2 pl-14 pr-2 leading-relaxed border-l-2 border-yellow-400/20 min-h-[2em]"><br></p>';
                     }
+                    setTimeout(() => syncEditorToStore(), 30);
+                    return;
                   }
                 }
               }}
