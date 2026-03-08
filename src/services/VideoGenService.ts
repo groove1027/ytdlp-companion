@@ -1,7 +1,7 @@
 
 import { AspectRatio, VideoModel, ImageModel, VideoTaskParams, VideoProvider } from "../types";
 import { uploadMediaToHosting, uploadRemoteUrlToCloudinary } from "./uploadService";
-import { getKieKey, getLaozhangKey, getApimartKey, getWaveSpeedKey, getXaiKey, monitoredFetch } from "./apiService";
+import { getKieKey, getApimartKey, getWaveSpeedKey, getXaiKey, monitoredFetch } from "./apiService";
 import { getEvolinkKey, evolinkGenerateImage as evolinkGenImg, createEvolinkVideoTask, pollEvolinkTask } from "./evolinkService";
 import { SAFETY_SETTINGS_BLOCK_NONE } from "./gemini/geminiProxy";
 import { logger } from "./LoggerService";
@@ -9,7 +9,6 @@ import { logger } from "./LoggerService";
 // === CONFIGURATION ===
 const KIE_BASE_URL = 'https://api.kie.ai/api/v1/jobs'; 
 const KIE_VEO_BASE_URL = 'https://api.kie.ai/api/v1/veo';
-const LAOZHANG_API_BASE = 'https://api.laozhang.ai'; 
 const APIMART_BASE_URL = 'https://api.apimart.ai/v1/videos/generations';
 const APIMART_TASK_URL = 'https://api.apimart.ai/v1/tasks';
 const WAVESPEED_BASE_URL = 'https://api.wavespeed.ai/api/v3';
@@ -84,22 +83,6 @@ export async function validateKieConnection(apiKey: string): Promise<{ success: 
     }
 }
 
-export async function validateLaozhangConnection(apiKey: string): Promise<{ success: boolean; message: string }> {
-    if (!apiKey) return { success: false, message: "API Key가 입력되지 않았습니다." };
-    try {
-        const response = await monitoredFetch(`${LAOZHANG_API_BASE}/v1/chat/completions`, {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model: "gemini-3-pro-image-preview", messages: [{ role: "user", content: "ping" }], max_tokens: 1 })
-        });
-        if (response.status === 401 || response.status === 403) return { success: false, message: "인증 실패: Key를 확인하세요." };
-        if (response.ok) return { success: true, message: "연결 성공!" };
-        return { success: false, message: `서버 응답 오류 (${response.status})` };
-    } catch (e: any) {
-        return { success: false, message: `연결 오류: ${e.message}` };
-    }
-}
-
 export async function validateApimartConnection(apiKey: string): Promise<{ success: boolean; message: string }> {
     if (!apiKey) return { success: false, message: "API Key가 입력되지 않았습니다." };
     try {
@@ -136,168 +119,6 @@ export async function validateXaiConnection(apiKey: string): Promise<{ success: 
 
 // === API METHODS ===
 
-// Image generation via Laozhang API
-export async function generateLaozhangImage(
-    prompt: string,
-    aspectRatio: AspectRatio,
-    referenceImages?: string | string[],
-    secondaryImage?: string,
-    resolution: "1K" | "2K" | "4K" = "4K", // [UPDATED] Resolution parameter with default "4K"
-    _isRetry?: boolean // [FIX] MALFORMED_FUNCTION_CALL retry flag
-): Promise<string> {
-    const apiKey = getLaozhangKey();
-    if (!apiKey) throw new Error("Laozhang API Key가 설정되지 않았습니다.");
-
-    let ratioParam = "16:9";
-    if (aspectRatio === AspectRatio.PORTRAIT) ratioParam = "9:16";
-    else if (aspectRatio === AspectRatio.SQUARE) ratioParam = "1:1";
-    else if (aspectRatio === AspectRatio.CLASSIC) ratioParam = "4:3";
-
-    const url = `${LAOZHANG_API_BASE}/v1beta/models/gemini-3-pro-image-preview:generateContent`;
-    const parts: any[] = [{ text: prompt }];
-
-    // [FIX] Match Laozhang API docs: snake_case for request, camelCase for response
-    const processImagePart = (imgSource: string) => {
-        try {
-            if (imgSource.startsWith("http")) {
-                // URL-based input (docs: fileData with camelCase)
-                return {
-                    fileData: {
-                        fileUri: imgSource,
-                        mimeType: "image/jpeg"
-                    }
-                };
-            } else if (imgSource.includes("data:")) {
-                // Base64 input (docs: inline_data with snake_case)
-                const arr = imgSource.split(',');
-                const mimeType = arr[0].match(/:(.*?);/)?.[1] || "image/jpeg";
-                const base64Data = arr[1].replace(/[\n\r\s]+/g, '');
-                return {
-                    inline_data: {
-                        mime_type: mimeType,
-                        data: base64Data
-                    }
-                };
-            }
-            return null;
-        } catch (e) {
-            console.error("Image processing failed:", e);
-            return null;
-        }
-    };
-
-    // [UPDATED] Multi-reference image support (string | string[])
-    const refImagesArray = !referenceImages
-        ? []
-        : typeof referenceImages === 'string'
-            ? [referenceImages]
-            : referenceImages;
-    for (const refImg of refImagesArray) {
-        const part = processImagePart(refImg);
-        if (part) parts.push(part);
-    }
-    if (secondaryImage) { const part = processImagePart(secondaryImage); if (part) parts.push(part); }
-
-    const response = await monitoredFetch(url, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            contents: [{ parts: parts }],
-            generationConfig: {
-                responseModalities: ["IMAGE"],
-                imageConfig: {
-                    aspectRatio: ratioParam,
-                    imageSize: resolution // [UPDATED] Use dynamic resolution
-                }
-            },
-            safetySettings: SAFETY_SETTINGS_BLOCK_NONE
-        })
-    });
-
-    if (!response.ok) {
-        // [FIX] 402 에러 코드 구별 처리
-        if (response.status === 402) throw new Error("Laozhang 잔액이 부족합니다. 충전 후 다시 시도하세요.");
-        const errText = await response.text();
-        throw new Error(`Laozhang API Error (${response.status}): ${errText}`);
-    }
-
-    const data = await response.json();
-
-    // [DEBUG] Log full response structure for troubleshooting
-    console.log("[generateLaozhangImage] Response keys:", JSON.stringify(Object.keys(data)));
-    if (data.candidates?.[0]) {
-        const c = data.candidates[0];
-        console.log("[generateLaozhangImage] Candidate keys:", JSON.stringify({
-            finishReason: c.finishReason,
-            contentKeys: c.content ? Object.keys(c.content) : 'no content',
-            partsCount: c.content?.parts?.length || 0,
-            partTypes: c.content?.parts?.map((p: any) => Object.keys(p)) || []
-        }));
-    }
-
-    // [FIX] Check for safety blocks or empty candidates
-    const candidate = data.candidates?.[0];
-    if (!candidate) {
-        const blockReason = data.promptFeedback?.blockReason || 'UNKNOWN';
-        console.warn("[generateLaozhangImage] No candidates. Full response:", JSON.stringify(data).substring(0, 500));
-        throw new Error(`이미지 생성 차단 (${blockReason}). 프롬프트를 수정해보세요.`);
-    }
-
-    const finishReason = candidate.finishReason;
-    if (finishReason === 'SAFETY' || finishReason === 'RECITATION') {
-        throw new Error(`안전 필터에 의해 차단됨 (${finishReason}). 프롬프트를 수정해보세요.`);
-    }
-
-    // [FIX] Handle MALFORMED_FUNCTION_CALL: model tried to delegate to internal tool
-    // (e.g. "call:google:imagegen{prompt:...}" or "call:dalle{prompt:...}")
-    // The model internally generates a good English prompt visible in finishMessage.
-    // Extract it and retry once with that clean prompt.
-    if (finishReason === 'MALFORMED_FUNCTION_CALL') {
-        if (!_isRetry) {
-            const finishMessage = candidate.finishMessage || '';
-            const match = finishMessage.match(/\{prompt:([\s\S]+)/);
-            if (match) {
-                let extractedPrompt = match[1].trim();
-                // Clean trailing braces/whitespace from malformed JSON
-                extractedPrompt = extractedPrompt.replace(/\}+\s*$/, '').trim();
-                console.log("[generateLaozhangImage] MALFORMED_FUNCTION_CALL → retrying with extracted English prompt:", extractedPrompt.substring(0, 120));
-                return generateLaozhangImage(extractedPrompt, aspectRatio, undefined, undefined, resolution, true);
-            }
-        }
-        console.error("[generateLaozhangImage] MALFORMED_FUNCTION_CALL (retry exhausted). finishMessage:", candidate.finishMessage?.substring(0, 200));
-        throw new Error(`이미지 생성 모델 오류 (MALFORMED_FUNCTION_CALL). 프롬프트를 수정해보세요.`);
-    }
-
-    const responseParts = candidate.content?.parts || [];
-    for (const part of responseParts) {
-        // Standard: inlineData with base64
-        if (part.inlineData && part.inlineData.data) {
-            const mimeType = part.inlineData.mimeType || 'image/jpeg';
-            return `data:${mimeType};base64,${part.inlineData.data.replace(/[\n\r\s]+/g, '')}`;
-        }
-        // Alternative: fileData with URI (some proxies return URLs)
-        if (part.fileData && part.fileData.fileUri) {
-            return part.fileData.fileUri;
-        }
-        // Alternative: direct image URL field
-        if (part.image_url) {
-            return part.image_url;
-        }
-    }
-
-    // Check alternative response structures (OpenAI-compatible format from proxy)
-    if (data.data?.[0]?.url) return data.data[0].url;
-    if (data.data?.[0]?.b64_json) return `data:image/png;base64,${data.data[0].b64_json}`;
-    // Some proxies nest differently
-    if (data.images?.[0]?.url) return data.images[0].url;
-    if (data.images?.[0]?.b64_json) return `data:image/png;base64,${data.images[0].b64_json}`;
-
-    // Log actual response for debugging
-    const textParts = responseParts.filter((p: any) => p.text).map((p: any) => p.text).join(' ');
-    console.error("[generateLaozhangImage] No image found. Full response:", JSON.stringify(data).substring(0, 1000));
-    throw new Error(`이미지 데이터 없음 (${finishReason || 'NO_IMAGE'}): ${textParts.substring(0, 50) || '응답 비어있음'}`);
-}
-
 // Process image source into API-compatible part format (extracted for reuse)
 export function processImagePart(imgSource: string): Record<string, unknown> | null {
     try {
@@ -316,161 +137,6 @@ export function processImagePart(imgSource: string): Record<string, unknown> | n
     }
 }
 
-// Image EDIT via Laozhang API (nano-banana-pro) — image-first parts order for true editing
-export async function editLaozhangImage(
-    editPrompt: string,
-    referenceImage: string,  // 필수 — base64 data URL 또는 http URL
-    aspectRatio: AspectRatio,
-    resolution: "1K" | "2K" | "4K" = "2K",
-    _isRetry?: boolean,
-    additionalImages?: string[]  // Additional reference images (style anchor, end frame)
-): Promise<string> {
-    const apiKey = getLaozhangKey();
-    if (!apiKey) throw new Error("Laozhang API Key가 설정되지 않았습니다.");
-    if (!referenceImage) throw new Error("editLaozhangImage: referenceImage is required");
-
-    let ratioParam = "16:9";
-    if (aspectRatio === AspectRatio.PORTRAIT) ratioParam = "9:16";
-    else if (aspectRatio === AspectRatio.SQUARE) ratioParam = "1:1";
-    else if (aspectRatio === AspectRatio.CLASSIC) ratioParam = "4:3";
-
-    // Parts: 이미지 FIRST → 편집 텍스트 SECOND (API docs §2-B)
-    const parts: any[] = [];
-
-    // 1) Primary 이미지 파트
-    const primaryPart = processImagePart(referenceImage);
-    if (primaryPart) parts.push(primaryPart);
-
-    // 1b) Additional images (style anchor, end frame) — after primary, before text
-    if (additionalImages) {
-        for (const img of additionalImages) {
-            const part = processImagePart(img);
-            if (part) parts.push(part);
-        }
-    }
-
-    // 2) 편집 지시 텍스트
-    parts.push({ text: editPrompt });
-
-    const url = `${LAOZHANG_API_BASE}/v1beta/models/gemini-3-pro-image-preview:generateContent`;
-
-    const response = await monitoredFetch(url, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            contents: [{ parts }],
-            generationConfig: {
-                responseModalities: ["IMAGE"],
-                imageConfig: { aspectRatio: ratioParam, imageSize: resolution }
-            },
-            safetySettings: SAFETY_SETTINGS_BLOCK_NONE
-        })
-    });
-
-    if (!response.ok) {
-        if (response.status === 402) throw new Error("Laozhang 잔액이 부족합니다. 충전 후 다시 시도하세요.");
-        const errText = await response.text();
-        throw new Error(`Laozhang Edit API Error (${response.status}): ${errText}`);
-    }
-
-    const data = await response.json();
-    const candidate = data.candidates?.[0];
-    if (!candidate) {
-        const blockReason = data.promptFeedback?.blockReason || 'UNKNOWN';
-        throw new Error(`이미지 편집 차단 (${blockReason}). 프롬프트를 수정해보세요.`);
-    }
-
-    const finishReason = candidate.finishReason;
-    if (finishReason === 'SAFETY' || finishReason === 'RECITATION') {
-        throw new Error(`안전 필터에 의해 차단됨 (${finishReason}). 프롬프트를 수정해보세요.`);
-    }
-
-    if (finishReason === 'MALFORMED_FUNCTION_CALL') {
-        if (!_isRetry) {
-            const finishMessage = candidate.finishMessage || '';
-            const match = finishMessage.match(/\{prompt:([\s\S]+)/);
-            if (match) {
-                let extractedPrompt = match[1].trim().replace(/\}+\s*$/, '').trim();
-                console.log("[editLaozhangImage] MALFORMED_FUNCTION_CALL → retrying with extracted prompt:", extractedPrompt.substring(0, 120));
-                return editLaozhangImage(extractedPrompt, referenceImage, aspectRatio, resolution, true);
-            }
-        }
-        throw new Error(`이미지 편집 모델 오류 (MALFORMED_FUNCTION_CALL). 프롬프트를 수정해보세요.`);
-    }
-
-    const responseParts = candidate.content?.parts || [];
-    for (const part of responseParts) {
-        if (part.inlineData && part.inlineData.data) {
-            const mimeType = part.inlineData.mimeType || 'image/jpeg';
-            return `data:${mimeType};base64,${part.inlineData.data.replace(/[\n\r\s]+/g, '')}`;
-        }
-        if (part.fileData && part.fileData.fileUri) return part.fileData.fileUri;
-        if (part.image_url) return part.image_url;
-    }
-
-    if (data.data?.[0]?.url) return data.data[0].url;
-    if (data.data?.[0]?.b64_json) return `data:image/png;base64,${data.data[0].b64_json}`;
-
-    throw new Error(`이미지 편집 데이터 없음 (${finishReason || 'NO_IMAGE'})`);
-}
-
-// Sora Image Edit via Laozhang (gpt-4o-image) — fallback for composition-preserving edits
-export async function generateSoraImageEdit(
-    editPrompt: string,
-    referenceImage: string,  // base64 data URL 또는 http URL
-    aspectRatio: AspectRatio
-): Promise<string> {
-    const apiKey = getLaozhangKey();
-    if (!apiKey) throw new Error("Laozhang API Key가 설정되지 않았습니다.");
-
-    // base64 data URL이 너무 크면 (>4MB) 경고 로그
-    if (referenceImage.startsWith("data:") && referenceImage.length > 4 * 1024 * 1024) {
-        console.warn("[SoraImageEdit] Large base64 input (>4MB), may fail. Consider uploading to Cloudinary first.");
-    }
-
-    const imageUrl = referenceImage;
-
-    const requestBody = {
-        model: "gpt-4o-image",
-        messages: [{
-            role: "user",
-            content: [
-                { type: "image_url", image_url: { url: imageUrl } },
-                { type: "text", text: editPrompt }
-            ]
-        }],
-        max_tokens: 4096
-    };
-
-    const response = await monitoredFetch(`${LAOZHANG_API_BASE}/v1/chat/completions`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody)
-    });
-
-    if (!response.ok) {
-        if (response.status === 402) throw new Error("Laozhang 잔액이 부족합니다. 충전 후 다시 시도하세요.");
-        const errText = await response.text();
-        throw new Error(`Sora Image Edit API Error (${response.status}): ${errText}`);
-    }
-
-    const data = await response.json();
-    const content = data.choices?.[0]?.message?.content || '';
-
-    // Sora Image Edit returns markdown with image URL
-    const urlMatch = content.match(/!\[.*?\]\((https?:\/\/[^\s)]+)\)/);
-    if (urlMatch) return urlMatch[1];
-
-    // Or direct URL
-    const directUrlMatch = content.match(/(https?:\/\/[^\s"']+\.(?:png|jpg|jpeg|webp))/i);
-    if (directUrlMatch) return directUrlMatch[1];
-
-    // Or base64 in response
-    if (data.choices?.[0]?.message?.image_url) return data.choices[0].message.image_url;
-
-    console.error("[SoraImageEdit] No image found in response. Content:", content.substring(0, 300));
-    throw new Error("Sora 이미지 편집 응답에서 이미지 URL을 찾을 수 없습니다.");
-}
 
 // [OFFICIAL DOC] Kie Nanobanana 2 이미지 생성
 // 기술문서: https://docs.kie.ai/market/google/nanobanana2
@@ -831,127 +497,6 @@ export async function pollApimartVeoTask(
     throw new Error("Veo Timeout");
 }
 
-// Create video generation task via Laozhang API (Veo Fast)
-export async function createLaozhangVeoTask(
-    prompt: string, // Unused
-    imageUrl: string, 
-    aspectRatio: AspectRatio, 
-    mode: VideoModel = VideoModel.VEO,
-    requiresTextRendering: boolean = false,
-    isSafeRetry: boolean = false,
-    cameraAngle?: string,
-    cameraMovement?: string
-): Promise<string> {
-    const apiKey = getLaozhangKey();
-    if (!apiKey) throw new Error("Laozhang API Key가 설정되지 않았습니다.");
-
-    const isLandscape = aspectRatio === AspectRatio.LANDSCAPE; 
-    let modelName = isLandscape ? "veo-3.1-landscape-fast-fl" : "veo-3.1-fast-fl";
-    let sizeParam = isLandscape ? "1280x720" : "720x1280";
-
-    const formData = new FormData();
-    formData.append('model', modelName);
-    
-    let finalPrompt = constructVeoPrompt("", cameraAngle, cameraMovement);
-    
-    if (isSafeRetry) {
-        finalPrompt = "[Sound Effects Only] [No Music] [No Speech] [Movement: Subtle]";
-    }
-    
-    formData.append('prompt', finalPrompt);
-    formData.append('size', sizeParam);
-
-    let fileToUpload: File | Blob;
-    if (imageUrl.startsWith("data:")) {
-        fileToUpload = base64ToFile(imageUrl, "image.png");
-    } else {
-        const resp = await monitoredFetch(imageUrl);
-        fileToUpload = await resp.blob();
-    }
-    formData.append('image', fileToUpload, "image.png");
-
-    const response = await monitoredFetch(`${LAOZHANG_API_BASE}/v1/videos`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${apiKey}` },
-        body: formData
-    });
-    if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(`Laozhang Veo Request Failed (${response.status}): ${errText}`);
-    }
-    const data = await response.json();
-    return data.id;
-}
-
-// Poll status for Laozhang Veo tasks (UPDATED with Progress & Content Fetch)
-export async function pollLaozhangVeoTask(
-    taskId: string, 
-    signal?: AbortSignal, 
-    onProgress?: (percent: number) => void
-): Promise<string> {
-    const url = `${LAOZHANG_API_BASE}/v1/videos/${taskId}`;
-    const contentUrl = `${LAOZHANG_API_BASE}/v1/videos/${taskId}/content`;
-    
-    let progress = 0;
-
-    for (let i = 0; i < 120; i++) {
-        if (signal?.aborted) throw new Error("Cancelled");
-
-        // Simulated Progress (as API doesn't provide it)
-        if (progress < 90) {
-            progress += 1;
-            if (onProgress) onProgress(progress);
-        }
-
-        await new Promise(r => setTimeout(r, 5000));
-        
-        try {
-            const response = await monitoredFetch(url, { headers: { 'Authorization': `Bearer ${getLaozhangKey()}` }, signal });
-            if (!response.ok) continue;
-            const taskData = await response.json();
-            
-            // Adjust progress based on status string
-            if (taskData.status === 'queued') {
-                if (progress < 10) progress = 10;
-            } else if (taskData.status === 'processing') {
-                if (progress < 30) progress = 30;
-                if (onProgress) onProgress(progress);
-            }
-
-            if (taskData.status === 'completed') {
-                if (onProgress) onProgress(98);
-                
-                // [STEP 3] Fetch Content URL explicitly
-                logger.info(`Veo Task ${taskId} Completed. Fetching content...`);
-                
-                const contentResponse = await monitoredFetch(contentUrl, { 
-                    headers: { 'Authorization': `Bearer ${getLaozhangKey()}` },
-                    signal 
-                });
-                
-                if (!contentResponse.ok) {
-                    throw new Error(`Content fetch failed: ${contentResponse.status}`);
-                }
-                
-                const contentData = await contentResponse.json();
-                if (onProgress) onProgress(100);
-                
-                if (contentData.url) return contentData.url;
-                // Sometimes Laozhang might return binary directly or different JSON? 
-                // Documentation says JSON with url. 
-                throw new Error("비디오 URL을 찾을 수 없습니다 (Content 응답).");
-
-            } else if (taskData.status === 'failed') {
-                throw new Error(`Veo 생성 실패: ${taskData.error || "Unknown Error"}`);
-            }
-        } catch (e: any) {
-            if (e.name === 'AbortError') throw e;
-            // Re-throw definitive failures (not transient network errors)
-            if (e.message?.includes('실패') || e.message?.includes('찾을 수 없') || e.message?.includes('Content fetch failed')) throw e;
-        }
-    }
-    throw new Error("Timeout");
-}
 
 // Create Kie Veo Task (Backup)
 export async function createKieVeoTask(
@@ -1180,22 +725,6 @@ export async function cancelKieTask(taskId: string): Promise<void> {
     });
 }
 
-export async function cancelLaozhangTask(taskId: string): Promise<void> {
-    const apiKey = getLaozhangKey();
-    await monitoredFetch(`${LAOZHANG_API_BASE}/v1/videos/${taskId}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${apiKey}` }
-    });
-}
-
-export async function createLaozhangVeoTaskExperimental(
-    prompt: string,
-    imageUrl: string,
-    aspectRatio: AspectRatio,
-    mode: VideoModel = VideoModel.VEO
-): Promise<string> {
-    return createLaozhangVeoTask(prompt, imageUrl, aspectRatio, mode, false, false);
-}
 
 /* WaveSpeed 워터마크 제거 기능 주석처리
 // === WAVESPEED WATERMARK REMOVAL ===
@@ -1693,16 +1222,6 @@ const grokProvider: VideoProvider = {
     },
 };
 
-// [DEPRECATED] Laozhang VEO 720p Provider — 주석 처리 (Evolink 1080p로 통합)
-// const veoFastProvider: VideoProvider = {
-//     create: (p) => createLaozhangVeoTask(
-//         p.prompt, p.imageUrl, p.aspectRatio,
-//         p.mode, p.requiresTextRendering, p.isSafeRetry,
-//         p.cameraAngle, p.cameraMovement
-//     ),
-//     poll: (taskId, signal, onProgress) => pollLaozhangVeoTask(taskId, signal, onProgress),
-//     cancel: (taskId) => cancelLaozhangTask(taskId),
-// };
 
 // [DEPRECATED] Apimart VEO 1080p Provider — 주석 처리 (Evolink로 대체)
 // const veoQualityProvider: VideoProvider = {

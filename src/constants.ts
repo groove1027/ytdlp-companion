@@ -7,7 +7,7 @@ export const PRICING = {
 
   // Image Generation
   IMAGE_GENERATION: 0.0806,          // Evolink Nanobanana 2 - 2K ($0.0806/image, 5.8 credits)
-  IMAGE_GENERATION_FALLBACK: 0.05,   // Laozhang Gemini 3 Pro Image ($0.05/image)
+  IMAGE_GENERATION_FALLBACK: 0.05,   // Kie Nanobanana 2 폴백 ($0.05/image)
   IMAGE_PREVIEW: 0.02,               // Fast Preview
   IMAGE_FLASH: 0.02,                 // Gemini 2.5 Flash ($0.02/image) — 비활성
 
@@ -30,7 +30,7 @@ export const PRICING = {
   WAVESPEED_PER_SEC: 0.01,           // WaveSpeed 워터마크/자막 제거 ($0.01/sec, 최소 $0.05)
   // REMOVE_BG_PER_IMAGE: 0.20,      // [DISABLED] Remove.bg 배경 제거
 
-  // Analysis — Gemini 3 Flash via Laozhang/Kie
+  // Analysis — Gemini 3 Flash via Evolink/Kie
   GEMINI_FLASH_INPUT_PER_1M: 0.50,   // Gemini 3 Flash Input ($0.50/1M tokens)
   GEMINI_FLASH_AUDIO_INPUT_PER_1M: 1.00,
   GEMINI_FLASH_OUTPUT_PER_1M: 3.00,  // Gemini 3 Flash Output ($3.00/1M tokens)

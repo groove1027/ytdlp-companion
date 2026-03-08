@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { AspectRatio } from '../../types';
 import { PRICING } from '../../constants';
-import { generateLaozhangImage, generateKieImage } from '../../services/VideoGenService';
+import { generateKieImage, generateEvolinkImageWrapped } from '../../services/VideoGenService';
 import { logger } from '../../services/LoggerService';
 import { showToast } from '../../stores/uiStore';
 import { useElapsedTimer, formatElapsed } from '../../hooks/useElapsedTimer';
@@ -77,7 +77,7 @@ export const CharacterGenCard: React.FC<CharacterGenCardProps> = ({
         logger.info(`[Card #${index}] Generating Image...`, { id, promptLen: prompt.length });
 
         try {
-            const url = await generateLaozhangImage(prompt, aspectRatio, referenceImage, undefined, "2K");
+            const url = await generateKieImage(prompt, aspectRatio, referenceImage, undefined, "nano-banana-2");
             if (!url) throw new Error("Empty URL returned");
 
             setImageUrl(url);
@@ -86,11 +86,11 @@ export const CharacterGenCard: React.FC<CharacterGenCardProps> = ({
             if (onCostAdd) onCostAdd(PRICING.IMAGE_GENERATION, 'image');
         } catch (e: unknown) {
             const errMsg = e instanceof Error ? e.message : String(e);
-            console.warn(`[Card #${index}] Laozhang failed, trying Kie fallback:`, errMsg);
-            setStatusOverride("⚠️ 기본 엔진 실패. Kie 엔진으로 우회 중...");
+            console.warn(`[Card #${index}] Kie Nanobanana 2 failed, trying Evolink fallback:`, errMsg);
+            setStatusOverride("⚠️ 기본 엔진 실패. Evolink 엔진으로 우회 중...");
 
             try {
-                const fallbackUrl = await generateKieImage(prompt, aspectRatio, referenceImage, undefined, "nano-banana-pro");
+                const fallbackUrl = await generateEvolinkImageWrapped(prompt, aspectRatio, referenceImage, undefined, "2K");
                 if (!fallbackUrl) throw new Error("Fallback Empty URL");
 
                 setImageUrl(fallbackUrl);

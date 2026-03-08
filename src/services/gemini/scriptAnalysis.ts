@@ -518,7 +518,7 @@ Return JSON: { specificLocation: string, timePeriod: string, culturalBackground:
 Script: ${truncatedScript}`;
 
     // [UPGRADED] Gemini 3.1 Pro — v1 OpenAI 프록시 경유
-    // API 문서: Laozhang v1beta는 이미지생성/비디오분석 전용, 텍스트는 v1/chat/completions만
+    // API 문서: v1beta는 이미지생성/비디오분석 전용, 텍스트는 v1/chat/completions만
     const payload = {
         contents: [{ role: 'user', parts: [{ text: promptText }] }],
         generationConfig: {

@@ -10,7 +10,7 @@ export default function CharacterMode() { return null; }
 // import { AspectRatio, ProjectConfig, ImageModel, VideoFormat, VideoModel, CharacterAppearance, VoiceName, CharacterDraft } from '../../types';
 // import { CHARACTER_LIBRARY, IMAGE_MODELS, PRICING, CHARACTER_STYLES } from '../../constants';
 // import { uploadMediaToHosting } from '../../services/uploadService';
-// // [REMOVED] generateLaozhangImage is no longer used here directly
+// // [REMOVED] Direct image generation import — uses Kie/Evolink via CharacterGenCard
 // import { generateCharacterVariations, analyzeImageUnified } from '../../services/geminiService';
 // import ImageLightbox from '../ImageLightbox';
 // import { logger } from '../../services/LoggerService';

@@ -47,7 +47,7 @@ export enum ImageModel {
 export enum VideoModel {
   VEO = 'veo-3.1-evolink', // [UPDATED] Evolink Veo 3.1 Fast 1080p
   GROK = 'grok',           // Kie Grok
-  // VEO_FAST = 'veo-3.1-fast', // [DEPRECATED] Laozhang 720p — 주석 처리 (Evolink 1080p로 통합)
+  // VEO_FAST = 'veo-3.1-fast', // [DEPRECATED] 720p — Evolink 1080p로 통합
   VEO_QUALITY = 'veo-3.1-quality' // Legacy / Compat → VEO로 매핑
 }
 

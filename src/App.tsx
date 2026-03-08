@@ -1050,57 +1050,57 @@ const App: React.FC = () => {
               <div className="mt-1 space-y-1 pl-3">
                 <button
                   onClick={() => setActiveTab('thumbnail-studio')}
-                  className={`flex items-center gap-3 w-full px-4 py-3.5 rounded-lg text-base font-semibold transition-all ${
+                  className={`flex items-center gap-2.5 w-full px-4 py-3 rounded-lg text-sm font-semibold transition-all ${
                     activeTab === 'thumbnail-studio'
                       ? 'bg-pink-600/20 text-pink-400 border border-pink-500/30'
                       : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/60'
                   }`}
                 >
-                  <span className="text-lg">🖼️</span>
+                  <span className="text-base">🖼️</span>
                   <span>썸네일 스튜디오</span>
                 </button>
                 <button
                   onClick={() => setActiveTab('character-twist')}
-                  className={`flex items-center gap-3 w-full px-4 py-3.5 rounded-lg text-base font-semibold transition-all ${
+                  className={`flex items-center gap-2.5 w-full px-4 py-3 rounded-lg text-sm font-semibold transition-all ${
                     activeTab === 'character-twist'
                       ? 'bg-orange-600/20 text-orange-400 border border-orange-500/30'
                       : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/60'
                   }`}
                 >
-                  <span className="text-lg">🌀</span>
+                  <span className="text-base">🌀</span>
                   <span>캐릭터 비틀기</span>
                 </button>
                 <button
                   onClick={() => setActiveTab('image-script-upload')}
-                  className={`flex items-center gap-3 w-full px-4 py-3.5 rounded-lg text-base font-semibold transition-all ${
+                  className={`flex items-center gap-2.5 w-full px-4 py-3 rounded-lg text-sm font-semibold transition-all ${
                     activeTab === 'image-script-upload'
                       ? 'bg-emerald-600/20 text-emerald-400 border border-emerald-500/30'
                       : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/60'
                   }`}
                 >
-                  <span className="text-lg">📸</span>
+                  <span className="text-base">📸</span>
                   <span>소스 임포트</span>
                 </button>
                 <button
                   onClick={() => setActiveTab('ppt-master')}
-                  className={`flex items-center gap-3 w-full px-4 py-3.5 rounded-lg text-base font-semibold transition-all ${
+                  className={`flex items-center gap-2.5 w-full px-4 py-3 rounded-lg text-sm font-semibold transition-all ${
                     activeTab === 'ppt-master'
                       ? 'bg-sky-600/20 text-sky-400 border border-sky-500/30'
                       : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/60'
                   }`}
                 >
-                  <span className="text-lg">📊</span>
+                  <span className="text-base">📊</span>
                   <span>PPT 마스터</span>
                 </button>
                 <button
                   onClick={() => setActiveTab('detail-page')}
-                  className={`flex items-center gap-3 w-full px-4 py-3.5 rounded-lg text-base font-semibold transition-all ${
+                  className={`flex items-center gap-2.5 w-full px-4 py-3 rounded-lg text-sm font-semibold transition-all ${
                     activeTab === 'detail-page'
                       ? 'bg-teal-600/20 text-teal-400 border border-teal-500/30'
                       : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/60'
                   }`}
                 >
-                  <span className="text-lg">🛒</span>
+                  <span className="text-base">🛒</span>
                   <span>쇼핑콘텐츠</span>
                 </button>
               </div>
@@ -1327,7 +1327,7 @@ const App: React.FC = () => {
                                                   </button>
                                               </div>
 
-                                              {/* 2. Veo 720p (Laozhang) */}
+                                              {/* 2. Veo 720p (Evolink) */}
                                               <button 
                                                   onClick={runVeoFastBatch} 
                                                   className="bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white px-4 py-2 rounded-lg text-sm font-bold border border-blue-400/50 shadow-md transition-all hover:scale-105 whitespace-nowrap"

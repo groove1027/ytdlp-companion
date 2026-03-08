@@ -11,7 +11,7 @@ import {
 } from '../services/VideoGenService';
 import { generateCharacterDialogue, sanitizePromptWithGemini } from '../services/geminiService';
 import { logger } from '../services/LoggerService';
-import { getKieKey, getApimartKey, getLaozhangKey, getXaiKey } from '../services/apiService';
+import { getKieKey, getApimartKey, getXaiKey } from '../services/apiService';
 import { uploadMediaToHosting } from '../services/uploadService';
 import { PRICING } from '../constants';
 import { useUIStore } from '../stores/uiStore';

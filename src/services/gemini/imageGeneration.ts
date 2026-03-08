@@ -1,7 +1,7 @@
 
 import { Scene, AspectRatio, ImageModel } from '../../types';
 import { getMicroTexture, isBlackAndWhiteStyle, getStyleNegativePrompt, getIntegrativeInfographicInstruction } from './promptHelpers';
-import { generateLaozhangImage, generateKieImage, generateEvolinkImageWrapped } from '../VideoGenService';
+import { generateKieImage, generateEvolinkImageWrapped } from '../VideoGenService';
 import { filterPromptContent } from './contentFilter';
 
 // [NEW] Shot size auto-rotation — prevents monotonous compositions when AI doesn't specify shot size

@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { ProjectConfig, CharacterDraft, ScriptModeState } from '../types';
-import { getCloudinaryConfig, getKieKey, getLaozhangKey, getApimartKey } from '../services/apiService';
+import { getCloudinaryConfig, getKieKey, getApimartKey } from '../services/apiService';
 
 // [v4.5] CharacterMode/RemakeMode 주석처리됨 - 추후 복원 가능
 // const CharacterMode = lazy(() => import('./modes/CharacterMode'));
@@ -60,11 +60,6 @@ const ConfigForm: React.FC<ConfigFormProps> = ({
     // [UPDATED] Kie Key is now PRIMARY for Analysis and Grok
     if (!getKieKey()) {
         missing.push("Kie API Key (필수: Gemini 3 분석 + Grok 영상)");
-    }
-
-    // Laozhang for Fallback & Image
-    if (!getLaozhangKey()) {
-        missing.push("Laozhang API Key (필수: 이미지 생성)");
     }
 
     if (!getApimartKey()) {

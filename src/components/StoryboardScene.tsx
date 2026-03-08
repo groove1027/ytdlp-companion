@@ -375,7 +375,7 @@ const StoryboardSceneInner: React.FC<StoryboardSceneProps> = ({
 
               {/* [UPDATED LAYOUT] Row 2: Split Veo Fast / Veo Quality */}
               <div className="flex gap-1 h-9">
-                  {/* Left: Veo 720p (Laozhang) */}
+                  {/* Left: Veo 720p (Evolink) */}
                   <button
                        onClick={() => onGenerateVeoFast(scene.id)}
                        disabled={scene.isGeneratingVideo}

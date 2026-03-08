@@ -3,7 +3,8 @@ import React, { useState, useRef, useEffect } from 'react';
 import { VideoModel, AspectRatio } from '../types';
 import { RATIOS } from '../constants';
 import { uploadMediaToHosting } from '../services/uploadService';
-import { createLaozhangVeoTaskExperimental, pollLaozhangVeoTask, createPortableGrokTask, pollKieTask } from '../services/VideoGenService';
+import { createPortableGrokTask, pollKieTask } from '../services/VideoGenService';
+import { createEvolinkVideoTask, pollEvolinkTask } from '../services/evolinkService';
 import { showToast } from '../stores/uiStore';
 import { useElapsedTimer, formatElapsed } from '../hooks/useElapsedTimer';
 
@@ -68,20 +69,19 @@ const QuickLab: React.FC = () => {
       let taskId = "";
 
       if (model === VideoModel.VEO || model === VideoModel.VEO_QUALITY) {
-          // [UPDATED] Use Evolink Veo 3.1 Fast
-          addLog(`[Evolink] 모델명 '${model === VideoModel.VEO ? 'veo-3.1-evolink' : 'veo3-quality'}' 파라미터 테스트`);
-          taskId = await createLaozhangVeoTaskExperimental(prompt, publicUrl, aspectRatio, model);
+          addLog(`[Evolink] Veo 3.1 1080p 영상 생성 중...`);
+          taskId = await createEvolinkVideoTask(prompt, [publicUrl], 'FIRST&LAST', aspectRatio === AspectRatio.LANDSCAPE ? '16:9' : '9:16');
       } else {
           taskId = await createPortableGrokTask(prompt, publicUrl, aspectRatio);
       }
-      
+
       addLog(`작업 ID 획득: ${taskId}`, 'success');
       addLog("영상 생성 대기 중 (Polling)...", 'info');
 
       // 3. Polling
       let videoUrl = "";
       if (model === VideoModel.VEO || model === VideoModel.VEO_QUALITY) {
-          videoUrl = await pollLaozhangVeoTask(taskId);
+          videoUrl = await pollEvolinkTask(taskId);
       } else {
           videoUrl = await pollKieTask(taskId);
       }

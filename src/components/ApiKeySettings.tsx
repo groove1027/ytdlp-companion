@@ -19,7 +19,6 @@ interface DetectedKey {
 const SERVICE_OPTIONS = [
     { value: 'evolink', label: 'Evolink AI' },
     { value: 'kie', label: 'KIE' },
-    { value: 'laozhang', label: 'Laozhang' },
     { value: 'cloudName', label: 'Cloud Name' },
     { value: 'uploadPreset', label: 'Upload Preset' },
     { value: 'typecast', label: 'Typecast' },
@@ -30,7 +29,6 @@ const SERVICE_OPTIONS = [
 const EXPORT_MAP: [string, string][] = [
     ['EVOLINK', 'evolink'],
     ['KIE', 'kie'],
-    ['LAOZHANG', 'laozhang'],
     ['CLOUD_NAME', 'cloudName'],
     ['UPLOAD_PRESET', 'uploadPreset'],
     ['TYPECAST', 'typecast'],
@@ -41,7 +39,6 @@ const EXPORT_MAP: [string, string][] = [
 // 라벨→필드 매핑 (KEY=VALUE, JSON, 주변 텍스트 감지용)
 const LABEL_MAP: [RegExp, string][] = [
     [/evolink/i, 'evolink'],
-    [/laozhang/i, 'laozhang'],
     [/\bkie\b/i, 'kie'],
     [/cloud[\s_.-]?name/i, 'cloudName'],
     [/upload[\s_.-]?preset/i, 'uploadPreset'],
@@ -64,7 +61,7 @@ const maskKey = (key: string): string => {
 };
 
 // 텍스트에서 키-like 토큰 여부 판별 (라벨 단어 제외)
-const LABEL_WORDS = /^(evolink|kie|laozhang|cloudinary|typecast|youtube|google|cloud|upload|preset|api|key|name|설정|필수|선택|ai|tts|stt)$/i;
+const LABEL_WORDS = /^(evolink|kie|cloudinary|typecast|youtube|google|cloud|upload|preset|api|key|name|설정|필수|선택|ai|tts|stt)$/i;
 const isKeyToken = (s: string): boolean => s.length >= 8 && /^[A-Za-z0-9\-_]+$/.test(s) && !LABEL_WORDS.test(s);
 
 /**
@@ -72,7 +69,7 @@ const isKeyToken = (s: string): boolean => s.length >= 8 && /^[A-Za-z0-9\-_]+$/.
  * 1) KEY=VALUE / JSON → 라벨 기반
  * 2) 주변 텍스트에 서비스명 언급 → 컨텍스트 기반
  * 3) 키 값의 패턴(AIzaSy, 32hex, sk-) → 패턴 기반
- * 4) sk- 키가 여러 개면 순서대로 evolink → laozhang 할당
+ * 4) sk- 키가 여러 개면 순서대로 evolink 할당
  */
 const smartDetect = (text: string): DetectedKey[] => {
     const results: DetectedKey[] = [];
@@ -155,8 +152,8 @@ const assignRemaining = (entries: DetectedKey[], assigned: Set<string>): Detecte
         }
     }
 
-    // sk- prefix 키: evolink → laozhang 순서 할당
-    const skOrder = ['evolink', 'laozhang'];
+    // sk- prefix 키: evolink 할당
+    const skOrder = ['evolink'];
     for (const entry of entries) {
         if (entry.service) continue;
         if (entry.value.startsWith('sk-')) {
@@ -193,7 +190,7 @@ const assignRemaining = (entries: DetectedKey[], assigned: Set<string>): Detecte
 // ── 컴포넌트 ──
 
 const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
-    const [keys, setKeys] = useState({ kie: '', laozhang: '', cloudName: '', uploadPreset: '', gemini: '', apimart: '', removeBg: '', wavespeed: '', xai: '', evolink: '', youtubeApiKey: '', typecast: '', replicate: '' });
+    const [keys, setKeys] = useState({ kie: '', cloudName: '', uploadPreset: '', gemini: '', apimart: '', removeBg: '', wavespeed: '', xai: '', evolink: '', youtubeApiKey: '', typecast: '', replicate: '' });
     const [showPassword, setShowPassword] = useState(false);
     const [showBulk, setShowBulk] = useState(false);
     const [bulkText, setBulkText] = useState('');
@@ -270,7 +267,6 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
             const stored = getStoredKeys();
             setKeys({
                 kie: stored.kie,
-                laozhang: stored.laozhang,
                 cloudName: stored.cloudName,
                 uploadPreset: stored.uploadPreset,
                 gemini: stored.gemini,
@@ -297,7 +293,7 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
     }, [isOpen, onClose]);
 
     const handleSave = () => {
-        saveApiKeys(keys.kie, keys.laozhang, keys.cloudName, keys.uploadPreset, keys.laozhang, keys.apimart, keys.removeBg, keys.wavespeed, keys.xai, keys.evolink, keys.youtubeApiKey, keys.typecast, keys.replicate);
+        saveApiKeys(keys.kie, keys.cloudName, keys.uploadPreset, undefined, keys.apimart, keys.removeBg, keys.wavespeed, keys.xai, keys.evolink, keys.youtubeApiKey, keys.typecast, keys.replicate);
         showToast('설정이 저장되었습니다. 페이지를 새로고침합니다.', 1500);
         setTimeout(() => window.location.reload(), 1500);
     };
@@ -435,19 +431,7 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
                         <input type={showPassword ? "text" : "password"} value={keys.kie} onChange={(e) => setKeys({...keys, kie: e.target.value})} placeholder="Kie API Key" className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-base text-white" />
                     </div>
 
-                    {/* 3. Laozhang */}
-                    <div className="space-y-3 pb-4 border-b border-gray-700">
-                        <div className="flex items-start justify-between">
-                            <div className="flex flex-col">
-                                <h3 className="text-base font-bold text-indigo-400 uppercase tracking-wider">⚡ LAOZHANG API</h3>
-                                <span className="text-sm text-gray-400">이미지 생성/편집(Gemini 3 Pro Image), Gemini 텍스트 분석(2순위)</span>
-                            </div>
-                            <a href="https://api.laozhang.ai" target="_blank" rel="noopener noreferrer" className="shrink-0 ml-3 px-2.5 py-1 bg-indigo-600/20 hover:bg-indigo-600/40 border border-indigo-500/30 text-indigo-400 text-xs font-bold rounded-lg transition-all flex items-center gap-1">키 발급 ↗</a>
-                        </div>
-                        <input type={showPassword ? "text" : "password"} value={keys.laozhang} onChange={(e) => setKeys({...keys, laozhang: e.target.value})} placeholder="Laozhang API Key" className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-base text-white" />
-                    </div>
-
-                    {/* 4. Cloudinary */}
+                    {/* 3. Cloudinary */}
                     <div className="space-y-3 pb-4 border-b border-gray-700">
                         <div className="flex items-start justify-between">
                             <div className="flex flex-col">

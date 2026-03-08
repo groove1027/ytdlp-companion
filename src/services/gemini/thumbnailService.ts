@@ -3,7 +3,7 @@ import { AspectRatio } from '../../types';
 import { requestGeminiProxy, extractTextFromResponse, SAFETY_SETTINGS_BLOCK_NONE } from './geminiProxy';
 import { getAdaptiveFont, isBlackAndWhiteStyle, getStyleNegativePrompt, getTextPresetPrompt, getFontHintPrompt, getTextScalePrompt, getTextPositionPrompt } from './promptHelpers';
 import { THUMBNAIL_TEXT_PRESETS, THUMBNAIL_FONT_HINTS } from '../../constants';
-import { generateLaozhangImage, generateKieImage, generateEvolinkImageWrapped } from '../VideoGenService';
+import { generateKieImage, generateEvolinkImageWrapped } from '../VideoGenService';
 export const generateCharacterDialogue = async (script: string, visual: string) => {
     const payload = {
         contents: [{
@@ -508,18 +508,12 @@ export const generateHighQualityThumbnail = async (
     [CRITICAL OVERRIDE: LANGUAGE MUST BE ${targetLanguage}]
     `;
 
-    // [UPDATED] 3단계 폴백: Evolink Nanobanana 2 → Laozhang → Kie
+    // [UPDATED] 2단계 폴백: Evolink Nanobanana 2 → Kie Nanobanana 2
     try {
         const url = await generateEvolinkImageWrapped(prompt, ratio, charImg, refImg, "2K");
         return { url, isFallback: false };
     } catch (e) {
-        console.warn("Evolink thumbnail failed, trying Laozhang", e);
-    }
-
-    try {
-        const url = await generateLaozhangImage(prompt, ratio, charImg, refImg, "2K");
-        return { url, isFallback: true };
-    } catch (e) {
+        console.warn("Evolink thumbnail failed, trying Kie", e);
         const url = await generateKieImage(prompt, ratio, charImg, refImg);
         return { url, isFallback: true };
     }

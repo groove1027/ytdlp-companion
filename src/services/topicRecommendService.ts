@@ -4,7 +4,7 @@
  * YouTube API 직접 호출 대신 Gemini의 Google Search 도구를 활용
  *
  * [FIX] Google Search grounding은 Google Native v1beta 엔드포인트에서만 동작.
- * Laozhang/Kie 등 OpenAI-compatible 프록시에서는 grounding 도구가 무시되므로,
+ * Kie 등 OpenAI-compatible 프록시에서는 grounding 도구가 무시되므로,
  * Evolink(Google Native) 실패 시 grounding 도구를 제거하고 폴백 요청한다.
  */
 import { requestGeminiProxy } from './gemini/geminiProxy';
@@ -76,7 +76,7 @@ JSON 배열 형식 (정확히 5개):
   onProgress('AI가 소재 5개 생성 중...', 60);
 
   // [FIX] Phase 1: Evolink Native (Google Search grounding 지원)
-  // Phase 2: Laozhang/Kie 폴백 (grounding 도구 제거 — OpenAI 프록시 미지원)
+  // Phase 2: Kie 폴백 (grounding 도구 제거 — OpenAI 프록시 미지원)
   let response: Record<string, unknown> | undefined;
   let usedGrounding = false;
 

@@ -1,5 +1,5 @@
 
-import { getKieKey, getLaozhangKey, monitoredFetch } from '../apiService';
+import { getKieKey, monitoredFetch } from '../apiService';
 import { getEvolinkKey, requestEvolinkNative } from '../evolinkService';
 import { PRICING } from '../../constants';
 import { logger } from '../LoggerService';
@@ -101,7 +101,7 @@ const convertGoogleToOpenAI = (model: string, googlePayload: any) => {
 
     if (isJsonRequested) {
         response_format = { type: "json_object" };
-        // [FIX] response_format만으로는 JSON 출력이 보장되지 않음 (Laozhang Gemini 프록시 미지원 확인)
+        // [FIX] response_format만으로는 JSON 출력이 보장되지 않음
         // 시스템 프롬프트로 JSON 출력을 이중 강제
         const jsonSystemPrompt = "[CRITICAL] You MUST respond with valid JSON ONLY. No markdown code blocks (no ```json). No conversational text (no 'Here is...'). Output ONLY the raw JSON object.";
         if (systemInstructionText) {
@@ -187,83 +187,12 @@ export const requestGeminiProxy = async (model: string, googlePayload: any, _ret
         lastError = e;
     }
 
-    // 1. Try Laozhang (Fallback 1) - OpenAI Compatible Format
-    try {
-        const laozhangKey = getLaozhangKey();
-        if (laozhangKey) {
-            console.log(`[GeminiService] Trying Laozhang (Primary) with model: ${model}${_retryCount > 0 ? ` (retry #${_retryCount})` : ''}`);
-
-            // Laozhang supports OpenAI format at /v1/chat/completions
-            const url = `https://api.laozhang.ai/v1/chat/completions`;
-
-            // Use the existing converter. Laozhang accepts standard model names like 'gemini-3-flash-preview'
-            const openAIBody = convertGoogleToOpenAI(model, googlePayload);
-            // Ensure model field is set correctly for Laozhang
-            openAIBody.model = model;
-
-            // [FIX] Laozhang Gemini 프록시도 response_format 미지원 확인
-            // response_format: json_object 전송 시 응답이 잘리거나 대화체로 반환됨
-            // → 시스템 프롬프트로만 JSON 출력 강제 (convertGoogleToOpenAI에서 이미 추가됨)
-            if (openAIBody.response_format) {
-                delete openAIBody.response_format;
-            }
-
-            const response = await monitoredFetch(url, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${laozhangKey}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(openAIBody)
-            });
-
-            if (response.ok) {
-                const json = await response.json();
-                const choice = json.choices?.[0];
-                const content = choice?.message?.content || "";
-                const toolCalls = choice?.message?.tool_calls;
-
-                // Map OpenAI response back to Google Format
-                let parts: any[] = [];
-
-                if (toolCalls && toolCalls.length > 0) {
-                    const fc = toolCalls[0].function;
-                    parts.push({
-                        functionCall: {
-                            name: fc.name,
-                            args: JSON.parse(fc.arguments || "{}")
-                        }
-                    });
-                } else {
-                    parts.push({ text: content });
-                }
-
-                return {
-                    candidates: [{
-                        content: {
-                            parts: parts
-                        }
-                    }]
-                };
-            }
-
-            const errText = await response.text();
-            console.warn(`[GeminiService] Laozhang Failed (${response.status}): ${errText}`);
-            lastError = new Error(`Laozhang Error: ${response.status} ${errText}`);
-        } else {
-            console.warn("[GeminiService] No Laozhang Key found, skipping to fallback.");
-        }
-    } catch (e: any) {
-        console.warn("[GeminiService] Laozhang Connection Error:", e);
-        lastError = e;
-    }
-
-    // 2. Try Kie (Fallback) - OpenAI Compatible Format
+    // 1. Try Kie (Fallback) - OpenAI Compatible Format
     try {
         const kieKey = getKieKey();
         if (!kieKey) {
             if (lastError) throw lastError;
-            throw new Error("Both Laozhang and Kie API Keys are missing.");
+            throw new Error("Evolink and Kie API Keys are missing.");
         }
 
         logger.info(`[Gemini] Kie 폴백 호출 (model: ${model})`);
@@ -279,7 +208,7 @@ export const requestGeminiProxy = async (model: string, googlePayload: any, _ret
         const openAIBody = convertGoogleToOpenAI(model, googlePayload);
         openAIBody.model = kieModelSlug;
 
-        // [PERF] Kie 전용 파라미터 추가 (Laozhang에는 미지원이므로 여기서만 설정)
+        // [PERF] Kie 전용 파라미터 추가
         openAIBody.include_thoughts = false; // 앱에서 reasoning_content 미사용 — 불필요 토큰 절약
         // Thinking 모델 요청이면 reasoning_effort: "high" 강제 (Kie 기술 문서 준수)
         openAIBody.reasoning_effort = isThinkingModel ? "high" : (googlePayload._reasoningEffort || "high");
@@ -372,46 +301,12 @@ export const requestGeminiNative = async (model: string, googlePayload: any, _re
         lastError = e;
     }
 
-    // 1. Try Laozhang v1beta (Fallback 1)
-    try {
-        const laozhangKey = getLaozhangKey();
-        if (laozhangKey) {
-            console.log(`[GeminiNative] Trying Laozhang v1beta with model: ${model}${_retryCount > 0 ? ` (retry #${_retryCount})` : ''}`);
-
-            const url = `https://api.laozhang.ai/v1beta/models/${model}:generateContent`;
-
-            const response = await monitoredFetch(url, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${laozhangKey}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(googlePayload)
-            });
-
-            if (response.ok) {
-                const data = await response.json();
-                console.log(`[GeminiNative] Laozhang v1beta Success`);
-                return data;
-            }
-
-            const errText = await response.text();
-            console.warn(`[GeminiNative] Laozhang v1beta Failed (${response.status}): ${errText}`);
-            lastError = new Error(`Laozhang v1beta Error: ${response.status} ${errText}`);
-        } else {
-            console.warn("[GeminiNative] No Laozhang Key found, skipping to fallback.");
-        }
-    } catch (e: any) {
-        console.warn("[GeminiNative] Laozhang v1beta Connection Error:", e);
-        lastError = e;
-    }
-
-    // 2. Try Kie v1beta (Fallback)
+    // 1. Try Kie v1beta (Fallback)
     try {
         const kieKey = getKieKey();
         if (!kieKey) {
             if (lastError) throw lastError;
-            throw new Error("Both Laozhang and Kie API Keys are missing.");
+            throw new Error("Evolink and Kie API Keys are missing.");
         }
 
         console.log("[GeminiNative] Switching to Kie v1beta Fallback...");

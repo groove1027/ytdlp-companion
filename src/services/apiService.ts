@@ -5,7 +5,6 @@ import { logger } from './LoggerService';
 // [DEPLOYMENT] Reset to empty before deploying. These are dev-only defaults.
 const DEFAULT_GEMINI_KEY = 'REDACTED_GEMINI_KEY';
 const DEFAULT_KIE_KEY = 'REDACTED_KIE_KEY';
-const DEFAULT_LAOZHANG_KEY = 'REDACTED_LAOZHANG_KEY';
 const DEFAULT_APIMART_KEY = 'REDACTED_APIMART_KEY';
 const DEFAULT_REMOVE_BG_KEY = 'REDACTED_REMOVEBG_KEY';
 const DEFAULT_WAVESPEED_KEY = '';
@@ -27,22 +26,13 @@ const sanitizeKey = (key: string | undefined | null): string => {
     return key.replace(/[^\x21-\x7E]/g, '').trim();
 };
 
-// [UPDATED] 라오장 키를 1순위로 사용하고, 없을 시 Kie 키를 폴백으로 사용
+// [UPDATED] Kie 키를 Gemini 폴백으로 사용
 export const getGeminiKey = (): string => {
-    const laozhangKey = getLaozhangKey();
-    if (laozhangKey) {
-        return laozhangKey;
-    }
     return getKieKey();
 };
 
 export const getKieKey = (): string => {
     const key = localStorage.getItem('CUSTOM_KIE_KEY') || DEFAULT_KIE_KEY;
-    return sanitizeKey(key);
-};
-
-export const getLaozhangKey = (): string => {
-    const key = localStorage.getItem('CUSTOM_LAOZHANG_KEY') || DEFAULT_LAOZHANG_KEY;
     return sanitizeKey(key);
 };
 
@@ -97,20 +87,11 @@ export const getFeedbackUrl = (): string => {
     return DEFAULT_FEEDBACK_URL;
 };
 
-export const saveApiKeys = (kie: string, laozhang: string, cloudName?: string, uploadPreset?: string, gemini?: string, apimart?: string, removeBg?: string, wavespeed?: string, xai?: string, evolink?: string, youtubeApiKey?: string, typecast?: string, replicate?: string) => {
+export const saveApiKeys = (kie: string, cloudName?: string, uploadPreset?: string, gemini?: string, apimart?: string, removeBg?: string, wavespeed?: string, xai?: string, evolink?: string, youtubeApiKey?: string, typecast?: string, replicate?: string) => {
     // Save raw input, but sanitized on retrieval
     if (kie.trim()) localStorage.setItem('CUSTOM_KIE_KEY', kie.trim());
     else localStorage.removeItem('CUSTOM_KIE_KEY');
 
-    if (laozhang.trim()) {
-        localStorage.setItem('CUSTOM_LAOZHANG_KEY', laozhang.trim());
-        // [MODIFIED] 편의를 위해 Gemini 키 위치에도 동일하게 저장하거나, 기존 값을 제거하여 통합 유도
-        localStorage.setItem('CUSTOM_GEMINI_KEY', laozhang.trim());
-    } else {
-        localStorage.removeItem('CUSTOM_LAOZHANG_KEY');
-        localStorage.removeItem('CUSTOM_GEMINI_KEY');
-    }
-    
     if (apimart && apimart.trim()) {
         localStorage.setItem('CUSTOM_APIMART_KEY', apimart.trim());
     } else {
@@ -152,7 +133,6 @@ export const getStoredKeys = () => {
     return {
         gemini: localStorage.getItem('CUSTOM_GEMINI_KEY') || '',
         kie: localStorage.getItem('CUSTOM_KIE_KEY') || '',
-        laozhang: localStorage.getItem('CUSTOM_LAOZHANG_KEY') || '',
         apimart: localStorage.getItem('CUSTOM_APIMART_KEY') || '',
         removeBg: localStorage.getItem('CUSTOM_REMOVE_BG_KEY') || '',
         cloudName: localStorage.getItem('CUSTOM_CLOUD_NAME') || '',

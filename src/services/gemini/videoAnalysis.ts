@@ -1,16 +1,16 @@
 
 import { Scene, AspectRatio, ImageModel, RemakeStyleAnalysis } from '../../types';
-import { getLaozhangKey, monitoredFetch } from '../apiService';
+import { getKieKey, monitoredFetch } from '../apiService';
 import { getEvolinkKey } from '../evolinkService';
 import { SAFETY_SETTINGS_BLOCK_NONE, requestGeminiProxy, extractTextFromResponse } from './geminiProxy';
 import { uploadMediaToHosting } from '../uploadService';
-import { generateLaozhangImage, generateKieImage, editLaozhangImage, generateSoraImageEdit } from '../VideoGenService';
+import { generateKieImage, generateEvolinkImageWrapped } from '../VideoGenService';
 
 // --- Types ---
 type VideoSource = { youtubeUrl: string } | { videoFile: File };
 
 // --- 1-A: analyzeVideoWithGemini ---
-// Laozhang /v1beta/ Google Native endpoint (NOT OpenAI format)
+// Evolink → Kie /v1beta/ Google Native endpoint (NOT OpenAI format)
 export const analyzeVideoWithGemini = async (
     source: VideoSource,
     atmosphere: string,
@@ -18,8 +18,8 @@ export const analyzeVideoWithGemini = async (
     userInstructions?: string
 ): Promise<Scene[]> => {
     const evolinkKey = getEvolinkKey();
-    const apiKey = evolinkKey || getLaozhangKey();
-    if (!apiKey) throw new Error("API Key가 설정되지 않았습니다. (Evolink 또는 Laozhang)");
+    const apiKey = evolinkKey || getKieKey();
+    if (!apiKey) throw new Error("API Key가 설정되지 않았습니다. (Evolink 또는 Kie)");
 
     // Determine video URI
     let fileUri: string;
@@ -74,11 +74,11 @@ Return a JSON array of scene objects:
 
 Analyze the video now. Return ONLY the JSON array.`;
 
-    // [UPDATED] Evolink v1beta 우선, Laozhang 폴백
+    // Evolink v1beta 우선, Kie 폴백
     const baseUrl = evolinkKey
         ? 'https://api.evolink.ai/v1beta'
-        : 'https://api.laozhang.ai/v1beta';
-    const model = evolinkKey ? 'gemini-3.1-pro-preview' : 'gemini-3.1-pro-preview';
+        : 'https://api.kie.ai/v1beta';
+    const model = 'gemini-3.1-pro-preview';
     const url = `${baseUrl}/models/${model}:generateContent`;
 
     const requestBody = {
@@ -474,7 +474,7 @@ export const analyzeFrameStyle = async (
         } else if (frameDataUrl.startsWith('http')) {
             // URL — use fileData for Google Native (Evolink) format.
             // [WARNING] fileData is NOT handled by convertGoogleToOpenAI — it will be silently
-            // dropped if the request falls back to OpenAI-compatible endpoints (Laozhang/Kie).
+            // dropped if the request falls back to OpenAI-compatible endpoints (Kie).
             // For image URLs, this is acceptable because requestGeminiProxy tries Evolink first
             // (which supports fileData natively). If Evolink is unavailable, the image analysis
             // will fail gracefully and return the fallback style analysis.
@@ -559,7 +559,7 @@ export const enrichYouTubeSceneDescriptions = async (
 ): Promise<Scene[]> => {
     try {
         const evolinkKey = getEvolinkKey();
-        const apiKey = evolinkKey || getLaozhangKey();
+        const apiKey = evolinkKey || getKieKey();
         if (!apiKey) return scenes;
 
         const sceneDescriptions = scenes.map((s, i) =>
@@ -586,11 +586,11 @@ Return ONLY numbered enrichments, one per line:
 [1] cool blue-gray palette, harsh overhead fluorescent, deep focus, symmetrical framing, polished tile floor
 ...`;
 
-        // [UPDATED] Evolink v1beta 우선, Laozhang 폴백
+        // Evolink v1beta 우선, Kie 폴백
         const enrichBaseUrl = evolinkKey
             ? 'https://api.evolink.ai/v1beta'
-            : 'https://api.laozhang.ai/v1beta';
-        const enrichModel = evolinkKey ? 'gemini-3.1-pro-preview' : 'gemini-3.1-pro-preview';
+            : 'https://api.kie.ai/v1beta';
+        const enrichModel = 'gemini-3.1-pro-preview';
         const url = `${enrichBaseUrl}/models/${enrichModel}:generateContent`;
 
         const requestBody = {
@@ -660,7 +660,7 @@ export const generateYouTubeReferenceFrames = async (
     onProgress?: (msg: string) => void
 ): Promise<Scene[]> => {
     const evolinkKey = getEvolinkKey();
-    const apiKey = evolinkKey || getLaozhangKey();
+    const apiKey = evolinkKey || getKieKey();
     if (!apiKey || scenes.length === 0) return scenes;
 
     const enriched = [...scenes];
@@ -677,11 +677,11 @@ export const generateYouTubeReferenceFrames = async (
             try {
                 const framePrompt = `Look at timestamp ${mid} seconds of this video. Generate a photorealistic image that faithfully reproduces the exact frame at that moment. Preserve the same subjects, positions, composition, lighting, and colors. No artistic style changes — just an accurate photographic reproduction of that video frame.`;
 
-                // [UPDATED] Evolink v1beta 우선, Laozhang 폴백
+                // Evolink v1beta 우선, Kie 폴백
                 const frameBaseUrl = evolinkKey
                     ? 'https://api.evolink.ai/v1beta'
-                    : 'https://api.laozhang.ai/v1beta';
-                const frameModel = evolinkKey ? 'gemini-3.1-pro-preview' : 'gemini-3-pro-image-preview';
+                    : 'https://api.kie.ai/v1beta';
+                const frameModel = 'gemini-3.1-pro-preview';
                 const url = `${frameBaseUrl}/models/${frameModel}:generateContent`;
                 const requestBody = {
                     contents: [{
@@ -719,7 +719,7 @@ export const generateYouTubeReferenceFrames = async (
             // Attempt 2: Text-to-image fallback using enriched visualPrompt
             try {
                 const fallbackPrompt = `Photorealistic photograph, faithful to this exact description: ${scene.visualPrompt}. Natural documentary photography, exact composition as described, accurate colors and lighting. No artistic filters, no text overlays, no watermarks.`;
-                const imgUrl = await generateLaozhangImage(fallbackPrompt, aspectRatio, undefined, undefined, "2K");
+                const imgUrl = await generateKieImage(fallbackPrompt, aspectRatio, undefined, undefined, "nano-banana-2");
                 console.log(`[YouTube Frames] Scene ${idx}: Text-to-image fallback OK`);
                 return { idx, frameUrl: imgUrl };
             } catch (e2: any) {
@@ -750,7 +750,7 @@ export const generateYouTubeReferenceFrames = async (
 
 // --- 1-C-4: generateRemakeImage ---
 // Style transfer image generation for REMAKE mode
-// [FIX] Laozhang primary with retry, Kie only as absolute last resort
+// Evolink → Kie 폴백 체인
 const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
 
 export const generateRemakeImage = async (
@@ -772,10 +772,7 @@ export const generateRemakeImage = async (
 
     console.log("[Remake] START", { sceneId: scene.id, imageModel, hasRef: !!refImage, hasStyleAnalysis: !!styleAnalysis, hasAnchor: !!styleAnchorUrl, aspectRatio, editPromptLen: editPrompt.length, cameraAngle: scene.cameraAngle, cameraMovement: scene.cameraMovement });
 
-    // Phase 5: Build additional images for context
-    const additionalImages = [scene.endFrameUrl, styleAnchorUrl].filter((u): u is string => !!u);
-
-    // Route 1: Flash model → Kie directly
+    // Route 1: Flash model → Evolink 폴백
     if (imageModel === ImageModel.FLASH) {
         try {
             console.log("[Remake] Route1: Kie Flash");
@@ -783,73 +780,62 @@ export const generateRemakeImage = async (
             return { url, isFallback: false };
         } catch (e: any) {
             console.warn("[Remake] Kie Flash failed:", e?.message);
-            const url = await generateLaozhangImage(descriptivePrompt, aspectRatio, undefined, undefined, "2K");
+            const url = await generateEvolinkImageWrapped(descriptivePrompt, aspectRatio, undefined, undefined, "2K");
             return { url, isFallback: true };
         }
     }
 
-    // Route 2: Edit-first chain (refImage 존재 시)
+    // Route 2: Edit-first chain (refImage 존재 시) — Evolink → Kie 폴백
     const errors: string[] = [];
     let mainUrl: string | undefined;
 
     if (refImage) {
-        // Step A: editLaozhangImage with additional context images
+        // Step A: Kie nano-banana-2 with reference image
         try {
-            console.log("[Remake] StepA: editLaozhang (with additionalImages:", additionalImages.length, ")");
-            mainUrl = await editLaozhangImage(editPrompt, refImage, aspectRatio, "2K", false, additionalImages.length > 0 ? additionalImages : undefined);
+            console.log("[Remake] StepA: Kie nano-banana-2 (ref image)");
+            mainUrl = await generateKieImage(editPrompt, aspectRatio, refImage, undefined, "nano-banana-2", 0.35);
         } catch (e: any) {
             errors.push(`A:${e?.message?.substring(0, 80)}`);
             console.warn("[Remake] StepA failed:", e?.message);
         }
 
-        // Step B: Wait + retry editLaozhangImage (rate limit recovery)
+        // Step B: Evolink image with reference (retry after delay)
         if (!mainUrl) {
             try {
-                console.log("[Remake] StepB: editLaozhang retry (2s delay)");
+                console.log("[Remake] StepB: Evolink retry (2s delay)");
                 await delay(2000);
-                mainUrl = await editLaozhangImage(editPrompt, refImage, aspectRatio, "2K");
+                mainUrl = await generateEvolinkImageWrapped(editPrompt, aspectRatio, refImage ? [refImage] : undefined, undefined, "2K");
             } catch (e: any) {
                 errors.push(`B:${e?.message?.substring(0, 80)}`);
                 console.warn("[Remake] StepB failed:", e?.message);
             }
         }
-
-        // Step C: Sora Image Edit fallback
-        if (!mainUrl) {
-            try {
-                console.log("[Remake] StepC: Sora Image Edit");
-                mainUrl = await generateSoraImageEdit(editPrompt, refImage, aspectRatio);
-            } catch (e: any) {
-                errors.push(`C:${e?.message?.substring(0, 80)}`);
-                console.warn("[Remake] StepC (Sora) failed:", e?.message);
-            }
-        }
     }
 
-    // Step D: text-only Laozhang 최후 수단
+    // Step C: Evolink text-only 폴백
     if (!mainUrl) {
         try {
-            console.log("[Remake] StepD: Laozhang text-only");
-            mainUrl = await generateLaozhangImage(descriptivePrompt, aspectRatio, undefined, undefined, "2K");
+            console.log("[Remake] StepC: Evolink text-only");
+            mainUrl = await generateEvolinkImageWrapped(descriptivePrompt, aspectRatio, undefined, undefined, "2K");
         } catch (e: any) {
-            errors.push(`D:${e?.message?.substring(0, 80)}`);
-            console.warn("[Remake] StepD failed:", e?.message);
+            errors.push(`C:${e?.message?.substring(0, 80)}`);
+            console.warn("[Remake] StepC failed:", e?.message);
         }
     }
 
-    // Step E: Kie 절대 최후 수단
+    // Step D: Kie 최후 수단
     if (!mainUrl) {
         try {
-            console.log("[Remake] StepE: Kie fallback (last resort)");
+            console.log("[Remake] StepD: Kie fallback (last resort)");
             mainUrl = await generateKieImage(descriptivePrompt, aspectRatio, refImage, undefined, undefined, refImage ? 0.35 : undefined);
         } catch (e: any) {
-            errors.push(`E:${e?.message?.substring(0, 80)}`);
+            errors.push(`D:${e?.message?.substring(0, 80)}`);
             console.error("[Remake] ALL STEPS FAILED:", errors);
             throw new Error(`모든 이미지 생성 실패: ${errors[errors.length - 1]}`);
         }
     }
 
-    const isFallback = errors.length >= 3;
+    const isFallback = errors.length >= 2;
 
     // Phase 6-D: Edit start/end frames in parallel (for FIRST_AND_LAST_FRAMES_2_VIDEO)
     let editedStartFrameUrl: string | undefined;
@@ -859,8 +845,8 @@ export const generateRemakeImage = async (
         try {
             console.log("[Remake] Editing start+end frames in parallel...");
             const [editedStart, editedEnd] = await Promise.all([
-                editLaozhangImage(editPrompt, scene.startFrameUrl, aspectRatio, "2K").catch(() => null),
-                editLaozhangImage(editPrompt, scene.endFrameUrl, aspectRatio, "2K").catch(() => null)
+                generateKieImage(editPrompt, aspectRatio, scene.startFrameUrl, undefined, "nano-banana-2", 0.35).catch(() => null),
+                generateKieImage(editPrompt, aspectRatio, scene.endFrameUrl, undefined, "nano-banana-2", 0.35).catch(() => null)
             ]);
             editedStartFrameUrl = editedStart || mainUrl;
             editedEndFrameUrl = editedEnd || mainUrl;
