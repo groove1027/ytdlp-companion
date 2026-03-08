@@ -1,6 +1,6 @@
 /**
  * AuthGate — 로그인/회원가입 + 소셜 로그인 게이트
- * 이메일 회원가입 시 전화번호 SMS 인증 필수
+ * 이메일 회원가입: 초대코드 + 이메일 (전화번호 인증 없음)
  * Google / 카카오 / 네이버 소셜 로그인 지원
  */
 import React, { useState, useEffect, useRef, useCallback } from 'react';

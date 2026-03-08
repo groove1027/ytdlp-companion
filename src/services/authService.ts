@@ -54,7 +54,7 @@ const updateSavedUser = (updates: Partial<AuthUser>): void => {
   }
 };
 
-/** 회원가입 (전화번호 본인 인증 필수) */
+/** 회원가입 (초대코드 + 이메일) */
 export const signup = async (
   email: string, password: string, inviteCode: string, displayName?: string,
   firebaseIdToken?: string

@@ -63,35 +63,28 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       );
     }
 
-    // 2. 전화번호 본인 인증 (필수 — 우회 불가)
-    if (!firebaseIdToken) {
-      return new Response(
-        JSON.stringify({ error: '전화번호 본인 인증이 필요합니다.' }),
-        { status: 403, headers }
-      );
-    }
+    // 2. 전화번호 본인 인증 (선택 — 제공 시에만 검증)
+    let verifiedPhone: string | null = null;
+    if (firebaseIdToken) {
+      try {
+        verifiedPhone = await verifyFirebasePhone(firebaseIdToken, context.env.FIREBASE_API_KEY);
+      } catch {
+        // 전화번호 인증 실패해도 가입은 진행
+      }
 
-    let verifiedPhone: string;
-    try {
-      verifiedPhone = await verifyFirebasePhone(firebaseIdToken, context.env.FIREBASE_API_KEY);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : '본인 인증 실패';
-      return new Response(
-        JSON.stringify({ error: msg }),
-        { status: 403, headers }
-      );
-    }
+      // 동일 전화번호로 가입된 계정 중복 확인 (전화번호가 검증된 경우만)
+      if (verifiedPhone) {
+        const phoneExisting = await context.env.DB.prepare(
+          'SELECT id FROM users WHERE phone_number = ?'
+        ).bind(verifiedPhone).first();
 
-    // 2-1. 동일 전화번호로 가입된 계정 중복 확인
-    const phoneExisting = await context.env.DB.prepare(
-      'SELECT id FROM users WHERE phone_number = ?'
-    ).bind(verifiedPhone).first();
-
-    if (phoneExisting) {
-      return new Response(
-        JSON.stringify({ error: '이 전화번호로 이미 가입된 계정이 있습니다.' }),
-        { status: 409, headers }
-      );
+        if (phoneExisting) {
+          return new Response(
+            JSON.stringify({ error: '이 전화번호로 이미 가입된 계정이 있습니다.' }),
+            { status: 409, headers }
+          );
+        }
+      }
     }
 
     // 3. 초대 코드 검증
@@ -123,7 +116,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       );
     }
 
-    // 5. 비밀번호 해싱 + 사용자 생성 (전화번호 포함)
+    // 5. 비밀번호 해싱 + 사용자 생성 (전화번호는 선택)
     const passwordHash = await hashPassword(password);
     await context.env.DB.prepare(
       'INSERT INTO users (email, password_hash, display_name, invite_code, phone_number, provider, provider_id) VALUES (?, ?, ?, ?, ?, ?, ?)'
