@@ -119,7 +119,7 @@ export const useVideoBatch = (
         initialModel: VideoModel, 
         explicitUpscaleRequest: boolean, 
         forceModel: boolean = false,
-        overrideDuration?: '6' | '10',
+        overrideDuration?: '6' | '10' | '15',
         overrideSpeech?: boolean,
         isRetry: boolean = false,
         isSafeMode: boolean = false, // [NEW] Flag for simplified retry
@@ -298,7 +298,7 @@ export const useVideoBatch = (
             if (effectiveModel === VideoModel.VEO) {
                 estimatedCost = PRICING.VIDEO_VEO;
             } else if (effectiveModel === VideoModel.GROK) {
-                estimatedCost = effectiveDuration === '10' ? PRICING.VIDEO_GROK_10S : PRICING.VIDEO_GROK_6S;
+                estimatedCost = effectiveDuration === '15' ? PRICING.VIDEO_GROK_15S : effectiveDuration === '10' ? PRICING.VIDEO_GROK_10S : PRICING.VIDEO_GROK_6S;
             }
 
             if (signal.aborted) throw new Error("Cancelled by user");
@@ -413,7 +413,7 @@ export const useVideoBatch = (
 
     const BATCH_LIMIT = 20;
 
-    const runGrokHQBatch = async (duration: '6' | '10', speechMode: boolean) => {
+    const runGrokHQBatch = async (duration: '6' | '10' | '15', speechMode: boolean) => {
         // [FIX BUG#10] Read current scenes from store to avoid stale closure
         const genTargets = useProjectStore.getState().scenes.filter(s => s.imageUrl && !s.videoUrl && !s.isGeneratingVideo);
         if (genTargets.length === 0) { useUIStore.getState().setToast({ show: true, message: "작업할 대상이 없습니다." }); setTimeout(() => useUIStore.getState().setToast(null), 3000); return; }

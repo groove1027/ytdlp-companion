@@ -240,10 +240,10 @@ const SceneCard: React.FC<SceneCardProps> = ({ scene, index, onUpdatePrompt, onD
             disabled={!scene.imageUrl || scene.isGeneratingVideo}
             icon={<svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>}
             onClick={() => onGrokVideo(scene.id)} />
-          <button type="button" title="Grok 6초/10초 전환"
-            onClick={() => useProjectStore.getState().updateScene(scene.id, { grokDuration: (scene.grokDuration === '6' ? '10' : '6') as '6' | '10' })}
+          <button type="button" title="Grok 6초/10초/15초 전환"
+            onClick={() => useProjectStore.getState().updateScene(scene.id, { grokDuration: (scene.grokDuration === '6' ? '10' : scene.grokDuration === '10' ? '15' : '6') as '6' | '10' | '15' })}
             className="h-7 px-1.5 rounded-lg border border-pink-500/20 bg-pink-600/10 text-[10px] font-bold text-pink-300 hover:bg-pink-600/20 transition-all">
-            {scene.grokDuration === '6' ? '6s' : '10s'}
+            {scene.grokDuration === '15' ? '15s' : scene.grokDuration === '6' ? '6s' : '10s'}
           </button>
           <ActionButton label={scene.grokSpeechMode ? '나레이션' : 'SFX'} color="fuchsia"
             tooltip="Grok SFX/나레이션 전환"
@@ -676,9 +676,9 @@ const SceneDetailModal: React.FC<SceneDetailModalProps> = ({
               <div className="flex items-center gap-2 col-span-2">
                 <span className="text-xs text-gray-500">Grok 설정:</span>
                 <button type="button"
-                  onClick={() => useProjectStore.getState().updateScene(scene.id, { grokDuration: (scene.grokDuration === '6' ? '10' : '6') as '6' | '10' })}
-                  className={`px-2.5 py-1 text-xs rounded-lg border transition-colors ${scene.grokDuration === '6' ? 'bg-gray-800 border-gray-600 text-gray-400' : 'bg-pink-900/30 border-pink-500/30 text-pink-300'}`}>
-                  {scene.grokDuration === '6' ? '6초' : '10초'}
+                  onClick={() => useProjectStore.getState().updateScene(scene.id, { grokDuration: (scene.grokDuration === '6' ? '10' : scene.grokDuration === '10' ? '15' : '6') as '6' | '10' | '15' })}
+                  className={`px-2.5 py-1 text-xs rounded-lg border transition-colors ${scene.grokDuration === '15' ? 'bg-pink-900/50 border-pink-400/40 text-pink-200' : scene.grokDuration === '6' ? 'bg-gray-800 border-gray-600 text-gray-400' : 'bg-pink-900/30 border-pink-500/30 text-pink-300'}`}>
+                  {scene.grokDuration === '15' ? '15초' : scene.grokDuration === '6' ? '6초' : '10초'}
                 </button>
                 <button type="button"
                   onClick={() => useProjectStore.getState().updateScene(scene.id, { grokSpeechMode: !scene.grokSpeechMode })}

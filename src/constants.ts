@@ -15,6 +15,7 @@ export const PRICING = {
   VIDEO_VEO: 0.1681,                 // Evolink Veo 3.1 Fast Lite 1080p ($0.1681/video, 12.1 credits)
   VIDEO_GROK_6S: 0.10,               // Kie Grok 720p 6s ($0.10/video, 20 credits)
   VIDEO_GROK_10S: 0.15,              // Kie Grok 720p 10s ($0.15/video, 30 credits)
+  VIDEO_GROK_15S: 0.20,              // Kie Grok 720p 15s ($0.20/video)
   VIDEO_XAI_V2V_PER_SEC: 0.05,       // xAI Grok Video-to-Video ($0.05/sec)
 
   // Music Generation (Kie SUNO)
@@ -57,7 +58,7 @@ export const IMAGE_MODELS = [
 
 export const VIDEO_MODELS = [
   { id: VideoModel.VEO, label: '💎 Evolink Veo 3.1 1080p', description: '최저가 1080p ($0.17) - Fast Engine' },
-  { id: VideoModel.GROK, label: '🚀 Grok (Kie)', description: '빠른 생성 ($0.10~)' }
+  { id: VideoModel.GROK, label: '🚀 Grok (Kie)', description: '빠른 생성 ($0.10~0.20)' }
 ];
 
 export const VIDEO_FORMATS = [

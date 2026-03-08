@@ -21,7 +21,7 @@ interface ProjectStore {
   thumbnails: Thumbnail[];
   projectTitle: string;
   currentProjectId: string | null;
-  batchGrokDuration: '6' | '10';
+  batchGrokDuration: '6' | '10' | '15';
   batchGrokSpeech: boolean;
   _loadGeneration: number; // increments on each loadProject to prevent stale async updates
 
@@ -31,7 +31,7 @@ interface ProjectStore {
   setThumbnails: (thumbnails: Thumbnail[] | ((prev: Thumbnail[]) => Thumbnail[])) => void;
   setProjectTitle: (title: string) => void;
   setCurrentProjectId: (id: string | null) => void;
-  setBatchGrokDuration: (d: '6' | '10' | ((prev: '6' | '10') => '6' | '10')) => void;
+  setBatchGrokDuration: (d: '6' | '10' | '15' | ((prev: '6' | '10' | '15') => '6' | '10' | '15')) => void;
   setBatchGrokSpeech: (speech: boolean) => void;
 
   // Scene mutation helpers

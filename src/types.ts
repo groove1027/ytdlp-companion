@@ -202,7 +202,7 @@ export interface Scene {
   generatedSfx?: string;
   generatedDialogue?: string;
 
-  grokDuration?: '6' | '10';
+  grokDuration?: '6' | '10' | '15';
   grokSpeechMode?: boolean;
 
   /** 커뮤니티 미디어 (밈/짤/일러스트/효과음) — 기존 이미지 대신 사용 */

@@ -1314,8 +1314,8 @@ const App: React.FC = () => {
                                               {/* Grok Settings */}
                                               <div className="flex items-center bg-gray-900 rounded-lg p-1 border border-gray-700 h-9 mr-2">
                                                   <button 
-                                                      onClick={() => setBatchGrokDuration(prev => prev === '6' ? '10' : '6')}
-                                                      className={`text-sm px-2.5 py-1 rounded font-mono mr-1 transition-colors border h-full flex items-center ${batchGrokDuration === '10' ? 'bg-indigo-900/80 border-indigo-500 text-indigo-200' : 'bg-gray-800 border-gray-600 text-gray-300 hover:bg-gray-700'}`}
+                                                      onClick={() => setBatchGrokDuration(prev => prev === '6' ? '10' : prev === '10' ? '15' : '6')}
+                                                      className={`text-sm px-2.5 py-1 rounded font-mono mr-1 transition-colors border h-full flex items-center ${batchGrokDuration === '15' ? 'bg-pink-900/80 border-pink-500 text-pink-200' : batchGrokDuration === '10' ? 'bg-indigo-900/80 border-indigo-500 text-indigo-200' : 'bg-gray-800 border-gray-600 text-gray-300 hover:bg-gray-700'}`}
                                                   >
                                                       ⏱️ {batchGrokDuration}s
                                                   </button>
