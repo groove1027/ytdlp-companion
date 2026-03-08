@@ -1089,11 +1089,19 @@ const App: React.FC = () => {
           {/* 도구모음 섹션 — 접이식 */}
           {(() => {
             const TOOL_TABS = ['thumbnail-studio', 'character-twist', 'image-script-upload', 'ppt-master', 'detail-page', 'subtitle-remover'];
-            const isToolboxOpen = toolboxOpen || TOOL_TABS.includes(activeTab);
+            const isToolTabActive = TOOL_TABS.includes(activeTab);
+            const isToolboxOpen = toolboxOpen || isToolTabActive;
             return (
           <div className="mt-4 pt-3 border-t-2 border-dashed border-gray-600/40">
             <button
-              onClick={() => useUIStore.getState().setToolboxOpen(!isToolboxOpen)}
+              onClick={() => {
+                if (isToolboxOpen) {
+                  useUIStore.getState().setToolboxOpen(false);
+                  if (isToolTabActive) setActiveTab('project');
+                } else {
+                  useUIStore.getState().setToolboxOpen(true);
+                }
+              }}
               className="flex items-center justify-between w-full px-4 py-3 rounded-lg text-base font-semibold text-gray-400 hover:text-gray-200 hover:bg-gray-800/60 transition-all"
             >
               <div className="flex items-center gap-3">
