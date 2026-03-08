@@ -39,7 +39,7 @@ import ProfileModal from './components/ProfileModal';
 import { useUIStore } from './stores/uiStore';
 import { useAuthStore } from './stores/authStore';
 import { useCostStore } from './stores/costStore';
-import { useProjectStore } from './stores/projectStore';
+import { useProjectStore, autoNewProjectIfNeeded } from './stores/projectStore';
 import { useNavigationStore } from './stores/navigationStore';
 
 // [v4.5] 새로운 탭 컴포넌트 (Lazy Loading)
@@ -213,10 +213,10 @@ const App: React.FC = () => {
 
       const lastId = localStorage.getItem('last-project-id');
       if (!lastId) {
-        // 저장된 프로젝트 ID 없음 → 현재 탭이 프로젝트가 아니면 자동 생성, 아니면 대시보드
+        // 저장된 프로젝트 ID 없음 → 현재 탭이 프로젝트가 아니면 자동 생성 (세션 1회), 아니면 대시보드
         const currentTab = useNavigationStore.getState().activeTab;
         if (currentTab !== 'project') {
-          useProjectStore.getState().newProject();
+          autoNewProjectIfNeeded();
         } else {
           useNavigationStore.getState().goToDashboard();
         }
@@ -241,12 +241,10 @@ const App: React.FC = () => {
     restoreLastProject();
   }, []);
 
-  // [UX] 프로젝트 필요 탭인데 프로젝트 없으면 자동 생성 — 어떤 탭이든 바로 작업 시작 가능
+  // [UX] 프로젝트 필요 탭인데 프로젝트 없으면 자동 생성 (세션 1회) — 직접 URL 진입 등 엣지 케이스 대비
   useEffect(() => {
     if (activeTab !== 'project' && !config) {
-      // navigationStore.setActiveTab에서 이미 처리하지만, 직접 URL 진입 등 엣지 케이스 대비
-      if (!useProjectStore.getState().config) {
-        useProjectStore.getState().newProject();
+      if (autoNewProjectIfNeeded()) {
         useNavigationStore.getState().leaveDashboard();
       }
     }

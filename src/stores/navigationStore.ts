@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { AppTab } from '../types';
-import { useProjectStore } from './projectStore';
+import { useProjectStore, autoNewProjectIfNeeded } from './projectStore';
 
 const NAV_STORAGE_KEY = 'navigation-state';
 
@@ -64,13 +64,19 @@ export const useNavigationStore = create<NavigationStore>((set) => ({
       saveState({ activeTab: tab, showProjectDashboard: true });
       set({ activeTab: tab, showProjectDashboard: true });
     } else {
-      // [UX] 프로젝트 미생성 시 자동 생성 — 어떤 탭이든 바로 작업 시작 가능
+      // [UX] 프로젝트 미생성 시 자동 생성 — 어떤 탭이든 바로 작업 시작 가능 (세션 당 1회)
       const { config } = useProjectStore.getState();
       if (!config) {
-        useProjectStore.getState().newProject();
-        // 대시보드 비활성화 — 자동 생성된 프로젝트로 바로 작업
-        saveState({ activeTab: tab, showProjectDashboard: false });
-        set({ activeTab: tab, showProjectDashboard: false });
+        const created = autoNewProjectIfNeeded();
+        if (created) {
+          // 대시보드 비활성화 — 자동 생성된 프로젝트로 바로 작업
+          saveState({ activeTab: tab, showProjectDashboard: false });
+          set({ activeTab: tab, showProjectDashboard: false });
+        } else {
+          // 이미 세션 내 자동 생성 완료 — 대시보드로 안내
+          saveState({ activeTab: tab });
+          set({ activeTab: tab });
+        }
       } else {
         saveState({ activeTab: tab });
         set({ activeTab: tab });

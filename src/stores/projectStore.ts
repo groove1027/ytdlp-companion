@@ -14,6 +14,22 @@ const useEditRoomStore = { getState: () => getEditRoomStore()?.getState() || { r
 let _idCounter = 0;
 const uniqueSceneId = () => `s-${Date.now()}-${++_idCounter}`;
 
+// [FIX] 세션 당 자동 프로젝트 생성 1회 제한 — 페이지 새로고침 시 리셋
+let _autoProjectCreatedInSession = false;
+
+/**
+ * 프로젝트가 없을 때 자동으로 임시 프로젝트를 생성하되, 세션 당 1회만 허용.
+ * 명시적 "새 프로젝트" 버튼 클릭과는 무관 — 오직 자동 생성만 제한.
+ * @returns true if a new project was created, false if skipped
+ */
+export const autoNewProjectIfNeeded = (): boolean => {
+  const { config } = useProjectStore.getState();
+  if (config || _autoProjectCreatedInSession) return false;
+  _autoProjectCreatedInSession = true;
+  useProjectStore.getState().newProject();
+  return true;
+};
+
 interface ProjectStore {
   // State
   config: ProjectConfig | null;
