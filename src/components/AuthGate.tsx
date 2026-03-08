@@ -140,7 +140,7 @@ const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
     finally { setIsLoading(false); }
   }, [email, password, rememberMe, onAuthenticated]);
 
-  // ── 회원가입 폼 → 전화번호 인증 ──
+  // ── 회원가입 폼 제출 ──
   const handleSignupFormSubmit = useCallback(() => {
     setError('');
     if (password !== confirmPassword) { setError('비밀번호가 일치하지 않습니다.'); return; }
@@ -148,9 +148,8 @@ const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
     if (!displayName.trim()) { setError('이름을 입력해주세요.'); return; }
     if (!inviteCode.trim()) { setError('초대 코드를 입력해주세요.'); return; }
     if (!email.trim()) { setError('이메일을 입력해주세요.'); return; }
-    if (!isFirebaseConfigured()) { setError('본인 인증 시스템이 준비되지 않았습니다. 관리자에게 문의해주세요.'); return; }
-    setSignupStep('phone');
-  }, [password, confirmPassword, inviteCode, email]);
+    handleSignupComplete();
+  }, [password, confirmPassword, inviteCode, email, displayName]);
 
   // ── OTP 전송 ──
   const handleSendOTP = useCallback(async () => {
@@ -359,7 +358,7 @@ const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
               {error && <div className="bg-red-900/20 border border-red-500/30 rounded-xl px-4 py-3 text-sm text-red-400">{error}</div>}
               <button type="submit" disabled={anyLoading}
                 className="w-full py-3.5 rounded-xl text-base font-bold text-white bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 disabled:from-gray-700 disabled:to-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed transition-all shadow-lg shadow-violet-500/20">
-                {isLoading ? '처리 중...' : mode === 'login' ? '로그인' : '다음 — 본인 인증'}
+                {isLoading ? '처리 중...' : mode === 'login' ? '로그인' : '회원가입'}
               </button>
             </form>
 
@@ -414,7 +413,7 @@ const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
               </>
             )}
 
-            {mode === 'signup' && (
+            {false && mode === 'signup' && (
               <p className="text-center text-xs text-gray-600 mt-4">이메일 회원가입 시 전화번호 본인 인증이 필요합니다</p>
             )}
             <p className="text-center text-xs text-gray-600 mt-3">
