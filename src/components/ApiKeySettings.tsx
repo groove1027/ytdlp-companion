@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { getStoredKeys, saveApiKeys } from '../services/apiService';
 import { showToast } from '../stores/uiStore';
+import { useAuthGuard } from '../hooks/useAuthGuard';
 
 interface ApiKeySettingsProps {
     isOpen: boolean;
@@ -193,6 +194,7 @@ const assignRemaining = (entries: DetectedKey[], assigned: Set<string>): Detecte
 // ── 컴포넌트 ──
 
 const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
+    const { requireAuth } = useAuthGuard();
     const [keys, setKeys] = useState({ kie: '', cloudName: '', uploadPreset: '', gemini: '', apimart: '', removeBg: '', wavespeed: '', xai: '', evolink: '', youtubeApiKey: '', typecast: '', ghostcutAppKey: '', ghostcutAppSecret: '' });
     const [showPassword, setShowPassword] = useState(false);
     const [showBulk, setShowBulk] = useState(false);
@@ -233,6 +235,7 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
 
     // 현재 설정 내보내기 (클립보드)
     const handleExport = async () => {
+        if (!requireAuth('API 키 내보내기')) return;
         const lines = EXPORT_MAP
             .filter(([, field]) => keys[field as keyof typeof keys])
             .map(([label, field]) => `${label}=${keys[field as keyof typeof keys]}`);
@@ -297,6 +300,7 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
     }, [isOpen, onClose]);
 
     const handleSave = () => {
+        if (!requireAuth('API 키 저장')) return;
         saveApiKeys(keys.kie, keys.cloudName, keys.uploadPreset, undefined, keys.apimart, keys.removeBg, keys.wavespeed, keys.xai, keys.evolink, keys.youtubeApiKey, keys.typecast, keys.ghostcutAppKey, keys.ghostcutAppSecret);
         showToast('설정이 저장되었습니다. 페이지를 새로고침합니다.', 1500);
         setTimeout(() => window.location.reload(), 1500);

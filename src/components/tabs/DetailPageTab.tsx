@@ -3,6 +3,7 @@ import { evolinkChat, evolinkGenerateImage } from '../../services/evolinkService
 import { uploadMediaToHosting } from '../../services/uploadService';
 import { showToast } from '../../stores/uiStore';
 import { useElapsedTimer, formatElapsed } from '../../hooks/useElapsedTimer';
+import { useAuthGuard } from '../../hooks/useAuthGuard';
 import type { DetailImageSegment, PageLength } from '../../types';
 import type { EvolinkChatMessage } from '../../services/evolinkService';
 
@@ -130,6 +131,7 @@ const EmptyStepPreview: React.FC<{ step: Step }> = ({ step }) => {
 // ============================================================
 
 const DetailPageTab: React.FC = () => {
+  const { requireAuth } = useAuthGuard();
   const [subTab, setSubTab] = useState<SubTab>('detail');
   const [step, setStep] = useState<Step>(1);
 
@@ -199,6 +201,7 @@ const DetailPageTab: React.FC = () => {
   // ============================================================
 
   const handleSuggestFeatures = useCallback(async () => {
+    if (!requireAuth('AI 기능 추천')) return;
     if (!productName.trim()) { showToast('상품명을 먼저 입력해주세요.'); return; }
     setIsSuggestingFeatures(true);
     try {
@@ -216,9 +219,10 @@ const DetailPageTab: React.FC = () => {
     } finally {
       setIsSuggestingFeatures(false);
     }
-  }, [productName, category]);
+  }, [requireAuth, productName, category]);
 
   const handlePlan = useCallback(async () => {
+    if (!requireAuth('AI 레이아웃 계획')) return;
     if (!productName.trim()) { showToast('상품명을 입력해주세요.'); return; }
     setIsPlanning(true);
     try {
@@ -271,9 +275,10 @@ const DetailPageTab: React.FC = () => {
     } finally {
       setIsPlanning(false);
     }
-  }, [productName, category, price, promo, features, gender, ageRanges, pageLength, customCount]);
+  }, [requireAuth, productName, category, price, promo, features, gender, ageRanges, pageLength, customCount]);
 
   const handleGenerateAll = useCallback(async () => {
+    if (!requireAuth('상세페이지 생성')) return;
     if (segments.length === 0) return;
     setIsGeneratingAll(true);
     setGenerationProgress(0);
@@ -297,7 +302,7 @@ const DetailPageTab: React.FC = () => {
     }
     setIsGeneratingAll(false);
     showToast('이미지 생성 완료!');
-  }, [segments, referenceUrls, productName]);
+  }, [requireAuth, segments, referenceUrls, productName]);
 
   const handleRegenerateOne = useCallback(async (segIdx: number) => {
     const seg = segments[segIdx];
@@ -319,6 +324,7 @@ const DetailPageTab: React.FC = () => {
   // ============================================================
 
   const handleGenerateThumbnails = useCallback(async () => {
+    if (!requireAuth('썸네일 생성')) return;
     if (!productName.trim()) { showToast('상품명을 입력해주세요.'); return; }
     setIsGeneratingThumb(true);
     setThumbResults([]);
@@ -344,7 +350,7 @@ const DetailPageTab: React.FC = () => {
     }
     setIsGeneratingThumb(false);
     showToast('썸네일 생성 완료!');
-  }, [productName, thumbStyle, thumbElement, thumbTextPosition, thumbTextOverlay, thumbCount, referenceUrls]);
+  }, [requireAuth, productName, thumbStyle, thumbElement, thumbTextPosition, thumbTextOverlay, thumbCount, referenceUrls]);
 
   // ============================================================
   // Common helpers

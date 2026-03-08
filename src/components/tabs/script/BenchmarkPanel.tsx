@@ -5,6 +5,7 @@ import { useNavigationStore } from '../../../stores/navigationStore';
 import { evolinkChat } from '../../../services/evolinkService';
 import { LegacyTopicRecommendation, ChannelScript } from '../../../types';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
+import { useAuthGuard } from '../../../hooks/useAuthGuard';
 
 const VIRAL_COLORS: Record<LegacyTopicRecommendation['viralScore'], { bg: string; text: string; label: string }> = {
   high: { bg: 'bg-red-900/30', text: 'text-red-300', label: 'HIGH' },
@@ -34,9 +35,12 @@ export default function BenchmarkPanel() {
 
   const hasBenchmarkData = channelScripts.length > 0 || channelGuideline !== null;
 
+  const { requireAuth } = useAuthGuard();
+
   const [analyzeError, setAnalyzeError] = useState('');
 
   const handleAnalyze = useCallback(async () => {
+    if (!requireAuth('대본 분석')) return;
     if (isAnalyzing) return;
     setIsAnalyzing(true);
     setAnalyzeError('');

@@ -3,6 +3,7 @@ import { useShoppingShortStore } from '../../../stores/shoppingShortStore';
 import { generateShoppingScripts } from '../../../services/shoppingScriptService';
 import VoiceFontPicker from './VoiceFontPicker';
 import { showToast } from '../../../stores/uiStore';
+import { useAuthGuard } from '../../../hooks/useAuthGuard';
 import type { SubtitleRemovalMethod } from '../../../types';
 
 const SUBTITLE_REMOVAL_OPTIONS: { id: SubtitleRemovalMethod; label: string; desc: string; icon: string }[] = [
@@ -11,6 +12,7 @@ const SUBTITLE_REMOVAL_OPTIONS: { id: SubtitleRemovalMethod; label: string; desc
 ];
 
 const ScriptSelectStep: React.FC = () => {
+  const { requireAuth } = useAuthGuard();
   const {
     sourceVideo,
     productAnalysis, setProductAnalysis,
@@ -58,6 +60,7 @@ const ScriptSelectStep: React.FC = () => {
 
   // 프리셋 기반 대본 재생성
   const handleRegenerateScripts = useCallback(async () => {
+    if (!requireAuth('대본 재생성')) return;
     if (!productAnalysis || !sourceVideo) return;
     setIsGeneratingScripts(true);
     try {
@@ -71,7 +74,7 @@ const ScriptSelectStep: React.FC = () => {
     } finally {
       setIsGeneratingScripts(false);
     }
-  }, [productAnalysis, sourceVideo, ctaPreset, narrationText, setIsGeneratingScripts, setGeneratedScripts, setSelectedScriptId]);
+  }, [requireAuth, productAnalysis, sourceVideo, ctaPreset, narrationText, setIsGeneratingScripts, setGeneratedScripts, setSelectedScriptId]);
 
   const handleStartRender = useCallback(() => {
     if (!selectedScriptId) {

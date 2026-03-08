@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useMemo } from 'react';
 import { useChannelAnalysisStore } from '../../../stores/channelAnalysisStore';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
+import { useAuthGuard } from '../../../hooks/useAuthGuard';
 import { showToast } from '../../../stores/uiStore';
 import { searchKeyword, getRelatedKeywords, getTopVideos, getVideoTags } from '../../../services/youtubeAnalysisService';
 import { getYoutubeApiKey } from '../../../services/apiService';
@@ -64,12 +65,15 @@ const KeywordLab: React.FC = () => {
     setKeyword, setLanguage, setRegion, setIsAnalyzing, setApiUsagePercent, analyze,
   } = useChannelAnalysisStore();
 
+  const { requireAuth } = useAuthGuard();
+
   const elapsed = useElapsedTimer(isAnalyzing);
   const [resultTab, setResultTab] = useState<ResultTab>('related');
   const [error, setError] = useState('');
   const latest = keywordResults.length > 0 ? keywordResults[keywordResults.length - 1] : null;
 
   const handleAnalyze = useCallback(async () => {
+    if (!requireAuth('키워드 분석')) return;
     if (!keyword.trim() || isAnalyzing) return;
     if (!getYoutubeApiKey()) {
       setError('YouTube API 키가 설정되지 않았습니다. 설정에서 키를 입력해주세요.');

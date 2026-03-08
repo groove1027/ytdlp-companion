@@ -15,6 +15,7 @@ import { parseFileToText, SUPPORTED_EXTENSIONS, SUPPORTED_FORMATS_LABEL } from '
 import BenchmarkPanel from './script/BenchmarkPanel';
 import TopicRecommendCards from './script/TopicRecommendCards';
 import { useElapsedTimer, formatElapsed } from '../../hooks/useElapsedTimer';
+import { useAuthGuard } from '../../hooks/useAuthGuard';
 
 const InstinctBrowser = React.lazy(() => import('./script/InstinctBrowser'));
 const ScriptExpander = React.lazy(() => import('./script/ScriptExpander'));
@@ -73,6 +74,8 @@ export default function ScriptWriterTab() {
   const recommendedTopics = useInstinctStore(s => s.recommendedTopics);
   const selectedTopicId = useInstinctStore(s => s.selectedTopicId);
 
+  const { requireAuth } = useAuthGuard();
+
   const elapsedRecommend = useElapsedTimer(isRecommending);
   const elapsedGenerate = useElapsedTimer(isGenerating);
   const elapsedStyle = useElapsedTimer(!!applyingStyle);
@@ -129,6 +132,7 @@ export default function ScriptWriterTab() {
 
   // -- 소재 추천 (본능 기제 → AI 소재 5개)
   const handleRecommendTopics = useCallback(async () => {
+    if (!requireAuth('AI 주제 추천')) return;
     const store = useInstinctStore.getState();
     store.setIsRecommending(true);
     store.clearTopics();
@@ -161,6 +165,7 @@ export default function ScriptWriterTab() {
 
   // -- 선택된 소재로 스트리밍 대본 생성
   const handleGenerateFromTopic = useCallback(async (topic: TopicRecommendation) => {
+    if (!requireAuth('AI 대본 생성')) return;
     if (!getEvolinkKey()) {
       setGenError('Evolink API 키가 설정되지 않았습니다. 설정에서 키를 입력해주세요.');
       return;
@@ -222,6 +227,7 @@ ${instinctPrompt}
   }, [instinctIds, targetCharCount, startGeneration, finishGeneration, setGeneratedScript, setFinalScript]);
 
   const handleGenerateScript = useCallback(async () => {
+    if (!requireAuth('AI 대본 생성')) return;
     if (!title.trim() || !synopsis.trim()) return;
     if (!getEvolinkKey()) {
       setGenError('Evolink API 키가 설정되지 않았습니다. 설정에서 키를 입력해주세요.');
@@ -295,6 +301,7 @@ ${instinctPrompt}
     selectedTopic, startGeneration, finishGeneration, setGeneratedScript, setFinalScript]);
 
   const handleApplySelectedStyle = useCallback(async () => {
+    if (!requireAuth('AI 스타일 적용')) return;
     if (!selectedStyleId) return;
     const preset = SCRIPT_STYLE_PRESETS.find(p => p.id === selectedStyleId);
     if (!preset) return;

@@ -13,6 +13,7 @@ import { crawlCoupangProduct, validateCoupangUrl, testProxyConnection } from '..
 import { generateDeeplink, hasCoupangAffiliateKeys } from '../../../services/coupangAffiliateService';
 import { getCoupangProxyUrl, saveCoupangKeys, getCoupangAccessKey, getCoupangSecretKey } from '../../../services/apiService';
 import { showToast } from '../../../stores/uiStore';
+import { useAuthGuard } from '../../../hooks/useAuthGuard';
 import { detectNarration } from '../../../services/shoppingScriptService';
 import type { ShoppingSourceType } from '../../../types';
 
@@ -26,6 +27,7 @@ const SOURCE_TYPES: { id: ShoppingSourceType; label: string; icon: string; desc:
 ];
 
 const SourceInputStep: React.FC = () => {
+  const { requireAuth } = useAuthGuard();
   const {
     sourceType, setSourceType,
     // Video
@@ -130,6 +132,7 @@ const SourceInputStep: React.FC = () => {
 
   // 영상 기반 분석
   const handleVideoAnalyze = useCallback(async () => {
+    if (!requireAuth('영상 분석')) return;
     if (!sourceVideo?.videoBlob) return;
     setIsAnalyzing(true);
     setAnalysisError(null);
@@ -156,13 +159,14 @@ const SourceInputStep: React.FC = () => {
       setIsAnalyzing(false);
       setAnalysisProgress('');
     }
-  }, [sourceVideo, ctaPreset, setIsAnalyzing, setAnalysisError, setProductAnalysis, setGeneratedScripts, setSelectedScriptId, goToStep, setNarrationText]);
+  }, [requireAuth, sourceVideo, ctaPreset, setIsAnalyzing, setAnalysisError, setProductAnalysis, setGeneratedScripts, setSelectedScriptId, goToStep, setNarrationText]);
 
   // ═══════════════════════════════════════════════════════════════
   // 쿠팡 소스 핸들러
   // ═══════════════════════════════════════════════════════════════
 
   const handleCoupangCrawl = useCallback(async () => {
+    if (!requireAuth('쿠팡 분석')) return;
     const validation = validateCoupangUrl(coupangUrl);
     if (!validation.valid) {
       setCrawlError(validation.message || '잘못된 URL');
@@ -184,10 +188,11 @@ const SourceInputStep: React.FC = () => {
       setIsCrawling(false);
       setCrawlProgress('');
     }
-  }, [coupangUrl, setIsCrawling, setCrawlError, setCoupangCrawlResult]);
+  }, [requireAuth, coupangUrl, setIsCrawling, setCrawlError, setCoupangCrawlResult]);
 
   // 쿠팡 데이터 기반 분석 + 대본 생성
   const handleCoupangAnalyze = useCallback(async () => {
+    if (!requireAuth('상품 분석')) return;
     if (!coupangCrawlResult) return;
     setIsAnalyzing(true);
     setAnalysisError(null);
@@ -223,7 +228,7 @@ const SourceInputStep: React.FC = () => {
       setIsAnalyzing(false);
       setAnalysisProgress('');
     }
-  }, [coupangCrawlResult, ctaPreset, setIsAnalyzing, setAnalysisError, setProductAnalysis, setNarrationText, setGeneratedScripts, setSelectedScriptId, setAffiliateLink, goToStep]);
+  }, [requireAuth, coupangCrawlResult, ctaPreset, setIsAnalyzing, setAnalysisError, setProductAnalysis, setNarrationText, setGeneratedScripts, setSelectedScriptId, setAffiliateLink, goToStep]);
 
   // 쿠팡파트너스 설정 저장
   const handleSaveCoupangKeys = useCallback(() => {

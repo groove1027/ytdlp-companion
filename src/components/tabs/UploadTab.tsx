@@ -10,6 +10,7 @@ import StepVideo from './upload/StepVideo';
 import InlineThumbnailStudio from './upload/InlineThumbnailStudio';
 import type { UploadStep, UploadPlatform, ThreadsAuthState, NaverClipAuthState, VideoMetadata } from '../../types';
 import { useElapsedTimer, formatElapsed } from '../../hooks/useElapsedTimer';
+import { useAuthGuard } from '../../hooks/useAuthGuard';
 
 // --- Platform Config ---
 
@@ -1418,6 +1419,7 @@ const StepMetadata: React.FC = () => {
   const updateShoppingTag = useUploadStore((s) => s.updateShoppingTag);
   const removeShoppingTag = useUploadStore((s) => s.removeShoppingTag);
   const addShoppingTag = useUploadStore((s) => s.addShoppingTag);
+  const { requireAuth } = useAuthGuard();
 
   const finalScript = useScriptWriterStore((s) => s.finalScript);
   const scenes = useProjectStore((s) => s.scenes);
@@ -1484,6 +1486,7 @@ const StepMetadata: React.FC = () => {
 
   // AI 메타데이터 + 쇼핑 태그 일괄 생성 (마스터 지침서 1-6단계)
   const handleAiGenerate = useCallback(async () => {
+    if (!requireAuth('AI 설명 생성')) return;
     const scriptText = getScriptText();
     if (!scriptText.trim()) {
       showToast('대본을 입력해주세요. 위 입력란에 대본을 붙여넣거나, 대본 작성 탭에서 먼저 작성하세요.');
@@ -1512,10 +1515,11 @@ const StepMetadata: React.FC = () => {
     } finally {
       setIsGenerating(false);
     }
-  }, [getScriptText, getSceneSummaries, selectedPlatforms, setIsGenerating, setMetadata, setShoppingTags]);
+  }, [getScriptText, getSceneSummaries, selectedPlatforms, setIsGenerating, setMetadata, setShoppingTags, requireAuth]);
 
   // 쇼핑 태그 추출
   const handleExtractShoppingTags = useCallback(async () => {
+    if (!requireAuth('AI 태그 추출')) return;
     const scriptText = getScriptText();
     if (!scriptText.trim()) {
       showToast('대본이 없어 쇼핑 태그를 추출할 수 없습니다.');
@@ -1530,7 +1534,7 @@ const StepMetadata: React.FC = () => {
     } finally {
       setIsExtractingTags(false);
     }
-  }, [getScriptText, getSceneSummaries, setShoppingTags]);
+  }, [getScriptText, getSceneSummaries, setShoppingTags, requireAuth]);
 
   // 메타데이터가 없으면 빈 구조를 만들어서 반환하는 헬퍼
   const getOrCreateMeta = useCallback((): VideoMetadata => {
@@ -2482,6 +2486,7 @@ const UploadTab: React.FC = () => {
   const metadata = useUploadStore((s) => s.metadata);
   const thumbnailUrl = useUploadStore((s) => s.thumbnailUrl);
   const platformProgress = useUploadStore((s) => s.platformProgress);
+  const { requireAuth } = useAuthGuard();
 
   // 위저드 스텝 네비게이션
   const [currentStep, setCurrentStep] = useState(0);
@@ -2588,6 +2593,7 @@ const UploadTab: React.FC = () => {
   };
 
   const handleStartUpload = useCallback(async () => {
+    if (!requireAuth('플랫폼 업로드')) return;
     startUpload();
     setCurrentStep(STEPS.length - 1);
 
@@ -2753,7 +2759,7 @@ const UploadTab: React.FC = () => {
 
     await Promise.allSettled(uploads);
     useUploadStore.getState().finishUpload();
-  }, [startUpload, selectedPlatforms, youtubeAuth, tiktokAuth, instagramAuth, threadsAuth, naverClipAuth]);
+  }, [startUpload, selectedPlatforms, youtubeAuth, tiktokAuth, instagramAuth, threadsAuth, naverClipAuth, requireAuth]);
 
   const isOptionalStep = (stepId: UploadStep) => stepId === 'thumbnail';
 

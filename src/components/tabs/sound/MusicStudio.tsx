@@ -20,6 +20,7 @@ import {
   GENRE_CATEGORIES, MOOD_TAGS, ENERGY_TAGS, INSTRUMENT_CATEGORIES,
   VOCAL_STYLES, PRODUCTION_TAGS, BPM_PRESETS, DURATION_PRESETS, STRUCTURE_TAGS,
 } from '../../../data/sunoData';
+import { useAuthGuard } from '../../../hooks/useAuthGuard';
 
 /** 오디오 URL에서 실제 duration을 가져오는 헬퍼 (API가 0으로 보고할 때 사용) */
 const getAudioDuration = (url: string): Promise<number> =>
@@ -159,6 +160,7 @@ const Section: React.FC<{ title: string; children: React.ReactNode; defaultOpen?
 
 /* ═══════ 가사 생성 탭 ═══════ */
 const LyricsTab: React.FC = () => {
+  const { requireAuth } = useAuthGuard();
   const lyricsPrompt = useSoundStudioStore((s) => s.lyricsPrompt);
   const setLyricsPrompt = useSoundStudioStore((s) => s.setLyricsPrompt);
   const generatedLyrics = useSoundStudioStore((s) => s.generatedLyrics);
@@ -289,6 +291,7 @@ const useFileUpload = (onUrl: (url: string) => void, onError: (msg: string) => v
 };
 
 const ToolsTab: React.FC = () => {
+  const { requireAuth } = useAuthGuard();
   const musicLibrary = useSoundStudioStore((s) => s.musicLibrary);
   const allTracks = useMemo(() => musicLibrary.flatMap((g) => g.tracks), [musicLibrary]);
   const vocalSepTarget = useSoundStudioStore((s) => s.vocalSepTarget);
@@ -362,6 +365,7 @@ const ToolsTab: React.FC = () => {
   );
 
   const handleVocalSeparation = useCallback(async () => {
+    if (!requireAuth('보컬 분리')) return;
     if (!vocalSepTarget || isVocalSeparating) return;
     if (!vocalSepTarget.audioId) { setToolError('이 트랙은 audioId가 없어 보컬 분리를 할 수 없습니다.'); return; }
     setIsVocalSeparating(true); setVocalSepResult(null); setToolError('');
@@ -505,6 +509,7 @@ const ToolsTab: React.FC = () => {
 
 /* ═══════ 메인 음악 생성 탭 (대폭 강화) ═══════ */
 const GenerateTab: React.FC = () => {
+  const { requireAuth } = useAuthGuard();
   const addCost = useCostStore((s) => s.addCost);
   const setMusicConfig = useSoundStudioStore((s) => s.setMusicConfig);
   const setIsGeneratingMusic = useSoundStudioStore((s) => s.setIsGeneratingMusic);
@@ -636,6 +641,7 @@ const GenerateTab: React.FC = () => {
   }, []);
 
   const handleAnalyze = useCallback(async () => {
+    if (!requireAuth('AI 음악 분석')) return;
     if (!activeScript.trim() || isAnalyzing) return;
     setIsAnalyzing(true); setAnalyzeError('');
     try {
@@ -684,6 +690,7 @@ const GenerateTab: React.FC = () => {
   }, [builtStyle, isBoosting]);
 
   const handleGenerate = useCallback(async () => {
+    if (!requireAuth('AI 음악 생성')) return;
     if (isGeneratingMusic) return;
     const count = Math.max(1, Math.min(50, batchCount));
     // AI 분석의 styleTagsFull이 있으면 우선 사용

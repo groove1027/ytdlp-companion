@@ -7,6 +7,7 @@ import ThumbnailTextStyleEditor from './ThumbnailTextStyleEditor';
 import ThumbnailPostProcessor from './ThumbnailPostProcessor';
 import { persistImage } from '../services/imageStorageService';
 import { showToast } from '../stores/uiStore';
+import { useAuthGuard } from '../hooks/useAuthGuard';
 import { useElapsedTimer, formatElapsed } from '../hooks/useElapsedTimer';
 import { logger } from '../services/LoggerService';
 
@@ -74,6 +75,7 @@ const ThumbnailGenerator: React.FC<ThumbnailGeneratorProps> = ({
   hideReferenceArea,     // [NEW] Destructure
   onBeforeGenerate       // [NEW] Destructure
 }) => {
+  const { requireAuth } = useAuthGuard();
   const [isPlanningLong, setIsPlanningLong] = useState(false);
   const [isPlanningShort, setIsPlanningShort] = useState(false);
   const [planningMsgIndex, setPlanningMsgIndex] = useState(0);
@@ -226,6 +228,7 @@ const ThumbnailGenerator: React.FC<ThumbnailGeneratorProps> = ({
   };
 
   const handleStartGeneration = async (type: 'long' | 'short') => {
+    if (!requireAuth('썸네일 생성')) return;
     logger.info(`[썸네일] ${type} 기획 생성 시작`);
     if (isThisTypeBusy(type)) {
       logger.warn(`[썸네일] ${type} 이미 생성 중이라 스킵`);

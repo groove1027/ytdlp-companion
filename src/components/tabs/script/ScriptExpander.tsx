@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import { useScriptWriterStore } from '../../../stores/scriptWriterStore';
+import { useAuthGuard } from '../../../hooks/useAuthGuard';
 import { evolinkChat } from '../../../services/evolinkService';
 
 const MAX_CHARS = 30000;
@@ -29,6 +30,8 @@ export default function ScriptExpander() {
     isExpanding, startExpansion, finishExpansion,
     expansionTarget,
   } = useScriptWriterStore();
+
+  const { requireAuth } = useAuthGuard();
 
   const [selectedLength, setSelectedLength] = useState<number>(10000);
   // const [preserveOptions, setPreserveOptions] = useState<PreserveOption[]>(['logic', 'emotion']);
@@ -102,6 +105,7 @@ ${script}
   };
 
   const handleExpand = useCallback(async () => {
+    if (!requireAuth('AI 대본 확장')) return;
     if (isExpanding || !currentScript) return;
     startExpansion(selectedLength);
     setExpandError('');

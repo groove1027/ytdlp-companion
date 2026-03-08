@@ -18,6 +18,7 @@ import {
   type DetailLevel,
 } from '../../data/slideStylePresets';
 import { useElapsedTimer, formatElapsed } from '../../hooks/useElapsedTimer';
+import { useAuthGuard } from '../../hooks/useAuthGuard';
 
 // ─── Types ───
 
@@ -235,6 +236,7 @@ const SlidePreview: React.FC<{
 // ─── Main Component ───
 
 export default function PptMasterTab() {
+  const { requireAuth } = useAuthGuard();
   const config = useProjectStore((s) => s.config);
   const addCost = useCostStore((s) => s.addCost);
 
@@ -312,6 +314,7 @@ export default function PptMasterTab() {
 
   // ─── AI 슬라이드 생성 ───
   const handleGenerate = useCallback(async () => {
+    if (!requireAuth('PPT 이미지 생성')) return;
     if (!inputText.trim()) return;
     setIsGenerating(true);
     setGenError('');
@@ -365,10 +368,11 @@ export default function PptMasterTab() {
     } finally {
       setIsGenerating(false);
     }
-  }, [inputText, selectedContentStyle, detailLevel, slideCount, addCost, generateImagesForRange]);
+  }, [requireAuth, inputText, selectedContentStyle, detailLevel, slideCount, addCost, generateImagesForRange]);
 
   // ─── 이미지 일괄 생성 ───
   const handleBatchImages = useCallback(async () => {
+    if (!requireAuth('PPT 일괄 생성')) return;
     if (slides.length === 0) return;
     setIsBatchingImages(true);
     setPreviewMode(false);
@@ -381,7 +385,7 @@ export default function PptMasterTab() {
 
     setIsBatchingImages(false);
     showToast('슬라이드 이미지 생성 완료!');
-  }, [slides, generateImagesForRange]);
+  }, [requireAuth, slides, generateImagesForRange]);
 
   // ─── 개별 이미지 재생성 ───
   const handleRegenImage = useCallback(async (index: number) => {
@@ -419,6 +423,7 @@ export default function PptMasterTab() {
 
   // ─── PPTX 내보내기 ───
   const handleExportPptx = useCallback(async () => {
+    if (!requireAuth('PPTX 내보내기')) return;
     try {
       const pptxgenjs = await import('pptxgenjs');
       const pptx = new pptxgenjs.default();
@@ -465,7 +470,7 @@ export default function PptMasterTab() {
       const msg = err instanceof Error ? err.message : 'PPTX 내보내기 실패';
       showToast(`PPTX 내보내기 실패: ${msg}`);
     }
-  }, [slides, selectedDesignStyle, selectedContentStyle]);
+  }, [requireAuth, slides, selectedDesignStyle, selectedContentStyle]);
 
   // ─── Render ───
 

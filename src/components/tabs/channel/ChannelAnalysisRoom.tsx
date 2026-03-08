@@ -4,6 +4,7 @@ import { useNavigationStore } from '../../../stores/navigationStore';
 import { useScriptWriterStore } from '../../../stores/scriptWriterStore';
 import { showToast } from '../../../stores/uiStore';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
+import { useAuthGuard } from '../../../hooks/useAuthGuard';
 import { getChannelInfo, getRecentVideosByFormat, getVideoTranscript, analyzeChannelStyle, analyzeChannelStyleDNA } from '../../../services/youtubeAnalysisService';
 import { getYoutubeApiKey } from '../../../services/apiService';
 import { evolinkChat } from '../../../services/evolinkService';
@@ -34,6 +35,8 @@ const ChannelAnalysisRoom: React.FC = () => {
   const setActiveTab = useNavigationStore(s => s.setActiveTab);
   const swSetTopics = useScriptWriterStore(s => s.setTopics);
 
+  const { requireAuth } = useAuthGuard();
+
   const [contentFormat, setContentFormat] = useState<ContentFormat>('long');
   const [videoCount, setVideoCount] = useState(10);
   const [channelUrl, setChannelUrl] = useState('');
@@ -49,6 +52,7 @@ const ChannelAnalysisRoom: React.FC = () => {
 
   // YouTube 채널 분석 (3-Layer DNA)
   const handleChannelAnalysis = useCallback(async () => {
+    if (!requireAuth('채널 분석')) return;
     if (!channelUrl.trim()) return;
     if (!getYoutubeApiKey()) {
       setError('YouTube API 키가 설정되지 않았습니다. 설정에서 키를 입력해주세요.');
@@ -143,6 +147,7 @@ const ChannelAnalysisRoom: React.FC = () => {
   const [topicError, setTopicError] = useState('');
 
   const handleTopicRecommend = useCallback(async () => {
+    if (!requireAuth('AI 주제 추천')) return;
     if (!topicInput.trim() && !channelGuideline) return;
     setIsAnalyzing(true);
     setTopicError('');

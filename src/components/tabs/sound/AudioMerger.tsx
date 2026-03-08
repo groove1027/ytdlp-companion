@@ -4,6 +4,7 @@ import { generateSupertonicTTS, mergeAudioFiles } from '../../../services/ttsSer
 import { generateTypecastTTS } from '../../../services/typecastService';
 import { generateElevenLabsDialogueTTS } from '../../../services/elevenlabsService';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
+import { useAuthGuard } from '../../../hooks/useAuthGuard';
 import type { Speaker, TTSLanguage } from '../../../types';
 
 function formatTime(seconds: number): string {
@@ -52,6 +53,7 @@ async function generateLineTTS(
 }
 
 const AudioMerger: React.FC = () => {
+  const { requireAuth } = useAuthGuard();
   const speakers = useSoundStudioStore((s) => s.speakers);
   const lines = useSoundStudioStore((s) => s.lines);
   const updateLine = useSoundStudioStore((s) => s.updateLine);
@@ -100,6 +102,7 @@ const AudioMerger: React.FC = () => {
 
   // 전체 TTS 생성 + 병합
   const handleGenerateAll = useCallback(async () => {
+    if (!requireAuth('오디오 병합')) return;
     if (isGeneratingTTS || lines.length === 0) return;
     // 업로드 모드가 아닌 경우에만 화자 체크
     const needsTts = lines.some((l) => l.audioSource !== 'uploaded' && !l.audioUrl);

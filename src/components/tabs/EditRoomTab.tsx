@@ -18,6 +18,7 @@ import type { SubtitleTemplate, SubtitleStyle, SceneEffectConfig, SceneTransitio
 const EditPointMatchingPanel = React.lazy(() => import('./editroom/EditPointMatchingPanel'));
 import { getFontByFamily } from '../../constants/fontLibrary';
 import { loadFont } from '../../services/fontLoaderService';
+import { useAuthGuard } from '../../hooks/useAuthGuard';
 
 /** globalSubtitleStyle이 null일 때 사용하는 기본 자막 스타일 (subtitleTemplates.ts의 base() 기본값과 동일) */
 const DEFAULT_SUBTITLE_STYLE: SubtitleStyle = {
@@ -1279,6 +1280,7 @@ const EditRoomTab: React.FC = () => {
   const totalDuration = useTotalDuration();
   const [showRenderModal, setShowRenderModal] = useState(false);
   const exportAbortRef = React.useRef<AbortController | null>(null);
+  const { requireAuth } = useAuthGuard();
 
   // 프로젝트 데이터 → editRoomStore 초기화
   useEffect(() => {
@@ -1324,6 +1326,7 @@ const EditRoomTab: React.FC = () => {
   }, [timeline]);
 
   const handleExportZip = useCallback(async () => {
+    if (!requireAuth('ZIP 내보내기')) return;
     try {
       await downloadSrtWithAssetsZip(
         timeline,
@@ -1333,7 +1336,7 @@ const EditRoomTab: React.FC = () => {
     } catch (err) {
       showToast('ZIP 내보내기 실패: ' + (err instanceof Error ? err.message : '알 수 없는 오류'));
     }
-  }, [timeline, scenes]);
+  }, [timeline, scenes, requireAuth]);
 
   // MP4 버튼 → 렌더 설정 모달 열기
   const handleExportMp4Click = useCallback(() => {
@@ -1395,6 +1398,7 @@ const EditRoomTab: React.FC = () => {
 
   // 렌더 설정 모달에서 확인 → 실제 내보내기 시작 (통합)
   const handleExportMp4 = useCallback(async () => {
+    if (!requireAuth('MP4 내보내기')) return;
     setShowRenderModal(false);
 
     const abortController = new AbortController();
@@ -1450,10 +1454,11 @@ const EditRoomTab: React.FC = () => {
       setExportProgress(null);
       blobUrls.forEach((url) => URL.revokeObjectURL(url));
     }
-  }, [timeline, scenes, lines, bgmTrack, setIsExporting, setExportProgress, buildOptimizedScenes, getExportDimensions, resolveSubtitleStyle]);
+  }, [timeline, scenes, lines, bgmTrack, setIsExporting, setExportProgress, buildOptimizedScenes, getExportDimensions, resolveSubtitleStyle, requireAuth]);
 
   // 개별 장면 렌더링
   const handleExportIndividualMp4 = useCallback(async () => {
+    if (!requireAuth('개별 MP4 내보내기')) return;
     setShowRenderModal(false);
 
     const abortController = new AbortController();
@@ -1553,7 +1558,7 @@ const EditRoomTab: React.FC = () => {
       setExportProgress(null);
       blobUrls.forEach((url) => URL.revokeObjectURL(url));
     }
-  }, [timeline, scenes, lines, bgmTrack, setIsExporting, setExportProgress, buildOptimizedScenes, getExportDimensions, resolveSubtitleStyle, buildSceneFilename]);
+  }, [timeline, scenes, lines, bgmTrack, setIsExporting, setExportProgress, buildOptimizedScenes, getExportDimensions, resolveSubtitleStyle, buildSceneFilename, requireAuth]);
 
   const sceneCount = sceneOrder.length || scenes.length;
   const editRoomSubTab = useEditRoomStore((s) => s.editRoomSubTab);

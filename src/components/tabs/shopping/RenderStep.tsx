@@ -5,6 +5,7 @@ import { generateTypecastTTS } from '../../../services/typecastService';
 import { generateElevenLabsDialogueTTS } from '../../../services/elevenlabsService';
 import { generateSupertonicTTS } from '../../../services/ttsService';
 import { showToast } from '../../../stores/uiStore';
+import { useAuthGuard } from '../../../hooks/useAuthGuard';
 import type { ShoppingRenderPhase } from '../../../types';
 
 const RENDER_PHASES: { phase: ShoppingRenderPhase; label: string; icon: string }[] = [
@@ -17,6 +18,7 @@ const RENDER_PHASES: { phase: ShoppingRenderPhase; label: string; icon: string }
 ];
 
 const RenderStep: React.FC = () => {
+  const { requireAuth } = useAuthGuard();
   const {
     sourceVideo,
     generatedScripts,
@@ -37,6 +39,7 @@ const RenderStep: React.FC = () => {
 
   // 전체 렌더 실행
   const startRender = useCallback(async () => {
+    if (!requireAuth('영상 렌더링')) return;
     if (!sourceVideo?.videoBlob || !selectedScript) return;
     if (isRendering) return;
 
@@ -98,7 +101,7 @@ const RenderStep: React.FC = () => {
     } finally {
       setIsRendering(false);
     }
-  }, [sourceVideo, selectedScript, ttsEngine, ttsVoiceId, ttsSpeed, subtitleTemplate, subtitleRemovalMethod, ctaPreset, ctaText, isRendering, setIsRendering, setResultBlobUrl, setRenderProgress]);
+  }, [requireAuth, sourceVideo, selectedScript, ttsEngine, ttsVoiceId, ttsSpeed, subtitleTemplate, subtitleRemovalMethod, ctaPreset, ctaText, isRendering, setIsRendering, setResultBlobUrl, setRenderProgress]);
 
   // 자동 시작 (렌더 스텝 진입 시 1회)
   useEffect(() => {

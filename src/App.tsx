@@ -32,10 +32,12 @@ import { getGeminiKey } from './services/apiService';
 import { dataURLtoFile } from './utils/fileHelpers';
 import { splitVideoIntoSegments, getVideoDuration } from './utils/videoSegmentUtils';
 import { persistImage } from './services/imageStorageService';
-import { verifyToken, AuthUser } from './services/authService';
+import { AuthUser } from './services/authService';
 import AuthGate from './components/AuthGate';
+import AuthPromptModal from './components/AuthPromptModal';
 import ProfileModal from './components/ProfileModal';
 import { useUIStore } from './stores/uiStore';
+import { useAuthStore } from './stores/authStore';
 import { useCostStore } from './stores/costStore';
 import { useProjectStore } from './stores/projectStore';
 import { useNavigationStore } from './stores/navigationStore';
@@ -129,18 +131,14 @@ class TabErrorBoundary extends React.Component<
 
 
 const App: React.FC = () => {
-  // --- Auth State ---
-  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
-  const [authChecking, setAuthChecking] = useState(true);
+  // --- Auth Store (Soft Gate) ---
+  const authUser = useAuthStore((s) => s.authUser);
+  const authChecking = useAuthStore((s) => s.authChecking);
+  const setAuthUser = useAuthStore((s) => s.setAuthUser);
+  const showAuthGateModal = useUIStore((s) => s.showAuthGateModal);
 
   useEffect(() => {
-    verifyToken().then((user) => {
-      setAuthUser(user);
-    }).catch(() => {
-      setAuthUser(null);
-    }).finally(() => {
-      setAuthChecking(false);
-    });
+    useAuthStore.getState().checkAuth();
   }, []);
 
   // --- Navigation Store (v4.5) ---
@@ -914,11 +912,6 @@ const App: React.FC = () => {
     );
   }
 
-  // 미인증 시 로그인 화면
-  if (!authUser) {
-    return <AuthGate onAuthenticated={setAuthUser} />;
-  }
-
   return (
     <div className="min-h-screen bg-gray-900 text-white font-sans selection:bg-blue-500 relative">
       <ProcessingOverlay message={processingMessage} progress={detailedStatus.percent} eta={detailedStatus.eta} mode={processingMode} />
@@ -982,24 +975,35 @@ const App: React.FC = () => {
         </h1>
         <div className="ml-auto flex items-center gap-3">
           <CostDashboard />
-          <button
-            onClick={() => useUIStore.getState().setShowApiSettings(true)}
-            className="px-3.5 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-gray-300 hover:text-white rounded-lg text-sm font-bold transition-all flex items-center gap-1.5"
-          >
-            ⚙️ API 설정
-          </button>
-          <button
-            onClick={() => useUIStore.getState().setShowFeedbackModal(true)}
-            className="px-3.5 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-gray-300 hover:text-white rounded-lg text-sm font-bold transition-all flex items-center gap-1.5"
-          >
-            💬 피드백
-          </button>
-          <button
-            onClick={() => useUIStore.getState().setShowProfileModal(true)}
-            className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-gray-300 hover:text-white rounded-lg text-sm font-bold transition-all flex items-center gap-1.5"
-          >
-            👤 {authUser.displayName}
-          </button>
+          {authUser ? (
+            <>
+              <button
+                onClick={() => useUIStore.getState().setShowApiSettings(true)}
+                className="px-3.5 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-gray-300 hover:text-white rounded-lg text-sm font-bold transition-all flex items-center gap-1.5"
+              >
+                ⚙️ API 설정
+              </button>
+              <button
+                onClick={() => useUIStore.getState().setShowFeedbackModal(true)}
+                className="px-3.5 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-gray-300 hover:text-white rounded-lg text-sm font-bold transition-all flex items-center gap-1.5"
+              >
+                💬 피드백
+              </button>
+              <button
+                onClick={() => useUIStore.getState().setShowProfileModal(true)}
+                className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-gray-300 hover:text-white rounded-lg text-sm font-bold transition-all flex items-center gap-1.5"
+              >
+                👤 {authUser.displayName}
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={() => useUIStore.getState().setShowAuthGateModal(true)}
+              className="px-4 py-2 rounded-lg text-sm font-bold text-white bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 transition-all shadow-lg shadow-violet-500/20"
+            >
+              로그인 / 회원가입
+            </button>
+          )}
         </div>
       </header>
 
@@ -1419,11 +1423,30 @@ const App: React.FC = () => {
       </div>{/* flex wrapper 닫기 */}
 
       <FeedbackModal />
-      <ProfileModal
-        authUser={authUser}
-        onUserUpdate={setAuthUser}
-        onAccountDeleted={() => setAuthUser(null)}
-      />
+      {authUser && (
+        <ProfileModal
+          authUser={authUser}
+          onUserUpdate={setAuthUser}
+          onAccountDeleted={() => setAuthUser(null)}
+        />
+      )}
+
+      {/* Soft Gate 모달 */}
+      <AuthPromptModal />
+      {showAuthGateModal && (
+        <div className="fixed inset-0 z-[250]">
+          <AuthGate onAuthenticated={(user) => {
+            setAuthUser(user);
+            useUIStore.getState().setShowAuthGateModal(false);
+          }} />
+          <button
+            onClick={() => useUIStore.getState().setShowAuthGateModal(false)}
+            className="fixed top-6 right-6 z-[251] w-10 h-10 flex items-center justify-center rounded-full bg-gray-800/80 hover:bg-gray-700 border border-gray-600 text-gray-400 hover:text-white text-xl transition-all"
+          >
+            &times;
+          </button>
+        </div>
+      )}
 
       {/* 전역 Toast 알림 */}
       {toast && toast.show && !toast.current && !toast.total && (

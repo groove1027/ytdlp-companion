@@ -13,6 +13,7 @@ import { showToast, useUIStore } from '../../../stores/uiStore';
 import { useNavigationStore } from '../../../stores/navigationStore';
 import ActionButton from '../../ui/ActionButton';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
+import { useAuthGuard } from '../../../hooks/useAuthGuard';
 
 // --- Constants ---
 
@@ -756,6 +757,7 @@ const StoryboardPanel: React.FC = () => {
   const [showGenDropdown, setShowGenDropdown] = useState(false);
   const [isBatchingImages, setIsBatchingImages] = useState(false);
   const [batchImageProgress, setBatchImageProgress] = useState({ current: 0, total: 0, success: 0, fail: 0 });
+  const { requireAuth } = useAuthGuard();
 
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -925,6 +927,7 @@ const StoryboardPanel: React.FC = () => {
 
   // --- 대본 → 프롬프트 자동 변환 ---
   const handleAutoPrompt = useCallback(async (sceneId: string) => {
+    if (!requireAuth('AI 프롬프트 생성')) return;
     const scene = useProjectStore.getState().scenes.find(s => s.id === sceneId);
     if (!scene?.scriptText) { showToast('나레이션 텍스트가 없습니다'); return; }
     const currentConfig = useProjectStore.getState().config;
@@ -971,7 +974,7 @@ const StoryboardPanel: React.FC = () => {
       updateScene(sceneId, { generationStatus: undefined });
       showToast('프롬프트 생성 실패');
     }
-  }, [updateScene]);
+  }, [updateScene, requireAuth]);
 
   // --- 레퍼런스 이미지 업로드 ---
   const handleReferenceUpload = useCallback((sceneId: string, file: File) => {
@@ -994,6 +997,7 @@ const StoryboardPanel: React.FC = () => {
 
   // --- 단일 이미지 생성 (스토어에서 style/characters 읽기 — BUG#17 fix) ---
   const handleGenerateImage = useCallback(async (sceneId: string, feedback?: string): Promise<boolean> => {
+    if (!requireAuth('이미지 생성')) return false;
     const { scenes: currentScenes, config: currentConfig } = useProjectStore.getState();
     let scene = currentScenes.find(s => s.id === sceneId);
     if (!scene || !currentConfig) return false;
@@ -1134,10 +1138,11 @@ const StoryboardPanel: React.FC = () => {
       updateScene(sceneId, { isGeneratingImage: false, generationStatus: `실패: ${msg}` });
       return false;
     }
-  }, [updateScene, addCost]);
+  }, [updateScene, addCost, requireAuth]);
 
   // --- 배치 이미지 생성 ---
   const handleBatchGenerateImages = useCallback(async () => {
+    if (!requireAuth('이미지 일괄 생성')) return;
     const { scenes: currentScenes } = useProjectStore.getState();
     const targets = currentScenes.filter(s => !s.imageUrl && !s.isGeneratingImage);
     if (targets.length === 0) return;
@@ -1170,7 +1175,7 @@ const StoryboardPanel: React.FC = () => {
     }
 
     setIsBatchingImages(false);
-  }, [handleGenerateImage]);
+  }, [handleGenerateImage, requireAuth]);
 
   // --- 배치 진행 상태 ---
   const batchCurrent = isBatchingImages ? batchImageProgress.current : videoBatch.batchProgress.current;

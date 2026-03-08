@@ -8,6 +8,7 @@ import { resizeImage, base64ToFile } from '../services/imageProcessingService';
 // import { removeBackground } from '../services/removeBgService';
 import { logger } from '../services/LoggerService';
 import { showToast } from '../stores/uiStore';
+import { useAuthGuard } from '../hooks/useAuthGuard';
 import { useCostStore } from '../stores/costStore';
 import ImageLightbox from './ImageLightbox';
 import { CharacterGenCard } from './modes/CharacterGenCard';
@@ -59,6 +60,7 @@ function useCharStyleFavorites() {
 }
 
 const CharacterTwistLab: React.FC = () => {
+    const { requireAuth } = useAuthGuard();
     // Image & Analysis
     const [twistImageBase64, setTwistImageBase64] = useState<string | null>(null);
     const [twistPublicUrl, setTwistPublicUrl] = useState<string | null>(null);
@@ -156,6 +158,7 @@ const CharacterTwistLab: React.FC = () => {
     }, []);
 
     const handleGenerate = async () => {
+        if (!requireAuth('캐릭터 생성')) return;
         if (!twistImageBase64) { showToast("이미지를 업로드해주세요 (필수)."); return; }
 
         logger.info("[CharacterTwistLab] Starting generation");

@@ -24,6 +24,7 @@ import TypecastEditor from './TypecastEditor';
 import { useProjectStore } from '../../../stores/projectStore';
 import { transferSoundToImageVideo } from '../../../utils/soundToImageBridge';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
+import { useAuthGuard } from '../../../hooks/useAuthGuard';
 
 const SPEAKER_COLORS = ['#6366f1', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316'];
 
@@ -203,6 +204,7 @@ const SAMPLE_TEXTS: Record<string, string> = {
 
 
 const VoiceStudio: React.FC = () => {
+  const { requireAuth } = useAuthGuard();
   const addCost = useCostStore((s) => s.addCost);
   const speakers = useSoundStudioStore((s) => s.speakers);
   const lines = useSoundStudioStore((s) => s.lines);
@@ -543,6 +545,7 @@ const VoiceStudio: React.FC = () => {
   const elapsedTypecastLoad = useElapsedTimer(isLoadingTypecastVoices);
 
   const handleGenerateLine = useCallback(async (lineId: string) => {
+    if (!requireAuth('TTS 음성 생성')) return;
     const speaker = speakers[0];
     if (!speaker?.voiceId) {
       showToast('음성을 선택해주세요.');
@@ -643,6 +646,7 @@ const VoiceStudio: React.FC = () => {
   }, [lines, speakers, updateLine, addCost]);
 
   const handleGenerateAll = useCallback(async () => {
+    if (!requireAuth('TTS 일괄 생성')) return;
     const speaker = speakers[0];
     if (!speaker?.voiceId || isGeneratingAll) return;
 
@@ -933,6 +937,7 @@ const VoiceStudio: React.FC = () => {
   }, [uploadedBlobUrl, isPlayingUpload]);
 
   const handleStartTranscription = useCallback(async () => {
+    if (!requireAuth('음성 텍스트 변환')) return;
     if (!uploadedFile || isTranscribing) return;
     setIsTranscribing(true);
     setUploadError(null);

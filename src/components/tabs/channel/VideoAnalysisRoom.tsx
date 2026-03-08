@@ -4,6 +4,7 @@ import type { EvolinkChatMessage } from '../../../services/evolinkService';
 import { useNavigationStore } from '../../../stores/navigationStore';
 import { useEditPointStore } from '../../../stores/editPointStore';
 import { useEditRoomStore } from '../../../stores/editRoomStore';
+import { useAuthGuard } from '../../../hooks/useAuthGuard';
 
 type AnalysisPreset = 'tikitaka' | 'snack';
 
@@ -183,6 +184,8 @@ const PRESET_INFO: Record<AnalysisPreset, { label: string; description: string; 
 };
 
 const VideoAnalysisRoom: React.FC = () => {
+  const { requireAuth } = useAuthGuard();
+
   const [inputMode, setInputMode] = useState<'upload' | 'youtube'>('youtube');
   const [youtubeUrl, setYoutubeUrl] = useState('');
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
@@ -226,6 +229,7 @@ const VideoAnalysisRoom: React.FC = () => {
   }, [result]);
 
   const handleAnalyze = async (preset: AnalysisPreset) => {
+    if (!requireAuth('영상 분석')) return;
     if (!hasInput) return;
     setSelectedPreset(preset);
     setIsAnalyzing(true);

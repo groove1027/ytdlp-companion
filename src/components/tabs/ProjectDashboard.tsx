@@ -3,6 +3,7 @@ import { ProjectData, ProjectSummary } from '../../types';
 import { getAllProjectSummaries, deleteProject, canCreateNewProject, getProject } from '../../services/storageService';
 import { showToast } from '../../stores/uiStore';
 import { useNavigationStore } from '../../stores/navigationStore';
+import { useAuthGuard } from '../../hooks/useAuthGuard';
 
 interface ProjectDashboardProps {
   onSelectProject: (project: ProjectData) => void;
@@ -274,6 +275,7 @@ const GRID_COLS: Record<CardSize, string> = {
 };
 
 const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, onNewProject, onImportProject, refreshTrigger }) => {
+  const { requireAuth } = useAuthGuard();
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -336,6 +338,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, on
   const nextProjectName = `새 프로젝트 ${summaries.length + 1}`;
 
   const handleNewProjectClick = async () => {
+    if (!requireAuth('프로젝트 생성')) return;
     try {
       if (!(await canCreateNewProject())) {
         showToast('저장 공간이 가득 찼습니다. 기존 프로젝트를 삭제 후 생성해주세요.', 5000);
@@ -354,6 +357,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, on
   };
 
   const handleBulkDelete = async () => {
+    if (!requireAuth('프로젝트 삭제')) return;
     if (selectedIds.size === 0) return;
     if (!confirm(`${selectedIds.size}개의 프로젝트를 삭제하시겠습니까?`)) return;
     try {
@@ -376,6 +380,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, on
 
   // 프로젝트 클릭 시 전체 데이터 로드
   const handleOpenProject = async (id: string) => {
+    if (!requireAuth('프로젝트 열기')) return;
     if (loadingProjectId) return; // 중복 로드 방지
     setLoadingProjectId(id);
     try {

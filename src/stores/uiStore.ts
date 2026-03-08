@@ -16,6 +16,8 @@ interface UIStore {
   showApiSettings: boolean;
   showWatermarkModal: boolean;
   showProfileModal: boolean;
+  authPromptAction: string | null;
+  showAuthGateModal: boolean;
   toast: ToastState | null;
   isProcessing: boolean;
   processingMessage: string | null;
@@ -33,6 +35,8 @@ interface UIStore {
   setShowApiSettings: (show: boolean) => void;
   setShowWatermarkModal: (show: boolean) => void;
   setShowProfileModal: (show: boolean) => void;
+  setAuthPromptAction: (action: string | null) => void;
+  setShowAuthGateModal: (show: boolean) => void;
   setToast: (toast: ToastState | null | ((prev: ToastState | null) => ToastState | null)) => void;
   setProcessing: (active: boolean, message?: string, mode?: string) => void;
   setProcessingMessage: (message: string) => void;
@@ -48,6 +52,8 @@ export const useUIStore = create<UIStore>((set) => ({
   showApiSettings: false,
   showWatermarkModal: false,
   showProfileModal: false,
+  authPromptAction: null,
+  showAuthGateModal: false,
   toast: null,
   isProcessing: false,
   processingMessage: null,
@@ -64,6 +70,8 @@ export const useUIStore = create<UIStore>((set) => ({
   setShowApiSettings: (show) => set({ showApiSettings: show }),
   setShowWatermarkModal: (show) => set({ showWatermarkModal: show }),
   setShowProfileModal: (show) => set({ showProfileModal: show }),
+  setAuthPromptAction: (action) => set({ authPromptAction: action }),
+  setShowAuthGateModal: (show) => set({ showAuthGateModal: show }),
   setToast: (toast) => set((state) => ({
     toast: typeof toast === 'function' ? toast(state.toast) : toast,
   })),

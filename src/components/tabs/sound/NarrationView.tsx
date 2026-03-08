@@ -11,10 +11,12 @@ import { PRICING } from '../../../constants';
 import NarrationToolbar from './NarrationToolbar';
 import NarrationLineItem from './NarrationLineItem';
 import NarrationCreditBar from './NarrationCreditBar';
+import { useAuthGuard } from '../../../hooks/useAuthGuard';
 
 const VoiceStudio = lazy(() => import('./VoiceStudio'));
 
 const NarrationView: React.FC = () => {
+  const { requireAuth } = useAuthGuard();
   const addCost = useCostStore((s) => s.addCost);
 
   // --- Local UI state ---
@@ -52,6 +54,7 @@ const NarrationView: React.FC = () => {
   // ===============================
   const handleGenerateLine = useCallback(
     async (lineId: string) => {
+      if (!requireAuth('나레이션 생성')) return;
       const lineIndex = lines.findIndex((l) => l.id === lineId);
       if (lineIndex < 0) return;
       const line = lines[lineIndex];
@@ -124,6 +127,7 @@ const NarrationView: React.FC = () => {
   // 전체 라인 TTS 생성 & 병합
   // ===============================
   const handleGenerateAll = useCallback(async () => {
+    if (!requireAuth('나레이션 일괄 생성')) return;
     if (isGeneratingTTS || lines.length === 0) return;
     if (!activeSpeaker) {
       showToast('음성을 먼저 선택해주세요.');
@@ -358,6 +362,7 @@ const NarrationView: React.FC = () => {
   // 수정된 라인만 재생성 & 병합
   // ===============================
   const handleRegenerateModified = useCallback(async () => {
+    if (!requireAuth('나레이션 재생성')) return;
     if (isGeneratingTTS || lines.length === 0) return;
     if (!activeSpeaker) return;
 

@@ -16,6 +16,7 @@ import CharacterLibraryModal from '../../CharacterLibraryModal';
 import { saveCharacterToLibrary } from '../../../services/storageService';
 import { showToast } from '../../../stores/uiStore';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
+import { useAuthGuard } from '../../../hooks/useAuthGuard';
 
 let _sceneIdCounter = 0;
 
@@ -87,6 +88,7 @@ const SetupPanel: React.FC = () => {
   const [scriptDraft, setScriptDraft] = useState('');
   const [showSplitGuide, setShowSplitGuide] = useState(false);
   const elapsed = useElapsedTimer(isAnalyzing);
+  const { requireAuth } = useAuthGuard();
 
   useEffect(() => { if (!config) useProjectStore.getState().newProject(); }, [config]);
 
@@ -214,6 +216,7 @@ const SetupPanel: React.FC = () => {
   }, [addCost]);
 
   const handleAnalyzeCharacter = useCallback(async (charId: string) => {
+    if (!requireAuth('캐릭터 분석')) return;
     const char = useImageVideoStore.getState().characters.find(c => c.id === charId);
     if (!char || char.isAnalyzing) return;
     if (char.analysisResult && char.analysisStyle && char.analysisCharacter) return;
@@ -233,12 +236,13 @@ const SetupPanel: React.FC = () => {
       useImageVideoStore.getState().updateCharacter(charId, { isAnalyzing: false, analysisResult: '' });
       showToast('캐릭터 분석 실패');
     }
-  }, [addCost]);
+  }, [addCost, requireAuth]);
 
   const handleAnalyzeAllCharacters = useCallback(async () => {
+    if (!requireAuth('캐릭터 일괄 분석')) return;
     const unanalyzed = useImageVideoStore.getState().characters.filter(c => (!c.analysisResult || !c.analysisStyle || !c.analysisCharacter) && !c.isAnalyzing);
     for (const char of unanalyzed) await handleAnalyzeCharacter(char.id);
-  }, [handleAnalyzeCharacter]);
+  }, [handleAnalyzeCharacter, requireAuth]);
 
   // [DISABLED] handleRemoveBg & Remove.bg 기능 전체 비활성화
 
@@ -257,6 +261,7 @@ const SetupPanel: React.FC = () => {
 
   /* ── 장면 분석 ── */
   const runSceneAnalysis = useCallback(async (skipConfirm = false): Promise<boolean> => {
+    if (!requireAuth('장면 분석')) return false;
     if (!config?.script || isAnalyzing) return false;
     if (!skipConfirm) {
       const existingScenes = useProjectStore.getState().scenes;
@@ -313,9 +318,10 @@ const SetupPanel: React.FC = () => {
       setAnalyzeError(e instanceof Error ? e.message : String(e));
       setIsAnalyzing(false); return false;
     }
-  }, [config, isAnalyzing, addCost]);
+  }, [config, isAnalyzing, addCost, requireAuth]);
 
   const handleCreateStoryboard = useCallback(async () => {
+    if (!requireAuth('스토리보드 생성')) return;
     const existingScenes = useProjectStore.getState().scenes;
     if (existingScenes.length > 0) {
       // 비주얼 프롬프트가 없으면 자동 생성 후 스토리보드 열기
@@ -329,7 +335,7 @@ const SetupPanel: React.FC = () => {
     }
     if (!config?.script) { showToast('대본을 먼저 입력해주세요'); return; }
     if (await runSceneAnalysis()) setActiveSubTab('storyboard');
-  }, [config?.script, runSceneAnalysis, setActiveSubTab]);
+  }, [config?.script, runSceneAnalysis, setActiveSubTab, requireAuth]);
 
   if (!config) return null;
 
