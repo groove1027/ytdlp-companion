@@ -26,6 +26,10 @@ const SERVICE_OPTIONS = [
     { value: 'youtubeApiKey', label: 'YouTube API' },
     { value: 'ghostcutAppKey', label: 'GhostCut AppKey' },
     { value: 'ghostcutAppSecret', label: 'GhostCut AppSecret' },
+    { value: 'removeBg', label: 'Remove.bg' },
+    { value: 'apimart', label: 'APIMart' },
+    { value: 'xai', label: 'X AI' },
+    { value: 'gemini', label: 'Gemini' },
 ];
 
 const EXPORT_MAP: [string, string][] = [
@@ -37,6 +41,10 @@ const EXPORT_MAP: [string, string][] = [
     ['YOUTUBE_API_KEY', 'youtubeApiKey'],
     ['GHOSTCUT_APP_KEY', 'ghostcutAppKey'],
     ['GHOSTCUT_APP_SECRET', 'ghostcutAppSecret'],
+    ['REMOVE_BG', 'removeBg'],
+    ['APIMART', 'apimart'],
+    ['X_AI', 'xai'],
+    ['GEMINI', 'gemini'],
 ];
 
 // 라벨→필드 매핑 (KEY=VALUE, JSON, 주변 텍스트 감지용)
@@ -51,6 +59,12 @@ const LABEL_MAP: [RegExp, string][] = [
     [/ghostcut[\s_.-]?app[\s_.-]?key/i, 'ghostcutAppKey'],
     [/ghostcut[\s_.-]?app[\s_.-]?secret/i, 'ghostcutAppSecret'],
     [/ghostcut/i, 'ghostcutAppKey'],
+    [/remove[\s_.-]?bg|배경[\s_.-]?제거/i, 'removeBg'],
+    [/apimart/i, 'apimart'],
+    [/\bx[\s_.-]?ai\b|^xai$/i, 'xai'],
+    [/gemini/i, 'gemini'],
+    [/laozhang/i, 'laozhang'],
+    [/giphy/i, 'giphy'],
 ];
 
 // 패턴→서비스 규칙 (키 값 자체의 형태로 판별)
@@ -98,17 +112,27 @@ const smartDetect = (text: string): DetectedKey[] => {
         } catch { /* JSON 파싱 실패 — 아래로 진행 */ }
     }
 
-    // Phase 2: 줄 단위 분석
-    for (const rawLine of trimmed.split('\n')) {
-        const line = rawLine.trim();
-        if (!line || line.length < 6) continue;
+    // Phase 2: 줄 단위 분석 — [Label] + 다음 줄 키 형식 지원
+    const lines = trimmed.split('\n').map(l => l.trim());
+    let pendingLabel = ''; // [Label] 형태가 발견되면 다음 줄에 적용
+
+    for (let li = 0; li < lines.length; li++) {
+        const line = lines[li];
+        if (!line) { pendingLabel = ''; continue; }
+
+        // [Label] 형태 감지 — 대괄호 라벨만 있는 줄
+        const bracketMatch = line.match(/^\[([^\]]+)\]$/);
+        if (bracketMatch) {
+            pendingLabel = bracketMatch[1].trim();
+            continue;
+        }
 
         // KEY=VALUE 또는 KEY:VALUE 에서 값 추출 시도
         const sepMatch = line.match(/^([^=:]+)[=:](.+)$/);
         if (sepMatch) {
             const label = sepMatch[1].trim();
             const value = sepMatch[2].trim().replace(/^["'\s]+|["'\s]+$/g, '');
-            if (value.length < 4) continue;
+            if (value.length < 4) { pendingLabel = ''; continue; }
 
             let service = '';
             const labelNorm = label.toLowerCase().replace(/[\s\-]/g, '_');
@@ -117,25 +141,41 @@ const smartDetect = (text: string): DetectedKey[] => {
             }
             if (service) assigned.add(service);
             results.push({ value, service, method: service ? 'label' : 'guess' });
+            pendingLabel = '';
             continue;
         }
 
         // 자유 형식: 토큰 분리 후 키-like 토큰 찾기
         const tokens = line.split(/[\s,\t|"']+/).filter(Boolean);
         const keyTokens = tokens.filter(isKeyToken);
-        if (keyTokens.length === 0) continue;
 
-        // 가장 긴 키-like 토큰 사용
-        const value = keyTokens.sort((a, b) => b.length - a.length)[0];
-
-        // 주변 텍스트(토큰 제외)에서 서비스명 찾기
-        const context = tokens.filter(t => t !== value).join(' ');
-        let service = '';
-        for (const [re, svc] of LABEL_MAP) {
-            if (re.test(context) && !assigned.has(svc)) { service = svc; break; }
+        // 키 토큰이 없으면 라벨 텍스트일 수 있음 → pendingLabel로 저장
+        if (keyTokens.length === 0) {
+            pendingLabel = line;
+            continue;
         }
-        if (service) assigned.add(service);
-        results.push({ value, service, method: service ? 'label' : 'guess' });
+
+        // 키 토큰마다 처리 (Cloudinary처럼 한 라벨 아래 여러 키가 올 수 있음)
+        for (const value of keyTokens) {
+            // 컨텍스트: pendingLabel + 같은 줄의 나머지 텍스트
+            const contextParts = tokens.filter(t => t !== value).join(' ');
+            const fullContext = pendingLabel ? `${pendingLabel} ${contextParts}` : contextParts;
+
+            let service = '';
+            for (const [re, svc] of LABEL_MAP) {
+                if (re.test(fullContext) && !assigned.has(svc)) { service = svc; break; }
+            }
+            if (service) assigned.add(service);
+            results.push({ value, service, method: service ? 'label' : 'guess' });
+        }
+
+        // Cloudinary 특수: [Cloudinary] 아래 두 줄(cloudName, uploadPreset)
+        // pendingLabel에 cloudinary가 있고 다음 줄도 키면 유지
+        const nextLine = li + 1 < lines.length ? lines[li + 1] : '';
+        const nextTokens = nextLine ? nextLine.split(/[\s,\t|"']+/).filter(Boolean).filter(isKeyToken) : [];
+        if (!(pendingLabel && /cloudinary/i.test(pendingLabel) && nextTokens.length > 0)) {
+            pendingLabel = '';
+        }
     }
 
     return assignRemaining(results, assigned);
