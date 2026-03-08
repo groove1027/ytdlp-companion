@@ -13,6 +13,7 @@ const DEFAULT_XAI_KEY = 'REDACTED_XAI_KEY';
 const DEFAULT_EVOLINK_KEY = 'REDACTED_EVOLINK_KEY';
 const DEFAULT_YOUTUBE_API_KEY = 'REDACTED_YOUTUBE_KEY';
 const DEFAULT_TYPECAST_KEY = '';
+const DEFAULT_REPLICATE_KEY = '';
 const DEFAULT_CLOUD_NAME = 'dji3gtb5r';
 const DEFAULT_UPLOAD_PRESET = 'storyboard';
 // [FEEDBACK] Google Apps Script Web App URL — 개발자가 한 번 설정
@@ -80,6 +81,11 @@ export const getTypecastKey = (): string => {
     return sanitizeKey(key);
 };
 
+export const getReplicateKey = (): string => {
+    const key = localStorage.getItem('CUSTOM_REPLICATE_KEY') || DEFAULT_REPLICATE_KEY;
+    return sanitizeKey(key);
+};
+
 export const getCloudinaryConfig = () => {
     return {
         cloudName: sanitizeKey(localStorage.getItem('CUSTOM_CLOUD_NAME') || DEFAULT_CLOUD_NAME),
@@ -91,7 +97,7 @@ export const getFeedbackUrl = (): string => {
     return DEFAULT_FEEDBACK_URL;
 };
 
-export const saveApiKeys = (kie: string, laozhang: string, cloudName?: string, uploadPreset?: string, gemini?: string, apimart?: string, removeBg?: string, wavespeed?: string, xai?: string, evolink?: string, youtubeApiKey?: string, typecast?: string) => {
+export const saveApiKeys = (kie: string, laozhang: string, cloudName?: string, uploadPreset?: string, gemini?: string, apimart?: string, removeBg?: string, wavespeed?: string, xai?: string, evolink?: string, youtubeApiKey?: string, typecast?: string, replicate?: string) => {
     // Save raw input, but sanitized on retrieval
     if (kie.trim()) localStorage.setItem('CUSTOM_KIE_KEY', kie.trim());
     else localStorage.removeItem('CUSTOM_KIE_KEY');
@@ -137,6 +143,9 @@ export const saveApiKeys = (kie: string, laozhang: string, cloudName?: string, u
 
     if (typecast && typecast.trim()) localStorage.setItem('CUSTOM_TYPECAST_KEY', typecast.trim());
     else localStorage.removeItem('CUSTOM_TYPECAST_KEY');
+
+    if (replicate && replicate.trim()) localStorage.setItem('CUSTOM_REPLICATE_KEY', replicate.trim());
+    else localStorage.removeItem('CUSTOM_REPLICATE_KEY');
 };
 
 export const getStoredKeys = () => {
@@ -152,7 +161,8 @@ export const getStoredKeys = () => {
         xai: localStorage.getItem('CUSTOM_XAI_KEY') || '',
         evolink: localStorage.getItem('CUSTOM_EVOLINK_KEY') || '',
         youtubeApiKey: localStorage.getItem('CUSTOM_YOUTUBE_API_KEY') || '',
-        typecast: localStorage.getItem('CUSTOM_TYPECAST_KEY') || ''
+        typecast: localStorage.getItem('CUSTOM_TYPECAST_KEY') || '',
+        replicate: localStorage.getItem('CUSTOM_REPLICATE_KEY') || ''
     };
 };
 

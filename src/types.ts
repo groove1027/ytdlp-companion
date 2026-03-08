@@ -520,7 +520,7 @@ export interface ShoppingScript {
 export type ShoppingCTAPreset = 'comment' | 'profile' | 'link';
 export type ShoppingRenderPhase = 'idle' | 'generating-tts' | 'removing-subtitles' | 'overlaying-subtitles' | 'mixing-audio' | 'encoding' | 'done' | 'error';
 export type ShoppingWizardStep = 'source' | 'script' | 'render';
-export type SubtitleRemovalMethod = 'blur' | 'crop' | 'none';
+export type SubtitleRemovalMethod = 'propainter' | 'none';
 
 // --- Detail Page Builder ---
 export interface DetailImageSegment {

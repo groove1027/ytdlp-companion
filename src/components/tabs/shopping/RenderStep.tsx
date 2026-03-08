@@ -9,7 +9,7 @@ import type { ShoppingRenderPhase } from '../../../types';
 
 const RENDER_PHASES: { phase: ShoppingRenderPhase; label: string; icon: string }[] = [
   { phase: 'generating-tts', label: 'TTS 생성', icon: '🎙️' },
-  { phase: 'removing-subtitles', label: '자막 제거', icon: '🔲' },
+  { phase: 'removing-subtitles', label: 'AI 자막 제거', icon: '🤖' },
   { phase: 'overlaying-subtitles', label: '자막 합성', icon: '📝' },
   { phase: 'mixing-audio', label: '오디오 합성', icon: '🔊' },
   { phase: 'encoding', label: '인코딩', icon: '⚙️' },
@@ -76,6 +76,8 @@ const RenderStep: React.FC = () => {
         ttsAudioUrl,
         {
           subtitleRemovalMethod,
+          videoWidth: sourceVideo.width,
+          videoHeight: sourceVideo.height,
           fontFamily: subtitleTemplate?.fontFamily || 'Pretendard',
           fontSize: subtitleTemplate?.fontSize || 40,
           ctaPreset,

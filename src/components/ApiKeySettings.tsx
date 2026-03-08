@@ -24,6 +24,7 @@ const SERVICE_OPTIONS = [
     { value: 'uploadPreset', label: 'Upload Preset' },
     { value: 'typecast', label: 'Typecast' },
     { value: 'youtubeApiKey', label: 'YouTube API' },
+    { value: 'replicate', label: 'Replicate' },
 ];
 
 const EXPORT_MAP: [string, string][] = [
@@ -34,6 +35,7 @@ const EXPORT_MAP: [string, string][] = [
     ['UPLOAD_PRESET', 'uploadPreset'],
     ['TYPECAST', 'typecast'],
     ['YOUTUBE_API_KEY', 'youtubeApiKey'],
+    ['REPLICATE', 'replicate'],
 ];
 
 // 라벨→필드 매핑 (KEY=VALUE, JSON, 주변 텍스트 감지용)
@@ -46,12 +48,14 @@ const LABEL_MAP: [RegExp, string][] = [
     [/cloudinary/i, 'cloudName'],
     [/typecast/i, 'typecast'],
     [/youtube|google[\s_.-]?api/i, 'youtubeApiKey'],
+    [/replicate/i, 'replicate'],
 ];
 
 // 패턴→서비스 규칙 (키 값 자체의 형태로 판별)
 const PATTERN_RULES: [RegExp, string][] = [
     [/^AIzaSy[A-Za-z0-9_-]{25,}$/, 'youtubeApiKey'],   // Google API 키 — 고유 prefix
     [/^[0-9a-f]{32}$/i, 'kie'],                          // 32자 hex — KIE 고유 포맷
+    [/^r8_[A-Za-z0-9]{20,}$/, 'replicate'],              // r8_ prefix — Replicate 고유 포맷
 ];
 
 const maskKey = (key: string): string => {
@@ -189,7 +193,7 @@ const assignRemaining = (entries: DetectedKey[], assigned: Set<string>): Detecte
 // ── 컴포넌트 ──
 
 const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
-    const [keys, setKeys] = useState({ kie: '', laozhang: '', cloudName: '', uploadPreset: '', gemini: '', apimart: '', removeBg: '', wavespeed: '', xai: '', evolink: '', youtubeApiKey: '', typecast: '' });
+    const [keys, setKeys] = useState({ kie: '', laozhang: '', cloudName: '', uploadPreset: '', gemini: '', apimart: '', removeBg: '', wavespeed: '', xai: '', evolink: '', youtubeApiKey: '', typecast: '', replicate: '' });
     const [showPassword, setShowPassword] = useState(false);
     const [showBulk, setShowBulk] = useState(false);
     const [bulkText, setBulkText] = useState('');
@@ -277,6 +281,7 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
                 evolink: stored.evolink,
                 youtubeApiKey: stored.youtubeApiKey,
                 typecast: stored.typecast,
+                replicate: stored.replicate,
             });
         }
     }, [isOpen]);
@@ -292,7 +297,7 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
     }, [isOpen, onClose]);
 
     const handleSave = () => {
-        saveApiKeys(keys.kie, keys.laozhang, keys.cloudName, keys.uploadPreset, keys.laozhang, keys.apimart, keys.removeBg, keys.wavespeed, keys.xai, keys.evolink, keys.youtubeApiKey, keys.typecast);
+        saveApiKeys(keys.kie, keys.laozhang, keys.cloudName, keys.uploadPreset, keys.laozhang, keys.apimart, keys.removeBg, keys.wavespeed, keys.xai, keys.evolink, keys.youtubeApiKey, keys.typecast, keys.replicate);
         showToast('설정이 저장되었습니다. 페이지를 새로고침합니다.', 1500);
         setTimeout(() => window.location.reload(), 1500);
     };
@@ -487,7 +492,7 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
                     {/* [DISABLED] 6. Remove.bg — 배경 제거 (기능 비활성화) */}
 
                     {/* 7. YouTube Data API */}
-                    <div className="space-y-3">
+                    <div className="space-y-3 pb-4 border-b border-gray-700">
                         <div className="flex items-start justify-between">
                             <div className="flex flex-col">
                                 <h3 className="text-base font-bold text-rose-400 uppercase tracking-wider">📺 YOUTUBE API</h3>
@@ -496,6 +501,18 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
                             <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener noreferrer" className="shrink-0 ml-3 px-2.5 py-1 bg-rose-600/20 hover:bg-rose-600/40 border border-rose-500/30 text-rose-400 text-xs font-bold rounded-lg transition-all flex items-center gap-1">키 발급 ↗</a>
                         </div>
                         <input type={showPassword ? "text" : "password"} value={keys.youtubeApiKey} onChange={(e) => setKeys({...keys, youtubeApiKey: e.target.value})} placeholder="YouTube Data API v3 Key" className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-base text-white" />
+                    </div>
+
+                    {/* 8. Replicate — ProPainter 자막 제거 */}
+                    <div className="space-y-3">
+                        <div className="flex items-start justify-between">
+                            <div className="flex flex-col">
+                                <h3 className="text-base font-bold text-cyan-400 uppercase tracking-wider">🎨 REPLICATE API</h3>
+                                <span className="text-sm text-gray-400">ProPainter AI 자막/워터마크 제거</span>
+                            </div>
+                            <a href="https://replicate.com/account/api-tokens" target="_blank" rel="noopener noreferrer" className="shrink-0 ml-3 px-2.5 py-1 bg-cyan-600/20 hover:bg-cyan-600/40 border border-cyan-500/30 text-cyan-400 text-xs font-bold rounded-lg transition-all flex items-center gap-1">키 발급 ↗</a>
+                        </div>
+                        <input type={showPassword ? "text" : "password"} value={keys.replicate} onChange={(e) => setKeys({...keys, replicate: e.target.value})} placeholder="Replicate API Token (r8_...)" className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-base text-white" />
                     </div>
                 </div>
 

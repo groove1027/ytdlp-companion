@@ -7,13 +7,16 @@
 
 import { loadFFmpeg, downloadMp4 } from './ffmpegService';
 import { splitBySentenceEndings } from './ttsService';
+import { removeSubtitlesWithProPainter } from './replicateService';
 import { logger } from './LoggerService';
-import type { ShoppingScript, ShoppingRenderPhase, SubtitleRemovalMethod, ShoppingCTAPreset } from '../types';
+import type { ShoppingScript, ShoppingRenderPhase, ShoppingCTAPreset } from '../types';
 import type { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile } from '@ffmpeg/util';
 
 interface RenderConfig {
-  subtitleRemovalMethod: SubtitleRemovalMethod;
+  subtitleRemovalMethod: 'propainter' | 'none';
+  videoWidth: number;
+  videoHeight: number;
   fontFamily: string;
   fontSize: number;
   ctaPreset: ShoppingCTAPreset;
@@ -38,13 +41,26 @@ export const renderShoppingShort = async (
 ): Promise<Blob> => {
   logger.info('[ShoppingRender] 렌더 시작', { script: script.title });
 
+  // 0. ProPainter 자막 제거 (propainter 모드일 때)
+  let videoBlob = sourceBlob;
+  if (config.subtitleRemovalMethod === 'propainter') {
+    onProgress({ phase: 'removing-subtitles', percent: 5, message: 'ProPainter AI 자막 제거 시작...' });
+    videoBlob = await removeSubtitlesWithProPainter(
+      sourceBlob,
+      config.videoWidth,
+      config.videoHeight,
+      (msg) => onProgress({ phase: 'removing-subtitles', percent: 15, message: msg }),
+    );
+    onProgress({ phase: 'removing-subtitles', percent: 25, message: 'AI 자막 제거 완료' });
+  }
+
   // 1. FFmpeg 로드
-  onProgress({ phase: 'removing-subtitles', percent: 5, message: 'FFmpeg 로드 중...' });
+  onProgress({ phase: 'overlaying-subtitles', percent: 28, message: 'FFmpeg 로드 중...' });
   const ffmpeg = await loadFFmpeg();
 
   // 2. 소스 비디오 → FFmpeg FS
-  onProgress({ phase: 'removing-subtitles', percent: 10, message: '영상 파일 준비 중...' });
-  const sourceData = await fetchFile(sourceBlob);
+  onProgress({ phase: 'overlaying-subtitles', percent: 30, message: '영상 파일 준비 중...' });
+  const sourceData = await fetchFile(videoBlob);
   await ffmpeg.writeFile('input.mp4', sourceData);
 
   // 3. TTS 오디오 → FFmpeg FS
@@ -60,10 +76,9 @@ export const renderShoppingShort = async (
   const ttsDuration = await getAudioDuration(ttsAudioUrl);
   const subtitleEntries = calculateSubtitleTimings(sentences, ttsDuration);
 
-  // 5. FFmpeg 필터 체인 빌드
-  onProgress({ phase: 'removing-subtitles', percent: 30, message: '자막 제거 처리 중...' });
+  // 5. FFmpeg 필터 체인 빌드 (자막 오버레이 + CTA)
+  onProgress({ phase: 'overlaying-subtitles', percent: 40, message: '자막 오버레이 준비 중...' });
   const filterChain = buildFilterChain(
-    config.subtitleRemovalMethod,
     subtitleEntries,
     config.fontSize,
     config.ctaText,
@@ -127,9 +142,8 @@ const calculateSubtitleTimings = (
   });
 };
 
-/** FFmpeg 필터 체인 빌드 */
+/** FFmpeg 필터 체인 빌드 (자막 오버레이 + CTA만 담당, 자막 제거는 ProPainter가 선행 처리) */
 const buildFilterChain = (
-  subtitleRemoval: SubtitleRemovalMethod,
   subtitles: { text: string; start: number; end: number }[],
   fontSize: number,
   ctaText: string,
@@ -137,23 +151,8 @@ const buildFilterChain = (
 ): string => {
   const filters: string[] = [];
 
-  // 1. 자막 제거 필터
-  if (subtitleRemoval === 'blur') {
-    // 하단 20% 블러 처리
-    filters.push(
-      "split[main][blur]",
-      "[blur]crop=iw:ih*0.2:0:ih*0.8,boxblur=20[blurred]",
-      "[main][blurred]overlay=0:H*0.8[desubbed]"
-    );
-  } else if (subtitleRemoval === 'crop') {
-    // 하단 20% 크롭 (검정 채움)
-    filters.push(
-      "drawbox=x=0:y=ih*0.8:w=iw:h=ih*0.2:color=black:t=fill[desubbed]"
-    );
-  } else {
-    // 자막 제거 없음 — 패스스루
-    filters.push("null[desubbed]");
-  }
+  // 패스스루 (ProPainter가 이미 처리했거나, 제거 없음)
+  filters.push("null[desubbed]");
 
   // 2. 새 자막 drawtext 오버레이
   subtitles.forEach((sub, i) => {

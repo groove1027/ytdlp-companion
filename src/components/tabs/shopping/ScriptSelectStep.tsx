@@ -6,9 +6,8 @@ import { showToast } from '../../../stores/uiStore';
 import type { SubtitleRemovalMethod } from '../../../types';
 
 const SUBTITLE_REMOVAL_OPTIONS: { id: SubtitleRemovalMethod; label: string; desc: string; icon: string }[] = [
-  { id: 'blur', label: '블러', desc: '하단 20% 블러 처리', icon: '🔲' },
-  { id: 'crop', label: '크롭', desc: '하단 20% 검정 채움', icon: '✂️' },
-  { id: 'none', label: '없음', desc: '원본 유지', icon: '📋' },
+  { id: 'propainter', label: 'AI 제거', desc: 'ProPainter로 자막 영역 복원', icon: '🤖' },
+  { id: 'none', label: '없음', desc: '원본 유지 (자막 제거 안 함)', icon: '📋' },
 ];
 
 const ScriptSelectStep: React.FC = () => {
@@ -340,7 +339,7 @@ const ScriptSelectStep: React.FC = () => {
       {/* 자막 제거 모드 */}
       <div>
         <h3 className="text-base font-bold text-gray-100 mb-3">원본 자막 제거</h3>
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 gap-3">
           {SUBTITLE_REMOVAL_OPTIONS.map(opt => (
             <button
               key={opt.id}
