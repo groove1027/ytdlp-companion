@@ -24,6 +24,7 @@ interface UIStore {
   processingMode: string | undefined;
   refreshTrigger: number;
   toolboxOpen: boolean;
+  postProductionOpen: boolean;
 
   // Actions
   openSidebar: () => void;
@@ -42,6 +43,7 @@ interface UIStore {
   setProcessingMessage: (message: string) => void;
   triggerRefresh: () => void;
   setToolboxOpen: (open: boolean) => void;
+  setPostProductionOpen: (open: boolean) => void;
 }
 
 export const useUIStore = create<UIStore>((set) => ({
@@ -60,6 +62,7 @@ export const useUIStore = create<UIStore>((set) => ({
   processingMode: undefined,
   refreshTrigger: 0,
   toolboxOpen: false,
+  postProductionOpen: false,
 
   openSidebar: () => set({ isSidebarOpen: true }),
   closeSidebar: () => set({ isSidebarOpen: false }),
@@ -83,6 +86,7 @@ export const useUIStore = create<UIStore>((set) => ({
   setProcessingMessage: (message) => set({ processingMessage: message }),
   triggerRefresh: () => set((state) => ({ refreshTrigger: state.refreshTrigger + 1 })),
   setToolboxOpen: (open) => set({ toolboxOpen: open }),
+  setPostProductionOpen: (open) => set({ postProductionOpen: open }),
 }));
 
 /** alert() 대체 유틸리티 — 어디서든 import해서 사용 */
