@@ -78,6 +78,17 @@ export const verifyPhoneOTP = async (
   };
 };
 
+/** 현재 인증된 사용자의 Firebase ID 토큰 반환 (백엔드 검증용) */
+export const getCurrentIdToken = async (): Promise<string | null> => {
+  const a = initFirebase();
+  if (!a || !a.currentUser) return null;
+  try {
+    return await a.currentUser.getIdToken(true);
+  } catch {
+    return null;
+  }
+};
+
 /** Firebase 설정 여부 확인 */
 export const isFirebaseConfigured = (): boolean => {
   return FIREBASE_CONFIG.apiKey !== 'YOUR_API_KEY' && FIREBASE_CONFIG.apiKey.length > 0;

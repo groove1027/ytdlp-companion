@@ -2,6 +2,7 @@ export interface Env {
   DB: D1Database;
   SESSIONS: KVNamespace;
   INVITE_CODES: KVNamespace;
+  FIREBASE_API_KEY: string;
 }
 
 export interface InviteCodeData {

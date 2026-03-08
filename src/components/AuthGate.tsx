@@ -8,6 +8,7 @@ import {
   setupRecaptcha,
   sendPhoneOTP,
   verifyPhoneOTP,
+  getCurrentIdToken,
   type ConfirmationResult,
   type RecaptchaVerifier,
 } from '../services/firebaseAuthService';
@@ -76,8 +77,7 @@ const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
     if (!email.trim()) { setError('이메일을 입력해주세요.'); return; }
 
     if (!isFirebaseConfigured()) {
-      // Firebase 미설정 시 전화인증 없이 진행
-      handleSignupComplete();
+      setError('본인 인증 시스템이 준비되지 않았습니다. 관리자에게 문의해주세요.');
       return;
     }
     setSignupStep('phone');
@@ -118,8 +118,17 @@ const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
     try {
       const result = await verifyPhoneOTP(confirmRef.current, otpCode);
       setVerifiedPhone(result);
+
+      // Firebase ID 토큰 획득 (백엔드 검증용)
+      const idToken = await getCurrentIdToken();
+      if (!idToken) {
+        setError('인증 토큰을 가져올 수 없습니다. 다시 시도해주세요.');
+        setIsLoading(false);
+        return;
+      }
+
       // 인증 성공 → 바로 회원가입 진행
-      await handleSignupComplete(result.phoneNumber, result.uid);
+      await handleSignupComplete(idToken);
     } catch (e) {
       const msg = (e as Error).message;
       if (msg.includes('invalid-verification-code')) setError('인증번호가 올바르지 않습니다.');
@@ -129,12 +138,12 @@ const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
   }, [otpCode]);
 
   // ── 최종 회원가입 API 호출 ──
-  const handleSignupComplete = useCallback(async (phoneNumber?: string, firebaseUid?: string) => {
+  const handleSignupComplete = useCallback(async (firebaseIdToken?: string) => {
     setIsLoading(true);
     setError('');
     try {
       const { signup } = await import('../services/authService');
-      const result = await signup(email, password, inviteCode, displayName || undefined, phoneNumber, firebaseUid);
+      const result = await signup(email, password, inviteCode, displayName || undefined, firebaseIdToken);
       onAuthenticated(result.user);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : '회원가입 실패');
