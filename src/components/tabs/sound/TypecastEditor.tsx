@@ -989,38 +989,73 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
               onInput={() => syncEditorToStore()}
               onKeyDown={(e) => {
                 if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); handlePlayAll(); }
-                // Delete/Backspace — contenteditable="false" 자식 때문에 네이티브 삭제 불가 → 선택 있으면 항상 수동 처리
-                if (e.key === 'Backspace' || e.key === 'Delete') {
+                // ⌘+A — contenteditable="false" 자식 때문에 네이티브 전체 선택이 불완전할 수 있으므로 수동 처리
+                if ((e.metaKey || e.ctrlKey) && e.key === 'a') {
+                  e.preventDefault();
+                  if (!editorRef.current) return;
+                  const range = document.createRange();
+                  range.selectNodeContents(editorRef.current);
                   const sel = window.getSelection();
-                  if (sel && sel.rangeCount > 0 && editorRef.current && !sel.isCollapsed) {
-                    e.preventDefault();
+                  sel?.removeAllRanges();
+                  sel?.addRange(range);
+                  return;
+                }
+                // Delete/Backspace — contenteditable="false" 자식 때문에 네이티브 삭제 불가 → 수동 처리
+                if (e.key === 'Backspace' || e.key === 'Delete') {
+                  if (!editorRef.current) return;
+                  const sel = window.getSelection();
+                  if (!sel || sel.rangeCount === 0) return;
+                  // 선택이 없으면(커서만) 네이티브에 위임
+                  if (sel.isCollapsed) return;
+                  e.preventDefault();
+                  try {
                     const range = sel.getRangeAt(0);
-                    // Range API로 전체 선택 여부 확인
-                    const fullRange = document.createRange();
-                    fullRange.selectNodeContents(editorRef.current);
-                    const isFullSelection =
-                      range.compareBoundaryPoints(Range.START_TO_START, fullRange) <= 0
-                      && range.compareBoundaryPoints(Range.END_TO_END, fullRange) >= 0;
-                    // 텍스트 기반 폴백 (부분 선택이지만 거의 전체인 경우)
-                    const editorText = editorRef.current.textContent?.replace(/\s/g, '') || '';
-                    const selText = sel.toString().replace(/\s/g, '');
-                    const isTextFullSelection = editorText.length > 0 && selText.length >= editorText.length * 0.8;
-                    if (isFullSelection || isTextFullSelection) {
+                    // 전체 선택 여부 체크 1: Range API
+                    let isFullSelection = false;
+                    try {
+                      const fullRange = document.createRange();
+                      fullRange.selectNodeContents(editorRef.current);
+                      isFullSelection =
+                        range.compareBoundaryPoints(Range.START_TO_START, fullRange) <= 0
+                        && range.compareBoundaryPoints(Range.END_TO_END, fullRange) >= 0;
+                    } catch { /* compareBoundaryPoints 실패 시 무시 */ }
+                    // 전체 선택 여부 체크 2: <p> 태그 기반 (비편집 요소 텍스트 제외)
+                    if (!isFullSelection) {
+                      const ps = editorRef.current.querySelectorAll('p');
+                      const editableText = Array.from(ps).map(p => getCleanParagraphText(p)).join('').replace(/\s/g, '');
+                      const selText = sel.toString().replace(/\s/g, '');
+                      isFullSelection = editableText.length > 0 && selText.length >= editableText.length * 0.7;
+                    }
+                    // 전체 선택 여부 체크 3: 줄 수 비교 (선택 범위가 모든 <p>를 포함하는지)
+                    if (!isFullSelection) {
+                      const ps = editorRef.current.querySelectorAll('p');
+                      if (ps.length > 0) {
+                        const firstP = ps[0];
+                        const lastP = ps[ps.length - 1];
+                        isFullSelection = range.intersectsNode(firstP) && range.intersectsNode(lastP);
+                      }
+                    }
+                    if (isFullSelection) {
                       const spId = lines[0]?.speakerId || speakers[0]?.id || '';
                       setLines([{ id: `line-${Date.now()}-0`, speakerId: spId, text: '', index: 0, ttsStatus: 'idle' as const }]);
                       setTimeout(() => forceRebuildEditor(), 30);
                       return;
                     }
-                    // 부분 선택 — 브라우저 네이티브가 contenteditable="false" 때문에 실패하므로 수동 삭제
+                    // 부분 선택 삭제
                     range.deleteContents();
-                    // 빈 <p>가 남지 않도록 정리
                     const ps = editorRef.current.querySelectorAll('p');
                     if (ps.length === 0) {
                       editorRef.current.innerHTML = '<p class="py-2 pl-14 pr-2 leading-relaxed border-l-2 border-yellow-400/20 min-h-[2em]"><br></p>';
                     }
                     setTimeout(() => syncEditorToStore(), 30);
-                    return;
+                  } catch (err) {
+                    // 예외 발생 시 안전하게 전체 삭제
+                    console.warn('[TypecastEditor] delete handler fallback:', err);
+                    const spId = lines[0]?.speakerId || speakers[0]?.id || '';
+                    setLines([{ id: `line-${Date.now()}-0`, speakerId: spId, text: '', index: 0, ttsStatus: 'idle' as const }]);
+                    setTimeout(() => forceRebuildEditor(), 30);
                   }
+                  return;
                 }
               }}
               onPaste={(e) => {
