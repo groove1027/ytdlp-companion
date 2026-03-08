@@ -62,14 +62,12 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     // 4. 비밀번호 해싱 + 사용자 생성
     const passwordHash = await hashPassword(password);
     await context.env.DB.prepare(
-      'INSERT INTO users (email, password_hash, display_name, invite_code, provider, provider_id) VALUES (?, ?, ?, ?, ?, ?)'
+      'INSERT INTO users (email, password_hash, display_name, invite_code) VALUES (?, ?, ?, ?)'
     ).bind(
       email.toLowerCase(),
       passwordHash,
       displayName || null,
       inviteCode.toUpperCase(),
-      'email',
-      null,
     ).run();
 
     // 5. 초대 코드 사용 횟수 증가
