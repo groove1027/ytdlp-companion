@@ -19,6 +19,7 @@ import {
   estimateNarrationDuration,
   calcAutoSpeedFactor,
 } from '../services/editPointService';
+import { removeSubtitlesWithProPainter } from '../services/replicateService';
 import { showToast } from './uiStore';
 
 interface EditPointStore {
@@ -44,6 +45,12 @@ interface EditPointStore {
   exportMode: EditPointExportMode;
   totalSourceSizeMB: number;
 
+  // 자막 제거
+  cleanSubtitles: boolean;
+  cleanProgress: number; // 0~100
+  cleanMessage: string;
+  isCleaning: boolean;
+
   // Actions
   setStep: (step: EditPointStep) => void;
   addSourceVideos: (files: File[]) => Promise<void>;
@@ -59,6 +66,8 @@ interface EditPointStore {
   autoCalcSpeed: () => void;
   applyAutoSpeed: () => void;
   setExportMode: (mode: EditPointExportMode) => void;
+  setCleanSubtitles: (enabled: boolean) => void;
+  runCleanSubtitles: () => Promise<void>;
   exportResult: () => void;
   reset: () => void;
 }
@@ -113,6 +122,26 @@ function getVideoThumbnail(file: File): Promise<string | undefined> {
   });
 }
 
+/** 비디오 파일에서 width/height 추출 */
+function getVideoDimensions(file: File): Promise<{ width: number; height: number }> {
+  return new Promise((resolve) => {
+    const video = document.createElement('video');
+    video.preload = 'metadata';
+    const url = URL.createObjectURL(file);
+    video.src = url;
+    video.onloadedmetadata = () => {
+      const w = video.videoWidth || 1920;
+      const h = video.videoHeight || 1080;
+      URL.revokeObjectURL(url);
+      resolve({ width: w, height: h });
+    };
+    video.onerror = () => {
+      URL.revokeObjectURL(url);
+      resolve({ width: 1920, height: 1080 });
+    };
+  });
+}
+
 /** 파일 다운로드 헬퍼 */
 function downloadFile(content: string, filename: string, mimeType: string) {
   const blob = new Blob([content], { type: mimeType });
@@ -137,6 +166,10 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
   isProcessing: false,
   exportMode: 'edl-file',
   totalSourceSizeMB: 0,
+  cleanSubtitles: false,
+  cleanProgress: 0,
+  cleanMessage: '',
+  isCleaning: false,
 
   setStep: (step) => set({ step }),
 
@@ -348,6 +381,60 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
 
   setExportMode: (mode) => set({ exportMode: mode }),
 
+  setCleanSubtitles: (enabled) => set({ cleanSubtitles: enabled }),
+
+  runCleanSubtitles: async () => {
+    const { sourceVideos, sourceMapping } = get();
+
+    // 매핑된 고유 소스 비디오만 추출
+    const mappedVideoIds = new Set(Object.values(sourceMapping));
+    const videosToClean = sourceVideos.filter(
+      (v) => mappedVideoIds.has(v.id) && !v.cleanedBlobUrl
+    );
+
+    if (videosToClean.length === 0) {
+      showToast('정리할 소스 영상이 없습니다.');
+      return;
+    }
+
+    set({ isCleaning: true, cleanProgress: 0, cleanMessage: '자막 제거 준비 중...' });
+
+    try {
+      for (let i = 0; i < videosToClean.length; i++) {
+        const video = videosToClean[i];
+        const pct = Math.round((i / videosToClean.length) * 100);
+        set({
+          cleanProgress: pct,
+          cleanMessage: `${i + 1}/${videosToClean.length} — ${video.fileName} 처리 중...`,
+        });
+
+        // 비디오 메타 정보로 width/height 추출
+        const dims = await getVideoDimensions(video.file);
+        const blob = new Blob([await video.file.arrayBuffer()], { type: video.file.type });
+
+        const cleanedBlob = await removeSubtitlesWithProPainter(
+          blob,
+          dims.width,
+          dims.height,
+          (msg) => set({ cleanMessage: `${i + 1}/${videosToClean.length} — ${msg}` }),
+        );
+
+        const cleanedUrl = URL.createObjectURL(cleanedBlob);
+        set((state) => ({
+          sourceVideos: state.sourceVideos.map((v) =>
+            v.id === video.id ? { ...v, cleanedBlobUrl: cleanedUrl } : v
+          ),
+        }));
+      }
+
+      set({ cleanProgress: 100, cleanMessage: '모든 소스 자막 제거 완료!', isCleaning: false });
+      showToast('소스 영상 자막 제거가 완료되었습니다.');
+    } catch (err) {
+      set({ isCleaning: false, cleanMessage: '' });
+      showToast('자막 제거 실패: ' + (err instanceof Error ? err.message : '알 수 없는 오류'));
+    }
+  },
+
   exportResult: () => {
     const { exportMode, edlEntries, sourceMapping, sourceVideos } = get();
 
@@ -386,7 +473,10 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
 
   reset: () => {
     // blob URL 정리
-    get().sourceVideos.forEach((v) => URL.revokeObjectURL(v.blobUrl));
+    get().sourceVideos.forEach((v) => {
+      URL.revokeObjectURL(v.blobUrl);
+      if (v.cleanedBlobUrl) URL.revokeObjectURL(v.cleanedBlobUrl);
+    });
     set({
       step: 'register',
       sourceVideos: [],
@@ -400,6 +490,10 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
       isProcessing: false,
       exportMode: 'edl-file',
       totalSourceSizeMB: 0,
+      cleanSubtitles: false,
+      cleanProgress: 0,
+      cleanMessage: '',
+      isCleaning: false,
     });
   },
 }));

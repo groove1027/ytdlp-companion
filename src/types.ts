@@ -1305,6 +1305,8 @@ export interface SourceVideoFile {
   fileSizeMB: number;
   durationSec: number | null;
   thumbnailDataUrl?: string;
+  /** ProPainter로 자막 제거된 영상 Blob URL */
+  cleanedBlobUrl?: string;
 }
 
 export interface EdlEntry {

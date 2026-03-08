@@ -18,6 +18,20 @@ const Step3Export: React.FC = () => {
   const setStep = useEditPointStore((s) => s.setStep);
   const totalSourceSizeMB = useEditPointStore((s) => s.totalSourceSizeMB);
   const edlEntries = useEditPointStore((s) => s.edlEntries);
+  const cleanSubtitles = useEditPointStore((s) => s.cleanSubtitles);
+  const setCleanSubtitles = useEditPointStore((s) => s.setCleanSubtitles);
+  const runCleanSubtitles = useEditPointStore((s) => s.runCleanSubtitles);
+  const isCleaning = useEditPointStore((s) => s.isCleaning);
+  const cleanProgress = useEditPointStore((s) => s.cleanProgress);
+  const cleanMessage = useEditPointStore((s) => s.cleanMessage);
+  const sourceVideos = useEditPointStore((s) => s.sourceVideos);
+  const sourceMapping = useEditPointStore((s) => s.sourceMapping);
+
+  // 이미 정리된 영상 수 계산
+  const mappedVideoIds = new Set(Object.values(sourceMapping));
+  const totalMapped = sourceVideos.filter((v) => mappedVideoIds.has(v.id)).length;
+  const cleanedCount = sourceVideos.filter((v) => mappedVideoIds.has(v.id) && v.cleanedBlobUrl).length;
+  const allCleaned = totalMapped > 0 && cleanedCount === totalMapped;
 
   const cards: ExportCard[] = [
     {
@@ -130,12 +144,92 @@ const Step3Export: React.FC = () => {
         })}
       </div>
 
+      {/* AI 자막 제거 옵션 */}
+      <div className={`rounded-xl border-2 transition-all ${
+        cleanSubtitles
+          ? 'border-cyan-500/40 bg-cyan-900/10'
+          : 'border-gray-700/50 bg-gray-800/30'
+      }`}>
+        <button
+          type="button"
+          onClick={() => setCleanSubtitles(!cleanSubtitles)}
+          disabled={isCleaning}
+          className="w-full p-4 flex items-center gap-3 text-left"
+        >
+          {/* 토글 */}
+          <div className={`w-10 h-6 rounded-full flex items-center transition-all shrink-0 ${
+            cleanSubtitles ? 'bg-cyan-600 justify-end' : 'bg-gray-600 justify-start'
+          }`}>
+            <div className="w-4 h-4 rounded-full bg-white mx-1 shadow" />
+          </div>
+
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <span className={`text-sm font-medium ${cleanSubtitles ? 'text-cyan-300' : 'text-gray-300'}`}>
+                AI 자막 제거 (ProPainter)
+              </span>
+              {allCleaned && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-600/20 text-green-400 border border-green-500/30">
+                  완료
+                </span>
+              )}
+            </div>
+            <p className="text-[11px] text-gray-500 mt-0.5">
+              소스 영상 하단의 자막/워터마크를 AI로 제거한 뒤 내보냅니다. Replicate API 키 필요.
+            </p>
+          </div>
+        </button>
+
+        {/* 자막 제거 실행 영역 */}
+        {cleanSubtitles && (
+          <div className="px-4 pb-4 space-y-3">
+            {/* 진행 상태 */}
+            {isCleaning && (
+              <div className="space-y-2">
+                <div className="w-full bg-gray-700/40 rounded-full h-2 overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-blue-500 transition-all duration-500"
+                    style={{ width: `${cleanProgress}%` }}
+                  />
+                </div>
+                <p className="text-[11px] text-cyan-400">{cleanMessage}</p>
+              </div>
+            )}
+
+            {/* 완료 상태 */}
+            {!isCleaning && cleanedCount > 0 && (
+              <p className="text-[11px] text-green-400">
+                {cleanedCount}/{totalMapped}개 소스 정리 완료
+              </p>
+            )}
+
+            {/* 실행 버튼 */}
+            {!isCleaning && !allCleaned && (
+              <button
+                type="button"
+                onClick={runCleanSubtitles}
+                className="w-full py-2.5 rounded-lg text-sm font-medium bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white transition-all flex items-center justify-center gap-2"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
+                </svg>
+                {cleanedCount > 0
+                  ? `나머지 ${totalMapped - cleanedCount}개 소스 자막 제거`
+                  : `${totalMapped}개 소스 영상 자막 제거 시작`
+                }
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
       {/* 액션 버튼 */}
       <div className="flex items-center justify-between pt-2">
         <button
           type="button"
           onClick={() => setStep('mapping')}
-          className="px-4 py-2 rounded-lg text-sm text-gray-400 hover:text-gray-200 bg-gray-800 hover:bg-gray-700 border border-gray-700 transition-all"
+          disabled={isCleaning}
+          className="px-4 py-2 rounded-lg text-sm text-gray-400 hover:text-gray-200 bg-gray-800 hover:bg-gray-700 border border-gray-700 transition-all disabled:opacity-50"
         >
           이전 단계
         </button>
@@ -143,12 +237,17 @@ const Step3Export: React.FC = () => {
         <button
           type="button"
           onClick={exportResult}
-          className="px-6 py-2.5 rounded-lg text-sm font-medium bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white shadow-lg shadow-amber-900/30 transition-all flex items-center gap-2"
+          disabled={isCleaning || (cleanSubtitles && !allCleaned)}
+          className={`px-6 py-2.5 rounded-lg text-sm font-medium shadow-lg transition-all flex items-center gap-2 ${
+            isCleaning || (cleanSubtitles && !allCleaned)
+              ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
+              : 'bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white shadow-amber-900/30'
+          }`}
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
           </svg>
-          내보내기 실행
+          {cleanSubtitles && !allCleaned ? '자막 제거를 먼저 실행하세요' : '내보내기 실행'}
         </button>
       </div>
     </div>
