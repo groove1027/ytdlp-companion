@@ -3,6 +3,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useUIStore } from '../stores/uiStore';
 import { useProjectStore } from '../stores/projectStore';
 import { submitFeedback, FeedbackResult } from '../services/feedbackService';
+import { getSavedUser } from '../services/authService';
 import { FeedbackType } from '../types';
 import type { FeedbackData, FeedbackScreenshot } from '../types';
 
@@ -39,6 +40,11 @@ const FeedbackModal: React.FC = () => {
     const [isDragOver, setIsDragOver] = useState(false);
     const [submitResult, setSubmitResult] = useState<FeedbackResult | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+
+    // 로그인 사용자 정보 자동 채우기
+    const savedUser = getSavedUser();
+    const userEmail = savedUser?.email || '';
+    const userDisplayName = savedUser?.displayName || '';
 
     // ESC 키로 닫기
     useEffect(() => {
@@ -126,12 +132,13 @@ const FeedbackModal: React.FC = () => {
             const data: FeedbackData = {
                 type: selectedType,
                 message: message.trim(),
-                email: email.trim() || undefined,
+                email: email.trim() || userEmail || undefined,
                 timestamp: Date.now(),
                 userAgent: navigator.userAgent,
                 appVersion: 'v4.5',
                 currentProjectId: currentProjectId || undefined,
                 screenshots: screenshots.length > 0 ? screenshots : undefined,
+                userDisplayName: userDisplayName || undefined,
             };
 
             const result = await submitFeedback(data);
@@ -340,7 +347,7 @@ const FeedbackModal: React.FC = () => {
                         <label className="text-sm font-bold text-gray-300 uppercase tracking-wider mb-2 block">이메일 <span className="text-gray-500 font-normal normal-case">(선택)</span></label>
                         <input
                             type="email"
-                            value={email}
+                            value={email || userEmail}
                             onChange={(e) => setEmail(e.target.value)}
                             placeholder="답변받을 이메일 (선택)"
                             className="w-full bg-gray-900 border border-gray-600 rounded-lg p-2.5 text-base text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none transition-colors"
@@ -351,6 +358,8 @@ const FeedbackModal: React.FC = () => {
                     <div className="bg-gray-900/50 rounded-lg p-3 border border-gray-700">
                         <p className="text-sm text-gray-400 font-bold mb-1.5">자동 수집 정보</p>
                         <div className="text-sm text-gray-500 space-y-0.5">
+                            {userDisplayName && <p>사용자: <span className="text-gray-400">{userDisplayName}</span></p>}
+                            {userEmail && <p>계정: <span className="text-gray-400">{userEmail}</span></p>}
                             <p>앱 버전: <span className="text-gray-400">v4.5</span></p>
                             <p className="truncate">브라우저: <span className="text-gray-400">{navigator.userAgent.substring(0, 80)}...</span></p>
                         </div>

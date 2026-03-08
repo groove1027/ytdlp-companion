@@ -70,6 +70,32 @@ export const signup = async (
   return data;
 };
 
+/** 소셜 로그인/회원가입 (Google, Kakao, Naver) */
+export const socialLogin = async (
+  provider: 'google' | 'kakao' | 'naver',
+  token: string,
+  inviteCode?: string,
+  redirectUri?: string,
+): Promise<{ token: string; user: AuthUser; isNewUser: boolean; needsInviteCode?: boolean }> => {
+  const res = await fetch('/api/auth/social-login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ provider, token, inviteCode, redirectUri }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    if (data.needsInviteCode) {
+      const err = new Error(data.error || '초대 코드가 필요합니다.') as Error & { needsInviteCode: boolean; pendingToken?: string };
+      err.needsInviteCode = true;
+      err.pendingToken = data.pendingToken;
+      throw err;
+    }
+    throw new Error(data.error || '소셜 로그인 실패');
+  }
+  saveAuth(data.token, data.user, true);
+  return data;
+};
+
 /** 로그인 */
 export const login = async (
   email: string, password: string, rememberMe = true

@@ -13,6 +13,8 @@ import {
   getAuth,
   RecaptchaVerifier,
   signInWithPhoneNumber,
+  signInWithPopup,
+  GoogleAuthProvider,
   onAuthStateChanged,
   Auth,
   ConfirmationResult,
@@ -76,6 +78,17 @@ export const verifyPhoneOTP = async (
     uid: result.user.uid,
     phoneNumber: result.user.phoneNumber || '',
   };
+};
+
+/** Google 팝업 로그인 → Firebase ID 토큰 반환 */
+export const signInWithGoogle = async (): Promise<string> => {
+  const a = initFirebase();
+  if (!a) throw new Error('Firebase가 초기화되지 않았습니다. 설정을 확인해주세요.');
+  const provider = new GoogleAuthProvider();
+  provider.addScope('email');
+  provider.addScope('profile');
+  const result = await signInWithPopup(a, provider);
+  return await result.user.getIdToken(true);
 };
 
 /** 현재 인증된 사용자의 Firebase ID 토큰 반환 (백엔드 검증용) */

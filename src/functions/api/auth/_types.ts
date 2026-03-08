@@ -3,6 +3,9 @@ export interface Env {
   SESSIONS: KVNamespace;
   INVITE_CODES: KVNamespace;
   FIREBASE_API_KEY: string;
+  KAKAO_CLIENT_SECRET: string;
+  NAVER_CLIENT_ID: string;
+  NAVER_CLIENT_SECRET: string;
 }
 
 export interface InviteCodeData {

@@ -28,6 +28,7 @@ function formatIssueBody(data: {
   currentProjectId?: string;
   screenshotUrls?: string[];
   timestamp: number;
+  userDisplayName?: string;
 }): string {
   const date = new Date(data.timestamp).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' });
   const sections: string[] = [];
@@ -50,13 +51,16 @@ function formatIssueBody(data: {
   sections.push('### 환경 정보');
   sections.push(`| 항목 | 값 |`);
   sections.push(`|------|-----|`);
+  if (data.userDisplayName) {
+    sections.push(`| 사용자 | ${data.userDisplayName} |`);
+  }
+  if (data.email) {
+    sections.push(`| 이메일 | ${data.email} |`);
+  }
   sections.push(`| 앱 버전 | ${data.appVersion} |`);
   sections.push(`| 브라우저 | ${data.userAgent.substring(0, 120)} |`);
   if (data.currentProjectId) {
     sections.push(`| 프로젝트 ID | \`${data.currentProjectId}\` |`);
-  }
-  if (data.email) {
-    sections.push(`| 이메일 | ${data.email} |`);
   }
 
   return sections.join('\n');
@@ -91,6 +95,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       currentProjectId?: string;
       screenshotUrls?: string[];
       timestamp: number;
+      userDisplayName?: string;
     };
 
     const titlePrefix = data.type === 'bug' || data.type === 'error' ? 'Bug' : data.type === 'suggestion' ? 'Feature' : 'Feedback';
