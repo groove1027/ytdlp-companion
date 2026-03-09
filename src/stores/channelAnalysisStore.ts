@@ -74,6 +74,7 @@ interface ChannelAnalysisStore {
   removeBenchmark: (id: string) => Promise<void>;
   /** 앱 초기화 시 IndexedDB에서 목록 로드 */
   loadAllBenchmarks: () => Promise<void>;
+  clearKeywordHistory: () => void;
   reset: () => void;
 }
 
@@ -113,14 +114,14 @@ export const useChannelAnalysisStore = create<ChannelAnalysisStore>((set) => ({
   setLanguage: (lang) => set({ language: lang }),
   setRegion: (region) => set({ region }),
 
-  // 키워드 분석 결과 일괄 반영
-  analyze: (results) => set({
-    keywordResults: results.keywordResults,
+  // 키워드 분석 결과 일괄 반영 (히스토리 누적)
+  analyze: (results) => set((state) => ({
+    keywordResults: [...state.keywordResults, ...results.keywordResults].slice(-20),
     relatedKeywords: results.relatedKeywords,
     topVideos: results.topVideos,
     tags: results.tags,
     isAnalyzing: false,
-  }),
+  })),
 
   setIsAnalyzing: (v) => set({ isAnalyzing: v }),
   setApiUsagePercent: (percent) => set({ apiUsagePercent: percent }),
@@ -204,6 +205,8 @@ export const useChannelAnalysisStore = create<ChannelAnalysisStore>((set) => ({
       set({ savedBenchmarks: all });
     } catch (e) { console.warn('[Benchmark] loadAll failed:', e); }
   },
+
+  clearKeywordHistory: () => set({ keywordResults: [] }),
 
   // 전체 초기화
   reset: () => set({ ...INITIAL_STATE }),

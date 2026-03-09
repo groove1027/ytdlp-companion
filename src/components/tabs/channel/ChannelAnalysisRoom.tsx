@@ -163,17 +163,42 @@ const ChannelAnalysisRoom: React.FC = () => {
           { role: 'system', content: '당신은 유튜브 콘텐츠 전략가입니다. 채널 스타일과 주제를 분석하여 바이럴 가능성이 높은 영상 주제 10개를 추천합니다. 각 주제에 대해 어떤 심리적 본능 기제를 자극하는지도 분석하세요. 반드시 JSON 배열로만 응답하세요. 마크다운 코드 블록 없이 순수 JSON만 출력합니다.' },
           { role: 'user', content: `${styleInfo}\n\n[본능 기제 분류 체계]\n${instinctTaxonomy}\n\n사용자 입력 주제: ${topicInput || '(자유 추천)'}\n\n위 채널 스타일에 맞는 새로운 영상 주제 10개를 추천하세요.\n\nJSON 배열:\n[\n  {\n    "id": 1,\n    "title": "영상 제목",\n    "mainSubject": "핵심 소재 한 줄",\n    "similarity": "채널 스타일과의 유사점",\n    "scriptFlow": "대본 흐름 (예: 후킹 > 사례 > 분석 > CTA)",\n    "viralScore": "high 또는 medium 또는 low",\n    "instinctAnalysis": {\n      "primaryInstincts": ["자극하는 핵심 본능 2~3개"],\n      "comboFormula": "본능 조합 공식 (예: 공포+비교+긴급)",\n      "hookSuggestion": "AI가 생성한 훅 문장"\n    }\n  }\n]\n\nhigh 3개, medium 4개, low 3개 비율로 추천하세요.` }
         ],
-        { temperature: 0.8, maxTokens: 6000 }
+        { temperature: 0.7, maxTokens: 6000 }
       );
 
       const raw = res.choices?.[0]?.message?.content || '';
       if (!raw.trim()) throw new Error('AI 응답이 비어있습니다.');
-      let jsonStr = raw;
-      const codeBlock = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+      let jsonStr = raw.trim();
+      // 마크다운 코드 블록 제거
+      const codeBlock = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
       if (codeBlock) jsonStr = codeBlock[1].trim();
-
+      // 코드 블록 없이 JSON 앞뒤에 텍스트가 붙은 경우 배열 부분만 추출
+      if (!jsonStr.startsWith('[')) {
+        const arrStart = jsonStr.indexOf('[');
+        const arrEnd = jsonStr.lastIndexOf(']');
+        if (arrStart !== -1 && arrEnd !== -1) {
+          jsonStr = jsonStr.substring(arrStart, arrEnd + 1);
+        }
+      }
+      // 불완전한 JSON 복구: 마지막 유효한 객체까지만 파싱
       let parsed: (LegacyTopicRecommendation & { instinctAnalysis?: TopicInstinctAnalysis })[];
-      try { parsed = JSON.parse(jsonStr); } catch { throw new Error('AI 응답을 파싱할 수 없습니다. 다시 시도해주세요.'); }
+      try {
+        parsed = JSON.parse(jsonStr);
+      } catch {
+        // 불완전한 배열 복구 시도: 마지막 완전한 }까지 잘라서 배열 닫기
+        const lastBrace = jsonStr.lastIndexOf('}');
+        if (lastBrace > 0) {
+          const recovered = jsonStr.substring(0, lastBrace + 1) + ']';
+          try {
+            const recoveredStart = recovered.indexOf('[');
+            parsed = JSON.parse(recoveredStart >= 0 ? recovered.substring(recoveredStart) : recovered);
+          } catch {
+            throw new Error('AI 응답을 파싱할 수 없습니다. 다시 시도해주세요.');
+          }
+        } else {
+          throw new Error('AI 응답을 파싱할 수 없습니다. 다시 시도해주세요.');
+        }
+      }
       if (Array.isArray(parsed) && parsed.length > 0) {
         setTopics(parsed.map((t, i) => {
           const ia = t.instinctAnalysis;
@@ -263,7 +288,7 @@ const ChannelAnalysisRoom: React.FC = () => {
               <p className="text-sm font-semibold text-white truncate">{channelInfo.title}</p>
               <p className="text-sm text-gray-400">
                 {inputSource === 'youtube'
-                  ? `구독자 ${fmtSubs(channelInfo.subscriberCount)}명 | 영상 ${channelInfo.videoCount}개`
+                  ? `구독자 ${fmtSubs(channelInfo.subscriberCount)}명 | 영상 ${channelInfo.videoCount}개 | 총 조회수 ${fmtViews(channelInfo.viewCount)}회`
                   : `${channelScripts.length}개 텍스트 | ${channelScripts.reduce((acc, s) => acc + (s.transcript?.length || 0), 0).toLocaleString()}자`
                 }
               </p>
@@ -284,44 +309,110 @@ const ChannelAnalysisRoom: React.FC = () => {
             <h3 className="text-lg font-bold text-white">
               {inputSource === 'youtube' ? `수집된 영상 (${channelScripts.length}개)` : `분석 대상 텍스트 (${channelScripts.length}개)`}
             </h3>
-            <span className="text-sm text-gray-500">
-              {inputSource === 'youtube' ? '분석에 사용된 영상 목록' : '스타일 분석에 활용되는 텍스트'}
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-500">
+                {inputSource === 'youtube' ? '분석에 사용된 영상 목록' : '스타일 분석에 활용되는 텍스트'}
+              </span>
+              {inputSource === 'youtube' && (
+                <button
+                  onClick={() => {
+                    const data = channelScripts.map(s => ({
+                      title: s.title,
+                      videoId: s.videoId,
+                      url: `https://www.youtube.com/watch?v=${s.videoId}`,
+                      viewCount: s.viewCount,
+                      duration: s.duration,
+                      publishedAt: s.publishedAt,
+                      transcript: s.transcript || '',
+                      description: s.description || '',
+                      tags: s.tags || [],
+                    }));
+                    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                    const a = document.createElement('a');
+                    a.href = URL.createObjectURL(blob);
+                    a.download = `${channelInfo?.title || 'channel'}-videos-${channelScripts.length}.json`;
+                    a.click();
+                    URL.revokeObjectURL(a.href);
+                    showToast(`${channelScripts.length}개 영상 데이터를 다운로드했습니다.`);
+                  }}
+                  className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-blue-600/20 text-blue-400 border border-blue-500/30 hover:bg-blue-600/30 transition-all flex items-center gap-1.5"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                  전체 다운로드
+                </button>
+              )}
+            </div>
           </div>
 
           {inputSource === 'youtube' ? (
             /* YouTube 썸네일 갤러리 */
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
               {channelScripts.map((s) => (
-                <a
+                <div
                   key={s.videoId}
-                  href={`https://www.youtube.com/watch?v=${s.videoId}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
                   className="group block rounded-lg overflow-hidden bg-gray-900/50 border border-gray-700/50 hover:border-orange-500/50 transition-all hover:shadow-lg hover:shadow-orange-900/10"
                 >
-                  <div className="relative aspect-video bg-gray-800">
-                    <img
-                      src={`https://img.youtube.com/vi/${s.videoId}/mqdefault.jpg`}
-                      alt={s.title}
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
-                      loading="lazy"
-                    />
-                    <span className="absolute bottom-1 right-1 px-1.5 py-0.5 text-xs font-mono font-bold bg-black/80 text-white rounded">
-                      {s.duration}
-                    </span>
-                  </div>
+                  <a
+                    href={`https://www.youtube.com/watch?v=${s.videoId}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    <div className="relative aspect-video bg-gray-800">
+                      <img
+                        src={`https://img.youtube.com/vi/${s.videoId}/mqdefault.jpg`}
+                        alt={s.title}
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
+                        loading="lazy"
+                      />
+                      <span className="absolute bottom-1 right-1 px-1.5 py-0.5 text-xs font-mono font-bold bg-black/80 text-white rounded">
+                        {s.duration}
+                      </span>
+                    </div>
+                  </a>
                   <div className="p-2">
-                    <p className="text-sm font-medium text-gray-200 line-clamp-2 leading-tight group-hover:text-orange-300 transition-colors">
-                      {s.title}
-                    </p>
-                    <div className="flex items-center gap-2 mt-1.5 text-sm text-gray-500">
-                      <span>조회수 {fmtViews(s.viewCount)}회</span>
-                      <span>·</span>
-                      <span>{fmtDate(s.publishedAt)}</span>
+                    <a
+                      href={`https://www.youtube.com/watch?v=${s.videoId}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      <p className="text-sm font-medium text-gray-200 line-clamp-2 leading-tight group-hover:text-orange-300 transition-colors">
+                        {s.title}
+                      </p>
+                    </a>
+                    <div className="flex items-center justify-between mt-1.5">
+                      <div className="flex items-center gap-2 text-xs text-gray-500">
+                        <span>조회수 {fmtViews(s.viewCount)}회</span>
+                        <span>·</span>
+                        <span>{fmtDate(s.publishedAt)}</span>
+                      </div>
+                      <button
+                        onClick={() => {
+                          const data = {
+                            title: s.title,
+                            videoId: s.videoId,
+                            url: `https://www.youtube.com/watch?v=${s.videoId}`,
+                            viewCount: s.viewCount,
+                            duration: s.duration,
+                            publishedAt: s.publishedAt,
+                            transcript: s.transcript || '',
+                            description: s.description || '',
+                            tags: s.tags || [],
+                          };
+                          const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                          const a = document.createElement('a');
+                          a.href = URL.createObjectURL(blob);
+                          a.download = `${s.title.replace(/[^a-zA-Z0-9가-힣\s]/g, '').substring(0, 50)}.json`;
+                          a.click();
+                          URL.revokeObjectURL(a.href);
+                        }}
+                        className="p-1 text-gray-600 hover:text-blue-400 transition-colors"
+                        title="영상 데이터 다운로드"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                      </button>
                     </div>
                   </div>
-                </a>
+                </div>
               ))}
             </div>
           ) : (
@@ -370,7 +461,7 @@ const ChannelAnalysisRoom: React.FC = () => {
             {channelGuideline.keywords.map((k, i) => <span key={i} className="px-2 py-0.5 text-sm bg-purple-900/30 text-purple-400 rounded-full border border-purple-800/40">{k}</span>)}
           </div>
 
-          <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-700/50 max-h-48 overflow-y-auto custom-scrollbar">
+          <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-700/50 max-h-96 overflow-y-auto custom-scrollbar">
             <p className="text-sm text-gray-300 whitespace-pre-wrap">{channelGuideline.fullGuidelineText}</p>
           </div>
         </div>
@@ -386,40 +477,100 @@ const ChannelAnalysisRoom: React.FC = () => {
           <div className="space-y-4">
             {channelGuideline.visualGuide && (
               <div>
-                <label className="block text-sm font-medium text-blue-400 mb-1.5">시각 스타일 (썸네일 + 영상 화면 분석)</label>
-                <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-700/50 max-h-48 overflow-y-auto custom-scrollbar">
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-sm font-medium text-blue-400">시각 스타일 (썸네일 + 영상 화면 분석)</label>
+                  <button
+                    onClick={async () => {
+                      await navigator.clipboard.writeText(channelGuideline.visualGuide!);
+                      showToast('시각 스타일이 복사되었습니다.');
+                    }}
+                    className="p-1 text-gray-600 hover:text-blue-400 transition-colors"
+                    title="복사"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                  </button>
+                </div>
+                <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-700/50 max-h-96 overflow-y-auto custom-scrollbar">
                   <p className="text-sm text-gray-300 whitespace-pre-wrap">{channelGuideline.visualGuide}</p>
                 </div>
               </div>
             )}
             {channelGuideline.editGuide && (
               <div>
-                <label className="block text-sm font-medium text-amber-400 mb-1.5">편집 스타일 (컷 리듬 / 전환 / 카메라 / 색보정)</label>
-                <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-700/50 max-h-48 overflow-y-auto custom-scrollbar">
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-sm font-medium text-amber-400">편집 스타일 (컷 리듬 / 전환 / 카메라 / 색보정)</label>
+                  <button
+                    onClick={async () => {
+                      await navigator.clipboard.writeText(channelGuideline.editGuide!);
+                      showToast('편집 스타일이 복사되었습니다.');
+                    }}
+                    className="p-1 text-gray-600 hover:text-amber-400 transition-colors"
+                    title="복사"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                  </button>
+                </div>
+                <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-700/50 max-h-96 overflow-y-auto custom-scrollbar">
                   <p className="text-sm text-gray-300 whitespace-pre-wrap">{channelGuideline.editGuide}</p>
                 </div>
               </div>
             )}
             {channelGuideline.audioGuide && (
               <div>
-                <label className="block text-sm font-medium text-fuchsia-400 mb-1.5">오디오 스타일 (BGM / 효과음 / 보이스톤)</label>
-                <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-700/50 max-h-48 overflow-y-auto custom-scrollbar">
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-sm font-medium text-fuchsia-400">오디오 스타일 (BGM / 효과음 / 보이스톤)</label>
+                  <button
+                    onClick={async () => {
+                      await navigator.clipboard.writeText(channelGuideline.audioGuide!);
+                      showToast('오디오 스타일이 복사되었습니다.');
+                    }}
+                    className="p-1 text-gray-600 hover:text-fuchsia-400 transition-colors"
+                    title="복사"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                  </button>
+                </div>
+                <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-700/50 max-h-96 overflow-y-auto custom-scrollbar">
                   <p className="text-sm text-gray-300 whitespace-pre-wrap">{channelGuideline.audioGuide}</p>
                 </div>
               </div>
             )}
             {channelGuideline.titleFormula && (
               <div>
-                <label className="block text-sm font-medium text-orange-400 mb-1.5">제목 / 메타데이터 공식</label>
-                <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-700/50 max-h-48 overflow-y-auto custom-scrollbar">
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-sm font-medium text-orange-400">제목 / 메타데이터 공식</label>
+                  <button
+                    onClick={async () => {
+                      await navigator.clipboard.writeText(channelGuideline.titleFormula!);
+                      showToast('제목/메타데이터 공식이 복사되었습니다.');
+                    }}
+                    className="p-1 text-gray-600 hover:text-orange-400 transition-colors"
+                    title="복사"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                  </button>
+                </div>
+                <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-700/50 max-h-96 overflow-y-auto custom-scrollbar">
                   <p className="text-sm text-gray-300 whitespace-pre-wrap">{channelGuideline.titleFormula}</p>
                 </div>
               </div>
             )}
             {channelGuideline.audienceInsight && (
               <div>
-                <label className="block text-sm font-medium text-cyan-400 mb-1.5">시청자 인사이트 (댓글 감성 분석)</label>
-                <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-700/50 max-h-48 overflow-y-auto custom-scrollbar">
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-sm font-medium text-cyan-400">시청자 인사이트 (댓글 감성 분석)</label>
+                  <button
+                    onClick={async () => {
+                      await navigator.clipboard.writeText(channelGuideline.audienceInsight!);
+                      showToast('시청자 인사이트가 복사되었습니다.');
+                    }}
+                    className="p-1 text-gray-600 hover:text-cyan-400 transition-colors"
+                    title="복사"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                  </button>
+                </div>
+                <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-700/50 max-h-96 overflow-y-auto custom-scrollbar">
                   <p className="text-sm text-gray-300 whitespace-pre-wrap">{channelGuideline.audienceInsight}</p>
                 </div>
               </div>

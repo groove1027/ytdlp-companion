@@ -490,7 +490,7 @@ export const getTopVideos = async (
             publishedAt: v.snippet?.publishedAt || '',
             engagement,
             viewToSubRatio,
-            tags: (v.snippet?.tags || []).slice(0, 20),
+            tags: v.snippet?.tags || [],
             subscriberCount,
             description: v.snippet?.description || '',
         };
@@ -910,7 +910,7 @@ ${combinedScripts}
   "avgLength": 평균글자수(숫자),
   "hookPattern": "도입부(Hook) 패턴 - 첫 문장 충격 요법 분석",
   "closingPattern": "결말(Pay-off) 패턴 - 시그니처 엔딩 분석",
-  "fullGuidelineText": "위 8가지 분석을 종합한 궁극의 시스템 프롬프트 (이 지침서대로 AI가 글을 쓰면 원본 화자와 100% 동일한 스타일이 나와야 함. 2000자 이상 상세히 작성)"
+  "fullGuidelineText": "위 8가지 분석을 종합한 궁극의 시스템 프롬프트. 아래 구조로 4000자 이상 매우 상세히 작성:\n\n[페르소나 선언] 이 AI의 정체성 한 줄 정의\n[사고 회로] 논리 구조, 세계관, 대상 인식 필터 상세 규칙\n[문장 구조 규칙] 평균 문장 길이, 종결어미 확률 분포표(~다 30%, ~요 20% 등), 수사 의문문 빈도, 접속사 패턴\n[어휘 사전] 이 화자만의 고유 표현 20개 이상 + 치환 규칙(일반어→화자 표현)\n[줄바꿈 규칙] 줄바꿈 트리거 조건, 공백 활용 패턴, 시각적 리듬\n[서사 구조] 도입부 Hook 공식(3가지 이상 예시), 중반 Build-up 패턴, 결말 Pay-off 시그니처\n[감정 역학] 감정 증폭 트리거, 급변 패턴, 반어법 사용 규칙\n[청자 관계] 호명 방식, 제4의 벽 활용, 공감대 형성 전략\n[절대 금기] 캐릭터 붕괴 방지 금지 규칙 5개 이상\n[실전 예시] 이 화자 스타일로 쓴 도입부 3개 + 결말부 2개 예시"
 }`;
 
     try {
@@ -919,7 +919,7 @@ ${combinedScripts}
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content: userPrompt }
             ],
-            { temperature: 0.3, maxTokens: 8000 }
+            { temperature: 0.3, maxTokens: 16000 }
         );
 
         const content = chatResponse.choices?.[0]?.message?.content || '';
@@ -1002,14 +1002,22 @@ const analyzeThumbnailStyle = async (scripts: ChannelScript[]): Promise<string> 
                     text: `아래 이미지는 같은 YouTube 채널의 썸네일(홀수번째)과 영상 중간 캡처(짝수번째)입니다. ${ytScripts.length}개 영상의 시각적 스타일 패턴을 분석하세요.
 
 분석 항목:
-1. 색상 팔레트: 지배적 색상, 온난/냉온 경향, 대비/채도 수준
-2. 타이포그래피: 폰트 스타일, 크기, 배치, 텍스트 색상 체계
-3. 구도: 프레이밍, 3분할법, 대칭 패턴, 시선 유도 방향
-4. 인물: 얼굴 크기/위치, 표정 유형, 포즈 패턴
-5. 브랜딩: 반복 로고/색상, 레이아웃 템플릿
-6. 영상 내 시각: 자막 스타일, 오버레이, 그래픽 요소, 텍스처, 화풍
+1. 색상 팔레트: 지배적 색상 3~5개 (HEX 코드 추정), 색온도(K 추정), 채도 레벨(0~100%), 명암 대비 수준, 그라디언트/단색 경향
+2. 타이포그래피 (매우 상세):
+   - 메인 텍스트: 폰트 계열(고딕/명조/손글씨/장식), 추정 폰트명, 굵기(Bold/ExtraBold 등), 크기(화면 대비 %), 색상(HEX), 테두리/그림자 효과
+   - 서브 텍스트: 폰트, 크기, 색상, 배치 위치
+   - 강조 방식: 밑줄/박스/색반전/기울기 등
+   - 텍스트 배치 규칙: 화면 내 좌표(상단좌측/중앙/하단 등), 여백, 정렬
+3. 구도: 프레이밍 패턴(클로즈업/미디엄/와이드 비율), 3분할법 활용, 대칭/비대칭, 시선 유도 방향, 여백 활용
+4. 인물: 얼굴 크기(화면 대비 %), 위치(좌/중앙/우), 표정 유형별 빈도(놀람/웃음/진지 등), 포즈 패턴
+5. 브랜딩: 반복 로고 위치/크기, 시그니처 색상, 레이아웃 템플릿 공식
+6. 영상 내 자막/오버레이:
+   - 자막 폰트, 크기, 색상(HEX), 배경색, 테두리, 위치(상/중/하), 애니메이션(팝업/슬라이드/타이핑)
+   - 강조 자막: 크기 확대율, 색상 변경, 효과음 동반 여부
+   - 정보 그래픽: 차트/그래프/아이콘 스타일, 색상 체계
+7. 텍스처/화풍: 필터 효과, 빈티지/모던/미니멀/맥시멀 경향, 노이즈/그레인 유무
 
-이 채널의 시각적 스타일을 완벽히 복제할 수 있도록 각 항목을 매우 구체적으로 가이드를 작성하세요. 이미지 생성 프롬프트로 바로 사용 가능할 정도로 상세한 앵글, 구도, 연출, 색감, 텍스처, 화풍 지침을 포함하세요.`
+이 채널의 시각적 스타일을 완벽히 복제할 수 있도록 매우 구체적으로 작성하세요. 이미지 생성 프롬프트로 바로 사용 가능할 정도의 구체적인 수치와 색상 코드를 포함하세요.`
                 },
                 ...imageParts
             ] as EvolinkContentPart[]
@@ -1017,7 +1025,7 @@ const analyzeThumbnailStyle = async (scripts: ChannelScript[]): Promise<string> 
     ];
 
     try {
-        const res = await evolinkChat(messages, { temperature: 0.3, maxTokens: 3000 });
+        const res = await evolinkChat(messages, { temperature: 0.3, maxTokens: 6000 });
         return res.choices?.[0]?.message?.content || '';
     } catch (e) {
         logger.warn('[StyleDNA] L2 썸네일 분석 실패', e instanceof Error ? e.message : String(e));
@@ -1045,28 +1053,43 @@ const analyzeDeepVideoStyle = async (scripts: ChannelScript[]): Promise<{ editGu
                     { text: `이 YouTube 영상("${script.title}")의 프로덕션 스타일을 종합 분석하세요:
 
 [편집 스타일]
-- 컷 빈도 (분당 추정), 전환 유형 (컷/디졸브/와이프 등 비율), B-roll 활용 빈도/방식
-- 장면 구성 패턴, 인서트컷 유형, 리액션컷 여부
+- 컷 빈도: 분당 평균 컷 수, 빠른 구간/느린 구간 패턴
+- 전환 유형: 컷(하드컷)/디졸브/와이프/줌 전환 비율(%), 특수 전환 효과
+- B-roll: 활용 빈도(분당), 소스 유형(실사/스톡/스크린캡처/애니메이션), 지속 시간
+- 장면 구성: 토킹헤드/B-roll/텍스트카드/스크린녹화 비율(%)
+- 인서트컷/리액션컷: 유형, 빈도, 연출 의도
 
 [카메라 워크]
-- 주요 앵글, 움직임 패턴, 프레이밍 일관성, 줌 사용
+- 주요 앵글: 정면/측면/하이앵글/로우앵글 비율
+- 움직임: 고정/팬/틸트/핸드헬드 패턴, 줌인·줌아웃 트리거 조건
+- 프레이밍: 피사체 위치(중앙/삼등분), 헤드룸, 여백 활용
 
 [색보정]
-- 색온도, 채도, 대비, 전체적 색감 톤
+- 색온도(K 추정), 채도 레벨, 대비 수준, 하이라이트/쉐도우 톤
+- LUT/필터 추정, 스킨톤 처리, 전체적 무드
 
-[자막/텍스트]
-- 폰트 스타일, 색상, 애니메이션, 등장 빈도, 배치 규칙, 크기
+[자막/텍스트 (매우 상세)]
+- 일반 자막: 폰트 계열/추정 폰트명, 크기(화면 대비), 색상, 테두리, 배경
+- 강조 자막: 크기 확대율, 색상(HEX 추정), 애니메이션(팝업/흔들림/확대), 등장 트리거
+- 정보 텍스트: 하단바/상단바 유무, 위치, 디자인
+- 이모지/아이콘 오버레이: 빈도, 스타일
 
-[사운드 디자인]
-- BGM 장르/무드, 효과음 밀도/유형, 보이스 톤/에너지
+[사운드 디자인 (매우 상세)]
+- BGM: 장르(lo-fi/cinematic/electronic 등), 무드(밝음/긴장/감성), BPM 추정, 음량 레벨(보이스 대비)
+- BGM 전환: 씬 전환 시 BGM 변경 패턴, 페이드인·아웃 방식
+- 효과음: 유형별 분류(전환음/강조음/유머/UI사운드), 밀도(분당), 주요 효과음 3~5개 묘사
+- 보이스: 톤(밝음/차분/에너제틱), 에너지 레벨(1~10), 말하기 속도(빠름/보통/느림), 감정 표현 범위
+- 무음/포즈: 활용 빈도, 연출 의도(긴장감/강조/호흡)
 
 [페이싱]
-- 오프닝 훅 길이(초), 세그먼트 리듬, 아웃트로 구조
+- 오프닝 훅: 길이(초), 구조(질문/충격/예고), 첫 컷 유형
+- 세그먼트 리듬: 평균 세그먼트 길이, 클라이맥스 위치
+- 아웃트로: 길이, CTA 유형, 엔드스크린 활용
 
-한국어로 매우 구체적이고 상세하게 분석하세요. 이 영상의 스타일을 정확히 복제할 수 있을 정도여야 합니다.` }
+한국어로 매우 구체적이고 상세하게 분석하세요. 이 영상의 편집과 사운드를 정확히 복제할 수 있는 수준이어야 합니다.` }
                 ]
             }],
-            generationConfig: { temperature: 0.3, maxOutputTokens: 4000 }
+            generationConfig: { temperature: 0.3, maxOutputTokens: 8000 }
         };
 
         try {
@@ -1090,9 +1113,9 @@ const analyzeDeepVideoStyle = async (scripts: ChannelScript[]): Promise<{ editGu
     // Gemini로 편집 가이드 / 오디오 가이드 분리
     try {
         const splitRes = await evolinkChat([
-            { role: 'system', content: '아래 영상 분석을 편집 가이드와 오디오 가이드로 분리. 반드시 JSON으로만 응답.' },
-            { role: 'user', content: `${combined}\n\n위 분석을 JSON으로 분리:\n{"editGuide": "편집 스타일 종합 (컷/전환/B-roll/카메라/색보정/자막/페이싱 — 구체적 수치 포함)", "audioGuide": "오디오 스타일 종합 (BGM 장르/무드, 효과음 유형/밀도, 보이스 톤/에너지 — 구체적 묘사)"}` }
-        ], { temperature: 0.1, maxTokens: 4000 });
+            { role: 'system', content: '아래 영상 분석을 편집 가이드와 오디오 가이드로 분리. 각각 2000자 이상으로 매우 상세하게 작성. 반드시 JSON으로만 응답.' },
+            { role: 'user', content: `${combined}\n\n위 분석을 JSON으로 분리 (각 2000자 이상 상세히):\n{"editGuide": "편집 스타일 종합 가이드 (컷 빈도/전환 유형 비율/B-roll 패턴/카메라 워크/색보정 수치/자막 폰트·색상·크기·애니메이션·배치 규칙/페이싱 — 이 가이드만으로 동일한 편집을 재현할 수 있어야 함)", "audioGuide": "오디오 스타일 종합 가이드 (BGM 장르·BPM·무드·음량/효과음 유형·밀도·주요 효과음 묘사/보이스 톤·에너지·속도/무음 활용 — 이 가이드만으로 동일한 사운드 디자인을 재현할 수 있어야 함)"}` }
+        ], { temperature: 0.1, maxTokens: 8000 });
 
         const raw = splitRes.choices?.[0]?.message?.content || '';
         let jsonStr = raw;
@@ -1127,9 +1150,9 @@ const analyzeCommentSentiment = async (scripts: ChannelScript[]): Promise<string
 
     try {
         const res = await evolinkChat([
-            { role: 'system', content: 'YouTube 시청자 댓글 분석 전문가. 한국어로 응답.' },
-            { role: 'user', content: `아래는 YouTube 채널의 시청자 댓글입니다.\n${allComments.join('\n')}\n\n분석:\n1. 핵심 반응: 시청자가 가장 좋아하는 점 (편집? 유머? 정보? 비주얼?)\n2. 요구사항: 원하는 콘텐츠/개선사항\n3. 감정 분포: 정보적 vs 재미 vs 감동 반응 비율\n4. 커뮤니티 문화: 밈, 인사이드 조크, 반복 문구\n5. 타겟 프로필: 추정 연령대, 관심사, 기대 콘텐츠 방향` }
-        ], { temperature: 0.3, maxTokens: 2000 });
+            { role: 'system', content: 'YouTube 시청자 심리 및 댓글 분석 전문가. 정량적 데이터와 정성적 인사이트를 모두 포함하여 한국어로 매우 상세하게 응답.' },
+            { role: 'user', content: `아래는 YouTube 채널의 인기 영상 시청자 댓글입니다.\n${allComments.join('\n')}\n\n아래 항목을 각각 5줄 이상으로 매우 상세히 분석하세요:\n\n1. 핵심 반응 분석\n   - 시청자가 가장 좋아하는 요소 TOP 5 (편집/유머/정보/비주얼/음악/진정성 등)\n   - 각 요소별 대표 댓글 인용 2개씩\n   - 감정적 반응 강도 (열광/만족/호감/무관심 비율 추정)\n\n2. 시청자 요구사항 & 불만\n   - 원하는 콘텐츠 주제 TOP 5\n   - 개선 요청사항 (편집/음질/길이/빈도 등)\n   - 반복되는 질문 패턴\n\n3. 감정 분포 매트릭스\n   - 정보적 반응 vs 재미 반응 vs 감동 반응 vs 비판적 반응 비율(%)\n   - 댓글 톤 분석: 존댓말/반말/이모지/밈 비율\n   - 평균 댓글 길이 및 참여 깊이\n\n4. 커뮤니티 문화 DNA\n   - 인사이드 조크, 밈, 반복 문구 TOP 10\n   - 팬덤 특성 (네이밍, 인사법, 암묵적 규칙)\n   - 시청자 간 상호작용 패턴\n\n5. 타겟 시청자 프로필\n   - 추정 연령대 분포 (10대/20대/30대/40대+ 비율)\n   - 추정 성별 분포\n   - 관심사 키워드 클라우드 (상위 15개)\n   - 시청 동기 (학습/오락/정보/힐링/습관)\n\n6. 콘텐츠 전략 인사이트\n   - 조회수 높은 영상의 댓글 공통점\n   - 시청자 이탈 위험 신호\n   - 신규 시청자 유입 패턴\n   - 추천 콘텐츠 방향 3가지` }
+        ], { temperature: 0.3, maxTokens: 6000 });
         return res.choices?.[0]?.message?.content || '';
     } catch (e) {
         logger.warn('[StyleDNA] L4 댓글 분석 실패', e instanceof Error ? e.message : String(e));
@@ -1160,9 +1183,9 @@ const analyzeMetadataPatterns = async (scripts: ChannelScript[], channelInfo: Ch
 
     try {
         const res = await evolinkChat([
-            { role: 'system', content: '콘텐츠 전략 분석가. 한국어로 응답.' },
-            { role: 'user', content: `채널: ${channelInfo.title} (구독자 ${channelInfo.subscriberCount.toLocaleString()}명)\n\n[제목 목록]\n${titles}\n\n[태그 클라우드]\n${topTags || '(태그 없음)'}\n\n[챕터 구조]\n${chapterExamples.join('\n') || '(챕터 없음)'}\n\n분석:\n1. 제목 공식: 반복 패턴, 숫자 사용, 이모지, 클릭베이트 요소, 공식화 가능한 템플릿 5개\n2. 태그 전략: SEO 키워드 패턴, 주제 분포\n3. 챕터 구조: 표준 영상 구조, 평균 세그먼트 수\n4. 콘텐츠 패턴: 업로드 주기, 조회수 높은 영상의 공통점` }
-        ], { temperature: 0.3, maxTokens: 2000 });
+            { role: 'system', content: '유튜브 SEO 전문가이자 콘텐츠 전략 분석가. 제목 공식과 메타데이터 전략을 실전에서 바로 적용 가능할 정도로 매우 상세하게 분석. 한국어로 응답.' },
+            { role: 'user', content: `채널: ${channelInfo.title} (구독자 ${channelInfo.subscriberCount.toLocaleString()}명)\n\n[제목 목록 + 조회수]\n${titles}\n\n[태그 클라우드]\n${topTags || '(태그 없음)'}\n\n[챕터 구조]\n${chapterExamples.join('\n') || '(챕터 없음)'}\n\n아래 항목을 각각 매우 상세히 분석하세요:\n\n1. 제목 공식 (가장 중요 — 바로 제목 지침서로 쓸 수 있을 수준)\n   a. 반복 패턴 분석: 문장 구조, 숫자 사용법, 이모지 패턴, 클릭베이트 요소\n   b. 공식화 가능한 제목 템플릿 10개 (변수 포함, 예: "[숫자] + [자극적 키워드] + [대상]")\n   c. 각 템플릿별 실전 예시 제목 3개씩\n   d. 조회수 높은 제목 vs 낮은 제목의 구조적 차이점\n   e. 제목 작성 규칙 체크리스트 (글자수, 키워드 위치, 감정 트리거, 금지 패턴)\n   f. 이 채널 스타일로 새 제목 5개 생성 예시\n\n2. 태그 전략\n   a. 핵심 SEO 키워드 패턴 (1차/2차/롱테일 분류)\n   b. 주제 분포 맵 (카테고리별 비율)\n   c. 경쟁 키워드 vs 틈새 키워드 비율\n   d. 추천 태그 세트 (새 영상용 20개)\n\n3. 챕터 구조 분석\n   a. 표준 영상 구조 (시간대별 구성)\n   b. 평균 세그먼트 수 및 길이\n   c. 챕터 네이밍 패턴\n\n4. 설명란 패턴\n   a. 설명란 구조 공식\n   b. CTA(Call to Action) 패턴\n   c. 링크/해시태그 활용법\n\n5. 업로드 패턴\n   a. 업로드 주기 분석\n   b. 조회수 높은 영상의 공통점 5가지\n   c. 시즈널/트렌드 대응 패턴` }
+        ], { temperature: 0.3, maxTokens: 6000 });
         return res.choices?.[0]?.message?.content || '';
     } catch (e) {
         logger.warn('[StyleDNA] L5 메타데이터 분석 실패', e instanceof Error ? e.message : String(e));
