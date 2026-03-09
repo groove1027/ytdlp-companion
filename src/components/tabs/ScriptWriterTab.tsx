@@ -172,25 +172,15 @@ export default function ScriptWriterTab() {
     }
 
     const projStore = useProjectStore.getState();
-    if (!projStore.currentProjectId) {
+    if (!projStore.currentProjectId || !projStore.config) {
       const ok = await canCreateNewProject();
       if (!ok) {
         setGenError('저장 공간이 부족합니다. 기존 프로젝트를 삭제해주세요.');
         return;
       }
-      const newId = `proj_${Date.now()}`;
-      projStore.setCurrentProjectId(newId);
-      if (!projStore.config) {
-        projStore.setConfig({
-          mode: 'SCRIPT',
-          script: scriptText.substring(0, 500),
-          videoFormat,
-          aspectRatio: 'LANDSCAPE' as never,
-          imageModel: 'NANO_COST' as never,
-          smartSplit: true,
-        } as never);
-      }
-      projStore.setProjectTitle(scriptText.trim().substring(0, 30) || '새 프로젝트');
+      // 프로젝트가 없으면 명시적으로 생성 (사용자가 실제 작업을 시작하는 시점)
+      const titleHint = scriptText.trim().substring(0, 30) || '대본 프로젝트';
+      projStore.newProject(titleHint);
       showToast('새 프로젝트가 자동 생성되었습니다');
     }
 

@@ -14,19 +14,55 @@ const useEditRoomStore = { getState: () => getEditRoomStore()?.getState() || { r
 let _idCounter = 0;
 const uniqueSceneId = () => `s-${Date.now()}-${++_idCounter}`;
 
-// [FIX] 세션 당 자동 프로젝트 생성 1회 제한 — 페이지 새로고침 시 리셋
-let _autoProjectCreatedInSession = false;
-
 /**
- * 프로젝트가 없을 때 자동으로 임시 프로젝트를 생성하되, 세션 당 1회만 허용.
- * 명시적 "새 프로젝트" 버튼 클릭과는 무관 — 오직 자동 생성만 제한.
- * @returns true if a new project was created, false if skipped
+ * 프로젝트가 없을 때: 기존 프로젝트 복원 → 없으면 새로 생성.
+ * 비동기로 동작하며, 복원/생성 성공 시 true 반환.
+ * 빈 임시 프로젝트를 무한 생성하지 않도록 반드시 기존 프로젝트를 먼저 시도.
  */
+export const autoRestoreOrCreateProject = async (): Promise<boolean> => {
+  const { config } = useProjectStore.getState();
+  if (config) return false; // 이미 로드된 프로젝트 있음
+
+  try {
+    const { getProject, getMostRecentProjectId } = await import('../services/storageService');
+
+    // 1) localStorage의 마지막 프로젝트 복원 시도
+    const lastId = localStorage.getItem('last-project-id');
+    if (lastId) {
+      const project = await getProject(lastId);
+      if (project) {
+        useProjectStore.getState().loadProject(project);
+        return true;
+      }
+      localStorage.removeItem('last-project-id');
+    }
+
+    // 2) IndexedDB에서 가장 최근 프로젝트 복원
+    const recentId = await getMostRecentProjectId();
+    if (recentId) {
+      const project = await getProject(recentId);
+      if (project) {
+        useProjectStore.getState().loadProject(project);
+        return true;
+      }
+    }
+
+    // 3) 프로젝트가 아예 없을 때만 새로 생성
+    useProjectStore.getState().newProject();
+    return true;
+  } catch (e) {
+    console.warn('[autoRestoreOrCreateProject] failed, creating new:', e);
+    useProjectStore.getState().newProject();
+    return true;
+  }
+};
+
+/** @deprecated 하위 호환용 — autoRestoreOrCreateProject()를 사용하세요 */
 export const autoNewProjectIfNeeded = (): boolean => {
   const { config } = useProjectStore.getState();
-  if (config || _autoProjectCreatedInSession) return false;
-  _autoProjectCreatedInSession = true;
-  useProjectStore.getState().newProject();
+  if (config) return false;
+  // 비동기 복원을 동기 호출에서 시작 (fire-and-forget)
+  autoRestoreOrCreateProject();
   return true;
 };
 
@@ -404,19 +440,22 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     try { localStorage.setItem('last-project-id', projectId); } catch { /* 무시 */ }
     useCostStore.getState().resetCosts();
 
-    // 즉시 IndexedDB에 초기 저장 (auto-save 조건과 무관하게 프로젝트 목록에 표시)
-    import('../services/storageService').then(({ saveProject }) => {
-      saveProject({
-        id: projectId,
-        title: autoTitle,
-        config: { mode: 'SCRIPT', script: '', videoFormat: VideoFormat.SHORT, aspectRatio: AspectRatio.LANDSCAPE, imageModel: ImageModel.NANO_COST, smartSplit: true } as ProjectConfig,
-        scenes: [],
-        thumbnails: [],
-        fullNarrationText: '',
-        lastModified: Date.now(),
-        costStats: useCostStore.getState().costStats,
-      }).catch(() => { /* 저장 실패 시 무시 — auto-save가 이후 재시도 */ });
-    }).catch(() => {});
+    // [FIX] 빈 프로젝트 즉시 저장 제거 — useAutoSave가 실제 변경 시에만 저장.
+    // 명시적 "새 프로젝트" 생성(사용자 클릭) 시만 즉시 저장하도록 title 존재 여부로 구분.
+    if (title) {
+      import('../services/storageService').then(({ saveProject }) => {
+        saveProject({
+          id: projectId,
+          title: autoTitle,
+          config: { mode: 'SCRIPT', script: '', videoFormat: VideoFormat.SHORT, aspectRatio: AspectRatio.LANDSCAPE, imageModel: ImageModel.NANO_COST, smartSplit: true } as ProjectConfig,
+          scenes: [],
+          thumbnails: [],
+          fullNarrationText: '',
+          lastModified: Date.now(),
+          costStats: useCostStore.getState().costStats,
+        }).catch(() => {});
+      }).catch(() => {});
+    }
 
     // [NEW] imageVideoStore 리셋 — 이전 프로젝트의 캐릭터/스타일이 남지 않도록
     try {

@@ -252,6 +252,45 @@ export const canCreateNewProject = async (): Promise<boolean> => {
   return estimate.percent < 80;
 };
 
+// --- Empty Project Cleanup ---
+
+/**
+ * 빈 임시 프로젝트 자동 정리 — 장면 0개 + 이미지 0개 + "임시 프로젝트" 제목인 프로젝트를 삭제.
+ * 단, 현재 열려 있는 프로젝트(currentId)는 삭제하지 않음.
+ * @param currentId 현재 열린 프로젝트 ID (보호)
+ * @returns 삭제된 프로젝트 수
+ */
+export const cleanupEmptyProjects = async (currentId?: string | null): Promise<number> => {
+  const db = await dbPromise;
+  const summaries = await db.getAll(SUMMARY_STORE);
+  let cleaned = 0;
+
+  for (const s of summaries) {
+    if (s.id === currentId) continue;
+    // 조건: 장면 없고, 이미지 없고, 임시 제목인 프로젝트
+    const isEmpty = s.sceneCount === 0 && s.completedImages === 0;
+    const isTempTitle = s.title.startsWith('임시 프로젝트') || s.title.startsWith('새 프로젝트');
+    if (isEmpty && isTempTitle) {
+      await deleteProject(s.id);
+      cleaned++;
+    }
+  }
+  return cleaned;
+};
+
+/**
+ * 가장 최근 수정된 프로젝트 ID를 반환 (빈 임시 프로젝트 제외).
+ * 유의미한 프로젝트가 없으면 가장 최근 프로젝트 아무거나 반환.
+ */
+export const getMostRecentProjectId = async (): Promise<string | null> => {
+  const summaries = await getAllProjectSummaries(); // lastModified 내림차순 정렬됨
+  // 우선: 장면이 있는 프로젝트
+  const meaningful = summaries.find(s => s.sceneCount > 0 || s.completedImages > 0);
+  if (meaningful) return meaningful.id;
+  // 폴백: 아무 프로젝트
+  return summaries[0]?.id || null;
+};
+
 // --- Character Library ---
 
 export const saveCharacterToLibrary = async (character: SavedCharacter): Promise<void> => {

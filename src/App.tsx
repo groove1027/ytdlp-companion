@@ -21,7 +21,7 @@ import {
     generatePromptFromScript,
     fetchCurrentExchangeRate,
 } from './services/geminiService';
-import { canCreateNewProject, requestPersistentStorage, getProject } from './services/storageService';
+import { canCreateNewProject, requestPersistentStorage } from './services/storageService';
 import { useVideoBatch } from './hooks/useVideoBatch';
 import { useAutoSave } from './hooks/useAutoSave';
 import { uploadMediaToHosting } from './services/uploadService';
@@ -39,7 +39,7 @@ import ProfileModal from './components/ProfileModal';
 import { useUIStore } from './stores/uiStore';
 import { useAuthStore } from './stores/authStore';
 import { useCostStore } from './stores/costStore';
-import { useProjectStore, autoNewProjectIfNeeded } from './stores/projectStore';
+import { useProjectStore, autoRestoreOrCreateProject } from './stores/projectStore';
 import { useNavigationStore } from './stores/navigationStore';
 
 // [v4.5] 새로운 탭 컴포넌트 (Lazy Loading)
@@ -233,52 +233,39 @@ const App: React.FC = () => {
   // Auto-save via Zustand store subscriptions
   useAutoSave();
 
-  // [FIX] 새 탭/새로고침 시 마지막 프로젝트 자동 복원
+  // [FIX] 앱 시작 시: 빈 임시 프로젝트 정리 → 마지막/최근 프로젝트 복원 → 없으면 1개만 생성
   useEffect(() => {
-    const restoreLastProject = async () => {
-      // 이미 프로젝트가 로드된 상태라면 스킵
+    const initProject = async () => {
       if (useProjectStore.getState().config) return;
 
-      const lastId = localStorage.getItem('last-project-id');
-      if (!lastId) {
-        // 저장된 프로젝트 ID 없음 → 현재 탭이 프로젝트가 아니면 자동 생성 (세션 1회), 아니면 대시보드
-        const currentTab = useNavigationStore.getState().activeTab;
-        if (currentTab !== 'project') {
-          autoNewProjectIfNeeded();
-        } else {
-          useNavigationStore.getState().goToDashboard();
-        }
-        return;
-      }
-
+      // 1) 빈 임시 프로젝트 정리 (누적 방지)
       try {
-        const project = await getProject(lastId);
-        if (project) {
-          useProjectStore.getState().loadProject(project);
-          // [FIX] 프로젝트 탭 + 대시보드 숨김 상태로 복원되면 구버전 UI가 뜨므로 대시보드로 강제 전환
-          const navState = useNavigationStore.getState();
-          if (navState.activeTab === 'project' && !navState.showProjectDashboard) {
-            navState.goToDashboard();
-          }
-        } else {
-          // IndexedDB에 해당 프로젝트 없음 → 대시보드로 이동
-          localStorage.removeItem('last-project-id');
-          useNavigationStore.getState().goToDashboard();
-        }
-      } catch (e) {
-        console.warn('[App] Failed to restore last project:', e);
-        useNavigationStore.getState().goToDashboard();
+        const { cleanupEmptyProjects } = await import('./services/storageService');
+        const cleaned = await cleanupEmptyProjects(null);
+        if (cleaned > 0) console.log(`[App] ${cleaned}개 빈 임시 프로젝트 정리됨`);
+      } catch { /* 정리 실패해도 계속 진행 */ }
+
+      // 2) 기존 프로젝트 복원 시도 → 없으면 새로 생성
+      const restored = await autoRestoreOrCreateProject();
+
+      // 3) 프로젝트 탭이면 대시보드, 아니면 작업 화면
+      const navState = useNavigationStore.getState();
+      if (restored && navState.activeTab === 'project' && !navState.showProjectDashboard) {
+        navState.goToDashboard();
+      }
+      if (restored && navState.activeTab !== 'project') {
+        navState.leaveDashboard();
       }
     };
-    restoreLastProject();
+    initProject();
   }, []);
 
-  // [UX] 프로젝트 필요 탭인데 프로젝트 없으면 자동 생성 (세션 1회) — 직접 URL 진입 등 엣지 케이스 대비
+  // [UX] 프로젝트 없이 작업 탭 진입 시 복원 (탭 전환 엣지 케이스)
   useEffect(() => {
     if (activeTab !== 'project' && !config) {
-      if (autoNewProjectIfNeeded()) {
-        useNavigationStore.getState().leaveDashboard();
-      }
+      autoRestoreOrCreateProject().then((restored) => {
+        if (restored) useNavigationStore.getState().leaveDashboard();
+      });
     }
   }, [activeTab, config]);
 

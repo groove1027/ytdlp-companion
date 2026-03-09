@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
-import { useProjectStore, autoNewProjectIfNeeded } from '../../../stores/projectStore';
+import { useProjectStore, autoRestoreOrCreateProject } from '../../../stores/projectStore';
 import { useCostStore } from '../../../stores/costStore';
 import { useScriptWriterStore } from '../../../stores/scriptWriterStore';
 import { useImageVideoStore } from '../../../stores/imageVideoStore';
@@ -90,7 +90,7 @@ const SetupPanel: React.FC = () => {
   const elapsed = useElapsedTimer(isAnalyzing);
   const { requireAuth } = useAuthGuard();
 
-  useEffect(() => { if (!config) autoNewProjectIfNeeded(); }, [config]);
+  useEffect(() => { if (!config) autoRestoreOrCreateProject(); }, [config]);
 
   const hasAudioScenes = scenes.length > 0 && scenes.some(s => !!s.audioUrl);
   const totalScenes = scenes.length;
