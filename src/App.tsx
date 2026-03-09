@@ -97,7 +97,7 @@ const TabFallback = () => (
   </div>
 );
 
-// ErrorBoundary — lazy 컴포넌트 런타임 에러 캐치
+// ErrorBoundary — lazy 컴포넌트 런타임 에러 + 동적 import 실패 캐치
 class TabErrorBoundary extends React.Component<
   { children: React.ReactNode },
   { error: Error | null }
@@ -108,20 +108,39 @@ class TabErrorBoundary extends React.Component<
   }
   render() {
     if (this.state.error) {
+      const isChunkError = this.state.error.message?.includes('Failed to fetch dynamically imported module')
+        || this.state.error.message?.includes('Loading chunk')
+        || this.state.error.message?.includes('Loading CSS chunk');
       return (
         <div className="p-8 text-center">
-          <p className="text-red-400 text-lg font-bold mb-2">탭 로딩 오류</p>
-          <pre className="text-red-300 text-sm bg-red-900/20 p-4 rounded-lg overflow-auto max-h-60 text-left">
-            {this.state.error.message}
-            {'\n'}
-            {this.state.error.stack}
-          </pre>
-          <button
-            className="mt-4 px-4 py-2 bg-red-600 hover:bg-red-500 rounded text-white"
-            onClick={() => this.setState({ error: null })}
-          >
-            다시 시도
-          </button>
+          <p className="text-red-400 text-lg font-bold mb-2">
+            {isChunkError ? '앱 업데이트 감지' : '탭 로딩 오류'}
+          </p>
+          {isChunkError ? (
+            <p className="text-gray-400 text-sm mb-4">
+              새 버전이 배포되었습니다. 페이지를 새로고침하면 정상 작동합니다.
+            </p>
+          ) : (
+            <pre className="text-red-300 text-sm bg-red-900/20 p-4 rounded-lg overflow-auto max-h-60 text-left mb-4">
+              {this.state.error.message}
+            </pre>
+          )}
+          <div className="flex gap-3 justify-center">
+            <button
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded text-white font-semibold"
+              onClick={() => window.location.reload()}
+            >
+              페이지 새로고침
+            </button>
+            {!isChunkError && (
+              <button
+                className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-gray-300"
+                onClick={() => this.setState({ error: null })}
+              >
+                다시 시도
+              </button>
+            )}
+          </div>
         </div>
       );
     }
@@ -1023,7 +1042,7 @@ const App: React.FC = () => {
       {/* [v4.5] 헤더 아래: 좌측 사이드바 + 우측 콘텐츠 */}
       <div className="flex pt-16 min-h-screen">
         {/* 좌측 네비게이션 사이드바 */}
-        <aside className="fixed top-16 left-0 bottom-0 w-56 bg-gray-950 border-r border-gray-800 z-30 flex flex-col py-3 px-3 gap-1 overflow-y-auto">
+        <aside className="fixed top-16 left-0 bottom-0 w-[15.5rem] bg-gray-950 border-r border-gray-800 z-30 flex flex-col py-3 px-3 gap-1 overflow-y-auto">
           {TAB_CONFIG.map((tab) => {
             const isActive = activeTab === tab.id;
             return (
@@ -1196,7 +1215,7 @@ const App: React.FC = () => {
         </aside>
 
         {/* 메인 콘텐츠 영역 */}
-        <main className="ml-56 flex-1 pb-12 px-8">
+        <main className="ml-[15.5rem] flex-1 pb-12 px-8">
           {/* [v4.5] 파이프라인 진행 표시기 (도구모음 탭에서는 숨김) */}
           {!TOOL_TABS.has(activeTab) && (() => {
             const currentStepIndex = PIPELINE_STEPS.findIndex(s => s.id === activeTab);

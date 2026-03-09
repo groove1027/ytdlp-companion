@@ -1259,13 +1259,17 @@ export const analyzeChannelStyleDNA = async (
         ]);
 
     // L1 base guideline
+    const textError = textResult.status === 'rejected' ? (textResult.reason?.message || String(textResult.reason)) : '';
+    if (textError) {
+        logger.warn('[StyleDNA] L1 텍스트 분석 실패', textError);
+    }
     const base: ChannelGuideline = textResult.status === 'fulfilled'
         ? textResult.value
         : {
             channelName: channelInfo.title,
             tone: '', structure: '', topics: [], keywords: [],
             targetAudience: '', avgLength: 0, hookPattern: '', closingPattern: '',
-            fullGuidelineText: '(텍스트 분석 실패)'
+            fullGuidelineText: `(텍스트 분석 실패: ${textError || '알 수 없는 오류'})\n\n💡 원인: API 키 미설정, 쿼터 소진, 또는 네트워크 오류일 수 있습니다.\n새로고침 후 다시 시도해보세요.`
         };
 
     // DNA 레이어 결과 수집

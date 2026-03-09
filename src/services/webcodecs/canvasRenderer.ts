@@ -90,12 +90,12 @@ export async function renderAllFrames(
       // 이전 장면은 끝에서 transDur만큼 겹침 → 전환 시작 시 prevLocalTime = prevDur - transDur
       // 전환 진행에 따라 prevLocalTime = prevDur - transDur + frameInfo.localTime
       const prevLocalTime = prevTiming.imageDuration - transDur + frameInfo.localTime;
-      renderSceneFrame(auxCtx, prevTiming, Math.max(0, prevLocalTime), imageBitmaps, videoFrameExtractors, width, height, fps);
+      await renderSceneFrame(auxCtx, prevTiming, Math.max(0, prevLocalTime), imageBitmaps, videoFrameExtractors, width, height, fps);
       const prevFrame = await createImageBitmap(auxCanvas);
 
       // 현재 장면 프레임
       const currLocalTime = frameInfo.localTime;
-      renderSceneFrame(ctx, currTiming, currLocalTime, imageBitmaps, videoFrameExtractors, width, height, fps);
+      await renderSceneFrame(ctx, currTiming, currLocalTime, imageBitmaps, videoFrameExtractors, width, height, fps);
       const currFrame = await createImageBitmap(canvas);
 
       // 전환 블렌딩
@@ -121,7 +121,7 @@ export async function renderAllFrames(
     } else {
       // 일반 장면 프레임
       const timing = timeline[frameInfo.sceneIndex];
-      renderSceneFrame(ctx, timing, frameInfo.localTime, imageBitmaps, videoFrameExtractors, width, height, fps);
+      await renderSceneFrame(ctx, timing, frameInfo.localTime, imageBitmaps, videoFrameExtractors, width, height, fps);
 
       // 자막 렌더링
       if (frameInfo.subtitleText && subtitleStyle?.template) {
@@ -280,8 +280,8 @@ const MOTION_FILTERS: Record<string, string> = {
   'vintage-style': 'sepia(0.3) contrast(1.1) saturate(0.8)',
 };
 
-/** 단일 장면 프레임을 캔버스에 렌더 (Ken Burns + motionEffect + CSS filter) */
-function renderSceneFrame(
+/** 단일 장면 프레임을 캔버스에 렌더 (Ken Burns + motionEffect + CSS filter + 비디오) */
+async function renderSceneFrame(
   ctx: OffscreenCanvasRenderingContext2D,
   timing: UnifiedSceneTiming,
   localTime: number,
@@ -290,7 +290,7 @@ function renderSceneFrame(
   canvasW: number,
   canvasH: number,
   fps: number = 30,
-): void {
+): Promise<void> {
   const bitmap = imageBitmaps.get(timing.sceneId);
   const videoExtractor = videoFrameExtractors.get(timing.sceneId);
 
@@ -343,9 +343,23 @@ function renderSceneFrame(
     // filter 초기화
     if (filters.length > 0) ctx.filter = 'none';
   } else if (videoExtractor) {
-    // 비디오 장면: 현재 시간의 프레임을 직접 그리기
-    ctx.fillStyle = '#000';
-    ctx.fillRect(0, 0, canvasW, canvasH);
+    // 비디오 장면: 현재 시간의 프레임을 추출하여 그리기
+    try {
+      const frameBitmap = await videoExtractor.getFrameAt(localTime);
+      if (frameBitmap) {
+        const scale = Math.max(canvasW / frameBitmap.width, canvasH / frameBitmap.height);
+        const dw = frameBitmap.width * scale;
+        const dh = frameBitmap.height * scale;
+        ctx.drawImage(frameBitmap, (canvasW - dw) / 2, (canvasH - dh) / 2, dw, dh);
+        frameBitmap.close();
+      } else {
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, canvasW, canvasH);
+      }
+    } catch {
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, canvasW, canvasH);
+    }
   } else {
     // 에셋 없음: 검은 화면
     ctx.fillStyle = '#000';
