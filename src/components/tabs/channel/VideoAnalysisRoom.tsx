@@ -1,4 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { evolinkChat } from '../../../services/evolinkService';
 import type { EvolinkChatMessage, EvolinkContentPart } from '../../../services/evolinkService';
 import { useNavigationStore } from '../../../stores/navigationStore';
@@ -414,6 +415,23 @@ const VERSION_COLORS = [
   { bg: 'bg-indigo-500/15', border: 'border-indigo-500/30', text: 'text-indigo-400', numBg: 'bg-indigo-500' },
   { bg: 'bg-fuchsia-500/15', border: 'border-fuchsia-500/30', text: 'text-fuchsia-400', numBg: 'bg-fuchsia-500' },
 ];
+
+const CHART_TOOLTIP_STYLE = { backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '8px' };
+
+/** 모드 색상 매핑 */
+const MODE_COLORS: Record<string, { fill: string; label: string }> = {
+  N: { fill: '#3b82f6', label: '내레이션[N]' },
+  S: { fill: '#10b981', label: '현장음-대사[S]' },
+  A: { fill: '#f59e0b', label: '현장음-액션[A]' },
+};
+
+/** 모드 문자열에서 N/S/A 추출 */
+function extractModeKey(mode: string): string {
+  if (mode.includes('N')) return 'N';
+  if (mode.includes('S')) return 'S';
+  if (mode.includes('A')) return 'A';
+  return '';
+}
 
 // ═══════════════════════════════════════════════════
 // 유저 메시지 빌더 (10개 버전 + 장면 구조화)
@@ -831,6 +849,99 @@ const VideoAnalysisRoom: React.FC = () => {
                           </button>
                         )}
                       </div>
+
+                      {/* 타임라인 바 + 모드별 파이 차트 */}
+                      {hasScenes && selectedPreset === 'tikitaka' && (() => {
+                        const rows = v.scenes;
+                        // 타임라인 바 데이터: 각 row를 duration 기반 stacked bar로
+                        const timelineData = rows.map(r => {
+                          const mk = extractModeKey(r.mode);
+                          const dur = parseDuration(r.duration);
+                          return {
+                            name: `#${r.cutNum}`,
+                            duration: dur,
+                            fill: MODE_COLORS[mk]?.fill || '#6b7280',
+                            mode: r.mode,
+                            audioContent: r.audioContent,
+                            durationLabel: r.duration,
+                          };
+                        });
+                        // 모드별 비율 파이 데이터
+                        const modeDist = [
+                          { name: '내레이션[N]', value: rows.filter(r => r.mode.includes('N')).length, fill: '#3b82f6' },
+                          { name: '현장음-대사[S]', value: rows.filter(r => r.mode.includes('S')).length, fill: '#10b981' },
+                          { name: '현장음-액션[A]', value: rows.filter(r => r.mode.includes('A')).length, fill: '#f59e0b' },
+                        ].filter(d => d.value > 0);
+
+                        if (timelineData.length === 0) return null;
+
+                        return (
+                          <div className="flex items-center gap-4 mb-3">
+                            {/* 타임라인 바 */}
+                            <div className="flex-1 bg-gray-900/40 rounded-lg border border-gray-700/40 p-2">
+                              <p className="text-[10px] text-gray-500 mb-1 font-medium">타임라인</p>
+                              <div style={{ width: '100%', height: 44 }}>
+                                <ResponsiveContainer width="100%" height="100%">
+                                  <BarChart layout="vertical" data={[{ name: 'timeline', ...Object.fromEntries(timelineData.map((d, i) => [`seg${i}`, d.duration])) }]} margin={{ top: 0, right: 0, bottom: 0, left: 0 }} barSize={24}>
+                                    <XAxis type="number" hide />
+                                    <YAxis type="category" dataKey="name" hide />
+                                    <Tooltip
+                                      contentStyle={CHART_TOOLTIP_STYLE}
+                                      labelStyle={{ color: '#9ca3af', fontSize: '11px' }}
+                                      itemStyle={{ color: '#e5e7eb', fontSize: '11px', padding: 0 }}
+                                      formatter={(value: number, name: string) => {
+                                        const idx = parseInt(name.replace('seg', ''), 10);
+                                        const item = timelineData[idx];
+                                        return [`${item?.mode} ${item?.durationLabel || value + '초'}`, item?.audioContent?.slice(0, 30) || `세그먼트 ${idx + 1}`];
+                                      }}
+                                    />
+                                    {timelineData.map((d, i) => (
+                                      <Bar key={`seg${i}`} dataKey={`seg${i}`} stackId="a" fill={d.fill} radius={i === 0 ? [4, 0, 0, 4] : i === timelineData.length - 1 ? [0, 4, 4, 0] : [0, 0, 0, 0]} />
+                                    ))}
+                                  </BarChart>
+                                </ResponsiveContainer>
+                              </div>
+                              {/* 범례 */}
+                              <div className="flex gap-3 mt-1">
+                                {Object.entries(MODE_COLORS).map(([key, mc]) => (
+                                  <span key={key} className="flex items-center gap-1 text-[9px] text-gray-500">
+                                    <span className="inline-block w-2 h-2 rounded-sm" style={{ backgroundColor: mc.fill }} />
+                                    {mc.label}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                            {/* 모드별 파이 차트 */}
+                            <div className="w-28 flex-shrink-0 bg-gray-900/40 rounded-lg border border-gray-700/40 p-2 flex flex-col items-center">
+                              <p className="text-[10px] text-gray-500 mb-0.5 font-medium">모드 비율</p>
+                              <div style={{ width: 100, height: 80 }}>
+                                <ResponsiveContainer width="100%" height="100%">
+                                  <PieChart>
+                                    <Pie
+                                      data={modeDist}
+                                      cx="50%"
+                                      cy="50%"
+                                      innerRadius={18}
+                                      outerRadius={34}
+                                      dataKey="value"
+                                      stroke="none"
+                                    >
+                                      {modeDist.map((entry, idx) => (
+                                        <Cell key={idx} fill={entry.fill} />
+                                      ))}
+                                    </Pie>
+                                    <Tooltip
+                                      contentStyle={CHART_TOOLTIP_STYLE}
+                                      itemStyle={{ color: '#e5e7eb', fontSize: '11px', padding: 0 }}
+                                      formatter={(value: number, name: string) => [`${value}컷`, name]}
+                                    />
+                                  </PieChart>
+                                </ResponsiveContainer>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })()}
 
                       {/* 프리셋별 장면 테이블 */}
                       {hasScenes ? (

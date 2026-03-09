@@ -1,4 +1,5 @@
 import React, { useState, useCallback } from 'react';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, PieChart, Pie, Cell } from 'recharts';
 import { useChannelAnalysisStore } from '../../../stores/channelAnalysisStore';
 import { useNavigationStore } from '../../../stores/navigationStore';
 import { useScriptWriterStore } from '../../../stores/scriptWriterStore';
@@ -432,6 +433,50 @@ const ChannelAnalysisRoom: React.FC = () => {
         </div>
       )}
 
+      {/* 영상별 조회수 비교 차트 */}
+      {channelScripts.length > 0 && !progress && inputSource === 'youtube' && (
+        <div className={card}>
+          <h3 className="text-lg font-bold text-white mb-4">영상별 조회수 비교</h3>
+          <ResponsiveContainer width="100%" height={300}>
+            <BarChart data={channelScripts.map(s => ({ name: s.title.substring(0, 15) + '...', views: s.viewCount, fullTitle: s.title }))} margin={{ top: 5, right: 20, left: 10, bottom: 80 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+              <XAxis dataKey="name" angle={-90} textAnchor="end" height={80} tick={{ fill: '#9ca3af', fontSize: 11 }} interval={0} />
+              <YAxis tick={{ fill: '#9ca3af' }} tickFormatter={fmtViews} />
+              <Tooltip
+                contentStyle={{ backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '8px' }}
+                labelStyle={{ color: '#f97316' }}
+                itemStyle={{ color: '#d1d5db' }}
+                formatter={(value: number) => [fmtViews(value) + '회', '조회수']}
+                labelFormatter={(_label: string, payload: readonly { payload?: { fullTitle?: string } }[]) => payload?.[0]?.payload?.fullTitle || _label}
+              />
+              <Bar dataKey="views" fill="#f97316" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {/* 발행일별 조회수 추이 */}
+      {channelScripts.length > 0 && !progress && inputSource === 'youtube' && (
+        <div className={card}>
+          <h3 className="text-lg font-bold text-white mb-4">발행일별 조회수 추이</h3>
+          <ResponsiveContainer width="100%" height={250}>
+            <AreaChart data={[...channelScripts].sort((a, b) => new Date(a.publishedAt).getTime() - new Date(b.publishedAt).getTime()).map(s => ({ date: new Date(s.publishedAt).toLocaleDateString('ko-KR', { month: 'short', day: 'numeric' }), views: s.viewCount, title: s.title }))} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+              <XAxis dataKey="date" tick={{ fill: '#9ca3af' }} />
+              <YAxis tick={{ fill: '#9ca3af' }} tickFormatter={fmtViews} />
+              <Tooltip
+                contentStyle={{ backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '8px' }}
+                labelStyle={{ color: '#3b82f6' }}
+                itemStyle={{ color: '#d1d5db' }}
+                formatter={(value: number) => [fmtViews(value) + '회', '조회수']}
+                labelFormatter={(_label: string, payload: readonly { payload?: { title?: string } }[]) => payload?.[0]?.payload?.title || _label}
+              />
+              <Area type="monotone" dataKey="views" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.15} />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
       {/* 스타일 분석 결과 */}
       {channelGuideline && !progress && (
         <div className={card}>
@@ -645,6 +690,72 @@ const ChannelAnalysisRoom: React.FC = () => {
       {topics.length > 0 && (
         <div className={card}>
           <h3 className="text-lg font-bold text-white mb-4">추천 주제</h3>
+
+          {/* 바이럴 점수 도넛 차트 */}
+          {(() => {
+            const viralDist = [
+              { name: '높음', value: topics.filter(t => t.viralScore === 'high').length, fill: '#ef4444' },
+              { name: '중간', value: topics.filter(t => t.viralScore === 'medium').length, fill: '#eab308' },
+              { name: '낮음', value: topics.filter(t => t.viralScore === 'low').length, fill: '#6b7280' },
+            ].filter(d => d.value > 0);
+            return (
+              <div className="flex items-center gap-6 mb-5 bg-gray-900/50 rounded-lg p-4 border border-gray-700/50">
+                <div className="relative" style={{ width: 200, height: 200 }}>
+                  <ResponsiveContainer width={200} height={200}>
+                    <PieChart>
+                      <Pie data={viralDist} innerRadius={50} outerRadius={80} dataKey="value" label={({ name, value }) => `${name} ${value}`}>
+                        {viralDist.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.fill} />
+                        ))}
+                      </Pie>
+                      <Tooltip contentStyle={{ backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '8px' }} itemStyle={{ color: '#d1d5db' }} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                    <span className="text-2xl font-bold text-white">{topics.length}</span>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <p className="text-sm font-medium text-gray-300 mb-2">바이럴 점수 분포</p>
+                  {viralDist.map(d => (
+                    <div key={d.name} className="flex items-center gap-2">
+                      <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: d.fill }} />
+                      <span className="text-sm text-gray-400">{d.name}</span>
+                      <span className="text-sm font-semibold text-gray-200">{d.value}개</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* 본능 기제 빈도 차트 */}
+          {topics.some(t => t.instinctAnalysis?.primaryInstincts?.length) && (() => {
+            const instinctFreq = new Map<string, number>();
+            topics.forEach(t => t.instinctAnalysis?.primaryInstincts?.forEach(inst => instinctFreq.set(inst, (instinctFreq.get(inst) || 0) + 1)));
+            const instinctData = [...instinctFreq.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([name, count]) => ({ name, count }));
+            if (instinctData.length === 0) return null;
+            return (
+              <div className="mb-5 bg-gray-900/50 rounded-lg p-4 border border-gray-700/50">
+                <p className="text-sm font-medium text-purple-400 mb-3">가장 많이 활용된 심리 기제</p>
+                <ResponsiveContainer width="100%" height={Math.max(200, instinctData.length * 35)}>
+                  <BarChart layout="vertical" data={instinctData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                    <XAxis type="number" tick={{ fill: '#9ca3af' }} allowDecimals={false} />
+                    <YAxis type="category" dataKey="name" width={120} tick={{ fill: '#9ca3af', fontSize: 12 }} />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '8px' }}
+                      labelStyle={{ color: '#a855f7' }}
+                      itemStyle={{ color: '#d1d5db' }}
+                      formatter={(value: number) => [value + '회', '빈도']}
+                    />
+                    <Bar dataKey="count" fill="#a855f7" radius={[0, 4, 4, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            );
+          })()}
+
           <div className="space-y-3">
             {topics.map(t => (
               <div key={t.id} onClick={() => setSelectedTopic(t)} className="bg-gray-900/50 rounded-lg p-4 border border-gray-700/50 hover:border-blue-600/50 cursor-pointer transition-all hover:bg-gray-900">

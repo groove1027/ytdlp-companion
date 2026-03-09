@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useMemo } from 'react';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ScatterChart, Scatter, ReferenceLine, Legend, LineChart, Line } from 'recharts';
 import { useChannelAnalysisStore } from '../../../stores/channelAnalysisStore';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
@@ -73,6 +74,14 @@ function analyzeSeo(v: TopVideo, kw: string): SeoCheck {
 function seoScore(s: SeoCheck): number {
   return [s.title, s.tags, s.desc, s.descLength].filter(Boolean).length;
 }
+
+// ═══════════════════════════════════════════════════
+// Recharts 다크 테마 공통 스타일
+// ═══════════════════════════════════════════════════
+
+const CHART_TOOLTIP = { backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '8px' };
+const AXIS_STYLE = { fill: '#9ca3af', fontSize: 12 };
+const GRID_STYLE = { strokeDasharray: '3 3', stroke: '#374151' };
 
 // ═══════════════════════════════════════════════════
 // SVG 레이더 차트
@@ -413,6 +422,41 @@ const KeywordLab: React.FC = () => {
         </div>
       )}
 
+      {/* ═══ 키워드 포지셔닝 맵 (산점도) ═══ */}
+      {keywordResults.length >= 2 && (
+        <div className="bg-gray-800 rounded-xl p-5 border border-gray-700">
+          <p className="text-sm font-bold text-gray-300 mb-3">키워드 포지셔닝 맵</p>
+          <ResponsiveContainer width="100%" height={300}>
+            <ScatterChart margin={{ top: 20, right: 30, bottom: 20, left: 10 }}>
+              <CartesianGrid {...GRID_STYLE} />
+              <XAxis type="number" dataKey="competition" name="경쟁도" domain={[0, 100]} tick={AXIS_STYLE} label={{ value: '경쟁도', position: 'insideBottom', offset: -10, style: AXIS_STYLE }} />
+              <YAxis type="number" dataKey="opportunity" name="기회점수" domain={[0, 100]} tick={AXIS_STYLE} label={{ value: '기회점수', angle: -90, position: 'insideLeft', offset: 10, style: AXIS_STYLE }} />
+              <Tooltip cursor={{ strokeDasharray: '3 3' }} contentStyle={CHART_TOOLTIP} labelStyle={{ color: '#e5e7eb' }} itemStyle={{ color: '#d1d5db' }}
+                content={({ payload }) => {
+                  if (!payload || payload.length === 0) return null;
+                  const d = payload[0].payload as { name: string; competition: number; opportunity: number; volume: number };
+                  return (
+                    <div style={CHART_TOOLTIP} className="px-3 py-2 text-sm">
+                      <p className="font-bold text-gray-200 mb-1">{d.name}</p>
+                      <p className="text-gray-400">경쟁도: <span className="text-white">{d.competition}</span></p>
+                      <p className="text-gray-400">기회점수: <span className="text-white">{d.opportunity}</span></p>
+                      <p className="text-gray-400">검색량: <span className="text-white">{fmtNum(d.volume)}</span></p>
+                    </div>
+                  );
+                }}
+              />
+              <ReferenceLine x={50} stroke="#4b5563" strokeDasharray="3 3" />
+              <ReferenceLine y={50} stroke="#4b5563" strokeDasharray="3 3" />
+              <Scatter
+                data={keywordResults.map(r => ({ name: r.keyword, competition: r.competition, opportunity: r.opportunityScore, volume: r.searchVolume }))}
+                fill="#3b82f6"
+              />
+            </ScatterChart>
+          </ResponsiveContainer>
+          <p className="text-[11px] text-green-400 text-right mt-1 mr-4 opacity-70">우상단 = 블루오션</p>
+        </div>
+      )}
+
       {/* ═══ 결과 탭 ═══ */}
       <div className="bg-gray-800 rounded-xl border border-gray-700 shadow-xl overflow-hidden">
         <div className="flex border-b border-gray-700">
@@ -511,6 +555,53 @@ const KeywordLab: React.FC = () => {
                     </div>
                   );
                 })}
+
+                {/* ── 참여율 비교 막대 차트 ── */}
+                {topVideos.length > 0 && (
+                  <div className="bg-gray-800 rounded-xl p-5 border border-gray-700 mt-6">
+                    <p className="text-sm font-bold text-gray-300 mb-3">상위 영상 참여율 비교</p>
+                    <ResponsiveContainer width="100%" height={280}>
+                      <BarChart data={topVideos.slice(0, 10).map(v => ({ name: v.title.substring(0, 12) + '...', engagement: v.engagement, viewToSub: v.viewToSubRatio, channel: v.channelTitle }))} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+                        <CartesianGrid {...GRID_STYLE} />
+                        <XAxis dataKey="name" tick={AXIS_STYLE} interval={0} angle={-20} textAnchor="end" height={50} />
+                        <YAxis tick={AXIS_STYLE} />
+                        <Tooltip contentStyle={CHART_TOOLTIP} labelStyle={{ color: '#e5e7eb' }} itemStyle={{ color: '#d1d5db' }} />
+                        <Legend wrapperStyle={{ color: '#9ca3af' }} />
+                        <Bar dataKey="engagement" fill="#10b981" name="참여율(%)" />
+                        <Bar dataKey="viewToSub" fill="#f59e0b" name="조회/구독(%)" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+
+                {/* ── SEO 점수 분포 (스택 바) ── */}
+                {topVideos.length > 0 && (
+                  <div className="bg-gray-800 rounded-xl p-5 border border-gray-700 mt-4">
+                    <p className="text-sm font-bold text-gray-300 mb-3">SEO 점수 분포</p>
+                    <ResponsiveContainer width="100%" height={250}>
+                      <BarChart data={topVideos.slice(0, 10).map(v => {
+                        const kw = keyword.toLowerCase();
+                        return {
+                          name: v.title.substring(0, 12) + '...',
+                          title: v.title.toLowerCase().includes(kw) ? 1 : 0,
+                          tags: v.tags.some(t => t.toLowerCase().includes(kw)) ? 1 : 0,
+                          desc: v.description.toLowerCase().includes(kw) ? 1 : 0,
+                          descLen: (v.description?.length || 0) >= 100 ? 1 : 0,
+                        };
+                      })} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+                        <CartesianGrid {...GRID_STYLE} />
+                        <XAxis dataKey="name" tick={AXIS_STYLE} interval={0} angle={-20} textAnchor="end" height={50} />
+                        <YAxis tick={AXIS_STYLE} domain={[0, 4]} ticks={[0, 1, 2, 3, 4]} />
+                        <Tooltip contentStyle={CHART_TOOLTIP} labelStyle={{ color: '#e5e7eb' }} itemStyle={{ color: '#d1d5db' }} />
+                        <Legend wrapperStyle={{ color: '#9ca3af' }} />
+                        <Bar dataKey="title" stackId="seo" fill="#22c55e" name="제목 키워드" />
+                        <Bar dataKey="tags" stackId="seo" fill="#3b82f6" name="태그 키워드" />
+                        <Bar dataKey="desc" stackId="seo" fill="#a855f7" name="설명 키워드" />
+                        <Bar dataKey="descLen" stackId="seo" fill="#f59e0b" name="설명 100자+" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
               </div>
             )
           )}
@@ -563,6 +654,25 @@ const KeywordLab: React.FC = () => {
                     <button onClick={clearKeywordHistory} className="px-3 py-1.5 bg-red-900/30 hover:bg-red-900/50 text-sm font-semibold text-red-400 rounded-md border border-red-700/30 transition-colors">초기화</button>
                   </div>
                 </div>
+                {/* ── 분석 키워드 트렌드 (라인 차트) ── */}
+                {keywordResults.length >= 2 && (
+                  <div className="bg-gray-800 rounded-xl p-5 border border-gray-700 mb-4">
+                    <p className="text-sm font-bold text-gray-300 mb-3">분석 키워드 트렌드</p>
+                    <ResponsiveContainer width="100%" height={250}>
+                      <LineChart data={keywordResults.map(r => ({ name: r.keyword, volume: r.searchVolume, competition: r.competition, opportunity: r.opportunityScore }))} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+                        <CartesianGrid {...GRID_STYLE} />
+                        <XAxis dataKey="name" tick={AXIS_STYLE} />
+                        <YAxis tick={AXIS_STYLE} domain={[0, 100]} />
+                        <Tooltip contentStyle={CHART_TOOLTIP} labelStyle={{ color: '#e5e7eb' }} itemStyle={{ color: '#d1d5db' }} />
+                        <Legend wrapperStyle={{ color: '#9ca3af' }} />
+                        <Line type="monotone" dataKey="volume" stroke="#3b82f6" name="검색량" strokeWidth={2} dot={{ r: 4 }} />
+                        <Line type="monotone" dataKey="competition" stroke="#ef4444" name="경쟁도" strokeWidth={2} dot={{ r: 4 }} />
+                        <Line type="monotone" dataKey="opportunity" stroke="#10b981" name="기회점수" strokeWidth={2} dot={{ r: 4 }} />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+
                 {/* 히스토리 바 차트 */}
                 <div className="space-y-2">
                   {[...keywordResults].reverse().map((r, i) => (
