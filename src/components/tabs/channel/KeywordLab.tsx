@@ -174,8 +174,8 @@ const Empty: React.FC<{ msg: string }> = ({ msg }) => (
 const KeywordLab: React.FC = () => {
   const {
     keyword, language, keywordResults, relatedKeywords, topVideos, tags,
-    isAnalyzing, apiUsagePercent,
-    setKeyword, setLanguage, setIsAnalyzing, setApiUsagePercent, analyze, clearKeywordHistory,
+    isAnalyzing,
+    setKeyword, setLanguage, setIsAnalyzing, analyze, clearKeywordHistory, syncQuota,
   } = useChannelAnalysisStore();
 
   const { requireAuth } = useAuthGuard();
@@ -229,14 +229,14 @@ const KeywordLab: React.FC = () => {
     try {
       // 1. 키워드 분석
       const keywordResult = await searchKeyword(kw, language, 'KR');
-      setApiUsagePercent(Math.min(100, apiUsagePercent + 5));
+      syncQuota();
 
       // 2. 연관 키워드 (쿼터 소모 없음)
       const related = await getRelatedKeywords(kw, language);
 
       // 3. 상위 영상
       const videos = await getTopVideos(kw, 10);
-      setApiUsagePercent(Math.min(100, apiUsagePercent + 15));
+      syncQuota();
 
       // 4. 태그 수집 — 상위 3개 영상 병렬 처리
       const tagArrays = await Promise.all(
@@ -250,7 +250,7 @@ const KeywordLab: React.FC = () => {
         .map(([tag, frequency]) => ({ tag, frequency }))
         .sort((a, b) => b.frequency - a.frequency);
 
-      setApiUsagePercent(Math.min(100, apiUsagePercent + 5));
+      syncQuota();
 
       // 5. 스토어에 결과 반영 (히스토리 누적)
       analyze({
@@ -265,7 +265,7 @@ const KeywordLab: React.FC = () => {
       setError(`키워드 분석 실패: ${msg}`);
       setIsAnalyzing(false);
     }
-  }, [keyword, language, isAnalyzing, apiUsagePercent, setKeyword, setIsAnalyzing, setApiUsagePercent, analyze, requireAuth]);
+  }, [keyword, language, isAnalyzing, setKeyword, setIsAnalyzing, analyze, syncQuota, requireAuth]);
 
   // ── 태그 복사 ──
   const handleCopyTags = useCallback(async () => {

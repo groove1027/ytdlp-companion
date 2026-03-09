@@ -32,7 +32,7 @@ const ChannelAnalysisRoom: React.FC = () => {
     channelScripts, channelInfo, channelGuideline, savedPresets,
     inputSource, uploadedFiles, sourceName,
     setChannelInfo, setChannelScripts, setChannelGuideline, savePreset, loadPreset,
-    setInputSource, setUploadedFiles, setSourceName,
+    setInputSource, setUploadedFiles, setSourceName, syncQuota,
   } = useChannelAnalysisStore();
   const setActiveTab = useNavigationStore(s => s.setActiveTab);
   const swSetTopics = useScriptWriterStore(s => s.setTopics);
@@ -65,13 +65,16 @@ const ChannelAnalysisRoom: React.FC = () => {
       setProgress({ step: 1, message: '채널 정보 조회 중...' });
       const info = await getChannelInfo(channelUrl);
       setChannelInfo(info);
+      syncQuota();
       setProgress({ step: 2, message: `영상 ${videoCount}개 수집 중...` });
       const filtered = await getRecentVideosByFormat(info.channelId, contentFormat, videoCount);
+      syncQuota();
       if (!filtered.length) { setError('해당 형식에 맞는 영상이 없습니다.'); setProgress(null); return; }
       const scripts: ChannelScript[] = [];
       for (let i = 0; i < filtered.length; i++) {
         setProgress({ step: 3, message: `대본 수집 중 (${i + 1}/${filtered.length})...` });
         scripts.push({ ...filtered[i], transcript: await getVideoTranscript(filtered[i].videoId) });
+        syncQuota();
       }
       setChannelScripts(scripts);
       setProgress({ step: 4, message: 'AI 채널 스타일 DNA 다층 분석 중... (텍스트 + 시각 + 편집 + 오디오 + 댓글)' });

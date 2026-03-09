@@ -1,4 +1,4 @@
-import React, { Suspense, lazy, useEffect } from 'react';
+import React, { Suspense, lazy, useEffect, useState } from 'react';
 import { useChannelAnalysisStore } from '../../stores/channelAnalysisStore';
 import type { ChannelAnalysisSubTab } from '../../types';
 
@@ -25,10 +25,14 @@ const ChannelAnalysisTab: React.FC = () => {
   const subTab = useChannelAnalysisStore((s) => s.subTab);
   const setSubTab = useChannelAnalysisStore((s) => s.setSubTab);
   const apiUsagePercent = useChannelAnalysisStore((s) => s.apiUsagePercent);
+  const quotaUsed = useChannelAnalysisStore((s) => s.quotaUsed);
+  const quotaLimit = useChannelAnalysisStore((s) => s.quotaLimit);
+  const [showQuotaInfo, setShowQuotaInfo] = useState(false);
 
-  // IndexedDB에서 저장된 벤치마크 목록 로드
+  // IndexedDB에서 저장된 벤치마크 목록 로드 + 쿼터 동기화
   useEffect(() => {
     useChannelAnalysisStore.getState().loadAllBenchmarks();
+    useChannelAnalysisStore.getState().syncQuota();
   }, []);
 
   return (
@@ -47,13 +51,99 @@ const ChannelAnalysisTab: React.FC = () => {
               </p>
             </div>
           </div>
-          {/* API 사용량 (통합) */}
-          <div className="flex items-center gap-2 text-sm text-gray-500">
-            <span>API 사용량</span>
-            <div className="w-28 h-2 bg-gray-700 rounded-full overflow-hidden">
-              <div className="h-full bg-gradient-to-r from-blue-500 to-blue-600 rounded-full transition-all" style={{ width: `${apiUsagePercent}%` }} />
-            </div>
-            <span className="text-gray-400 font-mono">{apiUsagePercent}%</span>
+          {/* API 사용량 (실제 쿼터 기반) */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setShowQuotaInfo(!showQuotaInfo)}
+              className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-300 transition-colors"
+            >
+              <span>API 사용량</span>
+              <div className="w-28 h-2.5 bg-gray-700 rounded-full overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all ${
+                    apiUsagePercent >= 90 ? 'bg-gradient-to-r from-red-500 to-red-600'
+                    : apiUsagePercent >= 70 ? 'bg-gradient-to-r from-amber-500 to-orange-500'
+                    : 'bg-gradient-to-r from-blue-500 to-blue-600'
+                  }`}
+                  style={{ width: `${Math.min(100, apiUsagePercent)}%` }}
+                />
+              </div>
+              <span className={`font-mono text-xs ${
+                apiUsagePercent >= 90 ? 'text-red-400' : apiUsagePercent >= 70 ? 'text-amber-400' : 'text-gray-400'
+              }`}>
+                {quotaUsed.toLocaleString()} / {quotaLimit.toLocaleString()}
+              </span>
+              <svg className={`w-3.5 h-3.5 text-gray-500 transition-transform ${showQuotaInfo ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+
+            {/* 쿼터 상세 정보 패널 */}
+            {showQuotaInfo && (
+              <div className="absolute right-0 top-full mt-2 w-80 bg-gray-800 border border-gray-700 rounded-xl shadow-2xl z-50 p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-bold text-white">YouTube Data API v3 쿼터</h4>
+                  <button type="button" onClick={() => setShowQuotaInfo(false)} className="text-gray-500 hover:text-gray-300">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
+                </div>
+
+                {/* 사용량 바 */}
+                <div>
+                  <div className="flex justify-between text-xs mb-1">
+                    <span className="text-gray-400">오늘 사용량</span>
+                    <span className={`font-mono font-bold ${
+                      apiUsagePercent >= 90 ? 'text-red-400' : apiUsagePercent >= 70 ? 'text-amber-400' : 'text-blue-400'
+                    }`}>{quotaUsed.toLocaleString()} / {quotaLimit.toLocaleString()} units</span>
+                  </div>
+                  <div className="w-full h-3 bg-gray-700 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all ${
+                        apiUsagePercent >= 90 ? 'bg-gradient-to-r from-red-500 to-red-600'
+                        : apiUsagePercent >= 70 ? 'bg-gradient-to-r from-amber-500 to-orange-500'
+                        : 'bg-gradient-to-r from-blue-500 to-blue-600'
+                      }`}
+                      style={{ width: `${Math.min(100, apiUsagePercent)}%` }}
+                    />
+                  </div>
+                  <p className="text-[10px] text-gray-500 mt-1">잔여: {(quotaLimit - quotaUsed).toLocaleString()} units ({Math.max(0, 100 - apiUsagePercent)}%)</p>
+                </div>
+
+                {/* 작업별 비용 */}
+                <div className="bg-gray-900/50 rounded-lg p-3 border border-gray-700/50">
+                  <p className="text-[10px] font-bold text-gray-400 mb-2">작업별 쿼터 비용</p>
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[10px]">
+                    <span className="text-gray-500">키워드 검색</span><span className="text-gray-300 text-right font-mono">100 units</span>
+                    <span className="text-gray-500">영상 상세 조회</span><span className="text-gray-300 text-right font-mono">1 unit</span>
+                    <span className="text-gray-500">채널 정보 조회</span><span className="text-gray-300 text-right font-mono">1 unit</span>
+                    <span className="text-gray-500">댓글 조회</span><span className="text-gray-300 text-right font-mono">1 unit</span>
+                    <span className="text-gray-500">자막 조회</span><span className="text-gray-300 text-right font-mono">50 units</span>
+                  </div>
+                </div>
+
+                {/* 안내 문구 */}
+                <div className="bg-blue-900/20 border border-blue-500/20 rounded-lg p-3 space-y-1.5">
+                  <p className="text-[11px] text-blue-300 font-semibold">사용량 추적 방식 안내</p>
+                  <p className="text-[10px] text-blue-200/70 leading-relaxed">
+                    이 앱 내에서 호출한 YouTube API 사용량을 자동 누적 기록합니다.
+                    일일 한도 <strong>10,000 units</strong>이며, 매일 자정(UTC) 자동 리셋됩니다.
+                  </p>
+                  <p className="text-[10px] text-gray-500 leading-relaxed">
+                    참고: 동일 API 키를 다른 앱/서비스에서도 사용 중이라면, 실제 Google Cloud Console의
+                    할당량과 차이가 있을 수 있습니다. 정확한 할당량은
+                    Google Cloud Console &gt; API &amp; Services &gt; YouTube Data API v3에서 확인하세요.
+                  </p>
+                </div>
+
+                {apiUsagePercent >= 90 && (
+                  <div className="bg-red-900/20 border border-red-500/20 rounded-lg p-2.5">
+                    <p className="text-[11px] text-red-400 font-semibold">쿼터 한도 임박</p>
+                    <p className="text-[10px] text-red-300/70">일일 쿼터의 90% 이상을 사용했습니다. 추가 분석 시 한도 초과로 오류가 발생할 수 있습니다.</p>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
 

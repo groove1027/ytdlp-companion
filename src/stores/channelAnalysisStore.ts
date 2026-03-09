@@ -13,6 +13,7 @@ import {
 } from '../types';
 import { saveBenchmarkData, getAllSavedBenchmarks, deleteSavedBenchmark } from '../services/storageService';
 import type { SavedBenchmarkData } from '../services/storageService';
+import { getQuotaUsage } from '../services/youtubeAnalysisService';
 
 interface ChannelAnalysisStore {
   // State
@@ -26,6 +27,10 @@ interface ChannelAnalysisStore {
   tags: KeywordTag[];
   isAnalyzing: boolean;
   apiUsagePercent: number;
+  /** 실제 YouTube API 쿼터 (localStorage 기반 누적) */
+  quotaUsed: number;
+  quotaLimit: number;
+  quotaDate: string;
   channelInfo: ChannelInfo | null;
   channelScripts: ChannelScript[];
   channelGuideline: ChannelGuideline | null;
@@ -51,6 +56,8 @@ interface ChannelAnalysisStore {
   }) => void;
   setIsAnalyzing: (v: boolean) => void;
   setApiUsagePercent: (percent: number) => void;
+  /** localStorage의 실제 쿼터 데이터를 스토어에 동기화 */
+  syncQuota: () => void;
   setChannelInfo: (info: ChannelInfo | null) => void;
   setChannelGuideline: (guideline: ChannelGuideline | null) => void;
   setChannelScripts: (scripts: ChannelScript[]) => void;
@@ -85,6 +92,8 @@ const loadPresetsFromStorage = (): ChannelGuideline[] => {
   catch { return []; }
 };
 
+const initQuota = getQuotaUsage();
+
 const INITIAL_STATE = {
   subTab: 'channel-room' as ChannelAnalysisSubTab,
   keyword: '',
@@ -95,7 +104,10 @@ const INITIAL_STATE = {
   topVideos: [] as TopVideo[],
   tags: [] as KeywordTag[],
   isAnalyzing: false,
-  apiUsagePercent: 0,
+  apiUsagePercent: Math.round((initQuota.used / initQuota.limit) * 100),
+  quotaUsed: initQuota.used,
+  quotaLimit: initQuota.limit,
+  quotaDate: initQuota.date,
   channelInfo: null,
   channelScripts: [] as ChannelScript[],
   channelGuideline: null,
@@ -125,6 +137,15 @@ export const useChannelAnalysisStore = create<ChannelAnalysisStore>((set) => ({
 
   setIsAnalyzing: (v) => set({ isAnalyzing: v }),
   setApiUsagePercent: (percent) => set({ apiUsagePercent: percent }),
+  syncQuota: () => {
+    const q = getQuotaUsage();
+    set({
+      quotaUsed: q.used,
+      quotaLimit: q.limit,
+      quotaDate: q.date,
+      apiUsagePercent: Math.round((q.used / q.limit) * 100),
+    });
+  },
   setChannelInfo: (info) => set({ channelInfo: info }),
   setChannelGuideline: (guideline) => {
     set({ channelGuideline: guideline });
