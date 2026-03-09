@@ -12,6 +12,7 @@ import { getYoutubeApiKey } from '../../../services/apiService';
 import { evolinkChat } from '../../../services/evolinkService';
 import { buildInstinctTaxonomy } from '../../../data/instinctPromptUtils';
 import ChannelInputPanel from './ChannelInputPanel';
+import AnalysisLoadingPanel, { notifyAnalysisComplete } from './AnalysisLoadingPanel';
 import type { LegacyTopicRecommendation, ContentFormat, ChannelScript, ChannelInfo, TopicInstinctAnalysis } from '../../../types';
 
 const VIRAL_CFG = {
@@ -54,91 +55,172 @@ const ChannelAnalysisRoom: React.FC = () => {
   const progressElapsed = useElapsedTimer(!!progress);
   const [selectedTopic, setSelectedTopic] = useState<LegacyTopicRecommendation | null>(null);
 
-  // --- YouTube 영상 다운로드 ---
+  // --- YouTube 영상 다운로드 (Piped API → Cobalt API → cobalt.tools 폴백) ---
   const [downloadingVideos, setDownloadingVideos] = useState<Set<string>>(new Set());
+  const [downloadProgress, setDownloadProgress] = useState<Record<string, number>>({}); // videoId → 0~100
   const [showBulkModal, setShowBulkModal] = useState(false);
-  const [bulkDownloadProgress, setBulkDownloadProgress] = useState<{ current: number; total: number } | null>(null);
-  const cobaltApiOk = useRef<boolean | null>(null); // null=미확인, true=사용가능, false=불가
+  const [bulkDownloadProgress, setBulkDownloadProgress] = useState<{ current: number; total: number; failed: number } | null>(null);
 
-  // cobalt API로 영상 다운로드 시도 → 실패 시 cobalt.tools 새 탭 + 클립보드 복사
-  const downloadVideo = useCallback(async (videoId: string, title: string) => {
-    const ytUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  // Piped 공개 인스턴스 (다중 폴백)
+  const PIPED_APIS = useRef([
+    'https://pipedapi.kavin.rocks',
+    'https://pipedapi.adminforge.de',
+    'https://pipedapi.leptons.xyz',
+    'https://api.piped.yt',
+    'https://piped-api.privacy.com.de',
+  ]);
+  // 작동 확인된 인스턴스를 앞으로 끌어올림
+  const promoteInstance = useCallback((url: string) => {
+    const apis = PIPED_APIS.current;
+    const idx = apis.indexOf(url);
+    if (idx > 0) { apis.splice(idx, 1); apis.unshift(url); }
+  }, []);
 
-    setDownloadingVideos(prev => { const next = new Set(prev); next.add(videoId); return next; });
+  // Piped API로 스트림 URL 획득
+  const fetchPipedStreams = useCallback(async (videoId: string): Promise<{ url: string; filename: string; quality: string } | null> => {
+    for (const api of PIPED_APIS.current) {
+      try {
+        const res = await fetch(`${api}/streams/${videoId}`, { signal: AbortSignal.timeout(8000) });
+        if (!res.ok) continue;
+        const data = await res.json();
+        // muxed MP4 스트림 (영상+음성) — 해상도 내림차순 정렬
+        const muxed = (data.videoStreams || [])
+          .filter((s: { videoOnly: boolean; mimeType: string }) => !s.videoOnly && s.mimeType?.includes('video/mp4'))
+          .sort((a: { height: number }, b: { height: number }) => (b.height || 0) - (a.height || 0));
+        if (muxed.length > 0) {
+          promoteInstance(api);
+          const best = muxed[0];
+          const safeTitle = (data.title || videoId).replace(/[<>:"/\\|?*]/g, '').substring(0, 80);
+          return { url: best.url, filename: `${safeTitle} (${best.quality || '720p'}).mp4`, quality: best.quality || '720p' };
+        }
+      } catch { continue; }
+    }
+    return null;
+  }, [promoteInstance]);
 
+  // fetch + Blob으로 실제 파일 다운로드 (진행률 표시)
+  const downloadBlob = useCallback(async (streamUrl: string, filename: string, videoId: string): Promise<boolean> => {
     try {
-      // cobalt API 시도 (이전에 실패했으면 건너뜀)
-      if (cobaltApiOk.current !== false) {
-        try {
-          const res = await fetch('https://api.cobalt.tools/', {
-            method: 'POST',
-            headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url: ytUrl, videoQuality: '720', youtubeVideoCodec: 'h264' }),
-          });
-          if (res.ok) {
-            const data = await res.json();
-            if (data.status === 'tunnel' || data.status === 'redirect') {
-              cobaltApiOk.current = true;
-              // 직접 다운로드 트리거
-              const a = document.createElement('a');
-              a.href = data.url;
-              a.download = data.filename || `${title}.mp4`;
-              a.target = '_blank';
-              a.rel = 'noopener noreferrer';
-              document.body.appendChild(a);
-              a.click();
-              document.body.removeChild(a);
-              showToast(`"${title}" 다운로드를 시작합니다.`);
-              return true;
-            }
-          }
-          cobaltApiOk.current = false;
-        } catch {
-          cobaltApiOk.current = false;
+      const res = await fetch(streamUrl);
+      if (!res.ok) return false;
+      const contentLength = parseInt(res.headers.get('content-length') || '0', 10);
+      const reader = res.body?.getReader();
+      if (!reader) return false;
+
+      const chunks: ArrayBuffer[] = [];
+      let received = 0;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength));
+        received += value.length;
+        if (contentLength > 0) {
+          setDownloadProgress(prev => ({ ...prev, [videoId]: Math.round((received / contentLength) * 100) }));
         }
       }
 
-      // 폴백: cobalt.tools 새 탭 + URL 클립보드 복사
-      try { await navigator.clipboard.writeText(ytUrl); } catch { /* 무시 */ }
-      window.open('https://cobalt.tools/', '_blank');
-      showToast('URL이 클립보드에 복사되었습니다. cobalt.tools에서 붙여넣기(Ctrl+V) 후 다운로드하세요.');
+      const blob = new Blob(chunks, { type: 'video/mp4' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 200);
+      return true;
+    } catch {
       return false;
-    } finally {
-      setDownloadingVideos(prev => { const next = new Set(prev); next.delete(videoId); return next; });
     }
   }, []);
 
-  // 일괄 다운로드: cobalt API 가능 시 순차 다운로드, 불가 시 URL 목록 모달
+  // Cobalt API 폴백 (tunnel 모드)
+  const COBALT_APIS = useRef([
+    'https://api.cobalt.tools',
+    'https://cobalt-api.meowing.de',
+  ]);
+  const downloadViaCobalt = useCallback(async (videoId: string, title: string): Promise<boolean> => {
+    const ytUrl = `https://www.youtube.com/watch?v=${videoId}`;
+    for (const api of COBALT_APIS.current) {
+      try {
+        const res = await fetch(`${api}/`, {
+          method: 'POST',
+          headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: ytUrl, videoQuality: '720', youtubeVideoCodec: 'h264' }),
+          signal: AbortSignal.timeout(10000),
+        });
+        if (!res.ok) continue;
+        const data = await res.json();
+        if (data.status === 'tunnel' && data.url) {
+          return await downloadBlob(data.url, data.filename || `${title}.mp4`, videoId);
+        }
+        if (data.status === 'redirect' && data.url) {
+          // redirect URL은 googlevideo.com → CORS 차단이지만 window.open으로 시도
+          window.open(data.url, '_blank');
+          return true;
+        }
+      } catch { continue; }
+    }
+    return false;
+  }, [downloadBlob]);
+
+  // 통합 다운로드: Piped → Cobalt → 최종 폴백
+  const downloadVideo = useCallback(async (videoId: string, title: string): Promise<boolean> => {
+    setDownloadingVideos(prev => { const next = new Set(prev); next.add(videoId); return next; });
+    setDownloadProgress(prev => ({ ...prev, [videoId]: 0 }));
+
+    try {
+      // 1차: Piped API (fetch + blob 다운로드)
+      const piped = await fetchPipedStreams(videoId);
+      if (piped) {
+        const ok = await downloadBlob(piped.url, piped.filename, videoId);
+        if (ok) {
+          showToast(`"${title}" (${piped.quality}) 다운로드 완료`);
+          return true;
+        }
+      }
+
+      // 2차: Cobalt API
+      const cobaltOk = await downloadViaCobalt(videoId, title);
+      if (cobaltOk) {
+        showToast(`"${title}" 다운로드 완료 (Cobalt)`);
+        return true;
+      }
+
+      // 3차: 최종 폴백 — cobalt.tools로 이동
+      const ytUrl = `https://www.youtube.com/watch?v=${videoId}`;
+      try { await navigator.clipboard.writeText(ytUrl); } catch { /* 무시 */ }
+      window.open('https://cobalt.tools/', '_blank');
+      showToast(`자동 다운로드 실패 — cobalt.tools에서 URL 붙여넣기로 다운로드하세요.`);
+      return false;
+    } finally {
+      setDownloadingVideos(prev => { const next = new Set(prev); next.delete(videoId); return next; });
+      setDownloadProgress(prev => { const copy = { ...prev }; delete copy[videoId]; return copy; });
+    }
+  }, [fetchPipedStreams, downloadBlob, downloadViaCobalt]);
+
+  // 일괄 다운로드
   const handleBulkVideoDownload = useCallback(async () => {
     const ytScripts = channelScripts.filter(s => s.videoId);
     if (!ytScripts.length) return;
 
-    // cobalt API 사용 가능 여부 빠르게 확인
-    if (cobaltApiOk.current === null) {
-      try {
-        const testRes = await fetch('https://api.cobalt.tools/', {
-          method: 'POST',
-          headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: `https://www.youtube.com/watch?v=${ytScripts[0].videoId}`, videoQuality: '360', youtubeVideoCodec: 'h264' }),
-        });
-        cobaltApiOk.current = testRes.ok && ['tunnel', 'redirect'].includes((await testRes.json()).status);
-      } catch { cobaltApiOk.current = false; }
+    setBulkDownloadProgress({ current: 0, total: ytScripts.length, failed: 0 });
+    let failed = 0;
+
+    for (let i = 0; i < ytScripts.length; i++) {
+      setBulkDownloadProgress({ current: i + 1, total: ytScripts.length, failed });
+      const ok = await downloadVideo(ytScripts[i].videoId, ytScripts[i].title);
+      if (!ok) failed++;
+      // 레이트 리밋 방지: 2초 대기
+      if (i < ytScripts.length - 1) await new Promise(r => setTimeout(r, 2000));
     }
 
-    if (cobaltApiOk.current) {
-      // API 사용 가능 → 순차 자동 다운로드
-      setBulkDownloadProgress({ current: 0, total: ytScripts.length });
-      for (let i = 0; i < ytScripts.length; i++) {
-        setBulkDownloadProgress({ current: i + 1, total: ytScripts.length });
-        await downloadVideo(ytScripts[i].videoId, ytScripts[i].title);
-        // 레이트 리밋 방지: 3초 대기
-        if (i < ytScripts.length - 1) await new Promise(r => setTimeout(r, 3000));
-      }
-      setBulkDownloadProgress(null);
-      showToast(`${ytScripts.length}개 영상 다운로드를 완료했습니다.`);
+    setBulkDownloadProgress(null);
+    if (failed === 0) {
+      showToast(`${ytScripts.length}개 영상 다운로드를 모두 완료했습니다.`);
     } else {
-      // API 불가 → URL 목록 모달 표시
-      setShowBulkModal(true);
+      showToast(`${ytScripts.length}개 중 ${ytScripts.length - failed}개 완료, ${failed}개 실패`);
     }
   }, [channelScripts, downloadVideo]);
 
@@ -404,13 +486,23 @@ const ChannelAnalysisRoom: React.FC = () => {
           error={error}
         />
 
-        {/* 진행 상태 */}
+        {/* 진행 상태 — 프리미엄 로딩 패널 */}
         {progress && (
-          <div className="mt-4 flex items-center gap-3 bg-gray-900/50 rounded-lg px-4 py-3 border border-gray-700/50">
-            <Spin /><span className="text-sm text-gray-300">{progress.message}</span>{progressElapsed > 0 && <span className="text-xs text-gray-400 tabular-nums">{formatElapsed(progressElapsed)}</span>}
-            <div className="flex-1 bg-gray-700 rounded-full h-1.5 ml-2">
-              <div className="bg-gradient-to-r from-orange-500 to-red-500 h-1.5 rounded-full transition-all" style={{ width: `${progress.step * 25}%` }} />
-            </div>
+          <div className="mt-4">
+            <AnalysisLoadingPanel
+              currentStep={progress.step - 1}
+              steps={[
+                { label: '채널 조회', icon: '🔍' },
+                { label: '영상 수집', icon: '📥' },
+                { label: '대본 수집', icon: '📝' },
+                { label: 'AI 분석', icon: '🧠' },
+              ]}
+              message={progress.message}
+              elapsedSec={progressElapsed}
+              estimatedTotalSec={150}
+              accent="orange"
+              description="채널의 콘텐츠 DNA를 5축(텍스트·시각·편집·오디오·댓글)으로 역설계합니다"
+            />
           </div>
         )}
 
@@ -551,13 +643,19 @@ const ChannelAnalysisRoom: React.FC = () => {
                         <button
                           onClick={() => downloadVideo(s.videoId, s.title)}
                           disabled={downloadingVideos.has(s.videoId)}
-                          className="p-1 text-gray-600 hover:text-red-400 transition-colors disabled:opacity-50"
-                          title="영상 다운로드"
+                          className="p-1 text-gray-600 hover:text-red-400 transition-colors disabled:opacity-50 relative"
+                          title="영상 다운로드 (MP4)"
                         >
-                          {downloadingVideos.has(s.videoId)
-                            ? <div className="w-3.5 h-3.5 border-2 border-red-400/30 border-t-red-400 rounded-full animate-spin" />
-                            : <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
-                          }
+                          {downloadingVideos.has(s.videoId) ? (
+                            <div className="flex items-center gap-0.5">
+                              <div className="w-3.5 h-3.5 border-2 border-red-400/30 border-t-red-400 rounded-full animate-spin" />
+                              {(downloadProgress[s.videoId] ?? 0) > 0 && (
+                                <span className="text-[10px] text-red-400 tabular-nums">{downloadProgress[s.videoId]}%</span>
+                              )}
+                            </div>
+                          ) : (
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                          )}
                         </button>
                         {/* JSON 데이터 다운로드 */}
                         <button
@@ -970,82 +1068,95 @@ const ChannelAnalysisRoom: React.FC = () => {
 
       {/* 영상 일괄 다운로드 모달 */}
       {showBulkModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowBulkModal(false)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => { if (!bulkDownloadProgress) setShowBulkModal(false); }}>
           <div className="bg-gray-800 rounded-2xl border border-gray-700 w-full max-w-lg p-6 shadow-2xl" onClick={e => e.stopPropagation()}>
             <div className="flex items-start justify-between mb-4">
               <div>
-                <h3 className="text-lg font-bold text-white">영상 다운로드</h3>
-                <p className="text-sm text-gray-400 mt-1">{channelScripts.filter(s => s.videoId).length}개 영상 URL</p>
+                <h3 className="text-lg font-bold text-white">영상 일괄 다운로드</h3>
+                <p className="text-sm text-gray-400 mt-1">
+                  {channelScripts.filter(s => s.videoId).length}개 영상 (MP4, 최대 720p)
+                </p>
               </div>
-              <button onClick={() => setShowBulkModal(false)} className="text-gray-500 hover:text-white">
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
-              </button>
+              {!bulkDownloadProgress && (
+                <button onClick={() => setShowBulkModal(false)} className="text-gray-500 hover:text-white">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+              )}
             </div>
 
-            {/* URL 목록 */}
+            {/* 진행 상태 바 */}
+            {bulkDownloadProgress && (
+              <div className="mb-4">
+                <div className="flex items-center justify-between text-sm mb-1.5">
+                  <span className="text-gray-300">다운로드 중...</span>
+                  <span className="text-red-400 font-mono">{bulkDownloadProgress.current}/{bulkDownloadProgress.total}</span>
+                </div>
+                <div className="w-full bg-gray-700 rounded-full h-2">
+                  <div
+                    className="bg-gradient-to-r from-red-500 to-red-400 h-2 rounded-full transition-all duration-300"
+                    style={{ width: `${(bulkDownloadProgress.current / bulkDownloadProgress.total) * 100}%` }}
+                  />
+                </div>
+                {bulkDownloadProgress.failed > 0 && (
+                  <p className="text-xs text-yellow-400 mt-1">{bulkDownloadProgress.failed}개 실패</p>
+                )}
+              </div>
+            )}
+
+            {/* 영상 목록 */}
             <div className="bg-gray-900/70 rounded-lg p-3 border border-gray-700/50 max-h-60 overflow-y-auto custom-scrollbar mb-4">
               {channelScripts.filter(s => s.videoId).map((s, i) => (
                 <div key={s.videoId} className="flex items-center gap-2 py-1.5 border-b border-gray-800/50 last:border-0">
                   <span className="text-xs text-gray-600 w-5 text-right flex-shrink-0">{i + 1}</span>
                   <span className="text-sm text-gray-300 truncate flex-1">{s.title}</span>
-                  <button
-                    onClick={() => downloadVideo(s.videoId, s.title)}
-                    disabled={downloadingVideos.has(s.videoId)}
-                    className="text-xs text-red-400 hover:text-red-300 flex-shrink-0 disabled:opacity-50"
-                  >
-                    {downloadingVideos.has(s.videoId)
-                      ? <div className="w-3 h-3 border-2 border-red-400/30 border-t-red-400 rounded-full animate-spin" />
-                      : '다운로드'
-                    }
-                  </button>
+                  {downloadingVideos.has(s.videoId) ? (
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      <div className="w-3 h-3 border-2 border-red-400/30 border-t-red-400 rounded-full animate-spin" />
+                      {(downloadProgress[s.videoId] ?? 0) > 0 && (
+                        <span className="text-[10px] text-red-400 tabular-nums">{downloadProgress[s.videoId]}%</span>
+                      )}
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => downloadVideo(s.videoId, s.title)}
+                      disabled={!!bulkDownloadProgress}
+                      className="text-xs text-red-400 hover:text-red-300 flex-shrink-0 disabled:opacity-30"
+                    >
+                      다운로드
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
 
-            {/* 안내 */}
-            <div className="bg-blue-900/20 rounded-lg p-3 border border-blue-800/30 mb-4">
-              <p className="text-sm text-blue-300 font-medium mb-1">사용 방법</p>
-              <ol className="text-sm text-gray-400 space-y-1 list-decimal list-inside">
-                <li>아래 "전체 URL 복사"를 클릭합니다</li>
-                <li>"cobalt.tools 열기"를 클릭합니다</li>
-                <li>cobalt.tools에서 URL을 붙여넣기(Ctrl+V)하면 다운로드됩니다</li>
-                <li>여러 영상은 URL을 하나씩 붙여넣어 다운로드하세요</li>
-              </ol>
-            </div>
-
             {/* 버튼 그룹 */}
             <div className="flex gap-3">
+              <button
+                onClick={() => { setShowBulkModal(false); handleBulkVideoDownload(); setShowBulkModal(true); }}
+                disabled={!!bulkDownloadProgress}
+                className="flex-1 py-3 bg-gradient-to-r from-red-600 to-red-500 hover:from-red-500 hover:to-red-400 text-white font-bold rounded-xl transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                전체 자동 다운로드
+              </button>
               <button
                 onClick={async () => {
                   const urls = channelScripts
                     .filter(s => s.videoId)
                     .map(s => `https://www.youtube.com/watch?v=${s.videoId}`)
                     .join('\n');
-                  try {
-                    await navigator.clipboard.writeText(urls);
-                    showToast(`${channelScripts.filter(s => s.videoId).length}개 URL이 복사되었습니다.`);
-                  } catch {
-                    // 폴백: textarea 사용
+                  try { await navigator.clipboard.writeText(urls); }
+                  catch {
                     const ta = document.createElement('textarea');
-                    ta.value = urls;
-                    document.body.appendChild(ta);
-                    ta.select();
-                    document.execCommand('copy');
-                    document.body.removeChild(ta);
-                    showToast('URL이 복사되었습니다.');
+                    ta.value = urls; document.body.appendChild(ta); ta.select();
+                    document.execCommand('copy'); document.body.removeChild(ta);
                   }
+                  showToast(`${channelScripts.filter(s => s.videoId).length}개 URL 복사됨`);
                 }}
-                className="flex-1 py-3 bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 text-white font-bold rounded-xl transition-all flex items-center justify-center gap-2"
+                className="px-5 py-3 bg-gray-700 hover:bg-gray-600 text-gray-300 font-semibold rounded-xl border border-gray-600 transition-all flex items-center gap-2"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
-                전체 URL 복사
-              </button>
-              <button
-                onClick={() => window.open('https://cobalt.tools/', '_blank')}
-                className="px-6 py-3 bg-red-600/20 hover:bg-red-600/30 text-red-400 font-semibold rounded-xl border border-red-500/30 transition-all flex items-center gap-2"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
-                cobalt.tools 열기
+                URL 복사
               </button>
             </div>
           </div>
