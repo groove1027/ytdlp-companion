@@ -7,7 +7,7 @@ import { useScriptWriterStore } from '../../../stores/scriptWriterStore';
 import { showToast } from '../../../stores/uiStore';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
-import { getChannelInfo, getRecentVideosByFormat, getVideoTranscript, analyzeChannelStyle, analyzeChannelStyleDNA } from '../../../services/youtubeAnalysisService';
+import { getChannelInfo, getRecentVideosByFormat, getVideoTranscript, analyzeChannelStyle, analyzeChannelStyleDNA, getRelatedKeywords, getTopVideos } from '../../../services/youtubeAnalysisService';
 import { getYoutubeApiKey } from '../../../services/apiService';
 import { evolinkChat } from '../../../services/evolinkService';
 import { buildInstinctTaxonomy } from '../../../data/instinctPromptUtils';
@@ -169,11 +169,42 @@ const ChannelAnalysisRoom: React.FC = () => {
       : '';
 
     try {
+      // Step 1: 실제 YouTube 트렌드 데이터 수집
+      const seedKeyword = topicInput.trim() || (channelGuideline?.topics?.[0]) || '';
+      let trendDataSection = '';
+
+      if (seedKeyword) {
+        // Google Suggest API로 실제 연관 검색어 수집 (쿼터 무료)
+        const [relatedKws, topVideos] = await Promise.all([
+          getRelatedKeywords(seedKeyword, 'ko').catch(() => []),
+          getYoutubeApiKey()
+            ? getTopVideos(seedKeyword, 10).catch(() => [])
+            : Promise.resolve([]),
+        ]);
+        syncQuota();
+
+        const suggestList = relatedKws.slice(0, 15).map(k => k.keyword).join(', ');
+        const topVideoList = topVideos.slice(0, 10).map((v, i) =>
+          `${i + 1}. "${v.title}" (${v.channelTitle}, 조회수 ${v.viewCount.toLocaleString()}, 참여율 ${v.engagement}%)`
+        ).join('\n');
+
+        trendDataSection = `\n\n[실제 YouTube 트렌드 데이터 — "${seedKeyword}" 기준]\n` +
+          (suggestList ? `연관 검색어 (Google Suggest 실시간): ${suggestList}\n` : '') +
+          (topVideoList ? `\n현재 상위 인기 영상:\n${topVideoList}\n` : '') +
+          `\n⚠️ 위 데이터는 실시간 YouTube 검색 결과입니다. 반드시 이 트렌드 데이터를 기반으로 주제를 추천하세요. 허구나 상상으로 주제를 만들지 마세요.`;
+      }
+
       const instinctTaxonomy = buildInstinctTaxonomy();
       const res = await evolinkChat(
         [
-          { role: 'system', content: '당신은 유튜브 콘텐츠 전략가입니다. 채널 스타일과 주제를 분석하여 바이럴 가능성이 높은 영상 주제 10개를 추천합니다. 각 주제에 대해 어떤 심리적 본능 기제를 자극하는지도 분석하세요. 반드시 JSON 배열로만 응답하세요. 마크다운 코드 블록 없이 순수 JSON만 출력합니다.' },
-          { role: 'user', content: `${styleInfo}\n\n[본능 기제 분류 체계]\n${instinctTaxonomy}\n\n사용자 입력 주제: ${topicInput || '(자유 추천)'}\n\n위 채널 스타일에 맞는 새로운 영상 주제 10개를 추천하세요.\n\nJSON 배열:\n[\n  {\n    "id": 1,\n    "title": "영상 제목",\n    "mainSubject": "핵심 소재 한 줄",\n    "similarity": "채널 스타일과의 유사점",\n    "scriptFlow": "대본 흐름 (예: 후킹 > 사례 > 분석 > CTA)",\n    "viralScore": "high 또는 medium 또는 low",\n    "instinctAnalysis": {\n      "primaryInstincts": ["자극하는 핵심 본능 2~3개"],\n      "comboFormula": "본능 조합 공식 (예: 공포+비교+긴급)",\n      "hookSuggestion": "AI가 생성한 훅 문장"\n    }\n  }\n]\n\nhigh 3개, medium 4개, low 3개 비율로 추천하세요.` }
+          { role: 'system', content: `당신은 유튜브 콘텐츠 전략가입니다. 실제 YouTube 트렌드와 검색 데이터를 기반으로 바이럴 가능성이 높은 영상 주제 10개를 추천합니다.
+
+절대 규칙:
+1. 추천 주제는 반드시 실제 트렌드, 실제 이슈, 실제 데이터에 근거해야 합니다.
+2. 상상이나 허구로 주제를 만들지 마세요. 현실에 존재하는 소재만 추천하세요.
+3. 각 주제의 "mainSubject"에는 왜 지금 이 주제가 뜨는지 실제 근거를 포함하세요.
+4. 반드시 JSON 배열로만 응답하세요. 마크다운 코드 블록 없이 순수 JSON만 출력합니다.` },
+          { role: 'user', content: `${styleInfo}${trendDataSection}\n\n[본능 기제 분류 체계]\n${instinctTaxonomy}\n\n사용자 입력 주제: ${topicInput || '(자유 추천)'}\n\n위 실제 트렌드 데이터와 채널 스타일을 기반으로, 지금 만들면 조회수가 나올 영상 주제 10개를 추천하세요.\n\nJSON 배열:\n[\n  {\n    "id": 1,\n    "title": "영상 제목",\n    "mainSubject": "핵심 소재 + 왜 지금 이 주제인지 근거",\n    "similarity": "채널 스타일과의 유사점",\n    "scriptFlow": "대본 흐름 (예: 후킹 > 사례 > 분석 > CTA)",\n    "viralScore": "high 또는 medium 또는 low",\n    "instinctAnalysis": {\n      "primaryInstincts": ["자극하는 핵심 본능 2~3개"],\n      "comboFormula": "본능 조합 공식 (예: 공포+비교+긴급)",\n      "hookSuggestion": "AI가 생성한 훅 문장"\n    }\n  }\n]\n\nhigh 3개, medium 4개, low 3개 비율로 추천하세요.` }
         ],
         { temperature: 0.7, maxTokens: 6000 }
       );

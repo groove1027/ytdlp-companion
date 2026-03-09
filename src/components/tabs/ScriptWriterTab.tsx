@@ -380,7 +380,14 @@ ${instinctPrompt}
     const formatLabel = `${targetCharCount.toLocaleString()}자 분량 (${estimateTime(targetCharCount)})`;
 
     const systemPrompt = `당신은 전문 영상 대본 작가입니다. 사용자의 요청에 따라 완성도 높은 영상 대본을 생성합니다.
-반드시 JSON 형식으로만 응답하세요. 마크다운 코드 블록 없이 순수 JSON만 출력하세요.`;
+
+핵심 원칙:
+1. 대본에 포함되는 정보, 사례, 통계, 사건은 반드시 실제로 존재하는 것이어야 합니다.
+2. 허구의 연구, 가짜 통계, 존재하지 않는 사건을 지어내지 마세요.
+3. 확실하지 않은 정보는 "~로 알려져 있다", "~라는 주장이 있다"로 표현하세요.
+4. 구체적 수치나 출처를 언급할 때는 실제 데이터만 사용하세요.
+
+반드시 JSON 형식으로만 응답하세요. 마크다운 코드 블록 없이 순수 JSON만 출력합니다.`;
 
     const instinctSection = instinctIds.length > 0
       ? `\n\n[적용할 본능 기제]\n${buildSelectedInstinctPrompt(instinctIds)}\n\n위 본능 기제를 활용하여 도입부(훅)에서 시청자 심리를 강하게 자극하세요.`

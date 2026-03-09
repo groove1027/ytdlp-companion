@@ -222,7 +222,7 @@ const ChannelInputPanel: React.FC<ChannelInputPanelProps> = ({
               type="text"
               value={channelUrl}
               onChange={e => onChannelUrlChange(e.target.value)}
-              placeholder="YouTube 채널 URL (예: https://youtube.com/@채널명 또는 채널 ID)"
+              placeholder="YouTube URL (채널, 영상, 쇼츠 모두 가능 — 예: @채널명, 영상/쇼츠 링크)"
               className={`flex-1 ${inp} px-4 py-2.5 focus:ring-orange-500`}
             />
             <button
@@ -393,7 +393,7 @@ const ChannelInputPanel: React.FC<ChannelInputPanelProps> = ({
         <div className="mt-3 px-4 py-2.5 bg-red-900/30 border border-red-500/50 rounded-lg">
           <p className="text-sm text-red-400">{error}</p>
           {inputSource === 'youtube' && (
-            <p className="text-sm text-gray-500 mt-1">YouTube API 키와 채널 URL을 확인 후 다시 시도해주세요.</p>
+            <p className="text-sm text-gray-500 mt-1">YouTube API 키와 URL을 확인 후 다시 시도해주세요. (채널, 영상, 쇼츠 URL 모두 지원)</p>
           )}
         </div>
       )}

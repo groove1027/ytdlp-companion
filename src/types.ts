@@ -681,6 +681,8 @@ export interface ChannelInfo {
   subscriberCount: number;
   videoCount: number;
   viewCount: number;
+  /** 영상/쇼츠 URL에서 감지된 콘텐츠 포맷 (자동 설정용) */
+  detectedFormat?: ContentFormat;
 }
 
 export interface ChannelScript {

@@ -144,14 +144,18 @@ const formatSubscribers = (count: number): string => {
     return String(count);
 };
 
-/** 채널 URL에서 채널 식별자 추출 */
-const extractChannelIdentifier = (url: string): { type: 'id' | 'handle' | 'custom'; value: string } | null => {
+/** 채널 URL 또는 영상 URL에서 식별자 추출 */
+const extractChannelIdentifier = (url: string): { type: 'id' | 'handle' | 'custom' | 'video' | 'shorts'; value: string } | null => {
     // URL 디코딩 (한글 등 %XX 인코딩 처리)
     let decoded = url.trim();
     try { decoded = decodeURIComponent(decoded); } catch { /* 디코딩 실패 시 원본 사용 */ }
 
     // 프로토콜 없으면 자동 보정 (youtube.com/... → https://youtube.com/...)
     if (/^(m\.)?youtube\.com/i.test(decoded)) {
+        decoded = 'https://' + decoded;
+    }
+    // youtu.be 단축 URL 보정
+    if (/^youtu\.be\//i.test(decoded)) {
         decoded = 'https://' + decoded;
     }
 
@@ -162,6 +166,22 @@ const extractChannelIdentifier = (url: string): { type: 'id' | 'handle' | 'custo
     // UCxxxx 채널 ID만 단독 입력
     const bareId = decoded.match(/^(UC[\w-]{20,})$/);
     if (bareId) return { type: 'id', value: bareId[1] };
+
+    // /shorts/VIDEO_ID 형식 (쇼츠 영상)
+    const shortsMatch = decoded.match(/\/shorts\/([\w-]{11})/);
+    if (shortsMatch) return { type: 'shorts', value: shortsMatch[1] };
+
+    // /watch?v=VIDEO_ID 형식 (일반 영상)
+    const watchMatch = decoded.match(/[?&]v=([\w-]{11})/);
+    if (watchMatch) return { type: 'video', value: watchMatch[1] };
+
+    // youtu.be/VIDEO_ID 단축 URL
+    const shortUrlMatch = decoded.match(/youtu\.be\/([\w-]{11})/);
+    if (shortUrlMatch) return { type: 'video', value: shortUrlMatch[1] };
+
+    // /live/VIDEO_ID 형식 (라이브 URL)
+    const liveMatch = decoded.match(/\/live\/([\w-]{11})/);
+    if (liveMatch) return { type: 'video', value: liveMatch[1] };
 
     // /channel/UCxxxx 형식
     const channelMatch = decoded.match(/\/channel\/(UC[\w-]+)/);
@@ -548,12 +568,29 @@ export const getChannelInfo = async (channelUrl: string): Promise<ChannelInfo> =
 
     const identifier = extractChannelIdentifier(channelUrl);
     if (!identifier) {
-        throw new Error('유효하지 않은 YouTube 채널 URL입니다. (@handle, /channel/UCxxx 형식 지원)');
+        throw new Error('유효하지 않은 YouTube URL입니다. (채널, 영상, 쇼츠 URL 모두 지원)');
     }
 
     let channelId: string;
+    let detectedFormat: 'long' | 'shorts' | undefined;
 
-    if (identifier.type === 'id') {
+    if (identifier.type === 'video' || identifier.type === 'shorts') {
+        // 영상/쇼츠 URL → Videos API로 채널 ID 추출
+        trackQuota('videos.list');
+        const videoUrl = `${YOUTUBE_API_BASE}/videos?part=snippet&id=${identifier.value}&key=${apiKey}`;
+        const videoResponse = await monitoredFetch(videoUrl);
+        if (!videoResponse.ok) throw new Error('영상 정보를 조회할 수 없습니다.');
+        const videoData = await videoResponse.json();
+        const videoItem = videoData.items?.[0];
+        if (!videoItem) throw new Error('존재하지 않는 영상입니다.');
+        channelId = videoItem.snippet?.channelId;
+        if (!channelId) throw new Error('영상에서 채널 정보를 추출할 수 없습니다.');
+        // 쇼츠 URL이면 자동으로 shorts 포맷 감지
+        if (identifier.type === 'shorts') {
+            detectedFormat = 'shorts';
+        }
+        logger.info('[YouTube] 영상 URL에서 채널 ID 추출 완료', { videoId: identifier.value, channelId, detectedFormat });
+    } else if (identifier.type === 'id') {
         channelId = identifier.value;
     } else {
         // handle 또는 custom name → 검색으로 채널 ID 확인
@@ -609,10 +646,11 @@ export const getChannelInfo = async (channelUrl: string): Promise<ChannelInfo> =
         thumbnailUrl: channel.snippet?.thumbnails?.high?.url || channel.snippet?.thumbnails?.default?.url || '',
         subscriberCount: parseInt(channel.statistics?.subscriberCount || '0'),
         videoCount: parseInt(channel.statistics?.videoCount || '0'),
-        viewCount: parseInt(channel.statistics?.viewCount || '0')
+        viewCount: parseInt(channel.statistics?.viewCount || '0'),
+        ...(detectedFormat && { detectedFormat }),
     };
 
-    logger.success('[YouTube] 채널 정보 조회 완료', { title: result.title, subscribers: result.subscriberCount });
+    logger.success('[YouTube] 채널 정보 조회 완료', { title: result.title, subscribers: result.subscriberCount, detectedFormat });
     return result;
 };
 
