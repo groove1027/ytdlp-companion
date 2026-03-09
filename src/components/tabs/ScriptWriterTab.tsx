@@ -93,7 +93,8 @@ export default function ScriptWriterTab() {
   const [selectedStyleId, setSelectedStyleId] = useState<string | null>(null);
   const [styleError, setStyleError] = useState('');
   const [showChannelGuide, setShowChannelGuide] = useState(false);
-  const [showAiHelper, setShowAiHelper] = useState(false);
+  const [showAiHelper, setShowAiHelper] = useState(true);
+  const [showManualInput, setShowManualInput] = useState(false);
 
   // 채널분석 데이터 도착 시 채널 가이드 자동 펼침
   const channelGuideAutoRef = React.useRef(false);
@@ -570,49 +571,20 @@ ${instinctPrompt}
             </div>
           )}
 
-          {/* 필수 입력: 제목 + 줄거리 */}
-          <div className="space-y-3">
-            <div>
-              <label className="flex items-center gap-1.5 text-sm font-bold text-gray-300 mb-1.5">
-                📌 제목
-              </label>
-              <input
-                type="text"
-                value={title}
-                onChange={e => setTitle(e.target.value)}
-                placeholder="영상 제목을 입력하세요"
-                className="w-full bg-gray-800/50 border border-gray-600 rounded-lg px-4 py-2.5 text-white placeholder-gray-500
-                  focus:border-violet-500 focus:ring-1 focus:ring-violet-500 outline-none text-sm"
-              />
-            </div>
-            <div>
-              <label className="flex items-center gap-1.5 text-sm font-bold text-gray-300 mb-1.5">
-                📋 줄거리 · 핵심 내용
-              </label>
-              <textarea
-                value={synopsis}
-                onChange={e => setSynopsis(e.target.value)}
-                placeholder="어떤 내용의 영상인지 간단히 설명해주세요"
-                rows={3}
-                className="w-full bg-gray-800/50 border border-gray-600 rounded-lg px-4 py-2.5 text-white placeholder-gray-500
-                  focus:border-violet-500 focus:ring-1 focus:ring-violet-500 outline-none resize-none text-sm"
-              />
-            </div>
-          </div>
-
-          {/* AI 소재 추천 (접힘형) */}
-          <div className="mt-4">
+          {/* ═══ AI 소재 추천 (최상단, 기본 열림) ═══ */}
+          <div className="mb-4">
             <button
               type="button"
               onClick={() => setShowAiHelper(!showAiHelper)}
-              className={`flex items-center gap-2 w-full px-4 py-2.5 rounded-lg border text-sm font-semibold transition-all ${
+              className={`flex items-center gap-2 w-full px-4 py-3 rounded-xl border text-sm font-bold transition-all ${
                 showAiHelper
-                  ? 'bg-violet-600/15 border-violet-500/40 text-violet-300'
+                  ? 'bg-gradient-to-r from-violet-600/15 to-blue-600/15 border-violet-500/40 text-violet-300'
                   : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:border-violet-500/40 hover:text-violet-300'
               }`}
             >
-              <span>💡</span>
-              <span>주제가 없나요? AI 소재 추천</span>
+              <span className="text-base">💡</span>
+              <span>AI 소재 추천</span>
+              <span className="text-xs text-gray-500 font-normal ml-1">— 버튼 하나로 바이럴 소재 5개 받기</span>
               {instinctIds.length > 0 && (
                 <span className="text-xs px-1.5 py-0.5 bg-violet-900/50 text-violet-300 rounded-full">🧠 {instinctIds.length}개</span>
               )}
@@ -624,68 +596,21 @@ ${instinctPrompt}
 
             {showAiHelper && (
               <div className="mt-3 space-y-3 bg-gray-800/20 rounded-xl border border-gray-700/30 p-4">
-                {/* 본능 기제 / 벤치마크 토글 */}
-                <div className="flex gap-2 flex-wrap">
-                  <button
-                    type="button"
-                    onClick={() => toggleTool('instinct')}
-                    className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-semibold transition-all ${
-                      openTool === 'instinct' ? 'bg-violet-600/20 border-violet-500/50 text-violet-300'
-                        : instinctIds.length > 0 ? 'bg-violet-900/10 border-violet-700/40 text-violet-400 hover:border-violet-500/50'
-                        : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:border-gray-500'
-                    }`}
-                  >
-                    <span>🧠</span><span>본능 기제</span>
-                    {instinctIds.length > 0 && <span className="text-xs px-1.5 py-0.5 bg-violet-900/50 text-violet-300 rounded-full">{instinctIds.length}개</span>}
-                    <span className="text-gray-600 text-xs">{openTool === 'instinct' ? '▲' : '▼'}</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => toggleTool('benchmark')}
-                    className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-semibold transition-all ${
-                      openTool === 'benchmark' ? 'bg-green-600/20 border-green-500/50 text-green-300'
-                        : (benchmarkScript || channelGuideline) ? 'bg-green-900/10 border-green-700/40 text-green-400 hover:border-green-500/50'
-                        : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:border-gray-500'
-                    }`}
-                  >
-                    <span>📊</span><span>벤치마크</span>
-                    {benchmarkScript && <span className="text-xs px-1.5 py-0.5 bg-green-900/50 text-green-300 rounded-full">참고 대본</span>}
-                    {channelGuideline && <span className="text-xs px-1.5 py-0.5 bg-orange-900/50 text-orange-300 rounded-full">{channelGuideline.channelName}</span>}
-                    <span className="text-gray-600 text-xs">{openTool === 'benchmark' ? '▲' : '▼'}</span>
-                  </button>
-                </div>
-
-                {openTool === 'instinct' && (
-                  <div className="rounded-xl border border-violet-700/30 bg-gray-800/20 p-4">
-                    <Suspense fallback={<Spinner />}><InstinctBrowser /></Suspense>
-                  </div>
-                )}
-                {openTool === 'benchmark' && (
-                  <div className="max-h-[420px] overflow-auto rounded-xl border border-green-700/30 bg-gray-800/20">
-                    <BenchmarkPanel />
-                  </div>
-                )}
-
-                {/* 소재 추천 버튼 */}
-                {instinctIds.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={handleRecommendTopics}
-                    disabled={isRecommending || isGenerating}
-                    className="w-full py-3 px-4 bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 text-white rounded-xl text-sm font-bold transition-all disabled:opacity-50 flex items-center justify-center gap-2"
-                  >
-                    {isRecommending ? (
-                      <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> 소재 추천 중... {elapsedRecommend > 0 && <span className="text-xs text-gray-400 tabular-nums">{formatElapsed(elapsedRecommend)}</span>}</>
-                    ) : (
-                      <>🔍 본능 기제 {instinctIds.length}개로 바이럴 소재 추천받기</>
-                    )}
-                  </button>
-                )}
-                {instinctIds.length === 0 && (
-                  <div className="text-center py-3 px-4 bg-orange-900/10 border border-orange-500/20 rounded-lg">
-                    <p className="text-sm text-orange-300/80">위에서 본능 기제를 선택하면 소재를 추천받을 수 있습니다</p>
-                  </div>
-                )}
+                {/* 즉시 소재 추천 CTA — 본능 기제 없어도 바로 추천 가능 */}
+                <button
+                  type="button"
+                  onClick={handleRecommendTopics}
+                  disabled={isRecommending || isGenerating}
+                  className="w-full py-3.5 px-4 bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 text-white rounded-xl text-sm font-bold transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-violet-600/20"
+                >
+                  {isRecommending ? (
+                    <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> 소재 추천 중... {elapsedRecommend > 0 && <span className="text-xs text-gray-400 tabular-nums">{formatElapsed(elapsedRecommend)}</span>}</>
+                  ) : instinctIds.length > 0 ? (
+                    <>🔍 본능 기제 {instinctIds.length}개로 바이럴 소재 추천받기</>
+                  ) : (
+                    <>🔍 지금 뜨는 바이럴 소재 5개 추천받기</>
+                  )}
+                </button>
 
                 {/* 소재 카드 + 레이더 */}
                 <TopicRecommendCards onSelect={handleSelectTopic} />
@@ -694,6 +619,101 @@ ${instinctPrompt}
                     <TopicComparisonRadar topics={recommendedTopics} selectedTopicId={selectedTopicId} />
                   </Suspense>
                 )}
+
+                {/* 고급 옵션: 본능 기제 / 벤치마크 (접힘형) */}
+                <div className="border-t border-gray-700/40 pt-3">
+                  <p className="text-xs text-gray-500 mb-2">고급 옵션 — 더 정교한 소재 추천을 원하면 설정하세요</p>
+                  <div className="flex gap-2 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => toggleTool('instinct')}
+                      className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-semibold transition-all ${
+                        openTool === 'instinct' ? 'bg-violet-600/20 border-violet-500/50 text-violet-300'
+                          : instinctIds.length > 0 ? 'bg-violet-900/10 border-violet-700/40 text-violet-400 hover:border-violet-500/50'
+                          : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:border-gray-500'
+                      }`}
+                    >
+                      <span>🧠</span><span>본능 기제</span>
+                      {instinctIds.length > 0 && <span className="text-xs px-1.5 py-0.5 bg-violet-900/50 text-violet-300 rounded-full">{instinctIds.length}개</span>}
+                      <span className="text-gray-600 text-xs">{openTool === 'instinct' ? '▲' : '▼'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => toggleTool('benchmark')}
+                      className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-semibold transition-all ${
+                        openTool === 'benchmark' ? 'bg-green-600/20 border-green-500/50 text-green-300'
+                          : (benchmarkScript || channelGuideline) ? 'bg-green-900/10 border-green-700/40 text-green-400 hover:border-green-500/50'
+                          : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:border-gray-500'
+                      }`}
+                    >
+                      <span>📊</span><span>벤치마크</span>
+                      {benchmarkScript && <span className="text-xs px-1.5 py-0.5 bg-green-900/50 text-green-300 rounded-full">참고 대본</span>}
+                      {channelGuideline && <span className="text-xs px-1.5 py-0.5 bg-orange-900/50 text-orange-300 rounded-full">{channelGuideline.channelName}</span>}
+                      <span className="text-gray-600 text-xs">{openTool === 'benchmark' ? '▲' : '▼'}</span>
+                    </button>
+                  </div>
+
+                  {openTool === 'instinct' && (
+                    <div className="mt-3 rounded-xl border border-violet-700/30 bg-gray-800/20 p-4">
+                      <Suspense fallback={<Spinner />}><InstinctBrowser /></Suspense>
+                    </div>
+                  )}
+                  {openTool === 'benchmark' && (
+                    <div className="mt-3 max-h-[420px] overflow-auto rounded-xl border border-green-700/30 bg-gray-800/20">
+                      <BenchmarkPanel />
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* ═══ 직접 입력하기 (접힘형) ═══ */}
+          <div>
+            <button
+              type="button"
+              onClick={() => setShowManualInput(!showManualInput)}
+              className={`flex items-center gap-2 w-full px-4 py-2.5 rounded-lg border text-sm font-semibold transition-all ${
+                showManualInput || (title.trim() || synopsis.trim())
+                  ? 'bg-gray-700/30 border-gray-600 text-gray-300'
+                  : 'bg-gray-800/50 border-gray-700 text-gray-500 hover:border-gray-500 hover:text-gray-300'
+              }`}
+            >
+              <span>✏️</span>
+              <span>직접 입력하기</span>
+              {(title.trim() || synopsis.trim()) && (
+                <span className="text-xs px-1.5 py-0.5 bg-violet-900/50 text-violet-300 rounded-full">입력됨</span>
+              )}
+              <span className="ml-auto text-gray-600 text-xs">{showManualInput ? '▲' : '▼'}</span>
+            </button>
+            {(showManualInput || title.trim() || synopsis.trim()) && (
+              <div className="mt-3 space-y-3">
+                <div>
+                  <label className="flex items-center gap-1.5 text-sm font-bold text-gray-300 mb-1.5">
+                    📌 제목
+                  </label>
+                  <input
+                    type="text"
+                    value={title}
+                    onChange={e => setTitle(e.target.value)}
+                    placeholder="영상 제목을 입력하세요"
+                    className="w-full bg-gray-800/50 border border-gray-600 rounded-lg px-4 py-2.5 text-white placeholder-gray-500
+                      focus:border-violet-500 focus:ring-1 focus:ring-violet-500 outline-none text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="flex items-center gap-1.5 text-sm font-bold text-gray-300 mb-1.5">
+                    📋 줄거리 · 핵심 내용
+                  </label>
+                  <textarea
+                    value={synopsis}
+                    onChange={e => setSynopsis(e.target.value)}
+                    placeholder="어떤 내용의 영상인지 간단히 설명해주세요"
+                    rows={3}
+                    className="w-full bg-gray-800/50 border border-gray-600 rounded-lg px-4 py-2.5 text-white placeholder-gray-500
+                      focus:border-violet-500 focus:ring-1 focus:ring-violet-500 outline-none resize-none text-sm"
+                  />
+                </div>
               </div>
             )}
           </div>

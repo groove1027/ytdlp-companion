@@ -24,26 +24,55 @@ interface RecommendOptions {
 export const recommendTopics = async (options: RecommendOptions): Promise<TopicRecommendation[]> => {
   const { mechanismIds, onProgress, channelGuideline, keyword } = options;
 
-  onProgress('본능 기제 분석 중...', 10);
-  const instinctPrompt = buildSelectedInstinctPrompt(mechanismIds);
+  const hasMechanisms = mechanismIds.length > 0;
+
+  onProgress(hasMechanisms ? '본능 기제 분석 중...' : '트렌드 분석 준비 중...', 10);
+  const instinctPrompt = hasMechanisms ? buildSelectedInstinctPrompt(mechanismIds) : '';
   const mechanisms = mechanismIds.map(getMechanismById).filter(Boolean);
   const hookKeywords = mechanisms.flatMap(m => m?.hooks || []).slice(0, 5);
 
   onProgress('Google 검색으로 바이럴 트렌드 분석 중...', 30);
 
   // Build Google Native payload with Search grounding
-  const systemText = `당신은 유튜브 바이럴 콘텐츠 기획 전문가입니다.
+  const systemText = hasMechanisms
+    ? `당신은 유튜브 바이럴 콘텐츠 기획 전문가입니다.
 Google 검색을 활용하여 최신 바이럴 트렌드와 인기 유튜브 영상을 조사한 뒤,
 사용자가 선택한 심리 본능 기제를 결합하여 폭발적 조회수가 예상되는 새로운 콘텐츠 소재 5개를 추천합니다.
+반드시 JSON 배열로만 응답하세요. 마크다운 코드블록 없이 순수 JSON만.`
+    : `당신은 유튜브 바이럴 콘텐츠 기획 전문가입니다.
+Google 검색을 활용하여 지금 가장 뜨거운 바이럴 트렌드, 인기 유튜브 영상, 화제 이슈를 조사한 뒤,
+폭발적 조회수가 예상되는 새로운 콘텐츠 소재 5개를 추천합니다.
+다양한 장르(지식/정보, 엔터테인먼트, 브이로그, 리뷰, 스토리텔링 등)를 포함하세요.
 반드시 JSON 배열로만 응답하세요. 마크다운 코드블록 없이 순수 JSON만.`;
 
-  const userText = `[선택된 본능 기제]
+  const userText = hasMechanisms
+    ? `[선택된 본능 기제]
 ${instinctPrompt}
 
 [훅 키워드]
 ${hookKeywords.join(', ')}
 ${keyword ? `\n[사용자 지정 키워드]\n${keyword}` : ''}
-${channelGuideline ? `\n[채널 가이드라인]\n${channelGuideline}` : ''}
+${channelGuideline ? `\n[채널 가이드라인]\n${channelGuideline}` : ''}`
+    : `${keyword ? `[사용자 지정 키워드]\n${keyword}\n\n` : ''}${channelGuideline ? `[채널 가이드라인]\n${channelGuideline}\n\n` : ''}[작업 지시]
+지금 유튜브에서 가장 화제인 트렌드, 이슈, 인기 영상을 Google 검색으로 조사하고,
+이를 바탕으로 새로운 콘텐츠 소재 5개를 추천하세요.
+각 소재는 다른 카테고리/장르여야 합니다.
+
+JSON 배열 형식 (정확히 5개):
+[
+  {
+    "title": "영상 제목 (30자 이내, 클릭 유도형)",
+    "hook": "첫 3초 훅 문장",
+    "synopsis": "1-2줄 줄거리",
+    "whyViral": "바이럴 예상 이유 (1줄)",
+    "instinctMatch": "트렌드 카테고리",
+    "referenceVideos": [{"title": "참고 영상/트렌드", "viewCount": "추정 조회수"}],
+    "estimatedViralScore": 85
+  }
+]`;
+
+  // 본능 기제가 있을 때만 작업 지시를 추가
+  const taskInstructions = hasMechanisms ? `
 
 [작업 지시]
 1. 먼저 Google 검색으로 위 키워드와 관련된 최근 유튜브 바이럴 영상, 트렌드, 화제 주제를 조사하세요.
@@ -61,10 +90,12 @@ JSON 배열 형식 (정확히 5개):
     "referenceVideos": [{"title": "참고 영상/트렌드", "viewCount": "추정 조회수"}],
     "estimatedViralScore": 85
   }
-]`;
+]` : '';
+
+  const finalUserText = userText + taskInstructions;
 
   const googlePayload = {
-    contents: [{ role: 'user', parts: [{ text: userText }] }],
+    contents: [{ role: 'user', parts: [{ text: finalUserText }] }],
     systemInstruction: { parts: [{ text: systemText }] },
     tools: [{ googleSearch: {} }],
     generationConfig: {
