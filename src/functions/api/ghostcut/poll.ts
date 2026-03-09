@@ -1,16 +1,33 @@
 /**
  * Cloudflare Pages Function — GhostCut 작업 결과 폴링
- * 클라이언트가 projectId로 폴링 → KV에서 결과 조회
+ * 클라이언트가 projectId로 폴링 → D1에서 결과 조회
  */
 
 interface Env {
-  GHOSTCUT_TASKS: KVNamespace;
+  DB: D1Database;
 }
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
+};
+
+/** D1 테이블 자동 생성 (최초 1회) */
+const ensureTable = async (db: D1Database) => {
+  await db.prepare(`
+    CREATE TABLE IF NOT EXISTS ghostcut_tasks (
+      project_id INTEGER PRIMARY KEY,
+      status TEXT NOT NULL DEFAULT 'processing',
+      progress INTEGER DEFAULT 0,
+      video_url TEXT DEFAULT '',
+      error_detail TEXT DEFAULT '',
+      task_id INTEGER,
+      duration REAL,
+      file_size INTEGER,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    )
+  `).run();
 };
 
 export const onRequestPost: PagesFunction<Env> = async (context) => {
@@ -23,20 +40,21 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       );
     }
 
-    // KV 바인딩 확인 — Pages 대시보드에서 GHOSTCUT_TASKS KV가 바인딩되지 않으면 undefined
-    if (!context.env.GHOSTCUT_TASKS) {
-      return new Response(
-        JSON.stringify({
-          status: 'error',
-          message: 'KV_NOT_BOUND: GHOSTCUT_TASKS KV 네임스페이스가 바인딩되지 않았습니다. Cloudflare Pages 대시보드 → Settings → Functions → KV namespace bindings에서 GHOSTCUT_TASKS를 추가해주세요.',
-        }),
-        { status: 503, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
+    await ensureTable(context.env.DB);
 
-    const result = await context.env.GHOSTCUT_TASKS.get(`project:${projectId}`);
+    const row = await context.env.DB.prepare(
+      'SELECT status, progress, video_url, error_detail, task_id, duration, file_size FROM ghostcut_tasks WHERE project_id = ?'
+    ).bind(projectId).first<{
+      status: string;
+      progress: number;
+      video_url: string;
+      error_detail: string;
+      task_id: number;
+      duration: number;
+      file_size: number;
+    }>();
 
-    if (!result) {
+    if (!row) {
       // 아직 콜백 미수신 — 처리 중
       return new Response(
         JSON.stringify({ status: 'processing' }),
@@ -44,9 +62,16 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       );
     }
 
-    const data = JSON.parse(result);
     return new Response(
-      JSON.stringify(data),
+      JSON.stringify({
+        status: row.status,
+        progress: row.progress,
+        videoUrl: row.video_url,
+        errorDetail: row.error_detail,
+        taskId: row.task_id,
+        duration: row.duration,
+        fileSize: row.file_size,
+      }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   } catch (err) {

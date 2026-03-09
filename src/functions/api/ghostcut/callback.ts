@@ -1,17 +1,15 @@
 /**
  * Cloudflare Pages Function — GhostCut 콜백 수신기
  * GhostCut 처리 완료 시 이 엔드포인트로 결과를 POST
- * 결과를 KV에 저장하여 클라이언트가 poll 엔드포인트로 조회
+ * 결과를 D1에 저장하여 클라이언트가 poll 엔드포인트로 조회
  *
  * GhostCut processStatus 값:
  *   1 = 성공 (Successful)
  *   그 외 = 실패 (Failed / Error)
- *
- * GhostCut은 callback-sign 헤더로 서명을 전송함 (검증용)
  */
 
 interface Env {
-  GHOSTCUT_TASKS: KVNamespace;
+  DB: D1Database;
 }
 
 interface GhostCutCallback {
@@ -31,6 +29,23 @@ interface GhostCutCallback {
   fileSize?: number;
 }
 
+/** D1 테이블 자동 생성 (최초 1회) */
+const ensureTable = async (db: D1Database) => {
+  await db.prepare(`
+    CREATE TABLE IF NOT EXISTS ghostcut_tasks (
+      project_id INTEGER PRIMARY KEY,
+      status TEXT NOT NULL DEFAULT 'processing',
+      progress INTEGER DEFAULT 0,
+      video_url TEXT DEFAULT '',
+      error_detail TEXT DEFAULT '',
+      task_id INTEGER,
+      duration REAL,
+      file_size INTEGER,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    )
+  `).run();
+};
+
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   try {
     const rawBody = await context.request.text();
@@ -47,16 +62,13 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       return new Response('Missing idProject', { status: 400 });
     }
 
-    // callback-sign 헤더 존재 여부 확인 (GhostCut이 보내는 서명)
-    // 서명이 없는 요청은 위조 가능성 — 로그만 남기고 처리는 진행
-    // (appSecret이 서버에 없으므로 서명 검증은 불가, 존재 여부로 기본 필터링)
+    // callback-sign 헤더 존재 여부 확인
     const callbackSign = context.request.headers.get('callback-sign');
     if (!callbackSign) {
       console.warn(`[GhostCut Callback] No callback-sign header for project ${projectId}`);
     }
 
-    // processStatus 매핑
-    // 1 = 성공, 그 외(0, 2, 3, ...) = 실패 또는 미완료
+    // processStatus 매핑: 1 = 성공, 그 외 = 실패
     const isSuccess = data.processStatus === 1;
     const statusLabel = isSuccess ? 'done' : 'failed';
 
@@ -67,28 +79,25 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         || data.processStatusEnum?.description
         || `처리 실패 (status: ${data.processStatus})`;
 
-    // KV 바인딩 확인
-    if (!context.env.GHOSTCUT_TASKS) {
-      console.error('[GhostCut Callback] GHOSTCUT_TASKS KV not bound!');
-      return new Response('KV not configured', { status: 503 });
-    }
+    // D1에 결과 저장
+    await ensureTable(context.env.DB);
+    await context.env.DB.prepare(`
+      INSERT OR REPLACE INTO ghostcut_tasks
+        (project_id, status, progress, video_url, error_detail, task_id, duration, file_size, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      projectId,
+      statusLabel,
+      data.processProgress ?? 0,
+      data.videoUrl || '',
+      errorDetail,
+      data.id,
+      data.duration ?? null,
+      data.fileSize ?? null,
+      Math.floor(Date.now() / 1000),
+    ).run();
 
-    // KV에 결과 저장 (TTL: 2시간 — 사용자가 다운로드할 충분한 시간)
-    await context.env.GHOSTCUT_TASKS.put(
-      `project:${projectId}`,
-      JSON.stringify({
-        status: statusLabel,
-        progress: data.processProgress ?? 0,
-        videoUrl: data.videoUrl || '',
-        errorDetail,
-        taskId: data.id,
-        duration: data.duration,
-        fileSize: data.fileSize,
-        timestamp: Date.now(),
-      }),
-      { expirationTtl: 7200 }
-    );
-
+    console.log(`[GhostCut Callback] project ${projectId} → ${statusLabel}`);
     return new Response('OK', { status: 200 });
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Unknown error';

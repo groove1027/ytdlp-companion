@@ -17,9 +17,7 @@ id = "d30b7cd636014eb28167c3948296b32d"
 binding = "INVITE_CODES"
 id = "245826094c12477c9793de17607d137b"
 
-[[kv_namespaces]]
-binding = "GHOSTCUT_TASKS"
-id = "4157adc6738a41048595d4803d7d4ca7"
+# GHOSTCUT_TASKS KV는 D1(DB)로 대체 — ghostcut_tasks 테이블 자동 생성
 
 # Firebase Phone Auth — 본인 인증 필수
 # Cloudflare 대시보드 > Pages > Settings > Environment variables 에서 설정하거나
