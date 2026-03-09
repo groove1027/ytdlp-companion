@@ -77,9 +77,13 @@ function parseTikitakaTable(content: string): SceneRow[] {
       }
     }
 
+    // timecodeSource에서 타임코드 정규화 (AI가 부가 텍스트를 포함할 수 있음)
+    const tcNorm = timecodeSource.match(/(\d{1,2}:\d{2}(?:\.\d+)?)\s*[~\-–—/]\s*(\d{1,2}:\d{2}(?:\.\d+)?)/);
+    const normalizedTc = tcNorm ? `${tcNorm[1]}~${tcNorm[2]}` : timecodeSource.trim();
+
     rows.push({
-      cutNum, mode, audioContent, effectSub, duration, videoDirection, timecodeSource,
-      timeline: '', sourceTimeline: timecodeSource, dialogue: audioContent, sceneDesc: videoDirection,
+      cutNum, mode, audioContent, effectSub, duration, videoDirection, timecodeSource: normalizedTc,
+      timeline: '', sourceTimeline: normalizedTc, dialogue: audioContent, sceneDesc: videoDirection,
     });
   }
 
@@ -146,12 +150,19 @@ function parseVersions(raw: string): VersionItem[] {
         // 배치 타임라인에서 원본 구간 분리: "00:00 ~ 00:03 (원본 MM:SS~MM:SS)"
         const rawTimeline = extractField(sContent, '배치') || extractField(sContent, '타임라인') || '';
         let timeline = rawTimeline;
-        let sourceTimeline = extractField(sContent, '원본') || '';
-        // 배치 필드 안에 "(원본 ...)" 형태로 원본 구간이 포함된 경우 분리
-        const embedSrc = rawTimeline.match(/\((?:원본\s*)?(\d{2}:\d{2}[^\)]*)\)/);
+        let sourceTimeline = '';
+        // 1) 배치 필드 안에 "(원본 ...)" 형태로 원본 구간이 포함된 경우 우선 분리
+        const embedSrc = rawTimeline.match(/\((?:원본[:\s：]*)?(\d{1,2}:\d{2}(?:\.\d+)?\s*[~\-–—]\s*\d{1,2}:\d{2}(?:\.\d+)?)[^)]*\)/);
         if (embedSrc) {
-          if (!sourceTimeline) sourceTimeline = embedSrc[1].trim();
+          sourceTimeline = embedSrc[1].trim();
           timeline = rawTimeline.replace(/\s*\([^)]*\)/, '').trim();
+        }
+        // 2) 별도 "원본" 필드에서 타임코드 추출 (embedSrc 실패 시 폴백)
+        if (!sourceTimeline) {
+          const rawSource = extractField(sContent, '원본') || '';
+          // 타임코드 패턴만 추출 (MM:SS~MM:SS 또는 M:SS~M:SS)
+          const tcMatch = rawSource.match(/(\d{1,2}:\d{2}(?:\.\d+)?)\s*[~\-–—]\s*(\d{1,2}:\d{2}(?:\.\d+)?)/);
+          sourceTimeline = tcMatch ? `${tcMatch[1]}~${tcMatch[2]}` : rawSource.replace(/[()]/g, '').trim();
         }
 
         scenes.push({
