@@ -3,7 +3,10 @@
  *
  * API: https://api.zhaoli.com/v-w-c/gateway/ve/work/fast
  * 인증: AppKey + AppSign (이중 MD5: MD5(MD5(body) + appSecret))
- * Flow: 영상 URL 전송 → 폴링(상태 확인) → 결과 영상 URL → Blob 다운로드
+ * Flow: 영상 URL 전송 → callback URL로 결과 수신 → KV 경유 폴링 → 결과 영상 다운로드
+ *
+ * GhostCut은 polling 엔드포인트가 없고 callback 방식만 지원.
+ * Cloudflare KV(GHOSTCUT_TASKS)를 경유하여 callback → poll 구조로 작동.
  */
 
 import { getGhostCutKeys, monitoredFetch } from './apiService';
@@ -11,8 +14,8 @@ import { uploadMediaToHosting } from './uploadService';
 import { logger } from './LoggerService';
 
 // Cloudflare Pages Function 프록시 경유 (CORS 우회)
-const GHOSTCUT_API_URL = '/api/ghostcut/submit';
-const GHOSTCUT_STATUS_URL = '/api/ghostcut/status';
+const GHOSTCUT_SUBMIT_URL = '/api/ghostcut/submit';
+const GHOSTCUT_POLL_URL = '/api/ghostcut/poll';
 
 /** 이중 MD5 서명 생성: MD5(MD5(body) + appSecret) */
 const generateSign = async (body: string, appSecret: string): Promise<string> => {
@@ -133,25 +136,26 @@ interface GhostCutResponse {
   };
 }
 
-interface GhostCutStatusResponse {
-  msg: string;
-  code: number;
-  body: {
-    status: number; // 0=대기, 1=처리중, 2=완료, 3=실패
-    resultUrl?: string;
-    videoUrl?: string;
-  };
+interface PollResult {
+  status: 'processing' | 'done' | 'failed' | 'error';
+  videoUrl?: string;
+  errorDetail?: string;
+  message?: string;
 }
 
-/** 작업 제출 */
+/** 작업 제출 (callback URL 포함) */
 const submitTask = async (videoUrl: string): Promise<{ projectId: number; taskId: number }> => {
   const { appKey, appSecret } = getGhostCutKeys();
   if (!appKey || !appSecret) {
     throw new Error('GhostCut API 키가 설정되지 않았습니다. API 설정에서 AppKey와 AppSecret을 입력해주세요.');
   }
 
+  // callback URL: 현재 도메인의 /api/ghostcut/callback
+  const callbackUrl = `${window.location.origin}/api/ghostcut/callback`;
+
   const body = JSON.stringify({
     urls: [videoUrl],
+    callback: callbackUrl,
     needChineseOcclude: 1,
     resolution: '1080p',
     needCrop: 0,
@@ -168,7 +172,7 @@ const submitTask = async (videoUrl: string): Promise<{ projectId: number; taskId
 
   const sign = await generateSign(body, appSecret);
 
-  const response = await monitoredFetch(GHOSTCUT_API_URL, {
+  const response = await monitoredFetch(GHOSTCUT_SUBMIT_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -194,46 +198,50 @@ const submitTask = async (videoUrl: string): Promise<{ projectId: number; taskId
   };
 };
 
-/** 작업 상태 폴링 (최대 15분, 10초 간격) */
-const pollTaskStatus = async (
+/** 작업 결과 폴링 (KV 경유, 최대 15분, 8초 간격) */
+const pollResult = async (
   projectId: number,
   onProgress?: (message: string) => void,
 ): Promise<string> => {
-  const { appKey, appSecret } = getGhostCutKeys();
-  const MAX_POLLS = 90;
+  const MAX_POLLS = 112; // 15분 / 8초
+  const POLL_INTERVAL = 8000;
 
   for (let i = 0; i < MAX_POLLS; i++) {
-    const body = JSON.stringify({ idProject: projectId });
-    const sign = await generateSign(body, appSecret);
-
-    const response = await monitoredFetch(GHOSTCUT_STATUS_URL, {
+    const response = await monitoredFetch(GHOSTCUT_POLL_URL, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'AppKey': appKey,
-        'AppSign': sign,
-      },
-      body,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId }),
     });
 
     if (!response.ok) {
-      throw new Error(`GhostCut 상태 조회 실패: ${response.statusText}`);
+      throw new Error(`폴링 오류: ${response.statusText}`);
     }
 
-    const data: GhostCutStatusResponse = await response.json();
+    const data: PollResult = await response.json();
 
-    if (data.body.status === 2) {
-      const resultUrl = data.body.resultUrl || data.body.videoUrl;
-      if (!resultUrl) throw new Error('GhostCut 결과 URL이 없습니다.');
-      return resultUrl;
+    if (data.status === 'done' && data.videoUrl) {
+      return data.videoUrl;
     }
 
-    if (data.body.status === 3) {
-      throw new Error('GhostCut 처리 실패: 영상을 처리할 수 없습니다.');
+    if (data.status === 'failed') {
+      throw new Error(`GhostCut 처리 실패: ${data.errorDetail || '영상을 처리할 수 없습니다.'}`);
     }
 
-    onProgress?.(data.body.status === 0 ? '대기열 대기 중...' : 'AI 자막 제거 처리 중...');
-    await new Promise((r) => setTimeout(r, 10000));
+    if (data.status === 'error') {
+      throw new Error(data.message || 'GhostCut 서버 오류');
+    }
+
+    // 아직 처리 중
+    const elapsed = (i + 1) * (POLL_INTERVAL / 1000);
+    if (elapsed < 30) {
+      onProgress?.('GhostCut 대기열 진입 중...');
+    } else if (elapsed < 90) {
+      onProgress?.('AI 자막 감지 & 제거 중...');
+    } else {
+      onProgress?.(`AI 처리 중... (${Math.round(elapsed)}초 경과)`);
+    }
+
+    await new Promise((r) => setTimeout(r, POLL_INTERVAL));
   }
 
   throw new Error('GhostCut 처리 시간 초과 (15분)');
@@ -242,8 +250,8 @@ const pollTaskStatus = async (
 /**
  * GhostCut 자막 제거 전체 파이프라인
  * 1. 영상 Cloudinary 업로드 (URL 필요)
- * 2. GhostCut API 작업 제출
- * 3. 폴링으로 완료 대기
+ * 2. GhostCut API 작업 제출 (callback URL 포함)
+ * 3. KV 경유 폴링으로 완료 대기
  * 4. 결과 영상 다운로드
  */
 export const removeSubtitlesWithGhostCut = async (
@@ -260,13 +268,13 @@ export const removeSubtitlesWithGhostCut = async (
   const videoUrl = await uploadMediaToHosting(videoFile);
   logger.info('[GhostCut] 영상 업로드 완료', { videoUrl });
 
-  // 2. 작업 제출
+  // 2. 작업 제출 (callback URL 자동 포함)
   onProgress?.('GhostCut AI 자막 제거 시작...');
   const { projectId } = await submitTask(videoUrl);
   logger.info('[GhostCut] 작업 제출', { projectId });
 
-  // 3. 폴링
-  const resultUrl = await pollTaskStatus(projectId, onProgress);
+  // 3. KV 경유 폴링
+  const resultUrl = await pollResult(projectId, onProgress);
   logger.info('[GhostCut] 처리 완료', { resultUrl });
 
   // 4. 결과 다운로드
