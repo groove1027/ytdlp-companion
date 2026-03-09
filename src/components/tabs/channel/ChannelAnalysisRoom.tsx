@@ -231,37 +231,63 @@ const ChannelAnalysisRoom: React.FC = () => {
         const res = await fetch(`${api}/`, {
           method: 'POST',
           headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: ytUrl, videoQuality: '720', youtubeVideoCodec: 'h264' }),
+          body: JSON.stringify({ url: ytUrl, videoQuality: '1080', youtubeVideoCodec: 'h264' }),
           signal: AbortSignal.timeout(10000),
         });
         if (!res.ok) continue;
         const data = await res.json();
         if (data.status === 'tunnel' && data.url) {
-          return await downloadBlob(data.url, data.filename || `${title}.mp4`, videoId);
+          const blob = await fetchStreamBlob(data.url, videoId, 0, 95);
+          if (blob) { saveBlobAsFile(blob, data.filename || `${title}.mp4`); return true; }
         }
         if (data.status === 'redirect' && data.url) {
-          // redirect URL은 googlevideo.com → CORS 차단이지만 window.open으로 시도
           window.open(data.url, '_blank');
           return true;
         }
       } catch { continue; }
     }
     return false;
-  }, [downloadBlob]);
+  }, [fetchStreamBlob, saveBlobAsFile]);
 
-  // 통합 다운로드: Piped → Cobalt → 최종 폴백
+  // 통합 다운로드: Piped (HD+FFmpeg 머지) → Piped (muxed) → Cobalt → 최종 폴백
   const downloadVideo = useCallback(async (videoId: string, title: string): Promise<boolean> => {
     setDownloadingVideos(prev => { const next = new Set(prev); next.add(videoId); return next; });
     setDownloadProgress(prev => ({ ...prev, [videoId]: 0 }));
 
     try {
-      // 1차: Piped API (fetch + blob 다운로드)
+      // 1차: Piped API
       const piped = await fetchPipedStreams(videoId);
       if (piped) {
-        const ok = await downloadBlob(piped.url, piped.filename, videoId);
-        if (ok) {
-          showToast(`"${title}" (${piped.quality}) 다운로드 완료`);
-          return true;
+        if (piped.needsMerge && piped.videoOnlyUrl && piped.audioUrl) {
+          // HD 다운로드: 영상(0~40%) + 오디오(40~80%) + FFmpeg 머지(80~100%)
+          setDownloadProgress(prev => ({ ...prev, [videoId]: 1 }));
+          const [videoBlob, audioBlob] = await Promise.all([
+            fetchStreamBlob(piped.videoOnlyUrl, videoId, 0, 40),
+            fetchStreamBlob(piped.audioUrl, videoId, 40, 40),
+          ]);
+
+          if (videoBlob && audioBlob) {
+            try {
+              const merged = await mergeWithFFmpeg(videoBlob, audioBlob, piped.filename, videoId);
+              saveBlobAsFile(merged, piped.filename);
+              setDownloadProgress(prev => ({ ...prev, [videoId]: 100 }));
+              showToast(`"${title}" (${piped.quality}) 다운로드 완료`);
+              return true;
+            } catch (e) {
+              console.warn('[Download] FFmpeg 머지 실패, muxed 폴백:', e);
+            }
+          }
+        }
+
+        // muxed 폴백 (720p)
+        if (piped.muxedUrl) {
+          const blob = await fetchStreamBlob(piped.muxedUrl, videoId, 0, 95);
+          if (blob) {
+            saveBlobAsFile(blob, piped.filename);
+            setDownloadProgress(prev => ({ ...prev, [videoId]: 100 }));
+            showToast(`"${title}" (${piped.quality}) 다운로드 완료`);
+            return true;
+          }
         }
       }
 
@@ -282,7 +308,7 @@ const ChannelAnalysisRoom: React.FC = () => {
       setDownloadingVideos(prev => { const next = new Set(prev); next.delete(videoId); return next; });
       setDownloadProgress(prev => { const copy = { ...prev }; delete copy[videoId]; return copy; });
     }
-  }, [fetchPipedStreams, downloadBlob, downloadViaCobalt]);
+  }, [fetchPipedStreams, fetchStreamBlob, mergeWithFFmpeg, saveBlobAsFile, downloadViaCobalt]);
 
   // 일괄 다운로드
   const handleBulkVideoDownload = useCallback(async () => {
@@ -1160,7 +1186,7 @@ const ChannelAnalysisRoom: React.FC = () => {
               <div>
                 <h3 className="text-lg font-bold text-white">영상 일괄 다운로드</h3>
                 <p className="text-sm text-gray-400 mt-1">
-                  {channelScripts.filter(s => s.videoId).length}개 영상 (MP4, 최대 720p)
+                  {channelScripts.filter(s => s.videoId).length}개 영상 (MP4, 최대 1080p)
                 </p>
               </div>
               {!bulkDownloadProgress && (
