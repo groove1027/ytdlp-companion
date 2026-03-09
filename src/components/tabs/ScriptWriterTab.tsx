@@ -20,6 +20,13 @@ import { useAuthGuard } from '../../hooks/useAuthGuard';
 
 const InstinctBrowser = React.lazy(() => import('./script/InstinctBrowser'));
 const ScriptExpander = React.lazy(() => import('./script/ScriptExpander'));
+const ScriptReadabilityDashboard = React.lazy(() => import('./script/ScriptReadabilityDashboard'));
+const EngagementHeatmap = React.lazy(() => import('./script/EngagementHeatmap'));
+const ScenePacingChart = React.lazy(() => import('./script/ScenePacingChart'));
+const TopicComparisonRadar = React.lazy(() => import('./script/TopicComparisonRadar'));
+const GenerationTimeline = React.lazy(() => import('./script/GenerationTimeline'));
+const StyleDiffView = React.lazy(() => import('./script/StyleDiffView'));
+const BenchmarkRadarChart = React.lazy(() => import('./script/BenchmarkRadarChart'));
 
 type OpenTool = 'instinct' | 'benchmark' | null;
 
@@ -591,6 +598,13 @@ ${instinctPrompt}
 
             {/* TopicRecommendCards */}
             <TopicRecommendCards onSelect={handleSelectTopic} />
+
+            {/* 소재 비교 레이더 차트 */}
+            {recommendedTopics.length >= 2 && (
+              <Suspense fallback={null}>
+                <TopicComparisonRadar topics={recommendedTopics} selectedTopicId={selectedTopicId} />
+              </Suspense>
+            )}
           </div>
         </div>
 
@@ -742,15 +756,17 @@ ${instinctPrompt}
             )}
           </div>
 
-          {/* D. Streaming text display */}
-          {streamingText && (
-            <div className="bg-gray-900 border border-violet-500/30 rounded-xl p-4 mb-3">
-              <div className="flex items-center gap-2 mb-3">
-                <div className="w-3 h-3 bg-violet-500 rounded-full animate-pulse" />
-                <span className="text-sm text-violet-300 font-bold">AI가 대본을 작성하고 있습니다...</span>
-                <span className="text-sm text-gray-500">{streamingText.length}자</span>
-              </div>
-              <pre className="text-base text-gray-200 whitespace-pre-wrap leading-relaxed font-sans">{streamingText}<span className="animate-pulse text-violet-400">|</span></pre>
+          {/* D. AI 생성 타임라인 (스트리밍 포함) */}
+          {(isGenerating || streamingText) && (
+            <div className="mb-3">
+              <Suspense fallback={null}>
+                <GenerationTimeline
+                  isGenerating={isGenerating}
+                  elapsed={elapsedGenerate}
+                  streamingText={streamingText}
+                  targetChars={targetCharCount}
+                />
+              </Suspense>
             </div>
           )}
 
@@ -875,10 +891,33 @@ ${instinctPrompt}
                 </div>
               </div>
             )}
+
+            {/* 스타일 변환 Diff 비교 */}
+            {styledScript && (generatedScript?.content || manualText) && (
+              <Suspense fallback={null}>
+                <StyleDiffView
+                  originalScript={generatedScript?.content || manualText || ''}
+                  styledScript={styledScript}
+                  styleName={styledStyleName}
+                />
+              </Suspense>
+            )}
           </div>
 
           {fileError && (
             <p className="text-sm text-red-400 mt-1 px-1">{fileError}</p>
+          )}
+
+          {/* 대본 분석 시각화 (가독성 + 참여 유도 히트맵) */}
+          {scriptText.length > 100 && (
+            <div className="mt-3 space-y-3">
+              <Suspense fallback={null}>
+                <ScriptReadabilityDashboard scriptText={scriptText} />
+              </Suspense>
+              <Suspense fallback={null}>
+                <EngagementHeatmap scriptText={scriptText} instinctCount={instinctIds.length} />
+              </Suspense>
+            </div>
           )}
 
           {/* Script Expander (collapsible) */}
@@ -996,6 +1035,15 @@ ${instinctPrompt}
                   <p className="text-sm text-gray-500">대본을 입력하면 가장 긴 구간의 분할 미리보기가 표시됩니다</p>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* 장면 페이싱 분석 차트 */}
+          {(splitResult.length >= 2 || livePreviewData.scenes.length >= 3) && (
+            <div className="mt-3">
+              <Suspense fallback={null}>
+                <ScenePacingChart scenes={splitResult.length >= 2 ? splitResult : livePreviewData.scenes} />
+              </Suspense>
             </div>
           )}
         </div>

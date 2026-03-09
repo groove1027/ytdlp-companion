@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, Suspense } from 'react';
 import { useChannelAnalysisStore } from '../../../stores/channelAnalysisStore';
 import { useScriptWriterStore } from '../../../stores/scriptWriterStore';
 import { useNavigationStore } from '../../../stores/navigationStore';
@@ -6,6 +6,8 @@ import { evolinkChat } from '../../../services/evolinkService';
 import { LegacyTopicRecommendation, ChannelScript } from '../../../types';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
+
+const BenchmarkRadarChart = React.lazy(() => import('./BenchmarkRadarChart'));
 
 const VIRAL_COLORS: Record<LegacyTopicRecommendation['viralScore'], { bg: string; text: string; label: string }> = {
   high: { bg: 'bg-red-900/30', text: 'text-red-300', label: 'HIGH' },
@@ -164,6 +166,17 @@ ${scriptSummaries}
                 </div>
               </div>
             </div>
+          )}
+
+          {/* 채널 스타일 레이더 차트 */}
+          {channelScripts.length > 0 && (
+            <Suspense fallback={null}>
+              <BenchmarkRadarChart
+                guideline={channelGuideline}
+                scripts={channelScripts}
+                currentScript={useScriptWriterStore.getState().finalScript || useScriptWriterStore.getState().generatedScript?.content}
+              />
+            </Suspense>
           )}
 
           {/* 벤치마크 대본 목록 (썸네일 포함) */}
