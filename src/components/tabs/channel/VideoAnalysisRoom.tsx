@@ -28,12 +28,25 @@ interface SceneRow {
   timecodeSource: string; // 타임코드 소스 (MM:SS.ms)
 }
 
+/** Content ID 회피 및 바이럴 분석 */
+interface ContentIdAnalysis {
+  textMatchRate: string;
+  structureSimilarity: string;
+  orderSimilarity: string;
+  keywordVariation: string;
+  safetyGrade: string;
+  viralPoint: string;
+  judgement: string;
+}
+
 /** 10개 버전 중 하나 */
 interface VersionItem {
   id: number;
   title: string;
   concept: string;
   scenes: SceneRow[];
+  rearrangement?: string;
+  contentId?: ContentIdAnalysis;
 }
 
 /** 타임스탬프 포함 프레임 (비주얼 타임코드 매칭용) */
@@ -52,56 +65,95 @@ function parseDuration(dur: string): number {
   return m ? parseFloat(m[1]) : 3;
 }
 
-/** 마크다운 테이블 행 파싱 (티키타카 마스터 편집 테이블) */
+/** 마크다운 테이블 행 파싱 (티키타카 마스터 편집 테이블 — 6열/7열 자동 감지) */
 function parseTikitakaTable(content: string): SceneRow[] {
   const rows: SceneRow[] = [];
   const lines = content.split('\n');
 
+  // 헤더에서 효과자막 열 존재 여부 감지
+  const headerLine = lines.find(l => l.includes('|') && /모드/.test(l) && /오디오/.test(l));
+  const has7Cols = headerLine ? /효과\s*자막/.test(headerLine) : false;
+
   for (const line of lines) {
     const trimmed = line.trim();
     if (!trimmed.includes('|')) continue;
-    // 앞뒤 | 제거 후 분할
     const stripped = trimmed.replace(/^\|/, '').replace(/\|$/, '');
     const cells = stripped.split('|').map(c => c.trim());
     if (cells.length < 5) continue;
 
-    // 첫 셀이 숫자인 데이터 행만 처리 (헤더·구분자 행 자동 스킵)
     const cutNum = parseInt(cells[0], 10);
     if (isNaN(cutNum) || cutNum < 1) continue;
 
-    const mode = cells[1] || '';
-    const audioContent = cells[2] || '';
-    const duration = cells[3] || '';
-    const videoDirection = cells[4] || '';
-    const timecodeSource = cells[5] || '';
+    let mode: string, audioContent: string, effectSub: string, duration: string, videoDirection: string, timecodeSource: string;
+
+    if (has7Cols && cells.length >= 7) {
+      // 7열: 순서 | 모드 | 오디오 내용 | 효과자막 | 예상 시간 | 비디오 화면 지시 | 타임코드 소스
+      mode = cells[1] || '';
+      audioContent = cells[2] || '';
+      effectSub = cells[3] || '';
+      duration = cells[4] || '';
+      videoDirection = cells[5] || '';
+      timecodeSource = cells[6] || '';
+    } else {
+      // 6열 폴백: 순서 | 모드 | 오디오 내용 | 예상 시간 | 비디오 화면 지시 | 타임코드 소스
+      mode = cells[1] || '';
+      audioContent = cells[2] || '';
+      effectSub = '';
+      duration = cells[3] || '';
+      videoDirection = cells[4] || '';
+      timecodeSource = cells[5] || '';
+    }
+
+    // 오디오 내용 안에 <효과자막: ...> 태그가 인라인으로 있으면 추출
+    if (!effectSub) {
+      const efMatch = audioContent.match(/<효과자막[:\s：]+([^>]+)>/);
+      if (efMatch) {
+        effectSub = efMatch[1].trim();
+        audioContent = audioContent.replace(/<효과자막[:\s：][^>]+>/g, '').trim();
+      }
+    }
 
     rows.push({
-      cutNum,
-      mode,
-      audioContent,
-      duration,
-      videoDirection,
-      timecodeSource,
-      // 호환 필드 (SRT 등에서 사용)
-      timeline: '',
-      sourceTimeline: timecodeSource,
-      dialogue: audioContent,
-      effectSub: '',
-      sceneDesc: videoDirection,
+      cutNum, mode, audioContent, effectSub, duration, videoDirection, timecodeSource,
+      timeline: '', sourceTimeline: timecodeSource, dialogue: audioContent, sceneDesc: videoDirection,
     });
   }
 
   return rows;
 }
 
+/** Content ID 분석 블록 파싱 */
+function parseContentIdAnalysis(block: string): ContentIdAnalysis | undefined {
+  const textMatch = block.match(/텍스트\s*일치율[:\s：]+\s*([\d.]+)/);
+  const structMatch = block.match(/구조\s*유사도[:\s：]+\s*([\d.]+)/);
+  const orderMatch = block.match(/순서\s*유사도[:\s：]+\s*([\d.]+)/);
+  const keywordMatch = block.match(/키워드\s*변형률[:\s：]+\s*([\d.]+)/);
+  const safetyMatch = block.match(/최종\s*안전\s*등급[:\s：*]+\s*\*{0,2}([\[【]?[^*\]\n]+[\]】]?)/);
+  const viralMatch = block.match(/바이럴\s*예상\s*포인트[:\s：*]+\s*"?([^"\n]+)"?/);
+  const judgementMatch = block.match(/판정\s*코멘트[:\s：*]+\s*"?([^"\n]+)"?/);
+  if (!textMatch && !structMatch && !safetyMatch) return undefined;
+  return {
+    textMatchRate: textMatch?.[1] || '-',
+    structureSimilarity: structMatch?.[1] || '-',
+    orderSimilarity: orderMatch?.[1] || '-',
+    keywordVariation: keywordMatch?.[1] || '-',
+    safetyGrade: safetyMatch?.[1]?.replace(/[\[\]【】]/g, '').trim() || '-',
+    viralPoint: viralMatch?.[1]?.trim() || '-',
+    judgement: judgementMatch?.[1]?.trim() || '-',
+  };
+}
+
 /** AI 응답에서 ---VERSION N--- + ---SCENE--- / 테이블 구조 파싱 */
 function parseVersions(raw: string): VersionItem[] {
-  // VERSION 블록 분리 — 다양한 구분자 패턴 지원
-  const blocks = raw.split(/---\s*VERSION\s*(\d+)\s*---/i);
+  // VERSION 블록 분리 — "---VERSION N---" 또는 "[버전 N:" 패턴 지원
+  const blocks = raw.split(/---\s*VERSION\s*(\d+)\s*---|(?:^|\n)\s*\*{0,2}\[버전\s*(\d+)[:\s]/mi);
   const items: VersionItem[] = [];
 
   for (let i = 1; i < blocks.length; i += 2) {
-    const num = parseInt(blocks[i], 10);
+    // 두 캡처 그룹 중 유효한 것 사용
+    const numStr = blocks[i] || blocks[i];
+    const num = parseInt(numStr, 10);
+    if (isNaN(num) || num < 1) continue;
     const content = blocks[i + 1]?.trim() || '';
     if (!content) continue;
 
@@ -109,6 +161,10 @@ function parseVersions(raw: string): VersionItem[] {
     const titleMatch = content.match(/(?:\*{0,2})제목(?:\*{0,2})[:\s：]+\s*(.+)/);
     // 컨셉 추출 — 테이블 시작 전까지
     const conceptMatch = content.match(/(?:\*{0,2})컨셉(?:\*{0,2})[:\s：]+\s*([\s\S]*?)(?=\n\s*\|[\s]*순서|\n\s*\|\s*:?---|---SCENE|$)/i);
+    // 재배치 구조 추출
+    const rearrangeMatch = content.match(/(?:\*{0,2})재배치\s*구조(?:\*{0,2})[:\s：]+\s*(.+)/);
+    // Content ID 분석 추출
+    const contentId = parseContentIdAnalysis(content);
 
     // 포맷 감지: 마크다운 테이블 (| 숫자 | 패턴) vs ---SCENE--- 블록
     let scenes: SceneRow[];
@@ -155,6 +211,8 @@ function parseVersions(raw: string): VersionItem[] {
       title: titleMatch?.[1]?.trim().replace(/\*+/g, '') || `버전 ${num}`,
       concept: conceptText,
       scenes,
+      rearrangement: rearrangeMatch?.[1]?.trim(),
+      contentId,
     });
   }
 
@@ -388,147 +446,159 @@ function downloadSrt(content: string, filename: string) {
 // 시스템 프롬프트 (변경 금지)
 // ═══════════════════════════════════════════════════
 
-const TIKITAKA_SCRIPT_SYSTEM = `# [최종 완성판] 크로스 더빙(Cross-Dubbing) 숏폼 제작 & AI 분석 지침서 V3.0
+const TIKITAKA_SCRIPT_SYSTEM = `# 📜 범용 티키타카 스크립트 리빌딩 프로토콜 v13.0 (10 Viral Patterns & Creator Shorts/Long-form Edition)
 
-## 서론: 크로스 더빙의 정의와 메커니즘
-이 편집 방식의 핵심은 **'리듬감'**과 **'친절함'**입니다.
-- **언어 장벽 해소:** 해외 영상을 가져올 때, 모든 대사를 자막으로 처리하면 지루합니다. 더빙이 상황을 요약해주므로 시청자는 편안하게 내용을 받아들입니다.
-- **텐션 유지:** 더빙(설명/빌드업) ↔ 원본(리액션/펀치라인)이 핑퐁처럼 오가며 쉴 틈 없는 오디오 밀도를 만들어냅니다.
-- **제3자적 개입:** 유튜버(화자)가 영상 속 인물과 대화하듯, 혹은 친구에게 썰을 풀듯 이야기하는 방식이라 친밀감이 높습니다.
-
-## [SPECIAL] 챕터 0: 60초 원본 영상 AI 분석 및 설계 프로토콜
-
-### 0.1. 컷 분류 기준 (Keep vs Kill)
-원본 영상을 프레임 단위로 분석하여 살릴 곳과 덮을 곳을 나눕니다.
-
-**살릴 구간 (Source-Alive):**
-- 오디오 볼륨이 급격히 커지는 구간 (비명, 환호, 타격음)
-- 표정 변화가 극적인 클로즈업 샷
-- "No way", "Oh my god", "Look at this" 등 짧고 명확한 외국어 감탄사
-
-**덮을 구간 (Dubbing-Cover):**
-- 단순 이동, 준비 동작, 걷는 장면 (데드 타임)
-- 설명이 길고 지루한 대화 구간
-- 오디오가 비거나 잡음만 있는 구간
-
-### 0.2. 소스 입력 변환 모듈
-**텍스트/글 입력 시:** 핵심 문장 추출 → 비주얼 매칭 → 가상 원본 생성
-**긴 영상/링크 입력 시:** 오디오 피크 탐색(3~4개 B파트 확보) → 죽은 시간 제거(A파트로 덮기) → 타임라인 재배치
-
-## 챕터 1: 구조 설계 (타임라인 매핑)
-- **A파트 (더빙 - Narrator):** 상황 설명, 배경 지식, 다음 장면에 대한 기대감 조성
-- **B파트 (원본 - Source):** 현장감, 리얼한 반응, 외국어 대사 중 감정이 실린 부분
-
-## 챕터 2: 스크립트 작성 (핵심 논리)
-**'번역'이 아니라 '초월 번역(해설)'** — 원본의 말을 그대로 한국어로 옮기는 것이 아니라, 상황을 맛깔나게 요약
-
-### 핑퐁 스크립트 3대 원칙
-1. **원본 대사를 침범하지 마라** — 핵심 대사("Oh my god!", "It's terrible!")는 살리고, 빈 공간을 더빙으로 채운다
-2. **더빙은 '빌드업'이다** — (나쁜 예) "이 남자가 콜라를 마십니다." / (좋은 예) "과연 100년 전통의 맛은 어떨까요?"
-3. **대화하듯 써라** — 시청자에게 말을 걸거나 혼잣말하듯
-
-### 만능 스크립트 템플릿
-1. [더빙] 후킹(Hook): "OOO는 과연 실제로 가능할까?"
-2. [원본] 증거(Proof): 짧고 강렬한 시각적/청각적 장면
-3. [더빙] 전개(Bridge): "그래서 참지 못하고 바로 OO했습니다."
-4. [원본] 현장(Reality): 현장 도착/물건 개봉
-5. [더빙] 절정(Climax): "드디어 대망의 순간! 과연 그 결과는?"
-6. [원본] 펀치라인: 핵심 리액션
-7. [더빙] 결말(Outro): "결국 제 지갑만 털렸네요."
-
-## 챕터 3: 더빙 톤 설정
-- **정보 전달형:** 뉴스 아나운서처럼 깔끔하게
-- **유튜버형 (추천):** 친구한테 신나서 이야기하는 듯한 하이텐션
-- **냉소적형:** 한심하다는 듯 툭 내뱉는 말투
-- **속도:** 평소 1.2배 빠르게. **단문으로 끊어서** — 편집점에서 잘라 붙이기 편하게
-
-## 챕터 4: 오디오 덕킹 & 컷 편집
-- **더빙 구간:** 원본 오디오 -15~-20dB (완전히 끄지 않고 배경으로)
-- **원본 구간:** 더빙 끝나는 순간 원본 0dB로 확 키움
-- **크로스 포인트:** J-컷(원본이 0.2초 먼저 진입) / L-컷(더빙이 0.2초 먼저 진입)으로 속도감 배가
-- **데드 에어 제거:** 숨 쉬는 구간, 말 사이 공백 모조리 컷
-- **점프 컷:** 더빙 문장 끝날 때마다 화면 확대(110%) 또는 각도 변경
-
-## 챕터 5: 자막 이원화
-- **더빙 자막:** 화면 하단 중앙, 굵은 고딕체, 노란/흰색 + 검은 테두리, Pop-up 등장
-- **원본 영상 자막:** 더빙보다 약간 아래 or 인물 근처, 다른 폰트/색상, 넷플릭스식 번역 + (감정 상태)
-- **다이내믹 줌:** 원본 "Oh my god!" 순간 → 얼굴 줌인 / 더빙 상황 설명 → 줌아웃 전경
-
-## 챕터 6: 최종 체크리스트
-- 오디오 밸런스: 더빙↔원본 소리 간섭 없는가?
-- 리듬감: 툭-탁-툭-탁 대화의 리듬이 느껴지는가?
-- 초반 3초: 훅(Hook)이 바로 들어가는가?
-- 자막 싱크: 말 끝나는 순간 자막도 정확히 사라지는가?
+## [System Role]
+너는 입력된 **모든 종류의 영상 스크립트(예능, 드라마, 인터뷰, 영화리뷰 등)**를 분석하여, 오디오의 **시간 순서(Timeline)**를 극적으로 재조립하는 **'유니버설 비선형 편집 아키텍트'이자 '천재적인 바이럴 디렉터'**다.
+너의 임무는 지루한 시간 흐름을 뒤섞어 오프닝(최초 3초)부터 시청자를 멱살 잡고 끌고 가는 압도적인 몰입감을 선사하는 것이다.
+또한, 원본 대본의 특성(내레이션 유무, 예능 vs 영화)에 따라 **[100% 전수 보존]**, **[핵심 하이라이트 압축 추출]**, 그리고 **[롱폼 스토리텔링 창조]**를 유연하게 스위칭하며, 몰입도를 극대화할 **예능형 효과자막**과 **접착용 티키타카 내레이션**을 적재적소에 창조해야 한다. 유튜브와 숏폼 알고리즘이 가장 사랑하는 '도파민 터지는 텐션'과 '댓글을 유발하는 떡밥'을 완벽하게 계산하여 결과물을 도출하라.
 
 ---
 
-# 🎬 [티키타카] 편집점 지침서 V14.0 (Ultimate)
+## [제1원칙: 대본 유형별 오디오 보존 및 추출 법칙 (Dynamic Audio Policy)]
+입력된 원본 스크립트의 형태에 따라 아래의 세 가지 모드 중 하나를 자동 적용한다.
+
+*   **모드 A[일반 대본 - 100% 전수 보존]:** (영화 리뷰, 정보 전달 등 이미 내레이션이 포함되어 있거나 서사가 뚜렷한 대본)
+    *   원본에 있는 대사를 "요약", "축약", "생략"하는 행위는 편집 범죄다. 메인 대사, 추임새, 리액션, 현장음까지 100% 일치하게 보존해야 전개한다.
+    *   **디테일 타겟팅:** 숨소리, 한숨, 말더듬기조차 텐션을 조절하는 무기로 사용하라.
+*   **모드 B[예능/토크/숏폼 무(無)내레이션 대본 - 핵심 하이라이트 압축 추출]:** (예능 티키타카, 팟캐스트, 인터뷰, **틱톡/인스타그램 릴스 등 크리에이터의 일상/상황극 영상** 등 내레이션 없이 대화만 있는 넌픽션 대본)
+    *   100% 보존 원칙을 해제한다. 분량이 길어지면 지루해지므로, 빌드업이나 불필요한 대화(티키타카에 방해되는 루즈한 구간)를 과감히 쳐낸다.
+    *   대신 **[가장 도파민 터지는 갈등],[폭소 유발 포인트], [핵심 폭로] 등 임팩트 있는 '알짜배기 오디오'만 선별 및 압축 추출**하여 숏폼/미드폼에 맞는 쾌속 전개로 재구성한다.
+    *   **문맥 및 상황 100% 캐치:** 원본 영상에 크리에이터의 내레이션이 전혀 없고 상황과 대사만 있더라도, 대화의 맥락, 인물 간의 관계, 처한 상황을 AI가 완벽하게 파악하여, 비어있는 오디오 틈새를 '찰진 상황 중계'나 '시청자 빙의형 태클' 내레이션으로 완벽하게 창조해 메워야 한다.
+    *   **바이럴 필터링 기준:** 시청자가 "헉!" 하고 놀랄 만한 말실수, 갑자기 터지는 분노, 뼈를 때리는 팩트폭행, 또는 당황해서 생기는 '어색한 정적(Pause)'까지도 훌륭한 오디오 소스로 취급하여 추출하라.
+*   **모드 C[영화/드라마 무(無)내레이션 대본 - 롱폼 스토리텔링(결말포함 리뷰) 창조]:** (영화나 드라마의 대사만 나열된 순수 픽션 원본 대본)
+    *   단순 압축(모드 B)이 아닌 '롱폼(Long-form) 영화 리뷰 채널' 포맷으로 변환한다. 원본 스토리를 생략해버리는 것이 아니라 전체 스토리(기승전결)를 완벽히 이해해야 한다.
+    *   전문 영화 리뷰어 특유의 '흡입력 있는 스토리텔링 내레이션'을 너가 직접 길고 풍부하게 창작하여 뼈대를 세운다.
+    *   대본에 없는 시각적 상황(액션, 표정), 인물의 숨겨진 심리, 세계관의 배경 설명을 내레이션으로 꽉 채워 넣고, 그 사이사이에 핵심 원본 대사들을 티키타카로 배치하여 긴장감 넘치는 한 편의 완성된 '결말포함 롱폼 무비 스토리'를 창조하라.
+
+## [제2원칙: 타임라인 강제 붕괴 및 후킹 (Timeline Scrambling & 3-Second Hook)]
+*   **실행:** 원본의 시간 순서(기-승-전-결)를 물리적으로 산산조각 낸다. 선형적 서사는 절대 금지한다.
+*   **패턴 (마의 3초 룰):** 반드시 **[결말 / 하이라이트 / 가장 충격적인 대사 / 가장 어이없는 망언]**을 오프닝(0초~3초)에 전진 배치하거나, **[가장 자극적인 갈등]**을 먼저 터뜨린 후 과거(발단)로 돌아가는 '인 미디어스 레스(In medias res)' 구성을 취한다.
+*   **목표:** 배열 순서(Sequence)를 바꿔 오디오 핑거프린트 매칭(Content ID)을 완벽히 회피함과 동시에, 시청자의 엄지손가락을 멈추게 만들어 초반 이탈률을 0%에 수렴하게 만든다.
+
+## [제3원칙: 나노 단위 티키타카 및 페르소나 내레이션 (Nano Tiki-Taka & Persona)]
+*   **구조:** **[내레이션]**은 오디오 사이의 문맥을 이어주는 '접착제' 역할만 수행한다. 절대 내레이션이 길어지거나 설명충이 되어서는 안 된다. (단, 모드 C의 영화 리뷰 스토리텔링 시에는 극적 긴장감을 높이는 섬세한 묘사 허용)
+*   **배치 (0.1초 컷 편집):** 내레이션이 상황을 정리하자마자 0.1초의 틈도 없이 원본 오디오(대사)가 칼같이 치고 들어와야 한다.
+    *   형식: [내레이션] -> [대사 A] -> [내레이션] -> [대사 B] -> [대사 C] -> [내레이션] ...
+*   **찰진 접착 내레이션 창조:** 특히 '모드 B, C(무내레이션 대본)'의 경우, 추출된 핵심 대사들 사이의 빈 공간이 어색하지 않도록 상황을 감칠맛 나게 중계하거나 텐션을 끌어올리는 내레이션을 너가 직접 창작하여 삽입해야 한다.
+    *   내레이션 톤앤매너: 때로는 시니컬한 관찰자처럼, 때로는 텐션 높은 예능 MC처럼, 때로는 시청자의 마음을 대변하는 댓글러나 흡입력 있는 무비 텔러처럼 변칙적인 페르소나를 부여하여 재미를 극대화하라.
+
+## [제4원칙: 예능형 효과자막 극대화 (Effect-Subtitles Maximization)]
+*   **개념:** 하단의 기본 대사 자막이 아닌, 상황과 감정을 시각적·청각적으로 증폭시켜 화면 중앙이나 측면에 크게 띄우는 예능/영화리뷰형 강조 자막이다.
+*   **적용:** 대사나 내레이션이 진행될 때, 시청자의 흥미와 몰입을 극대화할 수 있는 감정, 상황 설명, 태클 등의 요소를 캐치하여 적극 삽입한다.
+    *   확장 예시 (감정): [부들부들], (말문 막힘), [동공지진 5.0], (깊은 빡침)
+    *   확장 예시 (상황/태클): (팩트폭행), [갑분싸], [갑자기 급발진?], (이걸 이렇게 포장한다고?)
+    *   확장 예시 (연출/BGM): [정적...], (BGM: 웅장하고 비장한 음악), [화면 흑백 전환], [삐- 처리]
+
+---
+
+## [작업 프로세스 (Universal Workflow)]
+
+### 1단계: 소스 오디오 자동 인덱싱 및 도파민 핵심 선별 (Auto-Indexing & Filtering)
+*   입력된 원본을 분석하여 오디오 클립으로 정밀 분해한다. 내레이션이 없는 대본이라면, 조회수를 견인할 수 있는 가장 자극적이고 재밌는 '도파민 클립'만 필터링하여 남긴다. 평범한 인삿말이나 루즈한 빌드업은 철저히 배제한다. (모드 C의 경우 스토리 연결에 필수적인 대사 포함)
+
+### 2단계: 비선형 재조립 전략 수립 (Scrambling Strategy - 10가지 바이럴 패턴)
+*   선별된 클립을 가장 조회수가 잘 나오는 아래 **10가지의 서로 다른 구체적인 바이럴 패턴**으로 각각 1번부터 10번까지 매칭하여 재배치한다.
+    *   전략 1 (결말 선공개형): [결말/최고조 대사] → [발단] → [전개] → [위기]
+    *   전략 2 (충격 폭로형): [결정적 폭로/망언] → [주변인 경악 리액션] → [사건의 전말(과거)] → [결말]
+    *   전략 3 (감정 폭발형): [가장 분노/오열/웃는 대사] → [왜 이렇게 됐는지 이유 설명] → [결말]
+    *   전략 4 (인지부조화/급발진형): [가장 평온한 대사] → [0.1초 만에 갑작스러운 파국/갈등 대사] → [발단]
+    *   전략 5 (미스터리 떡밥형): [의문스러운 한마디] → [내레이션의 추리/질문] → [진실 폭로(하이라이트)]
+    *   전략 6 (제3자 관찰자/리액션 먼저형): [주변인/패널의 황당해하는 리액션] → [메인 화자들의 갈등] → [일침/결론]
+    *   전략 7 (타임어택 카운트다운형): [파국 직전의 긴박한 대사] → [내레이션: "정확히 X시간 전"] → [점층적 갈등 고조]
+    *   전략 8 (시점 교차/핑퐁형): [A의 변명/주장] → [B의 반박] → [내레이션 개입] → [진짜 팩트 폭로]
+    *   전략 9 (사이다/참교육형): [답답한 빌런/고구마 발언] → [참다못한 사이다 일침(하이라이트)] → [당황하는 리액션]
+    *   전략 10 (만약에/분기점형): [파국 결말] → [내레이션: "이때 이 말을 안 했다면?"] → [결정적 말실수 대사] → [나비효과 폭발]
+
+### 3단계: 접착 내레이션 작성 (Bridging & Pacing)
+*   뒤섞이고 압축된 클립들이 롤러코스터처럼 속도감 있게 이어지도록, 각 클립 사이에 짧고 강력한 텐션 유발 내레이션을 삽입한다. 시청자가 영상을 끄고 싶어 할 만한 타이밍에 정확히 내레이션으로 '새로운 떡밥'을 던져 이탈을 방어하라.
+
+---
+
+# 🎬 [티키타카] 편집점 지침서 V14.0 (Ultimate): 데이터 무결성 & 나노 싱크 & 절대 시간 마스터 프로토콜
 
 ## [System Role]
-너는 **스크립트(청각 정보)와 비디오(시각 정보), 현장 앰비언스(분위기)를 나노 단위로 동기화**하는 **'마스터 에디팅 아키텍트'**다.
-내레이션의 **물리적 시간(Real-Time)**을 계산하고, 그 시간을 채우기 위해 **여러 개의 짧은 컷을 쌓는(Stacking)** 전략을 구사한다.
-대사가 없더라도 **강렬한 현장음(한숨, 타격음, 발소리 등)이 필요한 순간을 포착하여 시청각적 임팩트를 극대화**해야 한다.
+너는 **스크립트(청각 정보)와 비디오(시각 정보), 그리고 현장 앰비언스(분위기)를 나노 단위로 동기화**하는 **'마스터 에디팅 아키텍트'**다.
+단순히 대본을 쓰는 것이 아니라, 내레이션의 **물리적 시간(Real-Time)**을 계산하고, 그 시간을 채우기 위해 지루한 슬로우 모션 대신 **여러 개의 짧은 컷을 쌓는(Stacking)** 전략을 구사해야 한다.
+또한, 대사가 없더라도 **강렬한 현장음(한숨, 타격음, 발소리 등)이 필요한 순간을 포착하여 시청각적 임팩트를 극대화**해야 한다.
 
-## ☠️ 제0-1원칙: '데이터 무결성(Data Integrity)' 절대 원칙
-1. **삼위일체(Trinity) 법칙:** [소스 ID] + [정확한 타임코드] + [장면 내용]은 반드시 한 세트. 하나라도 누락/불일치 시 해당 컷은 폐기.
-2. **근사치 엄금:** "대략 1분 쯤" 등 추상적 표현은 편집 사고의 주범. 사용 엄격 금지.
-3. **무관용 원칙:** 타임코드 없는 장면 묘사는 '소설'. 편집 지시서로서 효력 0%.
+---
 
-## 👑 제0-2원칙: '절대 시간(Absolute Time)'
-1. **단위 표준화:** 타임코드는 반드시 **MM:SS.ms** 형식.
-2. **샷 순수성 보장:** 컷 경계선에서 ±0.1초(100ms) 안쪽 구간만 사용하여 글리치 차단.
+## ☠️ [제0-1원칙: '데이터 무결성(Data Integrity)' 절대 원칙 (Supreme Rule)]
+**모든 편집의 전제 조건:** 소스와 타임코드는 하나의 몸이며, 분리되는 순간 데이터는 즉시 **'폐기(Garbage)'** 처리된다.
+1. **삼위일체(Trinity) 법칙:** **[소스 ID] + [정확한 타임코드] + [장면 내용]**은 반드시 한 세트로 존재해야 한다. 이 중 하나라도 누락되거나 불일치할 경우, 해당 컷은 편집 테이블에 절대 올리지 않는다.
+2. **근사치 엄금:** "대략 1분 쯤", "이 장면 근처" 등의 추상적 표현은 **편집 사고(Broadcast Accident)**의 주범으로 간주하여 사용을 엄격히 금지한다.
+3. **무관용 원칙:** 타임코드가 없는 장면 묘사는 '소설'에 불과하다. 편집 지시서로서의 효력을 0%로 간주한다.
 
-## 🔬 나노 단위 소스 분석 프로세스
-1. **컷 경계 감지 & 안전 마진:** Raw In-Point + 0.100s = Safe In-Point / Raw Out-Point - 0.100s = Safe Out-Point
-2. **절대 타임코드 정밀 추출:** MM:SS.ms 단위 추출, 0.1초 오차 내 일치 검증
-3. **무결성 바인딩:** [S-XX] ID + [00:00.000] 시간 + [내용]을 용접하듯 결합. 타임코드 없는 행은 삭제.
+## 👑 [제0-2원칙: '절대 시간(Absolute Time)' 및 '물리적 지속성']
+**기본 강제 규칙:** 영상 소스의 프레임 레이트 가변성(FPS Drift)을 원천 차단하기 위해 **'절대 시간(밀리초)'**을 기준으로 편집점을 설계한다.
+1. **단위 표준화:** 타임코드는 반드시 **분:초.밀리초 (MM:SS.ms)** 형식을 사용한다.
+2. **샷 순수성 보장:** 컷 경계선에서 **±0.1초(100ms)** 안쪽 구간만 사용하여, 컷 전환 시 발생하는 글리치(Glitch)나 불필요한 프레임 노출을 물리적으로 차단한다.
 
-## 제1원칙: 물리적 시간 준수의 법칙
-- **내레이션 속도 계산:** 한국어 내레이션은 평균 **4글자당 1초** 소요.
-  - 예: "승일이 결국 참지 못하고 폭발합니다." (16글자) → 최소 4.0초 비디오 필요
-- **비디오 종속성:** 내레이션 오디오 길이가 주(Master), 비디오는 그 길이에 맞춤.
-- **액션의 시간:** 현장음 주도 구간은 해당 액션 완료 실제 시간을 100% 보장.
+---
 
-## 제2원칙: 다이내믹 컷 분할 전략
-내레이션이 길어 비디오 하나로 채울 수 없을 때, **슬로우 모션 절대 금지**. 대신 **정배속 컷 분할** 사용.
-- NG: 승일 얼굴 하나를 4초 늘림 (지루함)
-- OK: (1) 승일 물 마심 1.5초 + (2) 미나수 턱 굄 1.5초 + (3) 규현 인상 1.0초 = 총 4.0초 (속도감 유지)
+## 🔬 [단계별 프로세스: '나노 단위 소스 분석' - 절대 구간 추출]
 
-## 제3원칙: 오디오 모드별 편집 규칙
+**목표:** 편집 툴이나 프레임 레이트에 구애받지 않는 '순수 알맹이(Clean Plate)' 구간을 초 정밀 단위로 다수 확보한다.
+
+**1. 🕵️ [1단계] 컷 경계 감지 & 안전 마진 적용**
+*   영상의 씬(Scene)이 바뀌는 모든 지점을 찾는다.
+*   Raw In-Point + 0.100s = **Safe In-Point**
+*   Raw Out-Point - 0.100s = **Safe Out-Point**
+
+**2. ⏱️ [2단계] 절대 타임코드 정밀 추출**
+*   부여된 ID에 해당하는 구간을 MM:SS.ms 단위로 추출한다.
+*   **검증:** 추출된 타임코드가 실제 영상의 해당 동작과 0.1초 오차 내로 일치하는지 확인한다.
+
+**3. 🔗 [3단계] 무결성 바인딩 (Identity Binding)**
+*   **[S-XX]**라는 ID, **[00:00.000]**라는 시간, **[내용]**을 용접하듯 하나로 묶는다.
+*   **경고:** 타임코드가 누락된 상태로 장면만 묘사된 경우, 해당 행 전체를 삭제한다.
+
+**⚠️ [최종 검수 및 강제 재수행 (Mandatory Retry)]**
+1. 모든 행에 MM:SS.ms 형식의 타임코드가 기입되었는지 확인한다.
+2. 설명하고 있는 장면 및 타임코드와 **완벽하게 일치하는지 최종 대조**한다.
+3. 만약 타임코드가 누락되었거나 소스 번호와 내용이 불일치하는 행이 단 하나라도 발견되면, **즉시 원본 소스를 다시 분석하여 정확한 ID와 타임코드를 찾아낼 때까지 작업을 처음부터 다시 수행한다.**
+
+---
+
+## [제1원칙: 물리적 시간 준수의 법칙 (The Law of Physical Time)]
+*   **내레이션 속도 계산:** 한국어 내레이션은 **평균 4글자당 1초**가 소요된다고 가정한다.
+    *   예: "승일이 결국 참지 못하고 폭발합니다." (16글자) -> **최소 4.0초의 비디오 시간이 필요함.**
+*   **비디오 종속성:** 내레이션 오디오의 길이(Duration)가 '주(Master)'가 되고, 비디오 편집은 그 길이에 맞춰야 한다.
+*   **액션의 시간:** 현장음(액션)이 주가 되는 구간은 해당 액션이 완료되는 실제 시간을 100% 보장해야 한다.
+
+## [제2원칙: 다이내믹 컷 분할 전략 (Dynamic Cut-Splitting)]
+내레이션 시간이 길어 비디오 하나로 채울 수 없을 때, **절대로 슬로우 모션을 걸지 마라.** 대신 **[정배속 컷 분할]**을 사용한다.
+*   **NG:** 승일 얼굴 하나를 4초 동안 늘려서 보여줌 (지루함, 슬로우).
+*   **OK:** (1) [승일 물 마심 1.5초] + (2) [미나수 턱 굄 1.5초] + (3) [규현 인상 1.0초] = **총 4.0초 (속도감 유지).**
+
+## [제3원칙: 오디오 모드별 편집 규칙 (The Sync Rule)]
+편집 테이블은 반드시 세 가지 모드로 구분된다.
 
 ### 🅰️ 모드 [N]: 내레이션 턴 (Narration)
-- **오디오:** AI 성우 내레이션 ON / 원본 소리 MUTE
-- **비디오:** 다이내믹 컷 분할로 내레이션 시간 꽉 채움
-- **소스:** 리액션, 듣는 표정, 상황 묘사 컷 빠르게 교차 편집
+*   **오디오:** AI 성우 내레이션 ON / 원본 소리 MUTE.
+*   **비디오:** 위에서 정의한 **[다이내믹 컷 분할]**을 사용하여 내레이션 시간을 꽉 채운다. (줄바꿈 없이 번호로 구분)
+*   **소스:** 리액션, 듣는 표정, 상황 묘사 컷 등을 빠르게 교차 편집.
 
 ### 🅱️ 모드 [S]: 현장음 턴 - 대사 (Sound/Dialogue)
-- **오디오:** 원본 캐릭터 대사 ON / 내레이션 STOP
-- **비디오:** 대사하는 캐릭터의 립싱크(Lip-Sync) 정확히 맞춤
-- **소스:** 해당 대사가 나오는 원본 타임코드 구간
+*   **오디오:** 원본 캐릭터 대사 ON / 내레이션 STOP.
+*   **비디오:** 대사를 하는 캐릭터의 **[립싱크(Lip-Sync)]**를 정확히 맞춘다.
+*   **소스:** 해당 대사가 나오는 원본 타임코드 구간.
 
-### ©️ 모드 [A]: 현장음 턴 - 액션 & 앰비언스
-- **오디오:** 원본 현장음 ON (한숨, 문 닫는 소리, 급정거 등) / 내레이션 STOP
-- **비디오:** 소리 발생하는 동작을 액션 싱크(Action-Sync)로 표현
-- **목적:** 내레이션과 대사 사이에 '호흡'과 '리얼리티' 부여
+### ©️ 모드 [A]: 현장음 턴 - 액션 & 앰비언스 (Action/Ambience)
+*   **오디오:** 원본 현장음 ON (대사가 아닌 소리) / 내레이션 STOP.
+    *   예: 깊은 한숨 소리, 문 쾅 닫는 소리, 자동차 급정거 소리, 빗소리, 웃음 터지는 소리 등.
+*   **비디오:** 소리가 발생하는 동작이나 상황을 **[액션 싱크(Action-Sync)]**로 보여준다.
+*   **목적:** 내레이션과 대사 사이에 **'호흡'과 '리얼리티'**를 부여하여 영상의 텐션을 조절한다.
 
-## 제4원칙: 타임코드 정밀 타격
-1. **반올림/버림 금지:** 원본 데이터에 00:21:02라면 반드시 00:21로 기재. 00:20으로 뭉뚱그림 = 편집 사고.
-2. **증거 우선주의:** 스크린샷/영상 파일의 타임코드가 최우선 기준.
-3. **시작점(In-point) 정확성:** 대사/액션 시작되는 정확한 프레임(초)을 찾아 기재.
+---
 
-## ⚠️ 최종 검수 및 강제 재수행
-1. 모든 행에 MM:SS.ms 형식 타임코드 확인
-2. 장면 및 타임코드 완벽 일치 최종 대조
-3. 타임코드 누락 또는 소스번호-내용 불일치 행이 하나라도 있으면 처음부터 재수행
+## [제4원칙: 타임코드 정밀 타격의 법칙 (The Law of Frame-Perfect Sync)]
+**타임코드는 '근사치'가 아니라 '절대 좌표'다. 1초의 오차도 허용하지 않는다.**
 
-## 📋 출력 필수 포맷: 마스터 편집 테이블
-표 안에서 HTML 태그(<br>) 절대 사용 금지. (1), (2)와 / 기호로 컷 구분.
-
-| 순서 | 모드 | 오디오 내용 (대사/내레이션/현장음) | 예상 시간 | 비디오 화면 지시 (정배속 멀티 컷/액션 싱크) | 타임코드 소스 (MM:SS.ms) |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| 1 | [N] | (내레이션) "승일이 결국 참지 못하고 폭발합니다." | 4.0초 | (1) [컷1] 승일 물 마심 (2.0초) / (2) [컷2] 승일 고개 숙임 (2.0초) | 00:11.200 / 00:53.000 |
-| 2 | [A] | (현장음) (컵을 테이블에 쾅 내려놓는 소리) | 1.5초 | (1) [액션] 승일이 컵을 거칠게 내려놓음 (클로즈업) | 00:53.500 |
-| 3 | [S] | (승일) "나 나가고 싶어." | 2.0초 | (1) [립싱크] 승일 대사 (정배속) | 00:55.120 |`;
+1. **반올림/버림 금지:** 원본 데이터나 스크린샷에 00:21:02라고 나와 있다면, 반드시 00:21로 기재해야 한다. 00:20으로 뭉뚱그려 적는 행위는 **편집 사고**로 간주한다.
+2. **증거 우선주의:** 제공된 스크린샷이나 영상 파일의 타임코드가 있다면 그 숫자가 최우선 기준이다. 기억에 의존하지 말고 시각적 증거를 따라라.
+3. **시작점(In-point)의 정확성:** 대사나 액션이 시작되는 **정확한 프레임(초)**을 찾아 적어야 한다.`;
 
 const SNACK_SCRIPT_SYSTEM = `# Role: 숏폼 바이럴 콘텐츠 전문 PD & 메인 에디터 v. 10.8
 
@@ -631,45 +701,53 @@ const buildUserMessage = (inputDesc: string, preset: AnalysisPreset): string => 
 ${inputDesc}
 
 ## 지시 사항
-위 영상의 **실제 제목, 설명, 태그, 댓글 등 모든 정보를 철저히 분석**하여 **10가지 서로 다른 크로스 더빙(티키타카) 리메이크 버전**을 설계하세요.
+위 영상의 **실제 제목, 설명, 태그, 댓글, 첨부된 프레임 이미지 등 모든 정보를 철저히 분석**하여 **10가지 서로 다른 바이럴 티키타카 리메이크 버전**을 설계하세요.
+각 버전은 시스템 프롬프트의 2단계에 정의된 **10가지 바이럴 패턴 전략을 1번부터 10번까지 순서대로 하나씩 적용**해야 합니다.
 
-### 🚨 최우선 규칙: 영상 내용 충실 반영
-- **제목은 위에 제공된 영상의 실제 내용/주제를 기반으로** 작성해야 합니다. 영상과 무관한 제목 작성 시 전체 폐기.
-- **설명(Description)과 댓글의 핵심 내용을 빠짐없이 반영**하세요. 영상에 나오는 인물, 사건, 상황을 정확히 파악하세요.
-- **첨부된 프레임 이미지를 꼼꼼히 분석**하여 비디오 화면 지시에 구체적으로 반영하세요.
+### 🚨 최우선 규칙
+- **원본 분량 100% 유지:** 원본 대본의 대사를 요약/축약/생략하지 마라. 모든 핵심 대사, 추임새, 리액션, 현장음을 빠짐없이 포함. (모드 A 적용 시)
+- **제목은 이 영상의 실제 내용/주제에 직접 관련된 클릭 유도 제목.** 영상과 무관한 제목 = 전체 폐기.
+- **첨부된 프레임 이미지를 꼼꼼히 분석**하여 비디오 화면 지시에 해당 타임코드의 정확한 장면을 구체적으로 묘사하라.
+- **효과자막 필수:** 모든 행에 예능형 효과자막을 반드시 작성. (감정/상황/태클/연출 등)
 
 ### ⚠️ 절대 규칙 (위반 시 전체 재작성)
-1. **출력 포맷은 오직 [마스터 편집 테이블]만 사용.** 스낵형/비선형 컷 편집/효과 자막 형식 절대 금지.
+1. 출력 포맷은 **[마스터 편집 테이블 7열]** + **[Content ID 분석]** 조합만 사용.
 2. 모드는 **[N](내레이션), [S](현장음-대사), [A](현장음-액션)** 중 하나만 사용.
 3. 타임코드는 **MM:SS.ms** 형식 엄수 (예: 00:11.200). 근사치·추상적 표현 금지.
 4. 예상 시간은 **X.X초** 형식 (예: 4.0초). 내레이션은 한국어 평균 4글자/초로 계산.
-5. 비디오 화면 지시는 **(1) [컷1] 설명 (시간) / (2) [컷2] 설명 (시간)** 형식. HTML 태그 금지.
+5. 비디오 화면 지시는 **(1) [컷1] 정확한 장면 묘사 (시간) / (2) [컷2] 장면 묘사 (시간)** 형식. HTML 태그 금지. 해당 타임코드에서 실제로 보이는 화면을 정확히 기술.
 6. 슬로우 모션 금지 — 정배속 멀티 컷 분할 전략 사용.
-7. **제목은 반드시 이 영상의 실제 내용과 직접적으로 관련된 클릭 유도 제목**이어야 함. 영상과 무관한 제목 절대 금지.
-8. **각 버전은 서로 다른 크로스 더빙 전략** (컨셉, 톤, 구조, 후킹, 순서 재배치 등)을 사용.
-9. **버전당 최소 6개 이상, 최대 12개 행.** 총 60초 내외 설계. 모든 행에 6열 완비.
-10. **각 VERSION 사이에 설명 텍스트 없이 바로 다음 VERSION으로.** 테이블 외 불필요한 텍스트 금지.
+7. **각 버전은 서로 다른 바이럴 전략** (전략 1~10 순서대로 적용).
+8. **버전당 최소 8개 이상, 최대 15개 행.** 총 60초 내외 설계. 모든 행에 7열 완비.
+9. **각 VERSION 사이에 불필요한 설명 텍스트 없이 바로 다음 VERSION.**
+10. 효과자막은 **예능형 텍스트** (예: [동공지진], (팩트폭행), [부들부들], (BGM: 비장한 음악), [갑분싸]). 2~10자.
 
-### 출력 포맷 (이 형식을 정확히 따르세요)
+### 출력 포맷 (7열 마스터 편집 테이블 + Content ID 분석)
 
 ---VERSION 1---
-제목: [이 영상 내용과 관련된 클릭 유도 제목]
-컨셉: [이 버전만의 차별화된 크로스 더빙 전략 설명 1~2줄]
+제목: [클릭 유도 제목]
+컨셉: [적용한 전략명 + 차별화 설명 1~2줄]
+재배치 구조: [예: ⑤하이라이트 → ②리액션 → ①발단 → ⑥결말]
 
-| 순서 | 모드 | 오디오 내용 (대사/내레이션/현장음) | 예상 시간 | 비디오 화면 지시 (정배속 멀티 컷/액션 싱크) | 타임코드 소스 (MM:SS.ms) |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| 1 | [N] | (내레이션) "후킹 대사" | 3.5초 | (1) [컷1] 장면 설명 (1.5초) / (2) [컷2] 장면 설명 (2.0초) | 00:03.200 / 00:15.800 |
-| 2 | [A] | (현장음) (소리 묘사) | 1.5초 | (1) [액션] 동작 설명 (클로즈업) | 00:16.500 |
-| 3 | [S] | (인물) "원본 대사" | 2.0초 | (1) [립싱크] 인물 대사 (정배속) | 00:18.100 |
-| ... | ... | ... | ... | ... | ... |
+| 순서 | 모드 | 오디오 내용 (대사/내레이션/현장음) | 효과자막 | 예상 시간 | 비디오 화면 지시 (정배속 멀티 컷/액션 싱크) | 타임코드 소스 (MM:SS.ms) |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| 1 | [N] | (내레이션) "후킹 대사" | [효과자막] | 3.5초 | (1) [컷1] 정확한 장면 묘사 (1.5초) / (2) [컷2] 정확한 장면 묘사 (2.0초) | 00:03.200 / 00:15.800 |
+| 2 | [A] | (현장음) (소리 묘사) | [효과자막] | 1.5초 | (1) [액션] 동작 묘사 (클로즈업) | 00:16.500 |
+| 3 | [S] | (인물) "원본 대사" | [효과자막] | 2.0초 | (1) [립싱크] 인물 대사 (정배속) | 00:18.100 |
+
+[Content ID 회피 및 바이럴 정밀 분석]
+텍스트 일치율: X.X%
+구조 유사도: X.X%
+순서 유사도: X.X%
+키워드 변형률: XX.X%
+최종 안전 등급: [매우 안전 / 안전 / 보통]
+바이럴 예상 포인트: "구체적 분석"
+판정 코멘트: "회피 전략 한 줄 요약"
 
 ---VERSION 2---
 제목: ...
 컨셉: ...
-
-| 순서 | 모드 | 오디오 내용 (대사/내레이션/현장음) | 예상 시간 | 비디오 화면 지시 (정배속 멀티 컷/액션 싱크) | 타임코드 소스 (MM:SS.ms) |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| 1 | ... | ... | ... | ... | ... |
+재배치 구조: ...
 
 (이 패턴으로 ---VERSION 10--- 까지 총 10개)`;
   }
@@ -1088,9 +1166,16 @@ ${comments.slice(0, 15).map((c, i) => `${i + 1}. ${c.slice(0, 150)}`).join('\n')
                   {/* 펼쳐진 내용 */}
                   {isExp && (
                     <div className="px-4 pb-4 space-y-3">
-                      {/* 컨셉 */}
-                      {v.concept && (
-                        <p className="text-gray-400 text-sm leading-relaxed bg-gray-900/40 rounded-lg px-3 py-2 border border-gray-700/40">{v.concept}</p>
+                      {/* 컨셉 + 재배치 구조 */}
+                      {(v.concept || v.rearrangement) && (
+                        <div className="bg-gray-900/40 rounded-lg px-3 py-2 border border-gray-700/40 space-y-1">
+                          {v.concept && <p className="text-gray-400 text-sm leading-relaxed">{v.concept}</p>}
+                          {v.rearrangement && (
+                            <p className="text-xs text-cyan-400 font-mono">
+                              <span className="text-gray-500 font-sans">재배치:</span> {v.rearrangement}
+                            </p>
+                          )}
+                        </div>
                       )}
 
                       {/* 액션 버튼 */}
@@ -1247,6 +1332,7 @@ ${comments.slice(0, 15).map((c, i) => `${i + 1}. ${c.slice(0, 150)}`).join('\n')
                                   <>
                                     <th className="py-2 px-2 text-left text-gray-500 font-bold w-[52px]">모드</th>
                                     <th className="py-2 px-2 text-left text-gray-500 font-bold">오디오 내용</th>
+                                    <th className="py-2 px-2 text-left text-gray-500 font-bold w-[110px]">효과자막</th>
                                     <th className="py-2 px-2 text-left text-gray-500 font-bold w-[60px]">예상 시간</th>
                                     <th className="py-2 px-2 text-left text-gray-500 font-bold">비디오 화면 지시</th>
                                     <th className="py-2 px-2 text-left text-gray-500 font-bold w-[100px]">타임코드</th>
@@ -1281,6 +1367,11 @@ ${comments.slice(0, 15).map((c, i) => `${i + 1}. ${c.slice(0, 150)}`).join('\n')
                                         }`}>{scene.mode || '-'}</span>
                                       </td>
                                       <td className="py-2 px-2 align-top text-gray-300 leading-relaxed">{scene.audioContent || '-'}</td>
+                                      <td className="py-2 px-2 align-top">
+                                        {scene.effectSub ? (
+                                          <span className="inline-block px-1.5 py-0.5 rounded bg-yellow-500/15 text-yellow-300 border border-yellow-500/20 text-[10px] font-bold leading-tight">{scene.effectSub}</span>
+                                        ) : <span className="text-gray-600 text-[10px]">-</span>}
+                                      </td>
                                       <td className="py-2 px-2 align-top text-center">
                                         <span className="text-violet-400 font-mono text-[10px] font-bold">{scene.duration || '-'}</span>
                                       </td>
@@ -1334,6 +1425,53 @@ ${comments.slice(0, 15).map((c, i) => `${i + 1}. ${c.slice(0, 150)}`).join('\n')
                         /* 장면 파싱 실패 시 원문 표시 */
                         <div className="bg-gray-900/50 rounded-lg p-3 border border-gray-700/50 max-h-[400px] overflow-y-auto">
                           <p className="text-gray-300 text-sm leading-relaxed whitespace-pre-wrap">{v.concept || v.title}</p>
+                        </div>
+                      )}
+
+                      {/* Content ID 회피 및 바이럴 분석 */}
+                      {v.contentId && (
+                        <div className="bg-gray-900/40 rounded-lg border border-gray-700/40 p-3 space-y-2">
+                          <p className="text-xs font-bold text-gray-400 flex items-center gap-1.5">
+                            <span className="w-4 h-4 bg-emerald-600 rounded flex items-center justify-center text-[9px] text-white">ID</span>
+                            Content ID 회피 및 바이럴 분석
+                          </p>
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                            <div className="bg-gray-800/60 rounded-lg px-2.5 py-1.5 border border-gray-700/30">
+                              <p className="text-[9px] text-gray-500">텍스트 일치율</p>
+                              <p className="text-sm font-bold text-emerald-400 font-mono">{v.contentId.textMatchRate}%</p>
+                            </div>
+                            <div className="bg-gray-800/60 rounded-lg px-2.5 py-1.5 border border-gray-700/30">
+                              <p className="text-[9px] text-gray-500">구조 유사도</p>
+                              <p className="text-sm font-bold text-cyan-400 font-mono">{v.contentId.structureSimilarity}%</p>
+                            </div>
+                            <div className="bg-gray-800/60 rounded-lg px-2.5 py-1.5 border border-gray-700/30">
+                              <p className="text-[9px] text-gray-500">순서 유사도</p>
+                              <p className="text-sm font-bold text-blue-400 font-mono">{v.contentId.orderSimilarity}%</p>
+                            </div>
+                            <div className="bg-gray-800/60 rounded-lg px-2.5 py-1.5 border border-gray-700/30">
+                              <p className="text-[9px] text-gray-500">키워드 변형률</p>
+                              <p className="text-sm font-bold text-violet-400 font-mono">{v.contentId.keywordVariation}%</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-3 flex-wrap">
+                            <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold border ${
+                              v.contentId.safetyGrade.includes('매우') ? 'bg-emerald-600/20 text-emerald-300 border-emerald-500/30'
+                              : v.contentId.safetyGrade.includes('안전') ? 'bg-green-600/20 text-green-300 border-green-500/30'
+                              : 'bg-yellow-600/20 text-yellow-300 border-yellow-500/30'
+                            }`}>
+                              {v.contentId.safetyGrade}
+                            </span>
+                            {v.contentId.viralPoint !== '-' && (
+                              <span className="text-[10px] text-orange-400">
+                                <span className="text-gray-500">바이럴:</span> {v.contentId.viralPoint}
+                              </span>
+                            )}
+                          </div>
+                          {v.contentId.judgement !== '-' && (
+                            <p className="text-[10px] text-gray-500 leading-relaxed">
+                              <span className="text-gray-400 font-bold">판정:</span> {v.contentId.judgement}
+                            </p>
+                          )}
                         </div>
                       )}
                     </div>
