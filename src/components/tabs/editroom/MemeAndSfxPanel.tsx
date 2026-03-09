@@ -45,12 +45,14 @@ function saveToStorage(key: string, data: unknown): void {
   try { localStorage.setItem(key, JSON.stringify(data)); } catch { /* ignore */ }
 }
 
-// ─── 공통 훅: 장면 적용 + 즐겨찾기 + 최근 ───
-function useMediaActions() {
+// ─── 퀵 패널 (탭 내부 컴팩트 패널) ───
+// QuickPanel은 localStorage에서 직접 읽어 상태 중복 방지
+const MemeAndSfxPanel: React.FC<{ onOpenDetail: () => void }> = ({ onOpenDetail }) => {
   const expandedSceneId = useEditRoomStore((s) => s.expandedSceneId);
   const scenes = useProjectStore((s) => s.scenes);
-  const [favorites, setFavorites] = useState<CommunityMediaItem[]>(() => loadFromStorage(FAVORITES_KEY, []));
-  const [recents, setRecents] = useState<CommunityMediaItem[]>(() => loadFromStorage(RECENT_KEY, []));
+
+  const recents = useMemo(() => loadFromStorage<CommunityMediaItem[]>(RECENT_KEY, []), []);
+  const favorites = useMemo(() => loadFromStorage<CommunityMediaItem[]>(FAVORITES_KEY, []), []);
 
   const targetScene = useMemo(() => {
     if (expandedSceneId) return scenes.find((s) => s.id === expandedSceneId);
@@ -61,46 +63,6 @@ function useMediaActions() {
     if (!targetScene) return -1;
     return scenes.indexOf(targetScene);
   }, [targetScene, scenes]);
-
-  const applyToScene = useCallback((item: CommunityMediaItem) => {
-    if (!targetScene) {
-      showToast('장면이 없습니다. 먼저 장면을 생성하세요.');
-      return;
-    }
-    useProjectStore.getState().updateScene(targetScene.id, {
-      imageUrl: item.type === 'image' ? item.url : targetScene.imageUrl,
-      communityMediaItem: item,
-    });
-    setRecents((prev) => {
-      const filtered = prev.filter((r) => r.id !== item.id);
-      const updated = [item, ...filtered].slice(0, MAX_RECENT);
-      saveToStorage(RECENT_KEY, updated);
-      return updated;
-    });
-    const idx = scenes.indexOf(targetScene) + 1;
-    showToast(`${item.type === 'image' ? '밈' : '효과음'} "${item.title}" → 장면 ${idx}에 적용`);
-  }, [targetScene, scenes]);
-
-  const toggleFavorite = useCallback((e: React.MouseEvent, item: CommunityMediaItem) => {
-    e.stopPropagation();
-    setFavorites((prev) => {
-      const exists = prev.some((f) => f.id === item.id);
-      const updated = exists
-        ? prev.filter((f) => f.id !== item.id)
-        : [item, ...prev].slice(0, MAX_FAVORITES);
-      saveToStorage(FAVORITES_KEY, updated);
-      return updated;
-    });
-  }, []);
-
-  const isFavorite = useCallback((id: string) => favorites.some((f) => f.id === id), [favorites]);
-
-  return { targetScene, targetIndex, applyToScene, toggleFavorite, isFavorite, favorites, recents, scenes };
-}
-
-// ─── 퀵 패널 (탭 내부 컴팩트 패널) ───
-const MemeAndSfxPanel: React.FC<{ onOpenDetail: () => void }> = ({ onOpenDetail }) => {
-  const { recents, favorites, targetScene, targetIndex } = useMediaActions();
 
   const recentImages = recents.filter((r) => r.type === 'image').slice(0, 6);
   const recentSfx = recents.filter((r) => r.type === 'sfx').slice(0, 3);
@@ -194,6 +156,9 @@ const MemeAndSfxPanel: React.FC<{ onOpenDetail: () => void }> = ({ onOpenDetail 
 
 // ─── 전체화면 검색 모달 ───
 export const MemeAndSfxSearchModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
+  const expandedSceneId = useEditRoomStore((s) => s.expandedSceneId);
+  const scenes = useProjectStore((s) => s.scenes);
+
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<CommunityMediaItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -201,29 +166,49 @@ export const MemeAndSfxSearchModal: React.FC<{ onClose: () => void }> = ({ onClo
   const [activeSource, setActiveSource] = useState<MediaSource | 'all'>('all');
   const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'search' | 'favorites' | 'recent'>('search');
+  const [favorites, setFavorites] = useState<CommunityMediaItem[]>(() => loadFromStorage(FAVORITES_KEY, []));
+  const [recents, setRecents] = useState<CommunityMediaItem[]>(() => loadFromStorage(RECENT_KEY, []));
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const preloadedRef = useRef(false);
+  const searchSeqRef = useRef(0);
+  const focusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const { targetScene, targetIndex, applyToScene, toggleFavorite, isFavorite, favorites, recents } = useMediaActions();
+  const targetScene = useMemo(() => {
+    if (expandedSceneId) return scenes.find((s) => s.id === expandedSceneId);
+    return scenes[0];
+  }, [expandedSceneId, scenes]);
 
-  // 프리로드
+  const targetIndex = useMemo(() => {
+    if (!targetScene) return -1;
+    return scenes.indexOf(targetScene);
+  }, [targetScene, scenes]);
+
+  // 프리로드 + 포커스
   useEffect(() => {
     if (!preloadedRef.current) {
       preloadedRef.current = true;
       preloadAllMedia();
     }
-    setTimeout(() => inputRef.current?.focus(), 150);
+    focusTimerRef.current = setTimeout(() => inputRef.current?.focus(), 150);
+    return () => {
+      if (focusTimerRef.current) clearTimeout(focusTimerRef.current);
+    };
   }, []);
 
-  // ESC 키
+  // ESC 키 + 오디오 정리
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
     return () => {
       window.removeEventListener('keydown', onKey);
-      if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
+      if (audioRef.current) {
+        audioRef.current.onended = null;
+        audioRef.current.onerror = null;
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
     };
   }, [onClose]);
 
@@ -232,6 +217,7 @@ export const MemeAndSfxSearchModal: React.FC<{ onClose: () => void }> = ({ onClo
     if (!trimmed) { setResults([]); return; }
     setIsLoading(true);
     setViewMode('search');
+    const seq = ++searchSeqRef.current;
     try {
       const items = await searchMedia({
         query: trimmed,
@@ -239,13 +225,52 @@ export const MemeAndSfxSearchModal: React.FC<{ onClose: () => void }> = ({ onClo
         source: source === 'all' ? undefined : source,
         limit: 60,
       });
-      setResults(items);
+      if (seq === searchSeqRef.current) {
+        setResults(items);
+      }
     } catch {
-      setResults([]);
+      if (seq === searchSeqRef.current) {
+        setResults([]);
+      }
     } finally {
-      setIsLoading(false);
+      if (seq === searchSeqRef.current) {
+        setIsLoading(false);
+      }
     }
   }, []);
+
+  const applyToScene = useCallback((item: CommunityMediaItem) => {
+    if (!targetScene) {
+      showToast('장면이 없습니다. 먼저 장면을 생성하세요.');
+      return;
+    }
+    useProjectStore.getState().updateScene(targetScene.id, {
+      imageUrl: item.type === 'image' ? item.url : targetScene.imageUrl,
+      communityMediaItem: item,
+    });
+    setRecents((prev) => {
+      const filtered = prev.filter((r) => r.id !== item.id);
+      const updated = [item, ...filtered].slice(0, MAX_RECENT);
+      saveToStorage(RECENT_KEY, updated);
+      return updated;
+    });
+    const idx = scenes.indexOf(targetScene) + 1;
+    showToast(`${item.type === 'image' ? '밈' : '효과음'} "${item.title}" → 장면 ${idx}에 적용`);
+  }, [targetScene, scenes]);
+
+  const toggleFavorite = useCallback((e: React.MouseEvent, item: CommunityMediaItem) => {
+    e.stopPropagation();
+    setFavorites((prev) => {
+      const exists = prev.some((f) => f.id === item.id);
+      const updated = exists
+        ? prev.filter((f) => f.id !== item.id)
+        : [item, ...prev].slice(0, MAX_FAVORITES);
+      saveToStorage(FAVORITES_KEY, updated);
+      return updated;
+    });
+  }, []);
+
+  const isFavorite = useCallback((id: string) => favorites.some((f) => f.id === id), [favorites]);
 
   const handlePlayAudio = useCallback((e: React.MouseEvent, item: CommunityMediaItem) => {
     e.stopPropagation();
@@ -254,7 +279,11 @@ export const MemeAndSfxSearchModal: React.FC<{ onClose: () => void }> = ({ onClo
       setPlayingAudioId(null);
       return;
     }
-    if (audioRef.current) audioRef.current.pause();
+    if (audioRef.current) {
+      audioRef.current.onended = null;
+      audioRef.current.onerror = null;
+      audioRef.current.pause();
+    }
     const audio = new Audio(item.url);
     audio.onended = () => setPlayingAudioId(null);
     audio.onerror = () => setPlayingAudioId(null);
@@ -262,10 +291,6 @@ export const MemeAndSfxSearchModal: React.FC<{ onClose: () => void }> = ({ onClo
     audioRef.current = audio;
     setPlayingAudioId(item.id);
   }, [playingAudioId]);
-
-  const handleApply = useCallback((item: CommunityMediaItem) => {
-    applyToScene(item);
-  }, [applyToScene]);
 
   const displayItems = viewMode === 'favorites' ? favorites
     : viewMode === 'recent' ? recents
@@ -463,7 +488,7 @@ export const MemeAndSfxSearchModal: React.FC<{ onClose: () => void }> = ({ onClo
               {imageItems.map((item) => (
                 <button
                   key={item.id}
-                  onClick={() => handleApply(item)}
+                  onClick={() => applyToScene(item)}
                   className="group/card relative bg-gray-800 rounded-xl border border-gray-700 overflow-hidden hover:border-amber-500/50 hover:shadow-lg hover:shadow-amber-500/10 transition-all"
                 >
                   <div className="aspect-square relative">
@@ -515,7 +540,7 @@ export const MemeAndSfxSearchModal: React.FC<{ onClose: () => void }> = ({ onClo
                 <div
                   key={item.id}
                   className="flex items-center gap-3 bg-gray-800 rounded-xl border border-gray-700 px-4 py-3 hover:border-amber-500/40 transition-all cursor-pointer group/sfx"
-                  onClick={() => handleApply(item)}
+                  onClick={() => applyToScene(item)}
                 >
                   <button
                     onClick={(e) => handlePlayAudio(e, item)}

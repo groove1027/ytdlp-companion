@@ -272,6 +272,9 @@ const SubtitleQuickPanel: React.FC<{ onOpenDetail: () => void }> = ({ onOpenDeta
   const setCharsPerLine = useEditRoomStore((s) => s.setCharsPerLine);
 
   const [aiLoading, setAiLoading] = useState(false);
+  const bottomFade = useEditRoomStore((s) => s.bottomFade);
+  const setBottomFade = useEditRoomStore((s) => s.setBottomFade);
+
   const [fontCat, setFontCat] = useState<FontCategory | 'all'>('all');
   const [fontSearch, setFontSearch] = useState('');
   const [fontDropOpen, setFontDropOpen] = useState(false);
@@ -515,15 +518,13 @@ const SubtitleQuickPanel: React.FC<{ onOpenDetail: () => void }> = ({ onOpenDeta
           );
         })()}
         {(() => {
-          const fade = useEditRoomStore((s) => s.bottomFade);
-          const setFade = useEditRoomStore((s) => s.setBottomFade);
-          const isOn = fade > 0;
+          const isOn = bottomFade > 0;
           return (
             <div className="flex items-center gap-2 flex-1">
               <p className="text-[11px] text-gray-400 font-bold">하단 페이드</p>
               <button
                 type="button"
-                onClick={() => setFade(isOn ? 0 : 50)}
+                onClick={() => setBottomFade(isOn ? 0 : 50)}
                 className={`relative w-8 h-4 rounded-full transition-colors ${isOn ? 'bg-amber-600' : 'bg-gray-700'}`}
               >
                 <span className={`absolute top-0.5 left-0.5 w-3 h-3 bg-white rounded-full transition-transform ${isOn ? 'translate-x-4' : ''}`} />
@@ -534,26 +535,21 @@ const SubtitleQuickPanel: React.FC<{ onOpenDetail: () => void }> = ({ onOpenDeta
       </div>
 
       {/* 하단 페이드 강도 슬라이더 */}
-      {(() => {
-        const fade = useEditRoomStore((s) => s.bottomFade);
-        const setFade = useEditRoomStore((s) => s.setBottomFade);
-        if (fade <= 0) return null;
-        return (
-          <div className="space-y-0.5">
-            <div className="flex items-center justify-between">
-              <p className="text-[11px] text-gray-400 font-bold">페이드 강도</p>
-              <span className="text-[11px] text-amber-400 font-mono">{fade}%</span>
-            </div>
-            <input
-              type="range"
-              min={10} max={100} step={5}
-              value={fade}
-              onChange={(e) => setFade(Number(e.target.value))}
-              className="w-full accent-amber-500"
-            />
+      {bottomFade > 0 && (
+        <div className="space-y-0.5">
+          <div className="flex items-center justify-between">
+            <p className="text-[11px] text-gray-400 font-bold">페이드 강도</p>
+            <span className="text-[11px] text-amber-400 font-mono">{bottomFade}%</span>
           </div>
-        );
-      })()}
+          <input
+            type="range"
+            min={10} max={100} step={5}
+            value={bottomFade}
+            onChange={(e) => setBottomFade(Number(e.target.value))}
+            className="w-full accent-amber-500"
+          />
+        </div>
+      )}
 
 
       {/* 빠른 템플릿 (4개로 축소) */}
