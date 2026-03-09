@@ -419,9 +419,10 @@ function generateSrt(scenes: SceneRow[], isTikitaka: boolean = false): string {
       return `${i + 1}\n${secondsToSrtTime(start)} --> ${secondsToSrtTime(accTime)}\n${modeTag}${text}`;
     }).join('\n\n');
   }
-  // 스낵형: 배치 타임코드 기반
+  // 스낵형: 원본 타임코드 우선, 없으면 배치 타임코드 폴백
   return scenes.map((scene, i) => {
-    const parts = scene.timeline.match(/(\d+:\d+(?:\.\d+)?)\s*[~\-–—]\s*(\d+:\d+(?:\.\d+)?)/);
+    const srcTc = scene.sourceTimeline || scene.timeline;
+    const parts = srcTc.match(/(\d+:\d+(?:\.\d+)?)\s*[~\-–—]\s*(\d+:\d+(?:\.\d+)?)/);
     const start = parts ? timecodeToSeconds(parts[1]) : i * 3;
     const end = parts ? timecodeToSeconds(parts[2]) : (i + 1) * 3;
     const text = scene.effectSub
@@ -832,6 +833,9 @@ const VideoAnalysisRoom: React.FC = () => {
   const [simProgress, setSimProgress] = useState(0);
   const analysisStartRef = useRef<number>(0);
 
+  // 프리셋별 결과 캐시 — 프리셋 전환 시 기존 데이터 보존
+  const resultCacheRef = useRef<Record<string, { raw: string; versions: VersionItem[]; thumbs: TimedFrame[] }>>({});
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const hasInput = inputMode === 'youtube' ? youtubeUrl.trim().length > 0 : uploadedFile !== null;
 
@@ -842,12 +846,31 @@ const VideoAnalysisRoom: React.FC = () => {
 
   const resetResults = useCallback(() => {
     setRawResult(''); setError(null); setVersions([]); setThumbnails([]); setExpandedId(null);
+    resultCacheRef.current = {};
   }, []);
 
-  // ── 분석 실행 ──
+  // ── 프리셋 전환 시 캐시 복원 or 신규 분석 ──
   const handleAnalyze = async (preset: AnalysisPreset) => {
     if (!requireAuth('영상 분석')) return;
     if (!hasInput) return;
+
+    // 현재 결과를 기존 프리셋 캐시에 저장 (전환 전 보존)
+    if (selectedPreset && rawResult) {
+      resultCacheRef.current[selectedPreset] = { raw: rawResult, versions, thumbs: thumbnails };
+    }
+
+    // 캐시에 이미 결과가 있으면 복원만 하고 종료
+    const cached = resultCacheRef.current[preset];
+    if (cached && cached.versions.length > 0) {
+      setSelectedPreset(preset);
+      setRawResult(cached.raw);
+      setVersions(cached.versions);
+      setThumbnails(cached.thumbs);
+      setExpandedId(null);
+      setError(null);
+      return;
+    }
+
     setSelectedPreset(preset);
     setIsAnalyzing(true);
     setAnalysisPhase('analyzing');
@@ -940,8 +963,11 @@ ${comments.slice(0, 15).map((c, i) => `${i + 1}. ${c.slice(0, 150)}`).join('\n')
       const response = await evolinkChat(messages, { temperature: 0.5, maxTokens: 40000 });
 
       const text = response.choices[0]?.message?.content || '';
+      const parsed = parseVersions(text);
       setRawResult(text);
-      setVersions(parseVersions(text));
+      setVersions(parsed);
+      // 결과 캐시에 저장
+      resultCacheRef.current[preset] = { raw: text, versions: parsed, thumbs: frames };
     } catch (err) {
       setError(err instanceof Error ? err.message : '분석 중 오류가 발생했습니다.');
     } finally {
@@ -1391,17 +1417,19 @@ ${comments.slice(0, 15).map((c, i) => `${i + 1}. ${c.slice(0, 150)}`).join('\n')
                                       <td className="py-2 px-2 align-top text-gray-300 leading-relaxed text-[11px]">{scene.dialogue || '-'}</td>
                                       <td className="py-2 px-2 align-top">
                                         <div className="space-y-0.5">
-                                          {scene.timeline && <div className="text-blue-400 font-mono text-[10px]">{scene.timeline}</div>}
-                                          {scene.sourceTimeline && <div className="text-gray-500 font-mono text-[10px]">원본: {scene.sourceTimeline}</div>}
+                                          {scene.sourceTimeline && <div className="text-blue-400 font-mono text-[10px]">원본: {scene.sourceTimeline}</div>}
+                                          {scene.timeline && <div className="text-gray-500 font-mono text-[10px]">배치: {scene.timeline}</div>}
                                         </div>
                                       </td>
                                     </>
                                   )}
                                   {thumbnails.length > 0 && (() => {
-                                    const tc = scene.timecodeSource || scene.sourceTimeline || scene.timeline || '';
+                                    // 티키타카: timecodeSource, 스낵형: sourceTimeline (원본) 우선
+                                    const tc = scene.timecodeSource || scene.sourceTimeline || '';
+                                    // 원본 타임코드에서 첫 번째 값 추출 (복수 타임코드 중 첫 번째)
                                     const firstTc = tc.split(/[/~,]/)[0].trim();
                                     const sceneTimeSec = timecodeToSeconds(firstTc);
-                                    const matched = matchFrameToTimecode(sceneTimeSec, thumbnails);
+                                    const matched = sceneTimeSec > 0 ? matchFrameToTimecode(sceneTimeSec, thumbnails) : (thumbnails[0] || null);
                                     return matched ? (
                                       <td className="py-2 px-2 align-top">
                                         <div className="space-y-0.5">
