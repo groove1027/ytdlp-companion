@@ -105,7 +105,12 @@ const SubtitleRemoverTab: React.FC = () => {
       setProgress('자막 제거 완료!');
     } catch (err: unknown) {
       setPhase('error');
-      setError(err instanceof Error ? err.message : '알 수 없는 오류가 발생했습니다.');
+      const raw = err instanceof Error ? err.message : '알 수 없는 오류가 발생했습니다.';
+      // "Failed to fetch"는 CORS/네트워크 오류 — 사용자에게 구체적 안내
+      const message = raw.includes('Failed to fetch')
+        ? 'GhostCut 서버 연결 실패 — 네트워크 상태를 확인하거나 잠시 후 다시 시도해주세요.'
+        : raw;
+      setError(message);
       setPercent(0);
     }
   }, [videoFile, requireAuth, addCost, videoDuration, percent]);

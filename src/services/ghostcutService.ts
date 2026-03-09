@@ -10,8 +10,9 @@ import { getGhostCutKeys, monitoredFetch } from './apiService';
 import { uploadMediaToHosting } from './uploadService';
 import { logger } from './LoggerService';
 
-const GHOSTCUT_API_URL = 'https://api.zhaoli.com/v-w-c/gateway/ve/work/fast';
-const GHOSTCUT_STATUS_URL = 'https://api.zhaoli.com/v-w-c/gateway/ve/work/state';
+// Cloudflare Pages Function 프록시 경유 (CORS 우회)
+const GHOSTCUT_API_URL = '/api/ghostcut/submit';
+const GHOSTCUT_STATUS_URL = '/api/ghostcut/status';
 
 /** 이중 MD5 서명 생성: MD5(MD5(body) + appSecret) */
 const generateSign = async (body: string, appSecret: string): Promise<string> => {
