@@ -744,7 +744,8 @@ const isShorts = (v: {
 export const getRecentVideosByFormat = async (
     channelId: string,
     format: 'long' | 'shorts',
-    targetCount: number = 10
+    targetCount: number = 10,
+    sortBy: 'latest' | 'popular' = 'latest',
 ): Promise<ChannelScript[]> => {
     const apiKey = getYoutubeApiKey();
     if (!apiKey) throw new Error('YouTube API 키가 설정되지 않았습니다.');
@@ -755,7 +756,8 @@ export const getRecentVideosByFormat = async (
     if (!trackQuota('search')) throw new Error('YouTube API 일일 쿼터 한도(10,000 units)를 초과했습니다. 내일 다시 시도하세요.');
 
     // 충분히 많이 가져와서 필터링 (최대 50개)
-    const searchUrl = `${YOUTUBE_API_BASE}/search?part=snippet&channelId=${channelId}&type=video&order=date&maxResults=50&key=${apiKey}`;
+    const orderParam = sortBy === 'popular' ? 'viewCount' : 'date';
+    const searchUrl = `${YOUTUBE_API_BASE}/search?part=snippet&channelId=${channelId}&type=video&order=${orderParam}&maxResults=50&key=${apiKey}`;
     const searchResponse = await monitoredFetch(searchUrl);
     if (!searchResponse.ok) throw new Error(`채널 영상 조회 실패 (${searchResponse.status})`);
 

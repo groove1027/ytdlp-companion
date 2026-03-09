@@ -41,6 +41,7 @@ const ChannelAnalysisRoom: React.FC = () => {
 
   const [contentFormat, setContentFormat] = useState<ContentFormat>('long');
   const [videoCount, setVideoCount] = useState(10);
+  const [videoSortOrder, setVideoSortOrder] = useState<'latest' | 'popular'>('latest');
   const [channelUrl, setChannelUrl] = useState('');
   const [progress, setProgress] = useState<{ step: number; message: string } | null>(null);
   const [error, setError] = useState('');
@@ -72,7 +73,7 @@ const ChannelAnalysisRoom: React.FC = () => {
         setContentFormat(info.detectedFormat);
       }
       setProgress({ step: 2, message: `영상 ${videoCount}개 수집 중...` });
-      const filtered = await getRecentVideosByFormat(info.channelId, effectiveFormat, videoCount);
+      const filtered = await getRecentVideosByFormat(info.channelId, effectiveFormat, videoCount, videoSortOrder);
       syncQuota();
       if (!filtered.length) { setError('해당 형식에 맞는 영상이 없습니다.'); setProgress(null); return; }
       const scripts: ChannelScript[] = [];
@@ -96,7 +97,7 @@ const ChannelAnalysisRoom: React.FC = () => {
       setError(`채널 분석 실패: ${msg}`);
       setProgress(null);
     }
-  }, [channelUrl, contentFormat, videoCount, setChannelInfo, setChannelScripts, setChannelGuideline]);
+  }, [channelUrl, contentFormat, videoCount, videoSortOrder, setChannelInfo, setChannelScripts, setChannelGuideline]);
 
   // 파일/직접입력 스타일 분석
   const handleFileManualAnalyze = useCallback(async (scripts: ChannelScript[]) => {
@@ -297,6 +298,8 @@ const ChannelAnalysisRoom: React.FC = () => {
           onContentFormatChange={setContentFormat}
           videoCount={videoCount}
           onVideoCountChange={setVideoCount}
+          videoSortOrder={videoSortOrder}
+          onVideoSortOrderChange={setVideoSortOrder}
           onYoutubeAnalyze={handleChannelAnalysis}
           uploadedFiles={uploadedFiles}
           onFilesChange={setUploadedFiles}

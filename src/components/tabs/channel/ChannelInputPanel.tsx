@@ -32,6 +32,8 @@ interface ChannelInputPanelProps {
   onContentFormatChange: (format: ContentFormat) => void;
   videoCount: number;
   onVideoCountChange: (count: number) => void;
+  videoSortOrder: 'latest' | 'popular';
+  onVideoSortOrderChange: (order: 'latest' | 'popular') => void;
   onYoutubeAnalyze: () => void;
   // File
   uploadedFiles: ParsedFileEntry[];
@@ -46,7 +48,7 @@ interface ChannelInputPanelProps {
 
 const ChannelInputPanel: React.FC<ChannelInputPanelProps> = ({
   inputSource, onInputSourceChange,
-  channelUrl, onChannelUrlChange, contentFormat, onContentFormatChange, videoCount, onVideoCountChange, onYoutubeAnalyze,
+  channelUrl, onChannelUrlChange, contentFormat, onContentFormatChange, videoCount, onVideoCountChange, videoSortOrder, onVideoSortOrderChange, onYoutubeAnalyze,
   uploadedFiles, onFilesChange,
   sourceName, onSourceNameChange, onFileManualAnalyze,
   isAnalyzing, error,
@@ -215,7 +217,21 @@ const ChannelInputPanel: React.FC<ChannelInputPanelProps> = ({
                 </button>
               ))}
             </div>
-            <span className="text-xs text-gray-500">10개 미만 권장 (정확도 vs 속도 최적)</span>
+            <div className="flex items-center gap-1.5 ml-3 pl-3 border-l border-gray-700">
+              {([['latest', '최신순'], ['popular', '인기순']] as const).map(([val, label]) => (
+                <button
+                  key={val}
+                  type="button"
+                  onClick={() => onVideoSortOrderChange(val)}
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all ${videoSortOrder === val
+                    ? 'bg-blue-600/20 text-blue-400 border-blue-600/50'
+                    : 'bg-gray-900/50 text-gray-400 border-gray-700/50 hover:border-gray-500 hover:text-gray-200'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
           <div className="flex gap-3">
             <input
