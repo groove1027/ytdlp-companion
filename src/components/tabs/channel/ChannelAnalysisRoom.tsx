@@ -31,7 +31,7 @@ const ChannelAnalysisRoom: React.FC = () => {
   const {
     channelScripts, channelInfo, channelGuideline, savedPresets,
     inputSource, uploadedFiles, sourceName,
-    setChannelInfo, setChannelScripts, setChannelGuideline, savePreset, loadPreset,
+    setChannelInfo, setChannelScripts, setChannelGuideline, savePreset, loadPreset, removePreset,
     setInputSource, setUploadedFiles, setSourceName, syncQuota,
   } = useChannelAnalysisStore();
   const setActiveTab = useNavigationStore(s => s.setActiveTab);
@@ -66,8 +66,13 @@ const ChannelAnalysisRoom: React.FC = () => {
       const info = await getChannelInfo(channelUrl);
       setChannelInfo(info);
       syncQuota();
+      // 쇼츠/영상 URL에서 감지된 포맷 자동 적용
+      const effectiveFormat = info.detectedFormat || contentFormat;
+      if (info.detectedFormat && info.detectedFormat !== contentFormat) {
+        setContentFormat(info.detectedFormat);
+      }
       setProgress({ step: 2, message: `영상 ${videoCount}개 수집 중...` });
-      const filtered = await getRecentVideosByFormat(info.channelId, contentFormat, videoCount);
+      const filtered = await getRecentVideosByFormat(info.channelId, effectiveFormat, videoCount);
       syncQuota();
       if (!filtered.length) { setError('해당 형식에 맞는 영상이 없습니다.'); setProgress(null); return; }
       const scripts: ChannelScript[] = [];
@@ -635,18 +640,30 @@ const ChannelAnalysisRoom: React.FC = () => {
         <div className={card}>
           <h3 className="text-lg font-bold text-white mb-3">저장된 채널 프리셋</h3>
           <div className="flex flex-wrap gap-2">
-            {savedPresets.map((p, i) => (
-              <button
-                key={i}
-                onClick={() => loadPreset(p.channelName)}
-                className={`px-4 py-2 text-sm font-semibold rounded-lg border transition-all ${channelGuideline?.channelName === p.channelName
-                  ? 'bg-blue-600/20 text-blue-400 border-blue-600/50'
-                  : 'bg-gray-900/50 text-gray-300 border-gray-700/50 hover:border-blue-600/50 hover:bg-gray-900'
-                }`}
-              >
-                {p.channelName}
-              </button>
-            ))}
+            {savedPresets.map((p, i) => {
+              const isActive = channelGuideline?.channelName === p.channelName;
+              return (
+                <div key={i} className="group relative">
+                  <button
+                    onClick={() => loadPreset(p.channelName)}
+                    className={`px-4 py-2 pr-8 text-sm font-semibold rounded-lg border transition-all ${isActive
+                      ? 'bg-blue-600/20 text-blue-400 border-blue-600/50'
+                      : 'bg-gray-900/50 text-gray-300 border-gray-700/50 hover:border-blue-600/50 hover:bg-gray-900'
+                    }`}
+                  >
+                    {p.channelName}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); removePreset(p.channelName); }}
+                    className="absolute right-1.5 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity text-gray-500 hover:text-red-400 hover:bg-red-500/10"
+                    title="프리셋 삭제"
+                  >
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
