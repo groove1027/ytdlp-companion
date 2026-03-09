@@ -149,12 +149,12 @@ function parseVersions(raw: string): VersionItem[] {
   const blocks = raw.split(/---\s*VERSION\s*(\d+)\s*---|(?:^|\n)\s*\*{0,2}\[버전\s*(\d+)[:\s]/mi);
   const items: VersionItem[] = [];
 
-  for (let i = 1; i < blocks.length; i += 2) {
-    // 두 캡처 그룹 중 유효한 것 사용
-    const numStr = blocks[i] || blocks[i];
+  for (let i = 1; i < blocks.length; i += 3) {
+    // 두 캡처 그룹 중 유효한 것 사용 (split alternation: group1 또는 group2)
+    const numStr = blocks[i] || blocks[i + 1];
     const num = parseInt(numStr, 10);
     if (isNaN(num) || num < 1) continue;
-    const content = blocks[i + 1]?.trim() || '';
+    const content = blocks[i + 2]?.trim() || '';
     if (!content) continue;
 
     // 제목 추출 — "제목:" 또는 "**제목:**" 또는 "### 제목:" 등
@@ -216,7 +216,7 @@ function parseVersions(raw: string): VersionItem[] {
     });
   }
 
-  if (items.length >= 3) return items;
+  if (items.length >= 1) return items;
 
   // 폴백 2: "## 버전 N:" 또는 "### N." 패턴
   const altBlocks = raw.split(/(?:^|\n)(?:#{1,3}\s*)?(?:버전\s*)?(\d{1,2})[.:\s]/m);
