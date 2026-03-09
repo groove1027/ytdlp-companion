@@ -315,10 +315,10 @@ async function fetchYouTubeComments(videoId: string): Promise<string[]> {
 }
 
 // ═══════════════════════════════════════════════════
-// YouTube 스토리보드 프레임 추출 (Piped API)
+// 정확한 타임코드 프레임 추출 (분석 결과 기반)
 // ═══════════════════════════════════════════════════
 
-const PIPED_APIS_FOR_STORYBOARD = [
+const PIPED_APIS_FOR_FRAMES = [
   'https://pipedapi.kavin.rocks',
   'https://pipedapi.adminforge.de',
   'https://pipedapi.leptons.xyz',
@@ -326,99 +326,115 @@ const PIPED_APIS_FOR_STORYBOARD = [
   'https://pipedapi.in.projectsegfau.lt',
 ];
 
-/** Piped API 스토리보드 스프라이트에서 개별 프레임을 추출 */
-async function fetchYouTubeStoryboardFrames(videoId: string, durationSec: number): Promise<TimedFrame[]> {
-  for (const api of PIPED_APIS_FOR_STORYBOARD) {
+/** YouTube 영상의 스트림 URL 획득 (Piped API) — 정확한 프레임 추출용 */
+async function fetchYouTubeStreamUrl(videoId: string): Promise<string | null> {
+  for (const api of PIPED_APIS_FOR_FRAMES) {
     try {
       const res = await fetch(`${api}/streams/${videoId}`, { signal: AbortSignal.timeout(10000) });
       if (!res.ok) continue;
       const data = await res.json();
-      if (data.error || !data.previewFrames?.length) continue;
+      if (data.error) continue;
 
-      // 가장 큰 해상도의 스토리보드 레벨 선택
-      const sb = [...data.previewFrames]
-        .sort((a: { frameWidth: number }, b: { frameWidth: number }) => b.frameWidth - a.frameWidth)[0];
+      // muxed 스트림 (seekable, 가장 낮은 해상도 = 빠른 로드)
+      const muxed = (data.videoStreams || [])
+        .filter((s: { videoOnly: boolean; mimeType: string }) => !s.videoOnly && s.mimeType?.includes('video/mp4'))
+        .sort((a: { height: number }, b: { height: number }) => (a.height || 0) - (b.height || 0));
+      if (muxed.length > 0 && muxed[0].url) return muxed[0].url;
 
-      if (!sb?.urls?.length || !sb.frameWidth || !sb.frameHeight) continue;
-
-      const msPerFrame = sb.durationPerFrame || 2000;
-      const perPageX = sb.framesPerPageX || 5;
-      const perPageY = sb.framesPerPageY || 5;
-      const perPage = perPageX * perPageY;
-      const totalFrames = sb.totalCount || Math.ceil((durationSec * 1000) / msPerFrame);
-
-      // 목표: 최대 60프레임 (메모리 절약)
-      // 전체 프레임 수가 60 이하면 모두 추출, 아니면 균등 샘플링
-      const targetCount = Math.min(totalFrames, 60);
-      const step = totalFrames <= 60 ? 1 : totalFrames / targetCount;
-
-      // 필요한 페이지만 로드 (중복 방지)
-      const neededPages = new Set<number>();
-      for (let idx = 0; idx < targetCount; idx++) {
-        const frameIdx = Math.min(Math.floor(idx * step), totalFrames - 1);
-        neededPages.add(Math.floor(frameIdx / perPage));
-      }
-
-      // 스프라이트 시트 로드 (최대 10장)
-      const pageArr = [...neededPages].slice(0, 10);
-      const loadedPages = new Map<number, HTMLImageElement>();
-
-      await Promise.allSettled(pageArr.map(async (pageIdx) => {
-        if (pageIdx >= sb.urls.length) return;
-        const url = sb.urls[pageIdx];
-        try {
-          const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-            const el = new Image();
-            el.crossOrigin = 'anonymous';
-            el.onload = () => resolve(el);
-            el.onerror = () => reject(new Error('load failed'));
-            el.src = url;
-            setTimeout(() => reject(new Error('timeout')), 8000);
-          });
-          loadedPages.set(pageIdx, img);
-        } catch { /* skip failed pages */ }
-      }));
-
-      if (loadedPages.size === 0) continue;
-
-      // 캔버스로 개별 프레임 추출
-      const frames: TimedFrame[] = [];
-      const canvas = document.createElement('canvas');
-      canvas.width = sb.frameWidth;
-      canvas.height = sb.frameHeight;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) continue;
-
-      for (let idx = 0; idx < targetCount; idx++) {
-        const frameIdx = Math.min(Math.floor(idx * step), totalFrames - 1);
-        const pageIdx = Math.floor(frameIdx / perPage);
-        const posInPage = frameIdx % perPage;
-        const col = posInPage % perPageX;
-        const row = Math.floor(posInPage / perPageX);
-        const img = loadedPages.get(pageIdx);
-        if (!img) continue;
-
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.drawImage(
-          img,
-          col * sb.frameWidth, row * sb.frameHeight,
-          sb.frameWidth, sb.frameHeight,
-          0, 0, canvas.width, canvas.height,
-        );
-
-        const timeSec = (frameIdx * msPerFrame) / 1000;
-        frames.push({
-          url: canvas.toDataURL('image/jpeg', 0.65),
-          timeSec,
-        });
-      }
-
-      if (frames.length >= 4) return frames;
-    } catch {
-      continue;
-    }
+      // video-only 폴백
+      const videoOnly = (data.videoStreams || [])
+        .filter((s: { videoOnly: boolean; mimeType: string }) => s.videoOnly && s.mimeType?.includes('video/mp4'))
+        .sort((a: { height: number }, b: { height: number }) => (a.height || 0) - (b.height || 0));
+      if (videoOnly.length > 0 && videoOnly[0].url) return videoOnly[0].url;
+    } catch { continue; }
   }
-  return []; // 폴백: 기본 4개 YouTube 썸네일 사용
+  return null;
+}
+
+/** 영상 소스에서 정확한 타임코드 지점의 프레임을 직접 추출 (1프레임 정밀도) */
+async function extractFramesAtExactTimecodes(
+  videoSource: string | File,
+  timecodes: number[],
+): Promise<TimedFrame[]> {
+  return new Promise((resolve) => {
+    const video = document.createElement('video');
+    video.muted = true;
+    video.preload = 'auto';
+    if (typeof videoSource === 'string') video.crossOrigin = 'anonymous';
+
+    const url = videoSource instanceof File ? URL.createObjectURL(videoSource) : videoSource;
+    video.src = url;
+
+    const cleanup = () => { if (videoSource instanceof File) URL.revokeObjectURL(url); };
+
+    video.onloadedmetadata = async () => {
+      const dur = video.duration;
+      const canvas = document.createElement('canvas');
+      canvas.width = 320;
+      canvas.height = 180;
+      const ctx = canvas.getContext('2d');
+      if (!ctx || !dur || dur < 1) { cleanup(); resolve([]); return; }
+
+      const frames: TimedFrame[] = [];
+      // 중복 제거 + 정렬 (sequential seeking 최적화)
+      const unique = [...new Set(timecodes.map(t => Math.round(t * 100) / 100))]
+        .filter(t => t >= 0 && t <= dur)
+        .sort((a, b) => a - b);
+
+      for (const tc of unique) {
+        video.currentTime = tc;
+        const seeked = await Promise.race([
+          new Promise<boolean>(r => { video.onseeked = () => r(true); }),
+          new Promise<boolean>(r => setTimeout(() => r(false), 5000)),
+        ]);
+        if (!seeked) continue;
+
+        try {
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          frames.push({ url: canvas.toDataURL('image/jpeg', 0.7), timeSec: tc });
+        } catch {
+          // CORS tainted canvas — skip
+          continue;
+        }
+      }
+
+      cleanup();
+      resolve(frames);
+    };
+
+    video.onerror = () => { cleanup(); resolve([]); };
+  });
+}
+
+/** 분석 결과(versions)에서 모든 타임코드를 초 단위로 수집 */
+function collectTimecodesFromVersions(versions: VersionItem[]): number[] {
+  const timecodes: number[] = [];
+  versions.forEach(v => v.scenes.forEach(s => {
+    // timecodeSource: "00:03.200 / 00:15.800" 또는 "00:03~00:07"
+    const tc = s.timecodeSource || s.sourceTimeline || '';
+    const parts = tc.split(/[/,]/);
+    parts.forEach(p => {
+      const cleaned = p.trim();
+      const range = cleaned.match(/(\d+:\d+(?:\.\d+)?)\s*[~\-–—]\s*(\d+:\d+(?:\.\d+)?)/);
+      if (range) {
+        timecodes.push(timecodeToSeconds(range[1]));
+        // 범위의 중간 지점도 추출
+        const mid = (timecodeToSeconds(range[1]) + timecodeToSeconds(range[2])) / 2;
+        if (mid > 0) timecodes.push(mid);
+      } else {
+        const sec = timecodeToSeconds(cleaned);
+        if (sec > 0) timecodes.push(sec);
+      }
+    });
+    // 배치 타임라인에서도 추출
+    if (s.timeline) {
+      const range = s.timeline.match(/(\d+:\d+(?:\.\d+)?)\s*[~\-–—]\s*(\d+:\d+(?:\.\d+)?)/);
+      if (range) {
+        timecodes.push(timecodeToSeconds(range[1]));
+      }
+    }
+  }));
+  return timecodes;
 }
 
 /** 업로드 영상에서 2초 간격으로 프레임 추출 (타임스탬프 포함) */
@@ -534,14 +550,35 @@ function generateAnalysisHtml(
 ): string {
   const isTk = preset === 'tikitaka' || preset === 'condensed';
   const presetLabel = preset === 'tikitaka' ? '티키타카 편집점' : preset === 'condensed' ? '축약 리캡' : '스낵형 편집점';
+  const presetColor = preset === 'tikitaka' ? 'blue' : preset === 'condensed' ? 'emerald' : 'amber';
   const now = new Date().toLocaleString('ko-KR');
 
   const escHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
   const modeColor = (m: string) =>
     m.includes('N') ? '#60a5fa' : m.includes('S') ? '#34d399' : m.includes('A') ? '#fbbf24' : '#9ca3af';
+  const modeBg = (m: string) =>
+    m.includes('N') ? 'background:rgba(59,130,246,0.15);color:#93c5fd;border:1px solid rgba(59,130,246,0.3)'
+    : m.includes('S') ? 'background:rgba(16,185,129,0.15);color:#6ee7b7;border:1px solid rgba(16,185,129,0.3)'
+    : m.includes('A') ? 'background:rgba(245,158,11,0.15);color:#fcd34d;border:1px solid rgba(245,158,11,0.3)'
+    : 'background:#374151;color:#9ca3af';
 
-  const versionsHtml = versions.map(v => {
+  // 버전별 색상 팔레트 (앱과 동일)
+  const vColors = [
+    { bg: '#1e3a5f20', border: '#3b82f640', numBg: '#3b82f6', text: '#60a5fa' },
+    { bg: '#3b1f5e20', border: '#8b5cf640', numBg: '#8b5cf6', text: '#a78bfa' },
+    { bg: '#1a3d2e20', border: '#10b98140', numBg: '#10b981', text: '#34d399' },
+    { bg: '#3d2b1020', border: '#f59e0b40', numBg: '#f59e0b', text: '#fbbf24' },
+    { bg: '#3d101020', border: '#ef444440', numBg: '#ef4444', text: '#f87171' },
+    { bg: '#10303d20', border: '#06b6d440', numBg: '#06b6d4', text: '#22d3ee' },
+    { bg: '#3d1a2d20', border: '#ec489940', numBg: '#ec4899', text: '#f472b6' },
+    { bg: '#2d1a0e20', border: '#ea580c40', numBg: '#ea580c', text: '#fb923c' },
+    { bg: '#2d2d1020', border: '#eab30840', numBg: '#eab308', text: '#facc15' },
+    { bg: '#1a2d3d20', border: '#6366f140', numBg: '#6366f1', text: '#818cf8' },
+  ];
+
+  const versionsHtml = versions.map((v, vi) => {
+    const c = vColors[vi % vColors.length];
     // 장면 테이블
     let tableHtml = '';
     if (v.scenes.length > 0) {
@@ -549,7 +586,7 @@ function generateAnalysisHtml(
         ? '<th>#</th><th>모드</th><th>오디오 내용</th><th>효과자막</th><th>예상시간</th><th>비디오 화면 지시</th><th>타임코드</th>'
         : '<th>#</th><th>화면</th><th>효과 자막</th><th>하단 자막</th><th>편집점</th>';
       const bodyRows = v.scenes.map((s, sIdx) => {
-        // 비주얼 매칭 (개선: 소스TC → 배치TC → 인덱스 분산)
+        // 비주얼 매칭 (소스TC → 배치TC → 인덱스 분산)
         const tc = s.timecodeSource || s.sourceTimeline || '';
         const firstTc = tc.split(/[/~,]/)[0].trim();
         let tSec = timecodeToSeconds(firstTc);
@@ -561,59 +598,72 @@ function generateAnalysisHtml(
           ? matchFrameToTimecode(tSec, thumbnails)
           : thumbnails[Math.min(Math.floor((sIdx / Math.max(v.scenes.length, 1)) * thumbnails.length), thumbnails.length - 1)] || null;
         const imgCell = matched
-          ? `<td class="visual"><img src="${escHtml(matched.url)}" alt="scene${s.cutNum}" /><span class="tc">${formatTimeSec(matched.timeSec)}</span></td>`
+          ? `<td class="visual"><img src="${escHtml(matched.url)}" alt="scene${s.cutNum}" onclick="openLightbox(this.src,'컷 #${s.cutNum}','${formatTimeSec(matched.timeSec)}')" /><span class="tc-label">${formatTimeSec(matched.timeSec)}</span></td>`
           : '';
 
         if (isTk) {
           return `<tr>
-            <td class="num">${s.cutNum}</td>
-            <td><span class="mode" style="color:${modeColor(s.mode)}">${escHtml(s.mode || '-')}</span></td>
-            <td>${escHtml(s.audioContent || '-')}</td>
-            <td class="effect">${s.effectSub ? escHtml(s.effectSub) : '-'}</td>
+            <td class="num"><span class="num-badge">${s.cutNum}</span></td>
+            <td><span class="mode-badge" style="${modeBg(s.mode)}">${escHtml(s.mode || '-')}</span></td>
+            <td class="audio-cell">${escHtml(s.audioContent || '-')}</td>
+            <td class="effect-cell">${s.effectSub ? `<span class="effect-badge">${escHtml(s.effectSub)}</span>` : '<span class="empty">-</span>'}</td>
             <td class="dur">${escHtml(s.duration || '-')}</td>
-            <td>${escHtml(s.videoDirection || '-')}</td>
+            <td class="direction-cell">${escHtml(s.videoDirection || '-')}</td>
             <td class="tc">${escHtml(s.timecodeSource || '-')}</td>
             ${thumbnails.length > 0 ? imgCell : ''}
           </tr>`;
         }
         return `<tr>
-          <td class="num">${s.cutNum}</td>
-          <td>${escHtml(s.sceneDesc || '-')}</td>
-          <td class="effect">${s.effectSub ? escHtml(s.effectSub) : '-'}</td>
-          <td>${escHtml(s.dialogue || '-')}</td>
-          <td class="tc">${s.sourceTimeline ? `원본: ${escHtml(s.sourceTimeline)}` : ''}${s.timeline ? `<br/>배치: ${escHtml(s.timeline)}` : ''}</td>
+          <td class="num"><span class="num-badge">${s.cutNum}</span></td>
+          <td class="scene-cell">${escHtml(s.sceneDesc || '-')}</td>
+          <td class="effect-cell">${s.effectSub ? `<span class="effect-badge">${escHtml(s.effectSub)}</span>` : '<span class="empty">-</span>'}</td>
+          <td class="dialogue-cell">${escHtml(s.dialogue || '-')}</td>
+          <td class="tc">${s.sourceTimeline ? `<span class="tc-source">원본: ${escHtml(s.sourceTimeline)}</span>` : ''}${s.timeline ? `<br/><span class="tc-batch">배치: ${escHtml(s.timeline)}</span>` : ''}</td>
           ${thumbnails.length > 0 ? imgCell : ''}
         </tr>`;
       }).join('\n');
 
       const visualHeader = thumbnails.length > 0 ? '<th>비주얼</th>' : '';
-      tableHtml = `<table><thead><tr>${headerCells}${visualHeader}</tr></thead><tbody>${bodyRows}</tbody></table>`;
+      tableHtml = `<div class="table-wrap"><table><thead><tr>${headerCells}${visualHeader}</tr></thead><tbody>${bodyRows}</tbody></table></div>`;
     }
 
     // Content ID
     let cidHtml = '';
     if (v.contentId) {
-      const c = v.contentId;
+      const ci = v.contentId;
+      const gradeStyle = ci.safetyGrade.includes('매우') ? 'background:rgba(16,185,129,0.15);color:#6ee7b7;border:1px solid rgba(16,185,129,0.3)'
+        : ci.safetyGrade.includes('안전') ? 'background:rgba(34,197,94,0.15);color:#86efac;border:1px solid rgba(34,197,94,0.3)'
+        : 'background:rgba(234,179,8,0.15);color:#fde047;border:1px solid rgba(234,179,8,0.3)';
       cidHtml = `<div class="cid">
-        <h4>Content ID 회피 및 바이럴 분석</h4>
+        <div class="cid-header"><span class="cid-icon">ID</span> Content ID 회피 및 바이럴 분석</div>
         <div class="cid-grid">
-          <div><span class="label">텍스트 일치율</span><span class="val">${escHtml(c.textMatchRate)}%</span></div>
-          <div><span class="label">구조 유사도</span><span class="val">${escHtml(c.structureSimilarity)}%</span></div>
-          <div><span class="label">순서 유사도</span><span class="val">${escHtml(c.orderSimilarity)}%</span></div>
-          <div><span class="label">키워드 변형률</span><span class="val">${escHtml(c.keywordVariation)}%</span></div>
+          <div class="cid-item"><span class="cid-label">텍스트 일치율</span><span class="cid-val" style="color:#34d399">${escHtml(ci.textMatchRate)}%</span></div>
+          <div class="cid-item"><span class="cid-label">구조 유사도</span><span class="cid-val" style="color:#22d3ee">${escHtml(ci.structureSimilarity)}%</span></div>
+          <div class="cid-item"><span class="cid-label">순서 유사도</span><span class="cid-val" style="color:#60a5fa">${escHtml(ci.orderSimilarity)}%</span></div>
+          <div class="cid-item"><span class="cid-label">키워드 변형률</span><span class="cid-val" style="color:#a78bfa">${escHtml(ci.keywordVariation)}%</span></div>
         </div>
-        <p><strong>안전등급:</strong> ${escHtml(c.safetyGrade)} &nbsp; <strong>바이럴:</strong> ${escHtml(c.viralPoint)}</p>
-        ${c.judgement !== '-' ? `<p><strong>판정:</strong> ${escHtml(c.judgement)}</p>` : ''}
+        <div class="cid-footer">
+          <span class="grade-badge" style="${gradeStyle}">${escHtml(ci.safetyGrade)}</span>
+          ${ci.viralPoint !== '-' ? `<span class="viral-info"><span class="viral-label">바이럴:</span> ${escHtml(ci.viralPoint)}</span>` : ''}
+        </div>
+        ${ci.judgement !== '-' ? `<p class="cid-judgement"><strong>판정:</strong> ${escHtml(ci.judgement)}</p>` : ''}
       </div>`;
     }
 
-    return `<section class="version">
-      <h3><span class="vnum">${v.id}</span> ${escHtml(v.title)}</h3>
-      ${v.concept ? `<p class="concept">${escHtml(v.concept)}</p>` : ''}
-      ${v.rearrangement ? `<p class="rearrange">재배치: ${escHtml(v.rearrangement)}</p>` : ''}
-      ${tableHtml}
-      ${cidHtml}
-    </section>`;
+    return `<div class="version" data-id="${v.id}">
+      <button class="version-header" onclick="toggleVersion(${v.id})">
+        <span class="vnum" style="background:${c.numBg}">${v.id}</span>
+        <span class="vtitle">${escHtml(v.title)}</span>
+        ${v.scenes.length > 0 ? `<span class="vcount">${v.scenes.length}컷</span>` : ''}
+        <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 9l-7 7-7-7"/></svg>
+      </button>
+      <div class="version-body" id="vbody-${v.id}" style="display:none">
+        ${v.concept ? `<p class="concept">${escHtml(v.concept)}</p>` : ''}
+        ${v.rearrangement ? `<p class="rearrange"><span class="rearrange-label">재배치:</span> ${escHtml(v.rearrangement)}</p>` : ''}
+        ${tableHtml}
+        ${cidHtml}
+      </div>
+    </div>`;
   }).join('\n');
 
   return `<!DOCTYPE html>
@@ -624,42 +674,176 @@ function generateAnalysisHtml(
 <title>${presetLabel} 분석 결과</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:#111827;color:#d1d5db;font-family:-apple-system,'Noto Sans KR',sans-serif;padding:24px;max-width:1200px;margin:0 auto}
-h1{color:#f9fafb;font-size:1.5rem;margin-bottom:4px}
-.meta{color:#6b7280;font-size:.75rem;margin-bottom:24px}
-.source{background:#1f2937;border:1px solid #374151;border-radius:8px;padding:12px;margin-bottom:20px;font-size:.8rem;white-space:pre-wrap}
-.version{background:#1f2937;border:1px solid #374151;border-radius:12px;padding:16px;margin-bottom:16px}
-.version h3{color:#f9fafb;font-size:1.05rem;margin-bottom:8px;display:flex;align-items:center;gap:8px}
-.vnum{display:inline-flex;width:24px;height:24px;border-radius:50%;background:#3b82f6;color:#fff;align-items:center;justify-content:center;font-size:.7rem;font-weight:700;flex-shrink:0}
-.concept{color:#9ca3af;font-size:.85rem;margin-bottom:10px}
-.rearrange{color:#22d3ee;font-size:.8rem;font-family:monospace;margin-bottom:10px}
-table{width:100%;border-collapse:collapse;font-size:.8rem;margin-bottom:12px}
-th{background:#111827;color:#6b7280;text-align:left;padding:8px 6px;border-bottom:2px solid #374151;white-space:nowrap}
-td{padding:6px;border-bottom:1px solid #1f2937;vertical-align:top}
-.num{text-align:center;font-weight:700;color:#9ca3af;width:30px}
-.mode{font-weight:700;font-size:.7rem}
-.effect{color:#fde047;font-weight:700;font-size:.75rem}
-.dur{color:#a78bfa;font-family:monospace;font-size:.75rem;text-align:center;white-space:nowrap}
-.tc{color:#60a5fa;font-family:monospace;font-size:.75rem}
-.visual{text-align:center}
-.visual img{width:120px;height:68px;object-fit:cover;border-radius:4px;border:1px solid #374151}
-.visual .tc{display:block;font-size:.6rem;color:#6b7280;margin-top:2px}
-.cid{background:#111827;border:1px solid #374151;border-radius:8px;padding:12px;margin-top:8px}
-.cid h4{color:#6b7280;font-size:.8rem;margin-bottom:8px}
-.cid-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:8px}
-.cid-grid div{background:#1f2937;border-radius:6px;padding:6px 8px}
-.cid-grid .label{display:block;color:#6b7280;font-size:.65rem}
-.cid-grid .val{display:block;font-size:1rem;font-weight:700;color:#34d399;font-family:monospace}
-.cid p{font-size:.8rem;color:#9ca3af;margin-top:4px}
-tr:hover{background:#1f293780}
-@media print{body{background:#fff;color:#111}th{background:#f3f4f6;color:#111}td{border-color:#d1d5db}.version,.source{border-color:#d1d5db}}
+body{background:#111827;color:#d1d5db;font-family:-apple-system,'Pretendard','Noto Sans KR',sans-serif;min-height:100vh}
+.container{max-width:1200px;margin:0 auto;padding:24px}
+a{color:#60a5fa;text-decoration:none}
+
+/* 헤더 */
+.page-header{position:sticky;top:0;background:rgba(17,24,39,0.92);backdrop-filter:blur(12px);border-bottom:1px solid #1f2937;z-index:40;padding:16px 24px}
+.page-header-inner{max-width:1200px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.page-title{font-size:1.3rem;font-weight:900;background:linear-gradient(135deg,#60a5fa,#a78bfa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;white-space:nowrap}
+.header-badges{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.header-badge{font-size:.7rem;font-weight:700;padding:4px 10px;border-radius:6px;border:1px solid}
+.meta-bar{display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid #1f2937}
+.meta-item{font-size:.75rem;color:#6b7280}
+.source-box{background:#1f2937;border:1px solid #374151;border-radius:10px;padding:12px 16px;margin-bottom:20px;font-size:.8rem;color:#9ca3af;white-space:pre-wrap}
+
+/* 아코디언 버전 */
+.version{border-radius:12px;border:1px solid #374151;margin-bottom:8px;overflow:hidden;transition:border-color 0.2s}
+.version:hover{border-color:#4b5563}
+.version.expanded{border-color:#3b82f650}
+.version-header{width:100%;display:flex;align-items:center;gap:12px;padding:14px 16px;background:rgba(31,41,55,0.5);border:none;color:inherit;cursor:pointer;text-align:left;font-family:inherit;transition:background 0.15s}
+.version-header:hover{background:rgba(31,41,55,0.8)}
+.vnum{display:inline-flex;width:28px;height:28px;border-radius:50%;color:#fff;align-items:center;justify-content:center;font-size:.7rem;font-weight:700;flex-shrink:0}
+.vtitle{flex:1;font-size:.9rem;font-weight:700;color:#f3f4f6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.vcount{font-size:.65rem;color:#6b7280;background:rgba(75,85,99,0.3);padding:2px 8px;border-radius:4px;flex-shrink:0}
+.chevron{width:16px;height:16px;color:#6b7280;flex-shrink:0;transition:transform 0.25s ease}
+.version.expanded .chevron{transform:rotate(180deg)}
+.version-body{padding:16px;padding-top:8px;display:none}
+.version.expanded .version-body{display:block}
+
+/* 컨셉/재배치 */
+.concept{color:#9ca3af;font-size:.85rem;line-height:1.6;margin-bottom:10px;background:rgba(17,24,39,0.4);border-radius:8px;padding:10px 12px;border:1px solid rgba(55,65,81,0.4)}
+.rearrange{font-size:.8rem;margin-bottom:10px;background:rgba(17,24,39,0.4);border-radius:8px;padding:8px 12px;border:1px solid rgba(55,65,81,0.4)}
+.rearrange-label{color:#6b7280;font-size:.75rem}
+.rearrange{color:#22d3ee;font-family:'Fira Code',monospace}
+
+/* 테이블 */
+.table-wrap{overflow-x:auto;border-radius:8px;border:1px solid #1f2937;margin-bottom:12px}
+table{width:100%;border-collapse:collapse;font-size:.78rem}
+th{background:#0f1729;color:#6b7280;text-align:left;padding:10px 8px;border-bottom:2px solid #1f2937;white-space:nowrap;font-size:.7rem;text-transform:uppercase;letter-spacing:0.5px}
+td{padding:8px;border-bottom:1px solid rgba(31,41,55,0.6);vertical-align:top}
+tr:hover{background:rgba(31,41,55,0.5)}
+.num{text-align:center;width:36px}
+.num-badge{display:inline-flex;width:22px;height:22px;border-radius:50%;background:#3b82f6;color:#fff;align-items:center;justify-content:center;font-size:.6rem;font-weight:700}
+.mode-badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:.65rem;font-weight:700}
+.audio-cell{color:#e5e7eb;line-height:1.5;max-width:300px}
+.scene-cell{color:#e5e7eb;line-height:1.5;max-width:280px;font-size:.75rem}
+.direction-cell{color:#9ca3af;line-height:1.5;font-size:.72rem;max-width:200px}
+.dialogue-cell{color:#e5e7eb;line-height:1.5;font-size:.75rem}
+.effect-cell{}
+.effect-badge{display:inline-block;padding:2px 8px;border-radius:4px;background:rgba(234,179,8,0.12);color:#fde047;border:1px solid rgba(234,179,8,0.2);font-size:.7rem;font-weight:700;line-height:1.3}
+.empty{color:#4b5563;font-size:.7rem}
+.dur{color:#a78bfa;font-family:'Fira Code',monospace;font-size:.72rem;text-align:center;white-space:nowrap}
+.tc{color:#60a5fa;font-family:'Fira Code',monospace;font-size:.72rem}
+.tc-source{color:#60a5fa;font-size:.68rem}
+.tc-batch{color:#6b7280;font-size:.68rem}
+
+/* 비주얼 */
+.visual{text-align:center;width:130px}
+.visual img{width:110px;height:62px;object-fit:cover;border-radius:6px;border:1px solid #374151;cursor:pointer;transition:all 0.15s}
+.visual img:hover{border-color:#3b82f680;box-shadow:0 0 0 2px rgba(59,130,246,0.2);transform:scale(1.05)}
+.tc-label{display:block;font-size:.58rem;color:#6b7280;margin-top:3px;font-family:'Fira Code',monospace}
+
+/* Content ID */
+.cid{background:rgba(17,24,39,0.5);border:1px solid rgba(55,65,81,0.4);border-radius:10px;padding:14px;margin-top:12px}
+.cid-header{font-size:.78rem;font-weight:700;color:#9ca3af;display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.cid-icon{display:inline-flex;width:20px;height:20px;border-radius:4px;background:#10b981;color:#fff;align-items:center;justify-content:center;font-size:.55rem;font-weight:900}
+.cid-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:10px}
+.cid-item{background:rgba(31,41,55,0.5);border-radius:8px;padding:8px 10px;border:1px solid rgba(55,65,81,0.3)}
+.cid-label{display:block;color:#6b7280;font-size:.6rem;margin-bottom:2px}
+.cid-val{display:block;font-size:1rem;font-weight:700;font-family:'Fira Code',monospace}
+.cid-footer{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.grade-badge{display:inline-block;padding:3px 10px;border-radius:4px;font-size:.68rem;font-weight:700}
+.viral-info{font-size:.7rem;color:#fb923c}
+.viral-label{color:#6b7280}
+.cid-judgement{font-size:.75rem;color:#9ca3af;margin-top:8px;line-height:1.5}
+
+/* 라이트박스 */
+.lightbox{position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.85);backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;padding:24px;cursor:pointer}
+.lightbox.active{display:flex}
+.lightbox-inner{position:relative;max-width:900px;width:100%;background:#1f2937;border-radius:16px;border:1px solid #374151;overflow:hidden;box-shadow:0 25px 50px rgba(0,0,0,0.5);cursor:default}
+.lightbox-close{position:absolute;top:12px;right:12px;z-index:10;width:32px;height:32px;border-radius:50%;background:rgba(31,41,55,0.8);color:#9ca3af;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:1.2rem;transition:all 0.15s}
+.lightbox-close:hover{background:#374151;color:#fff}
+.lightbox-img{width:100%;max-height:70vh;object-fit:contain;background:#000;display:block}
+.lightbox-info{padding:12px 16px;background:rgba(31,41,55,0.6);border-top:1px solid rgba(55,65,81,0.5);display:flex;align-items:center;gap:12px}
+.lightbox-tc{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:6px;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);font-size:.72rem;font-weight:700;font-family:'Fira Code',monospace}
+.lightbox-scene{color:#9ca3af;font-size:.75rem}
+
+/* 푸터 */
+.page-footer{padding:32px 24px;text-align:center;color:#4b5563;font-size:.7rem;border-top:1px solid #1f2937;margin-top:32px}
+
+/* 반응형 */
+@media(max-width:768px){
+  .cid-grid{grid-template-columns:repeat(2,1fr)}
+  .page-header-inner{flex-direction:column;align-items:flex-start}
+  .visual img{width:80px;height:45px}
+}
+@media print{body{background:#fff;color:#111}th{background:#f3f4f6;color:#111}td{border-color:#d1d5db}.version{border-color:#d1d5db;break-inside:avoid}.page-header{position:static;background:#fff;border-color:#d1d5db}}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:#1f2937}
+::-webkit-scrollbar-thumb{background:#4b5563;border-radius:3px}
 </style>
 </head>
 <body>
-<h1>${presetLabel} 분석 결과</h1>
-<p class="meta">생성일: ${now} &nbsp;|&nbsp; 총 ${versions.length}개 버전</p>
-${sourceInfo ? `<div class="source">${escHtml(sourceInfo)}</div>` : ''}
-${versionsHtml}
+<div class="page-header">
+  <div class="page-header-inner">
+    <span class="page-title">${presetLabel} 분석 결과</span>
+    <div class="header-badges">
+      <span class="header-badge" style="background:rgba(59,130,246,0.1);color:#60a5fa;border-color:rgba(59,130,246,0.3)">${versions.length}개 버전</span>
+      <span class="header-badge" style="background:rgba(139,92,246,0.1);color:#a78bfa;border-color:rgba(139,92,246,0.3)">${now}</span>
+    </div>
+  </div>
+</div>
+
+<div class="container">
+  ${sourceInfo ? `<div class="source-box">${escHtml(sourceInfo)}</div>` : ''}
+  ${versionsHtml}
+</div>
+
+<div class="page-footer">Generated by AI All-in-One Production</div>
+
+<!-- 라이트박스 모달 -->
+<div class="lightbox" id="lightbox" onclick="closeLightbox()">
+  <div class="lightbox-inner" onclick="event.stopPropagation()">
+    <button class="lightbox-close" onclick="closeLightbox()">&times;</button>
+    <img class="lightbox-img" id="lb-img" src="" alt="Preview" />
+    <div class="lightbox-info">
+      <span class="lightbox-tc" id="lb-tc"></span>
+      <span class="lightbox-scene" id="lb-scene"></span>
+    </div>
+  </div>
+</div>
+
+<script>
+// 아코디언 토글
+function toggleVersion(id) {
+  const all = document.querySelectorAll('.version');
+  all.forEach(el => {
+    const vid = parseInt(el.getAttribute('data-id'));
+    if (vid === id) {
+      el.classList.toggle('expanded');
+      const body = document.getElementById('vbody-' + id);
+      body.style.display = el.classList.contains('expanded') ? 'block' : 'none';
+    }
+  });
+}
+
+// 라이트박스
+function openLightbox(src, scene, tc) {
+  document.getElementById('lb-img').src = src;
+  document.getElementById('lb-tc').textContent = tc;
+  document.getElementById('lb-scene').textContent = scene;
+  document.getElementById('lightbox').classList.add('active');
+}
+function closeLightbox() {
+  document.getElementById('lightbox').classList.remove('active');
+}
+
+// ESC 키로 닫기
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') closeLightbox();
+});
+
+// 첫 번째 버전 자동 펼침
+document.addEventListener('DOMContentLoaded', function() {
+  const first = document.querySelector('.version');
+  if (first) {
+    const id = parseInt(first.getAttribute('data-id'));
+    toggleVersion(id);
+  }
+});
+</script>
 </body>
 </html>`;
 }
@@ -1195,18 +1379,15 @@ const VideoAnalysisRoom: React.FC = () => {
             fetchYouTubeComments(vid),
           ]);
 
-          // UI 표시용 썸네일 (비주얼 컬럼) — 스토리보드 우선, 폴백: 기본 4장
+          // UI 표시용 플레이스홀더 썸네일 (분석 중 표시용, 분석 후 정확한 프레임으로 교체됨)
           const durationSec = meta ? parseIsoDuration(meta.duration) : 60;
           const base = `https://img.youtube.com/vi/${vid}`;
-          const staticFrames: TimedFrame[] = [
+          frames = [
             { url: `${base}/hqdefault.jpg`, hdUrl: `${base}/maxresdefault.jpg`, timeSec: 0 },
             { url: `${base}/1.jpg`, hdUrl: `${base}/hqdefault.jpg`, timeSec: Math.round(durationSec * 0.25) },
             { url: `${base}/2.jpg`, hdUrl: `${base}/hqdefault.jpg`, timeSec: Math.round(durationSec * 0.5) },
             { url: `${base}/3.jpg`, hdUrl: `${base}/hqdefault.jpg`, timeSec: Math.round(durationSec * 0.75) },
           ];
-          // Piped 스토리보드에서 프레임 추출 시도 (타임코드별 고유 이미지 확보)
-          const storyboardFrames = await fetchYouTubeStoryboardFrames(vid, durationSec).catch(() => [] as TimedFrame[]);
-          frames = storyboardFrames.length >= 4 ? storyboardFrames : staticFrames;
 
           if (meta) {
             inputDesc = `## YouTube 영상 정보
@@ -1273,6 +1454,27 @@ ${comments.slice(0, 15).map((c, i) => `${i + 1}. ${c.slice(0, 150)}`).join('\n')
       const parsed = parseVersions(text);
       setRawResult(text);
       setVersions(parsed);
+
+      // ★ 분석 결과의 정확한 타임코드에서 프레임 직접 추출 (Gemini 1fps 분석 결과 기반)
+      const allTimecodes = collectTimecodesFromVersions(parsed);
+      if (allTimecodes.length > 0) {
+        let exactVideoSource: string | File | null = null;
+        if (uploadedFile) {
+          exactVideoSource = uploadedFile;
+        } else {
+          const vid = extractYouTubeVideoId(youtubeUrl);
+          if (vid) {
+            exactVideoSource = await fetchYouTubeStreamUrl(vid).catch(() => null);
+          }
+        }
+        if (exactVideoSource) {
+          const exactFrames = await extractFramesAtExactTimecodes(exactVideoSource, allTimecodes);
+          if (exactFrames.length > 0) {
+            setThumbnails(exactFrames);
+          }
+        }
+      }
+
       // 결과 캐시에 저장 (Zustand 스토어)
       setTimeout(() => cacheCurrentResult(preset), 100);
       notifyAnalysisComplete();
