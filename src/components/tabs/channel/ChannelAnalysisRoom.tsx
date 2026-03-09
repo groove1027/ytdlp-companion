@@ -1,5 +1,5 @@
-import React, { useState, useCallback, useRef } from 'react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, PieChart, Pie, Cell } from 'recharts';
+import React, { useState, useCallback, useRef, useMemo } from 'react';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, PieChart, Pie, Cell, ReferenceLine } from 'recharts';
 import { useChannelAnalysisStore } from '../../../stores/channelAnalysisStore';
 import { useNavigationStore } from '../../../stores/navigationStore';
 import { useProjectStore } from '../../../stores/projectStore';
@@ -926,49 +926,195 @@ const ChannelAnalysisRoom: React.FC = () => {
         </div>
       )}
 
-      {/* 영상별 조회수 비교 차트 */}
-      {channelScripts.length > 0 && !progress && inputSource === 'youtube' && (
-        <div className={card}>
-          <h3 className="text-lg font-bold text-white mb-4">영상별 조회수 비교</h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={channelScripts.map(s => ({ name: s.title.substring(0, 15) + '...', views: s.viewCount, fullTitle: s.title }))} margin={{ top: 5, right: 20, left: 10, bottom: 80 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-              <XAxis dataKey="name" angle={-90} textAnchor="end" height={80} tick={{ fill: '#9ca3af', fontSize: 11 }} interval={0} />
-              <YAxis tick={{ fill: '#9ca3af' }} tickFormatter={fmtViews} />
-              <Tooltip
-                contentStyle={{ backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '8px' }}
-                labelStyle={{ color: '#f97316' }}
-                itemStyle={{ color: '#d1d5db' }}
-                formatter={(value: number) => [fmtViews(value) + '회', '조회수']}
-                labelFormatter={(_label: string, payload: readonly { payload?: { fullTitle?: string } }[]) => payload?.[0]?.payload?.fullTitle || _label}
-              />
-              <Bar dataKey="views" fill="#f97316" radius={[4, 4, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      )}
+      {/* ═══ 영상별 조회수 비교 — 프리미엄 수평 바 차트 ═══ */}
+      {channelScripts.length > 0 && !progress && inputSource === 'youtube' && (() => {
+        const sorted = [...channelScripts].sort((a, b) => (b.viewCount || 0) - (a.viewCount || 0));
+        const maxV = sorted[0]?.viewCount || 1;
+        const avgV = Math.round(channelScripts.reduce((s, c) => s + (c.viewCount || 0), 0) / channelScripts.length);
+        const barData = sorted.map((s, i) => ({
+          rank: i + 1,
+          name: s.title.length > 22 ? s.title.substring(0, 22) + '…' : s.title,
+          views: s.viewCount || 0,
+          fullTitle: s.title,
+          pct: Math.round(((s.viewCount || 0) / maxV) * 100),
+        }));
+        const barH = Math.max(340, barData.length * 38);
+        return (
+          <div className="bg-gray-800/80 backdrop-blur-sm rounded-2xl border border-gray-700/60 shadow-2xl overflow-hidden">
+            {/* 헤더 */}
+            <div className="px-6 pt-5 pb-4 border-b border-gray-700/40">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center text-lg shadow-lg shadow-blue-500/20">📊</div>
+                <div className="flex-1">
+                  <h3 className="text-[17px] font-bold text-white tracking-tight">영상별 조회수 비교</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">{channelScripts.length}개 영상 · 조회수 순 정렬</p>
+                </div>
+                <div className="flex gap-5">
+                  <div className="text-right">
+                    <p className="text-[10px] text-gray-500 uppercase tracking-widest font-medium">최고</p>
+                    <p className="text-base font-extrabold bg-gradient-to-r from-amber-400 to-orange-400 bg-clip-text text-transparent">{fmtViews(maxV)}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-[10px] text-gray-500 uppercase tracking-widest font-medium">평균</p>
+                    <p className="text-base font-extrabold bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">{fmtViews(avgV)}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+            {/* 차트 */}
+            <div className="px-4 pt-3 pb-4">
+              <ResponsiveContainer width="100%" height={barH}>
+                <BarChart layout="vertical" data={barData} margin={{ top: 4, right: 30, left: 4, bottom: 4 }} barSize={22}>
+                  <defs>
+                    <linearGradient id="chBarGrad" x1="0" y1="0" x2="1" y2="0">
+                      <stop offset="0%" stopColor="#3b82f6" />
+                      <stop offset="100%" stopColor="#06b6d4" />
+                    </linearGradient>
+                    <linearGradient id="chBarGradTop" x1="0" y1="0" x2="1" y2="0">
+                      <stop offset="0%" stopColor="#f59e0b" />
+                      <stop offset="100%" stopColor="#ef4444" />
+                    </linearGradient>
+                    <linearGradient id="chBarGradMid" x1="0" y1="0" x2="1" y2="0">
+                      <stop offset="0%" stopColor="#8b5cf6" />
+                      <stop offset="100%" stopColor="#6366f1" />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" horizontal={false} />
+                  <XAxis type="number" tick={{ fill: '#4b5563', fontSize: 10 }} tickFormatter={fmtViews}
+                    axisLine={false} tickLine={false} />
+                  <YAxis type="category" dataKey="name" width={160}
+                    tick={{ fill: '#9ca3af', fontSize: 11, fontWeight: 500 }}
+                    axisLine={false} tickLine={false} />
+                  <ReferenceLine x={avgV} stroke="#3b82f6" strokeDasharray="6 4" strokeOpacity={0.35}
+                    label={{ value: '평균', position: 'top', fill: '#60a5fa', fontSize: 10 }} />
+                  <Tooltip
+                    cursor={{ fill: 'rgba(59,130,246,0.06)', radius: 6 }}
+                    contentStyle={{ backgroundColor: '#0f172a', border: '1px solid rgba(59,130,246,0.3)', borderRadius: '14px', boxShadow: '0 12px 40px rgba(0,0,0,0.6)', padding: '12px 16px' }}
+                    labelStyle={{ color: '#93c5fd', fontWeight: 700, fontSize: '13px', marginBottom: '6px' }}
+                    itemStyle={{ color: '#e2e8f0', fontSize: '12px' }}
+                    formatter={(value: number, _n: string, props: { payload?: { pct?: number } }) =>
+                      [`${fmtViews(value)}회 (상위 ${props.payload?.pct || 0}%)`, '조회수']}
+                    labelFormatter={(_l: string, p: readonly { payload?: { fullTitle?: string } }[]) => p?.[0]?.payload?.fullTitle || _l}
+                  />
+                  <Bar dataKey="views" radius={[0, 8, 8, 0]} animationDuration={1000} animationEasing="ease-out">
+                    {barData.map((_e, i) => (
+                      <Cell key={i} fill={i === 0 ? 'url(#chBarGradTop)' : i < 3 ? 'url(#chBarGradMid)' : 'url(#chBarGrad)'}
+                        fillOpacity={i < 3 ? 1 : 0.75} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+              {/* 범례 */}
+              <div className="flex items-center gap-5 mt-2 px-2">
+                <div className="flex items-center gap-1.5">
+                  <div className="w-3 h-2 rounded-sm bg-gradient-to-r from-amber-500 to-red-500" />
+                  <span className="text-[10px] text-gray-500 font-medium">1위</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div className="w-3 h-2 rounded-sm bg-gradient-to-r from-violet-500 to-indigo-500" />
+                  <span className="text-[10px] text-gray-500 font-medium">2~3위</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div className="w-3 h-2 rounded-sm bg-gradient-to-r from-blue-500 to-cyan-500" />
+                  <span className="text-[10px] text-gray-500 font-medium">일반</span>
+                </div>
+                <div className="flex items-center gap-1.5 ml-auto">
+                  <div className="w-4 border-t border-dashed border-blue-500/50" />
+                  <span className="text-[10px] text-gray-500 font-medium">평균선</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
-      {/* 발행일별 조회수 추이 */}
-      {channelScripts.length > 0 && !progress && inputSource === 'youtube' && (
-        <div className={card}>
-          <h3 className="text-lg font-bold text-white mb-4">발행일별 조회수 추이</h3>
-          <ResponsiveContainer width="100%" height={250}>
-            <AreaChart data={[...channelScripts].sort((a, b) => new Date(a.publishedAt).getTime() - new Date(b.publishedAt).getTime()).map(s => ({ date: new Date(s.publishedAt).toLocaleDateString('ko-KR', { month: 'short', day: 'numeric' }), views: s.viewCount, title: s.title }))} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-              <XAxis dataKey="date" tick={{ fill: '#9ca3af' }} />
-              <YAxis tick={{ fill: '#9ca3af' }} tickFormatter={fmtViews} />
-              <Tooltip
-                contentStyle={{ backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '8px' }}
-                labelStyle={{ color: '#3b82f6' }}
-                itemStyle={{ color: '#d1d5db' }}
-                formatter={(value: number) => [fmtViews(value) + '회', '조회수']}
-                labelFormatter={(_label: string, payload: readonly { payload?: { title?: string } }[]) => payload?.[0]?.payload?.title || _label}
-              />
-              <Area type="monotone" dataKey="views" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.15} />
-            </AreaChart>
-          </ResponsiveContainer>
-        </div>
-      )}
+      {/* ═══ 발행일별 조회수 추이 — 프리미엄 에어리어 차트 ═══ */}
+      {channelScripts.length > 0 && !progress && inputSource === 'youtube' && (() => {
+        const timeSorted = [...channelScripts]
+          .sort((a, b) => new Date(a.publishedAt).getTime() - new Date(b.publishedAt).getTime());
+        const timeData = timeSorted.map(s => ({
+          date: new Date(s.publishedAt).toLocaleDateString('ko-KR', { month: 'short', day: 'numeric' }),
+          views: s.viewCount || 0,
+          title: s.title,
+        }));
+        const avgV = Math.round(timeSorted.reduce((s, c) => s + (c.viewCount || 0), 0) / timeSorted.length);
+        const peakV = Math.max(...timeSorted.map(s => s.viewCount || 0));
+        const peakDate = timeSorted.find(s => s.viewCount === peakV);
+        const trend = timeSorted.length >= 3
+          ? (() => {
+              const half = Math.floor(timeSorted.length / 2);
+              const firstHalf = timeSorted.slice(0, half).reduce((s, c) => s + (c.viewCount || 0), 0) / half;
+              const secondHalf = timeSorted.slice(half).reduce((s, c) => s + (c.viewCount || 0), 0) / (timeSorted.length - half);
+              return secondHalf > firstHalf * 1.1 ? 'up' : secondHalf < firstHalf * 0.9 ? 'down' : 'flat';
+            })()
+          : 'flat';
+        const trendInfo = { up: { icon: '📈', label: '상승세', color: 'text-green-400' }, down: { icon: '📉', label: '하락세', color: 'text-red-400' }, flat: { icon: '➡️', label: '횡보', color: 'text-gray-400' } }[trend];
+        return (
+          <div className="bg-gray-800/80 backdrop-blur-sm rounded-2xl border border-gray-700/60 shadow-2xl overflow-hidden">
+            {/* 헤더 */}
+            <div className="px-6 pt-5 pb-4 border-b border-gray-700/40">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500 to-fuchsia-500 flex items-center justify-center text-lg shadow-lg shadow-violet-500/20">📈</div>
+                <div className="flex-1">
+                  <h3 className="text-[17px] font-bold text-white tracking-tight">발행일별 조회수 추이</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">시간순 퍼포먼스 분석</p>
+                </div>
+                <div className="flex gap-5">
+                  <div className="text-right">
+                    <p className="text-[10px] text-gray-500 uppercase tracking-widest font-medium">피크</p>
+                    <p className="text-sm font-extrabold text-fuchsia-400">{fmtViews(peakV)}</p>
+                    {peakDate && <p className="text-[10px] text-gray-600">{new Date(peakDate.publishedAt).toLocaleDateString('ko-KR', { month: 'short', day: 'numeric' })}</p>}
+                  </div>
+                  <div className="text-right">
+                    <p className="text-[10px] text-gray-500 uppercase tracking-widest font-medium">트렌드</p>
+                    <p className={`text-sm font-extrabold ${trendInfo.color}`}>{trendInfo.icon} {trendInfo.label}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+            {/* 차트 */}
+            <div className="px-4 pt-3 pb-5">
+              <ResponsiveContainer width="100%" height={280}>
+                <AreaChart data={timeData} margin={{ top: 10, right: 20, left: 10, bottom: 5 }}>
+                  <defs>
+                    <linearGradient id="chAreaGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#8b5cf6" stopOpacity={0.35} />
+                      <stop offset="40%" stopColor="#6366f1" stopOpacity={0.15} />
+                      <stop offset="100%" stopColor="#6366f1" stopOpacity={0.02} />
+                    </linearGradient>
+                    <linearGradient id="chStrokeGrad" x1="0" y1="0" x2="1" y2="0">
+                      <stop offset="0%" stopColor="#8b5cf6" />
+                      <stop offset="50%" stopColor="#a78bfa" />
+                      <stop offset="100%" stopColor="#c084fc" />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                  <XAxis dataKey="date" tick={{ fill: '#4b5563', fontSize: 11, fontWeight: 500 }}
+                    axisLine={{ stroke: '#1e293b' }} tickLine={false} />
+                  <YAxis tick={{ fill: '#4b5563', fontSize: 10 }} tickFormatter={fmtViews}
+                    axisLine={false} tickLine={false} />
+                  <ReferenceLine y={avgV} stroke="#6366f1" strokeDasharray="6 4" strokeOpacity={0.3}
+                    label={{ value: `평균 ${fmtViews(avgV)}`, position: 'right', fill: '#818cf8', fontSize: 10 }} />
+                  <Tooltip
+                    cursor={{ stroke: '#a78bfa', strokeWidth: 1, strokeDasharray: '4 4' }}
+                    contentStyle={{ backgroundColor: '#0f172a', border: '1px solid rgba(139,92,246,0.3)', borderRadius: '14px', boxShadow: '0 12px 40px rgba(0,0,0,0.6)', padding: '12px 16px' }}
+                    labelStyle={{ color: '#c4b5fd', fontWeight: 700, fontSize: '13px', marginBottom: '6px' }}
+                    itemStyle={{ color: '#e2e8f0', fontSize: '12px' }}
+                    formatter={(value: number) => [fmtViews(value) + '회', '조회수']}
+                    labelFormatter={(_l: string, p: readonly { payload?: { title?: string } }[]) => p?.[0]?.payload?.title || _l}
+                  />
+                  <Area type="monotone" dataKey="views"
+                    stroke="url(#chStrokeGrad)" strokeWidth={2.5}
+                    fill="url(#chAreaGrad)"
+                    dot={{ r: 4, fill: '#1e1b4b', stroke: '#a78bfa', strokeWidth: 2 }}
+                    activeDot={{ r: 6, fill: '#a78bfa', stroke: '#1e1b4b', strokeWidth: 2, style: { filter: 'drop-shadow(0 0 6px rgba(167,139,250,0.6))' } as React.CSSProperties }}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* 스타일 분석 결과 */}
       {channelGuideline && !progress && (
@@ -1196,37 +1342,46 @@ const ChannelAnalysisRoom: React.FC = () => {
         <div className={card}>
           <h3 className="text-lg font-bold text-white mb-4">추천 주제</h3>
 
-          {/* 바이럴 점수 도넛 차트 */}
+          {/* 바이럴 점수 도넛 차트 — 프리미엄 */}
           {(() => {
             const viralDist = [
-              { name: '높음', value: topics.filter(t => t.viralScore === 'high').length, fill: '#ef4444' },
-              { name: '중간', value: topics.filter(t => t.viralScore === 'medium').length, fill: '#eab308' },
-              { name: '낮음', value: topics.filter(t => t.viralScore === 'low').length, fill: '#6b7280' },
+              { name: '높음', value: topics.filter(t => t.viralScore === 'high').length, fill: '#ef4444', accent: 'from-red-500 to-orange-500' },
+              { name: '중간', value: topics.filter(t => t.viralScore === 'medium').length, fill: '#eab308', accent: 'from-yellow-500 to-amber-500' },
+              { name: '낮음', value: topics.filter(t => t.viralScore === 'low').length, fill: '#64748b', accent: 'from-slate-500 to-gray-500' },
             ].filter(d => d.value > 0);
+            const total = viralDist.reduce((s, d) => s + d.value, 0);
             return (
-              <div className="flex items-center gap-6 mb-5 bg-gray-900/50 rounded-lg p-4 border border-gray-700/50">
-                <div className="relative" style={{ width: 200, height: 200 }}>
-                  <ResponsiveContainer width={200} height={200}>
+              <div className="flex items-center gap-8 mb-5 bg-gradient-to-br from-gray-900/80 to-gray-800/40 rounded-xl p-5 border border-gray-700/40">
+                <div className="relative flex-shrink-0" style={{ width: 180, height: 180 }}>
+                  <ResponsiveContainer width={180} height={180}>
                     <PieChart>
-                      <Pie data={viralDist} innerRadius={50} outerRadius={80} dataKey="value" label={({ name, value }) => `${name} ${value}`}>
-                        {viralDist.map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={entry.fill} />
-                        ))}
+                      <defs>
+                        <filter id="pieGlow"><feGaussianBlur stdDeviation="2" result="b" /><feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
+                      </defs>
+                      <Pie data={viralDist} innerRadius={55} outerRadius={78} dataKey="value"
+                        paddingAngle={3} cornerRadius={4} stroke="none"
+                        label={false} animationDuration={800}>
+                        {viralDist.map((entry, i) => <Cell key={i} fill={entry.fill} style={{ filter: 'url(#pieGlow)' }} />)}
                       </Pie>
-                      <Tooltip contentStyle={{ backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '8px' }} itemStyle={{ color: '#d1d5db' }} />
+                      <Tooltip contentStyle={{ backgroundColor: '#0f172a', border: '1px solid rgba(99,102,241,0.3)', borderRadius: '12px', boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }} itemStyle={{ color: '#e2e8f0' }} />
                     </PieChart>
                   </ResponsiveContainer>
-                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                    <span className="text-2xl font-bold text-white">{topics.length}</span>
+                  <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                    <span className="text-3xl font-extrabold text-white">{total}</span>
+                    <span className="text-[10px] text-gray-500 font-medium uppercase tracking-widest">주제</span>
                   </div>
                 </div>
-                <div className="space-y-2">
-                  <p className="text-sm font-medium text-gray-300 mb-2">바이럴 점수 분포</p>
+                <div className="space-y-3 flex-1">
+                  <p className="text-sm font-bold text-white mb-3">바이럴 점수 분포</p>
                   {viralDist.map(d => (
-                    <div key={d.name} className="flex items-center gap-2">
-                      <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: d.fill }} />
-                      <span className="text-sm text-gray-400">{d.name}</span>
-                      <span className="text-sm font-semibold text-gray-200">{d.value}개</span>
+                    <div key={d.name} className="flex items-center gap-3">
+                      <div className={`w-3 h-3 rounded-full flex-shrink-0 bg-gradient-to-br ${d.accent}`} style={{ boxShadow: `0 0 8px ${d.fill}40` }} />
+                      <span className="text-sm text-gray-400 w-10">{d.name}</span>
+                      <div className="flex-1 h-2 bg-gray-800 rounded-full overflow-hidden">
+                        <div className="h-full rounded-full transition-all duration-700" style={{ width: `${(d.value / total) * 100}%`, backgroundColor: d.fill }} />
+                      </div>
+                      <span className="text-sm font-bold text-gray-200 w-12 text-right">{d.value}개</span>
+                      <span className="text-xs text-gray-500 w-10 text-right">{Math.round((d.value / total) * 100)}%</span>
                     </div>
                   ))}
                 </div>
@@ -1234,27 +1389,43 @@ const ChannelAnalysisRoom: React.FC = () => {
             );
           })()}
 
-          {/* 본능 기제 빈도 차트 */}
+          {/* 본능 기제 빈도 차트 — 프리미엄 */}
           {topics.some(t => t.instinctAnalysis?.primaryInstincts?.length) && (() => {
             const instinctFreq = new Map<string, number>();
             topics.forEach(t => t.instinctAnalysis?.primaryInstincts?.forEach(inst => instinctFreq.set(inst, (instinctFreq.get(inst) || 0) + 1)));
             const instinctData = [...instinctFreq.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([name, count]) => ({ name, count }));
             if (instinctData.length === 0) return null;
+            const maxCount = instinctData[0]?.count || 1;
             return (
-              <div className="mb-5 bg-gray-900/50 rounded-lg p-4 border border-gray-700/50">
-                <p className="text-sm font-medium text-purple-400 mb-3">가장 많이 활용된 심리 기제</p>
-                <ResponsiveContainer width="100%" height={Math.max(200, instinctData.length * 35)}>
-                  <BarChart layout="vertical" data={instinctData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                    <XAxis type="number" tick={{ fill: '#9ca3af' }} allowDecimals={false} />
-                    <YAxis type="category" dataKey="name" width={120} tick={{ fill: '#9ca3af', fontSize: 12 }} />
+              <div className="mb-5 bg-gradient-to-br from-gray-900/80 to-gray-800/40 rounded-xl p-5 border border-gray-700/40">
+                <div className="flex items-center gap-2 mb-4">
+                  <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-purple-500 to-fuchsia-500 flex items-center justify-center text-xs shadow-lg shadow-purple-500/20">🧠</div>
+                  <p className="text-sm font-bold text-white">가장 많이 활용된 심리 기제</p>
+                  <span className="text-xs text-gray-600 ml-auto">상위 {instinctData.length}개</span>
+                </div>
+                <ResponsiveContainer width="100%" height={Math.max(200, instinctData.length * 38)}>
+                  <BarChart layout="vertical" data={instinctData} margin={{ top: 4, right: 30, left: 4, bottom: 4 }} barSize={20}>
+                    <defs>
+                      <linearGradient id="instGrad" x1="0" y1="0" x2="1" y2="0">
+                        <stop offset="0%" stopColor="#a855f7" />
+                        <stop offset="100%" stopColor="#ec4899" />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" horizontal={false} />
+                    <XAxis type="number" tick={{ fill: '#4b5563', fontSize: 10 }} allowDecimals={false} axisLine={false} tickLine={false} />
+                    <YAxis type="category" dataKey="name" width={120} tick={{ fill: '#9ca3af', fontSize: 11, fontWeight: 500 }} axisLine={false} tickLine={false} />
                     <Tooltip
-                      contentStyle={{ backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '8px' }}
-                      labelStyle={{ color: '#a855f7' }}
-                      itemStyle={{ color: '#d1d5db' }}
-                      formatter={(value: number) => [value + '회', '빈도']}
+                      cursor={{ fill: 'rgba(168,85,247,0.06)', radius: 6 }}
+                      contentStyle={{ backgroundColor: '#0f172a', border: '1px solid rgba(168,85,247,0.3)', borderRadius: '12px', boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }}
+                      labelStyle={{ color: '#c084fc', fontWeight: 700 }}
+                      itemStyle={{ color: '#e2e8f0' }}
+                      formatter={(value: number) => [value + '회', '활용 빈도']}
                     />
-                    <Bar dataKey="count" fill="#a855f7" radius={[0, 4, 4, 0]} />
+                    <Bar dataKey="count" radius={[0, 8, 8, 0]} animationDuration={800}>
+                      {instinctData.map((_e, i) => (
+                        <Cell key={i} fill="url(#instGrad)" fillOpacity={1 - (i / instinctData.length) * 0.5} />
+                      ))}
+                    </Bar>
                   </BarChart>
                 </ResponsiveContainer>
               </div>
