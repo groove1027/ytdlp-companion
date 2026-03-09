@@ -185,7 +185,7 @@ export const getStoredKeys = () => {
 // [NEW] Centralized Fetch Wrapper for Logging
 export const monitoredFetch = async (url: string, options: RequestInit = {}): Promise<Response> => {
     const method = options.method || 'GET';
-    
+
     // Don't log full body for binary uploads (too large)
     const isBinaryUpload = options.body instanceof FormData || options.body instanceof Blob;
     const logBody = isBinaryUpload ? '[Binary/FormData]' : options.body;

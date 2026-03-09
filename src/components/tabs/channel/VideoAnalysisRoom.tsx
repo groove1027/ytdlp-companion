@@ -1114,7 +1114,9 @@ ${comments.slice(0, 15).map((c, i) => `${i + 1}. ${c.slice(0, 150)}`).join('\n')
       // 결과 캐시에 저장
       resultCacheRef.current[preset] = { raw: text, versions: parsed, thumbs: frames };
     } catch (err) {
-      setError(err instanceof Error ? err.message : '분석 중 오류가 발생했습니다.');
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[VideoAnalysis] 분석 실패:', err);
+      setError(`분석 실패: ${msg}`);
     } finally {
       setIsAnalyzing(false);
       setAnalysisPhase('idle');
