@@ -60,16 +60,14 @@ function parseTikitakaTable(content: string): SceneRow[] {
   for (const line of lines) {
     const trimmed = line.trim();
     if (!trimmed.includes('|')) continue;
-    // 헤더·구분자 행 스킵: 순서, :---, 모드, 오디오, 비디오 등 헤더 키워드
-    if (/순서|:[\s]*---|모드\s*\|.*오디오|오디오\s*내용|비디오\s*화면|예상\s*시간|타임코드\s*소스/i.test(trimmed)) continue;
-
     // 앞뒤 | 제거 후 분할
     const stripped = trimmed.replace(/^\|/, '').replace(/\|$/, '');
     const cells = stripped.split('|').map(c => c.trim());
     if (cells.length < 5) continue;
 
+    // 첫 셀이 숫자인 데이터 행만 처리 (헤더·구분자 행 자동 스킵)
     const cutNum = parseInt(cells[0], 10);
-    if (isNaN(cutNum)) continue;
+    if (isNaN(cutNum) || cutNum < 1) continue;
 
     const mode = cells[1] || '';
     const audioContent = cells[2] || '';
@@ -208,17 +206,17 @@ function extractField(block: string, keyword: string): string {
   return m?.[1]?.trim() || '';
 }
 
-/** YouTube URL에서 Video ID 추출 */
+/** YouTube URL에서 Video ID 추출 (watch, shorts, embed, youtu.be 지원) */
 function extractYouTubeVideoId(url: string): string | null {
-  const m = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/);
+  const m = url.match(/(?:youtube\.com\/(?:watch\?v=|shorts\/|embed\/|v\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
   return m?.[1] || null;
 }
 
-/** ISO 8601 duration (PT1M30S) → 초 변환 */
+/** ISO 8601 duration (PT1M30S, PT1M30.5S) → 초 변환 */
 function parseIsoDuration(iso: string): number {
-  const m = iso.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
+  const m = iso.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:([\d.]+)S)?/);
   if (!m) return 0;
-  return (parseInt(m[1] || '0', 10) * 3600) + (parseInt(m[2] || '0', 10) * 60) + parseInt(m[3] || '0', 10);
+  return (parseInt(m[1] || '0', 10) * 3600) + (parseInt(m[2] || '0', 10) * 60) + parseFloat(m[3] || '0');
 }
 
 /** 초 → MM:SS 포맷 */
@@ -315,7 +313,12 @@ async function extractVideoFrames(file: File): Promise<TimedFrame[]> {
       for (let i = 0; i < count; i++) {
         const timeSec = Math.min((i + 0.5) * interval, dur - 0.1);
         video.currentTime = timeSec;
-        await new Promise<void>(r => { video.onseeked = () => r(); });
+        // 5초 타임아웃으로 seek 실패 시 건너뜀
+        const seeked = await Promise.race([
+          new Promise<boolean>(r => { video.onseeked = () => r(true); }),
+          new Promise<boolean>(r => setTimeout(() => r(false), 5000)),
+        ]);
+        if (!seeked) continue;
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         frames.push({ url: canvas.toDataURL('image/jpeg', 0.6), timeSec });
       }
@@ -326,19 +329,21 @@ async function extractVideoFrames(file: File): Promise<TimedFrame[]> {
   });
 }
 
-/** 타임코드 문자열 → 초 변환 (00:03 → 3, 01:30 → 90) */
+/** 타임코드 문자열 → 초 변환 (00:03 → 3, 01:30.500 → 90.5, 00:11.2 → 11.2) */
 function timecodeToSeconds(tc: string): number {
   const m = tc.match(/(\d+):(\d+)(?:\.(\d+))?/);
   if (!m) return 0;
-  return parseInt(m[1], 10) * 60 + parseInt(m[2], 10) + (m[3] ? parseInt(m[3], 10) / 1000 : 0);
+  return parseInt(m[1], 10) * 60 + parseInt(m[2], 10) + (m[3] ? parseFloat('0.' + m[3]) : 0);
 }
 
 /** 초 → SRT 타임코드 (00:00:03,000) */
 function secondsToSrtTime(s: number): string {
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const sec = Math.floor(s % 60);
-  const ms = Math.round((s % 1) * 1000);
+  const total = Math.max(0, s);
+  let ms = Math.round((total % 1) * 1000);
+  let sec = Math.floor(total % 60);
+  if (ms >= 1000) { ms -= 1000; sec += 1; }
+  const m = Math.floor((total % 3600) / 60);
+  const h = Math.floor(total / 3600);
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')},${String(ms).padStart(3, '0')}`;
 }
 
@@ -358,7 +363,7 @@ function generateSrt(scenes: SceneRow[], isTikitaka: boolean = false): string {
   }
   // 스낵형: 배치 타임코드 기반
   return scenes.map((scene, i) => {
-    const parts = scene.timeline.match(/(\d+:\d+(?:\.\d+)?)\s*~\s*(\d+:\d+(?:\.\d+)?)/);
+    const parts = scene.timeline.match(/(\d+:\d+(?:\.\d+)?)\s*[~\-–—]\s*(\d+:\d+(?:\.\d+)?)/);
     const start = parts ? timecodeToSeconds(parts[1]) : i * 3;
     const end = parts ? timecodeToSeconds(parts[2]) : (i + 1) * 3;
     const text = scene.effectSub
@@ -370,7 +375,7 @@ function generateSrt(scenes: SceneRow[], isTikitaka: boolean = false): string {
 
 /** SRT 파일 다운로드 */
 function downloadSrt(content: string, filename: string) {
-  const blob = new Blob([content], { type: 'text/srt;charset=utf-8' });
+  const blob = new Blob(['\uFEFF' + content], { type: 'application/x-subrip;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -794,8 +799,9 @@ const VideoAnalysisRoom: React.FC = () => {
 
           // 영상 길이 파싱 → 썸네일 타임스탬프 추정
           const durationSec = meta ? parseIsoDuration(meta.duration) : 60;
+          // hqdefault는 항상 존재 (maxresdefault는 일부 영상에서 404)
           frames = [
-            { url: `https://img.youtube.com/vi/${vid}/maxresdefault.jpg`, timeSec: 0 },
+            { url: `https://img.youtube.com/vi/${vid}/hqdefault.jpg`, timeSec: 0 },
             { url: `https://img.youtube.com/vi/${vid}/1.jpg`, timeSec: Math.round(durationSec * 0.25) },
             { url: `https://img.youtube.com/vi/${vid}/2.jpg`, timeSec: Math.round(durationSec * 0.5) },
             { url: `https://img.youtube.com/vi/${vid}/3.jpg`, timeSec: Math.round(durationSec * 0.75) },
@@ -1115,7 +1121,7 @@ ${comments.slice(0, 15).map((c, i) => `${i + 1}. ${c.slice(0, 150)}`).join('\n')
                               onClick={() => {
                                 const isTk = selectedPreset === 'tikitaka';
                                 const versionText = isTk
-                                  ? `제목: ${v.title}\n컨셉: ${v.concept}\n\n` + v.scenes.map(s =>
+                                  ? `제목: ${v.title}\n컨셉: ${v.concept}\n\n| 순서 | 모드 | 오디오 내용 | 예상 시간 | 비디오 화면 지시 | 타임코드 소스 |\n| :--- | :--- | :--- | :--- | :--- | :--- |\n` + v.scenes.map(s =>
                                     `| ${s.cutNum} | ${s.mode} | ${s.audioContent} | ${s.duration} | ${s.videoDirection} | ${s.timecodeSource} |`
                                   ).join('\n')
                                   : `제목: ${v.title}\n\n` + v.scenes.map(s =>
