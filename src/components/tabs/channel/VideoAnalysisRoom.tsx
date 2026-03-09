@@ -443,6 +443,150 @@ function downloadSrt(content: string, filename: string) {
   URL.revokeObjectURL(url);
 }
 
+/** 파일 다운로드 헬퍼 */
+function downloadFile(content: string, filename: string, mime: string) {
+  const blob = new Blob(['\uFEFF' + content], { type: `${mime};charset=utf-8` });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/** 분석 결과 → 스탠드얼론 HTML 문서 생성 */
+function generateAnalysisHtml(
+  versions: VersionItem[],
+  preset: AnalysisPreset,
+  thumbnails: TimedFrame[],
+  sourceInfo: string,
+): string {
+  const isTk = preset === 'tikitaka';
+  const presetLabel = isTk ? '티키타카 편집점' : '스낵형 편집점';
+  const now = new Date().toLocaleString('ko-KR');
+
+  const escHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+  const modeColor = (m: string) =>
+    m.includes('N') ? '#60a5fa' : m.includes('S') ? '#34d399' : m.includes('A') ? '#fbbf24' : '#9ca3af';
+
+  const versionsHtml = versions.map(v => {
+    // 장면 테이블
+    let tableHtml = '';
+    if (v.scenes.length > 0) {
+      const headerCells = isTk
+        ? '<th>#</th><th>모드</th><th>오디오 내용</th><th>효과자막</th><th>예상시간</th><th>비디오 화면 지시</th><th>타임코드</th>'
+        : '<th>#</th><th>화면</th><th>효과 자막</th><th>하단 자막</th><th>편집점</th>';
+      const bodyRows = v.scenes.map(s => {
+        // 비주얼 매칭
+        const tc = s.timecodeSource || s.sourceTimeline || '';
+        const firstTc = tc.split(/[/~,]/)[0].trim();
+        const tSec = timecodeToSeconds(firstTc);
+        const matched = tSec > 0 ? matchFrameToTimecode(tSec, thumbnails) : (thumbnails[0] || null);
+        const imgCell = matched
+          ? `<td class="visual"><img src="${escHtml(matched.url)}" alt="scene${s.cutNum}" /><span class="tc">${formatTimeSec(matched.timeSec)}</span></td>`
+          : '';
+
+        if (isTk) {
+          return `<tr>
+            <td class="num">${s.cutNum}</td>
+            <td><span class="mode" style="color:${modeColor(s.mode)}">${escHtml(s.mode || '-')}</span></td>
+            <td>${escHtml(s.audioContent || '-')}</td>
+            <td class="effect">${s.effectSub ? escHtml(s.effectSub) : '-'}</td>
+            <td class="dur">${escHtml(s.duration || '-')}</td>
+            <td>${escHtml(s.videoDirection || '-')}</td>
+            <td class="tc">${escHtml(s.timecodeSource || '-')}</td>
+            ${thumbnails.length > 0 ? imgCell : ''}
+          </tr>`;
+        }
+        return `<tr>
+          <td class="num">${s.cutNum}</td>
+          <td>${escHtml(s.sceneDesc || '-')}</td>
+          <td class="effect">${s.effectSub ? escHtml(s.effectSub) : '-'}</td>
+          <td>${escHtml(s.dialogue || '-')}</td>
+          <td class="tc">${s.sourceTimeline ? `원본: ${escHtml(s.sourceTimeline)}` : ''}${s.timeline ? `<br/>배치: ${escHtml(s.timeline)}` : ''}</td>
+          ${thumbnails.length > 0 ? imgCell : ''}
+        </tr>`;
+      }).join('\n');
+
+      const visualHeader = thumbnails.length > 0 ? '<th>비주얼</th>' : '';
+      tableHtml = `<table><thead><tr>${headerCells}${visualHeader}</tr></thead><tbody>${bodyRows}</tbody></table>`;
+    }
+
+    // Content ID
+    let cidHtml = '';
+    if (v.contentId) {
+      const c = v.contentId;
+      cidHtml = `<div class="cid">
+        <h4>Content ID 회피 및 바이럴 분석</h4>
+        <div class="cid-grid">
+          <div><span class="label">텍스트 일치율</span><span class="val">${escHtml(c.textMatchRate)}%</span></div>
+          <div><span class="label">구조 유사도</span><span class="val">${escHtml(c.structureSimilarity)}%</span></div>
+          <div><span class="label">순서 유사도</span><span class="val">${escHtml(c.orderSimilarity)}%</span></div>
+          <div><span class="label">키워드 변형률</span><span class="val">${escHtml(c.keywordVariation)}%</span></div>
+        </div>
+        <p><strong>안전등급:</strong> ${escHtml(c.safetyGrade)} &nbsp; <strong>바이럴:</strong> ${escHtml(c.viralPoint)}</p>
+        ${c.judgement !== '-' ? `<p><strong>판정:</strong> ${escHtml(c.judgement)}</p>` : ''}
+      </div>`;
+    }
+
+    return `<section class="version">
+      <h3><span class="vnum">${v.id}</span> ${escHtml(v.title)}</h3>
+      ${v.concept ? `<p class="concept">${escHtml(v.concept)}</p>` : ''}
+      ${v.rearrangement ? `<p class="rearrange">재배치: ${escHtml(v.rearrangement)}</p>` : ''}
+      ${tableHtml}
+      ${cidHtml}
+    </section>`;
+  }).join('\n');
+
+  return `<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${presetLabel} 분석 결과</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#111827;color:#d1d5db;font-family:-apple-system,'Noto Sans KR',sans-serif;padding:24px;max-width:1200px;margin:0 auto}
+h1{color:#f9fafb;font-size:1.5rem;margin-bottom:4px}
+.meta{color:#6b7280;font-size:.75rem;margin-bottom:24px}
+.source{background:#1f2937;border:1px solid #374151;border-radius:8px;padding:12px;margin-bottom:20px;font-size:.8rem;white-space:pre-wrap}
+.version{background:#1f2937;border:1px solid #374151;border-radius:12px;padding:16px;margin-bottom:16px}
+.version h3{color:#f9fafb;font-size:1.05rem;margin-bottom:8px;display:flex;align-items:center;gap:8px}
+.vnum{display:inline-flex;width:24px;height:24px;border-radius:50%;background:#3b82f6;color:#fff;align-items:center;justify-content:center;font-size:.7rem;font-weight:700;flex-shrink:0}
+.concept{color:#9ca3af;font-size:.85rem;margin-bottom:10px}
+.rearrange{color:#22d3ee;font-size:.8rem;font-family:monospace;margin-bottom:10px}
+table{width:100%;border-collapse:collapse;font-size:.8rem;margin-bottom:12px}
+th{background:#111827;color:#6b7280;text-align:left;padding:8px 6px;border-bottom:2px solid #374151;white-space:nowrap}
+td{padding:6px;border-bottom:1px solid #1f2937;vertical-align:top}
+.num{text-align:center;font-weight:700;color:#9ca3af;width:30px}
+.mode{font-weight:700;font-size:.7rem}
+.effect{color:#fde047;font-weight:700;font-size:.75rem}
+.dur{color:#a78bfa;font-family:monospace;font-size:.75rem;text-align:center;white-space:nowrap}
+.tc{color:#60a5fa;font-family:monospace;font-size:.75rem}
+.visual{text-align:center}
+.visual img{width:120px;height:68px;object-fit:cover;border-radius:4px;border:1px solid #374151}
+.visual .tc{display:block;font-size:.6rem;color:#6b7280;margin-top:2px}
+.cid{background:#111827;border:1px solid #374151;border-radius:8px;padding:12px;margin-top:8px}
+.cid h4{color:#6b7280;font-size:.8rem;margin-bottom:8px}
+.cid-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:8px}
+.cid-grid div{background:#1f2937;border-radius:6px;padding:6px 8px}
+.cid-grid .label{display:block;color:#6b7280;font-size:.65rem}
+.cid-grid .val{display:block;font-size:1rem;font-weight:700;color:#34d399;font-family:monospace}
+.cid p{font-size:.8rem;color:#9ca3af;margin-top:4px}
+tr:hover{background:#1f293780}
+@media print{body{background:#fff;color:#111}th{background:#f3f4f6;color:#111}td{border-color:#d1d5db}.version,.source{border-color:#d1d5db}}
+</style>
+</head>
+<body>
+<h1>${presetLabel} 분석 결과</h1>
+<p class="meta">생성일: ${now} &nbsp;|&nbsp; 총 ${versions.length}개 버전</p>
+${sourceInfo ? `<div class="source">${escHtml(sourceInfo)}</div>` : ''}
+${versionsHtml}
+</body>
+</html>`;
+}
+
 // ═══════════════════════════════════════════════════
 // 시스템 프롬프트 (변경 금지)
 // ═══════════════════════════════════════════════════
@@ -831,6 +975,7 @@ const VideoAnalysisRoom: React.FC = () => {
   const [copiedVersion, setCopiedVersion] = useState<number | null>(null);
   const [elapsedSec, setElapsedSec] = useState(0);
   const [simProgress, setSimProgress] = useState(0);
+  const [previewFrame, setPreviewFrame] = useState<{ frame: TimedFrame; scene: SceneRow; versionTitle: string } | null>(null);
   const analysisStartRef = useRef<number>(0);
 
   // 프리셋별 결과 캐시 — 프리셋 전환 시 기존 데이터 보존
@@ -997,6 +1142,24 @@ ${comments.slice(0, 15).map((c, i) => `${i + 1}. ${c.slice(0, 150)}`).join('\n')
     downloadSrt(srt, `${safeName || `version-${v.id}`}.srt`);
   }, [selectedPreset]);
 
+  // HTML 다운로드 (개별 버전)
+  const handleDownloadVersionHtml = useCallback((v: VersionItem) => {
+    if (!selectedPreset) return;
+    const sourceInfo = inputMode === 'youtube' ? `YouTube: ${youtubeUrl}` : `파일: ${uploadedFile?.name || ''}`;
+    const html = generateAnalysisHtml([v], selectedPreset, thumbnails, sourceInfo);
+    const safeName = v.title.replace(/[^\w가-힣\s-]/g, '').trim().slice(0, 40);
+    downloadFile(html, `${safeName || `version-${v.id}`}.html`, 'text/html');
+  }, [selectedPreset, thumbnails, inputMode, youtubeUrl, uploadedFile]);
+
+  // HTML 다운로드 (전체 버전)
+  const handleDownloadAllHtml = useCallback(() => {
+    if (!selectedPreset || versions.length === 0) return;
+    const sourceInfo = inputMode === 'youtube' ? `YouTube: ${youtubeUrl}` : `파일: ${uploadedFile?.name || ''}`;
+    const html = generateAnalysisHtml(versions, selectedPreset, thumbnails, sourceInfo);
+    const presetLabel = selectedPreset === 'tikitaka' ? '티키타카' : '스낵형';
+    downloadFile(html, `${presetLabel}_분석결과_전체.html`, 'text/html');
+  }, [selectedPreset, versions, thumbnails, inputMode, youtubeUrl, uploadedFile]);
+
   // 경과 시간 + 시뮬레이션 진행률 타이머
   const ESTIMATED_TOTAL_SEC = 90; // 예상 총 소요시간 (초) — 10버전 상세 테이블
   useEffect(() => {
@@ -1011,10 +1174,15 @@ ${comments.slice(0, 15).map((c, i) => `${i + 1}. ${c.slice(0, 150)}`).join('\n')
     return () => clearInterval(iv);
   }, [isAnalyzing]);
 
-  // ESC
+  // ESC — 미리보기 → 버전 접기 순서
   useEffect(() => {
-    if (!expandedId) return;
-    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') setExpandedId(null); };
+    if (!expandedId && !previewFrame) return;
+    const h = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (previewFrame) { setPreviewFrame(null); return; }
+        setExpandedId(null);
+      }
+    };
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);
   }, [expandedId]);
@@ -1229,6 +1397,14 @@ ${comments.slice(0, 15).map((c, i) => `${i + 1}. ${c.slice(0, 150)}`).join('\n')
                             </button>
                             <button
                               type="button"
+                              onClick={() => handleDownloadVersionHtml(v)}
+                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-600/20 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-600/30 transition-all"
+                            >
+                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3M3 17v3a2 2 0 002 2h14a2 2 0 002-2v-3" /></svg>
+                              HTML
+                            </button>
+                            <button
+                              type="button"
                               onClick={() => {
                                 const isTk = selectedPreset === 'tikitaka';
                                 const versionText = isTk
@@ -1432,15 +1608,19 @@ ${comments.slice(0, 15).map((c, i) => `${i + 1}. ${c.slice(0, 150)}`).join('\n')
                                     const matched = sceneTimeSec > 0 ? matchFrameToTimecode(sceneTimeSec, thumbnails) : (thumbnails[0] || null);
                                     return matched ? (
                                       <td className="py-2 px-2 align-top">
-                                        <div className="space-y-0.5">
+                                        <button
+                                          type="button"
+                                          onClick={() => setPreviewFrame({ frame: matched, scene, versionTitle: v.title })}
+                                          className="space-y-0.5 group cursor-pointer text-left"
+                                        >
                                           <img
                                             src={matched.url}
                                             alt={`Scene ${scene.cutNum}`}
-                                            className="w-[100px] h-[56px] object-cover rounded border border-gray-700/50"
+                                            className="w-[100px] h-[56px] object-cover rounded border border-gray-700/50 group-hover:border-blue-500/60 group-hover:ring-1 group-hover:ring-blue-500/30 transition-all"
                                             loading="lazy"
                                           />
-                                          <div className="text-[9px] text-gray-600 text-center font-mono">{formatTimeSec(matched.timeSec)}</div>
-                                        </div>
+                                          <div className="text-[9px] text-gray-600 text-center font-mono group-hover:text-blue-400 transition-colors">{formatTimeSec(matched.timeSec)}</div>
+                                        </button>
                                       </td>
                                     ) : <td className="py-2 px-2" />;
                                   })()}
@@ -1511,9 +1691,17 @@ ${comments.slice(0, 15).map((c, i) => `${i + 1}. ${c.slice(0, 150)}`).join('\n')
         </div>
       )}
 
-      {/* ═══ 편집실로 보내기 ═══ */}
+      {/* ═══ 하단 액션 ═══ */}
       {rawResult && (
-        <div className="flex justify-center">
+        <div className="flex justify-center gap-3 flex-wrap">
+          <button
+            type="button"
+            onClick={handleDownloadAllHtml}
+            className="flex items-center gap-2 px-5 py-3 rounded-xl bg-emerald-600/20 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-600/30 font-bold transition-all"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3M3 17v3a2 2 0 002 2h14a2 2 0 002-2v-3" /></svg>
+            HTML 전체 저장
+          </button>
           <button
             type="button"
             onClick={() => {
@@ -1530,6 +1718,65 @@ ${comments.slice(0, 15).map((c, i) => `${i + 1}. ${c.slice(0, 150)}`).join('\n')
             편집실로 보내기
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
           </button>
+        </div>
+      )}
+
+      {/* ═══ 비주얼 미리보기 오버레이 ═══ */}
+      {previewFrame && (
+        <div
+          className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => setPreviewFrame(null)}
+        >
+          <div
+            className="relative bg-gray-900 border border-gray-700 rounded-2xl overflow-hidden max-w-3xl w-full shadow-2xl"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* 닫기 버튼 */}
+            <button
+              type="button"
+              onClick={() => setPreviewFrame(null)}
+              className="absolute top-3 right-3 z-10 w-8 h-8 rounded-full bg-gray-800/80 text-gray-400 hover:text-white hover:bg-gray-700 flex items-center justify-center transition-all"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
+            {/* 이미지 */}
+            <img
+              src={previewFrame.frame.url}
+              alt="Preview"
+              className="w-full h-auto max-h-[70vh] object-contain bg-black"
+            />
+            {/* 정보 바 */}
+            <div className="px-4 py-3 bg-gray-800/60 border-t border-gray-700/50">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-3">
+                  <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-blue-600/20 text-blue-400 border border-blue-500/30 text-xs font-bold">
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    {formatTimeSec(previewFrame.frame.timeSec)}
+                  </span>
+                  <span className="text-gray-400 text-xs">
+                    컷 #{previewFrame.scene.cutNum}
+                  </span>
+                  <span className="text-gray-500 text-xs truncate max-w-[300px]">
+                    {previewFrame.versionTitle}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 text-[10px] text-gray-500">
+                  {previewFrame.scene.timecodeSource && (
+                    <span className="font-mono">소스: {previewFrame.scene.timecodeSource}</span>
+                  )}
+                  {previewFrame.scene.sourceTimeline && (
+                    <span className="font-mono">원본: {previewFrame.scene.sourceTimeline}</span>
+                  )}
+                </div>
+              </div>
+              {/* 장면 설명 */}
+              {(previewFrame.scene.videoDirection || previewFrame.scene.sceneDesc) && (
+                <p className="text-gray-400 text-xs mt-2 leading-relaxed line-clamp-2">
+                  {previewFrame.scene.videoDirection || previewFrame.scene.sceneDesc}
+                </p>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>
