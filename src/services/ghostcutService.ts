@@ -143,6 +143,26 @@ interface PollResult {
   message?: string;
 }
 
+/** 재시도 래퍼 — 일시적 네트워크 오류 대비 (최대 retries회 재시도, 지수 백오프) */
+const fetchWithRetry = async (
+  url: string,
+  options: RequestInit,
+  retries = 3,
+): Promise<Response> => {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await monitoredFetch(url, options);
+      return res;
+    } catch (err) {
+      if (attempt === retries) throw err;
+      const delay = Math.min(2000 * Math.pow(2, attempt), 16000);
+      logger.warn(`[GhostCut] fetch 실패, ${delay}ms 후 재시도 (${attempt + 1}/${retries})`, { url });
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+  throw new Error('fetchWithRetry: unreachable');
+};
+
 /** 작업 제출 (callback URL 포함) */
 const submitTask = async (videoUrl: string): Promise<{ projectId: number; taskId: number }> => {
   const { appKey, appSecret } = getGhostCutKeys();
@@ -172,7 +192,7 @@ const submitTask = async (videoUrl: string): Promise<{ projectId: number; taskId
 
   const sign = await generateSign(body, appSecret);
 
-  const response = await monitoredFetch(GHOSTCUT_SUBMIT_URL, {
+  const response = await fetchWithRetry(GHOSTCUT_SUBMIT_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -198,26 +218,45 @@ const submitTask = async (videoUrl: string): Promise<{ projectId: number; taskId
   };
 };
 
-/** 작업 결과 폴링 (KV 경유, 최대 15분, 8초 간격) */
+/** 작업 결과 폴링 (KV 경유, 최대 30분, 8초 간격, 네트워크 오류 자동 재시도) */
 const pollResult = async (
   projectId: number,
-  onProgress?: (message: string) => void,
+  onProgress?: (message: string, elapsedSec: number) => void,
 ): Promise<string> => {
-  const MAX_POLLS = 112; // 15분 / 8초
+  const MAX_POLLS = 225; // 30분 / 8초
   const POLL_INTERVAL = 8000;
+  let consecutiveErrors = 0;
+  const MAX_CONSECUTIVE_ERRORS = 5;
 
   for (let i = 0; i < MAX_POLLS; i++) {
-    const response = await monitoredFetch(GHOSTCUT_POLL_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectId }),
-    });
+    let data: PollResult;
 
-    if (!response.ok) {
-      throw new Error(`폴링 오류: ${response.statusText}`);
+    try {
+      const response = await monitoredFetch(GHOSTCUT_POLL_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      data = await response.json();
+      consecutiveErrors = 0; // 성공 시 리셋
+    } catch (err) {
+      consecutiveErrors++;
+      logger.warn(`[GhostCut] 폴링 오류 (${consecutiveErrors}/${MAX_CONSECUTIVE_ERRORS})`, err);
+
+      if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+        throw new Error(`GhostCut 서버 연결 실패 — ${MAX_CONSECUTIVE_ERRORS}회 연속 오류. 네트워크를 확인해주세요.`);
+      }
+
+      const elapsed = (i + 1) * (POLL_INTERVAL / 1000);
+      onProgress?.('네트워크 오류, 자동 재시도 중...', elapsed);
+      await new Promise(r => setTimeout(r, POLL_INTERVAL));
+      continue;
     }
-
-    const data: PollResult = await response.json();
 
     if (data.status === 'done' && data.videoUrl) {
       return data.videoUrl;
@@ -231,34 +270,56 @@ const pollResult = async (
       throw new Error(data.message || 'GhostCut 서버 오류');
     }
 
-    // 아직 처리 중
+    // 아직 처리 중 — 경과 시간 기반 메시지
     const elapsed = (i + 1) * (POLL_INTERVAL / 1000);
     if (elapsed < 30) {
-      onProgress?.('GhostCut 대기열 진입 중...');
-    } else if (elapsed < 90) {
-      onProgress?.('AI 자막 감지 & 제거 중...');
+      onProgress?.('GhostCut 대기열 진입 중...', elapsed);
+    } else if (elapsed < 120) {
+      onProgress?.('AI 자막 감지 & 제거 중...', elapsed);
     } else {
-      onProgress?.(`AI 처리 중... (${Math.round(elapsed)}초 경과)`);
+      const min = Math.floor(elapsed / 60);
+      const sec = Math.round(elapsed % 60);
+      onProgress?.(`AI 처리 중... (${min}분 ${sec}초 경과)`, elapsed);
     }
 
     await new Promise((r) => setTimeout(r, POLL_INTERVAL));
   }
 
-  throw new Error('GhostCut 처리 시간 초과 (15분)');
+  throw new Error('GhostCut 처리 시간 초과 (30분). 영상이 너무 길거나 서버에 문제가 있을 수 있습니다.');
+};
+
+/** 결과 영상 다운로드 (최대 3회 재시도) */
+const downloadResult = async (resultUrl: string): Promise<Blob> => {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const response = await fetch(resultUrl);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      return await response.blob();
+    } catch (err) {
+      if (attempt === 2) {
+        throw new Error('GhostCut 결과 영상 다운로드 실패 — 네트워크를 확인하고 다시 시도해주세요.');
+      }
+      logger.warn(`[GhostCut] 다운로드 재시도 (${attempt + 1}/3)`, err);
+      await new Promise(r => setTimeout(r, 3000 * (attempt + 1)));
+    }
+  }
+  throw new Error('downloadResult: unreachable');
 };
 
 /**
  * GhostCut 자막 제거 전체 파이프라인
  * 1. 영상 Cloudinary 업로드 (URL 필요)
  * 2. GhostCut API 작업 제출 (callback URL 포함)
- * 3. KV 경유 폴링으로 완료 대기
- * 4. 결과 영상 다운로드
+ * 3. KV 경유 폴링으로 완료 대기 (최대 30분, 네트워크 오류 자동 재시도)
+ * 4. 결과 영상 다운로드 (최대 3회 재시도)
  */
 export const removeSubtitlesWithGhostCut = async (
   videoBlob: Blob,
   _width: number,
   _height: number,
-  onProgress?: (message: string) => void,
+  onProgress?: (message: string, elapsedSec?: number) => void,
 ): Promise<Blob> => {
   logger.info('[GhostCut] 자막 제거 파이프라인 시작');
 
@@ -273,18 +334,13 @@ export const removeSubtitlesWithGhostCut = async (
   const { projectId } = await submitTask(videoUrl);
   logger.info('[GhostCut] 작업 제출', { projectId });
 
-  // 3. KV 경유 폴링
+  // 3. KV 경유 폴링 (최대 30분, 네트워크 오류 5회 연속까지 자동 복구)
   const resultUrl = await pollResult(projectId, onProgress);
   logger.info('[GhostCut] 처리 완료', { resultUrl });
 
-  // 4. 결과 다운로드
+  // 4. 결과 다운로드 (최대 3회 재시도)
   onProgress?.('정제된 영상 다운로드 중...');
-  const resultResponse = await fetch(resultUrl);
-  if (!resultResponse.ok) {
-    throw new Error('GhostCut 결과 다운로드 실패');
-  }
-
-  const resultBlob = await resultResponse.blob();
+  const resultBlob = await downloadResult(resultUrl);
   logger.success('[GhostCut] 자막 제거 완료', { size: resultBlob.size });
   return resultBlob;
 };

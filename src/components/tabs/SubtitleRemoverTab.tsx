@@ -84,13 +84,25 @@ const SubtitleRemoverTab: React.FC = () => {
         blob,
         0,
         0,
-        (msg) => {
+        (msg, elapsedSec) => {
           setProgress(msg);
-          if (msg.includes('업로드')) setPercent(15);
-          else if (msg.includes('시작')) { setPercent(30); setPhase('processing'); }
-          else if (msg.includes('대기')) setPercent(35);
-          else if (msg.includes('처리 중')) setPercent(Math.min(percent + 5, 85));
-          else if (msg.includes('다운로드')) setPercent(90);
+          if (msg.includes('업로드')) {
+            setPercent(15);
+          } else if (msg.includes('시작')) {
+            setPercent(30);
+            setPhase('processing');
+          } else if (msg.includes('대기열')) {
+            setPercent(35);
+          } else if (msg.includes('재시도')) {
+            // 네트워크 오류 재시도 — 퍼센트 유지
+          } else if (msg.includes('다운로드')) {
+            setPercent(90);
+          } else if (elapsedSec != null) {
+            // 경과 시간 기반 진행률 (30~85% 범위, 최대 예상시간 기반)
+            const estimatedTotal = Math.max(videoDuration * 7, 60); // 영상 1초당 약 7초 처리
+            const ratio = Math.min(elapsedSec / estimatedTotal, 1);
+            setPercent(Math.round(30 + ratio * 55)); // 30% ~ 85%
+          }
         },
       );
 
@@ -236,6 +248,24 @@ const SubtitleRemoverTab: React.FC = () => {
               </div>
             )}
 
+            {/* 대용량 파일 경고 */}
+            {videoFile && videoFile.size > 500 * 1024 * 1024 && (
+              <div className="mt-3 p-2.5 rounded-lg bg-amber-900/20 border border-amber-500/30">
+                <p className="text-xs text-amber-300">
+                  파일 크기가 {(videoFile.size / 1024 / 1024).toFixed(0)}MB입니다.
+                  업로드와 처리에 시간이 오래 걸릴 수 있습니다.
+                </p>
+              </div>
+            )}
+
+            {/* 예상 소요시간 */}
+            {videoFile && videoDuration > 0 && (
+              <div className="mt-2 text-xs text-gray-500">
+                예상 소요시간: 약 {videoDuration < 30 ? '1~2분' : videoDuration < 120 ? '2~5분' : videoDuration < 300 ? '5~10분' : '10~20분'}
+                {videoDuration > 300 && <span className="text-amber-400 ml-1">(긴 영상은 시간이 더 소요될 수 있습니다)</span>}
+              </div>
+            )}
+
             {/* 실행 버튼 */}
             <div className="mt-4 flex gap-2">
               <button
@@ -321,25 +351,29 @@ const SubtitleRemoverTab: React.FC = () => {
               {(phase === 'uploading' || phase === 'processing') && (
                 <div className="mt-4 space-y-2">
                   {[
-                    { label: 'Cloudinary 업로드', done: percent > 20 },
-                    { label: 'GhostCut 작업 제출', done: percent > 30 },
-                    { label: 'AI 자막 감지 & 제거', done: percent > 85 },
-                    { label: '결과 영상 다운로드', done: percent >= 100 },
-                  ].map((step, i) => (
-                    <div key={i} className="flex items-center gap-2 text-sm">
-                      {step.done ? (
-                        <span className="text-green-400">✓</span>
-                      ) : percent > (i * 25) ? (
-                        <svg className="w-4 h-4 text-cyan-400 animate-spin" fill="none" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                        </svg>
-                      ) : (
-                        <span className="text-gray-600">○</span>
-                      )}
-                      <span className={step.done ? 'text-gray-300' : percent > (i * 25) ? 'text-cyan-300' : 'text-gray-600'}>{step.label}</span>
-                    </div>
-                  ))}
+                    { label: 'Cloudinary 업로드', threshold: 20 },
+                    { label: 'GhostCut 작업 제출', threshold: 32 },
+                    { label: 'AI 자막 감지 & 제거 (1~10분 소요)', threshold: 85 },
+                    { label: '결과 영상 다운로드', threshold: 95 },
+                  ].map((step, i, arr) => {
+                    const done = percent >= step.threshold;
+                    const active = !done && (i === 0 || percent >= arr[i - 1].threshold);
+                    return (
+                      <div key={i} className="flex items-center gap-2 text-sm">
+                        {done ? (
+                          <span className="text-green-400">✓</span>
+                        ) : active ? (
+                          <svg className="w-4 h-4 text-cyan-400 animate-spin" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                          </svg>
+                        ) : (
+                          <span className="text-gray-600">○</span>
+                        )}
+                        <span className={done ? 'text-gray-300' : active ? 'text-cyan-300' : 'text-gray-600'}>{step.label}</span>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
