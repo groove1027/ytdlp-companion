@@ -30,6 +30,9 @@ Thumbs.db
 # Build output
 dist/
 
+# Large media index data files (use Git LFS or external hosting)
+src/public/data/media-*.json
+
 # Node modules (if using Node.js projects)
 node_modules/
 

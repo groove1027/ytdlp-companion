@@ -1,5 +1,6 @@
 import React, { Suspense, lazy, useState, useCallback, useEffect } from 'react';
 import BgmOverlayPanel from './BgmOverlayPanel';
+import MemeAndSfxPanel from './MemeAndSfxPanel';
 import { useEditRoomStore } from '../../../stores/editRoomStore';
 import { useProjectStore } from '../../../stores/projectStore';
 import { SUBTITLE_TEMPLATES } from '../../../constants/subtitleTemplates';
@@ -14,7 +15,7 @@ import type { SubtitleStyle, SubtitleTemplate } from '../../../types';
 const SubtitleStyleEditor = lazy(() => import('../editor/SubtitleStyleEditor'));
 const EffectPresets = lazy(() => import('../editor/EffectPresets'));
 
-type PanelTab = 'effects' | 'subtitle' | 'bgm';
+type PanelTab = 'effects' | 'subtitle' | 'bgm' | 'meme-sfx';
 type FullModal = 'effects' | 'subtitle' | null;
 
 const LoadingFallback: React.FC = () => (
@@ -607,6 +608,7 @@ const EditRoomGlobalPanel: React.FC = () => {
     { id: 'effects', label: '이미지 효과', icon: '🎬' },
     { id: 'subtitle', label: '자막', icon: '✏' },
     { id: 'bgm', label: 'BGM', icon: '🎵' },
+    { id: 'meme-sfx', label: '밈/효과음', icon: '🎨' },
   ];
 
   return (
@@ -644,6 +646,9 @@ const EditRoomGlobalPanel: React.FC = () => {
 
           {/* BGM 탭 */}
           {activeTab === 'bgm' && <BgmOverlayPanel />}
+
+          {/* 밈 & 효과음 탭 */}
+          {activeTab === 'meme-sfx' && <MemeAndSfxPanel />}
         </div>
       </div>
 
