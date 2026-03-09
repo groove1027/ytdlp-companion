@@ -6,6 +6,7 @@ import ProcessingOverlay from './components/ProcessingOverlay';
 import ImageLightbox from './components/ImageLightbox';
 import DebugConsole from './components/DebugConsole';
 import FeedbackModal from './components/FeedbackModal';
+import FeedbackNotificationBanner from './components/FeedbackNotificationBanner';
 import CostDashboard from './components/CostDashboard';
 import ApiKeySettings from './components/ApiKeySettings';
 /* WaveSpeed 비활성화 — import 주석처리
@@ -1334,6 +1335,7 @@ const App: React.FC = () => {
       </div>{/* flex wrapper 닫기 */}
 
       <FeedbackModal />
+      <FeedbackNotificationBanner />
       {authUser && (
         <ProfileModal
           authUser={authUser}
