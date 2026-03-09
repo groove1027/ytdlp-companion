@@ -331,10 +331,20 @@ async function fetchYouTubeComments(videoId: string): Promise<string[]> {
 
 const PIPED_APIS_FOR_FRAMES = [
   'https://pipedapi.kavin.rocks',
+  'https://pipedapi-libre.kavin.rocks',
   'https://pipedapi.adminforge.de',
   'https://pipedapi.leptons.xyz',
+  'https://pipedapi.nosebs.ru',
   'https://api.piped.yt',
-  'https://pipedapi.in.projectsegfau.lt',
+  'https://piped-api.privacy.com.de',
+  'https://pipedapi.drgns.space',
+  'https://pipedapi.owo.si',
+  'https://pipedapi.ducks.party',
+  'https://piped-api.codespace.cz',
+  'https://pipedapi.reallyaweso.me',
+  'https://api.piped.private.coffee',
+  'https://pipedapi.darkness.services',
+  'https://pipedapi.orangenet.cc',
 ];
 
 /** YouTube 영상의 스트림 URL 획득 (Piped API) — 정확한 프레임 추출용 */

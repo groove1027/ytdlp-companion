@@ -55,7 +55,7 @@ const ChannelAnalysisRoom: React.FC = () => {
   const progressElapsed = useElapsedTimer(!!progress);
   const [selectedTopic, setSelectedTopic] = useState<LegacyTopicRecommendation | null>(null);
 
-  // --- YouTube 영상 다운로드 (Piped API → Cobalt API → cobalt.tools 폴백) ---
+  // --- YouTube 영상 다운로드 (Piped/Invidious → Cobalt+Turnstile → 수동 폴백) ---
   const [downloadingVideos, setDownloadingVideos] = useState<Set<string>>(new Set());
   const [downloadProgress, setDownloadProgress] = useState<Record<string, number>>({}); // videoId → 0~100
   const [downloadPhase, setDownloadPhase] = useState<Record<string, string>>({}); // videoId → 단계 텍스트
@@ -63,26 +63,39 @@ const ChannelAnalysisRoom: React.FC = () => {
   const [showBulkModal, setShowBulkModal] = useState(false);
   const [bulkDownloadProgress, setBulkDownloadProgress] = useState<{ current: number; total: number; failed: number } | null>(null);
 
-  // Piped 공개 인스턴스 (다중 폴백 — 2026.03 업데이트)
+  // Piped 공개 인스턴스 (전체 공식 목록 — 2026.03.10)
   const PIPED_APIS = useRef([
     'https://pipedapi.kavin.rocks',
+    'https://pipedapi-libre.kavin.rocks',
     'https://pipedapi.adminforge.de',
     'https://pipedapi.leptons.xyz',
+    'https://pipedapi.nosebs.ru',
     'https://api.piped.yt',
     'https://piped-api.privacy.com.de',
-    'https://pipedapi.in.projectsegfau.lt',
-    'https://api.piped.privacydev.net',
-    'https://pipedapi.darkness.services',
     'https://pipedapi.drgns.space',
-    'https://pipedapi.smnz.de',
+    'https://pipedapi.owo.si',
+    'https://pipedapi.ducks.party',
+    'https://piped-api.codespace.cz',
+    'https://pipedapi.reallyaweso.me',
+    'https://api.piped.private.coffee',
+    'https://pipedapi.darkness.services',
+    'https://pipedapi.orangenet.cc',
   ]);
-  // Invidious 인스턴스 (Piped 전멸 시 폴백)
+  // Invidious 인스턴스 (커뮤니티 전체 — 2026.03.10)
   const INVIDIOUS_APIS = useRef([
     'https://inv.nadeko.net',
     'https://yewtu.be',
     'https://invidious.nerdvpn.de',
     'https://invidious.privacyredirect.com',
     'https://iv.ggtyler.dev',
+    'https://invidious.protokolla.fi',
+    'https://invidious.materialio.us',
+    'https://invidious.fdn.fr',
+    'https://invidious.perennialte.ch',
+    'https://yt.artemislena.eu',
+    'https://invidious.lunar.icu',
+    'https://inv.tux.pizza',
+    'https://invidious.drgns.space',
   ]);
   // 작동 확인된 인스턴스를 앞으로 끌어올림
   const promoteInstance = useCallback((url: string) => {
@@ -291,67 +304,27 @@ const ChannelAnalysisRoom: React.FC = () => {
     return new Blob([safeOutput as BlobPart], { type: 'video/mp4' });
   }, []);
 
-  // Cobalt API v10 폴백 — 커뮤니티 인스턴스 (인증 불필요 인스턴스 우선)
-  const COBALT_APIS = useRef([
-    'https://cobalt-api.meowing.de',
-    'https://downloadapi.stuff.solutions',
-    'https://api.cobalt.tools',
-  ]);
+  // Cobalt API — Turnstile 인증 기반 다운로드 (2026.03 전환)
   const downloadViaCobalt = useCallback(async (videoId: string, title: string): Promise<boolean> => {
-    const ytUrl = `https://www.youtube.com/watch?v=${videoId}`;
-    for (const api of COBALT_APIS.current) {
-      try {
-        const res = await fetch(`${api}/`, {
-          method: 'POST',
-          headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            url: ytUrl,
-            videoQuality: '1080',
-            youtubeVideoCodec: 'h264',
-            downloadMode: 'auto',
-            filenameStyle: 'pretty',
-          }),
-          signal: AbortSignal.timeout(12000),
-        });
-        if (!res.ok) {
-          console.warn(`[Cobalt] ${api} → ${res.status}`);
-          continue;
-        }
-        const data = await res.json();
-        if (data.status === 'error') {
-          console.warn(`[Cobalt] ${api} error:`, data.error?.code);
-          continue;
-        }
-        if (data.status === 'tunnel' && data.url) {
-          const blob = await fetchStreamBlob(data.url, videoId, 0, 95);
-          if (blob) { saveBlobAsFile(blob, data.filename || `${title}.mp4`); return true; }
-        }
-        if (data.status === 'redirect' && data.url) {
-          window.open(data.url, '_blank');
-          return true;
-        }
-        if (data.status === 'picker' && data.picker?.length > 0) {
-          // picker 모드: 첫 번째 옵션으로 다운로드
-          const pick = data.picker[0];
-          if (pick.url) {
-            const blob = await fetchStreamBlob(pick.url, videoId, 0, 95);
-            if (blob) { saveBlobAsFile(blob, data.filename || `${title}.mp4`); return true; }
-          }
-        }
-      } catch (e) {
-        console.warn(`[Cobalt] ${api} failed:`, e);
-        continue;
+    try {
+      const { cobaltDownload } = await import('../../../services/cobaltAuthService');
+      const result = await cobaltDownload(videoId, (msg) => {
+        setDownloadPhase(prev => ({ ...prev, [videoId]: msg }));
+      });
+      if (!result) return false;
+
+      setDownloadPhase(prev => ({ ...prev, [videoId]: '영상 다운로드 중...' }));
+      const blob = await fetchStreamBlob(result.url, videoId, 0, 95);
+      if (blob) {
+        const safeTitle = (title || videoId).replace(/[<>:"/\\|?*]/g, '').substring(0, 80);
+        saveBlobAsFile(blob, result.filename || `${safeTitle}.mp4`);
+        return true;
       }
+    } catch (e) {
+      console.warn('[Cobalt] 인증 다운로드 실패:', e);
     }
     return false;
   }, [fetchStreamBlob, saveBlobAsFile]);
-
-  // Piped 프론트엔드 인스턴스 (다운로드 버튼 있는 UI)
-  const PIPED_FRONTENDS = useRef([
-    'https://piped.video',
-    'https://piped.adminforge.de',
-    'https://piped.kavin.rocks',
-  ]);
 
   // 통합 다운로드: Piped/Invidious (HD+FFmpeg) → muxed → Cobalt → Piped 프론트엔드
   const downloadVideo = useCallback(async (videoId: string, title: string): Promise<boolean> => {
@@ -420,14 +393,12 @@ const ChannelAnalysisRoom: React.FC = () => {
       }
       console.warn('[Download] Cobalt API도 실패');
 
-      // 3차: Piped 프론트엔드에서 직접 다운로드
-      setDownloadPhase(prev => ({ ...prev, [videoId]: '외부 이동...' }));
+      // 3차: 모든 방법 실패 — 유용한 안내 제공
+      setDownloadPhase(prev => ({ ...prev, [videoId]: '다운로드 실패' }));
       setDownloadDone(prev => ({ ...prev, [videoId]: 'fail' }));
       const ytUrl = `https://www.youtube.com/watch?v=${videoId}`;
       try { await navigator.clipboard.writeText(ytUrl); } catch { /* 무시 */ }
-      const frontendUrl = `${PIPED_FRONTENDS.current[0]}/watch?v=${videoId}`;
-      window.open(frontendUrl, '_blank');
-      showToast(`자동 다운로드 실패 — Piped에서 다운로드 버튼을 클릭하세요. (URL 복사됨)`);
+      showToast(`자동 다운로드 실패 — YouTube URL이 클립보드에 복사되었습니다. yt-dlp 또는 브라우저 확장 프로그램으로 다운로드하세요.`);
       return false;
     } finally {
       setDownloadingVideos(prev => { const next = new Set(prev); next.delete(videoId); return next; });
