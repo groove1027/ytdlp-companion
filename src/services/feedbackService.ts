@@ -54,6 +54,7 @@ export const submitFeedback = async (data: FeedbackData): Promise<FeedbackResult
         currentProjectId: data.currentProjectId,
         screenshotUrls,
         userDisplayName: data.userDisplayName,
+        debugLogs: data.debugLogs,
     };
 
     const response = await monitoredFetch('/api/feedback', {

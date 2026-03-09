@@ -22,6 +22,7 @@ export interface FeedbackData {
     currentProjectId?: string;
     screenshots?: FeedbackScreenshot[];
     userDisplayName?: string;
+    debugLogs?: string;
 }
 
 export enum AspectRatio {

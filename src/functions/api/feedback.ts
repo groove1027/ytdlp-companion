@@ -29,6 +29,7 @@ function formatIssueBody(data: {
   screenshotUrls?: string[];
   timestamp: number;
   userDisplayName?: string;
+  debugLogs?: string;
 }): string {
   const date = new Date(data.timestamp).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' });
   const sections: string[] = [];
@@ -61,6 +62,25 @@ function formatIssueBody(data: {
   sections.push(`| 브라우저 | ${data.userAgent.substring(0, 120)} |`);
   if (data.currentProjectId) {
     sections.push(`| 프로젝트 ID | \`${data.currentProjectId}\` |`);
+  }
+
+  // 디버그 로그 (접이식)
+  if (data.debugLogs) {
+    sections.push('');
+    sections.push('<details>');
+    sections.push('<summary><strong>디버그 로그</strong> (클릭하여 펼치기)</summary>');
+    sections.push('');
+    sections.push('```');
+    // GitHub issue body 최대 65536자 — 로그가 너무 길면 잘라냄
+    const maxLogLen = 30000;
+    if (data.debugLogs.length > maxLogLen) {
+      sections.push(data.debugLogs.substring(0, maxLogLen));
+      sections.push(`\n... (${data.debugLogs.length - maxLogLen}자 생략)`);
+    } else {
+      sections.push(data.debugLogs);
+    }
+    sections.push('```');
+    sections.push('</details>');
   }
 
   return sections.join('\n');
@@ -96,6 +116,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       screenshotUrls?: string[];
       timestamp: number;
       userDisplayName?: string;
+      debugLogs?: string;
     };
 
     const titlePrefix = data.type === 'bug' || data.type === 'error' ? 'Bug' : data.type === 'suggestion' ? 'Feature' : 'Feedback';

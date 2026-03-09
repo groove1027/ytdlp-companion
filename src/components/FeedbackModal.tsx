@@ -4,6 +4,7 @@ import { useUIStore } from '../stores/uiStore';
 import { useProjectStore } from '../stores/projectStore';
 import { submitFeedback, FeedbackResult } from '../services/feedbackService';
 import { getSavedUser } from '../services/authService';
+import { logger } from '../services/LoggerService';
 import { FeedbackType } from '../types';
 import type { FeedbackData, FeedbackScreenshot } from '../types';
 
@@ -39,7 +40,12 @@ const FeedbackModal: React.FC = () => {
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isDragOver, setIsDragOver] = useState(false);
     const [submitResult, setSubmitResult] = useState<FeedbackResult | null>(null);
+    const [attachLogs, setAttachLogs] = useState(true); // 버그일 때 기본 ON
+    const [showLogPreview, setShowLogPreview] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
+
+    const logCount = logger.getLogs().length;
+    const errorCount = logger.getErrorCount();
 
     // 로그인 사용자 정보 자동 채우기
     const savedUser = getSavedUser();
@@ -139,6 +145,7 @@ const FeedbackModal: React.FC = () => {
                 currentProjectId: currentProjectId || undefined,
                 screenshots: screenshots.length > 0 ? screenshots : undefined,
                 userDisplayName: userDisplayName || undefined,
+                debugLogs: attachLogs ? logger.exportFormatted() : undefined,
             };
 
             const result = await submitFeedback(data);
@@ -342,6 +349,58 @@ const FeedbackModal: React.FC = () => {
                         )}
                     </div>
 
+                    {/* 디버그 로그 첨부 */}
+                    <div>
+                        <div className="flex items-center justify-between mb-2">
+                            <label className="text-sm font-bold text-gray-300 uppercase tracking-wider flex items-center gap-2">
+                                디버그 로그
+                                {errorCount > 0 && (
+                                    <span className="text-[11px] font-normal normal-case px-1.5 py-0.5 rounded bg-red-600/20 text-red-400 border border-red-500/30">
+                                        {errorCount}개 오류 감지
+                                    </span>
+                                )}
+                            </label>
+                            <button
+                                onClick={() => setAttachLogs(!attachLogs)}
+                                className={`relative w-10 h-5 rounded-full transition-colors ${attachLogs ? 'bg-blue-600' : 'bg-gray-600'}`}
+                            >
+                                <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${attachLogs ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                            </button>
+                        </div>
+
+                        {attachLogs && logCount > 0 && (
+                            <div className="bg-gray-900/70 rounded-lg border border-gray-700/50 overflow-hidden">
+                                <button
+                                    onClick={() => setShowLogPreview(!showLogPreview)}
+                                    className="w-full flex items-center justify-between px-3 py-2 hover:bg-gray-700/30 transition-colors"
+                                >
+                                    <span className="text-sm text-gray-400">
+                                        {logCount}개 로그 첨부됨
+                                        {errorCount > 0 && <span className="text-red-400 ml-1">({errorCount}개 오류/경고)</span>}
+                                    </span>
+                                    <svg className={`w-4 h-4 text-gray-500 transition-transform ${showLogPreview ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                    </svg>
+                                </button>
+                                {showLogPreview && (
+                                    <div className="border-t border-gray-700/50 px-3 py-2 max-h-40 overflow-y-auto custom-scrollbar">
+                                        <pre className="text-[11px] text-gray-500 font-mono whitespace-pre-wrap break-all leading-relaxed">
+                                            {logger.exportFormatted()}
+                                        </pre>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {attachLogs && logCount === 0 && (
+                            <p className="text-sm text-gray-600">현재 기록된 로그가 없습니다</p>
+                        )}
+
+                        {!attachLogs && (
+                            <p className="text-sm text-gray-600">로그를 첨부하면 문제 원인을 정확히 파악할 수 있습니다</p>
+                        )}
+                    </div>
+
                     {/* 이메일 입력 (선택) */}
                     <div>
                         <label className="text-sm font-bold text-gray-300 uppercase tracking-wider mb-2 block">이메일 <span className="text-gray-500 font-normal normal-case">(선택)</span></label>
@@ -362,6 +421,9 @@ const FeedbackModal: React.FC = () => {
                             {userEmail && <p>계정: <span className="text-gray-400">{userEmail}</span></p>}
                             <p>앱 버전: <span className="text-gray-400">v4.5</span></p>
                             <p className="truncate">브라우저: <span className="text-gray-400">{navigator.userAgent.substring(0, 80)}...</span></p>
+                            {attachLogs && logCount > 0 && (
+                                <p>디버그 로그: <span className="text-blue-400">{logCount}개 항목 {errorCount > 0 && `(${errorCount}개 오류)`}</span></p>
+                            )}
                         </div>
                     </div>
 

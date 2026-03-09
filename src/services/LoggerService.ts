@@ -49,6 +49,34 @@ class LoggerService {
     return this.logs;
   }
 
+  /** 피드백 첨부용 포맷 문자열 (최신→과거, 에러/경고 우선 표시) */
+  exportFormatted(): string {
+    if (this.logs.length === 0) return '(로그 없음)';
+    return this.logs.map(log => {
+      const level = log.level.toUpperCase().padEnd(7);
+      const detail = log.details
+        ? '\n    ' + (typeof log.details === 'string' ? log.details : JSON.stringify(log.details, null, 2)).split('\n').join('\n    ')
+        : '';
+      return `[${log.timestamp}] ${level} ${log.message}${detail}`;
+    }).join('\n');
+  }
+
+  /** 에러/경고 로그만 추출 */
+  exportErrors(): string {
+    const errors = this.logs.filter(l => l.level === 'error' || l.level === 'warn');
+    if (errors.length === 0) return '';
+    return errors.map(log => {
+      const detail = log.details
+        ? '\n    ' + (typeof log.details === 'string' ? log.details : JSON.stringify(log.details, null, 2)).split('\n').join('\n    ')
+        : '';
+      return `[${log.timestamp}] ${log.level.toUpperCase()} ${log.message}${detail}`;
+    }).join('\n');
+  }
+
+  getErrorCount(): number {
+    return this.logs.filter(l => l.level === 'error' || l.level === 'warn').length;
+  }
+
   clear() {
     this.logs = [];
     this.notify();
