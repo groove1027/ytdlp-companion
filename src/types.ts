@@ -203,6 +203,13 @@ export interface Scene {
   generatedSfx?: string;
   generatedDialogue?: string;
 
+  // [v4.6] 장면별 사운드 디자인
+  bgmUrl?: string;               // 장면 배경음악 URL
+  bgmPrompt?: string;            // BGM 생성 프롬프트
+  sfxUrl?: string;               // 장면 효과음 URL
+  sfxPrompt?: string;            // SFX 생성 프롬프트
+  soundMood?: string;            // 장면 사운드 분위기 (AI 추천용)
+
   grokDuration?: '6' | '10' | '15';
   grokSpeechMode?: boolean;
 
@@ -885,6 +892,30 @@ export interface WhisperTranscriptResult {
   segments: WhisperSegment[];
   duration: number;          // 전체 길이 (초)
 }
+
+// --- AI 효과음 (SFX) ---
+export interface SfxItem {
+  id: string;
+  prompt: string;
+  duration: number;          // 요청 길이 (초)
+  audioUrl?: string;         // 생성된 오디오 URL
+  createdAt: number;
+  status: 'idle' | 'generating' | 'done' | 'error';
+  taskId?: string;
+  errorMsg?: string;
+}
+
+// --- LUFS 정규화 프리셋 ---
+export type LufsPreset = 'youtube' | 'spotify' | 'podcast' | 'broadcast' | 'tiktok' | 'custom';
+
+export const LUFS_PRESETS: Record<LufsPreset, { label: string; targetLufs: number; truePeakDbtp: number }> = {
+  youtube:   { label: 'YouTube (-14 LUFS)',      targetLufs: -14, truePeakDbtp: -1 },
+  spotify:   { label: 'Spotify (-14 LUFS)',      targetLufs: -14, truePeakDbtp: -1 },
+  podcast:   { label: '팟캐스트 (-16 LUFS)',     targetLufs: -16, truePeakDbtp: -1 },
+  broadcast: { label: '방송 EBU R128 (-23 LUFS)', targetLufs: -23, truePeakDbtp: -1 },
+  tiktok:    { label: 'TikTok/Reels (-14 LUFS)', targetLufs: -14, truePeakDbtp: -1 },
+  custom:    { label: '사용자 정의',              targetLufs: -14, truePeakDbtp: -1 },
+};
 
 export type SunoModel = 'V4' | 'V4_5' | 'V4_5PLUS' | 'V4_5ALL' | 'V5';
 

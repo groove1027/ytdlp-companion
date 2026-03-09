@@ -6,7 +6,9 @@ import { generateTypecastTTS } from '../../../services/typecastService';
 import { generateElevenLabsDialogueTTS } from '../../../services/elevenlabsService';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
-import type { Speaker, TTSLanguage } from '../../../types';
+import { audioBufferToWav } from '../../../services/ttsService';
+import type { Speaker, TTSLanguage, LufsPreset } from '../../../types';
+import { LUFS_PRESETS } from '../../../types';
 
 function formatTime(seconds: number): string {
   const m = Math.floor(seconds / 60);
@@ -53,6 +55,57 @@ async function generateLineTTS(
   }
 }
 
+/** LUFS 정규화 — AudioBuffer를 타겟 LUFS로 정규화하여 새 blob URL 반환 */
+async function normalizeLufs(audioUrl: string, targetLufs: number, truePeakDbtp: number): Promise<string> {
+  const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+  const ctx = new AudioCtx();
+  try {
+    const resp = await fetch(audioUrl);
+    const arrayBuf = await resp.arrayBuffer();
+    const buffer = await ctx.decodeAudioData(arrayBuf);
+
+    // Pass 1: RMS 측정
+    let sumSquares = 0;
+    let sampleCount = 0;
+    for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
+      const data = buffer.getChannelData(ch);
+      for (let i = 0; i < data.length; i++) {
+        sumSquares += data[i] * data[i];
+        sampleCount++;
+      }
+    }
+    const rms = Math.sqrt(sumSquares / sampleCount);
+    if (rms === 0) return audioUrl;
+
+    const currentLufs = 20 * Math.log10(rms) - 0.691;
+    const gainDb = targetLufs - currentLufs;
+    let gainLinear = Math.pow(10, gainDb / 20);
+
+    // True Peak 리미터
+    let maxPeak = 0;
+    for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
+      const data = buffer.getChannelData(ch);
+      for (let i = 0; i < data.length; i++) {
+        const abs = Math.abs(data[i]) * gainLinear;
+        if (abs > maxPeak) maxPeak = abs;
+      }
+    }
+    const limit = Math.pow(10, truePeakDbtp / 20);
+    if (maxPeak > limit) gainLinear *= limit / maxPeak;
+
+    // Pass 2: 게인 적용
+    for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
+      const data = buffer.getChannelData(ch);
+      for (let i = 0; i < data.length; i++) data[i] *= gainLinear;
+    }
+
+    const wavBlob = audioBufferToWav(buffer);
+    return URL.createObjectURL(wavBlob);
+  } finally {
+    await ctx.close();
+  }
+}
+
 const AudioMerger: React.FC = () => {
   const { requireAuth } = useAuthGuard();
   const speakers = useSoundStudioStore((s) => s.speakers);
@@ -71,6 +124,12 @@ const AudioMerger: React.FC = () => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const animFrameRef = useRef<number>(0);
   const elapsedTTS = useElapsedTimer(isGeneratingTTS);
+
+  // LUFS 정규화 상태
+  const [lufsEnabled, setLufsEnabled] = useState(false);
+  const [lufsPreset, setLufsPreset] = useState<LufsPreset>('youtube');
+  const [isNormalizing, setIsNormalizing] = useState(false);
+  const [lufsApplied, setLufsApplied] = useState(false);
 
   const segmentCount = useMemo(() => lines.filter((l) => l.audioUrl).length, [lines]);
   const totalDuration = useMemo(() => lines.reduce((sum, l) => sum + (l.duration || 0), 0), [lines]);
@@ -140,7 +199,18 @@ const AudioMerger: React.FC = () => {
         // 이전 blob URL 해제 후 새 URL 설정
         const prevUrl = useSoundStudioStore.getState().mergedAudioUrl;
         if (prevUrl?.startsWith('blob:')) URL.revokeObjectURL(prevUrl);
-        setMergedAudio(merged);
+
+        // LUFS 정규화 적용
+        let finalMerged = merged;
+        if (lufsEnabled) {
+          const preset = LUFS_PRESETS[lufsPreset];
+          finalMerged = await normalizeLufs(merged, preset.targetLufs, preset.truePeakDbtp);
+          if (finalMerged !== merged && merged.startsWith('blob:')) URL.revokeObjectURL(merged);
+          setLufsApplied(true);
+        } else {
+          setLufsApplied(false);
+        }
+        setMergedAudio(finalMerged);
 
         // 타임코드 계산 (순차 배치)
         const AudioCtx = window.AudioContext || window.webkitAudioContext;
@@ -285,10 +355,72 @@ const AudioMerger: React.FC = () => {
         </div>
       </div>
 
+      {/* LUFS Normalization Controls */}
+      <div className="bg-gray-800/60 rounded-lg border border-gray-700 px-4 py-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={lufsEnabled}
+                onChange={(e) => { setLufsEnabled(e.target.checked); setLufsApplied(false); }}
+                className="w-4 h-4 accent-fuchsia-500 rounded"
+              />
+              <span className="text-sm font-bold text-white">라우드니스 정규화 (LUFS)</span>
+            </label>
+            {lufsApplied && (
+              <span className="text-xs bg-green-600/20 text-green-400 px-2 py-0.5 rounded border border-green-500/30">적용됨</span>
+            )}
+          </div>
+          {lufsEnabled && (
+            <div className="flex items-center gap-2">
+              <select
+                value={lufsPreset}
+                onChange={(e) => { setLufsPreset(e.target.value as LufsPreset); setLufsApplied(false); }}
+                className="bg-gray-900 border border-gray-600 rounded-lg px-3 py-1 text-sm text-gray-200 focus:border-fuchsia-500/50"
+              >
+                {Object.entries(LUFS_PRESETS).filter(([k]) => k !== 'custom').map(([key, val]) => (
+                  <option key={key} value={key}>{val.label}</option>
+                ))}
+              </select>
+              {mergedAudioUrl && !lufsApplied && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setIsNormalizing(true);
+                    try {
+                      const preset = LUFS_PRESETS[lufsPreset];
+                      const normalized = await normalizeLufs(mergedAudioUrl, preset.targetLufs, preset.truePeakDbtp);
+                      if (normalized !== mergedAudioUrl) {
+                        const prevUrl = mergedAudioUrl;
+                        setMergedAudio(normalized);
+                        if (prevUrl.startsWith('blob:')) URL.revokeObjectURL(prevUrl);
+                      }
+                      setLufsApplied(true);
+                    } finally {
+                      setIsNormalizing(false);
+                    }
+                  }}
+                  disabled={isNormalizing}
+                  className="px-3 py-1 rounded-lg text-xs font-bold bg-fuchsia-600/20 text-fuchsia-300 border border-fuchsia-500/30 hover:bg-fuchsia-600/30 transition-all disabled:opacity-50"
+                >
+                  {isNormalizing ? '처리 중...' : '지금 적용'}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+        {lufsEnabled && (
+          <p className="text-xs text-gray-500 mt-1.5">
+            병합 시 자동 적용 · {LUFS_PRESETS[lufsPreset].label} · True Peak {LUFS_PRESETS[lufsPreset].truePeakDbtp} dBTP
+          </p>
+        )}
+      </div>
+
       {/* Merge status */}
       {mergedAudioUrl ? (
         <div className="bg-green-900/20 border border-green-600/30 rounded-lg px-4 py-3 flex items-center justify-between">
-          <span className="text-green-400 text-base font-bold">병합 완료</span>
+          <span className="text-green-400 text-base font-bold">병합 완료{lufsApplied ? ' + LUFS 정규화' : ''}</span>
           <span className="text-sm text-gray-400">총 {formatTime(totalDuration)} | {segmentCount}개 세그먼트</span>
         </div>
       ) : lines.length === 0 ? (

@@ -10,6 +10,7 @@ import {
   SunoModel,
   LyricsResult,
   VocalSeparationResult,
+  SfxItem,
 } from '../types';
 import type { MusicAnalysisResult } from '../services/musicService';
 import { saveMusicGroup, getAllSavedMusic, deleteSavedMusic } from '../services/storageService';
@@ -185,6 +186,12 @@ interface SoundStudioStore {
   setPendingEditedAudioUrl: (url: string | null) => void;
   commitPendingEdits: () => void;
 
+  // --- SFX (효과음) ---
+  sfxItems: SfxItem[];
+  addSfxItem: (item: SfxItem) => void;
+  updateSfxItem: (id: string, partial: Partial<SfxItem>) => void;
+  removeSfxItem: (id: string) => void;
+
   // Actions — UI
   setActiveSubTab: (tab: SoundSubTab) => void;
   reset: () => void;
@@ -220,6 +227,8 @@ const INITIAL_STATE = {
   isTranscribing: false,
   transcriptionProgress: null as string | null,
   pendingEditedAudioUrl: null as string | null,
+  // SFX (효과음)
+  sfxItems: [] as SfxItem[],
   // 음악 생성 탭 상태 (탭 이동 시 보존)
   genTabState: {
     sunoModel: 'V5' as SunoModel,
@@ -413,6 +422,15 @@ export const useSoundStudioStore = create<SoundStudioStore>((set) => ({
     }
     return state;
   }),
+
+  // --- SFX (효과음) ---
+  addSfxItem: (item) => set((state) => ({ sfxItems: [...state.sfxItems, item] })),
+  updateSfxItem: (id, partial) => set((state) => ({
+    sfxItems: state.sfxItems.map((s) => s.id === id ? { ...s, ...partial } : s),
+  })),
+  removeSfxItem: (id) => set((state) => ({
+    sfxItems: state.sfxItems.filter((s) => s.id !== id),
+  })),
 
   // --- UI ---
   setActiveSubTab: (tab) => set({ activeSubTab: tab }),

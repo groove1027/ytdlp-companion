@@ -312,6 +312,7 @@ const ToolsTab: React.FC = () => {
   const [toolError, setToolError] = useState('');
   const [toolSuccess, setToolSuccess] = useState('');
   const [uploadSepFile, setUploadSepFile] = useState<string>('');
+  const [stemMode, setStemMode] = useState<'separate_vocal' | 'split_stem'>('separate_vocal');
   const [uploadSepStatus, setUploadSepStatus] = useState('');
   const [isUploadSeparating, setIsUploadSeparating] = useState(false);
   const [uploadSepResult, setUploadSepResult] = useState<{ vocalUrl: string; instrumentalUrl: string } | null>(null);
@@ -370,7 +371,7 @@ const ToolsTab: React.FC = () => {
     if (!vocalSepTarget.audioId) { setToolError('이 트랙은 audioId가 없어 보컬 분리를 할 수 없습니다.'); return; }
     setIsVocalSeparating(true); setVocalSepResult(null); setToolError('');
     try {
-      const taskId = await separateVocals({ taskId: vocalSepTarget.id, audioId: vocalSepTarget.audioId });
+      const taskId = await separateVocals({ taskId: vocalSepTarget.id, audioId: vocalSepTarget.audioId, type: stemMode });
       const result = await pollVocalSeparation(taskId);
       setVocalSepResult(result); setToolSuccess('보컬/MR 분리 완료!');
     } catch (e: unknown) { setToolError(e instanceof Error ? e.message : String(e)); }
@@ -445,6 +446,28 @@ const ToolsTab: React.FC = () => {
       <div className="bg-gray-900/60 rounded-lg border border-gray-700 p-4 space-y-3">
         <h4 className="text-sm font-bold text-gray-200">♻️ 보컬/MR 분리 — 라이브러리 트랙</h4>
         <p className="text-xs text-gray-500">생성된 라이브러리 트랙에서 보컬과 MR을 분리합니다.</p>
+        {/* 스템 분리 모드 선택 */}
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-gray-400 shrink-0">모드:</span>
+          {([
+            { id: 'separate_vocal' as const, label: '보컬/MR (2트랙)', desc: '보컬 + 반주 분리' },
+            { id: 'split_stem' as const, label: '멀티스템 (12트랙)', desc: '드럼·베이스·기타·키보드 등' },
+          ]).map((mode) => (
+            <button
+              key={mode.id}
+              type="button"
+              onClick={() => setStemMode(mode.id)}
+              className={`px-3 py-1 rounded-lg text-xs font-semibold border transition-all ${
+                stemMode === mode.id
+                  ? 'bg-teal-600/20 text-teal-300 border-teal-500/50'
+                  : 'bg-gray-800 text-gray-400 border-gray-600 hover:text-gray-200'
+              }`}
+              title={mode.desc}
+            >
+              {mode.label}
+            </button>
+          ))}
+        </div>
         <select value={vocalSepTarget?.id || ''} onChange={(e) => { const t = allTracks.find((t) => t.id === e.target.value) || null; setVocalSepTarget(t); setVocalSepResult(null); }} className={selectCls}>
           <option value="">{allTracks.length === 0 ? '라이브러리에 트랙이 없습니다' : '트랙 선택...'}</option>
           {allTracks.map((t) => <option key={t.id} value={t.id}>{t.title} ({Math.floor(t.duration / 60)}:{String(Math.floor(t.duration % 60)).padStart(2, '0')})</option>)}

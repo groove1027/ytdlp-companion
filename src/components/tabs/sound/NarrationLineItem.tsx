@@ -90,10 +90,17 @@ const NarrationLineItem: React.FC<NarrationLineItemProps> = ({
 
   return (
     <div className={`group relative flex items-start gap-3 px-4 py-3 hover:bg-gray-800/50 border-b border-gray-800 transition-colors ${isModified ? 'border-l-2 border-l-yellow-500/60' : isError ? 'border-l-2 border-l-red-500/60' : ''}`}>
-      {/* 라인 번호 / 캐릭터 뱃지 */}
+      {/* 라인 번호 + 타임코드 / 캐릭터 뱃지 */}
       {lineNumber != null ? (
-        <div className="flex-shrink-0 w-7 h-7 rounded-full bg-gray-700 flex items-center justify-center text-xs font-bold text-gray-400 mt-0.5">
-          {lineNumber}
+        <div className="flex-shrink-0 flex flex-col items-center gap-0.5 mt-0.5">
+          <div className="w-7 h-7 rounded-full bg-gray-700 flex items-center justify-center text-xs font-bold text-gray-400">
+            {lineNumber}
+          </div>
+          {line.startTime != null && (
+            <span className="text-[9px] text-gray-500 font-mono tabular-nums leading-none">
+              {Math.floor(line.startTime / 60)}:{String(Math.floor(line.startTime % 60)).padStart(2, '0')}
+            </span>
+          )}
         </div>
       ) : (
         <div className="flex-shrink-0 h-7 rounded-full bg-indigo-900/40 border border-indigo-500/30 flex items-center justify-center text-[10px] font-bold text-indigo-300 mt-0.5 px-2 whitespace-nowrap max-w-[80px] truncate"
@@ -197,7 +204,10 @@ const NarrationLineItem: React.FC<NarrationLineItemProps> = ({
           title="라인 속도"
         />
 
-        {/* 글자수 */}
+        {/* 길이 + 글자수 */}
+        {line.duration != null && (
+          <span className="text-[10px] text-fuchsia-400/60 font-mono whitespace-nowrap">{line.duration.toFixed(1)}s</span>
+        )}
         <span className="text-[10px] text-gray-500 whitespace-nowrap">{line.text.length}자</span>
       </div>
 
