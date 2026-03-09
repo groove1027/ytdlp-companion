@@ -168,6 +168,7 @@ export const MemeAndSfxSearchModal: React.FC<{ onClose: () => void }> = ({ onClo
   const [viewMode, setViewMode] = useState<'search' | 'favorites' | 'recent'>('search');
   const [favorites, setFavorites] = useState<CommunityMediaItem[]>(() => loadFromStorage(FAVORITES_KEY, []));
   const [recents, setRecents] = useState<CommunityMediaItem[]>(() => loadFromStorage(RECENT_KEY, []));
+  const [previewItem, setPreviewItem] = useState<CommunityMediaItem | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -199,7 +200,12 @@ export const MemeAndSfxSearchModal: React.FC<{ onClose: () => void }> = ({ onClo
 
   // ESC 키 + 오디오 정리
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (previewItem) { setPreviewItem(null); return; }
+        onClose();
+      }
+    };
     window.addEventListener('keydown', onKey);
     return () => {
       window.removeEventListener('keydown', onKey);
@@ -210,7 +216,7 @@ export const MemeAndSfxSearchModal: React.FC<{ onClose: () => void }> = ({ onClo
         audioRef.current = null;
       }
     };
-  }, [onClose]);
+  }, [onClose, previewItem]);
 
   const doSearch = useCallback(async (q: string, type?: MediaType, source?: MediaSource | 'all') => {
     const trimmed = q.trim();
@@ -488,7 +494,7 @@ export const MemeAndSfxSearchModal: React.FC<{ onClose: () => void }> = ({ onClo
               {imageItems.map((item) => (
                 <button
                   key={item.id}
-                  onClick={() => applyToScene(item)}
+                  onClick={() => setPreviewItem(item)}
                   className="group/card relative bg-gray-800 rounded-xl border border-gray-700 overflow-hidden hover:border-amber-500/50 hover:shadow-lg hover:shadow-amber-500/10 transition-all"
                 >
                   <div className="aspect-square relative">
@@ -499,8 +505,8 @@ export const MemeAndSfxSearchModal: React.FC<{ onClose: () => void }> = ({ onClo
                       loading="lazy"
                     />
                     <div className="absolute inset-0 bg-black/0 group-hover/card:bg-black/40 transition-all flex items-center justify-center">
-                      <span className="opacity-0 group-hover/card:opacity-100 bg-amber-600 text-white text-sm font-bold px-3 py-1.5 rounded-lg transition-opacity shadow-lg">
-                        장면에 적용
+                      <span className="opacity-0 group-hover/card:opacity-100 bg-white/90 text-gray-900 text-sm font-bold px-3 py-1.5 rounded-lg transition-opacity shadow-lg">
+                        미리보기
                       </span>
                     </div>
                     <button
@@ -588,6 +594,77 @@ export const MemeAndSfxSearchModal: React.FC<{ onClose: () => void }> = ({ onClo
           </div>
         )}
       </div>
+
+      {/* 이미지 미리보기 오버레이 */}
+      {previewItem && previewItem.type === 'image' && (
+        <div
+          className="fixed inset-0 z-[60] bg-black/80 flex items-center justify-center"
+          onClick={() => setPreviewItem(null)}
+        >
+          <div
+            className="relative max-w-3xl w-full mx-4 bg-gray-900 rounded-2xl border border-gray-700 overflow-hidden shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* 미리보기 이미지 */}
+            <div className="relative bg-gray-950 flex items-center justify-center min-h-[300px] max-h-[70vh]">
+              <img
+                src={previewItem.url}
+                alt={previewItem.title}
+                className="max-w-full max-h-[70vh] object-contain"
+              />
+              {/* 소스 뱃지 */}
+              <span className="absolute top-3 left-3 bg-black/70 text-xs text-gray-300 px-2 py-1 rounded-lg font-bold">
+                {previewItem.source === 'klipy' ? 'KLIPY' : previewItem.source === 'irasutoya' ? 'IRASUTOYA' : previewItem.source}
+              </span>
+              {/* 포맷 뱃지 */}
+              <span className="absolute top-3 right-3 bg-black/70 text-xs text-amber-400 px-2 py-1 rounded-lg font-bold">
+                {previewItem.format?.toUpperCase()}
+              </span>
+            </div>
+
+            {/* 하단 정보 + 액션 */}
+            <div className="px-5 py-4 border-t border-gray-800">
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex-1 min-w-0">
+                  <p className="text-base text-white font-bold truncate">{previewItem.title}</p>
+                  {previewItem.tags.length > 0 && (
+                    <p className="text-xs text-gray-500 mt-1 line-clamp-1">
+                      {previewItem.tags.slice(0, 8).join(' · ')}
+                    </p>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <button
+                    onClick={(e) => toggleFavorite(e, previewItem)}
+                    className={`px-3 py-2 rounded-lg text-sm font-bold border transition-all ${
+                      isFavorite(previewItem.id)
+                        ? 'bg-amber-600/20 border-amber-500/50 text-amber-300'
+                        : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-amber-300 hover:border-amber-500/50'
+                    }`}
+                  >
+                    {isFavorite(previewItem.id) ? '★ 즐겨찾기' : '☆ 즐겨찾기'}
+                  </button>
+                  <button
+                    onClick={() => setPreviewItem(null)}
+                    className="px-4 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-gray-300 rounded-lg text-sm font-bold transition-colors"
+                  >
+                    닫기
+                  </button>
+                  <button
+                    onClick={() => {
+                      applyToScene(previewItem);
+                      setPreviewItem(null);
+                    }}
+                    className="px-5 py-2 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white rounded-lg text-sm font-bold transition-all shadow-md"
+                  >
+                    장면에 적용
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
