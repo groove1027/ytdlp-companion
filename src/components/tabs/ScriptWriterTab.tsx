@@ -142,7 +142,7 @@ export default function ScriptWriterTab() {
     setActiveTab('sound-studio');
   }, [generatedScript, manualText, finalScript, styledScript, setFinalScript, setActiveTab]);
 
-  // ── 장면 분할 ──
+  // ── 단락 나누기 ──
   const [showSplitGuide, setShowSplitGuide] = useState(true);
 
   const estimatedScenes = useMemo(() => {
@@ -223,10 +223,10 @@ ${scriptText}`;
         const fallback = splitScenesLocally(scriptText, videoFormat, smartSplit,
           videoFormat === VideoFormat.LONG ? longFormSplitType : undefined);
         setSplitResult(fallback);
-        showToast(`로컬 분할 완료: ${fallback.length}개 장면`);
+        showToast(`로컬 분할 완료: ${fallback.length}개 단락`);
       } else {
         setSplitResult(scenes);
-        showToast(`AI 장면 분석 완료: ${scenes.length}개 장면`);
+        showToast(`AI 단락 분석 완료: ${scenes.length}개 단락`);
       }
 
       projStore.setConfig((prev) => prev ? { ...prev, videoFormat } : prev);
@@ -235,7 +235,7 @@ ${scriptText}`;
     } catch (err) {
       clearInterval(simInterval);
       const msg = err instanceof Error ? err.message : String(err);
-      setGenError(`장면 분석 실패: ${msg}`);
+      setGenError(`단락 분석 실패: ${msg}`);
     } finally {
       setIsAnalyzingScenes(false);
     }
@@ -1051,16 +1051,16 @@ ${instinctPrompt}
           </div>
         </div>
 
-        {/* ═══ D. 장면 분할 ═══ */}
+        {/* ═══ D. 단락 나누기 ═══ */}
         <div className="px-6 py-4 border-b border-gray-700/30">
           <div className="flex items-center gap-2 mb-3">
-            <span className="text-sm font-bold text-gray-300">🎬 장면 분할</span>
+            <span className="text-sm font-bold text-gray-300">📝 단락 나누기</span>
             {estimatedScenes > 0 && (
               <span className="text-sm font-bold text-blue-300 bg-blue-900/30 px-2 py-0.5 rounded-lg border border-blue-700/40">
-                예상 약 {estimatedScenes}컷
+                예상 약 {estimatedScenes}단락
               </span>
             )}
-            <span className="text-xs text-gray-500">장면 분석 실행 시 AI가 정확한 컷수를 산출합니다</span>
+            <span className="text-xs text-gray-500">이미지/영상 탭에서 이 단락을 확인 후 장면 분석이 진행됩니다</span>
           </div>
 
           <div className="flex items-center gap-3 mb-2">
@@ -1095,7 +1095,7 @@ ${instinctPrompt}
           )}
 
           <p className="text-sm text-cyan-300/70 mt-1 mb-1 font-medium">
-            장면 분할은 영상 편집(이미지/영상 생성)을 위한 설정이며, 나레이션은 문장 단위(~다/~죠/~요)로 자연스럽게 읽힙니다.
+            단락 나누기는 대본의 구조를 정리합니다. 이미지/영상 탭에서 이 단락을 확인한 후 AI가 비주얼 프롬프트를 생성합니다.
           </p>
 
           {/* 실시간 단락 미리보기 */}
@@ -1109,7 +1109,7 @@ ${instinctPrompt}
               {livePreviewData.scenes.length > 0 ? `단락 미리보기 (예상 ${livePreviewData.scenes.length}컷)` : '단락 미리보기'}
             </span>
             {livePreviewData.scenes.length > 0 && (
-              <span className="text-xs text-yellow-400/70">예상치 — 아래 장면 분석에서 AI가 정확히 분할합니다</span>
+              <span className="text-xs text-yellow-400/70">예상치 — 이미지/영상 탭에서 확인 후 장면 분석이 진행됩니다</span>
             )}
           </button>
 
@@ -1120,10 +1120,10 @@ ${instinctPrompt}
                   <div className="px-3 py-2 bg-blue-900/15 border-b border-blue-700/15">
                     <div className="flex items-center justify-between mb-1.5">
                       <div className="flex items-center gap-2">
-                        <span className="text-sm font-bold text-blue-300">예상 분할 미리보기</span>
+                        <span className="text-sm font-bold text-blue-300">단락 미리보기</span>
                         <span className="text-xs px-1.5 py-0.5 rounded bg-yellow-900/30 text-yellow-300 border border-yellow-600/20 font-medium">로컬 추정</span>
                       </div>
-                      <span className="text-xs text-yellow-300/70 font-medium">장면 분석 실행 시 AI가 문맥을 이해하여 정확히 분할합니다</span>
+                      <span className="text-xs text-yellow-300/70 font-medium">이미지/영상 탭에서 이 단락을 확인 후 장면이 생성됩니다</span>
                     </div>
                     <p className="text-xs text-gray-400 leading-relaxed bg-gray-900/40 rounded px-2 py-1.5 border border-gray-700/20">
                       <span className="text-yellow-400/80 font-medium">원문:</span> {livePreviewData.original}
@@ -1150,7 +1150,7 @@ ${instinctPrompt}
             </div>
           )}
 
-          {/* 장면 페이싱 분석 차트 */}
+          {/* 단락 페이싱 분석 차트 */}
           {(splitResult.length >= 2 || livePreviewData.scenes.length >= 3) && (
             <div className="mt-3">
               <Suspense fallback={null}>
@@ -1180,12 +1180,12 @@ ${instinctPrompt}
               {isAnalyzingScenes ? (
                 <>
                   <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  <span>AI가 장면을 분석하고 있습니다... ({scriptText.length.toLocaleString()}자)</span>
+                  <span>AI가 단락을 분석하고 있습니다... ({scriptText.length.toLocaleString()}자)</span>
                   <span className="font-black text-lg text-white drop-shadow-md">{analysisProgress}%</span>
                   {elapsedAnalysis > 0 && <span className="text-xs text-gray-400 tabular-nums">{formatElapsed(elapsedAnalysis)}</span>}
                 </>
               ) : (
-                <>🎬 장면 분석 실행</>
+                <>📝 단락 나누기 실행</>
               )}
             </div>
           </button>

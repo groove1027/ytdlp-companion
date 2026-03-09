@@ -87,10 +87,23 @@ const SetupPanel: React.FC = () => {
   const [showCharacterLibrary, setShowCharacterLibrary] = useState(false);
   const [scriptDraft, setScriptDraft] = useState('');
   const [showSplitGuide, setShowSplitGuide] = useState(false);
+  const [importedSplitResult, setImportedSplitResult] = useState<string[]>([]);
+  const [showImportedSplit, setShowImportedSplit] = useState(true);
   const elapsed = useElapsedTimer(isAnalyzing);
   const { requireAuth } = useAuthGuard();
 
   useEffect(() => { if (!config) autoRestoreOrCreateProject(); }, [config]);
+
+  // 대본작성 탭에서 단락 분석 결과가 있으면 자동 이어받기
+  useEffect(() => {
+    if (importedSplitResult.length === 0) {
+      const { splitResult } = useScriptWriterStore.getState();
+      if (splitResult.length > 0) {
+        setImportedSplitResult(splitResult);
+        setShowImportedSplit(true);
+      }
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const hasAudioScenes = scenes.length > 0 && scenes.some(s => !!s.audioUrl);
   const totalScenes = scenes.length;
@@ -154,7 +167,12 @@ const SetupPanel: React.FC = () => {
     const { finalScript, generatedScript } = useScriptWriterStore.getState();
     const script = finalScript || generatedScript?.content || '';
     if (!script.trim()) { showToast('대본작성 탭에서 대본을 먼저 생성해주세요.'); return; }
-    const { videoFormat, smartSplit, longFormSplitType, selectedPreset } = useScriptWriterStore.getState();
+    const { videoFormat, smartSplit, longFormSplitType, selectedPreset, splitResult } = useScriptWriterStore.getState();
+    // 대본작성에서 분석된 단락 결과 이어받기
+    if (splitResult.length > 0) {
+      setImportedSplitResult(splitResult);
+      setShowImportedSplit(true);
+    }
     // 채널 프리셋의 콘텐츠 형식에 따라 화면 비율 자동 설정
     const presetFormat = selectedPreset?.channelGuideline?.contentFormat;
     const autoAspect = presetFormat === 'shorts' ? AspectRatio.PORTRAIT
@@ -163,7 +181,7 @@ const SetupPanel: React.FC = () => {
       ...prev, script, videoFormat, smartSplit, longFormSplitType,
       ...(autoAspect ? { aspectRatio: autoAspect } : {}),
     } : prev);
-    showToast(`대본 ${script.length.toLocaleString()}자 가져옴${presetFormat === 'shorts' ? ' (숏폼 9:16 자동 적용)' : ''}`);
+    showToast(`대본 ${script.length.toLocaleString()}자 가져옴${splitResult.length > 0 ? ` (${splitResult.length}개 단락 포함)` : ''}${presetFormat === 'shorts' ? ' · 숏폼 9:16 자동 적용' : ''}`);
   }, [setConfig]);
 
   const handleApplyDraft = useCallback(() => {
@@ -364,6 +382,42 @@ const SetupPanel: React.FC = () => {
         </div>
       )}
 
+      {/* ── 대본작성 단락 확인 ── */}
+      {importedSplitResult.length > 0 && !directInputMode && (
+        <div className="bg-gray-800/60 border border-violet-500/30 rounded-2xl p-5">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <span className="text-base">📝</span>
+              <h3 className="text-sm font-bold text-violet-300">대본작성에서 넘어온 단락</h3>
+              <span className="text-xs font-bold text-violet-300 bg-violet-500/15 border border-violet-500/30 px-2 py-0.5 rounded-lg">
+                {importedSplitResult.length}개 단락
+              </span>
+            </div>
+            <button type="button" onClick={() => setShowImportedSplit(!showImportedSplit)}
+              className="text-xs text-gray-400 hover:text-gray-300 transition-colors">
+              {showImportedSplit ? '접기 ▲' : '펼치기 ▼'}
+            </button>
+          </div>
+          <p className="text-xs text-gray-400 mb-3">
+            아래 단락 구조를 확인하세요. "스토리보드 생성" 시 이 단락을 기반으로 AI가 비주얼 프롬프트를 생성합니다.
+          </p>
+          {showImportedSplit && (
+            <div className="bg-gray-900/50 rounded-xl border border-gray-700/30 overflow-hidden max-h-[320px] overflow-auto">
+              {importedSplitResult.map((para, i) => (
+                <div key={i}
+                  className={`flex items-start gap-3 px-3 py-2.5 ${i % 2 === 0 ? 'bg-gray-800/10' : 'bg-gray-800/30'} border-b border-gray-700/15 last:border-b-0`}>
+                  <span className="flex-shrink-0 w-7 h-7 rounded-md bg-violet-900/30 border border-violet-600/20 flex items-center justify-center text-xs font-bold text-violet-300">
+                    {i + 1}
+                  </span>
+                  <p className="text-sm text-gray-200 leading-relaxed pt-0.5 flex-1">{para}</p>
+                  <span className="flex-shrink-0 text-xs text-gray-500 pt-1 whitespace-nowrap">{para.length}자</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ── 직접 입력 모드 토글 ── */}
       <div className="bg-gray-800/60 border border-gray-700 rounded-2xl px-5 py-4">
         <div className="flex items-center justify-between">
@@ -465,7 +519,7 @@ const SetupPanel: React.FC = () => {
             )}
 
             <p className="text-sm text-cyan-300/70 font-medium">
-              장면 분할은 영상 편집(이미지/영상 생성)을 위한 설정이며, 나레이션은 문장 단위(~다/~죠/~요)로 자연스럽게 읽힙니다.
+              단락 나누기는 대본의 구조를 정리합니다. "스토리보드 생성" 시 AI가 각 단락에 비주얼 프롬프트를 생성합니다.
             </p>
 
             {/* 화면 비율 */}
