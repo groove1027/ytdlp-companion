@@ -50,29 +50,38 @@ function parseTikitakaTable(content: string): SceneRow[] {
   const lines = content.split('\n');
 
   for (const line of lines) {
-    if (!line.includes('|')) continue;
-    // 헤더·구분자 행 스킵
-    if (line.includes('순서') || line.includes(':---') || line.includes('모드')) continue;
+    const trimmed = line.trim();
+    if (!trimmed.includes('|')) continue;
+    // 헤더·구분자 행 스킵: 순서, :---, 모드, 오디오, 비디오 등 헤더 키워드
+    if (/순서|:[\s]*---|모드\s*\|.*오디오|오디오\s*내용|비디오\s*화면|예상\s*시간|타임코드\s*소스/i.test(trimmed)) continue;
 
-    const cells = line.split('|').map(c => c.trim()).filter(Boolean);
+    // 앞뒤 | 제거 후 분할
+    const stripped = trimmed.replace(/^\|/, '').replace(/\|$/, '');
+    const cells = stripped.split('|').map(c => c.trim());
     if (cells.length < 5) continue;
 
     const cutNum = parseInt(cells[0], 10);
     if (isNaN(cutNum)) continue;
 
+    const mode = cells[1] || '';
+    const audioContent = cells[2] || '';
+    const duration = cells[3] || '';
+    const videoDirection = cells[4] || '';
+    const timecodeSource = cells[5] || '';
+
     rows.push({
       cutNum,
-      mode: cells[1] || '',
-      audioContent: cells[2] || '',
-      duration: cells[3] || '',
-      videoDirection: cells[4] || '',
-      timecodeSource: cells[5] || '',
+      mode,
+      audioContent,
+      duration,
+      videoDirection,
+      timecodeSource,
       // 호환 필드 (SRT 등에서 사용)
       timeline: '',
-      sourceTimeline: cells[5] || '',
-      dialogue: cells[2] || '',
+      sourceTimeline: timecodeSource,
+      dialogue: audioContent,
       effectSub: '',
-      sceneDesc: cells[4] || '',
+      sceneDesc: videoDirection,
     });
   }
 
@@ -81,19 +90,24 @@ function parseTikitakaTable(content: string): SceneRow[] {
 
 /** AI 응답에서 ---VERSION N--- + ---SCENE--- / 테이블 구조 파싱 */
 function parseVersions(raw: string): VersionItem[] {
+  // VERSION 블록 분리 — 다양한 구분자 패턴 지원
   const blocks = raw.split(/---\s*VERSION\s*(\d+)\s*---/i);
   const items: VersionItem[] = [];
 
   for (let i = 1; i < blocks.length; i += 2) {
     const num = parseInt(blocks[i], 10);
     const content = blocks[i + 1]?.trim() || '';
+    if (!content) continue;
 
-    const titleMatch = content.match(/제목:\s*(.+)/);
-    const conceptMatch = content.match(/컨셉:\s*([\s\S]*?)(?=---SCENE|\|[\s]*순서|\|[\s]*\d|$)/i);
+    // 제목 추출 — "제목:" 또는 "**제목:**" 또는 "### 제목:" 등
+    const titleMatch = content.match(/(?:\*{0,2})제목(?:\*{0,2})[:\s：]+\s*(.+)/);
+    // 컨셉 추출 — 테이블 시작 전까지
+    const conceptMatch = content.match(/(?:\*{0,2})컨셉(?:\*{0,2})[:\s：]+\s*([\s\S]*?)(?=\n\s*\|[\s]*순서|\n\s*\|\s*:?---|---SCENE|$)/i);
 
-    // 포맷 감지: 마크다운 테이블 vs ---SCENE--- 블록
+    // 포맷 감지: 마크다운 테이블 (| 숫자 | 패턴) vs ---SCENE--- 블록
     let scenes: SceneRow[];
-    const hasTable = content.split('\n').some(l => l.includes('|') && /\|\s*\d+\s*\|/.test(l));
+    const contentLines = content.split('\n');
+    const hasTable = contentLines.some(l => /\|\s*\d+\s*\|/.test(l));
 
     if (hasTable) {
       scenes = parseTikitakaTable(content);
@@ -103,29 +117,62 @@ function parseVersions(raw: string): VersionItem[] {
       for (let j = 1; j < sceneBlocks.length; j += 2) {
         const sNum = parseInt(sceneBlocks[j], 10);
         const sContent = sceneBlocks[j + 1]?.trim() || '';
+        // 배치 타임라인에서 원본 구간 분리: "00:00 ~ 00:03 (원본 MM:SS~MM:SS)"
+        const rawTimeline = extractField(sContent, '배치') || extractField(sContent, '타임라인') || '';
+        let timeline = rawTimeline;
+        let sourceTimeline = extractField(sContent, '원본') || '';
+        // 배치 필드 안에 "(원본 ...)" 형태로 원본 구간이 포함된 경우 분리
+        const embedSrc = rawTimeline.match(/\((?:원본\s*)?(\d{2}:\d{2}[^\)]*)\)/);
+        if (embedSrc) {
+          if (!sourceTimeline) sourceTimeline = embedSrc[1].trim();
+          timeline = rawTimeline.replace(/\s*\([^)]*\)/, '').trim();
+        }
+
         scenes.push({
           cutNum: sNum,
-          timeline: extractField(sContent, '배치') || extractField(sContent, '타임라인') || '',
-          sourceTimeline: extractField(sContent, '원본') || '',
-          dialogue: extractField(sContent, '대사') || extractField(sContent, '나레이션') || '',
-          effectSub: extractField(sContent, '효과') || '',
-          sceneDesc: extractField(sContent, '장면') || extractField(sContent, '화면') || '',
+          timeline,
+          sourceTimeline,
+          dialogue: extractField(sContent, '하단자막') || extractField(sContent, '하단') || extractField(sContent, '대사') || extractField(sContent, '나레이션') || '',
+          effectSub: extractField(sContent, '효과자막') || extractField(sContent, '효과') || '',
+          sceneDesc: extractField(sContent, '화면') || extractField(sContent, '장면') || '',
           mode: '', audioContent: '', duration: '', videoDirection: '', timecodeSource: '',
         });
       }
     }
 
+    // 컨셉 정리: 테이블이나 SCENE 블록 이후 내용 제거
+    let conceptText = conceptMatch?.[1]?.trim() || '';
+    conceptText = conceptText.replace(/\n---SCENE[\s\S]*/i, '').replace(/\n\|[\s\S]*/i, '').trim();
+
     items.push({
       id: num,
-      title: titleMatch?.[1]?.trim() || `버전 ${num}`,
-      concept: conceptMatch?.[1]?.trim().replace(/\n---SCENE[\s\S]*/i, '').replace(/\n\|[\s\S]*/i, '').trim() || '',
+      title: titleMatch?.[1]?.trim().replace(/\*+/g, '') || `버전 ${num}`,
+      concept: conceptText,
       scenes,
     });
   }
 
   if (items.length >= 3) return items;
 
-  // 폴백: 번호 리스트 파싱
+  // 폴백 2: "## 버전 N:" 또는 "### N." 패턴
+  const altBlocks = raw.split(/(?:^|\n)(?:#{1,3}\s*)?(?:버전\s*)?(\d{1,2})[.:\s]/m);
+  const altItems: VersionItem[] = [];
+  for (let i = 1; i < altBlocks.length; i += 2) {
+    const n = parseInt(altBlocks[i], 10);
+    if (n > 10 || n < 1) continue;
+    const block = altBlocks[i + 1]?.trim() || '';
+    const tMatch = block.match(/(?:\*{0,2})제목(?:\*{0,2})[:\s：]+\s*(.+)/);
+    const hasT = block.split('\n').some(l => /\|\s*\d+\s*\|/.test(l));
+    altItems.push({
+      id: n,
+      title: tMatch?.[1]?.trim().replace(/\*+/g, '') || block.split('\n')[0]?.trim().slice(0, 60) || `버전 ${n}`,
+      concept: '',
+      scenes: hasT ? parseTikitakaTable(block) : [],
+    });
+  }
+  if (altItems.length >= 3) return altItems;
+
+  // 폴백 3: 번호 리스트 파싱
   const lines = raw.split('\n');
   const fallback: VersionItem[] = [];
   let cur: Partial<VersionItem> | null = null;
@@ -389,14 +436,59 @@ const TIKITAKA_SCRIPT_SYSTEM = `# [최종 완성판] 크로스 더빙(Cross-Dubb
 
 const SNACK_SCRIPT_SYSTEM = `# Role: 숏폼 바이럴 콘텐츠 전문 PD & 메인 에디터 v. 10.8
 
-## 핵심 목표
-1. **Hooking & Non-linear:** 가장 바이럴한 펀치라인/클라이맥스를 0~3초에 선배치. 원본 타임라인을 완전히 뒤섞어라.
-2. **Pacing:** 롱테이크 삭제, 2~3초 단위 속도감 편집.
-3. **Coverage:** 모든 소재 최소 1회 등장.
-4. **Witty (이원화 자막):** 효과 자막(중앙 큼직한 연출) + 하단 자막(16자 이내 위트).
+## 1. 프로젝트 개요
+당신은 유튜브 쇼츠, 틱톡, 릴스 등 숏폼 플랫폼에서 수백만 조회수를 기록하는 '바이럴 콘텐츠 전문 PD'입니다. 사용자로부터 [영상 파일, 영상 링크, 대본, 이미지 시퀀스] 중 하나를 입력받으면, 이를 분석하여 시청 지속 시간(Retention)을 극대화할 수 있는 **[제목 10선]**과 **[나노 단위 비선형 컷 편집 및 이원화 자막 지침서]**를 작성해야 합니다.
 
-## 어조
-유쾌함, 긍정적, 트렌디함. 비속어 금지. 단호하고 명확하게 지시.`;
+## 2. 핵심 목표 (Mission)
+1. **Hooking & Non-linear (후킹과 비선형 재배치):** 썸네일과 제목, 초반 3초에서 시청자의 이탈을 막는다. **절대 원본 영상의 시간 흐름(순차적)대로 편집하지 마라.** 원본에서 가장 바이럴하고 자극적인 펀치라인/클라이맥스를 무조건 맨 앞(0~3초)에 선배치하고, 그 이후에도 텐션이 떨어지지 않게 원본의 타임라인을 완전히 뒤섞어(비선형 재배치) 시청자를 쉴 틈 없이 몰아쳐야 한다.
+2. **Pacing (속도감):** 지루한 롱테이크(Long-take)는 과감히 삭제하고, 핵심 장면(Highlight) 위주로 2~3초 단위의 속도감 있는 편집을 설계한다.
+3. **Coverage (완전성):** 영상에 등장하는 **모든 소재(음식, 동물, 인물, 상황 등)가 최소 1회 이상 등장**해야 한다. (하나라도 누락 금지)
+4. **Witty (재치 & 이원화 자막):** MZ세대 트렌드와 밈(Meme)을 반영한 16자 이내의 간결하고 임팩트 있는 '하단 기본 자막'과, 영상 상황 자체를 극대화하는 큼직한 '효과 자막(중앙 연출용)'을 동시에 기획한다.
+
+---
+
+## 3. 상세 분석 및 처리 프로세스 (Step-by-Step)
+
+### STEP 1: 입력 데이터 정밀 분석
+- 영상의 전체적인 분위기(Vibe), 등장인물/사물의 특징, 배경 음악의 비트, 돌발 상황 등을 프레임 단위로 분석한다.
+- **[중요]** 영상이 여러 에피소드나 사물의 나열로 이루어진 경우(예: 먹방 모음, 동물 모음), 절대 특정 장면만 길게 쓰지 말고, **모든 종류가 다 나오도록 배분**한다.
+- 타임라인을 완벽히 뒤섞기 위해, 영상 내 모든 컷의 '바이럴 임팩트 수치(리액션, 소리, 시각적 충격)'를 평가하여 0순위, 1순위, 2순위 컷을 분류한다.
+
+### STEP 2: 제목(카피라이팅) 추출
+- 사용자가 영상 프레임 상단이나 썸네일에 사용할 수 있는 **제목 10가지**를 추천한다.
+- **조건:**
+    - 클릭을 유도하는 의문형, 감탄형, '주접' 멘트, 정보 공유형 등을 섞을 것.
+    - 예시: "이거 모르면 손해 ㅋㅋ", "마지막 반전 주의", "사람이 어떻게 핑크 복숭아? 🍑"
+
+### STEP 3: 컷 편집 및 자막 설계 (핵심)
+- **비선형 바이럴 편집 규칙 (Non-linear Editing Rule):**
+    - **가장 빵 터지는 핵심 컷(0순위)을 무조건 1번 컷으로 끌어온다.**
+    - 1번 컷 이후에도 원래 시간 순서로 돌아가지 마라. 1순위 장면, 2순위 장면들을 교차로 배치하여 텐션이 롤러코스터처럼 요동치게 타임라인을 완전히 해체하고 재조립한다. (예: 결말 컷 -> 중간 위기 컷 -> 초반 세팅 컷 -> 또 다른 위기 컷)
+    - 하나의 컷은 가급적 **2~4초를 넘기지 않는다.**
+    - 롱테이크(지루하게 이어지는 장면)는 건너뛰고, **동작의 정점(Climax)이나 표정 변화가 확실한 구간**만 타임스탬프로 지정한다.
+    - 단순 나열이 아니라, 화면 전환(Transition)이 자연스럽게 이어지도록 배치한다.
+- **자막 이원화 규칙 (Subtitle Rule):**
+    - **효과 자막 (화면 내 연출 자막):** 영상 자체의 상황, 타격감, 감정 등을 묘사하는 큼직한 예능형 텍스트 (예: 💥쾅!, ㅋㅋㅋ, 😳동공지진, 물음표?). 화면 중앙이나 피사체 옆 등 시각적으로 가장 눈에 띄는 곳에 배치하도록 묘사한다.
+    - **하단 기본 자막 (길이 및 내용):** 공백 포함 **16자 이내** (모바일 가독성 최적화). 상황을 단순히 설명하기보다, **시청자의 마음을 대변하거나(Reaction), 엉뚱한 해석을 달거나, ASMR/식감을 강조**하는 멘트로 작성. 문장 끝에 적절한 이모지 1개를 필수 포함.
+
+---
+
+## 4. 출력 형식 (Output Format)
+*반드시 아래 형식을 지켜서 출력하시오. (주의: 컷 순서는 원본 영상의 시간 순서가 아니라, 임팩트 순으로 완전히 뒤섞인 상태여야 합니다!)*
+
+각 버전은 고유한 후킹 전략, 톤, 편집 방향으로 차별화합니다.
+
+---
+
+## 5. 예외 처리 (Exception Handling)
+- **소리가 없는 영상인 경우:** 시각적 요소(식감, 표정, 자막 드립)에 더 집중하여 효과 자막과 하단 자막을 구성한다.
+- **특정 대사가 있는 경우:** 대사를 그대로 받아적지 말고, 그 대사의 **속뜻이나 상황을 비트는 자막**을 단다.
+- **너무 정적인 영상인 경우:** "줌 인(Zoom-in)", "화면 흔들기" 등의 편집 효과를 텍스트로 제안한다.
+
+## 6. 어조 및 태도 (Tone & Manner)
+- **유쾌함, 긍정적, 트렌디함.**
+- 인터넷 밈(Meme)이나 유행어를 적절히 활용하지만, 비속어는 피한다.
+- 사용자가 바로 편집 툴에 적용할 수 있도록 **단호하고 명확하게** 지시한다.`;
 
 const PRESET_INFO: Record<AnalysisPreset, { label: string; description: string; color: string }> = {
   tikitaka: { label: '티키타카', description: '크로스 더빙 스타일 — 더빙과 원본이 핑퐁처럼 교차하는 숏폼', color: 'blue' },
@@ -439,73 +531,98 @@ function extractModeKey(mode: string): string {
 
 const buildUserMessage = (inputDesc: string, preset: AnalysisPreset): string => {
   if (preset === 'tikitaka') {
-    return `다음 영상을 프레임 단위로 분석하여 10가지 서로 다른 크로스 더빙 리메이크 버전을 제안해주세요.
-
+    return `## 분석 대상
 ${inputDesc}
 
-반드시 아래 구분자 형식으로 10개 버전을 출력하세요. 각 버전은 [마스터 편집 테이블] 형식으로 작성합니다:
+## 지시 사항
+위 영상을 프레임 단위로 분석하여 **10가지 서로 다른 크로스 더빙(티키타카) 리메이크 버전**을 설계하세요.
+
+### ⚠️ 절대 규칙 (위반 시 전체 재작성)
+1. **출력 포맷은 오직 [마스터 편집 테이블]만 사용.** 스낵형/비선형 컷 편집/효과 자막 형식 절대 금지.
+2. 모드는 **[N](내레이션), [S](현장음-대사), [A](현장음-액션)** 중 하나만 사용.
+3. 타임코드는 **MM:SS.ms** 형식 엄수 (예: 00:11.200). 근사치·추상적 표현 금지.
+4. 예상 시간은 **X.X초** 형식 (예: 4.0초). 내레이션은 한국어 평균 4글자/초로 계산.
+5. 비디오 화면 지시는 **(1) [컷1] 설명 (시간) / (2) [컷2] 설명 (시간)** 형식. HTML 태그 금지.
+6. 슬로우 모션 금지 — 정배속 멀티 컷 분할 전략 사용.
+7. **제목은 반드시 이 영상의 내용과 직접적으로 관련된 클릭 유도 제목**이어야 함.
+8. **각 버전은 서로 다른 크로스 더빙 전략** (컨셉, 톤, 구조, 후킹, 순서 재배치 등)을 사용.
+9. **버전당 최소 6개 이상, 최대 12개 행.** 총 60초 내외 설계. 모든 행에 6열 완비.
+10. **각 VERSION 사이에 설명 텍스트 없이 바로 다음 VERSION으로.** 테이블 외 불필요한 텍스트 금지.
+
+### 출력 포맷 (이 형식을 정확히 따르세요)
 
 ---VERSION 1---
-제목: [클릭 유도 제목]
-컨셉: [이 버전의 차별화된 크로스 더빙 전략 2~3줄]
+제목: [이 영상 내용과 관련된 클릭 유도 제목]
+컨셉: [이 버전만의 차별화된 크로스 더빙 전략 설명 1~2줄]
 
 | 순서 | 모드 | 오디오 내용 (대사/내레이션/현장음) | 예상 시간 | 비디오 화면 지시 (정배속 멀티 컷/액션 싱크) | 타임코드 소스 (MM:SS.ms) |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| 1 | [N] | (내레이션) "..." | 4.0초 | (1) [컷1] ... (2.0초) / (2) [컷2] ... (2.0초) | 00:11.200 / 00:53.000 |
-| 2 | [S] | (원본대사) "..." | 2.0초 | (1) [립싱크] ... | 00:55.120 |
-| 3 | [A] | (현장음) (소리 묘사) | 1.5초 | (1) [액션] ... | 01:02.050 |
+| 1 | [N] | (내레이션) "후킹 대사" | 3.5초 | (1) [컷1] 장면 설명 (1.5초) / (2) [컷2] 장면 설명 (2.0초) | 00:03.200 / 00:15.800 |
+| 2 | [A] | (현장음) (소리 묘사) | 1.5초 | (1) [액션] 동작 설명 (클로즈업) | 00:16.500 |
+| 3 | [S] | (인물) "원본 대사" | 2.0초 | (1) [립싱크] 인물 대사 (정배속) | 00:18.100 |
+| ... | ... | ... | ... | ... | ... |
 
 ---VERSION 2---
 제목: ...
 컨셉: ...
-| 순서 | 모드 | ... | ... | ... | ... |
-...
 
-(총 10개 버전, 각각 5~10개 행의 마스터 편집 테이블, 총 60초 내외 설계)
+| 순서 | 모드 | 오디오 내용 (대사/내레이션/현장음) | 예상 시간 | 비디오 화면 지시 (정배속 멀티 컷/액션 싱크) | 타임코드 소스 (MM:SS.ms) |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| 1 | ... | ... | ... | ... | ... |
 
-[필수 규칙]
-- 모드는 반드시 [N](내레이션), [S](현장음-대사), [A](현장음-액션) 중 하나
-- 타임코드는 MM:SS.ms 형식 엄수 (데이터 무결성 절대 원칙)
-- 예상 시간은 초 단위로 명시 (예: 4.0초)
-- 내레이션은 한국어 평균 4글자/초로 계산하여 예상 시간 산정
-- HTML 태그(<br> 등) 사용 금지, (1), (2)와 / 기호로 컷 구분
-- 슬로우 모션 금지 — 정배속 멀티 컷 분할 전략 사용`;
+(이 패턴으로 ---VERSION 10--- 까지 총 10개)`;
   }
 
   // 스낵형
-  return `다음 영상을 프레임 단위로 분석하여 10가지 서로 다른 리메이크 버전을 제안해주세요.
-
+  return `## 분석 대상
 ${inputDesc}
 
-반드시 아래 구분자 형식으로 10개 버전을 출력하세요. 각 버전은 5~10개의 장면(SCENE)을 포함해야 합니다:
+## 지시 사항
+위 영상/자료를 프레임 단위로 분석하여, 지침서에 따라 **10가지 서로 다른 숏폼 리메이크 버전**을 설계하세요.
+
+### ⚠️ 절대 규칙 (위반 시 전체 재작성)
+1. **컷 순서는 원본 영상의 시간 순서가 아니라, 임팩트 순으로 완전히 뒤섞어야 한다.** 순차적 나열 절대 금지.
+2. 가장 바이럴한 펀치라인/클라이맥스를 무조건 **1번 컷(00:00~00:03)에 선배치**.
+3. 효과 자막은 **큼직한 예능형 텍스트** (예: 💥쾅!, ㅋㅋㅋ, 😳동공지진). 2~8자 이내.
+4. 하단 자막은 **공백 포함 16자 이내**. 시청자 마음 대변/엉뚱한 해석. 이모지 1개 필수.
+5. 하나의 컷은 가급적 **2~4초**를 넘기지 않는다.
+6. 영상에 등장하는 **모든 소재가 최소 1회 이상** 등장해야 한다.
+7. **제목은 반드시 이 영상의 내용과 직접적으로 관련된 클릭 유도 제목**이어야 함.
+8. **각 버전은 서로 다른 후킹 전략, 톤, 편집 방향**으로 차별화.
+9. **총 길이 45~60초 내외.** 버전당 5~15개 컷.
+10. **각 VERSION 사이에 불필요한 설명 텍스트 금지.** 바로 다음 VERSION으로 이어진다.
+
+### 출력 포맷 (이 형식을 정확히 따르세요)
 
 ---VERSION 1---
-제목: [클릭 유도 제목]
-컨셉: [이 버전의 차별화된 편집 방향 2~3줄]
+제목: [이 영상 내용과 관련된 클릭 유도 제목]
+컨셉: [이 버전만의 차별화된 후킹/편집 전략 설명 1~2줄]
 
 ---SCENE 1---
-배치: [00:00 ~ 00:03]
-원본: [원본 영상의 MM:SS ~ MM:SS]
-대사: [이 구간의 나레이션/대사 텍스트]
-효과자막: [화면 중앙에 표시할 큰 효과 자막]
-장면: [화면에 보이는 구체적 행동/시각적 묘사]
+배치: 00:00 ~ 00:03 (원본 MM:SS~MM:SS 구간을 끌어옴)
+화면: [가장 바이럴한 장면의 구체적 행동/시각적 충격 묘사 + 카메라워크/전환효과]
+효과자막: [화면에 크게 들어갈 예능형 효과 자막]
+하단자막: [16자 이내 하단 자막 + 이모지]
 
 ---SCENE 2---
-배치: [00:03 ~ 00:06]
-원본: [MM:SS ~ MM:SS]
-대사: [나레이션/대사]
+배치: 00:03 ~ 00:06 (원본 MM:SS~MM:SS)
+화면: [순서를 무시하고 텐션을 이어갈 다음 핵심 행동 묘사]
 효과자막: [효과 자막]
-장면: [장면 설명]
+하단자막: [16자 이내 + 이모지]
 
-(장면 반복...)
+(모든 소재가 포함되도록 컷 반복)
 
 ---VERSION 2---
 제목: ...
 컨셉: ...
 ---SCENE 1---
+배치: ...
+화면: ...
+효과자막: ...
+하단자막: ...
 ...
 
-(총 10개 버전, 각각 서로 다른 톤/후킹/편집 방향, 5~10개 장면씩)`;
+(이 패턴으로 ---VERSION 10--- 까지 총 10개)`;
 };
 
 // ═══════════════════════════════════════════════════
@@ -591,7 +708,7 @@ const VideoAnalysisRoom: React.FC = () => {
       ];
 
       // 3단계: AI 분석 (Gemini 3.1 Pro — 프레임 단위 시각 분석 포함)
-      const response = await evolinkChat(messages, { temperature: 0.7, maxTokens: 16000 });
+      const response = await evolinkChat(messages, { temperature: 0.5, maxTokens: 40000 });
 
       const text = response.choices[0]?.message?.content || '';
       setRawResult(text);
@@ -626,7 +743,7 @@ const VideoAnalysisRoom: React.FC = () => {
   }, [selectedPreset]);
 
   // 경과 시간 + 시뮬레이션 진행률 타이머
-  const ESTIMATED_TOTAL_SEC = 45; // 예상 총 소요시간 (초)
+  const ESTIMATED_TOTAL_SEC = 90; // 예상 총 소요시간 (초) — 10버전 상세 테이블
   useEffect(() => {
     if (!isAnalyzing) return;
     const iv = setInterval(() => {
@@ -839,14 +956,39 @@ const VideoAnalysisRoom: React.FC = () => {
                           {copiedVersion === v.id ? '복사됨' : '복사'}
                         </button>
                         {hasScenes && (
-                          <button
-                            type="button"
-                            onClick={() => handleDownloadSrt(v)}
-                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-600/20 text-blue-400 border border-blue-500/30 hover:bg-blue-600/30 transition-all"
-                          >
-                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3M3 17v3a2 2 0 002 2h14a2 2 0 002-2v-3" /></svg>
-                            SRT 다운로드
-                          </button>
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => handleDownloadSrt(v)}
+                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-600/20 text-blue-400 border border-blue-500/30 hover:bg-blue-600/30 transition-all"
+                            >
+                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3M3 17v3a2 2 0 002 2h14a2 2 0 002-2v-3" /></svg>
+                              SRT
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const isTk = selectedPreset === 'tikitaka';
+                                const versionText = isTk
+                                  ? `제목: ${v.title}\n컨셉: ${v.concept}\n\n` + v.scenes.map(s =>
+                                    `| ${s.cutNum} | ${s.mode} | ${s.audioContent} | ${s.duration} | ${s.videoDirection} | ${s.timecodeSource} |`
+                                  ).join('\n')
+                                  : `제목: ${v.title}\n\n` + v.scenes.map(s =>
+                                    `[컷 ${s.cutNum}] ${s.timeline}\n대사: ${s.dialogue}\n효과: ${s.effectSub}\n장면: ${s.sceneDesc}`
+                                  ).join('\n\n');
+                                const epStore = useEditPointStore.getState();
+                                epStore.reset();
+                                epStore.setRawEditTable(versionText);
+                                epStore.setRawNarration(versionText);
+                                useEditRoomStore.getState().setEditRoomSubTab('edit-point-matching');
+                                useNavigationStore.getState().setActiveTab('edit-room');
+                              }}
+                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-amber-600/20 text-amber-400 border border-amber-500/30 hover:bg-amber-600/30 transition-all"
+                            >
+                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14.121 14.121L19 19m-7-7l7-7m-7 7l-2.879 2.879M12 12L9.121 9.121" /></svg>
+                              편집실로
+                            </button>
+                          </>
                         )}
                       </div>
 
@@ -960,13 +1102,13 @@ const VideoAnalysisRoom: React.FC = () => {
                                   </>
                                 ) : (
                                   <>
-                                    <th className="py-2 px-2 text-left text-gray-500 font-bold">대사/나레이션</th>
+                                    <th className="py-2 px-2 text-left text-gray-500 font-bold">화면</th>
                                     <th className="py-2 px-2 text-left text-gray-500 font-bold">효과 자막</th>
-                                    <th className="py-2 px-2 text-left text-gray-500 font-bold">장면 설명</th>
-                                    <th className="py-2 px-2 text-left text-gray-500 font-bold w-[90px]">편집점</th>
+                                    <th className="py-2 px-2 text-left text-gray-500 font-bold">하단 자막</th>
+                                    <th className="py-2 px-2 text-left text-gray-500 font-bold w-[110px]">편집점</th>
                                   </>
                                 )}
-                                {thumbnails.length > 0 && (
+                                {thumbnails.length > 0 && selectedPreset !== 'tikitaka' && (
                                   <th className="py-2 px-2 text-left text-gray-500 font-bold w-[120px]">비주얼</th>
                                 )}
                               </tr>
@@ -982,7 +1124,7 @@ const VideoAnalysisRoom: React.FC = () => {
                                       <td className="py-2 px-2 align-top">
                                         <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold ${
                                           scene.mode.includes('N') ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
-                                          : scene.mode.includes('S') ? 'bg-red-500/20 text-red-300 border border-red-500/30'
+                                          : scene.mode.includes('S') ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
                                           : scene.mode.includes('A') ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
                                           : 'bg-gray-700 text-gray-400'
                                         }`}>{scene.mode || '-'}</span>
@@ -998,13 +1140,13 @@ const VideoAnalysisRoom: React.FC = () => {
                                     </>
                                   ) : (
                                     <>
-                                      <td className="py-2 px-2 align-top text-gray-300 leading-relaxed">{scene.dialogue || '-'}</td>
+                                      <td className="py-2 px-2 align-top text-gray-300 leading-relaxed text-[11px]">{scene.sceneDesc || '-'}</td>
                                       <td className="py-2 px-2 align-top">
                                         {scene.effectSub ? (
                                           <span className="inline-block px-2 py-0.5 rounded bg-yellow-500/15 text-yellow-300 border border-yellow-500/20 text-xs font-bold">{scene.effectSub}</span>
                                         ) : '-'}
                                       </td>
-                                      <td className="py-2 px-2 align-top text-gray-400 leading-relaxed">{scene.sceneDesc || '-'}</td>
+                                      <td className="py-2 px-2 align-top text-gray-300 leading-relaxed text-[11px]">{scene.dialogue || '-'}</td>
                                       <td className="py-2 px-2 align-top">
                                         <div className="space-y-0.5">
                                           {scene.timeline && <div className="text-blue-400 font-mono text-[10px]">{scene.timeline}</div>}
@@ -1013,7 +1155,7 @@ const VideoAnalysisRoom: React.FC = () => {
                                       </td>
                                     </>
                                   )}
-                                  {thumbnails.length > 0 && (
+                                  {thumbnails.length > 0 && selectedPreset !== 'tikitaka' && (
                                     <td className="py-2 px-2 align-top">
                                       {thumbnails[si % thumbnails.length] && (
                                         <img
