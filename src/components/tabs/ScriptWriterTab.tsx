@@ -59,13 +59,6 @@ const LONG_SPLIT: Record<'DEFAULT' | 'DETAILED', { label: string; desc: string }
   DETAILED: { label: '디테일 중심', desc: '1문장 → 1장면 (많은 컷, 다큐/사연)' },
 };
 
-const STEPS = [
-  { id: 1, label: '소재 준비', icon: '🎯' },
-  { id: 2, label: '추천 소재 선택', icon: '🔍' },
-  { id: 3, label: '대본 작성', icon: '✍️' },
-  { id: 4, label: '장면 설정', icon: '🎬' },
-];
-
 const Spinner: React.FC = () => (
   <div className="flex items-center justify-center h-32">
     <div className="w-6 h-6 border-2 border-gray-600 border-t-violet-400 rounded-full animate-spin" />
@@ -100,6 +93,7 @@ export default function ScriptWriterTab() {
   const [selectedStyleId, setSelectedStyleId] = useState<string | null>(null);
   const [styleError, setStyleError] = useState('');
   const [showChannelGuide, setShowChannelGuide] = useState(false);
+  const [showAiHelper, setShowAiHelper] = useState(false);
 
   // 채널분석 데이터 도착 시 채널 가이드 자동 펼침
   const channelGuideAutoRef = React.useRef(false);
@@ -110,10 +104,15 @@ export default function ScriptWriterTab() {
     }
   }, [channelGuideline, selectedTopic]);
 
+  // 소재 추천 결과 도착 시 소재 추천 섹션 자동 펼침
   const instinctIds = useInstinctStore(s => s.selectedMechanismIds);
   const isRecommending = useInstinctStore(s => s.isRecommending);
   const recommendedTopics = useInstinctStore(s => s.recommendedTopics);
   const selectedTopicId = useInstinctStore(s => s.selectedTopicId);
+
+  useEffect(() => {
+    if (recommendedTopics.length > 0) setShowAiHelper(true);
+  }, [recommendedTopics.length]);
 
   const { requireAuth } = useAuthGuard();
 
@@ -129,22 +128,16 @@ export default function ScriptWriterTab() {
   }, [selectedTopic]);
 
   const scriptText = finalScript || generatedScript?.content || manualText || '';
-  const displayScript = scriptText; // same source of truth as scriptText
+  const displayScript = scriptText;
 
   const handleGoToSoundStudio = useCallback(() => {
     const latest = finalScript || styledScript || generatedScript?.content || manualText || '';
     if (!latest.trim()) return;
-
-    // 1. 대본 저장
     setFinalScript(latest);
     useProjectStore.getState().setConfig((prev) =>
       prev ? { ...prev, script: latest } : prev
     );
-
-    // [v4.5] 스마트 제목 — 대본 첫 줄 기반
     useProjectStore.getState().smartUpdateTitle('script-writer', latest.split('\n')[0] || '');
-
-    // 2. 사운드 스튜디오 이동 (나레이션 라인은 VoiceStudio에서 자동 생성)
     setActiveTab('sound-studio');
   }, [generatedScript, manualText, finalScript, styledScript, setFinalScript, setActiveTab]);
 
@@ -276,7 +269,6 @@ ${scriptText}`;
       setFileError(`파일 불러오기 실패: ${msg}`);
     } finally {
       setFileLoading(false);
-      // input 초기화 (같은 파일 재선택 가능하도록)
       e.target.value = '';
     }
   }, [setFinalScript, setGeneratedScript]);
@@ -359,7 +351,6 @@ ${instinctPrompt}
         { temperature: 0.7, maxTokens: Math.min(32000, Math.max(8000, targetCharCount * 2)) }
       );
 
-      // 완성 후 저장
       setGeneratedScript({
         title: topic.title,
         content: fullText,
@@ -494,9 +485,7 @@ ${instinctPrompt}
       );
       const content = res.choices?.[0]?.message?.content || '';
       if (!content.trim()) throw new Error('스타일 변환 결과가 비어있습니다. 다시 시도해주세요.');
-      // 원본 보존 — styledScript에만 저장 (generatedScript 덮어쓰지 않음)
       setStyledScript(content, preset.name);
-      // 기본적으로 스타일 적용본을 finalScript로 설정
       setFinalScript(content);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -509,207 +498,219 @@ ${instinctPrompt}
   const toggleTool = (tool: OpenTool) => setOpenTool(prev => prev === tool ? null : tool);
   const hasAnyTool = instinctIds.length > 0 || !!benchmarkScript || !!channelGuideline;
 
+  // 생성 버튼 동적 안내
+  const canGenerate = selectedTopicFromStore ? !isGenerating : (!!title.trim() && !!synopsis.trim() && !isGenerating);
+  const guidanceText = useMemo(() => {
+    if (selectedTopicFromStore) return '';
+    if (!title.trim() && !synopsis.trim()) return '제목과 줄거리를 입력하면 AI가 대본을 생성합니다';
+    if (!title.trim()) return '제목을 입력하세요';
+    if (!synopsis.trim()) return '줄거리를 입력하세요';
+    return '';
+  }, [title, synopsis, selectedTopicFromStore]);
+
+  // ═══════════════════════════════════════════════════
+  // JSX
+  // ═══════════════════════════════════════════════════
   return (
     <div className="h-full flex flex-col bg-gray-900 text-gray-100">
 
-      {/* ─── Header + Flow ─── */}
-      <div className="px-6 pt-5 pb-4 border-b border-gray-700/50">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-bold text-white">대본 작성</h2>
-          {/* 상단 사운드 스튜디오 이동 버튼 — 주석처리 */}
-          {/* <button onClick={handleGoToSoundStudio} disabled={!displayScript}
-            className="px-5 py-2 bg-gradient-to-r from-blue-600 to-violet-600
-              hover:from-blue-500 hover:to-violet-500 disabled:opacity-30 disabled:cursor-not-allowed
-              text-white rounded-lg text-sm font-bold shadow-md transition-all">
-            사운드 스튜디오로 이동 →
-          </button> */}
-        </div>
-        <div className="flex items-center gap-0">
-          {STEPS.map((step, i) => (
-            <React.Fragment key={step.id}>
-              {i > 0 && <div className="flex-shrink-0 w-8 flex items-center justify-center"><div className="w-full h-px bg-gray-700" /></div>}
-              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-gray-400">
-                <span className="w-5 h-5 rounded-full bg-gray-800 border border-gray-600 flex items-center justify-center text-sm font-bold">{step.id}</span>
-                <span>{step.icon}</span>
-                <span className="font-medium">{step.label}</span>
-              </div>
-            </React.Fragment>
-          ))}
-        </div>
+      {/* ─── Header (심플) ─── */}
+      <div className="px-6 pt-5 pb-3 border-b border-gray-700/50">
+        <h2 className="text-lg font-bold text-white flex items-center gap-2">
+          <span className="w-8 h-8 bg-gradient-to-br from-violet-500 to-violet-700 rounded-lg flex items-center justify-center text-sm">✍️</span>
+          대본 작성
+        </h2>
       </div>
 
       {/* ─── Scrollable content ─── */}
       <div className="flex-1 overflow-auto">
 
-        {/* 채널분석에서 도착한 소재 안내 배너 */}
-        {selectedTopic && !scriptText && (
-          <div className="mx-6 mt-4 mb-2 bg-gradient-to-r from-blue-900/25 to-violet-900/25 border border-blue-500/30 rounded-xl p-4">
-            <div className="flex items-start gap-3">
-              <div className="w-10 h-10 bg-blue-600/20 rounded-full flex items-center justify-center flex-shrink-0">
-                <span className="text-lg">📡</span>
+        {/* ═══ A. 주제 입력 ═══ */}
+        <div className="px-6 pt-5 pb-4 border-b border-gray-700/30">
+
+          {/* 채널분석 소재 배너 */}
+          {selectedTopic && !scriptText && (
+            <div className="mb-4 bg-gradient-to-r from-blue-900/25 to-violet-900/25 border border-blue-500/30 rounded-xl p-4">
+              <div className="flex items-start gap-3">
+                <div className="w-9 h-9 bg-blue-600/20 rounded-full flex items-center justify-center flex-shrink-0">
+                  <span className="text-base">📡</span>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-bold text-blue-300">채널분석에서 소재를 가져왔습니다</p>
+                  <p className="text-sm text-gray-300 mt-0.5">
+                    {channelGuideline && <><span className="text-orange-400 font-semibold">{channelGuideline.channelName}</span> 채널 스타일 + </>}
+                    <span className="text-violet-400 font-semibold">{selectedTopic.title}</span>
+                  </p>
+                  <p className="text-xs text-gray-500 mt-1">제목과 줄거리가 자동 입력됨 — 아래에서 수정 후 생성하세요</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setSelectedTopic(null); setTitle(''); setSynopsis(''); }}
+                  className="text-gray-600 hover:text-gray-400 transition-colors flex-shrink-0"
+                  title="초기화"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
               </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-bold text-blue-300">
-                  채널분석에서 소재를 가져왔습니다
-                </p>
-                <p className="text-sm text-gray-300 mt-1">
-                  {channelGuideline && (
-                    <><span className="text-orange-400 font-semibold">{channelGuideline.channelName}</span> 채널 스타일 + </>
-                  )}
-                  <span className="text-violet-400 font-semibold">{selectedTopic.title}</span>
-                </p>
-                <p className="text-xs text-gray-500 mt-1.5">
-                  제목과 줄거리가 자동 입력되었습니다 — 아래 Step 3에서 바로 AI 대본을 생성하세요
-                </p>
-              </div>
-              <button
-                onClick={() => { setSelectedTopic(null); setTitle(''); setSynopsis(''); }}
-                className="text-gray-600 hover:text-gray-400 transition-colors flex-shrink-0"
-                title="초기화"
-              >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* ━━ Step 1: 소재 준비 ━━ */}
-        <div className="px-6 py-4 border-b border-gray-700/30">
-          <div className="flex items-center gap-2 mb-3">
-            <span className="text-sm font-bold text-gray-500 uppercase tracking-wider">Step 1</span>
-            <span className="text-sm font-semibold text-gray-300">소재 준비</span>
-            <span className="text-sm text-yellow-400/80 font-medium">(선택) 본능 기제/벤치마크를 설정하면 AI 대본에 자동 반영됩니다</span>
-          </div>
-
-          <div className="flex gap-2 flex-wrap">
-            <button onClick={() => toggleTool('instinct')}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-lg border text-sm font-semibold transition-all ${
-                openTool === 'instinct' ? 'bg-violet-600/20 border-violet-500/50 text-violet-300'
-                  : instinctIds.length > 0 ? 'bg-violet-900/10 border-violet-700/40 text-violet-400 hover:border-violet-500/50'
-                  : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:border-gray-500'}`}>
-              <span>🧠</span><span>본능 기제</span>
-              {instinctIds.length > 0 && <span className="text-sm px-1.5 py-0.5 bg-violet-900/50 text-violet-300 rounded-full">{instinctIds.length}개</span>}
-              <span className="text-gray-600 text-sm">{openTool === 'instinct' ? '▲' : '▼'}</span>
-            </button>
-            <button onClick={() => toggleTool('benchmark')}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-lg border text-sm font-semibold transition-all ${
-                openTool === 'benchmark' ? 'bg-green-600/20 border-green-500/50 text-green-300'
-                  : (benchmarkScript || channelGuideline) ? 'bg-green-900/10 border-green-700/40 text-green-400 hover:border-green-500/50'
-                  : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:border-gray-500'}`}>
-              <span>📊</span><span>벤치마크</span>
-              {benchmarkScript && <span className="text-sm px-1.5 py-0.5 bg-green-900/50 text-green-300 rounded-full">참고 대본</span>}
-              {channelGuideline && <span className="text-sm px-1.5 py-0.5 bg-orange-900/50 text-orange-300 rounded-full">{channelGuideline.channelName}</span>}
-              <span className="text-gray-600 text-sm">{openTool === 'benchmark' ? '▲' : '▼'}</span>
-            </button>
-          </div>
-
-          {hasAnyTool && openTool === null && (
-            <div className="mt-2 px-3 py-2 bg-green-900/15 border border-green-600/25 rounded-lg flex items-center gap-1.5">
-              <span className="text-sm text-green-400 font-medium">적용 중 →</span>
-              {instinctIds.length > 0 && <span className="text-sm text-violet-300 font-medium">🧠 본능 {instinctIds.length}개</span>}
-              {benchmarkScript && <span className="text-sm text-green-300 font-medium">📊 벤치마크</span>}
-              {channelGuideline && <span className="text-sm text-orange-300 font-medium">📡 {channelGuideline.channelName}</span>}
-              <span className="text-sm text-green-400/70">— AI 생성 시 프롬프트에 자동 포함</span>
             </div>
           )}
 
-          {openTool === 'instinct' && (
-            <div className="mt-3 rounded-xl border border-violet-700/30 bg-gray-800/20 p-4">
-              <Suspense fallback={<Spinner />}><InstinctBrowser /></Suspense>
-            </div>
-          )}
-
-          {openTool === 'benchmark' && (
-            <div className="mt-3 max-h-[420px] overflow-auto rounded-xl border border-green-700/30 bg-gray-800/20">
-              <BenchmarkPanel />
-            </div>
-          )}
-        </div>
-
-        {/* ━━ Step 2: 추천 소재 선택 ━━ */}
-        <div className="px-6 py-4 border-b border-gray-700/30">
-          <div className="flex items-center gap-2 mb-3">
-            <span className="text-sm font-bold text-gray-500 uppercase tracking-wider">Step 2</span>
-            <span className="text-sm font-semibold text-gray-300">추천 소재 선택</span>
-            <span className="text-sm text-orange-400/80 font-medium">본능 기제를 선택한 후, 아래 버튼으로 바이럴 소재를 추천받으세요</span>
-          </div>
-
-          <div className="space-y-3">
-            {/* 소재 추천 버튼 */}
-            {instinctIds.length > 0 && (
+          {/* 선택된 소재 표시 (본능 기제 추천) */}
+          {selectedTopicFromStore && (
+            <div className="mb-3 bg-violet-900/15 border border-violet-500/25 rounded-lg px-3 py-2 flex items-center gap-2">
+              <span className="text-violet-400 text-xs font-bold">선택된 소재</span>
+              <span className="text-sm text-gray-300 truncate">{selectedTopicFromStore.title}</span>
               <button
                 type="button"
-                onClick={handleRecommendTopics}
-                disabled={isRecommending || isGenerating}
-                className="w-full py-3 px-4 bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 text-white rounded-xl text-base font-bold transition-all disabled:opacity-50 flex items-center justify-center gap-2"
-              >
-                {isRecommending ? (
-                  <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> 소재 추천 중... {elapsedRecommend > 0 && <span className="text-xs text-gray-400 tabular-nums">{formatElapsed(elapsedRecommend)}</span>}</>
-                ) : (
-                  <>&#x1F50D; 본능 기제 {instinctIds.length}개로 바이럴 소재 추천받기</>
+                onClick={() => { useInstinctStore.getState().selectTopic(''); setTitle(''); setSynopsis(''); }}
+                className="ml-auto text-gray-600 hover:text-gray-400 text-xs"
+              >초기화</button>
+            </div>
+          )}
+
+          {/* 필수 입력: 제목 + 줄거리 */}
+          <div className="space-y-3">
+            <div>
+              <label className="flex items-center gap-1.5 text-sm font-bold text-gray-300 mb-1.5">
+                📌 제목
+              </label>
+              <input
+                type="text"
+                value={title}
+                onChange={e => setTitle(e.target.value)}
+                placeholder="영상 제목을 입력하세요"
+                className="w-full bg-gray-800/50 border border-gray-600 rounded-lg px-4 py-2.5 text-white placeholder-gray-500
+                  focus:border-violet-500 focus:ring-1 focus:ring-violet-500 outline-none text-sm"
+              />
+            </div>
+            <div>
+              <label className="flex items-center gap-1.5 text-sm font-bold text-gray-300 mb-1.5">
+                📋 줄거리 · 핵심 내용
+              </label>
+              <textarea
+                value={synopsis}
+                onChange={e => setSynopsis(e.target.value)}
+                placeholder="어떤 내용의 영상인지 간단히 설명해주세요"
+                rows={3}
+                className="w-full bg-gray-800/50 border border-gray-600 rounded-lg px-4 py-2.5 text-white placeholder-gray-500
+                  focus:border-violet-500 focus:ring-1 focus:ring-violet-500 outline-none resize-none text-sm"
+              />
+            </div>
+          </div>
+
+          {/* AI 소재 추천 (접힘형) */}
+          <div className="mt-4">
+            <button
+              type="button"
+              onClick={() => setShowAiHelper(!showAiHelper)}
+              className={`flex items-center gap-2 w-full px-4 py-2.5 rounded-lg border text-sm font-semibold transition-all ${
+                showAiHelper
+                  ? 'bg-violet-600/15 border-violet-500/40 text-violet-300'
+                  : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:border-violet-500/40 hover:text-violet-300'
+              }`}
+            >
+              <span>💡</span>
+              <span>주제가 없나요? AI 소재 추천</span>
+              {instinctIds.length > 0 && (
+                <span className="text-xs px-1.5 py-0.5 bg-violet-900/50 text-violet-300 rounded-full">🧠 {instinctIds.length}개</span>
+              )}
+              {(benchmarkScript || channelGuideline) && (
+                <span className="text-xs px-1.5 py-0.5 bg-green-900/50 text-green-300 rounded-full">📊</span>
+              )}
+              <span className="ml-auto text-gray-600 text-xs">{showAiHelper ? '▲' : '▼'}</span>
+            </button>
+
+            {showAiHelper && (
+              <div className="mt-3 space-y-3 bg-gray-800/20 rounded-xl border border-gray-700/30 p-4">
+                {/* 본능 기제 / 벤치마크 토글 */}
+                <div className="flex gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => toggleTool('instinct')}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-semibold transition-all ${
+                      openTool === 'instinct' ? 'bg-violet-600/20 border-violet-500/50 text-violet-300'
+                        : instinctIds.length > 0 ? 'bg-violet-900/10 border-violet-700/40 text-violet-400 hover:border-violet-500/50'
+                        : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:border-gray-500'
+                    }`}
+                  >
+                    <span>🧠</span><span>본능 기제</span>
+                    {instinctIds.length > 0 && <span className="text-xs px-1.5 py-0.5 bg-violet-900/50 text-violet-300 rounded-full">{instinctIds.length}개</span>}
+                    <span className="text-gray-600 text-xs">{openTool === 'instinct' ? '▲' : '▼'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => toggleTool('benchmark')}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-semibold transition-all ${
+                      openTool === 'benchmark' ? 'bg-green-600/20 border-green-500/50 text-green-300'
+                        : (benchmarkScript || channelGuideline) ? 'bg-green-900/10 border-green-700/40 text-green-400 hover:border-green-500/50'
+                        : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:border-gray-500'
+                    }`}
+                  >
+                    <span>📊</span><span>벤치마크</span>
+                    {benchmarkScript && <span className="text-xs px-1.5 py-0.5 bg-green-900/50 text-green-300 rounded-full">참고 대본</span>}
+                    {channelGuideline && <span className="text-xs px-1.5 py-0.5 bg-orange-900/50 text-orange-300 rounded-full">{channelGuideline.channelName}</span>}
+                    <span className="text-gray-600 text-xs">{openTool === 'benchmark' ? '▲' : '▼'}</span>
+                  </button>
+                </div>
+
+                {openTool === 'instinct' && (
+                  <div className="rounded-xl border border-violet-700/30 bg-gray-800/20 p-4">
+                    <Suspense fallback={<Spinner />}><InstinctBrowser /></Suspense>
+                  </div>
                 )}
-              </button>
-            )}
-            {instinctIds.length === 0 && !selectedTopic && (
-              <div className="text-center py-4 px-4 bg-orange-900/15 border border-orange-500/30 rounded-lg">
-                <p className="text-sm text-orange-300 font-medium">Step 1에서 본능 기제를 먼저 선택해주세요</p>
-                <p className="text-xs text-orange-400/60 mt-1">본능 기제를 선택하면 Google 검색 기반 바이럴 소재를 추천받을 수 있습니다</p>
-              </div>
-            )}
-            {instinctIds.length === 0 && selectedTopic && (
-              <div className="text-center py-3 px-4 bg-green-900/15 border border-green-500/30 rounded-lg">
-                <p className="text-sm text-green-300 font-medium">채널분석에서 소재가 이미 선택됨 — Step 3으로 바로 이동 가능</p>
-                <p className="text-xs text-green-400/60 mt-1">추가로 본능 기제 기반 소재 추천도 받을 수 있습니다</p>
-              </div>
-            )}
+                {openTool === 'benchmark' && (
+                  <div className="max-h-[420px] overflow-auto rounded-xl border border-green-700/30 bg-gray-800/20">
+                    <BenchmarkPanel />
+                  </div>
+                )}
 
-            {/* TopicRecommendCards */}
-            <TopicRecommendCards onSelect={handleSelectTopic} />
+                {/* 소재 추천 버튼 */}
+                {instinctIds.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleRecommendTopics}
+                    disabled={isRecommending || isGenerating}
+                    className="w-full py-3 px-4 bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 text-white rounded-xl text-sm font-bold transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    {isRecommending ? (
+                      <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> 소재 추천 중... {elapsedRecommend > 0 && <span className="text-xs text-gray-400 tabular-nums">{formatElapsed(elapsedRecommend)}</span>}</>
+                    ) : (
+                      <>🔍 본능 기제 {instinctIds.length}개로 바이럴 소재 추천받기</>
+                    )}
+                  </button>
+                )}
+                {instinctIds.length === 0 && (
+                  <div className="text-center py-3 px-4 bg-orange-900/10 border border-orange-500/20 rounded-lg">
+                    <p className="text-sm text-orange-300/80">위에서 본능 기제를 선택하면 소재를 추천받을 수 있습니다</p>
+                  </div>
+                )}
 
-            {/* 소재 비교 레이더 차트 */}
-            {recommendedTopics.length >= 2 && (
-              <Suspense fallback={null}>
-                <TopicComparisonRadar topics={recommendedTopics} selectedTopicId={selectedTopicId} />
-              </Suspense>
+                {/* 소재 카드 + 레이더 */}
+                <TopicRecommendCards onSelect={handleSelectTopic} />
+                {recommendedTopics.length >= 2 && (
+                  <Suspense fallback={null}>
+                    <TopicComparisonRadar topics={recommendedTopics} selectedTopicId={selectedTopicId} />
+                  </Suspense>
+                )}
+              </div>
             )}
           </div>
         </div>
 
-        {/* ━━ Step 3: 대본 작성 ━━ */}
+        {/* ═══ B. 생성 옵션 + CTA ═══ */}
         <div className="px-6 py-4 border-b border-gray-700/30">
-          <div className="flex items-center gap-2 mb-3">
-            <span className="text-sm font-bold text-gray-500 uppercase tracking-wider">Step 3</span>
-            <span className="text-sm font-semibold text-gray-300">대본 작성</span>
-          </div>
 
-          {/* A. 선택된 소재 배너 (본능 기제 or 채널분석) */}
-          {selectedTopicFromStore && (
-            <div className="bg-violet-900/20 border border-violet-500/30 rounded-lg px-4 py-3 mb-3">
-              <p className="text-sm text-violet-300 font-bold">선택된 소재: {selectedTopicFromStore.title}</p>
-              <p className="text-sm text-gray-400">{selectedTopicFromStore.synopsis}</p>
-            </div>
-          )}
-          {!selectedTopicFromStore && selectedTopic && (
-            <div className="bg-blue-900/20 border border-blue-500/30 rounded-lg px-4 py-3 mb-3">
-              <p className="text-sm text-blue-300 font-bold">채널분석 소재: {selectedTopic.title}</p>
-              <p className="text-sm text-gray-400">{selectedTopic.mainSubject}</p>
-              {selectedTopic.scriptFlow && (
-                <p className="text-sm text-gray-500 mt-1">대본 흐름: {selectedTopic.scriptFlow}</p>
-              )}
-            </div>
-          )}
-
-          {/* 채널 스타일 적용 배지 */}
+          {/* 채널 스타일 */}
           {channelGuideline && (
-            <div className="mb-3">
+            <div className="mb-4">
               <button
                 type="button"
                 onClick={() => setShowChannelGuide(prev => !prev)}
                 className="flex items-center gap-2 px-3 py-2 bg-orange-900/15 border border-orange-500/30 rounded-lg text-sm transition-all hover:bg-orange-900/25 w-full text-left"
               >
-                <span className="text-orange-400 font-bold">&#x1F4CA; 채널 스타일 적용됨</span>
+                <span className="text-orange-400 font-bold">📡 채널 스타일 적용됨</span>
                 <span className="text-orange-300/70 font-medium truncate">{channelGuideline.channelName}</span>
                 <span className="ml-auto text-gray-500 text-xs flex-shrink-0">{showChannelGuide ? '접기 ▲' : '펼치기 ▼'}</span>
               </button>
@@ -749,99 +750,109 @@ ${instinctPrompt}
             </div>
           )}
 
-          {/* B+C 통합: 스타일 선택 + AI 대본 생성 */}
-          <div className="bg-gradient-to-r from-violet-900/20 to-pink-900/20 rounded-xl border border-violet-600/40 mb-3 overflow-hidden">
-            {/* 상단: 스타일 선택 */}
-            <div className="p-4 pb-3">
-              <div className="flex items-center gap-2 mb-3">
-                <span className="text-lg">🎨</span>
-                <span className="text-sm font-bold text-white">대본 스타일</span>
-                <span className="text-sm text-violet-300/80 font-medium">스타일을 선택 후 AI 생성 또는 기존 대본에 스타일 변환이 가능합니다</span>
-              </div>
-              <div className="flex gap-2">
-                {SCRIPT_STYLE_PRESETS.map(preset => {
-                  const isSelected = selectedStyleId === preset.id;
-                  return (
-                    <button
-                      key={preset.id}
-                      onClick={() => setSelectedStyleId(isSelected ? null : preset.id)}
-                      disabled={!!applyingStyle}
-                      className={`flex-1 flex flex-col items-center justify-center gap-0.5 py-2.5 rounded-lg border text-center transition-all ${
-                        isSelected
-                          ? 'bg-violet-600/35 border-violet-400 text-white'
-                          : 'bg-gray-800/70 border-gray-600/50 text-gray-300 hover:border-violet-400/60 hover:text-white'
-                      } disabled:opacity-50`}
-                    >
-                      <div className="flex items-center gap-1">
-                        <span>{preset.icon}</span>
-                        <span className="text-sm font-bold truncate">{preset.name}</span>
-                      </div>
-                      <span className="text-xs text-gray-500 leading-tight">{preset.description}</span>
-                    </button>
-                  );
-                })}
-              </div>
+          {/* 스타일 선택 */}
+          <div className="mb-4">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-sm font-bold text-gray-300">🎨 대본 스타일</span>
+              <span className="text-xs text-gray-500">(선택사항)</span>
             </div>
-
-            {/* 구분선 */}
-            <div className="border-t border-violet-600/20" />
-
-            {/* 하단: AI 대본 생성 */}
-            <div className="px-4 py-3 flex items-center gap-4">
-              <div className="flex items-center gap-2">
-                <span className="text-base">📝</span>
-                <span className="text-sm font-semibold text-gray-300">AI 대본 생성</span>
-                <span className="text-sm text-green-300/80 font-medium">글자수를 입력하고 우측 생성 버튼을 누르세요</span>
-                <span className={`text-xs px-2 py-0.5 rounded font-bold border ${
-                  contentFormat === 'shorts'
-                    ? 'bg-pink-900/40 text-pink-300 border-pink-500/30'
-                    : 'bg-blue-900/40 text-blue-300 border-blue-500/30'
-                }`}>
-                  {contentFormat === 'shorts' ? '쇼츠' : '롱폼'}
-                </span>
-                {selectedStyleId && (
-                  <span className="text-xs px-2 py-0.5 rounded bg-violet-900/40 text-violet-300 border border-violet-500/30">
-                    {SCRIPT_STYLE_PRESETS.find(p => p.id === selectedStyleId)?.icon} {SCRIPT_STYLE_PRESETS.find(p => p.id === selectedStyleId)?.name}
-                  </span>
-                )}
-              </div>
-              <div className="flex items-center gap-2 ml-auto">
-                <input type="number" min={350} max={30000} step={50}
-                  value={targetCharCount} onChange={(e) => setTargetCharCount(Math.max(350, Number(e.target.value)))}
-                  className="w-[80px] px-2 py-1.5 rounded-md bg-gray-900/60 text-gray-200 text-sm text-center
-                    border border-gray-700 focus:outline-none focus:border-blue-500/50" />
-                <span className="text-sm text-gray-500">자</span>
-                <span className="text-sm text-cyan-400 font-medium">{estimateTime(targetCharCount)}</span>
-                <button onClick={selectedTopicFromStore ? () => handleGenerateFromTopic(selectedTopicFromStore) : handleGenerateScript}
-                  disabled={selectedTopicFromStore ? isGenerating : (!title.trim() || !synopsis.trim() || isGenerating)}
-                  className="px-5 py-2 bg-gradient-to-r from-blue-600 to-violet-600
-                    hover:from-blue-500 hover:to-violet-500 disabled:opacity-40 disabled:cursor-not-allowed
-                    text-white rounded-lg text-sm font-bold transition-all whitespace-nowrap
-                    shadow-lg shadow-violet-900/30">
-                  {isGenerating ? (<><span className="animate-spin inline-block">⟳</span> 생성 중 {elapsedGenerate > 0 && <span className="text-xs text-gray-400 tabular-nums">{formatElapsed(elapsedGenerate)}</span>}</>) : '🚀 AI 대본 생성'}
-                </button>
-              </div>
-              {genError && <p className="text-sm text-red-400 ml-2">{genError}</p>}
-              {styleError && <p className="text-sm text-red-400 ml-2">{styleError}</p>}
+            <div className="flex gap-2">
+              {SCRIPT_STYLE_PRESETS.map(preset => {
+                const isSelected = selectedStyleId === preset.id;
+                return (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => setSelectedStyleId(isSelected ? null : preset.id)}
+                    disabled={!!applyingStyle}
+                    className={`flex-1 flex flex-col items-center justify-center gap-0.5 py-2.5 rounded-lg border text-center transition-all ${
+                      isSelected
+                        ? 'bg-violet-600/35 border-violet-400 text-white'
+                        : 'bg-gray-800/70 border-gray-600/50 text-gray-300 hover:border-violet-400/60 hover:text-white'
+                    } disabled:opacity-50`}
+                  >
+                    <div className="flex items-center gap-1">
+                      <span>{preset.icon}</span>
+                      <span className="text-sm font-bold truncate">{preset.name}</span>
+                    </div>
+                    <span className="text-xs text-gray-500 leading-tight">{preset.description}</span>
+                  </button>
+                );
+              })}
             </div>
+          </div>
 
-            {/* 기존 대본에 스타일 변환 버튼 */}
-            {selectedStyleId && scriptText.trim() && !styledScript && (
-              <div className="px-4 py-2.5 bg-violet-900/10 border-t border-violet-600/15 flex items-center justify-between">
-                <span className="text-sm text-violet-300/80 font-medium">
-                  입력된 대본에 <span className="text-violet-200 font-bold">{SCRIPT_STYLE_PRESETS.find(p => p.id === selectedStyleId)?.icon} {SCRIPT_STYLE_PRESETS.find(p => p.id === selectedStyleId)?.name}</span> 스타일을 적용할 수 있습니다
-                </span>
-                <button onClick={handleApplySelectedStyle}
-                  disabled={!!applyingStyle}
-                  className="px-4 py-1.5 bg-violet-600 hover:bg-violet-500 disabled:opacity-40
-                    text-white rounded-lg text-sm font-bold transition-all whitespace-nowrap">
-                  {applyingStyle ? (<><span className="animate-spin inline-block">⟳</span> 변환 중 {elapsedStyle > 0 && <span className="text-xs text-gray-400 tabular-nums">{formatElapsed(elapsedStyle)}</span>}</>) : '🎨 스타일 변환'}
-                </button>
-              </div>
+          {/* 생성 바 */}
+          <div className="flex items-center gap-3 bg-gray-800/40 rounded-xl px-4 py-3 border border-gray-700/40">
+            <span className="text-sm text-gray-400 flex-shrink-0">📏</span>
+            <input type="number" min={350} max={30000} step={50}
+              value={targetCharCount} onChange={(e) => setTargetCharCount(Math.max(350, Number(e.target.value)))}
+              className="w-[80px] px-2 py-1.5 rounded-md bg-gray-900/60 text-gray-200 text-sm text-center
+                border border-gray-700 focus:outline-none focus:border-violet-500/50" />
+            <span className="text-sm text-gray-500">자</span>
+            <span className="text-sm text-cyan-400 font-medium whitespace-nowrap">{estimateTime(targetCharCount)}</span>
+
+            <div className="flex-1" />
+
+            <button
+              type="button"
+              onClick={selectedTopicFromStore ? () => handleGenerateFromTopic(selectedTopicFromStore) : handleGenerateScript}
+              disabled={!canGenerate}
+              className="px-6 py-2.5 bg-gradient-to-r from-blue-600 to-violet-600
+                hover:from-blue-500 hover:to-violet-500 disabled:opacity-30 disabled:cursor-not-allowed
+                text-white rounded-lg text-sm font-bold transition-all whitespace-nowrap
+                shadow-lg shadow-violet-900/30"
+            >
+              {isGenerating ? (<><span className="animate-spin inline-block">⟳</span> 생성 중 {elapsedGenerate > 0 && <span className="text-xs text-gray-400 tabular-nums">{formatElapsed(elapsedGenerate)}</span>}</>) : '🚀 AI 대본 생성'}
+            </button>
+          </div>
+
+          {/* 동적 안내 + 적용 중 뱃지 */}
+          <div className="mt-2 flex items-center gap-2 flex-wrap min-h-[24px]">
+            {guidanceText && (
+              <span className="text-sm text-amber-400/80">{guidanceText}</span>
+            )}
+            {!guidanceText && hasAnyTool && (
+              <>
+                <span className="text-xs text-gray-500">적용 중:</span>
+                {instinctIds.length > 0 && <span className="text-xs text-violet-300 bg-violet-900/30 px-1.5 py-0.5 rounded">🧠 본능 {instinctIds.length}개</span>}
+                {benchmarkScript && <span className="text-xs text-green-300 bg-green-900/30 px-1.5 py-0.5 rounded">📊 벤치마크</span>}
+                {channelGuideline && <span className="text-xs text-orange-300 bg-orange-900/30 px-1.5 py-0.5 rounded">📡 {channelGuideline.channelName}</span>}
+              </>
+            )}
+            {selectedStyleId && !guidanceText && (
+              <span className="text-xs text-violet-300 bg-violet-900/30 px-1.5 py-0.5 rounded">
+                {SCRIPT_STYLE_PRESETS.find(p => p.id === selectedStyleId)?.icon} {SCRIPT_STYLE_PRESETS.find(p => p.id === selectedStyleId)?.name}
+              </span>
             )}
           </div>
 
-          {/* D. AI 생성 타임라인 (스트리밍 포함) */}
+          {genError && <p className="text-sm text-red-400 mt-2">{genError}</p>}
+          {styleError && <p className="text-sm text-red-400 mt-2">{styleError}</p>}
+
+          {/* 기존 대본에 스타일 변환 */}
+          {selectedStyleId && scriptText.trim() && !styledScript && (
+            <div className="mt-3 px-4 py-2.5 bg-violet-900/10 border border-violet-600/20 rounded-lg flex items-center justify-between">
+              <span className="text-sm text-violet-300/80 font-medium">
+                입력된 대본에 <span className="text-violet-200 font-bold">{SCRIPT_STYLE_PRESETS.find(p => p.id === selectedStyleId)?.icon} {SCRIPT_STYLE_PRESETS.find(p => p.id === selectedStyleId)?.name}</span> 스타일 적용
+              </span>
+              <button
+                type="button"
+                onClick={handleApplySelectedStyle}
+                disabled={!!applyingStyle}
+                className="px-4 py-1.5 bg-violet-600 hover:bg-violet-500 disabled:opacity-40
+                  text-white rounded-lg text-sm font-bold transition-all whitespace-nowrap"
+              >
+                {applyingStyle ? (<><span className="animate-spin inline-block">⟳</span> 변환 중 {elapsedStyle > 0 && <span className="text-xs text-gray-400 tabular-nums">{formatElapsed(elapsedStyle)}</span>}</>) : '🎨 스타일 변환'}
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* ═══ C. 대본 결과 ═══ */}
+        <div className="px-6 py-4 border-b border-gray-700/30">
+
+          {/* 스트리밍 타임라인 */}
           {(isGenerating || streamingText) && (
             <div className="mb-3">
               <Suspense fallback={null}>
@@ -855,145 +866,134 @@ ${instinctPrompt}
             </div>
           )}
 
-          {/* Script textarea(s) -- 원본 + 스타일 적용본 */}
-          <div className="space-y-3">
-            {/* 원본 대본 */}
-            <div className="relative">
-              <div className="flex items-center justify-between mb-1.5">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-bold text-gray-400 uppercase tracking-wider">✏️ 원본 대본</span>
-                  <span className="text-sm text-blue-300/80 font-medium">직접 입력하거나 파일을 불러올 수 있습니다</span>
-                  {styledScript && (
-                    <button
-                      type="button"
-                      onClick={() => { setFinalScript(generatedScript?.content || manualText || ''); }}
-                      className={`text-sm px-2 py-0.5 rounded border transition-all ${
-                        finalScript === (generatedScript?.content || manualText)
-                          ? 'bg-blue-600/20 border-blue-500/50 text-blue-300 font-bold'
-                          : 'bg-gray-800/50 border-gray-700/50 text-gray-500 hover:text-gray-300'
-                      }`}
-                    >
-                      {finalScript === (generatedScript?.content || manualText) ? '✓ 나레이션용 선택됨' : '나레이션용으로 선택'}
-                    </button>
-                  )}
-                </div>
-                <div className="flex items-center gap-2">
-                  <label className={`flex items-center gap-1.5 px-2.5 py-1
-                    ${fileLoading ? 'bg-blue-600/20 text-blue-300 border-blue-500/40' : 'bg-gray-800 hover:bg-gray-700 text-gray-300 border-gray-600'}
-                    rounded-lg text-sm cursor-pointer border font-medium transition-colors`}>
-                    {fileLoading ? (<><span className="animate-spin">⟳</span> 불러오는 중...</>) : (<>📁 파일 불러오기</>)}
-                    <input type="file" accept={SUPPORTED_EXTENSIONS} onChange={handleFileUpload} className="hidden" disabled={fileLoading} />
-                  </label>
+          {/* 원본 대본 */}
+          <div className="relative">
+            <div className="flex items-center justify-between mb-1.5">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-bold text-gray-400">✏️ 대본</span>
+                {styledScript && (
                   <button
                     type="button"
-                    onClick={() => { navigator.clipboard.writeText(generatedScript?.content || manualText || '').then(() => showToast('대본이 클립보드에 복사되었습니다.')); }}
-                    className="text-sm text-gray-500 hover:text-gray-300 bg-gray-800/50 hover:bg-gray-700/50 px-2 py-1 rounded border border-gray-700/50 transition-colors"
-                    title="원본 대본 복사"
+                    onClick={() => { setFinalScript(generatedScript?.content || manualText || ''); }}
+                    className={`text-xs px-2 py-0.5 rounded border transition-all ${
+                      finalScript === (generatedScript?.content || manualText)
+                        ? 'bg-blue-600/20 border-blue-500/50 text-blue-300 font-bold'
+                        : 'bg-gray-800/50 border-gray-700/50 text-gray-500 hover:text-gray-300'
+                    }`}
                   >
-                    📋 복사
+                    {finalScript === (generatedScript?.content || manualText) ? '✓ 나레이션용 선택됨' : '나레이션용으로 선택'}
                   </button>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <label className={`flex items-center gap-1.5 px-2.5 py-1
+                  ${fileLoading ? 'bg-blue-600/20 text-blue-300 border-blue-500/40' : 'bg-gray-800 hover:bg-gray-700 text-gray-300 border-gray-600'}
+                  rounded-lg text-xs cursor-pointer border font-medium transition-colors`}>
+                  {fileLoading ? (<><span className="animate-spin">⟳</span> 불러오는 중...</>) : (<>📁 파일 불러오기</>)}
+                  <input type="file" accept={SUPPORTED_EXTENSIONS} onChange={handleFileUpload} className="hidden" disabled={fileLoading} />
+                </label>
+                <button
+                  type="button"
+                  onClick={() => { navigator.clipboard.writeText(generatedScript?.content || manualText || '').then(() => showToast('대본이 클립보드에 복사되었습니다.')); }}
+                  className="text-xs text-gray-500 hover:text-gray-300 bg-gray-800/50 hover:bg-gray-700/50 px-2 py-1 rounded border border-gray-700/50 transition-colors"
+                  title="원본 대본 복사"
+                >
+                  📋 복사
+                </button>
+              </div>
+            </div>
+            <textarea
+              value={displayScript}
+              onChange={(e) => {
+                const val = e.target.value;
+                if (generatedScript) {
+                  setGeneratedScript({ ...generatedScript, content: val, charCount: val.length });
+                } else {
+                  setManualText(val);
+                }
+                if (!styledScript) setFinalScript(val);
+              }}
+              placeholder="대본을 직접 입력하거나, 위에서 AI 생성을 사용하세요."
+              rows={styledScript ? 10 : 14}
+              className="w-full bg-gray-800/30 text-gray-200 p-4 text-sm leading-relaxed rounded-xl
+                border border-gray-700/40 focus:outline-none focus:border-violet-500/30 resize-none placeholder-gray-600"
+            />
+          </div>
+          <div className="flex items-center justify-between mt-2">
+            {scriptText.length > 0 ? (
+              <span className="text-sm font-bold text-violet-400 bg-violet-500/10 border border-violet-500/30 px-3 py-1.5 rounded-lg">
+                {scriptText.length.toLocaleString()}자 · {estimateTime(scriptText.length)}
+              </span>
+            ) : <span />}
+            <span className="text-xs text-gray-600">{SUPPORTED_FORMATS_LABEL}</span>
+          </div>
+
+          {/* 스타일 적용본 */}
+          {styledScript && (
+            <div className="relative mt-3">
+              <div className="flex items-center justify-between mb-1.5">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-bold text-violet-400">🎨 {styledStyleName} 스타일 적용</span>
+                  <button
+                    type="button"
+                    onClick={() => setFinalScript(styledScript)}
+                    className={`text-xs px-2 py-0.5 rounded border transition-all ${
+                      finalScript === styledScript
+                        ? 'bg-violet-600/20 border-violet-500/50 text-violet-300 font-bold'
+                        : 'bg-gray-800/50 border-gray-700/50 text-gray-500 hover:text-gray-300'
+                    }`}
+                  >
+                    {finalScript === styledScript ? '✓ 나레이션용 선택됨' : '나레이션용으로 선택'}
+                  </button>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => { navigator.clipboard.writeText(styledScript).then(() => showToast('스타일 적용본이 클립보드에 복사되었습니다.')); }}
+                    className="text-xs text-gray-500 hover:text-gray-300 bg-gray-800/50 hover:bg-gray-700/50 px-2 py-1 rounded border border-gray-700/50 transition-colors"
+                    title="스타일 적용본 복사"
+                  >📋 복사</button>
+                  <button
+                    type="button"
+                    onClick={() => { clearStyledScript(); setFinalScript(generatedScript?.content || manualText || ''); }}
+                    className="text-xs text-gray-500 hover:text-red-400 bg-gray-800/50 hover:bg-red-900/20 px-2 py-1 rounded border border-gray-700/50 transition-colors"
+                    title="스타일 적용본 삭제"
+                  >✕ 삭제</button>
                 </div>
               </div>
               <textarea
-                value={displayScript}
+                value={styledScript}
                 onChange={(e) => {
                   const val = e.target.value;
-                  if (generatedScript) {
-                    setGeneratedScript({ ...generatedScript, content: val, charCount: val.length });
-                  } else {
-                    setManualText(val);
-                  }
-                  // 스타일 적용본이 없으면 원본이 곧 finalScript
-                  if (!styledScript) setFinalScript(val);
+                  setStyledScript(val, styledStyleName);
+                  if (finalScript === styledScript) setFinalScript(val);
                 }}
-                placeholder="대본을 직접 입력하거나, 위에서 AI 생성을 사용하세요."
-                rows={styledScript ? 10 : 14}
-                className="w-full bg-gray-800/30 text-gray-200 p-4 text-base leading-relaxed rounded-xl
-                  border border-gray-700/40 focus:outline-none focus:border-blue-500/30 resize-none placeholder-gray-600"
+                rows={10}
+                className="w-full bg-violet-900/10 text-gray-200 p-4 text-sm leading-relaxed rounded-xl
+                  border border-violet-700/30 focus:outline-none focus:border-violet-500/30 resize-none"
               />
-            </div>
-            <div className="flex items-center justify-between mt-2">
-              {scriptText.length > 0 ? (
-                <span className="text-sm font-bold text-blue-400 bg-blue-500/10 border border-blue-500/30 px-3 py-1.5 rounded-lg">
-                  {scriptText.length.toLocaleString()}자 · {estimateTime(scriptText.length)}
+              <div className="absolute bottom-3 right-3">
+                <span className="text-xs text-violet-400/60 bg-gray-800/80 px-2 py-1 rounded backdrop-blur-sm">
+                  {styledScript.length.toLocaleString()}자 · {estimateTime(styledScript.length)}
                 </span>
-              ) : <span />}
-              <span className="text-xs text-gray-600">{SUPPORTED_FORMATS_LABEL}</span>
-            </div>
-
-            {/* 스타일 적용본 (스타일 적용 후에만 표시) */}
-            {styledScript && (
-              <div className="relative">
-                <div className="flex items-center justify-between mb-1.5">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-bold text-violet-400 uppercase tracking-wider">🎨 {styledStyleName} 스타일 적용</span>
-                    <button
-                      type="button"
-                      onClick={() => setFinalScript(styledScript)}
-                      className={`text-sm px-2 py-0.5 rounded border transition-all ${
-                        finalScript === styledScript
-                          ? 'bg-violet-600/20 border-violet-500/50 text-violet-300 font-bold'
-                          : 'bg-gray-800/50 border-gray-700/50 text-gray-500 hover:text-gray-300'
-                      }`}
-                    >
-                      {finalScript === styledScript ? '✓ 나레이션용 선택됨' : '나레이션용으로 선택'}
-                    </button>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => { navigator.clipboard.writeText(styledScript).then(() => showToast('스타일 적용본이 클립보드에 복사되었습니다.')); }}
-                      className="text-sm text-gray-500 hover:text-gray-300 bg-gray-800/50 hover:bg-gray-700/50 px-2 py-1 rounded border border-gray-700/50 transition-colors"
-                      title="스타일 적용본 복사"
-                    >
-                      📋 복사
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { clearStyledScript(); setFinalScript(generatedScript?.content || manualText || ''); }}
-                      className="text-sm text-gray-500 hover:text-red-400 bg-gray-800/50 hover:bg-red-900/20 px-2 py-1 rounded border border-gray-700/50 transition-colors"
-                      title="스타일 적용본 삭제"
-                    >
-                      ✕ 삭제
-                    </button>
-                  </div>
-                </div>
-                <textarea
-                  value={styledScript}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    setStyledScript(val, styledStyleName);
-                    if (finalScript === styledScript) setFinalScript(val);
-                  }}
-                  rows={10}
-                  className="w-full bg-violet-900/10 text-gray-200 p-4 text-base leading-relaxed rounded-xl
-                    border border-violet-700/30 focus:outline-none focus:border-violet-500/30 resize-none"
-                />
-                <div className="absolute bottom-3 right-3">
-                  <span className="text-sm text-violet-400/60 bg-gray-800/80 px-2 py-1 rounded backdrop-blur-sm">
-                    {styledScript.length.toLocaleString()}자 · {estimateTime(styledScript.length)}
-                  </span>
-                </div>
               </div>
-            )}
-
-            {/* 스타일 변환 Diff 비교 */}
-            {styledScript && (generatedScript?.content || manualText) && (
-              <Suspense fallback={null}>
-                <StyleDiffView
-                  originalScript={generatedScript?.content || manualText || ''}
-                  styledScript={styledScript}
-                  styleName={styledStyleName}
-                />
-              </Suspense>
-            )}
-          </div>
-
-          {fileError && (
-            <p className="text-sm text-red-400 mt-1 px-1">{fileError}</p>
+            </div>
           )}
 
-          {/* 대본 분석 시각화 (가독성 + 참여 유도 히트맵) */}
+          {/* 스타일 변환 Diff 비교 */}
+          {styledScript && (generatedScript?.content || manualText) && (
+            <Suspense fallback={null}>
+              <StyleDiffView
+                originalScript={generatedScript?.content || manualText || ''}
+                styledScript={styledScript}
+                styleName={styledStyleName}
+              />
+            </Suspense>
+          )}
+
+          {fileError && <p className="text-sm text-red-400 mt-1 px-1">{fileError}</p>}
+
+          {/* 대본 분석 시각화 */}
           {scriptText.length > 100 && (
             <div className="mt-3 space-y-3">
               <Suspense fallback={null}>
@@ -1005,18 +1005,22 @@ ${instinctPrompt}
             </div>
           )}
 
-          {/* Script Expander (collapsible) */}
+          {/* 대본 확장 */}
           <div className="mt-3">
-            <button onClick={() => setShowExpander(!showExpander)}
+            <button
+              type="button"
+              onClick={() => setShowExpander(!showExpander)}
               className={`flex items-center gap-2 px-4 py-2.5 rounded-lg border text-sm font-semibold transition-all w-full justify-between ${
                 showExpander ? 'bg-green-600/15 border-green-500/40 text-green-300'
-                  : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:border-gray-500'}`}>
+                  : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:border-gray-500'
+              }`}
+            >
               <div className="flex items-center gap-2">
                 <span>📐</span>
                 <span>대본 확장</span>
-                <span className="text-sm text-gray-500 font-normal">(현재 대본을 AI가 자연스럽게 늘려줍니다)</span>
+                <span className="text-xs text-gray-500 font-normal">(현재 대본을 AI가 자연스럽게 늘려줍니다)</span>
               </div>
-              <span className="text-gray-600 text-sm">{showExpander ? '▲' : '▼'}</span>
+              <span className="text-gray-600 text-xs">{showExpander ? '▲' : '▼'}</span>
             </button>
             {showExpander && (
               <div className="mt-2 rounded-xl border border-green-700/30 bg-gray-800/20 p-5">
@@ -1026,11 +1030,10 @@ ${instinctPrompt}
           </div>
         </div>
 
-        {/* ━━ Step 4: 장면 분할 설정 ━━ */}
+        {/* ═══ D. 장면 분할 ═══ */}
         <div className="px-6 py-4 border-b border-gray-700/30">
           <div className="flex items-center gap-2 mb-3">
-            <span className="text-sm font-bold text-gray-500 uppercase tracking-wider">Step 4</span>
-            <span className="text-sm font-semibold text-gray-300">장면 분할</span>
+            <span className="text-sm font-bold text-gray-300">🎬 장면 분할</span>
             {estimatedScenes > 0 && (
               <span className="text-sm font-bold text-blue-300 bg-blue-900/30 px-2 py-0.5 rounded-lg border border-blue-700/40">
                 예상 약 {estimatedScenes}컷
@@ -1042,7 +1045,7 @@ ${instinctPrompt}
           <div className="flex items-center gap-3 mb-2">
             <div className="flex rounded-lg overflow-hidden border border-gray-600">
               {FORMAT_BUTTONS.map(f => (
-                <button key={f.id} onClick={() => setVideoFormat(f.id)}
+                <button key={f.id} type="button" onClick={() => setVideoFormat(f.id)}
                   className={`px-3 py-1.5 text-sm font-bold transition-all ${
                     videoFormat === f.id ? `${f.color} text-white` : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
                   }`}>{f.label}</button>
@@ -1051,7 +1054,7 @@ ${instinctPrompt}
             {videoFormat === VideoFormat.LONG && (
               <div className="flex bg-gray-800/60 p-0.5 rounded-lg border border-gray-600">
                 {(['DEFAULT', 'DETAILED'] as const).map(type => (
-                  <button key={type} onClick={() => setLongFormSplitType(type)}
+                  <button key={type} type="button" onClick={() => setLongFormSplitType(type)}
                     className={`py-1 px-2.5 rounded-md text-sm font-bold transition-all ${
                       longFormSplitType === type
                         ? (type === 'DEFAULT' ? 'bg-violet-600 text-white' : 'bg-indigo-600 text-white')
@@ -1075,8 +1078,11 @@ ${instinctPrompt}
           </p>
 
           {/* 실시간 단락 미리보기 */}
-          <button onClick={() => setShowSplitGuide(!showSplitGuide)}
-            className="mt-2 flex items-center gap-1.5 text-sm text-blue-400 hover:text-blue-300 transition-colors">
+          <button
+            type="button"
+            onClick={() => setShowSplitGuide(!showSplitGuide)}
+            className="mt-2 flex items-center gap-1.5 text-sm text-blue-400 hover:text-blue-300 transition-colors"
+          >
             <span>{showSplitGuide ? '▼' : '▶'}</span>
             <span className="underline font-medium">
               {livePreviewData.scenes.length > 0 ? `단락 미리보기 (예상 ${livePreviewData.scenes.length}컷)` : '단락 미리보기'}
@@ -1133,14 +1139,18 @@ ${instinctPrompt}
           )}
         </div>
 
-        {/* ━━ Final CTA ━━ */}
+        {/* ═══ Final CTA ═══ */}
         <div className="px-6 py-5 space-y-3">
-          <button onClick={handleSceneAnalysis} disabled={!displayScript || isAnalyzingScenes}
+          <button
+            type="button"
+            onClick={handleSceneAnalysis}
+            disabled={!displayScript || isAnalyzingScenes}
             className={`w-full relative overflow-hidden rounded-xl text-sm font-bold shadow-lg transition-all ${
               isAnalyzingScenes
                 ? 'bg-gray-800 border border-gray-600 text-white'
                 : 'bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 disabled:opacity-25 disabled:cursor-not-allowed text-white border border-violet-400/40 shadow-violet-900/30'
-            }`}>
+            }`}
+          >
             {isAnalyzingScenes && (
               <div className="absolute inset-y-0 left-0 bg-gradient-to-r from-amber-500 via-orange-500 to-yellow-500 rounded-xl transition-all duration-300 ease-out"
                 style={{ width: `${analysisProgress}%` }} />
@@ -1159,11 +1169,15 @@ ${instinctPrompt}
             </div>
           </button>
 
-          <button onClick={handleGoToSoundStudio} disabled={!displayScript.trim()}
+          <button
+            type="button"
+            onClick={handleGoToSoundStudio}
+            disabled={!displayScript.trim()}
             className="w-full bg-gradient-to-r from-fuchsia-600 to-violet-600
               hover:from-fuchsia-500 hover:to-violet-500 disabled:opacity-25 disabled:cursor-not-allowed
               text-white rounded-xl text-sm font-bold border border-fuchsia-400/30 shadow-lg shadow-fuchsia-900/20
-              py-3.5 flex items-center justify-center gap-2 transition-all">
+              py-3.5 flex items-center justify-center gap-2 transition-all"
+          >
             🎙 사운드 스튜디오로 대본 보내기
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
           </button>
