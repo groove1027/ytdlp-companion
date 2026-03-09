@@ -1433,7 +1433,7 @@ export enum EvolinkImageModel {
 
 // ═══ 영상 분석실 (VideoAnalysisRoom) ═══
 
-export type VideoAnalysisPreset = 'tikitaka' | 'snack';
+export type VideoAnalysisPreset = 'tikitaka' | 'snack' | 'condensed';
 
 /** 장면 하나의 구조화 데이터 (스낵형 + 티키타카 공용) */
 export interface VideoSceneRow {
