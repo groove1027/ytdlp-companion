@@ -1,6 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import { evolinkChat } from '../../../services/evolinkService';
+import { evolinkChatStream } from '../../../services/evolinkService';
 import type { EvolinkChatMessage, EvolinkContentPart } from '../../../services/evolinkService';
 import { useNavigationStore } from '../../../stores/navigationStore';
 import { useEditPointStore } from '../../../stores/editPointStore';
@@ -1104,10 +1104,9 @@ ${comments.slice(0, 15).map((c, i) => `${i + 1}. ${c.slice(0, 150)}`).join('\n')
         { role: 'user', content: userContent },
       ];
 
-      // 3단계: AI 분석 (Gemini 3.1 Pro — 프레임 단위 시각 분석 포함)
-      const response = await evolinkChat(messages, { temperature: 0.5, maxTokens: 40000 });
+      // 3단계: AI 분석 — 스트리밍 (연결 타임아웃 방지)
+      const text = await evolinkChatStream(messages, () => {}, { temperature: 0.5, maxTokens: 40000 });
 
-      const text = response.choices[0]?.message?.content || '';
       const parsed = parseVersions(text);
       setRawResult(text);
       setVersions(parsed);
