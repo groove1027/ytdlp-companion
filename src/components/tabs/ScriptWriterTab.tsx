@@ -78,7 +78,8 @@ export default function ScriptWriterTab() {
     finalScript, setFinalScript,
     styledScript, styledStyleName, setStyledScript, clearStyledScript,
     isGenerating, startGeneration, finishGeneration,
-    selectedTopic, benchmarkScript,
+    selectedTopic, setSelectedTopic, benchmarkScript,
+    contentFormat,
     videoFormat, setVideoFormat,
     longFormSplitType, setLongFormSplitType, smartSplit,
     targetCharCount, setTargetCharCount,
@@ -99,6 +100,15 @@ export default function ScriptWriterTab() {
   const [selectedStyleId, setSelectedStyleId] = useState<string | null>(null);
   const [styleError, setStyleError] = useState('');
   const [showChannelGuide, setShowChannelGuide] = useState(false);
+
+  // 채널분석 데이터 도착 시 채널 가이드 자동 펼침
+  const channelGuideAutoRef = React.useRef(false);
+  useEffect(() => {
+    if (channelGuideline && selectedTopic && !channelGuideAutoRef.current) {
+      setShowChannelGuide(true);
+      channelGuideAutoRef.current = true;
+    }
+  }, [channelGuideline, selectedTopic]);
 
   const instinctIds = useInstinctStore(s => s.selectedMechanismIds);
   const isRecommending = useInstinctStore(s => s.isRecommending);
@@ -378,14 +388,24 @@ ${instinctPrompt}
     setGenError('');
 
     const formatLabel = `${targetCharCount.toLocaleString()}자 분량 (${estimateTime(targetCharCount)})`;
+    const isShorts = contentFormat === 'shorts';
 
-    const systemPrompt = `당신은 전문 영상 대본 작가입니다. 사용자의 요청에 따라 완성도 높은 영상 대본을 생성합니다.
+    const shortsRule = isShorts
+      ? `\n\n중요 — 이 대본은 유튜브 쇼츠(60초 이내 세로 영상)용입니다:
+- 첫 문장에서 즉시 주제를 던지세요 (서론/도입부 없이 바로 핵심)
+- 짧고 강렬한 문장 위주 (한 문장 20자 이내)
+- "본 영상에서 다루겠습니다" 같은 롱폼 유도 표현 절대 금지
+- 대본 자체가 완결된 콘텐츠여야 합니다 (다른 영상 참조 X)
+- 마지막은 반전/충격/핵심 결론으로 임팩트 있게 마무리`
+      : '';
+
+    const systemPrompt = `당신은 전문 영상 대본 작가입니다. 사용자의 요청에 따라 완성도 높은 ${isShorts ? '유튜브 쇼츠' : '영상'} 대본을 생성합니다.
 
 핵심 원칙:
 1. 대본에 포함되는 정보, 사례, 통계, 사건은 반드시 실제로 존재하는 것이어야 합니다.
 2. 허구의 연구, 가짜 통계, 존재하지 않는 사건을 지어내지 마세요.
 3. 확실하지 않은 정보는 "~로 알려져 있다", "~라는 주장이 있다"로 표현하세요.
-4. 구체적 수치나 출처를 언급할 때는 실제 데이터만 사용하세요.
+4. 구체적 수치나 출처를 언급할 때는 실제 데이터만 사용하세요.${shortsRule}
 
 반드시 JSON 형식으로만 응답하세요. 마크다운 코드 블록 없이 순수 JSON만 출력합니다.`;
 
@@ -405,10 +425,11 @@ ${instinctPrompt}
       ? `\n\n[주제 본능 분석]\n핵심 본능: ${selectedTopic.instinctAnalysis.primaryInstincts.join(', ')}\n조합 공식: ${selectedTopic.instinctAnalysis.comboFormula}\n추천 훅: "${selectedTopic.instinctAnalysis.hookSuggestion}"\n→ 위 심리 기제를 도입부(훅)에 적극 반영하세요.`
       : '';
 
-    const userPrompt = `다음 조건에 맞는 영상 대본을 생성하세요:
+    const userPrompt = `다음 조건에 맞는 ${isShorts ? '유튜브 쇼츠(세로 60초)' : '영상'} 대본을 생성하세요:
 
 - 제목: ${title}
 - 줄거리: ${synopsis}
+- 포맷: ${isShorts ? '쇼츠 (60초 이내, 세로형)' : '롱폼'}
 - 분량: ${formatLabel}${instinctSection}${guidelineSection}${benchmarkSection}${topicInstinctSection}
 
 다음 JSON 형식으로 출력하세요:
@@ -520,7 +541,39 @@ ${instinctPrompt}
       {/* ─── Scrollable content ─── */}
       <div className="flex-1 overflow-auto">
 
-        {/* (navigation prompt removed — now integrated into results section below CTA) */}
+        {/* 채널분석에서 도착한 소재 안내 배너 */}
+        {selectedTopic && !scriptText && (
+          <div className="mx-6 mt-4 mb-2 bg-gradient-to-r from-blue-900/25 to-violet-900/25 border border-blue-500/30 rounded-xl p-4">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 bg-blue-600/20 rounded-full flex items-center justify-center flex-shrink-0">
+                <span className="text-lg">📡</span>
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-bold text-blue-300">
+                  채널분석에서 소재를 가져왔습니다
+                </p>
+                <p className="text-sm text-gray-300 mt-1">
+                  {channelGuideline && (
+                    <><span className="text-orange-400 font-semibold">{channelGuideline.channelName}</span> 채널 스타일 + </>
+                  )}
+                  <span className="text-violet-400 font-semibold">{selectedTopic.title}</span>
+                </p>
+                <p className="text-xs text-gray-500 mt-1.5">
+                  제목과 줄거리가 자동 입력되었습니다 — 아래 Step 3에서 바로 AI 대본을 생성하세요
+                </p>
+              </div>
+              <button
+                onClick={() => { setSelectedTopic(null); setTitle(''); setSynopsis(''); }}
+                className="text-gray-600 hover:text-gray-400 transition-colors flex-shrink-0"
+                title="초기화"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* ━━ Step 1: 소재 준비 ━━ */}
         <div className="px-6 py-4 border-b border-gray-700/30">
@@ -599,10 +652,16 @@ ${instinctPrompt}
                 )}
               </button>
             )}
-            {instinctIds.length === 0 && (
+            {instinctIds.length === 0 && !selectedTopic && (
               <div className="text-center py-4 px-4 bg-orange-900/15 border border-orange-500/30 rounded-lg">
                 <p className="text-sm text-orange-300 font-medium">Step 1에서 본능 기제를 먼저 선택해주세요</p>
                 <p className="text-xs text-orange-400/60 mt-1">본능 기제를 선택하면 Google 검색 기반 바이럴 소재를 추천받을 수 있습니다</p>
+              </div>
+            )}
+            {instinctIds.length === 0 && selectedTopic && (
+              <div className="text-center py-3 px-4 bg-green-900/15 border border-green-500/30 rounded-lg">
+                <p className="text-sm text-green-300 font-medium">채널분석에서 소재가 이미 선택됨 — Step 3으로 바로 이동 가능</p>
+                <p className="text-xs text-green-400/60 mt-1">추가로 본능 기제 기반 소재 추천도 받을 수 있습니다</p>
               </div>
             )}
 
@@ -625,11 +684,20 @@ ${instinctPrompt}
             <span className="text-sm font-semibold text-gray-300">대본 작성</span>
           </div>
 
-          {/* A. 선택된 소재 배너 */}
+          {/* A. 선택된 소재 배너 (본능 기제 or 채널분석) */}
           {selectedTopicFromStore && (
             <div className="bg-violet-900/20 border border-violet-500/30 rounded-lg px-4 py-3 mb-3">
               <p className="text-sm text-violet-300 font-bold">선택된 소재: {selectedTopicFromStore.title}</p>
               <p className="text-sm text-gray-400">{selectedTopicFromStore.synopsis}</p>
+            </div>
+          )}
+          {!selectedTopicFromStore && selectedTopic && (
+            <div className="bg-blue-900/20 border border-blue-500/30 rounded-lg px-4 py-3 mb-3">
+              <p className="text-sm text-blue-300 font-bold">채널분석 소재: {selectedTopic.title}</p>
+              <p className="text-sm text-gray-400">{selectedTopic.mainSubject}</p>
+              {selectedTopic.scriptFlow && (
+                <p className="text-sm text-gray-500 mt-1">대본 흐름: {selectedTopic.scriptFlow}</p>
+              )}
             </div>
           )}
 
@@ -724,6 +792,13 @@ ${instinctPrompt}
                 <span className="text-base">📝</span>
                 <span className="text-sm font-semibold text-gray-300">AI 대본 생성</span>
                 <span className="text-sm text-green-300/80 font-medium">글자수를 입력하고 우측 생성 버튼을 누르세요</span>
+                <span className={`text-xs px-2 py-0.5 rounded font-bold border ${
+                  contentFormat === 'shorts'
+                    ? 'bg-pink-900/40 text-pink-300 border-pink-500/30'
+                    : 'bg-blue-900/40 text-blue-300 border-blue-500/30'
+                }`}>
+                  {contentFormat === 'shorts' ? '쇼츠' : '롱폼'}
+                </span>
                 {selectedStyleId && (
                   <span className="text-xs px-2 py-0.5 rounded bg-violet-900/40 text-violet-300 border border-violet-500/30">
                     {SCRIPT_STYLE_PRESETS.find(p => p.id === selectedStyleId)?.icon} {SCRIPT_STYLE_PRESETS.find(p => p.id === selectedStyleId)?.name}

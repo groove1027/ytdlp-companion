@@ -36,6 +36,7 @@ const ChannelAnalysisRoom: React.FC = () => {
   } = useChannelAnalysisStore();
   const setActiveTab = useNavigationStore(s => s.setActiveTab);
   const swSetTopics = useScriptWriterStore(s => s.setTopics);
+  const swSetSelectedTopic = useScriptWriterStore(s => s.setSelectedTopic);
 
   const { requireAuth } = useAuthGuard();
 
@@ -272,11 +273,16 @@ const ChannelAnalysisRoom: React.FC = () => {
     }
   }, [topicInput, channelGuideline]);
 
+  const swSetContentFormat = useScriptWriterStore(s => s.setContentFormat);
+
   // 주제를 대본 작성으로 보내기
   const handleSend = useCallback((topic: LegacyTopicRecommendation) => {
     swSetTopics([topic]);
+    swSetSelectedTopic(topic);
+    // 채널분석 포맷(롱폼/쇼츠)을 대본작성에 자동 동기화
+    swSetContentFormat(contentFormat);
     setActiveTab('script-writer');
-  }, [swSetTopics, setActiveTab]);
+  }, [swSetTopics, swSetSelectedTopic, swSetContentFormat, contentFormat, setActiveTab]);
 
   return (
     <div className="space-y-6 animate-fade-in-up">
