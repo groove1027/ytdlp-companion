@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
-import { ProjectData, ProjectSummary } from '../../types';
+import { ProjectData, ProjectSummary, PipelineSteps } from '../../types';
 import { getAllProjectSummaries, deleteProject, canCreateNewProject, getProject } from '../../services/storageService';
 import { showToast } from '../../stores/uiStore';
 import { useNavigationStore } from '../../stores/navigationStore';
@@ -47,6 +47,59 @@ const estimateDurationFromVideos = (completedVideos: number): string => {
   if (!completedVideos) return '';
   const sec = completedVideos * 6;
   return sec < 60 ? `${sec}초` : `${Math.floor(sec / 60)}분 ${sec % 60}초`;
+};
+
+// [v4.5] 상대 시간 표시
+const formatRelativeTime = (ts: number): string => {
+  const diff = Date.now() - ts;
+  const sec = Math.floor(diff / 1000);
+  if (sec < 60) return '방금 전';
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}분 전`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}시간 전`;
+  const days = Math.floor(hr / 24);
+  if (days < 7) return `${days}일 전`;
+  return formatDate(ts);
+};
+
+// [v4.5] 탭별 그라데이션 배경 (이미지 없는 카드용)
+const TAB_GRADIENTS: Record<string, string> = {
+  'channel-analysis': 'from-blue-900/50 to-blue-800/20',
+  'script-writer': 'from-violet-900/50 to-violet-800/20',
+  'sound-studio': 'from-fuchsia-900/50 to-fuchsia-800/20',
+  'image-video': 'from-orange-900/50 to-orange-800/20',
+  'edit-room': 'from-amber-900/50 to-amber-800/20',
+  'upload': 'from-green-900/50 to-green-800/20',
+  'subtitle-remover': 'from-cyan-900/50 to-cyan-800/20',
+  'detail-page': 'from-emerald-900/50 to-emerald-800/20',
+  'thumbnail-studio': 'from-pink-900/50 to-pink-800/20',
+};
+
+// [v4.5] 탭별 아이콘
+const TAB_ICONS: Record<string, string> = {
+  'channel-analysis': '🔍',
+  'script-writer': '✍️',
+  'sound-studio': '🎵',
+  'image-video': '🎬',
+  'edit-room': '✂️',
+  'upload': '📤',
+};
+
+// [v4.5] 파이프라인 진행도 (mini icons)
+const PIPELINE_STEPS: { key: keyof PipelineSteps; icon: string; label: string }[] = [
+  { key: 'channelAnalysis', icon: '🔍', label: '분석' },
+  { key: 'scriptWriting', icon: '✍️', label: '대본' },
+  { key: 'soundStudio', icon: '🎵', label: '사운드' },
+  { key: 'imageVideo', icon: '🎬', label: '영상' },
+  { key: 'editRoom', icon: '✂️', label: '편집' },
+  { key: 'upload', icon: '📤', label: '업로드' },
+];
+
+const getPipelineProgress = (steps?: PipelineSteps): number => {
+  if (!steps) return 0;
+  const completed = PIPELINE_STEPS.filter(s => steps[s.key]).length;
+  return Math.round((completed / PIPELINE_STEPS.length) * 100);
 };
 
 // 배지 색상 맵 (정적 클래스로 Tailwind 호환 보장)
@@ -110,9 +163,28 @@ interface CardProps {
   onOpen: () => void;
 }
 
-// --- 그리드 카드 ---
+// --- 그리드 카드 (v4.5 스마트 프로젝트) ---
 const ProjectCard: React.FC<CardProps> = ({ summary, isSelected, onToggleSelect, onOpen }) => {
   const thumb = summary.thumbnailUrl;
+  const images = summary.sceneImageUrls || [];
+  const hasImages = images.length > 0 || !!thumb;
+  const gradient = TAB_GRADIENTS[summary.lastActiveTab || ''] || 'from-gray-800/50 to-gray-700/20';
+  const progress = getPipelineProgress(summary.pipelineSteps);
+
+  // [v4.5] Hover Scrub — 마우스 X 위치에 따라 장면 이미지 전환
+  const [hoverIdx, setHoverIdx] = useState(-1);
+  const thumbRef = useRef<HTMLDivElement>(null);
+  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    if (images.length < 2) return;
+    const rect = thumbRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const x = (e.clientX - rect.left) / rect.width;
+    setHoverIdx(Math.min(Math.floor(x * images.length), images.length - 1));
+  }, [images.length]);
+  const handleMouseLeave = useCallback(() => setHoverIdx(-1), []);
+
+  const displayImage = hoverIdx >= 0 && images[hoverIdx] ? images[hoverIdx] : thumb;
+
   return (
     <div
       className={`group bg-gray-800 rounded-xl border overflow-hidden cursor-pointer transition-all hover:border-blue-500/50 hover:shadow-lg hover:shadow-blue-500/10 ${isSelected ? 'border-blue-500 ring-1 ring-blue-500/40' : 'border-gray-700'}`}
@@ -132,27 +204,77 @@ const ProjectCard: React.FC<CardProps> = ({ summary, isSelected, onToggleSelect,
           <Checkbox checked={isSelected} onClick={e => { e.stopPropagation(); onToggleSelect(); }} />
         </div>
       </div>
-      <div className="aspect-video bg-gray-700">
-        {thumb
-          ? <img src={thumb} alt={summary.title} className="w-full h-full object-cover" />
-          : <div className="w-full h-full flex items-center justify-center"><PlaceholderIcon /></div>}
+
+      {/* 썸네일 영역 — Hover Scrub + 동적 그라데이션 */}
+      <div
+        ref={thumbRef}
+        className="aspect-video bg-gray-700 relative overflow-hidden"
+        onMouseMove={handleMouseMove}
+        onMouseLeave={handleMouseLeave}
+      >
+        {hasImages && displayImage ? (
+          <>
+            <img src={displayImage} alt={summary.title} className="w-full h-full object-cover transition-opacity duration-150" />
+            {/* Hover Scrub 인디케이터 */}
+            {images.length > 1 && hoverIdx >= 0 && (
+              <div className="absolute bottom-1.5 left-1/2 -translate-x-1/2 flex gap-0.5">
+                {images.map((_, i) => (
+                  <div key={i} className={`h-0.5 rounded-full transition-all ${i === hoverIdx ? 'w-4 bg-white' : 'w-1.5 bg-white/40'}`} />
+                ))}
+              </div>
+            )}
+          </>
+        ) : (
+          /* 이미지 없는 카드 — 활동 기반 동적 비주얼 */
+          <div className={`w-full h-full bg-gradient-to-br ${gradient} flex flex-col items-center justify-center gap-2 p-3`}>
+            {/* 파이프라인 미니 아이콘 */}
+            {summary.pipelineSteps && Object.values(summary.pipelineSteps).some(Boolean) ? (
+              <>
+                <div className="flex items-center gap-1.5">
+                  {PIPELINE_STEPS.map(s => {
+                    const done = summary.pipelineSteps?.[s.key];
+                    return (
+                      <div key={s.key} className={`flex flex-col items-center gap-0.5 transition-all ${done ? 'opacity-100' : 'opacity-30'}`}>
+                        <span className="text-lg">{s.icon}</span>
+                        <div className={`w-1.5 h-1.5 rounded-full ${done ? 'bg-green-400' : 'bg-gray-600'}`} />
+                      </div>
+                    );
+                  })}
+                </div>
+                {progress > 0 && (
+                  <div className="w-3/4 h-1 bg-gray-700 rounded-full overflow-hidden mt-1">
+                    <div className="h-full bg-gradient-to-r from-blue-500 to-violet-500 rounded-full transition-all" style={{ width: `${progress}%` }} />
+                  </div>
+                )}
+              </>
+            ) : (
+              /* 아직 활동 없음 */
+              <div className="flex flex-col items-center gap-1">
+                <span className="text-2xl">{TAB_ICONS[summary.lastActiveTab || ''] || '📁'}</span>
+                <span className="text-[11px] text-gray-400 font-medium">새 프로젝트</span>
+              </div>
+            )}
+          </div>
+        )}
       </div>
+
+      {/* 하단: 제목 + 상대시간 + 파이프라인 바 */}
       <div className="p-3">
         <h3 className="text-sm font-bold text-white truncate mb-1">{summary.title}</h3>
-        <div className="text-sm text-gray-500 space-y-0.5">
-          {summary.createdAt && (
-            <p>생성: {formatDate(summary.createdAt)}</p>
-          )}
-          <p>수정: {formatDate(summary.lastModified)}</p>
+        <div className="flex items-center justify-between text-[12px] text-gray-500">
+          <span>{formatRelativeTime(summary.lastModified)}</span>
+          {summary.createdAt && <span>{formatDate(summary.createdAt).split(' ').slice(0, 1).join()}</span>}
         </div>
       </div>
     </div>
   );
 };
 
-// --- 리스트 아이템 ---
+// --- 리스트 아이템 (v4.5) ---
 const ProjectListItem: React.FC<CardProps> = ({ summary, isSelected, onToggleSelect, onOpen }) => {
   const thumb = summary.thumbnailUrl;
+  const gradient = TAB_GRADIENTS[summary.lastActiveTab || ''] || 'from-gray-800/50 to-gray-700/20';
+  const progress = getPipelineProgress(summary.pipelineSteps);
   return (
     <div
       className={`flex items-center gap-4 bg-gray-800 rounded-lg border px-4 py-3 cursor-pointer transition-all hover:border-blue-500/50 ${isSelected ? 'border-blue-500 ring-1 ring-blue-500/40' : 'border-gray-700'}`}
@@ -162,13 +284,23 @@ const ProjectListItem: React.FC<CardProps> = ({ summary, isSelected, onToggleSel
       <div className="w-20 h-12 rounded bg-gray-700 overflow-hidden flex-shrink-0">
         {thumb
           ? <img src={thumb} alt={summary.title} className="w-full h-full object-cover" />
-          : <div className="w-full h-full flex items-center justify-center"><PlaceholderIcon size="w-5 h-5" /></div>}
+          : <div className={`w-full h-full bg-gradient-to-br ${gradient} flex items-center justify-center`}>
+              <span className="text-base">{TAB_ICONS[summary.lastActiveTab || ''] || '📁'}</span>
+            </div>}
       </div>
       <div className="flex-1 min-w-0">
         <h3 className="text-sm font-bold text-white truncate">{summary.title}</h3>
-        <div className="flex items-center gap-3 text-sm text-gray-500">
-          {summary.createdAt && <span>생성: {formatDate(summary.createdAt)}</span>}
-          <span>수정: {formatDate(summary.lastModified)}</span>
+        <div className="flex items-center gap-3 text-[12px] text-gray-500">
+          <span>{formatRelativeTime(summary.lastModified)}</span>
+          {/* 미니 파이프라인 */}
+          {summary.pipelineSteps && (
+            <div className="flex items-center gap-0.5">
+              {PIPELINE_STEPS.map(s => (
+                <span key={s.key} className={`text-[10px] ${summary.pipelineSteps?.[s.key] ? 'opacity-100' : 'opacity-20'}`}>{s.icon}</span>
+              ))}
+            </div>
+          )}
+          {progress > 0 && <span className="text-blue-400 font-bold">{progress}%</span>}
         </div>
       </div>
       <div className="flex flex-wrap gap-1 max-w-xs justify-end">

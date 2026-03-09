@@ -81,6 +81,20 @@ export const useNavigationStore = create<NavigationStore>((set) => ({
         saveState({ activeTab: tab });
         set({ activeTab: tab });
       }
+      // [v4.5] 탭 전환 시 lastActiveTab 추적 + 파이프라인 단계 마킹
+      useProjectStore.getState().setLastActiveTab(tab);
+      const PIPELINE_MAP: Record<string, string> = {
+        'channel-analysis': 'channelAnalysis',
+        'script-writer': 'scriptWriting',
+        'sound-studio': 'soundStudio',
+        'image-video': 'imageVideo',
+        'edit-room': 'editRoom',
+        'upload': 'upload',
+      };
+      const step = PIPELINE_MAP[tab];
+      if (step) {
+        useProjectStore.getState().markPipelineStep(step as any);
+      }
     }
   },
 

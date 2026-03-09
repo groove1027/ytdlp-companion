@@ -1,8 +1,7 @@
 
 import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import ConfigForm from './components/ConfigForm';
-import { StoryboardScene } from './components/StoryboardScene';
-const ThumbnailGenerator = lazy(() => import('./components/ThumbnailGenerator'));
+// [v4.5] 레거시 UI 제거됨 — StoryboardScene, ThumbnailGenerator는 각 탭 컴포넌트에서 직접 import
 import ProcessingOverlay from './components/ProcessingOverlay';
 import ImageLightbox from './components/ImageLightbox';
 import DebugConsole from './components/DebugConsole';
@@ -25,9 +24,9 @@ import { canCreateNewProject, requestPersistentStorage, getProject } from './ser
 import { useVideoBatch } from './hooks/useVideoBatch';
 import { useAutoSave } from './hooks/useAutoSave';
 import { uploadMediaToHosting } from './services/uploadService';
-import { downloadImages, downloadVideos, downloadThumbnails, exportProjectHtml, exportVisualPromptsHtml, exportVideoPromptsHtml } from './services/exportService';
+// [v4.5] 레거시 UI 제거됨 — export 함수들은 편집실 탭에서 직접 import
 import { PRICING } from './constants';
-import { getVisualStyleLabel } from './components/VisualStylePicker';
+// [v4.5] getVisualStyleLabel은 레거시 UI 제거로 불필요 — 각 탭에서 직접 import
 import { getGeminiKey } from './services/apiService';
 import { dataURLtoFile } from './utils/fileHelpers';
 import { splitVideoIntoSegments, getVideoDuration } from './utils/videoSegmentUtils';
@@ -236,7 +235,11 @@ const App: React.FC = () => {
         const project = await getProject(lastId);
         if (project) {
           useProjectStore.getState().loadProject(project);
-          // 탭 상태는 navigationStore가 localStorage에서 복원하므로 그대로 유지
+          // [FIX] 프로젝트 탭 + 대시보드 숨김 상태로 복원되면 구버전 UI가 뜨므로 대시보드로 강제 전환
+          const navState = useNavigationStore.getState();
+          if (navState.activeTab === 'project' && !navState.showProjectDashboard) {
+            navState.goToDashboard();
+          }
         } else {
           // IndexedDB에 해당 프로젝트 없음 → 대시보드로 이동
           localStorage.removeItem('last-project-id');
@@ -315,11 +318,6 @@ const App: React.FC = () => {
   };
 
   // setProcessing replaced by setProcessing from useUIStore
-
-  const getAtmosphereLabel = (prompt: string): string => {
-      if (!prompt) return '';
-      return getVisualStyleLabel(prompt) || prompt;
-  };
 
   // A-2: useCallback with getState() to avoid deps on scenes/config
   const handleGenerateImage = useCallback(async (sceneId: string, feedback?: string, currentScenes?: typeof scenes, currentConfig?: typeof config, skipLoadingState = false) => {
@@ -431,6 +429,12 @@ const App: React.FC = () => {
                 setScenes(prev => prev.map(s => s.id === sceneId && s.imageUrl === imageUrl ? { ...s, imageUrl: persistedUrl } : s));
             }
         });
+
+        // [v4.5] 스마트 제목 — 첫 이미지 생성 시
+        const ps = useProjectStore.getState();
+        const style = ps.config?.atmosphere || ps.config?.selectedVisualStyle || '';
+        const sceneCount = ps.scenes.filter(s => s.imageUrl).length;
+        ps.smartUpdateTitle('image-video', style ? `${style} ${sceneCount}컷` : `${sceneCount}컷 생성`);
     } catch (e: any) {
         const errMsg = e?.message || '알 수 없는 오류';
         console.error(`[handleGenerateImage] Scene ${sceneId} failed:`, errMsg);
@@ -810,9 +814,11 @@ const App: React.FC = () => {
   const handleLoadProject = (project: ProjectData) => {
       useProjectStore.getState().loadProject(project);
       leaveDashboard();
-      // 프로젝트에 장면이 있으면 편집실 탭으로 바로 이동
+      // 프로젝트 상태에 따라 적절한 탭으로 이동 (구버전 레거시 UI 방지)
       if (project.scenes.length > 0) {
         useNavigationStore.getState().setActiveTab('edit-room');
+      } else {
+        useNavigationStore.getState().setActiveTab('channel-analysis');
       }
   };
   
@@ -1289,199 +1295,10 @@ const App: React.FC = () => {
           ) : showConfigForm ? (
               <ConfigForm onNext={handleConfigSubmit} isLoading={isProcessing} onSetProcessing={setProcessing} onCostAdd={addCost} onSaveDraft={handleSaveDraft} initialDraft={null} />
           ) : (
-              <div className="animate-fade-in space-y-6">
-                  <div className="border-b border-gray-800 pb-2">
-                          <div className="relative group mb-1 flex items-center max-w-full">
-                              <input type="text" value={projectTitle} onChange={(e) => setProjectTitle(e.target.value)} className="text-3xl font-bold text-white bg-transparent border-b border-transparent hover:border-gray-500 focus:border-blue-500 focus:outline-none transition-all w-full md:w-auto md:min-w-[400px]" placeholder="프로젝트 제목을 입력하세요" />
-                              <span className="ml-2 text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity text-base pointer-events-none">✏️</span>
-                          </div>
-                          
-                          {/* [UPDATED] Detailed Project Info Badges */}
-                          <div className="flex gap-2 text-sm text-gray-400 items-center flex-wrap mt-2">
-                              {/* 1. Basic Mode Info */}
-                              <span className={`px-2 py-1 rounded border border-gray-700 font-bold bg-gray-800`}>
-                                  {/* [v4.5] REMAKE 모드 표시 주석처리됨 - 추후 복원 가능 */}
-                                  {/* {config!.mode === 'THUMBNAIL' || config!.isThumbnailOnlyMode ? '🖼️ 썸네일 전용' : config!.mode === 'REMAKE' ? '🎬 V2V 변환' : config!.mode === 'SCRIPT' ? '🎬 대본 모드' : config!.mode} */}
-                                  {config!.mode === 'THUMBNAIL' || config!.isThumbnailOnlyMode ? '🖼️ 썸네일 전용' : config!.mode === 'SCRIPT' ? '🎬 대본 모드' : config!.mode}
-                              </span>
-                              <span className="bg-gray-800 px-2 py-1 rounded border border-gray-700 font-bold">{config!.aspectRatio}</span>
-                              
-                              {/* 2. Style Badge */}
-                              {config!.atmosphere && (
-                                  <span className="bg-purple-900/30 text-purple-300 px-2 py-1 rounded border border-purple-700/50 font-bold truncate max-w-[200px]" title={config!.atmosphere}>
-                                      🎨 {getAtmosphereLabel(config!.atmosphere)}
-                                  </span>
-                              )}
-
-                              {/* 3. Split Logic Badge */}
-                              {config!.smartSplit ? (
-                                  <span className="bg-indigo-900/30 text-indigo-300 px-2 py-1 rounded border border-indigo-500/50 font-bold flex items-center gap-1">
-                                      🤖 AI 자동 분할
-                                  </span>
-                              ) : (
-                                  <span className="bg-orange-900/30 text-orange-300 px-2 py-1 rounded border border-orange-500/50 font-bold flex items-center gap-1">
-                                      ✂️ 수동 분할 (Enter)
-                                  </span>
-                              )}
-
-                              {/* 4. Feature Toggles */}
-                              {config!.allowInfographics && <span className="bg-blue-900/30 text-blue-300 px-2 py-1 rounded border border-blue-500/50 font-bold">📊 인포그래픽 모드</span>}
-                              {config!.textForceLock && <span className="bg-orange-900/30 text-orange-300 px-2 py-1 rounded border border-orange-500/50 font-bold">🔠 텍스트 강제 고정</span>}
-                              {config!.suppressText && <span className="bg-red-900/30 text-red-300 px-2 py-1 rounded border border-red-500/50 font-bold">🚫 텍스트 금지 (No Text)</span>}
-                              {config!.characterImage && <span className="bg-emerald-900/30 text-emerald-300 px-2 py-1 rounded border border-emerald-500/50 font-bold">👤 캐릭터 적용됨</span>}
-                              {config!.isMixedMedia && <span className="bg-pink-900/30 text-pink-300 px-2 py-1 rounded border border-pink-500/50 font-bold">🔀 스타일 혼합</span>}
-                          </div>
-                      </div>
-
-                      <div className="flex flex-wrap gap-3 w-full bg-gray-900/50 p-4 rounded-xl border border-gray-800 shadow-sm items-center">
-                         <div className="text-base font-bold text-gray-400 mr-2">📂 프로젝트 관리:</div>
-                         {!(config!.mode === 'THUMBNAIL' || config!.isThumbnailOnlyMode) && (
-                             <button onClick={() => useUIStore.getState().setShowFullScriptModal(true)} className="bg-gray-800 hover:bg-gray-700 border border-gray-600 text-gray-200 px-4 py-2.5 rounded-lg text-sm font-bold shadow-md flex items-center gap-2"><span>📜</span> 전체 대본</button>
-                         )}
-                         <button onClick={downloadThumbnails} className="bg-gray-800 hover:bg-gray-700 border border-gray-600 text-gray-200 px-4 py-2.5 rounded-lg text-sm font-bold shadow-md flex items-center gap-2"><span>🖼️</span> 썸네일 저장</button>
-                         {!(config!.mode === 'THUMBNAIL' || config!.isThumbnailOnlyMode) && (
-                             <>
-                                 <button onClick={downloadImages} className="bg-gray-800 hover:bg-gray-700 border border-gray-600 text-gray-200 px-4 py-2.5 rounded-lg text-sm font-bold shadow-md flex items-center gap-2"><span>📸</span> 이미지 저장</button>
-                                 <div className="flex items-center gap-2">
-                                     <button onClick={downloadVideos} className="bg-gray-800 hover:bg-gray-700 border border-gray-600 text-gray-200 px-4 py-2.5 rounded-lg text-sm font-bold shadow-md flex items-center gap-2"><span>🎬</span> 영상 저장</button>
-                                     {(isBatching || (toast && toast.show)) && <span className="text-sm text-green-300 font-bold bg-green-900/40 px-3 py-1.5 rounded-full border border-green-500/30 animate-pulse">{isBatching ? `⏳ ${batchProgress.current}/${batchProgress.total} 저장 중...` : `⏳ ${toast?.message} (${toast?.current}/${toast?.total})`}</span>}
-                                 </div>
-                                 <button onClick={exportVisualPromptsHtml} className="bg-gray-800 hover:bg-gray-700 border border-gray-600 text-gray-200 px-4 py-2.5 rounded-lg text-sm font-bold shadow-md flex items-center gap-2"><span>🎨</span> 비주얼 프롬프트 가이드</button>
-                                 <button onClick={exportVideoPromptsHtml} className="bg-gray-800 hover:bg-gray-700 border border-gray-600 text-gray-200 px-4 py-2.5 rounded-lg text-sm font-bold shadow-md flex items-center gap-2"><span>🎬</span> 영상 프롬프트 가이드</button>
-                             </>
-                         )}
-                         <button onClick={exportProjectHtml} className="bg-blue-900/40 hover:bg-blue-800/60 border border-blue-500/50 text-blue-200 px-4 py-2.5 rounded-lg text-sm font-bold shadow-lg flex items-center gap-2 ml-auto"><span>💾</span> 프로젝트 저장 (HTML)</button>
-                      </div>
-
-                      {!(config!.mode === 'THUMBNAIL' || config!.isThumbnailOnlyMode) && (
-                          <div className="flex flex-col gap-2">
-                              <div className="flex justify-end px-2">
-                                  <span className="text-[13px] text-yellow-300 bg-yellow-900/20 px-3 py-1.5 rounded border border-yellow-700/30 font-bold flex items-center gap-1 shadow-lg">
-                                      💡 Veo 3.1 1080p(Apimart)는 가격($0.08)이 가장 저렴하고 화질이 뛰어난 최고의 가성비 모델입니다! 다만, 생성속도가 가장 느리고 API 서버의 트래픽으로 인해 오류가 뜰 수 있습니다!
-                                  </span>
-                              </div>
-
-                              <div className="bg-gray-800/50 rounded-xl p-4 border border-gray-700 flex flex-col gap-4 shadow-lg">
-                                  <div className="flex flex-col xl:flex-row items-center justify-between gap-4 w-full">
-                                      <div className="flex items-center gap-3 w-full xl:w-auto justify-start">
-                                          <span className="text-base font-bold text-gray-300 whitespace-nowrap">🎥 일괄 영상 생성 (Batch Only) :</span>
-                                      </div>
-                                      <div className="flex flex-col lg:flex-row items-center gap-2 lg:gap-0 w-full xl:w-auto justify-center lg:justify-end">
-                                          <div className="flex items-center gap-2 w-full sm:w-auto justify-center">
-                                              
-                                              {/* [UPDATED LAYOUT] Grok -> Veo 720p -> Veo 1080p */}
-                                              
-                                              {/* 1. Grok HQ */}
-                                              <button 
-                                                  onClick={() => runGrokHQBatch(batchGrokDuration, batchGrokSpeech)} 
-                                                  className="bg-gradient-to-r from-pink-700 to-rose-600 hover:from-pink-600 hover:to-rose-500 text-white px-4 py-2 text-sm font-bold transition-all hover:brightness-110 flex items-center gap-1 rounded-lg shadow-md whitespace-nowrap"
-                                              >
-                                                  🚀 Grok HQ (Kie)
-                                              </button>
-                                              
-                                              {/* Grok Settings */}
-                                              <div className="flex items-center bg-gray-900 rounded-lg p-1 border border-gray-700 h-9 mr-2">
-                                                  <button 
-                                                      onClick={() => setBatchGrokDuration(prev => prev === '6' ? '10' : prev === '10' ? '15' : '6')}
-                                                      className={`text-sm px-2.5 py-1 rounded font-mono mr-1 transition-colors border h-full flex items-center ${batchGrokDuration === '15' ? 'bg-pink-900/80 border-pink-500 text-pink-200' : batchGrokDuration === '10' ? 'bg-indigo-900/80 border-indigo-500 text-indigo-200' : 'bg-gray-800 border-gray-600 text-gray-300 hover:bg-gray-700'}`}
-                                                  >
-                                                      ⏱️ {batchGrokDuration}s
-                                                  </button>
-                                                  <button 
-                                                      onClick={() => setBatchGrokSpeech(!batchGrokSpeech)}
-                                                      className={`text-sm px-2.5 py-1 rounded font-mono transition-colors border h-full flex items-center ${batchGrokSpeech ? 'bg-green-900/80 border-green-500 text-green-200' : 'bg-gray-800 border-gray-600 text-gray-300 hover:bg-gray-700'}`}
-                                                  >
-                                                      {batchGrokSpeech ? '🗣️ 대사' : '🔇 SFX'}
-                                                  </button>
-                                              </div>
-
-                                              {/* 2. Veo 720p (Evolink) */}
-                                              <button 
-                                                  onClick={runVeoFastBatch} 
-                                                  className="bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white px-4 py-2 rounded-lg text-sm font-bold border border-blue-400/50 shadow-md transition-all hover:scale-105 whitespace-nowrap"
-                                              >
-                                                  ⚡ Veo 720p (Fast)
-                                              </button>
-
-                                              {/* 3. Veo 1080p (Apimart) */}
-                                              <button 
-                                                  onClick={runVeoQualityBatch} 
-                                                  className="bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500 text-white px-4 py-2 rounded-lg text-sm font-bold border border-violet-400/50 shadow-md transition-all hover:scale-105 whitespace-nowrap"
-                                              >
-                                                  💎 Veo 1080p (Apimart)
-                                              </button>
-
-                                          </div>
-                                      </div>
-                                  </div>
-                                  <div className="w-full bg-red-600 border-2 border-red-400 rounded-lg p-3 text-center shadow-lg shadow-red-900/50">
-                                      <span className="text-sm text-white font-black flex items-center justify-center gap-2 drop-shadow-md">
-                                          ⚠️ Veo 3.1은 장면의 검열이 엄격하여 일부 영상 생성이 제한될 수 있습니다. (실패 시 Grok HQ 모드 사용 권장)
-                                      </span>
-                                  </div>
-                                  <div className="w-full bg-orange-600 border-2 border-orange-400 rounded-lg p-3 text-center shadow-lg shadow-orange-900/50 mt-2">
-                                      <span className="text-sm text-white font-black flex items-center justify-center gap-2 drop-shadow-md">
-                                          🔠 문자가 포함된 영상의 경우 Veo보다 Grok이 비교적 더 정확하게 묘사합니다.
-                                      </span>
-                                  </div>
-                              </div>
-                          </div>
-                      )}
-                      
-                      <Suspense fallback={<div className="flex items-center justify-center py-10"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div><span className="ml-3 text-gray-400 text-base">썸네일 스튜디오 로딩 중...</span></div>}>
-                      <ThumbnailGenerator
-                          script={config!.script}
-                          styleDescription={`${config!.detectedStyleDescription} ${config!.atmosphere || ''}`}
-                          characterImageBase64={config!.characterImage}
-                          characterDescription={config!.detectedCharacterDescription}
-                          thumbnails={thumbnails}
-                          setThumbnails={setThumbnails}
-                          videoFormat={config!.videoFormat}
-                          onImageClick={(url: string) => useUIStore.getState().openLightbox(url)}
-                          onCostAdd={addCost}
-                          textForceLock={config!.textForceLock}
-                          isMixedMedia={config!.isMixedMedia}
-                          languageContext={{
-                              lang: config!.detectedLanguage,
-                              langName: config!.detectedLanguageName,
-                              locale: config!.detectedLocale,
-                              nuance: config!.culturalNuance
-                          }}
-                          globalContext={config!.globalContext}
-                      />
-                      </Suspense>
-
-                      {scenes.length > 0 ? (
-                          <div className={`grid gap-6 ${config!.aspectRatio === '9:16' ? 'grid-cols-1 md:grid-cols-2 xl:grid-cols-3' : 'grid-cols-2 md:grid-cols-3 xl:grid-cols-4'}`}>
-                              {scenes.map((scene, index) => (
-                                  <StoryboardScene
-                                        key={scene.id}
-                                        scene={scene}
-                                        index={index}
-                                        aspectRatio={config!.aspectRatio}
-                                        videoFormat={config!.videoFormat}
-                                        onGenerateImage={handleGenerateImage}
-                                        onGenerateGrokHQ={runSingleGrokHQ}
-                                        onGenerateVeoFast={runSingleVeoFast}
-                                        onGenerateVeoQuality={runSingleVeoQuality}
-                                        onUploadImage={handleManualImageUpload}
-                                        onCancelGeneration={cancelScene}
-                                        onInjectCharacter={handleInjectCharacter}
-                                        onAutoPrompt={handleAutoPromptGen}
-                                        variant='default'
-                                   />
-                              ))}
-                          </div>
-                      ) : !config!.script ? (
-                          <div className="flex flex-col items-center justify-center py-16 text-center">
-                              <div className="w-16 h-16 bg-gray-800 rounded-2xl flex items-center justify-center mb-4">
-                                  <svg className="w-8 h-8 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
-                              </div>
-                              <p className="text-gray-400 text-base font-medium mb-1">새 프로젝트가 시작되었습니다</p>
-                              <p className="text-gray-600 text-sm max-w-md">이미지/영상 탭에서 대본을 가져오고 설정을 구성한 뒤 장면을 분석하세요.</p>
-                          </div>
-                      ) : null}
-              </div>
+              /* [v4.5 FIX] 구버전 레거시 UI 대신 대시보드로 자동 복귀 */
+              <Suspense fallback={<TabFallback />}>
+                <ProjectDashboard onSelectProject={handleLoadProject} onNewProject={handleNewProject} onImportProject={handleImportProject} refreshTrigger={refreshTrigger} />
+              </Suspense>
           )}
       </main>
       </div>{/* flex wrapper 닫기 */}

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { ProjectConfig, Scene, Thumbnail, ProjectData, VideoFormat, AspectRatio, ImageModel } from '../types';
+import { ProjectConfig, Scene, Thumbnail, ProjectData, VideoFormat, AspectRatio, ImageModel, PipelineSteps } from '../types';
 import { useCostStore } from './costStore';
 import { useSoundStudioStore } from './soundStudioStore';
 import { persistImage, isBase64Image } from '../services/imageStorageService';
@@ -60,6 +60,11 @@ interface ProjectStore {
   // Project lifecycle
   loadProject: (project: ProjectData) => void;
   newProject: (title?: string) => void;
+
+  // [v4.5] 스마트 프로젝트
+  smartUpdateTitle: (tab: string, hint: string) => void;
+  markPipelineStep: (step: keyof PipelineSteps) => void;
+  setLastActiveTab: (tab: string) => void;
 }
 
 // Scene fields that may contain base64 image data and should be migrated
@@ -418,5 +423,55 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       const { useImageVideoStore } = require('./imageVideoStore');
       useImageVideoStore.getState().resetStore();
     } catch { /* imageVideoStore 미초기화 시 무시 */ }
+  },
+
+  // [v4.5] 활동 기반 스마트 제목 — 첫 번째 의미 있는 작업 시 자동 업데이트
+  smartUpdateTitle: (tab, hint) => {
+    const { config, projectTitle } = get();
+    if (!config) return;
+    // 수동 제목 또는 이미 스마트 제목이 적용된 경우 스킵
+    if (config.isManuallyNamed) return;
+    if (!projectTitle.startsWith('임시 프로젝트') && !projectTitle.startsWith('새 프로젝트')) return;
+
+    const TAB_LABELS: Record<string, string> = {
+      'channel-analysis': '채널분석',
+      'script-writer': '대본',
+      'sound-studio': '나레이션',
+      'image-video': '영상제작',
+      'edit-room': '편집',
+      'subtitle-remover': '자막제거',
+      'detail-page': '쇼핑숏폼',
+      'thumbnail-studio': '썸네일',
+    };
+    const label = TAB_LABELS[tab] || tab;
+    const cleanHint = hint.replace(/\n/g, ' ').trim();
+    const truncated = cleanHint.length > 20 ? cleanHint.slice(0, 20) + '…' : cleanHint;
+    const newTitle = truncated ? `${label} — ${truncated}` : `${label} 프로젝트`;
+    set({ projectTitle: newTitle });
+  },
+
+  // [v4.5] 파이프라인 진행도 마킹
+  markPipelineStep: (step) => {
+    set(state => {
+      if (!state.config) return state;
+      const current = state.config.pipelineSteps || {};
+      if (current[step]) return state; // 이미 완료된 단계
+      return {
+        config: {
+          ...state.config,
+          pipelineSteps: { ...current, [step]: true },
+        },
+      };
+    });
+  },
+
+  // [v4.5] 마지막 활동 탭 추적
+  setLastActiveTab: (tab) => {
+    set(state => {
+      if (!state.config) return state;
+      return {
+        config: { ...state.config, lastActiveTab: tab },
+      };
+    });
   },
 }));

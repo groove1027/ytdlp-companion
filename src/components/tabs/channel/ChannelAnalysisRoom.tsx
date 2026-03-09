@@ -2,6 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, PieChart, Pie, Cell } from 'recharts';
 import { useChannelAnalysisStore } from '../../../stores/channelAnalysisStore';
 import { useNavigationStore } from '../../../stores/navigationStore';
+import { useProjectStore } from '../../../stores/projectStore';
 import { useScriptWriterStore } from '../../../stores/scriptWriterStore';
 import { showToast } from '../../../stores/uiStore';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
@@ -77,6 +78,8 @@ const ChannelAnalysisRoom: React.FC = () => {
       setChannelGuideline(await analyzeChannelStyleDNA(scripts, info));
       setProgress(null);
       showToast('채널 스타일 DNA 분석이 완료되었습니다.');
+      // [v4.5] 스마트 제목 — 채널명 기반
+      useProjectStore.getState().smartUpdateTitle('channel-analysis', info.title || channelUrl);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error('[ChannelAnalysis] 채널 분석 실패:', e);

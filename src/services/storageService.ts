@@ -117,6 +117,16 @@ function extractSummary(project: ProjectData): ProjectSummary {
     thumbnailUrl: scenes.find(s => s.imageUrl && !s.imageUrl.startsWith('data:'))?.imageUrl
       || scenes.find(s => s.imageUrl)?.imageUrl,
     estimatedSizeMB: estimateProjectSizeMB(project),
+
+    // [v4.5] 스마트 프로젝트 확장
+    lastActiveTab: config.lastActiveTab,
+    pipelineSteps: config.pipelineSteps,
+    isManuallyNamed: config.isManuallyNamed,
+    // Hover Scrub용: URL 이미지만 (base64 제외, 최대 10개)
+    sceneImageUrls: scenes
+      .filter(s => s.imageUrl && !s.imageUrl.startsWith('data:'))
+      .map(s => s.imageUrl!)
+      .slice(0, 10),
   };
 }
 

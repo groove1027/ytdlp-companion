@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import { useSoundStudioStore, registerAudio, unregisterAudio } from '../../../stores/soundStudioStore';
+import { useProjectStore } from '../../../stores/projectStore';
 import { generateSupertonicTTS, mergeAudioFiles } from '../../../services/ttsService';
 import { generateTypecastTTS } from '../../../services/typecastService';
 import { generateElevenLabsDialogueTTS } from '../../../services/elevenlabsService';
@@ -165,6 +166,9 @@ const AudioMerger: React.FC = () => {
           await ctx.close();
         }
       }
+      // [v4.5] 스마트 제목 — 나레이션 라인 수 기반
+      const lineCount = useSoundStudioStore.getState().lines.filter(l => l.audioUrl).length;
+      useProjectStore.getState().smartUpdateTitle('sound-studio', `${lineCount}줄 나레이션`);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {

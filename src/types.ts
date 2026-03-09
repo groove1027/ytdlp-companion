@@ -397,6 +397,11 @@ export interface ProjectConfig {
   mergedAudioUrl?: string;        // 전체 병합 오디오 (사운드 스튜디오에서 전송)
   sceneOrder?: string[];           // 편집실 장면 순서 (영속화)
   bgmConfig?: BgmConfig;           // 편집실 BGM 설정 (영속화)
+
+  // [v4.5] 스마트 프로젝트 메타데이터
+  lastActiveTab?: string;          // 마지막 활동 탭 ID
+  pipelineSteps?: PipelineSteps;   // 파이프라인 진행도
+  isManuallyNamed?: boolean;       // 사용자가 수동으로 제목 변경했는지
 }
 
 export interface CostStats {
@@ -406,6 +411,16 @@ export interface CostStats {
   analysisCount: number;
   ttsCount: number;
   musicCount: number;
+}
+
+// [v4.5] 파이프라인 진행도 추적
+export interface PipelineSteps {
+  channelAnalysis?: boolean;
+  scriptWriting?: boolean;
+  soundStudio?: boolean;
+  imageVideo?: boolean;
+  editRoom?: boolean;
+  upload?: boolean;
 }
 
 export interface ProjectData {
@@ -437,6 +452,12 @@ export interface ProjectSummary {
   completedVideos: number;
   thumbnailUrl?: string;
   estimatedSizeMB?: number;
+
+  // [v4.5] 스마트 프로젝트 확장
+  lastActiveTab?: string;            // 마지막 활동 탭
+  pipelineSteps?: PipelineSteps;     // 파이프라인 진행도
+  isManuallyNamed?: boolean;         // 수동 제목 여부
+  sceneImageUrls?: string[];         // Hover Scrub용 장면 이미지 (최대 10개)
 }
 
 export interface StorageEstimate {

@@ -131,6 +131,9 @@ export default function ScriptWriterTab() {
       prev ? { ...prev, script: latest } : prev
     );
 
+    // [v4.5] 스마트 제목 — 대본 첫 줄 기반
+    useProjectStore.getState().smartUpdateTitle('script-writer', latest.split('\n')[0] || '');
+
     // 2. 사운드 스튜디오 이동 (나레이션 라인은 VoiceStudio에서 자동 생성)
     setActiveTab('sound-studio');
   }, [generatedScript, manualText, finalScript, styledScript, setFinalScript, setActiveTab]);
