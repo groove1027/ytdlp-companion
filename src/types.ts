@@ -714,6 +714,7 @@ export interface ChannelGuideline {
   audioGuide?: string;         // 오디오 스타일 DNA (BGM/효과음/보이스톤)
   titleFormula?: string;       // 제목/메타데이터 공식 패턴
   audienceInsight?: string;    // 시청자 인사이트 (댓글 분석)
+  contentFormat?: ContentFormat; // 감지된 콘텐츠 형식 (롱폼/숏폼)
 }
 
 // --- 채널 분석 입력 ---

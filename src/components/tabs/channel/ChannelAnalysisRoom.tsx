@@ -83,7 +83,9 @@ const ChannelAnalysisRoom: React.FC = () => {
       }
       setChannelScripts(scripts);
       setProgress({ step: 4, message: 'AI 채널 스타일 DNA 다층 분석 중... (텍스트 + 시각 + 편집 + 오디오 + 댓글)' });
-      setChannelGuideline(await analyzeChannelStyleDNA(scripts, info));
+      const guideline = await analyzeChannelStyleDNA(scripts, info);
+      guideline.contentFormat = effectiveFormat;
+      setChannelGuideline(guideline);
       setProgress(null);
       showToast('채널 스타일 DNA 분석이 완료되었습니다.');
       // [v4.5] 스마트 제목 — 채널명 기반

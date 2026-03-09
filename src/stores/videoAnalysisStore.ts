@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 import type {
   VideoAnalysisPreset,
   VideoVersionItem,
@@ -62,52 +63,69 @@ const INITIAL_STATE = {
   resultCache: {} as Record<string, ResultCache>,
 };
 
-export const useVideoAnalysisStore = create<VideoAnalysisStore>((set, get) => ({
-  ...INITIAL_STATE,
+export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
+  persist(
+    (set, get) => ({
+      ...INITIAL_STATE,
 
-  setInputMode: (mode) => set({ inputMode: mode }),
-  setYoutubeUrl: (url) => set({ youtubeUrl: url }),
-  setSelectedPreset: (preset) => set({ selectedPreset: preset }),
-  setRawResult: (raw) => set({ rawResult: raw }),
-  setVersions: (versions) => set({ versions }),
-  setThumbnails: (thumbs) => set({ thumbnails: thumbs }),
-  setError: (error) => set({ error }),
-  setExpandedId: (id) => set({ expandedId: id }),
+      setInputMode: (mode) => set({ inputMode: mode }),
+      setYoutubeUrl: (url) => set({ youtubeUrl: url }),
+      setSelectedPreset: (preset) => set({ selectedPreset: preset }),
+      setRawResult: (raw) => set({ rawResult: raw }),
+      setVersions: (versions) => set({ versions }),
+      setThumbnails: (thumbs) => set({ thumbnails: thumbs }),
+      setError: (error) => set({ error }),
+      setExpandedId: (id) => set({ expandedId: id }),
 
-  cacheCurrentResult: (preset) => {
-    const { rawResult, versions, thumbnails, resultCache } = get();
-    if (!rawResult) return;
-    set({
-      resultCache: {
-        ...resultCache,
-        [preset]: { raw: rawResult, versions, thumbs: thumbnails },
+      cacheCurrentResult: (preset) => {
+        const { rawResult, versions, thumbnails, resultCache } = get();
+        if (!rawResult) return;
+        set({
+          resultCache: {
+            ...resultCache,
+            [preset]: { raw: rawResult, versions, thumbs: thumbnails },
+          },
+        });
       },
-    });
-  },
 
-  restoreFromCache: (preset) => {
-    const cached = get().resultCache[preset];
-    if (!cached || cached.versions.length === 0) return false;
-    set({
-      selectedPreset: preset,
-      rawResult: cached.raw,
-      versions: cached.versions,
-      thumbnails: cached.thumbs,
-      expandedId: null,
-      error: null,
-    });
-    return true;
-  },
+      restoreFromCache: (preset) => {
+        const cached = get().resultCache[preset];
+        if (!cached || cached.versions.length === 0) return false;
+        set({
+          selectedPreset: preset,
+          rawResult: cached.raw,
+          versions: cached.versions,
+          thumbnails: cached.thumbs,
+          expandedId: null,
+          error: null,
+        });
+        return true;
+      },
 
-  clearCache: () => set({ resultCache: {} }),
+      clearCache: () => set({ resultCache: {} }),
 
-  resetResults: () => set({
-    rawResult: '',
-    error: null,
-    versions: [],
-    thumbnails: [],
-    expandedId: null,
-  }),
+      resetResults: () => set({
+        rawResult: '',
+        error: null,
+        versions: [],
+        thumbnails: [],
+        expandedId: null,
+      }),
 
-  reset: () => set({ ...INITIAL_STATE }),
-}));
+      reset: () => set({ ...INITIAL_STATE }),
+    }),
+    {
+      name: 'video-analysis-store',
+      // blob URL 썸네일은 localStorage에 저장 불가 — 텍스트 데이터만 영속화
+      partialize: (state) => ({
+        inputMode: state.inputMode,
+        youtubeUrl: state.youtubeUrl,
+        selectedPreset: state.selectedPreset,
+        rawResult: state.rawResult,
+        versions: state.versions,
+        resultCache: state.resultCache,
+        // thumbnails 제외 (blob URL은 세션 간 유효하지 않음)
+      }),
+    },
+  ),
+);

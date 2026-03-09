@@ -154,9 +154,16 @@ const SetupPanel: React.FC = () => {
     const { finalScript, generatedScript } = useScriptWriterStore.getState();
     const script = finalScript || generatedScript?.content || '';
     if (!script.trim()) { showToast('대본작성 탭에서 대본을 먼저 생성해주세요.'); return; }
-    const { videoFormat, smartSplit, longFormSplitType } = useScriptWriterStore.getState();
-    setConfig((prev) => prev ? { ...prev, script, videoFormat, smartSplit, longFormSplitType } : prev);
-    showToast(`대본 ${script.length.toLocaleString()}자 가져옴`);
+    const { videoFormat, smartSplit, longFormSplitType, selectedPreset } = useScriptWriterStore.getState();
+    // 채널 프리셋의 콘텐츠 형식에 따라 화면 비율 자동 설정
+    const presetFormat = selectedPreset?.channelGuideline?.contentFormat;
+    const autoAspect = presetFormat === 'shorts' ? AspectRatio.PORTRAIT
+      : videoFormat !== VideoFormat.LONG ? AspectRatio.PORTRAIT : undefined;
+    setConfig((prev) => prev ? {
+      ...prev, script, videoFormat, smartSplit, longFormSplitType,
+      ...(autoAspect ? { aspectRatio: autoAspect } : {}),
+    } : prev);
+    showToast(`대본 ${script.length.toLocaleString()}자 가져옴${presetFormat === 'shorts' ? ' (숏폼 9:16 자동 적용)' : ''}`);
   }, [setConfig]);
 
   const handleApplyDraft = useCallback(() => {

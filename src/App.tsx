@@ -1043,6 +1043,17 @@ const App: React.FC = () => {
       <div className="flex pt-16 min-h-screen">
         {/* 좌측 네비게이션 사이드바 */}
         <aside className="fixed top-16 left-0 bottom-0 w-[15.5rem] bg-gray-950 border-r border-gray-800 z-30 flex flex-col py-3 px-3 gap-1 overflow-y-auto">
+          {/* 새 프로젝트 버튼 (항상 표시) */}
+          <button
+            onClick={() => {
+              localStorage.removeItem('last-project-id');
+              goToDashboard();
+            }}
+            className="flex items-center gap-2 w-full px-4 py-2.5 mb-1 rounded-lg text-sm font-bold text-white bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 transition-all shadow-md"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" /></svg>
+            새 프로젝트
+          </button>
           {TAB_CONFIG.map((tab) => {
             const isActive = activeTab === tab.id;
             return (

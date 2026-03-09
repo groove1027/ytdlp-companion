@@ -731,8 +731,8 @@ ${instinctPrompt}
                 )}
               </div>
               <div className="flex items-center gap-2 ml-auto">
-                <input type="number" min={500} max={30000} step={500}
-                  value={targetCharCount} onChange={(e) => setTargetCharCount(Math.max(500, Number(e.target.value)))}
+                <input type="number" min={350} max={30000} step={50}
+                  value={targetCharCount} onChange={(e) => setTargetCharCount(Math.max(350, Number(e.target.value)))}
                   className="w-[80px] px-2 py-1.5 rounded-md bg-gray-900/60 text-gray-200 text-sm text-center
                     border border-gray-700 focus:outline-none focus:border-blue-500/50" />
                 <span className="text-sm text-gray-500">자</span>
