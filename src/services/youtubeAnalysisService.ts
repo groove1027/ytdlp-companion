@@ -675,8 +675,33 @@ export const getRecentVideos = async (
 };
 
 /**
+ * 쇼츠 판별: 세로형 영상 (player embedWidth < embedHeight) 또는 제목/태그에 #Shorts 포함
+ * YouTube Data API에는 공식 쇼츠 필터가 없어서 player 비율 + 메타 정보로 판별
+ */
+const isShorts = (v: {
+    snippet?: { title?: string; tags?: string[] };
+    contentDetails?: { duration?: string };
+    player?: { embedWidth?: string; embedHeight?: string };
+}): boolean => {
+    // 1순위: player 비율로 판별 (세로형 = 쇼츠)
+    const w = parseInt(v.player?.embedWidth || '0');
+    const h = parseInt(v.player?.embedHeight || '0');
+    if (w > 0 && h > 0) return h > w;
+
+    // 2순위: 제목 또는 태그에 #Shorts / shorts 포함 + 3분 이하
+    const title = v.snippet?.title || '';
+    const tags = v.snippet?.tags || [];
+    const seconds = isoDurationToSeconds(v.contentDetails?.duration || 'PT0S');
+    const hasShortsMeta = /\bshorts?\b/i.test(title) || tags.some(t => /\bshorts?\b/i.test(t));
+    if (hasShortsMeta && seconds <= 180) return true;
+
+    // 3순위: 60초 이하면 쇼츠로 추정
+    return seconds > 0 && seconds <= 60;
+};
+
+/**
  * 채널의 최근 영상을 롱폼/쇼츠 필터링하여 가져오기 (최대 50개 검색 후 필터)
- * @param format 'long' = 60초 이상, 'shorts' = 60초 미만
+ * @param format 'long' = 가로형 영상, 'shorts' = 세로형 영상
  */
 export const getRecentVideosByFormat = async (
     channelId: string,
@@ -703,17 +728,21 @@ export const getRecentVideosByFormat = async (
 
     if (videoIds.length === 0) return [];
 
+    // player part 추가하여 영상 비율(가로/세로) 정보 확인
     trackQuota('videos.list');
-    const videoUrl = `${YOUTUBE_API_BASE}/videos?part=snippet,statistics,contentDetails&id=${videoIds.join(',')}&key=${apiKey}`;
+    const videoUrl = `${YOUTUBE_API_BASE}/videos?part=snippet,statistics,contentDetails,player&id=${videoIds.join(',')}&key=${apiKey}`;
     const videoResponse = await monitoredFetch(videoUrl);
     if (!videoResponse.ok) throw new Error(`영상 상세 조회 실패 (${videoResponse.status})`);
 
     const videoData = await videoResponse.json();
 
-    // 포맷별 필터링 (쇼츠: 60초 미만, 롱폼: 60초 이상)
-    const filtered = (videoData.items || []).filter((v: { contentDetails?: { duration?: string } }) => {
-        const seconds = isoDurationToSeconds(v.contentDetails?.duration || 'PT0S');
-        return format === 'shorts' ? seconds < 60 : seconds >= 60;
+    // 포맷별 필터링 (쇼츠: 세로형, 롱폼: 가로형)
+    const filtered = (videoData.items || []).filter((v: {
+        snippet?: { title?: string; tags?: string[] };
+        contentDetails?: { duration?: string };
+        player?: { embedWidth?: string; embedHeight?: string };
+    }) => {
+        return format === 'shorts' ? isShorts(v) : !isShorts(v);
     });
 
     const results: ChannelScript[] = filtered.slice(0, targetCount).map((v: {
