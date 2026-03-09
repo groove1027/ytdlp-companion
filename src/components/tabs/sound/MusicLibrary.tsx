@@ -186,6 +186,105 @@ const LyricsModal: React.FC<{
   );
 };
 
+// ========== 트랙 상세 보기 모달 ==========
+const TrackDetailModal: React.FC<{
+  track: GeneratedMusic;
+  groupTitle: string;
+  onClose: () => void;
+  onPlay: () => void;
+  onExtend: () => void;
+  onLyrics: () => void;
+  onDownload: () => void;
+  isPlaying: boolean;
+}> = ({ track, groupTitle, onClose, onPlay, onExtend, onLyrics, onDownload, isPlaying }) => {
+  return (
+    <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-gray-800 rounded-2xl border border-gray-600 w-full max-w-lg overflow-hidden shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        {/* 커버 아트 — 크게 보기 */}
+        <div className="relative w-full aspect-square max-h-[320px] bg-gray-900 flex items-center justify-center overflow-hidden">
+          {track.imageUrl ? (
+            <img src={track.imageUrl} alt={track.title} className="w-full h-full object-cover" />
+          ) : (
+            <div className="w-full h-full bg-gradient-to-br from-purple-900/60 to-fuchsia-900/60 flex items-center justify-center">
+              <span className="text-6xl opacity-40">🎵</span>
+            </div>
+          )}
+          {/* 오버레이 재생 버튼 */}
+          <button type="button" onClick={onPlay}
+            className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 hover:opacity-100 transition-opacity">
+            <div className="w-16 h-16 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center border border-white/30">
+              {isPlaying ? (
+                <svg className="w-6 h-6" viewBox="0 0 12 12" fill="white"><rect x="1" y="1" width="3.5" height="10" rx="0.5" /><rect x="7.5" y="1" width="3.5" height="10" rx="0.5" /></svg>
+              ) : (
+                <svg className="w-6 h-6 ml-1" viewBox="0 0 12 12" fill="white"><polygon points="2,1 11,6 2,11" /></svg>
+              )}
+            </div>
+          </button>
+          {/* 닫기 버튼 */}
+          <button type="button" onClick={onClose}
+            className="absolute top-3 right-3 w-8 h-8 rounded-full bg-black/50 backdrop-blur-sm text-white/80 hover:text-white flex items-center justify-center transition-colors">
+            &times;
+          </button>
+        </div>
+
+        {/* 트랙 정보 */}
+        <div className="p-5 space-y-4">
+          <div>
+            <h3 className="text-lg font-bold text-white">{track.title}</h3>
+            <p className="text-sm text-gray-400 mt-0.5">{groupTitle}</p>
+          </div>
+
+          {/* 메타 정보 그리드 */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="bg-gray-900/60 rounded-lg px-3 py-2 border border-gray-700">
+              <p className="text-[10px] text-gray-500 uppercase tracking-wider">길이</p>
+              <p className="text-sm font-bold text-white">{formatTime(track.duration)}</p>
+            </div>
+            <div className="bg-gray-900/60 rounded-lg px-3 py-2 border border-gray-700">
+              <p className="text-[10px] text-gray-500 uppercase tracking-wider">모델</p>
+              <p className="text-sm font-bold text-white">{track.model || 'Suno'}</p>
+            </div>
+            {track.tags && (
+              <div className="col-span-2 bg-gray-900/60 rounded-lg px-3 py-2 border border-gray-700">
+                <p className="text-[10px] text-gray-500 uppercase tracking-wider">스타일</p>
+                <p className="text-sm text-gray-200 line-clamp-2">{track.tags}</p>
+              </div>
+            )}
+            {track.audioId && (
+              <div className="col-span-2 bg-gray-900/60 rounded-lg px-3 py-2 border border-gray-700">
+                <p className="text-[10px] text-gray-500 uppercase tracking-wider">Audio ID</p>
+                <p className="text-xs text-gray-400 font-mono truncate">{track.audioId}</p>
+              </div>
+            )}
+          </div>
+
+          {/* 액션 버튼들 */}
+          <div className="flex gap-2">
+            <button type="button" onClick={onPlay}
+              className="flex-1 py-2.5 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-sm font-bold transition-colors flex items-center justify-center gap-2">
+              {isPlaying ? '⏸ 일시정지' : '▶ 재생'}
+            </button>
+            <button type="button" onClick={onDownload} disabled={!track.audioUrl}
+              className="px-4 py-2.5 bg-gray-700 hover:bg-gray-600 text-gray-200 rounded-lg text-sm font-bold border border-gray-600 transition-colors disabled:opacity-40">
+              ⬇ 다운로드
+            </button>
+          </div>
+          <div className="flex gap-2">
+            <button type="button" onClick={onExtend} disabled={!track.audioId}
+              className="flex-1 py-2 bg-gray-700/60 hover:bg-gray-700 text-gray-300 rounded-lg text-xs font-semibold border border-gray-600 transition-colors disabled:opacity-40">
+              🔄 곡 연장
+            </button>
+            <button type="button" onClick={onLyrics}
+              className="flex-1 py-2 bg-gray-700/60 hover:bg-gray-700 text-gray-300 rounded-lg text-xs font-semibold border border-gray-600 transition-colors">
+              📝 가사 보기
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ========== 메인 라이브러리 ==========
 const MusicLibrary: React.FC = () => {
   const musicLibrary = useSoundStudioStore((s) => s.musicLibrary);
@@ -212,6 +311,8 @@ const MusicLibrary: React.FC = () => {
   // 모달
   const [extendTarget, setExtendTarget] = useState<GeneratedMusic | null>(null);
   const [lyricsTarget, setLyricsTarget] = useState<GeneratedMusic | null>(null);
+  const [detailTarget, setDetailTarget] = useState<{ track: GeneratedMusic; groupTitle: string } | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
 
   const allTracks = useMemo(() => musicLibrary.flatMap((g) => g.tracks), [musicLibrary]);
   const filteredLibrary = useMemo(() => {
@@ -257,13 +358,24 @@ const MusicLibrary: React.FC = () => {
     return () => { audio.removeEventListener('ended', onEnded); audio.removeEventListener('timeupdate', onTimeUpdate); audio.pause(); audio.src = ''; unregisterAudio(audio); };
   }, []);
 
-  // 메뉴 외부 클릭 닫기
+  // 메뉴 외부 클릭 닫기 + 뷰포트 경계 보정
   useEffect(() => {
     if (!menuTrack) return;
     const close = () => setMenuTrack(null);
     window.addEventListener('click', close);
+    // 뷰포트 경계 체크 — 메뉴가 화면 밖으로 넘어가면 위치 보정
+    requestAnimationFrame(() => {
+      const el = menuRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      let { x, y } = menuPos;
+      if (rect.right > window.innerWidth - 8) x = window.innerWidth - rect.width - 8;
+      if (rect.bottom > window.innerHeight - 8) y = Math.max(8, y - rect.height - 8);
+      if (x < 8) x = 8;
+      if (x !== menuPos.x || y !== menuPos.y) setMenuPos({ x, y });
+    });
     return () => window.removeEventListener('click', close);
-  }, [menuTrack]);
+  }, [menuTrack, menuPos]);
 
   // 볼륨 팝업 외부 클릭 닫기
   useEffect(() => {
@@ -484,13 +596,17 @@ const MusicLibrary: React.FC = () => {
                 <div key={track.id}
                   className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all text-left ${isCurrent ? 'bg-purple-600/15 border border-purple-500/30' : 'hover:bg-gray-700/30 border border-transparent'}`}
                   onContextMenu={(e) => handleContextMenu(e, track, group.groupTitle)}>
-                  {/* 커버 썸네일 */}
+                  {/* 커버 썸네일 — 클릭 시 상세 모달 */}
                   {track.imageUrl ? (
-                    <img src={track.imageUrl} alt="" className="w-8 h-8 rounded object-cover shrink-0" />
+                    <button type="button" onClick={(e) => { e.stopPropagation(); setDetailTarget({ track, groupTitle: group.groupTitle }); }}
+                      className="shrink-0 w-8 h-8 rounded overflow-hidden hover:ring-2 hover:ring-purple-500/50 transition-all cursor-pointer">
+                      <img src={track.imageUrl} alt="" className="w-full h-full object-cover" />
+                    </button>
                   ) : (
-                    <span className={`text-xs shrink-0 w-8 h-8 rounded bg-gray-800 flex items-center justify-center ${isCurrent && isPlaying ? 'text-purple-400' : 'text-gray-500'}`}>
+                    <button type="button" onClick={(e) => { e.stopPropagation(); setDetailTarget({ track, groupTitle: group.groupTitle }); }}
+                      className={`text-xs shrink-0 w-8 h-8 rounded bg-gray-800 flex items-center justify-center hover:ring-2 hover:ring-purple-500/50 transition-all cursor-pointer ${isCurrent && isPlaying ? 'text-purple-400' : 'text-gray-500'}`}>
                       {isCurrent && isPlaying ? '&#128266;' : (<svg className="w-3.5 h-3.5" viewBox="0 0 12 12" fill="white"><polygon points="2,1 11,6 2,11" /></svg>)}
-                    </span>
+                    </button>
                   )}
 
                   {/* 트랙 정보 - 클릭으로 재생 */}
@@ -526,7 +642,7 @@ const MusicLibrary: React.FC = () => {
 
       {/* 컨텍스트 메뉴 */}
       {menuTrack && (
-        <div className="fixed z-50 bg-gray-800 border border-gray-600 rounded-lg shadow-xl py-1 min-w-[160px]"
+        <div ref={menuRef} className="fixed z-50 bg-gray-800 border border-gray-600 rounded-xl shadow-2xl py-1.5 min-w-[180px] backdrop-blur-sm"
           style={{ left: menuPos.x, top: menuPos.y }}
           onClick={(e) => e.stopPropagation()}>
           <button type="button"
@@ -579,6 +695,18 @@ const MusicLibrary: React.FC = () => {
       {/* 모달들 */}
       {extendTarget && <ExtendModal track={extendTarget} onClose={() => setExtendTarget(null)} />}
       {lyricsTarget && <LyricsModal track={lyricsTarget} onClose={() => setLyricsTarget(null)} />}
+      {detailTarget && (
+        <TrackDetailModal
+          track={detailTarget.track}
+          groupTitle={detailTarget.groupTitle}
+          onClose={() => setDetailTarget(null)}
+          onPlay={() => handlePlayTrack(detailTarget.track, detailTarget.groupTitle)}
+          onExtend={() => { setExtendTarget(detailTarget.track); setDetailTarget(null); }}
+          onLyrics={() => { setLyricsTarget(detailTarget.track); setDetailTarget(null); }}
+          onDownload={() => handleDownload(detailTarget.track)}
+          isPlaying={currentTrack?.id === detailTarget.track.id && isPlaying}
+        />
+      )}
     </div>
   );
 };
