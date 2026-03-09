@@ -38,6 +38,7 @@ export interface EvolinkChatOptions {
     maxTokens?: number;
     stream?: boolean;
     responseFormat?: { type: string; json_schema?: Record<string, unknown> };
+    signal?: AbortSignal;
 }
 
 export interface EvolinkChatResponse {
@@ -132,7 +133,8 @@ export const evolinkChat = async (
         temperature = 0.7,
         maxTokens = 4096,
         stream = false,
-        responseFormat
+        responseFormat,
+        signal
     } = options;
 
     const body: Record<string, unknown> = {
@@ -150,14 +152,17 @@ export const evolinkChat = async (
 
     logger.info('[Evolink] Chat completion 요청', { model: body.model, messageCount: messages.length });
 
-    const response = await monitoredFetch(`${EVOLINK_BASE_URL}/chat/completions`, {
+    const fetchOptions: RequestInit = {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${apiKey}`
         },
         body: JSON.stringify(body)
-    });
+    };
+    if (signal) fetchOptions.signal = signal;
+
+    const response = await monitoredFetch(`${EVOLINK_BASE_URL}/chat/completions`, fetchOptions);
 
     if (!response.ok) {
         const errorDetail = await parseEvolinkError(response);

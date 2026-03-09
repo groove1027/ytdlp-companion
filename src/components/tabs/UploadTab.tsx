@@ -1496,20 +1496,18 @@ const StepMetadata: React.FC = () => {
     setIsGenerating(true);
     try {
       const sceneSummaries = getSceneSummaries();
-      // Steps 1-5 (메타데이터) + Step 6 (쇼핑 태그) 동시 실행
-      const [result, shopTags] = await Promise.all([
-        generateUploadMetadata(scriptText, sceneSummaries, { platforms: selectedPlatforms }),
-        extractShoppingTags(scriptText, sceneSummaries),
-      ]);
+      // 메타데이터 생성 (타임아웃·재시도 내장)
+      const result = await generateUploadMetadata(scriptText, sceneSummaries, { platforms: selectedPlatforms });
       setMetadata(result);
       setDescription(result.description);
       setPublicHashtagsText(result.publicHashtags?.join(', ') ?? '');
       setHiddenTagsText(result.hiddenTags?.join(', ') ?? result.tags.join(', '));
       setSelectedIdx(0);
-      // 쇼핑 태그 자동 세팅
-      if (shopTags.length > 0) {
-        setShoppingTags(shopTags);
-      }
+      // 쇼핑 태그는 별도 — 실패해도 메타데이터에 영향 없음
+      try {
+        const shopTags = await extractShoppingTags(scriptText, sceneSummaries);
+        if (shopTags.length > 0) setShoppingTags(shopTags);
+      } catch { /* 쇼핑 태그 실패 무시 */ }
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'AI 메타데이터 생성 실패');
     } finally {

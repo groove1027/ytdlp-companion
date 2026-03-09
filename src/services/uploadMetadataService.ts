@@ -1,6 +1,10 @@
 
 import { evolinkChat } from './evolinkService';
+import { logger } from './LoggerService';
 import type { VideoMetadata, PolicyCheckResult } from '../types';
+
+const METADATA_TIMEOUT_MS = 60_000; // 60초 타임아웃
+const METADATA_MAX_RETRIES = 2;     // 최대 2회 재시도 (총 3회)
 
 interface MetadataGenerationOptions {
   platforms?: string[];  // ['youtube', 'tiktok', 'instagram']
@@ -118,19 +122,51 @@ ${fullScript.slice(0, 8000)}
 ${sceneContext}
 === 끝 ===`;
 
-  const response = await evolinkChat(
-    [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userPrompt },
-    ],
-    {
-      temperature: 0.5,
-      maxTokens: 4096,
-      responseFormat: { type: 'json_object' },
-    }
-  );
+  // 타임아웃 + 재시도 래핑
+  let content = '';
+  let lastError: Error | null = null;
 
-  const content = response.choices?.[0]?.message?.content || '';
+  for (let attempt = 0; attempt <= METADATA_MAX_RETRIES; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), METADATA_TIMEOUT_MS);
+
+    try {
+      if (attempt > 0) {
+        logger.warn(`[메타데이터] 재시도 ${attempt}/${METADATA_MAX_RETRIES}...`);
+      }
+
+      const response = await evolinkChat(
+        [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+        {
+          temperature: 0.5,
+          maxTokens: 4096,
+          responseFormat: { type: 'json_object' },
+          signal: controller.signal,
+        }
+      );
+
+      content = response.choices?.[0]?.message?.content || '';
+      if (content) break; // 성공 시 루프 탈출
+      lastError = new Error('AI 응답이 비어있습니다.');
+    } catch (err: unknown) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      if (lastError.name === 'AbortError') {
+        logger.warn(`[메타데이터] ${METADATA_TIMEOUT_MS / 1000}초 타임아웃 (시도 ${attempt + 1})`);
+        lastError = new Error(`AI 메타데이터 생성이 ${METADATA_TIMEOUT_MS / 1000}초를 초과했습니다. 다시 시도해주세요.`);
+      }
+      // 마지막 시도가 아니면 계속
+      if (attempt === METADATA_MAX_RETRIES) break;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  if (!content) {
+    throw lastError || new Error('AI 메타데이터 생성에 실패했습니다.');
+  }
 
   // Parse JSON response
   let parsed: Record<string, unknown>;
