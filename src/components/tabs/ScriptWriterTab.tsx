@@ -83,6 +83,9 @@ export default function ScriptWriterTab() {
     longFormSplitType, setLongFormSplitType, smartSplit,
     targetCharCount, setTargetCharCount,
     splitResult, setSplitResult,
+    manualText, setManualText,
+    title, setTitle,
+    synopsis, setSynopsis,
   } = useScriptWriterStore();
 
   const setActiveTab = useNavigationStore((s) => s.setActiveTab);
@@ -90,9 +93,6 @@ export default function ScriptWriterTab() {
 
   const [openTool, setOpenTool] = useState<OpenTool>(null);
   const [showExpander, setShowExpander] = useState(false);
-  const [manualText, setManualText] = useState('');
-  const [title, setTitle] = useState('');
-  const [synopsis, setSynopsis] = useState('');
   const [genError, setGenError] = useState('');
   const [streamingText, setStreamingText] = useState('');
   const [applyingStyle, setApplyingStyle] = useState<string | null>(null);

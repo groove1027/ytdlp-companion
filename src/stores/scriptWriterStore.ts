@@ -22,6 +22,12 @@ interface ScriptWriterStore {
   styledScript: string;          // 스타일 적용된 대본 (원본과 별도)
   styledStyleName: string;       // 적용된 스타일 이름
   finalScript: string;
+  /** 대본 직접 입력 텍스트 (탭 전환 시 보존) */
+  manualText: string;
+  /** 제목 (탭 전환 시 보존) */
+  title: string;
+  /** 시놉시스 (탭 전환 시 보존) */
+  synopsis: string;
   isGenerating: boolean;
   isExpanding: boolean;
   expansionTarget: number | null;
@@ -46,6 +52,9 @@ interface ScriptWriterStore {
   setStyledScript: (script: string, styleName: string) => void;
   clearStyledScript: () => void;
   setFinalScript: (script: string) => void;
+  setManualText: (text: string) => void;
+  setTitle: (title: string) => void;
+  setSynopsis: (synopsis: string) => void;
   startGeneration: () => void;
   finishGeneration: () => void;
   startExpansion: (target: number) => void;
@@ -72,6 +81,9 @@ const INITIAL_STATE = {
   styledScript: '',
   styledStyleName: '',
   finalScript: '',
+  manualText: '',
+  title: '',
+  synopsis: '',
   isGenerating: false,
   isExpanding: false,
   expansionTarget: null as number | null,
@@ -113,6 +125,9 @@ export const useScriptWriterStore = create<ScriptWriterStore>((set) => ({
   clearStyledScript: () => set({ styledScript: '', styledStyleName: '' }),
 
   setFinalScript: (script) => set({ finalScript: script }),
+  setManualText: (text) => set({ manualText: text }),
+  setTitle: (title) => set({ title }),
+  setSynopsis: (synopsis) => set({ synopsis }),
 
   startGeneration: () => set({ isGenerating: true }),
   finishGeneration: () => set({ isGenerating: false }),

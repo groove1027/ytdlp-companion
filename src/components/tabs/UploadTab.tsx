@@ -2386,6 +2386,7 @@ const StepUpload: React.FC = () => {
   const isUploading = useUploadStore((s) => s.isUploading);
   const platformProgress = useUploadStore((s) => s.platformProgress);
   const selectedPlatforms = useUploadStore((s) => s.selectedPlatforms);
+  const setStep = useUploadStore((s) => s.setStep);
 
   const allDone = platformProgress.length > 0 && platformProgress.every(p => p.status === 'done');
 
@@ -2428,7 +2429,18 @@ const StepUpload: React.FC = () => {
                   />
                 </div>
                 {pp.status === 'error' && pp.error && (
-                  <p className="text-sm text-red-400 mt-2">{pp.error}</p>
+                  <div className="mt-2">
+                    <p className="text-sm text-red-400">{pp.error}</p>
+                    {(pp.error.includes('연동') || pp.error.includes('토큰') || pp.error.includes('인증')) && (
+                      <button
+                        type="button"
+                        onClick={() => setStep('auth')}
+                        className="mt-2 px-3 py-1.5 text-xs font-semibold rounded-lg bg-blue-600/20 text-blue-400 border border-blue-500/30 hover:bg-blue-600/30 transition-all"
+                      >
+                        플랫폼 연동으로 이동
+                      </button>
+                    )}
+                  </div>
                 )}
                 {pp.status === 'done' && pp.resultUrl && (
                   <a href={pp.resultUrl} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-400 hover:text-blue-300 mt-2 block">
@@ -2625,7 +2637,10 @@ const UploadTab: React.FC = () => {
     // 모든 플랫폼 병렬 업로드
     const uploads: Promise<void>[] = [];
 
-    // YouTube
+    // YouTube — 미인증 시 명시적 에러 표시
+    if (selectedPlatforms.includes('youtube') && (!youtubeAuth.isConnected || !youtubeAuth.accessToken)) {
+      setPP('youtube', { status: 'error', error: 'YouTube 연동이 필요합니다. "1. 플랫폼 연동" 단계에서 YouTube를 연동해주세요.', progress: 0 });
+    }
     if (selectedPlatforms.includes('youtube') && youtubeAuth.isConnected && youtubeAuth.accessToken) {
       uploads.push((async () => {
         try {
