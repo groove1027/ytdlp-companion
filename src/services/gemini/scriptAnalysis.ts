@@ -819,7 +819,13 @@ export const parseScriptToScenes = async (
     // [NEW] Helper function to parse JSON response and apply post-processing
     const processResponse = (text: string, skipLineRemap = false): Scene[] => {
         const jsonText = extractJsonFromText(text);
-        const parsed = JSON.parse(jsonText || '[]');
+        let parsed: any[];
+        try {
+            parsed = JSON.parse(jsonText || '[]');
+        } catch (e) {
+            console.error('[processResponse] JSON 파싱 실패:', e, '\nraw:', jsonText?.slice(0, 200));
+            throw new Error('AI 응답 형식 오류 — 다시 시도해주세요. (JSON parse error)');
+        }
 
         if (!Array.isArray(parsed) || parsed.length === 0) throw new Error("AI returned empty scene list.");
 
@@ -1051,7 +1057,12 @@ export const parseScriptToScenes = async (
         }
 
         // 합쳐진 장면 배열을 기존 후처리에 전달 (skipLineRemap=true: 청크별 scriptText 보존)
-        scenes = processResponse(JSON.stringify(allRawScenes), true);
+        try {
+            scenes = processResponse(JSON.stringify(allRawScenes), true);
+        } catch (e: any) {
+            console.error('[parseScriptToScenes] 청크 합산 후처리 실패:', e);
+            throw new Error(`스토리보드 후처리 실패 — 다시 시도해주세요. (${e.message})`);
+        }
         console.log(`[parseScriptToScenes] 청크 합산 → ${scenes.length} scenes`);
     } else {
         // === 기존 로직 (짧은 대본) ===
@@ -1085,21 +1096,27 @@ export const parseScriptToScenes = async (
 
     // [PERF] Process enrichment in parallel (was sequential for-loop)
     if (scenesToEnrich.length > 0) {
-        const enrichResults = await Promise.allSettled(
-            scenesToEnrich.map(({ s }) => {
-                console.log(`[Enrichment] Searching for: ${s.entityName}`);
-                return enrichEntityDetail(s.entityName!, baseSetting || "");
-            })
-        );
+        try {
+            const enrichResults = await Promise.allSettled(
+                scenesToEnrich.map(({ s }) => {
+                    console.log(`[Enrichment] Searching for: ${s.entityName}`);
+                    return enrichEntityDetail(s.entityName!, baseSetting || "");
+                })
+            );
 
-        enrichResults.forEach((result, idx) => {
-            const sceneIndex = scenesToEnrich[idx].i;
-            if (result.status === 'fulfilled') {
-                scenes[sceneIndex].entityVisualContext = result.value;
-            } else {
-                console.warn(`[Enrichment] Failed for ${scenesToEnrich[idx].s.entityName}, skipping...`);
-            }
-        });
+            enrichResults.forEach((result, idx) => {
+                if (idx < scenesToEnrich.length) {
+                    const sceneIndex = scenesToEnrich[idx].i;
+                    if (result.status === 'fulfilled') {
+                        scenes[sceneIndex].entityVisualContext = result.value;
+                    } else {
+                        console.warn(`[Enrichment] Failed for ${scenesToEnrich[idx].s.entityName}, skipping...`);
+                    }
+                }
+            });
+        } catch (e) {
+            console.warn('[Enrichment] Phase 2 실패 — 건너뜁니다:', e);
+        }
     }
 
     return scenes;

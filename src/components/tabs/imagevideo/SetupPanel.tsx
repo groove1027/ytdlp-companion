@@ -322,7 +322,9 @@ const SetupPanel: React.FC = () => {
       useProjectStore.getState().setConfig((prev) => prev ? { ...prev, cachedContextData: ctx as Record<string, unknown>, globalContext: JSON.stringify(globalContextObj), detectedStyleDescription: ctx.visualTone || prev.detectedStyleDescription, detectedLanguage: ctx.detectedLanguage || prev.detectedLanguage, detectedLanguageName: ctx.detectedLanguageName || prev.detectedLanguageName, detectedLocale: ctx.detectedLocale || prev.detectedLocale } : prev);
       setIsAnalyzing(false); return true;
     } catch (e: unknown) {
-      setAnalyzeError(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      const isJsonErr = msg.includes('JSON') || msg.includes('Unexpected token') || msg.includes('Unexpected end');
+      setAnalyzeError(isJsonErr ? `AI 응답 형식 오류 — "스토리보드 생성"을 다시 눌러주세요. (${msg})` : msg);
       setIsAnalyzing(false); return false;
     }
   }, [config, isAnalyzing, addCost, requireAuth]);
