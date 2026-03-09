@@ -1,6 +1,6 @@
 import React, { Suspense, lazy, useState, useCallback, useEffect } from 'react';
 import BgmOverlayPanel from './BgmOverlayPanel';
-import MemeAndSfxPanel from './MemeAndSfxPanel';
+import MemeAndSfxPanel, { MemeAndSfxSearchModal } from './MemeAndSfxPanel';
 import { useEditRoomStore } from '../../../stores/editRoomStore';
 import { useProjectStore } from '../../../stores/projectStore';
 import { SUBTITLE_TEMPLATES } from '../../../constants/subtitleTemplates';
@@ -16,7 +16,7 @@ const SubtitleStyleEditor = lazy(() => import('../editor/SubtitleStyleEditor'));
 const EffectPresets = lazy(() => import('../editor/EffectPresets'));
 
 type PanelTab = 'effects' | 'subtitle' | 'bgm' | 'meme-sfx';
-type FullModal = 'effects' | 'subtitle' | null;
+type FullModal = 'effects' | 'subtitle' | 'meme-sfx' | null;
 
 const LoadingFallback: React.FC = () => (
   <div className="flex items-center justify-center h-32">
@@ -621,13 +621,13 @@ const EditRoomGlobalPanel: React.FC = () => {
               key={tab.id}
               type="button"
               onClick={() => setActiveTab(tab.id)}
-              className={`flex items-center gap-1 px-2.5 py-2 text-sm font-bold border-b-2 transition-all ${
+              className={`flex-1 flex items-center justify-center gap-1 px-1.5 py-2 text-xs font-bold border-b-2 transition-all whitespace-nowrap ${
                 activeTab === tab.id
                   ? 'border-amber-500 text-amber-400'
                   : 'border-transparent text-gray-500 hover:text-gray-300'
               }`}
             >
-              <span>{tab.icon}</span> {tab.label}
+              <span className="text-sm">{tab.icon}</span>{tab.label}
             </button>
           ))}
         </div>
@@ -648,7 +648,7 @@ const EditRoomGlobalPanel: React.FC = () => {
           {activeTab === 'bgm' && <BgmOverlayPanel />}
 
           {/* 밈 & 효과음 탭 */}
-          {activeTab === 'meme-sfx' && <MemeAndSfxPanel />}
+          {activeTab === 'meme-sfx' && <MemeAndSfxPanel onOpenDetail={() => setFullModal('meme-sfx')} />}
         </div>
       </div>
 
@@ -677,6 +677,11 @@ const EditRoomGlobalPanel: React.FC = () => {
             </Suspense>
           </div>
         </div>
+      )}
+
+      {/* 전체화면 모달 — 밈 & 효과음 검색 */}
+      {fullModal === 'meme-sfx' && (
+        <MemeAndSfxSearchModal onClose={() => setFullModal(null)} />
       )}
 
       {/* 전체화면 모달 — 자막 상세 편집 */}
