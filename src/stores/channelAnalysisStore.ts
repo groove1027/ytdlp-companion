@@ -175,11 +175,26 @@ export const useChannelAnalysisStore = create<ChannelAnalysisStore>((set) => ({
     return { savedPresets: updated };
   }),
 
-  // 프리셋 로드 (채널 가이드라인에 반영)
-  loadPreset: (channelName) => set((state) => {
+  // 프리셋 로드 (채널 가이드라인 + IndexedDB 벤치마크 스크립트 복원)
+  loadPreset: (channelName) => {
+    const state = useChannelAnalysisStore.getState();
     const preset = state.savedPresets.find(p => p.channelName === channelName);
-    return preset ? { channelGuideline: preset } : {};
-  }),
+    if (!preset) return;
+
+    // 1) 가이드라인 즉시 반영
+    set({ channelGuideline: preset });
+
+    // 2) IndexedDB 벤치마크에서 스크립트 복원 (비동기)
+    (async () => {
+      try {
+        const all = await getAllSavedBenchmarks();
+        const bench = all.find(b => b.channelName === channelName);
+        if (bench && bench.scripts.length > 0) {
+          set({ channelScripts: bench.scripts, savedBenchmarks: all });
+        }
+      } catch { /* 벤치마크 없으면 스크립트 없이 가이드라인만 표시 */ }
+    })();
+  },
 
   setInputSource: (source) => set({ inputSource: source }),
   setUploadedFiles: (files) => set({ uploadedFiles: files }),
