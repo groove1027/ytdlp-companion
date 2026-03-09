@@ -854,10 +854,10 @@ const GenerateTab: React.FC = () => {
             className={`px-3 py-1 rounded-md text-[11px] font-semibold transition-all ${scriptSource === 'manual' ? 'bg-purple-600 text-white' : 'text-gray-400'}`}>직접 입력</button>
         </div>
         {scriptSource === 'from-script' ? (
-          <textarea value={storeScript} readOnly placeholder="대본작성 탭에서 대본을 먼저 작성하세요..." rows={2}
+          <textarea value={storeScript} readOnly placeholder="대본작성 탭에서 대본을 먼저 작성하세요..." rows={5}
             className="w-full px-3 py-2 rounded-lg bg-gray-900/70 border border-gray-700 text-xs text-gray-300 resize-none cursor-default" />
         ) : (
-          <textarea value={manualScript} onChange={(e) => setManualScript(e.target.value)} placeholder="음악 분위기를 분석할 텍스트..." rows={2}
+          <textarea value={manualScript} onChange={(e) => setManualScript(e.target.value)} placeholder="음악 분위기를 분석할 텍스트..." rows={5}
             className="w-full px-3 py-2 rounded-lg bg-gray-900 border border-gray-700 text-xs text-gray-200 placeholder-gray-600 focus:outline-none focus:border-purple-500 resize-none" />
         )}
         <button type="button" onClick={handleAnalyze} disabled={!activeScript.trim() || isAnalyzing}
