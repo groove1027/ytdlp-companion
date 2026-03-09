@@ -146,16 +146,20 @@ const formatSubscribers = (count: number): string => {
 
 /** 채널 URL에서 채널 식별자 추출 */
 const extractChannelIdentifier = (url: string): { type: 'id' | 'handle' | 'custom'; value: string } | null => {
+    // URL 디코딩 (한글 등 %XX 인코딩 처리)
+    let decoded = url;
+    try { decoded = decodeURIComponent(url); } catch { /* 디코딩 실패 시 원본 사용 */ }
+
     // /channel/UCxxxx 형식
-    const channelMatch = url.match(/\/channel\/(UC[\w-]+)/);
+    const channelMatch = decoded.match(/\/channel\/(UC[\w-]+)/);
     if (channelMatch) return { type: 'id', value: channelMatch[1] };
 
-    // /@handle 형식
-    const handleMatch = url.match(/\/@([\w.-]+)/);
+    // /@handle 형식 — 한글/일본어/유니코드 지원
+    const handleMatch = decoded.match(/\/@([^\/\s?#]+)/);
     if (handleMatch) return { type: 'handle', value: handleMatch[1] };
 
     // /c/customname 또는 /user/username 형식
-    const customMatch = url.match(/\/(c|user)\/([\w.-]+)/);
+    const customMatch = decoded.match(/\/(c|user)\/([^\/\s?#]+)/);
     if (customMatch) return { type: 'custom', value: customMatch[2] };
 
     return null;
