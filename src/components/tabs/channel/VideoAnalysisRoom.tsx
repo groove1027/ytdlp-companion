@@ -6,6 +6,8 @@ import { useNavigationStore } from '../../../stores/navigationStore';
 import { useEditPointStore } from '../../../stores/editPointStore';
 import { useEditRoomStore } from '../../../stores/editRoomStore';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
+import { getYoutubeApiKey } from '../../../services/apiService';
+import { monitoredFetch } from '../../../services/apiService';
 
 type AnalysisPreset = 'tikitaka' | 'snack';
 
@@ -204,6 +206,60 @@ function extractField(block: string, keyword: string): string {
 function extractYouTubeVideoId(url: string): string | null {
   const m = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/);
   return m?.[1] || null;
+}
+
+/** YouTube 영상의 실제 메타데이터 (제목, 설명, 태그, 통계) 가져오기 */
+interface YTVideoMeta {
+  title: string;
+  description: string;
+  tags: string[];
+  duration: string;
+  viewCount: number;
+  likeCount: number;
+  channelTitle: string;
+}
+
+async function fetchYouTubeVideoMeta(videoId: string): Promise<YTVideoMeta | null> {
+  const apiKey = getYoutubeApiKey();
+  if (!apiKey) return null;
+  try {
+    const res = await monitoredFetch(
+      `https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics,contentDetails&id=${videoId}&key=${apiKey}`
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    const item = data.items?.[0];
+    if (!item) return null;
+    return {
+      title: item.snippet?.title || '',
+      description: item.snippet?.description || '',
+      tags: item.snippet?.tags || [],
+      duration: item.contentDetails?.duration || '',
+      viewCount: parseInt(item.statistics?.viewCount || '0', 10),
+      likeCount: parseInt(item.statistics?.likeCount || '0', 10),
+      channelTitle: item.snippet?.channelTitle || '',
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** YouTube 영상 댓글 상위 20개 가져오기 (영상 내용 파악 보조) */
+async function fetchYouTubeComments(videoId: string): Promise<string[]> {
+  const apiKey = getYoutubeApiKey();
+  if (!apiKey) return [];
+  try {
+    const res = await monitoredFetch(
+      `https://www.googleapis.com/youtube/v3/commentThreads?part=snippet&videoId=${videoId}&maxResults=20&order=relevance&textFormat=plainText&key=${apiKey}`
+    );
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.items || []).map((item: { snippet?: { topLevelComment?: { snippet?: { textDisplay?: string } } } }) =>
+      item.snippet?.topLevelComment?.snippet?.textDisplay || ''
+    ).filter(Boolean).slice(0, 20);
+  } catch {
+    return [];
+  }
 }
 
 /** 업로드 영상에서 프레임 추출 */
@@ -535,7 +591,12 @@ const buildUserMessage = (inputDesc: string, preset: AnalysisPreset): string => 
 ${inputDesc}
 
 ## 지시 사항
-위 영상을 프레임 단위로 분석하여 **10가지 서로 다른 크로스 더빙(티키타카) 리메이크 버전**을 설계하세요.
+위 영상의 **실제 제목, 설명, 태그, 댓글 등 모든 정보를 철저히 분석**하여 **10가지 서로 다른 크로스 더빙(티키타카) 리메이크 버전**을 설계하세요.
+
+### 🚨 최우선 규칙: 영상 내용 충실 반영
+- **제목은 위에 제공된 영상의 실제 내용/주제를 기반으로** 작성해야 합니다. 영상과 무관한 제목 작성 시 전체 폐기.
+- **설명(Description)과 댓글의 핵심 내용을 빠짐없이 반영**하세요. 영상에 나오는 인물, 사건, 상황을 정확히 파악하세요.
+- **첨부된 프레임 이미지를 꼼꼼히 분석**하여 비디오 화면 지시에 구체적으로 반영하세요.
 
 ### ⚠️ 절대 규칙 (위반 시 전체 재작성)
 1. **출력 포맷은 오직 [마스터 편집 테이블]만 사용.** 스낵형/비선형 컷 편집/효과 자막 형식 절대 금지.
@@ -544,7 +605,7 @@ ${inputDesc}
 4. 예상 시간은 **X.X초** 형식 (예: 4.0초). 내레이션은 한국어 평균 4글자/초로 계산.
 5. 비디오 화면 지시는 **(1) [컷1] 설명 (시간) / (2) [컷2] 설명 (시간)** 형식. HTML 태그 금지.
 6. 슬로우 모션 금지 — 정배속 멀티 컷 분할 전략 사용.
-7. **제목은 반드시 이 영상의 내용과 직접적으로 관련된 클릭 유도 제목**이어야 함.
+7. **제목은 반드시 이 영상의 실제 내용과 직접적으로 관련된 클릭 유도 제목**이어야 함. 영상과 무관한 제목 절대 금지.
 8. **각 버전은 서로 다른 크로스 더빙 전략** (컨셉, 톤, 구조, 후킹, 순서 재배치 등)을 사용.
 9. **버전당 최소 6개 이상, 최대 12개 행.** 총 60초 내외 설계. 모든 행에 6열 완비.
 10. **각 VERSION 사이에 설명 텍스트 없이 바로 다음 VERSION으로.** 테이블 외 불필요한 텍스트 금지.
@@ -578,7 +639,12 @@ ${inputDesc}
 ${inputDesc}
 
 ## 지시 사항
-위 영상/자료를 프레임 단위로 분석하여, 지침서에 따라 **10가지 서로 다른 숏폼 리메이크 버전**을 설계하세요.
+위 영상의 **실제 제목, 설명, 태그, 댓글 등 모든 정보를 철저히 분석**하여, 지침서에 따라 **10가지 서로 다른 숏폼 리메이크 버전**을 설계하세요.
+
+### 🚨 최우선 규칙: 영상 내용 충실 반영
+- **제목은 위에 제공된 영상의 실제 내용/주제를 기반으로** 작성해야 합니다. 영상과 무관한 제목 작성 시 전체 폐기.
+- **설명(Description)과 댓글의 핵심 내용을 빠짐없이 반영**하세요. 영상에 나오는 인물, 사건, 상황을 정확히 파악하세요.
+- **첨부된 프레임 이미지를 꼼꼼히 분석**하여 화면 묘사에 구체적으로 반영하세요.
 
 ### ⚠️ 절대 규칙 (위반 시 전체 재작성)
 1. **컷 순서는 원본 영상의 시간 순서가 아니라, 임팩트 순으로 완전히 뒤섞어야 한다.** 순차적 나열 절대 금지.
@@ -587,7 +653,7 @@ ${inputDesc}
 4. 하단 자막은 **공백 포함 16자 이내**. 시청자 마음 대변/엉뚱한 해석. 이모지 1개 필수.
 5. 하나의 컷은 가급적 **2~4초**를 넘기지 않는다.
 6. 영상에 등장하는 **모든 소재가 최소 1회 이상** 등장해야 한다.
-7. **제목은 반드시 이 영상의 내용과 직접적으로 관련된 클릭 유도 제목**이어야 함.
+7. **제목은 반드시 이 영상의 실제 내용과 직접적으로 관련된 클릭 유도 제목**이어야 함. 영상과 무관한 제목 절대 금지.
 8. **각 버전은 서로 다른 후킹 전략, 톤, 편집 방향**으로 차별화.
 9. **총 길이 45~60초 내외.** 버전당 5~15개 컷.
 10. **각 VERSION 사이에 불필요한 설명 텍스트 금지.** 바로 다음 VERSION으로 이어진다.
@@ -672,20 +738,58 @@ const VideoAnalysisRoom: React.FC = () => {
     analysisStartRef.current = Date.now();
     resetResults();
 
-    const inputDesc = inputMode === 'youtube'
-      ? `YouTube 영상 URL: ${youtubeUrl.trim()}`
-      : `업로드된 영상 파일: ${uploadedFile?.name} (${((uploadedFile?.size || 0) / 1024 / 1024).toFixed(1)}MB)`;
-
     const scriptSystem = preset === 'tikitaka' ? TIKITAKA_SCRIPT_SYSTEM : SNACK_SCRIPT_SYSTEM;
 
     try {
-      // 1단계: 프레임/썸네일 추출 (AI에 시각 정보 전달용)
+      // 1단계: 프레임/썸네일 추출 + YouTube 메타데이터 가져오기
       let frames: string[] = [];
+      let inputDesc = '';
+
       if (uploadedFile) {
         frames = await extractVideoFrames(uploadedFile, 10);
+        inputDesc = `업로드된 영상 파일: ${uploadedFile.name} (${((uploadedFile.size || 0) / 1024 / 1024).toFixed(1)}MB)`;
       } else {
         const vid = extractYouTubeVideoId(youtubeUrl);
-        if (vid) frames = [0, 1, 2, 3].map(i => `https://img.youtube.com/vi/${vid}/${i}.jpg`);
+        if (vid) {
+          // 다양한 해상도 썸네일 수집
+          frames = [
+            `https://img.youtube.com/vi/${vid}/maxresdefault.jpg`,
+            `https://img.youtube.com/vi/${vid}/hqdefault.jpg`,
+            `https://img.youtube.com/vi/${vid}/0.jpg`,
+            `https://img.youtube.com/vi/${vid}/1.jpg`,
+            `https://img.youtube.com/vi/${vid}/2.jpg`,
+            `https://img.youtube.com/vi/${vid}/3.jpg`,
+          ];
+
+          // YouTube Data API로 실제 영상 정보 가져오기
+          const [meta, comments] = await Promise.all([
+            fetchYouTubeVideoMeta(vid),
+            fetchYouTubeComments(vid),
+          ]);
+
+          if (meta) {
+            inputDesc = `## YouTube 영상 정보
+- **제목**: ${meta.title}
+- **채널**: ${meta.channelTitle}
+- **조회수**: ${meta.viewCount.toLocaleString()}회
+- **좋아요**: ${meta.likeCount.toLocaleString()}개
+- **영상 길이**: ${meta.duration}
+- **태그**: ${meta.tags.slice(0, 30).join(', ') || '없음'}
+- **URL**: ${youtubeUrl.trim()}
+
+### 영상 설명(Description)
+${meta.description.slice(0, 2000)}${meta.description.length > 2000 ? '\n...(이하 생략)' : ''}`;
+
+            if (comments.length > 0) {
+              inputDesc += `\n\n### 상위 댓글 ${comments.length}개 (영상 내용 맥락 파악용)
+${comments.slice(0, 15).map((c, i) => `${i + 1}. ${c.slice(0, 150)}`).join('\n')}`;
+            }
+          } else {
+            inputDesc = `YouTube 영상 URL: ${youtubeUrl.trim()}\n(메타데이터 조회 실패 — 첨부된 썸네일 이미지를 프레임 단위로 분석하세요)`;
+          }
+        } else {
+          inputDesc = `YouTube 영상 URL: ${youtubeUrl.trim()}`;
+        }
       }
       setThumbnails(frames);
 
@@ -1108,7 +1212,7 @@ const VideoAnalysisRoom: React.FC = () => {
                                     <th className="py-2 px-2 text-left text-gray-500 font-bold w-[110px]">편집점</th>
                                   </>
                                 )}
-                                {thumbnails.length > 0 && selectedPreset !== 'tikitaka' && (
+                                {thumbnails.length > 0 && (
                                   <th className="py-2 px-2 text-left text-gray-500 font-bold w-[120px]">비주얼</th>
                                 )}
                               </tr>
@@ -1155,7 +1259,7 @@ const VideoAnalysisRoom: React.FC = () => {
                                       </td>
                                     </>
                                   )}
-                                  {thumbnails.length > 0 && selectedPreset !== 'tikitaka' && (
+                                  {thumbnails.length > 0 && (
                                     <td className="py-2 px-2 align-top">
                                       {thumbnails[si % thumbnails.length] && (
                                         <img
