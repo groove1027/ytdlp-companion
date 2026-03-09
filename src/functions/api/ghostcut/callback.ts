@@ -67,6 +67,12 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         || data.processStatusEnum?.description
         || `처리 실패 (status: ${data.processStatus})`;
 
+    // KV 바인딩 확인
+    if (!context.env.GHOSTCUT_TASKS) {
+      console.error('[GhostCut Callback] GHOSTCUT_TASKS KV not bound!');
+      return new Response('KV not configured', { status: 503 });
+    }
+
     // KV에 결과 저장 (TTL: 2시간 — 사용자가 다운로드할 충분한 시간)
     await context.env.GHOSTCUT_TASKS.put(
       `project:${projectId}`,

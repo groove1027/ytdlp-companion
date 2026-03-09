@@ -225,8 +225,8 @@ const pollResult = async (
 ): Promise<string> => {
   const MAX_POLLS = 225; // 30분 / 8초
   const POLL_INTERVAL = 8000;
-  let consecutiveErrors = 0;
-  const MAX_CONSECUTIVE_ERRORS = 5;
+  let consecutiveNetworkErrors = 0;
+  const MAX_NETWORK_ERRORS = 10; // 네트워크 오류는 10회까지 허용 (80초)
 
   for (let i = 0; i < MAX_POLLS; i++) {
     let data: PollResult;
@@ -239,21 +239,53 @@ const pollResult = async (
       });
 
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
+        // 서버 에러 응답 — 본문에서 상세 원인 추출
+        let serverMsg = `HTTP ${response.status}`;
+        try {
+          const errData = await response.json() as PollResult;
+          if (errData.message) serverMsg = errData.message;
+        } catch { /* 본문 파싱 실패 무시 */ }
+
+        // KV 미바인딩 (503) — 즉시 실패 (재시도 무의미)
+        if (response.status === 503 || serverMsg.includes('KV_NOT_BOUND')) {
+          throw new Error(
+            'GhostCut 폴링 서버 설정 오류: GHOSTCUT_TASKS KV가 바인딩되지 않았습니다.\n' +
+            'Cloudflare Pages 대시보드 → Settings → Functions → KV namespace bindings에서 설정해주세요.'
+          );
+        }
+
+        // 500 서버 오류 — 3회까지 재시도 후 상세 에러 표시
+        consecutiveNetworkErrors++;
+        if (consecutiveNetworkErrors >= 3 && response.status >= 500) {
+          throw new Error(`GhostCut 폴링 서버 오류 (${response.status}): ${serverMsg}`);
+        }
+
+        const elapsed = (i + 1) * (POLL_INTERVAL / 1000);
+        onProgress?.(`서버 오류 (${response.status}), 재시도 중...`, elapsed);
+        await new Promise(r => setTimeout(r, POLL_INTERVAL));
+        continue;
       }
 
       data = await response.json();
-      consecutiveErrors = 0; // 성공 시 리셋
+      consecutiveNetworkErrors = 0; // 성공 시 리셋
     } catch (err) {
-      consecutiveErrors++;
-      logger.warn(`[GhostCut] 폴링 오류 (${consecutiveErrors}/${MAX_CONSECUTIVE_ERRORS})`, err);
+      // monitoredFetch 자체 실패 (네트워크 오류) 또는 위에서 던진 에러
+      const errMsg = err instanceof Error ? err.message : String(err);
 
-      if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-        throw new Error(`GhostCut 서버 연결 실패 — ${MAX_CONSECUTIVE_ERRORS}회 연속 오류. 네트워크를 확인해주세요.`);
+      // 위에서 throw한 설정 오류는 그대로 전파
+      if (errMsg.includes('KV') || errMsg.includes('폴링 서버')) {
+        throw err;
+      }
+
+      consecutiveNetworkErrors++;
+      logger.warn(`[GhostCut] 폴링 네트워크 오류 (${consecutiveNetworkErrors}/${MAX_NETWORK_ERRORS})`, err);
+
+      if (consecutiveNetworkErrors >= MAX_NETWORK_ERRORS) {
+        throw new Error(`GhostCut 서버 연결 실패 — ${MAX_NETWORK_ERRORS}회 연속 네트워크 오류. 인터넷 연결을 확인해주세요.`);
       }
 
       const elapsed = (i + 1) * (POLL_INTERVAL / 1000);
-      onProgress?.('네트워크 오류, 자동 재시도 중...', elapsed);
+      onProgress?.(`네트워크 오류, 자동 재시도 중... (${consecutiveNetworkErrors}/${MAX_NETWORK_ERRORS})`, elapsed);
       await new Promise(r => setTimeout(r, POLL_INTERVAL));
       continue;
     }
@@ -267,6 +299,7 @@ const pollResult = async (
     }
 
     if (data.status === 'error') {
+      // 서버가 반환한 에러 메시지를 그대로 표시
       throw new Error(data.message || 'GhostCut 서버 오류');
     }
 

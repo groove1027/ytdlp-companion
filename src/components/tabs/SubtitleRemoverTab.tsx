@@ -123,7 +123,7 @@ const SubtitleRemoverTab: React.FC = () => {
         ? 'GhostCut 서버 연결 실패 — 네트워크 상태를 확인하거나 잠시 후 다시 시도해주세요.'
         : raw;
       setError(message);
-      setPercent(0);
+      // 진행률 유지 (어디서 실패했는지 사용자에게 표시)
     }
   }, [videoFile, requireAuth, addCost, videoDuration, percent]);
 
@@ -343,7 +343,20 @@ const SubtitleRemoverTab: React.FC = () => {
 
               {error && (
                 <div className="mt-3 p-3 rounded-lg bg-red-900/20 border border-red-500/30">
-                  <p className="text-sm text-red-300">{error}</p>
+                  <p className="text-sm text-red-300 whitespace-pre-line">{error}</p>
+                  {/* KV 설정 오류는 관리자 안내, 나머지는 재시도 버튼 */}
+                  {error.includes('KV') ? (
+                    <p className="text-xs text-red-400/70 mt-2">
+                      관리자에게 Cloudflare KV 바인딩 설정을 요청하세요.
+                    </p>
+                  ) : (
+                    <button
+                      onClick={handleRemove}
+                      className="mt-2 px-4 py-1.5 text-xs font-bold rounded-lg bg-red-600/30 text-red-300 hover:bg-red-600/50 border border-red-500/30 transition-colors"
+                    >
+                      다시 시도
+                    </button>
+                  )}
                 </div>
               )}
 

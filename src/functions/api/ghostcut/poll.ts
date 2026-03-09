@@ -23,6 +23,17 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       );
     }
 
+    // KV 바인딩 확인 — Pages 대시보드에서 GHOSTCUT_TASKS KV가 바인딩되지 않으면 undefined
+    if (!context.env.GHOSTCUT_TASKS) {
+      return new Response(
+        JSON.stringify({
+          status: 'error',
+          message: 'KV_NOT_BOUND: GHOSTCUT_TASKS KV 네임스페이스가 바인딩되지 않았습니다. Cloudflare Pages 대시보드 → Settings → Functions → KV namespace bindings에서 GHOSTCUT_TASKS를 추가해주세요.',
+        }),
+        { status: 503, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     const result = await context.env.GHOSTCUT_TASKS.get(`project:${projectId}`);
 
     if (!result) {
