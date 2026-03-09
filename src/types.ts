@@ -1430,6 +1430,53 @@ export enum EvolinkImageModel {
   NANO_BANANA_PRO = 'nano-banana-pro'
 }
 
+// ═══ 영상 분석실 (VideoAnalysisRoom) ═══
+
+export type VideoAnalysisPreset = 'tikitaka' | 'snack';
+
+/** 장면 하나의 구조화 데이터 (스낵형 + 티키타카 공용) */
+export interface VideoSceneRow {
+  cutNum: number;
+  timeline: string;
+  sourceTimeline: string;
+  dialogue: string;
+  effectSub: string;
+  sceneDesc: string;
+  mode: string;
+  audioContent: string;
+  duration: string;
+  videoDirection: string;
+  timecodeSource: string;
+}
+
+/** Content ID 회피 및 바이럴 분석 */
+export interface VideoContentIdAnalysis {
+  textMatchRate: string;
+  structureSimilarity: string;
+  orderSimilarity: string;
+  keywordVariation: string;
+  safetyGrade: string;
+  viralPoint: string;
+  judgement: string;
+}
+
+/** 10개 버전 중 하나 */
+export interface VideoVersionItem {
+  id: number;
+  title: string;
+  concept: string;
+  scenes: VideoSceneRow[];
+  rearrangement?: string;
+  contentId?: VideoContentIdAnalysis;
+}
+
+/** 타임스탬프 포함 프레임 (비주얼 타임코드 매칭용) */
+export interface VideoTimedFrame {
+  url: string;
+  hdUrl?: string;
+  timeSec: number;
+}
+
 declare global {
   interface AIStudio {
     hasSelectedApiKey: () => Promise<boolean>;

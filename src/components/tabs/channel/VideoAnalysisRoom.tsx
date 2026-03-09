@@ -5,55 +5,17 @@ import type { EvolinkChatMessage, EvolinkContentPart } from '../../../services/e
 import { useNavigationStore } from '../../../stores/navigationStore';
 import { useEditPointStore } from '../../../stores/editPointStore';
 import { useEditRoomStore } from '../../../stores/editRoomStore';
+import { useVideoAnalysisStore } from '../../../stores/videoAnalysisStore';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
 import { getYoutubeApiKey } from '../../../services/apiService';
 import { monitoredFetch } from '../../../services/apiService';
-
-type AnalysisPreset = 'tikitaka' | 'snack';
-
-/** 장면 하나의 구조화 데이터 (스낵형 + 티키타카 공용) */
-interface SceneRow {
-  cutNum: number;
-  // 스낵형 컬럼
-  timeline: string;      // 배치 타임코드 (00:00~00:03)
-  sourceTimeline: string; // 원본 타임코드
-  dialogue: string;      // 대사/나레이션
-  effectSub: string;     // 효과 자막
-  sceneDesc: string;     // 장면 설명
-  // 티키타카 마스터 편집 테이블 컬럼
-  mode: string;           // [N], [S], [A]
-  audioContent: string;   // 오디오 내용 (대사/내레이션/현장음)
-  duration: string;       // 예상 시간 (예: 4.0초)
-  videoDirection: string; // 비디오 화면 지시
-  timecodeSource: string; // 타임코드 소스 (MM:SS.ms)
-}
-
-/** Content ID 회피 및 바이럴 분석 */
-interface ContentIdAnalysis {
-  textMatchRate: string;
-  structureSimilarity: string;
-  orderSimilarity: string;
-  keywordVariation: string;
-  safetyGrade: string;
-  viralPoint: string;
-  judgement: string;
-}
-
-/** 10개 버전 중 하나 */
-interface VersionItem {
-  id: number;
-  title: string;
-  concept: string;
-  scenes: SceneRow[];
-  rearrangement?: string;
-  contentId?: ContentIdAnalysis;
-}
-
-/** 타임스탬프 포함 프레임 (비주얼 타임코드 매칭용) */
-interface TimedFrame {
-  url: string;
-  timeSec: number;
-}
+import type {
+  VideoAnalysisPreset as AnalysisPreset,
+  VideoSceneRow as SceneRow,
+  VideoContentIdAnalysis as ContentIdAnalysis,
+  VideoVersionItem as VersionItem,
+  VideoTimedFrame as TimedFrame,
+} from '../../../types';
 
 // ═══════════════════════════════════════════════════
 // 유틸리티
@@ -477,12 +439,18 @@ function generateAnalysisHtml(
       const headerCells = isTk
         ? '<th>#</th><th>모드</th><th>오디오 내용</th><th>효과자막</th><th>예상시간</th><th>비디오 화면 지시</th><th>타임코드</th>'
         : '<th>#</th><th>화면</th><th>효과 자막</th><th>하단 자막</th><th>편집점</th>';
-      const bodyRows = v.scenes.map(s => {
-        // 비주얼 매칭
+      const bodyRows = v.scenes.map((s, sIdx) => {
+        // 비주얼 매칭 (개선: 소스TC → 배치TC → 인덱스 분산)
         const tc = s.timecodeSource || s.sourceTimeline || '';
         const firstTc = tc.split(/[/~,]/)[0].trim();
-        const tSec = timecodeToSeconds(firstTc);
-        const matched = tSec > 0 ? matchFrameToTimecode(tSec, thumbnails) : (thumbnails[0] || null);
+        let tSec = timecodeToSeconds(firstTc);
+        if (tSec <= 0 && s.timeline) {
+          const range = s.timeline.match(/(\d+:\d+(?:\.\d+)?)\s*[~\-–—]\s*(\d+:\d+(?:\.\d+)?)/);
+          if (range) tSec = (timecodeToSeconds(range[1]) + timecodeToSeconds(range[2])) / 2;
+        }
+        const matched = tSec > 0
+          ? matchFrameToTimecode(tSec, thumbnails)
+          : thumbnails[Math.min(Math.floor((sIdx / Math.max(v.scenes.length, 1)) * thumbnails.length), thumbnails.length - 1)] || null;
         const imgCell = matched
           ? `<td class="visual"><img src="${escHtml(matched.url)}" alt="scene${s.cutNum}" /><span class="tc">${formatTimeSec(matched.timeSec)}</span></td>`
           : '';
@@ -961,25 +929,23 @@ ${inputDesc}
 const VideoAnalysisRoom: React.FC = () => {
   const { requireAuth } = useAuthGuard();
 
-  const [inputMode, setInputMode] = useState<'upload' | 'youtube'>('youtube');
-  const [youtubeUrl, setYoutubeUrl] = useState('');
+  // ── Zustand 스토어 (탭 전환 시 영속) ──
+  const store = useVideoAnalysisStore();
+  const {
+    inputMode, youtubeUrl, selectedPreset, rawResult, versions, thumbnails, error, expandedId,
+    setInputMode, setYoutubeUrl, setSelectedPreset, setRawResult, setVersions, setThumbnails,
+    setError, setExpandedId, cacheCurrentResult, restoreFromCache, resetResults,
+  } = store;
+
+  // 로컬 전용 (일시적 UI 상태 — 영속 불필요)
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
-  const [selectedPreset, setSelectedPreset] = useState<AnalysisPreset | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisPhase, setAnalysisPhase] = useState<'idle' | 'analyzing'>('idle');
-  const [rawResult, setRawResult] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [versions, setVersions] = useState<VersionItem[]>([]);
-  const [expandedId, setExpandedId] = useState<number | null>(null);
-  const [thumbnails, setThumbnails] = useState<TimedFrame[]>([]);
   const [copiedVersion, setCopiedVersion] = useState<number | null>(null);
   const [elapsedSec, setElapsedSec] = useState(0);
   const [simProgress, setSimProgress] = useState(0);
   const [previewFrame, setPreviewFrame] = useState<{ frame: TimedFrame; scene: SceneRow; versionTitle: string } | null>(null);
   const analysisStartRef = useRef<number>(0);
-
-  // 프리셋별 결과 캐시 — 프리셋 전환 시 기존 데이터 보존
-  const resultCacheRef = useRef<Record<string, { raw: string; versions: VersionItem[]; thumbs: TimedFrame[] }>>({});
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const hasInput = inputMode === 'youtube' ? youtubeUrl.trim().length > 0 : uploadedFile !== null;
@@ -989,11 +955,6 @@ const VideoAnalysisRoom: React.FC = () => {
     if (file) { setUploadedFile(file); setRawResult(''); setError(null); setVersions([]); setThumbnails([]); }
   };
 
-  const resetResults = useCallback(() => {
-    setRawResult(''); setError(null); setVersions([]); setThumbnails([]); setExpandedId(null);
-    resultCacheRef.current = {};
-  }, []);
-
   // ── 프리셋 전환 시 캐시 복원 or 신규 분석 ──
   const handleAnalyze = async (preset: AnalysisPreset) => {
     if (!requireAuth('영상 분석')) return;
@@ -1001,20 +962,11 @@ const VideoAnalysisRoom: React.FC = () => {
 
     // 현재 결과를 기존 프리셋 캐시에 저장 (전환 전 보존)
     if (selectedPreset && rawResult) {
-      resultCacheRef.current[selectedPreset] = { raw: rawResult, versions, thumbs: thumbnails };
+      cacheCurrentResult(selectedPreset);
     }
 
     // 캐시에 이미 결과가 있으면 복원만 하고 종료
-    const cached = resultCacheRef.current[preset];
-    if (cached && cached.versions.length > 0) {
-      setSelectedPreset(preset);
-      setRawResult(cached.raw);
-      setVersions(cached.versions);
-      setThumbnails(cached.thumbs);
-      setExpandedId(null);
-      setError(null);
-      return;
-    }
+    if (restoreFromCache(preset)) return;
 
     setSelectedPreset(preset);
     setIsAnalyzing(true);
@@ -1045,13 +997,34 @@ const VideoAnalysisRoom: React.FC = () => {
 
           // 영상 길이 파싱 → 썸네일 타임스탬프 추정
           const durationSec = meta ? parseIsoDuration(meta.duration) : 60;
-          // hqdefault는 항상 존재 (maxresdefault는 일부 영상에서 404)
+          // YouTube CDN: maxresdefault(1280x720), sddefault(640x480), hqdefault(480x360)
+          // 포지션별: 0.jpg(=hqdefault), 1/2/3.jpg (120x90) — hdUrl로 고해상도 제공
+          const base = `https://img.youtube.com/vi/${vid}`;
           frames = [
-            { url: `https://img.youtube.com/vi/${vid}/hqdefault.jpg`, timeSec: 0 },
-            { url: `https://img.youtube.com/vi/${vid}/1.jpg`, timeSec: Math.round(durationSec * 0.25) },
-            { url: `https://img.youtube.com/vi/${vid}/2.jpg`, timeSec: Math.round(durationSec * 0.5) },
-            { url: `https://img.youtube.com/vi/${vid}/3.jpg`, timeSec: Math.round(durationSec * 0.75) },
+            { url: `${base}/hqdefault.jpg`, hdUrl: `${base}/maxresdefault.jpg`, timeSec: 0 },
+            { url: `${base}/hqdefault.jpg`, hdUrl: `${base}/sddefault.jpg`, timeSec: Math.round(durationSec * 0.25) },
+            { url: `${base}/hqdefault.jpg`, hdUrl: `${base}/sddefault.jpg`, timeSec: Math.round(durationSec * 0.5) },
+            { url: `${base}/hqdefault.jpg`, hdUrl: `${base}/sddefault.jpg`, timeSec: Math.round(durationSec * 0.75) },
           ];
+          // 더 많은 중간 프레임 추가 (5초 간격) — 장면 매칭 정밀도 향상
+          if (durationSec > 20) {
+            const interval = Math.max(5, Math.round(durationSec / 20));
+            for (let t = interval; t < durationSec; t += interval) {
+              // 가장 가까운 기본 포지션(0/25/50/75%)의 썸네일 사용
+              const pct = t / durationSec;
+              let thumbUrl: string;
+              if (pct < 0.125) thumbUrl = `${base}/hqdefault.jpg`;
+              else if (pct < 0.375) thumbUrl = `${base}/1.jpg`;
+              else if (pct < 0.625) thumbUrl = `${base}/2.jpg`;
+              else if (pct < 0.875) thumbUrl = `${base}/3.jpg`;
+              else thumbUrl = `${base}/hqdefault.jpg`;
+              // 기존 타임스탬프와 너무 가까우면 스킵 (±2초 이내)
+              if (!frames.some(f => Math.abs(f.timeSec - t) < 3)) {
+                frames.push({ url: thumbUrl, hdUrl: thumbUrl, timeSec: t });
+              }
+            }
+            frames.sort((a, b) => a.timeSec - b.timeSec);
+          }
 
           if (meta) {
             inputDesc = `## YouTube 영상 정보
@@ -1110,8 +1083,8 @@ ${comments.slice(0, 15).map((c, i) => `${i + 1}. ${c.slice(0, 150)}`).join('\n')
       const parsed = parseVersions(text);
       setRawResult(text);
       setVersions(parsed);
-      // 결과 캐시에 저장
-      resultCacheRef.current[preset] = { raw: text, versions: parsed, thumbs: frames };
+      // 결과 캐시에 저장 (Zustand 스토어)
+      setTimeout(() => cacheCurrentResult(preset), 100);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error('[VideoAnalysis] 분석 실패:', err);
@@ -1605,8 +1578,19 @@ ${comments.slice(0, 15).map((c, i) => `${i + 1}. ${c.slice(0, 150)}`).join('\n')
                                     const tc = scene.timecodeSource || scene.sourceTimeline || '';
                                     // 원본 타임코드에서 첫 번째 값 추출 (복수 타임코드 중 첫 번째)
                                     const firstTc = tc.split(/[/~,]/)[0].trim();
-                                    const sceneTimeSec = timecodeToSeconds(firstTc);
-                                    const matched = sceneTimeSec > 0 ? matchFrameToTimecode(sceneTimeSec, thumbnails) : (thumbnails[0] || null);
+                                    let sceneTimeSec = timecodeToSeconds(firstTc);
+                                    // 소스 타임코드 없으면 배치 타임코드 시도
+                                    if (sceneTimeSec <= 0 && scene.timeline) {
+                                      const range = scene.timeline.match(/(\d+:\d+(?:\.\d+)?)\s*[~\-–—]\s*(\d+:\d+(?:\.\d+)?)/);
+                                      if (range) {
+                                        const mid = (timecodeToSeconds(range[1]) + timecodeToSeconds(range[2])) / 2;
+                                        if (mid > 0) sceneTimeSec = mid;
+                                      }
+                                    }
+                                    // 최종 폴백: 장면 인덱스로 프레임 분산 배치 (항상 같은 썸네일 방지)
+                                    const matched = sceneTimeSec > 0
+                                      ? matchFrameToTimecode(sceneTimeSec, thumbnails)
+                                      : thumbnails[Math.min(Math.floor((si / Math.max(v.scenes.length, 1)) * thumbnails.length), thumbnails.length - 1)] || null;
                                     return matched ? (
                                       <td className="py-2 px-2 align-top">
                                         <button
@@ -1740,11 +1724,17 @@ ${comments.slice(0, 15).map((c, i) => `${i + 1}. ${c.slice(0, 150)}`).join('\n')
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
             </button>
-            {/* 이미지 */}
+            {/* 이미지 — hdUrl 우선 사용, 404 시 url 폴백 */}
             <img
-              src={previewFrame.frame.url}
+              src={previewFrame.frame.hdUrl || previewFrame.frame.url}
               alt="Preview"
               className="w-full h-auto max-h-[70vh] object-contain bg-black"
+              onError={(e) => {
+                const img = e.currentTarget;
+                if (img.src !== previewFrame.frame.url) {
+                  img.src = previewFrame.frame.url;
+                }
+              }}
             />
             {/* 정보 바 */}
             <div className="px-4 py-3 bg-gray-800/60 border-t border-gray-700/50">
