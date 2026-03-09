@@ -152,16 +152,28 @@ export const uploadVideoToTikTok = async (opts: {
   disableComment?: boolean;
   disableDuet?: boolean;
   disableStitch?: boolean;
+  hashtags?: string[];         // 해시태그 배열 (제목에 자동 삽입)
   onProgress?: (pct: number) => void;
 }): Promise<{ publishId: string }> => {
-  const { accessToken, file, title, privacy, disableComment, disableDuet, disableStitch, onProgress } = opts;
+  const { accessToken, file, title, privacy, disableComment, disableDuet, disableStitch, hashtags, onProgress } = opts;
 
   logger.info('[TikTok] 영상 업로드 시작', { title, size: file.size });
 
+  // TikTok은 description이 없으므로 제목에 해시태그 포함
+  let titleWithHashtags = title;
+  if (hashtags && hashtags.length > 0) {
+    const hashtagStr = hashtags.map(h => `#${h.replace(/^#/, '')}`).join(' ');
+    const combined = `${title} ${hashtagStr}`;
+    titleWithHashtags = combined.length <= 150 ? combined : title;
+  }
+
   // Step 1: Init — FILE_UPLOAD 방식
+  const CHUNK_SIZE = 10 * 1024 * 1024; // 10MB per chunk
+  const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+
   const initBody = {
     post_info: {
-      title: title.slice(0, 150),
+      title: titleWithHashtags.slice(0, 150),
       privacy_level: privacy,
       disable_comment: disableComment ?? false,
       disable_duet: disableDuet ?? false,
@@ -170,8 +182,8 @@ export const uploadVideoToTikTok = async (opts: {
     source_info: {
       source: 'FILE_UPLOAD',
       video_size: file.size,
-      chunk_size: file.size, // 단일 청크 (파일 크기가 64MB 이하인 경우)
-      total_chunk_count: 1,
+      chunk_size: totalChunks === 1 ? file.size : CHUNK_SIZE,
+      total_chunk_count: totalChunks,
     },
   };
 
@@ -201,32 +213,55 @@ export const uploadVideoToTikTok = async (opts: {
     throw new Error('TikTok 업로드 URL 또는 publish_id를 받지 못했습니다.');
   }
 
-  // Step 2: 파일 업로드 (XMLHttpRequest for progress)
-  await new Promise<void>((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open('PUT', uploadUrl, true);
-    xhr.setRequestHeader('Content-Type', file.type || 'video/mp4');
-    xhr.setRequestHeader('Content-Range', `bytes 0-${file.size - 1}/${file.size}`);
+  // Step 2: 파일 업로드 (청크 단위)
+  if (totalChunks === 1) {
+    // 단일 청크 — 기존 방식
+    await new Promise<void>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('PUT', uploadUrl, true);
+      xhr.setRequestHeader('Content-Type', file.type || 'video/mp4');
+      xhr.setRequestHeader('Content-Range', `bytes 0-${file.size - 1}/${file.size}`);
 
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) {
-        onProgress?.(Math.round((e.loaded / e.total) * 80)); // 80%까지는 업로드
-      }
-    };
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          onProgress?.(Math.round((e.loaded / e.total) * 80));
+        }
+      };
 
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        resolve();
-      } else {
-        reject(new Error(`TikTok 파일 업로드 실패 (${xhr.status})`));
-      }
-    };
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) resolve();
+        else reject(new Error(`TikTok 파일 업로드 실패 (${xhr.status})`));
+      };
 
-    xhr.onerror = () => reject(new Error('TikTok 네트워크 오류'));
-    xhr.onabort = () => reject(new Error('TikTok 업로드 취소'));
+      xhr.onerror = () => reject(new Error('TikTok 네트워크 오류'));
+      xhr.onabort = () => reject(new Error('TikTok 업로드 취소'));
+      xhr.send(file);
+    });
+  } else {
+    // 멀티 청크 업로드
+    for (let i = 0; i < totalChunks; i++) {
+      const start = i * CHUNK_SIZE;
+      const end = Math.min(start + CHUNK_SIZE, file.size);
+      const chunk = file.slice(start, end);
 
-    xhr.send(file);
-  });
+      await new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('PUT', uploadUrl, true);
+        xhr.setRequestHeader('Content-Type', file.type || 'video/mp4');
+        xhr.setRequestHeader('Content-Range', `bytes ${start}-${end - 1}/${file.size}`);
+
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) resolve();
+          else reject(new Error(`TikTok 청크 ${i + 1}/${totalChunks} 업로드 실패 (${xhr.status})`));
+        };
+
+        xhr.onerror = () => reject(new Error('TikTok 네트워크 오류'));
+        xhr.send(chunk);
+      });
+
+      onProgress?.(Math.round(((i + 1) / totalChunks) * 80));
+    }
+  }
 
   // Step 3: 상태 폴링
   onProgress?.(85);

@@ -165,9 +165,10 @@ export const uploadVideoToThreads = async (opts: {
   userId: string;
   videoUrl: string;  // 공개 URL (Cloudinary 등)
   text: string;
+  replyControl?: 'everyone' | 'accounts_you_follow' | 'mentioned_only';
   onProgress?: (pct: number) => void;
 }): Promise<{ mediaId: string; permalink: string }> => {
-  const { accessToken, userId, videoUrl, text, onProgress } = opts;
+  const { accessToken, userId, videoUrl, text, replyControl, onProgress } = opts;
 
   logger.info('[Threads] 영상 게시 시작', { userId, videoUrl: videoUrl.slice(0, 50) });
 
@@ -183,6 +184,7 @@ export const uploadVideoToThreads = async (opts: {
         video_url: videoUrl,
         text: text.slice(0, 500),
         access_token: accessToken,
+        ...(replyControl ? { reply_control: replyControl } : {}),
       }),
     }
   );

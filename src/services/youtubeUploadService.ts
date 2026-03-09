@@ -201,10 +201,13 @@ export const uploadVideoToYouTube = async (opts: {
   privacy: 'public' | 'unlisted' | 'private';
   madeForKids: boolean;
   categoryId?: string;
+  defaultLanguage?: string;
+  notifySubscribers?: boolean;
+  scheduledAt?: string;          // ISO 8601 — if set, use publishAt
   thumbnailDataUrl?: string | null;
   onProgress?: (pct: number) => void;
 }): Promise<{ videoId: string; videoUrl: string }> => {
-  const { accessToken, file, title, description, tags, privacy, madeForKids, categoryId, thumbnailDataUrl, onProgress } = opts;
+  const { accessToken, file, title, description, tags, privacy, madeForKids, categoryId, defaultLanguage, notifySubscribers, scheduledAt, thumbnailDataUrl, onProgress } = opts;
 
   logger.info('[YouTube] 영상 업로드 시작', { title, size: file.size, privacy });
 
@@ -214,11 +217,15 @@ export const uploadVideoToYouTube = async (opts: {
       title: title.slice(0, 100),
       description: description.slice(0, 5000),
       tags: tags.slice(0, 500),
-      categoryId: categoryId || '22', // "People & Blogs"
+      categoryId: categoryId || '22',
+      defaultLanguage: defaultLanguage || 'ko',
+      defaultAudioLanguage: defaultLanguage || 'ko',
     },
     status: {
-      privacyStatus: privacy,
+      privacyStatus: scheduledAt ? 'private' : privacy,
       selfDeclaredMadeForKids: madeForKids,
+      ...(scheduledAt ? { publishAt: new Date(scheduledAt).toISOString() } : {}),
+      ...(notifySubscribers === false ? { notifySubscribers: false } : {}),
     },
   };
 
@@ -293,4 +300,59 @@ export const uploadVideoToYouTube = async (opts: {
 
     xhr.send(file);
   });
+};
+
+/** YouTube 자막(캡션) 업로드 */
+export const uploadCaptionsToYouTube = async (
+  accessToken: string,
+  videoId: string,
+  srtContent: string,
+  language: string = 'ko',
+  name: string = '한국어',
+): Promise<void> => {
+  const blob = new Blob([srtContent], { type: 'application/octet-stream' });
+  const captionMetadata = {
+    snippet: {
+      videoId,
+      language,
+      name,
+    },
+  };
+
+  // Step 1: Resumable upload 세션 초기화
+  const initResponse = await fetch(
+    'https://www.googleapis.com/upload/youtube/v3/captions?uploadType=resumable&part=snippet',
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json; charset=UTF-8',
+        'X-Upload-Content-Length': String(blob.size),
+        'X-Upload-Content-Type': 'application/octet-stream',
+      },
+      body: JSON.stringify(captionMetadata),
+    }
+  );
+
+  if (!initResponse.ok) {
+    const err = await initResponse.text();
+    logger.warn('[YouTube] 자막 업로드 초기화 실패', err);
+    return;
+  }
+
+  const uploadUrl = initResponse.headers.get('Location');
+  if (!uploadUrl) return;
+
+  // Step 2: SRT 파일 업로드
+  const uploadResponse = await fetch(uploadUrl, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/octet-stream' },
+    body: blob,
+  });
+
+  if (uploadResponse.ok) {
+    logger.success('[YouTube] 자막 업로드 완료', { videoId, language });
+  } else {
+    logger.warn('[YouTube] 자막 업로드 실패', await uploadResponse.text());
+  }
 };

@@ -2238,8 +2238,40 @@ const StepSettings: React.FC = () => {
   const hasIg = selectedPlatforms.includes('instagram');
   const hasTh = selectedPlatforms.includes('threads');
 
+  const videoDuration = useUploadStore((s) => s.videoDuration);
+  const videoSize = useUploadStore((s) => s.videoSize);
+
   return (
     <div className="space-y-4">
+      {/* 플랫폼별 영상 제한 경고 */}
+      {videoDuration && (
+        <div className="space-y-2">
+          {hasIg && videoDuration > 90 && (
+            <div className="flex items-center gap-2 text-sm bg-red-900/20 border border-red-500/30 rounded-lg px-4 py-2.5">
+              <span className="text-red-400 font-bold">Instagram</span>
+              <span className="text-red-300">Reels 최대 90초 초과 ({Math.round(videoDuration)}초) — 업로드 시 실패합니다</span>
+            </div>
+          )}
+          {hasTh && videoDuration > 300 && (
+            <div className="flex items-center gap-2 text-sm bg-red-900/20 border border-red-500/30 rounded-lg px-4 py-2.5">
+              <span className="text-red-400 font-bold">Threads</span>
+              <span className="text-red-300">최대 5분 초과 ({Math.round(videoDuration)}초) — 업로드 시 실패합니다</span>
+            </div>
+          )}
+          {hasTt && videoDuration > 600 && (
+            <div className="flex items-center gap-2 text-sm bg-red-900/20 border border-red-500/30 rounded-lg px-4 py-2.5">
+              <span className="text-red-400 font-bold">TikTok</span>
+              <span className="text-red-300">최대 10분 초과 ({Math.round(videoDuration)}초) — 업로드 시 실패합니다</span>
+            </div>
+          )}
+          {hasTt && videoSize && videoSize > 4 * 1024 * 1024 * 1024 && (
+            <div className="flex items-center gap-2 text-sm bg-red-900/20 border border-red-500/30 rounded-lg px-4 py-2.5">
+              <span className="text-red-400 font-bold">TikTok</span>
+              <span className="text-red-300">최대 4GB 초과 — 업로드 시 실패합니다</span>
+            </div>
+          )}
+        </div>
+      )}
       <div className="bg-gray-800 border border-gray-700 rounded-xl p-6 space-y-5">
         <h3 className="text-xl font-bold text-white mb-1">업로드 설정</h3>
         <p className="text-sm text-gray-400 mb-3">각 플랫폼별 공개 범위와 옵션을 설정합니다.</p>
@@ -2280,6 +2312,52 @@ const StepSettings: React.FC = () => {
               checked={settings.notifySubscribers}
               onChange={(v) => setUploadSettings({ notifySubscribers: v })}
             />
+
+            {/* YouTube 카테고리 */}
+            <div className="space-y-1.5">
+              <label className="text-sm text-gray-300">카테고리</label>
+              <select
+                value={settings.categoryId || '22'}
+                onChange={(e) => setUploadSettings({ categoryId: e.target.value })}
+                className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-red-500/50"
+              >
+                <option value="1">영화/애니메이션</option>
+                <option value="2">자동차</option>
+                <option value="10">음악</option>
+                <option value="15">반려동물/동물</option>
+                <option value="17">스포츠</option>
+                <option value="19">여행/이벤트</option>
+                <option value="20">게임</option>
+                <option value="22">인물/블로그</option>
+                <option value="23">코미디</option>
+                <option value="24">엔터테인먼트</option>
+                <option value="25">뉴스/정치</option>
+                <option value="26">노하우/스타일</option>
+                <option value="27">교육</option>
+                <option value="28">과학기술</option>
+              </select>
+            </div>
+
+            {/* 영상 언어 */}
+            <div className="space-y-1.5">
+              <label className="text-sm text-gray-300">영상 언어</label>
+              <select
+                value={settings.defaultLanguage || 'ko'}
+                onChange={(e) => setUploadSettings({ defaultLanguage: e.target.value })}
+                className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-red-500/50"
+              >
+                <option value="ko">한국어</option>
+                <option value="en">영어</option>
+                <option value="ja">일본어</option>
+                <option value="zh">중국어</option>
+                <option value="es">스페인어</option>
+                <option value="fr">프랑스어</option>
+                <option value="de">독일어</option>
+                <option value="pt">포르투갈어</option>
+                <option value="vi">베트남어</option>
+                <option value="th">태국어</option>
+              </select>
+            </div>
           </div>
         )}
 
@@ -2343,6 +2421,33 @@ const StepSettings: React.FC = () => {
               <div className="flex items-center gap-2 text-sm text-gray-400 bg-gray-800/60 border border-gray-600/30 rounded-lg px-3 py-2">
                 <span className="text-gray-300 font-semibold">Threads</span>
                 <span>— 게시물은 항상 공개로 게시됩니다</span>
+              </div>
+            )}
+            {hasTh && (
+              <div className="space-y-1.5 mt-3">
+                <label className="text-sm text-gray-300 flex items-center gap-2">
+                  <span className="text-gray-300 font-semibold">Threads</span> 답글 허용 범위
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {([
+                    { id: 'everyone' as const, label: '모든 사람' },
+                    { id: 'accounts_you_follow' as const, label: '팔로잉만' },
+                    { id: 'mentioned_only' as const, label: '멘션만' },
+                  ]).map((opt) => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => setUploadSettings({ threadsReplyControl: opt.id })}
+                      className={`py-2 px-3 rounded-lg text-sm font-medium border transition-all ${
+                        settings.threadsReplyControl === opt.id
+                          ? 'border-gray-400/50 bg-gray-400/10 text-gray-200'
+                          : 'border-gray-700 bg-gray-900/50 text-gray-400 hover:border-gray-600'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
           </div>
@@ -2614,6 +2719,32 @@ const UploadTab: React.FC = () => {
     if (!file) return;
     const meta = store.metadata;
     const settings = store.uploadSettings;
+
+    // 플랫폼별 영상 제한 검증
+    const duration = store.videoDuration;
+    const validationErrors: string[] = [];
+    if (duration) {
+      if (selectedPlatforms.includes('instagram') && instagramAuth.isConnected && duration > 90) {
+        validationErrors.push(`Instagram Reels는 최대 90초입니다 (현재 ${Math.round(duration)}초)`);
+      }
+      if (selectedPlatforms.includes('threads') && threadsAuth.isConnected && duration > 300) {
+        validationErrors.push(`Threads는 최대 5분입니다 (현재 ${Math.round(duration)}초)`);
+      }
+      if (selectedPlatforms.includes('tiktok') && tiktokAuth.isConnected && duration > 600) {
+        validationErrors.push(`TikTok은 최대 10분입니다 (현재 ${Math.round(duration)}초)`);
+      }
+    }
+    if (file.size > 4 * 1024 * 1024 * 1024) {
+      if (selectedPlatforms.includes('tiktok') && tiktokAuth.isConnected) {
+        validationErrors.push('TikTok은 최대 4GB입니다');
+      }
+    }
+    if (validationErrors.length > 0) {
+      showToast(validationErrors.join('\n'));
+      useUploadStore.getState().finishUpload();
+      return;
+    }
+
     const setPP = useUploadStore.getState().setPlatformProgress;
 
     // Instagram/Threads에 필요한 공개 URL (Cloudinary 업로드)
@@ -2671,6 +2802,10 @@ const UploadTab: React.FC = () => {
             tags: [...(meta?.hiddenTags || meta?.tags || [])],
             privacy: settings.privacy as 'public' | 'unlisted' | 'private',
             madeForKids: settings.madeForKids,
+            categoryId: settings.categoryId,
+            defaultLanguage: settings.defaultLanguage,
+            notifySubscribers: settings.notifySubscribers,
+            scheduledAt: settings.scheduledAt,
             thumbnailDataUrl: store.thumbnailUrl,
             onProgress: (pct) => setPP('youtube', { progress: pct, status: 'uploading' }),
           });
@@ -2706,6 +2841,7 @@ const UploadTab: React.FC = () => {
             disableDuet: settings.tiktokDisableDuet,
             disableStitch: settings.tiktokDisableStitch,
             disableComment: settings.tiktokDisableComment,
+            hashtags: meta?.publicHashtags || [],
             onProgress: (pct) => setPP('tiktok', { progress: pct, status: 'uploading' }),
           });
           setPP('tiktok', { progress: 100, status: 'done', resultUrl: `https://www.tiktok.com/@${tiktokAuth.username}` });
@@ -2726,11 +2862,24 @@ const UploadTab: React.FC = () => {
         try {
           const { uploadVideoToInstagram } = await import('../../services/instagramUploadService');
           const caption = `${meta?.selectedTitle || meta?.titles?.[0] || ''}\n\n${meta?.description || ''}\n\n${(meta?.publicHashtags || []).map(t => `#${t.replace(/^#/, '')}`).join(' ')}`;
+          // 썸네일이 있으면 Cloudinary에 업로드하여 커버 URL 생성
+          let igCoverUrl: string | undefined;
+          if (store.thumbnailUrl) {
+            try {
+              const { uploadMediaToHosting } = await import('../../services/uploadService');
+              const thumbBlob = await fetch(store.thumbnailUrl).then(r => r.blob());
+              const thumbFile = new File([thumbBlob], 'cover.jpg', { type: 'image/jpeg' });
+              igCoverUrl = await uploadMediaToHosting(thumbFile);
+            } catch {
+              // 커버 업로드 실패는 무시 — 영상 업로드는 진행
+            }
+          }
           const result = await uploadVideoToInstagram({
             accessToken: instagramAuth.accessToken!,
             userId: instagramAuth.userId!,
             videoUrl: publicVideoUrl,
             caption,
+            coverUrl: igCoverUrl,
             onProgress: (pct) => setPP('instagram', { progress: pct, status: 'uploading' }),
           });
           setPP('instagram', { progress: 100, status: 'done', resultUrl: result.permalink || `https://www.instagram.com/${instagramAuth.username}` });
@@ -2756,6 +2905,7 @@ const UploadTab: React.FC = () => {
             userId: threadsAuth.userId!,
             videoUrl: publicVideoUrl,
             text,
+            replyControl: settings.threadsReplyControl,
             onProgress: (pct) => setPP('threads', { progress: pct, status: 'uploading' }),
           });
           setPP('threads', { progress: 100, status: 'done', resultUrl: result.permalink || `https://threads.net/@${threadsAuth.username}` });

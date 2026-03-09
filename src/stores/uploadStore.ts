@@ -104,10 +104,13 @@ const DEFAULT_UPLOAD_SETTINGS: UploadSettings = {
   privacy: 'private',
   madeForKids: false,
   notifySubscribers: true,
+  categoryId: '22',
+  defaultLanguage: 'ko',
   tiktokPrivacy: 'SELF_ONLY',
   tiktokDisableDuet: false,
   tiktokDisableStitch: false,
   tiktokDisableComment: false,
+  threadsReplyControl: 'everyone',
 };
 
 const DEFAULT_EXPORT_CONFIG: ExportConfig = {

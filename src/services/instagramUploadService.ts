@@ -160,9 +160,10 @@ export const uploadVideoToInstagram = async (opts: {
   userId: string;
   videoUrl: string;  // 공개 URL (Cloudinary 등)
   caption: string;
+  coverUrl?: string;           // 커버 이미지 공개 URL (Cloudinary 등)
   onProgress?: (pct: number) => void;
 }): Promise<{ mediaId: string; permalink: string }> => {
-  const { accessToken, userId, videoUrl, caption, onProgress } = opts;
+  const { accessToken, userId, videoUrl, caption, coverUrl, onProgress } = opts;
 
   logger.info('[Instagram] Reels 업로드 시작', { userId, videoUrl: videoUrl.slice(0, 50) });
 
@@ -178,6 +179,7 @@ export const uploadVideoToInstagram = async (opts: {
         video_url: videoUrl,
         caption: caption.slice(0, 2200),
         access_token: accessToken,
+        ...(coverUrl ? { cover_url: coverUrl } : {}),
       }),
     }
   );

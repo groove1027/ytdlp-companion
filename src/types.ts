@@ -1146,11 +1146,16 @@ export interface UploadSettings {
   scheduledAt?: string;        // ISO 8601 예약 시간
   madeForKids: boolean;
   notifySubscribers: boolean;
+  // YouTube 추가 설정
+  categoryId: string;          // YouTube 카테고리 ID (기본: "22")
+  defaultLanguage: string;     // 영상 기본 언어 (기본: "ko")
   // TikTok 전용
   tiktokPrivacy: 'PUBLIC_TO_EVERYONE' | 'MUTUAL_FOLLOW_FRIENDS' | 'FOLLOWER_OF_CREATOR' | 'SELF_ONLY';
   tiktokDisableDuet: boolean;
   tiktokDisableStitch: boolean;
   tiktokDisableComment: boolean;
+  // Threads 전용
+  threadsReplyControl: 'everyone' | 'accounts_you_follow' | 'mentioned_only';
 }
 
 export type OutputMode = 'mp4' | 'srt-image' | 'srt-video';

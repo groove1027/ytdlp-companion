@@ -1,4 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
+import AnalysisLoadingPanel, { notifyAnalysisComplete } from './AnalysisLoadingPanel';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { evolinkChatStream, evolinkVideoAnalysisStream } from '../../../services/evolinkService';
 import type { EvolinkChatMessage, EvolinkContentPart } from '../../../services/evolinkService';
@@ -1164,6 +1165,7 @@ ${comments.slice(0, 15).map((c, i) => `${i + 1}. ${c.slice(0, 150)}`).join('\n')
       setVersions(parsed);
       // 결과 캐시에 저장 (Zustand 스토어)
       setTimeout(() => cacheCurrentResult(preset), 100);
+      notifyAnalysisComplete();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error('[VideoAnalysis] 분석 실패:', err);
@@ -1352,42 +1354,23 @@ ${comments.slice(0, 15).map((c, i) => `${i + 1}. ${c.slice(0, 150)}`).join('\n')
         )}
       </div>
 
-      {/* ═══ 로딩 ═══ */}
-      {isAnalyzing && (() => {
-        const elMin = Math.floor(elapsedSec / 60);
-        const elS = elapsedSec % 60;
-        const remainSec = simProgress > 0 ? Math.max(0, Math.round(elapsedSec / simProgress * (100 - simProgress))) : ESTIMATED_TOTAL_SEC;
-        const remMin = Math.floor(remainSec / 60);
-        const remS = remainSec % 60;
-        return (
-          <div className="bg-gray-800/50 rounded-xl border border-blue-500/20 p-6">
-            <div className="flex items-center gap-3">
-              <div className="w-6 h-6 border-2 border-gray-600 border-t-blue-400 rounded-full animate-spin" />
-              <div className="flex-1">
-                <p className="text-white font-semibold">10가지 리메이크 버전 생성 중...</p>
-                <p className="text-gray-400 text-sm">AI가 영상을 분석하고 장면별 편집 가이드를 작성하고 있습니다.</p>
-              </div>
-              <span className="text-blue-400 font-bold text-lg tabular-nums">{simProgress}%</span>
-            </div>
-            {/* 프로그레스 바 */}
-            <div className="mt-4 h-2 rounded-full bg-gray-700 overflow-hidden">
-              <div
-                className="h-full bg-gradient-to-r from-blue-500 to-violet-500 rounded-full transition-all duration-500 ease-out"
-                style={{ width: `${simProgress}%` }}
-              />
-            </div>
-            {/* 경과 시간 / 예상 완료 */}
-            <div className="mt-2.5 flex items-center justify-between text-xs tabular-nums">
-              <span className="text-gray-400">
-                경과 <span className="text-gray-300 font-medium">{elMin > 0 ? `${elMin}분 ` : ''}{String(elS).padStart(2, '0')}초</span>
-              </span>
-              <span className="text-gray-500">
-                예상 완료까지 약 <span className="text-blue-400/80 font-medium">{remMin > 0 ? `${remMin}분 ` : ''}{String(remS).padStart(2, '0')}초</span>
-              </span>
-            </div>
-          </div>
-        );
-      })()}
+      {/* ═══ 로딩 — 프리미엄 로딩 패널 ═══ */}
+      {isAnalyzing && (
+        <AnalysisLoadingPanel
+          currentStep={simProgress < 15 ? 0 : simProgress < 40 ? 1 : simProgress < 75 ? 2 : 3}
+          steps={[
+            { label: '영상 로드', icon: '📹' },
+            { label: '장면 분석', icon: '🔍' },
+            { label: '버전 생성', icon: '✨' },
+            { label: '편집 가이드', icon: '📋' },
+          ]}
+          message="10가지 리메이크 버전 생성 중..."
+          elapsedSec={elapsedSec}
+          estimatedTotalSec={ESTIMATED_TOTAL_SEC}
+          accent="blue"
+          description="AI가 영상을 분석하고 장면별 편집 가이드를 작성하고 있습니다"
+        />
+      )}
 
       {/* ═══ 에러 ═══ */}
       {error && (

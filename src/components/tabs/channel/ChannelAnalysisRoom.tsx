@@ -76,36 +76,78 @@ const ChannelAnalysisRoom: React.FC = () => {
     if (idx > 0) { apis.splice(idx, 1); apis.unshift(url); }
   }, []);
 
-  // Piped API로 스트림 URL 획득
-  const fetchPipedStreams = useCallback(async (videoId: string): Promise<{ url: string; filename: string; quality: string } | null> => {
+  // Piped API로 스트림 URL 획득 (HD videoOnly + audio 분리 스트림 포함)
+  const fetchPipedStreams = useCallback(async (videoId: string): Promise<{
+    muxedUrl?: string; // 720p 이하 영상+음성 통합
+    videoOnlyUrl?: string; // 1080p+ 영상만
+    audioUrl?: string; // 오디오만
+    filename: string;
+    quality: string;
+    needsMerge: boolean; // true면 FFmpeg 머지 필요
+  } | null> => {
     for (const api of PIPED_APIS.current) {
       try {
         const res = await fetch(`${api}/streams/${videoId}`, { signal: AbortSignal.timeout(8000) });
         if (!res.ok) continue;
         const data = await res.json();
-        // muxed MP4 스트림 (영상+음성) — 해상도 내림차순 정렬
+        const safeTitle = (data.title || videoId).replace(/[<>:"/\\|?*]/g, '').substring(0, 80);
+
+        // 1) HD videoOnly MP4 스트림 (1080p↑) — 해상도 내림차순
+        const videoOnly = (data.videoStreams || [])
+          .filter((s: { videoOnly: boolean; mimeType: string; height: number }) =>
+            s.videoOnly && s.mimeType?.includes('video/mp4') && (s.height || 0) >= 720)
+          .sort((a: { height: number }, b: { height: number }) => (b.height || 0) - (a.height || 0));
+
+        // 2) 오디오 스트림 (M4A 우선)
+        const audio = (data.audioStreams || [])
+          .filter((s: { mimeType: string }) => s.mimeType?.includes('audio/mp4') || s.mimeType?.includes('audio/m4a'))
+          .sort((a: { bitrate: number }, b: { bitrate: number }) => (b.bitrate || 0) - (a.bitrate || 0));
+
+        // 3) muxed MP4 스트림 (폴백)
         const muxed = (data.videoStreams || [])
           .filter((s: { videoOnly: boolean; mimeType: string }) => !s.videoOnly && s.mimeType?.includes('video/mp4'))
           .sort((a: { height: number }, b: { height: number }) => (b.height || 0) - (a.height || 0));
+
+        promoteInstance(api);
+
+        // HD(1080p+) videoOnly + audio → FFmpeg 머지
+        if (videoOnly.length > 0 && audio.length > 0) {
+          const bestVideo = videoOnly[0];
+          const bestAudio = audio[0];
+          return {
+            videoOnlyUrl: bestVideo.url,
+            audioUrl: bestAudio.url,
+            filename: `${safeTitle} (${bestVideo.quality || `${bestVideo.height}p`}).mp4`,
+            quality: bestVideo.quality || `${bestVideo.height}p`,
+            needsMerge: true,
+          };
+        }
+
+        // muxed 폴백 (720p 이하)
         if (muxed.length > 0) {
-          promoteInstance(api);
           const best = muxed[0];
-          const safeTitle = (data.title || videoId).replace(/[<>:"/\\|?*]/g, '').substring(0, 80);
-          return { url: best.url, filename: `${safeTitle} (${best.quality || '720p'}).mp4`, quality: best.quality || '720p' };
+          return {
+            muxedUrl: best.url,
+            filename: `${safeTitle} (${best.quality || '720p'}).mp4`,
+            quality: best.quality || '720p',
+            needsMerge: false,
+          };
         }
       } catch { continue; }
     }
     return null;
   }, [promoteInstance]);
 
-  // fetch + Blob으로 실제 파일 다운로드 (진행률 표시)
-  const downloadBlob = useCallback(async (streamUrl: string, filename: string, videoId: string): Promise<boolean> => {
+  // fetch + ReadableStream → Blob (진행률 표시)
+  const fetchStreamBlob = useCallback(async (
+    streamUrl: string, videoId: string, progressOffset: number, progressScale: number,
+  ): Promise<Blob | null> => {
     try {
       const res = await fetch(streamUrl);
-      if (!res.ok) return false;
+      if (!res.ok) return null;
       const contentLength = parseInt(res.headers.get('content-length') || '0', 10);
       const reader = res.body?.getReader();
-      if (!reader) return false;
+      if (!reader) return null;
 
       const chunks: ArrayBuffer[] = [];
       let received = 0;
@@ -116,23 +158,65 @@ const ChannelAnalysisRoom: React.FC = () => {
         chunks.push(value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength));
         received += value.length;
         if (contentLength > 0) {
-          setDownloadProgress(prev => ({ ...prev, [videoId]: Math.round((received / contentLength) * 100) }));
+          const pct = Math.round(progressOffset + (received / contentLength) * progressScale);
+          setDownloadProgress(prev => ({ ...prev, [videoId]: pct }));
         }
       }
-
-      const blob = new Blob(chunks, { type: 'video/mp4' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      a.style.display = 'none';
-      document.body.appendChild(a);
-      a.click();
-      setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 200);
-      return true;
+      return new Blob(chunks);
     } catch {
-      return false;
+      return null;
     }
+  }, []);
+
+  // Blob을 파일로 저장
+  const saveBlobAsFile = useCallback((blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 200);
+  }, []);
+
+  // FFmpeg로 videoOnly + audio 머지 → MP4
+  const mergeWithFFmpeg = useCallback(async (
+    videoBlob: Blob, audioBlob: Blob, filename: string, videoId: string,
+  ): Promise<Blob> => {
+    setDownloadProgress(prev => ({ ...prev, [videoId]: 85 }));
+    const { loadFFmpeg } = await import('../../../services/ffmpegService');
+    const { fetchFile } = await import('@ffmpeg/util');
+    const ffmpeg = await loadFFmpeg();
+
+    const videoData = await fetchFile(URL.createObjectURL(videoBlob));
+    const audioData = await fetchFile(URL.createObjectURL(audioBlob));
+
+    await ffmpeg.writeFile('input_v.mp4', videoData);
+    await ffmpeg.writeFile('input_a.m4a', audioData);
+
+    setDownloadProgress(prev => ({ ...prev, [videoId]: 90 }));
+
+    await ffmpeg.exec([
+      '-i', 'input_v.mp4',
+      '-i', 'input_a.m4a',
+      '-c:v', 'copy',
+      '-c:a', 'aac',
+      '-shortest',
+      '-y', 'merged.mp4',
+    ]);
+
+    setDownloadProgress(prev => ({ ...prev, [videoId]: 97 }));
+
+    const outputData = await ffmpeg.readFile('merged.mp4');
+    const safeOutput = outputData instanceof Uint8Array ? new Uint8Array(outputData) : outputData;
+
+    // 임시 파일 정리
+    try { await ffmpeg.deleteFile('input_v.mp4'); } catch { /* ignore */ }
+    try { await ffmpeg.deleteFile('input_a.m4a'); } catch { /* ignore */ }
+    try { await ffmpeg.deleteFile('merged.mp4'); } catch { /* ignore */ }
+
+    return new Blob([safeOutput as BlobPart], { type: 'video/mp4' });
   }, []);
 
   // Cobalt API 폴백 (tunnel 모드)
@@ -259,6 +343,7 @@ const ChannelAnalysisRoom: React.FC = () => {
       guideline.contentFormat = effectiveFormat;
       setChannelGuideline(guideline);
       setProgress(null);
+      notifyAnalysisComplete();
       showToast('채널 스타일 DNA 분석이 완료되었습니다.');
       // [v4.5] 스마트 제목 — 채널명 기반
       useProjectStore.getState().smartUpdateTitle('channel-analysis', info.title || channelUrl);
@@ -293,6 +378,7 @@ const ChannelAnalysisRoom: React.FC = () => {
       setProgress({ step: 4, message: 'AI 스타일 역설계 분석 중...' });
       setChannelGuideline(await analyzeChannelStyle(scripts, stubInfo));
       setProgress(null);
+      notifyAnalysisComplete();
       showToast('스타일 분석이 완료되었습니다.');
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
