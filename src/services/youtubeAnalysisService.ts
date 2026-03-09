@@ -147,8 +147,21 @@ const formatSubscribers = (count: number): string => {
 /** 채널 URL에서 채널 식별자 추출 */
 const extractChannelIdentifier = (url: string): { type: 'id' | 'handle' | 'custom'; value: string } | null => {
     // URL 디코딩 (한글 등 %XX 인코딩 처리)
-    let decoded = url;
-    try { decoded = decodeURIComponent(url); } catch { /* 디코딩 실패 시 원본 사용 */ }
+    let decoded = url.trim();
+    try { decoded = decodeURIComponent(decoded); } catch { /* 디코딩 실패 시 원본 사용 */ }
+
+    // 프로토콜 없으면 자동 보정 (youtube.com/... → https://youtube.com/...)
+    if (/^(m\.)?youtube\.com/i.test(decoded)) {
+        decoded = 'https://' + decoded;
+    }
+
+    // @handle만 단독 입력 (URL 없이)
+    const bareHandle = decoded.match(/^@([^\s\/]+)$/);
+    if (bareHandle) return { type: 'handle', value: bareHandle[1] };
+
+    // UCxxxx 채널 ID만 단독 입력
+    const bareId = decoded.match(/^(UC[\w-]{20,})$/);
+    if (bareId) return { type: 'id', value: bareId[1] };
 
     // /channel/UCxxxx 형식
     const channelMatch = decoded.match(/\/channel\/(UC[\w-]+)/);
