@@ -8,6 +8,8 @@
 
 ## 🟢 완료된 작업
 
+- [x] StoryboardPanel 이미지/영상 직접 업로드 기능 추가 — SceneCard, GridSceneCard, SceneDetailModal에 업로드 버튼 + 삭제 기능, Cloudinary 호스팅 연동 (#20, 2026-03-10)
+- [x] musicService.ts pollMusicStatus FIRST_SUCCESS 버그 수정 — 중간 상태를 SUCCESS와 분리하여 계속 폴링, snake_case 필드 폴백 추가, 에러 메시지 개선 (#21/#22, 2026-03-10)
 - [x] UploadTab UI 리디자인 — 원페이지 스크롤 + 플랫폼별 accent 색상 (2026-03-06)
 - [x] 프로젝트 코드베이스 분석 완료 (11,123줄)
 - [x] CLAUDE.md 작성 (프로젝트 루트 매뉴얼)

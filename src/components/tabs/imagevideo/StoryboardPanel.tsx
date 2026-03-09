@@ -5,6 +5,7 @@ import { useImageVideoStore } from '../../../stores/imageVideoStore';
 import { generateSceneImage } from '../../../services/gemini/imageGeneration';
 import { generatePromptFromScript } from '../../../services/gemini/imageAnalysis';
 import { persistImage } from '../../../services/imageStorageService';
+import { uploadMediaToHosting } from '../../../services/uploadService';
 import { useVideoBatch } from '../../../hooks/useVideoBatch';
 import { PRICING } from '../../../constants';
 import { AspectRatio, ImageModel, CharacterAppearance, VideoFormat } from '../../../types';
@@ -92,12 +93,14 @@ interface SceneCardProps {
   onAddAfter: (index: number) => void;
   onAutoPrompt: (id: string) => void;
   onReferenceUpload: (id: string, file: File) => void;
+  onUploadImage: (id: string, file: File) => void;
   onOpenDetail: (scene: Scene, index: number) => void;
   onCopyScript?: (sceneId: string) => void;
 }
 
-const SceneCard: React.FC<SceneCardProps> = ({ scene, index, onUpdatePrompt, onDelete, onRegenerate, onTransform, onGrokVideo, onVeoVideo, onPlaySceneAudio, playingSceneId, sceneProgress, onAddAfter, onAutoPrompt, onReferenceUpload, onOpenDetail, onCopyScript }) => {
+const SceneCard: React.FC<SceneCardProps> = ({ scene, index, onUpdatePrompt, onDelete, onRegenerate, onTransform, onGrokVideo, onVeoVideo, onPlaySceneAudio, playingSceneId, sceneProgress, onAddAfter, onAutoPrompt, onReferenceUpload, onUploadImage, onOpenDetail, onCopyScript }) => {
   const refInputRef = useRef<HTMLInputElement>(null);
+  const uploadInputRef = useRef<HTMLInputElement>(null);
   return (
   <div className="bg-gray-800 border border-gray-700 rounded-xl p-4 hover:border-gray-600 transition-colors">
     <div className="flex gap-4">
@@ -305,14 +308,22 @@ const SceneCard: React.FC<SceneCardProps> = ({ scene, index, onUpdatePrompt, onD
             )}
           </div>
         ) : (
-          <div className="w-full h-24 bg-gray-900 border border-gray-700 border-dashed rounded-lg flex items-center justify-center">
+          <div
+            className="w-full h-24 bg-gray-900 border border-gray-700 border-dashed rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-orange-500/40 hover:bg-gray-800/50 transition-colors"
+            onClick={() => !scene.isGeneratingImage && uploadInputRef.current?.click()}
+          >
             {scene.isGeneratingImage ? (
               <div className="w-6 h-6 border-2 border-gray-500 border-t-orange-400 rounded-full animate-spin" />
             ) : (
-              <span className="text-gray-600 text-sm">이미지 없음</span>
+              <>
+                <svg className="w-5 h-5 text-gray-600 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                <span className="text-gray-600 text-[10px]">클릭하여 업로드</span>
+              </>
             )}
           </div>
         )}
+        <input type="file" ref={uploadInputRef} accept="image/*,video/*" className="hidden"
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) onUploadImage(scene.id, f); e.target.value = ''; }} />
         {scene.isGeneratingVideo && (
           <div className="mt-2 flex items-center gap-1.5">
             <div className="w-3 h-3 border border-gray-500 border-t-blue-400 rounded-full animate-spin" />
@@ -339,12 +350,14 @@ interface GridSceneCardProps {
   sceneProgress?: number;
   onAddAfter: (index: number) => void;
   onReferenceUpload: (id: string, file: File) => void;
+  onUploadImage: (id: string, file: File) => void;
   onOpenDetail: (scene: Scene, index: number) => void;
   onCopyScript?: (sceneId: string) => void;
 }
 
-const GridSceneCard: React.FC<GridSceneCardProps> = ({ scene, index, onRegenerate, onDelete, onGrokVideo, onVeoVideo, onPlaySceneAudio, playingSceneId, sceneProgress, onAddAfter, onReferenceUpload, onOpenDetail, onCopyScript }) => {
+const GridSceneCard: React.FC<GridSceneCardProps> = ({ scene, index, onRegenerate, onDelete, onGrokVideo, onVeoVideo, onPlaySceneAudio, playingSceneId, sceneProgress, onAddAfter, onReferenceUpload, onUploadImage, onOpenDetail, onCopyScript }) => {
   const isThisPlaying = playingSceneId === scene.id;
+  const gridUploadRef = useRef<HTMLInputElement>(null);
 
   return (
     <div className="bg-gray-800 border border-gray-700 rounded-xl overflow-hidden hover:border-gray-500 transition-colors">
@@ -375,8 +388,16 @@ const GridSceneCard: React.FC<GridSceneCardProps> = ({ scene, index, onRegenerat
             onClick={() => scene.imageUrl && useUIStore.getState().openLightbox(scene.imageUrl)}
           />
         ) : (
-          <div className="absolute inset-0 flex items-center justify-center text-gray-600 text-sm">이미지 없음</div>
+          <div
+            className="absolute inset-0 flex flex-col items-center justify-center text-gray-600 hover:text-orange-400/60 transition-colors"
+            onClick={() => gridUploadRef.current?.click()}
+          >
+            <svg className="w-6 h-6 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+            <span className="text-[10px]">클릭하여 업로드</span>
+          </div>
         )}
+        <input type="file" ref={gridUploadRef} accept="image/*,video/*" className="hidden"
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) onUploadImage(scene.id, f); e.target.value = ''; }} />
         {scene.videoUrl && !scene.isGeneratingVideo && (
           <div className="absolute top-1.5 right-1.5 bg-green-500/80 text-white text-[9px] font-bold px-1 py-0.5 rounded flex items-center gap-0.5 pointer-events-none">
             <svg className="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
@@ -494,16 +515,18 @@ interface SceneDetailModalProps {
   onDelete: (index: number) => void;
   onAutoPrompt: (id: string) => void;
   onReferenceUpload: (id: string, file: File) => void;
+  onUploadImage: (id: string, file: File) => void;
   onAddAfter: (index: number) => void;
 }
 
 const SceneDetailModal: React.FC<SceneDetailModalProps> = ({
-  scene: sceneProp, index, onClose, onUpdatePrompt, onRegenerate, onTransform, onGrokVideo, onVeoVideo, onDelete, onAutoPrompt, onReferenceUpload, onAddAfter
+  scene: sceneProp, index, onClose, onUpdatePrompt, onRegenerate, onTransform, onGrokVideo, onVeoVideo, onDelete, onAutoPrompt, onReferenceUpload, onUploadImage, onAddAfter
 }) => {
   // 스토어에서 최신 장면 데이터 구독 (stale prop 방지)
   const liveScene = useProjectStore((s) => s.scenes.find((sc) => sc.id === sceneProp.id));
   const scene = liveScene || sceneProp;
   const refInputRef = useRef<HTMLInputElement>(null);
+  const modalUploadRef = useRef<HTMLInputElement>(null);
 
   // 경과 시간 타이머
   const isPrompting = !!scene.generationStatus && !scene.isGeneratingImage && !scene.isGeneratingVideo;
@@ -542,13 +565,36 @@ const SceneDetailModal: React.FC<SceneDetailModalProps> = ({
           {/* Image & Video Preview */}
           <div className="flex gap-4">
             <div className="flex-1">
-              <p className="text-xs font-semibold text-gray-500 uppercase mb-2">이미지</p>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-semibold text-gray-500 uppercase">이미지</p>
+                <div className="flex items-center gap-1.5">
+                  <input type="file" ref={modalUploadRef} accept="image/*,video/*" className="hidden"
+                    onChange={(e) => { const f = e.target.files?.[0]; if (f) onUploadImage(scene.id, f); e.target.value = ''; }} />
+                  <button type="button" onClick={() => modalUploadRef.current?.click()}
+                    className="text-[10px] text-orange-400 hover:text-orange-300 border border-orange-500/30 hover:border-orange-500/50 px-2 py-0.5 rounded transition-colors">
+                    직접 업로드
+                  </button>
+                  {(scene.imageUrl || scene.videoUrl) && (
+                    <button type="button" onClick={() => {
+                      useProjectStore.getState().updateScene(scene.id, { imageUrl: '', videoUrl: undefined });
+                      showToast('이미지/영상 삭제됨');
+                    }}
+                      className="text-[10px] text-red-400 hover:text-red-300 border border-red-500/30 hover:border-red-500/50 px-2 py-0.5 rounded transition-colors">
+                      삭제
+                    </button>
+                  )}
+                </div>
+              </div>
               {scene.imageUrl ? (
                 <img src={scene.imageUrl} className="w-full rounded-xl border border-gray-700 cursor-pointer" alt="scene"
                   onClick={() => useUIStore.getState().openLightbox(scene.imageUrl!)} />
               ) : (
-                <div className="w-full aspect-video bg-gray-800 border border-gray-700 border-dashed rounded-xl flex items-center justify-center">
-                  <span className="text-gray-600 text-sm">이미지 없음</span>
+                <div
+                  className="w-full aspect-video bg-gray-800 border border-gray-700 border-dashed rounded-xl flex flex-col items-center justify-center cursor-pointer hover:border-orange-500/40 hover:bg-gray-800/80 transition-colors"
+                  onClick={() => modalUploadRef.current?.click()}
+                >
+                  <svg className="w-8 h-8 text-gray-600 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                  <span className="text-gray-600 text-sm">클릭하여 이미지/영상 업로드</span>
                 </div>
               )}
             </div>
@@ -965,6 +1011,25 @@ const StoryboardPanel: React.FC = () => {
       showToast('레퍼런스 이미지 추가됨');
     };
     reader.readAsDataURL(file);
+  }, [updateScene]);
+
+  // --- 이미지/영상 직접 업로드 ---
+  const handleUploadImage = useCallback(async (sceneId: string, file: File) => {
+    const isVideo = file.type.startsWith('video/');
+    updateScene(sceneId, { isGeneratingImage: true, generationStatus: '업로드 중...' });
+    try {
+      const url = await uploadMediaToHosting(file);
+      if (isVideo) {
+        updateScene(sceneId, { videoUrl: url, isGeneratingImage: false, generationStatus: undefined });
+        showToast('영상 업로드 완료');
+      } else {
+        updateScene(sceneId, { imageUrl: url, isGeneratingImage: false, generationStatus: undefined });
+        showToast('이미지 업로드 완료');
+      }
+    } catch (err: unknown) {
+      updateScene(sceneId, { isGeneratingImage: false, generationStatus: undefined });
+      showToast(`업로드 실패: ${err instanceof Error ? err.message : '알 수 없는 오류'}`);
+    }
   }, [updateScene]);
 
   // --- 프롬프트 수정 ---
@@ -1440,6 +1505,7 @@ const StoryboardPanel: React.FC = () => {
           onDelete={removeScene}
           onAutoPrompt={handleAutoPrompt}
           onReferenceUpload={handleReferenceUpload}
+          onUploadImage={handleUploadImage}
           onAddAfter={handleAddSceneAfter}
         />
       )}
@@ -1548,6 +1614,7 @@ const StoryboardPanel: React.FC = () => {
               sceneProgress={sceneProgress}
               onAddAfter={handleAddSceneAfter}
               onReferenceUpload={handleReferenceUpload}
+              onUploadImage={handleUploadImage}
               onOpenDetail={(scene, idx) => setDetailScene({ scene, index: idx })}
               onCopyScript={handleCopyScript}
             />
@@ -1572,6 +1639,7 @@ const StoryboardPanel: React.FC = () => {
               onAddAfter={handleAddSceneAfter}
               onAutoPrompt={handleAutoPrompt}
               onReferenceUpload={handleReferenceUpload}
+              onUploadImage={handleUploadImage}
               onOpenDetail={(scene, idx) => setDetailScene({ scene, index: idx })}
               onCopyScript={handleCopyScript}
             />

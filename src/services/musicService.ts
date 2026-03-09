@@ -356,27 +356,44 @@ export const pollMusicStatus = async (
         const status = data.data?.status;
 
         // 서버 진행률이 있으면 사용 (일부 상태에서 제공)
-        if (status === 'FIRST_SUCCESS' || status === 'TEXT_SUCCESS') {
+        if (status === 'TEXT_SUCCESS') {
             simulatedProgress = Math.max(simulatedProgress, 70);
             onProgress?.(Math.round(simulatedProgress));
         }
 
-        if (status === 'SUCCESS' || status === 'FIRST_SUCCESS') {
+        // FIRST_SUCCESS = 첫 번째 곡만 완료된 중간 상태 → SUCCESS까지 계속 폴링
+        if (status === 'FIRST_SUCCESS') {
+            simulatedProgress = Math.max(simulatedProgress, 80);
+            onProgress?.(Math.round(simulatedProgress));
+            logger.info('[Music] FIRST_SUCCESS 중간 상태 — SUCCESS까지 계속 폴링', { taskId, attempt });
+            continue;
+        }
+
+        if (status === 'SUCCESS') {
             onProgress?.(100);
 
             // 결과 파싱: data.data.response.sunoData[] (Kie Suno 공식 스펙)
             const sunoData = data.data?.response?.sunoData;
-            const track = Array.isArray(sunoData) && sunoData.length > 0 ? sunoData[0] : null;
 
-            if (!track?.audioUrl) throw new Error('음악 결과에서 오디오 URL을 찾을 수 없습니다.');
+            if (!Array.isArray(sunoData) || sunoData.length === 0) {
+                throw new Error(`음악 생성 결과가 비어있습니다 (taskId: ${taskId}). sunoData 배열이 없거나 비어있음.`);
+            }
+
+            const track = sunoData[0];
+            // audioUrl (camelCase) 우선, audio_url (snake_case) 폴백
+            const audioUrl: string = track?.audioUrl || track?.audio_url || '';
+
+            if (!audioUrl) {
+                throw new Error(`음악 결과에서 오디오 URL을 찾을 수 없습니다 (taskId: ${taskId}). track keys: ${Object.keys(track || {}).join(', ')}`);
+            }
 
             const result: GeneratedMusic = {
                 id: taskId,
                 audioId: track.id,
                 title: track.title || `Generated Music ${new Date().toLocaleTimeString()}`,
-                audioUrl: track.audioUrl,
-                streamUrl: track.streamAudioUrl,
-                imageUrl: track.imageUrl,
+                audioUrl,
+                streamUrl: track.streamAudioUrl || track.stream_audio_url,
+                imageUrl: track.imageUrl || track.image_url,
                 duration: track.duration || 0,
                 createdAt: new Date().toISOString(),
                 isFavorite: false,
