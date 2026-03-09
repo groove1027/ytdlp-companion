@@ -341,7 +341,7 @@ export const MemeAndSfxSearchModal: React.FC<{ onClose: () => void }> = ({ onClo
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') doSearch(query, activeType, activeSource); }}
-              placeholder="검색어 입력 (예: reaction, 놀람, sword, 고양이...)"
+              placeholder="한글 또는 영어로 검색 (예: 웃음, 폭발, 고양이, funny, explosion...)"
               className="flex-1 bg-gray-800 border border-gray-600 rounded-xl px-5 py-3 text-base text-white placeholder-gray-500 focus:border-amber-500/50 outline-none"
             />
             <button
@@ -465,9 +465,46 @@ export const MemeAndSfxSearchModal: React.FC<{ onClose: () => void }> = ({ onClo
           <div className="text-center py-16">
             <span className="text-5xl block mb-3">🔍</span>
             <p className="text-gray-400 text-lg font-bold">검색 결과가 없습니다</p>
-            <p className="text-gray-600 text-sm mt-2">영어 키워드도 시도해보세요 (예: funny, sad, explosion)</p>
+            <p className="text-gray-600 text-sm mt-2">한글/영어 모두 검색 가능합니다 (예: 웃음, 폭발, funny, explosion)</p>
+            <p className="text-gray-600 text-xs mt-1">팁: 빠른 카테고리 버튼도 활용해보세요</p>
           </div>
         )}
+        {/* 즐겨찾기/최근 사용 초기화 버튼 */}
+        {viewMode === 'favorites' && favorites.length > 0 && (
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={() => {
+                if (!confirm(`즐겨찾기 ${favorites.length}개를 전부 삭제하시겠습니까?`)) return;
+                setFavorites([]);
+                saveToStorage(FAVORITES_KEY, []);
+                showToast('즐겨찾기가 초기화되었습니다.');
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-red-600/10 text-red-400 border border-red-500/30 hover:bg-red-600/20 transition-all"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+              즐겨찾기 전체 삭제
+            </button>
+          </div>
+        )}
+        {viewMode === 'recent' && recents.length > 0 && (
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={() => {
+                if (!confirm(`최근 사용 기록 ${recents.length}개를 전부 삭제하시겠습니까?`)) return;
+                setRecents([]);
+                saveToStorage(RECENT_KEY, []);
+                showToast('최근 사용 기록이 초기화되었습니다.');
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-red-600/10 text-red-400 border border-red-500/30 hover:bg-red-600/20 transition-all"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+              기록 전체 삭제
+            </button>
+          </div>
+        )}
+
         {displayItems.length === 0 && viewMode === 'favorites' && (
           <div className="text-center py-16">
             <span className="text-5xl block mb-3">⭐</span>
