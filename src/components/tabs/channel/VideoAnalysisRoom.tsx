@@ -314,6 +314,113 @@ async function fetchYouTubeComments(videoId: string): Promise<string[]> {
   }
 }
 
+// ═══════════════════════════════════════════════════
+// YouTube 스토리보드 프레임 추출 (Piped API)
+// ═══════════════════════════════════════════════════
+
+const PIPED_APIS_FOR_STORYBOARD = [
+  'https://pipedapi.kavin.rocks',
+  'https://pipedapi.adminforge.de',
+  'https://pipedapi.leptons.xyz',
+  'https://api.piped.yt',
+  'https://pipedapi.in.projectsegfau.lt',
+];
+
+/** Piped API 스토리보드 스프라이트에서 개별 프레임을 추출 */
+async function fetchYouTubeStoryboardFrames(videoId: string, durationSec: number): Promise<TimedFrame[]> {
+  for (const api of PIPED_APIS_FOR_STORYBOARD) {
+    try {
+      const res = await fetch(`${api}/streams/${videoId}`, { signal: AbortSignal.timeout(10000) });
+      if (!res.ok) continue;
+      const data = await res.json();
+      if (data.error || !data.previewFrames?.length) continue;
+
+      // 가장 큰 해상도의 스토리보드 레벨 선택
+      const sb = [...data.previewFrames]
+        .sort((a: { frameWidth: number }, b: { frameWidth: number }) => b.frameWidth - a.frameWidth)[0];
+
+      if (!sb?.urls?.length || !sb.frameWidth || !sb.frameHeight) continue;
+
+      const msPerFrame = sb.durationPerFrame || 2000;
+      const perPageX = sb.framesPerPageX || 5;
+      const perPageY = sb.framesPerPageY || 5;
+      const perPage = perPageX * perPageY;
+      const totalFrames = sb.totalCount || Math.ceil((durationSec * 1000) / msPerFrame);
+
+      // 목표: 최대 60프레임 (메모리 절약)
+      // 전체 프레임 수가 60 이하면 모두 추출, 아니면 균등 샘플링
+      const targetCount = Math.min(totalFrames, 60);
+      const step = totalFrames <= 60 ? 1 : totalFrames / targetCount;
+
+      // 필요한 페이지만 로드 (중복 방지)
+      const neededPages = new Set<number>();
+      for (let idx = 0; idx < targetCount; idx++) {
+        const frameIdx = Math.min(Math.floor(idx * step), totalFrames - 1);
+        neededPages.add(Math.floor(frameIdx / perPage));
+      }
+
+      // 스프라이트 시트 로드 (최대 10장)
+      const pageArr = [...neededPages].slice(0, 10);
+      const loadedPages = new Map<number, HTMLImageElement>();
+
+      await Promise.allSettled(pageArr.map(async (pageIdx) => {
+        if (pageIdx >= sb.urls.length) return;
+        const url = sb.urls[pageIdx];
+        try {
+          const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+            const el = new Image();
+            el.crossOrigin = 'anonymous';
+            el.onload = () => resolve(el);
+            el.onerror = () => reject(new Error('load failed'));
+            el.src = url;
+            setTimeout(() => reject(new Error('timeout')), 8000);
+          });
+          loadedPages.set(pageIdx, img);
+        } catch { /* skip failed pages */ }
+      }));
+
+      if (loadedPages.size === 0) continue;
+
+      // 캔버스로 개별 프레임 추출
+      const frames: TimedFrame[] = [];
+      const canvas = document.createElement('canvas');
+      canvas.width = sb.frameWidth;
+      canvas.height = sb.frameHeight;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) continue;
+
+      for (let idx = 0; idx < targetCount; idx++) {
+        const frameIdx = Math.min(Math.floor(idx * step), totalFrames - 1);
+        const pageIdx = Math.floor(frameIdx / perPage);
+        const posInPage = frameIdx % perPage;
+        const col = posInPage % perPageX;
+        const row = Math.floor(posInPage / perPageX);
+        const img = loadedPages.get(pageIdx);
+        if (!img) continue;
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(
+          img,
+          col * sb.frameWidth, row * sb.frameHeight,
+          sb.frameWidth, sb.frameHeight,
+          0, 0, canvas.width, canvas.height,
+        );
+
+        const timeSec = (frameIdx * msPerFrame) / 1000;
+        frames.push({
+          url: canvas.toDataURL('image/jpeg', 0.65),
+          timeSec,
+        });
+      }
+
+      if (frames.length >= 4) return frames;
+    } catch {
+      continue;
+    }
+  }
+  return []; // 폴백: 기본 4개 YouTube 썸네일 사용
+}
+
 /** 업로드 영상에서 2초 간격으로 프레임 추출 (타임스탬프 포함) */
 async function extractVideoFrames(file: File): Promise<TimedFrame[]> {
   return new Promise((resolve) => {
@@ -1088,15 +1195,18 @@ const VideoAnalysisRoom: React.FC = () => {
             fetchYouTubeComments(vid),
           ]);
 
-          // UI 표시용 썸네일 (비주얼 컬럼)
+          // UI 표시용 썸네일 (비주얼 컬럼) — 스토리보드 우선, 폴백: 기본 4장
           const durationSec = meta ? parseIsoDuration(meta.duration) : 60;
           const base = `https://img.youtube.com/vi/${vid}`;
-          frames = [
+          const staticFrames: TimedFrame[] = [
             { url: `${base}/hqdefault.jpg`, hdUrl: `${base}/maxresdefault.jpg`, timeSec: 0 },
             { url: `${base}/1.jpg`, hdUrl: `${base}/hqdefault.jpg`, timeSec: Math.round(durationSec * 0.25) },
             { url: `${base}/2.jpg`, hdUrl: `${base}/hqdefault.jpg`, timeSec: Math.round(durationSec * 0.5) },
             { url: `${base}/3.jpg`, hdUrl: `${base}/hqdefault.jpg`, timeSec: Math.round(durationSec * 0.75) },
           ];
+          // Piped 스토리보드에서 프레임 추출 시도 (타임코드별 고유 이미지 확보)
+          const storyboardFrames = await fetchYouTubeStoryboardFrames(vid, durationSec).catch(() => [] as TimedFrame[]);
+          frames = storyboardFrames.length >= 4 ? storyboardFrames : staticFrames;
 
           if (meta) {
             inputDesc = `## YouTube 영상 정보

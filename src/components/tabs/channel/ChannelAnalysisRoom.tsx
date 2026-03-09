@@ -58,16 +58,31 @@ const ChannelAnalysisRoom: React.FC = () => {
   // --- YouTube 영상 다운로드 (Piped API → Cobalt API → cobalt.tools 폴백) ---
   const [downloadingVideos, setDownloadingVideos] = useState<Set<string>>(new Set());
   const [downloadProgress, setDownloadProgress] = useState<Record<string, number>>({}); // videoId → 0~100
+  const [downloadPhase, setDownloadPhase] = useState<Record<string, string>>({}); // videoId → 단계 텍스트
+  const [downloadDone, setDownloadDone] = useState<Record<string, 'done' | 'fail'>>({}); // 완료/실패 상태
   const [showBulkModal, setShowBulkModal] = useState(false);
   const [bulkDownloadProgress, setBulkDownloadProgress] = useState<{ current: number; total: number; failed: number } | null>(null);
 
-  // Piped 공개 인스턴스 (다중 폴백)
+  // Piped 공개 인스턴스 (다중 폴백 — 2026.03 업데이트)
   const PIPED_APIS = useRef([
     'https://pipedapi.kavin.rocks',
     'https://pipedapi.adminforge.de',
     'https://pipedapi.leptons.xyz',
     'https://api.piped.yt',
     'https://piped-api.privacy.com.de',
+    'https://pipedapi.in.projectsegfau.lt',
+    'https://api.piped.privacydev.net',
+    'https://pipedapi.darkness.services',
+    'https://pipedapi.drgns.space',
+    'https://pipedapi.smnz.de',
+  ]);
+  // Invidious 인스턴스 (Piped 전멸 시 폴백)
+  const INVIDIOUS_APIS = useRef([
+    'https://inv.nadeko.net',
+    'https://yewtu.be',
+    'https://invidious.nerdvpn.de',
+    'https://invidious.privacyredirect.com',
+    'https://iv.ggtyler.dev',
   ]);
   // 작동 확인된 인스턴스를 앞으로 끌어올림
   const promoteInstance = useCallback((url: string) => {
@@ -76,67 +91,124 @@ const ChannelAnalysisRoom: React.FC = () => {
     if (idx > 0) { apis.splice(idx, 1); apis.unshift(url); }
   }, []);
 
-  // Piped API로 스트림 URL 획득 (HD videoOnly + audio 분리 스트림 포함)
-  const fetchPipedStreams = useCallback(async (videoId: string): Promise<{
-    muxedUrl?: string; // 720p 이하 영상+음성 통합
-    videoOnlyUrl?: string; // 1080p+ 영상만
-    audioUrl?: string; // 오디오만
+  // 스트림 결과 공통 타입
+  type StreamResult = {
+    muxedUrl?: string;
+    videoOnlyUrl?: string;
+    audioUrl?: string;
     filename: string;
     quality: string;
-    needsMerge: boolean; // true면 FFmpeg 머지 필요
-  } | null> => {
-    for (const api of PIPED_APIS.current) {
-      try {
-        const res = await fetch(`${api}/streams/${videoId}`, { signal: AbortSignal.timeout(8000) });
-        if (!res.ok) continue;
-        const data = await res.json();
-        const safeTitle = (data.title || videoId).replace(/[<>:"/\\|?*]/g, '').substring(0, 80);
+    needsMerge: boolean;
+  };
 
-        // 1) HD videoOnly MP4 스트림 (1080p↑) — 해상도 내림차순
-        const videoOnly = (data.videoStreams || [])
-          .filter((s: { videoOnly: boolean; mimeType: string; height: number }) =>
-            s.videoOnly && s.mimeType?.includes('video/mp4') && (s.height || 0) >= 720)
-          .sort((a: { height: number }, b: { height: number }) => (b.height || 0) - (a.height || 0));
+  // Piped API 단일 인스턴스 시도
+  const tryPipedInstance = useCallback(async (api: string, videoId: string): Promise<StreamResult | null> => {
+    const res = await fetch(`${api}/streams/${videoId}`, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data.error || !data.title) return null; // bot 차단 등
+    const safeTitle = (data.title || videoId).replace(/[<>:"/\\|?*]/g, '').substring(0, 80);
 
-        // 2) 오디오 스트림 (M4A 우선)
-        const audio = (data.audioStreams || [])
-          .filter((s: { mimeType: string }) => s.mimeType?.includes('audio/mp4') || s.mimeType?.includes('audio/m4a'))
-          .sort((a: { bitrate: number }, b: { bitrate: number }) => (b.bitrate || 0) - (a.bitrate || 0));
+    const videoOnly = (data.videoStreams || [])
+      .filter((s: { videoOnly: boolean; mimeType: string; height: number }) =>
+        s.videoOnly && s.mimeType?.includes('video/mp4') && (s.height || 0) >= 720)
+      .sort((a: { height: number }, b: { height: number }) => (b.height || 0) - (a.height || 0));
+    const audio = (data.audioStreams || [])
+      .filter((s: { mimeType: string }) => s.mimeType?.includes('audio/mp4') || s.mimeType?.includes('audio/m4a'))
+      .sort((a: { bitrate: number }, b: { bitrate: number }) => (b.bitrate || 0) - (a.bitrate || 0));
+    const muxed = (data.videoStreams || [])
+      .filter((s: { videoOnly: boolean; mimeType: string }) => !s.videoOnly && s.mimeType?.includes('video/mp4'))
+      .sort((a: { height: number }, b: { height: number }) => (b.height || 0) - (a.height || 0));
 
-        // 3) muxed MP4 스트림 (폴백)
-        const muxed = (data.videoStreams || [])
-          .filter((s: { videoOnly: boolean; mimeType: string }) => !s.videoOnly && s.mimeType?.includes('video/mp4'))
-          .sort((a: { height: number }, b: { height: number }) => (b.height || 0) - (a.height || 0));
+    promoteInstance(api);
 
-        promoteInstance(api);
-
-        // HD(1080p+) videoOnly + audio → FFmpeg 머지
-        if (videoOnly.length > 0 && audio.length > 0) {
-          const bestVideo = videoOnly[0];
-          const bestAudio = audio[0];
-          return {
-            videoOnlyUrl: bestVideo.url,
-            audioUrl: bestAudio.url,
-            filename: `${safeTitle} (${bestVideo.quality || `${bestVideo.height}p`}).mp4`,
-            quality: bestVideo.quality || `${bestVideo.height}p`,
-            needsMerge: true,
-          };
-        }
-
-        // muxed 폴백 (720p 이하)
-        if (muxed.length > 0) {
-          const best = muxed[0];
-          return {
-            muxedUrl: best.url,
-            filename: `${safeTitle} (${best.quality || '720p'}).mp4`,
-            quality: best.quality || '720p',
-            needsMerge: false,
-          };
-        }
-      } catch { continue; }
+    if (videoOnly.length > 0 && audio.length > 0) {
+      const bestVideo = videoOnly[0];
+      return {
+        videoOnlyUrl: bestVideo.url, audioUrl: audio[0].url,
+        filename: `${safeTitle} (${bestVideo.quality || `${bestVideo.height}p`}).mp4`,
+        quality: bestVideo.quality || `${bestVideo.height}p`, needsMerge: true,
+      };
+    }
+    if (muxed.length > 0) {
+      const best = muxed[0];
+      return {
+        muxedUrl: best.url,
+        filename: `${safeTitle} (${best.quality || '720p'}).mp4`,
+        quality: best.quality || '720p', needsMerge: false,
+      };
     }
     return null;
   }, [promoteInstance]);
+
+  // Invidious API 단일 인스턴스 시도
+  const tryInvidiousInstance = useCallback(async (api: string, videoId: string): Promise<StreamResult | null> => {
+    const res = await fetch(`${api}/api/v1/videos/${videoId}?fields=title,formatStreams,adaptiveFormats`, {
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data.error || !data.title) return null;
+    const safeTitle = (data.title || videoId).replace(/[<>:"/\\|?*]/g, '').substring(0, 80);
+
+    // adaptiveFormats: videoOnly + audioOnly (고해상도)
+    const videoOnly = (data.adaptiveFormats || [])
+      .filter((s: { type: string; encoding: string; resolution: string }) =>
+        s.type?.startsWith('video/mp4') && s.resolution)
+      .sort((a: { resolution: string }, b: { resolution: string }) =>
+        parseInt(b.resolution || '0') - parseInt(a.resolution || '0'));
+    const audio = (data.adaptiveFormats || [])
+      .filter((s: { type: string }) => s.type?.startsWith('audio/mp4') || s.type?.startsWith('audio/m4a'))
+      .sort((a: { bitrate: string }, b: { bitrate: string }) =>
+        parseInt(b.bitrate || '0') - parseInt(a.bitrate || '0'));
+
+    // formatStreams: muxed (720p 이하)
+    const muxed = (data.formatStreams || [])
+      .filter((s: { type: string }) => s.type?.startsWith('video/mp4'))
+      .sort((a: { resolution: string }, b: { resolution: string }) =>
+        parseInt(b.resolution || '0') - parseInt(a.resolution || '0'));
+
+    if (videoOnly.length > 0 && audio.length > 0) {
+      const best = videoOnly[0];
+      const res720 = best.resolution ? parseInt(best.resolution) : 720;
+      return {
+        videoOnlyUrl: best.url, audioUrl: audio[0].url,
+        filename: `${safeTitle} (${res720}p).mp4`,
+        quality: `${res720}p`, needsMerge: true,
+      };
+    }
+    if (muxed.length > 0) {
+      const best = muxed[0];
+      return {
+        muxedUrl: best.url,
+        filename: `${safeTitle} (${best.qualityLabel || '720p'}).mp4`,
+        quality: best.qualityLabel || '720p', needsMerge: false,
+      };
+    }
+    return null;
+  }, []);
+
+  // Piped + Invidious 병렬 레이스 — 첫 성공 결과 반환
+  const fetchStreams = useCallback(async (videoId: string): Promise<StreamResult | null> => {
+    // 3개씩 병렬 배치로 시도 (네트워크 부하 제한)
+    const allApis: { type: 'piped' | 'invidious'; url: string }[] = [
+      ...PIPED_APIS.current.map(url => ({ type: 'piped' as const, url })),
+      ...INVIDIOUS_APIS.current.map(url => ({ type: 'invidious' as const, url })),
+    ];
+    const BATCH = 3;
+    for (let i = 0; i < allApis.length; i += BATCH) {
+      const batch = allApis.slice(i, i + BATCH);
+      const results = await Promise.allSettled(
+        batch.map(({ type, url }) =>
+          type === 'piped' ? tryPipedInstance(url, videoId) : tryInvidiousInstance(url, videoId)
+        )
+      );
+      for (const r of results) {
+        if (r.status === 'fulfilled' && r.value) return r.value;
+      }
+    }
+    return null;
+  }, [tryPipedInstance, tryInvidiousInstance]);
 
   // fetch + ReadableStream → Blob (진행률 표시)
   const fetchStreamBlob = useCallback(async (
@@ -219,10 +291,11 @@ const ChannelAnalysisRoom: React.FC = () => {
     return new Blob([safeOutput as BlobPart], { type: 'video/mp4' });
   }, []);
 
-  // Cobalt API 폴백 (tunnel 모드)
+  // Cobalt API v10 폴백 — 커뮤니티 인스턴스 (인증 불필요 인스턴스 우선)
   const COBALT_APIS = useRef([
-    'https://api.cobalt.tools',
     'https://cobalt-api.meowing.de',
+    'https://downloadapi.stuff.solutions',
+    'https://api.cobalt.tools',
   ]);
   const downloadViaCobalt = useCallback(async (videoId: string, title: string): Promise<boolean> => {
     const ytUrl = `https://www.youtube.com/watch?v=${videoId}`;
@@ -231,11 +304,24 @@ const ChannelAnalysisRoom: React.FC = () => {
         const res = await fetch(`${api}/`, {
           method: 'POST',
           headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: ytUrl, videoQuality: '1080', youtubeVideoCodec: 'h264' }),
-          signal: AbortSignal.timeout(10000),
+          body: JSON.stringify({
+            url: ytUrl,
+            videoQuality: '1080',
+            youtubeVideoCodec: 'h264',
+            downloadMode: 'auto',
+            filenameStyle: 'pretty',
+          }),
+          signal: AbortSignal.timeout(12000),
         });
-        if (!res.ok) continue;
+        if (!res.ok) {
+          console.warn(`[Cobalt] ${api} → ${res.status}`);
+          continue;
+        }
         const data = await res.json();
+        if (data.status === 'error') {
+          console.warn(`[Cobalt] ${api} error:`, data.error?.code);
+          continue;
+        }
         if (data.status === 'tunnel' && data.url) {
           const blob = await fetchStreamBlob(data.url, videoId, 0, 95);
           if (blob) { saveBlobAsFile(blob, data.filename || `${title}.mp4`); return true; }
@@ -244,71 +330,115 @@ const ChannelAnalysisRoom: React.FC = () => {
           window.open(data.url, '_blank');
           return true;
         }
-      } catch { continue; }
+        if (data.status === 'picker' && data.picker?.length > 0) {
+          // picker 모드: 첫 번째 옵션으로 다운로드
+          const pick = data.picker[0];
+          if (pick.url) {
+            const blob = await fetchStreamBlob(pick.url, videoId, 0, 95);
+            if (blob) { saveBlobAsFile(blob, data.filename || `${title}.mp4`); return true; }
+          }
+        }
+      } catch (e) {
+        console.warn(`[Cobalt] ${api} failed:`, e);
+        continue;
+      }
     }
     return false;
   }, [fetchStreamBlob, saveBlobAsFile]);
 
-  // 통합 다운로드: Piped (HD+FFmpeg 머지) → Piped (muxed) → Cobalt → 최종 폴백
+  // Piped 프론트엔드 인스턴스 (다운로드 버튼 있는 UI)
+  const PIPED_FRONTENDS = useRef([
+    'https://piped.video',
+    'https://piped.adminforge.de',
+    'https://piped.kavin.rocks',
+  ]);
+
+  // 통합 다운로드: Piped/Invidious (HD+FFmpeg) → muxed → Cobalt → Piped 프론트엔드
   const downloadVideo = useCallback(async (videoId: string, title: string): Promise<boolean> => {
     setDownloadingVideos(prev => { const next = new Set(prev); next.add(videoId); return next; });
     setDownloadProgress(prev => ({ ...prev, [videoId]: 0 }));
+    setDownloadPhase(prev => ({ ...prev, [videoId]: '스트림 검색 중...' }));
+    setDownloadDone(prev => { const copy = { ...prev }; delete copy[videoId]; return copy; });
 
     try {
-      // 1차: Piped API
-      const piped = await fetchPipedStreams(videoId);
-      if (piped) {
-        if (piped.needsMerge && piped.videoOnlyUrl && piped.audioUrl) {
-          // HD 다운로드: 영상(0~40%) + 오디오(40~80%) + FFmpeg 머지(80~100%)
+      // 1차: Piped + Invidious 병렬 레이스
+      console.log(`[Download] 1차 시도: Piped/Invidious 스트림 (${videoId})`);
+      const streams = await fetchStreams(videoId);
+      if (streams) {
+        if (streams.needsMerge && streams.videoOnlyUrl && streams.audioUrl) {
+          setDownloadPhase(prev => ({ ...prev, [videoId]: `${streams.quality} 다운로드 중...` }));
           setDownloadProgress(prev => ({ ...prev, [videoId]: 1 }));
           const [videoBlob, audioBlob] = await Promise.all([
-            fetchStreamBlob(piped.videoOnlyUrl, videoId, 0, 40),
-            fetchStreamBlob(piped.audioUrl, videoId, 40, 40),
+            fetchStreamBlob(streams.videoOnlyUrl, videoId, 0, 40),
+            fetchStreamBlob(streams.audioUrl, videoId, 40, 40),
           ]);
 
           if (videoBlob && audioBlob) {
             try {
-              const merged = await mergeWithFFmpeg(videoBlob, audioBlob, piped.filename, videoId);
-              saveBlobAsFile(merged, piped.filename);
+              setDownloadPhase(prev => ({ ...prev, [videoId]: 'FFmpeg 머지 중...' }));
+              const merged = await mergeWithFFmpeg(videoBlob, audioBlob, streams.filename, videoId);
+              saveBlobAsFile(merged, streams.filename);
               setDownloadProgress(prev => ({ ...prev, [videoId]: 100 }));
-              showToast(`"${title}" (${piped.quality}) 다운로드 완료`);
+              setDownloadPhase(prev => ({ ...prev, [videoId]: '완료!' }));
+              setDownloadDone(prev => ({ ...prev, [videoId]: 'done' }));
+              showToast(`"${title}" (${streams.quality}) 다운로드 완료`);
               return true;
             } catch (e) {
               console.warn('[Download] FFmpeg 머지 실패, muxed 폴백:', e);
             }
+          } else {
+            console.warn('[Download] 스트림 다운로드 실패 (CORS 또는 네트워크 오류)');
           }
         }
 
         // muxed 폴백 (720p)
-        if (piped.muxedUrl) {
-          const blob = await fetchStreamBlob(piped.muxedUrl, videoId, 0, 95);
+        if (streams.muxedUrl) {
+          setDownloadPhase(prev => ({ ...prev, [videoId]: `${streams.quality} 다운로드 중...` }));
+          const blob = await fetchStreamBlob(streams.muxedUrl, videoId, 0, 95);
           if (blob) {
-            saveBlobAsFile(blob, piped.filename);
+            saveBlobAsFile(blob, streams.filename);
             setDownloadProgress(prev => ({ ...prev, [videoId]: 100 }));
-            showToast(`"${title}" (${piped.quality}) 다운로드 완료`);
+            setDownloadPhase(prev => ({ ...prev, [videoId]: '완료!' }));
+            setDownloadDone(prev => ({ ...prev, [videoId]: 'done' }));
+            showToast(`"${title}" (${streams.quality}) 다운로드 완료`);
             return true;
           }
         }
+      } else {
+        console.warn('[Download] 모든 Piped/Invidious 인스턴스 실패');
       }
 
       // 2차: Cobalt API
+      setDownloadPhase(prev => ({ ...prev, [videoId]: 'Cobalt 시도 중...' }));
+      console.log(`[Download] 2차 시도: Cobalt API (${videoId})`);
       const cobaltOk = await downloadViaCobalt(videoId, title);
       if (cobaltOk) {
+        setDownloadPhase(prev => ({ ...prev, [videoId]: '완료!' }));
+        setDownloadDone(prev => ({ ...prev, [videoId]: 'done' }));
         showToast(`"${title}" 다운로드 완료 (Cobalt)`);
         return true;
       }
+      console.warn('[Download] Cobalt API도 실패');
 
-      // 3차: 최종 폴백 — cobalt.tools로 이동
+      // 3차: Piped 프론트엔드에서 직접 다운로드
+      setDownloadPhase(prev => ({ ...prev, [videoId]: '외부 이동...' }));
+      setDownloadDone(prev => ({ ...prev, [videoId]: 'fail' }));
       const ytUrl = `https://www.youtube.com/watch?v=${videoId}`;
       try { await navigator.clipboard.writeText(ytUrl); } catch { /* 무시 */ }
-      window.open('https://cobalt.tools/', '_blank');
-      showToast(`자동 다운로드 실패 — cobalt.tools에서 URL 붙여넣기로 다운로드하세요.`);
+      const frontendUrl = `${PIPED_FRONTENDS.current[0]}/watch?v=${videoId}`;
+      window.open(frontendUrl, '_blank');
+      showToast(`자동 다운로드 실패 — Piped에서 다운로드 버튼을 클릭하세요. (URL 복사됨)`);
       return false;
     } finally {
       setDownloadingVideos(prev => { const next = new Set(prev); next.delete(videoId); return next; });
-      setDownloadProgress(prev => { const copy = { ...prev }; delete copy[videoId]; return copy; });
+      // 진행률/단계는 3초 후 자동 정리 (결과 확인 시간)
+      setTimeout(() => {
+        setDownloadProgress(prev => { const copy = { ...prev }; delete copy[videoId]; return copy; });
+        setDownloadPhase(prev => { const copy = { ...prev }; delete copy[videoId]; return copy; });
+        setDownloadDone(prev => { const copy = { ...prev }; delete copy[videoId]; return copy; });
+      }, 3000);
     }
-  }, [fetchPipedStreams, fetchStreamBlob, mergeWithFFmpeg, saveBlobAsFile, downloadViaCobalt]);
+  }, [fetchStreams, fetchStreamBlob, mergeWithFFmpeg, saveBlobAsFile, downloadViaCobalt]);
 
   // 일괄 다운로드
   const handleBulkVideoDownload = useCallback(async () => {
@@ -689,14 +819,15 @@ const ChannelAnalysisRoom: React.FC = () => {
               )}
               {inputSource === 'youtube' && (
                 <button
-                  onClick={handleBulkVideoDownload}
+                  onClick={() => setShowBulkModal(true)}
                   disabled={!!bulkDownloadProgress}
                   className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-red-600/20 text-red-400 border border-red-500/30 hover:bg-red-600/30 transition-all flex items-center gap-1.5 disabled:opacity-50"
                 >
                   {bulkDownloadProgress ? (
                     <>
                       <div className="w-3.5 h-3.5 border-2 border-red-400/30 border-t-red-400 rounded-full animate-spin" />
-                      {bulkDownloadProgress.current}/{bulkDownloadProgress.total}
+                      다운로드 중 {bulkDownloadProgress.current}/{bulkDownloadProgress.total}
+                      {bulkDownloadProgress.failed > 0 && <span className="text-yellow-400">({bulkDownloadProgress.failed} 실패)</span>}
                     </>
                   ) : (
                     <>
@@ -752,23 +883,29 @@ const ChannelAnalysisRoom: React.FC = () => {
                       </div>
                       <div className="flex items-center gap-0.5">
                         {/* 영상 파일 다운로드 */}
-                        <button
-                          onClick={() => downloadVideo(s.videoId, s.title)}
-                          disabled={downloadingVideos.has(s.videoId)}
-                          className="p-1 text-gray-600 hover:text-red-400 transition-colors disabled:opacity-50 relative"
-                          title="영상 다운로드 (MP4)"
-                        >
-                          {downloadingVideos.has(s.videoId) ? (
-                            <div className="flex items-center gap-0.5">
+                        {downloadingVideos.has(s.videoId) || downloadDone[s.videoId] ? (
+                          <div className="flex items-center gap-1.5 px-1.5 py-0.5 rounded-md bg-gray-900/60">
+                            {downloadDone[s.videoId] === 'done' ? (
+                              <svg className="w-3.5 h-3.5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                            ) : downloadDone[s.videoId] === 'fail' ? (
+                              <svg className="w-3.5 h-3.5 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                            ) : (
                               <div className="w-3.5 h-3.5 border-2 border-red-400/30 border-t-red-400 rounded-full animate-spin" />
-                              {(downloadProgress[s.videoId] ?? 0) > 0 && (
-                                <span className="text-[10px] text-red-400 tabular-nums">{downloadProgress[s.videoId]}%</span>
-                              )}
-                            </div>
-                          ) : (
+                            )}
+                            <span className={`text-[11px] tabular-nums whitespace-nowrap ${downloadDone[s.videoId] === 'done' ? 'text-green-400' : downloadDone[s.videoId] === 'fail' ? 'text-yellow-400' : 'text-red-300'}`}>
+                              {downloadPhase[s.videoId] || '대기 중...'}
+                              {!downloadDone[s.videoId] && (downloadProgress[s.videoId] ?? 0) > 0 && ` ${downloadProgress[s.videoId]}%`}
+                            </span>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => downloadVideo(s.videoId, s.title)}
+                            className="p-1 text-gray-600 hover:text-red-400 transition-colors"
+                            title="영상 다운로드 (MP4)"
+                          >
                             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
-                          )}
-                        </button>
+                          </button>
+                        )}
                         {/* JSON 데이터 다운로드 */}
                         <button
                           onClick={() => {
@@ -1218,15 +1355,38 @@ const ChannelAnalysisRoom: React.FC = () => {
             {/* 영상 목록 */}
             <div className="bg-gray-900/70 rounded-lg p-3 border border-gray-700/50 max-h-60 overflow-y-auto custom-scrollbar mb-4">
               {channelScripts.filter(s => s.videoId).map((s, i) => (
-                <div key={s.videoId} className="flex items-center gap-2 py-1.5 border-b border-gray-800/50 last:border-0">
+                <div key={s.videoId} className="flex items-center gap-2 py-2 border-b border-gray-800/50 last:border-0">
                   <span className="text-xs text-gray-600 w-5 text-right flex-shrink-0">{i + 1}</span>
-                  <span className="text-sm text-gray-300 truncate flex-1">{s.title}</span>
-                  {downloadingVideos.has(s.videoId) ? (
+                  <div className="flex-1 min-w-0">
+                    <span className="text-sm text-gray-300 truncate block">{s.title}</span>
+                    {/* 진행 중이면 프로그레스 바 표시 */}
+                    {downloadingVideos.has(s.videoId) && (downloadProgress[s.videoId] ?? 0) > 0 && (
+                      <div className="w-full bg-gray-700/50 rounded-full h-1 mt-1">
+                        <div
+                          className="bg-gradient-to-r from-red-500 to-red-400 h-1 rounded-full transition-all duration-300"
+                          style={{ width: `${downloadProgress[s.videoId]}%` }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                  {/* 상태 표시 */}
+                  {downloadDone[s.videoId] === 'done' ? (
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      <svg className="w-3.5 h-3.5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                      <span className="text-[11px] text-green-400">완료</span>
+                    </div>
+                  ) : downloadDone[s.videoId] === 'fail' ? (
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      <svg className="w-3.5 h-3.5 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01" /></svg>
+                      <span className="text-[11px] text-yellow-400">실패</span>
+                    </div>
+                  ) : downloadingVideos.has(s.videoId) ? (
                     <div className="flex items-center gap-1 flex-shrink-0">
                       <div className="w-3 h-3 border-2 border-red-400/30 border-t-red-400 rounded-full animate-spin" />
-                      {(downloadProgress[s.videoId] ?? 0) > 0 && (
-                        <span className="text-[10px] text-red-400 tabular-nums">{downloadProgress[s.videoId]}%</span>
-                      )}
+                      <span className="text-[11px] text-red-300 tabular-nums whitespace-nowrap max-w-[100px] truncate">
+                        {downloadPhase[s.videoId] || '대기 중...'}
+                        {(downloadProgress[s.videoId] ?? 0) > 0 && ` ${downloadProgress[s.videoId]}%`}
+                      </span>
                     </div>
                   ) : (
                     <button
