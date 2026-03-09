@@ -373,6 +373,118 @@ export const requestEvolinkNative = async (
     return data;
 };
 
+// === VIDEO ANALYSIS (Gemini v1beta — fileData) ===
+
+/**
+ * Evolink v1beta 네이티브 비디오 분석 (스트리밍)
+ * Gemini 3.1 Pro가 영상을 1fps 단위로 직접 분석
+ * YouTube URL 또는 Cloudinary URL을 fileData로 전달
+ */
+export const evolinkVideoAnalysisStream = async (
+    videoUri: string,
+    mimeType: string,
+    systemPrompt: string,
+    userPrompt: string,
+    onChunk: (text: string, accumulated: string) => void,
+    options: { temperature?: number; maxOutputTokens?: number } = {}
+): Promise<string> => {
+    const apiKey = getEvolinkKey();
+    if (!apiKey) throw new Error('Evolink API 키가 설정되지 않았습니다.');
+
+    const { temperature = 0.5, maxOutputTokens = 40000 } = options;
+
+    const payload = {
+        contents: [{
+            role: 'user',
+            parts: [
+                { fileData: { mimeType, fileUri: videoUri } },
+                { text: userPrompt },
+            ],
+        }],
+        systemInstruction: { parts: [{ text: systemPrompt }] },
+        generationConfig: { temperature, maxOutputTokens },
+        safetySettings: [
+            { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+            { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+            { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+            { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
+        ],
+    };
+
+    const model = 'gemini-3.1-pro-preview';
+    const url = `${EVOLINK_V1BETA_URL}/models/${model}:streamGenerateContent?alt=sse`;
+
+    logger.info('[Evolink Video] v1beta 비디오 분석 스트리밍 시작', { videoUri: videoUri.slice(0, 80), mimeType });
+
+    const response = await monitoredFetch(url, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+        const errorDetail = await parseEvolinkError(response);
+        logger.error(`[Evolink Video] v1beta 실패 (${response.status})`, { error: errorDetail });
+        throw new Error(`Evolink v1beta 비디오 분석 오류 (${response.status}): ${errorDetail}`);
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('스트리밍 응답을 읽을 수 없습니다.');
+
+    const decoder = new TextDecoder();
+    let accumulated = '';
+    let buffer = '';
+
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed || trimmed === 'data: [DONE]') continue;
+            if (!trimmed.startsWith('data: ')) continue;
+
+            try {
+                const json = JSON.parse(trimmed.slice(6));
+                const parts = json.candidates?.[0]?.content?.parts;
+                if (parts) {
+                    for (const part of parts) {
+                        if (part.text) {
+                            accumulated += part.text;
+                            onChunk(part.text, accumulated);
+                        }
+                    }
+                }
+            } catch {
+                // 불완전 청크 무시
+            }
+        }
+    }
+
+    // 비용 추정
+    try {
+        const estInputTokens = Math.ceil((systemPrompt.length + userPrompt.length) / 4) + 5000; // 영상 토큰 추정
+        const estOutputTokens = Math.ceil(accumulated.length / 4);
+        const inputCost = estInputTokens / 1_000_000 * PRICING.GEMINI_PRO_INPUT_PER_1M;
+        const outputCost = estOutputTokens / 1_000_000 * PRICING.GEMINI_PRO_OUTPUT_PER_1M;
+        const totalCost = inputCost + outputCost;
+        if (totalCost > 0) {
+            useCostStore.getState().addCost(totalCost, 'analysis');
+            logger.info('[Evolink Video] 비용 추정', { estInputTokens, estOutputTokens, costUsd: totalCost.toFixed(6) });
+        }
+    } catch { /* cost tracking should not break */ }
+
+    logger.success('[Evolink Video] 비디오 분석 스트리밍 완료', { totalLength: accumulated.length });
+    return accumulated;
+};
+
 // === IMAGE GENERATION (Nanobanana 2 — Async Task-based) ===
 
 /**
