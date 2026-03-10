@@ -134,7 +134,7 @@ export async function refineTimecodeWithVision(
 
   // Vision AI에 프레임 전송하여 최적 컷 포인트 찾기
   const frameParts = Array.from(frames.entries())
-    .slice(0, 10) // 최대 10프레임
+    .slice(0, 4) // [FIX] 최대 4프레임 (API 요청 크기 제한 + 비용 절감)
     .map(([ts, dataUrl]) => ({
       timestamp: ts,
       dataUrl,
@@ -263,8 +263,9 @@ export function generateFFmpegScript(
       const atempoFilters = buildAtempoChain(speed);
 
       lines.push(`# ${entry.order}: ${entry.narrationText.slice(0, 40)} (${speed}x → ${outputDur}s)`);
+      // [FIX] -t를 -i 앞에 배치하여 입력 길이 제한으로 사용 (출력 절삭 방지)
       lines.push(
-        `ffmpeg -y -ss ${start.toFixed(3)} -i "${videoFile}" -t ${clipDuration.toFixed(3)} \\`
+        `ffmpeg -y -ss ${start.toFixed(3)} -t ${clipDuration.toFixed(3)} -i "${videoFile}" \\`
       );
       lines.push(
         `  -filter:v "setpts=${pts}*PTS" -filter:a "${atempoFilters}" \\`

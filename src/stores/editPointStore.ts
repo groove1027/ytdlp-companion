@@ -264,9 +264,23 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
     const { edlEntries, sourceVideos } = get();
     const mapping: Record<string, string> = {};
 
+    // [FIX] sourceId 정규화: "S-1", "S-01", "s-01", "S01" → "S-01" 통일
+    const normalizeSourceId = (id: string): string => {
+      const cleaned = id.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+      const match = cleaned.match(/^([A-Z]*)(\d+)$/);
+      if (match) {
+        const prefix = match[1] || 'S';
+        const num = match[2].padStart(2, '0');
+        return `${prefix}-${num}`;
+      }
+      return id.trim().toUpperCase();
+    };
+
     for (const entry of edlEntries) {
-      // sourceId가 일치하는 비디오 찾기
-      const match = sourceVideos.find((v) => v.sourceId === entry.sourceId);
+      const normalizedEntry = normalizeSourceId(entry.sourceId);
+      // 정확 매칭 → 정규화 매칭 순서
+      const match = sourceVideos.find((v) => v.sourceId === entry.sourceId)
+        || sourceVideos.find((v) => normalizeSourceId(v.sourceId) === normalizedEntry);
       if (match) {
         mapping[entry.sourceId] = match.id;
       }
@@ -299,19 +313,26 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
       processingMessage: 'AI 타임코드 정제 시작...',
     });
 
-    try {
-      for (let i = 0; i < edlEntries.length; i++) {
-        const entry = edlEntries[i];
-        const videoId = sourceMapping[entry.sourceId];
-        const video = sourceVideos.find((v) => v.id === videoId);
+    // [FIX] 개별 항목 에러 처리 — 한 항목 실패해도 나머지 계속 진행
+    let successCount = 0;
+    let failCount = 0;
 
-        set({
-          processingProgress: Math.round((i / edlEntries.length) * 100),
-          processingMessage: `${i + 1}/${edlEntries.length} 정제 중: ${entry.order}`,
-        });
+    for (let i = 0; i < edlEntries.length; i++) {
+      const entry = edlEntries[i];
+      const videoId = sourceMapping[entry.sourceId];
+      const video = sourceVideos.find((v) => v.id === videoId);
 
-        if (!video) continue;
+      set({
+        processingProgress: Math.round((i / edlEntries.length) * 100),
+        processingMessage: `${i + 1}/${edlEntries.length} 정제 중: ${entry.order}`,
+      });
 
+      if (!video) {
+        failCount++;
+        continue;
+      }
+
+      try {
         const result = await refineTimecodeWithVision(entry, video.file);
 
         set((state) => ({
@@ -327,19 +348,24 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
               : e
           ),
         }));
+        successCount++;
+      } catch (entryErr) {
+        failCount++;
+        console.error(`[EditPoint] 정제 실패 (${entry.order}):`, entryErr);
       }
+    }
 
-      set({
-        isProcessing: false,
-        processingPhase: '',
-        processingProgress: 100,
-        processingMessage: '',
-      });
+    set({
+      isProcessing: false,
+      processingPhase: '',
+      processingProgress: 100,
+      processingMessage: '',
+    });
 
+    if (failCount > 0) {
+      showToast(`타임코드 정제: ${successCount}개 성공, ${failCount}개 실패`);
+    } else {
       showToast('타임코드 정제 완료!');
-    } catch (err) {
-      set({ isProcessing: false, processingPhase: '', processingMessage: '' });
-      showToast('타임코드 정제 실패: ' + (err instanceof Error ? err.message : '알 수 없는 오류'));
     }
   },
 
