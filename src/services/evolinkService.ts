@@ -39,6 +39,8 @@ export interface EvolinkChatOptions {
     stream?: boolean;
     responseFormat?: { type: string; json_schema?: Record<string, unknown> };
     signal?: AbortSignal;
+    /** monitoredFetch 타임아웃 (ms). 미지정 시 무제한, 긴 대본 처리 시 명시적으로 설정 */
+    timeoutMs?: number;
 }
 
 export interface EvolinkChatResponse {
@@ -134,7 +136,8 @@ export const evolinkChat = async (
         maxTokens = 4096,
         stream = false,
         responseFormat,
-        signal
+        signal,
+        timeoutMs
     } = options;
 
     const body: Record<string, unknown> = {
@@ -150,7 +153,7 @@ export const evolinkChat = async (
         body.response_format = responseFormat;
     }
 
-    logger.info('[Evolink] Chat completion 요청', { model: body.model, messageCount: messages.length });
+    logger.info('[Evolink] Chat completion 요청', { model: body.model, messageCount: messages.length, timeoutMs });
 
     const fetchOptions: RequestInit = {
         method: 'POST',
@@ -162,7 +165,8 @@ export const evolinkChat = async (
     };
     if (signal) fetchOptions.signal = signal;
 
-    const response = await monitoredFetch(`${EVOLINK_BASE_URL}/chat/completions`, fetchOptions);
+    // [FIX #32] 긴 대본 처리를 위한 확장 타임아웃 지원 (미지정 시 무제한)
+    const response = await monitoredFetch(`${EVOLINK_BASE_URL}/chat/completions`, fetchOptions, timeoutMs);
 
     if (!response.ok) {
         const errorDetail = await parseEvolinkError(response);
@@ -329,7 +333,8 @@ export const mapModelToEvolinkNative = (model: string): string => {
 export const requestEvolinkNative = async (
     model: string,
     googlePayload: Record<string, unknown>,
-    method: string = 'generateContent'
+    method: string = 'generateContent',
+    timeoutMs?: number
 ): Promise<Record<string, unknown>> => {
     const apiKey = getEvolinkKey();
     if (!apiKey) throw new Error('Evolink API 키가 설정되지 않았습니다.');
@@ -337,8 +342,9 @@ export const requestEvolinkNative = async (
     const evolinkModel = mapModelToEvolinkNative(model);
     const url = `${EVOLINK_V1BETA_URL}/models/${evolinkModel}:${method}`;
 
-    logger.info(`[Evolink Native] v1beta 요청: ${evolinkModel}:${method}`, { originalModel: model });
+    logger.info(`[Evolink Native] v1beta 요청: ${evolinkModel}:${method}`, { originalModel: model, timeoutMs });
 
+    // [FIX #32] 긴 대본 처리를 위한 확장 타임아웃 지원 (미지정 시 무제한)
     const response = await monitoredFetch(url, {
         method: 'POST',
         headers: {
@@ -346,7 +352,7 @@ export const requestEvolinkNative = async (
             'Content-Type': 'application/json'
         },
         body: JSON.stringify(googlePayload)
-    });
+    }, timeoutMs);
 
     if (!response.ok) {
         const errorDetail = await parseEvolinkError(response);

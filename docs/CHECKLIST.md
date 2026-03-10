@@ -8,6 +8,9 @@
 
 ## 🟢 완료된 작업
 
+- [x] #31 대본 작성 새 파일 업로드 시 이전 대본 미초기화 버그 수정 — clearPreviousContent 액션 추가, handleFileUpload/handleSelectTopic/selectedTopic useEffect에서 이전 콘텐츠 초기화, instinctStore 소재 선택도 초기화 (scriptWriterStore.ts, ScriptWriterTab.tsx, 2026-03-10)
+- [x] #32 긴 대본 스토리보드 네트워크 타임아웃 수정 — monitoredFetch에 AbortController 타임아웃 추가, 청크 크기 5000→3000자 축소, evolinkChat/requestEvolinkNative/requestGeminiProxy에 timeoutMs 전파, 재시도 조건에 Failed to fetch 추가 (apiService.ts, evolinkService.ts, geminiProxy.ts, scriptAnalysis.ts, 2026-03-10)
+- [x] logger.trackRetry() 호출 추가 — src/services/ 내 17개 재시도/폴링 루프에 재시도 추적 로깅 삽입 (14개 파일, 2026-03-10)
 - [x] StoryboardPanel 이미지/영상 직접 업로드 기능 추가 — SceneCard, GridSceneCard, SceneDetailModal에 업로드 버튼 + 삭제 기능, Cloudinary 호스팅 연동 (#20, 2026-03-10)
 - [x] musicService.ts pollMusicStatus FIRST_SUCCESS 버그 수정 — 중간 상태를 SUCCESS와 분리하여 계속 폴링, snake_case 필드 폴백 추가, 에러 메시지 개선 (#21/#22, 2026-03-10)
 - [x] UploadTab UI 리디자인 — 원페이지 스크롤 + 플랫폼별 accent 색상 (2026-03-06)

@@ -182,8 +182,9 @@ export const getStoredKeys = () => {
     };
 };
 
-// [NEW] Centralized Fetch Wrapper for Logging (v2: timing + success logging)
-export const monitoredFetch = async (url: string, options: RequestInit = {}): Promise<Response> => {
+// [NEW] Centralized Fetch Wrapper for Logging (v2: timing + success logging + timeout)
+// timeoutMs: AbortController 기반 타임아웃 (기본 0 = 무제한, 양수 시 해당 ms 후 AbortError)
+export const monitoredFetch = async (url: string, options: RequestInit = {}, timeoutMs: number = 0): Promise<Response> => {
     const method = options.method || 'GET';
     const startTime = performance.now();
 
@@ -192,8 +193,19 @@ export const monitoredFetch = async (url: string, options: RequestInit = {}): Pr
 
     logger.info(`📡 API Request: ${method} ${url}`, isBinaryUpload ? '[Binary/FormData]' : undefined);
 
+    // [FIX #32] AbortController 기반 타임아웃 — 긴 AI 요청의 브라우저/네트워크 타임아웃 방지
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    let mergedSignal = options.signal;
+
+    if (timeoutMs > 0 && !options.signal) {
+        // 호출자가 signal을 제공하지 않은 경우에만 타임아웃 AbortController 생성
+        const controller = new AbortController();
+        timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+        mergedSignal = controller.signal;
+    }
+
     try {
-        const response = await fetch(url, options);
+        const response = await fetch(url, { ...options, signal: mergedSignal });
         const duration = Math.round(performance.now() - startTime);
 
         if (!response.ok) {
@@ -223,7 +235,15 @@ export const monitoredFetch = async (url: string, options: RequestInit = {}): Pr
         return response;
     } catch (error: any) {
         const duration = Math.round(performance.now() - startTime);
+        // AbortError를 타임아웃 메시지로 변환 (호출자가 signal을 직접 넘긴 경우는 원래 에러 유지)
+        if (error.name === 'AbortError' && timeoutId !== undefined) {
+            const timeoutSec = Math.round(timeoutMs / 1000);
+            logger.apiLog('error', `⏱️ Timeout (${timeoutSec}s): ${method} ${url}`, duration, `요청이 ${timeoutSec}초를 초과했습니다.`);
+            throw new Error(`네트워크 타임아웃: ${method} ${url} (${timeoutSec}초 초과). 대본이 길 경우 처리 시간이 오래 걸릴 수 있습니다.`);
+        }
         logger.apiLog('error', `🔥 Network Error: ${method} ${url}`, duration, error.message);
         throw error;
+    } finally {
+        if (timeoutId !== undefined) clearTimeout(timeoutId);
     }
 };

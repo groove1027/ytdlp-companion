@@ -168,16 +168,17 @@ const convertGoogleToOpenAI = (model: string, googlePayload: any) => {
 };
 
 // --- CORE PROXY REQUEST FUNCTION ---
-export const requestGeminiProxy = async (model: string, googlePayload: any, _retryCount: number = 0): Promise<any> => {
+// [FIX #32] timeoutMs 파라미터 추가 — 긴 대본 스토리보드 생성 시 네트워크 타임아웃 방지
+export const requestGeminiProxy = async (model: string, googlePayload: any, _retryCount: number = 0, timeoutMs?: number): Promise<any> => {
     let lastError: any = null;
 
     // 0. Try Evolink Native v1beta (Priority 0) - Google Native Format
     try {
         const evolinkKey = getEvolinkKey();
         if (evolinkKey) {
-            logger.info(`[Gemini] Evolink Native 호출 (model: ${model})`);
+            logger.info(`[Gemini] Evolink Native 호출 (model: ${model})`, { timeoutMs });
             console.log(`[GeminiService] Trying Evolink Native (Priority 0) with model: ${model}${_retryCount > 0 ? ` (retry #${_retryCount})` : ''}`);
-            const data = await requestEvolinkNative(model, googlePayload);
+            const data = await requestEvolinkNative(model, googlePayload, 'generateContent', timeoutMs);
             logger.success(`[Gemini] Evolink Native 응답 수신 완료`);
             return data;
         }
@@ -229,6 +230,7 @@ export const requestGeminiProxy = async (model: string, googlePayload: any, _ret
             delete openAIBody.response_format;
         }
 
+        // [FIX #32] Kie 폴백에도 동일한 타임아웃 적용
         const response = await monitoredFetch(url, {
             method: 'POST',
             headers: {
@@ -236,7 +238,7 @@ export const requestGeminiProxy = async (model: string, googlePayload: any, _ret
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify(openAIBody)
-        });
+        }, timeoutMs);
 
         if (response.ok) {
             const json = await response.json();
@@ -275,7 +277,7 @@ export const requestGeminiProxy = async (model: string, googlePayload: any, _ret
         if (_retryCount < 1) {
             logger.trackRetry('GeminiProxy 전체', _retryCount + 1, 2, (lastError || e)?.message);
             await new Promise(r => setTimeout(r, 2000));
-            return requestGeminiProxy(model, googlePayload, _retryCount + 1);
+            return requestGeminiProxy(model, googlePayload, _retryCount + 1, timeoutMs);
         }
         console.error("[GeminiService] All Proxies Failed after retry.", e);
         throw new Error(`All proxies failed. Last error: ${(lastError || e)?.message || 'Unknown'}`);

@@ -65,6 +65,8 @@ interface ScriptWriterStore {
   setSmartSplit: (v: boolean) => void;
   setTargetCharCount: (count: number) => void;
   setSplitResult: (scenes: string[]) => void;
+  /** 새 입력(파일 업로드 등) 시 이전 대본 콘텐츠만 초기화 — 포맷 설정은 보존 */
+  clearPreviousContent: () => void;
   reset: () => void;
 }
 
@@ -142,6 +144,23 @@ export const useScriptWriterStore = create<ScriptWriterStore>((set) => ({
   setSmartSplit: (v) => set({ smartSplit: v }),
   setTargetCharCount: (count) => set({ targetCharCount: count }),
   setSplitResult: (scenes) => set({ splitResult: scenes }),
+
+  // 새 파일 업로드 시 이전 대본 콘텐츠를 초기화하되, 포맷/분량 설정은 유지
+  clearPreviousContent: () => set({
+    generatedScript: null,
+    styledScript: '',
+    styledStyleName: '',
+    finalScript: '',
+    manualText: '',
+    title: '',
+    synopsis: '',
+    topics: [],
+    selectedTopic: null,
+    splitResult: [],
+    benchmarkScript: '',
+    selectedPreset: null,
+    activeStep: 1,
+  }),
 
   reset: () => set({ ...INITIAL_STATE }),
 }));

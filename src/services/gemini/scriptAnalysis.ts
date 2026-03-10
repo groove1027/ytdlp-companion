@@ -988,7 +988,8 @@ export const parseScriptToScenes = async (
     };
 
     // === 대형 대본 청크 분할 (Cloudflare 524 타임아웃 방지) ===
-    const CHUNK_MAX_CHARS = 5000;
+    // [FIX #32] 5000→3000자로 축소 — 79컷 대본 등에서 청크당 AI 처리 시간 단축
+    const CHUNK_MAX_CHARS = 3000;
 
     if (cleanedScript.length > CHUNK_MAX_CHARS) {
         console.log(`[parseScriptToScenes] 📐 대형 대본 감지 (${cleanedScript.length}자) — 청크 분할 처리`);
@@ -1022,12 +1023,13 @@ export const parseScriptToScenes = async (
                 }
                 try {
                     console.log(`[parseScriptToScenes] 청크 ${ci + 1}/${chunks.length} (${chunks[ci].length}자) → evolinkChat (시도 ${retry + 1})`);
+                    // [FIX #32] 긴 대본 청크 처리를 위해 10분 타임아웃 적용
                     const res = await evolinkChat(
                         [
                             { role: 'system', content: chunkSysPrompt },
                             { role: 'user', content: chunkUserContent }
                         ],
-                        { temperature: 0.3, maxTokens: 16000, responseFormat: { type: 'json_object' } }
+                        { temperature: 0.3, maxTokens: 16000, responseFormat: { type: 'json_object' }, timeoutMs: 600_000 }
                     );
                     const content = res.choices?.[0]?.message?.content || '';
                     if (!content) throw new Error('Empty Response');
@@ -1049,7 +1051,8 @@ export const parseScriptToScenes = async (
                 } catch (ce: any) {
                     const msg = ce.message || '';
                     console.warn(`[parseScriptToScenes] 청크 ${ci + 1} 실패 (시도 ${retry + 1}): ${msg.slice(0, 100)}`);
-                    if (msg.includes('524') || msg.includes('timeout') || msg.includes('네트워크')) {
+                    // [FIX #32] "Failed to fetch", "타임아웃" 패턴도 재시도 대상에 추가
+                    if (msg.includes('524') || msg.includes('timeout') || msg.includes('타임아웃') || msg.includes('네트워크') || msg.includes('Failed to fetch') || msg.includes('Network Error')) {
                         if (retry < 2) { await new Promise(r => setTimeout(r, 5000)); continue; }
                     }
                     if (retry === 2) throw new Error(`청크 ${ci + 1} 파싱 실패: ${msg}`);
@@ -1070,17 +1073,19 @@ export const parseScriptToScenes = async (
         console.log(`[parseScriptToScenes] 청크 합산 → ${scenes.length} scenes`);
     } else {
         // === 기존 로직 (짧은 대본) ===
+        // [FIX #32] 5분 타임아웃 적용 — 대본 길이에 관계없이 충분한 처리 시간 보장
+        const SCRIPT_TIMEOUT_MS = 300_000;
         try {
             // 1차: Gemini 3.1 Pro (최고 품질)
             console.log('[parseScriptToScenes] 🧠 Gemini 3.1 Pro 호출');
-            const data = await requestGeminiProxy('gemini-3.1-pro-preview', payload);
+            const data = await requestGeminiProxy('gemini-3.1-pro-preview', payload, 0, SCRIPT_TIMEOUT_MS);
             scenes = extractAndProcess(data, 'Gemini3.1-Pro');
         } catch (e: any) {
             console.warn("Phase 1 (Pro) Failed:", e);
             try {
                 // 2차: Gemini 3.1 Pro 재시도 (최종 폴백)
                 console.log('[parseScriptToScenes] 🔄 Gemini 3.1 Pro 최종 폴백');
-                const data = await requestGeminiProxy('gemini-3.1-pro-preview', payload);
+                const data = await requestGeminiProxy('gemini-3.1-pro-preview', payload, 0, SCRIPT_TIMEOUT_MS);
                 scenes = extractAndProcess(data, 'Gemini3.1-Pro-Retry');
             } catch (proxyError: any) {
                 console.error("All models failed:", proxyError);

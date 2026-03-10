@@ -80,6 +80,7 @@ export default function ScriptWriterTab() {
     manualText, setManualText,
     title, setTitle,
     synopsis, setSynopsis,
+    clearPreviousContent,
   } = useScriptWriterStore();
 
   const setActiveTab = useNavigationStore((s) => s.setActiveTab);
@@ -123,6 +124,12 @@ export default function ScriptWriterTab() {
 
   useEffect(() => {
     if (selectedTopic) {
+      // 채널분석에서 새 소재가 도착하면 이전 대본 콘텐츠 초기화
+      setGeneratedScript(null);
+      clearStyledScript();
+      setFinalScript('');
+      setManualText('');
+      setSplitResult([]);
       setTitle(selectedTopic.title);
       setSynopsis(`${selectedTopic.mainSubject}\n\n대본 흐름: ${selectedTopic.scriptFlow}`);
     }
@@ -252,9 +259,12 @@ ${scriptText}`;
     try {
       const text = await parseFileToText(file);
       if (!text.trim()) throw new Error('파일에서 텍스트를 추출할 수 없습니다.');
+      // 이전 대본 콘텐츠 전체 초기화 (포맷 설정은 유지)
+      clearPreviousContent();
+      // instinctStore의 소재 추천 선택도 초기화
+      useInstinctStore.getState().clearTopics();
       setManualText(text);
       setFinalScript(text);
-      setGeneratedScript(null);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       setFileError(`파일 불러오기 실패: ${msg}`);
@@ -262,7 +272,7 @@ ${scriptText}`;
       setFileLoading(false);
       e.target.value = '';
     }
-  }, [setFinalScript, setGeneratedScript]);
+  }, [clearPreviousContent, setManualText, setFinalScript]);
 
   // -- 소재 추천 (본능 기제 → AI 소재 5개)
   const handleRecommendTopics = useCallback(async () => {
@@ -290,12 +300,18 @@ ${scriptText}`;
     return recommendedTopics.find(t => t.id === selectedTopicId) || null;
   }, [selectedTopicId, recommendedTopics]);
 
-  // -- 소재 선택 시 제목/줄거리 자동 채우기
+  // -- 소재 선택 시 이전 대본 초기화 후 제목/줄거리 자동 채우기
   const handleSelectTopic = useCallback((topic: TopicRecommendation) => {
     useInstinctStore.getState().selectTopic(topic.id);
+    // 이전 소재의 대본이 남아있지 않도록 콘텐츠 초기화
+    setGeneratedScript(null);
+    clearStyledScript();
+    setFinalScript('');
+    setManualText('');
+    setSplitResult([]);
     setTitle(topic.title);
     setSynopsis(topic.synopsis);
-  }, []);
+  }, [setGeneratedScript, clearStyledScript, setFinalScript, setManualText, setSplitResult, setTitle, setSynopsis]);
 
   // -- 선택된 소재로 스트리밍 대본 생성
   const handleGenerateFromTopic = useCallback(async (topic: TopicRecommendation) => {
