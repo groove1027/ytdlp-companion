@@ -841,7 +841,8 @@ const ChannelAnalysisRoom: React.FC = () => {
                   }}
                   className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-blue-600/20 text-blue-400 border border-blue-500/30 hover:bg-blue-600/30 transition-all flex items-center gap-1.5"
                 >
-                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                  {/* JSON 중괄호 아이콘 */}
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" /></svg>
                   JSON 저장
                 </button>
               )}
@@ -849,18 +850,19 @@ const ChannelAnalysisRoom: React.FC = () => {
                 <button
                   onClick={() => setShowBulkModal(true)}
                   disabled={!!bulkDownloadProgress}
-                  className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-red-600/20 text-red-400 border border-red-500/30 hover:bg-red-600/30 transition-all flex items-center gap-1.5 disabled:opacity-50"
+                  className="min-w-[140px] px-3 py-1.5 text-xs font-semibold rounded-lg bg-red-600/20 text-red-400 border border-red-500/30 hover:bg-red-600/30 transition-all flex items-center justify-center gap-1.5 disabled:opacity-50"
                 >
                   {bulkDownloadProgress ? (
                     <>
-                      <div className="w-3.5 h-3.5 border-2 border-red-400/30 border-t-red-400 rounded-full animate-spin" />
-                      다운로드 중 {bulkDownloadProgress.current}/{bulkDownloadProgress.total}
-                      {bulkDownloadProgress.failed > 0 && <span className="text-yellow-400">({bulkDownloadProgress.failed} 실패)</span>}
+                      <div className="shrink-0 w-3.5 h-3.5 border-2 border-red-400/30 border-t-red-400 rounded-full animate-spin" />
+                      <span className="truncate">{bulkDownloadProgress.current}/{bulkDownloadProgress.total}</span>
+                      {bulkDownloadProgress.failed > 0 && <span className="shrink-0 text-yellow-400">({bulkDownloadProgress.failed})</span>}
                     </>
                   ) : (
                     <>
-                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
-                      영상 일괄 다운로드
+                      {/* MP4 파일 다운로드 아이콘 */}
+                      <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 4v16m10-16v16M3 8h4m6 0h8M3 12h18M3 16h4m6 0h8" /></svg>
+                      MP4 일괄 저장
                     </>
                   )}
                 </button>
@@ -909,32 +911,32 @@ const ChannelAnalysisRoom: React.FC = () => {
                         <span>·</span>
                         <span>{fmtDate(s.publishedAt)}</span>
                       </div>
-                      <div className="flex items-center gap-0.5">
-                        {/* 영상 파일 다운로드 */}
+                      <div className="flex items-center gap-0.5 shrink-0">
+                        {/* MP4 영상 저장 */}
                         {downloadingVideos.has(s.videoId) || downloadDone[s.videoId] ? (
-                          <div className="flex items-center gap-1.5 px-1.5 py-0.5 rounded-md bg-gray-900/60">
+                          <div className="flex items-center gap-1 h-6 max-w-[100px] px-1.5 rounded-md bg-gray-900/60">
                             {downloadDone[s.videoId] === 'done' ? (
-                              <svg className="w-3.5 h-3.5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                              <svg className="w-3 h-3 shrink-0 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
                             ) : downloadDone[s.videoId] === 'fail' ? (
-                              <svg className="w-3.5 h-3.5 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                              <svg className="w-3 h-3 shrink-0 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                             ) : (
-                              <div className="w-3.5 h-3.5 border-2 border-red-400/30 border-t-red-400 rounded-full animate-spin" />
+                              <div className="w-3 h-3 shrink-0 border-2 border-red-400/30 border-t-red-400 rounded-full animate-spin" />
                             )}
-                            <span className={`text-[11px] tabular-nums whitespace-nowrap ${downloadDone[s.videoId] === 'done' ? 'text-green-400' : downloadDone[s.videoId] === 'fail' ? 'text-yellow-400' : 'text-red-300'}`}>
-                              {downloadPhase[s.videoId] || '대기 중...'}
-                              {!downloadDone[s.videoId] && (downloadProgress[s.videoId] ?? 0) > 0 && ` ${downloadProgress[s.videoId]}%`}
+                            <span className={`text-[10px] tabular-nums truncate ${downloadDone[s.videoId] === 'done' ? 'text-green-400' : downloadDone[s.videoId] === 'fail' ? 'text-yellow-400' : 'text-red-300'}`}>
+                              {downloadDone[s.videoId] === 'done' ? 'OK' : downloadDone[s.videoId] === 'fail' ? '실패' : `${downloadProgress[s.videoId] ?? 0}%`}
                             </span>
                           </div>
                         ) : (
                           <button
                             onClick={() => downloadVideo(s.videoId, s.title)}
                             className="p-1 text-gray-600 hover:text-red-400 transition-colors"
-                            title="영상 다운로드 (MP4)"
+                            title="MP4 영상 저장"
                           >
-                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                            {/* 필름 프레임 아이콘 (영상 파일) */}
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 4v16m10-16v16M3 8h4m6 0h8M3 12h18M3 16h4m6 0h8" /></svg>
                           </button>
                         )}
-                        {/* JSON 데이터 다운로드 */}
+                        {/* JSON 데이터 저장 */}
                         <button
                           onClick={() => {
                             const data = {
@@ -956,9 +958,10 @@ const ChannelAnalysisRoom: React.FC = () => {
                             URL.revokeObjectURL(a.href);
                           }}
                           className="p-1 text-gray-600 hover:text-blue-400 transition-colors"
-                          title="JSON 데이터 다운로드"
+                          title="JSON 데이터 저장"
                         >
-                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                          {/* 코드 괄호 아이콘 (JSON 데이터) */}
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" /></svg>
                         </button>
                       </div>
                     </div>
