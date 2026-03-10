@@ -5,6 +5,12 @@ import type {
   VideoVersionItem,
   VideoTimedFrame,
 } from '../types';
+import {
+  saveVideoAnalysisSlot,
+  getAllVideoAnalysisSlots,
+  deleteVideoAnalysisSlot,
+} from '../services/storageService';
+import type { SavedVideoAnalysisSlot } from '../services/storageService';
 
 interface ResultCache {
   raw: string;
@@ -27,6 +33,10 @@ interface VideoAnalysisStore {
 
   // 프리셋별 결과 캐시
   resultCache: Record<string, ResultCache>;
+
+  // 슬롯 관리
+  savedSlots: SavedVideoAnalysisSlot[];
+  activeSlotId: string | null;
 
   // Actions
   setInputMode: (mode: 'upload' | 'youtube') => void;
@@ -51,6 +61,18 @@ interface VideoAnalysisStore {
   resetResults: () => void;
   /** 전체 초기화 */
   reset: () => void;
+
+  // 슬롯 액션
+  /** 현재 결과를 슬롯에 저장 */
+  saveSlot: (name?: string) => Promise<void>;
+  /** 슬롯 로드 */
+  loadSlot: (id: string) => Promise<void>;
+  /** 슬롯 삭제 */
+  removeSlot: (id: string) => Promise<void>;
+  /** 앱 초기화 시 슬롯 목록 로드 */
+  loadAllSlots: () => Promise<void>;
+  /** 새 분석 시작 — 결과 초기화 */
+  newAnalysis: () => void;
 }
 
 const INITIAL_STATE = {
@@ -63,6 +85,8 @@ const INITIAL_STATE = {
   error: null as string | null,
   expandedId: null as number | null,
   resultCache: {} as Record<string, ResultCache>,
+  savedSlots: [] as SavedVideoAnalysisSlot[],
+  activeSlotId: null as string | null,
 };
 
 export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
@@ -122,6 +146,73 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
       }),
 
       reset: () => set({ ...INITIAL_STATE }),
+
+      // --- 슬롯 관리 ---
+      saveSlot: async (name) => {
+        const { youtubeUrl, inputMode, selectedPreset, rawResult, versions, resultCache } = get();
+        if (!rawResult && versions.length === 0) return;
+        const slotName = name || youtubeUrl || '영상 분석';
+        const id = `va-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        const slot: SavedVideoAnalysisSlot = {
+          id, name: slotName, youtubeUrl, inputMode, selectedPreset,
+          rawResult, versions, resultCache, savedAt: Date.now(),
+        };
+        try {
+          await saveVideoAnalysisSlot(slot);
+          const all = await getAllVideoAnalysisSlots();
+          set({ savedSlots: all, activeSlotId: id });
+        } catch (e) { console.warn('[VideoSlot] save failed:', e); }
+      },
+
+      loadSlot: async (id) => {
+        try {
+          const all = await getAllVideoAnalysisSlots();
+          const found = all.find(s => s.id === id);
+          if (found) {
+            set({
+              youtubeUrl: found.youtubeUrl,
+              inputMode: found.inputMode,
+              selectedPreset: found.selectedPreset,
+              rawResult: found.rawResult,
+              versions: found.versions,
+              resultCache: found.resultCache,
+              thumbnails: [],
+              expandedId: null,
+              error: null,
+              savedSlots: all,
+              activeSlotId: id,
+            });
+          }
+        } catch (e) { console.warn('[VideoSlot] load failed:', e); }
+      },
+
+      removeSlot: async (id) => {
+        try {
+          await deleteVideoAnalysisSlot(id);
+          const all = await getAllVideoAnalysisSlots();
+          const { activeSlotId } = get();
+          set({ savedSlots: all, activeSlotId: activeSlotId === id ? null : activeSlotId });
+        } catch (e) { console.warn('[VideoSlot] delete failed:', e); }
+      },
+
+      loadAllSlots: async () => {
+        try {
+          const all = await getAllVideoAnalysisSlots();
+          set({ savedSlots: all });
+        } catch (e) { console.warn('[VideoSlot] loadAll failed:', e); }
+      },
+
+      newAnalysis: () => set({
+        youtubeUrl: '',
+        selectedPreset: null,
+        rawResult: '',
+        versions: [],
+        thumbnails: [],
+        resultCache: {},
+        error: null,
+        expandedId: null,
+        activeSlotId: null,
+      }),
     }),
     {
       name: 'video-analysis-store',
@@ -133,7 +224,7 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
         rawResult: state.rawResult,
         versions: state.versions,
         resultCache: state.resultCache,
-        // thumbnails 제외 (blob URL은 세션 간 유효하지 않음)
+        // thumbnails, savedSlots, activeSlotId 제외 (IndexedDB에서 관리)
       }),
     },
   ),

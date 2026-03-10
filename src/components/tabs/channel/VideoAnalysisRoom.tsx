@@ -8,6 +8,7 @@ import { useNavigationStore } from '../../../stores/navigationStore';
 import { useEditPointStore } from '../../../stores/editPointStore';
 import { useEditRoomStore } from '../../../stores/editRoomStore';
 import { useVideoAnalysisStore } from '../../../stores/videoAnalysisStore';
+import AnalysisSlotBar from './AnalysisSlotBar';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
 import { getYoutubeApiKey } from '../../../services/apiService';
 import { monitoredFetch } from '../../../services/apiService';
@@ -1547,6 +1548,7 @@ const VideoAnalysisRoom: React.FC = () => {
     setInputMode, setYoutubeUrl, setSelectedPreset, setRawResult, setVersions, setThumbnails,
     setError, setExpandedId, cacheCurrentResult, restoreFromCache, resetResults,
     clearPresetCache,
+    savedSlots, activeSlotId, loadSlot, removeSlot, newAnalysis, loadAllSlots, saveSlot,
   } = store;
 
   // 로컬 전용 (일시적 UI 상태 — 영속 불필요)
@@ -1562,6 +1564,9 @@ const VideoAnalysisRoom: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const hasInput = inputMode === 'youtube' ? youtubeUrl.trim().length > 0 : uploadedFile !== null;
+
+  // 슬롯 목록 초기 로드
+  React.useEffect(() => { loadAllSlots(); }, []);
 
   const handleDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); setIsDragOver(true); }, []);
   const handleDragLeave = useCallback((e: React.DragEvent) => { e.preventDefault(); setIsDragOver(false); }, []);
@@ -1753,6 +1758,8 @@ ${comments.slice(0, 15).map((c, i) => `${i + 1}. ${c.slice(0, 150)}`).join('\n')
       // 결과 캐시에 저장 (Zustand 스토어)
       setTimeout(() => cacheCurrentResult(preset), 100);
       notifyAnalysisComplete();
+      // 자동 슬롯 저장
+      setTimeout(() => useVideoAnalysisStore.getState().saveSlot(), 500);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error('[VideoAnalysis] 분석 실패:', err);
@@ -1831,6 +1838,15 @@ ${comments.slice(0, 15).map((c, i) => `${i + 1}. ${c.slice(0, 150)}`).join('\n')
 
   return (
     <div className="space-y-6">
+      {/* 분석 슬롯 바 */}
+      <AnalysisSlotBar
+        slots={savedSlots.map(s => ({ id: s.id, name: s.name, savedAt: s.savedAt }))}
+        activeSlotId={activeSlotId}
+        onNewAnalysis={() => { newAnalysis(); setUploadedFile(null); }}
+        onLoadSlot={loadSlot}
+        onDeleteSlot={removeSlot}
+        hasCurrentResults={versions.length > 0 && !activeSlotId}
+      />
       {/* ═══ 입력 ═══ */}
       <div className="bg-gray-800/50 rounded-xl border border-gray-700 p-6">
         <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">

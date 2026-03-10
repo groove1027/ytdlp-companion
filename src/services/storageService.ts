@@ -1,6 +1,6 @@
 
 import { openDB, DBSchema } from 'idb';
-import { ProjectData, ProjectSummary, StorageEstimate, SavedCharacter, MusicLibraryItem, ChannelScript, ChannelGuideline } from '../types';
+import { ProjectData, ProjectSummary, StorageEstimate, SavedCharacter, MusicLibraryItem, ChannelScript, ChannelGuideline, ChannelInfo, ChannelInputSource, VideoVersionItem, VideoAnalysisPreset, VideoTimedFrame } from '../types';
 
 // --- DB Schema ---
 
@@ -19,6 +19,8 @@ export interface SavedBenchmarkData {
   scripts: ChannelScript[];
   guideline: ChannelGuideline | null;
   savedAt: number;
+  channelInfo?: ChannelInfo | null;
+  inputSource?: ChannelInputSource;
 }
 
 /** IndexedDB에 저장되는 오디오 Blob 래퍼 */
@@ -27,6 +29,19 @@ export interface SavedAudioBlob {
   projectId: string;
   blob: Blob;
   createdAt: number;
+}
+
+/** 영상분석 슬롯 저장용 */
+export interface SavedVideoAnalysisSlot {
+  id: string;
+  name: string;
+  youtubeUrl: string;
+  inputMode: 'upload' | 'youtube';
+  selectedPreset: VideoAnalysisPreset | null;
+  rawResult: string;
+  versions: VideoVersionItem[];
+  resultCache: Record<string, { raw: string; versions: VideoVersionItem[]; thumbs: VideoTimedFrame[] }>;
+  savedAt: number;
 }
 
 interface StoryboardDB extends DBSchema {
@@ -54,6 +69,10 @@ interface StoryboardDB extends DBSchema {
     key: string;
     value: SavedAudioBlob;
   };
+  'video-analysis': {
+    key: string;
+    value: SavedVideoAnalysisSlot;
+  };
 }
 
 const DB_NAME = 'ai-storyboard-v2';
@@ -63,9 +82,10 @@ const CHARACTER_STORE = 'characters';
 const MUSIC_STORE = 'music';
 const BENCHMARK_STORE = 'benchmarks';
 const AUDIO_BLOB_STORE = 'audio-blobs';
+const VIDEO_ANALYSIS_STORE = 'video-analysis';
 
-// Initialize DB (v6: adds audio-blobs store for TTS narration persistence)
-export const dbPromise = openDB<StoryboardDB>(DB_NAME, 6, {
+// Initialize DB (v7: adds video-analysis store for video analysis slots)
+export const dbPromise = openDB<StoryboardDB>(DB_NAME, 7, {
   upgrade(db, oldVersion) {
     if (oldVersion < 1) {
       db.createObjectStore(PROJECT_STORE, { keyPath: 'id' });
@@ -84,6 +104,9 @@ export const dbPromise = openDB<StoryboardDB>(DB_NAME, 6, {
     }
     if (oldVersion < 6) {
       db.createObjectStore(AUDIO_BLOB_STORE, { keyPath: 'id' });
+    }
+    if (oldVersion < 7) {
+      db.createObjectStore(VIDEO_ANALYSIS_STORE, { keyPath: 'id' });
     }
   },
 });
@@ -348,10 +371,12 @@ export const saveBenchmarkData = async (
   channelName: string,
   scripts: ChannelScript[],
   guideline: ChannelGuideline | null,
+  channelInfo?: ChannelInfo | null,
+  inputSource?: ChannelInputSource,
 ): Promise<void> => {
   const db = await dbPromise;
   const id = channelName.trim().toLowerCase().replace(/\s+/g, '-');
-  const saved: SavedBenchmarkData = { id, channelName, scripts, guideline, savedAt: Date.now() };
+  const saved: SavedBenchmarkData = { id, channelName, scripts, guideline, savedAt: Date.now(), channelInfo, inputSource };
   await db.put(BENCHMARK_STORE, saved);
 };
 
@@ -371,4 +396,22 @@ export const deleteAllSavedBenchmarks = async (): Promise<void> => {
   const tx = db.transaction(BENCHMARK_STORE, 'readwrite');
   tx.objectStore(BENCHMARK_STORE).clear();
   await tx.done;
+};
+
+// --- Video Analysis Slots ---
+
+export const saveVideoAnalysisSlot = async (slot: SavedVideoAnalysisSlot): Promise<void> => {
+  const db = await dbPromise;
+  await db.put(VIDEO_ANALYSIS_STORE, slot);
+};
+
+export const getAllVideoAnalysisSlots = async (): Promise<SavedVideoAnalysisSlot[]> => {
+  const db = await dbPromise;
+  const all = await db.getAll(VIDEO_ANALYSIS_STORE);
+  return all.sort((a, b) => b.savedAt - a.savedAt);
+};
+
+export const deleteVideoAnalysisSlot = async (id: string): Promise<void> => {
+  const db = await dbPromise;
+  await db.delete(VIDEO_ANALYSIS_STORE, id);
 };

@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, useMemo } from 'react';
+import React, { useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, PieChart, Pie, Cell, ReferenceLine } from 'recharts';
 import { useChannelAnalysisStore } from '../../../stores/channelAnalysisStore';
 import { useNavigationStore } from '../../../stores/navigationStore';
@@ -14,6 +14,7 @@ import { buildInstinctTaxonomy } from '../../../data/instinctPromptUtils';
 import { logger } from '../../../services/LoggerService';
 import ChannelInputPanel from './ChannelInputPanel';
 import AnalysisLoadingPanel, { notifyAnalysisComplete } from './AnalysisLoadingPanel';
+import AnalysisSlotBar from './AnalysisSlotBar';
 import type { LegacyTopicRecommendation, ContentFormat, ChannelScript, ChannelInfo, TopicInstinctAnalysis } from '../../../types';
 
 const VIRAL_CFG = {
@@ -34,15 +35,19 @@ const ChannelAnalysisRoom: React.FC = () => {
     channelScripts, channelInfo, channelGuideline, savedPresets,
     inputSource, uploadedFiles, sourceName,
     topicInput, topicRecommendations,
+    savedBenchmarks, activeSlotId,
     setChannelInfo, setChannelScripts, setChannelGuideline, savePreset, loadPreset, removePreset,
     setInputSource, setUploadedFiles, setSourceName, syncQuota,
     setTopicInput, setTopicRecommendations,
+    loadBenchmark, removeBenchmark, newAnalysis, loadAllBenchmarks,
   } = useChannelAnalysisStore();
   const setActiveTab = useNavigationStore(s => s.setActiveTab);
   const swSetTopics = useScriptWriterStore(s => s.setTopics);
   const swSetSelectedTopic = useScriptWriterStore(s => s.setSelectedTopic);
 
   const { requireAuth } = useAuthGuard();
+
+  useEffect(() => { loadAllBenchmarks(); }, []);
 
   const [contentFormat, setContentFormat] = useState<ContentFormat>('long');
   const [videoCount, setVideoCount] = useState(10);
@@ -677,6 +682,16 @@ const ChannelAnalysisRoom: React.FC = () => {
 
   return (
     <div className="space-y-6 animate-fade-in-up">
+      {/* 분석 슬롯 바 */}
+      <AnalysisSlotBar
+        slots={savedBenchmarks.map(b => ({ id: b.id, name: b.channelName, savedAt: b.savedAt }))}
+        activeSlotId={activeSlotId}
+        onNewAnalysis={() => { newAnalysis(); setChannelUrl(''); }}
+        onLoadSlot={loadBenchmark}
+        onDeleteSlot={removeBenchmark}
+        hasCurrentResults={!!channelGuideline && !activeSlotId}
+      />
+
       {/* 채널 스타일 클로닝 — 입력 패널 */}
       <div className={card}>
         <div className="mb-3">

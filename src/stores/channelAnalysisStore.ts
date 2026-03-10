@@ -80,6 +80,8 @@ interface ChannelAnalysisStore {
   setTopicRecommendations: (topics: LegacyTopicRecommendation[]) => void;
   /** 저장된 벤치마크 목록 */
   savedBenchmarks: SavedBenchmarkData[];
+  /** 현재 활성 슬롯 ID */
+  activeSlotId: string | null;
   /** 현재 채널 분석 결과를 IndexedDB에 저장 */
   saveBenchmark: () => Promise<void>;
   /** IndexedDB에서 벤치마크 불러오기 */
@@ -88,6 +90,8 @@ interface ChannelAnalysisStore {
   removeBenchmark: (id: string) => Promise<void>;
   /** 앱 초기화 시 IndexedDB에서 목록 로드 */
   loadAllBenchmarks: () => Promise<void>;
+  /** 새 분석 시작 — 결과 초기화 */
+  newAnalysis: () => void;
   clearKeywordHistory: () => void;
   reset: () => void;
 }
@@ -125,6 +129,7 @@ const INITIAL_STATE = {
   topicInput: '',
   topicRecommendations: [] as LegacyTopicRecommendation[],
   savedBenchmarks: [] as SavedBenchmarkData[],
+  activeSlotId: null as string | null,
 };
 
 export const useChannelAnalysisStore = create<ChannelAnalysisStore>((set) => ({
@@ -214,13 +219,14 @@ export const useChannelAnalysisStore = create<ChannelAnalysisStore>((set) => ({
 
   // --- 벤치마크 IndexedDB 영속화 ---
   saveBenchmark: async () => {
-    const { channelInfo, channelScripts, channelGuideline } = useChannelAnalysisStore.getState();
+    const { channelInfo, channelScripts, channelGuideline, inputSource } = useChannelAnalysisStore.getState();
     const name = channelInfo?.title || channelGuideline?.channelName || '미지정 채널';
     if (channelScripts.length === 0 && !channelGuideline) return;
     try {
-      await saveBenchmarkData(name, channelScripts, channelGuideline);
+      await saveBenchmarkData(name, channelScripts, channelGuideline, channelInfo, inputSource);
       const all = await getAllSavedBenchmarks();
-      set({ savedBenchmarks: all });
+      const slotId = name.trim().toLowerCase().replace(/\s+/g, '-');
+      set({ savedBenchmarks: all, activeSlotId: slotId });
     } catch (e) { console.warn('[Benchmark] save failed:', e); }
   },
 
@@ -232,7 +238,10 @@ export const useChannelAnalysisStore = create<ChannelAnalysisStore>((set) => ({
         set({
           channelScripts: found.scripts,
           channelGuideline: found.guideline,
+          channelInfo: found.channelInfo || null,
+          inputSource: found.inputSource || 'youtube',
           savedBenchmarks: all,
+          activeSlotId: id,
         });
       }
     } catch (e) { console.warn('[Benchmark] load failed:', e); }
@@ -252,6 +261,16 @@ export const useChannelAnalysisStore = create<ChannelAnalysisStore>((set) => ({
       set({ savedBenchmarks: all });
     } catch (e) { console.warn('[Benchmark] loadAll failed:', e); }
   },
+
+  newAnalysis: () => set({
+    channelInfo: null,
+    channelScripts: [],
+    channelGuideline: null,
+    topicRecommendations: [],
+    topicInput: '',
+    activeSlotId: null,
+    isAnalyzing: false,
+  }),
 
   clearKeywordHistory: () => set({ keywordResults: [] }),
 
