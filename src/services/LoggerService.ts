@@ -20,11 +20,15 @@ const generateSessionId = (): string => {
   return id;
 };
 
+const PERSIST_KEY = 'DEBUG_PERSISTED_ERRORS';
+const MAX_PERSISTED = 50;
+
 class LoggerService {
   private logs: LogEntry[] = [];
   private listeners: LogListener[] = [];
   readonly sessionId = generateSessionId();
   private readonly sessionStart = Date.now();
+  private globalHandlersInstalled = false;
 
   private addLog(level: LogLevel, message: string, details?: any, extra?: Partial<LogEntry>) {
     const entry: LogEntry = {
@@ -34,8 +38,20 @@ class LoggerService {
       details,
       ...extra,
     };
-    this.logs = [entry, ...this.logs].slice(0, 300); // 100 → 300
+    this.logs = [entry, ...this.logs].slice(0, 300);
     this.notify();
+  }
+
+  /** Error 객체에서 stack trace + message 추출 */
+  private enrichErrorDetails(details: any): any {
+    if (details instanceof Error) {
+      return {
+        message: details.message,
+        stack: details.stack?.split('\n').slice(0, 8).join('\n'), // 상위 8줄만
+        name: details.name,
+      };
+    }
+    return details;
   }
 
   info(message: string, details?: any) {
@@ -44,7 +60,8 @@ class LoggerService {
   }
 
   error(message: string, details?: any) {
-    this.addLog('error', message, details);
+    this.addLog('error', message, this.enrichErrorDetails(details));
+    this.persistErrors();
     console.error(`[ERROR] ${message}`, details || '');
   }
 
@@ -54,13 +71,15 @@ class LoggerService {
   }
 
   warn(message: string, details?: any) {
-    this.addLog('warn', message, details);
+    this.addLog('warn', message, this.enrichErrorDetails(details));
+    this.persistErrors();
     console.warn(`[WARN] ${message}`, details || '');
   }
 
   /** API 호출 결과 로깅 (응답 시간 포함) */
   apiLog(level: LogLevel, message: string, duration: number, details?: any) {
-    this.addLog(level, message, details, { category: 'api', duration });
+    this.addLog(level, message, this.enrichErrorDetails(details), { category: 'api', duration });
+    if (level === 'error' || level === 'warn') this.persistErrors();
     const fn = level === 'error' ? console.error : level === 'warn' ? console.warn : console.log;
     fn(`[${level.toUpperCase()}] ${message} (${duration}ms)`, details || '');
   }
@@ -71,9 +90,100 @@ class LoggerService {
     this.addLog('info', msg, undefined, { category: 'action' });
   }
 
+  /** 재시도 추적 */
+  trackRetry(operation: string, attempt: number, maxAttempts: number, reason?: string) {
+    const msg = `🔄 Retry ${attempt}/${maxAttempts}: ${operation}`;
+    this.addLog('warn', msg, reason || undefined, { category: 'api' });
+  }
+
   getLogs() {
     return this.logs;
   }
+
+  // ── 글로벌 에러 핸들러 ──
+
+  /** 글로벌 에러/이벤트 핸들러 설치 (앱 시작 시 1회 호출) */
+  installGlobalHandlers() {
+    if (this.globalHandlersInstalled) return;
+    this.globalHandlersInstalled = true;
+
+    // 이전 세션 에러 복원
+    this.restorePersistedErrors();
+
+    // Uncaught errors
+    window.addEventListener('error', (event) => {
+      this.addLog('error', `💥 Uncaught: ${event.message}`, {
+        file: event.filename?.split('/').pop(),
+        line: event.lineno,
+        col: event.colno,
+        stack: event.error?.stack?.split('\n').slice(0, 5).join('\n'),
+      }, { category: 'system' });
+      this.persistErrors();
+    });
+
+    // Unhandled promise rejections
+    window.addEventListener('unhandledrejection', (event) => {
+      const reason = event.reason;
+      const message = reason instanceof Error ? reason.message : String(reason);
+      const stack = reason instanceof Error ? reason.stack?.split('\n').slice(0, 5).join('\n') : undefined;
+      this.addLog('error', `💥 Unhandled Rejection: ${message}`, { stack }, { category: 'system' });
+      this.persistErrors();
+    });
+
+    // 탭 비활성화/활성화 감지
+    document.addEventListener('visibilitychange', () => {
+      const state = document.visibilityState;
+      this.addLog('info', state === 'visible' ? '🔀 탭 활성화 (foreground)' : '🔀 탭 비활성화 (background)', undefined, { category: 'system' });
+    });
+
+    // 네트워크 온/오프라인 전환
+    window.addEventListener('online', () => {
+      this.addLog('info', '🌐 네트워크 연결됨', undefined, { category: 'system' });
+    });
+    window.addEventListener('offline', () => {
+      this.addLog('warn', '🌐 네트워크 끊김', undefined, { category: 'system' });
+      this.persistErrors();
+    });
+
+    this.addLog('info', `🚀 앱 시작 (세션: ${this.sessionId})`, undefined, { category: 'system' });
+  }
+
+  // ── 로그 영속화 (에러/경고만) ──
+
+  /** 에러/경고 로그를 localStorage에 저장 (새로고침 후에도 유지) */
+  private persistErrors() {
+    try {
+      const errors = this.logs
+        .filter(l => l.level === 'error' || l.level === 'warn')
+        .filter(l => !l.message.startsWith('[이전]')) // 복원된 로그 제외
+        .slice(0, MAX_PERSISTED);
+      localStorage.setItem(PERSIST_KEY, JSON.stringify(errors));
+    } catch { /* quota exceeded, ignore */ }
+  }
+
+  /** 이전 세션의 에러 로그 복원 */
+  private restorePersistedErrors() {
+    try {
+      const saved = localStorage.getItem(PERSIST_KEY);
+      if (!saved) return;
+      const entries: LogEntry[] = JSON.parse(saved);
+      if (entries.length === 0) return;
+
+      // 이전 세션 에러를 현재 로그 뒤에 추가 (구분 표시)
+      const restored = entries.map(e => ({
+        ...e,
+        message: `[이전] ${e.message}`,
+      }));
+      this.logs = [...this.logs, ...restored].slice(0, 300);
+      this.addLog('info', `📋 이전 세션 에러 ${entries.length}건 복원됨`, undefined, { category: 'system' });
+      this.notify();
+
+      // 복원 후 삭제
+      localStorage.removeItem(PERSIST_KEY);
+    } catch { /* ignore */ }
+  }
+
+  // ── 환경 스냅샷 ──
 
   /** 환경 스냅샷 수집 (동기) */
   collectEnvironmentSnapshot(): Record<string, string> {
@@ -155,6 +265,8 @@ class LoggerService {
     return snapshot;
   }
 
+  // ── Export ──
+
   /** 피드백 첨부용 포맷 문자열 (최신->과거) */
   exportFormatted(): string {
     if (this.logs.length === 0) return '(로그 없음)';
@@ -211,6 +323,11 @@ class LoggerService {
       const time = a.timestamp.substring(11, 19); // HH:MM:SS
       return `[${time}] ${a.message}`;
     }).join('\n');
+  }
+
+  /** 카테고리별 로그 필터링 */
+  getLogsByCategory(category: LogEntry['category']): LogEntry[] {
+    return this.logs.filter(l => l.category === category);
   }
 
   clear() {

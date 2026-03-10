@@ -2,6 +2,7 @@
 import { Scene, VideoFormat, CharacterAppearance } from '../../types';
 import { requestGeminiProxy, extractTextFromResponse, extractFunctionCall, performMockSearch, SAFETY_SETTINGS_BLOCK_NONE } from './geminiProxy';
 import { evolinkChat } from '../evolinkService';
+import { logger } from '../LoggerService';
 
 // [NEW] Robust JSON Extraction — handles thinking model markdown output
 export const extractJsonFromText = (text: string): string | null => {
@@ -1016,6 +1017,9 @@ export const parseScriptToScenes = async (
             let chunkScenes: any[] = [];
             // 최대 3회 재시도 (524 타임아웃 대응)
             for (let retry = 0; retry < 3; retry++) {
+                if (retry > 0) {
+                    logger.trackRetry(`스크립트 청크 ${ci + 1} 파싱`, retry + 1, 3, '524 타임아웃 또는 네트워크 오류');
+                }
                 try {
                     console.log(`[parseScriptToScenes] 청크 ${ci + 1}/${chunks.length} (${chunks[ci].length}자) → evolinkChat (시도 ${retry + 1})`);
                     const res = await evolinkChat(

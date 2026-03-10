@@ -305,7 +305,7 @@ export async function pollKieTask(taskId: string, signal?: AbortSignal, onProgre
             if (response.status === 404) throw new Error(`Kie 태스크를 찾을 수 없습니다 (${taskId}).`);
             if (response.status === 422) throw new Error("Kie 태스크 조회 실패 (recordInfo is null).");
             if (response.status === 429) {
-                logger.warn(`[Kie] Rate limited (429). Backing off 5s...`);
+                logger.trackRetry('Kie 폴링 (429)', i + 1, maxAttempts, 'Rate limited');
                 await new Promise(r => setTimeout(r, 5000));
             }
             continue;
@@ -316,6 +316,7 @@ export async function pollKieTask(taskId: string, signal?: AbortSignal, onProgre
             if (data.code === 401) throw new Error("Kie API Key 인증 실패.");
             if (data.code === 402) throw new Error("Kie 잔액이 부족합니다.");
             if (data.code === 501) throw new Error(`Kie 생성 실패 (501): ${data.msg || 'Generation Failed'}`);
+            logger.trackRetry('Kie 폴링 (비정상 code)', i + 1, maxAttempts, `code: ${data.code}`);
             continue;
         }
 
@@ -366,7 +367,7 @@ export async function pollKieTask(taskId: string, signal?: AbortSignal, onProgre
         if (e.message.includes("결과 URL을 찾을 수 없습니다")) throw e;
         if (e.message.includes("Kie 생성 실패")) throw e;
         // 네트워크 일시 오류 등은 재시도
-        logger.warn(`[Kie] Poll attempt ${i + 1} error (will retry): ${e.message}`);
+        logger.trackRetry('Kie 폴링 (네트워크)', i + 1, maxAttempts, e.message);
     }
   }
   throw new Error("Timeout: Kie 작업 시간 초과 (10분)");
@@ -559,7 +560,10 @@ export async function pollKieVeoTask(
                 headers: { 'Authorization': `Bearer ${getKieKey()}` },
                 signal
             });
-            if (!response.ok) continue;
+            if (!response.ok) {
+                logger.trackRetry('Kie Veo 폴링', i + 1, maxAttempts, `HTTP ${response.status}`);
+                continue;
+            }
             const data = await response.json();
             const taskData = data.data;
 
@@ -575,6 +579,7 @@ export async function pollKieVeoTask(
         } catch (e: any) {
             if (e.name === 'AbortError' || e.message === "Cancelled by user") throw e;
             if (e.message.includes("생성 실패") || e.message.includes("결과 URL 없음")) throw e;
+            logger.trackRetry('Kie Veo 폴링 (네트워크)', i + 1, maxAttempts, e.message);
         }
     }
     throw new Error("Timeout: Kie Veo 작업 시간 초과");
@@ -825,7 +830,10 @@ async function pollWaveSpeedTask(
                 headers: { 'Authorization': `Bearer ${apiKey}` },
                 signal
             });
-            if (!response.ok) continue;
+            if (!response.ok) {
+                logger.trackRetry('WaveSpeed 폴링', i + 1, 200, `HTTP ${response.status}`);
+                continue;
+            }
 
             const data = await response.json();
             const status = data.data?.status || data.status;
@@ -845,6 +853,7 @@ async function pollWaveSpeedTask(
             const err = e as Error;
             if (err.name === 'AbortError' || err.message === "Cancelled") throw e;
             if (err.message.includes("실패") || err.message.includes("찾을 수 없습니다")) throw e;
+            logger.trackRetry('WaveSpeed 폴링 (네트워크)', i + 1, 200, err.message);
         }
     }
     throw new Error("V2V 작업 시간 초과 (Timeout)");

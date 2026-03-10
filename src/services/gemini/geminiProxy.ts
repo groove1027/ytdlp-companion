@@ -273,7 +273,7 @@ export const requestGeminiProxy = async (model: string, googlePayload: any, _ret
     } catch (e: any) {
         // [FIX] 1회 자동 재시도 (모든 프록시 실패 시)
         if (_retryCount < 1) {
-            console.warn(`[GeminiService] All proxies failed. Retrying in 2s... (attempt ${_retryCount + 1})`);
+            logger.trackRetry('GeminiProxy 전체', _retryCount + 1, 2, (lastError || e)?.message);
             await new Promise(r => setTimeout(r, 2000));
             return requestGeminiProxy(model, googlePayload, _retryCount + 1);
         }
@@ -334,7 +334,7 @@ export const requestGeminiNative = async (model: string, googlePayload: any, _re
     } catch (e: any) {
         // 1회 자동 재시도 (2초 대기)
         if (_retryCount < 1) {
-            console.warn(`[GeminiNative] All v1beta proxies failed. Retrying in 2s... (attempt ${_retryCount + 1})`);
+            logger.trackRetry('GeminiNative v1beta 전체', _retryCount + 1, 2, (lastError || e)?.message);
             await new Promise(r => setTimeout(r, 2000));
             return requestGeminiNative(model, googlePayload, _retryCount + 1);
         }

@@ -1,6 +1,7 @@
 
 import { uploadMediaToHosting } from './uploadService';
 import { dataURLtoFile } from '../utils/fileHelpers';
+import { logger } from './LoggerService';
 import type { Scene } from '../types';
 
 // ---------------------------------------------------------------------------
@@ -68,6 +69,9 @@ export const persistImage = async (imageData: string): Promise<string> => {
     let lastError: unknown;
 
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        if (attempt > 1) {
+            logger.trackRetry('persistImage upload', attempt, MAX_RETRIES, lastError instanceof Error ? lastError.message : String(lastError));
+        }
         try {
             const url = await uploadMediaToHosting(file);
             return url;

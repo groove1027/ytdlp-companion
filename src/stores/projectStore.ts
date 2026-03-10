@@ -3,6 +3,7 @@ import { ProjectConfig, Scene, Thumbnail, ProjectData, VideoFormat, AspectRatio,
 import { useCostStore } from './costStore';
 import { useSoundStudioStore } from './soundStudioStore';
 import { persistImage, isBase64Image } from '../services/imageStorageService';
+import { logger } from '../services/LoggerService';
 
 // editRoomStore → projectStore 순환 참조 방지: lazy require 사용
 const getEditRoomStore = () => {
@@ -127,9 +128,14 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     config: typeof config === 'function' ? config(state.config) : config,
   })),
 
-  setScenes: (scenes) => set((state) => ({
-    scenes: typeof scenes === 'function' ? scenes(state.scenes) : scenes,
-  })),
+  setScenes: (scenes) => set((state) => {
+    const newScenes = typeof scenes === 'function' ? scenes(state.scenes) : scenes;
+    // 장면 수가 변경된 경우에만 로깅 (매 렌더 노이즈 방지)
+    if (newScenes.length !== state.scenes.length) {
+      logger.info('장면 업데이트', { count: newScenes.length, prev: state.scenes.length });
+    }
+    return { scenes: newScenes };
+  }),
 
   setThumbnails: (thumbnails) => set((state) => ({
     thumbnails: typeof thumbnails === 'function' ? thumbnails(state.thumbnails) : thumbnails,
@@ -256,6 +262,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     const sanitizedScenes = project.config?.allowInfographics === true
       ? scenes
       : scenes.map((s) => ({ ...s, isInfographic: false }));
+
+    logger.info('프로젝트 로드', { projectId: project.id, title: project.title, sceneCount: sanitizedScenes.length });
 
     // [FIX] 이전 프로젝트의 찌꺼기 방지 — 먼저 관련 스토어 초기화
     try { useEditRoomStore.getState().reset(); } catch { /* 미초기화 시 무시 */ }
@@ -419,6 +427,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     // 임시 제목 자동 생성: "임시 프로젝트 03/07 14:30"
     const now = new Date();
     const autoTitle = title || `임시 프로젝트 ${String(now.getMonth() + 1).padStart(2, '0')}/${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+    logger.info('프로젝트 생성', { projectId, title: autoTitle });
 
     set({
       config: {

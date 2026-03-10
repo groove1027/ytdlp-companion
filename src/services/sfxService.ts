@@ -75,6 +75,7 @@ export async function pollSfxTask(
 
     if (!response.ok) {
       if (response.status === 429) {
+        logger.trackRetry('SFX 폴링 (429)', attempt + 1, maxAttempts, 'Rate limited');
         await new Promise(resolve => setTimeout(resolve, 5000));
         continue;
       }

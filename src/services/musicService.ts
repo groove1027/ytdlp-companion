@@ -343,6 +343,7 @@ export const pollMusicStatus = async (
 
         if (!response.ok) {
             if (response.status === 429) {
+                logger.trackRetry('음악 폴링 (429)', attempt + 1, maxAttempts, 'Rate limited');
                 await new Promise(resolve => setTimeout(resolve, 5000));
                 continue;
             }
@@ -818,7 +819,7 @@ export const pollLyricsResult = async (taskId: string, signal?: AbortSignal): Pr
         const response = await monitoredFetch(`${KIE_BASE_URL}/lyrics/record-info?taskId=${taskId}`, {
             headers: { 'Authorization': `Bearer ${apiKey}` },
         });
-        if (!response.ok) { if (response.status === 429) { await new Promise(r => setTimeout(r, 5000)); continue; } throw new Error(`가사 폴링 오류 (${response.status})`); }
+        if (!response.ok) { if (response.status === 429) { logger.trackRetry('가사 폴링 (429)', attempt + 1, maxAttempts, 'Rate limited'); await new Promise(r => setTimeout(r, 5000)); continue; } throw new Error(`가사 폴링 오류 (${response.status})`); }
         const data = await response.json();
         if (data.code === 422) continue;
         const status = data.data?.status;
@@ -862,7 +863,7 @@ export const pollVocalSeparation = async (taskId: string, signal?: AbortSignal):
         const response = await monitoredFetch(`${KIE_BASE_URL}/vocal-removal/record-info?taskId=${taskId}`, {
             headers: { 'Authorization': `Bearer ${apiKey}` },
         });
-        if (!response.ok) { if (response.status === 429) { await new Promise(r => setTimeout(r, 5000)); continue; } throw new Error(`보컬 분리 폴링 오류 (${response.status})`); }
+        if (!response.ok) { if (response.status === 429) { logger.trackRetry('보컬 분리 폴링 (429)', attempt + 1, maxAttempts, 'Rate limited'); await new Promise(r => setTimeout(r, 5000)); continue; } throw new Error(`보컬 분리 폴링 오류 (${response.status})`); }
         const data = await response.json();
         if (data.code === 422) continue;
         const successFlag = data.data?.successFlag;

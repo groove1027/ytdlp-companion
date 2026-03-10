@@ -120,6 +120,7 @@ async function pollKieTranscriptionTask(
 
     if (!response.ok) {
       if (response.status === 429) {
+        logger.trackRetry('전사 폴링 (429)', attempt + 1, maxAttempts, 'Rate limited');
         await new Promise((resolve) => setTimeout(resolve, 5000));
         continue;
       }

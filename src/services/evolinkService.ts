@@ -590,9 +590,7 @@ export const pollEvolinkTask = async (
                 if (response.status === 404) throw new Error('Evolink 태스크를 찾을 수 없습니다.');
                 // MEDIUM 2: 일시적 오류 시 상태 코드와 응답 본문을 로깅
                 const errorDetail = await parseEvolinkError(response);
-                logger.warn(`[Evolink] 폴링 일시적 오류 (${response.status}), 재시도 ${i + 1}/${maxAttempts}`, {
-                    taskId, status: response.status, error: errorDetail
-                });
+                logger.trackRetry('Evolink 폴링', i + 1, maxAttempts, `HTTP ${response.status}: ${errorDetail}`);
                 continue;
             }
 
@@ -628,9 +626,7 @@ export const pollEvolinkTask = async (
             }
             // MEDIUM 2: 네트워크 오류 등도 로깅 후 재시도
             const errMsg = e instanceof Error ? e.message : String(e);
-            logger.warn(`[Evolink] 폴링 네트워크 오류, 재시도 ${i + 1}/${maxAttempts}`, {
-                taskId, error: errMsg
-            });
+            logger.trackRetry('Evolink 폴링 (네트워크)', i + 1, maxAttempts, errMsg);
         }
     }
 

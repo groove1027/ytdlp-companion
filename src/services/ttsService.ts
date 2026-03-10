@@ -391,6 +391,7 @@ const pollKieTtsTask = async (taskId: string, apiKey: string, maxAttempts: numbe
         if (!response.ok) {
             if (response.status === 429) {
                 // Rate limit — 5초 대기 후 재시도
+                logger.trackRetry('TTS 폴링 (429)', attempt + 1, maxAttempts, 'Rate limited');
                 await new Promise(resolve => setTimeout(resolve, 5000));
                 continue;
             }

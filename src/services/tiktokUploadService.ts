@@ -294,7 +294,10 @@ const pollTikTokPublishStatus = async (
       body: JSON.stringify({ publish_id: publishId }),
     });
 
-    if (!response.ok) continue;
+    if (!response.ok) {
+      logger.trackRetry('TikTok 게시 상태 폴링', i + 1, maxAttempts, `HTTP ${response.status}`);
+      continue;
+    }
 
     const data = await response.json();
     const status = data.data?.status;

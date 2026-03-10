@@ -260,6 +260,7 @@ const pollResult = async (
           throw new Error(`GhostCut 폴링 서버 오류 (${response.status}): ${serverMsg}`);
         }
 
+        logger.trackRetry('GhostCut 폴링 (서버 오류)', i + 1, MAX_POLLS, `HTTP ${response.status}: ${serverMsg}`);
         const elapsed = (i + 1) * (POLL_INTERVAL / 1000);
         onProgress?.(`서버 오류 (${response.status}), 재시도 중...`, elapsed);
         await new Promise(r => setTimeout(r, POLL_INTERVAL));
@@ -278,6 +279,7 @@ const pollResult = async (
       }
 
       consecutiveNetworkErrors++;
+      logger.trackRetry('GhostCut 폴링 (네트워크)', i + 1, MAX_POLLS, errMsg);
       logger.warn(`[GhostCut] 폴링 네트워크 오류 (${consecutiveNetworkErrors}/${MAX_NETWORK_ERRORS})`, err);
 
       if (consecutiveNetworkErrors >= MAX_NETWORK_ERRORS) {

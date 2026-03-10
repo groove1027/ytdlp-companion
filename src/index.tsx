@@ -6,6 +6,10 @@ import { handleOAuthCallback } from './services/youtubeUploadService';
 import { handleTikTokOAuthCallback } from './services/tiktokUploadService';
 import { handleInstagramOAuthCallback } from './services/instagramUploadService';
 import { handleThreadsOAuthCallback } from './services/threadsUploadService';
+import { logger } from './services/LoggerService';
+
+// 글로벌 에러 핸들러 설치 (uncaught error, unhandled rejection, 탭 비활성화, 네트워크 변경)
+logger.installGlobalHandlers();
 
 // OAuth 팝업 콜백 감지 — 앱 렌더링 전에 처리
 // ?code= 파라미터가 있고 opener(부모 창)가 있으면 코드를 전달하고 팝업을 닫음

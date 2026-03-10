@@ -132,7 +132,7 @@ ${sceneContext}
 
     try {
       if (attempt > 0) {
-        logger.warn(`[메타데이터] 재시도 ${attempt}/${METADATA_MAX_RETRIES}...`);
+        logger.trackRetry('메타데이터 AI 생성', attempt, METADATA_MAX_RETRIES, lastError?.message);
       }
 
       const response = await evolinkChat(

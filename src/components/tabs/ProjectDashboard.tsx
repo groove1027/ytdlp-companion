@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { ProjectData, ProjectSummary, PipelineSteps } from '../../types';
 import { getAllProjectSummaries, deleteProject, canCreateNewProject, getProject } from '../../services/storageService';
 import { showToast } from '../../stores/uiStore';
+import { exportProjectById } from '../../services/exportService';
 import { useNavigationStore } from '../../stores/navigationStore';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
 
@@ -161,10 +162,12 @@ interface CardProps {
   isSelected: boolean;
   onToggleSelect: () => void;
   onOpen: () => void;
+  onExport: () => void;
+  isExporting?: boolean;
 }
 
 // --- 그리드 카드 (v4.5 스마트 프로젝트) ---
-const ProjectCard: React.FC<CardProps> = ({ summary, isSelected, onToggleSelect, onOpen }) => {
+const ProjectCard: React.FC<CardProps> = ({ summary, isSelected, onToggleSelect, onOpen, onExport, isExporting }) => {
   const thumb = summary.thumbnailUrl;
   const images = summary.sceneImageUrls || [];
   const hasImages = images.length > 0 || !!thumb;
@@ -258,12 +261,23 @@ const ProjectCard: React.FC<CardProps> = ({ summary, isSelected, onToggleSelect,
         )}
       </div>
 
-      {/* 하단: 제목 + 상대시간 + 파이프라인 바 */}
+      {/* 하단: 제목 + 상대시간 + 내보내기 */}
       <div className="p-3">
         <h3 className="text-sm font-bold text-white truncate mb-1">{summary.title}</h3>
         <div className="flex items-center justify-between text-[12px] text-gray-500">
           <span>{formatRelativeTime(summary.lastModified)}</span>
-          {summary.createdAt && <span>{formatDate(summary.createdAt).split(' ').slice(0, 1).join()}</span>}
+          <button
+            onClick={e => { e.stopPropagation(); onExport(); }}
+            disabled={isExporting}
+            className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-blue-400 disabled:text-blue-400 p-0.5"
+            title="프로젝트 내보내기"
+          >
+            {isExporting ? (
+              <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+            ) : (
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+            )}
+          </button>
         </div>
       </div>
     </div>
@@ -271,7 +285,7 @@ const ProjectCard: React.FC<CardProps> = ({ summary, isSelected, onToggleSelect,
 };
 
 // --- 리스트 아이템 (v4.5) ---
-const ProjectListItem: React.FC<CardProps> = ({ summary, isSelected, onToggleSelect, onOpen }) => {
+const ProjectListItem: React.FC<CardProps> = ({ summary, isSelected, onToggleSelect, onOpen, onExport, isExporting }) => {
   const thumb = summary.thumbnailUrl;
   const gradient = TAB_GRADIENTS[summary.lastActiveTab || ''] || 'from-gray-800/50 to-gray-700/20';
   const progress = getPipelineProgress(summary.pipelineSteps);
@@ -306,6 +320,18 @@ const ProjectListItem: React.FC<CardProps> = ({ summary, isSelected, onToggleSel
       <div className="flex flex-wrap gap-1 max-w-xs justify-end">
         {getBadges(summary).map((b, i) => <span key={i} className={badgeStyle(b.color)}>{b.label}</span>)}
       </div>
+      <button
+        onClick={e => { e.stopPropagation(); onExport(); }}
+        disabled={isExporting}
+        className="flex-shrink-0 text-gray-400 hover:text-blue-400 disabled:text-blue-400 p-1.5 rounded-lg hover:bg-gray-700 transition-colors"
+        title="프로젝트 내보내기"
+      >
+        {isExporting ? (
+          <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+        ) : (
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+        )}
+      </button>
     </div>
   );
 };
@@ -454,6 +480,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, on
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [currentPage, setCurrentPage] = useState(1);
   const [loadingProjectId, setLoadingProjectId] = useState<string | null>(null);
+  const [exportingIds, setExportingIds] = useState<Set<string>>(new Set());
 
   const loadSummaries = useCallback(async () => {
     try {
@@ -524,6 +551,31 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, on
       }
     } finally {
       setLoadingProjectId(null);
+    }
+  };
+
+  // 프로젝트 내보내기
+  const handleExportProject = async (id: string) => {
+    if (exportingIds.has(id)) return;
+    setExportingIds(prev => new Set(prev).add(id));
+    try {
+      await exportProjectById(id);
+      showToast('프로젝트가 내보내기 되었습니다.', 3000);
+    } catch (e) {
+      console.error('[ProjectDashboard] 내보내기 실패:', e);
+      showToast('내보내기에 실패했습니다.', 4000);
+    } finally {
+      setExportingIds(prev => { const next = new Set(prev); next.delete(id); return next; });
+    }
+  };
+
+  // 선택된 프로젝트 일괄 내보내기
+  const handleBulkExport = async () => {
+    if (selectedIds.size === 0) return;
+    const ids = Array.from(selectedIds);
+    showToast(`${ids.length}개 프로젝트 내보내기 중...`, 3000);
+    for (const id of ids) {
+      await handleExportProject(id);
     }
   };
 
@@ -613,8 +665,9 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, on
         <div className="flex items-center gap-2">
           {onImportProject && (
             <>
-              <input ref={fileInputRef} type="file" accept=".html" className="hidden" onChange={handleFileChange} />
-              <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-gray-300 text-sm font-medium px-3 py-2 rounded-lg transition-colors whitespace-nowrap">
+              <input ref={fileInputRef} type="file" accept=".html,.zip" className="hidden" onChange={handleFileChange} />
+              <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-gray-300 text-sm font-medium px-3 py-2 rounded-lg transition-colors whitespace-nowrap"
+                title="내보낸 프로젝트 파일(.html 또는 .zip)을 다시 불러옵니다">
                 📥 불러오기
               </button>
             </>
@@ -653,6 +706,10 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, on
             className="text-sm px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 hover:text-white transition-colors">
             {selectedIds.size === filtered.length && filtered.length > 0 ? '전체 해제' : '전체 선택'}
           </button>
+          <button onClick={handleBulkExport} disabled={selectedIds.size === 0}
+            className="text-sm px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-blue-400 hover:text-blue-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1">
+            📦 선택 내보내기{selectedIds.size > 0 && ` (${selectedIds.size})`}
+          </button>
           <button onClick={handleBulkDelete} disabled={selectedIds.size === 0}
             className="text-sm px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-red-400 hover:text-red-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1">
             🗑️ 선택 삭제{selectedIds.size > 0 && ` (${selectedIds.size})`}
@@ -689,14 +746,16 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, on
         <div className={`grid gap-4 ${GRID_COLS[cardSize]}`}>
           {paged.map(s => (
             <ProjectCard key={s.id} summary={s} isSelected={selectedIds.has(s.id)}
-              onToggleSelect={() => toggleSelect(s.id)} onOpen={() => handleOpenProject(s.id)} />
+              onToggleSelect={() => toggleSelect(s.id)} onOpen={() => handleOpenProject(s.id)}
+              onExport={() => handleExportProject(s.id)} isExporting={exportingIds.has(s.id)} />
           ))}
         </div>
       ) : (
         <div className="flex flex-col gap-2">
           {paged.map(s => (
             <ProjectListItem key={s.id} summary={s} isSelected={selectedIds.has(s.id)}
-              onToggleSelect={() => toggleSelect(s.id)} onOpen={() => handleOpenProject(s.id)} />
+              onToggleSelect={() => toggleSelect(s.id)} onOpen={() => handleOpenProject(s.id)}
+              onExport={() => handleExportProject(s.id)} isExporting={exportingIds.has(s.id)} />
           ))}
         </div>
       )}

@@ -408,3 +408,110 @@ export const exportVideoPromptsHtml = () => {
     );
     downloadHtmlFile(htmlContent, `Video_Prompts_${Date.now()}.html`);
 };
+
+/** 프로젝트 대시보드에서 ID로 직접 내보내기 (스토어 의존 없음) */
+export const exportProjectById = async (projectId: string): Promise<void> => {
+    const { getProject } = await import('./storageService');
+    const project = await getProject(projectId);
+    if (!project) {
+        useUIStore.getState().setToast({ show: true, message: '프로젝트를 찾을 수 없습니다.' });
+        setTimeout(() => useUIStore.getState().setToast(null), 3000);
+        return;
+    }
+
+    const { config, scenes, thumbnails, title, id, costStats } = project;
+    if (!config) {
+        useUIStore.getState().setToast({ show: true, message: '프로젝트 설정이 없습니다.' });
+        setTimeout(() => useUIStore.getState().setToast(null), 3000);
+        return;
+    }
+
+    const displayTitle = (title || 'Untitled').replace(/\n/g, ' ');
+    const emptyCostStats = { totalUsd: 0, imageCount: 0, videoCount: 0, analysisCount: 0, ttsCount: 0, musicCount: 0 };
+
+    if (scenes.length >= 30) {
+        // ZIP 내보내기 (대형 프로젝트)
+        try {
+            const { default: JSZip } = await import('jszip');
+            const zip = new JSZip();
+            const dataFolder = zip.folder('data')!;
+            const scenesFolder = dataFolder.folder('scenes')!;
+
+            const isLarge = scenes.length >= 200;
+            const maxWidth = isLarge ? 1280 : 1920;
+            const jpegQuality = isLarge ? 0.6 : 0.8;
+
+            const manifestScenes: ExportManifest['scenes'] = [];
+            for (let i = 0; i < scenes.length; i++) {
+                const s = scenes[i];
+                let imageFile: string | undefined;
+                if (s.imageUrl) {
+                    const filename = `scene_${String(i + 1).padStart(3, '0')}.jpg`;
+                    try {
+                        const blob = await imageToBlob(s.imageUrl, maxWidth, jpegQuality);
+                        scenesFolder.file(filename, blob);
+                        imageFile = filename;
+                    } catch { /* skip */ }
+                }
+                manifestScenes.push({
+                    id: s.id, index: i, scriptText: s.scriptText, visualPrompt: s.visualPrompt,
+                    cameraMovement: s.cameraMovement, imageFile, videoUrl: s.videoUrl,
+                    characterPresent: s.characterPresent, castType: s.castType, entityName: s.entityName,
+                });
+            }
+
+            const manifest: ExportManifest = {
+                version: '1.0', projectId: id, title: displayTitle, createdAt: Date.now(),
+                sceneCount: scenes.length, config, scenes: manifestScenes,
+                thumbnails: thumbnails.filter(t => t.imageUrl).map(t => ({ id: t.id, imageFile: undefined, textOverlay: t.textOverlay })),
+                costStats: costStats || emptyCostStats,
+            };
+            dataFolder.file('manifest.json', JSON.stringify(manifest, null, 2));
+            zip.file('index.html', buildOptimizedViewerHtml(manifest.title));
+
+            const blob = await zip.generateAsync({ type: 'blob' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            const safeTitle = displayTitle.replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').substring(0, 30);
+            link.download = `${safeTitle}_Project.zip`;
+            link.click();
+            URL.revokeObjectURL(link.href);
+        } catch (e) {
+            console.error('[exportProjectById] ZIP failed', e);
+            useUIStore.getState().setToast({ show: true, message: '내보내기 실패: ' + (e instanceof Error ? e.message : String(e)) });
+            setTimeout(() => useUIStore.getState().setToast(null), 4000);
+        }
+    } else {
+        // HTML 내보내기 (소형 프로젝트)
+        try {
+            const isShort = config.videoFormat === VideoFormat.SHORT || config.videoFormat === VideoFormat.NANO;
+            const constraint = isShort
+                ? { type: 'height' as const, size: 1920 }
+                : { type: 'width' as const, size: 1920 };
+
+            const optimizedScenes = await Promise.all(scenes.map(async (s) => {
+                if (s.imageUrl) return { ...s, imageUrl: await optimizeForExport(s.imageUrl, 'image/jpeg', constraint) };
+                return s;
+            }));
+            const optimizedThumbnails = await Promise.all(thumbnails.map(async (t) => {
+                if (t.imageUrl) return { ...t, imageUrl: await optimizeForExport(t.imageUrl, 'image/jpeg', constraint) };
+                return t;
+            }));
+
+            const data = { id, title: displayTitle, config, scenes: optimizedScenes, thumbnails: optimizedThumbnails, costStats: costStats || emptyCostStats };
+            const htmlContent = buildExportHtml(data, displayTitle);
+
+            const blob = new Blob([htmlContent], { type: 'text/html' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            const safeTitle = displayTitle.replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').substring(0, 30);
+            link.download = `${safeTitle}_Project_Export.html`;
+            link.click();
+            URL.revokeObjectURL(link.href);
+        } catch (e) {
+            console.error('[exportProjectById] HTML failed', e);
+            useUIStore.getState().setToast({ show: true, message: '내보내기 실패: ' + (e instanceof Error ? e.message : String(e)) });
+            setTimeout(() => useUIStore.getState().setToast(null), 4000);
+        }
+    }
+};

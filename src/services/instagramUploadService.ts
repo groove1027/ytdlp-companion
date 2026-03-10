@@ -255,7 +255,10 @@ const pollContainerStatus = async (
       `${GRAPH_BASE}/${containerId}?fields=status_code,status&access_token=${accessToken}`
     );
 
-    if (!res.ok) continue;
+    if (!res.ok) {
+      logger.trackRetry('Instagram 컨테이너 폴링', i + 1, maxAttempts, `HTTP ${res.status}`);
+      continue;
+    }
 
     const data = await res.json();
     const status = data.status_code;
