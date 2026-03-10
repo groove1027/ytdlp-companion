@@ -8,6 +8,7 @@
 
 ## 🟢 완료된 작업
 
+- [x] #51 새로고침 후 프로젝트 전부 사라지는 버그 수정 — cleanupEmptyProjects에 최신 프로젝트 보호 + 1시간 미경과 프로젝트 보호, App.tsx에서 last-project-id를 currentId로 전달, useAutoSave에 beforeunload 긴급 저장(flushSave) 추가, 저장 실패 시 모든 에러에 Toast 표시, saveProject에 에러 로깅 추가 (storageService.ts, useAutoSave.ts, App.tsx, 2026-03-10)
 - [x] #50 이미지/영상 "청크 파싱 실패: Failed to fetch" 에러 수정 — 청크 분할 파싱에 지수 백오프 재시도(2s→6s→18s) 적용, 짧은 대본 파싱에도 네트워크 오류 재시도 추가, 네트워크 오류 vs API 오류 구분 에러 메시지, 사용자에게 구체적 조치 안내 (scriptAnalysis.ts, 2026-03-10)
 - [x] #44 내보내기 70%에서 멈춤 + 텍스트 붙여넣기 불가 수정 — (1) 비디오 프레임 추출(getFrameAt)에 5초 타임아웃, renderAllFrames에 전체 10분 타임아웃+메모리 압력 체크, 오디오 렌더링(startRendering)에 5분 타임아웃, fetchAndDecode에 30초 타임아웃, composeMp4 시작 시 메모리 90% 초과 시 FFmpeg 폴백 (index.ts, canvasRenderer.ts, audioMixer.ts) (2) VisualTimeline 키보드 핸들러에 contentEditable 요소 감지 추가 — 붙여넣기(Cmd+V)/스페이스바 차단 방지 (VisualTimeline.tsx, 2026-03-10)
 - [x] #49 이미지/영상 스타일 선택 후 스토리보드에 이미지 미표시 수정 — StoryboardPanel 진입 시 이미지 없는 장면 자동 일괄 생성 useEffect 추가, autoImageTriggeredRef로 중복 실행 방지, 500ms 딜레이로 UI 렌더 후 시작 (StoryboardPanel.tsx, 2026-03-10)

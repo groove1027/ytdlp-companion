@@ -178,6 +178,7 @@ export const saveProject = async (project: ProjectData) => {
       console.error('[Storage] QuotaExceededError: 브라우저 저장소 용량 초과');
       throw new Error('QUOTA_EXCEEDED');
     }
+    console.error('[Storage] 프로젝트 저장 실패:', e);
     throw e;
   }
 };
@@ -288,12 +289,19 @@ export const cleanupEmptyProjects = async (currentId?: string | null): Promise<n
   const summaries = await db.getAll(SUMMARY_STORE);
   let cleaned = 0;
 
+  // 가장 최근 프로젝트는 절대 삭제하지 않음
+  const sorted = [...summaries].sort((a, b) => (b.lastModified || 0) - (a.lastModified || 0));
+  const mostRecentId = sorted[0]?.id;
+
   for (const s of summaries) {
     if (s.id === currentId) continue;
+    if (s.id === mostRecentId) continue; // 최신 프로젝트 보호
     // 조건: 장면 없고, 이미지 없고, 임시 제목인 프로젝트
     const isEmpty = s.sceneCount === 0 && s.completedImages === 0;
     const isTempTitle = s.title.startsWith('임시 프로젝트') || s.title.startsWith('새 프로젝트');
-    if (isEmpty && isTempTitle) {
+    // 1시간 이상 경과한 빈 임시 프로젝트만 삭제
+    const isOldEnough = (Date.now() - (s.lastModified || 0)) > 3_600_000;
+    if (isEmpty && isTempTitle && isOldEnough) {
       await deleteProject(s.id);
       cleaned++;
     }

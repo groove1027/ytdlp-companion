@@ -176,16 +176,16 @@ const submitTask = async (videoUrl: string): Promise<{ projectId: number; taskId
   const body = JSON.stringify({
     urls: [videoUrl],
     callback: callbackUrl,
-    needChineseOcclude: 1,
+    needChineseOcclude: 0,   // 중국어 전용 → 비활성 (한국어 자막에 부적합)
     resolution: '1080p',
     needCrop: 0,
-    needMask: 0,
+    needMask: 1,             // 범용 마스크 제거 활성화 (언어 무관)
     needMirror: 0,
     needRescale: 0,
     needShift: 0,
     needTransition: 0,
     needTrim: 0,
-    music: 2,
+    music: 0,                // 음악 처리 비활성 (영상 길이 변경 방지)
     musicRegion: '',
     randomBorder: 0,
   });
@@ -377,5 +377,16 @@ export const removeSubtitlesWithGhostCut = async (
   onProgress?.('정제된 영상 다운로드 중...');
   const resultBlob = await downloadResult(resultUrl);
   logger.success('[GhostCut] 자막 제거 완료', { size: resultBlob.size });
+
+  // 5. 결과 검증 — 원본 대비 크기가 50% 미만이면 경고
+  const sizeRatio = resultBlob.size / videoBlob.size;
+  if (sizeRatio < 0.5) {
+    logger.warn('[GhostCut] 결과 영상 크기가 원본의 50% 미만', {
+      originalSize: videoBlob.size,
+      resultSize: resultBlob.size,
+      ratio: Math.round(sizeRatio * 100) + '%',
+    });
+  }
+
   return resultBlob;
 };

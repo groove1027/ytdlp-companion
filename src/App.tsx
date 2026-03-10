@@ -241,7 +241,8 @@ const App: React.FC = () => {
       // 1) 빈 임시 프로젝트 정리 (누적 방지)
       try {
         const { cleanupEmptyProjects } = await import('./services/storageService');
-        const cleaned = await cleanupEmptyProjects(null);
+        const lastId = localStorage.getItem('last-project-id');
+        const cleaned = await cleanupEmptyProjects(lastId);
         if (cleaned > 0) console.log(`[App] ${cleaned}개 빈 임시 프로젝트 정리됨`);
       } catch { /* 정리 실패해도 계속 진행 */ }
 
