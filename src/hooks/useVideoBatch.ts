@@ -126,6 +126,7 @@ export const useVideoBatch = (
         retryCount: number = 0       // [NEW] Auto-Retry Counter
     ) => {
         if (!scene.imageUrl) return;
+        logger.trackAction('비디오 생성 시작', initialModel);
 
         // [CRITICAL FIX 2] Abort any existing controller for this scene before creating a new one
         // Prevents orphaned AbortControllers during recursive retries
@@ -414,6 +415,7 @@ export const useVideoBatch = (
     const BATCH_LIMIT = 20;
 
     const runGrokHQBatch = async (duration: '6' | '10' | '15', speechMode: boolean) => {
+        logger.trackAction('비디오 배치 생성 시작', 'Grok HQ');
         // [FIX BUG#10] Read current scenes from store to avoid stale closure
         const genTargets = useProjectStore.getState().scenes.filter(s => s.imageUrl && !s.videoUrl && !s.isGeneratingVideo);
         if (genTargets.length === 0) { useUIStore.getState().setToast({ show: true, message: "작업할 대상이 없습니다." }); setTimeout(() => useUIStore.getState().setToast(null), 3000); return; }
@@ -427,18 +429,20 @@ export const useVideoBatch = (
     };
     
     const runVeoFastBatch = async () => {
+        logger.trackAction('비디오 배치 생성 시작', 'Veo Fast');
         // [FIX BUG#10] Read current scenes from store to avoid stale closure
         const targets = useProjectStore.getState().scenes.filter(s => s.imageUrl && !s.videoUrl && !s.isGeneratingVideo);
         if (targets.length === 0) { useUIStore.getState().setToast({ show: true, message: "작업 대상이 없습니다." }); setTimeout(() => useUIStore.getState().setToast(null), 3000); return; }
         setIsBatching(true);
         setProgress({ current: 0, total: targets.length });
         await runBatch(targets, BATCH_LIMIT, async (scene) => {
-             await processScene(scene.id, scene, VideoModel.VEO, false, true); 
+             await processScene(scene.id, scene, VideoModel.VEO, false, true);
         }, () => setProgress(prev => ({ ...prev, current: prev.current + 1 })));
         setIsBatching(false);
     };
 
     const runVeoQualityBatch = async () => {
+        logger.trackAction('비디오 배치 생성 시작', 'Veo Quality');
         // [FIX BUG#10] Read current scenes from store to avoid stale closure
         const targets = useProjectStore.getState().scenes.filter(s => s.imageUrl && !s.videoUrl && !s.isGeneratingVideo);
         if (targets.length === 0) { useUIStore.getState().setToast({ show: true, message: "작업 대상이 없습니다." }); setTimeout(() => useUIStore.getState().setToast(null), 3000); return; }
@@ -452,6 +456,7 @@ export const useVideoBatch = (
     };
 
     const runUpscaleBatch = async () => {
+        logger.trackAction('비디오 배치 생성 시작', 'Upscale');
         // [FIX BUG#10] Read current scenes from store to avoid stale closure
         const targets = useProjectStore.getState().scenes.filter(s => s.videoUrl && !s.isUpscaled && !s.isUpscaling && s.generationTaskId);
         if (targets.length === 0) { useUIStore.getState().setToast({ show: true, message: "작업 대상이 없습니다." }); setTimeout(() => useUIStore.getState().setToast(null), 3000); return; }
@@ -466,6 +471,7 @@ export const useVideoBatch = (
     // V2V: xAI Grok Video Edit (sourceVideoUrl → style transfer)
     const processRemakeScene = async (sceneId: string, scene: Scene) => {
         if (!scene.sourceVideoUrl) return;
+        logger.trackAction('비디오 생성 시작', 'V2V Remake (xAI Grok)');
 
         const controller = new AbortController();
         abortControllers.current.set(sceneId, controller);
@@ -522,6 +528,7 @@ export const useVideoBatch = (
     };
 
     const runRemakeBatch = async () => {
+        logger.trackAction('비디오 배치 생성 시작', 'V2V Remake');
         // [FIX BUG#10] Read current scenes from store to avoid stale closure
         const targets = useProjectStore.getState().scenes.filter(s => s.sourceVideoUrl && !s.videoUrl && !s.isGeneratingVideo);
         if (targets.length === 0) { useUIStore.getState().setToast({ show: true, message: "작업 대상이 없습니다." }); setTimeout(() => useUIStore.getState().setToast(null), 3000); return; }

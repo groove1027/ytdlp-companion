@@ -182,18 +182,19 @@ export const getStoredKeys = () => {
     };
 };
 
-// [NEW] Centralized Fetch Wrapper for Logging
+// [NEW] Centralized Fetch Wrapper for Logging (v2: timing + success logging)
 export const monitoredFetch = async (url: string, options: RequestInit = {}): Promise<Response> => {
     const method = options.method || 'GET';
+    const startTime = performance.now();
 
     // Don't log full body for binary uploads (too large)
     const isBinaryUpload = options.body instanceof FormData || options.body instanceof Blob;
-    const logBody = isBinaryUpload ? '[Binary/FormData]' : options.body;
 
-    logger.info(`📡 API Request: ${method} ${url}`, isBinaryUpload ? undefined : logBody);
+    logger.info(`📡 API Request: ${method} ${url}`, isBinaryUpload ? '[Binary/FormData]' : undefined);
 
     try {
         const response = await fetch(url, options);
+        const duration = Math.round(performance.now() - startTime);
 
         if (!response.ok) {
             // Clone response to read body without consuming it for the caller
@@ -210,14 +211,19 @@ export const monitoredFetch = async (url: string, options: RequestInit = {}): Pr
                 errorBody = "[Body Read Failed]";
             }
 
-            logger.error(`❌ API Error ${response.status}: ${url}`, errorBody);
+            logger.apiLog('error', `❌ API Error ${response.status}: ${method} ${url}`, duration, errorBody);
         } else {
-            // Optional: Log success if needed, but keeping it quiet to reduce noise
-            // logger.success(`✅ API Success ${response.status}: ${url}`);
+            // Success response summary (status + content info)
+            const contentType = response.headers.get('content-type') || '';
+            const contentLength = response.headers.get('content-length');
+            const sizeHint = contentLength ? ` ${Math.round(parseInt(contentLength) / 1024)}KB` : '';
+            const typeHint = contentType.includes('json') ? 'json' : contentType.includes('text') ? 'text' : contentType.split(';')[0] || '';
+            logger.apiLog('success', `✅ ${response.status} ${method} ${url}`, duration, sizeHint || typeHint ? `${typeHint}${sizeHint}` : undefined);
         }
         return response;
     } catch (error: any) {
-        logger.error(`🔥 Network Error: ${url}`, error.message);
+        const duration = Math.round(performance.now() - startTime);
+        logger.apiLog('error', `🔥 Network Error: ${method} ${url}`, duration, error.message);
         throw error;
     }
 };

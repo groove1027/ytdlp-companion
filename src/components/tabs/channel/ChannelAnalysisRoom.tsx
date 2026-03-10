@@ -11,6 +11,7 @@ import { getChannelInfo, getRecentVideosByFormat, getVideoTranscript, analyzeCha
 import { getYoutubeApiKey } from '../../../services/apiService';
 import { evolinkChat } from '../../../services/evolinkService';
 import { buildInstinctTaxonomy } from '../../../data/instinctPromptUtils';
+import { logger } from '../../../services/LoggerService';
 import ChannelInputPanel from './ChannelInputPanel';
 import AnalysisLoadingPanel, { notifyAnalysisComplete } from './AnalysisLoadingPanel';
 import type { LegacyTopicRecommendation, ContentFormat, ChannelScript, ChannelInfo, TopicInstinctAnalysis } from '../../../types';
@@ -328,6 +329,7 @@ const ChannelAnalysisRoom: React.FC = () => {
 
   // 통합 다운로드: Piped/Invidious (HD+FFmpeg) → muxed → Cobalt → Piped 프론트엔드
   const downloadVideo = useCallback(async (videoId: string, title: string): Promise<boolean> => {
+    logger.trackAction('YouTube 다운로드 시작', `${title} (${videoId})`);
     setDownloadingVideos(prev => { const next = new Set(prev); next.add(videoId); return next; });
     setDownloadProgress(prev => ({ ...prev, [videoId]: 0 }));
     setDownloadPhase(prev => ({ ...prev, [videoId]: '스트림 검색 중...' }));
@@ -413,6 +415,7 @@ const ChannelAnalysisRoom: React.FC = () => {
 
   // 일괄 다운로드
   const handleBulkVideoDownload = useCallback(async () => {
+    logger.trackAction('일괄 다운로드', '채널 영상');
     const ytScripts = channelScripts.filter(s => s.videoId);
     if (!ytScripts.length) return;
 
@@ -437,6 +440,7 @@ const ChannelAnalysisRoom: React.FC = () => {
 
   // YouTube 채널 분석 (3-Layer DNA)
   const handleChannelAnalysis = useCallback(async () => {
+    logger.trackAction('채널 분석 시작');
     if (!requireAuth('채널 분석')) return;
     if (!channelUrl.trim()) return;
     if (!getYoutubeApiKey()) {
@@ -484,6 +488,7 @@ const ChannelAnalysisRoom: React.FC = () => {
 
   // 파일/직접입력 스타일 분석
   const handleFileManualAnalyze = useCallback(async (scripts: ChannelScript[]) => {
+    logger.trackAction('파일/수동 분석 시작');
     if (scripts.length === 0) return;
     setError('');
     const name = sourceName.trim() || '업로드된 글';

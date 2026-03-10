@@ -2,6 +2,7 @@ import React, { Suspense, lazy, useCallback } from 'react';
 import { useImageVideoStore } from '../../stores/imageVideoStore';
 import { useProjectStore } from '../../stores/projectStore';
 import { showToast } from '../../stores/uiStore';
+import { logger } from '../../services/LoggerService';
 
 const SetupPanel = lazy(() => import('./imagevideo/SetupPanel'));
 const StoryboardPanel = lazy(() => import('./imagevideo/StoryboardPanel'));
@@ -20,6 +21,7 @@ const ImageVideoTab: React.FC = () => {
   const setActiveSubTab = useImageVideoStore((s) => s.setActiveSubTab);
 
   const handleSubTabClick = useCallback((tabId: 'setup' | 'storyboard') => {
+    logger.trackAction('이미지/영상 서브탭 전환', tabId);
     if (tabId === 'storyboard') {
       const { scenes } = useProjectStore.getState();
       if (scenes.length === 0) {

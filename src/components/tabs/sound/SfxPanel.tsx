@@ -2,6 +2,7 @@ import React, { useState, useRef, useCallback } from 'react';
 import { useSoundStudioStore, registerAudio, unregisterAudio } from '../../../stores/soundStudioStore';
 import { generateSfx, SFX_PRESETS } from '../../../services/sfxService';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
+import { logger } from '../../../services/LoggerService';
 import type { SfxItem } from '../../../types';
 
 function formatDuration(sec: number): string {
@@ -21,6 +22,7 @@ const SfxPanel: React.FC = () => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const handleGenerate = useCallback(async (sfxPrompt?: string) => {
+    logger.trackAction('효과음 생성 시작', sfxPrompt || prompt.trim());
     if (!requireAuth('SFX 생성')) return;
     const finalPrompt = sfxPrompt || prompt.trim();
     if (!finalPrompt) return;

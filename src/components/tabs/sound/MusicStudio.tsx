@@ -21,6 +21,7 @@ import {
   VOCAL_STYLES, PRODUCTION_TAGS, BPM_PRESETS, DURATION_PRESETS, STRUCTURE_TAGS,
 } from '../../../data/sunoData';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
+import { logger } from '../../../services/LoggerService';
 
 /** 오디오 URL에서 실제 duration을 가져오는 헬퍼 (API가 0으로 보고할 때 사용) */
 const getAudioDuration = (url: string): Promise<number> =>
@@ -172,6 +173,7 @@ const LyricsTab: React.FC = () => {
   const elapsedLyrics = useElapsedTimer(isGeneratingLyrics);
 
   const handleGenerate = useCallback(async () => {
+    logger.trackAction('가사 생성 시작');
     if (!lyricsPrompt.trim() || isGeneratingLyrics) return;
     setIsGeneratingLyrics(true); setError('');
     try {
@@ -324,6 +326,7 @@ const ToolsTab: React.FC = () => {
   );
 
   const handleUploadSeparation = useCallback(async () => {
+    logger.trackAction('업로드 보컬 분리 시작');
     if (!uploadSepFile || isUploadSeparating) return;
     setIsUploadSeparating(true);
     setUploadSepResult(null);
@@ -366,6 +369,7 @@ const ToolsTab: React.FC = () => {
   );
 
   const handleVocalSeparation = useCallback(async () => {
+    logger.trackAction('보컬 분리 시작');
     if (!requireAuth('보컬 분리')) return;
     if (!vocalSepTarget || isVocalSeparating) return;
     if (!vocalSepTarget.audioId) { setToolError('이 트랙은 audioId가 없어 보컬 분리를 할 수 없습니다.'); return; }
@@ -664,6 +668,7 @@ const GenerateTab: React.FC = () => {
   }, []);
 
   const handleAnalyze = useCallback(async () => {
+    logger.trackAction('AI 음악 분석 시작');
     if (!requireAuth('AI 음악 분석')) return;
     if (!activeScript.trim() || isAnalyzing) return;
     setIsAnalyzing(true); setAnalyzeError('');
@@ -703,6 +708,7 @@ const GenerateTab: React.FC = () => {
   }, []);
 
   const handleStyleBoost = useCallback(async () => {
+    logger.trackAction('스타일 부스트 시작');
     if (!builtStyle || isBoosting) return;
     setIsBoosting(true);
     try {
@@ -713,6 +719,7 @@ const GenerateTab: React.FC = () => {
   }, [builtStyle, isBoosting]);
 
   const handleGenerate = useCallback(async () => {
+    logger.trackAction('음악 생성 시작');
     if (!requireAuth('AI 음악 생성')) return;
     if (isGeneratingMusic) return;
     const count = Math.max(1, Math.min(50, batchCount));

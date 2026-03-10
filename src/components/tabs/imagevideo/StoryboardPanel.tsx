@@ -15,6 +15,7 @@ import { useNavigationStore } from '../../../stores/navigationStore';
 import ActionButton from '../../ui/ActionButton';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
+import { logger } from '../../../services/LoggerService';
 
 // --- Constants ---
 
@@ -954,6 +955,7 @@ const StoryboardPanel: React.FC = () => {
 
   // --- 대본 → 프롬프트 자동 변환 ---
   const handleAutoPrompt = useCallback(async (sceneId: string) => {
+    logger.trackAction('프롬프트 자동 생성', sceneId);
     if (!requireAuth('AI 프롬프트 생성')) return;
     const scene = useProjectStore.getState().scenes.find(s => s.id === sceneId);
     if (!scene?.scriptText) { showToast('나레이션 텍스트가 없습니다'); return; }
@@ -1043,6 +1045,7 @@ const StoryboardPanel: React.FC = () => {
 
   // --- 단일 이미지 생성 (스토어에서 style/characters 읽기 — BUG#17 fix) ---
   const handleGenerateImage = useCallback(async (sceneId: string, feedback?: string): Promise<boolean> => {
+    logger.trackAction('이미지 생성', sceneId);
     if (!requireAuth('이미지 생성')) return false;
     const { scenes: currentScenes, config: currentConfig } = useProjectStore.getState();
     let scene = currentScenes.find(s => s.id === sceneId);
@@ -1188,6 +1191,7 @@ const StoryboardPanel: React.FC = () => {
 
   // --- 배치 이미지 생성 ---
   const handleBatchGenerateImages = useCallback(async () => {
+    logger.trackAction('이미지 일괄 생성');
     if (!requireAuth('이미지 일괄 생성')) return;
     const { scenes: currentScenes } = useProjectStore.getState();
     const targets = currentScenes.filter(s => !s.imageUrl && !s.isGeneratingImage);

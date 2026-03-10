@@ -19,6 +19,7 @@ const EditPointMatchingPanel = React.lazy(() => import('./editroom/EditPointMatc
 import { getFontByFamily } from '../../constants/fontLibrary';
 import { loadFont } from '../../services/fontLoaderService';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
+import { logger } from '../../services/LoggerService';
 
 /** globalSubtitleStyle이 null일 때 사용하는 기본 자막 스타일 (subtitleTemplates.ts의 base() 기본값과 동일) */
 const DEFAULT_SUBTITLE_STYLE: SubtitleStyle = {
@@ -1318,6 +1319,7 @@ const EditRoomTab: React.FC = () => {
   }, [linesTimingKey]);
 
   const handleExportSrt = useCallback(() => {
+    logger.trackAction('SRT 내보내기');
     try {
       downloadSrtFile(timeline, 'subtitles.srt');
     } catch (err) {
@@ -1326,6 +1328,7 @@ const EditRoomTab: React.FC = () => {
   }, [timeline]);
 
   const handleExportZip = useCallback(async () => {
+    logger.trackAction('ZIP 내보내기');
     if (!requireAuth('ZIP 내보내기')) return;
     try {
       await downloadSrtWithAssetsZip(
@@ -1398,6 +1401,7 @@ const EditRoomTab: React.FC = () => {
 
   // 렌더 설정 모달에서 확인 → 실제 내보내기 시작 (통합)
   const handleExportMp4 = useCallback(async () => {
+    logger.trackAction('MP4 렌더링 시작');
     if (!requireAuth('MP4 내보내기')) return;
     setShowRenderModal(false);
 

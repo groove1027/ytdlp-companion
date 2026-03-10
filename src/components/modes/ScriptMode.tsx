@@ -11,6 +11,7 @@ import { resizeImage, base64ToFile } from '../../services/imageProcessingService
 import { showToast } from '../../stores/uiStore';
 import { useCostStore } from '../../stores/costStore';
 import { useElapsedTimer, formatElapsed } from '../../hooks/useElapsedTimer';
+import { logger } from '../../services/LoggerService';
 
 interface ScriptModeProps {
     onNext: (config: ProjectConfig) => void;
@@ -230,6 +231,7 @@ const ScriptMode: React.FC<ScriptModeProps> = ({
     // [FIXED: BUG-12] 수동 예상 컷수 계산 — Pro/Thinking 모델로 정밀 분석
     // Race condition fix: capture script snapshot and compare with scriptRef.current after async
     const handleEstimateScenes = async () => {
+        logger.trackAction('장면 예상 계산', '대본 분석');
         if (!script.trim()) return;
         const scriptSnapshot = script; // Capture script at call time
         setIsEstimating(true);
@@ -415,6 +417,7 @@ const ScriptMode: React.FC<ScriptModeProps> = ({
 
     // [MODIFIED] handleStylePreview Refactored for Sequential Execution & Immediate Upload
     const handleStylePreview = async () => {
+        logger.trackAction('스타일 미리보기', '이미지 2개 생성');
         if (!script.trim()) { showToast("대본을 먼저 입력해주세요."); return; }
         
         setIsPreviewModalOpen(true);
@@ -559,6 +562,7 @@ const ScriptMode: React.FC<ScriptModeProps> = ({
     };
 
     const handleSubmit = (e: React.FormEvent) => {
+        logger.trackAction('대본 제출', '프로젝트 설정 저장');
         e.preventDefault();
         const finalScript = script.trim();
         if (!finalScript) { showToast("대본을 입력해주세요."); return; }

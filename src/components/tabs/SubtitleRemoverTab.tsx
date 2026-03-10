@@ -4,6 +4,7 @@ import { getGhostCutKeys } from '../../services/apiService';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
 import { useCostStore } from '../../stores/costStore';
 import { PRICING } from '../../constants';
+import { logger } from '../../services/LoggerService';
 
 type Phase = 'idle' | 'uploading' | 'processing' | 'done' | 'error';
 
@@ -69,6 +70,7 @@ const SubtitleRemoverTab: React.FC = () => {
   }, []);
 
   const handleRemove = useCallback(async () => {
+    logger.trackAction('자막/워터마크 제거 시작');
     if (!requireAuth('자막 제거')) return;
     if (!videoFile) return;
 

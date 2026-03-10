@@ -2,6 +2,7 @@ import React, { Suspense, lazy, useState, useCallback, useEffect } from 'react';
 import { useSoundStudioStore } from '../../stores/soundStudioStore';
 import { stopAllAudio } from '../../stores/soundStudioStore';
 import { useUIStore } from '../../stores/uiStore';
+import { logger } from '../../services/LoggerService';
 
 const VoiceStudio = lazy(() => import('./sound/VoiceStudio'));
 const MusicStudio = lazy(() => import('./sound/MusicStudio'));
@@ -43,6 +44,7 @@ const SoundStudioTab: React.FC = () => {
   }, []);
 
   const handleSubTabClick = useCallback((tabId: 'narration' | 'waveform') => {
+    logger.trackAction('사운드 서브탭 전환', tabId);
     if (tabId === 'waveform') {
       const { lines } = useSoundStudioStore.getState();
       if (lines.length === 0) {

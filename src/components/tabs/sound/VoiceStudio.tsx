@@ -25,6 +25,7 @@ import { useProjectStore } from '../../../stores/projectStore';
 import { transferSoundToImageVideo } from '../../../utils/soundToImageBridge';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
+import { logger } from '../../../services/LoggerService';
 
 const SPEAKER_COLORS = ['#6366f1', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316'];
 
@@ -545,6 +546,7 @@ const VoiceStudio: React.FC = () => {
   const elapsedTypecastLoad = useElapsedTimer(isLoadingTypecastVoices);
 
   const handleGenerateLine = useCallback(async (lineId: string) => {
+    logger.trackAction('나레이션 생성 시작', lineId);
     if (!requireAuth('TTS 음성 생성')) return;
     const speaker = speakers[0];
     if (!speaker?.voiceId) {
@@ -646,6 +648,7 @@ const VoiceStudio: React.FC = () => {
   }, [lines, speakers, updateLine, addCost]);
 
   const handleGenerateAll = useCallback(async () => {
+    logger.trackAction('나레이션 일괄 생성 시작');
     if (!requireAuth('TTS 일괄 생성')) return;
     const speaker = speakers[0];
     if (!speaker?.voiceId || isGeneratingAll) return;
@@ -937,6 +940,7 @@ const VoiceStudio: React.FC = () => {
   }, [uploadedBlobUrl, isPlayingUpload]);
 
   const handleStartTranscription = useCallback(async () => {
+    logger.trackAction('음성 텍스트 변환 시작');
     if (!requireAuth('음성 텍스트 변환')) return;
     if (!uploadedFile || isTranscribing) return;
     setIsTranscribing(true);

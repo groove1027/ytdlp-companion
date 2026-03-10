@@ -11,6 +11,7 @@ import InlineThumbnailStudio from './upload/InlineThumbnailStudio';
 import type { UploadStep, UploadPlatform, ThreadsAuthState, NaverClipAuthState, VideoMetadata } from '../../types';
 import { useElapsedTimer, formatElapsed } from '../../hooks/useElapsedTimer';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
+import { logger } from '../../services/LoggerService';
 
 // --- Platform Config ---
 
@@ -417,6 +418,7 @@ const StepAuth: React.FC = () => {
 
   // YouTube OAuth 동의 팝업 열기
   const handleYtOAuthOpen = async () => {
+    logger.trackAction('YouTube OAuth 인증 시작');
     const cid = youtubeAuth.clientId || ytClientId.trim();
     if (!cid) { setYtAuthError('OAuth 클라이언트 ID를 먼저 설정해주세요.'); return; }
     setYtAuthError('');
@@ -1486,6 +1488,7 @@ const StepMetadata: React.FC = () => {
 
   // AI 메타데이터 + 쇼핑 태그 일괄 생성 (마스터 지침서 1-6단계)
   const handleAiGenerate = useCallback(async () => {
+    logger.trackAction('AI 메타데이터 생성');
     if (!requireAuth('AI 설명 생성')) return;
     const scriptText = getScriptText();
     if (!scriptText.trim()) {
@@ -2708,6 +2711,7 @@ const UploadTab: React.FC = () => {
   };
 
   const handleStartUpload = useCallback(async () => {
+    logger.trackAction('업로드 시작', selectedPlatforms.join(', '));
     if (!requireAuth('플랫폼 업로드')) return;
     startUpload();
     setCurrentStep(STEPS.length - 1);

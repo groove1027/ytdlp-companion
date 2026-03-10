@@ -64,15 +64,15 @@ function formatIssueBody(data: {
     sections.push(`| 프로젝트 ID | \`${data.currentProjectId}\` |`);
   }
 
-  // 디버그 로그 (접이식)
+  // 디버그 로그 (접이식) — 환경 스냅샷 + 액션 트레일 + 전체 로그 포함
   if (data.debugLogs) {
     sections.push('');
     sections.push('<details>');
-    sections.push('<summary><strong>디버그 로그</strong> (클릭하여 펼치기)</summary>');
+    sections.push('<summary><strong>디버그 로그 (환경 + 액션 + API)</strong> (클릭하여 펼치기)</summary>');
     sections.push('');
     sections.push('```');
     // GitHub issue body 최대 65536자 — 로그가 너무 길면 잘라냄
-    const maxLogLen = 30000;
+    const maxLogLen = 40000;
     if (data.debugLogs.length > maxLogLen) {
       sections.push(data.debugLogs.substring(0, maxLogLen));
       sections.push(`\n... (${data.debugLogs.length - maxLogLen}자 생략)`);

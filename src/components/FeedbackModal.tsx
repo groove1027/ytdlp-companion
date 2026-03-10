@@ -135,6 +135,9 @@ const FeedbackModal: React.FC = () => {
         try {
             const currentProjectId = useProjectStore.getState().currentProjectId;
 
+            // 환경 스냅샷 + 로그를 결합한 포맷 생성
+            const debugLogs = attachLogs ? await logger.exportFormattedWithEnv() : undefined;
+
             const data: FeedbackData = {
                 type: selectedType,
                 message: message.trim(),
@@ -145,7 +148,7 @@ const FeedbackModal: React.FC = () => {
                 currentProjectId: currentProjectId || undefined,
                 screenshots: screenshots.length > 0 ? screenshots : undefined,
                 userDisplayName: userDisplayName || undefined,
-                debugLogs: attachLogs ? logger.exportFormatted() : undefined,
+                debugLogs,
             };
 
             const result = await submitFeedback(data);
@@ -420,11 +423,16 @@ const FeedbackModal: React.FC = () => {
                             {userDisplayName && <p>사용자: <span className="text-gray-400">{userDisplayName}</span></p>}
                             {userEmail && <p>계정: <span className="text-gray-400">{userEmail}</span></p>}
                             <p>앱 버전: <span className="text-gray-400">v4.5</span></p>
+                            <p>세션 ID: <span className="text-gray-400 font-mono">{logger.sessionId}</span></p>
                             <p className="truncate">브라우저: <span className="text-gray-400">{navigator.userAgent.substring(0, 80)}...</span></p>
+                            <p>화면: <span className="text-gray-400">{window.innerWidth}x{window.innerHeight}</span></p>
                             {attachLogs && logCount > 0 && (
                                 <p>디버그 로그: <span className="text-blue-400">{logCount}개 항목 {errorCount > 0 && `(${errorCount}개 오류)`}</span></p>
                             )}
                         </div>
+                        <p className="text-[11px] text-gray-600 mt-1.5 pt-1.5 border-t border-gray-700/50">
+                            환경 정보, API 키 상태, 사용자 행동 경로가 자동 포함됩니다
+                        </p>
                     </div>
 
                     {/* 버튼 */}

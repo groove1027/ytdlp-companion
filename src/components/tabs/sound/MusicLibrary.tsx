@@ -8,6 +8,7 @@ import {
 } from '../../../services/musicService';
 import type { GeneratedMusic, SunoModel, TimestampedWord } from '../../../types';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
+import { logger } from '../../../services/LoggerService';
 
 type FilterTab = 'all' | 'completed' | 'favorites';
 
@@ -36,6 +37,7 @@ const ExtendModal: React.FC<{
   const elapsedExtend = useElapsedTimer(isRunning);
 
   const handleExtend = useCallback(async () => {
+    logger.trackAction('음악 연장 시작', track.title);
     if (!track.audioId || isRunning) return;
     setIsRunning(true);
     setError('');

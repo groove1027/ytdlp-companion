@@ -80,9 +80,11 @@ const DebugConsole: React.FC = () => {
               ) : (
                 logs.map((log, i) => (
                   <div key={i} className="text-[11px] leading-snug border-b border-gray-900/50 pb-0.5 last:border-0">
-                    <span className="text-gray-600">[{log.timestamp}]</span>{' '}
+                    <span className="text-gray-600">[{log.timestamp.substring(11, 23)}]</span>{' '}
                     <span className={`font-bold uppercase mr-1 ${getLevelColor(log.level)}`}>{log.level}</span>
+                    {log.category && <span className="text-gray-600 mr-1">[{log.category}]</span>}
                     <span className="text-gray-300">{log.message}</span>
+                    {log.duration != null && <span className="text-gray-600 ml-1">({log.duration}ms)</span>}
                     {log.details && (
                       <pre className="mt-0.5 p-1 bg-black/40 rounded text-[9px] text-gray-500 overflow-x-auto whitespace-pre-wrap">
                         {typeof log.details === 'string' ? log.details : JSON.stringify(log.details, null, 2)}
