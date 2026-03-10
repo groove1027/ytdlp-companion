@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useUIStore } from '../stores/uiStore';
 import { useProjectStore } from '../stores/projectStore';
-import { submitFeedback, FeedbackResult } from '../services/feedbackService';
+import { submitFeedback, FeedbackResult, requestNotificationPermission } from '../services/feedbackService';
 import { getSavedUser } from '../services/authService';
 import { logger } from '../services/LoggerService';
 import { FeedbackType } from '../types';
@@ -153,6 +153,8 @@ const FeedbackModal: React.FC = () => {
 
             const result = await submitFeedback(data);
             setSubmitResult(result);
+            // 피드백 응답 알림을 받기 위해 브라우저 알림 권한 요청
+            requestNotificationPermission();
         } catch (e: unknown) {
             const errorMsg = e instanceof Error ? e.message : '알 수 없는 오류';
             setToast({ show: true, message: `피드백 전송 실패: ${errorMsg}` });

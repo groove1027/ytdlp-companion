@@ -1,15 +1,34 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { checkResolvedFeedbacks, dismissFeedbackIssue, type ResolvedFeedback } from '../services/feedbackService';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { checkResolvedFeedbacks, dismissFeedbackIssue, playNotificationSound, showBrowserNotification, type ResolvedFeedback } from '../services/feedbackService';
 
 const CHECK_INTERVAL = 10 * 60 * 1000; // 10분
 
 const FeedbackNotificationBanner: React.FC = () => {
   const [resolved, setResolved] = useState<ResolvedFeedback[]>([]);
+  // 이미 알림을 보낸 이슈 번호 추적 (중복 알림 방지)
+  const notifiedRef = useRef<Set<number>>(new Set());
 
   const check = useCallback(async () => {
     try {
       const results = await checkResolvedFeedbacks();
-      if (results.length > 0) setResolved(results);
+      if (results.length > 0) {
+        // 기존 표시 중인 것 + 새로 발견된 것 병합 (dismiss 안 된 것만)
+        setResolved(prev => {
+          const existingIds = new Set(prev.map(r => r.issueNumber));
+          const newItems = results.filter(r => !existingIds.has(r.issueNumber));
+          return [...prev, ...newItems];
+        });
+
+        // 새로 발견된 것만 알림음 + 푸시 알림
+        const newResults = results.filter(r => !notifiedRef.current.has(r.issueNumber));
+        if (newResults.length > 0) {
+          playNotificationSound();
+          newResults.forEach(r => {
+            showBrowserNotification(r);
+            notifiedRef.current.add(r.issueNumber);
+          });
+        }
+      }
     } catch { /* silent */ }
   }, []);
 
@@ -32,26 +51,34 @@ const FeedbackNotificationBanner: React.FC = () => {
       {resolved.map(r => (
         <div
           key={r.issueNumber}
-          className="bg-gradient-to-r from-emerald-900/90 to-green-900/90 border border-emerald-500/40 rounded-xl p-4 shadow-2xl shadow-emerald-900/30 backdrop-blur-sm animate-fade-in-up"
+          className="bg-gradient-to-r from-emerald-900/95 to-green-900/95 border border-emerald-500/50 rounded-xl p-4 shadow-2xl shadow-emerald-900/40 backdrop-blur-md"
+          style={{ animation: 'feedbackSlideIn 0.4s ease-out' }}
         >
           <div className="flex items-start gap-3">
-            <div className="w-8 h-8 bg-emerald-500/20 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
-              <svg className="w-4 h-4 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-              </svg>
+            {/* 펄스 아이콘 — 사용자 주의 끌기 */}
+            <div className="relative flex-shrink-0 mt-0.5">
+              <div className="absolute inset-0 w-8 h-8 bg-emerald-400/30 rounded-full animate-ping" />
+              <div className="relative w-8 h-8 bg-emerald-500/30 rounded-full flex items-center justify-center border border-emerald-400/50">
+                <svg className="w-4 h-4 text-emerald-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+              </div>
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-bold text-emerald-300">
-                피드백 #{r.issueNumber}이 반영되었습니다!
+              <p className="text-sm font-bold text-emerald-200">
+                피드백 #{r.issueNumber} 반영 완료!
               </p>
               {r.closeComment && (
-                <p className="text-xs text-emerald-400/70 mt-1 line-clamp-2">{r.closeComment}</p>
+                <p className="text-xs text-emerald-300/80 mt-1 line-clamp-3">{r.closeComment}</p>
               )}
+              <p className="text-[11px] text-emerald-500/60 mt-2">
+                확인하셨으면 X를 눌러 닫아주세요
+              </p>
             </div>
             <button
               onClick={() => handleDismiss(r.issueNumber)}
-              className="text-gray-500 hover:text-gray-300 transition-colors flex-shrink-0"
-              title="닫기"
+              className="flex-shrink-0 w-7 h-7 rounded-lg bg-emerald-800/50 hover:bg-emerald-700/60 border border-emerald-600/30 flex items-center justify-center text-emerald-400 hover:text-white transition-colors"
+              title="확인 완료 — 닫기"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -60,6 +87,14 @@ const FeedbackNotificationBanner: React.FC = () => {
           </div>
         </div>
       ))}
+
+      {/* 슬라이드 인 애니메이션 */}
+      <style>{`
+        @keyframes feedbackSlideIn {
+          from { opacity: 0; transform: translateX(100px); }
+          to { opacity: 1; transform: translateX(0); }
+        }
+      `}</style>
     </div>
   );
 };

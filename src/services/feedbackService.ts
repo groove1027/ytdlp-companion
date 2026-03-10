@@ -116,6 +116,63 @@ export interface ResolvedFeedback {
 }
 
 /** GitHub API로 미확인 이슈 상태 체크 — closed면 반환 */
+// ── 알림음 (Web Audio API 합성 차임) ──
+
+let audioCtx: AudioContext | null = null;
+
+/** 알림 차임음 재생 (외부 파일 불필요) */
+export function playNotificationSound(): void {
+    try {
+        if (!audioCtx) audioCtx = new AudioContext();
+        const ctx = audioCtx;
+        const now = ctx.currentTime;
+
+        // 3음 상승 차임 (C5 → E5 → G5)
+        const notes = [523.25, 659.25, 783.99];
+        notes.forEach((freq, i) => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = 'sine';
+            osc.frequency.value = freq;
+            gain.gain.setValueAtTime(0, now + i * 0.15);
+            gain.gain.linearRampToValueAtTime(0.3, now + i * 0.15 + 0.05);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.15 + 0.4);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start(now + i * 0.15);
+            osc.stop(now + i * 0.15 + 0.5);
+        });
+    } catch { /* 오디오 재생 실패 무시 */ }
+}
+
+// ── 브라우저 푸시 알림 (Notification API) ──
+
+/** 알림 권한 요청 — 피드백 제출 성공 시 호출 */
+export async function requestNotificationPermission(): Promise<boolean> {
+    if (!('Notification' in window)) return false;
+    if (Notification.permission === 'granted') return true;
+    if (Notification.permission === 'denied') return false;
+    const result = await Notification.requestPermission();
+    return result === 'granted';
+}
+
+/** 브라우저 푸시 알림 표시 */
+export function showBrowserNotification(resolved: ResolvedFeedback): void {
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    try {
+        const body = resolved.closeComment
+            ? `${resolved.closeComment}`
+            : '제출하신 피드백이 처리 완료되었습니다.';
+        new Notification(`피드백 #${resolved.issueNumber} 반영 완료!`, {
+            body,
+            icon: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">✅</text></svg>',
+            tag: `feedback-${resolved.issueNumber}`,
+            requireInteraction: false,
+        });
+    } catch { /* 알림 생성 실패 무시 */ }
+}
+
+/** GitHub API로 미확인 이슈 상태 체크 — closed면 반환 */
 export async function checkResolvedFeedbacks(): Promise<ResolvedFeedback[]> {
     const tracked = getTrackedIssues().filter(i => !i.dismissed);
     if (tracked.length === 0) return [];
