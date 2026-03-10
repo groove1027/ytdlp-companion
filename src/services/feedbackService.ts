@@ -127,20 +127,23 @@ export function playNotificationSound(): void {
         const ctx = audioCtx;
         const now = ctx.currentTime;
 
-        // 3음 상승 차임 (C5 → E5 → G5)
-        const notes = [523.25, 659.25, 783.99];
-        notes.forEach((freq, i) => {
-            const osc = ctx.createOscillator();
-            const gain = ctx.createGain();
-            osc.type = 'sine';
-            osc.frequency.value = freq;
-            gain.gain.setValueAtTime(0, now + i * 0.15);
-            gain.gain.linearRampToValueAtTime(0.3, now + i * 0.15 + 0.05);
-            gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.15 + 0.4);
-            osc.connect(gain);
-            gain.connect(ctx.destination);
-            osc.start(now + i * 0.15);
-            osc.stop(now + i * 0.15 + 0.5);
+        // 3음 상승 차임 × 2회 (C5→E5→G5, 잠시 쉬고 반복)
+        [0, 0.8].forEach(offset => {
+            const notes = [523.25, 659.25, 783.99];
+            notes.forEach((freq, i) => {
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = 'sine';
+                osc.frequency.value = freq;
+                const t = now + offset + i * 0.15;
+                gain.gain.setValueAtTime(0, t);
+                gain.gain.linearRampToValueAtTime(0.35, t + 0.05);
+                gain.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.start(t);
+                osc.stop(t + 0.5);
+            });
         });
     } catch { /* 오디오 재생 실패 무시 */ }
 }
@@ -198,9 +201,13 @@ export async function checkResolvedFeedbacks(): Promise<ResolvedFeedback[]> {
                     if (commentsRes.ok) {
                         const comments = await commentsRes.json() as { body?: string }[];
                         if (comments.length > 0 && comments[0].body) {
-                            // 마크다운에서 첫 줄 요약 추출
-                            const firstLine = comments[0].body.split('\n').find(l => l.trim() && !l.startsWith('#') && !l.startsWith('>'));
-                            closeComment = firstLine?.trim() || null;
+                            // 마크다운 태그/헤더 제거 후 전체 코멘트 표시 (최대 300자)
+                            const cleaned = comments[0].body
+                                .split('\n')
+                                .filter(l => l.trim() && !l.startsWith('#') && !l.startsWith('>') && !l.startsWith('---'))
+                                .join('\n')
+                                .trim();
+                            closeComment = cleaned.length > 300 ? cleaned.slice(0, 300) + '...' : cleaned;
                         }
                     }
                 } catch { /* 댓글 조회 실패 무시 */ }

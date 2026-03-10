@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { checkResolvedFeedbacks, dismissFeedbackIssue, playNotificationSound, showBrowserNotification, type ResolvedFeedback } from '../services/feedbackService';
 
-const CHECK_INTERVAL = 10 * 60 * 1000; // 10분
+const CHECK_INTERVAL = 5 * 60 * 1000; // 5분
 
 const FeedbackNotificationBanner: React.FC = () => {
   const [resolved, setResolved] = useState<ResolvedFeedback[]>([]);
@@ -69,10 +69,10 @@ const FeedbackNotificationBanner: React.FC = () => {
                 피드백 #{r.issueNumber} 반영 완료!
               </p>
               {r.closeComment && (
-                <p className="text-xs text-emerald-300/80 mt-1 line-clamp-3">{r.closeComment}</p>
+                <p className="text-xs text-emerald-300/80 mt-1.5 leading-relaxed whitespace-pre-line line-clamp-6">{r.closeComment}</p>
               )}
               <p className="text-[11px] text-emerald-500/60 mt-2">
-                확인하셨으면 X를 눌러 닫아주세요
+                새로고침하면 반영됩니다 ✨ 확인하셨으면 X를 눌러주세요
               </p>
             </div>
             <button
