@@ -49,6 +49,38 @@ const ChannelAnalysisRoom: React.FC = () => {
 
   useEffect(() => { loadAllBenchmarks(); }, []);
 
+  // 앱 시작 시 Cobalt + Invidious 인스턴스 동적 갱신 (죽은 인스턴스 자동 교체)
+  const instancesRefreshed = useRef(false);
+  useEffect(() => {
+    if (instancesRefreshed.current) return;
+    instancesRefreshed.current = true;
+    (async () => {
+      try {
+        const { refreshCobaltInstances } = await import('../../../services/cobaltAuthService');
+        const count = await refreshCobaltInstances();
+        if (count > 0) console.log(`[Download] Cobalt 인스턴스 ${count}개 갱신 완료`);
+      } catch { /* 무시 */ }
+      // Invidious 인스턴스 동적 갱신
+      try {
+        const res = await fetch('https://api.invidious.io/', { signal: AbortSignal.timeout(8_000) });
+        if (res.ok) {
+          const list = await res.json() as [string, { api: boolean; cors: boolean; type: string; uri: string }][];
+          const fresh: string[] = [];
+          for (const [, info] of list) {
+            if (info.api && info.type === 'https' && info.uri) {
+              fresh.push(info.uri.replace(/\/$/, ''));
+            }
+          }
+          if (fresh.length > 3) {
+            // 기존 하드코딩 리스트를 새로 가져온 것으로 교체
+            INVIDIOUS_APIS.current = fresh.slice(0, 20);
+            console.log(`[Download] Invidious 인스턴스 ${fresh.length}개 갱신 완료`);
+          }
+        }
+      } catch { /* 무시 */ }
+    })();
+  }, []);
+
   const [contentFormat, setContentFormat] = useState<ContentFormat>('long');
   const [videoCount, setVideoCount] = useState(10);
   const [videoSortOrder, setVideoSortOrder] = useState<'latest' | 'popular'>('latest');
@@ -345,7 +377,8 @@ const ChannelAnalysisRoom: React.FC = () => {
 
     try {
       // 1차: Piped + Invidious 병렬 레이스
-      console.log(`[Download] 1차 시도: Piped/Invidious 스트림 (${videoId})`);
+      logger.info(`[Download] 1차: Piped(${PIPED_APIS.current.length}) + Invidious(${INVIDIOUS_APIS.current.length}) (${videoId})`);
+      setDownloadPhase(prev => ({ ...prev, [videoId]: `Piped/Invidious 검색 중 (${PIPED_APIS.current.length + INVIDIOUS_APIS.current.length}개)...` }));
       const streams = await fetchStreams(videoId);
       if (streams) {
         if (streams.needsMerge && streams.videoOnlyUrl && streams.audioUrl) {
@@ -388,12 +421,12 @@ const ChannelAnalysisRoom: React.FC = () => {
           }
         }
       } else {
-        console.warn('[Download] 모든 Piped/Invidious 인스턴스 실패');
+        logger.warn(`[Download] 모든 Piped/Invidious 인스턴스 실패 — Piped:${PIPED_APIS.current.length}개, Invidious:${INVIDIOUS_APIS.current.length}개 모두 응답없거나 스트림없음`);
       }
 
-      // 2차: Cobalt API
-      setDownloadPhase(prev => ({ ...prev, [videoId]: 'Cobalt 시도 중...' }));
-      console.log(`[Download] 2차 시도: Cobalt API (${videoId})`);
+      // 2차: Cobalt API (인증 + 비인증 자동 폴백)
+      setDownloadPhase(prev => ({ ...prev, [videoId]: 'Cobalt API 시도 중...' }));
+      logger.info(`[Download] 2차: Cobalt API (${videoId})`);
       const cobaltOk = await downloadViaCobalt(videoId, title);
       if (cobaltOk) {
         setDownloadPhase(prev => ({ ...prev, [videoId]: '완료!' }));
@@ -401,14 +434,15 @@ const ChannelAnalysisRoom: React.FC = () => {
         showToast(`"${title}" 다운로드 완료 (Cobalt)`);
         return true;
       }
-      console.warn('[Download] Cobalt API도 실패');
+      logger.error(`[Download] Cobalt API도 실패 — ${videoId}`);
 
       // 3차: 모든 방법 실패 — 유용한 안내 제공
+      logger.error(`[Download] 모든 다운로드 방법 실패: ${title} (${videoId})`);
       setDownloadPhase(prev => ({ ...prev, [videoId]: '다운로드 실패' }));
       setDownloadDone(prev => ({ ...prev, [videoId]: 'fail' }));
       const ytUrl = `https://www.youtube.com/watch?v=${videoId}`;
       try { await navigator.clipboard.writeText(ytUrl); } catch { /* 무시 */ }
-      showToast(`자동 다운로드 실패 — YouTube URL이 클립보드에 복사되었습니다. yt-dlp 또는 브라우저 확장 프로그램으로 다운로드하세요.`);
+      showToast(`자동 다운로드 실패 — YouTube URL이 클립보드에 복사되었습니다. 브라우저 확장 프로그램(SaveFrom 등)으로 다운로드하세요.`);
       return false;
     } finally {
       setDownloadingVideos(prev => { const next = new Set(prev); next.delete(videoId); return next; });

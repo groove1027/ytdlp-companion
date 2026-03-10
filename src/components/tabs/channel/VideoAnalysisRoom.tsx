@@ -330,7 +330,7 @@ async function fetchYouTubeComments(videoId: string): Promise<string[]> {
 // 정확한 타임코드 프레임 추출 (분석 결과 기반)
 // ═══════════════════════════════════════════════════
 
-const PIPED_APIS_FOR_FRAMES = [
+let PIPED_APIS_FOR_FRAMES = [
   'https://pipedapi.kavin.rocks',
   'https://pipedapi-libre.kavin.rocks',
   'https://pipedapi.adminforge.de',
@@ -348,13 +348,35 @@ const PIPED_APIS_FOR_FRAMES = [
   'https://pipedapi.orangenet.cc',
 ];
 
-const INVIDIOUS_APIS = [
+let INVIDIOUS_APIS = [
   'https://inv.nadeko.net',
   'https://invidious.fdn.fr',
   'https://vid.puffyan.us',
   'https://invidious.nerdvpn.de',
   'https://invidious.protokolla.fi',
 ];
+
+/** Invidious 인스턴스 동적 갱신 (api.invidious.io에서 실시간 가져오기) */
+async function refreshInvidiousInstances(): Promise<void> {
+  try {
+    const res = await fetch('https://api.invidious.io/', { signal: AbortSignal.timeout(8_000) });
+    if (!res.ok) return;
+    const list = await res.json() as [string, { api: boolean; cors: boolean; type: string; uri: string }][];
+    const fresh: string[] = [];
+    for (const [, info] of list) {
+      if (info.api && info.type === 'https' && info.uri) {
+        fresh.push(info.uri.replace(/\/$/, ''));
+      }
+    }
+    if (fresh.length > 3) {
+      INVIDIOUS_APIS = fresh.slice(0, 20);
+      console.log(`[Frame] Invidious 인스턴스 ${fresh.length}개 갱신`);
+    }
+  } catch { /* 무시 — 기존 하드코딩 사용 */ }
+}
+
+// 최초 1회 갱신 (모듈 로드 시)
+refreshInvidiousInstances();
 
 /** YouTube 스트림 URL 획득 (Piped → Invidious → Cobalt 3중) */
 async function fetchYouTubeStreamUrl(videoId: string): Promise<string | null> {
