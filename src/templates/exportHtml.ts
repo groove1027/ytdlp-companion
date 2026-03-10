@@ -260,7 +260,7 @@ export const buildExportHtml = (
                     let title = "";
                     if (mode === 'SCRIPT') { title = "📜 전체 대본"; content = projectData.scenes.map(s => s.scriptText).join('\\n\\n'); }
                     else if (mode === 'VISUAL') { title = "🎨 비주얼 프롬프트"; content = projectData.scenes.map((s, i) => \`=== Scene \${i+1} ===\\n\${s.visualPrompt || "No prompt"}\`).join('\\n\\n'); }
-                    else if (mode === 'VIDEO') { title = "🎬 영상 프롬프트"; content = projectData.scenes.map((s, i) => \`=== Scene \${i+1} ===\\n\${(s.visualPrompt || "").trim()}\`).join('\\n\\n'); }
+                    else if (mode === 'VIDEO') { title = "🎬 영상 프롬프트"; content = projectData.scenes.map((s, i) => { let p = (s.visualPrompt || "").trim(); let tags = ""; if(s.cameraAngle) tags += " [CAMERA: "+s.cameraAngle+"]"; if(s.cameraMovement) tags += " [MOVEMENT: "+s.cameraMovement+"]"; return \`=== Scene \${i+1} ===\\n\${p}\${tags}\`; }).join('\\n\\n'); }
                     titleEl.innerText = title; textarea.value = content; modal.classList.remove('hidden');
                 }
                 function closeTextModal() { document.getElementById('text-modal').classList.add('hidden'); }
@@ -319,6 +319,8 @@ export const buildExportHtml = (
             <div class="flex gap-2 flex-shrink-0 flex-wrap justify-end">
                 <button onclick="openCharacter()" class="px-3 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-600 rounded-lg text-xs font-bold text-gray-300">👤 캐릭터</button>
                 <button onclick="openTextModal('SCRIPT')" class="px-3 py-2 bg-blue-900/30 hover:bg-blue-800/50 border border-blue-500/50 rounded-lg text-xs font-bold text-blue-200">📜 대본</button>
+                <button onclick="openTextModal('VISUAL')" class="px-3 py-2 bg-purple-900/30 hover:bg-purple-800/50 border border-purple-500/50 rounded-lg text-xs font-bold text-purple-200">🎨 이미지 프롬프트</button>
+                <button onclick="openTextModal('VIDEO')" class="px-3 py-2 bg-pink-900/30 hover:bg-pink-800/50 border border-pink-500/50 rounded-lg text-xs font-bold text-pink-200">🎬 영상 프롬프트</button>
                 <button onclick="downloadAllImages()" class="px-3 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg text-xs font-bold shadow-lg">💾 이미지 저장</button>
             </div>
         </div>

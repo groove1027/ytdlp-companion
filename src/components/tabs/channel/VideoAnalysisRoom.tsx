@@ -1341,7 +1341,20 @@ const VideoAnalysisRoom: React.FC = () => {
   const analysisStartRef = useRef<number>(0);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
   const hasInput = inputMode === 'youtube' ? youtubeUrl.trim().length > 0 : uploadedFile !== null;
+
+  const handleDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); setIsDragOver(true); }, []);
+  const handleDragLeave = useCallback((e: React.DragEvent) => { e.preventDefault(); setIsDragOver(false); }, []);
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file && file.type.startsWith('video/')) {
+      setUploadedFile(file); setRawResult(''); setError(null); setVersions([]); setThumbnails([]);
+      if (inputMode !== 'upload') setInputMode('upload');
+    }
+  }, [inputMode, setInputMode, setRawResult, setError, setVersions, setThumbnails]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1629,9 +1642,11 @@ ${comments.slice(0, 15).map((c, i) => `${i + 1}. ${c.slice(0, 150)}`).join('\n')
                 </button>
               </div>
             ) : (
-              <button type="button" onClick={() => fileInputRef.current?.click()} className="w-full border-2 border-dashed border-gray-600 rounded-lg py-8 flex flex-col items-center gap-2 hover:border-blue-500/50 hover:bg-blue-500/5 transition-all">
+              <button type="button" onClick={() => fileInputRef.current?.click()}
+                onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}
+                className={`w-full border-2 border-dashed rounded-lg py-8 flex flex-col items-center gap-2 transition-all ${isDragOver ? 'border-blue-400 bg-blue-500/10' : 'border-gray-600 hover:border-blue-500/50 hover:bg-blue-500/5'}`}>
                 <svg className="w-10 h-10 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
-                <span className="text-gray-400 text-sm">클릭하여 영상 파일 선택</span>
+                <span className="text-gray-400 text-sm">{isDragOver ? '여기에 놓으세요!' : '클릭 또는 드래그하여 영상 파일 선택'}</span>
                 <span className="text-gray-600 text-xs">MP4, MOV, AVI 등</span>
               </button>
             )}

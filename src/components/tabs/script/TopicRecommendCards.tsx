@@ -208,7 +208,12 @@ const TopicRecommendCards: React.FC<TopicRecommendCardsProps> = ({ onSelect }) =
                       <ul className="space-y-0.5">
                         {topic.referenceVideos.slice(0, 3).map((v, i) => (
                           <li key={i} className="text-xs text-gray-400 truncate">
-                            &bull; &ldquo;{v.title}&rdquo;
+                            &bull;{' '}
+                            <a href={`https://www.youtube.com/results?search_query=${encodeURIComponent(v.title)}`}
+                               target="_blank" rel="noopener noreferrer"
+                               className="text-blue-400 hover:text-blue-300 hover:underline">
+                              &ldquo;{v.title}&rdquo;
+                            </a>
                             <span className="text-gray-500 ml-1">
                               (조회수 {formatViewCount(v.viewCount)})
                             </span>

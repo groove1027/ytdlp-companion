@@ -337,12 +337,27 @@ export function generateEdlFile(
 
   let recordIn = 0;
 
+  // 소스별 안전한 EDL 릴네임 생성 (CMX 3600: 최대 32자, 공백/특수문자 제거)
+  const reelNameMap: Record<string, string> = {};
+  let reelCounter = 1;
+  const toReelName = (sourceId: string): string => {
+    if (!reelNameMap[sourceId]) {
+      const raw = sourceMapping[sourceId] || sourceId;
+      // 확장자 제거 후 영문/숫자/언더스코어만 유지, 최대 32자
+      const safe = raw.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9_]/g, '_').substring(0, 24);
+      reelNameMap[sourceId] = safe || `CLIP${String(reelCounter).padStart(3, '0')}`;
+      reelCounter++;
+    }
+    return reelNameMap[sourceId];
+  };
+
   entries.forEach((entry, i) => {
     const start = entry.refinedTimecodeStart ?? entry.timecodeStart;
     const end = entry.refinedTimecodeEnd ?? entry.timecodeEnd;
     const duration = (end - start) / entry.speedFactor;
 
-    const sourceFile = sourceMapping[entry.sourceId] || entry.sourceId;
+    const reelName = toReelName(entry.sourceId);
+    const fullName = sourceMapping[entry.sourceId] || entry.sourceId;
     const recordOut = recordIn + duration;
 
     const toTC = (sec: number) => {
@@ -353,10 +368,15 @@ export function generateEdlFile(
       return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}:${String(f).padStart(2, '0')}`;
     };
 
-    lines.push(
-      `${String(i + 1).padStart(3, '0')}  ${sourceFile.padEnd(8)} V     C        ${toTC(start)} ${toTC(end)} ${toTC(recordIn)} ${toTC(recordOut)}`
-    );
-    lines.push(`* FROM CLIP NAME: ${entry.sourceDescription || sourceFile}`);
+    const editNum = String(i + 1).padStart(3, '0');
+    const srcTC = `${toTC(start)} ${toTC(end)}`;
+    const recTC = `${toTC(recordIn)} ${toTC(recordOut)}`;
+
+    // Video track
+    lines.push(`${editNum}  ${reelName.padEnd(32)} V     C        ${srcTC} ${recTC}`);
+    // Audio track (동일 타임코드)
+    lines.push(`${editNum}  ${reelName.padEnd(32)} A     C        ${srcTC} ${recTC}`);
+    lines.push(`* FROM CLIP NAME: ${entry.sourceDescription || fullName}`);
     if (entry.note) lines.push(`* COMMENT: ${entry.note}`);
     lines.push('');
 
