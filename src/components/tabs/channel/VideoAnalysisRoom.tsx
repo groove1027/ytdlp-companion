@@ -347,28 +347,62 @@ const PIPED_APIS_FOR_FRAMES = [
   'https://pipedapi.orangenet.cc',
 ];
 
-/** YouTube 영상의 스트림 URL 획득 (Piped API) — 정확한 프레임 추출용 */
+const INVIDIOUS_APIS = [
+  'https://inv.nadeko.net',
+  'https://invidious.fdn.fr',
+  'https://vid.puffyan.us',
+  'https://invidious.nerdvpn.de',
+  'https://invidious.protokolla.fi',
+];
+
+/** YouTube 영상의 스트림 URL 획득 (Piped → Invidious 폴백) — 정확한 프레임 추출용 */
 async function fetchYouTubeStreamUrl(videoId: string): Promise<string | null> {
+  // Phase 1: Piped API
   for (const api of PIPED_APIS_FOR_FRAMES) {
     try {
-      const res = await fetch(`${api}/streams/${videoId}`, { signal: AbortSignal.timeout(10000) });
+      const res = await fetch(`${api}/streams/${videoId}`, { signal: AbortSignal.timeout(8000) });
       if (!res.ok) continue;
       const data = await res.json();
       if (data.error) continue;
 
-      // muxed 스트림 (seekable, 가장 낮은 해상도 = 빠른 로드)
+      // 360p~480p 중간 해상도 선호 (화질+속도 균형)
       const muxed = (data.videoStreams || [])
         .filter((s: { videoOnly: boolean; mimeType: string }) => !s.videoOnly && s.mimeType?.includes('video/mp4'))
-        .sort((a: { height: number }, b: { height: number }) => (a.height || 0) - (b.height || 0));
-      if (muxed.length > 0 && muxed[0].url) return muxed[0].url;
+        .sort((a: { height: number }, b: { height: number }) => Math.abs((a.height || 0) - 360) - Math.abs((b.height || 0) - 360));
+      if (muxed.length > 0 && muxed[0].url) {
+        console.log(`[FrameExtract] Piped 스트림 획득 성공: ${api} (${muxed[0].height}p)`);
+        return muxed[0].url;
+      }
 
-      // video-only 폴백
       const videoOnly = (data.videoStreams || [])
         .filter((s: { videoOnly: boolean; mimeType: string }) => s.videoOnly && s.mimeType?.includes('video/mp4'))
-        .sort((a: { height: number }, b: { height: number }) => (a.height || 0) - (b.height || 0));
-      if (videoOnly.length > 0 && videoOnly[0].url) return videoOnly[0].url;
+        .sort((a: { height: number }, b: { height: number }) => Math.abs((a.height || 0) - 360) - Math.abs((b.height || 0) - 360));
+      if (videoOnly.length > 0 && videoOnly[0].url) {
+        console.log(`[FrameExtract] Piped video-only 스트림: ${api} (${videoOnly[0].height}p)`);
+        return videoOnly[0].url;
+      }
     } catch { continue; }
   }
+  console.warn('[FrameExtract] Piped API 전부 실패, Invidious 시도...');
+
+  // Phase 2: Invidious API 폴백
+  for (const api of INVIDIOUS_APIS) {
+    try {
+      const res = await fetch(`${api}/api/v1/videos/${videoId}`, { signal: AbortSignal.timeout(8000) });
+      if (!res.ok) continue;
+      const data = await res.json();
+      // formatStreams = muxed (audio+video)
+      const streams = (data.formatStreams || [])
+        .filter((s: { type: string }) => s.type?.includes('video/mp4'))
+        .sort((a: { resolution: string }, b: { resolution: string }) =>
+          Math.abs(parseInt(a.resolution || '0') - 360) - Math.abs(parseInt(b.resolution || '0') - 360));
+      if (streams.length > 0 && streams[0].url) {
+        console.log(`[FrameExtract] Invidious 스트림 획득 성공: ${api} (${streams[0].resolution})`);
+        return streams[0].url;
+      }
+    } catch { continue; }
+  }
+  console.error('[FrameExtract] Piped + Invidious 전부 실패 — YouTube 프레임 추출 불가');
   return null;
 }
 
@@ -390,17 +424,22 @@ async function extractFramesAtExactTimecodes(
 
     video.onloadedmetadata = async () => {
       const dur = video.duration;
+      // 영상 비율에 맞춰 캔버스 크기 결정 (최소 640px 폭)
+      const vw = video.videoWidth || 640;
+      const vh = video.videoHeight || 360;
+      const scale = Math.max(640 / vw, 1);
       const canvas = document.createElement('canvas');
-      canvas.width = 320;
-      canvas.height = 180;
+      canvas.width = Math.round(vw * scale);
+      canvas.height = Math.round(vh * scale);
       const ctx = canvas.getContext('2d');
       if (!ctx || !dur || dur < 1) { cleanup(); resolve([]); return; }
 
       const frames: TimedFrame[] = [];
-      // 중복 제거 + 정렬 (sequential seeking 최적화)
       const unique = [...new Set(timecodes.map(t => Math.round(t * 100) / 100))]
         .filter(t => t >= 0 && t <= dur)
         .sort((a, b) => a - b);
+
+      console.log(`[FrameExtract] 정밀 추출 시작: ${unique.length}개 타임코드, 캔버스 ${canvas.width}x${canvas.height}`);
 
       for (const tc of unique) {
         video.currentTime = tc;
@@ -412,18 +451,19 @@ async function extractFramesAtExactTimecodes(
 
         try {
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          frames.push({ url: canvas.toDataURL('image/jpeg', 0.7), timeSec: tc });
+          frames.push({ url: canvas.toDataURL('image/jpeg', 0.85), timeSec: tc });
         } catch {
           // CORS tainted canvas — skip
           continue;
         }
       }
 
+      console.log(`[FrameExtract] 정밀 추출 완료: ${frames.length}/${unique.length}개 성공`);
       cleanup();
       resolve(frames);
     };
 
-    video.onerror = () => { cleanup(); resolve([]); };
+    video.onerror = () => { console.error('[FrameExtract] 비디오 로드 실패:', url.slice(0, 80)); cleanup(); resolve([]); };
   });
 }
 
@@ -469,24 +509,27 @@ async function extractVideoFrames(file: File): Promise<TimedFrame[]> {
     video.onloadedmetadata = async () => {
       const dur = video.duration;
       if (!dur || dur < 1) { URL.revokeObjectURL(url); resolve([]); return; }
+      const vw = video.videoWidth || 640;
+      const vh = video.videoHeight || 360;
+      const scale = Math.max(640 / vw, 1);
       const canvas = document.createElement('canvas');
-      canvas.width = 320; canvas.height = 180;
+      canvas.width = Math.round(vw * scale);
+      canvas.height = Math.round(vh * scale);
       const ctx = canvas.getContext('2d');
       if (!ctx) { URL.revokeObjectURL(url); resolve([]); return; }
       const frames: TimedFrame[] = [];
-      const interval = 2; // 2초 간격
-      const count = Math.min(Math.ceil(dur / interval), 60); // 최대 60프레임
+      const interval = 2;
+      const count = Math.min(Math.ceil(dur / interval), 60);
       for (let i = 0; i < count; i++) {
         const timeSec = Math.min((i + 0.5) * interval, dur - 0.1);
         video.currentTime = timeSec;
-        // 5초 타임아웃으로 seek 실패 시 건너뜀
         const seeked = await Promise.race([
           new Promise<boolean>(r => { video.onseeked = () => r(true); }),
           new Promise<boolean>(r => setTimeout(() => r(false), 5000)),
         ]);
         if (!seeked) continue;
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        frames.push({ url: canvas.toDataURL('image/jpeg', 0.6), timeSec });
+        frames.push({ url: canvas.toDataURL('image/jpeg', 0.85), timeSec });
       }
       URL.revokeObjectURL(url);
       resolve(frames);
@@ -1495,8 +1538,9 @@ ${comments.slice(0, 15).map((c, i) => `${i + 1}. ${c.slice(0, 150)}`).join('\n')
       setRawResult(text);
       setVersions(parsed);
 
-      // ★ 분석 결과의 정확한 타임코드에서 프레임 직접 추출 (Gemini 1fps 분석 결과 기반)
+      // ★ 분석 결과의 정확한 타임코드에서 프레임 직접 추출 (Gemini 분석 결과 기반 1프레임 정밀도)
       const allTimecodes = collectTimecodesFromVersions(parsed);
+      console.log(`[FrameExtract] 수집된 타임코드: ${allTimecodes.length}개`);
       if (allTimecodes.length > 0) {
         let exactVideoSource: string | File | null = null;
         if (uploadedFile) {
@@ -1504,14 +1548,23 @@ ${comments.slice(0, 15).map((c, i) => `${i + 1}. ${c.slice(0, 150)}`).join('\n')
         } else {
           const vid = extractYouTubeVideoId(youtubeUrl);
           if (vid) {
-            exactVideoSource = await fetchYouTubeStreamUrl(vid).catch(() => null);
+            console.log(`[FrameExtract] YouTube 스트림 URL 획득 시도: ${vid}`);
+            exactVideoSource = await fetchYouTubeStreamUrl(vid).catch((e) => {
+              console.error('[FrameExtract] 스트림 URL 획득 오류:', e);
+              return null;
+            });
           }
         }
         if (exactVideoSource) {
           const exactFrames = await extractFramesAtExactTimecodes(exactVideoSource, allTimecodes);
           if (exactFrames.length > 0) {
+            console.log(`[FrameExtract] ✅ 정밀 프레임 ${exactFrames.length}개 적용`);
             setThumbnails(exactFrames);
+          } else {
+            console.warn('[FrameExtract] 정밀 추출 결과 0개 — CORS 또는 seek 실패');
           }
+        } else {
+          console.warn('[FrameExtract] 비디오 소스 없음 — 기본 썸네일 유지');
         }
       }
 
