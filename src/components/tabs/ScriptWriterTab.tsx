@@ -4,7 +4,7 @@ import { useNavigationStore } from '../../stores/navigationStore';
 import { useChannelAnalysisStore } from '../../stores/channelAnalysisStore';
 import { useInstinctStore } from '../../stores/instinctStore';
 import { useProjectStore } from '../../stores/projectStore';
-import { evolinkChat, evolinkChatStream, getEvolinkKey } from '../../services/evolinkService';
+import { evolinkChat, evolinkChatStream, evolinkNativeStream, getEvolinkKey } from '../../services/evolinkService';
 import { recommendTopics } from '../../services/topicRecommendService';
 import { buildSelectedInstinctPrompt } from '../../data/instinctPromptUtils';
 import { SCRIPT_STYLE_PRESETS } from '../../data/scriptStylePresets';
@@ -357,15 +357,14 @@ ${instinctPrompt}
 대본만 출력하세요. 제목이나 부가 설명 없이 본문만.`;
 
     try {
-      const fullText = await evolinkChatStream(
-        [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
-        ],
-        (chunk, accumulated) => {
+      // [FIX #42] v1beta 네이티브 스트리밍 + Google Search 그라운딩으로 최신 정보 반영
+      const fullText = await evolinkNativeStream(
+        systemPrompt,
+        userPrompt,
+        (_chunk, accumulated) => {
           setStreamingText(accumulated);
         },
-        { temperature: 0.7, maxTokens: Math.min(32000, Math.max(8000, targetCharCount * 2)) }
+        { temperature: 0.7, maxOutputTokens: Math.min(32000, Math.max(8000, targetCharCount * 2)), enableWebSearch: true }
       );
 
       setGeneratedScript({

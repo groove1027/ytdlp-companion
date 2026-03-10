@@ -384,6 +384,115 @@ export const requestEvolinkNative = async (
     return data;
 };
 
+// === NATIVE v1beta STREAMING (Google Search 그라운딩 지원) ===
+
+/**
+ * Evolink v1beta 네이티브 스트리밍 — Google Search 그라운딩 지원
+ * 대본 생성 등 최신 정보가 필요한 텍스트 생성에 사용
+ * OpenAI-compatible 대신 v1beta를 쓰면 tools: [{ googleSearch: {} }] 활성화 가능
+ */
+export const evolinkNativeStream = async (
+    systemPrompt: string,
+    userPrompt: string,
+    onChunk: (text: string, accumulated: string) => void,
+    options: { temperature?: number; maxOutputTokens?: number; enableWebSearch?: boolean } = {}
+): Promise<string> => {
+    const apiKey = getEvolinkKey();
+    if (!apiKey) throw new Error('Evolink API 키가 설정되지 않았습니다.');
+
+    const { temperature = 0.7, maxOutputTokens = 16000, enableWebSearch = false } = options;
+
+    const payload: Record<string, unknown> = {
+        contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
+        systemInstruction: { parts: [{ text: systemPrompt }] },
+        generationConfig: { temperature, maxOutputTokens },
+        safetySettings: [
+            { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+            { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+            { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+            { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
+        ],
+    };
+
+    // [FIX #42] Google Search 그라운딩: 최신 기사/뉴스 참조 가능
+    if (enableWebSearch) {
+        payload.tools = [{ googleSearch: {} }];
+    }
+
+    const model = 'gemini-3.1-pro-preview';
+    const url = `${EVOLINK_V1BETA_URL}/models/${model}:streamGenerateContent?alt=sse`;
+
+    logger.info('[Evolink Native Stream] 시작', { enableWebSearch, maxOutputTokens });
+
+    const response = await monitoredFetch(url, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+        const errorDetail = await parseEvolinkError(response);
+        logger.error(`[Evolink Native Stream] 실패 (${response.status})`, { error: errorDetail });
+        throw new Error(`Evolink v1beta 스트리밍 오류 (${response.status}): ${errorDetail}`);
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('스트리밍 응답을 읽을 수 없습니다.');
+
+    const decoder = new TextDecoder();
+    let accumulated = '';
+    let buffer = '';
+
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed || trimmed === 'data: [DONE]') continue;
+            if (!trimmed.startsWith('data: ')) continue;
+
+            try {
+                const json = JSON.parse(trimmed.slice(6));
+                const parts = json.candidates?.[0]?.content?.parts;
+                if (parts) {
+                    for (const part of parts) {
+                        if (part.text) {
+                            accumulated += part.text;
+                            onChunk(part.text, accumulated);
+                        }
+                    }
+                }
+            } catch {
+                // 불완전 청크 무시
+            }
+        }
+    }
+
+    // 비용 추정
+    try {
+        const estInputTokens = Math.ceil((systemPrompt.length + userPrompt.length) / 4);
+        const estOutputTokens = Math.ceil(accumulated.length / 4);
+        const inputCost = estInputTokens / 1_000_000 * PRICING.GEMINI_PRO_INPUT_PER_1M;
+        const outputCost = estOutputTokens / 1_000_000 * PRICING.GEMINI_PRO_OUTPUT_PER_1M;
+        const totalCost = inputCost + outputCost;
+        if (totalCost > 0) {
+            useCostStore.getState().addCost(totalCost, 'analysis');
+            logger.info('[Evolink Native Stream] 비용 추정', { estInputTokens, estOutputTokens, costUsd: totalCost.toFixed(6) });
+        }
+    } catch { /* cost tracking should not break */ }
+
+    logger.success('[Evolink Native Stream] 완료', { totalLength: accumulated.length, webSearch: enableWebSearch });
+    return accumulated;
+};
+
 // === VIDEO ANALYSIS (Gemini v1beta — fileData) ===
 
 /**
