@@ -1033,10 +1033,15 @@ export const parseScriptToScenes = async (
                             { role: 'system', content: chunkSysPrompt },
                             { role: 'user', content: chunkUserContent }
                         ],
-                        { temperature: 0.3, maxTokens: 16000, responseFormat: { type: 'json_object' }, timeoutMs: 600_000 }
+                        { temperature: 0.3, maxTokens: 32000, responseFormat: { type: 'json_object' }, timeoutMs: 600_000 }
                     );
+                    // [FIX #54] finishReason이 "length"면 토큰 한도 초과로 JSON 잘림 → 재시도
+                    const finishReason = res.choices?.[0]?.finish_reason;
                     const content = res.choices?.[0]?.message?.content || '';
                     if (!content) throw new Error('Empty Response');
+                    if (finishReason === 'length') {
+                        throw new Error('토큰 한도 초과: AI 응답이 잘렸습니다. 재시도합니다.');
+                    }
 
                     // JSON 파싱 (다양한 포맷 지원)
                     let parsed: any;
@@ -1057,7 +1062,9 @@ export const parseScriptToScenes = async (
                     // [FIX #50] 네트워크 오류 vs API 오류 구분
                     const isNetworkError = msg.includes('Failed to fetch') || msg.includes('Network Error') || msg.includes('fetch') || msg.includes('ERR_NETWORK') || msg.includes('ECONNREFUSED') || msg.includes('net::');
                     const isTimeoutError = msg.includes('524') || msg.includes('timeout') || msg.includes('타임아웃') || msg.includes('AbortError');
-                    const isRetryable = isNetworkError || isTimeoutError || msg.includes('네트워크');
+                    // [FIX #54] JSON 파싱 실패 + 토큰 한도 초과도 재시도 가능하도록 추가
+                    const isJsonError = msg.includes('Unexpected') || msg.includes('JSON') || msg.includes('토큰 한도');
+                    const isRetryable = isNetworkError || isTimeoutError || isJsonError || msg.includes('네트워크');
 
                     const errorCategory = isNetworkError ? '네트워크 연결 오류' : isTimeoutError ? '서버 응답 시간 초과' : 'API 오류';
                     console.warn(`[parseScriptToScenes] 청크 ${ci + 1} 실패 (시도 ${retry + 1}/${MAX_CHUNK_RETRIES}, ${errorCategory}): ${msg.slice(0, 150)}`);
