@@ -10,6 +10,7 @@ import { generateSpeech as generateSupertonicSpeech, isModelLoaded as isSuperton
 import type { ScriptLine, TTSLanguage, Speaker, TTSEngine } from '../../../types';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
 import { TYPECAST_EMOTIONS, TYPECAST_MODELS } from '../../../constants';
+import { showToast } from '../../../stores/uiStore';
 import MiniWaveform from './MiniWaveform';
 
 // Supertonic 2 음성 카탈로그 (10개, HuggingFace Supertone/supertonic-2 기준)
@@ -651,7 +652,14 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
 
   // 전체 생성 + 재생
   const handlePlayAll = useCallback(async () => {
-    if (!activeSpeaker?.voiceId || lines.length === 0) return;
+    if (lines.length === 0) {
+      showToast('나레이션 대본이 없습니다. 대본을 먼저 입력해주세요.');
+      return;
+    }
+    if (!activeSpeaker?.voiceId) {
+      showToast('음성을 선택해주세요. 상단 음성 브라우저에서 캐릭터를 클릭하세요.');
+      return;
+    }
     if (mergedAudioUrl && lines.every(l => l.ttsStatus === 'done')) {
       if (audioRef.current) { audioRef.current.pause(); unregisterAudio(audioRef.current); }
       await loadLineDurations();
@@ -1192,6 +1200,9 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
             <button type="button"
               onClick={() => {
                 if (isPlaying) { handlePauseResume(); return; }
+                // 선행 조건 미충족 시 안내 토스트
+                if (lines.length === 0) { showToast('나레이션 대본이 없습니다. 대본을 먼저 입력해주세요.'); return; }
+                if (!activeSpeaker?.voiceId) { showToast('음성을 선택해주세요. 상단 음성 브라우저에서 캐릭터를 클릭하세요.'); return; }
                 // 이미 생성 완료면 바로 재생
                 if (mergedAudioUrl && lines.every(l => l.ttsStatus === 'done')) { handlePlayAll(); return; }
                 // 크레딧 소모 확인
@@ -1200,9 +1211,9 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
                 if (credits > 0 && !window.confirm(`${totalChars.toLocaleString()}자 × 2 = ${credits.toLocaleString()} 크레딧이 소모됩니다.\n계속하시겠습니까?`)) return;
                 handlePlayAll();
               }}
-              disabled={isGeneratingAll || (lines.length > 0 && !activeSpeaker?.voiceId)}
-              className={`w-12 h-12 rounded-full flex items-center justify-center text-xl shadow-lg ${isGeneratingAll ? 'bg-purple-600 animate-pulse' : 'bg-orange-500 hover:bg-orange-400 hover:scale-105'} text-white transition-all`}
-              title="재생하기 (⌘+Enter)">
+              disabled={isGeneratingAll}
+              className={`w-12 h-12 rounded-full flex items-center justify-center text-xl shadow-lg ${isGeneratingAll ? 'bg-purple-600 animate-pulse' : (!activeSpeaker?.voiceId || lines.length === 0) ? 'bg-gray-600 cursor-not-allowed' : 'bg-orange-500 hover:bg-orange-400 hover:scale-105'} text-white transition-all`}
+              title={!activeSpeaker?.voiceId ? '음성을 먼저 선택하세요' : lines.length === 0 ? '대본을 먼저 입력하세요' : '재생하기 (⌘+Enter)'}>
               {isGeneratingAll ? '⟳' : isPlaying ? (<svg className="w-3.5 h-3.5" viewBox="0 0 12 12" fill="white"><rect x="1" y="1" width="3.5" height="10" rx="0.5" /><rect x="7.5" y="1" width="3.5" height="10" rx="0.5" /></svg>) : (<svg className="w-3.5 h-3.5" viewBox="0 0 12 12" fill="white"><polygon points="2,1 11,6 2,11" /></svg>)}
             </button>
             <button type="button" className="text-white/60 hover:text-white">
@@ -1227,6 +1238,12 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
             </button>
           </div>
         </div>
+        {/* 선행 조건 미충족 안내 */}
+        {!activeSpeaker?.voiceId && lines.length > 0 && (
+          <div className="px-4 py-1.5 text-center text-xs text-yellow-400/80 bg-yellow-900/10 border-t border-yellow-500/20">
+            음성이 선택되지 않았습니다 — 상단에서 캐릭터를 클릭하여 음성을 선택해주세요
+          </div>
+        )}
       </div>
 
       {/* === 다운로드 모달 === */}

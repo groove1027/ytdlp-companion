@@ -10,6 +10,7 @@ import {
   ChannelScript,
   ChannelGuideline,
   ParsedFileEntry,
+  LegacyTopicRecommendation,
 } from '../types';
 import { saveBenchmarkData, getAllSavedBenchmarks, deleteSavedBenchmark } from '../services/storageService';
 import type { SavedBenchmarkData } from '../services/storageService';
@@ -42,6 +43,10 @@ interface ChannelAnalysisStore {
   uploadedFiles: ParsedFileEntry[];
   /** 작가/채널 이름 (파일/직접입력용) */
   sourceName: string;
+  /** 주제 추천 입력값 */
+  topicInput: string;
+  /** AI 주제 추천 결과 (탭 전환 시 유지) */
+  topicRecommendations: LegacyTopicRecommendation[];
 
   // Actions
   setSubTab: (tab: ChannelAnalysisSubTab) => void;
@@ -71,6 +76,8 @@ interface ChannelAnalysisStore {
   setUploadedFiles: (files: ParsedFileEntry[]) => void;
   setSourceName: (name: string) => void;
   clearUploadedFiles: () => void;
+  setTopicInput: (input: string) => void;
+  setTopicRecommendations: (topics: LegacyTopicRecommendation[]) => void;
   /** 저장된 벤치마크 목록 */
   savedBenchmarks: SavedBenchmarkData[];
   /** 현재 채널 분석 결과를 IndexedDB에 저장 */
@@ -115,6 +122,8 @@ const INITIAL_STATE = {
   inputSource: 'youtube' as ChannelInputSource,
   uploadedFiles: [] as ParsedFileEntry[],
   sourceName: '',
+  topicInput: '',
+  topicRecommendations: [] as LegacyTopicRecommendation[],
   savedBenchmarks: [] as SavedBenchmarkData[],
 };
 
@@ -200,6 +209,8 @@ export const useChannelAnalysisStore = create<ChannelAnalysisStore>((set) => ({
   setUploadedFiles: (files) => set({ uploadedFiles: files }),
   setSourceName: (name) => set({ sourceName: name }),
   clearUploadedFiles: () => set({ uploadedFiles: [], sourceName: '' }),
+  setTopicInput: (input) => set({ topicInput: input }),
+  setTopicRecommendations: (topics) => set({ topicRecommendations: topics }),
 
   // --- 벤치마크 IndexedDB 영속화 ---
   saveBenchmark: async () => {

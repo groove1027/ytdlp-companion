@@ -8,7 +8,7 @@ import { evolinkChat, evolinkChatStream, getEvolinkKey } from '../../services/ev
 import { recommendTopics } from '../../services/topicRecommendService';
 import { buildSelectedInstinctPrompt } from '../../data/instinctPromptUtils';
 import { SCRIPT_STYLE_PRESETS } from '../../data/scriptStylePresets';
-import { VideoFormat, TopicRecommendation } from '../../types';
+import { VideoFormat, ContentFormat, TopicRecommendation } from '../../types';
 import { showToast } from '../../stores/uiStore';
 import { countScenesLocally, splitScenesLocally, extractJsonFromText } from '../../services/gemini/scriptAnalysis';
 import { canCreateNewProject } from '../../services/storageService';
@@ -72,7 +72,8 @@ export default function ScriptWriterTab() {
     styledScript, styledStyleName, setStyledScript, clearStyledScript,
     isGenerating, startGeneration, finishGeneration,
     selectedTopic, setSelectedTopic, benchmarkScript,
-    contentFormat,
+    contentFormat, setContentFormat,
+    shortsSeconds, setShortsSeconds,
     videoFormat, setVideoFormat,
     longFormSplitType, setLongFormSplitType, smartSplit,
     targetCharCount, setTargetCharCount,
@@ -325,10 +326,19 @@ ${scriptText}`;
     setGenError('');
 
     const instinctPrompt = buildSelectedInstinctPrompt(instinctIds);
+    const isShorts = contentFormat === 'shorts';
+
+    const shortsSystemRule = isShorts
+      ? `\n이 대본은 유튜브 쇼츠(${shortsSeconds}초 이내 세로 영상)용입니다. 짧고 강렬하게 작성하세요.`
+      : '';
 
     const systemPrompt = `당신은 유튜브 바이럴 영상 전문 대본 작가입니다.
 주어진 소재와 본능 기제를 바탕으로 완성된 대본을 작성합니다.
-훅(도입부)에서 선택된 본능 기제가 시청자 심리를 강하게 자극하도록 설계하세요.`;
+훅(도입부)에서 선택된 본능 기제가 시청자 심리를 강하게 자극하도록 설계하세요.${shortsSystemRule}`;
+
+    const shortsRequirement = isShorts
+      ? `\n- 포맷: 유튜브 쇼츠 (${shortsSeconds}초 이내, 세로형)\n- 첫 문장에서 즉시 주제를 던지세요 (서론 없이 바로 핵심)\n- 짧고 강렬한 문장 위주 (한 문장 20자 이내)\n- "본 영상에서 다루겠습니다" 같은 롱폼 유도 표현 절대 금지\n- 마지막은 반전/충격/핵심 결론으로 임팩트 있게 마무리`
+      : '';
 
     const userPrompt = `[소재]
 제목: ${topic.title}
@@ -342,7 +352,7 @@ ${instinctPrompt}
 - 위 소재와 본능 기제를 결합한 완성 대본을 작성하세요
 - 대본 길이: 약 ${targetCharCount}자
 - 훅(첫 3초)은 반드시 "${topic.hook}"을 기반으로 작성
-- 대본 형식: 나레이션 대본 (화자 지시 없이 내레이션만)
+- 대본 형식: 나레이션 대본 (화자 지시 없이 내레이션만)${shortsRequirement}
 
 대본만 출력하세요. 제목이나 부가 설명 없이 본문만.`;
 
@@ -373,7 +383,7 @@ ${instinctPrompt}
     } finally {
       finishGeneration();
     }
-  }, [instinctIds, targetCharCount, startGeneration, finishGeneration, setGeneratedScript, setFinalScript]);
+  }, [instinctIds, targetCharCount, contentFormat, shortsSeconds, startGeneration, finishGeneration, setGeneratedScript, setFinalScript]);
 
   const handleGenerateScript = useCallback(async () => {
     if (!requireAuth('AI 대본 생성')) return;
@@ -389,7 +399,7 @@ ${instinctPrompt}
     const isShorts = contentFormat === 'shorts';
 
     const shortsRule = isShorts
-      ? `\n\n중요 — 이 대본은 유튜브 쇼츠(60초 이내 세로 영상)용입니다:
+      ? `\n\n중요 — 이 대본은 유튜브 쇼츠(${shortsSeconds}초 이내 세로 영상)용입니다:
 - 첫 문장에서 즉시 주제를 던지세요 (서론/도입부 없이 바로 핵심)
 - 짧고 강렬한 문장 위주 (한 문장 20자 이내)
 - "본 영상에서 다루겠습니다" 같은 롱폼 유도 표현 절대 금지
@@ -423,11 +433,11 @@ ${instinctPrompt}
       ? `\n\n[주제 본능 분석]\n핵심 본능: ${selectedTopic.instinctAnalysis.primaryInstincts.join(', ')}\n조합 공식: ${selectedTopic.instinctAnalysis.comboFormula}\n추천 훅: "${selectedTopic.instinctAnalysis.hookSuggestion}"\n→ 위 심리 기제를 도입부(훅)에 적극 반영하세요.`
       : '';
 
-    const userPrompt = `다음 조건에 맞는 ${isShorts ? '유튜브 쇼츠(세로 60초)' : '영상'} 대본을 생성하세요:
+    const userPrompt = `다음 조건에 맞는 ${isShorts ? `유튜브 쇼츠(세로 ${shortsSeconds}초)` : '영상'} 대본을 생성하세요:
 
 - 제목: ${title}
 - 줄거리: ${synopsis}
-- 포맷: ${isShorts ? '쇼츠 (60초 이내, 세로형)' : '롱폼'}
+- 포맷: ${isShorts ? `쇼츠 (${shortsSeconds}초 이내, 세로형)` : '롱폼'}
 - 분량: ${formatLabel}${instinctSection}${guidelineSection}${benchmarkSection}${topicInstinctSection}
 
 다음 JSON 형식으로 출력하세요:
@@ -464,7 +474,7 @@ ${instinctPrompt}
     } finally {
       finishGeneration();
     }
-  }, [title, synopsis, targetCharCount, instinctIds, channelGuideline, benchmarkScript,
+  }, [title, synopsis, targetCharCount, contentFormat, shortsSeconds, instinctIds, channelGuideline, benchmarkScript,
     selectedTopic, startGeneration, finishGeneration, setGeneratedScript, setFinalScript]);
 
   const handleApplySelectedStyle = useCallback(async () => {
@@ -818,10 +828,57 @@ ${instinctPrompt}
             <span className="text-sm font-bold text-white">대본 생성</span>
           </div>
 
+          {/* 콘텐츠 형식 선택: 롱폼 / 쇼츠 */}
+          <div className="mb-3 flex items-center gap-3">
+            <span className="text-sm text-gray-400 flex-shrink-0">형식</span>
+            <div className="flex gap-2">
+              {([['long', '롱폼', 'bg-blue-600'], ['shorts', '쇼츠', 'bg-emerald-600']] as [ContentFormat, string, string][]).map(([val, label, color]) => (
+                <button key={val} type="button"
+                  onClick={() => {
+                    setContentFormat(val);
+                    if (val === 'shorts') {
+                      setTargetCharCount(Math.min(targetCharCount, 500));
+                    } else if (val === 'long' && targetCharCount <= 500) {
+                      setTargetCharCount(5000);
+                    }
+                  }}
+                  className={`px-4 py-1.5 rounded-lg text-sm font-semibold border transition-all
+                    ${contentFormat === val
+                      ? `${color} text-white border-transparent shadow-md`
+                      : 'bg-gray-800 text-gray-400 border-gray-700 hover:border-gray-500'}`}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            {contentFormat === 'shorts' && (
+              <div className="flex items-center gap-2 ml-2">
+                <select
+                  value={shortsSeconds}
+                  onChange={(e) => {
+                    const sec = Number(e.target.value);
+                    setShortsSeconds(sec);
+                    setTargetCharCount(Math.round((sec / 60) * 650));
+                  }}
+                  className="bg-gray-800 text-gray-200 text-sm rounded-lg border border-gray-700
+                    px-2 py-1.5 focus:outline-none focus:border-emerald-500/50"
+                >
+                  <option value={15}>15초</option>
+                  <option value={30}>30초</option>
+                  <option value={45}>45초</option>
+                  <option value={60}>60초</option>
+                </select>
+                <span className="text-xs text-emerald-400/70">세로 영상</span>
+              </div>
+            )}
+          </div>
+
           <div className="flex items-center gap-3 bg-gray-800/40 rounded-xl px-4 py-3 border border-gray-700/40">
             <span className="text-sm text-gray-400 flex-shrink-0">📏</span>
-            <input type="number" min={350} max={30000} step={50}
-              value={targetCharCount} onChange={(e) => setTargetCharCount(Math.max(350, Number(e.target.value)))}
+            <input type="number"
+              min={contentFormat === 'shorts' ? 100 : 350}
+              max={contentFormat === 'shorts' ? 1000 : 30000}
+              step={contentFormat === 'shorts' ? 25 : 50}
+              value={targetCharCount} onChange={(e) => setTargetCharCount(Math.max(contentFormat === 'shorts' ? 100 : 350, Number(e.target.value)))}
               className="w-[80px] px-2 py-1.5 rounded-md bg-gray-900/60 text-gray-200 text-sm text-center
                 border border-gray-700 focus:outline-none focus:border-violet-500/50" />
             <span className="text-sm text-gray-500">자</span>

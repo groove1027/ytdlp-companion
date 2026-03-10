@@ -651,7 +651,15 @@ const VoiceStudio: React.FC = () => {
     logger.trackAction('나레이션 일괄 생성 시작');
     if (!requireAuth('TTS 일괄 생성')) return;
     const speaker = speakers[0];
-    if (!speaker?.voiceId || isGeneratingAll) return;
+    if (isGeneratingAll) return;
+    if (!speaker?.voiceId) {
+      showToast('음성을 선택해주세요. 음성 브라우저에서 캐릭터를 클릭하세요.');
+      return;
+    }
+    if (lines.length === 0) {
+      showToast('나레이션 대본이 없습니다. 대본을 먼저 입력해주세요.');
+      return;
+    }
 
     setIsGeneratingAll(true);
     setGenerateProgress({ current: 0, total: lines.length });

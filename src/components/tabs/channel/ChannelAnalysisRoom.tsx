@@ -33,8 +33,10 @@ const ChannelAnalysisRoom: React.FC = () => {
   const {
     channelScripts, channelInfo, channelGuideline, savedPresets,
     inputSource, uploadedFiles, sourceName,
+    topicInput, topicRecommendations,
     setChannelInfo, setChannelScripts, setChannelGuideline, savePreset, loadPreset, removePreset,
     setInputSource, setUploadedFiles, setSourceName, syncQuota,
+    setTopicInput, setTopicRecommendations,
   } = useChannelAnalysisStore();
   const setActiveTab = useNavigationStore(s => s.setActiveTab);
   const swSetTopics = useScriptWriterStore(s => s.setTopics);
@@ -49,8 +51,9 @@ const ChannelAnalysisRoom: React.FC = () => {
   const [progress, setProgress] = useState<{ step: number; message: string } | null>(null);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
-  const [topicInput, setTopicInput] = useState('');
-  const [topics, setTopics] = useState<LegacyTopicRecommendation[]>([]);
+  // topicInput, topicRecommendations → Zustand 스토어에서 관리 (탭 전환 시 유지)
+  const topics = topicRecommendations;
+  const setTopics = setTopicRecommendations;
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const elapsed = useElapsedTimer(isAnalyzing);
   const progressElapsed = useElapsedTimer(!!progress);

@@ -8,6 +8,55 @@ import {
   VideoFormat,
 } from '../types';
 
+// --- localStorage 자동 임시저장 ---
+const DRAFT_STORAGE_KEY = 'SCRIPT_WRITER_DRAFT';
+
+/** 페이지 리로드 시 복원할 필드 목록 (일시적 UI 상태 제외) */
+const PERSISTED_KEYS = [
+  'inputMode', 'contentFormat', 'shortsSeconds', 'benchmarkScript',
+  'title', 'synopsis', 'manualText',
+  'generatedScript', 'styledScript', 'styledStyleName', 'finalScript',
+  'videoFormat', 'longFormSplitType', 'smartSplit', 'targetCharCount',
+  'splitResult', 'activeStep',
+] as const;
+
+type PersistedKey = typeof PERSISTED_KEYS[number];
+type PersistedState = Pick<ScriptWriterStore, PersistedKey>;
+
+function loadDraft(): Partial<PersistedState> {
+  try {
+    const raw = localStorage.getItem(DRAFT_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    // 저장된 키 중 허용된 것만 반환
+    const result: Record<string, unknown> = {};
+    for (const key of PERSISTED_KEYS) {
+      if (key in parsed) {
+        result[key] = parsed[key];
+      }
+    }
+    return result as Partial<PersistedState>;
+  } catch {
+    return {};
+  }
+}
+
+function saveDraft(state: Record<string, unknown>): void {
+  try {
+    const draft: Record<string, unknown> = {};
+    for (const key of PERSISTED_KEYS) {
+      draft[key] = state[key];
+    }
+    localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draft));
+  } catch {
+    // localStorage 용량 초과 등 — 조용히 무시
+  }
+}
+
+function clearDraft(): void {
+  try { localStorage.removeItem(DRAFT_STORAGE_KEY); } catch { /* noop */ }
+}
+
 interface ScriptWriterStore {
   // State
   inputMode: ScriptInputMode;
@@ -97,8 +146,16 @@ const INITIAL_STATE = {
   splitResult: [] as string[],
 };
 
+// localStorage에서 이전 드래프트 복원
+const restoredDraft = loadDraft();
+
 export const useScriptWriterStore = create<ScriptWriterStore>((set) => ({
   ...INITIAL_STATE,
+  ...restoredDraft,
+  // 일시적 상태는 항상 초기값으로 (복원하지 않음)
+  isGenerating: false,
+  isExpanding: false,
+  expansionTarget: null,
 
   setInputMode: (mode) => set({ inputMode: mode }),
   setContentFormat: (format) => set({ contentFormat: format }),
@@ -146,21 +203,32 @@ export const useScriptWriterStore = create<ScriptWriterStore>((set) => ({
   setSplitResult: (scenes) => set({ splitResult: scenes }),
 
   // 새 파일 업로드 시 이전 대본 콘텐츠를 초기화하되, 포맷/분량 설정은 유지
-  clearPreviousContent: () => set({
-    generatedScript: null,
-    styledScript: '',
-    styledStyleName: '',
-    finalScript: '',
-    manualText: '',
-    title: '',
-    synopsis: '',
-    topics: [],
-    selectedTopic: null,
-    splitResult: [],
-    benchmarkScript: '',
-    selectedPreset: null,
-    activeStep: 1,
-  }),
+  clearPreviousContent: () => {
+    clearDraft();
+    set({
+      generatedScript: null,
+      styledScript: '',
+      styledStyleName: '',
+      finalScript: '',
+      manualText: '',
+      title: '',
+      synopsis: '',
+      topics: [],
+      selectedTopic: null,
+      splitResult: [],
+      benchmarkScript: '',
+      selectedPreset: null,
+      activeStep: 1,
+    });
+  },
 
-  reset: () => set({ ...INITIAL_STATE }),
+  reset: () => {
+    clearDraft();
+    set({ ...INITIAL_STATE });
+  },
 }));
+
+// 상태 변경 시 자동으로 localStorage에 저장
+useScriptWriterStore.subscribe((state) => {
+  saveDraft(state as unknown as Record<string, unknown>);
+});
