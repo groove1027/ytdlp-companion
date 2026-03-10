@@ -103,7 +103,7 @@ const ImageScriptUploadLab: React.FC = () => {
       imageModel: ImageModel.FLASH,
       smartSplit: true,
       allowInfographics: false,
-      suppressText: false,
+      suppressText: true,
       textForceLock: false,
       detectedStyleDescription: '',
       detectedCharacterDescription: '',

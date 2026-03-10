@@ -79,7 +79,7 @@ const ScriptMode: React.FC<ScriptModeProps> = ({
     const [smartSplit, setSmartSplit] = useState(initialState?.smartSplit ?? true);
     const [isMixedMedia, setIsMixedMedia] = useState(initialState?.isMixedMedia ?? false); 
     const [textForceLock, setTextForceLock] = useState(initialState?.textForceLock ?? false); 
-    const [suppressText, setSuppressText] = useState(initialState?.suppressText ?? false); // [NEW] Suppress Text Mode
+    const [suppressText, setSuppressText] = useState(initialState?.suppressText ?? true); // [NEW] Suppress Text Mode — 기본 ON (#38)
     
     // [NEW] Estimation State (Restored if available)
     const [estimatedScenes, setEstimatedScenes] = useState<number>(initialState?.estimatedScenes || 0);

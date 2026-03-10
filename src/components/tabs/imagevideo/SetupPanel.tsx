@@ -690,7 +690,7 @@ const SetupPanel: React.FC = () => {
               <p className="text-sm font-bold text-white">🚫 텍스트 생성 금지 (Clean Mode)</p>
               <p className="text-xs text-gray-400 mt-1">AI가 이미지 내에 어떤 글자도 생성하지 않도록 원천 차단합니다.</p>
             </div>
-            <Toggle checked={config.suppressText ?? false} onChange={(v) => updateConfig('suppressText', v)} />
+            <Toggle checked={config.suppressText ?? true} onChange={(v) => updateConfig('suppressText', v)} />
           </div>
         </div>
 
