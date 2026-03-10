@@ -344,6 +344,27 @@ export const requestEvolinkNative = async (
 
     logger.info(`[Evolink Native] v1beta 요청: ${evolinkModel}:${method}`, { originalModel: model, timeoutMs });
 
+    // [FIX] Evolink v1beta는 systemInstruction을 처리하지 못함 (400: "valid role: user, model")
+    // → systemInstruction 텍스트를 contents 첫 번째 user 메시지에 합침
+    let payload = googlePayload;
+    if (googlePayload.systemInstruction) {
+        payload = { ...googlePayload };
+        const sysInst = payload.systemInstruction as { parts?: { text?: string }[] };
+        const sysText = sysInst?.parts?.map(p => p.text).filter(Boolean).join('\n') || '';
+        delete payload.systemInstruction;
+
+        if (sysText && Array.isArray(payload.contents)) {
+            const contents = (payload.contents as { role?: string; parts: { text?: string }[] }[]).map(c => ({ ...c, parts: [...c.parts] }));
+            const firstUser = contents.find(c => c.role === 'user' || !c.role);
+            if (firstUser && firstUser.parts.length > 0 && firstUser.parts[0].text != null) {
+                firstUser.parts[0] = { ...firstUser.parts[0], text: sysText + '\n\n' + firstUser.parts[0].text };
+            } else {
+                contents.unshift({ role: 'user', parts: [{ text: sysText }] });
+            }
+            payload.contents = contents;
+        }
+    }
+
     // [FIX #32] 긴 대본 처리를 위한 확장 타임아웃 지원 (미지정 시 무제한)
     const response = await monitoredFetch(url, {
         method: 'POST',
@@ -351,7 +372,7 @@ export const requestEvolinkNative = async (
             'Authorization': `Bearer ${apiKey}`,
             'Content-Type': 'application/json'
         },
-        body: JSON.stringify(googlePayload)
+        body: JSON.stringify(payload)
     }, timeoutMs);
 
     if (!response.ok) {
