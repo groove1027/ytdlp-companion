@@ -44,6 +44,8 @@ interface VideoAnalysisStore {
   restoreFromCache: (preset: VideoAnalysisPreset) => boolean;
   /** 캐시 삭제 */
   clearCache: () => void;
+  /** 특정 프리셋 캐시만 삭제 */
+  clearPresetCache: (preset: VideoAnalysisPreset) => void;
 
   /** 결과 초기화 (새 분석 시작 시) */
   resetResults: () => void;
@@ -103,6 +105,13 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
       },
 
       clearCache: () => set({ resultCache: {} }),
+
+      clearPresetCache: (preset) => {
+        const { resultCache } = get();
+        const next = { ...resultCache };
+        delete next[preset];
+        set({ resultCache: next });
+      },
 
       resetResults: () => set({
         rawResult: '',

@@ -1328,6 +1328,7 @@ const VideoAnalysisRoom: React.FC = () => {
     inputMode, youtubeUrl, selectedPreset, rawResult, versions, thumbnails, error, expandedId,
     setInputMode, setYoutubeUrl, setSelectedPreset, setRawResult, setVersions, setThumbnails,
     setError, setExpandedId, cacheCurrentResult, restoreFromCache, resetResults,
+    clearPresetCache,
   } = store;
 
   // 로컬 전용 (일시적 UI 상태 — 영속 불필요)
@@ -1362,7 +1363,7 @@ const VideoAnalysisRoom: React.FC = () => {
   };
 
   // ── 프리셋 전환 시 캐시 복원 or 신규 분석 ──
-  const handleAnalyze = async (preset: AnalysisPreset) => {
+  const handleAnalyze = async (preset: AnalysisPreset, force = false) => {
     if (!requireAuth('영상 분석')) return;
     if (!hasInput) return;
 
@@ -1371,8 +1372,13 @@ const VideoAnalysisRoom: React.FC = () => {
       cacheCurrentResult(selectedPreset);
     }
 
+    // 강제 재생성 시 해당 프리셋 캐시 삭제
+    if (force) {
+      clearPresetCache(preset);
+    }
+
     // 캐시에 이미 결과가 있으면 복원만 하고 종료
-    if (restoreFromCache(preset)) return;
+    if (!force && restoreFromCache(preset)) return;
 
     setSelectedPreset(preset);
     setIsAnalyzing(true);
@@ -1734,10 +1740,21 @@ ${comments.slice(0, 15).map((c, i) => `${i + 1}. ${c.slice(0, 150)}`).join('\n')
       {/* ═══ 10가지 버전 아코디언 ═══ */}
       {versions.length > 0 && (
         <div className="space-y-4">
-          <h2 className="text-lg font-bold text-white flex items-center gap-2">
-            <span className="w-8 h-8 bg-gradient-to-br from-blue-500 to-violet-600 rounded-lg flex items-center justify-center text-sm">🎬</span>
-            리메이크 {versions.length}가지 버전
-          </h2>
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-bold text-white flex items-center gap-2">
+              <span className="w-8 h-8 bg-gradient-to-br from-blue-500 to-violet-600 rounded-lg flex items-center justify-center text-sm">🎬</span>
+              리메이크 {versions.length}가지 버전
+            </h2>
+            <button
+              type="button"
+              disabled={isAnalyzing}
+              onClick={() => selectedPreset && handleAnalyze(selectedPreset, true)}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-600/20 text-blue-400 border border-blue-500/30 hover:bg-blue-600/30 text-sm font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+              재생성
+            </button>
+          </div>
 
           <div className="space-y-2">
             {versions.map((v) => {
