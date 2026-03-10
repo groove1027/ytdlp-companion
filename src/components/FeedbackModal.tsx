@@ -16,6 +16,29 @@ const FEEDBACK_TYPES = [
 
 const MAX_SCREENSHOTS = 3;
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+const DRAFT_STORAGE_KEY = 'feedback_draft';
+
+interface FeedbackDraft {
+    selectedType: FeedbackType;
+    message: string;
+    email: string;
+}
+
+const saveDraft = (draft: FeedbackDraft) => {
+    try { localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draft)); } catch { /* ignore */ }
+};
+
+const loadDraft = (): FeedbackDraft | null => {
+    try {
+        const raw = localStorage.getItem(DRAFT_STORAGE_KEY);
+        if (!raw) return null;
+        return JSON.parse(raw) as FeedbackDraft;
+    } catch { return null; }
+};
+
+const clearDraft = () => {
+    try { localStorage.removeItem(DRAFT_STORAGE_KEY); } catch { /* ignore */ }
+};
 
 const fileToScreenshot = (file: File): Promise<FeedbackScreenshot> => {
     return new Promise((resolve, reject) => {
@@ -43,6 +66,8 @@ const FeedbackModal: React.FC = () => {
     const [attachLogs, setAttachLogs] = useState(true); // 버그일 때 기본 ON
     const [showLogPreview, setShowLogPreview] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    // 텍스트 선택 중 backdrop 클릭으로 모달이 닫히는 것을 방지하기 위한 ref
+    const mouseDownInsideRef = useRef(false);
 
     const logCount = logger.getLogs().length;
     const errorCount = logger.getErrorCount();
@@ -52,13 +77,46 @@ const FeedbackModal: React.FC = () => {
     const userEmail = savedUser?.email || '';
     const userDisplayName = savedUser?.displayName || '';
 
+    // 모달 열릴 때 localStorage에서 임시저장 복원
+    useEffect(() => {
+        if (showFeedbackModal) {
+            const draft = loadDraft();
+            if (draft) {
+                setSelectedType(draft.selectedType);
+                setMessage(draft.message);
+                setEmail(draft.email);
+            }
+        }
+    }, [showFeedbackModal]);
+
+    // 입력 내용이 변경될 때마다 localStorage에 임시저장
+    useEffect(() => {
+        if (showFeedbackModal && (message || email)) {
+            saveDraft({ selectedType, message, email });
+        }
+    }, [showFeedbackModal, selectedType, message, email]);
+
+    // 작성 중인 내용이 있는지 확인하는 헬퍼
+    const hasUnsavedContent = message.trim().length > 0 || screenshots.length > 0;
+
+    // 확인 후 닫기 — 작성 중 내용이 있으면 확인 대화상자 표시
+    const tryClose = useCallback(() => {
+        if (hasUnsavedContent) {
+            const confirmed = window.confirm('작성 중인 내용이 있습니다. 닫으시겠습니까?\n(내용은 임시저장되어 다시 열면 복원됩니다)');
+            if (!confirmed) return;
+        }
+        setShowFeedbackModal(false);
+        // 확인 후 닫을 때도 draft는 유지 — 다시 열면 복원됨
+        // draft를 지우지 않음 (제출 성공 시에만 지움)
+    }, [hasUnsavedContent, setShowFeedbackModal]);
+
     // ESC 키로 닫기
     useEffect(() => {
         if (!showFeedbackModal) return;
-        const handleKeyDown = (e: KeyboardEvent) => { if (e.key === 'Escape') setShowFeedbackModal(false); };
+        const handleKeyDown = (e: KeyboardEvent) => { if (e.key === 'Escape') tryClose(); };
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [showFeedbackModal, setShowFeedbackModal]);
+    }, [showFeedbackModal, tryClose]);
 
     // 클립보드 붙여넣기
     useEffect(() => {
@@ -119,13 +177,25 @@ const FeedbackModal: React.FC = () => {
 
     if (!showFeedbackModal) return null;
 
-    const handleClose = () => {
+    // 완전 초기화 (제출 성공 후 또는 명시적 닫기)
+    const resetAndClose = () => {
         setShowFeedbackModal(false);
         setMessage('');
         setEmail('');
         setScreenshots([]);
         setSelectedType(FeedbackType.BUG);
         setSubmitResult(null);
+        clearDraft();
+    };
+
+    // 확인 대화상자 포함 닫기 (backdrop 클릭, 취소 버튼, X 버튼)
+    const handleClose = () => {
+        // 제출 성공 화면에서는 바로 닫기 + 초기화
+        if (submitResult) {
+            resetAndClose();
+            return;
+        }
+        tryClose();
     };
 
     const handleSubmit = async () => {
@@ -153,6 +223,7 @@ const FeedbackModal: React.FC = () => {
 
             const result = await submitFeedback(data);
             setSubmitResult(result);
+            clearDraft(); // 제출 성공 시 임시저장 삭제
             // 피드백 응답 알림을 받기 위해 브라우저 알림 권한 요청
             requestNotificationPermission();
         } catch (e: unknown) {
@@ -164,14 +235,35 @@ const FeedbackModal: React.FC = () => {
         }
     };
 
+    // backdrop mousedown/mouseup 방식으로 텍스트 선택 시 모달 닫힘 방지
+    const handleBackdropMouseDown = (e: React.MouseEvent) => {
+        // 배경(backdrop) 자체에서 mousedown이 시작된 경우만 true
+        if (e.target === e.currentTarget) {
+            mouseDownInsideRef.current = false;
+        }
+    };
+
+    const handleBackdropMouseUp = (e: React.MouseEvent) => {
+        // mousedown이 모달 내부에서 시작되었으면 닫지 않음 (텍스트 선택 중)
+        if (mouseDownInsideRef.current) {
+            mouseDownInsideRef.current = false;
+            return;
+        }
+        // backdrop에서 mousedown + mouseup 모두 발생했을 때만 닫기
+        if (e.target === e.currentTarget) {
+            handleClose();
+        }
+    };
+
     return (
         <div
             className="fixed inset-0 bg-black/80 z-[9999] flex items-center justify-center p-4 animate-fade-in"
-            onClick={handleClose}
+            onMouseDown={handleBackdropMouseDown}
+            onMouseUp={handleBackdropMouseUp}
         >
             <div
                 className="bg-gray-800 rounded-xl border border-gray-700 shadow-2xl w-full max-w-lg p-6 animate-fade-in-up max-h-[90vh] overflow-y-auto"
-                onClick={(e) => e.stopPropagation()}
+                onMouseDown={() => { mouseDownInsideRef.current = true; }}
             >
                 {/* 성공 화면 */}
                 {submitResult ? (
@@ -205,7 +297,7 @@ const FeedbackModal: React.FC = () => {
                             </p>
                         </div>
                         <button
-                            onClick={handleClose}
+                            onClick={resetAndClose}
                             className="w-full py-3 bg-gray-700 hover:bg-gray-600 text-gray-200 rounded-lg text-base font-bold transition-colors"
                         >
                             닫기

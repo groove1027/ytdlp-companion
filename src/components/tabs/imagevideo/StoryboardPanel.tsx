@@ -1227,6 +1227,24 @@ const StoryboardPanel: React.FC = () => {
     setIsBatchingImages(false);
   }, [handleGenerateImage, requireAuth]);
 
+  // --- [FIX #49] 자동 이미지 생성 — 스토리보드 진입 시 이미지 없는 장면 자동 생성 시작 ---
+  const autoImageTriggeredRef = useRef(false);
+  useEffect(() => {
+    // 조건: 장면이 있고, 이미지가 하나도 없고, 배치 작업 미진행, 한 번만 실행
+    if (autoImageTriggeredRef.current) return;
+    if (scenes.length === 0) return;
+    if (isBatchingImages || videoBatch.isBatching) return;
+    const hasAnyImage = scenes.some(s => s.imageUrl || s.isGeneratingImage);
+    if (hasAnyImage) return;
+    autoImageTriggeredRef.current = true;
+    // 약간의 딜레이 후 시작 (UI 렌더링 완료 대기)
+    const timer = setTimeout(() => {
+      logger.trackAction('이미지 자동 일괄 생성 (스토리보드 진입)');
+      handleBatchGenerateImages();
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [scenes, isBatchingImages, videoBatch.isBatching, handleBatchGenerateImages]);
+
   // --- 배치 진행 상태 ---
   const batchCurrent = isBatchingImages ? batchImageProgress.current : videoBatch.batchProgress.current;
   const batchTotal = isBatchingImages ? batchImageProgress.total : videoBatch.batchProgress.total;

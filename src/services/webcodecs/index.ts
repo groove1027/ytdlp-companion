@@ -65,6 +65,20 @@ export function isWebCodecsSupported(): boolean {
  * WebCodecs 지원 시 GPU 인코딩, 미지원 시 FFmpeg WASM 폴백
  */
 export async function composeMp4(options: ComposeMp4Options): Promise<Blob> {
+  // [FIX #44] 렌더링 시작 전 메모리 압력 체크
+  const perfMem = (performance as unknown as { memory?: { usedJSHeapSize: number; jsHeapSizeLimit: number } }).memory;
+  if (perfMem) {
+    const usedMB = Math.round(perfMem.usedJSHeapSize / 1024 / 1024);
+    const limitMB = Math.round(perfMem.jsHeapSizeLimit / 1024 / 1024);
+    const usageRatio = perfMem.usedJSHeapSize / perfMem.jsHeapSizeLimit;
+    console.log(`[WebCodecs] 메모리 상태: ${usedMB}MB / ${limitMB}MB (${Math.round(usageRatio * 100)}%)`);
+    if (usageRatio > 0.90) {
+      console.warn(`[WebCodecs] 메모리 사용량 ${Math.round(usageRatio * 100)}% — OOM 위험, FFmpeg 폴백`);
+      const ffmpeg = await import('../ffmpegService');
+      return ffmpeg.composeMp4(options);
+    }
+  }
+
   // 1. WebCodecs 지원 확인
   if (!isWebCodecsSupported()) {
     console.log('[WebCodecs] 미지원 브라우저 → FFmpeg WASM 폴백');
@@ -342,8 +356,16 @@ async function createVideoExtractor(url: string): Promise<VideoFrameExtractor | 
       duration: video.duration,
       async getFrameAt(timeSec: number): Promise<ImageBitmap> {
         video.currentTime = timeSec;
-        await new Promise<void>((resolve) => {
-          video.onseeked = () => resolve();
+        // [FIX #44] onseeked에 타임아웃 추가 — 무한 대기 방지 (5초)
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(() => {
+            video.onseeked = null;
+            reject(new Error(`Video seek timeout at ${timeSec.toFixed(2)}s`));
+          }, 5000);
+          video.onseeked = () => {
+            clearTimeout(timer);
+            resolve();
+          };
         });
         return createImageBitmap(video);
       },

@@ -8,6 +8,12 @@
 
 ## 🟢 완료된 작업
 
+- [x] #50 이미지/영상 "청크 파싱 실패: Failed to fetch" 에러 수정 — 청크 분할 파싱에 지수 백오프 재시도(2s→6s→18s) 적용, 짧은 대본 파싱에도 네트워크 오류 재시도 추가, 네트워크 오류 vs API 오류 구분 에러 메시지, 사용자에게 구체적 조치 안내 (scriptAnalysis.ts, 2026-03-10)
+- [x] #44 내보내기 70%에서 멈춤 + 텍스트 붙여넣기 불가 수정 — (1) 비디오 프레임 추출(getFrameAt)에 5초 타임아웃, renderAllFrames에 전체 10분 타임아웃+메모리 압력 체크, 오디오 렌더링(startRendering)에 5분 타임아웃, fetchAndDecode에 30초 타임아웃, composeMp4 시작 시 메모리 90% 초과 시 FFmpeg 폴백 (index.ts, canvasRenderer.ts, audioMixer.ts) (2) VisualTimeline 키보드 핸들러에 contentEditable 요소 감지 추가 — 붙여넣기(Cmd+V)/스페이스바 차단 방지 (VisualTimeline.tsx, 2026-03-10)
+- [x] #49 이미지/영상 스타일 선택 후 스토리보드에 이미지 미표시 수정 — StoryboardPanel 진입 시 이미지 없는 장면 자동 일괄 생성 useEffect 추가, autoImageTriggeredRef로 중복 실행 방지, 500ms 딜레이로 UI 렌더 후 시작 (StoryboardPanel.tsx, 2026-03-10)
+- [x] #43 채널분석에서 대본 대신 영상 설명글로 분석하는 문제 수정 — getVideoTranscript에 Invidious/Piped API 자막 다운로드 체인 추가(OAuth 불필요, 쿼터 무소비), 언어 우선순위(한국어>영어>기타) 자막 트랙 선택, VTT→평문 변환, transcriptSource 필드 추가로 출처 추적, 설명 폴백 시 AI 프롬프트에 품질 경고 주입 (youtubeAnalysisService.ts, types.ts, ChannelAnalysisRoom.tsx, 2026-03-10)
+- [x] #45 채널분석 쇼츠 인기순 5개 분석 시 한 영상만 분석한 것 같은 결과 수정 — analyzeChannelStyle 프롬프트에 Multi-Video Analysis Rule 추가, 영상별 메타데이터(태그/길이/설명) 개별 구조화, 영상 목록 요약 섹션 추가, 본문 없는 쇼츠도 제목/태그에서 주제 유추 지시 (youtubeAnalysisService.ts, 2026-03-10)
+- [x] #46 피드백 모달 텍스트 복사 시 모달 닫힘 + 내용 소실 수정 — backdrop onClick→onMouseDown/onMouseUp 분리로 텍스트 선택 시 닫힘 방지, localStorage 임시저장으로 재열기 시 내용 복원, 작성 중 닫기 시 confirm 대화상자 표시 (FeedbackModal.tsx, 2026-03-10)
 - [x] #35 사운드 스튜디오 플레이 버튼 무반응 수정 — handlePlayAll/handleGenerateAll 사일런트 리턴에 showToast 안내 추가, 플레이 버튼 disabled 시 시각적 피드백(회색 배경 + 툴팁), 음성 미선택 시 하단 안내 배너 (TypecastEditor.tsx, VoiceStudio.tsx, 2026-03-10)
 - [x] #33 대본 생성 시 쇼츠(숏폼) 옵션 추가 — ScriptWriterTab STEP 3에 콘텐츠 형식(롱폼/쇼츠) 토글 + 쇼츠 초수(15/30/45/60초) 선택 UI 추가, handleGenerateScript/handleGenerateFromTopic에 쇼츠 프롬프트 반영, targetCharCount 자동 조정 (ScriptWriterTab.tsx, 2026-03-10)
 - [x] #34 채널 분석 주제 추천 결과 탭 전환 시 소실 수정 — topicInput, topicRecommendations를 useState에서 channelAnalysisStore(Zustand)로 이동, 탭 전환해도 추천 결과 유지 (channelAnalysisStore.ts, ChannelAnalysisRoom.tsx, 2026-03-10)

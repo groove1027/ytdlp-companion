@@ -8,6 +8,7 @@ import { showToast } from '../../../stores/uiStore';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
 import { getChannelInfo, getRecentVideosByFormat, getVideoTranscript, analyzeChannelStyle, analyzeChannelStyleDNA, getRelatedKeywords, getTopVideos } from '../../../services/youtubeAnalysisService';
+import type { TranscriptResult } from '../../../services/youtubeAnalysisService';
 import { getYoutubeApiKey } from '../../../services/apiService';
 import { evolinkChat } from '../../../services/evolinkService';
 import { buildInstinctTaxonomy } from '../../../data/instinctPromptUtils';
@@ -505,10 +506,21 @@ const ChannelAnalysisRoom: React.FC = () => {
       syncQuota();
       if (!filtered.length) { setError('해당 형식에 맞는 영상이 없습니다.'); setProgress(null); return; }
       const scripts: ChannelScript[] = [];
+      let captionSuccessCount = 0;
       for (let i = 0; i < filtered.length; i++) {
         setProgress({ step: 3, message: `대본 수집 중 (${i + 1}/${filtered.length})...` });
-        scripts.push({ ...filtered[i], transcript: await getVideoTranscript(filtered[i].videoId) });
+        const result: TranscriptResult = await getVideoTranscript(filtered[i].videoId);
+        scripts.push({ ...filtered[i], transcript: result.text, transcriptSource: result.source });
+        if (result.source === 'caption') captionSuccessCount++;
         syncQuota();
+      }
+      // 자막 확보 현황 로깅
+      const descOnlyCount = scripts.length - captionSuccessCount;
+      if (descOnlyCount > 0) {
+        logger.warn(`[채널분석] 자막 확보: ${captionSuccessCount}/${scripts.length}개 성공, ${descOnlyCount}개는 영상 설명으로 대체`);
+        if (captionSuccessCount === 0) {
+          showToast(`모든 영상에서 자막을 가져오지 못해 영상 설명으로 분석합니다. 분석 정확도가 낮을 수 있습니다.`);
+        }
       }
       setChannelScripts(scripts);
       setProgress({ step: 4, message: 'AI 채널 스타일 DNA 다층 분석 중... (텍스트 + 시각 + 편집 + 오디오 + 댓글)' });

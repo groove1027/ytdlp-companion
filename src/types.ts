@@ -692,6 +692,7 @@ export interface ChannelScript {
   title: string;
   description: string;
   transcript: string;          // 자막/대본 텍스트
+  transcriptSource?: 'caption' | 'description';  // 자막 출처 (caption=실제 자막, description=영상 설명 폴백)
   publishedAt: string;
   viewCount: number;
   duration: string;

@@ -1148,7 +1148,8 @@ const VisualTimeline: React.FC = () => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.code === 'Space' && !e.repeat) {
         const tag = (e.target as HTMLElement)?.tagName;
-        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+        // [FIX #44] contentEditable 요소에서도 스페이스바 입력 허용
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (e.target as HTMLElement)?.isContentEditable) return;
         e.preventDefault();
         handlePlayPause();
       }
@@ -1161,7 +1162,9 @@ const VisualTimeline: React.FC = () => {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      // [FIX #44] contentEditable 요소도 텍스트 입력 영역으로 취급 — 붙여넣기(Cmd+V) 차단 방지
+      const isEditable = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (e.target as HTMLElement)?.isContentEditable;
+      if (isEditable) return;
 
       // C → 블레이드
       if (e.key === 'c' || e.key === 'C') {

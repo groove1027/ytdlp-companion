@@ -146,8 +146,15 @@ export async function mixAudio(
   onProgress?.(70);
 
   // 4. 오프라인 렌더링
+  // [FIX #44] 오프라인 렌더링에 5분 타임아웃 — OOM 시 무한 대기 방지
   if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-  const renderedBuffer = await ctx.startRendering();
+  const OFFLINE_RENDER_TIMEOUT_MS = 300_000;
+  const renderedBuffer = await Promise.race([
+    ctx.startRendering(),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`오디오 렌더링 시간 초과 (${Math.round(OFFLINE_RENDER_TIMEOUT_MS / 1000)}초): 영상이 너무 길거나 메모리가 부족합니다.`)), OFFLINE_RENDER_TIMEOUT_MS)
+    ),
+  ]);
 
   onProgress?.(85);
 
@@ -234,15 +241,22 @@ export async function encodeAudioAAC(
 
 /** URL에서 오디오를 가져와 AudioBuffer로 디코드 */
 async function fetchAndDecode(ctx: OfflineAudioContext, url: string): Promise<AudioBuffer> {
-  let arrayBuffer: ArrayBuffer;
-  if (url.startsWith('blob:')) {
-    const resp = await fetch(url);
-    arrayBuffer = await resp.arrayBuffer();
-  } else {
-    const resp = await fetch(url);
-    arrayBuffer = await resp.arrayBuffer();
+  // [FIX #44] 오디오 fetch에 30초 타임아웃 — 네트워크 지연 시 무한 대기 방지
+  const FETCH_TIMEOUT_MS = 30_000;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const resp = await fetch(url, { signal: controller.signal });
+    const arrayBuffer = await resp.arrayBuffer();
+    clearTimeout(timer);
+    return ctx.decodeAudioData(arrayBuffer);
+  } catch (e) {
+    clearTimeout(timer);
+    if (e instanceof DOMException && e.name === 'AbortError') {
+      throw new Error(`오디오 로드 시간 초과 (30초): ${url.slice(0, 80)}`);
+    }
+    throw e;
   }
-  return ctx.decodeAudioData(arrayBuffer);
 }
 
 /** 마스터링 프리셋 적용 (DynamicsCompressor + EQ) */

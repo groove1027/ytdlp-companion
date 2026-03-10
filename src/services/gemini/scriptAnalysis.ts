@@ -1016,13 +1016,17 @@ export const parseScriptToScenes = async (
             const chunkUserContent = `Script (Part ${ci + 1}/${chunks.length}):\n${chunks[ci]}\n\n[MANDATORY GLOBAL CONTEXT]\n${baseSetting || 'No context provided.'}`;
 
             let chunkScenes: any[] = [];
-            // 최대 3회 재시도 (524 타임아웃 대응)
-            for (let retry = 0; retry < 3; retry++) {
+            // [FIX #50] 최대 3회 재시도 — 네트워크 오류 시 지수 백오프 (2s, 6s, 18s)
+            const MAX_CHUNK_RETRIES = 3;
+            for (let retry = 0; retry < MAX_CHUNK_RETRIES; retry++) {
                 if (retry > 0) {
-                    logger.trackRetry(`스크립트 청크 ${ci + 1} 파싱`, retry + 1, 3, '524 타임아웃 또는 네트워크 오류');
+                    const backoffMs = 2000 * Math.pow(3, retry - 1); // 2s, 6s, 18s
+                    logger.trackRetry(`스크립트 청크 ${ci + 1} 파싱`, retry + 1, MAX_CHUNK_RETRIES, `네트워크/타임아웃 오류 — ${backoffMs / 1000}초 대기 후 재시도`);
+                    console.log(`[parseScriptToScenes] 청크 ${ci + 1} 재시도 대기: ${backoffMs / 1000}초`);
+                    await new Promise(r => setTimeout(r, backoffMs));
                 }
                 try {
-                    console.log(`[parseScriptToScenes] 청크 ${ci + 1}/${chunks.length} (${chunks[ci].length}자) → evolinkChat (시도 ${retry + 1})`);
+                    console.log(`[parseScriptToScenes] 청크 ${ci + 1}/${chunks.length} (${chunks[ci].length}자) → evolinkChat (시도 ${retry + 1}/${MAX_CHUNK_RETRIES})`);
                     // [FIX #32] 긴 대본 청크 처리를 위해 10분 타임아웃 적용
                     const res = await evolinkChat(
                         [
@@ -1050,12 +1054,26 @@ export const parseScriptToScenes = async (
                     }
                 } catch (ce: any) {
                     const msg = ce.message || '';
-                    console.warn(`[parseScriptToScenes] 청크 ${ci + 1} 실패 (시도 ${retry + 1}): ${msg.slice(0, 100)}`);
-                    // [FIX #32] "Failed to fetch", "타임아웃" 패턴도 재시도 대상에 추가
-                    if (msg.includes('524') || msg.includes('timeout') || msg.includes('타임아웃') || msg.includes('네트워크') || msg.includes('Failed to fetch') || msg.includes('Network Error')) {
-                        if (retry < 2) { await new Promise(r => setTimeout(r, 5000)); continue; }
+                    // [FIX #50] 네트워크 오류 vs API 오류 구분
+                    const isNetworkError = msg.includes('Failed to fetch') || msg.includes('Network Error') || msg.includes('fetch') || msg.includes('ERR_NETWORK') || msg.includes('ECONNREFUSED') || msg.includes('net::');
+                    const isTimeoutError = msg.includes('524') || msg.includes('timeout') || msg.includes('타임아웃') || msg.includes('AbortError');
+                    const isRetryable = isNetworkError || isTimeoutError || msg.includes('네트워크');
+
+                    const errorCategory = isNetworkError ? '네트워크 연결 오류' : isTimeoutError ? '서버 응답 시간 초과' : 'API 오류';
+                    console.warn(`[parseScriptToScenes] 청크 ${ci + 1} 실패 (시도 ${retry + 1}/${MAX_CHUNK_RETRIES}, ${errorCategory}): ${msg.slice(0, 150)}`);
+                    logger.warn(`[parseScriptToScenes] 청크 ${ci + 1} ${errorCategory}`, { retry: retry + 1, msg: msg.slice(0, 200) });
+
+                    if (isRetryable && retry < MAX_CHUNK_RETRIES - 1) {
+                        continue; // 지수 백오프는 루프 상단에서 처리
                     }
-                    if (retry === 2) throw new Error(`청크 ${ci + 1} 파싱 실패: ${msg}`);
+                    // 최종 실패 — 사용자에게 구체적 에러 메시지 전달
+                    if (isNetworkError) {
+                        throw new Error(`청크 ${ci + 1} 파싱 실패 (네트워크 오류): 인터넷 연결을 확인해주세요. ${MAX_CHUNK_RETRIES}회 재시도했으나 서버에 접속할 수 없습니다.`);
+                    } else if (isTimeoutError) {
+                        throw new Error(`청크 ${ci + 1} 파싱 실패 (시간 초과): 서버가 응답하지 않습니다. 잠시 후 다시 시도해주세요.`);
+                    } else {
+                        throw new Error(`청크 ${ci + 1} 파싱 실패: ${msg}`);
+                    }
                 }
             }
 
@@ -1075,21 +1093,44 @@ export const parseScriptToScenes = async (
         // === 기존 로직 (짧은 대본) ===
         // [FIX #32] 5분 타임아웃 적용 — 대본 길이에 관계없이 충분한 처리 시간 보장
         const SCRIPT_TIMEOUT_MS = 300_000;
-        try {
-            // 1차: Gemini 3.1 Pro (최고 품질)
-            console.log('[parseScriptToScenes] 🧠 Gemini 3.1 Pro 호출');
-            const data = await requestGeminiProxy('gemini-3.1-pro-preview', payload, 0, SCRIPT_TIMEOUT_MS);
-            scenes = extractAndProcess(data, 'Gemini3.1-Pro');
-        } catch (e: any) {
-            console.warn("Phase 1 (Pro) Failed:", e);
+        // [FIX #50] 네트워크 오류 시 지수 백오프 재시도 (최대 3회)
+        const MAX_SHORT_RETRIES = 3;
+        let lastShortError: Error | null = null;
+        for (let attempt = 0; attempt < MAX_SHORT_RETRIES; attempt++) {
+            if (attempt > 0) {
+                const backoffMs = 2000 * Math.pow(3, attempt - 1);
+                const errMsg = lastShortError?.message || '';
+                const isNetworkError = errMsg.includes('Failed to fetch') || errMsg.includes('Network Error') || errMsg.includes('fetch') || errMsg.includes('ERR_NETWORK');
+                const isTimeoutError = errMsg.includes('524') || errMsg.includes('timeout') || errMsg.includes('타임아웃');
+                if (!isNetworkError && !isTimeoutError && !errMsg.includes('네트워크')) {
+                    break; // API 오류는 재시도하지 않음
+                }
+                logger.trackRetry('스크립트 파싱', attempt + 1, MAX_SHORT_RETRIES, `네트워크/타임아웃 오류 — ${backoffMs / 1000}초 대기`);
+                console.log(`[parseScriptToScenes] 재시도 대기: ${backoffMs / 1000}초 (시도 ${attempt + 1}/${MAX_SHORT_RETRIES})`);
+                await new Promise(r => setTimeout(r, backoffMs));
+            }
             try {
-                // 2차: Gemini 3.1 Pro 재시도 (최종 폴백)
-                console.log('[parseScriptToScenes] 🔄 Gemini 3.1 Pro 최종 폴백');
+                // 1차: Gemini 3.1 Pro (최고 품질)
+                console.log(`[parseScriptToScenes] Gemini 3.1 Pro 호출 (시도 ${attempt + 1}/${MAX_SHORT_RETRIES})`);
                 const data = await requestGeminiProxy('gemini-3.1-pro-preview', payload, 0, SCRIPT_TIMEOUT_MS);
-                scenes = extractAndProcess(data, 'Gemini3.1-Pro-Retry');
-            } catch (proxyError: any) {
-                console.error("All models failed:", proxyError);
-                throw new Error(`대본 분석 실패 (모든 엔진): ${e.message}`);
+                scenes = extractAndProcess(data, 'Gemini3.1-Pro');
+                lastShortError = null;
+                break; // 성공
+            } catch (e: any) {
+                console.warn(`Phase 1 (Pro) Failed (attempt ${attempt + 1}):`, e.message?.slice(0, 100));
+                lastShortError = e;
+            }
+        }
+        if (lastShortError) {
+            const msg = lastShortError.message || '';
+            const isNetworkError = msg.includes('Failed to fetch') || msg.includes('Network Error') || msg.includes('fetch');
+            const isTimeoutError = msg.includes('524') || msg.includes('timeout') || msg.includes('타임아웃');
+            if (isNetworkError) {
+                throw new Error(`대본 분석 실패 (네트워크 오류): 인터넷 연결을 확인해주세요. ${MAX_SHORT_RETRIES}회 재시도했으나 서버에 접속할 수 없습니다.`);
+            } else if (isTimeoutError) {
+                throw new Error(`대본 분석 실패 (시간 초과): 서버가 응답하지 않습니다. 잠시 후 다시 시도해주세요.`);
+            } else {
+                throw new Error(`대본 분석 실패 (모든 엔진): ${msg}`);
             }
         }
     }

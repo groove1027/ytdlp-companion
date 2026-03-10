@@ -167,7 +167,26 @@ JSON 배열 형식 (정확히 5개):
     const jsonMatch = text.match(/\[[\s\S]*\]/);
     if (!jsonMatch) throw new Error('JSON 배열을 찾을 수 없습니다.');
 
-    const parsed: unknown = JSON.parse(jsonMatch[0]);
+    // AI 응답 JSON에 control character(줄바꿈, 탭 등)가 포함되어
+    // "Bad control character in string literal" 에러가 발생하는 문제 수정 (#47/#48)
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(jsonMatch[0]);
+    } catch {
+      // JSON 문자열 값 내부의 제어 문자를 이스케이프/제거하여 재시도
+      const sanitized = jsonMatch[0].replace(
+        /"(?:[^"\\]|\\.)*"/g,
+        (match) => match.replace(/[\x00-\x1F\x7F]/g, (ch) => {
+          // 흔한 제어 문자는 이스케이프 시퀀스로 변환
+          const escapes: Record<string, string> = {
+            '\n': '\\n', '\r': '\\r', '\t': '\\t',
+          };
+          return escapes[ch] || ' ';
+        })
+      );
+      parsed = JSON.parse(sanitized);
+      logger.info('[소재추천] control character 제거 후 JSON 파싱 성공');
+    }
     const arr: unknown[] = Array.isArray(parsed) ? parsed : [];
 
     const topics: TopicRecommendation[] = arr.slice(0, 5).map((item: unknown, i: number) => {

@@ -68,10 +68,29 @@ export async function renderAllFrames(
   const auxCanvas = new OffscreenCanvas(width, height);
   const auxCtx = auxCanvas.getContext('2d')!;
 
+  // [FIX #44] 프레임별 타임아웃 — 단일 프레임이 30초 이상 걸리면 중단
+  const PER_FRAME_TIMEOUT_MS = 30_000;
+  // [FIX #44] 전체 렌더링 타임아웃 — 10분 초과 시 중단 (OOM 예방)
+  const TOTAL_RENDER_TIMEOUT_MS = 600_000;
+  const renderStartTime = performance.now();
+
   for (let f = 0; f < totalFrames; f++) {
     // AbortSignal 체크 (매 30프레임마다 = ~1초)
     if (f % fps === 0 && signal?.aborted) {
       throw new DOMException('Aborted', 'AbortError');
+    }
+
+    // [FIX #44] 전체 렌더링 시간 초과 체크 (매 초)
+    if (f % fps === 0) {
+      const elapsed = performance.now() - renderStartTime;
+      if (elapsed > TOTAL_RENDER_TIMEOUT_MS) {
+        throw new Error(`비디오 렌더링 시간 초과: ${Math.round(elapsed / 1000)}초 경과 (프레임 ${f}/${totalFrames}). 장면 수를 줄이거나 해상도를 낮춰주세요.`);
+      }
+      // [FIX #44] 메모리 압력 체크 (performance.memory API, Chrome만)
+      const perfMem = (performance as unknown as { memory?: { usedJSHeapSize: number; jsHeapSizeLimit: number } }).memory;
+      if (perfMem && perfMem.usedJSHeapSize > perfMem.jsHeapSizeLimit * 0.92) {
+        throw new Error(`메모리 부족: 힙 사용량 ${Math.round(perfMem.usedJSHeapSize / 1024 / 1024)}MB / ${Math.round(perfMem.jsHeapSizeLimit / 1024 / 1024)}MB. 장면 수를 줄이거나 불필요한 탭을 닫아주세요.`);
+      }
     }
 
     const timeSec = f / fps;
@@ -344,8 +363,14 @@ async function renderSceneFrame(
     if (filters.length > 0) ctx.filter = 'none';
   } else if (videoExtractor) {
     // 비디오 장면: 현재 시간의 프레임을 추출하여 그리기
+    // [FIX #44] 프레임 추출에 10초 타임아웃 — 단일 프레임 무한 대기 방지
     try {
-      const frameBitmap = await videoExtractor.getFrameAt(localTime);
+      const frameBitmap = await Promise.race([
+        videoExtractor.getFrameAt(localTime),
+        new Promise<null>((_, reject) =>
+          setTimeout(() => reject(new Error(`Frame extraction timeout at ${localTime.toFixed(2)}s`)), 10_000)
+        ),
+      ]);
       if (frameBitmap) {
         const scale = Math.max(canvasW / frameBitmap.width, canvasH / frameBitmap.height);
         const dw = frameBitmap.width * scale;
@@ -357,6 +382,7 @@ async function renderSceneFrame(
         ctx.fillRect(0, 0, canvasW, canvasH);
       }
     } catch {
+      // 프레임 추출 실패 시 검은 화면으로 대체 (렌더링 중단하지 않음)
       ctx.fillStyle = '#000';
       ctx.fillRect(0, 0, canvasW, canvasH);
     }
