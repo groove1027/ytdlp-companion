@@ -34,23 +34,23 @@ export const autoRestoreOrCreateProject = async (): Promise<boolean> => {
   try {
     const { getProject, getMostRecentProjectId } = await import('../services/storageService');
 
-    // 1) localStorage의 마지막 프로젝트 복원 시도
+    // 1) localStorage의 마지막 프로젝트 복원 시도 (자동 복원 → 비용 리셋)
     const lastId = localStorage.getItem('last-project-id');
     if (lastId) {
       const project = await getProject(lastId);
       if (project) {
-        useProjectStore.getState().loadProject(project);
+        useProjectStore.getState().loadProject(project, { skipCostRestore: true });
         return true;
       }
       localStorage.removeItem('last-project-id');
     }
 
-    // 2) IndexedDB에서 가장 최근 프로젝트 복원
+    // 2) IndexedDB에서 가장 최근 프로젝트 복원 (자동 복원 → 비용 리셋)
     const recentId = await getMostRecentProjectId();
     if (recentId) {
       const project = await getProject(recentId);
       if (project) {
-        useProjectStore.getState().loadProject(project);
+        useProjectStore.getState().loadProject(project, { skipCostRestore: true });
         return true;
       }
     }
@@ -102,7 +102,7 @@ interface ProjectStore {
   removeScene: (index: number) => void;
 
   // Project lifecycle
-  loadProject: (project: ProjectData) => void;
+  loadProject: (project: ProjectData, options?: { skipCostRestore?: boolean }) => void;
   newProject: (title?: string) => void;
 
   // [v4.5] 스마트 프로젝트
@@ -277,7 +277,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     return { scenes: newScenes };
   }),
 
-  loadProject: (project) => {
+  loadProject: (project, options) => {
     const scenes = project.scenes || [];
     const sanitizedScenes = project.config?.allowInfographics === true
       ? scenes
@@ -309,7 +309,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     });
     // [FIX] localStorage에 마지막 프로젝트 ID 저장 → 새 탭/새로고침 시 복원용
     try { if (project.id) localStorage.setItem('last-project-id', project.id); } catch { /* 무시 */ }
-    if (project.costStats) {
+    // 새로고침 자동 복원 시에는 비용 리셋, 수동 프로젝트 불러오기 시에만 비용 복원
+    if (options?.skipCostRestore) {
+      useCostStore.getState().resetCosts();
+    } else if (project.costStats) {
       useCostStore.getState().setCostStats(project.costStats);
     } else {
       useCostStore.getState().resetCosts();
