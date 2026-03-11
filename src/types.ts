@@ -1453,6 +1453,7 @@ export interface VideoSceneRow {
   sceneDesc: string;
   mode: string;
   audioContent: string;
+  audioContentOriginal?: string; // 원어 오디오 (해외 영상 분석 시)
   duration: string;
   videoDirection: string;
   timecodeSource: string;
@@ -1477,6 +1478,7 @@ export interface VideoVersionItem {
   scenes: VideoSceneRow[];
   rearrangement?: string;
   contentId?: VideoContentIdAnalysis;
+  detectedLang?: string; // 감지된 원본 언어 코드 (en, ja, zh 등)
 }
 
 /** 타임스탬프 포함 프레임 (비주얼 타임코드 매칭용) */
