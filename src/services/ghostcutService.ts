@@ -138,6 +138,7 @@ interface GhostCutResponse {
 
 interface PollResult {
   status: 'processing' | 'done' | 'failed' | 'error';
+  progress?: number;
   videoUrl?: string;
   errorDetail?: string;
   message?: string;
@@ -218,7 +219,14 @@ const submitTask = async (videoUrl: string): Promise<{ projectId: number; taskId
   };
 };
 
-/** 작업 결과 폴링 (KV 경유, 최대 30분, 8초 간격, 네트워크 오류 자동 재시도) */
+/** 경과 시간을 "X분 Y초" 형태로 포맷 */
+const formatElapsed = (sec: number): string => {
+  const m = Math.floor(sec / 60);
+  const s = Math.round(sec % 60);
+  return m > 0 ? `${m}분 ${s}초` : `${s}초`;
+};
+
+/** 작업 결과 폴링 (D1 경유, 최대 30분, 8초 간격, 네트워크 오류 자동 재시도) */
 const pollResult = async (
   projectId: number,
   onProgress?: (message: string, elapsedSec: number) => void,
@@ -262,7 +270,7 @@ const pollResult = async (
 
         logger.trackRetry('GhostCut 폴링 (서버 오류)', i + 1, MAX_POLLS, `HTTP ${response.status}: ${serverMsg}`);
         const elapsed = (i + 1) * (POLL_INTERVAL / 1000);
-        onProgress?.(`서버 오류 (${response.status}), 재시도 중...`, elapsed);
+        onProgress?.(`서버 오류 (${response.status}), 자동 재시도 중...`, elapsed);
         await new Promise(r => setTimeout(r, POLL_INTERVAL));
         continue;
       }
@@ -305,22 +313,62 @@ const pollResult = async (
       throw new Error(data.message || 'GhostCut 서버 오류');
     }
 
-    // 아직 처리 중 — 경과 시간 기반 메시지
+    // ── 처리 중 — 경과 시간 기반 단계별 상세 메시지 ──
     const elapsed = (i + 1) * (POLL_INTERVAL / 1000);
-    if (elapsed < 30) {
-      onProgress?.('GhostCut 대기열 진입 중...', elapsed);
-    } else if (elapsed < 120) {
-      onProgress?.('AI 자막 감지 & 제거 중...', elapsed);
+    const elapsedStr = formatElapsed(elapsed);
+
+    // 서버가 progress %를 반환하면 우선 사용
+    if (data.progress && data.progress > 0) {
+      onProgress?.(
+        `AI 자막 제거 진행 중... ${data.progress}% (${elapsedStr} 경과)`,
+        elapsed,
+      );
+    } else if (elapsed < 20) {
+      // Phase 1: 작업 대기열 진입 (0~20초)
+      onProgress?.(
+        `GhostCut 서버 대기열 진입 중... (${elapsedStr} 경과)`,
+        elapsed,
+      );
+    } else if (elapsed < 60) {
+      // Phase 2: AI 감지 시작 (20초~1분)
+      onProgress?.(
+        `AI가 영상을 분석하고 자막 위치를 감지하고 있습니다... (${elapsedStr} 경과)`,
+        elapsed,
+      );
+    } else if (elapsed < 180) {
+      // Phase 3: 자막 제거 중 (1~3분)
+      onProgress?.(
+        `자막 영역을 AI로 제거하고 배경을 복원 중입니다... (${elapsedStr} 경과) — 정상적으로 처리 중이니 잠시만 기다려주세요`,
+        elapsed,
+      );
+    } else if (elapsed < 420) {
+      // Phase 4: 장시간 처리 (3~7분)
+      onProgress?.(
+        `AI 처리가 계속 진행 중입니다 (${elapsedStr} 경과) — 영상 길이에 따라 5~15분 소요될 수 있습니다`,
+        elapsed,
+      );
+    } else if (elapsed < 900) {
+      // Phase 5: 긴 영상 처리 (7~15분)
+      onProgress?.(
+        `고해상도 영상 처리 중... (${elapsedStr} 경과) — 거의 완료되어 가고 있습니다. 브라우저를 닫지 마세요`,
+        elapsed,
+      );
     } else {
-      const min = Math.floor(elapsed / 60);
-      const sec = Math.round(elapsed % 60);
-      onProgress?.(`AI 처리 중... (${min}분 ${sec}초 경과)`, elapsed);
+      // Phase 6: 매우 긴 처리 (15분+)
+      onProgress?.(
+        `처리에 시간이 오래 걸리고 있습니다 (${elapsedStr} 경과) — 최대 30분까지 대기합니다. 연결은 유지 중입니다`,
+        elapsed,
+      );
     }
 
     await new Promise((r) => setTimeout(r, POLL_INTERVAL));
   }
 
-  throw new Error('GhostCut 처리 시간 초과 (30분). 영상이 너무 길거나 서버에 문제가 있을 수 있습니다.');
+  throw new Error(
+    'GhostCut 처리 시간 초과 (30분).\n' +
+    '영상이 너무 길거나 GhostCut 서버가 혼잡할 수 있습니다.\n' +
+    '잠시 후 다시 시도해주세요. 5분 이하의 짧은 영상으로 먼저 테스트하는 것을 추천합니다.'
+  );
 };
 
 /** 결과 영상 다운로드 (최대 3회 재시도) */

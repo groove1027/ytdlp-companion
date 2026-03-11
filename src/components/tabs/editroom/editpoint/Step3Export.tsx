@@ -177,6 +177,13 @@ const Step3Export: React.FC = () => {
             <p className="text-[11px] text-gray-500 mt-0.5">
               소스 영상의 자막/워터마크를 GhostCut AI로 자동 제거한 뒤 내보냅니다.
             </p>
+            <p className="text-[10px] text-amber-400/70 mt-0.5">
+              영상 1개당 5~15분 소요 — {totalMapped}개 소스 기준 총 {
+                totalMapped <= 1 ? '약 5~15분' :
+                totalMapped <= 3 ? `약 ${totalMapped * 5}~${totalMapped * 15}분` :
+                `약 ${totalMapped * 5}분 이상`
+              } 예상
+            </p>
           </div>
         </button>
 

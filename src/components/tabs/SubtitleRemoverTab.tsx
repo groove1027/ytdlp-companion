@@ -101,7 +101,8 @@ const SubtitleRemoverTab: React.FC = () => {
             setPercent(90);
           } else if (elapsedSec != null) {
             // 경과 시간 기반 진행률 (30~85% 범위, 최대 예상시간 기반)
-            const estimatedTotal = Math.max(videoDuration * 7, 60); // 영상 1초당 약 7초 처리
+            // GhostCut은 영상 1초당 약 10~15초 처리 소요 (실측 기반)
+            const estimatedTotal = Math.max(videoDuration * 12, 120);
             const ratio = Math.min(elapsedSec / estimatedTotal, 1);
             setPercent(Math.round(30 + ratio * 55)); // 30% ~ 85%
           }
@@ -255,16 +256,33 @@ const SubtitleRemoverTab: React.FC = () => {
               <div className="mt-3 p-2.5 rounded-lg bg-amber-900/20 border border-amber-500/30">
                 <p className="text-xs text-amber-300">
                   파일 크기가 {(videoFile.size / 1024 / 1024).toFixed(0)}MB입니다.
-                  업로드와 처리에 시간이 오래 걸릴 수 있습니다.
+                  업로드와 처리에 시간이 상당히 오래 걸릴 수 있습니다 (최대 20~30분).
                 </p>
               </div>
             )}
 
-            {/* 예상 소요시간 */}
+            {/* 예상 소요시간 + 주의사항 안내 */}
             {videoFile && videoDuration > 0 && (
-              <div className="mt-2 text-xs text-gray-500">
-                예상 소요시간: 약 {videoDuration < 30 ? '1~2분' : videoDuration < 120 ? '2~5분' : videoDuration < 300 ? '5~10분' : '10~20분'}
-                {videoDuration > 300 && <span className="text-amber-400 ml-1">(긴 영상은 시간이 더 소요될 수 있습니다)</span>}
+              <div className="mt-3 p-3 rounded-lg bg-blue-900/15 border border-blue-500/20">
+                <div className="flex items-start gap-2">
+                  <span className="text-blue-400 text-sm mt-0.5">&#9432;</span>
+                  <div className="space-y-1">
+                    <p className="text-xs text-blue-300 font-medium">
+                      예상 소요시간: 약 {
+                        videoDuration < 15 ? '2~5분'
+                        : videoDuration < 60 ? '3~8분'
+                        : videoDuration < 180 ? '5~12분'
+                        : videoDuration < 600 ? '10~20분'
+                        : '15~30분'
+                      }
+                    </p>
+                    <p className="text-[11px] text-blue-400/70 leading-relaxed">
+                      자막 제거는 AI 서버에서 프레임 단위로 처리하므로 시간이 오래 걸립니다.
+                      {videoDuration >= 60 && ' 긴 영상일수록 더 오래 소요됩니다.'}
+                      {' '}처리 중 브라우저를 닫지 마세요.
+                    </p>
+                  </div>
+                </div>
               </div>
             )}
 
@@ -305,10 +323,13 @@ const SubtitleRemoverTab: React.FC = () => {
               <li className="flex gap-2"><span className="text-cyan-400">3.</span> AI가 텍스트를 제거하고 배경을 자연스럽게 복원합니다</li>
               <li className="flex gap-2"><span className="text-cyan-400">4.</span> 완성된 영상을 미리보기하고 다운로드합니다</li>
             </ul>
-            <div className="mt-3 pt-3 border-t border-gray-700/50 text-xs text-gray-600">
+            <div className="mt-3 pt-3 border-t border-gray-700/50 text-xs text-gray-600 space-y-1">
               <p>엔진: GhostCut AI (OCR 기반 텍스트 감지 + 인페인팅)</p>
               <p>비용: 약 $0.01/초 (최소 $0.05)</p>
-              <p>처리 시간: 영상 길이에 따라 1~15분</p>
+              <p>처리 시간: 영상 길이에 따라 <span className="text-amber-400/80 font-medium">최소 3분 ~ 최대 30분</span></p>
+              <p className="text-gray-600/80">
+                AI가 프레임마다 자막을 탐지하고 제거하는 고품질 처리이므로 시간이 오래 걸리는 것이 정상입니다.
+              </p>
             </div>
           </div>
         </div>
@@ -366,10 +387,10 @@ const SubtitleRemoverTab: React.FC = () => {
               {(phase === 'uploading' || phase === 'processing') && (
                 <div className="mt-4 space-y-2">
                   {[
-                    { label: 'Cloudinary 업로드', threshold: 20 },
-                    { label: 'GhostCut 작업 제출', threshold: 32 },
-                    { label: 'AI 자막 감지 & 제거 (1~10분 소요)', threshold: 85 },
-                    { label: '결과 영상 다운로드', threshold: 95 },
+                    { label: '영상 업로드 (Cloudinary)', threshold: 20 },
+                    { label: 'GhostCut AI 서버에 작업 요청', threshold: 32 },
+                    { label: 'AI 자막 감지 및 배경 복원 (5~15분 소요 — 정상)', threshold: 85 },
+                    { label: '처리 완료된 영상 다운로드', threshold: 95 },
                   ].map((step, i, arr) => {
                     const done = percent >= step.threshold;
                     const active = !done && (i === 0 || percent >= arr[i - 1].threshold);
@@ -389,6 +410,17 @@ const SubtitleRemoverTab: React.FC = () => {
                       </div>
                     );
                   })}
+                </div>
+              )}
+
+              {/* 처리 중 안내 메시지 */}
+              {phase === 'processing' && percent < 85 && (
+                <div className="mt-3 p-2.5 rounded-lg bg-cyan-900/10 border border-cyan-500/15">
+                  <p className="text-[11px] text-cyan-400/80 leading-relaxed">
+                    AI가 영상의 모든 프레임을 분석하고 자막을 제거합니다.
+                    이 과정은 서버에서 처리되며 영상 길이에 따라 5~15분 이상 소요됩니다.
+                    페이지를 닫거나 새로고침하지 마세요.
+                  </p>
                 </div>
               )}
             </div>
