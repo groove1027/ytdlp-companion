@@ -8,6 +8,7 @@
 
 ## 🟢 완료된 작업
 
+- [x] GhostCut 자막 제거 UI/UX 대폭 개선 — 폴링 메시지 6단계 세분화 (대기열→감지→제거→장시간→고해상도→초장시간), D1 progress 필드 활용, 예상 소요시간 영상길이별 정확 표시, 처리 중 안내 박스, 배치 처리 소요시간 경고, 진행률 계산 실측 반영 (ghostcutService.ts, SubtitleRemoverTab.tsx, Step3Export.tsx, editPointStore.ts, 2026-03-11)
 - [x] 디버그 로그 시스템 최대 고도화 — 15개 진단 카테고리 추가 (생성 파라미터/결과, 설정 변경 감사, 미디어 치수 검증, API 워터폴, Console 캡처, Long Task, 메모리 타임라인, 네트워크 타임라인, 리소스 실패, Feature Detection, React Error Boundary, 프로젝트 설정 스냅샷, 스토어 상태 요약) (LoggerService.ts, ErrorBoundary.tsx, apiService.ts, imageGeneration.ts, useVideoBatch.ts, projectStore.ts, imageVideoStore.ts, StoryboardPanel.tsx, FeedbackModal.tsx, index.tsx, 2026-03-11)
 - [x] #83 이미지/영상 스토리보드 대본 변경 시 기존 장면 미초기화 수정 — 대본 변경 감지 로직 추가, enrichMode를 대본 불일치 시 비활성화하여 새 장면으로 전면 교체, autoImageTriggeredRef 리셋으로 새 장면 자동 이미지 생성 보장 (SetupPanel.tsx, StoryboardPanel.tsx, 2026-03-11)
 - [x] #84 채널 스타일 지침서 수동 수정 기능 추가 — 대본작성 탭의 채널 스타일 표시를 편집 가능한 textarea로 변경, 말투/구조/도입패턴/마무리 필드를 사용자가 직접 수정 가능 (ScriptWriterTab.tsx, 2026-03-11)

@@ -1738,15 +1738,16 @@ const VideoAnalysisRoom: React.FC = () => {
   // ── Zustand 스토어 (탭 전환 시 영속) ──
   const store = useVideoAnalysisStore();
   const {
-    inputMode, youtubeUrl, selectedPreset, rawResult, versions, thumbnails, error, expandedId,
-    setInputMode, setYoutubeUrl, setSelectedPreset, setRawResult, setVersions, setThumbnails,
+    inputMode, youtubeUrl, youtubeUrls, selectedPreset, rawResult, versions, thumbnails, error, expandedId,
+    setInputMode, setYoutubeUrl, updateYoutubeUrl, addYoutubeUrl, removeYoutubeUrl,
+    setSelectedPreset, setRawResult, setVersions, setThumbnails,
     setError, setExpandedId, cacheCurrentResult, restoreFromCache, resetResults,
     clearPresetCache,
     savedSlots, activeSlotId, loadSlot, removeSlot, newAnalysis, loadAllSlots, saveSlot,
   } = store;
 
   // 로컬 전용 (일시적 UI 상태 — 영속 불필요)
-  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisPhase, setAnalysisPhase] = useState<'idle' | 'analyzing'>('idle');
   const [copiedVersion, setCopiedVersion] = useState<number | null>(null);
@@ -1761,7 +1762,8 @@ const VideoAnalysisRoom: React.FC = () => {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragOver, setIsDragOver] = useState(false);
-  const hasInput = inputMode === 'youtube' ? youtubeUrl.trim().length > 0 : uploadedFile !== null;
+  const validYoutubeUrls = youtubeUrls.filter(u => u.trim().length > 0);
+  const hasInput = inputMode === 'youtube' ? validYoutubeUrls.length > 0 : uploadedFiles.length > 0;
 
   // 슬롯 목록 초기 로드
   React.useEffect(() => { loadAllSlots(); }, []);
@@ -1771,17 +1773,26 @@ const VideoAnalysisRoom: React.FC = () => {
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setIsDragOver(false);
-    const file = e.dataTransfer.files?.[0];
-    if (file && file.type.startsWith('video/')) {
-      setUploadedFile(file); setRawResult(''); setError(null); setVersions([]); setThumbnails([]);
+    const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('video/')).slice(0, 5);
+    if (files.length > 0) {
+      setUploadedFiles(prev => [...prev, ...files].slice(0, 5));
+      setRawResult(''); setError(null); setVersions([]); setThumbnails([]);
       if (inputMode !== 'upload') setInputMode('upload');
     }
   }, [inputMode, setInputMode, setRawResult, setError, setVersions, setThumbnails]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) { setUploadedFile(file); setRawResult(''); setError(null); setVersions([]); setThumbnails([]); }
+    const files = Array.from(e.target.files || []).filter(f => f.type.startsWith('video/')).slice(0, 5);
+    if (files.length > 0) {
+      setUploadedFiles(prev => [...prev, ...files].slice(0, 5));
+      setRawResult(''); setError(null); setVersions([]); setThumbnails([]);
+    }
   };
+
+  const handleRemoveFile = useCallback((index: number) => {
+    setUploadedFiles(prev => prev.filter((_, i) => i !== index));
+    resetResults();
+  }, [resetResults]);
 
   // ── 인기 쇼츠 음원 추천 (Google Search 그라운딩) ──
   const handleFetchTrendingBgm = useCallback(async () => {
@@ -1861,63 +1872,98 @@ const VideoAnalysisRoom: React.FC = () => {
 
     try {
       // 1단계: 영상 소스 준비 + UI 썸네일 + 메타데이터
-      let videoUri = ''; // Gemini v1beta fileData용 URL
+      let videoUri = ''; // Gemini v1beta fileData용 URL (첫 번째 영상)
       let videoMime = 'video/mp4';
       let frames: TimedFrame[] = [];
       let inputDesc = '';
+      const isMultiSource = (inputMode === 'youtube' && validYoutubeUrls.length > 1) || (inputMode === 'upload' && uploadedFiles.length > 1);
 
-      if (uploadedFile) {
-        videoMime = uploadedFile.type || 'video/mp4';
-        // UI 표시용 프레임 추출 (비주얼 컬럼)
-        frames = await extractVideoFrames(uploadedFile);
-        inputDesc = `업로드된 영상 파일: ${uploadedFile.name} (${((uploadedFile.size || 0) / 1024 / 1024).toFixed(1)}MB)`;
-        // ★ 업로드 영상은 프레임 기반 멀티모달 분석으로 진행
-        // (Gemini v1beta fileData.fileUri는 YouTube URL만 지원, 외부 URL 접근 불가)
+      if (uploadedFiles.length > 0) {
+        // 업로드 모드: 모든 파일의 프레임 추출 + 메타데이터 수집
+        videoMime = uploadedFiles[0].type || 'video/mp4';
+        const allFrames: TimedFrame[] = [];
+        const fileDescs: string[] = [];
+
+        for (let fi = 0; fi < uploadedFiles.length; fi++) {
+          const f = uploadedFiles[fi];
+          const fFrames = await extractVideoFrames(f);
+          // 다중 영상 프레임은 소스 구분을 위해 timeSec에 오프셋 없이 수집
+          allFrames.push(...fFrames);
+          fileDescs.push(`[소스 ${fi + 1}] ${f.name} (${((f.size || 0) / 1024 / 1024).toFixed(1)}MB)`);
+        }
+        frames = allFrames;
+
+        if (isMultiSource) {
+          inputDesc = `## 다중 영상 짜집기 분석 (${uploadedFiles.length}개 소스)\n\n` + fileDescs.join('\n');
+        } else {
+          inputDesc = `업로드된 영상 파일: ${uploadedFiles[0].name} (${((uploadedFiles[0].size || 0) / 1024 / 1024).toFixed(1)}MB)`;
+        }
         videoUri = '';
       } else {
-        const vid = extractYouTubeVideoId(youtubeUrl);
-        if (vid) {
-          // YouTube URL → Gemini에 직접 전달 (Google 서비스 간 내부 접근)
-          videoUri = youtubeUrl.trim();
+        // YouTube 모드: 모든 URL의 메타데이터 수집
+        const urls = validYoutubeUrls;
+        const primaryVid = extractYouTubeVideoId(urls[0]);
 
-          // YouTube Data API로 메타데이터 + 댓글 가져오기 (보조 컨텍스트)
-          const [meta, comments] = await Promise.all([
-            fetchYouTubeVideoMeta(vid),
-            fetchYouTubeComments(vid),
-          ]);
+        if (primaryVid) {
+          // 첫 번째 영상은 Gemini v1beta용
+          videoUri = urls[0].trim();
+        }
 
-          // UI 표시용 플레이스홀더 썸네일 (분석 중 표시용, 분석 후 정확한 프레임으로 교체됨)
+        // 모든 영상의 메타데이터 병렬 수집
+        const metaResults = await Promise.allSettled(
+          urls.map(async (url) => {
+            const vid = extractYouTubeVideoId(url);
+            if (!vid) return null;
+            const [meta, comments] = await Promise.all([
+              fetchYouTubeVideoMeta(vid),
+              fetchYouTubeComments(vid),
+            ]);
+            return { vid, url, meta, comments };
+          })
+        );
+
+        const allFrames: TimedFrame[] = [];
+        const descs: string[] = [];
+
+        for (let vi = 0; vi < metaResults.length; vi++) {
+          const r = metaResults[vi];
+          if (r.status !== 'fulfilled' || !r.value) continue;
+          const { vid, url, meta, comments } = r.value;
+          const sourceLabel = urls.length > 1 ? `[소스 ${vi + 1}] ` : '';
+
           const durationSec = meta ? parseIsoDuration(meta.duration) : 60;
           const base = `https://img.youtube.com/vi/${vid}`;
-          frames = [
+          allFrames.push(
             { url: `${base}/hqdefault.jpg`, hdUrl: `${base}/maxresdefault.jpg`, timeSec: 0 },
             { url: `${base}/1.jpg`, hdUrl: `${base}/hqdefault.jpg`, timeSec: Math.round(durationSec * 0.25) },
             { url: `${base}/2.jpg`, hdUrl: `${base}/hqdefault.jpg`, timeSec: Math.round(durationSec * 0.5) },
             { url: `${base}/3.jpg`, hdUrl: `${base}/hqdefault.jpg`, timeSec: Math.round(durationSec * 0.75) },
-          ];
+          );
 
           if (meta) {
-            inputDesc = `## YouTube 영상 정보
+            descs.push(`${sourceLabel}## YouTube 영상 정보
 - **제목**: ${meta.title}
 - **채널**: ${meta.channelTitle}
 - **조회수**: ${meta.viewCount.toLocaleString()}회
 - **좋아요**: ${meta.likeCount.toLocaleString()}개
 - **영상 길이**: ${meta.duration} (${durationSec}초)
 - **태그**: ${meta.tags.slice(0, 30).join(', ') || '없음'}
-- **URL**: ${youtubeUrl.trim()}
+- **URL**: ${url.trim()}
 
 ### 영상 설명(Description)
-${meta.description.slice(0, 2000)}${meta.description.length > 2000 ? '\n...(이하 생략)' : ''}`;
-
-            if (comments.length > 0) {
-              inputDesc += `\n\n### 상위 댓글 ${comments.length}개 (영상 내용 맥락 파악용)
-${comments.slice(0, 15).map((c, i) => `${i + 1}. ${c.slice(0, 150)}`).join('\n')}`;
-            }
+${meta.description.slice(0, 1500)}${meta.description.length > 1500 ? '\n...(이하 생략)' : ''}` +
+              (comments.length > 0 ? `\n\n### 상위 댓글 ${Math.min(comments.length, 10)}개\n${comments.slice(0, 10).map((c, i) => `${i + 1}. ${c.slice(0, 150)}`).join('\n')}` : ''));
           } else {
-            inputDesc = `YouTube 영상 URL: ${youtubeUrl.trim()}`;
+            descs.push(`${sourceLabel}YouTube 영상 URL: ${url.trim()}`);
           }
+        }
+
+        frames = allFrames;
+
+        if (isMultiSource) {
+          inputDesc = `## 다중 영상 짜집기 분석 (${urls.length}개 소스)\n아래 ${urls.length}개 영상의 핵심 장면을 조합하여 하나의 새로운 영상을 만들어야 합니다.\n각 소스의 가장 매력적인 구간을 골라 짜집기(재편집) 편집표를 작성해주세요.\n\n` + descs.join('\n\n---\n\n');
         } else {
-          inputDesc = `YouTube 영상 URL: ${youtubeUrl.trim()}`;
+          inputDesc = descs[0] || `YouTube 영상 URL: ${urls[0]?.trim() || ''}`;
         }
       }
       setThumbnails(frames);
@@ -1948,7 +1994,7 @@ ${comments.slice(0, 15).map((c, i) => `${i + 1}. ${c.slice(0, 150)}`).join('\n')
             text = await evolinkChatStream(messages, () => {}, { temperature: 0.5, maxTokens: maxTokens });
           }
         }
-      } else if (uploadedFile && frames.length > 0) {
+      } else if (uploadedFiles.length > 0 && frames.length > 0) {
         // ★ 업로드 영상 + File API 미지원 → 프레임 기반 멀티모달 분석
         showToast('프레임 기반 분석 모드로 진행합니다. 잠시만 기다려주세요...', 4000);
         text = await analyzeWithFrames(frames, userPrompt, scriptSystem, maxTokens);
@@ -1974,8 +2020,8 @@ ${comments.slice(0, 15).map((c, i) => `${i + 1}. ${c.slice(0, 150)}`).join('\n')
         let ytVid: string | null = null;
         let durSec = 300; // 기본 5분 추정
 
-        if (uploadedFile) {
-          videoSource = uploadedFile;
+        if (uploadedFiles.length > 0) {
+          videoSource = uploadedFiles[0];
         } else {
           ytVid = extractYouTubeVideoId(youtubeUrl);
           if (ytVid) {
@@ -2050,20 +2096,20 @@ ${comments.slice(0, 15).map((c, i) => `${i + 1}. ${c.slice(0, 150)}`).join('\n')
   // HTML 다운로드 (개별 버전)
   const handleDownloadVersionHtml = useCallback((v: VersionItem) => {
     if (!selectedPreset) return;
-    const sourceInfo = inputMode === 'youtube' ? `YouTube: ${youtubeUrl}` : `파일: ${uploadedFile?.name || ''}`;
+    const sourceInfo = inputMode === 'youtube' ? `YouTube: ${youtubeUrl}` : `파일: ${uploadedFiles[0]?.name || ''}`;
     const html = generateAnalysisHtml([v], selectedPreset, thumbnails, sourceInfo);
     const safeName = v.title.replace(/[^\w가-힣\s-]/g, '').trim().slice(0, 40);
     downloadFile(html, `${safeName || `version-${v.id}`}.html`, 'text/html');
-  }, [selectedPreset, thumbnails, inputMode, youtubeUrl, uploadedFile]);
+  }, [selectedPreset, thumbnails, inputMode, youtubeUrl, uploadedFiles]);
 
   // HTML 다운로드 (전체 버전)
   const handleDownloadAllHtml = useCallback(() => {
     if (!selectedPreset || versions.length === 0) return;
-    const sourceInfo = inputMode === 'youtube' ? `YouTube: ${youtubeUrl}` : `파일: ${uploadedFile?.name || ''}`;
+    const sourceInfo = inputMode === 'youtube' ? `YouTube: ${youtubeUrl}` : `파일: ${uploadedFiles[0]?.name || ''}`;
     const html = generateAnalysisHtml(versions, selectedPreset, thumbnails, sourceInfo);
     const presetLabel = selectedPreset === 'tikitaka' ? '티키타카' : selectedPreset === 'condensed' ? '축약리캡' : '스낵형';
     downloadFile(html, `${presetLabel}_분석결과_전체.html`, 'text/html');
-  }, [selectedPreset, versions, thumbnails, inputMode, youtubeUrl, uploadedFile]);
+  }, [selectedPreset, versions, thumbnails, inputMode, youtubeUrl, uploadedFiles]);
 
   // 경과 시간 + 시뮬레이션 진행률 타이머
   const ESTIMATED_TOTAL_SEC = 90; // 예상 총 소요시간 (초) — 10버전 상세 테이블
@@ -2098,7 +2144,7 @@ ${comments.slice(0, 15).map((c, i) => `${i + 1}. ${c.slice(0, 150)}`).join('\n')
       <AnalysisSlotBar
         slots={savedSlots.map(s => ({ id: s.id, name: s.name, savedAt: s.savedAt }))}
         activeSlotId={activeSlotId}
-        onNewAnalysis={() => { newAnalysis(); setUploadedFile(null); }}
+        onNewAnalysis={() => { newAnalysis(); setUploadedFiles([]); }}
         onLoadSlot={loadSlot}
         onDeleteSlot={removeSlot}
         hasCurrentResults={versions.length > 0 && !activeSlotId}
@@ -2114,7 +2160,7 @@ ${comments.slice(0, 15).map((c, i) => `${i + 1}. ${c.slice(0, 150)}`).join('\n')
             <button
               key={mode}
               type="button"
-              onClick={() => { setInputMode(mode); if (mode === 'youtube') setUploadedFile(null); else setYoutubeUrl(''); resetResults(); }}
+              onClick={() => { setInputMode(mode); if (mode === 'youtube') setUploadedFiles([]); else setYoutubeUrl(''); resetResults(); }}
               className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
                 inputMode === mode
                   ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30'
@@ -2127,40 +2173,68 @@ ${comments.slice(0, 15).map((c, i) => `${i + 1}. ${c.slice(0, 150)}`).join('\n')
         </div>
 
         {inputMode === 'youtube' ? (
-          <div className="relative">
-            <input
-              type="url" value={youtubeUrl}
-              onChange={e => { setYoutubeUrl(e.target.value); resetResults(); }}
-              placeholder="YouTube 영상 URL (예: https://youtube.com/watch?v=...)"
-              className="w-full bg-gray-900 border border-gray-600 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
-            />
-            {youtubeUrl && (
-              <button type="button" onClick={() => setYoutubeUrl('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300">
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+          <div className="space-y-2">
+            {youtubeUrls.map((url, idx) => (
+              <div key={idx} className="relative flex items-center gap-2">
+                <span className="text-xs text-gray-500 font-mono w-6 text-center flex-shrink-0">{idx + 1}</span>
+                <input
+                  type="url" value={url}
+                  onChange={e => { updateYoutubeUrl(idx, e.target.value); resetResults(); }}
+                  placeholder={idx === 0 ? 'YouTube 영상 URL (예: https://youtube.com/watch?v=...)' : `소스 ${idx + 1} YouTube URL`}
+                  className="flex-1 bg-gray-900 border border-gray-600 rounded-lg px-4 py-2.5 text-white text-sm placeholder-gray-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
+                />
+                {youtubeUrls.length > 1 && (
+                  <button type="button" onClick={() => { removeYoutubeUrl(idx); resetResults(); }} className="text-gray-500 hover:text-red-400 flex-shrink-0 p-1">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
+                )}
+              </div>
+            ))}
+            {youtubeUrls.length < 5 && (
+              <button type="button" onClick={addYoutubeUrl}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-blue-400 bg-blue-600/10 border border-blue-500/20 hover:bg-blue-600/20 transition-all">
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" /></svg>
+                영상 추가 (최대 5개)
               </button>
+            )}
+            {validYoutubeUrls.length > 1 && (
+              <p className="text-[11px] text-blue-400/70 mt-1">
+                {validYoutubeUrls.length}개 영상을 조합한 짜집기 분석을 수행합니다
+              </p>
             )}
           </div>
         ) : (
-          <div>
-            <input type="file" ref={fileInputRef} onChange={handleFileChange} accept="video/*" className="hidden" />
-            {uploadedFile ? (
-              <div className="flex items-center gap-3 bg-gray-900 border border-gray-600 rounded-lg px-4 py-3">
-                <span className="text-blue-400 text-lg">🎥</span>
-                <div className="flex-1 min-w-0">
-                  <p className="text-white text-sm font-medium truncate">{uploadedFile.name}</p>
-                  <p className="text-gray-500 text-xs">{(uploadedFile.size / 1024 / 1024).toFixed(1)}MB</p>
-                </div>
-                <button type="button" onClick={() => { setUploadedFile(null); if (fileInputRef.current) fileInputRef.current.value = ''; }} className="text-gray-500 hover:text-red-400">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
-                </button>
+          <div className="space-y-2">
+            <input type="file" ref={fileInputRef} onChange={handleFileChange} accept="video/*" multiple className="hidden" />
+            {uploadedFiles.length > 0 && (
+              <div className="space-y-1.5">
+                {uploadedFiles.map((file, idx) => (
+                  <div key={idx} className="flex items-center gap-3 bg-gray-900 border border-gray-600 rounded-lg px-4 py-2.5">
+                    <span className="text-xs text-gray-500 font-mono w-5 text-center flex-shrink-0">{idx + 1}</span>
+                    <span className="text-blue-400 text-base flex-shrink-0">🎥</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-white text-sm font-medium truncate">{file.name}</p>
+                      <p className="text-gray-500 text-xs">{(file.size / 1024 / 1024).toFixed(1)}MB</p>
+                    </div>
+                    <button type="button" onClick={() => handleRemoveFile(idx)} className="text-gray-500 hover:text-red-400 flex-shrink-0">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                    </button>
+                  </div>
+                ))}
+                {uploadedFiles.length > 1 && (
+                  <p className="text-[11px] text-blue-400/70">
+                    {uploadedFiles.length}개 영상을 조합한 짜집기 분석을 수행합니다
+                  </p>
+                )}
               </div>
-            ) : (
+            )}
+            {uploadedFiles.length < 5 && (
               <button type="button" onClick={() => fileInputRef.current?.click()}
                 onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}
-                className={`w-full border-2 border-dashed rounded-lg py-8 flex flex-col items-center gap-2 transition-all ${isDragOver ? 'border-blue-400 bg-blue-500/10' : 'border-gray-600 hover:border-blue-500/50 hover:bg-blue-500/5'}`}>
-                <svg className="w-10 h-10 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
-                <span className="text-gray-400 text-sm">{isDragOver ? '여기에 놓으세요!' : '클릭 또는 드래그하여 영상 파일 선택'}</span>
-                <span className="text-gray-600 text-xs">MP4, MOV, AVI 등</span>
+                className={`w-full border-2 border-dashed rounded-lg py-6 flex flex-col items-center gap-2 transition-all ${isDragOver ? 'border-blue-400 bg-blue-500/10' : 'border-gray-600 hover:border-blue-500/50 hover:bg-blue-500/5'}`}>
+                <svg className="w-8 h-8 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
+                <span className="text-gray-400 text-sm">{isDragOver ? '여기에 놓으세요!' : uploadedFiles.length > 0 ? '영상 추가 (클릭 또는 드래그)' : '클릭 또는 드래그하여 영상 파일 선택'}</span>
+                <span className="text-gray-600 text-xs">MP4, MOV, AVI 등 — 최대 5개</span>
               </button>
             )}
           </div>

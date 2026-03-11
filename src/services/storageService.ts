@@ -36,6 +36,7 @@ export interface SavedVideoAnalysisSlot {
   id: string;
   name: string;
   youtubeUrl: string;
+  youtubeUrls?: string[];       // 다중 영상 URL (v4.6+)
   inputMode: 'upload' | 'youtube';
   selectedPreset: VideoAnalysisPreset | null;
   rawResult: string;
