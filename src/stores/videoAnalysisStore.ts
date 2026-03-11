@@ -217,15 +217,42 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
     {
       name: 'video-analysis-store',
       // blob URL 썸네일은 localStorage에 저장 불가 — 텍스트 데이터만 영속화
-      partialize: (state) => ({
-        inputMode: state.inputMode,
-        youtubeUrl: state.youtubeUrl,
-        selectedPreset: state.selectedPreset,
-        rawResult: state.rawResult,
-        versions: state.versions,
-        resultCache: state.resultCache,
-        // thumbnails, savedSlots, activeSlotId 제외 (IndexedDB에서 관리)
-      }),
+      partialize: (state) => {
+        // resultCache를 최대 3개로 제한 (가장 최근 프리셋만 유지)
+        const cacheKeys = Object.keys(state.resultCache);
+        const limitedCache: Record<string, ResultCache> = {};
+        cacheKeys.slice(-3).forEach(k => { limitedCache[k] = state.resultCache[k]; });
+
+        return {
+          inputMode: state.inputMode,
+          youtubeUrl: state.youtubeUrl,
+          selectedPreset: state.selectedPreset,
+          rawResult: state.rawResult.length > 50000 ? state.rawResult.slice(0, 50000) : state.rawResult,
+          versions: state.versions,
+          resultCache: limitedCache,
+          // thumbnails, savedSlots, activeSlotId 제외 (IndexedDB에서 관리)
+        };
+      },
+      storage: {
+        getItem: (name) => {
+          try {
+            const str = localStorage.getItem(name);
+            return str ? JSON.parse(str) : null;
+          } catch { return null; }
+        },
+        setItem: (name, value) => {
+          try {
+            localStorage.setItem(name, JSON.stringify(value));
+          } catch {
+            // QuotaExceededError — 캐시 비우고 재시도
+            try {
+              const slim = { ...value, state: { ...value.state, resultCache: {}, rawResult: '' } };
+              localStorage.setItem(name, JSON.stringify(slim));
+            } catch { /* 최종 실패 시 무시 — 데이터 유실보다 크래시 방지 우선 */ }
+          }
+        },
+        removeItem: (name) => { try { localStorage.removeItem(name); } catch { /* 무시 */ } },
+      },
     },
   ),
 );
