@@ -166,6 +166,12 @@ const throwIfApiKeyError = (status: number, body: string): void => {
     if (lower.includes('quotaexceeded') || lower.includes('dailylimitexceeded')) {
         throw new Error('YouTube API 일일 쿼터(10,000 units)가 초과되었습니다. 내일 자정(태평양 시간) 이후 재시도하세요.');
     }
+    if (lower.includes('permission_denied') || lower.includes('are blocked') || (lower.includes('forbidden') && status === 403)) {
+        throw new Error(
+            'YouTube API 키의 접근 권한이 차단되어 있습니다. ' +
+            'Google Cloud Console에서 API 키 제한 설정을 확인하고, YouTube Data API v3 접근을 허용해주세요.'
+        );
+    }
 };
 
 /** 채널 URL 또는 영상 URL에서 식별자 추출 */
