@@ -1053,13 +1053,6 @@ const App: React.FC = () => {
                 💬 피드백
               </button>
               <button
-                data-tour="help-button"
-                onClick={() => useUIStore.getState().setShowHelpGuide(true)}
-                className="px-3.5 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-gray-300 hover:text-white rounded-lg text-sm font-bold transition-all flex items-center gap-1.5"
-              >
-                ❓ 도움말
-              </button>
-              <button
                 onClick={() => useUIStore.getState().setShowProfileModal(true)}
                 className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-gray-300 hover:text-white rounded-lg text-sm font-bold transition-all flex items-center gap-1.5"
               >
@@ -1074,6 +1067,14 @@ const App: React.FC = () => {
               로그인 / 회원가입
             </button>
           )}
+          {/* 도움말 — 로그인 여부 무관, 항상 표시 */}
+          <button
+            data-tour="help-button"
+            onClick={() => useUIStore.getState().setShowHelpGuide(true)}
+            className="px-3.5 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-gray-300 hover:text-white rounded-lg text-sm font-bold transition-all flex items-center gap-1.5"
+          >
+            ❓ 도움말
+          </button>
         </div>
       </header>
 
