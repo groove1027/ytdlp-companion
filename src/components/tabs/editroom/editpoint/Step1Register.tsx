@@ -33,9 +33,23 @@ const Step1Register: React.FC = () => {
   };
 
   const canProceed = sourceVideos.length > 0 && rawEditTable.trim().length > 0;
+  const hasEditTableButNoSource = sourceVideos.length === 0 && rawEditTable.trim().length > 0;
 
   return (
     <div className="space-y-6">
+      {/* 소스 영상 없음 경고 */}
+      {hasEditTableButNoSource && (
+        <div className="bg-amber-900/20 border border-amber-500/30 rounded-lg p-4 flex items-start gap-3">
+          <svg className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+            <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+          </svg>
+          <div>
+            <p className="text-sm font-semibold text-amber-300">소스 영상이 필요합니다</p>
+            <p className="text-xs text-amber-400/80 mt-1">편집표는 준비되었지만 소스 영상이 없습니다. 위의 "영상 파일 선택"에서 원본 영상을 업로드해주세요.</p>
+          </div>
+        </div>
+      )}
+
       {/* 소스 영상 업로드 */}
       <div className="bg-gray-800/50 rounded-xl border border-gray-700/50 p-5">
         <div className="flex items-center justify-between mb-4">

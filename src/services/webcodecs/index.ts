@@ -416,20 +416,12 @@ function adjustNarrationTimes(
   timeline: UnifiedSceneTiming[],
   sceneTransitions?: Record<string, SceneTransitionConfig>,
 ): { sceneId?: string; audioUrl?: string; startTime?: number }[] {
-  if (!sceneTransitions || timeline.length <= 1) return narrationLines;
+  if (timeline.length <= 1) return narrationLines;
 
-  // 전환이 하나도 없으면 조정 불필요
-  const hasAnyTransition = timeline.some(
-    (t, i) => i < timeline.length - 1 &&
-      sceneTransitions[t.sceneId]?.preset &&
-      sceneTransitions[t.sceneId].preset !== 'none',
-  );
-  if (!hasAnyTransition) return narrationLines;
-
-  // sceneStarts 계산 (canvasRenderer.resolveFrame과 동일 로직)
+  // sceneStarts 계산 (canvasRenderer.resolveFrame과 동일 로직 — 전환 유무와 무관하게 항상 수행)
   const sceneStarts: number[] = [0];
   for (let i = 0; i < timeline.length - 1; i++) {
-    const trans = sceneTransitions[timeline[i].sceneId];
+    const trans = sceneTransitions?.[timeline[i].sceneId];
     const transDur = (trans && trans.preset !== 'none') ? trans.duration : 0;
     sceneStarts.push(sceneStarts[i] + timeline[i].imageDuration - transDur);
   }

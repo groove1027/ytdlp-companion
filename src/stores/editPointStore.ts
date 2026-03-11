@@ -239,7 +239,14 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
   setRawNarration: (text) => set({ rawNarration: text }),
 
   parseEditTable: async () => {
-    const { rawEditTable, rawNarration } = get();
+    const { rawEditTable, rawNarration, isProcessing } = get();
+
+    // 중복 요청 방지
+    if (isProcessing) {
+      showToast('이미 파싱이 진행 중입니다. 잠시 기다려주세요.');
+      return;
+    }
+
     if (!rawEditTable.trim()) {
       showToast('편집표를 입력해주세요.');
       return;
@@ -269,7 +276,14 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
       showToast(`${entries.length}개 편집 항목을 파싱했습니다.`);
     } catch (err) {
       set({ isProcessing: false, processingPhase: '', processingMessage: '' });
-      showToast('편집표 파싱 실패: ' + (err instanceof Error ? err.message : '알 수 없는 오류'));
+      const errMsg = err instanceof Error ? err.message : '알 수 없는 오류';
+      if (errMsg.includes('429') || errMsg.toLowerCase().includes('rate') || errMsg.toLowerCase().includes('too many')) {
+        showToast('AI 서버가 바빠요. 30초 후 다시 시도해주세요.');
+      } else if (errMsg.toLowerCase().includes('timeout') || errMsg.toLowerCase().includes('timed out')) {
+        showToast('편집표가 너무 크거나 서버 응답이 느립니다. 잠시 후 다시 시도해주세요.');
+      } else {
+        showToast('편집표 파싱 실패: ' + errMsg);
+      }
     }
   },
 
@@ -600,6 +614,8 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
     } else if (videoBlob) {
       const file = new File([videoBlob], 'video-analysis-source.mp4', { type: 'video/mp4' });
       await get().addSourceVideos([file]);
+    } else {
+      showToast('소스 영상이 없습니다. 편집점 매칭 Step 1에서 영상을 직접 업로드해주세요.');
     }
 
     // 편집표 자동 파싱
