@@ -225,8 +225,8 @@ const SocialAnalysisRoom: React.FC = () => {
       await handleAddVideo(file);
       showToast('TikTok 영상 다운로드 완료');
       setTiktokUrl('');
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : 'TikTok 영상 다운로드 실패', 5000);
+    } catch {
+      showToast('URL 다운로드에 실패했습니다. 영상을 직접 저장한 후 파일로 업로드해주세요.', 5000);
     } finally {
       setIsDownloadingUrl(false);
     }
@@ -375,7 +375,7 @@ const SocialAnalysisRoom: React.FC = () => {
           <div className="mt-3 flex items-start gap-2 bg-cyan-900/20 border border-cyan-600/30 rounded-lg px-3 py-2.5">
             <span className="text-cyan-400 text-sm mt-0.5">💡</span>
             <p className="text-xs text-cyan-300/90 leading-relaxed">
-              TikTok 영상 URL을 아래에 붙여넣으면 자동 다운로드 후 프레임을 추출합니다. 스크린샷도 함께 업로드 가능합니다.
+              TikTok 영상 URL을 아래에 붙여넣으면 자동 다운로드를 시도합니다. 실패 시 영상을 직접 저장한 후 아래에서 파일 업로드해주세요.
             </p>
           </div>
         )}
