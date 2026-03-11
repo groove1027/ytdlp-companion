@@ -284,6 +284,11 @@ export async function composeMp4(options: ComposeMp4Options): Promise<Blob> {
     checkAbort();
 
     // ─── Phase 5: MP4 먹싱 ─────────────────────
+    // [FIX #127 #130] 인코딩된 프레임이 없으면 muxer 진입 전 즉시 실패
+    if (videoChunks.length === 0) {
+      throw new Error('영상 인코딩 실패: 프레임이 생성되지 않았습니다. 다른 탭을 닫고 다시 시도해주세요.');
+    }
+
     emitProgress('done', 0, 'MP4 생성 중...');
 
     const muxer = createMp4Muxer({

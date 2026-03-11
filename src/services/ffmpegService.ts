@@ -819,6 +819,14 @@ function buildZoompanFilter(
  * Blob → 브라우저 다운로드
  */
 export function downloadMp4(blob: Blob, filename = 'output.mp4'): void {
+  // [FIX #127 #130] 유효하지 않은 MP4 다운로드 방지 — 최소 1KB 이상이어야 함
+  if (blob.size <= 1000) {
+    throw new Error(
+      '내보내기 실패: 생성된 영상 파일이 비정상입니다 (크기: ' +
+      blob.size + ' bytes). 다시 시도해주세요.'
+    );
+  }
+
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;

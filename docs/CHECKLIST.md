@@ -8,6 +8,7 @@
 
 ## 🟢 완료된 작업
 
+- [x] #129 Evolink API 429 Rate Limit 재시도 — 태스크 생성(이미지/비디오)에 지수 백오프 재시도(2s→4s→8s, 최대 3회) 추가, 폴링 중 429 시 5초 추가 대기 (evolinkService.ts, 2026-03-12)
 - [x] #128 이미지 생성 폴백 시 사용자 미통지 수정 — Kie→Evolink 폴백 발생 시 showToast로 서버 변경 재시도 안내 표시 (imageGeneration.ts, 2026-03-12)
 - [x] GhostCut 자막 제거 UI/UX 대폭 개선 — 폴링 메시지 6단계 세분화 (대기열→감지→제거→장시간→고해상도→초장시간), D1 progress 필드 활용, 예상 소요시간 영상길이별 정확 표시, 처리 중 안내 박스, 배치 처리 소요시간 경고, 진행률 계산 실측 반영 (ghostcutService.ts, SubtitleRemoverTab.tsx, Step3Export.tsx, editPointStore.ts, 2026-03-11)
 - [x] 디버그 로그 시스템 최대 고도화 — 15개 진단 카테고리 추가 (생성 파라미터/결과, 설정 변경 감사, 미디어 치수 검증, API 워터폴, Console 캡처, Long Task, 메모리 타임라인, 네트워크 타임라인, 리소스 실패, Feature Detection, React Error Boundary, 프로젝트 설정 스냅샷, 스토어 상태 요약) (LoggerService.ts, ErrorBoundary.tsx, apiService.ts, imageGeneration.ts, useVideoBatch.ts, projectStore.ts, imageVideoStore.ts, StoryboardPanel.tsx, FeedbackModal.tsx, index.tsx, 2026-03-11)

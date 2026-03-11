@@ -106,6 +106,39 @@ function handleEvolinkError(status: number, errorDetail: string): never {
     throw new Error(`Evolink 오류 (${status}): ${errorDetail}`);
 }
 
+// === HELPER: 429 Rate Limit 재시도 (지수 백오프) ===
+/**
+ * monitoredFetch 래퍼 — HTTP 429 응답 시 지수 백오프로 최대 3회 재시도
+ * 태스크 생성(이미지/비디오) 호출에 사용
+ * @param maxRetries 최대 재시도 횟수 (기본 3)
+ * @param baseDelayMs 첫 재시도 대기 시간 (기본 2000ms, 이후 2배씩 증가)
+ */
+async function fetchWithRateLimitRetry(
+    url: string,
+    init: RequestInit,
+    maxRetries: number = 3,
+    baseDelayMs: number = 2000
+): Promise<Response> {
+    let lastResponse: Response | null = null;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        const response = await monitoredFetch(url, init);
+
+        if (response.status !== 429 || attempt === maxRetries) {
+            return response;
+        }
+
+        // 429 — 지수 백오프 대기 후 재시도
+        lastResponse = response;
+        const delayMs = baseDelayMs * Math.pow(2, attempt); // 2s, 4s, 8s
+        logger.warn(`[Evolink] 429 Rate Limit — ${delayMs}ms 후 재시도 (${attempt + 1}/${maxRetries})`, { url });
+        await new Promise(r => setTimeout(r, delayMs));
+    }
+
+    // 도달하지 않는 코드이나 TypeScript 타입 안전성을 위해
+    return lastResponse!;
+}
+
 async function parseEvolinkError(response: Response): Promise<string> {
     const errorText = await response.text();
     try {
@@ -764,7 +797,8 @@ export const createEvolinkImageTask = async (
 
     logger.info('[Evolink] Nanobanana 2 이미지 태스크 생성', { aspectRatio, quality, hasRefImages: !!imageUrls });
 
-    const response = await monitoredFetch(`${EVOLINK_BASE_URL}/images/generations`, {
+    // [FIX #129] 429 Rate Limit 시 지수 백오프 재시도 (2s→4s→8s, 최대 3회)
+    const response = await fetchWithRateLimitRetry(`${EVOLINK_BASE_URL}/images/generations`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -827,6 +861,11 @@ export const pollEvolinkTask = async (
 
             if (!response.ok) {
                 if (response.status === 404) throw new Error('Evolink 태스크를 찾을 수 없습니다.');
+                // [FIX #129] 429 Rate Limit — 추가 5초 대기 후 재시도
+                if (response.status === 429) {
+                    logger.warn(`[Evolink] 폴링 429 Rate Limit — 5초 추가 대기`, { taskId, attempt: i + 1 });
+                    await new Promise(r => setTimeout(r, 5000));
+                }
                 // MEDIUM 2: 일시적 오류 시 상태 코드와 응답 본문을 로깅
                 const errorDetail = await parseEvolinkError(response);
                 logger.trackRetry('Evolink 폴링', i + 1, maxAttempts, `HTTP ${response.status}: ${errorDetail}`);
@@ -927,7 +966,8 @@ export const createEvolinkVideoTask = async (
         generationType, aspectRatio, duration, quality, hasImages: !!imageUrls
     });
 
-    const response = await monitoredFetch(`${EVOLINK_BASE_URL}/videos/generations`, {
+    // [FIX #129] 429 Rate Limit 시 지수 백오프 재시도 (2s→4s→8s, 최대 3회)
+    const response = await fetchWithRateLimitRetry(`${EVOLINK_BASE_URL}/videos/generations`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',

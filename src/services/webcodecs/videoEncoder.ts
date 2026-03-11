@@ -71,11 +71,15 @@ export function createEncoder(
 } {
   const { width, height, fps, bitrate = 8_000_000, keyframeIntervalFrames = 60 } = config;
 
+  // [FIX #127 #130] 인코더 에러를 외부로 전파하기 위한 플래그
+  let encoderError: Error | null = null;
+
   const encoder = new VideoEncoder({
     output(chunk, meta) {
       onChunk({ chunk, meta });
     },
     error(e) {
+      encoderError = e;
       onError(e);
     },
   });
@@ -94,6 +98,10 @@ export function createEncoder(
   const frameDurationMicro = Math.round(1_000_000 / fps);
 
   function encodeFrame(canvas: OffscreenCanvas, frameIndex: number): void {
+    // [FIX #127 #130] 인코더 에러 발생 시 즉시 중단
+    if (encoderError) {
+      throw new Error(`영상 인코딩 중 오류 발생: ${encoderError.message}`);
+    }
     const timestamp = frameIndex * frameDurationMicro;
     const frame = new VideoFrame(canvas, {
       timestamp,
@@ -106,6 +114,10 @@ export function createEncoder(
 
   async function flush(): Promise<void> {
     await encoder.flush();
+    // [FIX #127 #130] flush 후에도 에러 체크 — 비동기 에러가 flush 중 발생할 수 있음
+    if (encoderError) {
+      throw new Error(`영상 인코딩 중 오류 발생: ${encoderError.message}`);
+    }
   }
 
   return { encoder, encodeFrame, flush };
