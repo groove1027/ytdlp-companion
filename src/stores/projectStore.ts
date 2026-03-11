@@ -131,9 +131,22 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   batchGrokSpeech: false,
   _loadGeneration: 0,
 
-  setConfig: (config) => set((state) => ({
-    config: typeof config === 'function' ? config(state.config) : config,
-  })),
+  setConfig: (config) => set((state) => {
+    const newConfig = typeof config === 'function' ? config(state.config) : config;
+    // [DIAGNOSTIC] 주요 설정 변경 추적
+    if (state.config && newConfig) {
+      const track = (key: string) => {
+        const oldVal = (state.config as any)?.[key];
+        const newVal = (newConfig as any)?.[key];
+        if (oldVal !== undefined && newVal !== undefined && oldVal !== newVal) {
+          logger.trackSettingChange(`config.${key}`, oldVal, newVal);
+        }
+      };
+      track('videoFormat'); track('aspectRatio'); track('imageModel');
+      track('smartSplit'); track('allowInfographics');
+    }
+    return { config: newConfig };
+  }),
 
   setScenes: (scenes) => set((state) => {
     const newScenes = typeof scenes === 'function' ? scenes(state.scenes) : scenes;

@@ -162,6 +162,7 @@ export const useVideoBatch = (
             progress: 0
         } : s));
 
+        let vidGenStart = performance.now();
         try {
             // [PRE-FLIGHT CHECKS]
             if (effectiveModel === VideoModel.VEO || effectiveModel === VideoModel.VEO_QUALITY) {
@@ -274,6 +275,21 @@ export const useVideoBatch = (
                 // globalContext parse failure is non-fatal
             }
 
+            // [DIAGNOSTIC] 영상 생성 파라미터 기록
+            const sceneIdx = scenes.findIndex(s => s.id === sceneId);
+            logger.trackVideoGeneration({
+                sceneId,
+                sceneIndex: sceneIdx >= 0 ? sceneIdx : 0,
+                videoModel: effectiveModel,
+                aspectRatio: config?.aspectRatio || AspectRatio.LANDSCAPE,
+                duration: effectiveDuration,
+                speechMode: effectiveSpeech,
+                hasImageUrl: !!publicImageUrl,
+                promptLength: enhancedPrompt.length,
+                isSafeRetry: isSafeMode,
+            });
+
+            vidGenStart = performance.now();
             const provider = getVideoProvider(effectiveModel);
             taskId = await provider.create({
                 prompt: enhancedPrompt,
@@ -311,23 +327,25 @@ export const useVideoBatch = (
             };
 
             const videoUrl = await provider.poll(taskId, signal, handleProgress);
+            logger.trackGenerationResult({ type: 'video', sceneId, success: true, provider: effectiveModel, duration: Math.round(performance.now() - vidGenStart) });
 
             if (onCostAdd && estimatedCost > 0) {
                 onCostAdd(estimatedCost, 'video');
             }
 
             const isNativeHQ = effectiveModel === VideoModel.VEO || (effectiveModel === VideoModel.GROK && explicitUpscaleRequest);
-            
+
             safeSetScenes(prev => prev.map(s => s.id === sceneId ? {
                 ...s, videoUrl, isGeneratingVideo: false, isUpscaling: false, isUpscaled: false, isNativeHQ, generationTaskId: taskId, videoModelUsed: effectiveModel, generationStatus: undefined, progress: 100,
                 ...(generatedSfx ? { generatedSfx } : {}),
                 ...(generatedDialogue ? { generatedDialogue } : {}),
             } : s));
-            
+
             logger.success(`Scene ${sceneId} Process Complete`);
 
         } catch (e: any) {
             if (e.message === "Cancelled by user" || signal.aborted) return;
+            logger.trackGenerationResult({ type: 'video', sceneId, success: false, provider: effectiveModel, duration: Math.round(performance.now() - vidGenStart), error: e.message?.substring(0, 200) });
             const errStr = (e.message || "").toLowerCase();
             
             // [NEW] AUTO-RETRY LOGIC FOR NETWORK/TIMEOUT ERRORS

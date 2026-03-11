@@ -71,6 +71,7 @@ const FeedbackModal: React.FC = () => {
 
     const logCount = logger.getLogs().length;
     const errorCount = logger.getErrorCount();
+    const diagnostics = logger.getDiagnosticSummary();
 
     // 로그인 사용자 정보 자동 채우기
     const savedUser = getSavedUser();
@@ -479,6 +480,36 @@ const FeedbackModal: React.FC = () => {
                                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                                     </svg>
                                 </button>
+                                {/* 진단 데이터 요약 배지 */}
+                                {(diagnostics.mediaMismatches > 0 || diagnostics.longTasks > 0 || diagnostics.consoleErrors > 0 || diagnostics.resourceFailures > 0 || diagnostics.settingChanges > 0) && (
+                                    <div className="flex flex-wrap gap-1.5 px-3 py-1.5 border-t border-gray-700/30">
+                                        {diagnostics.mediaMismatches > 0 && (
+                                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-600/20 text-orange-400 border border-orange-500/30">
+                                                비율불일치 {diagnostics.mediaMismatches}
+                                            </span>
+                                        )}
+                                        {diagnostics.longTasks > 0 && (
+                                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-600/20 text-yellow-400 border border-yellow-500/30">
+                                                느린작업 {diagnostics.longTasks}
+                                            </span>
+                                        )}
+                                        {diagnostics.consoleErrors > 0 && (
+                                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-600/20 text-red-400 border border-red-500/30">
+                                                콘솔오류 {diagnostics.consoleErrors}
+                                            </span>
+                                        )}
+                                        {diagnostics.resourceFailures > 0 && (
+                                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-600/20 text-purple-400 border border-purple-500/30">
+                                                리소스실패 {diagnostics.resourceFailures}
+                                            </span>
+                                        )}
+                                        {diagnostics.settingChanges > 0 && (
+                                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-600/20 text-blue-400 border border-blue-500/30">
+                                                설정변경 {diagnostics.settingChanges}
+                                            </span>
+                                        )}
+                                    </div>
+                                )}
                                 {showLogPreview && (
                                     <div className="border-t border-gray-700/50 px-3 py-2 max-h-40 overflow-y-auto custom-scrollbar">
                                         <pre className="text-[11px] text-gray-500 font-mono whitespace-pre-wrap break-all leading-relaxed">
@@ -525,7 +556,7 @@ const FeedbackModal: React.FC = () => {
                             )}
                         </div>
                         <p className="text-[11px] text-gray-600 mt-1.5 pt-1.5 border-t border-gray-700/50">
-                            환경 정보, API 키 상태, 사용자 행동 경로가 자동 포함됩니다
+                            환경 + 프로젝트 설정 + 생성 이력 + 성능 + 네트워크 + API 워터폴이 자동 포함됩니다
                         </p>
                     </div>
 

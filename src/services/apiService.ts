@@ -191,6 +191,9 @@ export const monitoredFetch = async (url: string, options: RequestInit = {}, tim
     // Don't log full body for binary uploads (too large)
     const isBinaryUpload = options.body instanceof FormData || options.body instanceof Blob;
 
+    // [DIAGNOSTIC] API 타이밍 워터폴 기록
+    const timingId = logger.startApiTiming(url, method);
+
     logger.info(`📡 API Request: ${method} ${url}`, isBinaryUpload ? '[Binary/FormData]' : undefined);
 
     // [FIX #32] AbortController 기반 타임아웃 — 긴 AI 요청의 브라우저/네트워크 타임아웃 방지
@@ -223,6 +226,7 @@ export const monitoredFetch = async (url: string, options: RequestInit = {}, tim
                 errorBody = "[Body Read Failed]";
             }
 
+            logger.endApiTiming(timingId, response.status);
             logger.apiLog('error', `❌ API Error ${response.status}: ${method} ${url}`, duration, errorBody);
         } else {
             // Success response summary (status + content info)
@@ -230,6 +234,7 @@ export const monitoredFetch = async (url: string, options: RequestInit = {}, tim
             const contentLength = response.headers.get('content-length');
             const sizeHint = contentLength ? ` ${Math.round(parseInt(contentLength) / 1024)}KB` : '';
             const typeHint = contentType.includes('json') ? 'json' : contentType.includes('text') ? 'text' : contentType.split(';')[0] || '';
+            logger.endApiTiming(timingId, response.status);
             logger.apiLog('success', `✅ ${response.status} ${method} ${url}`, duration, sizeHint || typeHint ? `${typeHint}${sizeHint}` : undefined);
         }
         return response;
@@ -238,9 +243,11 @@ export const monitoredFetch = async (url: string, options: RequestInit = {}, tim
         // AbortError를 타임아웃 메시지로 변환 (호출자가 signal을 직접 넘긴 경우는 원래 에러 유지)
         if (error.name === 'AbortError' && timeoutId !== undefined) {
             const timeoutSec = Math.round(timeoutMs / 1000);
+            logger.endApiTiming(timingId, 'timeout');
             logger.apiLog('error', `⏱️ Timeout (${timeoutSec}s): ${method} ${url}`, duration, `요청이 ${timeoutSec}초를 초과했습니다.`);
             throw new Error(`네트워크 타임아웃: ${method} ${url} (${timeoutSec}초 초과). 대본이 길 경우 처리 시간이 오래 걸릴 수 있습니다.`);
         }
+        logger.endApiTiming(timingId, 'error');
         logger.apiLog('error', `🔥 Network Error: ${method} ${url}`, duration, error.message);
         throw error;
     } finally {

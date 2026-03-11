@@ -1,6 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
+import ErrorBoundary from './components/ErrorBoundary';
 import { testV2V } from './services/VideoGenService';
 import { handleOAuthCallback } from './services/youtubeUploadService';
 import { handleTikTokOAuthCallback } from './services/tiktokUploadService';
@@ -28,7 +29,9 @@ if (handleOAuthCallback() || handleTikTokOAuthCallback() || handleInstagramOAuth
   const root = ReactDOM.createRoot(rootElement);
   root.render(
     <React.StrictMode>
-      <App />
+      <ErrorBoundary fallbackMessage="앱 전체에서 오류가 발생했습니다. 페이지를 새로고침해 주세요.">
+        <App />
+      </ErrorBoundary>
     </React.StrictMode>
   );
 }

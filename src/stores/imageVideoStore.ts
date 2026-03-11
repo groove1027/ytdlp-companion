@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { CharacterReference } from '../types';
+import { logger } from '../services/LoggerService';
 
 interface ImageVideoStore {
   // 서브탭 상태
@@ -58,9 +59,9 @@ export const useImageVideoStore = create<ImageVideoStore>((set) => ({
   isMultiCharacter: false,
 
   setActiveSubTab: (tab) => set({ activeSubTab: tab }),
-  setStyle: (v) => { set({ style: v }); syncToProjectConfig(); },
-  setEnableWebSearch: (v) => { set({ enableWebSearch: v }); syncToProjectConfig(); },
-  setIsMultiCharacter: (v) => { set({ isMultiCharacter: v }); syncToProjectConfig(); },
+  setStyle: (v) => { const prev = useImageVideoStore.getState().style; logger.trackSettingChange('iv.style', prev, v); set({ style: v }); syncToProjectConfig(); },
+  setEnableWebSearch: (v) => { const prev = useImageVideoStore.getState().enableWebSearch; logger.trackSettingChange('iv.webSearch', prev, v); set({ enableWebSearch: v }); syncToProjectConfig(); },
+  setIsMultiCharacter: (v) => { const prev = useImageVideoStore.getState().isMultiCharacter; logger.trackSettingChange('iv.multiChar', prev, v); set({ isMultiCharacter: v }); syncToProjectConfig(); },
   setCharacters: (chars) => {
     set((s) => ({ characters: typeof chars === 'function' ? chars(s.characters) : chars }));
     syncToProjectConfig();

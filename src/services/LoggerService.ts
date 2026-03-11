@@ -6,7 +6,7 @@ export interface LogEntry {
   level: LogLevel;
   message: string;
   details?: any;
-  category?: 'api' | 'action' | 'system' | 'service';
+  category?: 'api' | 'action' | 'system' | 'service' | 'generation' | 'performance' | 'config';
   duration?: number;       // ms (API 호출 응답 시간)
 }
 
@@ -22,6 +22,54 @@ const generateSessionId = (): string => {
 
 const PERSIST_KEY = 'DEBUG_PERSISTED_ERRORS';
 const MAX_PERSISTED = 50;
+const MAX_LOGS = 500; // 300→500으로 증가 (고도화된 진단 데이터 수용)
+
+// ── 설정 변경 감사 추적 ──
+interface SettingChange {
+  timestamp: string;
+  key: string;
+  oldValue: string;
+  newValue: string;
+}
+
+// ── 미디어 치수 추적 ──
+interface MediaDimensionRecord {
+  timestamp: string;
+  sceneId: string;
+  type: 'image' | 'video';
+  requestedRatio: string;
+  actualWidth?: number;
+  actualHeight?: number;
+  actualRatio?: string;
+  mismatch: boolean;
+}
+
+// ── API 타이밍 워터폴 ──
+interface ApiTimingEntry {
+  id: string;
+  url: string;
+  method: string;
+  startTime: number;
+  endTime?: number;
+  duration?: number;
+  status?: number | 'error' | 'timeout';
+}
+
+// ── 메모리 타임라인 ──
+interface MemorySnapshot {
+  timestamp: number;
+  usedMB: number;
+  totalMB: number;
+}
+
+// ── 네트워크 품질 타임라인 ──
+interface NetworkSnapshot {
+  timestamp: string;
+  online: boolean;
+  effectiveType?: string;
+  rtt?: number;
+  downlink?: number;
+}
 
 class LoggerService {
   private logs: LogEntry[] = [];
@@ -29,6 +77,20 @@ class LoggerService {
   readonly sessionId = generateSessionId();
   private readonly sessionStart = Date.now();
   private globalHandlersInstalled = false;
+
+  // ── 고도화된 진단 데이터 저장소 ──
+  private settingChanges: SettingChange[] = [];
+  private mediaDimensions: MediaDimensionRecord[] = [];
+  private apiTimings: ApiTimingEntry[] = [];
+  private memoryTimeline: MemorySnapshot[] = [];
+  private networkTimeline: NetworkSnapshot[] = [];
+  private consoleCaptures: { level: string; message: string; timestamp: string }[] = [];
+  private longTasks: { duration: number; timestamp: string }[] = [];
+  private resourceFailures: { url: string; type: string; timestamp: string }[] = [];
+  private _apiTimingCounter = 0;
+  private _memoryIntervalId: ReturnType<typeof setInterval> | null = null;
+  private _originalConsoleError: typeof console.error | null = null;
+  private _originalConsoleWarn: typeof console.warn | null = null;
 
   private addLog(level: LogLevel, message: string, details?: any, extra?: Partial<LogEntry>) {
     const entry: LogEntry = {
@@ -38,7 +100,7 @@ class LoggerService {
       details,
       ...extra,
     };
-    this.logs = [entry, ...this.logs].slice(0, 300);
+    this.logs = [entry, ...this.logs].slice(0, MAX_LOGS);
     this.notify();
   }
 
@@ -56,24 +118,24 @@ class LoggerService {
 
   info(message: string, details?: any) {
     this.addLog('info', message, details);
-    console.log(`[INFO] ${message}`, details || '');
+    this._safeConsoleLog(`[INFO] ${message}`, details || '');
   }
 
   error(message: string, details?: any) {
     this.addLog('error', message, this.enrichErrorDetails(details));
     this.persistErrors();
-    console.error(`[ERROR] ${message}`, details || '');
+    this._safeConsoleError(`[ERROR] ${message}`, details || '');
   }
 
   success(message: string, details?: any) {
     this.addLog('success', message, details);
-    console.log(`[SUCCESS] ${message}`, details || '');
+    this._safeConsoleLog(`[SUCCESS] ${message}`, details || '');
   }
 
   warn(message: string, details?: any) {
     this.addLog('warn', message, this.enrichErrorDetails(details));
     this.persistErrors();
-    console.warn(`[WARN] ${message}`, details || '');
+    this._safeConsoleWarn(`[WARN] ${message}`, details || '');
   }
 
   /** API 호출 결과 로깅 (응답 시간 포함) */
@@ -100,7 +162,185 @@ class LoggerService {
     return this.logs;
   }
 
-  // ── 글로벌 에러 핸들러 ──
+  // ══════════════════════════════════════════════════════════════
+  // [NEW] 이미지/영상 생성 파라미터 로깅
+  // ══════════════════════════════════════════════════════════════
+
+  /** 이미지 생성 파라미터 기록 */
+  trackImageGeneration(params: {
+    sceneId: string;
+    sceneIndex: number;
+    style: string;
+    aspectRatio: string;
+    imageModel: string;
+    castType?: string;
+    hasCharacterRef: boolean;
+    hasFeedback: boolean;
+    enableWebSearch: boolean;
+    promptLength: number;
+    provider: string;
+  }) {
+    this.addLog('info', `🎨 이미지 생성 요청`, {
+      scene: `#${params.sceneIndex + 1} (${params.sceneId})`,
+      style: params.style,
+      ratio: params.aspectRatio,
+      model: params.imageModel,
+      cast: params.castType || 'MAIN',
+      charRef: params.hasCharacterRef,
+      feedback: params.hasFeedback,
+      webSearch: params.enableWebSearch,
+      promptLen: params.promptLength,
+      provider: params.provider,
+    }, { category: 'generation' });
+  }
+
+  /** 영상 생성 파라미터 기록 */
+  trackVideoGeneration(params: {
+    sceneId: string;
+    sceneIndex: number;
+    videoModel: string;
+    aspectRatio: string;
+    duration?: string;
+    speechMode?: boolean;
+    hasImageUrl: boolean;
+    promptLength: number;
+    isSafeRetry?: boolean;
+  }) {
+    this.addLog('info', `🎬 영상 생성 요청`, {
+      scene: `#${params.sceneIndex + 1} (${params.sceneId})`,
+      model: params.videoModel,
+      ratio: params.aspectRatio,
+      duration: params.duration || 'default',
+      speech: params.speechMode || false,
+      hasImage: params.hasImageUrl,
+      promptLen: params.promptLength,
+      safeRetry: params.isSafeRetry || false,
+    }, { category: 'generation' });
+  }
+
+  /** 생성 결과 기록 (성공/실패) */
+  trackGenerationResult(params: {
+    type: 'image' | 'video';
+    sceneId: string;
+    success: boolean;
+    provider: string;
+    duration: number;
+    isFallback?: boolean;
+    error?: string;
+  }) {
+    const level = params.success ? 'success' : 'error';
+    const emoji = params.success ? '✅' : '❌';
+    const fb = params.isFallback ? ' (폴백)' : '';
+    this.addLog(level, `${emoji} ${params.type === 'image' ? '이미지' : '영상'} 생성 ${params.success ? '성공' : '실패'}${fb}`, {
+      scene: params.sceneId,
+      provider: params.provider,
+      duration: `${params.duration}ms`,
+      ...(params.error ? { error: params.error } : {}),
+    }, { category: 'generation', duration: params.duration });
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // [NEW] 설정 변경 감사 추적
+  // ══════════════════════════════════════════════════════════════
+
+  /** 설정 변경 추적 (old→new 값 전이) */
+  trackSettingChange(key: string, oldValue: unknown, newValue: unknown) {
+    const old = typeof oldValue === 'object' ? JSON.stringify(oldValue) : String(oldValue ?? '(없음)');
+    const nv = typeof newValue === 'object' ? JSON.stringify(newValue) : String(newValue ?? '(없음)');
+    if (old === nv) return; // 동일한 값은 무시
+    const change: SettingChange = {
+      timestamp: new Date().toISOString(),
+      key,
+      oldValue: old.substring(0, 200),
+      newValue: nv.substring(0, 200),
+    };
+    this.settingChanges = [...this.settingChanges, change].slice(-100);
+    this.addLog('info', `⚙️ 설정 변경: ${key}`, { from: old.substring(0, 100), to: nv.substring(0, 100) }, { category: 'config' });
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // [NEW] 미디어 치수 검증 (요청 vs 실제)
+  // ══════════════════════════════════════════════════════════════
+
+  /** 생성된 미디어의 실제 치수를 기록하고 요청한 비율과 비교 */
+  trackMediaDimension(params: {
+    sceneId: string;
+    type: 'image' | 'video';
+    requestedRatio: string;
+    actualWidth: number;
+    actualHeight: number;
+  }) {
+    const actualRatio = params.actualWidth > 0 && params.actualHeight > 0
+      ? `${(params.actualWidth / params.actualHeight).toFixed(2)}`
+      : '?';
+
+    // 비율 불일치 판단 (±15% 허용)
+    const ratioMap: Record<string, number> = { '16:9': 1.778, '9:16': 0.5625, '1:1': 1.0, '4:3': 1.333 };
+    const expected = ratioMap[params.requestedRatio] || 1.0;
+    const actual = params.actualWidth / params.actualHeight;
+    const mismatch = Math.abs(actual - expected) / expected > 0.15;
+
+    const record: MediaDimensionRecord = {
+      timestamp: new Date().toISOString(),
+      sceneId: params.sceneId,
+      type: params.type,
+      requestedRatio: params.requestedRatio,
+      actualWidth: params.actualWidth,
+      actualHeight: params.actualHeight,
+      actualRatio,
+      mismatch,
+    };
+    this.mediaDimensions = [...this.mediaDimensions, record].slice(-50);
+
+    if (mismatch) {
+      this.addLog('warn', `⚠️ ${params.type} 비율 불일치`, {
+        scene: params.sceneId,
+        requested: params.requestedRatio,
+        actual: `${params.actualWidth}x${params.actualHeight} (${actualRatio})`,
+      }, { category: 'generation' });
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // [NEW] API 타이밍 워터폴
+  // ══════════════════════════════════════════════════════════════
+
+  /** API 호출 시작 기록 → ID 반환 */
+  startApiTiming(url: string, method: string): string {
+    const id = `api-${++this._apiTimingCounter}`;
+    this.apiTimings = [...this.apiTimings, {
+      id, url, method, startTime: performance.now(),
+    }].slice(-100);
+    return id;
+  }
+
+  /** API 호출 완료 기록 */
+  endApiTiming(id: string, status: number | 'error' | 'timeout') {
+    const entry = this.apiTimings.find(e => e.id === id);
+    if (entry) {
+      entry.endTime = performance.now();
+      entry.duration = Math.round(entry.endTime - entry.startTime);
+      entry.status = status;
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // [NEW] React Error Boundary 연동
+  // ══════════════════════════════════════════════════════════════
+
+  /** React 컴포넌트 렌더 에러 기록 */
+  trackReactError(error: Error, componentStack: string) {
+    this.addLog('error', `⚛️ React Render Error: ${error.message}`, {
+      name: error.name,
+      stack: error.stack?.split('\n').slice(0, 8).join('\n'),
+      componentStack: componentStack.split('\n').slice(0, 10).join('\n'),
+    }, { category: 'system' });
+    this.persistErrors();
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // 글로벌 에러 핸들러 (강화)
+  // ══════════════════════════════════════════════════════════════
 
   /** 글로벌 에러/이벤트 핸들러 설치 (앱 시작 시 1회 호출) */
   installGlobalHandlers() {
@@ -112,6 +352,20 @@ class LoggerService {
 
     // Uncaught errors
     window.addEventListener('error', (event) => {
+      // 리소스 로딩 실패 감지 (img, script, link 등)
+      const target = event.target as any;
+      if (target && target !== window && target.tagName) {
+        const tagName = target.tagName?.toLowerCase();
+        const src = (target as HTMLImageElement).src || (target as HTMLScriptElement).src || (target as HTMLLinkElement).href || '?';
+        this.resourceFailures = [...this.resourceFailures, {
+          url: src.substring(0, 200),
+          type: tagName || 'unknown',
+          timestamp: new Date().toISOString(),
+        }].slice(-50);
+        this.addLog('warn', `📦 리소스 로딩 실패: <${tagName}>`, { url: src.substring(0, 200) }, { category: 'system' });
+        return; // 리소스 에러는 여기서 처리
+      }
+
       this.addLog('error', `💥 Uncaught: ${event.message}`, {
         file: event.filename?.split('/').pop(),
         line: event.lineno,
@@ -119,7 +373,7 @@ class LoggerService {
         stack: event.error?.stack?.split('\n').slice(0, 5).join('\n'),
       }, { category: 'system' });
       this.persistErrors();
-    });
+    }, true); // capture phase로 리소스 에러도 잡기
 
     // Unhandled promise rejections
     window.addEventListener('unhandledrejection', (event) => {
@@ -139,13 +393,171 @@ class LoggerService {
     // 네트워크 온/오프라인 전환
     window.addEventListener('online', () => {
       this.addLog('info', '🌐 네트워크 연결됨', undefined, { category: 'system' });
+      this._recordNetworkSnapshot();
     });
     window.addEventListener('offline', () => {
       this.addLog('warn', '🌐 네트워크 끊김', undefined, { category: 'system' });
+      this._recordNetworkSnapshot();
       this.persistErrors();
     });
 
+    // [NEW] 네트워크 품질 변화 감지
+    const conn = (navigator as any).connection;
+    if (conn && conn.addEventListener) {
+      conn.addEventListener('change', () => {
+        this._recordNetworkSnapshot();
+        this.addLog('info', `🌐 네트워크 변경: ${conn.effectiveType} (RTT: ${conn.rtt}ms, ↓${conn.downlink}Mbps)`, undefined, { category: 'system' });
+      });
+    }
+
+    // [NEW] Console.error/warn 캡처 (원본 보존)
+    this._installConsoleCapture();
+
+    // [NEW] Long Task 감지 (Chrome PerformanceObserver)
+    this._installLongTaskObserver();
+
+    // [NEW] 메모리 타임라인 (30초 간격, Chrome only)
+    this._installMemoryMonitor();
+
+    // [NEW] Feature detection 기록
+    this._recordFeatureDetection();
+
+    // 초기 네트워크 스냅샷
+    this._recordNetworkSnapshot();
+
     this.addLog('info', `🚀 앱 시작 (세션: ${this.sessionId})`, undefined, { category: 'system' });
+  }
+
+  // ── Console 캡처 ──
+
+  private _installConsoleCapture() {
+    this._originalConsoleError = console.error;
+    this._originalConsoleWarn = console.warn;
+
+    const self = this;
+    console.error = function (...args: any[]) {
+      // logger 자체 호출 무한루프 방지
+      const msg = args.map(a => typeof a === 'string' ? a : (a instanceof Error ? a.message : '')).join(' ');
+      if (!msg.includes('[ERROR]') && !msg.includes('[WARN]')) {
+        self.consoleCaptures = [...self.consoleCaptures, {
+          level: 'error',
+          message: msg.substring(0, 500),
+          timestamp: new Date().toISOString(),
+        }].slice(-100);
+      }
+      self._originalConsoleError!.apply(console, args);
+    };
+
+    console.warn = function (...args: any[]) {
+      const msg = args.map(a => typeof a === 'string' ? a : '').join(' ');
+      if (!msg.includes('[WARN]') && !msg.includes('[INFO]')) {
+        self.consoleCaptures = [...self.consoleCaptures, {
+          level: 'warn',
+          message: msg.substring(0, 500),
+          timestamp: new Date().toISOString(),
+        }].slice(-100);
+      }
+      self._originalConsoleWarn!.apply(console, args);
+    };
+  }
+
+  // 안전한 콘솔 출력 (캡처 무한루프 방지)
+  private _safeConsoleLog(msg: string, ...args: any[]) {
+    (this._originalConsoleError ? Function.prototype.bind.call(console.log, console) : console.log)(msg, ...args);
+  }
+  private _safeConsoleError(msg: string, ...args: any[]) {
+    (this._originalConsoleError || console.error).call(console, msg, ...args);
+  }
+  private _safeConsoleWarn(msg: string, ...args: any[]) {
+    (this._originalConsoleWarn || console.warn).call(console, msg, ...args);
+  }
+
+  // ── Long Task Observer ──
+
+  private _installLongTaskObserver() {
+    try {
+      if (typeof PerformanceObserver !== 'undefined') {
+        const obs = new PerformanceObserver((list) => {
+          for (const entry of list.getEntries()) {
+            if (entry.duration > 100) { // 100ms 이상만 기록
+              this.longTasks = [...this.longTasks, {
+                duration: Math.round(entry.duration),
+                timestamp: new Date().toISOString(),
+              }].slice(-50);
+              if (entry.duration > 500) {
+                this.addLog('warn', `🐌 Long Task 감지: ${Math.round(entry.duration)}ms`, undefined, { category: 'performance' });
+              }
+            }
+          }
+        });
+        obs.observe({ type: 'longtask', buffered: true });
+      }
+    } catch { /* Long Task API 미지원 브라우저 */ }
+  }
+
+  // ── 메모리 모니터 ──
+
+  private _installMemoryMonitor() {
+    const perf = performance as any;
+    if (!perf.memory) return;
+
+    this._memoryIntervalId = setInterval(() => {
+      const used = Math.round(perf.memory.usedJSHeapSize / 1024 / 1024);
+      const total = Math.round(perf.memory.totalJSHeapSize / 1024 / 1024);
+      this.memoryTimeline = [...this.memoryTimeline, {
+        timestamp: Date.now(),
+        usedMB: used,
+        totalMB: total,
+      }].slice(-120); // 최대 1시간 (30초 간격)
+
+      // 메모리 급등 경고 (500MB 이상)
+      if (used > 500) {
+        this.addLog('warn', `🧠 높은 메모리 사용: ${used}MB / ${total}MB`, undefined, { category: 'performance' });
+      }
+    }, 30000);
+  }
+
+  // ── 네트워크 스냅샷 ──
+
+  private _recordNetworkSnapshot() {
+    const conn = (navigator as any).connection;
+    this.networkTimeline = [...this.networkTimeline, {
+      timestamp: new Date().toISOString(),
+      online: navigator.onLine,
+      effectiveType: conn?.effectiveType,
+      rtt: conn?.rtt,
+      downlink: conn?.downlink,
+    }].slice(-60);
+  }
+
+  // ── Feature Detection ──
+
+  private _recordFeatureDetection() {
+    const features: Record<string, boolean> = {};
+    try {
+      features['WebCodecs'] = typeof (window as any).VideoEncoder === 'function';
+      features['OffscreenCanvas'] = typeof OffscreenCanvas === 'function';
+      features['SharedArrayBuffer'] = typeof SharedArrayBuffer === 'function';
+      features['WebWorker'] = typeof Worker === 'function';
+      features['IndexedDB'] = typeof indexedDB !== 'undefined';
+      features['WebGL2'] = (() => { try { return !!document.createElement('canvas').getContext('webgl2'); } catch { return false; } })();
+      features['WebGPU'] = typeof (navigator as any).gpu !== 'undefined';
+      features['ServiceWorker'] = 'serviceWorker' in navigator;
+      features['Clipboard'] = typeof navigator.clipboard !== 'undefined';
+      features['WASM'] = typeof WebAssembly === 'object';
+      features['MediaRecorder'] = typeof MediaRecorder === 'function';
+      features['PerformanceObserver'] = typeof PerformanceObserver === 'function';
+      features['StorageEstimate'] = typeof navigator.storage?.estimate === 'function';
+      features['WebAudio'] = typeof AudioContext === 'function' || typeof (window as any).webkitAudioContext === 'function';
+    } catch { /* ignore */ }
+
+    const supported = Object.entries(features).filter(([, v]) => v).map(([k]) => k);
+    const missing = Object.entries(features).filter(([, v]) => !v).map(([k]) => k);
+
+    this.addLog('info', `🔍 Feature Detection`, {
+      supported: supported.join(', '),
+      missing: missing.length > 0 ? missing.join(', ') : '(all supported)',
+    }, { category: 'system' });
   }
 
   // ── 로그 영속화 (에러/경고만) ──
@@ -174,7 +586,7 @@ class LoggerService {
         ...e,
         message: `[이전] ${e.message}`,
       }));
-      this.logs = [...this.logs, ...restored].slice(0, 300);
+      this.logs = [...this.logs, ...restored].slice(0, MAX_LOGS);
       this.addLog('info', `📋 이전 세션 에러 ${entries.length}건 복원됨`, undefined, { category: 'system' });
       this.notify();
 
@@ -183,7 +595,9 @@ class LoggerService {
     } catch { /* ignore */ }
   }
 
-  // ── 환경 스냅샷 ──
+  // ══════════════════════════════════════════════════════════════
+  // 환경 스냅샷 (강화)
+  // ══════════════════════════════════════════════════════════════
 
   /** 환경 스냅샷 수집 (동기) */
   collectEnvironmentSnapshot(): Record<string, string> {
@@ -192,10 +606,12 @@ class LoggerService {
     // Session
     snapshot['Session ID'] = this.sessionId;
     snapshot['Session Duration'] = `${Math.round((Date.now() - this.sessionStart) / 1000)}s`;
+    snapshot['App Version'] = 'v4.5';
 
     // Screen
     snapshot['Screen'] = `${screen.width}x${screen.height} (DPR: ${devicePixelRatio})`;
     snapshot['Viewport'] = `${window.innerWidth}x${window.innerHeight}`;
+    snapshot['Color Depth'] = `${screen.colorDepth}bit`;
 
     // Memory (Chrome only)
     const perf = performance as any;
@@ -211,11 +627,14 @@ class LoggerService {
     const conn = (navigator as any).connection;
     if (conn) {
       snapshot['Network'] = `${conn.effectiveType || '?'} (RTT: ${conn.rtt ?? '?'}ms, downlink: ${conn.downlink ?? '?'}Mbps)`;
+      if (conn.saveData) snapshot['Data Saver'] = 'ON';
     }
 
     // Browser
     snapshot['Language'] = navigator.language;
     snapshot['Platform'] = navigator.platform;
+    snapshot['Cores'] = String(navigator.hardwareConcurrency || '?');
+    snapshot['Touch'] = 'ontouchstart' in window ? 'Yes' : 'No';
 
     // API Key Status
     try {
@@ -249,6 +668,85 @@ class LoggerService {
     return snapshot;
   }
 
+  // ══════════════════════════════════════════════════════════════
+  // [NEW] 프로젝트 설정 스냅샷
+  // ══════════════════════════════════════════════════════════════
+
+  /** 프로젝트 설정 + 주요 스토어 상태 수집 (피드백 제출 시 호출) */
+  collectProjectSnapshot(): Record<string, string> {
+    const snap: Record<string, string> = {};
+
+    try {
+      // projectStore — lazy import로 순환참조 방지
+      const projectStore = require('../stores/projectStore').useProjectStore;
+      const ps = projectStore.getState();
+      if (ps.config) {
+        snap['VideoFormat'] = ps.config.videoFormat || '?';
+        snap['AspectRatio'] = ps.config.aspectRatio || '?';
+        snap['ImageModel'] = ps.config.imageModel || '?';
+        snap['SmartSplit'] = String(ps.config.smartSplit ?? '?');
+        snap['AllowInfographics'] = String(ps.config.allowInfographics ?? '?');
+        snap['PipelineSteps'] = JSON.stringify(ps.config.pipelineSteps || {});
+      }
+      snap['Scene Count'] = String(ps.scenes?.length || 0);
+      snap['Project Title'] = (ps.projectTitle || '(untitled)').substring(0, 50);
+      snap['Project ID'] = ps.currentProjectId || '(none)';
+
+      // 장면별 요약 (이미지/영상 완성 상태)
+      if (ps.scenes?.length > 0) {
+        const withImg = ps.scenes.filter((s: any) => s.imageUrl).length;
+        const withVid = ps.scenes.filter((s: any) => s.videoUrl).length;
+        const withPrompt = ps.scenes.filter((s: any) => s.visualPrompt).length;
+        snap['Scene Images'] = `${withImg}/${ps.scenes.length}`;
+        snap['Scene Videos'] = `${withVid}/${ps.scenes.length}`;
+        snap['Scene Prompts'] = `${withPrompt}/${ps.scenes.length}`;
+      }
+    } catch { /* projectStore 미로드 시 무시 */ }
+
+    try {
+      // imageVideoStore
+      const ivStore = require('../stores/imageVideoStore').useImageVideoStore;
+      const iv = ivStore.getState();
+      snap['IV.Style'] = iv.style || '(none)';
+      snap['IV.SubTab'] = iv.activeSubTab;
+      snap['IV.Characters'] = String(iv.characters?.length || 0);
+      snap['IV.WebSearch'] = String(iv.enableWebSearch);
+      snap['IV.MultiChar'] = String(iv.isMultiCharacter);
+    } catch { /* ignore */ }
+
+    try {
+      // scriptWriterStore
+      const swStore = require('../stores/scriptWriterStore').useScriptWriterStore;
+      const sw = swStore.getState();
+      snap['SW.InputMode'] = sw.inputMode || '?';
+      snap['SW.ContentFormat'] = sw.contentFormat || '?';
+      snap['SW.VideoFormat'] = sw.videoFormat || '?';
+      snap['SW.ActiveStep'] = String(sw.activeStep);
+      snap['SW.SmartSplit'] = String(sw.smartSplit);
+    } catch { /* ignore */ }
+
+    try {
+      // costStore
+      const costStore = require('../stores/costStore').useCostStore;
+      const cs = costStore.getState();
+      if (cs.costStats) {
+        snap['Cost.Total'] = `$${cs.costStats.totalUsd?.toFixed(4) || '0'}`;
+        snap['Cost.Images'] = String(cs.costStats.imageCount || 0);
+        snap['Cost.Videos'] = String(cs.costStats.videoCount || 0);
+      }
+    } catch { /* ignore */ }
+
+    try {
+      // navigationStore
+      const navStore = require('../stores/navigationStore').useNavigationStore;
+      const ns = navStore.getState();
+      snap['Nav.ActiveTab'] = ns.activeTab || '?';
+      snap['Nav.Dashboard'] = String(ns.showProjectDashboard);
+    } catch { /* ignore */ }
+
+    return snap;
+  }
+
   /** 비동기 환경 정보 포함 전체 스냅샷 (스토리지 용량 등) */
   async collectFullEnvironmentSnapshot(): Promise<Record<string, string>> {
     const snapshot = this.collectEnvironmentSnapshot();
@@ -262,10 +760,22 @@ class LoggerService {
       }
     } catch { /* ignore */ }
 
+    // localStorage 사용량 추정
+    try {
+      let lsSize = 0;
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key) lsSize += (localStorage.getItem(key) || '').length;
+      }
+      snapshot['LocalStorage'] = `${Math.round(lsSize / 1024)}KB (${localStorage.length} keys)`;
+    } catch { /* ignore */ }
+
     return snapshot;
   }
 
-  // ── Export ──
+  // ══════════════════════════════════════════════════════════════
+  // Export (강화)
+  // ══════════════════════════════════════════════════════════════
 
   /** 피드백 첨부용 포맷 문자열 (최신->과거) */
   exportFormatted(): string {
@@ -282,19 +792,114 @@ class LoggerService {
     }).join('\n');
   }
 
-  /** 환경 스냅샷 + 전체 로그 결합 포맷 (피드백 제출용) */
+  /** [강화] 환경 + 프로젝트 + 진단 데이터 + 로그 결합 포맷 (피드백 제출용) */
   async exportFormattedWithEnv(): Promise<string> {
     const env = await this.collectFullEnvironmentSnapshot();
     const envLines = Object.entries(env).map(([k, v]) => `  ${k}: ${v}`).join('\n');
+
+    // 프로젝트 설정 스냅샷
+    const projectSnap = this.collectProjectSnapshot();
+    const projectLines = Object.entries(projectSnap).map(([k, v]) => `  ${k}: ${v}`).join('\n');
 
     const actionTrail = this.getActionTrail();
     const actionSection = actionTrail !== '(기록된 액션 없음)'
       ? `\n\n--- User Actions ---\n${actionTrail}`
       : '';
 
-    const header = `--- Environment ---\n${envLines}${actionSection}\n\n--- Logs (${this.logs.length}) ---`;
+    // 설정 변경 이력
+    const settingSection = this.settingChanges.length > 0
+      ? `\n\n--- Setting Changes (${this.settingChanges.length}) ---\n${this.settingChanges.map(s => {
+        const t = s.timestamp.substring(11, 19);
+        return `[${t}] ${s.key}: ${s.oldValue} → ${s.newValue}`;
+      }).join('\n')}`
+      : '';
+
+    // 미디어 치수 불일치
+    const mismatches = this.mediaDimensions.filter(m => m.mismatch);
+    const dimensionSection = mismatches.length > 0
+      ? `\n\n--- Media Dimension Mismatches (${mismatches.length}) ---\n${mismatches.map(m => {
+        const t = m.timestamp.substring(11, 19);
+        return `[${t}] ${m.type} ${m.sceneId}: requested=${m.requestedRatio} actual=${m.actualWidth}x${m.actualHeight} (${m.actualRatio})`;
+      }).join('\n')}`
+      : '';
+
+    // 생성 요청 요약
+    const genLogs = this.logs.filter(l => l.category === 'generation');
+    const genSection = genLogs.length > 0
+      ? `\n\n--- Generation Log (${genLogs.length}) ---\n${genLogs.slice(0, 30).map(g => {
+        const t = g.timestamp.substring(11, 19);
+        const dur = g.duration ? ` (${g.duration}ms)` : '';
+        return `[${t}] ${g.level.toUpperCase()} ${g.message}${dur}`;
+      }).join('\n')}`
+      : '';
+
+    // 메모리 타임라인 (최근 10개)
+    const memSection = this.memoryTimeline.length > 0
+      ? `\n\n--- Memory Timeline ---\n${this.memoryTimeline.slice(-10).map(m => {
+        const d = new Date(m.timestamp);
+        return `[${d.toTimeString().substring(0, 8)}] ${m.usedMB}MB / ${m.totalMB}MB`;
+      }).join('\n')}`
+      : '';
+
+    // Long Task 요약
+    const ltSection = this.longTasks.length > 0
+      ? `\n\n--- Long Tasks (${this.longTasks.length}) ---\n${this.longTasks.slice(-10).map(lt => {
+        const t = lt.timestamp.substring(11, 19);
+        return `[${t}] ${lt.duration}ms`;
+      }).join('\n')}`
+      : '';
+
+    // Console captures (error/warn만, 최근 20개)
+    const ccSection = this.consoleCaptures.length > 0
+      ? `\n\n--- Console Captures (${this.consoleCaptures.length}) ---\n${this.consoleCaptures.slice(-20).map(c => {
+        const t = c.timestamp.substring(11, 19);
+        return `[${t}] ${c.level.toUpperCase()} ${c.message.substring(0, 200)}`;
+      }).join('\n')}`
+      : '';
+
+    // 네트워크 타임라인
+    const netSection = this.networkTimeline.length > 1
+      ? `\n\n--- Network Timeline (${this.networkTimeline.length}) ---\n${this.networkTimeline.slice(-10).map(n => {
+        const t = n.timestamp.substring(11, 19);
+        return `[${t}] ${n.online ? 'Online' : 'OFFLINE'} ${n.effectiveType || ''} RTT:${n.rtt ?? '?'}ms ↓${n.downlink ?? '?'}Mbps`;
+      }).join('\n')}`
+      : '';
+
+    // 리소스 로딩 실패
+    const resSection = this.resourceFailures.length > 0
+      ? `\n\n--- Resource Failures (${this.resourceFailures.length}) ---\n${this.resourceFailures.slice(-10).map(r => {
+        const t = r.timestamp.substring(11, 19);
+        return `[${t}] <${r.type}> ${r.url}`;
+      }).join('\n')}`
+      : '';
+
+    // API 타이밍 워터폴 (최근 20개)
+    const completedApis = this.apiTimings.filter(a => a.endTime);
+    const waterfall = completedApis.length > 0
+      ? `\n\n--- API Waterfall (${completedApis.length}) ---\n${completedApis.slice(-20).map(a => {
+        return `${a.method} ${a.url.substring(0, 80)} → ${a.status} (${a.duration}ms)`;
+      }).join('\n')}`
+      : '';
+
+    const header = `--- Environment ---\n${envLines}`;
+    const projectHeader = projectLines ? `\n\n--- Project Config ---\n${projectLines}` : '';
     const logs = this.exportFormatted();
-    return `${header}\n${logs}`;
+
+    return [
+      header,
+      projectHeader,
+      actionSection,
+      settingSection,
+      genSection,
+      dimensionSection,
+      memSection,
+      ltSection,
+      netSection,
+      ccSection,
+      resSection,
+      waterfall,
+      `\n\n--- Logs (${this.logs.length}) ---\n${logs}`,
+    ].filter(s => s).join('');
   }
 
   /** 에러/경고 로그만 추출 */
@@ -328,6 +933,27 @@ class LoggerService {
   /** 카테고리별 로그 필터링 */
   getLogsByCategory(category: LogEntry['category']): LogEntry[] {
     return this.logs.filter(l => l.category === category);
+  }
+
+  /** 진단 통계 요약 (피드백 모달 표시용) */
+  getDiagnosticSummary(): {
+    logCount: number;
+    errorCount: number;
+    settingChanges: number;
+    mediaMismatches: number;
+    longTasks: number;
+    consoleErrors: number;
+    resourceFailures: number;
+  } {
+    return {
+      logCount: this.logs.length,
+      errorCount: this.getErrorCount(),
+      settingChanges: this.settingChanges.length,
+      mediaMismatches: this.mediaDimensions.filter(m => m.mismatch).length,
+      longTasks: this.longTasks.length,
+      consoleErrors: this.consoleCaptures.filter(c => c.level === 'error').length,
+      resourceFailures: this.resourceFailures.length,
+    };
   }
 
   clear() {

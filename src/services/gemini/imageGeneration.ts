@@ -3,6 +3,7 @@ import { Scene, AspectRatio, ImageModel } from '../../types';
 import { getMicroTexture, isBlackAndWhiteStyle, getStyleNegativePrompt, getIntegrativeInfographicInstruction } from './promptHelpers';
 import { generateKieImage, generateEvolinkImageWrapped } from '../VideoGenService';
 import { filterPromptContent } from './contentFilter';
+import { logger } from '../LoggerService';
 
 // [NEW] Shot size auto-rotation — prevents monotonous compositions when AI doesn't specify shot size
 const SHOT_ROTATION: string[] = ['medium shot', 'close-up', 'wide shot', 'medium close-up', 'establishing shot', 'over-the-shoulder'];
@@ -645,22 +646,43 @@ export const generateSceneImage = async (
         console.warn("[ContentFilter] 금칙어 제거됨:", filterResult.removedTerms.join(', '));
     }
 
+    // [DIAGNOSTIC] 이미지 생성 파라미터 기록
+    logger.trackImageGeneration({
+        sceneId: scene.id || '?',
+        sceneIndex: sceneIndex ?? -1,
+        style: effectiveStyle,
+        aspectRatio: ratio,
+        imageModel: String(model),
+        castType: scene.castType,
+        hasCharacterRef: finalCharImages.length > 0,
+        hasFeedback: !!(feedback && feedback.trim()),
+        enableWebSearch: effectiveWebSearch || false,
+        promptLength: finalPrompt.length,
+        provider: 'kie-primary',
+    });
+
     // [OFFICIAL DOC] 2단계 폴백: Kie Nanobanana 2 (1차) → Evolink Nanobanana 2 (2차)
     // Kie: nano-banana-2, POST /api/v1/jobs/createTask (google_search)
     // Evolink: gemini-3.1-flash-image-preview, POST /v1/images/generations (web_search)
+    const genStartTime = performance.now();
     try {
         if (updateStatus) updateStatus(effectiveWebSearch ? "⚡ Kie Nanobanana 2 + 웹검색 생성 중..." : "⚡ Kie Nanobanana 2 생성 중...");
         const url = await generateKieImage(finalPrompt, ratio, finalCharImages, prodImg, "nano-banana-2", undefined, effectiveWebSearch);
+        logger.trackGenerationResult({ type: 'image', sceneId: scene.id || '?', success: true, provider: 'Kie', duration: Math.round(performance.now() - genStartTime) });
         return { url, isFallback: false, isFiltered: filterResult.wasFiltered };
     } catch (e) {
+        logger.trackGenerationResult({ type: 'image', sceneId: scene.id || '?', success: false, provider: 'Kie', duration: Math.round(performance.now() - genStartTime), error: (e as Error).message });
         console.warn("[ImageGen] Kie Nanobanana 2 실패, Evolink 폴백 시도", e);
     }
 
+    const fbStartTime = performance.now();
     try {
         if (updateStatus) updateStatus(effectiveWebSearch ? "Evolink + 웹검색 폴백 시도 중..." : "Evolink Nanobanana 2 폴백 시도 중...");
         const url = await generateEvolinkImageWrapped(finalPrompt, ratio, finalCharImages, prodImg, "2K", effectiveWebSearch);
+        logger.trackGenerationResult({ type: 'image', sceneId: scene.id || '?', success: true, provider: 'Evolink', duration: Math.round(performance.now() - fbStartTime), isFallback: true });
         return { url, isFallback: true, isFiltered: filterResult.wasFiltered };
     } catch (e) {
+        logger.trackGenerationResult({ type: 'image', sceneId: scene.id || '?', success: false, provider: 'Evolink', duration: Math.round(performance.now() - fbStartTime), error: (e as Error).message });
         console.warn("[ImageGen] Evolink Nanobanana 2도 실패", e);
         throw new Error(`이미지 생성 실패: Kie, Evolink 모두 실패. ${(e as Error).message}`);
     }

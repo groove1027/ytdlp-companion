@@ -588,7 +588,14 @@ const SceneDetailModal: React.FC<SceneDetailModalProps> = ({
               </div>
               {scene.imageUrl ? (
                 <img src={scene.imageUrl} className="w-full rounded-xl border border-gray-700 cursor-pointer" alt="scene"
-                  onClick={() => useUIStore.getState().openLightbox(scene.imageUrl!)} />
+                  onClick={() => useUIStore.getState().openLightbox(scene.imageUrl!)}
+                  onLoad={(e) => {
+                    const img = e.currentTarget;
+                    const ar = useProjectStore.getState().config?.aspectRatio;
+                    if (img.naturalWidth > 0 && ar) {
+                      logger.trackMediaDimension({ sceneId: scene.id, type: 'image', requestedRatio: ar, actualWidth: img.naturalWidth, actualHeight: img.naturalHeight });
+                    }
+                  }} />
               ) : (
                 <div
                   className="w-full aspect-video bg-gray-800 border border-gray-700 border-dashed rounded-xl flex flex-col items-center justify-center cursor-pointer hover:border-orange-500/40 hover:bg-gray-800/80 transition-colors"
