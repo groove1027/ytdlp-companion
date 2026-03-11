@@ -399,7 +399,7 @@ ${instinctPrompt}
       setFinalScript(fullText);
       setStreamingText('');
     } catch (err) {
-      if (err instanceof DOMException && err.name === 'AbortError') {
+      if (abortCtrl.signal.aborted || (err instanceof DOMException && err.name === 'AbortError')) {
         setGenError('');
       } else {
         setGenError(err instanceof Error ? err.message : '대본 생성 실패');
@@ -499,7 +499,7 @@ ${instinctPrompt}
       });
       setFinalScript(content);
     } catch (e: unknown) {
-      if (e instanceof DOMException && e.name === 'AbortError') {
+      if (abortCtrl.signal.aborted || (e instanceof DOMException && e.name === 'AbortError')) {
         setGenError('');
       } else {
         const msg = e instanceof Error ? e.message : String(e);
