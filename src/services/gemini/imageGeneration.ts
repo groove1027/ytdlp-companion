@@ -4,6 +4,7 @@ import { getMicroTexture, isBlackAndWhiteStyle, getStyleNegativePrompt, getInteg
 import { generateKieImage, generateEvolinkImageWrapped } from '../VideoGenService';
 import { filterPromptContent } from './contentFilter';
 import { logger } from '../LoggerService';
+import { showToast } from '../../stores/uiStore';
 
 // [NEW] Shot size auto-rotation — prevents monotonous compositions when AI doesn't specify shot size
 const SHOT_ROTATION: string[] = ['medium shot', 'close-up', 'wide shot', 'medium close-up', 'establishing shot', 'over-the-shoulder'];
@@ -679,6 +680,7 @@ export const generateSceneImage = async (
     }
 
     const fbStartTime = performance.now();
+    showToast('이미지 생성 서버를 변경하여 재시도합니다...', 3000);
     try {
         if (updateStatus) updateStatus(effectiveWebSearch ? "Evolink + 웹검색 폴백 시도 중..." : "Evolink Nanobanana 2 폴백 시도 중...");
         const url = await generateEvolinkImageWrapped(finalPrompt, ratio, finalCharImages, prodImg, "2K", effectiveWebSearch);
