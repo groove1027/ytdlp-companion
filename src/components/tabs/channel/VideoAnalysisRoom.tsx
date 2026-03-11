@@ -13,6 +13,7 @@ import AnalysisSlotBar from './AnalysisSlotBar';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
 import { getYoutubeApiKey } from '../../../services/apiService';
 import { monitoredFetch } from '../../../services/apiService';
+import { getQuotaUsage } from '../../../services/youtubeAnalysisService';
 import type {
   VideoAnalysisPreset as AnalysisPreset,
   VideoSceneRow as SceneRow,
@@ -1669,16 +1670,22 @@ const VideoAnalysisRoom: React.FC = () => {
   // ── 인기 쇼츠 음원 추천 (Google Search 그라운딩) ──
   const handleFetchTrendingBgm = useCallback(async () => {
     if (isBgmLoading) return;
+    // YouTube 쿼터 체크 (10곡 검색 = 1,000 단위)
+    const quota = getQuotaUsage();
+    if (quota.remaining < 1000) {
+      showToast(`YouTube 일일 쿼터가 부족합니다 (남은 쿼터: ${quota.remaining})`, 5000);
+      return;
+    }
     setIsBgmLoading(true);
     setTrendingBgm([]);
     try {
       const now = new Date();
       const sysP = '당신은 YouTube Shorts 트렌드 음원 전문가입니다. 반드시 JSON 배열만 출력하세요.';
-      const userP = `현재 ${now.getFullYear()}년 ${now.getMonth() + 1}월 기준, YouTube Shorts에서 가장 많이 사용되고 있는 인기 음원/BGM 15개를 추천해주세요.\n조건:\n- 실제로 Shorts 크리에이터들이 현재 많이 사용하는 곡\n- 한국 + 글로벌 혼합\n- 원곡, 리믹스, 밈 음원 포함\nJSON 배열만 응답 (코드블록 없이):\n[{"title":"곡명","artist":"아티스트명"},...]`;
+      const userP = `현재 ${now.getFullYear()}년 ${now.getMonth() + 1}월 기준, YouTube Shorts에서 가장 많이 사용되고 있는 인기 음원/BGM 10개를 추천해주세요.\n조건:\n- 실제로 Shorts 크리에이터들이 현재 많이 사용하는 곡\n- 한국 + 글로벌 혼합\n- 원곡, 리믹스, 밈 음원 포함\nJSON 배열만 응답 (코드블록 없이):\n[{"title":"곡명","artist":"아티스트명"},...]`;
       const aiResult = await evolinkNativeStream(sysP, userP, () => {}, { temperature: 0.3, maxOutputTokens: 2000, enableWebSearch: true });
       const cleaned = aiResult.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
       const jsonMatch = cleaned.match(/\[[\s\S]*\]/);
-      if (!jsonMatch) throw new Error('파싱 실패');
+      if (!jsonMatch) throw new Error('AI 응답 파싱 실패');
       const songs: { title: string; artist: string }[] = JSON.parse(jsonMatch[0]);
       const apiKey = getYoutubeApiKey();
       const results: { title: string; artist: string; videoId: string; thumbnail: string }[] = [];
@@ -1695,9 +1702,14 @@ const VideoAnalysisRoom: React.FC = () => {
         }));
         for (const r of fetched) { if (r.status === 'fulfilled' && r.value) results.push(r.value); }
       }
+      if (results.length === 0) {
+        showToast('음원 검색 결과가 없습니다. 잠시 후 다시 시도해주세요.', 4000);
+      }
       setTrendingBgm(results);
-    } catch (err) { console.error('트렌딩 BGM 로드 실패:', err); }
-    finally { setIsBgmLoading(false); }
+    } catch (err) {
+      console.error('트렌딩 BGM 로드 실패:', err);
+      showToast('인기 음원 추천에 실패했습니다. 잠시 후 다시 시도해주세요.', 5000);
+    } finally { setIsBgmLoading(false); }
   }, [isBgmLoading]);
 
   // ── 프리셋 전환 시 캐시 복원 or 신규 분석 ──
