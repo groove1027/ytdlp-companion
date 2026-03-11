@@ -2476,7 +2476,7 @@ ${meta.description.slice(0, 1500)}${meta.description.length > 1500 ? '\n...(이�
                   <button type="button" onClick={() => setExpandedId(isExp ? null : v.id)} className="w-full flex items-center gap-3 px-4 py-3.5 text-left">
                     <span className={`w-7 h-7 rounded-full ${c.numBg} flex items-center justify-center text-xs font-bold text-white flex-shrink-0`}>{v.id}</span>
                     <span className={`flex-1 text-sm font-bold truncate ${isExp ? c.text : 'text-gray-200'}`}>{v.title}</span>
-                    {hasScenes && <span className="text-[10px] text-gray-500 bg-gray-700/50 px-1.5 py-0.5 rounded flex-shrink-0">{v.scenes.length}컷</span>}
+                    {hasScenes && <span className="text-xs text-gray-500 bg-gray-700/50 px-1.5 py-0.5 rounded flex-shrink-0">{v.scenes.length}컷</span>}
                     <svg className={`w-4 h-4 text-gray-500 transition-transform duration-200 flex-shrink-0 ${isExp ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
                     </svg>
@@ -2584,7 +2584,7 @@ ${meta.description.slice(0, 1500)}${meta.description.length > 1500 ? '\n...(이�
                           <div className="flex items-center gap-4 mb-3">
                             {/* 타임라인 바 */}
                             <div className="flex-1 bg-gray-900/40 rounded-lg border border-gray-700/40 p-2">
-                              <p className="text-[10px] text-gray-500 mb-1 font-medium">타임라인</p>
+                              <p className="text-[11px] text-gray-500 mb-1 font-medium">타임라인</p>
                               <div style={{ width: '100%', height: 44 }}>
                                 <ResponsiveContainer width="100%" height="100%">
                                   <BarChart layout="vertical" data={[{ name: 'timeline', ...Object.fromEntries(timelineData.map((d, i) => [`seg${i}`, d.duration])) }]} margin={{ top: 0, right: 0, bottom: 0, left: 0 }} barSize={24}>
@@ -2609,7 +2609,7 @@ ${meta.description.slice(0, 1500)}${meta.description.length > 1500 ? '\n...(이�
                               {/* 범례 */}
                               <div className="flex gap-3 mt-1">
                                 {Object.entries(MODE_COLORS).map(([key, mc]) => (
-                                  <span key={key} className="flex items-center gap-1 text-[9px] text-gray-500">
+                                  <span key={key} className="flex items-center gap-1 text-[11px] text-gray-500">
                                     <span className="inline-block w-2 h-2 rounded-sm" style={{ backgroundColor: mc.fill }} />
                                     {mc.label}
                                   </span>
@@ -2618,7 +2618,7 @@ ${meta.description.slice(0, 1500)}${meta.description.length > 1500 ? '\n...(이�
                             </div>
                             {/* 모드별 파이 차트 */}
                             <div className="w-28 flex-shrink-0 bg-gray-900/40 rounded-lg border border-gray-700/40 p-2 flex flex-col items-center">
-                              <p className="text-[10px] text-gray-500 mb-0.5 font-medium">모드 비율</p>
+                              <p className="text-[11px] text-gray-500 mb-0.5 font-medium">모드 비율</p>
                               <div style={{ width: 100, height: 80 }}>
                                 <ResponsiveContainer width="100%" height="100%">
                                   <PieChart>
@@ -2681,12 +2681,12 @@ ${meta.description.slice(0, 1500)}${meta.description.length > 1500 ? '\n...(이�
                               {v.scenes.map((scene, si) => (
                                 <tr key={scene.cutNum} className="border-b border-gray-800/50 hover:bg-gray-800/30">
                                   <td className="py-2 px-2 align-top">
-                                    <span className={`inline-flex w-5 h-5 rounded-full items-center justify-center text-[10px] font-bold text-white ${c.numBg}`}>{scene.cutNum}</span>
+                                    <span className={`inline-flex w-6 h-6 rounded-full items-center justify-center text-xs font-bold text-white ${c.numBg}`}>{scene.cutNum}</span>
                                   </td>
                                   {(selectedPreset === 'tikitaka' || selectedPreset === 'condensed') ? (
                                     <>
                                       <td className="py-2 px-2 align-top">
-                                        <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                                        <span className={`inline-block px-1.5 py-0.5 rounded text-xs font-bold ${
                                           scene.mode.includes('N') ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
                                           : scene.mode.includes('S') ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
                                           : scene.mode.includes('A') ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
@@ -2696,30 +2696,30 @@ ${meta.description.slice(0, 1500)}${meta.description.length > 1500 ? '\n...(이�
                                       <td className="py-2 px-2 align-top text-gray-300 leading-relaxed">{scene.audioContent || '-'}</td>
                                       <td className="py-2 px-2 align-top">
                                         {scene.effectSub ? (
-                                          <span className="inline-block px-1.5 py-0.5 rounded bg-yellow-500/15 text-yellow-300 border border-yellow-500/20 text-[10px] font-bold leading-tight">{scene.effectSub}</span>
-                                        ) : <span className="text-gray-600 text-[10px]">-</span>}
+                                          <span className="inline-block px-1.5 py-0.5 rounded bg-yellow-500/15 text-yellow-300 border border-yellow-500/20 text-xs font-bold leading-tight">{scene.effectSub}</span>
+                                        ) : <span className="text-gray-600 text-xs">-</span>}
                                       </td>
                                       <td className="py-2 px-2 align-top text-center">
-                                        <span className="text-violet-400 font-mono text-[10px] font-bold">{scene.duration || '-'}</span>
+                                        <span className="text-violet-400 font-mono text-xs font-bold">{scene.duration || '-'}</span>
                                       </td>
-                                      <td className="py-2 px-2 align-top text-gray-400 leading-relaxed text-[11px]">{scene.videoDirection || '-'}</td>
+                                      <td className="py-2 px-2 align-top text-gray-400 leading-relaxed text-xs">{scene.videoDirection || '-'}</td>
                                       <td className="py-2 px-2 align-top">
-                                        <div className="text-blue-400 font-mono text-[10px] leading-relaxed">{scene.timecodeSource || '-'}</div>
+                                        <div className="text-blue-400 font-mono text-xs leading-relaxed">{scene.timecodeSource || '-'}</div>
                                       </td>
                                     </>
                                   ) : (
                                     <>
-                                      <td className="py-2 px-2 align-top text-gray-300 leading-relaxed text-[11px]">{scene.sceneDesc || '-'}</td>
+                                      <td className="py-2 px-2 align-top text-gray-300 leading-relaxed text-xs">{scene.sceneDesc || '-'}</td>
                                       <td className="py-2 px-2 align-top">
                                         {scene.effectSub ? (
                                           <span className="inline-block px-2 py-0.5 rounded bg-yellow-500/15 text-yellow-300 border border-yellow-500/20 text-xs font-bold">{scene.effectSub}</span>
                                         ) : '-'}
                                       </td>
-                                      <td className="py-2 px-2 align-top text-gray-300 leading-relaxed text-[11px]">{scene.dialogue || '-'}</td>
+                                      <td className="py-2 px-2 align-top text-gray-300 leading-relaxed text-xs">{scene.dialogue || '-'}</td>
                                       <td className="py-2 px-2 align-top">
                                         <div className="space-y-0.5">
-                                          {scene.sourceTimeline && <div className="text-blue-400 font-mono text-[10px]">원본: {scene.sourceTimeline}</div>}
-                                          {scene.timeline && <div className="text-gray-500 font-mono text-[10px]">배치: {scene.timeline}</div>}
+                                          {scene.sourceTimeline && <div className="text-blue-400 font-mono text-xs">원본: {scene.sourceTimeline}</div>}
+                                          {scene.timeline && <div className="text-gray-500 font-mono text-xs">배치: {scene.timeline}</div>}
                                         </div>
                                       </td>
                                     </>
@@ -2755,7 +2755,7 @@ ${meta.description.slice(0, 1500)}${meta.description.length > 1500 ? '\n...(이�
                                             className="w-[100px] h-[56px] object-cover rounded border border-gray-700/50 group-hover:border-blue-500/60 group-hover:ring-1 group-hover:ring-blue-500/30 transition-all"
                                             loading="lazy"
                                           />
-                                          <div className="text-[9px] text-gray-600 text-center font-mono group-hover:text-blue-400 transition-colors">{formatTimeSec(matched.timeSec)}</div>
+                                          <div className="text-[11px] text-gray-600 text-center font-mono group-hover:text-blue-400 transition-colors">{formatTimeSec(matched.timeSec)}</div>
                                         </button>
                                       </td>
                                     ) : <td className="py-2 px-2" />;
@@ -2776,29 +2776,29 @@ ${meta.description.slice(0, 1500)}${meta.description.length > 1500 ? '\n...(이�
                       {v.contentId && (
                         <div className="bg-gray-900/40 rounded-lg border border-gray-700/40 p-3 space-y-2">
                           <p className="text-xs font-bold text-gray-400 flex items-center gap-1.5">
-                            <span className="w-4 h-4 bg-emerald-600 rounded flex items-center justify-center text-[9px] text-white">ID</span>
+                            <span className="w-4 h-4 bg-emerald-600 rounded flex items-center justify-center text-[10px] text-white">ID</span>
                             Content ID 회피 및 바이럴 분석
                           </p>
                           <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                             <div className="bg-gray-800/60 rounded-lg px-2.5 py-1.5 border border-gray-700/30">
-                              <p className="text-[9px] text-gray-500">텍스트 일치율</p>
+                              <p className="text-[11px] text-gray-500">텍스트 일치율</p>
                               <p className="text-sm font-bold text-emerald-400 font-mono">{v.contentId.textMatchRate}%</p>
                             </div>
                             <div className="bg-gray-800/60 rounded-lg px-2.5 py-1.5 border border-gray-700/30">
-                              <p className="text-[9px] text-gray-500">구조 유사도</p>
+                              <p className="text-[11px] text-gray-500">구조 유사도</p>
                               <p className="text-sm font-bold text-cyan-400 font-mono">{v.contentId.structureSimilarity}%</p>
                             </div>
                             <div className="bg-gray-800/60 rounded-lg px-2.5 py-1.5 border border-gray-700/30">
-                              <p className="text-[9px] text-gray-500">순서 유사도</p>
+                              <p className="text-[11px] text-gray-500">순서 유사도</p>
                               <p className="text-sm font-bold text-blue-400 font-mono">{v.contentId.orderSimilarity}%</p>
                             </div>
                             <div className="bg-gray-800/60 rounded-lg px-2.5 py-1.5 border border-gray-700/30">
-                              <p className="text-[9px] text-gray-500">키워드 변형률</p>
+                              <p className="text-[11px] text-gray-500">키워드 변형률</p>
                               <p className="text-sm font-bold text-violet-400 font-mono">{v.contentId.keywordVariation}%</p>
                             </div>
                           </div>
                           <div className="flex items-center gap-3 flex-wrap">
-                            <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold border ${
+                            <span className={`inline-block px-2 py-0.5 rounded text-xs font-bold border ${
                               v.contentId.safetyGrade.includes('매우') ? 'bg-emerald-600/20 text-emerald-300 border-emerald-500/30'
                               : v.contentId.safetyGrade.includes('안전') ? 'bg-green-600/20 text-green-300 border-green-500/30'
                               : 'bg-yellow-600/20 text-yellow-300 border-yellow-500/30'
@@ -2806,13 +2806,13 @@ ${meta.description.slice(0, 1500)}${meta.description.length > 1500 ? '\n...(이�
                               {v.contentId.safetyGrade}
                             </span>
                             {v.contentId.viralPoint !== '-' && (
-                              <span className="text-[10px] text-orange-400">
+                              <span className="text-xs text-orange-400">
                                 <span className="text-gray-500">바이럴:</span> {v.contentId.viralPoint}
                               </span>
                             )}
                           </div>
                           {v.contentId.judgement !== '-' && (
-                            <p className="text-[10px] text-gray-500 leading-relaxed">
+                            <p className="text-xs text-gray-500 leading-relaxed">
                               <span className="text-gray-400 font-bold">판정:</span> {v.contentId.judgement}
                             </p>
                           )}
