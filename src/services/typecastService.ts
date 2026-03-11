@@ -759,82 +759,6 @@ const validateEmotionForModel = (
   return preset;
 };
 
-/**
- * 텍스트에서 주요 언어를 감지하여 ISO 639-3 코드 반환
- * 한글/히라가나/카타카나/한자/라틴 문자 비율 기반 경량 감지
- */
-function detectTextLanguage(text: string): string | null {
-  const cleaned = text.replace(/[\d\s\p{P}\p{S}]/gu, '');
-  if (cleaned.length < 3) return null;
-
-  let korean = 0, japanese = 0, chinese = 0, latin = 0;
-  for (const ch of cleaned) {
-    const code = ch.codePointAt(0)!;
-    if (code >= 0xAC00 && code <= 0xD7AF) korean++;       // Hangul syllables
-    else if (code >= 0x1100 && code <= 0x11FF) korean++;   // Hangul Jamo
-    else if (code >= 0x3130 && code <= 0x318F) korean++;   // Hangul Compatibility Jamo
-    else if (code >= 0x3040 && code <= 0x309F) japanese++;  // Hiragana
-    else if (code >= 0x30A0 && code <= 0x30FF) japanese++;  // Katakana
-    else if (code >= 0x4E00 && code <= 0x9FFF) chinese++;   // CJK Unified
-    else if (code >= 0x0041 && code <= 0x024F) latin++;     // Latin
-  }
-
-  const total = korean + japanese + chinese + latin;
-  if (total === 0) return null;
-
-  // 일본어: 히라가나/카타카나 존재 시 높은 우선순위 (한자는 중/일 공유)
-  if (japanese > 0 && (japanese + chinese) / total > 0.3) return 'jpn';
-  if (korean / total > 0.3) return 'kor';
-  if (chinese / total > 0.5) return 'zho';
-  if (latin / total > 0.5) return 'eng';
-
-  return null;
-}
-
-/**
- * 오디오를 타겟 피크 레벨로 정규화 (데시벨 편차 보정)
- * -1dB 피크 기준, ±2dB 이상 차이 시에만 적용
- */
-async function normalizeAudioPeak(audioUrl: string, targetPeakDb: number = -1.0): Promise<string> {
-  const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-  const ctx = new AudioCtx();
-  try {
-    const resp = await fetch(audioUrl);
-    const buf = await resp.arrayBuffer();
-    const buffer = await ctx.decodeAudioData(buf);
-
-    // 최대 피크 측정
-    let maxPeak = 0;
-    for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
-      const data = buffer.getChannelData(ch);
-      for (let i = 0; i < data.length; i++) {
-        const abs = Math.abs(data[i]);
-        if (abs > maxPeak) maxPeak = abs;
-      }
-    }
-    if (maxPeak === 0) return audioUrl;
-
-    const targetPeak = Math.pow(10, targetPeakDb / 20);
-    const gain = targetPeak / maxPeak;
-
-    // ±2dB 미만 차이는 무시 (불필요한 처리 방지)
-    if (Math.abs(20 * Math.log10(gain)) < 2) return audioUrl;
-
-    // 게인 적용
-    for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
-      const data = buffer.getChannelData(ch);
-      for (let i = 0; i < data.length; i++) data[i] *= gain;
-    }
-
-    const wavBlob = audioBufferToWav(buffer);
-    const newUrl = URL.createObjectURL(wavBlob);
-    if (audioUrl.startsWith('blob:')) URL.revokeObjectURL(audioUrl);
-    return newUrl;
-  } finally {
-    await ctx.close();
-  }
-}
-
 export const generateTypecastTTS = async (
   text: string,
   options: TypecastTTSOptions,
@@ -842,20 +766,6 @@ export const generateTypecastTTS = async (
   const apiKey = getTypecastKey();
   if (!apiKey) throw new Error('Typecast API 키가 설정되지 않았습니다.');
   if (!text.trim()) throw new Error('TTS 텍스트가 비어있습니다.');
-
-  // [FIX #113-1] 언어 자동 감지: 텍스트 언어와 설정 언어 불일치 시 자동 교정
-  const detectedLang = detectTextLanguage(text);
-  if (detectedLang && options.language) {
-    const specifiedLang = options.language.toLowerCase();
-    if (detectedLang !== specifiedLang) {
-      logger.warn('[Typecast] 텍스트 언어 자동 감지 — 설정 언어와 불일치, 자동 교정', {
-        specified: specifiedLang,
-        detected: detectedLang,
-        textPreview: text.slice(0, 30),
-      });
-      options = { ...options, language: detectedLang };
-    }
-  }
 
   // 모델 호환성: voice가 선택 모델을 지원하지 않으면 자동 폴백
   const requestedModel = options.model || 'ssfm-v30';
@@ -879,21 +789,10 @@ export const generateTypecastTTS = async (
     }
   }
 
-  let result: TypecastTTSResult;
   if (text.length > TYPECAST_MAX_CHARS) {
-    result = await generateChunked(text, options, apiKey);
-  } else {
-    result = await generateSingle(text, options, apiKey);
+    return generateChunked(text, options, apiKey);
   }
-
-  // [FIX #113-2] 피크 정규화: 라인 간 데시벨 편차 보정 (-1dB 피크 기준)
-  try {
-    const normalizedUrl = await normalizeAudioPeak(result.audioUrl);
-    return { audioUrl: normalizedUrl, format: result.format };
-  } catch {
-    // 정규화 실패 시 원본 반환
-    return result;
-  }
+  return generateSingle(text, options, apiKey);
 };
 
 const generateSingle = async (

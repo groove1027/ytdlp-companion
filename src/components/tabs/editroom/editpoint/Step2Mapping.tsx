@@ -1,6 +1,5 @@
 import React from 'react';
 import { useEditPointStore } from '../../../../stores/editPointStore';
-import type { VideoTimedFrame } from '../../../../types';
 
 /** 신뢰도 뱃지 */
 const ConfidenceBadge: React.FC<{ confidence: number }> = ({ confidence }) => {
@@ -20,18 +19,6 @@ function formatTC(sec: number): string {
   return `${String(m).padStart(2, '0')}:${s.padStart(4, '0')}`;
 }
 
-/** 분석 프레임 중 타임코드에 가장 가까운 프레임 매칭 */
-function matchFrameToTimecode(timeSec: number, frames: VideoTimedFrame[]): VideoTimedFrame | null {
-  if (frames.length === 0) return null;
-  let best = frames[0];
-  let bestDist = Math.abs(best.timeSec - timeSec);
-  for (const f of frames) {
-    const d = Math.abs(f.timeSec - timeSec);
-    if (d < bestDist) { best = f; bestDist = d; }
-  }
-  return bestDist < 30 ? best : null;
-}
-
 const Step2Mapping: React.FC = () => {
   const edlEntries = useEditPointStore((s) => s.edlEntries);
   const sourceVideos = useEditPointStore((s) => s.sourceVideos);
@@ -45,8 +32,6 @@ const Step2Mapping: React.FC = () => {
   const isProcessing = useEditPointStore((s) => s.isProcessing);
   const processingProgress = useEditPointStore((s) => s.processingProgress);
   const processingMessage = useEditPointStore((s) => s.processingMessage);
-  const analysisFrames = useEditPointStore((s) => s.analysisFrames);
-  const hasFrames = analysisFrames.length > 0;
 
   // 매핑되지 않은 소스 확인
   const uniqueSourceIds = [...new Set(edlEntries.map((e) => e.sourceId))];
@@ -68,7 +53,6 @@ const Step2Mapping: React.FC = () => {
             <thead>
               <tr className="bg-gray-900/60 text-gray-400 border-b border-gray-700/50">
                 <th className="text-left px-3 py-2.5 font-medium">순서</th>
-                {hasFrames && <th className="text-center px-2 py-2.5 font-medium">프레임</th>}
                 <th className="text-left px-3 py-2.5 font-medium">내레이션</th>
                 <th className="text-left px-3 py-2.5 font-medium">소스</th>
                 <th className="text-left px-3 py-2.5 font-medium">소스 영상</th>
@@ -83,23 +67,6 @@ const Step2Mapping: React.FC = () => {
               {edlEntries.map((entry) => (
                 <tr key={entry.id} className="border-b border-gray-800/50 hover:bg-gray-800/30 transition-colors">
                   <td className="px-3 py-2 text-amber-300 font-mono">{entry.order}</td>
-                  {hasFrames && (
-                    <td className="px-2 py-2 text-center">
-                      {(() => {
-                        const frame = matchFrameToTimecode(entry.timecodeStart, analysisFrames);
-                        return frame ? (
-                          <img
-                            src={frame.hdUrl || frame.url}
-                            alt={`${formatTC(entry.timecodeStart)}`}
-                            className="w-16 h-9 rounded object-cover border border-blue-500/20 inline-block hover:border-blue-400/50 transition-colors cursor-pointer"
-                            title={`프레임: ${formatTC(frame.timeSec)}`}
-                          />
-                        ) : (
-                          <span className="text-gray-600 text-[10px]">--</span>
-                        );
-                      })()}
-                    </td>
-                  )}
                   <td className="px-3 py-2 text-gray-300 max-w-[200px]">
                     <p className="truncate" title={entry.narrationText}>
                       {entry.narrationText || '--'}

@@ -111,20 +111,36 @@ const NarrationLineItem: React.FC<NarrationLineItemProps> = ({
 
       {/* 상태 표시 + 재생/생성 버튼 */}
       <div className="flex-shrink-0 flex flex-col items-center gap-0.5 mt-0.5">
-        <button
-          type="button"
-          onClick={() => (status === 'done' ? onPlayLine(line.id) : onGenerateLine(line.id))}
-          disabled={status === 'generating'}
-          className={`w-8 h-8 rounded-full flex items-center justify-center text-sm transition-colors ${playButtonClass}`}
-        >
-          {status === 'generating' ? (
-            <span className="animate-spin inline-block w-4 h-4 border-2 border-white/30 border-t-white rounded-full" />
-          ) : status === 'done' ? (
-            <svg className="w-3.5 h-3.5" viewBox="0 0 12 12" fill="white"><polygon points="2,1 11,6 2,11" /></svg>
-          ) : (
-            <svg className="w-3.5 h-3.5" viewBox="0 0 12 12" fill="white"><polygon points="2,1 11,6 2,11" /></svg>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => (status === 'done' ? onPlayLine(line.id) : onGenerateLine(line.id))}
+            disabled={status === 'generating'}
+            className={`w-8 h-8 rounded-full flex items-center justify-center text-sm transition-colors ${playButtonClass}`}
+          >
+            {status === 'generating' ? (
+              <span className="animate-spin inline-block w-4 h-4 border-2 border-white/30 border-t-white rounded-full" />
+            ) : status === 'done' ? (
+              <svg className="w-3.5 h-3.5" viewBox="0 0 12 12" fill="white"><polygon points="2,1 11,6 2,11" /></svg>
+            ) : (
+              <svg className="w-3.5 h-3.5" viewBox="0 0 12 12" fill="white"><polygon points="2,1 11,6 2,11" /></svg>
+            )}
+          </button>
+          {/* 재생성 버튼 (오디오 존재 시) */}
+          {isDone && (
+            <button
+              type="button"
+              onClick={() => onGenerateLine(line.id)}
+              disabled={line.ttsStatus === 'generating'}
+              className="w-6 h-6 rounded-full flex items-center justify-center bg-gray-600/80 hover:bg-purple-600 text-gray-400 hover:text-white transition-colors"
+              title="같은 텍스트로 재생성"
+            >
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            </button>
           )}
-        </button>
+        </div>
         {isModified && (
           <span className="text-[9px] text-yellow-400 font-bold leading-none">재생성</span>
         )}
@@ -213,6 +229,16 @@ const NarrationLineItem: React.FC<NarrationLineItemProps> = ({
 
       {/* 호버 액션 바 */}
       <div className="absolute right-2 -top-3 hidden group-hover:flex items-center gap-1 bg-gray-700 border border-gray-600 rounded-lg px-1.5 py-1 shadow-lg z-10">
+        {isDone && (
+          <button
+            type="button"
+            onClick={() => onGenerateLine(line.id)}
+            className="px-1.5 py-0.5 rounded text-[10px] text-purple-300 hover:bg-purple-900/40 transition-colors"
+            title="같은 텍스트로 재생성"
+          >
+            재생성
+          </button>
+        )}
         <button
           type="button"
           onClick={() => { setEditText(line.text); setIsEditing(true); }}

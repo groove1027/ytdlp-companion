@@ -262,6 +262,86 @@ export async function cobaltDownload(
   return null;
 }
 
+/**
+ * 범용 URL 다운로드 — YouTube 외 TikTok/Douyin 등도 지원
+ * 인증된 커뮤니티 인스턴스 순회 (Turnstile + 비인증 폴백)
+ */
+export async function cobaltDownloadUrl(
+  targetUrl: string,
+  onPhase?: (msg: string) => void,
+): Promise<{ url: string; filename: string } | null> {
+  const fallbackName = 'download.mp4';
+
+  // Phase 1: 인증 기반 시도
+  if (!turnstileFailed) {
+    for (const instance of COBALT_INSTANCES) {
+      if (instance.noAuth) continue;
+      try {
+        onPhase?.(`보안 인증 중... (${new URL(instance.api).hostname})`);
+        const jwt = await getSessionToken(instance);
+
+        onPhase?.('다운로드 요청 중...');
+        const res = await fetch(`${instance.api}/`, {
+          method: 'POST',
+          headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${jwt}`,
+          },
+          body: JSON.stringify({
+            url: targetUrl,
+            downloadMode: 'auto',
+            filenameStyle: 'pretty',
+          }),
+          signal: AbortSignal.timeout(15_000),
+        });
+
+        if (!res.ok) { logger.warn(`[Cobalt-URL] ${instance.api} → HTTP ${res.status}`); continue; }
+
+        const data = await res.json();
+        if (data.status === 'error' && data.error?.code?.includes('auth')) {
+          delete jwtCache[instance.api];
+          continue;
+        }
+        const result = extractCobaltUrl(data, fallbackName);
+        if (result) {
+          logger.info(`[Cobalt-URL] ✅ 인증 다운로드 성공: ${instance.api}`);
+          return result;
+        }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        logger.warn(`[Cobalt-URL] ${instance.api} 인증 실패: ${msg}`);
+        if (msg.includes('Turnstile') || msg.includes('스크립트')) break;
+        continue;
+      }
+    }
+  }
+
+  // Phase 2: 비인증 시도
+  onPhase?.('비인증 다운로드 시도 중...');
+  for (const instance of COBALT_INSTANCES) {
+    try {
+      const res = await fetch(`${instance.api}/`, {
+        method: 'POST',
+        headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: targetUrl, downloadMode: 'auto', filenameStyle: 'pretty' }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!res.ok) continue;
+      const data = await res.json();
+      const result = extractCobaltUrl(data, fallbackName);
+      if (result) {
+        logger.info(`[Cobalt-URL] ✅ 비인증 다운로드 성공: ${instance.api}`);
+        return result;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
 /** 런타임 인스턴스 목록 갱신 — instances.cobalt.best에서 YouTube 지원 인스턴스 탐색 */
 export async function refreshCobaltInstances(): Promise<number> {
   try {

@@ -44,7 +44,6 @@ interface VideoAnalysisStore {
   activeSlotId: string | null;
 
   // Actions
-  setVideoBlob: (blob: Blob | null) => void;
   setInputMode: (mode: 'upload' | 'youtube') => void;
   setYoutubeUrl: (url: string) => void;
   /** 다중 URL: 특정 인덱스의 URL 업데이트 */
@@ -83,6 +82,8 @@ interface VideoAnalysisStore {
   removeSlot: (id: string) => Promise<void>;
   /** 앱 초기화 시 슬롯 목록 로드 */
   loadAllSlots: () => Promise<void>;
+  /** 영상 Blob 설정 (편집실 전달용) */
+  setVideoBlob: (blob: Blob | File | null) => void;
   /** 새 분석 시작 — 결과 초기화 */
   newAnalysis: () => void;
 }
@@ -110,7 +111,6 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
     (set, get) => ({
       ...INITIAL_STATE,
 
-      setVideoBlob: (blob) => set({ videoBlob: blob }),
       setInputMode: (mode) => set({ inputMode: mode }),
       setYoutubeUrl: (url) => set({ youtubeUrl: url, youtubeUrls: [url] }),
 
@@ -181,7 +181,7 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
         expandedId: null,
       }),
 
-      reset: () => set({ ...INITIAL_STATE, videoBlob: null }),
+      reset: () => set({ ...INITIAL_STATE }),
 
       // --- 슬롯 관리 ---
       saveSlot: async (name) => {
@@ -244,6 +244,8 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
           set({ savedSlots: all });
         } catch (e) { console.warn('[VideoSlot] loadAll failed:', e); }
       },
+
+      setVideoBlob: (blob) => set({ videoBlob: blob instanceof File ? blob : blob }),
 
       newAnalysis: () => set({
         youtubeUrl: '',

@@ -3,12 +3,13 @@
  * 해외 쇼핑 영상 다운로드 (TikTok / Douyin / Xiaohongshu)
  *
  * 우선순위:
- * 1. cobalt.tools API (무료, 오픈소스)
+ * 1. cobalt 인증 인스턴스 (Turnstile + 비인증 폴백)
  * 2. 사용자 설정 프록시 엔드포인트
  * 3. 로컬 파일 업로드 (항상 가능한 폴백)
  */
 
 import { logger } from './LoggerService';
+import { cobaltDownloadUrl } from './cobaltAuthService';
 
 export type VideoPlatform = 'douyin' | 'tiktok' | 'xiaohongshu' | 'unknown';
 
@@ -21,8 +22,6 @@ interface DownloadResult {
   filename: string;
   source: 'cobalt' | 'proxy' | 'direct';
 }
-
-const COBALT_API = 'https://api.cobalt.tools';
 
 const PLATFORM_PATTERNS: { platform: VideoPlatform; patterns: RegExp[] }[] = [
   {
@@ -82,49 +81,20 @@ export const getPlatformInfo = (platform: VideoPlatform): { label: string; color
   }
 };
 
-/** cobalt.tools API로 다운로드 시도 */
+/** cobalt 인증 인스턴스로 다운로드 (Turnstile + 비인증 폴백) */
 const downloadFromCobalt = async (url: string): Promise<DownloadResult> => {
-  logger.info('[VideoDownload] cobalt.tools 시도', { url });
+  logger.info('[VideoDownload] cobalt 인증 인스턴스 시도', { url });
 
-  const res = await fetch(`${COBALT_API}/`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-    },
-    body: JSON.stringify({
-      url,
-      downloadMode: 'auto',
-      filenameStyle: 'basic',
-    }),
-  });
+  const result = await cobaltDownloadUrl(url);
+  if (!result) throw new Error('cobalt: 모든 인스턴스 실패');
 
-  if (!res.ok) {
-    const errText = await res.text().catch(() => res.statusText);
-    throw new Error(`cobalt API 오류 (${res.status}): ${errText}`);
-  }
+  // cobalt가 반환한 tunnel/redirect URL에서 영상 다운로드
+  const videoRes = await fetch(result.url, { signal: AbortSignal.timeout(60_000) });
+  if (!videoRes.ok) throw new Error(`영상 다운로드 실패 (${videoRes.status})`);
 
-  const data = await res.json();
-
-  if (data.status === 'error') {
-    throw new Error(`cobalt 오류: ${data.error?.code || 'unknown'}`);
-  }
-
-  // cobalt returns a download URL
-  if (data.status === 'tunnel' || data.status === 'redirect') {
-    const videoUrl = data.url;
-    if (!videoUrl) throw new Error('cobalt: 다운로드 URL 없음');
-
-    const videoRes = await fetch(videoUrl);
-    if (!videoRes.ok) throw new Error(`영상 다운로드 실패 (${videoRes.status})`);
-
-    const blob = await videoRes.blob();
-    const filename = data.filename || 'download.mp4';
-    logger.success('[VideoDownload] cobalt 성공', { size: blob.size });
-    return { blob, filename, source: 'cobalt' };
-  }
-
-  throw new Error(`cobalt: 예상치 못한 상태 (${data.status})`);
+  const blob = await videoRes.blob();
+  logger.success('[VideoDownload] cobalt 성공', { size: blob.size });
+  return { blob, filename: result.filename, source: 'cobalt' };
 };
 
 /** 프록시 엔드포인트로 다운로드 시도 */
