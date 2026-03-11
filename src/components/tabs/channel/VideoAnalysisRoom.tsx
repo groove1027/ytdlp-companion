@@ -643,10 +643,161 @@ function blobToDataUrl(blob: Blob): Promise<string> {
 }
 
 /**
+ * ★★ WebCodecs 기반 프레임 정확 추출 (최상급 정확도)
+ * VideoFrame API + requestVideoFrameCallback으로 프레임 레벨 정확도 달성
+ *
+ * 전략:
+ * 1. 대상 시간 0.5초 전으로 seek (키프레임 로딩 보장)
+ * 2. play() → requestVideoFrameCallback으로 매 프레임 모니터링
+ * 3. metadata.mediaTime ≥ 대상 시간에 도달하면 VideoFrame으로 정확한 디코딩 프레임 캡처
+ * 4. OffscreenCanvas → HD(원본 해상도, JPEG 97%) + 썸네일(640px, JPEG 90%) 동시 인코딩
+ *
+ * WebCodecs 미지원 브라우저 → canvasExtractFrames 자동 폴백
+ */
+function webCodecsExtractFrames(
+  videoUrl: string,
+  timecodes: number[],
+  isBlob: boolean,
+): Promise<TimedFrame[]> {
+  // Feature detection — VideoFrame + requestVideoFrameCallback 둘 다 필요
+  const hasVideoFrame = typeof (globalThis as Record<string, unknown>).VideoFrame === 'function';
+  const hasRVFC = 'requestVideoFrameCallback' in HTMLVideoElement.prototype;
+
+  if (!hasVideoFrame || !hasRVFC) {
+    console.log('[Frame] WebCodecs 미지원 브라우저 → canvas 폴백');
+    return canvasExtractFrames(videoUrl, timecodes, isBlob);
+  }
+
+  return new Promise((resolve) => {
+    const video = document.createElement('video');
+    video.muted = true;
+    video.preload = 'auto';
+    if (!isBlob) video.crossOrigin = 'anonymous';
+    video.src = videoUrl;
+
+    const cleanup = () => { if (isBlob) URL.revokeObjectURL(videoUrl); };
+
+    video.onloadedmetadata = async () => {
+      const dur = video.duration;
+      const vw = video.videoWidth || 640;
+      const vh = video.videoHeight || 360;
+      if (!dur || dur < 1) { cleanup(); resolve([]); return; }
+
+      const thumbScale = Math.min(1, 640 / vw);
+      const thumbW = Math.round(vw * thumbScale);
+      const thumbH = Math.round(vh * thumbScale);
+
+      const frames: TimedFrame[] = [];
+      const unique = [...new Set(timecodes.map(t => Math.round(t * 100) / 100))]
+        .filter(t => t >= 0 && t <= dur)
+        .sort((a, b) => a - b);
+
+      console.log(`[Frame/WebCodecs] 추출 시작: ${unique.length}개, 원본=${vw}x${vh}`);
+
+      for (const tc of unique) {
+        try {
+          // 1단계: 대상 0.5초 전으로 seek (키프레임 로딩)
+          const seekTo = Math.max(0, tc - 0.5);
+          video.currentTime = seekTo;
+          const seeked = await Promise.race([
+            new Promise<boolean>(r => { video.onseeked = () => r(true); }),
+            new Promise<boolean>(r => setTimeout(() => r(false), 5000)),
+          ]);
+          if (!seeked) continue;
+
+          // 2단계: play forward → requestVideoFrameCallback → 정확한 프레임 도달 시 캡처
+          const captured = await new Promise<TimedFrame | null>((captureResolve) => {
+            const captureTimeout = setTimeout(() => {
+              video.pause();
+              captureResolve(null);
+            }, 8000);
+
+            const VF = (globalThis as Record<string, unknown>).VideoFrame as {
+              new (source: HTMLVideoElement, init?: { timestamp?: number }): {
+                displayWidth: number;
+                displayHeight: number;
+                close(): void;
+              };
+            };
+
+            const tryCapture = async (_now: number, metadata: Record<string, number>) => {
+              const mediaTime: number = metadata.mediaTime ?? video.currentTime;
+
+              // 대상 시간 도달 여부 (1프레임 이내 = ~16ms@60fps)
+              if (mediaTime >= tc - 0.017) {
+                video.pause();
+                clearTimeout(captureTimeout);
+                try {
+                  const vf = new VF(video, { timestamp: Math.round(mediaTime * 1_000_000) });
+
+                  // HD: 원본 해상도 그대로
+                  const hdC = new OffscreenCanvas(vf.displayWidth, vf.displayHeight);
+                  hdC.getContext('2d')!.drawImage(vf as unknown as CanvasImageSource, 0, 0);
+
+                  // 썸네일: 640px 스케일
+                  const tC = new OffscreenCanvas(thumbW, thumbH);
+                  tC.getContext('2d')!.drawImage(vf as unknown as CanvasImageSource, 0, 0, thumbW, thumbH);
+                  vf.close();
+
+                  const [tBlob, hBlob] = await Promise.all([
+                    tC.convertToBlob({ type: 'image/jpeg', quality: 0.9 }),
+                    hdC.convertToBlob({ type: 'image/jpeg', quality: 0.97 }),
+                  ]);
+                  const [thumbUrl, hdUrl] = await Promise.all([
+                    blobToDataUrl(tBlob), blobToDataUrl(hBlob),
+                  ]);
+
+                  const drift = Math.abs(mediaTime - tc);
+                  if (drift > 0.02) {
+                    console.log(`[Frame/WebCodecs] ${tc.toFixed(3)}s → 실제 ${mediaTime.toFixed(3)}s (Δ${(drift * 1000).toFixed(0)}ms)`);
+                  }
+                  captureResolve({ url: thumbUrl, hdUrl, timeSec: tc });
+                } catch (err) {
+                  console.warn('[Frame/WebCodecs] VideoFrame 캡처 에러:', err);
+                  captureResolve(null);
+                }
+              } else {
+                // 아직 대상 미도달 → 다음 프레임 대기
+                (video as unknown as Record<string, (cb: typeof tryCapture) => void>)
+                  .requestVideoFrameCallback(tryCapture);
+              }
+            };
+
+            // seek 후 이미 대상에 도달했으면 바로 캡처, 아니면 재생하며 전진
+            if (video.currentTime >= tc - 0.017) {
+              (video as unknown as Record<string, (cb: typeof tryCapture) => void>)
+                .requestVideoFrameCallback(tryCapture);
+            } else {
+              video.play().then(() => {
+                (video as unknown as Record<string, (cb: typeof tryCapture) => void>)
+                  .requestVideoFrameCallback(tryCapture);
+              }).catch(() => {
+                clearTimeout(captureTimeout);
+                captureResolve(null);
+              });
+            }
+          });
+
+          if (captured) frames.push(captured);
+        } catch (err) {
+          console.warn(`[Frame/WebCodecs] ${tc}s 실패:`, err);
+        }
+      }
+
+      console.log(`[Frame/WebCodecs] ✅ 완료: ${frames.length}/${unique.length}`);
+      cleanup();
+      resolve(frames);
+    };
+
+    video.onerror = () => { cleanup(); resolve([]); };
+  });
+}
+
+/**
  * ★ 3중 폴백 프레임 추출 — 무조건 결과를 반환
- * 전략: 로컬 디코딩 우선 (컴퓨터 자원 활용, 원본 품질 보장)
- * Layer 1: 스트림 URL → Blob 다운로드 → 로컬 canvas 추출 (CORS 무관, 원본 품질)
- * Layer 2: 스트림 URL → crossOrigin canvas 추출 (Blob 다운로드 실패 시 빠른 폴백)
+ * 전략: WebCodecs 우선 → canvas 폴백 → YouTube 썸네일 최후 수단
+ * Layer 1: Blob 다운로드 → WebCodecs 프레임 정확 추출 (CORS 무관, 프레임 정확)
+ * Layer 2: crossOrigin → WebCodecs/canvas 추출 (Blob 실패 시)
  * Layer 3: YouTube 고정 썸네일 매핑 (최후 수단, 무조건 성공)
  */
 async function extractFramesWithFallback(
@@ -657,45 +808,43 @@ async function extractFramesWithFallback(
 ): Promise<TimedFrame[]> {
   if (timecodes.length === 0) return [];
 
-  // ── 업로드 파일: 로컬 추출 (CORS 없음, 항상 성공) ──
+  // ── 업로드 파일: WebCodecs 로컬 추출 (CORS 없음, 프레임 정확) ──
   if (videoSource instanceof File) {
-    // 편집실 전달용 Blob 저장
     useVideoAnalysisStore.getState().setVideoBlob(videoSource);
     const blobUrl = URL.createObjectURL(videoSource);
-    const frames = await canvasExtractFrames(blobUrl, timecodes, true);
+    const frames = await webCodecsExtractFrames(blobUrl, timecodes, true);
     if (frames.length > 0) {
-      console.log(`[Frame] ✅ 로컬 파일 추출 성공: ${frames.length}개`);
+      console.log(`[Frame] ✅ WebCodecs 로컬 파일 추출 성공: ${frames.length}개`);
       return frames;
     }
   }
 
-  // ── YouTube/URL: 3중 폴백 (로컬 Blob 우선) ──
+  // ── YouTube/URL: 3중 폴백 (WebCodecs + Blob 우선) ──
   const streamUrl = typeof videoSource === 'string' ? videoSource : null;
 
   if (streamUrl) {
-    // Layer 1: Blob 다운로드 → 로컬 canvas (원본 품질, CORS 완전 우회)
-    console.log('[Frame] Layer 1: Blob 다운로드 → 로컬 디코딩 시도');
+    // Layer 1: Blob 다운로드 → WebCodecs (프레임 정확, CORS 완전 우회)
+    console.log('[Frame] Layer 1: Blob 다운로드 → WebCodecs 추출 시도');
     const dlResult = await downloadVideoAsBlob(streamUrl);
     if (dlResult) {
-      // 편집실 전달용 Blob 저장
       useVideoAnalysisStore.getState().setVideoBlob(dlResult.blob);
-      const layer1 = await canvasExtractFrames(dlResult.blobUrl, timecodes, true);
+      const layer1 = await webCodecsExtractFrames(dlResult.blobUrl, timecodes, true);
       if (layer1.length > 0) {
-        console.log(`[Frame] ✅ Layer 1 성공 (로컬 Blob): ${layer1.length}개`);
+        console.log(`[Frame] ✅ Layer 1 성공 (WebCodecs + Blob): ${layer1.length}개`);
         return layer1;
       }
     }
 
-    // Layer 2: crossOrigin 직접 추출 (Blob 실패 시 빠른 폴백)
-    console.log('[Frame] Layer 2: crossOrigin 추출 시도');
-    const layer2 = await canvasExtractFrames(streamUrl, timecodes, false);
+    // Layer 2: crossOrigin → WebCodecs/canvas (Blob 실패 시)
+    console.log('[Frame] Layer 2: crossOrigin WebCodecs 추출 시도');
+    const layer2 = await webCodecsExtractFrames(streamUrl, timecodes, false);
     if (layer2.length > 0) {
       console.log(`[Frame] ✅ Layer 2 성공 (crossOrigin): ${layer2.length}개`);
       return layer2;
     }
   }
 
-  // Layer 3: YouTube 고정 썸네일 (무조건 성공)
+  // Layer 3: YouTube 고정 썸네일 (최후 수단)
   if (youtubeVideoId) {
     console.log('[Frame] Layer 3: YouTube 썸네일 폴백');
     const layer3 = buildYouTubeThumbnailFallback(youtubeVideoId, timecodes, durationSec);

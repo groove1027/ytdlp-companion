@@ -36,11 +36,15 @@ interface VideoAnalysisStore {
   // 프리셋별 결과 캐시
   resultCache: Record<string, ResultCache>;
 
+  // 다운로드된 영상 (비영속 — 편집실 전달용)
+  videoBlob: Blob | null;
+
   // 슬롯 관리
   savedSlots: SavedVideoAnalysisSlot[];
   activeSlotId: string | null;
 
   // Actions
+  setVideoBlob: (blob: Blob | null) => void;
   setInputMode: (mode: 'upload' | 'youtube') => void;
   setYoutubeUrl: (url: string) => void;
   /** 다중 URL: 특정 인덱스의 URL 업데이트 */
@@ -96,6 +100,7 @@ const INITIAL_STATE = {
   error: null as string | null,
   expandedId: null as number | null,
   resultCache: {} as Record<string, ResultCache>,
+  videoBlob: null as Blob | null,
   savedSlots: [] as SavedVideoAnalysisSlot[],
   activeSlotId: null as string | null,
 };
@@ -105,6 +110,7 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
     (set, get) => ({
       ...INITIAL_STATE,
 
+      setVideoBlob: (blob) => set({ videoBlob: blob }),
       setInputMode: (mode) => set({ inputMode: mode }),
       setYoutubeUrl: (url) => set({ youtubeUrl: url, youtubeUrls: [url] }),
 
@@ -175,7 +181,7 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
         expandedId: null,
       }),
 
-      reset: () => set({ ...INITIAL_STATE }),
+      reset: () => set({ ...INITIAL_STATE, videoBlob: null }),
 
       // --- 슬롯 관리 ---
       saveSlot: async (name) => {
@@ -250,6 +256,7 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
         error: null,
         expandedId: null,
         activeSlotId: null,
+        videoBlob: null,
       }),
     }),
     {

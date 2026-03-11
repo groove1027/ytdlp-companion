@@ -9,6 +9,7 @@ import {
   EditPointExportMode,
   SourceVideoFile,
   EdlEntry,
+  VideoTimedFrame,
 } from '../types';
 import {
   parseEditTableWithAI,
@@ -45,6 +46,9 @@ interface EditPointStore {
   exportMode: EditPointExportMode;
   totalSourceSizeMB: number;
 
+  // 영상 분석실 연동
+  analysisFrames: VideoTimedFrame[];
+
   // 자막 제거
   cleanSubtitles: boolean;
   cleanProgress: number; // 0~100
@@ -52,6 +56,13 @@ interface EditPointStore {
   isCleaning: boolean;
 
   // Actions
+  importFromVideoAnalysis: (params: {
+    frames: VideoTimedFrame[];
+    videoBlob: Blob | null;
+    videoFile: File | null;
+    editTableText: string;
+    narrationText: string;
+  }) => Promise<void>;
   setStep: (step: EditPointStep) => void;
   addSourceVideos: (files: File[]) => Promise<void>;
   removeSourceVideo: (id: string) => void;
@@ -170,10 +181,27 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
   isProcessing: false,
   exportMode: 'edl-file',
   totalSourceSizeMB: 0,
+  analysisFrames: [],
   cleanSubtitles: false,
   cleanProgress: 0,
   cleanMessage: '',
   isCleaning: false,
+
+  importFromVideoAnalysis: async ({ frames, videoBlob, videoFile, editTableText, narrationText }) => {
+    // 기존 상태 초기화
+    get().reset();
+    // 편집표 + 나레이션 + 프레임 설정
+    set({ rawEditTable: editTableText, rawNarration: narrationText, analysisFrames: frames });
+
+    // 영상 자동 등록 (File 우선, 없으면 Blob → File 변환)
+    let file: File | null = videoFile;
+    if (!file && videoBlob) {
+      file = new File([videoBlob], 'analysis-video.mp4', { type: videoBlob.type || 'video/mp4' });
+    }
+    if (file) {
+      await get().addSourceVideos([file]);
+    }
+  },
 
   setStep: (step) => set({ step }),
 
@@ -582,6 +610,7 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
       rawNarration: '',
       edlEntries: [],
       sourceMapping: {},
+      analysisFrames: [],
       processingPhase: '',
       processingProgress: 0,
       processingMessage: '',

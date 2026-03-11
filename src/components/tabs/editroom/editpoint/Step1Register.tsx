@@ -1,6 +1,13 @@
 import React, { useCallback, useRef } from 'react';
 import { useEditPointStore } from '../../../../stores/editPointStore';
 
+/** 초 → MM:SS 포맷 */
+function formatTimeSec(sec: number): string {
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
 const Step1Register: React.FC = () => {
   const sourceVideos = useEditPointStore((s) => s.sourceVideos);
   const rawEditTable = useEditPointStore((s) => s.rawEditTable);
@@ -14,6 +21,7 @@ const Step1Register: React.FC = () => {
   const parseEditTable = useEditPointStore((s) => s.parseEditTable);
   const isProcessing = useEditPointStore((s) => s.isProcessing);
   const processingMessage = useEditPointStore((s) => s.processingMessage);
+  const analysisFrames = useEditPointStore((s) => s.analysisFrames);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -110,6 +118,42 @@ const Step1Register: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* 영상 분석실 프레임 미리보기 */}
+      {analysisFrames.length > 0 && (
+        <div className="bg-blue-900/20 border border-blue-500/30 rounded-xl p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold text-blue-400 flex items-center gap-2">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              </svg>
+              영상 분석실에서 가져온 프레임
+            </h3>
+            <span className="text-[10px] text-blue-300/60">{analysisFrames.length}개 프레임</span>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {analysisFrames.slice(0, 16).map((f, i) => (
+              <div key={i} className="relative group">
+                <img src={f.url} alt="" className="w-20 h-11 rounded object-cover border border-blue-500/20 group-hover:border-blue-400/50 transition-colors" />
+                <span className="absolute bottom-0 right-0 bg-black/70 text-blue-300 text-[8px] px-1 rounded-tl font-mono">
+                  {formatTimeSec(f.timeSec)}
+                </span>
+              </div>
+            ))}
+            {analysisFrames.length > 16 && (
+              <div className="flex items-center justify-center w-20 h-11 rounded bg-gray-800/50 border border-gray-700/30">
+                <span className="text-[10px] text-gray-500">+{analysisFrames.length - 16}</span>
+              </div>
+            )}
+          </div>
+          {sourceVideos.length > 0 && (
+            <div className="mt-2 flex items-center gap-1.5 text-[10px] text-blue-400">
+              <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" /></svg>
+              소스 영상 자동 등록 완료
+            </div>
+          )}
+        </div>
+      )}
 
       {/* 편집표 붙여넣기 */}
       <div className="bg-gray-800/50 rounded-xl border border-gray-700/50 p-5">
