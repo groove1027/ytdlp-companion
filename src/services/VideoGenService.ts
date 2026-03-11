@@ -160,12 +160,13 @@ export async function generateKieImage(
 
     const inputImages: string[] = [];
     const ensureUrl = async (img: string, debugName: string): Promise<string> => {
+        if (!img || img.trim().length === 0) throw new Error(`빈 이미지 (${debugName})`);
         if (img.startsWith("http")) return img;
         if (img.startsWith("data:")) {
             const file = base64ToFile(img, `${debugName}.png`);
             return await uploadMediaToHosting(file);
         }
-        return img;
+        throw new Error(`잘못된 이미지 형식 (${debugName}): ${img.slice(0, 20)}...`);
     };
 
     // Multi-reference image support (string | string[])

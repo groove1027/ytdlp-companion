@@ -561,9 +561,9 @@ const KeywordLab: React.FC = () => {
                   <div className="bg-gray-800 rounded-xl p-5 border border-gray-700 mt-6">
                     <p className="text-sm font-bold text-gray-300 mb-3">상위 영상 참여율 비교</p>
                     <ResponsiveContainer width="100%" height={280}>
-                      <BarChart data={topVideos.slice(0, 10).map(v => ({ name: v.title.substring(0, 12) + '...', engagement: v.engagement, viewToSub: v.viewToSubRatio, channel: v.channelTitle }))} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+                      <BarChart data={topVideos.slice(0, 10).map(v => ({ name: v.title.substring(0, 12) + '...', engagement: v.engagement, viewToSub: v.viewToSubRatio, channel: v.channelTitle }))} margin={{ top: 10, right: 30, bottom: 60, left: 40 }}>
                         <CartesianGrid {...GRID_STYLE} />
-                        <XAxis dataKey="name" tick={AXIS_STYLE} interval={0} angle={-20} textAnchor="end" height={50} />
+                        <XAxis dataKey="name" tick={AXIS_STYLE} interval={0} angle={-20} textAnchor="end" height={60} />
                         <YAxis tick={AXIS_STYLE} />
                         <Tooltip contentStyle={CHART_TOOLTIP} labelStyle={{ color: '#e5e7eb' }} itemStyle={{ color: '#d1d5db' }} />
                         <Legend wrapperStyle={{ color: '#9ca3af' }} />
@@ -588,9 +588,9 @@ const KeywordLab: React.FC = () => {
                           desc: v.description.toLowerCase().includes(kw) ? 1 : 0,
                           descLen: (v.description?.length || 0) >= 100 ? 1 : 0,
                         };
-                      })} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+                      })} margin={{ top: 10, right: 30, bottom: 60, left: 40 }}>
                         <CartesianGrid {...GRID_STYLE} />
-                        <XAxis dataKey="name" tick={AXIS_STYLE} interval={0} angle={-20} textAnchor="end" height={50} />
+                        <XAxis dataKey="name" tick={AXIS_STYLE} interval={0} angle={-20} textAnchor="end" height={60} />
                         <YAxis tick={AXIS_STYLE} domain={[0, 4]} ticks={[0, 1, 2, 3, 4]} />
                         <Tooltip contentStyle={CHART_TOOLTIP} labelStyle={{ color: '#e5e7eb' }} itemStyle={{ color: '#d1d5db' }} />
                         <Legend wrapperStyle={{ color: '#9ca3af' }} />
@@ -659,7 +659,7 @@ const KeywordLab: React.FC = () => {
                   <div className="bg-gray-800 rounded-xl p-5 border border-gray-700 mb-4">
                     <p className="text-sm font-bold text-gray-300 mb-3">분석 키워드 트렌드</p>
                     <ResponsiveContainer width="100%" height={250}>
-                      <LineChart data={keywordResults.map(r => ({ name: r.keyword, volume: r.searchVolume, competition: r.competition, opportunity: r.opportunityScore }))} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+                      <LineChart data={keywordResults.map(r => ({ name: r.keyword, volume: r.searchVolume, competition: r.competition, opportunity: r.opportunityScore }))} margin={{ top: 10, right: 30, bottom: 30, left: 40 }}>
                         <CartesianGrid {...GRID_STYLE} />
                         <XAxis dataKey="name" tick={AXIS_STYLE} />
                         <YAxis tick={AXIS_STYLE} domain={[0, 100]} />

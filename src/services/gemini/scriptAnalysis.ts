@@ -1061,7 +1061,8 @@ export const parseScriptToScenes = async (
                     const isTimeoutError = msg.includes('524') || msg.includes('timeout') || msg.includes('타임아웃') || msg.includes('AbortError');
                     // [FIX #54] JSON 파싱 실패 + 토큰 한도 초과도 재시도 가능하도록 추가
                     const isJsonError = msg.includes('Unexpected') || msg.includes('JSON') || msg.includes('토큰 한도');
-                    const isRetryable = isNetworkError || isTimeoutError || isJsonError || msg.includes('네트워크');
+                    const isEmptyResponse = msg.includes('Empty Response');
+                    const isRetryable = isNetworkError || isTimeoutError || isJsonError || isEmptyResponse || msg.includes('네트워크');
 
                     const errorCategory = isNetworkError ? '네트워크 연결 오류' : isTimeoutError ? '서버 응답 시간 초과' : 'API 오류';
                     console.warn(`[parseScriptToScenes] 청크 ${ci + 1} 실패 (시도 ${retry + 1}/${MAX_CHUNK_RETRIES}, ${errorCategory}): ${msg.slice(0, 150)}`);
@@ -1106,7 +1107,8 @@ export const parseScriptToScenes = async (
                 const errMsg = lastShortError?.message || '';
                 const isNetworkError = errMsg.includes('Failed to fetch') || errMsg.includes('Network Error') || errMsg.includes('fetch') || errMsg.includes('ERR_NETWORK');
                 const isTimeoutError = errMsg.includes('524') || errMsg.includes('timeout') || errMsg.includes('타임아웃');
-                if (!isNetworkError && !isTimeoutError && !errMsg.includes('네트워크')) {
+                const isEmptyResponse = errMsg.includes('Empty Response');
+                if (!isNetworkError && !isTimeoutError && !isEmptyResponse && !errMsg.includes('네트워크')) {
                     break; // API 오류는 재시도하지 않음
                 }
                 logger.trackRetry('스크립트 파싱', attempt + 1, MAX_SHORT_RETRIES, `네트워크/타임아웃 오류 — ${backoffMs / 1000}초 대기`);

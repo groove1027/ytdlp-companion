@@ -519,7 +519,8 @@ function buildYouTubeThumbnailFallback(videoId: string, timecodes: number[], dur
 }
 
 /**
- * 비디오에서 정확한 타임코드 프레임 추출
+ * 비디오에서 정확한 타임코드 프레임 추출 (로컬 디코딩)
+ * - 원본 해상도 HD 프레임 + 640px 썸네일 동시 생성
  * - Blob URL: createImageBitmap → OffscreenCanvas (고품질, CORS 무관)
  * - 일반 URL: crossOrigin canvas drawImage (CORS 필요)
  */
@@ -541,30 +542,23 @@ function canvasExtractFrames(
       const dur = video.duration;
       const vw = video.videoWidth || 640;
       const vh = video.videoHeight || 360;
-      const scale = Math.max(640 / vw, 1);
-      const outW = Math.round(vw * scale);
-      const outH = Math.round(vh * scale);
       if (!dur || dur < 1) { cleanup(); resolve([]); return; }
+
+      // 썸네일: 640px 기준 스케일
+      const thumbScale = Math.min(1, 640 / vw);
+      const thumbW = Math.round(vw * thumbScale);
+      const thumbH = Math.round(vh * thumbScale);
+      // HD: 원본 해상도 그대로 (최소 보장 없음 — 원본이 최고 품질)
+      const hdW = vw;
+      const hdH = vh;
 
       const frames: TimedFrame[] = [];
       const unique = [...new Set(timecodes.map(t => Math.round(t * 100) / 100))]
         .filter(t => t >= 0 && t <= dur)
         .sort((a, b) => a - b);
 
-      // Blob URL이면 createImageBitmap 방식 (tainted canvas 문제 없음)
       const useImageBitmap = isBlob && typeof OffscreenCanvas !== 'undefined';
-      console.log(`[Frame] 추출: ${unique.length}개, ${outW}x${outH}, blob=${isBlob}, imageBitmap=${useImageBitmap}`);
-
-      // 공유 캔버스 (drawImage 폴백용 또는 ImageBitmap → DataURL 변환용)
-      const canvas = useImageBitmap
-        ? new OffscreenCanvas(outW, outH)
-        : document.createElement('canvas');
-      if (!useImageBitmap) {
-        (canvas as HTMLCanvasElement).width = outW;
-        (canvas as HTMLCanvasElement).height = outH;
-      }
-      const ctx = canvas.getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
-      if (!ctx) { cleanup(); resolve([]); return; }
+      console.log(`[Frame] 추출: ${unique.length}개, 원본=${vw}x${vh}, 썸네일=${thumbW}x${thumbH}, blob=${isBlob}`);
 
       for (const tc of unique) {
         video.currentTime = tc;
@@ -576,34 +570,40 @@ function canvasExtractFrames(
 
         try {
           if (useImageBitmap) {
-            // ImageBitmap 방식: 고품질 리사이즈, CORS 무관
-            // 썸네일용 (목록 표시)
-            const bmpThumb = await createImageBitmap(video, { resizeWidth: outW, resizeHeight: outH, resizeQuality: 'high' });
-            ctx.drawImage(bmpThumb, 0, 0);
+            // ── 썸네일 (목록 표시용) ──
+            const bmpThumb = await createImageBitmap(video, { resizeWidth: thumbW, resizeHeight: thumbH, resizeQuality: 'high' });
+            const thumbCanvas = new OffscreenCanvas(thumbW, thumbH);
+            const thumbCtx = thumbCanvas.getContext('2d');
+            if (!thumbCtx) { bmpThumb.close(); continue; }
+            thumbCtx.drawImage(bmpThumb, 0, 0);
             bmpThumb.close();
-            const thumbBlob = await (canvas as OffscreenCanvas).convertToBlob({ type: 'image/jpeg', quality: 0.88 });
+            const thumbBlob = await thumbCanvas.convertToBlob({ type: 'image/jpeg', quality: 0.9 });
             const thumbUrl = await blobToDataUrl(thumbBlob);
-            // HD용 (프리뷰 확대) — 원본 해상도 또는 최소 1280px
-            const hdW = Math.max(vw, 1280);
-            const hdH = Math.round(hdW * (vh / vw));
+
+            // ── HD (클릭 확대용) — 원본 해상도, 고품질 ──
+            const bmpHd = await createImageBitmap(video, { resizeWidth: hdW, resizeHeight: hdH, resizeQuality: 'high' });
             const hdCanvas = new OffscreenCanvas(hdW, hdH);
             const hdCtx = hdCanvas.getContext('2d');
             let hdUrl: string | undefined;
             if (hdCtx) {
-              const bmpHd = await createImageBitmap(video, { resizeWidth: hdW, resizeHeight: hdH, resizeQuality: 'high' });
               hdCtx.drawImage(bmpHd, 0, 0);
               bmpHd.close();
-              const hdBlob = await hdCanvas.convertToBlob({ type: 'image/jpeg', quality: 0.92 });
+              const hdBlob = await hdCanvas.convertToBlob({ type: 'image/jpeg', quality: 0.97 });
               hdUrl = await blobToDataUrl(hdBlob);
+            } else {
+              bmpHd.close();
             }
             frames.push({ url: thumbUrl, hdUrl, timeSec: tc });
           } else {
-            // 일반 Canvas drawImage (crossOrigin 필요)
-            ctx.drawImage(video, 0, 0, outW, outH);
-            const thumbUrl = (canvas as HTMLCanvasElement).toDataURL('image/jpeg', 0.85);
-            // HD용
-            const hdW = Math.max(vw, 1280);
-            const hdH = Math.round(hdW * (vh / vw));
+            // ── Canvas drawImage 폴백 (crossOrigin 필요) ──
+            const thumbCanvas = document.createElement('canvas');
+            thumbCanvas.width = thumbW;
+            thumbCanvas.height = thumbH;
+            const thumbCtx = thumbCanvas.getContext('2d');
+            if (!thumbCtx) continue;
+            thumbCtx.drawImage(video, 0, 0, thumbW, thumbH);
+            const thumbUrl = thumbCanvas.toDataURL('image/jpeg', 0.9);
+
             const hdCanvas = document.createElement('canvas');
             hdCanvas.width = hdW;
             hdCanvas.height = hdH;
@@ -611,7 +611,7 @@ function canvasExtractFrames(
             let hdUrl: string | undefined;
             if (hdCtx) {
               hdCtx.drawImage(video, 0, 0, hdW, hdH);
-              hdUrl = hdCanvas.toDataURL('image/jpeg', 0.92);
+              hdUrl = hdCanvas.toDataURL('image/jpeg', 0.97);
             }
             frames.push({ url: thumbUrl, hdUrl, timeSec: tc });
           }

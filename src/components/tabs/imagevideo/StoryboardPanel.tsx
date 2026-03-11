@@ -1121,8 +1121,8 @@ const StoryboardPanel: React.FC = () => {
             : 'Cinematic';
 
       const charImages = currentCharacters.length > 0
-        ? currentCharacters.map(c => c.imageUrl || c.imageBase64).filter(Boolean) as string[]
-        : currentConfig.characterImage ? [currentConfig.characterImage] : [];
+        ? currentCharacters.map(c => c.imageUrl || c.imageBase64).filter((v): v is string => !!v && (v.startsWith('http') || v.startsWith('data:')))
+        : currentConfig.characterImage && (currentConfig.characterImage.startsWith('http') || currentConfig.characterImage.startsWith('data:')) ? [currentConfig.characterImage] : [];
 
       // [NEW] Combine all character analysis results for visual consistency
       const combinedAnalysis = currentCharacters
