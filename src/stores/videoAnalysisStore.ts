@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { showToast } from './uiStore';
 import type {
   VideoAnalysisPreset,
   VideoVersionItem,
@@ -248,7 +249,10 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
             try {
               const slim = { ...value, state: { ...value.state, resultCache: {}, rawResult: '' } };
               localStorage.setItem(name, JSON.stringify(slim));
-            } catch { /* 최종 실패 시 무시 — 데이터 유실보다 크래시 방지 우선 */ }
+              showToast('⚠️ 저장 공간이 부족하여 이전 분석 캐시를 정리했습니다. 분석 결과는 정상 유지됩니다.', 5000);
+            } catch {
+              showToast('⚠️ 저장 공간이 가득 찼습니다. 브라우저 캐시를 정리해주세요.', 5000);
+            }
           }
         },
         removeItem: (name) => { try { localStorage.removeItem(name); } catch { /* 무시 */ } },
