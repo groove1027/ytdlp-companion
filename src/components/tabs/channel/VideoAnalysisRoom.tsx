@@ -1,9 +1,10 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import AnalysisLoadingPanel, { notifyAnalysisComplete } from './AnalysisLoadingPanel';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import { evolinkChatStream, evolinkVideoAnalysisStream } from '../../../services/evolinkService';
+import { evolinkChatStream, evolinkVideoAnalysisStream, evolinkNativeStream, uploadFileToEvolinkFileApi } from '../../../services/evolinkService';
 import type { EvolinkChatMessage, EvolinkContentPart } from '../../../services/evolinkService';
 import { uploadMediaToHosting } from '../../../services/uploadService';
+import { showToast } from '../../../stores/uiStore';
 import { useNavigationStore } from '../../../stores/navigationStore';
 import { useEditPointStore } from '../../../stores/editPointStore';
 import { useEditRoomStore } from '../../../stores/editRoomStore';
@@ -734,6 +735,58 @@ async function extractVideoFrames(file: File): Promise<TimedFrame[]> {
     };
     video.onerror = () => { URL.revokeObjectURL(url); resolve([]); };
   });
+}
+
+/**
+ * 프레임 기반 멀티모달 분석 — 업로드 영상 전용
+ * base64 프레임을 Cloudinary에 업로드하여 URL로 변환 후 AI 분석
+ * (base64 데이터 URL 직접 전송 시 페이로드 크기 문제 방지)
+ */
+async function analyzeWithFrames(
+  frames: TimedFrame[],
+  userPrompt: string,
+  scriptSystem: string
+): Promise<string> {
+  // 최대 20프레임, 영상 전체를 균일하게 커버
+  const maxFrames = 20;
+  const step = Math.max(1, Math.floor(frames.length / maxFrames));
+  const selectedFrames = frames.filter((_, i) => i % step === 0).slice(0, maxFrames);
+
+  // base64 프레임을 Cloudinary에 업로드하여 URL로 변환 (API 접근성 보장)
+  let frameUrls: { url: string; timeSec: number }[] = [];
+  try {
+    const uploads = await Promise.all(
+      selectedFrames.map(async (f) => {
+        if (f.url.startsWith('data:')) {
+          // base64 → Blob → Cloudinary 업로드
+          const res = await fetch(f.url);
+          const blob = await res.blob();
+          const file = new File([blob], `frame-${f.timeSec.toFixed(1)}s.jpg`, { type: 'image/jpeg' });
+          const cloudUrl = await uploadMediaToHosting(file);
+          return { url: cloudUrl, timeSec: f.timeSec };
+        }
+        return { url: f.url, timeSec: f.timeSec };
+      })
+    );
+    frameUrls = uploads;
+  } catch (uploadErr) {
+    console.warn('[VideoAnalysis] 프레임 Cloudinary 업로드 실패, base64 직접 전송:', uploadErr);
+    // Cloudinary 실패 시 base64 데이터 URL 직접 사용 (폴백)
+    frameUrls = selectedFrames.map(f => ({ url: f.url, timeSec: f.timeSec }));
+  }
+
+  const parts: EvolinkContentPart[] = [
+    { type: 'text', text: `${userPrompt}\n\n[아래는 영상에서 추출한 ${frameUrls.length}개 프레임입니다. 각 프레임의 타임스탬프를 참고하여 영상 전체 흐름을 분석해주세요.]` },
+    ...frameUrls.flatMap(f => [
+      { type: 'text' as const, text: `[프레임 ${formatTimeSec(f.timeSec)}]` },
+      { type: 'image_url' as const, image_url: { url: f.url } },
+    ]),
+  ];
+  const messages: EvolinkChatMessage[] = [
+    { role: 'system', content: scriptSystem },
+    { role: 'user', content: parts },
+  ];
+  return evolinkChatStream(messages, () => {}, { temperature: 0.5, maxTokens: 40000 });
 }
 
 /** 타임코드 문자열 → 초 변환 (00:03 → 3, 01:30.500 → 90.5, 00:11.2 → 11.2) */
@@ -1585,6 +1638,10 @@ const VideoAnalysisRoom: React.FC = () => {
   const [previewFrame, setPreviewFrame] = useState<{ frame: TimedFrame; scene: SceneRow; versionTitle: string } | null>(null);
   const analysisStartRef = useRef<number>(0);
 
+  // ── 인기 쇼츠 음원 추천 ──
+  const [trendingBgm, setTrendingBgm] = useState<{ title: string; artist: string; videoId: string; thumbnail: string }[]>([]);
+  const [isBgmLoading, setIsBgmLoading] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const hasInput = inputMode === 'youtube' ? youtubeUrl.trim().length > 0 : uploadedFile !== null;
@@ -1608,6 +1665,40 @@ const VideoAnalysisRoom: React.FC = () => {
     const file = e.target.files?.[0];
     if (file) { setUploadedFile(file); setRawResult(''); setError(null); setVersions([]); setThumbnails([]); }
   };
+
+  // ── 인기 쇼츠 음원 추천 (Google Search 그라운딩) ──
+  const handleFetchTrendingBgm = useCallback(async () => {
+    if (isBgmLoading) return;
+    setIsBgmLoading(true);
+    setTrendingBgm([]);
+    try {
+      const now = new Date();
+      const sysP = '당신은 YouTube Shorts 트렌드 음원 전문가입니다. 반드시 JSON 배열만 출력하세요.';
+      const userP = `현재 ${now.getFullYear()}년 ${now.getMonth() + 1}월 기준, YouTube Shorts에서 가장 많이 사용되고 있는 인기 음원/BGM 15개를 추천해주세요.\n조건:\n- 실제로 Shorts 크리에이터들이 현재 많이 사용하는 곡\n- 한국 + 글로벌 혼합\n- 원곡, 리믹스, 밈 음원 포함\nJSON 배열만 응답 (코드블록 없이):\n[{"title":"곡명","artist":"아티스트명"},...]`;
+      const aiResult = await evolinkNativeStream(sysP, userP, () => {}, { temperature: 0.3, maxOutputTokens: 2000, enableWebSearch: true });
+      const cleaned = aiResult.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+      const jsonMatch = cleaned.match(/\[[\s\S]*\]/);
+      if (!jsonMatch) throw new Error('파싱 실패');
+      const songs: { title: string; artist: string }[] = JSON.parse(jsonMatch[0]);
+      const apiKey = getYoutubeApiKey();
+      const results: { title: string; artist: string; videoId: string; thumbnail: string }[] = [];
+      for (let i = 0; i < songs.length; i += 5) {
+        const batch = songs.slice(i, i + 5);
+        const fetched = await Promise.allSettled(batch.map(async (song) => {
+          const q = encodeURIComponent(`${song.title} ${song.artist} official`);
+          const res = await monitoredFetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&q=${q}&type=video&maxResults=1&key=${apiKey}`);
+          if (!res.ok) return null;
+          const data = await res.json();
+          const item = data.items?.[0];
+          if (!item) return null;
+          return { title: song.title, artist: song.artist, videoId: item.id.videoId, thumbnail: item.snippet.thumbnails.medium?.url || item.snippet.thumbnails.default?.url };
+        }));
+        for (const r of fetched) { if (r.status === 'fulfilled' && r.value) results.push(r.value); }
+      }
+      setTrendingBgm(results);
+    } catch (err) { console.error('트렌딩 BGM 로드 실패:', err); }
+    finally { setIsBgmLoading(false); }
+  }, [isBgmLoading]);
 
   // ── 프리셋 전환 시 캐시 복원 or 신규 분석 ──
   const handleAnalyze = async (preset: AnalysisPreset, force = false) => {
@@ -1647,13 +1738,24 @@ const VideoAnalysisRoom: React.FC = () => {
       let inputDesc = '';
 
       if (uploadedFile) {
-        // 업로드 파일 → Cloudinary에 업로드 → URL 획득
-        const cloudUrl = await uploadMediaToHosting(uploadedFile);
-        videoUri = cloudUrl;
         videoMime = uploadedFile.type || 'video/mp4';
         // UI 표시용 프레임 추출 (비주얼 컬럼)
         frames = await extractVideoFrames(uploadedFile);
         inputDesc = `업로드된 영상 파일: ${uploadedFile.name} (${((uploadedFile.size || 0) / 1024 / 1024).toFixed(1)}MB)`;
+
+        // ★ Evolink File API로 직접 업로드 시도 (Gemini 네이티브 분석 가능)
+        // 기존 Cloudinary → fileData 방식은 Gemini가 외부 URL을 지원하지 않아 제거
+        try {
+          const fileUri = await uploadFileToEvolinkFileApi(uploadedFile, (phase) => {
+            console.log(`[VideoAnalysis] File API: ${phase}`);
+          });
+          videoUri = fileUri;
+          console.log('[VideoAnalysis] Evolink File API 업로드 성공:', fileUri.slice(0, 80));
+        } catch (fileApiErr) {
+          console.warn('[VideoAnalysis] Evolink File API 불가, 프레임 기반 분석으로 전환:', fileApiErr);
+          // File API 미지원 시 videoUri를 비워두고 프레임 기반 멀티모달 분석으로 진행
+          videoUri = '';
+        }
       } else {
         const vid = extractYouTubeVideoId(youtubeUrl);
         if (vid) {
@@ -1708,29 +1810,31 @@ ${comments.slice(0, 15).map((c, i) => `${i + 1}. ${c.slice(0, 150)}`).join('\n')
 
       if (videoUri) {
         // ★ v1beta fileData: Gemini가 영상을 1프레임 단위로 직접 분석
+        // (YouTube URL 또는 Evolink File API URI)
         try {
           text = await evolinkVideoAnalysisStream(
             videoUri, videoMime, scriptSystem, userPrompt,
             () => {}, { temperature: 0.5, maxOutputTokens: 40000 }
           );
         } catch (videoErr) {
-          // v1beta 실패 시 OpenAI 호환 폴백 (이미지 기반)
+          // v1beta 실패 시 OpenAI 호환 폴백 (이미지 프레임 기반)
           console.warn('[VideoAnalysis] v1beta 영상 분석 실패, 이미지 폴백:', videoErr);
-          const parts: EvolinkContentPart[] = [
-            { type: 'text', text: userPrompt },
-            ...frames.slice(0, 10).flatMap(f => [
-              { type: 'text' as const, text: `[프레임 ${formatTimeSec(f.timeSec)}]` },
-              { type: 'image_url' as const, image_url: { url: f.url } },
-            ]),
-          ];
-          const messages: EvolinkChatMessage[] = [
-            { role: 'system', content: scriptSystem },
-            { role: 'user', content: parts },
-          ];
-          text = await evolinkChatStream(messages, () => {}, { temperature: 0.5, maxTokens: 40000 });
+          if (frames.length > 0) {
+            text = await analyzeWithFrames(frames, userPrompt, scriptSystem);
+          } else {
+            const messages: EvolinkChatMessage[] = [
+              { role: 'system', content: scriptSystem },
+              { role: 'user', content: userPrompt },
+            ];
+            text = await evolinkChatStream(messages, () => {}, { temperature: 0.5, maxTokens: 40000 });
+          }
         }
+      } else if (uploadedFile && frames.length > 0) {
+        // ★ 업로드 영상 + File API 미지원 → 프레임 기반 멀티모달 분석
+        showToast('프레임 기반 분석 모드로 진행합니다. 잠시만 기다려주세요...', 4000);
+        text = await analyzeWithFrames(frames, userPrompt, scriptSystem);
       } else {
-        // URL 없음 — 텍스트만으로 분석
+        // URL도 프레임도 없음 — 텍스트만으로 분석
         const messages: EvolinkChatMessage[] = [
           { role: 'system', content: scriptSystem },
           { role: 'user', content: userPrompt },
@@ -1788,6 +1892,14 @@ ${comments.slice(0, 15).map((c, i) => `${i + 1}. ${c.slice(0, 150)}`).join('\n')
       const msg = err instanceof Error ? err.message : String(err);
       console.error('[VideoAnalysis] 분석 실패:', err);
       setError(`분석 실패: ${msg}`);
+      // 사용자에게 구체적 안내 메시지 표시
+      if (msg.includes('Cloudinary') || msg.includes('업로드')) {
+        showToast('영상 업로드에 실패했습니다. 파일 크기를 줄이거나 YouTube 링크를 사용해주세요.', 6000);
+      } else if (msg.includes('API 키') || msg.includes('Evolink')) {
+        showToast('AI 서비스 연결에 문제가 있습니다. API 설정을 확인해주세요.', 6000);
+      } else {
+        showToast('영상 분석에 실패했습니다. 잠시 후 다시 시도해주세요.', 5000);
+      }
     } finally {
       setIsAnalyzing(false);
       setAnalysisPhase('idle');
