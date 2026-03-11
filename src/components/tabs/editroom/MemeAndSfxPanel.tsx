@@ -322,13 +322,31 @@ export const MemeAndSfxSearchModal: React.FC<{ onClose: () => void }> = ({ onClo
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-gray-300 rounded-lg text-base font-bold transition-colors"
-          >
-            닫기 X
-          </button>
+          <div className="flex items-center gap-2">
+            {/* 현재 적용된 미디어 표시 + 초기화 */}
+            {targetScene?.communityMediaItem && (
+              <button
+                type="button"
+                onClick={() => {
+                  useProjectStore.getState().updateScene(targetScene.id, {
+                    communityMediaItem: undefined,
+                  });
+                  showToast(`장면 ${targetIndex + 1}의 밈/효과음을 제거했습니다.`);
+                }}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-bold bg-red-600/10 text-red-400 border border-red-500/30 hover:bg-red-600/20 transition-all"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                적용 해제
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-gray-300 rounded-lg text-base font-bold transition-colors"
+            >
+              닫기 X
+            </button>
+          </div>
         </div>
       </div>
 

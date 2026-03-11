@@ -223,7 +223,12 @@ const StoryboardSceneInner: React.FC<StoryboardSceneProps> = ({
            )}
            {scene.isNativeHQ && <span className="text-sm bg-orange-600/20 text-orange-300 px-2 py-0.5 rounded border border-orange-500/30 font-bold flex-shrink-0">🚀 Native HQ</span>}
            {scene.isInfographic && <span className="text-sm bg-blue-600/20 text-blue-300 px-2 py-0.5 rounded border border-blue-500/30 font-bold flex-shrink-0">📊 Info</span>}
-           {scene.communityMediaItem && <span className="text-sm bg-cyan-600/20 text-cyan-300 px-2 py-0.5 rounded border border-cyan-500/30 font-bold flex-shrink-0" title={scene.communityMediaItem.title}>🎨 {scene.communityMediaItem.source}</span>}
+           {scene.communityMediaItem && (
+             <span className="text-sm bg-cyan-600/20 text-cyan-300 px-2 py-0.5 rounded border border-cyan-500/30 font-bold flex-shrink-0 inline-flex items-center gap-1" title={scene.communityMediaItem.title}>
+               🎨 {scene.communityMediaItem.source}
+               <button type="button" onClick={(e) => { e.stopPropagation(); useProjectStore.getState().updateScene(scene.id, { communityMediaItem: undefined }); }} className="ml-0.5 w-4 h-4 rounded-full bg-cyan-500/30 hover:bg-red-500/50 text-cyan-200 hover:text-white flex items-center justify-center text-[10px] transition-colors" title="적용 해제">✕</button>
+             </span>
+           )}
            {scene.isLoopMode && <span className="text-sm bg-teal-600/20 text-teal-300 px-2 py-0.5 rounded border border-teal-500/30 font-bold flex-shrink-0 flex items-center gap-1">🔄 Loop</span>}
            {scene.v2vTotalSegments && scene.v2vTotalSegments > 1 && (
                <span className="text-sm bg-purple-600/20 text-purple-300 px-2 py-0.5 rounded border border-purple-500/30 font-bold flex-shrink-0">
