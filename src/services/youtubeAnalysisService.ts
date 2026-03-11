@@ -117,6 +117,55 @@ export const getQuotaUsage = (): { used: number; limit: number; remaining: numbe
     };
 };
 
+// === 조회수 알림용 배치 API ===
+
+/** 채널의 최근 영상 ID 목록 조회 (search API, 100 units) */
+export const getRecentVideoIds = async (channelId: string, maxResults: number = 10): Promise<string[]> => {
+    const apiKey = getYoutubeApiKey();
+    if (!apiKey) throw new Error('YouTube API 키가 설정되지 않았습니다.');
+    if (!trackQuota('search')) throw new Error('YouTube API 일일 쿼터 한도를 초과했습니다.');
+
+    const url = `${YOUTUBE_API_BASE}/search?part=id&channelId=${channelId}&type=video&order=date&maxResults=${maxResults}&key=${apiKey}`;
+    const response = await monitoredFetch(url);
+    if (!response.ok) throw new Error(`YouTube 검색 오류 (${response.status})`);
+
+    const data = await response.json();
+    return (data.items || [])
+        .map((item: Record<string, Record<string, string>>) => item.id?.videoId)
+        .filter(Boolean) as string[];
+};
+
+/** 영상 조회수 배치 조회 (videos.list, 1 unit per batch of 50) */
+export const getVideoStatsBatch = async (
+    videoIds: string[]
+): Promise<Array<{ videoId: string; title: string; viewCount: number }>> => {
+    const apiKey = getYoutubeApiKey();
+    if (!apiKey) throw new Error('YouTube API 키가 설정되지 않았습니다.');
+    if (videoIds.length === 0) return [];
+
+    const results: Array<{ videoId: string; title: string; viewCount: number }> = [];
+
+    for (let i = 0; i < videoIds.length; i += 50) {
+        const batch = videoIds.slice(i, i + 50);
+        if (!trackQuota('videos.list')) throw new Error('YouTube API 일일 쿼터 한도를 초과했습니다.');
+
+        const url = `${YOUTUBE_API_BASE}/videos?part=snippet,statistics&id=${batch.join(',')}&key=${apiKey}`;
+        const response = await monitoredFetch(url);
+        if (!response.ok) throw new Error(`YouTube 영상 통계 오류 (${response.status})`);
+
+        const data = await response.json();
+        for (const item of (data.items || [])) {
+            results.push({
+                videoId: item.id,
+                title: item.snippet?.title || '',
+                viewCount: parseInt(item.statistics?.viewCount || '0', 10),
+            });
+        }
+    }
+
+    return results;
+};
+
 // === HELPER FUNCTIONS ===
 
 /** ISO 8601 duration을 사람이 읽을 수 있는 형태로 변환 (PT1H2M30S → "1:02:30") */

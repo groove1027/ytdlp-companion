@@ -24,6 +24,7 @@ import {
 import { canCreateNewProject, requestPersistentStorage } from './services/storageService';
 import { useVideoBatch } from './hooks/useVideoBatch';
 import { useAutoSave } from './hooks/useAutoSave';
+import { useViewAlertPolling } from './hooks/useViewAlertPolling';
 import { uploadMediaToHosting } from './services/uploadService';
 // [v4.5] 레거시 UI 제거됨 — export 함수들은 편집실 탭에서 직접 import
 import { PRICING } from './constants';
@@ -274,6 +275,7 @@ const App: React.FC = () => {
 
   // Auto-save via Zustand store subscriptions
   useAutoSave();
+  useViewAlertPolling();
 
   // [FIX] 앱 시작 시: 빈 임시 프로젝트 정리 → 마지막/최근 프로젝트 복원 → 없으면 1개만 생성
   useEffect(() => {

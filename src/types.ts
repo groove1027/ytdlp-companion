@@ -631,7 +631,31 @@ export interface CommunityMediaItem {
 }
 
 /** 채널분석 서브 탭 */
-export type ChannelAnalysisSubTab = 'keyword-lab' | 'channel-room' | 'video-room' | 'social-room';
+export type ChannelAnalysisSubTab = 'keyword-lab' | 'channel-room' | 'video-room' | 'social-room' | 'view-alert';
+
+// --- 조회수 알림 ---
+export interface ViewAlertConfig {
+  id: string;
+  channelId: string;
+  channelName: string;
+  threshold: number;         // 조회수 임계값
+  intervalMin: number;       // 체크 주기 (분)
+  enabled: boolean;
+  trackedVideoIds: string[]; // 감시 중인 영상 ID
+  notifiedVideoIds: string[];// 이미 알림 보낸 영상
+  lastRefreshedAt: number;   // 영상 목록 마지막 갱신 시각
+}
+
+export interface ViewAlertNotification {
+  id: string;
+  channelName: string;
+  videoId: string;
+  videoTitle: string;
+  viewCount: number;
+  threshold: number;
+  timestamp: number;
+  read: boolean;
+}
 
 // --- 채널분석: 키워드 랩 ---
 export interface KeywordAnalysisResult {
