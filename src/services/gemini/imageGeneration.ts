@@ -147,7 +147,8 @@ export const generateSceneImage = async (
     suppressText?: boolean, // [NEW] Suppress Text Mode
     characterAnalysisResult?: string, // [NEW] Character analysis result for visual consistency
     sceneIndex?: number, // [NEW] Scene index for shot size auto-rotation
-    enableWebSearch?: boolean // [NEW] Kie google_search / Evolink web_search
+    enableWebSearch?: boolean, // [NEW] Kie google_search / Evolink web_search
+    preserveCharacterStyle?: boolean // [NEW] 캐릭터 예술 스타일 보존 모드 (사용자가 비주얼 미선택 + 캐릭터 분석 스타일 사용 시)
 ) => {
     // [CRITICAL FIX] Prioritize explicit style argument over detected style description
     const effectiveStyle = (style && style.trim() !== "") ? style : (styleDesc || "High Quality");
@@ -288,12 +289,14 @@ export const generateSceneImage = async (
         subjectPrompt += `[CRITICAL CONSISTENCY RULES]\n`;
         subjectPrompt += `1. The character's face, hair, body proportions, and clothing MUST be IDENTICAL to the reference image in every detail.\n`;
         subjectPrompt += `2. The character MUST be naturally integrated into the scene — correct perspective, proper scale relative to environment.\n`;
-        if (isMixedMedia) {
-            // [MIXED MEDIA] 캐릭터 원본 아트 스타일 보존 — 2D는 2D, 3D는 3D, 실사는 실사
-            subjectPrompt += `3. [ART STYLE PRESERVATION] The character MUST retain its EXACT original art style as described in the detected art style analysis above. If the reference is 2D cartoon with flat colors and bold outlines, render it as 2D cartoon with flat colors and bold outlines. If anime, render as anime. If realistic, render as realistic. Do NOT convert the character's art style to match the background — the style contrast is INTENTIONAL.\n`;
-            subjectPrompt += `4. The character's rendering method (line quality, shading technique, color palette, level of detail) must match the reference image exactly. The deliberate visual contrast between character style and background style is the core creative intent.\n`;
+        if (isMixedMedia || preserveCharacterStyle) {
+            // [MIXED MEDIA / CHARACTER STYLE PRESERVATION] 캐릭터 원본 아트 스타일 보존
+            // isMixedMedia: 의도적 스타일 대비 / preserveCharacterStyle: 사용자가 비주얼 미선택 시 캐릭터 그림체 유지
+            subjectPrompt += `3. [ART STYLE PRESERVATION — HIGHEST PRIORITY] The character MUST retain its EXACT original art style as described in the detected art style analysis above. If the reference is 2D cartoon with flat colors and bold outlines, render it as 2D cartoon with flat colors and bold outlines. If anime, render as anime. If realistic, render as realistic. Do NOT convert the character's art style to match the background — the style contrast is INTENTIONAL.\n`;
+            subjectPrompt += `4. The character's rendering method (line quality, shading technique, color palette, level of detail) must match the reference image exactly. The entire scene — including background, props, and lighting — MUST also follow the same art style ('${style}').\n`;
+            subjectPrompt += `5. Adapt the character's lighting and color temperature to match the scene's environment while keeping the art style intact.\n`;
         } else {
-            // [NORMAL MODE] 비주얼 스타일이 선택되면 캐릭터의 원본 아트 스타일은 무시하고,
+            // [NORMAL MODE] 사용자가 비주얼 스타일을 명시적으로 선택한 경우 — 캐릭터의 원본 아트 스타일은 무시하고,
             // 캐릭터의 신체적 특징(얼굴, 머리, 체형, 옷)만 유지한 채 선택된 비주얼 스타일로 강제 렌더링
             subjectPrompt += `3. [MANDATORY STYLE OVERRIDE] The character MUST be re-rendered in the scene's selected visual style ('${style}'). The character's ORIGINAL art style (cartoon, anime, 2D, etc.) MUST be completely IGNORED and OVERRIDDEN. Only preserve the character's IDENTITY FEATURES (face shape, hair style/color, body proportions, clothing design). The character MUST look like it was originally created in the '${style}' art style.\n`;
             subjectPrompt += `4. NEVER preserve the character's original rendering method. Adapt EVERYTHING — line quality, shading technique, color palette, level of detail — to match '${style}'. The character must have proper 3D depth, perspective, and volume consistent with the selected style.\n`;

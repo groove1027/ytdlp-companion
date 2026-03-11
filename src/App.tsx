@@ -394,12 +394,18 @@ const App: React.FC = () => {
         // [CRITICAL FIX] Art Style — StoryboardPanel과 동일한 폴백 체인
         // 1순위: atmosphere (ScriptMode 프리셋 또는 visualTone 자동 저장값)
         // 2순위: detectedStyleDescription (Pro 분석 시 저장된 visualTone)
-        // 3순위: "Cinematic" 기본값
+        // 3순위: 캐릭터 분석 예술 스타일 (analysisStyle) — 캐릭터 그림체 보존
+        // 4순위: "Cinematic" 기본값
+        const appCharArtStyle = resolvedConfig.characters?.find(c => c.analysisStyle)?.analysisStyle || '';
         const effectiveStyle = (resolvedConfig.atmosphere && resolvedConfig.atmosphere.trim() !== "")
             ? resolvedConfig.atmosphere
             : (resolvedConfig.detectedStyleDescription && resolvedConfig.detectedStyleDescription.trim() !== "")
               ? resolvedConfig.detectedStyleDescription
-              : "Cinematic";
+              : (appCharArtStyle.trim() !== "")
+                ? appCharArtStyle
+                : "Cinematic";
+        // 사용자가 비주얼 미선택 + 캐릭터 아트 스타일로 폴백된 경우 → 캐릭터 그림체 보존 모드
+        const appPreserveCharStyle = appCharArtStyle.trim() !== '' && effectiveStyle === appCharArtStyle;
 
         let result: { url: string; isFallback: boolean };
 
@@ -453,7 +459,8 @@ const App: React.FC = () => {
                 resolvedConfig.suppressText,
                 combinedCharAnalysis,
                 appSceneIndex >= 0 ? appSceneIndex : undefined,
-                resolvedConfig.enableWebSearch
+                resolvedConfig.enableWebSearch,
+                appPreserveCharStyle
             );
         }
 

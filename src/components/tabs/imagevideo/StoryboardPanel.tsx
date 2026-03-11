@@ -974,13 +974,17 @@ const StoryboardPanel: React.FC = () => {
     const currentConfig = useProjectStore.getState().config;
     // [CRITICAL FIX] 스타일 결정 — handleGenerateImage와 동일한 폴백 체인
     const rawStyle = useImageVideoStore.getState().style;
+    const promptChars = useImageVideoStore.getState().characters;
+    const promptCharArtStyle = promptChars.find(c => c.analysisStyle)?.analysisStyle || '';
     const currentStyle = (rawStyle && rawStyle !== 'custom')
       ? rawStyle
       : (currentConfig?.atmosphere && currentConfig.atmosphere.trim() !== '')
         ? currentConfig.atmosphere
         : (currentConfig?.detectedStyleDescription && currentConfig.detectedStyleDescription.trim() !== '')
           ? currentConfig.detectedStyleDescription
-          : 'Cinematic';
+          : (promptCharArtStyle.trim() !== '')
+            ? promptCharArtStyle
+            : 'Cinematic';
     try {
       updateScene(sceneId, { generationStatus: 'AI 프롬프트 생성 중...' });
       const allScenes = useProjectStore.getState().scenes;
@@ -1068,13 +1072,17 @@ const StoryboardPanel: React.FC = () => {
       updateScene(sceneId, { generationStatus: '비주얼 프롬프트 자동 생성 중...' });
       try {
         const rawAutoStyle = useImageVideoStore.getState().style;
+        const autoChars = useImageVideoStore.getState().characters;
+        const autoCharArtStyle = autoChars.find(c => c.analysisStyle)?.analysisStyle || '';
         const autoStyle = (rawAutoStyle && rawAutoStyle !== 'custom')
           ? rawAutoStyle
           : (currentConfig.atmosphere && currentConfig.atmosphere.trim() !== '')
             ? currentConfig.atmosphere
             : (currentConfig.detectedStyleDescription && currentConfig.detectedStyleDescription.trim() !== '')
               ? currentConfig.detectedStyleDescription
-              : 'Cinematic';
+              : (autoCharArtStyle.trim() !== '')
+                ? autoCharArtStyle
+                : 'Cinematic';
         const sceneIdx = currentScenes.findIndex(s => s.id === sceneId);
         const prevScene = sceneIdx > 0 ? currentScenes[sceneIdx - 1] : undefined;
         const nextScene = sceneIdx < currentScenes.length - 1 ? currentScenes[sceneIdx + 1] : undefined;
@@ -1111,14 +1119,21 @@ const StoryboardPanel: React.FC = () => {
       // 1순위: 사용자가 스타일 팔레트에서 선택한 값 (useImageVideoStore.style)
       // 2순위: config.atmosphere (ScriptMode 프리셋 또는 visualTone 자동 저장값)
       // 3순위: config.detectedStyleDescription (SetupPanel Pro 분석 시 저장된 visualTone)
-      // 4순위: "Cinematic" 기본값
-      const effectiveStyle = currentStyle !== 'custom'
+      // 4순위: 캐릭터 분석 예술 스타일 (analysisStyle) — 캐릭터 그림체 보존
+      // 5순위: "Cinematic" 기본값
+      const charArtStyle = currentCharacters.find(c => c.analysisStyle)?.analysisStyle || '';
+      const userSelectedStyle = currentStyle !== 'custom';
+      const effectiveStyle = userSelectedStyle
         ? currentStyle
         : (currentConfig.atmosphere && currentConfig.atmosphere.trim() !== '')
           ? currentConfig.atmosphere
           : (currentConfig.detectedStyleDescription && currentConfig.detectedStyleDescription.trim() !== '')
             ? currentConfig.detectedStyleDescription
-            : 'Cinematic';
+            : (charArtStyle.trim() !== '')
+              ? charArtStyle
+              : 'Cinematic';
+      // 사용자가 비주얼 미선택 + 캐릭터 아트 스타일로 폴백된 경우 → 캐릭터 그림체 보존 모드
+      const preserveCharStyle = !userSelectedStyle && charArtStyle.trim() !== '' && effectiveStyle === charArtStyle;
 
       const charImages = currentCharacters.length > 0
         ? currentCharacters.map(c => c.imageUrl || c.imageBase64).filter((v): v is string => !!v && (v.startsWith('http') || v.startsWith('data:')))
@@ -1163,6 +1178,7 @@ const StoryboardPanel: React.FC = () => {
         combinedAnalysis || undefined,
         currentSceneIndex >= 0 ? currentSceneIndex : undefined,
         currentWebSearch,
+        preserveCharStyle,
       );
 
       const imageUrl = result.url;
