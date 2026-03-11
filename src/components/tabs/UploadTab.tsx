@@ -846,6 +846,18 @@ const StepAuth: React.FC = () => {
                             클라이언트 ID/시크릿 다시 입력하기
                           </button>
                         </div>
+
+                        {/* 해결 4: 테스트 사용자 등록 */}
+                        <div className="bg-gray-900/60 rounded-lg border border-gray-700/50 p-3 space-y-2">
+                          <p className="font-semibold text-gray-200">4. 테스트 사용자로 내 계정 등록 (가장 흔한 원인)</p>
+                          <p className="text-gray-400">"Not a valid email" 또는 "액세스 차단됨" 에러가 뜨면, OAuth 동의 화면이 아직 테스트 모드이기 때문입니다. 내 Google 계정을 테스트 사용자로 등록해야 합니다.</p>
+                          <a href="https://console.cloud.google.com/apis/credentials/consent" target="_blank" rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1.5 text-blue-400 hover:text-blue-300 transition-colors border border-blue-500/30 rounded-lg px-3 py-1.5 bg-blue-600/10 hover:bg-blue-600/20">
+                            <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" /><polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" /></svg>
+                            OAuth 동의 화면 설정 열기
+                          </a>
+                          <p className="text-gray-500">"Test users" 섹션에서 <strong className="text-green-400">+ Add users</strong>를 클릭하고 내 Gmail 주소를 입력 → 저장 후 다시 시도해주세요.</p>
+                        </div>
                       </div>
                     )}
                   </div>
