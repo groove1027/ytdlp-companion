@@ -491,11 +491,112 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
         break;
       }
       case 'push-to-timeline': {
-        showToast('타임라인으로 전송되었습니다.');
+        // edlEntries → projectStore scenes + soundStudioStore lines 변환
+        try {
+          const { useProjectStore } = require('./projectStore');
+          const { useSoundStudioStore } = require('./soundStudioStore');
+          const { useEditRoomStore } = require('./editRoomStore');
+          const { useNavigationStore } = require('./navigationStore');
+
+          const now = Date.now();
+          const newScenes = edlEntries.map((entry, i) => {
+            // 소스 영상 매핑: sourceId → sourceMapping → sourceVideos
+            const mappedVideoId = sourceMapping[entry.sourceId];
+            const sourceVideo = sourceVideos.find(v => v.id === mappedVideoId);
+            const videoUrl = sourceVideo?.cleanedBlobUrl || sourceVideo?.blobUrl;
+            const duration = (entry.refinedTimecodeEnd ?? entry.timecodeEnd) - (entry.refinedTimecodeStart ?? entry.timecodeStart);
+
+            return {
+              id: `s-${now}-${i + 1}`,
+              scriptText: entry.narrationText || '',
+              visualPrompt: '',
+              visualDescriptionKO: entry.sourceDescription || '',
+              characterPresent: false,
+              videoUrl,
+              startTime: entry.refinedTimecodeStart ?? entry.timecodeStart,
+              endTime: entry.refinedTimecodeEnd ?? entry.timecodeEnd,
+              audioDuration: entry.narrationDurationSec || duration,
+              referenceImage: entry.referenceFrameUrl,
+              imageUrl: entry.referenceFrameUrl || sourceVideo?.thumbnailDataUrl,
+            };
+          });
+
+          // scenes를 projectStore에 세팅
+          useProjectStore.getState().setScenes(newScenes);
+
+          // soundStudioStore lines 세팅 (자막/내보내기용)
+          const newLines = newScenes.map((scene, i) => ({
+            id: `line-${now}-${i}`,
+            speakerId: '',
+            text: scene.scriptText,
+            index: i,
+            sceneId: scene.id,
+            audioUrl: undefined as string | undefined,
+            duration: scene.audioDuration,
+            startTime: scene.startTime,
+            endTime: scene.endTime,
+            ttsStatus: 'idle' as const,
+          }));
+          useSoundStudioStore.getState().setLines(newLines);
+
+          // 편집실 타임라인 탭으로 이동
+          useEditRoomStore.getState().setEditRoomSubTab('timeline');
+          useNavigationStore.getState().setActiveTab('edit-room');
+          showToast('편집점이 타임라인으로 전송되었습니다! 미리보기 후 MP4로 내보낼 수 있습니다.');
+        } catch (err) {
+          showToast('타임라인 전송 실패: ' + (err instanceof Error ? err.message : '알 수 없는 오류'));
+        }
         break;
       }
       case 'direct-mp4': {
-        showToast('브라우저 MP4 합성은 준비 중입니다.');
+        // 타임라인 전송 후 MP4 내보내기 안내
+        // push-to-timeline과 동일 로직 실행 후 안내
+        try {
+          const { useProjectStore } = require('./projectStore');
+          const { useSoundStudioStore } = require('./soundStudioStore');
+          const { useEditRoomStore } = require('./editRoomStore');
+          const { useNavigationStore } = require('./navigationStore');
+
+          const now = Date.now();
+          const newScenes = edlEntries.map((entry, i) => {
+            const mappedVideoId = sourceMapping[entry.sourceId];
+            const sourceVideo = sourceVideos.find(v => v.id === mappedVideoId);
+            const videoUrl = sourceVideo?.cleanedBlobUrl || sourceVideo?.blobUrl;
+            const duration = (entry.refinedTimecodeEnd ?? entry.timecodeEnd) - (entry.refinedTimecodeStart ?? entry.timecodeStart);
+            return {
+              id: `s-${now}-${i + 1}`,
+              scriptText: entry.narrationText || '',
+              visualPrompt: '',
+              visualDescriptionKO: entry.sourceDescription || '',
+              characterPresent: false,
+              videoUrl,
+              startTime: entry.refinedTimecodeStart ?? entry.timecodeStart,
+              endTime: entry.refinedTimecodeEnd ?? entry.timecodeEnd,
+              audioDuration: entry.narrationDurationSec || duration,
+              referenceImage: entry.referenceFrameUrl,
+              imageUrl: entry.referenceFrameUrl || sourceVideo?.thumbnailDataUrl,
+            };
+          });
+          useProjectStore.getState().setScenes(newScenes);
+          const newLines = newScenes.map((scene, i) => ({
+            id: `line-${now}-${i}`,
+            speakerId: '',
+            text: scene.scriptText,
+            index: i,
+            sceneId: scene.id,
+            audioUrl: undefined as string | undefined,
+            duration: scene.audioDuration,
+            startTime: scene.startTime,
+            endTime: scene.endTime,
+            ttsStatus: 'idle' as const,
+          }));
+          useSoundStudioStore.getState().setLines(newLines);
+          useEditRoomStore.getState().setEditRoomSubTab('timeline');
+          useNavigationStore.getState().setActiveTab('edit-room');
+          showToast('타임라인으로 전송되었습니다. 내보내기 버튼으로 MP4를 생성하세요!');
+        } catch (err) {
+          showToast('타임라인 전송 실패: ' + (err instanceof Error ? err.message : '알 수 없는 오류'));
+        }
         break;
       }
     }
