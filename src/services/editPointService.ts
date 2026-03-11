@@ -58,14 +58,8 @@ function secondsToTimecode(sec: number): string {
   return `${String(m).padStart(2, '0')}:${s.toFixed(3).padStart(6, '0')}`;
 }
 
-/**
- * AI로 편집표(raw text) + 내레이션 → EdlEntry[] 구조화 파싱
- */
-export async function parseEditTableWithAI(
-  rawTable: string,
-  narration: string
-): Promise<EdlEntry[]> {
-  const systemPrompt = `You are a professional video editor assistant. Parse the given edit table (EDL) and narration text into structured JSON.
+/** 편집표 파싱 시스템 프롬프트 (공통) */
+const EDIT_PARSE_SYSTEM_PROMPT = `You are a professional video editor assistant. Parse the given edit table (EDL) and narration text into structured JSON.
 
 The edit table may be in various formats: pipe-delimited, tab-delimited, markdown table, or free-form text.
 Each row typically contains: order/sequence, narration text, source ID (like S-01, S-03), source description, speed factor, timecode range, and notes.
@@ -93,53 +87,9 @@ Rules:
 - Extract all rows, preserving original order
 - If narration text references are found, match them to the narration provided`;
 
-  const userContent = `## 편집표 (Edit Table):
-${rawTable}
-
-${narration ? `## 내레이션 대본:
-${narration}` : ''}`;
-
-  const response = await evolinkChat(
-    [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userContent },
-    ],
-    {
-      temperature: 0.1,
-      maxTokens: 16384,
-      responseFormat: { type: 'json_object' },
-    }
-  );
-
-  const finishReason = response.choices?.[0]?.finish_reason;
-  const content = response.choices[0]?.message?.content || '{}';
-
-  // [FIX #75] AI 응답이 토큰 제한으로 잘린 경우 감지 → 재시도 또는 에러
-  if (finishReason === 'length') {
-    console.warn('[EditPoint] AI 응답이 토큰 제한으로 잘렸습니다. 불완전한 JSON 복구 시도...');
-    // 잘린 JSON 복구 시도: 마지막 유효한 entry까지 파싱
-    const recovered = recoverTruncatedJson(content);
-    if (recovered.entries && recovered.entries.length > 0) {
-      console.log(`[EditPoint] ${recovered.entries.length}개 항목 복구 성공`);
-      return recovered.entries.map((entry: Record<string, unknown>, idx: number) => ({
-        id: `edl-${Date.now()}-${idx}`,
-        order: String(entry.order || `${idx + 1}`),
-        narrationText: String(entry.narrationText || ''),
-        sourceId: String(entry.sourceId || 'S-01'),
-        sourceDescription: String(entry.sourceDescription || ''),
-        speedFactor: Number(entry.speedFactor) || 1.0,
-        timecodeStart: parseTimecodeToSeconds(String(entry.timecodeStart || '0')),
-        timecodeEnd: parseTimecodeToSeconds(String(entry.timecodeEnd || '0')),
-        note: String(entry.note || ''),
-      }));
-    }
-    throw new Error('편집표가 너무 큽니다. 편집표를 나누어 입력해주세요.');
-  }
-
-  const parsed = JSON.parse(content);
-  const rawEntries = parsed.entries || [];
-
-  return rawEntries.map((entry: Record<string, unknown>, idx: number) => ({
+/** raw entry → EdlEntry 변환 */
+function rawEntryToEdl(entry: Record<string, unknown>, idx: number): EdlEntry {
+  return {
     id: `edl-${Date.now()}-${idx}`,
     order: String(entry.order || `${idx + 1}`),
     narrationText: String(entry.narrationText || ''),
@@ -149,7 +99,195 @@ ${narration}` : ''}`;
     timecodeStart: parseTimecodeToSeconds(String(entry.timecodeStart || '0')),
     timecodeEnd: parseTimecodeToSeconds(String(entry.timecodeEnd || '0')),
     note: String(entry.note || ''),
-  }));
+  };
+}
+
+/**
+ * 편집표를 줄 단위로 분할 (표 헤더/구분선 감지)
+ * 반환: 의미 있는 데이터 행들의 배열
+ */
+function splitEditTableLines(rawTable: string): string[] {
+  return rawTable.split('\n').filter(line => {
+    const trimmed = line.trim();
+    if (!trimmed) return false;
+    // 순수 구분선 제외 (----, ====, |---|---|)
+    if (/^[-=|+\s]+$/.test(trimmed)) return false;
+    return true;
+  });
+}
+
+/**
+ * 편집표 텍스트의 대략적 토큰 수 추정 (한국어 혼합)
+ */
+function estimateTokenCount(text: string): number {
+  // 한국어: ~1.5 토큰/글자, 영어: ~0.25 토큰/단어(~4글자)
+  const koreanChars = (text.match(/[\uAC00-\uD7AF\u3130-\u318F]/g) || []).length;
+  const otherChars = text.length - koreanChars;
+  return Math.ceil(koreanChars * 1.5 + otherChars / 3);
+}
+
+/** 단일 청크에 대해 AI 파싱 실행 */
+async function parseEditChunk(
+  tableChunk: string,
+  narration: string,
+  isChunked: boolean,
+): Promise<Record<string, unknown>[]> {
+  const userContent = `## 편집표 (Edit Table):
+${tableChunk}
+
+${narration ? `## 내레이션 대본:
+${narration}` : ''}`;
+
+  const estimatedInput = estimateTokenCount(EDIT_PARSE_SYSTEM_PROMPT + userContent);
+  // 입력이 크면 출력 여유를 더 확보 (Evolink 프록시 총 컨텍스트 제한 대응)
+  const maxTokens = estimatedInput > 12000 ? 8192 : 16384;
+
+  const response = await evolinkChat(
+    [
+      { role: 'system', content: EDIT_PARSE_SYSTEM_PROMPT },
+      { role: 'user', content: userContent },
+    ],
+    {
+      temperature: 0.1,
+      maxTokens,
+      responseFormat: { type: 'json_object' },
+    }
+  );
+
+  const finishReason = response.choices?.[0]?.finish_reason;
+  const completionTokens = response.usage?.completion_tokens || 0;
+  const content = response.choices[0]?.message?.content || '{}';
+
+  // [FIX #97] 출력 토큰이 비정상적으로 적으면 (500 미만) 프록시 제한 가능성 → JSON 모드 없이 재시도
+  if (finishReason === 'length' && completionTokens < 500) {
+    console.warn(`[EditPoint] 비정상 토큰 제한 감지 (completion: ${completionTokens}). JSON 모드 없이 재시도...`);
+    return await parseEditChunkFallback(tableChunk, narration);
+  }
+
+  // finishReason === 'length'이지만 일부 결과가 있으면 복구 시도
+  if (finishReason === 'length') {
+    console.warn('[EditPoint] AI 응답이 토큰 제한으로 잘렸습니다. 복구 시도...');
+    const recovered = recoverTruncatedJson(content);
+    if (recovered.entries && recovered.entries.length > 0) {
+      console.log(`[EditPoint] ${recovered.entries.length}개 항목 복구 성공`);
+      return recovered.entries;
+    }
+    // 청크 모드가 아니면 청크 분할로 재시도됨 → 여기서 빈 배열 반환하지 않고 에러
+    throw new Error('AI_TRUNCATED');
+  }
+
+  const parsed = JSON.parse(content);
+  return parsed.entries || [];
+}
+
+/**
+ * JSON 모드 없이 파싱 (폴백)
+ * Evolink 프록시가 JSON 모드에서 출력을 제한하는 경우 대응
+ */
+async function parseEditChunkFallback(
+  tableChunk: string,
+  narration: string,
+): Promise<Record<string, unknown>[]> {
+  const compactPrompt = `Parse this edit table into JSON. Return ONLY a JSON object with "entries" array.
+Each entry: { "order", "narrationText", "sourceId" (format "S-XX"), "sourceDescription", "speedFactor" (default 1.0), "timecodeStart" (format "MM:SS.sss", default "00:00.000"), "timecodeEnd", "note" }`;
+
+  const userContent = narration
+    ? `Edit Table:\n${tableChunk}\n\nNarration:\n${narration}`
+    : `Edit Table:\n${tableChunk}`;
+
+  const response = await evolinkChat(
+    [
+      { role: 'system', content: compactPrompt },
+      { role: 'user', content: userContent },
+    ],
+    {
+      temperature: 0.1,
+      maxTokens: 16384,
+      // JSON 모드 제거 — 텍스트로 받아서 수동 파싱
+    }
+  );
+
+  const content = response.choices[0]?.message?.content || '';
+  const completionTokens = response.usage?.completion_tokens || 0;
+
+  // JSON 블록 추출 (```json ... ``` 또는 { ... })
+  const jsonMatch = content.match(/```json\s*([\s\S]*?)```/) || content.match(/(\{[\s\S]*\})/);
+  if (!jsonMatch) {
+    console.error('[EditPoint] 폴백에서도 JSON 추출 실패. completionTokens:', completionTokens);
+    throw new Error('편집표 파싱에 실패했습니다. 편집표 형식을 확인해주세요.');
+  }
+
+  try {
+    const parsed = JSON.parse(jsonMatch[1]);
+    return parsed.entries || [];
+  } catch {
+    // 잘린 JSON이면 복구 시도
+    const recovered = recoverTruncatedJson(jsonMatch[1]);
+    if (recovered.entries.length > 0) return recovered.entries;
+    throw new Error('편집표 파싱에 실패했습니다. 편집표 형식을 확인해주세요.');
+  }
+}
+
+/**
+ * AI로 편집표(raw text) + 내레이션 → EdlEntry[] 구조화 파싱
+ * [FIX #97] 대형 편집표 자동 청크 분할 + JSON 모드 폴백
+ */
+export async function parseEditTableWithAI(
+  rawTable: string,
+  narration: string
+): Promise<EdlEntry[]> {
+  const totalEstTokens = estimateTokenCount(rawTable + narration + EDIT_PARSE_SYSTEM_PROMPT);
+
+  // 입력이 충분히 작으면 단일 호출
+  if (totalEstTokens < 12000) {
+    try {
+      const entries = await parseEditChunk(rawTable, narration, false);
+      return entries.map(rawEntryToEdl);
+    } catch (err) {
+      if (err instanceof Error && err.message === 'AI_TRUNCATED') {
+        // 단일 호출이 잘렸으면 청크 분할로 재시도
+        console.warn('[EditPoint] 단일 호출 실패, 청크 분할 재시도...');
+      } else {
+        throw err;
+      }
+    }
+  }
+
+  // 대형 편집표: 줄 단위로 분할하여 청크별 처리
+  console.log(`[EditPoint] 대형 편집표 감지 (추정 ${totalEstTokens} 토큰). 청크 분할 처리...`);
+  const lines = splitEditTableLines(rawTable);
+
+  // 헤더 행 감지 (첫 줄이 헤더일 가능성)
+  let headerLine = '';
+  if (lines.length > 0) {
+    const firstLine = lines[0].toLowerCase();
+    if (firstLine.includes('순서') || firstLine.includes('order') || firstLine.includes('내레이션')
+      || firstLine.includes('소스') || firstLine.includes('타임코드') || firstLine.includes('no')) {
+      headerLine = lines.shift() || '';
+    }
+  }
+
+  // 청크 크기: 행 수 기준 (한 청크에 최대 20행)
+  const CHUNK_SIZE = 20;
+  const allEntries: Record<string, unknown>[] = [];
+
+  for (let i = 0; i < lines.length; i += CHUNK_SIZE) {
+    const chunkLines = lines.slice(i, i + CHUNK_SIZE);
+    const chunkTable = headerLine
+      ? [headerLine, ...chunkLines].join('\n')
+      : chunkLines.join('\n');
+
+    // 청크 파싱 (내레이션은 첫 청크에만 전달 — 토큰 절약)
+    const chunkNarration = i === 0 ? narration : '';
+    const entries = await parseEditChunk(chunkTable, chunkNarration, true);
+    allEntries.push(...entries);
+  }
+
+  if (allEntries.length === 0) {
+    throw new Error('편집표 파싱에 실패했습니다. 편집표 형식을 확인해주세요.');
+  }
+
+  return allEntries.map(rawEntryToEdl);
 }
 
 /**
