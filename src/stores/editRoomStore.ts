@@ -367,10 +367,12 @@ export const useEditRoomStore = create<EditRoomStore>((set, get) => ({
     const newIds = scenes.map((s) => s.id);
 
     // BUG #4 fix: 새 프로젝트 감지 — 기존 sceneOrder와 겹치는 ID가 없으면 전체 리셋
+    // ★ editRoomSubTab은 보존 — "편집실로" 버튼에서 설정한 서브탭이 리셋되는 문제 방지
     if (get().initialized && get().sceneOrder.length > 0) {
       const overlap = get().sceneOrder.filter((id) => newIds.includes(id));
       if (overlap.length === 0) {
-        set({ ...INITIAL_STATE });
+        const currentSubTab = get().editRoomSubTab;
+        set({ ...INITIAL_STATE, editRoomSubTab: currentSubTab });
       }
     }
 
