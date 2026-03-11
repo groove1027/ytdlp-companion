@@ -297,16 +297,29 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
           } catch { return null; }
         },
         setItem: (name, value) => {
-          try {
-            localStorage.setItem(name, JSON.stringify(value));
-          } catch {
-            // QuotaExceededError — 캐시 비우고 재시도
+          const slimValue = () => ({
+            ...value,
+            state: { ...value.state, resultCache: {}, rawResult: '' },
+          });
+          // 선제적 크기 체크 — JSON 직렬화 후 추정 크기가 크면 미리 축소
+          const json = JSON.stringify(value);
+          const MAX_ENTRY_BYTES = 3 * 1024 * 1024; // 3MB 안전선
+          if (json.length > MAX_ENTRY_BYTES) {
             try {
-              const slim = { ...value, state: { ...value.state, resultCache: {}, rawResult: '' } };
-              localStorage.setItem(name, JSON.stringify(slim));
-              showToast('⚠️ 저장 공간이 부족하여 이전 분석 캐시를 정리했습니다. 분석 결과는 정상 유지됩니다.', 5000);
+              localStorage.setItem(name, JSON.stringify(slimValue()));
             } catch {
-              showToast('⚠️ 저장 공간이 가득 찼습니다. 브라우저 캐시를 정리해주세요.', 5000);
+              showToast('저장 공간이 부족해요. 브라우저 설정에서 캐시를 정리해주세요.', 5000);
+            }
+            return;
+          }
+          try {
+            localStorage.setItem(name, json);
+          } catch {
+            // QuotaExceededError — 캐시 비우고 조용히 재시도
+            try {
+              localStorage.setItem(name, JSON.stringify(slimValue()));
+            } catch {
+              showToast('저장 공간이 부족해요. 브라우저 설정에서 캐시를 정리해주세요.', 5000);
             }
           }
         },
