@@ -2507,6 +2507,56 @@ ${comments.slice(0, 15).map((c, i) => `${i + 1}. ${c.slice(0, 150)}`).join('\n')
         </div>
       )}
 
+      {/* ═══ 인기 쇼츠 음원 추천 (스낵형 전용) ═══ */}
+      {rawResult && selectedPreset === 'snack' && (
+        <div className="bg-gray-800/40 rounded-2xl border border-fuchsia-500/20 p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-bold text-fuchsia-400 flex items-center gap-2">
+              <span className="w-6 h-6 bg-gradient-to-br from-fuchsia-500 to-pink-600 rounded-lg flex items-center justify-center text-white text-xs">&#9835;</span>
+              인기 쇼츠 음원
+            </h3>
+            <button
+              type="button"
+              onClick={handleFetchTrendingBgm}
+              disabled={isBgmLoading}
+              className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${isBgmLoading ? 'bg-gray-700 text-gray-500 cursor-not-allowed' : 'bg-fuchsia-600/20 text-fuchsia-400 border border-fuchsia-500/30 hover:bg-fuchsia-600/30'}`}
+            >
+              {isBgmLoading ? (
+                <span className="flex items-center gap-1.5">
+                  <span className="w-3 h-3 border-2 border-fuchsia-400/30 border-t-fuchsia-400 rounded-full animate-spin" />
+                  AI 검색 중...
+                </span>
+              ) : trendingBgm.length > 0 ? '새로고침' : '추천 받기'}
+            </button>
+          </div>
+          <p className="text-[11px] text-gray-500">AI가 실시간 웹 검색으로 현재 쇼츠에서 유행하는 음원을 찾아드려요. 클릭하면 YouTube에서 바로 들어볼 수 있어요.</p>
+          {trendingBgm.length > 0 && (
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
+              {trendingBgm.map((bgm, idx) => (
+                <a
+                  key={`${bgm.videoId}-${idx}`}
+                  href={`https://www.youtube.com/watch?v=${bgm.videoId}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="group bg-gray-900/60 rounded-xl border border-gray-700/40 overflow-hidden hover:border-fuchsia-500/40 hover:bg-gray-900/80 transition-all"
+                >
+                  <div className="relative aspect-video bg-black">
+                    <img src={bgm.thumbnail} alt={bgm.title} className="w-full h-full object-cover" loading="lazy" />
+                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-all flex items-center justify-center">
+                      <svg className="w-8 h-8 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
+                    </div>
+                  </div>
+                  <div className="p-2">
+                    <p className="text-xs font-bold text-gray-200 line-clamp-1">{bgm.title}</p>
+                    <p className="text-[10px] text-gray-500 line-clamp-1">{bgm.artist}</p>
+                  </div>
+                </a>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ═══ 하단 액션 ═══ */}
       {rawResult && (
         <div className="flex justify-center gap-3 flex-wrap">
