@@ -14,6 +14,7 @@ import { useAuthGuard } from '../../../hooks/useAuthGuard';
 import { getYoutubeApiKey } from '../../../services/apiService';
 import { monitoredFetch } from '../../../services/apiService';
 import { getQuotaUsage } from '../../../services/youtubeAnalysisService';
+import { cobaltDownload, refreshCobaltInstances } from '../../../services/cobaltAuthService';
 import type {
   VideoAnalysisPreset as AnalysisPreset,
   VideoSceneRow as SceneRow,
@@ -358,6 +359,25 @@ let INVIDIOUS_APIS = [
   'https://invidious.protokolla.fi',
 ];
 
+/** Piped 인스턴스 동적 갱신 (piped-instances.kavin.rocks에서 실시간 가져오기) */
+async function refreshPipedInstances(): Promise<void> {
+  try {
+    const res = await fetch('https://piped-instances.kavin.rocks/', { signal: AbortSignal.timeout(8_000) });
+    if (!res.ok) return;
+    const list = await res.json() as { name: string; api_url: string; locations: string; registered: number }[];
+    const fresh: string[] = [];
+    for (const inst of list) {
+      if (inst.api_url) {
+        fresh.push(inst.api_url.replace(/\/$/, ''));
+      }
+    }
+    if (fresh.length > 3) {
+      PIPED_APIS_FOR_FRAMES = fresh.slice(0, 25);
+      console.log(`[Frame] Piped 인스턴스 ${fresh.length}개 갱신`);
+    }
+  } catch { /* 무시 — 기존 하드코딩 사용 */ }
+}
+
 /** Invidious 인스턴스 동적 갱신 (api.invidious.io에서 실시간 가져오기) */
 async function refreshInvidiousInstances(): Promise<void> {
   try {
@@ -377,8 +397,10 @@ async function refreshInvidiousInstances(): Promise<void> {
   } catch { /* 무시 — 기존 하드코딩 사용 */ }
 }
 
-// 최초 1회 갱신 (모듈 로드 시)
+// 최초 1회 갱신 (모듈 로드 시) — Piped + Invidious + Cobalt 병렬 갱신
+refreshPipedInstances();
 refreshInvidiousInstances();
+refreshCobaltInstances();
 
 /** YouTube 스트림 URL 획득 (Piped → Invidious → Cobalt 3중) */
 async function fetchYouTubeStreamUrl(videoId: string): Promise<string | null> {
@@ -422,17 +444,12 @@ async function fetchYouTubeStreamUrl(videoId: string): Promise<string | null> {
   }
   console.warn('[Frame] Invidious 전부 실패');
 
-  // Phase 3: Cobalt API
+  // Phase 3: Cobalt API (인증 + 비인증 폴백 — cobaltAuthService 사용)
   try {
-    const res = await fetch('https://api.cobalt.tools', {
-      method: 'POST',
-      headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: `https://www.youtube.com/watch?v=${videoId}`, videoQuality: '360', filenameStyle: 'basic' }),
-      signal: AbortSignal.timeout(10000),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data.url) { console.log('[Frame] Cobalt 성공'); return data.url; }
+    const cobaltResult = await cobaltDownload(videoId);
+    if (cobaltResult?.url) {
+      console.log('[Frame] Cobalt 인증 다운로드 성공');
+      return cobaltResult.url;
     }
   } catch { /* continue */ }
   console.warn('[Frame] Cobalt 실패');
