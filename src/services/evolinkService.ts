@@ -626,6 +626,106 @@ export const evolinkVideoAnalysisStream = async (
     return accumulated;
 };
 
+/**
+ * Evolink v1beta 프레임 기반 멀티모달 분석 (스트리밍)
+ * base64 이미지 프레임을 inlineData로 직접 전송 — OpenAI 호환 image_url 400 에러 우회
+ */
+export const evolinkFrameAnalysisStream = async (
+    frames: { base64: string; mimeType: string; label: string }[],
+    systemPrompt: string,
+    userPrompt: string,
+    onChunk: (text: string, accumulated: string) => void,
+    options: { temperature?: number; maxOutputTokens?: number } = {}
+): Promise<string> => {
+    const apiKey = getEvolinkKey();
+    if (!apiKey) throw new Error('Evolink API 키가 설정되지 않았습니다.');
+
+    const { temperature = 0.5, maxOutputTokens = 40000 } = options;
+
+    // 프레임을 inlineData parts로 변환
+    const frameParts = frames.flatMap(f => [
+        { text: f.label },
+        { inlineData: { mimeType: f.mimeType, data: f.base64 } },
+    ]);
+
+    const payload = {
+        contents: [{
+            role: 'user',
+            parts: [
+                { text: `${systemPrompt}\n\n${userPrompt}` },
+                ...frameParts,
+            ],
+        }],
+        generationConfig: { temperature, maxOutputTokens },
+        safetySettings: [
+            { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+            { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+            { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+            { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
+        ],
+    };
+
+    const model = 'gemini-3.1-pro-preview';
+    const url = `${EVOLINK_V1BETA_URL}/models/${model}:streamGenerateContent?alt=sse`;
+
+    logger.info('[Evolink Frames] v1beta 프레임 분석 스트리밍 시작', { frameCount: frames.length });
+
+    const response = await monitoredFetch(url, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+        const errorDetail = await parseEvolinkError(response);
+        logger.error(`[Evolink Frames] v1beta 실패 (${response.status})`, { error: errorDetail });
+        throw new Error(`Evolink v1beta 프레임 분석 오류 (${response.status}): ${errorDetail}`);
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('스트리밍 응답을 읽을 수 없습니다.');
+
+    const decoder = new TextDecoder();
+    let accumulated = '';
+    let buffer = '';
+
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed || trimmed === 'data: [DONE]') continue;
+            if (!trimmed.startsWith('data: ')) continue;
+
+            try {
+                const json = JSON.parse(trimmed.slice(6));
+                const parts = json.candidates?.[0]?.content?.parts;
+                if (parts) {
+                    for (const part of parts) {
+                        if (part.text) {
+                            accumulated += part.text;
+                            onChunk(part.text, accumulated);
+                        }
+                    }
+                }
+            } catch {
+                // 불완전 청크 무시
+            }
+        }
+    }
+
+    logger.success('[Evolink Frames] 프레임 분석 스트리밍 완료', { totalLength: accumulated.length });
+    return accumulated;
+};
+
 // === IMAGE GENERATION (Nanobanana 2 — Async Task-based) ===
 
 /**

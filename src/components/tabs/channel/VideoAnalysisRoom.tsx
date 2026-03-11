@@ -1,9 +1,9 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import AnalysisLoadingPanel, { notifyAnalysisComplete } from './AnalysisLoadingPanel';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import { evolinkChatStream, evolinkVideoAnalysisStream, evolinkNativeStream } from '../../../services/evolinkService';
-import type { EvolinkChatMessage, EvolinkContentPart } from '../../../services/evolinkService';
-import { uploadMediaToHosting } from '../../../services/uploadService';
+import { evolinkChatStream, evolinkVideoAnalysisStream, evolinkNativeStream, evolinkFrameAnalysisStream } from '../../../services/evolinkService';
+import type { EvolinkChatMessage } from '../../../services/evolinkService';
+
 import { showToast } from '../../../stores/uiStore';
 import { useNavigationStore } from '../../../stores/navigationStore';
 import { useEditPointStore } from '../../../stores/editPointStore';
@@ -740,8 +740,8 @@ async function extractVideoFrames(file: File): Promise<TimedFrame[]> {
 
 /**
  * 프레임 기반 멀티모달 분석 — 업로드 영상 전용
- * base64 프레임을 Cloudinary에 업로드하여 URL로 변환 후 AI 분석
- * (base64 데이터 URL 직접 전송 시 페이로드 크기 문제 방지)
+ * v1beta inlineData로 base64 프레임 직접 전송
+ * (OpenAI 호환 image_url 방식은 400 에러 발생하므로 v1beta 사용)
  */
 async function analyzeWithFrames(
   frames: TimedFrame[],
@@ -749,46 +749,33 @@ async function analyzeWithFrames(
   scriptSystem: string,
   maxTokens = 40000
 ): Promise<string> {
-  // 최대 20프레임, 영상 전체를 균일하게 커버
-  const maxFrames = 20;
+  // 최대 14프레임, 영상 전체를 균일하게 커버
+  const maxFrames = 14;
   const step = Math.max(1, Math.floor(frames.length / maxFrames));
   const selectedFrames = frames.filter((_, i) => i % step === 0).slice(0, maxFrames);
 
-  // base64 프레임을 Cloudinary에 업로드하여 URL로 변환 (API 접근성 보장)
-  let frameUrls: { url: string; timeSec: number }[] = [];
-  try {
-    const uploads = await Promise.all(
-      selectedFrames.map(async (f) => {
-        if (f.url.startsWith('data:')) {
-          // base64 → Blob → Cloudinary 업로드
-          const res = await fetch(f.url);
-          const blob = await res.blob();
-          const file = new File([blob], `frame-${f.timeSec.toFixed(1)}s.jpg`, { type: 'image/jpeg' });
-          const cloudUrl = await uploadMediaToHosting(file);
-          return { url: cloudUrl, timeSec: f.timeSec };
-        }
-        return { url: f.url, timeSec: f.timeSec };
-      })
-    );
-    frameUrls = uploads;
-  } catch (uploadErr) {
-    console.warn('[VideoAnalysis] 프레임 Cloudinary 업로드 실패, base64 직접 전송:', uploadErr);
-    // Cloudinary 실패 시 base64 데이터 URL 직접 사용 (폴백)
-    frameUrls = selectedFrames.map(f => ({ url: f.url, timeSec: f.timeSec }));
-  }
+  // base64 data URL에서 inlineData 포맷으로 변환
+  const frameData = selectedFrames.map(f => {
+    let base64 = '';
+    let mimeType = 'image/jpeg';
+    if (f.url.startsWith('data:')) {
+      const parts = f.url.split(',');
+      base64 = parts[1] || '';
+      mimeType = parts[0].match(/:(.*?);/)?.[1] || 'image/jpeg';
+    }
+    return {
+      base64,
+      mimeType,
+      label: `[프레임 ${formatTimeSec(f.timeSec)}]`,
+    };
+  }).filter(f => f.base64.length > 0);
 
-  const parts: EvolinkContentPart[] = [
-    { type: 'text', text: `${userPrompt}\n\n[아래는 영상에서 추출한 ${frameUrls.length}개 프레임입니다. 각 프레임의 타임스탬프를 참고하여 영상 전체 흐름을 분석해주세요.]` },
-    ...frameUrls.flatMap(f => [
-      { type: 'text' as const, text: `[프레임 ${formatTimeSec(f.timeSec)}]` },
-      { type: 'image_url' as const, image_url: { url: f.url } },
-    ]),
-  ];
-  const messages: EvolinkChatMessage[] = [
-    { role: 'system', content: scriptSystem },
-    { role: 'user', content: parts },
-  ];
-  return evolinkChatStream(messages, () => {}, { temperature: 0.5, maxTokens });
+  const enrichedPrompt = `${userPrompt}\n\n[아래는 영상에서 추출한 ${frameData.length}개 프레임입니다. 각 프레임의 타임스탬프를 참고하여 영상 전체 흐름을 분석해주세요.]`;
+
+  return evolinkFrameAnalysisStream(
+    frameData, scriptSystem, enrichedPrompt,
+    () => {}, { temperature: 0.5, maxOutputTokens: maxTokens }
+  );
 }
 
 /** 타임코드 문자열 → 초 변환 (00:03 → 3, 01:30.500 → 90.5, 00:11.2 → 11.2) */
