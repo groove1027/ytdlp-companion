@@ -584,7 +584,7 @@ const VoiceStudio: React.FC = () => {
           languageCode: speaker.language === 'ko' ? 'ko' : speaker.language === 'ja' ? 'ja' : 'en',
         });
       } else if (speaker.engine === 'supertonic') {
-        result = await generateSupertonicTTS(line.text, speaker.voiceId, speaker.language || 'ko', line.lineSpeed ?? speaker.speed ?? 1.0);
+        result = await generateSupertonicTTS(line.text, line.voiceId || speaker.voiceId, speaker.language || 'ko', line.lineSpeed ?? speaker.speed ?? 1.0);
       } else {
         // Typecast (기본)
         result = await generateTypecastTTS(line.text, {

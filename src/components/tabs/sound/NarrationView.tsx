@@ -73,7 +73,7 @@ const NarrationView: React.FC = () => {
         const effectiveSpeed = line.lineSpeed ?? globalSpeed;
 
         const result = await generateTypecastTTS(line.text, {
-          voiceId: speaker.voiceId,
+          voiceId: line.voiceId || speaker.voiceId,
           model: speaker.typecastModel,
           language: speaker.language === 'ko' ? 'kor' : speaker.language === 'en' ? 'eng' : speaker.language === 'ja' ? 'jpn' : 'kor',
           emotionMode: smartEmotion ? 'smart' : 'preset',

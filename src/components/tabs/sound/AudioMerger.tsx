@@ -180,7 +180,11 @@ const AudioMerger: React.FC = () => {
           setTtsProgress({ current: i + 1, total: lines.length });
           continue; // 이미 생성된 라인 또는 업로드 라인은 건너뜀
         }
-        const speaker = speakers.find((s) => s.id === line.speakerId) || speakers[0];
+        const baseSpeaker = speakers.find((s) => s.id === line.speakerId) || speakers[0];
+        // 줄별 캐릭터 음성 오버라이드 적용 (멀티 캐릭터 TTS 지원)
+        const speaker: Speaker = line.voiceId
+          ? { ...baseSpeaker, voiceId: line.voiceId }
+          : baseSpeaker;
         // SmartPrompt 문맥: 인접 라인 텍스트를 전달하여 감정 추론 정확도 향상
         const prevText = i > 0 ? lines[i - 1]?.text?.slice(-200) : undefined;
         const nextText = i < lines.length - 1 ? lines[i + 1]?.text?.slice(0, 200) : undefined;
