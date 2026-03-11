@@ -416,12 +416,12 @@ export const evolinkNativeStream = async (
     systemPrompt: string,
     userPrompt: string,
     onChunk: (text: string, accumulated: string) => void,
-    options: { temperature?: number; maxOutputTokens?: number; enableWebSearch?: boolean } = {}
+    options: { temperature?: number; maxOutputTokens?: number; enableWebSearch?: boolean; signal?: AbortSignal } = {}
 ): Promise<string> => {
     const apiKey = getEvolinkKey();
     if (!apiKey) throw new Error('Evolink API 키가 설정되지 않았습니다.');
 
-    const { temperature = 0.7, maxOutputTokens = 16000, enableWebSearch = false } = options;
+    const { temperature = 0.7, maxOutputTokens = 16000, enableWebSearch = false, signal } = options;
 
     const payload: Record<string, unknown> = {
         contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
@@ -445,14 +445,17 @@ export const evolinkNativeStream = async (
 
     logger.info('[Evolink Native Stream] 시작', { enableWebSearch, maxOutputTokens });
 
-    const response = await monitoredFetch(url, {
+    const fetchInit: RequestInit = {
         method: 'POST',
         headers: {
             'Authorization': `Bearer ${apiKey}`,
             'Content-Type': 'application/json',
         },
         body: JSON.stringify(payload),
-    });
+    };
+    if (signal) fetchInit.signal = signal;
+
+    const response = await monitoredFetch(url, fetchInit);
 
     if (!response.ok) {
         const errorDetail = await parseEvolinkError(response);

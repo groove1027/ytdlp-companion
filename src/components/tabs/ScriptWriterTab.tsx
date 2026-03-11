@@ -1,4 +1,4 @@
-import React, { Suspense, useState, useCallback, useEffect, useMemo } from 'react';
+import React, { Suspense, useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useScriptWriterStore } from '../../stores/scriptWriterStore';
 import { useNavigationStore } from '../../stores/navigationStore';
 import { useChannelAnalysisStore } from '../../stores/channelAnalysisStore';
@@ -108,6 +108,7 @@ export default function ScriptWriterTab() {
   const [showExpander, setShowExpander] = useState(false);
   const [genError, setGenError] = useState('');
   const [streamingText, setStreamingText] = useState('');
+  const genAbortRef = useRef<AbortController | null>(null);
   const [applyingStyle, setApplyingStyle] = useState<string | null>(null);
   const [selectedStyleId, setSelectedStyleId] = useState<string | null>(null);
   const [styleError, setStyleError] = useState('');
@@ -338,6 +339,10 @@ ${scriptText}`;
       setGenError('Evolink API 키가 설정되지 않았습니다. 설정에서 키를 입력해주세요.');
       return;
     }
+    genAbortRef.current?.abort();
+    const abortCtrl = new AbortController();
+    genAbortRef.current = abortCtrl;
+
     startGeneration();
     setStreamingText('');
     setGenError('');
@@ -381,7 +386,7 @@ ${instinctPrompt}
         (_chunk, accumulated) => {
           setStreamingText(accumulated);
         },
-        { temperature: 0.7, maxOutputTokens: Math.min(32000, Math.max(8000, targetCharCount * 2)), enableWebSearch: true }
+        { temperature: 0.7, maxOutputTokens: Math.min(32000, Math.max(8000, targetCharCount * 2)), enableWebSearch: true, signal: abortCtrl.signal }
       );
 
       setGeneratedScript({
@@ -394,9 +399,14 @@ ${instinctPrompt}
       setFinalScript(fullText);
       setStreamingText('');
     } catch (err) {
-      setGenError(err instanceof Error ? err.message : '대본 생성 실패');
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        setGenError('');
+      } else {
+        setGenError(err instanceof Error ? err.message : '대본 생성 실패');
+      }
       setStreamingText('');
     } finally {
+      genAbortRef.current = null;
       finishGeneration();
     }
   }, [instinctIds, targetCharCount, contentFormat, shortsSeconds, startGeneration, finishGeneration, setGeneratedScript, setFinalScript]);
@@ -408,6 +418,10 @@ ${instinctPrompt}
       setGenError('Evolink API 키가 설정되지 않았습니다. 설정에서 키를 입력해주세요.');
       return;
     }
+    genAbortRef.current?.abort();
+    const abortCtrl = new AbortController();
+    genAbortRef.current = abortCtrl;
+
     startGeneration();
     setGenError('');
 
@@ -467,7 +481,7 @@ ${instinctPrompt}
     try {
       const res = await evolinkChat(
         [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }],
-        { temperature: 0.7, maxTokens: Math.min(32000, Math.max(8000, Math.ceil(targetCharCount * 2))) }
+        { temperature: 0.7, maxTokens: Math.min(32000, Math.max(8000, Math.ceil(targetCharCount * 2))), signal: abortCtrl.signal }
       );
       const raw = res.choices?.[0]?.message?.content || '';
       if (!raw.trim()) throw new Error('AI 응답이 비어있습니다. 다시 시도해주세요.');
@@ -485,13 +499,23 @@ ${instinctPrompt}
       });
       setFinalScript(content);
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setGenError(`대본 생성 실패: ${msg}`);
+      if (e instanceof DOMException && e.name === 'AbortError') {
+        setGenError('');
+      } else {
+        const msg = e instanceof Error ? e.message : String(e);
+        setGenError(`대본 생성 실패: ${msg}`);
+      }
     } finally {
+      genAbortRef.current = null;
       finishGeneration();
     }
   }, [title, synopsis, targetCharCount, contentFormat, shortsSeconds, instinctIds, channelGuideline, benchmarkScript,
     selectedTopic, startGeneration, finishGeneration, setGeneratedScript, setFinalScript]);
+
+  const handleCancelGeneration = useCallback(() => {
+    genAbortRef.current?.abort();
+    genAbortRef.current = null;
+  }, []);
 
   const handleApplySelectedStyle = useCallback(async () => {
     if (!requireAuth('AI 스타일 적용')) return;
@@ -923,17 +947,30 @@ ${instinctPrompt}
 
             <div className="flex-1" />
 
-            <button
-              type="button"
-              onClick={selectedTopicFromStore ? () => handleGenerateFromTopic(selectedTopicFromStore) : handleGenerateScript}
-              disabled={!canGenerate}
-              className="px-6 py-2.5 bg-gradient-to-r from-blue-600 to-violet-600
-                hover:from-blue-500 hover:to-violet-500 disabled:opacity-30 disabled:cursor-not-allowed
-                text-white rounded-lg text-sm font-bold transition-all whitespace-nowrap
-                shadow-lg shadow-violet-900/30"
-            >
-              {isGenerating ? (<><span className="animate-spin inline-block">⟳</span> 생성 중 {elapsedGenerate > 0 && <span className="text-xs text-gray-400 tabular-nums">{formatElapsed(elapsedGenerate)}</span>}</>) : '🚀 AI 대본 생성'}
-            </button>
+            {isGenerating ? (
+              <button
+                type="button"
+                onClick={handleCancelGeneration}
+                className="px-6 py-2.5 bg-gradient-to-r from-red-600 to-rose-600
+                  hover:from-red-500 hover:to-rose-500
+                  text-white rounded-lg text-sm font-bold transition-all whitespace-nowrap
+                  shadow-lg shadow-red-900/30"
+              >
+                <span className="animate-spin inline-block mr-1">⟳</span> 중지 {elapsedGenerate > 0 && <span className="text-xs text-red-200/70 tabular-nums">{formatElapsed(elapsedGenerate)}</span>}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={selectedTopicFromStore ? () => handleGenerateFromTopic(selectedTopicFromStore) : handleGenerateScript}
+                disabled={!canGenerate}
+                className="px-6 py-2.5 bg-gradient-to-r from-blue-600 to-violet-600
+                  hover:from-blue-500 hover:to-violet-500 disabled:opacity-30 disabled:cursor-not-allowed
+                  text-white rounded-lg text-sm font-bold transition-all whitespace-nowrap
+                  shadow-lg shadow-violet-900/30"
+              >
+                🚀 AI 대본 생성
+              </button>
+            )}
           </div>
 
           {/* 동적 안내 */}
