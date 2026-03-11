@@ -68,7 +68,7 @@ interface EditPointStore {
   setExportMode: (mode: EditPointExportMode) => void;
   setCleanSubtitles: (enabled: boolean) => void;
   runCleanSubtitles: () => Promise<void>;
-  exportResult: () => void;
+  exportResult: () => Promise<void>;
   reset: () => void;
 }
 
@@ -427,7 +427,11 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
       return;
     }
 
-    set({ isCleaning: true, cleanProgress: 0, cleanMessage: '자막 제거 준비 중...' });
+    set({
+      isCleaning: true,
+      cleanProgress: 0,
+      cleanMessage: `자막 제거 준비 중... (총 ${videosToClean.length}개, 영상당 5~15분 소요)`,
+    });
 
     try {
       for (let i = 0; i < videosToClean.length; i++) {
@@ -435,7 +439,7 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
         const pct = Math.round((i / videosToClean.length) * 100);
         set({
           cleanProgress: pct,
-          cleanMessage: `${i + 1}/${videosToClean.length} — ${video.fileName} 처리 중...`,
+          cleanMessage: `[${i + 1}/${videosToClean.length}] ${video.fileName} — AI 자막 제거 진행 중 (영상당 5~15분 소요)`,
         });
 
         // 비디오 메타 정보로 width/height 추출
@@ -446,7 +450,7 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
           blob,
           dims.width,
           dims.height,
-          (msg) => set({ cleanMessage: `${i + 1}/${videosToClean.length} — ${msg}` }),
+          (msg) => set({ cleanMessage: `[${i + 1}/${videosToClean.length}] ${msg}` }),
         );
 
         const cleanedUrl = URL.createObjectURL(cleanedBlob);
@@ -465,7 +469,7 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
     }
   },
 
-  exportResult: () => {
+  exportResult: async () => {
     const { exportMode, edlEntries, sourceMapping, sourceVideos } = get();
 
     // 파일명 매핑 (videoId → fileName)
@@ -477,9 +481,13 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
 
     switch (exportMode) {
       case 'ffmpeg-script': {
-        const script = generateFFmpegScript(edlEntries, fileNameMapping);
-        downloadFile(script, 'edit_script.sh', 'text/x-shellscript');
-        showToast('FFmpeg 스크립트가 다운로드되었습니다.');
+        try {
+          const script = generateFFmpegScript(edlEntries, fileNameMapping);
+          downloadFile(script, 'edit_script.sh', 'text/x-shellscript');
+          showToast('FFmpeg 스크립트가 다운로드되었습니다.');
+        } catch (err) {
+          showToast('FFmpeg 스크립트 생성 실패: ' + (err instanceof Error ? err.message : '알 수 없는 오류'));
+        }
         break;
       }
       case 'edl-file': {
@@ -490,72 +498,21 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
         showToast('EDL + SRT 파일이 다운로드되었습니다.');
         break;
       }
-      case 'push-to-timeline': {
-        // edlEntries → projectStore scenes + soundStudioStore lines 변환
-        try {
-          const { useProjectStore } = require('./projectStore');
-          const { useSoundStudioStore } = require('./soundStudioStore');
-          const { useEditRoomStore } = require('./editRoomStore');
-          const { useNavigationStore } = require('./navigationStore');
-
-          const now = Date.now();
-          const newScenes = edlEntries.map((entry, i) => {
-            // 소스 영상 매핑: sourceId → sourceMapping → sourceVideos
-            const mappedVideoId = sourceMapping[entry.sourceId];
-            const sourceVideo = sourceVideos.find(v => v.id === mappedVideoId);
-            const videoUrl = sourceVideo?.cleanedBlobUrl || sourceVideo?.blobUrl;
-            const duration = (entry.refinedTimecodeEnd ?? entry.timecodeEnd) - (entry.refinedTimecodeStart ?? entry.timecodeStart);
-
-            return {
-              id: `s-${now}-${i + 1}`,
-              scriptText: entry.narrationText || '',
-              visualPrompt: '',
-              visualDescriptionKO: entry.sourceDescription || '',
-              characterPresent: false,
-              videoUrl,
-              startTime: entry.refinedTimecodeStart ?? entry.timecodeStart,
-              endTime: entry.refinedTimecodeEnd ?? entry.timecodeEnd,
-              audioDuration: entry.narrationDurationSec || duration,
-              referenceImage: entry.referenceFrameUrl,
-              imageUrl: entry.referenceFrameUrl || sourceVideo?.thumbnailDataUrl,
-            };
-          });
-
-          // scenes를 projectStore에 세팅
-          useProjectStore.getState().setScenes(newScenes);
-
-          // soundStudioStore lines 세팅 (자막/내보내기용)
-          const newLines = newScenes.map((scene, i) => ({
-            id: `line-${now}-${i}`,
-            speakerId: '',
-            text: scene.scriptText,
-            index: i,
-            sceneId: scene.id,
-            audioUrl: undefined as string | undefined,
-            duration: scene.audioDuration,
-            startTime: scene.startTime,
-            endTime: scene.endTime,
-            ttsStatus: 'idle' as const,
-          }));
-          useSoundStudioStore.getState().setLines(newLines);
-
-          // 편집실 타임라인 탭으로 이동
-          useEditRoomStore.getState().setEditRoomSubTab('timeline');
-          useNavigationStore.getState().setActiveTab('edit-room');
-          showToast('편집점이 타임라인으로 전송되었습니다! 미리보기 후 MP4로 내보낼 수 있습니다.');
-        } catch (err) {
-          showToast('타임라인 전송 실패: ' + (err instanceof Error ? err.message : '알 수 없는 오류'));
-        }
-        break;
-      }
+      case 'push-to-timeline':
       case 'direct-mp4': {
-        // 타임라인 전송 후 MP4 내보내기 안내
-        // push-to-timeline과 동일 로직 실행 후 안내
+        // [FIX #98] require() → ES dynamic import (프로덕션 빌드 호환)
         try {
-          const { useProjectStore } = require('./projectStore');
-          const { useSoundStudioStore } = require('./soundStudioStore');
-          const { useEditRoomStore } = require('./editRoomStore');
-          const { useNavigationStore } = require('./navigationStore');
+          const [
+            { useProjectStore },
+            { useSoundStudioStore },
+            { useEditRoomStore },
+            { useNavigationStore },
+          ] = await Promise.all([
+            import('./projectStore'),
+            import('./soundStudioStore'),
+            import('./editRoomStore'),
+            import('./navigationStore'),
+          ]);
 
           const now = Date.now();
           const newScenes = edlEntries.map((entry, i) => {
@@ -563,12 +520,15 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
             const sourceVideo = sourceVideos.find(v => v.id === mappedVideoId);
             const videoUrl = sourceVideo?.cleanedBlobUrl || sourceVideo?.blobUrl;
             const duration = (entry.refinedTimecodeEnd ?? entry.timecodeEnd) - (entry.refinedTimecodeStart ?? entry.timecodeStart);
+
             return {
               id: `s-${now}-${i + 1}`,
               scriptText: entry.narrationText || '',
               visualPrompt: '',
               visualDescriptionKO: entry.sourceDescription || '',
               characterPresent: false,
+              isGeneratingImage: false,
+              isGeneratingVideo: false,
               videoUrl,
               startTime: entry.refinedTimecodeStart ?? entry.timecodeStart,
               endTime: entry.refinedTimecodeEnd ?? entry.timecodeEnd,
@@ -577,7 +537,9 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
               imageUrl: entry.referenceFrameUrl || sourceVideo?.thumbnailDataUrl,
             };
           });
+
           useProjectStore.getState().setScenes(newScenes);
+
           const newLines = newScenes.map((scene, i) => ({
             id: `line-${now}-${i}`,
             speakerId: '',
@@ -591,9 +553,14 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
             ttsStatus: 'idle' as const,
           }));
           useSoundStudioStore.getState().setLines(newLines);
+
           useEditRoomStore.getState().setEditRoomSubTab('timeline');
           useNavigationStore.getState().setActiveTab('edit-room');
-          showToast('타임라인으로 전송되었습니다. 내보내기 버튼으로 MP4를 생성하세요!');
+
+          const msg = exportMode === 'direct-mp4'
+            ? '타임라인으로 전송되었습니다. 내보내기 버튼으로 MP4를 생성하세요!'
+            : '편집점이 타임라인으로 전송되었습니다! 미리보기 후 MP4로 내보낼 수 있습니다.';
+          showToast(msg);
         } catch (err) {
           showToast('타임라인 전송 실패: ' + (err instanceof Error ? err.message : '알 수 없는 오류'));
         }
