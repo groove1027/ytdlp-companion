@@ -7,7 +7,17 @@ import { LegacyTopicRecommendation, ChannelScript } from '../../../types';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
 
-const BenchmarkRadarChart = React.lazy(() => import('./BenchmarkRadarChart'));
+const BenchmarkRadarChart = React.lazy(() =>
+  import('./BenchmarkRadarChart').catch(() =>
+    import('./BenchmarkRadarChart').catch(() => {
+      if (!sessionStorage.getItem('__chunk_reload')) {
+        sessionStorage.setItem('__chunk_reload', '1');
+        window.location.reload();
+      }
+      throw new Error('Failed to fetch dynamically imported module');
+    })
+  )
+);
 
 const VIRAL_COLORS: Record<LegacyTopicRecommendation['viralScore'], { bg: string; text: string; label: string }> = {
   high: { bg: 'bg-red-900/30', text: 'text-red-300', label: 'HIGH' },

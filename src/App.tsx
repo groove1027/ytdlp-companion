@@ -263,6 +263,8 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    // 정상 로딩 시 청크 리로드 플래그 초기화
+    sessionStorage.removeItem('__chunk_reload');
     requestPersistentStorage();
     // [FIX] 앱 시작 시 음악 라이브러리 로드 — 편집실 BGM 패널에서 즉시 트랙 표시
     import('./stores/soundStudioStore').then(({ useSoundStudioStore }) => {

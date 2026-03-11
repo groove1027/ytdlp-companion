@@ -18,15 +18,31 @@ import TopicRecommendCards from './script/TopicRecommendCards';
 import { useElapsedTimer, formatElapsed } from '../../hooks/useElapsedTimer';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
 
-const InstinctBrowser = React.lazy(() => import('./script/InstinctBrowser'));
-const ScriptExpander = React.lazy(() => import('./script/ScriptExpander'));
-const ScriptReadabilityDashboard = React.lazy(() => import('./script/ScriptReadabilityDashboard'));
-const EngagementHeatmap = React.lazy(() => import('./script/EngagementHeatmap'));
-const ScenePacingChart = React.lazy(() => import('./script/ScenePacingChart'));
-const TopicComparisonRadar = React.lazy(() => import('./script/TopicComparisonRadar'));
-const GenerationTimeline = React.lazy(() => import('./script/GenerationTimeline'));
-const StyleDiffView = React.lazy(() => import('./script/StyleDiffView'));
-const BenchmarkRadarChart = React.lazy(() => import('./script/BenchmarkRadarChart'));
+// 청크 로딩 실패 시 1회 재시도 + 자동 리로드
+function lazyRetry(importFn: () => Promise<{ default: React.ComponentType<any> }>) {
+  return React.lazy(() =>
+    importFn().catch(() =>
+      importFn().catch(() => {
+        const reloaded = sessionStorage.getItem('__chunk_reload');
+        if (!reloaded) {
+          sessionStorage.setItem('__chunk_reload', '1');
+          window.location.reload();
+        }
+        throw new Error('Failed to fetch dynamically imported module');
+      })
+    )
+  );
+}
+
+const InstinctBrowser = lazyRetry(() => import('./script/InstinctBrowser'));
+const ScriptExpander = lazyRetry(() => import('./script/ScriptExpander'));
+const ScriptReadabilityDashboard = lazyRetry(() => import('./script/ScriptReadabilityDashboard'));
+const EngagementHeatmap = lazyRetry(() => import('./script/EngagementHeatmap'));
+const ScenePacingChart = lazyRetry(() => import('./script/ScenePacingChart'));
+const TopicComparisonRadar = lazyRetry(() => import('./script/TopicComparisonRadar'));
+const GenerationTimeline = lazyRetry(() => import('./script/GenerationTimeline'));
+const StyleDiffView = lazyRetry(() => import('./script/StyleDiffView'));
+const BenchmarkRadarChart = lazyRetry(() => import('./script/BenchmarkRadarChart'));
 
 type OpenTool = 'instinct' | 'benchmark' | null;
 

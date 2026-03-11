@@ -15,7 +15,17 @@ import RenderSettingsModal from './editroom/RenderSettingsModal';
 import OverlayPreviewLayer from './editroom/OverlayPreviewLayer';
 import type { SubtitleTemplate, SubtitleStyle, SceneEffectConfig, SceneTransitionPreset, EditRoomSubTab } from '../../types';
 
-const EditPointMatchingPanel = React.lazy(() => import('./editroom/EditPointMatchingPanel'));
+const EditPointMatchingPanel = React.lazy(() =>
+  import('./editroom/EditPointMatchingPanel').catch(() =>
+    import('./editroom/EditPointMatchingPanel').catch(() => {
+      if (!sessionStorage.getItem('__chunk_reload')) {
+        sessionStorage.setItem('__chunk_reload', '1');
+        window.location.reload();
+      }
+      throw new Error('Failed to fetch dynamically imported module');
+    })
+  )
+);
 import { getFontByFamily } from '../../constants/fontLibrary';
 import { loadFont } from '../../services/fontLoaderService';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
