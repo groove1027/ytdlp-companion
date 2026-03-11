@@ -2,7 +2,7 @@ import React, { useRef, useCallback, useEffect, useState, useMemo } from 'react'
 import JSZip from 'jszip';
 import { useSoundStudioStore, registerAudio, unregisterAudio } from '../../../stores/soundStudioStore';
 import { mergeAudioFiles, splitBySentenceEndings } from '../../../services/ttsService';
-import { fetchTypecastVoices, V30_EMOTIONS, V21_EMOTIONS } from '../../../services/typecastService';
+import { fetchTypecastVoices, V30_EMOTIONS, V21_EMOTIONS, TYPECAST_LANGUAGES } from '../../../services/typecastService';
 import type { TypecastVoice } from '../../../services/typecastService';
 import { ELEVENLABS_VOICES, elNameKo } from '../../../services/elevenlabsService';
 import type { ElevenLabsVoice } from '../../../services/elevenlabsService';
@@ -134,6 +134,7 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
   const [pickerShowFilter, setPickerShowFilter] = useState(false);
   const [pickerAgeFilters, setPickerAgeFilters] = useState<string[]>([]);
   const [pickerContentFilters, setPickerContentFilters] = useState<string[]>([]);
+  const [pickerLangFilter, setPickerLangFilter] = useState<string>('');
 
   // ElevenLabs 전용 피커 상태
   const [elPickerOpen, setElPickerOpen] = useState(false);
@@ -227,6 +228,14 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
       audioUrl: undefined,
       ttsStatus: 'idle' as const,
     };
+    // 음성의 기본 언어 자동 감지 → speaker.language 동기화
+    const primaryLang = voice.language[0];
+    const langMap: Record<string, TTSLanguage> = { kor: 'ko', jpn: 'ja', eng: 'en' };
+    const detectedLang = langMap[primaryLang] || 'ko';
+    if (activeSpeaker) {
+      updateSpeaker(activeSpeaker.id, { language: detectedLang });
+      setTcLanguage(detectedLang);
+    }
     // 클릭한 줄부터 같은 voiceId인 연속 줄 모두 변경
     updateLine(line.id, update);
     for (let i = pickerLineIdx + 1; i < lines.length; i++) {
@@ -451,9 +460,10 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
   const [elEmotion, setElEmotion] = useState('none'); // ElevenLabs Audio Tag 감정
   const [elLanguage, setElLanguage] = useState('auto'); // ElevenLabs 언어 (globalEmotion과 분리)
   const [globalIntensity, setGlobalIntensity] = useState(() => Math.round((activeSpeaker?.emotionIntensity ?? 1.0) * 100));
-  const [globalSpeed, setGlobalSpeed] = useState(1.0);
+  const [globalSpeed, setGlobalSpeed] = useState(() => activeSpeaker?.speed ?? 1.0);
   const [globalPitch, setGlobalPitch] = useState(() => activeSpeaker?.pitch ?? 0);
   const [globalModel, setGlobalModel] = useState(() => activeSpeaker?.typecastModel ?? 'ssfm-v30');
+  const [tcLanguage, setTcLanguage] = useState(() => activeSpeaker?.language ?? 'ko');
   const [pauseDuration, setPauseDuration] = useState(0.3);
 
   // 모델별 감정 프리셋 배열
@@ -918,10 +928,10 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
             <div className="absolute top-full left-0 mt-1 z-50 bg-gray-800 border border-gray-600 rounded-xl shadow-2xl p-4 w-64" onClick={e => e.stopPropagation()}>
               <div className="flex items-center justify-between mb-3">
                 <span className="text-sm font-bold text-white">속도</span>
-                <input type="number" min={0.5} max={2.0} step={0.1} value={globalSpeed} onChange={e => setGlobalSpeed(Number(e.target.value))}
+                <input type="number" min={0.5} max={2.0} step={0.1} value={globalSpeed} onChange={e => { const v = Number(e.target.value); setGlobalSpeed(v); if (activeSpeaker) updateSpeaker(activeSpeaker.id, { speed: v }); }}
                   className="w-16 text-xs bg-gray-900 border border-gray-600 rounded px-2 py-1 text-gray-300 text-center" />
               </div>
-              <input type="range" min={0.5} max={2.0} step={0.1} value={globalSpeed} onChange={e => setGlobalSpeed(Number(e.target.value))}
+              <input type="range" min={0.5} max={2.0} step={0.1} value={globalSpeed} onChange={e => { const v = Number(e.target.value); setGlobalSpeed(v); if (activeSpeaker) updateSpeaker(activeSpeaker.id, { speed: v }); }}
                 className="w-full h-1.5 bg-gray-700 rounded-full appearance-none cursor-pointer accent-orange-500" />
               <div className="flex justify-between text-[10px] text-gray-500 mt-1 mb-2">
                 <span>0.5x</span><span>1.0x</span><span>1.5x</span><span>2.0x</span>
@@ -973,8 +983,17 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
           {TYPECAST_MODELS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
         </select>
         <span className="text-gray-600">|</span>
+        <select value={tcLanguage} onChange={(e) => { const lang = e.target.value as TTSLanguage; setTcLanguage(lang); if (activeSpeaker) updateSpeaker(activeSpeaker.id, { language: lang }); }}
+          className="text-xs bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-gray-300 cursor-pointer">
+          <option value="ko">{'\uD83C\uDDF0\uD83C\uDDF7'} 한국어</option>
+          <option value="en">{'\uD83C\uDDFA\uD83C\uDDF8'} English</option>
+          <option value="ja">{'\uD83C\uDDEF\uD83C\uDDF5'} 日本語</option>
+        </select>
+        <span className="text-gray-600">|</span>
         <button type="button" onClick={() => {
           lines.forEach(l => updateLine(l.id, { emotion: globalEmotion, lineSpeed: globalSpeed, audioUrl: undefined, ttsStatus: 'idle' }));
+          if (activeSpeaker) updateSpeaker(activeSpeaker.id, { speed: globalSpeed });
+          setMergedAudio(null);
         }} className="text-xs bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 px-3 py-1 rounded-lg border border-purple-500/30 font-bold">전체 적용</button>
       </div>
       )}
@@ -1505,6 +1524,7 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
           }
           if (pickerAgeFilters.length > 0 && !pickerAgeFilters.includes(v.age)) return false;
           if (pickerContentFilters.length > 0 && !pickerContentFilters.some(cf => v.use_cases.includes(cf))) return false;
+          if (pickerLangFilter && !v.language.includes(pickerLangFilter)) return false;
           return true;
         });
         return (
@@ -1576,9 +1596,31 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
                       })}
                     </div>
                   </div>
+                  {/* 언어 */}
+                  <div>
+                    <p className="text-xs font-bold text-gray-300 mb-2">언어</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {[
+                        { id: '', label: '전체' },
+                        { id: 'kor', label: '\uD83C\uDDF0\uD83C\uDDF7 한국어' },
+                        { id: 'jpn', label: '\uD83C\uDDEF\uD83C\uDDF5 日本語' },
+                        { id: 'eng', label: '\uD83C\uDDFA\uD83C\uDDF8 English' },
+                      ].map(lang => {
+                        const active = pickerLangFilter === lang.id;
+                        return (
+                          <button key={lang.id} type="button"
+                            onClick={() => setPickerLangFilter(active ? '' : lang.id)}
+                            className={`flex items-center gap-1 text-xs px-3 py-1.5 rounded-full border transition-colors ${active ? 'bg-blue-500/20 text-blue-300 border-blue-500/40' : 'text-gray-400 border-gray-600 hover:border-gray-400'}`}>
+                            {active && <span className="text-blue-400">{'\u2713'}</span>}
+                            {lang.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                   {/* 초기화 */}
                   <div className="flex items-center gap-2 pt-1">
-                    <button type="button" onClick={() => { setPickerAgeFilters([]); setPickerContentFilters([]); }}
+                    <button type="button" onClick={() => { setPickerAgeFilters([]); setPickerContentFilters([]); setPickerLangFilter(''); }}
                       className="text-xs text-gray-500 hover:text-gray-300 px-3 py-1 rounded border border-gray-600 transition-colors">초기화</button>
                     <span className="text-xs text-gray-500">적용 결과: {filtered.length}개</span>
                   </div>
@@ -1614,7 +1656,7 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
                           </div>
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-bold text-white truncate">{voice.name}</p>
-                            <p className="text-xs text-gray-500 truncate">#{voice.use_cases.slice(0, 1).map(uc => UC_KO[uc] || uc).join('')} | 🇰🇷 한국어</p>
+                            <p className="text-xs text-gray-500 truncate">#{voice.use_cases.slice(0, 1).map(uc => UC_KO[uc] || uc).join('')} | {(TYPECAST_LANGUAGES.find(l => l.code === voice.language[0]) || TYPECAST_LANGUAGES[0]).flag} {(TYPECAST_LANGUAGES.find(l => l.code === voice.language[0]) || TYPECAST_LANGUAGES[0]).nameKo}</p>
                           </div>
                           {lines[pickerLineIdx]?.voiceId === voice.voice_id && <span className="text-green-400 text-sm">✓</span>}
                         </div>
@@ -1637,7 +1679,7 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
                         {lines[pickerLineIdx]?.voiceId === voice.voice_id && <span className="text-green-400 ml-1">✓</span>}
                       </p>
                       <p className="text-xs text-gray-500 truncate">
-                        #{voice.use_cases.slice(0, 2).map(uc => UC_KO[uc] || uc).join(' · ')} | 🇰🇷 한국어{voice.language.length > 1 ? `+${voice.language.length - 1}` : ''}
+                        #{voice.use_cases.slice(0, 2).map(uc => UC_KO[uc] || uc).join(' · ')} | {(TYPECAST_LANGUAGES.find(l => l.code === voice.language[0]) || TYPECAST_LANGUAGES[0]).flag} {(TYPECAST_LANGUAGES.find(l => l.code === voice.language[0]) || TYPECAST_LANGUAGES[0]).nameKo}{voice.language.length > 1 ? `+${voice.language.length - 1}` : ''}
                       </p>
                     </div>
                     {/* 즐겨찾기 + 미리듣기 */}
