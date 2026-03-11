@@ -1,5 +1,6 @@
 import React, { useState, useRef, useCallback } from 'react';
 import { evolinkFrameAnalysisStream } from '../../../services/evolinkService';
+import { downloadFromUrl } from '../../../services/videoDownloadService';
 import { showToast } from '../../../stores/uiStore';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
 
@@ -111,6 +112,8 @@ const SocialAnalysisRoom: React.FC = () => {
   const [isExtractingFrames, setIsExtractingFrames] = useState(false);
   const [captionText, setCaptionText] = useState('');
   const [commentText, setCommentText] = useState('');
+  const [tiktokUrl, setTiktokUrl] = useState('');
+  const [isDownloadingUrl, setIsDownloadingUrl] = useState(false);
 
   // 분석 상태
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -212,6 +215,23 @@ const SocialAnalysisRoom: React.FC = () => {
     e.stopPropagation();
   }, []);
 
+  // TikTok URL → 영상 다운로드 + 프레임 추출
+  const handleTiktokUrlDownload = useCallback(async () => {
+    if (!tiktokUrl.trim() || video || isDownloadingUrl) return;
+    setIsDownloadingUrl(true);
+    try {
+      const result = await downloadFromUrl(tiktokUrl.trim());
+      const file = new File([result.blob], result.filename, { type: result.blob.type || 'video/mp4' });
+      await handleAddVideo(file);
+      showToast('TikTok 영상 다운로드 완료');
+      setTiktokUrl('');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'TikTok 영상 다운로드 실패', 5000);
+    } finally {
+      setIsDownloadingUrl(false);
+    }
+  }, [tiktokUrl, video, isDownloadingUrl, handleAddVideo]);
+
   // 분석 실행
   const handleAnalyze = useCallback(async () => {
     const hasContent = images.length > 0 || video || captionText.trim() || commentText.trim();
@@ -300,6 +320,7 @@ const SocialAnalysisRoom: React.FC = () => {
     setVideo(null);
     setCaptionText('');
     setCommentText('');
+    setTiktokUrl('');
     setStreamText('');
     setAnalysisResult('');
     setAnalysisDone(false);
@@ -339,7 +360,61 @@ const SocialAnalysisRoom: React.FC = () => {
             </button>
           ))}
         </div>
+
+        {/* 플랫폼별 안내 */}
+        {platform === 'instagram' && (
+          <div className="mt-3 flex items-start gap-2 bg-amber-900/20 border border-amber-600/30 rounded-lg px-3 py-2.5">
+            <span className="text-amber-400 text-sm mt-0.5">⚠️</span>
+            <p className="text-xs text-amber-300/90 leading-relaxed">
+              <strong>Instagram은 URL 직접 접근이 불가합니다.</strong><br />
+              게시물 스크린샷을 캡처하고, 영상은 릴스 저장 후 파일로 업로드해주세요.
+            </p>
+          </div>
+        )}
+        {platform === 'tiktok' && (
+          <div className="mt-3 flex items-start gap-2 bg-cyan-900/20 border border-cyan-600/30 rounded-lg px-3 py-2.5">
+            <span className="text-cyan-400 text-sm mt-0.5">💡</span>
+            <p className="text-xs text-cyan-300/90 leading-relaxed">
+              TikTok 영상 URL을 아래에 붙여넣으면 자동 다운로드 후 프레임을 추출합니다. 스크린샷도 함께 업로드 가능합니다.
+            </p>
+          </div>
+        )}
       </div>
+
+      {/* TikTok URL 입력 (TikTok 선택 시만) */}
+      {platform === 'tiktok' && !video && (
+        <div className="bg-gray-800/40 rounded-xl border border-cyan-700/30 p-4 space-y-2">
+          <h3 className="text-sm font-bold text-white">🔗 TikTok URL 다운로드</h3>
+          <div className="flex gap-2">
+            <input
+              type="url"
+              value={tiktokUrl}
+              onChange={e => setTiktokUrl(e.target.value)}
+              placeholder="TikTok 영상 URL (예: https://www.tiktok.com/@user/video/...)"
+              className="flex-1 bg-gray-900/60 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-cyan-500/50"
+              onKeyDown={e => { if (e.key === 'Enter') handleTiktokUrlDownload(); }}
+            />
+            <button
+              type="button"
+              onClick={handleTiktokUrlDownload}
+              disabled={!tiktokUrl.trim() || isDownloadingUrl}
+              className={`px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${
+                !tiktokUrl.trim() || isDownloadingUrl
+                  ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                  : 'bg-cyan-600 hover:bg-cyan-500 text-white'
+              }`}
+            >
+              {isDownloadingUrl ? (
+                <span className="flex items-center gap-1.5">
+                  <span className="w-3.5 h-3.5 border-2 border-gray-400 border-t-cyan-300 rounded-full animate-spin" />
+                  다운로드 중
+                </span>
+              ) : '다운로드'}
+            </button>
+          </div>
+          <p className="text-[10px] text-gray-500">vm.tiktok.com, vt.tiktok.com 단축 URL도 지원</p>
+        </div>
+      )}
 
       {/* 입력 영역 (2열) */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
