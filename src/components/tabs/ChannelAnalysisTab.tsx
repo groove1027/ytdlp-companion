@@ -5,11 +5,13 @@ import type { ChannelAnalysisSubTab } from '../../types';
 const KeywordLab = lazy(() => import('./channel/KeywordLab'));
 const ChannelAnalysisRoom = lazy(() => import('./channel/ChannelAnalysisRoom'));
 const VideoAnalysisRoom = lazy(() => import('./channel/VideoAnalysisRoom'));
+const SocialAnalysisRoom = lazy(() => import('./channel/SocialAnalysisRoom'));
 
 const SUB_TABS: { id: ChannelAnalysisSubTab; label: string; icon: string }[] = [
   { id: 'keyword-lab', label: '키워드 랩', icon: '🔍' },
   { id: 'channel-room', label: '채널 분석실', icon: '📊' },
   { id: 'video-room', label: '영상 분석실', icon: '🎬' },
+  { id: 'social-room', label: '소셜 분석실', icon: '📱' },
 ];
 
 const LoadingFallback: React.FC = () => (
@@ -178,6 +180,7 @@ const ChannelAnalysisTab: React.FC = () => {
           {subTab === 'keyword-lab' && <KeywordLab />}
           {subTab === 'channel-room' && <ChannelAnalysisRoom />}
           {subTab === 'video-room' && <VideoAnalysisRoom />}
+          {subTab === 'social-room' && <SocialAnalysisRoom />}
         </Suspense>
       </div>
     </div>

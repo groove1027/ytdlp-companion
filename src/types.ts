@@ -631,7 +631,7 @@ export interface CommunityMediaItem {
 }
 
 /** 채널분석 서브 탭 */
-export type ChannelAnalysisSubTab = 'keyword-lab' | 'channel-room' | 'video-room';
+export type ChannelAnalysisSubTab = 'keyword-lab' | 'channel-room' | 'video-room' | 'social-room';
 
 // --- 채널분석: 키워드 랩 ---
 export interface KeywordAnalysisResult {
