@@ -36,26 +36,47 @@ import { AuthUser } from './services/authService';
 import AuthGate from './components/AuthGate';
 import AuthPromptModal from './components/AuthPromptModal';
 import ProfileModal from './components/ProfileModal';
+import HelpGuideModal from './components/HelpGuideModal';
+import OnboardingTour from './components/OnboardingTour';
 import { useUIStore } from './stores/uiStore';
 import { useAuthStore } from './stores/authStore';
 import { useCostStore } from './stores/costStore';
 import { useProjectStore, autoRestoreOrCreateProject } from './stores/projectStore';
 import { useNavigationStore } from './stores/navigationStore';
 
-// [v4.5] 새로운 탭 컴포넌트 (Lazy Loading)
-const ProjectDashboard = lazy(() => import('./components/tabs/ProjectDashboard'));
-const ChannelAnalysisTab = lazy(() => import('./components/tabs/ChannelAnalysisTab'));
-const ScriptWriterTab = lazy(() => import('./components/tabs/ScriptWriterTab'));
-const SoundStudioTab = lazy(() => import('./components/tabs/SoundStudioTab'));
-const ImageVideoTab = lazy(() => import('./components/tabs/ImageVideoTab'));
-const EditRoomTab = lazy(() => import('./components/tabs/EditRoomTab'));
-const UploadTab = lazy(() => import('./components/tabs/UploadTab'));
-const ThumbnailStudioTab = lazy(() => import('./components/tabs/ThumbnailStudioTab'));
-const CharacterTwistLab = lazy(() => import('./components/CharacterTwistLab'));
-const ImageScriptUploadLab = lazy(() => import('./components/ImageScriptUploadLab'));
-const PptMasterTab = lazy(() => import('./components/tabs/PptMasterTab'));
-const DetailPageTab = lazy(() => import('./components/tabs/DetailPageTab'));
-const SubtitleRemoverTab = lazy(() => import('./components/tabs/SubtitleRemoverTab'));
+// 청크 로딩 실패 시 1회 재시도 + 자동 리로드 (배포 후 구버전 캐시 문제 해결)
+function lazyRetry(importFn: () => Promise<{ default: React.ComponentType<any> }>) {
+  return lazy(() =>
+    importFn().catch(() => {
+      // 1회 재시도
+      return importFn().catch(() => {
+        // 재시도도 실패 → 아직 리로드 안 했으면 자동 리로드
+        const reloaded = sessionStorage.getItem('__chunk_reload');
+        if (!reloaded) {
+          sessionStorage.setItem('__chunk_reload', '1');
+          window.location.reload();
+        }
+        // 이미 리로드 했으면 에러 전파 → ErrorBoundary에서 처리
+        throw new Error('Failed to fetch dynamically imported module');
+      });
+    })
+  );
+}
+
+// [v4.5] 새로운 탭 컴포넌트 (Lazy Loading + 자동 재시도)
+const ProjectDashboard = lazyRetry(() => import('./components/tabs/ProjectDashboard'));
+const ChannelAnalysisTab = lazyRetry(() => import('./components/tabs/ChannelAnalysisTab'));
+const ScriptWriterTab = lazyRetry(() => import('./components/tabs/ScriptWriterTab'));
+const SoundStudioTab = lazyRetry(() => import('./components/tabs/SoundStudioTab'));
+const ImageVideoTab = lazyRetry(() => import('./components/tabs/ImageVideoTab'));
+const EditRoomTab = lazyRetry(() => import('./components/tabs/EditRoomTab'));
+const UploadTab = lazyRetry(() => import('./components/tabs/UploadTab'));
+const ThumbnailStudioTab = lazyRetry(() => import('./components/tabs/ThumbnailStudioTab'));
+const CharacterTwistLab = lazyRetry(() => import('./components/CharacterTwistLab'));
+const ImageScriptUploadLab = lazyRetry(() => import('./components/ImageScriptUploadLab'));
+const PptMasterTab = lazyRetry(() => import('./components/tabs/PptMasterTab'));
+const DetailPageTab = lazyRetry(() => import('./components/tabs/DetailPageTab'));
+const SubtitleRemoverTab = lazyRetry(() => import('./components/tabs/SubtitleRemoverTab'));
 // ShoppingShortTab은 DetailPageTab(쇼핑콘텐츠) 내부 서브탭으로 이동됨
 
 // [v4.5] 탭 정의 — 메인 파이프라인
@@ -107,11 +128,30 @@ class TabErrorBoundary extends React.Component<
   static getDerivedStateFromError(error: Error) {
     return { error };
   }
+  componentDidCatch(error: Error) {
+    const isChunkError = error.message?.includes('Failed to fetch dynamically imported module')
+      || error.message?.includes('Loading chunk')
+      || error.message?.includes('Loading CSS chunk');
+    if (isChunkError) {
+      // lazyRetry에서 이미 1회 리로드 시도함 → 여기 도달 시 sessionStorage 초기화만
+      sessionStorage.removeItem('__chunk_reload');
+    }
+  }
   render() {
     if (this.state.error) {
       const isChunkError = this.state.error.message?.includes('Failed to fetch dynamically imported module')
         || this.state.error.message?.includes('Loading chunk')
         || this.state.error.message?.includes('Loading CSS chunk');
+
+      // 캐시 무효화 강제 리로드
+      const handleHardReload = () => {
+        sessionStorage.removeItem('__chunk_reload');
+        // 캐시 무효화: timestamp 쿼리 추가
+        const url = new URL(window.location.href);
+        url.searchParams.set('_v', Date.now().toString());
+        window.location.replace(url.toString());
+      };
+
       return (
         <div className="p-8 text-center">
           <p className="text-red-400 text-lg font-bold mb-2">
@@ -119,7 +159,7 @@ class TabErrorBoundary extends React.Component<
           </p>
           {isChunkError ? (
             <p className="text-gray-400 text-sm mb-4">
-              새 버전이 배포되었습니다. 페이지를 새로고침하면 정상 작동합니다.
+              새 버전이 배포되었습니다. 아래 버튼을 누르면 최신 버전으로 전환됩니다.
             </p>
           ) : (
             <pre className="text-red-300 text-sm bg-red-900/20 p-4 rounded-lg overflow-auto max-h-60 text-left mb-4">
@@ -129,9 +169,9 @@ class TabErrorBoundary extends React.Component<
           <div className="flex gap-3 justify-center">
             <button
               className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded text-white font-semibold"
-              onClick={() => window.location.reload()}
+              onClick={handleHardReload}
             >
-              페이지 새로고침
+              최신 버전으로 새로고침
             </button>
             {!isChunkError && (
               <button
@@ -1011,6 +1051,13 @@ const App: React.FC = () => {
                 💬 피드백
               </button>
               <button
+                data-tour="help-button"
+                onClick={() => useUIStore.getState().setShowHelpGuide(true)}
+                className="px-3.5 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-gray-300 hover:text-white rounded-lg text-sm font-bold transition-all flex items-center gap-1.5"
+              >
+                ❓ 도움말
+              </button>
+              <button
                 onClick={() => useUIStore.getState().setShowProfileModal(true)}
                 className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-gray-300 hover:text-white rounded-lg text-sm font-bold transition-all flex items-center gap-1.5"
               >
@@ -1034,6 +1081,7 @@ const App: React.FC = () => {
         <aside className="fixed top-16 left-0 bottom-0 w-[15.5rem] bg-gray-950 border-r border-gray-800 z-30 flex flex-col py-3 px-3 gap-1 overflow-y-auto">
           {/* 새 프로젝트 버튼 (항상 표시) */}
           <button
+            data-tour="new-project"
             onClick={() => {
               localStorage.removeItem('last-project-id');
               goToDashboard();
@@ -1048,6 +1096,7 @@ const App: React.FC = () => {
             return (
               <React.Fragment key={tab.id}>
                 <button
+                  data-tour={`tab-${tab.id}`}
                   onClick={() => {
                     if (tab.id === 'project' && activeTab === 'project') {
                       goToDashboard();
@@ -1071,6 +1120,7 @@ const App: React.FC = () => {
                   return (
                     <div className="mt-0.5 mb-0.5">
                       <button
+                        data-tour="post-production"
                         onClick={() => useUIStore.getState().setPostProductionOpen(!isPostProdOpen)}
                         className={`flex items-center justify-between w-full px-4 py-3.5 rounded-lg text-base font-semibold transition-all ${
                           POST_PRODUCTION_TAB_IDS.has(activeTab)
@@ -1127,6 +1177,7 @@ const App: React.FC = () => {
                   useUIStore.getState().setToolboxOpen(true);
                 }
               }}
+              data-tour="toolbox"
               className="flex items-center justify-between w-full px-4 py-3 rounded-lg text-base font-semibold text-gray-400 hover:text-gray-200 hover:bg-gray-800/60 transition-all"
             >
               <div className="flex items-center gap-3">
@@ -1331,6 +1382,10 @@ const App: React.FC = () => {
           onAccountDeleted={() => setAuthUser(null)}
         />
       )}
+
+      {/* 도움말 & 온보딩 */}
+      <HelpGuideModal />
+      <OnboardingTour />
 
       {/* Soft Gate 모달 */}
       <AuthPromptModal />

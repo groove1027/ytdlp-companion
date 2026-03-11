@@ -16,6 +16,7 @@ interface UIStore {
   showApiSettings: boolean;
   showWatermarkModal: boolean;
   showProfileModal: boolean;
+  showHelpGuide: boolean;
   authPromptAction: string | null;
   showAuthGateModal: boolean;
   toast: ToastState | null;
@@ -36,6 +37,7 @@ interface UIStore {
   setShowApiSettings: (show: boolean) => void;
   setShowWatermarkModal: (show: boolean) => void;
   setShowProfileModal: (show: boolean) => void;
+  setShowHelpGuide: (show: boolean) => void;
   setAuthPromptAction: (action: string | null) => void;
   setShowAuthGateModal: (show: boolean) => void;
   setToast: (toast: ToastState | null | ((prev: ToastState | null) => ToastState | null)) => void;
@@ -54,6 +56,7 @@ export const useUIStore = create<UIStore>((set) => ({
   showApiSettings: false,
   showWatermarkModal: false,
   showProfileModal: false,
+  showHelpGuide: false,
   authPromptAction: null,
   showAuthGateModal: false,
   toast: null,
@@ -73,6 +76,7 @@ export const useUIStore = create<UIStore>((set) => ({
   setShowApiSettings: (show) => set({ showApiSettings: show }),
   setShowWatermarkModal: (show) => set({ showWatermarkModal: show }),
   setShowProfileModal: (show) => set({ showProfileModal: show }),
+  setShowHelpGuide: (show) => set({ showHelpGuide: show }),
   setAuthPromptAction: (action) => set({ authPromptAction: action }),
   setShowAuthGateModal: (show) => set({ showAuthGateModal: show }),
   setToast: (toast) => set((state) => ({
