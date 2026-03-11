@@ -1,7 +1,7 @@
 
 import { Scene, VideoFormat, CharacterAppearance } from '../../types';
 import { requestGeminiProxy, extractTextFromResponse, extractFunctionCall, performMockSearch, SAFETY_SETTINGS_BLOCK_NONE } from './geminiProxy';
-import { evolinkChat } from '../evolinkService';
+import { evolinkChat, evolinkChatStream } from '../evolinkService';
 import { logger } from '../LoggerService';
 
 // [NEW] Robust JSON Extraction — handles thinking model markdown output
@@ -1026,22 +1026,19 @@ export const parseScriptToScenes = async (
                     await new Promise(r => setTimeout(r, backoffMs));
                 }
                 try {
-                    console.log(`[parseScriptToScenes] 청크 ${ci + 1}/${chunks.length} (${chunks[ci].length}자) → evolinkChat (시도 ${retry + 1}/${MAX_CHUNK_RETRIES})`);
-                    // [FIX #32] 긴 대본 청크 처리를 위해 10분 타임아웃 적용
-                    const res = await evolinkChat(
+                    console.log(`[parseScriptToScenes] 청크 ${ci + 1}/${chunks.length} (${chunks[ci].length}자) → evolinkChatStream (시도 ${retry + 1}/${MAX_CHUNK_RETRIES})`);
+                    // [FIX #99] 스트리밍 전환 — 프록시 연결 타임아웃(~125초) 방지
+                    // 비스트리밍은 응답 완료까지 데이터가 안 흘러서 프록시가 연결을 끊음
+                    // 스트리밍은 SSE로 데이터가 지속 전송되어 타임아웃 회피
+                    const content = await evolinkChatStream(
                         [
                             { role: 'system', content: chunkSysPrompt },
                             { role: 'user', content: chunkUserContent }
                         ],
-                        { temperature: 0.3, maxTokens: 32000, responseFormat: { type: 'json_object' }, timeoutMs: 600_000 }
+                        () => {}, // 청크 콜백 불필요 — 최종 텍스트만 사용
+                        { temperature: 0.3, maxTokens: 32000, responseFormat: { type: 'json_object' } }
                     );
-                    // [FIX #54] finishReason이 "length"면 토큰 한도 초과로 JSON 잘림 → 재시도
-                    const finishReason = res.choices?.[0]?.finish_reason;
-                    const content = res.choices?.[0]?.message?.content || '';
                     if (!content) throw new Error('Empty Response');
-                    if (finishReason === 'length') {
-                        throw new Error('토큰 한도 초과: AI 응답이 잘렸습니다. 재시도합니다.');
-                    }
 
                     // JSON 파싱 (다양한 포맷 지원)
                     let parsed: any;
