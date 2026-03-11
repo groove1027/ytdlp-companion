@@ -277,6 +277,16 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
     const { edlEntries, sourceVideos } = get();
     const mapping: Record<string, string> = {};
 
+    // [FIX] 소스 영상이 1개면 모든 EDL 항목을 해당 영상에 자동 매핑
+    if (sourceVideos.length === 1) {
+      const singleVideo = sourceVideos[0];
+      for (const entry of edlEntries) {
+        mapping[entry.sourceId] = singleVideo.id;
+      }
+      set({ sourceMapping: mapping });
+      return;
+    }
+
     // [FIX] sourceId 정규화: "S-1", "S-01", "s-01", "S01" → "S-01" 통일
     const normalizeSourceId = (id: string): string => {
       const cleaned = id.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
