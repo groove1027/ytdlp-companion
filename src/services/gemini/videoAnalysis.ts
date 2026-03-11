@@ -1,7 +1,7 @@
 
 import { Scene, AspectRatio, ImageModel, RemakeStyleAnalysis } from '../../types';
 import { getKieKey, monitoredFetch } from '../apiService';
-import { getEvolinkKey, uploadFileToEvolinkFileApi } from '../evolinkService';
+import { getEvolinkKey } from '../evolinkService';
 import { SAFETY_SETTINGS_BLOCK_NONE, requestGeminiProxy, extractTextFromResponse } from './geminiProxy';
 import { uploadMediaToHosting } from '../uploadService';
 import { generateKieImage, generateEvolinkImageWrapped } from '../VideoGenService';
@@ -26,14 +26,8 @@ export const analyzeVideoWithGemini = async (
     if ('youtubeUrl' in source) {
         fileUri = source.youtubeUrl;
     } else {
-        // Evolink File API로 직접 업로드 시도 (Gemini 네이티브 분석 가능)
-        // Cloudinary URL은 Gemini fileData.fileUri에서 지원되지 않음
-        try {
-            fileUri = await uploadFileToEvolinkFileApi(source.videoFile);
-        } catch {
-            // File API 미지원 시 Cloudinary 폴백 (호환성 기대)
-            fileUri = await uploadMediaToHosting(source.videoFile);
-        }
+        // 업로드 파일 → Cloudinary URL 전달 (Gemini fileData 호환성 제한적이나 시도)
+        fileUri = await uploadMediaToHosting(source.videoFile);
     }
 
     const strategyPrompt = strategy === 'NARRATIVE'

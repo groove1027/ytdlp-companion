@@ -1,7 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import AnalysisLoadingPanel, { notifyAnalysisComplete } from './AnalysisLoadingPanel';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import { evolinkChatStream, evolinkVideoAnalysisStream, evolinkNativeStream, uploadFileToEvolinkFileApi } from '../../../services/evolinkService';
+import { evolinkChatStream, evolinkVideoAnalysisStream, evolinkNativeStream } from '../../../services/evolinkService';
 import type { EvolinkChatMessage, EvolinkContentPart } from '../../../services/evolinkService';
 import { uploadMediaToHosting } from '../../../services/uploadService';
 import { showToast } from '../../../stores/uiStore';
@@ -1742,20 +1742,9 @@ const VideoAnalysisRoom: React.FC = () => {
         // UI 표시용 프레임 추출 (비주얼 컬럼)
         frames = await extractVideoFrames(uploadedFile);
         inputDesc = `업로드된 영상 파일: ${uploadedFile.name} (${((uploadedFile.size || 0) / 1024 / 1024).toFixed(1)}MB)`;
-
-        // ★ Evolink File API로 직접 업로드 시도 (Gemini 네이티브 분석 가능)
-        // 기존 Cloudinary → fileData 방식은 Gemini가 외부 URL을 지원하지 않아 제거
-        try {
-          const fileUri = await uploadFileToEvolinkFileApi(uploadedFile, (phase) => {
-            console.log(`[VideoAnalysis] File API: ${phase}`);
-          });
-          videoUri = fileUri;
-          console.log('[VideoAnalysis] Evolink File API 업로드 성공:', fileUri.slice(0, 80));
-        } catch (fileApiErr) {
-          console.warn('[VideoAnalysis] Evolink File API 불가, 프레임 기반 분석으로 전환:', fileApiErr);
-          // File API 미지원 시 videoUri를 비워두고 프레임 기반 멀티모달 분석으로 진행
-          videoUri = '';
-        }
+        // ★ 업로드 영상은 프레임 기반 멀티모달 분석으로 진행
+        // (Gemini v1beta fileData.fileUri는 YouTube URL만 지원, 외부 URL 접근 불가)
+        videoUri = '';
       } else {
         const vid = extractYouTubeVideoId(youtubeUrl);
         if (vid) {
