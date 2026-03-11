@@ -783,11 +783,13 @@ const StoryboardPanel: React.FC = () => {
   const [previewIndex, setPreviewIndex] = useState(0);
   const [detailScene, setDetailScene] = useState<{ scene: Scene; index: number } | null>(null);
   const [showGenDropdown, setShowGenDropdown] = useState(false);
+  const [showDownloadDropdown, setShowDownloadDropdown] = useState(false);
   const [isBatchingImages, setIsBatchingImages] = useState(false);
   const [batchImageProgress, setBatchImageProgress] = useState({ current: 0, total: 0, success: 0, fail: 0 });
   const { requireAuth } = useAuthGuard();
 
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const downloadDropdownRef = useRef<HTMLDivElement>(null);
 
   // BUG#16: ref to track latest batch progress
   const batchImageProgressRef = useRef(batchImageProgress);
@@ -805,15 +807,18 @@ const StoryboardPanel: React.FC = () => {
 
   // 드롭다운 바깥 클릭 시 닫기
   useEffect(() => {
-    if (!showGenDropdown) return;
+    if (!showGenDropdown && !showDownloadDropdown) return;
     const handleClickOutside = (e: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+      if (showGenDropdown && dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
         setShowGenDropdown(false);
+      }
+      if (showDownloadDropdown && downloadDropdownRef.current && !downloadDropdownRef.current.contains(e.target as Node)) {
+        setShowDownloadDropdown(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [showGenDropdown]);
+  }, [showGenDropdown, showDownloadDropdown]);
 
   // --- 전체 오디오 재생 ---
   const startGlobalTick = useCallback(() => {
@@ -1391,6 +1396,51 @@ const StoryboardPanel: React.FC = () => {
           >
             {totalScenes >= 30 ? '📦 ZIP 저장' : '💾 HTML 저장'}
           </button>
+          {/* Download dropdown */}
+          <div className="relative" ref={downloadDropdownRef}>
+            <button
+              type="button"
+              onClick={() => setShowDownloadDropdown(!showDownloadDropdown)}
+              disabled={completedImages === 0 && completedVideos === 0}
+              className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed text-gray-300 text-xs font-medium rounded-lg border border-gray-600 transition-colors flex items-center gap-1.5"
+            >
+              ⬇️ 다운로드
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7"/></svg>
+            </button>
+            {showDownloadDropdown && (
+              <div className="absolute right-0 top-full mt-1 w-52 bg-gray-800 border border-gray-700 rounded-xl shadow-2xl z-50 overflow-hidden">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setShowDownloadDropdown(false);
+                    const { downloadImages } = await import('../../../services/exportService');
+                    await downloadImages();
+                  }}
+                  disabled={completedImages === 0}
+                  className="w-full text-left px-4 py-2.5 text-sm text-gray-200 hover:bg-gray-700/60 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+                >
+                  <span className="w-2 h-2 rounded-full bg-orange-400" />
+                  이미지 일괄 다운로드
+                  <span className="ml-auto text-[11px] text-gray-500">{completedImages}장</span>
+                </button>
+                <div className="border-t border-gray-700" />
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setShowDownloadDropdown(false);
+                    const { downloadVideos } = await import('../../../services/exportService');
+                    await downloadVideos();
+                  }}
+                  disabled={completedVideos === 0}
+                  className="w-full text-left px-4 py-2.5 text-sm text-gray-200 hover:bg-gray-700/60 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+                >
+                  <span className="w-2 h-2 rounded-full bg-blue-400" />
+                  영상 일괄 다운로드
+                  <span className="ml-auto text-[11px] text-gray-500">{completedVideos}편</span>
+                </button>
+              </div>
+            )}
+          </div>
           {/* Generate dropdown */}
           <div className="relative" ref={dropdownRef}>
             <button
