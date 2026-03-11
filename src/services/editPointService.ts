@@ -9,6 +9,31 @@ import { extractFramesFromVideo } from './gemini/videoAnalysis';
 import { formatSrtTime } from './srtService';
 
 /**
+ * 잘린 JSON 응답에서 유효한 entries를 복구
+ * AI 응답이 max_tokens로 잘렸을 때, 마지막 완전한 entry까지 추출
+ */
+function recoverTruncatedJson(content: string): { entries: Record<string, unknown>[] } {
+  // 1. 정상 파싱 시도
+  try {
+    const parsed = JSON.parse(content);
+    if (parsed.entries) return parsed;
+  } catch { /* 잘린 JSON이므로 파싱 실패 예상 */ }
+
+  // 2. 마지막 완전한 } 를 찾아서 배열 닫기 시도
+  const entries: Record<string, unknown>[] = [];
+  const entryPattern = /\{[^{}]*"order"\s*:\s*"[^"]*"[^{}]*\}/g;
+  let match;
+  while ((match = entryPattern.exec(content)) !== null) {
+    try {
+      const entry = JSON.parse(match[0]);
+      entries.push(entry);
+    } catch { /* 불완전한 entry 건너뜀 */ }
+  }
+
+  return { entries };
+}
+
+/**
  * 타임코드 문자열 → 초 단위 변환
  * 지원 포맷: "00:07.500", "1:23.4", "00:01:05.420", "7.5"
  */
@@ -81,12 +106,36 @@ ${narration}` : ''}`;
     ],
     {
       temperature: 0.1,
-      maxTokens: 4096,
+      maxTokens: 16384,
       responseFormat: { type: 'json_object' },
     }
   );
 
+  const finishReason = response.choices?.[0]?.finish_reason;
   const content = response.choices[0]?.message?.content || '{}';
+
+  // [FIX #75] AI 응답이 토큰 제한으로 잘린 경우 감지 → 재시도 또는 에러
+  if (finishReason === 'length') {
+    console.warn('[EditPoint] AI 응답이 토큰 제한으로 잘렸습니다. 불완전한 JSON 복구 시도...');
+    // 잘린 JSON 복구 시도: 마지막 유효한 entry까지 파싱
+    const recovered = recoverTruncatedJson(content);
+    if (recovered.entries && recovered.entries.length > 0) {
+      console.log(`[EditPoint] ${recovered.entries.length}개 항목 복구 성공`);
+      return recovered.entries.map((entry: Record<string, unknown>, idx: number) => ({
+        id: `edl-${Date.now()}-${idx}`,
+        order: String(entry.order || `${idx + 1}`),
+        narrationText: String(entry.narrationText || ''),
+        sourceId: String(entry.sourceId || 'S-01'),
+        sourceDescription: String(entry.sourceDescription || ''),
+        speedFactor: Number(entry.speedFactor) || 1.0,
+        timecodeStart: parseTimecodeToSeconds(String(entry.timecodeStart || '0')),
+        timecodeEnd: parseTimecodeToSeconds(String(entry.timecodeEnd || '0')),
+        note: String(entry.note || ''),
+      }));
+    }
+    throw new Error('편집표가 너무 큽니다. 편집표를 나누어 입력해주세요.');
+  }
+
   const parsed = JSON.parse(content);
   const rawEntries = parsed.entries || [];
 
@@ -325,6 +374,11 @@ function buildAtempoChain(speed: number): string {
 
 /**
  * EdlEntry[] → CMX 3600 EDL 포맷 생성
+ * [FIX #73] Premiere Pro 호환 형식으로 수정:
+ * - 릴네임 최대 8자 (CMX 3600 표준)
+ * - 트랙 표기: "V  C" → "AA/V  C" (Premiere Pro가 인식하는 형식)
+ * - 행 포맷: "{edit#}  {reel}  {track}  {transition}  {srcIn} {srcOut} {recIn} {recOut}"
+ * - BOM 없이 UTF-8 텍스트
  */
 export function generateEdlFile(
   entries: EdlEntry[],
@@ -338,14 +392,14 @@ export function generateEdlFile(
 
   let recordIn = 0;
 
-  // 소스별 안전한 EDL 릴네임 생성 (CMX 3600: 최대 32자, 공백/특수문자 제거)
+  // 소스별 안전한 EDL 릴네임 생성 (CMX 3600 표준: 최대 8자)
   const reelNameMap: Record<string, string> = {};
   let reelCounter = 1;
   const toReelName = (sourceId: string): string => {
     if (!reelNameMap[sourceId]) {
       const raw = sourceMapping[sourceId] || sourceId;
-      // 확장자 제거 후 영문/숫자/언더스코어만 유지, 최대 32자
-      const safe = raw.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9_]/g, '_').substring(0, 24);
+      // 확장자 제거 후 영문/숫자만 유지, 최대 8자 (CMX 3600 표준)
+      const safe = raw.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9]/g, '').substring(0, 8);
       reelNameMap[sourceId] = safe || `CLIP${String(reelCounter).padStart(3, '0')}`;
       reelCounter++;
     }
@@ -361,6 +415,7 @@ export function generateEdlFile(
     const fullName = sourceMapping[entry.sourceId] || entry.sourceId;
     const recordOut = recordIn + duration;
 
+    // CMX 3600: 타임코드 HH:MM:SS:FF (세미콜론 = 드롭프레임, 콜론 = 논드롭)
     const toTC = (sec: number) => {
       const h = Math.floor(sec / 3600);
       const m = Math.floor((sec % 3600) / 60);
@@ -370,21 +425,28 @@ export function generateEdlFile(
     };
 
     const editNum = String(i + 1).padStart(3, '0');
-    const srcTC = `${toTC(start)} ${toTC(end)}`;
-    const recTC = `${toTC(recordIn)} ${toTC(recordOut)}`;
+    const srcIn = toTC(start);
+    const srcOut = toTC(end);
+    const recIn = toTC(recordIn);
+    const recOut = toTC(recordOut);
 
-    // Video track
-    lines.push(`${editNum}  ${reelName.padEnd(32)} V     C        ${srcTC} ${recTC}`);
-    // Audio track (동일 타임코드)
-    lines.push(`${editNum}  ${reelName.padEnd(32)} A     C        ${srcTC} ${recTC}`);
-    lines.push(`* FROM CLIP NAME: ${entry.sourceDescription || fullName}`);
+    // CMX 3600 표준 형식 (Premiere Pro 호환):
+    // {edit#}  {reel(8자)}  {track}  {transition}  {speed} {srcIn} {srcOut} {recIn} {recOut}
+    // 트랙: AA/V = 오디오+비디오 동시 (Premiere가 가장 잘 인식)
+    lines.push(`${editNum}  ${reelName.padEnd(8)}  AA/V  C        ${srcIn} ${srcOut} ${recIn} ${recOut}`);
+
+    // 소스 파일 이름 + 설명 주석
+    lines.push(`* FROM CLIP NAME: ${fullName}`);
+    if (entry.sourceDescription) lines.push(`* SOURCE FILE: ${entry.sourceDescription}`);
+    if (entry.narrationText) lines.push(`* NARRATION: ${entry.narrationText.substring(0, 80)}`);
+    if (entry.speedFactor !== 1.0) lines.push(`* SPEED: ${entry.speedFactor}x`);
     if (entry.note) lines.push(`* COMMENT: ${entry.note}`);
     lines.push('');
 
     recordIn = recordOut;
   });
 
-  return lines.join('\n');
+  return lines.join('\r\n');
 }
 
 /**

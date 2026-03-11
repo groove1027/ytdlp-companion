@@ -88,7 +88,8 @@ export function downloadSrtFile(
 export async function downloadSrtWithAssetsZip(
   timeline: UnifiedSceneTiming[],
   scenes: { id: string; imageUrl?: string; videoUrl?: string }[],
-  filename = 'project-assets.zip'
+  filename = 'project-assets.zip',
+  narrationLines?: { sceneId?: string; audioUrl?: string }[],
 ): Promise<void> {
   const JSZip = (await import('jszip')).default;
   const zip = new JSZip();
@@ -137,6 +138,39 @@ export async function downloadSrtWithAssetsZip(
           if (blob) {
             const ext = guessExtension(vidUrl, 'mp4');
             zip.file(`videos/${idx}_scene.${ext}`, blob);
+          } else {
+            failedAssets.push(label);
+          }
+        })
+      );
+    }
+  }
+
+  // [FIX #76] 나레이션 오디오 포함 — CapCut 등 외부 편집기에서 오디오 사용 가능
+  if (narrationLines && narrationLines.length > 0) {
+    const audioSet = new Set<string>(); // 중복 방지
+    let audioIdx = 0;
+    for (const line of narrationLines) {
+      if (!line.audioUrl || audioSet.has(line.audioUrl)) continue;
+      audioSet.add(line.audioUrl);
+      audioIdx++;
+
+      const audioUrl = line.audioUrl;
+      const sceneIdx = line.sceneId
+        ? timeline.findIndex((t) => t.sceneId === line.sceneId)
+        : -1;
+      const label = sceneIdx >= 0
+        ? `Scene ${String(sceneIdx + 1).padStart(3, '0')} narration`
+        : `Narration ${audioIdx}`;
+      const filePrefix = sceneIdx >= 0
+        ? String(sceneIdx + 1).padStart(3, '0')
+        : String(audioIdx).padStart(3, '0');
+
+      fetchPromises.push(
+        fetchAsBlob(audioUrl, label).then((blob) => {
+          if (blob) {
+            const ext = guessExtension(audioUrl, 'mp3');
+            zip.file(`audio/${filePrefix}_narration.${ext}`, blob);
           } else {
             failedAssets.push(label);
           }

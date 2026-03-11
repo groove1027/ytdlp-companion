@@ -298,7 +298,14 @@ const SetupPanel: React.FC = () => {
     const ss = config.smartSplit ?? true;
     const lfs = config.longFormSplitType;
     const existingScenes = useProjectStore.getState().scenes;
-    const enrichMode = existingScenes.length > 0;
+    // [FIX #83] 대본이 변경된 경우 enrichMode 비활성화 — 기존 장면 교체
+    // 기존 장면의 나레이션 텍스트와 현재 대본을 비교하여 대본 불일치 시 전면 교체
+    const existingScriptText = existingScenes.map(s => (s.scriptText || '').trim()).join(' ').trim();
+    const currentScript = (config.script || '').replace(/\s+/g, ' ').trim();
+    const isScriptChanged = existingScenes.length > 0 && existingScriptText.length > 0 &&
+      !currentScript.includes(existingScriptText.slice(0, Math.min(100, existingScriptText.length))) &&
+      !existingScriptText.includes(currentScript.slice(0, Math.min(100, currentScript.length)));
+    const enrichMode = existingScenes.length > 0 && !isScriptChanged;
     try {
       const ctx = await analyzeScriptContext(config.script, onCost, vf, ss, lfs);
       const parsed = await parseScriptToScenes(
@@ -351,6 +358,17 @@ const SetupPanel: React.FC = () => {
     if (!requireAuth('스토리보드 생성')) return;
     const existingScenes = useProjectStore.getState().scenes;
     if (existingScenes.length > 0) {
+      // [FIX #83] 대본이 변경되었으면 기존 장면을 무시하고 새로 분석
+      const existingScriptText = existingScenes.map(s => (s.scriptText || '').trim()).join(' ').trim();
+      const currentScript = (config?.script || '').replace(/\s+/g, ' ').trim();
+      const isScriptChanged = existingScriptText.length > 0 &&
+        !currentScript.includes(existingScriptText.slice(0, Math.min(100, existingScriptText.length))) &&
+        !existingScriptText.includes(currentScript.slice(0, Math.min(100, currentScript.length)));
+      if (isScriptChanged && config?.script) {
+        showToast('대본이 변경되었습니다. 새 스토리보드를 생성합니다...');
+        if (await runSceneAnalysis()) setActiveSubTab('storyboard');
+        return;
+      }
       // 비주얼 프롬프트가 없으면 자동 생성 후 스토리보드 열기
       const hasPrompts = existingScenes.some(s => s.visualPrompt && s.visualPrompt.trim().length > 0);
       if (!hasPrompts && config?.script) {

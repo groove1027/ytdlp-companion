@@ -1229,7 +1229,19 @@ const StoryboardPanel: React.FC = () => {
 
   // --- [FIX #49] 자동 이미지 생성 — 스토리보드 진입 시 이미지 없는 장면 자동 생성 시작 ---
   const autoImageTriggeredRef = useRef(false);
+  const prevSceneIdsRef = useRef<string>('');
   useEffect(() => {
+    // [FIX #83] 장면 ID가 전면 교체되면 autoImage 트리거를 리셋하여 새 장면에도 자동 생성 적용
+    const currentIds = scenes.map(s => s.id).join(',');
+    if (prevSceneIdsRef.current && currentIds !== prevSceneIdsRef.current) {
+      const prevIds = new Set(prevSceneIdsRef.current.split(','));
+      const hasOverlap = scenes.some(s => prevIds.has(s.id));
+      if (!hasOverlap) {
+        autoImageTriggeredRef.current = false;
+      }
+    }
+    prevSceneIdsRef.current = currentIds;
+
     // 조건: 장면이 있고, 이미지가 하나도 없고, 배치 작업 미진행, 한 번만 실행
     if (autoImageTriggeredRef.current) return;
     if (scenes.length === 0) return;

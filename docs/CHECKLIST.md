@@ -8,6 +8,14 @@
 
 ## 🟢 완료된 작업
 
+- [x] #83 이미지/영상 스토리보드 대본 변경 시 기존 장면 미초기화 수정 — 대본 변경 감지 로직 추가, enrichMode를 대본 불일치 시 비활성화하여 새 장면으로 전면 교체, autoImageTriggeredRef 리셋으로 새 장면 자동 이미지 생성 보장 (SetupPanel.tsx, StoryboardPanel.tsx, 2026-03-11)
+- [x] #84 채널 스타일 지침서 수동 수정 기능 추가 — 대본작성 탭의 채널 스타일 표시를 편집 가능한 textarea로 변경, 말투/구조/도입패턴/마무리 필드를 사용자가 직접 수정 가능 (ScriptWriterTab.tsx, 2026-03-11)
+- [x] #86 축약리캡 롱폼(30분) 영상 타임코드가 초반 1분에만 집중되는 문제 수정 — 축약리캡 시스템/유저 프롬프트에 원본 영상 전체 구간 골고루 분포 지시 추가, 예시 타임코드를 전체 영상 범위로 변경 (VideoAnalysisRoom.tsx, 2026-03-11)
+- [x] #73 EDL+SRT 추출 시 프리미어 프로에서 빈 파일로 나오는 버그 수정 — CMX 3600 EDL 포맷을 Premiere Pro 호환으로 수정: 릴네임 8자 제한, AA/V 트랙 표기, CRLF 줄바꿈, UTF-8 BOM 추가 (editPointService.ts, editPointStore.ts, 2026-03-11)
+- [x] #75 편집점 매칭 AI 파싱 실행 안 되는 버그 수정 — maxTokens 4096→16384 증가, finishReason="length" 감지 시 잘린 JSON 복구 로직 추가 (editPointService.ts, 2026-03-11)
+- [x] #76 편집실 나레이션 내보내기 시 CapCut에서 오디오 끊김 수정 — ZIP 내보내기에 나레이션 오디오 파일(audio/ 폴더) 포함, downloadSrtWithAssetsZip에 narrationLines 파라미터 추가 (srtService.ts, EditRoomTab.tsx, 2026-03-11)
+- [x] #82 편집실 MP4 내보내기 반복 실패 수정 — WebCodecs 메모리 임계값 강화(90%→75%), 할당 힙 대비 사용률 체크 추가, 여유 메모리 500MB 미만 시 경고, 메모리 부족 시 사용자에게 구체적 안내 메시지 표시 (webcodecs/index.ts, 2026-03-11)
+- [x] #62/#81/#85 채널분석 쇼츠 필터링 버그 수정 — isShorts() 함수에서 player.embedWidth/Height가 임베드 플레이어 크기(480x270)를 반환해 대부분의 쇼츠를 가로형으로 오판하는 문제 수정, player 비율을 세로형 확정 시에만 사용하도록 변경, lenient 보충 필터(3분 이하) 추가, 2페이지 검색으로 후보 영상 확대, 403 API 키 에러 시 구체적 안내 메시지 추가 (youtubeAnalysisService.ts, 2026-03-11)
 - [x] #51 새로고침 후 프로젝트 전부 사라지는 버그 수정 — cleanupEmptyProjects에 최신 프로젝트 보호 + 1시간 미경과 프로젝트 보호, App.tsx에서 last-project-id를 currentId로 전달, useAutoSave에 beforeunload 긴급 저장(flushSave) 추가, 저장 실패 시 모든 에러에 Toast 표시, saveProject에 에러 로깅 추가 (storageService.ts, useAutoSave.ts, App.tsx, 2026-03-10)
 - [x] #50 이미지/영상 "청크 파싱 실패: Failed to fetch" 에러 수정 — 청크 분할 파싱에 지수 백오프 재시도(2s→6s→18s) 적용, 짧은 대본 파싱에도 네트워크 오류 재시도 추가, 네트워크 오류 vs API 오류 구분 에러 메시지, 사용자에게 구체적 조치 안내 (scriptAnalysis.ts, 2026-03-10)
 - [x] #44 내보내기 70%에서 멈춤 + 텍스트 붙여넣기 불가 수정 — (1) 비디오 프레임 추출(getFrameAt)에 5초 타임아웃, renderAllFrames에 전체 10분 타임아웃+메모리 압력 체크, 오디오 렌더링(startRendering)에 5분 타임아웃, fetchAndDecode에 30초 타임아웃, composeMp4 시작 시 메모리 90% 초과 시 FFmpeg 폴백 (index.ts, canvasRenderer.ts, audioMixer.ts) (2) VisualTimeline 키보드 핸들러에 contentEditable 요소 감지 추가 — 붙여넣기(Cmd+V)/스페이스바 차단 방지 (VisualTimeline.tsx, 2026-03-10)

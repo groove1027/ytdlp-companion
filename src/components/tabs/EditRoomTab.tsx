@@ -1331,15 +1331,17 @@ const EditRoomTab: React.FC = () => {
     logger.trackAction('ZIP 내보내기');
     if (!requireAuth('ZIP 내보내기')) return;
     try {
+      // [FIX #76] 나레이션 오디오를 ZIP에 포함 — CapCut 등 외부 편집기에서 오디오 사용 가능
       await downloadSrtWithAssetsZip(
         timeline,
         scenes.map((s) => ({ id: s.id, imageUrl: s.imageUrl, videoUrl: s.videoUrl })),
-        'project-assets.zip'
+        'project-assets.zip',
+        lines.filter((l) => !!l.audioUrl).map((l) => ({ sceneId: l.sceneId, audioUrl: l.audioUrl })),
       );
     } catch (err) {
       showToast('ZIP 내보내기 실패: ' + (err instanceof Error ? err.message : '알 수 없는 오류'));
     }
-  }, [timeline, scenes, requireAuth]);
+  }, [timeline, scenes, lines, requireAuth]);
 
   // MP4 버튼 → 렌더 설정 모달 열기
   const handleExportMp4Click = useCallback(() => {

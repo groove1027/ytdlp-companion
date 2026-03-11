@@ -144,6 +144,30 @@ const formatSubscribers = (count: number): string => {
     return String(count);
 };
 
+/**
+ * YouTube API 403/401 에러에서 API 키 설정 문제를 감지하여 명확한 에러 메시지 throw
+ * - accessNotConfigured: YouTube Data API v3 미활성화
+ * - keyInvalid: 잘못된 API 키
+ * - quotaExceeded: 쿼터 초과
+ */
+const throwIfApiKeyError = (status: number, body: string): void => {
+    if (status !== 403 && status !== 401 && status !== 400) return;
+    const lower = body.toLowerCase();
+    if (lower.includes('accessnotconfigured') || lower.includes('service_disabled')) {
+        throw new Error(
+            'YouTube Data API v3가 활성화되지 않은 API 키입니다. ' +
+            'Google Cloud Console에서 YouTube Data API v3를 활성화한 후 다시 시도하세요. ' +
+            '(설정 > API 키 관리 > Google Cloud Console 링크 참조)'
+        );
+    }
+    if (lower.includes('keyinvalid') || lower.includes('api key not valid')) {
+        throw new Error('YouTube API 키가 유효하지 않습니다. 설정에서 올바른 키를 입력해주세요.');
+    }
+    if (lower.includes('quotaexceeded') || lower.includes('dailylimitexceeded')) {
+        throw new Error('YouTube API 일일 쿼터(10,000 units)가 초과되었습니다. 내일 자정(태평양 시간) 이후 재시도하세요.');
+    }
+};
+
 /** 채널 URL 또는 영상 URL에서 식별자 추출 */
 const extractChannelIdentifier = (url: string): { type: 'id' | 'handle' | 'custom' | 'video' | 'shorts'; value: string } | null => {
     // URL 디코딩 (한글 등 %XX 인코딩 처리)
@@ -579,7 +603,10 @@ export const getChannelInfo = async (channelUrl: string): Promise<ChannelInfo> =
         trackQuota('videos.list');
         const videoUrl = `${YOUTUBE_API_BASE}/videos?part=snippet&id=${identifier.value}&key=${apiKey}`;
         const videoResponse = await monitoredFetch(videoUrl);
-        if (!videoResponse.ok) throw new Error('영상 정보를 조회할 수 없습니다.');
+        if (!videoResponse.ok) {
+            throwIfApiKeyError(videoResponse.status, await videoResponse.text().catch(() => ''));
+            throw new Error('영상 정보를 조회할 수 없습니다.');
+        }
         const videoData = await videoResponse.json();
         const videoItem = videoData.items?.[0];
         if (!videoItem) throw new Error('존재하지 않는 영상입니다.');
@@ -603,11 +630,16 @@ export const getChannelInfo = async (channelUrl: string): Promise<ChannelInfo> =
         const searchResponse = await monitoredFetch(searchUrl);
 
         if (!searchResponse.ok) {
+            // 403/401 에러 시 API 키 문제를 먼저 확인
+            throwIfApiKeyError(searchResponse.status, await searchResponse.text().catch(() => ''));
             // forHandle 실패 시 search API로 폴백
             trackQuota('search');
             const fallbackUrl = `${YOUTUBE_API_BASE}/search?part=snippet&q=${encodeURIComponent(identifier.value)}&type=channel&maxResults=1&key=${apiKey}`;
             const fallbackResponse = await monitoredFetch(fallbackUrl);
-            if (!fallbackResponse.ok) throw new Error('채널을 찾을 수 없습니다.');
+            if (!fallbackResponse.ok) {
+                throwIfApiKeyError(fallbackResponse.status, await fallbackResponse.text().catch(() => ''));
+                throw new Error('채널을 찾을 수 없습니다.');
+            }
 
             const fallbackData = await fallbackResponse.json();
             channelId = fallbackData.items?.[0]?.id?.channelId;
@@ -620,7 +652,10 @@ export const getChannelInfo = async (channelUrl: string): Promise<ChannelInfo> =
                 trackQuota('search');
                 const fallbackUrl = `${YOUTUBE_API_BASE}/search?part=snippet&q=${encodeURIComponent(identifier.value)}&type=channel&maxResults=1&key=${apiKey}`;
                 const fallbackResponse = await monitoredFetch(fallbackUrl);
-                if (!fallbackResponse.ok) throw new Error('채널을 찾을 수 없습니다.');
+                if (!fallbackResponse.ok) {
+                    throwIfApiKeyError(fallbackResponse.status, await fallbackResponse.text().catch(() => ''));
+                    throw new Error('채널을 찾을 수 없습니다.');
+                }
 
                 const fallbackData = await fallbackResponse.json();
                 channelId = fallbackData.items?.[0]?.id?.channelId;
@@ -713,32 +748,63 @@ export const getRecentVideos = async (
 };
 
 /**
- * 쇼츠 판별: 세로형 영상 (player embedWidth < embedHeight) 또는 제목/태그에 #Shorts 포함
- * YouTube Data API에는 공식 쇼츠 필터가 없어서 player 비율 + 메타 정보로 판별
+ * 쇼츠 판별: 복합 시그널 기반 (duration + player 비율 + 제목/태그)
+ * YouTube Data API에는 공식 쇼츠 필터가 없어서 여러 시그널을 조합하여 판별
+ *
+ * 핵심 로직 변경 (2026.03.11):
+ * - player.embedWidth/embedHeight는 임베드 플레이어 크기이지 영상 원본 비율이 아님
+ *   → 대부분의 영상(쇼츠 포함)에서 480x270(가로)으로 반환되어 쇼츠를 놓침
+ * - 수정: player 비율은 "세로형이 확실할 때만" 쇼츠로 확정하고,
+ *   가로형이어도 duration/meta 시그널을 추가 확인
  */
 const isShorts = (v: {
     snippet?: { title?: string; tags?: string[] };
     contentDetails?: { duration?: string };
     player?: { embedWidth?: string; embedHeight?: string };
 }): boolean => {
-    // 1순위: player 비율로 판별 (세로형 = 쇼츠)
     const w = parseInt(v.player?.embedWidth || '0');
     const h = parseInt(v.player?.embedHeight || '0');
-    if (w > 0 && h > 0) return h > w;
-
-    // 2순위: 제목 또는 태그에 #Shorts / shorts 포함 + 3분 이하
     const title = v.snippet?.title || '';
     const tags = v.snippet?.tags || [];
     const seconds = isoDurationToSeconds(v.contentDetails?.duration || 'PT0S');
     const hasShortsMeta = /\bshorts?\b/i.test(title) || tags.some(t => /\bshorts?\b/i.test(t));
+
+    // 1순위: player가 확실히 세로형이면 쇼츠 확정
+    if (w > 0 && h > 0 && h > w) return true;
+
+    // 2순위: 제목 또는 태그에 #Shorts / shorts 포함 + 3분 이하
     if (hasShortsMeta && seconds <= 180) return true;
 
-    // 3순위: 60초 이하면 쇼츠로 추정
-    return seconds > 0 && seconds <= 60;
+    // 3순위: 60초 이하면 쇼츠로 추정 (player 비율은 임베드 기본값일 수 있어 신뢰 불가)
+    if (seconds > 0 && seconds <= 60) return true;
+
+    return false;
 };
 
 /**
- * 채널의 최근 영상을 롱폼/쇼츠 필터링하여 가져오기 (최대 50개 검색 후 필터)
+ * 쇼츠 완화 판별: duration <= 180초 (3분) 이하이면 쇼츠 후보로 간주
+ * strict isShorts가 targetCount 미달일 때 보충용으로 사용
+ */
+const isShortsLenient = (v: {
+    snippet?: { title?: string; tags?: string[] };
+    contentDetails?: { duration?: string };
+    player?: { embedWidth?: string; embedHeight?: string };
+}): boolean => {
+    const seconds = isoDurationToSeconds(v.contentDetails?.duration || 'PT0S');
+    return seconds > 0 && seconds <= 180;
+};
+
+type VideoDetailItem = {
+    id: string;
+    snippet?: { title?: string; description?: string; publishedAt?: string; tags?: string[]; thumbnails?: { high?: { url?: string }; medium?: { url?: string }; default?: { url?: string } } };
+    statistics?: { viewCount?: string };
+    contentDetails?: { duration?: string };
+    player?: { embedWidth?: string; embedHeight?: string };
+};
+
+/**
+ * 채널의 최근 영상을 롱폼/쇼츠 필터링하여 가져오기
+ * 최대 50개 검색 후 필터 + 쇼츠 모드에서 부족하면 완화 필터 + 2페이지 보충
  * @param format 'long' = 가로형 영상, 'shorts' = 세로형 영상
  */
 export const getRecentVideosByFormat = async (
@@ -755,42 +821,92 @@ export const getRecentVideosByFormat = async (
     // 쿼터 확인 (search=100 + videos.list=1 = 101 units)
     if (!trackQuota('search')) throw new Error('YouTube API 일일 쿼터 한도(10,000 units)를 초과했습니다. 내일 다시 시도하세요.');
 
-    // 충분히 많이 가져와서 필터링 (최대 50개)
     const orderParam = sortBy === 'popular' ? 'viewCount' : 'date';
-    const searchUrl = `${YOUTUBE_API_BASE}/search?part=snippet&channelId=${channelId}&type=video&order=${orderParam}&maxResults=50&key=${apiKey}`;
-    const searchResponse = await monitoredFetch(searchUrl);
-    if (!searchResponse.ok) throw new Error(`채널 영상 조회 실패 (${searchResponse.status})`);
+    const allDetailItems: VideoDetailItem[] = [];
+    let nextPageToken: string | undefined;
+    let pagesFetched = 0;
+    const maxPages = 2; // 최대 2페이지 (100개) — 쿼터 절약
 
-    const searchData = await searchResponse.json();
-    const videoIds = (searchData.items || [])
-        .map((item: { id?: { videoId?: string } }) => item.id?.videoId)
-        .filter(Boolean);
+    // 페이지 단위로 검색 + 상세 조회
+    while (pagesFetched < maxPages) {
+        const pageParam = nextPageToken ? `&pageToken=${nextPageToken}` : '';
+        const searchUrl = `${YOUTUBE_API_BASE}/search?part=snippet&channelId=${channelId}&type=video&order=${orderParam}&maxResults=50${pageParam}&key=${apiKey}`;
 
-    if (videoIds.length === 0) return [];
+        // 2페이지부터는 추가 쿼터
+        if (pagesFetched > 0) {
+            if (!trackQuota('search')) break;
+        }
 
-    // player part 추가하여 영상 비율(가로/세로) 정보 확인
-    trackQuota('videos.list');
-    const videoUrl = `${YOUTUBE_API_BASE}/videos?part=snippet,statistics,contentDetails,player&id=${videoIds.join(',')}&key=${apiKey}`;
-    const videoResponse = await monitoredFetch(videoUrl);
-    if (!videoResponse.ok) throw new Error(`영상 상세 조회 실패 (${videoResponse.status})`);
+        const searchResponse = await monitoredFetch(searchUrl);
+        if (!searchResponse.ok) {
+            if (pagesFetched === 0) throw new Error(`채널 영상 조회 실패 (${searchResponse.status})`);
+            break; // 2페이지 실패는 무시
+        }
 
-    const videoData = await videoResponse.json();
+        const searchData = await searchResponse.json();
+        const videoIds = (searchData.items || [])
+            .map((item: { id?: { videoId?: string } }) => item.id?.videoId)
+            .filter(Boolean);
 
-    // 포맷별 필터링 (쇼츠: 세로형, 롱폼: 가로형)
-    const filtered = (videoData.items || []).filter((v: {
-        snippet?: { title?: string; tags?: string[] };
-        contentDetails?: { duration?: string };
-        player?: { embedWidth?: string; embedHeight?: string };
-    }) => {
-        return format === 'shorts' ? isShorts(v) : !isShorts(v);
-    });
+        if (videoIds.length === 0) break;
 
-    const results: ChannelScript[] = filtered.slice(0, targetCount).map((v: {
-        id: string;
-        snippet?: { title?: string; description?: string; publishedAt?: string; tags?: string[]; thumbnails?: { high?: { url?: string }; medium?: { url?: string }; default?: { url?: string } } };
-        statistics?: { viewCount?: string };
-        contentDetails?: { duration?: string };
-    }) => ({
+        // player part 추가하여 영상 비율(가로/세로) 정보 확인
+        trackQuota('videos.list');
+        const videoUrl = `${YOUTUBE_API_BASE}/videos?part=snippet,statistics,contentDetails,player&id=${videoIds.join(',')}&key=${apiKey}`;
+        const videoResponse = await monitoredFetch(videoUrl);
+        if (!videoResponse.ok) {
+            if (pagesFetched === 0) throw new Error(`영상 상세 조회 실패 (${videoResponse.status})`);
+            break;
+        }
+
+        const videoData = await videoResponse.json();
+        allDetailItems.push(...(videoData.items || []));
+
+        pagesFetched++;
+        nextPageToken = searchData.nextPageToken;
+
+        // 1페이지로 충분한지 확인 (strict 필터 적용)
+        const strictFiltered = allDetailItems.filter(v =>
+            format === 'shorts' ? isShorts(v) : !isShorts(v)
+        );
+        if (strictFiltered.length >= targetCount || !nextPageToken) break;
+
+        // 쇼츠 모드: strict + lenient 합산으로도 충분한지 확인
+        if (format === 'shorts') {
+            const lenientFiltered = allDetailItems.filter(v => isShortsLenient(v));
+            if (lenientFiltered.length >= targetCount) break;
+        }
+    }
+
+    if (allDetailItems.length === 0) return [];
+
+    // 포맷별 필터링 (strict → lenient 보충)
+    let filtered: VideoDetailItem[];
+    if (format === 'shorts') {
+        // strict 필터 먼저
+        const strictResult = allDetailItems.filter(v => isShorts(v));
+        if (strictResult.length >= targetCount) {
+            filtered = strictResult;
+        } else {
+            // strict로 부족하면 lenient(3분 이하)로 보충
+            const lenientResult = allDetailItems.filter(v => isShortsLenient(v));
+            // strict 결과를 우선 배치하고, lenient에서 중복 제거 후 보충
+            const strictIds = new Set(strictResult.map(v => v.id));
+            const extras = lenientResult.filter(v => !strictIds.has(v.id));
+            filtered = [...strictResult, ...extras];
+            if (strictResult.length < targetCount && lenientResult.length > strictResult.length) {
+                logger.info('[YouTube] 쇼츠 strict 필터 부족 → lenient(3분 이하) 보충', {
+                    strict: strictResult.length,
+                    lenient: lenientResult.length,
+                    targetCount,
+                });
+            }
+        }
+    } else {
+        filtered = allDetailItems.filter(v => !isShorts(v));
+    }
+
+    const results: ChannelScript[] = filtered.slice(0, targetCount).map((v) => ({
         videoId: v.id,
         title: v.snippet?.title || '',
         description: v.snippet?.description || '',

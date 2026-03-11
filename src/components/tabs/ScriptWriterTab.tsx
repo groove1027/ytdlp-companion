@@ -86,6 +86,7 @@ export default function ScriptWriterTab() {
 
   const setActiveTab = useNavigationStore((s) => s.setActiveTab);
   const channelGuideline = useChannelAnalysisStore((s) => s.channelGuideline);
+  const setChannelGuideline = useChannelAnalysisStore((s) => s.setChannelGuideline);
 
   const [openTool, setOpenTool] = useState<OpenTool>(null);
   const [showExpander, setShowExpander] = useState(false);
@@ -760,21 +761,42 @@ ${instinctPrompt}
               </button>
               {showChannelGuide && (
                 <div className="mt-2 bg-gray-800/60 border border-orange-500/20 rounded-lg px-4 py-3 space-y-2 text-sm">
+                  <p className="text-[10px] text-gray-600 mb-1">클릭하여 직접 수정할 수 있습니다</p>
                   <div className="flex items-start gap-2">
                     <span className="text-gray-500 flex-shrink-0 w-16">말투</span>
-                    <span className="text-gray-300">{channelGuideline.tone}</span>
+                    <textarea
+                      value={channelGuideline.tone}
+                      onChange={(e) => setChannelGuideline({ ...channelGuideline, tone: e.target.value })}
+                      rows={2}
+                      className="flex-1 bg-gray-900/60 border border-gray-700 rounded px-2 py-1 text-gray-300 text-sm resize-none focus:outline-none focus:border-orange-500/50"
+                    />
                   </div>
                   <div className="flex items-start gap-2">
                     <span className="text-gray-500 flex-shrink-0 w-16">구조</span>
-                    <span className="text-gray-300">{channelGuideline.structure}</span>
+                    <textarea
+                      value={channelGuideline.structure}
+                      onChange={(e) => setChannelGuideline({ ...channelGuideline, structure: e.target.value })}
+                      rows={2}
+                      className="flex-1 bg-gray-900/60 border border-gray-700 rounded px-2 py-1 text-gray-300 text-sm resize-none focus:outline-none focus:border-orange-500/50"
+                    />
                   </div>
                   <div className="flex items-start gap-2">
                     <span className="text-gray-500 flex-shrink-0 w-16">도입 패턴</span>
-                    <span className="text-gray-300">{channelGuideline.hookPattern}</span>
+                    <textarea
+                      value={channelGuideline.hookPattern}
+                      onChange={(e) => setChannelGuideline({ ...channelGuideline, hookPattern: e.target.value })}
+                      rows={2}
+                      className="flex-1 bg-gray-900/60 border border-gray-700 rounded px-2 py-1 text-gray-300 text-sm resize-none focus:outline-none focus:border-orange-500/50"
+                    />
                   </div>
                   <div className="flex items-start gap-2">
                     <span className="text-gray-500 flex-shrink-0 w-16">마무리</span>
-                    <span className="text-gray-300">{channelGuideline.closingPattern}</span>
+                    <textarea
+                      value={channelGuideline.closingPattern}
+                      onChange={(e) => setChannelGuideline({ ...channelGuideline, closingPattern: e.target.value })}
+                      rows={2}
+                      className="flex-1 bg-gray-900/60 border border-gray-700 rounded px-2 py-1 text-gray-300 text-sm resize-none focus:outline-none focus:border-orange-500/50"
+                    />
                   </div>
                   {channelGuideline.keywords.length > 0 && (
                     <div className="flex items-start gap-2">

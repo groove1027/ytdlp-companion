@@ -65,15 +65,46 @@ export function isWebCodecsSupported(): boolean {
  * WebCodecs 지원 시 GPU 인코딩, 미지원 시 FFmpeg WASM 폴백
  */
 export async function composeMp4(options: ComposeMp4Options): Promise<Blob> {
-  // [FIX #44] 렌더링 시작 전 메모리 압력 체크
-  const perfMem = (performance as unknown as { memory?: { usedJSHeapSize: number; jsHeapSizeLimit: number } }).memory;
+  // [FIX #82] 렌더링 시작 전 메모리 압력 체크 — 임계값 강화
+  const perfMem = (performance as unknown as { memory?: { usedJSHeapSize: number; totalJSHeapSize: number; jsHeapSizeLimit: number } }).memory;
   if (perfMem) {
     const usedMB = Math.round(perfMem.usedJSHeapSize / 1024 / 1024);
+    const allocatedMB = Math.round((perfMem.totalJSHeapSize || perfMem.usedJSHeapSize) / 1024 / 1024);
     const limitMB = Math.round(perfMem.jsHeapSizeLimit / 1024 / 1024);
     const usageRatio = perfMem.usedJSHeapSize / perfMem.jsHeapSizeLimit;
-    console.log(`[WebCodecs] 메모리 상태: ${usedMB}MB / ${limitMB}MB (${Math.round(usageRatio * 100)}%)`);
-    if (usageRatio > 0.90) {
-      console.warn(`[WebCodecs] 메모리 사용량 ${Math.round(usageRatio * 100)}% — OOM 위험, FFmpeg 폴백`);
+    // 할당된 힙 대비 사용률 (GC로 회수 불가능한 실제 메모리 압력)
+    const allocatedRatio = perfMem.totalJSHeapSize
+      ? perfMem.usedJSHeapSize / perfMem.totalJSHeapSize
+      : usageRatio;
+    console.log(`[WebCodecs] 메모리 상태: ${usedMB}MB / ${allocatedMB}MB (할당) / ${limitMB}MB (한계) — 사용률 ${Math.round(usageRatio * 100)}%`);
+
+    // 메모리 부족 조건:
+    // 1. 힙 한계 대비 75% 초과 (이전: 90%)
+    // 2. 할당 힙 대비 95% 초과 (GC 여유 부족)
+    // 3. 사용 메모리 1GB 이상이면서 여유가 500MB 미만
+    const remainingMB = limitMB - usedMB;
+    if (usageRatio > 0.75 || allocatedRatio > 0.95 || (usedMB > 1024 && remainingMB < 500)) {
+      const reason = usageRatio > 0.75
+        ? `힙 한계 대비 ${Math.round(usageRatio * 100)}%`
+        : allocatedRatio > 0.95
+        ? `할당 힙 대비 ${Math.round(allocatedRatio * 100)}%`
+        : `여유 메모리 ${remainingMB}MB`;
+      console.warn(`[WebCodecs] 메모리 부족 (${reason}) — 경량 모드로 전환`);
+
+      // 메모리가 매우 부족하면 FFmpeg도 위험 → 사전 경고 후 진행
+      if (usageRatio > 0.85 || remainingMB < 300) {
+        options.onProgress?.({
+          phase: 'initializing',
+          percent: 0,
+          message: '메모리가 부족합니다. 다른 탭을 닫고 다시 시도해주세요.',
+        });
+        throw new Error(
+          '메모리가 부족하여 내보내기를 진행할 수 없습니다. ' +
+          `현재 ${usedMB}MB 사용 중 (한계: ${limitMB}MB). ` +
+          '다른 탭을 닫거나 페이지를 새로고침한 후 다시 시도해주세요.'
+        );
+      }
+
       const ffmpeg = await import('../ffmpegService');
       return ffmpeg.composeMp4(options);
     }

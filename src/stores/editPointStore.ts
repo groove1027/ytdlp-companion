@@ -142,15 +142,19 @@ function getVideoDimensions(file: File): Promise<{ width: number; height: number
   });
 }
 
-/** 파일 다운로드 헬퍼 */
+/** 파일 다운로드 헬퍼 (UTF-8 BOM 포함 — Premiere Pro 호환) */
 function downloadFile(content: string, filename: string, mimeType: string) {
-  const blob = new Blob([content], { type: mimeType });
+  // [FIX #73] UTF-8 BOM 추가 — Premiere Pro가 EDL/SRT를 올바르게 인식하도록
+  const bom = '\uFEFF';
+  const blob = new Blob([bom + content], { type: `${mimeType};charset=utf-8` });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(url);
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
 
 export const useEditPointStore = create<EditPointStore>((set, get) => ({
