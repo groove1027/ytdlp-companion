@@ -2,6 +2,13 @@ import { create } from 'zustand';
 import { ProjectConfig, Scene, Thumbnail, ProjectData, VideoFormat, AspectRatio, ImageModel, PipelineSteps } from '../types';
 import { useCostStore } from './costStore';
 import { useSoundStudioStore } from './soundStudioStore';
+import { useScriptWriterStore } from './scriptWriterStore';
+import { useChannelAnalysisStore } from './channelAnalysisStore';
+import { useVideoAnalysisStore } from './videoAnalysisStore';
+import { useEditPointStore } from './editPointStore';
+import { useEditorStore } from './editorStore';
+import { useShoppingShortStore } from './shoppingShortStore';
+import { useUploadStore } from './uploadStore';
 import { persistImage, isBase64Image } from '../services/imageStorageService';
 import { logger } from '../services/LoggerService';
 
@@ -267,9 +274,14 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
     // [FIX] 이전 프로젝트의 찌꺼기 방지 — 먼저 관련 스토어 초기화
     try { useEditRoomStore.getState().reset(); } catch { /* 미초기화 시 무시 */ }
-    try {
-      useSoundStudioStore.getState().reset();
-    } catch { /* 미초기화 시 무시 */ }
+    try { useSoundStudioStore.getState().reset(); } catch { /* 미초기화 시 무시 */ }
+    try { useScriptWriterStore.getState().reset(); } catch { /* 미초기화 시 무시 */ }
+    try { useChannelAnalysisStore.getState().reset(); } catch { /* 미초기화 시 무시 */ }
+    try { useVideoAnalysisStore.getState().reset(); } catch { /* 미초기화 시 무시 */ }
+    try { useEditPointStore.getState().reset(); } catch { /* 미초기화 시 무시 */ }
+    try { useEditorStore.getState().reset(); } catch { /* 미초기화 시 무시 */ }
+    try { useShoppingShortStore.getState().reset(); } catch { /* 미초기화 시 무시 */ }
+    try { useUploadStore.getState().resetUpload(); } catch { /* 미초기화 시 무시 */ }
 
     // Increment generation to invalidate any in-flight async migrations from previous loads
     const generation = get()._loadGeneration + 1;
@@ -420,6 +432,13 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     // [FIX] 이전 프로젝트 찌꺼기 방지 — 모든 관련 스토어 초기화
     try { useEditRoomStore.getState().reset(); } catch { /* 미초기화 시 무시 */ }
     try { useSoundStudioStore.getState().reset(); } catch { /* 미초기화 시 무시 */ }
+    try { useScriptWriterStore.getState().reset(); } catch { /* 미초기화 시 무시 */ }
+    try { useChannelAnalysisStore.getState().reset(); } catch { /* 미초기화 시 무시 */ }
+    try { useVideoAnalysisStore.getState().reset(); } catch { /* 미초기화 시 무시 */ }
+    try { useEditPointStore.getState().reset(); } catch { /* 미초기화 시 무시 */ }
+    try { useEditorStore.getState().reset(); } catch { /* 미초기화 시 무시 */ }
+    try { useShoppingShortStore.getState().reset(); } catch { /* 미초기화 시 무시 */ }
+    try { useUploadStore.getState().resetUpload(); } catch { /* 미초기화 시 무시 */ }
 
     // 고유 프로젝트 ID 즉시 생성 (auto-save가 작동하려면 필수)
     const projectId = `proj_${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
