@@ -199,11 +199,11 @@ export const requestGeminiProxy = async (model: string, googlePayload: any, _ret
         logger.info(`[Gemini] Kie 폴백 호출 (model: ${model})`);
         console.log("[GeminiService] Switching to Kie Fallback...");
 
-        // [FIX] Kie는 thinking 전용 모델 없음 → Pro + reasoning_effort: "high"로 매핑
+        // [FIX #119] Kie는 gemini-3-pro / gemini-3-flash만 지원 (3.1 없음)
         const isThinkingModel = model.includes('thinking');
-        let kieModelSlug = 'gemini-3.1-flash';
-        if (model.includes('pro')) kieModelSlug = 'gemini-3.1-pro';
-        else if (model.includes('flash')) kieModelSlug = 'gemini-3.1-flash';
+        let kieModelSlug = 'gemini-3-flash';
+        if (model.includes('pro')) kieModelSlug = 'gemini-3-pro';
+        else if (model.includes('flash')) kieModelSlug = 'gemini-3-flash';
 
         const url = `https://api.kie.ai/${kieModelSlug}/v1/chat/completions`;
         const openAIBody = convertGoogleToOpenAI(model, googlePayload);
@@ -245,6 +245,11 @@ export const requestGeminiProxy = async (model: string, googlePayload: any, _ret
             const choice = json.choices?.[0];
             const content = choice?.message?.content || "";
             const toolCalls = choice?.message?.tool_calls;
+
+            // [FIX #119] 빈 응답 검증 — 200이어도 content 없으면 에러 처리
+            if (!toolCalls?.length && !content.trim()) {
+                throw new Error(`Kie 빈 응답 (model: ${kieModelSlug}). finish_reason: ${choice?.finish_reason || 'unknown'}`);
+            }
 
             let parts: any[] = [];
 
