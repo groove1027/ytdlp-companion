@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useRef, useCallback, useEffect, lazy, Suspense } from 'react';
 import AnalysisLoadingPanel, { notifyAnalysisComplete } from './AnalysisLoadingPanel';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { evolinkChatStream, evolinkVideoAnalysisStream, evolinkNativeStream, evolinkFrameAnalysisStream } from '../../../services/evolinkService';
@@ -22,6 +22,8 @@ import type {
   VideoVersionItem as VersionItem,
   VideoTimedFrame as TimedFrame,
 } from '../../../types';
+
+const ScenarioPreviewPlayer = lazy(() => import('./ScenarioPreviewPlayer'));
 
 // ═══════════════════════════════════════════════════
 // 유틸리티
@@ -2056,6 +2058,7 @@ const VideoAnalysisRoom: React.FC = () => {
   const [elapsedSec, setElapsedSec] = useState(0);
   const [simProgress, setSimProgress] = useState(0);
   const [previewFrame, setPreviewFrame] = useState<{ frame: TimedFrame; scene: SceneRow; versionTitle: string } | null>(null);
+  const [previewVersion, setPreviewVersion] = useState<VersionItem | null>(null);
   const analysisStartRef = useRef<number>(0);
 
   // ── 인기 쇼츠 음원 추천 ──
@@ -2431,6 +2434,7 @@ ${meta.description.slice(0, 1500)}${meta.description.length > 1500 ? '\n...(이�
   // ESC — 미리보기 → 버전 접기 순서
   useEffect(() => {
     if (!expandedId && !previewFrame) return;
+    if (previewVersion) return; // ScenarioPreviewPlayer가 자체 ESC 처리
     const h = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         if (previewFrame) { setPreviewFrame(null); return; }
@@ -2439,7 +2443,7 @@ ${meta.description.slice(0, 1500)}${meta.description.length > 1500 ? '\n...(이�
     };
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);
-  }, [expandedId]);
+  }, [expandedId, previewVersion]);
 
   return (
     <div className="space-y-6">
@@ -2696,6 +2700,17 @@ ${meta.description.slice(0, 1500)}${meta.description.length > 1500 ? '\n...(이�
                         </button>
                         {hasScenes && (
                           <>
+                            {/* 프리뷰 (영상 blob이 있을 때만) */}
+                            {useVideoAnalysisStore.getState().videoBlob && (
+                              <button
+                                type="button"
+                                onClick={() => setPreviewVersion(v)}
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-violet-600/20 text-violet-400 border border-violet-500/30 hover:bg-violet-600/30 transition-all"
+                              >
+                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                                프리뷰
+                              </button>
+                            )}
                             <button
                               type="button"
                               onClick={() => handleDownloadSrt(v)}
@@ -2731,6 +2746,7 @@ ${meta.description.slice(0, 1500)}${meta.description.length > 1500 ? '\n...(이�
                                   editTableText: versionText,
                                   narrationText: versionText,
                                 });
+                                useVideoAnalysisStore.getState().setEditRoomSelectedVersionIdx(v.id - 1);
                                 useEditRoomStore.getState().setEditRoomSubTab('edit-point-matching');
                                 useNavigationStore.getState().setActiveTab('edit-room');
                               }}
@@ -3056,6 +3072,7 @@ ${meta.description.slice(0, 1500)}${meta.description.length > 1500 ? '\n...(이�
                 editTableText: rawResult,
                 narrationText: rawResult,
               });
+              useVideoAnalysisStore.getState().setEditRoomSelectedVersionIdx(0);
               useEditRoomStore.getState().setEditRoomSubTab('edit-point-matching');
               useNavigationStore.getState().setActiveTab('edit-room');
             }}
@@ -3131,6 +3148,18 @@ ${meta.description.slice(0, 1500)}${meta.description.length > 1500 ? '\n...(이�
             </div>
           </div>
         </div>
+      )}
+
+      {/* ═══ 시나리오 프리뷰 플레이어 (MP4 + SRT 내보내기) ═══ */}
+      {previewVersion && useVideoAnalysisStore.getState().videoBlob && (
+        <Suspense fallback={null}>
+          <ScenarioPreviewPlayer
+            version={previewVersion}
+            videoBlob={useVideoAnalysisStore.getState().videoBlob!}
+            onClose={() => setPreviewVersion(null)}
+            onDownloadSrt={() => handleDownloadSrt(previewVersion)}
+          />
+        </Suspense>
       )}
     </div>
   );

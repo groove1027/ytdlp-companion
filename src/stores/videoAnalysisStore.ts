@@ -86,6 +86,10 @@ interface VideoAnalysisStore {
   setVideoBlob: (blob: Blob | File | null) => void;
   /** 새 분석 시작 — 결과 초기화 */
   newAnalysis: () => void;
+
+  /** 편집실 버전 셀렉터용 — 현재 선택된 버전 인덱스 */
+  editRoomSelectedVersionIdx: number | null;
+  setEditRoomSelectedVersionIdx: (idx: number | null) => void;
 }
 
 const MAX_YOUTUBE_URLS = 5;
@@ -104,6 +108,7 @@ const INITIAL_STATE = {
   videoBlob: null as Blob | null,
   savedSlots: [] as SavedVideoAnalysisSlot[],
   activeSlotId: null as string | null,
+  editRoomSelectedVersionIdx: null as number | null,
 };
 
 export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
@@ -246,6 +251,9 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
       },
 
       setVideoBlob: (blob) => set({ videoBlob: blob instanceof File ? blob : blob }),
+
+      editRoomSelectedVersionIdx: null,
+      setEditRoomSelectedVersionIdx: (idx) => set({ editRoomSelectedVersionIdx: idx }),
 
       newAnalysis: () => set({
         youtubeUrl: '',

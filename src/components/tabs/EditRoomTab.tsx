@@ -30,6 +30,7 @@ import { getFontByFamily } from '../../constants/fontLibrary';
 import { loadFont } from '../../services/fontLoaderService';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
 import { logger } from '../../services/LoggerService';
+import VersionSelectorBar from './editroom/VersionSelectorBar';
 
 /** globalSubtitleStyle이 null일 때 사용하는 기본 자막 스타일 (subtitleTemplates.ts의 base() 기본값과 동일) */
 const DEFAULT_SUBTITLE_STYLE: SubtitleStyle = {
@@ -1603,6 +1604,9 @@ const EditRoomTab: React.FC = () => {
           onExportZip={handleExportZip}
           onExportMp4={handleExportMp4Click}
         />
+
+        {/* 채널분석 버전 셀렉터 */}
+        <VersionSelectorBar />
 
         {/* 서브탭 네비게이션 */}
         <div className="flex items-center gap-1 mb-5 border-b border-gray-800">
