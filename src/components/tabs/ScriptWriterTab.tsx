@@ -527,15 +527,17 @@ ${instinctPrompt}
     setApplyingStyle(preset.id);
     setStyleError('');
     try {
+      // [FIX #120] 프리셋 지침의 하드코딩 분량을 사용자 설정값으로 동적 교체
+      const charCountOverride = `\n\n[분량 지시] 반드시 공백 제외 ${targetCharCount}자 이상의 대본을 작성하십시오. 지정된 분량보다 짧으면 Layer 확장 법칙을 적용하여 채우십시오.`;
       const res = await evolinkChat(
         [
           {
             role: 'system',
-            content: `${preset.systemPrompt}\n\n[중요 지시] 사용자가 제공한 대본을 위 스타일 지침서에 맞게 재작성하십시오. 대본의 핵심 내용과 주제는 유지하되, 문체/어미/톤/구조를 지침서에 맞게 완전히 변환하십시오. 순수 대본 텍스트만 출력하십시오.`
+            content: `${preset.systemPrompt}${charCountOverride}\n\n[중요 지시] 사용자가 제공한 대본을 위 스타일 지침서에 맞게 재작성하십시오. 대본의 핵심 내용과 주제는 유지하되, 문체/어미/톤/구조를 지침서에 맞게 완전히 변환하십시오. 순수 대본 텍스트만 출력하십시오.`
           },
           {
             role: 'user',
-            content: `다음 대본을 '${preset.name}' 스타일로 재작성하세요:\n\n${currentScript}`
+            content: `다음 대본을 '${preset.name}' 스타일로 재작성하세요 (목표: ${targetCharCount}자 이상):\n\n${currentScript}`
           }
         ],
         { temperature: 0.7, maxTokens: Math.min(32000, Math.max(8000, Math.ceil(currentScript.length * 2))) }
@@ -911,7 +913,7 @@ ${instinctPrompt}
                 </button>
               ))}
             </div>
-            {contentFormat === 'shorts' && (
+            {contentFormat === 'shorts' ? (
               <div className="flex items-center gap-2 ml-2">
                 <select
                   value={shortsSeconds}
@@ -929,6 +931,28 @@ ${instinctPrompt}
                   <option value={60}>60초</option>
                 </select>
                 <span className="text-xs text-emerald-400/70">세로 영상</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 ml-2">
+                <select
+                  value={Math.round(targetCharCount / 350)}
+                  onChange={(e) => {
+                    const min = Number(e.target.value);
+                    setTargetCharCount(min * 350);
+                  }}
+                  className="bg-gray-800 text-gray-200 text-sm rounded-lg border border-gray-700
+                    px-2 py-1.5 focus:outline-none focus:border-blue-500/50"
+                >
+                  <option value={5}>5분</option>
+                  <option value={8}>8분</option>
+                  <option value={10}>10분</option>
+                  <option value={13}>13분</option>
+                  <option value={15}>15분</option>
+                  <option value={20}>20분</option>
+                  <option value={23}>23분</option>
+                  <option value={25}>25분</option>
+                  <option value={30}>30분</option>
+                </select>
               </div>
             )}
           </div>
@@ -1105,13 +1129,14 @@ ${instinctPrompt}
                   <button
                     type="button"
                     onClick={() => setFinalScript(styledScript)}
+                    title="이 스타일 적용본을 사운드 스튜디오(TTS)와 이미지/영상 탭에서 사용할 최종 대본으로 지정합니다"
                     className={`text-xs px-2 py-0.5 rounded border transition-all ${
                       finalScript === styledScript
                         ? 'bg-violet-600/20 border-violet-500/50 text-violet-300 font-bold'
                         : 'bg-gray-800/50 border-gray-700/50 text-gray-500 hover:text-gray-300'
                     }`}
                   >
-                    {finalScript === styledScript ? '✓ 나레이션용 선택됨' : '나레이션용으로 선택'}
+                    {finalScript === styledScript ? '✓ 최종 대본으로 선택됨' : '최종 대본으로 선택'}
                   </button>
                 </div>
                 <div className="flex items-center gap-1.5">
