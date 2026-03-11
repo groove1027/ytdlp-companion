@@ -142,11 +142,11 @@ function getVideoDimensions(file: File): Promise<{ width: number; height: number
   });
 }
 
-/** 파일 다운로드 헬퍼 (UTF-8 BOM 포함 — Premiere Pro 호환) */
-function downloadFile(content: string, filename: string, mimeType: string) {
-  // [FIX #73] UTF-8 BOM 추가 — Premiere Pro가 EDL/SRT를 올바르게 인식하도록
-  const bom = '\uFEFF';
-  const blob = new Blob([bom + content], { type: `${mimeType};charset=utf-8` });
+/** 파일 다운로드 헬퍼 */
+function downloadFile(content: string, filename: string, mimeType: string, addBom = false) {
+  // BOM은 EDL/SRT 전용 — sh/txt 등에는 붙이면 안 됨
+  const prefix = addBom ? '\uFEFF' : '';
+  const blob = new Blob([prefix + content], { type: `${mimeType};charset=utf-8` });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -485,8 +485,8 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
       case 'edl-file': {
         const edl = generateEdlFile(edlEntries, fileNameMapping);
         const srt = generateNarrationSrt(edlEntries);
-        downloadFile(edl, 'edit_decision_list.edl', 'text/plain');
-        downloadFile(srt, 'narration.srt', 'text/plain');
+        downloadFile(edl, 'edit_decision_list.edl', 'text/plain', true);
+        downloadFile(srt, 'narration.srt', 'text/plain', true);
         showToast('EDL + SRT 파일이 다운로드되었습니다.');
         break;
       }
