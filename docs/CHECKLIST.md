@@ -8,6 +8,8 @@
 
 ## 🟢 완료된 작업
 
+- [x] 편집실 타임라인 원본오디오 재생 기능 구현 — AudioTrackId에 origAudio 추가, 타임라인 재생 시 각 장면의 videoUrl 오디오 동기 재생, M/S 뮤트/솔로 버튼 추가, 볼륨 컨트롤, AudioMixerModal/AudioEffectModal에 origAudio 트랙 추가 (types.ts, editRoomStore.ts, VisualTimeline.tsx, AudioMixerModal.tsx, AudioEffectModal.tsx, 2026-03-13)
+- [x] 영상 분석실 지난 분석 클릭 시 비주얼(썸네일) 누락 수정 — loadSlot에서 thumbnails:[]로 초기화되어 유실되던 문제, resultCache에서 thumbs 복원하도록 수정 (videoAnalysisStore.ts, 2026-03-13)
 - [x] #153 썸네일 텍스트 모드 선택 기능 — 3모드(AI 자동/직접 입력/이미지만) 셀렉터 추가, 이미지만 모드에서 프롬프트의 텍스트 블록 제거 + 네거티브 강화, 직접 입력 모드에서 사용자 커스텀 텍스트 주입, 재생성 시 textMode 유지 (types.ts, SetupPanel.tsx, ThumbnailStudioTab.tsx, ThumbnailGenerator.tsx, thumbnailService.ts, 2026-03-13)
 - [x] #160 대본작성 "단락나누기 실행" 후 이미지/영상 탭 "스토리보드 생성" 버튼 비활성화 버그 수정 — handleSceneAnalysis에서 config.script 미전달 문제 해결, 탭 이동 시 script/videoFormat/smartSplit/longFormSplitType/aspectRatio를 프로젝트 config에 전달, SetupPanel의 splitResult 구독을 reactive로 변경 (ScriptWriterTab.tsx, SetupPanel.tsx, 2026-03-12)
 - [x] #146 내 피드백 내역 팝업 + 답변 확인 기능 — 헤더 "내 피드백" 버튼, 보낸 피드백 목록/상태/답변 내용 팝업 조회, GitHub API 실시간 상태 체크 (FeedbackHistoryPanel.tsx, feedbackService.ts, uiStore.ts, App.tsx, 2026-03-12)

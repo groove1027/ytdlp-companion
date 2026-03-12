@@ -2,34 +2,31 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": {
-          "tools": [
-            "Edit",
-            "Write",
-            "MultiEdit"
-          ]
-        },
+        "matcher": "Edit|Write|MultiEdit",
         "hooks": [
           {
             "type": "command",
             "command": "echo '⚠️ 작업 전 확인: CLAUDE.md 절대 규칙 준수, 관련 스킬 파일(.claude/skills/) 참조, API 수정 시 .claude/skills/api-reference.md 필수 확인'"
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash /Users/jihoo/Downloads/all-in-one-production-build4/.claude/hooks/pre-commit-check.sh"
+          }
+        ]
       }
     ],
     "PostToolUse": [
       {
-        "matcher": {
-          "tools": [
-            "Edit",
-            "Write",
-            "MultiEdit"
-          ]
-        },
+        "matcher": "Edit|Write|MultiEdit",
         "hooks": [
           {
             "type": "command",
-            "command": "bash /Users/jihoo/Downloads/all-in-one-production-claudecode/.claude/hooks/post-edit-check.sh"
+            "command": "bash /Users/jihoo/Downloads/all-in-one-production-build4/.claude/hooks/post-edit-check.sh"
           }
         ]
       }

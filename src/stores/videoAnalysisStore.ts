@@ -217,6 +217,8 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
             const urls = found.youtubeUrls?.length
               ? found.youtubeUrls
               : found.youtubeUrl ? [found.youtubeUrl] : [''];
+            // resultCache에서 비주얼(thumbnails) 복원 — 이전엔 []로 초기화되어 유실됨
+            const restoredThumbs = (found.selectedPreset && found.resultCache?.[found.selectedPreset]?.thumbs) || [];
             set({
               youtubeUrl: found.youtubeUrl,
               youtubeUrls: urls,
@@ -225,7 +227,7 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
               rawResult: found.rawResult,
               versions: found.versions,
               resultCache: found.resultCache,
-              thumbnails: [],
+              thumbnails: restoredThumbs,
               expandedId: null,
               error: null,
               savedSlots: all,
