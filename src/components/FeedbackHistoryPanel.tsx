@@ -46,9 +46,9 @@ const FeedbackHistoryPanel: React.FC = () => {
                     submittedAt: t.submittedAt,
                     feedbackType: t.feedbackType,
                     messagePreview: t.messagePreview,
-                    state: 'open' as const,
-                    latestComment: null,
-                    closedAt: null,
+                    state: (t.cachedState || 'open') as 'open' | 'closed',
+                    latestComment: t.cachedComment || null,
+                    closedAt: t.cachedClosedAt || null,
                 })));
             }
             refresh();
@@ -158,7 +158,7 @@ const FeedbackHistoryPanel: React.FC = () => {
 
                                             {/* 메시지 미리보기 */}
                                             {fb.messagePreview && (
-                                                <p className="text-gray-400 text-sm mt-1.5 line-clamp-2">{fb.messagePreview}</p>
+                                                <p className="text-gray-400 text-sm mt-1.5 whitespace-pre-line">{fb.messagePreview}</p>
                                             )}
 
                                             {/* 날짜 */}

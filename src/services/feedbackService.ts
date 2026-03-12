@@ -86,6 +86,10 @@ export interface TrackedIssue {
     dismissed: boolean;
     feedbackType?: string;
     messagePreview?: string;
+    // 캐시된 GitHub 상태 (API 실패 시 폴백용)
+    cachedState?: 'open' | 'closed';
+    cachedComment?: string | null;
+    cachedClosedAt?: string | null;
 }
 
 function saveFeedbackIssue(issueNumber: number, feedbackType?: string, messagePreview?: string): void {
@@ -97,7 +101,7 @@ function saveFeedbackIssue(issueNumber: number, feedbackType?: string, messagePr
             submittedAt: Date.now(),
             dismissed: false,
             feedbackType,
-            messagePreview: messagePreview ? messagePreview.slice(0, 100) : undefined,
+            messagePreview: messagePreview ? messagePreview.slice(0, 500) : undefined,
         });
         localStorage.setItem(FEEDBACK_ISSUES_KEY, JSON.stringify(existing));
     } catch { /* ignore */ }
@@ -113,6 +117,17 @@ export function dismissFeedbackIssue(issueNumber: number): void {
     try {
         const issues: TrackedIssue[] = JSON.parse(localStorage.getItem(FEEDBACK_ISSUES_KEY) || '[]');
         const updated = issues.map(i => i.issueNumber === issueNumber ? { ...i, dismissed: true } : i);
+        localStorage.setItem(FEEDBACK_ISSUES_KEY, JSON.stringify(updated));
+    } catch { /* ignore */ }
+}
+
+/** GitHub 상태를 localStorage에 캐시 — API 실패 시에도 마지막 확인 상태 유지 */
+function updateTrackedIssueCache(issueNumber: number, state: 'open' | 'closed', comment: string | null, closedAt: string | null): void {
+    try {
+        const issues: TrackedIssue[] = JSON.parse(localStorage.getItem(FEEDBACK_ISSUES_KEY) || '[]');
+        const updated = issues.map(i => i.issueNumber === issueNumber
+            ? { ...i, cachedState: state, cachedComment: comment, cachedClosedAt: closedAt }
+            : i);
         localStorage.setItem(FEEDBACK_ISSUES_KEY, JSON.stringify(updated));
     } catch { /* ignore */ }
 }
@@ -183,48 +198,26 @@ export function showBrowserNotification(resolved: ResolvedFeedback): void {
     } catch { /* 알림 생성 실패 무시 */ }
 }
 
-/** GitHub API로 미확인 이슈 상태 체크 — closed면 반환 */
+/** 백엔드 프록시를 통해 미확인 이슈 상태 체크 — closed면 반환 */
 export async function checkResolvedFeedbacks(): Promise<ResolvedFeedback[]> {
     const tracked = getTrackedIssues().filter(i => !i.dismissed);
     if (tracked.length === 0) return [];
 
-    const resolved: ResolvedFeedback[] = [];
+    try {
+        const issueNumbers = tracked.map(t => t.issueNumber).join(',');
+        const res = await monitoredFetch(`/api/feedback-status?issues=${issueNumbers}`);
+        if (!res.ok) return [];
+        const data = await res.json() as { statuses: { issueNumber: number; state: string; closedAt: string | null; latestComment: string | null }[] };
 
-    for (const issue of tracked) {
-        try {
-            const res = await fetch(
-                `https://api.github.com/repos/groove1027/all-in-one-production/issues/${issue.issueNumber}`,
-                { headers: { Accept: 'application/vnd.github.v3+json' } },
-            );
-            if (!res.ok) continue;
-            const data = await res.json() as { state: string; closed_at: string | null };
-            if (data.state === 'closed') {
-                // 최신 댓글 가져오기 (해결 내용)
-                let closeComment: string | null = null;
-                try {
-                    const commentsRes = await fetch(
-                        `https://api.github.com/repos/groove1027/all-in-one-production/issues/${issue.issueNumber}/comments?per_page=1&direction=desc`,
-                        { headers: { Accept: 'application/vnd.github.v3+json' } },
-                    );
-                    if (commentsRes.ok) {
-                        const comments = await commentsRes.json() as { body?: string }[];
-                        if (comments.length > 0 && comments[0].body) {
-                            // 마크다운 태그/헤더 제거 후 전체 코멘트 표시 (최대 300자)
-                            const cleaned = comments[0].body
-                                .split('\n')
-                                .filter(l => l.trim() && !l.startsWith('#') && !l.startsWith('>') && !l.startsWith('---'))
-                                .join('\n')
-                                .trim();
-                            closeComment = cleaned.length > 300 ? cleaned.slice(0, 300) + '...' : cleaned;
-                        }
-                    }
-                } catch { /* 댓글 조회 실패 무시 */ }
-                resolved.push({ issueNumber: issue.issueNumber, closedAt: data.closed_at || '', closeComment });
+        const resolved: ResolvedFeedback[] = [];
+        for (const s of data.statuses) {
+            if (s.state === 'closed') {
+                resolved.push({ issueNumber: s.issueNumber, closedAt: s.closedAt || '', closeComment: s.latestComment });
+                updateTrackedIssueCache(s.issueNumber, 'closed', s.latestComment, s.closedAt);
             }
-        } catch { /* 개별 이슈 조회 실패 무시 */ }
-    }
-
-    return resolved;
+        }
+        return resolved;
+    } catch { return []; }
 }
 
 /** 모든 추적 이슈의 현재 상태를 GitHub API로 조회 */
@@ -242,72 +235,49 @@ export async function fetchAllFeedbackStatuses(): Promise<FeedbackStatus[]> {
     const tracked = getTrackedIssues();
     if (tracked.length === 0) return [];
 
-    const statuses: FeedbackStatus[] = [];
+    // 백엔드 프록시를 통해 일괄 조회 (private repo → 인증 필요)
+    const issueNumbers = tracked.map(t => t.issueNumber).join(',');
+    let apiStatuses: { issueNumber: number; state: string; closedAt: string | null; latestComment: string | null }[] = [];
 
-    for (const issue of tracked) {
-        try {
-            const res = await fetch(
-                `https://api.github.com/repos/groove1027/all-in-one-production/issues/${issue.issueNumber}`,
-                { headers: { Accept: 'application/vnd.github.v3+json' } },
-            );
-            if (!res.ok) {
-                // API 실패 시 로컬 데이터만으로 표시
-                statuses.push({
-                    issueNumber: issue.issueNumber,
-                    submittedAt: issue.submittedAt,
-                    feedbackType: issue.feedbackType,
-                    messagePreview: issue.messagePreview,
-                    state: 'open',
-                    latestComment: null,
-                    closedAt: null,
-                });
-                continue;
-            }
-            const data = await res.json() as { state: string; closed_at: string | null };
-
-            let latestComment: string | null = null;
-            if (data.state === 'closed') {
-                try {
-                    const commentsRes = await fetch(
-                        `https://api.github.com/repos/groove1027/all-in-one-production/issues/${issue.issueNumber}/comments?per_page=1&direction=desc`,
-                        { headers: { Accept: 'application/vnd.github.v3+json' } },
-                    );
-                    if (commentsRes.ok) {
-                        const comments = await commentsRes.json() as { body?: string }[];
-                        if (comments.length > 0 && comments[0].body) {
-                            const cleaned = comments[0].body
-                                .split('\n')
-                                .filter((l: string) => l.trim() && !l.startsWith('#') && !l.startsWith('>') && !l.startsWith('---'))
-                                .join('\n')
-                                .trim();
-                            latestComment = cleaned.length > 300 ? cleaned.slice(0, 300) + '...' : cleaned;
-                        }
-                    }
-                } catch { /* ignore */ }
-            }
-
-            statuses.push({
-                issueNumber: issue.issueNumber,
-                submittedAt: issue.submittedAt,
-                feedbackType: issue.feedbackType,
-                messagePreview: issue.messagePreview,
-                state: data.state === 'closed' ? 'closed' : 'open',
-                latestComment,
-                closedAt: data.closed_at,
-            });
-        } catch {
-            statuses.push({
-                issueNumber: issue.issueNumber,
-                submittedAt: issue.submittedAt,
-                feedbackType: issue.feedbackType,
-                messagePreview: issue.messagePreview,
-                state: 'open',
-                latestComment: null,
-                closedAt: null,
-            });
+    try {
+        const res = await monitoredFetch(`/api/feedback-status?issues=${issueNumbers}`);
+        if (res.ok) {
+            const data = await res.json() as { statuses: typeof apiStatuses };
+            apiStatuses = data.statuses;
         }
-    }
+    } catch { /* 백엔드 호출 실패 — 캐시된 상태로 폴백 */ }
 
-    // 최신순 정렬
+    const apiMap = new Map(apiStatuses.map(s => [s.issueNumber, s]));
+
+    const statuses: FeedbackStatus[] = tracked.map(issue => {
+        const api = apiMap.get(issue.issueNumber);
+
+        if (api) {
+            const resolvedState = api.state === 'closed' ? 'closed' as const : 'open' as const;
+            // 성공 시 로컬 캐시 업데이트
+            updateTrackedIssueCache(issue.issueNumber, resolvedState, api.latestComment, api.closedAt);
+            return {
+                issueNumber: issue.issueNumber,
+                submittedAt: issue.submittedAt,
+                feedbackType: issue.feedbackType,
+                messagePreview: issue.messagePreview,
+                state: resolvedState,
+                latestComment: api.latestComment,
+                closedAt: api.closedAt,
+            };
+        }
+
+        // API 실패 시 캐시된 상태 사용
+        return {
+            issueNumber: issue.issueNumber,
+            submittedAt: issue.submittedAt,
+            feedbackType: issue.feedbackType,
+            messagePreview: issue.messagePreview,
+            state: issue.cachedState || 'open',
+            latestComment: issue.cachedComment || null,
+            closedAt: issue.cachedClosedAt || null,
+        };
+    });
+
     return statuses.sort((a, b) => b.submittedAt - a.submittedAt);
 }
