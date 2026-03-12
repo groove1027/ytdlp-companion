@@ -87,6 +87,29 @@ export interface YtdlpHealthStatus {
   uptime: number;
 }
 
+export interface SocialComment {
+  author: string;
+  text: string;
+  likeCount: number;
+  timestamp: number;
+}
+
+export interface SocialMetadata {
+  title: string;
+  description: string;
+  uploader: string;
+  platform: string;
+  duration: number;
+  thumbnail: string;
+  viewCount: number;
+  likeCount: number;
+  commentCount: number;
+  uploadDate: string;
+  comments: SocialComment[];
+  commentsError?: string;
+  cached?: boolean;
+}
+
 export type VideoQuality = 'best' | '1080p' | '720p' | '480p' | '360p' | 'audio';
 
 // ──────────────────────────────────────────────
@@ -280,6 +303,84 @@ export async function checkHealth(): Promise<YtdlpHealthStatus> {
   }
 
   return response.json();
+}
+
+// ──────────────────────────────────────────────
+// 소셜 미디어 API (TikTok, Douyin 등)
+// ──────────────────────────────────────────────
+
+/**
+ * 소셜 미디어 URL에서 메타데이터(캡션, 댓글 등)를 추출합니다.
+ *
+ * @param url - TikTok/Douyin/Xiaohongshu 등 소셜 미디어 URL
+ * @param includeComments - 댓글 포함 여부 (기본: false)
+ */
+export async function getSocialMetadata(
+  url: string,
+  includeComments = false,
+): Promise<SocialMetadata> {
+  return apiCall<SocialMetadata>('/api/social/metadata', {
+    method: 'POST',
+    body: JSON.stringify({ url, includeComments }),
+  });
+}
+
+/**
+ * 소셜 미디어 영상을 서버 프록시를 통해 Blob으로 다운로드합니다.
+ *
+ * @param url - TikTok/Douyin/Xiaohongshu 등 소셜 미디어 URL
+ * @param quality - 화질 (기본: '720p')
+ * @param onProgress - 진행률 콜백 (0~1)
+ */
+export async function downloadSocialVideo(
+  url: string,
+  quality: VideoQuality = '720p',
+  onProgress?: (progress: number) => void,
+): Promise<{ blob: Blob; title: string }> {
+  const baseUrl = getApiBaseUrl();
+  const apiKey = getApiKey();
+  const proxyUrl = `${baseUrl.replace(/\/$/, '')}/api/social/download`;
+
+  const response = await monitoredFetch(proxyUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(apiKey ? { 'X-API-Key': apiKey } : {}),
+    },
+    body: JSON.stringify({ url, quality }),
+    signal: AbortSignal.timeout(120_000),
+  });
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
+    throw new Error(body.error || `다운로드 실패 (${response.status})`);
+  }
+
+  // Content-Disposition에서 파일명 추출
+  const disposition = response.headers.get('Content-Disposition') || '';
+  const filenameMatch = disposition.match(/filename="?([^"]+)"?/);
+  const title = filenameMatch ? decodeURIComponent(filenameMatch[1]).replace(/\.mp4$/, '') : 'download';
+
+  if (onProgress && response.body) {
+    const contentLength = parseInt(response.headers.get('Content-Length') || '0', 10);
+    const reader = response.body.getReader();
+    const chunks: BlobPart[] = [];
+    let received = 0;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      received += (value as Uint8Array).length;
+      if (contentLength > 0) {
+        onProgress(received / contentLength);
+      }
+    }
+
+    return { blob: new Blob(chunks, { type: 'video/mp4' }), title };
+  }
+
+  return { blob: await response.blob(), title };
 }
 
 /**

@@ -9,7 +9,7 @@
  */
 
 import { logger } from './LoggerService';
-import { downloadVideoViaProxy, isYtdlpServerConfigured } from './ytdlpApiService';
+import { downloadVideoViaProxy, downloadSocialVideo, isYtdlpServerConfigured } from './ytdlpApiService';
 
 export type VideoPlatform = 'douyin' | 'tiktok' | 'xiaohongshu' | 'unknown';
 
@@ -82,11 +82,25 @@ export const getPlatformInfo = (platform: VideoPlatform): { label: string; color
   }
 };
 
+/** YouTube URL인지 감지 */
+const isYoutubeUrl = (url: string): boolean => {
+  return /youtube\.com|youtu\.be/i.test(url);
+};
+
 /** yt-dlp API 서버 프록시로 다운로드 (CDN CORS 우회) */
 const downloadFromYtdlp = async (url: string): Promise<DownloadResult> => {
   logger.info('[VideoDownload] yt-dlp 프록시 시도', { url });
 
   if (!isYtdlpServerConfigured()) throw new Error('yt-dlp API 서버 미설정');
+
+  // 비YouTube URL → 소셜 전용 엔드포인트 사용
+  if (!isYoutubeUrl(url)) {
+    logger.info('[VideoDownload] 소셜 엔드포인트 라우팅', { url });
+    const { blob, title } = await downloadSocialVideo(url, '720p');
+    logger.success('[VideoDownload] 소셜 다운로드 성공', { size: blob.size });
+    const filename = `${title || 'download'}.mp4`.replace(/[<>:"/\\|?*]/g, '');
+    return { blob, filename, source: 'ytdlp' };
+  }
 
   const { blob, info } = await downloadVideoViaProxy(url, '720p');
   logger.success('[VideoDownload] yt-dlp 프록시 성공', { size: blob.size });

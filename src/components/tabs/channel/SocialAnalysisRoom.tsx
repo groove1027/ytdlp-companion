@@ -2,6 +2,7 @@ import React, { useState, useRef, useCallback } from 'react';
 import { logger } from '../../../services/LoggerService';
 import { evolinkFrameAnalysisStream } from '../../../services/evolinkService';
 import { downloadFromUrl } from '../../../services/videoDownloadService';
+import { getSocialMetadata, SocialMetadata } from '../../../services/ytdlpApiService';
 import { showToast } from '../../../stores/uiStore';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
 
@@ -120,6 +121,10 @@ const SocialAnalysisRoom: React.FC = () => {
   const [commentText, setCommentText] = useState('');
   const [tiktokUrl, setTiktokUrl] = useState('');
   const [isDownloadingUrl, setIsDownloadingUrl] = useState(false);
+  const [isLoadingMetadata, setIsLoadingMetadata] = useState(false);
+  const [captionAutoFilled, setCaptionAutoFilled] = useState(false);
+  const [commentAutoFilled, setCommentAutoFilled] = useState(false);
+  const [metadataInfo, setMetadataInfo] = useState<{ uploader: string; viewCount: number; likeCount: number } | null>(null);
 
   // 분석 상태
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -225,23 +230,80 @@ const SocialAnalysisRoom: React.FC = () => {
     e.stopPropagation();
   }, []);
 
-  // TikTok URL → 영상 다운로드 + 프레임 추출
+  // URL → 영상 다운로드 + 메타데이터(캡션/댓글) 병렬 수집
   const handleTiktokUrlDownload = useCallback(async () => {
     if (!tiktokUrl.trim() || video || isDownloadingUrl) return;
     setIsDownloadingUrl(true);
+    setIsLoadingMetadata(true);
+
+    const url = tiktokUrl.trim();
+
     try {
-      const result = await downloadFromUrl(tiktokUrl.trim());
-      const file = new File([result.blob], result.filename, { type: result.blob.type || 'video/mp4' });
-      await handleAddVideo(file);
-      showToast('TikTok 영상 다운로드 완료');
+      // 영상 다운로드 + 메타데이터 수집 병렬 실행
+      const [downloadResult, metadataResult] = await Promise.allSettled([
+        downloadFromUrl(url),
+        getSocialMetadata(url, true),
+      ]);
+
+      // 영상 다운로드 처리
+      if (downloadResult.status === 'fulfilled') {
+        const file = new File([downloadResult.value.blob], downloadResult.value.filename, { type: downloadResult.value.blob.type || 'video/mp4' });
+        await handleAddVideo(file);
+      } else {
+        logger.trackSwallowedError('SocialAnalysisRoom:downloadVideo', downloadResult.reason);
+        showToast('영상 다운로드에 실패했습니다. 파일을 직접 업로드해주세요.', 5000);
+      }
+
+      // 메타데이터 처리
+      if (metadataResult.status === 'fulfilled') {
+        const meta: SocialMetadata = metadataResult.value;
+
+        // 캡션 자동채움 (사용자가 미입력 시만)
+        if (meta.description && !captionText.trim()) {
+          setCaptionText(meta.description);
+          setCaptionAutoFilled(true);
+        }
+
+        // 댓글 자동채움
+        if (meta.comments && meta.comments.length > 0 && !commentText.trim()) {
+          const formatted = meta.comments
+            .map(c => `@${c.author}: ${c.text}`)
+            .join('\n');
+          setCommentText(formatted);
+          setCommentAutoFilled(true);
+        }
+
+        // 메타데이터 정보 바
+        if (meta.uploader || meta.viewCount || meta.likeCount) {
+          setMetadataInfo({
+            uploader: meta.uploader,
+            viewCount: meta.viewCount,
+            likeCount: meta.likeCount,
+          });
+        }
+
+        const parts: string[] = [];
+        if (downloadResult.status === 'fulfilled') parts.push('영상');
+        if (meta.description) parts.push('캡션');
+        if (meta.comments?.length) parts.push(`댓글 ${meta.comments.length}개`);
+        if (parts.length > 0) showToast(`자동 수집 완료: ${parts.join(' + ')}`);
+        if (meta.commentsError) showToast('댓글 수집에 실패했습니다. 수동 입력해주세요.');
+      } else {
+        logger.trackSwallowedError('SocialAnalysisRoom:fetchMetadata', metadataResult.reason);
+        if (downloadResult.status === 'fulfilled') {
+          showToast('영상은 받았지만 캡션/댓글 자동 수집에 실패했습니다.');
+        }
+      }
+
       setTiktokUrl('');
     } catch (e) {
       logger.trackSwallowedError('SocialAnalysisRoom:downloadTikTok', e);
-      showToast('URL 다운로드에 실패했습니다. 영상을 직접 저장한 후 파일로 업로드해주세요.', 5000);
+      showToast('URL 처리에 실패했습니다.', 5000);
     } finally {
       setIsDownloadingUrl(false);
+      setIsLoadingMetadata(false);
     }
-  }, [tiktokUrl, video, isDownloadingUrl, handleAddVideo]);
+  }, [tiktokUrl, video, isDownloadingUrl, handleAddVideo, captionText, commentText]);
 
   // 분석 실행
   const handleAnalyze = useCallback(async () => {
@@ -335,6 +397,10 @@ const SocialAnalysisRoom: React.FC = () => {
     setStreamText('');
     setAnalysisResult('');
     setAnalysisDone(false);
+    setCaptionAutoFilled(false);
+    setCommentAutoFilled(false);
+    setMetadataInfo(null);
+    setIsLoadingMetadata(false);
   }, [images, video]);
 
   const displayText = analysisResult || streamText;
@@ -386,22 +452,40 @@ const SocialAnalysisRoom: React.FC = () => {
           <div className="mt-3 flex items-start gap-2 bg-cyan-900/20 border border-cyan-600/30 rounded-lg px-3 py-2.5">
             <span className="text-cyan-400 text-sm mt-0.5">💡</span>
             <p className="text-xs text-cyan-300/90 leading-relaxed">
-              TikTok 영상 URL을 아래에 붙여넣으면 자동 다운로드를 시도합니다. 실패 시 영상을 직접 저장한 후 아래에서 파일 업로드해주세요.
+              TikTok 영상 URL을 아래에 붙여넣으면 <strong>영상 + 캡션 + 댓글을 한번에 자동 수집</strong>합니다. 실패 시 영상을 직접 저장한 후 파일 업로드해주세요.
+            </p>
+          </div>
+        )}
+        {platform === 'other' && (
+          <div className="mt-3 flex items-start gap-2 bg-emerald-900/20 border border-emerald-600/30 rounded-lg px-3 py-2.5">
+            <span className="text-emerald-400 text-sm mt-0.5">🌐</span>
+            <p className="text-xs text-emerald-300/90 leading-relaxed">
+              더우인(Douyin), 샤오홍슈(Xiaohongshu) 등의 URL을 붙여넣으면 영상과 메타데이터를 자동 수집합니다.
             </p>
           </div>
         )}
       </div>
 
-      {/* TikTok URL 입력 (TikTok 선택 시만) */}
-      {platform === 'tiktok' && !video && (
+      {/* URL 입력 (TikTok / 기타 SNS 선택 시) */}
+      {(platform === 'tiktok' || platform === 'other') && !video && (
         <div className="bg-gray-800/40 rounded-xl border border-cyan-700/30 p-4 space-y-2">
-          <h3 className="text-sm font-bold text-white">🔗 TikTok URL 다운로드</h3>
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-bold text-white">🔗 URL로 자동 수집</h3>
+            {isLoadingMetadata && (
+              <span className="flex items-center gap-1 text-[10px] text-cyan-400">
+                <span className="w-3 h-3 border-2 border-gray-600 border-t-cyan-400 rounded-full animate-spin" />
+                메타데이터 수집 중
+              </span>
+            )}
+          </div>
           <div className="flex gap-2">
             <input
               type="url"
               value={tiktokUrl}
               onChange={e => setTiktokUrl(e.target.value)}
-              placeholder="TikTok 영상 URL (예: https://www.tiktok.com/@user/video/...)"
+              placeholder={platform === 'tiktok'
+                ? 'TikTok 영상 URL (예: https://www.tiktok.com/@user/video/...)'
+                : '소셜 영상 URL (TikTok, 더우인, 샤오홍슈 등)'}
               className="flex-1 bg-gray-900/60 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-cyan-500/50"
               onKeyDown={e => { if (e.key === 'Enter') handleTiktokUrlDownload(); }}
             />
@@ -418,12 +502,12 @@ const SocialAnalysisRoom: React.FC = () => {
               {isDownloadingUrl ? (
                 <span className="flex items-center gap-1.5">
                   <span className="w-3.5 h-3.5 border-2 border-gray-400 border-t-cyan-300 rounded-full animate-spin" />
-                  다운로드 중
+                  수집 중
                 </span>
-              ) : '다운로드'}
+              ) : '자동 수집'}
             </button>
           </div>
-          <p className="text-[10px] text-gray-500">vm.tiktok.com, vt.tiktok.com 단축 URL도 지원</p>
+          <p className="text-[10px] text-gray-500">영상 + 캡션 + 댓글을 한번에 자동 수집합니다 · TikTok, Douyin, Xiaohongshu 단축 URL 지원</p>
         </div>
       )}
 
@@ -565,10 +649,25 @@ const SocialAnalysisRoom: React.FC = () => {
         <div className="space-y-3">
           {/* 캡션/대본 */}
           <div className="bg-gray-800/40 rounded-xl border border-gray-700/30 p-4 space-y-2">
-            <h3 className="text-sm font-bold text-white">📝 캡션 / 대본</h3>
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-bold text-white">📝 캡션 / 대본</h3>
+              {captionAutoFilled && (
+                <span className="px-1.5 py-0.5 text-[10px] font-semibold bg-cyan-600/20 text-cyan-300 border border-cyan-500/30 rounded">
+                  자동 수집됨
+                </span>
+              )}
+            </div>
+            {/* 메타데이터 정보 바 */}
+            {metadataInfo && (
+              <div className="flex items-center gap-3 text-[11px] text-gray-400 bg-gray-900/40 rounded-lg px-3 py-1.5">
+                {metadataInfo.uploader && <span>👤 {metadataInfo.uploader}</span>}
+                {metadataInfo.viewCount > 0 && <span>👁️ {metadataInfo.viewCount.toLocaleString()}</span>}
+                {metadataInfo.likeCount > 0 && <span>❤️ {metadataInfo.likeCount.toLocaleString()}</span>}
+              </div>
+            )}
             <textarea
               value={captionText}
-              onChange={(e) => setCaptionText(e.target.value)}
+              onChange={(e) => { setCaptionText(e.target.value); if (captionAutoFilled) setCaptionAutoFilled(false); }}
               placeholder="게시물 캡션이나 영상 대본을 붙여넣으세요..."
               className="w-full h-32 bg-gray-900/60 border border-gray-700 rounded-lg p-3 text-sm text-gray-200 placeholder-gray-500 resize-none focus:outline-none focus:border-blue-500/50"
             />
@@ -576,10 +675,17 @@ const SocialAnalysisRoom: React.FC = () => {
 
           {/* 댓글 */}
           <div className="bg-gray-800/40 rounded-xl border border-gray-700/30 p-4 space-y-2">
-            <h3 className="text-sm font-bold text-white">💬 댓글</h3>
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-bold text-white">💬 댓글</h3>
+              {commentAutoFilled && (
+                <span className="px-1.5 py-0.5 text-[10px] font-semibold bg-cyan-600/20 text-cyan-300 border border-cyan-500/30 rounded">
+                  자동 수집됨
+                </span>
+              )}
+            </div>
             <textarea
               value={commentText}
-              onChange={(e) => setCommentText(e.target.value)}
+              onChange={(e) => { setCommentText(e.target.value); if (commentAutoFilled) setCommentAutoFilled(false); }}
               placeholder="주요 댓글들을 붙여넣으세요... (선택)"
               className="w-full h-32 bg-gray-900/60 border border-gray-700 rounded-lg p-3 text-sm text-gray-200 placeholder-gray-500 resize-none focus:outline-none focus:border-blue-500/50"
             />
