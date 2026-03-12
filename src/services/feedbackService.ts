@@ -41,7 +41,7 @@ async function uploadScreenshotToCloudinary(base64DataUri: string): Promise<stri
     formData.append('upload_preset', uploadPreset);
     formData.append('folder', 'feedback-screenshots');
 
-    const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, {
+    const res = await monitoredFetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, {
         method: 'POST',
         body: formData,
     });
