@@ -417,6 +417,7 @@ export const pollMusicStatus = async (
         if (status === 'CREATE_TASK_FAILED' || status === 'GENERATE_AUDIO_FAILED' ||
             status === 'CALLBACK_EXCEPTION' || status === 'SENSITIVE_WORD_ERROR') {
             const failMsg = data.data?.errorMessage || status;
+            logger.trackErrorChain(`Suno status=${status}: ${failMsg}`, 'musicService:pollMusicStatus:generation_failed');
             throw new Error(`음악 생성 실패: ${failMsg}`);
         }
 
@@ -737,6 +738,7 @@ CRITICAL RULES:
         return result;
     } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
+        logger.trackErrorChain(msg, 'musicService:analyzeMusicForScript:ai_fallback');
         logger.error('[Music] 대본 음악 분석 실패', msg);
         showToast(`음악 분석 실패: ${msg.substring(0, 80)}`, 5000);
 
@@ -852,7 +854,9 @@ export const pollLyricsResult = async (taskId: string, signal?: AbortSignal): Pr
         }
         if (status === 'CREATE_TASK_FAILED' || status === 'GENERATE_LYRICS_FAILED' ||
             status === 'CALLBACK_EXCEPTION' || status === 'SENSITIVE_WORD_ERROR') {
-            throw new Error(`가사 생성 실패: ${data.data?.errorMessage || status}`);
+            const lyricsFailMsg = data.data?.errorMessage || status;
+            logger.trackErrorChain(`Suno lyrics status=${status}: ${lyricsFailMsg}`, 'musicService:pollLyricsResult:generation_failed');
+            throw new Error(`가사 생성 실패: ${lyricsFailMsg}`);
         }
     }
     logger.endAsyncOp(opId, 'failed', '가사 생성 시간 초과');
@@ -912,7 +916,9 @@ export const pollVocalSeparation = async (taskId: string, signal?: AbortSignal):
         }
         if (successFlag === 'CREATE_TASK_FAILED' || successFlag === 'GENERATE_AUDIO_FAILED' ||
             successFlag === 'CALLBACK_EXCEPTION') {
-            throw new Error(`보컬 분리 실패: ${data.data?.errorMessage || successFlag}`);
+            const vocalFailMsg = data.data?.errorMessage || successFlag;
+            logger.trackErrorChain(`Suno vocal status=${successFlag}: ${vocalFailMsg}`, 'musicService:pollVocalSeparation:generation_failed');
+            throw new Error(`보컬 분리 실패: ${vocalFailMsg}`);
         }
     }
     logger.endAsyncOp(opId, 'failed', '보컬 분리 시간 초과');

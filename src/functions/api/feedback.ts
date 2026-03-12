@@ -30,6 +30,7 @@ function formatIssueBody(data: {
   timestamp: number;
   userDisplayName?: string;
   debugLogs?: string;
+  debugLogUrl?: string;
 }): string {
   const date = new Date(data.timestamp).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' });
   const sections: string[] = [];
@@ -65,22 +66,28 @@ function formatIssueBody(data: {
   }
 
   // 디버그 로그 (접이식) — 환경 스냅샷 + 액션 트레일 + 전체 로그 포함
-  if (data.debugLogs) {
+  if (data.debugLogs || data.debugLogUrl) {
     sections.push('');
-    sections.push('<details>');
-    sections.push('<summary><strong>디버그 로그 (환경 + 액션 + API)</strong> (클릭하여 펼치기)</summary>');
-    sections.push('');
-    sections.push('```');
-    // GitHub issue body 최대 65536자 — 로그가 너무 길면 잘라냄
-    const maxLogLen = 40000;
-    if (data.debugLogs.length > maxLogLen) {
-      sections.push(data.debugLogs.substring(0, maxLogLen));
-      sections.push(`\n... (${data.debugLogs.length - maxLogLen}자 생략)`);
-    } else {
-      sections.push(data.debugLogs);
+    if (data.debugLogUrl) {
+      sections.push(`> 📋 [전체 진단 로그 보기](${data.debugLogUrl})`);
+      sections.push('');
     }
-    sections.push('```');
-    sections.push('</details>');
+    if (data.debugLogs) {
+      sections.push('<details>');
+      sections.push('<summary><strong>디버그 로그 (환경 + 액션 + API)</strong> (클릭하여 펼치기)</summary>');
+      sections.push('');
+      sections.push('```');
+      // GitHub issue body 최대 65536자 — 로그가 너무 길면 잘라냄
+      const maxLogLen = 40000;
+      if (data.debugLogs.length > maxLogLen) {
+        sections.push(data.debugLogs.substring(0, maxLogLen));
+        sections.push(`\n... (${data.debugLogs.length - maxLogLen}자 생략)`);
+      } else {
+        sections.push(data.debugLogs);
+      }
+      sections.push('```');
+      sections.push('</details>');
+    }
   }
 
   return sections.join('\n');
@@ -117,6 +124,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       timestamp: number;
       userDisplayName?: string;
       debugLogs?: string;
+      debugLogUrl?: string;
     };
 
     const titlePrefix = data.type === 'bug' || data.type === 'error' ? 'Bug' : data.type === 'suggestion' ? 'Feature' : 'Feedback';

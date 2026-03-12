@@ -494,6 +494,7 @@ export const mergeAudioFiles = async (audioUrls: string[]): Promise<string> => {
         for (const url of audioUrls) {
             const response = await monitoredFetch(url);
             if (!response.ok) {
+                logger.trackErrorChain(`HTTP ${response.status} fetching audio file`, 'ttsService:mergeAudioFiles:file_fetch_failed');
                 logger.warn('[TTS] 오디오 파일 다운로드 실패, 건너뜀', { url });
                 continue;
             }

@@ -2,6 +2,33 @@
 import { FeedbackData } from '../types';
 import { getCloudinaryConfig, monitoredFetch } from './apiService';
 
+/** 디버그 로그 텍스트 → Cloudinary 업로드 → URL 반환 */
+async function uploadDebugLogToCloudinary(text: string): Promise<string> {
+    const { cloudName, uploadPreset } = getCloudinaryConfig();
+    if (!cloudName || !uploadPreset) {
+        throw new Error('Cloudinary 설정 없음 — 디버그 로그 업로드 불가');
+    }
+
+    const blob = new Blob([text], { type: 'text/plain' });
+    const formData = new FormData();
+    formData.append('file', blob, 'debug-log.txt');
+    formData.append('upload_preset', uploadPreset);
+    formData.append('folder', 'feedback-debug-logs');
+    formData.append('resource_type', 'raw');
+
+    const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/raw/upload`, {
+        method: 'POST',
+        body: formData,
+    });
+
+    if (!res.ok) {
+        throw new Error(`Cloudinary debug log upload failed: ${res.status}`);
+    }
+
+    const data = await res.json() as { secure_url: string };
+    return data.secure_url;
+}
+
 /** 스크린샷 base64 → Cloudinary 업로드 → URL 반환 */
 async function uploadScreenshotToCloudinary(base64DataUri: string): Promise<string> {
     const { cloudName, uploadPreset } = getCloudinaryConfig();
@@ -43,7 +70,17 @@ export const submitFeedback = async (data: FeedbackData): Promise<FeedbackResult
         screenshotUrls = results.filter((url): url is string => url !== null);
     }
 
-    // 2. Pages Function (/api/feedback) 으로 전송 → GitHub Issue 자동 생성
+    // 2. 디버그 로그가 35000자를 초과하면 Cloudinary에 전체 로그 업로드
+    let debugLogUrl: string | undefined;
+    let debugLogs = data.debugLogs;
+    const DEBUG_LOG_THRESHOLD = 35000;
+    if (debugLogs && debugLogs.length > DEBUG_LOG_THRESHOLD) {
+        debugLogUrl = await uploadDebugLogToCloudinary(debugLogs).catch(() => undefined);
+        const suffix = debugLogUrl ? `\n... (전체 로그: ${debugLogUrl})` : `\n... (${debugLogs.length - DEBUG_LOG_THRESHOLD}자 생략)`;
+        debugLogs = debugLogs.substring(0, DEBUG_LOG_THRESHOLD) + suffix;
+    }
+
+    // 3. Pages Function (/api/feedback) 으로 전송 → GitHub Issue 자동 생성
     const payload = {
         type: data.type,
         message: data.message,
@@ -54,7 +91,8 @@ export const submitFeedback = async (data: FeedbackData): Promise<FeedbackResult
         currentProjectId: data.currentProjectId,
         screenshotUrls,
         userDisplayName: data.userDisplayName,
-        debugLogs: data.debugLogs,
+        debugLogs,
+        debugLogUrl,
     };
 
     const response = await monitoredFetch('/api/feedback', {

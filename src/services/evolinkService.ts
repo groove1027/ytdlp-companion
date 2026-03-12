@@ -132,6 +132,7 @@ async function fetchWithRateLimitRetry(
         lastResponse = response;
         const delayMs = baseDelayMs * Math.pow(2, attempt); // 2s, 4s, 8s
         logger.warn(`[Evolink] 429 Rate Limit — ${delayMs}ms 후 재시도 (${attempt + 1}/${maxRetries})`, { url });
+        logger.trackErrorChain(`HTTP 429 Rate Limit (attempt ${attempt + 1}/${maxRetries})`, 'evolinkService:fetchWithRateLimitRetry:rate_limit');
         await new Promise(r => setTimeout(r, delayMs));
     }
 
@@ -931,6 +932,7 @@ export const pollEvolinkTask = async (
             }
             // MEDIUM 2: 네트워크 오류 등도 로깅 후 재시도
             const errMsg = e instanceof Error ? e.message : String(e);
+            logger.trackErrorChain(errMsg, 'evolinkService:pollEvolinkTask:network_retry');
             logger.trackRetry('Evolink 폴링 (네트워크)', i + 1, maxAttempts, errMsg);
         }
     }

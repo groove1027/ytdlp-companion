@@ -211,6 +211,7 @@ export const useVideoBatch = (
                     publicImageUrl = await uploadMediaToHosting(washedFile);
                     logger.success(`[Auto-Retry] Image washed and uploaded: ${publicImageUrl}`);
                 } catch (washError) {
+                    logger.trackErrorChain(String(washError), 'useVideoBatch:processScene:imagewash_failed');
                     console.error("[Auto-Retry] Image washing failed, proceeding with original", washError);
                 }
             } else if (publicImageUrl.startsWith('data:')) {
@@ -389,25 +390,26 @@ export const useVideoBatch = (
             // [NEW] AUTO-RETRY LOGIC FOR NETWORK/TIMEOUT ERRORS
             // Catches "timeout", "超时", "504", "502", "network error", "apimart failed"
             const isTimeout = errStr.includes("timeout") || errStr.includes("超时") || errStr.includes("504") || errStr.includes("502") || errStr.includes("network") || errStr.includes("veo timeout");
-            
+
             if (isTimeout && retryCount < 3) {
                 const nextRetry = retryCount + 1;
                 logger.warn(`Scene ${sceneId} Timeout detected (${errStr}). Auto-Retrying (${nextRetry}/3)...`);
-                
+                const _timeoutChainId = logger.trackErrorChain(String(e), 'useVideoBatch:processScene:timeout');
+
                 // Add a small delay (backoff) to let server recover
                 await new Promise(resolve => setTimeout(resolve, 3000));
-                
+
                 // Recursive Retry
                 await processScene(
-                    sceneId, 
-                    scene, 
-                    initialModel, 
-                    explicitUpscaleRequest, 
-                    forceModel, 
-                    overrideDuration, 
-                    overrideSpeech, 
-                    isRetry, 
-                    isSafeMode, 
+                    sceneId,
+                    scene,
+                    initialModel,
+                    explicitUpscaleRequest,
+                    forceModel,
+                    overrideDuration,
+                    overrideSpeech,
+                    isRetry,
+                    isSafeMode,
                     nextRetry
                 );
                 return; // Exit current stack
@@ -416,18 +418,21 @@ export const useVideoBatch = (
             if (!isSafeMode) {
                 if (errStr.includes("audio_filtered") || errStr.includes("audio filter")) {
                     logger.warn(`Scene ${sceneId} caught AUDIO_FILTERED. Retrying in Safe Mode (Silent)...`);
+                    logger.trackErrorChain(String(e), 'useVideoBatch:processScene:audio_filtered');
                     await processScene(sceneId, scene, initialModel, explicitUpscaleRequest, forceModel, overrideDuration, overrideSpeech, isRetry, true, retryCount);
                     return;
                 }
-                
+
                 if (errStr.includes("invalid_argument") || errStr.includes("invalid argument")) {
                     logger.warn(`Scene ${sceneId} caught INVALID_ARGUMENT. Retrying in Safe Mode (Short Prompt)...`);
+                    logger.trackErrorChain(String(e), 'useVideoBatch:processScene:invalid_argument');
                     await processScene(sceneId, scene, initialModel, explicitUpscaleRequest, forceModel, overrideDuration, overrideSpeech, isRetry, true, retryCount);
                     return;
                 }
 
                 if (!isRetry && (errStr.includes("40") || errStr.includes("safety") || errStr.includes("policy") || errStr.includes("ip"))) {
                     logger.warn(`Scene ${sceneId} hit Safety/IP filter. Triggering Image Wash Retry...`);
+                    logger.trackErrorChain(String(e), 'useVideoBatch:processScene:safety_filter');
                     await processScene(sceneId, scene, initialModel, explicitUpscaleRequest, forceModel, overrideDuration, overrideSpeech, true, false, retryCount);
                     return;
                 }

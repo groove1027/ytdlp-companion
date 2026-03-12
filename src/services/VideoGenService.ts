@@ -372,6 +372,7 @@ export async function pollKieTask(taskId: string, signal?: AbortSignal, onProgre
         if (e.message.includes("결과 URL을 찾을 수 없습니다")) throw e;
         if (e.message.includes("Kie 생성 실패")) throw e;
         // 네트워크 일시 오류 등은 재시도
+        logger.trackErrorChain(e.message, 'VideoGenService:pollKieTask:network_retry');
         logger.trackRetry('Kie 폴링 (네트워크)', i + 1, maxAttempts, e.message);
     }
   }
@@ -594,6 +595,7 @@ export async function pollKieVeoTask(
         } catch (e: any) {
             if (e.name === 'AbortError' || e.message === "Cancelled by user") throw e;
             if (e.message.includes("생성 실패") || e.message.includes("결과 URL 없음")) throw e;
+            logger.trackErrorChain(e.message, 'VideoGenService:pollKieVeoTask:network_retry');
             logger.trackRetry('Kie Veo 폴링 (네트워크)', i + 1, maxAttempts, e.message);
         }
     }
@@ -1169,6 +1171,7 @@ export async function pollXaiVideoEditTask(
             const err = e as Error;
             if (err.name === 'AbortError' || err.message === "Cancelled") throw e;
             if (err.message.includes("만료") || err.message.includes("URL 없음")) throw e;
+            logger.trackErrorChain(err.message, 'VideoGenService:pollXaiVideoEditTask:network_retry');
         }
     }
     logger.endAsyncOp(opId, 'failed', 'xAI 작업 시간 초과 (Timeout)');
@@ -1240,6 +1243,7 @@ const grokProvider: VideoProvider = {
             return `kie:${taskId}`;
         } catch (e) {
             logger.warn(`[Grok] Kie 실패, Evolink Veo 폴백 시도: ${(e as Error).message}`);
+            logger.trackErrorChain(String(e), 'VideoGenService:grokProvider:kie_to_evolink_fallback');
             const taskId = await createEvolinkVeoTask(p);
             return `evolink:${taskId}`;
         }
