@@ -16,7 +16,7 @@ async function uploadDebugLogToCloudinary(text: string): Promise<string> {
     formData.append('folder', 'feedback-debug-logs');
     formData.append('resource_type', 'raw');
 
-    const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/raw/upload`, {
+    const res = await monitoredFetch(`https://api.cloudinary.com/v1_1/${cloudName}/raw/upload`, {
         method: 'POST',
         body: formData,
     });
