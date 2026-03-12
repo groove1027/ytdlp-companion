@@ -2,15 +2,17 @@ import React, { useState, useCallback, Suspense, lazy } from 'react';
 import { evolinkChat, evolinkGenerateImage } from '../../services/evolinkService';
 import { uploadMediaToHosting } from '../../services/uploadService';
 import { showToast } from '../../stores/uiStore';
+import { logger } from '../../services/LoggerService';
 import { useElapsedTimer, formatElapsed } from '../../hooks/useElapsedTimer';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
 import type { DetailImageSegment, PageLength } from '../../types';
 import type { EvolinkChatMessage } from '../../services/evolinkService';
 
 const ShoppingShortContent = lazy(() => import('./ShoppingShortTab'));
+const ShoppingChannelContent = lazy(() => import('./ShoppingChannelTab'));
 
 // --- Sub-tab type ---
-type SubTab = 'detail' | 'thumbnail' | 'shopping-short';
+type SubTab = 'detail' | 'thumbnail' | 'shopping-short' | 'shopping-channel';
 type Step = 1 | 2 | 3;
 
 // --- Constants ---
@@ -79,7 +81,8 @@ function extractJsonArray(text: string): DetailImageSegment[] | null {
       keyMessage: String(item.keyMessage || ''),
       visualPrompt: String(item.visualPrompt || ''),
     }));
-  } catch {
+  } catch (e) {
+    logger.trackSwallowedError('DetailPageTab:parseSegments', e);
     return null;
   }
 }
@@ -183,7 +186,8 @@ const DetailPageTab: React.FC = () => {
     try {
       const urls = await Promise.all(newFiles.map(f => uploadMediaToHosting(f)));
       setReferenceUrls(prev => [...prev, ...urls]);
-    } catch {
+    } catch (e) {
+      logger.trackSwallowedError('DetailPageTab:uploadReferenceImages', e);
       showToast('이미지 업로드 실패. 다시 시도해주세요.');
     } finally {
       setIsUploadingImages(false);
@@ -343,7 +347,8 @@ const DetailPageTab: React.FC = () => {
         const url = await evolinkGenerateImage(prompt, '1:1', '2K', imageUrls);
         results.push(url);
         setThumbResults([...results]);
-      } catch {
+      } catch (e) {
+        logger.trackSwallowedError('DetailPageTab:generateThumbnail', e);
         results.push('');
         setThumbResults([...results]);
       }
@@ -418,7 +423,7 @@ const DetailPageTab: React.FC = () => {
           <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-teal-500 to-teal-700 flex items-center justify-center text-white text-lg font-bold shadow-lg">🛒</div>
           <div>
             <h1 className="text-2xl font-bold text-white">쇼핑콘텐츠</h1>
-            <p className="text-sm text-gray-400">상세페이지 · 썸네일 · 쇼핑 숏폼 자동화</p>
+            <p className="text-sm text-gray-400">상세페이지 · 썸네일 · 숏폼 · 쇼핑 채널</p>
           </div>
         </div>
       </div>
@@ -454,6 +459,16 @@ const DetailPageTab: React.FC = () => {
           }`}
         >
           쇼핑 숏폼 자동화
+        </button>
+        <button
+          onClick={() => setSubTab('shopping-channel')}
+          className={`px-5 py-2.5 text-sm font-bold rounded-t-lg transition-all ${
+            subTab === 'shopping-channel'
+              ? 'bg-gray-800 text-cyan-400 border-b-2 border-cyan-500'
+              : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/50'
+          }`}
+        >
+          쇼핑 채널 AI
         </button>
       </div>
 
@@ -823,6 +838,17 @@ const DetailPageTab: React.FC = () => {
           </div>
         }>
           <ShoppingShortContent hideHeader />
+        </Suspense>
+      )}
+
+      {subTab === 'shopping-channel' && (
+        <Suspense fallback={
+          <div className="flex items-center justify-center py-16">
+            <div className="animate-spin rounded-full h-7 w-7 border-b-2 border-cyan-500" />
+            <span className="ml-3 text-gray-400 text-sm">로딩 중...</span>
+          </div>
+        }>
+          <ShoppingChannelContent hideHeader />
         </Suspense>
       )}
     </div>

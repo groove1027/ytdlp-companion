@@ -261,6 +261,7 @@ export interface Thumbnail {
   fontHint?: string;      // 'gothic' | 'serif' | 'brush' | ... 폰트 힌트 ID
   textPosition?: string;  // 'bottom-center' | 'top' | 'right' | 'center'
   textScale?: number;     // 0.8 ~ 2.0
+  textMode?: 'auto' | 'custom' | 'none'; // 텍스트 모드: AI자동 / 직접입력 / 이미지만
 }
 
 export interface ThumbnailTextPreset {
@@ -600,6 +601,40 @@ export interface ShoppingScript {
   };
   fullText: string;
   estimatedDuration: number;
+}
+
+// --- Shopping Channel (AI 쇼핑 리뷰 영상) ---
+export type ShoppingChannelWizardStep = 'product' | 'concept' | 'script' | 'generate';
+export type ShoppingCharacterPreset = 'friendly-sister' | 'expert-reviewer' | 'aesthetic-vlogger' | 'trusted-expert';
+export type ShoppingSceneTemplate = 'general-review' | 'unboxing' | 'comparison';
+
+export interface ShoppingCharacterConfig {
+  presetId: ShoppingCharacterPreset;
+  customDescription: string;
+  referenceImageUrl: string | null;
+}
+
+export interface ShoppingChannelProduct {
+  images: string[];        // base64 (1-3장)
+  imageUrls: string[];     // Cloudinary URLs
+  name: string;
+  description: string;
+}
+
+export interface ShoppingChannelScene {
+  id: string;
+  sceneIndex: number;
+  section: 'hooking' | 'detail' | 'romance' | 'wit' | 'cta';
+  scriptText: string;
+  visualPrompt: string;
+  imageUrl: string | null;
+  videoUrl: string | null;
+  isGeneratingImage: boolean;
+  isGeneratingVideo: boolean;
+  imageError: string | null;
+  videoError: string | null;
+  progress: number;
+  videoEngine: 'veo' | 'grok' | null;
 }
 
 export type ShoppingCTAPreset = 'comment' | 'profile' | 'link';
