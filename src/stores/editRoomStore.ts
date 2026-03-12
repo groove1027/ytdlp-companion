@@ -474,7 +474,7 @@ export const useEditRoomStore = create<EditRoomStore>((set, get) => ({
       const existingSub = get().sceneSubtitles[sceneId];
       sceneSubtitles[sceneId] = {
         ...existingSub,
-        text: existingSub?.text || matchedLine?.text || scene.scriptText || '',
+        text: existingSub?.text || scene.generatedDialogue || matchedLine?.text || scene.scriptText || '',
         startTime: startT,
         endTime: endT,
         animationPreset: existingSub?.animationPreset || 'none',

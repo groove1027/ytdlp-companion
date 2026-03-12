@@ -1,5 +1,6 @@
 
-import { Scene, VideoFormat, CharacterAppearance } from '../../types';
+import { Scene, VideoFormat, CharacterAppearance, DialogueTone, CharacterProfile } from '../../types';
+import { DIALOGUE_TONE_PRESETS } from '../../constants';
 import { requestGeminiProxy, extractTextFromResponse, extractFunctionCall, performMockSearch, SAFETY_SETTINGS_BLOCK_NONE } from './geminiProxy';
 import { evolinkChat, evolinkChatStream } from '../evolinkService';
 import { logger } from '../LoggerService';
@@ -586,7 +587,10 @@ export const parseScriptToScenes = async (
     onCost?: (c: number) => void,
     suppressText?: boolean, // [NEW] No Text Mode Argument
     longFormSplitType?: 'DEFAULT' | 'DETAILED', // [NEW] Long Form Split Type
-    targetSceneCount?: number // [NEW] 예상 컷수 — 이 수치에 맞춰 장면 분할 강제
+    targetSceneCount?: number, // [NEW] 예상 컷수 — 이 수치에 맞춰 장면 분할 강제
+    dialogueTone?: DialogueTone, // [v4.7] 대사 톤 프리셋
+    characterProfiles?: CharacterProfile[], // [v4.7] 캐릭터 프로필 배열
+    referenceDialogue?: string // [v4.7] 참조 대사 텍스트
 ): Promise<Scene[]> => {
     // Cost is now auto-tracked inside evolinkChat/requestEvolinkNative
     console.log(`[parseScriptToScenes] Received targetSceneCount: ${targetSceneCount}, type: ${typeof targetSceneCount}`);
@@ -784,6 +788,34 @@ export const parseScriptToScenes = async (
     5. **ATMOSPHERE**: Include environmental particles: dust motes in light beams, rain droplets on glass, morning fog, steam rising from street grates, falling autumn leaves, snow flurries. These add cinematic depth.
     6. **COLOR PALETTE**: Specify mood colors: "desaturated teal and orange color grade", "warm amber palette with deep burgundy accents", "cool blue-grey overcast with single warm light source".
 
+    ${dialogueTone && dialogueTone !== 'none' ? `
+    [PHASE: DIALOGUE GENERATION]
+    You MUST generate character dialogue for EACH scene. This is a SCREEN DIALOGUE — text that viewers READ on screen.
+
+    [DIALOGUE TONE RULES]
+    ${DIALOGUE_TONE_PRESETS[dialogueTone]?.promptRules || ''}
+
+    [EMOTIONAL ARC]
+    Follow this beat structure across all scenes: ${DIALOGUE_TONE_PRESETS[dialogueTone]?.arcTemplate || ''}
+    Assign one emotionalBeat per scene. The beats must flow naturally across the entire script.
+
+    ${characterProfiles && characterProfiles.length > 0 ? `[CHARACTER PROFILES]
+    These characters appear in the script. Each has a distinct voice:
+    ${characterProfiles.map(c => `- ${c.name} (${c.role}${c.age ? ', ' + c.age : ''}): ${c.speechStyle || 'natural speech'}`).join('\n    ')}
+    Match dialogue speaker to the most appropriate character for each scene.` : ''}
+
+    ${referenceDialogue ? `[REFERENCE STYLE]
+    The user provided reference dialogue. Match the TONE, RHYTHM, and VOCABULARY of this sample:
+    "${referenceDialogue.slice(0, 500)}"` : ''}
+
+    For EACH scene, generate:
+    - "dialogue": The actual screen dialogue text (in the script's language). Must match the tone rules above.
+    - "dialogueSpeaker": Name of the speaking character (from CHARACTER PROFILES if available, otherwise infer).
+    - "dialogueEmotion": One of: "neutral" | "happy" | "sad" | "angry" | "surprised" | "fearful" | "nostalgic" | "sarcastic" | "excited"
+    - "dialogueSfx": Optional sound effect suggestion (e.g. "door_slam", "rain", "crowd_murmur"). Empty string if none.
+    - "emotionalBeat": One of the beats from the arc template above.
+    ` : ''}
+
     [PHASE: OUTPUT FORMAT]
     Return a VALID JSON array of Scene objects. No markdown.
     {
@@ -803,7 +835,12 @@ export const parseScriptToScenes = async (
         "isInfographic": boolean,
         "sceneLocation": "Specific location for THIS scene (e.g. 'Forbidden City, Beijing'). Based on CONTENT, not script language.",
         "sceneEra": "Time period for THIS scene (e.g. 'Qing Dynasty', 'Modern Day')",
-        "sceneCulture": "Cultural background for THIS scene (e.g. 'Chinese Imperial', 'Korean Traditional')"
+        "sceneCulture": "Cultural background for THIS scene (e.g. 'Chinese Imperial', 'Korean Traditional')"${dialogueTone && dialogueTone !== 'none' ? `,
+        "dialogue": "Screen dialogue text in script language. REQUIRED when dialogue mode is ON.",
+        "dialogueSpeaker": "Character name speaking this line",
+        "dialogueEmotion": "neutral" | "happy" | "sad" | "angry" | "surprised" | "fearful" | "nostalgic" | "sarcastic" | "excited",
+        "dialogueSfx": "Optional SFX suggestion (empty string if none)",
+        "emotionalBeat": "hook" | "daily" | "conflict" | "escalation" | "twist" | "resolution" | "reflection" | "build" | "surprise" | "payoff" | "cta"` : ''}
     }
     `;
 
@@ -841,7 +878,13 @@ export const parseScriptToScenes = async (
             // [NEW] entityComposition — KEY_ENTITY 연출 구도
             entityComposition: item.entityComposition || '',
             // Placeholder for enrichment
-            entityVisualContext: ""
+            entityVisualContext: "",
+            // [v4.7] 대사 필드 매핑
+            generatedDialogue: item.dialogue || '',
+            dialogueSpeaker: item.dialogueSpeaker || '',
+            dialogueEmotion: item.dialogueEmotion || '',
+            dialogueSfx: item.dialogueSfx || '',
+            emotionalBeat: item.emotionalBeat || undefined,
         }));
 
         // [CRITICAL FIX] Force-map original script text onto scenes
@@ -901,6 +944,45 @@ export const parseScriptToScenes = async (
                 }
             }
             console.log(`[PostProcess] AUTO mode: ${mainCount} MAIN scene(s) kept, rest forced to NOBODY`);
+        }
+
+        // [CRITICAL FIX] MINIMAL 캐릭터 빈도 강제 적용 — 최대 2회만 MAIN 허용
+        // MINIMAL 모드: 전체 장면의 ~10% (20장면 기준 2장면)만 MAIN, 나머지는 NOBODY로 강제 전환
+        // KEY_ENTITY는 예외 — 유명인/브랜드/장소는 반드시 표시되어야 함
+        if (appearance === CharacterAppearance.MINIMAL) {
+            const maxMain = Math.max(2, Math.round(result.length * 0.1));
+            let mainCount = 0;
+            for (let i = 0; i < result.length; i++) {
+                if (result[i].castType === 'KEY_ENTITY') continue;
+                if (result[i].castType === 'MAIN') {
+                    if (mainCount >= maxMain) {
+                        result[i] = {
+                            ...result[i],
+                            castType: 'NOBODY',
+                            characterPresent: false,
+                            characterAction: '',
+                        };
+                        console.log(`[PostProcess] MINIMAL castType fix: scene ${i} forced MAIN→NOBODY (max ${maxMain} MAIN exceeded, count=${mainCount})`);
+                    } else {
+                        mainCount++;
+                    }
+                }
+            }
+            console.log(`[PostProcess] MINIMAL mode: ${mainCount} MAIN scene(s) kept (max ${maxMain}), rest forced to NOBODY`);
+        }
+
+        // [CRITICAL FIX] NONE 캐릭터 모드 — 모든 장면에서 캐릭터 완전 제거
+        if (appearance === CharacterAppearance.NONE) {
+            for (let i = 0; i < result.length; i++) {
+                if (result[i].castType === 'KEY_ENTITY') continue;
+                result[i] = {
+                    ...result[i],
+                    castType: 'NOBODY',
+                    characterPresent: false,
+                    characterAction: '',
+                };
+            }
+            console.log(`[PostProcess] NONE mode: all non-KEY_ENTITY scenes forced to NOBODY`);
         }
 
         // [NEW] KEY_ENTITY 연출 구도 강제 다양화 — 같은 구도 연속 사용 금지

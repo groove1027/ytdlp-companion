@@ -1312,7 +1312,8 @@ const ScriptMode: React.FC<ScriptModeProps> = ({
                             {[
                                 { id: CharacterAppearance.AUTO, label: '자동 (AI)' },
                                 { id: CharacterAppearance.ALWAYS, label: '항상 (진행자)' },
-                                { id: CharacterAppearance.MINIMAL, label: '최소화 (B-Roll)' }
+                                { id: CharacterAppearance.MINIMAL, label: '최소화 (B-Roll)' },
+                                { id: CharacterAppearance.NONE, label: '출연 안함' }
                             ].map(opt => (
                                 <button
                                     key={opt.id}

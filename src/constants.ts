@@ -1,5 +1,5 @@
 
-import { AspectRatio, VoiceName, ImageModel, VideoFormat, VideoModel } from "./types";
+import { AspectRatio, VoiceName, ImageModel, VideoFormat, VideoModel, DialogueTone } from "./types";
 
 // [2026-03-02] Real-time Pricing (조사 기반 실시간 반영)
 export const PRICING = {
@@ -515,3 +515,49 @@ export const TYPECAST_MODELS: { id: string; label: string; description: string; 
   { id: 'ssfm-v30', label: 'SSFM v3.0', description: '최신 — Smart + Preset 감정', supportsSmartEmotion: true },
   { id: 'ssfm-v21', label: 'SSFM v2.1', description: '안정 — Preset 감정만', supportsSmartEmotion: false },
 ];
+
+// === DIALOGUE TONE PRESETS (v4.7 대사 품질 고도화) ===
+export const DIALOGUE_TONE_PRESETS: Record<DialogueTone, { label: string; emoji: string; desc: string; promptRules: string; arcTemplate: string }> = {
+  senior_story: {
+    label: '시니어 사연',
+    emoji: '👵',
+    desc: '시니어 채널 — 존댓말, 감성적, 회상조',
+    promptRules: `Tone: Warm Korean honorifics (존댓말). Elderly reminiscence style. Use "~했지요", "~이었답니다", "그때는 말이에요..." patterns. Include sighs, pauses (…), and emotional interjections (아이고, 참…). Dialogue must feel like a grandparent telling a story to their grandchildren.`,
+    arcTemplate: 'hook → daily → conflict → escalation → twist → resolution → reflection',
+  },
+  meme_viral: {
+    label: '밈/바이럴',
+    emoji: '🤣',
+    desc: '짧고 자극적 — 과장, 신조어, 리액션',
+    promptRules: `Tone: Extreme casual Korean (반말). Use internet slang, exaggeration ("미쳤다 진짜", "ㄹㅇ", "헐", "대박"). Each line must be punchy (max 15 chars). Include reaction sounds (ㅋㅋㅋ, 엥?, 헉). Dialogue should feel like viral TikTok/YouTube Shorts narration.`,
+    arcTemplate: 'hook → build → surprise → payoff → cta',
+  },
+  drama: {
+    label: '드라마/갈등',
+    emoji: '🎭',
+    desc: '대화 중심 — 갈등, 반전, 감정 교차',
+    promptRules: `Tone: Natural conversational Korean with emotional range. Two or more speakers with distinct speech patterns. Use conflict-driven dialogue with tension buildup. Include pauses (...), interruptions (—), and emotional shifts. Each speaker must have a unique voice.`,
+    arcTemplate: 'hook → daily → conflict → escalation → twist → resolution',
+  },
+  info: {
+    label: '정보/해설',
+    emoji: '📚',
+    desc: '친근한 해설 — 쉬운 설명, 질문형',
+    promptRules: `Tone: Friendly Korean semi-formal (해요체). Use rhetorical questions ("~인 거 알고 계셨나요?", "왜 그럴까요?"). Include "자, 여기서 중요한 건요—" transition patterns. Dialogue should make complex topics feel accessible and engaging.`,
+    arcTemplate: 'hook → build → surprise → build → payoff → cta',
+  },
+  storytelling: {
+    label: '스토리텔링',
+    emoji: '📖',
+    desc: '내러티브 — 서사적, 3인칭, 문학적',
+    promptRules: `Tone: Literary Korean narration. Third-person omniscient. Use vivid descriptions and internal monologue. Include scene-setting ("그날 밤,", "어느 날 문득,"). Mix narration with character speech in quotes. Build atmosphere through sensory details.`,
+    arcTemplate: 'hook → daily → build → conflict → escalation → twist → resolution → reflection',
+  },
+  none: {
+    label: '사용 안 함',
+    emoji: '⛔',
+    desc: '대사 생성 비활성화',
+    promptRules: '',
+    arcTemplate: '',
+  },
+};

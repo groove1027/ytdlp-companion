@@ -112,10 +112,16 @@ export enum SceneType {
 export enum CharacterAppearance {
   AUTO = 'AUTO',
   ALWAYS = 'ALWAYS',
-  MINIMAL = 'MINIMAL'
+  MINIMAL = 'MINIMAL',
+  NONE = 'NONE'
 }
 
 export type CreationMode = 'STRICT' | 'HYBRID' | 'CREATIVE';
+
+// [v4.7] 대사 품질 고도화
+export type DialogueTone = 'senior_story' | 'meme_viral' | 'drama' | 'info' | 'storytelling' | 'none';
+export interface CharacterProfile { name: string; age?: string; speechStyle?: string; role: 'protagonist' | 'antagonist' | 'narrator' | 'supporting'; }
+export type EmotionalBeat = 'hook' | 'daily' | 'conflict' | 'escalation' | 'twist' | 'resolution' | 'reflection' | 'build' | 'surprise' | 'payoff' | 'cta';
 
 export interface CompositionConfig {
     x: number;
@@ -204,6 +210,10 @@ export interface Scene {
 
   generatedSfx?: string;
   generatedDialogue?: string;
+  dialogueSpeaker?: string;
+  dialogueEmotion?: string;
+  dialogueSfx?: string;
+  emotionalBeat?: EmotionalBeat;
 
   // [v4.6] 장면별 사운드 디자인
   bgmUrl?: string;               // 장면 배경음악 URL
@@ -411,6 +421,12 @@ export interface ProjectConfig {
   lastActiveTab?: string;          // 마지막 활동 탭 ID
   pipelineSteps?: PipelineSteps;   // 파이프라인 진행도
   isManuallyNamed?: boolean;       // 사용자가 수동으로 제목 변경했는지
+
+  // [v4.7] 대사 품질 고도화
+  dialogueTone?: DialogueTone;
+  referenceDialogue?: string;
+  extractedCharacters?: CharacterProfile[];
+  dialogueMode?: boolean;
 }
 
 export interface CostStats {

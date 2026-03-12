@@ -7,8 +7,8 @@ import { analyzeScriptContext, parseScriptToScenes, countScenesLocally, splitSce
 import { analyzeCharacterImage } from '../../../services/characterAnalysisService';
 import { persistImage } from '../../../services/imageStorageService';
 // import { removeBackground } from '../../../services/removeBgService';
-import { PRICING } from '../../../constants';
-import { VideoFormat, CharacterAppearance, AspectRatio } from '../../../types';
+import { PRICING, DIALOGUE_TONE_PRESETS } from '../../../constants';
+import { VideoFormat, CharacterAppearance, AspectRatio, DialogueTone } from '../../../types';
 import type { CharacterReference, SavedCharacter } from '../../../types';
 import VisualStylePicker, { getVisualStyleLabel } from '../../VisualStylePicker';
 import CharacterUploadPanel from '../../CharacterUploadPanel';
@@ -54,6 +54,7 @@ const CHAR_FREQ = [
   { value: CharacterAppearance.AUTO, label: '자동 (AI)' },
   { value: CharacterAppearance.ALWAYS, label: '항상 (진행자)' },
   { value: CharacterAppearance.MINIMAL, label: '최소화 (B-Roll)' },
+  { value: CharacterAppearance.NONE, label: '출연 안함' },
 ];
 
 /** 한국어 나레이션 기준 약 650자/분 */
@@ -80,6 +81,12 @@ const SetupPanel: React.FC = () => {
   const setEnableWebSearch = useImageVideoStore((s) => s.setEnableWebSearch);
   const isMultiCharacter = useImageVideoStore((s) => s.isMultiCharacter);
   const setIsMultiCharacter = useImageVideoStore((s) => s.setIsMultiCharacter);
+  const dialogueMode = useImageVideoStore((s) => s.dialogueMode);
+  const setDialogueMode = useImageVideoStore((s) => s.setDialogueMode);
+  const dialogueTone = useImageVideoStore((s) => s.dialogueTone);
+  const setDialogueTone = useImageVideoStore((s) => s.setDialogueTone);
+  const referenceDialogue = useImageVideoStore((s) => s.referenceDialogue);
+  const setReferenceDialogue = useImageVideoStore((s) => s.setReferenceDialogue);
 
   const [directInputMode, setDirectInputMode] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -314,7 +321,10 @@ const SetupPanel: React.FC = () => {
         config.allowInfographics ?? false, enrichMode ? false : ss,
         config.baseAge, config.textForceLock, JSON.stringify(ctx), ctx.detectedLocale, onCost,
         config.suppressText, enrichMode ? undefined : (vf === VideoFormat.LONG ? lfs : undefined),
-        enrichMode ? existingScenes.length : ctx.estimatedSceneCount
+        enrichMode ? existingScenes.length : ctx.estimatedSceneCount,
+        config.dialogueTone, // [v4.7] 대사 톤
+        config.extractedCharacters || ctx.characters, // [v4.7] 캐릭터 프로필
+        config.referenceDialogue // [v4.7] 참조 대사
       );
 
       // [POST-PROCESS] 개별 장면에 컨텍스트 누락 시 전역 분석 결과로 채움
@@ -331,7 +341,7 @@ const SetupPanel: React.FC = () => {
       if (enrichMode) {
         useProjectStore.getState().setScenes(existingScenes.map((ex, i) => {
           const ai = parsed[i]; if (!ai) return ex;
-          return { ...ex, visualPrompt: ai.visualPrompt || ex.visualPrompt, visualDescriptionKO: ai.visualDescriptionKO || ex.visualDescriptionKO, characterPresent: ai.characterPresent ?? ex.characterPresent, castType: ai.castType || ex.castType, cameraAngle: ai.cameraAngle || ex.cameraAngle, cameraMovement: ai.cameraMovement || ex.cameraMovement, shotSize: ai.shotSize || ex.shotSize, isInfographic: ai.isInfographic ?? ex.isInfographic, sceneLocation: ai.sceneLocation || ex.sceneLocation, sceneEra: ai.sceneEra || ex.sceneEra, sceneCulture: ai.sceneCulture || ex.sceneCulture, characterAction: ai.characterAction || ex.characterAction, entityName: ai.entityName || ex.entityName, entityComposition: ai.entityComposition || ex.entityComposition };
+          return { ...ex, visualPrompt: ai.visualPrompt || ex.visualPrompt, visualDescriptionKO: ai.visualDescriptionKO || ex.visualDescriptionKO, characterPresent: ai.characterPresent ?? ex.characterPresent, castType: ai.castType || ex.castType, cameraAngle: ai.cameraAngle || ex.cameraAngle, cameraMovement: ai.cameraMovement || ex.cameraMovement, shotSize: ai.shotSize || ex.shotSize, isInfographic: ai.isInfographic ?? ex.isInfographic, sceneLocation: ai.sceneLocation || ex.sceneLocation, sceneEra: ai.sceneEra || ex.sceneEra, sceneCulture: ai.sceneCulture || ex.sceneCulture, characterAction: ai.characterAction || ex.characterAction, entityName: ai.entityName || ex.entityName, entityComposition: ai.entityComposition || ex.entityComposition, generatedDialogue: ai.generatedDialogue || ex.generatedDialogue, dialogueSpeaker: ai.dialogueSpeaker || ex.dialogueSpeaker, dialogueEmotion: ai.dialogueEmotion || ex.dialogueEmotion, dialogueSfx: ai.dialogueSfx || ex.dialogueSfx, emotionalBeat: ai.emotionalBeat || ex.emotionalBeat };
         }));
       } else {
         useProjectStore.getState().setScenes(parsed.map((s, i) => ({ ...s, id: `scene-${Date.now()}-${++_sceneIdCounter}-${i}`, isGeneratingImage: false, isGeneratingVideo: false })));
@@ -776,6 +786,51 @@ const SetupPanel: React.FC = () => {
           colorTheme="blue"
           compact
         />
+      </div>
+
+      {/* ── 대사 생성 (v4.7) ── */}
+      <div className="bg-gray-800/60 border border-gray-700/50 rounded-xl p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-fuchsia-500 to-fuchsia-700 flex items-center justify-center text-sm">💬</div>
+            <h3 className="text-base font-bold text-white">{stepBase + 3}. 대사 생성 (선택)</h3>
+          </div>
+          <Toggle checked={dialogueMode} onChange={(v) => { setDialogueMode(v); if (v && dialogueTone === 'none') setDialogueTone('senior_story'); if (!v) setDialogueTone('none'); }} />
+        </div>
+        {dialogueMode && (
+          <div className="space-y-3">
+            <p className="text-xs text-gray-400">화면에 표시할 대사를 AI가 자동 생성합니다. 톤을 선택하면 해당 스타일로 대사가 만들어집니다.</p>
+            <div className="grid grid-cols-3 gap-1.5">
+              {(Object.entries(DIALOGUE_TONE_PRESETS) as [DialogueTone, typeof DIALOGUE_TONE_PRESETS[DialogueTone]][])
+                .filter(([k]) => k !== 'none')
+                .map(([key, preset]) => (
+                  <button key={key} type="button" onClick={() => setDialogueTone(key)}
+                    className={`px-2.5 py-2 rounded-lg text-xs font-medium transition-all border ${
+                      dialogueTone === key
+                        ? 'bg-fuchsia-600/20 text-fuchsia-400 border-fuchsia-500/30'
+                        : 'bg-gray-700/40 text-gray-400 border-gray-600/30 hover:border-gray-500/50'
+                    }`}>
+                    <span className="block text-sm">{preset.emoji}</span>
+                    <span className="block mt-0.5">{preset.label}</span>
+                  </button>
+                ))}
+            </div>
+            {dialogueTone !== 'none' && (
+              <p className="text-[11px] text-fuchsia-400/80">{DIALOGUE_TONE_PRESETS[dialogueTone].desc}</p>
+            )}
+            <div>
+              <label className="text-xs text-gray-400 block mb-1">참조 대사 (선택, 톤 참고용)</label>
+              <textarea
+                value={referenceDialogue}
+                onChange={(e) => setReferenceDialogue(e.target.value.slice(0, 500))}
+                placeholder="원하는 대사 스타일의 예시를 붙여넣으세요..."
+                className="w-full bg-gray-900/60 border border-gray-700/50 rounded-lg px-3 py-2 text-sm text-gray-300 placeholder-gray-600 resize-none focus:outline-none focus:border-fuchsia-500/50"
+                rows={2}
+              />
+              <div className="text-[10px] text-gray-600 text-right mt-0.5">{referenceDialogue.length}/500</div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ── 에러 ── */}

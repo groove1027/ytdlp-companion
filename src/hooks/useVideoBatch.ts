@@ -203,7 +203,12 @@ export const useVideoBatch = (
             let generatedDialogue = undefined;
             let generatedSfx = undefined;
 
-            if (!isSafeMode && (overrideSpeech !== undefined ? overrideSpeech : (scene.grokSpeechMode || false))) {
+            // [v4.7] 기존 대사가 있으면 재사용 (parseScriptToScenes에서 생성된 대사)
+            if (scene.generatedDialogue) {
+                generatedDialogue = scene.generatedDialogue;
+                generatedSfx = scene.generatedSfx || scene.dialogueSfx;
+                logger.info(`[v4.7] Reusing pre-generated dialogue for Scene ${sceneId}: "${generatedDialogue}"`);
+            } else if (!isSafeMode && (overrideSpeech !== undefined ? overrideSpeech : (scene.grokSpeechMode || false))) {
                  if (effectiveModel !== VideoModel.VEO && effectiveModel !== VideoModel.VEO_QUALITY) {
                     logger.info(`Generating Dialogue for Scene ${sceneId}...`);
                     const audioData = await generateCharacterDialogue(scene.scriptText, scene.visualPrompt);

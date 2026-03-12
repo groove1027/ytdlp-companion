@@ -680,6 +680,11 @@ const App: React.FC = () => {
           if (!newConfig.atmosphere && contextData.visualTone) {
               finalConfig.atmosphere = contextData.visualTone;
           }
+          // [v4.7] extractedCharacters 저장
+          if (contextData.characters) {
+              finalConfig.extractedCharacters = contextData.characters;
+          }
+
           const analyzedScenes = await parseScriptToScenes(
               newConfig.script,
               newConfig.videoFormat,
@@ -695,7 +700,10 @@ const App: React.FC = () => {
               (c)=>addCost(c, 'analysis'),
               newConfig.suppressText,
               newConfig.longFormSplitType,
-              proSceneCount // [NEW] Pro/Thinking이 산출한 정밀 컷수 우선 사용
+              proSceneCount, // [NEW] Pro/Thinking이 산출한 정밀 컷수 우선 사용
+              newConfig.dialogueTone, // [v4.7] 대사 톤
+              newConfig.extractedCharacters || contextData.characters, // [v4.7] 캐릭터 프로필
+              newConfig.referenceDialogue // [v4.7] 참조 대사
           );
 
           // [FIX] Correctly initialize isInfographic based on config if not set
@@ -711,13 +719,13 @@ const App: React.FC = () => {
                   textToRender = s.scriptText; 
               }
 
-              return { 
-                  ...s, 
-                  id: `scene-${Date.now()}-${i}`, 
-                  isGeneratingImage: true, 
+              return {
+                  ...s,
+                  id: `scene-${Date.now()}-${i}`,
+                  isGeneratingImage: true,
                   isGeneratingVideo: false,
                   grokDuration: '10',
-                  grokSpeechMode: false,
+                  grokSpeechMode: newConfig.dialogueMode ?? false,
                   isNativeHQ: false, 
                   isInfographic: newConfig.allowInfographics === true ? (s.isInfographic === true) : false, // [FIX] allowInfographics가 false면 무조건 false 강제
                   requiresTextRendering: requiresText,

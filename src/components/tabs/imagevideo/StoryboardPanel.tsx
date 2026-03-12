@@ -155,6 +155,19 @@ const SceneCard: React.FC<SceneCardProps> = ({ scene, index, onUpdatePrompt, onD
           <p className="text-sm text-gray-300 mt-0.5 max-h-24 overflow-y-auto">{scene.scriptText || '(나레이션 없음)'}</p>
         </div>
 
+        {/* 대사 미리보기 (v4.7) */}
+        {scene.generatedDialogue && (
+          <div className="bg-fuchsia-900/20 border border-fuchsia-500/20 rounded-lg px-3 py-2 space-y-1">
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] font-bold text-fuchsia-400 uppercase tracking-wider">💬 대사</span>
+              {scene.dialogueSpeaker && <span className="text-[10px] text-fuchsia-300/70">— {scene.dialogueSpeaker}</span>}
+              {scene.dialogueEmotion && <span className="text-[9px] bg-fuchsia-600/20 text-fuchsia-300 px-1.5 py-0.5 rounded-full border border-fuchsia-500/20">{scene.dialogueEmotion}</span>}
+            </div>
+            <p className="text-sm text-fuchsia-200/90 leading-relaxed">&ldquo;{scene.generatedDialogue}&rdquo;</p>
+            {scene.dialogueSfx && <p className="text-[10px] text-gray-500">SFX: {scene.dialogueSfx}</p>}
+          </div>
+        )}
+
         {/* Audio strip — always visible when scene has audio or script */}
         {(scene.audioUrl || scene.scriptText) && onPlaySceneAudio && (
           <div className="flex items-center gap-2 bg-gray-900/40 rounded-lg px-2.5 py-1.5 border border-gray-700/50">

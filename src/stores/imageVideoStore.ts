@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { CharacterReference } from '../types';
+import type { CharacterReference, DialogueTone } from '../types';
 import { logger } from '../services/LoggerService';
 
 interface ImageVideoStore {
@@ -12,6 +12,10 @@ interface ImageVideoStore {
   enableWebSearch: boolean;
   // [NEW] 멀티캐릭터 모드 (false=싱글 구버전 레이아웃, true=5슬롯 그리드)
   isMultiCharacter: boolean;
+  // [v4.7] 대사 품질 고도화
+  dialogueTone: DialogueTone;
+  referenceDialogue: string;
+  dialogueMode: boolean;
 
   setActiveSubTab: (tab: 'setup' | 'storyboard') => void;
   setStyle: (v: string) => void;
@@ -22,9 +26,12 @@ interface ImageVideoStore {
   updateCharacter: (id: string, updates: Partial<CharacterReference>) => void;
   setEnableWebSearch: (v: boolean) => void;
   setIsMultiCharacter: (v: boolean) => void;
+  setDialogueTone: (v: DialogueTone) => void;
+  setReferenceDialogue: (v: string) => void;
+  setDialogueMode: (v: boolean) => void;
 
   // 프로젝트 로드/리셋 시 일괄 복원
-  restoreFromConfig: (data: { style?: string; characters?: CharacterReference[]; enableWebSearch?: boolean; isMultiCharacter?: boolean }) => void;
+  restoreFromConfig: (data: { style?: string; characters?: CharacterReference[]; enableWebSearch?: boolean; isMultiCharacter?: boolean; dialogueTone?: DialogueTone; referenceDialogue?: string; dialogueMode?: boolean }) => void;
   resetStore: () => void;
 }
 
@@ -43,10 +50,10 @@ const syncToProjectConfig = () => {
   requestAnimationFrame(() => {
     const ps = getProjectStore();
     if (!ps) return;
-    const { style, characters, enableWebSearch, isMultiCharacter } = useImageVideoStore.getState();
+    const { style, characters, enableWebSearch, isMultiCharacter, dialogueTone, referenceDialogue, dialogueMode } = useImageVideoStore.getState();
     ps.getState().setConfig((prev: any) => {
       if (!prev) return prev;
-      return { ...prev, selectedVisualStyle: style, characters, enableWebSearch, isMultiCharacter };
+      return { ...prev, selectedVisualStyle: style, characters, enableWebSearch, isMultiCharacter, dialogueTone, referenceDialogue, dialogueMode };
     });
   });
 };
@@ -57,11 +64,17 @@ export const useImageVideoStore = create<ImageVideoStore>((set) => ({
   characters: [],
   enableWebSearch: true,
   isMultiCharacter: false,
+  dialogueTone: 'none' as DialogueTone,
+  referenceDialogue: '',
+  dialogueMode: false,
 
   setActiveSubTab: (tab) => set({ activeSubTab: tab }),
   setStyle: (v) => { const prev = useImageVideoStore.getState().style; logger.trackSettingChange('iv.style', prev, v); set({ style: v }); syncToProjectConfig(); },
   setEnableWebSearch: (v) => { const prev = useImageVideoStore.getState().enableWebSearch; logger.trackSettingChange('iv.webSearch', prev, v); set({ enableWebSearch: v }); syncToProjectConfig(); },
   setIsMultiCharacter: (v) => { const prev = useImageVideoStore.getState().isMultiCharacter; logger.trackSettingChange('iv.multiChar', prev, v); set({ isMultiCharacter: v }); syncToProjectConfig(); },
+  setDialogueTone: (v) => { const prev = useImageVideoStore.getState().dialogueTone; logger.trackSettingChange('iv.dialogueTone', prev, v); set({ dialogueTone: v }); syncToProjectConfig(); },
+  setReferenceDialogue: (v) => { set({ referenceDialogue: v }); syncToProjectConfig(); },
+  setDialogueMode: (v) => { const prev = useImageVideoStore.getState().dialogueMode; logger.trackSettingChange('iv.dialogueMode', prev, v); set({ dialogueMode: v }); syncToProjectConfig(); },
   setCharacters: (chars) => {
     set((s) => ({ characters: typeof chars === 'function' ? chars(s.characters) : chars }));
     syncToProjectConfig();
@@ -83,6 +96,9 @@ export const useImageVideoStore = create<ImageVideoStore>((set) => ({
     characters: data.characters || [],
     enableWebSearch: data.enableWebSearch ?? true,
     isMultiCharacter: data.isMultiCharacter ?? false,
+    dialogueTone: data.dialogueTone || 'none',
+    referenceDialogue: data.referenceDialogue || '',
+    dialogueMode: data.dialogueMode ?? false,
   }),
 
   // 새 프로젝트 시 초기화
@@ -92,5 +108,8 @@ export const useImageVideoStore = create<ImageVideoStore>((set) => ({
     characters: [],
     enableWebSearch: true,
     isMultiCharacter: false,
+    dialogueTone: 'none' as DialogueTone,
+    referenceDialogue: '',
+    dialogueMode: false,
   }),
 }));
