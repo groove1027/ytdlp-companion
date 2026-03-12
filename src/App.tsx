@@ -45,6 +45,7 @@ import { useAuthStore } from './stores/authStore';
 import { useCostStore } from './stores/costStore';
 import { useProjectStore, autoRestoreOrCreateProject } from './stores/projectStore';
 import { useNavigationStore } from './stores/navigationStore';
+import { logger } from './services/LoggerService';
 
 // 청크 로딩 실패 시 1회 재시도 + 자동 리로드 (배포 후 구버전 캐시 문제 해결)
 function lazyRetry(importFn: () => Promise<{ default: React.ComponentType<any> }>) {
@@ -219,6 +220,7 @@ const App: React.FC = () => {
 
   // --- UI Store ---
   const isSidebarOpen = useUIStore((s) => s.isSidebarOpen);
+  const lastAutoSavedAt = useUIStore((s) => s.lastAutoSavedAt);
   const lightboxUrl = useUIStore((s) => s.lightboxUrl);
   const showFullScriptModal = useUIStore((s) => s.showFullScriptModal);
   const showApiSettings = useUIStore((s) => s.showApiSettings);
@@ -271,7 +273,7 @@ const App: React.FC = () => {
     // [FIX] 앱 시작 시 음악 라이브러리 로드 — 편집실 BGM 패널에서 즉시 트랙 표시
     import('./stores/soundStudioStore').then(({ useSoundStudioStore }) => {
       useSoundStudioStore.getState().loadMusicLibrary();
-    }).catch(() => {});
+    }).catch((e) => { logger.trackSwallowedError('App:loadMusicLibrary', e); });
   }, []);
 
   // Auto-save via Zustand store subscriptions
@@ -289,7 +291,7 @@ const App: React.FC = () => {
         const lastId = localStorage.getItem('last-project-id');
         const cleaned = await cleanupEmptyProjects(lastId);
         if (cleaned > 0) console.log(`[App] ${cleaned}개 빈 임시 프로젝트 정리됨`);
-      } catch { /* 정리 실패해도 계속 진행 */ }
+      } catch (e) { logger.trackSwallowedError('App:initProject/cleanupEmptyProjects', e); }
 
       // 2) 기존 프로젝트 복원 시도 → 없으면 새로 생성
       const restored = await autoRestoreOrCreateProject();
@@ -1281,6 +1283,13 @@ const App: React.FC = () => {
             );
           })()}
           {/* [FIX #175-6] 디버그 로그 숨김 — 피드백 전송 시 자동 포함되므로 노출 불필요 */}
+          {/* [FIX #148] 자동 저장 상태 표시 */}
+          {lastAutoSavedAt && (
+            <div className="mt-auto pt-3 px-4 pb-2 text-xs text-gray-600 flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-green-500/60 animate-pulse" />
+              자동 저장됨 {new Date(lastAutoSavedAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}
+            </div>
+          )}
         </aside>
 
         {/* 메인 콘텐츠 영역 */}

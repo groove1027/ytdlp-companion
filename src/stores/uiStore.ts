@@ -27,6 +27,7 @@ interface UIStore {
   refreshTrigger: number;
   toolboxOpen: boolean;
   postProductionOpen: boolean;
+  lastAutoSavedAt: number | null;
 
   // Actions
   openSidebar: () => void;
@@ -48,6 +49,7 @@ interface UIStore {
   triggerRefresh: () => void;
   setToolboxOpen: (open: boolean) => void;
   setPostProductionOpen: (open: boolean) => void;
+  setLastAutoSavedAt: (ts: number) => void;
 }
 
 export const useUIStore = create<UIStore>((set) => ({
@@ -69,6 +71,7 @@ export const useUIStore = create<UIStore>((set) => ({
   refreshTrigger: 0,
   toolboxOpen: false,
   postProductionOpen: false,
+  lastAutoSavedAt: null,
 
   openSidebar: () => set({ isSidebarOpen: true }),
   closeSidebar: () => set({ isSidebarOpen: false }),
@@ -95,6 +98,7 @@ export const useUIStore = create<UIStore>((set) => ({
   triggerRefresh: () => set((state) => ({ refreshTrigger: state.refreshTrigger + 1 })),
   setToolboxOpen: (open) => set({ toolboxOpen: open }),
   setPostProductionOpen: (open) => set({ postProductionOpen: open }),
+  setLastAutoSavedAt: (ts) => set({ lastAutoSavedAt: ts }),
 }));
 
 /** alert() 대체 유틸리티 — 어디서든 import해서 사용 */
