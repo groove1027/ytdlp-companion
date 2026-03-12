@@ -1063,12 +1063,6 @@ const App: React.FC = () => {
                 💬 피드백
               </button>
               <button
-                onClick={() => useUIStore.getState().setShowFeedbackHistory(true)}
-                className="px-3.5 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-gray-300 hover:text-white rounded-lg text-sm font-bold transition-all flex items-center gap-1.5"
-              >
-                📋 내 피드백
-              </button>
-              <button
                 onClick={() => useUIStore.getState().setShowProfileModal(true)}
                 className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-gray-300 hover:text-white rounded-lg text-sm font-bold transition-all flex items-center gap-1.5"
               >
