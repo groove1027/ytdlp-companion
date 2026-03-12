@@ -878,9 +878,15 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
       {/* Typecast 전용 툴바 */}
       {(activeSpeaker?.engine || ttsEngine || 'typecast') === 'typecast' && (
       <div className="flex items-center gap-2 px-4 py-2.5 bg-gray-900/80 border-b border-gray-700/50 flex-wrap">
+        <select value={globalModel} onChange={(e) => setGlobalModel(e.target.value as 'ssfm-v30' | 'ssfm-v21')}
+          title={TYPECAST_MODELS.find(m => m.id === globalModel)?.description || ''}
+          className={`text-xs font-bold rounded-lg px-2.5 py-1.5 cursor-pointer border transition-colors ${globalModel === 'ssfm-v21' ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' : 'bg-fuchsia-500/15 text-fuchsia-300 border-fuchsia-500/30'}`}>
+          {TYPECAST_MODELS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
+        </select>
+        <span className="text-gray-600">|</span>
         <button type="button" onClick={() => { if (globalModel !== 'ssfm-v21') setSmartEmotion(!smartEmotion); }}
           disabled={globalModel === 'ssfm-v21'}
-          title={globalModel === 'ssfm-v21' ? 'Smart Emotion은 SSFM v3.0 전용입니다' : ''}
+          title={globalModel === 'ssfm-v21' ? '스마트 이모션은 최신 음성(v3.0) 전용입니다' : 'AI가 문맥에 맞게 감정을 자동 조절합니다'}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border ${globalModel === 'ssfm-v21' ? 'bg-gray-800 text-gray-500 border-gray-700 opacity-50 cursor-not-allowed' : smartEmotion ? 'bg-orange-500/20 text-orange-300 border-orange-500/40' : 'bg-gray-800 text-gray-400 border-gray-600'}`}>
           🧠 스마트 이모션
         </button>
@@ -984,11 +990,6 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
           음성 재생성
         </button>
         <span className="text-gray-600">|</span>
-        <select value={globalModel} onChange={(e) => setGlobalModel(e.target.value as 'ssfm-v30' | 'ssfm-v21')}
-          className="text-xs bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-gray-300 cursor-pointer">
-          {TYPECAST_MODELS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
-        </select>
-        <span className="text-gray-600">|</span>
         <select value={tcLanguage} onChange={(e) => { const lang = e.target.value as TTSLanguage; setTcLanguage(lang); if (activeSpeaker) updateSpeaker(activeSpeaker.id, { language: lang }); }}
           className="text-xs bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-gray-300 cursor-pointer">
           <option value="ko">{'\uD83C\uDDF0\uD83C\uDDF7'} 한국어</option>
@@ -1005,7 +1006,7 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
       )}
       {(activeSpeaker?.engine || ttsEngine || 'typecast') === 'typecast' && smartEmotion && (
         <div className="px-4 py-1.5 bg-blue-900/10 text-xs text-blue-400/70 flex items-center gap-1.5 border-b border-gray-700/30">
-          <span>🧠</span><span>Smart Emotion: 전후 문맥 자동 감정 조절 ({TYPECAST_MODELS.find(m => m.id === globalModel)?.label || 'SSFM v3.0'})</span>
+          <span>🧠</span><span>Smart Emotion: 전후 문맥 자동 감정 조절 ({TYPECAST_MODELS.find(m => m.id === globalModel)?.labelShort || '최신 v3.0'})</span>
         </div>
       )}
 

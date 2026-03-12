@@ -511,9 +511,9 @@ export const TYPECAST_V21_EMOTIONS: { id: string; label: string; labelKo: string
   { id: 'toneup',  label: 'Tone Up',  labelKo: '톤업',     icon: '📈', description: '에너지 넘치는 상승 톤' },
 ];
 
-export const TYPECAST_MODELS: { id: string; label: string; description: string; supportsSmartEmotion: boolean }[] = [
-  { id: 'ssfm-v30', label: 'SSFM v3.0', description: '최신 — Smart + Preset 감정', supportsSmartEmotion: true },
-  { id: 'ssfm-v21', label: 'SSFM v2.1', description: '안정 — Preset 감정만', supportsSmartEmotion: false },
+export const TYPECAST_MODELS: { id: string; label: string; labelShort: string; description: string; supportsSmartEmotion: boolean }[] = [
+  { id: 'ssfm-v30', label: '✨ 최신 음성 (v3.0)', labelShort: '최신 v3.0', description: 'AI 감정 자동 조절 + 수동 감정 선택', supportsSmartEmotion: true },
+  { id: 'ssfm-v21', label: '🎙️ 클래식 음성 (v2.1)', labelShort: '클래식 v2.1', description: '안정적이고 자연스러운 음질, 수동 감정만', supportsSmartEmotion: false },
 ];
 
 // === DIALOGUE TONE PRESETS (v4.7 대사 품질 고도화) ===
