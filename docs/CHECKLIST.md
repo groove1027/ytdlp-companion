@@ -8,6 +8,8 @@
 
 ## 🟢 완료된 작업
 
+- [x] #146 내 피드백 내역 팝업 + 답변 확인 기능 — 헤더 "내 피드백" 버튼, 보낸 피드백 목록/상태/답변 내용 팝업 조회, GitHub API 실시간 상태 체크 (FeedbackHistoryPanel.tsx, feedbackService.ts, uiStore.ts, App.tsx, 2026-03-12)
+- [x] #142 영상/분석실에 All TTS 리메이크 프리셋 추가 — 스크립트 리빌딩 프로토콜 v3.6 적용, 원본 100% 보존 + 텍스트 유사도 0% 수렴 TTS 전용 대본 10종 생성 + Content ID 회피 분석 (VideoAnalysisRoom.tsx, types.ts, docs/all-tts-protocol.md, 2026-03-12)
 - [x] #129 Evolink API 429 Rate Limit 재시도 — 태스크 생성(이미지/비디오)에 지수 백오프 재시도(2s→4s→8s, 최대 3회) 추가, 폴링 중 429 시 5초 추가 대기 (evolinkService.ts, 2026-03-12)
 - [x] #128 이미지 생성 폴백 시 사용자 미통지 수정 — Kie→Evolink 폴백 발생 시 showToast로 서버 변경 재시도 안내 표시 (imageGeneration.ts, 2026-03-12)
 - [x] GhostCut 자막 제거 UI/UX 대폭 개선 — 폴링 메시지 6단계 세분화 (대기열→감지→제거→장시간→고해상도→초장시간), D1 progress 필드 활용, 예상 소요시간 영상길이별 정확 표시, 처리 중 안내 박스, 배치 처리 소요시간 경고, 진행률 계산 실측 반영 (ghostcutService.ts, SubtitleRemoverTab.tsx, Step3Export.tsx, editPointStore.ts, 2026-03-11)

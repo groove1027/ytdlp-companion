@@ -225,23 +225,22 @@ export const MemeAndSfxSearchModal: React.FC<{ onClose: () => void }> = ({ onClo
     setViewMode('search');
     const seq = ++searchSeqRef.current;
     try {
-      const items = await searchMedia({
-        query: trimmed,
-        type,
-        source: source === 'all' ? undefined : source,
-        limit: 60,
-      });
-      if (seq === searchSeqRef.current) {
-        setResults(items);
+      const srcOpt = source === 'all' ? undefined : source;
+      // 타입 필터 없으면 이미지/SFX 각각 검색 (SFX가 이미지에 밀리지 않도록)
+      if (!type && !srcOpt) {
+        const [images, sfx] = await Promise.all([
+          searchMedia({ query: trimmed, type: 'image', limit: 48 }),
+          searchMedia({ query: trimmed, type: 'sfx', limit: 24 }),
+        ]);
+        if (seq === searchSeqRef.current) setResults([...images, ...sfx]);
+      } else {
+        const items = await searchMedia({ query: trimmed, type, source: srcOpt, limit: 60 });
+        if (seq === searchSeqRef.current) setResults(items);
       }
     } catch {
-      if (seq === searchSeqRef.current) {
-        setResults([]);
-      }
+      if (seq === searchSeqRef.current) setResults([]);
     } finally {
-      if (seq === searchSeqRef.current) {
-        setIsLoading(false);
-      }
+      if (seq === searchSeqRef.current) setIsLoading(false);
     }
   }, []);
 
@@ -290,13 +289,35 @@ export const MemeAndSfxSearchModal: React.FC<{ onClose: () => void }> = ({ onClo
       audioRef.current.onerror = null;
       audioRef.current.pause();
     }
+    // SFX Lab: hotlink protection으로 직접 재생 불가 → 새 탭에서 열기
+    if (item.source === 'sfx_lab') {
+      window.open(item.url, '_blank', 'noopener');
+      showToast('SFX Lab 사운드를 새 탭에서 재생합니다');
+      return;
+    }
     const audio = new Audio(item.url);
     audio.onended = () => setPlayingAudioId(null);
-    audio.onerror = () => setPlayingAudioId(null);
-    audio.play().catch(() => setPlayingAudioId(null));
+    audio.onerror = () => {
+      setPlayingAudioId(null);
+      showToast('재생 실패 — 외부 서버 제한일 수 있습니다');
+    };
+    audio.play().catch(() => {
+      setPlayingAudioId(null);
+      showToast('재생 실패 — 외부 서버 제한일 수 있습니다');
+    });
     audioRef.current = audio;
     setPlayingAudioId(item.id);
   }, [playingAudioId]);
+
+  /** 검색 + 필터 전체 초기화 */
+  const resetSearch = useCallback(() => {
+    setQuery('');
+    setResults([]);
+    setActiveType(undefined);
+    setActiveSource('all');
+    setViewMode('search');
+    inputRef.current?.focus();
+  }, []);
 
   const displayItems = viewMode === 'favorites' ? favorites
     : viewMode === 'recent' ? recents
@@ -354,14 +375,26 @@ export const MemeAndSfxSearchModal: React.FC<{ onClose: () => void }> = ({ onClo
         {/* 검색 바 + 필터 */}
         <div className="space-y-3">
           <div className="flex gap-3">
-            <input
-              ref={inputRef}
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') doSearch(query, activeType, activeSource); }}
-              placeholder="한글 또는 영어로 검색 (예: 웃음, 폭발, 고양이, funny, explosion...)"
-              className="flex-1 bg-gray-800 border border-gray-600 rounded-xl px-5 py-3 text-base text-white placeholder-gray-500 focus:border-amber-500/50 outline-none"
-            />
+            <div className="relative flex-1">
+              <input
+                ref={inputRef}
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') doSearch(query, activeType, activeSource); }}
+                placeholder="한글 또는 영어로 검색 (예: 웃음, 폭발, 고양이, funny, explosion...)"
+                className="w-full bg-gray-800 border border-gray-600 rounded-xl px-5 py-3 pr-10 text-base text-white placeholder-gray-500 focus:border-amber-500/50 outline-none"
+              />
+              {query && (
+                <button
+                  type="button"
+                  onClick={resetSearch}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 w-6 h-6 flex items-center justify-center rounded-full bg-gray-600 hover:bg-gray-500 text-gray-300 hover:text-white transition-colors"
+                  title="검색 초기화"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+              )}
+            </div>
             <button
               onClick={() => doSearch(query, activeType, activeSource)}
               disabled={isLoading || !query.trim()}
@@ -446,6 +479,20 @@ export const MemeAndSfxSearchModal: React.FC<{ onClose: () => void }> = ({ onClo
                 </button>
               ))}
             </div>
+
+            {/* 필터 초기화 (활성 필터가 있을 때만 표시) */}
+            {(activeType !== undefined || activeSource !== 'all' || query.trim()) && (
+              <>
+                <div className="w-px h-6 bg-gray-700" />
+                <button
+                  onClick={resetSearch}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-red-600/10 text-red-400 border border-red-500/30 hover:bg-red-600/20 transition-all whitespace-nowrap"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                  초기화
+                </button>
+              </>
+            )}
           </div>
         </div>
 
@@ -597,44 +644,54 @@ export const MemeAndSfxSearchModal: React.FC<{ onClose: () => void }> = ({ onClo
               <span className="text-xs text-gray-600 font-normal">({sfxItems.length})</span>
             </p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-              {sfxItems.map((item) => (
-                <div
-                  key={item.id}
-                  className="flex items-center gap-3 bg-gray-800 rounded-xl border border-gray-700 px-4 py-3 hover:border-amber-500/40 transition-all cursor-pointer group/sfx"
-                  onClick={() => applyToScene(item)}
-                >
-                  <button
-                    onClick={(e) => handlePlayAudio(e, item)}
-                    className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 border-2 transition-all ${
-                      playingAudioId === item.id
-                        ? 'bg-amber-600 border-amber-400 text-white animate-pulse'
-                        : 'bg-gray-700 border-gray-600 text-gray-300 hover:bg-gray-600 hover:border-gray-500'
-                    }`}
-                    title={playingAudioId === item.id ? '정지' : '미리듣기'}
+              {sfxItems.map((item) => {
+                const isSfxLab = item.source === 'sfx_lab';
+                return (
+                  <div
+                    key={item.id}
+                    className="flex items-center gap-3 bg-gray-800 rounded-xl border border-gray-700 px-4 py-3 hover:border-amber-500/40 transition-all cursor-pointer group/sfx"
+                    onClick={() => applyToScene(item)}
                   >
-                    {playingAudioId === item.id ? (
-                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16" /><rect x="14" y="4" width="4" height="16" /></svg>
-                    ) : (
-                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
-                    )}
-                  </button>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm text-white font-medium line-clamp-1">{item.title}</p>
-                    <p className="text-xs text-gray-500">{item.source === 'sfx_lab' ? 'SFX Lab' : 'MyInstants'} · {item.tags.slice(0, 3).join(', ')}</p>
+                    <button
+                      onClick={(e) => handlePlayAudio(e, item)}
+                      className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 border-2 transition-all ${
+                        isSfxLab
+                          ? 'bg-gray-700 border-violet-500/50 text-violet-300 hover:bg-violet-900/40 hover:border-violet-400'
+                          : playingAudioId === item.id
+                            ? 'bg-amber-600 border-amber-400 text-white animate-pulse'
+                            : 'bg-gray-700 border-gray-600 text-gray-300 hover:bg-gray-600 hover:border-gray-500'
+                      }`}
+                      title={isSfxLab ? '새 탭에서 듣기' : playingAudioId === item.id ? '정지' : '미리듣기'}
+                    >
+                      {isSfxLab ? (
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+                      ) : playingAudioId === item.id ? (
+                        <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16" /><rect x="14" y="4" width="4" height="16" /></svg>
+                      ) : (
+                        <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
+                      )}
+                    </button>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-white font-medium line-clamp-1">{item.title}</p>
+                      <p className="text-xs text-gray-500">
+                        {isSfxLab ? 'SFX Lab' : 'MyInstants'} · {item.tags.slice(0, 3).join(', ')}
+                        {isSfxLab && <span className="ml-1 text-violet-400/60">(새 탭 재생)</span>}
+                      </p>
+                    </div>
+                    <button
+                      onClick={(e) => toggleFavorite(e, item)}
+                      className={`flex-shrink-0 text-lg transition-colors ${
+                        isFavorite(item.id) ? 'text-amber-400' : 'text-gray-600 opacity-0 group-hover/sfx:opacity-100 hover:text-amber-400'
+                      }`}
+                    >
+                      {isFavorite(item.id) ? '★' : '☆'}
+                    </button>
+                    <span className="text-sm text-amber-400 opacity-0 group-hover/sfx:opacity-100 transition-opacity font-bold flex-shrink-0">
+                      적용 →
+                    </span>
                   </div>
-                  <button
-                    onClick={(e) => toggleFavorite(e, item)}
-                    className={`flex-shrink-0 text-lg transition-colors ${
-                      isFavorite(item.id) ? 'text-amber-400' : 'text-gray-600 opacity-0 group-hover/sfx:opacity-100 hover:text-amber-400'
-                    }`}
-                  >
-                    {isFavorite(item.id) ? '★' : '☆'}
-                  </button>
-                  <span className="text-sm text-amber-400 opacity-0 group-hover/sfx:opacity-100 transition-opacity font-bold flex-shrink-0">
-                    적용 →
-                  </span>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}

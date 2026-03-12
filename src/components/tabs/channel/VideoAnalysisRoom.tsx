@@ -9,6 +9,8 @@ import { useNavigationStore } from '../../../stores/navigationStore';
 import { useEditPointStore } from '../../../stores/editPointStore';
 import { useEditRoomStore } from '../../../stores/editRoomStore';
 import { useVideoAnalysisStore } from '../../../stores/videoAnalysisStore';
+import { useScriptWriterStore } from '../../../stores/scriptWriterStore';
+import { buildVideoAnalysisStylePreset } from '../../../utils/videoStyleExtractor';
 import AnalysisSlotBar from './AnalysisSlotBar';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
 import { getYoutubeApiKey } from '../../../services/apiService';
@@ -3047,6 +3049,22 @@ ${meta.description.slice(0, 1500)}${meta.description.length > 1500 ? '\n...(이�
                             >
                               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14.121 14.121L19 19m-7-7l7-7m-7 7l-2.879 2.879M12 12L9.121 9.121" /></svg>
                               편집실로
+                            </button>
+                            {/* #158: 대본작성 스타일로 사용 */}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (!selectedPreset) return;
+                                const slotName = youtubeUrl || '영상 분석';
+                                const style = buildVideoAnalysisStylePreset(v, selectedPreset, slotName);
+                                useScriptWriterStore.getState().addVideoAnalysisStyle(style);
+                                useNavigationStore.getState().setActiveTab('script-writer');
+                                showToast(`"V${v.id} ${v.title}" 스타일이 대본작성에 적용되었어요`);
+                              }}
+                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-violet-600/20 text-violet-400 border border-violet-500/30 hover:bg-violet-600/30 transition-all"
+                            >
+                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                              대본작성 스타일
                             </button>
                           </>
                         )}

@@ -6,6 +6,7 @@ import {
   LegacyTopicRecommendation,
   GeneratedScript,
   VideoFormat,
+  VideoAnalysisStylePreset,
 } from '../types';
 
 // --- localStorage 자동 임시저장 ---
@@ -17,7 +18,7 @@ const PERSISTED_KEYS = [
   'title', 'synopsis', 'manualText',
   'generatedScript', 'styledScript', 'styledStyleName', 'finalScript',
   'videoFormat', 'longFormSplitType', 'smartSplit', 'targetCharCount',
-  'splitResult', 'activeStep',
+  'splitResult', 'activeStep', 'videoAnalysisStyles',
 ] as const;
 
 type PersistedKey = typeof PERSISTED_KEYS[number];
@@ -86,6 +87,8 @@ interface ScriptWriterStore {
   smartSplit: boolean;
   targetCharCount: number;
   splitResult: string[];         // 장면 분석 결과 (AI 분할된 장면 배열)
+  /** 영상분석에서 가져온 스타일 프리셋 (#158) */
+  videoAnalysisStyles: VideoAnalysisStylePreset[];
 
   // Actions
   setInputMode: (mode: ScriptInputMode) => void;
@@ -114,6 +117,10 @@ interface ScriptWriterStore {
   setSmartSplit: (v: boolean) => void;
   setTargetCharCount: (count: number) => void;
   setSplitResult: (scenes: string[]) => void;
+  /** 영상분석 스타일 추가 (최대 5개, 초과 시 가장 오래된 것 제거) */
+  addVideoAnalysisStyle: (style: VideoAnalysisStylePreset) => void;
+  /** 영상분석 스타일 제거 */
+  removeVideoAnalysisStyle: (id: string) => void;
   /** 새 입력(파일 업로드 등) 시 이전 대본 콘텐츠만 초기화 — 포맷 설정은 보존 */
   clearPreviousContent: () => void;
   reset: () => void;
@@ -144,6 +151,7 @@ const INITIAL_STATE = {
   smartSplit: true,
   targetCharCount: 5000,
   splitResult: [] as string[],
+  videoAnalysisStyles: [] as VideoAnalysisStylePreset[],
 };
 
 // localStorage에서 이전 드래프트 복원
@@ -201,6 +209,16 @@ export const useScriptWriterStore = create<ScriptWriterStore>((set) => ({
   setSmartSplit: (v) => set({ smartSplit: v }),
   setTargetCharCount: (count) => set({ targetCharCount: count }),
   setSplitResult: (scenes) => set({ splitResult: scenes }),
+
+  addVideoAnalysisStyle: (style) => set((state) => {
+    const filtered = state.videoAnalysisStyles.filter(s => s.id !== style.id);
+    const updated = [style, ...filtered].slice(0, 5);
+    return { videoAnalysisStyles: updated };
+  }),
+
+  removeVideoAnalysisStyle: (id) => set((state) => ({
+    videoAnalysisStyles: state.videoAnalysisStyles.filter(s => s.id !== id),
+  })),
 
   // 새 파일 업로드 시 이전 대본 콘텐츠를 초기화하되, 포맷/분량 설정은 유지
   clearPreviousContent: () => {

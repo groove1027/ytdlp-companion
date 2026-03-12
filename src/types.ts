@@ -1528,6 +1528,18 @@ export interface VideoTimedFrame {
   timeSec: number;
 }
 
+/** 영상분석 프리셋 → 대본작성 스타일 브릿지 (#158) */
+export interface VideoAnalysisStylePreset {
+  id: string;
+  name: string;
+  icon: string;
+  description: string;
+  systemPrompt: string;
+  sourcePreset: VideoAnalysisPreset;
+  sourceVersionId: number;
+  sourceTitle: string;
+}
+
 declare global {
   interface AIStudio {
     hasSelectedApiKey: () => Promise<boolean>;

@@ -7,7 +7,7 @@ import { useProjectStore } from '../../stores/projectStore';
 import { evolinkChat, evolinkChatStream, evolinkNativeStream, getEvolinkKey } from '../../services/evolinkService';
 import { recommendTopics } from '../../services/topicRecommendService';
 import { buildSelectedInstinctPrompt } from '../../data/instinctPromptUtils';
-import { SCRIPT_STYLE_PRESETS } from '../../data/scriptStylePresets';
+import { SCRIPT_STYLE_PRESETS, ScriptStylePreset } from '../../data/scriptStylePresets';
 import { VideoFormat, ContentFormat, TopicRecommendation } from '../../types';
 import { showToast } from '../../stores/uiStore';
 import { countScenesLocally, splitScenesLocally, extractJsonFromText } from '../../services/gemini/scriptAnalysis';
@@ -98,6 +98,7 @@ export default function ScriptWriterTab() {
     title, setTitle,
     synopsis, setSynopsis,
     clearPreviousContent,
+    videoAnalysisStyles, addVideoAnalysisStyle, removeVideoAnalysisStyle,
   } = useScriptWriterStore();
 
   const setActiveTab = useNavigationStore((s) => s.setActiveTab);
@@ -517,10 +518,19 @@ ${instinctPrompt}
     genAbortRef.current = null;
   }, []);
 
+  // #158: 빌트인 + 영상분석 스타일 병합
+  const allStylePresets: ScriptStylePreset[] = useMemo(() => {
+    const vaPresets: ScriptStylePreset[] = videoAnalysisStyles.map(va => ({
+      id: va.id, name: va.name, icon: va.icon,
+      description: va.description, systemPrompt: va.systemPrompt,
+    }));
+    return [...SCRIPT_STYLE_PRESETS, ...vaPresets];
+  }, [videoAnalysisStyles]);
+
   const handleApplySelectedStyle = useCallback(async () => {
     if (!requireAuth('AI 스타일 적용')) return;
     if (!selectedStyleId) return;
-    const preset = SCRIPT_STYLE_PRESETS.find(p => p.id === selectedStyleId);
+    const preset = allStylePresets.find(p => p.id === selectedStyleId);
     if (!preset) return;
     const currentScript = generatedScript?.content || manualText || '';
     if (!currentScript.trim()) return;
@@ -552,7 +562,7 @@ ${instinctPrompt}
     } finally {
       setApplyingStyle(null);
     }
-  }, [selectedStyleId, generatedScript, manualText, title, setStyledScript, setFinalScript]);
+  }, [selectedStyleId, generatedScript, manualText, title, setStyledScript, setFinalScript, allStylePresets]);
 
   const toggleTool = (tool: OpenTool) => setOpenTool(prev => prev === tool ? null : tool);
   const hasAnyTool = instinctIds.length > 0 || !!benchmarkScript || !!channelGuideline;
@@ -880,6 +890,48 @@ ${instinctPrompt}
               );
             })}
           </div>
+
+          {/* #158: 영상분석에서 가져온 스타일 프리셋 */}
+          {videoAnalysisStyles.length > 0 && (
+            <div className="mt-2 space-y-1.5">
+              <p className="text-[11px] text-blue-400 font-bold flex items-center gap-1">
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                영상분석 스타일
+              </p>
+              <div className="flex gap-2 overflow-x-auto pb-1">
+                {videoAnalysisStyles.map(va => {
+                  const isSelected = selectedStyleId === va.id;
+                  return (
+                    <button
+                      key={va.id}
+                      type="button"
+                      onClick={() => setSelectedStyleId(isSelected ? null : va.id)}
+                      disabled={!!applyingStyle}
+                      className={`relative group/va flex-shrink-0 flex flex-col items-center justify-center gap-0.5 py-2.5 px-4 rounded-lg border text-center transition-all min-w-[120px] ${
+                        isSelected
+                          ? 'bg-blue-600/30 border-blue-400 text-white'
+                          : 'bg-gray-800/70 border-blue-500/30 text-gray-300 hover:border-blue-400/60 hover:text-white'
+                      } disabled:opacity-50`}
+                    >
+                      <div className="flex items-center gap-1">
+                        <span>{va.icon}</span>
+                        <span className="text-sm font-bold truncate">{va.name}</span>
+                      </div>
+                      <span className="text-[10px] text-gray-500 leading-tight truncate max-w-[140px]">{va.description}</span>
+                      {/* 삭제 버튼 */}
+                      <span
+                        onClick={(e) => { e.stopPropagation(); removeVideoAnalysisStyle(va.id); }}
+                        className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-gray-700 border border-gray-600 text-gray-400 hover:bg-red-600 hover:text-white hover:border-red-500 flex items-center justify-center text-[10px] opacity-0 group-hover/va:opacity-100 transition-all cursor-pointer"
+                        title="스타일 제거"
+                      >
+                        ✕
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* ═══════════════════════════════════════
@@ -1014,7 +1066,7 @@ ${instinctPrompt}
             )}
             {selectedStyleId && !guidanceText && (
               <span className="text-xs text-violet-300 bg-violet-900/30 px-1.5 py-0.5 rounded">
-                {SCRIPT_STYLE_PRESETS.find(p => p.id === selectedStyleId)?.icon} {SCRIPT_STYLE_PRESETS.find(p => p.id === selectedStyleId)?.name}
+                {allStylePresets.find(p => p.id === selectedStyleId)?.icon} {allStylePresets.find(p => p.id === selectedStyleId)?.name}
               </span>
             )}
           </div>
@@ -1026,7 +1078,7 @@ ${instinctPrompt}
           {selectedStyleId && scriptText.trim() && !styledScript && (
             <div className="mt-3 px-4 py-2.5 bg-violet-900/10 border border-violet-600/20 rounded-lg flex items-center justify-between">
               <span className="text-sm text-violet-300/80 font-medium">
-                입력된 대본에 <span className="text-violet-200 font-bold">{SCRIPT_STYLE_PRESETS.find(p => p.id === selectedStyleId)?.icon} {SCRIPT_STYLE_PRESETS.find(p => p.id === selectedStyleId)?.name}</span> 스타일 적용
+                입력된 대본에 <span className="text-violet-200 font-bold">{allStylePresets.find(p => p.id === selectedStyleId)?.icon} {allStylePresets.find(p => p.id === selectedStyleId)?.name}</span> 스타일 적용
               </span>
               <button
                 type="button"
