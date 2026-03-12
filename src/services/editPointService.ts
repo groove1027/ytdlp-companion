@@ -291,83 +291,101 @@ export async function parseEditTableWithAI(
 }
 
 /**
+ * [FIX #134] 이미지 리사이즈 + 압축 — Vision API 토큰 절감
+ */
+function compressImage(dataUrl: string, maxW: number, maxH: number, quality: number): Promise<string> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxW / img.width, maxH / img.height);
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      const ctx = canvas.getContext('2d')!;
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
+/**
+ * [FIX #134] 자연어 응답에서 JSON 추출
+ * AI가 "Here is the JSON: {...}" 등 자연어를 반환할 때 대응
+ */
+function extractJsonFromResponse(content: string): Record<string, unknown> {
+  // 1. 직접 파싱
+  try { return JSON.parse(content); } catch { /* continue */ }
+  // 2. ```json ... ``` 블록
+  const codeBlock = content.match(/```json\s*([\s\S]*?)```/);
+  if (codeBlock) {
+    try { return JSON.parse(codeBlock[1]); } catch { /* continue */ }
+  }
+  // 3. { ... } 패턴
+  const jsonMatch = content.match(/\{[\s\S]*\}/);
+  if (jsonMatch) {
+    try { return JSON.parse(jsonMatch[0]); } catch { /* continue */ }
+  }
+  return {};
+}
+
+/**
  * Vision AI로 타임코드 정제
- * 타임코드 전후 프레임 추출 → Gemini Vision 비교 → 보정
+ * [FIX #134] 프레임 2장 + 이미지 압축 + 프롬프트 축소 + JSON 폴백 파싱
  */
 export async function refineTimecodeWithVision(
   entry: EdlEntry,
   videoFile: File
 ): Promise<{ refinedStart: number; refinedEnd: number; confidence: number; referenceFrameUrl?: string }> {
-  // 타임코드 전후 ±1초 범위에서 0.2초 간격으로 프레임 추출
   const startCenter = entry.timecodeStart;
   const endCenter = entry.timecodeEnd;
 
-  const startTimestamps: number[] = [];
-  for (let t = Math.max(0, startCenter - 1); t <= startCenter + 1; t += 0.2) {
-    startTimestamps.push(Math.round(t * 100) / 100);
-  }
-
-  const endTimestamps: number[] = [];
-  for (let t = Math.max(0, endCenter - 1); t <= endCenter + 1; t += 0.2) {
-    endTimestamps.push(Math.round(t * 100) / 100);
-  }
-
-  const allTimestamps = [...new Set([...startTimestamps, ...endTimestamps])].sort((a, b) => a - b);
-
-  const frames = await extractFramesFromVideo(videoFile, allTimestamps);
+  // [FIX #134] 프레임 2장만 추출 (시작점 + 끝점) — 토큰 소비 대폭 절감
+  const timestamps = [Math.max(0, startCenter), Math.max(0, endCenter)];
+  const frames = await extractFramesFromVideo(videoFile, timestamps);
   if (frames.size === 0) {
     return { refinedStart: startCenter, refinedEnd: endCenter, confidence: 0 };
   }
 
-  // Vision AI에 프레임 전송하여 최적 컷 포인트 찾기
-  const frameParts = Array.from(frames.entries())
-    .slice(0, 4) // [FIX] 최대 4프레임 (API 요청 크기 제한 + 비용 절감)
-    .map(([ts, dataUrl]) => ({
-      timestamp: ts,
-      dataUrl,
-    }));
+  // [FIX #134] 256x144 + quality 0.4 로 압축 — 이미지당 토큰 ~80% 절감
+  const frameParts: { timestamp: number; dataUrl: string }[] = [];
+  for (const [ts, dataUrl] of frames.entries()) {
+    const compressed = await compressImage(dataUrl, 256, 144, 0.4);
+    frameParts.push({ timestamp: ts, dataUrl: compressed });
+    if (frameParts.length >= 2) break;
+  }
 
   const imageContent = frameParts.map((f, i) => [
-    { type: 'text' as const, text: `Frame ${i + 1} at ${secondsToTimecode(f.timestamp)}:` },
+    { type: 'text' as const, text: `[${i === 0 ? 'START' : 'END'} ${secondsToTimecode(f.timestamp)}]` },
     { type: 'image_url' as const, image_url: { url: f.dataUrl } },
   ]).flat();
 
+  // [FIX #134] 축소된 프롬프트 + responseFormat 제거 + maxTokens 증가
   const response = await evolinkChat(
     [
       {
         role: 'system',
-        content: `You are a video editing expert. Analyze the frames and find the best cut points.
-
-The editor wants to cut a clip described as: "${entry.sourceDescription}"
-Original timecodes: start=${secondsToTimecode(entry.timecodeStart)}, end=${secondsToTimecode(entry.timecodeEnd)}
-
-Look at the frames and determine:
-1. The best start frame (where the described content begins)
-2. The best end frame (where the described content ends)
-3. Your confidence level (0.0-1.0)
-
-Return JSON: { "refinedStart": "MM:SS.sss", "refinedEnd": "MM:SS.sss", "confidence": 0.85, "bestFrameIndex": 0 }`,
+        content: `Video cut point finder. Clip: "${entry.sourceDescription || entry.narrationText}"
+TC: ${secondsToTimecode(startCenter)}~${secondsToTimecode(endCenter)}
+Return ONLY JSON: {"refinedStart":"MM:SS.sss","refinedEnd":"MM:SS.sss","confidence":0.85}`,
       },
-      {
-        role: 'user',
-        content: imageContent,
-      },
+      { role: 'user', content: imageContent },
     ],
     {
       temperature: 0.1,
-      maxTokens: 256,
-      responseFormat: { type: 'json_object' },
+      maxTokens: 1024,
     }
   );
 
-  const result = JSON.parse(response.choices[0]?.message?.content || '{}');
-  const bestIdx = Number(result.bestFrameIndex) || 0;
+  const content = response.choices[0]?.message?.content || '{}';
+  const result = extractJsonFromResponse(content);
 
   return {
     refinedStart: parseTimecodeToSeconds(String(result.refinedStart || secondsToTimecode(startCenter))),
     refinedEnd: parseTimecodeToSeconds(String(result.refinedEnd || secondsToTimecode(endCenter))),
     confidence: Math.min(1, Math.max(0, Number(result.confidence) || 0)),
-    referenceFrameUrl: frameParts[bestIdx]?.dataUrl,
+    referenceFrameUrl: frameParts[0]?.dataUrl,
   };
 }
 
