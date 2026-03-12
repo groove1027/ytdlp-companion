@@ -1098,27 +1098,34 @@ export const parseScriptToScenes = async (
             const chunkUserContent = `Script (Part ${ci + 1}/${chunks.length}):\n${chunks[ci]}\n\n[MANDATORY GLOBAL CONTEXT]\n${baseSetting || 'No context provided.'}`;
 
             let chunkScenes: any[] = [];
-            // [FIX #50] 최대 3회 재시도 — 네트워크 오류 시 지수 백오프 (2s, 6s, 18s)
-            const MAX_CHUNK_RETRIES = 3;
+            // [FIX #178] 최대 4회 재시도 — 429 포함 재시도 + 지수 백오프
+            const MAX_CHUNK_RETRIES = 4;
+            // [FIX #178] 90초 타임아웃 — 프록시 125초 끊기 전에 능동 중단
+            const STREAM_TIMEOUT_MS = 90_000;
+            let lastChunkError: Error | null = null;
             for (let retry = 0; retry < MAX_CHUNK_RETRIES; retry++) {
                 if (retry > 0) {
-                    const backoffMs = 2000 * Math.pow(3, retry - 1); // 2s, 6s, 18s
-                    logger.trackRetry(`스크립트 청크 ${ci + 1} 파싱`, retry + 1, MAX_CHUNK_RETRIES, `네트워크/타임아웃 오류 — ${backoffMs / 1000}초 대기 후 재시도`);
-                    console.log(`[parseScriptToScenes] 청크 ${ci + 1} 재시도 대기: ${backoffMs / 1000}초`);
+                    // [FIX #178] 429 에러 시 더 긴 대기 (15s, 30s), 일반 에러 시 (3s, 9s, 27s)
+                    const is429 = (lastChunkError?.message || '').includes('요청 제한');
+                    const backoffMs = is429
+                        ? 15000 * Math.pow(2, retry - 1)  // 15s, 30s, 60s
+                        : 3000 * Math.pow(3, retry - 1);  // 3s, 9s, 27s
+                    logger.trackRetry(`스크립트 청크 ${ci + 1} 파싱`, retry + 1, MAX_CHUNK_RETRIES,
+                        `${is429 ? '429 요청 제한' : '네트워크/타임아웃 오류'} — ${backoffMs / 1000}초 대기 후 재시도`);
+                    console.log(`[parseScriptToScenes] 청크 ${ci + 1} 재시도 대기: ${backoffMs / 1000}초 (${is429 ? '429 백오프' : '일반 백오프'})`);
                     await new Promise(r => setTimeout(r, backoffMs));
                 }
                 try {
                     console.log(`[parseScriptToScenes] 청크 ${ci + 1}/${chunks.length} (${chunks[ci].length}자) → evolinkChatStream (시도 ${retry + 1}/${MAX_CHUNK_RETRIES})`);
                     // [FIX #99] 스트리밍 전환 — 프록시 연결 타임아웃(~125초) 방지
-                    // 비스트리밍은 응답 완료까지 데이터가 안 흘러서 프록시가 연결을 끊음
-                    // 스트리밍은 SSE로 데이터가 지속 전송되어 타임아웃 회피
+                    // [FIX #178] 90초 타임아웃 추가 — 프록시 끊기 전에 능동 중단하여 빠른 재시도
                     const content = await evolinkChatStream(
                         [
                             { role: 'system', content: chunkSysPrompt },
                             { role: 'user', content: chunkUserContent }
                         ],
                         () => {}, // 청크 콜백 불필요 — 최종 텍스트만 사용
-                        { temperature: 0.3, maxTokens: 32000, responseFormat: { type: 'json_object' } }
+                        { temperature: 0.3, maxTokens: 32000, responseFormat: { type: 'json_object' }, timeoutMs: STREAM_TIMEOUT_MS }
                     );
                     if (!content) throw new Error('Empty Response');
 
@@ -1134,33 +1141,74 @@ export const parseScriptToScenes = async (
                     const scenes = Array.isArray(parsed) ? parsed : (parsed.scenes || [parsed]);
                     if (scenes.length > 0) {
                         chunkScenes = scenes;
+                        lastChunkError = null;
                         break;
                     }
                 } catch (ce: any) {
                     const msg = ce.message || '';
+                    lastChunkError = ce;
                     // [FIX #50] 네트워크 오류 vs API 오류 구분
                     const isNetworkError = msg.includes('Failed to fetch') || msg.includes('Network Error') || msg.includes('fetch') || msg.includes('ERR_NETWORK') || msg.includes('ECONNREFUSED') || msg.includes('net::');
                     const isTimeoutError = msg.includes('524') || msg.includes('timeout') || msg.includes('타임아웃') || msg.includes('AbortError');
                     // [FIX #54] JSON 파싱 실패 + 토큰 한도 초과도 재시도 가능하도록 추가
                     const isJsonError = msg.includes('Unexpected') || msg.includes('JSON') || msg.includes('토큰 한도');
                     const isEmptyResponse = msg.includes('Empty Response');
-                    const isRetryable = isNetworkError || isTimeoutError || isJsonError || isEmptyResponse || msg.includes('네트워크');
+                    // [FIX #178] 429 요청 제한도 재시도 대상에 포함
+                    const isRateLimited = msg.includes('요청 제한') || msg.includes('429') || msg.includes('Rate Limit');
+                    const isRetryable = isNetworkError || isTimeoutError || isJsonError || isEmptyResponse || isRateLimited || msg.includes('네트워크');
 
-                    const errorCategory = isNetworkError ? '네트워크 연결 오류' : isTimeoutError ? '서버 응답 시간 초과' : 'API 오류';
+                    const errorCategory = isRateLimited ? '요청 제한 (429)' : isNetworkError ? '네트워크 연결 오류' : isTimeoutError ? '서버 응답 시간 초과' : 'API 오류';
                     console.warn(`[parseScriptToScenes] 청크 ${ci + 1} 실패 (시도 ${retry + 1}/${MAX_CHUNK_RETRIES}, ${errorCategory}): ${msg.slice(0, 150)}`);
                     logger.warn(`[parseScriptToScenes] 청크 ${ci + 1} ${errorCategory}`, { retry: retry + 1, msg: msg.slice(0, 200) });
 
                     if (isRetryable && retry < MAX_CHUNK_RETRIES - 1) {
                         continue; // 지수 백오프는 루프 상단에서 처리
                     }
-                    // 최종 실패 — 사용자에게 구체적 에러 메시지 전달
-                    if (isNetworkError) {
-                        throw new Error(`청크 ${ci + 1} 파싱 실패 (네트워크 오류): 인터넷 연결을 확인해주세요. ${MAX_CHUNK_RETRIES}회 재시도했으나 서버에 접속할 수 없습니다.`);
-                    } else if (isTimeoutError) {
-                        throw new Error(`청크 ${ci + 1} 파싱 실패 (시간 초과): 서버가 응답하지 않습니다. 잠시 후 다시 시도해주세요.`);
-                    } else {
-                        throw new Error(`청크 ${ci + 1} 파싱 실패: ${msg}`);
+                }
+            }
+
+            // [FIX #178] 스트리밍 전부 실패 → v1beta Native 폴백 (마지막 시도)
+            if (chunkScenes.length === 0 && lastChunkError) {
+                console.log(`[parseScriptToScenes] 청크 ${ci + 1} 스트리밍 ${MAX_CHUNK_RETRIES}회 실패 → v1beta Native 폴백 시도`);
+                logger.info(`[parseScriptToScenes] 청크 ${ci + 1} v1beta 폴백`, { lastError: lastChunkError.message?.slice(0, 100) });
+                try {
+                    const chunkPayload = {
+                        ...payload,
+                        contents: [{ role: 'user', parts: [{ text: chunkUserContent }] }],
+                    };
+                    const data = await requestGeminiProxy('gemini-3.1-pro-preview', chunkPayload, 0, 300_000);
+                    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                    if (text) {
+                        let parsed: any;
+                        try { parsed = JSON.parse(text); } catch {
+                            const jsonText = extractJsonFromText(text);
+                            parsed = JSON.parse(jsonText || '[]');
+                        }
+                        const scenes = Array.isArray(parsed) ? parsed : (parsed.scenes || [parsed]);
+                        if (scenes.length > 0) {
+                            chunkScenes = scenes;
+                            console.log(`[parseScriptToScenes] 청크 ${ci + 1} v1beta 폴백 성공: ${scenes.length}개 장면`);
+                        }
                     }
+                } catch (fallbackErr: any) {
+                    console.error(`[parseScriptToScenes] 청크 ${ci + 1} v1beta 폴백도 실패:`, fallbackErr.message?.slice(0, 100));
+                }
+            }
+
+            // 최종 실패 처리
+            if (chunkScenes.length === 0) {
+                const msg = lastChunkError?.message || 'Unknown error';
+                const isNetworkError = msg.includes('Failed to fetch') || msg.includes('Network Error') || msg.includes('fetch');
+                const isTimeoutError = msg.includes('524') || msg.includes('timeout') || msg.includes('타임아웃');
+                const isRateLimited = msg.includes('요청 제한') || msg.includes('429');
+                if (isRateLimited) {
+                    throw new Error(`청크 ${ci + 1} 파싱 실패 (요청 제한): 서버가 바쁩니다. 1~2분 후 다시 시도해주세요.`);
+                } else if (isNetworkError) {
+                    throw new Error(`청크 ${ci + 1} 파싱 실패 (네트워크 오류): 인터넷 연결을 확인해주세요. ${MAX_CHUNK_RETRIES}회 + 폴백까지 시도했으나 실패했습니다.`);
+                } else if (isTimeoutError) {
+                    throw new Error(`청크 ${ci + 1} 파싱 실패 (시간 초과): 서버가 응답하지 않습니다. 잠시 후 다시 시도해주세요.`);
+                } else {
+                    throw new Error(`청크 ${ci + 1} 파싱 실패: ${msg}`);
                 }
             }
 

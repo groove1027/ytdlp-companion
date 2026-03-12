@@ -250,6 +250,7 @@ export const evolinkChatStream = async (
         temperature = 0.7,
         maxTokens = 4096,
         responseFormat,
+        timeoutMs,
     } = options;
 
     const body: Record<string, unknown> = {
@@ -273,6 +274,7 @@ export const evolinkChatStream = async (
         apiKeyPrefix: apiKey.slice(0, 8) + '...',
     });
 
+    // [FIX #178] 타임아웃 적용 — 프록시 연결 끊김(~125초) 전에 능동적으로 중단
     const response = await monitoredFetch(`${EVOLINK_BASE_URL}/chat/completions`, {
         method: 'POST',
         headers: {
@@ -280,7 +282,7 @@ export const evolinkChatStream = async (
             'Authorization': `Bearer ${apiKey}`,
         },
         body: JSON.stringify(body),
-    });
+    }, timeoutMs);
 
     if (!response.ok) {
         const errorDetail = await parseEvolinkError(response);
