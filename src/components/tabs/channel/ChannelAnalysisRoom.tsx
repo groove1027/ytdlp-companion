@@ -16,6 +16,7 @@ import { logger } from '../../../services/LoggerService';
 import ChannelInputPanel from './ChannelInputPanel';
 import AnalysisLoadingPanel, { notifyAnalysisComplete } from './AnalysisLoadingPanel';
 import AnalysisSlotBar from './AnalysisSlotBar';
+import ChannelRemakePanel from './ChannelRemakePanel';
 import type { LegacyTopicRecommendation, ContentFormat, ChannelScript, ChannelInfo, TopicInstinctAnalysis } from '../../../types';
 
 const VIRAL_CFG = {
@@ -66,46 +67,25 @@ const ChannelAnalysisRoom: React.FC = () => {
   const progressElapsed = useElapsedTimer(!!progress);
   const [selectedTopic, setSelectedTopic] = useState<LegacyTopicRecommendation | null>(null);
 
-  // --- YouTube 영상 다운로드 (yt-dlp API 서버 → CDN 직접 다운로드) ---
-  const [downloadingVideos, setDownloadingVideos] = useState<Set<string>>(new Set());
-  const [downloadPhase, setDownloadPhase] = useState<Record<string, string>>({}); // videoId → 단계 텍스트
-  const [downloadDone, setDownloadDone] = useState<Record<string, 'done' | 'fail'>>({}); // 완료/실패 상태
+  // --- YouTube 영상 다운로드 (yt-dlp 서버 프록시) ---
   const [showBulkModal, setShowBulkModal] = useState(false);
   const [bulkDownloadProgress, setBulkDownloadProgress] = useState<{ current: number; total: number; failed: number } | null>(null);
 
-  // Method A: 서버는 CDN URL만 추출 → 브라우저가 CDN에서 직접 다운로드 (서버 대역폭 0)
+  // 서버 프록시 경유 다운로드 — Content-Disposition: attachment로 바로 파일 저장
   const downloadVideo = useCallback(async (videoId: string, title: string): Promise<boolean> => {
     logger.trackAction('YouTube 다운로드 시작', `${title} (${videoId})`);
-    setDownloadingVideos(prev => { const next = new Set(prev); next.add(videoId); return next; });
-    setDownloadPhase(prev => ({ ...prev, [videoId]: 'CDN 주소 추출 중...' }));
-    setDownloadDone(prev => { const copy = { ...prev }; delete copy[videoId]; return copy; });
-
     try {
       const { triggerDirectDownload, isYtdlpServerConfigured } = await import('../../../services/ytdlpApiService');
       if (!isYtdlpServerConfigured()) {
         throw new Error('yt-dlp API 서버가 설정되지 않았습니다');
       }
-
-      await triggerDirectDownload(videoId, '720p', title);
-
-      setDownloadPhase(prev => ({ ...prev, [videoId]: '다운로드 시작됨!' }));
-      setDownloadDone(prev => ({ ...prev, [videoId]: 'done' }));
+      triggerDirectDownload(videoId, 'best', title);
       showToast(`"${title}" 다운로드가 시작되었습니다`);
       return true;
     } catch (e) {
       logger.error(`[Download] 다운로드 오류: ${title} (${videoId})`, e instanceof Error ? e.message : String(e));
-      setDownloadPhase(prev => ({ ...prev, [videoId]: '다운로드 실패' }));
-      setDownloadDone(prev => ({ ...prev, [videoId]: 'fail' }));
-      const ytUrl = `https://www.youtube.com/watch?v=${videoId}`;
-      try { await navigator.clipboard.writeText(ytUrl); } catch (clipErr) { logger.trackSwallowedError('ChannelAnalysisRoom:downloadVideo/clipboard', clipErr); }
-      showToast(`다운로드 실패 — YouTube URL이 클립보드에 복사되었습니다`);
+      showToast(`다운로드 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`);
       return false;
-    } finally {
-      setDownloadingVideos(prev => { const next = new Set(prev); next.delete(videoId); return next; });
-      setTimeout(() => {
-        setDownloadPhase(prev => { const copy = { ...prev }; delete copy[videoId]; return copy; });
-        setDownloadDone(prev => { const copy = { ...prev }; delete copy[videoId]; return copy; });
-      }, 3000);
     }
   }, []);
 
@@ -487,35 +467,6 @@ const ChannelAnalysisRoom: React.FC = () => {
               </span>
               {inputSource === 'youtube' && (
                 <button
-                  onClick={() => {
-                    const data = channelScripts.map(s => ({
-                      title: s.title,
-                      videoId: s.videoId,
-                      url: `https://www.youtube.com/watch?v=${s.videoId}`,
-                      viewCount: s.viewCount,
-                      duration: s.duration,
-                      publishedAt: s.publishedAt,
-                      transcript: s.transcript || '',
-                      description: s.description || '',
-                      tags: s.tags || [],
-                    }));
-                    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-                    const a = document.createElement('a');
-                    a.href = URL.createObjectURL(blob);
-                    a.download = `${channelInfo?.title || 'channel'}-videos-${channelScripts.length}.json`;
-                    a.click();
-                    URL.revokeObjectURL(a.href);
-                    showToast(`${channelScripts.length}개 영상 데이터를 다운로드했습니다.`);
-                  }}
-                  className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-blue-600/20 text-blue-400 border border-blue-500/30 hover:bg-blue-600/30 transition-all flex items-center gap-1.5"
-                >
-                  {/* JSON 중괄호 아이콘 */}
-                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" /></svg>
-                  JSON 저장
-                </button>
-              )}
-              {inputSource === 'youtube' && (
-                <button
                   onClick={() => setShowBulkModal(true)}
                   disabled={!!bulkDownloadProgress}
                   className="min-w-[140px] px-3 py-1.5 text-xs font-semibold rounded-lg bg-red-600/20 text-red-400 border border-red-500/30 hover:bg-red-600/30 transition-all flex items-center justify-center gap-1.5 disabled:opacity-50"
@@ -528,9 +479,9 @@ const ChannelAnalysisRoom: React.FC = () => {
                     </>
                   ) : (
                     <>
-                      {/* MP4 파일 다운로드 아이콘 */}
-                      <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 4v16m10-16v16M3 8h4m6 0h8M3 12h18M3 16h4m6 0h8" /></svg>
-                      MP4 일괄 저장
+                      {/* 다운로드 화살표 아이콘 */}
+                      <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                      MP4 일괄 다운로드
                     </>
                   )}
                 </button>
@@ -579,59 +530,14 @@ const ChannelAnalysisRoom: React.FC = () => {
                         <span>·</span>
                         <span>{fmtDate(s.publishedAt)}</span>
                       </div>
-                      <div className="flex items-center gap-0.5 shrink-0">
-                        {/* MP4 영상 저장 */}
-                        {downloadingVideos.has(s.videoId) || downloadDone[s.videoId] ? (
-                          <div className="flex items-center gap-1 h-6 max-w-[100px] px-1.5 rounded-md bg-gray-900/60">
-                            {downloadDone[s.videoId] === 'done' ? (
-                              <svg className="w-3 h-3 shrink-0 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-                            ) : downloadDone[s.videoId] === 'fail' ? (
-                              <svg className="w-3 h-3 shrink-0 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                            ) : (
-                              <div className="w-3 h-3 shrink-0 border-2 border-red-400/30 border-t-red-400 rounded-full animate-spin" />
-                            )}
-                            <span className={`text-[10px] tabular-nums truncate ${downloadDone[s.videoId] === 'done' ? 'text-green-400' : downloadDone[s.videoId] === 'fail' ? 'text-yellow-400' : 'text-red-300'}`}>
-                              {downloadDone[s.videoId] === 'done' ? 'OK' : downloadDone[s.videoId] === 'fail' ? '실패' : '...'}
-                            </span>
-                          </div>
-                        ) : (
-                          <button
-                            onClick={() => downloadVideo(s.videoId, s.title)}
-                            className="p-1 text-gray-600 hover:text-red-400 transition-colors"
-                            title="MP4 영상 저장"
-                          >
-                            {/* 필름 프레임 아이콘 (영상 파일) */}
-                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 4v16m10-16v16M3 8h4m6 0h8M3 12h18M3 16h4m6 0h8" /></svg>
-                          </button>
-                        )}
-                        {/* JSON 데이터 저장 */}
-                        <button
-                          onClick={() => {
-                            const data = {
-                              title: s.title,
-                              videoId: s.videoId,
-                              url: `https://www.youtube.com/watch?v=${s.videoId}`,
-                              viewCount: s.viewCount,
-                              duration: s.duration,
-                              publishedAt: s.publishedAt,
-                              transcript: s.transcript || '',
-                              description: s.description || '',
-                              tags: s.tags || [],
-                            };
-                            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-                            const a = document.createElement('a');
-                            a.href = URL.createObjectURL(blob);
-                            a.download = `${s.title.replace(/[^a-zA-Z0-9가-힣\s]/g, '').substring(0, 50)}.json`;
-                            a.click();
-                            URL.revokeObjectURL(a.href);
-                          }}
-                          className="p-1 text-gray-600 hover:text-blue-400 transition-colors"
-                          title="JSON 데이터 저장"
-                        >
-                          {/* 코드 괄호 아이콘 (JSON 데이터) */}
-                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" /></svg>
-                        </button>
-                      </div>
+                      <button
+                        onClick={(e) => { e.preventDefault(); downloadVideo(s.videoId, s.title); }}
+                        className="p-1.5 text-gray-500 hover:text-red-400 hover:bg-red-500/10 rounded-md transition-all"
+                        title="MP4 다운로드"
+                      >
+                        {/* 다운로드 화살표 아이콘 */}
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -991,6 +897,9 @@ const ChannelAnalysisRoom: React.FC = () => {
         </div>
       )}
 
+      {/* 채널 스타일 리메이크 (#144) */}
+      <ChannelRemakePanel />
+
       {/* 저장된 채널 프리셋 */}
       {savedPresets.length > 0 && (
         <div className={card}>
@@ -1227,42 +1136,15 @@ const ChannelAnalysisRoom: React.FC = () => {
               {channelScripts.filter(s => s.videoId).map((s, i) => (
                 <div key={s.videoId} className="flex items-center gap-2 py-2 border-b border-gray-800/50 last:border-0">
                   <span className="text-xs text-gray-600 w-5 text-right flex-shrink-0">{i + 1}</span>
-                  <div className="flex-1 min-w-0">
-                    <span className="text-sm text-gray-300 truncate block">{s.title}</span>
-                    {/* 진행 중이면 프로그레스 바 표시 */}
-                    {downloadingVideos.has(s.videoId) && (
-                      <div className="w-full bg-gray-700/50 rounded-full h-1 mt-1">
-                        <div className="bg-gradient-to-r from-red-500 to-red-400 h-1 rounded-full animate-pulse" style={{ width: '100%' }} />
-                      </div>
-                    )}
-                  </div>
-                  {/* 상태 표시 */}
-                  {downloadDone[s.videoId] === 'done' ? (
-                    <div className="flex items-center gap-1 flex-shrink-0">
-                      <svg className="w-3.5 h-3.5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-                      <span className="text-[11px] text-green-400">완료</span>
-                    </div>
-                  ) : downloadDone[s.videoId] === 'fail' ? (
-                    <div className="flex items-center gap-1 flex-shrink-0">
-                      <svg className="w-3.5 h-3.5 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01" /></svg>
-                      <span className="text-[11px] text-yellow-400">실패</span>
-                    </div>
-                  ) : downloadingVideos.has(s.videoId) ? (
-                    <div className="flex items-center gap-1 flex-shrink-0">
-                      <div className="w-3 h-3 border-2 border-red-400/30 border-t-red-400 rounded-full animate-spin" />
-                      <span className="text-[11px] text-red-300 tabular-nums whitespace-nowrap max-w-[100px] truncate">
-                        {downloadPhase[s.videoId] || '대기 중...'}
-                      </span>
-                    </div>
-                  ) : (
-                    <button
-                      onClick={() => downloadVideo(s.videoId, s.title)}
-                      disabled={!!bulkDownloadProgress}
-                      className="text-xs text-red-400 hover:text-red-300 flex-shrink-0 disabled:opacity-30"
-                    >
-                      다운로드
-                    </button>
-                  )}
+                  <span className="text-sm text-gray-300 truncate flex-1 min-w-0">{s.title}</span>
+                  <button
+                    onClick={() => downloadVideo(s.videoId, s.title)}
+                    disabled={!!bulkDownloadProgress}
+                    className="p-1 text-gray-500 hover:text-red-400 transition-colors flex-shrink-0 disabled:opacity-30"
+                    title="MP4 다운로드"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                  </button>
                 </div>
               ))}
             </div>

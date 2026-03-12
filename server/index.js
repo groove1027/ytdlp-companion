@@ -395,7 +395,7 @@ function authMiddleware(req, res, next) {
     return next();
   }
 
-  const key = req.headers['x-api-key'] || req.headers['authorization']?.replace('Bearer ', '');
+  const key = req.headers['x-api-key'] || req.headers['authorization']?.replace('Bearer ', '') || req.query.key;
 
   if (key !== API_KEY) {
     log('warn', `Auth failed from ${req.ip}`);

@@ -102,7 +102,7 @@ const downloadFromYtdlp = async (url: string): Promise<DownloadResult> => {
     return { blob, filename, source: 'ytdlp' };
   }
 
-  const { blob, info } = await downloadVideoViaProxy(url, '720p');
+  const { blob, info } = await downloadVideoViaProxy(url, 'best');
   logger.success('[VideoDownload] yt-dlp 프록시 성공', { size: blob.size });
   const filename = `${info.title || 'download'}.mp4`.replace(/[<>:"/\\|?*]/g, '');
   return { blob, filename, source: 'ytdlp' };

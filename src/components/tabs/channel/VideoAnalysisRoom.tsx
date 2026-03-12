@@ -381,7 +381,7 @@ async function fetchYouTubeStreamUrl(videoId: string): Promise<string | null> {
   }
   try {
     console.log('[Frame] yt-dlp API 서버 시도');
-    const result = await extractStreamUrl(videoId, '720p');
+    const result = await extractStreamUrl(videoId, 'best');
     if (result?.url) {
       console.log('[Frame] ✅ yt-dlp API 성공');
       return result.url;
@@ -401,7 +401,7 @@ async function downloadVideoAsBlob(videoId: string): Promise<{ blobUrl: string; 
   try {
     console.log('[Frame] 서버 프록시 경유 Blob 다운로드 시작...');
     const { downloadVideoViaProxy } = await import('../../../services/ytdlpApiService');
-    const { blob } = await downloadVideoViaProxy(videoId, '720p');
+    const { blob } = await downloadVideoViaProxy(videoId, 'best');
     const blobUrl = URL.createObjectURL(blob);
     logger.registerBlobUrl(blobUrl, 'video', 'VideoAnalysisRoom:downloadVideoAsBlob', blob.size / (1024 * 1024));
     console.log(`[Frame] Blob 다운로드 완료: ${(blob.size / 1024 / 1024).toFixed(1)}MB`);

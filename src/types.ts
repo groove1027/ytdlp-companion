@@ -890,6 +890,17 @@ export interface GeneratedScript {
   structure: string[];         // 단락 구조
 }
 
+// --- 채널 스타일 리메이크 (#144) ---
+export interface RemakeVersion {
+  label: string;
+  icon: string;
+  description: string;
+  title: string;
+  subtitles: string[];
+  emotionGuide: string;
+  script: string;
+}
+
 // --- 사운드 스튜디오 ---
 export type TTSEngine = 'elevenlabs' | 'supertonic' | 'typecast';
 export type TTSLanguage = 'ko' | 'en' | 'ja';

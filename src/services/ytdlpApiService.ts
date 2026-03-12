@@ -173,37 +173,30 @@ export async function extractStreamUrl(
 }
 
 /**
- * YouTube 영상을 브라우저 내비게이션으로 직접 다운로드합니다.
- * Method A: 서버는 CDN URL만 반환 → 브라우저가 CDN에서 직접 다운로드 → 서버 대역폭 0
+ * YouTube 영상을 서버 프록시 경유로 바로 다운로드합니다.
+ * 서버 /api/download → Content-Disposition: attachment → 브라우저가 파일로 저장
  *
  * @param youtubeUrl - YouTube URL 또는 VIDEO_ID
- * @param quality - 화질 (기본: '720p')
+ * @param quality - 화질 (기본: 'best')
  * @param title - 파일명에 사용할 제목 (선택)
- * @returns 추출된 스트림 정보
  */
-export async function triggerDirectDownload(
+export function triggerDirectDownload(
   youtubeUrl: string,
-  quality: VideoQuality = '720p',
-  title?: string,
-): Promise<YtdlpStreamResult> {
-  const info = await extractStreamUrl(youtubeUrl, quality);
+  quality: VideoQuality = 'best',
+  _title?: string,
+): void {
+  const baseUrl = getApiBaseUrl();
+  const apiKey = getApiKey();
 
-  const safeTitle = (title || info.title || 'download')
-    .replace(/[<>:"/\\|?*]/g, '')
-    .substring(0, 80);
+  // 서버 프록시 URL — Content-Disposition: attachment 헤더로 바로 다운로드
+  const proxyUrl = `${baseUrl.replace(/\/$/, '')}/api/download?url=${encodeURIComponent(youtubeUrl)}&quality=${quality}&key=${encodeURIComponent(apiKey)}`;
 
-  // <a> 태그 내비게이션 — CORS 우회, 서버 대역폭 0
   const a = document.createElement('a');
-  a.href = info.url;
-  a.download = `${safeTitle}.mp4`;
-  a.target = '_blank';
-  a.rel = 'noopener noreferrer';
+  a.href = proxyUrl;
   a.style.display = 'none';
   document.body.appendChild(a);
   a.click();
   setTimeout(() => document.body.removeChild(a), 200);
-
-  return info;
 }
 
 /**
