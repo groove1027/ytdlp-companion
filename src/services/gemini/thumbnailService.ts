@@ -4,6 +4,7 @@ import { requestGeminiProxy, extractTextFromResponse, SAFETY_SETTINGS_BLOCK_NONE
 import { getAdaptiveFont, isBlackAndWhiteStyle, getStyleNegativePrompt, getTextPresetPrompt, getFontHintPrompt, getTextScalePrompt, getTextPositionPrompt } from './promptHelpers';
 import { THUMBNAIL_TEXT_PRESETS, THUMBNAIL_FONT_HINTS } from '../../constants';
 import { generateKieImage, generateEvolinkImageWrapped } from '../VideoGenService';
+import { logger } from '../LoggerService';
 export const generateCharacterDialogue = async (script: string, visual: string) => {
     const payload = {
         contents: [{
@@ -19,7 +20,8 @@ export const generateCharacterDialogue = async (script: string, visual: string) 
     const text = extractTextFromResponse(data);
     try {
         return JSON.parse(text || '{}');
-    } catch {
+    } catch (e) {
+        logger.trackSwallowedError('thumbnailService:generateCharacterDialogue', e);
         console.warn('[generateCharacterDialogue] JSON parse failed, returning empty object');
         return {};
     }
@@ -97,7 +99,8 @@ export const generateCharacterVariations = async (concept: string, type: 'RANDOM
     try {
         const jsonText = text.replace(/```json\n|\n```/g, "").trim();
         return JSON.parse(jsonText || '[]');
-    } catch {
+    } catch (e) {
+        logger.trackSwallowedError('thumbnailService:generateThumbnailVariations', e);
         return [concept, concept, concept, concept];
     }
 };
@@ -119,7 +122,8 @@ export const generateStylePreviewPrompts = async (script: string, style: string,
     const text = extractTextFromResponse(data);
     try {
         return JSON.parse(text || '{ "intro": "", "highlight": "" }');
-    } catch {
+    } catch (e) {
+        logger.trackSwallowedError('thumbnailService:generateStylePreviewPrompts', e);
         console.warn('[generateStylePreviewPrompts] JSON parse failed, returning empty prompts');
         return { intro: '', highlight: '' };
     }
@@ -205,9 +209,11 @@ export const generateHighQualityThumbnail = async (
     textPreset?: string,
     fontHint?: string,
     textPosition?: string,
-    textScale?: number
+    textScale?: number,
+    textMode?: 'auto' | 'custom' | 'none'
 ) => {
     const idx = index || 0;
+    const isTextless = textMode === 'none';
 
     // [LOGIC CHANGE START] Check if Style Copy Mode is active (Detailed Style + Reference Image exists)
     const isStyleCopy = !!(origStyle && origStyle.length > 20 && refImg);
@@ -479,14 +485,31 @@ export const generateHighQualityThumbnail = async (
 
     const colorFidelityConstraints = `[CRITICAL: IGNORE LIGHTING], (Exact Hex Color Match), (No color bleeding), (Keep text color pure and distinct from background lighting), (No tint change)`;
 
+    // [NEW] textMode='none' 분기: 텍스트 관련 프롬프트 전부 제거
+    const textBlock = isTextless
+        ? `[NO TEXT OVERLAY] This image must contain NO title text, NO headline, NO text overlay.
+           (Pure visual thumbnail background), (No text: 3.0), (No title: 3.0), (No headline: 3.0), (No large words: 3.0).
+           Small ambient text within the scene (SFX like "!!", "?!", onomatopoeia, speech bubbles) is OK if contextually appropriate.
+           Use the full canvas for visual composition without reserving space for text.`
+        : `[THUMBNAIL TEXT] Content: "${text}". ${localeRule}.`;
+
+    const depthBlock = isTextless
+        ? `[DEPTH] (Cinematic depth of field), (Background blur: subtle)`
+        : `[DEPTH] (Text implies separate layer), (Foreground text, Background image), (Depth of field: Background blur)`;
+
+    // textless 모드에서는 텍스트 관련 네거티브 강화
+    if (isTextless) {
+        styleNegative += ", (Title text: 3.0), (Headline: 3.0), (Large text overlay: 3.0), (Text banner: 3.0), (Typography: 2.0)";
+    }
+
     // [FINAL PROMPT CONSTRUCTION]
     const prompt = `
-    ${stickerInstruction}
-    ${layoutInstruction}
+    ${isTextless ? '' : stickerInstruction}
+    ${isTextless ? '[LAYOUT]: Full-frame visual composition. Use the entire canvas for the visual scene.' : layoutInstruction}
     ${styleInstruction}
-    ${colorPrompt}
+    ${isTextless ? '' : colorPrompt}
 
-    [THUMBNAIL TEXT] Content: "${text}". ${localeRule}.
+    ${textBlock}
 
     ${compositionDirectives}
 
@@ -499,13 +522,13 @@ export const generateHighQualityThumbnail = async (
     [STYLE] ${style}. ${feedback || ''}
     [TECHNICAL] (8k resolution), (masterpiece), ${!isBw ? '(vivid colors), (full color), ' : ''} ${cleanTexture}
 
-    [DEPTH] (Text implies separate layer), (Foreground text, Background image), (Depth of field: Background blur)
+    ${depthBlock}
 
-    [CONSTRAINTS] ${colorFidelityConstraints}
+    ${isTextless ? '' : `[CONSTRAINTS] ${colorFidelityConstraints}`}
 
-    [NEGATIVE] ${styleNegative}, ${contentBleedNegative}, ${cultureNegatives} (Low Quality), (Blurry), (Text covered), (Text cut off), (High Contrast)
+    [NEGATIVE] ${styleNegative}, ${contentBleedNegative}, ${cultureNegatives} (Low Quality), (Blurry)${isTextless ? '' : ', (Text covered), (Text cut off)'}, (High Contrast)
 
-    [CRITICAL OVERRIDE: LANGUAGE MUST BE ${targetLanguage}]
+    ${isTextless ? '' : `[CRITICAL OVERRIDE: LANGUAGE MUST BE ${targetLanguage}]`}
     `;
 
     // [UPDATED] 2단계 폴백: Evolink Nanobanana 2 → Kie Nanobanana 2

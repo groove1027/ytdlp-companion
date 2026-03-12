@@ -10,6 +10,7 @@ import { useProjectStore } from '../../stores/projectStore';
 import { useImageVideoStore } from '../../stores/imageVideoStore';
 import { compressImageUnderSize } from '../../utils/fileHelpers';
 import SetupPanel, { SetupState } from './thumbnail/SetupPanel';
+import { logger } from '../../services/LoggerService';
 
 const ThumbnailGenerator = lazy(() => import('../ThumbnailGenerator'));
 
@@ -36,6 +37,8 @@ const ThumbnailStudioTab: React.FC = () => {
     atmosphere: '',
     charDescription: '',
     youtubeUrl: '',
+    textMode: 'auto',
+    customText: '',
   });
 
   // Collapsible setup panel
@@ -162,7 +165,8 @@ const ThumbnailStudioTab: React.FC = () => {
         downloadBlob(blob, `thumbnail_${String(i + 1).padStart(2, '0')}.${ext}`);
       }
       showToast(`원본 ${readyThumbnails.length}장 저장 완료`, 3000);
-    } catch {
+    } catch (e) {
+      logger.trackSwallowedError('ThumbnailStudioTab:handleSaveOriginal', e);
       showToast('저장 중 오류가 발생했습니다', 3000);
     } finally {
       setIsSaving(false);
@@ -181,7 +185,8 @@ const ThumbnailStudioTab: React.FC = () => {
         downloadBlob(blob, name);
       }
       showToast(`업로드용 ${readyThumbnails.length}장 저장 완료 (2MB 이하)`, 3000);
-    } catch {
+    } catch (e) {
+      logger.trackSwallowedError('ThumbnailStudioTab:handleSaveCompressed', e);
       showToast('압축 저장 중 오류가 발생했습니다', 3000);
     } finally {
       setIsSaving(false);
@@ -287,6 +292,8 @@ const ThumbnailStudioTab: React.FC = () => {
           videoFormat={vf}
           onImageClick={(url: string) => useUIStore.getState().openLightbox(url)}
           onCostAdd={addCost}
+          textMode={setup.textMode}
+          customText={setup.customText}
           languageContext={{
             lang: analyzedCtx.lang,
             langName: analyzedCtx.langName,

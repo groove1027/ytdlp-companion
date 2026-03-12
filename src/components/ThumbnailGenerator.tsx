@@ -49,6 +49,8 @@ interface ThumbnailGeneratorProps {
   globalContext?: string; // [NEW] 문화권/지명/시대/핵심 엔티티 JSON
   initialReferenceImage?: string; // [NEW] Pre-loaded reference image from setup phase
   initialExtractedStyle?: string; // [NEW] Pre-analyzed style from setup phase
+  textMode?: 'auto' | 'custom' | 'none'; // [NEW] 텍스트 모드
+  customText?: string; // [NEW] 직접 입력 모드용 커스텀 텍스트
   autoStart?: boolean; // [NEW] Auto-start generation on mount
   hideReferenceArea?: boolean; // [NEW] Hide built-in reference area (when managed by parent)
   onBeforeGenerate?: () => Promise<void>; // [NEW] Callback before generation starts
@@ -69,6 +71,8 @@ const ThumbnailGenerator: React.FC<ThumbnailGeneratorProps> = ({
   isMixedMedia, // [NEW] Destructure
   languageContext, // [NEW] Destructure
   globalContext, // [NEW] Destructure
+  textMode, // [NEW] 텍스트 모드
+  customText, // [NEW] 직접 입력 텍스트
   initialReferenceImage, // [NEW] Destructure
   initialExtractedStyle, // [NEW] Destructure
   autoStart,             // [NEW] Destructure
@@ -243,7 +247,8 @@ const ThumbnailGenerator: React.FC<ThumbnailGeneratorProps> = ({
     if (onBeforeGenerate) {
       try {
         await onBeforeGenerate();
-      } catch {
+      } catch (e) {
+        logger.trackSwallowedError('ThumbnailGenerator:onBeforeGenerate', e);
         // Reset loading state on failure
         if (type === 'long') setIsPlanningLong(false);
         else setIsPlanningShort(false);
@@ -293,10 +298,18 @@ const ThumbnailGenerator: React.FC<ThumbnailGeneratorProps> = ({
             highlight = neons[Math.floor(Math.random() * neons.length)];
         }
 
+        // [NEW] textMode 분기: none=텍스트 제거, custom=사용자 텍스트, auto=AI 텍스트
+        let finalTextOverlay = concept.textOverlay || "";
+        if (textMode === 'none') {
+            finalTextOverlay = "";
+        } else if (textMode === 'custom' && customText?.trim()) {
+            finalTextOverlay = customText.trim();
+        }
+
         return {
             id: `thumb-${type}-${Date.now()}-${idx}`,
             // [FIX] Add fallback for textOverlay to prevent "undefined" string
-            textOverlay: concept.textOverlay || "",
+            textOverlay: finalTextOverlay,
             fullTitle: concept.fullTitle,
             visualDescription: concept.visualDescription,
             primaryColorHex: primaryColorHex,
@@ -312,7 +325,8 @@ const ThumbnailGenerator: React.FC<ThumbnailGeneratorProps> = ({
             poseDescription: concept.poseDescription,
             cameraAngle: concept.cameraAngle,
             // [NEW] Default text style preset
-            textPreset: 'sticker'
+            textPreset: 'sticker',
+            textMode: textMode || 'auto'
         };
       });
 
@@ -341,7 +355,12 @@ const ThumbnailGenerator: React.FC<ThumbnailGeneratorProps> = ({
               // [NEW] Pass extra fields
               thumb.shotSize,
               thumb.poseDescription,
-              thumb.cameraAngle
+              thumb.cameraAngle,
+              undefined, // textPreset
+              undefined, // fontHint
+              undefined, // textPosition
+              undefined, // textScale
+              thumb.textMode // [NEW] textMode
           )
       ));
 
@@ -372,7 +391,8 @@ const ThumbnailGenerator: React.FC<ThumbnailGeneratorProps> = ({
       textPreset?: string,
       fontHint?: string,
       textPosition?: string,
-      textScale?: number
+      textScale?: number,
+      thumbTextMode?: 'auto' | 'custom' | 'none'
   ) => {
     setThumbnails(prev => prev.map(t => t.id === id ? { ...t, isGenerating: true, generationStatus: undefined } : t));
 
@@ -415,7 +435,8 @@ const ThumbnailGenerator: React.FC<ThumbnailGeneratorProps> = ({
           textPreset,      // [NEW] Text Style Preset
           fontHint,        // [NEW] Font Hint
           textPosition,    // [NEW] Text Position
-          textScale        // [NEW] Text Scale
+          textScale,       // [NEW] Text Scale
+          thumbTextMode    // [NEW] Text Mode
       );
       
       const imageUrl = result.url;
@@ -476,7 +497,7 @@ const ThumbnailGenerator: React.FC<ThumbnailGeneratorProps> = ({
       e.preventDefault();
       if (!editingId) return;
       const ratio = thumb.format === 'short' ? AspectRatio.PORTRAIT : AspectRatio.LANDSCAPE;
-      generateSingleThumbnail(thumb.id, thumb.textOverlay, thumb.visualDescription, ratio, feedback, thumb.primaryColorHex, thumb.secondaryColorHex, thumb.colorMode, undefined, thumb.isNativeHQ, thumb.sentiment, thumb.highlight, thumb.shotSize, thumb.poseDescription, thumb.cameraAngle);
+      generateSingleThumbnail(thumb.id, thumb.textOverlay, thumb.visualDescription, ratio, feedback, thumb.primaryColorHex, thumb.secondaryColorHex, thumb.colorMode, undefined, thumb.isNativeHQ, thumb.sentiment, thumb.highlight, thumb.shotSize, thumb.poseDescription, thumb.cameraAngle, undefined, undefined, undefined, undefined, thumb.textMode);
       setEditingId(null);
       setFeedback('');
   };
@@ -745,7 +766,7 @@ const ThumbnailGenerator: React.FC<ThumbnailGeneratorProps> = ({
                                     <button
                                         onClick={(e) => {
                                             e.stopPropagation();
-                                            generateSingleThumbnail(thumb.id, thumb.textOverlay, thumb.visualDescription, isShort ? AspectRatio.PORTRAIT : AspectRatio.LANDSCAPE, undefined, thumb.primaryColorHex, thumb.secondaryColorHex, thumb.colorMode, idx, thumb.isNativeHQ, thumb.sentiment, thumb.highlight, thumb.shotSize, thumb.poseDescription, thumb.cameraAngle);
+                                            generateSingleThumbnail(thumb.id, thumb.textOverlay, thumb.visualDescription, isShort ? AspectRatio.PORTRAIT : AspectRatio.LANDSCAPE, undefined, thumb.primaryColorHex, thumb.secondaryColorHex, thumb.colorMode, idx, thumb.isNativeHQ, thumb.sentiment, thumb.highlight, thumb.shotSize, thumb.poseDescription, thumb.cameraAngle, undefined, undefined, undefined, undefined, thumb.textMode);
                                         }}
                                         className="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-white text-sm rounded border border-gray-600 font-bold transition-colors shadow-lg flex items-center gap-1"
                                     >
@@ -829,7 +850,7 @@ const ThumbnailGenerator: React.FC<ThumbnailGeneratorProps> = ({
                                   <span className="text-2xl">⬇</span>
                                   <span className="text-xs text-white/80 font-bold">다운로드</span>
                                 </button>
-                                <button onClick={() => { setToolbarId(null); generateSingleThumbnail(thumb.id, thumb.textOverlay, thumb.visualDescription, isShort ? AspectRatio.PORTRAIT : AspectRatio.LANDSCAPE, undefined, thumb.primaryColorHex, thumb.secondaryColorHex, thumb.colorMode, idx, thumb.isNativeHQ, thumb.sentiment, thumb.highlight, thumb.shotSize, thumb.poseDescription, thumb.cameraAngle); }} className="flex flex-col items-center gap-1.5 bg-white/10 hover:bg-white/20 backdrop-blur rounded-xl px-3 py-3 transition-colors" title="재생성">
+                                <button onClick={() => { setToolbarId(null); generateSingleThumbnail(thumb.id, thumb.textOverlay, thumb.visualDescription, isShort ? AspectRatio.PORTRAIT : AspectRatio.LANDSCAPE, undefined, thumb.primaryColorHex, thumb.secondaryColorHex, thumb.colorMode, idx, thumb.isNativeHQ, thumb.sentiment, thumb.highlight, thumb.shotSize, thumb.poseDescription, thumb.cameraAngle, undefined, undefined, undefined, undefined, thumb.textMode); }} className="flex flex-col items-center gap-1.5 bg-white/10 hover:bg-white/20 backdrop-blur rounded-xl px-3 py-3 transition-colors" title="재생성">
                                   <span className="text-2xl">🔄</span>
                                   <span className="text-xs text-white/80 font-bold">재생성</span>
                                 </button>
@@ -837,10 +858,12 @@ const ThumbnailGenerator: React.FC<ThumbnailGeneratorProps> = ({
                                   <span className="text-2xl">✏️</span>
                                   <span className="text-xs text-white/80 font-bold">수정</span>
                                 </button>
+                                {thumb.textMode !== 'none' && (
                                 <button onClick={() => { setToolbarId(null); setTextEditingId(thumb.id); }} className="flex flex-col items-center gap-1.5 bg-white/10 hover:bg-white/20 backdrop-blur rounded-xl px-3 py-3 transition-colors" title="문구 수정">
                                   <span className="text-2xl font-black text-white">T</span>
                                   <span className="text-xs text-white/80 font-bold">문구</span>
                                 </button>
+                                )}
                                 <button onClick={() => { setToolbarId(null); setPostProcessId(thumb.id); }} className="flex flex-col items-center gap-1.5 bg-white/10 hover:bg-white/20 backdrop-blur rounded-xl px-3 py-3 transition-colors" title="후처리">
                                   <span className="text-2xl">🎛️</span>
                                   <span className="text-xs text-white/80 font-bold">후처리</span>

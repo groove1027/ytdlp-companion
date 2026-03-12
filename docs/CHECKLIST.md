@@ -8,6 +8,7 @@
 
 ## 🟢 완료된 작업
 
+- [x] #153 썸네일 텍스트 모드 선택 기능 — 3모드(AI 자동/직접 입력/이미지만) 셀렉터 추가, 이미지만 모드에서 프롬프트의 텍스트 블록 제거 + 네거티브 강화, 직접 입력 모드에서 사용자 커스텀 텍스트 주입, 재생성 시 textMode 유지 (types.ts, SetupPanel.tsx, ThumbnailStudioTab.tsx, ThumbnailGenerator.tsx, thumbnailService.ts, 2026-03-13)
 - [x] #160 대본작성 "단락나누기 실행" 후 이미지/영상 탭 "스토리보드 생성" 버튼 비활성화 버그 수정 — handleSceneAnalysis에서 config.script 미전달 문제 해결, 탭 이동 시 script/videoFormat/smartSplit/longFormSplitType/aspectRatio를 프로젝트 config에 전달, SetupPanel의 splitResult 구독을 reactive로 변경 (ScriptWriterTab.tsx, SetupPanel.tsx, 2026-03-12)
 - [x] #146 내 피드백 내역 팝업 + 답변 확인 기능 — 헤더 "내 피드백" 버튼, 보낸 피드백 목록/상태/답변 내용 팝업 조회, GitHub API 실시간 상태 체크 (FeedbackHistoryPanel.tsx, feedbackService.ts, uiStore.ts, App.tsx, 2026-03-12)
 - [x] #142 영상/분석실에 All TTS 리메이크 프리셋 추가 — 스크립트 리빌딩 프로토콜 v3.6 적용, 원본 100% 보존 + 텍스트 유사도 0% 수렴 TTS 전용 대본 10종 생성 + Content ID 회피 분석 (VideoAnalysisRoom.tsx, types.ts, docs/all-tts-protocol.md, 2026-03-12)

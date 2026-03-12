@@ -15,6 +15,8 @@ export interface SetupState {
   referenceImageBase64?: string;
   youtubeUrl: string;
   youtubeThumbnail?: string;
+  textMode: 'auto' | 'custom' | 'none';
+  customText: string;
 }
 
 interface SetupPanelProps {
@@ -263,10 +265,71 @@ const SetupPanel: React.FC<SetupPanelProps> = ({
             </div>}
           </div>
 
+          {/* Text Mode Selection */}
+          <div>
+            <h3 className="text-lg font-bold text-white mb-3">{setup.mode === 'reference' ? '5' : '4'}. 썸네일 텍스트 설정</h3>
+            <div className="grid grid-cols-3 gap-3">
+              <button
+                onClick={() => setSetup(prev => ({ ...prev, textMode: 'auto', customText: '' }))}
+                className={`p-3 rounded-xl border-2 transition-all text-center ${
+                  setup.textMode === 'auto'
+                    ? 'border-pink-500 bg-pink-900/20'
+                    : 'border-gray-600 bg-gray-900/50 hover:border-gray-500'
+                }`}
+              >
+                <div className="text-xl mb-1">&#129302;</div>
+                <div className={`text-sm font-bold ${setup.textMode === 'auto' ? 'text-pink-300' : 'text-gray-300'}`}>AI 자동</div>
+                <div className="text-xs text-gray-400 mt-0.5">AI가 바이럴 문구 생성</div>
+              </button>
+              <button
+                onClick={() => setSetup(prev => ({ ...prev, textMode: 'custom' }))}
+                className={`p-3 rounded-xl border-2 transition-all text-center ${
+                  setup.textMode === 'custom'
+                    ? 'border-pink-500 bg-pink-900/20'
+                    : 'border-gray-600 bg-gray-900/50 hover:border-gray-500'
+                }`}
+              >
+                <div className="text-xl mb-1">&#9999;&#65039;</div>
+                <div className={`text-sm font-bold ${setup.textMode === 'custom' ? 'text-pink-300' : 'text-gray-300'}`}>직접 입력</div>
+                <div className="text-xs text-gray-400 mt-0.5">내가 쓴 문구로 생성</div>
+              </button>
+              <button
+                onClick={() => setSetup(prev => ({ ...prev, textMode: 'none', customText: '' }))}
+                className={`p-3 rounded-xl border-2 transition-all text-center ${
+                  setup.textMode === 'none'
+                    ? 'border-pink-500 bg-pink-900/20'
+                    : 'border-gray-600 bg-gray-900/50 hover:border-gray-500'
+                }`}
+              >
+                <div className="text-xl mb-1">&#128444;&#65039;</div>
+                <div className={`text-sm font-bold ${setup.textMode === 'none' ? 'text-pink-300' : 'text-gray-300'}`}>이미지만</div>
+                <div className="text-xs text-gray-400 mt-0.5">제목 없이 배경만 생성</div>
+              </button>
+            </div>
+            {setup.textMode === 'custom' && (
+              <div className="mt-3">
+                <textarea
+                  value={setup.customText}
+                  onChange={(e) => setSetup(prev => ({ ...prev, customText: e.target.value }))}
+                  placeholder="썸네일에 넣을 문구를 입력하세요..."
+                  className="w-full h-16 bg-gray-900 border border-pink-500/50 rounded-lg p-3 text-white text-sm focus:border-pink-500 outline-none resize-none focus:ring-1 focus:ring-pink-500"
+                />
+                <p className="text-xs text-gray-500 mt-1">4개 썸네일에 동일한 문구가 적용됩니다.</p>
+              </div>
+            )}
+            {setup.textMode === 'none' && (
+              <div className="mt-3 bg-blue-900/20 border border-blue-700/30 rounded-lg p-3">
+                <p className="text-sm text-blue-200 leading-relaxed">
+                  &#128161; 제목 없이 배경 이미지만 생성됩니다. 포토샵이나 캔바에서 직접 제목을 넣으실 분에게 추천합니다.
+                </p>
+              </div>
+            )}
+          </div>
+
           {/* Style (random mode only) */}
           {setup.mode === 'random' && (
             <div>
-              <h3 className="text-lg font-bold text-white mb-3">4. 비주얼 스타일 (선택)</h3>
+              <h3 className="text-lg font-bold text-white mb-3">5. 비주얼 스타일 (선택)</h3>
               <div className="bg-gradient-to-r from-purple-900/30 via-gray-800/50 to-orange-900/30 border border-gray-600 rounded-xl p-4 mb-4">
                 <div className="grid grid-cols-2 gap-3">
                   <div>
