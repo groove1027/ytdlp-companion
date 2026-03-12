@@ -94,7 +94,7 @@ export const useAutoSave = () => {
         // 오디오 blob을 IndexedDB에 영속화 (fire-and-forget)
         try {
           import('../services/audioStorageService').then(({ persistProjectAudio }) => {
-            persistProjectAudio(currentProjectId, scenes, config.mergedAudioUrl).catch(() => {});
+            persistProjectAudio(currentProjectId, scenes, config.mergedAudioUrl).catch((e) => { logger.trackSwallowedError('useAutoSave:persistProjectAudio', e); });
           });
         } catch (e) { logger.trackSwallowedError('useAutoSave:doSave/audioStorage', e); }
 

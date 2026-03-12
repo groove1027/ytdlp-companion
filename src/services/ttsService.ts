@@ -648,6 +648,7 @@ export const splitAudioAtTime = async (
     logger.registerBlobUrl(url2, 'audio', 'ttsService:splitAudioAtTime');
     return [url1, url2];
   } catch (e) {
+    logger.trackSwallowedError('ttsService:splitAudioAtTime', e);
     console.warn('[splitAudioAtTime] Failed to split audio:', e);
     return null;
   }

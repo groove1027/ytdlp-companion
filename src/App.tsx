@@ -819,6 +819,7 @@ const App: React.FC = () => {
   const handleManualImageUpload = useCallback(async (sceneId: string, file: File) => {
       // Show immediately with ObjectURL for fast preview
       const objectUrl = URL.createObjectURL(file);
+      logger.registerBlobUrl(objectUrl, 'image', 'App:handleManualImageUpload');
       setScenes(prev => prev.map(s => s.id === sceneId ? { ...s, imageUrl: objectUrl, isNativeHQ: false } : s));
 
       // Background: upload to Cloudinary
@@ -911,6 +912,7 @@ const App: React.FC = () => {
                       if (imgFile) {
                           const blob = await imgFile.async('blob');
                           imageUrl = URL.createObjectURL(blob);
+                          logger.registerBlobUrl(imageUrl, 'image', 'App:importZipProject');
                       }
                   }
                   return {
