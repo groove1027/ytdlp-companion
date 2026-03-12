@@ -147,7 +147,8 @@ const LyricsModal: React.FC<{
       try {
         const result = await getTimestampedLyrics(track.id, track.audioId!);
         if (!cancelled) setWords(result);
-      } catch {
+      } catch (e) {
+        logger.trackSwallowedError('MusicLibrary:getTimestampedLyrics', e);
         // 타임스탬프 가사 실패 → 일반 가사만 표시
       } finally {
         if (!cancelled) setLoading(false);

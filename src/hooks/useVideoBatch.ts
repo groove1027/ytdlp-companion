@@ -27,7 +27,8 @@ function base64ToFile(base64: string, filename: string): File {
         const u8arr = new Uint8Array(n);
         while (n--) u8arr[n] = bstr.charCodeAt(n);
         return new File([u8arr], filename, { type: mime });
-    } catch {
+    } catch (e) {
+        logger.trackSwallowedError('useVideoBatch:base64ToFile', e);
         console.warn('Invalid base64 image, using empty file fallback');
         return new File([], filename, { type: 'image/png' });
     }
@@ -296,7 +297,8 @@ export const useVideoBatch = (
                     if (ctx.specificLocation) parts.push(ctx.specificLocation);
                 }
                 culturalContextStr = parts.filter(Boolean).join(", ");
-            } catch {
+            } catch (e) {
+                logger.trackSwallowedError('useVideoBatch:parseGlobalContext', e);
                 // globalContext parse failure is non-fatal
             }
 

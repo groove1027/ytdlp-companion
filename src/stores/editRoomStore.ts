@@ -94,7 +94,8 @@ async function findNearestSilenceGap(audioUrl: string, estimatedTime: number, to
 
     // 전체 길이의 30% 이내에서만 보정 (너무 멀면 문자비례 유지)
     return minDist <= totalDuration * 0.3 ? nearest : estimatedTime;
-  } catch {
+  } catch (e) {
+    logger.trackSwallowedError('editRoomStore:snapToSilence', e);
     return estimatedTime;
   }
 }
@@ -157,7 +158,8 @@ async function tryWhisperTranscribe(audioUrl: string): Promise<WhisperWord[] | n
       }
     }
     return allWords.length > 0 ? allWords : null;
-  } catch {
+  } catch (e) {
+    logger.trackSwallowedError('editRoomStore:parseWhisperWords', e);
     return null;
   }
 }
@@ -543,7 +545,8 @@ export const useEditRoomStore = create<EditRoomStore>((set, get) => ({
                 const buf = await resp.arrayBuffer();
                 const decoded = await ctx.decodeAudioData(buf);
                 dur = decoded.duration;
-              } catch {
+              } catch (e) {
+                logger.trackSwallowedError('editRoomStore:recalcAudioOffsets', e);
                 dur = 3;
               }
             }
@@ -1096,7 +1099,8 @@ export const useEditRoomStore = create<EditRoomStore>((set, get) => ({
         } else {
           splitPoints = fallbackSplitPoints(rawText, cpl);
         }
-      } catch {
+      } catch (e) {
+        logger.trackSwallowedError('editRoomStore:aiSubtitleSplit', e);
         splitPoints = fallbackSplitPoints(rawText, cpl);
       }
 

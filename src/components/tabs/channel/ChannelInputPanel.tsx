@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useRef } from 'react';
 import { parseFileToText, SUPPORTED_EXTENSIONS, SUPPORTED_FORMATS_LABEL } from '../../../services/fileParserService';
 import { showToast } from '../../../stores/uiStore';
+import { logger } from '../../../services/LoggerService';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
 import type { ChannelInputSource, ParsedFileEntry, ContentFormat, ChannelScript } from '../../../types';
 
@@ -91,7 +92,8 @@ const ChannelInputPanel: React.FC<ChannelInputPanelProps> = ({
           text,
           preview: text.substring(0, 100).replace(/\n/g, ' '),
         });
-      } catch {
+      } catch (e) {
+        logger.trackSwallowedError('ChannelInputPanel:parseFile', e);
         showToast(`${file.name}: 파일 파싱 실패`);
       }
     }

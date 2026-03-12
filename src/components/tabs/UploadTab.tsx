@@ -1542,7 +1542,8 @@ const StepMetadata: React.FC = () => {
     try {
       const tags = await extractShoppingTags(scriptText, getSceneSummaries());
       setShoppingTags(tags);
-    } catch {
+    } catch (e) {
+      logger.trackSwallowedError('UploadTab:extractShoppingTags', e);
       showToast('쇼핑 태그 추출 실패');
     } finally {
       setIsExtractingTags(false);
@@ -2796,7 +2797,8 @@ const UploadTab: React.FC = () => {
               const refreshed = await refreshAccessToken(youtubeAuth.refreshToken, youtubeAuth.clientId, youtubeAuth.clientSecret);
               token = refreshed.accessToken;
               useUploadStore.getState().setYoutubeAuth({ accessToken: token, expiresAt: Date.now() + refreshed.expiresIn * 1000 });
-            } catch {
+            } catch (e) {
+              logger.trackSwallowedError('UploadTab:refreshYoutubeToken', e);
               setPP('youtube', { status: 'error', error: '토큰 갱신 실패. YouTube를 다시 연동해주세요.' });
               return;
             }
@@ -2842,7 +2844,8 @@ const UploadTab: React.FC = () => {
               const refreshed = await refreshTikTokAccessToken(tiktokAuth.refreshToken, tiktokAuth.clientKey, tiktokAuth.clientSecret);
               token = refreshed.accessToken;
               useUploadStore.getState().setTiktokAuth({ accessToken: token, refreshToken: refreshed.refreshToken, expiresAt: Date.now() + refreshed.expiresIn * 1000 });
-            } catch {
+            } catch (e) {
+              logger.trackSwallowedError('UploadTab:refreshTikTokToken', e);
               setPP('tiktok', { status: 'error', error: '토큰 갱신 실패. TikTok을 다시 연동해주세요.' });
               return;
             }
@@ -2884,7 +2887,8 @@ const UploadTab: React.FC = () => {
               const thumbBlob = await fetch(store.thumbnailUrl).then(r => r.blob());
               const thumbFile = new File([thumbBlob], 'cover.jpg', { type: 'image/jpeg' });
               igCoverUrl = await uploadMediaToHosting(thumbFile);
-            } catch {
+            } catch (e) {
+              logger.trackSwallowedError('UploadTab:uploadInstagramCover', e);
               // 커버 업로드 실패는 무시 — 영상 업로드는 진행
             }
           }

@@ -144,7 +144,8 @@ const pollDialogueTask = async (taskId: string, apiKey: string, maxAttempts: num
         try {
           const parsed = JSON.parse(resultJson);
           audioUrl = parsed.resultUrls?.[0] || parsed.audio_url || parsed.url;
-        } catch {
+        } catch (e) {
+          logger.trackSwallowedError('elevenlabsService:parseResultJson', e);
           audioUrl = resultJson;
         }
       } else if (resultJson) {

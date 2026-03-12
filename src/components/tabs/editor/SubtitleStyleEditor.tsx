@@ -2,6 +2,7 @@ import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react'
 import { useEditorStore } from '../../../stores/editorStore';
 import { useProjectStore } from '../../../stores/projectStore';
 import { useEditRoomStore } from '../../../stores/editRoomStore';
+import { logger } from '../../../services/LoggerService';
 import type { SubtitleTemplate, SubtitleStyle } from '../../../types';
 import { FONT_LIBRARY, FONT_CATEGORY_LABELS, getFontsByCategory, getFontByFamily } from '../../../constants/fontLibrary';
 import type { FontCategory, FontEntry } from '../../../constants/fontLibrary';
@@ -30,7 +31,7 @@ function loadPresets(): SavedSubtitlePreset[] {
   try {
     const raw = localStorage.getItem(PRESET_STORAGE_KEY);
     return raw ? JSON.parse(raw) : [];
-  } catch { return []; }
+  } catch (e) { logger.trackSwallowedError('SubtitleStyleEditor:loadPresets', e); return []; }
 }
 
 function savePresets(presets: SavedSubtitlePreset[]): void {
@@ -1116,7 +1117,8 @@ const SubtitleStyleEditor: React.FC = () => {
                           } else {
                             showToast('분할할 자막이 없습니다 (모두 한줄 이내)');
                           }
-                        } catch {
+                        } catch (e) {
+                          logger.trackSwallowedError('SubtitleStyleEditor:aiSegment', e);
                           showToast('AI 분할 실패 — 빠른 분할을 사용하세요');
                         } finally {
                           setAiSegmentLoading(false);

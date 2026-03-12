@@ -161,7 +161,8 @@ export const extractAudioFromVideo = async (videoBlob: Blob): Promise<Blob | nul
         }, maxDuration + 500);
 
         video.onended = () => { if (recorder.state === 'recording') recorder.stop(); };
-      } catch {
+      } catch (e) {
+        logger.trackSwallowedError('shoppingScriptService:audioCapture', e);
         logger.unregisterBlobUrl(_audioSrcUrl);
         URL.revokeObjectURL(_audioSrcUrl);
         resolve(null);

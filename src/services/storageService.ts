@@ -119,7 +119,8 @@ function estimateProjectSizeMB(project: ProjectData): number {
   try {
     const json = JSON.stringify(project);
     return parseFloat((new Blob([json]).size / (1024 * 1024)).toFixed(1));
-  } catch {
+  } catch (e) {
+    logger.trackSwallowedError('storageService:estimateProjectSizeMB', e);
     return 0;
   }
 }

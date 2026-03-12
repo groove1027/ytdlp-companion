@@ -89,7 +89,8 @@ function extractVideoFrames(file: File, count: number): Promise<{ frames: { base
           const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
           const b64 = dataUrl.split(',')[1] || '';
           if (b64) frames.push({ base64: b64, mimeType: 'image/jpeg', timeSec: Math.round(tc * 10) / 10 });
-        } catch {
+        } catch (e) {
+          logger.trackSwallowedError('SocialAnalysisRoom:extractFrame', e);
           // 프레임 추출 실패 시 건너뜀
         }
       }
@@ -234,7 +235,8 @@ const SocialAnalysisRoom: React.FC = () => {
       await handleAddVideo(file);
       showToast('TikTok 영상 다운로드 완료');
       setTiktokUrl('');
-    } catch {
+    } catch (e) {
+      logger.trackSwallowedError('SocialAnalysisRoom:downloadTikTok', e);
       showToast('URL 다운로드에 실패했습니다. 영상을 직접 저장한 후 파일로 업로드해주세요.', 5000);
     } finally {
       setIsDownloadingUrl(false);

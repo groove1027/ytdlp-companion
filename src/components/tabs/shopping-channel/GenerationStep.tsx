@@ -2,6 +2,7 @@ import React, { useCallback, useRef, useState } from 'react';
 import { useShoppingChannelStore } from '../../../stores/shoppingChannelStore';
 import { runPipeline, generateSceneImage, generateSceneVideo, SECTION_LABELS } from '../../../services/shoppingChannelService';
 import { useCostStore } from '../../../stores/costStore';
+import { logger } from '../../../services/LoggerService';
 import { showToast } from '../../../stores/uiStore';
 
 const PHASE_LABELS: Record<string, string> = {
@@ -98,7 +99,8 @@ const GenerationStep: React.FC = () => {
       a.download = filename;
       a.click();
       URL.revokeObjectURL(a.href);
-    } catch {
+    } catch (e) {
+      logger.trackSwallowedError('GenerationStep:downloadFile', e);
       window.open(url, '_blank');
     }
   }, []);

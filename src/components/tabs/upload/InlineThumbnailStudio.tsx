@@ -9,6 +9,7 @@ import { useProjectStore } from '../../../stores/projectStore';
 import { useUIStore, showToast } from '../../../stores/uiStore';
 import { extractYouTubeVideoId, fetchYouTubeThumbnail } from '../../../utils/thumbnailUtils';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
+import { logger } from '../../../services/LoggerService';
 
 const ThumbnailGenerator = lazy(() => import('../../ThumbnailGenerator'));
 
@@ -63,7 +64,8 @@ const InlineThumbnailStudio: React.FC<InlineThumbnailStudioProps> = ({ onClose }
       const base64 = await fetchYouTubeThumbnail(videoId);
       setReferenceImage(base64);
       setExtractedStyle(undefined);
-    } catch {
+    } catch (e) {
+      logger.trackSwallowedError('InlineThumbnailStudio:fetchYouTubeThumbnail', e);
       showToast('YouTube 썸네일을 가져올 수 없습니다.');
     } finally {
       setIsFetchingThumb(false);
@@ -78,7 +80,8 @@ const InlineThumbnailStudio: React.FC<InlineThumbnailStudioProps> = ({ onClose }
       const resized = await resizeImage(file, 1024);
       setReferenceImage(resized);
       setExtractedStyle(undefined);
-    } catch {
+    } catch (e) {
+      logger.trackSwallowedError('InlineThumbnailStudio:handleRefFileChange', e);
       showToast('이미지를 처리할 수 없습니다.');
     }
     if (fileRef.current) fileRef.current.value = '';
@@ -92,7 +95,8 @@ const InlineThumbnailStudio: React.FC<InlineThumbnailStudioProps> = ({ onClose }
       const analysis = await analyzeStyleReference(referenceImage);
       setExtractedStyle(analysis);
       // Cost is auto-tracked inside evolinkChat()
-    } catch {
+    } catch (e) {
+      logger.trackSwallowedError('InlineThumbnailStudio:handleAnalyze', e);
       showToast('스타일 분석에 실패했습니다.');
     } finally {
       setIsAnalyzing(false);

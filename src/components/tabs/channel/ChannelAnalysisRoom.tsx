@@ -1636,7 +1636,8 @@ const ChannelAnalysisRoom: React.FC = () => {
                     .map(s => `https://www.youtube.com/watch?v=${s.videoId}`)
                     .join('\n');
                   try { await navigator.clipboard.writeText(urls); }
-                  catch {
+                  catch (e) {
+                    logger.trackSwallowedError('ChannelAnalysisRoom:copyUrls', e);
                     const ta = document.createElement('textarea');
                     ta.value = urls; document.body.appendChild(ta); ta.select();
                     document.execCommand('copy'); document.body.removeChild(ta);

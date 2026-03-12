@@ -12,6 +12,7 @@ import type {
 import { computeKenBurns, drawKenBurnsFrame, OVERSCALE } from './kenBurnsEngine';
 import { renderTransition } from './transitionEngine';
 import { drawSubtitle } from './subtitleRenderer';
+import { logger } from '../LoggerService';
 
 export interface CanvasRendererConfig {
   width: number;
@@ -381,7 +382,8 @@ async function renderSceneFrame(
         ctx.fillStyle = '#000';
         ctx.fillRect(0, 0, canvasW, canvasH);
       }
-    } catch {
+    } catch (e) {
+      logger.trackSwallowedError('canvasRenderer:extractFrame', e);
       // 프레임 추출 실패 시 검은 화면으로 대체 (렌더링 중단하지 않음)
       ctx.fillStyle = '#000';
       ctx.fillRect(0, 0, canvasW, canvasH);

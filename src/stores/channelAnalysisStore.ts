@@ -101,7 +101,7 @@ const PRESETS_KEY = 'CHANNEL_PRESETS';
 
 const loadPresetsFromStorage = (): ChannelGuideline[] => {
   try { return JSON.parse(localStorage.getItem(PRESETS_KEY) || '[]'); }
-  catch { return []; }
+  catch (e) { logger.trackSwallowedError('channelAnalysisStore:loadPresetsFromStorage', e); return []; }
 };
 
 const initQuota = getQuotaUsage();
@@ -210,7 +210,7 @@ export const useChannelAnalysisStore = create<ChannelAnalysisStore>((set) => ({
         if (bench && bench.scripts.length > 0) {
           set({ channelScripts: bench.scripts, savedBenchmarks: all });
         }
-      } catch { /* 벤치마크 없으면 스크립트 없이 가이드라인만 표시 */ }
+      } catch (e) { logger.trackSwallowedError('channelAnalysisStore:loadBenchmarkScripts', e); /* 벤치마크 없으면 스크립트 없이 가이드라인만 표시 */ }
     })();
   },
 

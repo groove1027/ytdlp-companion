@@ -10,6 +10,7 @@ import { buildSelectedInstinctPrompt } from '../../data/instinctPromptUtils';
 import { SCRIPT_STYLE_PRESETS, ScriptStylePreset } from '../../data/scriptStylePresets';
 import { VideoFormat, ContentFormat, TopicRecommendation, AspectRatio } from '../../types';
 import { showToast } from '../../stores/uiStore';
+import { logger } from '../../services/LoggerService';
 import { countScenesLocally, splitScenesLocally, extractJsonFromText } from '../../services/gemini/scriptAnalysis';
 import { canCreateNewProject } from '../../services/storageService';
 import { parseFileToText, SUPPORTED_EXTENSIONS, SUPPORTED_FORMATS_LABEL } from '../../services/fileParserService';
@@ -635,7 +636,7 @@ ${instinctPrompt}
             finalDuration = parsed.estimatedDuration || finalDuration;
             finalStructure = Array.isArray(parsed.structure) ? parsed.structure : [];
           }
-        } catch { /* JSON 파싱 실패 시 plain text 사용 */ }
+        } catch (e) { logger.trackSwallowedError('ScriptWriterTab:parseGeneratedScript', e); /* JSON 파싱 실패 시 plain text 사용 */ }
       }
 
       setGeneratedScript({

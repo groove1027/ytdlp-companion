@@ -1,4 +1,5 @@
 import { evolinkChat } from './evolinkService';
+import { logger } from './LoggerService';
 import type { ShoppingTag } from '../types';
 
 /**
@@ -80,7 +81,8 @@ ${fullScript.slice(0, 6000)}${sceneContext}`;
         category: typeof t.category === 'string' ? t.category : '기타',
       }))
       .slice(0, 15);
-  } catch {
+  } catch (e) {
+    logger.trackSwallowedError('shoppingTagService:extractShoppingTags', e);
     return [];
   }
 }

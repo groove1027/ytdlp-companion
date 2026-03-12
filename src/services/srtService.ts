@@ -4,6 +4,7 @@
  */
 
 import { SrtEntry, UnifiedSceneTiming } from '../types';
+import { logger } from './LoggerService';
 
 /**
  * 초(seconds)를 SRT 타임코드로 변환
@@ -222,7 +223,8 @@ function guessExtension(url: string, fallback: string): string {
     const pathname = new URL(url).pathname;
     const ext = pathname.split('.').pop()?.toLowerCase();
     if (ext && ext.length <= 5 && /^[a-z0-9]+$/.test(ext)) return ext;
-  } catch {
+  } catch (e) {
+    logger.trackSwallowedError('srtService:guessExtension', e);
     // URL 파싱 실패 시 fallback
   }
   return fallback;

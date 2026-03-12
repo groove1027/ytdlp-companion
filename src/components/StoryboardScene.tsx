@@ -4,6 +4,7 @@ import { Scene, AspectRatio, VideoFormat, VideoModel } from '../types';
 import type { CommunityMediaItem } from '../types';
 import { useProjectStore } from '../stores/projectStore';
 import { useUIStore } from '../stores/uiStore';
+import { logger } from '../services/LoggerService';
 
 const MediaSearchModal = lazy(() => import('./MediaSearchModal'));
 
@@ -140,7 +141,8 @@ const StoryboardSceneInner: React.FC<StoryboardSceneProps> = ({
       link.click();
       document.body.removeChild(link);
       setTimeout(() => URL.revokeObjectURL(link.href), 30000); // 30 seconds for large images
-    } catch {
+    } catch (e) {
+      logger.trackSwallowedError('StoryboardScene:handleDownloadImage', e);
       // Fallback: open in new tab
       window.open(scene.imageUrl, '_blank');
     }

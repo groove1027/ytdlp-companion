@@ -2,6 +2,7 @@ import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { useProjectStore } from '../../../stores/projectStore';
 import { useEditRoomStore } from '../../../stores/editRoomStore';
 import { showToast } from '../../../stores/uiStore';
+import { logger } from '../../../services/LoggerService';
 import OverlayPicker, { OVERLAY_PRESETS } from '../editroom/OverlayPicker';
 import OverlayPreviewLayer from '../editroom/OverlayPreviewLayer';
 import type { SceneOverlayConfig, SceneEffectConfig } from '../../../types';
@@ -303,7 +304,7 @@ const EffectPresets: React.FC = () => {
           const result = await detectImageFocalPoint(url);
           setSceneEffect(scene.id, { anchorX: result.anchorX, anchorY: result.anchorY, anchorLabel: result.anchorLabel });
           done++;
-        } catch { /* skip failed */ }
+        } catch (e) { logger.trackSwallowedError('EffectPresets:detectFocalPoint', e); /* skip failed */ }
       }
       showToast(`${done}/${targets.length}개 장면 초점 감지 완료`);
     } catch (e) {

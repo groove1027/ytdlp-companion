@@ -46,7 +46,7 @@ interface ImageVideoStore {
 let _projectStoreRef: any = null;
 const getProjectStore = () => {
   if (!_projectStoreRef) {
-    try { _projectStoreRef = require('./projectStore').useProjectStore; } catch { return null; }
+    try { _projectStoreRef = require('./projectStore').useProjectStore; } catch (e) { logger.trackSwallowedError('imageVideoStore:getProjectStore', e); return null; }
   }
   return _projectStoreRef;
 };

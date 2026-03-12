@@ -132,7 +132,8 @@ export const verifyToken = async (): Promise<AuthUser | null> => {
     const isLocal = !!localStorage.getItem(AUTH_TOKEN_KEY);
     saveAuth(token, data.user, isLocal);
     return data.user;
-  } catch {
+  } catch (e) {
+    logger.trackSwallowedError('authService:validateToken', e);
     // 네트워크 오류 시 로컬 캐시 사용 (오프라인 허용)
     return getSavedUser();
   }

@@ -1133,7 +1133,8 @@ export const parseScriptToScenes = async (
                     let parsed: any;
                     try {
                         parsed = JSON.parse(content);
-                    } catch {
+                    } catch (e) {
+                        logger.trackSwallowedError('scriptAnalysis:parseChunkJson', e);
                         const jsonText = extractJsonFromText(content);
                         parsed = JSON.parse(jsonText || '[]');
                     }
@@ -1180,7 +1181,8 @@ export const parseScriptToScenes = async (
                     const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
                     if (text) {
                         let parsed: any;
-                        try { parsed = JSON.parse(text); } catch {
+                        try { parsed = JSON.parse(text); } catch (e) {
+                            logger.trackSwallowedError('scriptAnalysis:parseV1betaJson', e);
                             const jsonText = extractJsonFromText(text);
                             parsed = JSON.parse(jsonText || '[]');
                         }

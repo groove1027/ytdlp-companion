@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { verifyToken, AuthUser } from '../services/authService';
+import { logger } from '../services/LoggerService';
 
 interface AuthStore {
   authUser: AuthUser | null;
@@ -17,7 +18,8 @@ export const useAuthStore = create<AuthStore>((set) => ({
     try {
       const user = await verifyToken();
       set({ authUser: user, authChecking: false });
-    } catch {
+    } catch (e) {
+      logger.trackSwallowedError('authStore:checkAuth', e);
       set({ authUser: null, authChecking: false });
     }
   },

@@ -234,7 +234,8 @@ const AudioMerger: React.FC = () => {
               const dur = decoded.duration;
               updateLine(line.id, { startTime: offset, endTime: offset + dur, duration: dur });
               offset += dur;
-            } catch {
+            } catch (e) {
+              logger.trackSwallowedError('AudioMerger:measureAudioDuration', e);
               updateLine(line.id, { startTime: offset, endTime: offset + 2, duration: 2 });
               offset += 2;
             }

@@ -639,7 +639,8 @@ function canvasExtractFrames(
             }
             frames.push({ url: thumbUrl, hdUrl, timeSec: tc });
           }
-        } catch {
+        } catch (e) {
+          logger.trackSwallowedError('VideoAnalysisRoom:extractFrame', e);
           console.warn(`[Frame] 추출 실패 at ${tc}s (CORS/encode)`);
           cleanup();
           resolve(frames);

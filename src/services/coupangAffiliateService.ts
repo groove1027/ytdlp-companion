@@ -153,7 +153,8 @@ export const testAffiliateConnection = async (): Promise<boolean> => {
     // HMAC 서명 생성만 테스트 (실제 API 호출 없이)
     await generateHmac('GET', '/test', '');
     return true;
-  } catch {
+  } catch (e) {
+    logger.trackSwallowedError('coupangAffiliateService:testConnection', e);
     return false;
   }
 };

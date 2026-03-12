@@ -3,6 +3,7 @@ import { useChannelAnalysisStore } from '../../../stores/channelAnalysisStore';
 import { useScriptWriterStore } from '../../../stores/scriptWriterStore';
 import { useNavigationStore } from '../../../stores/navigationStore';
 import { evolinkChat } from '../../../services/evolinkService';
+import { logger } from '../../../services/LoggerService';
 import { LegacyTopicRecommendation, ChannelScript } from '../../../types';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
@@ -106,7 +107,8 @@ ${scriptSummaries}
       let parsed: LegacyTopicRecommendation[];
       try {
         parsed = JSON.parse(jsonStr);
-      } catch {
+      } catch (e) {
+        logger.trackSwallowedError('BenchmarkPanel:parseTopics', e);
         throw new Error('AI 응답을 파싱할 수 없습니다. 다시 시도해주세요.');
       }
       if (Array.isArray(parsed) && parsed.length > 0) {

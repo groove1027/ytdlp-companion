@@ -286,7 +286,8 @@ export const uploadVideoToYouTube = async (opts: {
             videoId,
             videoUrl: `https://www.youtube.com/watch?v=${videoId}`,
           });
-        } catch {
+        } catch (e) {
+          logger.trackSwallowedError('youtubeUploadService:parseUploadResponse', e);
           reject(new Error('업로드 응답을 파싱할 수 없습니다.'));
         }
       } else {

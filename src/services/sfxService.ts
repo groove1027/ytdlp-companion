@@ -98,7 +98,8 @@ export async function pollSfxTask(
         try {
           const parsed = JSON.parse(resultJson);
           audioUrl = parsed.resultUrls?.[0] || parsed.audio_url || parsed.url;
-        } catch {
+        } catch (e) {
+          logger.trackSwallowedError('sfxService:parseResultJson', e);
           audioUrl = resultJson;
         }
       } else if (resultJson) {

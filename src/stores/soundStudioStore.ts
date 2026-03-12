@@ -35,7 +35,8 @@ export function stopAllAudio(): void {
     try {
       audio.pause();
       audio.currentTime = 0;
-    } catch {
+    } catch (e) {
+      logger.trackSwallowedError('soundStudioStore:stopAllAudio', e);
       // 이미 해제된 오디오 무시
     }
   });
@@ -49,12 +50,12 @@ const FAVORITE_VOICES_KEY = 'SOUND_FAVORITE_VOICES';
 
 const loadFavoriteModels = (): SunoModel[] => {
   try { return JSON.parse(localStorage.getItem(FAVORITE_MODELS_KEY) || '[]'); }
-  catch { return []; }
+  catch (e) { logger.trackSwallowedError('soundStudioStore:loadFavoriteModels', e); return []; }
 };
 
 const loadFavoriteVoices = (): string[] => {
   try { return JSON.parse(localStorage.getItem(FAVORITE_VOICES_KEY) || '[]'); }
-  catch { return []; }
+  catch (e) { logger.trackSwallowedError('soundStudioStore:loadFavoriteVoices', e); return []; }
 };
 
 type SoundSubTab = 'narration' | 'waveform';

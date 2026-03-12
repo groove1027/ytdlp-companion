@@ -104,7 +104,8 @@ const autoExtendToTarget = async (
       current = { ...extResult, duration: extDur, audioId: extResult.audioId || audioId };
 
       if (current.duration >= targetDuration * 0.9) break;
-    } catch {
+    } catch (e) {
+      logger.trackSwallowedError('MusicStudio:extendLoop', e);
       break;
     }
   }

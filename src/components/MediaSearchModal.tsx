@@ -1,6 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import type { CommunityMediaItem, MediaType } from '../types';
 import { searchMedia, preloadAllMedia } from '../services/mediaSearchService';
+import { logger } from '../services/LoggerService';
 
 interface MediaSearchModalProps {
   isOpen: boolean;
@@ -61,7 +62,8 @@ const MediaSearchModal: React.FC<MediaSearchModalProps> = ({
     try {
       const items = await searchMedia({ query: trimmed, type, limit: 30 });
       setResults(items);
-    } catch {
+    } catch (e) {
+      logger.trackSwallowedError('MediaSearchModal:handleSearch', e);
       setResults([]);
     } finally {
       setIsLoading(false);

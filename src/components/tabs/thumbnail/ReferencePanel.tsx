@@ -3,6 +3,7 @@ import { resizeImage } from '../../../services/imageProcessingService';
 import { analyzeStyleReference } from '../../../services/geminiService';
 import { extractYouTubeVideoId, fetchYouTubeThumbnail } from '../../../utils/thumbnailUtils';
 import { showToast } from '../../../stores/uiStore';
+import { logger } from '../../../services/LoggerService';
 
 interface ReferencePanelProps {
   youtubeUrl: string;
@@ -62,7 +63,8 @@ const ReferencePanel: React.FC<ReferencePanelProps> = ({
     try {
       const base64 = await fetchYouTubeThumbnail(videoId);
       onSetYoutubeThumbnail(base64);
-    } catch {
+    } catch (e) {
+      logger.trackSwallowedError('ReferencePanel:fetchYouTubeThumbnail', e);
       onSetYtFetchFailed(true);
     } finally {
       onSetYtFetching(false);

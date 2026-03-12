@@ -2,6 +2,7 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { useProjectStore } from '../../stores/projectStore';
 import { useCostStore } from '../../stores/costStore';
 import { evolinkChat } from '../../services/evolinkService';
+import { logger } from '../../services/LoggerService';
 import type { EvolinkChatMessage } from '../../services/evolinkService';
 import { generateSceneImage } from '../../services/gemini/imageGeneration';
 import { showToast } from '../../stores/uiStore';
@@ -305,7 +306,8 @@ export default function PptMasterTab() {
         addCost(PRICING.IMAGE_GENERATION, 'image');
         const imageUrl = typeof result === 'string' ? result : result.url;
         setSlides(prev => prev.map((s, idx) => idx === i ? { ...s, imageUrl, isGeneratingImage: false } : s));
-      } catch {
+      } catch (e) {
+        logger.trackSwallowedError('PptMasterTab:generateBatchImages', e);
         setSlides(prev => prev.map((s, idx) => idx === i ? { ...s, isGeneratingImage: false } : s));
       }
       setBatchProgress(prev => ({ ...prev, current: prev.current + 1 }));
@@ -415,7 +417,8 @@ export default function PptMasterTab() {
       addCost(PRICING.IMAGE_GENERATION, 'image');
       const imageUrl = typeof result === 'string' ? result : result.url;
       setSlides(prev => prev.map((s, i) => i === index ? { ...s, imageUrl, isGeneratingImage: false } : s));
-    } catch {
+    } catch (e) {
+      logger.trackSwallowedError('PptMasterTab:regenerateSlideImage', e);
       setSlides(prev => prev.map((s, i) => i === index ? { ...s, isGeneratingImage: false } : s));
       showToast('이미지 생성 실패');
     }

@@ -2,6 +2,7 @@ import React, { useState, useCallback } from 'react';
 import type { InstinctPart } from '../../../types';
 import { INSTINCT_COMBOS, MASTER_FORMULA } from '../../../data/instinctData';
 import { useInstinctStore } from '../../../stores/instinctStore';
+import { logger } from '../../../services/LoggerService';
 
 interface Props {
   part: InstinctPart;
@@ -20,7 +21,8 @@ const InstinctDetail: React.FC<Props> = ({ part, searchResults }) => {
   const copyHook = useCallback(async (hook: string) => {
     try {
       await navigator.clipboard.writeText(hook);
-    } catch {
+    } catch (e) {
+      logger.trackSwallowedError('InstinctDetail:copyHook', e);
       const ta = document.createElement('textarea');
       ta.value = hook;
       document.body.appendChild(ta);

@@ -5,6 +5,7 @@ import { getEvolinkKey } from '../evolinkService';
 import { SAFETY_SETTINGS_BLOCK_NONE, requestGeminiProxy, requestKieChatFallback, extractTextFromResponse } from './geminiProxy';
 import { uploadMediaToHosting } from '../uploadService';
 import { generateKieImage, generateEvolinkImageWrapped } from '../VideoGenService';
+import { logger } from '../LoggerService';
 
 // --- Types ---
 type VideoSource = { youtubeUrl: string } | { videoFile: File };
@@ -123,7 +124,8 @@ Analyze the video now. Return ONLY the JSON array.`;
     try {
         const cleaned = rawText.replace(/```json|```/g, '').trim();
         parsed = JSON.parse(cleaned);
-    } catch {
+    } catch (e) {
+        logger.trackSwallowedError('videoAnalysis:parseJson', e);
         console.error("[VideoAnalysis] JSON parse failed:", rawText);
         throw new Error("영상 분석 결과 파싱에 실패했습니다. 다시 시도해주세요.");
     }
@@ -868,7 +870,8 @@ export const generateRemakeImage = async (
             ]);
             editedStartFrameUrl = editedStart || mainUrl;
             editedEndFrameUrl = editedEnd || mainUrl;
-        } catch {
+        } catch (e) {
+            logger.trackSwallowedError('videoAnalysis:editFrames', e);
             // Graceful: use main frame for both (degrades to IMAGE_2_VIDEO behavior)
             editedStartFrameUrl = mainUrl;
             editedEndFrameUrl = mainUrl;

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { checkResolvedFeedbacks, dismissFeedbackIssue, playNotificationSound, showBrowserNotification, type ResolvedFeedback } from '../services/feedbackService';
 import { useUIStore } from '../stores/uiStore';
+import { logger } from '../services/LoggerService';
 
 const CHECK_INTERVAL = 5 * 60 * 1000; // 5분
 
@@ -27,7 +28,7 @@ const FeedbackNotificationBanner: React.FC = () => {
           });
         }
       }
-    } catch { /* silent */ }
+    } catch (e) { logger.trackSwallowedError('FeedbackNotificationBanner:check', e); /* silent */ }
   }, []);
 
   useEffect(() => {

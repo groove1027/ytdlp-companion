@@ -145,7 +145,8 @@ async function parseEvolinkError(response: Response): Promise<string> {
     try {
         const errorJson = JSON.parse(errorText);
         return errorJson.error?.message || errorJson.message || errorText;
-    } catch {
+    } catch (e) {
+        logger.trackSwallowedError('evolinkService:parseError', e);
         return errorText;
     }
 }
@@ -319,7 +320,8 @@ export const evolinkChatStream = async (
                     accumulated += delta;
                     onChunk(delta, accumulated);
                 }
-            } catch {
+            } catch (e) {
+                logger.trackSwallowedError('evolinkService:streamChunkDelta', e);
                 // 파싱 실패 무시 (불완전 청크)
             }
         }
@@ -535,7 +537,8 @@ export const evolinkNativeStream = async (
                 if (candidate?.finishReason) {
                     lastFinishReason = candidate.finishReason;
                 }
-            } catch {
+            } catch (e) {
+                logger.trackSwallowedError('evolinkService:streamChunkCandidate', e);
                 // 불완전 청크 무시
             }
         }
@@ -651,13 +654,14 @@ export const evolinkVideoAnalysisStream = async (
                         }
                     }
                 }
-            } catch {
+            } catch (e) {
+                logger.trackSwallowedError('evolinkService:streamChunkVideo', e);
                 // 불완전 청크 무시
             }
         }
     }
 
-    // 비용 추정
+    // 비용 추정 (video stream)
     try {
         const estInputTokens = Math.ceil((systemPrompt.length + userPrompt.length) / 4) + 5000; // 영상 토큰 추정
         const estOutputTokens = Math.ceil(accumulated.length / 4);
@@ -765,7 +769,8 @@ export const evolinkFrameAnalysisStream = async (
                         }
                     }
                 }
-            } catch {
+            } catch (e) {
+                logger.trackSwallowedError('evolinkService:streamChunkFrames', e);
                 // 불완전 청크 무시
             }
         }

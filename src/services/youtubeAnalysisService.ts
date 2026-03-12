@@ -51,7 +51,8 @@ const loadQuotaRecord = (): QuotaRecord => {
                 return record;
             }
         }
-    } catch {
+    } catch (e) {
+        logger.trackSwallowedError('youtubeAnalysisService:loadQuotaRecord', e);
         // localStorage 파싱 실패 시 리셋
     }
     return { date: getTodayString(), used: 0 };
@@ -61,7 +62,8 @@ const loadQuotaRecord = (): QuotaRecord => {
 const saveQuotaRecord = (record: QuotaRecord): void => {
     try {
         localStorage.setItem(QUOTA_STORAGE_KEY, JSON.stringify(record));
-    } catch {
+    } catch (e) {
+        logger.trackSwallowedError('youtubeAnalysisService:saveQuotaRecord', e);
         // localStorage 저장 실패 무시
     }
 };
@@ -426,7 +428,8 @@ export const getRelatedKeywords = async (
                 }
             }
         }
-    } catch {
+    } catch (e) {
+        logger.trackSwallowedError('youtubeAnalysisService:suggestApi', e);
         logger.warn('[YouTube] Suggest API 실패, YouTube Search 폴백 시도');
     }
 
@@ -1050,7 +1053,8 @@ const fetchTranscriptViaInvidious = async (videoId: string): Promise<string | nu
                 });
                 return cleaned;
             }
-        } catch {
+        } catch (e) {
+            logger.trackSwallowedError('youtubeAnalysisService:invidiousCaption', e);
             continue;
         }
     }
@@ -1096,7 +1100,8 @@ const fetchTranscriptViaPiped = async (videoId: string): Promise<string | null> 
                 });
                 return cleaned;
             }
-        } catch {
+        } catch (e) {
+            logger.trackSwallowedError('youtubeAnalysisService:pipedCaption', e);
             continue;
         }
     }
@@ -1187,7 +1192,8 @@ export const getVideoTranscript = async (videoId: string): Promise<TranscriptRes
             return { text: invidiousResult, source: 'caption' };
         }
         logger.info('[YouTube] Invidious 자막 실패 — Piped 시도', { videoId });
-    } catch {
+    } catch (e) {
+        logger.trackSwallowedError('youtubeAnalysisService:invidiousTranscript', e);
         logger.info('[YouTube] Invidious 자막 오류 — Piped 시도', { videoId });
     }
 
@@ -1198,7 +1204,8 @@ export const getVideoTranscript = async (videoId: string): Promise<TranscriptRes
             return { text: pipedResult, source: 'caption' };
         }
         logger.info('[YouTube] Piped 자막 실패 — YouTube API 시도', { videoId });
-    } catch {
+    } catch (e) {
+        logger.trackSwallowedError('youtubeAnalysisService:pipedTranscript', e);
         logger.info('[YouTube] Piped 자막 오류 — YouTube API 시도', { videoId });
     }
 
@@ -1426,7 +1433,8 @@ export const getVideoComments = async (videoId: string, maxResults: number = 30)
             .map((item: { snippet?: { topLevelComment?: { snippet?: { textDisplay?: string } } } }) =>
                 item.snippet?.topLevelComment?.snippet?.textDisplay || ''
             ).filter(Boolean);
-    } catch {
+    } catch (e) {
+        logger.trackSwallowedError('youtubeAnalysisService:fetchComments', e);
         return [];
     }
 };
@@ -1576,7 +1584,8 @@ const analyzeDeepVideoStyle = async (scripts: ChannelScript[]): Promise<{ editGu
         if (cb) jsonStr = cb[1].trim();
         const parsed = JSON.parse(jsonStr);
         return { editGuide: parsed.editGuide || combined, audioGuide: parsed.audioGuide || '' };
-    } catch {
+    } catch (e) {
+        logger.trackSwallowedError('youtubeAnalysisService:splitGuides', e);
         return { editGuide: combined, audioGuide: '' };
     }
 };

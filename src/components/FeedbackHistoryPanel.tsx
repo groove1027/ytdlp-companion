@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useUIStore } from '../stores/uiStore';
 import { fetchAllFeedbackStatuses, getTrackedIssues, type FeedbackStatus } from '../services/feedbackService';
+import { logger } from '../services/LoggerService';
 
 const TYPE_META: Record<string, { icon: string; label: string }> = {
     bug: { icon: '\uD83D\uDC1B', label: '버그' },
@@ -32,7 +33,7 @@ const FeedbackHistoryPanel: React.FC = () => {
         try {
             const result = await fetchAllFeedbackStatuses();
             setStatuses(result);
-        } catch { /* silent */ }
+        } catch (e) { logger.trackSwallowedError('FeedbackHistoryPanel:refresh', e); /* silent */ }
         setLoading(false);
     }, []);
 

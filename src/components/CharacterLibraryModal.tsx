@@ -3,6 +3,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { getAllSavedCharacters, deleteSavedCharacter } from '../services/storageService';
 import { showToast } from '../stores/uiStore';
 import type { SavedCharacter } from '../types';
+import { logger } from '../services/LoggerService';
 
 interface CharacterLibraryModalProps {
   isOpen: boolean;
@@ -27,7 +28,8 @@ const CharacterLibraryModal: React.FC<CharacterLibraryModalProps> = ({
     try {
       const all = await getAllSavedCharacters();
       setCharacters(all);
-    } catch {
+    } catch (e) {
+      logger.trackSwallowedError('CharacterLibraryModal:loadCharacters', e);
       showToast('캐릭터 목록 로드 실패');
     } finally {
       setLoading(false);
@@ -53,7 +55,8 @@ const CharacterLibraryModal: React.FC<CharacterLibraryModalProps> = ({
       await deleteSavedCharacter(id);
       setCharacters(prev => prev.filter(c => c.id !== id));
       showToast(`"${label}" 삭제됨`);
-    } catch {
+    } catch (e) {
+      logger.trackSwallowedError('CharacterLibraryModal:handleDelete', e);
       showToast('삭제 실패');
     }
   }, []);

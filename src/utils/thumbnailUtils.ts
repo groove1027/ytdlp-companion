@@ -4,6 +4,7 @@
  * Extracted from ThumbnailStudioTab and InlineThumbnailStudio to eliminate
  * code duplication.
  */
+import { logger } from '../services/LoggerService';
 
 /**
  * Extract a YouTube video ID from various URL formats.
@@ -59,7 +60,8 @@ export async function fetchYouTubeThumbnail(videoId: string): Promise<string> {
         img.src = url;
       });
       return base64;
-    } catch {
+    } catch (e) {
+      logger.trackSwallowedError('thumbnailUtils:fetchYouTubeThumbnail', e);
       continue;
     }
   }

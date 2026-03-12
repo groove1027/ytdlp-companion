@@ -218,7 +218,8 @@ const cleanupFiles = async (ffmpeg: FFmpeg, ttsExt: string): Promise<void> => {
     await ffmpeg.deleteFile('input.mp4');
     await ffmpeg.deleteFile(`narration.${ttsExt}`);
     await ffmpeg.deleteFile('output.mp4');
-  } catch {
+  } catch (e) {
+    logger.trackSwallowedError('shoppingRenderService:cleanupFiles', e);
     // 클린업 실패는 무시
   }
 };

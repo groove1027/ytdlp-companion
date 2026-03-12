@@ -84,14 +84,16 @@ Return JSON: { "style": "<art style description>", "character": "<character feat
         const parsed = JSON.parse(jsonStr);
         style = cleanValue(String(parsed.style || ''));
         character = cleanValue(String(parsed.character || ''));
-    } catch {
+    } catch (e) {
+        logger.trackSwallowedError('characterAnalysisService:parseJson', e);
         // AI 응답에 literal newline/tab이 JSON 값 내부에 포함된 경우 → 공백으로 치환 후 재시도
         try {
             const fixed = jsonStr.replace(/[\n\r\t]/g, ' ').replace(/\s+/g, ' ');
             const parsed = JSON.parse(fixed);
             style = cleanValue(String(parsed.style || ''));
             character = cleanValue(String(parsed.character || ''));
-        } catch {
+        } catch (e2) {
+            logger.trackSwallowedError('characterAnalysisService:parseJsonFixed', e2);
             logger.warn('[CharacterAnalysis] JSON 파싱 실패, 정규식 폴백 시도');
         }
     }

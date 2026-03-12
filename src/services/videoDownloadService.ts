@@ -66,7 +66,8 @@ export const validateVideoUrl = (url: string): { valid: boolean; message?: strin
     const parsed = new URL(url.startsWith('http') ? url : `https://${url}`);
     if (!parsed.hostname) return { valid: false, message: '올바른 URL이 아닙니다.' };
     return { valid: true };
-  } catch {
+  } catch (e) {
+    logger.trackSwallowedError('videoDownloadService:validateVideoUrl', e);
     return { valid: false, message: '올바른 URL 형식이 아닙니다.' };
   }
 };

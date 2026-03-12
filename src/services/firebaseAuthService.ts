@@ -20,6 +20,7 @@ import {
   ConfirmationResult,
   User
 } from 'firebase/auth';
+import { logger } from './LoggerService';
 
 // ── Firebase 설정 ──
 // TODO: Firebase 콘솔에서 복사한 값으로 교체
@@ -97,7 +98,8 @@ export const getCurrentIdToken = async (): Promise<string | null> => {
   if (!a || !a.currentUser) return null;
   try {
     return await a.currentUser.getIdToken(true);
-  } catch {
+  } catch (e) {
+    logger.trackSwallowedError('firebaseAuthService:getCurrentIdToken', e);
     return null;
   }
 };

@@ -25,7 +25,7 @@ interface FeedbackDraft {
 }
 
 const saveDraft = (draft: FeedbackDraft) => {
-    try { localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draft)); } catch { /* ignore */ }
+    try { localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draft)); } catch (e) { logger.trackSwallowedError('FeedbackModal:saveDraft', e); /* ignore */ }
 };
 
 const loadDraft = (): FeedbackDraft | null => {
@@ -33,11 +33,11 @@ const loadDraft = (): FeedbackDraft | null => {
         const raw = localStorage.getItem(DRAFT_STORAGE_KEY);
         if (!raw) return null;
         return JSON.parse(raw) as FeedbackDraft;
-    } catch { return null; }
+    } catch (e) { logger.trackSwallowedError('FeedbackModal:loadDraft', e); return null; }
 };
 
 const clearDraft = () => {
-    try { localStorage.removeItem(DRAFT_STORAGE_KEY); } catch { /* ignore */ }
+    try { localStorage.removeItem(DRAFT_STORAGE_KEY); } catch (e) { logger.trackSwallowedError('FeedbackModal:clearDraft', e); /* ignore */ }
 };
 
 const fileToScreenshot = (file: File): Promise<FeedbackScreenshot> => {

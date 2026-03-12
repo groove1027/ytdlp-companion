@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useRef } from 'react';
 import { useShoppingShortStore } from '../../../stores/shoppingShortStore';
+import { logger } from '../../../services/LoggerService';
 import {
   downloadFromUrl,
   detectPlatform,
@@ -213,7 +214,8 @@ const SourceInputStep: React.FC = () => {
         try {
           const links = await generateDeeplink([coupangCrawlResult.product.productUrl]);
           if (links.length > 0) setAffiliateLink(links[0]);
-        } catch {
+        } catch (e) {
+          logger.trackSwallowedError('SourceInputStep:generateDeeplink', e);
           // 딥링크 실패는 치명적이지 않음
         }
       }

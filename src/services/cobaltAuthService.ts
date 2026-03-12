@@ -334,7 +334,8 @@ export async function cobaltDownloadUrl(
         logger.info(`[Cobalt-URL] ✅ 비인증 다운로드 성공: ${instance.api}`);
         return result;
       }
-    } catch {
+    } catch (e) {
+      logger.trackSwallowedError('cobaltAuthService:downloadViaInstance', e);
       continue;
     }
   }

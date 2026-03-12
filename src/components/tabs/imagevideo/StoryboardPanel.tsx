@@ -1130,7 +1130,8 @@ const StoryboardPanel: React.FC = () => {
         updateScene(sceneId, { visualPrompt: autoPrompt });
         // 최신 장면 데이터 재읽기
         scene = useProjectStore.getState().scenes.find(s => s.id === sceneId)!;
-      } catch {
+      } catch (e) {
+        logger.trackSwallowedError('StoryboardPanel:generateAutoPrompt', e);
         // 폴백: scriptText 자체를 visualPrompt로 사용
         updateScene(sceneId, { visualPrompt: scene.scriptText });
         scene = useProjectStore.getState().scenes.find(s => s.id === sceneId)!;

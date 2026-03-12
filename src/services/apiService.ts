@@ -219,7 +219,8 @@ export const monitoredFetch = async (url: string, options: RequestInit = {}, tim
                 const text = await clone.text();
                 try {
                     errorBody = JSON.parse(text);
-                } catch {
+                } catch (e) {
+                    logger.trackSwallowedError('apiService:parseErrorBody', e);
                     errorBody = text;
                 }
             } catch (e) {

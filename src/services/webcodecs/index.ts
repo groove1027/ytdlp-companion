@@ -19,6 +19,7 @@ import { renderAllFrames, computeTotalDuration, type VideoFrameExtractor } from 
 import { mixAudio, encodeAudioAAC } from './audioMixer';
 import { createMp4Muxer } from './mp4Muxer';
 import { OVERSCALE } from './kenBurnsEngine';
+import { logger } from '../LoggerService';
 
 // Re-export downloadMp4 from ffmpegService for backward compat
 export { downloadMp4 } from '../ffmpegService';
@@ -385,7 +386,8 @@ async function createVideoExtractor(url: string): Promise<VideoFrameExtractor | 
           const blob = await res.blob();
           videoSrc = URL.createObjectURL(blob);
         }
-      } catch {
+      } catch (e) {
+        logger.trackSwallowedError('webcodecs/index:fetchVideoBlob', e);
         // CORS fetch 실패 → Cloudinary 프록시 시도
         try {
           const { uploadRemoteUrlToCloudinary } = await import('../uploadService');
@@ -395,7 +397,8 @@ async function createVideoExtractor(url: string): Promise<VideoFrameExtractor | 
             const blob = await proxyRes.blob();
             videoSrc = URL.createObjectURL(blob);
           }
-        } catch {
+        } catch (e2) {
+          logger.trackSwallowedError('webcodecs/index:fetchVideoProxy', e2);
           // 프록시도 실패 → 원본 URL로 시도
         }
       }

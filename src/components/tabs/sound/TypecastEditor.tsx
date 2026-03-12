@@ -1,6 +1,7 @@
 import React, { useRef, useCallback, useEffect, useState, useMemo } from 'react';
 import JSZip from 'jszip';
 import { useSoundStudioStore, registerAudio, unregisterAudio } from '../../../stores/soundStudioStore';
+import { logger } from '../../../services/LoggerService';
 import { mergeAudioFiles, splitBySentenceEndings } from '../../../services/ttsService';
 import { fetchTypecastVoices, V30_EMOTIONS, V21_EMOTIONS, TYPECAST_LANGUAGES } from '../../../services/typecastService';
 import type { TypecastVoice } from '../../../services/typecastService';
@@ -359,7 +360,8 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
       pickerAudioRef.current = audio;
       audio.onended = () => { setPickerPlayingId(null); unregisterAudio(audio); pickerAudioRef.current = null; };
       audio.play().catch(() => { setPickerPlayingId(null); unregisterAudio(audio); });
-    } catch {
+    } catch (e) {
+      logger.trackSwallowedError('TypecastEditor:playModelPreview', e);
       // 모델 로드 실패 등
     } finally {
       setStPreviewLoading(null);
@@ -606,7 +608,8 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
             a.onerror = () => resolve(0);
           });
           durations.push(dur);
-        } catch {
+        } catch (e) {
+          logger.trackSwallowedError('TypecastEditor:measureLineDuration', e);
           durations.push(0);
         }
       } else {
@@ -1052,7 +1055,7 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
                       isFullSelection =
                         range.compareBoundaryPoints(Range.START_TO_START, fullRange) <= 0
                         && range.compareBoundaryPoints(Range.END_TO_END, fullRange) >= 0;
-                    } catch { /* compareBoundaryPoints 실패 시 무시 */ }
+                    } catch (e) { logger.trackSwallowedError('TypecastEditor:compareBoundaryPoints', e); /* compareBoundaryPoints 실패 시 무시 */ }
                     // 전체 선택 여부 체크 2: <p> 태그 기반 (비편집 요소 텍스트 제외)
                     if (!isFullSelection) {
                       const ps = editorRef.current.querySelectorAll('p');
@@ -1447,7 +1450,8 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
                             const blob = await resp.blob();
                             zip.file(fileName, blob);
                             addedCount++;
-                          } catch {
+                          } catch (e) {
+                            logger.trackSwallowedError('TypecastEditor:fetchAudioForZip', e);
                             console.warn(`[Download] Failed to fetch audio for line ${i}`);
                           }
                         }

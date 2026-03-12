@@ -47,7 +47,7 @@ const CHAR_STYLE_FAV_KEY = 'FAVORITE_CHARACTER_STYLES';
 function useCharStyleFavorites() {
     const [favs, setFavs] = useState<string[]>(() => {
         try { return JSON.parse(localStorage.getItem(CHAR_STYLE_FAV_KEY) || '[]'); }
-        catch { return []; }
+        catch (e) { logger.trackSwallowedError('CharacterTwistLab:loadCharStyleFavorites', e); return []; }
     });
     const toggle = (label: string) => {
         setFavs(prev => {

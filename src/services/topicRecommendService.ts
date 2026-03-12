@@ -172,7 +172,8 @@ JSON 배열 형식 (정확히 5개):
     let parsed: unknown;
     try {
       parsed = JSON.parse(jsonMatch[0]);
-    } catch {
+    } catch (e) {
+      logger.trackSwallowedError('topicRecommendService:parseJson', e);
       // JSON 문자열 값 내부의 제어 문자를 이스케이프/제거하여 재시도
       const sanitized = jsonMatch[0].replace(
         /"(?:[^"\\]|\\.)*"/g,

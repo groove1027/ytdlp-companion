@@ -274,7 +274,7 @@ const ScriptMode: React.FC<ScriptModeProps> = ({
                     return;
                 }
                 setEstimatedScenes(count);
-            } catch { setEstimatedScenes(-1); }
+            } catch (e) { logger.trackSwallowedError('ScriptMode:estimateSceneCount', e); setEstimatedScenes(-1); }
         } finally {
             setIsEstimating(false);
         }

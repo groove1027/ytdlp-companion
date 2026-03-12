@@ -68,7 +68,8 @@ async function supportsWebGPU(): Promise<boolean> {
         const gpu = nav.gpu as { requestAdapter: () => Promise<unknown> };
         const adapter = await gpu.requestAdapter();
         return !!adapter;
-    } catch {
+    } catch (e) {
+        logger.trackSwallowedError('supertonicService:supportsWebGPU', e);
         return false;
     }
 }

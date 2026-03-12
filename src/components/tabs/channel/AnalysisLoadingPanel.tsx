@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { logger } from '../../../services/LoggerService';
 
 /**
  * 분석 대기 화면 — 체감 시간을 줄이기 위한 프리미엄 로딩 패널
@@ -272,7 +273,8 @@ export function notifyAnalysisComplete(tabTitle?: string) {
     gain.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
     osc.start(now);
     osc.stop(now + 0.5);
-  } catch {
+  } catch (e) {
+    logger.trackSwallowedError('AnalysisLoadingPanel:playSuccessSound', e);
     // 사운드 실패 무시
   }
 }

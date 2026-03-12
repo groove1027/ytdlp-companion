@@ -173,7 +173,8 @@ ${sceneContext}
   try {
     const jsonStr = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
     parsed = JSON.parse(jsonStr);
-  } catch {
+  } catch (e) {
+    logger.trackSwallowedError('uploadMetadataService:parseJson', e);
     throw new Error('AI 응답을 파싱할 수 없습니다. 다시 시도해주세요.');
   }
 

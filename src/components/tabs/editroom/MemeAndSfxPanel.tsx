@@ -239,7 +239,8 @@ export const MemeAndSfxSearchModal: React.FC<{ onClose: () => void }> = ({ onClo
         const items = await searchMedia({ query: trimmed, type, source: srcOpt, limit: 60 });
         if (seq === searchSeqRef.current) setResults(items);
       }
-    } catch {
+    } catch (e) {
+      logger.trackSwallowedError('MemeAndSfxPanel:handleSearch', e);
       if (seq === searchSeqRef.current) setResults([]);
     } finally {
       if (seq === searchSeqRef.current) setIsLoading(false);

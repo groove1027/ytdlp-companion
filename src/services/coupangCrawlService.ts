@@ -275,7 +275,8 @@ export const testProxyConnection = async (): Promise<boolean> => {
       method: 'GET',
     });
     return response.ok;
-  } catch {
+  } catch (e) {
+    logger.trackSwallowedError('coupangCrawlService:checkProxyHealth', e);
     return false;
   }
 };

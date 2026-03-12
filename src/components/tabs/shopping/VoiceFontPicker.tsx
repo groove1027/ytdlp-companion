@@ -209,7 +209,8 @@ const TTSVoiceModal: React.FC<TTSVoiceModalProps> = ({
       // 캐시 저장 (fire-and-forget)
       cachePreview(cacheKey, audioUrl).catch((e) => { logger.trackSwallowedError('VoiceFontPicker:cachePreview', e); });
       playAudioUrl(audioUrl, id);
-    } catch {
+    } catch (e) {
+      logger.trackSwallowedError('VoiceFontPicker:playPreview', e);
       // 에러 시 무시
     } finally {
       if (currentPlayId === playIdRef.current) setIsGeneratingPreview(false);

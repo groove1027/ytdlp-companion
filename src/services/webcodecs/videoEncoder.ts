@@ -3,6 +3,8 @@
  * H.264 하드웨어 가속 인코딩 + 병렬 배치 처리
  */
 
+import { logger } from '../LoggerService';
+
 export interface EncodedChunk {
   chunk: EncodedVideoChunk;
   meta?: EncodedVideoChunkMetadata;
@@ -45,7 +47,8 @@ export async function probeVideoEncoder(
       if (support.supported) {
         return { codec, hardwareAcceleration: hw };
       }
-    } catch {
+    } catch (e) {
+      logger.trackSwallowedError('videoEncoder:checkCodecSupport', e);
       // continue
     }
   }

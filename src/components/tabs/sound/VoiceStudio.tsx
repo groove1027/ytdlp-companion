@@ -894,7 +894,8 @@ const VoiceStudio: React.FC = () => {
       const buf = await file.arrayBuffer();
       const decoded = await ctx.decodeAudioData(buf);
       setUploadedDuration(decoded.duration);
-    } catch {
+    } catch (e) {
+      logger.trackSwallowedError('VoiceStudio:measureUploadedDuration', e);
       setUploadedDuration(0);
     } finally {
       await ctx.close();

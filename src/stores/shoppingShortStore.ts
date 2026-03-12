@@ -175,7 +175,7 @@ export const useShoppingShortStore = create<ShoppingShortStore>((set) => ({
   setIsDownloading: (v) => set({ isDownloading: v }),
   setDownloadError: (err) => set({ downloadError: err }),
   setProxyUrl: (url) => {
-    try { localStorage.setItem(PROXY_KEY, url); } catch { /* noop */ }
+    try { localStorage.setItem(PROXY_KEY, url); } catch (e) { logger.trackSwallowedError('shoppingShortStore:setProxyUrl', e); }
     set({ proxyUrl: url });
   },
 

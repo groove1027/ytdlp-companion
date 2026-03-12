@@ -245,7 +245,8 @@ const SetupPanel: React.FC = () => {
         isAnalyzing: false,
       });
       // Cost is auto-tracked inside evolinkChat()
-    } catch {
+    } catch (e) {
+      logger.trackSwallowedError('SetupPanel:autoAnalyzeCharacter', e);
       useImageVideoStore.getState().updateCharacter(charId, { isAnalyzing: false, analysisResult: '' });
       showToast('캐릭터 분석 실패');
     }
@@ -268,7 +269,8 @@ const SetupPanel: React.FC = () => {
         isAnalyzing: false,
       });
       // Cost is auto-tracked inside evolinkChat()
-    } catch {
+    } catch (e) {
+      logger.trackSwallowedError('SetupPanel:handleAnalyzeCharacter', e);
       useImageVideoStore.getState().updateCharacter(charId, { isAnalyzing: false, analysisResult: '' });
       showToast('캐릭터 분석 실패');
     }

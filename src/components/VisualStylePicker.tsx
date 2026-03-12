@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { VISUAL_STYLES } from '../constants';
+import { logger } from '../services/LoggerService';
 
 // ─── Utils ───
 
@@ -227,7 +228,7 @@ const FAVORITES_KEY = 'FAVORITE_VISUAL_STYLES';
 function useFavorites(key: string) {
   const [favs, setFavs] = useState<string[]>(() => {
     try { return JSON.parse(localStorage.getItem(key) || '[]'); }
-    catch { return []; }
+    catch (e) { logger.trackSwallowedError('VisualStylePicker:useFavorites', e); return []; }
   });
   const toggle = (id: string) => {
     setFavs(prev => {

@@ -410,7 +410,8 @@ const pollKieTtsTask = async (taskId: string, apiKey: string, maxAttempts: numbe
                 try {
                     const parsed = JSON.parse(resultJson);
                     audioUrl = parsed.resultUrls?.[0] || parsed.audio_url || parsed.url;
-                } catch {
+                } catch (e) {
+                    logger.trackSwallowedError('ttsService:parseResultJson', e);
                     audioUrl = resultJson;
                 }
             } else if (resultJson) {

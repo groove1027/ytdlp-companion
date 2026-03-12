@@ -3,6 +3,8 @@
  * 세션 간에도 유지되어 동일 음성의 반복 재생 시 즉시 로드
  */
 
+import { logger } from './LoggerService';
+
 const CACHE_NAME = 'tts-previews-v1';
 
 /** 캐시에서 미리듣기 오디오 Blob URL 로드 */
@@ -14,7 +16,8 @@ export async function getCachedPreview(key: string): Promise<string | null> {
     if (!res) return null;
     const blob = await res.blob();
     return URL.createObjectURL(blob);
-  } catch {
+  } catch (e) {
+    logger.trackSwallowedError('ttsPreviewCache:getCachedPreview', e);
     return null;
   }
 }
@@ -31,7 +34,8 @@ export async function cachePreview(key: string, audioUrl: string): Promise<void>
       `/_tts/${key}`,
       new Response(blob, { headers: { 'Content-Type': blob.type || 'audio/wav' } })
     );
-  } catch {
+  } catch (e) {
+    logger.trackSwallowedError('ttsPreviewCache:cachePreview', e);
     // Cache API 사용 불가 시 무시
   }
 }
