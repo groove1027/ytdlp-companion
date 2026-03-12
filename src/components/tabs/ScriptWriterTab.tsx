@@ -460,31 +460,49 @@ ${instinctPrompt}
 
 [요구사항]
 - 위 소재와 본능 기제를 결합한 완성 대본을 작성하세요
-- 대본 길이: 약 ${targetCharCount}자
+- 대본 길이: 반드시 ${targetCharCount}자 이상 작성 (목표 분량에 도달할 때까지 내용을 충분히 전개하세요)
 - 훅(첫 3초)은 반드시 "${topic.hook}"을 기반으로 작성
 - 대본 형식: 나레이션 대본 (화자 지시 없이 내레이션만)${shortsRequirement}
 
 대본만 출력하세요. 제목이나 부가 설명 없이 본문만.`;
 
     try {
-      // [FIX #42] v1beta 네이티브 스트리밍 + Google Search 그라운딩으로 최신 정보 반영
-      const fullText = await evolinkNativeStream(
+      // [FIX #137] 토큰 배수 4x + 자동 이어쓰기로 롱폼 대본 잘림 해결
+      let finishReason = '';
+      const tokenBudget = Math.min(65536, Math.max(8000, Math.ceil(targetCharCount * 4)));
+      let result = await evolinkNativeStream(
         systemPrompt,
         userPrompt,
-        (_chunk, accumulated) => {
-          setStreamingText(accumulated);
-        },
-        { temperature: 0.7, maxOutputTokens: Math.min(32000, Math.max(8000, targetCharCount * 2)), enableWebSearch: true, signal: abortCtrl.signal }
+        (_chunk, accumulated) => { setStreamingText(accumulated); },
+        { temperature: 0.7, maxOutputTokens: tokenBudget, enableWebSearch: true, signal: abortCtrl.signal, onFinish: (r) => { finishReason = r; } }
       );
+
+      // [FIX #137] 이어쓰기: finishReason이 MAX_TOKENS이고 목표 분량 미달 시 자동 계속 생성 (최대 3회)
+      const isLongForm = contentFormat !== 'shorts';
+      const MAX_CONTINUATIONS = 3;
+      for (let ci = 0; ci < MAX_CONTINUATIONS; ci++) {
+        const isTruncated = finishReason === 'MAX_TOKENS' || finishReason === 'length';
+        if (!isLongForm || !isTruncated || result.length >= targetCharCount * 0.8) break;
+
+        const remaining = targetCharCount - result.length;
+        const contPrompt = `다음은 이전에 작성하던 대본의 마지막 부분입니다:\n\n"...${result.slice(-800)}"\n\n이 대본을 끊긴 부분부터 자연스럽게 이어서 계속 작성하세요.\n남은 분량: 약 ${remaining}자\n\n중요: 이미 쓴 내용을 반복하지 마세요. 끊긴 지점부터 바로 이어서 쓰세요. 대본 본문만 출력하세요.`;
+        finishReason = '';
+        const contText = await evolinkNativeStream(
+          systemPrompt, contPrompt,
+          (_chunk, accumulated) => { setStreamingText(result + accumulated); },
+          { temperature: 0.7, maxOutputTokens: Math.min(32000, Math.max(4000, Math.ceil(remaining * 4))), signal: abortCtrl.signal, onFinish: (r) => { finishReason = r; } }
+        );
+        result += contText;
+      }
 
       setGeneratedScript({
         title: topic.title,
-        content: fullText,
-        charCount: fullText.length,
-        estimatedDuration: `약 ${Math.round(fullText.length / 350)}분`,
+        content: result,
+        charCount: result.length,
+        estimatedDuration: `약 ${Math.round(result.length / 350)}분`,
         structure: [],
       });
-      setFinalScript(fullText);
+      setFinalScript(result);
       setStreamingText('');
     } catch (err) {
       if (abortCtrl.signal.aborted || (err instanceof DOMException && err.name === 'AbortError')) {
@@ -566,20 +584,38 @@ ${instinctPrompt}
 - 제목: ${title}
 - 줄거리: ${synopsis}
 - 포맷: ${isShorts ? `쇼츠 (${shortsSeconds}초 이내, 세로형)` : '롱폼'}
-- 분량: ${formatLabel}${instinctSection}${channelStyleSection ? '\n\n' + channelStyleSection : ''}${topicInstinctSection}
+- 분량: ${formatLabel} (반드시 이 분량을 채우세요. 목표 글자수에 도달할 때까지 내용을 충분히 전개하세요)${instinctSection}${channelStyleSection ? '\n\n' + channelStyleSection : ''}${topicInstinctSection}
 
 대본만 출력하세요. 제목이나 부가 설명 없이 본문만.`;
 
     try {
-      // [FIX #159] 스트리밍 방식으로 전환 — 토큰 제한으로 인한 응답 잘림(finishReason: "length") 방지
-      const fullText = await evolinkNativeStream(
+      // [FIX #137] 토큰 배수 4x + 자동 이어쓰기로 롱폼 대본 잘림 해결
+      let finishReason = '';
+      const tokenBudget = Math.min(65536, Math.max(8000, Math.ceil(targetCharCount * 4)));
+      let fullText = await evolinkNativeStream(
         systemPrompt,
         userPrompt,
-        (_chunk, accumulated) => {
-          setStreamingText(accumulated);
-        },
-        { temperature: 0.7, maxOutputTokens: Math.min(32000, Math.max(8000, targetCharCount * 2)), enableWebSearch: true, signal: abortCtrl.signal }
+        (_chunk, accumulated) => { setStreamingText(accumulated); },
+        { temperature: 0.7, maxOutputTokens: tokenBudget, enableWebSearch: true, signal: abortCtrl.signal, onFinish: (r) => { finishReason = r; } }
       );
+
+      // [FIX #137] 이어쓰기: finishReason이 MAX_TOKENS이고 목표 분량 미달 시 자동 계속 생성 (최대 3회)
+      const isLongForm = contentFormat !== 'shorts';
+      const MAX_CONTINUATIONS = 3;
+      for (let ci = 0; ci < MAX_CONTINUATIONS; ci++) {
+        const isTruncated = finishReason === 'MAX_TOKENS' || finishReason === 'length';
+        if (!isLongForm || !isTruncated || fullText.length >= targetCharCount * 0.8) break;
+
+        const remaining = targetCharCount - fullText.length;
+        const contPrompt = `다음은 이전에 작성하던 대본의 마지막 부분입니다:\n\n"...${fullText.slice(-800)}"\n\n이 대본을 끊긴 부분부터 자연스럽게 이어서 계속 작성하세요.\n남은 분량: 약 ${remaining}자\n\n중요: 이미 쓴 내용을 반복하지 마세요. 끊긴 지점부터 바로 이어서 쓰세요. 대본 본문만 출력하세요.`;
+        finishReason = '';
+        const contText = await evolinkNativeStream(
+          systemPrompt, contPrompt,
+          (_chunk, accumulated) => { setStreamingText(fullText + accumulated); },
+          { temperature: 0.7, maxOutputTokens: Math.min(32000, Math.max(4000, Math.ceil(remaining * 4))), signal: abortCtrl.signal, onFinish: (r) => { finishReason = r; } }
+        );
+        fullText += contText;
+      }
 
       if (!fullText.trim()) throw new Error('AI 응답이 비어있습니다. 다시 시도해주세요.');
 

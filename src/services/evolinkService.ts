@@ -451,12 +451,12 @@ export const evolinkNativeStream = async (
     systemPrompt: string,
     userPrompt: string,
     onChunk: (text: string, accumulated: string) => void,
-    options: { temperature?: number; maxOutputTokens?: number; enableWebSearch?: boolean; signal?: AbortSignal } = {}
+    options: { temperature?: number; maxOutputTokens?: number; enableWebSearch?: boolean; signal?: AbortSignal; onFinish?: (reason: string) => void } = {}
 ): Promise<string> => {
     const apiKey = getEvolinkKey();
     if (!apiKey) throw new Error('Evolink API 키가 설정되지 않았습니다.');
 
-    const { temperature = 0.7, maxOutputTokens = 16000, enableWebSearch = false, signal } = options;
+    const { temperature = 0.7, maxOutputTokens = 16000, enableWebSearch = false, signal, onFinish } = options;
 
     const payload: Record<string, unknown> = {
         contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
@@ -504,6 +504,7 @@ export const evolinkNativeStream = async (
     const decoder = new TextDecoder();
     let accumulated = '';
     let buffer = '';
+    let lastFinishReason = '';
 
     while (true) {
         const { done, value } = await reader.read();
@@ -520,7 +521,8 @@ export const evolinkNativeStream = async (
 
             try {
                 const json = JSON.parse(trimmed.slice(6));
-                const parts = json.candidates?.[0]?.content?.parts;
+                const candidate = json.candidates?.[0];
+                const parts = candidate?.content?.parts;
                 if (parts) {
                     for (const part of parts) {
                         if (part.text) {
@@ -529,11 +531,17 @@ export const evolinkNativeStream = async (
                         }
                     }
                 }
+                if (candidate?.finishReason) {
+                    lastFinishReason = candidate.finishReason;
+                }
             } catch {
                 // 불완전 청크 무시
             }
         }
     }
+
+    // finishReason 콜백 (MAX_TOKENS 등 잘림 감지용)
+    if (onFinish) onFinish(lastFinishReason);
 
     // 비용 추정
     try {
@@ -548,7 +556,7 @@ export const evolinkNativeStream = async (
         }
     } catch { /* cost tracking should not break */ }
 
-    logger.success('[Evolink Native Stream] 완료', { totalLength: accumulated.length, webSearch: enableWebSearch });
+    logger.success('[Evolink Native Stream] 완료', { totalLength: accumulated.length, finishReason: lastFinishReason, webSearch: enableWebSearch });
     return accumulated;
 };
 
