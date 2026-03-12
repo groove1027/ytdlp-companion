@@ -67,6 +67,7 @@ const TRACK_TABS: { id: AudioTrackId; label: string; icon: string }[] = [
   { id: 'narration', label: '나레이션', icon: '🎤' },
   { id: 'bgm', label: 'BGM', icon: '🎵' },
   { id: 'sfx', label: 'SFX', icon: '🔊' },
+  { id: 'origAudio', label: '원본오디오', icon: '🎬' },
 ];
 
 const ALL_EFFECT_TYPES: AudioEffectType[] = ['eq', 'compressor', 'reverb', 'delay', 'deesser', 'noisegate'];

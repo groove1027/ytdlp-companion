@@ -4,7 +4,7 @@
 # Runs after every Edit/Write/MultiEdit on .ts/.tsx files
 # ============================================================
 
-PROJECT_DIR="/Users/jihoo/Downloads/all-in-one-production-claudecode"
+PROJECT_DIR="/Users/jihoo/Downloads/all-in-one-production-build4"
 SRC_DIR="$PROJECT_DIR/src"
 
 # Get the edited file path from environment
@@ -77,27 +77,25 @@ if echo "$FILE" | grep -q 'VideoGenService'; then
 fi
 
 # ──────────────────────────────────────────────
-# OUTPUT RESULTS
+# OUTPUT RESULTS + BLOCK ON ERRORS
 # ──────────────────────────────────────────────
+EXIT_CODE=0
+
 if [ ${#ERRORS[@]} -gt 0 ]; then
     for e in "${ERRORS[@]}"; do echo "$e"; done
     echo ""
+    echo "🚨 에러 ${#ERRORS[@]}건 — 이 에러를 수정하기 전까지 진행 불가!"
+    EXIT_CODE=1
 fi
 
 if [ ${#WARNINGS[@]} -gt 0 ]; then
     for w in "${WARNINGS[@]}"; do echo "$w"; done
     echo ""
+    echo "⚠️ 경고 ${#WARNINGS[@]}건 — 반드시 확인 후 수정하라"
 fi
 
 if [ ${#ERRORS[@]} -eq 0 ] && [ ${#WARNINGS[@]} -eq 0 ]; then
     echo "✅ 자동 검수 통과 (TypeScript OK, 규칙 위반 없음)"
-else
-    if [ ${#ERRORS[@]} -gt 0 ]; then
-        echo "🚨 에러 ${#ERRORS[@]}건 — 반드시 수정하세요!"
-    fi
-    if [ ${#WARNINGS[@]} -gt 0 ]; then
-        echo "⚠️ 경고 ${#WARNINGS[@]}건 — 확인 필요"
-    fi
 fi
 
-exit 0
+exit $EXIT_CODE

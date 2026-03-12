@@ -239,6 +239,7 @@ const VisualTimeline: React.FC = () => {
   const trackMixer = useEditRoomStore((s) => s.trackMixer);
   const setTrackMixer = useEditRoomStore((s) => s.setTrackMixer);
   const sfxVolume = useEditRoomStore((s) => s.sfxVolume);
+  const origAudioVolume = useEditRoomStore((s) => s.origAudioVolume);
   const updateSceneTiming = useEditRoomStore((s) => s.updateSceneTiming);
   const updateSubtitleTiming = useEditRoomStore((s) => s.updateSubtitleTiming);
   const splitSceneAtTime = useEditRoomStore((s) => s.splitSceneAtTime);
@@ -322,6 +323,7 @@ const VisualTimeline: React.FC = () => {
   const playheadTimeRef = useRef(0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const bgmAudioRef = useRef<HTMLAudioElement | null>(null);
+  const origAudioRefs = useRef<HTMLAudioElement[]>([]);
   const animRef = useRef<number>(0);
   const playheadElRefs = useRef<(HTMLDivElement | null)[]>([]);
   const timeDisplayRef = useRef<HTMLSpanElement | null>(null);
@@ -953,12 +955,58 @@ const VisualTimeline: React.FC = () => {
     bgmAudioRef.current = null;
   }, []);
 
+  // 원본오디오 재생 헬퍼 — 각 장면의 videoUrl에서 오디오를 추출하여 재생
+  const startOrigAudio = useCallback((seekTime: number) => {
+    // 기존 재생 중인 원본오디오 모두 정지
+    origAudioRefs.current.forEach(a => { a.pause(); a.src = ''; });
+    origAudioRefs.current = [];
+    const mixer = useEditRoomStore.getState().trackMixer.origAudio;
+    if (mixer?.mute) return;
+    const vol = useEditRoomStore.getState().origAudioVolume / 100;
+    // 각 videoAudioBlock에 대해 개별 Audio 생성
+    const blocks = timeline.map((t) => {
+      const scene = scenes.find(s => s.id === t.sceneId);
+      if (!scene?.videoUrl) return null;
+      return { videoUrl: scene.videoUrl, start: t.imageStartTime, duration: t.imageDuration };
+    }).filter(Boolean) as { videoUrl: string; start: number; duration: number }[];
+
+    blocks.forEach(b => {
+      if (seekTime >= b.start + b.duration) return; // 이미 지나간 블록
+      const audio = new Audio(b.videoUrl);
+      audio.volume = vol;
+      if (seekTime > b.start) {
+        // 시크 위치가 블록 중간이면 해당 위치부터 재생
+        audio.currentTime = seekTime - b.start;
+      }
+      // 블록 시작 시간이 현재보다 뒤면 딜레이 후 재생
+      const delay = Math.max(0, b.start - seekTime);
+      const playAudio = () => {
+        audio.play().catch(e => { logger.trackSwallowedError('VisualTimeline:origAudioPlay', e); });
+      };
+      if (delay > 0.05) {
+        setTimeout(playAudio, delay * 1000);
+      } else {
+        playAudio();
+      }
+      // 블록 끝에서 정지
+      const remainingDuration = b.duration - (seekTime > b.start ? seekTime - b.start : 0);
+      setTimeout(() => { audio.pause(); }, (delay + remainingDuration) * 1000);
+      origAudioRefs.current.push(audio);
+    });
+  }, [timeline, scenes]);
+
+  const stopOrigAudio = useCallback(() => {
+    origAudioRefs.current.forEach(a => { a.pause(); a.src = ''; });
+    origAudioRefs.current = [];
+  }, []);
+
   // 룰러 클릭으로 플레이헤드 이동 (재생 중이면 정지 후 이동)
   const handleRulerSeek = useCallback((e: React.MouseEvent) => {
     if (!rulerTrackRef.current) return;
     if (audioRef.current && !audioRef.current.paused) {
       audioRef.current.pause();
       stopBgmAudio();
+      stopOrigAudio();
       cancelAnimationFrame(animRef.current);
       setIsPlaying(false);
       useEditRoomStore.getState().setIsTimelinePlaying(false);
@@ -967,7 +1015,7 @@ const VisualTimeline: React.FC = () => {
     const x = e.clientX - rect.left;
     const time = Math.max(0, Math.min(totalDuration, x / effectivePxRef.current));
     movePlayhead(time);
-  }, [totalDuration, movePlayhead, stopBgmAudio]);
+  }, [totalDuration, movePlayhead, stopBgmAudio, stopOrigAudio]);
 
   // 플레이헤드 다이아몬드 드래그
   const handlePlayheadDrag = useCallback((e: React.MouseEvent) => {
@@ -977,6 +1025,7 @@ const VisualTimeline: React.FC = () => {
     if (audioRef.current && !audioRef.current.paused) {
       audioRef.current.pause();
       stopBgmAudio();
+      stopOrigAudio();
       cancelAnimationFrame(animRef.current);
       setIsPlaying(false);
       useEditRoomStore.getState().setIsTimelinePlaying(false);
@@ -994,13 +1043,14 @@ const VisualTimeline: React.FC = () => {
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
-  }, [totalDuration, movePlayhead, stopBgmAudio]);
+  }, [totalDuration, movePlayhead, stopBgmAudio, stopOrigAudio]);
 
   // 재생 기능: 현재 플레이헤드 위치부터 재생 (DOM 직접 조작 — 60fps)
   const handlePlayPause = useCallback(() => {
     if (isPlaying) {
       audioRef.current?.pause();
       stopBgmAudio();
+      stopOrigAudio();
       cancelAnimationFrame(animRef.current);
       // 정지 시 세그먼트 텍스트 초기화
       prevSubTextRef.current = '';
@@ -1021,6 +1071,7 @@ const VisualTimeline: React.FC = () => {
     const stopAll = () => {
       cancelAnimationFrame(animRef.current);
       stopBgmAudio();
+      stopOrigAudio();
       movePlayhead(totalDuration);
       setIsPlaying(false);
       useEditRoomStore.getState().setIsTimelinePlaying(false);
@@ -1087,6 +1138,7 @@ const VisualTimeline: React.FC = () => {
       setIsPlaying(true);
       useEditRoomStore.getState().setIsTimelinePlaying(true);
       startBgmAudio(seekTime);
+      startOrigAudio(seekTime);
       const tick = () => {
         if (!audio.paused) {
           movePlayhead(audio.currentTime);
@@ -1099,6 +1151,7 @@ const VisualTimeline: React.FC = () => {
         animRef.current = requestAnimationFrame(tick);
       }).catch(() => {
         stopBgmAudio();
+        stopOrigAudio();
         setIsPlaying(false);
         useEditRoomStore.getState().setIsTimelinePlaying(false);
       });
@@ -1109,6 +1162,7 @@ const VisualTimeline: React.FC = () => {
     setIsPlaying(true);
     useEditRoomStore.getState().setIsTimelinePlaying(true);
     startBgmAudio(seekTime);
+    startOrigAudio(seekTime);
 
     const targetIdx = orderedLines.findIndex(l => l.audioUrl && (l.startTime + (l.duration || 0)) > seekTime);
     if (targetIdx >= 0 && orderedLines[targetIdx].audioUrl) {
@@ -1128,13 +1182,14 @@ const VisualTimeline: React.FC = () => {
       animRef.current = requestAnimationFrame(tick);
     };
     animRef.current = requestAnimationFrame(tick);
-  }, [isPlaying, timeline, lineByScene, lines, movePlayhead, totalDuration, startBgmAudio, stopBgmAudio]);
+  }, [isPlaying, timeline, lineByScene, lines, movePlayhead, totalDuration, startBgmAudio, stopBgmAudio, startOrigAudio, stopOrigAudio]);
 
   // 처음으로 이동
   const handleGoToStart = useCallback(() => {
     if (isPlaying) {
       audioRef.current?.pause();
       stopBgmAudio();
+      stopOrigAudio();
       cancelAnimationFrame(animRef.current);
       setIsPlaying(false);
       useEditRoomStore.getState().setIsTimelinePlaying(false);
@@ -1142,7 +1197,7 @@ const VisualTimeline: React.FC = () => {
       useEditRoomStore.getState().setActiveSubtitleText('');
     }
     movePlayhead(0);
-  }, [isPlaying, movePlayhead, stopBgmAudio]);
+  }, [isPlaying, movePlayhead, stopBgmAudio, stopOrigAudio]);
 
   // 스페이스바 재생/일시정지
   useEffect(() => {
@@ -1193,11 +1248,18 @@ const VisualTimeline: React.FC = () => {
     }
   }, [bgmTrack.volume]);
 
+  // 원본오디오 볼륨/뮤트 실시간 동기화
+  useEffect(() => {
+    const vol = trackMixer.origAudio?.mute ? 0 : origAudioVolume / 100;
+    origAudioRefs.current.forEach(a => { a.volume = vol; });
+  }, [origAudioVolume, trackMixer.origAudio?.mute]);
+
   // 컴포넌트 언마운트 시 클린업
   useEffect(() => {
     return () => {
       audioRef.current?.pause();
       bgmAudioRef.current?.pause();
+      origAudioRefs.current.forEach(a => a.pause());
       cancelAnimationFrame(animRef.current);
     };
   }, []);
@@ -1615,10 +1677,14 @@ const VisualTimeline: React.FC = () => {
           {/* 4. 원본 영상 오디오 트랙 */}
           {(() => { const h = getAudioTrackHeight('origAudio'); return (
           <div data-track-key="origAudio" className="flex border-t border-gray-700/30" style={{ height: h }}>
-            <div className="flex-shrink-0 flex items-center px-1.5 bg-gray-800/80 border-r border-gray-700/50 text-[10px] text-rose-500 font-bold cursor-pointer select-none" style={{ width: LABEL_WIDTH }}
+            <div className="flex-shrink-0 flex items-center gap-0.5 px-0.5 bg-gray-800/80 border-r border-gray-700/50 text-[10px] text-rose-500 font-bold cursor-pointer select-none" style={{ width: LABEL_WIDTH }}
               onDoubleClick={() => toggleTrackExpand('origAudio')} title="더블클릭: 확장/축소, Alt+휠: 높이 조절">
-              원본오디오
-              {expandedTracks.has('origAudio') && <span className="ml-auto text-[7px] text-rose-400/60">▼</span>}
+              <span className="truncate flex-1 min-w-0 pl-0.5">원본오디오</span>
+              <button type="button" onClick={(e) => { e.stopPropagation(); setTrackMixer('origAudio', { mute: !trackMixer.origAudio.mute }); }}
+                className={`w-3.5 h-3.5 rounded text-[7px] font-black flex items-center justify-center flex-shrink-0 transition-colors ${trackMixer.origAudio?.mute ? 'bg-red-500 text-white' : 'bg-gray-700 text-gray-500 hover:text-gray-300'}`} title="뮤트">M</button>
+              <button type="button" onClick={(e) => { e.stopPropagation(); setTrackMixer('origAudio', { solo: !trackMixer.origAudio.solo }); }}
+                className={`w-3.5 h-3.5 rounded text-[7px] font-black flex items-center justify-center flex-shrink-0 transition-colors ${trackMixer.origAudio?.solo ? 'bg-yellow-500 text-black' : 'bg-gray-700 text-gray-500 hover:text-gray-300'}`} title="솔로">S</button>
+              {expandedTracks.has('origAudio') && <span className="text-[7px] text-rose-400/60">▼</span>}
             </div>
             <div className="relative flex-1">
               {videoAudioBlocks.map((b) => (

@@ -196,6 +196,7 @@ interface EditRoomStore {
   // 트랙 믹서 (mute/solo)
   trackMixer: Record<AudioTrackId, TrackMixerConfig>;
   sfxVolume: number;
+  origAudioVolume: number;
 
   // 렌더 설정
   renderSettings: RenderSettings;
@@ -256,6 +257,7 @@ interface EditRoomStore {
   updateTrackEffect: (trackId: AudioTrackId, index: number, partial: Partial<TrackAudioEffect>) => void;
   setTrackMixer: (trackId: AudioTrackId, config: Partial<TrackMixerConfig>) => void;
   setSfxVolume: (volume: number) => void;
+  setOrigAudioVolume: (volume: number) => void;
   setRenderSettings: (config: Partial<RenderSettings>) => void;
   applySubtitleStyleToAll: (style: SubtitleStyle) => void;
   applySubtitleStyleToRange: (start: number, end: number, style: SubtitleStyle) => void;
@@ -307,6 +309,7 @@ const DEFAULT_TRACK_EFFECTS: Record<AudioTrackId, TrackEffectConfig> = {
   narration: { effects: [], bypass: false },
   bgm: { effects: [], bypass: false },
   sfx: { effects: [], bypass: false },
+  origAudio: { effects: [], bypass: false },
   master: { effects: [
     { type: 'compressor', enabled: true, params: { threshold: -20, ratio: 4, attack: 10, release: 100, gain: 0 } },
   ], bypass: false },
@@ -337,9 +340,11 @@ const INITIAL_STATE = {
     narration: { mute: false, solo: false, crossfadeMs: 50, pan: 0 },
     bgm: { mute: false, solo: false, crossfadeMs: 30, pan: 0 },
     sfx: { mute: false, solo: false, crossfadeMs: 30, pan: 0 },
+    origAudio: { mute: false, solo: false, crossfadeMs: 0, pan: 0 },
     master: { mute: false, solo: false, crossfadeMs: 0, pan: 0 },
   } as Record<AudioTrackId, TrackMixerConfig>,
   sfxVolume: 80,
+  origAudioVolume: 80,
   renderSettings: {
     loudness: { enabled: true, targetLufs: -14, truePeakDbtp: -1, lra: 11 },
     masterPresetOverride: null,
@@ -985,6 +990,7 @@ export const useEditRoomStore = create<EditRoomStore>((set, get) => ({
   })),
 
   setSfxVolume: (volume) => set({ sfxVolume: volume }),
+  setOrigAudioVolume: (volume) => set({ origAudioVolume: volume }),
 
   setRenderSettings: (config) => set((state) => ({
     renderSettings: { ...state.renderSettings, ...config },

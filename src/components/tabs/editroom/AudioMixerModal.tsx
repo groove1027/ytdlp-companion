@@ -74,6 +74,7 @@ const TRACKS: TrackInfo[] = [
   { id: 'narration', label: '나레이션', icon: '🎤', color: 'text-green-400', borderColor: 'border-green-500/40', accentCss: 'rgb(74, 222, 128)' },
   { id: 'bgm', label: 'BGM', icon: '🎵', color: 'text-cyan-400', borderColor: 'border-cyan-500/40', accentCss: 'rgb(34, 211, 238)' },
   { id: 'sfx', label: 'SFX', icon: '🔊', color: 'text-fuchsia-400', borderColor: 'border-fuchsia-500/40', accentCss: 'rgb(217, 70, 239)' },
+  { id: 'origAudio', label: '원본오디오', icon: '🎬', color: 'text-rose-400', borderColor: 'border-rose-500/40', accentCss: 'rgb(251, 113, 133)' },
 ];
 
 /** FX 이펙트 체인 모달 (믹서 위에 뜨는 서브모달) */
@@ -251,17 +252,22 @@ const AudioMixerModal: React.FC<AudioMixerModalProps> = ({ onClose }) => {
     sceneOrder.forEach((id) => { setSceneAudioSettings(id, { volume: newVol }); });
   }, [sceneOrder, setSceneAudioSettings]);
 
+  const origAudioVolume = useEditRoomStore((s) => s.origAudioVolume);
+  const setOrigAudioVolume = useEditRoomStore((s) => s.setOrigAudioVolume);
+
   const getVolume = useCallback((trackId: AudioTrackId): number => {
     if (trackId === 'narration') return avgNarrationVolume;
     if (trackId === 'bgm') return bgmTrack.volume;
+    if (trackId === 'origAudio') return origAudioVolume;
     return sfxVolume;
-  }, [avgNarrationVolume, bgmTrack.volume, sfxVolume]);
+  }, [avgNarrationVolume, bgmTrack.volume, sfxVolume, origAudioVolume]);
 
   const handleVolumeChange = useCallback((trackId: AudioTrackId, vol: number) => {
     if (trackId === 'narration') handleGlobalNarrationVolume(vol);
     else if (trackId === 'bgm') setBgmTrack({ volume: Math.min(100, vol) });
+    else if (trackId === 'origAudio') setOrigAudioVolume(vol);
     else setSfxVolume(vol);
-  }, [handleGlobalNarrationVolume, setBgmTrack, setSfxVolume]);
+  }, [handleGlobalNarrationVolume, setBgmTrack, setSfxVolume, setOrigAudioVolume]);
 
   const handleFaderClick = useCallback((e: React.MouseEvent<HTMLDivElement>, trackId: AudioTrackId) => {
     const rect = e.currentTarget.getBoundingClientRect();

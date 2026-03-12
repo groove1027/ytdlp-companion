@@ -18,7 +18,7 @@ import { useAuthGuard } from '../../../hooks/useAuthGuard';
 import { getYoutubeApiKey } from '../../../services/apiService';
 import { monitoredFetch } from '../../../services/apiService';
 import { getQuotaUsage } from '../../../services/youtubeAnalysisService';
-import { cobaltDownload, refreshCobaltInstances } from '../../../services/cobaltAuthService';
+import { extractStreamUrl, isYtdlpServerConfigured } from '../../../services/ytdlpApiService';
 import type {
   VideoAnalysisPreset as AnalysisPreset,
   VideoSceneRow as SceneRow,
@@ -371,142 +371,37 @@ async function fetchYouTubeComments(videoId: string): Promise<string[]> {
 // 정확한 타임코드 프레임 추출 (분석 결과 기반)
 // ═══════════════════════════════════════════════════
 
-let PIPED_APIS_FOR_FRAMES = [
-  'https://pipedapi.kavin.rocks',
-  'https://pipedapi.adminforge.de',
-  'https://pipedapi.leptons.xyz',
-  'https://api.piped.yt',
-];
-
-let INVIDIOUS_APIS = [
-  'https://inv.nadeko.net',
-  'https://invidious.fdn.fr',
-  'https://invidious.nerdvpn.de',
-];
-
-/** Piped 인스턴스 동적 갱신 */
-async function refreshPipedInstances(): Promise<void> {
-  try {
-    const res = await fetch('https://piped-instances.kavin.rocks/', { signal: AbortSignal.timeout(5_000) });
-    if (!res.ok) return;
-    const list = await res.json() as { api_url: string }[];
-    const fresh = list.map(i => i.api_url?.replace(/\/$/, '')).filter(Boolean);
-    if (fresh.length > 2) {
-      PIPED_APIS_FOR_FRAMES = fresh.slice(0, 10);
-      console.log(`[Frame] Piped 인스턴스 ${fresh.length}개 갱신`);
-    }
-  } catch (e) { logger.trackSwallowedError('VideoAnalysisRoom:refreshPipedInstances', e); }
-}
-
-/** Invidious 인스턴스 동적 갱신 */
-async function refreshInvidiousInstances(): Promise<void> {
-  try {
-    const res = await fetch('https://api.invidious.io/instances.json', { signal: AbortSignal.timeout(5_000) });
-    if (!res.ok) return;
-    const list = await res.json() as [string, { api: boolean; type: string; uri: string }][];
-    const fresh = list.filter(([, i]) => i.api && i.type === 'https' && i.uri).map(([, i]) => i.uri.replace(/\/$/, ''));
-    if (fresh.length > 2) {
-      INVIDIOUS_APIS = fresh.slice(0, 10);
-      console.log(`[Frame] Invidious 인스턴스 ${fresh.length}개 갱신`);
-    }
-  } catch (e) { logger.trackSwallowedError('VideoAnalysisRoom:refreshInvidiousInstances', e); }
-}
-
-// 최초 1회 갱신 (모듈 로드 시)
-refreshPipedInstances();
-refreshInvidiousInstances();
-refreshCobaltInstances();
-
 /**
- * Piped/Invidious 병렬 레이스 — 모든 인스턴스 동시 시도, 첫 성공 반환
- * 전부 죽어 있으면 빠르게 실패 (최대 8초)
- */
-async function racePipedInvidious(videoId: string): Promise<string | null> {
-  const pipedAttempts = PIPED_APIS_FOR_FRAMES.map(api =>
-    fetch(`${api}/streams/${videoId}`, { signal: AbortSignal.timeout(8000) })
-      .then(async res => {
-        if (!res.ok) throw new Error(`${res.status}`);
-        const data = await res.json();
-        if (data.error) throw new Error(data.error);
-        const muxed = (data.videoStreams || [])
-          .filter((s: { videoOnly: boolean; mimeType: string }) => !s.videoOnly && s.mimeType?.includes('video/mp4'))
-          .sort((a: { height: number }, b: { height: number }) => Math.abs((a.height || 0) - 360) - Math.abs((b.height || 0) - 360));
-        if (muxed.length > 0 && muxed[0].url) {
-          console.log(`[Frame] Piped 성공: ${api} (${muxed[0].height}p)`);
-          return muxed[0].url as string;
-        }
-        const vo = (data.videoStreams || [])
-          .filter((s: { videoOnly: boolean; mimeType: string }) => s.videoOnly && s.mimeType?.includes('video/mp4'))
-          .sort((a: { height: number }, b: { height: number }) => Math.abs((a.height || 0) - 360) - Math.abs((b.height || 0) - 360));
-        if (vo.length > 0 && vo[0].url) return vo[0].url as string;
-        throw new Error('no streams');
-      })
-  );
-
-  const invidiousAttempts = INVIDIOUS_APIS.map(api =>
-    fetch(`${api}/api/v1/videos/${videoId}`, { signal: AbortSignal.timeout(8000) })
-      .then(async res => {
-        if (!res.ok) throw new Error(`${res.status}`);
-        const data = await res.json();
-        const streams = (data.formatStreams || [])
-          .filter((s: { type: string }) => s.type?.includes('video/mp4'))
-          .sort((a: { resolution: string }, b: { resolution: string }) =>
-            Math.abs(parseInt(a.resolution || '0') - 360) - Math.abs(parseInt(b.resolution || '0') - 360));
-        if (streams.length > 0 && streams[0].url) {
-          console.log(`[Frame] Invidious 성공: ${api} (${streams[0].resolution})`);
-          return streams[0].url as string;
-        }
-        throw new Error('no streams');
-      })
-  );
-
-  try {
-    return await Promise.any([...pipedAttempts, ...invidiousAttempts]);
-  } catch (e) {
-    logger.trackSwallowedError('VideoAnalysisRoom:racePipedInvidious', e);
-    return null;
-  }
-}
-
-/**
- * ★ YouTube 스트림 URL 획득 — Cobalt 우선, Piped/Invidious 병렬 폴백
- *
- * 2026-03 현재: Piped/Invidious 공개 인스턴스 대부분 사망.
- * Cobalt(Turnstile 인증)이 유일하게 안정적인 YouTube 다운로드 수단.
- * → Cobalt를 1순위로 시도하고, Piped/Invidious는 병렬 레이스로 빠르게 폴백.
+ * ★ YouTube 스트림 URL 획득 — yt-dlp API 서버 (자체 호스팅)
  */
 async function fetchYouTubeStreamUrl(videoId: string): Promise<string | null> {
-  // Phase 1: Cobalt API (Turnstile 인증 — 실제 브라우저에서 자동 해결)
+  if (!isYtdlpServerConfigured()) {
+    console.warn('[Frame] yt-dlp API 서버 미설정');
+    return null;
+  }
   try {
-    console.log('[Frame] Phase 1: Cobalt 다운로드 시도');
-    const cobaltResult = await cobaltDownload(videoId);
-    if (cobaltResult?.url) {
-      console.log('[Frame] ✅ Cobalt 다운로드 성공');
-      return cobaltResult.url;
+    console.log('[Frame] yt-dlp API 서버 시도');
+    const result = await extractStreamUrl(videoId, '720p');
+    if (result?.url) {
+      console.log('[Frame] ✅ yt-dlp API 성공');
+      return result.url;
     }
   } catch (e) {
-    console.warn('[Frame] Cobalt 실패:', e instanceof Error ? e.message : String(e));
+    console.warn('[Frame] yt-dlp API 실패:', e instanceof Error ? e.message : String(e));
   }
-
-  // Phase 2: Piped/Invidious 병렬 레이스 (전부 동시 시도, 첫 성공 반환)
-  console.log('[Frame] Phase 2: Piped/Invidious 병렬 시도');
-  const altResult = await racePipedInvidious(videoId);
-  if (altResult) return altResult;
-
-  console.warn('[Frame] 모든 다운로드 방법 실패');
   return null;
 }
 
 /**
- * 스트림 URL → Blob 다운로드 (CORS 완전 우회)
- * crossOrigin 의존 없이 canvas에서 toDataURL 가능
+ * 서버 프록시를 통해 영상 Blob 다운로드 (CORS 완전 우회)
+ * YouTube CDN은 CORS 차단 → 서버 프록시(/api/download) 경유
+ * 프레임 추출 전용 — 일반 다운로드는 triggerDirectDownload 사용
  */
-async function downloadVideoAsBlob(streamUrl: string): Promise<{ blobUrl: string; blob: Blob } | null> {
+async function downloadVideoAsBlob(videoId: string): Promise<{ blobUrl: string; blob: Blob } | null> {
   try {
-    console.log('[Frame] Blob 다운로드 시작...');
-    const res = await fetch(streamUrl, { signal: AbortSignal.timeout(60000) });
-    if (!res.ok) return null;
-    const blob = await res.blob();
+    console.log('[Frame] 서버 프록시 경유 Blob 다운로드 시작...');
+    const { downloadVideoViaProxy } = await import('../../../services/ytdlpApiService');
+    const { blob } = await downloadVideoViaProxy(videoId, '720p');
     const blobUrl = URL.createObjectURL(blob);
     logger.registerBlobUrl(blobUrl, 'video', 'VideoAnalysisRoom:downloadVideoAsBlob', blob.size / (1024 * 1024));
     console.log(`[Frame] Blob 다운로드 완료: ${(blob.size / 1024 / 1024).toFixed(1)}MB`);
@@ -698,10 +593,10 @@ async function extractFramesWithFallback(
   // ── YouTube/URL: 3중 폴백 (로컬 Blob 우선) ──
   const streamUrl = typeof videoSource === 'string' ? videoSource : null;
 
-  if (streamUrl) {
-    // Layer 1: Blob 다운로드 → 로컬 canvas (원본 품질, CORS 완전 우회)
-    console.log('[Frame] Layer 1: Blob 다운로드 → 로컬 디코딩 시도');
-    const dlResult = await downloadVideoAsBlob(streamUrl);
+  if (streamUrl && youtubeVideoId) {
+    // Layer 1: 서버 프록시로 Blob 다운로드 → 로컬 canvas (원본 품질, CORS 우회)
+    console.log('[Frame] Layer 1: 서버 프록시 Blob 다운로드 → 로컬 디코딩 시도');
+    const dlResult = await downloadVideoAsBlob(youtubeVideoId);
     if (dlResult) {
       // 편집실 전달용 Blob 저장
       useVideoAnalysisStore.getState().setVideoBlob(dlResult.blob);

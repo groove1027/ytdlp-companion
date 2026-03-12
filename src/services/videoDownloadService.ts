@@ -3,13 +3,13 @@
  * 해외 쇼핑 영상 다운로드 (TikTok / Douyin / Xiaohongshu)
  *
  * 우선순위:
- * 1. cobalt 인증 인스턴스 (Turnstile + 비인증 폴백)
+ * 1. yt-dlp API 서버 (자체 호스팅)
  * 2. 사용자 설정 프록시 엔드포인트
  * 3. 로컬 파일 업로드 (항상 가능한 폴백)
  */
 
 import { logger } from './LoggerService';
-import { cobaltDownloadUrl } from './cobaltAuthService';
+import { downloadVideoViaProxy, isYtdlpServerConfigured } from './ytdlpApiService';
 
 export type VideoPlatform = 'douyin' | 'tiktok' | 'xiaohongshu' | 'unknown';
 
@@ -20,7 +20,7 @@ interface DownloadOptions {
 interface DownloadResult {
   blob: Blob;
   filename: string;
-  source: 'cobalt' | 'proxy' | 'direct';
+  source: 'ytdlp' | 'proxy' | 'direct';
 }
 
 const PLATFORM_PATTERNS: { platform: VideoPlatform; patterns: RegExp[] }[] = [
@@ -82,20 +82,16 @@ export const getPlatformInfo = (platform: VideoPlatform): { label: string; color
   }
 };
 
-/** cobalt 인증 인스턴스로 다운로드 (Turnstile + 비인증 폴백) */
-const downloadFromCobalt = async (url: string): Promise<DownloadResult> => {
-  logger.info('[VideoDownload] cobalt 인증 인스턴스 시도', { url });
+/** yt-dlp API 서버 프록시로 다운로드 (CDN CORS 우회) */
+const downloadFromYtdlp = async (url: string): Promise<DownloadResult> => {
+  logger.info('[VideoDownload] yt-dlp 프록시 시도', { url });
 
-  const result = await cobaltDownloadUrl(url);
-  if (!result) throw new Error('cobalt: 모든 인스턴스 실패');
+  if (!isYtdlpServerConfigured()) throw new Error('yt-dlp API 서버 미설정');
 
-  // cobalt가 반환한 tunnel/redirect URL에서 영상 다운로드
-  const videoRes = await fetch(result.url, { signal: AbortSignal.timeout(60_000) });
-  if (!videoRes.ok) throw new Error(`영상 다운로드 실패 (${videoRes.status})`);
-
-  const blob = await videoRes.blob();
-  logger.success('[VideoDownload] cobalt 성공', { size: blob.size });
-  return { blob, filename: result.filename, source: 'cobalt' };
+  const { blob, info } = await downloadVideoViaProxy(url, '720p');
+  logger.success('[VideoDownload] yt-dlp 프록시 성공', { size: blob.size });
+  const filename = `${info.title || 'download'}.mp4`.replace(/[<>:"/\\|?*]/g, '');
+  return { blob, filename, source: 'ytdlp' };
 };
 
 /** 프록시 엔드포인트로 다운로드 시도 */
@@ -131,7 +127,7 @@ const downloadFromProxy = async (url: string, proxyUrl: string): Promise<Downloa
 
 /**
  * URL → Blob 다운로드
- * cobalt → 프록시 → 실패 시 에러 (파일 업로드 폴백은 UI에서 안내)
+ * yt-dlp API → 프록시 → 실패 시 에러 (파일 업로드 폴백은 UI에서 안내)
  */
 export const downloadFromUrl = async (
   url: string,
@@ -139,11 +135,11 @@ export const downloadFromUrl = async (
 ): Promise<DownloadResult> => {
   const normalizedUrl = url.startsWith('http') ? url : `https://${url}`;
 
-  // 1. cobalt.tools
+  // 1. yt-dlp API 서버
   try {
-    return await downloadFromCobalt(normalizedUrl);
+    return await downloadFromYtdlp(normalizedUrl);
   } catch (e) {
-    logger.warn('[VideoDownload] cobalt 실패, 프록시 폴백', { error: (e as Error).message });
+    logger.warn('[VideoDownload] yt-dlp 실패, 프록시 폴백', { error: (e as Error).message });
   }
 
   // 2. 프록시
