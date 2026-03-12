@@ -8,6 +8,7 @@
 
 ## 🟢 완료된 작업
 
+- [x] #179 편집실 믹서 버튼 클릭 시 에러 수정 — AudioMixerModal에서 origAudio 트랙의 VU 미터 ref 누락으로 `Cannot read properties of undefined (reading 'meter')` 크래시 발생, origMeterRef/origPeakRef 추가 + meterState에 origSmooth/origPeak/origPeakAge 추가 + meterRefs에 origAudio 매핑 추가 + 마스터 레벨에 origPct 반영 (AudioMixerModal.tsx, 2026-03-13)
 - [x] #144 채널 스타일 리메이크 기능 — 채널 DNA 분석 결과 화면에서 YouTube 링크/파일/텍스트 입력 → 3가지 버전(원본충실/구조재편집/창작확장) 대본 동시 생성, 버전 선택 시 대본작성 탭으로 자동 이동, 채널 말투·구조·감정전개 정확 모방 (types.ts, ChannelRemakePanel.tsx, ChannelAnalysisRoom.tsx, 2026-03-13)
 - [x] TikTok 캡션/댓글 자동 수집 기능 — 소셜 콘텐츠 분석실에서 URL 붙여넣기 한 번으로 영상+캡션+댓글 동시 자동 수집, 서버에 /api/social/metadata + /api/social/download 엔드포인트 추가, 비YouTube URL 소셜 전용 라우팅, 캡션/댓글 자동채움 + "자동 수집됨" 뱃지 + 메타데이터 정보 바, 기타 SNS에서도 URL 입력 지원 (server/index.js, ytdlpApiService.ts, videoDownloadService.ts, SocialAnalysisRoom.tsx, 2026-03-13)
 - [x] #154 뮤직 레퍼런스 분석실 — 사운드 스튜디오에 "뮤직 레퍼런스" 서브탭 추가, 모든 YouTube URL 형식 파싱(채널/@handle/플레이리스트/영상/쇼츠/embed/live/mix/베어ID 등), 플레이리스트→영상목록 자동변환, Gemini 3.1 Pro 멀티모달로 음악 DNA(장르/BPM/키/악기/무드/구조/프로덕션) + 비주얼 DNA(아트스타일/색상팔레트/타이포/레이아웃) 이중 분석, 음악+비주얼 DNA 퓨전 썸네일 4컨셉 생성, Suno 프롬프트 자동 생성 (types.ts, musicReferenceService.ts, musicReferenceStore.ts, MusicReferenceRoom.tsx, SoundStudioTab.tsx, 2026-03-13)
