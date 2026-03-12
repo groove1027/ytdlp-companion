@@ -63,15 +63,12 @@ const FeedbackModal: React.FC = () => {
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isDragOver, setIsDragOver] = useState(false);
     const [submitResult, setSubmitResult] = useState<FeedbackResult | null>(null);
-    const [attachLogs, setAttachLogs] = useState(true); // 버그일 때 기본 ON
-    const [showLogPreview, setShowLogPreview] = useState(false);
+    const attachLogs = true; // [FIX #175-6] 항상 자동 포함
     const fileInputRef = useRef<HTMLInputElement>(null);
     // 텍스트 선택 중 backdrop 클릭으로 모달이 닫히는 것을 방지하기 위한 ref
     const mouseDownInsideRef = useRef(false);
 
-    const logCount = logger.getLogs().length;
-    const errorCount = logger.getErrorCount();
-    const diagnostics = logger.getDiagnosticSummary();
+    // [FIX #175-6] 디버그 로그 UI 숨김 — logCount/errorCount/diagnostics 제거
 
     // 로그인 사용자 정보 자동 채우기
     const savedUser = getSavedUser();
@@ -474,86 +471,10 @@ const FeedbackModal: React.FC = () => {
                         )}
                     </div>
 
-                    {/* 디버그 로그 첨부 */}
-                    <div>
-                        <div className="flex items-center justify-between mb-2">
-                            <label className="text-sm font-bold text-gray-300 uppercase tracking-wider flex items-center gap-2">
-                                디버그 로그
-                                {errorCount > 0 && (
-                                    <span className="text-[11px] font-normal normal-case px-1.5 py-0.5 rounded bg-red-600/20 text-red-400 border border-red-500/30">
-                                        {errorCount}개 오류 감지
-                                    </span>
-                                )}
-                            </label>
-                            <button
-                                onClick={() => setAttachLogs(!attachLogs)}
-                                className={`relative w-10 h-5 rounded-full transition-colors ${attachLogs ? 'bg-blue-600' : 'bg-gray-600'}`}
-                            >
-                                <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${attachLogs ? 'translate-x-5' : 'translate-x-0.5'}`} />
-                            </button>
-                        </div>
-
-                        {attachLogs && logCount > 0 && (
-                            <div className="bg-gray-900/70 rounded-lg border border-gray-700/50 overflow-hidden">
-                                <button
-                                    onClick={() => setShowLogPreview(!showLogPreview)}
-                                    className="w-full flex items-center justify-between px-3 py-2 hover:bg-gray-700/30 transition-colors"
-                                >
-                                    <span className="text-sm text-gray-400">
-                                        {logCount}개 로그 첨부됨
-                                        {errorCount > 0 && <span className="text-red-400 ml-1">({errorCount}개 오류/경고)</span>}
-                                    </span>
-                                    <svg className={`w-4 h-4 text-gray-500 transition-transform ${showLogPreview ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                                    </svg>
-                                </button>
-                                {/* 진단 데이터 요약 배지 */}
-                                {(diagnostics.mediaMismatches > 0 || diagnostics.longTasks > 0 || diagnostics.consoleErrors > 0 || diagnostics.resourceFailures > 0 || diagnostics.settingChanges > 0) && (
-                                    <div className="flex flex-wrap gap-1.5 px-3 py-1.5 border-t border-gray-700/30">
-                                        {diagnostics.mediaMismatches > 0 && (
-                                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-600/20 text-orange-400 border border-orange-500/30">
-                                                비율불일치 {diagnostics.mediaMismatches}
-                                            </span>
-                                        )}
-                                        {diagnostics.longTasks > 0 && (
-                                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-600/20 text-yellow-400 border border-yellow-500/30">
-                                                느린작업 {diagnostics.longTasks}
-                                            </span>
-                                        )}
-                                        {diagnostics.consoleErrors > 0 && (
-                                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-600/20 text-red-400 border border-red-500/30">
-                                                콘솔오류 {diagnostics.consoleErrors}
-                                            </span>
-                                        )}
-                                        {diagnostics.resourceFailures > 0 && (
-                                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-600/20 text-purple-400 border border-purple-500/30">
-                                                리소스실패 {diagnostics.resourceFailures}
-                                            </span>
-                                        )}
-                                        {diagnostics.settingChanges > 0 && (
-                                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-600/20 text-blue-400 border border-blue-500/30">
-                                                설정변경 {diagnostics.settingChanges}
-                                            </span>
-                                        )}
-                                    </div>
-                                )}
-                                {showLogPreview && (
-                                    <div className="border-t border-gray-700/50 px-3 py-2 max-h-40 overflow-y-auto custom-scrollbar">
-                                        <pre className="text-[11px] text-gray-500 font-mono whitespace-pre-wrap break-all leading-relaxed">
-                                            {logger.exportFormatted()}
-                                        </pre>
-                                    </div>
-                                )}
-                            </div>
-                        )}
-
-                        {attachLogs && logCount === 0 && (
-                            <p className="text-sm text-gray-600">현재 기록된 로그가 없습니다</p>
-                        )}
-
-                        {!attachLogs && (
-                            <p className="text-sm text-gray-600">로그를 첨부하면 문제 원인을 정확히 파악할 수 있습니다</p>
-                        )}
+                    {/* [FIX #175-6] 디버그 로그 — 항상 자동 포함, 사용자에게 간결히 안내만 */}
+                    <div className="flex items-center gap-2 px-3 py-2 bg-gray-800/50 rounded-lg border border-gray-700/30">
+                        <span className="text-green-400 text-sm">✓</span>
+                        <span className="text-sm text-gray-400">진단 정보가 자동으로 포함됩니다</span>
                     </div>
 
                     {/* 이메일 입력 (선택) */}
@@ -578,8 +499,8 @@ const FeedbackModal: React.FC = () => {
                             <p>세션 ID: <span className="text-gray-400 font-mono">{logger.sessionId}</span></p>
                             <p className="truncate">브라우저: <span className="text-gray-400">{navigator.userAgent.substring(0, 80)}...</span></p>
                             <p>화면: <span className="text-gray-400">{window.innerWidth}x{window.innerHeight}</span></p>
-                            {attachLogs && logCount > 0 && (
-                                <p>디버그 로그: <span className="text-blue-400">{logCount}개 항목 {errorCount > 0 && `(${errorCount}개 오류)`}</span></p>
+                            {attachLogs && (
+                                <p>디버그 로그: <span className="text-blue-400">포함됨</span></p>
                             )}
                         </div>
                         <p className="text-[11px] text-gray-600 mt-1.5 pt-1.5 border-t border-gray-700/50">

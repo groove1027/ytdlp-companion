@@ -1280,10 +1280,7 @@ const App: React.FC = () => {
           </div>
             );
           })()}
-          {/* 디버그 로그 — 사이드바 하단 */}
-          <div className="mt-auto pt-3 border-t border-gray-800">
-            <DebugConsole />
-          </div>
+          {/* [FIX #175-6] 디버그 로그 숨김 — 피드백 전송 시 자동 포함되므로 노출 불필요 */}
         </aside>
 
         {/* 메인 콘텐츠 영역 */}

@@ -233,7 +233,13 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
     const langMap: Record<string, TTSLanguage> = { kor: 'ko', jpn: 'ja', eng: 'en' };
     const detectedLang = langMap[primaryLang] || 'ko';
     if (activeSpeaker) {
-      updateSpeaker(activeSpeaker.id, { language: detectedLang });
+      // [FIX #175-2] 캐릭터 선택 시 Speaker.voiceId도 즉시 동기화 — 별도 Typecast 탭에서 적용할 필요 없음
+      updateSpeaker(activeSpeaker.id, {
+        language: detectedLang,
+        voiceId: voice.voice_id,
+        name: voice.name,
+        imageUrl: voice.image_url,
+      });
       setTcLanguage(detectedLang);
     }
     // 클릭한 줄부터 같은 voiceId인 연속 줄 모두 변경

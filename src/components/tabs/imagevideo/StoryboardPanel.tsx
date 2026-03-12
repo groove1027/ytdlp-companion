@@ -296,11 +296,10 @@ const SceneCard: React.FC<SceneCardProps> = ({ scene, index, onUpdatePrompt, onD
               src={scene.videoUrl}
               poster={scene.imageUrl}
               className="w-full h-24 object-cover rounded-lg border border-green-500/50 cursor-pointer"
+              controls
               muted
               loop
               playsInline
-              onMouseEnter={(e) => (e.target as HTMLVideoElement).play()}
-              onMouseLeave={(e) => { const v = e.target as HTMLVideoElement; v.pause(); v.currentTime = 0; }}
             />
             <div className="absolute top-1 right-1 bg-green-500/80 text-white text-[9px] font-bold px-1 py-0.5 rounded flex items-center gap-0.5 pointer-events-none">
               <svg className="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
@@ -316,8 +315,9 @@ const SceneCard: React.FC<SceneCardProps> = ({ scene, index, onUpdatePrompt, onD
               onClick={() => scene.imageUrl && useUIStore.getState().openLightbox(scene.imageUrl)}
             />
             {scene.isGeneratingImage && (
-              <div className="absolute inset-0 flex items-center justify-center bg-black/60 rounded-lg">
-                <div className="w-6 h-6 border-2 border-gray-500 border-t-orange-400 rounded-full animate-spin" />
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 backdrop-blur-sm rounded-lg">
+                <div className="w-5 h-5 border-2 border-gray-500 border-t-orange-400 rounded-full animate-spin" />
+                <span className="text-[9px] text-orange-300 mt-1 animate-pulse">생성 중</span>
               </div>
             )}
           </div>
@@ -327,7 +327,10 @@ const SceneCard: React.FC<SceneCardProps> = ({ scene, index, onUpdatePrompt, onD
             onClick={() => !scene.isGeneratingImage && uploadInputRef.current?.click()}
           >
             {scene.isGeneratingImage ? (
-              <div className="w-6 h-6 border-2 border-gray-500 border-t-orange-400 rounded-full animate-spin" />
+              <div className="flex flex-col items-center">
+                <div className="w-6 h-6 border-2 border-gray-500 border-t-orange-400 rounded-full animate-spin" />
+                <span className="text-[9px] text-orange-300 mt-1 animate-pulse">생성 중</span>
+              </div>
             ) : (
               <>
                 <svg className="w-5 h-5 text-gray-600 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
@@ -339,9 +342,9 @@ const SceneCard: React.FC<SceneCardProps> = ({ scene, index, onUpdatePrompt, onD
         <input type="file" ref={uploadInputRef} accept="image/*,video/*" className="hidden"
           onChange={(e) => { const f = e.target.files?.[0]; if (f) onUploadImage(scene.id, f); e.target.value = ''; }} />
         {scene.isGeneratingVideo && (
-          <div className="mt-2 flex items-center gap-1.5">
+          <div className="mt-2 flex items-center gap-1.5 bg-blue-900/20 border border-blue-500/20 rounded-lg px-2 py-1">
             <div className="w-3 h-3 border border-gray-500 border-t-blue-400 rounded-full animate-spin" />
-            <span className="text-sm text-blue-400">영상 생성중...</span>
+            <span className="text-xs text-blue-400 animate-pulse font-medium">영상 생성중...</span>
           </div>
         )}
       </div>
@@ -380,19 +383,22 @@ const GridSceneCard: React.FC<GridSceneCardProps> = ({ scene, index, onRegenerat
         className="relative aspect-video bg-gray-900 cursor-pointer group"
       >
         {scene.isGeneratingImage ? (
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className="animate-spin h-6 w-6 border-2 border-orange-500 border-t-transparent rounded-full" />
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-900/80 backdrop-blur-sm">
+            <div className="relative">
+              <div className="animate-spin h-8 w-8 border-2 border-orange-500 border-t-transparent rounded-full" />
+              <div className="absolute inset-0 animate-ping h-8 w-8 border border-orange-400/30 rounded-full" />
+            </div>
+            <span className="text-[10px] text-orange-300 mt-2 animate-pulse font-medium">이미지 생성 중...</span>
           </div>
         ) : scene.videoUrl && !scene.isGeneratingVideo ? (
           <video
             src={scene.videoUrl}
             poster={scene.imageUrl}
             className="w-full h-full object-cover"
+            controls
             muted
             loop
             playsInline
-            onMouseEnter={(e) => (e.target as HTMLVideoElement).play()}
-            onMouseLeave={(e) => { const v = e.target as HTMLVideoElement; v.pause(); v.currentTime = 0; }}
           />
         ) : scene.imageUrl ? (
           <img
@@ -1268,35 +1274,7 @@ const StoryboardPanel: React.FC = () => {
     setIsBatchingImages(false);
   }, [handleGenerateImage, requireAuth]);
 
-  // --- [FIX #49] 자동 이미지 생성 — 스토리보드 진입 시 이미지 없는 장면 자동 생성 시작 ---
-  const autoImageTriggeredRef = useRef(false);
-  const prevSceneIdsRef = useRef<string>('');
-  useEffect(() => {
-    // [FIX #83] 장면 ID가 전면 교체되면 autoImage 트리거를 리셋하여 새 장면에도 자동 생성 적용
-    const currentIds = scenes.map(s => s.id).join(',');
-    if (prevSceneIdsRef.current && currentIds !== prevSceneIdsRef.current) {
-      const prevIds = new Set(prevSceneIdsRef.current.split(','));
-      const hasOverlap = scenes.some(s => prevIds.has(s.id));
-      if (!hasOverlap) {
-        autoImageTriggeredRef.current = false;
-      }
-    }
-    prevSceneIdsRef.current = currentIds;
-
-    // 조건: 장면이 있고, 이미지가 하나도 없고, 배치 작업 미진행, 한 번만 실행
-    if (autoImageTriggeredRef.current) return;
-    if (scenes.length === 0) return;
-    if (isBatchingImages || videoBatch.isBatching) return;
-    const hasAnyImage = scenes.some(s => s.imageUrl || s.isGeneratingImage);
-    if (hasAnyImage) return;
-    autoImageTriggeredRef.current = true;
-    // 약간의 딜레이 후 시작 (UI 렌더링 완료 대기)
-    const timer = setTimeout(() => {
-      logger.trackAction('이미지 자동 일괄 생성 (스토리보드 진입)');
-      handleBatchGenerateImages();
-    }, 500);
-    return () => clearTimeout(timer);
-  }, [scenes, isBatchingImages, videoBatch.isBatching, handleBatchGenerateImages]);
+  // [FIX #175-1] 자동 이미지 생성 제거 — 빈 슬롯으로 시작, 사용자가 직접 생성 버튼 클릭 시에만 생성
 
   // --- 배치 진행 상태 ---
   const batchCurrent = isBatchingImages ? batchImageProgress.current : videoBatch.batchProgress.current;
@@ -1554,6 +1532,14 @@ const StoryboardPanel: React.FC = () => {
                 </button>
                 <button
                   type="button"
+                  onClick={() => { videoBatch.runGrokHQBatch('15', false); setShowGenDropdown(false); }}
+                  className="w-full text-left px-4 py-2 text-sm text-gray-200 hover:bg-gray-700/60 transition-colors flex items-center gap-2"
+                >
+                  <span className="w-2 h-2 rounded-full bg-pink-400" />
+                  Grok SFX Only 15초 (일괄)
+                </button>
+                <button
+                  type="button"
                   onClick={() => { videoBatch.runGrokHQBatch('6', true); setShowGenDropdown(false); }}
                   className="w-full text-left px-4 py-2 text-sm text-gray-200 hover:bg-gray-700/60 transition-colors flex items-center gap-2"
                 >
@@ -1567,6 +1553,14 @@ const StoryboardPanel: React.FC = () => {
                 >
                   <span className="w-2 h-2 rounded-full bg-fuchsia-400" />
                   Grok 나레이션 10초 (일괄)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { videoBatch.runGrokHQBatch('15', true); setShowGenDropdown(false); }}
+                  className="w-full text-left px-4 py-2 text-sm text-gray-200 hover:bg-gray-700/60 transition-colors flex items-center gap-2"
+                >
+                  <span className="w-2 h-2 rounded-full bg-fuchsia-400" />
+                  Grok 나레이션 15초 (일괄)
                 </button>
                 <div className="border-t border-gray-700" />
                 <p className="px-4 py-1 text-xs text-gray-500 font-bold uppercase">Veo 3.1 1080p (Evolink)</p>
