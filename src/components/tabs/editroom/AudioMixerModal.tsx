@@ -227,6 +227,8 @@ const AudioMixerModal: React.FC<AudioMixerModalProps> = ({ onClose }) => {
   const bgmPeakRef = useRef<HTMLDivElement>(null);
   const sfxMeterRef = useRef<HTMLDivElement>(null);
   const sfxPeakRef = useRef<HTMLDivElement>(null);
+  const origMeterRef = useRef<HTMLDivElement>(null);
+  const origPeakRef = useRef<HTMLDivElement>(null);
   const masterLRef = useRef<HTMLDivElement>(null);
   const masterLPeakRef = useRef<HTMLDivElement>(null);
   const masterRRef = useRef<HTMLDivElement>(null);
@@ -236,9 +238,9 @@ const AudioMixerModal: React.FC<AudioMixerModalProps> = ({ onClose }) => {
 
   // 감쇠/피크홀드 상태 (ref — React 렌더 밖에서 관리)
   const meterState = useRef({
-    narrSmooth: 0, bgmSmooth: 0, sfxSmooth: 0, masterLSmooth: 0, masterRSmooth: 0,
-    narrPeak: 0, bgmPeak: 0, sfxPeak: 0, masterLPeak: 0, masterRPeak: 0,
-    narrPeakAge: 0, bgmPeakAge: 0, sfxPeakAge: 0, masterLPeakAge: 0, masterRPeakAge: 0,
+    narrSmooth: 0, bgmSmooth: 0, sfxSmooth: 0, origSmooth: 0, masterLSmooth: 0, masterRSmooth: 0,
+    narrPeak: 0, bgmPeak: 0, sfxPeak: 0, origPeak: 0, masterLPeak: 0, masterRPeak: 0,
+    narrPeakAge: 0, bgmPeakAge: 0, sfxPeakAge: 0, origPeakAge: 0, masterLPeakAge: 0, masterRPeakAge: 0,
   });
 
   const avgNarrationVolume = React.useMemo(() => {
@@ -285,9 +287,9 @@ const AudioMixerModal: React.FC<AudioMixerModalProps> = ({ onClose }) => {
     const applyMeter = (
       el: HTMLDivElement | null, peakEl: HTMLDivElement | null,
       targetPct: number,
-      smoothKey: 'narrSmooth' | 'bgmSmooth' | 'sfxSmooth' | 'masterLSmooth' | 'masterRSmooth',
-      peakKey: 'narrPeak' | 'bgmPeak' | 'sfxPeak' | 'masterLPeak' | 'masterRPeak',
-      ageKey: 'narrPeakAge' | 'bgmPeakAge' | 'sfxPeakAge' | 'masterLPeakAge' | 'masterRPeakAge',
+      smoothKey: 'narrSmooth' | 'bgmSmooth' | 'sfxSmooth' | 'origSmooth' | 'masterLSmooth' | 'masterRSmooth',
+      peakKey: 'narrPeak' | 'bgmPeak' | 'sfxPeak' | 'origPeak' | 'masterLPeak' | 'masterRPeak',
+      ageKey: 'narrPeakAge' | 'bgmPeakAge' | 'sfxPeakAge' | 'origPeakAge' | 'masterLPeakAge' | 'masterRPeakAge',
       accentCss: string
     ) => {
       const st = meterState.current;
@@ -343,10 +345,15 @@ const AudioMixerModal: React.FC<AudioMixerModalProps> = ({ onClose }) => {
       const sfxPct = sfxMute ? 0 : dbToPercent(volToDb(store.sfxVolume));
       applyMeter(sfxMeterRef.current, sfxPeakRef.current, sfxPct, 'sfxSmooth', 'sfxPeak', 'sfxPeakAge', 'rgb(217, 70, 239)');
 
+      // 원본오디오
+      const origMute = store.trackMixer.origAudio.mute;
+      const origPct = origMute ? 0 : dbToPercent(volToDb(store.origAudioVolume));
+      applyMeter(origMeterRef.current, origPeakRef.current, origPct, 'origSmooth', 'origPeak', 'origPeakAge', 'rgb(251, 113, 133)');
+
       // 마스터: 라이브 레벨 기반, L/R 약간 차이
       const masterLivePct = narrMute ? 0 : dbToPercent(volToDb(liveRms * narrVol));
-      const effectiveMasterL = Math.max(masterLivePct, bgmPct, sfxPct);
-      const effectiveMasterR = Math.max(masterLivePct * 0.96, bgmPct * 0.97, sfxPct * 0.98);
+      const effectiveMasterL = Math.max(masterLivePct, bgmPct, sfxPct, origPct);
+      const effectiveMasterR = Math.max(masterLivePct * 0.96, bgmPct * 0.97, sfxPct * 0.98, origPct * 0.95);
       applyMeter(masterLRef.current, masterLPeakRef.current, effectiveMasterL, 'masterLSmooth', 'masterLPeak', 'masterLPeakAge', '');
       applyMeter(masterRRef.current, masterRPeakRef.current, effectiveMasterR, 'masterRSmooth', 'masterRPeak', 'masterRPeakAge', '');
 
@@ -375,6 +382,7 @@ const AudioMixerModal: React.FC<AudioMixerModalProps> = ({ onClose }) => {
     narration: { meter: narrMeterRef, peak: narrPeakRef },
     bgm: { meter: bgmMeterRef, peak: bgmPeakRef },
     sfx: { meter: sfxMeterRef, peak: sfxPeakRef },
+    origAudio: { meter: origMeterRef, peak: origPeakRef },
   };
 
   return (
