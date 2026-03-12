@@ -376,16 +376,41 @@ async function loadImageBitmap(
 /** 비디오 URL → VideoFrameExtractor 생성 */
 async function createVideoExtractor(url: string): Promise<VideoFrameExtractor | null> {
   try {
+    // [FIX #149] 외부 URL → blob URL 변환 (CORS 문제 회피)
+    let videoSrc = url;
+    if (!url.startsWith('blob:') && !url.startsWith('data:')) {
+      try {
+        const res = await fetch(url);
+        if (res.ok) {
+          const blob = await res.blob();
+          videoSrc = URL.createObjectURL(blob);
+        }
+      } catch {
+        // CORS fetch 실패 → Cloudinary 프록시 시도
+        try {
+          const { uploadRemoteUrlToCloudinary } = await import('../uploadService');
+          const proxyUrl = await uploadRemoteUrlToCloudinary(url);
+          const proxyRes = await fetch(proxyUrl);
+          if (proxyRes.ok) {
+            const blob = await proxyRes.blob();
+            videoSrc = URL.createObjectURL(blob);
+          }
+        } catch {
+          // 프록시도 실패 → 원본 URL로 시도
+        }
+      }
+    }
+
     const video = document.createElement('video');
     video.crossOrigin = 'anonymous';
     video.muted = true;
     video.preload = 'auto';
-    video.src = url;
+    video.src = videoSrc;
 
     await new Promise<void>((resolve, reject) => {
       video.onloadedmetadata = () => resolve();
       video.onerror = () => reject(new Error('Video load failed'));
-      setTimeout(() => reject(new Error('Video load timeout')), 10000);
+      setTimeout(() => reject(new Error('Video load timeout')), 15000); // [FIX #149] 타임아웃 10→15초
     });
 
     return {

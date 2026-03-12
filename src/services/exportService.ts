@@ -31,12 +31,24 @@ export const downloadImages = async () => {
         if (s.imageUrl!.startsWith('data:image')) {
             zip.file(filename, s.imageUrl!.split(',')[1], { base64: true });
         } else {
+            let blob: Blob | null = null;
+            // [FIX #150] 1차: 직접 fetch
             try {
                 const res = await fetch(s.imageUrl!);
-                const blob = await res.blob();
+                if (res.ok) blob = await res.blob();
+            } catch { /* CORS 차단 — 프록시 시도 */ }
+            // [FIX #150] 2차: Cloudinary 프록시 경유
+            if (!blob) {
+                try {
+                    const proxyUrl = await uploadRemoteUrlToCloudinary(s.imageUrl!);
+                    const res = await fetch(proxyUrl);
+                    if (res.ok) blob = await res.blob();
+                } catch (e) {
+                    console.error(`Failed to fetch image for scene ${s.id}`, e);
+                }
+            }
+            if (blob) {
                 zip.file(filename, blob);
-            } catch (e) {
-                console.error(`Failed to fetch image for scene ${s.id}`, e);
             }
         }
     }, (count) => useUIStore.getState().setToast(prev => ({ ...prev!, current: count })));

@@ -40,7 +40,7 @@ export const validateCoupangUrl = (url: string): { valid: boolean; message?: str
 const fetchViaProxy = async (targetUrl: string): Promise<string> => {
   const proxyUrl = getCoupangProxyUrl();
   if (!proxyUrl) {
-    throw new Error('CORS 프록시 URL이 설정되지 않았습니다. 쿠팡파트너스 설정에서 프록시를 설정해주세요.');
+    throw new Error('CORS 프록시 URL이 필요해요. 쇼핑콘텐츠 첫 화면 하단의 "CORS 프록시 URL" 입력란에 프록시 주소를 넣어주세요. (예: Cloudflare Workers URL)');
   }
 
   const fetchUrl = `${proxyUrl.replace(/\/$/, '')}/crawl`;

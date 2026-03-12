@@ -260,7 +260,11 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
     });
 
     try {
-      const entries = await parseEditTableWithAI(rawEditTable, rawNarration);
+      // [FIX #135] 소스 영상 최대 duration 전달 → 타임코드 클램핑
+      const { sourceVideos } = get();
+      const maxDur = sourceVideos.length === 1 && sourceVideos[0].durationSec
+        ? sourceVideos[0].durationSec : undefined;
+      const entries = await parseEditTableWithAI(rawEditTable, rawNarration, maxDur);
       set({
         edlEntries: entries,
         isProcessing: false,
@@ -371,14 +375,17 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
 
       try {
         const result = await refineTimecodeWithVision(entry, video.file);
+        // [FIX #135] 정제 결과도 영상 길이 내로 클램핑
+        const dur = video.durationSec;
+        const clamp = (v: number) => dur ? Math.max(0, Math.min(v, dur)) : v;
 
         set((state) => ({
           edlEntries: state.edlEntries.map((e) =>
             e.id === entry.id
               ? {
                   ...e,
-                  refinedTimecodeStart: result.refinedStart,
-                  refinedTimecodeEnd: result.refinedEnd,
+                  refinedTimecodeStart: clamp(result.refinedStart),
+                  refinedTimecodeEnd: clamp(result.refinedEnd),
                   refinedConfidence: result.confidence,
                   referenceFrameUrl: result.referenceFrameUrl,
                 }

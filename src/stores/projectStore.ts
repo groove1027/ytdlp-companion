@@ -109,6 +109,11 @@ interface ProjectStore {
   smartUpdateTitle: (tab: string, hint: string) => void;
   markPipelineStep: (step: keyof PipelineSteps) => void;
   setLastActiveTab: (tab: string) => void;
+
+  // [FIX #147] 미디어 초기화
+  clearAllSceneImages: () => void;
+  clearAllSceneVideos: () => void;
+  clearAllSceneMedia: () => void;
 }
 
 // Scene fields that may contain base64 image data and should be migrated
@@ -276,6 +281,27 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     newScenes.splice(index, 1);
     return { scenes: newScenes };
   }),
+
+  // [FIX #147] 미디어 일괄 초기화
+  clearAllSceneImages: () => set((state) => ({
+    scenes: state.scenes.map((s) => ({
+      ...s, imageUrl: undefined, isGeneratingImage: false, generationStatus: undefined, isPromptFiltered: false,
+    })),
+  })),
+  clearAllSceneVideos: () => set((state) => ({
+    scenes: state.scenes.map((s) => ({
+      ...s, videoUrl: undefined, isGeneratingVideo: false, generationTaskId: undefined, videoPrompt: undefined,
+    })),
+  })),
+  clearAllSceneMedia: () => set((state) => ({
+    scenes: state.scenes.map((s) => ({
+      ...s,
+      imageUrl: undefined, videoUrl: undefined,
+      isGeneratingImage: false, isGeneratingVideo: false,
+      generationStatus: undefined, generationTaskId: undefined,
+      videoPrompt: undefined, isPromptFiltered: false,
+    })),
+  })),
 
   loadProject: (project, options) => {
     const scenes = project.scenes || [];

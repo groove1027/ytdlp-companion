@@ -88,7 +88,14 @@ Rules:
 - If narration text references are found, match them to the narration provided`;
 
 /** raw entry → EdlEntry 변환 */
-function rawEntryToEdl(entry: Record<string, unknown>, idx: number): EdlEntry {
+function rawEntryToEdl(entry: Record<string, unknown>, idx: number, maxDuration?: number): EdlEntry {
+  let start = parseTimecodeToSeconds(String(entry.timecodeStart || '0'));
+  let end = parseTimecodeToSeconds(String(entry.timecodeEnd || '0'));
+  // [FIX #135] 영상 길이 초과 타임코드 클램핑 — AI 할루시네이션 방지
+  if (maxDuration && maxDuration > 0) {
+    start = Math.max(0, Math.min(start, maxDuration));
+    end = Math.max(0, Math.min(end, maxDuration));
+  }
   return {
     id: `edl-${Date.now()}-${idx}`,
     order: String(entry.order || `${idx + 1}`),
@@ -96,8 +103,8 @@ function rawEntryToEdl(entry: Record<string, unknown>, idx: number): EdlEntry {
     sourceId: String(entry.sourceId || 'S-01'),
     sourceDescription: String(entry.sourceDescription || ''),
     speedFactor: Number(entry.speedFactor) || 1.0,
-    timecodeStart: parseTimecodeToSeconds(String(entry.timecodeStart || '0')),
-    timecodeEnd: parseTimecodeToSeconds(String(entry.timecodeEnd || '0')),
+    timecodeStart: start,
+    timecodeEnd: end,
     note: String(entry.note || ''),
   };
 }
@@ -234,7 +241,8 @@ Each entry: { "order", "narrationText", "sourceId" (format "S-XX"), "sourceDescr
  */
 export async function parseEditTableWithAI(
   rawTable: string,
-  narration: string
+  narration: string,
+  maxDuration?: number
 ): Promise<EdlEntry[]> {
   const totalEstTokens = estimateTokenCount(rawTable + narration + EDIT_PARSE_SYSTEM_PROMPT);
 
@@ -242,7 +250,7 @@ export async function parseEditTableWithAI(
   if (totalEstTokens < 12000) {
     try {
       const entries = await parseEditChunk(rawTable, narration, false);
-      return entries.map(rawEntryToEdl);
+      return entries.map((e, i) => rawEntryToEdl(e, i, maxDuration));
     } catch (err) {
       if (err instanceof Error && err.message === 'AI_TRUNCATED') {
         // 단일 호출이 잘렸으면 청크 분할로 재시도
@@ -287,7 +295,7 @@ export async function parseEditTableWithAI(
     throw new Error('편집표 파싱에 실패했습니다. 편집표 형식을 확인해주세요.');
   }
 
-  return allEntries.map(rawEntryToEdl);
+  return allEntries.map((e, i) => rawEntryToEdl(e, i, maxDuration));
 }
 
 /**

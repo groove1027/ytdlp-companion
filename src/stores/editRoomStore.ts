@@ -1033,73 +1033,23 @@ export const useEditRoomStore = create<EditRoomStore>((set, get) => ({
   splitMultiLineSubtitles: () => {
     const state = get();
 
-    // 줄바꿈이 포함된 자막 수집
-    const toSplit: { sceneId: string; lines: string[]; sub: SceneSubtitleConfig }[] = [];
+    // [FIX #141] 줄바꿈이 포함된 자막을 한 줄로 합침 (장면 분할 안 함 — 토글 시 장면 폭증 방지)
+    const updated = { ...state.sceneSubtitles };
+    let count = 0;
+
     state.sceneOrder.forEach((sceneId) => {
-      const sub = state.sceneSubtitles[sceneId];
+      const sub = updated[sceneId];
       if (!sub?.text?.includes('\n')) return;
       const lines = sub.text.split('\n').map((l) => l.trim()).filter(Boolean);
       if (lines.length <= 1) return;
-      toSplit.push({ sceneId, lines, sub });
+      // 줄바꿈 제거하고 한 줄로 합침
+      updated[sceneId] = { ...sub, text: lines.join(' ') };
+      count++;
     });
 
-    if (toSplit.length === 0) return 0;
-
-    let totalCreated = 0;
-
-    // 역순 처리 (인덱스 밀림 방지)
-    for (let i = toSplit.length - 1; i >= 0; i--) {
-      const { sceneId, lines, sub } = toSplit[i];
-      const scenes = useProjectStore.getState().scenes;
-      const sceneIdx = scenes.findIndex((s) => s.id === sceneId);
-      if (sceneIdx < 0) continue;
-
-      const sourceImageUrl = scenes[sceneIdx]?.imageUrl;
-      const sourceVideoUrl = scenes[sceneIdx]?.videoUrl;
-      const totalDur = sub.endTime - sub.startTime;
-      const totalChars = lines.reduce((sum, l) => sum + l.length, 0) || 1;
-
-      // 원본 장면은 첫 줄만
-      useProjectStore.getState().updateScene(sceneId, { scriptText: lines[0] });
-
-      // 나머지 줄을 역순으로 새 장면 생성 (항상 원본 바로 뒤에 삽입 → 순서 보존)
-      for (let j = lines.length - 1; j >= 1; j--) {
-        const curScenes = useProjectStore.getState().scenes;
-        const curIdx = curScenes.findIndex((s) => s.id === sceneId);
-        if (curIdx < 0) continue;
-
-        useProjectStore.getState().addSceneAfter(curIdx);
-
-        const afterScenes = useProjectStore.getState().scenes;
-        const newScene = afterScenes[curIdx + 1];
-        if (newScene) {
-          const lineDur = totalDur * (lines[j].length / totalChars);
-          const lineStart = sub.startTime + totalDur * (lines.slice(0, j).reduce((s, l) => s + l.length, 0) / totalChars);
-          useProjectStore.getState().updateScene(newScene.id, {
-            scriptText: lines[j],
-            imageUrl: sourceImageUrl,
-            videoUrl: sourceVideoUrl,
-            startTime: lineStart,
-            endTime: lineStart + lineDur,
-            audioDuration: lineDur,
-          });
-          totalCreated++;
-        }
-      }
-
-      // 원본 장면 타이밍 업데이트 (첫 줄 비례)
-      const firstDur = totalDur * (lines[0].length / totalChars);
-      useProjectStore.getState().updateScene(sceneId, {
-        startTime: sub.startTime,
-        endTime: sub.startTime + firstDur,
-        audioDuration: firstDur,
-      });
-    }
-
-    // editRoomStore 재초기화 (새 장면 반영)
-    get().initFromProject();
-
-    return totalCreated;
+    if (count === 0) return 0;
+    set({ sceneSubtitles: updated });
+    return count;
   },
 
   setCharsPerLine: (v) => set({ charsPerLine: v }),

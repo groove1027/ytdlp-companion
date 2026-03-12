@@ -1461,6 +1461,35 @@ const StoryboardPanel: React.FC = () => {
                   영상 일괄 다운로드
                   <span className="ml-auto text-[11px] text-gray-500">{completedVideos}편</span>
                 </button>
+                <div className="border-t border-gray-700" />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowDownloadDropdown(false);
+                    if (confirm('모든 이미지를 삭제할까요? (대본은 유지됩니다)')) {
+                      useProjectStore.getState().clearAllSceneImages();
+                    }
+                  }}
+                  disabled={completedImages === 0}
+                  className="w-full text-left px-4 py-2.5 text-sm text-red-400 hover:bg-red-900/30 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+                >
+                  <span className="w-2 h-2 rounded-full bg-red-400" />
+                  이미지 전체 삭제
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowDownloadDropdown(false);
+                    if (confirm('모든 영상을 삭제할까요? (이미지와 대본은 유지됩니다)')) {
+                      useProjectStore.getState().clearAllSceneVideos();
+                    }
+                  }}
+                  disabled={completedVideos === 0}
+                  className="w-full text-left px-4 py-2.5 text-sm text-red-400 hover:bg-red-900/30 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+                >
+                  <span className="w-2 h-2 rounded-full bg-red-400" />
+                  영상 전체 삭제
+                </button>
               </div>
             )}
           </div>
