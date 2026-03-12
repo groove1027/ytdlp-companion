@@ -8,6 +8,8 @@
 
 ## 🟢 완료된 작업
 
+- [x] #154 뮤직 레퍼런스 분석실 — 사운드 스튜디오에 "뮤직 레퍼런스" 서브탭 추가, 모든 YouTube URL 형식 파싱(채널/@handle/플레이리스트/영상/쇼츠/embed/live/mix/베어ID 등), 플레이리스트→영상목록 자동변환, Gemini 3.1 Pro 멀티모달로 음악 DNA(장르/BPM/키/악기/무드/구조/프로덕션) + 비주얼 DNA(아트스타일/색상팔레트/타이포/레이아웃) 이중 분석, 음악+비주얼 DNA 퓨전 썸네일 4컨셉 생성, Suno 프롬프트 자동 생성 (types.ts, musicReferenceService.ts, musicReferenceStore.ts, MusicReferenceRoom.tsx, SoundStudioTab.tsx, 2026-03-13)
+- [x] Cobalt + Piped/Invidious → yt-dlp API 서버 전환 — 모든 다운로드 경로를 자체 yt-dlp API(175.126.73.193:3100) 단일 소스로 통일, cobaltAuthService.ts 삭제, Piped/Invidious 다운로드 코드 전량 제거(~200줄), 자막 조회용 Piped/Invidious는 유지 (2026-03-13)
 - [x] 편집실 타임라인 원본오디오 재생 기능 구현 — AudioTrackId에 origAudio 추가, 타임라인 재생 시 각 장면의 videoUrl 오디오 동기 재생, M/S 뮤트/솔로 버튼 추가, 볼륨 컨트롤, AudioMixerModal/AudioEffectModal에 origAudio 트랙 추가 (types.ts, editRoomStore.ts, VisualTimeline.tsx, AudioMixerModal.tsx, AudioEffectModal.tsx, 2026-03-13)
 - [x] 영상 분석실 지난 분석 클릭 시 비주얼(썸네일) 누락 수정 — loadSlot에서 thumbnails:[]로 초기화되어 유실되던 문제, resultCache에서 thumbs 복원하도록 수정 (videoAnalysisStore.ts, 2026-03-13)
 - [x] #153 썸네일 텍스트 모드 선택 기능 — 3모드(AI 자동/직접 입력/이미지만) 셀렉터 추가, 이미지만 모드에서 프롬프트의 텍스트 블록 제거 + 네거티브 강화, 직접 입력 모드에서 사용자 커스텀 텍스트 주입, 재생성 시 textMode 유지 (types.ts, SetupPanel.tsx, ThumbnailStudioTab.tsx, ThumbnailGenerator.tsx, thumbnailService.ts, 2026-03-13)

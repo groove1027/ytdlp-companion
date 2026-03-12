@@ -10,8 +10,9 @@ const MusicLibrary = lazy(() => import('./sound/MusicLibrary'));
 const WaveformEditor = lazy(() => import('./sound/WaveformEditor'));
 const NarrationCreditBar = lazy(() => import('./sound/NarrationCreditBar'));
 const SfxPanel = lazy(() => import('./sound/SfxPanel'));
+const MusicReferenceRoom = lazy(() => import('./sound/MusicReferenceRoom'));
 
-type MainSection = 'tts' | 'music' | 'sfx';
+type MainSection = 'tts' | 'music' | 'sfx' | 'reference';
 
 const TTS_ENGINE_LABELS: Record<string, string> = {
   typecast: 'Typecast',
@@ -95,6 +96,7 @@ const SoundStudioTab: React.FC = () => {
             { id: 'tts' as MainSection, label: '나레이션', icon: '🎤' },
             { id: 'music' as MainSection, label: '음악 생성', icon: '🎵' },
             { id: 'sfx' as MainSection, label: '효과음', icon: '🔊' },
+            { id: 'reference' as MainSection, label: '뮤직 레퍼런스', icon: '🔍' },
           ]).map((sec) => {
             const isActive = mainSection === sec.id;
             return (
@@ -159,6 +161,7 @@ const SoundStudioTab: React.FC = () => {
             </div>
           )}
           {mainSection === 'sfx' && <SfxPanel />}
+          {mainSection === 'reference' && <MusicReferenceRoom />}
         </Suspense>
       </div>
     </div>

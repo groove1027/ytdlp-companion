@@ -1453,7 +1453,7 @@ export interface TrackAudioEffect {
   params: Record<string, number>;
 }
 
-export type AudioTrackId = 'narration' | 'bgm' | 'sfx' | 'master';
+export type AudioTrackId = 'narration' | 'bgm' | 'sfx' | 'origAudio' | 'master';
 
 export interface TrackEffectConfig {
   effects: TrackAudioEffect[];
@@ -1578,6 +1578,110 @@ export interface VideoAnalysisStylePreset {
   sourceVersionId: number;
   sourceTitle: string;
 }
+
+// === MUSIC REFERENCE ANALYSIS (#154) ===
+
+/** YouTube URL 파싱 결과 */
+export type YouTubeUrlParseResult =
+  | { type: 'channel'; channelId: string }
+  | { type: 'handle'; handle: string }
+  | { type: 'custom'; name: string }
+  | { type: 'playlist'; playlistId: string }
+  | { type: 'video'; videoId: string; playlistId?: string }
+  | { type: 'shorts'; videoId: string }
+  | { type: 'unknown' };
+
+/** 뮤직 레퍼런스 수집된 영상 */
+export interface MusicReferenceVideo {
+  videoId: string;
+  title: string;
+  thumbnailUrl: string;
+  duration: string;
+  viewCount: number;
+  publishedAt: string;
+  channelTitle: string;
+}
+
+/** 영상별 음악 DNA */
+export interface PerVideoMusicDNA {
+  videoId: string;
+  title: string;
+  genre: string;
+  subGenre: string;
+  bpm: number;
+  key: string;
+  tempo: string;
+  instruments: string[];
+  vocalType: string;
+  mood: string;
+  energyLevel: number;
+  energyCurve: string;
+  structure: string[];
+  productionStyle: string;
+  mixingCharacter: string;
+  viewCount: number;
+}
+
+/** 채널 종합 음악 DNA */
+export interface ChannelMusicDNA {
+  primaryGenre: string;
+  genreDistribution: Record<string, number>;
+  signatureSounds: string[];
+  bpmRange: { min: number; max: number; avg: number };
+  keyPreference: string[];
+  moodProfile: string;
+  instrumentProfile: string[];
+  productionFingerprint: string;
+  genreEvolution: string;
+  viewCountCorrelation: string;
+  similarArtists: string[];
+  influenceMap: string;
+  sunoStylePrompt: string;
+  fullReport: string;
+}
+
+/** 채널 비주얼 DNA */
+export interface ChannelVisualDNA {
+  dominantStyle: string;
+  styleConsistency: number;
+  styleKeywords: string[];
+  primaryColors: string[];
+  colorHarmony: string;
+  backgroundStyle: string;
+  fontStyle: string;
+  textPlacement: string;
+  textEffects: string;
+  layoutPattern: string;
+  compositionRule: string;
+  subjectType: string;
+  characterStyle: string;
+  topPerformingStyle: string;
+  stylePromptForGeneration: string;
+  negativePrompt: string;
+  fullReport: string;
+}
+
+/** 퓨전 썸네일 컨셉 */
+export interface MusicReferenceFusionConcept {
+  id: string;
+  textOverlay: string;
+  fullTitle: string;
+  visualDescription: string;
+  musicMoodMapping: string;
+  colorPalette: string[];
+  imageUrl?: string;
+  isGenerating: boolean;
+}
+
+/** 뮤직 레퍼런스 분석 진행 단계 */
+export type MusicReferencePhase =
+  | 'idle'
+  | 'collecting'
+  | 'music-analysis'
+  | 'visual-analysis'
+  | 'thumbnail-gen'
+  | 'done'
+  | 'error';
 
 declare global {
   interface AIStudio {
