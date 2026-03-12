@@ -228,6 +228,24 @@ export const monitoredFetch = async (url: string, options: RequestInit = {}, tim
 
             logger.endApiTiming(timingId, response.status);
             logger.apiLog('error', `❌ API Error ${response.status}: ${method} ${url}`, duration, errorBody);
+            logger.trackApiFailure({
+                timestamp: new Date().toISOString(),
+                url: url.substring(0, 200),
+                method,
+                status: response.status,
+                durationMs: duration,
+                requestSnippet: !isBinaryUpload && typeof options.body === 'string'
+                    ? options.body.substring(0, 500)
+                    : isBinaryUpload ? '[Binary/FormData]' : undefined,
+                responseSnippet: typeof errorBody === 'string'
+                    ? errorBody.substring(0, 500)
+                    : JSON.stringify(errorBody).substring(0, 500),
+                responseHeaders: [
+                    response.headers.get('x-ratelimit-remaining') ? `ratelimit-remaining: ${response.headers.get('x-ratelimit-remaining')}` : '',
+                    response.headers.get('retry-after') ? `retry-after: ${response.headers.get('retry-after')}` : '',
+                    response.headers.get('x-request-id') ? `x-request-id: ${response.headers.get('x-request-id')}` : '',
+                ].filter(Boolean).join(', ') || undefined,
+            });
         } else {
             // Success response summary (status + content info)
             const contentType = response.headers.get('content-type') || '';
@@ -249,6 +267,17 @@ export const monitoredFetch = async (url: string, options: RequestInit = {}, tim
         }
         logger.endApiTiming(timingId, 'error');
         logger.apiLog('error', `🔥 Network Error: ${method} ${url}`, duration, error.message);
+        logger.trackApiFailure({
+            timestamp: new Date().toISOString(),
+            url: url.substring(0, 200),
+            method,
+            status: error.name === 'AbortError' ? 'timeout' : 'network-error',
+            durationMs: duration,
+            requestSnippet: !isBinaryUpload && typeof options.body === 'string'
+                ? options.body.substring(0, 500)
+                : undefined,
+            responseSnippet: error.message,
+        });
         throw error;
     } finally {
         if (timeoutId !== undefined) clearTimeout(timeoutId);

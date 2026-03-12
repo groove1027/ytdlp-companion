@@ -62,6 +62,7 @@ export const useNavigationStore = create<NavigationStore>((set) => ({
   setActiveTab: (tab) => {
     // 사용자 액션 추적
     logger.trackAction('탭 전환', tab);
+    logger.trackTabVisit(tab);
 
     // 프로젝트 탭 클릭 시 항상 대시보드 표시 (구버전 ConfigForm 방지)
     if (tab === 'project') {

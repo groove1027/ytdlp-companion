@@ -71,6 +71,62 @@ interface NetworkSnapshot {
   downlink?: number;
 }
 
+// ── Tab Visit History ──
+interface TabVisit {
+  tab: string;
+  subTab?: string;
+  enteredAt: number;
+  leftAt?: number;
+  durationMs?: number;
+}
+
+// ── API Failure Details ──
+interface ApiFailureDetail {
+  timestamp: string;
+  url: string;
+  method: string;
+  status: number | string;
+  durationMs: number;
+  requestSnippet?: string;
+  responseSnippet?: string;
+  responseHeaders?: string;
+}
+
+// ── Blob URL Registry ──
+interface BlobUrlRecord {
+  url: string;
+  type: 'image' | 'video' | 'audio' | 'other';
+  owner: string;
+  sizeMB?: number;
+  createdAt: number;
+}
+
+// ── Async Operation Tracking ──
+interface AsyncOperationRecord {
+  id: string;
+  type: string;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  startedAt: number;
+  completedAt?: number;
+  details?: string;
+}
+
+// ── Error Chain ──
+interface ErrorChainEntry {
+  id: string;
+  timestamp: string;
+  message: string;
+  context?: string;
+  parentId?: string;
+}
+
+// ── Swallowed Error ──
+interface SwallowedErrorRecord {
+  timestamp: string;
+  location: string;
+  message: string;
+}
+
 class LoggerService {
   private logs: LogEntry[] = [];
   private listeners: LogListener[] = [];
@@ -91,6 +147,16 @@ class LoggerService {
   private _memoryIntervalId: ReturnType<typeof setInterval> | null = null;
   private _originalConsoleError: typeof console.error | null = null;
   private _originalConsoleWarn: typeof console.warn | null = null;
+
+  // ── 10x 강화 진단 데이터 ──
+  private tabVisitHistory: TabVisit[] = [];
+  private _currentTabVisit: TabVisit | null = null;
+  private apiFailureDetails: ApiFailureDetail[] = [];
+  private blobUrlRegistry: Map<string, BlobUrlRecord> = new Map();
+  private asyncOperations: Map<string, AsyncOperationRecord> = new Map();
+  private errorChains: ErrorChainEntry[] = [];
+  private swallowedErrors: SwallowedErrorRecord[] = [];
+  private _errorChainCounter = 0;
 
   private addLog(level: LogLevel, message: string, details?: any, extra?: Partial<LogEntry>) {
     const entry: LogEntry = {
@@ -152,10 +218,37 @@ class LoggerService {
     this.addLog('info', msg, undefined, { category: 'action' });
   }
 
+  /** 탭 방문 기록 (tab + optional subTab) */
+  trackTabVisit(tab: string, subTab?: string) {
+    const now = Date.now();
+    // 이전 탭 방문 종료 처리
+    if (this._currentTabVisit) {
+      this._currentTabVisit.leftAt = now;
+      this._currentTabVisit.durationMs = now - this._currentTabVisit.enteredAt;
+    }
+    const visit: TabVisit = { tab, subTab, enteredAt: now };
+    this.tabVisitHistory = [...this.tabVisitHistory, visit].slice(-50);
+    this._currentTabVisit = visit;
+    const label = subTab ? `${tab} > ${subTab}` : tab;
+    this.addLog('info', `📍 탭 방문: ${label}`, undefined, { category: 'action' });
+  }
+
   /** 재시도 추적 */
   trackRetry(operation: string, attempt: number, maxAttempts: number, reason?: string) {
     const msg = `🔄 Retry ${attempt}/${maxAttempts}: ${operation}`;
     this.addLog('warn', msg, reason || undefined, { category: 'api' });
+  }
+
+  // ── API 실패 상세 기록 ──
+
+  /** API 실패 상세 정보 기록 (요청 바디 스니펫 + 응답 바디 스니펫 + 헤더) */
+  trackApiFailure(detail: ApiFailureDetail) {
+    this.apiFailureDetails = [...this.apiFailureDetails, detail].slice(-20);
+  }
+
+  /** API 실패 목록 반환 */
+  getApiFailures(): ApiFailureDetail[] {
+    return this.apiFailureDetails;
   }
 
   getLogs() {
@@ -672,8 +765,13 @@ class LoggerService {
   // [NEW] 프로젝트 설정 스냅샷
   // ══════════════════════════════════════════════════════════════
 
-  /** 프로젝트 설정 + 주요 스토어 상태 수집 (피드백 제출 시 호출) */
+  /** 프로젝트 설정 + 주요 스토어 상태 수집 (피드백 제출 시 호출) — backward-compatible wrapper */
   collectProjectSnapshot(): Record<string, string> {
+    return this.collectAllStoreSnapshots();
+  }
+
+  /** 핵심 5개 스토어 스냅샷 (projectStore, imageVideoStore, scriptWriterStore, costStore, navigationStore) */
+  private _collectCoreProjectSnapshot(): Record<string, string> {
     const snap: Record<string, string> = {};
 
     try {
@@ -797,16 +895,16 @@ class LoggerService {
     const env = await this.collectFullEnvironmentSnapshot();
     const envLines = Object.entries(env).map(([k, v]) => `  ${k}: ${v}`).join('\n');
 
-    // 프로젝트 설정 스냅샷
-    const projectSnap = this.collectProjectSnapshot();
-    const projectLines = Object.entries(projectSnap).map(([k, v]) => `  ${k}: ${v}`).join('\n');
+    // A+K. All Store Snapshots (extended from old collectProjectSnapshot)
+    const allSnap = this.collectAllStoreSnapshots();
+    const allSnapLines = Object.entries(allSnap).map(([k, v]) => `  ${k}: ${v}`).join('\n');
 
     const actionTrail = this.getActionTrail();
     const actionSection = actionTrail !== '(기록된 액션 없음)'
       ? `\n\n--- User Actions ---\n${actionTrail}`
       : '';
 
-    // 설정 변경 이력
+    // Setting changes
     const settingSection = this.settingChanges.length > 0
       ? `\n\n--- Setting Changes (${this.settingChanges.length}) ---\n${this.settingChanges.map(s => {
         const t = s.timestamp.substring(11, 19);
@@ -814,7 +912,7 @@ class LoggerService {
       }).join('\n')}`
       : '';
 
-    // 미디어 치수 불일치
+    // Media dimension mismatches
     const mismatches = this.mediaDimensions.filter(m => m.mismatch);
     const dimensionSection = mismatches.length > 0
       ? `\n\n--- Media Dimension Mismatches (${mismatches.length}) ---\n${mismatches.map(m => {
@@ -823,7 +921,7 @@ class LoggerService {
       }).join('\n')}`
       : '';
 
-    // 생성 요청 요약
+    // Generation log
     const genLogs = this.logs.filter(l => l.category === 'generation');
     const genSection = genLogs.length > 0
       ? `\n\n--- Generation Log (${genLogs.length}) ---\n${genLogs.slice(0, 30).map(g => {
@@ -833,7 +931,7 @@ class LoggerService {
       }).join('\n')}`
       : '';
 
-    // 메모리 타임라인 (최근 10개)
+    // Memory timeline
     const memSection = this.memoryTimeline.length > 0
       ? `\n\n--- Memory Timeline ---\n${this.memoryTimeline.slice(-10).map(m => {
         const d = new Date(m.timestamp);
@@ -841,7 +939,7 @@ class LoggerService {
       }).join('\n')}`
       : '';
 
-    // Long Task 요약
+    // Long tasks
     const ltSection = this.longTasks.length > 0
       ? `\n\n--- Long Tasks (${this.longTasks.length}) ---\n${this.longTasks.slice(-10).map(lt => {
         const t = lt.timestamp.substring(11, 19);
@@ -849,7 +947,7 @@ class LoggerService {
       }).join('\n')}`
       : '';
 
-    // Console captures (error/warn만, 최근 20개)
+    // Console captures
     const ccSection = this.consoleCaptures.length > 0
       ? `\n\n--- Console Captures (${this.consoleCaptures.length}) ---\n${this.consoleCaptures.slice(-20).map(c => {
         const t = c.timestamp.substring(11, 19);
@@ -857,7 +955,7 @@ class LoggerService {
       }).join('\n')}`
       : '';
 
-    // 네트워크 타임라인
+    // Network timeline
     const netSection = this.networkTimeline.length > 1
       ? `\n\n--- Network Timeline (${this.networkTimeline.length}) ---\n${this.networkTimeline.slice(-10).map(n => {
         const t = n.timestamp.substring(11, 19);
@@ -865,7 +963,7 @@ class LoggerService {
       }).join('\n')}`
       : '';
 
-    // 리소스 로딩 실패
+    // Resource failures
     const resSection = this.resourceFailures.length > 0
       ? `\n\n--- Resource Failures (${this.resourceFailures.length}) ---\n${this.resourceFailures.slice(-10).map(r => {
         const t = r.timestamp.substring(11, 19);
@@ -873,7 +971,7 @@ class LoggerService {
       }).join('\n')}`
       : '';
 
-    // API 타이밍 워터폴 (최근 20개)
+    // API waterfall
     const completedApis = this.apiTimings.filter(a => a.endTime);
     const waterfall = completedApis.length > 0
       ? `\n\n--- API Waterfall (${completedApis.length}) ---\n${completedApis.slice(-20).map(a => {
@@ -881,23 +979,117 @@ class LoggerService {
       }).join('\n')}`
       : '';
 
+    // ═══ NEW SECTIONS (10x Enhancement) ═══
+
+    // C. Tab Visit History
+    const closedVisit = this._currentTabVisit
+      ? [...this.tabVisitHistory, { ...this._currentTabVisit, leftAt: Date.now(), durationMs: Date.now() - this._currentTabVisit.enteredAt }]
+      : this.tabVisitHistory;
+    const tabSection = closedVisit.length > 0
+      ? `\n\n--- Tab Visit History (${closedVisit.length}) ---\n${closedVisit.slice(-20).map(v => {
+        const t = new Date(v.enteredAt).toTimeString().substring(0, 8);
+        const dur = v.durationMs ? `(${v.durationMs >= 60000 ? `${Math.floor(v.durationMs / 60000)}m ${Math.round((v.durationMs % 60000) / 1000)}s` : `${Math.round(v.durationMs / 1000)}s`})` : '(현재)';
+        const sub = v.subTab ? ` > ${v.subTab}` : '';
+        return `[${t}] ${v.tab}${sub} ${dur}`;
+      }).join('\n')}`
+      : '';
+
+    // B. API Failure Details
+    const failSection = this.apiFailureDetails.length > 0
+      ? `\n\n--- API Failure Details (${this.apiFailureDetails.length}) ---\n${this.apiFailureDetails.slice(-10).map(f => {
+        const t = f.timestamp.substring(11, 19);
+        let entry = `[${t}] ${f.method} ${f.url.substring(0, 80)} → ${f.status} (${f.durationMs}ms)`;
+        if (f.requestSnippet) entry += `\n  Req: ${f.requestSnippet}`;
+        if (f.responseSnippet) entry += `\n  Res: ${f.responseSnippet}`;
+        if (f.responseHeaders) entry += `\n  Headers: ${f.responseHeaders}`;
+        return entry;
+      }).join('\n')}`
+      : '';
+
+    // D. Persist Rehydration Status
+    const persistSection = `\n\n--- Persist Rehydration Status ---\n${this.collectPersistStatus()}`;
+
+    // E. IndexedDB Status
+    let idbSection = '';
+    try {
+      const idbStatus = await this.collectIndexedDbStatus();
+      idbSection = `\n\n--- IndexedDB Status ---\n${idbStatus}`;
+    } catch { /* ignore */ }
+
+    // F. Blob URL Registry
+    const blobs = Array.from(this.blobUrlRegistry.values());
+    const blobSection = blobs.length > 0
+      ? `\n\n--- Active Blob URLs (${blobs.length}) ---\n${blobs.map(b => {
+        const t = new Date(b.createdAt).toTimeString().substring(0, 8);
+        const size = b.sizeMB ? ` ${b.sizeMB}MB` : '';
+        return `[${t}] ${b.type} (${b.owner})${size}`;
+      }).join('\n')}\nTotal blobs: ${blobs.length}, Est. memory: ${blobs.reduce((s, b) => s + (b.sizeMB || 0), 0).toFixed(1)}MB`
+      : '';
+
+    // G. Async Operations
+    const ops = Array.from(this.asyncOperations.values());
+    const activeOps = ops.filter(o => o.status === 'running' || o.status === 'pending');
+    const recentCompleted = ops.filter(o => o.status === 'completed' || o.status === 'failed').slice(-5);
+    const opsSection = (activeOps.length > 0 || recentCompleted.length > 0)
+      ? `\n\n--- Async Operations ---\n${[
+        ...activeOps.map(o => `  [${o.status.toUpperCase()}] ${o.type} — ${o.id} (${Math.round((Date.now() - o.startedAt) / 1000)}s elapsed)${o.details ? ` — ${o.details}` : ''}`),
+        ...recentCompleted.map(o => `  [${o.status.toUpperCase()}] ${o.type} — ${o.id} (${o.completedAt ? Math.round((o.completedAt - o.startedAt) / 1000) : '?'}s)${o.details ? ` — ${o.details}` : ''}`)
+      ].join('\n')}`
+      : '';
+
+    // H. DOM Diagnostics
+    const domSnap = this.collectDomDiagnostics();
+    const domSection = Object.keys(domSnap).length > 0
+      ? `\n\n--- DOM Diagnostics ---\n${Object.entries(domSnap).map(([k, v]) => `  ${k}: ${v}`).join('\n')}`
+      : '';
+
+    // I. Error Chain
+    const chainSection = this.errorChains.length > 0
+      ? `\n\n--- Error Chains (${this.errorChains.length}) ---\n${this.errorChains.slice(-15).map(e => {
+        const t = e.timestamp.substring(11, 19);
+        const parent = e.parentId ? ` ← ${e.parentId}` : ' (ROOT)';
+        return `[${t}] ${e.id}${parent}: ${e.message}${e.context ? ` [${e.context}]` : ''}`;
+      }).join('\n')}`
+      : '';
+
+    // J. localStorage Breakdown
+    const lsSection = `\n\n--- localStorage Breakdown ---\n${this.collectLocalStorageBreakdown()}`;
+
+    // L. Swallowed Errors
+    const swallowSection = this.swallowedErrors.length > 0
+      ? `\n\n--- Swallowed Errors (${this.swallowedErrors.length}) ---\n${this.swallowedErrors.slice(-15).map(s => {
+        const t = s.timestamp.substring(11, 19);
+        return `[${t}] ${s.location}: ${s.message}`;
+      }).join('\n')}`
+      : '';
+
     const header = `--- Environment ---\n${envLines}`;
-    const projectHeader = projectLines ? `\n\n--- Project Config ---\n${projectLines}` : '';
+    const storeHeader = allSnapLines ? `\n\n--- All Store States ---\n${allSnapLines}` : '';
     const logs = this.exportFormatted();
 
     return [
       header,
-      projectHeader,
+      storeHeader,
       actionSection,
+      tabSection,
       settingSection,
       genSection,
       dimensionSection,
+      failSection,
+      chainSection,
+      swallowSection,
+      opsSection,
+      blobSection,
       memSection,
       ltSection,
       netSection,
       ccSection,
       resSection,
       waterfall,
+      persistSection,
+      idbSection,
+      domSection,
+      lsSection,
       `\n\n--- Logs (${this.logs.length}) ---\n${logs}`,
     ].filter(s => s).join('');
   }
@@ -954,6 +1146,286 @@ class LoggerService {
       consoleErrors: this.consoleCaptures.filter(c => c.level === 'error').length,
       resourceFailures: this.resourceFailures.length,
     };
+  }
+
+  // ══ F. Blob URL Registry ══
+  registerBlobUrl(url: string, type: BlobUrlRecord['type'], owner: string, sizeMB?: number) {
+    this.blobUrlRegistry.set(url, { url, type, owner, sizeMB, createdAt: Date.now() });
+  }
+  unregisterBlobUrl(url: string) {
+    this.blobUrlRegistry.delete(url);
+  }
+
+  // ══ G. Async Operation Tracking ══
+  startAsyncOp(id: string, type: string, details?: string) {
+    this.asyncOperations.set(id, { id, type, status: 'running', startedAt: Date.now(), details });
+  }
+  endAsyncOp(id: string, status: 'completed' | 'failed', details?: string) {
+    const op = this.asyncOperations.get(id);
+    if (op) {
+      op.status = status;
+      op.completedAt = Date.now();
+      if (details) op.details = details;
+    }
+  }
+
+  // ══ I. Error Chain ══
+  trackErrorChain(message: string, context?: string, parentId?: string): string {
+    const id = `err-${++this._errorChainCounter}`;
+    this.errorChains = [...this.errorChains, { id, timestamp: new Date().toISOString(), message, context, parentId }].slice(-50);
+    return id;
+  }
+
+  // ══ L. Swallowed Error ══
+  trackSwallowedError(location: string, error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    this.swallowedErrors = [...this.swallowedErrors, {
+      timestamp: new Date().toISOString(),
+      location,
+      message: msg.substring(0, 300),
+    }].slice(-50);
+  }
+
+  // ══ A+K. All Store Snapshots + User Input Context ══
+  collectAllStoreSnapshots(): Record<string, string> {
+    const snap: Record<string, string> = {};
+    // Re-use existing projectStore snapshot
+    const existing = this._collectCoreProjectSnapshot();
+    Object.assign(snap, existing);
+
+    try {
+      const vaStore = require('../stores/videoAnalysisStore').useVideoAnalysisStore;
+      const va = vaStore.getState();
+      snap['VA.InputMode'] = va.inputMode || '?';
+      snap['VA.YoutubeUrls'] = String(va.youtubeUrls?.filter((u: string) => u.trim()).length || 0);
+      snap['VA.SelectedPreset'] = va.selectedPreset || '(none)';
+      snap['VA.CacheKeys'] = String(Object.keys(va.resultCache || {}).length);
+      snap['VA.Versions'] = String(va.versions?.length || 0);
+      snap['VA.ActiveSlot'] = va.activeSlotId || '(none)';
+      snap['VA.RawResultLen'] = String(va.rawResult?.length || 0);
+    } catch { /* ignore */ }
+
+    try {
+      const caStore = require('../stores/channelAnalysisStore').useChannelAnalysisStore;
+      const ca = caStore.getState();
+      snap['CA.SubTab'] = ca.subTab || '?';
+      snap['CA.Keyword'] = (ca.keyword || '').substring(0, 50);
+      snap['CA.QuotaUsed'] = `${ca.quotaUsed || 0}/${ca.quotaLimit || 10000}`;
+      snap['CA.Benchmarks'] = String(ca.savedBenchmarks?.length || 0);
+      snap['CA.Presets'] = String(ca.savedPresets?.length || 0);
+    } catch { /* ignore */ }
+
+    try {
+      const ssStore = require('../stores/soundStudioStore').useSoundStudioStore;
+      const ss = ssStore.getState();
+      snap['SS.Speakers'] = String(ss.speakers?.length || 0);
+      snap['SS.Lines'] = String(ss.lines?.length || 0);
+      snap['SS.TtsEngine'] = ss.ttsEngine || '?';
+      snap['SS.IsGenerating'] = String(ss.isGeneratingTTS || false);
+      snap['SS.MusicLibrary'] = String(ss.musicLibrary?.length || 0);
+      snap['SS.SfxItems'] = String(ss.sfxItems?.length || 0);
+    } catch { /* ignore */ }
+
+    try {
+      const erStore = require('../stores/editRoomStore').useEditRoomStore;
+      const er = erStore.getState();
+      snap['ER.SubTab'] = er.editRoomSubTab || '?';
+      snap['ER.Scenes'] = String(er.scenes?.length || 0);
+      snap['ER.Effects'] = String(Object.keys(er.sceneEffects || {}).length);
+      snap['ER.Subtitles'] = String(Object.keys(er.sceneSubtitles || {}).length);
+      snap['ER.HasBGM'] = String(!!er.bgmConfig?.url);
+    } catch { /* ignore */ }
+
+    try {
+      const edStore = require('../stores/editorStore').useEditorStore;
+      const ed = edStore.getState();
+      snap['ED.TimelineLen'] = String(ed.timeline?.length || 0);
+      snap['ED.Subtitles'] = String(ed.subtitles?.length || 0);
+      snap['ED.Zoom'] = String(ed.zoom || 100);
+      snap['ED.ActiveTab'] = ed.activeEditorTab || '?';
+    } catch { /* ignore */ }
+
+    try {
+      const uiStore = require('../stores/uiStore').useUIStore;
+      const ui = uiStore.getState();
+      const openModals: string[] = [];
+      if (ui.showFeedbackModal) openModals.push('feedback');
+      if (ui.showApiSettings) openModals.push('apiSettings');
+      if (ui.showFullScriptModal) openModals.push('fullScript');
+      if (ui.lightboxUrl) openModals.push('lightbox');
+      if (ui.showFeedbackHistory) openModals.push('feedbackHistory');
+      snap['UI.OpenModals'] = openModals.length > 0 ? openModals.join(', ') : '(none)';
+      snap['UI.IsProcessing'] = String(ui.isProcessing || false);
+      snap['UI.ProcessingMsg'] = (ui.processingMessage || '').substring(0, 80);
+    } catch { /* ignore */ }
+
+    try {
+      const authStore = require('../stores/authStore').useAuthStore;
+      const auth = authStore.getState();
+      snap['Auth.LoggedIn'] = String(!!auth.authUser);
+      snap['Auth.Role'] = auth.authUser?.role || '(none)';
+      snap['Auth.Checking'] = String(auth.authChecking || false);
+    } catch { /* ignore */ }
+
+    try {
+      const upStore = require('../stores/uploadStore').useUploadStore;
+      const up = upStore.getState();
+      snap['UP.Step'] = String(up.currentStep || 0);
+      snap['UP.Platforms'] = String(up.selectedPlatforms?.length || 0);
+      snap['UP.HasVideo'] = String(!!up.videoFile || !!up.videoUrl);
+      const authed: string[] = [];
+      if (up.youtubeAuth?.accessToken) authed.push('youtube');
+      if (up.tiktokAuth?.accessToken) authed.push('tiktok');
+      if (up.instagramAuth?.accessToken) authed.push('instagram');
+      snap['UP.AuthedPlatforms'] = authed.length > 0 ? authed.join(', ') : '(none)';
+    } catch { /* ignore */ }
+
+    try {
+      const vaStore = require('../stores/viewAlertStore').useViewAlertStore;
+      const va2 = vaStore.getState();
+      snap['Alert.Count'] = String(va2.alerts?.length || 0);
+      snap['Alert.IsPolling'] = String(va2.isPollingActive || false);
+      snap['Alert.Notifications'] = String(va2.notifications?.length || 0);
+    } catch { /* ignore */ }
+
+    try {
+      const ssStore2 = require('../stores/shoppingShortStore').useShoppingShortStore;
+      const shs = ssStore2.getState();
+      snap['Shop.Step'] = String(shs.currentStep || 0);
+      snap['Shop.HasSource'] = String(!!shs.sourceVideo || !!shs.sourceUrl);
+      snap['Shop.RenderProgress'] = String(shs.renderProgress || 0);
+    } catch { /* ignore */ }
+
+    try {
+      const epStore = require('../stores/editPointStore').useEditPointStore;
+      const ep = epStore.getState();
+      snap['EP.Sources'] = String(ep.sourceVideos?.length || 0);
+      snap['EP.EdlEntries'] = String(ep.edlEntries?.length || 0);
+      snap['EP.Phase'] = ep.processingPhase || 'idle';
+    } catch { /* ignore */ }
+
+    try {
+      const instStore = require('../stores/instinctStore').useInstinctStore;
+      const inst = instStore.getState();
+      snap['Inst.Mechanisms'] = String(inst.selectedMechanismIds?.length || 0);
+      snap['Inst.IsRecommending'] = String(inst.isRecommending || false);
+    } catch { /* ignore */ }
+
+    return snap;
+  }
+
+  // ══ H. DOM/Rendering Diagnostics ══
+  collectDomDiagnostics(): Record<string, string> {
+    const snap: Record<string, string> = {};
+    try {
+      snap['DOM Nodes'] = String(document.querySelectorAll('*').length);
+      // Max DOM depth (sample first 200 elements)
+      const allElements = document.querySelectorAll('*');
+      let maxDepth = 0;
+      for (let i = 0; i < Math.min(allElements.length, 200); i++) {
+        let depth = 0;
+        let node: Node | null = allElements[i];
+        while (node && node !== document) { depth++; node = node.parentNode; }
+        if (depth > maxDepth) maxDepth = depth;
+      }
+      snap['DOM Max Depth'] = String(maxDepth);
+
+      // Canvas contexts
+      const canvases = document.querySelectorAll('canvas');
+      snap['Canvas Elements'] = String(canvases.length);
+
+      // Video/Audio elements
+      const videos = document.querySelectorAll('video');
+      const audios = document.querySelectorAll('audio');
+      snap['Video Elements'] = String(videos.length);
+      snap['Audio Elements'] = String(audios.length);
+
+      // iframes
+      snap['IFrames'] = String(document.querySelectorAll('iframe').length);
+
+      // CSS animations (approximate)
+      const animations = document.getAnimations ? document.getAnimations().length : 0;
+      snap['Active Animations'] = String(animations);
+
+      // GPU info (WebGL)
+      try {
+        const gl = document.createElement('canvas').getContext('webgl');
+        if (gl) {
+          const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+          if (dbg) {
+            snap['GPU Renderer'] = gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) || '?';
+          }
+        }
+      } catch { /* no webgl */ }
+
+      // Current scroll position
+      snap['ScrollY'] = String(Math.round(window.scrollY));
+    } catch { /* ignore */ }
+    return snap;
+  }
+
+  // ══ J. localStorage Detailed Breakdown ══
+  collectLocalStorageBreakdown(): string {
+    try {
+      const entries: { key: string; sizeKB: number }[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key) {
+          const val = localStorage.getItem(key) || '';
+          entries.push({ key, sizeKB: Math.round(val.length / 1024 * 10) / 10 });
+        }
+      }
+      entries.sort((a, b) => b.sizeKB - a.sizeKB);
+      const total = entries.reduce((sum, e) => sum + e.sizeKB, 0);
+      const lines = entries.slice(0, 15).map(e => {
+        const pct = total > 0 ? Math.round(e.sizeKB / total * 100) : 0;
+        const warn = pct > 50 ? ' ⚠️' : '';
+        return `  ${e.key}: ${e.sizeKB}KB (${pct}%)${warn}`;
+      });
+      return `Total: ${Math.round(total)}KB (${entries.length} keys)\n${lines.join('\n')}`;
+    } catch { return '(접근 불가)'; }
+  }
+
+  // ══ E. IndexedDB Status ══
+  async collectIndexedDbStatus(): Promise<string> {
+    try {
+      const db = await (await import('idb')).openDB('ai-storyboard-v2');
+      const storeNames = Array.from(db.objectStoreNames);
+      const lines: string[] = [];
+      for (const storeName of storeNames) {
+        try {
+          const tx = db.transaction(storeName, 'readonly');
+          const count = await tx.objectStore(storeName).count();
+          lines.push(`  ${storeName}: ${count} records`);
+        } catch { lines.push(`  ${storeName}: (read error)`); }
+      }
+      db.close();
+      return `Stores: ${storeNames.length}\n${lines.join('\n')}`;
+    } catch { return '(IndexedDB 접근 불가)'; }
+  }
+
+  // ══ D. Zustand Persist Rehydration Status ══
+  collectPersistStatus(): string {
+    const checks: string[] = [];
+    const persistKeys = [
+      'video-analysis-store', 'navigation-state', 'view-alert-store',
+      'SCRIPT_WRITER_DRAFT', 'CHANNEL_PRESETS', 'UPLOAD_PLATFORM_AUTH',
+      'SOUND_FAVORITE_MODELS', 'SOUND_FAVORITE_VOICES', 'SHOPPING_SHORT_PROXY_URL',
+    ];
+    for (const key of persistKeys) {
+      try {
+        const val = localStorage.getItem(key);
+        if (val) {
+          const sizeKB = Math.round(val.length / 1024 * 10) / 10;
+          // Validate JSON
+          try { JSON.parse(val); checks.push(`  ${key}: ✅ ${sizeKB}KB`); }
+          catch { checks.push(`  ${key}: ⚠️ ${sizeKB}KB (invalid JSON)`); }
+        } else {
+          checks.push(`  ${key}: (empty)`);
+        }
+      } catch { checks.push(`  ${key}: ❌ (access error)`); }
+    }
+    return checks.join('\n');
   }
 
   clear() {

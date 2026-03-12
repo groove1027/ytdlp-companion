@@ -13,6 +13,7 @@ import {
   LegacyTopicRecommendation,
 } from '../types';
 import { saveBenchmarkData, getAllSavedBenchmarks, deleteSavedBenchmark } from '../services/storageService';
+import { logger } from '../services/LoggerService';
 import type { SavedBenchmarkData } from '../services/storageService';
 import { getQuotaUsage } from '../services/youtubeAnalysisService';
 
@@ -135,7 +136,10 @@ const INITIAL_STATE = {
 export const useChannelAnalysisStore = create<ChannelAnalysisStore>((set) => ({
   ...INITIAL_STATE,
 
-  setSubTab: (tab) => set({ subTab: tab }),
+  setSubTab: (tab) => {
+    logger.trackTabVisit('channel-analysis', tab);
+    set({ subTab: tab });
+  },
   setKeyword: (keyword) => set({ keyword }),
   setLanguage: (lang) => set({ language: lang }),
   setRegion: (region) => set({ region }),
