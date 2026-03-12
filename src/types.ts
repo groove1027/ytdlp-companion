@@ -1526,6 +1526,10 @@ export interface VideoTimedFrame {
   url: string;
   hdUrl?: string;
   timeSec: number;
+  /** 다중 영상 소스 구분용 파일명 */
+  sourceFileName?: string;
+  /** 다중 영상 소스 인덱스 (0-based) */
+  sourceIndex?: number;
 }
 
 /** 영상분석 프리셋 → 대본작성 스타일 브릿지 (#158) */

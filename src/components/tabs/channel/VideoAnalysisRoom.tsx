@@ -770,7 +770,7 @@ function collectTimecodesFromVersions(versions: VersionItem[], durationSec?: num
 }
 
 /** 업로드 영상에서 2초 간격으로 프레임 추출 (타임스탬프 포함) */
-async function extractVideoFrames(file: File): Promise<TimedFrame[]> {
+async function extractVideoFrames(file: File, sourceIndex?: number): Promise<TimedFrame[]> {
   // [FIX #157] 전체 타임아웃 래퍼 — 메타데이터 로딩 실패 시 영원히 멈추는 문제 방지
   const OVERALL_TIMEOUT_MS = 30_000; // 파일 1개당 최대 30초
   return Promise.race([
@@ -803,7 +803,12 @@ async function extractVideoFrames(file: File): Promise<TimedFrame[]> {
           ]);
           if (!seeked) continue;
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          frames.push({ url: canvas.toDataURL('image/jpeg', 0.85), timeSec });
+          frames.push({
+            url: canvas.toDataURL('image/jpeg', 0.85),
+            timeSec,
+            sourceFileName: file.name,
+            sourceIndex: sourceIndex ?? 0,
+          });
         }
         URL.revokeObjectURL(url);
         resolve(frames);
@@ -2330,6 +2335,17 @@ const VideoAnalysisRoom: React.FC = () => {
   // 슬롯 목록 초기 로드
   React.useEffect(() => { loadAllSlots(); }, []);
 
+  // [FIX] 탭 전환 후 비주얼 유실 복구 — resultCache에서 thumbnails 복원
+  React.useEffect(() => {
+    const s = useVideoAnalysisStore.getState();
+    if (s.versions.length > 0 && s.thumbnails.length === 0 && s.selectedPreset) {
+      const cached = s.resultCache[s.selectedPreset];
+      if (cached?.thumbs?.length > 0) {
+        s.setThumbnails(cached.thumbs);
+      }
+    }
+  }, []);
+
   const handleDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); setIsDragOver(true); }, []);
   const handleDragLeave = useCallback((e: React.DragEvent) => { e.preventDefault(); setIsDragOver(false); }, []);
   const handleDrop = useCallback((e: React.DragEvent) => {
@@ -2462,8 +2478,8 @@ const VideoAnalysisRoom: React.FC = () => {
 
         for (let fi = 0; fi < uploadedFiles.length; fi++) {
           const f = uploadedFiles[fi];
-          const fFrames = await extractVideoFrames(f);
-          // 다중 영상 프레임은 소스 구분을 위해 timeSec에 오프셋 없이 수집
+          const fFrames = await extractVideoFrames(f, fi);
+          // 다중 영상 프레임은 sourceIndex로 소스 구분
           allFrames.push(...fFrames);
           fileDescs.push(`[소스 ${fi + 1}] ${f.name} (${((f.size || 0) / 1024 / 1024).toFixed(1)}MB)`);
         }
@@ -2509,11 +2525,12 @@ const VideoAnalysisRoom: React.FC = () => {
 
           const durationSec = meta ? parseIsoDuration(meta.duration) : 60;
           const base = `https://img.youtube.com/vi/${vid}`;
+          const ytSourceName = meta?.title ? meta.title.slice(0, 30) : `YouTube ${vi + 1}`;
           allFrames.push(
-            { url: `${base}/hqdefault.jpg`, hdUrl: `${base}/maxresdefault.jpg`, timeSec: 0 },
-            { url: `${base}/1.jpg`, hdUrl: `${base}/hqdefault.jpg`, timeSec: Math.round(durationSec * 0.25) },
-            { url: `${base}/2.jpg`, hdUrl: `${base}/hqdefault.jpg`, timeSec: Math.round(durationSec * 0.5) },
-            { url: `${base}/3.jpg`, hdUrl: `${base}/hqdefault.jpg`, timeSec: Math.round(durationSec * 0.75) },
+            { url: `${base}/hqdefault.jpg`, hdUrl: `${base}/maxresdefault.jpg`, timeSec: 0, sourceFileName: ytSourceName, sourceIndex: vi },
+            { url: `${base}/1.jpg`, hdUrl: `${base}/hqdefault.jpg`, timeSec: Math.round(durationSec * 0.25), sourceFileName: ytSourceName, sourceIndex: vi },
+            { url: `${base}/2.jpg`, hdUrl: `${base}/hqdefault.jpg`, timeSec: Math.round(durationSec * 0.5), sourceFileName: ytSourceName, sourceIndex: vi },
+            { url: `${base}/3.jpg`, hdUrl: `${base}/hqdefault.jpg`, timeSec: Math.round(durationSec * 0.75), sourceFileName: ytSourceName, sourceIndex: vi },
           );
 
           if (meta) {
@@ -2594,15 +2611,35 @@ ${meta.description.slice(0, 1500)}${meta.description.length > 1500 ? '\n...(이�
       setVersions(parsed);
 
       // ★ 3중 폴백 프레임 추출 — 무조건 결과 보장
-      // 영상 길이를 먼저 파악하여 타임코드 검증에 활용
-      let videoSource: string | File | null = null;
+      // [FIX #156] 다중 업로드 영상: 모든 파일에서 프레임 추출
       let ytVid: string | null = null;
       let durSec = 300; // 기본 5분 추정
 
       if (uploadedFiles.length > 0) {
-        videoSource = uploadedFiles[0];
+        // 다중 업로드 모드: 모든 파일에서 타임코드 기반 프레임 추출
+        const allTimecodes = collectTimecodesFromVersions(parsed);
+        console.log(`[Frame] 수집된 타임코드: ${allTimecodes.length}개 (업로드 ${uploadedFiles.length}개 영상)`);
+        if (allTimecodes.length > 0) {
+          const multiExactFrames: TimedFrame[] = [];
+          for (let fi = 0; fi < uploadedFiles.length; fi++) {
+            const f = uploadedFiles[fi];
+            const fileFrames = await extractFramesWithFallback(f, allTimecodes, null, durSec);
+            // 소스 정보 태깅
+            const tagged = fileFrames.map(fr => ({
+              ...fr,
+              sourceFileName: fr.sourceFileName || f.name,
+              sourceIndex: fr.sourceIndex ?? fi,
+            }));
+            multiExactFrames.push(...tagged);
+          }
+          if (multiExactFrames.length > 0) {
+            console.log(`[Frame] ✅ 최종 프레임 ${multiExactFrames.length}개 적용 (${uploadedFiles.length}개 영상)`);
+            setThumbnails(multiExactFrames);
+          }
+        }
       } else {
         ytVid = extractYouTubeVideoId(youtubeUrl);
+        let videoSource: string | null = null;
         if (ytVid) {
           // YouTube 메타데이터에서 영상 길이 추출
           try {
@@ -2617,17 +2654,17 @@ ${meta.description.slice(0, 1500)}${meta.description.length > 1500 ? '\n...(이�
           const streamUrl = await fetchYouTubeStreamUrl(ytVid).catch(() => null);
           if (streamUrl) videoSource = streamUrl;
         }
-      }
 
-      const allTimecodes = collectTimecodesFromVersions(parsed, durSec);
-      console.log(`[Frame] 수집된 타임코드: ${allTimecodes.length}개 (영상 길이: ${durSec}초)`);
-      if (allTimecodes.length > 0) {
-        const exactFrames = await extractFramesWithFallback(
-          videoSource || '', allTimecodes, ytVid, durSec
-        );
-        if (exactFrames.length > 0) {
-          console.log(`[Frame] ✅ 최종 프레임 ${exactFrames.length}개 적용`);
-          setThumbnails(exactFrames);
+        const allTimecodes = collectTimecodesFromVersions(parsed, durSec);
+        console.log(`[Frame] 수집된 타임코드: ${allTimecodes.length}개 (영상 길이: ${durSec}초)`);
+        if (allTimecodes.length > 0) {
+          const exactFrames = await extractFramesWithFallback(
+            videoSource || '', allTimecodes, ytVid, durSec
+          );
+          if (exactFrames.length > 0) {
+            console.log(`[Frame] ✅ 최종 프레임 ${exactFrames.length}개 적용`);
+            setThumbnails(exactFrames);
+          }
         }
       }
 
@@ -3272,10 +3309,20 @@ ${meta.description.slice(0, 1500)}${meta.description.length > 1500 ? '\n...(이�
                                         if (mid > 0) sceneTimeSec = mid;
                                       }
                                     }
+                                    // [FIX #156] 다중 영상: 소스 인덱스 추출 (AI 출력의 "[소스 N]" 패턴 매칭)
+                                    const sourceMatch = tc.match(/\[소스\s*(\d+)\]/);
+                                    const sceneSourceIdx = sourceMatch ? parseInt(sourceMatch[1], 10) - 1 : undefined;
+                                    // 해당 소스의 프레임만 필터링 (다중 영상 시)
+                                    const hasMultipleSources = thumbnails.some(f => f.sourceIndex !== undefined && f.sourceIndex > 0);
+                                    const relevantFrames = hasMultipleSources && sceneSourceIdx !== undefined
+                                      ? thumbnails.filter(f => f.sourceIndex === sceneSourceIdx)
+                                      : thumbnails;
                                     // 최종 폴백: 장면 인덱스로 프레임 분산 배치 (항상 같은 썸네일 방지)
-                                    const matched = sceneTimeSec > 0
-                                      ? matchFrameToTimecode(sceneTimeSec, thumbnails)
-                                      : thumbnails[Math.min(Math.floor((si / Math.max(v.scenes.length, 1)) * thumbnails.length), thumbnails.length - 1)] || null;
+                                    const matched = sceneTimeSec > 0 && relevantFrames.length > 0
+                                      ? matchFrameToTimecode(sceneTimeSec, relevantFrames)
+                                      : (relevantFrames.length > 0
+                                          ? relevantFrames[Math.min(Math.floor((si / Math.max(v.scenes.length, 1)) * relevantFrames.length), relevantFrames.length - 1)]
+                                          : thumbnails[Math.min(Math.floor((si / Math.max(v.scenes.length, 1)) * thumbnails.length), thumbnails.length - 1)] || null);
                                     return matched ? (
                                       <td className="py-2 px-2 align-top">
                                         <button
@@ -3290,6 +3337,12 @@ ${meta.description.slice(0, 1500)}${meta.description.length > 1500 ? '\n...(이�
                                             loading="lazy"
                                           />
                                           <div className="text-[11px] text-gray-600 text-center font-mono group-hover:text-blue-400 transition-colors">{formatTimeSec(matched.timeSec)}</div>
+                                          {/* [FIX #156] 다중 영상 시 소스 파일명 표시 */}
+                                          {matched.sourceFileName && hasMultipleSources && (
+                                            <div className="text-[10px] text-cyan-500/70 truncate max-w-[100px]" title={matched.sourceFileName}>
+                                              {matched.sourceFileName.length > 15 ? matched.sourceFileName.slice(0, 12) + '...' : matched.sourceFileName}
+                                            </div>
+                                          )}
                                         </button>
                                       </td>
                                     ) : <td className="py-2 px-2" />;
