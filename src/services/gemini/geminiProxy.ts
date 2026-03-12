@@ -65,6 +65,14 @@ const convertGoogleToOpenAI = (model: string, googlePayload: any) => {
                             url: `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`
                         }
                     });
+                } else if (part.fileData) {
+                    // [FIX] Kie는 모든 미디어(이미지/영상/오디오)를 image_url 포맷으로 통일 수신
+                    messageContent.push({
+                        type: 'image_url',
+                        image_url: {
+                            url: part.fileData.fileUri
+                        }
+                    });
                 } else if (part.functionCall) {
                     // Map Google functionCall to OpenAI tool_calls
                     toolCalls.push({
@@ -289,6 +297,81 @@ export const requestGeminiProxy = async (model: string, googlePayload: any, _ret
     }
 };
 
+// --- KIE CHAT COMPLETIONS FALLBACK ---
+// [FIX] Kie는 v1beta/generateContent 엔드포인트 없음.
+// gemini-3-pro, gemini-3-flash chat/completions (OpenAI 호환)만 지원.
+// Google Native 포맷 → OpenAI 변환 → 호출 → Google 포맷 응답 반환.
+export const requestKieChatFallback = async (model: string, googlePayload: any, timeoutMs?: number): Promise<any> => {
+    const kieKey = getKieKey();
+    if (!kieKey) throw new Error("Kie API Key가 설정되지 않았습니다.");
+
+    // Kie는 gemini-3-pro / gemini-3-flash만 지원 (3.1 없음)
+    const kieModelSlug = model.includes('pro') ? 'gemini-3-pro' : 'gemini-3-flash';
+    const url = `https://api.kie.ai/${kieModelSlug}/v1/chat/completions`;
+
+    const openAIBody = convertGoogleToOpenAI(model, googlePayload);
+    openAIBody.model = kieModelSlug;
+    openAIBody.include_thoughts = false;
+    openAIBody.reasoning_effort = googlePayload?.generationConfig?._reasoningEffort || "high";
+
+    // [FIX] Kie response_format 비호환 → 시스템 프롬프트로 JSON 강제
+    if (openAIBody.response_format) {
+        const jsonEnforcement = "\n\n[CRITICAL OUTPUT FORMAT] You MUST respond with valid JSON only. No markdown code blocks (no ```json). No conversational text. Output ONLY the raw JSON.";
+        const sysMsg = openAIBody.messages?.find((m: any) => m.role === 'system');
+        if (sysMsg) {
+            sysMsg.content += jsonEnforcement;
+        } else {
+            openAIBody.messages.unshift({ role: 'system', content: jsonEnforcement.trim() });
+        }
+        delete openAIBody.response_format;
+    }
+
+    logger.info(`[Kie Chat] ${kieModelSlug} 호출`, { model, timeoutMs });
+
+    const response = await monitoredFetch(url, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${kieKey}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(openAIBody)
+    }, timeoutMs);
+
+    if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(`Kie Chat Error (${response.status}): ${errText}`);
+    }
+
+    const json = await response.json();
+    const choice = json.choices?.[0];
+    const content = choice?.message?.content || "";
+    const toolCalls = choice?.message?.tool_calls;
+
+    if (!toolCalls?.length && !content.trim()) {
+        throw new Error(`Kie 빈 응답 (model: ${kieModelSlug}). finish_reason: ${choice?.finish_reason || 'unknown'}`);
+    }
+
+    // OpenAI 응답 → Google Native 포맷 변환
+    let parts: any[] = [];
+    if (toolCalls && toolCalls.length > 0) {
+        const fc = toolCalls[0].function;
+        parts.push({
+            functionCall: {
+                name: fc.name,
+                args: JSON.parse(fc.arguments || "{}")
+            }
+        });
+    } else {
+        parts.push({ text: content });
+    }
+
+    return {
+        candidates: [{
+            content: { parts }
+        }]
+    };
+};
+
 // --- NATIVE v1beta REQUEST FUNCTION ---
 // Calls Google Native v1beta endpoint directly (NO OpenAI conversion)
 // Preserves thinkingConfig, responseMimeType, safetySettings natively
@@ -308,7 +391,7 @@ export const requestGeminiNative = async (model: string, googlePayload: any, _re
         lastError = e;
     }
 
-    // 1. Try Kie v1beta (Fallback)
+    // 1. [FIX] Kie Chat Completions 폴백 (v1beta 미지원 — gemini-3-pro/flash chat/completions만 가능)
     try {
         const kieKey = getKieKey();
         if (!kieKey) {
@@ -316,37 +399,18 @@ export const requestGeminiNative = async (model: string, googlePayload: any, _re
             throw new Error("Evolink and Kie API Keys are missing.");
         }
 
-        console.log("[GeminiNative] Switching to Kie v1beta Fallback...");
-
-        const url = `https://api.kie.ai/v1beta/models/${model}:generateContent`;
-
-        const response = await monitoredFetch(url, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${kieKey}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(googlePayload)
-        });
-
-        if (response.ok) {
-            const data = await response.json();
-            console.log(`[GeminiNative] Kie v1beta Success`);
-            return data;
-        }
-
-        const errText = await response.text();
-        throw new Error(`Kie v1beta Error (${response.status}): ${errText}`);
+        console.log("[GeminiNative] Switching to Kie Chat Completions Fallback...");
+        return await requestKieChatFallback(model, googlePayload);
 
     } catch (e: any) {
         // 1회 자동 재시도 (2초 대기)
         if (_retryCount < 1) {
-            logger.trackRetry('GeminiNative v1beta 전체', _retryCount + 1, 2, (lastError || e)?.message);
+            logger.trackRetry('GeminiNative 전체', _retryCount + 1, 2, (lastError || e)?.message);
             await new Promise(r => setTimeout(r, 2000));
             return requestGeminiNative(model, googlePayload, _retryCount + 1);
         }
-        console.error("[GeminiNative] All v1beta Proxies Failed after retry.", e);
-        throw new Error(`All v1beta proxies failed. Last error: ${(lastError || e)?.message || 'Unknown'}`);
+        console.error("[GeminiNative] All Proxies Failed after retry.", e);
+        throw new Error(`All proxies failed. Last error: ${(lastError || e)?.message || 'Unknown'}`);
     }
 };
 
@@ -421,7 +485,7 @@ export const fetchCurrentExchangeRate = async () => {
                 return { rate: Math.round(rate * 100) / 100, date: `${timeStr}\nExchangeRate-API` };
             }
         }
-    } catch { /* fallback */ }
+    } catch (e) { logger.trackSwallowedError('GeminiProxy:getExchangeRate/exchangeRateApi', e); }
 
     // 2순위: Frankfurter (ECB 기반, 평일 1회 업데이트)
     try {
@@ -433,7 +497,7 @@ export const fetchCurrentExchangeRate = async () => {
                 return { rate: Math.round(rate * 100) / 100, date: `${timeStr}\nFrankfurter/ECB` };
             }
         }
-    } catch { /* fallback */ }
+    } catch (e) { logger.trackSwallowedError('GeminiProxy:getExchangeRate/frankfurter', e); }
 
     return {
         rate: PRICING.EXCHANGE_RATE,

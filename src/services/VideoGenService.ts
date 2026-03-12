@@ -282,11 +282,14 @@ export async function generateKieImage(
 // resultJson (on success): '{"resultUrls":["url"]}' for image/media/video
 // Best practice: 2-3s intervals with exponential backoff, timeout after 10-15 min
 export async function pollKieTask(taskId: string, signal?: AbortSignal, onProgress?: (percent: number) => void): Promise<string> {
+  const opId = `pollKieTask-${taskId}`;
+  logger.startAsyncOp(opId, 'pollKieTask', taskId);
   const maxAttempts = 300;
   const url = `${KIE_BASE_URL}/recordInfo?taskId=${taskId}`;
   let simulatedProgress = 0;
   let pollInterval = 2000; // 시작: 2초, 점진적 증가
 
+  try {
   for (let i = 0; i < maxAttempts; i++) {
     if (signal?.aborted) throw new Error("Cancelled by user");
     await new Promise((resolve) => setTimeout(resolve, pollInterval));
@@ -339,14 +342,15 @@ export async function pollKieTask(taskId: string, signal?: AbortSignal, onProgre
 
             // [OFFICIAL DOC] 이미지/미디어/비디오: { resultUrls: string[] }
             if (result?.resultUrls && Array.isArray(result.resultUrls) && result.resultUrls.length > 0) {
+                logger.endAsyncOp(opId, 'completed', result.resultUrls[0]);
                 return result.resultUrls[0];
             }
             // 레거시 호환 폴백
-            if (result?.images?.[0]) return result.images[0];
-            if (result?.image_url) return result.image_url;
-            if (result?.video_url) return result.video_url;
-            if (result?.url) return result.url;
-            if (taskData.url) return taskData.url;
+            if (result?.images?.[0]) { logger.endAsyncOp(opId, 'completed', result.images[0]); return result.images[0]; }
+            if (result?.image_url) { logger.endAsyncOp(opId, 'completed', result.image_url); return result.image_url; }
+            if (result?.video_url) { logger.endAsyncOp(opId, 'completed', result.video_url); return result.video_url; }
+            if (result?.url) { logger.endAsyncOp(opId, 'completed', result.url); return result.url; }
+            if (taskData.url) { logger.endAsyncOp(opId, 'completed', taskData.url); return taskData.url; }
 
             // [FIX] 결과 형식이 예상과 다를 경우 — re-throw하여 무한 폴링 방지
             logger.error(`[Kie] Task ${taskId} success but URL extraction failed. Full resultJson: ${JSON.stringify(result).substring(0, 500)}`);
@@ -371,7 +375,13 @@ export async function pollKieTask(taskId: string, signal?: AbortSignal, onProgre
         logger.trackRetry('Kie 폴링 (네트워크)', i + 1, maxAttempts, e.message);
     }
   }
+  logger.endAsyncOp(opId, 'failed', 'Timeout: Kie 작업 시간 초과 (10분)');
   throw new Error("Timeout: Kie 작업 시간 초과 (10분)");
+  } catch (err: unknown) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    if (!errMsg.includes('Timeout')) logger.endAsyncOp(opId, 'failed', errMsg);
+    throw err;
+  }
 }
 
 function constructVeoPrompt(rawPrompt: string, cameraAngle?: string, cameraMovement?: string, culturalContext?: string): string {
@@ -543,10 +553,13 @@ export async function pollKieVeoTask(
     signal?: AbortSignal,
     onProgress?: (percent: number) => void
 ): Promise<string> {
+    const opId = `pollKieVeoTask-${taskId}`;
+    logger.startAsyncOp(opId, 'pollKieVeoTask', taskId);
     const maxAttempts = 300;
     const url = `${KIE_VEO_BASE_URL}/record-info?taskId=${taskId}`;
     let simulatedProgress = 0;
 
+    try {
     for (let i = 0; i < maxAttempts; i++) {
         if (signal?.aborted) throw new Error("Cancelled by user");
         await new Promise(r => setTimeout(r, 3000));
@@ -572,6 +585,7 @@ export async function pollKieVeoTask(
                 if (onProgress) onProgress(100);
                 const resultUrl = taskData.response?.resultUrls?.[0];
                 if (!resultUrl) throw new Error("Kie Veo 결과 URL 없음");
+                logger.endAsyncOp(opId, 'completed', resultUrl);
                 return resultUrl;
             }
             if (taskData.successFlag >= 2) {
@@ -583,7 +597,13 @@ export async function pollKieVeoTask(
             logger.trackRetry('Kie Veo 폴링 (네트워크)', i + 1, maxAttempts, e.message);
         }
     }
+    logger.endAsyncOp(opId, 'failed', 'Timeout: Kie Veo 작업 시간 초과');
     throw new Error("Timeout: Kie Veo 작업 시간 초과");
+    } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (!errMsg.includes('Timeout')) logger.endAsyncOp(opId, 'failed', errMsg);
+        throw err;
+    }
 }
 
 // Create REMAKE Veo Task (FIRST_AND_LAST_FRAMES_2_VIDEO)
@@ -1102,10 +1122,13 @@ export async function pollXaiVideoEditTask(
     signal?: AbortSignal,
     onProgress?: (percent: number) => void
 ): Promise<string> {
+    const opId = `pollXaiVideoEditTask-${requestId}`;
+    logger.startAsyncOp(opId, 'pollXaiVideoEditTask', requestId);
     const apiKey = getXaiKey();
     const url = `${XAI_BASE_URL}/videos/${requestId}`;
     let simulatedProgress = 0;
 
+    try {
     for (let i = 0; i < 300; i++) {
         if (signal?.aborted) throw new Error("Cancelled");
         await new Promise(r => setTimeout(r, 2000));
@@ -1128,12 +1151,14 @@ export async function pollXaiVideoEditTask(
             if (data.video?.url) {
                 if (onProgress) onProgress(100);
                 logger.info(`[V2V] xAI Grok Edit completed: ${data.video.url}`);
+                logger.endAsyncOp(opId, 'completed', data.video.url);
                 return data.video.url;
             }
             if (data.status === 'done') {
                 if (onProgress) onProgress(100);
                 const videoUrl = data.video?.url;
                 if (!videoUrl) throw new Error("xAI 결과 영상 URL 없음");
+                logger.endAsyncOp(opId, 'completed', videoUrl);
                 return videoUrl;
             }
             if (data.status === 'expired') {
@@ -1146,7 +1171,13 @@ export async function pollXaiVideoEditTask(
             if (err.message.includes("만료") || err.message.includes("URL 없음")) throw e;
         }
     }
+    logger.endAsyncOp(opId, 'failed', 'xAI 작업 시간 초과 (Timeout)');
     throw new Error("xAI 작업 시간 초과 (Timeout)");
+    } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (!errMsg.includes('시간 초과')) logger.endAsyncOp(opId, 'failed', errMsg);
+        throw err;
+    }
 }
 
 // === V2V Quick Test Utility (브라우저 콘솔에서 사용) ===

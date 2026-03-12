@@ -224,7 +224,7 @@ export const evolinkChat = async (
                 });
             }
         }
-    } catch { /* cost tracking should not break API calls */ }
+    } catch (e) { logger.trackSwallowedError('EvolinkService:evolinkChat/costTracking', e); }
 
     logger.success('[Evolink] Chat completion 성공', {
         tokens: data.usage?.total_tokens,
@@ -343,7 +343,7 @@ export const evolinkChatStream = async (
                 costUsd: totalCost.toFixed(6)
             });
         }
-    } catch { /* cost tracking should not break API calls */ }
+    } catch (e) { logger.trackSwallowedError('EvolinkService:evolinkChatStream/costTracking', e); }
 
     logger.success('[Evolink] 스트리밍 완료', { totalLength: accumulated.length });
     return accumulated;
@@ -434,7 +434,7 @@ export const requestEvolinkNative = async (
                 });
             }
         }
-    } catch { /* cost tracking should not break API calls */ }
+    } catch (e) { logger.trackSwallowedError('EvolinkService:requestEvolinkNative/costTracking', e); }
 
     logger.success(`[Evolink Native] v1beta 성공`);
     return data;
@@ -554,7 +554,7 @@ export const evolinkNativeStream = async (
             useCostStore.getState().addCost(totalCost, 'analysis');
             logger.info('[Evolink Native Stream] 비용 추정', { estInputTokens, estOutputTokens, costUsd: totalCost.toFixed(6) });
         }
-    } catch { /* cost tracking should not break */ }
+    } catch (e) { logger.trackSwallowedError('EvolinkService:evolinkNativeStream/costTracking', e); }
 
     logger.success('[Evolink Native Stream] 완료', { totalLength: accumulated.length, finishReason: lastFinishReason, webSearch: enableWebSearch });
     return accumulated;
@@ -667,7 +667,7 @@ export const evolinkVideoAnalysisStream = async (
             useCostStore.getState().addCost(totalCost, 'analysis');
             logger.info('[Evolink Video] 비용 추정', { estInputTokens, estOutputTokens, costUsd: totalCost.toFixed(6) });
         }
-    } catch { /* cost tracking should not break */ }
+    } catch (e) { logger.trackSwallowedError('EvolinkService:evolinkVideoAnalysisStream/costTracking', e); }
 
     logger.success('[Evolink Video] 비디오 분석 스트리밍 완료', { totalLength: accumulated.length });
     return accumulated;
@@ -845,12 +845,18 @@ export const pollEvolinkTask = async (
     intervalMs: number = 3000,
     maxTimeoutMs: number = 300_000
 ): Promise<string> => {
+    const opId = `pollEvolinkTask-${taskId}`;
+    logger.startAsyncOp(opId, 'pollEvolinkTask', taskId);
     const apiKey = getEvolinkKey();
-    if (!apiKey) throw new Error('Evolink API 키가 설정되지 않았습니다.');
+    if (!apiKey) {
+        logger.endAsyncOp(opId, 'failed', 'Evolink API 키 없음');
+        throw new Error('Evolink API 키가 설정되지 않았습니다.');
+    }
 
     const url = `${EVOLINK_BASE_URL}/tasks/${taskId}`;
     const startTime = Date.now();
 
+    try {
     for (let i = 0; i < maxAttempts; i++) {
         if (signal?.aborted) throw new Error('Cancelled by user');
 
@@ -860,6 +866,7 @@ export const pollEvolinkTask = async (
             logger.error(`[Evolink] 태스크 절대 시간 초과: ${taskId}`, {
                 elapsedMs: elapsed, maxTimeoutMs, attempts: i
             });
+            logger.endAsyncOp(opId, 'failed', `절대 시간 초과: ${Math.round(elapsed / 1000)}초`);
             throw new Error(`Evolink 태스크 시간 초과 (${taskId}): ${Math.round(elapsed / 1000)}초 경과`);
         }
 
@@ -900,6 +907,7 @@ export const pollEvolinkTask = async (
 
                 if (data.results && data.results.length > 0) {
                     logger.success(`[Evolink] 태스크 완료: ${taskId}`, { resultCount: data.results.length });
+                    logger.endAsyncOp(opId, 'completed', data.results[0]);
                     return data.results[0];
                 }
                 throw new Error('Evolink 태스크 완료되었으나 결과 URL이 없습니다.');
@@ -927,7 +935,16 @@ export const pollEvolinkTask = async (
         }
     }
 
+    logger.endAsyncOp(opId, 'failed', `${maxAttempts}회 폴링 초과`);
     throw new Error(`Evolink 태스크 시간 초과 (${taskId}): ${maxAttempts}회 폴링 초과`);
+    } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        // 시간 초과 / 절대 시간 초과는 이미 endAsyncOp 호출됨
+        if (!errMsg.includes('시간 초과') && !errMsg.includes('폴링 초과')) {
+            logger.endAsyncOp(opId, 'failed', errMsg);
+        }
+        throw err;
+    }
 };
 
 /**

@@ -173,7 +173,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     try {
       if (id) localStorage.setItem('last-project-id', id);
       else localStorage.removeItem('last-project-id');
-    } catch { /* localStorage 접근 실패 시 무시 */ }
+    } catch (e) { logger.trackSwallowedError('ProjectStore:setCurrentProjectId', e); }
   },
 
   setBatchGrokDuration: (d) => set((state) => ({
@@ -321,15 +321,15 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     logger.info('프로젝트 로드', { projectId: project.id, title: project.title, sceneCount: sanitizedScenes.length });
 
     // [FIX] 이전 프로젝트의 찌꺼기 방지 — 먼저 관련 스토어 초기화
-    try { useEditRoomStore.getState().reset(); } catch { /* 미초기화 시 무시 */ }
-    try { useSoundStudioStore.getState().reset(); } catch { /* 미초기화 시 무시 */ }
-    try { useScriptWriterStore.getState().reset(); } catch { /* 미초기화 시 무시 */ }
-    try { useChannelAnalysisStore.getState().reset(); } catch { /* 미초기화 시 무시 */ }
-    try { useVideoAnalysisStore.getState().reset(); } catch { /* 미초기화 시 무시 */ }
-    try { useEditPointStore.getState().reset(); } catch { /* 미초기화 시 무시 */ }
-    try { useEditorStore.getState().reset(); } catch { /* 미초기화 시 무시 */ }
-    try { useShoppingShortStore.getState().reset(); } catch { /* 미초기화 시 무시 */ }
-    try { useUploadStore.getState().resetUpload(); } catch { /* 미초기화 시 무시 */ }
+    try { useEditRoomStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/resetEditRoom', e); }
+    try { useSoundStudioStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/resetSoundStudio', e); }
+    try { useScriptWriterStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/resetScriptWriter', e); }
+    try { useChannelAnalysisStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/resetChannelAnalysis', e); }
+    try { useVideoAnalysisStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/resetVideoAnalysis', e); }
+    try { useEditPointStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/resetEditPoint', e); }
+    try { useEditorStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/resetEditor', e); }
+    try { useShoppingShortStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/resetShoppingShort', e); }
+    try { useUploadStore.getState().resetUpload(); } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/resetUpload', e); }
 
     // Increment generation to invalidate any in-flight async migrations from previous loads
     const generation = get()._loadGeneration + 1;
@@ -343,7 +343,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       _loadGeneration: generation,
     });
     // [FIX] localStorage에 마지막 프로젝트 ID 저장 → 새 탭/새로고침 시 복원용
-    try { if (project.id) localStorage.setItem('last-project-id', project.id); } catch { /* 무시 */ }
+    try { if (project.id) localStorage.setItem('last-project-id', project.id); } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/setLastId', e); }
     // 새로고침 자동 복원 시에는 비용 리셋, 수동 프로젝트 불러오기 시에만 비용 복원
     if (options?.skipCostRestore) {
       useCostStore.getState().resetCosts();
@@ -362,7 +362,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         enableWebSearch: project.config?.enableWebSearch,
         isMultiCharacter: project.config?.isMultiCharacter,
       });
-    } catch { /* imageVideoStore 미초기화 시 무시 */ }
+    } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/restoreImageVideoStore', e); }
 
     // [FIX] 나레이션 복원 — IndexedDB에서 오디오 Blob 복원 후 ScriptLine[] 재생성
     // blob: URL은 세션 종속이므로, IDB에 영속화된 Blob → 새 blob URL로 교체
@@ -419,8 +419,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
           if (restoredLines.length > 0) {
             useSoundStudioStore.getState().setLines(restoredLines);
           }
-        } catch { /* soundStudioStore 미초기화 시 무시 */ }
-      }).catch(() => { /* audioStorageService import 실패 시 무시 */ });
+        } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/restoreLines', e); }
+      }).catch((e) => { logger.trackSwallowedError('ProjectStore:loadProject/audioImport', e); });
 
       // 즉시 동기 처리: non-blob audioUrl로 soundStudioStore lines 초기 세팅
       const immediateLines = sanitizedScenes
@@ -444,7 +444,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       if (immediateLines.length > 0) {
         useSoundStudioStore.getState().setLines(immediateLines);
       }
-    } catch { /* soundStudioStore 미초기화 시 무시 */ }
+    } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/immediateLines', e); }
 
     // Background migration: convert ALL base64 scene images to Cloudinary URLs
     sanitizedScenes.forEach((scene) => {
@@ -481,15 +481,15 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   newProject: (title?: string) => {
     // [FIX] 이전 프로젝트 찌꺼기 방지 — 모든 관련 스토어 초기화
-    try { useEditRoomStore.getState().reset(); } catch { /* 미초기화 시 무시 */ }
-    try { useSoundStudioStore.getState().reset(); } catch { /* 미초기화 시 무시 */ }
-    try { useScriptWriterStore.getState().reset(); } catch { /* 미초기화 시 무시 */ }
-    try { useChannelAnalysisStore.getState().reset(); } catch { /* 미초기화 시 무시 */ }
-    try { useVideoAnalysisStore.getState().reset(); } catch { /* 미초기화 시 무시 */ }
-    try { useEditPointStore.getState().reset(); } catch { /* 미초기화 시 무시 */ }
-    try { useEditorStore.getState().reset(); } catch { /* 미초기화 시 무시 */ }
-    try { useShoppingShortStore.getState().reset(); } catch { /* 미초기화 시 무시 */ }
-    try { useUploadStore.getState().resetUpload(); } catch { /* 미초기화 시 무시 */ }
+    try { useEditRoomStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:newProject/resetEditRoom', e); }
+    try { useSoundStudioStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:newProject/resetSoundStudio', e); }
+    try { useScriptWriterStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:newProject/resetScriptWriter', e); }
+    try { useChannelAnalysisStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:newProject/resetChannelAnalysis', e); }
+    try { useVideoAnalysisStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:newProject/resetVideoAnalysis', e); }
+    try { useEditPointStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:newProject/resetEditPoint', e); }
+    try { useEditorStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:newProject/resetEditor', e); }
+    try { useShoppingShortStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:newProject/resetShoppingShort', e); }
+    try { useUploadStore.getState().resetUpload(); } catch (e) { logger.trackSwallowedError('ProjectStore:newProject/resetUpload', e); }
 
     // 고유 프로젝트 ID 즉시 생성 (auto-save가 작동하려면 필수)
     const projectId = `proj_${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -517,7 +517,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       batchGrokSpeech: false,
     });
     // 마지막 프로젝트 ID를 localStorage에 저장 (복구용)
-    try { localStorage.setItem('last-project-id', projectId); } catch { /* 무시 */ }
+    try { localStorage.setItem('last-project-id', projectId); } catch (e) { logger.trackSwallowedError('ProjectStore:newProject/setLastId', e); }
     useCostStore.getState().resetCosts();
 
     // [FIX] 빈 프로젝트 즉시 저장 제거 — useAutoSave가 실제 변경 시에만 저장.
@@ -533,15 +533,15 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
           fullNarrationText: '',
           lastModified: Date.now(),
           costStats: useCostStore.getState().costStats,
-        }).catch(() => {});
-      }).catch(() => {});
+        }).catch((e) => { logger.trackSwallowedError('ProjectStore:newProject/saveProject', e); });
+      }).catch((e) => { logger.trackSwallowedError('ProjectStore:newProject/saveImport', e); });
     }
 
     // [NEW] imageVideoStore 리셋 — 이전 프로젝트의 캐릭터/스타일이 남지 않도록
     try {
       const { useImageVideoStore } = require('./imageVideoStore');
       useImageVideoStore.getState().resetStore();
-    } catch { /* imageVideoStore 미초기화 시 무시 */ }
+    } catch (e) { logger.trackSwallowedError('ProjectStore:newProject/resetImageVideoStore', e); }
   },
 
   // [v4.5] 활동 기반 스마트 제목 — 첫 번째 의미 있는 작업 시 자동 업데이트
@@ -586,6 +586,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   // [v4.5] 마지막 활동 탭 추적
   setLastActiveTab: (tab) => {
+    logger.trackTabVisit('project-last-tab', tab);
     set(state => {
       if (!state.config) return state;
       return {

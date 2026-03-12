@@ -9,6 +9,7 @@
 
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
+import { logger } from './LoggerService';
 import type {
   UnifiedSceneTiming,
   SubtitleStyle,
@@ -253,7 +254,7 @@ export async function composeMp4(options: ComposeMp4Options): Promise<Blob> {
         };
         video.onerror = () => { clearTimeout(timeout); resolve(0); };
         video.src = url;
-      } catch { resolve(0); }
+      } catch (e) { logger.trackSwallowedError('FfmpegService:probeVideoDuration', e); resolve(0); }
     });
   }
 
@@ -360,7 +361,7 @@ export async function composeMp4(options: ComposeMp4Options): Promise<Blob> {
     } catch (execErr) {
       console.warn(`[ffmpegService] 장면 ${segIdx + 1} 인코딩 실패 (건너뜀):`, execErr);
       // 실패한 입력 파일 정리
-      try { await ffmpeg.deleteFile(inputName); } catch { /* ignore */ }
+      try { await ffmpeg.deleteFile(inputName); } catch (e) { logger.trackSwallowedError('FfmpegService:execErr/cleanup', e); }
     }
 
     segIdx++;
@@ -500,9 +501,9 @@ export async function composeMp4(options: ComposeMp4Options): Promise<Blob> {
         '-preset', 'ultrafast',
         '-y', 'video_sub.mp4',
       ], 180000);
-      try { await ffmpeg.deleteFile('video_only.mp4'); } catch { /* ignore */ }
+      try { await ffmpeg.deleteFile('video_only.mp4'); } catch (e) { logger.trackSwallowedError('FfmpegService:subtitle/cleanupVideoOnly', e); }
       await execWithTimeout(['-i', 'video_sub.mp4', '-c', 'copy', '-y', 'video_only.mp4']);
-      try { await ffmpeg.deleteFile('video_sub.mp4'); } catch { /* ignore */ }
+      try { await ffmpeg.deleteFile('video_sub.mp4'); } catch (e) { logger.trackSwallowedError('FfmpegService:subtitle/cleanupVideoSub', e); }
     }
   }
 
@@ -547,8 +548,8 @@ export async function composeMp4(options: ComposeMp4Options): Promise<Blob> {
           const narData = await fetchFile(narLine.audioUrl!);
           await ffmpeg.writeFile(fileName, narData);
           narrationFileNames.push(fileName);
-        } catch {
-          // Skip failed narration downloads
+        } catch (e) {
+          logger.trackSwallowedError('FfmpegService:narrationLoad', e);
         }
         emitProgress('composing', ((ni + 1) / validNarrations.length) * 50, PHASE_WEIGHTS.audio, `나레이션 ${ni + 1}/${validNarrations.length} 로딩`);
       }
@@ -713,11 +714,11 @@ export async function composeMp4(options: ComposeMp4Options): Promise<Blob> {
   // 임시 파일 정리
   const allFiles = [...segmentFiles, ...narrationFileNames, 'concat.txt', 'video_only.mp4', 'output.mp4', 'bgm.mp3'];
   for (const f of allFiles) {
-    try { await ffmpeg.deleteFile(f); } catch { /* ignore */ }
+    try { await ffmpeg.deleteFile(f); } catch (e) { logger.trackSwallowedError('FfmpegService:finalCleanup', e); }
   }
   for (let i = 0; i < segIdx; i++) {
-    try { await ffmpeg.deleteFile(`input_${i}.png`); } catch { /* ignore */ }
-    try { await ffmpeg.deleteFile(`input_${i}.mp4`); } catch { /* ignore */ }
+    try { await ffmpeg.deleteFile(`input_${i}.png`); } catch (e) { logger.trackSwallowedError('FfmpegService:finalCleanup/png', e); }
+    try { await ffmpeg.deleteFile(`input_${i}.mp4`); } catch (e) { logger.trackSwallowedError('FfmpegService:finalCleanup/mp4', e); }
   }
 
   ffmpeg.off('progress', progressHandler);
@@ -828,11 +829,12 @@ export function downloadMp4(blob: Blob, filename = 'output.mp4'): void {
   }
 
   const url = URL.createObjectURL(blob);
+  logger.registerBlobUrl(url, 'video', 'ffmpegService:downloadMp4');
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 60000);
+  setTimeout(() => { logger.unregisterBlobUrl(url); URL.revokeObjectURL(url); }, 60000);
 }

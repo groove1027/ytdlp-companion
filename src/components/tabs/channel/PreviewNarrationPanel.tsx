@@ -2,6 +2,7 @@ import React, { useState, useRef, useCallback } from 'react';
 import { generateTypecastTTS } from '../../../services/typecastService';
 import { useSoundStudioStore } from '../../../stores/soundStudioStore';
 import { showToast } from '../../../stores/uiStore';
+import { logger } from '../../../services/LoggerService';
 
 export interface TtsEntry {
   audioUrl: string;
@@ -94,7 +95,7 @@ const PreviewNarrationPanel: React.FC<Props> = ({
       setPlayingCut(null);
     } else {
       audioRef.current.src = entry.audioUrl;
-      audioRef.current.play().catch(() => {});
+      audioRef.current.play().catch((e) => { logger.trackSwallowedError('PreviewNarrationPanel:play', e); });
       setPlayingCut(cutNum);
     }
   }, [ttsMap, playingCut]);

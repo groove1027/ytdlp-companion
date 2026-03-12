@@ -12,6 +12,7 @@ import {
   SubtitleTemplate,
   CoupangCrawlResult,
 } from '../types';
+import { logger } from '../services/LoggerService';
 
 interface ShoppingRenderProgress {
   phase: ShoppingRenderPhase;
@@ -120,7 +121,8 @@ const PROXY_KEY = 'SHOPPING_SHORT_PROXY_URL';
 const getInitialProxy = (): string => {
   try {
     return localStorage.getItem(PROXY_KEY) || '';
-  } catch {
+  } catch (e) {
+    logger.trackSwallowedError('ShoppingShortStore:getInitialProxy', e);
     return '';
   }
 };
@@ -161,8 +163,8 @@ export const useShoppingShortStore = create<ShoppingShortStore>((set) => ({
   ...initialState,
 
   // Wizard
-  setCurrentStep: (step) => set({ currentStep: step }),
-  goToStep: (step) => set({ currentStep: step }),
+  setCurrentStep: (step) => { logger.trackTabVisit('shopping-short', step); set({ currentStep: step }); },
+  goToStep: (step) => { logger.trackTabVisit('shopping-short', step); set({ currentStep: step }); },
 
   // Source Type
   setSourceType: (type) => set({ sourceType: type }),

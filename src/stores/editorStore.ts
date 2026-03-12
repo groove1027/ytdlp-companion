@@ -6,6 +6,7 @@ import {
   EffectPresetId,
   SubtitleStyle,
 } from '../types';
+import { logger } from '../services/LoggerService';
 
 type EditorTab = 'effects' | 'subtitle';
 
@@ -101,7 +102,7 @@ export const useEditorStore = create<EditorStore>((set) => ({
 
   // --- UI ---
   setZoom: (zoom) => set({ zoom: Math.min(200, Math.max(50, zoom)) }),
-  setActiveEditorTab: (tab) => set({ activeEditorTab: tab }),
+  setActiveEditorTab: (tab) => { logger.trackTabVisit('editor', tab); set({ activeEditorTab: tab }); },
 
   reset: () => set({ ...INITIAL_STATE }),
 }));

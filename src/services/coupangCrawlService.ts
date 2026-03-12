@@ -95,7 +95,7 @@ const parseProductFromHtml = (html: string, productId: string, originalUrl: stri
         if (!price && data.offers?.price) price = Number(data.offers.price);
         if (!ogTitle && data.name) {/* use data.name */}
       }
-    } catch { /* ignore */ }
+    } catch (e) { logger.trackSwallowedError('CoupangCrawlService:parseLdJson', e); }
   });
 
   // 할인율 계산

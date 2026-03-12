@@ -35,7 +35,7 @@ const SubtitleRemoverTab: React.FC = () => {
       return;
     }
     // 이전 결과 초기화
-    if (resultBlobUrl) URL.revokeObjectURL(resultBlobUrl);
+    if (resultBlobUrl) { logger.unregisterBlobUrl(resultBlobUrl); URL.revokeObjectURL(resultBlobUrl); }
     setResultBlobUrl(null);
     setPhase('idle');
     setError('');
@@ -44,16 +44,20 @@ const SubtitleRemoverTab: React.FC = () => {
 
     setVideoFile(file);
     const url = URL.createObjectURL(file);
+    logger.registerBlobUrl(url, 'video', 'SubtitleRemoverTab:handleFileSelect');
     setVideoPreviewUrl(url);
 
-    // 영상 길이 추출
+    // 영상 길이 추출 (별도의 임시 video 엘리먼트 사용)
     const video = document.createElement('video');
     video.preload = 'metadata';
+    const durationProbeUrl = URL.createObjectURL(file);
+    logger.registerBlobUrl(durationProbeUrl, 'video', 'SubtitleRemoverTab:durationProbe');
     video.onloadedmetadata = () => {
       setVideoDuration(video.duration);
-      URL.revokeObjectURL(video.src);
+      logger.unregisterBlobUrl(durationProbeUrl);
+      URL.revokeObjectURL(durationProbeUrl);
     };
-    video.src = url;
+    video.src = durationProbeUrl;
   }, [resultBlobUrl]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
@@ -114,6 +118,7 @@ const SubtitleRemoverTab: React.FC = () => {
       addCost(cost, 'video');
 
       const url = URL.createObjectURL(resultBlob);
+      logger.registerBlobUrl(url, 'video', 'SubtitleRemoverTab:handleRemove');
       setResultBlobUrl(url);
       setPhase('done');
       setPercent(100);
@@ -139,8 +144,8 @@ const SubtitleRemoverTab: React.FC = () => {
   }, [resultBlobUrl]);
 
   const handleReset = useCallback(() => {
-    if (resultBlobUrl) URL.revokeObjectURL(resultBlobUrl);
-    if (videoPreviewUrl) URL.revokeObjectURL(videoPreviewUrl);
+    if (resultBlobUrl) { logger.unregisterBlobUrl(resultBlobUrl); URL.revokeObjectURL(resultBlobUrl); }
+    if (videoPreviewUrl) { logger.unregisterBlobUrl(videoPreviewUrl); URL.revokeObjectURL(videoPreviewUrl); }
     setVideoFile(null);
     setVideoPreviewUrl(null);
     setResultBlobUrl(null);

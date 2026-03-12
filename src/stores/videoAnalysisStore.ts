@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { showToast } from './uiStore';
+import { logger } from '../services/LoggerService';
 import type {
   VideoAnalysisPreset,
   VideoVersionItem,
@@ -313,7 +314,7 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
           try {
             const str = localStorage.getItem(name);
             return str ? JSON.parse(str) : null;
-          } catch { return null; }
+          } catch (e) { logger.trackSwallowedError('VideoAnalysisStore:storage/getItem', e); return null; }
         },
         setItem: (name, value) => {
           const slimValue = () => ({
@@ -326,23 +327,26 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
           if (json.length > MAX_ENTRY_BYTES) {
             try {
               localStorage.setItem(name, JSON.stringify(slimValue()));
-            } catch {
+            } catch (e) {
+              logger.trackSwallowedError('VideoAnalysisStore:storage/setItemSlim', e);
               showToast('저장 공간이 부족해요. 브라우저 설정에서 캐시를 정리해주세요.', 5000);
             }
             return;
           }
           try {
             localStorage.setItem(name, json);
-          } catch {
+          } catch (e) {
+            logger.trackSwallowedError('VideoAnalysisStore:storage/setItem', e);
             // QuotaExceededError — 캐시 비우고 조용히 재시도
             try {
               localStorage.setItem(name, JSON.stringify(slimValue()));
-            } catch {
+            } catch (e2) {
+              logger.trackSwallowedError('VideoAnalysisStore:storage/setItemRetry', e2);
               showToast('저장 공간이 부족해요. 브라우저 설정에서 캐시를 정리해주세요.', 5000);
             }
           }
         },
-        removeItem: (name) => { try { localStorage.removeItem(name); } catch { /* 무시 */ } },
+        removeItem: (name) => { try { localStorage.removeItem(name); } catch (e) { logger.trackSwallowedError('VideoAnalysisStore:storage/removeItem', e); } },
       },
     },
   ),

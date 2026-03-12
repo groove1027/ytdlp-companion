@@ -1056,7 +1056,7 @@ const ScenePreviewPanel: React.FC<{
       img.src = url;
       // decode()는 비동기적으로 이미지를 GPU 텍스처까지 완전 준비
       // → 전환 시 createElement로 같은 src 사용하면 즉시 표시 가능
-      if (img.decode) img.decode().catch(() => {});
+      if (img.decode) img.decode().catch((e) => { logger.trackSwallowedError('EditRoomTab:preload/imageDecode', e); });
     };
     if (activeIdx > 0) preload(scenes[activeIdx - 1]?.imageUrl);
     if (activeIdx < scenes.length - 1) preload(scenes[activeIdx + 1]?.imageUrl);
@@ -1269,7 +1269,9 @@ function base64ToBlobUrl(base64: string): string {
   const binary = atob(data);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return URL.createObjectURL(new Blob([bytes], { type: mime }));
+  const blobUrl = URL.createObjectURL(new Blob([bytes], { type: mime }));
+  logger.registerBlobUrl(blobUrl, mime.startsWith('video') ? 'video' : 'image', 'EditRoomTab:base64ToBlobUrl');
+  return blobUrl;
 }
 
 const EditRoomTab: React.FC = () => {
@@ -1469,7 +1471,7 @@ const EditRoomTab: React.FC = () => {
       exportAbortRef.current = null;
       setIsExporting(false);
       setExportProgress(null);
-      blobUrls.forEach((url) => URL.revokeObjectURL(url));
+      blobUrls.forEach((url) => { logger.unregisterBlobUrl(url); URL.revokeObjectURL(url); });
     }
   }, [timeline, scenes, lines, bgmTrack, setIsExporting, setExportProgress, buildOptimizedScenes, getExportDimensions, resolveSubtitleStyle, requireAuth]);
 
@@ -1573,7 +1575,7 @@ const EditRoomTab: React.FC = () => {
       exportAbortRef.current = null;
       setIsExporting(false);
       setExportProgress(null);
-      blobUrls.forEach((url) => URL.revokeObjectURL(url));
+      blobUrls.forEach((url) => { logger.unregisterBlobUrl(url); URL.revokeObjectURL(url); });
     }
   }, [timeline, scenes, lines, bgmTrack, setIsExporting, setExportProgress, buildOptimizedScenes, getExportDimensions, resolveSubtitleStyle, buildSceneFilename, requireAuth]);
 

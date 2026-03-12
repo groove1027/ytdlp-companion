@@ -61,9 +61,12 @@ export async function pollSfxTask(
   onProgress?: (state: string) => void,
   maxAttempts: number = 60,
 ): Promise<string> {
+  const opId = `pollSfxTask-${taskId}`;
+  logger.startAsyncOp(opId, 'pollSfxTask', taskId);
   const apiKey = getKieKey();
   logger.info('[SFX] 폴링 시작', { taskId });
 
+  try {
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const delay = attempt < 5 ? 2000 : 3000;
     await new Promise(resolve => setTimeout(resolve, delay));
@@ -105,6 +108,7 @@ export async function pollSfxTask(
       if (!audioUrl) throw new Error('SFX 결과에서 오디오 URL을 찾을 수 없습니다.');
 
       logger.success('[SFX] 생성 완료', { taskId, attempt });
+      logger.endAsyncOp(opId, 'completed', audioUrl);
       return audioUrl;
     }
 
@@ -114,7 +118,13 @@ export async function pollSfxTask(
     }
   }
 
+  logger.endAsyncOp(opId, 'failed', `SFX 생성 시간 초과 (${maxAttempts}회 폴링 실패)`);
   throw new Error(`SFX 생성 시간 초과 (${maxAttempts}회 폴링 실패)`);
+  } catch (err: unknown) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    if (!errMsg.includes('시간 초과')) logger.endAsyncOp(opId, 'failed', errMsg);
+    throw err;
+  }
 }
 
 /** SFX 생성 (createTask + polling 통합) */

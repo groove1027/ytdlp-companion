@@ -1,6 +1,7 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react';
 import { useSoundStudioStore } from '../../../stores/soundStudioStore';
 import { useEditRoomStore } from '../../../stores/editRoomStore';
+import { logger } from '../../../services/LoggerService';
 import type { BgmConfig, GeneratedMusic, AudioMasterPreset, CompressorBandSettings, TrackMixerConfig, RenderSettings, AudioTrackId } from '../../../types';
 
 const AUDIO_PRESETS_KEY = 'AUDIO_USER_PRESETS';
@@ -24,7 +25,7 @@ function loadAudioPresets(): SavedAudioPreset[] {
   try {
     const raw = localStorage.getItem(AUDIO_PRESETS_KEY);
     return raw ? JSON.parse(raw) : [];
-  } catch { return []; }
+  } catch (e) { logger.trackSwallowedError('BgmOverlayPanel:loadAudioPresets', e); return []; }
 }
 
 function saveAudioPresets(presets: SavedAudioPreset[]): void {
@@ -171,7 +172,7 @@ const BgmDetailModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const togglePlay = useCallback(() => {
     const el = audioRef.current;
     if (!el) return;
-    if (isPlaying) { el.pause(); } else { el.volume = bgmTrack.volume / 100; el.play().catch(() => {}); }
+    if (isPlaying) { el.pause(); } else { el.volume = bgmTrack.volume / 100; el.play().catch((e) => { logger.trackSwallowedError('BgmOverlayPanel:togglePlay', e); }); }
   }, [isPlaying, bgmTrack.volume]);
 
   useEffect(() => {
@@ -379,7 +380,7 @@ const TrackListWithPreview: React.FC<{
     audio.volume = previewVol / 100;
     audio.onended = () => setPlayingId(null);
     audio.onpause = () => { if (previewRef.current === audio) setPlayingId(null); };
-    audio.play().catch(() => {});
+    audio.play().catch((e) => { logger.trackSwallowedError('BgmOverlayPanel:previewPlay', e); });
     previewRef.current = audio;
     setPlayingId(track.id);
   }, [playingId, previewVol]);

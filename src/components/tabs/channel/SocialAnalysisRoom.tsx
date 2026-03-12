@@ -1,4 +1,5 @@
 import React, { useState, useRef, useCallback } from 'react';
+import { logger } from '../../../services/LoggerService';
 import { evolinkFrameAnalysisStream } from '../../../services/evolinkService';
 import { downloadFromUrl } from '../../../services/videoDownloadService';
 import { showToast } from '../../../stores/uiStore';
@@ -51,11 +52,13 @@ function extractVideoFrames(file: File, count: number): Promise<{ frames: { base
     video.muted = true;
     video.preload = 'auto';
     const blobUrl = URL.createObjectURL(file);
+    logger.registerBlobUrl(blobUrl, 'video', 'SocialAnalysisRoom:extractVideoFrames');
     video.src = blobUrl;
 
     video.onloadedmetadata = async () => {
       const dur = video.duration;
       if (!dur || dur < 0.5) {
+        logger.unregisterBlobUrl(blobUrl);
         URL.revokeObjectURL(blobUrl);
         reject(new Error('영상 길이를 읽을 수 없습니다.'));
         return;
@@ -91,11 +94,13 @@ function extractVideoFrames(file: File, count: number): Promise<{ frames: { base
         }
       }
 
+      logger.unregisterBlobUrl(blobUrl);
       URL.revokeObjectURL(blobUrl);
       resolve({ frames, duration: dur });
     };
 
     video.onerror = () => {
+      logger.unregisterBlobUrl(blobUrl);
       URL.revokeObjectURL(blobUrl);
       reject(new Error('영상 파일을 로드할 수 없습니다.'));
     };
@@ -140,10 +145,12 @@ const SocialAnalysisRoom: React.FC = () => {
     const newImages: UploadedImage[] = [];
     for (const file of toAdd) {
       const base64 = await fileToBase64(file);
+      const imgPreview = URL.createObjectURL(file);
+      logger.registerBlobUrl(imgPreview, 'image', 'SocialAnalysisRoom:handleAddImages');
       newImages.push({
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         file,
-        preview: URL.createObjectURL(file),
+        preview: imgPreview,
         base64,
         mimeType: file.type,
       });
@@ -170,9 +177,11 @@ const SocialAnalysisRoom: React.FC = () => {
         showToast('영상에서 프레임을 추출할 수 없습니다.');
         return;
       }
+      const videoPreview = URL.createObjectURL(file);
+      logger.registerBlobUrl(videoPreview, 'video', 'SocialAnalysisRoom:handleAddVideo');
       setVideo({
         file,
-        preview: URL.createObjectURL(file),
+        preview: videoPreview,
         duration,
         frames,
       });
@@ -186,7 +195,7 @@ const SocialAnalysisRoom: React.FC = () => {
 
   // 영상 삭제
   const handleRemoveVideo = useCallback(() => {
-    if (video) URL.revokeObjectURL(video.preview);
+    if (video) { logger.unregisterBlobUrl(video.preview); URL.revokeObjectURL(video.preview); }
     setVideo(null);
   }, [video]);
 
@@ -194,7 +203,7 @@ const SocialAnalysisRoom: React.FC = () => {
   const handleRemoveImage = useCallback((id: string) => {
     setImages(prev => {
       const target = prev.find(img => img.id === id);
-      if (target) URL.revokeObjectURL(target.preview);
+      if (target) { logger.unregisterBlobUrl(target.preview); URL.revokeObjectURL(target.preview); }
       return prev.filter(img => img.id !== id);
     });
   }, []);
@@ -314,8 +323,8 @@ const SocialAnalysisRoom: React.FC = () => {
 
   // 초기화
   const handleReset = useCallback(() => {
-    images.forEach(img => URL.revokeObjectURL(img.preview));
-    if (video) URL.revokeObjectURL(video.preview);
+    images.forEach(img => { logger.unregisterBlobUrl(img.preview); URL.revokeObjectURL(img.preview); });
+    if (video) { logger.unregisterBlobUrl(video.preview); URL.revokeObjectURL(video.preview); }
     setImages([]);
     setVideo(null);
     setCaptionText('');
@@ -427,7 +436,7 @@ const SocialAnalysisRoom: React.FC = () => {
               {images.length > 0 && (
                 <button
                   type="button"
-                  onClick={() => { images.forEach(img => URL.revokeObjectURL(img.preview)); setImages([]); }}
+                  onClick={() => { images.forEach(img => { logger.unregisterBlobUrl(img.preview); URL.revokeObjectURL(img.preview); }); setImages([]); }}
                   className="text-xs text-red-400 hover:text-red-300"
                 >
                   전체 삭제

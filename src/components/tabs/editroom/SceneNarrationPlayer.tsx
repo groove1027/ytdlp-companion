@@ -1,5 +1,6 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react';
 import type { ScriptLine, SceneAudioConfig } from '../../../types';
+import { logger } from '../../../services/LoggerService';
 
 interface SceneNarrationPlayerProps {
   line: ScriptLine | null;
@@ -29,7 +30,7 @@ const SceneNarrationPlayer: React.FC<SceneNarrationPlayerProps> = ({
     } else {
       el.playbackRate = audioSettings.speed;
       el.volume = Math.min(1, audioSettings.volume / 100);
-      el.play().catch(() => {});
+      el.play().catch((e) => { logger.trackSwallowedError('SceneNarrationPlayer:togglePlay', e); });
     }
   }, [isPlaying, audioSettings]);
 

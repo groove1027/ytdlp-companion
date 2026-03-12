@@ -314,14 +314,20 @@ export const pollMusicStatus = async (
     signal?: AbortSignal,
     onProgress?: (progress: number) => void
 ): Promise<GeneratedMusic> => {
+    const opId = `pollMusicStatus-${taskId}`;
+    logger.startAsyncOp(opId, 'pollMusicStatus', taskId);
     const apiKey = getKieKey();
-    if (!apiKey) throw new Error('Kie API 키가 설정되지 않았습니다.');
+    if (!apiKey) {
+        logger.endAsyncOp(opId, 'failed', 'Kie API 키 없음');
+        throw new Error('Kie API 키가 설정되지 않았습니다.');
+    }
 
     logger.info('[Music] 폴링 시작', { taskId });
 
     const maxAttempts = 120; // 최대 ~6분 (3초 간격)
     let simulatedProgress = 0;
 
+    try {
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
         // 중단 체크
         if (signal?.aborted) throw new Error('음악 생성이 취소되었습니다.');
@@ -403,6 +409,7 @@ export const pollMusicStatus = async (
             };
 
             logger.success('[Music] 음악 생성 완료', { taskId, title: result.title, duration: result.duration });
+            logger.endAsyncOp(opId, 'completed', audioUrl);
             return result;
         }
 
@@ -416,7 +423,13 @@ export const pollMusicStatus = async (
         // PENDING, TEXT_SUCCESS → 계속 폴링
     }
 
+    logger.endAsyncOp(opId, 'failed', `음악 생성 시간 초과 (${maxAttempts}회 폴링 실패)`);
     throw new Error(`음악 생성 시간 초과 (${maxAttempts}회 폴링 실패)`);
+    } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (!errMsg.includes('시간 초과')) logger.endAsyncOp(opId, 'failed', errMsg);
+        throw err;
+    }
 };
 
 // === GENRE LIST ===
@@ -476,7 +489,7 @@ const parseAiJson = (raw: string): Record<string, unknown> => {
     try {
         const j = s.lastIndexOf('}');
         if (j > 0) return JSON.parse(s.substring(0, j + 1));
-    } catch { /* 잘린 JSON → 복구 시도 */ }
+    } catch (e) { logger.trackSwallowedError('MusicService:parseAnalysisJson/directParse', e); /* 잘린 JSON → 복구 시도 */ }
 
     // 2차: 잘린 JSON 자동 복구 — 미닫힌 괄호/따옴표 닫기
     let fixed = s;
@@ -810,9 +823,15 @@ export const generateLyrics = async (prompt: string): Promise<string> => {
 };
 
 export const pollLyricsResult = async (taskId: string, signal?: AbortSignal): Promise<LyricsResult[]> => {
+    const opId = `pollLyricsResult-${taskId}`;
+    logger.startAsyncOp(opId, 'pollLyricsResult', taskId);
     const apiKey = getKieKey();
-    if (!apiKey) throw new Error('Kie API 키가 설정되지 않았습니다.');
+    if (!apiKey) {
+        logger.endAsyncOp(opId, 'failed', 'Kie API 키 없음');
+        throw new Error('Kie API 키가 설정되지 않았습니다.');
+    }
     const maxAttempts = 60;
+    try {
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
         if (signal?.aborted) throw new Error('가사 생성이 취소되었습니다.');
         await new Promise(r => setTimeout(r, 3000));
@@ -827,14 +846,22 @@ export const pollLyricsResult = async (taskId: string, signal?: AbortSignal): Pr
             // Kie Suno 공식 스펙: data.data.response.data[] → [{title, text}]
             const lyricsData = data.data?.response?.lyricsData;
             const items = Array.isArray(lyricsData) ? lyricsData : [];
-            return items.filter((i: { text?: string }) => i?.text).map((i: { title?: string; text: string }) => ({ title: i.title || '', text: i.text }));
+            const result = items.filter((i: { text?: string }) => i?.text).map((i: { title?: string; text: string }) => ({ title: i.title || '', text: i.text }));
+            logger.endAsyncOp(opId, 'completed', `${result.length}개 가사 반환`);
+            return result;
         }
         if (status === 'CREATE_TASK_FAILED' || status === 'GENERATE_LYRICS_FAILED' ||
             status === 'CALLBACK_EXCEPTION' || status === 'SENSITIVE_WORD_ERROR') {
             throw new Error(`가사 생성 실패: ${data.data?.errorMessage || status}`);
         }
     }
+    logger.endAsyncOp(opId, 'failed', '가사 생성 시간 초과');
     throw new Error('가사 생성 시간 초과');
+    } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (!errMsg.includes('시간 초과')) logger.endAsyncOp(opId, 'failed', errMsg);
+        throw err;
+    }
 };
 
 // === VOCAL SEPARATION ===
@@ -854,9 +881,15 @@ export const separateVocals = async (opts: {
 };
 
 export const pollVocalSeparation = async (taskId: string, signal?: AbortSignal): Promise<VocalSeparationResult> => {
+    const opId = `pollVocalSeparation-${taskId}`;
+    logger.startAsyncOp(opId, 'pollVocalSeparation', taskId);
     const apiKey = getKieKey();
-    if (!apiKey) throw new Error('Kie API 키가 설정되지 않았습니다.');
+    if (!apiKey) {
+        logger.endAsyncOp(opId, 'failed', 'Kie API 키 없음');
+        throw new Error('Kie API 키가 설정되지 않았습니다.');
+    }
     const maxAttempts = 60;
+    try {
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
         if (signal?.aborted) throw new Error('보컬 분리가 취소되었습니다.');
         await new Promise(r => setTimeout(r, 3000));
@@ -870,17 +903,25 @@ export const pollVocalSeparation = async (taskId: string, signal?: AbortSignal):
         if (successFlag === 'SUCCESS') {
             // Kie Suno 공식 스펙: data.data.response.vocalUrl / instrumentalUrl (camelCase)
             const resp = data.data?.response;
-            return {
+            const result: VocalSeparationResult = {
                 vocalUrl: resp?.vocalUrl || '',
                 instrumentalUrl: resp?.instrumentalUrl || '',
             };
+            logger.endAsyncOp(opId, 'completed', `vocalUrl=${result.vocalUrl.slice(0, 60)}`);
+            return result;
         }
         if (successFlag === 'CREATE_TASK_FAILED' || successFlag === 'GENERATE_AUDIO_FAILED' ||
             successFlag === 'CALLBACK_EXCEPTION') {
             throw new Error(`보컬 분리 실패: ${data.data?.errorMessage || successFlag}`);
         }
     }
+    logger.endAsyncOp(opId, 'failed', '보컬 분리 시간 초과');
     throw new Error('보컬 분리 시간 초과');
+    } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (!errMsg.includes('시간 초과')) logger.endAsyncOp(opId, 'failed', errMsg);
+        throw err;
+    }
 };
 
 // === TIMESTAMPED LYRICS ===

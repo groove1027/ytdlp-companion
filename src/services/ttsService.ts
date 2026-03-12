@@ -526,6 +526,7 @@ export const mergeAudioFiles = async (audioUrls: string[]): Promise<string> => {
         // WAV 인코딩
         const wavBlob = audioBufferToWav(mergedBuffer);
         const mergedUrl = URL.createObjectURL(wavBlob);
+        logger.registerBlobUrl(mergedUrl, 'audio', 'ttsService:mergeAudioFiles');
 
         logger.success('[TTS] 오디오 병합 완료', {
             fileCount: buffers.length,
@@ -640,7 +641,11 @@ export const splitAudioAtTime = async (
     const blob2 = audioBufferToWav(buf2);
     ctx.close();
 
-    return [URL.createObjectURL(blob1), URL.createObjectURL(blob2)];
+    const url1 = URL.createObjectURL(blob1);
+    logger.registerBlobUrl(url1, 'audio', 'ttsService:splitAudioAtTime');
+    const url2 = URL.createObjectURL(blob2);
+    logger.registerBlobUrl(url2, 'audio', 'ttsService:splitAudioAtTime');
+    return [url1, url2];
   } catch (e) {
     console.warn('[splitAudioAtTime] Failed to split audio:', e);
     return null;

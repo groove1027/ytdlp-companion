@@ -1,6 +1,7 @@
 
 import { openDB, DBSchema } from 'idb';
 import { ProjectData, ProjectSummary, StorageEstimate, SavedCharacter, MusicLibraryItem, ChannelScript, ChannelGuideline, ChannelInfo, ChannelInputSource, VideoVersionItem, VideoAnalysisPreset, VideoTimedFrame } from '../types';
+import { logger } from './LoggerService';
 
 // --- DB Schema ---
 
@@ -200,7 +201,7 @@ export const deleteProject = async (id: string) => {
   try {
     const { deleteProjectAudio } = await import('./audioStorageService');
     await deleteProjectAudio(id);
-  } catch { /* audio 클린업 실패해도 프로젝트 삭제는 성공 */ }
+  } catch (e) { logger.trackSwallowedError('StorageService:deleteProject/audioCleanup', e); }
 };
 
 export const deleteAllProjects = async () => {

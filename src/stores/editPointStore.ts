@@ -22,6 +22,7 @@ import {
 } from '../services/editPointService';
 import { removeSubtitlesWithGhostCut } from '../services/ghostcutService';
 import { showToast } from './uiStore';
+import { logger } from '../services/LoggerService';
 
 interface EditPointStore {
   // 위저드
@@ -87,13 +88,16 @@ function getVideoDuration(file: File): Promise<number | null> {
     const video = document.createElement('video');
     video.preload = 'metadata';
     const url = URL.createObjectURL(file);
+    logger.registerBlobUrl(url, 'video', 'editPointStore:getVideoDuration');
     video.src = url;
     video.onloadedmetadata = () => {
       const dur = video.duration;
+      logger.unregisterBlobUrl(url);
       URL.revokeObjectURL(url);
       resolve(isFinite(dur) ? dur : null);
     };
     video.onerror = () => {
+      logger.unregisterBlobUrl(url);
       URL.revokeObjectURL(url);
       resolve(null);
     };
@@ -107,6 +111,7 @@ function getVideoThumbnail(file: File): Promise<string | undefined> {
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
     const url = URL.createObjectURL(file);
+    logger.registerBlobUrl(url, 'video', 'editPointStore:getVideoThumbnail');
     video.src = url;
     video.muted = true;
     video.preload = 'auto';
@@ -120,11 +125,13 @@ function getVideoThumbnail(file: File): Promise<string | undefined> {
       canvas.height = 90;
       ctx?.drawImage(video, 0, 0, 160, 90);
       const dataUrl = canvas.toDataURL('image/jpeg', 0.6);
+      logger.unregisterBlobUrl(url);
       URL.revokeObjectURL(url);
       resolve(dataUrl);
     };
 
     video.onerror = () => {
+      logger.unregisterBlobUrl(url);
       URL.revokeObjectURL(url);
       resolve(undefined);
     };
@@ -137,14 +144,17 @@ function getVideoDimensions(file: File): Promise<{ width: number; height: number
     const video = document.createElement('video');
     video.preload = 'metadata';
     const url = URL.createObjectURL(file);
+    logger.registerBlobUrl(url, 'video', 'editPointStore:getVideoDimensions');
     video.src = url;
     video.onloadedmetadata = () => {
       const w = video.videoWidth || 1920;
       const h = video.videoHeight || 1080;
+      logger.unregisterBlobUrl(url);
       URL.revokeObjectURL(url);
       resolve({ width: w, height: h });
     };
     video.onerror = () => {
+      logger.unregisterBlobUrl(url);
       URL.revokeObjectURL(url);
       resolve({ width: 1920, height: 1080 });
     };
@@ -157,13 +167,14 @@ function downloadFile(content: string, filename: string, mimeType: string, addBo
   const prefix = addBom ? '\uFEFF' : '';
   const blob = new Blob([prefix + content], { type: `${mimeType};charset=utf-8` });
   const url = URL.createObjectURL(blob);
+  logger.registerBlobUrl(url, 'other', 'editPointStore:downloadFile');
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  setTimeout(() => { logger.unregisterBlobUrl(url); URL.revokeObjectURL(url); }, 5000);
 }
 
 export const useEditPointStore = create<EditPointStore>((set, get) => ({
@@ -184,7 +195,7 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
   cleanMessage: '',
   isCleaning: false,
 
-  setStep: (step) => set({ step }),
+  setStep: (step) => { logger.trackTabVisit('edit-point', step); set({ step }); },
 
   addSourceVideos: async (files) => {
     const newVideos: SourceVideoFile[] = [];
@@ -198,11 +209,13 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
         getVideoThumbnail(file),
       ]);
 
+      const blobUrl = URL.createObjectURL(file);
+      logger.registerBlobUrl(blobUrl, 'video', 'editPointStore:addSourceVideos', sizeMB);
       newVideos.push({
         id: `sv-${Date.now()}-${i}`,
         sourceId: `S-${String(existingCount + i + 1).padStart(2, '0')}`,
         file,
-        blobUrl: URL.createObjectURL(file),
+        blobUrl,
         fileName: file.name,
         fileSizeMB: sizeMB,
         durationSec: duration,
@@ -219,7 +232,10 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
 
   removeSourceVideo: (id) => {
     const video = get().sourceVideos.find((v) => v.id === id);
-    if (video) URL.revokeObjectURL(video.blobUrl);
+    if (video) {
+      logger.unregisterBlobUrl(video.blobUrl);
+      URL.revokeObjectURL(video.blobUrl);
+    }
     set((state) => {
       const filtered = state.sourceVideos.filter((v) => v.id !== id);
       const total = filtered.reduce((sum, v) => sum + v.fileSizeMB, 0);
@@ -494,6 +510,7 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
         );
 
         const cleanedUrl = URL.createObjectURL(cleanedBlob);
+        logger.registerBlobUrl(cleanedUrl, 'video', 'editPointStore:runCleanSubtitles');
         set((state) => ({
           sourceVideos: state.sourceVideos.map((v) =>
             v.id === video.id ? { ...v, cleanedBlobUrl: cleanedUrl } : v
@@ -634,8 +651,12 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
   reset: () => {
     // blob URL 정리
     get().sourceVideos.forEach((v) => {
+      logger.unregisterBlobUrl(v.blobUrl);
       URL.revokeObjectURL(v.blobUrl);
-      if (v.cleanedBlobUrl) URL.revokeObjectURL(v.cleanedBlobUrl);
+      if (v.cleanedBlobUrl) {
+        logger.unregisterBlobUrl(v.cleanedBlobUrl);
+        URL.revokeObjectURL(v.cleanedBlobUrl);
+      }
     });
     set({
       step: 'register',

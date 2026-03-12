@@ -1522,7 +1522,7 @@ const StepMetadata: React.FC = () => {
       try {
         const shopTags = await extractShoppingTags(scriptText, sceneSummaries);
         if (shopTags.length > 0) setShoppingTags(shopTags);
-      } catch { /* 쇼핑 태그 실패 무시 */ }
+      } catch (e) { logger.trackSwallowedError('UploadTab:generateMetadata/shoppingTags', e); }
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'AI 메타데이터 생성 실패');
     } finally {

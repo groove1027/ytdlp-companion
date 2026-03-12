@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { getStoredKeys, saveApiKeys } from '../services/apiService';
 import { showToast } from '../stores/uiStore';
 import { useAuthGuard } from '../hooks/useAuthGuard';
+import { logger } from '../services/LoggerService';
 
 interface ApiKeySettingsProps {
     isOpen: boolean;
@@ -111,7 +112,7 @@ const smartDetect = (text: string): DetectedKey[] => {
                 results.push({ value: v, service, method: service ? 'label' : 'guess' });
             }
             if (results.length > 0) return assignRemaining(results, assigned);
-        } catch { /* JSON 파싱 실패 — 아래로 진행 */ }
+        } catch (e) { logger.trackSwallowedError('ApiKeySettings:smartPaste/jsonParse', e); }
     }
 
     // Phase 2: 줄 단위 분석 — [Label] + 다음 줄 키 형식 지원
@@ -521,7 +522,7 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
                                 try {
                                   import('../services/typecastService').then(m => m.clearTypecastVoiceCache());
                                   window.dispatchEvent(new Event('typecast-key-changed'));
-                                } catch {}
+                                } catch (e) { logger.trackSwallowedError('ApiKeySettings:typecastKeyBlur', e); }
                             }}
                             placeholder="Typecast API Key (typecast.ai에서 발급)"
                             className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-base text-white" />

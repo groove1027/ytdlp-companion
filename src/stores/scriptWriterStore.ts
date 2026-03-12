@@ -8,6 +8,7 @@ import {
   VideoFormat,
   VideoAnalysisStylePreset,
 } from '../types';
+import { logger } from '../services/LoggerService';
 
 // --- localStorage 자동 임시저장 ---
 const DRAFT_STORAGE_KEY = 'SCRIPT_WRITER_DRAFT';
@@ -37,7 +38,8 @@ function loadDraft(): Partial<PersistedState> {
       }
     }
     return result as Partial<PersistedState>;
-  } catch {
+  } catch (e) {
+    logger.trackSwallowedError('ScriptWriterStore:loadDraft', e);
     return {};
   }
 }
@@ -49,13 +51,13 @@ function saveDraft(state: Record<string, unknown>): void {
       draft[key] = state[key];
     }
     localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draft));
-  } catch {
-    // localStorage 용량 초과 등 — 조용히 무시
+  } catch (e) {
+    logger.trackSwallowedError('ScriptWriterStore:saveDraft', e);
   }
 }
 
 function clearDraft(): void {
-  try { localStorage.removeItem(DRAFT_STORAGE_KEY); } catch { /* noop */ }
+  try { localStorage.removeItem(DRAFT_STORAGE_KEY); } catch (e) { logger.trackSwallowedError('ScriptWriterStore:clearDraft', e); }
 }
 
 interface ScriptWriterStore {
@@ -202,7 +204,7 @@ export const useScriptWriterStore = create<ScriptWriterStore>((set) => ({
   startExpansion: (target) => set({ isExpanding: true, expansionTarget: target }),
   finishExpansion: () => set({ isExpanding: false, expansionTarget: null }),
 
-  setActiveStep: (step) => set({ activeStep: Math.min(4, Math.max(1, step)) }),
+  setActiveStep: (step) => { const clamped = Math.min(4, Math.max(1, step)); logger.trackTabVisit('script-writer', String(clamped)); set({ activeStep: clamped }); },
 
   setVideoFormat: (format) => set({ videoFormat: format }),
   setLongFormSplitType: (type) => set({ longFormSplitType: type }),

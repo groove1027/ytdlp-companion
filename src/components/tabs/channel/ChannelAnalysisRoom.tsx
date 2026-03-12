@@ -60,7 +60,7 @@ const ChannelAnalysisRoom: React.FC = () => {
         const { refreshCobaltInstances } = await import('../../../services/cobaltAuthService');
         const count = await refreshCobaltInstances();
         if (count > 0) console.log(`[Download] Cobalt 인스턴스 ${count}개 갱신 완료`);
-      } catch { /* 무시 */ }
+      } catch (e) { logger.trackSwallowedError('ChannelAnalysisRoom:refreshCobalt', e); }
       // Invidious 인스턴스 동적 갱신
       try {
         const res = await fetch('https://api.invidious.io/', { signal: AbortSignal.timeout(8_000) });
@@ -78,7 +78,7 @@ const ChannelAnalysisRoom: React.FC = () => {
             console.log(`[Download] Invidious 인스턴스 ${fresh.length}개 갱신 완료`);
           }
         }
-      } catch { /* 무시 */ }
+      } catch (e) { logger.trackSwallowedError('ChannelAnalysisRoom:refreshInvidious', e); }
     })();
   }, []);
 
@@ -290,7 +290,8 @@ const ChannelAnalysisRoom: React.FC = () => {
         }
       }
       return new Blob(chunks);
-    } catch {
+    } catch (e) {
+      logger.trackSwallowedError('ChannelAnalysisRoom:fetchStreamBlob', e);
       return null;
     }
   }, []);
@@ -339,9 +340,9 @@ const ChannelAnalysisRoom: React.FC = () => {
     const safeOutput = outputData instanceof Uint8Array ? new Uint8Array(outputData) : outputData;
 
     // 임시 파일 정리
-    try { await ffmpeg.deleteFile('input_v.mp4'); } catch { /* ignore */ }
-    try { await ffmpeg.deleteFile('input_a.m4a'); } catch { /* ignore */ }
-    try { await ffmpeg.deleteFile('merged.mp4'); } catch { /* ignore */ }
+    try { await ffmpeg.deleteFile('input_v.mp4'); } catch (e) { logger.trackSwallowedError('ChannelAnalysisRoom:mergeWithFFmpeg/cleanup', e); }
+    try { await ffmpeg.deleteFile('input_a.m4a'); } catch (e) { logger.trackSwallowedError('ChannelAnalysisRoom:mergeWithFFmpeg/cleanup', e); }
+    try { await ffmpeg.deleteFile('merged.mp4'); } catch (e) { logger.trackSwallowedError('ChannelAnalysisRoom:mergeWithFFmpeg/cleanup', e); }
 
     return new Blob([safeOutput as BlobPart], { type: 'video/mp4' });
   }, []);
@@ -442,7 +443,7 @@ const ChannelAnalysisRoom: React.FC = () => {
       setDownloadPhase(prev => ({ ...prev, [videoId]: '다운로드 실패' }));
       setDownloadDone(prev => ({ ...prev, [videoId]: 'fail' }));
       const ytUrl = `https://www.youtube.com/watch?v=${videoId}`;
-      try { await navigator.clipboard.writeText(ytUrl); } catch { /* 무시 */ }
+      try { await navigator.clipboard.writeText(ytUrl); } catch (e) { logger.trackSwallowedError('ChannelAnalysisRoom:downloadVideo/clipboard', e); }
       showToast(`자동 다운로드 실패 — YouTube URL이 클립보드에 복사되었습니다. 브라우저 확장 프로그램(SaveFrom 등)으로 다운로드하세요.`);
       return false;
     } finally {
@@ -588,7 +589,8 @@ const ChannelAnalysisRoom: React.FC = () => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
       showToast('스타일 프롬프트가 클립보드에 복사되었습니다.');
-    } catch {
+    } catch (e) {
+      logger.trackSwallowedError('ChannelAnalysisRoom:handleCopyPrompt/clipboard', e);
       const ta = document.createElement('textarea');
       ta.value = channelGuideline.fullGuidelineText;
       document.body.appendChild(ta);
@@ -673,7 +675,8 @@ const ChannelAnalysisRoom: React.FC = () => {
       let parsed: (LegacyTopicRecommendation & { instinctAnalysis?: TopicInstinctAnalysis })[];
       try {
         parsed = JSON.parse(jsonStr);
-      } catch {
+      } catch (parseErr) {
+        logger.trackSwallowedError('ChannelAnalysisRoom:handleTopicRecommend/jsonParse', parseErr);
         // 불완전한 배열 복구 시도: 마지막 완전한 }까지 잘라서 배열 닫기
         const lastBrace = jsonStr.lastIndexOf('}');
         if (lastBrace > 0) {
@@ -681,7 +684,8 @@ const ChannelAnalysisRoom: React.FC = () => {
           try {
             const recoveredStart = recovered.indexOf('[');
             parsed = JSON.parse(recoveredStart >= 0 ? recovered.substring(recoveredStart) : recovered);
-          } catch {
+          } catch (recoveryErr) {
+            logger.trackSwallowedError('ChannelAnalysisRoom:handleTopicRecommend/jsonRecovery', recoveryErr);
             throw new Error('AI 응답을 파싱할 수 없습니다. 다시 시도해주세요.');
           }
         } else {

@@ -34,7 +34,7 @@ export const removeBackground = async (imageFile: File): Promise<File> => {
                 if (errJson.errors && errJson.errors[0]) {
                     errorMsg = errJson.errors[0].title || errorMsg;
                 }
-            } catch (e) {}
+            } catch (e) { logger.trackSwallowedError('RemoveBgService:removeBackground/parseError', e); }
             
             if (response.status === 402) {
                 errorMsg = "크레딧이 부족합니다 (Payment Required).";

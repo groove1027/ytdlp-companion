@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
+import { logger } from '../../../services/LoggerService';
 import { useSoundStudioStore, registerAudio, unregisterAudio } from '../../../stores/soundStudioStore';
 import { useUIStore, showToast } from '../../../stores/uiStore';
 import { useScriptWriterStore } from '../../../stores/scriptWriterStore';
@@ -25,7 +26,6 @@ import { useProjectStore } from '../../../stores/projectStore';
 import { transferSoundToImageVideo } from '../../../utils/soundToImageBridge';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
-import { logger } from '../../../services/LoggerService';
 
 const SPEAKER_COLORS = ['#6366f1', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316'];
 
@@ -290,7 +290,7 @@ const VoiceStudio: React.FC = () => {
   const [typecastModelFilter, setTypecastModelFilter] = useState<string | null>(null);
   // showAllTypecastLanguages 제거 → 가로 스크롤로 대체
   const [recentTypecastVoiceIds, setRecentTypecastVoiceIds] = useState<string[]>(() => {
-    try { return JSON.parse(localStorage.getItem('TYPECAST_RECENT_VOICES') || '[]'); } catch { return []; }
+    try { return JSON.parse(localStorage.getItem('TYPECAST_RECENT_VOICES') || '[]'); } catch (e) { logger.trackSwallowedError('VoiceStudio:loadRecentTypecastVoices', e); return []; }
   });
 
   // Typecast 카테고리 태그 — 모든 음성의 use_cases에서 집계
@@ -461,7 +461,7 @@ const VoiceStudio: React.FC = () => {
       if (audioRef.current) {
         audioRef.current.pause();
         unregisterAudio(audioRef.current);
-        if (audioRef.current.src?.startsWith('blob:')) URL.revokeObjectURL(audioRef.current.src);
+        if (audioRef.current.src?.startsWith('blob:')) { logger.unregisterBlobUrl(audioRef.current.src); URL.revokeObjectURL(audioRef.current.src); }
         audioRef.current = null;
       }
       if (uploadAudioRef.current) {
@@ -470,7 +470,7 @@ const VoiceStudio: React.FC = () => {
         uploadAudioRef.current = null;
       }
       Object.values(sampleCacheRef.current).forEach(url => {
-        if (url.startsWith('blob:')) URL.revokeObjectURL(url);
+        if (url.startsWith('blob:')) { logger.unregisterBlobUrl(url); URL.revokeObjectURL(url); }
       });
       sampleCacheRef.current = {};
     };
@@ -611,7 +611,7 @@ const VoiceStudio: React.FC = () => {
         const decoded = await ctx.decodeAudioData(buf);
         realDuration = decoded.duration;
         ctx.close();
-      } catch { /* 디코딩 실패 시 무시 */ }
+      } catch (e) { logger.trackSwallowedError('VoiceStudio:generateTTS/decodeDuration', e); }
 
       updateLine(lineId, {
         audioUrl: result.audioUrl,
@@ -808,6 +808,7 @@ const VoiceStudio: React.FC = () => {
         if (res.ok) {
           const blob = await res.blob();
           const url = URL.createObjectURL(blob);
+          logger.registerBlobUrl(url, 'audio', 'VoiceStudio:playVoiceSample');
           sampleCacheRef.current[cacheKey] = url;
           cachePreview(cacheKey, voice.preview);
           if (isStale()) return;
@@ -815,7 +816,7 @@ const VoiceStudio: React.FC = () => {
           playAudio(url, voice.id, isStale, speed);
           return;
         }
-      } catch { /* 정적 파일 없음 → API 폴백 */ }
+      } catch (e) { logger.trackSwallowedError('VoiceStudio:previewVoice/staticFile', e); }
     }
 
     // 4단계: API 생성 (기본 속도 1.0으로 생성, playbackRate로 속도 적용 — 이중 적용 방지)
@@ -880,8 +881,9 @@ const VoiceStudio: React.FC = () => {
     }
 
     // blob URL 생성
-    if (uploadedBlobUrl) URL.revokeObjectURL(uploadedBlobUrl);
+    if (uploadedBlobUrl) { logger.unregisterBlobUrl(uploadedBlobUrl); URL.revokeObjectURL(uploadedBlobUrl); }
     const blobUrl = URL.createObjectURL(file);
+    logger.registerBlobUrl(blobUrl, 'audio', 'VoiceStudio:handleFileUpload');
     setUploadedFile(file);
     setUploadedBlobUrl(blobUrl);
 
@@ -914,7 +916,7 @@ const VoiceStudio: React.FC = () => {
   const handleDragLeave = useCallback(() => setIsDragging(false), []);
 
   const handleRemoveUpload = useCallback(() => {
-    if (uploadedBlobUrl) URL.revokeObjectURL(uploadedBlobUrl);
+    if (uploadedBlobUrl) { logger.unregisterBlobUrl(uploadedBlobUrl); URL.revokeObjectURL(uploadedBlobUrl); }
     if (uploadAudioRef.current) {
       uploadAudioRef.current.pause();
       unregisterAudio(uploadAudioRef.current);
@@ -1779,7 +1781,7 @@ const VoiceStudio: React.FC = () => {
                         <div className="flex items-center gap-1.5 px-1 pb-1 border-b border-blue-500/20">
                           <span className="text-blue-400 text-sm">&#128337;</span>
                           <span className="text-sm font-bold text-blue-400">최근 사용 ({recentVoices.length})</span>
-                          <button type="button" onClick={() => { setRecentTypecastVoiceIds([]); try { localStorage.removeItem('TYPECAST_RECENT_VOICES'); } catch {} }}
+                          <button type="button" onClick={() => { setRecentTypecastVoiceIds([]); try { localStorage.removeItem('TYPECAST_RECENT_VOICES'); } catch (e) { logger.trackSwallowedError('VoiceStudio:clearRecentVoices', e); } }}
                             className="text-[10px] text-gray-500 hover:text-red-400 ml-auto transition-colors">비우기</button>
                         </div>
                         <div className="grid grid-cols-2 gap-1.5">

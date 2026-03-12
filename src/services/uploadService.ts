@@ -24,7 +24,7 @@ export const uploadMediaToHosting = async (file: File, _unusedKey?: string): Pro
         ctx.drawImage(bitmap, 0, 0);
         uploadFile = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.85 });
       }
-    } catch { /* compression failed, upload original */ }
+    } catch (e) { logger.trackSwallowedError('UploadService:uploadMediaToHosting/compression', e); }
   }
 
   const formData = new FormData();

@@ -881,6 +881,7 @@ const generateSingle = async (
   const audioBlob = await response.blob();
   const mimeType = audioFormat === 'mp3' ? 'audio/mpeg' : 'audio/wav';
   const audioUrl = URL.createObjectURL(new Blob([audioBlob], { type: mimeType }));
+  logger.registerBlobUrl(audioUrl, 'audio', 'typecastService:generateSingle');
 
   return { audioUrl, format: audioFormat };
 };
@@ -941,9 +942,10 @@ const generateChunked = async (
   // AudioBuffer → WAV blob
   const wavBlob = audioBufferToWav(merged);
   const mergedUrl = URL.createObjectURL(wavBlob);
+  logger.registerBlobUrl(mergedUrl, 'audio', 'typecastService:generateChunked');
 
   // 개별 chunk blob URL 해제
-  audioUrls.forEach(u => { if (u.startsWith('blob:')) URL.revokeObjectURL(u); });
+  audioUrls.forEach(u => { if (u.startsWith('blob:')) { logger.unregisterBlobUrl(u); URL.revokeObjectURL(u); } });
   await ctx.close();
 
   return { audioUrl: mergedUrl, format: 'wav' };

@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { logger } from '../services/LoggerService';
 import {
   UploadStep,
   UploadPlatform,
@@ -91,13 +92,13 @@ const loadSavedAuth = (): Partial<SavedAuth> => {
     const raw = localStorage.getItem(AUTH_STORAGE_KEY);
     if (!raw) return {};
     return JSON.parse(raw) as Partial<SavedAuth>;
-  } catch { return {}; }
+  } catch (e) { logger.trackSwallowedError('UploadStore:loadSavedAuth', e); return {}; }
 };
 
 const saveAuthToStorage = (data: SavedAuth) => {
   try {
     localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(data));
-  } catch { /* quota exceeded 등 무시 */ }
+  } catch (e) { logger.trackSwallowedError('UploadStore:saveAuthToStorage', e); }
 };
 
 const DEFAULT_UPLOAD_SETTINGS: UploadSettings = {
@@ -149,7 +150,7 @@ const INITIAL_STATE = {
 export const useUploadStore = create<UploadStore>((set) => ({
   ...INITIAL_STATE,
 
-  setStep: (step) => set({ currentStep: step }),
+  setStep: (step) => { logger.trackTabVisit('upload', step); set({ currentStep: step }); },
 
   togglePlatform: (platform) => set((state) => {
     const has = state.selectedPlatforms.includes(platform);
@@ -259,20 +260,31 @@ export const useUploadStore = create<UploadStore>((set) => ({
   })),
 
   setVideoFile: (file) => set((state) => {
-    if (state.videoUrl) URL.revokeObjectURL(state.videoUrl);
+    if (state.videoUrl) {
+      logger.unregisterBlobUrl(state.videoUrl);
+      URL.revokeObjectURL(state.videoUrl);
+    }
     if (!file) return { videoFile: null, videoUrl: null, videoDuration: null, videoSize: null };
-    return { videoFile: file, videoUrl: URL.createObjectURL(file), videoSize: file.size, videoDuration: null };
+    const videoUrl = URL.createObjectURL(file);
+    logger.registerBlobUrl(videoUrl, 'video', 'uploadStore:setVideoFile', file.size / (1024 * 1024));
+    return { videoFile: file, videoUrl, videoSize: file.size, videoDuration: null };
   }),
 
   setVideoDuration: (d) => set({ videoDuration: d }),
 
   clearVideo: () => set((state) => {
-    if (state.videoUrl) URL.revokeObjectURL(state.videoUrl);
+    if (state.videoUrl) {
+      logger.unregisterBlobUrl(state.videoUrl);
+      URL.revokeObjectURL(state.videoUrl);
+    }
     return { videoFile: null, videoUrl: null, videoDuration: null, videoSize: null };
   }),
 
   resetUpload: () => set((state) => {
-    if (state.videoUrl) URL.revokeObjectURL(state.videoUrl);
+    if (state.videoUrl) {
+      logger.unregisterBlobUrl(state.videoUrl);
+      URL.revokeObjectURL(state.videoUrl);
+    }
     return {
       ...INITIAL_STATE,
       youtubeAuth: state.youtubeAuth,

@@ -118,7 +118,9 @@ const V31_SYSTEM_PROMPT = `# <동적 타겟팅 기반 쇼핑형 대본 생성 �
 export const extractAudioFromVideo = async (videoBlob: Blob): Promise<Blob | null> => {
   return new Promise((resolve) => {
     const video = document.createElement('video');
-    video.src = URL.createObjectURL(videoBlob);
+    const _audioSrcUrl = URL.createObjectURL(videoBlob);
+    logger.registerBlobUrl(_audioSrcUrl, 'video', 'shoppingScriptService:extractAudioFromVideo');
+    video.src = _audioSrcUrl;
     video.muted = false;
     video.volume = 1;
 
@@ -130,7 +132,8 @@ export const extractAudioFromVideo = async (videoBlob: Blob): Promise<Blob | nul
 
         if (audioTracks.length === 0) {
           logger.info('[ShoppingScript] 영상에 오디오 트랙 없음');
-          URL.revokeObjectURL(video.src);
+          logger.unregisterBlobUrl(_audioSrcUrl);
+          URL.revokeObjectURL(_audioSrcUrl);
           resolve(null);
           return;
         }
@@ -141,7 +144,8 @@ export const extractAudioFromVideo = async (videoBlob: Blob): Promise<Blob | nul
 
         recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
         recorder.onstop = () => {
-          URL.revokeObjectURL(video.src);
+          logger.unregisterBlobUrl(_audioSrcUrl);
+          URL.revokeObjectURL(_audioSrcUrl);
           if (chunks.length === 0) { resolve(null); return; }
           resolve(new Blob(chunks, { type: 'audio/webm' }));
         };
@@ -158,13 +162,15 @@ export const extractAudioFromVideo = async (videoBlob: Blob): Promise<Blob | nul
 
         video.onended = () => { if (recorder.state === 'recording') recorder.stop(); };
       } catch {
-        URL.revokeObjectURL(video.src);
+        logger.unregisterBlobUrl(_audioSrcUrl);
+        URL.revokeObjectURL(_audioSrcUrl);
         resolve(null);
       }
     };
 
     video.onerror = () => {
-      URL.revokeObjectURL(video.src);
+      logger.unregisterBlobUrl(_audioSrcUrl);
+      URL.revokeObjectURL(_audioSrcUrl);
       resolve(null);
     };
   });
@@ -578,6 +584,7 @@ export const extractFramesForAnalysis = async (
   return new Promise((resolve, reject) => {
     const video = document.createElement('video');
     const objectUrl = URL.createObjectURL(videoBlob);
+    logger.registerBlobUrl(objectUrl, 'video', 'shoppingScriptService:extractFramesForAnalysis');
     video.preload = 'auto';
     video.muted = true;
     video.src = objectUrl;
@@ -597,6 +604,7 @@ export const extractFramesForAnalysis = async (
 
       const captureNext = () => {
         if (currentIndex >= timestamps.length) {
+          logger.unregisterBlobUrl(objectUrl);
           URL.revokeObjectURL(objectUrl);
           resolve(frames);
           return;
@@ -620,6 +628,7 @@ export const extractFramesForAnalysis = async (
     };
 
     video.onerror = () => {
+      logger.unregisterBlobUrl(objectUrl);
       URL.revokeObjectURL(objectUrl);
       reject(new Error('프레임 추출 실패'));
     };

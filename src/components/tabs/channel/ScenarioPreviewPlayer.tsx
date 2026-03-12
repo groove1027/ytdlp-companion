@@ -14,6 +14,7 @@ import type {
 } from '../../../types';
 import { showToast } from '../../../stores/uiStore';
 import PreviewNarrationPanel, { type TtsEntry } from './PreviewNarrationPanel';
+import { logger } from '../../../services/LoggerService';
 
 // ═══════════════════════════════════════
 // 유틸리티
@@ -249,7 +250,7 @@ const ScenarioPreviewPlayer: React.FC<Props> = ({
     if (!video || !scene) return;
     video.currentTime = scene.startSec;
     sceneEndRef.current = scene.endSec;
-    video.play().catch(() => {});
+    video.play().catch((e) => { logger.trackSwallowedError('ScenarioPreviewPlayer:play', e); });
     setIsPlaying(true);
   }, [scene]);
 
@@ -266,13 +267,13 @@ const ScenarioPreviewPlayer: React.FC<Props> = ({
   const prevScene = useCallback(() => {
     const newIdx = Math.max(0, currentIdx - 1);
     seekToScene(newIdx);
-    if (isPlaying) videoRef.current?.play().catch(() => {});
+    if (isPlaying) videoRef.current?.play().catch((e) => { logger.trackSwallowedError('ScenarioPreviewPlayer:prevScene/play', e); });
   }, [currentIdx, seekToScene, isPlaying]);
 
   const nextScene = useCallback(() => {
     const newIdx = Math.min(orderedScenes.length - 1, currentIdx + 1);
     seekToScene(newIdx);
-    if (isPlaying) videoRef.current?.play().catch(() => {});
+    if (isPlaying) videoRef.current?.play().catch((e) => { logger.trackSwallowedError('ScenarioPreviewPlayer:nextScene/play', e); });
   }, [currentIdx, orderedScenes.length, seekToScene, isPlaying]);
 
   // Time tracking + auto-advance (ref 기반으로 stale closure 방지)
@@ -335,7 +336,7 @@ const ScenarioPreviewPlayer: React.FC<Props> = ({
       try {
         const srcStream = (exportVideo as unknown as { captureStream: () => MediaStream }).captureStream();
         srcStream.getAudioTracks().forEach(t => canvasStream.addTrack(t));
-      } catch { /* 오디오 없이 진행 */ }
+      } catch (e) { logger.trackSwallowedError('ScenarioPreviewPlayer:export/captureAudio', e); }
 
       // MP4 우선, WebM 폴백
       const mimeType = MediaRecorder.isTypeSupported('video/mp4; codecs=avc1,mp4a.40.2')
@@ -431,7 +432,7 @@ const ScenarioPreviewPlayer: React.FC<Props> = ({
     if (isPlaying && tts) {
       audio.src = tts.audioUrl;
       audio.currentTime = 0;
-      audio.play().catch(() => {});
+      audio.play().catch((e) => { logger.trackSwallowedError('ScenarioPreviewPlayer:ttsPlay', e); });
     } else {
       audio.pause();
     }
@@ -666,7 +667,7 @@ const ScenarioPreviewPlayer: React.FC<Props> = ({
                       isPast={displayIdx < currentIdx}
                       onClick={() => {
                         seekToScene(displayIdx);
-                        if (isPlaying) videoRef.current?.play().catch(() => {});
+                        if (isPlaying) videoRef.current?.play().catch((e) => { logger.trackSwallowedError('ScenarioPreviewPlayer:sceneClick/play', e); });
                       }}
                     />
                   );
@@ -687,7 +688,7 @@ const ScenarioPreviewPlayer: React.FC<Props> = ({
             onTtsGenerated={handleTtsGenerated}
             onSeekToScene={(idx) => {
               seekToScene(idx);
-              if (isPlaying) videoRef.current?.play().catch(() => {});
+              if (isPlaying) videoRef.current?.play().catch((e) => { logger.trackSwallowedError('ScenarioPreviewPlayer:narrationSeek/play', e); });
             }}
           />
         </div>

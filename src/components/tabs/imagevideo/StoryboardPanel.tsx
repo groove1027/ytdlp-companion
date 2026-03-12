@@ -887,7 +887,7 @@ const StoryboardPanel: React.FC = () => {
       globalAudioRef.current.onloadedmetadata = () => setGlobalDuration(globalAudioRef.current!.duration);
       globalAudioRef.current.onended = () => { setIsGlobalPlaying(false); setGlobalTime(0); cancelAnimationFrame(globalAnimRef.current); };
     }
-    globalAudioRef.current.play().then(() => { setIsGlobalPlaying(true); startGlobalTick(); }).catch(() => {});
+    globalAudioRef.current.play().then(() => { setIsGlobalPlaying(true); startGlobalTick(); }).catch((e) => { logger.trackSwallowedError('StoryboardPanel:globalPlay', e); });
   }, [config?.mergedAudioUrl, isGlobalPlaying, startGlobalTick]);
 
   const seekGlobalTo = useCallback((clientX: number) => {

@@ -256,7 +256,7 @@ const LyricsTab: React.FC = () => {
               </div>
               <pre className="text-sm text-gray-300 whitespace-pre-wrap font-sans leading-relaxed max-h-48 overflow-y-auto">{lr.text}</pre>
               <div className="flex justify-end gap-2">
-                <button type="button" onClick={() => navigator.clipboard.writeText(lr.text).then(() => showToast('클립보드에 복사되었습니다.')).catch(() => {})}
+                <button type="button" onClick={() => navigator.clipboard.writeText(lr.text).then(() => showToast('클립보드에 복사되었습니다.')).catch((e) => { logger.trackSwallowedError('MusicStudio:copyLyrics/clipboard', e); })}
                   className="px-3 py-1 rounded text-xs bg-gray-800 text-gray-400 hover:text-white border border-gray-700 hover:border-gray-500 transition-colors">📋 복사</button>
                 <button type="button" onClick={() => handleApply(lr)}
                   className="px-3 py-1 rounded text-xs bg-purple-600/20 text-purple-300 hover:bg-purple-600/40 border border-purple-500/30 transition-colors">🎵 적용</button>
@@ -662,7 +662,7 @@ const GenerateTab: React.FC = () => {
         if (lr.text) setPrompt(lr.text);
         if (lr.title) setTitle(lr.title);
         setMusicType('vocal');
-      } catch { /* ignore */ }
+      } catch (e) { logger.trackSwallowedError('MusicStudio:applyLyrics/parse', e); }
       sessionStorage.removeItem('SUNO_APPLY_LYRICS');
     }
   }, []);
@@ -714,7 +714,7 @@ const GenerateTab: React.FC = () => {
     try {
       const boosted = await boostStyle(builtStyle);
       setCustomTags(boosted);
-    } catch { /* ignore */ }
+    } catch (e) { logger.trackSwallowedError('MusicStudio:handleStyleBoost', e); }
     finally { setIsBoosting(false); }
   }, [builtStyle, isBoosting]);
 
@@ -800,7 +800,7 @@ const GenerateTab: React.FC = () => {
 
           allResults.push(result);
           completed++;
-        } catch { failed++; }
+        } catch (e) { logger.trackSwallowedError('MusicStudio:handleGenerate/processOne', e); failed++; }
         setBatchStatus({ completed, failed, total: count });
         setProgress(Math.round(((completed + failed) / count) * 100));
       };

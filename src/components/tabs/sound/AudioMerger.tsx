@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useRef, useCallback, useEffect } from 'react';
+import { logger } from '../../../services/LoggerService';
 import { useSoundStudioStore, registerAudio, unregisterAudio } from '../../../stores/soundStudioStore';
 import { useProjectStore } from '../../../stores/projectStore';
 import { generateSupertonicTTS, mergeAudioFiles } from '../../../services/ttsService';
@@ -100,7 +101,9 @@ async function normalizeLufs(audioUrl: string, targetLufs: number, truePeakDbtp:
     }
 
     const wavBlob = audioBufferToWav(buffer);
-    return URL.createObjectURL(wavBlob);
+    const normalizedUrl = URL.createObjectURL(wavBlob);
+    logger.registerBlobUrl(normalizedUrl, 'audio', 'AudioMerger:normalizeLufs');
+    return normalizedUrl;
   } finally {
     await ctx.close();
   }
@@ -202,14 +205,14 @@ const AudioMerger: React.FC = () => {
         const merged = await mergeAudioFiles(allUrls);
         // 이전 blob URL 해제 후 새 URL 설정
         const prevUrl = useSoundStudioStore.getState().mergedAudioUrl;
-        if (prevUrl?.startsWith('blob:')) URL.revokeObjectURL(prevUrl);
+        if (prevUrl?.startsWith('blob:')) { logger.unregisterBlobUrl(prevUrl); URL.revokeObjectURL(prevUrl); }
 
         // LUFS 정규화 적용
         let finalMerged = merged;
         if (lufsEnabled) {
           const preset = LUFS_PRESETS[lufsPreset];
           finalMerged = await normalizeLufs(merged, preset.targetLufs, preset.truePeakDbtp);
-          if (finalMerged !== merged && merged.startsWith('blob:')) URL.revokeObjectURL(merged);
+          if (finalMerged !== merged && merged.startsWith('blob:')) { logger.unregisterBlobUrl(merged); URL.revokeObjectURL(merged); }
           setLufsApplied(true);
         } else {
           setLufsApplied(false);
@@ -398,7 +401,7 @@ const AudioMerger: React.FC = () => {
                       if (normalized !== mergedAudioUrl) {
                         const prevUrl = mergedAudioUrl;
                         setMergedAudio(normalized);
-                        if (prevUrl.startsWith('blob:')) URL.revokeObjectURL(prevUrl);
+                        if (prevUrl.startsWith('blob:')) { logger.unregisterBlobUrl(prevUrl); URL.revokeObjectURL(prevUrl); }
                       }
                       setLufsApplied(true);
                     } finally {

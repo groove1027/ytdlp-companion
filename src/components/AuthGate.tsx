@@ -4,6 +4,7 @@
  * Google / 카카오 / 네이버 소셜 로그인 지원
  */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { logger } from '../services/LoggerService';
 import {
   isFirebaseConfigured,
   setupRecaptcha,
@@ -64,7 +65,7 @@ const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
         if (c.kakao?.authUrl) u.kakao = c.kakao.authUrl;
         if (c.naver?.authUrl) u.naver = c.naver.authUrl;
         setOauthUrls(u);
-      }).catch(() => {});
+      }).catch((e) => { logger.trackSwallowedError('AuthGate:loadOAuthUrls', e); });
 
     const p = new URLSearchParams(window.location.search);
     const code = p.get('code'), state = p.get('state');

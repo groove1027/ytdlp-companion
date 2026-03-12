@@ -8,21 +8,21 @@ import { logger } from '../LoggerService';
 // [NEW] Robust JSON Extraction — handles thinking model markdown output
 export const extractJsonFromText = (text: string): string | null => {
     // 1. Already valid JSON
-    try { JSON.parse(text); return text; } catch {}
+    try { JSON.parse(text); return text; } catch (e) { logger.trackSwallowedError('ScriptAnalysis:extractJsonFromText/direct', e); }
     // 2. Extract from markdown code blocks: ```json ... ``` or ``` ... ```
     const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
     if (codeBlockMatch) {
-        try { JSON.parse(codeBlockMatch[1].trim()); return codeBlockMatch[1].trim(); } catch {}
+        try { JSON.parse(codeBlockMatch[1].trim()); return codeBlockMatch[1].trim(); } catch (e) { logger.trackSwallowedError('ScriptAnalysis:extractJsonFromText/codeBlock', e); }
     }
     // 3. Find JSON object in text
     const objMatch = text.match(/(\{[\s\S]*\})/);
     if (objMatch) {
-        try { JSON.parse(objMatch[1]); return objMatch[1]; } catch {}
+        try { JSON.parse(objMatch[1]); return objMatch[1]; } catch (e) { logger.trackSwallowedError('ScriptAnalysis:extractJsonFromText/objMatch', e); }
     }
     // 4. Find JSON array in text
     const arrMatch = text.match(/(\[[\s\S]*\])/);
     if (arrMatch) {
-        try { JSON.parse(arrMatch[1]); return arrMatch[1]; } catch {}
+        try { JSON.parse(arrMatch[1]); return arrMatch[1]; } catch (e) { logger.trackSwallowedError('ScriptAnalysis:extractJsonFromText/arrMatch', e); }
     }
     return null;
 };

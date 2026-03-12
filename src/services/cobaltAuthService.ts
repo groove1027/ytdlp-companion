@@ -75,7 +75,7 @@ function solveTurnstile(sitekey: string): Promise<string> {
 
     let widgetId: string;
     const cleanup = () => {
-      try { w.turnstile?.remove(widgetId); } catch { /* 무시 */ }
+      try { w.turnstile?.remove(widgetId); } catch (e) { logger.trackSwallowedError('CobaltAuthService:cleanup/turnstileRemove', e); }
       container.remove();
     };
 
@@ -390,7 +390,7 @@ export async function refreshCobaltInstances(): Promise<number> {
           // sitekey 없으면 비인증 인스턴스로 추가
           fresh.push({ api: apiUrl, sitekey: '', noAuth: true });
         }
-      } catch { /* skip */ }
+      } catch (e) { logger.trackSwallowedError('CobaltAuthService:refreshInstances/parse', e); }
     }
 
     if (fresh.length > 0) {

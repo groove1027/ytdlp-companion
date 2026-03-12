@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useMemo } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ScatterChart, Scatter, ReferenceLine, Legend, LineChart, Line } from 'recharts';
+import { logger } from '../../../services/LoggerService';
 import { useChannelAnalysisStore } from '../../../stores/channelAnalysisStore';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
@@ -272,7 +273,7 @@ const KeywordLab: React.FC = () => {
   // ── 태그 복사 ──
   const handleCopyTags = useCallback(async () => {
     const text = tags.map(t => t.tag).join(', ');
-    try { await navigator.clipboard.writeText(text); } catch { /* fallback */ }
+    try { await navigator.clipboard.writeText(text); } catch (e) { logger.trackSwallowedError('KeywordLab:copyTags/clipboard', e); }
     showToast('클립보드에 복사되었습니다.');
   }, [tags]);
 

@@ -99,9 +99,12 @@ async function pollKieTranscriptionTask(
   }
 ): Promise<WhisperTranscriptResult> {
   const { signal, onProgress, maxAttempts = 120 } = options || {};
+  const opId = `pollKieTranscriptionTask-${taskId}`;
+  logger.startAsyncOp(opId, 'pollKieTranscriptionTask', taskId);
 
   logger.info('[STT] 폴링 시작', { taskId });
 
+  try {
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     if (signal?.aborted) throw new Error('전사가 취소되었습니다.');
 
@@ -143,7 +146,9 @@ async function pollKieTranscriptionTask(
       } else {
         parsed = resultJson;
       }
-      return parseTranscriptionResult(parsed);
+      const result = parseTranscriptionResult(parsed);
+      logger.endAsyncOp(opId, 'completed', `segments=${result.segments.length}, lang=${result.language}`);
+      return result;
     }
 
     if (state === 'fail') {
@@ -155,7 +160,13 @@ async function pollKieTranscriptionTask(
     onProgress?.(`전사 중... (${attempt + 1}/${maxAttempts})`);
   }
 
+  logger.endAsyncOp(opId, 'failed', `전사 시간 초과 (${maxAttempts}회 폴링 실패)`);
   throw new Error(`전사 시간 초과 (${maxAttempts}회 폴링 실패)`);
+  } catch (err: unknown) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    if (!errMsg.includes('시간 초과')) logger.endAsyncOp(opId, 'failed', errMsg);
+    throw err;
+  }
 }
 
 /**

@@ -1,5 +1,6 @@
 import React, { useMemo, useRef, useCallback, useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
+import { logger } from '../../../services/LoggerService';
 import { useProjectStore } from '../../../stores/projectStore';
 import { useSoundStudioStore } from '../../../stores/soundStudioStore';
 import { useEditRoomStore } from '../../../stores/editRoomStore';
@@ -151,7 +152,7 @@ const MiniWaveformTrack: React.FC<{ audioUrl: string; width: number; height: num
         }
         ctx.globalAlpha = 1;
       })
-      .catch(() => {})
+      .catch((e) => { logger.trackSwallowedError('VisualTimeline:WaveformCanvas/decode', e); })
       .finally(() => { audioCtx.close(); });
   }, [audioUrl, width, height, color]);
 
@@ -943,7 +944,7 @@ const VisualTimeline: React.FC = () => {
     audio.loop = true;
     // BGM 오디오 파일 내 재생 위치 = 타임라인 위치 - BGM 시작 오프셋
     audio.currentTime = seekTime - bgmStart;
-    audio.play().catch(() => {});
+    audio.play().catch((e) => { logger.trackSwallowedError('VisualTimeline:bgmSeekPlay', e); });
     bgmAudioRef.current = audio;
   }, []);
 

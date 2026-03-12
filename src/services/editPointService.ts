@@ -7,6 +7,7 @@ import { EdlEntry } from '../types';
 import { evolinkChat } from './evolinkService';
 import { extractFramesFromVideo } from './gemini/videoAnalysis';
 import { formatSrtTime } from './srtService';
+import { logger } from './LoggerService';
 
 /**
  * 잘린 JSON 응답에서 유효한 entries를 복구
@@ -17,7 +18,7 @@ function recoverTruncatedJson(content: string): { entries: Record<string, unknow
   try {
     const parsed = JSON.parse(content);
     if (parsed.entries) return parsed;
-  } catch { /* 잘린 JSON이므로 파싱 실패 예상 */ }
+  } catch (e) { logger.trackSwallowedError('EditPointService:recoverTruncatedJson/parse', e); }
 
   // 2. 마지막 완전한 } 를 찾아서 배열 닫기 시도
   const entries: Record<string, unknown>[] = [];
@@ -27,7 +28,7 @@ function recoverTruncatedJson(content: string): { entries: Record<string, unknow
     try {
       const entry = JSON.parse(match[0]);
       entries.push(entry);
-    } catch { /* 불완전한 entry 건너뜀 */ }
+    } catch (e) { logger.trackSwallowedError('EditPointService:recoverTruncatedJson/entry', e); }
   }
 
   return { entries };
@@ -227,7 +228,8 @@ Each entry: { "order", "narrationText", "sourceId" (format "S-XX"), "sourceDescr
   try {
     const parsed = JSON.parse(jsonMatch[1]);
     return parsed.entries || [];
-  } catch {
+  } catch (e) {
+    logger.trackSwallowedError('EditPointService:parseEditTableJson', e);
     // 잘린 JSON이면 복구 시도
     const recovered = recoverTruncatedJson(jsonMatch[1]);
     if (recovered.entries.length > 0) return recovered.entries;
@@ -324,16 +326,16 @@ function compressImage(dataUrl: string, maxW: number, maxH: number, quality: num
  */
 function extractJsonFromResponse(content: string): Record<string, unknown> {
   // 1. 직접 파싱
-  try { return JSON.parse(content); } catch { /* continue */ }
+  try { return JSON.parse(content); } catch (e) { logger.trackSwallowedError('EditPointService:extractJsonFromResponse/directParse', e); }
   // 2. ```json ... ``` 블록
   const codeBlock = content.match(/```json\s*([\s\S]*?)```/);
   if (codeBlock) {
-    try { return JSON.parse(codeBlock[1]); } catch { /* continue */ }
+    try { return JSON.parse(codeBlock[1]); } catch (e) { logger.trackSwallowedError('EditPointService:extractJsonFromResponse/codeBlock', e); }
   }
   // 3. { ... } 패턴
   const jsonMatch = content.match(/\{[\s\S]*\}/);
   if (jsonMatch) {
-    try { return JSON.parse(jsonMatch[0]); } catch { /* continue */ }
+    try { return JSON.parse(jsonMatch[0]); } catch (e) { logger.trackSwallowedError('EditPointService:extractJsonFromResponse/jsonMatch', e); }
   }
   return {};
 }
@@ -412,7 +414,8 @@ Return ONLY JSON: {"refinedStart":"MM:SS.sss","refinedEnd":"MM:SS.sss","confiden
     const result = extractJsonFromResponse(content);
     if (result.refinedStart || result.refinedEnd) return result;
     return null;
-  } catch {
+  } catch (e) {
+    logger.trackSwallowedError('EditPointService:attemptTextOnlyRefine', e);
     return null;
   }
 }

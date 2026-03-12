@@ -15,6 +15,7 @@ import CharacterUploadPanel from '../../CharacterUploadPanel';
 import CharacterLibraryModal from '../../CharacterLibraryModal';
 import { saveCharacterToLibrary } from '../../../services/storageService';
 import { showToast } from '../../../stores/uiStore';
+import { logger } from '../../../services/LoggerService';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
 
@@ -210,7 +211,7 @@ const SetupPanel: React.FC = () => {
     });
     persistImage(imageBase64).then(url => {
       useImageVideoStore.getState().updateCharacter(charId, { imageUrl: url });
-    }).catch(() => {});
+    }).catch((e) => { logger.trackSwallowedError('SetupPanel:addCharacter/persistImage', e); });
 
     // [DISABLED] Remove.bg 배경 제거 비활성화
     const finalSrc = imageBase64;
@@ -285,7 +286,7 @@ const SetupPanel: React.FC = () => {
     try {
       await saveCharacterToLibrary({ id: `char-lib-${Date.now()}`, imageBase64: char.imageBase64, imageUrl: char.imageUrl, label: char.label, analysisResult: char.analysisResult, analysisStyle: char.analysisStyle, analysisCharacter: char.analysisCharacter, savedAt: Date.now() });
       showToast(`"${char.label}" 저장됨`);
-    } catch { showToast('저장 실패'); }
+    } catch (e) { logger.trackSwallowedError('SetupPanel:saveCharacterToLibrary', e); showToast('저장 실패'); }
   }, []);
 
   const handleLoadFromLibrary = useCallback((saved: SavedCharacter) => {

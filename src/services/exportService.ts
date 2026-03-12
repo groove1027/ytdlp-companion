@@ -1,4 +1,5 @@
 
+import { logger } from './LoggerService';
 import { VideoFormat, ExportManifest } from '../types';
 import type { Scene, Thumbnail } from '../types';
 import { useProjectStore } from '../stores/projectStore';
@@ -36,7 +37,7 @@ export const downloadImages = async () => {
             try {
                 const res = await fetch(s.imageUrl!);
                 if (res.ok) blob = await res.blob();
-            } catch { /* CORS 차단 — 프록시 시도 */ }
+            } catch (e) { logger.trackSwallowedError('ExportService:downloadImages/directFetch', e); }
             // [FIX #150] 2차: Cloudinary 프록시 경유
             if (!blob) {
                 try {
@@ -59,9 +60,12 @@ export const downloadImages = async () => {
 
     const content = await zip.generateAsync({ type: "blob" });
     const link = document.createElement('a');
-    link.href = URL.createObjectURL(content);
+    const _imgZipUrl = URL.createObjectURL(content);
+    logger.registerBlobUrl(_imgZipUrl, 'other', 'exportService:downloadImages');
+    link.href = _imgZipUrl;
     link.download = `images_${Date.now()}.zip`;
     link.click();
+    logger.unregisterBlobUrl(_imgZipUrl);
 
     useUIStore.getState().setToast(null);
 };
@@ -143,9 +147,12 @@ export const downloadVideos = async () => {
 
     const content = await zip.generateAsync({ type: "blob" });
     const link = document.createElement('a');
-    link.href = URL.createObjectURL(content);
+    const _vidZipUrl = URL.createObjectURL(content);
+    logger.registerBlobUrl(_vidZipUrl, 'other', 'exportService:downloadVideos');
+    link.href = _vidZipUrl;
     link.download = `videos_complete_${Date.now()}.zip`;
     link.click();
+    logger.unregisterBlobUrl(_vidZipUrl);
 
     useUIStore.getState().setToast(null);
 };
@@ -180,9 +187,12 @@ export const downloadThumbnails = async () => {
 
     const content = await zip.generateAsync({ type: "blob" });
     const link = document.createElement('a');
-    link.href = URL.createObjectURL(content);
+    const _thumbZipUrl = URL.createObjectURL(content);
+    logger.registerBlobUrl(_thumbZipUrl, 'other', 'exportService:downloadThumbnails');
+    link.href = _thumbZipUrl;
     link.download = `project_thumbnails_${Date.now()}.zip`;
     link.click();
+    logger.unregisterBlobUrl(_thumbZipUrl);
 
     useUIStore.getState().setToast(null);
 };
@@ -258,10 +268,13 @@ export const exportProjectHtml = async () => {
 
         const blob = new Blob([htmlContent], { type: 'text/html' });
         const link = document.createElement('a');
-        link.href = URL.createObjectURL(blob);
+        const _htmlUrl = URL.createObjectURL(blob);
+        logger.registerBlobUrl(_htmlUrl, 'other', 'exportService:exportProjectHtml');
+        link.href = _htmlUrl;
         const safeTitle = displayTitle.replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').substring(0, 30);
         link.download = `${safeTitle}_Project_Export.html`;
         link.click();
+        logger.unregisterBlobUrl(_htmlUrl);
 
     } catch(e) {
         console.error("Export failed", e);
@@ -374,11 +387,14 @@ export const exportProjectZip = async () => {
     const blob = await zip.generateAsync({ type: 'blob' });
 
     const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
+    const _zipUrl = URL.createObjectURL(blob);
+    logger.registerBlobUrl(_zipUrl, 'other', 'exportService:exportProjectZip');
+    link.href = _zipUrl;
     const safeTitle = manifest.title.replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').substring(0, 30);
     link.download = `${safeTitle}_Project.zip`;
     link.click();
-    URL.revokeObjectURL(link.href);
+    logger.unregisterBlobUrl(_zipUrl);
+    URL.revokeObjectURL(_zipUrl);
 
   } catch (e) {
     console.error('[ZipExport] failed', e);
@@ -463,7 +479,7 @@ export const exportProjectById = async (projectId: string): Promise<void> => {
                         const blob = await imageToBlob(s.imageUrl, maxWidth, jpegQuality);
                         scenesFolder.file(filename, blob);
                         imageFile = filename;
-                    } catch { /* skip */ }
+                    } catch (e) { logger.trackSwallowedError('ExportService:exportProjectById/imageToBlob', e); }
                 }
                 manifestScenes.push({
                     id: s.id, index: i, scriptText: s.scriptText, visualPrompt: s.visualPrompt,
@@ -483,11 +499,14 @@ export const exportProjectById = async (projectId: string): Promise<void> => {
 
             const blob = await zip.generateAsync({ type: 'blob' });
             const link = document.createElement('a');
-            link.href = URL.createObjectURL(blob);
+            const _byIdZipUrl = URL.createObjectURL(blob);
+            logger.registerBlobUrl(_byIdZipUrl, 'other', 'exportService:exportProjectById:zip');
+            link.href = _byIdZipUrl;
             const safeTitle = displayTitle.replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').substring(0, 30);
             link.download = `${safeTitle}_Project.zip`;
             link.click();
-            URL.revokeObjectURL(link.href);
+            logger.unregisterBlobUrl(_byIdZipUrl);
+            URL.revokeObjectURL(_byIdZipUrl);
         } catch (e) {
             console.error('[exportProjectById] ZIP failed', e);
             useUIStore.getState().setToast({ show: true, message: '내보내기 실패: ' + (e instanceof Error ? e.message : String(e)) });
@@ -515,11 +534,14 @@ export const exportProjectById = async (projectId: string): Promise<void> => {
 
             const blob = new Blob([htmlContent], { type: 'text/html' });
             const link = document.createElement('a');
-            link.href = URL.createObjectURL(blob);
+            const _byIdHtmlUrl = URL.createObjectURL(blob);
+            logger.registerBlobUrl(_byIdHtmlUrl, 'other', 'exportService:exportProjectById:html');
+            link.href = _byIdHtmlUrl;
             const safeTitle = displayTitle.replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').substring(0, 30);
             link.download = `${safeTitle}_Project_Export.html`;
             link.click();
-            URL.revokeObjectURL(link.href);
+            logger.unregisterBlobUrl(_byIdHtmlUrl);
+            URL.revokeObjectURL(_byIdHtmlUrl);
         } catch (e) {
             console.error('[exportProjectById] HTML failed', e);
             useUIStore.getState().setToast({ show: true, message: '내보내기 실패: ' + (e instanceof Error ? e.message : String(e)) });

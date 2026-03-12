@@ -1,3 +1,4 @@
+import { logger } from './LoggerService';
 const AUTH_TOKEN_KEY = 'auth_token';
 const AUTH_USER_KEY = 'auth_user';
 
@@ -38,7 +39,7 @@ export const getSavedUser = (): AuthUser | null => {
   try {
     const raw = localStorage.getItem(AUTH_USER_KEY) || sessionStorage.getItem(AUTH_USER_KEY);
     return raw ? JSON.parse(raw) : null;
-  } catch { return null; }
+  } catch (e) { logger.trackSwallowedError('AuthService:getSavedUser', e); return null; }
 };
 
 /** 저장된 사용자 정보 업데이트 (이름 변경 등) */
@@ -145,7 +146,7 @@ export const logout = async (): Promise<void> => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token }),
-    }).catch(() => {});
+    }).catch((e) => { logger.trackSwallowedError('AuthService:logout/fetch', e); });
   }
   clearAuth();
 };

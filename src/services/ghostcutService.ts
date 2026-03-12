@@ -252,7 +252,7 @@ const pollResult = async (
         try {
           const errData = await response.json() as PollResult;
           if (errData.message) serverMsg = errData.message;
-        } catch { /* 본문 파싱 실패 무시 */ }
+        } catch (e) { logger.trackSwallowedError('GhostcutService:pollTask/parseError', e); }
 
         // KV 미바인딩 (503) — 즉시 실패 (재시도 무의미)
         if (response.status === 503 || serverMsg.includes('KV_NOT_BOUND')) {

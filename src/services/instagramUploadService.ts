@@ -233,7 +233,7 @@ export const uploadVideoToInstagram = async (opts: {
       const mediaData = await mediaRes.json();
       permalink = mediaData.permalink || '';
     }
-  } catch { /* permalink 조회 실패는 무시 */ }
+  } catch (e) { logger.trackSwallowedError('InstagramUploadService:uploadReels/permalink', e); }
 
   onProgress?.(100);
   logger.success('[Instagram] Reels 게시 완료', { mediaId, permalink });

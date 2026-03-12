@@ -76,7 +76,7 @@ export const useImageVideoStore = create<ImageVideoStore>((set) => ({
   dialogueMode: false,
   targetSceneCount: null,
 
-  setActiveSubTab: (tab) => set({ activeSubTab: tab }),
+  setActiveSubTab: (tab) => { logger.trackTabVisit('image-video', tab); set({ activeSubTab: tab }); },
   setStyle: (v) => { const prev = useImageVideoStore.getState().style; logger.trackSettingChange('iv.style', prev, v); set({ style: v }); syncToProjectConfig(); },
   setCustomStyleNote: (v) => { set({ customStyleNote: v }); syncToProjectConfig(); },
   setEnableWebSearch: (v) => { const prev = useImageVideoStore.getState().enableWebSearch; logger.trackSettingChange('iv.webSearch', prev, v); set({ enableWebSearch: v }); syncToProjectConfig(); },

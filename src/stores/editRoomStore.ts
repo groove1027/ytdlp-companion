@@ -26,6 +26,7 @@ import { splitAudioAtTime } from '../services/ttsService';
 import { evolinkChat } from '../services/evolinkService';
 import { transcribeAudio } from '../services/transcriptionService';
 import type { WhisperWord } from '../types';
+import { logger } from '../services/LoggerService';
 
 type GlobalPanel = 'subtitle-style' | 'bgm' | 'export' | null;
 
@@ -890,8 +891,8 @@ export const useEditRoomStore = create<EditRoomStore>((set, get) => ({
 
   setExpandedSceneId: (id) => set({ expandedSceneId: id }),
   setNavigateToSceneFn: (fn) => set({ _navigateToSceneFn: fn }),
-  setEditRoomSubTab: (tab) => set({ editRoomSubTab: tab }),
-  setActiveGlobalPanel: (panel) => set({ activeGlobalPanel: panel }),
+  setEditRoomSubTab: (tab) => { logger.trackTabVisit('edit-room', tab); set({ editRoomSubTab: tab }); },
+  setActiveGlobalPanel: (panel) => { logger.trackTabVisit('edit-room-panel', panel || 'closed'); set({ activeGlobalPanel: panel }); },
   setFfmpegLoaded: (v) => set({ ffmpegLoaded: v }),
   setIsExporting: (v) => set({ isExporting: v }),
   setExportProgress: (progress) => set({ exportProgress: progress }),

@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useRef, Suspense, lazy } from 'react';
+import { logger } from '../../../services/LoggerService';
 import { useSoundStudioStore, registerAudio, unregisterAudio } from '../../../stores/soundStudioStore';
 import { useProjectStore } from '../../../stores/projectStore';
 import { useCostStore } from '../../../stores/costStore';
@@ -95,7 +96,7 @@ const NarrationView: React.FC = () => {
           const decoded = await ctx.decodeAudioData(buf);
           realDuration = decoded.duration;
           ctx.close();
-        } catch { /* 디코딩 실패 시 duration 없이 진행 */ }
+        } catch (e) { logger.trackSwallowedError('NarrationView:generateTTS/decodeDuration', e); /* 디코딩 실패 시 duration 없이 진행 */ }
 
         updateLine(lineId, {
           audioUrl: result.audioUrl,
@@ -174,14 +175,14 @@ const NarrationView: React.FC = () => {
               const buf = await resp.arrayBuffer();
               const decoded = await ctx.decodeAudioData(buf);
               duration = decoded.duration;
-            } catch { /* 디코딩 실패 시 기존 duration 사용 */ }
+            } catch (e) { logger.trackSwallowedError('NarrationView:buildTimeline/decodeDuration', e); /* 디코딩 실패 시 기존 duration 사용 */ }
           }
           const startTime = currentTime;
           const endTime = currentTime + duration;
           currentTime = endTime;
           timedLines.push({ ...line, duration, startTime, endTime });
         }
-        try { ctx.close(); } catch { /* 무시 */ }
+        try { ctx.close(); } catch (e) { logger.trackSwallowedError('NarrationView:buildTimeline/ctxClose', e); }
         setLines(timedLines);
 
         // Scene 타이밍 동기화

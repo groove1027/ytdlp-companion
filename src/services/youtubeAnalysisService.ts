@@ -227,7 +227,7 @@ const throwIfApiKeyError = (status: number, body: string): void => {
 const extractChannelIdentifier = (url: string): { type: 'id' | 'handle' | 'custom' | 'video' | 'shorts'; value: string } | null => {
     // URL 디코딩 (한글 등 %XX 인코딩 처리)
     let decoded = url.trim();
-    try { decoded = decodeURIComponent(decoded); } catch { /* 디코딩 실패 시 원본 사용 */ }
+    try { decoded = decodeURIComponent(decoded); } catch (e) { logger.trackSwallowedError('YoutubeAnalysisService:extractChannelIdentifier/decode', e); }
 
     // 프로토콜 없으면 자동 보정 (youtube.com/... → https://youtube.com/...)
     if (/^(m\.)?youtube\.com/i.test(decoded)) {

@@ -14,6 +14,7 @@ import {
 } from '../types';
 import type { MusicAnalysisResult } from '../services/musicService';
 import { saveMusicGroup, getAllSavedMusic, deleteSavedMusic } from '../services/storageService';
+import { logger } from '../services/LoggerService';
 
 // --- 전역 오디오 제어 (Zustand 상태 외부 — 리렌더 방지) ---
 const _activeAudios = new Set<HTMLAudioElement>();
@@ -364,7 +365,7 @@ export const useSoundStudioStore = create<SoundStudioStore>((set) => ({
   setIsGeneratingMusic: (v) => set({ isGeneratingMusic: v }),
 
   // --- 뮤직 스튜디오 탭 ---
-  setMusicStudioTab: (tab) => set({ musicStudioTab: tab }),
+  setMusicStudioTab: (tab) => { logger.trackTabVisit('music-studio', tab); set({ musicStudioTab: tab }); },
 
   // --- 가사 에디터 ---
   setLyricsPrompt: (prompt) => set({ lyricsPrompt: prompt }),
@@ -433,7 +434,7 @@ export const useSoundStudioStore = create<SoundStudioStore>((set) => ({
   })),
 
   // --- UI ---
-  setActiveSubTab: (tab) => set({ activeSubTab: tab }),
+  setActiveSubTab: (tab) => { logger.trackTabVisit('sound-studio', tab); set({ activeSubTab: tab }); },
 
   reset: () => set({ ...INITIAL_STATE }),
 }));

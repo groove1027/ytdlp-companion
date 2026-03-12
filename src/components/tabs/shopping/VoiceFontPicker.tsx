@@ -8,6 +8,7 @@ import { getAvailableVoices } from '../../../services/ttsService';
 import type { VoiceOption } from '../../../services/ttsService';
 import { generateSpeech as generateSupertonicSpeech } from '../../../services/supertonicService';
 import { getCachedPreview, cachePreview } from '../../../services/ttsPreviewCache';
+import { logger } from '../../../services/LoggerService';
 import { SUBTITLE_TEMPLATES, SUBTITLE_CAT_TABS } from '../../../constants/subtitleTemplates';
 import type { SubtitleCategoryId } from '../../../constants/subtitleTemplates';
 import type { TTSEngine, ShoppingCTAPreset, SubtitleTemplate } from '../../../types';
@@ -206,7 +207,7 @@ const TTSVoiceModal: React.FC<TTSVoiceModalProps> = ({
       if (currentPlayId !== playIdRef.current) return;
 
       // 캐시 저장 (fire-and-forget)
-      cachePreview(cacheKey, audioUrl).catch(() => {});
+      cachePreview(cacheKey, audioUrl).catch((e) => { logger.trackSwallowedError('VoiceFontPicker:cachePreview', e); });
       playAudioUrl(audioUrl, id);
     } catch {
       // 에러 시 무시
@@ -601,7 +602,7 @@ const VoiceFontPicker: React.FC<VoiceFontPickerProps> = ({ showCta = true }) => 
       fetchTypecastVoices().then(voices => {
         const voice = voices.find(v => v.voice_id === ttsVoiceId);
         if (voice) setDisplayVoiceName(voice.name);
-      }).catch(() => {});
+      }).catch((e) => { logger.trackSwallowedError('VoiceFontPicker:fetchVoiceName', e); });
     }
   }, [ttsEngine, ttsVoiceId]);
 

@@ -18,6 +18,7 @@
 
 import { useEditRoomStore } from '../stores/editRoomStore';
 import type { TrackAudioEffect } from '../types';
+import { logger } from './LoggerService';
 
 // ─── Types ───
 export interface AudioLevels {
@@ -377,7 +378,7 @@ export function connectAudioToAnalyser(audio: HTMLAudioElement): void {
   if (audioCtx.state === 'suspended') audioCtx.resume();
 
   if (chain?.source) {
-    try { chain.source.disconnect(); } catch { /* ignore */ }
+    try { chain.source.disconnect(); } catch (e) { logger.trackSwallowedError('AudioAnalyserService:connectAudioToAnalyser/disconnect', e); }
   }
 
   const source = audioCtx.createMediaElementSource(audio);

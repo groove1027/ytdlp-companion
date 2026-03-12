@@ -3,6 +3,7 @@ import { useSoundStudioStore, registerAudio, unregisterAudio } from '../../../st
 import { audioBufferToWav } from '../../../services/ttsService';
 import { transferSoundToImageVideo } from '../../../utils/soundToImageBridge';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
+import { logger } from '../../../services/LoggerService';
 
 /* ───── 유틸 ───── */
 const fmt = (sec: number): string => {
@@ -563,7 +564,7 @@ const WaveformEditor: React.FC = () => {
         regions.push({ startTime: st, endTime: et, duration: et - st });
       }
       setSilenceRegions(regions);
-    } catch { setSilenceRegions([]); }
+    } catch (e) { logger.trackSwallowedError('WaveformEditor:detectSilence', e); setSilenceRegions([]); }
     finally { await ctx.close(); setIsDetecting(false); }
   }, [workingUrl, silenceConfig, isDetecting]);
 
@@ -767,11 +768,11 @@ const WaveformEditor: React.FC = () => {
             {beforeUrl && (
               <div className="flex items-center gap-1.5 bg-gray-800/60 rounded-lg border border-gray-700/50 px-2 py-1">
                 <div className={`flex items-center gap-1 px-1.5 py-0.5 rounded cursor-pointer text-[10px] font-bold uppercase transition-colors ${showingBefore ? 'bg-orange-600/20 text-orange-400' : 'text-gray-500 hover:text-gray-300'}`}
-                  onClick={() => { setShowingBefore(true); if (beforeAudioRef.current) { beforeAudioRef.current.src = beforeUrl; beforeAudioRef.current.play().catch(() => {}); } }}>
+                  onClick={() => { setShowingBefore(true); if (beforeAudioRef.current) { beforeAudioRef.current.src = beforeUrl; beforeAudioRef.current.play().catch((e) => { logger.trackSwallowedError('WaveformEditor:beforePlay', e); }); } }}>
                   B <span className="font-mono text-xs">{fmt(beforeDuration)}</span>
                 </div>
                 <div className={`flex items-center gap-1 px-1.5 py-0.5 rounded cursor-pointer text-[10px] font-bold uppercase transition-colors ${!showingBefore ? 'bg-green-600/20 text-green-400' : 'text-gray-500 hover:text-gray-300'}`}
-                  onClick={() => { setShowingBefore(false); if (beforeAudioRef.current) beforeAudioRef.current.pause(); if (audioRef.current) { audioRef.current.currentTime = 0; audioRef.current.play().catch(() => {}); setIsPlaying(true); } }}>
+                  onClick={() => { setShowingBefore(false); if (beforeAudioRef.current) beforeAudioRef.current.pause(); if (audioRef.current) { audioRef.current.currentTime = 0; audioRef.current.play().catch((e) => { logger.trackSwallowedError('WaveformEditor:afterPlay', e); }); setIsPlaying(true); } }}>
                   A <span className="font-mono text-xs">{fmt(totalDuration)}</span>
                 </div>
                 {beforeDuration > 0 && totalDuration > 0 && (
