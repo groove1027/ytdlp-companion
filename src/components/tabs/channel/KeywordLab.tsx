@@ -20,6 +20,7 @@ const LANG_OPTIONS = [
   { id: 'ja' as const, label: '日本語' },
   { id: 'en' as const, label: 'EN' },
 ];
+const LANG_TO_REGION: Record<string, string> = { ko: 'KR', ja: 'JP', en: 'US' };
 const DURATION_OPTIONS: { id: DurationFilter; label: string }[] = [
   { id: 'all', label: '전체' },
   { id: 'short', label: '쇼츠' },
@@ -228,7 +229,8 @@ const KeywordLab: React.FC = () => {
 
     try {
       // 1. 키워드 분석
-      const keywordResult = await searchKeyword(kw, language, 'KR');
+      const region = LANG_TO_REGION[language] || 'KR';
+      const keywordResult = await searchKeyword(kw, language, region);
       syncQuota();
 
       // 2. 연관 키워드 (쿼터 소모 없음)

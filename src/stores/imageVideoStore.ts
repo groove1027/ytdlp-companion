@@ -18,6 +18,8 @@ interface ImageVideoStore {
   dialogueTone: DialogueTone;
   referenceDialogue: string;
   dialogueMode: boolean;
+  // [#177] 목표 컷 수 — 사용자가 원하는 장면 수 오버라이드
+  targetSceneCount: number | null;
 
   setActiveSubTab: (tab: 'setup' | 'storyboard') => void;
   setStyle: (v: string) => void;
@@ -32,9 +34,10 @@ interface ImageVideoStore {
   setDialogueTone: (v: DialogueTone) => void;
   setReferenceDialogue: (v: string) => void;
   setDialogueMode: (v: boolean) => void;
+  setTargetSceneCount: (v: number | null) => void;
 
   // 프로젝트 로드/리셋 시 일괄 복원
-  restoreFromConfig: (data: { style?: string; characters?: CharacterReference[]; enableWebSearch?: boolean; isMultiCharacter?: boolean; dialogueTone?: DialogueTone; referenceDialogue?: string; dialogueMode?: boolean; customStyleNote?: string }) => void;
+  restoreFromConfig: (data: { style?: string; characters?: CharacterReference[]; enableWebSearch?: boolean; isMultiCharacter?: boolean; dialogueTone?: DialogueTone; referenceDialogue?: string; dialogueMode?: boolean; customStyleNote?: string; targetSceneCount?: number | null }) => void;
   resetStore: () => void;
 }
 
@@ -71,6 +74,7 @@ export const useImageVideoStore = create<ImageVideoStore>((set) => ({
   dialogueTone: 'none' as DialogueTone,
   referenceDialogue: '',
   dialogueMode: false,
+  targetSceneCount: null,
 
   setActiveSubTab: (tab) => set({ activeSubTab: tab }),
   setStyle: (v) => { const prev = useImageVideoStore.getState().style; logger.trackSettingChange('iv.style', prev, v); set({ style: v }); syncToProjectConfig(); },
@@ -80,6 +84,7 @@ export const useImageVideoStore = create<ImageVideoStore>((set) => ({
   setDialogueTone: (v) => { const prev = useImageVideoStore.getState().dialogueTone; logger.trackSettingChange('iv.dialogueTone', prev, v); set({ dialogueTone: v }); syncToProjectConfig(); },
   setReferenceDialogue: (v) => { set({ referenceDialogue: v }); syncToProjectConfig(); },
   setDialogueMode: (v) => { const prev = useImageVideoStore.getState().dialogueMode; logger.trackSettingChange('iv.dialogueMode', prev, v); set({ dialogueMode: v }); syncToProjectConfig(); },
+  setTargetSceneCount: (v) => { set({ targetSceneCount: v }); },
   setCharacters: (chars) => {
     set((s) => ({ characters: typeof chars === 'function' ? chars(s.characters) : chars }));
     syncToProjectConfig();
@@ -105,6 +110,7 @@ export const useImageVideoStore = create<ImageVideoStore>((set) => ({
     dialogueTone: data.dialogueTone || 'none',
     referenceDialogue: data.referenceDialogue || '',
     dialogueMode: data.dialogueMode ?? false,
+    targetSceneCount: data.targetSceneCount ?? null,
   }),
 
   // 새 프로젝트 시 초기화
@@ -118,5 +124,6 @@ export const useImageVideoStore = create<ImageVideoStore>((set) => ({
     dialogueTone: 'none' as DialogueTone,
     referenceDialogue: '',
     dialogueMode: false,
+    targetSceneCount: null,
   }),
 }));

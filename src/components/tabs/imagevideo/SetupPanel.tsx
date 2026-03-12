@@ -89,6 +89,8 @@ const SetupPanel: React.FC = () => {
   const setReferenceDialogue = useImageVideoStore((s) => s.setReferenceDialogue);
   const customStyleNote = useImageVideoStore((s) => s.customStyleNote);
   const setCustomStyleNote = useImageVideoStore((s) => s.setCustomStyleNote);
+  const targetSceneCount = useImageVideoStore((s) => s.targetSceneCount);
+  const setTargetSceneCount = useImageVideoStore((s) => s.setTargetSceneCount);
 
   const [directInputMode, setDirectInputMode] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -322,7 +324,7 @@ const SetupPanel: React.FC = () => {
         config.allowInfographics ?? false, enrichMode ? false : ss,
         config.baseAge, config.textForceLock, JSON.stringify(ctx), ctx.detectedLocale, onCost,
         config.suppressText, enrichMode ? undefined : (vf === VideoFormat.LONG ? lfs : undefined),
-        enrichMode ? existingScenes.length : ctx.estimatedSceneCount,
+        enrichMode ? existingScenes.length : (useImageVideoStore.getState().targetSceneCount ?? ctx.estimatedSceneCount),
         config.dialogueTone, // [v4.7] 대사 톤
         config.extractedCharacters || ctx.characters, // [v4.7] 캐릭터 프로필
         config.referenceDialogue // [v4.7] 참조 대사
@@ -560,7 +562,7 @@ const SetupPanel: React.FC = () => {
               <Toggle checked={config.smartSplit ?? true} onChange={(v) => updateConfig('smartSplit', v)} />
             </div>
 
-            {/* 글자수 / 예상시간 / 예상 컷수 */}
+            {/* 글자수 / 예상시간 / 예상 컷수 + 목표 컷 수 입력 */}
             {scriptText.trim() && (
               <div className="flex items-center gap-3 flex-wrap">
                 <span className="text-sm font-bold text-orange-400 bg-orange-500/10 border border-orange-500/30 px-3 py-1.5 rounded-lg">
@@ -571,6 +573,30 @@ const SetupPanel: React.FC = () => {
                     예상 약 {estimatedScenes}컷
                   </span>
                 )}
+                {/* [#177] 목표 컷 수 오버라이드 입력 */}
+                <div className="flex items-center gap-1.5">
+                  <label className="text-xs font-bold text-orange-300 whitespace-nowrap">목표 컷 수</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={30}
+                    value={targetSceneCount ?? ''}
+                    placeholder={estimatedScenes > 0 ? String(estimatedScenes) : '자동'}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      if (raw === '') { setTargetSceneCount(null); return; }
+                      const n = parseInt(raw, 10);
+                      if (!isNaN(n) && n >= 1 && n <= 30) setTargetSceneCount(n);
+                    }}
+                    className="w-16 bg-gray-900 border border-orange-500/40 rounded-lg px-2 py-1 text-sm text-orange-300 text-center placeholder-gray-600 focus:outline-none focus:border-orange-400 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                  />
+                  {targetSceneCount !== null && (
+                    <button type="button" onClick={() => setTargetSceneCount(null)}
+                      className="text-xs text-gray-500 hover:text-gray-300 transition-colors" title="자동으로 되돌리기">
+                      ✕
+                    </button>
+                  )}
+                </div>
               </div>
             )}
 
@@ -658,6 +684,42 @@ const SetupPanel: React.FC = () => {
       {/* ════════════════════════════════════════════ */}
       <div className="bg-gray-800/60 border border-gray-700 rounded-2xl p-5 space-y-4">
         <h3 className="text-base font-bold text-white">{stepBase + 1}. 생성 옵션</h3>
+
+        {/* [#177] 목표 컷 수 — 직접 입력 모드가 아닐 때 여기에 표시 */}
+        {!directInputMode && scriptText.trim() && (
+          <div className="bg-gray-900/60 border border-orange-500/20 rounded-xl px-5 py-3 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <p className="text-sm font-bold text-white whitespace-nowrap">🎯 목표 컷 수</p>
+              {estimatedScenes > 0 && (
+                <span className="text-xs text-gray-400">자동 추정: {estimatedScenes}컷</span>
+              )}
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <input
+                type="number"
+                min={1}
+                max={30}
+                value={targetSceneCount ?? ''}
+                placeholder={estimatedScenes > 0 ? String(estimatedScenes) : '자동'}
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  if (raw === '') { setTargetSceneCount(null); return; }
+                  const n = parseInt(raw, 10);
+                  if (!isNaN(n) && n >= 1 && n <= 30) setTargetSceneCount(n);
+                }}
+                className="w-16 bg-gray-900 border border-orange-500/40 rounded-lg px-2 py-1.5 text-sm text-orange-300 text-center placeholder-gray-600 focus:outline-none focus:border-orange-400 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+              />
+              {targetSceneCount !== null ? (
+                <button type="button" onClick={() => setTargetSceneCount(null)}
+                  className="text-xs text-gray-500 hover:text-gray-300 transition-colors" title="자동으로 되돌리기">
+                  ✕
+                </button>
+              ) : (
+                <span className="text-[11px] text-gray-600 whitespace-nowrap">1~30</span>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* 화면 비율 */}
         <div className="bg-gray-900/60 border border-gray-700 rounded-xl px-5 py-4">

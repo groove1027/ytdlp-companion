@@ -1071,7 +1071,10 @@ export const useEditRoomStore = create<EditRoomStore>((set, get) => ({
     for (const sceneId of state.sceneOrder) {
       const sub = updated[sceneId];
       if (!sub?.text?.trim()) continue;
+      // AI 분할 / Whisper 타이밍 계산용 (줄바꿈→공백으로 평탄화)
       const rawText = sub.text.replace(/\n/g, ' ').trim();
+      // 렌더러 전달용 (줄바꿈 보존 — subtitleRenderer가 \n으로 멀티라인 처리)
+      const preservedText = sub.text.trim();
       if (rawText.length <= cpl) continue;
 
       // ── Step 1: AI 의미 단위 분할 → 글자 위치 배열 ──
@@ -1131,12 +1134,13 @@ export const useEditRoomStore = create<EditRoomStore>((set, get) => ({
       boundaries.push(lineDuration);
 
       // 오디오 상대시간 → 절대 타임라인 시간 변환
+      // preservedText를 슬라이스하여 원본 줄바꿈(\n)을 렌더러까지 전달
       const segments: SubtitleSegment[] = [];
       let textStart = 0;
       for (let i = 0; i <= splitPoints.length; i++) {
-        const textEnd = i < splitPoints.length ? splitPoints[i] : rawText.length;
+        const textEnd = i < splitPoints.length ? splitPoints[i] : preservedText.length;
         segments.push({
-          text: rawText.slice(textStart, textEnd).trim(),
+          text: preservedText.slice(textStart, textEnd).trim(),
           startTime: sub.startTime + boundaries[i],
           endTime: sub.startTime + boundaries[i + 1],
         });

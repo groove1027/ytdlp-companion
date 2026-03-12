@@ -78,6 +78,23 @@ function buildChannelStyleSection(
 도입패턴: ${guideline.hookPattern}
 마무리패턴: ${guideline.closingPattern}`);
 
+    // #162: Style DNA layers — 채널 분석에서 추출된 추가 필드 반영
+    if (guideline.visualGuide) {
+      parts.push(`시각 스타일: ${guideline.visualGuide}`);
+    }
+    if (guideline.editGuide) {
+      parts.push(`편집 스타일: ${guideline.editGuide}`);
+    }
+    if (guideline.audioGuide) {
+      parts.push(`오디오 스타일: ${guideline.audioGuide}`);
+    }
+    if (guideline.titleFormula) {
+      parts.push(`제목 공식: ${guideline.titleFormula}`);
+    }
+    if (guideline.audienceInsight) {
+      parts.push(`시청자 인사이트: ${guideline.audienceInsight}`);
+    }
+
     // fullGuidelineText에 상세 분석이 있으면 포함 (최대 2000자)
     if (guideline.fullGuidelineText && guideline.fullGuidelineText.length > 50) {
       const trimmed = guideline.fullGuidelineText.slice(0, 2000);
@@ -482,6 +499,15 @@ ${instinctPrompt}
     }
   }, [instinctIds, targetCharCount, contentFormat, shortsSeconds, channelGuideline, channelScripts, benchmarkScript, startGeneration, finishGeneration, setGeneratedScript, setFinalScript]);
 
+  // #158: 빌트인 + 영상분석 스타일 병합
+  const allStylePresets: ScriptStylePreset[] = useMemo(() => {
+    const vaPresets: ScriptStylePreset[] = videoAnalysisStyles.map(va => ({
+      id: va.id, name: va.name, icon: va.icon,
+      description: va.description, systemPrompt: va.systemPrompt,
+    }));
+    return [...SCRIPT_STYLE_PRESETS, ...vaPresets];
+  }, [videoAnalysisStyles]);
+
   const handleGenerateScript = useCallback(async () => {
     if (!requireAuth('AI 대본 생성')) return;
     if (!title.trim() || !synopsis.trim()) return;
@@ -512,13 +538,20 @@ ${instinctPrompt}
     // [FIX #159] 채널 스타일 데이터를 종합하여 프롬프트에 반영 (fullGuidelineText + 대본 샘플 포함)
     const channelStyleSection = buildChannelStyleSection(channelGuideline, channelScripts, benchmarkScript);
 
-    const systemPrompt = `당신은 전문 영상 대본 작가입니다. 사용자의 요청에 따라 완성도 높은 ${isShorts ? '유튜브 쇼츠' : '영상'} 대본을 생성합니다.
+    // [FIX #170] 선택된 스타일 프리셋의 시스템 프롬프트를 생성 시 반영
+    const activePreset = selectedStyleId ? allStylePresets.find(p => p.id === selectedStyleId) : null;
+
+    const baseSystemPrompt = `당신은 전문 영상 대본 작가입니다. 사용자의 요청에 따라 완성도 높은 ${isShorts ? '유튜브 쇼츠' : '영상'} 대본을 생성합니다.
 
 핵심 원칙:
 1. 대본에 포함되는 정보, 사례, 통계, 사건은 반드시 실제로 존재하는 것이어야 합니다.
 2. 허구의 연구, 가짜 통계, 존재하지 않는 사건을 지어내지 마세요.
 3. 확실하지 않은 정보는 "~로 알려져 있다", "~라는 주장이 있다"로 표현하세요.
 4. 구체적 수치나 출처를 언급할 때는 실제 데이터만 사용하세요.${shortsRule}`;
+
+    const systemPrompt = activePreset
+      ? `${activePreset.systemPrompt}\n\n${baseSystemPrompt}`
+      : baseSystemPrompt;
 
     const instinctSection = instinctIds.length > 0
       ? `\n\n[적용할 본능 기제]\n${buildSelectedInstinctPrompt(instinctIds)}\n\n위 본능 기제를 활용하여 도입부(훅)에서 시청자 심리를 강하게 자극하세요.`
@@ -591,21 +624,12 @@ ${instinctPrompt}
       finishGeneration();
     }
   }, [title, synopsis, targetCharCount, contentFormat, shortsSeconds, instinctIds, channelGuideline, channelScripts, benchmarkScript,
-    selectedTopic, startGeneration, finishGeneration, setGeneratedScript, setFinalScript]);
+    selectedTopic, selectedStyleId, allStylePresets, startGeneration, finishGeneration, setGeneratedScript, setFinalScript]);
 
   const handleCancelGeneration = useCallback(() => {
     genAbortRef.current?.abort();
     genAbortRef.current = null;
   }, []);
-
-  // #158: 빌트인 + 영상분석 스타일 병합
-  const allStylePresets: ScriptStylePreset[] = useMemo(() => {
-    const vaPresets: ScriptStylePreset[] = videoAnalysisStyles.map(va => ({
-      id: va.id, name: va.name, icon: va.icon,
-      description: va.description, systemPrompt: va.systemPrompt,
-    }));
-    return [...SCRIPT_STYLE_PRESETS, ...vaPresets];
-  }, [videoAnalysisStyles]);
 
   const handleApplySelectedStyle = useCallback(async () => {
     if (!requireAuth('AI 스타일 적용')) return;

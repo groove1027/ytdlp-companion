@@ -865,6 +865,11 @@ export const pollEvolinkTask = async (
 
             if (!response.ok) {
                 if (response.status === 404) throw new Error('Evolink 태스크를 찾을 수 없습니다.');
+                // [FIX #172] 402 Quota Exhausted — 즉시 중단, 재시도 무의미
+                if (response.status === 402) {
+                    logger.error(`[Evolink] 폴링 402 잔액 부족 — 즉시 중단`, { taskId, attempt: i + 1 });
+                    throw new Error('QUOTA_EXHAUSTED: Evolink 잔액 부족 — 크레딧을 충전해주세요.');
+                }
                 // [FIX #129] 429 Rate Limit — 추가 5초 대기 후 재시도
                 if (response.status === 429) {
                     logger.warn(`[Evolink] 폴링 429 Rate Limit — 5초 추가 대기`, { taskId, attempt: i + 1 });
@@ -905,6 +910,8 @@ export const pollEvolinkTask = async (
                 if (e.name === 'AbortError' || e.message === 'Cancelled by user') throw e;
                 if (e.message.includes('태스크 실패') || e.message.includes('찾을 수 없습니다')) throw e;
                 if (e.message.includes('시간 초과') || e.message.includes('완료되었으나')) throw e;
+                // [FIX #172] 잔액 부족은 재시도 무의미 — 즉시 상위로 전파
+                if (e.message.includes('QUOTA_EXHAUSTED') || e.message.includes('잔액 부족')) throw e;
             }
             // MEDIUM 2: 네트워크 오류 등도 로깅 후 재시도
             const errMsg = e instanceof Error ? e.message : String(e);

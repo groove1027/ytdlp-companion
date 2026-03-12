@@ -33,14 +33,31 @@ function base64ToFile(base64: string, filename: string): File {
     }
 }
 
+// [FIX #172] 잔액 부족(QUOTA_EXHAUSTED) 에러 감지 헬퍼
+function isQuotaExhaustedError(error: unknown): boolean {
+    if (error instanceof Error) {
+        const msg = error.message;
+        return msg.includes('QUOTA_EXHAUSTED') || msg.includes('잔액 부족');
+    }
+    return false;
+}
+
 // [MODIFIED] Throttled Sliding Window Batch Runner
+// [FIX #172] 잔액 부족 시 남은 장면 스킵하고 즉시 종료
 async function runBatch<T>(items: T[], limit: number, fn: (item: T) => Promise<void>, onProgress: () => void) {
     const queue = [...items];
     const active: Promise<void>[] = [];
-    while (queue.length > 0 || active.length > 0) {
-        while (queue.length > 0 && active.length < limit) {
+    let quotaExhausted = false;
+    while ((queue.length > 0 || active.length > 0) && !quotaExhausted) {
+        while (queue.length > 0 && active.length < limit && !quotaExhausted) {
             const item = queue.shift()!;
-            const p = fn(item).finally(() => {
+            const p = fn(item).catch((e) => {
+                if (isQuotaExhaustedError(e)) {
+                    quotaExhausted = true;
+                    // 남은 큐 비우기 — 더 이상 새 작업 시작하지 않음
+                    queue.length = 0;
+                }
+            }).finally(() => {
                 const idx = active.indexOf(p);
                 if (idx > -1) active.splice(idx, 1);
                 onProgress();
@@ -50,6 +67,8 @@ async function runBatch<T>(items: T[], limit: number, fn: (item: T) => Promise<v
         }
         if (active.length > 0) await Promise.race(active);
     }
+    // 진행 중이던 작업이 완료될 때까지 대기
+    if (active.length > 0) await Promise.allSettled(active);
 }
 
 export const useVideoBatch = (
@@ -352,7 +371,21 @@ export const useVideoBatch = (
             if (e.message === "Cancelled by user" || signal.aborted) return;
             logger.trackGenerationResult({ type: 'video', sceneId, success: false, provider: effectiveModel, duration: Math.round(performance.now() - vidGenStart), error: e.message?.substring(0, 200) });
             const errStr = (e.message || "").toLowerCase();
-            
+
+            // [FIX #172] 잔액 부족(QUOTA_EXHAUSTED) — 재시도 없이 즉시 중단 + 사용자 알림
+            if (isQuotaExhaustedError(e)) {
+                logger.error(`[Quota] Scene ${sceneId} — 잔액 부족으로 중단`, e.message);
+                useUIStore.getState().setToast({ show: true, message: '잔액이 부족합니다. 크레딧을 충전한 후 다시 시도해주세요.' });
+                setTimeout(() => useUIStore.getState().setToast(null), 6000);
+                safeSetScenes(prev => prev.map(s => s.id === sceneId ? {
+                    ...s, isGeneratingVideo: false, isUpscaling: false,
+                    videoGenerationError: '잔액 부족: 크레딧을 충전해주세요.',
+                    generationStatus: undefined, progress: 0
+                } : s));
+                // 에러를 다시 던져서 runBatch가 남은 장면 처리를 중단하도록 함
+                throw e;
+            }
+
             // [NEW] AUTO-RETRY LOGIC FOR NETWORK/TIMEOUT ERRORS
             // Catches "timeout", "超时", "504", "502", "network error", "apimart failed"
             const isTimeout = errStr.includes("timeout") || errStr.includes("超时") || errStr.includes("504") || errStr.includes("502") || errStr.includes("network") || errStr.includes("veo timeout");
