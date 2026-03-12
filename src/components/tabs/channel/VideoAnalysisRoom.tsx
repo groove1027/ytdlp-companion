@@ -10,6 +10,7 @@ import { useEditPointStore } from '../../../stores/editPointStore';
 import { useEditRoomStore } from '../../../stores/editRoomStore';
 import { useVideoAnalysisStore } from '../../../stores/videoAnalysisStore';
 import { useScriptWriterStore } from '../../../stores/scriptWriterStore';
+import { useSoundStudioStore } from '../../../stores/soundStudioStore';
 import { buildVideoAnalysisStylePreset } from '../../../utils/videoStyleExtractor';
 import AnalysisSlotBar from './AnalysisSlotBar';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
@@ -3102,6 +3103,53 @@ ${meta.description.slice(0, 1500)}${meta.description.length > 1500 ? '\n...(이�
                             >
                               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
                               대본작성 스타일
+                            </button>
+                            {/* #166: 나레이션 → 사운드 스튜디오 TTS 전송 */}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const soundStore = useSoundStudioStore.getState();
+                                let speakerId = soundStore.speakers[0]?.id || '';
+                                if (!speakerId) {
+                                  const newSpeaker = {
+                                    id: `speaker-${Date.now()}`,
+                                    name: '화자 1',
+                                    color: '#c026d3',
+                                    engine: 'typecast' as const,
+                                    voiceId: '',
+                                    language: 'ko' as const,
+                                    speed: 1.0,
+                                    pitch: 0,
+                                    stability: 0.5,
+                                    similarityBoost: 0.75,
+                                    style: 0,
+                                    useSpeakerBoost: true,
+                                    lineCount: 0,
+                                    totalDuration: 0,
+                                  };
+                                  soundStore.addSpeaker(newSpeaker);
+                                  speakerId = newSpeaker.id;
+                                }
+                                const newLines = v.scenes
+                                  .filter(s => (s.audioContent || s.dialogue || '').trim())
+                                  .map((s, i) => ({
+                                    id: `line-${Date.now()}-${i}`,
+                                    speakerId,
+                                    text: (s.audioContent || s.dialogue || '').trim(),
+                                    index: i,
+                                  }));
+                                if (newLines.length === 0) {
+                                  showToast('전송할 나레이션이 없습니다.', 3000);
+                                  return;
+                                }
+                                soundStore.setLines(newLines);
+                                useNavigationStore.getState().setActiveTab('sound-studio');
+                                showToast(`"V${v.id}" 나레이션 ${newLines.length}줄을 사운드 스튜디오로 전송했어요`);
+                              }}
+                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-fuchsia-600/20 text-fuchsia-400 border border-fuchsia-500/30 hover:bg-fuchsia-600/30 transition-all"
+                            >
+                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>
+                              TTS 생성
                             </button>
                           </>
                         )}
