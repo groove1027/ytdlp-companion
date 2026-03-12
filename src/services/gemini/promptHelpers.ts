@@ -30,12 +30,32 @@ export const isBlackAndWhiteStyle = (style: string): string => {
     return "FALSE";
 };
 
+// [NEW] Helper: Detect if style is photorealistic/cinematic (live-action)
+// Used to conditionally apply cinematic quality descriptors only for realistic styles
+export const isRealisticStyle = (style: string): boolean => {
+    const s = style.toLowerCase();
+    // 1차: 명시적 비실사 키워드가 있으면 → 비실사
+    if (s.match(/anime|manga|webtoon|2d|cartoon|illustration|drawing|sketch|flat|vector|pixel|paint|watercolor|oil\s*paint|crayon|pastel|chalk|stencil|graffiti|pop\s*art|ukiyo|woodcut|linocut|collage|paper\s*cut|clay|plastic|toy|lego|voxel|chibi|retro\s*game|8.?bit|16.?bit|meme|crude|simplistic|psychedelic|mural|hieroglyph/)) {
+        return false;
+    }
+    // 2차: 명시적 실사 키워드가 있으면 → 실사
+    if (s.match(/realistic|photo|movie|film|cinema|live.?action|8k|photography|hyper.?real|documentary|cinematic|blockbuster|thriller|noir|drama|horror|war|western|spy|k.?drama|sf\s|sci.?fi|futurist|fantasy|medieval|historical|vintage\s*film/)) {
+        return true;
+    }
+    // 3차: 3D 렌더 스타일은 실사도 비실사도 아닌 중간 — 시네마틱 디스크립터는 적용하지 않음
+    if (s.match(/3d|pixar|disney|render/)) {
+        return false;
+    }
+    // 기본값: 판별 불가 시 비실사로 간주 (실사 편향 방지)
+    return false;
+};
+
 // [NEW] Helper: Style Negative Prompt
 // [UPDATED] Extended negative prompts to avoid style bleeding into language/text
 export const getStyleNegativePrompt = (style: string): string => {
     const s = style.toLowerCase();
-    if (s.match(/anime|manga|webtoon|2d|cartoon|illustration|drawing|sketch|flat|vector/)) {
-        return "(photorealistic: -2.0), (3d render: -2.0), (realistic texture: -2.0), (photo: -2.0), (unreal engine: -2.0), (photograph), (realistic)";
+    if (s.match(/anime|manga|webtoon|2d|cartoon|illustration|drawing|sketch|flat|vector|pixel|paint|watercolor|crayon|pastel|chalk|stencil|graffiti|pop\s*art|ukiyo|woodcut|linocut|collage|paper\s*cut|meme|crude|simplistic|psychedelic|mural|hieroglyph/)) {
+        return "(photorealistic: -2.0), (3d render: -2.0), (realistic texture: -2.0), (photo: -2.0), (unreal engine: -2.0), (photograph), (realistic), (8K resolution: -2.0), (volumetric lighting: -2.0), (cinematic: -2.0), (professional photography: -2.0)";
     }
     if (s.match(/realistic|photo|movie|film|cinema|live action|8k|photography/)) {
         return "(anime: -2.0), (cartoon: -2.0), (2d: -2.0), (drawing: -2.0), (sketch: -2.0), (illustration: -2.0), (flattened)";

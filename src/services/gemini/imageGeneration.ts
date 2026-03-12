@@ -1,6 +1,6 @@
 
 import { Scene, AspectRatio, ImageModel } from '../../types';
-import { getMicroTexture, isBlackAndWhiteStyle, getStyleNegativePrompt, getIntegrativeInfographicInstruction } from './promptHelpers';
+import { getMicroTexture, isBlackAndWhiteStyle, getStyleNegativePrompt, getIntegrativeInfographicInstruction, isRealisticStyle } from './promptHelpers';
 import { generateKieImage, generateEvolinkImageWrapped } from '../VideoGenService';
 import { filterPromptContent } from './contentFilter';
 import { logger } from '../LoggerService';
@@ -192,7 +192,7 @@ export const generateSceneImage = async (
                 finalCharImages = [];
                 subjectPrompt = `[IMPORTANT: The SOLE SUBJECT is ${scene.entityName}]\n`;
                 subjectPrompt += `(Subject: ${scene.entityName}), (Appearance: ${entityDesc}), `;
-                subjectPrompt += `(Full cinematic portrait of ${scene.entityName}, no other characters visible), `;
+                subjectPrompt += `(Full portrait of ${scene.entityName}, no other characters visible), `;
                 negativePrompt += "(main character face), (custom character), ";
                 break;
 
@@ -571,7 +571,9 @@ export const generateSceneImage = async (
             subjectPrompt += ` (Render the Character in its ORIGINAL art style exactly as shown in the reference image — preserve the exact rendering method, line quality, shading technique, color palette, and visual medium from the reference), `;
 
             // 2. Background gets the SELECTED visual style
-            backgroundPrompt = `(Background: ${effectiveVisualPrompt}), (Background Style: ${effectiveStyle}, Cinematic, Detailed, 3D Depth), (Background environment rendered in '${effectiveStyle}' style)`;
+            backgroundPrompt = isRealisticStyle(effectiveStyle)
+                ? `(Background: ${effectiveVisualPrompt}), (Background Style: ${effectiveStyle}, Cinematic, Detailed, 3D Depth), (Background environment rendered in '${effectiveStyle}' style)`
+                : `(Background: ${effectiveVisualPrompt}), (Background Style: ${effectiveStyle}, Detailed), (Background environment rendered ENTIRELY in '${effectiveStyle}' style, NO photorealistic elements)`;
 
             // 3. Separation Rule — character's original art style stays distinct from background style
             mixedMediaInstruction = `[MIXED MEDIA VISUAL RULE: The Character MUST be rendered in its ORIGINAL art style exactly as it appears in the reference image. If the character reference is 2D cartoon with flat colors and bold outlines, the character MUST remain 2D cartoon with flat colors and bold outlines. If anime, keep anime. If realistic, keep realistic. Do NOT convert or adapt the character's art style. The Background environment is rendered in '${effectiveStyle}' style. This deliberate style contrast between character and background is the CORE creative intent. The character must still be composited with correct perspective and scale within the scene.]`;
@@ -587,8 +589,12 @@ export const generateSceneImage = async (
             globalStyleInstruction = `(MANDATORY Art Style: ${effectiveStyle}: 2.5), (The ENTIRE image MUST be rendered in this exact style), (Style Override: ${effectiveStyle})`;
         }
 
-        // [NEW] Contextual Background Enforcement (Common) + Cinematic Quality Boost
-        backgroundPrompt += `, (Background: Highly Detailed Environment matching script context), (Cinematic Depth), (Full Scenery), (Professional cinematography, 8K resolution detail, volumetric lighting with atmospheric depth)`;
+        // [FIX] Style-aware Background Quality — 실사 스타일만 시네마틱 디스크립터 적용, 비실사는 스타일 일관성 강화
+        if (isRealisticStyle(effectiveStyle)) {
+            backgroundPrompt += `, (Background: Highly Detailed Environment matching script context), (Cinematic Depth), (Full Scenery), (Professional cinematography, 8K resolution detail, volumetric lighting with atmospheric depth)`;
+        } else {
+            backgroundPrompt += `, (Background: Detailed Environment matching script context), (Full Scenery), (The ENTIRE background MUST be rendered in '${effectiveStyle}' style — maintain consistent art style across the whole image), (DO NOT use photorealistic rendering for any part of the image)`;
+        }
 
         // [FIX] User-edited prompt boost: place user's description at highest priority position
         const userEditPrefixNormal = isUserEdited
