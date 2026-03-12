@@ -12,6 +12,8 @@ interface ImageVideoStore {
   enableWebSearch: boolean;
   // [NEW] 멀티캐릭터 모드 (false=싱글 구버전 레이아웃, true=5슬롯 그리드)
   isMultiCharacter: boolean;
+  // [FIX #174] 비주얼 스타일 커스텀 지시 (handshake 제거 등)
+  customStyleNote: string;
   // [v4.7] 대사 품질 고도화
   dialogueTone: DialogueTone;
   referenceDialogue: string;
@@ -19,6 +21,7 @@ interface ImageVideoStore {
 
   setActiveSubTab: (tab: 'setup' | 'storyboard') => void;
   setStyle: (v: string) => void;
+  setCustomStyleNote: (v: string) => void;
   setCharacters: (chars: CharacterReference[] | ((prev: CharacterReference[]) => CharacterReference[])) => void;
   addCharacter: (char: CharacterReference) => void;
   removeCharacter: (id: string) => void;
@@ -31,7 +34,7 @@ interface ImageVideoStore {
   setDialogueMode: (v: boolean) => void;
 
   // 프로젝트 로드/리셋 시 일괄 복원
-  restoreFromConfig: (data: { style?: string; characters?: CharacterReference[]; enableWebSearch?: boolean; isMultiCharacter?: boolean; dialogueTone?: DialogueTone; referenceDialogue?: string; dialogueMode?: boolean }) => void;
+  restoreFromConfig: (data: { style?: string; characters?: CharacterReference[]; enableWebSearch?: boolean; isMultiCharacter?: boolean; dialogueTone?: DialogueTone; referenceDialogue?: string; dialogueMode?: boolean; customStyleNote?: string }) => void;
   resetStore: () => void;
 }
 
@@ -50,10 +53,10 @@ const syncToProjectConfig = () => {
   requestAnimationFrame(() => {
     const ps = getProjectStore();
     if (!ps) return;
-    const { style, characters, enableWebSearch, isMultiCharacter, dialogueTone, referenceDialogue, dialogueMode } = useImageVideoStore.getState();
+    const { style, characters, enableWebSearch, isMultiCharacter, dialogueTone, referenceDialogue, dialogueMode, customStyleNote } = useImageVideoStore.getState();
     ps.getState().setConfig((prev: any) => {
       if (!prev) return prev;
-      return { ...prev, selectedVisualStyle: style, characters, enableWebSearch, isMultiCharacter, dialogueTone, referenceDialogue, dialogueMode };
+      return { ...prev, selectedVisualStyle: style, characters, enableWebSearch, isMultiCharacter, dialogueTone, referenceDialogue, dialogueMode, customStyleNote };
     });
   });
 };
@@ -64,12 +67,14 @@ export const useImageVideoStore = create<ImageVideoStore>((set) => ({
   characters: [],
   enableWebSearch: true,
   isMultiCharacter: false,
+  customStyleNote: '',
   dialogueTone: 'none' as DialogueTone,
   referenceDialogue: '',
   dialogueMode: false,
 
   setActiveSubTab: (tab) => set({ activeSubTab: tab }),
   setStyle: (v) => { const prev = useImageVideoStore.getState().style; logger.trackSettingChange('iv.style', prev, v); set({ style: v }); syncToProjectConfig(); },
+  setCustomStyleNote: (v) => { set({ customStyleNote: v }); syncToProjectConfig(); },
   setEnableWebSearch: (v) => { const prev = useImageVideoStore.getState().enableWebSearch; logger.trackSettingChange('iv.webSearch', prev, v); set({ enableWebSearch: v }); syncToProjectConfig(); },
   setIsMultiCharacter: (v) => { const prev = useImageVideoStore.getState().isMultiCharacter; logger.trackSettingChange('iv.multiChar', prev, v); set({ isMultiCharacter: v }); syncToProjectConfig(); },
   setDialogueTone: (v) => { const prev = useImageVideoStore.getState().dialogueTone; logger.trackSettingChange('iv.dialogueTone', prev, v); set({ dialogueTone: v }); syncToProjectConfig(); },
@@ -96,6 +101,7 @@ export const useImageVideoStore = create<ImageVideoStore>((set) => ({
     characters: data.characters || [],
     enableWebSearch: data.enableWebSearch ?? true,
     isMultiCharacter: data.isMultiCharacter ?? false,
+    customStyleNote: data.customStyleNote || '',
     dialogueTone: data.dialogueTone || 'none',
     referenceDialogue: data.referenceDialogue || '',
     dialogueMode: data.dialogueMode ?? false,
@@ -108,6 +114,7 @@ export const useImageVideoStore = create<ImageVideoStore>((set) => ({
     characters: [],
     enableWebSearch: true,
     isMultiCharacter: false,
+    customStyleNote: '',
     dialogueTone: 'none' as DialogueTone,
     referenceDialogue: '',
     dialogueMode: false,

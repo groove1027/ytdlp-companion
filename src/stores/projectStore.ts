@@ -305,9 +305,18 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   loadProject: (project, options) => {
     const scenes = project.scenes || [];
-    const sanitizedScenes = project.config?.allowInfographics === true
+    // [FIX #176] 프로젝트 로드 시 중단된 생성 상태 초기화 — 이전 세션의 stuck 스피너 방지
+    const sanitizedScenes = (project.config?.allowInfographics === true
       ? scenes
-      : scenes.map((s) => ({ ...s, isInfographic: false }));
+      : scenes.map((s) => ({ ...s, isInfographic: false }))
+    ).map((s) => ({
+      ...s,
+      isGeneratingImage: false,
+      isGeneratingVideo: false,
+      isUpscaling: false,
+      generationStatus: undefined,
+      generationCancelled: false,
+    }));
 
     logger.info('프로젝트 로드', { projectId: project.id, title: project.title, sceneCount: sanitizedScenes.length });
 

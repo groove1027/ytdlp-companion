@@ -43,7 +43,11 @@ const ThumbnailStudioTab: React.FC = () => {
 
   // Analyzed context (populated on first generation)
   const [analyzedCtx, setAnalyzedCtx] = useState<AnalyzedContext>({});
-  const [thumbnails, setThumbnails] = useState<Thumbnail[]>([]);
+  // [FIX #173] projectStore 연동 — 썸네일이 프로젝트와 함께 저장되도록
+  const storeThumbnails = useProjectStore((s) => s.thumbnails);
+  const storeSetThumbnails = useProjectStore((s) => s.setThumbnails);
+  const thumbnails = storeThumbnails;
+  const setThumbnails = storeSetThumbnails;
 
   // Reference analysis state
   const [isYtFetching, setIsYtFetching] = useState(false);

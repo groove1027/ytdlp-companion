@@ -36,11 +36,12 @@ const flushSave = () => {
 };
 
 export const useAutoSave = () => {
-  const lastSavedRef = useRef<{ scenesLength: number; configRef: object | null; completedImages: number; completedVideos: number }>({
+  const lastSavedRef = useRef<{ scenesLength: number; configRef: object | null; completedImages: number; completedVideos: number; thumbnailCount: number }>({
     scenesLength: 0,
     configRef: null,
     completedImages: 0,
     completedVideos: 0,
+    thumbnailCount: 0,
   });
 
   useEffect(() => {
@@ -54,15 +55,17 @@ export const useAutoSave = () => {
 
         if (!currentProjectId || !config) return;
 
-        // Dirty check: 장면 수, config, 이미지/영상 완료 수 변경 시에만 저장
+        // Dirty check: 장면 수, config, 이미지/영상 완료 수, 썸네일 수 변경 시에만 저장
         const completedImages = scenes.filter(s => s.imageUrl).length;
         const completedVideos = scenes.filter(s => s.videoUrl).length;
+        const thumbnailCount = thumbnails.length;
         const prev = lastSavedRef.current;
         if (
           prev.scenesLength === scenes.length &&
           prev.configRef === config &&
           prev.completedImages === completedImages &&
-          prev.completedVideos === completedVideos
+          prev.completedVideos === completedVideos &&
+          prev.thumbnailCount === thumbnailCount
         ) {
           return;
         }
@@ -80,7 +83,7 @@ export const useAutoSave = () => {
           });
 
           // Update last-saved snapshot on success
-          lastSavedRef.current = { scenesLength: scenes.length, configRef: config, completedImages, completedVideos };
+          lastSavedRef.current = { scenesLength: scenes.length, configRef: config, completedImages, completedVideos, thumbnailCount };
 
           // 오디오 blob을 IndexedDB에 영속화 (fire-and-forget)
           try {

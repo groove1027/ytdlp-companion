@@ -87,6 +87,8 @@ const SetupPanel: React.FC = () => {
   const setDialogueTone = useImageVideoStore((s) => s.setDialogueTone);
   const referenceDialogue = useImageVideoStore((s) => s.referenceDialogue);
   const setReferenceDialogue = useImageVideoStore((s) => s.setReferenceDialogue);
+  const customStyleNote = useImageVideoStore((s) => s.customStyleNote);
+  const setCustomStyleNote = useImageVideoStore((s) => s.setCustomStyleNote);
 
   const [directInputMode, setDirectInputMode] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -549,24 +551,6 @@ const SetupPanel: React.FC = () => {
               단락 나누기는 대본의 구조를 정리합니다. "스토리보드 생성" 시 AI가 각 단락에 비주얼 프롬프트를 생성합니다.
             </p>
 
-            {/* 화면 비율 */}
-            <div>
-              <span className="text-sm text-gray-400 font-semibold block mb-2">화면 비율</span>
-              <div className="grid grid-cols-3 gap-2">
-                {RATIO.map((o) => (
-                  <button key={o.value} type="button" onClick={() => updateConfig('aspectRatio', o.value)}
-                    className={`py-3.5 rounded-xl text-center transition-all border-2 ${
-                      config.aspectRatio === o.value
-                        ? 'bg-orange-500/20 border-orange-500 text-white'
-                        : 'bg-gray-900 border-gray-700 text-gray-400 hover:border-gray-500'
-                    }`}>
-                    <span className="text-base font-bold">{o.label}</span>
-                    <span className="text-xs text-gray-500 block mt-0.5">{o.desc}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-
             {/* 스마트 분할 */}
             <div className="bg-gray-900/60 border border-gray-700 rounded-xl px-4 py-3 flex items-center justify-between gap-3">
               <div className="min-w-0">
@@ -675,6 +659,27 @@ const SetupPanel: React.FC = () => {
       <div className="bg-gray-800/60 border border-gray-700 rounded-2xl p-5 space-y-4">
         <h3 className="text-base font-bold text-white">{stepBase + 1}. 생성 옵션</h3>
 
+        {/* 화면 비율 */}
+        <div className="bg-gray-900/60 border border-gray-700 rounded-xl px-5 py-4">
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-sm font-bold text-white">📐 화면 비율</p>
+            <span className="text-xs text-gray-500">{RATIO.find(r => r.value === config.aspectRatio)?.label || '16:9'} 선택됨</span>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            {RATIO.map((o) => (
+              <button key={o.value} type="button" onClick={() => updateConfig('aspectRatio', o.value)}
+                className={`py-3 rounded-xl text-center transition-all border-2 ${
+                  config.aspectRatio === o.value
+                    ? 'bg-orange-500/20 border-orange-500 text-white'
+                    : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-500'
+                }`}>
+                <span className="text-base font-bold">{o.label}</span>
+                <span className="text-xs text-gray-500 block mt-0.5">{o.desc}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
         {/* 인포그래픽 + 캐릭터 출연 빈도 */}
         <div className="grid grid-cols-2 gap-3">
           <div className="bg-gray-900/60 border border-gray-700 rounded-xl px-5 py-4 flex items-center justify-between gap-3">
@@ -686,7 +691,7 @@ const SetupPanel: React.FC = () => {
           </div>
           <div className="bg-gray-900/60 border border-gray-700 rounded-xl px-5 py-4">
             <p className="text-sm font-bold text-white mb-2.5">👤 캐릭터 출연 빈도</p>
-            <div className="grid grid-cols-3 gap-1.5">
+            <div className="grid grid-cols-2 gap-1.5">
               {CHAR_FREQ.map((o) => (
                 <button key={o.value} type="button" onClick={() => updateConfig('characterAppearance', o.value)}
                   className={`py-2 rounded-lg text-xs font-bold transition-all ${
@@ -785,6 +790,17 @@ const SetupPanel: React.FC = () => {
           colorTheme="blue"
           compact
         />
+        {/* [FIX #174] 커스텀 스타일 지시 — handshake 제거, 다큐멘터리 톤 등 */}
+        <div className="mt-3">
+          <label className="text-xs text-gray-400 mb-1 block">추가 스타일 지시 (선택)</label>
+          <textarea
+            value={customStyleNote}
+            onChange={(e) => setCustomStyleNote(e.target.value)}
+            placeholder="예: no handshake effect, 다큐멘터리 톤, 따뜻한 색감, 광각 렌즈..."
+            className="w-full bg-gray-900 border border-gray-600 rounded-lg p-2.5 text-sm text-white placeholder-gray-500 focus:border-orange-500 focus:outline-none transition-colors resize-none"
+            rows={2}
+          />
+        </div>
       </div>
 
       {/* ── 대사 생성 (v4.7) ── */}

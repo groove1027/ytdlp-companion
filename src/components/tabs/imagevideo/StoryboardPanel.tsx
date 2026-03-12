@@ -1151,6 +1151,9 @@ const StoryboardPanel: React.FC = () => {
             : (charArtStyle.trim() !== '')
               ? charArtStyle
               : 'Cinematic';
+      // [FIX #174] 커스텀 스타일 지시 병합 (handshake 제거, 다큐멘터리 톤 등)
+      const customNote = useImageVideoStore.getState().customStyleNote?.trim();
+      const finalStyle = customNote ? `${effectiveStyle}. ${customNote}` : effectiveStyle;
       // 사용자가 비주얼 미선택 + 캐릭터 아트 스타일로 폴백된 경우 → 캐릭터 그림체 보존 모드
       const preserveCharStyle = !userSelectedStyle && charArtStyle.trim() !== '' && effectiveStyle === charArtStyle;
 
@@ -1172,7 +1175,7 @@ const StoryboardPanel: React.FC = () => {
 
       const result = await generateSceneImage(
         scene,
-        effectiveStyle,
+        finalStyle,
         currentConfig.aspectRatio || AspectRatio.LANDSCAPE,
         imageModel,
         charImages,
