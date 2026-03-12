@@ -28,6 +28,7 @@ import type {
 } from '../../../types';
 
 const ScenarioPreviewPlayer = lazy(() => import('./ScenarioPreviewPlayer'));
+const UploadMasterGuide = lazy(() => import('./UploadMasterGuide'));
 
 // ═══════════════════════════════════════════════════
 // 유틸리티
@@ -3523,6 +3524,13 @@ ${meta.description.slice(0, 1500)}${meta.description.length > 1500 ? '\n...(이�
             </div>
           )}
         </div>
+      )}
+
+      {/* ═══ 업로드 마스터 지침서 ═══ */}
+      {rawResult && versions.length > 0 && (
+        <Suspense fallback={<div className="h-12 bg-gray-800/40 rounded-2xl animate-pulse" />}>
+          <UploadMasterGuide rawResult={rawResult} versions={versions.map(v => ({ title: v.title, concept: v.concept }))} />
+        </Suspense>
       )}
 
       {/* ═══ 하단 액션 ═══ */}
