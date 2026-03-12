@@ -331,8 +331,91 @@ function extractJsonFromResponse(content: string): Record<string, unknown> {
 }
 
 /**
+ * [FIX #134] Vision 정제 단일 시도 — 성공 시 결과, 실패 시 null
+ * finishReason 및 completionTokens 검증 포함
+ */
+async function attemptVisionRefine(
+  frameParts: { timestamp: number; dataUrl: string }[],
+  desc: string,
+  startTC: string,
+  endTC: string,
+): Promise<Record<string, unknown> | null> {
+  try {
+    const imageContent = frameParts.map((f, i) => [
+      { type: 'text' as const, text: `[${i === 0 ? 'START' : 'END'} ${secondsToTimecode(f.timestamp)}]` },
+      { type: 'image_url' as const, image_url: { url: f.dataUrl } },
+    ]).flat();
+
+    const response = await evolinkChat(
+      [
+        {
+          role: 'system',
+          content: `Video cut finder. Clip: "${desc}"\nTC: ${startTC}~${endTC}\nReturn ONLY JSON: {"refinedStart":"MM:SS.sss","refinedEnd":"MM:SS.sss","confidence":0.85}`,
+        },
+        { role: 'user', content: imageContent },
+      ],
+      { temperature: 0.1, maxTokens: 1024 },
+    );
+
+    // 토큰 부족 감지 — completionTokens < 50이면 확실히 실패
+    const finishReason = response.choices?.[0]?.finish_reason;
+    const completionTokens = response.usage?.completion_tokens || 0;
+    if (finishReason === 'length' && completionTokens < 50) {
+      console.warn(`[EditPoint] Vision 토큰 부족 (completion: ${completionTokens}). 다음 단계로...`);
+      return null;
+    }
+
+    const content = response.choices[0]?.message?.content || '';
+    const result = extractJsonFromResponse(content);
+    if (result.refinedStart || result.refinedEnd) return result;
+    return null;
+  } catch (err) {
+    console.warn('[EditPoint] Vision 시도 실패:', err);
+    return null;
+  }
+}
+
+/**
+ * [FIX #134] 텍스트 전용 정제 — 이미지 없이 AI에게 편집 규칙 기반 보정 요청
+ * 토큰 초과 절대 불가 (텍스트만 사용)
+ */
+async function attemptTextOnlyRefine(
+  desc: string,
+  startTC: string,
+  endTC: string,
+): Promise<Record<string, unknown> | null> {
+  try {
+    const response = await evolinkChat(
+      [
+        {
+          role: 'system',
+          content: `You are a video editor. Refine timecodes based on editing best practices.
+Return ONLY JSON: {"refinedStart":"MM:SS.sss","refinedEnd":"MM:SS.sss","confidence":0.5}`,
+        },
+        {
+          role: 'user',
+          content: `Clip: "${desc}"\nTC: ${startTC} ~ ${endTC}\nApply standard pre-roll/post-roll and clean cut points.`,
+        },
+      ],
+      { temperature: 0.1, maxTokens: 512 },
+    );
+
+    const content = response.choices[0]?.message?.content || '';
+    const result = extractJsonFromResponse(content);
+    if (result.refinedStart || result.refinedEnd) return result;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Vision AI로 타임코드 정제
- * [FIX #134] 프레임 2장 + 이미지 압축 + 프롬프트 축소 + JSON 폴백 파싱
+ * [FIX #134] 3단계 폴백 체인 — 어떤 환경에서도 실패 안 함
+ *   1차: 2프레임 Vision (256×144 압축)
+ *   2차: 1프레임 Vision (토큰 추가 절감)
+ *   3차: 텍스트 전용 (이미지 없이 — 토큰 초과 원천 차단)
+ *   최종: 원본 타임코드 반환 (confidence: 0)
  */
 export async function refineTimecodeWithVision(
   entry: EdlEntry,
@@ -340,15 +423,14 @@ export async function refineTimecodeWithVision(
 ): Promise<{ refinedStart: number; refinedEnd: number; confidence: number; referenceFrameUrl?: string }> {
   const startCenter = entry.timecodeStart;
   const endCenter = entry.timecodeEnd;
+  const startTC = secondsToTimecode(startCenter);
+  const endTC = secondsToTimecode(endCenter);
+  const desc = entry.sourceDescription || entry.narrationText;
 
-  // [FIX #134] 프레임 2장만 추출 (시작점 + 끝점) — 토큰 소비 대폭 절감
+  // 프레임 추출 + 압축
   const timestamps = [Math.max(0, startCenter), Math.max(0, endCenter)];
   const frames = await extractFramesFromVideo(videoFile, timestamps);
-  if (frames.size === 0) {
-    return { refinedStart: startCenter, refinedEnd: endCenter, confidence: 0 };
-  }
 
-  // [FIX #134] 256x144 + quality 0.4 로 압축 — 이미지당 토큰 ~80% 절감
   const frameParts: { timestamp: number; dataUrl: string }[] = [];
   for (const [ts, dataUrl] of frames.entries()) {
     const compressed = await compressImage(dataUrl, 256, 144, 0.4);
@@ -356,35 +438,34 @@ export async function refineTimecodeWithVision(
     if (frameParts.length >= 2) break;
   }
 
-  const imageContent = frameParts.map((f, i) => [
-    { type: 'text' as const, text: `[${i === 0 ? 'START' : 'END'} ${secondsToTimecode(f.timestamp)}]` },
-    { type: 'image_url' as const, image_url: { url: f.dataUrl } },
-  ]).flat();
+  const toResult = (r: Record<string, unknown>) => ({
+    refinedStart: parseTimecodeToSeconds(String(r.refinedStart || startTC)),
+    refinedEnd: parseTimecodeToSeconds(String(r.refinedEnd || endTC)),
+    confidence: Math.min(1, Math.max(0, Number(r.confidence) || 0)),
+    referenceFrameUrl: frameParts[0]?.dataUrl,
+  });
 
-  // [FIX #134] 축소된 프롬프트 + responseFormat 제거 + maxTokens 증가
-  const response = await evolinkChat(
-    [
-      {
-        role: 'system',
-        content: `Video cut point finder. Clip: "${entry.sourceDescription || entry.narrationText}"
-TC: ${secondsToTimecode(startCenter)}~${secondsToTimecode(endCenter)}
-Return ONLY JSON: {"refinedStart":"MM:SS.sss","refinedEnd":"MM:SS.sss","confidence":0.85}`,
-      },
-      { role: 'user', content: imageContent },
-    ],
-    {
-      temperature: 0.1,
-      maxTokens: 1024,
-    }
-  );
+  // 1차: 2프레임 Vision
+  if (frameParts.length >= 2) {
+    const r = await attemptVisionRefine(frameParts, desc, startTC, endTC);
+    if (r) return toResult(r);
+  }
 
-  const content = response.choices[0]?.message?.content || '{}';
-  const result = extractJsonFromResponse(content);
+  // 2차: 1프레임 Vision (토큰 50% 추가 절감)
+  if (frameParts.length >= 1) {
+    const r = await attemptVisionRefine(frameParts.slice(0, 1), desc, startTC, endTC);
+    if (r) return toResult(r);
+  }
 
+  // 3차: 텍스트 전용 (이미지 없음 — 토큰 초과 원천 차단)
+  const r = await attemptTextOnlyRefine(desc, startTC, endTC);
+  if (r) return toResult(r);
+
+  // 최종: 원본 타임코드 (절대 실패하지 않는 마지막 방어선)
   return {
-    refinedStart: parseTimecodeToSeconds(String(result.refinedStart || secondsToTimecode(startCenter))),
-    refinedEnd: parseTimecodeToSeconds(String(result.refinedEnd || secondsToTimecode(endCenter))),
-    confidence: Math.min(1, Math.max(0, Number(result.confidence) || 0)),
+    refinedStart: startCenter,
+    refinedEnd: endCenter,
+    confidence: 0,
     referenceFrameUrl: frameParts[0]?.dataUrl,
   };
 }
