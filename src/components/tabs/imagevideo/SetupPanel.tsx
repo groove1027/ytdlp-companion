@@ -102,15 +102,14 @@ const SetupPanel: React.FC = () => {
   useEffect(() => { if (!config) autoRestoreOrCreateProject(); }, [config]);
 
   // 대본작성 탭에서 단락 분석 결과가 있으면 자동 이어받기
+  // [FIX #160] splitResult 변경을 구독하여 탭 전환 후에도 확실히 반영
+  const scriptWriterSplitResult = useScriptWriterStore((s) => s.splitResult);
   useEffect(() => {
-    if (importedSplitResult.length === 0) {
-      const { splitResult } = useScriptWriterStore.getState();
-      if (splitResult.length > 0) {
-        setImportedSplitResult(splitResult);
-        setShowImportedSplit(true);
-      }
+    if (scriptWriterSplitResult.length > 0) {
+      setImportedSplitResult(scriptWriterSplitResult);
+      setShowImportedSplit(true);
     }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [scriptWriterSplitResult]);
 
   const hasAudioScenes = scenes.length > 0 && scenes.some(s => !!s.audioUrl);
   const totalScenes = scenes.length;

@@ -8,6 +8,7 @@
 
 ## 🟢 완료된 작업
 
+- [x] #160 대본작성 "단락나누기 실행" 후 이미지/영상 탭 "스토리보드 생성" 버튼 비활성화 버그 수정 — handleSceneAnalysis에서 config.script 미전달 문제 해결, 탭 이동 시 script/videoFormat/smartSplit/longFormSplitType/aspectRatio를 프로젝트 config에 전달, SetupPanel의 splitResult 구독을 reactive로 변경 (ScriptWriterTab.tsx, SetupPanel.tsx, 2026-03-12)
 - [x] #146 내 피드백 내역 팝업 + 답변 확인 기능 — 헤더 "내 피드백" 버튼, 보낸 피드백 목록/상태/답변 내용 팝업 조회, GitHub API 실시간 상태 체크 (FeedbackHistoryPanel.tsx, feedbackService.ts, uiStore.ts, App.tsx, 2026-03-12)
 - [x] #142 영상/분석실에 All TTS 리메이크 프리셋 추가 — 스크립트 리빌딩 프로토콜 v3.6 적용, 원본 100% 보존 + 텍스트 유사도 0% 수렴 TTS 전용 대본 10종 생성 + Content ID 회피 분석 (VideoAnalysisRoom.tsx, types.ts, docs/all-tts-protocol.md, 2026-03-12)
 - [x] #129 Evolink API 429 Rate Limit 재시도 — 태스크 생성(이미지/비디오)에 지수 백오프 재시도(2s→4s→8s, 최대 3회) 추가, 폴링 중 429 시 5초 추가 대기 (evolinkService.ts, 2026-03-12)

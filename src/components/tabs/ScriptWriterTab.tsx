@@ -8,7 +8,7 @@ import { evolinkChat, evolinkChatStream, evolinkNativeStream, getEvolinkKey } fr
 import { recommendTopics } from '../../services/topicRecommendService';
 import { buildSelectedInstinctPrompt } from '../../data/instinctPromptUtils';
 import { SCRIPT_STYLE_PRESETS, ScriptStylePreset } from '../../data/scriptStylePresets';
-import { VideoFormat, ContentFormat, TopicRecommendation } from '../../types';
+import { VideoFormat, ContentFormat, TopicRecommendation, AspectRatio } from '../../types';
 import { showToast } from '../../stores/uiStore';
 import { countScenesLocally, splitScenesLocally, extractJsonFromText } from '../../services/gemini/scriptAnalysis';
 import { canCreateNewProject } from '../../services/storageService';
@@ -54,6 +54,60 @@ function estimateTime(chars: number): string {
   if (m === 0) return `약 ${s}초`;
   if (s === 0) return `약 ${m}분`;
   return `약 ${m}분 ${s}초`;
+}
+
+/**
+ * 채널 스타일 데이터를 종합하여 AI 프롬프트용 섹션을 구성 (#159)
+ * - channelGuideline의 기본 필드 + fullGuidelineText(상세 분석)
+ * - channelScripts에서 실제 자막 샘플 (말투 학습용, caption 소스 우선)
+ * - benchmarkScript (사용자 선택 벤치마크 대본)
+ */
+function buildChannelStyleSection(
+  guideline: import('../../types').ChannelGuideline | null,
+  scripts: import('../../types').ChannelScript[],
+  benchmark: string,
+): string {
+  const parts: string[] = [];
+
+  if (guideline) {
+    // 기본 스타일 가이드
+    parts.push(`[채널 스타일 가이드]
+채널명: ${guideline.channelName}
+말투: ${guideline.tone}
+구조: ${guideline.structure}
+도입패턴: ${guideline.hookPattern}
+마무리패턴: ${guideline.closingPattern}`);
+
+    // fullGuidelineText에 상세 분석이 있으면 포함 (최대 2000자)
+    if (guideline.fullGuidelineText && guideline.fullGuidelineText.length > 50) {
+      const trimmed = guideline.fullGuidelineText.slice(0, 2000);
+      parts.push(`\n[채널 상세 스타일 분석]\n${trimmed}`);
+    }
+  }
+
+  // 실제 자막이 확보된 스크립트 샘플 (caption 소스 우선, 최대 3개, 각 600자)
+  const captionScripts = scripts.filter(s => s.transcriptSource === 'caption' && s.transcript.length > 100);
+  const sampleScripts = captionScripts.length > 0
+    ? captionScripts.slice(0, 3)
+    : scripts.filter(s => s.transcript.length > 100).slice(0, 2);
+
+  if (sampleScripts.length > 0) {
+    const samples = sampleScripts.map((s, i) =>
+      `--- 샘플 ${i + 1}: "${s.title}" ---\n${s.transcript.slice(0, 600)}`
+    ).join('\n\n');
+    parts.push(`\n[채널 대본 샘플 (말투·어조·종결어미를 정확히 모방하세요)]\n${samples}`);
+  }
+
+  // 벤치마크 대본 (사용자 선택)
+  if (benchmark) {
+    parts.push(`\n[참고 벤치마크 대본 (앞 1200자)]\n${benchmark.slice(0, 1200)}\n→ 위 대본의 말투와 흐름을 정확히 모방하되 내용은 새롭게 작성하세요.`);
+  }
+
+  if (parts.length > 0) {
+    parts.push('\n→ 위 채널의 말투, 종결어미, 문장 호흡, 도입/마무리 패턴을 충실히 반영하여 대본을 작성하세요. 채널 고유의 스타일을 최우선으로 지키세요.');
+  }
+
+  return parts.join('\n');
 }
 
 const FORMAT_BUTTONS: { id: VideoFormat; label: string; color: string }[] = [
@@ -104,6 +158,7 @@ export default function ScriptWriterTab() {
   const setActiveTab = useNavigationStore((s) => s.setActiveTab);
   const channelGuideline = useChannelAnalysisStore((s) => s.channelGuideline);
   const setChannelGuideline = useChannelAnalysisStore((s) => s.setChannelGuideline);
+  const channelScripts = useChannelAnalysisStore((s) => s.channelScripts);
 
   const [openTool, setOpenTool] = useState<OpenTool>(null);
   const [showExpander, setShowExpander] = useState(false);
@@ -256,7 +311,19 @@ ${scriptText}`;
         showToast(`AI 단락 분석 완료: ${scenes.length}개 단락`);
       }
 
-      projStore.setConfig((prev) => prev ? { ...prev, videoFormat } : prev);
+      // [FIX #160] 이미지/영상 탭으로 이동 시 대본·설정을 프로젝트 config에 반드시 전달
+      // 이전에는 videoFormat만 전달하여 config.script가 비어 "스토리보드 생성" 버튼이 비활성화되는 버그 발생
+      setFinalScript(scriptText);
+      const autoAspect = videoFormat !== VideoFormat.LONG ? AspectRatio.PORTRAIT : undefined;
+      projStore.setConfig((prev) => prev ? {
+        ...prev,
+        script: scriptText,
+        videoFormat,
+        smartSplit,
+        longFormSplitType,
+        ...(autoAspect ? { aspectRatio: autoAspect } : {}),
+      } : prev);
+      projStore.smartUpdateTitle('script-writer', scriptText.split('\n')[0] || '');
       setAnalysisProgress(100);
       setActiveTab('image-video');
     } catch (err) {
@@ -266,7 +333,7 @@ ${scriptText}`;
     } finally {
       setIsAnalyzingScenes(false);
     }
-  }, [scriptText, videoFormat, longFormSplitType, smartSplit, isAnalyzingScenes, setSplitResult, setActiveTab]);
+  }, [scriptText, videoFormat, longFormSplitType, smartSplit, isAnalyzingScenes, setSplitResult, setActiveTab, setFinalScript]);
 
   const [fileLoading, setFileLoading] = useState(false);
   const [fileError, setFileError] = useState('');
@@ -355,9 +422,12 @@ ${scriptText}`;
       ? `\n이 대본은 유튜브 쇼츠(${shortsSeconds}초 이내 세로 영상)용입니다. 짧고 강렬하게 작성하세요.`
       : '';
 
+    // [FIX #159] 채널 스타일 데이터를 종합하여 프롬프트에 반영
+    const channelStyleSection = buildChannelStyleSection(channelGuideline, channelScripts, benchmarkScript);
+
     const systemPrompt = `당신은 유튜브 바이럴 영상 전문 대본 작가입니다.
 주어진 소재와 본능 기제를 바탕으로 완성된 대본을 작성합니다.
-훅(도입부)에서 선택된 본능 기제가 시청자 심리를 강하게 자극하도록 설계하세요.${shortsSystemRule}`;
+훅(도입부)에서 선택된 본능 기제가 시청자 심리를 강하게 자극하도록 설계하세요.${shortsSystemRule}${channelStyleSection ? '\n\n' + channelStyleSection : ''}`;
 
     const shortsRequirement = isShorts
       ? `\n- 포맷: 유튜브 쇼츠 (${shortsSeconds}초 이내, 세로형)\n- 첫 문장에서 즉시 주제를 던지세요 (서론 없이 바로 핵심)\n- 짧고 강렬한 문장 위주 (한 문장 20자 이내)\n- "본 영상에서 다루겠습니다" 같은 롱폼 유도 표현 절대 금지\n- 마지막은 반전/충격/핵심 결론으로 임팩트 있게 마무리`
@@ -410,7 +480,7 @@ ${instinctPrompt}
       genAbortRef.current = null;
       finishGeneration();
     }
-  }, [instinctIds, targetCharCount, contentFormat, shortsSeconds, startGeneration, finishGeneration, setGeneratedScript, setFinalScript]);
+  }, [instinctIds, targetCharCount, contentFormat, shortsSeconds, channelGuideline, channelScripts, benchmarkScript, startGeneration, finishGeneration, setGeneratedScript, setFinalScript]);
 
   const handleGenerateScript = useCallback(async () => {
     if (!requireAuth('AI 대본 생성')) return;
@@ -424,6 +494,7 @@ ${instinctPrompt}
     genAbortRef.current = abortCtrl;
 
     startGeneration();
+    setStreamingText('');
     setGenError('');
 
     const formatLabel = `${targetCharCount.toLocaleString()}자 분량 (${estimateTime(targetCharCount)})`;
@@ -438,26 +509,19 @@ ${instinctPrompt}
 - 마지막은 반전/충격/핵심 결론으로 임팩트 있게 마무리`
       : '';
 
+    // [FIX #159] 채널 스타일 데이터를 종합하여 프롬프트에 반영 (fullGuidelineText + 대본 샘플 포함)
+    const channelStyleSection = buildChannelStyleSection(channelGuideline, channelScripts, benchmarkScript);
+
     const systemPrompt = `당신은 전문 영상 대본 작가입니다. 사용자의 요청에 따라 완성도 높은 ${isShorts ? '유튜브 쇼츠' : '영상'} 대본을 생성합니다.
 
 핵심 원칙:
 1. 대본에 포함되는 정보, 사례, 통계, 사건은 반드시 실제로 존재하는 것이어야 합니다.
 2. 허구의 연구, 가짜 통계, 존재하지 않는 사건을 지어내지 마세요.
 3. 확실하지 않은 정보는 "~로 알려져 있다", "~라는 주장이 있다"로 표현하세요.
-4. 구체적 수치나 출처를 언급할 때는 실제 데이터만 사용하세요.${shortsRule}
-
-반드시 JSON 형식으로만 응답하세요. 마크다운 코드 블록 없이 순수 JSON만 출력합니다.`;
+4. 구체적 수치나 출처를 언급할 때는 실제 데이터만 사용하세요.${shortsRule}`;
 
     const instinctSection = instinctIds.length > 0
       ? `\n\n[적용할 본능 기제]\n${buildSelectedInstinctPrompt(instinctIds)}\n\n위 본능 기제를 활용하여 도입부(훅)에서 시청자 심리를 강하게 자극하세요.`
-      : '';
-
-    const guidelineSection = channelGuideline
-      ? `\n\n[채널 스타일 가이드]\n채널명: ${channelGuideline.channelName}\n말투: ${channelGuideline.tone}\n구조: ${channelGuideline.structure}\n도입패턴: ${channelGuideline.hookPattern}\n마무리패턴: ${channelGuideline.closingPattern}\n→ 위 채널 스타일에 맞춰 대본을 작성하세요.`
-      : '';
-
-    const benchmarkSection = benchmarkScript
-      ? `\n\n[참고 벤치마크 대본 (앞 800자)]\n${benchmarkScript.slice(0, 800)}\n→ 위 대본의 말투와 흐름을 참고하되 내용은 새롭게 작성하세요.`
       : '';
 
     const topicInstinctSection = selectedTopic?.instinctAnalysis
@@ -469,36 +533,51 @@ ${instinctPrompt}
 - 제목: ${title}
 - 줄거리: ${synopsis}
 - 포맷: ${isShorts ? `쇼츠 (${shortsSeconds}초 이내, 세로형)` : '롱폼'}
-- 분량: ${formatLabel}${instinctSection}${guidelineSection}${benchmarkSection}${topicInstinctSection}
+- 분량: ${formatLabel}${instinctSection}${channelStyleSection ? '\n\n' + channelStyleSection : ''}${topicInstinctSection}
 
-다음 JSON 형식으로 출력하세요:
-{
-  "title": "제목",
-  "content": "완성된 대본 전문 (줄바꿈 포함)",
-  "estimatedDuration": "예상 분량 (예: 약 8분)",
-  "structure": ["도입부", "전개", "클라이맥스", "결말"]
-}`;
+대본만 출력하세요. 제목이나 부가 설명 없이 본문만.`;
 
     try {
-      const res = await evolinkChat(
-        [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }],
-        { temperature: 0.7, maxTokens: Math.min(32000, Math.max(8000, Math.ceil(targetCharCount * 2))), signal: abortCtrl.signal }
+      // [FIX #159] 스트리밍 방식으로 전환 — 토큰 제한으로 인한 응답 잘림(finishReason: "length") 방지
+      const fullText = await evolinkNativeStream(
+        systemPrompt,
+        userPrompt,
+        (_chunk, accumulated) => {
+          setStreamingText(accumulated);
+        },
+        { temperature: 0.7, maxOutputTokens: Math.min(32000, Math.max(8000, targetCharCount * 2)), enableWebSearch: true, signal: abortCtrl.signal }
       );
-      const raw = res.choices?.[0]?.message?.content || '';
-      if (!raw.trim()) throw new Error('AI 응답이 비어있습니다. 다시 시도해주세요.');
-      const jsonStr = extractJsonFromText(raw);
-      let parsed: { title?: string; content?: string; estimatedDuration?: string; structure?: string[] };
-      try { parsed = JSON.parse(jsonStr || '{}'); } catch { throw new Error('AI 응답을 파싱할 수 없습니다. 다시 시도해주세요.'); }
-      const content = parsed.content || '';
-      if (!content.trim()) throw new Error('생성된 대본이 비어있습니다. 다시 시도해주세요.');
+
+      if (!fullText.trim()) throw new Error('AI 응답이 비어있습니다. 다시 시도해주세요.');
+
+      // JSON 파싱 시도 (이전 방식 호환) — 실패 시 plain text로 사용
+      let finalContent = fullText;
+      let finalTitle = title;
+      let finalDuration = `약 ${Math.round(fullText.length / 350)}분`;
+      let finalStructure: string[] = [];
+
+      const jsonStr = extractJsonFromText(fullText);
+      if (jsonStr) {
+        try {
+          const parsed = JSON.parse(jsonStr) as { title?: string; content?: string; estimatedDuration?: string; structure?: string[] };
+          if (parsed.content && parsed.content.trim()) {
+            finalContent = parsed.content;
+            finalTitle = parsed.title || title;
+            finalDuration = parsed.estimatedDuration || finalDuration;
+            finalStructure = Array.isArray(parsed.structure) ? parsed.structure : [];
+          }
+        } catch { /* JSON 파싱 실패 시 plain text 사용 */ }
+      }
+
       setGeneratedScript({
-        title: parsed.title || title,
-        content,
-        charCount: content.length,
-        estimatedDuration: parsed.estimatedDuration || '약 5분',
-        structure: Array.isArray(parsed.structure) ? parsed.structure : ['도입부', '전개', '클라이맥스', '결말'],
+        title: finalTitle,
+        content: finalContent,
+        charCount: finalContent.length,
+        estimatedDuration: finalDuration,
+        structure: finalStructure.length > 0 ? finalStructure : ['도입부', '전개', '클라이맥스', '결말'],
       });
-      setFinalScript(content);
+      setFinalScript(finalContent);
+      setStreamingText('');
     } catch (e: unknown) {
       if (abortCtrl.signal.aborted || (e instanceof DOMException && e.name === 'AbortError')) {
         setGenError('');
@@ -506,11 +585,12 @@ ${instinctPrompt}
         const msg = e instanceof Error ? e.message : String(e);
         setGenError(`대본 생성 실패: ${msg}`);
       }
+      setStreamingText('');
     } finally {
       genAbortRef.current = null;
       finishGeneration();
     }
-  }, [title, synopsis, targetCharCount, contentFormat, shortsSeconds, instinctIds, channelGuideline, benchmarkScript,
+  }, [title, synopsis, targetCharCount, contentFormat, shortsSeconds, instinctIds, channelGuideline, channelScripts, benchmarkScript,
     selectedTopic, startGeneration, finishGeneration, setGeneratedScript, setFinalScript]);
 
   const handleCancelGeneration = useCallback(() => {

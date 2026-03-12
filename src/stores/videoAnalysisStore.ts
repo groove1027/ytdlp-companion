@@ -273,10 +273,19 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
       name: 'video-analysis-store',
       // blob URL 썸네일은 localStorage에 저장 불가 — 텍스트 데이터만 영속화
       partialize: (state) => {
-        // resultCache를 최대 3개로 제한 (가장 최근 프리셋만 유지)
+        // resultCache를 최대 3개로 제한 + data URL thumbs 제거 (localStorage 3MB 초과 방지)
         const cacheKeys = Object.keys(state.resultCache);
         const limitedCache: Record<string, ResultCache> = {};
-        cacheKeys.slice(-3).forEach(k => { limitedCache[k] = state.resultCache[k]; });
+        cacheKeys.slice(-3).forEach(k => {
+          const entry = state.resultCache[k];
+          limitedCache[k] = {
+            ...entry,
+            thumbs: entry.thumbs.filter(t => !t.url.startsWith('data:')),
+          };
+        });
+
+        // URL 기반 썸네일만 영속화 (YouTube URL 등), data URL은 크기 문제로 제외
+        const persistableThumbs = state.thumbnails.filter(t => !t.url.startsWith('data:'));
 
         return {
           inputMode: state.inputMode,
@@ -285,10 +294,20 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
           selectedPreset: state.selectedPreset,
           rawResult: state.rawResult.length > 50000 ? state.rawResult.slice(0, 50000) : state.rawResult,
           versions: state.versions,
+          thumbnails: persistableThumbs,
+          expandedId: state.expandedId,
           resultCache: limitedCache,
-          // thumbnails, savedSlots, activeSlotId 제외 (IndexedDB에서 관리)
+          // savedSlots, activeSlotId 제외 (IndexedDB에서 관리)
         };
       },
+      // 리하이드레이션 시 현재 인메모리 thumbnails가 비어있지 않으면 보존
+      merge: (persistedState, currentState) => ({
+        ...currentState,
+        ...(persistedState as object),
+        thumbnails: (currentState as VideoAnalysisStore).thumbnails?.length > 0
+          ? (currentState as VideoAnalysisStore).thumbnails
+          : ((persistedState as any)?.thumbnails || []),
+      }),
       storage: {
         getItem: (name) => {
           try {
