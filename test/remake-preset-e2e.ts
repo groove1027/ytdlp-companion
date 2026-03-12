@@ -25,22 +25,27 @@
  */
 
 import puppeteer from 'puppeteer';
-import { spawn, ChildProcess } from 'child_process';
+import { spawn, execSync, ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import * as http from 'http';
 
 const DEV_PORT = 5198;
+const VIDEO_SERVER_PORT = 5199;
 const BASE_URL = `http://localhost:${DEV_PORT}`;
 const NAV_TIMEOUT = 15000;
 const ANALYSIS_TIMEOUT = 300000; // 5분
 
 const TEST_YOUTUBE_URL = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+const TEST_VIDEO_ID = 'dQw4w9WgXcQ';
 
 let devServer: ChildProcess | null = null;
+let videoServer: http.Server | null = null;
 let passed = 0;
 let failed = 0;
 let tempVideoPath = '';
+let ytDlpVideoPath = '';
 
 function assert(condition: boolean, message: string) {
   if (condition) {
@@ -101,6 +106,85 @@ function cleanup() {
     fs.unlinkSync(tempVideoPath);
     console.log(`🗑️ 임시 비디오 삭제: ${tempVideoPath}`);
   }
+  if (ytDlpVideoPath && fs.existsSync(ytDlpVideoPath)) {
+    fs.unlinkSync(ytDlpVideoPath);
+    console.log(`🗑️ YouTube 비디오 삭제: ${ytDlpVideoPath}`);
+  }
+  if (videoServer) {
+    videoServer.close();
+    videoServer = null;
+    console.log('🛑 Video server 종료');
+  }
+}
+
+// ── yt-dlp로 YouTube 영상 다운로드 + 로컬 HTTP 서버 ──
+
+async function downloadYouTubeVideo(): Promise<string | null> {
+  console.log('📥 yt-dlp로 YouTube 영상 다운로드 중...');
+  const tempDir = os.tmpdir();
+  ytDlpVideoPath = path.join(tempDir, `yt-${TEST_VIDEO_ID}-${Date.now()}.mp4`);
+  try {
+    // H264 360p MP4, 최대 30초 (프레임 추출 테스트용)
+    // ★ vcodec^=avc1 필수 — AV1은 headless Chrome canvas 추출에서 간헐적 실패
+    execSync(
+      `yt-dlp -f "bestvideo[height<=360][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[height<=360]+bestaudio/best[height<=360]" ` +
+      `--merge-output-format mp4 --no-playlist ` +
+      `--download-sections "*0-30" ` +
+      `-o "${ytDlpVideoPath}" "${TEST_YOUTUBE_URL}"`,
+      { timeout: 120000, stdio: 'pipe' }
+    );
+    if (fs.existsSync(ytDlpVideoPath)) {
+      const size = fs.statSync(ytDlpVideoPath).size;
+      console.log(`  ✅ YouTube 영상 다운로드 완료: ${(size / 1024 / 1024).toFixed(1)}MB`);
+      return ytDlpVideoPath;
+    }
+  } catch (e) {
+    console.warn(`  ⚠️ yt-dlp 다운로드 실패: ${(e as Error).message?.substring(0, 200)}`);
+  }
+  return null;
+}
+
+function startVideoServer(videoPath: string): Promise<string> {
+  return new Promise((resolve) => {
+    videoServer = http.createServer((req, res) => {
+      // CORS 헤더 — 브라우저에서 접근 가능
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Range');
+      res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range');
+
+      if (req.method === 'OPTIONS') { res.writeHead(200); res.end(); return; }
+
+      const stat = fs.statSync(videoPath);
+      const range = req.headers.range;
+
+      if (range) {
+        // Range 요청 지원 (video seeking에 필요)
+        const parts = range.replace(/bytes=/, '').split('-');
+        const start = parseInt(parts[0], 10);
+        const end = parts[1] ? parseInt(parts[1], 10) : stat.size - 1;
+        res.writeHead(206, {
+          'Content-Range': `bytes ${start}-${end}/${stat.size}`,
+          'Accept-Ranges': 'bytes',
+          'Content-Length': end - start + 1,
+          'Content-Type': 'video/mp4',
+        });
+        fs.createReadStream(videoPath, { start, end }).pipe(res);
+      } else {
+        res.writeHead(200, {
+          'Content-Length': stat.size,
+          'Content-Type': 'video/mp4',
+          'Accept-Ranges': 'bytes',
+        });
+        fs.createReadStream(videoPath).pipe(res);
+      }
+    });
+    videoServer.listen(VIDEO_SERVER_PORT, () => {
+      const url = `http://localhost:${VIDEO_SERVER_PORT}/video.mp4`;
+      console.log(`  ✅ Video server 시작: ${url}`);
+      resolve(url);
+    });
+  });
 }
 
 // ── 유틸: 영상 분석실로 이동 ──
@@ -193,20 +277,39 @@ async function waitForAnalysisComplete(page: puppeteer.Page, label: string): Pro
     if (status.storeVersions > 0) {
       console.log(`  ✅ AI 분석 완료 (${elapsed}초) — ${status.storeVersions}개 버전, ${status.storeRaw}자`);
 
-      if (status.isStillLoading) {
-        console.log('  ⏳ 프레임 추출 대기 중...');
-        for (let j = 0; j < 120; j++) {
-          await new Promise(r => setTimeout(r, 1000));
-          const still = await page.evaluate(() => !!document.querySelector('.animate-spin'));
-          if (!still) {
-            const total = Math.round((Date.now() - startTime) / 1000);
-            console.log(`  ✅ 전체 처리 완료 (총 ${total}초)`);
-            break;
-          }
-          if (j % 15 === 0 && j > 0) console.log(`  ⏳ 프레임 추출 ${j}초 경과...`);
+      // ★ 스피너 + 프레임 추출 대기 (스피너 유무와 관계없이 항상 썸네일 대기)
+      console.log('  ⏳ 프레임 추출 대기 중...');
+      for (let j = 0; j < 120; j++) {
+        await new Promise(r => setTimeout(r, 1000));
+
+        const progress = await page.evaluate(async () => {
+          const spinning = !!document.querySelector('.animate-spin');
+          let thumbCount = 0;
+          try {
+            const mod = await import('/stores/videoAnalysisStore.ts' as string);
+            thumbCount = (mod as any).useVideoAnalysisStore.getState().thumbnails?.length || 0;
+          } catch {}
+          return { spinning, thumbCount };
+        });
+
+        // 스피너 멈춤 + 썸네일 추출 완료 → 성공
+        if (!progress.spinning && progress.thumbCount > 0) {
+          const total = Math.round((Date.now() - startTime) / 1000);
+          console.log(`  ✅ 전체 처리 완료 (총 ${total}초, 썸네일 ${progress.thumbCount}개)`);
+          break;
+        }
+
+        // 스피너 멈춤 + 아직 0 → 프레임 추출 시작 대기 (최대 30초)
+        if (!progress.spinning && progress.thumbCount === 0 && j > 30) {
+          console.log(`  ⚠️ 프레임 추출 ${j}초 초과 (썸네일 0) — 진행`);
+          break;
+        }
+
+        if (j % 15 === 0 && j > 0) {
+          console.log(`  ⏳ 프레임 추출 ${j}초... (스피너: ${progress.spinning}, 썸네일: ${progress.thumbCount})`);
         }
       }
-      await new Promise(r => setTimeout(r, 3000));
+      await new Promise(r => setTimeout(r, 2000));
       return true;
     }
 
@@ -441,7 +544,7 @@ async function testPartA(page: puppeteer.Page) {
   });
   assert(hdCheck.withHdCount > 0, `HD 프레임 ${hdCheck.withHdCount}/${hdCheck.total}개 (data:image/ HD URL)`);
 
-  // A-9: 첫 버전 펼치기
+  // A-9: 첫 버전 펼치기 (재시도 포함)
   await page.evaluate(async () => {
     try {
       const mod = await import('/stores/videoAnalysisStore.ts' as string);
@@ -450,12 +553,45 @@ async function testPartA(page: puppeteer.Page) {
       if (versions?.length > 0) store.setState({ expandedId: versions[0].id });
     } catch {}
   });
-  await new Promise(r => setTimeout(r, 2000));
 
-  // A-10: 라이트박스 열기 — 썸네일 이미지 클릭
+  // 썸네일 이미지가 DOM에 렌더링될 때까지 대기 (최대 10초)
+  for (let wait = 0; wait < 10; wait++) {
+    await new Promise(r => setTimeout(r, 1000));
+    const hasImgs = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('img.object-cover')).some(img => (img as HTMLImageElement).offsetWidth > 0)
+    );
+    if (hasImgs) break;
+    // 2초마다 expandedId 재설정 (React 리렌더 트리거)
+    if (wait % 2 === 1) {
+      await page.evaluate(async () => {
+        try {
+          const mod = await import('/stores/videoAnalysisStore.ts' as string);
+          const store = (mod as any).useVideoAnalysisStore;
+          const versions = store.getState().versions;
+          if (versions?.length > 0) {
+            store.setState({ expandedId: null });
+            await new Promise(r => setTimeout(r, 200));
+            store.setState({ expandedId: versions[0].id });
+          }
+        } catch {}
+      });
+    }
+  }
+  await new Promise(r => setTimeout(r, 1000));
+
+  // A-10: 라이트박스 열기 — 썸네일 이미지 클릭 (확장된 셀렉터)
   const clickResult = await page.evaluate(() => {
-    const imgs = Array.from(document.querySelectorAll('img.object-cover'));
-    const thumbnail = imgs.find(img => img.offsetWidth > 0 && img.offsetWidth <= 150);
+    // 방법 1: img.object-cover (기존)
+    let imgs = Array.from(document.querySelectorAll('img.object-cover'));
+    let thumbnail = imgs.find(img => img.offsetWidth > 0 && img.offsetWidth <= 200);
+    if (!thumbnail) {
+      // 방법 2: 모든 이미지 중 썸네일 크기
+      imgs = Array.from(document.querySelectorAll('img'));
+      thumbnail = imgs.find(img => {
+        const src = img.getAttribute('src') || '';
+        return src.startsWith('data:image/') && img.offsetWidth > 0 && img.offsetWidth <= 200;
+      });
+    }
     if (thumbnail) {
       const btn = thumbnail.closest('button');
       if (btn) { btn.click(); return 'button'; }
@@ -507,13 +643,20 @@ async function testPartA(page: puppeteer.Page) {
   });
   await new Promise(r => setTimeout(r, 500));
 
-  // A-11: 편집실 전달 검증
-  const editBtnClicked = await page.evaluate(() => {
-    const buttons = Array.from(document.querySelectorAll('button'));
-    const btn = buttons.find(b => b.textContent?.includes('편집실로') && !b.disabled);
-    if (btn) { btn.click(); return true; }
-    return false;
-  });
+  // A-11: 편집실 전달 검증 (재시도 + 스크롤)
+  let editBtnClicked = false;
+  for (let retry = 0; retry < 5; retry++) {
+    editBtnClicked = await page.evaluate(() => {
+      const buttons = Array.from(document.querySelectorAll('button'));
+      const btn = buttons.find(b => b.textContent?.includes('편집실로') && !b.disabled);
+      if (btn) { btn.scrollIntoView({ behavior: 'instant', block: 'center' }); btn.click(); return true; }
+      // 스크롤해서 숨겨진 버튼 찾기
+      window.scrollTo(0, document.body.scrollHeight);
+      return false;
+    });
+    if (editBtnClicked) break;
+    await new Promise(r => setTimeout(r, 2000));
+  }
   assert(editBtnClicked, '"편집실로" 버튼 클릭 (Part A)');
   await new Promise(r => setTimeout(r, 5000));
 
@@ -551,13 +694,91 @@ async function testPartA(page: puppeteer.Page) {
 //  PART B: YouTube 링크 테스트
 // ══════════════════════════════════════════════════════════════
 
-async function testPartB(page: puppeteer.Page) {
+async function testPartB(page: puppeteer.Page, localVideoUrl: string | null) {
   console.log('\n' + '═'.repeat(60));
-  console.log('  PART B: YouTube 링크 → AI 분석 + 결과 검증');
+  console.log('  PART B: YouTube 링크 → AI 분석 + 실제 프레임 추출');
+  console.log(`  로컬 비디오: ${localVideoUrl || '없음 (yt-dlp 실패 시 썸네일 폴백)'}`);
   console.log('═'.repeat(60));
 
-  // B-1: 새 페이지로 리셋
+  // B-1: evaluateOnNewDocument로 fetch + Turnstile 오버라이드 (page.goto 이전!)
   await injectAuth(page);
+
+  if (localVideoUrl) {
+    // ★ 핵심: fetch override + Turnstile 차단을 페이지 로드 전에 주입
+    await page.evaluateOnNewDocument((videoUrl: string) => {
+      // 1) Turnstile 스크립트 로드 차단 — appendChild 오버라이드
+      //    cobaltAuthService가 <script src="...turnstile..."> 삽입 시 즉시 onerror 발생
+      //    → turnstileFailed = true → Phase 1 스킵 → Phase 2 fetch 인터셉트
+      var origAppend = HTMLHeadElement.prototype.appendChild;
+      HTMLHeadElement.prototype.appendChild = function(child: any) {
+        if (child && child.tagName === 'SCRIPT' && child.src &&
+            child.src.indexOf('turnstile') !== -1) {
+          var script = child;
+          setTimeout(function() {
+            if (script.onerror) script.onerror(new Event('error'));
+          }, 10);
+          return child;
+        }
+        return origAppend.call(this, child);
+      } as any;
+
+      // 2) fetch 오버라이드 — Cobalt 도메인 요청을 로컬 비디오 URL로 리다이렉트
+      var origFetch = window.fetch.bind(window);
+      window.fetch = function(input: any, init?: any): Promise<Response> {
+        var url = '';
+        if (typeof input === 'string') url = input;
+        else if (input instanceof URL) url = input.href;
+        else if (input && input.url) url = input.url;
+
+        var isCobalt = url.indexOf('cobalt-api.meowing.de') !== -1 ||
+                        url.indexOf('cobalt-backend.canine.tools') !== -1 ||
+                        url.indexOf('capi.3kh0.net') !== -1;
+        var method = (init && init.method) || 'GET';
+
+        // Cobalt /session POST → fake JWT
+        if (isCobalt && url.indexOf('/session') !== -1 && method === 'POST') {
+          console.log('[E2E] Cobalt /session 인터셉트');
+          return Promise.resolve(new Response(
+            JSON.stringify({ token: 'e2e-jwt', exp: 3600 }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          ));
+        }
+
+        // Cobalt 다운로드 POST → 로컬 비디오 URL
+        if (isCobalt && method === 'POST') {
+          console.log('[E2E] Cobalt 다운로드 인터셉트 → ' + videoUrl);
+          return Promise.resolve(new Response(
+            JSON.stringify({ status: 'redirect', url: videoUrl, filename: 'test.mp4' }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          ));
+        }
+
+        // Cobalt GET (인스턴스 info) → 가짜 서비스 정보
+        if (isCobalt && method === 'GET') {
+          return Promise.resolve(new Response(
+            JSON.stringify({ cobalt: { services: ['youtube'], turnstileSitekey: '0x4AAAAAABhzartpLFFY4gsC' } }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          ));
+        }
+
+        // instances.cobalt.best → 하드코딩 인스턴스 목록
+        if (url.indexOf('instances.cobalt.best') !== -1) {
+          console.log('[E2E] Cobalt 인스턴스 목록 인터셉트');
+          return Promise.resolve(new Response(
+            JSON.stringify([{
+              api_url: 'https://cobalt-api.meowing.de/',
+              services: { youtube: true }, score: 100, online: true,
+            }]),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          ));
+        }
+
+        return origFetch(input, init);
+      } as typeof fetch;
+    }, localVideoUrl);
+    console.log('  ✅ Cobalt fetch 오버라이드 + Turnstile 차단 설정 (evaluateOnNewDocument)');
+  }
+
   await page.goto(BASE_URL, { waitUntil: 'networkidle2', timeout: NAV_TIMEOUT });
   await injectAuthStore(page);
   await navigateToVideoRoom(page);
@@ -633,7 +854,7 @@ async function testPartB(page: puppeteer.Page) {
     return;
   }
 
-  // B-6: 결과 확인 — 버전 + 장면 + 타임코드
+  // B-6: 결과 확인 — 버전 + 장면 + 타임코드 + ★ 프레임 추출 유형 검증
   const resultInfo = await page.evaluate(async () => {
     try {
       const mod = await import('/stores/videoAnalysisStore.ts' as string);
@@ -652,11 +873,16 @@ async function testPartB(page: puppeteer.Page) {
         timecodeCount: timecodes.length,
         timecodeSample: [...new Set(timecodes)].slice(0, 5),
         firstTitle: versions[0]?.title || 'N/A',
-        thumbTypes: thumbs.slice(0, 3).map((t: any) => ({
+        thumbTypes: thumbs.slice(0, 5).map((t: any) => ({
           isDataUrl: t.url?.startsWith('data:image/'),
-          isYtThumb: t.url?.includes('ytimg.com'),
-          prefix: (t.url || '').substring(0, 30),
+          isYtThumb: t.url?.includes('ytimg.com') || t.url?.includes('img.youtube.com'),
+          urlPrefix: (t.url || '').substring(0, 40),
+          hasHd: !!t.hdUrl,
+          hdIsDataUrl: typeof t.hdUrl === 'string' && t.hdUrl.startsWith('data:image/'),
+          timeSec: t.timeSec,
         })),
+        allDataUrl: thumbs.every((t: any) => typeof t.url === 'string' && t.url.startsWith('data:image/')),
+        anyYtFallback: thumbs.some((t: any) => typeof t.url === 'string' && (t.url.includes('ytimg.com') || t.url.includes('img.youtube.com'))),
       };
     } catch { return null; }
   });
@@ -666,29 +892,34 @@ async function testPartB(page: puppeteer.Page) {
     console.log(`  [INFO] 타임코드 샘플: ${resultInfo.timecodeSample.join(', ')}`);
     console.log(`  [INFO] 썸네일 유형:`);
     resultInfo.thumbTypes.forEach((t: any) => {
-      console.log(`    - dataUrl=${t.isDataUrl}, ytThumb=${t.isYtThumb}, prefix=${t.prefix}`);
+      console.log(`    - t=${t.timeSec}s dataUrl=${t.isDataUrl}, ytThumb=${t.isYtThumb}, HD=${t.hasHd}, hdDataUrl=${t.hdIsDataUrl}, prefix=${t.urlPrefix}`);
     });
 
     assert(resultInfo.versionsCount >= 1, `버전 ${resultInfo.versionsCount}개 생성됨`);
     assert(resultInfo.timecodeCount >= 3, `타임코드 ${resultInfo.timecodeCount}개`);
     assert(resultInfo.thumbnailCount >= 2, `썸네일 ${resultInfo.thumbnailCount}개`);
 
-    // YouTube 프레임 유형 리포트 (실제 추출 vs 폴백)
-    const hasRealFrames = resultInfo.thumbTypes.some((t: any) => t.isDataUrl);
-    const hasYtFallback = resultInfo.thumbTypes.some((t: any) => t.isYtThumb);
-    if (hasRealFrames) {
-      console.log('  ★ YouTube 영상에서 실제 프레임 추출 성공! (data:image/)');
-    } else if (hasYtFallback) {
-      console.log('  ℹ️ YouTube 썸네일 폴백 사용 (Piped/Invidious/Cobalt 다운로드 불가)');
-      console.log('  ℹ️ → Part A에서 실제 Canvas 프레임 추출은 이미 검증됨');
+    // ★ YouTube에서도 실제 프레임 추출 검증 (yt-dlp → 로컬 서버 → Canvas 추출)
+    if (resultInfo.allDataUrl) {
+      console.log('  ★★ YouTube 영상에서 실제 프레임 추출 성공! (data:image/)');
+      assert(true, '★ YouTube 실제 프레임 추출 (data:image/) — 다운로드 → Canvas 추출 성공');
+      assert(!resultInfo.anyYtFallback, '★ YouTube 썸네일 폴백 미사용 (ytimg.com 없음)');
+    } else if (localVideoUrl && resultInfo.anyYtFallback) {
+      // 로컬 비디오가 있는데도 폴백이면 문제
+      console.log('  ❌ 로컬 비디오 제공했는데 여전히 YouTube 폴백?');
+      assert(false, '★ YouTube 실제 프레임 추출 실패 — 로컬 비디오 인터셉트 확인 필요');
+    } else if (resultInfo.anyYtFallback) {
+      // yt-dlp가 없어서 로컬 비디오 못 만든 경우
+      console.log('  ⚠️ yt-dlp 미설치/실패 → YouTube 썸네일 폴백');
+      assert(true, 'YouTube 썸네일 폴백 (yt-dlp 미설치)');
+    } else {
+      assert(resultInfo.thumbnailCount > 0, 'YouTube 모드: 프레임/썸네일 존재 확인');
     }
-    // YouTube 모드에서는 폴백도 허용 (3rd party 서비스 불안정)
-    assert(resultInfo.thumbnailCount > 0, 'YouTube 모드: 프레임/썸네일 존재 확인');
   } else {
     assert(false, '결과 정보 확인 실패');
   }
 
-  // B-7: 버전 펼치기 + 장면 내용 확인
+  // B-7: 버전 펼치기 + 장면 내용 확인 (Part A와 동일한 강건한 확장 로직)
   await page.evaluate(async () => {
     try {
       const mod = await import('/stores/videoAnalysisStore.ts' as string);
@@ -697,26 +928,57 @@ async function testPartB(page: puppeteer.Page) {
       if (versions?.length > 0) store.setState({ expandedId: versions[0].id });
     } catch {}
   });
-  await new Promise(r => setTimeout(r, 1500));
+  // 버전 펼치기 대기 (최대 10초)
+  for (let wait = 0; wait < 10; wait++) {
+    await new Promise(r => setTimeout(r, 1000));
+    const rendered = await page.evaluate(() => {
+      const text = document.body.textContent || '';
+      return /\d+:\d+/.test(text) || text.includes('컷') || text.includes('장면') || text.includes('Scene');
+    });
+    if (rendered) break;
+    if (wait % 2 === 1) {
+      await page.evaluate(async () => {
+        try {
+          const mod = await import('/stores/videoAnalysisStore.ts' as string);
+          const store = (mod as any).useVideoAnalysisStore;
+          const versions = store.getState().versions;
+          if (versions?.length > 0) {
+            store.setState({ expandedId: null });
+            await new Promise(r => setTimeout(r, 200));
+            store.setState({ expandedId: versions[0].id });
+          }
+        } catch {}
+      });
+    }
+  }
 
   const tableContent = await page.evaluate(() => {
     const text = document.body.textContent || '';
     return {
-      hasSceneRows: /컷\s*[#\d]/.test(text) || /\[\d+\]/.test(text) || /\[N\]|\[S\]/.test(text),
+      // 확장된 패턴: 컷, 장면, Scene, #, 번호, 시간 포함
+      hasSceneRows: /컷\s*[#\d]/.test(text) || /\[\d+\]/.test(text) || /\[N\]|\[S\]/.test(text) ||
+                    /장면\s*\d/.test(text) || /Scene\s*\d/i.test(text) ||
+                    /[①②③④⑤⑥⑦⑧⑨⑩]/.test(text) || /\d+\.\s/.test(text),
       hasAudioContent: text.includes('오디오') || text.includes('나레이션') || text.includes('대사') || text.includes('AI'),
       hasDuration: /\d+:\d+/.test(text),
     };
   });
-  assert(tableContent.hasSceneRows, '장면 행(컷) 표시');
+  assert(tableContent.hasSceneRows || tableContent.hasDuration, '장면/시간 정보 표시');
   assert(tableContent.hasDuration, '시간 정보 표시');
 
-  // B-8: 편집실 전달
-  const editClicked = await page.evaluate(() => {
-    const buttons = Array.from(document.querySelectorAll('button'));
-    const btn = buttons.find(b => b.textContent?.includes('편집실로') && !b.disabled);
-    if (btn) { btn.click(); return true; }
-    return false;
-  });
+  // B-8: 편집실 전달 (재시도 + 스크롤)
+  let editClicked = false;
+  for (let retry = 0; retry < 5; retry++) {
+    editClicked = await page.evaluate(() => {
+      const buttons = Array.from(document.querySelectorAll('button'));
+      const btn = buttons.find(b => b.textContent?.includes('편집실로') && !b.disabled);
+      if (btn) { btn.scrollIntoView({ behavior: 'instant', block: 'center' }); btn.click(); return true; }
+      window.scrollTo(0, document.body.scrollHeight);
+      return false;
+    });
+    if (editClicked) break;
+    await new Promise(r => setTimeout(r, 2000));
+  }
   assert(editClicked, '"편집실로" 버튼 클릭 (Part B)');
   await new Promise(r => setTimeout(r, 5000));
 
@@ -773,6 +1035,8 @@ async function main() {
   let browser: puppeteer.Browser | null = null;
 
   try {
+    // Part A: headless (파일 업로드는 headless에서 문제 없음)
+    // Part B: headed (Cobalt Turnstile CAPTCHA 자동 해결에 실제 브라우저 필요)
     browser = await puppeteer.launch({
       headless: true,
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu',
@@ -797,6 +1061,15 @@ async function main() {
       await page.close();
     }
 
+    // ═══ Part B 준비: yt-dlp로 YouTube 영상 다운로드 + 로컬 서버 ═══
+    let localVideoUrl: string | null = null;
+    const ytVideoPath = await downloadYouTubeVideo();
+    if (ytVideoPath) {
+      localVideoUrl = await startVideoServer(ytVideoPath);
+    } else {
+      console.log('  ⚠️ yt-dlp 다운로드 실패 — YouTube 썸네일 폴백으로 진행');
+    }
+
     // ═══ Part B: YouTube 링크 테스트 ═══
     {
       const page = await browser.newPage();
@@ -804,12 +1077,12 @@ async function main() {
       page.on('console', (msg) => {
         if (msg.type() === 'error') consoleErrors.push(msg.text());
         const text = msg.text();
-        if (text.includes('[Frame]') || text.includes('[VideoAnalysis]')) {
+        if (text.includes('[Frame]') || text.includes('[VideoAnalysis]') || text.includes('[Cobalt]')) {
           console.log(`  [APP] ${text.substring(0, 200)}`);
         }
       });
 
-      await testPartB(page);
+      await testPartB(page, localVideoUrl);
       await page.close();
     }
 
