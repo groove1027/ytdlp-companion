@@ -563,12 +563,12 @@ export const evolinkVideoAnalysisStream = async (
     systemPrompt: string,
     userPrompt: string,
     onChunk: (text: string, accumulated: string) => void,
-    options: { temperature?: number; maxOutputTokens?: number } = {}
+    options: { temperature?: number; maxOutputTokens?: number; signal?: AbortSignal } = {}
 ): Promise<string> => {
     const apiKey = getEvolinkKey();
     if (!apiKey) throw new Error('Evolink API 키가 설정되지 않았습니다.');
 
-    const { temperature = 0.5, maxOutputTokens = 40000 } = options;
+    const { temperature = 0.5, maxOutputTokens = 40000, signal } = options;
 
     const payload = {
         contents: [{
@@ -600,6 +600,7 @@ export const evolinkVideoAnalysisStream = async (
             'Content-Type': 'application/json',
         },
         body: JSON.stringify(payload),
+        signal,
     });
 
     if (!response.ok) {
@@ -671,12 +672,12 @@ export const evolinkFrameAnalysisStream = async (
     systemPrompt: string,
     userPrompt: string,
     onChunk: (text: string, accumulated: string) => void,
-    options: { temperature?: number; maxOutputTokens?: number } = {}
+    options: { temperature?: number; maxOutputTokens?: number; signal?: AbortSignal } = {}
 ): Promise<string> => {
     const apiKey = getEvolinkKey();
     if (!apiKey) throw new Error('Evolink API 키가 설정되지 않았습니다.');
 
-    const { temperature = 0.5, maxOutputTokens = 40000 } = options;
+    const { temperature = 0.5, maxOutputTokens = 40000, signal } = options;
 
     // 프레임을 inlineData parts로 변환
     const frameParts = frames.flatMap(f => [
@@ -713,6 +714,7 @@ export const evolinkFrameAnalysisStream = async (
             'Content-Type': 'application/json',
         },
         body: JSON.stringify(payload),
+        signal,
     });
 
     if (!response.ok) {

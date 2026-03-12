@@ -31,6 +31,8 @@ interface AnalysisLoadingPanelProps {
   accent?: 'blue' | 'orange';
   /** 추가 안내 문구 (최상단) */
   description?: string;
+  /** [FIX #157] 분석 취소 콜백 */
+  onCancel?: () => void;
 }
 
 // ── 팁 데이터 ──
@@ -64,6 +66,7 @@ const AnalysisLoadingPanel: React.FC<AnalysisLoadingPanelProps> = ({
   estimatedTotalSec,
   accent = 'blue',
   description,
+  onCancel,
 }) => {
   // 팁 캐러셀
   const [tipIndex, setTipIndex] = useState(() => Math.floor(Math.random() * TIPS.length));
@@ -177,6 +180,19 @@ const AnalysisLoadingPanel: React.FC<AnalysisLoadingPanelProps> = ({
           )}
         </div>
       </div>
+
+      {/* [FIX #157] 취소 버튼 — 2분 이상 경과 시 노출 */}
+      {onCancel && elapsedSec >= 120 && (
+        <div className="flex justify-center">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="px-4 py-2 text-sm font-medium text-red-400 bg-red-900/20 border border-red-500/30 rounded-lg hover:bg-red-900/40 hover:text-red-300 transition-all"
+          >
+            분석 중단하기
+          </button>
+        </div>
+      )}
 
       {/* 파이프라인 단계 */}
       <div className="flex items-center gap-1">
