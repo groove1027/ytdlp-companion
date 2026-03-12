@@ -13,6 +13,7 @@ interface UIStore {
   lightboxUrl: string | null;
   showFullScriptModal: boolean;
   showFeedbackModal: boolean;
+  showFeedbackHistory: boolean;
   showApiSettings: boolean;
   showWatermarkModal: boolean;
   showProfileModal: boolean;
@@ -34,6 +35,7 @@ interface UIStore {
   closeLightbox: () => void;
   setShowFullScriptModal: (show: boolean) => void;
   setShowFeedbackModal: (show: boolean) => void;
+  setShowFeedbackHistory: (show: boolean) => void;
   setShowApiSettings: (show: boolean) => void;
   setShowWatermarkModal: (show: boolean) => void;
   setShowProfileModal: (show: boolean) => void;
@@ -53,6 +55,7 @@ export const useUIStore = create<UIStore>((set) => ({
   lightboxUrl: null,
   showFullScriptModal: false,
   showFeedbackModal: false,
+  showFeedbackHistory: false,
   showApiSettings: false,
   showWatermarkModal: false,
   showProfileModal: false,
@@ -73,6 +76,7 @@ export const useUIStore = create<UIStore>((set) => ({
   closeLightbox: () => set({ lightboxUrl: null }),
   setShowFullScriptModal: (show) => set({ showFullScriptModal: show }),
   setShowFeedbackModal: (show) => set({ showFeedbackModal: show }),
+  setShowFeedbackHistory: (show) => set({ showFeedbackHistory: show }),
   setShowApiSettings: (show) => set({ showApiSettings: show }),
   setShowWatermarkModal: (show) => set({ showWatermarkModal: show }),
   setShowProfileModal: (show) => set({ showProfileModal: show }),

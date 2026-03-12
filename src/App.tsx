@@ -6,6 +6,7 @@ import ProcessingOverlay from './components/ProcessingOverlay';
 import ImageLightbox from './components/ImageLightbox';
 import DebugConsole from './components/DebugConsole';
 import FeedbackModal from './components/FeedbackModal';
+import FeedbackHistoryPanel from './components/FeedbackHistoryPanel';
 import FeedbackNotificationBanner from './components/FeedbackNotificationBanner';
 import CostDashboard from './components/CostDashboard';
 import ApiKeySettings from './components/ApiKeySettings';
@@ -1062,6 +1063,12 @@ const App: React.FC = () => {
                 💬 피드백
               </button>
               <button
+                onClick={() => useUIStore.getState().setShowFeedbackHistory(true)}
+                className="px-3.5 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-gray-300 hover:text-white rounded-lg text-sm font-bold transition-all flex items-center gap-1.5"
+              >
+                📋 내 피드백
+              </button>
+              <button
                 onClick={() => useUIStore.getState().setShowProfileModal(true)}
                 className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-gray-300 hover:text-white rounded-lg text-sm font-bold transition-all flex items-center gap-1.5"
               >
@@ -1386,6 +1393,7 @@ const App: React.FC = () => {
       </div>{/* flex wrapper 닫기 */}
 
       <FeedbackModal />
+      <FeedbackHistoryPanel />
       <FeedbackNotificationBanner />
       {authUser && (
         <ProfileModal
