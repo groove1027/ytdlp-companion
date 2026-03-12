@@ -21,6 +21,15 @@ import { logger } from '../../../services/LoggerService';
 
 const IMAGE_MODEL = ImageModel.NANO_SPEED;
 
+// --- Video Cost Helper ---
+const getGrokCost = (duration?: '6' | '10' | '15'): number =>
+  duration === '15' ? PRICING.VIDEO_GROK_15S : duration === '6' ? PRICING.VIDEO_GROK_6S : PRICING.VIDEO_GROK_10S;
+
+const fmtCost = (usd: number, rate: number): string => {
+  const krw = Math.round(usd * rate);
+  return `$${usd.toFixed(2)} (~₩${krw.toLocaleString()})`;
+};
+
 // --- Helper: Sliding window batch runner ---
 
 async function runImageBatch(
@@ -254,7 +263,7 @@ const SceneCard: React.FC<SceneCardProps> = ({ scene, index, onUpdatePrompt, onD
           <div className="w-px h-5 bg-gray-700 mx-0.5" />
           {/* Grok video actions */}
           <ActionButton label="Grok" color="pink"
-            tooltip={`Grok 영상 (${scene.grokDuration || '10'}s ${scene.grokSpeechMode ? '나레이션' : 'SFX'})`}
+            tooltip={`Grok 영상 (${scene.grokDuration || '10'}s ${scene.grokSpeechMode ? '나레이션' : 'SFX'}) — ${fmtCost(getGrokCost((scene.grokDuration || '10') as '6'|'10'|'15'), useCostStore.getState().exchangeRate || PRICING.EXCHANGE_RATE)}`}
             disabled={!scene.imageUrl || scene.isGeneratingVideo}
             icon={<svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>}
             onClick={() => onGrokVideo(scene.id)} />
@@ -269,7 +278,8 @@ const SceneCard: React.FC<SceneCardProps> = ({ scene, index, onUpdatePrompt, onD
           <div className="w-px h-5 bg-gray-700 mx-0.5" />
           {/* Veo video */}
           <ActionButton label="Veo 영상" color="blue"
-            tooltip="Veo 3.1 1080p" disabled={!scene.imageUrl || scene.isGeneratingVideo}
+            tooltip={`Veo 3.1 1080p — ${fmtCost(PRICING.VIDEO_VEO, useCostStore.getState().exchangeRate || PRICING.EXCHANGE_RATE)}`}
+            disabled={!scene.imageUrl || scene.isGeneratingVideo}
             icon={<svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M21 3H3c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H3V5h18v14zM9.5 16.5v-9l7 4.5z"/></svg>}
             onClick={() => onVeoVideo(scene.id)} />
           <div className="w-px h-5 bg-gray-700 mx-0.5" />
@@ -485,12 +495,12 @@ const GridSceneCard: React.FC<GridSceneCardProps> = ({ scene, index, onRegenerat
               icon={<svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>}
               onClick={(e) => { e.stopPropagation(); onRegenerate(scene.id); }} />
             <ActionButton label="Grok" color="pink" compact
-              tooltip={`Grok 영상 (${scene.grokDuration || '10'}s)`}
+              tooltip={`Grok 영상 (${scene.grokDuration || '10'}s) — ${fmtCost(getGrokCost((scene.grokDuration || '10') as '6'|'10'|'15'), useCostStore.getState().exchangeRate || PRICING.EXCHANGE_RATE)}`}
               disabled={!scene.imageUrl || scene.isGeneratingVideo}
               icon={<svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>}
               onClick={(e) => { e.stopPropagation(); onGrokVideo(scene.id); }} />
             <ActionButton label="Veo" color="blue" compact
-              tooltip="Veo 3.1 영상"
+              tooltip={`Veo 3.1 영상 — ${fmtCost(PRICING.VIDEO_VEO, useCostStore.getState().exchangeRate || PRICING.EXCHANGE_RATE)}`}
               disabled={!scene.imageUrl || scene.isGeneratingVideo}
               icon={<svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><path d="M21 3H3c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H3V5h18v14zM9.5 16.5v-9l7 4.5z"/></svg>}
               onClick={(e) => { e.stopPropagation(); onVeoVideo(scene.id); }} />
@@ -727,7 +737,7 @@ const SceneDetailModal: React.FC<SceneDetailModalProps> = ({
                 {scene.isGeneratingVideo ? (
                   <><span className="w-4 h-4 border-2 border-pink-400/30 border-t-pink-400 rounded-full animate-spin" /> 생성 중 {elapsedVideo > 0 && <span className="tabular-nums text-xs text-pink-400/70">{formatElapsed(elapsedVideo)}</span>}</>
                 ) : (
-                  <><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg> Grok 영상 ({scene.grokDuration || '10'}s {scene.grokSpeechMode ? '나레이션' : 'SFX'})</>
+                  <><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg> Grok 영상 ({scene.grokDuration || '10'}s {scene.grokSpeechMode ? '나레이션' : 'SFX'}) <span className="text-pink-400/60 text-xs ml-1">{fmtCost(getGrokCost((scene.grokDuration || '10') as '6'|'10'|'15'), useCostStore.getState().exchangeRate || PRICING.EXCHANGE_RATE)}</span></>
                 )}
               </button>
               <button type="button" disabled={!scene.imageUrl || scene.isGeneratingVideo} onClick={() => onVeoVideo(scene.id)}
@@ -735,7 +745,7 @@ const SceneDetailModal: React.FC<SceneDetailModalProps> = ({
                 {scene.isGeneratingVideo ? (
                   <><span className="w-4 h-4 border-2 border-blue-400/30 border-t-blue-400 rounded-full animate-spin" /> 생성 중 {elapsedVideo > 0 && <span className="tabular-nums text-xs text-blue-400/70">{formatElapsed(elapsedVideo)}</span>}</>
                 ) : (
-                  <><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg> Veo 3.1 1080p</>
+                  <><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg> Veo 3.1 1080p <span className="text-blue-400/60 text-xs ml-1">{fmtCost(PRICING.VIDEO_VEO, useCostStore.getState().exchangeRate || PRICING.EXCHANGE_RATE)}</span></>
                 )}
               </button>
               {/* Video generation status */}
@@ -826,6 +836,8 @@ const StoryboardPanel: React.FC = () => {
 
   const completedImages = scenes.filter((s) => s.imageUrl && !s.isGeneratingImage).length;
   const completedVideos = scenes.filter((s) => s.videoUrl && !s.isGeneratingVideo).length;
+  const videoEligible = scenes.filter((s) => s.imageUrl && !s.videoUrl && !s.isGeneratingVideo).length;
+  const exRate = useCostStore.getState().exchangeRate || PRICING.EXCHANGE_RATE;
 
   const isAnyBatchRunning = isBatchingImages || videoBatch.isBatching;
   const elapsedBatch = useElapsedTimer(isAnyBatchRunning);
@@ -1506,7 +1518,7 @@ const StoryboardPanel: React.FC = () => {
             </button>
 
             {showGenDropdown && (
-              <div className="absolute right-0 top-full mt-1 w-60 bg-gray-800 border border-gray-700 rounded-xl shadow-2xl z-50 overflow-hidden">
+              <div className="absolute right-0 top-full mt-1 w-72 bg-gray-800 border border-gray-700 rounded-xl shadow-2xl z-50 overflow-hidden">
                 <button
                   type="button"
                   onClick={() => { handleBatchGenerateImages(); setShowGenDropdown(false); }}
@@ -1523,7 +1535,8 @@ const StoryboardPanel: React.FC = () => {
                   className="w-full text-left px-4 py-2 text-sm text-gray-200 hover:bg-gray-700/60 transition-colors flex items-center gap-2"
                 >
                   <span className="w-2 h-2 rounded-full bg-pink-400" />
-                  Grok SFX Only 6초 (일괄)
+                  <span className="flex-1">Grok SFX Only 6초 (일괄)</span>
+                  <span className="text-[10px] text-pink-400/70">{fmtCost(PRICING.VIDEO_GROK_6S * videoEligible, exRate)}</span>
                 </button>
                 <button
                   type="button"
@@ -1531,7 +1544,8 @@ const StoryboardPanel: React.FC = () => {
                   className="w-full text-left px-4 py-2 text-sm text-gray-200 hover:bg-gray-700/60 transition-colors flex items-center gap-2"
                 >
                   <span className="w-2 h-2 rounded-full bg-pink-400" />
-                  Grok SFX Only 10초 (일괄)
+                  <span className="flex-1">Grok SFX Only 10초 (일괄)</span>
+                  <span className="text-[10px] text-pink-400/70">{fmtCost(PRICING.VIDEO_GROK_10S * videoEligible, exRate)}</span>
                 </button>
                 <button
                   type="button"
@@ -1539,7 +1553,8 @@ const StoryboardPanel: React.FC = () => {
                   className="w-full text-left px-4 py-2 text-sm text-gray-200 hover:bg-gray-700/60 transition-colors flex items-center gap-2"
                 >
                   <span className="w-2 h-2 rounded-full bg-pink-400" />
-                  Grok SFX Only 15초 (일괄)
+                  <span className="flex-1">Grok SFX Only 15초 (일괄)</span>
+                  <span className="text-[10px] text-pink-400/70">{fmtCost(PRICING.VIDEO_GROK_15S * videoEligible, exRate)}</span>
                 </button>
                 <button
                   type="button"
@@ -1547,7 +1562,8 @@ const StoryboardPanel: React.FC = () => {
                   className="w-full text-left px-4 py-2 text-sm text-gray-200 hover:bg-gray-700/60 transition-colors flex items-center gap-2"
                 >
                   <span className="w-2 h-2 rounded-full bg-fuchsia-400" />
-                  Grok 나레이션 6초 (일괄)
+                  <span className="flex-1">Grok 나레이션 6초 (일괄)</span>
+                  <span className="text-[10px] text-fuchsia-400/70">{fmtCost(PRICING.VIDEO_GROK_6S * videoEligible, exRate)}</span>
                 </button>
                 <button
                   type="button"
@@ -1555,7 +1571,8 @@ const StoryboardPanel: React.FC = () => {
                   className="w-full text-left px-4 py-2 text-sm text-gray-200 hover:bg-gray-700/60 transition-colors flex items-center gap-2"
                 >
                   <span className="w-2 h-2 rounded-full bg-fuchsia-400" />
-                  Grok 나레이션 10초 (일괄)
+                  <span className="flex-1">Grok 나레이션 10초 (일괄)</span>
+                  <span className="text-[10px] text-fuchsia-400/70">{fmtCost(PRICING.VIDEO_GROK_10S * videoEligible, exRate)}</span>
                 </button>
                 <button
                   type="button"
@@ -1563,7 +1580,8 @@ const StoryboardPanel: React.FC = () => {
                   className="w-full text-left px-4 py-2 text-sm text-gray-200 hover:bg-gray-700/60 transition-colors flex items-center gap-2"
                 >
                   <span className="w-2 h-2 rounded-full bg-fuchsia-400" />
-                  Grok 나레이션 15초 (일괄)
+                  <span className="flex-1">Grok 나레이션 15초 (일괄)</span>
+                  <span className="text-[10px] text-fuchsia-400/70">{fmtCost(PRICING.VIDEO_GROK_15S * videoEligible, exRate)}</span>
                 </button>
                 <div className="border-t border-gray-700" />
                 <p className="px-4 py-1 text-xs text-gray-500 font-bold uppercase">Veo 3.1 1080p (Evolink)</p>
@@ -1573,8 +1591,12 @@ const StoryboardPanel: React.FC = () => {
                   className="w-full text-left px-4 py-2 text-sm text-gray-200 hover:bg-gray-700/60 transition-colors flex items-center gap-2"
                 >
                   <span className="w-2 h-2 rounded-full bg-blue-400" />
-                  Veo 3.1 1080p (일괄)
+                  <span className="flex-1">Veo 3.1 1080p (일괄)</span>
+                  <span className="text-[10px] text-blue-400/70">{fmtCost(PRICING.VIDEO_VEO * videoEligible, exRate)}</span>
                 </button>
+                {videoEligible > 0 && (
+                  <p className="px-4 py-1.5 text-[10px] text-gray-500 border-t border-gray-700/50">대상 {videoEligible}개 장면 × 건당 비용 = 예상 합계</p>
+                )}
               </div>
             )}
           </div>
