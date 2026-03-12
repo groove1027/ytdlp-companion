@@ -2,7 +2,7 @@
 import { Scene, AspectRatio, ImageModel, RemakeStyleAnalysis } from '../../types';
 import { getKieKey, monitoredFetch } from '../apiService';
 import { getEvolinkKey } from '../evolinkService';
-import { SAFETY_SETTINGS_BLOCK_NONE, requestGeminiProxy, extractTextFromResponse } from './geminiProxy';
+import { SAFETY_SETTINGS_BLOCK_NONE, requestGeminiProxy, requestKieChatFallback, extractTextFromResponse } from './geminiProxy';
 import { uploadMediaToHosting } from '../uploadService';
 import { generateKieImage, generateEvolinkImageWrapped } from '../VideoGenService';
 
@@ -74,13 +74,7 @@ Return a JSON array of scene objects:
 
 Analyze the video now. Return ONLY the JSON array.`;
 
-    // Evolink v1beta 우선, Kie 폴백
-    const baseUrl = evolinkKey
-        ? 'https://api.evolink.ai/v1beta'
-        : 'https://api.kie.ai/v1beta';
-    const model = 'gemini-3.1-pro-preview';
-    const url = `${baseUrl}/models/${model}:generateContent`;
-
+    // [FIX] Evolink v1beta 우선, Kie chat/completions 폴백 (Kie는 v1beta 미지원)
     const requestBody = {
         contents: [{
             parts: [
@@ -101,21 +95,26 @@ Analyze the video now. Return ONLY the JSON array.`;
         safetySettings: SAFETY_SETTINGS_BLOCK_NONE
     };
 
-    const response = await monitoredFetch(url, {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${apiKey}`,
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(requestBody)
-    });
-
-    if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(`Video Analysis API Error (${response.status}): ${errText}`);
+    let data: any;
+    if (evolinkKey) {
+        const url = `https://api.evolink.ai/v1beta/models/gemini-3.1-pro-preview:generateContent`;
+        const response = await monitoredFetch(url, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${evolinkKey}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(requestBody)
+        });
+        if (!response.ok) {
+            const errText = await response.text();
+            throw new Error(`Video Analysis API Error (${response.status}): ${errText}`);
+        }
+        data = await response.json();
+    } else {
+        // [FIX] Kie는 v1beta 없음 → gemini-3-pro chat/completions 폴백
+        data = await requestKieChatFallback('gemini-3-pro', requestBody);
     }
-
-    const data = await response.json();
     // [FIX] Thinking model may return multiple parts (parts[0]=thinking, parts[1]=content).
     // Use extractTextFromResponse to get the last non-thinking text part.
     const rawText = extractTextFromResponse(data) || '[]';
@@ -157,13 +156,13 @@ Analyze the video now. Return ONLY the JSON array.`;
 
 // --- 1-B: extractFramesFromVideo ---
 // Client-side frame extraction using HTMLVideoElement + Canvas API
-// [FIX] 개별 프레임 seek 타임아웃 (5초) + 전체 타임아웃 (30초) 추가
+// [FIX #155] 개별 프레임 seek 타임아웃 (5초) + 전체 타임아웃 (30→90초)
 export const extractFramesFromVideo = (
     file: File,
     timestamps: number[]
 ): Promise<Map<number, string>> => {
     const FRAME_TIMEOUT_MS = 5000;  // 개별 프레임 seek 타임아웃
-    const TOTAL_TIMEOUT_MS = 30000; // 전체 추출 타임아웃
+    const TOTAL_TIMEOUT_MS = 90000; // 전체 추출 타임아웃 (30→90초)
 
     return new Promise((resolve) => {
         const video = document.createElement('video');
@@ -175,7 +174,7 @@ export const extractFramesFromVideo = (
         let currentIndex = 0;
         let frameTimer: ReturnType<typeof setTimeout> | undefined;
 
-        // 전체 타임아웃: 30초 초과 시 현재까지 추출된 프레임 반환
+        // [FIX #155] 전체 타임아웃: 90초 초과 시 현재까지 추출된 프레임 반환
         const totalTimer = setTimeout(() => {
             console.warn(`[VideoAnalysis] Frame extraction total timeout (${TOTAL_TIMEOUT_MS}ms), returning ${frames.size}/${sortedTimestamps.length} frames`);
             cleanup();
@@ -499,11 +498,7 @@ export const analyzeFrameStyle = async (
             base64Data = arr[1];
         } else if (frameDataUrl.startsWith('http')) {
             // URL — use fileData for Google Native (Evolink) format.
-            // [WARNING] fileData is NOT handled by convertGoogleToOpenAI — it will be silently
-            // dropped if the request falls back to OpenAI-compatible endpoints (Kie).
-            // For image URLs, this is acceptable because requestGeminiProxy tries Evolink first
-            // (which supports fileData natively). If Evolink is unavailable, the image analysis
-            // will fail gracefully and return the fallback style analysis.
+            // [FIX] fileData는 convertGoogleToOpenAI에서 image_url 포맷으로 변환됨 (Kie 호환)
             const payload = {
                 contents: [{
                     parts: [
@@ -612,13 +607,7 @@ Return ONLY numbered enrichments, one per line:
 [1] cool blue-gray palette, harsh overhead fluorescent, deep focus, symmetrical framing, polished tile floor
 ...`;
 
-        // Evolink v1beta 우선, Kie 폴백
-        const enrichBaseUrl = evolinkKey
-            ? 'https://api.evolink.ai/v1beta'
-            : 'https://api.kie.ai/v1beta';
-        const enrichModel = 'gemini-3.1-pro-preview';
-        const url = `${enrichBaseUrl}/models/${enrichModel}:generateContent`;
-
+        // [FIX] Evolink v1beta 우선, Kie chat/completions 폴백 (Kie는 v1beta 미지원)
         const requestBody = {
             contents: [{
                 parts: [
@@ -635,18 +624,23 @@ Return ONLY numbered enrichments, one per line:
             safetySettings: SAFETY_SETTINGS_BLOCK_NONE
         };
 
-        const response = await monitoredFetch(url, {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify(requestBody)
-        });
-
-        if (!response.ok) {
-            console.warn("[YouTube Enrichment] API error:", response.status);
-            return scenes;
+        let data: any;
+        if (evolinkKey) {
+            const url = `https://api.evolink.ai/v1beta/models/gemini-3.1-pro-preview:generateContent`;
+            const response = await monitoredFetch(url, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${evolinkKey}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify(requestBody)
+            });
+            if (!response.ok) {
+                console.warn("[YouTube Enrichment] API error:", response.status);
+                return scenes;
+            }
+            data = await response.json();
+        } else {
+            // [FIX] Kie는 v1beta 없음 → gemini-3-pro chat/completions 폴백
+            data = await requestKieChatFallback('gemini-3-pro', requestBody);
         }
-
-        const data = await response.json();
         // [FIX] Thinking model may return multiple parts (parts[0]=thinking, parts[1]=content).
         // Use extractTextFromResponse to get the last non-thinking text part.
         const rawText = extractTextFromResponse(data) || '';
@@ -703,12 +697,10 @@ export const generateYouTubeReferenceFrames = async (
             try {
                 const framePrompt = `Look at timestamp ${mid} seconds of this video. Generate a photorealistic image that faithfully reproduces the exact frame at that moment. Preserve the same subjects, positions, composition, lighting, and colors. No artistic style changes — just an accurate photographic reproduction of that video frame.`;
 
-                // Evolink v1beta 우선, Kie 폴백
-                const frameBaseUrl = evolinkKey
-                    ? 'https://api.evolink.ai/v1beta'
-                    : 'https://api.kie.ai/v1beta';
-                const frameModel = 'gemini-3.1-pro-preview';
-                const url = `${frameBaseUrl}/models/${frameModel}:generateContent`;
+                // [FIX] Evolink v1beta만 사용 (Kie는 v1beta/responseModalities 미지원)
+                if (!evolinkKey) throw new Error("Evolink 키 없음 — 텍스트 폴백 사용");
+
+                const url = `https://api.evolink.ai/v1beta/models/gemini-3.1-pro-preview:generateContent`;
                 const requestBody = {
                     contents: [{
                         parts: [
@@ -725,7 +717,7 @@ export const generateYouTubeReferenceFrames = async (
 
                 const response = await monitoredFetch(url, {
                     method: 'POST',
-                    headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+                    headers: { 'Authorization': `Bearer ${evolinkKey}`, 'Content-Type': 'application/json' },
                     body: JSON.stringify(requestBody)
                 });
 
