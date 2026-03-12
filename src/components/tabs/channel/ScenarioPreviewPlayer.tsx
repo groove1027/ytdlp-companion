@@ -140,6 +140,7 @@ const ScenarioPreviewPlayer: React.FC<Props> = ({
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const sceneEndRef = useRef<number>(0);
+  const currentIdxRef = useRef(0);
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentIdx, setCurrentIdx] = useState(0);
@@ -163,7 +164,7 @@ const ScenarioPreviewPlayer: React.FC<Props> = ({
   const scenes = useMemo((): ParsedScene[] => {
     return version.scenes.map(scene => {
       const tc = scene.timecodeSource || scene.sourceTimeline || scene.timeline || '';
-      const match = tc.match(/(\d+:\d+(?:\.\d+)?)\s*[~\-–—]\s*(\d+:\d+(?:\.\d+)?)/);
+      const match = tc.match(/(\d+:\d+(?:\.\d+)?)\s*[~\-–—/]\s*(\d+:\d+(?:\.\d+)?)/);
       const startSec = match ? tcToSec(match[1]) : 0;
       const endSec = match ? tcToSec(match[2]) : startSec + parseDur(scene.duration);
       return {
@@ -183,6 +184,7 @@ const ScenarioPreviewPlayer: React.FC<Props> = ({
   useEffect(() => {
     setSceneOrder(scenes.map((_, i) => i));
     setCurrentIdx(0);
+    currentIdxRef.current = 0;
   }, [scenes]);
 
   // ─── 재정렬된 장면 목록 ───
@@ -228,6 +230,7 @@ const ScenarioPreviewPlayer: React.FC<Props> = ({
   const resetOrder = useCallback(() => {
     setSceneOrder(scenes.map((_, i) => i));
     setCurrentIdx(0);
+    currentIdxRef.current = 0;
   }, [scenes]);
 
   // ─── 재생 제어 ───
@@ -236,6 +239,7 @@ const ScenarioPreviewPlayer: React.FC<Props> = ({
     if (!video || !orderedScenes[idx]) return;
     const s = orderedScenes[idx];
     setCurrentIdx(idx);
+    currentIdxRef.current = idx;
     video.currentTime = s.startSec;
     sceneEndRef.current = s.endSec;
   }, [orderedScenes]);
@@ -271,7 +275,7 @@ const ScenarioPreviewPlayer: React.FC<Props> = ({
     if (isPlaying) videoRef.current?.play().catch(() => {});
   }, [currentIdx, orderedScenes.length, seekToScene, isPlaying]);
 
-  // Time tracking + auto-advance
+  // Time tracking + auto-advance (ref 기반으로 stale closure 방지)
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -279,8 +283,10 @@ const ScenarioPreviewPlayer: React.FC<Props> = ({
       setCurrentTime(video.currentTime);
       // 장면 끝에 도달하면 다음 장면으로 자동 이동
       if (video.currentTime >= sceneEndRef.current - 0.05 && !video.paused) {
-        if (currentIdx < orderedScenes.length - 1) {
-          const next = currentIdx + 1;
+        const idx = currentIdxRef.current;
+        if (idx < orderedScenes.length - 1) {
+          const next = idx + 1;
+          currentIdxRef.current = next;
           setCurrentIdx(next);
           video.currentTime = orderedScenes[next].startSec;
           sceneEndRef.current = orderedScenes[next].endSec;
@@ -292,7 +298,7 @@ const ScenarioPreviewPlayer: React.FC<Props> = ({
     };
     video.addEventListener('timeupdate', onTimeUpdate);
     return () => video.removeEventListener('timeupdate', onTimeUpdate);
-  }, [currentIdx, orderedScenes]);
+  }, [orderedScenes]);
 
   // ─── MP4 내보내기 (Canvas + MediaRecorder) ───
   const handleExportMp4 = useCallback(async () => {
