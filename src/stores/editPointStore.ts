@@ -308,7 +308,18 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
         get().autoMapSources();
       }
 
-      showToast(`${entries.length}개 편집 항목을 파싱했습니다.`);
+      // [FIX #215] 편집표 행 수 vs 파싱 결과 수 비교 → 부분 실패 경고
+      const rawLines = rawEditTable.split('\n').filter(l => {
+        const t = l.trim();
+        return t && !(/^[-=|+:\s]+$/.test(t)) && !/^\|?\s*(순서|order|모드|no\b)/i.test(t);
+      });
+      // 파이프 구분 데이터 행만 카운트 (숫자로 시작하는 행)
+      const dataLineCount = rawLines.filter(l => /^\|?\s*\d/.test(l.trim())).length;
+      if (dataLineCount > 0 && entries.length < dataLineCount * 0.8) {
+        showToast(`${entries.length}/${dataLineCount}개 항목만 파싱되었습니다. 일부 구간이 누락되었을 수 있어요.`);
+      } else {
+        showToast(`${entries.length}개 편집 항목을 파싱했습니다.`);
+      }
     } catch (err) {
       set({ isProcessing: false, processingPhase: '', processingMessage: '' });
       const errMsg = err instanceof Error ? err.message : '알 수 없는 오류';
@@ -653,6 +664,9 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
 
   importFromVideoAnalysis: async (data) => {
     const { frames, videoBlob, videoFile, editTableText, narrationText } = data;
+
+    // [FIX #215] 이전 소스 영상/상태 정리 — 버전 전환 시 누적 방지
+    get().reset();
 
     // 편집표 + 나레이션 텍스트 설정
     set({ rawEditTable: editTableText, rawNarration: narrationText });

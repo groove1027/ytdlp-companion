@@ -118,8 +118,8 @@ function splitEditTableLines(rawTable: string): string[] {
   return rawTable.split('\n').filter(line => {
     const trimmed = line.trim();
     if (!trimmed) return false;
-    // 순수 구분선 제외 (----, ====, |---|---|)
-    if (/^[-=|+\s]+$/.test(trimmed)) return false;
+    // 순수 구분선 제외 (----, ====, |---|---|, | :--- | :--- |)
+    if (/^[-=|+:\s]+$/.test(trimmed)) return false;
     return true;
   });
 }
@@ -302,13 +302,15 @@ export async function parseEditTableWithAI(
   console.log(`[EditPoint] 대형 편집표 감지 (추정 ${totalEstTokens} 토큰). 순차 처리...`);
   const lines = splitEditTableLines(rawTable);
 
-  // 헤더 행 감지 (첫 줄이 헤더일 가능성)
+  // [FIX #215] 헤더 행 감지 — 첫 5줄 이내에서 테이블 헤더 탐색 (VideoAnalysisRoom은 "제목:", "컨셉:" 후에 헤더)
   let headerLine = '';
-  if (lines.length > 0) {
-    const firstLine = lines[0].toLowerCase();
-    if (firstLine.includes('순서') || firstLine.includes('order') || firstLine.includes('내레이션')
-      || firstLine.includes('소스') || firstLine.includes('타임코드') || firstLine.includes('no')) {
-      headerLine = lines.shift() || '';
+  const headerKeywords = ['순서', 'order', '내레이션', '소스', '타임코드', '모드'];
+  const searchLimit = Math.min(lines.length, 5);
+  for (let hi = 0; hi < searchLimit; hi++) {
+    const candidate = lines[hi].toLowerCase();
+    if (headerKeywords.some(kw => candidate.includes(kw)) && candidate.includes('|')) {
+      headerLine = lines.splice(hi, 1)[0];
+      break;
     }
   }
 

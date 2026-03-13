@@ -856,7 +856,7 @@ async function extractAudioSegments(
   videoBlob: Blob,
   segments: { startSec: number; durationSec: number }[],
 ): Promise<AudioBuffer> {
-  const audioCtx = new OfflineAudioContext(2, 1, 48000); // 임시 — 길이 계산 후 재생성
+  const audioCtx = new OfflineAudioContext(2, 48000, 48000); // 디코딩 전용 (1초 버퍼)
   const arrayBuf = await videoBlob.arrayBuffer();
   const decoded = await audioCtx.decodeAudioData(arrayBuf);
 
@@ -887,11 +887,14 @@ async function extractAudioSegments(
   return offCtx.startRendering();
 }
 
-/** 편집 영상과 싱크 맞는 SRT 생성 (누적 타임코드 기반) */
-function generateSyncedSrt(scenes: SceneRow[]): string {
+/** 편집 영상과 싱크 맞는 SRT 생성 (실제 세그먼트 duration 기반) */
+function generateSyncedSrt(
+  scenes: SceneRow[],
+  segmentDurations: number[],
+): string {
   let accTime = 0;
   return scenes.map((scene, i) => {
-    const dur = parseDuration(scene.duration);
+    const dur = segmentDurations[i] ?? parseDuration(scene.duration);
     const start = accTime;
     accTime += dur;
     const text = scene.audioContent || scene.dialogue || scene.sceneDesc;
@@ -2907,8 +2910,8 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       logger.unregisterBlobUrl(videoBlobUrl);
       URL.revokeObjectURL(videoBlobUrl);
 
-      // 5) 싱크 맞는 SRT 생성
-      const srt = generateSyncedSrt(v.scenes);
+      // 5) 싱크 맞는 SRT 생성 (실제 세그먼트 duration으로 싱크)
+      const srt = generateSyncedSrt(v.scenes, segments.map(s => s.durationSec));
 
       // 6) ZIP 패키징
       const JSZip = (await import('jszip')).default;

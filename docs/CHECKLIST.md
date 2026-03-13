@@ -8,6 +8,8 @@
 
 ## 🟢 완료된 작업
 
+- [x] #212 채널 스타일 대본 만들기 영상 파일 첨부 지원 — file input에 video/* 추가, 영상 파일 감지 시 extractFramesForAnalysis(8프레임) + evolinkFrameAnalysisStream(v1beta multimodal vision)으로 영상 내용 분석→sourceContent로 주입, 분석 프로그레스 UI, 200MB 제한 (ChannelRemakePanel.tsx, 2026-03-13)
+- [x] #215 편집실 파싱 실패 수정 — narrationText 중복 전송 제거(토큰 2배→429 유발), 청크 병렬(CONCURRENCY=3)→순차 처리, parseEditChunkWithRetry() 429/499/네트워크 에러 지수 백오프 2회 재시도, 청크 크기 20→30 확대, 부분 실패 시 성공 청크 결과만으로 진행 (editPointService.ts, editPointStore.ts, VideoAnalysisRoom.tsx, VersionSelectorBar.tsx, 2026-03-13)
 - [x] SRT 다운로드 시 타임코드대로 잘린 편집 영상 + SRT ZIP 다운로드 — UnifiedSceneTiming에 videoTrimStartSec 추가, canvasRenderer에서 오프셋 적용, composeMp4에 rawAudioBuffer 외부 주입 지원, VideoAnalysisRoom에서 영상 blob 있으면 WebCodecs 렌더링→ZIP, 없으면 기존 SRT 다운로드 유지, 버튼 레이블 동적 변경(SRT↔SRT+영상) (types.ts, canvasRenderer.ts, webcodecs/index.ts, VideoAnalysisRoom.tsx, 2026-03-13)
 - [x] #182 GhostCut 자막 제거 미작동 수정 + 다국어 지원 — needChineseOcclude 0→1 (OCR 텍스트 감지 활성화), 누락된 필수 파라미터 videoInpaintLang 추가, 자막 언어 선택 UI (ko/en/zh/ja/all/ar) 추가, GhostCutLang 타입 export (ghostcutService.ts, SubtitleRemoverTab.tsx, 2026-03-13)
 - [x] 편집점 매칭 AI 파싱/정제 병렬 처리 최적화 — parseEditTableWithAI() 대형 편집표 청크 순차→3개 동시 병렬, refineTimecodes() 타임코드 정제 순차→4개 동시 병렬(Promise.allSettled), 체감 3-5배 속도 향상 (editPointService.ts, editPointStore.ts, 2026-03-13)
