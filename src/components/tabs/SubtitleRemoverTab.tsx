@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback } from 'react';
-import { removeSubtitlesWithGhostCut } from '../../services/ghostcutService';
+import { removeSubtitlesWithGhostCut, type GhostCutLang } from '../../services/ghostcutService';
 import { getGhostCutKeys } from '../../services/apiService';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
 import { useCostStore } from '../../stores/costStore';
@@ -20,6 +20,7 @@ const SubtitleRemoverTab: React.FC = () => {
   const [error, setError] = useState('');
   const [resultBlobUrl, setResultBlobUrl] = useState<string | null>(null);
   const [videoDuration, setVideoDuration] = useState(0);
+  const [subtitleLang, setSubtitleLang] = useState<GhostCutLang>('ko');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const hasKeys = (() => {
@@ -111,6 +112,7 @@ const SubtitleRemoverTab: React.FC = () => {
             setPercent(Math.round(30 + ratio * 55)); // 30% ~ 85%
           }
         },
+        subtitleLang,
       );
 
       // 비용 추가
@@ -133,7 +135,7 @@ const SubtitleRemoverTab: React.FC = () => {
       setError(message);
       // 진행률 유지 (어디서 실패했는지 사용자에게 표시)
     }
-  }, [videoFile, requireAuth, addCost, videoDuration, percent]);
+  }, [videoFile, requireAuth, addCost, videoDuration, percent, subtitleLang]);
 
   const handleDownload = useCallback(() => {
     if (!resultBlobUrl) return;
@@ -263,6 +265,26 @@ const SubtitleRemoverTab: React.FC = () => {
                   파일 크기가 {(videoFile.size / 1024 / 1024).toFixed(0)}MB입니다.
                   업로드와 처리에 시간이 상당히 오래 걸릴 수 있습니다 (최대 20~30분).
                 </p>
+              </div>
+            )}
+
+            {/* 자막 언어 선택 */}
+            {videoFile && (
+              <div className="mt-3">
+                <label className="block text-sm text-gray-400 mb-1.5">자막 언어</label>
+                <select
+                  value={subtitleLang}
+                  onChange={(e) => setSubtitleLang(e.target.value as GhostCutLang)}
+                  disabled={phase === 'uploading' || phase === 'processing'}
+                  className="w-full px-3 py-2 rounded-lg bg-gray-700 border border-gray-600 text-gray-200 text-sm focus:border-cyan-500 focus:outline-none disabled:opacity-50"
+                >
+                  <option value="ko">한국어 (Korean)</option>
+                  <option value="en">영어 (English)</option>
+                  <option value="zh">중국어 (Chinese)</option>
+                  <option value="ja">일본어 (Japanese)</option>
+                  <option value="all">중국어+영어 동시 (Chinese & English)</option>
+                  <option value="ar">아랍어 (Arabic)</option>
+                </select>
               </div>
             )}
 

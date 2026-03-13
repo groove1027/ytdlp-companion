@@ -164,8 +164,11 @@ const fetchWithRetry = async (
   throw new Error('fetchWithRetry: unreachable');
 };
 
+/** GhostCut 지원 자막 언어 코드 (공식 문서 4.1.2) */
+export type GhostCutLang = 'ko' | 'zh' | 'en' | 'all' | 'ja' | 'ar';
+
 /** 작업 제출 (callback URL 포함) */
-const submitTask = async (videoUrl: string): Promise<{ projectId: number; taskId: number }> => {
+const submitTask = async (videoUrl: string, lang: GhostCutLang = 'ko'): Promise<{ projectId: number; taskId: number }> => {
   const { appKey, appSecret } = getGhostCutKeys();
   if (!appKey || !appSecret) {
     throw new Error('GhostCut API 키가 설정되지 않았습니다. API 설정에서 AppKey와 AppSecret을 입력해주세요.');
@@ -177,10 +180,11 @@ const submitTask = async (videoUrl: string): Promise<{ projectId: number; taskId
   const body = JSON.stringify({
     urls: [videoUrl],
     callback: callbackUrl,
-    needChineseOcclude: 0,   // 중국어 전용 → 비활성 (한국어 자막에 부적합)
+    needChineseOcclude: 1,   // 1=자동 텍스트 제거 (공식 문서 4.1.2 필수 파라미터)
+    videoInpaintLang: lang,  // 제거 대상 언어 (zh/en/all/ja/ko/ar 지원)
     resolution: '1080p',
     needCrop: 0,
-    needMask: 1,             // 범용 마스크 제거 활성화 (언어 무관)
+    needMask: 1,             // 워터마크/로고 마스크 제거 병행
     needMirror: 0,
     needRescale: 0,
     needShift: 0,
@@ -403,6 +407,7 @@ export const removeSubtitlesWithGhostCut = async (
   _width: number,
   _height: number,
   onProgress?: (message: string, elapsedSec?: number) => void,
+  lang: GhostCutLang = 'ko',
 ): Promise<Blob> => {
   logger.info('[GhostCut] 자막 제거 파이프라인 시작');
 
@@ -414,8 +419,8 @@ export const removeSubtitlesWithGhostCut = async (
 
   // 2. 작업 제출 (callback URL 자동 포함)
   onProgress?.('GhostCut AI 자막 제거 시작...');
-  const { projectId } = await submitTask(videoUrl);
-  logger.info('[GhostCut] 작업 제출', { projectId });
+  const { projectId } = await submitTask(videoUrl, lang);
+  logger.info('[GhostCut] 작업 제출', { projectId, lang });
 
   // 3. KV 경유 폴링 (최대 30분, 네트워크 오류 5회 연속까지 자동 복구)
   const resultUrl = await pollResult(projectId, onProgress);
