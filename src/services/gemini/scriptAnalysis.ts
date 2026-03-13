@@ -5,7 +5,7 @@ import { requestGeminiProxy, extractTextFromResponse, SAFETY_SETTINGS_BLOCK_NONE
 import { evolinkChat } from '../evolinkService';
 import { logger } from '../LoggerService';
 
-// [NEW] Robust JSON Extraction — handles thinking model markdown output
+// [NEW] Robust JSON Extraction — handles thinking model markdown output + truncated responses
 export const extractJsonFromText = (text: string): string | null => {
     // 1. Already valid JSON
     try { JSON.parse(text); return text; } catch (e) { logger.trackSwallowedError('ScriptAnalysis:extractJsonFromText/direct', e); }
@@ -24,7 +24,65 @@ export const extractJsonFromText = (text: string): string | null => {
     if (arrMatch) {
         try { JSON.parse(arrMatch[1]); return arrMatch[1]; } catch (e) { logger.trackSwallowedError('ScriptAnalysis:extractJsonFromText/arrMatch', e); }
     }
+    // 5. [FIX #249] Truncated response recovery — unclosed code block or incomplete JSON
+    // When finishReason:"length", the response may be cut off without closing ``` or brackets
+    const unclosedBlockMatch = text.match(/```(?:json)?\s*([\s\S]+)/);
+    const candidate = unclosedBlockMatch ? unclosedBlockMatch[1].trim() : text.trim();
+    if (candidate.startsWith('[') || candidate.startsWith('{')) {
+        const repaired = repairTruncatedJson(candidate);
+        if (repaired) {
+            try { JSON.parse(repaired); logger.warn('[extractJsonFromText] 잘린 JSON 복구 성공 (truncated response recovered)'); return repaired; } catch (e) { logger.trackSwallowedError('ScriptAnalysis:extractJsonFromText/truncatedRepair', e); }
+        }
+    }
     return null;
+};
+
+// [FIX #249] Truncated JSON repair — close unclosed brackets/braces to salvage partial data
+const repairTruncatedJson = (text: string): string | null => {
+    // Remove trailing incomplete key-value pairs (e.g., "key": "unfinis)
+    // Find the last complete value boundary: }, ], true, false, null, number, or closed string
+    let cleaned = text;
+    // Strip trailing comma
+    cleaned = cleaned.replace(/,\s*$/, '');
+    // If ends mid-string or mid-key, truncate to last complete element
+    const lastGoodIdx = Math.max(
+        cleaned.lastIndexOf('}'),
+        cleaned.lastIndexOf(']'),
+        cleaned.lastIndexOf('"'),
+        cleaned.lastIndexOf('true'),
+        cleaned.lastIndexOf('false'),
+        cleaned.lastIndexOf('null')
+    );
+    if (lastGoodIdx > 0) {
+        // Check if we're inside a string — count unescaped quotes
+        const beforeLast = cleaned.substring(0, lastGoodIdx + 1);
+        const quoteCount = (beforeLast.match(/(?<!\\)"/g) || []).length;
+        if (quoteCount % 2 !== 0) {
+            // Odd quotes — truncate to close the string
+            cleaned = beforeLast + '"';
+        } else {
+            cleaned = beforeLast;
+        }
+    }
+    // Remove trailing comma again after truncation
+    cleaned = cleaned.replace(/,\s*$/, '');
+    // Build closing bracket stack
+    const stack: string[] = [];
+    let inString = false;
+    let escape = false;
+    for (const ch of cleaned) {
+        if (escape) { escape = false; continue; }
+        if (ch === '\\' && inString) { escape = true; continue; }
+        if (ch === '"') { inString = !inString; continue; }
+        if (inString) continue;
+        if (ch === '[') stack.push(']');
+        else if (ch === '{') stack.push('}');
+        else if (ch === ']' || ch === '}') stack.pop();
+    }
+    if (stack.length > 0) {
+        cleaned += stack.reverse().join('');
+    }
+    return cleaned.length > 2 ? cleaned : null;
 };
 
 // --- Semantic Scene Break Detection ---

@@ -278,6 +278,13 @@ export const requestGeminiProxy = async (model: string, googlePayload: any, _ret
                 throw new Error(`Evolink v1 빈 응답. finish_reason: ${choice?.finish_reason || 'unknown'}`);
             }
 
+            // [FIX #249] 응답 잘림 경고 — finishReason: "length"이면 JSON이 불완전할 수 있음
+            if (choice?.finish_reason === 'length') {
+                logger.warn('[Gemini] ⚠️ Evolink v1 응답 잘림 (finish_reason: length) — 토큰 제한 초과, JSON 복구 시도됨', {
+                    completionTokens: json.usage?.completion_tokens
+                });
+            }
+
             let parts: any[] = [];
             if (toolCalls && toolCalls.length > 0) {
                 const fc = toolCalls[0].function;
@@ -347,6 +354,13 @@ export const requestGeminiProxy = async (model: string, googlePayload: any, _ret
 
             if (!toolCalls?.length && !content.trim()) {
                 throw new Error(`Evolink Flash Lite 빈 응답. finish_reason: ${choice?.finish_reason || 'unknown'}`);
+            }
+
+            // [FIX #249] 응답 잘림 경고
+            if (choice?.finish_reason === 'length') {
+                logger.warn('[Gemini] ⚠️ Flash Lite 응답 잘림 (finish_reason: length)', {
+                    completionTokens: json.usage?.completion_tokens
+                });
             }
 
             let parts: any[] = [];
@@ -627,6 +641,13 @@ export const requestGeminiNative = async (model: string, googlePayload: any, _re
 
             if (!toolCalls?.length && !content.trim()) {
                 throw new Error(`Evolink v1 빈 응답. finish_reason: ${choice?.finish_reason || 'unknown'}`);
+            }
+
+            // [FIX #249] 응답 잘림 경고 (재시도 경로)
+            if (choice?.finish_reason === 'length') {
+                logger.warn('[Gemini] ⚠️ Evolink v1 재시도 응답 잘림 (finish_reason: length)', {
+                    completionTokens: json.usage?.completion_tokens
+                });
             }
 
             let parts: any[] = [];

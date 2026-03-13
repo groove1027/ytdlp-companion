@@ -259,9 +259,18 @@ export const evolinkChat = async (
         }
     } catch (e) { logger.trackSwallowedError('EvolinkService:evolinkChat/costTracking', e); }
 
+    // [FIX #249] 응답 잘림 경고 — JSON 불완전 가능성
+    const finishReason = data.choices?.[0]?.finish_reason;
+    if (finishReason === 'length') {
+        logger.warn('[Evolink] ⚠️ Chat 응답 잘림 (finish_reason: length) — 토큰 제한 초과, JSON 복구 시도됨', {
+            completionTokens: data.usage?.completion_tokens,
+            maxTokens
+        });
+    }
+
     logger.success('[Evolink] Chat completion 성공', {
         tokens: data.usage?.total_tokens,
-        finishReason: data.choices?.[0]?.finish_reason
+        finishReason
     });
 
     return data;
