@@ -424,7 +424,7 @@ export const requestEvolinkNative = async (
     }
 
     // [FIX #32] 긴 대본 처리를 위한 확장 타임아웃 지원 (미지정 시 무제한)
-    // [FIX #209] 429 rate limit 시 지수 백오프 재시도
+    // [FIX #209/#245] 429 rate limit 시 1회 재시도 후 빠르게 폴백 (Smart Routing이 Kie로 전환)
     const response = await fetchWithRateLimitRetry(url, {
         method: 'POST',
         headers: {
@@ -432,7 +432,7 @@ export const requestEvolinkNative = async (
             'Content-Type': 'application/json'
         },
         body: JSON.stringify(payload)
-    }, 3, 3000, timeoutMs);
+    }, 1, 3000, timeoutMs);
 
     if (!response.ok) {
         const errorDetail = await parseEvolinkError(response);

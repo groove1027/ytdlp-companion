@@ -5,6 +5,17 @@ import { PRICING } from '../../constants';
 import { logger } from '../LoggerService';
 import { useCostStore } from '../../stores/costStore';
 
+// [FIX #245] Evolink 429 Rate Limit 쿨다운 — 한 엔드포인트 429 시 전체 Evolink 스킵 → 즉시 Kie 폴백
+let _evolinkRateLimitedUntil = 0;
+const EVOLINK_RATE_LIMIT_COOLDOWN_MS = 60_000; // 60초 쿨다운
+
+const markEvolinkRateLimited = () => {
+    _evolinkRateLimitedUntil = Date.now() + EVOLINK_RATE_LIMIT_COOLDOWN_MS;
+    logger.warn(`[Evolink] 429 Rate Limit 감지 — ${EVOLINK_RATE_LIMIT_COOLDOWN_MS / 1000}초간 Evolink 전체 스킵, Kie 우선`);
+};
+
+const isEvolinkRateLimited = (): boolean => Date.now() < _evolinkRateLimitedUntil;
+
 // Local Type Definition to replace Google SDK Type enum
 const SchemaType = {
     STRING: 'STRING',
@@ -205,6 +216,8 @@ export const requestGeminiProxy = async (model: string, googlePayload: any, _ret
     // v1beta 전용 기능: Google Search grounding, fileData(영상/오디오)
     const tryEvolinkV1Beta = async (): Promise<any> => {
         if (shouldSkipNative) throw new Error('v1beta skipped (skipNative/retry)');
+        // [FIX #245] 429 쿨다운 중이면 즉시 스킵 → Kie로 폴백
+        if (isEvolinkRateLimited()) throw new Error('Evolink rate limited (cooldown active), skipping v1beta');
         const evolinkKey = getEvolinkKey();
         if (!evolinkKey) throw new Error('No Evolink key');
         const nativeTimeout = timeoutMs ? Math.min(timeoutMs, NATIVE_MAX_WAIT_MS) : NATIVE_MAX_WAIT_MS;
@@ -218,6 +231,8 @@ export const requestGeminiProxy = async (model: string, googlePayload: any, _ret
     // --- [Inner Helper] Evolink v1/chat/completions (OpenAI Format, 동일 Gemini 3.1 Pro) ---
     // v1beta보다 안정적, 텍스트 전용 요청의 기본 경로
     const tryEvolinkV1Chat = async (): Promise<any> => {
+        // [FIX #245] 429 쿨다운 중이면 즉시 스킵 → Kie로 폴백
+        if (isEvolinkRateLimited()) throw new Error('Evolink rate limited (cooldown active), skipping v1');
         const evolinkKey = getEvolinkKey();
         if (!evolinkKey) throw new Error('No Evolink key');
         logger.info(`[Gemini] Evolink v1 Chat (model: ${model}) — 3.1 Pro`);
@@ -226,6 +241,7 @@ export const requestGeminiProxy = async (model: string, googlePayload: any, _ret
         const evolinkV1Body = convertGoogleToOpenAI(model, googlePayload);
         evolinkV1Body.model = 'gemini-3.1-pro-preview';
 
+        // [FIX #245] 429 재시도 1회로 축소 (기존 3회 ~21초 낭비) — Smart Routing이 Kie로 빠르게 전환
         const evolinkV1Response = await fetchWithRateLimitRetry(
             'https://api.evolink.ai/v1/chat/completions',
             {
@@ -236,7 +252,7 @@ export const requestGeminiProxy = async (model: string, googlePayload: any, _ret
                 },
                 body: JSON.stringify(evolinkV1Body)
             },
-            3, 3000, timeoutMs
+            1, 3000, timeoutMs
         );
 
         if (evolinkV1Response.ok) {
@@ -279,6 +295,8 @@ export const requestGeminiProxy = async (model: string, googlePayload: any, _ret
             return { candidates: [{ content: { parts } }] };
         }
 
+        // [FIX #245] 429 응답 시 Evolink 전체 쿨다운 마킹 — 이후 호출은 즉시 Kie로
+        if (evolinkV1Response.status === 429) markEvolinkRateLimited();
         const errText = await evolinkV1Response.text();
         throw new Error(`Evolink v1 Chat Error (${evolinkV1Response.status}): ${errText}`);
     };
@@ -297,6 +315,10 @@ export const requestGeminiProxy = async (model: string, googlePayload: any, _ret
             return await fn();
         } catch (e: any) {
             logger.warn(`[Gemini] ${name} 실패: ${e.message}`);
+            // [FIX #245] Evolink 429 감지 → 쿨다운 마킹 (에러 메시지에서 429/rate limit 패턴 검출)
+            if (e.message?.includes('429') || e.message?.toLowerCase().includes('rate limit')) {
+                markEvolinkRateLimited();
+            }
             lastError = e;
         }
     }
@@ -486,6 +508,8 @@ export const requestGeminiNative = async (model: string, googlePayload: any, _re
 
     // --- [Inner Helper] Evolink v1beta ---
     const tryEvolinkV1Beta = async (): Promise<any> => {
+        // [FIX #245] 429 쿨다운 중이면 즉시 스킵
+        if (isEvolinkRateLimited()) throw new Error('Evolink rate limited (cooldown), skipping v1beta');
         const evolinkKey = getEvolinkKey();
         if (!evolinkKey) throw new Error('No Evolink key');
         console.log(`[GeminiNative] Trying Evolink v1beta (model: ${model}, maxWait: 60s${_retryCount > 0 ? `, retry #${_retryCount}` : ''})`);
@@ -495,6 +519,8 @@ export const requestGeminiNative = async (model: string, googlePayload: any, _re
 
     // --- [Inner Helper] Evolink v1/chat/completions (동일 3.1 Pro) ---
     const tryEvolinkV1Chat = async (): Promise<any> => {
+        // [FIX #245] 429 쿨다운 중이면 즉시 스킵
+        if (isEvolinkRateLimited()) throw new Error('Evolink rate limited (cooldown), skipping v1');
         const evolinkKey = getEvolinkKey();
         if (!evolinkKey) throw new Error('No Evolink key');
         console.log("[GeminiNative] Trying Evolink v1/chat/completions (3.1 Pro)...");
@@ -502,6 +528,7 @@ export const requestGeminiNative = async (model: string, googlePayload: any, _re
         const evolinkV1Body = convertGoogleToOpenAI(model, googlePayload);
         evolinkV1Body.model = 'gemini-3.1-pro-preview';
 
+        // [FIX #245] 429 재시도 1회로 축소 — Smart Routing이 Kie로 전환
         const evolinkV1Response = await fetchWithRateLimitRetry(
             'https://api.evolink.ai/v1/chat/completions',
             {
@@ -512,7 +539,7 @@ export const requestGeminiNative = async (model: string, googlePayload: any, _re
                 },
                 body: JSON.stringify(evolinkV1Body)
             },
-            3, 3000
+            1, 3000
         );
 
         if (evolinkV1Response.ok) {
@@ -547,6 +574,8 @@ export const requestGeminiNative = async (model: string, googlePayload: any, _re
             return { candidates: [{ content: { parts } }] };
         }
 
+        // [FIX #245] 429 시 쿨다운 마킹
+        if (evolinkV1Response.status === 429) markEvolinkRateLimited();
         const errText = await evolinkV1Response.text();
         throw new Error(`Evolink v1 Error (${evolinkV1Response.status}): ${errText}`);
     };
@@ -563,6 +592,10 @@ export const requestGeminiNative = async (model: string, googlePayload: any, _re
             return await fn();
         } catch (e: any) {
             console.warn(`[GeminiNative] ${name} Error:`, e.message);
+            // [FIX #245] 429 감지 → Evolink 전체 쿨다운
+            if (e.message?.includes('429') || e.message?.toLowerCase().includes('rate limit')) {
+                markEvolinkRateLimited();
+            }
             lastError = e;
         }
     }

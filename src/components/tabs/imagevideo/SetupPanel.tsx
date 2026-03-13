@@ -1051,7 +1051,8 @@ const SetupPanel: React.FC = () => {
                     elapsed < 30 ? '캐릭터 일관성과 시각적 연출을 조율합니다' :
                     elapsed < 60 ? '생성된 프롬프트를 검증하고 최적화합니다' :
                     elapsed < 90 ? '장면이 많아 시간이 조금 더 걸리고 있습니다' :
-                    '대본이 길수록 더 정교한 분석이 필요합니다 — 거의 완료 단계입니다!'
+                    elapsed < 120 ? 'AI 서버 응답을 기다리고 있습니다... 잠시만 기다려주세요' :
+                    '평소보다 오래 걸리고 있습니다. 서버가 바쁠 수 있으니 조금만 더 기다려주세요.'
                   }</p>
                 </div>
 
@@ -1082,15 +1083,18 @@ const SetupPanel: React.FC = () => {
                       { label: '캐릭터', threshold: 30 },
                       { label: '품질 검수', threshold: 60 },
                     ].map((step, i, arr) => {
+                      const isLast = i === arr.length - 1;
                       const isActive = elapsed >= (i === 0 ? 0 : arr[i - 1].threshold) && elapsed < step.threshold;
-                      const isDone = elapsed >= step.threshold;
+                      // [FIX #245] 마지막 단계는 분석 완료 전까지 "진행 중"(amber) 유지 — 거짓 완료 표시 방지
+                      const isDone = isLast ? false : elapsed >= step.threshold;
+                      const isLastActive = isLast && elapsed >= (arr[i - 1].threshold);
                       return (
                         <div key={step.label} className="flex-1 flex flex-col items-center gap-1">
                           <div className={`w-full h-1.5 rounded-full transition-all duration-500 ${
-                            isDone ? 'bg-green-500/60' : isActive ? 'bg-amber-500/60 animate-pulse' : 'bg-white/10'
+                            isDone ? 'bg-green-500/60' : (isActive || isLastActive) ? 'bg-amber-500/60 animate-pulse' : 'bg-white/10'
                           }`} />
                           <span className={`text-[10px] transition-all ${
-                            isDone ? 'text-green-300 font-bold' : isActive ? 'text-amber-300 font-bold' : 'text-white/30'
+                            isDone ? 'text-green-300 font-bold' : (isActive || isLastActive) ? 'text-amber-300 font-bold' : 'text-white/30'
                           }`}>
                             {isDone ? '✓ ' : ''}{step.label}
                           </span>
@@ -1109,7 +1113,9 @@ const SetupPanel: React.FC = () => {
                       ? '이 과정은 AI가 각 장면에 최적화된 이미지 프롬프트를 만드는 핵심 단계입니다. 장면 수에 따라 20초~2분 소요됩니다.'
                       : elapsed < 60
                       ? '장면별로 캐릭터 외모, 카메라 앵글, 조명 등 세부사항을 꼼꼼하게 설계하고 있습니다.'
-                      : '대본이 길거나 장면이 많을수록 더 정교한 분석이 진행됩니다. 창을 닫지 마세요!'}
+                      : elapsed < 120
+                      ? '대본이 길거나 장면이 많을수록 더 정교한 분석이 진행됩니다. 창을 닫지 마세요!'
+                      : '서버가 바쁠 때는 응답이 지연될 수 있습니다. 실패 시 자동으로 안내해드릴게요.'}
                   </p>
                 </div>
               </div>
