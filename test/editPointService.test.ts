@@ -39,7 +39,7 @@ function splitEditTableLines(rawTable: string): string[] {
   return rawTable.split('\n').filter(line => {
     const trimmed = line.trim();
     if (!trimmed) return false;
-    if (/^[-=|+\s]+$/.test(trimmed)) return false;
+    if (/^[-=|+:\s]+$/.test(trimmed)) return false;
     return true;
   });
 }
