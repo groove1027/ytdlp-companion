@@ -5,16 +5,17 @@ import { PRICING } from '../../constants';
 import { logger } from '../LoggerService';
 import { useCostStore } from '../../stores/costStore';
 
-// [FIX #245] Evolink 429 Rate Limit 쿨다운 — 한 엔드포인트 429 시 전체 Evolink 스킵 → 즉시 Kie 폴백
-let _evolinkRateLimitedUntil = 0;
-const EVOLINK_RATE_LIMIT_COOLDOWN_MS = 60_000; // 60초 쿨다운
+// [FIX #245] Evolink 429 Rate Limit 쿨다운 — Pro 모델 429 시 Flash Lite 우선, Kie는 최후 비상
+// 429는 모델별 rate limit일 수 있으므로 Pro만 쿨다운, Flash Lite는 별도 시도
+let _evolinkProRateLimitedUntil = 0;
+const EVOLINK_RATE_LIMIT_COOLDOWN_MS = 60_000; // 60초 쿨다운 (Evolink 공식 문서: "retry after 60 seconds")
 
-const markEvolinkRateLimited = () => {
-    _evolinkRateLimitedUntil = Date.now() + EVOLINK_RATE_LIMIT_COOLDOWN_MS;
-    logger.warn(`[Evolink] 429 Rate Limit 감지 — ${EVOLINK_RATE_LIMIT_COOLDOWN_MS / 1000}초간 Evolink 전체 스킵, Kie 우선`);
+const markEvolinkProRateLimited = () => {
+    _evolinkProRateLimitedUntil = Date.now() + EVOLINK_RATE_LIMIT_COOLDOWN_MS;
+    logger.warn(`[Evolink] Pro 429 Rate Limit 감지 — ${EVOLINK_RATE_LIMIT_COOLDOWN_MS / 1000}초간 Pro 스킵, Flash Lite 우선`);
 };
 
-const isEvolinkRateLimited = (): boolean => Date.now() < _evolinkRateLimitedUntil;
+const isEvolinkProRateLimited = (): boolean => Date.now() < _evolinkProRateLimitedUntil;
 
 // Local Type Definition to replace Google SDK Type enum
 const SchemaType = {
@@ -216,8 +217,8 @@ export const requestGeminiProxy = async (model: string, googlePayload: any, _ret
     // v1beta 전용 기능: Google Search grounding, fileData(영상/오디오)
     const tryEvolinkV1Beta = async (): Promise<any> => {
         if (shouldSkipNative) throw new Error('v1beta skipped (skipNative/retry)');
-        // [FIX #245] 429 쿨다운 중이면 즉시 스킵 → Kie로 폴백
-        if (isEvolinkRateLimited()) throw new Error('Evolink rate limited (cooldown active), skipping v1beta');
+        // [FIX #245] Pro 429 쿨다운 중이면 스킵 → Flash Lite로
+        if (isEvolinkProRateLimited()) throw new Error('Evolink Pro rate limited (cooldown), skipping v1beta');
         const evolinkKey = getEvolinkKey();
         if (!evolinkKey) throw new Error('No Evolink key');
         const nativeTimeout = timeoutMs ? Math.min(timeoutMs, NATIVE_MAX_WAIT_MS) : NATIVE_MAX_WAIT_MS;
@@ -228,11 +229,11 @@ export const requestGeminiProxy = async (model: string, googlePayload: any, _ret
         return data;
     };
 
-    // --- [Inner Helper] Evolink v1/chat/completions (OpenAI Format, 동일 Gemini 3.1 Pro) ---
+    // --- [Inner Helper] Evolink v1/chat/completions (OpenAI Format, Gemini 3.1 Pro) ---
     // v1beta보다 안정적, 텍스트 전용 요청의 기본 경로
     const tryEvolinkV1Chat = async (): Promise<any> => {
-        // [FIX #245] 429 쿨다운 중이면 즉시 스킵 → Kie로 폴백
-        if (isEvolinkRateLimited()) throw new Error('Evolink rate limited (cooldown active), skipping v1');
+        // [FIX #245] Pro 429 쿨다운 중이면 스킵 → Flash Lite로
+        if (isEvolinkProRateLimited()) throw new Error('Evolink Pro rate limited (cooldown), skipping v1');
         const evolinkKey = getEvolinkKey();
         if (!evolinkKey) throw new Error('No Evolink key');
         logger.info(`[Gemini] Evolink v1 Chat (model: ${model}) — 3.1 Pro`);
@@ -241,7 +242,7 @@ export const requestGeminiProxy = async (model: string, googlePayload: any, _ret
         const evolinkV1Body = convertGoogleToOpenAI(model, googlePayload);
         evolinkV1Body.model = 'gemini-3.1-pro-preview';
 
-        // [FIX #245] 429 재시도 1회로 축소 (기존 3회 ~21초 낭비) — Smart Routing이 Kie로 빠르게 전환
+        // [FIX #245] 429 재시도 1회 — Smart Routing이 Flash Lite로 빠르게 전환
         const evolinkV1Response = await fetchWithRateLimitRetry(
             'https://api.evolink.ai/v1/chat/completions',
             {
@@ -295,29 +296,95 @@ export const requestGeminiProxy = async (model: string, googlePayload: any, _ret
             return { candidates: [{ content: { parts } }] };
         }
 
-        // [FIX #245] 429 응답 시 Evolink 전체 쿨다운 마킹 — 이후 호출은 즉시 Kie로
-        if (evolinkV1Response.status === 429) markEvolinkRateLimited();
+        // [FIX #245] Pro 429 → Pro 쿨다운 마킹 (Flash Lite는 별도 모델이라 영향 없음)
+        if (evolinkV1Response.status === 429) markEvolinkProRateLimited();
         const errText = await evolinkV1Response.text();
         throw new Error(`Evolink v1 Chat Error (${evolinkV1Response.status}): ${errText}`);
     };
 
-    // --- [FIX #244] Smart Routing ---
-    // Google Search/fileData 포함 → v1beta 우선 (특수 기능 필요)
-    // 텍스트 전용 → v1(안정) 우선, v1beta 불안정 회피
-    const priorities: Array<{ name: string; fn: () => Promise<any> }> = requiresBeta
-        ? [{ name: 'v1beta', fn: tryEvolinkV1Beta }, { name: 'v1', fn: tryEvolinkV1Chat }]
-        : [{ name: 'v1', fn: tryEvolinkV1Chat }, { name: 'v1beta', fn: tryEvolinkV1Beta }];
+    // --- [FIX #245] Evolink 3.1 Flash Lite (Pro 429 시 동급 폴백) ---
+    // Evolink 기술문서: gemini-3.1-flash-lite-preview — Pro와 동일 Evolink 계정, 3.1급 품질 유지
+    // Pro가 rate limited 되어도 Flash Lite는 별도 모델이라 사용 가능
+    const tryEvolinkFlashLite = async (): Promise<any> => {
+        const evolinkKey = getEvolinkKey();
+        if (!evolinkKey) throw new Error('No Evolink key');
+        logger.info(`[Gemini] Evolink Flash Lite 폴백 — 3.1 Flash Lite`);
+        console.log("[GeminiService] Trying Evolink v1/chat/completions (3.1 Flash Lite)...");
 
-    console.log(`[GeminiService] Smart Routing: ${requiresBeta ? 'v1beta→v1→Kie (Google Search/fileData 감지)' : 'v1→v1beta→Kie (텍스트 전용, 안정 우선)'}`);
+        const flashBody = convertGoogleToOpenAI(model, googlePayload);
+        flashBody.model = 'gemini-3.1-flash-lite-preview';
+
+        const flashResponse = await fetchWithRateLimitRetry(
+            'https://api.evolink.ai/v1/chat/completions',
+            {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${evolinkKey}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(flashBody)
+            },
+            1, 3000, timeoutMs
+        );
+
+        if (flashResponse.ok) {
+            const json = await flashResponse.json();
+            const choice = json.choices?.[0];
+            const content = choice?.message?.content || "";
+            const toolCalls = choice?.message?.tool_calls;
+
+            if (!toolCalls?.length && !content.trim()) {
+                throw new Error(`Evolink Flash Lite 빈 응답. finish_reason: ${choice?.finish_reason || 'unknown'}`);
+            }
+
+            let parts: any[] = [];
+            if (toolCalls && toolCalls.length > 0) {
+                const fc = toolCalls[0].function;
+                parts.push({ functionCall: { name: fc.name, args: JSON.parse(fc.arguments || "{}") } });
+            } else {
+                parts.push({ text: content });
+            }
+
+            // Flash Lite 비용 추적 (Pro보다 저렴 — 별도 가격 미확인 시 Pro 가격 적용)
+            try {
+                const usage = json.usage;
+                if (usage) {
+                    const inputCost = (usage.prompt_tokens || 0) / 1_000_000 * PRICING.GEMINI_PRO_INPUT_PER_1M;
+                    const outputCost = (usage.completion_tokens || 0) / 1_000_000 * PRICING.GEMINI_PRO_OUTPUT_PER_1M;
+                    const totalCost = inputCost + outputCost;
+                    if (totalCost > 0) {
+                        useCostStore.getState().addCost(totalCost, 'analysis');
+                        logger.info('[Evolink Flash Lite] 비용 추적', { promptTokens: usage.prompt_tokens, completionTokens: usage.completion_tokens, costUsd: totalCost.toFixed(6) });
+                    }
+                }
+            } catch (costErr) { logger.trackSwallowedError('GeminiProxy:evolinkFlashLite/costTracking', costErr); }
+
+            logger.success(`[Gemini] Evolink Flash Lite 성공 — 3.1 Flash Lite`);
+            return { candidates: [{ content: { parts } }] };
+        }
+
+        const errText = await flashResponse.text();
+        throw new Error(`Evolink Flash Lite Error (${flashResponse.status}): ${errText}`);
+    };
+
+    // --- [FIX #244/#245] Smart Routing ---
+    // 텍스트 전용: v1(Pro) → v1beta(Pro) → Flash Lite → Kie (최후 비상)
+    // Google Search/fileData: v1beta(Pro) → v1(Pro) → Flash Lite → Kie (최후 비상)
+    // Pro 429 시 Flash Lite가 동급 품질로 즉시 처리 — Kie(3.0 다운그레이드) 방지
+    const priorities: Array<{ name: string; fn: () => Promise<any> }> = requiresBeta
+        ? [{ name: 'v1beta(Pro)', fn: tryEvolinkV1Beta }, { name: 'v1(Pro)', fn: tryEvolinkV1Chat }, { name: 'FlashLite', fn: tryEvolinkFlashLite }]
+        : [{ name: 'v1(Pro)', fn: tryEvolinkV1Chat }, { name: 'v1beta(Pro)', fn: tryEvolinkV1Beta }, { name: 'FlashLite', fn: tryEvolinkFlashLite }];
+
+    console.log(`[GeminiService] Smart Routing: ${requiresBeta ? 'v1beta(Pro)→v1(Pro)→FlashLite→Kie' : 'v1(Pro)→v1beta(Pro)→FlashLite→Kie'}`);
 
     for (const { name, fn } of priorities) {
         try {
             return await fn();
         } catch (e: any) {
             logger.warn(`[Gemini] ${name} 실패: ${e.message}`);
-            // [FIX #245] Evolink 429 감지 → 쿨다운 마킹 (에러 메시지에서 429/rate limit 패턴 검출)
-            if (e.message?.includes('429') || e.message?.toLowerCase().includes('rate limit')) {
-                markEvolinkRateLimited();
+            // [FIX #245] Pro 429 감지 → Pro만 쿨다운 (Flash Lite는 영향 없음)
+            if (name.includes('Pro') && (e.message?.includes('429') || e.message?.toLowerCase().includes('rate limit'))) {
+                markEvolinkProRateLimited();
             }
             lastError = e;
         }
@@ -506,10 +573,9 @@ export const requestGeminiNative = async (model: string, googlePayload: any, _re
     const NATIVE_MAX_WAIT_MS = 60_000;
     const requiresBeta = needsV1Beta(googlePayload);
 
-    // --- [Inner Helper] Evolink v1beta ---
+    // --- [Inner Helper] Evolink v1beta (Pro) ---
     const tryEvolinkV1Beta = async (): Promise<any> => {
-        // [FIX #245] 429 쿨다운 중이면 즉시 스킵
-        if (isEvolinkRateLimited()) throw new Error('Evolink rate limited (cooldown), skipping v1beta');
+        if (isEvolinkProRateLimited()) throw new Error('Evolink Pro rate limited (cooldown), skipping v1beta');
         const evolinkKey = getEvolinkKey();
         if (!evolinkKey) throw new Error('No Evolink key');
         console.log(`[GeminiNative] Trying Evolink v1beta (model: ${model}, maxWait: 60s${_retryCount > 0 ? `, retry #${_retryCount}` : ''})`);
@@ -517,10 +583,9 @@ export const requestGeminiNative = async (model: string, googlePayload: any, _re
         return data;
     };
 
-    // --- [Inner Helper] Evolink v1/chat/completions (동일 3.1 Pro) ---
+    // --- [Inner Helper] Evolink v1/chat/completions (Pro) ---
     const tryEvolinkV1Chat = async (): Promise<any> => {
-        // [FIX #245] 429 쿨다운 중이면 즉시 스킵
-        if (isEvolinkRateLimited()) throw new Error('Evolink rate limited (cooldown), skipping v1');
+        if (isEvolinkProRateLimited()) throw new Error('Evolink Pro rate limited (cooldown), skipping v1');
         const evolinkKey = getEvolinkKey();
         if (!evolinkKey) throw new Error('No Evolink key');
         console.log("[GeminiNative] Trying Evolink v1/chat/completions (3.1 Pro)...");
@@ -528,7 +593,6 @@ export const requestGeminiNative = async (model: string, googlePayload: any, _re
         const evolinkV1Body = convertGoogleToOpenAI(model, googlePayload);
         evolinkV1Body.model = 'gemini-3.1-pro-preview';
 
-        // [FIX #245] 429 재시도 1회로 축소 — Smart Routing이 Kie로 전환
         const evolinkV1Response = await fetchWithRateLimitRetry(
             'https://api.evolink.ai/v1/chat/completions',
             {
@@ -560,7 +624,6 @@ export const requestGeminiNative = async (model: string, googlePayload: any, _re
                 parts.push({ text: content });
             }
 
-            // 비용 추적
             try {
                 const usage = json.usage;
                 if (usage) {
@@ -574,33 +637,82 @@ export const requestGeminiNative = async (model: string, googlePayload: any, _re
             return { candidates: [{ content: { parts } }] };
         }
 
-        // [FIX #245] 429 시 쿨다운 마킹
-        if (evolinkV1Response.status === 429) markEvolinkRateLimited();
+        if (evolinkV1Response.status === 429) markEvolinkProRateLimited();
         const errText = await evolinkV1Response.text();
         throw new Error(`Evolink v1 Error (${evolinkV1Response.status}): ${errText}`);
     };
 
-    // --- Smart Routing (requestGeminiProxy와 동일 로직) ---
-    const priorities: Array<{ name: string; fn: () => Promise<any> }> = requiresBeta
-        ? [{ name: 'v1beta', fn: tryEvolinkV1Beta }, { name: 'v1', fn: tryEvolinkV1Chat }]
-        : [{ name: 'v1', fn: tryEvolinkV1Chat }, { name: 'v1beta', fn: tryEvolinkV1Beta }];
+    // --- [FIX #245] Evolink 3.1 Flash Lite (Pro 429 시 동급 폴백) ---
+    const tryEvolinkFlashLite = async (): Promise<any> => {
+        const evolinkKey = getEvolinkKey();
+        if (!evolinkKey) throw new Error('No Evolink key');
+        console.log("[GeminiNative] Trying Evolink v1/chat/completions (3.1 Flash Lite)...");
 
-    console.log(`[GeminiNative] Smart Routing: ${requiresBeta ? 'v1beta→v1→Kie' : 'v1→v1beta→Kie (텍스트 전용)'}`);
+        const flashBody = convertGoogleToOpenAI(model, googlePayload);
+        flashBody.model = 'gemini-3.1-flash-lite-preview';
+
+        const flashResponse = await fetchWithRateLimitRetry(
+            'https://api.evolink.ai/v1/chat/completions',
+            {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${evolinkKey}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify(flashBody)
+            },
+            1, 3000
+        );
+
+        if (flashResponse.ok) {
+            const json = await flashResponse.json();
+            const choice = json.choices?.[0];
+            const content = choice?.message?.content || "";
+            const toolCalls = choice?.message?.tool_calls;
+            if (!toolCalls?.length && !content.trim()) throw new Error(`Evolink Flash Lite 빈 응답`);
+
+            let parts: any[] = [];
+            if (toolCalls && toolCalls.length > 0) {
+                const fc = toolCalls[0].function;
+                parts.push({ functionCall: { name: fc.name, args: JSON.parse(fc.arguments || "{}") } });
+            } else {
+                parts.push({ text: content });
+            }
+
+            try {
+                const usage = json.usage;
+                if (usage) {
+                    const totalCost = ((usage.prompt_tokens || 0) / 1_000_000 * PRICING.GEMINI_PRO_INPUT_PER_1M)
+                        + ((usage.completion_tokens || 0) / 1_000_000 * PRICING.GEMINI_PRO_OUTPUT_PER_1M);
+                    if (totalCost > 0) useCostStore.getState().addCost(totalCost, 'analysis');
+                }
+            } catch (costErr) { logger.trackSwallowedError('GeminiNative:flashLite/costTracking', costErr); }
+
+            logger.success(`[GeminiNative] Evolink Flash Lite 성공`);
+            return { candidates: [{ content: { parts } }] };
+        }
+
+        const errText = await flashResponse.text();
+        throw new Error(`Evolink Flash Lite Error (${flashResponse.status}): ${errText}`);
+    };
+
+    // --- Smart Routing: Pro → Flash Lite → Kie ---
+    const priorities: Array<{ name: string; fn: () => Promise<any> }> = requiresBeta
+        ? [{ name: 'v1beta(Pro)', fn: tryEvolinkV1Beta }, { name: 'v1(Pro)', fn: tryEvolinkV1Chat }, { name: 'FlashLite', fn: tryEvolinkFlashLite }]
+        : [{ name: 'v1(Pro)', fn: tryEvolinkV1Chat }, { name: 'v1beta(Pro)', fn: tryEvolinkV1Beta }, { name: 'FlashLite', fn: tryEvolinkFlashLite }];
+
+    console.log(`[GeminiNative] Smart Routing: ${requiresBeta ? 'v1beta(Pro)→v1(Pro)→FlashLite→Kie' : 'v1(Pro)→v1beta(Pro)→FlashLite→Kie'}`);
 
     for (const { name, fn } of priorities) {
         try {
             return await fn();
         } catch (e: any) {
             console.warn(`[GeminiNative] ${name} Error:`, e.message);
-            // [FIX #245] 429 감지 → Evolink 전체 쿨다운
-            if (e.message?.includes('429') || e.message?.toLowerCase().includes('rate limit')) {
-                markEvolinkRateLimited();
+            if (name.includes('Pro') && (e.message?.includes('429') || e.message?.toLowerCase().includes('rate limit'))) {
+                markEvolinkProRateLimited();
             }
             lastError = e;
         }
     }
 
-    // Kie Chat Completions 최종 폴백 (3.0 Pro 다운그레이드)
+    // Kie Chat Completions 최종 폴백 (3.0 Pro 다운그레이드 — 최후 비상)
     try {
         const kieKey = getKieKey();
         if (!kieKey) {
