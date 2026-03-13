@@ -187,13 +187,18 @@ export const requestGeminiProxy = async (model: string, googlePayload: any, _ret
     const shouldSkipNative = options?.skipNative || _retryCount > 0;
 
     // 0. Try Evolink Native v1beta (Priority 0) - Google Native Format
+    // [FIX #244] v1beta 빠른 폴백 — v1beta 불안정 시 Kie까지 대기 시간 단축
+    // 전체 타임아웃(최대 300초)을 v1beta에 넘기면 v1beta 실패 시 125초+ 허비 후에야 Kie 시작
+    // → v1beta는 최대 60초만 대기, 실패 시 즉시 Kie 폴백으로 체감 속도 대폭 개선
+    const NATIVE_MAX_WAIT_MS = 60_000;
     if (!shouldSkipNative) {
         try {
             const evolinkKey = getEvolinkKey();
             if (evolinkKey) {
-                logger.info(`[Gemini] Evolink Native 호출 (model: ${model})`, { timeoutMs });
-                console.log(`[GeminiService] Trying Evolink Native (Priority 0) with model: ${model}${_retryCount > 0 ? ` (retry #${_retryCount})` : ''}`);
-                const data = await requestEvolinkNative(model, googlePayload, 'generateContent', timeoutMs);
+                const nativeTimeout = timeoutMs ? Math.min(timeoutMs, NATIVE_MAX_WAIT_MS) : NATIVE_MAX_WAIT_MS;
+                logger.info(`[Gemini] Evolink Native 호출 (model: ${model})`, { timeoutMs, nativeTimeout });
+                console.log(`[GeminiService] Trying Evolink Native (Priority 0) with model: ${model}, nativeTimeout: ${nativeTimeout / 1000}s${_retryCount > 0 ? ` (retry #${_retryCount})` : ''}`);
+                const data = await requestEvolinkNative(model, googlePayload, 'generateContent', nativeTimeout);
                 logger.success(`[Gemini] Evolink Native 응답 수신 완료`);
                 return data;
             }
@@ -389,11 +394,12 @@ export const requestGeminiNative = async (model: string, googlePayload: any, _re
     let lastError: any = null;
 
     // 0. Try Evolink v1beta (Priority 0)
+    // [FIX #244] v1beta 빠른 폴백 — 최대 60초 대기
     try {
         const evolinkKey = getEvolinkKey();
         if (evolinkKey) {
-            console.log(`[GeminiNative] Trying Evolink v1beta (Priority 0) with model: ${model}${_retryCount > 0 ? ` (retry #${_retryCount})` : ''}`);
-            const data = await requestEvolinkNative(model, googlePayload);
+            console.log(`[GeminiNative] Trying Evolink v1beta (Priority 0) with model: ${model}, maxWait: 60s${_retryCount > 0 ? ` (retry #${_retryCount})` : ''}`);
+            const data = await requestEvolinkNative(model, googlePayload, 'generateContent', 60_000);
             return data;
         }
     } catch (e: any) {
