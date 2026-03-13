@@ -153,10 +153,9 @@ async function parseEditChunkWithRetry(
       lastError = err instanceof Error ? err : new Error(String(err));
       const msg = lastError.message.toLowerCase();
 
-      // 재시도 가능한 에러 판별
+      // 재시도 가능한 에러 판별 (AI_TRUNCATED는 토큰 초과라 재시도 무의미)
       const isRetryable = msg.includes('429') || msg.includes('499') || msg.includes('rate') ||
-        msg.includes('network') || msg.includes('fetch') || msg.includes('요청 제한') ||
-        msg === 'ai_truncated';
+        msg.includes('network') || msg.includes('fetch') || msg.includes('요청 제한');
 
       if (!isRetryable || attempt === maxRetries) throw lastError;
 
