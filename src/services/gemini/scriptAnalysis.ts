@@ -859,29 +859,33 @@ export const parseScriptToScenes = async (
             }));
         }
 
-        // [CRITICAL FIX] AUTO 캐릭터 빈도 강제 적용 — 최대 1회만 MAIN 허용
-        // AUTO 모드: MAIN 1회 초과 절대 금지 → 첫 번째 MAIN만 유지, 나머지는 NOBODY로 강제 전환
-        // KEY_ENTITY는 예외 — 유명인/브랜드/장소는 반드시 표시되어야 함
+        // [CRITICAL FIX] AUTO 캐릭터 빈도 강제 적용 — 연속 MAIN 금지
+        // AUTO 모드: MAIN이 연속 2회 이상 나오면 안 됨 → 직전이 MAIN이면 현재를 NOBODY로 전환
+        // KEY_ENTITY는 연속 판정에서 제외 (투명하게 건너뜀)
         if (appearance === CharacterAppearance.AUTO) {
-            let mainCount = 0;
+            let prevWasMain = false;
+            let fixCount = 0;
             for (let i = 0; i < result.length; i++) {
-                // KEY_ENTITY는 건너뜀 — 유명인/브랜드/장소는 항상 표시
                 if (result[i].castType === 'KEY_ENTITY') continue;
                 if (result[i].castType === 'MAIN') {
-                    if (mainCount >= 1) {
+                    if (prevWasMain) {
                         result[i] = {
                             ...result[i],
                             castType: 'NOBODY',
                             characterPresent: false,
                             characterAction: '',
                         };
-                        console.log(`[PostProcess] AUTO castType fix: scene ${i} forced MAIN→NOBODY (max 1 MAIN exceeded, count=${mainCount})`);
+                        fixCount++;
+                        console.log(`[PostProcess] AUTO castType fix: scene ${i} forced MAIN→NOBODY (consecutive MAIN)`);
+                        // prevWasMain을 false로 리셋하지 않음 → 3연속 MAIN도 2번째부터 전부 NOBODY
                     } else {
-                        mainCount++;
+                        prevWasMain = true;
                     }
+                } else {
+                    prevWasMain = false;
                 }
             }
-            console.log(`[PostProcess] AUTO mode: ${mainCount} MAIN scene(s) kept, rest forced to NOBODY`);
+            console.log(`[PostProcess] AUTO mode: ${fixCount} consecutive MAIN scene(s) fixed to NOBODY`);
         }
 
         // [CRITICAL FIX] MINIMAL 캐릭터 빈도 강제 적용 — 최대 2회만 MAIN 허용
@@ -1093,18 +1097,20 @@ export const parseScriptToScenes = async (
             }
         }
 
-        // [CRITICAL] 청크 병합 후 캐릭터 빈도 재적용 — 각 청크는 독립 처리되므로 전체 기준으로 재조정
+        // [CRITICAL] 청크 병합 후 캐릭터 빈도 재적용 — 연속 MAIN 금지 (청크 경계에서 연속될 수 있음)
         if (appearance === CharacterAppearance.AUTO) {
-            let mainCount = 0;
+            let prevWasMain = false;
+            let fixCount = 0;
             for (let i = 0; i < allScenes.length; i++) {
                 if (allScenes[i].castType === 'KEY_ENTITY') continue;
                 if (allScenes[i].castType === 'MAIN') {
-                    if (mainCount >= 1) {
+                    if (prevWasMain) {
                         allScenes[i] = { ...allScenes[i], castType: 'NOBODY', characterPresent: false, characterAction: '' };
-                    } else { mainCount++; }
-                }
+                        fixCount++;
+                    } else { prevWasMain = true; }
+                } else { prevWasMain = false; }
             }
-            console.log(`[PostProcess-Chunked] AUTO mode re-enforced: ${mainCount} MAIN kept across ${allScenes.length} scenes`);
+            console.log(`[PostProcess-Chunked] AUTO mode re-enforced: ${fixCount} consecutive MAIN fixed across ${allScenes.length} scenes`);
         } else if (appearance === CharacterAppearance.MINIMAL) {
             const maxMain = Math.max(2, Math.round(allScenes.length * 0.1));
             let mainCount = 0;

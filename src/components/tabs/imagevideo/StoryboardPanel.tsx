@@ -1037,16 +1037,13 @@ const StoryboardPanel: React.FC = () => {
         globalContext: currentConfig?.globalContext,
         characterDesc: charDesc,
       });
-      // [CRITICAL FIX] 프롬프트 재생성 시 stale 엔티티/캐스트 메타데이터도 리셋
-      // 기존 castType/entityName이 새 프롬프트와 맞지 않으면 이미지가 엉뚱하게 생성됨
-      // castType을 'MAIN'으로 리셋 — 'NOBODY'로 하면 인물 네거티브 프롬프트가 추가되어 문제 발생
+      // [FIX] 프롬프트 재생성 시 — 기존 castType 보존 (AUTO 빈도 규칙 유지)
+      // KEY_ENTITY 메타데이터만 리셋 (새 프롬프트와 맞지 않을 수 있음)
       updateScene(sceneId, {
         visualPrompt: prompt,
         generationStatus: undefined,
-        castType: 'MAIN',
-        entityName: undefined,
-        entityComposition: undefined,
-        characterPresent: true,
+        entityName: scene.castType === 'KEY_ENTITY' ? undefined : scene.entityName,
+        entityComposition: scene.castType === 'KEY_ENTITY' ? undefined : scene.entityComposition,
         characterAction: undefined,
       });
       showToast('프롬프트 생성 완료');

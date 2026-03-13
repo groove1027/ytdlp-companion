@@ -284,7 +284,8 @@ export const generateSceneImage = async (
 
     // 4. Inject Character Analysis Result for visual consistency
     // [NANOBANANA 2] Gemini-native 자연어 지시로 캐릭터 일관성 강화
-    if (characterAnalysisResult && characterAnalysisResult.trim()) {
+    // [FIX] NOBODY/EXTRA 장면에는 캐릭터 분석 결과를 주입하지 않음 — "No humans" + "CHARACTER IDENTITY" 모순 방지
+    if (characterAnalysisResult && characterAnalysisResult.trim() && scene.castType !== 'NOBODY' && scene.castType !== 'EXTRA') {
         subjectPrompt += `\n[IMPORTANT: CHARACTER IDENTITY — MUST MATCH EXACTLY]\n`;
         subjectPrompt += `${characterAnalysisResult}\n`;
         subjectPrompt += `[CRITICAL CONSISTENCY RULES]\n`;
