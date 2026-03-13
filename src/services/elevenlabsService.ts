@@ -11,7 +11,7 @@
 
 import { monitoredFetch, getKieKey } from './apiService';
 import { logger } from './LoggerService';
-import { mergeAudioFiles, splitTextForTTS } from './ttsService';
+import { mergeAudioFiles, splitTextForTTS, stripSpeakerTags } from './ttsService';
 
 const KIE_BASE_URL = 'https://api.kie.ai/api/v1';
 
@@ -31,17 +31,19 @@ export const generateElevenLabsDialogueTTS = async (
 ): Promise<{ audioUrl: string; format: string }> => {
   const apiKey = getKieKey();
   if (!apiKey) throw new Error('Kie API 키가 설정되지 않았습니다. API 설정에서 Kie 키를 입력해주세요.');
-  if (!options.text.trim()) throw new Error('TTS 텍스트가 비어있습니다.');
+  // [FIX #228] 화자/모드 태그 제거 후 TTS 생성
+  const cleanedOptions = { ...options, text: stripSpeakerTags(options.text) };
+  if (!cleanedOptions.text.trim()) throw new Error('TTS 텍스트가 비어있습니다.');
 
   // 4500자 초과 시 자동 청킹
-  if (options.text.length > 4500) {
-    const chunks = splitTextForTTS(options.text, 4500);
-    logger.info('[ElevenLabs] 자동 청킹', { totalLength: options.text.length, chunkCount: chunks.length });
+  if (cleanedOptions.text.length > 4500) {
+    const chunks = splitTextForTTS(cleanedOptions.text, 4500);
+    logger.info('[ElevenLabs] 자동 청킹', { totalLength: cleanedOptions.text.length, chunkCount: chunks.length });
 
     const audioUrls: string[] = [];
     for (let i = 0; i < chunks.length; i++) {
       logger.info(`[ElevenLabs] 청크 ${i + 1}/${chunks.length} 생성 중 (${chunks[i].length}자)`);
-      const result = await generateSingleChunk({ ...options, text: chunks[i] }, apiKey);
+      const result = await generateSingleChunk({ ...cleanedOptions, text: chunks[i] }, apiKey);
       audioUrls.push(result.audioUrl);
     }
 
@@ -51,7 +53,7 @@ export const generateElevenLabsDialogueTTS = async (
     return { audioUrl: mergedUrl, format: 'wav' };
   }
 
-  return generateSingleChunk(options, apiKey);
+  return generateSingleChunk(cleanedOptions, apiKey);
 };
 
 /** 단일 청크 TTS 생성 — dialogue 배열 포맷 사용 */

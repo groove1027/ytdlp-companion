@@ -7,7 +7,7 @@
 
 import { monitoredFetch, getTypecastKey } from './apiService';
 import { logger } from './LoggerService';
-import { mergeAudioFiles } from './ttsService';
+import { mergeAudioFiles, stripSpeakerTags } from './ttsService';
 import type { TypecastEmotionMode, TypecastEmotionPreset, TypecastModel } from '../types';
 
 const TYPECAST_BASE_URL = 'https://api.typecast.ai';
@@ -766,7 +766,9 @@ export const generateTypecastTTS = async (
 ): Promise<TypecastTTSResult> => {
   const apiKey = getTypecastKey();
   if (!apiKey) throw new Error('Typecast API 키가 설정되지 않았습니다.');
-  if (!text.trim()) throw new Error('TTS 텍스트가 비어있습니다.');
+  // [FIX #228] 화자/모드 태그 제거 후 TTS 생성
+  const cleanText = stripSpeakerTags(text);
+  if (!cleanText.trim()) throw new Error('TTS 텍스트가 비어있습니다.');
 
   // 모델 호환성: voice가 선택 모델을 지원하지 않으면 자동 폴백
   const requestedModel = options.model || 'ssfm-v30';
@@ -790,10 +792,10 @@ export const generateTypecastTTS = async (
     }
   }
 
-  if (text.length > TYPECAST_MAX_CHARS) {
-    return generateChunked(text, options, apiKey);
+  if (cleanText.length > TYPECAST_MAX_CHARS) {
+    return generateChunked(cleanText, options, apiKey);
   }
-  return generateSingle(text, options, apiKey);
+  return generateSingle(cleanText, options, apiKey);
 };
 
 const generateSingle = async (

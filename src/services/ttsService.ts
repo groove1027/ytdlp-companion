@@ -9,6 +9,27 @@ import type { TTSEngine, TTSLanguage } from '../types';
 const KIE_BASE_URL = 'https://api.kie.ai/api/v1';
 const TTS_MAX_CHUNK_CHARS = 4500; // ElevenLabs 5000자 제한 대비 안전 마진
 
+// === SPEAKER TAG STRIPPING (FIX #228) ===
+
+/**
+ * TTS 생성 전 화자/모드 태그를 제거하여 순수 대사만 추출
+ * AI 생성 스크립트에 포함된 [N], [S-진행자], 나레이션: 등의 태그가
+ * TTS 엔진에 전달되면 그대로 읽혀버리는 문제 해결
+ */
+export const stripSpeakerTags = (text: string): string => {
+  if (!text) return '';
+  let cleaned = text.trim();
+  // [A-더빙], [B-원본], [A], [B], [N], [S-화자명] 등 브라켓 태그
+  cleaned = cleaned.replace(/^\[(?:[NABnab](?:[-‐–—][^\]]*)?|[Ss][-‐–][^\]]*)\]\s*/g, '');
+  // [화자명] 패턴 (한글 1-10자 브라켓, 줄 시작)
+  cleaned = cleaned.replace(/^\[[가-힣]{1,10}\]\s*/g, '');
+  // 나레이션:, 내레이션:, 진행자:, MC:, 해설:, 화자N: 등 알려진 역할 접두사
+  cleaned = cleaned.replace(/^(?:나레이션|내레이션|나레이터|진행자|MC|mc|해설|화자\s*\d*)\s*[:：]\s*/gi, '');
+  // (더빙), (원본), (나레이션) 등 괄호 모드 태그 (어디서든)
+  cleaned = cleaned.replace(/\((?:더빙|원본|나레이션|내레이션)\)/g, '');
+  return cleaned.trim();
+};
+
 // === TEXT SPLITTING ===
 
 /**
@@ -372,9 +393,11 @@ export const generateSupertonicTTS = async (
     language: TTSLanguage = 'ko',
     speed: number = 1.0
 ): Promise<TTSResult> => {
-    if (!text.trim()) throw new Error('TTS 텍스트가 비어있습니다.');
+    // [FIX #228] 화자/모드 태그 제거 후 TTS 생성
+    const cleanText = stripSpeakerTags(text);
+    if (!cleanText.trim()) throw new Error('TTS 텍스트가 비어있습니다.');
 
-    logger.info('[TTS] Supertonic 2 생성 요청 (로컬)', { voiceId, language, textLength: text.length, speed });
+    logger.info('[TTS] Supertonic 2 생성 요청 (로컬)', { voiceId, language, textLength: cleanText.length, speed });
 
     // Supertonic 2는 한/영/프/스/포 5개 언어 지원. 일본어 미지원 → 한국어로 폴백 (영어보다 발음 체계가 유사)
     const langMap: Record<TTSLanguage, string> = {
@@ -383,7 +406,7 @@ export const generateSupertonicTTS = async (
         'ja': 'ko'
     };
 
-    const result = await generateSupertonicSpeech(text, langMap[language] || 'ko', voiceId, speed);
+    const result = await generateSupertonicSpeech(cleanText, langMap[language] || 'ko', voiceId, speed);
 
     logger.success('[TTS] Supertonic 2 생성 완료 (로컬)', { voiceId });
     return { audioUrl: result.audioUrl, format: result.format as 'wav' };

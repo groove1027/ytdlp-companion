@@ -20,6 +20,7 @@ import { monitoredFetch } from '../../../services/apiService';
 import { getQuotaUsage } from '../../../services/youtubeAnalysisService';
 import { extractStreamUrl, isYtdlpServerConfigured, getSocialMetadata, downloadSocialVideo } from '../../../services/ytdlpApiService';
 import { detectPlatform } from '../../../services/videoDownloadService';
+import { uploadMediaToHosting } from '../../../services/uploadService';
 import type {
   VideoAnalysisPreset as AnalysisPreset,
   VideoSceneRow as SceneRow,
@@ -486,12 +487,48 @@ async function preciseSeek(video: HTMLVideoElement, targetSec: number, timeoutMs
 }
 
 /**
- * 비디오에서 정확한 타임코드 프레임 추출 (로컬 디코딩)
- * - 원본 해상도 HD 프레임 + 640px 썸네일 동시 생성
+ * 비디오에서 정확한 타임코드 프레임 추출
+ * ★ WebCodecs VideoDecoder 우선 (PTS 정밀 매칭, 키프레임 스냅 없음)
+ * ★ 미지원 시 기존 canvas 폴백 (키프레임 스냅으로 정밀도 떨어짐)
+ */
+async function canvasExtractFrames(
+  videoUrl: string,
+  timecodes: number[],
+  isBlob: boolean,
+): Promise<TimedFrame[]> {
+  // ── WebCodecs 정밀 추출 (Blob URL일 때만) ──
+  if (isBlob) {
+    try {
+      const { webcodecExtractFrames, isVideoDecoderSupported } =
+        await import('../../../services/webcodecs/videoDecoder');
+
+      if (isVideoDecoderSupported()) {
+        const resp = await fetch(videoUrl);
+        const blob = await resp.blob();
+        const frames = await webcodecExtractFrames(blob, timecodes);
+        if (frames.length > 0) {
+          console.log(`[Frame] ✅ WebCodecs 정밀 추출 성공: ${frames.length}개 (키프레임 스냅 없음)`);
+          logger.unregisterBlobUrl(videoUrl);
+          URL.revokeObjectURL(videoUrl);
+          return frames;
+        }
+        console.warn('[Frame] WebCodecs 0개 반환 → canvas 폴백');
+      }
+    } catch (e) {
+      console.warn('[Frame] WebCodecs 실패 → canvas 폴백:', e);
+    }
+  }
+
+  // ── Canvas 폴백 (기존 방식) ──
+  return canvasExtractFramesLegacy(videoUrl, timecodes, isBlob);
+}
+
+/**
+ * [레거시] Canvas 기반 프레임 추출 — WebCodecs 미지원 시 폴백
  * - Blob URL: createImageBitmap → OffscreenCanvas (고품질, CORS 무관)
  * - 일반 URL: crossOrigin canvas drawImage (CORS 필요)
  */
-function canvasExtractFrames(
+function canvasExtractFramesLegacy(
   videoUrl: string,
   timecodes: number[],
   isBlob: boolean,
@@ -728,8 +765,62 @@ function collectTimecodesFromVersions(versions: VersionItem[], durationSec?: num
   return deduped;
 }
 
-/** 업로드 영상에서 2초 간격으로 프레임 추출 (타임스탬프 포함) */
+/** 업로드 영상에서 프레임 추출 — WebCodecs 우선, canvas 폴백 */
 async function extractVideoFrames(file: File, sourceIndex?: number): Promise<TimedFrame[]> {
+  // ── WebCodecs 정밀 추출 우선 시도 ──
+  try {
+    const { webcodecExtractFrames, isVideoDecoderSupported } =
+      await import('../../../services/webcodecs/videoDecoder');
+
+    if (isVideoDecoderSupported()) {
+      // duration 계산 (WebCodecs에 타임코드 배열 전달용)
+      const dur = await getFileDuration(file);
+      if (dur && dur > 1) {
+        const maxFrameCount = 60;
+        const interval = Math.max(2, dur / maxFrameCount);
+        const count = Math.min(Math.ceil(dur / interval), maxFrameCount);
+        const sampleTimecodes = Array.from({ length: count }, (_, i) =>
+          Math.min((i + 0.5) * interval, dur - 0.1));
+
+        const frames = await webcodecExtractFrames(file, sampleTimecodes);
+        if (frames.length > 0) {
+          console.log(`[extractVideoFrames] ✅ WebCodecs 정밀 추출: ${frames.length}개`);
+          return frames.map(f => ({
+            ...f,
+            sourceFileName: file.name,
+            sourceIndex: sourceIndex ?? 0,
+          }));
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('[extractVideoFrames] WebCodecs 실패 → canvas 폴백:', e);
+  }
+
+  // ── Canvas 폴백 (기존 방식) ──
+  return extractVideoFramesLegacy(file, sourceIndex);
+}
+
+/** 파일 duration 조회 (WebCodecs 타임코드 계산용) */
+function getFileDuration(file: File): Promise<number | null> {
+  return new Promise((resolve) => {
+    const video = document.createElement('video');
+    video.muted = true;
+    video.preload = 'metadata';
+    const url = URL.createObjectURL(file);
+    video.src = url;
+    const cleanup = () => { URL.revokeObjectURL(url); };
+    video.onloadedmetadata = () => {
+      cleanup();
+      resolve(isFinite(video.duration) ? video.duration : null);
+    };
+    video.onerror = () => { cleanup(); resolve(null); };
+    setTimeout(() => { cleanup(); resolve(null); }, 5000);
+  });
+}
+
+/** [레거시] Canvas 기반 프레임 추출 — WebCodecs 폴백용 */
+async function extractVideoFramesLegacy(file: File, sourceIndex?: number): Promise<TimedFrame[]> {
   // [FIX #155] 타임아웃 30→90초로 확대 + 동적 간격으로 영상 전체 커버
   const OVERALL_TIMEOUT_MS = 90_000; // 파일 1개당 최대 90초
   return Promise.race([
@@ -2751,12 +2842,31 @@ const VideoAnalysisRoom: React.FC = () => {
         }
         frames = allFrames;
 
+        // [FIX #208] 프레임 추출 완전 실패 시 Cloudinary 업로드 → v1beta 영상 분석 폴백
+        if (allFrames.length === 0 && uploadedFiles.length > 0) {
+          showToast('⚠️ 프레임 추출 실패 — 영상을 업로드하여 분석합니다...', 5000);
+          try {
+            const hostedUrl = await uploadMediaToHosting(uploadedFiles[0]);
+            videoUri = hostedUrl;
+            videoMime = uploadedFiles[0].type || 'video/mp4';
+            console.log('[VideoAnalysis] 프레임 추출 실패 → Cloudinary 업로드 성공, v1beta 분석으로 전환:', hostedUrl.slice(0, 80));
+          } catch (uploadErr) {
+            console.warn('[VideoAnalysis] Cloudinary 업로드도 실패:', uploadErr);
+            throw new Error(
+              '영상 프레임 추출에 실패했습니다.\n' +
+              '• Chrome 최신 버전을 사용해 보세요\n' +
+              '• 영상 파일 크기를 줄여 보세요 (300MB 이하 권장)\n' +
+              '• Cloudinary 설정 시 자동 업로드 분석이 가능합니다'
+            );
+          }
+        }
+
         if (isMultiSource) {
           inputDesc = `## 다중 영상 짜집기 분석 (${uploadedFiles.length}개 소스)\n\n` + fileDescs.join('\n');
         } else {
           inputDesc = `업로드된 영상 파일: ${uploadedFiles[0].name} (${((uploadedFiles[0].size || 0) / 1024 / 1024).toFixed(1)}MB)`;
         }
-        videoUri = '';
+        if (!videoUri) videoUri = '';
       } else {
         // 링크 모드: YouTube / TikTok / 소셜 자동 감지
         const urls = validYoutubeUrls;
