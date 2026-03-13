@@ -175,25 +175,35 @@ const convertGoogleToOpenAI = (model: string, googlePayload: any) => {
     return payload;
 };
 
+// [FIX #191] skipNative 옵션 — 재시도/Flash 폴백 시 Evolink Native 스킵
+interface GeminiProxyOptions { skipNative?: boolean; }
+
 // --- CORE PROXY REQUEST FUNCTION ---
 // [FIX #32] timeoutMs 파라미터 추가 — 긴 대본 스토리보드 생성 시 네트워크 타임아웃 방지
-export const requestGeminiProxy = async (model: string, googlePayload: any, _retryCount: number = 0, timeoutMs?: number): Promise<any> => {
+export const requestGeminiProxy = async (model: string, googlePayload: any, _retryCount: number = 0, timeoutMs?: number, options?: GeminiProxyOptions): Promise<any> => {
     let lastError: any = null;
 
+    // [FIX #191] skipNative: 명시적 스킵 또는 재시도 시 Evolink Native 자동 스킵
+    const shouldSkipNative = options?.skipNative || _retryCount > 0;
+
     // 0. Try Evolink Native v1beta (Priority 0) - Google Native Format
-    try {
-        const evolinkKey = getEvolinkKey();
-        if (evolinkKey) {
-            logger.info(`[Gemini] Evolink Native 호출 (model: ${model})`, { timeoutMs });
-            console.log(`[GeminiService] Trying Evolink Native (Priority 0) with model: ${model}${_retryCount > 0 ? ` (retry #${_retryCount})` : ''}`);
-            const data = await requestEvolinkNative(model, googlePayload, 'generateContent', timeoutMs);
-            logger.success(`[Gemini] Evolink Native 응답 수신 완료`);
-            return data;
+    if (!shouldSkipNative) {
+        try {
+            const evolinkKey = getEvolinkKey();
+            if (evolinkKey) {
+                logger.info(`[Gemini] Evolink Native 호출 (model: ${model})`, { timeoutMs });
+                console.log(`[GeminiService] Trying Evolink Native (Priority 0) with model: ${model}${_retryCount > 0 ? ` (retry #${_retryCount})` : ''}`);
+                const data = await requestEvolinkNative(model, googlePayload, 'generateContent', timeoutMs);
+                logger.success(`[Gemini] Evolink Native 응답 수신 완료`);
+                return data;
+            }
+        } catch (e: any) {
+            logger.warn(`[Gemini] Evolink Native 실패: ${e.message}`);
+            console.warn("[GeminiService] Evolink Native Error:", e.message);
+            lastError = e;
         }
-    } catch (e: any) {
-        logger.warn(`[Gemini] Evolink Native 실패: ${e.message}`);
-        console.warn("[GeminiService] Evolink Native Error:", e.message);
-        lastError = e;
+    } else {
+        console.log(`[GeminiService] Evolink Native 스킵 (skipNative=${options?.skipNative}, retry=${_retryCount})`);
     }
 
     // 1. Try Kie (Fallback) - OpenAI Compatible Format
@@ -290,7 +300,7 @@ export const requestGeminiProxy = async (model: string, googlePayload: any, _ret
         if (_retryCount < 1) {
             logger.trackRetry('GeminiProxy 전체', _retryCount + 1, 2, (lastError || e)?.message);
             await new Promise(r => setTimeout(r, 2000));
-            return requestGeminiProxy(model, googlePayload, _retryCount + 1, timeoutMs);
+            return requestGeminiProxy(model, googlePayload, _retryCount + 1, timeoutMs, options);
         }
         console.error("[GeminiService] All Proxies Failed after retry.", e);
         throw new Error(`All proxies failed. Last error: ${(lastError || e)?.message || 'Unknown'}`);

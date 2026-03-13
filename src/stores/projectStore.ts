@@ -12,10 +12,10 @@ import { useUploadStore } from './uploadStore';
 import { persistImage, isBase64Image } from '../services/imageStorageService';
 import { logger } from '../services/LoggerService';
 
-// editRoomStore → projectStore 순환 참조 방지: lazy require 사용
-const getEditRoomStore = () => {
-  try { return require('./editRoomStore').useEditRoomStore; } catch { return null; }
-};
+// editRoomStore → projectStore 순환 참조 방지: lazy import 사용
+let _editRoomStoreRef: any = null;
+import('./editRoomStore').then(m => { _editRoomStoreRef = m.useEditRoomStore; }).catch(() => {});
+const getEditRoomStore = () => _editRoomStoreRef;
 const useEditRoomStore = { getState: () => getEditRoomStore()?.getState() || { reset: () => {} } };
 
 // Monotonic counter to guarantee unique scene IDs even within the same millisecond
@@ -354,15 +354,14 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     }
 
     // [NEW] imageVideoStore 복원 — 캐릭터/스타일/웹검색 설정을 config에서 복원
-    try {
-      const { useImageVideoStore } = require('./imageVideoStore');
+    import('./imageVideoStore').then(({ useImageVideoStore }) => {
       useImageVideoStore.getState().restoreFromConfig({
         style: project.config?.selectedVisualStyle,
         characters: project.config?.characters,
         enableWebSearch: project.config?.enableWebSearch,
         isMultiCharacter: project.config?.isMultiCharacter,
       });
-    } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/restoreImageVideoStore', e); }
+    }).catch(e => { logger.trackSwallowedError('ProjectStore:loadProject/restoreImageVideoStore', e); });
 
     // [FIX] 나레이션 복원 — IndexedDB에서 오디오 Blob 복원 후 ScriptLine[] 재생성
     // blob: URL은 세션 종속이므로, IDB에 영속화된 Blob → 새 blob URL로 교체
@@ -538,10 +537,9 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     }
 
     // [NEW] imageVideoStore 리셋 — 이전 프로젝트의 캐릭터/스타일이 남지 않도록
-    try {
-      const { useImageVideoStore } = require('./imageVideoStore');
+    import('./imageVideoStore').then(({ useImageVideoStore }) => {
       useImageVideoStore.getState().resetStore();
-    } catch (e) { logger.trackSwallowedError('ProjectStore:newProject/resetImageVideoStore', e); }
+    }).catch(e => { logger.trackSwallowedError('ProjectStore:newProject/resetImageVideoStore', e); });
   },
 
   // [v4.5] 활동 기반 스마트 제목 — 첫 번째 의미 있는 작업 시 자동 업데이트

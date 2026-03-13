@@ -1169,6 +1169,35 @@ export const parseScriptToScenes = async (
                     }
                 } catch (fallbackErr: any) {
                     console.error(`[parseScriptToScenes] 청크 ${ci + 1} v1beta 폴백도 실패:`, fallbackErr.message?.slice(0, 100));
+                    // [FIX #191] 에러 투명성 — 폴백 에러를 lastChunkError에 반영
+                    lastChunkError = new Error(
+                        `스트리밍: ${lastChunkError?.message?.slice(0, 80)} | 폴백: ${fallbackErr.message?.slice(0, 80)}`
+                    );
+                }
+            }
+            // [FIX #191] Flash 모델 폴백 — Pro 빈 응답 시 Flash로 재시도 (Evolink 스킵)
+            if (chunkScenes.length === 0) {
+                try {
+                    console.log(`[parseScriptToScenes] 청크 ${ci + 1} Flash 폴백 시도`);
+                    logger.info(`[parseScriptToScenes] 청크 ${ci + 1} Flash 폴백`, { lastError: lastChunkError?.message?.slice(0, 100) });
+                    const chunkPayload = { ...payload, contents: [{ role: 'user', parts: [{ text: chunkUserContent }] }] };
+                    const data = await requestGeminiProxy('gemini-3-flash', chunkPayload, 0, 300_000, { skipNative: true });
+                    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                    if (text) {
+                        let parsed: any;
+                        try { parsed = JSON.parse(text); } catch (e) {
+                            logger.trackSwallowedError('scriptAnalysis:parseFlashJson', e);
+                            const jsonText = extractJsonFromText(text);
+                            parsed = JSON.parse(jsonText || '[]');
+                        }
+                        const scenes = Array.isArray(parsed) ? parsed : (parsed.scenes || [parsed]);
+                        if (scenes.length > 0) {
+                            chunkScenes = scenes;
+                            console.log(`[parseScriptToScenes] 청크 ${ci + 1} Flash 폴백 성공: ${scenes.length}개 장면`);
+                        }
+                    }
+                } catch (flashErr: any) {
+                    console.error(`[parseScriptToScenes] 청크 ${ci + 1} Flash 폴백도 실패:`, flashErr.message?.slice(0, 100));
                 }
             }
             if (chunkScenes.length === 0) {
@@ -1257,6 +1286,18 @@ export const parseScriptToScenes = async (
             } catch (e: any) {
                 console.warn(`Phase 1 (Pro) Failed (attempt ${attempt + 1}):`, e.message?.slice(0, 100));
                 lastShortError = e;
+            }
+        }
+        // [FIX #191] Flash 모델 폴백 — Pro 모두 실패 시 Flash로 재시도 (Evolink 스킵)
+        if (lastShortError) {
+            try {
+                console.log(`[parseScriptToScenes] Flash 폴백 시도 (짧은 대본)`);
+                logger.info(`[parseScriptToScenes] Flash 폴백 시도`, { lastError: lastShortError.message?.slice(0, 100) });
+                const data = await requestGeminiProxy('gemini-3-flash', payload, 0, SCRIPT_TIMEOUT_MS, { skipNative: true });
+                scenes = extractAndProcess(data, 'Gemini-Flash');
+                lastShortError = null;
+            } catch (flashErr: any) {
+                console.warn(`[parseScriptToScenes] Flash 폴백도 실패: ${flashErr.message?.slice(0, 100)}`);
             }
         }
         if (lastShortError) {
