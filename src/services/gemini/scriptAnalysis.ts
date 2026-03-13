@@ -2,7 +2,7 @@
 import { Scene, VideoFormat, CharacterAppearance, DialogueTone, CharacterProfile } from '../../types';
 import { DIALOGUE_TONE_PRESETS } from '../../constants';
 import { requestGeminiProxy, extractTextFromResponse, extractFunctionCall, performMockSearch, SAFETY_SETTINGS_BLOCK_NONE } from './geminiProxy';
-import { evolinkChat, evolinkChatStream } from '../evolinkService';
+import { evolinkChat } from '../evolinkService';
 import { logger } from '../LoggerService';
 
 // [NEW] Robust JSON Extraction — handles thinking model markdown output
@@ -1070,167 +1070,12 @@ export const parseScriptToScenes = async (
         return result;
     };
 
-    // === 대형 대본 청크 분할 (Cloudflare 524 타임아웃 방지) ===
-    // [FIX #32] 5000→3000자로 축소 — 79컷 대본 등에서 청크당 AI 처리 시간 단축
-    const CHUNK_MAX_CHARS = 3000;
-
-    if (cleanedScript.length > CHUNK_MAX_CHARS) {
-        console.log(`[parseScriptToScenes] 📐 대형 대본 감지 (${cleanedScript.length}자) — 청크 분할 처리`);
-
-        // 단락 경계에서 분할
-        const paragraphs = cleanedScript.split(/\n\n+/);
-        const chunks: string[] = [];
-        let currentChunk = '';
-        for (const para of paragraphs) {
-            if ((currentChunk + '\n\n' + para).length > CHUNK_MAX_CHARS && currentChunk.length > 0) {
-                chunks.push(currentChunk.trim());
-                currentChunk = para;
-            } else {
-                currentChunk += (currentChunk ? '\n\n' : '') + para;
-            }
-        }
-        if (currentChunk.trim()) chunks.push(currentChunk.trim());
-        console.log(`[parseScriptToScenes] ${chunks.length}개 청크로 분할 (${chunks.map(c => c.length + '자').join(', ')})`);
-
-        // [FIX #235] 순차 청크 처리 — 병렬 처리 시 429 Rate Limit 폭주 문제 해결
-        // 구 버전(순차 for 루프)이 안정적이었음 → 순차 복원 + 429 즉시 v1beta 폴백
-        const chunkSysPrompt = (payload.systemInstruction as any)?.parts?.[0]?.text || '';
-        const STREAM_TIMEOUT_MS = 90_000;
-        const CHUNK_COOLDOWN_MS = 2000; // 청크 간 쿨다운 — API 부하 방지
-
-        const allRawScenes: any[] = [];
-        const failedChunks: number[] = [];
-        let balanceError: string | null = null;
-        onChunkProgress?.(0, chunks.length);
-        console.log(`[parseScriptToScenes] 📦 ${chunks.length}개 청크 순차 처리 시작`);
-
-        for (let ci = 0; ci < chunks.length; ci++) {
-            if (ci > 0) await new Promise(r => setTimeout(r, CHUNK_COOLDOWN_MS));
-
-            const chunkUserContent = `Script (Part ${ci + 1}/${chunks.length}):\n${chunks[ci]}\n\n[MANDATORY GLOBAL CONTEXT]\n${baseSetting || 'No context provided.'}`;
-            let chunkScenes: any[] = [];
-            let lastChunkError: Error | null = null;
-
-            // 1차: evolinkChatStream 시도 (1회만 — 429 시 즉시 폴백)
-            try {
-                console.log(`[parseScriptToScenes] 청크 ${ci + 1}/${chunks.length} (${chunks[ci].length}자) → evolinkChatStream`);
-                const content = await evolinkChatStream(
-                    [
-                        { role: 'system', content: chunkSysPrompt },
-                        { role: 'user', content: chunkUserContent }
-                    ],
-                    () => {},
-                    { temperature: 0.3, maxTokens: 32000, responseFormat: { type: 'json_object' }, timeoutMs: STREAM_TIMEOUT_MS }
-                );
-                if (!content) throw new Error('Empty Response');
-                let parsed: any;
-                try { parsed = JSON.parse(content); } catch (e) {
-                    logger.trackSwallowedError('scriptAnalysis:parseChunkJson', e);
-                    const jsonText = extractJsonFromText(content);
-                    parsed = JSON.parse(jsonText || '[]');
-                }
-                const scenes = Array.isArray(parsed) ? parsed : (parsed.scenes || [parsed]);
-                if (scenes.length > 0) chunkScenes = scenes;
-            } catch (ce: any) {
-                lastChunkError = ce;
-                const msg = ce.message || '';
-                const errorCategory = msg.includes('429') || msg.includes('Rate Limit') || msg.includes('요청 제한')
-                    ? '요청 제한 (429)' : msg.includes('timeout') || msg.includes('타임아웃') || msg.includes('524')
-                    ? '서버 응답 시간 초과' : 'API 오류';
-                console.warn(`[parseScriptToScenes] 청크 ${ci + 1} 스트리밍 실패 (${errorCategory}): ${msg.slice(0, 150)}`);
-                logger.warn(`[parseScriptToScenes] 청크 ${ci + 1} ${errorCategory}`, { msg: msg.slice(0, 200) });
-            }
-
-            // 2차: v1beta Native 폴백 (스트리밍 실패 시 즉시 전환 — 429 재시도 대기 없음)
-            if (chunkScenes.length === 0) {
-                console.log(`[parseScriptToScenes] 청크 ${ci + 1} → v1beta 폴백`);
-                logger.info(`[parseScriptToScenes] 청크 ${ci + 1} v1beta 폴백`, { lastError: lastChunkError?.message?.slice(0, 100) });
-                try {
-                    const chunkPayload = { ...payload, contents: [{ role: 'user', parts: [{ text: chunkUserContent }] }] };
-                    const data = await requestGeminiProxy('gemini-3.1-pro-preview', chunkPayload, 0, 120_000);
-                    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-                    if (text) {
-                        let parsed: any;
-                        try { parsed = JSON.parse(text); } catch (e) {
-                            logger.trackSwallowedError('scriptAnalysis:parseV1betaJson', e);
-                            const jsonText = extractJsonFromText(text);
-                            parsed = JSON.parse(jsonText || '[]');
-                        }
-                        const scenes = Array.isArray(parsed) ? parsed : (parsed.scenes || [parsed]);
-                        if (scenes.length > 0) {
-                            chunkScenes = scenes;
-                            console.log(`[parseScriptToScenes] 청크 ${ci + 1} v1beta 폴백 성공: ${scenes.length}개 장면`);
-                        }
-                    }
-                } catch (fallbackErr: any) {
-                    console.error(`[parseScriptToScenes] 청크 ${ci + 1} v1beta 폴백도 실패:`, fallbackErr.message?.slice(0, 100));
-                    lastChunkError = new Error(
-                        `스트리밍: ${lastChunkError?.message?.slice(0, 80)} | 폴백: ${fallbackErr.message?.slice(0, 80)}`
-                    );
-                }
-            }
-
-            // 3차: Flash 모델 폴백
-            if (chunkScenes.length === 0) {
-                try {
-                    console.log(`[parseScriptToScenes] 청크 ${ci + 1} Flash 폴백 시도`);
-                    logger.info(`[parseScriptToScenes] 청크 ${ci + 1} Flash 폴백`, { lastError: lastChunkError?.message?.slice(0, 100) });
-                    const chunkPayload = { ...payload, contents: [{ role: 'user', parts: [{ text: chunkUserContent }] }] };
-                    const data = await requestGeminiProxy('gemini-3-flash', chunkPayload, 0, 120_000, { skipNative: true });
-                    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-                    if (text) {
-                        let parsed: any;
-                        try { parsed = JSON.parse(text); } catch (e) {
-                            logger.trackSwallowedError('scriptAnalysis:parseFlashJson', e);
-                            const jsonText = extractJsonFromText(text);
-                            parsed = JSON.parse(jsonText || '[]');
-                        }
-                        const scenes = Array.isArray(parsed) ? parsed : (parsed.scenes || [parsed]);
-                        if (scenes.length > 0) {
-                            chunkScenes = scenes;
-                            console.log(`[parseScriptToScenes] 청크 ${ci + 1} Flash 폴백 성공: ${scenes.length}개 장면`);
-                        }
-                    }
-                } catch (flashErr: any) {
-                    console.error(`[parseScriptToScenes] 청크 ${ci + 1} Flash 폴백도 실패:`, flashErr.message?.slice(0, 100));
-                }
-            }
-
-            // 결과 수집
-            if (chunkScenes.length > 0) {
-                allRawScenes.push(...chunkScenes);
-                console.log(`[parseScriptToScenes] 청크 ${ci + 1}: ${chunkScenes.length}개 장면 (누적 ${allRawScenes.length}개)`);
-            } else {
-                const msg = lastChunkError?.message || 'Unknown error';
-                if (msg.includes('잔액 부족') || msg.includes('insufficient') || msg.includes('QUOTA_EXHAUSTED') || msg.includes('크레딧')) {
-                    balanceError = msg;
-                    break; // 잔액 부족 시 즉시 중단
-                }
-                failedChunks.push(ci + 1);
-                console.error(`[parseScriptToScenes] 청크 ${ci + 1} 최종 실패: ${msg.slice(0, 100)}`);
-            }
-            onChunkProgress?.(ci + 1, chunks.length);
-        }
-
-        if (balanceError) throw new Error(balanceError);
-        if (allRawScenes.length === 0) {
-            throw new Error(`모든 청크(${chunks.length}개) 파싱 실패 — 서버 상태를 확인하고 다시 시도해주세요.`);
-        }
-        if (failedChunks.length > 0) {
-            console.warn(`[parseScriptToScenes] ⚠️ 부분 성공: ${failedChunks.length}개 청크 실패 (${failedChunks.join(',')}), ${allRawScenes.length}개 장면 수집`);
-        }
-
-        // 합쳐진 장면 배열을 기존 후처리에 전달 (skipLineRemap=true: 청크별 scriptText 보존)
-        try {
-            scenes = processResponse(JSON.stringify(allRawScenes), true);
-        } catch (e: any) {
-            console.error('[parseScriptToScenes] 청크 합산 후처리 실패:', e);
-            throw new Error(`스토리보드 후처리 실패 — 다시 시도해주세요. (${e.message})`);
-        }
-        console.log(`[parseScriptToScenes] 청크 합산 → ${scenes.length} scenes`);
-    } else {
-        // === 기존 로직 (짧은 대본) ===
-        // [FIX #32] 5분 타임아웃 적용 — 대본 길이에 관계없이 충분한 처리 시간 보장
+    // [FIX #235] 청크 분할 제거 — 구 버전(v3.1)처럼 대본 전체를 v1beta 한 방에 전송
+    // Gemini 3.1 Pro는 3.0 Pro보다 더 강력하므로 대본 크기 제한 불필요
+    // Evolink v1beta generateContent는 콘텐츠 크기 제한 없음 (기술 문서 확인)
+    {
+        console.log(`[parseScriptToScenes] 📝 대본 전체 전송 (${cleanedScript.length}자) — v1beta 단일 요청`);
+        // 5분 타임아웃 — 대형 대본도 충분히 처리 가능
         const SCRIPT_TIMEOUT_MS = 300_000;
         // [FIX #50] 네트워크 오류 시 지수 백오프 재시도 (최대 3회)
         const MAX_SHORT_RETRIES = 3;
