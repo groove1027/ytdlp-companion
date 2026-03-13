@@ -7,6 +7,7 @@
 
 import { monitoredFetch, getTypecastKey } from './apiService';
 import { logger } from './LoggerService';
+import { mergeAudioFiles } from './ttsService';
 import type { TypecastEmotionMode, TypecastEmotionPreset, TypecastModel } from '../types';
 
 const TYPECAST_BASE_URL = 'https://api.typecast.ai';
@@ -921,32 +922,11 @@ const generateChunked = async (
 
   if (audioUrls.length === 1) return { audioUrl: audioUrls[0], format: options.audioFormat || 'wav' };
 
-  // Web Audio API로 병합
-  const ctx = new AudioContext();
-  const buffers: AudioBuffer[] = [];
-  for (const url of audioUrls) {
-    // Fix #7: monitoredFetch 래퍼 사용
-    const resp = await monitoredFetch(url);
-    const arrayBuf = await resp.arrayBuffer();
-    buffers.push(await ctx.decodeAudioData(arrayBuf));
-  }
-
-  const totalLength = buffers.reduce((sum, b) => sum + b.length, 0);
-  const merged = ctx.createBuffer(1, totalLength, buffers[0]?.sampleRate || 44100);
-  let offset = 0;
-  for (const buf of buffers) {
-    merged.getChannelData(0).set(buf.getChannelData(0), offset);
-    offset += buf.length;
-  }
-
-  // AudioBuffer → WAV blob
-  const wavBlob = audioBufferToWav(merged);
-  const mergedUrl = URL.createObjectURL(wavBlob);
-  logger.registerBlobUrl(mergedUrl, 'audio', 'typecastService:generateChunked');
+  // [FIX #194] 공유 mergeAudioFiles 사용 — 클립 간 음량 정규화 포함
+  const mergedUrl = await mergeAudioFiles(audioUrls);
 
   // 개별 chunk blob URL 해제
   audioUrls.forEach(u => { if (u.startsWith('blob:')) { logger.unregisterBlobUrl(u); URL.revokeObjectURL(u); } });
-  await ctx.close();
 
   return { audioUrl: mergedUrl, format: 'wav' };
 };

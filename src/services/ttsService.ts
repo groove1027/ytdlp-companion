@@ -14,32 +14,54 @@ const TTS_MAX_CHUNK_CHARS = 4500; // ElevenLabs 5000자 제한 대비 안전 마
 /**
  * 한국어 종결어미 + 구두점 기반 문장 분할 (나레이션 TTS용)
  * 장면 분할(이미지용)과 독립적으로 사용됨
+ *
+ * [FIX #194] 줄바꿈 존중 규칙:
+ *   - 사용자가 줄바꿈(\n)으로 구분한 경우 각 줄을 하나의 TTS 라인으로 유지
+ *   - 줄바꿈이 2개 이상인 곳(빈 줄)은 확실한 단락 경계 → 항상 분리
+ *   - 줄바꿈이 없는 단일 텍스트 블록만 문장 단위로 자동 분할
  */
 export const splitBySentenceEndings = (text: string): string[] => {
   if (!text.trim()) return [];
 
+  // 줄바꿈이 있는지 확인 — 사용자가 의도적으로 끊어놓았는지 판단
+  const hasUserLineBreaks = /\n/.test(text.trim());
+
+  if (hasUserLineBreaks) {
+    // 사용자가 줄바꿈으로 명시적으로 구분 → 각 줄을 그대로 TTS 라인으로 유지
+    // 빈 줄(연속 줄바꿈)은 단락 경계로 자동 제거
+    const lines = text.split(/\n/).map(l => l.trim()).filter(l => l.length > 0);
+
+    // 5자 미만 줄은 이전 줄에 병합 (너무 짧은 단독 줄 방지)
+    const merged: string[] = [];
+    for (const line of lines) {
+      if (line.length < 5 && merged.length > 0) {
+        merged[merged.length - 1] += ' ' + line;
+      } else {
+        merged.push(line);
+      }
+    }
+    return merged.length > 0 ? merged : [text.trim()];
+  }
+
+  // 줄바꿈 없는 단일 블록 → 기존 문장 분할 로직 적용
   // 1순위: 구두점 (.!?。！？) 뒤에서 분할
-  // 2순위: 한국어 종결어미 + 공백/줄바꿈에서 분할
+  // 2순위: 한국어 종결어미 + 공백에서 분할
   const KOREAN_ENDINGS = /(?<=(?:습니다|합니다|됩니다|입니다|었습니다|였습니다|하세요|으세요|세요|어요|아요|해요|이에요|예요|잖아요|더라고요|거든요|네요|군요|이죠|거죠|죠|요|다|까))[.!?。！？]?\s+/g;
   const PUNCTUATION = /(?<=[.!?。！？])\s+/g;
 
-  // 먼저 줄바꿈으로 단락 분리
-  const paragraphs = text.split(/\n+/).filter(p => p.trim());
   const sentences: string[] = [];
 
-  for (const para of paragraphs) {
-    // 구두점 분할 시도
-    let parts = para.split(PUNCTUATION).filter(s => s.trim());
-    if (parts.length <= 1) {
-      // 구두점 없으면 종결어미 분할 시도
-      parts = para.split(KOREAN_ENDINGS).filter(s => s.trim());
-    }
-    if (parts.length <= 1) {
-      // 종결어미도 없으면 그대로 유지
-      sentences.push(para.trim());
-    } else {
-      sentences.push(...parts.map(s => s.trim()).filter(s => s));
-    }
+  // 구두점 분할 시도
+  let parts = text.split(PUNCTUATION).filter(s => s.trim());
+  if (parts.length <= 1) {
+    // 구두점 없으면 종결어미 분할 시도
+    parts = text.split(KOREAN_ENDINGS).filter(s => s.trim());
+  }
+  if (parts.length <= 1) {
+    // 종결어미도 없으면 그대로 유지
+    sentences.push(text.trim());
+  } else {
+    sentences.push(...parts.map(s => s.trim()).filter(s => s));
   }
 
   // 5자 미만 문장은 이전 문장에 병합
@@ -475,7 +497,64 @@ export const getAvailableVoices = (
 // === AUDIO MERGE ===
 
 /**
+ * 개별 AudioBuffer의 RMS를 측정하여 타겟 RMS로 정규화 (게인 적용)
+ * [FIX #194] 클립 간 음량 편차 제거 — 병합 전 각 클립을 동일 라우드니스로 맞춤
+ * @param buffer 정규화할 AudioBuffer (in-place 수정)
+ * @param targetRmsDb 타겟 RMS (dB), 기본 -20dB (나레이션 표준)
+ * @param peakLimitDb 피크 리미터 (dBFS), 기본 -1dB (클리핑 방지)
+ */
+const normalizeBufferRms = (buffer: AudioBuffer, targetRmsDb: number = -20, peakLimitDb: number = -1): void => {
+    // Pass 1: RMS 측정
+    let sumSquares = 0;
+    let sampleCount = 0;
+    for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
+        const data = buffer.getChannelData(ch);
+        for (let i = 0; i < data.length; i++) {
+            sumSquares += data[i] * data[i];
+            sampleCount++;
+        }
+    }
+    const rms = Math.sqrt(sumSquares / sampleCount);
+    // 무음 클립은 정규화 생략
+    if (rms < 1e-6) return;
+
+    const currentRmsDb = 20 * Math.log10(rms);
+    const gainDb = targetRmsDb - currentRmsDb;
+    let gainLinear = Math.pow(10, gainDb / 20);
+
+    // Pass 2: 피크 리미터 — 게인 적용 후 피크가 리미트를 초과하면 게인 축소
+    let maxPeak = 0;
+    for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
+        const data = buffer.getChannelData(ch);
+        for (let i = 0; i < data.length; i++) {
+            const abs = Math.abs(data[i]) * gainLinear;
+            if (abs > maxPeak) maxPeak = abs;
+        }
+    }
+    const peakLimit = Math.pow(10, peakLimitDb / 20);
+    if (maxPeak > peakLimit) {
+        gainLinear *= peakLimit / maxPeak;
+    }
+
+    // Pass 3: 게인 적용
+    for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
+        const data = buffer.getChannelData(ch);
+        for (let i = 0; i < data.length; i++) {
+            data[i] *= gainLinear;
+        }
+    }
+
+    logger.info('[TTS] 클립 정규화', {
+        currentRmsDb: currentRmsDb.toFixed(1),
+        targetRmsDb,
+        gainDb: gainDb.toFixed(1),
+        peakAfter: (maxPeak > peakLimit ? peakLimit : maxPeak).toFixed(3),
+    });
+};
+
+/**
  * Web Audio API를 사용하여 여러 오디오 파일을 하나로 병합
+ * [FIX #194] 병합 전 각 클립의 음량을 RMS 정규화하여 들쑥날쑥한 음량 해소
  * @param audioUrls 병합할 오디오 URL 배열 (순서대로 이어붙임)
  * @returns 병합된 오디오 Blob URL
  */
@@ -506,6 +585,11 @@ export const mergeAudioFiles = async (audioUrls: string[]): Promise<string> => {
 
         if (buffers.length === 0) throw new Error('디코딩된 오디오 버퍼가 없습니다.');
 
+        // [FIX #194] 병합 전 각 클립 음량 정규화 — 클립 간 음량 편차 제거
+        for (const buffer of buffers) {
+            normalizeBufferRms(buffer);
+        }
+
         // 총 길이 계산
         const totalLength = buffers.reduce((sum, buf) => sum + buf.length, 0);
         const sampleRate = buffers[0].sampleRate;
@@ -530,7 +614,7 @@ export const mergeAudioFiles = async (audioUrls: string[]): Promise<string> => {
         const mergedUrl = URL.createObjectURL(wavBlob);
         logger.registerBlobUrl(mergedUrl, 'audio', 'ttsService:mergeAudioFiles');
 
-        logger.success('[TTS] 오디오 병합 완료', {
+        logger.success('[TTS] 오디오 병합 완료 (클립 정규화 적용)', {
             fileCount: buffers.length,
             totalDuration: `${(totalLength / sampleRate).toFixed(1)}초`
         });

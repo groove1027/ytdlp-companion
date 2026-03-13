@@ -1137,6 +1137,160 @@ const pickBestCaptionTrack = (tracks: CaptionTrackInfo[]): CaptionTrackInfo | nu
     return sorted[0];
 };
 
+/**
+ * YouTube Innertube API로 자막 가져오기 (youtubei/v1/get_transcript)
+ * CORS 프록시 없이 직접 호출 — 브라우저 환경에서는 CORS 제한 가능성 있음
+ * 성공 시 가장 정확한 자동 생성 자막 확보 가능
+ */
+const fetchTranscriptViaInnertube = async (videoId: string): Promise<string | null> => {
+    try {
+        // 1단계: 영상 페이지에서 innertubeApiKey를 CORS 우회 방식으로 가져오기
+        // Innertube API는 고정된 클라이언트 키 사용 가능 (YouTube Web 클라이언트)
+        const INNERTUBE_API_KEY = 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8';
+        const url = `https://www.youtube.com/youtubei/v1/get_transcript?key=${INNERTUBE_API_KEY}`;
+
+        const body = {
+            context: {
+                client: {
+                    clientName: 'WEB',
+                    clientVersion: '2.20240313.00.00',
+                    hl: 'ko',
+                    gl: 'KR',
+                },
+            },
+            params: btoa(`\n\x0b${videoId}`),
+        };
+
+        const res = await monitoredFetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+            signal: AbortSignal.timeout(10000),
+        });
+
+        if (!res.ok) return null;
+
+        const data = await res.json();
+
+        // Innertube 응답에서 자막 텍스트 추출
+        const actions = data?.actions;
+        if (!actions || !Array.isArray(actions)) return null;
+
+        const transcriptAction = actions.find(
+            (a: Record<string, unknown>) => a.updateEngagementPanelAction
+        );
+        const transcriptRenderer = transcriptAction
+            ?.updateEngagementPanelAction
+            ?.content
+            ?.transcriptRenderer
+            ?.body
+            ?.transcriptBodyRenderer
+            ?.cueGroups;
+
+        if (!transcriptRenderer || !Array.isArray(transcriptRenderer)) return null;
+
+        const lines: string[] = [];
+        let prevLine = '';
+        for (const group of transcriptRenderer) {
+            const cues = group?.transcriptCueGroupRenderer?.cues;
+            if (!cues || !Array.isArray(cues)) continue;
+            for (const cue of cues) {
+                const text = cue?.transcriptCueRenderer?.cue?.simpleText?.trim();
+                if (text && text !== prevLine) {
+                    lines.push(text);
+                    prevLine = text;
+                }
+            }
+        }
+
+        if (lines.length > 5) {
+            const result = lines.join(' ');
+            logger.success('[YouTube] Innertube 자막 가져오기 성공', {
+                videoId, length: result.length, lineCount: lines.length,
+            });
+            return result;
+        }
+    } catch (e) {
+        logger.trackSwallowedError('youtubeAnalysisService:innertubeTranscript', e);
+    }
+    return null;
+};
+
+/**
+ * YouTube timedtext XML 엔드포인트로 자막 가져오기
+ * URL: https://www.youtube.com/api/timedtext?v={videoId}&lang={lang}&fmt=srv3
+ * 자동 생성 자막(asr)도 지원: &kind=asr 파라미터 추가
+ * CORS 프록시 없이 직접 호출
+ */
+const fetchTranscriptViaTimedtext = async (videoId: string): Promise<string | null> => {
+    // 언어 + 자동생성 여부 조합 시도
+    const attempts = [
+        { lang: 'ko', kind: '' },        // 수동 한국어
+        { lang: 'ko', kind: 'asr' },     // 자동 생성 한국어
+        { lang: 'en', kind: '' },         // 수동 영어
+        { lang: 'en', kind: 'asr' },      // 자동 생성 영어
+        { lang: 'ja', kind: '' },         // 수동 일본어
+        { lang: 'ja', kind: 'asr' },      // 자동 생성 일본어
+    ];
+
+    for (const { lang, kind } of attempts) {
+        try {
+            const kindParam = kind ? `&kind=${kind}` : '';
+            const url = `https://www.youtube.com/api/timedtext?v=${videoId}&lang=${lang}${kindParam}&fmt=srv3`;
+
+            const res = await monitoredFetch(url, {
+                signal: AbortSignal.timeout(8000),
+            });
+            if (!res.ok) continue;
+
+            const xmlText = await res.text();
+            if (!xmlText || xmlText.length < 50) continue;
+
+            // XML에서 텍스트 추출 (<text> 태그 파싱)
+            const cleaned = parseTimedtextXmlToPlainText(xmlText);
+            if (cleaned.length > 50) {
+                logger.success('[YouTube] timedtext XML 자막 가져오기 성공', {
+                    videoId, lang, kind: kind || 'manual', length: cleaned.length,
+                });
+                return cleaned;
+            }
+        } catch (e) {
+            logger.trackSwallowedError('youtubeAnalysisService:timedtextCaption', e);
+            continue;
+        }
+    }
+    return null;
+};
+
+/** YouTube timedtext XML (srv3 형식) 파싱 — <text> 태그에서 텍스트만 추출 */
+const parseTimedtextXmlToPlainText = (xml: string): string => {
+    const textLines: string[] = [];
+    let prevLine = '';
+
+    // <text start="..." dur="...">텍스트</text> 패턴 매칭
+    const textRegex = /<text[^>]*>([\s\S]*?)<\/text>/gi;
+    let match: RegExpExecArray | null;
+    while ((match = textRegex.exec(xml)) !== null) {
+        const raw = match[1]
+            .replace(/<[^>]+>/g, '')    // 내부 HTML 태그 제거
+            .replace(/&amp;/g, '&')
+            .replace(/&lt;/g, '<')
+            .replace(/&gt;/g, '>')
+            .replace(/&quot;/g, '"')
+            .replace(/&#39;/g, "'")
+            .replace(/&nbsp;/g, ' ')
+            .replace(/\n/g, ' ')
+            .trim();
+
+        if (raw && raw !== prevLine) {
+            textLines.push(raw);
+            prevLine = raw;
+        }
+    }
+
+    return textLines.join(' ');
+};
+
 /** VTT/SRT 자막 텍스트를 일반 텍스트로 변환 (타임코드, 태그 제거, 중복 제거) */
 const parseVttToPlainText = (raw: string): string => {
     const lines = raw.split('\n');
@@ -1176,14 +1330,16 @@ const parseVttToPlainText = (raw: string): string => {
  * 우선순위:
  * 1. Invidious API (무료, OAuth 불필요, 쿼터 소비 없음)
  * 2. Piped API (무료, OAuth 불필요, 쿼터 소비 없음)
- * 3. YouTube Data API captions.list (50 쿼터, 타인 영상 403 가능)
- * 4. 영상 설명 폴백 (최후 수단 — 분석 품질 저하 경고 포함)
+ * 3. YouTube Innertube API (무료, OAuth 불필요, 쿼터 소비 없음)
+ * 4. YouTube timedtext XML (무료, OAuth 불필요, 쿼터 소비 없음)
+ * 5. YouTube Data API captions.list (50 쿼터, 목록만 확인 가능)
+ * 6. 영상 설명 폴백 (최후 수단 — 분석 품질 저하 경고 포함)
  */
 export const getVideoTranscript = async (videoId: string): Promise<TranscriptResult> => {
     const apiKey = getYoutubeApiKey();
     if (!apiKey) throw new Error('YouTube API 키가 설정되지 않았습니다.');
 
-    logger.info('[YouTube] 자막 조회 시도 (Invidious → Piped → YouTube API → 설명 폴백)', { videoId });
+    logger.info('[YouTube] 자막 조회 시도 (Invidious → Piped → Innertube → timedtext → YouTube API → 설명 폴백)', { videoId });
 
     // === 1단계: Invidious API (최우선 — 무료, 쿼터 없음) ===
     try {
@@ -1203,13 +1359,37 @@ export const getVideoTranscript = async (videoId: string): Promise<TranscriptRes
         if (pipedResult) {
             return { text: pipedResult, source: 'caption' };
         }
-        logger.info('[YouTube] Piped 자막 실패 — YouTube API 시도', { videoId });
+        logger.info('[YouTube] Piped 자막 실패 — Innertube 시도', { videoId });
     } catch (e) {
         logger.trackSwallowedError('youtubeAnalysisService:pipedTranscript', e);
-        logger.info('[YouTube] Piped 자막 오류 — YouTube API 시도', { videoId });
+        logger.info('[YouTube] Piped 자막 오류 — Innertube 시도', { videoId });
     }
 
-    // === 3단계: YouTube Data API captions.list (50 쿼터, 403 가능) ===
+    // === 3단계: YouTube Innertube API (무료, 쿼터 없음, CORS 제한 가능) ===
+    try {
+        const innertubeResult = await fetchTranscriptViaInnertube(videoId);
+        if (innertubeResult) {
+            return { text: innertubeResult, source: 'caption' };
+        }
+        logger.info('[YouTube] Innertube 자막 실패 — timedtext 시도', { videoId });
+    } catch (e) {
+        logger.trackSwallowedError('youtubeAnalysisService:innertubeTranscript', e);
+        logger.info('[YouTube] Innertube 자막 오류 — timedtext 시도', { videoId });
+    }
+
+    // === 4단계: YouTube timedtext XML (무료, 쿼터 없음, 자동생성 자막 지원) ===
+    try {
+        const timedtextResult = await fetchTranscriptViaTimedtext(videoId);
+        if (timedtextResult) {
+            return { text: timedtextResult, source: 'caption' };
+        }
+        logger.info('[YouTube] timedtext 자막 실패 — YouTube API 시도', { videoId });
+    } catch (e) {
+        logger.trackSwallowedError('youtubeAnalysisService:timedtextTranscript', e);
+        logger.info('[YouTube] timedtext 자막 오류 — YouTube API 시도', { videoId });
+    }
+
+    // === 5단계: YouTube Data API captions.list (50 쿼터, 목록만 확인 가능) ===
     if (trackQuota('captions.list')) {
         try {
             const captionsUrl = `${YOUTUBE_API_BASE}/captions?part=snippet&videoId=${videoId}&key=${apiKey}`;
@@ -1234,7 +1414,7 @@ export const getVideoTranscript = async (videoId: string): Promise<TranscriptRes
         logger.info('[YouTube] 쿼터 부족으로 YouTube API 자막 조회 건너뜀');
     }
 
-    // === 4단계: 영상 설명 폴백 (최후 수단) ===
+    // === 6단계: 영상 설명 폴백 (최후 수단) ===
     logger.warn('[YouTube] 모든 자막 소스 실패 — 영상 설명으로 대체 (분석 품질 저하 가능)', { videoId });
     trackQuota('videos.list');
     const description = await getVideoDescriptionFallback(videoId, apiKey);
