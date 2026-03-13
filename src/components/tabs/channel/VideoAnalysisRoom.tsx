@@ -851,6 +851,54 @@ function downloadFile(content: string, filename: string, mime: string) {
   URL.revokeObjectURL(url);
 }
 
+/** 소스 영상 Blob에서 지정 구간들의 오디오를 추출 → 단일 AudioBuffer로 합성 */
+async function extractAudioSegments(
+  videoBlob: Blob,
+  segments: { startSec: number; durationSec: number }[],
+): Promise<AudioBuffer> {
+  const audioCtx = new OfflineAudioContext(2, 1, 48000); // 임시 — 길이 계산 후 재생성
+  const arrayBuf = await videoBlob.arrayBuffer();
+  const decoded = await audioCtx.decodeAudioData(arrayBuf);
+
+  const totalDuration = segments.reduce((s, seg) => s + seg.durationSec, 0);
+  const sampleRate = decoded.sampleRate;
+  const totalSamples = Math.ceil(totalDuration * sampleRate);
+  const channels = decoded.numberOfChannels;
+
+  const offCtx = new OfflineAudioContext(channels, totalSamples, sampleRate);
+  let offset = 0;
+  for (const seg of segments) {
+    const startSample = Math.floor(seg.startSec * sampleRate);
+    const durSamples = Math.ceil(seg.durationSec * sampleRate);
+    const safeDur = Math.min(durSamples, decoded.length - startSample);
+    if (safeDur <= 0) { offset += seg.durationSec; continue; }
+    const src = offCtx.createBufferSource();
+    const segBuf = offCtx.createBuffer(channels, safeDur, sampleRate);
+    for (let ch = 0; ch < channels; ch++) {
+      const srcData = decoded.getChannelData(ch);
+      const dstData = segBuf.getChannelData(ch);
+      dstData.set(srcData.subarray(startSample, startSample + safeDur));
+    }
+    src.buffer = segBuf;
+    src.connect(offCtx.destination);
+    src.start(offset);
+    offset += seg.durationSec;
+  }
+  return offCtx.startRendering();
+}
+
+/** 편집 영상과 싱크 맞는 SRT 생성 (누적 타임코드 기반) */
+function generateSyncedSrt(scenes: SceneRow[]): string {
+  let accTime = 0;
+  return scenes.map((scene, i) => {
+    const dur = parseDuration(scene.duration);
+    const start = accTime;
+    accTime += dur;
+    const text = scene.audioContent || scene.dialogue || scene.sceneDesc;
+    return `${i + 1}\n${secondsToSrtTime(start)} --> ${secondsToSrtTime(accTime)}\n${text}`;
+  }).join('\n\n');
+}
+
 /** 분석 결과 → 스탠드얼론 HTML 문서 생성 */
 function generateAnalysisHtml(
   versions: VersionItem[],
@@ -2241,6 +2289,8 @@ const VideoAnalysisRoom: React.FC = () => {
   const [isLongForm, setIsLongForm] = useState(false);
   const [previewFrame, setPreviewFrame] = useState<{ frame: TimedFrame; scene: SceneRow; versionTitle: string } | null>(null);
   const [previewVersion, setPreviewVersion] = useState<VersionItem | null>(null);
+  const [renderingVersionId, setRenderingVersionId] = useState<number | null>(null);
+  const [renderProgress, setRenderProgress] = useState(0);
   const [displayLangMode, setDisplayLangMode] = useState<'ko' | 'bilingual' | 'original'>('bilingual');
   const analysisStartRef = useRef<number>(0);
 
@@ -2789,13 +2839,102 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
     setTimeout(() => setCopiedVersion(null), 2000);
   }, [selectedPreset]);
 
-  // SRT 다운로드
-  const handleDownloadSrt = useCallback((v: VersionItem) => {
+  // SRT 다운로드 (영상 blob 있으면 편집 영상 + SRT ZIP 다운로드)
+  const handleDownloadSrt = useCallback(async (v: VersionItem) => {
     if (v.scenes.length === 0) return;
-    const isTk = true; // 모든 프리셋 통일: 7열 마스터 편집 테이블
-    const srt = generateSrt(v.scenes, isTk);
-    const safeName = v.title.replace(/[^\w가-힣\s-]/g, '').trim().slice(0, 40);
-    downloadSrt(srt, `${safeName || `version-${v.id}`}.srt`);
+    const safeName = v.title.replace(/[^\w가-힣\s-]/g, '').trim().slice(0, 40) || `version-${v.id}`;
+
+    const videoBlob = useVideoAnalysisStore.getState().videoBlob;
+    if (!videoBlob) {
+      // 영상 없으면 기존 SRT 다운로드
+      const isTk = true;
+      const srt = generateSrt(v.scenes, isTk);
+      downloadSrt(srt, `${safeName}.srt`);
+      return;
+    }
+
+    // 영상 있음 → WebCodecs로 편집 영상 생성 + ZIP
+    setRenderingVersionId(v.id);
+    setRenderProgress(0);
+    try {
+      // 1) 타임코드 파싱 → segments
+      const segments: { startSec: number; durationSec: number }[] = [];
+      for (const s of v.scenes) {
+        const srcTc = s.sourceTimeline || s.timeline;
+        const parts = srcTc.match(/(\d+:\d+(?:\.\d+)?)\s*[~\-–—]\s*(\d+:\d+(?:\.\d+)?)/);
+        const start = parts ? timecodeToSeconds(parts[1]) : 0;
+        const end = parts ? timecodeToSeconds(parts[2]) : parseDuration(s.duration);
+        segments.push({ startSec: start, durationSec: Math.max(0.1, end - start) });
+      }
+
+      // 2) 원본 영상 오디오 세그먼트 추출
+      const rawAudioBuffer = await extractAudioSegments(videoBlob, segments);
+
+      // 3) composeMp4 타임라인 구성
+      const videoBlobUrl = URL.createObjectURL(videoBlob);
+      logger.registerBlobUrl(videoBlobUrl, 'video', 'VideoAnalysisRoom:srtExport', videoBlob.size / (1024 * 1024));
+
+      const timeline = segments.map((seg, i) => ({
+        sceneId: `trim-${i}`,
+        sceneIndex: i,
+        imageStartTime: segments.slice(0, i).reduce((a, s) => a + s.durationSec, 0),
+        imageEndTime: segments.slice(0, i + 1).reduce((a, s) => a + s.durationSec, 0),
+        imageDuration: seg.durationSec,
+        subtitleSegments: [],
+        effectPreset: 'static',
+        volume: 1,
+        speed: 1,
+        videoTrimStartSec: seg.startSec,
+      }));
+      const sceneEntries = segments.map((_, i) => ({
+        id: `trim-${i}`,
+        videoUrl: videoBlobUrl,
+      }));
+
+      // 4) WebCodecs 렌더링
+      const { composeMp4 } = await import('../../../services/webcodecs/index');
+      const mp4Blob = await composeMp4({
+        timeline,
+        scenes: sceneEntries,
+        narrationLines: [],
+        rawAudioBuffer,
+        width: 1920,
+        height: 1080,
+        fps: 30,
+        onProgress: (p) => setRenderProgress(p.percent),
+      });
+
+      logger.unregisterBlobUrl(videoBlobUrl);
+      URL.revokeObjectURL(videoBlobUrl);
+
+      // 5) 싱크 맞는 SRT 생성
+      const srt = generateSyncedSrt(v.scenes);
+
+      // 6) ZIP 패키징
+      const JSZip = (await import('jszip')).default;
+      const zip = new JSZip();
+      zip.file(`${safeName}.mp4`, mp4Blob);
+      zip.file(`${safeName}.srt`, '\uFEFF' + srt);
+      const zipBlob = await zip.generateAsync({ type: 'blob' });
+
+      const zipUrl = URL.createObjectURL(zipBlob);
+      logger.registerBlobUrl(zipUrl, 'other', 'VideoAnalysisRoom:srtZip');
+      const a = document.createElement('a');
+      a.href = zipUrl;
+      a.download = `${safeName}.zip`;
+      a.click();
+      logger.unregisterBlobUrl(zipUrl);
+      URL.revokeObjectURL(zipUrl);
+    } catch (err) {
+      logger.trackSwallowedError('VideoAnalysisRoom:handleDownloadSrt/render', err);
+      showToast('영상 렌더링 실패 — SRT만 다운로드합니다');
+      // 폴백: SRT만 다운로드
+      const srt = generateSrt(v.scenes, true);
+      downloadSrt(srt, `${safeName}.srt`);
+    } finally {
+      setRenderingVersionId(null);
+      setRenderProgress(0);
+    }
   }, [selectedPreset]);
 
   // HTML 다운로드 (개별 버전)
@@ -3128,10 +3267,20 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                             <button
                               type="button"
                               onClick={() => handleDownloadSrt(v)}
-                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-600/20 text-blue-400 border border-blue-500/30 hover:bg-blue-600/30 transition-all"
+                              disabled={renderingVersionId === v.id}
+                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-600/20 text-blue-400 border border-blue-500/30 hover:bg-blue-600/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                             >
-                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3M3 17v3a2 2 0 002 2h14a2 2 0 002-2v-3" /></svg>
-                              SRT
+                              {renderingVersionId === v.id ? (
+                                <>
+                                  <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+                                  {renderProgress}%
+                                </>
+                              ) : (
+                                <>
+                                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3M3 17v3a2 2 0 002 2h14a2 2 0 002-2v-3" /></svg>
+                                  {useVideoAnalysisStore.getState().videoBlob ? 'SRT+영상' : 'SRT'}
+                                </>
+                              )}
                             </button>
                             <button
                               type="button"
@@ -3158,7 +3307,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                   videoBlob: videoStore.videoBlob,
                                   videoFile: uploadedFiles[0] || null,
                                   editTableText: versionText,
-                                  narrationText: versionText,
+                                  narrationText: '', // [FIX #215] 편집표에 이미 내레이션 포함 — 중복 전송 시 토큰 2배 + 429 유발
                                 });
                                 useVideoAnalysisStore.getState().setEditRoomSelectedVersionIdx(v.id - 1);
                                 useEditRoomStore.getState().setEditRoomSubTab('edit-point-matching');
@@ -3620,7 +3769,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                 videoBlob: videoStore.videoBlob,
                 videoFile: uploadedFiles[0] || null,
                 editTableText: rawResult,
-                narrationText: rawResult,
+                narrationText: '', // [FIX #215] 편집표에 이미 내레이션 포함 — 중복 전송 시 토큰 2배 + 429 유발
               });
               useVideoAnalysisStore.getState().setEditRoomSelectedVersionIdx(0);
               useEditRoomStore.getState().setEditRoomSubTab('edit-point-matching');

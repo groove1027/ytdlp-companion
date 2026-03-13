@@ -8,6 +8,7 @@
 
 ## 🟢 완료된 작업
 
+- [x] SRT 다운로드 시 타임코드대로 잘린 편집 영상 + SRT ZIP 다운로드 — UnifiedSceneTiming에 videoTrimStartSec 추가, canvasRenderer에서 오프셋 적용, composeMp4에 rawAudioBuffer 외부 주입 지원, VideoAnalysisRoom에서 영상 blob 있으면 WebCodecs 렌더링→ZIP, 없으면 기존 SRT 다운로드 유지, 버튼 레이블 동적 변경(SRT↔SRT+영상) (types.ts, canvasRenderer.ts, webcodecs/index.ts, VideoAnalysisRoom.tsx, 2026-03-13)
 - [x] #182 GhostCut 자막 제거 미작동 수정 + 다국어 지원 — needChineseOcclude 0→1 (OCR 텍스트 감지 활성화), 누락된 필수 파라미터 videoInpaintLang 추가, 자막 언어 선택 UI (ko/en/zh/ja/all/ar) 추가, GhostCutLang 타입 export (ghostcutService.ts, SubtitleRemoverTab.tsx, 2026-03-13)
 - [x] 편집점 매칭 AI 파싱/정제 병렬 처리 최적화 — parseEditTableWithAI() 대형 편집표 청크 순차→3개 동시 병렬, refineTimecodes() 타임코드 정제 순차→4개 동시 병렬(Promise.allSettled), 체감 3-5배 속도 향상 (editPointService.ts, editPointStore.ts, 2026-03-13)
 - [x] 편집실 레이어 클릭 선택 + 인스펙터 패널 — 타임라인 7개 트랙 전체 클릭 선택, 선택 하이라이트(ring-2 ring-amber-400), 우측 패널 GlobalPanel↔LayerInspectorPanel 조건부 전환, 5종 서브인스펙터(Video/Subtitle/Transition/Audio/BGM), 우클릭 컨텍스트 메뉴(뮤트/솔로/초기화/삭제), Escape 선택해제 + Delete 삭제/초기화 키보드 단축키 (types.ts, editRoomStore.ts, VisualTimeline.tsx, EditRoomTab.tsx, LayerInspectorPanel.tsx, 5 inspectors, TimelineContextMenu.tsx, 2026-03-13)

@@ -367,7 +367,7 @@ async function renderSceneFrame(
     // [FIX #44] 프레임 추출에 10초 타임아웃 — 단일 프레임 무한 대기 방지
     try {
       const frameBitmap = await Promise.race([
-        videoExtractor.getFrameAt(localTime),
+        videoExtractor.getFrameAt((timing.videoTrimStartSec ?? 0) + localTime),
         new Promise<null>((_, reject) =>
           setTimeout(() => reject(new Error(`Frame extraction timeout at ${localTime.toFixed(2)}s`)), 10_000)
         ),

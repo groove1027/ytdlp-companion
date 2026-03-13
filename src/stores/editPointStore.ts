@@ -314,8 +314,8 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
       const errMsg = err instanceof Error ? err.message : '알 수 없는 오류';
       if (errMsg.includes('429') || errMsg.toLowerCase().includes('rate') || errMsg.toLowerCase().includes('too many')) {
         showToast('AI 서버가 바빠요. 30초 후 다시 시도해주세요.');
-      } else if (errMsg.toLowerCase().includes('timeout') || errMsg.toLowerCase().includes('timed out')) {
-        showToast('편집표가 너무 크거나 서버 응답이 느립니다. 잠시 후 다시 시도해주세요.');
+      } else if (errMsg.includes('499') || errMsg.toLowerCase().includes('timeout') || errMsg.toLowerCase().includes('timed out') || errMsg.toLowerCase().includes('failed to fetch')) {
+        showToast('서버 응답이 느려 시간이 초과되었어요. 잠시 후 다시 시도해주세요.');
       } else {
         showToast('편집표 파싱 실패: ' + errMsg);
       }

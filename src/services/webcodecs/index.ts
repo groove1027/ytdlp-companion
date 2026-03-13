@@ -37,6 +37,7 @@ export interface ComposeMp4Options {
   width?: number;
   height?: number;
   videoBitrateMbps?: number; // 비트레이트 (Mbps, 기본 20)
+  rawAudioBuffer?: AudioBuffer; // 외부 제공 오디오 (mixAudio 건너뛰고 바로 AAC 인코딩)
   onProgress?: (progress: ExportProgress) => void;
   signal?: AbortSignal;
 }
@@ -130,6 +131,7 @@ export async function composeMp4(options: ComposeMp4Options): Promise<Blob> {
     width = 1920,
     height = 1080,
     videoBitrateMbps = 20,
+    rawAudioBuffer: externalAudioBuffer,
     onProgress,
     signal,
   } = options;
@@ -257,19 +259,25 @@ export async function composeMp4(options: ComposeMp4Options): Promise<Blob> {
     const audioPromise = (async () => {
       emitProgress('encoding', 0, '오디오 믹싱 중...');
 
-      audioBuffer = await mixAudio(
-        {
-          timeline,
-          narrationLines: adjustedNarrationLines,
-          bgmConfig,
-          loudnessNorm,
-          totalDuration,
-        },
-        signal,
-        (p) => {
-          emitProgress('encoding', p * 0.7, `오디오 믹싱: ${Math.round(p)}%`);
-        },
-      );
+      if (externalAudioBuffer) {
+        // 외부 제공 오디오 → mixAudio 건너뛰고 바로 AAC 인코딩
+        audioBuffer = externalAudioBuffer;
+        emitProgress('encoding', 70, '오디오 인코딩 중...');
+      } else {
+        audioBuffer = await mixAudio(
+          {
+            timeline,
+            narrationLines: adjustedNarrationLines,
+            bgmConfig,
+            loudnessNorm,
+            totalDuration,
+          },
+          signal,
+          (p) => {
+            emitProgress('encoding', p * 0.7, `오디오 믹싱: ${Math.round(p)}%`);
+          },
+        );
+      }
 
       if (audioBuffer) {
         // AAC 인코딩

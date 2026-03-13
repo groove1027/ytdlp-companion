@@ -1410,6 +1410,7 @@ export interface UnifiedSceneTiming {
   motionEffect?: string;  // 모션 효과 (pan, micro, slow, rotate 등)
   anchorX?: number;   // 0-100%, 줌/팬 앵커 X
   anchorY?: number;   // 0-100%, 줌/팬 앵커 Y
+  videoTrimStartSec?: number; // 원본 영상에서 트림 시작 시간 (초)
   volume: number;
   speed: number;
   transitionToNext?: SceneTransitionConfig;

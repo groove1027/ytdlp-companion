@@ -30,7 +30,7 @@ const VersionSelectorBar: React.FC = () => {
       videoBlob: videoStore.videoBlob,
       videoFile: null,
       editTableText: versionText,
-      narrationText: versionText,
+      narrationText: '', // [FIX #215] 편집표에 이미 내레이션 포함 — 중복 전송 시 토큰 2배 + 429 유발
     });
 
     useVideoAnalysisStore.getState().setEditRoomSelectedVersionIdx(idx);

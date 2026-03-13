@@ -134,6 +134,41 @@ function estimateTokenCount(text: string): number {
   return Math.ceil(koreanChars * 1.5 + otherChars / 3);
 }
 
+/**
+ * 단일 청크에 대해 AI 파싱 실행 + 재시도
+ * [FIX #215] 429/499/네트워크 에러 시 지수 백오프 재시도 (최대 2회)
+ */
+async function parseEditChunkWithRetry(
+  tableChunk: string,
+  narration: string,
+  isChunked: boolean,
+  maxRetries: number = 2,
+): Promise<Record<string, unknown>[]> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await parseEditChunk(tableChunk, narration, isChunked);
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      const msg = lastError.message.toLowerCase();
+
+      // 재시도 가능한 에러 판별
+      const isRetryable = msg.includes('429') || msg.includes('499') || msg.includes('rate') ||
+        msg.includes('network') || msg.includes('fetch') || msg.includes('요청 제한') ||
+        msg === 'ai_truncated';
+
+      if (!isRetryable || attempt === maxRetries) throw lastError;
+
+      const delay = 8000 * Math.pow(2, attempt); // 8s, 16s
+      console.warn(`[EditPoint] 청크 파싱 재시도 (${attempt + 1}/${maxRetries}), ${delay / 1000}초 대기...`);
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+
+  throw lastError!;
+}
+
 /** 단일 청크에 대해 AI 파싱 실행 */
 async function parseEditChunk(
   tableChunk: string,
@@ -248,10 +283,10 @@ export async function parseEditTableWithAI(
 ): Promise<EdlEntry[]> {
   const totalEstTokens = estimateTokenCount(rawTable + narration + EDIT_PARSE_SYSTEM_PROMPT);
 
-  // 입력이 충분히 작으면 단일 호출
+  // 입력이 충분히 작으면 단일 호출 (재시도 포함)
   if (totalEstTokens < 12000) {
     try {
-      const entries = await parseEditChunk(rawTable, narration, false);
+      const entries = await parseEditChunkWithRetry(rawTable, narration, false);
       return entries.map((e, i) => rawEntryToEdl(e, i, maxDuration));
     } catch (err) {
       if (err instanceof Error && err.message === 'AI_TRUNCATED') {
@@ -263,8 +298,9 @@ export async function parseEditTableWithAI(
     }
   }
 
-  // 대형 편집표: 줄 단위로 분할하여 청크별 병렬 처리
-  console.log(`[EditPoint] 대형 편집표 감지 (추정 ${totalEstTokens} 토큰). 청크 병렬 처리...`);
+  // [FIX #215] 대형 편집표: 순차 처리 + 개별 청크 재시도
+  // 병렬 호출(CONCURRENCY=3)은 429 rate limit 연쇄 실패의 원인
+  console.log(`[EditPoint] 대형 편집표 감지 (추정 ${totalEstTokens} 토큰). 순차 처리...`);
   const lines = splitEditTableLines(rawTable);
 
   // 헤더 행 감지 (첫 줄이 헤더일 가능성)
@@ -277,9 +313,8 @@ export async function parseEditTableWithAI(
     }
   }
 
-  // 청크 크기: 행 수 기준 (한 청크에 최대 20행)
-  const CHUNK_SIZE = 20;
-  const CONCURRENCY = 3; // 동시 API 호출 수 (rate limit 고려)
+  // [FIX #215] 청크 크기 30행으로 확대 → API 호출 횟수 감소 (128행: 7청크→5청크)
+  const CHUNK_SIZE = 30;
 
   // 청크 목록 생성
   const chunks: { table: string; narration: string; index: number }[] = [];
@@ -295,26 +330,30 @@ export async function parseEditTableWithAI(
     });
   }
 
-  // 병렬 배치 처리 (CONCURRENCY개씩 동시 실행)
-  const chunkResults: Record<string, unknown>[][] = new Array(chunks.length);
-  for (let batchStart = 0; batchStart < chunks.length; batchStart += CONCURRENCY) {
-    const batch = chunks.slice(batchStart, batchStart + CONCURRENCY);
-    const results = await Promise.all(
-      batch.map((chunk) => parseEditChunk(chunk.table, chunk.narration, true))
-    );
-    results.forEach((entries, j) => {
-      chunkResults[batchStart + j] = entries;
-    });
-  }
-
-  // 순서 보장: 청크 인덱스 순으로 합치기
+  // [FIX #215] 순차 처리 + 개별 청크 재시도 — 429 rate limit 방지
   const allEntries: Record<string, unknown>[] = [];
-  for (const entries of chunkResults) {
-    if (entries) allEntries.push(...entries);
+  let failedChunks = 0;
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    try {
+      const entries = await parseEditChunkWithRetry(chunk.table, chunk.narration, true);
+      allEntries.push(...entries);
+    } catch (err) {
+      failedChunks++;
+      console.error(`[EditPoint] 청크 ${i + 1}/${chunks.length} 최종 실패:`, err);
+      // 이미 일부 결과가 있으면 실패 청크를 건너뛰고 계속 진행
+      if (allEntries.length === 0 && i === chunks.length - 1) {
+        throw err; // 결과가 하나도 없으면 전체 실패
+      }
+    }
   }
 
   if (allEntries.length === 0) {
     throw new Error('편집표 파싱에 실패했습니다. 편집표 형식을 확인해주세요.');
+  }
+
+  if (failedChunks > 0) {
+    console.warn(`[EditPoint] ${chunks.length}개 청크 중 ${failedChunks}개 실패 — ${allEntries.length}개 항목 부분 복구`);
   }
 
   return allEntries.map((e, i) => rawEntryToEdl(e, i, maxDuration));
