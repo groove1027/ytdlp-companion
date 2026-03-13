@@ -16,7 +16,10 @@ import {
   TrackMixerConfig,
   RenderSettings,
   EditRoomSubTab,
+  TimelineLayerSelection,
+  TimelineContextMenuState,
 } from '../types';
+import type { TimelineLayerType } from '../types';
 import { useProjectStore } from './projectStore';
 import { useSoundStudioStore } from './soundStudioStore';
 import { useCostStore } from './costStore';
@@ -223,7 +226,15 @@ interface EditRoomStore {
   // 초기화 플래그
   initialized: boolean;
 
+  // 타임라인 레이어 선택
+  selectedLayer: TimelineLayerSelection | null;
+  contextMenu: TimelineContextMenuState | null;
+
   // Actions
+  selectLayer: (layerType: TimelineLayerType, sceneId: string | null) => void;
+  clearSelection: () => void;
+  setContextMenu: (menu: TimelineContextMenuState | null) => void;
+  deleteSelectedLayer: () => void;
   initFromProject: () => void;
   setCharsPerLine: (v: number) => void;
   setActiveSubtitleText: (text: string) => void;
@@ -360,6 +371,8 @@ const INITIAL_STATE = {
   isTimelinePlaying: false,
   editRoomSubTab: 'timeline' as EditRoomSubTab,
   initialized: false,
+  selectedLayer: null as TimelineLayerSelection | null,
+  contextMenu: null as TimelineContextMenuState | null,
   _navigateToSceneFn: null as ((targetId: string) => void) | null,
   _undoStack: [] as Array<{ sceneSubtitles: Record<string, SceneSubtitleConfig>; sceneOrder: string[]; scenesJson: string; linesJson: string }>,
   _redoStack: [] as Array<{ sceneSubtitles: Record<string, SceneSubtitleConfig>; sceneOrder: string[]; scenesJson: string; linesJson: string }>,
@@ -1060,6 +1073,44 @@ export const useEditRoomStore = create<EditRoomStore>((set, get) => ({
     if (count === 0) return 0;
     set({ sceneSubtitles: updated });
     return count;
+  },
+
+  selectLayer: (layerType, sceneId) => {
+    set({
+      selectedLayer: { layerType, sceneId },
+      contextMenu: null,
+    });
+    // 영상 레이어 선택 시 프리뷰 동기화
+    if (sceneId && (layerType === 'video' || layerType === 'subtitle' || layerType === 'narration' || layerType === 'origAudio' || layerType === 'sfx' || layerType === 'transition')) {
+      const realSceneId = sceneId.replace(/^(va-|sfx-)/, '');
+      set({ expandedSceneId: realSceneId });
+    }
+  },
+
+  clearSelection: () => set({ selectedLayer: null, contextMenu: null }),
+
+  setContextMenu: (menu) => set({ contextMenu: menu }),
+
+  deleteSelectedLayer: () => {
+    const { selectedLayer } = get();
+    if (!selectedLayer) return;
+    const { layerType, sceneId } = selectedLayer;
+    if (!sceneId) return;
+    const realId = sceneId.replace(/^(va-|sfx-)/, '');
+    switch (layerType) {
+      case 'subtitle':
+        get().setSceneSubtitle(realId, { text: '' });
+        break;
+      case 'transition':
+        get().setSceneTransition(realId, { preset: 'none', duration: 0.5 });
+        break;
+      case 'video':
+        get().setSceneEffect(realId, { panZoomPreset: 'none', motionEffect: 'none' });
+        break;
+      default:
+        break;
+    }
+    set({ selectedLayer: null });
   },
 
   setCharsPerLine: (v) => set({ charsPerLine: v }),

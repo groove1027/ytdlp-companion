@@ -9,6 +9,7 @@ import { showToast } from '../../stores/uiStore';
 import EditRoomHeader from './editroom/EditRoomHeader';
 import EditRoomSceneList from './editroom/EditRoomSceneList';
 import EditRoomGlobalPanel from './editroom/EditRoomGlobalPanel';
+import LayerInspectorPanel from './editroom/LayerInspectorPanel';
 import EditRoomExportBar from './editroom/EditRoomExportBar';
 import VisualTimeline from './editroom/VisualTimeline';
 import RenderSettingsModal from './editroom/RenderSettingsModal';
@@ -1285,6 +1286,7 @@ const EditRoomTab: React.FC = () => {
   const bgmTrack = useEditRoomStore((s) => s.bgmTrack);
   const expandedSceneId = useEditRoomStore((s) => s.expandedSceneId);
   const setExpandedSceneId = useEditRoomStore((s) => s.setExpandedSceneId);
+  const selectedLayer = useEditRoomStore((s) => s.selectedLayer);
   const setIsExporting = useEditRoomStore((s) => s.setIsExporting);
   const setExportProgress = useEditRoomStore((s) => s.setExportProgress);
   const setExportedVideoBlob = useEditRoomStore((s) => s.setExportedVideoBlob);
@@ -1653,7 +1655,7 @@ const EditRoomTab: React.FC = () => {
                 />
               </div>
               <div className="w-80 flex-shrink-0 hidden lg:flex lg:flex-col">
-                <EditRoomGlobalPanel />
+                {selectedLayer ? <LayerInspectorPanel /> : <EditRoomGlobalPanel />}
               </div>
             </div>
 

@@ -7,8 +7,9 @@ import { useEditRoomStore } from '../../../stores/editRoomStore';
 import { useUnifiedTimeline, useTotalDuration } from '../../../hooks/useUnifiedTimeline';
 import SceneTransitionPicker, { getTransitionLabel, TRANSITION_GROUPS } from './SceneTransitionPicker';
 import AudioMixerModal from './AudioMixerModal';
+import TimelineContextMenu from './TimelineContextMenu';
 import { connectAudioToAnalyser } from '../../../services/audioAnalyserService';
-import type { SceneTransitionConfig, SceneTransitionPreset } from '../../../types';
+import type { SceneTransitionConfig, SceneTransitionPreset, TimelineLayerType } from '../../../types';
 
 const BASE_IMAGE_TRACK_HEIGHT = 48;
 const BASE_TRACK_HEIGHT = 28;
@@ -248,6 +249,11 @@ const VisualTimeline: React.FC = () => {
   const redo = useEditRoomStore((s) => s.redo);
   const undoStackLen = useEditRoomStore((s) => s._undoStack.length);
   const redoStackLen = useEditRoomStore((s) => s._redoStack.length);
+  const selectedLayer = useEditRoomStore((s) => s.selectedLayer);
+  const selectLayer = useEditRoomStore((s) => s.selectLayer);
+  const clearSelection = useEditRoomStore((s) => s.clearSelection);
+  const setContextMenu = useEditRoomStore((s) => s.setContextMenu);
+  const deleteSelectedLayer = useEditRoomStore((s) => s.deleteSelectedLayer);
   const timeline = useUnifiedTimeline();
   const totalDuration = useTotalDuration();
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -421,6 +427,24 @@ const VisualTimeline: React.FC = () => {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [handleZoomChange]);
+
+  // 레이어 선택 헬퍼
+  const isLayerSelected = useCallback((layerType: TimelineLayerType, sceneId: string | null) => {
+    if (!selectedLayer) return false;
+    return selectedLayer.layerType === layerType && selectedLayer.sceneId === sceneId;
+  }, [selectedLayer]);
+
+  const handleLayerClick = useCallback((e: React.MouseEvent, layerType: TimelineLayerType, sceneId: string | null) => {
+    e.stopPropagation();
+    selectLayer(layerType, sceneId);
+  }, [selectLayer]);
+
+  const handleLayerContextMenu = useCallback((e: React.MouseEvent, layerType: TimelineLayerType, sceneId: string | null) => {
+    e.preventDefault();
+    e.stopPropagation();
+    selectLayer(layerType, sceneId);
+    setContextMenu({ x: e.clientX, y: e.clientY, layerType, sceneId });
+  }, [selectLayer, setContextMenu]);
 
   // 시간 눈금 생성 — effectivePx <= 15 구간에서 10초 간격 추가
   const rulerMarks = useMemo(() => {
@@ -1236,6 +1260,19 @@ const VisualTimeline: React.FC = () => {
         if (e.shiftKey) { useEditRoomStore.getState().redo(); }
         else { useEditRoomStore.getState().undo(); }
       }
+
+      // Escape → 선택 해제
+      if (e.key === 'Escape') {
+        useEditRoomStore.getState().clearSelection();
+      }
+
+      // Delete/Backspace → 선택된 레이어 삭제/초기화
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (useEditRoomStore.getState().selectedLayer) {
+          e.preventDefault();
+          useEditRoomStore.getState().deleteSelectedLayer();
+        }
+      }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
@@ -1482,11 +1519,15 @@ const VisualTimeline: React.FC = () => {
                   className={`absolute top-1 bottom-1 rounded-sm flex items-center px-1 overflow-hidden select-none group/sub transition-colors ${
                     subDrag?.sceneId === b.sceneId
                       ? 'bg-yellow-500/30 border border-yellow-400/50 ring-1 ring-yellow-400/40 z-10'
-                      : 'bg-yellow-600/20 border border-yellow-500/30 hover:border-yellow-400/50 cursor-grab'
+                      : isLayerSelected('subtitle', b.sceneId)
+                        ? 'bg-yellow-500/25 border border-yellow-400 ring-2 ring-amber-400/80 z-30 cursor-grab'
+                        : 'bg-yellow-600/20 border border-yellow-500/30 hover:border-yellow-400/50 cursor-grab'
                   }`}
                   style={{ left: b.x, width: b.w }}
+                  onClick={(e) => handleLayerClick(e, 'subtitle', b.sceneId)}
+                  onContextMenu={(e) => handleLayerContextMenu(e, 'subtitle', b.sceneId)}
                   onMouseDown={(e) => handleSubtitleMouseDown(e, b.sceneId, b.startTime, b.endTime)}
-                  title="드래그: 자막 이동, 가장자리: 자막 트림"
+                  title="클릭: 선택, 드래그: 자막 이동, 가장자리: 자막 트림"
                 >
                   {/* 좌측 트림 핸들 */}
                   <div className="absolute left-0 top-0 bottom-0 w-[5px] z-20 cursor-ew-resize opacity-0 group-hover/sub:opacity-100 transition-opacity bg-gradient-to-r from-yellow-400/40 to-transparent" />
@@ -1512,11 +1553,13 @@ const VisualTimeline: React.FC = () => {
                     key={b.id}
                     className={`absolute top-0.5 bottom-0.5 rounded overflow-hidden border transition-colors select-none group/clip ${
                       isDragging ? 'border-amber-400 ring-2 ring-amber-400/60 z-30 opacity-90' :
+                      isLayerSelected('video', b.id) ? 'border-amber-400 ring-2 ring-amber-400/80 z-30' :
                       b.isActive ? 'border-amber-400 ring-1 ring-amber-400/50 z-10' : `${b.borderColor} hover:border-gray-400`
                     }`}
                     style={{ left: b.x, width: b.w, cursor: toolMode === 'blade' ? BLADE_CURSOR : clipDrag ? (clipDrag.mode === 'move' ? 'grabbing' : 'ew-resize') : clipCursor }}
-                    title={toolMode === 'blade' ? `장면 ${b.label} — 클릭하여 분할` : `장면 ${b.label} (드래그: 이동, 가장자리: 트림, Shift: 리플)`}
-                    onClick={() => { if (!isDragging) setExpandedSceneId(b.isActive ? null : b.id); }}
+                    title={toolMode === 'blade' ? `장면 ${b.label} — 클릭하여 분할` : `장면 ${b.label} (클릭: 선택, 드래그: 이동, 가장자리: 트림)`}
+                    onClick={(e) => { if (!isDragging) { selectLayer('video', b.id); setExpandedSceneId(b.isActive ? null : b.id); } }}
+                    onContextMenu={(e) => handleLayerContextMenu(e, 'video', b.id)}
                     onMouseDown={(e) => handleClipMouseDown(e, b.id)}
                     onMouseMove={(e) => { if (!clipDrag) setClipCursor(getClipCursor(e)); }}
                     onMouseEnter={(e) => handleSceneMouseEnter(e, b)}
@@ -1647,13 +1690,16 @@ const VisualTimeline: React.FC = () => {
                         else transitionAnchorRefs.current.delete(m.sceneId);
                       }}
                       type="button"
-                      onClick={() => handleTransitionMarkerClick(m.sceneId)}
+                      onClick={(e) => { selectLayer('transition', m.sceneId); handleTransitionMarkerClick(m.sceneId); }}
+                      onContextMenu={(e) => handleLayerContextMenu(e, 'transition', m.sceneId)}
                       className={`relative w-5 h-5 rounded flex items-center justify-center text-[10px] transition-all border ${
-                        hasTransition
-                          ? 'bg-amber-600/30 border-amber-500/50 text-amber-300 hover:bg-amber-600/40'
-                          : isActive
-                            ? 'bg-gray-700 border-gray-500 text-gray-300'
-                            : 'bg-gray-800/60 border-gray-700/40 text-gray-600 hover:text-gray-400 hover:border-gray-600'
+                        isLayerSelected('transition', m.sceneId)
+                          ? 'bg-amber-600/40 border-amber-400 ring-2 ring-amber-400/80 text-amber-200 z-30'
+                          : hasTransition
+                            ? 'bg-amber-600/30 border-amber-500/50 text-amber-300 hover:bg-amber-600/40'
+                            : isActive
+                              ? 'bg-gray-700 border-gray-500 text-gray-300'
+                              : 'bg-gray-800/60 border-gray-700/40 text-gray-600 hover:text-gray-400 hover:border-gray-600'
                       }`}
                       title={`${m.fromLabel}\u2192${m.toLabel}: ${getTransitionLabel(m.config.preset)}${hasTransition ? ` (${m.config.duration}s)` : ''}`}
                     >
@@ -1688,7 +1734,17 @@ const VisualTimeline: React.FC = () => {
             </div>
             <div className="relative flex-1">
               {videoAudioBlocks.map((b) => (
-                <div key={b.id} className="absolute top-0.5 bottom-0.5 bg-rose-600/20 border border-rose-500/30 rounded-sm overflow-hidden" style={{ left: b.x, width: b.w }}>
+                <div
+                  key={b.id}
+                  className={`absolute top-0.5 bottom-0.5 rounded-sm overflow-hidden cursor-pointer ${
+                    isLayerSelected('origAudio', b.id)
+                      ? 'bg-rose-500/25 border border-rose-400 ring-2 ring-amber-400/80 z-30'
+                      : 'bg-rose-600/20 border border-rose-500/30 hover:border-rose-400/50'
+                  }`}
+                  style={{ left: b.x, width: b.w }}
+                  onClick={(e) => handleLayerClick(e, 'origAudio', b.id)}
+                  onContextMenu={(e) => handleLayerContextMenu(e, 'origAudio', b.id)}
+                >
                   {b.videoUrl && b.w > 12 ? (
                     <MiniWaveformTrack audioUrl={b.videoUrl} width={b.w} height={h - 2} color="rgb(251, 113, 133)" />
                   ) : (
@@ -1742,8 +1798,14 @@ const VisualTimeline: React.FC = () => {
                 return (
                   <div
                     key={b.id}
-                    className="absolute top-0.5 bottom-0.5 bg-green-600/20 border border-green-500/30 rounded-sm overflow-hidden"
+                    className={`absolute top-0.5 bottom-0.5 rounded-sm overflow-hidden cursor-pointer ${
+                      isLayerSelected('narration', b.id)
+                        ? 'bg-green-500/25 border border-green-400 ring-2 ring-amber-400/80 z-30'
+                        : 'bg-green-600/20 border border-green-500/30 hover:border-green-400/50'
+                    }`}
                     style={{ left: b.x, width: b.w }}
+                    onClick={(e) => handleLayerClick(e, 'narration', b.id)}
+                    onContextMenu={(e) => handleLayerContextMenu(e, 'narration', b.id)}
                   >
                     {b.audioUrl && b.w > 20 && (
                       <MiniWaveformTrack audioUrl={b.audioUrl} width={b.w} height={narH - 2} color="rgb(74, 222, 128)" />
@@ -1816,8 +1878,14 @@ const VisualTimeline: React.FC = () => {
                 const isDraggingBgm = bgmDrag !== null;
                 return (
                   <div
-                    className={`absolute top-0.5 bottom-0.5 bg-cyan-600/15 border rounded-sm overflow-hidden select-none ${isDraggingBgm ? 'border-cyan-400/70 ring-1 ring-cyan-400/30' : 'border-cyan-500/30'}`}
+                    className={`absolute top-0.5 bottom-0.5 bg-cyan-600/15 border rounded-sm overflow-hidden select-none ${
+                      isDraggingBgm ? 'border-cyan-400/70 ring-1 ring-cyan-400/30'
+                        : isLayerSelected('bgm', null) ? 'border-cyan-400 ring-2 ring-amber-400/80 z-30'
+                        : 'border-cyan-500/30 hover:border-cyan-400/50'
+                    }`}
                     style={{ left: bgmLeftPx, width: bgmWidthPx, cursor: isDraggingBgm ? (bgmDrag.mode === 'move' ? 'grabbing' : 'ew-resize') : bgmCursor }}
+                    onClick={(e) => handleLayerClick(e, 'bgm', null)}
+                    onContextMenu={(e) => handleLayerContextMenu(e, 'bgm', null)}
                     onMouseDown={handleBgmMouseDown}
                     onMouseMove={(e) => { if (!isDraggingBgm) setBgmCursor(getBgmCursor(e)); }}
                     onMouseLeave={() => { if (!isDraggingBgm) setBgmCursor('grab'); }}
@@ -1861,9 +1929,15 @@ const VisualTimeline: React.FC = () => {
                 return (
                   <div
                     key={b.id}
-                    className="absolute top-0.5 bottom-0.5 bg-fuchsia-600/20 border border-fuchsia-500/30 rounded-sm overflow-hidden"
+                    className={`absolute top-0.5 bottom-0.5 rounded-sm overflow-hidden cursor-pointer ${
+                      isLayerSelected('sfx', b.id)
+                        ? 'bg-fuchsia-500/25 border border-fuchsia-400 ring-2 ring-amber-400/80 z-30'
+                        : 'bg-fuchsia-600/20 border border-fuchsia-500/30 hover:border-fuchsia-400/50'
+                    }`}
                     style={{ left: b.x, width: b.w }}
                     title={b.text}
+                    onClick={(e) => handleLayerClick(e, 'sfx', b.id)}
+                    onContextMenu={(e) => handleLayerContextMenu(e, 'sfx', b.id)}
                   >
                     <SyntheticWaveform seed={b.text} width={b.w} height={sfxH - 2} color="rgb(217, 70, 239)" />
                     {b.w > 40 && (
@@ -1887,6 +1961,9 @@ const VisualTimeline: React.FC = () => {
 
       {/* 오디오 믹서 모달 */}
       {showMixerModal && <AudioMixerModal onClose={() => setShowMixerModal(false)} />}
+
+      {/* 우클릭 컨텍스트 메뉴 */}
+      <TimelineContextMenu />
 
       {/* 단축키 안내 */}
       <div className="flex items-center justify-center gap-4 px-2 py-0.5 bg-gray-800/60 border-t border-gray-700/30 select-none">
@@ -1919,6 +1996,14 @@ const VisualTimeline: React.FC = () => {
           <span>+</span>
           <kbd className="px-1 py-px bg-gray-700/80 rounded text-[8px] text-gray-400 font-mono border border-gray-600/50">Z</kbd>
           <span className="text-gray-500 ml-0.5">되돌리기</span>
+        </span>
+        <span className="text-[9px] text-gray-600 flex items-center gap-1">
+          <kbd className="px-1 py-px bg-gray-700/80 rounded text-[8px] text-gray-400 font-mono border border-gray-600/50">Esc</kbd>
+          <span className="text-gray-500 ml-0.5">선택 해제</span>
+        </span>
+        <span className="text-[9px] text-gray-600 flex items-center gap-1">
+          <kbd className="px-1 py-px bg-gray-700/80 rounded text-[8px] text-gray-400 font-mono border border-gray-600/50">Del</kbd>
+          <span className="text-gray-500 ml-0.5">삭제/초기화</span>
         </span>
       </div>
 
