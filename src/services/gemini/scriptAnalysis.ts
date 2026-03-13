@@ -1097,18 +1097,19 @@ export const parseScriptToScenes = async (
         const processOneChunk = async (ci: number): Promise<any[]> => {
             const chunkUserContent = `Script (Part ${ci + 1}/${chunks.length}):\n${chunks[ci]}\n\n[MANDATORY GLOBAL CONTEXT]\n${baseSetting || 'No context provided.'}`;
             let chunkScenes: any[] = [];
-            // [FIX #193] 4→2회로 축소 — 불필요한 재시도 시간 절감 (90초×4=360초 → 90초×2=180초)
-            const MAX_CHUNK_RETRIES = 2;
+            // [FIX #226] 3회 재시도 + 지수 백오프 + 지터 — 429/타임아웃 대응 강화
+            const MAX_CHUNK_RETRIES = 3;
             const STREAM_TIMEOUT_MS = 90_000;
             let lastChunkError: Error | null = null;
             for (let retry = 0; retry < MAX_CHUNK_RETRIES; retry++) {
                 if (retry > 0) {
-                    const is429 = (lastChunkError?.message || '').includes('요청 제한');
-                    // [FIX #193] 429 → 스트리밍 재시도 무의미, 즉시 v1beta 폴백
-                    if (is429) break;
-                    const backoffMs = 3000;
+                    const errMsg = lastChunkError?.message || '';
+                    const is429 = errMsg.includes('요청 제한') || errMsg.includes('429') || errMsg.includes('Rate Limit');
+                    // [FIX #226] 429 시 더 긴 대기 후 재시도 (즉시 폴백 대신 한 번 더 시도)
+                    const baseBackoff = is429 ? 8000 : 3000;
+                    const backoffMs = baseBackoff * Math.pow(2, retry - 1) + Math.random() * 2000; // 지수 백오프 + 지터
                     logger.trackRetry(`스크립트 청크 ${ci + 1} 파싱`, retry + 1, MAX_CHUNK_RETRIES,
-                        `네트워크/타임아웃 오류 — ${backoffMs / 1000}초 대기 후 재시도`);
+                        `${is429 ? '요청 제한' : '네트워크/타임아웃'} 오류 — ${Math.round(backoffMs / 1000)}초 대기 후 재시도`);
                     await new Promise(r => setTimeout(r, backoffMs));
                 }
                 try {
@@ -1152,7 +1153,8 @@ export const parseScriptToScenes = async (
                 logger.info(`[parseScriptToScenes] 청크 ${ci + 1} v1beta 폴백`, { lastError: lastChunkError.message?.slice(0, 100) });
                 try {
                     const chunkPayload = { ...payload, contents: [{ role: 'user', parts: [{ text: chunkUserContent }] }] };
-                    const data = await requestGeminiProxy('gemini-3.1-pro-preview', chunkPayload, 0, 300_000);
+                    // [FIX #226] v1beta 폴백 타임아웃 120초 — Cloudflare 125초 제한 내 완료 보장
+                    const data = await requestGeminiProxy('gemini-3.1-pro-preview', chunkPayload, 0, 120_000);
                     const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
                     if (text) {
                         let parsed: any;
@@ -1181,7 +1183,8 @@ export const parseScriptToScenes = async (
                     console.log(`[parseScriptToScenes] 청크 ${ci + 1} Flash 폴백 시도`);
                     logger.info(`[parseScriptToScenes] 청크 ${ci + 1} Flash 폴백`, { lastError: lastChunkError?.message?.slice(0, 100) });
                     const chunkPayload = { ...payload, contents: [{ role: 'user', parts: [{ text: chunkUserContent }] }] };
-                    const data = await requestGeminiProxy('gemini-3-flash', chunkPayload, 0, 300_000, { skipNative: true });
+                    // [FIX #226] Flash 폴백 타임아웃도 120초
+                    const data = await requestGeminiProxy('gemini-3-flash', chunkPayload, 0, 120_000, { skipNative: true });
                     const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
                     if (text) {
                         let parsed: any;
@@ -1209,13 +1212,14 @@ export const parseScriptToScenes = async (
             return chunkScenes;
         };
 
-        // [FIX #193] 병렬 청크 처리 — 순차→병렬 전환 (N개 청크 동시 처리, 2초 스태거로 429 방지)
-        console.log(`[parseScriptToScenes] ⚡ ${chunks.length}개 청크 병렬 처리 시작 (2초 간격 스태거)`);
+        // [FIX #226] 병렬 청크 처리 — 4초 스태거 + 랜덤 지터로 429 thundering herd 방지
+        const CHUNK_STAGGER_MS = 4000;
+        console.log(`[parseScriptToScenes] ⚡ ${chunks.length}개 청크 병렬 처리 시작 (${CHUNK_STAGGER_MS / 1000}초 간격 스태거)`);
         let completedChunks = 0;
         onChunkProgress?.(0, chunks.length);
         const chunkResults = await Promise.allSettled(
             chunks.map(async (_, ci) => {
-                if (ci > 0) await new Promise(r => setTimeout(r, ci * 2000));
+                if (ci > 0) await new Promise(r => setTimeout(r, ci * CHUNK_STAGGER_MS + Math.random() * 1000));
                 const scenes = await processOneChunk(ci);
                 completedChunks++;
                 onChunkProgress?.(completedChunks, chunks.length);

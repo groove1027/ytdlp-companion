@@ -106,7 +106,7 @@ function handleEvolinkError(status: number, errorDetail: string): never {
     throw new Error(`Evolink 오류 (${status}): ${errorDetail}`);
 }
 
-// === HELPER: 429 Rate Limit 재시도 (지수 백오프) ===
+// === HELPER: 429 Rate Limit 재시도 (지수 백오프 + 지터) ===
 /**
  * monitoredFetch 래퍼 — HTTP 429 응답 시 지수 백오프로 최대 3회 재시도
  * 태스크 생성(이미지/비디오) + 채팅 완성 호출 모두에 사용
@@ -130,10 +130,11 @@ async function fetchWithRateLimitRetry(
             return response;
         }
 
-        // 429 — 지수 백오프 대기 후 재시도
+        // 429 — 지수 백오프 + 랜덤 지터 대기 후 재시도 (thundering herd 방지)
         lastResponse = response;
-        const delayMs = baseDelayMs * Math.pow(2, attempt); // 3s, 6s, 12s
-        logger.warn(`[Evolink] 429 Rate Limit — ${delayMs}ms 후 재시도 (${attempt + 1}/${maxRetries})`, { url });
+        const jitter = Math.random() * 1500; // 0~1.5초 랜덤 지터
+        const delayMs = baseDelayMs * Math.pow(2, attempt) + jitter; // 3s+j, 6s+j, 12s+j
+        logger.warn(`[Evolink] 429 Rate Limit — ${Math.round(delayMs)}ms 후 재시도 (${attempt + 1}/${maxRetries})`, { url });
         logger.trackErrorChain(`HTTP 429 Rate Limit (attempt ${attempt + 1}/${maxRetries})`, 'evolinkService:fetchWithRateLimitRetry:rate_limit');
         await new Promise(r => setTimeout(r, delayMs));
     }
@@ -280,14 +281,15 @@ export const evolinkChatStream = async (
     });
 
     // [FIX #178] 타임아웃 적용 — 프록시 연결 끊김(~125초) 전에 능동적으로 중단
-    const response = await monitoredFetch(`${EVOLINK_BASE_URL}/chat/completions`, {
+    // [FIX #226] 429 Rate Limit 재시도 추가 — 스트리밍에도 fetchWithRateLimitRetry 적용
+    const response = await fetchWithRateLimitRetry(`${EVOLINK_BASE_URL}/chat/completions`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${apiKey}`,
         },
         body: JSON.stringify(body),
-    }, timeoutMs);
+    }, 3, 3000, timeoutMs);
 
     if (!response.ok) {
         const errorDetail = await parseEvolinkError(response);
@@ -509,7 +511,8 @@ export const evolinkNativeStream = async (
     };
     if (signal) fetchInit.signal = signal;
 
-    const response = await monitoredFetch(url, fetchInit);
+    // [FIX #226] 429 Rate Limit 재시도 추가 — 네이티브 스트리밍에도 적용
+    const response = await fetchWithRateLimitRetry(url, fetchInit, 3, 3000);
 
     if (!response.ok) {
         const errorDetail = await parseEvolinkError(response);
@@ -525,8 +528,20 @@ export const evolinkNativeStream = async (
     let buffer = '';
     let lastFinishReason = '';
 
+    // [FIX #226] 네이티브 스트리밍 유휴 타임아웃 — 60초 무응답 시 연결 중단
+    const NATIVE_STREAM_IDLE_MS = 60_000;
+
     while (true) {
-        const { done, value } = await reader.read();
+        let idleTimer: ReturnType<typeof setTimeout> | undefined;
+        const { done, value } = await Promise.race([
+            reader.read(),
+            new Promise<never>((_, reject) => {
+                idleTimer = setTimeout(() => {
+                    reader.cancel().catch(() => {});
+                    reject(new Error('네이티브 스트리밍 60초 무응답 — 연결 중단'));
+                }, NATIVE_STREAM_IDLE_MS);
+            })
+        ]).finally(() => { if (idleTimer) clearTimeout(idleTimer); });
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
@@ -630,7 +645,8 @@ export const evolinkVideoAnalysisStream = async (
 
     logger.info('[Evolink Video] v1beta 비디오 분석 스트리밍 시작', { videoCount: videoUris.length, videoUri: videoUris[0].slice(0, 80), mimeType: mimeTypes[0] });
 
-    const response = await monitoredFetch(url, {
+    // [FIX #226] 429 Rate Limit 재시도 추가 — 비디오 분석 스트리밍에도 적용
+    const response = await fetchWithRateLimitRetry(url, {
         method: 'POST',
         headers: {
             'Authorization': `Bearer ${apiKey}`,
@@ -638,7 +654,7 @@ export const evolinkVideoAnalysisStream = async (
         },
         body: JSON.stringify(payload),
         signal,
-    });
+    }, 3, 3000);
 
     if (!response.ok) {
         const errorDetail = await parseEvolinkError(response);
@@ -653,8 +669,20 @@ export const evolinkVideoAnalysisStream = async (
     let accumulated = '';
     let buffer = '';
 
+    // [FIX #226] 비디오 분석 스트리밍 유휴 타임아웃 — 90초 무응답 시 중단 (영상 처리는 더 오래 걸릴 수 있음)
+    const VIDEO_STREAM_IDLE_MS = 90_000;
+
     while (true) {
-        const { done, value } = await reader.read();
+        let idleTimer: ReturnType<typeof setTimeout> | undefined;
+        const { done, value } = await Promise.race([
+            reader.read(),
+            new Promise<never>((_, reject) => {
+                idleTimer = setTimeout(() => {
+                    reader.cancel().catch(() => {});
+                    reject(new Error('비디오 분석 스트리밍 90초 무응답 — 연결 중단'));
+                }, VIDEO_STREAM_IDLE_MS);
+            })
+        ]).finally(() => { if (idleTimer) clearTimeout(idleTimer); });
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
@@ -745,7 +773,8 @@ export const evolinkFrameAnalysisStream = async (
 
     logger.info('[Evolink Frames] v1beta 프레임 분석 스트리밍 시작', { frameCount: frames.length });
 
-    const response = await monitoredFetch(url, {
+    // [FIX #226] 429 Rate Limit 재시도 추가 — 프레임 분석 스트리밍에도 적용
+    const response = await fetchWithRateLimitRetry(url, {
         method: 'POST',
         headers: {
             'Authorization': `Bearer ${apiKey}`,
@@ -753,7 +782,7 @@ export const evolinkFrameAnalysisStream = async (
         },
         body: JSON.stringify(payload),
         signal,
-    });
+    }, 3, 3000);
 
     if (!response.ok) {
         const errorDetail = await parseEvolinkError(response);
@@ -768,8 +797,20 @@ export const evolinkFrameAnalysisStream = async (
     let accumulated = '';
     let buffer = '';
 
+    // [FIX #226] 프레임 분석 스트리밍 유휴 타임아웃 — 60초 무응답 시 중단
+    const FRAME_STREAM_IDLE_MS = 60_000;
+
     while (true) {
-        const { done, value } = await reader.read();
+        let idleTimer: ReturnType<typeof setTimeout> | undefined;
+        const { done, value } = await Promise.race([
+            reader.read(),
+            new Promise<never>((_, reject) => {
+                idleTimer = setTimeout(() => {
+                    reader.cancel().catch(() => {});
+                    reject(new Error('프레임 분석 스트리밍 60초 무응답 — 연결 중단'));
+                }, FRAME_STREAM_IDLE_MS);
+            })
+        ]).finally(() => { if (idleTimer) clearTimeout(idleTimer); });
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });

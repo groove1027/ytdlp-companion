@@ -184,6 +184,7 @@ ${narration}` : ''}`;
   // 입력이 크면 출력 여유를 더 확보 (Evolink 프록시 총 컨텍스트 제한 대응)
   const maxTokens = estimatedInput > 12000 ? 8192 : 16384;
 
+  // [FIX #214] 120초 타임아웃 — 편집점 파싱 무한 hang 방지
   const response = await evolinkChat(
     [
       { role: 'system', content: EDIT_PARSE_SYSTEM_PROMPT },
@@ -193,6 +194,7 @@ ${narration}` : ''}`;
       temperature: 0.1,
       maxTokens,
       responseFormat: { type: 'json_object' },
+      timeoutMs: 120_000,
     }
   );
 
@@ -237,6 +239,7 @@ Each entry: { "order", "narrationText", "sourceId" (format "S-XX"), "sourceDescr
     ? `Edit Table:\n${tableChunk}\n\nNarration:\n${narration}`
     : `Edit Table:\n${tableChunk}`;
 
+  // [FIX #214] 120초 타임아웃 — 폴백에서도 hang 방지
   const response = await evolinkChat(
     [
       { role: 'system', content: compactPrompt },
@@ -245,6 +248,7 @@ Each entry: { "order", "narrationText", "sourceId" (format "S-XX"), "sourceDescr
     {
       temperature: 0.1,
       maxTokens: 16384,
+      timeoutMs: 120_000,
       // JSON 모드 제거 — 텍스트로 받아서 수동 파싱
     }
   );
@@ -416,6 +420,7 @@ async function attemptVisionRefine(
       { type: 'image_url' as const, image_url: { url: f.dataUrl } },
     ]).flat();
 
+    // [FIX #214] 60초 타임아웃 — Vision 정제는 빠른 응답 기대
     const response = await evolinkChat(
       [
         {
@@ -424,7 +429,7 @@ async function attemptVisionRefine(
         },
         { role: 'user', content: imageContent },
       ],
-      { temperature: 0.1, maxTokens: 1024 },
+      { temperature: 0.1, maxTokens: 1024, timeoutMs: 60_000 },
     );
 
     // 토큰 부족 감지 — completionTokens < 50이면 확실히 실패
@@ -455,6 +460,7 @@ async function attemptTextOnlyRefine(
   endTC: string,
 ): Promise<Record<string, unknown> | null> {
   try {
+    // [FIX #214] 60초 타임아웃 — 텍스트 전용 정제
     const response = await evolinkChat(
       [
         {
@@ -467,7 +473,7 @@ Return ONLY JSON: {"refinedStart":"MM:SS.sss","refinedEnd":"MM:SS.sss","confiden
           content: `Clip: "${desc}"\nTC: ${startTC} ~ ${endTC}\nApply standard pre-roll/post-roll and clean cut points.`,
         },
       ],
-      { temperature: 0.1, maxTokens: 512 },
+      { temperature: 0.1, maxTokens: 512, timeoutMs: 60_000 },
     );
 
     const content = response.choices[0]?.message?.content || '';

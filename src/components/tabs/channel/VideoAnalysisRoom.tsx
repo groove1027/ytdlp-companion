@@ -3150,7 +3150,10 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
 
         for (let retry = 0; retry < MAX_RETRY && failedIndices.length > 0; retry++) {
           if (signal.aborted) break;
-          console.log(`[VideoAnalysis] 재시도 ${retry + 1}/${MAX_RETRY}: 배치 ${failedIndices.map(i => i + 1).join(', ')}`);
+          // [FIX #198] 429 재시도 전 지수 백오프 대기 — 즉시 재시도 시 동일 429 반복 방지
+          const retryDelay = 5000 * Math.pow(2, retry) + Math.random() * 2000; // 5s+j, 10s+j
+          console.log(`[VideoAnalysis] 재시도 ${retry + 1}/${MAX_RETRY}: 배치 ${failedIndices.map(i => i + 1).join(', ')} — ${Math.round(retryDelay / 1000)}초 대기`);
+          await new Promise(r => setTimeout(r, retryDelay));
           const retryResults = await Promise.allSettled(
             failedIndices.map(bi => runBatch(bi))
           );

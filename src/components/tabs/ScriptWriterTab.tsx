@@ -312,7 +312,8 @@ export default function ScriptWriterTab() {
 대본:
 ${scriptText}`;
 
-      const response = await evolinkChat([{ role: 'user', content: prompt }]);
+      // [FIX #222] 120초 타임아웃 — 롱폼 단락 나누기 무한 hang 방지
+      const response = await evolinkChat([{ role: 'user', content: prompt }], { timeoutMs: 120_000 });
       clearInterval(simInterval);
       setAnalysisProgress(95);
 
@@ -692,7 +693,7 @@ ${instinctPrompt}
             content: `다음 대본을 '${preset.name}' 스타일로 재작성하세요 (목표: ${targetCharCount}자 이상):\n\n${currentScript}`
           }
         ],
-        { temperature: 0.7, maxTokens: Math.min(32000, Math.max(8000, Math.ceil(currentScript.length * 2))) }
+        { temperature: 0.7, maxTokens: Math.min(32000, Math.max(8000, Math.ceil(currentScript.length * 2))), timeoutMs: 120_000 }
       );
       const content = res.choices?.[0]?.message?.content || '';
       if (!content.trim()) throw new Error('스타일 변환 결과가 비어있습니다. 다시 시도해주세요.');

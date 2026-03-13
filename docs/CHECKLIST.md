@@ -8,6 +8,7 @@
 
 ## 🟢 완료된 작업
 
+- [x] #226/#222/#199/#191/#214/#198 API 429/타임아웃 종합 수정 — (1) evolinkChatStream에 429 재시도 적용 (2) 네이티브 스트리밍 3개(Native/Video/Frame)에 idle timeout(60s/90s/60s) + 429 재시도 추가 (3) 청크 재시도 2→3회 + 지수 백오프 + 지터 (4) v1beta/Flash 폴백 타임아웃 300s→120s (5) 청크 스태거 2s→4s + 지터 (6) 편집점 파싱 120s 타임아웃 (7) 영상분석실 배치 재시도에 지수 백오프 대기 (evolinkService.ts, scriptAnalysis.ts, editPointService.ts, VideoAnalysisRoom.tsx, 2026-03-13)
 - [x] #195 비주얼 스타일에서 채널 레퍼런스 스타일 적용 기능 — 채널분석 탭에서 분석된 채널의 visualGuide(시각 스타일 DNA)를 이미지/영상 탭 비주얼 스타일 섹션에서 원클릭 적용, 저장된 채널 프리셋 목록 접이식 표시, 적용 상태 배지(📡 채널명) 표시, 채널 스타일 해제/초기화 지원 (SetupPanel.tsx, 2026-03-13)
 - [x] #193 대형 대본(8,000자+) 장면 분석 속도 대폭 개선 — 순차→병렬 청크 처리(Promise.allSettled + 2초 스태거), 재시도 4→2회 축소, 429 즉시 v1beta 폴백, 스트리밍 30초 유휴 타임아웃, 실시간 청크 진행률 UI, 부분 성공 허용 (scriptAnalysis.ts, evolinkService.ts, SetupPanel.tsx, 2026-03-13)
 - [x] 스낵형 자막전용 + 리메이크 10버전 안정화 + 쇼핑형 V7.0 편집점 적용 — (1) SNACK_SCRIPT_SYSTEM v11.0: [N] 나레이션 완전 제거, [S]/[A]만 허용, 자막전용 편집, UI 테이블 헤더 '자막 내용'으로 변경 (2) 병렬배치 재시도: 실패배치 최대 2회 retry + 프로그레시브 버전 보존 (3) 쇼핑형: targetDuration 60초 max cap 제거→소스영상 90% 기반, SHOPPING_SCRIPT_SYSTEM에 V7.0 다이내믹 멀티-컷 편집 프로토콜(킬샷/소스ID/나노분할/절대시간) 통합 (VideoAnalysisRoom.tsx, shoppingScriptService.ts, docs/SHOPPING_EDIT_PROTOCOL_V7.md, 2026-03-13)
