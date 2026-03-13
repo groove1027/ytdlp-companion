@@ -488,7 +488,8 @@ const App: React.FC = () => {
             isGeneratingImage: false,
             isNativeHQ: useNativeHQ,
             visualPrompt: feedback ? feedback : s.visualPrompt,
-            generationStatus: undefined
+            generationStatus: undefined,
+            imageUpdatedAfterVideo: !!s.videoUrl,
         } : s));
 
         // Background: persist to Cloudinary (Base64 → URL)
@@ -732,7 +733,7 @@ const App: React.FC = () => {
                   id: `scene-${Date.now()}-${i}`,
                   isGeneratingImage: true,
                   isGeneratingVideo: false,
-                  grokDuration: '10',
+                  grokDuration: '15',
                   grokSpeechMode: newConfig.dialogueMode ?? false,
                   isNativeHQ: false, 
                   isInfographic: newConfig.allowInfographics === true ? (s.isInfographic === true) : false, // [FIX] allowInfographics가 false면 무조건 false 강제
@@ -1445,11 +1446,30 @@ const App: React.FC = () => {
       )}
 
       {/* 전역 Toast 알림 */}
-      {toast && toast.show && !toast.current && !toast.total && (
+      {toast && toast.show && !toast.total && (
         <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[9999] pointer-events-none" style={{ animation: 'toastIn 0.3s ease-out' }}>
           <style>{`@keyframes toastIn { from { opacity:0; transform:translateY(-12px); } to { opacity:1; transform:translateY(0); } }`}</style>
           <div className="bg-gray-900/95 text-white px-5 py-3 rounded-xl shadow-2xl border border-gray-600/50 backdrop-blur-sm text-sm font-medium flex items-center gap-2">
             <span className="text-green-400">✓</span> {toast.message}
+          </div>
+        </div>
+      )}
+
+      {/* 프로그레스 Toast (다운로드 진행률) */}
+      {toast && toast.show && toast.total && toast.total > 0 && (
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[9999] pointer-events-none" style={{ animation: 'toastIn 0.3s ease-out' }}>
+          <div className="bg-gray-900/95 text-white px-5 py-3.5 rounded-xl shadow-2xl border border-gray-600/50 backdrop-blur-sm text-sm font-medium min-w-[280px]">
+            <div className="flex items-center gap-2 mb-2">
+              <svg className="w-4 h-4 text-blue-400 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+              <span>{toast.message}</span>
+              <span className="ml-auto text-xs text-gray-400">{toast.current ?? 0}/{toast.total}</span>
+            </div>
+            <div className="w-full bg-gray-700 rounded-full h-1.5 overflow-hidden">
+              <div
+                className="bg-gradient-to-r from-blue-500 to-violet-500 h-full rounded-full transition-all duration-300"
+                style={{ width: `${Math.round(((toast.current ?? 0) / toast.total) * 100)}%` }}
+              />
+            </div>
           </div>
         </div>
       )}

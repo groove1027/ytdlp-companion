@@ -80,7 +80,8 @@ export const downloadImages = async () => {
     link.click();
     logger.unregisterBlobUrl(_imgZipUrl);
 
-    useUIStore.getState().setToast(null);
+    useUIStore.getState().setToast({ show: true, message: `이미지 ${total}장 다운로드 완료!` });
+    setTimeout(() => useUIStore.getState().setToast(null), 4000);
 };
 
 export const downloadVideos = async () => {
@@ -167,7 +168,11 @@ export const downloadVideos = async () => {
     link.click();
     logger.unregisterBlobUrl(_vidZipUrl);
 
-    useUIStore.getState().setToast(null);
+    const successMsg = linkOnlyScenes.length > 0
+        ? `영상 ${total - linkOnlyScenes.length}편 다운로드 완료 (${linkOnlyScenes.length}편 실패)`
+        : `영상 ${total}편 다운로드 완료!`;
+    useUIStore.getState().setToast({ show: true, message: successMsg });
+    setTimeout(() => useUIStore.getState().setToast(null), 4000);
 };
 
 export const downloadThumbnails = async () => {
@@ -207,7 +212,8 @@ export const downloadThumbnails = async () => {
     link.click();
     logger.unregisterBlobUrl(_thumbZipUrl);
 
-    useUIStore.getState().setToast(null);
+    useUIStore.getState().setToast({ show: true, message: `썸네일 ${total}장 다운로드 완료!` });
+    setTimeout(() => useUIStore.getState().setToast(null), 4000);
 };
 
 export const exportProjectHtml = async () => {
@@ -417,10 +423,11 @@ export const exportProjectZip = async () => {
       costStats,
     };
 
-    dataFolder.file('manifest.json', JSON.stringify(manifest, null, 2));
+    const manifestJsonStr = JSON.stringify(manifest, null, 2);
+    dataFolder.file('manifest.json', manifestJsonStr);
 
-    // HTML viewer
-    const viewerHtml = buildOptimizedViewerHtml(manifest.title);
+    // HTML viewer — manifest를 인라인 삽입 (file:// 프로토콜에서 fetch 차단 대응)
+    const viewerHtml = buildOptimizedViewerHtml(manifest.title, JSON.stringify(manifest));
     zip.file('index.html', viewerHtml);
 
     useUIStore.getState().setProcessing(true, 'ZIP 압축 중...', 'EXPORT');
@@ -534,8 +541,9 @@ export const exportProjectById = async (projectId: string): Promise<void> => {
                 thumbnails: thumbnails.filter(t => t.imageUrl).map(t => ({ id: t.id, imageFile: undefined, textOverlay: t.textOverlay })),
                 costStats: costStats || emptyCostStats,
             };
-            dataFolder.file('manifest.json', JSON.stringify(manifest, null, 2));
-            zip.file('index.html', buildOptimizedViewerHtml(manifest.title));
+            const manifestJsonStr2 = JSON.stringify(manifest, null, 2);
+            dataFolder.file('manifest.json', manifestJsonStr2);
+            zip.file('index.html', buildOptimizedViewerHtml(manifest.title, JSON.stringify(manifest)));
 
             const blob = await zip.generateAsync({ type: 'blob' });
             const link = document.createElement('a');
