@@ -1,6 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import { evolinkChat } from '../../../services/evolinkService';
-import { useScriptWriterStore } from '../../../stores/scriptWriterStore';
+import { useScriptWriterStore, EngagementBoosterResult } from '../../../stores/scriptWriterStore';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
 
 const WEAK = 50;
@@ -10,10 +10,6 @@ interface ParagraphInfo {
   label: string; text: string; issues: string[];
 }
 
-interface Enhanced {
-  index: number; original: string; enhanced: string; changes: string; applied: boolean;
-}
-
 interface Props {
   data: ParagraphInfo[];
   paragraphs: string[];
@@ -21,11 +17,10 @@ interface Props {
 }
 
 export default function EngagementBooster({ data, paragraphs, onClose }: Props) {
-  const { setFinalScript } = useScriptWriterStore();
+  const { setFinalScript, engagementBoosterResults: results, setEngagementBoosterResults: setResults } = useScriptWriterStore();
   const { requireAuth } = useAuthGuard();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [results, setResults] = useState<Enhanced[]>([]);
 
   const weakParas = data.filter(d => d.engagement < WEAK);
 
@@ -75,7 +70,7 @@ ${weakInfo}
 
       const text = response.choices?.[0]?.message?.content || '';
       const parsed = JSON.parse(text);
-      const items: Enhanced[] = (parsed.results || [])
+      const items: EngagementBoosterResult[] = (parsed.results || [])
         .map((r: { index: number; enhanced: string; changes: string }) => ({
           index: r.index - 1, // 0-based
           original: paragraphs[r.index - 1] || '',
@@ -83,7 +78,7 @@ ${weakInfo}
           changes: r.changes || '',
           applied: false,
         }))
-        .filter((r: Enhanced) => r.original && r.enhanced && r.index >= 0 && r.index < paragraphs.length);
+        .filter((r: EngagementBoosterResult) => r.original && r.enhanced && r.index >= 0 && r.index < paragraphs.length);
 
       if (items.length === 0) {
         setError('AI가 강화 결과를 생성하지 못했습니다. 다시 시도해주세요.');
@@ -109,8 +104,8 @@ ${weakInfo}
       curParas[targetIdx] = result.enhanced;
       setFinalScript(curParas.join('\n\n'));
     }
-    setResults(prev => prev.map(r => r.index === targetIdx ? { ...r, applied: true } : r));
-  }, [results, setFinalScript]);
+    setResults(results.map(r => r.index === targetIdx ? { ...r, applied: true } : r));
+  }, [results, setFinalScript, setResults]);
 
   const applyAll = useCallback(() => {
     const store = useScriptWriterStore.getState();
@@ -120,8 +115,8 @@ ${weakInfo}
       if (!r.applied && r.index < curParas.length) curParas[r.index] = r.enhanced;
     }
     setFinalScript(curParas.join('\n\n'));
-    setResults(prev => prev.map(r => ({ ...r, applied: true })));
-  }, [results, setFinalScript]);
+    setResults(results.map(r => ({ ...r, applied: true })));
+  }, [results, setFinalScript, setResults]);
 
   return (
     <div className="bg-violet-900/10 rounded-xl border border-violet-500/20 p-4 space-y-3">

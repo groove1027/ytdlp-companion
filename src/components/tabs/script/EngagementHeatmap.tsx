@@ -1,5 +1,6 @@
 import React, { useMemo, useState, Suspense } from 'react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
+import { useScriptWriterStore } from '../../../stores/scriptWriterStore';
 
 const EngagementBooster = React.lazy(() => import('./EngagementBooster'));
 
@@ -52,7 +53,7 @@ function scoreParagraph(text: string, idx: number, total: number): ParagraphScor
 
 export default function EngagementHeatmap({ scriptText, instinctCount }: Props) {
   const [selIdx, setSelIdx] = useState<number | null>(null);
-  const [showBooster, setShowBooster] = useState(false);
+  const { engagementBoosterOpen: showBooster, setEngagementBoosterOpen: setShowBooster } = useScriptWriterStore();
 
   const { data, paragraphs } = useMemo(() => {
     if (!scriptText.trim()) return { data: [] as ParagraphScore[], paragraphs: [] as string[] };

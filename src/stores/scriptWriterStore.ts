@@ -60,6 +60,11 @@ function clearDraft(): void {
   try { localStorage.removeItem(DRAFT_STORAGE_KEY); } catch (e) { logger.trackSwallowedError('ScriptWriterStore:clearDraft', e); }
 }
 
+/** AI 참여도 강화 결과 항목 */
+export interface EngagementBoosterResult {
+  index: number; original: string; enhanced: string; changes: string; applied: boolean;
+}
+
 interface ScriptWriterStore {
   // State
   inputMode: ScriptInputMode;
@@ -91,6 +96,9 @@ interface ScriptWriterStore {
   splitResult: string[];         // 장면 분석 결과 (AI 분할된 장면 배열)
   /** 영상분석에서 가져온 스타일 프리셋 (#158) */
   videoAnalysisStyles: VideoAnalysisStylePreset[];
+  /** [FIX #249] AI 참여도 강화 결과 — 탭 전환 시 유실 방지 */
+  engagementBoosterResults: EngagementBoosterResult[];
+  engagementBoosterOpen: boolean;
 
   // Actions
   setInputMode: (mode: ScriptInputMode) => void;
@@ -123,6 +131,9 @@ interface ScriptWriterStore {
   addVideoAnalysisStyle: (style: VideoAnalysisStylePreset) => void;
   /** 영상분석 스타일 제거 */
   removeVideoAnalysisStyle: (id: string) => void;
+  /** [FIX #249] 참여도 강화 결과 저장/초기화 */
+  setEngagementBoosterResults: (results: EngagementBoosterResult[]) => void;
+  setEngagementBoosterOpen: (open: boolean) => void;
   /** 새 입력(파일 업로드 등) 시 이전 대본 콘텐츠만 초기화 — 포맷 설정은 보존 */
   clearPreviousContent: () => void;
   reset: () => void;
@@ -154,6 +165,8 @@ const INITIAL_STATE = {
   targetCharCount: 5000,
   splitResult: [] as string[],
   videoAnalysisStyles: [] as VideoAnalysisStylePreset[],
+  engagementBoosterResults: [] as EngagementBoosterResult[],
+  engagementBoosterOpen: false,
 };
 
 // localStorage에서 이전 드래프트 복원
@@ -222,6 +235,9 @@ export const useScriptWriterStore = create<ScriptWriterStore>((set) => ({
     videoAnalysisStyles: state.videoAnalysisStyles.filter(s => s.id !== id),
   })),
 
+  setEngagementBoosterResults: (results) => set({ engagementBoosterResults: results }),
+  setEngagementBoosterOpen: (open) => set({ engagementBoosterOpen: open }),
+
   // 새 파일 업로드 시 이전 대본 콘텐츠를 초기화하되, 포맷/분량 설정은 유지
   clearPreviousContent: () => {
     clearDraft();
@@ -239,6 +255,8 @@ export const useScriptWriterStore = create<ScriptWriterStore>((set) => ({
       benchmarkScript: '',
       selectedPreset: null,
       activeStep: 1,
+      engagementBoosterResults: [],
+      engagementBoosterOpen: false,
     });
   },
 
