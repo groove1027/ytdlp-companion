@@ -34,6 +34,12 @@ interface AnalysisLoadingPanelProps {
   description?: string;
   /** [FIX #157] 분석 취소 콜백 */
   onCancel?: () => void;
+  /** 병렬 배치 진행 현황: 완료된 배치 수 */
+  completedBatches?: number;
+  /** 병렬 배치 총 수 */
+  totalBatches?: number;
+  /** 롱폼 영상 여부 (5분+ 시 추가 경고 표시) */
+  isLongForm?: boolean;
 }
 
 // ── 팁 데이터 ──
@@ -68,6 +74,9 @@ const AnalysisLoadingPanel: React.FC<AnalysisLoadingPanelProps> = ({
   accent = 'blue',
   description,
   onCancel,
+  completedBatches,
+  totalBatches,
+  isLongForm,
 }) => {
   // 팁 캐러셀
   const [tipIndex, setTipIndex] = useState(() => Math.floor(Math.random() * TIPS.length));
@@ -221,15 +230,49 @@ const AnalysisLoadingPanel: React.FC<AnalysisLoadingPanelProps> = ({
         })}
       </div>
 
-      {/* 안내 문구 */}
-      <div className={`${accentColors.tipBg} border ${accentColors.tipBorder} rounded-lg px-4 py-3`}>
-        <p className="text-xs text-gray-500 font-semibold mb-1.5">보통 2~3분 정도 소요됩니다</p>
-        <p className="text-sm text-gray-400 leading-relaxed">
-          AI가 채널의 텍스트 스타일, 시각 패턴, 편집 리듬, 오디오 톤, 댓글 반응까지
+      {/* ★ 예상 소요시간 배너 — 눈에 확 띄는 강조 디자인 */}
+      <div className={`relative overflow-hidden rounded-xl border-2 ${accent === 'blue' ? 'border-blue-500/40 bg-gradient-to-r from-blue-900/30 to-violet-900/20' : 'border-orange-500/40 bg-gradient-to-r from-orange-900/30 to-red-900/20'} px-5 py-4`}>
+        <div className="flex items-center gap-3 mb-2">
+          <span className="text-2xl">⏱️</span>
+          <p className={`text-lg font-bold ${accent === 'blue' ? 'text-blue-300' : 'text-orange-300'}`}>
+            예상 소요시간: <span className="text-white text-xl">{isLongForm ? '5~10분+' : '약 1~2분'}</span>
+          </p>
+        </div>
+        {isLongForm && (
+          <div className="flex items-start gap-2 mb-2 bg-yellow-900/20 border border-yellow-500/30 rounded-lg px-3 py-2">
+            <span className="text-lg flex-shrink-0">⚠️</span>
+            <p className="text-sm text-yellow-300 font-medium leading-snug">
+              롱폼 영상은 분석할 내용이 많아 <span className="text-yellow-200 font-bold">5~10분 이상</span> 걸릴 수 있습니다.
+              다른 탭에서 작업하셔도 됩니다 — 완료 시 알림이 갑니다!
+            </p>
+          </div>
+        )}
+        {completedBatches != null && totalBatches != null && totalBatches > 1 && (
+          <div className="flex items-center gap-2 mt-1">
+            <div className="flex gap-1">
+              {Array.from({ length: totalBatches }, (_, i) => (
+                <div
+                  key={i}
+                  className={`w-6 h-2 rounded-full transition-all duration-500 ${
+                    i < completedBatches
+                      ? 'bg-green-400'
+                      : i === completedBatches
+                        ? `${accent === 'blue' ? 'bg-blue-400' : 'bg-orange-400'} animate-pulse`
+                        : 'bg-gray-600'
+                  }`}
+                />
+              ))}
+            </div>
+            <span className="text-xs text-gray-400 font-medium">
+              병렬 분석 <span className="text-green-400 font-bold">{completedBatches}</span>/{totalBatches} 완료
+            </span>
+          </div>
+        )}
+        <p className="text-sm text-gray-400 mt-2 leading-relaxed">
+          AI가 텍스트 스타일, 시각 패턴, 편집 리듬, 오디오 톤, 댓글 반응까지
           <span className="text-gray-300 font-medium"> 5가지 축</span>으로 종합 분석합니다.
-          정확한 채널 DNA 추출을 위해 조금 기다려주세요.
         </p>
-        <p className="text-xs text-gray-500 mt-2 italic">{encouragement}</p>
+        <p className="text-xs text-gray-500 mt-1.5 italic">{encouragement}</p>
       </div>
 
       {/* 팁 캐러셀 */}
