@@ -326,6 +326,11 @@ export async function composeMp4(options: ComposeMp4Options): Promise<Blob> {
       bmp.close();
     }
 
+    // VideoFrameExtractor 정리 (스트리밍 디코더 리소스 해제)
+    for (const ext of videoFrameExtractors.values()) {
+      ext.dispose?.();
+    }
+
     const totalElapsed = Math.round((performance.now() - startTime) / 1000);
     emitProgress('done', 100, '완료!');
     onProgress?.({
@@ -382,34 +387,63 @@ async function loadImageBitmap(
   }
 }
 
-/** 비디오 URL → VideoFrameExtractor 생성 */
+/** URL → Blob 가져오기 (CORS 우회 포함) */
+async function fetchVideoBlob(url: string): Promise<Blob | null> {
+  if (url.startsWith('blob:') || url.startsWith('data:')) {
+    try {
+      const res = await fetch(url);
+      return res.ok ? await res.blob() : null;
+    } catch { return null; }
+  }
+
+  // 외부 URL → fetch
+  try {
+    const res = await fetch(url);
+    if (res.ok) return await res.blob();
+  } catch (e) {
+    logger.trackSwallowedError('webcodecs/index:fetchVideoBlob', e);
+  }
+
+  // CORS fetch 실패 → Cloudinary 프록시
+  try {
+    const { uploadRemoteUrlToCloudinary } = await import('../uploadService');
+    const proxyUrl = await uploadRemoteUrlToCloudinary(url);
+    const proxyRes = await fetch(proxyUrl);
+    if (proxyRes.ok) return await proxyRes.blob();
+  } catch (e2) {
+    logger.trackSwallowedError('webcodecs/index:fetchVideoProxy', e2);
+  }
+
+  return null;
+}
+
+/** 비디오 URL → VideoFrameExtractor 생성 (WebCodecs 스트리밍 우선 → Canvas 폴백) */
 async function createVideoExtractor(url: string): Promise<VideoFrameExtractor | null> {
   try {
-    // [FIX #149] 외부 URL → blob URL 변환 (CORS 문제 회피)
-    let videoSrc = url;
-    if (!url.startsWith('blob:') && !url.startsWith('data:')) {
+    const blob = await fetchVideoBlob(url);
+
+    // ── WebCodecs 스트리밍 디코더 (정밀 프레임 추출) ──
+    if (blob) {
       try {
-        const res = await fetch(url);
-        if (res.ok) {
-          const blob = await res.blob();
-          videoSrc = URL.createObjectURL(blob);
+        const { createStreamingVideoExtractor, isVideoDecoderSupported } =
+          await import('./videoDecoder');
+        if (isVideoDecoderSupported()) {
+          const extractor = await createStreamingVideoExtractor(blob);
+          console.log('[WebCodecs] 스트리밍 디코더 생성 성공');
+          return extractor;
         }
       } catch (e) {
-        logger.trackSwallowedError('webcodecs/index:fetchVideoBlob', e);
-        // CORS fetch 실패 → Cloudinary 프록시 시도
-        try {
-          const { uploadRemoteUrlToCloudinary } = await import('../uploadService');
-          const proxyUrl = await uploadRemoteUrlToCloudinary(url);
-          const proxyRes = await fetch(proxyUrl);
-          if (proxyRes.ok) {
-            const blob = await proxyRes.blob();
-            videoSrc = URL.createObjectURL(blob);
-          }
-        } catch (e2) {
-          logger.trackSwallowedError('webcodecs/index:fetchVideoProxy', e2);
-          // 프록시도 실패 → 원본 URL로 시도
-        }
+        logger.trackSwallowedError('webcodecs/index:streamingDecoder', e);
+        console.warn('[WebCodecs] 스트리밍 디코더 실패, Canvas 폴백:', e);
       }
+    }
+
+    // ── Canvas 폴백 (video.currentTime + createImageBitmap) ──
+    let videoSrc: string;
+    if (blob) {
+      videoSrc = URL.createObjectURL(blob);
+    } else {
+      videoSrc = url; // blob 가져오기 실패 시 원본 URL로 시도
     }
 
     const video = document.createElement('video');
@@ -421,14 +455,13 @@ async function createVideoExtractor(url: string): Promise<VideoFrameExtractor | 
     await new Promise<void>((resolve, reject) => {
       video.onloadedmetadata = () => resolve();
       video.onerror = () => reject(new Error('Video load failed'));
-      setTimeout(() => reject(new Error('Video load timeout')), 15000); // [FIX #149] 타임아웃 10→15초
+      setTimeout(() => reject(new Error('Video load timeout')), 15000);
     });
 
     return {
       duration: video.duration,
       async getFrameAt(timeSec: number): Promise<ImageBitmap> {
         video.currentTime = timeSec;
-        // [FIX #44] onseeked에 타임아웃 추가 — 무한 대기 방지 (5초)
         await new Promise<void>((resolve, reject) => {
           const timer = setTimeout(() => {
             video.onseeked = null;
@@ -440,6 +473,9 @@ async function createVideoExtractor(url: string): Promise<VideoFrameExtractor | 
           };
         });
         return createImageBitmap(video);
+      },
+      dispose() {
+        if (videoSrc.startsWith('blob:')) URL.revokeObjectURL(videoSrc);
       },
     };
   } catch (e) {

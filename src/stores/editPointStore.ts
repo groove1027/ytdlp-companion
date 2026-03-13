@@ -104,8 +104,22 @@ function getVideoDuration(file: File): Promise<number | null> {
   });
 }
 
-/** 비디오 첫 프레임 썸네일 생성 */
-function getVideoThumbnail(file: File): Promise<string | undefined> {
+/** 비디오 첫 프레임 썸네일 생성 — WebCodecs 우선 → Canvas 폴백 */
+async function getVideoThumbnail(file: File): Promise<string | undefined> {
+  // ── WebCodecs 정밀 추출 우선 ──
+  try {
+    const { webcodecExtractFrames, isVideoDecoderSupported } =
+      await import('../services/webcodecs/videoDecoder');
+
+    if (isVideoDecoderSupported()) {
+      const frames = await webcodecExtractFrames(file, [0.1], { thumbWidth: 160, thumbQuality: 0.6 });
+      if (frames.length > 0) return frames[0].url;
+    }
+  } catch {
+    // WebCodecs 실패 → canvas 폴백
+  }
+
+  // ── Canvas 폴백 ──
   return new Promise((resolve) => {
     const video = document.createElement('video');
     const canvas = document.createElement('canvas');

@@ -577,8 +577,56 @@ ${topPositiveReviews.slice(0, 3).map((r, i) => `${i + 1}. "${r}"`).join('\n')}
 
 /**
  * 프레임 추출 — Blob/File → base64 프레임 배열
+ * ★ WebCodecs VideoDecoder 우선 → Canvas 폴백
  */
 export const extractFramesForAnalysis = async (
+  videoBlob: Blob,
+  frameCount: number = 6,
+): Promise<string[]> => {
+  // ── WebCodecs 정밀 추출 우선 ──
+  try {
+    const { webcodecExtractFrames, isVideoDecoderSupported } =
+      await import('./webcodecs/videoDecoder');
+
+    if (isVideoDecoderSupported()) {
+      // duration 계산을 위한 임시 video 요소
+      const dur = await getVideoDurationFromBlob(videoBlob);
+      if (dur && dur > 0.5) {
+        const timestamps: number[] = [];
+        for (let i = 0; i < frameCount; i++) {
+          timestamps.push((dur / (frameCount + 1)) * (i + 1));
+        }
+        const frames = await webcodecExtractFrames(videoBlob, timestamps, { thumbWidth: 768, thumbQuality: 0.8 });
+        if (frames.length > 0) {
+          console.log(`[ShoppingScript] ✅ WebCodecs 정밀 추출: ${frames.length}개`);
+          return frames.map(f => f.url);
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('[ShoppingScript] WebCodecs 실패 → canvas 폴백:', e);
+  }
+
+  // ── Canvas 폴백 (기존 방식) ──
+  return extractFramesForAnalysisLegacy(videoBlob, frameCount);
+};
+
+/** Blob → duration 조회 */
+function getVideoDurationFromBlob(blob: Blob): Promise<number | null> {
+  return new Promise((resolve) => {
+    const video = document.createElement('video');
+    video.muted = true;
+    video.preload = 'metadata';
+    const url = URL.createObjectURL(blob);
+    video.src = url;
+    video.onloadedmetadata = () => { URL.revokeObjectURL(url); resolve(isFinite(video.duration) ? video.duration : null); };
+    video.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+    setTimeout(() => { URL.revokeObjectURL(url); resolve(null); }, 5000);
+  });
+}
+
+/** [레거시] Canvas 기반 프레임 추출 — WebCodecs 폴백용 */
+const extractFramesForAnalysisLegacy = (
   videoBlob: Blob,
   frameCount: number = 6,
 ): Promise<string[]> => {

@@ -46,8 +46,53 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
-/** 영상에서 균등 간격 프레임 추출 */
-function extractVideoFrames(file: File, count: number): Promise<{ frames: { base64: string; mimeType: string; timeSec: number }[]; duration: number }> {
+/** 영상에서 균등 간격 프레임 추출 — WebCodecs 우선 → Canvas 폴백 */
+async function extractVideoFrames(file: File, count: number): Promise<{ frames: { base64: string; mimeType: string; timeSec: number }[]; duration: number }> {
+  // ── WebCodecs 정밀 추출 우선 ──
+  try {
+    const { webcodecExtractFrames, isVideoDecoderSupported } =
+      await import('../../../services/webcodecs/videoDecoder');
+
+    if (isVideoDecoderSupported()) {
+      const dur = await getSocialFileDuration(file);
+      if (dur && dur > 0.5) {
+        const step = dur / (count + 1);
+        const timecodes = Array.from({ length: count }, (_, i) => Math.min(dur - 0.1, step * (i + 1)));
+        const timedFrames = await webcodecExtractFrames(file, timecodes, { thumbWidth: 640, thumbQuality: 0.8 });
+        if (timedFrames.length > 0) {
+          console.log(`[SocialAnalysis] ✅ WebCodecs 정밀 추출: ${timedFrames.length}개`);
+          const frames = timedFrames.map(f => {
+            const b64 = f.url.split(',')[1] || '';
+            return { base64: b64, mimeType: 'image/jpeg', timeSec: Math.round(f.timeSec * 10) / 10 };
+          }).filter(f => f.base64);
+          return { frames, duration: dur };
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('[SocialAnalysis] WebCodecs 실패 → canvas 폴백:', e);
+  }
+
+  // ── Canvas 폴백 ──
+  return extractVideoFramesLegacy(file, count);
+}
+
+/** Blob → duration */
+function getSocialFileDuration(file: File): Promise<number | null> {
+  return new Promise((resolve) => {
+    const video = document.createElement('video');
+    video.muted = true;
+    video.preload = 'metadata';
+    const url = URL.createObjectURL(file);
+    video.src = url;
+    video.onloadedmetadata = () => { URL.revokeObjectURL(url); resolve(isFinite(video.duration) ? video.duration : null); };
+    video.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+    setTimeout(() => { URL.revokeObjectURL(url); resolve(null); }, 5000);
+  });
+}
+
+/** [레거시] Canvas 기반 프레임 추출 */
+function extractVideoFramesLegacy(file: File, count: number): Promise<{ frames: { base64: string; mimeType: string; timeSec: number }[]; duration: number }> {
   return new Promise((resolve, reject) => {
     const video = document.createElement('video');
     video.muted = true;
@@ -67,7 +112,6 @@ function extractVideoFrames(file: File, count: number): Promise<{ frames: { base
 
       const vw = video.videoWidth || 640;
       const vh = video.videoHeight || 360;
-      // 최대 640px 너비로 스케일
       const scale = Math.min(1, 640 / vw);
       const outW = Math.round(vw * scale);
       const outH = Math.round(vh * scale);
@@ -78,7 +122,6 @@ function extractVideoFrames(file: File, count: number): Promise<{ frames: { base
       const ctx = canvas.getContext('2d')!;
 
       const frames: { base64: string; mimeType: string; timeSec: number }[] = [];
-      // 균등 간격 타임코드 (첫/끝 약간 안쪽)
       const step = dur / (count + 1);
       const timecodes = Array.from({ length: count }, (_, i) => Math.min(dur - 0.1, step * (i + 1)));
 
@@ -92,7 +135,6 @@ function extractVideoFrames(file: File, count: number): Promise<{ frames: { base
           if (b64) frames.push({ base64: b64, mimeType: 'image/jpeg', timeSec: Math.round(tc * 10) / 10 });
         } catch (e) {
           logger.trackSwallowedError('SocialAnalysisRoom:extractFrame', e);
-          // 프레임 추출 실패 시 건너뜀
         }
       }
 

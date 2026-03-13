@@ -157,14 +157,40 @@ Analyze the video now. Return ONLY the JSON array.`;
 };
 
 // --- 1-B: extractFramesFromVideo ---
-// Client-side frame extraction using HTMLVideoElement + Canvas API
-// [FIX #155] 개별 프레임 seek 타임아웃 (5초) + 전체 타임아웃 (30→90초)
-export const extractFramesFromVideo = (
+// ★ WebCodecs VideoDecoder 우선 → Canvas 폴백
+export const extractFramesFromVideo = async (
     file: File,
     timestamps: number[]
 ): Promise<Map<number, string>> => {
-    const FRAME_TIMEOUT_MS = 5000;  // 개별 프레임 seek 타임아웃
-    const TOTAL_TIMEOUT_MS = 90000; // 전체 추출 타임아웃 (30→90초)
+    // ── WebCodecs 정밀 추출 우선 ──
+    try {
+        const { webcodecExtractFrames, isVideoDecoderSupported } =
+            await import('../webcodecs/videoDecoder');
+
+        if (isVideoDecoderSupported() && timestamps.length > 0) {
+            const frames = await webcodecExtractFrames(file, timestamps, { thumbWidth: 512, thumbQuality: 0.7 });
+            if (frames.length > 0) {
+                const result = new Map<number, string>();
+                frames.forEach(f => result.set(f.timeSec, f.url));
+                console.log(`[VideoAnalysis] ✅ WebCodecs 정밀 추출: ${result.size}/${timestamps.length}개`);
+                return result;
+            }
+        }
+    } catch (e) {
+        console.warn('[VideoAnalysis] WebCodecs 실패 → canvas 폴백:', e);
+    }
+
+    // ── Canvas 폴백 (기존 방식) ──
+    return extractFramesFromVideoLegacy(file, timestamps);
+};
+
+/** [레거시] Canvas 기반 프레임 추출 — WebCodecs 폴백용 */
+const extractFramesFromVideoLegacy = (
+    file: File,
+    timestamps: number[]
+): Promise<Map<number, string>> => {
+    const FRAME_TIMEOUT_MS = 5000;
+    const TOTAL_TIMEOUT_MS = 90000;
 
     return new Promise((resolve) => {
         const video = document.createElement('video');
@@ -176,7 +202,6 @@ export const extractFramesFromVideo = (
         let currentIndex = 0;
         let frameTimer: ReturnType<typeof setTimeout> | undefined;
 
-        // [FIX #155] 전체 타임아웃: 90초 초과 시 현재까지 추출된 프레임 반환
         const totalTimer = setTimeout(() => {
             console.warn(`[VideoAnalysis] Frame extraction total timeout (${TOTAL_TIMEOUT_MS}ms), returning ${frames.size}/${sortedTimestamps.length} frames`);
             cleanup();
@@ -194,10 +219,9 @@ export const extractFramesFromVideo = (
         video.preload = 'auto';
 
         video.onloadedmetadata = () => {
-            // [FIX] Maintain original aspect ratio when downscaling
             const vw = video.videoWidth;
             const vh = video.videoHeight;
-            const maxW = 512;  // [FIX] 해상도 축소 (1024→512): API 전송 크기 절감
+            const maxW = 512;
             const maxH = 512;
             const scale = Math.min(1, maxW / vw, maxH / vh);
             canvas.width = Math.round(vw * scale);
@@ -216,10 +240,8 @@ export const extractFramesFromVideo = (
                     return;
                 }
                 const ts = sortedTimestamps[currentIndex];
-                // Clamp to video duration
                 video.currentTime = Math.min(ts, video.duration - 0.1);
 
-                // [FIX] 개별 프레임 타임아웃: seek이 5초 내에 안 되면 건너뜀
                 frameTimer = setTimeout(() => {
                     console.warn(`[VideoAnalysis] Frame seek timeout at ${ts}s, skipping`);
                     currentIndex++;
@@ -230,7 +252,7 @@ export const extractFramesFromVideo = (
             video.onseeked = () => {
                 if (frameTimer) clearTimeout(frameTimer);
                 ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                const dataUrl = canvas.toDataURL('image/jpeg', 0.7); // [FIX] 품질 0.85→0.7 (API 크기 절감)
+                const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
                 frames.set(sortedTimestamps[currentIndex], dataUrl);
                 currentIndex++;
                 captureNext();
@@ -242,7 +264,7 @@ export const extractFramesFromVideo = (
         video.onerror = () => {
             console.error("[VideoAnalysis] Failed to load video for frame extraction");
             cleanup();
-            resolve(frames); // Return whatever we have
+            resolve(frames);
         };
     });
 };

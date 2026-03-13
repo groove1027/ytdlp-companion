@@ -170,43 +170,72 @@ export const downloadFromUrl = async (
   );
 };
 
-/** File → ShoppingSourceVideo metadata 추출 */
-export const extractVideoMetadata = (
+/** File → ShoppingSourceVideo metadata 추출 — WebCodecs 우선 → Canvas 폴백 */
+export const extractVideoMetadata = async (
   file: File
 ): Promise<{ duration: number; width: number; height: number; thumbnailDataUrl: string }> => {
+  // 메타데이터(duration, dimensions)는 항상 <video>로 읽음
+  const meta = await getVideoMeta(file);
+
+  // ── 썸네일: WebCodecs 정밀 추출 우선 ──
+  try {
+    const { webcodecExtractFrames, isVideoDecoderSupported } =
+      await import('./webcodecs/videoDecoder');
+
+    if (isVideoDecoderSupported()) {
+      const tc = Math.min(1, meta.duration * 0.1);
+      const frames = await webcodecExtractFrames(file, [tc], { thumbWidth: meta.width, thumbQuality: 0.7 });
+      if (frames.length > 0) {
+        return { ...meta, thumbnailDataUrl: frames[0].hdUrl || frames[0].url };
+      }
+    }
+  } catch {
+    // WebCodecs 실패 → canvas 폴백
+  }
+
+  // ── Canvas 폴백 ──
+  const thumbnailDataUrl = await getCanvasThumbnail(file, meta.duration);
+  return { ...meta, thumbnailDataUrl };
+};
+
+/** video 메타데이터(duration, width, height) 추출 */
+function getVideoMeta(file: File): Promise<{ duration: number; width: number; height: number }> {
   return new Promise((resolve, reject) => {
     const video = document.createElement('video');
-    const objectUrl = URL.createObjectURL(file);
+    const url = URL.createObjectURL(file);
     video.preload = 'metadata';
     video.muted = true;
-    video.src = objectUrl;
-
+    video.src = url;
     video.onloadedmetadata = () => {
-      video.currentTime = Math.min(1, video.duration * 0.1);
+      URL.revokeObjectURL(url);
+      resolve({ duration: video.duration, width: video.videoWidth, height: video.videoHeight });
     };
+    video.onerror = () => { URL.revokeObjectURL(url); reject(new Error('영상 메타데이터를 읽을 수 없습니다.')); };
+  });
+}
 
+/** [레거시] Canvas 기반 썸네일 생성 */
+function getCanvasThumbnail(file: File, duration: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement('video');
+    const url = URL.createObjectURL(file);
+    video.preload = 'auto';
+    video.muted = true;
+    video.src = url;
+    video.onloadedmetadata = () => { video.currentTime = Math.min(1, duration * 0.1); };
     video.onseeked = () => {
       const canvas = document.createElement('canvas');
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       const ctx = canvas.getContext('2d')!;
       ctx.drawImage(video, 0, 0);
-      const thumbnailDataUrl = canvas.toDataURL('image/jpeg', 0.7);
-      URL.revokeObjectURL(objectUrl);
-      resolve({
-        duration: video.duration,
-        width: video.videoWidth,
-        height: video.videoHeight,
-        thumbnailDataUrl,
-      });
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
+      URL.revokeObjectURL(url);
+      resolve(dataUrl);
     };
-
-    video.onerror = () => {
-      URL.revokeObjectURL(objectUrl);
-      reject(new Error('영상 메타데이터를 읽을 수 없습니다.'));
-    };
+    video.onerror = () => { URL.revokeObjectURL(url); reject(new Error('썸네일 생성 실패')); };
   });
-};
+}
 
 /** Blob → video metadata 추출 */
 export const extractBlobVideoMetadata = (

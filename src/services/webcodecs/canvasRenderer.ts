@@ -31,6 +31,8 @@ export interface CanvasRendererConfig {
 export interface VideoFrameExtractor {
   getFrameAt(timeSec: number): Promise<ImageBitmap>;
   duration: number;
+  /** 리소스 해제 (디코더 종료 + 캐시 정리) */
+  dispose?(): void;
 }
 
 interface FrameInfo {
