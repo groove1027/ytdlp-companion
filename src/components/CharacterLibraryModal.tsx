@@ -68,7 +68,7 @@ const CharacterLibraryModal: React.FC<CharacterLibraryModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={onClose}>
       <div
-        className="bg-gray-800 rounded-2xl border border-gray-700 shadow-2xl w-full max-w-xl max-h-[80vh] flex flex-col animate-fade-in-up"
+        className="bg-gray-800 rounded-2xl border border-gray-700 shadow-2xl w-full max-w-lg max-h-[80vh] flex flex-col animate-fade-in-up"
         onClick={(e) => e.stopPropagation()}
       >
         {/* 헤더 */}
@@ -84,7 +84,7 @@ const CharacterLibraryModal: React.FC<CharacterLibraryModalProps> = ({
         </div>
 
         {/* 본문 */}
-        <div className="flex-1 overflow-y-auto p-5 custom-scrollbar">
+        <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
           {loading ? (
             <div className="flex items-center justify-center py-12">
               <div className="w-6 h-6 border-2 border-gray-500 border-t-purple-400 rounded-full animate-spin" />
@@ -96,43 +96,38 @@ const CharacterLibraryModal: React.FC<CharacterLibraryModalProps> = ({
               <p className="text-sm text-gray-600">캐릭터 슬롯에서 분석 완료 후 💾 버튼으로 저장하세요</p>
             </div>
           ) : (
-            <div className="grid grid-cols-4 gap-3">
+            <div className="grid grid-cols-3 gap-3">
               {characters.map((char) => (
-                <div key={char.id} className="group bg-gray-900 rounded-xl border border-gray-700 overflow-hidden hover:border-gray-500 transition-colors">
+                <div key={char.id} className="group bg-gray-900 rounded-xl border border-gray-700/60 overflow-hidden hover:border-purple-500/40 transition-all hover:shadow-lg hover:shadow-purple-900/10">
                   {/* 썸네일 */}
-                  <div className="relative aspect-square bg-gray-800">
+                  <div className="relative aspect-[3/4] bg-gray-800">
                     <img
                       src={char.imageUrl || char.imageBase64 || ''}
                       alt={char.label}
-                      className="w-full h-full object-cover"
+                      className="w-full h-full object-cover object-top"
                       loading="lazy"
                     />
                     {/* 삭제 버튼 */}
                     <button
                       type="button"
                       onClick={() => handleDelete(char.id, char.label)}
-                      className="absolute top-1 right-1 w-5 h-5 bg-red-500/80 hover:bg-red-500 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity text-white text-xs"
+                      className="absolute top-1.5 right-1.5 w-6 h-6 bg-black/60 hover:bg-red-500 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all text-white/80 hover:text-white text-xs backdrop-blur-sm"
                       title="라이브러리에서 삭제"
                     >
                       &times;
                     </button>
                   </div>
                   {/* 정보 */}
-                  <div className="p-2 space-y-1.5">
+                  <div className="p-2.5 space-y-2">
                     <p className="text-sm text-gray-200 font-medium truncate" title={char.label}>{char.label}</p>
-                    {char.analysisResult && (
-                      <p className="text-xs text-gray-500 leading-tight line-clamp-2" title={char.analysisResult}>
-                        {char.analysisResult.slice(0, 80)}{char.analysisResult.length > 80 ? '...' : ''}
-                      </p>
-                    )}
                     <button
                       type="button"
                       onClick={() => onLoad(char)}
                       disabled={isFull}
-                      className={`w-full text-sm font-bold py-1.5 rounded-lg transition-all ${
+                      className={`w-full text-xs font-bold py-1.5 rounded-lg transition-all ${
                         isFull
                           ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
-                          : 'bg-purple-600/30 text-purple-300 border border-purple-500/30 hover:bg-purple-600/50 hover:text-white'
+                          : 'bg-purple-600/20 text-purple-300 border border-purple-500/30 hover:bg-purple-600/40 hover:text-white'
                       }`}
                     >
                       {isFull ? '슬롯 가득 참' : '불러오기'}
