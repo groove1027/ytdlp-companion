@@ -7,7 +7,7 @@ import { useScriptWriterStore } from '../../../stores/scriptWriterStore';
 import { showToast } from '../../../stores/uiStore';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
-import { getChannelInfo, getRecentVideosByFormat, getVideoTranscript, analyzeChannelStyle, analyzeChannelStyleDNA, getRelatedKeywords, getTopVideos } from '../../../services/youtubeAnalysisService';
+import { getChannelInfo, getRecentVideosByFormat, getVideoTranscript, analyzeChannelStyle, analyzeChannelStyleDNA, retryFailedStyleDNA, getRelatedKeywords, getTopVideos } from '../../../services/youtubeAnalysisService';
 import type { TranscriptResult } from '../../../services/youtubeAnalysisService';
 import { getYoutubeApiKey } from '../../../services/apiService';
 import { evolinkChat } from '../../../services/evolinkService';
@@ -66,6 +66,7 @@ const ChannelAnalysisRoom: React.FC = () => {
   const elapsed = useElapsedTimer(isAnalyzing);
   const progressElapsed = useElapsedTimer(!!progress);
   const [selectedTopic, setSelectedTopic] = useState<LegacyTopicRecommendation | null>(null);
+  const [isRetrying, setIsRetrying] = useState(false);
 
   // --- YouTube 영상 다운로드 (yt-dlp 서버 프록시) ---
   const [showBulkModal, setShowBulkModal] = useState(false);
@@ -205,6 +206,28 @@ const ChannelAnalysisRoom: React.FC = () => {
       setProgress(null);
     }
   }, [sourceName, setChannelInfo, setChannelScripts, setChannelGuideline]);
+
+  // [FIX #209] 실패한 레이어만 재분석
+  const handleRetryFailed = useCallback(async () => {
+    if (!channelGuideline || !channelInfo || !channelScripts.length) return;
+    setIsRetrying(true);
+    setError('');
+    try {
+      const updated = await retryFailedStyleDNA(channelScripts, channelInfo, channelGuideline);
+      updated.contentFormat = channelGuideline.contentFormat;
+      setChannelGuideline(updated);
+      if (!updated.failedLayers?.length) {
+        showToast('실패했던 분석이 모두 완료되었습니다!');
+      } else {
+        showToast(`${(channelGuideline.failedLayers?.length || 0) - updated.failedLayers.length}개 항목 복구, ${updated.failedLayers.length}개 여전히 실패`);
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(`재분석 실패: ${msg}`);
+    } finally {
+      setIsRetrying(false);
+    }
+  }, [channelGuideline, channelInfo, channelScripts, setChannelGuideline]);
 
   // 프리셋 저장
   const handleSavePreset = useCallback(() => {
@@ -786,12 +809,33 @@ const ChannelAnalysisRoom: React.FC = () => {
       )}
 
       {/* 채널 스타일 DNA */}
-      {channelGuideline && !progress && (channelGuideline.visualGuide || channelGuideline.editGuide || channelGuideline.audioGuide || channelGuideline.titleFormula || channelGuideline.audienceInsight) && (
+      {channelGuideline && !progress && (channelGuideline.visualGuide || channelGuideline.editGuide || channelGuideline.audioGuide || channelGuideline.titleFormula || channelGuideline.audienceInsight || channelGuideline.failedLayers?.length) && (
         <div className={card}>
-          <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
-            <span className="w-7 h-7 rounded-lg bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center text-white text-xs font-bold">D</span>
-            채널 스타일 DNA
-          </h3>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-bold text-white flex items-center gap-2">
+              <span className="w-7 h-7 rounded-lg bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center text-white text-xs font-bold">D</span>
+              채널 스타일 DNA
+            </h3>
+            {channelGuideline.failedLayers && channelGuideline.failedLayers.length > 0 && (
+              <button
+                onClick={handleRetryFailed}
+                disabled={isRetrying}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg bg-amber-600/20 text-amber-400 border border-amber-500/30 hover:bg-amber-600/30 transition-colors disabled:opacity-50"
+              >
+                {isRetrying ? <Spin /> : <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>}
+                {isRetrying ? '재분석 중...' : `실패 항목 재분석 (${channelGuideline.failedLayers.length}개)`}
+              </button>
+            )}
+          </div>
+          {channelGuideline.failedLayers && channelGuideline.failedLayers.length > 0 && (
+            <div className="mb-4 p-3 rounded-lg bg-amber-900/20 border border-amber-700/30 text-sm text-amber-300">
+              {(() => {
+                const layerNames: Record<string, string> = { L1: '텍스트 분석', L2: '시각 스타일', L3: '편집/오디오', L4: '댓글 분석', L5: '제목/메타데이터' };
+                const names = channelGuideline.failedLayers!.map(l => layerNames[l] || l).join(', ');
+                return `일부 분석이 완료되지 않았습니다: ${names} — 위의 "실패 항목 재분석" 버튼을 눌러주세요.`;
+              })()}
+            </div>
+          )}
           <div className="space-y-4">
             {channelGuideline.visualGuide && (
               <div>

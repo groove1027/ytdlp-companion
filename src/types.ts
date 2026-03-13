@@ -793,6 +793,7 @@ export interface ChannelGuideline {
   titleFormula?: string;       // 제목/메타데이터 공식 패턴
   audienceInsight?: string;    // 시청자 인사이트 (댓글 분석)
   contentFormat?: ContentFormat; // 감지된 콘텐츠 형식 (롱폼/숏폼)
+  failedLayers?: string[];     // [FIX #209] 실패한 DNA 레이어 (재분석 트리거용)
 }
 
 // --- 채널 분석 입력 ---
@@ -1480,6 +1481,21 @@ export interface TrackMixerConfig {
 
 // --- 편집실 서브탭 ---
 export type EditRoomSubTab = 'timeline' | 'edit-point-matching';
+
+// --- 타임라인 레이어 선택 ---
+export type TimelineLayerType = 'video' | 'subtitle' | 'transition' | 'narration' | 'bgm' | 'sfx' | 'origAudio';
+
+export interface TimelineLayerSelection {
+  layerType: TimelineLayerType;
+  sceneId: string | null; // BGM은 글로벌이므로 null
+}
+
+export interface TimelineContextMenuState {
+  x: number;
+  y: number;
+  layerType: TimelineLayerType;
+  sceneId: string | null;
+}
 
 // --- 편집점 매칭 ---
 export type EditPointStep = 'register' | 'mapping' | 'export';

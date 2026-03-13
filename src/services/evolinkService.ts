@@ -109,20 +109,22 @@ function handleEvolinkError(status: number, errorDetail: string): never {
 // === HELPER: 429 Rate Limit 재시도 (지수 백오프) ===
 /**
  * monitoredFetch 래퍼 — HTTP 429 응답 시 지수 백오프로 최대 3회 재시도
- * 태스크 생성(이미지/비디오) 호출에 사용
+ * 태스크 생성(이미지/비디오) + 채팅 완성 호출 모두에 사용
  * @param maxRetries 최대 재시도 횟수 (기본 3)
  * @param baseDelayMs 첫 재시도 대기 시간 (기본 2000ms, 이후 2배씩 증가)
+ * @param timeoutMs monitoredFetch 타임아웃 (optional)
  */
 async function fetchWithRateLimitRetry(
     url: string,
     init: RequestInit,
     maxRetries: number = 3,
-    baseDelayMs: number = 2000
+    baseDelayMs: number = 2000,
+    timeoutMs?: number
 ): Promise<Response> {
     let lastResponse: Response | null = null;
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
-        const response = await monitoredFetch(url, init);
+        const response = await monitoredFetch(url, init, timeoutMs);
 
         if (response.status !== 429 || attempt === maxRetries) {
             return response;
@@ -130,7 +132,7 @@ async function fetchWithRateLimitRetry(
 
         // 429 — 지수 백오프 대기 후 재시도
         lastResponse = response;
-        const delayMs = baseDelayMs * Math.pow(2, attempt); // 2s, 4s, 8s
+        const delayMs = baseDelayMs * Math.pow(2, attempt); // 3s, 6s, 12s
         logger.warn(`[Evolink] 429 Rate Limit — ${delayMs}ms 후 재시도 (${attempt + 1}/${maxRetries})`, { url });
         logger.trackErrorChain(`HTTP 429 Rate Limit (attempt ${attempt + 1}/${maxRetries})`, 'evolinkService:fetchWithRateLimitRetry:rate_limit');
         await new Promise(r => setTimeout(r, delayMs));
@@ -201,7 +203,8 @@ export const evolinkChat = async (
     if (signal) fetchOptions.signal = signal;
 
     // [FIX #32] 긴 대본 처리를 위한 확장 타임아웃 지원 (미지정 시 무제한)
-    const response = await monitoredFetch(`${EVOLINK_BASE_URL}/chat/completions`, fetchOptions, timeoutMs);
+    // [FIX #209] 429 rate limit 시 지수 백오프 재시도 (채널 DNA 분석 병렬 호출 대비)
+    const response = await fetchWithRateLimitRetry(`${EVOLINK_BASE_URL}/chat/completions`, fetchOptions, 3, 3000, timeoutMs);
 
     if (!response.ok) {
         const errorDetail = await parseEvolinkError(response);
@@ -404,14 +407,15 @@ export const requestEvolinkNative = async (
     }
 
     // [FIX #32] 긴 대본 처리를 위한 확장 타임아웃 지원 (미지정 시 무제한)
-    const response = await monitoredFetch(url, {
+    // [FIX #209] 429 rate limit 시 지수 백오프 재시도
+    const response = await fetchWithRateLimitRetry(url, {
         method: 'POST',
         headers: {
             'Authorization': `Bearer ${apiKey}`,
             'Content-Type': 'application/json'
         },
         body: JSON.stringify(payload)
-    }, timeoutMs);
+    }, 3, 3000, timeoutMs);
 
     if (!response.ok) {
         const errorDetail = await parseEvolinkError(response);

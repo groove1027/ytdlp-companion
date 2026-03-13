@@ -1869,28 +1869,43 @@ export const analyzeChannelStyleDNA = async (
         scriptCount: scripts.length
     });
 
-    // 모든 레이어 병렬 실행
-    const [textResult, thumbnailResult, deepVideoResult, commentResult, metadataResult] =
-        await Promise.allSettled([
-            analyzeChannelStyle(scripts, channelInfo),   // L1: 텍스트 포렌식
-            analyzeThumbnailStyle(scripts),              // L2: 썸네일 시각
-            analyzeDeepVideoStyle(scripts),              // L3: 딥 영상
-            analyzeCommentSentiment(scripts),            // L4: 댓글 감성
-            analyzeMetadataPatterns(scripts, channelInfo) // L5: 메타데이터
-        ]);
+    // [FIX #209] 2파로 나눠 실행하여 rate limit 완화
+    // Wave 1: L1 (텍스트, 필수) + L5 (메타데이터, 텍스트만) — 가벼운 호출 먼저
+    const [textResult, metadataResult] = await Promise.allSettled([
+        analyzeChannelStyle(scripts, channelInfo),   // L1: 텍스트 포렌식
+        analyzeMetadataPatterns(scripts, channelInfo) // L5: 메타데이터
+    ]);
+
+    // Wave 2: L2 (멀티모달) + L3 (영상 URL) + L4 (댓글) — 2초 후 실행
+    await new Promise(r => setTimeout(r, 2000));
+    const [thumbnailResult, deepVideoResult, commentResult] = await Promise.allSettled([
+        analyzeThumbnailStyle(scripts),              // L2: 썸네일 시각
+        analyzeDeepVideoStyle(scripts),              // L3: 딥 영상
+        analyzeCommentSentiment(scripts),            // L4: 댓글 감성
+    ]);
 
     // L1 base guideline
     const textError = textResult.status === 'rejected' ? (textResult.reason?.message || String(textResult.reason)) : '';
     if (textError) {
         logger.warn('[StyleDNA] L1 텍스트 분석 실패', textError);
     }
+
+    // [FIX #209] 에러 메시지를 원인에 맞게 구체적으로 표시
+    const getErrorHint = (err: string): string => {
+        if (err.includes('요청 제한') || err.includes('429')) return '💡 원인: AI 서버가 일시적으로 바쁜 상태입니다. 잠시 후 "실패 항목 재분석" 버튼을 눌러보세요.';
+        if (err.includes('키가 설정되지') || err.includes('인증 실패')) return '💡 원인: Evolink API 키가 설정되지 않았습니다. 설정에서 키를 입력해주세요.';
+        if (err.includes('잔액 부족')) return '💡 원인: Evolink 크레딧이 소진되었습니다. 충전 후 다시 시도해주세요.';
+        if (err.includes('Failed to fetch') || err.includes('network')) return '💡 원인: 네트워크 연결이 불안정합니다. 인터넷 연결 확인 후 다시 시도해주세요.';
+        return '💡 잠시 후 "실패 항목 재분석" 버튼을 눌러 다시 시도해보세요.';
+    };
+
     const base: ChannelGuideline = textResult.status === 'fulfilled'
         ? textResult.value
         : {
             channelName: channelInfo.title,
             tone: '', structure: '', topics: [], keywords: [],
             targetAudience: '', avgLength: 0, hookPattern: '', closingPattern: '',
-            fullGuidelineText: `(텍스트 분석 실패: ${textError || '알 수 없는 오류'})\n\n💡 원인: API 키 미설정, 쿼터 소진, 또는 네트워크 오류일 수 있습니다.\n새로고침 후 다시 시도해보세요.`
+            fullGuidelineText: `(텍스트 분석 실패: ${textError || '알 수 없는 오류'})\n\n${getErrorHint(textError)}`
         };
 
     // DNA 레이어 결과 수집
@@ -1908,6 +1923,14 @@ export const analyzeChannelStyleDNA = async (
         audienceInsight && `\n\n=== 시청자 인사이트 ===\n${audienceInsight}`,
     ].filter(Boolean).join('');
 
+    // [FIX #209] 실패한 레이어 추적
+    const failedLayers: string[] = [];
+    if (textResult.status === 'rejected') failedLayers.push('L1');
+    if (!visualGuide) failedLayers.push('L2');
+    if (!editGuide && !audioGuide) failedLayers.push('L3');
+    if (!audienceInsight) failedLayers.push('L4');
+    if (!titleFormula) failedLayers.push('L5');
+
     const enhanced: ChannelGuideline = {
         ...base,
         fullGuidelineText: base.fullGuidelineText + dnaAppendix,
@@ -1916,15 +1939,84 @@ export const analyzeChannelStyleDNA = async (
         audioGuide,
         titleFormula,
         audienceInsight,
+        failedLayers: failedLayers.length > 0 ? failedLayers : undefined,
     };
 
     const layerStatus = {
         L1: textResult.status, L2: thumbnailResult.status,
-        L3: deepVideoResult.status, L4: commentResult.status, L5: metadataResult.status
+        L3: deepVideoResult.status, L4: commentResult.status, L5: metadataResult.status,
+        failedLayers
     };
     logger.success('[StyleDNA] 채널 스타일 DNA 분석 완료', layerStatus);
 
     return enhanced;
+};
+
+/**
+ * [FIX #209] 실패한 레이어만 재분석
+ * 기존 guideline에 실패한 레이어 결과를 병합
+ */
+export const retryFailedStyleDNA = async (
+    scripts: ChannelScript[],
+    channelInfo: ChannelInfo,
+    existingGuideline: ChannelGuideline
+): Promise<ChannelGuideline> => {
+    const failed = existingGuideline.failedLayers || [];
+    if (failed.length === 0) return existingGuideline;
+
+    logger.info('[StyleDNA] 실패 레이어 재분석 시작', { failedLayers: failed });
+
+    const tasks: Promise<{ layer: string; result: unknown }>[] = [];
+
+    if (failed.includes('L1')) {
+        tasks.push(analyzeChannelStyle(scripts, channelInfo).then(r => ({ layer: 'L1', result: r })).catch(() => ({ layer: 'L1', result: null })));
+    }
+    if (failed.includes('L2')) {
+        tasks.push(analyzeThumbnailStyle(scripts).then(r => ({ layer: 'L2', result: r })).catch(() => ({ layer: 'L2', result: null })));
+    }
+    if (failed.includes('L3')) {
+        tasks.push(analyzeDeepVideoStyle(scripts).then(r => ({ layer: 'L3', result: r })).catch(() => ({ layer: 'L3', result: null })));
+    }
+    if (failed.includes('L4')) {
+        tasks.push(analyzeCommentSentiment(scripts).then(r => ({ layer: 'L4', result: r })).catch(() => ({ layer: 'L4', result: null })));
+    }
+    if (failed.includes('L5')) {
+        tasks.push(analyzeMetadataPatterns(scripts, channelInfo).then(r => ({ layer: 'L5', result: r })).catch(() => ({ layer: 'L5', result: null })));
+    }
+
+    const results = await Promise.all(tasks);
+    let updated = { ...existingGuideline };
+    const stillFailed: string[] = [];
+
+    for (const { layer, result } of results) {
+        if (!result) { stillFailed.push(layer); continue; }
+        switch (layer) {
+            case 'L1': {
+                const g = result as ChannelGuideline;
+                updated = { ...updated, ...g, visualGuide: updated.visualGuide, editGuide: updated.editGuide, audioGuide: updated.audioGuide, titleFormula: updated.titleFormula, audienceInsight: updated.audienceInsight };
+                break;
+            }
+            case 'L2': updated.visualGuide = result as string; break;
+            case 'L3': { const r = result as { editGuide: string; audioGuide: string }; updated.editGuide = r.editGuide; updated.audioGuide = r.audioGuide; break; }
+            case 'L4': updated.audienceInsight = result as string; break;
+            case 'L5': updated.titleFormula = result as string; break;
+        }
+    }
+
+    // fullGuidelineText 재조립
+    const baseText = updated.tone ? updated.fullGuidelineText.split('\n\n=== ')[0] : updated.fullGuidelineText;
+    const dnaAppendix = [
+        updated.visualGuide && `\n\n=== 시각 스타일 DNA ===\n${updated.visualGuide}`,
+        updated.editGuide && `\n\n=== 편집 스타일 DNA ===\n${updated.editGuide}`,
+        updated.audioGuide && `\n\n=== 오디오 스타일 DNA ===\n${updated.audioGuide}`,
+        updated.titleFormula && `\n\n=== 제목/메타데이터 공식 ===\n${updated.titleFormula}`,
+        updated.audienceInsight && `\n\n=== 시청자 인사이트 ===\n${updated.audienceInsight}`,
+    ].filter(Boolean).join('');
+    updated.fullGuidelineText = baseText + dnaAppendix;
+    updated.failedLayers = stillFailed.length > 0 ? stillFailed : undefined;
+
+    logger.success('[StyleDNA] 실패 레이어 재분석 완료', { retried: failed, stillFailed });
+    return updated;
 };
 
 // === UTILITY ===
