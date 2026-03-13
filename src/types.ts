@@ -794,6 +794,7 @@ export interface ChannelGuideline {
   audienceInsight?: string;    // 시청자 인사이트 (댓글 분석)
   contentFormat?: ContentFormat; // 감지된 콘텐츠 형식 (롱폼/숏폼)
   failedLayers?: string[];     // [FIX #209] 실패한 DNA 레이어 (재분석 트리거용)
+  sourceDiscoveryGuide?: string; // [#232] 소재 발굴 가이드 (AI 생성)
 }
 
 // --- 채널 분석 입력 ---

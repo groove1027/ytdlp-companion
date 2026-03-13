@@ -67,6 +67,8 @@ const ChannelAnalysisRoom: React.FC = () => {
   const progressElapsed = useElapsedTimer(!!progress);
   const [selectedTopic, setSelectedTopic] = useState<LegacyTopicRecommendation | null>(null);
   const [isRetrying, setIsRetrying] = useState(false);
+  const [isGeneratingSourceGuide, setIsGeneratingSourceGuide] = useState(false);
+  const sourceGuideElapsed = useElapsedTimer(isGeneratingSourceGuide);
 
   // --- YouTube 영상 다운로드 (yt-dlp 서버 프록시) ---
   const [showBulkModal, setShowBulkModal] = useState(false);
@@ -228,6 +230,86 @@ const ChannelAnalysisRoom: React.FC = () => {
       setIsRetrying(false);
     }
   }, [channelGuideline, channelInfo, channelScripts, setChannelGuideline]);
+
+  // [#232] 소재 발굴 가이드 생성
+  const handleGenerateSourceGuide = useCallback(async () => {
+    if (!channelGuideline) return;
+    if (!requireAuth('소재 발굴 가이드')) return;
+    setIsGeneratingSourceGuide(true);
+    try {
+      const topicsStr = (Array.isArray(channelGuideline.topics) ? channelGuideline.topics : []).join(', ');
+      const keywordsStr = (Array.isArray(channelGuideline.keywords) ? channelGuideline.keywords : []).join(', ');
+      const formatLabel = channelGuideline.contentFormat === 'shorts' ? '쇼츠 (60초 이내)' : '롱폼 (10분 내외)';
+
+      const res = await evolinkChat(
+        [
+          { role: 'system', content: `당신은 유튜브 콘텐츠 소재 발굴 전문 컨설턴트입니다. 분석된 채널의 주제/스타일을 기반으로, 이 채널과 유사한 콘텐츠를 만들기 위한 실질적이고 즉시 활용 가능한 소재 발굴 전략을 제시합니다.
+
+절대 규칙:
+1. 실제로 즉시 활용 가능한 구체적인 방법 위주로 작성하세요.
+2. 각 플랫폼/도구에 대해 구체적인 검색어 예시를 포함하세요.
+3. 이 채널의 주제 분야에 특화된 소스를 추천하세요 (일반론 X).
+4. 마크다운 없이 일반 텍스트로 작성하세요.
+5. 소제목은 【】로 감싸서 표시하세요 (예: 【소재 발굴 플랫폼】).
+6. 한국어로 작성하세요.` },
+          { role: 'user', content: `[분석 완료된 채널 정보]
+채널명: ${channelGuideline.channelName}
+주요 주제: ${topicsStr || '(미분류)'}
+핵심 키워드: ${keywordsStr || '(미추출)'}
+타겟 시청자: ${channelGuideline.targetAudience || '(미분석)'}
+콘텐츠 포맷: ${formatLabel}
+말투/어조: ${channelGuideline.tone || '(미분석)'}
+
+위 채널 분석 결과를 기반으로, 이 채널과 유사한 콘텐츠를 만들려는 크리에이터를 위한 "소재 발굴 가이드"를 작성해주세요.
+
+반드시 다음 6가지 항목을 모두 포함하세요:
+
+1. 【소재 발굴 플랫폼】
+- 이 분야에 특화된 커뮤니티, 사이트, SNS, 앱 (각각 URL 또는 접근 방법 명시)
+- 왜 이 플랫폼이 이 분야에 효과적인지 이유 설명
+- 최소 5개 이상 추천
+
+2. 【검색 전략】
+- 이 분야에서 사용할 구체적인 검색 키워드 조합 예시 (최소 10개)
+- 어디서(Google, YouTube, 네이버, 커뮤니티), 어떻게(검색 연산자, 필터 활용) 검색할지
+- 경쟁 채널 모니터링 방법
+
+3. 【트렌드 모니터링 방법】
+- 이 분야의 최신 트렌드를 빠르게 포착하는 방법
+- 활용할 트렌드 도구 (Google Trends, YouTube 트렌드 등)
+- 트렌드를 콘텐츠로 전환하는 타이밍 팁
+
+4. 【소재 → 대본 발전 방법】
+- 발굴한 소재를 이 채널 스타일의 대본으로 바꾸는 단계별 과정
+- 소재에 독창성을 부여하는 차별화 전략
+- 이 채널의 도입부/구조/마무리 패턴에 맞게 소재를 재가공하는 방법
+
+5. 【소재 선별 기준】
+- 이 채널 스타일에 맞는 좋은 소재의 특징 (체크리스트 형태)
+- 피해야 할 소재 유형
+- 조회수가 나올 소재 vs 안 나올 소재 구별법
+
+6. 【올인원에서 바로 활용하기】
+- "키워드 랩"에서 발굴한 키워드로 경쟁력 검증하는 방법
+- "주제 추천" 기능에 소재를 입력해서 AI 확장하는 방법
+- 분석한 채널의 스타일 프리셋을 활용해 대본을 자동 생성하는 흐름` }
+        ],
+        { temperature: 0.5, maxTokens: 4000 }
+      );
+
+      const content = res.choices?.[0]?.message?.content || '';
+      if (!content.trim()) throw new Error('AI 응답이 비어있습니다.');
+
+      const updated = { ...channelGuideline, sourceDiscoveryGuide: content.trim() };
+      setChannelGuideline(updated);
+      showToast('소재 발굴 가이드가 생성되었습니다.');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      showToast(`소재 발굴 가이드 생성 실패: ${msg}`);
+    } finally {
+      setIsGeneratingSourceGuide(false);
+    }
+  }, [channelGuideline, setChannelGuideline, requireAuth]);
 
   // 프리셋 저장
   const handleSavePreset = useCallback(() => {
@@ -938,6 +1020,72 @@ const ChannelAnalysisRoom: React.FC = () => {
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {/* [#232] 소재 발굴 가이드 */}
+      {channelGuideline && !progress && (
+        <div className={card}>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-bold text-white flex items-center gap-2">
+              <span className="w-7 h-7 rounded-lg bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center text-white text-sm">📍</span>
+              소재 발굴 가이드
+            </h3>
+            <div className="flex items-center gap-2">
+              {channelGuideline.sourceDiscoveryGuide && (
+                <button
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(channelGuideline.sourceDiscoveryGuide!);
+                      showToast('소재 발굴 가이드가 복사되었습니다.');
+                    } catch (e) {
+                      logger.trackSwallowedError('ChannelAnalysisRoom:copySourceGuide', e);
+                      const ta = document.createElement('textarea');
+                      ta.value = channelGuideline.sourceDiscoveryGuide!;
+                      document.body.appendChild(ta); ta.select();
+                      document.execCommand('copy'); document.body.removeChild(ta);
+                      showToast('소재 발굴 가이드가 복사되었습니다.');
+                    }
+                  }}
+                  className="p-1.5 text-gray-500 hover:text-emerald-400 transition-colors rounded-lg hover:bg-emerald-900/20"
+                  title="가이드 복사"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                </button>
+              )}
+              <button
+                onClick={handleGenerateSourceGuide}
+                disabled={isGeneratingSourceGuide}
+                className="px-4 py-1.5 text-sm font-semibold rounded-lg border transition-all flex items-center gap-1.5 bg-emerald-600/20 text-emerald-400 border-emerald-500/30 hover:bg-emerald-600/30 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isGeneratingSourceGuide ? (
+                  <>
+                    <Spin />
+                    생성 중...
+                    {sourceGuideElapsed > 0 && <span className="text-xs text-gray-500 tabular-nums">{formatElapsed(sourceGuideElapsed)}</span>}
+                  </>
+                ) : channelGuideline.sourceDiscoveryGuide ? '가이드 재생성' : '소재 발굴 가이드 생성'}
+              </button>
+            </div>
+          </div>
+          <p className="text-sm text-gray-500 mb-3">
+            분석된 채널의 주제/스타일을 기반으로, 어디서 어떻게 소재를 찾을 수 있는지 AI가 맞춤 전략을 제시합니다.
+          </p>
+          {channelGuideline.sourceDiscoveryGuide ? (
+            <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-700/50 max-h-[600px] overflow-y-auto custom-scrollbar">
+              <p className="text-sm text-gray-300 whitespace-pre-wrap leading-relaxed">{channelGuideline.sourceDiscoveryGuide}</p>
+            </div>
+          ) : (
+            <div className="bg-gray-900/30 rounded-lg p-8 border border-dashed border-gray-700/50 flex flex-col items-center justify-center text-center">
+              <div className="w-12 h-12 rounded-full bg-emerald-900/30 flex items-center justify-center mb-3">
+                <svg className="w-6 h-6 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+              </div>
+              <p className="text-sm text-gray-500">위 버튼을 눌러 이 채널에 맞는 소재 발굴 전략을 생성하세요.</p>
+              <p className="text-xs text-gray-600 mt-1">소재 찾는 플랫폼, 검색 전략, 트렌드 모니터링, 대본 발전 방법까지 안내합니다.</p>
+            </div>
+          )}
         </div>
       )}
 
