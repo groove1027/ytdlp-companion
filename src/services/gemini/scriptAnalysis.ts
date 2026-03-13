@@ -1165,6 +1165,9 @@ export const parseScriptToScenes = async (
                     if (isRetryable && retry < MAX_CHUNK_RETRIES - 1) {
                         continue; // 지수 백오프는 루프 상단에서 처리
                     }
+                    if (!isRetryable) {
+                        break; // [FIX #180] 잔액 부족 등 비재시도 에러 → 즉시 중단하고 폴백 시도
+                    }
                 }
             }
 
@@ -1200,10 +1203,14 @@ export const parseScriptToScenes = async (
             // 최종 실패 처리
             if (chunkScenes.length === 0) {
                 const msg = lastChunkError?.message || 'Unknown error';
+                const isBalanceError = msg.includes('잔액 부족') || msg.includes('insufficient') || msg.includes('QUOTA_EXHAUSTED');
                 const isNetworkError = msg.includes('Failed to fetch') || msg.includes('Network Error') || msg.includes('fetch');
                 const isTimeoutError = msg.includes('524') || msg.includes('timeout') || msg.includes('타임아웃');
                 const isRateLimited = msg.includes('요청 제한') || msg.includes('429');
-                if (isRateLimited) {
+                // [FIX #180] 잔액 부족 에러를 최우선 감지 — 명확한 안내
+                if (isBalanceError) {
+                    throw new Error(`AI 크레딧이 부족합니다. Evolink 크레딧을 충전한 후 다시 시도해주세요.`);
+                } else if (isRateLimited) {
                     throw new Error(`청크 ${ci + 1} 파싱 실패 (요청 제한): 서버가 바쁩니다. 1~2분 후 다시 시도해주세요.`);
                 } else if (isNetworkError) {
                     throw new Error(`청크 ${ci + 1} 파싱 실패 (네트워크 오류): 인터넷 연결을 확인해주세요. ${MAX_CHUNK_RETRIES}회 + 폴백까지 시도했으나 실패했습니다.`);
@@ -1261,9 +1268,13 @@ export const parseScriptToScenes = async (
         }
         if (lastShortError) {
             const msg = lastShortError.message || '';
+            const isBalanceError = msg.includes('잔액 부족') || msg.includes('insufficient') || msg.includes('QUOTA_EXHAUSTED');
             const isNetworkError = msg.includes('Failed to fetch') || msg.includes('Network Error') || msg.includes('fetch');
             const isTimeoutError = msg.includes('524') || msg.includes('timeout') || msg.includes('타임아웃');
-            if (isNetworkError) {
+            // [FIX #180] 잔액 부족 에러를 최우선 감지
+            if (isBalanceError) {
+                throw new Error(`AI 크레딧이 부족합니다. Evolink 크레딧을 충전한 후 다시 시도해주세요.`);
+            } else if (isNetworkError) {
                 throw new Error(`대본 분석 실패 (네트워크 오류): 인터넷 연결을 확인해주세요. ${MAX_SHORT_RETRIES}회 재시도했으나 서버에 접속할 수 없습니다.`);
             } else if (isTimeoutError) {
                 throw new Error(`대본 분석 실패 (시간 초과): 서버가 응답하지 않습니다. 잠시 후 다시 시도해주세요.`);
