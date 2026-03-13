@@ -191,7 +191,8 @@ export interface Scene {
   isUpscaling?: boolean;
   isUpscaled?: boolean;
   isNativeHQ?: boolean;
-  isInfographic?: boolean; 
+  imageUpdatedAfterVideo?: boolean; // 이미지가 영상 이후에 재생성됨 → 카드에서 이미지 우선 표시
+  isInfographic?: boolean;
   isLoopMode?: boolean; 
   
   progress?: number; 

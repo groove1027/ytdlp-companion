@@ -277,7 +277,7 @@ export const useVideoBatch = (
             // Build prompt for Grok
             const audioSuffix = isSafeMode ? " [No Sound]" : " [Sound Effects Only] [No Music]";
             const enhancedPrompt = `${rawPrompt}${audioSuffix}`.trim();
-            const effectiveDuration = overrideDuration || freshScene.grokDuration || '10';
+            const effectiveDuration = overrideDuration || freshScene.grokDuration || '15';
             const effectiveSpeech = isSafeMode ? false : (overrideSpeech !== undefined ? overrideSpeech : (freshScene.grokSpeechMode || false));
 
             // [FIX] Build cultural context string from globalContext + per-scene fields
@@ -364,6 +364,7 @@ export const useVideoBatch = (
 
             safeSetScenes(prev => prev.map(s => s.id === sceneId ? {
                 ...s, videoUrl, isGeneratingVideo: false, isUpscaling: false, isUpscaled: false, isNativeHQ, generationTaskId: taskId, videoModelUsed: effectiveModel, generationStatus: undefined, progress: 100,
+                imageUpdatedAfterVideo: false,
                 ...(generatedSfx ? { generatedSfx } : {}),
                 ...(generatedDialogue ? { generatedDialogue } : {}),
             } : s));
@@ -461,7 +462,7 @@ export const useVideoBatch = (
             const upscaleId = await createPortableUpscaleTask(scene.generationTaskId);
             const newVideoUrl = await pollKieTask(upscaleId, signal);
             safeSetScenes(prev => prev.map(s => s.id === sceneId ? {
-                ...s, videoUrl: newVideoUrl, isUpscaling: false, isUpscaled: true
+                ...s, videoUrl: newVideoUrl, isUpscaling: false, isUpscaled: true, imageUpdatedAfterVideo: false,
             } : s));
             logger.success(`Upscale Only Success for Scene ${sceneId}`);
         } catch (e: any) {
@@ -576,7 +577,7 @@ export const useVideoBatch = (
             safeSetScenes(prev => prev.map(s => s.id === sceneId ? {
                 ...s, videoUrl, isGeneratingVideo: false, isNativeHQ: false,
                 generationTaskId: taskId, videoModelUsed: VideoModel.GROK,
-                generationStatus: undefined, progress: 100
+                generationStatus: undefined, progress: 100, imageUpdatedAfterVideo: false,
             } : s));
 
         } catch (e: any) {

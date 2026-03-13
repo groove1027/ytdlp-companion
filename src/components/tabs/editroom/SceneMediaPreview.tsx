@@ -94,8 +94,9 @@ interface SceneMediaPreviewProps {
 const SceneMediaPreview: React.FC<SceneMediaPreviewProps> = ({ scene, sceneIndex, overlays, effect }) => {
   const [showLarge, setShowLarge] = useState(false);
   const config = useProjectStore((s) => s.config);
-  const mediaUrl = scene.videoUrl || scene.imageUrl;
-  const isVideo = !!scene.videoUrl;
+  const showImageOverVideo = scene.imageUpdatedAfterVideo && !!scene.imageUrl;
+  const mediaUrl = showImageOverVideo ? scene.imageUrl : (scene.videoUrl || scene.imageUrl);
+  const isVideo = showImageOverVideo ? false : !!scene.videoUrl;
 
   const isPortrait = config?.aspectRatio === '9:16';
   const thumbClass = isPortrait ? 'w-14 h-[100px]' : 'w-28 h-20';

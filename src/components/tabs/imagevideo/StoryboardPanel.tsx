@@ -263,7 +263,7 @@ const SceneCard: React.FC<SceneCardProps> = ({ scene, index, onUpdatePrompt, onD
           <div className="w-px h-5 bg-gray-700 mx-0.5" />
           {/* Grok video actions */}
           <ActionButton label="Grok" color="pink"
-            tooltip={`Grok 영상 (${scene.grokDuration || '10'}s ${scene.grokSpeechMode ? '나레이션' : 'SFX'}) — ${fmtCost(getGrokCost((scene.grokDuration || '10') as '6'|'10'|'15'), useCostStore.getState().exchangeRate || PRICING.EXCHANGE_RATE)}`}
+            tooltip={`Grok 영상 (${scene.grokDuration || '15'}s ${scene.grokSpeechMode ? '나레이션' : 'SFX'}) — ${fmtCost(getGrokCost((scene.grokDuration || '15') as '6'|'10'|'15'), useCostStore.getState().exchangeRate || PRICING.EXCHANGE_RATE)}`}
             disabled={!scene.imageUrl || scene.isGeneratingVideo}
             icon={<svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>}
             onClick={() => onGrokVideo(scene.id)} />
@@ -300,7 +300,7 @@ const SceneCard: React.FC<SceneCardProps> = ({ scene, index, onUpdatePrompt, onD
 
       {/* Right: thumbnail / video */}
       <div className="flex-shrink-0 w-40">
-        {scene.videoUrl && !scene.isGeneratingVideo ? (
+        {scene.videoUrl && !scene.isGeneratingVideo && !scene.imageUpdatedAfterVideo ? (
           <div className="relative group">
             <video
               src={scene.videoUrl}
@@ -321,9 +321,14 @@ const SceneCard: React.FC<SceneCardProps> = ({ scene, index, onUpdatePrompt, onD
             <img
               src={scene.imageUrl}
               alt={`Scene ${index + 1}`}
-              className="w-full h-24 object-cover rounded-lg border border-gray-700 cursor-pointer"
+              className={`w-full h-24 object-cover rounded-lg border ${scene.imageUpdatedAfterVideo ? 'border-orange-500/50' : 'border-gray-700'} cursor-pointer`}
               onClick={() => scene.imageUrl && useUIStore.getState().openLightbox(scene.imageUrl)}
             />
+            {scene.imageUpdatedAfterVideo && scene.videoUrl && (
+              <div className="absolute top-1 right-1 bg-orange-500/80 text-white text-[9px] font-bold px-1 py-0.5 rounded flex items-center gap-0.5 pointer-events-none">
+                🖼 새 이미지
+              </div>
+            )}
             {scene.isGeneratingImage && (
               <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 backdrop-blur-sm rounded-lg">
                 <div className="w-5 h-5 border-2 border-gray-500 border-t-orange-400 rounded-full animate-spin" />
@@ -400,7 +405,7 @@ const GridSceneCard: React.FC<GridSceneCardProps> = ({ scene, index, onRegenerat
             </div>
             <span className="text-[10px] text-orange-300 mt-2 animate-pulse font-medium">이미지 생성 중...</span>
           </div>
-        ) : scene.videoUrl && !scene.isGeneratingVideo ? (
+        ) : scene.videoUrl && !scene.isGeneratingVideo && !scene.imageUpdatedAfterVideo ? (
           <video
             src={scene.videoUrl}
             poster={scene.imageUrl}
@@ -495,7 +500,7 @@ const GridSceneCard: React.FC<GridSceneCardProps> = ({ scene, index, onRegenerat
               icon={<svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>}
               onClick={(e) => { e.stopPropagation(); onRegenerate(scene.id); }} />
             <ActionButton label="Grok" color="pink" compact
-              tooltip={`Grok 영상 (${scene.grokDuration || '10'}s) — ${fmtCost(getGrokCost((scene.grokDuration || '10') as '6'|'10'|'15'), useCostStore.getState().exchangeRate || PRICING.EXCHANGE_RATE)}`}
+              tooltip={`Grok 영상 (${scene.grokDuration || '15'}s) — ${fmtCost(getGrokCost((scene.grokDuration || '15') as '6'|'10'|'15'), useCostStore.getState().exchangeRate || PRICING.EXCHANGE_RATE)}`}
               disabled={!scene.imageUrl || scene.isGeneratingVideo}
               icon={<svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>}
               onClick={(e) => { e.stopPropagation(); onGrokVideo(scene.id); }} />
@@ -737,7 +742,7 @@ const SceneDetailModal: React.FC<SceneDetailModalProps> = ({
                 {scene.isGeneratingVideo ? (
                   <><span className="w-4 h-4 border-2 border-pink-400/30 border-t-pink-400 rounded-full animate-spin" /> 생성 중 {elapsedVideo > 0 && <span className="tabular-nums text-xs text-pink-400/70">{formatElapsed(elapsedVideo)}</span>}</>
                 ) : (
-                  <><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg> Grok 영상 ({scene.grokDuration || '10'}s {scene.grokSpeechMode ? '나레이션' : 'SFX'}) <span className="text-pink-400/60 text-xs ml-1">{fmtCost(getGrokCost((scene.grokDuration || '10') as '6'|'10'|'15'), useCostStore.getState().exchangeRate || PRICING.EXCHANGE_RATE)}</span></>
+                  <><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg> Grok 영상 ({scene.grokDuration || '15'}s {scene.grokSpeechMode ? '나레이션' : 'SFX'}) <span className="text-pink-400/60 text-xs ml-1">{fmtCost(getGrokCost((scene.grokDuration || '15') as '6'|'10'|'15'), useCostStore.getState().exchangeRate || PRICING.EXCHANGE_RATE)}</span></>
                 )}
               </button>
               <button type="button" disabled={!scene.imageUrl || scene.isGeneratingVideo} onClick={() => onVeoVideo(scene.id)}
@@ -1071,7 +1076,8 @@ const StoryboardPanel: React.FC = () => {
         updateScene(sceneId, { videoUrl: url, isGeneratingImage: false, generationStatus: undefined });
         showToast('영상 업로드 완료');
       } else {
-        updateScene(sceneId, { imageUrl: url, isGeneratingImage: false, generationStatus: undefined });
+        const sceneForUpload = useProjectStore.getState().scenes.find(s => s.id === sceneId);
+        updateScene(sceneId, { imageUrl: url, isGeneratingImage: false, generationStatus: undefined, imageUpdatedAfterVideo: !!sceneForUpload?.videoUrl });
         showToast('이미지 업로드 완료');
       }
     } catch (err: unknown) {
@@ -1224,11 +1230,13 @@ const StoryboardPanel: React.FC = () => {
         return false;
       }
 
+      const sceneAfterGen = useProjectStore.getState().scenes.find(s => s.id === sceneId);
       updateScene(sceneId, {
         imageUrl,
         isGeneratingImage: false,
         generationStatus: undefined,
         isPromptFiltered: result.isFiltered || false,
+        imageUpdatedAfterVideo: !!sceneAfterGen?.videoUrl,
       });
 
       const cost = result.isFallback
@@ -1423,7 +1431,7 @@ const StoryboardPanel: React.FC = () => {
             }}
             className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs font-medium rounded-lg border border-gray-600 transition-colors flex items-center gap-1.5"
           >
-            {totalScenes >= 30 ? '📦 ZIP 저장' : '💾 HTML 저장'}
+            {totalScenes >= 30 ? '📦 스토리보드 저장' : '💾 스토리보드 저장'}
           </button>
           {/* Download dropdown */}
           <div className="relative" ref={downloadDropdownRef}>
