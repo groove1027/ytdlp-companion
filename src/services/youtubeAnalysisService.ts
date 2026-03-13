@@ -1707,7 +1707,7 @@ const analyzeDeepVideoStyle = async (scripts: ChannelScript[]): Promise<{ editGu
             contents: [{
                 role: 'user',
                 parts: [
-                    { fileData: { fileUri: youtubeUrl, mimeType: 'video/*' } },
+                    { fileData: { fileUri: youtubeUrl, mimeType: 'video/mp4' } },
                     { text: `이 YouTube 영상("${script.title}")의 프로덕션 스타일을 종합 분석하세요:
 
 [편집 스타일]

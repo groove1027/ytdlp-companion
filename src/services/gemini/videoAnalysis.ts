@@ -1,7 +1,7 @@
 
 import { Scene, AspectRatio, ImageModel, RemakeStyleAnalysis } from '../../types';
 import { getKieKey, monitoredFetch } from '../apiService';
-import { getEvolinkKey } from '../evolinkService';
+import { getEvolinkKey, fetchWithRateLimitRetry } from '../evolinkService';
 import { SAFETY_SETTINGS_BLOCK_NONE, requestGeminiProxy, requestKieChatFallback, extractTextFromResponse } from './geminiProxy';
 import { uploadMediaToHosting } from '../uploadService';
 import { generateKieImage, generateEvolinkImageWrapped } from '../VideoGenService';
@@ -78,6 +78,7 @@ Analyze the video now. Return ONLY the JSON array.`;
     // [FIX] Evolink v1beta 우선, Kie chat/completions 폴백 (Kie는 v1beta 미지원)
     const requestBody = {
         contents: [{
+            role: 'user' as const,
             parts: [
                 {
                     fileData: {
@@ -99,7 +100,7 @@ Analyze the video now. Return ONLY the JSON array.`;
     let data: any;
     if (evolinkKey) {
         const url = `https://api.evolink.ai/v1beta/models/gemini-3.1-pro-preview:generateContent`;
-        const response = await monitoredFetch(url, {
+        const response = await fetchWithRateLimitRetry(url, {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${evolinkKey}`,
@@ -525,6 +526,7 @@ export const analyzeFrameStyle = async (
             // [FIX] fileData는 convertGoogleToOpenAI에서 image_url 포맷으로 변환됨 (Kie 호환)
             const payload = {
                 contents: [{
+                    role: 'user' as const,
                     parts: [
                         { fileData: { fileUri: frameDataUrl, mimeType: 'image/jpeg' } },
                         { text: `Analyze the visual style of this image. Return JSON with: colorPalette (dominant colors), renderingTechnique (e.g. cel-shading, photorealistic, watercolor), lightingDescription, textureDescription, artMedium (e.g. digital painting, 3D render, photography), overallDescription (one sentence summarizing the complete visual style).` }
@@ -555,6 +557,7 @@ export const analyzeFrameStyle = async (
 
         const payload = {
             contents: [{
+                role: 'user' as const,
                 parts: [
                     {
                         inlineData: {
@@ -634,6 +637,7 @@ Return ONLY numbered enrichments, one per line:
         // [FIX] Evolink v1beta 우선, Kie chat/completions 폴백 (Kie는 v1beta 미지원)
         const requestBody = {
             contents: [{
+                role: 'user' as const,
                 parts: [
                     { fileData: { mimeType: "video/mp4", fileUri: youtubeUrl } },
                     { text: prompt }
@@ -651,7 +655,7 @@ Return ONLY numbered enrichments, one per line:
         let data: any;
         if (evolinkKey) {
             const url = `https://api.evolink.ai/v1beta/models/gemini-3.1-pro-preview:generateContent`;
-            const response = await monitoredFetch(url, {
+            const response = await fetchWithRateLimitRetry(url, {
                 method: 'POST',
                 headers: { 'Authorization': `Bearer ${evolinkKey}`, 'Content-Type': 'application/json' },
                 body: JSON.stringify(requestBody)
@@ -727,6 +731,7 @@ export const generateYouTubeReferenceFrames = async (
                 const url = `https://api.evolink.ai/v1beta/models/gemini-3.1-pro-preview:generateContent`;
                 const requestBody = {
                     contents: [{
+                        role: 'user' as const,
                         parts: [
                             { fileData: { mimeType: "video/mp4", fileUri: youtubeUrl } },
                             { text: framePrompt }
@@ -739,7 +744,7 @@ export const generateYouTubeReferenceFrames = async (
                     safetySettings: SAFETY_SETTINGS_BLOCK_NONE
                 };
 
-                const response = await monitoredFetch(url, {
+                const response = await fetchWithRateLimitRetry(url, {
                     method: 'POST',
                     headers: { 'Authorization': `Bearer ${evolinkKey}`, 'Content-Type': 'application/json' },
                     body: JSON.stringify(requestBody)
@@ -915,6 +920,7 @@ export const batchTranslateToKorean = async (
 
     const payload = {
         contents: [{
+            role: 'user' as const,
             parts: [{ text: `You are a professional Korean localizer. Translate each numbered line to natural, broadcast-quality Korean.
 
 RULES:

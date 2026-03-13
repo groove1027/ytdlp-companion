@@ -114,7 +114,7 @@ function handleEvolinkError(status: number, errorDetail: string): never {
  * @param baseDelayMs 첫 재시도 대기 시간 (기본 2000ms, 이후 2배씩 증가)
  * @param timeoutMs monitoredFetch 타임아웃 (optional)
  */
-async function fetchWithRateLimitRetry(
+export async function fetchWithRateLimitRetry(
     url: string,
     init: RequestInit,
     maxRetries: number = 3,
@@ -257,6 +257,7 @@ export const evolinkChatStream = async (
         maxTokens = 4096,
         responseFormat,
         timeoutMs,
+        signal,
     } = options;
 
     const body: Record<string, unknown> = {
@@ -289,6 +290,7 @@ export const evolinkChatStream = async (
             'Authorization': `Bearer ${apiKey}`,
         },
         body: JSON.stringify(body),
+        signal,
     }, 3, 3000, timeoutMs);
 
     if (!response.ok) {
@@ -383,7 +385,8 @@ export const mapModelToEvolinkNative = (model: string): string => {
 /**
  * Evolink Google Native v1beta 포맷으로 직접 요청
  * requestGeminiNative()와 동일한 Google Payload 포맷 사용
- * thinkingConfig, responseMimeType, safetySettings 네이티브 지원
+ * 기술 문서 기준: contents + generationConfig(temperature, maxOutputTokens, topP, topK)만 지원
+ * systemInstruction 미지원 → user 메시지에 합침 처리
  */
 export const requestEvolinkNative = async (
     model: string,
@@ -479,9 +482,10 @@ export const evolinkNativeStream = async (
 
     const { temperature = 0.7, maxOutputTokens = 16000, enableWebSearch = false, signal, onFinish } = options;
 
+    // [FIX] Evolink v1beta는 systemInstruction 미지원 (400: "valid role: user, model")
+    // → systemPrompt를 user 메시지에 합침 (requestEvolinkNative와 동일 처리)
     const payload: Record<string, unknown> = {
-        contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
-        systemInstruction: { parts: [{ text: systemPrompt }] },
+        contents: [{ role: 'user', parts: [{ text: systemPrompt + '\n\n' + userPrompt }] }],
         generationConfig: { temperature, maxOutputTokens },
         safetySettings: [
             { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
@@ -622,15 +626,16 @@ export const evolinkVideoAnalysisStream = async (
         fileData: { mimeType: mimeTypes[i] || mimeTypes[0], fileUri: uri },
     }));
 
+    // [FIX] Evolink v1beta는 systemInstruction 미지원 (400: "valid role: user, model")
+    // → systemPrompt를 user 메시지에 합침 (requestEvolinkNative와 동일 처리)
     const payload = {
         contents: [{
             role: 'user',
             parts: [
                 ...fileParts,
-                { text: userPrompt },
+                { text: systemPrompt + '\n\n' + userPrompt },
             ],
         }],
-        systemInstruction: { parts: [{ text: systemPrompt }] },
         generationConfig: { temperature, maxOutputTokens },
         safetySettings: [
             { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
@@ -872,9 +877,9 @@ export const createEvolinkImageTask = async (
         body.image_urls = imageUrls;
     }
 
-    // [OFFICIAL DOC] Evolink web_search: 웹 검색으로 실존 인물/장소 정확도 향상
+    // [FIX] Evolink 기술 문서: web_search는 model_params 안에 위치해야 함
     if (enableWebSearch) {
-        body.web_search = true;
+        body.model_params = { web_search: true };
     }
 
     logger.info('[Evolink] Nanobanana 2 이미지 태스크 생성', { aspectRatio, quality, hasRefImages: !!imageUrls });

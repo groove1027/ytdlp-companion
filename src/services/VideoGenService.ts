@@ -197,7 +197,7 @@ export async function generateKieImage(
             image_input: inputImages.length > 0 ? inputImages : undefined,
             aspect_ratio: ratioString,
             resolution: "2K",
-            output_format: "jpeg",
+            output_format: "jpg",
         };
         if (imageStrength !== undefined && inputImages.length > 0) {
             inputPayload.prompt_strength = imageStrength;
@@ -707,9 +707,9 @@ export async function createPortableGrokTask(
     // 2. finalPrompt 구성 시 QUALITY_TAGS + STYLE_LOCK을 함께 결합
     const finalPrompt = `${STYLE_LOCK_TAGS} ${audioPrompt} ${basePrompt}${isLoop ? " [Seamless Loop]" : ""}${cameraTag}${movementTag}${protectionPrompt}${QUALITY_TAGS}`.trim().replace(/\s+/g, " ");
 
+    // [FIX] index는 task_id와 함께 사용하는 파라미터 — image_urls 사용 시 불필요 (기술 문서)
     const input = {
         image_urls: [publicImageUrl],
-        index: 0,
         prompt: finalPrompt,
         mode: "normal",
         duration: duration.toString(),

@@ -1,8 +1,8 @@
 /**
  * ElevenLabs Sound Effects V2 서비스 (Kie API 경유)
  *
- * 모델: elevenlabs/sound-effects
- * 텍스트 프롬프트 → 최대 30초 SFX 생성 (48kHz, 로열티프리)
+ * 모델: elevenlabs/sound-effect-v2
+ * 텍스트 프롬프트 → 최대 22초 SFX 생성 (로열티프리)
  * API: POST https://api.kie.ai/api/v1/jobs/createTask → GET .../recordInfo?taskId=
  * 인증: Authorization: Bearer {KIE_API_KEY}
  */
@@ -24,7 +24,7 @@ export async function createSfxTask(
 
   const input: Record<string, unknown> = { text: prompt };
   if (durationSeconds && durationSeconds > 0) {
-    input.duration_seconds = Math.min(durationSeconds, 30);
+    input.duration_seconds = Math.min(durationSeconds, 22);
   }
 
   const response = await monitoredFetch(`${KIE_BASE_URL}/jobs/createTask`, {
@@ -34,7 +34,7 @@ export async function createSfxTask(
       'Authorization': `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: 'elevenlabs/sound-effects',
+      model: 'elevenlabs/sound-effect-v2',
       input,
     }),
   });

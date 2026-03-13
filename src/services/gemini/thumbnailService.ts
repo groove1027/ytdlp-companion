@@ -8,6 +8,7 @@ import { logger } from '../LoggerService';
 export const generateCharacterDialogue = async (script: string, visual: string) => {
     const payload = {
         contents: [{
+            role: 'user' as const,
             parts: [{
                 text: `Generate dialogue and SFX. Script: ${script}. Visual: ${visual}. Return JSON: { dialogue: string, sfx: string }`
             }]
@@ -30,6 +31,7 @@ export const generateCharacterDialogue = async (script: string, visual: string) 
 export const sanitizePromptWithGemini = async (prompt: string) => {
     const payload = {
         contents: [{
+            role: 'user' as const,
             parts: [{
                 text: `Sanitize this prompt. Remove NSFW. Return prompt. Prompt: ${prompt}`
             }]
@@ -85,6 +87,7 @@ export const editThumbnailTextStyled = async (
 export const generateCharacterVariations = async (concept: string, type: 'RANDOM' | 'CUSTOM', customStyle?: string) => {
     const payload = {
         contents: [{
+            role: 'user' as const,
             parts: [{
                 text: `Generate 4 distinct character variation prompts based on: ${concept}. Type: ${type}. Custom Style: ${customStyle}.
                 Return JSON array of strings.`
@@ -108,6 +111,7 @@ export const generateCharacterVariations = async (concept: string, type: 'RANDOM
 export const generateStylePreviewPrompts = async (script: string, style: string, atmosphere?: string) => {
     const payload = {
         contents: [{
+            role: 'user' as const,
             parts: [{
                 text: `Generate 2 image prompts (Intro, Highlight) for script: ${script.substring(0, 500)}. Style: ${style} ${atmosphere}.
                 Return JSON: { intro: string, highlight: string }`
@@ -150,6 +154,7 @@ export const generateThumbnailConcepts = async (script: string, isShort: boolean
 
     const payload = {
         contents: [{
+            role: 'user' as const,
             parts: [{
                 text: `You are a Viral YouTube Thumbnail Expert.
                 Analyze script context deeply. Generate 4 high-CTR concepts.

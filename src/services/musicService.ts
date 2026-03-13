@@ -845,8 +845,8 @@ export const pollLyricsResult = async (taskId: string, signal?: AbortSignal): Pr
         if (data.code === 422) continue;
         const status = data.data?.status;
         if (status === 'SUCCESS') {
-            // Kie Suno 공식 스펙: data.data.response.data[] → [{title, text}]
-            const lyricsData = data.data?.response?.lyricsData;
+            // [FIX] Kie Suno 공식 스펙: data.data.response.data[] → [{title, text}]
+            const lyricsData = data.data?.response?.data;
             const items = Array.isArray(lyricsData) ? lyricsData : [];
             const result = items.filter((i: { text?: string }) => i?.text).map((i: { title?: string; text: string }) => ({ title: i.title || '', text: i.text }));
             logger.endAsyncOp(opId, 'completed', `${result.length}개 가사 반환`);

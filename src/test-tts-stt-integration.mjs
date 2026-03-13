@@ -64,7 +64,6 @@ async function createTtsTask() {
         stability: 0.5,
         similarity_boost: 0.75,
         style: 0,
-        use_speaker_boost: true,
         speed: 1.0,
         timestamps: false,
         previous_text: '',
@@ -212,7 +211,7 @@ async function createSttTask(audioUrl) {
       input: {
         audio_url: audioUrl,
         diarize: false,
-        timestamps_granularity: 'word',
+        tag_audio_events: false,
       },
     }),
   });

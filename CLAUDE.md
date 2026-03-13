@@ -122,7 +122,25 @@ project-root/
 모든 API 키는 `services/apiService.ts`의 `getXxxKey()` 함수를 통해 접근.
 직접 `localStorage`에 접근하지 마라.
 
-> **외부 API 상세 기술 문서**: `.claude/skills/api-reference.md` 참조 (요청/응답 포맷, 에러 코드, 케이싱 규칙 등)
+> **외부 API 상세 기술 문서**: `.claude/skills/` 폴더에 서비스별 개별 문서 저장 (원본 무삭제·무축약):
+>
+> | 서비스 | 스킬 파일 |
+> |--------|----------|
+> | Evolink Gemini 3.1 Pro | `evolink-gemini-3.1-pro-full.md` |
+> | Evolink NanoBanana2 Task | `evolink-nanobanana2-task.md` |
+> | Evolink NanoBanana Pro Image | `evolink-nanobanana-pro-image.md` |
+> | Evolink Veo 3.1 Video | `evolink-veo31-video.md` |
+> | Laozhang NanoBanana Pro Image | `laozhang-nanobanana-pro-image.md` |
+> | KIE Grok Image-to-Video | `kie-grok-image-to-video.md` |
+> | KIE NanoBanana2 Task | `kie-nanobanana2-task.md` |
+> | KIE Gemini API | `kie-gemini-api.md` |
+> | KIE Suno API | `kie-suno-api.md` |
+> | KIE ElevenLabs (TTS/STT/SFX/Isolation) | `kie-elevenlabs-api.md` |
+> | Grok Imagine Video | `grok-imagine-video.md` |
+> | Suno Complete | `suno-api-complete.md` |
+> | Typecast API | `typecast-api.md` |
+> | Typecast Download | `typecast-download.md` |
+> | API 요약 (참고용) | `api-reference.md` |
 
 ---
 
@@ -148,7 +166,7 @@ project-root/
 | components/ 폴더 전체 | `.claude/skills/ui-component.md` | "UI", "컴포넌트", "화면", "버튼", components/* |
 | storageService.ts, IndexedDB | `.claude/skills/data-storage.md` | "저장", "IndexedDB", "프로젝트", services/storage* |
 | HTML 내보내기, ZIP | `.claude/skills/export-system.md` | "내보내기", "export", "HTML", "다운로드", "ZIP" |
-| 외부 API 요청/응답 포맷 | `.claude/skills/api-reference.md` | "API", "엔드포인트", "요청", "응답", "에러코드", fetch 수정 시 |
+| 외부 API 요청/응답 포맷 | `.claude/skills/{서비스별 개별 문서}` | "API", "엔드포인트", "요청", "응답", "에러코드", fetch 수정 시 — 해당 서비스 문서 개별 참조 |
 
 ---
 

@@ -56,7 +56,7 @@ export async function transcribeAudio(
       input: {
         audio_url: audioUrl,
         diarize: false,
-        timestamps_granularity: 'word',
+        tag_audio_events: false,
       },
     }),
     signal,

@@ -518,7 +518,7 @@ export const fetchCurrentExchangeRate = async () => {
 export const validateGeminiConnection = async () => {
     try {
         await requestGeminiProxy('gemini-3.1-pro-preview', {
-            contents: [{ parts: [{ text: "ping" }] }]
+            contents: [{ role: 'user', parts: [{ text: "ping" }] }]
         });
         return { success: true, message: "Gemini (Evolink/Proxy) 연결 성공!" };
     } catch (e: any) {

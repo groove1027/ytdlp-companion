@@ -65,20 +65,23 @@ const generateSingleChunk = async (
     text,
     voiceId = 'Sarah',
     stability = 0.5,
-    languageCode = 'auto',
+    languageCode = '',
   } = options;
+
+  // KIE API는 'auto'를 지원하지 않음 — 빈 문자열이 자동 감지
+  const resolvedLangCode = languageCode === 'auto' ? '' : languageCode;
 
   logger.info('[ElevenLabs] Dialogue V3 생성 요청 (Kie 경유)', {
     voiceId,
     textLength: text.length,
     stability,
-    languageCode,
+    languageCode: resolvedLangCode,
   });
 
   const input: Record<string, unknown> = {
     dialogue: [{ text, voice: voiceId }],
     stability,
-    language_code: languageCode,
+    ...(resolvedLangCode ? { language_code: resolvedLangCode } : {}),
   };
 
   const response = await monitoredFetch(`${KIE_BASE_URL}/jobs/createTask`, {

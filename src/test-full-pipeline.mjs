@@ -33,7 +33,7 @@ async function createTtsTask(text, voice = 'Sarah') {
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${KIE_KEY}` },
     body: JSON.stringify({
       model: 'elevenlabs/text-to-speech-multilingual-v2',
-      input: { text, voice, stability: 0.5, similarity_boost: 0.75, style: 0, use_speaker_boost: true, speed: 1.0, timestamps: false }
+      input: { text, voice, stability: 0.5, similarity_boost: 0.75, style: 0, speed: 1.0, timestamps: false }
     })
   });
   const d = await res.json();
@@ -122,7 +122,7 @@ async function transcribe(audioUrl) {
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${KIE_KEY}` },
     body: JSON.stringify({
       model: 'elevenlabs/speech-to-text',
-      input: { audio_url: audioUrl, diarize: false, timestamps_granularity: 'word' }
+      input: { audio_url: audioUrl, diarize: false, tag_audio_events: false }
     })
   });
   const d = await res.json();
