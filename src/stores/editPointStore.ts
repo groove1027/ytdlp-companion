@@ -362,6 +362,7 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
 
   refineTimecodes: async () => {
     const { edlEntries, sourceMapping, sourceVideos } = get();
+    const CONCURRENCY = 4; // 동시 Vision API 호출 수 (rate limit 고려)
 
     set({
       isProcessing: true,
@@ -373,45 +374,54 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
     // [FIX] 개별 항목 에러 처리 — 한 항목 실패해도 나머지 계속 진행
     let successCount = 0;
     let failCount = 0;
+    let completedCount = 0;
 
-    for (let i = 0; i < edlEntries.length; i++) {
-      const entry = edlEntries[i];
-      const videoId = sourceMapping[entry.sourceId];
-      const video = sourceVideos.find((v) => v.id === videoId);
+    // 병렬 배치 처리 (CONCURRENCY개씩 동시 실행)
+    for (let batchStart = 0; batchStart < edlEntries.length; batchStart += CONCURRENCY) {
+      const batch = edlEntries.slice(batchStart, batchStart + CONCURRENCY);
 
       set({
-        processingProgress: Math.round((i / edlEntries.length) * 100),
-        processingMessage: `${i + 1}/${edlEntries.length} 정제 중: ${entry.order}`,
+        processingProgress: Math.round((batchStart / edlEntries.length) * 100),
+        processingMessage: `${batchStart + 1}~${Math.min(batchStart + CONCURRENCY, edlEntries.length)}/${edlEntries.length} 정제 중 (${CONCURRENCY}개 병렬)`,
       });
 
-      if (!video) {
-        failCount++;
-        continue;
-      }
+      const results = await Promise.allSettled(
+        batch.map(async (entry) => {
+          const videoId = sourceMapping[entry.sourceId];
+          const video = sourceVideos.find((v) => v.id === videoId);
+          if (!video) throw new Error('NO_VIDEO');
 
-      try {
-        const result = await refineTimecodeWithVision(entry, video.file);
-        // [FIX #135] 정제 결과도 영상 길이 내로 클램핑
-        const dur = video.durationSec;
-        const clamp = (v: number) => dur ? Math.max(0, Math.min(v, dur)) : v;
+          const result = await refineTimecodeWithVision(entry, video.file);
+          return { entry, result, video };
+        })
+      );
 
-        set((state) => ({
-          edlEntries: state.edlEntries.map((e) =>
-            e.id === entry.id
-              ? {
-                  ...e,
-                  refinedTimecodeStart: clamp(result.refinedStart),
-                  refinedTimecodeEnd: clamp(result.refinedEnd),
-                  refinedConfidence: result.confidence,
-                  referenceFrameUrl: result.referenceFrameUrl,
-                }
-              : e
-          ),
-        }));
-        successCount++;
-      } catch (entryErr) {
-        failCount++;
-        console.error(`[EditPoint] 정제 실패 (${entry.order}):`, entryErr);
+      // 배치 결과 반영
+      for (const r of results) {
+        completedCount++;
+        if (r.status === 'fulfilled') {
+          const { entry, result, video } = r.value;
+          const dur = video.durationSec;
+          const clamp = (v: number) => dur ? Math.max(0, Math.min(v, dur)) : v;
+
+          set((state) => ({
+            edlEntries: state.edlEntries.map((e) =>
+              e.id === entry.id
+                ? {
+                    ...e,
+                    refinedTimecodeStart: clamp(result.refinedStart),
+                    refinedTimecodeEnd: clamp(result.refinedEnd),
+                    refinedConfidence: result.confidence,
+                    referenceFrameUrl: result.referenceFrameUrl,
+                  }
+                : e
+            ),
+          }));
+          successCount++;
+        } else {
+          failCount++;
+          console.error(`[EditPoint] 정제 실패:`, r.reason);
+        }
       }
     }
 

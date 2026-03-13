@@ -263,8 +263,8 @@ export async function parseEditTableWithAI(
     }
   }
 
-  // 대형 편집표: 줄 단위로 분할하여 청크별 처리
-  console.log(`[EditPoint] 대형 편집표 감지 (추정 ${totalEstTokens} 토큰). 청크 분할 처리...`);
+  // 대형 편집표: 줄 단위로 분할하여 청크별 병렬 처리
+  console.log(`[EditPoint] 대형 편집표 감지 (추정 ${totalEstTokens} 토큰). 청크 병렬 처리...`);
   const lines = splitEditTableLines(rawTable);
 
   // 헤더 행 감지 (첫 줄이 헤더일 가능성)
@@ -279,18 +279,38 @@ export async function parseEditTableWithAI(
 
   // 청크 크기: 행 수 기준 (한 청크에 최대 20행)
   const CHUNK_SIZE = 20;
-  const allEntries: Record<string, unknown>[] = [];
+  const CONCURRENCY = 3; // 동시 API 호출 수 (rate limit 고려)
 
+  // 청크 목록 생성
+  const chunks: { table: string; narration: string; index: number }[] = [];
   for (let i = 0; i < lines.length; i += CHUNK_SIZE) {
     const chunkLines = lines.slice(i, i + CHUNK_SIZE);
     const chunkTable = headerLine
       ? [headerLine, ...chunkLines].join('\n')
       : chunkLines.join('\n');
+    chunks.push({
+      table: chunkTable,
+      narration: i === 0 ? narration : '',
+      index: chunks.length,
+    });
+  }
 
-    // 청크 파싱 (내레이션은 첫 청크에만 전달 — 토큰 절약)
-    const chunkNarration = i === 0 ? narration : '';
-    const entries = await parseEditChunk(chunkTable, chunkNarration, true);
-    allEntries.push(...entries);
+  // 병렬 배치 처리 (CONCURRENCY개씩 동시 실행)
+  const chunkResults: Record<string, unknown>[][] = new Array(chunks.length);
+  for (let batchStart = 0; batchStart < chunks.length; batchStart += CONCURRENCY) {
+    const batch = chunks.slice(batchStart, batchStart + CONCURRENCY);
+    const results = await Promise.all(
+      batch.map((chunk) => parseEditChunk(chunk.table, chunk.narration, true))
+    );
+    results.forEach((entries, j) => {
+      chunkResults[batchStart + j] = entries;
+    });
+  }
+
+  // 순서 보장: 청크 인덱스 순으로 합치기
+  const allEntries: Record<string, unknown>[] = [];
+  for (const entries of chunkResults) {
+    if (entries) allEntries.push(...entries);
   }
 
   if (allEntries.length === 0) {

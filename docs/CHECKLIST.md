@@ -8,6 +8,9 @@
 
 ## 🟢 완료된 작업
 
+- [x] 편집점 매칭 AI 파싱/정제 병렬 처리 최적화 — parseEditTableWithAI() 대형 편집표 청크 순차→3개 동시 병렬, refineTimecodes() 타임코드 정제 순차→4개 동시 병렬(Promise.allSettled), 체감 3-5배 속도 향상 (editPointService.ts, editPointStore.ts, 2026-03-13)
+- [x] 편집실 레이어 클릭 선택 + 인스펙터 패널 — 타임라인 7개 트랙 전체 클릭 선택, 선택 하이라이트(ring-2 ring-amber-400), 우측 패널 GlobalPanel↔LayerInspectorPanel 조건부 전환, 5종 서브인스펙터(Video/Subtitle/Transition/Audio/BGM), 우클릭 컨텍스트 메뉴(뮤트/솔로/초기화/삭제), Escape 선택해제 + Delete 삭제/초기화 키보드 단축키 (types.ts, editRoomStore.ts, VisualTimeline.tsx, EditRoomTab.tsx, LayerInspectorPanel.tsx, 5 inspectors, TimelineContextMenu.tsx, 2026-03-13)
+- [x] 영상 분석실 5병렬 AI 분석 + 프로그레시브 렌더링 — 10버전 프리셋(tikitaka/snack/condensed/alltts)을 5배치×2버전으로 병렬 분할, 배치 완료 즉시 버전 표시, 예상 소요시간 배너 대폭 강화(눈에 확 띄는 디자인+롱폼 경고+배치 진행률 인디케이터), ESTIMATED_TOTAL_SEC 병렬시 50초로 단축 (VideoAnalysisRoom.tsx, AnalysisLoadingPanel.tsx, 2026-03-13)
 - [x] #179 편집실 믹서 버튼 클릭 시 에러 수정 — AudioMixerModal에서 origAudio 트랙의 VU 미터 ref 누락으로 `Cannot read properties of undefined (reading 'meter')` 크래시 발생, origMeterRef/origPeakRef 추가 + meterState에 origSmooth/origPeak/origPeakAge 추가 + meterRefs에 origAudio 매핑 추가 + 마스터 레벨에 origPct 반영 (AudioMixerModal.tsx, 2026-03-13)
 - [x] #144 채널 스타일 리메이크 기능 — 채널 DNA 분석 결과 화면에서 YouTube 링크/파일/텍스트 입력 → 3가지 버전(원본충실/구조재편집/창작확장) 대본 동시 생성, 버전 선택 시 대본작성 탭으로 자동 이동, 채널 말투·구조·감정전개 정확 모방 (types.ts, ChannelRemakePanel.tsx, ChannelAnalysisRoom.tsx, 2026-03-13)
 - [x] TikTok 캡션/댓글 자동 수집 기능 — 소셜 콘텐츠 분석실에서 URL 붙여넣기 한 번으로 영상+캡션+댓글 동시 자동 수집, 서버에 /api/social/metadata + /api/social/download 엔드포인트 추가, 비YouTube URL 소셜 전용 라우팅, 캡션/댓글 자동채움 + "자동 수집됨" 뱃지 + 메타데이터 정보 바, 기타 SNS에서도 URL 입력 지원 (server/index.js, ytdlpApiService.ts, videoDownloadService.ts, SocialAnalysisRoom.tsx, 2026-03-13)
