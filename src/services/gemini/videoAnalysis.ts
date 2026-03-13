@@ -114,8 +114,8 @@ Analyze the video now. Return ONLY the JSON array.`;
         }
         data = await response.json();
     } else {
-        // [FIX] Kie는 v1beta 없음 → gemini-3-pro chat/completions 폴백
-        data = await requestKieChatFallback('gemini-3-pro', requestBody);
+        // [FIX] Kie는 v1beta 없음 → gemini-3.1-pro chat/completions 폴백
+        data = await requestKieChatFallback('gemini-3.1-pro', requestBody);
     }
     // [FIX] Thinking model may return multiple parts (parts[0]=thinking, parts[1]=content).
     // Use extractTextFromResponse to get the last non-thinking text part.
@@ -666,8 +666,8 @@ Return ONLY numbered enrichments, one per line:
             }
             data = await response.json();
         } else {
-            // [FIX] Kie는 v1beta 없음 → gemini-3-pro chat/completions 폴백
-            data = await requestKieChatFallback('gemini-3-pro', requestBody);
+            // [FIX] Kie는 v1beta 없음 → gemini-3.1-pro chat/completions 폴백
+            data = await requestKieChatFallback('gemini-3.1-pro', requestBody);
         }
         // [FIX] Thinking model may return multiple parts (parts[0]=thinking, parts[1]=content).
         // Use extractTextFromResponse to get the last non-thinking text part.

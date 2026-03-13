@@ -190,14 +190,14 @@ export async function generateKieImage(
     let inputPayload: Record<string, unknown>;
 
     if (model === "nano-banana-pro") {
-        // [LEGACY] NanoBananaPro — 기존 호환성 유지
+        // [LEGACY] NanoBananaPro — Kie 공식 문서: output_format "png"|"jpeg" (NOT "jpg")
         targetModel = "nano-banana-pro";
         inputPayload = {
             prompt,
             image_input: inputImages.length > 0 ? inputImages : undefined,
             aspect_ratio: ratioString,
             resolution: "2K",
-            output_format: "jpg",
+            output_format: "jpeg",
         };
         if (imageStrength !== undefined && inputImages.length > 0) {
             inputPayload.prompt_strength = imageStrength;
@@ -309,8 +309,11 @@ export async function pollKieTask(taskId: string, signal?: AbortSignal, onProgre
             if (response.status === 404) throw new Error(`Kie 태스크를 찾을 수 없습니다 (${taskId}).`);
             if (response.status === 422) throw new Error("Kie 태스크 조회 실패 (recordInfo is null).");
             if (response.status === 429) {
-                logger.trackRetry('Kie 폴링 (429)', i + 1, maxAttempts, 'Rate limited');
-                await new Promise(r => setTimeout(r, 5000));
+                // [FIX #245] Retry-After 헤더 우선, 없으면 지수 백오프 (Kie docs: "exponential backoff")
+                const retryAfter = response.headers.get('Retry-After');
+                const waitMs = retryAfter ? Math.min(parseInt(retryAfter, 10) * 1000 || 5000, 60000) : Math.min(2000 * Math.pow(2, Math.min(i, 5)), 30000);
+                logger.trackRetry('Kie 폴링 (429)', i + 1, maxAttempts, `Rate limited, ${Math.round(waitMs)}ms 대기`);
+                await new Promise(r => setTimeout(r, waitMs));
             }
             continue;
         }

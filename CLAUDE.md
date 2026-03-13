@@ -126,14 +126,16 @@ project-root/
 >
 > | 서비스 | 스킬 파일 |
 > |--------|----------|
-> | Evolink Gemini 3.1 Pro | `evolink-gemini-3.1-pro-full.md` |
+> | **Evolink Gemini 3.1 Pro & Flash (최우선 참조)** | **`evolink-gemini-3.1-pro-flash.md`** |
+> | Evolink Gemini 3.1 Pro (구버전) | `evolink-gemini-3.1-pro-full.md` |
 > | Evolink NanoBanana2 Task | `evolink-nanobanana2-task.md` |
 > | Evolink NanoBanana Pro Image | `evolink-nanobanana-pro-image.md` |
 > | Evolink Veo 3.1 Video | `evolink-veo31-video.md` |
 > | Laozhang NanoBanana Pro Image | `laozhang-nanobanana-pro-image.md` |
 > | KIE Grok Image-to-Video | `kie-grok-image-to-video.md` |
 > | KIE NanoBanana2 Task | `kie-nanobanana2-task.md` |
-> | KIE Gemini API | `kie-gemini-api.md` |
+> | KIE Gemini API (3.0 Pro/Flash) | `kie-gemini-api.md` |
+> | KIE Gemini 3.1 Pro | `kie-gemini-3.1-pro.md` |
 > | KIE Suno API | `kie-suno-api.md` |
 > | KIE ElevenLabs (TTS/STT/SFX/Isolation) | `kie-elevenlabs-api.md` |
 > | Grok Imagine Video | `grok-imagine-video.md` |
@@ -161,6 +163,7 @@ project-root/
 
 | 작업 대상 | 활성화할 스킬 | 트리거 키워드/파일 |
 |-----------|--------------|-------------------|
+| **Evolink Gemini API (v1, v1beta)** | **`.claude/skills/evolink-gemini-3.1-pro-flash.md`** | **Evolink Gemini 관련 모든 작업 — 절대적 최우선 참조** |
 | geminiService.ts, 프롬프트 | `.claude/skills/ai-service.md` | "프롬프트", "AI", "분석", "Gemini", services/gemini* |
 | VideoGenService.ts, uploadService.ts | `.claude/skills/media-gen.md` | "영상", "비디오", "이미지", "업로드", services/Video*, services/upload* |
 | components/ 폴더 전체 | `.claude/skills/ui-component.md` | "UI", "컴포넌트", "화면", "버튼", components/* |

@@ -8,14 +8,26 @@ import { useCostStore } from '../../stores/costStore';
 // [FIX #245] Evolink 429 Rate Limit 쿨다운 — Pro 모델 429 시 Flash Lite 우선, Kie는 최후 비상
 // 429는 모델별 rate limit일 수 있으므로 Pro만 쿨다운, Flash Lite는 별도 시도
 let _evolinkProRateLimitedUntil = 0;
-const EVOLINK_RATE_LIMIT_COOLDOWN_MS = 60_000; // 60초 쿨다운 (Evolink 공식 문서: "retry after 60 seconds")
+const EVOLINK_RATE_LIMIT_COOLDOWN_MS = 60_000; // 기본 60초 쿨다운 (Evolink 공식 문서: "retry after 60 seconds")
 
-const markEvolinkProRateLimited = () => {
-    _evolinkProRateLimitedUntil = Date.now() + EVOLINK_RATE_LIMIT_COOLDOWN_MS;
-    logger.warn(`[Evolink] Pro 429 Rate Limit 감지 — ${EVOLINK_RATE_LIMIT_COOLDOWN_MS / 1000}초간 Pro 스킵, Flash Lite 우선`);
+const markEvolinkProRateLimited = (retryAfterMs?: number) => {
+    // Retry-After 헤더 값이 있으면 그 시간 사용, 없으면 기본 60초
+    const cooldownMs = retryAfterMs && retryAfterMs > 0
+        ? Math.min(retryAfterMs, 120_000) // 최대 120초 캡
+        : EVOLINK_RATE_LIMIT_COOLDOWN_MS;
+    _evolinkProRateLimitedUntil = Date.now() + cooldownMs;
+    logger.warn(`[Evolink] Pro 429 Rate Limit 감지 — ${Math.round(cooldownMs / 1000)}초간 Pro 스킵, Flash Lite 우선`);
 };
 
 const isEvolinkProRateLimited = (): boolean => Date.now() < _evolinkProRateLimitedUntil;
+
+// [FIX #245] 429 응답에서 Retry-After 헤더 추출 (초 → ms 변환)
+const extractRetryAfterMs = (response: Response): number | undefined => {
+    const header = response.headers.get('Retry-After') || response.headers.get('retry-after');
+    if (!header) return undefined;
+    const sec = parseInt(header, 10);
+    return (!isNaN(sec) && sec > 0) ? sec * 1000 : undefined;
+};
 
 // Local Type Definition to replace Google SDK Type enum
 const SchemaType = {
@@ -206,7 +218,7 @@ interface GeminiProxyOptions { skipNative?: boolean; }
 // [FIX #244] Smart Routing: 페이로드 분석 → 최적 경로 자동 선택
 // - Google Search/fileData 포함 → v1beta 우선 (특수 기능 필요)
 // - 텍스트 전용 → v1 우선 (안정적, 동일 Gemini 3.1 Pro, v1beta 불안정 회피)
-// - Kie는 항상 최종 폴백 (3.0 Pro 다운그레이드)
+// - Kie는 항상 최종 폴백 (Gemini 3.1 Pro — 동급 품질)
 export const requestGeminiProxy = async (model: string, googlePayload: any, _retryCount: number = 0, timeoutMs?: number, options?: GeminiProxyOptions): Promise<any> => {
     let lastError: any = null;
     const shouldSkipNative = options?.skipNative || _retryCount > 0;
@@ -296,8 +308,8 @@ export const requestGeminiProxy = async (model: string, googlePayload: any, _ret
             return { candidates: [{ content: { parts } }] };
         }
 
-        // [FIX #245] Pro 429 → Pro 쿨다운 마킹 (Flash Lite는 별도 모델이라 영향 없음)
-        if (evolinkV1Response.status === 429) markEvolinkProRateLimited();
+        // [FIX #245] Pro 429 → Retry-After 헤더 기반 쿨다운 마킹
+        if (evolinkV1Response.status === 429) markEvolinkProRateLimited(extractRetryAfterMs(evolinkV1Response));
         const errText = await evolinkV1Response.text();
         throw new Error(`Evolink v1 Chat Error (${evolinkV1Response.status}): ${errText}`);
     };
@@ -368,14 +380,14 @@ export const requestGeminiProxy = async (model: string, googlePayload: any, _ret
     };
 
     // --- [FIX #244/#245] Smart Routing ---
-    // 텍스트 전용: v1(Pro) → v1beta(Pro) → Flash Lite → Kie (최후 비상)
-    // Google Search/fileData: v1beta(Pro) → v1(Pro) → Flash Lite → Kie (최후 비상)
-    // Pro 429 시 Flash Lite가 동급 품질로 즉시 처리 — Kie(3.0 다운그레이드) 방지
+    // 텍스트 전용: v1(Pro) → v1beta(Pro) → Flash Lite → Kie 3.1 Pro
+    // Google Search/fileData: v1beta(Pro) → v1(Pro) → Flash Lite → Kie 3.1 Pro
+    // 전 구간 3.1급 품질 유지 — Kie도 3.1 Pro 지원 (docs.kie.ai 2026-03 확인)
     const priorities: Array<{ name: string; fn: () => Promise<any> }> = requiresBeta
         ? [{ name: 'v1beta(Pro)', fn: tryEvolinkV1Beta }, { name: 'v1(Pro)', fn: tryEvolinkV1Chat }, { name: 'FlashLite', fn: tryEvolinkFlashLite }]
         : [{ name: 'v1(Pro)', fn: tryEvolinkV1Chat }, { name: 'v1beta(Pro)', fn: tryEvolinkV1Beta }, { name: 'FlashLite', fn: tryEvolinkFlashLite }];
 
-    console.log(`[GeminiService] Smart Routing: ${requiresBeta ? 'v1beta(Pro)→v1(Pro)→FlashLite→Kie' : 'v1(Pro)→v1beta(Pro)→FlashLite→Kie'}`);
+    console.log(`[GeminiService] Smart Routing: ${requiresBeta ? 'v1beta(Pro)→v1(Pro)→FlashLite→Kie3.1' : 'v1(Pro)→v1beta(Pro)→FlashLite→Kie3.1'}`);
 
     for (const { name, fn } of priorities) {
         try {
@@ -390,7 +402,7 @@ export const requestGeminiProxy = async (model: string, googlePayload: any, _ret
         }
     }
 
-    // Kie (최종 폴백) - Gemini 3.0 Pro (3.1 대비 프롬프트 품질 저하 가능)
+    // Kie (최종 폴백) — Gemini 3.1 Pro (Kie docs.kie.ai 2026-03 확인: gemini-3.1-pro 지원)
     try {
         const kieKey = getKieKey();
         if (!kieKey) {
@@ -398,14 +410,14 @@ export const requestGeminiProxy = async (model: string, googlePayload: any, _ret
             throw new Error("Evolink and Kie API Keys are missing.");
         }
 
-        logger.warn(`[Gemini] Kie 최종 폴백 호출 (model: ${model}) — 3.0 Pro 다운그레이드`);
-        console.log("[GeminiService] Switching to Kie Fallback (3.0 Pro downgrade)...");
-
-        // [FIX #119] Kie는 gemini-3-pro / gemini-3-flash만 지원 (3.1 없음)
-        const isThinkingModel = model.includes('thinking');
+        // [FIX #245] Kie Gemini 3.1 Pro 지원 — 더 이상 3.0 다운그레이드 아님
+        // docs.kie.ai/market/gemini/gemini-3-1-pro 확인: api.kie.ai/gemini-3.1-pro/v1/chat/completions
         let kieModelSlug = 'gemini-3-flash';
-        if (model.includes('pro')) kieModelSlug = 'gemini-3-pro';
+        if (model.includes('pro')) kieModelSlug = 'gemini-3.1-pro';
         else if (model.includes('flash')) kieModelSlug = 'gemini-3-flash';
+
+        logger.warn(`[Gemini] Kie 폴백 호출 (model: ${kieModelSlug})`);
+        console.log(`[GeminiService] Switching to Kie Fallback (${kieModelSlug})...`);
 
         const url = `https://api.kie.ai/${kieModelSlug}/v1/chat/completions`;
         const openAIBody = convertGoogleToOpenAI(model, googlePayload);
@@ -414,6 +426,7 @@ export const requestGeminiProxy = async (model: string, googlePayload: any, _ret
         // [PERF] Kie 전용 파라미터 추가
         openAIBody.include_thoughts = false; // 앱에서 reasoning_content 미사용 — 불필요 토큰 절약
         // Thinking 모델 요청이면 reasoning_effort: "high" 강제 (Kie 기술 문서 준수)
+        const isThinkingModel = model.includes('thinking');
         openAIBody.reasoning_effort = isThinkingModel ? "high" : (googlePayload._reasoningEffort || "high");
 
         // [FIX] Kie API response_format 호환성 처리
@@ -493,14 +506,14 @@ export const requestGeminiProxy = async (model: string, googlePayload: any, _ret
 
 // --- KIE CHAT COMPLETIONS FALLBACK ---
 // [FIX] Kie는 v1beta/generateContent 엔드포인트 없음.
-// gemini-3-pro, gemini-3-flash chat/completions (OpenAI 호환)만 지원.
+// gemini-3.1-pro, gemini-3-flash chat/completions (OpenAI 호환) 지원.
 // Google Native 포맷 → OpenAI 변환 → 호출 → Google 포맷 응답 반환.
 export const requestKieChatFallback = async (model: string, googlePayload: any, timeoutMs?: number): Promise<any> => {
     const kieKey = getKieKey();
     if (!kieKey) throw new Error("Kie API Key가 설정되지 않았습니다.");
 
-    // Kie는 gemini-3-pro / gemini-3-flash만 지원 (3.1 없음)
-    const kieModelSlug = model.includes('pro') ? 'gemini-3-pro' : 'gemini-3-flash';
+    // [FIX #245] Kie Gemini 3.1 Pro 지원 (docs.kie.ai 2026-03 확인)
+    const kieModelSlug = model.includes('pro') ? 'gemini-3.1-pro' : 'gemini-3-flash';
     const url = `https://api.kie.ai/${kieModelSlug}/v1/chat/completions`;
 
     const openAIBody = convertGoogleToOpenAI(model, googlePayload);
@@ -637,7 +650,7 @@ export const requestGeminiNative = async (model: string, googlePayload: any, _re
             return { candidates: [{ content: { parts } }] };
         }
 
-        if (evolinkV1Response.status === 429) markEvolinkProRateLimited();
+        if (evolinkV1Response.status === 429) markEvolinkProRateLimited(extractRetryAfterMs(evolinkV1Response));
         const errText = await evolinkV1Response.text();
         throw new Error(`Evolink v1 Error (${evolinkV1Response.status}): ${errText}`);
     };
@@ -698,7 +711,7 @@ export const requestGeminiNative = async (model: string, googlePayload: any, _re
         ? [{ name: 'v1beta(Pro)', fn: tryEvolinkV1Beta }, { name: 'v1(Pro)', fn: tryEvolinkV1Chat }, { name: 'FlashLite', fn: tryEvolinkFlashLite }]
         : [{ name: 'v1(Pro)', fn: tryEvolinkV1Chat }, { name: 'v1beta(Pro)', fn: tryEvolinkV1Beta }, { name: 'FlashLite', fn: tryEvolinkFlashLite }];
 
-    console.log(`[GeminiNative] Smart Routing: ${requiresBeta ? 'v1beta(Pro)→v1(Pro)→FlashLite→Kie' : 'v1(Pro)→v1beta(Pro)→FlashLite→Kie'}`);
+    console.log(`[GeminiNative] Smart Routing: ${requiresBeta ? 'v1beta(Pro)→v1(Pro)→FlashLite→Kie3.1' : 'v1(Pro)→v1beta(Pro)→FlashLite→Kie3.1'}`);
 
     for (const { name, fn } of priorities) {
         try {
@@ -712,7 +725,7 @@ export const requestGeminiNative = async (model: string, googlePayload: any, _re
         }
     }
 
-    // Kie Chat Completions 최종 폴백 (3.0 Pro 다운그레이드 — 최후 비상)
+    // Kie Chat Completions 최종 폴백 (Gemini 3.1 Pro — 동급 품질)
     try {
         const kieKey = getKieKey();
         if (!kieKey) {
@@ -720,7 +733,7 @@ export const requestGeminiNative = async (model: string, googlePayload: any, _re
             throw new Error("Evolink and Kie API Keys are missing.");
         }
 
-        console.log("[GeminiNative] Switching to Kie Chat Completions Fallback (3.0 Pro downgrade)...");
+        console.log("[GeminiNative] Switching to Kie Chat Completions Fallback (3.1 Pro)...");
         return await requestKieChatFallback(model, googlePayload);
 
     } catch (e: any) {

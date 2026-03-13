@@ -123,8 +123,11 @@ async function pollKieTranscriptionTask(
 
     if (!response.ok) {
       if (response.status === 429) {
-        logger.trackRetry('전사 폴링 (429)', attempt + 1, maxAttempts, 'Rate limited');
-        await new Promise((resolve) => setTimeout(resolve, 5000));
+        // [FIX #245] Retry-After 헤더 우선, 없으면 지수 백오프
+        const retryAfter = response.headers.get('Retry-After');
+        const waitMs = retryAfter ? Math.min(parseInt(retryAfter, 10) * 1000 || 5000, 60000) : Math.min(2000 * Math.pow(2, Math.min(attempt, 5)), 30000);
+        logger.trackRetry('전사 폴링 (429)', attempt + 1, maxAttempts, `Rate limited, ${Math.round(waitMs)}ms 대기`);
+        await new Promise((resolve) => setTimeout(resolve, waitMs));
         continue;
       }
       throw new Error(`전사 폴링 오류 (${response.status})`);

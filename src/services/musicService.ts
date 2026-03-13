@@ -349,8 +349,11 @@ export const pollMusicStatus = async (
 
         if (!response.ok) {
             if (response.status === 429) {
-                logger.trackRetry('음악 폴링 (429)', attempt + 1, maxAttempts, 'Rate limited');
-                await new Promise(resolve => setTimeout(resolve, 5000));
+                // [FIX #245] Retry-After 헤더 우선, 없으면 지수 백오프
+                const retryAfter = response.headers.get('Retry-After');
+                const waitMs = retryAfter ? Math.min(parseInt(retryAfter, 10) * 1000 || 5000, 60000) : Math.min(2000 * Math.pow(2, Math.min(attempt, 5)), 30000);
+                logger.trackRetry('음악 폴링 (429)', attempt + 1, maxAttempts, `Rate limited, ${Math.round(waitMs)}ms 대기`);
+                await new Promise(resolve => setTimeout(resolve, waitMs));
                 continue;
             }
             throw new Error(`음악 폴링 오류 (${response.status})`);
@@ -840,7 +843,7 @@ export const pollLyricsResult = async (taskId: string, signal?: AbortSignal): Pr
         const response = await monitoredFetch(`${KIE_BASE_URL}/lyrics/record-info?taskId=${taskId}`, {
             headers: { 'Authorization': `Bearer ${apiKey}` },
         });
-        if (!response.ok) { if (response.status === 429) { logger.trackRetry('가사 폴링 (429)', attempt + 1, maxAttempts, 'Rate limited'); await new Promise(r => setTimeout(r, 5000)); continue; } throw new Error(`가사 폴링 오류 (${response.status})`); }
+        if (!response.ok) { if (response.status === 429) { const ra = response.headers.get('Retry-After'); const wMs = ra ? Math.min(parseInt(ra, 10) * 1000 || 5000, 60000) : Math.min(2000 * Math.pow(2, Math.min(attempt, 5)), 30000); logger.trackRetry('가사 폴링 (429)', attempt + 1, maxAttempts, `Rate limited, ${Math.round(wMs)}ms 대기`); await new Promise(r => setTimeout(r, wMs)); continue; } throw new Error(`가사 폴링 오류 (${response.status})`); }
         const data = await response.json();
         if (data.code === 422) continue;
         const status = data.data?.status;
@@ -900,7 +903,7 @@ export const pollVocalSeparation = async (taskId: string, signal?: AbortSignal):
         const response = await monitoredFetch(`${KIE_BASE_URL}/vocal-removal/record-info?taskId=${taskId}`, {
             headers: { 'Authorization': `Bearer ${apiKey}` },
         });
-        if (!response.ok) { if (response.status === 429) { logger.trackRetry('보컬 분리 폴링 (429)', attempt + 1, maxAttempts, 'Rate limited'); await new Promise(r => setTimeout(r, 5000)); continue; } throw new Error(`보컬 분리 폴링 오류 (${response.status})`); }
+        if (!response.ok) { if (response.status === 429) { const ra = response.headers.get('Retry-After'); const wMs = ra ? Math.min(parseInt(ra, 10) * 1000 || 5000, 60000) : Math.min(2000 * Math.pow(2, Math.min(attempt, 5)), 30000); logger.trackRetry('보컬 분리 폴링 (429)', attempt + 1, maxAttempts, `Rate limited, ${Math.round(wMs)}ms 대기`); await new Promise(r => setTimeout(r, wMs)); continue; } throw new Error(`보컬 분리 폴링 오류 (${response.status})`); }
         const data = await response.json();
         if (data.code === 422) continue;
         const successFlag = data.data?.successFlag;

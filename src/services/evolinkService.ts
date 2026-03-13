@@ -130,12 +130,33 @@ export async function fetchWithRateLimitRetry(
             return response;
         }
 
-        // 429 — 지수 백오프 + 랜덤 지터 대기 후 재시도 (thundering herd 방지)
+        // [FIX #245] 429 — Retry-After 헤더 우선, 없으면 지수 백오프 + 랜덤 지터
+        // Evolink 공식 문서: "Retry-After 헤더 값을 추출하여 그 시간만큼 대기 후 재시도"
         lastResponse = response;
-        const jitter = Math.random() * 1500; // 0~1.5초 랜덤 지터
-        const delayMs = baseDelayMs * Math.pow(2, attempt) + jitter; // 3s+j, 6s+j, 12s+j
-        logger.warn(`[Evolink] 429 Rate Limit — ${Math.round(delayMs)}ms 후 재시도 (${attempt + 1}/${maxRetries})`, { url });
-        logger.trackErrorChain(`HTTP 429 Rate Limit (attempt ${attempt + 1}/${maxRetries})`, 'evolinkService:fetchWithRateLimitRetry:rate_limit');
+        const retryAfterHeader = response.headers.get('Retry-After') || response.headers.get('retry-after');
+        let delayMs: number;
+
+        if (retryAfterHeader) {
+            // Retry-After는 초 단위 숫자 또는 HTTP-date 형식
+            const retryAfterSec = parseInt(retryAfterHeader, 10);
+            if (!isNaN(retryAfterSec) && retryAfterSec > 0) {
+                // 서버 지정 대기 시간 사용 (최대 120초 캡 — 무한 대기 방지)
+                delayMs = Math.min(retryAfterSec * 1000, 120_000);
+                logger.warn(`[Evolink] 429 Rate Limit — Retry-After: ${retryAfterSec}초 대기 (${attempt + 1}/${maxRetries})`, { url });
+            } else {
+                // HTTP-date 등 파싱 불가 → 지수 백오프 폴백
+                const jitter = Math.random() * 1500;
+                delayMs = baseDelayMs * Math.pow(2, attempt) + jitter;
+                logger.warn(`[Evolink] 429 Rate Limit — Retry-After 파싱 불가 ("${retryAfterHeader}"), 지수 백오프 ${Math.round(delayMs)}ms (${attempt + 1}/${maxRetries})`, { url });
+            }
+        } else {
+            // Retry-After 헤더 없음 → 기존 지수 백오프 + 랜덤 지터 (thundering herd 방지)
+            const jitter = Math.random() * 1500;
+            delayMs = baseDelayMs * Math.pow(2, attempt) + jitter;
+            logger.warn(`[Evolink] 429 Rate Limit — 지수 백오프 ${Math.round(delayMs)}ms 후 재시도 (${attempt + 1}/${maxRetries})`, { url });
+        }
+
+        logger.trackErrorChain(`HTTP 429 Rate Limit (attempt ${attempt + 1}/${maxRetries}, delay ${Math.round(delayMs)}ms)`, 'evolinkService:fetchWithRateLimitRetry:rate_limit');
         await new Promise(r => setTimeout(r, delayMs));
     }
 
@@ -960,10 +981,12 @@ export const pollEvolinkTask = async (
                     logger.error(`[Evolink] 폴링 402 잔액 부족 — 즉시 중단`, { taskId, attempt: i + 1 });
                     throw new Error('QUOTA_EXHAUSTED: Evolink 잔액 부족 — 크레딧을 충전해주세요.');
                 }
-                // [FIX #129] 429 Rate Limit — 추가 5초 대기 후 재시도
+                // [FIX #245] 429 Rate Limit — Retry-After 헤더 우선, 없으면 지수 백오프
                 if (response.status === 429) {
-                    logger.warn(`[Evolink] 폴링 429 Rate Limit — 5초 추가 대기`, { taskId, attempt: i + 1 });
-                    await new Promise(r => setTimeout(r, 5000));
+                    const retryAfter = response.headers.get('Retry-After');
+                    const waitMs = retryAfter ? Math.min(parseInt(retryAfter, 10) * 1000 || 5000, 60000) : Math.min(2000 * Math.pow(2, Math.min(i, 5)), 30000);
+                    logger.warn(`[Evolink] 폴링 429 Rate Limit — ${Math.round(waitMs)}ms 대기`, { taskId, attempt: i + 1 });
+                    await new Promise(r => setTimeout(r, waitMs));
                 }
                 // MEDIUM 2: 일시적 오류 시 상태 코드와 응답 본문을 로깅
                 const errorDetail = await parseEvolinkError(response);
