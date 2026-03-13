@@ -595,8 +595,8 @@ const SetupPanel: React.FC = () => {
                   </span>
                 )}
                 {/* [#177] 목표 컷 수 오버라이드 입력 */}
-                <div className="flex items-center gap-1.5">
-                  <label className="text-xs font-bold text-orange-300 whitespace-nowrap">목표 컷 수</label>
+                <div className="flex items-center gap-1.5" title="대본을 몇 개의 장면(컷)으로 나눌지 설정합니다. 비워두면 AI가 자동으로 정해요.">
+                  <label className="text-xs font-bold text-orange-300 whitespace-nowrap cursor-help">목표 컷 수</label>
                   <input
                     type="number"
                     min={1}
@@ -708,7 +708,8 @@ const SetupPanel: React.FC = () => {
 
         {/* [#177] 목표 컷 수 — 직접 입력 모드가 아닐 때 여기에 표시 */}
         {!directInputMode && scriptText.trim() && (
-          <div className="bg-gray-900/60 border border-orange-500/20 rounded-xl px-5 py-3 flex items-center justify-between gap-3">
+          <div className="bg-gray-900/60 border border-orange-500/20 rounded-xl px-5 py-3 space-y-2">
+            <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3 min-w-0">
               <p className="text-sm font-bold text-white whitespace-nowrap">🎯 목표 컷 수</p>
               {estimatedScenes > 0 && (
@@ -739,6 +740,11 @@ const SetupPanel: React.FC = () => {
                 <span className="text-[11px] text-gray-600 whitespace-nowrap">1~30</span>
               )}
             </div>
+            </div>
+            <p className="text-xs text-gray-500 leading-relaxed">
+              대본을 몇 개의 장면(컷)으로 나눌지 설정합니다. 비워두면 대본 길이에 맞춰 AI가 자동으로 정해요.
+              숫자가 클수록 장면이 세밀하게 나뉘고, 작을수록 장면당 내용이 많아집니다.
+            </p>
           </div>
         )}
 
