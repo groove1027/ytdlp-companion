@@ -1,8 +1,9 @@
 
 import { getKieKey, monitoredFetch } from '../apiService';
-import { getEvolinkKey, requestEvolinkNative } from '../evolinkService';
+import { getEvolinkKey, requestEvolinkNative, fetchWithRateLimitRetry } from '../evolinkService';
 import { PRICING } from '../../constants';
 import { logger } from '../LoggerService';
+import { useCostStore } from '../../stores/costStore';
 
 // Local Type Definition to replace Google SDK Type enum
 const SchemaType = {
@@ -211,7 +212,92 @@ export const requestGeminiProxy = async (model: string, googlePayload: any, _ret
         console.log(`[GeminiService] Evolink Native 스킵 (skipNative=${options?.skipNative}, retry=${_retryCount})`);
     }
 
-    // 1. Try Kie (Fallback) - OpenAI Compatible Format
+    // 1. [FIX #244] Evolink v1/chat/completions 폴백 — 여전히 Gemini 3.1 Pro!
+    // v1beta가 실패해도 Evolink의 OpenAI 호환 엔드포인트로 동일 3.1 Pro 모델 유지
+    // → 비주얼 프롬프트 품질 저하 없이 NanoBanana 2 이미지 품질 보장
+    // → Kie(3.0 Pro)로 다운그레이드하기 전에 반드시 이 단계를 거침
+    try {
+        const evolinkKey = getEvolinkKey();
+        if (evolinkKey) {
+            logger.info(`[Gemini] Evolink v1 Chat 폴백 (model: ${model}) — 3.1 Pro 유지`);
+            console.log("[GeminiService] Trying Evolink v1/chat/completions (Priority 1, still 3.1 Pro)...");
+
+            const evolinkV1Body = convertGoogleToOpenAI(model, googlePayload);
+            evolinkV1Body.model = 'gemini-3.1-pro-preview';
+            // Evolink v1은 response_format: json_object를 네이티브 지원 — Kie와 달리 삭제 불필요
+
+            const evolinkV1Response = await fetchWithRateLimitRetry(
+                'https://api.evolink.ai/v1/chat/completions',
+                {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${evolinkKey}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(evolinkV1Body)
+                },
+                3, 3000, timeoutMs
+            );
+
+            if (evolinkV1Response.ok) {
+                const json = await evolinkV1Response.json();
+                const choice = json.choices?.[0];
+                const content = choice?.message?.content || "";
+                const toolCalls = choice?.message?.tool_calls;
+
+                if (!toolCalls?.length && !content.trim()) {
+                    throw new Error(`Evolink v1 빈 응답. finish_reason: ${choice?.finish_reason || 'unknown'}`);
+                }
+
+                let parts: any[] = [];
+                if (toolCalls && toolCalls.length > 0) {
+                    const fc = toolCalls[0].function;
+                    parts.push({
+                        functionCall: {
+                            name: fc.name,
+                            args: JSON.parse(fc.arguments || "{}")
+                        }
+                    });
+                } else {
+                    parts.push({ text: content });
+                }
+
+                // 비용 자동 추적 (evolinkChat과 동일 방식)
+                try {
+                    const usage = json.usage;
+                    if (usage) {
+                        const inputCost = (usage.prompt_tokens || 0) / 1_000_000 * PRICING.GEMINI_PRO_INPUT_PER_1M;
+                        const outputCost = (usage.completion_tokens || 0) / 1_000_000 * PRICING.GEMINI_PRO_OUTPUT_PER_1M;
+                        const totalCost = inputCost + outputCost;
+                        if (totalCost > 0) {
+                            useCostStore.getState().addCost(totalCost, 'analysis');
+                            logger.info('[Evolink v1 Chat] 비용 자동 추적', {
+                                promptTokens: usage.prompt_tokens,
+                                completionTokens: usage.completion_tokens,
+                                costUsd: totalCost.toFixed(6)
+                            });
+                        }
+                    }
+                } catch (costErr) { logger.trackSwallowedError('GeminiProxy:evolinkV1Chat/costTracking', costErr); }
+
+                logger.success(`[Gemini] Evolink v1 Chat 성공 — 3.1 Pro 품질 유지 ✅`);
+                return {
+                    candidates: [{
+                        content: { parts }
+                    }]
+                };
+            }
+
+            const errText = await evolinkV1Response.text();
+            throw new Error(`Evolink v1 Chat Error (${evolinkV1Response.status}): ${errText}`);
+        }
+    } catch (e: any) {
+        logger.warn(`[Gemini] Evolink v1 Chat 실패: ${e.message} — Kie(3.0) 최종 폴백으로 전환`);
+        console.warn("[GeminiService] Evolink v1 Chat Error:", e.message);
+        lastError = e;
+    }
+
+    // 2. Try Kie (최종 폴백) - Gemini 3.0 Pro (⚠️ 3.1 대비 프롬프트 품질 저하 가능)
     try {
         const kieKey = getKieKey();
         if (!kieKey) {
@@ -219,8 +305,8 @@ export const requestGeminiProxy = async (model: string, googlePayload: any, _ret
             throw new Error("Evolink and Kie API Keys are missing.");
         }
 
-        logger.info(`[Gemini] Kie 폴백 호출 (model: ${model})`);
-        console.log("[GeminiService] Switching to Kie Fallback...");
+        logger.warn(`[Gemini] Kie 최종 폴백 호출 (model: ${model}) — ⚠️ 3.0 Pro 다운그레이드`);
+        console.log("[GeminiService] Switching to Kie Fallback (3.0 Pro downgrade)...");
 
         // [FIX #119] Kie는 gemini-3-pro / gemini-3-flash만 지원 (3.1 없음)
         const isThinkingModel = model.includes('thinking');
@@ -407,7 +493,68 @@ export const requestGeminiNative = async (model: string, googlePayload: any, _re
         lastError = e;
     }
 
-    // 1. [FIX] Kie Chat Completions 폴백 (v1beta 미지원 — gemini-3-pro/flash chat/completions만 가능)
+    // 1. [FIX #244] Evolink v1/chat/completions 폴백 — 3.1 Pro 유지
+    try {
+        const evolinkKey = getEvolinkKey();
+        if (evolinkKey) {
+            console.log("[GeminiNative] Trying Evolink v1/chat/completions (Priority 1, still 3.1 Pro)...");
+            const evolinkV1Body = convertGoogleToOpenAI(model, googlePayload);
+            evolinkV1Body.model = 'gemini-3.1-pro-preview';
+
+            const evolinkV1Response = await fetchWithRateLimitRetry(
+                'https://api.evolink.ai/v1/chat/completions',
+                {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${evolinkKey}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(evolinkV1Body)
+                },
+                3, 3000
+            );
+
+            if (evolinkV1Response.ok) {
+                const json = await evolinkV1Response.json();
+                const choice = json.choices?.[0];
+                const content = choice?.message?.content || "";
+                const toolCalls = choice?.message?.tool_calls;
+
+                if (!toolCalls?.length && !content.trim()) {
+                    throw new Error(`Evolink v1 빈 응답. finish_reason: ${choice?.finish_reason || 'unknown'}`);
+                }
+
+                let parts: any[] = [];
+                if (toolCalls && toolCalls.length > 0) {
+                    const fc = toolCalls[0].function;
+                    parts.push({ functionCall: { name: fc.name, args: JSON.parse(fc.arguments || "{}") } });
+                } else {
+                    parts.push({ text: content });
+                }
+
+                // 비용 추적
+                try {
+                    const usage = json.usage;
+                    if (usage) {
+                        const totalCost = ((usage.prompt_tokens || 0) / 1_000_000 * PRICING.GEMINI_PRO_INPUT_PER_1M)
+                            + ((usage.completion_tokens || 0) / 1_000_000 * PRICING.GEMINI_PRO_OUTPUT_PER_1M);
+                        if (totalCost > 0) useCostStore.getState().addCost(totalCost, 'analysis');
+                    }
+                } catch (costErr) { logger.trackSwallowedError('GeminiNative:evolinkV1/costTracking', costErr); }
+
+                logger.success(`[GeminiNative] Evolink v1 Chat 성공 — 3.1 Pro 유지 ✅`);
+                return { candidates: [{ content: { parts } }] };
+            }
+
+            const errText = await evolinkV1Response.text();
+            throw new Error(`Evolink v1 Error (${evolinkV1Response.status}): ${errText}`);
+        }
+    } catch (e: any) {
+        console.warn("[GeminiNative] Evolink v1 Chat Error:", e.message);
+        lastError = e;
+    }
+
+    // 2. Kie Chat Completions 최종 폴백 (⚠️ 3.0 Pro 다운그레이드)
     try {
         const kieKey = getKieKey();
         if (!kieKey) {
@@ -415,7 +562,7 @@ export const requestGeminiNative = async (model: string, googlePayload: any, _re
             throw new Error("Evolink and Kie API Keys are missing.");
         }
 
-        console.log("[GeminiNative] Switching to Kie Chat Completions Fallback...");
+        console.log("[GeminiNative] Switching to Kie Chat Completions Fallback (3.0 Pro downgrade)...");
         return await requestKieChatFallback(model, googlePayload);
 
     } catch (e: any) {
