@@ -1092,68 +1092,61 @@ export const parseScriptToScenes = async (
         if (currentChunk.trim()) chunks.push(currentChunk.trim());
         console.log(`[parseScriptToScenes] ${chunks.length}개 청크로 분할 (${chunks.map(c => c.length + '자').join(', ')})`);
 
-        // [FIX #193] 청크별 처리를 함수로 추출 — 병렬 실행 가능
+        // [FIX #235] 순차 청크 처리 — 병렬 처리 시 429 Rate Limit 폭주 문제 해결
+        // 구 버전(순차 for 루프)이 안정적이었음 → 순차 복원 + 429 즉시 v1beta 폴백
         const chunkSysPrompt = (payload.systemInstruction as any)?.parts?.[0]?.text || '';
-        const processOneChunk = async (ci: number): Promise<any[]> => {
+        const STREAM_TIMEOUT_MS = 90_000;
+        const CHUNK_COOLDOWN_MS = 2000; // 청크 간 쿨다운 — API 부하 방지
+
+        const allRawScenes: any[] = [];
+        const failedChunks: number[] = [];
+        let balanceError: string | null = null;
+        onChunkProgress?.(0, chunks.length);
+        console.log(`[parseScriptToScenes] 📦 ${chunks.length}개 청크 순차 처리 시작`);
+
+        for (let ci = 0; ci < chunks.length; ci++) {
+            if (ci > 0) await new Promise(r => setTimeout(r, CHUNK_COOLDOWN_MS));
+
             const chunkUserContent = `Script (Part ${ci + 1}/${chunks.length}):\n${chunks[ci]}\n\n[MANDATORY GLOBAL CONTEXT]\n${baseSetting || 'No context provided.'}`;
             let chunkScenes: any[] = [];
-            // [FIX #226] 3회 재시도 + 지수 백오프 + 지터 — 429/타임아웃 대응 강화
-            const MAX_CHUNK_RETRIES = 3;
-            const STREAM_TIMEOUT_MS = 90_000;
             let lastChunkError: Error | null = null;
-            for (let retry = 0; retry < MAX_CHUNK_RETRIES; retry++) {
-                if (retry > 0) {
-                    const errMsg = lastChunkError?.message || '';
-                    const is429 = errMsg.includes('요청 제한') || errMsg.includes('429') || errMsg.includes('Rate Limit');
-                    // [FIX #226] 429 시 더 긴 대기 후 재시도 (즉시 폴백 대신 한 번 더 시도)
-                    const baseBackoff = is429 ? 8000 : 3000;
-                    const backoffMs = baseBackoff * Math.pow(2, retry - 1) + Math.random() * 2000; // 지수 백오프 + 지터
-                    logger.trackRetry(`스크립트 청크 ${ci + 1} 파싱`, retry + 1, MAX_CHUNK_RETRIES,
-                        `${is429 ? '요청 제한' : '네트워크/타임아웃'} 오류 — ${Math.round(backoffMs / 1000)}초 대기 후 재시도`);
-                    await new Promise(r => setTimeout(r, backoffMs));
+
+            // 1차: evolinkChatStream 시도 (1회만 — 429 시 즉시 폴백)
+            try {
+                console.log(`[parseScriptToScenes] 청크 ${ci + 1}/${chunks.length} (${chunks[ci].length}자) → evolinkChatStream`);
+                const content = await evolinkChatStream(
+                    [
+                        { role: 'system', content: chunkSysPrompt },
+                        { role: 'user', content: chunkUserContent }
+                    ],
+                    () => {},
+                    { temperature: 0.3, maxTokens: 32000, responseFormat: { type: 'json_object' }, timeoutMs: STREAM_TIMEOUT_MS }
+                );
+                if (!content) throw new Error('Empty Response');
+                let parsed: any;
+                try { parsed = JSON.parse(content); } catch (e) {
+                    logger.trackSwallowedError('scriptAnalysis:parseChunkJson', e);
+                    const jsonText = extractJsonFromText(content);
+                    parsed = JSON.parse(jsonText || '[]');
                 }
-                try {
-                    console.log(`[parseScriptToScenes] 청크 ${ci + 1}/${chunks.length} (${chunks[ci].length}자) → evolinkChatStream (시도 ${retry + 1}/${MAX_CHUNK_RETRIES})`);
-                    const content = await evolinkChatStream(
-                        [
-                            { role: 'system', content: chunkSysPrompt },
-                            { role: 'user', content: chunkUserContent }
-                        ],
-                        () => {},
-                        { temperature: 0.3, maxTokens: 32000, responseFormat: { type: 'json_object' }, timeoutMs: STREAM_TIMEOUT_MS }
-                    );
-                    if (!content) throw new Error('Empty Response');
-                    let parsed: any;
-                    try { parsed = JSON.parse(content); } catch (e) {
-                        logger.trackSwallowedError('scriptAnalysis:parseChunkJson', e);
-                        const jsonText = extractJsonFromText(content);
-                        parsed = JSON.parse(jsonText || '[]');
-                    }
-                    const scenes = Array.isArray(parsed) ? parsed : (parsed.scenes || [parsed]);
-                    if (scenes.length > 0) { chunkScenes = scenes; lastChunkError = null; break; }
-                } catch (ce: any) {
-                    const msg = ce.message || '';
-                    lastChunkError = ce;
-                    const isNetworkError = msg.includes('Failed to fetch') || msg.includes('Network Error') || msg.includes('fetch') || msg.includes('ERR_NETWORK') || msg.includes('ECONNREFUSED') || msg.includes('net::');
-                    const isTimeoutError = msg.includes('524') || msg.includes('timeout') || msg.includes('타임아웃') || msg.includes('AbortError');
-                    const isJsonError = msg.includes('Unexpected') || msg.includes('JSON') || msg.includes('토큰 한도');
-                    const isEmptyResponse = msg.includes('Empty Response');
-                    const isRateLimited = msg.includes('요청 제한') || msg.includes('429') || msg.includes('Rate Limit');
-                    const isRetryable = isNetworkError || isTimeoutError || isJsonError || isEmptyResponse || isRateLimited || msg.includes('네트워크');
-                    const errorCategory = isRateLimited ? '요청 제한 (429)' : isNetworkError ? '네트워크 연결 오류' : isTimeoutError ? '서버 응답 시간 초과' : 'API 오류';
-                    console.warn(`[parseScriptToScenes] 청크 ${ci + 1} 실패 (시도 ${retry + 1}/${MAX_CHUNK_RETRIES}, ${errorCategory}): ${msg.slice(0, 150)}`);
-                    logger.warn(`[parseScriptToScenes] 청크 ${ci + 1} ${errorCategory}`, { retry: retry + 1, msg: msg.slice(0, 200) });
-                    if (isRetryable && retry < MAX_CHUNK_RETRIES - 1) continue;
-                    if (!isRetryable) break;
-                }
+                const scenes = Array.isArray(parsed) ? parsed : (parsed.scenes || [parsed]);
+                if (scenes.length > 0) chunkScenes = scenes;
+            } catch (ce: any) {
+                lastChunkError = ce;
+                const msg = ce.message || '';
+                const errorCategory = msg.includes('429') || msg.includes('Rate Limit') || msg.includes('요청 제한')
+                    ? '요청 제한 (429)' : msg.includes('timeout') || msg.includes('타임아웃') || msg.includes('524')
+                    ? '서버 응답 시간 초과' : 'API 오류';
+                console.warn(`[parseScriptToScenes] 청크 ${ci + 1} 스트리밍 실패 (${errorCategory}): ${msg.slice(0, 150)}`);
+                logger.warn(`[parseScriptToScenes] 청크 ${ci + 1} ${errorCategory}`, { msg: msg.slice(0, 200) });
             }
-            // 스트리밍 실패 → v1beta Native 폴백 (Kie 자동 폴백 포함)
-            if (chunkScenes.length === 0 && lastChunkError) {
-                console.log(`[parseScriptToScenes] 청크 ${ci + 1} 스트리밍 실패 → v1beta 폴백`);
-                logger.info(`[parseScriptToScenes] 청크 ${ci + 1} v1beta 폴백`, { lastError: lastChunkError.message?.slice(0, 100) });
+
+            // 2차: v1beta Native 폴백 (스트리밍 실패 시 즉시 전환 — 429 재시도 대기 없음)
+            if (chunkScenes.length === 0) {
+                console.log(`[parseScriptToScenes] 청크 ${ci + 1} → v1beta 폴백`);
+                logger.info(`[parseScriptToScenes] 청크 ${ci + 1} v1beta 폴백`, { lastError: lastChunkError?.message?.slice(0, 100) });
                 try {
                     const chunkPayload = { ...payload, contents: [{ role: 'user', parts: [{ text: chunkUserContent }] }] };
-                    // [FIX #226] v1beta 폴백 타임아웃 120초 — Cloudflare 125초 제한 내 완료 보장
                     const data = await requestGeminiProxy('gemini-3.1-pro-preview', chunkPayload, 0, 120_000);
                     const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
                     if (text) {
@@ -1171,19 +1164,18 @@ export const parseScriptToScenes = async (
                     }
                 } catch (fallbackErr: any) {
                     console.error(`[parseScriptToScenes] 청크 ${ci + 1} v1beta 폴백도 실패:`, fallbackErr.message?.slice(0, 100));
-                    // [FIX #191] 에러 투명성 — 폴백 에러를 lastChunkError에 반영
                     lastChunkError = new Error(
                         `스트리밍: ${lastChunkError?.message?.slice(0, 80)} | 폴백: ${fallbackErr.message?.slice(0, 80)}`
                     );
                 }
             }
-            // [FIX #191] Flash 모델 폴백 — Pro 빈 응답 시 Flash로 재시도 (Evolink 스킵)
+
+            // 3차: Flash 모델 폴백
             if (chunkScenes.length === 0) {
                 try {
                     console.log(`[parseScriptToScenes] 청크 ${ci + 1} Flash 폴백 시도`);
                     logger.info(`[parseScriptToScenes] 청크 ${ci + 1} Flash 폴백`, { lastError: lastChunkError?.message?.slice(0, 100) });
                     const chunkPayload = { ...payload, contents: [{ role: 'user', parts: [{ text: chunkUserContent }] }] };
-                    // [FIX #226] Flash 폴백 타임아웃도 120초
                     const data = await requestGeminiProxy('gemini-3-flash', chunkPayload, 0, 120_000, { skipNative: true });
                     const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
                     if (text) {
@@ -1203,46 +1195,23 @@ export const parseScriptToScenes = async (
                     console.error(`[parseScriptToScenes] 청크 ${ci + 1} Flash 폴백도 실패:`, flashErr.message?.slice(0, 100));
                 }
             }
-            if (chunkScenes.length === 0) {
-                const msg = lastChunkError?.message || 'Unknown error';
-                if (msg.includes('잔액 부족') || msg.includes('insufficient') || msg.includes('QUOTA_EXHAUSTED'))
-                    throw new Error(`AI 크레딧이 부족합니다. Evolink 크레딧을 충전한 후 다시 시도해주세요.`);
-                throw new Error(`청크 ${ci + 1} 파싱 실패: ${msg.slice(0, 100)}`);
-            }
-            return chunkScenes;
-        };
 
-        // [FIX #226] 병렬 청크 처리 — 4초 스태거 + 랜덤 지터로 429 thundering herd 방지
-        const CHUNK_STAGGER_MS = 4000;
-        console.log(`[parseScriptToScenes] ⚡ ${chunks.length}개 청크 병렬 처리 시작 (${CHUNK_STAGGER_MS / 1000}초 간격 스태거)`);
-        let completedChunks = 0;
-        onChunkProgress?.(0, chunks.length);
-        const chunkResults = await Promise.allSettled(
-            chunks.map(async (_, ci) => {
-                if (ci > 0) await new Promise(r => setTimeout(r, ci * CHUNK_STAGGER_MS + Math.random() * 1000));
-                const scenes = await processOneChunk(ci);
-                completedChunks++;
-                onChunkProgress?.(completedChunks, chunks.length);
-                console.log(`[parseScriptToScenes] 청크 ${ci + 1}: ${scenes.length}개 장면 (${completedChunks}/${chunks.length} 완료)`);
-                return scenes;
-            })
-        );
-
-        // 결과 수집 — 순서 보존 + 부분 성공 허용
-        const allRawScenes: any[] = [];
-        let balanceError: string | null = null;
-        const failedChunks: number[] = [];
-        for (let ci = 0; ci < chunkResults.length; ci++) {
-            const result = chunkResults[ci];
-            if (result.status === 'fulfilled') {
-                allRawScenes.push(...result.value);
+            // 결과 수집
+            if (chunkScenes.length > 0) {
+                allRawScenes.push(...chunkScenes);
+                console.log(`[parseScriptToScenes] 청크 ${ci + 1}: ${chunkScenes.length}개 장면 (누적 ${allRawScenes.length}개)`);
             } else {
-                const msg = result.reason?.message || '';
-                if (msg.includes('크레딧') || msg.includes('잔액') || msg.includes('insufficient')) balanceError = msg;
+                const msg = lastChunkError?.message || 'Unknown error';
+                if (msg.includes('잔액 부족') || msg.includes('insufficient') || msg.includes('QUOTA_EXHAUSTED') || msg.includes('크레딧')) {
+                    balanceError = msg;
+                    break; // 잔액 부족 시 즉시 중단
+                }
                 failedChunks.push(ci + 1);
                 console.error(`[parseScriptToScenes] 청크 ${ci + 1} 최종 실패: ${msg.slice(0, 100)}`);
             }
+            onChunkProgress?.(ci + 1, chunks.length);
         }
+
         if (balanceError) throw new Error(balanceError);
         if (allRawScenes.length === 0) {
             throw new Error(`모든 청크(${chunks.length}개) 파싱 실패 — 서버 상태를 확인하고 다시 시도해주세요.`);
