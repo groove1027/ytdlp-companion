@@ -11,6 +11,7 @@ import { PRICING, DIALOGUE_TONE_PRESETS } from '../../../constants';
 import { VideoFormat, CharacterAppearance, AspectRatio, DialogueTone } from '../../../types';
 import type { CharacterReference, SavedCharacter } from '../../../types';
 import VisualStylePicker, { getVisualStyleLabel } from '../../VisualStylePicker';
+import { useChannelAnalysisStore } from '../../../stores/channelAnalysisStore';
 import CharacterUploadPanel from '../../CharacterUploadPanel';
 import CharacterLibraryModal from '../../CharacterLibraryModal';
 import { saveCharacterToLibrary } from '../../../services/storageService';
@@ -96,6 +97,7 @@ const SetupPanel: React.FC = () => {
   const [directInputMode, setDirectInputMode] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analyzeError, setAnalyzeError] = useState('');
+  const [chunkProgress, setChunkProgress] = useState<{ completed: number; total: number } | null>(null);
   const [showCharacterLibrary, setShowCharacterLibrary] = useState(false);
   const [scriptDraft, setScriptDraft] = useState('');
   const [showSplitGuide, setShowSplitGuide] = useState(false);
@@ -146,6 +148,21 @@ const SetupPanel: React.FC = () => {
   }, [scriptText, vf, ss, lfs]);
   const selectedLabel = getVisualStyleLabel(style);
   const stepBase = directInputMode ? 3 : 1;
+
+  // [#195] 채널 레퍼런스 스타일 — 채널 분석 결과에서 시각 스타일 가져오기
+  const channelGuideline = useChannelAnalysisStore((s) => s.channelGuideline);
+  const savedPresets = useChannelAnalysisStore((s) => s.savedPresets);
+  const [showPresetList, setShowPresetList] = useState(false);
+  // 현재 적용된 채널 스타일 이름 역추적
+  const appliedChannelName = useMemo(() => {
+    if (style === 'custom' || selectedLabel) return '';
+    if (channelGuideline?.visualGuide && style === channelGuideline.visualGuide) return channelGuideline.channelName;
+    const matched = savedPresets.find(p => p.visualGuide && style === p.visualGuide);
+    return matched?.channelName || '';
+  }, [style, selectedLabel, channelGuideline, savedPresets]);
+  const channelPresetsWithVisual = useMemo(() =>
+    savedPresets.filter(p => p.visualGuide && p.visualGuide.trim()),
+  [savedPresets]);
 
   // Task 2: Scene analysis mode detection
   const hasVisualPrompts = scenes.length > 0 && scenes.some(s => !!s.visualPrompt);
@@ -305,7 +322,7 @@ const SetupPanel: React.FC = () => {
       const existingScenes = useProjectStore.getState().scenes;
       // enrichMode가 기존 데이터를 보존하므로 confirm 불필요 — 바로 진행
     }
-    setIsAnalyzing(true); setAnalyzeError('');
+    setIsAnalyzing(true); setAnalyzeError(''); setChunkProgress(null);
     const onCost = (c: number) => addCost(c, 'analysis');
     const vf = config.videoFormat || VideoFormat.SHORT;
     const ss = config.smartSplit ?? true;
@@ -330,7 +347,8 @@ const SetupPanel: React.FC = () => {
         enrichMode ? existingScenes.length : (useImageVideoStore.getState().targetSceneCount ?? ctx.estimatedSceneCount),
         config.dialogueTone, // [v4.7] 대사 톤
         config.extractedCharacters || ctx.characters, // [v4.7] 캐릭터 프로필
-        config.referenceDialogue // [v4.7] 참조 대사
+        config.referenceDialogue, // [v4.7] 참조 대사
+        (completed, total) => setChunkProgress(total > 1 ? { completed, total } : null) // [FIX #193] 청크 진행률
       );
 
       // [POST-PROCESS] 개별 장면에 컨텍스트 누락 시 전역 분석 결과로 채움
@@ -361,12 +379,12 @@ const SetupPanel: React.FC = () => {
         keyEntities: ctx.keyEntities || '',
       };
       useProjectStore.getState().setConfig((prev) => prev ? { ...prev, cachedContextData: ctx as Record<string, unknown>, globalContext: JSON.stringify(globalContextObj), detectedStyleDescription: ctx.visualTone || prev.detectedStyleDescription, detectedLanguage: ctx.detectedLanguage || prev.detectedLanguage, detectedLanguageName: ctx.detectedLanguageName || prev.detectedLanguageName, detectedLocale: ctx.detectedLocale || prev.detectedLocale } : prev);
-      setIsAnalyzing(false); return true;
+      setIsAnalyzing(false); setChunkProgress(null); return true;
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       const isJsonErr = msg.includes('JSON') || msg.includes('Unexpected token') || msg.includes('Unexpected end');
       setAnalyzeError(isJsonErr ? `AI 응답 형식 오류 — "스토리보드 생성"을 다시 눌러주세요. (${msg})` : msg);
-      setIsAnalyzing(false); return false;
+      setIsAnalyzing(false); setChunkProgress(null); return false;
     }
   }, [config, isAnalyzing, addCost, requireAuth]);
 
@@ -823,6 +841,11 @@ const SetupPanel: React.FC = () => {
                 🎨 {selectedLabel}
               </span>
             )}
+            {appliedChannelName && (
+              <span className="text-xs font-bold text-blue-300 bg-blue-900/30 border border-blue-500/30 px-2 py-0.5 rounded-lg">
+                📡 {appliedChannelName}
+              </span>
+            )}
           </div>
           {style !== 'custom' && (
             <button type="button" onClick={() => setStyle('custom')} className="text-xs text-red-400 hover:text-red-300 underline">초기화</button>
@@ -835,7 +858,91 @@ const SetupPanel: React.FC = () => {
           <p className="text-xs text-gray-400 mt-0.5">이곳 설정을 선택하면 분석된 화풍 대신 해당 스타일이 우선 적용됩니다.</p>
         </div>
 
-        {/* 스타일 독립/혼합 모드 — 체크박스 (우선순위 안내 바로 아래) */}
+        {/* [#195] 채널 레퍼런스 스타일 — 분석된 채널의 시각 스타일 적용 */}
+        {(channelGuideline?.visualGuide || channelPresetsWithVisual.length > 0) && (
+          <div className="border border-blue-500/30 rounded-xl overflow-hidden bg-blue-950/20">
+            <div className="px-4 py-3 flex items-center justify-between bg-blue-900/20">
+              <div className="flex items-center gap-2">
+                <span className="text-base">📡</span>
+                <span className="text-sm font-bold text-blue-300">채널 레퍼런스 스타일</span>
+              </div>
+              {channelPresetsWithVisual.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => setShowPresetList(!showPresetList)}
+                  className="text-xs text-blue-400 hover:text-blue-300 underline"
+                >
+                  {showPresetList ? '접기' : `저장된 채널 ${channelPresetsWithVisual.length}개`}
+                </button>
+              )}
+            </div>
+            <div className="p-3 space-y-2">
+              {/* 현재 분석 중인 채널 */}
+              {channelGuideline?.visualGuide && (
+                <div
+                  className={`p-3 rounded-lg border cursor-pointer transition-all ${
+                    style === channelGuideline.visualGuide
+                      ? 'bg-blue-600/15 border-blue-500/50 ring-1 ring-blue-500/30'
+                      : 'bg-gray-900/60 border-gray-700/50 hover:border-blue-500/40 hover:bg-gray-800/70'
+                  }`}
+                  onClick={() => setStyle(style === channelGuideline.visualGuide ? 'custom' : channelGuideline.visualGuide)}
+                >
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-sm font-bold text-white">{channelGuideline.channelName}</span>
+                    {style === channelGuideline.visualGuide ? (
+                      <span className="text-xs text-blue-400 bg-blue-600/20 border border-blue-500/30 rounded-lg px-2.5 py-1 font-bold">적용됨</span>
+                    ) : (
+                      <button
+                        type="button"
+                        className="text-xs text-gray-400 hover:text-cyan-400 bg-gray-800 border border-gray-700 hover:border-cyan-500/50 rounded-lg px-2.5 py-1 font-bold transition-colors"
+                        onClick={(e) => { e.stopPropagation(); setStyle(channelGuideline.visualGuide!); }}
+                      >
+                        적용
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-xs text-gray-400 line-clamp-3 leading-relaxed">{channelGuideline.visualGuide.slice(0, 200)}{channelGuideline.visualGuide.length > 200 ? '...' : ''}</p>
+                </div>
+              )}
+
+              {/* 저장된 프리셋 목록 (접이식) */}
+              {showPresetList && channelPresetsWithVisual
+                .filter(p => p.channelName !== channelGuideline?.channelName)
+                .map(preset => (
+                  <div
+                    key={preset.channelName}
+                    className={`p-3 rounded-lg border cursor-pointer transition-all ${
+                      style === preset.visualGuide
+                        ? 'bg-blue-600/15 border-blue-500/50 ring-1 ring-blue-500/30'
+                        : 'bg-gray-900/60 border-gray-700/50 hover:border-blue-500/40 hover:bg-gray-800/70'
+                    }`}
+                    onClick={() => setStyle(style === preset.visualGuide ? 'custom' : preset.visualGuide!)}
+                  >
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-sm font-bold text-white">{preset.channelName}</span>
+                      {style === preset.visualGuide ? (
+                        <span className="text-xs text-blue-400 bg-blue-600/20 border border-blue-500/30 rounded-lg px-2.5 py-1 font-bold">적용됨</span>
+                      ) : (
+                        <button
+                          type="button"
+                          className="text-xs text-gray-400 hover:text-cyan-400 bg-gray-800 border border-gray-700 hover:border-cyan-500/50 rounded-lg px-2.5 py-1 font-bold transition-colors"
+                          onClick={(e) => { e.stopPropagation(); setStyle(preset.visualGuide!); }}
+                        >
+                          적용
+                        </button>
+                      )}
+                    </div>
+                    <p className="text-xs text-gray-400 line-clamp-2 leading-relaxed">{preset.visualGuide!.slice(0, 150)}{preset.visualGuide!.length > 150 ? '...' : ''}</p>
+                  </div>
+                ))
+              }
+
+              <p className="text-[11px] text-gray-500 mt-1">채널분석 탭에서 분석한 채널의 영상 톤과 그림체를 이미지 생성에 적용합니다.</p>
+            </div>
+          </div>
+        )}
+
+        {/* 스타일 독립/혼합 모드 — 체크박스 */}
         <div className="bg-gray-900/60 border border-gray-700 rounded-xl px-5 py-4 flex items-center gap-4">
           <input
             type="checkbox"
@@ -931,13 +1038,14 @@ const SetupPanel: React.FC = () => {
                 {/* 메인 상태 */}
                 <div className="flex items-center gap-3">
                   <span className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  <span className="font-bold text-lg">{elapsed < 5 ? '대본 구조 분석 중...' : elapsed < 15 ? '장면별 비주얼 프롬프트 생성 중...' : elapsed < 30 ? '캐릭터 배치 및 카메라 앵글 최적화 중...' : elapsed < 60 ? '최종 검수 및 품질 보정 중...' : 'AI가 열심히 작업하고 있습니다...'}</span>
+                  <span className="font-bold text-lg">{chunkProgress ? `대본 분석 중... (${chunkProgress.completed}/${chunkProgress.total} 블록 완료)` : elapsed < 5 ? '대본 구조 분석 중...' : elapsed < 15 ? '장면별 비주얼 프롬프트 생성 중...' : elapsed < 30 ? '캐릭터 배치 및 카메라 앵글 최적화 중...' : elapsed < 60 ? '최종 검수 및 품질 보정 중...' : 'AI가 열심히 작업하고 있습니다...'}</span>
                   {elapsed > 0 && <span className="text-xs text-white/70 tabular-nums bg-white/10 px-2.5 py-1 rounded-full font-mono">{formatElapsed(elapsed)}</span>}
                 </div>
 
                 {/* 상세 설명 */}
                 <div className="text-sm text-white/60 font-normal text-center leading-relaxed max-w-md space-y-1">
                   <p>{
+                    chunkProgress ? `대본을 ${chunkProgress.total}개 블록으로 나눠 동시 분석 중입니다` :
                     elapsed < 5 ? '대본의 언어, 시대, 문화적 맥락을 파악하고 있습니다' :
                     elapsed < 15 ? '각 장면에 최적화된 구도, 조명, 배경을 설계합니다' :
                     elapsed < 30 ? '캐릭터 일관성과 시각적 연출을 조율합니다' :
@@ -950,7 +1058,25 @@ const SetupPanel: React.FC = () => {
                 {/* 진행 단계 프로그레스 바 */}
                 <div className="w-full max-w-sm">
                   <div className="flex items-center gap-0.5">
-                    {[
+                    {chunkProgress ? (
+                      /* [FIX #193] 청크 병렬 처리 시 실제 진행률 표시 */
+                      Array.from({ length: chunkProgress.total }, (_, i) => {
+                        const isDone = i < chunkProgress.completed;
+                        const isActive = i === chunkProgress.completed;
+                        return (
+                          <div key={i} className="flex-1 flex flex-col items-center gap-1">
+                            <div className={`w-full h-1.5 rounded-full transition-all duration-500 ${
+                              isDone ? 'bg-green-500/60' : isActive ? 'bg-amber-500/60 animate-pulse' : 'bg-white/10'
+                            }`} />
+                            <span className={`text-[10px] transition-all ${
+                              isDone ? 'text-green-300 font-bold' : isActive ? 'text-amber-300 font-bold' : 'text-white/30'
+                            }`}>
+                              {isDone ? '✓ ' : ''}블록 {i + 1}
+                            </span>
+                          </div>
+                        );
+                      })
+                    ) : [
                       { label: '문맥 분석', threshold: 5 },
                       { label: '프롬프트', threshold: 15 },
                       { label: '캐릭터', threshold: 30 },
@@ -977,7 +1103,9 @@ const SetupPanel: React.FC = () => {
                 {/* 친절한 안내 메시지 */}
                 <div className="bg-white/5 rounded-lg px-4 py-2 text-center max-w-sm">
                   <p className="text-xs text-white/40 leading-relaxed">
-                    {elapsed < 30
+                    {chunkProgress
+                      ? `긴 대본을 ${chunkProgress.total}개 블록으로 나눠 동시에 분석합니다. 보통 1~3분 소요됩니다.`
+                      : elapsed < 30
                       ? '이 과정은 AI가 각 장면에 최적화된 이미지 프롬프트를 만드는 핵심 단계입니다. 장면 수에 따라 20초~2분 소요됩니다.'
                       : elapsed < 60
                       ? '장면별로 캐릭터 외모, 카메라 앵글, 조명 등 세부사항을 꼼꼼하게 설계하고 있습니다.'

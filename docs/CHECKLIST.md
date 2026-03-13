@@ -8,6 +8,10 @@
 
 ## 🟢 완료된 작업
 
+- [x] #195 비주얼 스타일에서 채널 레퍼런스 스타일 적용 기능 — 채널분석 탭에서 분석된 채널의 visualGuide(시각 스타일 DNA)를 이미지/영상 탭 비주얼 스타일 섹션에서 원클릭 적용, 저장된 채널 프리셋 목록 접이식 표시, 적용 상태 배지(📡 채널명) 표시, 채널 스타일 해제/초기화 지원 (SetupPanel.tsx, 2026-03-13)
+- [x] #193 대형 대본(8,000자+) 장면 분석 속도 대폭 개선 — 순차→병렬 청크 처리(Promise.allSettled + 2초 스태거), 재시도 4→2회 축소, 429 즉시 v1beta 폴백, 스트리밍 30초 유휴 타임아웃, 실시간 청크 진행률 UI, 부분 성공 허용 (scriptAnalysis.ts, evolinkService.ts, SetupPanel.tsx, 2026-03-13)
+- [x] 스낵형 자막전용 + 리메이크 10버전 안정화 + 쇼핑형 V7.0 편집점 적용 — (1) SNACK_SCRIPT_SYSTEM v11.0: [N] 나레이션 완전 제거, [S]/[A]만 허용, 자막전용 편집, UI 테이블 헤더 '자막 내용'으로 변경 (2) 병렬배치 재시도: 실패배치 최대 2회 retry + 프로그레시브 버전 보존 (3) 쇼핑형: targetDuration 60초 max cap 제거→소스영상 90% 기반, SHOPPING_SCRIPT_SYSTEM에 V7.0 다이내믹 멀티-컷 편집 프로토콜(킬샷/소스ID/나노분할/절대시간) 통합 (VideoAnalysisRoom.tsx, shoppingScriptService.ts, docs/SHOPPING_EDIT_PROTOCOL_V7.md, 2026-03-13)
+- [x] #232 소재 발굴 가이드 기능 — 채널 분석 후 AI가 맞춤 소재 발굴 전략(플랫폼/검색/트렌드/대본 발전/선별 기준/올인원 활용법) 생성, ChannelGuideline.sourceDiscoveryGuide 필드 추가 (types.ts, ChannelAnalysisRoom.tsx, 2026-03-13)
 - [x] #183 내보내기 시 이미지 비율 미반영 수정 — 사용자가 설정한 화면 비율(1:1, 9:16 등)이 ZIP/이미지 내보내기에 반영되지 않던 버그 수정, cropBlobToAspectRatio 유틸리티 추가, downloadSrtWithAssetsZip/exportProjectZip/exportProjectById/downloadImages 4개 내보내기 경로 모두에 중앙 크롭 적용 (fileHelpers.ts, srtService.ts, EditRoomTab.tsx, exportService.ts, 2026-03-13)
 - [x] **WebCodecs VideoDecoder 정밀 프레임 추출 (전수 교체 완료)** — mp4box.js demux + VideoDecoder PTS 정확 디코딩으로 키프레임 스냅 문제 완전 해결, 기존 canvas video.currentTime 방식은 폴백으로 유지, 전체 7곳(VideoAnalysisRoom, SocialAnalysisRoom, videoAnalysis, shoppingScriptService, editPointStore, videoDownloadService, **composeMp4 파이프라인**)에 WebCodecs 우선 경로 적용, composeMp4용 createStreamingVideoExtractor 스트리밍 디코더 추가(순차 전방 O(1) + 후방 탐색 시 키프레임 재디코딩 + ImageBitmap 링버퍼 15프레임), VideoFrameExtractor에 dispose() 추가 (videoDecoder.ts, canvasRenderer.ts, webcodecs/index.ts, 2026-03-13)
 - [x] 영상분석실 프레임 추출 정밀도 대폭 개선 — preciseSeek() 키프레임 스냅 2차 보정, seek 타임아웃 5→15초+경고 로그, CORS만 치명적 에러(나머지 continue), Blob 다운로드 120→600초, 소셜 다운로드 120→300초 (VideoAnalysisRoom.tsx, ytdlpApiService.ts, 2026-03-13)
