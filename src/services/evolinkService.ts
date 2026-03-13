@@ -41,6 +41,8 @@ export interface EvolinkChatOptions {
     signal?: AbortSignal;
     /** monitoredFetch 타임아웃 (ms). 미지정 시 무제한, 긴 대본 처리 시 명시적으로 설정 */
     timeoutMs?: number;
+    /** 모델 오버라이드. 미지정 시 gemini-3.1-pro-preview 사용. 단순 작업에는 'gemini-3.1-flash-lite-preview' 권장 */
+    model?: string;
 }
 
 export interface EvolinkChatResponse {
@@ -196,11 +198,12 @@ export const evolinkChat = async (
         stream = false,
         responseFormat,
         signal,
-        timeoutMs
+        timeoutMs,
+        model = 'gemini-3.1-pro-preview'
     } = options;
 
     const body: Record<string, unknown> = {
-        model: 'gemini-3.1-pro-preview',
+        model,
         messages,
         temperature,
         max_tokens: maxTokens,
@@ -235,12 +238,15 @@ export const evolinkChat = async (
 
     const data: EvolinkChatResponse = await response.json();
 
-    // Auto-track Gemini 3.1 Pro token-based cost
+    // Auto-track token-based cost (Pro vs Flash Lite)
     try {
         const usage = data.usage;
         if (usage) {
-            const inputCost = (usage.prompt_tokens || 0) / 1_000_000 * PRICING.GEMINI_PRO_INPUT_PER_1M;
-            const outputCost = (usage.completion_tokens || 0) / 1_000_000 * PRICING.GEMINI_PRO_OUTPUT_PER_1M;
+            const isFlash = model.includes('flash');
+            const inputRate = isFlash ? PRICING.GEMINI_FLASH_INPUT_PER_1M : PRICING.GEMINI_PRO_INPUT_PER_1M;
+            const outputRate = isFlash ? PRICING.GEMINI_FLASH_OUTPUT_PER_1M : PRICING.GEMINI_PRO_OUTPUT_PER_1M;
+            const inputCost = (usage.prompt_tokens || 0) / 1_000_000 * inputRate;
+            const outputCost = (usage.completion_tokens || 0) / 1_000_000 * outputRate;
             const totalCost = inputCost + outputCost;
             if (totalCost > 0) {
                 useCostStore.getState().addCost(totalCost, 'analysis');

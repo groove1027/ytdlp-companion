@@ -313,7 +313,13 @@ export default function ScriptWriterTab() {
 ${scriptText}`;
 
       // [FIX #222] 120초 타임아웃 — 롱폼 단락 나누기 무한 hang 방지
-      const response = await evolinkChat([{ role: 'user', content: prompt }], { timeoutMs: 120_000 });
+      // Flash Lite: 단순 텍스트 분할에는 Pro 불필요, Flash Lite가 2~3배 빠름
+      const response = await evolinkChat([{ role: 'user', content: prompt }], {
+        timeoutMs: 120_000,
+        model: 'gemini-3.1-flash-lite-preview',
+        temperature: 0.3,
+        maxTokens: 2048,
+      });
       clearInterval(simInterval);
       setAnalysisProgress(95);
 

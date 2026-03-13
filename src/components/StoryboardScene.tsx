@@ -368,7 +368,7 @@ const StoryboardSceneInner: React.FC<StoryboardSceneProps> = ({
                   >
                       {scene.videoUrl ? '🔄 Grok HQ' : '🚀 Grok HQ (720p)'}
                   </button>
-                  <button onClick={() => useProjectStore.getState().updateScene(scene.id, { grokDuration: scene.grokDuration === '6' ? '10' : scene.grokDuration === '10' ? '15' : '6' })} className={`w-[20%] text-xs px-1 rounded font-mono border flex items-center justify-center ${scene.grokDuration === '15' ? 'bg-pink-900/80 border-pink-500 text-pink-200' : scene.grokDuration === '6' ? 'bg-gray-800 border-gray-600 text-gray-300' : 'bg-indigo-900/80 border-indigo-500 text-indigo-200'}`}>⏱️ {scene.grokDuration || '10'}s</button>
+                  <button onClick={() => useProjectStore.getState().updateScene(scene.id, { grokDuration: scene.grokDuration === '6' ? '10' : scene.grokDuration === '10' ? '15' : '6' })} className={`w-[20%] text-xs px-1 rounded font-mono border flex items-center justify-center ${scene.grokDuration === '15' ? 'bg-pink-900/80 border-pink-500 text-pink-200' : scene.grokDuration === '6' ? 'bg-gray-800 border-gray-600 text-gray-300' : 'bg-indigo-900/80 border-indigo-500 text-indigo-200'}`}>⏱️ {scene.grokDuration || '15'}s</button>
                   <button onClick={() => useProjectStore.getState().updateScene(scene.id, { grokSpeechMode: !scene.grokSpeechMode })} className={`w-[20%] text-xs px-1 rounded border flex items-center justify-center ${scene.grokSpeechMode ? 'bg-green-900/50 border-green-700 text-green-400' : 'bg-gray-800 border-gray-700 text-gray-400'}`}>{scene.grokSpeechMode ? '🗣️ 대사' : '🔇 SFX'}</button>
               </div>
 

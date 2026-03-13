@@ -1,7 +1,7 @@
 // ZIP 내보내기용 최적화 HTML 뷰어 템플릿
 // IntersectionObserver 레이지 로딩 + 20장면 페이지네이션
 
-export function buildOptimizedViewerHtml(projectTitle: string): string {
+export function buildOptimizedViewerHtml(projectTitle: string, manifestJson?: string): string {
   return `<!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -36,7 +36,7 @@ body{font-family:'Pretendard',sans-serif;background:#111827;color:#e5e7eb;margin
   <img id="lb-img" style="max-width:90vw;max-height:90vh;border-radius:12px">
 </div>
 
-<script id="project-data" type="application/json"><\/script>
+<script id="project-data" type="application/json">${manifestJson || ''}<\/script>
 <script>
 const SCENES_PER_PAGE=20;
 let manifest=null,currentPage=0,totalPages=0;
