@@ -18,7 +18,8 @@ import { useAuthGuard } from '../../../hooks/useAuthGuard';
 import { getYoutubeApiKey } from '../../../services/apiService';
 import { monitoredFetch } from '../../../services/apiService';
 import { getQuotaUsage } from '../../../services/youtubeAnalysisService';
-import { extractStreamUrl, isYtdlpServerConfigured } from '../../../services/ytdlpApiService';
+import { extractStreamUrl, isYtdlpServerConfigured, getSocialMetadata, downloadSocialVideo } from '../../../services/ytdlpApiService';
+import { detectPlatform } from '../../../services/videoDownloadService';
 import type {
   VideoAnalysisPreset as AnalysisPreset,
   VideoSceneRow as SceneRow,
@@ -283,6 +284,11 @@ function extractField(block: string, keyword: string): string {
 function extractYouTubeVideoId(url: string): string | null {
   const m = url.match(/(?:youtube\.com\/(?:watch\?v=|shorts\/|embed\/|v\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
   return m?.[1] || null;
+}
+
+/** URL이 YouTube인지 판별 */
+function isYouTubeUrl(url: string): boolean {
+  return /youtube\.com|youtu\.be/i.test(url);
 }
 
 /** ISO 8601 duration (PT1M30S, PT1M30.5S) → 초 변환 */
@@ -2409,49 +2415,49 @@ const VideoAnalysisRoom: React.FC = () => {
         }
         videoUri = '';
       } else {
-        // YouTube 모드: 모든 URL의 메타데이터 수집
+        // 링크 모드: YouTube / TikTok / 소셜 자동 감지
         const urls = validYoutubeUrls;
-        const primaryVid = extractYouTubeVideoId(urls[0]);
+        const firstIsYouTube = isYouTubeUrl(urls[0]);
+        const detectedPlatform = firstIsYouTube ? 'youtube' : detectPlatform(urls[0]);
 
-        if (primaryVid) {
-          // 첫 번째 영상은 Gemini v1beta용
-          videoUri = urls[0].trim();
-        }
+        if (firstIsYouTube) {
+          // ── YouTube 모드 ──
+          const primaryVid = extractYouTubeVideoId(urls[0]);
+          if (primaryVid) videoUri = urls[0].trim();
 
-        // 모든 영상의 메타데이터 병렬 수집
-        const metaResults = await Promise.allSettled(
-          urls.map(async (url) => {
-            const vid = extractYouTubeVideoId(url);
-            if (!vid) return null;
-            const [meta, comments] = await Promise.all([
-              fetchYouTubeVideoMeta(vid),
-              fetchYouTubeComments(vid),
-            ]);
-            return { vid, url, meta, comments };
-          })
-        );
-
-        const allFrames: TimedFrame[] = [];
-        const descs: string[] = [];
-
-        for (let vi = 0; vi < metaResults.length; vi++) {
-          const r = metaResults[vi];
-          if (r.status !== 'fulfilled' || !r.value) continue;
-          const { vid, url, meta, comments } = r.value;
-          const sourceLabel = urls.length > 1 ? `[소스 ${vi + 1}] ` : '';
-
-          const durationSec = meta ? parseIsoDuration(meta.duration) : 60;
-          const base = `https://img.youtube.com/vi/${vid}`;
-          const ytSourceName = meta?.title ? meta.title.slice(0, 30) : `YouTube ${vi + 1}`;
-          allFrames.push(
-            { url: `${base}/hqdefault.jpg`, hdUrl: `${base}/maxresdefault.jpg`, timeSec: 0, sourceFileName: ytSourceName, sourceIndex: vi },
-            { url: `${base}/1.jpg`, hdUrl: `${base}/hqdefault.jpg`, timeSec: Math.round(durationSec * 0.25), sourceFileName: ytSourceName, sourceIndex: vi },
-            { url: `${base}/2.jpg`, hdUrl: `${base}/hqdefault.jpg`, timeSec: Math.round(durationSec * 0.5), sourceFileName: ytSourceName, sourceIndex: vi },
-            { url: `${base}/3.jpg`, hdUrl: `${base}/hqdefault.jpg`, timeSec: Math.round(durationSec * 0.75), sourceFileName: ytSourceName, sourceIndex: vi },
+          const metaResults = await Promise.allSettled(
+            urls.map(async (url) => {
+              const vid = extractYouTubeVideoId(url);
+              if (!vid) return null;
+              const [meta, comments] = await Promise.all([
+                fetchYouTubeVideoMeta(vid),
+                fetchYouTubeComments(vid),
+              ]);
+              return { vid, url, meta, comments };
+            })
           );
 
-          if (meta) {
-            descs.push(`${sourceLabel}## YouTube 영상 정보
+          const allFrames: TimedFrame[] = [];
+          const descs: string[] = [];
+
+          for (let vi = 0; vi < metaResults.length; vi++) {
+            const r = metaResults[vi];
+            if (r.status !== 'fulfilled' || !r.value) continue;
+            const { vid, url, meta, comments } = r.value;
+            const sourceLabel = urls.length > 1 ? `[소스 ${vi + 1}] ` : '';
+
+            const durationSec = meta ? parseIsoDuration(meta.duration) : 60;
+            const base = `https://img.youtube.com/vi/${vid}`;
+            const ytSourceName = meta?.title ? meta.title.slice(0, 30) : `YouTube ${vi + 1}`;
+            allFrames.push(
+              { url: `${base}/hqdefault.jpg`, hdUrl: `${base}/maxresdefault.jpg`, timeSec: 0, sourceFileName: ytSourceName, sourceIndex: vi },
+              { url: `${base}/1.jpg`, hdUrl: `${base}/hqdefault.jpg`, timeSec: Math.round(durationSec * 0.25), sourceFileName: ytSourceName, sourceIndex: vi },
+              { url: `${base}/2.jpg`, hdUrl: `${base}/hqdefault.jpg`, timeSec: Math.round(durationSec * 0.5), sourceFileName: ytSourceName, sourceIndex: vi },
+              { url: `${base}/3.jpg`, hdUrl: `${base}/hqdefault.jpg`, timeSec: Math.round(durationSec * 0.75), sourceFileName: ytSourceName, sourceIndex: vi },
+            );
+
+            if (meta) {
+              descs.push(`${sourceLabel}## YouTube 영상 정보
 - **제목**: ${meta.title}
 - **채널**: ${meta.channelTitle}
 - **조회수**: ${meta.viewCount.toLocaleString()}회
@@ -2462,18 +2468,99 @@ const VideoAnalysisRoom: React.FC = () => {
 
 ### 영상 설명(Description)
 ${meta.description.slice(0, 1500)}${meta.description.length > 1500 ? '\n...(이하 생략)' : ''}` +
-              (comments.length > 0 ? `\n\n### 상위 댓글 ${Math.min(comments.length, 10)}개\n${comments.slice(0, 10).map((c, i) => `${i + 1}. ${c.slice(0, 150)}`).join('\n')}` : ''));
-          } else {
-            descs.push(`${sourceLabel}YouTube 영상 URL: ${url.trim()}`);
+                (comments.length > 0 ? `\n\n### 상위 댓글 ${Math.min(comments.length, 10)}개\n${comments.slice(0, 10).map((c, i) => `${i + 1}. ${c.slice(0, 150)}`).join('\n')}` : ''));
+            } else {
+              descs.push(`${sourceLabel}YouTube 영상 URL: ${url.trim()}`);
+            }
           }
-        }
 
-        frames = allFrames;
+          frames = allFrames;
 
-        if (isMultiSource) {
-          inputDesc = `## 다중 영상 짜집기 분석 (${urls.length}개 소스)\n아래 ${urls.length}개 영상의 핵심 장면을 조합하여 하나의 새로운 영상을 만들어야 합니다.\n각 소스의 가장 매력적인 구간을 골라 짜집기(재편집) 편집표를 작성해주세요.\n\n` + descs.join('\n\n---\n\n');
+          if (isMultiSource) {
+            inputDesc = `## 다중 영상 짜집기 분석 (${urls.length}개 소스)\n아래 ${urls.length}개 영상의 핵심 장면을 조합하여 하나의 새로운 영상을 만들어야 합니다.\n각 소스의 가장 매력적인 구간을 골라 짜집기(재편집) 편집표를 작성해주세요.\n\n` + descs.join('\n\n---\n\n');
+          } else {
+            inputDesc = descs[0] || `YouTube 영상 URL: ${urls[0]?.trim() || ''}`;
+          }
         } else {
-          inputDesc = descs[0] || `YouTube 영상 URL: ${urls[0]?.trim() || ''}`;
+          // ── 소셜 모드 (TikTok / Douyin / Xiaohongshu 등) ──
+          const platformLabel = detectedPlatform === 'tiktok' ? 'TikTok'
+            : detectedPlatform === 'douyin' ? '더우인'
+            : detectedPlatform === 'xiaohongshu' ? '샤오홍슈'
+            : '소셜 영상';
+
+          const allFrames: TimedFrame[] = [];
+          const descs: string[] = [];
+
+          for (let vi = 0; vi < urls.length; vi++) {
+            const url = urls[vi].trim();
+            if (!url) continue;
+            const sourceLabel = urls.length > 1 ? `[소스 ${vi + 1}] ` : '';
+
+            // 소셜 메타데이터 수집 (댓글 포함)
+            let socialMeta: Awaited<ReturnType<typeof getSocialMetadata>> | null = null;
+            try {
+              socialMeta = await getSocialMetadata(url, true);
+            } catch (e) {
+              console.warn(`[VideoAnalysis] 소셜 메타데이터 수집 실패 (${url}):`, e);
+            }
+
+            // 영상 Blob 다운로드 → 프레임 추출
+            let videoBlob: Blob | null = null;
+            try {
+              showToast(`${platformLabel} 영상 다운로드 중...`, 3000);
+              const dl = await downloadSocialVideo(url, '720p');
+              videoBlob = dl.blob;
+              useVideoAnalysisStore.getState().setVideoBlob(videoBlob);
+            } catch (e) {
+              console.warn(`[VideoAnalysis] 소셜 영상 다운로드 실패 (${url}):`, e);
+            }
+
+            if (videoBlob) {
+              const blobUrl = URL.createObjectURL(videoBlob);
+              logger.registerBlobUrl(blobUrl, 'video', 'VideoAnalysisRoom:socialDownload', videoBlob.size / (1024 * 1024));
+              const durationSec = socialMeta?.duration || 60;
+              // 대표 타임코드로 초기 프레임 추출
+              const sampleTimes = [0, Math.round(durationSec * 0.25), Math.round(durationSec * 0.5), Math.round(durationSec * 0.75)];
+              const socialFrames = await canvasExtractFrames(blobUrl, sampleTimes, true);
+              const sourceName = socialMeta?.title ? socialMeta.title.slice(0, 30) : `${platformLabel} ${vi + 1}`;
+              allFrames.push(...socialFrames.map(f => ({ ...f, sourceFileName: sourceName, sourceIndex: vi })));
+            } else if (socialMeta?.thumbnail) {
+              // Blob 실패 시 썸네일 폴백
+              const durationSec = socialMeta.duration || 60;
+              const sourceName = socialMeta.title?.slice(0, 30) || `${platformLabel} ${vi + 1}`;
+              allFrames.push(
+                { url: socialMeta.thumbnail, hdUrl: socialMeta.thumbnail, timeSec: 0, sourceFileName: sourceName, sourceIndex: vi },
+                { url: socialMeta.thumbnail, hdUrl: socialMeta.thumbnail, timeSec: Math.round(durationSec * 0.5), sourceFileName: sourceName, sourceIndex: vi },
+              );
+            }
+
+            if (socialMeta) {
+              const commentText = socialMeta.comments?.length > 0
+                ? `\n\n### 상위 댓글 ${Math.min(socialMeta.comments.length, 10)}개\n${socialMeta.comments.slice(0, 10).map((c, i) => `${i + 1}. ${c.author}: ${c.text.slice(0, 150)}`).join('\n')}`
+                : '';
+              descs.push(`${sourceLabel}## ${platformLabel} 영상 정보
+- **제목**: ${socialMeta.title || '(제목 없음)'}
+- **크리에이터**: ${socialMeta.uploader || '알 수 없음'}
+- **조회수**: ${(socialMeta.viewCount || 0).toLocaleString()}회
+- **좋아요**: ${(socialMeta.likeCount || 0).toLocaleString()}개
+- **영상 길이**: ${socialMeta.duration || 0}초
+- **URL**: ${url}
+
+### 영상 설명
+${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '').length > 1500 ? '\n...(이하 생략)' : ''}${commentText}`);
+            } else {
+              descs.push(`${sourceLabel}${platformLabel} 영상 URL: ${url}`);
+            }
+          }
+
+          frames = allFrames;
+          videoUri = ''; // 소셜은 Gemini v1beta 미지원
+
+          if (isMultiSource) {
+            inputDesc = `## 다중 영상 짜집기 분석 (${urls.length}개 소스)\n아래 ${urls.length}개 ${platformLabel} 영상의 핵심 장면을 조합하여 하나의 새로운 영상을 만들어야 합니다.\n각 소스의 가장 매력적인 구간을 골라 짜집기(재편집) 편집표를 작성해주세요.\n\n` + descs.join('\n\n---\n\n');
+          } else {
+            inputDesc = descs[0] || `${platformLabel} 영상 URL: ${urls[0]?.trim() || ''}`;
+          }
         }
       }
       setThumbnails(frames);
@@ -2613,15 +2700,14 @@ ${meta.description.slice(0, 1500)}${meta.description.length > 1500 ? '\n...(이�
             setThumbnails(multiExactFrames);
           }
         }
-      } else {
+      } else if (isYouTubeUrl(youtubeUrl)) {
+        // YouTube: 기존 3중 폴백
         ytVid = extractYouTubeVideoId(youtubeUrl);
         let videoSource: string | null = null;
         if (ytVid) {
-          // YouTube 메타데이터에서 영상 길이 추출
           try {
             const meta = await fetchYouTubeVideoMeta(ytVid);
             if (meta?.duration) {
-              // ISO 8601 duration (PT1M30S) → 초 변환
               const m = meta.duration.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
               if (m) durSec = (parseInt(m[1] || '0') * 3600) + (parseInt(m[2] || '0') * 60) + parseInt(m[3] || '0');
             }
@@ -2640,6 +2726,21 @@ ${meta.description.slice(0, 1500)}${meta.description.length > 1500 ? '\n...(이�
           if (exactFrames.length > 0) {
             console.log(`[Frame] ✅ 최종 프레임 ${exactFrames.length}개 적용`);
             setThumbnails(exactFrames);
+          }
+        }
+      } else {
+        // 소셜 (TikTok 등): 이미 다운로드한 Blob으로 프레임 추출
+        const existingBlob = useVideoAnalysisStore.getState().videoBlob;
+        if (existingBlob) {
+          const allTimecodes = collectTimecodesFromVersions(parsed, durSec);
+          if (allTimecodes.length > 0) {
+            const blobUrl = URL.createObjectURL(existingBlob);
+            logger.registerBlobUrl(blobUrl, 'video', 'VideoAnalysisRoom:socialPostAnalysis', existingBlob.size / (1024 * 1024));
+            const exactFrames = await canvasExtractFrames(blobUrl, allTimecodes, true);
+            if (exactFrames.length > 0) {
+              console.log(`[Frame] ✅ 소셜 영상 타임코드 프레임 ${exactFrames.length}개 적용`);
+              setThumbnails(exactFrames);
+            }
           }
         }
       }
@@ -2700,7 +2801,7 @@ ${meta.description.slice(0, 1500)}${meta.description.length > 1500 ? '\n...(이�
   // HTML 다운로드 (개별 버전)
   const handleDownloadVersionHtml = useCallback((v: VersionItem) => {
     if (!selectedPreset) return;
-    const sourceInfo = inputMode === 'youtube' ? `YouTube: ${youtubeUrl}` : `파일: ${uploadedFiles[0]?.name || ''}`;
+    const sourceInfo = inputMode === 'youtube' ? `영상: ${youtubeUrl}` : `파일: ${uploadedFiles[0]?.name || ''}`;
     const html = generateAnalysisHtml([v], selectedPreset, thumbnails, sourceInfo);
     const safeName = v.title.replace(/[^\w가-힣\s-]/g, '').trim().slice(0, 40);
     downloadFile(html, `${safeName || `version-${v.id}`}.html`, 'text/html');
@@ -2709,7 +2810,7 @@ ${meta.description.slice(0, 1500)}${meta.description.length > 1500 ? '\n...(이�
   // HTML 다운로드 (전체 버전)
   const handleDownloadAllHtml = useCallback(() => {
     if (!selectedPreset || versions.length === 0) return;
-    const sourceInfo = inputMode === 'youtube' ? `YouTube: ${youtubeUrl}` : `파일: ${uploadedFiles[0]?.name || ''}`;
+    const sourceInfo = inputMode === 'youtube' ? `영상: ${youtubeUrl}` : `파일: ${uploadedFiles[0]?.name || ''}`;
     const html = generateAnalysisHtml(versions, selectedPreset, thumbnails, sourceInfo);
     const presetLabel = PRESET_INFO[selectedPreset as AnalysisPreset]?.label || '스낵형';
     downloadFile(html, `${presetLabel}_분석결과_전체.html`, 'text/html');
@@ -2778,7 +2879,7 @@ ${meta.description.slice(0, 1500)}${meta.description.length > 1500 ? '\n...(이�
                   : 'bg-gray-700/50 text-gray-400 border border-gray-600/30 hover:text-gray-300'
               }`}
             >
-              {mode === 'youtube' ? 'YouTube 링크' : '영상 업로드'}
+              {mode === 'youtube' ? '영상 링크' : '영상 업로드'}
             </button>
           ))}
         </div>
@@ -2791,7 +2892,7 @@ ${meta.description.slice(0, 1500)}${meta.description.length > 1500 ? '\n...(이�
                 <input
                   type="url" value={url}
                   onChange={e => { updateYoutubeUrl(idx, e.target.value); resetResults(); }}
-                  placeholder={idx === 0 ? 'YouTube 영상 URL (예: https://youtube.com/watch?v=...)' : `소스 ${idx + 1} YouTube URL`}
+                  placeholder={idx === 0 ? '영상 URL (YouTube, TikTok 등)' : `소스 ${idx + 1} 영상 URL`}
                   className="flex-1 bg-gray-900 border border-gray-600 rounded-lg px-4 py-2.5 text-white text-sm placeholder-gray-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
                 />
                 {youtubeUrls.length > 1 && (
