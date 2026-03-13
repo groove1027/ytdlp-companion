@@ -235,10 +235,11 @@ const pollResult = async (
   projectId: number,
   onProgress?: (message: string, elapsedSec: number) => void,
 ): Promise<string> => {
-  const MAX_POLLS = 225; // 30분 / 8초
+  // [FIX #188] 폴링 시간 45분으로 확장 — 긴 영상 처리 대응
+  const MAX_POLLS = 340; // 45분 / 8초
   const POLL_INTERVAL = 8000;
   let consecutiveNetworkErrors = 0;
-  const MAX_NETWORK_ERRORS = 10; // 네트워크 오류는 10회까지 허용 (80초)
+  const MAX_NETWORK_ERRORS = 15; // [FIX #188] 네트워크 오류 허용 횟수 확대 (15회 = 120초)
 
   for (let i = 0; i < MAX_POLLS; i++) {
     let data: PollResult;
@@ -369,9 +370,9 @@ const pollResult = async (
   }
 
   throw new Error(
-    'GhostCut 처리 시간 초과 (30분).\n' +
+    'GhostCut 처리 시간 초과 (45분).\n' +
     '영상이 너무 길거나 GhostCut 서버가 혼잡할 수 있습니다.\n' +
-    '잠시 후 다시 시도해주세요. 5분 이하의 짧은 영상으로 먼저 테스트하는 것을 추천합니다.'
+    '잠시 후 다시 시도해주세요. 10분 이하의 영상으로 먼저 테스트하는 것을 추천합니다.'
   );
 };
 
@@ -379,7 +380,8 @@ const pollResult = async (
 const downloadResult = async (resultUrl: string): Promise<Blob> => {
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      const response = await fetch(resultUrl);
+      // [FIX #188] monitoredFetch 사용 — 로깅 + 타임아웃 추적
+      const response = await monitoredFetch(resultUrl);
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }

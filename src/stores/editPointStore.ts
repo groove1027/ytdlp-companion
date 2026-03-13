@@ -281,8 +281,21 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
       const maxDur = sourceVideos.length === 1 && sourceVideos[0].durationSec
         ? sourceVideos[0].durationSec : undefined;
       const entries = await parseEditTableWithAI(rawEditTable, rawNarration, maxDur);
+
+      // [FIX #192] 소스 매핑을 edlEntries와 동일한 set()에서 원자적으로 처리
+      // → Step2Mapping이 "매핑 안 됨" 에러를 잠깐 보여주는 깜빡임 방지
+      const { sourceVideos: currentSourceVideos } = get();
+      const initialMapping: Record<string, string> = {};
+      if (currentSourceVideos.length === 1) {
+        const singleVideo = currentSourceVideos[0];
+        for (const entry of entries) {
+          initialMapping[entry.sourceId] = singleVideo.id;
+        }
+      }
+
       set({
         edlEntries: entries,
+        sourceMapping: initialMapping,
         isProcessing: false,
         processingPhase: '',
         processingProgress: 100,
@@ -290,8 +303,10 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
         step: 'mapping',
       });
 
-      // 자동 소스 매핑 실행
-      get().autoMapSources();
+      // 다중 소스인 경우 정규화 매핑 추가 실행
+      if (currentSourceVideos.length !== 1) {
+        get().autoMapSources();
+      }
 
       showToast(`${entries.length}개 편집 항목을 파싱했습니다.`);
     } catch (err) {

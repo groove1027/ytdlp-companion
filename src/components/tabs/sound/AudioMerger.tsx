@@ -129,7 +129,8 @@ const AudioMerger: React.FC = () => {
   const elapsedTTS = useElapsedTimer(isGeneratingTTS);
 
   // LUFS 정규화 상태
-  const [lufsEnabled, setLufsEnabled] = useState(false);
+  // [FIX #190] LUFS 정규화 기본 활성화 — 나레이션 음량 들쑥날쑥 방지
+  const [lufsEnabled, setLufsEnabled] = useState(true);
   const [lufsPreset, setLufsPreset] = useState<LufsPreset>('youtube');
   const [isNormalizing, setIsNormalizing] = useState(false);
   const [lufsApplied, setLufsApplied] = useState(false);

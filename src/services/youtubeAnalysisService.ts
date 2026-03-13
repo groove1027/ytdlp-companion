@@ -1298,13 +1298,30 @@ export const analyzeChannelStyle = async (
     const captionCount = scripts.filter(s => s.transcriptSource === 'caption').length;
     const descriptionCount = scripts.filter(s => s.transcriptSource === 'description').length;
     const combinedScripts = scripts.map((s, i) => {
-        const textContent = s.transcript || s.description || '';
+        const isDescOnly = s.transcriptSource === 'description';
         const tagsStr = (s.tags || []).slice(0, 15).join(', ');
-        const sourceLabel = s.transcriptSource === 'description' ? ' [⚠ 자막 없음 — 영상 설명으로 대체]' : ' [자막 확보]';
+        const sourceLabel = isDescOnly ? ' [⚠ 자막 없음 — 설명란만 참고]' : ' [자막 확보]';
         const header = `=== 영상 ${i + 1}/${scripts.length}: "${s.title}" (조회수 ${s.viewCount.toLocaleString()}, 길이 ${s.duration || '?'})${sourceLabel} ===`;
         const tagLine = tagsStr ? `[태그] ${tagsStr}` : '';
-        const descLine = s.description && s.description !== textContent ? `[설명] ${s.description.substring(0, 200)}` : '';
-        const bodyText = textContent ? `[본문]\n${textContent.substring(0, perScript - 300)}` : '[본문 없음 — 태그/제목/설명에서 주제 파악 필요]';
+
+        let bodyText: string;
+        if (isDescOnly) {
+            // [FIX #186] 자막 미확보 → 설명란은 면책조항/기획의도가 많으므로 축소 + 명시적 라벨링
+            const rawDesc = s.transcript || s.description || '';
+            // 면책조항/법적고지/기획의도 영역 필터: 해당 키워드 이후 텍스트 제거
+            const cutPatterns = /(?:면책\s*조항|법적\s*고지|저작권\s*고지|본\s*영상은\s*투자|수익\s*보장|협찬|광고\s*포함|기획\s*의도|Disclaimer)/i;
+            const cutIdx = rawDesc.search(cutPatterns);
+            const cleaned = cutIdx > 50 ? rawDesc.substring(0, cutIdx).trim() : rawDesc;
+            // 설명란 전용: 500자 제한 + 명시 라벨
+            bodyText = cleaned
+                ? `[설명란 요약 — 주제/키워드 참고만, 말투·구조 분석 제외]\n${cleaned.substring(0, 500)}`
+                : '[본문 없음 — 태그/제목에서 주제 파악 필요]';
+        } else {
+            const textContent = s.transcript || '';
+            bodyText = textContent ? `[본문]\n${textContent.substring(0, perScript - 300)}` : '[본문 없음 — 태그/제목/설명에서 주제 파악 필요]';
+        }
+
+        const descLine = !isDescOnly && s.description ? `[설명] ${s.description.substring(0, 200)}` : '';
         return [header, tagLine, descLine, bodyText].filter(Boolean).join('\n');
     }).join('\n\n');
     // 설명 전용 영상이 과반일 경우 AI에게 경고 주입

@@ -228,7 +228,8 @@ export default function ScriptWriterTab() {
     }
   }, [selectedTopic]);
 
-  const scriptText = finalScript || generatedScript?.content || manualText || '';
+  // [FIX #185] ?? 사용: 빈 문자열('')은 유효한 값 — 전체 삭제 후 이전 텍스트로 롤백되는 버그 수정
+  const scriptText = (finalScript ?? generatedScript?.content ?? manualText) || '';
   const displayScript = scriptText;
 
   const handleGoToSoundStudio = useCallback(() => {
