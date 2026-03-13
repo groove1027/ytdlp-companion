@@ -45,6 +45,7 @@ import { useAuthStore } from './stores/authStore';
 import { useCostStore } from './stores/costStore';
 import { useProjectStore, autoRestoreOrCreateProject } from './stores/projectStore';
 import { useNavigationStore } from './stores/navigationStore';
+import { useImageVideoStore } from './stores/imageVideoStore';
 import { logger } from './services/LoggerService';
 
 // 청크 로딩 실패 시 1회 재시도 + 자동 리로드 (배포 후 구버전 캐시 문제 해결)
@@ -396,21 +397,26 @@ const App: React.FC = () => {
 
     try {
         const costMultiplier = useNativeHQ ? 2 : 1;
-        // [CRITICAL FIX] Art Style — StoryboardPanel과 동일한 폴백 체인
-        // 1순위: atmosphere (ScriptMode 프리셋 또는 visualTone 자동 저장값)
-        // 2순위: detectedStyleDescription (Pro 분석 시 저장된 visualTone)
-        // 3순위: 캐릭터 분석 예술 스타일 (analysisStyle) — 캐릭터 그림체 보존
-        // 4순위: "Cinematic" 기본값
+        // [FIX #252] Art Style — StoryboardPanel과 완전 동일한 폴백 체인
+        // 1순위: 사용자가 스타일 팔레트에서 선택한 값 (useImageVideoStore.style)
+        // 2순위: atmosphere (ScriptMode 프리셋 또는 visualTone 자동 저장값)
+        // 3순위: detectedStyleDescription (Pro 분석 시 저장된 visualTone)
+        // 4순위: 캐릭터 분석 예술 스타일 (analysisStyle) — 캐릭터 그림체 보존
+        // 5순위: "Cinematic" 기본값
+        const userStyle = useImageVideoStore.getState().style;
+        const userSelectedStyle = userStyle && userStyle !== 'custom';
         const appCharArtStyle = resolvedConfig.characters?.find(c => c.analysisStyle)?.analysisStyle || '';
-        const effectiveStyle = (resolvedConfig.atmosphere && resolvedConfig.atmosphere.trim() !== "")
-            ? resolvedConfig.atmosphere
-            : (resolvedConfig.detectedStyleDescription && resolvedConfig.detectedStyleDescription.trim() !== "")
-              ? resolvedConfig.detectedStyleDescription
-              : (appCharArtStyle.trim() !== "")
-                ? appCharArtStyle
-                : "Cinematic";
+        const effectiveStyle = userSelectedStyle
+            ? userStyle
+            : (resolvedConfig.atmosphere && resolvedConfig.atmosphere.trim() !== "")
+              ? resolvedConfig.atmosphere
+              : (resolvedConfig.detectedStyleDescription && resolvedConfig.detectedStyleDescription.trim() !== "")
+                ? resolvedConfig.detectedStyleDescription
+                : (appCharArtStyle.trim() !== "")
+                  ? appCharArtStyle
+                  : "Cinematic";
         // 사용자가 비주얼 미선택 + 캐릭터 아트 스타일로 폴백된 경우 → 캐릭터 그림체 보존 모드
-        const appPreserveCharStyle = appCharArtStyle.trim() !== '' && effectiveStyle === appCharArtStyle;
+        const appPreserveCharStyle = !userSelectedStyle && appCharArtStyle.trim() !== '' && effectiveStyle === appCharArtStyle;
 
         let result: { url: string; isFallback: boolean };
 
@@ -842,11 +848,15 @@ const App: React.FC = () => {
           if (!getGeminiKey()) {
               throw new Error("API Key가 설정되지 않았습니다.");
           }
-          const autoStyle = (currentConfig.atmosphere && currentConfig.atmosphere.trim() !== '')
-              ? currentConfig.atmosphere
-              : (currentConfig.detectedStyleDescription && currentConfig.detectedStyleDescription.trim() !== '')
-                ? currentConfig.detectedStyleDescription
-                : 'Cinematic';
+          // [FIX #252] 사용자 스타일 1순위 — handleGenerateImage와 동일한 폴백 체인
+          const autoUserStyle = useImageVideoStore.getState().style;
+          const autoStyle = (autoUserStyle && autoUserStyle !== 'custom')
+              ? autoUserStyle
+              : (currentConfig.atmosphere && currentConfig.atmosphere.trim() !== '')
+                ? currentConfig.atmosphere
+                : (currentConfig.detectedStyleDescription && currentConfig.detectedStyleDescription.trim() !== '')
+                  ? currentConfig.detectedStyleDescription
+                  : 'Cinematic';
           const allScenes = useProjectStore.getState().scenes;
           const sceneIdx = allScenes.findIndex(s => s.id === sceneId);
           const prevScene = sceneIdx > 0 ? allScenes[sceneIdx - 1] : undefined;

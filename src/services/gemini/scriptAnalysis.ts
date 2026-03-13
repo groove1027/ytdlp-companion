@@ -995,26 +995,152 @@ export const parseScriptToScenes = async (
     };
 
     // [UPGRADED] Gemini 3.1 Pro — v1 프록시 경유
-    const extractAndProcess = (data: any, label: string): Scene[] => {
+    const extractAndProcess = (data: any, label: string, skipLineRemap = false): Scene[] => {
         const text = extractTextFromResponse(data);
         if (!text) {
             const reason = data?.candidates?.[0]?.finishReason;
             if (reason === 'SAFETY') throw new Error("⚠️ AI 안전 필터가 응답을 차단했습니다.");
             throw new Error(`${label} 응답 실패 (Empty Response). Reason: ${reason || 'Unknown'}`);
         }
-        const result = processResponse(text);
+        const result = processResponse(text, skipLineRemap);
         console.log(`[parseScriptToScenes] ${label} → ${result.length} scenes generated (target: ${targetSceneCount})`);
         return result;
     };
 
-    // [FIX #235] 청크 분할 제거 — 구 버전(v3.1)처럼 대본 전체를 v1beta 한 방에 전송
-    // Gemini 3.1 Pro는 3.0 Pro보다 더 강력하므로 대본 크기 제한 불필요
-    // Evolink v1beta generateContent는 콘텐츠 크기 제한 없음 (기술 문서 확인)
-    {
-        console.log(`[parseScriptToScenes] 📝 대본 전체 전송 (${cleanedScript.length}자) — v1beta 단일 요청`);
-        // 5분 타임아웃 — 대형 대본도 충분히 처리 가능
+    // [FIX #251] 청크 분할 재도입 — 대형 대본(30장면+)에서 브라우저 네트워크 타임아웃 방지
+    // 65장면 대본이 단일 요청 시 125초에서 브라우저/프록시 타임아웃으로 실패한 사례 대응
+    const CHUNK_SCENE_THRESHOLD = 30;
+    const CHUNK_SIZE = 25;
+    const CHUNK_COOLDOWN_MS = 2000;
+    const shouldChunk = (targetSceneCount || 0) >= CHUNK_SCENE_THRESHOLD;
+
+    if (shouldChunk) {
+        // 대본을 로컬 결정론적 분할기로 장면 텍스트 단위로 분할
+        const sceneTexts = splitScenesLocally(cleanedScript, format, smartSplit, longFormSplitType);
+        const totalChunks = Math.ceil(sceneTexts.length / CHUNK_SIZE);
+        console.log(`[parseScriptToScenes] 📦 청크 분할: ${sceneTexts.length}장면 → ${totalChunks}청크 (CHUNK_SIZE=${CHUNK_SIZE})`);
+        onChunkProgress?.(0, totalChunks);
+
+        const allScenes: Scene[] = [];
+        const CHUNK_TIMEOUT_MS = 180_000; // 3분 (청크는 작으므로 타임아웃 단축)
+
+        for (let ci = 0; ci < totalChunks; ci++) {
+            const chunkSceneTexts = sceneTexts.slice(ci * CHUNK_SIZE, (ci + 1) * CHUNK_SIZE);
+            const chunkScript = chunkSceneTexts.join('\n');
+            const chunkTarget = chunkSceneTexts.length;
+
+            const chunkPayload = {
+                contents: [{ role: 'user', parts: [{ text: `Script:\n${chunkScript}\n\n[MANDATORY GLOBAL CONTEXT — Apply to EVERY scene as default. Override per-scene ONLY if scene content clearly depicts a different setting.]\n${baseSetting || 'No context provided.'}\n\n[CHUNK OVERRIDE] This is chunk ${ci + 1} of ${totalChunks}. You MUST generate EXACTLY ${chunkTarget} scenes for this chunk. Ignore any other target scene count in the system instructions.` }] }],
+                systemInstruction: { parts: [{ text: systemPrompt }] },
+                safetySettings: SAFETY_SETTINGS_BLOCK_NONE,
+                generationConfig: { responseMimeType: 'application/json', maxOutputTokens: 65536 }
+            };
+
+            const MAX_RETRIES = 3;
+            let lastError: Error | null = null;
+            let chunkResult: Scene[] | null = null;
+
+            for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+                if (attempt > 0) {
+                    const backoffMs = 2000 * Math.pow(3, attempt - 1);
+                    const errMsg = lastError?.message || '';
+                    const isRetryable = errMsg.includes('Failed to fetch') || errMsg.includes('Network Error') || errMsg.includes('fetch') || errMsg.includes('ERR_NETWORK') || errMsg.includes('524') || errMsg.includes('timeout') || errMsg.includes('타임아웃') || errMsg.includes('Empty Response') || errMsg.includes('네트워크');
+                    if (!isRetryable) break;
+                    logger.trackRetry(`청크 ${ci + 1}/${totalChunks}`, attempt + 1, MAX_RETRIES, `${backoffMs / 1000}초 대기`);
+                    await new Promise(r => setTimeout(r, backoffMs));
+                }
+                try {
+                    console.log(`[parseScriptToScenes] 청크 ${ci + 1}/${totalChunks}: Pro 호출 (시도 ${attempt + 1}/${MAX_RETRIES}, ${chunkTarget}장면)`);
+                    const data = await requestGeminiProxy('gemini-3.1-pro-preview', chunkPayload, 0, CHUNK_TIMEOUT_MS);
+                    chunkResult = extractAndProcess(data, `Chunk${ci + 1}-Pro`, true);
+                    lastError = null;
+                    break;
+                } catch (e: any) {
+                    console.warn(`청크 ${ci + 1} Pro 실패 (attempt ${attempt + 1}):`, e.message?.slice(0, 100));
+                    lastError = e;
+                }
+            }
+
+            // Flash 폴백
+            if (lastError) {
+                try {
+                    console.log(`[parseScriptToScenes] 청크 ${ci + 1}/${totalChunks}: Flash 폴백`);
+                    const data = await requestGeminiProxy('gemini-3-flash', chunkPayload, 0, CHUNK_TIMEOUT_MS, { skipNative: true });
+                    chunkResult = extractAndProcess(data, `Chunk${ci + 1}-Flash`, true);
+                    lastError = null;
+                } catch (flashErr: any) {
+                    console.warn(`청크 ${ci + 1} Flash 폴백도 실패: ${flashErr.message?.slice(0, 100)}`);
+                    lastError = flashErr;
+                }
+            }
+
+            if (lastError || !chunkResult) {
+                const msg = lastError?.message || 'Unknown error';
+                const isBalanceError = msg.includes('잔액 부족') || msg.includes('insufficient') || msg.includes('QUOTA_EXHAUSTED');
+                if (isBalanceError) {
+                    throw new Error(`AI 크레딧이 부족합니다. Evolink 크레딧을 충전한 후 다시 시도해주세요.`);
+                }
+                throw new Error(`대본 분석 실패 (청크 ${ci + 1}/${totalChunks}): ${msg}`);
+            }
+
+            allScenes.push(...chunkResult);
+            onChunkProgress?.(ci + 1, totalChunks);
+
+            // 청크 간 쿨다운 (429 Rate Limit 방지, 마지막 청크 후 스킵)
+            if (ci < totalChunks - 1) {
+                console.log(`[parseScriptToScenes] 청크 간 쿨다운: ${CHUNK_COOLDOWN_MS / 1000}초`);
+                await new Promise(r => setTimeout(r, CHUNK_COOLDOWN_MS));
+            }
+        }
+
+        // [CRITICAL] 청크 병합 후 캐릭터 빈도 재적용 — 각 청크는 독립 처리되므로 전체 기준으로 재조정
+        if (appearance === CharacterAppearance.AUTO) {
+            let mainCount = 0;
+            for (let i = 0; i < allScenes.length; i++) {
+                if (allScenes[i].castType === 'KEY_ENTITY') continue;
+                if (allScenes[i].castType === 'MAIN') {
+                    if (mainCount >= 1) {
+                        allScenes[i] = { ...allScenes[i], castType: 'NOBODY', characterPresent: false, characterAction: '' };
+                    } else { mainCount++; }
+                }
+            }
+            console.log(`[PostProcess-Chunked] AUTO mode re-enforced: ${mainCount} MAIN kept across ${allScenes.length} scenes`);
+        } else if (appearance === CharacterAppearance.MINIMAL) {
+            const maxMain = Math.max(2, Math.round(allScenes.length * 0.1));
+            let mainCount = 0;
+            for (let i = 0; i < allScenes.length; i++) {
+                if (allScenes[i].castType === 'KEY_ENTITY') continue;
+                if (allScenes[i].castType === 'MAIN') {
+                    if (mainCount >= maxMain) {
+                        allScenes[i] = { ...allScenes[i], castType: 'NOBODY', characterPresent: false, characterAction: '' };
+                    } else { mainCount++; }
+                }
+            }
+            console.log(`[PostProcess-Chunked] MINIMAL mode re-enforced: ${mainCount}/${maxMain} MAIN kept`);
+        }
+
+        // Entity composition 전체 로테이션 재적용
+        const ENTITY_COMPS = ['ENTITY_SOLO', 'ENTITY_WITH_MAIN', 'MAIN_OBSERVING', 'ENTITY_FG_MAIN_BG', 'MAIN_FG_ENTITY_BG'] as const;
+        let ecIdx = 0, lastEc = '';
+        for (let i = 0; i < allScenes.length; i++) {
+            if (allScenes[i].castType === 'KEY_ENTITY') {
+                if (!allScenes[i].entityComposition || allScenes[i].entityComposition === lastEc) {
+                    allScenes[i] = { ...allScenes[i], entityComposition: ENTITY_COMPS[ecIdx % ENTITY_COMPS.length] };
+                }
+                lastEc = allScenes[i].entityComposition || '';
+                ecIdx++;
+                if (appearance === CharacterAppearance.ALWAYS && allScenes[i].entityComposition === 'ENTITY_SOLO') {
+                    allScenes[i] = { ...allScenes[i], entityComposition: 'ENTITY_WITH_MAIN' };
+                }
+            }
+        }
+
+        scenes = allScenes;
+        console.log(`[parseScriptToScenes] ✅ 청크 처리 완료: ${scenes.length}장면 (${totalChunks}청크)`);
+    } else {
+        // [기존 로직] 단일 요청 (30장면 미만)
+        console.log(`[parseScriptToScenes] 📝 대본 전체 전송 (${cleanedScript.length}자) — 단일 요청`);
         const SCRIPT_TIMEOUT_MS = 300_000;
-        // [FIX #50] 네트워크 오류 시 지수 백오프 재시도 (최대 3회)
         const MAX_SHORT_RETRIES = 3;
         let lastShortError: Error | null = null;
         for (let attempt = 0; attempt < MAX_SHORT_RETRIES; attempt++) {
@@ -1025,28 +1151,26 @@ export const parseScriptToScenes = async (
                 const isTimeoutError = errMsg.includes('524') || errMsg.includes('timeout') || errMsg.includes('타임아웃');
                 const isEmptyResponse = errMsg.includes('Empty Response');
                 if (!isNetworkError && !isTimeoutError && !isEmptyResponse && !errMsg.includes('네트워크')) {
-                    break; // API 오류는 재시도하지 않음
+                    break;
                 }
                 logger.trackRetry('스크립트 파싱', attempt + 1, MAX_SHORT_RETRIES, `네트워크/타임아웃 오류 — ${backoffMs / 1000}초 대기`);
                 console.log(`[parseScriptToScenes] 재시도 대기: ${backoffMs / 1000}초 (시도 ${attempt + 1}/${MAX_SHORT_RETRIES})`);
                 await new Promise(r => setTimeout(r, backoffMs));
             }
             try {
-                // 1차: Gemini 3.1 Pro (최고 품질)
                 console.log(`[parseScriptToScenes] Gemini 3.1 Pro 호출 (시도 ${attempt + 1}/${MAX_SHORT_RETRIES})`);
                 const data = await requestGeminiProxy('gemini-3.1-pro-preview', payload, 0, SCRIPT_TIMEOUT_MS);
                 scenes = extractAndProcess(data, 'Gemini3.1-Pro');
                 lastShortError = null;
-                break; // 성공
+                break;
             } catch (e: any) {
                 console.warn(`Phase 1 (Pro) Failed (attempt ${attempt + 1}):`, e.message?.slice(0, 100));
                 lastShortError = e;
             }
         }
-        // [FIX #191] Flash 모델 폴백 — Pro 모두 실패 시 Flash로 재시도 (Evolink 스킵)
         if (lastShortError) {
             try {
-                console.log(`[parseScriptToScenes] Flash 폴백 시도 (짧은 대본)`);
+                console.log(`[parseScriptToScenes] Flash 폴백 시도`);
                 logger.info(`[parseScriptToScenes] Flash 폴백 시도`, { lastError: lastShortError.message?.slice(0, 100) });
                 const data = await requestGeminiProxy('gemini-3-flash', payload, 0, SCRIPT_TIMEOUT_MS, { skipNative: true });
                 scenes = extractAndProcess(data, 'Gemini-Flash');
@@ -1060,7 +1184,6 @@ export const parseScriptToScenes = async (
             const isBalanceError = msg.includes('잔액 부족') || msg.includes('insufficient') || msg.includes('QUOTA_EXHAUSTED');
             const isNetworkError = msg.includes('Failed to fetch') || msg.includes('Network Error') || msg.includes('fetch');
             const isTimeoutError = msg.includes('524') || msg.includes('timeout') || msg.includes('타임아웃');
-            // [FIX #180] 잔액 부족 에러를 최우선 감지
             if (isBalanceError) {
                 throw new Error(`AI 크레딧이 부족합니다. Evolink 크레딧을 충전한 후 다시 시도해주세요.`);
             } else if (isNetworkError) {
