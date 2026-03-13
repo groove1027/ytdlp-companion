@@ -15,8 +15,10 @@ import { generateFontCssTag } from './fontLoaderService';
 import { buildOptimizedViewerHtml } from '../templates/exportHtmlOptimized';
 
 export const downloadImages = async () => {
-    const { scenes } = useProjectStore.getState();
+    const { scenes, config } = useProjectStore.getState();
     const { setToast } = useUIStore.getState();
+    const { cropBlobToAspectRatio } = await import('../utils/fileHelpers');
+    const aspectRatio = config?.aspectRatio;
 
     const { default: JSZip } = await import('jszip');
     const zip = new JSZip();
@@ -28,11 +30,19 @@ export const downloadImages = async () => {
     setToast({ show: true, message: "이미지 저장 중...", current: 0, total: total });
 
     await processSequentially(validScenes, 5, 20, async (s) => {
-        const filename = getSafeFilename(scenes.indexOf(s), s.scriptText, 'png');
+        // [FIX #183] 비율 크롭 적용 위해 항상 Blob 경유
+        const filename = getSafeFilename(scenes.indexOf(s), s.scriptText, aspectRatio ? 'jpg' : 'png');
+        let blob: Blob | null = null;
+
         if (s.imageUrl!.startsWith('data:image')) {
-            zip.file(filename, s.imageUrl!.split(',')[1], { base64: true });
+            // base64 → Blob 변환
+            const arr = s.imageUrl!.split(',');
+            const mime = arr[0].match(/:(.*?);/)?.[1] || 'image/png';
+            const bstr = atob(arr[1]);
+            const u8 = new Uint8Array(bstr.length);
+            for (let i = 0; i < bstr.length; i++) u8[i] = bstr.charCodeAt(i);
+            blob = new Blob([u8], { type: mime });
         } else {
-            let blob: Blob | null = null;
             // [FIX #150] 1차: 직접 fetch
             try {
                 const res = await fetch(s.imageUrl!);
@@ -48,9 +58,12 @@ export const downloadImages = async () => {
                     console.error(`Failed to fetch image for scene ${s.id}`, e);
                 }
             }
-            if (blob) {
-                zip.file(filename, blob);
-            }
+        }
+
+        if (blob) {
+            // [FIX #183] 설정된 비율로 중앙 크롭
+            const finalBlob = aspectRatio ? await cropBlobToAspectRatio(blob, aspectRatio) : blob;
+            zip.file(filename, finalBlob);
         }
     }, (count) => useUIStore.getState().setToast(prev => ({ ...prev!, current: count })));
 
@@ -286,23 +299,50 @@ export const exportProjectHtml = async () => {
 
 // --- ZIP Export (30+ scenes) ---
 
-async function imageToBlob(imageUrl: string, maxWidth: number, quality: number): Promise<Blob> {
-  // Remote URL: fetch directly
+async function imageToBlob(imageUrl: string, maxWidth: number, quality: number, targetAspectRatio?: string): Promise<Blob> {
+  // Remote URL: fetch directly, then apply aspect ratio crop if needed
   if (!imageUrl.startsWith('data:')) {
     const res = await fetch(imageUrl);
-    return await res.blob();
+    const blob = await res.blob();
+    // [FIX #183] 비율 크롭 적용
+    if (targetAspectRatio) {
+      const { cropBlobToAspectRatio } = await import('../utils/fileHelpers');
+      return cropBlobToAspectRatio(blob, targetAspectRatio, quality);
+    }
+    return blob;
   }
-  // Base64: downscale via canvas
+  // Base64: downscale via canvas + [FIX #183] aspect ratio crop
   return new Promise<Blob>((resolve, reject) => {
     const img = new Image();
     img.onload = () => {
       let w = img.width, h = img.height;
+
+      // [FIX #183] Apply aspect ratio center-crop
+      let sx = 0, sy = 0, sw = w, sh = h;
+      if (targetAspectRatio) {
+        const parts = targetAspectRatio.split(':').map(Number);
+        if (parts.length === 2 && parts[0] && parts[1]) {
+          const targetAR = parts[0] / parts[1];
+          const currentAR = w / h;
+          if (Math.abs(currentAR - targetAR) / targetAR >= 0.02) {
+            if (currentAR > targetAR) {
+              sw = Math.round(h * targetAR);
+              sx = Math.round((w - sw) / 2);
+            } else {
+              sh = Math.round(w / targetAR);
+              sy = Math.round((h - sh) / 2);
+            }
+            w = sw; h = sh;
+          }
+        }
+      }
+
       if (w > maxWidth) { h = Math.round(h * (maxWidth / w)); w = maxWidth; }
       const canvas = document.createElement('canvas');
       canvas.width = w; canvas.height = h;
       const ctx = canvas.getContext('2d');
       if (!ctx) { reject(new Error('canvas error')); return; }
-      ctx.drawImage(img, 0, 0, w, h);
+      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, w, h);
       canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('toBlob failed')), 'image/jpeg', quality);
     };
     img.onerror = reject;
@@ -341,7 +381,7 @@ export const exportProjectZip = async () => {
         const filename = `scene_${String(i + 1).padStart(3, '0')}.${ext}`;
         try {
           useUIStore.getState().setProcessing(true, `이미지 변환 중 (${i + 1}/${total})...`, 'EXPORT');
-          const blob = await imageToBlob(s.imageUrl, maxWidth, jpegQuality);
+          const blob = await imageToBlob(s.imageUrl, maxWidth, jpegQuality, config.aspectRatio);
           scenesFolder.file(filename, blob);
           imageFile = filename;
         } catch (e) {
@@ -476,7 +516,7 @@ export const exportProjectById = async (projectId: string): Promise<void> => {
                 if (s.imageUrl) {
                     const filename = `scene_${String(i + 1).padStart(3, '0')}.jpg`;
                     try {
-                        const blob = await imageToBlob(s.imageUrl, maxWidth, jpegQuality);
+                        const blob = await imageToBlob(s.imageUrl, maxWidth, jpegQuality, config.aspectRatio);
                         scenesFolder.file(filename, blob);
                         imageFile = filename;
                     } catch (e) { logger.trackSwallowedError('ExportService:exportProjectById/imageToBlob', e); }

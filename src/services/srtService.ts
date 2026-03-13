@@ -5,6 +5,7 @@
 
 import { SrtEntry, UnifiedSceneTiming } from '../types';
 import { logger } from './LoggerService';
+import { cropBlobToAspectRatio } from '../utils/fileHelpers';
 
 /**
  * 초(seconds)를 SRT 타임코드로 변환
@@ -91,6 +92,7 @@ export async function downloadSrtWithAssetsZip(
   scenes: { id: string; imageUrl?: string; videoUrl?: string }[],
   filename = 'project-assets.zip',
   narrationLines?: { sceneId?: string; audioUrl?: string }[],
+  aspectRatio?: string,
 ): Promise<void> {
   const JSZip = (await import('jszip')).default;
   const zip = new JSZip();
@@ -114,15 +116,16 @@ export async function downloadSrtWithAssetsZip(
 
     const idx = String(timing.sceneIndex + 1).padStart(3, '0');
 
-    // 이미지
+    // 이미지 — [FIX #183] 설정된 비율로 중앙 크롭 적용
     if (scene.imageUrl) {
       const imgUrl = scene.imageUrl;
       const label = `Scene ${idx} image`;
       fetchPromises.push(
-        fetchAsBlob(imgUrl, label).then((blob) => {
+        fetchAsBlob(imgUrl, label).then(async (blob) => {
           if (blob) {
-            const ext = guessExtension(imgUrl, 'png');
-            zip.file(`images/${idx}_scene.${ext}`, blob);
+            const cropped = aspectRatio ? await cropBlobToAspectRatio(blob, aspectRatio) : blob;
+            const ext = aspectRatio ? 'jpg' : guessExtension(imgUrl, 'png');
+            zip.file(`images/${idx}_scene.${ext}`, cropped);
           } else {
             failedAssets.push(label);
           }

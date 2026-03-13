@@ -167,6 +167,54 @@ export const compressImageUnderSize = (
     });
 };
 
+/**
+ * [FIX #183] Blob 이미지를 목표 비율로 중앙 크롭
+ * 비율이 이미 일치하면(2% 이내) 원본 Blob 그대로 반환
+ */
+export const cropBlobToAspectRatio = (
+    blob: Blob,
+    targetRatio: string,
+    quality = 0.85
+): Promise<Blob> => {
+    const parts = targetRatio.split(':').map(Number);
+    if (parts.length !== 2 || !parts[0] || !parts[1]) return Promise.resolve(blob);
+    const targetAR = parts[0] / parts[1];
+
+    return new Promise((resolve) => {
+        const url = URL.createObjectURL(blob);
+        const img = new Image();
+        img.onload = () => {
+            URL.revokeObjectURL(url);
+            const w = img.naturalWidth;
+            const h = img.naturalHeight;
+            const currentAR = w / h;
+
+            if (Math.abs(currentAR - targetAR) / targetAR < 0.02) {
+                resolve(blob);
+                return;
+            }
+
+            let sx = 0, sy = 0, sw = w, sh = h;
+            if (currentAR > targetAR) {
+                sw = Math.round(h * targetAR);
+                sx = Math.round((w - sw) / 2);
+            } else {
+                sh = Math.round(w / targetAR);
+                sy = Math.round((h - sh) / 2);
+            }
+
+            const canvas = document.createElement('canvas');
+            canvas.width = sw; canvas.height = sh;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) { resolve(blob); return; }
+            ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+            canvas.toBlob(b => resolve(b || blob), 'image/jpeg', quality);
+        };
+        img.onerror = () => { URL.revokeObjectURL(url); resolve(blob); };
+        img.src = url;
+    });
+};
+
 export const processSequentially = async <T>(
     items: T[],
     batchSize: number,

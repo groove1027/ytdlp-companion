@@ -8,6 +8,8 @@
 
 ## 🟢 완료된 작업
 
+- [x] #183 내보내기 시 이미지 비율 미반영 수정 — 사용자가 설정한 화면 비율(1:1, 9:16 등)이 ZIP/이미지 내보내기에 반영되지 않던 버그 수정, cropBlobToAspectRatio 유틸리티 추가, downloadSrtWithAssetsZip/exportProjectZip/exportProjectById/downloadImages 4개 내보내기 경로 모두에 중앙 크롭 적용 (fileHelpers.ts, srtService.ts, EditRoomTab.tsx, exportService.ts, 2026-03-13)
+- [x] **WebCodecs VideoDecoder 정밀 프레임 추출 (전수 교체 완료)** — mp4box.js demux + VideoDecoder PTS 정확 디코딩으로 키프레임 스냅 문제 완전 해결, 기존 canvas video.currentTime 방식은 폴백으로 유지, 전체 7곳(VideoAnalysisRoom, SocialAnalysisRoom, videoAnalysis, shoppingScriptService, editPointStore, videoDownloadService, **composeMp4 파이프라인**)에 WebCodecs 우선 경로 적용, composeMp4용 createStreamingVideoExtractor 스트리밍 디코더 추가(순차 전방 O(1) + 후방 탐색 시 키프레임 재디코딩 + ImageBitmap 링버퍼 15프레임), VideoFrameExtractor에 dispose() 추가 (videoDecoder.ts, canvasRenderer.ts, webcodecs/index.ts, 2026-03-13)
 - [x] 영상분석실 프레임 추출 정밀도 대폭 개선 — preciseSeek() 키프레임 스냅 2차 보정, seek 타임아웃 5→15초+경고 로그, CORS만 치명적 에러(나머지 continue), Blob 다운로드 120→600초, 소셜 다운로드 120→300초 (VideoAnalysisRoom.tsx, ytdlpApiService.ts, 2026-03-13)
 - [x] #212 채널 스타일 대본 만들기 영상 파일 첨부 지원 — file input에 video/* 추가, 영상 파일 감지 시 extractFramesForAnalysis(8프레임) + evolinkFrameAnalysisStream(v1beta multimodal vision)으로 영상 내용 분석→sourceContent로 주입, 분석 프로그레스 UI, 200MB 제한 (ChannelRemakePanel.tsx, 2026-03-13)
 - [x] #215 편집실 파싱 실패 수정 — narrationText 중복 전송 제거(토큰 2배→429 유발), 청크 병렬(CONCURRENCY=3)→순차 처리, parseEditChunkWithRetry() 429/499/네트워크 에러 지수 백오프 2회 재시도, 청크 크기 20→30 확대, 부분 실패 시 성공 청크 결과만으로 진행 (editPointService.ts, editPointStore.ts, VideoAnalysisRoom.tsx, VersionSelectorBar.tsx, 2026-03-13)
