@@ -2,9 +2,10 @@ import React, { useState, useCallback, useRef } from 'react';
 import { useChannelAnalysisStore } from '../../../stores/channelAnalysisStore';
 import { useScriptWriterStore } from '../../../stores/scriptWriterStore';
 import { useNavigationStore } from '../../../stores/navigationStore';
-import { evolinkChat, getEvolinkKey } from '../../../services/evolinkService';
+import { evolinkChat, getEvolinkKey, evolinkFrameAnalysisStream } from '../../../services/evolinkService';
 import { getVideoTranscript } from '../../../services/youtubeAnalysisService';
 import { parseFileToText } from '../../../services/fileParserService';
+import { extractFramesForAnalysis } from '../../../services/shoppingScriptService';
 import { showToast } from '../../../stores/uiStore';
 import { logger } from '../../../services/LoggerService';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
@@ -62,20 +63,89 @@ const ChannelRemakePanel: React.FC = () => {
   const [versions, setVersions] = useState<RemakeVersion[]>([]);
   const [error, setError] = useState('');
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
+  const [isAnalyzingVideo, setIsAnalyzingVideo] = useState(false);
+  const [videoAnalysisProgress, setVideoAnalysisProgress] = useState('');
   const elapsed = useElapsedTimer(isGenerating);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const detectedVideoId = sourceInput.trim() ? extractVideoId(sourceInput.trim()) : null;
 
-  const handleFileUpload = useCallback(async (file: File) => {
+  const handleVideoAnalysis = useCallback(async (file: File) => {
+    if (file.size > 200 * 1024 * 1024) {
+      setError('200MB 이하 영상만 업로드할 수 있습니다.');
+      return;
+    }
+    if (!getEvolinkKey()) {
+      setError('Evolink API 키를 먼저 설정해주세요.');
+      return;
+    }
+
+    setIsAnalyzingVideo(true);
+    setVideoAnalysisProgress('프레임 추출 중...');
+    setError('');
+
     try {
-      const text = await parseFileToText(file);
-      setSourceInput(text);
-      showToast(`"${file.name}" 불러옴`);
+      const dataUrls = await extractFramesForAnalysis(file, 8);
+      if (dataUrls.length === 0) throw new Error('영상에서 프레임을 추출할 수 없습니다.');
+
+      setVideoAnalysisProgress(`${dataUrls.length}개 프레임 추출 완료, AI 분석 중...`);
+
+      const frames = dataUrls.map((dataUrl, i) => {
+        const parts = dataUrl.split(',');
+        const base64 = parts[1] || '';
+        const mimeMatch = parts[0].match(/:(.*?);/);
+        const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+        return { base64, mimeType, label: `[프레임 ${i + 1}/${dataUrls.length}]` };
+      }).filter(f => f.base64.length > 0);
+
+      const sysPrompt = `당신은 영상 콘텐츠 분석 전문가입니다. 영상에서 추출한 프레임을 분석하여 영상의 전체 내용을 상세히 설명해주세요.
+
+분석 항목:
+1. 영상의 주제/소재
+2. 주요 내용 흐름 (시작 → 전개 → 마무리)
+3. 핵심 메시지/정보
+4. 등장인물/대상
+5. 배경/분위기
+
+결과는 한국어로, 대본 리메이크의 원본 소스로 활용할 수 있도록 상세하게 서술해주세요. 마크다운 없이 순수 텍스트로 작성하세요.`;
+
+      const userMsg = `이 영상(${file.name})의 ${frames.length}개 프레임을 분석하여 영상 전체 내용을 상세히 설명해주세요. 이 설명은 채널 스타일 대본 리메이크의 원본 소재로 사용됩니다.`;
+
+      const analysisText = await evolinkFrameAnalysisStream(
+        frames, sysPrompt, userMsg,
+        (_chunk, accumulated) => setVideoAnalysisProgress(`AI 분석 중... (${accumulated.length}자)`),
+        { temperature: 0.5, maxOutputTokens: 4096 }
+      );
+
+      if (!analysisText || analysisText.trim().length < 50) {
+        throw new Error('영상 분석 결과가 너무 짧습니다. 다른 영상을 시도해주세요.');
+      }
+
+      setSourceInput(analysisText.trim());
+      showToast(`"${file.name}" 영상 분석 완료`);
     } catch (e) {
-      setError(`파일 읽기 실패: ${e instanceof Error ? e.message : String(e)}`);
+      const msg = e instanceof Error ? e.message : String(e);
+      logger.error('[Remake] 영상 분석 실패', msg);
+      setError(`영상 분석 실패: ${msg}`);
+    } finally {
+      setIsAnalyzingVideo(false);
+      setVideoAnalysisProgress('');
     }
   }, []);
+
+  const handleFileUpload = useCallback(async (file: File) => {
+    try {
+      if (file.type.startsWith('video/')) {
+        await handleVideoAnalysis(file);
+      } else {
+        const text = await parseFileToText(file);
+        setSourceInput(text);
+        showToast(`"${file.name}" 불러옴`);
+      }
+    } catch (e) {
+      setError(`파일 처리 실패: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }, [handleVideoAnalysis]);
 
   const handleGenerate = useCallback(async () => {
     if (!channelGuideline || !sourceInput.trim()) return;
@@ -166,19 +236,19 @@ const ChannelRemakePanel: React.FC = () => {
         <textarea
           value={sourceInput}
           onChange={e => setSourceInput(e.target.value)}
-          placeholder="YouTube 링크를 붙여넣거나, 원본 대본/내용을 직접 입력하세요"
+          placeholder="YouTube 링크를 붙여넣거나, 원본 대본/내용을 직접 입력하세요 (영상 파일도 첨부 가능)"
           rows={3}
           className="w-full bg-gray-900 border border-gray-600 rounded-lg text-white text-sm placeholder-gray-500 px-4 py-3 pr-20 focus:ring-2 focus:ring-blue-500 resize-none"
         />
         <button
           onClick={() => fileInputRef.current?.click()}
           className="absolute right-2 top-2 px-2 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-400 text-[11px] rounded-md border border-gray-600 transition-colors"
-          title="파일에서 불러오기"
+          title="파일/영상에서 불러오기"
         >
           <svg className="w-3.5 h-3.5 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
           파일
         </button>
-        <input ref={fileInputRef} type="file" accept=".txt,.srt,.vtt,.pdf,.doc,.docx" className="hidden"
+        <input ref={fileInputRef} type="file" accept=".txt,.srt,.vtt,.pdf,.doc,.docx,video/mp4,video/webm,video/quicktime" className="hidden"
           onChange={e => { if (e.target.files?.[0]) handleFileUpload(e.target.files[0]); e.target.value = ''; }} />
       </div>
 
@@ -190,6 +260,14 @@ const ChannelRemakePanel: React.FC = () => {
         </p>
       )}
 
+      {/* 영상 분석 프로그레스 */}
+      {isAnalyzingVideo && (
+        <div className="mt-2 flex items-center gap-2 px-3 py-2 bg-blue-900/20 border border-blue-500/30 rounded-lg">
+          <div className="w-4 h-4 border-2 border-blue-400/30 border-t-blue-400 rounded-full animate-spin flex-shrink-0" />
+          <span className="text-xs text-blue-400">{videoAnalysisProgress || '영상 분석 중...'}</span>
+        </div>
+      )}
+
       {error && (
         <div className="mt-2 px-4 py-2.5 bg-red-900/30 border border-red-500/50 rounded-lg">
           <p className="text-sm text-red-400 whitespace-pre-wrap">{error}</p>
@@ -198,7 +276,7 @@ const ChannelRemakePanel: React.FC = () => {
 
       <button
         onClick={handleGenerate}
-        disabled={isGenerating || !sourceInput.trim()}
+        disabled={isGenerating || isAnalyzingVideo || !sourceInput.trim()}
         className="w-full mt-3 py-3.5 bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 text-white font-bold rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
       >
         {isGenerating ? (
