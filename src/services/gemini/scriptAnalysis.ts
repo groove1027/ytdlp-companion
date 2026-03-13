@@ -590,7 +590,8 @@ export const parseScriptToScenes = async (
     targetSceneCount?: number, // [NEW] 예상 컷수 — 이 수치에 맞춰 장면 분할 강제
     dialogueTone?: DialogueTone, // [v4.7] 대사 톤 프리셋
     characterProfiles?: CharacterProfile[], // [v4.7] 캐릭터 프로필 배열
-    referenceDialogue?: string // [v4.7] 참조 대사 텍스트
+    referenceDialogue?: string, // [v4.7] 참조 대사 텍스트
+    onChunkProgress?: (completed: number, total: number) => void // [FIX #193] 청크 진행 콜백
 ): Promise<Scene[]> => {
     // Cost is now auto-tracked inside evolinkChat/requestEvolinkNative
     console.log(`[parseScriptToScenes] Received targetSceneCount: ${targetSceneCount}, type: ${typeof targetSceneCount}`);
@@ -1091,95 +1092,66 @@ export const parseScriptToScenes = async (
         if (currentChunk.trim()) chunks.push(currentChunk.trim());
         console.log(`[parseScriptToScenes] ${chunks.length}개 청크로 분할 (${chunks.map(c => c.length + '자').join(', ')})`);
 
-        const allRawScenes: any[] = [];
-        for (let ci = 0; ci < chunks.length; ci++) {
-            // evolinkChat 사용 (OpenAI-compatible, 524 타임아웃 내성 높음)
-            const chunkSysPrompt = (payload.systemInstruction as any)?.parts?.[0]?.text || '';
+        // [FIX #193] 청크별 처리를 함수로 추출 — 병렬 실행 가능
+        const chunkSysPrompt = (payload.systemInstruction as any)?.parts?.[0]?.text || '';
+        const processOneChunk = async (ci: number): Promise<any[]> => {
             const chunkUserContent = `Script (Part ${ci + 1}/${chunks.length}):\n${chunks[ci]}\n\n[MANDATORY GLOBAL CONTEXT]\n${baseSetting || 'No context provided.'}`;
-
             let chunkScenes: any[] = [];
-            // [FIX #178] 최대 4회 재시도 — 429 포함 재시도 + 지수 백오프
-            const MAX_CHUNK_RETRIES = 4;
-            // [FIX #178] 90초 타임아웃 — 프록시 125초 끊기 전에 능동 중단
+            // [FIX #193] 4→2회로 축소 — 불필요한 재시도 시간 절감 (90초×4=360초 → 90초×2=180초)
+            const MAX_CHUNK_RETRIES = 2;
             const STREAM_TIMEOUT_MS = 90_000;
             let lastChunkError: Error | null = null;
             for (let retry = 0; retry < MAX_CHUNK_RETRIES; retry++) {
                 if (retry > 0) {
-                    // [FIX #178] 429 에러 시 더 긴 대기 (15s, 30s), 일반 에러 시 (3s, 9s, 27s)
                     const is429 = (lastChunkError?.message || '').includes('요청 제한');
-                    const backoffMs = is429
-                        ? 15000 * Math.pow(2, retry - 1)  // 15s, 30s, 60s
-                        : 3000 * Math.pow(3, retry - 1);  // 3s, 9s, 27s
+                    // [FIX #193] 429 → 스트리밍 재시도 무의미, 즉시 v1beta 폴백
+                    if (is429) break;
+                    const backoffMs = 3000;
                     logger.trackRetry(`스크립트 청크 ${ci + 1} 파싱`, retry + 1, MAX_CHUNK_RETRIES,
-                        `${is429 ? '429 요청 제한' : '네트워크/타임아웃 오류'} — ${backoffMs / 1000}초 대기 후 재시도`);
-                    console.log(`[parseScriptToScenes] 청크 ${ci + 1} 재시도 대기: ${backoffMs / 1000}초 (${is429 ? '429 백오프' : '일반 백오프'})`);
+                        `네트워크/타임아웃 오류 — ${backoffMs / 1000}초 대기 후 재시도`);
                     await new Promise(r => setTimeout(r, backoffMs));
                 }
                 try {
                     console.log(`[parseScriptToScenes] 청크 ${ci + 1}/${chunks.length} (${chunks[ci].length}자) → evolinkChatStream (시도 ${retry + 1}/${MAX_CHUNK_RETRIES})`);
-                    // [FIX #99] 스트리밍 전환 — 프록시 연결 타임아웃(~125초) 방지
-                    // [FIX #178] 90초 타임아웃 추가 — 프록시 끊기 전에 능동 중단하여 빠른 재시도
                     const content = await evolinkChatStream(
                         [
                             { role: 'system', content: chunkSysPrompt },
                             { role: 'user', content: chunkUserContent }
                         ],
-                        () => {}, // 청크 콜백 불필요 — 최종 텍스트만 사용
+                        () => {},
                         { temperature: 0.3, maxTokens: 32000, responseFormat: { type: 'json_object' }, timeoutMs: STREAM_TIMEOUT_MS }
                     );
                     if (!content) throw new Error('Empty Response');
-
-                    // JSON 파싱 (다양한 포맷 지원)
                     let parsed: any;
-                    try {
-                        parsed = JSON.parse(content);
-                    } catch (e) {
+                    try { parsed = JSON.parse(content); } catch (e) {
                         logger.trackSwallowedError('scriptAnalysis:parseChunkJson', e);
                         const jsonText = extractJsonFromText(content);
                         parsed = JSON.parse(jsonText || '[]');
                     }
-                    // { scenes: [...] } 또는 [...] 둘 다 지원
                     const scenes = Array.isArray(parsed) ? parsed : (parsed.scenes || [parsed]);
-                    if (scenes.length > 0) {
-                        chunkScenes = scenes;
-                        lastChunkError = null;
-                        break;
-                    }
+                    if (scenes.length > 0) { chunkScenes = scenes; lastChunkError = null; break; }
                 } catch (ce: any) {
                     const msg = ce.message || '';
                     lastChunkError = ce;
-                    // [FIX #50] 네트워크 오류 vs API 오류 구분
                     const isNetworkError = msg.includes('Failed to fetch') || msg.includes('Network Error') || msg.includes('fetch') || msg.includes('ERR_NETWORK') || msg.includes('ECONNREFUSED') || msg.includes('net::');
                     const isTimeoutError = msg.includes('524') || msg.includes('timeout') || msg.includes('타임아웃') || msg.includes('AbortError');
-                    // [FIX #54] JSON 파싱 실패 + 토큰 한도 초과도 재시도 가능하도록 추가
                     const isJsonError = msg.includes('Unexpected') || msg.includes('JSON') || msg.includes('토큰 한도');
                     const isEmptyResponse = msg.includes('Empty Response');
-                    // [FIX #178] 429 요청 제한도 재시도 대상에 포함
                     const isRateLimited = msg.includes('요청 제한') || msg.includes('429') || msg.includes('Rate Limit');
                     const isRetryable = isNetworkError || isTimeoutError || isJsonError || isEmptyResponse || isRateLimited || msg.includes('네트워크');
-
                     const errorCategory = isRateLimited ? '요청 제한 (429)' : isNetworkError ? '네트워크 연결 오류' : isTimeoutError ? '서버 응답 시간 초과' : 'API 오류';
                     console.warn(`[parseScriptToScenes] 청크 ${ci + 1} 실패 (시도 ${retry + 1}/${MAX_CHUNK_RETRIES}, ${errorCategory}): ${msg.slice(0, 150)}`);
                     logger.warn(`[parseScriptToScenes] 청크 ${ci + 1} ${errorCategory}`, { retry: retry + 1, msg: msg.slice(0, 200) });
-
-                    if (isRetryable && retry < MAX_CHUNK_RETRIES - 1) {
-                        continue; // 지수 백오프는 루프 상단에서 처리
-                    }
-                    if (!isRetryable) {
-                        break; // [FIX #180] 잔액 부족 등 비재시도 에러 → 즉시 중단하고 폴백 시도
-                    }
+                    if (isRetryable && retry < MAX_CHUNK_RETRIES - 1) continue;
+                    if (!isRetryable) break;
                 }
             }
-
-            // [FIX #178] 스트리밍 전부 실패 → v1beta Native 폴백 (마지막 시도)
+            // 스트리밍 실패 → v1beta Native 폴백 (Kie 자동 폴백 포함)
             if (chunkScenes.length === 0 && lastChunkError) {
-                console.log(`[parseScriptToScenes] 청크 ${ci + 1} 스트리밍 ${MAX_CHUNK_RETRIES}회 실패 → v1beta Native 폴백 시도`);
+                console.log(`[parseScriptToScenes] 청크 ${ci + 1} 스트리밍 실패 → v1beta 폴백`);
                 logger.info(`[parseScriptToScenes] 청크 ${ci + 1} v1beta 폴백`, { lastError: lastChunkError.message?.slice(0, 100) });
                 try {
-                    const chunkPayload = {
-                        ...payload,
-                        contents: [{ role: 'user', parts: [{ text: chunkUserContent }] }],
-                    };
+                    const chunkPayload = { ...payload, contents: [{ role: 'user', parts: [{ text: chunkUserContent }] }] };
                     const data = await requestGeminiProxy('gemini-3.1-pro-preview', chunkPayload, 0, 300_000);
                     const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
                     if (text) {
@@ -1199,30 +1171,51 @@ export const parseScriptToScenes = async (
                     console.error(`[parseScriptToScenes] 청크 ${ci + 1} v1beta 폴백도 실패:`, fallbackErr.message?.slice(0, 100));
                 }
             }
-
-            // 최종 실패 처리
             if (chunkScenes.length === 0) {
                 const msg = lastChunkError?.message || 'Unknown error';
-                const isBalanceError = msg.includes('잔액 부족') || msg.includes('insufficient') || msg.includes('QUOTA_EXHAUSTED');
-                const isNetworkError = msg.includes('Failed to fetch') || msg.includes('Network Error') || msg.includes('fetch');
-                const isTimeoutError = msg.includes('524') || msg.includes('timeout') || msg.includes('타임아웃');
-                const isRateLimited = msg.includes('요청 제한') || msg.includes('429');
-                // [FIX #180] 잔액 부족 에러를 최우선 감지 — 명확한 안내
-                if (isBalanceError) {
+                if (msg.includes('잔액 부족') || msg.includes('insufficient') || msg.includes('QUOTA_EXHAUSTED'))
                     throw new Error(`AI 크레딧이 부족합니다. Evolink 크레딧을 충전한 후 다시 시도해주세요.`);
-                } else if (isRateLimited) {
-                    throw new Error(`청크 ${ci + 1} 파싱 실패 (요청 제한): 서버가 바쁩니다. 1~2분 후 다시 시도해주세요.`);
-                } else if (isNetworkError) {
-                    throw new Error(`청크 ${ci + 1} 파싱 실패 (네트워크 오류): 인터넷 연결을 확인해주세요. ${MAX_CHUNK_RETRIES}회 + 폴백까지 시도했으나 실패했습니다.`);
-                } else if (isTimeoutError) {
-                    throw new Error(`청크 ${ci + 1} 파싱 실패 (시간 초과): 서버가 응답하지 않습니다. 잠시 후 다시 시도해주세요.`);
-                } else {
-                    throw new Error(`청크 ${ci + 1} 파싱 실패: ${msg}`);
-                }
+                throw new Error(`청크 ${ci + 1} 파싱 실패: ${msg.slice(0, 100)}`);
             }
+            return chunkScenes;
+        };
 
-            allRawScenes.push(...chunkScenes);
-            console.log(`[parseScriptToScenes] 청크 ${ci + 1}: ${chunkScenes.length}개 장면 (누적 ${allRawScenes.length}개)`);
+        // [FIX #193] 병렬 청크 처리 — 순차→병렬 전환 (N개 청크 동시 처리, 2초 스태거로 429 방지)
+        console.log(`[parseScriptToScenes] ⚡ ${chunks.length}개 청크 병렬 처리 시작 (2초 간격 스태거)`);
+        let completedChunks = 0;
+        onChunkProgress?.(0, chunks.length);
+        const chunkResults = await Promise.allSettled(
+            chunks.map(async (_, ci) => {
+                if (ci > 0) await new Promise(r => setTimeout(r, ci * 2000));
+                const scenes = await processOneChunk(ci);
+                completedChunks++;
+                onChunkProgress?.(completedChunks, chunks.length);
+                console.log(`[parseScriptToScenes] 청크 ${ci + 1}: ${scenes.length}개 장면 (${completedChunks}/${chunks.length} 완료)`);
+                return scenes;
+            })
+        );
+
+        // 결과 수집 — 순서 보존 + 부분 성공 허용
+        const allRawScenes: any[] = [];
+        let balanceError: string | null = null;
+        const failedChunks: number[] = [];
+        for (let ci = 0; ci < chunkResults.length; ci++) {
+            const result = chunkResults[ci];
+            if (result.status === 'fulfilled') {
+                allRawScenes.push(...result.value);
+            } else {
+                const msg = result.reason?.message || '';
+                if (msg.includes('크레딧') || msg.includes('잔액') || msg.includes('insufficient')) balanceError = msg;
+                failedChunks.push(ci + 1);
+                console.error(`[parseScriptToScenes] 청크 ${ci + 1} 최종 실패: ${msg.slice(0, 100)}`);
+            }
+        }
+        if (balanceError) throw new Error(balanceError);
+        if (allRawScenes.length === 0) {
+            throw new Error(`모든 청크(${chunks.length}개) 파싱 실패 — 서버 상태를 확인하고 다시 시도해주세요.`);
+        }
+        if (failedChunks.length > 0) {
+            console.warn(`[parseScriptToScenes] ⚠️ 부분 성공: ${failedChunks.length}개 청크 실패 (${failedChunks.join(',')}), ${allRawScenes.length}개 장면 수집`);
         }
 
         // 합쳐진 장면 배열을 기존 후처리에 전달 (skipLineRemap=true: 청크별 scriptText 보존)

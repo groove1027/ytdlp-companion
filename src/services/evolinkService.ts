@@ -301,8 +301,20 @@ export const evolinkChatStream = async (
     let accumulated = '';
     let buffer = '';
 
+    // [FIX #193] 스트리밍 유휴 타임아웃 — 30초 무응답 시 연결 중단
+    const STREAM_IDLE_MS = 30_000;
+
     while (true) {
-        const { done, value } = await reader.read();
+        let idleTimer: ReturnType<typeof setTimeout> | undefined;
+        const { done, value } = await Promise.race([
+            reader.read(),
+            new Promise<never>((_, reject) => {
+                idleTimer = setTimeout(() => {
+                    reader.cancel().catch(() => {});
+                    reject(new Error('스트리밍 30초 무응답 — 연결 중단'));
+                }, STREAM_IDLE_MS);
+            })
+        ]).finally(() => { if (idleTimer) clearTimeout(idleTimer); });
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
@@ -576,8 +588,8 @@ export const evolinkNativeStream = async (
  * YouTube URL 또는 Cloudinary URL을 fileData로 전달
  */
 export const evolinkVideoAnalysisStream = async (
-    videoUri: string,
-    mimeType: string,
+    videoUri: string | string[],
+    mimeType: string | string[],
     systemPrompt: string,
     userPrompt: string,
     onChunk: (text: string, accumulated: string) => void,
@@ -588,11 +600,18 @@ export const evolinkVideoAnalysisStream = async (
 
     const { temperature = 0.5, maxOutputTokens = 40000, signal } = options;
 
+    // [FIX #189] 다중 영상 지원 — 단일/배열 모두 처리
+    const videoUris = Array.isArray(videoUri) ? videoUri : [videoUri];
+    const mimeTypes = Array.isArray(mimeType) ? mimeType : [mimeType];
+    const fileParts = videoUris.map((uri, i) => ({
+        fileData: { mimeType: mimeTypes[i] || mimeTypes[0], fileUri: uri },
+    }));
+
     const payload = {
         contents: [{
             role: 'user',
             parts: [
-                { fileData: { mimeType, fileUri: videoUri } },
+                ...fileParts,
                 { text: userPrompt },
             ],
         }],
@@ -609,7 +628,7 @@ export const evolinkVideoAnalysisStream = async (
     const model = 'gemini-3.1-pro-preview';
     const url = `${EVOLINK_V1BETA_URL}/models/${model}:streamGenerateContent?alt=sse`;
 
-    logger.info('[Evolink Video] v1beta 비디오 분석 스트리밍 시작', { videoUri: videoUri.slice(0, 80), mimeType });
+    logger.info('[Evolink Video] v1beta 비디오 분석 스트리밍 시작', { videoCount: videoUris.length, videoUri: videoUris[0].slice(0, 80), mimeType: mimeTypes[0] });
 
     const response = await monitoredFetch(url, {
         method: 'POST',
@@ -667,7 +686,7 @@ export const evolinkVideoAnalysisStream = async (
 
     // 비용 추정 (video stream)
     try {
-        const estInputTokens = Math.ceil((systemPrompt.length + userPrompt.length) / 4) + 5000; // 영상 토큰 추정
+        const estInputTokens = Math.ceil((systemPrompt.length + userPrompt.length) / 4) + 5000 * videoUris.length; // 영상 토큰 추정
         const estOutputTokens = Math.ceil(accumulated.length / 4);
         const inputCost = estInputTokens / 1_000_000 * PRICING.GEMINI_PRO_INPUT_PER_1M;
         const outputCost = estOutputTokens / 1_000_000 * PRICING.GEMINI_PRO_OUTPUT_PER_1M;

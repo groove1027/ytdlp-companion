@@ -223,7 +223,7 @@ export async function downloadVideoViaProxy(
 
   const response = await monitoredFetch(proxyUrl, {
     headers: apiKey ? { 'X-API-Key': apiKey } : {},
-    signal: AbortSignal.timeout(120_000),
+    signal: AbortSignal.timeout(600_000), // 10분 — 30분+ 고화질 영상 대응
   });
 
   if (!response.ok) {
@@ -341,7 +341,7 @@ export async function downloadSocialVideo(
       ...(apiKey ? { 'X-API-Key': apiKey } : {}),
     },
     body: JSON.stringify({ url, quality }),
-    signal: AbortSignal.timeout(120_000),
+    signal: AbortSignal.timeout(300_000), // 5분 — 소셜 영상 대응
   });
 
   if (!response.ok) {

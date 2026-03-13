@@ -317,7 +317,8 @@ export const generateShoppingScripts = async (
     link: '하단 링크 클릭',
   };
 
-  const targetDuration = Math.max(15, Math.min(60, Math.round(duration)));
+  // 소스 영상 총 길이의 ~90%로 설정 (편집 여유분 확보, 최소 15초)
+  const targetDuration = Math.max(15, Math.round(duration * 0.9));
 
   const narrationRef = narrationText
     ? `\n\n## 원본 나레이션 참고\n원본 영상의 나레이션입니다. 이 톤과 내용을 참고하되, 한국어 쇼핑 숏폼에 맞게 재창작하세요:\n\`\`\`\n${narrationText}\n\`\`\``

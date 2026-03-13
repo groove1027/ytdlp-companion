@@ -85,7 +85,7 @@ if [ ${#ERRORS[@]} -gt 0 ]; then
     for e in "${ERRORS[@]}"; do echo "$e"; done
     echo ""
     echo "🚨 에러 ${#ERRORS[@]}건 — 이 에러를 수정하기 전까지 진행 불가!"
-    EXIT_CODE=1
+    EXIT_CODE=2
 fi
 
 if [ ${#WARNINGS[@]} -gt 0 ]; then
