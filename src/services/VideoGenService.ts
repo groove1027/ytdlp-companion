@@ -23,6 +23,10 @@ const AUDIO_SAFETY_TAGS = "[CRITICAL: Sound Effects Only] [ABSOLUTELY No Backgro
 // [FIX] BUG-12: 이미지의 그림체가 영상에서 변경되지 않도록 강제 프롬프트
 const STYLE_LOCK_TAGS = "[CRITICAL: Preserve exact art style of input image] [Maintain same color palette] [Keep same rendering technique] [No style change] [Consistent visual identity]";
 
+// === CHARACTER CONSISTENCY CONSTANTS ===
+// [FIX #252] Grok 영상 생성 시 캐릭터 일관성 유지를 위한 프롬프트 지시
+const CHARACTER_CONSISTENCY_TAGS = "[Maintain character consistency throughout the video] [Preserve exact facial features, hairstyle, and body proportions from the input image] [Keep clothing details, colors, and accessories identical] [Consistent lighting and skin tone] [Keep all subjects inside the camera frame]";
+
 // === HELPER FUNCTIONS ===
 
 /** [FIX M10] Combine two AbortSignals into one: aborts when either signal fires. */
@@ -707,8 +711,8 @@ export async function createPortableGrokTask(
     // 1. 블러 방지 및 선명도 강화를 위한 태그 추가
     const QUALITY_TAGS = " [Sharp Focus] [High Shutter Speed] [Crystal Clear] [No Motion Blur] [High Fidelity]";
 
-    // 2. finalPrompt 구성 시 QUALITY_TAGS + STYLE_LOCK을 함께 결합
-    const finalPrompt = `${STYLE_LOCK_TAGS} ${audioPrompt} ${basePrompt}${isLoop ? " [Seamless Loop]" : ""}${cameraTag}${movementTag}${protectionPrompt}${QUALITY_TAGS}`.trim().replace(/\s+/g, " ");
+    // 2. finalPrompt 구성 시 QUALITY_TAGS + STYLE_LOCK + CHARACTER_CONSISTENCY를 함께 결합
+    const finalPrompt = `${STYLE_LOCK_TAGS} ${CHARACTER_CONSISTENCY_TAGS} ${audioPrompt} ${basePrompt}${isLoop ? " [Seamless Loop]" : ""}${cameraTag}${movementTag}${protectionPrompt}${QUALITY_TAGS}`.trim().replace(/\s+/g, " ");
 
     // [FIX] index는 task_id와 함께 사용하는 파라미터 — image_urls 사용 시 불필요 (기술 문서)
     const input = {
