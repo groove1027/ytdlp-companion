@@ -1041,7 +1041,6 @@ const StoryboardPanel: React.FC = () => {
         castType: 'MAIN',
         entityName: undefined,
         entityComposition: undefined,
-        entityVisualContext: undefined,
         characterPresent: true,
         characterAction: undefined,
       });

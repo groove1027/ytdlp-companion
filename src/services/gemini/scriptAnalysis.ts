@@ -1,7 +1,7 @@
 
 import { Scene, VideoFormat, CharacterAppearance, DialogueTone, CharacterProfile } from '../../types';
 import { DIALOGUE_TONE_PRESETS } from '../../constants';
-import { requestGeminiProxy, extractTextFromResponse, extractFunctionCall, performMockSearch, SAFETY_SETTINGS_BLOCK_NONE } from './geminiProxy';
+import { requestGeminiProxy, extractTextFromResponse, SAFETY_SETTINGS_BLOCK_NONE } from './geminiProxy';
 import { evolinkChat } from '../evolinkService';
 import { logger } from '../LoggerService';
 
@@ -381,70 +381,9 @@ const sanitizeScript = (text: string): string => {
     return text.replace(/[*#`<>{}|^\\]/g, '').replace(/[^\p{L}\p{N}\p{P}\s]/gu, '');
 };
 
-// [NEW] Specialized Function for Entity Grounding (Single Step)
-// This calls Gemini Pro WITH tools to get visual details for a specific entity
-const enrichEntityDetail = async (entityName: string, baseContext: string): Promise<string> => {
-    const systemPrompt = `
-    You are a visual design expert.
-    Your task: Find the specific, current visual appearance of "${entityName}".
-    Context: ${baseContext}
-
-    1. If the entity is a famous person/brand/object, use the 'googleSearch' tool to find their most recognizable or current look.
-    2. If the entity is generic, describe a high-quality standard version.
-    3. Output: A concise, comma-separated visual description string (English) suitable for an image generation prompt.
-    `;
-
-    // Maintain conversation for the tool loop
-    let conversationHistory: any[] = [
-        { role: 'user', parts: [{ text: `Describe the visual appearance of: ${entityName}` }] }
-    ];
-
-    let maxTurns = 3;
-    let finalDescription = "";
-
-    while (maxTurns > 0) {
-        const payload = {
-            contents: conversationHistory,
-            systemInstruction: { parts: [{ text: systemPrompt }] },
-            tools: [{ googleSearch: {} }], // Enable Search Tool HERE
-            safetySettings: SAFETY_SETTINGS_BLOCK_NONE,
-        };
-
-        try {
-            const data = await requestGeminiProxy('gemini-3.1-pro-preview', payload);
-
-            // Check for Function Call
-            const functionCall = extractFunctionCall(data);
-            if (functionCall) {
-                const searchResult = await performMockSearch(functionCall.args.query || entityName);
-
-                conversationHistory.push({
-                    role: 'model',
-                    parts: [{ functionCall: { name: functionCall.name, args: functionCall.args } }]
-                });
-                conversationHistory.push({
-                    role: 'function',
-                    parts: [{ functionResponse: { name: functionCall.name, response: { name: functionCall.name, content: searchResult } } }]
-                });
-                maxTurns--;
-                continue;
-            }
-
-            // Check for Text
-            const text = extractTextFromResponse(data);
-            if (text) {
-                finalDescription = text;
-                break;
-            }
-            break; // No text, no function => Exit
-        } catch (e) {
-            console.warn(`[EntityEnrichment] Failed for ${entityName}`, e);
-            break; // Fail gracefully
-        }
-    }
-
-    return finalDescription || entityName; // Fallback to name if failed
-};
+// [REMOVED] enrichEntityDetail — Entity Enrichment Phase 2 제거
+// NanoBanana 2 이미지 생성기가 google_search/web_search로 실제 웹 검색을 수행하므로
+// Gemini Pro에서 mock 검색으로 텍스트 설명을 뽑는 이 단계는 불필요 (400 에러 + 비용 낭비 원인)
 
 export const analyzeScriptContext = async (
     script: string,
@@ -878,8 +817,6 @@ export const parseScriptToScenes = async (
             shotSize: item.shotSize || 'Medium Shot',
             // [NEW] entityComposition — KEY_ENTITY 연출 구도
             entityComposition: item.entityComposition || '',
-            // Placeholder for enrichment
-            entityVisualContext: "",
             // [v4.7] 대사 필드 매핑
             generatedDialogue: item.dialogue || '',
             dialogueSpeaker: item.dialogueSpeaker || '',
@@ -1136,39 +1073,7 @@ export const parseScriptToScenes = async (
         }
     }
 
-    // --- PHASE 2: ENTITY ENRICHMENT (SEQUENTIAL GROUNDING) ---
-    // Iterate through scenes and enrich ONLY Key Entities using tools.
-    // We run this sequentially or in small batches to be safe.
-
-    console.log("[ScriptMode] Starting Phase 2: Entity Enrichment...");
-
-    // Filter indices that need enrichment to save API calls
-    const scenesToEnrich = scenes.map((s, i) => ({ s, i })).filter(({ s }) => s.castType === 'KEY_ENTITY' && s.entityName);
-
-    // [PERF] Process enrichment in parallel (was sequential for-loop)
-    if (scenesToEnrich.length > 0) {
-        try {
-            const enrichResults = await Promise.allSettled(
-                scenesToEnrich.map(({ s }) => {
-                    console.log(`[Enrichment] Searching for: ${s.entityName}`);
-                    return enrichEntityDetail(s.entityName!, baseSetting || "");
-                })
-            );
-
-            enrichResults.forEach((result, idx) => {
-                if (idx < scenesToEnrich.length) {
-                    const sceneIndex = scenesToEnrich[idx].i;
-                    if (result.status === 'fulfilled') {
-                        scenes[sceneIndex].entityVisualContext = result.value;
-                    } else {
-                        console.warn(`[Enrichment] Failed for ${scenesToEnrich[idx].s.entityName}, skipping...`);
-                    }
-                }
-            });
-        } catch (e) {
-            console.warn('[Enrichment] Phase 2 실패 — 건너뜁니다:', e);
-        }
-    }
+    // [REMOVED] Phase 2: Entity Enrichment — NanoBanana 2가 직접 웹 검색하므로 불필요
 
     return scenes;
 };

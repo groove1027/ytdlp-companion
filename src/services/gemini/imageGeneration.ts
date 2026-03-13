@@ -182,7 +182,7 @@ export const generateSceneImage = async (
 
     // 1. Determine Subject & Reference Usage based on 'castType' + 'entityComposition'
     if (scene.castType === 'KEY_ENTITY') {
-        const entityDesc = scene.entityVisualContext || scene.entityName || 'Notable entity';
+        const entityDesc = scene.entityName || 'Notable entity';
         const entityComp = scene.entityComposition || 'ENTITY_SOLO';
 
         // [NEW] 5가지 연출 구도에 따른 프롬프트 + 캐릭터 레퍼런스 제어

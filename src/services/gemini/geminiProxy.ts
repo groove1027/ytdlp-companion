@@ -768,31 +768,7 @@ export const extractTextFromResponse = (data: any): string => {
     }
 };
 
-// [NEW] Helper to check for function calls
-export const extractFunctionCall = (data: any) => {
-    try {
-        const parts = data.candidates?.[0]?.content?.parts;
-        if (!parts) return null;
-        // Skip thinking parts, find the first functionCall part
-        for (const part of parts) {
-            if (part.functionCall && !part.thought) return part.functionCall;
-        }
-        return null;
-    } catch (e) {
-        return null;
-    }
-};
-
-// TODO: This is a STUB/MOCK implementation. No real Google Search grounding API is connected.
-// It returns a fake result instructing the model to use internal knowledge instead.
-// This exists solely to satisfy the function-calling loop when googleSearch tool is invoked,
-// preventing the conversation from crashing. Replace with a real search API when available.
-export const performMockSearch = async (query: string): Promise<string> => {
-    console.warn(`[System] Mock Search Triggered (no real search API connected) for: ${query}`);
-    return JSON.stringify({
-        result: `[System Message] External search is currently simulated. Please use your internal knowledge base to provide detailed visual descriptions for '${query}'. If it is a famous person or object, describe it accurately based on your high-confidence training data.`
-    });
-};
+// [REMOVED] extractFunctionCall, performMockSearch — Entity Enrichment 제거로 불필요
 
 export const urlToBase64 = async (url: string): Promise<string> => {
   const response = await monitoredFetch(url);

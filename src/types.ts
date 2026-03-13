@@ -141,7 +141,6 @@ export interface Scene {
   // [NEW] Smart Casting & Entity Logic
   castType?: 'MAIN' | 'KEY_ENTITY' | 'EXTRA' | 'NOBODY'; // 배역 타입
   entityName?: string; // 실존 인물/브랜드 이름 (예: Donald Trump)
-  entityVisualContext?: string; // 구글 검색 기반 외모 묘사
   // [NEW] KEY_ENTITY 연출 구도 — AUTO 모드에서 유명인/브랜드/장소 등장 시 다채로운 연출 강제
   entityComposition?: 'ENTITY_SOLO' | 'ENTITY_WITH_MAIN' | 'MAIN_OBSERVING' | 'ENTITY_FG_MAIN_BG' | 'MAIN_FG_ENTITY_BG';
   

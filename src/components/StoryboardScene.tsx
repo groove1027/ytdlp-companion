@@ -250,12 +250,6 @@ const StoryboardSceneInner: React.FC<StoryboardSceneProps> = ({
                            </span>
                        )}
                    </span>
-                   {scene.entityVisualContext && (
-                       <div className="absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 bg-gray-900/95 text-sm text-gray-200 p-2 rounded-lg border border-gray-700 shadow-xl opacity-0 group-hover/badge:opacity-100 pointer-events-none transition-opacity">
-                           <div className="font-bold text-blue-400 mb-1">검색된 정보:</div>
-                           {scene.entityVisualContext}
-                       </div>
-                   )}
                </div>
            )}
         </div>
