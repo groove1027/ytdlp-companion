@@ -24,6 +24,32 @@ const PERSIST_KEY = 'DEBUG_PERSISTED_ERRORS';
 const MAX_PERSISTED = 50;
 const MAX_LOGS = 500; // 300→500으로 증가 (고도화된 진단 데이터 수용)
 
+// [FIX #191] require() → 자기초기화 레지스트리 패턴 (Vite/브라우저 호환)
+const _storeRefs: Record<string, any> = {};
+const _lazyStoreImports: [string, () => Promise<any>][] = [
+  ['projectStore', () => import('../stores/projectStore').then(m => m.useProjectStore)],
+  ['imageVideoStore', () => import('../stores/imageVideoStore').then(m => m.useImageVideoStore)],
+  ['scriptWriterStore', () => import('../stores/scriptWriterStore').then(m => m.useScriptWriterStore)],
+  ['costStore', () => import('../stores/costStore').then(m => m.useCostStore)],
+  ['navigationStore', () => import('../stores/navigationStore').then(m => m.useNavigationStore)],
+  ['videoAnalysisStore', () => import('../stores/videoAnalysisStore').then(m => m.useVideoAnalysisStore)],
+  ['channelAnalysisStore', () => import('../stores/channelAnalysisStore').then(m => m.useChannelAnalysisStore)],
+  ['soundStudioStore', () => import('../stores/soundStudioStore').then(m => m.useSoundStudioStore)],
+  ['editRoomStore', () => import('../stores/editRoomStore').then(m => m.useEditRoomStore)],
+  ['editorStore', () => import('../stores/editorStore').then(m => m.useEditorStore)],
+  ['uiStore', () => import('../stores/uiStore').then(m => m.useUIStore)],
+  ['authStore', () => import('../stores/authStore').then(m => m.useAuthStore)],
+  ['uploadStore', () => import('../stores/uploadStore').then(m => m.useUploadStore)],
+  ['viewAlertStore', () => import('../stores/viewAlertStore').then(m => m.useViewAlertStore)],
+  ['shoppingShortStore', () => import('../stores/shoppingShortStore').then(m => m.useShoppingShortStore)],
+  ['editPointStore', () => import('../stores/editPointStore').then(m => m.useEditPointStore)],
+  ['instinctStore', () => import('../stores/instinctStore').then(m => m.useInstinctStore)],
+];
+_lazyStoreImports.forEach(([name, importFn]) => {
+  importFn().then(store => { _storeRefs[name] = store; }).catch(() => {});
+});
+const _getStore = (name: string) => _storeRefs[name] || null;
+
 // ── 설정 변경 감사 추적 ──
 interface SettingChange {
   timestamp: string;
@@ -776,7 +802,8 @@ class LoggerService {
 
     try {
       // projectStore — lazy import로 순환참조 방지
-      const projectStore = require('../stores/projectStore').useProjectStore;
+      const projectStore = _getStore('projectStore');
+      if (!projectStore) throw new Error('not loaded');
       const ps = projectStore.getState();
       if (ps.config) {
         snap['VideoFormat'] = ps.config.videoFormat || '?';
@@ -803,7 +830,8 @@ class LoggerService {
 
     try {
       // imageVideoStore
-      const ivStore = require('../stores/imageVideoStore').useImageVideoStore;
+      const ivStore = _getStore('imageVideoStore');
+      if (!ivStore) throw new Error('not loaded');
       const iv = ivStore.getState();
       snap['IV.Style'] = iv.style || '(none)';
       snap['IV.SubTab'] = iv.activeSubTab;
@@ -814,7 +842,8 @@ class LoggerService {
 
     try {
       // scriptWriterStore
-      const swStore = require('../stores/scriptWriterStore').useScriptWriterStore;
+      const swStore = _getStore('scriptWriterStore');
+      if (!swStore) throw new Error('not loaded');
       const sw = swStore.getState();
       snap['SW.InputMode'] = sw.inputMode || '?';
       snap['SW.ContentFormat'] = sw.contentFormat || '?';
@@ -825,7 +854,8 @@ class LoggerService {
 
     try {
       // costStore
-      const costStore = require('../stores/costStore').useCostStore;
+      const costStore = _getStore('costStore');
+      if (!costStore) throw new Error('not loaded');
       const cs = costStore.getState();
       if (cs.costStats) {
         snap['Cost.Total'] = `$${cs.costStats.totalUsd?.toFixed(4) || '0'}`;
@@ -836,7 +866,8 @@ class LoggerService {
 
     try {
       // navigationStore
-      const navStore = require('../stores/navigationStore').useNavigationStore;
+      const navStore = _getStore('navigationStore');
+      if (!navStore) throw new Error('not loaded');
       const ns = navStore.getState();
       snap['Nav.ActiveTab'] = ns.activeTab || '?';
       snap['Nav.Dashboard'] = String(ns.showProjectDashboard);
@@ -1194,7 +1225,8 @@ class LoggerService {
     Object.assign(snap, existing);
 
     try {
-      const vaStore = require('../stores/videoAnalysisStore').useVideoAnalysisStore;
+      const vaStore = _getStore('videoAnalysisStore');
+      if (!vaStore) throw new Error('not loaded');
       const va = vaStore.getState();
       snap['VA.InputMode'] = va.inputMode || '?';
       snap['VA.YoutubeUrls'] = String(va.youtubeUrls?.filter((u: string) => u.trim()).length || 0);
@@ -1206,7 +1238,8 @@ class LoggerService {
     } catch { /* ignore */ }
 
     try {
-      const caStore = require('../stores/channelAnalysisStore').useChannelAnalysisStore;
+      const caStore = _getStore('channelAnalysisStore');
+      if (!caStore) throw new Error('not loaded');
       const ca = caStore.getState();
       snap['CA.SubTab'] = ca.subTab || '?';
       snap['CA.Keyword'] = (ca.keyword || '').substring(0, 50);
@@ -1216,7 +1249,8 @@ class LoggerService {
     } catch { /* ignore */ }
 
     try {
-      const ssStore = require('../stores/soundStudioStore').useSoundStudioStore;
+      const ssStore = _getStore('soundStudioStore');
+      if (!ssStore) throw new Error('not loaded');
       const ss = ssStore.getState();
       snap['SS.Speakers'] = String(ss.speakers?.length || 0);
       snap['SS.Lines'] = String(ss.lines?.length || 0);
@@ -1227,7 +1261,8 @@ class LoggerService {
     } catch { /* ignore */ }
 
     try {
-      const erStore = require('../stores/editRoomStore').useEditRoomStore;
+      const erStore = _getStore('editRoomStore');
+      if (!erStore) throw new Error('not loaded');
       const er = erStore.getState();
       snap['ER.SubTab'] = er.editRoomSubTab || '?';
       snap['ER.Scenes'] = String(er.scenes?.length || 0);
@@ -1237,7 +1272,8 @@ class LoggerService {
     } catch { /* ignore */ }
 
     try {
-      const edStore = require('../stores/editorStore').useEditorStore;
+      const edStore = _getStore('editorStore');
+      if (!edStore) throw new Error('not loaded');
       const ed = edStore.getState();
       snap['ED.TimelineLen'] = String(ed.timeline?.length || 0);
       snap['ED.Subtitles'] = String(ed.subtitles?.length || 0);
@@ -1246,7 +1282,8 @@ class LoggerService {
     } catch { /* ignore */ }
 
     try {
-      const uiStore = require('../stores/uiStore').useUIStore;
+      const uiStore = _getStore('uiStore');
+      if (!uiStore) throw new Error('not loaded');
       const ui = uiStore.getState();
       const openModals: string[] = [];
       if (ui.showFeedbackModal) openModals.push('feedback');
@@ -1260,7 +1297,8 @@ class LoggerService {
     } catch { /* ignore */ }
 
     try {
-      const authStore = require('../stores/authStore').useAuthStore;
+      const authStore = _getStore('authStore');
+      if (!authStore) throw new Error('not loaded');
       const auth = authStore.getState();
       snap['Auth.LoggedIn'] = String(!!auth.authUser);
       snap['Auth.Role'] = auth.authUser?.role || '(none)';
@@ -1268,7 +1306,8 @@ class LoggerService {
     } catch { /* ignore */ }
 
     try {
-      const upStore = require('../stores/uploadStore').useUploadStore;
+      const upStore = _getStore('uploadStore');
+      if (!upStore) throw new Error('not loaded');
       const up = upStore.getState();
       snap['UP.Step'] = String(up.currentStep || 0);
       snap['UP.Platforms'] = String(up.selectedPlatforms?.length || 0);
@@ -1281,7 +1320,8 @@ class LoggerService {
     } catch { /* ignore */ }
 
     try {
-      const vaStore = require('../stores/viewAlertStore').useViewAlertStore;
+      const vaStore = _getStore('viewAlertStore');
+      if (!vaStore) throw new Error('not loaded');
       const va2 = vaStore.getState();
       snap['Alert.Count'] = String(va2.alerts?.length || 0);
       snap['Alert.IsPolling'] = String(va2.isPollingActive || false);
@@ -1289,7 +1329,8 @@ class LoggerService {
     } catch { /* ignore */ }
 
     try {
-      const ssStore2 = require('../stores/shoppingShortStore').useShoppingShortStore;
+      const ssStore2 = _getStore('shoppingShortStore');
+      if (!ssStore2) throw new Error('not loaded');
       const shs = ssStore2.getState();
       snap['Shop.Step'] = String(shs.currentStep || 0);
       snap['Shop.HasSource'] = String(!!shs.sourceVideo || !!shs.sourceUrl);
@@ -1297,7 +1338,8 @@ class LoggerService {
     } catch { /* ignore */ }
 
     try {
-      const epStore = require('../stores/editPointStore').useEditPointStore;
+      const epStore = _getStore('editPointStore');
+      if (!epStore) throw new Error('not loaded');
       const ep = epStore.getState();
       snap['EP.Sources'] = String(ep.sourceVideos?.length || 0);
       snap['EP.EdlEntries'] = String(ep.edlEntries?.length || 0);
@@ -1305,7 +1347,8 @@ class LoggerService {
     } catch { /* ignore */ }
 
     try {
-      const instStore = require('../stores/instinctStore').useInstinctStore;
+      const instStore = _getStore('instinctStore');
+      if (!instStore) throw new Error('not loaded');
       const inst = instStore.getState();
       snap['Inst.Mechanisms'] = String(inst.selectedMechanismIds?.length || 0);
       snap['Inst.IsRecommending'] = String(inst.isRecommending || false);

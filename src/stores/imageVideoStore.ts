@@ -44,12 +44,8 @@ interface ImageVideoStore {
 // [CRITICAL] imageVideoStore 변경 시 projectStore.config에 자동 싱크
 // 순환 의존 방지: lazy import 캐시 패턴 사용
 let _projectStoreRef: any = null;
-const getProjectStore = () => {
-  if (!_projectStoreRef) {
-    try { _projectStoreRef = require('./projectStore').useProjectStore; } catch (e) { logger.trackSwallowedError('imageVideoStore:getProjectStore', e); return null; }
-  }
-  return _projectStoreRef;
-};
+import('./projectStore').then(m => { _projectStoreRef = m.useProjectStore; }).catch(() => {});
+const getProjectStore = () => _projectStoreRef;
 
 const syncToProjectConfig = () => {
   // requestAnimationFrame으로 현재 렌더 사이클 밖에서 실행 (Zustand 업데이트 충돌 방지)
