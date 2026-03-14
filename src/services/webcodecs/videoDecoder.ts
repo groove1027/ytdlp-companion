@@ -582,12 +582,13 @@ export async function createStreamingVideoExtractor(
 
       // 5. Wait for output callback
       return new Promise<ImageBitmap>((resolve, reject) => {
+        // [FIX #285] 타임아웃 10s→30s: 저사양 GPU(Intel Iris Xe 등)에서 메모리 압박 시 디코딩 지연
         const timer = setTimeout(() => {
           if (pendingTarget?.sampleIdx === targetIdx) {
             pendingTarget = null;
             reject(new Error(`프레임 디코딩 타임아웃: ${timeSec.toFixed(3)}s`));
           }
-        }, 10_000);
+        }, 30_000);
 
         pendingTarget = {
           sampleIdx: targetIdx,

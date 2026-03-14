@@ -852,6 +852,7 @@ const StoryboardPanel: React.FC = () => {
   const completedImages = scenes.filter((s) => s.imageUrl && !s.isGeneratingImage).length;
   const completedVideos = scenes.filter((s) => s.videoUrl && !s.isGeneratingVideo).length;
   const videoEligible = scenes.filter((s) => s.imageUrl && !s.videoUrl && !s.isGeneratingVideo).length;
+  const imageEligible = scenes.filter((s) => !s.imageUrl && !s.isGeneratingImage).length;
   const exRate = useCostStore.getState().exchangeRate || PRICING.EXCHANGE_RATE;
 
   const isAnyBatchRunning = isBatchingImages || videoBatch.isBatching;
@@ -1191,12 +1192,14 @@ const StoryboardPanel: React.FC = () => {
       // 사용자가 비주얼 미선택 + 캐릭터 아트 스타일로 폴백된 경우 → 캐릭터 그림체 보존 모드
       const preserveCharStyle = !userSelectedStyle && charArtStyle.trim() !== '' && effectiveStyle === charArtStyle;
 
-      const charImages = currentCharacters.length > 0
+      // [FIX #283] characterAppearance가 NONE이면 캐릭터 참조 이미지/분석 결과를 전달하지 않음
+      const isCharNone = currentConfig.characterAppearance === CharacterAppearance.NONE;
+      const charImages = isCharNone ? [] : (currentCharacters.length > 0
         ? currentCharacters.map(c => c.imageUrl || c.imageBase64).filter((v): v is string => !!v && (v.startsWith('http') || v.startsWith('data:')))
-        : currentConfig.characterImage && (currentConfig.characterImage.startsWith('http') || currentConfig.characterImage.startsWith('data:')) ? [currentConfig.characterImage] : [];
+        : currentConfig.characterImage && (currentConfig.characterImage.startsWith('http') || currentConfig.characterImage.startsWith('data:')) ? [currentConfig.characterImage] : []);
 
       // [NEW] Combine all character analysis results for visual consistency
-      const combinedAnalysis = currentCharacters
+      const combinedAnalysis = isCharNone ? '' : currentCharacters
         .filter(c => c.analysisResult)
         .map(c => c.analysisResult)
         .join('\n');
@@ -1603,8 +1606,12 @@ const StoryboardPanel: React.FC = () => {
                   className="w-full text-left px-4 py-2.5 text-base text-gray-200 hover:bg-gray-700/60 transition-colors flex items-center gap-2"
                 >
                   <span className="w-2 h-2 rounded-full bg-orange-400" />
-                  이미지 일괄 생성
+                  <span className="flex-1">이미지 일괄 생성</span>
+                  <span className="text-[10px] text-orange-400/70">{fmtCost(PRICING.IMAGE_GENERATION * imageEligible, exRate)}</span>
                 </button>
+                {imageEligible > 0 && videoEligible === 0 && totalScenes > 0 && (
+                  <p className="px-4 py-1 text-[10px] text-yellow-400/80 bg-yellow-600/10">⚠️ 이미지가 없는 장면은 영상 생성 불가 — 이미지를 먼저 생성해주세요</p>
+                )}
                 <div className="border-t border-gray-700" />
                 <p className="px-4 py-1 text-xs text-gray-500 font-bold uppercase">Grok 720p (Kie)</p>
                 <button
@@ -1701,7 +1708,7 @@ const StoryboardPanel: React.FC = () => {
           </span>
           {/* 캐릭터 빈도 */}
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-purple-600/20 text-purple-300 border border-purple-500/30">
-            👤 {config?.characterAppearance === CharacterAppearance.ALWAYS ? '항상 출연' : config?.characterAppearance === CharacterAppearance.MINIMAL ? '최소 출연' : '자동'}
+            👤 {config?.characterAppearance === CharacterAppearance.ALWAYS ? '항상 출연' : config?.characterAppearance === CharacterAppearance.MINIMAL ? '최소 출연' : config?.characterAppearance === CharacterAppearance.NONE ? '출연 안함' : '자동'}
           </span>
           {/* 조건부 ON 배지들 */}
           {config?.allowInfographics && (

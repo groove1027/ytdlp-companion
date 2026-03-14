@@ -366,12 +366,12 @@ async function renderSceneFrame(
     if (filters.length > 0) ctx.filter = 'none';
   } else if (videoExtractor) {
     // 비디오 장면: 현재 시간의 프레임을 추출하여 그리기
-    // [FIX #44] 프레임 추출에 10초 타임아웃 — 단일 프레임 무한 대기 방지
+    // [FIX #285] 프레임 추출 타임아웃 10s→30s — 저사양 GPU 메모리 압박 시 타임아웃 방지
     try {
       const frameBitmap = await Promise.race([
         videoExtractor.getFrameAt((timing.videoTrimStartSec ?? 0) + localTime),
         new Promise<null>((_, reject) =>
-          setTimeout(() => reject(new Error(`Frame extraction timeout at ${localTime.toFixed(2)}s`)), 10_000)
+          setTimeout(() => reject(new Error(`Frame extraction timeout at ${localTime.toFixed(2)}s`)), 30_000)
         ),
       ]);
       if (frameBitmap) {

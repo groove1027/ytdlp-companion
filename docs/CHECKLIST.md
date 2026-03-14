@@ -8,6 +8,7 @@
 
 ## 🟢 완료된 작업
 
+- [x] **#283/#285 버그 수정 + #284 피드백 답변** — (1) #283-1: 영상 일괄 생성 시 이미지 미생성 장면 안내 메시지 추가 (2) #283-2: 캐릭터 '출연 안함' 설정이 이미지 생성에 미반영되던 버그 — characterAppearance NONE일 때 charImages/분석결과 제거 + 배지 표시 수정 (3) #283-3: 이미지 일괄 생성 버튼에 예상 비용 표시 추가 (4) #284: AI 영상 모델 한계 안내 코멘트 (5) #285: MP4 내보내기 프레임 디코딩 타임아웃 10초→30초 — 저사양 GPU 메모리 압박 시 타임아웃 방지 (StoryboardPanel.tsx, videoDecoder.ts, canvasRenderer.ts, 2026-03-14)
 - [x] **#280/#281/#282 버그 3건 일괄 수정** — (1) #280: 채널분석 "이걸로 선택" 클릭 시 대본작성 탭으로 대본 미전달 — ScriptWriterTab mount 시 useEffect가 selectedTopic 기반으로 generatedScript/finalScript를 초기화하는 버그. handleSelect에서 selectedTopic을 null로 클리어하여 수정 (2) #281: 배포 후 StoryboardPanel 동적 import 실패 → "앱 업데이트" 메시지 — ImageVideoTab/ChannelAnalysisTab/SoundStudioTab의 서브 컴포넌트에 lazyRetry(재시도+자동 새로고침) 적용 (3) #282: 채널분석 실패항목 재분석 반복 실패 — L2 썸네일 분석에서 400(콘텐츠 정책) 시 동일 이미지로 재시도하던 문제. 점진적 폴백(15×2→5×2→5×1) 추가 (ChannelRemakePanel.tsx, ImageVideoTab.tsx, ChannelAnalysisTab.tsx, SoundStudioTab.tsx, youtubeAnalysisService.ts, 2026-03-14)
 - [x] **PPT 마스터 슬라이드 이미지가 일러스트/그림으로 생성되는 버그 수정** — 스토리보드용 `generateSceneImage` 공유 사용이 근본 원인. PPT 전용 `generatePptSlideImage` 함수 신규 작성으로 스토리보드와 완전 분리. (1) `generateSceneImage` import 완전 제거 → `generateEvolinkImageWrapped`/`generateKieImage` 직접 호출 (2) 3축 합성 프롬프트: 디자인 스타일(시각적 미학) + 콘텐츠 레이아웃(layoutHint — 배치 방식) + 슬라이드 데이터(제목·키포인트를 이미지 내 텍스트로 포함) (3) ContentStyle에 `layoutHint` 필드 추가 — 7개 스타일별 레이아웃 지시(스티브 잡스→1문장 중심, 벤토→2×2 그리드, 컨설턴트→P/S/I 3분할 등) (4) 3곳(샘플 미리보기, 배치 생성, 개별 재생성) 모두 교체 + useCallback 의존성 배열 보정 — 스토리보드 무영향 (PptMasterTab.tsx, slideStylePresets.ts, 2026-03-14)
 
