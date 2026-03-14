@@ -53,53 +53,34 @@ async function generatePptSlideImage(
   visualHint: string,
   editInstruction?: string,
 ): Promise<string> {
-  // 한글 포함 여부 감지 → 텍스트 언어 지시 결정
-  const allText = title + ' ' + keyPoints.join(' ');
-  const hasKorean = /[가-힣ㄱ-ㅎㅏ-ㅣ]/.test(allText);
-  const langDirective = hasKorean
-    ? `CRITICAL LANGUAGE RULE: The title and key points contain Korean text. You MUST render them EXACTLY in Korean (한국어) as provided — do NOT translate to English. All text on the slide must be in Korean.`
-    : `Text language: render all text exactly as provided.`;
-
-  // 키포인트를 슬라이드 텍스트 요소로 구성
-  const keyPointsSection = keyPoints.length > 0
-    ? `The slide must also display these key points as readable text elements:\n${keyPoints.slice(0, 4).map((p, i) => `  ${i + 1}. "${p}"`).join('\n')}`
-    : '';
-
   // 사용자 수정 지시가 있으면 프롬프트에 추가
   const editSection = editInstruction?.trim()
     ? `\nUSER EDIT REQUEST: Apply this modification to the slide design — "${editInstruction.trim()}"`
     : '';
 
   const prompt = [
-    // 1) 슬라이드 기본 지시
-    `Generate a PRESENTATION SLIDE image (16:9 landscape). This must look like an actual PowerPoint/Keynote slide screenshot — NOT an illustration, NOT a photograph, NOT artwork.`,
-    '',
-    // 언어 지시 (한국어 텍스트면 반드시 한국어로 렌더링)
-    langDirective,
+    // 1) 슬라이드 배경 디자인 지시 (텍스트 없이 순수 디자인 요소만)
+    `Generate a PRESENTATION SLIDE BACKGROUND image (16:9 landscape). This is a decorative background design — DO NOT render any text, titles, words, letters, or typography on the image.`,
     '',
     // 2) 디자인 스타일 (시각적 미학)
     `VISUAL DESIGN STYLE: ${designStyle.prompt}`,
     `Background color base: ${designStyle.bgColor}, accent color: ${designStyle.accentColor}.`,
     '',
-    // 3) 콘텐츠 레이아웃 (텍스트 배치 방식)
-    `SLIDE LAYOUT: ${contentStyle.layoutHint}`,
+    // 3) 콘텐츠 레이아웃 힌트 (디자인 요소 배치용)
+    `DESIGN LAYOUT INSPIRATION: ${contentStyle.layoutHint}`,
+    `Use this layout style for placing decorative elements (shapes, icons, graphics) — but do NOT render any actual text.`,
     '',
-    // 4) 슬라이드 텍스트 콘텐츠 (실제로 이미지에 렌더링할 텍스트)
-    `SLIDE TITLE (must be rendered as large, bold, readable text on the slide): "${title}"`,
-    keyPointsSection,
-    '',
-    // 5) 보조 비주얼 (아이콘, 도형, 차트 등)
-    `Supporting visual elements (icons, shapes, diagrams): ${visualHint}`,
+    // 4) 보조 비주얼 (아이콘, 도형, 차트 등)
+    `Supporting visual elements (icons, shapes, abstract diagrams): ${visualHint}`,
     editSection,
     '',
-    // 6) 강제 규칙
+    // 5) 강제 규칙
     `STRICT RULES:`,
-    `- The title "${title}" MUST be clearly visible and readable as typography on the slide.`,
-    `- This is a presentation slide with text and design elements — NOT a scene illustration.`,
-    `- Include appropriate icons, shapes, or infographic elements that complement the text.`,
-    `- Maintain proper visual hierarchy: title prominent, key points below, visuals supporting.`,
+    `- DO NOT render any text, titles, words, letters, numbers, or typography on the image.`,
+    `- This is a pure decorative background — text will be overlaid separately by the presentation software.`,
+    `- Include appropriate decorative elements: icons, shapes, gradients, patterns, abstract infographic elements.`,
+    `- Leave clear space in the upper-left and center areas for text overlay.`,
     `- Do NOT include photographs of real people or character illustrations.`,
-    hasKorean ? `- MUST render ALL text in Korean exactly as given. Do NOT translate or romanize.` : '',
   ].filter(Boolean).join('\n');
 
   // Kie NanoBanana 2 우선 (스토리보드와 동일), Evolink 폴백
@@ -913,19 +894,19 @@ export default function PptMasterTab() {
 
         s.addText(slide.title, {
           x: 0.5, y: 0.3, w: 9, h: 1,
-          fontSize: 28, bold: true, color: 'FFFFFF', fontFace: 'Arial',
+          fontSize: 28, bold: true, color: 'FFFFFF', fontFace: 'Malgun Gothic',
         });
 
         s.addText(slide.body, {
           x: 0.5, y: 1.5, w: 9, h: 3.5,
-          fontSize: 16, color: 'E0E0E0', fontFace: 'Arial', lineSpacingMultiple: 1.4,
+          fontSize: 16, color: 'E0E0E0', fontFace: 'Malgun Gothic', lineSpacingMultiple: 1.4,
         });
 
         if (slide.keyPoints.length > 0) {
           s.addText(slide.keyPoints.map(kp => `  ${kp}`).join('\n'), {
             x: 0.5, y: 5.2, w: 9, h: 1.5,
             fontSize: 14, color: selectedDesignStyle.accentColor.replace('#', ''),
-            fontFace: 'Arial', bold: true,
+            fontFace: 'Malgun Gothic', bold: true,
           });
         }
 

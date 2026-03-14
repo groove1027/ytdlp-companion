@@ -8,6 +8,7 @@
 
 ## 🟢 완료된 작업
 
+- [x] **PPT 마스터 한글 정확도 + 하단 내용 중복 수정** — (1) PPTX 폰트 Arial→Malgun Gothic 3곳 교체: 한글 시스템 폰트로 정확한 렌더링 (2) AI 이미지 생성 프롬프트에서 텍스트 렌더링 지시 제거: 이미지는 순수 디자인 배경만, 텍스트는 PPTX 텍스트 레이어에서만 표시 → 한글 왜곡/중복 표시 해결 (PptMasterTab.tsx, 2026-03-15)
 - [x] **#243 스토리보드 장면 선택 + 선택적 배치 생성** — (1) 장면 체크박스 선택 UI: 그리드/리스트 뷰 모두에 체크박스 추가, 선택된 장면은 주황색 테두리로 하이라이트 (2) "장면 선택" 버튼: 전체 선택/해제 토글, 선택 개수 표시 (3) 선택 기반 배치 생성: 이미지 일괄 생성, Grok 6종(SFX/나레이션×3초옵션), Veo 3.1 모두 선택된 장면만 대상 (4) 비용 예상: 선택한 장면 수 기준으로 드롭다운에 예상 비용 표시 (5) 선택 없으면 기존과 동일하게 전체 대상 동작 (useVideoBatch.ts, StoryboardPanel.tsx, 2026-03-15)
 - [x] **PPT 마스터 대규모 기능 강화 6건** — (1) 이미지 프롬프트 한국어 강제 렌더링: 한글 텍스트 감지 시 영어 번역 금지 지시 추가 (2) 수정 요청 입력 필드: 개별 슬라이드에서 텍스트 수정 지시 → 반영하여 이미지 재생성 (3) PPTX 동적 import 에러 수정: `await import('pptxgenjs')` → 정적 import로 변경 (4) HTML 내보내기: 슬라이드를 HTML 파일로 저장 (인쇄 지원) (5) 전체 이미지 ZIP 다운로드: JSZip으로 모든 슬라이드 이미지 일괄 저장 (6) 탭 전환/프로젝트 저장 시 슬라이드 데이터 유지: Zustand pptMasterStore 도입 + ProjectConfig에 pptSlides 영속화 + 프로젝트 로드 시 자동 복원 (7) 한줄요약 중간 슬라이드 삽입 금지 규칙 추가 (PptMasterTab.tsx, pptMasterStore.ts, slideStylePresets.ts, types.ts, 2026-03-15)
 - [x] **전수 조사 프로토콜 Hook 강화** — (1) pre-edit-gate.sh: src/ 코드 수정 시 .phase-ready 게이트 파일 없으면 exit 2 차단 (2) prepare-work.sh: grep 전수 조사 자동화 + 게이트 파일 생성 (3) CLAUDE.md 최상단에 9단계 프로토콜 강제 명시 (4) touch 우회 방지: 파일 크기 50바이트 미만 시 무효 처리 (.claude/hooks/pre-edit-gate.sh, prepare-work.sh, settings.json, CLAUDE.md, 2026-03-15)
