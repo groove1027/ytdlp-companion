@@ -361,12 +361,22 @@ const DetailPageTab: React.FC = () => {
   // Common helpers
   // ============================================================
 
-  const handleDownloadOne = useCallback((url: string, filename: string) => {
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.target = '_blank';
-    a.click();
+  const handleDownloadOne = useCallback(async (url: string, filename: string) => {
+    try {
+      const res = await fetch(url);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+    }
   }, []);
 
   const handleDownloadAll = useCallback(() => {
@@ -673,12 +683,12 @@ const DetailPageTab: React.FC = () => {
                     <div className="h-full bg-gradient-to-r from-teal-500 to-cyan-500 transition-all duration-500" style={{ width: `${generationProgress}%` }} />
                   </div>
                 )}
-                <div className="max-w-md mx-auto space-y-1">
+                <div className="max-w-md mx-auto space-y-3">
                   {segments.map((seg, idx) => (
-                    <div key={seg.id} className="relative group">
+                    <div key={seg.id} className="relative group bg-gray-800/40 border border-gray-700 rounded-xl overflow-hidden">
                       {seg.imageUrl ? (
                         <div className="relative">
-                          <img src={seg.imageUrl} alt={seg.title} className="w-full rounded-lg border border-gray-700" loading="lazy" />
+                          <img src={seg.imageUrl} alt={seg.title} className="w-full rounded-t-xl border-b border-gray-700" loading="lazy" />
                           <div className="absolute bottom-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                             <button onClick={() => handleRegenerateOne(idx)} disabled={seg.isGenerating} className="px-2 py-1 bg-black/70 text-white rounded text-xs hover:bg-black/90 transition-colors disabled:opacity-50">{seg.isGenerating ? '...' : '재생성'}</button>
                             <button onClick={() => handleDownloadOne(seg.imageUrl!, `detail_${idx + 1}.png`)} className="px-2 py-1 bg-black/70 text-white rounded text-xs hover:bg-black/90 transition-colors">다운로드</button>
@@ -686,7 +696,7 @@ const DetailPageTab: React.FC = () => {
                           <div className="absolute top-2 left-2 px-2 py-1 bg-black/60 text-white rounded text-xs font-bold">{idx + 1}/{segments.length}</div>
                         </div>
                       ) : (
-                        <div className="w-full aspect-[9/16] bg-gray-800/60 border border-gray-700 rounded-lg flex flex-col items-center justify-center gap-3">
+                        <div className="w-full aspect-[9/16] bg-gray-800/60 rounded-t-xl flex flex-col items-center justify-center gap-3">
                           {seg.isGenerating ? (
                             <>
                               <div className="w-8 h-8 border-2 border-gray-600 border-t-teal-400 rounded-full animate-spin" />
@@ -706,6 +716,26 @@ const DetailPageTab: React.FC = () => {
                           </div>
                         </div>
                       )}
+                      {/* 개별 프롬프트 편집 영역 */}
+                      <details className="border-t border-gray-700">
+                        <summary className="px-3 py-2 text-xs text-gray-400 font-bold cursor-pointer hover:text-teal-400 hover:bg-gray-800/60 transition-colors select-none flex items-center gap-1.5">
+                          <svg className="w-3 h-3 transition-transform details-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                          프롬프트 편집 — {seg.title}
+                        </summary>
+                        <div className="p-3 space-y-2 bg-gray-900/40">
+                          <div>
+                            <label className="text-xs text-gray-500 font-bold mb-1 block">Key Message (한글 카피)</label>
+                            <textarea value={seg.keyMessage} onChange={e => setSegments(prev => prev.map((s, i) => i === idx ? { ...s, keyMessage: e.target.value } : s))} rows={2} className="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-white text-sm focus:border-teal-500 focus:outline-none resize-none" />
+                          </div>
+                          <div>
+                            <label className="text-xs text-gray-500 font-bold mb-1 block">Visual Prompt (이미지 설명)</label>
+                            <textarea value={seg.visualPrompt} onChange={e => setSegments(prev => prev.map((s, i) => i === idx ? { ...s, visualPrompt: e.target.value } : s))} rows={3} className="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-gray-300 text-xs focus:border-teal-500 focus:outline-none resize-none font-mono" />
+                          </div>
+                          <button onClick={() => handleRegenerateOne(idx)} disabled={seg.isGenerating} className={`w-full py-2 rounded-lg text-sm font-bold transition-all ${seg.isGenerating ? 'bg-gray-700 text-gray-500 cursor-not-allowed' : 'bg-teal-600/20 text-teal-400 border border-teal-500/30 hover:bg-teal-600/30'}`}>
+                            {seg.isGenerating ? '재생성 중...' : '이 페이지만 재생성'}
+                          </button>
+                        </div>
+                      </details>
                     </div>
                   ))}
                 </div>
