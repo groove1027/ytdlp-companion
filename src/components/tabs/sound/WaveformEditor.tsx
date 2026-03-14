@@ -71,9 +71,12 @@ const DB_SCALE_W = 40;
 const RULER_H = 30;
 const DB_LEVELS = [0, -6, -12, -24, -36, -48];
 
+const ACCEPTED_AUDIO_TYPES = '.wav,.mp3,.m4a,.ogg,.flac,.webm,.aac';
+
 const WaveformEditor: React.FC = () => {
   const lines = useSoundStudioStore((s) => s.lines);
   const mergedAudioUrl = useSoundStudioStore((s) => s.mergedAudioUrl);
+  const setMergedAudio = useSoundStudioStore((s) => s.setMergedAudio);
   const updateLine = useSoundStudioStore((s) => s.updateLine);
   const removeLine = useSoundStudioStore((s) => s.removeLine);
   const pendingEditedAudioUrl = useSoundStudioStore((s) => s.pendingEditedAudioUrl);
@@ -81,6 +84,11 @@ const WaveformEditor: React.FC = () => {
   const commitPendingEdits = useSoundStudioStore((s) => s.commitPendingEdits);
 
   const workingUrl = pendingEditedAudioUrl || mergedAudioUrl;
+
+  // 파일 업로드
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -137,6 +145,41 @@ const WaveformEditor: React.FC = () => {
     const q = searchQuery.toLowerCase();
     return subtitles.filter((s) => s.text.toLowerCase().includes(q));
   }, [subtitles, searchQuery]);
+
+  // 외부 오디오 파일 업로드 핸들러
+  const handleFileUpload = useCallback(async (file: File) => {
+    if (!file.type.startsWith('audio/') && !file.name.match(/\.(wav|mp3|m4a|ogg|flac|webm|aac)$/i)) {
+      logger.warn('[WaveformEditor] 오디오 파일이 아닙니다:', file.name);
+      return;
+    }
+    try {
+      const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const ctx = new Ctx();
+      const arrBuf = await file.arrayBuffer();
+      await ctx.decodeAudioData(arrBuf); // 유효한 오디오인지 검증
+      await ctx.close();
+
+      const blobUrl = URL.createObjectURL(file);
+      setPendingEditedAudioUrl(null);
+      setBeforeUrl(null);
+      setSilenceRegions([]);
+      setUploadedFileName(file.name);
+      setMergedAudio(blobUrl);
+      logger.trackAction('외부 오디오 파일 업로드', file.name);
+    } catch (err) {
+      logger.trackSwallowedError('WaveformEditor:fileUpload', err);
+    }
+  }, [setMergedAudio, setPendingEditedAudioUrl]);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file) handleFileUpload(file);
+  }, [handleFileUpload]);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); setIsDragOver(true); }, []);
+  const handleDragLeave = useCallback(() => { setIsDragOver(false); }, []);
 
   // mergedAudioUrl 변경 시 (새 TTS 생성 등) 편집 상태 리셋
   useEffect(() => {
@@ -697,11 +740,16 @@ const WaveformEditor: React.FC = () => {
                 </span>
               )}
             </div>
-            <p className="text-gray-500 text-xs mt-0.5">Space 재생 | ←→ 탐색 | +/- 줌 | 드래그 선택</p>
+            <p className="text-gray-500 text-xs mt-0.5">
+              {uploadedFileName ? (<><span className="text-fuchsia-400">{uploadedFileName}</span> | </>) : ''}
+              Space 재생 | ←→ 탐색 | +/- 줌 | 드래그 선택
+            </p>
           </div>
         </div>
         {hasAudio && (
           <div className="flex items-center gap-1.5 flex-wrap">
+            <button type="button" onClick={() => fileInputRef.current?.click()}
+              className="px-2.5 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-200 rounded-lg text-xs font-bold border border-gray-600 transition-colors">불러오기</button>
             <button type="button" onClick={() => dlBlob(workingUrl!, `narration_edited_${Date.now()}.wav`)}
               className="px-2.5 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-xs font-bold transition-colors">WAV</button>
             {subtitles.length > 0 && (
@@ -736,9 +784,29 @@ const WaveformEditor: React.FC = () => {
         )}
       </div>
 
+      {/* 숨겨진 파일 input */}
+      <input ref={fileInputRef} type="file" accept={ACCEPTED_AUDIO_TYPES} className="hidden"
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileUpload(f); e.target.value = ''; }} />
+
       {!hasAudio ? (
-        <div className="bg-gray-800/50 border border-gray-700 border-dashed rounded-lg px-4 py-8 text-center text-gray-500 text-base">
-          결과 탭에서 TTS를 먼저 생성해주세요. 병합된 오디오가 있어야 파형 편집이 가능합니다.
+        <div
+          className={`rounded-xl border-2 border-dashed px-6 py-12 text-center transition-all ${
+            isDragOver ? 'border-fuchsia-400 bg-fuchsia-600/10' : 'border-gray-600 bg-gray-800/50 hover:border-gray-500'
+          }`}
+          onDrop={handleDrop}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+        >
+          <div className="text-4xl mb-3 opacity-60">&#128266;</div>
+          <p className="text-gray-300 text-base font-semibold mb-1">오디오 파일을 여기에 드래그하거나</p>
+          <button type="button" onClick={() => fileInputRef.current?.click()}
+            className="px-5 py-2.5 bg-gradient-to-r from-fuchsia-600 to-purple-600 hover:from-fuchsia-500 hover:to-purple-500 text-white rounded-xl text-sm font-bold shadow-lg shadow-fuchsia-500/20 transition-all mt-2">
+            파일 선택하기
+          </button>
+          <p className="text-gray-500 text-xs mt-3">WAV, MP3, M4A, OGG, FLAC, WebM 지원</p>
+          <div className="mt-4 pt-4 border-t border-gray-700/30">
+            <p className="text-gray-600 text-xs">또는 나레이션 탭에서 TTS를 생성하면 자동으로 불러옵니다</p>
+          </div>
         </div>
       ) : (
         <>

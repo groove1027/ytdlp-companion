@@ -1,7 +1,6 @@
 import React, { Suspense, lazy, useState, useCallback, useEffect } from 'react';
 import { useSoundStudioStore } from '../../stores/soundStudioStore';
 import { stopAllAudio } from '../../stores/soundStudioStore';
-import { useUIStore } from '../../stores/uiStore';
 import { logger } from '../../services/LoggerService';
 
 const VoiceStudio = lazy(() => import('./sound/VoiceStudio'));
@@ -46,14 +45,6 @@ const SoundStudioTab: React.FC = () => {
 
   const handleSubTabClick = useCallback((tabId: 'narration' | 'waveform') => {
     logger.trackAction('사운드 서브탭 전환', tabId);
-    if (tabId === 'waveform') {
-      const { lines } = useSoundStudioStore.getState();
-      if (lines.length === 0) {
-        useUIStore.getState().setToast({ show: true, message: '나레이션 탭에서 대본을 먼저 불러와주세요.' });
-        setTimeout(() => useUIStore.getState().setToast(null), 3000);
-        return;
-      }
-    }
     setActiveSubTab(tabId);
   }, [setActiveSubTab]);
 
