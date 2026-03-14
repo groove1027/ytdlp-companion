@@ -1169,28 +1169,93 @@ const GenerateTab: React.FC = () => {
         disabled={isGeneratingMusic || (!prompt.trim() && !activeScript.trim())}
         className={`w-full py-3 rounded-lg text-sm font-bold transition-all border ${
           isGeneratingMusic ? 'bg-gray-700 text-gray-400 border-gray-600 cursor-not-allowed' :
-          'bg-gradient-to-r from-pink-600 to-orange-600 hover:from-pink-500 hover:to-orange-500 text-white border-pink-400/50 shadow-md'}`}>
+          'bg-gradient-to-r from-fuchsia-600 to-pink-600 hover:from-fuchsia-500 hover:to-pink-500 text-white border-fuchsia-400/50 shadow-md'}`}>
         {isGeneratingMusic ? (
           <span className="flex items-center justify-center gap-2">
             <span className="w-4 h-4 border-2 border-gray-500 border-t-gray-300 rounded-full animate-spin" />
-            {batchStatus.total > 1 ? `생성 중... ${batchStatus.completed + batchStatus.failed}/${batchStatus.total} (${progress}%)` : `생성 중... ${progress > 0 ? `(${progress}%)` : ''}`}
-            {elapsedMusic > 0 && <span className="text-xs text-gray-400 tabular-nums">{formatElapsed(elapsedMusic)}</span>}
+            생성 중...
           </span>
         ) : batchCount > 1 ? `${batchCount}곡 일괄 생성 (${formatTime(duration)})` : `음악 생성 (${formatTime(duration)})`}
       </button>
 
-      {isGeneratingMusic && progress > 0 && (
-        <div className="w-full h-1.5 bg-gray-700 rounded-full overflow-hidden">
-          <div className="h-full bg-gradient-to-r from-pink-500 to-orange-500 rounded-full transition-all duration-300" style={{ width: `${progress}%` }} />
-        </div>
-      )}
-      {isGeneratingMusic && batchStatus.total > 1 && (
-        <div className="flex items-center gap-3 text-xs">
-          <span className="text-green-400">완료: {batchStatus.completed}</span>
-          {batchStatus.failed > 0 && <span className="text-red-400">실패: {batchStatus.failed}</span>}
-          <span className="text-gray-500">대기: {batchStatus.total - batchStatus.completed - batchStatus.failed}</span>
-        </div>
-      )}
+      {/* Music generation progress panel */}
+      {isGeneratingMusic && (() => {
+        const MUSIC_TIPS = [
+          '🎵 AI가 멜로디와 하모니를 조합하고 있어요',
+          '🎹 악기 배치와 믹싱을 최적화하는 중이에요',
+          '💡 탭을 열어둔 채로 기다리면 더 안정적이에요',
+          '🎧 완성된 곡은 라이브러리에서 바로 들을 수 있어요',
+          '🎤 보컬/MR 분리도 도구 탭에서 할 수 있어요',
+          '⚡ Suno V5는 가장 빠르고 음질이 좋아요',
+        ];
+        const musicPhase = progress === 0 ? '요청' : progress < 30 ? '작곡' : progress < 70 ? '편곡' : progress < 95 ? '믹싱' : '마무리';
+        const musicPhaseIcon = progress === 0 ? '📤' : progress < 30 ? '🎼' : progress < 70 ? '🎹' : progress < 95 ? '🎧' : '📦';
+        const isBatch = batchStatus.total > 1;
+        const batchDone = batchStatus.completed + batchStatus.failed;
+        const batchPct = isBatch ? Math.round((batchDone / batchStatus.total) * 100) : progress;
+        return (
+          <div className="bg-gradient-to-br from-fuchsia-900/20 to-pink-900/15 border border-fuchsia-500/30 rounded-2xl p-4 space-y-3">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 flex-shrink-0 border-2 border-fuchsia-400 border-t-transparent rounded-full animate-spin" />
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-bold text-fuchsia-300">
+                  {isBatch
+                    ? `🎵 ${batchStatus.total}곡 중 ${batchStatus.completed}곡 완료`
+                    : `${musicPhaseIcon} ${musicPhase === '요청' ? 'AI 작곡 요청 중...' : musicPhase === '작곡' ? 'AI 작곡 중...' : musicPhase === '편곡' ? 'AI 편곡 중...' : musicPhase === '믹싱' ? '믹싱 및 마스터링 중...' : '인코딩 마무리 중...'}`}
+                </div>
+                <div className="text-xs text-gray-400 mt-0.5 flex items-center gap-2">
+                  {isBatch && <span className="tabular-nums">{batchDone}/{batchStatus.total}</span>}
+                  {elapsedMusic > 0 && <span className="text-gray-500 tabular-nums">{formatElapsed(elapsedMusic)} 경과</span>}
+                </div>
+              </div>
+            </div>
+
+            {/* Progress bar */}
+            <div className="space-y-1">
+              <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-fuchsia-500 to-pink-400 rounded-full transition-all duration-700 ease-out"
+                  style={{ width: `${Math.max(2, batchPct)}%` }}
+                />
+              </div>
+              <div className="flex justify-between text-[10px] text-gray-500">
+                <span>{isBatch ? `${batchStatus.total - batchDone}곡 남음` : musicPhase}</span>
+                <span className="tabular-nums">{batchPct}%</span>
+              </div>
+            </div>
+
+            {/* Batch per-song indicators */}
+            {isBatch && (
+              <div className="flex flex-wrap gap-1">
+                {Array.from({ length: batchStatus.total }, (_, i) => {
+                  const isDone = i < batchStatus.completed;
+                  const isFailed = i >= batchStatus.completed && i < batchDone;
+                  const isActive = i === batchDone && batchDone < batchStatus.total;
+                  return (
+                    <div key={i} className={`w-6 h-1.5 rounded-full transition-all duration-300 ${
+                      isDone ? 'bg-green-500' : isFailed ? 'bg-red-500' : isActive ? 'bg-fuchsia-400 animate-pulse' : 'bg-gray-700'
+                    }`} title={isDone ? `#${i + 1} 완료` : isFailed ? `#${i + 1} 실패` : isActive ? `#${i + 1} 진행 중` : `#${i + 1} 대기`} />
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Batch summary */}
+            {isBatch && batchDone > 0 && (
+              <div className="flex items-center gap-3 text-xs">
+                <span className="text-green-400 flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500" /> 완료 {batchStatus.completed}</span>
+                {batchStatus.failed > 0 && <span className="text-red-400 flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500" /> 실패 {batchStatus.failed}</span>}
+                <span className="text-gray-500 flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-gray-600" /> 대기 {batchStatus.total - batchDone}</span>
+              </div>
+            )}
+
+            {/* Rotating tip */}
+            <div className="text-xs text-gray-500 italic">
+              {MUSIC_TIPS[Math.floor(elapsedMusic / 8) % MUSIC_TIPS.length]}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── 자동 연장 진행 상황 (친절 안내) ── */}
       {extendStatus && (() => {

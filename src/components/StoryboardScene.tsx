@@ -338,9 +338,49 @@ const StoryboardSceneInner: React.FC<StoryboardSceneProps> = ({
                   {scene.isGeneratingVideo && !scene.videoUrl && (
                       <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/90 backdrop-blur-sm z-30 p-4 text-center">
                            {scene.isUpscaling ? (
-                               <><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-500 mb-2"></div><span className="text-base text-green-300 font-bold mb-1 animate-pulse">2단계: 고화질(HQ) 변환 중...</span></>
+                               <>
+                                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-500 mb-2"></div>
+                                 <span className="text-base text-green-300 font-bold mb-1 animate-pulse">2단계: 고화질(HQ) 변환 중...</span>
+                                 {progress > 0 && (
+                                   <div className="w-full max-w-[80%] mt-2">
+                                     <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden">
+                                       <div className="h-full bg-gradient-to-r from-green-500 to-emerald-400 rounded-full transition-all duration-500" style={{ width: `${Math.round(progress)}%` }} />
+                                     </div>
+                                     <p className="text-xs text-green-400/80 mt-1 tabular-nums">{Math.round(progress)}%</p>
+                                   </div>
+                                 )}
+                               </>
                            ) : (
-                               <><div className="w-full max-w-[80%] mb-3"><div className="h-2 w-full bg-gray-800 rounded-full overflow-hidden"><div className="h-full bg-gradient-to-r from-blue-500 to-violet-500 transition-all duration-200" style={{ width: `${Math.round(progress)}%` }}></div></div><p className="text-sm text-white font-bold mt-1 text-right">{Math.round(progress)}%</p></div><span className="text-base text-blue-300 font-bold mb-1">{scene.generationStatus || "영상 생성 중..."}</span></>
+                               <>
+                                 <div className="w-full max-w-[85%] space-y-2">
+                                   {/* Phase label */}
+                                   <div className="flex items-center justify-center gap-2 mb-1">
+                                     <div className={`w-5 h-5 flex-shrink-0 border-2 rounded-full animate-spin ${
+                                       scene.videoModelUsed === VideoModel.VEO || scene.videoModelUsed === VideoModel.VEO_QUALITY
+                                         ? 'border-violet-400 border-t-transparent'
+                                         : 'border-blue-400 border-t-transparent'
+                                     }`} />
+                                     <span className={`text-sm font-bold ${
+                                       scene.videoModelUsed === VideoModel.VEO || scene.videoModelUsed === VideoModel.VEO_QUALITY
+                                         ? 'text-violet-300' : 'text-blue-300'
+                                     }`}>
+                                       {scene.generationStatus || (progress < 5 ? '📤 업로드 및 요청 중...' : progress < 30 ? '⏳ 대기열 처리 중...' : progress < 80 ? '🎬 영상 생성 중...' : '📦 인코딩 마무리 중...')}
+                                     </span>
+                                   </div>
+                                   {/* Animated progress bar */}
+                                   <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
+                                     <div className={`h-full rounded-full transition-all duration-700 ease-out ${
+                                       scene.videoModelUsed === VideoModel.VEO || scene.videoModelUsed === VideoModel.VEO_QUALITY
+                                         ? 'bg-gradient-to-r from-violet-500 to-fuchsia-500'
+                                         : 'bg-gradient-to-r from-blue-500 to-violet-500'
+                                     }`} style={{ width: `${Math.max(2, Math.round(progress))}%` }} />
+                                   </div>
+                                   <div className="flex justify-between text-[10px] text-gray-500">
+                                     <span>{progress < 5 ? '준비' : progress < 30 ? '대기' : progress < 80 ? '생성' : '마무리'}</span>
+                                     <span className="tabular-nums font-medium text-white/70">{Math.round(progress)}%</span>
+                                   </div>
+                                 </div>
+                               </>
                            )}
                            <button onClick={() => onCancelGeneration(scene.id)} className="mt-3 px-3 py-1 bg-gray-800 hover:bg-gray-700 rounded text-sm border border-gray-600 text-gray-400">작업 취소</button>
                       </div>

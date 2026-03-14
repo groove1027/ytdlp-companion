@@ -2,9 +2,21 @@ import React, { useState, useRef, useCallback } from 'react';
 import { removeSubtitlesWithGhostCut, type GhostCutLang } from '../../services/ghostcutService';
 import { getGhostCutKeys } from '../../services/apiService';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
+import { useElapsedTimer, formatElapsed } from '../../hooks/useElapsedTimer';
 import { useCostStore } from '../../stores/costStore';
 import { PRICING } from '../../constants';
 import { logger } from '../../services/LoggerService';
+
+const REMOVAL_TIPS = [
+  '🎬 AI가 영상의 모든 프레임에서 텍스트를 탐지하고 있어요',
+  '🧹 자막 영역을 감지한 뒤 배경을 자연스럽게 복원합니다',
+  '⏳ 영상 길이에 따라 5~15분 이상 소요될 수 있어요',
+  '🔍 프레임 단위로 OCR 분석 중 — 고품질 결과를 위한 과정이에요',
+  '💡 처리 중 브라우저를 닫지 마세요. 서버에서 작업이 진행됩니다',
+  '🎯 워터마크도 텍스트 기반이면 함께 제거됩니다',
+  '📱 세로 영상도 가로 영상과 동일하게 처리할 수 있어요',
+  '✨ AI 인페인팅으로 자막 뒤 배경을 자연스럽게 채웁니다',
+];
 
 type Phase = 'idle' | 'uploading' | 'processing' | 'done' | 'error';
 
@@ -22,6 +34,9 @@ const SubtitleRemoverTab: React.FC = () => {
   const [videoDuration, setVideoDuration] = useState(0);
   const [subtitleLang, setSubtitleLang] = useState<GhostCutLang>('ko');
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const isProcessing = phase === 'uploading' || phase === 'processing';
+  const elapsed = useElapsedTimer(isProcessing);
 
   const hasKeys = (() => {
     const { appKey, appSecret } = getGhostCutKeys();
@@ -380,17 +395,28 @@ const SubtitleRemoverTab: React.FC = () => {
           {/* 진행 상태 */}
           {phase !== 'idle' && (
             <div className="bg-gray-800 rounded-xl border border-gray-700 p-5">
-              <h2 className="text-base font-bold text-gray-200 mb-3">처리 상태</h2>
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  {isProcessing && <div className="w-3 h-3 bg-cyan-500 rounded-full animate-pulse" />}
+                  <h2 className="text-base font-bold text-gray-200">처리 상태</h2>
+                </div>
+                {isProcessing && elapsed > 0 && (
+                  <span className="text-sm text-gray-400 tabular-nums font-mono">{formatElapsed(elapsed)}</span>
+                )}
+              </div>
 
               {/* 프로그레스 바 */}
-              <div className="w-full bg-gray-700 rounded-full h-3 mb-3 overflow-hidden">
+              <div className="w-full bg-gray-800 rounded-full h-3 mb-3 overflow-hidden">
                 <div
-                  className={`h-full rounded-full transition-all duration-500 ${
+                  className={`h-full rounded-full transition-all duration-700 ease-out ${
                     phase === 'error' ? 'bg-red-500' :
                     phase === 'done' ? 'bg-green-500' :
-                    'bg-gradient-to-r from-cyan-500 to-blue-500'
+                    'bg-gradient-to-r from-cyan-500 to-sky-500'
                   }`}
-                  style={{ width: `${percent}%` }}
+                  style={{
+                    width: `${percent}%`,
+                    ...(isProcessing ? { backgroundSize: '200% 100%', animation: 'subtitleShimmer 2s linear infinite' } : {}),
+                  }}
                 />
               </div>
 
@@ -464,6 +490,15 @@ const SubtitleRemoverTab: React.FC = () => {
                   </p>
                 </div>
               )}
+
+              {/* 대기 중 회전 팁 */}
+              {isProcessing && elapsed > 0 && (
+                <div className="mt-3 text-xs text-gray-500 italic text-center transition-opacity duration-500">
+                  {REMOVAL_TIPS[Math.floor(elapsed / 8) % REMOVAL_TIPS.length]}
+                </div>
+              )}
+
+              <style>{`@keyframes subtitleShimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }`}</style>
             </div>
           )}
 

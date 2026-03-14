@@ -314,13 +314,21 @@ const KeywordLab: React.FC = () => {
             {isAnalyzing && (
               <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
                 <div className="w-5 h-5 border-2 border-gray-600 border-t-blue-400 rounded-full animate-spin" />
+                <span className="text-xs text-blue-400 animate-pulse">
+                  {elapsed < 5 ? '검색 중' : elapsed < 15 ? '데이터 수집' : elapsed < 30 ? '태그 분석' : '마무리 중'}...
+                </span>
                 {elapsed > 0 && <span className="text-xs text-gray-400 tabular-nums">{formatElapsed(elapsed)}</span>}
               </div>
             )}
           </div>
           <button onClick={() => handleAnalyze()} disabled={isAnalyzing || !keyword.trim()}
             className="px-8 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap">
-            {isAnalyzing ? '분석 중...' : '분석'}
+            {isAnalyzing ? (
+              <span className="flex items-center gap-2">
+                <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                {elapsed < 5 ? '검색 중...' : elapsed < 15 ? '수집 중...' : elapsed < 30 ? '분석 중...' : '마무리...'}
+              </span>
+            ) : '분석'}
           </button>
         </div>
 

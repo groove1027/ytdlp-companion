@@ -40,6 +40,8 @@ interface AnalysisLoadingPanelProps {
   totalBatches?: number;
   /** 롱폼 영상 여부 (5분+ 시 추가 경고 표시) */
   isLongForm?: boolean;
+  /** 개별 영상 진행 현황 (예: 대본 수집 시 "3/10 완료") */
+  videoProgress?: { current: number; total: number };
 }
 
 // ── 팁 데이터 ──
@@ -77,6 +79,7 @@ const AnalysisLoadingPanel: React.FC<AnalysisLoadingPanelProps> = ({
   completedBatches,
   totalBatches,
   isLongForm,
+  videoProgress,
 }) => {
   // 팁 캐러셀
   const [tipIndex, setTipIndex] = useState(() => Math.floor(Math.random() * TIPS.length));
@@ -190,6 +193,36 @@ const AnalysisLoadingPanel: React.FC<AnalysisLoadingPanelProps> = ({
           )}
         </div>
       </div>
+
+      {/* 개별 영상 진행 현황 */}
+      {videoProgress && videoProgress.total > 1 && (
+        <div className={`flex items-center gap-3 px-4 py-2.5 rounded-lg border ${
+          accent === 'blue' ? 'bg-blue-900/15 border-blue-500/20' : 'bg-orange-900/15 border-orange-500/20'
+        }`}>
+          <div className="flex gap-0.5 flex-shrink-0">
+            {Array.from({ length: Math.min(videoProgress.total, 20) }, (_, i) => (
+              <div
+                key={i}
+                className={`h-3 rounded-sm transition-all duration-500 ${
+                  videoProgress.total <= 10 ? 'w-4' : 'w-2'
+                } ${
+                  i < videoProgress.current
+                    ? 'bg-green-400'
+                    : i === videoProgress.current
+                      ? `${accent === 'blue' ? 'bg-blue-400' : 'bg-orange-400'} animate-pulse`
+                      : 'bg-gray-600'
+                }`}
+              />
+            ))}
+            {videoProgress.total > 20 && (
+              <span className="text-[10px] text-gray-500 ml-1 self-center">+{videoProgress.total - 20}</span>
+            )}
+          </div>
+          <span className="text-xs text-gray-300 font-medium whitespace-nowrap">
+            영상 <span className={`font-bold ${accent === 'blue' ? 'text-blue-400' : 'text-orange-400'}`}>{videoProgress.current}</span>/{videoProgress.total} 처리 중
+          </span>
+        </div>
+      )}
 
       {/* [FIX #157] 취소 버튼 — 2분 이상 경과 시 노출 */}
       {onCancel && elapsedSec >= 120 && (

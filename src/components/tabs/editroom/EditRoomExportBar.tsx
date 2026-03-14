@@ -38,6 +38,23 @@ const PHASE_LABELS: Record<ExportProgress['phase'], string> = {
   'done': '완료',
 };
 
+/** 내보내기 진행 표시용 페이즈 순서 */
+const EXPORT_PHASE_ORDER: { phase: ExportProgress['phase']; label: string; icon: string }[] = [
+  { phase: 'initializing', label: '준비', icon: '📦' },
+  { phase: 'composing', label: '합성', icon: '🎬' },
+  { phase: 'encoding', label: '인코딩', icon: '⚙️' },
+  { phase: 'done', label: '완료', icon: '✅' },
+];
+
+/** loading-ffmpeg, writing-assets → initializing 그룹에 매핑 */
+function mapPhaseToIndex(phase: ExportProgress['phase']): number {
+  if (phase === 'loading-ffmpeg' || phase === 'writing-assets' || phase === 'initializing') return 0;
+  if (phase === 'composing') return 1;
+  if (phase === 'encoding') return 2;
+  if (phase === 'done') return 3;
+  return 0;
+}
+
 const EditRoomExportBar: React.FC<EditRoomExportBarProps> = ({
   onExportSrt,
   onExportZip,
@@ -55,28 +72,67 @@ const EditRoomExportBar: React.FC<EditRoomExportBarProps> = ({
   return (
     <div className="fixed bottom-0 left-56 right-0 z-30 bg-gray-900/95 backdrop-blur border-t border-gray-700">
       <div className="max-w-7xl mx-auto px-4 py-3">
-        {/* 진행률 바 */}
+        {/* 진행률 바 + 페이즈 커넥터 */}
         {isExporting && exportProgress && (
           <div className="mb-2">
+            {/* 페이즈 커넥터 */}
+            <div className="flex items-center gap-1 mb-2">
+              {EXPORT_PHASE_ORDER.map((ep, i) => {
+                const activeIdx = mapPhaseToIndex(exportProgress.phase);
+                const isDone = i < activeIdx;
+                const isCurrent = i === activeIdx;
+                return (
+                  <React.Fragment key={ep.phase}>
+                    {i > 0 && (
+                      <div className={`flex-1 h-0.5 transition-all duration-500 ${
+                        isDone ? 'bg-amber-500' :
+                        isCurrent ? 'bg-gradient-to-r from-amber-500 to-gray-700' :
+                        'bg-gray-700'
+                      }`} />
+                    )}
+                    <div className="flex items-center gap-1">
+                      <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] transition-all duration-300 ${
+                        isDone ? 'bg-amber-600 text-white' :
+                        isCurrent ? 'bg-amber-500 text-gray-900 animate-pulse' :
+                        'bg-gray-700 text-gray-500'
+                      }`}>
+                        {isDone ? '\u2713' : ep.icon}
+                      </div>
+                      <span className={`text-[10px] font-medium hidden sm:inline ${
+                        isDone ? 'text-amber-400' :
+                        isCurrent ? 'text-amber-300' :
+                        'text-gray-600'
+                      }`}>
+                        {ep.label}
+                      </span>
+                    </div>
+                  </React.Fragment>
+                );
+              })}
+            </div>
+
+            {/* 메시지 + 시간 + 퍼센트 */}
             <div className="flex items-center justify-between mb-1">
               <span className="text-sm text-gray-400">
                 {PHASE_LABELS[exportProgress.phase]} — {exportProgress.message}
               </span>
               <div className="flex items-center gap-3">
                 {exportProgress.elapsedSec != null && exportProgress.elapsedSec > 0 && (
-                  <span className="text-xs text-gray-500 font-mono">
+                  <span className="text-xs text-gray-500 font-mono tabular-nums">
                     {formatTime(exportProgress.elapsedSec)}
                     {exportProgress.etaSec != null && exportProgress.etaSec > 0 && (
                       <> / ~{formatTime(exportProgress.elapsedSec + exportProgress.etaSec)}</>
                     )}
                   </span>
                 )}
-                <span className="text-sm text-amber-400 font-mono">{Math.min(100, Math.max(0, exportProgress.percent))}%</span>
+                <span className="text-sm text-amber-400 font-mono tabular-nums">{Math.min(100, Math.max(0, exportProgress.percent))}%</span>
               </div>
             </div>
-            <div className="h-1.5 bg-gray-700 rounded-full overflow-hidden">
+
+            {/* 프로그레스 바 */}
+            <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
               <div
-                className="h-full bg-gradient-to-r from-amber-500 to-orange-500 rounded-full transition-all duration-300"
+                className="h-full bg-gradient-to-r from-amber-500 to-orange-500 rounded-full transition-all duration-700 ease-out"
                 style={{ width: `${Math.min(100, Math.max(0, exportProgress.percent))}%` }}
               />
             </div>

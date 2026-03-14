@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback, useRef } from 'react';
+import React, { useEffect, useCallback, useRef, useState } from 'react';
 import { useShoppingShortStore } from '../../../stores/shoppingShortStore';
 import { renderShoppingShort, downloadRenderedVideo } from '../../../services/shoppingRenderService';
 import { generateTypecastTTS } from '../../../services/typecastService';
@@ -17,6 +17,12 @@ const RENDER_PHASES: { phase: ShoppingRenderPhase; label: string; icon: string }
   { phase: 'done', label: '완료', icon: '✅' },
 ];
 
+function formatElapsed(sec: number): string {
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return m > 0 ? `${m}분 ${s}초` : `${s}초`;
+}
+
 const RenderStep: React.FC = () => {
   const { requireAuth } = useAuthGuard();
   const {
@@ -34,6 +40,18 @@ const RenderStep: React.FC = () => {
   } = useShoppingShortStore();
 
   const hasStarted = useRef(false);
+  const renderStartRef = useRef<number>(0);
+  const [elapsedSec, setElapsedSec] = useState(0);
+
+  // 경과 시간 타이머
+  useEffect(() => {
+    if (!isRendering) { setElapsedSec(0); return; }
+    renderStartRef.current = Date.now();
+    const timer = setInterval(() => {
+      setElapsedSec(Math.floor((Date.now() - renderStartRef.current) / 1000));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [isRendering]);
 
   const selectedScript = generatedScripts.find(s => s.id === selectedScriptId);
 
@@ -134,8 +152,16 @@ const RenderStep: React.FC = () => {
 
       {/* 파이프라인 진행 표시 */}
       <div className="bg-gray-800/40 rounded-2xl p-6 border border-gray-700/40">
-        <h3 className="text-lg font-bold text-gray-100 mb-6">렌더링 파이프라인</h3>
+        <div className="flex items-center justify-between mb-6">
+          <h3 className="text-lg font-bold text-gray-100">렌더링 파이프라인</h3>
+          {isRendering && elapsedSec > 0 && (
+            <span className="text-xs text-gray-500 font-mono tabular-nums">
+              {formatElapsed(elapsedSec)} 경과
+            </span>
+          )}
+        </div>
 
+        {/* 페이즈 커넥터 */}
         <div className="flex items-center justify-between mb-6">
           {RENDER_PHASES.map((phase, i) => {
             const isDone = currentPhaseIndex > i;
@@ -143,15 +169,22 @@ const RenderStep: React.FC = () => {
 
             return (
               <React.Fragment key={phase.phase}>
-                <div className="flex flex-col items-center gap-1">
-                  <div className={`w-10 h-10 rounded-full flex items-center justify-center text-lg transition-all ${
-                    isDone ? 'bg-green-600/30 border border-green-500/50' :
-                    isCurrent ? 'bg-lime-600/30 border border-lime-500/50 animate-pulse' :
-                    'bg-gray-800/60 border border-gray-700/40'
+                {i > 0 && (
+                  <div className={`flex-1 h-0.5 mx-1 transition-all duration-500 ${
+                    isDone ? 'bg-green-500' :
+                    isCurrent ? 'bg-gradient-to-r from-green-500 to-gray-700' :
+                    'bg-gray-700/40'
+                  }`} />
+                )}
+                <div className="flex flex-col items-center gap-1.5 min-w-0">
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-all duration-300 ${
+                    isDone ? 'bg-green-600 text-white shadow-lg shadow-green-900/30' :
+                    isCurrent ? 'bg-lime-500 text-gray-900 animate-pulse shadow-lg shadow-lime-900/30' :
+                    'bg-gray-800 text-gray-500 border border-gray-700'
                   }`}>
-                    {phase.icon}
+                    {isDone ? '\u2713' : phase.icon}
                   </div>
-                  <span className={`text-xs font-medium ${
+                  <span className={`text-[10px] font-medium whitespace-nowrap ${
                     isDone ? 'text-green-400' :
                     isCurrent ? 'text-lime-300' :
                     'text-gray-600'
@@ -159,36 +192,38 @@ const RenderStep: React.FC = () => {
                     {phase.label}
                   </span>
                 </div>
-                {i < RENDER_PHASES.length - 1 && (
-                  <div className={`flex-1 h-0.5 mx-2 ${
-                    isDone ? 'bg-green-500/50' :
-                    isCurrent ? 'bg-lime-500/30' :
-                    'bg-gray-700/40'
-                  }`} />
-                )}
               </React.Fragment>
             );
           })}
         </div>
 
         {/* 프로그레스 바 */}
-        <div className="w-full bg-gray-700/40 rounded-full h-3 overflow-hidden">
+        <div className="w-full bg-gray-800 rounded-full h-2.5 overflow-hidden">
           <div
-            className={`h-full rounded-full transition-all duration-500 ${
+            className={`h-full rounded-full transition-all duration-700 ease-out ${
               renderProgress.phase === 'error' ? 'bg-red-500' :
-              renderProgress.phase === 'done' ? 'bg-green-500' :
+              renderProgress.phase === 'done' ? 'bg-gradient-to-r from-green-500 to-lime-400' :
               'bg-gradient-to-r from-lime-500 to-green-500'
             }`}
             style={{ width: `${renderProgress.percent}%` }}
           />
         </div>
-        <p className={`mt-2 text-sm ${
-          renderProgress.phase === 'error' ? 'text-red-400' :
-          renderProgress.phase === 'done' ? 'text-green-400' :
-          'text-gray-400'
-        }`}>
-          {renderProgress.message || '대기 중...'}
-        </p>
+
+        {/* 메시지 + 퍼센트 */}
+        <div className="flex items-center justify-between mt-2">
+          <p className={`text-sm ${
+            renderProgress.phase === 'error' ? 'text-red-400' :
+            renderProgress.phase === 'done' ? 'text-green-400' :
+            'text-gray-400'
+          }`}>
+            {renderProgress.message || '대기 중...'}
+          </p>
+          {isRendering && renderProgress.percent > 0 && renderProgress.phase !== 'done' && (
+            <span className="text-xs text-lime-400 font-mono tabular-nums">
+              {renderProgress.percent}%
+            </span>
+          )}
+        </div>
       </div>
 
       {/* 결과 미리보기 */}

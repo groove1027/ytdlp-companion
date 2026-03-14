@@ -17,6 +17,17 @@ const PIPELINE_STEPS = [
 
 const TOTAL_ESTIMATED = PIPELINE_STEPS.reduce((a, s) => a + s.duration, 0);
 
+const GENERATION_TIPS = [
+  '💡 본능 기제를 많이 선택할수록 AI가 더 강렬한 훅을 만듭니다',
+  '📊 채널 분석 데이터가 있으면 말투와 구조를 자동으로 학습해요',
+  '🎯 목표 글자수를 넉넉히 설정하면 내용이 더 풍부해집니다',
+  '✍️ 생성된 대본은 자유롭게 편집할 수 있어요',
+  '🔄 스타일 변환으로 같은 내용을 다른 톤으로 바꿀 수 있어요',
+  '🎬 쇼츠 포맷은 짧고 강렬한 문장 위주로 생성됩니다',
+  '📡 벤치마크 대본을 설정하면 그 영상의 흐름을 학습합니다',
+  '🧠 AI가 소재를 분석하고 최적의 구조를 설계하고 있어요',
+];
+
 export default function GenerationTimeline({ isGenerating, elapsed, streamingText, targetChars }: Props) {
   const [currentStep, setCurrentStep] = useState(0);
 
@@ -129,6 +140,11 @@ export default function GenerationTimeline({ isGenerating, elapsed, streamingTex
           </div>
         </div>
       )}
+
+      {/* 대기 중 회전 팁 */}
+      <div className="text-xs text-gray-500 italic text-center transition-opacity duration-500">
+        {GENERATION_TIPS[Math.floor(elapsed / 8) % GENERATION_TIPS.length]}
+      </div>
 
       <style>{`@keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }`}</style>
     </div>

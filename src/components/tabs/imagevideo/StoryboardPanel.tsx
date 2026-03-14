@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { useProjectStore } from '../../../stores/projectStore';
 import { useCostStore } from '../../../stores/costStore';
 import { useImageVideoStore } from '../../../stores/imageVideoStore';
@@ -16,6 +16,16 @@ import ActionButton from '../../ui/ActionButton';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
 import { logger } from '../../../services/LoggerService';
+
+// --- 배치 진행 중 로테이팅 팁 ---
+const BATCH_TIPS: string[] = [
+  '이미지 한 장당 약 15~60초 정도 소요됩니다',
+  '생성된 이미지가 마음에 안 들면 개별 장면에서 재생성할 수 있어요',
+  '다른 구도로 변형 버튼으로 같은 장면의 다양한 앵글을 시도해보세요',
+  '이미지 생성 후 영상으로 변환하면 더 생동감 있는 결과물을 얻을 수 있어요',
+  '스타일 프리셋을 바꾸면 같은 대본도 완전히 다른 분위기로 표현됩니다',
+  '배치 생성 중에도 완료된 장면은 바로 확인할 수 있어요',
+];
 
 // --- Constants ---
 
@@ -848,6 +858,12 @@ const StoryboardPanel: React.FC = () => {
   const elapsedBatch = useElapsedTimer(isAnyBatchRunning);
   const totalScenes = scenes.length;
 
+  // 배치 진행 중 로테이팅 팁
+  const batchTip = useMemo(() => {
+    const idx = Math.floor(elapsedBatch / 8) % BATCH_TIPS.length;
+    return BATCH_TIPS[idx];
+  }, [Math.floor(elapsedBatch / 8)]);
+
   // 드롭다운 바깥 클릭 시 닫기
   useEffect(() => {
     if (!showGenDropdown && !showDownloadDropdown) return;
@@ -1343,31 +1359,64 @@ const StoryboardPanel: React.FC = () => {
         </div>
       )}
 
-      {/* Batch progress bar */}
+      {/* Batch progress bar — 향상된 진행 패널 */}
       {isAnyBatchRunning && (
-        <div className="mb-4 bg-gray-800/60 border border-gray-700 rounded-xl px-4 py-3">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-sm text-gray-300 font-medium">
-              {isBatchingImages ? '이미지 일괄 생성' : '영상 일괄 생성'}
-            </span>
-            <span className="text-sm text-gray-400 flex items-center gap-2">
-              {batchCurrent}/{batchTotal}
+        <div className={`mb-4 rounded-xl border p-4 space-y-3 ${
+          isBatchingImages
+            ? 'bg-orange-900/20 border-orange-500/30'
+            : 'bg-blue-900/20 border-blue-500/30'
+        }`}>
+          {/* 헤더: 스피너 + 라벨 + 카운터 */}
+          <div className="flex items-center gap-3">
+            <div className={`w-7 h-7 border-2 rounded-full animate-spin ${
+              isBatchingImages
+                ? 'border-orange-400 border-t-transparent'
+                : 'border-blue-400 border-t-transparent'
+            }`} />
+            <div className="flex-1 min-w-0">
+              <div className={`text-sm font-bold ${isBatchingImages ? 'text-orange-300' : 'text-blue-300'}`}>
+                {isBatchingImages ? '이미지 일괄 생성' : '영상 일괄 생성'}
+              </div>
+              <div className="text-xs text-gray-400 flex items-center gap-2">
+                <span className="tabular-nums">{formatElapsed(elapsedBatch)} 경과</span>
+                {batchCurrent > 0 && elapsedBatch > 0 && (
+                  <span className="text-gray-500">
+                    · 예상 남은 시간 <span className={`font-medium ${isBatchingImages ? 'text-orange-400' : 'text-blue-400'}`}>
+                      {formatElapsed(Math.max(0, Math.round((elapsedBatch / batchCurrent) * (batchTotal - batchCurrent))))}
+                    </span>
+                  </span>
+                )}
+              </div>
+            </div>
+            <div className="text-right flex-shrink-0">
+              <span className={`text-lg font-bold tabular-nums ${isBatchingImages ? 'text-orange-300' : 'text-blue-300'}`}>
+                {batchCurrent}/{batchTotal}
+              </span>
               {isBatchingImages && batchImageProgress.fail > 0 && (
-                <span className="text-red-400">({batchImageProgress.fail}개 실패)</span>
+                <div className="text-xs text-red-400 mt-0.5">{batchImageProgress.fail}개 실패</div>
               )}
-              {elapsedBatch > 0 && <span className="text-gray-500 tabular-nums text-xs">{formatElapsed(elapsedBatch)}</span>}
-            </span>
+            </div>
           </div>
-          <div className="w-full bg-gray-700 rounded-full h-2.5">
+
+          {/* 프로그레스 바 */}
+          <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
             <div
               style={{ width: `${batchPercent}%` }}
-              className={`h-2.5 rounded-full transition-all duration-300 ${
+              className={`h-full rounded-full transition-all duration-700 ${
                 isBatchingImages
-                  ? batchImageProgress.fail > 0 ? 'bg-gradient-to-r from-orange-500 to-red-500' : 'bg-orange-500'
-                  : 'bg-blue-500'
+                  ? batchImageProgress.fail > 0 ? 'bg-gradient-to-r from-orange-500 to-red-500' : 'bg-gradient-to-r from-orange-500 to-amber-500'
+                  : 'bg-gradient-to-r from-blue-500 to-violet-500'
               }`}
             />
           </div>
+
+          {/* 로테이팅 팁 (이미지 배치 시만) */}
+          {isBatchingImages && (
+            <div className="flex items-start gap-2 pt-1">
+              <span className="text-xs text-orange-400 flex-shrink-0 mt-px">💡</span>
+              <p className="text-xs text-gray-400">{batchTip}</p>
+            </div>
+          )}
         </div>
       )}
 

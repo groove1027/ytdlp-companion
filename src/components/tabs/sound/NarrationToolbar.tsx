@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Speaker } from '../../../types';
 import { TYPECAST_EMOTIONS } from '../../../constants';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
@@ -36,6 +36,15 @@ const NarrationToolbar: React.FC<NarrationToolbarProps> = ({
 }) => {
   const elapsed = useElapsedTimer(isGenerating);
   const currentEmotion = TYPECAST_EMOTIONS.find((e) => e.id === globalEmotion);
+
+  // 경과 시간 기반 진행 단계 표시
+  const phaseLabel = useMemo(() => {
+    if (!isGenerating) return '';
+    if (elapsed < 5) return '나레이션 생성 준비 중...';
+    if (elapsed < 20) return '음성 인코딩 중...';
+    if (elapsed < 40) return '오디오 병합 중...';
+    return '업로드 및 마무리 중...';
+  }, [isGenerating, elapsed]);
 
   return (
     <div className="flex items-center gap-3 px-4 py-2.5 bg-gray-800 border-b border-gray-700 flex-wrap">
@@ -104,7 +113,13 @@ const NarrationToolbar: React.FC<NarrationToolbarProps> = ({
 
       {/* 우측 버튼 그룹 */}
       <div className="ml-auto flex items-center gap-2">
-        {elapsed > 0 && <span className="text-xs text-gray-400 tabular-nums">{formatElapsed(elapsed)}</span>}
+        {isGenerating && (
+          <div className="flex items-center gap-2 text-sm text-fuchsia-400 animate-pulse">
+            <div className="w-4 h-4 border-2 border-fuchsia-400 border-t-transparent rounded-full animate-spin" />
+            <span className="text-xs">{phaseLabel}</span>
+            {elapsed > 0 && <span className="text-xs text-gray-400 tabular-nums">{formatElapsed(elapsed)}</span>}
+          </div>
+        )}
         <button
           type="button"
           onClick={onPlayAll}

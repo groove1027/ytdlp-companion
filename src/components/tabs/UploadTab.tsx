@@ -1688,23 +1688,37 @@ const StepMetadata: React.FC = () => {
         )
       )}
 
-      {/* AI 생성 로딩 — 6단계 표시 */}
+      {/* AI 생성 로딩 — 6단계 표시 + 팁 */}
       {isGenerating && (
-        <div className="bg-violet-900/20 border border-violet-500/30 rounded-xl px-5 py-4">
+        <div className="bg-green-900/20 border border-green-500/30 rounded-xl px-5 py-4">
           <div className="flex items-center gap-3 mb-3">
-            <div className="w-5 h-5 border-2 border-violet-400 border-t-transparent rounded-full animate-spin" />
-            <p className="text-base text-violet-300 font-bold">
-              AI가 대본을 분석 중...
+            <div className="w-5 h-5 border-2 border-green-400 border-t-transparent rounded-full animate-spin" />
+            <p className="text-base text-green-300 font-bold">
+              {elapsed < 5 ? 'AI가 대본을 분석 중...' : elapsed < 15 ? '제목 후보 생성 중...' : elapsed < 25 ? '설명 및 해시태그 생성 중...' : '태그 최적화 마무리 중...'}
               {elapsed > 0 && <span className="text-xs text-gray-400 tabular-nums ml-2">{formatElapsed(elapsed)}</span>}
             </p>
           </div>
-          <div className="flex flex-wrap gap-2">
-            {['1. 정책 검사', '2. 제목 5개', '3. 설명', '4. 공개 해시태그', ...(selectedPlatforms.includes('youtube') ? ['5. 비공개 태그'] : []), '6. 쇼핑 태그'].map((step) => (
-              <span key={step} className="text-[11px] bg-violet-500/15 text-violet-300/80 border border-violet-500/20 px-2 py-0.5 rounded">
-                {step}
-              </span>
-            ))}
+          <div className="flex flex-wrap gap-2 mb-3">
+            {['1. 정책 검사', '2. 제목 5개', '3. 설명', '4. 공개 해시태그', ...(selectedPlatforms.includes('youtube') ? ['5. 비공개 태그'] : []), '6. 쇼핑 태그'].map((step, idx) => {
+              const activeIdx = elapsed < 3 ? 0 : elapsed < 8 ? 1 : elapsed < 15 ? 2 : elapsed < 20 ? 3 : elapsed < 25 ? 4 : 5;
+              const isDone = idx < activeIdx;
+              const isActive = idx === activeIdx;
+              return (
+                <span key={step} className={`text-[11px] px-2 py-0.5 rounded border transition-all ${
+                  isDone ? 'bg-green-600/20 text-green-400 border-green-500/30' :
+                  isActive ? 'bg-green-500/15 text-green-300 border-green-500/30 animate-pulse' :
+                  'bg-gray-700/30 text-gray-500 border-gray-600/30'
+                }`}>
+                  {isDone ? '\u2713 ' : ''}{step}
+                </span>
+              );
+            })}
           </div>
+          <p className="text-xs text-gray-500 italic">
+            {elapsed % 12 < 4 ? '대본이 길수록 더 정확한 메타데이터가 생성됩니다' :
+             elapsed % 12 < 8 ? '생성된 제목은 수정하거나 직접 입력할 수 있습니다' :
+             '플랫폼별 최적 길이에 맞춰 설명이 자동 조정됩니다'}
+          </p>
         </div>
       )}
 
