@@ -680,12 +680,18 @@ export const parseScriptToScenes = async (
 
     1. **CASE: AUTO (The Pro Director)**
        - **Limit**: Character ('MAIN') MUST appear only once every 3-5 scenes. After a MAIN scene, the next 2-4 scenes MUST be 'NOBODY', 'EXTRA', or 'KEY_ENTITY'.
-       - **Rule**: After 1 character scene → at least 2 non-character scenes (data visuals, scenery, objects, establishing shots, infographics, b-roll) → then character may appear again.
+       - **Rule**: After 1 character scene → at least 2 non-character scenes → then character may appear again.
        - **Pacing**: Create a natural documentary rhythm — the character introduces/reacts, then the visuals carry the story, then the character returns.
        - **Variety**: MAIN scenes should show the character in different shotSize/cameraAngle. Non-character scenes provide visual variety.
+       - **EXTRA Usage (CRITICAL — DO NOT IGNORE)**:
+         - When the script mentions or implies OTHER PEOPLE (landlord, agent, colleague, passerby, crowd, customer, opponent, victim, witness, doctor, teacher, etc.), set castType to 'EXTRA' — NOT 'NOBODY'.
+         - 'EXTRA' = a GENERIC person (not the main character) appears in the scene. Use varied ages, genders, and appearances.
+         - Aim for at least 20-30% of non-MAIN scenes to be 'EXTRA' when the script involves human interactions or social contexts.
+         - 'NOBODY' should ONLY be used for pure scenery, objects, data visuals, establishing shots, or abstract concepts with NO human element.
        - **Infographics**:
          - If explaining complex data -> 'MAIN' (Presenter Mode).
          - If showing raw data/impact -> 'NOBODY' (Full Screen Chart).
+         - If data involves people/social topics -> 'EXTRA' (Generic person interacting with data).
 
     [CRITICAL: KEY_ENTITY MANDATORY APPEARANCE RULE — ALL MODES]
     When the script mentions ANY of the following, you MUST set castType to 'KEY_ENTITY':
