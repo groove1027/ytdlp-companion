@@ -504,7 +504,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         mode: 'SCRIPT',
         script: '',
         videoFormat: VideoFormat.SHORT,
-        aspectRatio: AspectRatio.LANDSCAPE,
+        aspectRatio: AspectRatio.PORTRAIT,
         imageModel: ImageModel.NANO_COST,
         smartSplit: true,
       } as ProjectConfig,
@@ -526,7 +526,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         saveProject({
           id: projectId,
           title: autoTitle,
-          config: { mode: 'SCRIPT', script: '', videoFormat: VideoFormat.SHORT, aspectRatio: AspectRatio.LANDSCAPE, imageModel: ImageModel.NANO_COST, smartSplit: true } as ProjectConfig,
+          config: { mode: 'SCRIPT', script: '', videoFormat: VideoFormat.SHORT, aspectRatio: AspectRatio.PORTRAIT, imageModel: ImageModel.NANO_COST, smartSplit: true } as ProjectConfig,
           scenes: [],
           thumbnails: [],
           fullNarrationText: '',

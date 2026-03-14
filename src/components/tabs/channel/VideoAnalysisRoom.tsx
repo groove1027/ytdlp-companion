@@ -2,7 +2,7 @@ import React, { useState, useRef, useCallback, useEffect, lazy, Suspense } from 
 import { logger } from '../../../services/LoggerService';
 import AnalysisLoadingPanel, { notifyAnalysisComplete } from './AnalysisLoadingPanel';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import { evolinkChatStream, evolinkVideoAnalysisStream, evolinkNativeStream, evolinkFrameAnalysisStream } from '../../../services/evolinkService';
+import { evolinkChatStream, evolinkVideoAnalysisStream, evolinkNativeStream, evolinkFrameAnalysisStream, getEvolinkKey } from '../../../services/evolinkService';
 import type { EvolinkChatMessage } from '../../../services/evolinkService';
 
 import { showToast } from '../../../stores/uiStore';
@@ -15,8 +15,7 @@ import { useSoundStudioStore } from '../../../stores/soundStudioStore';
 import { buildVideoAnalysisStylePreset } from '../../../utils/videoStyleExtractor';
 import AnalysisSlotBar from './AnalysisSlotBar';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
-import { getYoutubeApiKey } from '../../../services/apiService';
-import { monitoredFetch } from '../../../services/apiService';
+import { getYoutubeApiKey, getKieKey, monitoredFetch } from '../../../services/apiService';
 import { getQuotaUsage } from '../../../services/youtubeAnalysisService';
 import { extractStreamUrl, isYtdlpServerConfigured, getSocialMetadata, downloadSocialVideo } from '../../../services/ytdlpApiService';
 import { detectPlatform } from '../../../services/videoDownloadService';
@@ -949,9 +948,8 @@ function generateSrt(scenes: SceneRow[], isTikitaka: boolean = false): string {
       const dur = parseDuration(scene.duration);
       const start = accTime;
       accTime += dur;
-      const modeTag = scene.mode ? `${scene.mode} ` : '';
       const text = scene.audioContent || scene.dialogue || scene.sceneDesc;
-      return `${i + 1}\n${secondsToSrtTime(start)} --> ${secondsToSrtTime(accTime)}\n${modeTag}${text}`;
+      return `${i + 1}\n${secondsToSrtTime(start)} --> ${secondsToSrtTime(accTime)}\n${text}`;
     }).join('\n\n');
   }
   // 스낵형: 원본 타임코드 우선, 없으면 배치 타임코드 폴백
@@ -2797,6 +2795,13 @@ const VideoAnalysisRoom: React.FC = () => {
     if (!requireAuth('영상 분석')) return;
     if (!hasInput) return;
 
+    // API 키 사전 검증 — 키 없이 5배치 모두 실패하는 것을 방지
+    if (!getEvolinkKey() && !getKieKey()) {
+      showToast('AI 분석을 위한 API 키가 설정되어 있지 않아요. ⚙️ 설정에서 API 키를 등록해주세요!', 6000);
+      setError('API 키가 설정되지 않았습니다. 설정 메뉴에서 Evolink 또는 KIE API 키를 등록해주세요.');
+      return;
+    }
+
     // 현재 결과를 기존 프리셋 캐시에 저장 (전환 전 보존)
     if (selectedPreset && rawResult) {
       cacheCurrentResult(selectedPreset);
@@ -3173,7 +3178,12 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
         const totalSuccess = BATCH_COUNT - failedIndices.length;
         if (totalSuccess === 0) {
           if (signal.aborted) throw new DOMException('분석이 취소되었습니다.', 'AbortError');
-          throw new Error('모든 병렬 분석 배치가 실패했습니다.');
+          // 첫 번째 실패 원인을 포함하여 디버깅 용이하게
+          const firstFailure = results.find(r => r.status === 'rejected') as PromiseRejectedResult | undefined;
+          const reason = firstFailure?.reason instanceof Error ? firstFailure.reason.message : String(firstFailure?.reason || '');
+          throw new Error(reason.includes('API') || reason.includes('키')
+            ? `API 키가 설정되지 않았습니다. 설정에서 API 키를 등록해주세요.`
+            : `모든 병렬 분석 배치가 실패했습니다. (${reason.slice(0, 80) || '원인 불명'})`);
         }
         if (failedIndices.length > 0) {
           showToast(`${BATCH_COUNT}개 배치 중 ${totalSuccess}개 성공 — 일부 버전이 누락될 수 있습니다.`, 5000);
@@ -3792,9 +3802,18 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                     `[컷 ${s.cutNum}] ${s.timeline}\n대사: ${s.dialogue}\n효과: ${s.effectSub}\n장면: ${s.sceneDesc}`
                                   ).join('\n\n');
                                 const videoStore = useVideoAnalysisStore.getState();
+                                // [FIX #213] YouTube 모드에서 videoBlob이 없으면 다운로드 시도
+                                let effectiveBlob = videoStore.videoBlob;
+                                if (!effectiveBlob && !uploadedFiles[0] && inputMode === 'youtube' && youtubeUrl) {
+                                  try {
+                                    const dl = await downloadSocialVideo(youtubeUrl, '720p');
+                                    effectiveBlob = dl.blob;
+                                    videoStore.setVideoBlob(dl.blob);
+                                  } catch (e) { console.warn('[EditRoom] 영상 다운로드 실패:', e); }
+                                }
                                 await useEditPointStore.getState().importFromVideoAnalysis({
                                   frames: thumbnails,
-                                  videoBlob: videoStore.videoBlob,
+                                  videoBlob: effectiveBlob,
                                   videoFile: uploadedFiles[0] || null,
                                   editTableText: versionText,
                                   narrationText: '', // [FIX #215] 편집표에 이미 내레이션 포함 — 중복 전송 시 토큰 2배 + 429 유발
@@ -4254,9 +4273,18 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
             type="button"
             onClick={async () => {
               const videoStore = useVideoAnalysisStore.getState();
+              // [FIX #213] YouTube 모드에서 videoBlob이 없으면 다운로드 시도
+              let effectiveBlob = videoStore.videoBlob;
+              if (!effectiveBlob && !uploadedFiles[0] && inputMode === 'youtube' && youtubeUrl) {
+                try {
+                  const dl = await downloadSocialVideo(youtubeUrl, '720p');
+                  effectiveBlob = dl.blob;
+                  videoStore.setVideoBlob(dl.blob);
+                } catch (e) { console.warn('[EditRoom] 영상 다운로드 실패:', e); }
+              }
               await useEditPointStore.getState().importFromVideoAnalysis({
                 frames: thumbnails,
-                videoBlob: videoStore.videoBlob,
+                videoBlob: effectiveBlob,
                 videoFile: uploadedFiles[0] || null,
                 editTableText: rawResult,
                 narrationText: '', // [FIX #215] 편집표에 이미 내레이션 포함 — 중복 전송 시 토큰 2배 + 429 유발

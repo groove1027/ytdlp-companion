@@ -436,7 +436,7 @@ export async function createApimartVeoTask(
         publicImageUrl = await uploadMediaToHosting(file);
     }
 
-    let finalPrompt = constructVeoPrompt("", cameraAngle, cameraMovement, culturalContext);
+    let finalPrompt = constructVeoPrompt(sanitizePrompt(prompt), cameraAngle, cameraMovement, culturalContext);
     
     if (isSafeRetry) {
         finalPrompt = "[Sound Effects Only] [No Music] [No Speech] [Movement: Subtle]";
@@ -1363,8 +1363,8 @@ async function createEvolinkVeoTask(params: VideoTaskParams): Promise<string> {
         publicImageUrl = await uploadMediaToHosting(file);
     }
 
-    // 프롬프트 구성 (culturalContext 포함하여 문화적 맥락 반영)
-    let finalPrompt = constructVeoPrompt("", params.cameraAngle, params.cameraMovement, params.culturalContext);
+    // 프롬프트 구성 (원본 visualPrompt + culturalContext 포함하여 문화적 맥락 반영)
+    let finalPrompt = constructVeoPrompt(sanitizePrompt(params.prompt), params.cameraAngle, params.cameraMovement, params.culturalContext);
     if (params.isSafeRetry) {
         finalPrompt = "[Sound Effects Only] [No Music] [No Speech] [Movement: Subtle]";
     }

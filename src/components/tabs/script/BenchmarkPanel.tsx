@@ -39,6 +39,8 @@ export default function BenchmarkPanel() {
   const setBenchmarkScript = useScriptWriterStore((s) => s.setBenchmarkScript);
   const setActiveStep = useScriptWriterStore((s) => s.setActiveStep);
   const setSelectedTopic = useScriptWriterStore((s) => s.setSelectedTopic);
+  const referenceComments = useScriptWriterStore((s) => s.referenceComments);
+  const setReferenceComments = useScriptWriterStore((s) => s.setReferenceComments);
 
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const elapsed = useElapsedTimer(isAnalyzing);
@@ -301,6 +303,25 @@ ${scriptSummaries}
                   <span>→</span>
                 </button>
               </div>
+            </div>
+          )}
+
+          {/* [#216] 댓글 붙여넣기 — 시청자 반응을 AI 대본에 반영 */}
+          {hasBenchmarkData && (
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-gray-500 uppercase tracking-wider">댓글 붙여넣기</span>
+                {referenceComments.length > 0 && (
+                  <span className="text-xs text-violet-400">{referenceComments.length.toLocaleString()}자</span>
+                )}
+              </div>
+              <textarea
+                value={referenceComments}
+                onChange={(e) => setReferenceComments(e.target.value)}
+                placeholder="YouTube 댓글을 복사·붙여넣기하세요. 시청자 반응과 관심사가 대본에 반영됩니다."
+                className="w-full h-20 px-3 py-2 rounded-lg bg-gray-800/50 border border-gray-700/40 text-sm text-gray-200 placeholder-gray-600 resize-y focus:outline-none focus:border-violet-500/50 transition-colors"
+                maxLength={3000}
+              />
             </div>
           )}
 

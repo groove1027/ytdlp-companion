@@ -68,6 +68,7 @@ function buildChannelStyleSection(
   guideline: import('../../types').ChannelGuideline | null,
   scripts: import('../../types').ChannelScript[],
   benchmark: string,
+  referenceComments?: string,
 ): string {
   const parts: string[] = [];
 
@@ -122,6 +123,11 @@ function buildChannelStyleSection(
     parts.push(`\n[참고 벤치마크 대본 (앞 1200자)]\n${benchmark.slice(0, 1200)}\n→ 위 대본의 말투와 흐름을 정확히 모방하되 내용은 새롭게 작성하세요.`);
   }
 
+  // [#216] 사용자 수동 댓글 붙여넣기 — 시청자 반응/관심사를 대본에 반영
+  if (referenceComments && referenceComments.trim().length > 10) {
+    parts.push(`\n[시청자 댓글 참고 (사용자 입력)]\n${referenceComments.trim().slice(0, 2000)}\n→ 위 댓글에서 시청자들이 관심 있어하는 포인트, 궁금해하는 내용, 요청 사항을 대본에 자연스럽게 반영하세요.`);
+  }
+
   if (parts.length > 0) {
     parts.push('\n→ 위 채널의 말투, 종결어미, 문장 호흡, 도입/마무리 패턴을 충실히 반영하여 대본을 작성하세요. 채널 고유의 스타일을 최우선으로 지키세요.');
   }
@@ -173,6 +179,7 @@ export default function ScriptWriterTab() {
     clearPreviousContent,
     videoAnalysisStyles, addVideoAnalysisStyle, removeVideoAnalysisStyle,
     scriptAiModel, setScriptAiModel,
+    referenceComments,
   } = useScriptWriterStore();
 
   const setActiveTab = useNavigationStore((s) => s.setActiveTab);
@@ -451,7 +458,7 @@ ${scriptText}`;
       : '';
 
     // [FIX #159] 채널 스타일 데이터를 종합하여 프롬프트에 반영
-    const channelStyleSection = buildChannelStyleSection(channelGuideline, channelScripts, benchmarkScript);
+    const channelStyleSection = buildChannelStyleSection(channelGuideline, channelScripts, benchmarkScript, referenceComments);
 
     const systemPrompt = `당신은 유튜브 바이럴 영상 전문 대본 작가입니다.
 주어진 소재와 본능 기제를 바탕으로 완성된 대본을 작성합니다.
@@ -527,7 +534,7 @@ ${instinctPrompt}
       genAbortRef.current = null;
       finishGeneration();
     }
-  }, [instinctIds, targetCharCount, contentFormat, shortsSeconds, channelGuideline, channelScripts, benchmarkScript, startGeneration, finishGeneration, setGeneratedScript, setFinalScript, scriptAiModel]);
+  }, [instinctIds, targetCharCount, contentFormat, shortsSeconds, channelGuideline, channelScripts, benchmarkScript, referenceComments, startGeneration, finishGeneration, setGeneratedScript, setFinalScript, scriptAiModel]);
 
   // #158: 빌트인 + 영상분석 스타일 병합
   const allStylePresets: ScriptStylePreset[] = useMemo(() => {
@@ -566,7 +573,7 @@ ${instinctPrompt}
       : '';
 
     // [FIX #159] 채널 스타일 데이터를 종합하여 프롬프트에 반영 (fullGuidelineText + 대본 샘플 포함)
-    const channelStyleSection = buildChannelStyleSection(channelGuideline, channelScripts, benchmarkScript);
+    const channelStyleSection = buildChannelStyleSection(channelGuideline, channelScripts, benchmarkScript, referenceComments);
 
     // [FIX #170] 선택된 스타일 프리셋의 시스템 프롬프트를 생성 시 반영
     const activePreset = selectedStyleId ? allStylePresets.find(p => p.id === selectedStyleId) : null;
@@ -672,7 +679,7 @@ ${instinctPrompt}
       genAbortRef.current = null;
       finishGeneration();
     }
-  }, [title, synopsis, targetCharCount, contentFormat, shortsSeconds, instinctIds, channelGuideline, channelScripts, benchmarkScript,
+  }, [title, synopsis, targetCharCount, contentFormat, shortsSeconds, instinctIds, channelGuideline, channelScripts, benchmarkScript, referenceComments,
     selectedTopic, selectedStyleId, allStylePresets, startGeneration, finishGeneration, setGeneratedScript, setFinalScript, scriptAiModel]);
 
   const handleCancelGeneration = useCallback(() => {

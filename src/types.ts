@@ -3,6 +3,7 @@ export enum FeedbackType {
     BUG = 'bug',
     ERROR = 'error',
     SUGGESTION = 'suggestion',
+    AUTH = 'auth',
     OTHER = 'other'
 }
 

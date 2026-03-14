@@ -13,6 +13,7 @@ interface UIStore {
   lightboxUrl: string | null;
   showFullScriptModal: boolean;
   showFeedbackModal: boolean;
+  feedbackDefaultType: string | null;
   showFeedbackHistory: boolean;
   showApiSettings: boolean;
   showWatermarkModal: boolean;
@@ -35,7 +36,7 @@ interface UIStore {
   openLightbox: (url: string) => void;
   closeLightbox: () => void;
   setShowFullScriptModal: (show: boolean) => void;
-  setShowFeedbackModal: (show: boolean) => void;
+  setShowFeedbackModal: (show: boolean, defaultType?: string | null) => void;
   setShowFeedbackHistory: (show: boolean) => void;
   setShowApiSettings: (show: boolean) => void;
   setShowWatermarkModal: (show: boolean) => void;
@@ -57,6 +58,7 @@ export const useUIStore = create<UIStore>((set) => ({
   lightboxUrl: null,
   showFullScriptModal: false,
   showFeedbackModal: false,
+  feedbackDefaultType: null,
   showFeedbackHistory: false,
   showApiSettings: false,
   showWatermarkModal: false,
@@ -78,7 +80,7 @@ export const useUIStore = create<UIStore>((set) => ({
   openLightbox: (url) => set({ lightboxUrl: url }),
   closeLightbox: () => set({ lightboxUrl: null }),
   setShowFullScriptModal: (show) => set({ showFullScriptModal: show }),
-  setShowFeedbackModal: (show) => set({ showFeedbackModal: show }),
+  setShowFeedbackModal: (show, defaultType) => set({ showFeedbackModal: show, feedbackDefaultType: show ? (defaultType ?? null) : null }),
   setShowFeedbackHistory: (show) => set({ showFeedbackHistory: show }),
   setShowApiSettings: (show) => set({ showApiSettings: show }),
   setShowWatermarkModal: (show) => set({ showWatermarkModal: show }),

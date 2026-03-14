@@ -16,6 +16,7 @@ import {
   type RecaptchaVerifier,
 } from '../services/firebaseAuthService';
 import { socialLogin } from '../services/authService';
+import { useUIStore } from '../stores/uiStore';
 
 interface AuthGateProps {
   onAuthenticated: (user: { email: string; displayName: string }) => void;
@@ -424,6 +425,17 @@ const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
             </p>
           </>
         )}
+
+        {/* 로그인/회원가입 문제 시 피드백 */}
+        <div className="mt-6 pt-4 border-t border-gray-800/50 text-center">
+          <button
+            type="button"
+            onClick={() => useUIStore.getState().setShowFeedbackModal(true, 'auth')}
+            className="text-xs text-gray-500 hover:text-blue-400 transition-colors"
+          >
+            가입이나 로그인에 문제가 있으신가요? →  피드백 보내기
+          </button>
+        </div>
       </div>
     </div>
   );

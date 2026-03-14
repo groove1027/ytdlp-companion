@@ -21,6 +21,7 @@ const PERSISTED_KEYS = [
   'generatedScript', 'styledScript', 'styledStyleName', 'finalScript',
   'videoFormat', 'longFormSplitType', 'smartSplit', 'targetCharCount',
   'splitResult', 'activeStep', 'videoAnalysisStyles', 'scriptAiModel',
+  'referenceComments',
 ] as const;
 
 type PersistedKey = typeof PERSISTED_KEYS[number];
@@ -102,6 +103,8 @@ interface ScriptWriterStore {
   engagementBoosterOpen: boolean;
   /** 대본 작성 AI 모델 선택 (Gemini Pro / Claude Sonnet / Claude Opus) */
   scriptAiModel: ScriptAiModel;
+  /** [#216] 사용자 수동 댓글 붙여넣기 — 채널 스타일 대본 생성 시 AI 참고 자료 */
+  referenceComments: string;
 
   // Actions
   setInputMode: (mode: ScriptInputMode) => void;
@@ -139,6 +142,8 @@ interface ScriptWriterStore {
   setEngagementBoosterOpen: (open: boolean) => void;
   /** 대본 작성 AI 모델 변경 */
   setScriptAiModel: (model: ScriptAiModel) => void;
+  /** [#216] 댓글 붙여넣기 설정 */
+  setReferenceComments: (comments: string) => void;
   /** 새 입력(파일 업로드 등) 시 이전 대본 콘텐츠만 초기화 — 포맷 설정은 보존 */
   clearPreviousContent: () => void;
   reset: () => void;
@@ -173,6 +178,7 @@ const INITIAL_STATE = {
   engagementBoosterResults: [] as EngagementBoosterResult[],
   engagementBoosterOpen: false,
   scriptAiModel: ScriptAiModel.GEMINI_PRO,
+  referenceComments: '',
 };
 
 // localStorage에서 이전 드래프트 복원
@@ -244,6 +250,7 @@ export const useScriptWriterStore = create<ScriptWriterStore>((set) => ({
   setEngagementBoosterResults: (results) => set({ engagementBoosterResults: results }),
   setEngagementBoosterOpen: (open) => set({ engagementBoosterOpen: open }),
   setScriptAiModel: (model) => set({ scriptAiModel: model }),
+  setReferenceComments: (comments) => set({ referenceComments: comments }),
 
   // 새 파일 업로드 시 이전 대본 콘텐츠를 초기화하되, 포맷/분량 설정은 유지
   clearPreviousContent: () => {
