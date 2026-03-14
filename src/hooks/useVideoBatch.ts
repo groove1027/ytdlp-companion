@@ -16,6 +16,7 @@ import { uploadMediaToHosting } from '../services/uploadService';
 import { PRICING } from '../constants';
 import { useUIStore } from '../stores/uiStore';
 import { useProjectStore } from '../stores/projectStore';
+import { runKieBatch } from '../utils/kieBatchRunner';
 
 // Helper for Base64 to File
 function base64ToFile(base64: string, filename: string): File {
@@ -43,34 +44,8 @@ function isQuotaExhaustedError(error: unknown): boolean {
     return false;
 }
 
-// [MODIFIED] Throttled Sliding Window Batch Runner
-// [FIX #172] 잔액 부족 시 남은 장면 스킵하고 즉시 종료
-async function runBatch<T>(items: T[], limit: number, fn: (item: T) => Promise<void>, onProgress: () => void) {
-    const queue = [...items];
-    const active: Promise<void>[] = [];
-    let quotaExhausted = false;
-    while ((queue.length > 0 || active.length > 0) && !quotaExhausted) {
-        while (queue.length > 0 && active.length < limit && !quotaExhausted) {
-            const item = queue.shift()!;
-            const p = fn(item).catch((e) => {
-                if (isQuotaExhaustedError(e)) {
-                    quotaExhausted = true;
-                    // 남은 큐 비우기 — 더 이상 새 작업 시작하지 않음
-                    queue.length = 0;
-                }
-            }).finally(() => {
-                const idx = active.indexOf(p);
-                if (idx > -1) active.splice(idx, 1);
-                onProgress();
-            });
-            active.push(p);
-            await new Promise(resolve => setTimeout(resolve, 100));
-        }
-        if (active.length > 0) await Promise.race(active);
-    }
-    // 진행 중이던 작업이 완료될 때까지 대기
-    if (active.length > 0) await Promise.allSettled(active);
-}
+// [REMOVED] 기존 슬라이딩 윈도우 runBatch → kieBatchRunner.ts의 runKieBatch로 교체
+// KIE 레이트 리밋: 10개/10초 버스트 제출, 최대 100 동시 처리
 
 export const useVideoBatch = (
     scenes: Scene[],
@@ -476,7 +451,8 @@ export const useVideoBatch = (
         }
     };
 
-    const BATCH_LIMIT = 20;
+    // KIE 레이트 리밋 옵션: 10개/10초 버스트, 최대 100 동시 처리
+    const kieBatchOpts = { isQuotaExhausted: isQuotaExhaustedError };
 
     const runGrokHQBatch = async (duration: '6' | '10' | '15', speechMode: boolean) => {
         logger.trackAction('비디오 배치 생성 시작', 'Grok HQ');
@@ -485,13 +461,13 @@ export const useVideoBatch = (
         if (genTargets.length === 0) { useUIStore.getState().setToast({ show: true, message: "작업할 대상이 없습니다." }); setTimeout(() => useUIStore.getState().setToast(null), 3000); return; }
         setIsBatching(true);
         setProgress({ current: 0, total: genTargets.length });
-        await runBatch(genTargets, BATCH_LIMIT, async (scene) => {
+        await runKieBatch(genTargets, async (scene) => {
             await processScene(scene.id, scene, VideoModel.GROK, true, true, duration, speechMode);
-        }, () => setProgress(prev => ({ ...prev, current: prev.current + 1 })));
+        }, () => setProgress(prev => ({ ...prev, current: prev.current + 1 })), kieBatchOpts);
         setIsBatching(false);
         logger.success("Grok HQ Batch Completed");
     };
-    
+
     const runVeoFastBatch = async () => {
         logger.trackAction('비디오 배치 생성 시작', 'Veo Fast');
         // [FIX BUG#10] Read current scenes from store to avoid stale closure
@@ -499,9 +475,9 @@ export const useVideoBatch = (
         if (targets.length === 0) { useUIStore.getState().setToast({ show: true, message: "작업 대상이 없습니다." }); setTimeout(() => useUIStore.getState().setToast(null), 3000); return; }
         setIsBatching(true);
         setProgress({ current: 0, total: targets.length });
-        await runBatch(targets, BATCH_LIMIT, async (scene) => {
+        await runKieBatch(targets, async (scene) => {
              await processScene(scene.id, scene, VideoModel.VEO, false, true);
-        }, () => setProgress(prev => ({ ...prev, current: prev.current + 1 })));
+        }, () => setProgress(prev => ({ ...prev, current: prev.current + 1 })), kieBatchOpts);
         setIsBatching(false);
     };
 
@@ -512,10 +488,10 @@ export const useVideoBatch = (
         if (targets.length === 0) { useUIStore.getState().setToast({ show: true, message: "작업 대상이 없습니다." }); setTimeout(() => useUIStore.getState().setToast(null), 3000); return; }
         setIsBatching(true);
         setProgress({ current: 0, total: targets.length });
-        await runBatch(targets, BATCH_LIMIT, async (scene) => {
+        await runKieBatch(targets, async (scene) => {
              // [HIGH FIX 1] Use VEO_QUALITY instead of VEO for quality batch
              await processScene(scene.id, scene, VideoModel.VEO_QUALITY, false, true);
-        }, () => setProgress(prev => ({ ...prev, current: prev.current + 1 })));
+        }, () => setProgress(prev => ({ ...prev, current: prev.current + 1 })), kieBatchOpts);
         setIsBatching(false);
     };
 
@@ -526,9 +502,9 @@ export const useVideoBatch = (
         if (targets.length === 0) { useUIStore.getState().setToast({ show: true, message: "작업 대상이 없습니다." }); setTimeout(() => useUIStore.getState().setToast(null), 3000); return; }
         setIsBatching(true);
         setProgress({ current: 0, total: targets.length });
-        await runBatch(targets, BATCH_LIMIT, async (scene) => { 
+        await runKieBatch(targets, async (scene) => {
              await processUpscaleOnly(scene.id, scene);
-        }, () => setProgress(prev => ({ ...prev, current: prev.current + 1 })));
+        }, () => setProgress(prev => ({ ...prev, current: prev.current + 1 })), kieBatchOpts);
         setIsBatching(false);
     };
     
@@ -598,9 +574,9 @@ export const useVideoBatch = (
         if (targets.length === 0) { useUIStore.getState().setToast({ show: true, message: "작업 대상이 없습니다." }); setTimeout(() => useUIStore.getState().setToast(null), 3000); return; }
         setIsBatching(true);
         setProgress({ current: 0, total: targets.length });
-        await runBatch(targets, BATCH_LIMIT, async (scene) => {
+        await runKieBatch(targets, async (scene) => {
             await processRemakeScene(scene.id, scene);
-        }, () => setProgress(prev => ({ ...prev, current: prev.current + 1 })));
+        }, () => setProgress(prev => ({ ...prev, current: prev.current + 1 })), kieBatchOpts);
         setIsBatching(false);
     };
 
@@ -609,9 +585,9 @@ export const useVideoBatch = (
         if (targets.length === 0) return;
         setIsBatching(true);
         setProgress({ current: 0, total: targets.length });
-        await runBatch(targets, BATCH_LIMIT, async (scene) => {
+        await runKieBatch(targets, async (scene) => {
             await processRemakeScene(scene.id, scene);
-        }, () => setProgress(prev => ({ ...prev, current: prev.current + 1 })));
+        }, () => setProgress(prev => ({ ...prev, current: prev.current + 1 })), kieBatchOpts);
         setIsBatching(false);
     };
 

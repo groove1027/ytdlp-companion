@@ -3,6 +3,7 @@ import { generateTypecastTTS } from '../../../services/typecastService';
 import { useSoundStudioStore } from '../../../stores/soundStudioStore';
 import { showToast } from '../../../stores/uiStore';
 import { logger } from '../../../services/LoggerService';
+import { runKieBatch } from '../../../utils/kieBatchRunner';
 
 export interface TtsEntry {
   audioUrl: string;
@@ -81,10 +82,11 @@ const PreviewNarrationPanel: React.FC<Props> = ({
   }, [getText, onTtsGenerated]);
 
   const handleGenerateAll = useCallback(async () => {
-    for (const s of scenes) {
-      if (ttsMap[s.cutNum]) continue;
+    // KIE 레이트 리밋 배치: 10개/10초 병렬 제출 (미생성 장면만)
+    const targets = scenes.filter(s => !ttsMap[s.cutNum]);
+    await runKieBatch(targets, async (s) => {
       await handleGenerate(s.cutNum, s.subtitle);
-    }
+    }, () => {});
   }, [scenes, ttsMap, handleGenerate]);
 
   const handlePlay = useCallback((cutNum: number) => {

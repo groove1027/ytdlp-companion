@@ -22,6 +22,7 @@ import {
 } from '../../../data/sunoData';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
 import { logger } from '../../../services/LoggerService';
+import { runKieBatch } from '../../../utils/kieBatchRunner';
 
 /** 오디오 URL에서 실제 duration을 가져오는 헬퍼 (API가 0으로 보고할 때 사용) */
 const getAudioDuration = (url: string): Promise<number> =>
@@ -780,12 +781,11 @@ const GenerateTab: React.FC = () => {
         setBatchStatus({ completed: 0, failed: 1, total: 1 });
       } finally { setIsGeneratingMusic(false); setProgress(0); setExtendStatus(''); }
     } else {
-      const PARALLEL = 10;
-      const queue = Array.from({ length: count }, (_, i) => i);
-      const active: Promise<void>[] = [];
+      // KIE 레이트 리밋 배치: 10개/10초 버스트, 최대 100 동시 처리
+      const indices = Array.from({ length: count }, (_, i) => i);
       let completed = 0, failed = 0;
       const allResults: GeneratedMusic[] = [];
-      const processOne = async (idx: number) => {
+      await runKieBatch(indices, async (idx: number) => {
         const cfg = { ...baseConfig, title: count > 1 ? `${baseConfig.title} #${idx + 1}` : baseConfig.title };
         try {
           const taskId = await generateMusic(cfg);
@@ -804,16 +804,7 @@ const GenerateTab: React.FC = () => {
         } catch (e) { logger.trackSwallowedError('MusicStudio:handleGenerate/processOne', e); failed++; }
         setBatchStatus({ completed, failed, total: count });
         setProgress(Math.round(((completed + failed) / count) * 100));
-      };
-      while (queue.length > 0 || active.length > 0) {
-        while (queue.length > 0 && active.length < PARALLEL) {
-          const idx = queue.shift()!;
-          const p = processOne(idx).finally(() => { const i = active.indexOf(p); if (i > -1) active.splice(i, 1); });
-          active.push(p);
-          await new Promise(r => setTimeout(r, 200));
-        }
-        if (active.length > 0) await Promise.race(active);
-      }
+      }, () => {});
       if (allResults.length > 0) groupMusicByDate(allResults).forEach((g) => addToLibrary(g));
       if (failed > 0) setGenerateError(`${count}곡 중 ${failed}곡 실패, ${completed}곡 완료`);
       setIsGeneratingMusic(false); setProgress(0);

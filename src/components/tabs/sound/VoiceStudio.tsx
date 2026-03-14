@@ -26,6 +26,7 @@ import { useProjectStore } from '../../../stores/projectStore';
 import { transferSoundToImageVideo } from '../../../utils/soundToImageBridge';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
+import { runKieBatch } from '../../../utils/kieBatchRunner';
 
 const SPEAKER_COLORS = ['#6366f1', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316'];
 
@@ -665,12 +666,13 @@ const VoiceStudio: React.FC = () => {
     setGenerateProgress({ current: 0, total: lines.length });
 
     try {
-      for (let i = 0; i < lines.length; i++) {
-        if (!lines[i].audioUrl || lines[i].ttsStatus !== 'done') {
-          await handleGenerateLine(lines[i].id);
-        }
-        setGenerateProgress({ current: i + 1, total: lines.length });
-      }
+      // KIE 레이트 리밋 배치: 10개/10초 병렬 제출 (미생성 라인만)
+      const targets = lines.filter(l => !l.audioUrl || l.ttsStatus !== 'done');
+      let done = 0;
+      await runKieBatch(targets, async (line) => {
+        await handleGenerateLine(line.id);
+      }, () => { done++; setGenerateProgress({ current: lines.length - targets.length + done, total: lines.length }); });
+      setGenerateProgress({ current: lines.length, total: lines.length });
 
       // 전체 병합
       const updatedLines = useSoundStudioStore.getState().lines;

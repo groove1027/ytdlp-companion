@@ -10,6 +10,7 @@ import { useAuthGuard } from '../../../hooks/useAuthGuard';
 import { audioBufferToWav } from '../../../services/ttsService';
 import type { Speaker, TTSLanguage, LufsPreset } from '../../../types';
 import { LUFS_PRESETS } from '../../../types';
+import { runKieBatch } from '../../../utils/kieBatchRunner';
 
 function formatTime(seconds: number): string {
   const m = Math.floor(seconds / 60);
@@ -177,25 +178,22 @@ const AudioMerger: React.FC = () => {
     setTtsProgress({ current: 0, total: lines.length });
 
     try {
-      // 라인별 TTS 생성 (업로드된 라인은 건너뜀)
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        if (line.audioUrl || line.audioSource === 'uploaded') {
-          setTtsProgress({ current: i + 1, total: lines.length });
-          continue; // 이미 생성된 라인 또는 업로드 라인은 건너뜀
-        }
+      // KIE 레이트 리밋 배치: 10개/10초 병렬 제출 (미생성 라인만)
+      const targets = lines
+        .map((line, i) => ({ line, idx: i }))
+        .filter(({ line }) => !line.audioUrl && line.audioSource !== 'uploaded');
+      let done = 0;
+      await runKieBatch(targets, async ({ line, idx }) => {
         const baseSpeaker = speakers.find((s) => s.id === line.speakerId) || speakers[0];
-        // 줄별 캐릭터 음성 오버라이드 적용 (멀티 캐릭터 TTS 지원)
         const speaker: Speaker = line.voiceId
           ? { ...baseSpeaker, voiceId: line.voiceId }
           : baseSpeaker;
-        // SmartPrompt 문맥: 인접 라인 텍스트를 전달하여 감정 추론 정확도 향상
-        const prevText = i > 0 ? lines[i - 1]?.text?.slice(-200) : undefined;
-        const nextText = i < lines.length - 1 ? lines[i + 1]?.text?.slice(0, 200) : undefined;
+        const prevText = idx > 0 ? lines[idx - 1]?.text?.slice(-200) : undefined;
+        const nextText = idx < lines.length - 1 ? lines[idx + 1]?.text?.slice(0, 200) : undefined;
         const result = await generateLineTTS(line.text, speaker, { previousText: prevText, nextText: nextText });
         updateLine(line.id, { audioUrl: result.audioUrl });
-        setTtsProgress({ current: i + 1, total: lines.length });
-      }
+      }, () => { done++; setTtsProgress({ current: lines.length - targets.length + done, total: lines.length }); });
+      setTtsProgress({ current: lines.length, total: lines.length });
 
       // 병합
       const allUrls = useSoundStudioStore.getState().lines

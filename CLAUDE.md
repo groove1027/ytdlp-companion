@@ -135,7 +135,7 @@ project-root/
 > | KIE Grok Image-to-Video | `kie-grok-image-to-video.md` |
 > | KIE NanoBanana2 Task | `kie-nanobanana2-task.md` |
 > | KIE Gemini API (3.0 Pro/Flash) | `kie-gemini-api.md` |
-> | KIE Gemini 3.1 Pro | `kie-gemini-3.1-pro.md` |
+> | **KIE Gemini 3.1 Pro (OpenAPI 원본 — 절대적 참조)** | **`kie-gemini-3.1-pro.md`** |
 > | KIE Suno API | `kie-suno-api.md` |
 > | KIE ElevenLabs (TTS/STT/SFX/Isolation) | `kie-elevenlabs-api.md` |
 > | Grok Imagine Video | `grok-imagine-video.md` |

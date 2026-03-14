@@ -13,6 +13,7 @@ import NarrationToolbar from './NarrationToolbar';
 import NarrationLineItem from './NarrationLineItem';
 import NarrationCreditBar from './NarrationCreditBar';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
+import { runKieBatch } from '../../../utils/kieBatchRunner';
 
 const VoiceStudio = lazy(() => import('./VoiceStudio'));
 
@@ -139,17 +140,17 @@ const NarrationView: React.FC = () => {
     setTtsProgress({ current: 0, total: lines.length });
 
     try {
-      // 미생성 라인만 순차 생성 (매 반복마다 fresh state 참조)
-      for (let i = 0; i < lines.length; i++) {
-        const freshLines = useSoundStudioStore.getState().lines;
-        const freshLine = freshLines.find(l => l.id === lines[i].id);
-        if (freshLine?.audioUrl && freshLine?.ttsStatus === 'done') {
-          setTtsProgress({ current: i + 1, total: lines.length });
-          continue; // 이미 생성 완료된 라인은 건너뛰기
-        }
-        await handleGenerateLine(lines[i].id);
-        setTtsProgress({ current: i + 1, total: lines.length });
-      }
+      // KIE 레이트 리밋 배치: 10개/10초 병렬 제출 (미생성 라인만)
+      const targets = lines.filter(l => {
+        const fresh = useSoundStudioStore.getState().lines.find(fl => fl.id === l.id);
+        return !(fresh?.audioUrl && fresh?.ttsStatus === 'done');
+      });
+      let done = 0;
+      await runKieBatch(targets, async (line) => {
+        await handleGenerateLine(line.id);
+      }, () => { done++; setTtsProgress({ current: lines.length - targets.length + done, total: lines.length }); });
+      // 이미 완료된 라인까지 포함한 최종 진행률
+      setTtsProgress({ current: lines.length, total: lines.length });
 
       // 최신 lines 가져오기 (store에서)
       const updatedLines = useSoundStudioStore.getState().lines;
