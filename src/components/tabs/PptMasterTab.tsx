@@ -416,6 +416,7 @@ export default function PptMasterTab() {
 
     try {
       const systemPrompt = buildSlideGenerationPrompt(selectedContentStyle, detailLevel, slideCount);
+      let finalSlides: SlideData[] = [];
 
       if (slideCount < CHUNK_THRESHOLD) {
         // ─── 기존 로직: 단일 요청 (30장 미만) ───
@@ -433,10 +434,10 @@ export default function PptMasterTab() {
         const parsed: SlideData[] = JSON.parse(jsonStr);
         if (!Array.isArray(parsed) || parsed.length === 0) throw new Error('슬라이드 데이터가 비어있습니다.');
 
-        const processedSlides = parsed.map((s, i) => ({
+        finalSlides = parsed.map((s, i) => ({
           ...s, slideNumber: i + 1, keyPoints: s.keyPoints || [], visualHint: s.visualHint || '',
         }));
-        setSlides(processedSlides);
+        setSlides(finalSlides);
         addCost(PRICING.GEMINI_PRO_INPUT_PER_1M * 0.002, 'analysis');
 
       } else {
@@ -510,20 +511,23 @@ export default function PptMasterTab() {
 
         addCost(PRICING.GEMINI_PRO_INPUT_PER_1M * 0.002 * totalChunks, 'analysis');
 
-        const processedSlides = allSlides.map((s, i) => ({
+        finalSlides = allSlides.map((s, i) => ({
           ...s, slideNumber: i + 1, keyPoints: s.keyPoints || [], visualHint: s.visualHint || '',
         }));
-        setSlides(processedSlides);
+        setSlides(finalSlides);
       }
 
-      // 공통: 결과 표시
+      // 공통: 결과 표시 + 미리보기 이미지 자동 생성
+      setStep(4);
       if (slideCount > 10) {
         setPreviewMode(true);
-        showToast(`슬라이드 생성 완료! 미리보기 모드`);
+        const previewCount = Math.min(2, finalSlides.length);
+        showToast(`슬라이드 텍스트 완료! 미리보기 ${previewCount}장 이미지 생성 중...`);
+        await generateImagesForRange(finalSlides, 0, previewCount);
+        showToast(`미리보기 ${previewCount}장 이미지 생성 완료!`);
       } else {
         showToast(`슬라이드 생성 완료!`);
       }
-      setStep(4);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : '슬라이드 생성 실패';
       setGenError(msg);
