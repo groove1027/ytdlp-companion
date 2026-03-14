@@ -4,11 +4,11 @@ import { useCostStore } from '../../stores/costStore';
 import { evolinkChat } from '../../services/evolinkService';
 import { logger } from '../../services/LoggerService';
 import type { EvolinkChatMessage } from '../../services/evolinkService';
-import { generateSceneImage } from '../../services/gemini/imageGeneration';
+import { generateEvolinkImageWrapped, generateKieImage } from '../../services/VideoGenService';
 import { showToast } from '../../stores/uiStore';
 import { extractJsonFromText } from '../../services/gemini/scriptAnalysis';
 import { PRICING } from '../../constants';
-import { AspectRatio, ImageModel } from '../../types';
+import { AspectRatio } from '../../types';
 import {
   CONTENT_STYLES,
   DESIGN_STYLES,
@@ -37,6 +37,42 @@ function parseFileContent(content: string, fileName: string): string {
   if (ext === 'html' || ext === 'htm') return stripHtmlTags(content);
   if (ext === 'rtf') return content.replace(/\{\\[^{}]*\}/g, '').replace(/\\[a-z]+\d* ?/gi, '').replace(/[{}]/g, '').trim();
   return content;
+}
+
+// ─── PPT 전용 이미지 생성 (스토리보드 모듈과 완전 독립) ───
+
+async function generatePptSlideImage(
+  designPrompt: string,
+  title: string,
+  keyPoints: string[],
+  visualHint: string,
+): Promise<string> {
+  const keyPointsText = keyPoints.length > 0
+    ? `Key text elements to include: ${keyPoints.slice(0, 4).join(' | ')}`
+    : '';
+
+  const prompt = [
+    `Create a professional presentation slide image in 16:9 landscape format.`,
+    `Design style: ${designPrompt}.`,
+    `The slide MUST contain the following text as the main title, rendered in large, bold, readable typography: "${title}".`,
+    keyPointsText,
+    `Visual concept for supporting graphics/icons: ${visualHint}.`,
+    `CRITICAL RULES:`,
+    `- This is a PRESENTATION SLIDE, not an illustration or photograph.`,
+    `- The title text "${title}" MUST be clearly readable and prominently placed.`,
+    `- Use clean layout with proper visual hierarchy: title at top, supporting visuals below.`,
+    `- Include design elements like icons, shapes, charts, or diagrams that match the visual concept.`,
+    `- Professional presentation aesthetic with balanced whitespace.`,
+    `- Do NOT generate photographic images or character illustrations.`,
+  ].filter(Boolean).join('\n');
+
+  // Evolink 우선, Kie 폴백
+  try {
+    return await generateEvolinkImageWrapped(prompt, AspectRatio.LANDSCAPE);
+  } catch (e) {
+    logger.info('[PPT] Evolink 실패, Kie 폴백', e);
+    return await generateKieImage(prompt, AspectRatio.LANDSCAPE);
+  }
 }
 
 // ─── Types ───
@@ -214,21 +250,112 @@ const DesignPreviewCard: React.FC<{
   );
 };
 
+// ─── Slide Image Lightbox ───
+
+const SlideLightbox: React.FC<{
+  slides: SlideData[];
+  initialIndex: number;
+  onClose: () => void;
+}> = ({ slides, initialIndex, onClose }) => {
+  const slidesWithImages = React.useMemo(
+    () => slides.map((s, i) => ({ slide: s, originalIdx: i })).filter(({ slide }) => !!slide.imageUrl),
+    [slides],
+  );
+  const viewIdx = React.useMemo(
+    () => Math.max(0, slidesWithImages.findIndex(({ originalIdx }) => originalIdx === initialIndex)),
+    [slidesWithImages, initialIndex],
+  );
+  const [pos, setPos] = useState(viewIdx);
+
+  useEffect(() => { setPos(viewIdx); }, [viewIdx]);
+
+  const navigate = useCallback((dir: 1 | -1) => {
+    setPos(prev => {
+      const next = prev + dir;
+      return next >= 0 && next < slidesWithImages.length ? next : prev;
+    });
+  }, [slidesWithImages.length]);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+      if (e.key === 'ArrowLeft') navigate(-1);
+      if (e.key === 'ArrowRight') navigate(1);
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [navigate, onClose]);
+
+  if (slidesWithImages.length === 0) return null;
+  const { slide } = slidesWithImages[pos] || slidesWithImages[0];
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="relative max-w-4xl w-full" onClick={(e) => e.stopPropagation()}>
+        <button onClick={onClose} className="absolute -top-10 right-0 text-gray-400 hover:text-white text-2xl z-10">&times;</button>
+
+        <div className="rounded-2xl overflow-hidden bg-gray-900 border border-gray-700">
+          <img src={slide.imageUrl!} alt={`Slide ${slide.slideNumber}`} className="w-full object-contain max-h-[70vh]" />
+          <div className="p-4 space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="bg-sky-600/30 text-sky-300 text-xs font-bold px-2 py-0.5 rounded">#{slide.slideNumber}</span>
+              <h4 className="text-base font-bold text-white line-clamp-1">{slide.title}</h4>
+            </div>
+            <p className="text-sm text-gray-400 line-clamp-2">{slide.body}</p>
+          </div>
+        </div>
+
+        {slidesWithImages.length > 1 && (
+          <div className="flex justify-between items-center mt-3">
+            <button
+              onClick={() => navigate(-1)}
+              disabled={pos === 0}
+              className="px-4 py-2 rounded-lg bg-gray-800 text-white disabled:opacity-30 hover:bg-gray-700 transition-colors"
+            >
+              ← 이전
+            </button>
+            <span className="text-sm text-gray-500">{pos + 1} / {slidesWithImages.length}</span>
+            <button
+              onClick={() => navigate(1)}
+              disabled={pos === slidesWithImages.length - 1}
+              className="px-4 py-2 rounded-lg bg-gray-800 text-white disabled:opacity-30 hover:bg-gray-700 transition-colors"
+            >
+              다음 →
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 // ─── Slide Preview Card ───
 
 const SlidePreview: React.FC<{
   slide: SlideData;
   designStyle: DesignStyle;
   onRegenImage: () => void;
-}> = ({ slide, designStyle, onRegenImage }) => (
+  onImageClick?: () => void;
+}> = ({ slide, designStyle, onRegenImage, onImageClick }) => (
   <div className="bg-gray-800 border border-gray-700 rounded-xl overflow-hidden">
-    <div className="aspect-video relative" style={{ backgroundColor: designStyle.bgColor }}>
+    <div
+      className={`aspect-video relative ${slide.imageUrl && !slide.isGeneratingImage ? 'cursor-zoom-in' : ''}`}
+      style={{ backgroundColor: designStyle.bgColor }}
+      onClick={() => { if (slide.imageUrl && !slide.isGeneratingImage && onImageClick) onImageClick(); }}
+    >
       {slide.isGeneratingImage ? (
         <div className="absolute inset-0 flex items-center justify-center bg-black/40">
           <div className="w-6 h-6 border-2 border-sky-400 border-t-transparent rounded-full animate-spin" />
         </div>
       ) : slide.imageUrl ? (
-        <img src={slide.imageUrl} alt={`Slide ${slide.slideNumber}`} className="w-full h-full object-cover" />
+        <>
+          <img src={slide.imageUrl} alt={`Slide ${slide.slideNumber}`} className="w-full h-full object-cover" />
+          <div className="absolute inset-0 bg-black/0 hover:bg-black/20 transition-colors flex items-center justify-center opacity-0 hover:opacity-100">
+            <svg className="w-8 h-8 text-white/80" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607zM10.5 7.5v6m3-3h-6" />
+            </svg>
+          </div>
+        </>
       ) : (
         <div className="absolute inset-0 flex items-center justify-center text-gray-500 text-sm">
           이미지 미생성
@@ -279,6 +406,7 @@ export default function PptMasterTab() {
 
   // Lightbox
   const [lightboxIdx, setLightboxIdx] = useState<number | null>(null);
+  const [slideLightboxIdx, setSlideLightboxIdx] = useState<number | null>(null);
 
   // Generation state
   const [isGenerating, setIsGenerating] = useState(false);
@@ -346,20 +474,15 @@ export default function PptMasterTab() {
     setIsGeneratingSample(true);
     setSampleImage(null);
     try {
-      const snippet = inputText.slice(0, 300);
-      const fakeScene = {
-        id: `ppt-sample-${Date.now()}`,
-        scriptText: snippet,
-        visualPrompt: `${selectedDesignStyle.prompt}, presentation slide illustration for: ${snippet}`,
-        visualDescriptionKO: '샘플 미리보기',
-        characterPresent: false,
-        isGeneratingImage: false,
-        isGeneratingVideo: false,
-        isNativeHQ: false,
-      };
-      const result = await generateSceneImage(fakeScene, selectedDesignStyle.prompt, AspectRatio.LANDSCAPE, ImageModel.NANO_SPEED);
+      const snippet = inputText.slice(0, 100);
+      const imageUrl = await generatePptSlideImage(
+        selectedDesignStyle.prompt,
+        '샘플 미리보기',
+        [snippet],
+        'overview presentation intro slide',
+      );
       addCost(PRICING.IMAGE_GENERATION, 'image');
-      setSampleImage(typeof result === 'string' ? result : result.url);
+      setSampleImage(imageUrl);
       showToast('샘플 미리보기가 생성되었습니다!');
     } catch (e) {
       logger.trackSwallowedError('PptMasterTab:samplePreview', e);
@@ -371,44 +494,57 @@ export default function PptMasterTab() {
 
   useEffect(() => { setSampleImage(null); }, [selectedDesignStyle.id]);
 
-  // ─── Helper: 이미지 생성 (지정 인덱스 범위) ───
+  // ─── Helper: 이미지 생성 (Sliding Window 병렬 처리) ───
+  const BATCH_CONCURRENCY = 20; // 동시 실행 상한 (스토리보드와 동일)
+  const BATCH_FIRE_INTERVAL = 100; // 요청 간격 ms
+
   const generateImagesForRange = useCallback(async (
     slidesData: SlideData[],
     startIdx: number,
     endIdx: number,
   ) => {
+    // 이미지 없는 슬라이드만 대상으로 큐 구성
+    const queue: number[] = [];
     for (let i = startIdx; i < endIdx; i++) {
-      const slide = slidesData[i];
-      if (!slide || slide.imageUrl) continue;
-      setSlides(prev => prev.map((s, idx) => idx === i ? { ...s, isGeneratingImage: true } : s));
+      if (slidesData[i] && !slidesData[i].imageUrl) queue.push(i);
+    }
+    if (queue.length === 0) return;
 
+    const generateOne = async (idx: number): Promise<void> => {
+      const slide = slidesData[idx];
+      if (!slide) return;
+      setSlides(prev => prev.map((s, i) => i === idx ? { ...s, isGeneratingImage: true } : s));
       try {
-        const combinedPrompt = `${selectedDesignStyle.prompt}, presentation slide illustration for: ${slide.visualHint}`;
-        const fakeScene = {
-          id: `ppt-${Date.now()}-${i}`,
-          scriptText: slide.body,
-          visualPrompt: combinedPrompt,
-          visualDescriptionKO: slide.title,
-          characterPresent: false,
-          isGeneratingImage: false,
-          isGeneratingVideo: false,
-          isNativeHQ: false,
-        };
-
-        const result = await generateSceneImage(
-          fakeScene,
+        const imageUrl = await generatePptSlideImage(
           selectedDesignStyle.prompt,
-          AspectRatio.LANDSCAPE,
-          ImageModel.NANO_SPEED,
+          slide.title,
+          slide.keyPoints,
+          slide.visualHint,
         );
         addCost(PRICING.IMAGE_GENERATION, 'image');
-        const imageUrl = typeof result === 'string' ? result : result.url;
-        setSlides(prev => prev.map((s, idx) => idx === i ? { ...s, imageUrl, isGeneratingImage: false } : s));
+        setSlides(prev => prev.map((s, i) => i === idx ? { ...s, imageUrl, isGeneratingImage: false } : s));
       } catch (e) {
         logger.trackSwallowedError('PptMasterTab:generateBatchImages', e);
-        setSlides(prev => prev.map((s, idx) => idx === i ? { ...s, isGeneratingImage: false } : s));
+        setSlides(prev => prev.map((s, i) => i === idx ? { ...s, isGeneratingImage: false } : s));
       }
       setBatchProgress(prev => ({ ...prev, current: prev.current + 1 }));
+    };
+
+    // Sliding Window: 최대 BATCH_CONCURRENCY개 동시 실행, 완료되면 즉시 다음 발사
+    const pending = [...queue];
+    const active: Promise<void>[] = [];
+
+    while (pending.length > 0 || active.length > 0) {
+      while (pending.length > 0 && active.length < BATCH_CONCURRENCY) {
+        const idx = pending.shift()!;
+        const p = generateOne(idx).finally(() => {
+          const ai = active.indexOf(p);
+          if (ai > -1) active.splice(ai, 1);
+        });
+        active.push(p);
+        await new Promise(resolve => setTimeout(resolve, BATCH_FIRE_INTERVAL));
+      }
+      if (active.length > 0) await Promise.race(active);
     }
   }, [selectedDesignStyle, addCost]);
 
@@ -606,26 +742,13 @@ export default function PptMasterTab() {
 
     setSlides(prev => prev.map((s, i) => i === index ? { ...s, isGeneratingImage: true } : s));
     try {
-      const combinedPrompt = `${selectedDesignStyle.prompt}, presentation slide illustration for: ${slide.visualHint}`;
-      const fakeScene = {
-        id: `ppt-regen-${Date.now()}-${index}`,
-        scriptText: slide.body,
-        visualPrompt: combinedPrompt,
-        visualDescriptionKO: slide.title,
-        characterPresent: false,
-        isGeneratingImage: false,
-        isGeneratingVideo: false,
-        isNativeHQ: false,
-      };
-
-      const result = await generateSceneImage(
-        fakeScene,
+      const imageUrl = await generatePptSlideImage(
         selectedDesignStyle.prompt,
-        AspectRatio.LANDSCAPE,
-        ImageModel.NANO_SPEED,
+        slide.title,
+        slide.keyPoints,
+        slide.visualHint,
       );
       addCost(PRICING.IMAGE_GENERATION, 'image');
-      const imageUrl = typeof result === 'string' ? result : result.url;
       setSlides(prev => prev.map((s, i) => i === index ? { ...s, imageUrl, isGeneratingImage: false } : s));
     } catch (e) {
       logger.trackSwallowedError('PptMasterTab:regenerateSlideImage', e);
@@ -1094,6 +1217,7 @@ export default function PptMasterTab() {
                 slide={slide}
                 designStyle={selectedDesignStyle}
                 onRegenImage={() => handleRegenImage(i)}
+                onImageClick={() => setSlideLightboxIdx(i)}
               />
             ))}
           </div>
@@ -1162,6 +1286,15 @@ export default function PptMasterTab() {
           selectedId={selectedDesignStyle.id}
           onSelect={setSelectedDesignStyle}
           onClose={() => setLightboxIdx(null)}
+        />
+      )}
+
+      {/* Slide Image Lightbox */}
+      {slideLightboxIdx !== null && (
+        <SlideLightbox
+          slides={slides}
+          initialIndex={slideLightboxIdx}
+          onClose={() => setSlideLightboxIdx(null)}
         />
       )}
     </div>
