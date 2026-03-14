@@ -13,7 +13,8 @@
  *   /ytdlp-proxy/health               →  http://VPS:3100/health
  */
 
-const YTDLP_SERVER = 'http://175.126.73.193:3100';
+// Cloudflare Workers는 IP 직접 fetch 차단 (error 1003) → nip.io 와일드카드 DNS 사용
+const YTDLP_SERVER = 'http://175-126-73-193.nip.io:3100';
 
 interface CFContext {
   request: Request;
@@ -39,13 +40,12 @@ export async function onRequest(context: CFContext): Promise<Response> {
     });
   }
 
-  // Forward headers (host 제외)
+  // 필요한 헤더만 전달 (Cloudflare 내부 헤더 CF-*, cdn-loop 등 제외)
   const forwardHeaders = new Headers();
-  for (const [key, value] of request.headers.entries()) {
-    if (key.toLowerCase() !== 'host') {
-      forwardHeaders.set(key, value);
-    }
-  }
+  const apiKey = request.headers.get('X-API-Key');
+  const contentType = request.headers.get('Content-Type');
+  if (apiKey) forwardHeaders.set('X-API-Key', apiKey);
+  if (contentType) forwardHeaders.set('Content-Type', contentType);
 
   const init: RequestInit = {
     method: request.method,
@@ -58,7 +58,14 @@ export async function onRequest(context: CFContext): Promise<Response> {
 
   try {
     const response = await fetch(targetUrl, init);
-    const responseHeaders = new Headers(response.headers);
+    const responseHeaders = new Headers();
+    // 응답 헤더도 필요한 것만 전달
+    const ct = response.headers.get('Content-Type');
+    const cd = response.headers.get('Content-Disposition');
+    const cl = response.headers.get('Content-Length');
+    if (ct) responseHeaders.set('Content-Type', ct);
+    if (cd) responseHeaders.set('Content-Disposition', cd);
+    if (cl) responseHeaders.set('Content-Length', cl);
     responseHeaders.set('Access-Control-Allow-Origin', '*');
 
     return new Response(response.body, {
@@ -68,7 +75,7 @@ export async function onRequest(context: CFContext): Promise<Response> {
     });
   } catch (error) {
     return new Response(
-      JSON.stringify({ error: 'yt-dlp 서버 연결 실패: ' + String(error) }),
+      JSON.stringify({ error: 'yt-dlp proxy error: ' + String(error) }),
       { status: 502, headers: { 'Content-Type': 'application/json' } },
     );
   }
