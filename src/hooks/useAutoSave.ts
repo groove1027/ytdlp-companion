@@ -24,7 +24,7 @@ const computeFingerprint = (
     `${s.id}:${(s.scriptText || '').length}:${s.scriptText?.charCodeAt(0) || 0}:${s.imageUrl ? 'I' : '-'}:${s.videoUrl ? 'V' : '-'}:${s.audioUrl ? 'A' : '-'}:${(s.visualPrompt || '').length}:${s.audioDuration || 0}`
   ).join('|');
   const cfgFp = config
-    ? `${config.mode}:${config.videoFormat}:${config.aspectRatio}:${config.imageModel}:${(config.script || '').length}:${config.mergedAudioUrl ? 'M' : '-'}`
+    ? `${config.mode}:${config.videoFormat}:${config.aspectRatio}:${config.imageModel}:${(config.script || '').length}:${config.mergedAudioUrl ? 'M' : '-'}:ppt${config.pptSlides?.length || 0}:${config.pptContentStyleId || '-'}:${config.pptDesignStyleId || '-'}`
     : 'null';
   return `${scenes.length}::${sceneFp}::${cfgFp}::${thumbnailCount}::${projectTitle}`;
 };

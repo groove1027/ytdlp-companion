@@ -11,6 +11,7 @@ import { useShoppingShortStore } from './shoppingShortStore';
 import { useUploadStore } from './uploadStore';
 import { persistImage, isBase64Image } from '../services/imageStorageService';
 import { logger } from '../services/LoggerService';
+import { usePptMasterStore } from './pptMasterStore';
 
 // editRoomStore → projectStore 순환 참조 방지: lazy import 사용
 let _editRoomStoreRef: any = null;
@@ -330,6 +331,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     try { useEditorStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/resetEditor', e); }
     try { useShoppingShortStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/resetShoppingShort', e); }
     try { useUploadStore.getState().resetUpload(); } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/resetUpload', e); }
+    try { usePptMasterStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/resetPptMaster', e); }
 
     // Increment generation to invalidate any in-flight async migrations from previous loads
     const generation = get()._loadGeneration + 1;
@@ -494,6 +496,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     try { useEditorStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:newProject/resetEditor', e); }
     try { useShoppingShortStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:newProject/resetShoppingShort', e); }
     try { useUploadStore.getState().resetUpload(); } catch (e) { logger.trackSwallowedError('ProjectStore:newProject/resetUpload', e); }
+    try { usePptMasterStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:newProject/resetPptMaster', e); }
 
     // 고유 프로젝트 ID 즉시 생성 (auto-save가 작동하려면 필수)
     const projectId = `proj_${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
