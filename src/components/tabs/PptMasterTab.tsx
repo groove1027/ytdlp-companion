@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useProjectStore } from '../../stores/projectStore';
 import { useCostStore } from '../../stores/costStore';
 import { evolinkChat } from '../../services/evolinkService';
@@ -21,6 +21,24 @@ import {
 import { useElapsedTimer, formatElapsed } from '../../hooks/useElapsedTimer';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
 
+// ─── File Upload Helpers ───
+
+const SUPPORTED_EXTENSIONS = ['.md', '.txt', '.csv', '.json', '.html', '.htm', '.xml', '.rtf', '.log', '.yaml', '.yml', '.toml'];
+const SUPPORTED_ACCEPT = SUPPORTED_EXTENSIONS.join(',');
+
+function stripHtmlTags(html: string): string {
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  return tmp.textContent || tmp.innerText || '';
+}
+
+function parseFileContent(content: string, fileName: string): string {
+  const ext = (fileName.split('.').pop() || '').toLowerCase();
+  if (ext === 'html' || ext === 'htm') return stripHtmlTags(content);
+  if (ext === 'rtf') return content.replace(/\{\\[^{}]*\}/g, '').replace(/\\[a-z]+\d* ?/gi, '').replace(/[{}]/g, '').trim();
+  return content;
+}
+
 // ─── Types ───
 
 interface SlideData {
@@ -37,7 +55,7 @@ interface SlideData {
 type Step = 1 | 2 | 3 | 4;
 
 const STEPS = [
-  { id: 1 as Step, label: '텍스트 입력', icon: '📝' },
+  { id: 1 as Step, label: '내용 입력', icon: '📝' },
   { id: 2 as Step, label: '디자인 스타일', icon: '🎨' },
   { id: 3 as Step, label: '세부 설정', icon: '⚙️' },
   { id: 4 as Step, label: '슬라이드 생성', icon: '📊' },
@@ -260,8 +278,18 @@ export default function PptMasterTab() {
   const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0 });
   const [previewMode, setPreviewMode] = useState(false);
 
+  // File upload
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [uploadedFileName, setUploadedFileName] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Sample preview
+  const [sampleImage, setSampleImage] = useState<string | null>(null);
+  const [isGeneratingSample, setIsGeneratingSample] = useState(false);
+
   const elapsed = useElapsedTimer(isGenerating);
   const elapsedBatch = useElapsedTimer(isBatchingImages);
+  const elapsedSample = useElapsedTimer(isGeneratingSample);
 
   const importScript = useCallback(() => {
     const script = config?.script;
@@ -272,6 +300,65 @@ export default function PptMasterTab() {
       showToast('프로젝트에 저장된 대본이 없습니다.');
     }
   }, [config]);
+
+  // ─── File Upload ───
+  const handleFileUpload = useCallback((file: File) => {
+    const ext = '.' + (file.name.split('.').pop() || '').toLowerCase();
+    if (!SUPPORTED_EXTENSIONS.includes(ext)) {
+      showToast(`지원하지 않는 파일 형식입니다: ${ext}`);
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const raw = e.target?.result as string;
+      if (raw) {
+        setInputText(parseFileContent(raw, file.name));
+        setUploadedFileName(file.name);
+        showToast(`${file.name} 파일을 불러왔습니다.`);
+      }
+    };
+    reader.onerror = () => showToast('파일 읽기 실패');
+    reader.readAsText(file, 'utf-8');
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file) handleFileUpload(file);
+  }, [handleFileUpload]);
+
+  // ─── Sample Preview ───
+  const handleSamplePreview = useCallback(async () => {
+    if (!requireAuth('샘플 미리보기')) return;
+    if (!inputText.trim()) { showToast('내용을 먼저 입력하세요.'); return; }
+    setIsGeneratingSample(true);
+    setSampleImage(null);
+    try {
+      const snippet = inputText.slice(0, 300);
+      const fakeScene = {
+        id: `ppt-sample-${Date.now()}`,
+        scriptText: snippet,
+        visualPrompt: `${selectedDesignStyle.prompt}, presentation slide illustration for: ${snippet}`,
+        visualDescriptionKO: '샘플 미리보기',
+        characterPresent: false,
+        isGeneratingImage: false,
+        isGeneratingVideo: false,
+        isNativeHQ: false,
+      };
+      const result = await generateSceneImage(fakeScene, selectedDesignStyle.prompt, AspectRatio.LANDSCAPE, ImageModel.NANO_SPEED);
+      addCost(PRICING.IMAGE_GENERATION, 'image');
+      setSampleImage(typeof result === 'string' ? result : result.url);
+      showToast('샘플 미리보기가 생성되었습니다!');
+    } catch (e) {
+      logger.trackSwallowedError('PptMasterTab:samplePreview', e);
+      showToast('샘플 미리보기 생성 실패');
+    } finally {
+      setIsGeneratingSample(false);
+    }
+  }, [requireAuth, inputText, selectedDesignStyle, addCost]);
+
+  useEffect(() => { setSampleImage(null); }, [selectedDesignStyle.id]);
 
   // ─── Helper: 이미지 생성 (지정 인덱스 범위) ───
   const generateImagesForRange = useCallback(async (
@@ -590,24 +677,57 @@ export default function PptMasterTab() {
         ))}
       </div>
 
-      {/* ━━ Step 1: Text Input ━━ */}
+      {/* ━━ Step 1: Content Input ━━ */}
       {step === 1 && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="text-lg font-bold text-gray-200">텍스트 입력</h3>
+            <h3 className="text-lg font-bold text-gray-200">내용 입력</h3>
             <button onClick={importScript} className="text-xs text-sky-400 hover:text-sky-300 border border-sky-500/30 px-3 py-1.5 rounded-lg transition-colors">
               프로젝트 대본 가져오기
             </button>
           </div>
+
+          {/* File Upload Zone */}
+          <div
+            onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
+            onDragLeave={() => setIsDragOver(false)}
+            onDrop={handleDrop}
+            onClick={() => fileInputRef.current?.click()}
+            className={`border-2 border-dashed rounded-xl p-5 text-center cursor-pointer transition-all ${
+              isDragOver ? 'border-sky-500 bg-sky-500/10' : 'border-gray-700 hover:border-sky-500/40 bg-gray-900/30'
+            }`}
+          >
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept={SUPPORTED_ACCEPT}
+              className="hidden"
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileUpload(f); e.target.value = ''; }}
+            />
+            <div className="text-2xl mb-1.5">📎</div>
+            <div className="text-sm text-gray-300 font-medium">파일을 드래그하거나 클릭하여 업로드</div>
+            <div className="text-xs text-gray-500 mt-1">.md .txt .csv .json .html .xml .rtf .yaml .log</div>
+            {uploadedFileName && (
+              <div className="mt-2 inline-flex items-center gap-1.5 bg-sky-900/30 text-sky-300 border border-sky-500/30 px-3 py-1 rounded-full text-xs">
+                📄 {uploadedFileName}
+              </div>
+            )}
+          </div>
+
+          <div className="text-xs text-gray-600 text-center">또는 직접 입력</div>
+
           <textarea
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
-            rows={12}
-            placeholder="프레젠테이션으로 변환할 텍스트를 입력하세요. 보고서, 기획안, 에세이, 대본 등 어떤 텍스트든 가능합니다."
+            rows={10}
+            placeholder="프레젠테이션으로 변환할 내용을 입력하세요. 보고서, 기획안, 에세이, 대본, 마크다운 등 어떤 형식이든 가능합니다."
             className="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-sky-500/50 resize-none"
           />
           <div className="flex items-center justify-between text-xs text-gray-500">
-            <span>{inputText.length.toLocaleString()}자</span>
+            <span>
+              {inputText.length.toLocaleString()}자
+              {uploadedFileName && <span className="ml-1 text-sky-400/60">({uploadedFileName})</span>}
+            </span>
             <span>권장: 500~10,000자</span>
           </div>
         </div>
@@ -627,6 +747,42 @@ export default function PptMasterTab() {
                 onZoom={() => setLightboxIdx(idx)}
               />
             ))}
+          </div>
+
+          {/* Sample Preview */}
+          <div className="pt-4 border-t border-gray-700/50">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <h4 className="text-sm font-bold text-gray-300">샘플 미리보기</h4>
+                <p className="text-xs text-gray-500 mt-0.5">선택한 디자인 스타일로 슬라이드 이미지 1컷을 미리 확인합니다.</p>
+              </div>
+              <button
+                type="button"
+                onClick={handleSamplePreview}
+                disabled={isGeneratingSample || !inputText.trim()}
+                className="text-xs bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white px-4 py-2 rounded-lg font-bold transition-all disabled:opacity-50 flex items-center gap-2"
+              >
+                {isGeneratingSample ? (
+                  <>
+                    <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    생성 중...{elapsedSample > 0 && <span className="text-sky-200 tabular-nums ml-1">{formatElapsed(elapsedSample)}</span>}
+                  </>
+                ) : '샘플 생성하기'}
+              </button>
+            </div>
+            {sampleImage ? (
+              <div className="rounded-xl overflow-hidden border border-gray-700 max-w-md">
+                <img src={sampleImage} alt="샘플 미리보기" className="w-full aspect-video object-cover" />
+                <div className="bg-gray-800/50 px-3 py-2 text-xs text-gray-400 flex items-center gap-2">
+                  <span className="w-2 h-2 bg-green-500 rounded-full" />
+                  {selectedDesignStyle.label} 스타일 미리보기
+                </div>
+              </div>
+            ) : !inputText.trim() ? (
+              <div className="rounded-xl border border-gray-700/50 bg-gray-800/20 p-5 text-center text-sm text-gray-600">
+                Step 1에서 내용을 입력하면 샘플 미리보기를 생성할 수 있습니다.
+              </div>
+            ) : null}
           </div>
         </div>
       )}
@@ -729,9 +885,9 @@ export default function PptMasterTab() {
               <div className="text-sky-300 font-medium">{DETAIL_LEVELS.find(d => d.id === detailLevel)?.label}</div>
               <div className="text-gray-500">슬라이드 장수</div>
               <div className="text-sky-300 font-medium">{slideCount}장</div>
-              <div className="text-gray-500">입력 텍스트</div>
+              <div className="text-gray-500">입력 내용</div>
               <div className={`font-medium ${inputText.trim() ? 'text-sky-300' : 'text-amber-400'}`}>
-                {inputText.trim() ? `${inputText.length.toLocaleString()}자` : '미입력 — Step 1에서 입력하세요'}
+                {inputText.trim() ? `${inputText.length.toLocaleString()}자${uploadedFileName ? ` (${uploadedFileName})` : ''}` : '미입력 — Step 1에서 입력하세요'}
               </div>
             </div>
           </div>
