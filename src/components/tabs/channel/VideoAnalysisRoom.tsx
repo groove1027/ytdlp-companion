@@ -913,6 +913,11 @@ async function analyzeWithFrames(
     };
   }).filter(f => f.base64.length > 0);
 
+  // [FIX #264] URL 기반 프레임(YouTube 썸네일 등)만 있으면 base64 변환 불가 → 명시적 실패
+  if (frameData.length === 0) {
+    throw new Error('유효한 base64 프레임이 없습니다 (URL 기반 프레임은 변환 불가).');
+  }
+
   const enrichedPrompt = `${userPrompt}\n\n[아래는 영상에서 추출한 ${frameData.length}개 프레임입니다. 각 프레임의 타임스탬프를 참고하여 영상 전체 흐름을 분석해주세요.]`;
 
   return evolinkFrameAnalysisStream(
@@ -3102,8 +3107,14 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
           } catch (videoErr) {
             if (signal.aborted) throw new DOMException('분석이 취소되었습니다.', 'AbortError');
             console.warn('[VideoAnalysis] v1beta 실패, 폴백:', videoErr);
+            // [FIX #264] 프레임 분석 실패 시에도 텍스트 폴백으로 이어지도록 try/catch 추가
             if (frames.length > 0) {
-              return await analyzeWithFrames(frames, prompt, scriptSystem, tokens, signal);
+              try {
+                return await analyzeWithFrames(frames, prompt, scriptSystem, tokens, signal);
+              } catch (frameErr) {
+                if (signal.aborted) throw new DOMException('분석이 취소되었습니다.', 'AbortError');
+                console.warn('[VideoAnalysis] 프레임 분석도 실패, 텍스트 폴백:', frameErr);
+              }
             }
             const messages: EvolinkChatMessage[] = [
               { role: 'system', content: scriptSystem },
