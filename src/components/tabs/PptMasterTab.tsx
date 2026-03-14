@@ -20,6 +20,9 @@ import {
 } from '../../data/slideStylePresets';
 import { useElapsedTimer, formatElapsed } from '../../hooks/useElapsedTimer';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
+import { usePptMasterStore, getSelectedContentStyle, getSelectedDesignStyle } from '../../stores/pptMasterStore';
+import pptxgenjs from 'pptxgenjs';
+import JSZip from 'jszip';
 
 // ─── File Upload Helpers ───
 
@@ -48,15 +51,31 @@ async function generatePptSlideImage(
   title: string,
   keyPoints: string[],
   visualHint: string,
+  editInstruction?: string,
 ): Promise<string> {
+  // 한글 포함 여부 감지 → 텍스트 언어 지시 결정
+  const allText = title + ' ' + keyPoints.join(' ');
+  const hasKorean = /[가-힣ㄱ-ㅎㅏ-ㅣ]/.test(allText);
+  const langDirective = hasKorean
+    ? `CRITICAL LANGUAGE RULE: The title and key points contain Korean text. You MUST render them EXACTLY in Korean (한국어) as provided — do NOT translate to English. All text on the slide must be in Korean.`
+    : `Text language: render all text exactly as provided.`;
+
   // 키포인트를 슬라이드 텍스트 요소로 구성
   const keyPointsSection = keyPoints.length > 0
     ? `The slide must also display these key points as readable text elements:\n${keyPoints.slice(0, 4).map((p, i) => `  ${i + 1}. "${p}"`).join('\n')}`
     : '';
 
+  // 사용자 수정 지시가 있으면 프롬프트에 추가
+  const editSection = editInstruction?.trim()
+    ? `\nUSER EDIT REQUEST: Apply this modification to the slide design — "${editInstruction.trim()}"`
+    : '';
+
   const prompt = [
     // 1) 슬라이드 기본 지시
     `Generate a PRESENTATION SLIDE image (16:9 landscape). This must look like an actual PowerPoint/Keynote slide screenshot — NOT an illustration, NOT a photograph, NOT artwork.`,
+    '',
+    // 언어 지시 (한국어 텍스트면 반드시 한국어로 렌더링)
+    langDirective,
     '',
     // 2) 디자인 스타일 (시각적 미학)
     `VISUAL DESIGN STYLE: ${designStyle.prompt}`,
@@ -71,6 +90,7 @@ async function generatePptSlideImage(
     '',
     // 5) 보조 비주얼 (아이콘, 도형, 차트 등)
     `Supporting visual elements (icons, shapes, diagrams): ${visualHint}`,
+    editSection,
     '',
     // 6) 강제 규칙
     `STRICT RULES:`,
@@ -79,6 +99,7 @@ async function generatePptSlideImage(
     `- Include appropriate icons, shapes, or infographic elements that complement the text.`,
     `- Maintain proper visual hierarchy: title prominent, key points below, visuals supporting.`,
     `- Do NOT include photographs of real people or character illustrations.`,
+    hasKorean ? `- MUST render ALL text in Korean exactly as given. Do NOT translate or romanize.` : '',
   ].filter(Boolean).join('\n');
 
   // Kie NanoBanana 2 우선 (스토리보드와 동일), Evolink 폴백
@@ -349,91 +370,149 @@ const SlideLightbox: React.FC<{
 const SlidePreview: React.FC<{
   slide: SlideData;
   designStyle: DesignStyle;
-  onRegenImage: () => void;
+  onRegenImage: (editInstruction?: string) => void;
   onImageClick?: () => void;
-}> = ({ slide, designStyle, onRegenImage, onImageClick }) => (
-  <div className="bg-gray-800 border border-gray-700 rounded-xl overflow-hidden">
-    <div
-      className={`aspect-video relative ${slide.imageUrl && !slide.isGeneratingImage ? 'cursor-zoom-in' : ''}`}
-      style={{ backgroundColor: designStyle.bgColor }}
-      onClick={() => { if (slide.imageUrl && !slide.isGeneratingImage && onImageClick) onImageClick(); }}
-    >
-      {slide.isGeneratingImage ? (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/40">
-          <div className="w-6 h-6 border-2 border-sky-400 border-t-transparent rounded-full animate-spin" />
-        </div>
-      ) : slide.imageUrl ? (
-        <>
-          <img src={slide.imageUrl} alt={`Slide ${slide.slideNumber}`} className="w-full h-full object-cover" />
-          <div className="absolute inset-0 bg-black/0 hover:bg-black/20 transition-colors flex items-center justify-center opacity-0 hover:opacity-100">
-            <svg className="w-8 h-8 text-white/80" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607zM10.5 7.5v6m3-3h-6" />
-            </svg>
+}> = ({ slide, designStyle, onRegenImage, onImageClick }) => {
+  const [editText, setEditText] = useState('');
+  const [showEdit, setShowEdit] = useState(false);
+
+  return (
+    <div className="bg-gray-800 border border-gray-700 rounded-xl overflow-hidden">
+      <div
+        className={`aspect-video relative ${slide.imageUrl && !slide.isGeneratingImage ? 'cursor-zoom-in' : ''}`}
+        style={{ backgroundColor: designStyle.bgColor }}
+        onClick={() => { if (slide.imageUrl && !slide.isGeneratingImage && onImageClick) onImageClick(); }}
+      >
+        {slide.isGeneratingImage ? (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/40">
+            <div className="w-6 h-6 border-2 border-sky-400 border-t-transparent rounded-full animate-spin" />
           </div>
-        </>
-      ) : (
-        <div className="absolute inset-0 flex items-center justify-center text-gray-500 text-sm">
-          이미지 미생성
+        ) : slide.imageUrl ? (
+          <>
+            <img src={slide.imageUrl} alt={`Slide ${slide.slideNumber}`} className="w-full h-full object-cover" />
+            <div className="absolute inset-0 bg-black/0 hover:bg-black/20 transition-colors flex items-center justify-center opacity-0 hover:opacity-100">
+              <svg className="w-8 h-8 text-white/80" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607zM10.5 7.5v6m3-3h-6" />
+              </svg>
+            </div>
+          </>
+        ) : (
+          <div className="absolute inset-0 flex items-center justify-center text-gray-500 text-sm">
+            이미지 미생성
+          </div>
+        )}
+        <div className="absolute top-2 left-2 bg-black/60 text-white text-xs font-bold px-2 py-0.5 rounded">
+          #{slide.slideNumber}
         </div>
-      )}
-      <div className="absolute top-2 left-2 bg-black/60 text-white text-xs font-bold px-2 py-0.5 rounded">
-        #{slide.slideNumber}
+      </div>
+      <div className="p-3 space-y-2">
+        <h4 className="text-sm font-bold text-gray-100 line-clamp-1">{slide.title}</h4>
+        <p className="text-xs text-gray-400 line-clamp-3">{slide.body}</p>
+        {slide.keyPoints.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {slide.keyPoints.map((kp, i) => (
+              <span key={i} className="text-[10px] bg-sky-900/30 text-sky-300 border border-sky-500/30 px-1.5 py-0.5 rounded">
+                {kp}
+              </span>
+            ))}
+          </div>
+        )}
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => onRegenImage()}
+            disabled={slide.isGeneratingImage}
+            className="text-[10px] text-sky-400 hover:text-sky-300 border border-sky-500/30 hover:border-sky-500/50 px-2 py-1 rounded transition-colors disabled:opacity-30"
+          >
+            이미지 재생성
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowEdit(!showEdit)}
+            disabled={slide.isGeneratingImage}
+            className="text-[10px] text-amber-400 hover:text-amber-300 border border-amber-500/30 hover:border-amber-500/50 px-2 py-1 rounded transition-colors disabled:opacity-30"
+          >
+            {showEdit ? '닫기' : '수정 요청'}
+          </button>
+        </div>
+        {showEdit && (
+          <div className="space-y-1.5 pt-1">
+            <input
+              type="text"
+              value={editText}
+              onChange={(e) => setEditText(e.target.value)}
+              placeholder="예: 배경을 파란색으로, 글씨를 더 크게"
+              className="w-full bg-gray-900 border border-gray-600 rounded-lg px-2.5 py-1.5 text-xs text-gray-200 placeholder-gray-600 focus:outline-none focus:border-amber-500/50"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && editText.trim()) {
+                  onRegenImage(editText.trim());
+                  setEditText('');
+                  setShowEdit(false);
+                }
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => {
+                if (editText.trim()) {
+                  onRegenImage(editText.trim());
+                  setEditText('');
+                  setShowEdit(false);
+                }
+              }}
+              disabled={!editText.trim() || slide.isGeneratingImage}
+              className="w-full text-[10px] bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white px-2 py-1.5 rounded-lg font-bold transition-all disabled:opacity-30"
+            >
+              수정 반영하여 재생성
+            </button>
+          </div>
+        )}
       </div>
     </div>
-    <div className="p-3 space-y-2">
-      <h4 className="text-sm font-bold text-gray-100 line-clamp-1">{slide.title}</h4>
-      <p className="text-xs text-gray-400 line-clamp-3">{slide.body}</p>
-      {slide.keyPoints.length > 0 && (
-        <div className="flex flex-wrap gap-1">
-          {slide.keyPoints.map((kp, i) => (
-            <span key={i} className="text-[10px] bg-sky-900/30 text-sky-300 border border-sky-500/30 px-1.5 py-0.5 rounded">
-              {kp}
-            </span>
-          ))}
-        </div>
-      )}
-      <button
-        type="button"
-        onClick={onRegenImage}
-        disabled={slide.isGeneratingImage}
-        className="text-[10px] text-sky-400 hover:text-sky-300 border border-sky-500/30 hover:border-sky-500/50 px-2 py-1 rounded transition-colors disabled:opacity-30"
-      >
-        이미지 재생성
-      </button>
-    </div>
-  </div>
-);
+  );
+};
 
 // ─── Main Component ───
 
 export default function PptMasterTab() {
   const { requireAuth } = useAuthGuard();
   const config = useProjectStore((s) => s.config);
+  const setConfig = useProjectStore((s) => s.setConfig);
   const addCost = useCostStore((s) => s.addCost);
 
-  // Wizard state
-  const [step, setStep] = useState<Step>(1);
-  const [inputText, setInputText] = useState('');
-  const [selectedContentStyle, setSelectedContentStyle] = useState<ContentStyle>(CONTENT_STYLES[0]);
-  const [selectedDesignStyle, setSelectedDesignStyle] = useState<DesignStyle>(DESIGN_STYLES[0]);
-  const [detailLevel, setDetailLevel] = useState<DetailLevel>('standard');
-  const [slideCount, setSlideCount] = useState(8);
+  // ─── Zustand 스토어 (탭 전환 시 상태 유지) ───
+  const {
+    step, setStep,
+    inputText, setInputText,
+    selectedContentStyleId, setSelectedContentStyleId,
+    selectedDesignStyleId, setSelectedDesignStyleId,
+    detailLevel, setDetailLevel,
+    slideCount, setSlideCount,
+    slides, setSlides,
+    previewMode, setPreviewMode,
+    uploadedFileName, setUploadedFileName,
+  } = usePptMasterStore();
 
-  // Lightbox
+  // Computed style objects from ID
+  const selectedContentStyle = getSelectedContentStyle(selectedContentStyleId);
+  const selectedDesignStyle = getSelectedDesignStyle(selectedDesignStyleId);
+
+  // Wrapper setters for ContentStyle/DesignStyle (accept full object, store ID)
+  const setSelectedContentStyle = useCallback((cs: ContentStyle) => setSelectedContentStyleId(cs.id), [setSelectedContentStyleId]);
+  const setSelectedDesignStyle = useCallback((ds: DesignStyle) => setSelectedDesignStyleId(ds.id), [setSelectedDesignStyleId]);
+
+  // Lightbox (UI-only, no need to persist)
   const [lightboxIdx, setLightboxIdx] = useState<number | null>(null);
   const [slideLightboxIdx, setSlideLightboxIdx] = useState<number | null>(null);
 
-  // Generation state
+  // Generation state (transient, no persistence needed)
   const [isGenerating, setIsGenerating] = useState(false);
-  const [slides, setSlides] = useState<SlideData[]>([]);
   const [genError, setGenError] = useState('');
   const [isBatchingImages, setIsBatchingImages] = useState(false);
   const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0 });
-  const [previewMode, setPreviewMode] = useState(false);
 
   // File upload
   const [isDragOver, setIsDragOver] = useState(false);
-  const [uploadedFileName, setUploadedFileName] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Sample preview
@@ -445,6 +524,42 @@ export default function PptMasterTab() {
   const elapsedBatch = useElapsedTimer(isBatchingImages);
   const elapsedSample = useElapsedTimer(isGeneratingSample);
 
+  // ─── 프로젝트 로드 시 저장된 PPT 데이터 복원 ───
+  const hasRestored = useRef(false);
+  useEffect(() => {
+    if (hasRestored.current || !config) return;
+    if (config.pptSlides && config.pptSlides.length > 0) {
+      setSlides(config.pptSlides.map(s => ({ ...s, isGeneratingImage: false })));
+      if (config.pptContentStyleId) setSelectedContentStyleId(config.pptContentStyleId);
+      if (config.pptDesignStyleId) setSelectedDesignStyleId(config.pptDesignStyleId);
+      if (config.pptDetailLevel) setDetailLevel(config.pptDetailLevel as DetailLevel);
+      if (config.pptSlideCount) setSlideCount(config.pptSlideCount);
+      if (config.pptInputText) setInputText(config.pptInputText);
+      setStep(4);
+      hasRestored.current = true;
+    }
+  }, [config, setSlides, setSelectedContentStyleId, setSelectedDesignStyleId, setDetailLevel, setSlideCount, setInputText, setStep]);
+
+  // ─── 슬라이드 변경 시 프로젝트 자동 저장 (디바운스) ───
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  useEffect(() => {
+    if (slides.length === 0) return;
+    clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      const cleanSlides = slides.map(({ isGeneratingImage, ...rest }) => rest);
+      setConfig((prev) => prev ? {
+        ...prev,
+        pptSlides: cleanSlides,
+        pptContentStyleId: selectedContentStyleId,
+        pptDesignStyleId: selectedDesignStyleId,
+        pptDetailLevel: detailLevel,
+        pptSlideCount: slideCount,
+        pptInputText: inputText,
+      } : prev);
+    }, 2000);
+    return () => clearTimeout(saveTimerRef.current);
+  }, [slides, selectedContentStyleId, selectedDesignStyleId, detailLevel, slideCount, inputText, setConfig]);
+
   const importScript = useCallback(() => {
     const script = config?.script;
     if (script?.trim()) {
@@ -453,7 +568,7 @@ export default function PptMasterTab() {
     } else {
       showToast('프로젝트에 저장된 대본이 없습니다.');
     }
-  }, [config]);
+  }, [config, setInputText]);
 
   // ─── File Upload ───
   const handleFileUpload = useCallback((file: File) => {
@@ -473,7 +588,7 @@ export default function PptMasterTab() {
     };
     reader.onerror = () => showToast('파일 읽기 실패');
     reader.readAsText(file, 'utf-8');
-  }, []);
+  }, [setInputText, setUploadedFileName]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -752,8 +867,8 @@ export default function PptMasterTab() {
     showToast('슬라이드 이미지 생성 완료!');
   }, [requireAuth, slides, generateImagesForRange]);
 
-  // ─── 개별 이미지 재생성 ───
-  const handleRegenImage = useCallback(async (index: number) => {
+  // ─── 개별 이미지 재생성 (수정 지시 지원) ───
+  const handleRegenImage = useCallback(async (index: number, editInstruction?: string) => {
     const slide = slides[index];
     if (!slide) return;
 
@@ -765,6 +880,7 @@ export default function PptMasterTab() {
         slide.title,
         slide.keyPoints,
         slide.visualHint,
+        editInstruction,
       );
       addCost(PRICING.IMAGE_GENERATION, 'image');
       setSlides(prev => prev.map((s, i) => i === index ? { ...s, imageUrl, isGeneratingImage: false } : s));
@@ -775,12 +891,11 @@ export default function PptMasterTab() {
     }
   }, [slides, selectedDesignStyle, selectedContentStyle, addCost]);
 
-  // ─── PPTX 내보내기 ───
+  // ─── PPTX 내보내기 (정적 import로 동적 모듈 로드 에러 해결) ───
   const handleExportPptx = useCallback(async () => {
     if (!requireAuth('PPTX 내보내기')) return;
     try {
-      const pptxgenjs = await import('pptxgenjs');
-      const pptx = new pptxgenjs.default();
+      const pptx = new pptxgenjs();
       pptx.layout = 'LAYOUT_WIDE';
 
       for (const slide of slides) {
@@ -825,6 +940,93 @@ export default function PptMasterTab() {
       showToast(`PPTX 내보내기 실패: ${msg}`);
     }
   }, [requireAuth, slides, selectedDesignStyle, selectedContentStyle]);
+
+  // ─── HTML 내보내기 ───
+  const handleExportHtml = useCallback(() => {
+    const htmlSlides = slides.map((slide, i) => {
+      const imgTag = slide.imageUrl
+        ? `<img src="${slide.imageUrl}" style="width:100%;height:100%;object-fit:cover;position:absolute;top:0;left:0;" />`
+        : '';
+      const kpHtml = slide.keyPoints.length > 0
+        ? `<ul style="list-style:none;padding:0;margin:16px 0 0;">${slide.keyPoints.map(kp => `<li style="color:${selectedDesignStyle.accentColor};font-size:14px;font-weight:bold;margin:4px 0;">• ${kp}</li>`).join('')}</ul>`
+        : '';
+      return `
+      <div class="slide" style="page-break-after:always;position:relative;width:960px;height:540px;margin:20px auto;background:${selectedDesignStyle.bgColor};border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.3);">
+        ${imgTag}
+        <div style="position:relative;z-index:1;padding:40px;${slide.imageUrl ? 'background:rgba(0,0,0,0.5);height:100%;box-sizing:border-box;' : ''}">
+          <div style="font-size:10px;color:#888;margin-bottom:8px;">#${i + 1}</div>
+          <h2 style="font-size:28px;font-weight:bold;color:#fff;margin:0 0 16px;">${slide.title}</h2>
+          <p style="font-size:16px;color:#e0e0e0;line-height:1.6;white-space:pre-wrap;">${slide.body}</p>
+          ${kpHtml}
+        </div>
+      </div>`;
+    }).join('\n');
+
+    const html = `<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>PPT 마스터 — ${selectedContentStyle.label} × ${selectedDesignStyle.label}</title>
+<style>
+  body { background:#111;font-family:'Apple SD Gothic Neo','Malgun Gothic',sans-serif;padding:40px 0; }
+  @media print { body { background:#fff; } .slide { box-shadow:none!important;margin:0 auto!important; } }
+</style>
+</head>
+<body>
+<h1 style="text-align:center;color:#fff;font-size:24px;margin-bottom:32px;">
+  ${selectedContentStyle.icon} ${selectedContentStyle.label} × ${selectedDesignStyle.label} (${slides.length}장)
+</h1>
+${htmlSlides}
+</body>
+</html>`;
+
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `PPT_${selectedContentStyle.label}_${selectedDesignStyle.label}_${slides.length}slides.html`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('HTML 파일 다운로드 완료!');
+  }, [slides, selectedDesignStyle, selectedContentStyle]);
+
+  // ─── 전체 이미지 ZIP 다운로드 ───
+  const handleDownloadAllImages = useCallback(async () => {
+    const slidesWithImg = slides.filter(s => s.imageUrl);
+    if (slidesWithImg.length === 0) {
+      showToast('다운로드할 이미지가 없습니다.');
+      return;
+    }
+
+    try {
+      const zip = new JSZip();
+      for (const slide of slidesWithImg) {
+        if (!slide.imageUrl) continue;
+        let data: Blob;
+        if (slide.imageUrl.startsWith('data:')) {
+          const resp = await fetch(slide.imageUrl);
+          data = await resp.blob();
+        } else {
+          const resp = await fetch(slide.imageUrl);
+          data = await resp.blob();
+        }
+        const ext = slide.imageUrl.startsWith('data:image/png') ? 'png' : 'jpg';
+        zip.file(`slide_${String(slide.slideNumber).padStart(3, '0')}.${ext}`, data);
+      }
+      const blob = await zip.generateAsync({ type: 'blob' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `PPT_images_${slides.length}slides.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast(`${slidesWithImg.length}장의 이미지를 ZIP으로 다운로드했습니다!`);
+    } catch (err) {
+      logger.trackSwallowedError('PptMasterTab:downloadAllImages', err);
+      showToast('이미지 다운로드 실패');
+    }
+  }, [slides]);
 
   // ─── Render ───
 
@@ -1208,7 +1410,7 @@ export default function PptMasterTab() {
               )}
             </h3>
             {!previewMode && (
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <button
                   type="button"
                   onClick={handleBatchImages}
@@ -1224,6 +1426,21 @@ export default function PptMasterTab() {
                 >
                   PPTX 내보내기
                 </button>
+                <button
+                  type="button"
+                  onClick={handleExportHtml}
+                  className="text-xs bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-500 hover:to-purple-500 text-white px-3 py-1.5 rounded-lg font-bold transition-all"
+                >
+                  HTML 저장
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDownloadAllImages}
+                  disabled={slides.filter(s => s.imageUrl).length === 0}
+                  className="text-xs bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white px-3 py-1.5 rounded-lg font-bold transition-all disabled:opacity-50"
+                >
+                  전체 이미지 저장
+                </button>
               </div>
             )}
           </div>
@@ -1234,7 +1451,7 @@ export default function PptMasterTab() {
                 key={i}
                 slide={slide}
                 designStyle={selectedDesignStyle}
-                onRegenImage={() => handleRegenImage(i)}
+                onRegenImage={(editInstruction?: string) => handleRegenImage(i, editInstruction)}
                 onImageClick={() => setSlideLightboxIdx(i)}
               />
             ))}

@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo '⚠️ 작업 전 확인: CLAUDE.md 절대 규칙 준수, 관련 스킬 파일(.claude/skills/) 참조, API 수정 시 .claude/skills/api-reference.md 필수 확인'"
+            "command": "bash /Users/jihoo/Downloads/all-in-one-production-build4/.claude/hooks/pre-edit-gate.sh"
           }
         ]
       },

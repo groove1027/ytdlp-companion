@@ -436,6 +436,25 @@ export interface ProjectConfig {
   referenceDialogue?: string;
   extractedCharacters?: CharacterProfile[];
   dialogueMode?: boolean;
+
+  // [v4.8] PPT 마스터 슬라이드 영속화
+  pptSlides?: PptSlideData[];
+  pptContentStyleId?: string;
+  pptDesignStyleId?: string;
+  pptDetailLevel?: string;
+  pptSlideCount?: number;
+  pptInputText?: string;
+}
+
+// PPT 마스터 슬라이드 데이터 (프로젝트 저장용)
+export interface PptSlideData {
+  slideNumber: number;
+  title: string;
+  body: string;
+  keyPoints: string[];
+  visualHint: string;
+  speakerNote?: string;
+  imageUrl?: string;
 }
 
 export interface CostStats {

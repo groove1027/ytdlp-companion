@@ -1,3 +1,43 @@
+# 🚨🚨🚨 STOP — 코드 수정 전에 반드시 읽어라 🚨🚨🚨
+
+> **이 섹션을 건너뛰고 코드를 수정하면 Hook이 exit 2로 차단한다.**
+> **"전수 조사 프로토콜"이라는 키워드가 나오면 아래 9단계를 100% 실행하라.**
+
+## 전수 조사 프로토콜 (9단계 — 순서 위반 금지, 생략 금지)
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  STEP 1: memory/MEMORY.md 읽기 (Read 도구)              │
+│  STEP 2: 관련 .claude/skills/ 파일 읽기 (Read 도구)      │
+│  STEP 3: 수정 대상 함수/변수명 grep 전수 조사             │
+│  STEP 4: bash .claude/hooks/prepare-work.sh "검색어"     │
+│          → .phase-ready 게이트 생성 (이것 없으면 Edit 차단)│
+│  ─── 여기부터 코드 수정 가능 ───                          │
+│  STEP 5: 목록의 모든 파일 수정 (빠짐없이)                 │
+│  STEP 6: tsc --noEmit + vite build 검증                  │
+│  STEP 7: grep 재검증 (빠진 곳 없는지 증명)                │
+│  STEP 8: 커밋 + 푸시                                     │
+│  STEP 9: 이슈 코멘트 (친절한 톤) + 이슈 닫기              │
+│          → 커밋 후 rm .phase-ready (자동 정리)            │
+│          → 작업 완료 후 work-history.md 기록              │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Hook 강제 체크포인트 (물리적 차단)
+| 시점 | Hook | 차단 조건 |
+|------|------|-----------|
+| **Edit/Write 시도 전** | `pre-edit-gate.sh` | `.phase-ready` 없음 → **exit 2 차단** |
+| **Edit/Write 직후** | `post-edit-check.sh` | tsc 에러 → **exit 2 차단** |
+| **git commit 시도 전** | `pre-commit-check.sh` | CHECKLIST/work-history 미수정, UI변경 시 E2E 미검증 → **exit 2 차단** |
+
+### 금지 사항
+- `touch .phase-ready` 금지 — 반드시 `prepare-work.sh`로 생성
+- STEP 1~4 없이 STEP 5로 점프 금지
+- 검증(STEP 6~7) 없이 커밋(STEP 8) 금지
+- "대충 알겠지"로 grep 생략 금지
+
+---
+
 # CLAUDE.md — All-in-One Production v3.1
 
 > **이 파일은 프로젝트 루트에 반드시 위치해야 합니다.**
