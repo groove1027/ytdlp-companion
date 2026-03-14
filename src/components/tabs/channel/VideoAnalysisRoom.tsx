@@ -84,10 +84,17 @@ function breakSubtitleLines(text: string, maxChars: number = 12): string {
   }).join('\n');
 }
 
-/** 마크다운 테이블 행 파싱 (티키타카 마스터 편집 테이블 — 6열/7열 자동 감지) */
+/** 마크다운 테이블 행 파싱 (티키타카 마스터 편집 테이블 — 6열/7열/8열 자동 감지) */
 function parseTikitakaTable(content: string): SceneRow[] {
   const rows: SceneRow[] = [];
   const lines = content.split('\n');
+
+  // 시간 패턴: "3.0초", "2.5s", "4초" 등
+  const isDurationPattern = (s: string) => /^\d+(?:\.\d+)?초?s?$/.test(s.trim());
+  // 타임코드 패턴: "0:15", "02:15", "0:15~0:18", "원본 02:15" 등
+  const hasTimecodePattern = (s: string) => /\d{1,2}:\d{2}/.test(s);
+  // 효과태그 패턴: [펀치], [💥쾅!], [동공지진] 등 (모드 태그 [S]/[A]/[N] 제외)
+  const isEffectTag = (s: string) => /^\[.+\]$/.test(s.trim()) && !/^\[[SAN]\]$/i.test(s.trim());
 
   // 헤더에서 효과자막 열 존재 여부 감지
   // [FIX #291 #292] 스낵형 헤더 "자막 내용"도 감지 — 기존에는 "오디오"/"내레이션"만 매칭하여 스낵형 7열 파싱 실패
@@ -114,6 +121,21 @@ function parseTikitakaTable(content: string): SceneRow[] {
       duration = cells[4] || '';
       videoDirection = cells[5] || '';
       timecodeSource = cells[6] || '';
+
+      // [FIX #293] AI가 8열 테이블 생성 시 열 밀림 자동 교정
+      // 증상: 효과자막="-", 예상시간="[태그]", 비디오화면지시="X.X초", 타임코드="화면묘사"
+      // 원인: AI가 자막 내용과 효과자막 사이에 빈 열("-")을 추가하여 8열 테이블을 생성
+      if (
+        isEffectTag(duration) && !isDurationPattern(duration) &&
+        isDurationPattern(videoDirection) && !hasTimecodePattern(timecodeSource)
+      ) {
+        // 열이 1칸 밀렸음 — effectSub 자리에 빈 열("-")이 들어감
+        effectSub = duration;        // [펀치] → 효과자막
+        duration = videoDirection;    // 4.0초 → 예상 시간
+        videoDirection = timecodeSource; // 화면 묘사 → 비디오 화면 지시
+        // 8열이면 실제 타임코드가 cells[7]에 있음
+        timecodeSource = (cells.length >= 8 ? cells[7] : '') || '';
+      }
     } else {
       // 6열 폴백: 순서 | 모드 | 오디오 내용 | 예상 시간 | 비디오 화면 지시 | 타임코드 소스
       mode = cells[1] || '';
@@ -122,6 +144,17 @@ function parseTikitakaTable(content: string): SceneRow[] {
       duration = cells[3] || '';
       videoDirection = cells[4] || '';
       timecodeSource = cells[5] || '';
+
+      // 6열 폴백에서도 열 밀림 교정: AI가 효과자막 없는 7열 생성 시
+      if (
+        isEffectTag(duration) && !isDurationPattern(duration) &&
+        isDurationPattern(videoDirection) && cells.length >= 7
+      ) {
+        effectSub = duration;
+        duration = videoDirection;
+        videoDirection = cells[5] || '';
+        timecodeSource = cells[6] || '';
+      }
     }
 
     // 이중 언어 분리: "원어 대사" ⟶ "한국어 번역" 또는 [EN] ... → [KR] ...
@@ -133,7 +166,7 @@ function parseTikitakaTable(content: string): SceneRow[] {
     }
 
     // 오디오 내용 안에 <효과자막: ...> 태그가 인라인으로 있으면 추출
-    if (!effectSub) {
+    if (!effectSub || effectSub === '-') {
       const efMatch = audioContent.match(/<효과자막[:\s：]+([^>]+)>/);
       if (efMatch) {
         effectSub = efMatch[1].trim();

@@ -8,6 +8,8 @@
 
 ## 🟢 완료된 작업
 
+- [x] **#293 스낵형 영상분석 편집점(타임코드) 미표시 수정** — AI가 8열 테이블 생성 시 열 밀림으로 효과자막/예상시간/타임코드가 한 칸씩 밀려서 표시되던 문제. parseTikitakaTable에 콘텐츠 패턴 기반 열 밀림 자동 교정 로직 추가 (VideoAnalysisRoom.tsx, 2026-03-15)
+- [x] **#295 PPT 마스터 슬라이드 프로젝트 저장 누락 수정** — 자동 저장 핑거프린트가 pptSlides 변경을 감지하지 못해 IndexedDB에 저장 안 되던 버그. (1) computeFingerprint에 pptSlides 카운트/스타일 ID 포함 (2) loadProject/newProject에서 pptMasterStore 리셋 추가 (useAutoSave.ts, projectStore.ts, 2026-03-15)
 - [x] **#288 이미지+영상 통합 다운로드 기능** — 롱폼 제작 시 일부만 영상, 나머지 이미지인 경우 하나의 ZIP으로 장면 순서대로 다운로드. 영상 있는 장면은 mp4, 없으면 jpg로 포함. 드롭다운 최상단에 "📦 통합 다운로드" 버튼 추가 (exportService.ts, StoryboardPanel.tsx, 2026-03-15)
 - [x] **#236 롱폼 영상 티키타카 리메이크 다양성 개선** — 1시간짜리 긴 영상에서 10개 버전이 비슷한 장면으로만 나오던 문제. (1) 5병렬 배치에 시간 구간별 집중 지시 추가 — 배치 0은 0~12분, 배치 1은 12~24분... 각각 다른 구간에 집중 (2) 업로드 영상의 프레임 기반 분석 시 해당 구간의 프레임만 선별하여 AI에 전달 (3) callAI에 overrideFrames 파라미터 추가로 배치별 프레임 분리 지원 (VideoAnalysisRoom.tsx, 2026-03-15)
 - [x] **#286~#292 일괄 처리 (7건)** — (1) #286: 자막 없는 영상도 제목+설명으로 채널 리메이크 허용 (youtubeAnalysisService, ChannelRemakePanel) (2) #290: 프로젝트 로드 시 targetSceneCount 초기화 + "장면 초기화" 버튼 추가 (projectStore, SetupPanel) (3) #291+#292: 스낵형 테이블 파서 헤더 감지 수정 — "자막" 키워드도 매칭하여 7열 정상 파싱 (VideoAnalysisRoom) (4) #287+#289: 편집실로 보내기 성공 토스트 추가 (editPointStore) (5) #288: 혼합 저장 기능 요청 → enhancement 라벨로 기록 (2026-03-15)
