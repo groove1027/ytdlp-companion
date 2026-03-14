@@ -41,6 +41,48 @@ function parseDuration(dur: string): number {
   return m ? parseFloat(m[1]) : 3;
 }
 
+/** TTS용 순수 텍스트 추출: 구두점/기호/화자 라벨 제거 */
+function stripForTts(text: string): string {
+  return text
+    // 화자 라벨 제거: "화자1:", "MC:", "[나레이션]", "(진행자)" 등
+    .replace(/^[\[(]?[^\]\):\n]{1,10}[\])]?\s*[:：]\s*/gm, '')
+    .replace(/^[\[(][^\]\)]{1,15}[\])]\s*/gm, '')
+    // 괄호 안 지시문 제거: (웃으며), [효과음], <강조> 등
+    .replace(/[\[(（<][^)\]）>]*[)\]）>]/g, '')
+    // 구두점/기호 제거 (한글, 영문, 숫자, 공백만 유지)
+    .replace(/[^\p{L}\p{N}\s]/gu, '')
+    // 다중 공백 → 단일 공백
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** 숏폼 자막 줄바꿈: ~maxChars자 내외로 자연스러운 단락 분리 */
+function breakSubtitleLines(text: string, maxChars: number = 12): string {
+  if (text.length <= maxChars) return text;
+  const words = text.split(/\s+/);
+  const lines: string[] = [];
+  let currentLine = '';
+  for (const word of words) {
+    const candidate = currentLine ? `${currentLine} ${word}` : word;
+    if (candidate.length > maxChars && currentLine) {
+      lines.push(currentLine);
+      currentLine = word;
+    } else {
+      currentLine = candidate;
+    }
+  }
+  if (currentLine) lines.push(currentLine);
+  // 한국어 등 띄어쓰기가 적은 경우: 단어 분할 실패 시 강제 분리
+  return lines.map(line => {
+    if (line.length <= maxChars) return line;
+    const chunks: string[] = [];
+    for (let i = 0; i < line.length; i += maxChars) {
+      chunks.push(line.slice(i, i + maxChars));
+    }
+    return chunks.join('\n');
+  }).join('\n');
+}
+
 /** 마크다운 테이블 행 파싱 (티키타카 마스터 편집 테이블 — 6열/7열 자동 감지) */
 function parseTikitakaTable(content: string): SceneRow[] {
   const rows: SceneRow[] = [];
@@ -944,29 +986,70 @@ function secondsToSrtTime(s: number): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')},${String(ms).padStart(3, '0')}`;
 }
 
-/** SceneRow 배열 → SRT 파일 내용 생성 (스낵형: 타임라인 기반, 티키타카: 누적 시간 기반) */
-function generateSrt(scenes: SceneRow[], isTikitaka: boolean = false): string {
+/** SRT 레이어 타입: dialogue=일반자막, effect=효과자막, combined=통합(기존 호환) */
+type SrtLayer = 'dialogue' | 'effect' | 'combined';
+
+/** SceneRow 배열 → SRT 파일 내용 생성 (프리셋별 최적화 + 레이어 분리 + 숏폼 줄바꿈) */
+function generateSrt(
+  scenes: SceneRow[],
+  isTikitaka: boolean = false,
+  layer: SrtLayer = 'combined',
+  shortFormBreak: boolean = false,
+  preset?: AnalysisPreset,
+): string {
+  const applyBreak = (t: string) => shortFormBreak ? breakSubtitleLines(t, 12) : t;
+
+  // 프리셋별 메인 텍스트 소스 우선순위
+  const getMainText = (scene: SceneRow): string => {
+    if (preset === 'snack') return scene.dialogue || scene.audioContent || scene.sceneDesc;
+    return scene.audioContent || scene.dialogue || scene.sceneDesc;
+  };
+
+  const getLayerText = (scene: SceneRow): string => {
+    switch (layer) {
+      case 'dialogue':
+        return applyBreak(getMainText(scene));
+      case 'effect':
+        return applyBreak(scene.effectSub || '');
+      case 'combined':
+      default:
+        return scene.effectSub
+          ? `${applyBreak(scene.effectSub)}\n${applyBreak(getMainText(scene))}`
+          : applyBreak(getMainText(scene));
+    }
+  };
+
   if (isTikitaka) {
-    // 티키타카: 예상 시간 누적으로 타임코드 생성
     let accTime = 0;
-    return scenes.map((scene, i) => {
+    const entries = scenes.map((scene, i) => {
       const dur = parseDuration(scene.duration);
       const start = accTime;
       accTime += dur;
-      const text = scene.audioContent || scene.dialogue || scene.sceneDesc;
+      const text = getLayerText(scene);
+      if (!text) return null;
       return `${i + 1}\n${secondsToSrtTime(start)} --> ${secondsToSrtTime(accTime)}\n${text}`;
+    }).filter(Boolean);
+    // 효과자막 레이어에서 빈 항목 제거 후 인덱스 재정렬
+    return entries.map((entry, i) => {
+      const parts = (entry as string).split('\n');
+      parts[0] = String(i + 1);
+      return parts.join('\n');
     }).join('\n\n');
   }
   // 스낵형: 원본 타임코드 우선, 없으면 배치 타임코드 폴백
-  return scenes.map((scene, i) => {
+  const entries = scenes.map((scene, i) => {
     const srcTc = scene.sourceTimeline || scene.timeline;
     const parts = srcTc.match(/(\d+:\d+(?:\.\d+)?)\s*[~\-–—]\s*(\d+:\d+(?:\.\d+)?)/);
     const start = parts ? timecodeToSeconds(parts[1]) : i * 3;
     const end = parts ? timecodeToSeconds(parts[2]) : (i + 1) * 3;
-    const text = scene.effectSub
-      ? `${scene.effectSub}\n${scene.dialogue || scene.sceneDesc}`
-      : (scene.dialogue || scene.sceneDesc);
+    const text = getLayerText(scene);
+    if (!text) return null;
     return `${i + 1}\n${secondsToSrtTime(start)} --> ${secondsToSrtTime(end)}\n${text}`;
+  }).filter(Boolean);
+  return entries.map((entry, i) => {
+    const parts = (entry as string).split('\n');
+    parts[0] = String(i + 1);
+    return parts.join('\n');
   }).join('\n\n');
 }
 
@@ -1036,18 +1119,42 @@ async function extractAudioSegments(
   return offCtx.startRendering();
 }
 
-/** 편집 영상과 싱크 맞는 SRT 생성 (실제 세그먼트 duration 기반) */
+/** 편집 영상과 싱크 맞는 SRT 생성 (프리셋별 최적화 + 레이어 분리 + 숏폼 줄바꿈) */
 function generateSyncedSrt(
   scenes: SceneRow[],
   segmentDurations: number[],
+  layer: SrtLayer = 'combined',
+  shortFormBreak: boolean = false,
+  preset?: AnalysisPreset,
 ): string {
+  const applyBreak = (t: string) => shortFormBreak ? breakSubtitleLines(t, 12) : t;
+  const getMainText = (scene: SceneRow): string => {
+    if (preset === 'snack') return scene.dialogue || scene.audioContent || scene.sceneDesc;
+    return scene.audioContent || scene.dialogue || scene.sceneDesc;
+  };
+  const getLayerText = (scene: SceneRow): string => {
+    switch (layer) {
+      case 'dialogue': return applyBreak(getMainText(scene));
+      case 'effect': return applyBreak(scene.effectSub || '');
+      case 'combined':
+      default: return scene.effectSub
+        ? `${applyBreak(scene.effectSub)}\n${applyBreak(getMainText(scene))}`
+        : applyBreak(getMainText(scene));
+    }
+  };
   let accTime = 0;
-  return scenes.map((scene, i) => {
+  const entries = scenes.map((scene, i) => {
     const dur = segmentDurations[i] ?? parseDuration(scene.duration);
     const start = accTime;
     accTime += dur;
-    const text = scene.audioContent || scene.dialogue || scene.sceneDesc;
+    const text = getLayerText(scene);
+    if (!text) return null;
     return `${i + 1}\n${secondsToSrtTime(start)} --> ${secondsToSrtTime(accTime)}\n${text}`;
+  }).filter(Boolean);
+  return entries.map((entry, i) => {
+    const parts = (entry as string).split('\n');
+    parts[0] = String(i + 1);
+    return parts.join('\n');
   }).join('\n\n');
 }
 
@@ -2724,6 +2831,7 @@ const VideoAnalysisRoom: React.FC = () => {
   const [analysisPhase, setAnalysisPhase] = useState<'idle' | 'analyzing'>('idle');
   const analysisAbortRef = useRef<AbortController | null>(null);
   const [copiedVersion, setCopiedVersion] = useState<number | null>(null);
+  const [copyMenuVersionId, setCopyMenuVersionId] = useState<number | null>(null);
   const [elapsedSec, setElapsedSec] = useState(0);
   const [simProgress, setSimProgress] = useState(0);
   const [batchProgress, setBatchProgress] = useState<{ completed: number; total: number } | null>(null);
@@ -3377,29 +3485,143 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
     }
   };
 
-  // 버전 복사
-  const handleCopyVersion = useCallback(async (v: VersionItem) => {
-    const isTk = true; // 모든 프리셋 통일: 7열 마스터 편집 테이블
-    const scenesText = isTk
-      ? v.scenes.map(s => `[${s.cutNum}] ${s.mode} | ${s.audioContent} | 효과자막: ${s.effectSub || '-'} | ${s.duration} | ${s.videoDirection} | ${s.timecodeSource}`).join('\n')
-      : v.scenes.map(s => `[컷 ${s.cutNum}] ${s.timeline}\n대사: ${s.dialogue}\n효과: ${s.effectSub}\n장면: ${s.sceneDesc}`).join('\n\n');
-    const text = `제목: ${v.title}\n컨셉: ${v.concept}\n\n${scenesText}`;
+  // 버전 복사 (3종: tts=TTS만, original=오리지널 대사, all=모두) — 프리셋별 최적화
+  const handleCopyVersion = useCallback(async (v: VersionItem, mode: 'tts' | 'original' | 'all') => {
+    let text = '';
+    const preset = selectedPreset;
+
+    if (mode === 'tts') {
+      // TTS만: 프리셋별 최적화된 순수 나레이션 추출
+      if (preset === 'snack') {
+        // 스낵형: [S]/[A] 자막 중심 — dialogue 우선 (자막이 곧 TTS)
+        text = v.scenes
+          .map(s => stripForTts(s.dialogue || s.audioContent || ''))
+          .filter(line => line.trim())
+          .join('\n');
+      } else if (preset === 'alltts') {
+        // All TTS: 이미 TTS 최적화 대본 — 최소한의 정제만 (구두점만 제거, 화자는 없음)
+        text = v.scenes
+          .map(s => (s.audioContent || s.dialogue || '').replace(/[\[(（<][^)\]）>]*[)\]）>]/g, '').replace(/[^\p{L}\p{N}\s]/gu, '').replace(/\s+/g, ' ').trim())
+          .filter(line => line.trim())
+          .join('\n');
+      } else if (preset === 'deep') {
+        // 심층 분석: 나레이션이 길고 단락 구조 → 빈 줄로 단락 구분
+        text = v.scenes
+          .map(s => stripForTts(s.audioContent || s.dialogue || ''))
+          .filter(line => line.trim())
+          .join('\n\n');
+      } else {
+        // tikitaka/condensed/shopping: 기본 — 화자/기호 제거
+        text = v.scenes
+          .map(s => stripForTts(s.audioContent || s.dialogue || ''))
+          .filter(line => line.trim())
+          .join('\n');
+      }
+    } else if (mode === 'original') {
+      // 오리지널 대사: 프리셋별 최적화
+      if (preset === 'tikitaka' && v.detectedLang && v.detectedLang !== 'ko') {
+        // 티키타카 해외 영상: 원어 대사 + 한국어 번역 쌍으로 복사
+        text = v.scenes
+          .map(s => {
+            const orig = (s.audioContentOriginal || '').trim();
+            const kr = (s.audioContent || s.dialogue || '').trim();
+            return orig ? `[${v.detectedLang?.toUpperCase()}] ${orig}\n[KR] ${kr}` : kr;
+          })
+          .filter(line => line)
+          .join('\n\n');
+      } else if (preset === 'snack') {
+        // 스낵형: 자막 원문 (dialogue 우선, 효과자막도 별도 줄로 포함)
+        text = v.scenes
+          .map(s => {
+            const sub = (s.dialogue || s.audioContent || '').trim();
+            const fx = (s.effectSub || '').trim();
+            return fx ? `${sub}\n[효과] ${fx}` : sub;
+          })
+          .filter(line => line)
+          .join('\n');
+      } else if (preset === 'shopping') {
+        // 쇼핑형: 상품 나레이션 + 효과자막 (가격/특가 등) 포함
+        text = v.scenes
+          .map(s => {
+            const narr = (s.audioContent || s.dialogue || '').trim();
+            const fx = (s.effectSub || '').trim();
+            return fx ? `${narr}\n[효과] ${fx}` : narr;
+          })
+          .filter(line => line)
+          .join('\n');
+      } else {
+        // tikitaka(국내)/condensed/deep/alltts: audioContent 원본 그대로
+        text = v.scenes
+          .map(s => (s.audioContent || s.dialogue || '').trim())
+          .filter(line => line)
+          .join('\n');
+      }
+    } else {
+      // 모두: 프리셋별 최적화된 전체 포맷
+      if (preset === 'deep') {
+        // 심층 분석: 보고서 스타일 (모드/타임코드 없이 나레이션 + 화면 지시 중심)
+        const scenesText = v.scenes.map(s =>
+          `[${s.cutNum}] ${s.audioContent}\n   화면: ${s.videoDirection}${s.effectSub ? `\n   효과: ${s.effectSub}` : ''}`
+        ).join('\n\n');
+        text = `제목: ${v.title}\n컨셉: ${v.concept}\n\n${scenesText}`;
+      } else if (preset === 'shopping') {
+        // 쇼핑형: 상품 대본 포맷 (타임코드 + 효과자막 강조)
+        const scenesText = v.scenes.map(s =>
+          `[${s.cutNum}] ${s.mode} | ${s.audioContent}${s.effectSub ? ` | ★${s.effectSub}★` : ''} | ${s.duration} | ${s.timecodeSource}`
+        ).join('\n');
+        text = `제목: ${v.title}\n컨셉: ${v.concept}\n\n${scenesText}`;
+      } else {
+        // tikitaka/snack/condensed/alltts: 7열 마스터 편집 테이블
+        const scenesText = v.scenes.map(s =>
+          `[${s.cutNum}] ${s.mode} | ${s.audioContent} | 효과자막: ${s.effectSub || '-'} | ${s.duration} | ${s.videoDirection} | ${s.timecodeSource}`
+        ).join('\n');
+        text = `제목: ${v.title}\n컨셉: ${v.concept}\n\n${scenesText}`;
+      }
+    }
     try { await navigator.clipboard.writeText(text); } catch (e) { logger.trackSwallowedError('VideoAnalysisRoom:handleCopyVersion/clipboard', e); }
+    setCopyMenuVersionId(null);
     setCopiedVersion(v.id);
     setTimeout(() => setCopiedVersion(null), 2000);
   }, [selectedPreset]);
 
-  // SRT 다운로드 (영상 blob 있으면 편집 영상 + SRT ZIP 다운로드)
+  // SRT 다운로드 (프리셋별 최적화 + 효과자막/일반자막 레이어 분리 + 숏폼 줄바꿈)
   const handleDownloadSrt = useCallback(async (v: VersionItem) => {
     if (v.scenes.length === 0) return;
     const safeName = v.title.replace(/[^\w가-힣\s-]/g, '').trim().slice(0, 40) || `version-${v.id}`;
+    const hasEffectSub = v.scenes.some(s => (s.effectSub || '').trim());
+    const totalDur = v.scenes.reduce((acc, s) => acc + parseDuration(s.duration), 0);
+    // 프리셋별 숏폼 판단: tikitaka/snack/condensed/alltts는 항상 숏폼 취급, deep은 항상 롱폼
+    const isShortForm = selectedPreset === 'deep' ? false
+      : (selectedPreset === 'tikitaka' || selectedPreset === 'snack' || selectedPreset === 'alltts') ? true
+      : totalDur <= 90;
+    // 프리셋별 SRT 레이어 파일명
+    const dlgLabel = selectedPreset === 'snack' ? '자막' : selectedPreset === 'shopping' ? '나레이션' : '일반자막';
+    const fxLabel = selectedPreset === 'snack' ? '이원화자막' : selectedPreset === 'shopping' ? '상품효과' : '효과자막';
 
     const videoBlob = useVideoAnalysisStore.getState().videoBlob;
     if (!videoBlob) {
-      // 영상 없으면 기존 SRT 다운로드
+      // 영상 없으면 SRT만 다운로드 (레이어 분리)
       const isTk = true;
-      const srt = generateSrt(v.scenes, isTk);
-      downloadSrt(srt, `${safeName}.srt`);
+      if (hasEffectSub) {
+        const JSZip = (await import('jszip')).default;
+        const zip = new JSZip();
+        zip.file(`${safeName}_${dlgLabel}.srt`, '\uFEFF' + generateSrt(v.scenes, isTk, 'dialogue', isShortForm, selectedPreset || undefined));
+        zip.file(`${safeName}_${fxLabel}.srt`, '\uFEFF' + generateSrt(v.scenes, isTk, 'effect', isShortForm, selectedPreset || undefined));
+        zip.file(`${safeName}_통합.srt`, '\uFEFF' + generateSrt(v.scenes, isTk, 'combined', isShortForm, selectedPreset || undefined));
+        const zipBlob = await zip.generateAsync({ type: 'blob' });
+        const zipUrl = URL.createObjectURL(zipBlob);
+        logger.registerBlobUrl(zipUrl, 'other', 'VideoAnalysisRoom:srtLayerZip');
+        const a = document.createElement('a');
+        a.href = zipUrl;
+        a.download = `${safeName}_자막.zip`;
+        a.click();
+        logger.unregisterBlobUrl(zipUrl);
+        URL.revokeObjectURL(zipUrl);
+        showToast(`${dlgLabel} + ${fxLabel} + 통합 SRT가 ZIP으로 다운로드되었어요`);
+      } else {
+        const srt = generateSrt(v.scenes, isTk, 'dialogue', isShortForm, selectedPreset || undefined);
+        downloadSrt(srt, `${safeName}.srt`);
+      }
       return;
     }
 
@@ -3457,14 +3679,16 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       logger.unregisterBlobUrl(videoBlobUrl);
       URL.revokeObjectURL(videoBlobUrl);
 
-      // 5) 싱크 맞는 SRT 생성 (실제 세그먼트 duration으로 싱크)
-      const srt = generateSyncedSrt(v.scenes, segments.map(s => s.durationSec));
-
-      // 6) ZIP 패키징
+      // 5) 프리셋별 레이어 분리 SRT 생성
+      const durations = segments.map(s => s.durationSec);
       const JSZip = (await import('jszip')).default;
       const zip = new JSZip();
       zip.file(`${safeName}.mp4`, mp4Blob);
-      zip.file(`${safeName}.srt`, '\uFEFF' + srt);
+      zip.file(`${safeName}_${dlgLabel}.srt`, '\uFEFF' + generateSyncedSrt(v.scenes, durations, 'dialogue', isShortForm, selectedPreset || undefined));
+      if (hasEffectSub) {
+        zip.file(`${safeName}_${fxLabel}.srt`, '\uFEFF' + generateSyncedSrt(v.scenes, durations, 'effect', isShortForm, selectedPreset || undefined));
+      }
+      zip.file(`${safeName}_통합.srt`, '\uFEFF' + generateSyncedSrt(v.scenes, durations, 'combined', isShortForm, selectedPreset || undefined));
       const zipBlob = await zip.generateAsync({ type: 'blob' });
 
       const zipUrl = URL.createObjectURL(zipBlob);
@@ -3478,9 +3702,26 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
     } catch (err) {
       logger.trackSwallowedError('VideoAnalysisRoom:handleDownloadSrt/render', err);
       showToast('영상 렌더링 실패 — SRT만 다운로드합니다');
-      // 폴백: SRT만 다운로드
-      const srt = generateSrt(v.scenes, true);
-      downloadSrt(srt, `${safeName}.srt`);
+      // 폴백: SRT만 다운로드 (프리셋별 레이어 분리)
+      if (hasEffectSub) {
+        const JSZip = (await import('jszip')).default;
+        const zip = new JSZip();
+        zip.file(`${safeName}_${dlgLabel}.srt`, '\uFEFF' + generateSrt(v.scenes, true, 'dialogue', isShortForm, selectedPreset || undefined));
+        zip.file(`${safeName}_${fxLabel}.srt`, '\uFEFF' + generateSrt(v.scenes, true, 'effect', isShortForm, selectedPreset || undefined));
+        zip.file(`${safeName}_통합.srt`, '\uFEFF' + generateSrt(v.scenes, true, 'combined', isShortForm, selectedPreset || undefined));
+        const zipBlob = await zip.generateAsync({ type: 'blob' });
+        const zipUrl = URL.createObjectURL(zipBlob);
+        logger.registerBlobUrl(zipUrl, 'other', 'VideoAnalysisRoom:srtFallbackZip');
+        const a = document.createElement('a');
+        a.href = zipUrl;
+        a.download = `${safeName}_자막.zip`;
+        a.click();
+        logger.unregisterBlobUrl(zipUrl);
+        URL.revokeObjectURL(zipUrl);
+      } else {
+        const srt = generateSrt(v.scenes, true, 'dialogue', isShortForm, selectedPreset || undefined);
+        downloadSrt(srt, `${safeName}.srt`);
+      }
     } finally {
       setRenderingVersionId(null);
       setRenderProgress(0);
@@ -3531,13 +3772,25 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
     if (previewVersion) return; // ScenarioPreviewPlayer가 자체 ESC 처리
     const h = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        if (copyMenuVersionId) { setCopyMenuVersionId(null); return; }
         if (previewFrame) { setPreviewFrame(null); return; }
         setExpandedId(null);
       }
     };
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);
-  }, [expandedId, previewVersion]);
+  }, [expandedId, previewVersion, copyMenuVersionId]);
+
+  // 대본 복사 드롭다운 외부 클릭 시 닫기
+  useEffect(() => {
+    if (copyMenuVersionId === null) return;
+    const h = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest('[data-copy-menu]')) setCopyMenuVersionId(null);
+    };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, [copyMenuVersionId]);
 
   return (
     <div className="space-y-6">
@@ -3810,18 +4063,87 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                       )}
 
                       {/* 액션 버튼 */}
-                      <div className="flex gap-2">
-                        <button
-                          type="button"
-                          onClick={() => handleCopyVersion(v)}
-                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                            copiedVersion === v.id
-                              ? 'bg-green-600/20 text-green-400 border border-green-500/30'
-                              : 'bg-gray-700/50 text-gray-400 border border-gray-600/30 hover:text-white'
-                          }`}
-                        >
-                          {copiedVersion === v.id ? '복사됨' : '복사'}
-                        </button>
+                      <div className="flex gap-2 flex-wrap">
+                        {/* 대본 복사 드롭다운 (3종) */}
+                        <div className="relative" data-copy-menu>
+                          <button
+                            type="button"
+                            onClick={() => setCopyMenuVersionId(copyMenuVersionId === v.id ? null : v.id)}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                              copiedVersion === v.id
+                                ? 'bg-green-600/20 text-green-400 border border-green-500/30'
+                                : 'bg-gray-700/50 text-gray-400 border border-gray-600/30 hover:text-white'
+                            }`}
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                            {copiedVersion === v.id ? '복사됨' : '대본복사'}
+                            <svg className="w-3 h-3 ml-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" /></svg>
+                          </button>
+                          {copyMenuVersionId === v.id && (() => {
+                            // 프리셋별 복사 메뉴 라벨 최적화
+                            const ttsLabel = selectedPreset === 'snack' ? 'TTS용 자막 복사'
+                              : selectedPreset === 'alltts' ? 'TTS 대본 복사'
+                              : selectedPreset === 'deep' ? 'TTS용 나레이션 복사'
+                              : selectedPreset === 'shopping' ? 'TTS용 나레이션 복사'
+                              : 'TTS만 복사';
+                            const ttsDesc = selectedPreset === 'snack' ? '자막에서 기호 제거'
+                              : selectedPreset === 'alltts' ? '최소 정제 (원본 보존형)'
+                              : selectedPreset === 'deep' ? '단락 구분 포함'
+                              : '구두점/기호/화자 제거';
+                            const origLabel = selectedPreset === 'snack' ? '자막 원문 복사'
+                              : selectedPreset === 'shopping' ? '나레이션+효과 복사'
+                              : (selectedPreset === 'tikitaka' && v.detectedLang && v.detectedLang !== 'ko') ? '원어+한국어 대사 복사'
+                              : selectedPreset === 'deep' ? '나레이션 원문 복사'
+                              : '오리지널 대사 복사';
+                            const origDesc = selectedPreset === 'snack' ? '자막+효과자막 포함'
+                              : selectedPreset === 'shopping' ? '상품 효과자막 포함'
+                              : (selectedPreset === 'tikitaka' && v.detectedLang && v.detectedLang !== 'ko') ? `${v.detectedLang.toUpperCase()}+KR 쌍`
+                              : '원본 대사 그대로';
+                            const allLabel = selectedPreset === 'deep' ? '분석 보고서 복사'
+                              : selectedPreset === 'shopping' ? '쇼핑 대본 전체 복사'
+                              : '모두 복사';
+                            const allDesc = selectedPreset === 'deep' ? '나레이션+화면지시+효과'
+                              : selectedPreset === 'shopping' ? '나레이션+효과+타임코드'
+                              : '편집표 전체 (모드/효과/타임코드)';
+                            return (
+                            <div className="absolute left-0 top-full mt-1 z-50 bg-gray-800 border border-gray-600/50 rounded-lg shadow-xl overflow-hidden min-w-[180px]">
+                              <button
+                                type="button"
+                                onClick={() => handleCopyVersion(v, 'tts')}
+                                className="w-full flex items-center gap-2 px-3 py-2.5 text-xs text-left hover:bg-blue-600/20 transition-colors"
+                              >
+                                <span className="w-5 h-5 rounded bg-blue-600/20 flex items-center justify-center text-blue-400 text-[10px] font-bold">T</span>
+                                <div>
+                                  <div className="text-gray-200 font-medium">{ttsLabel}</div>
+                                  <div className="text-gray-500 text-[10px]">{ttsDesc}</div>
+                                </div>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleCopyVersion(v, 'original')}
+                                className="w-full flex items-center gap-2 px-3 py-2.5 text-xs text-left hover:bg-violet-600/20 transition-colors border-t border-gray-700/50"
+                              >
+                                <span className="w-5 h-5 rounded bg-violet-600/20 flex items-center justify-center text-violet-400 text-[10px] font-bold">O</span>
+                                <div>
+                                  <div className="text-gray-200 font-medium">{origLabel}</div>
+                                  <div className="text-gray-500 text-[10px]">{origDesc}</div>
+                                </div>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleCopyVersion(v, 'all')}
+                                className="w-full flex items-center gap-2 px-3 py-2.5 text-xs text-left hover:bg-emerald-600/20 transition-colors border-t border-gray-700/50"
+                              >
+                                <span className="w-5 h-5 rounded bg-emerald-600/20 flex items-center justify-center text-emerald-400 text-[10px] font-bold">A</span>
+                                <div>
+                                  <div className="text-gray-200 font-medium">{allLabel}</div>
+                                  <div className="text-gray-500 text-[10px]">{allDesc}</div>
+                                </div>
+                              </button>
+                            </div>
+                            );
+                          })()}
+                        </div>
                         {hasScenes && (
                           <>
                             {/* 프리뷰 (영상 blob이 있을 때만) */}
