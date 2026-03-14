@@ -74,22 +74,19 @@ export async function composeMp4(options: ComposeMp4Options): Promise<Blob> {
     const allocatedMB = Math.round((perfMem.totalJSHeapSize || perfMem.usedJSHeapSize) / 1024 / 1024);
     const limitMB = Math.round(perfMem.jsHeapSizeLimit / 1024 / 1024);
     const usageRatio = perfMem.usedJSHeapSize / perfMem.jsHeapSizeLimit;
-    // 할당된 힙 대비 사용률 (GC로 회수 불가능한 실제 메모리 압력)
-    const allocatedRatio = perfMem.totalJSHeapSize
-      ? perfMem.usedJSHeapSize / perfMem.totalJSHeapSize
-      : usageRatio;
+    // [FIX #277] allocatedRatio 제거 — totalJSHeapSize/usedJSHeapSize ≈ 99%는 장시간 세션에서 정상
+    // 이 비율로 WebCodecs를 FFmpeg 폴백시키면 여유 2.8GB 있어도 GP U 인코딩 포기하는 오탐 발생
     console.log(`[WebCodecs] 메모리 상태: ${usedMB}MB / ${allocatedMB}MB (할당) / ${limitMB}MB (한계) — 사용률 ${Math.round(usageRatio * 100)}%`);
 
-    // 메모리 부족 조건:
-    // 1. 힙 한계 대비 75% 초과 (이전: 90%)
-    // 2. 할당 힙 대비 95% 초과 (GC 여유 부족)
-    // 3. 사용 메모리 1GB 이상이면서 여유가 500MB 미만
+    // [FIX #277] 메모리 부족 조건 (allocatedRatio 제거 — 오탐 원인):
+    // totalJSHeapSize는 V8 현재 할당 청크일 뿐, jsHeapSizeLimit까지 자동 확장됨.
+    // used/total ≈ 99%는 장시간 세션에서 정상이며 실제 메모리 부족이 아님.
+    // 1. 힙 한계 대비 75% 초과
+    // 2. 사용 메모리 1GB 이상이면서 여유가 500MB 미만
     const remainingMB = limitMB - usedMB;
-    if (usageRatio > 0.75 || allocatedRatio > 0.95 || (usedMB > 1024 && remainingMB < 500)) {
+    if (usageRatio > 0.75 || (usedMB > 1024 && remainingMB < 500)) {
       const reason = usageRatio > 0.75
         ? `힙 한계 대비 ${Math.round(usageRatio * 100)}%`
-        : allocatedRatio > 0.95
-        ? `할당 힙 대비 ${Math.round(allocatedRatio * 100)}%`
         : `여유 메모리 ${remainingMB}MB`;
       console.warn(`[WebCodecs] 메모리 부족 (${reason}) — 경량 모드로 전환`);
 
