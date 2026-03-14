@@ -45,7 +45,7 @@ const TTS_ENGINES: { id: TTSEngine; label: string; voiceCount: number; icon: str
     voiceCount: 542,
     icon: '\uD83C\uDFAD',
     iconColor: '#3b82f6',
-    description: 'AI 음성. ssfm-v30: 다양한 감정 + Smart Emotion / ssfm-v21: 빠르고 안정적. 글자당 2크레딧. (프리미엄 플랜 시 690개+)',
+    description: 'AI 음성. ssfm-v30: 다양한 감정 + Smart Emotion / ssfm-v21: 빠르고 안정적. 글자당 2크레딧.',
     badge: 'API \uD0A4',
   },
   {
