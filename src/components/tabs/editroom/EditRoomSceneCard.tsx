@@ -1,9 +1,11 @@
-import React, { useState, useCallback, useMemo, lazy, Suspense } from 'react';
+import React, { useState, useCallback, useMemo, useRef, lazy, Suspense } from 'react';
 import type { SyntheticListenerMap } from '@dnd-kit/core/dist/hooks/utilities';
 import type { Scene, ScriptLine, UnifiedSceneTiming, SceneEffectConfig, SceneSubtitleConfig, SceneAudioConfig, SceneOverlayConfig, CommunityMediaItem } from '../../../types';
 import { useEditRoomStore } from '../../../stores/editRoomStore';
 import { useProjectStore } from '../../../stores/projectStore';
 import { useSoundStudioStore } from '../../../stores/soundStudioStore';
+import { uploadMediaToHosting } from '../../../services/uploadService';
+import { showToast } from '../../../stores/uiStore';
 import SceneMediaPreview from './SceneMediaPreview';
 import SceneTextInfo from './SceneTextInfo';
 import SceneNarrationPlayer from './SceneNarrationPlayer';
@@ -51,6 +53,8 @@ const EditRoomSceneCard: React.FC<EditRoomSceneCardProps> = ({
   dragListeners,
 }) => {
   const [showMediaSearch, setShowMediaSearch] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const uploadInputRef = useRef<HTMLInputElement>(null);
   const setSceneEffect = useEditRoomStore((s) => s.setSceneEffect);
   const setSceneSubtitle = useEditRoomStore((s) => s.setSceneSubtitle);
   const setSceneAudioSettings = useEditRoomStore((s) => s.setSceneAudioSettings);
@@ -116,6 +120,40 @@ const EditRoomSceneCard: React.FC<EditRoomSceneCardProps> = ({
   const handleRemoveOverlay = useCallback((index: number) => {
     removeSceneOverlay(scene.id, index);
   }, [scene.id, removeSceneOverlay]);
+
+  // 이미지 다운로드
+  const handleDownloadImage = useCallback(async () => {
+    const url = scene.imageUrl;
+    if (!url) return;
+    try {
+      const res = await fetch(url);
+      const blob = await res.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `scene-${sceneIndex + 1}.${blob.type.includes('png') ? 'png' : 'jpg'}`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } catch {
+      window.open(url, '_blank');
+    }
+  }, [scene.imageUrl, sceneIndex]);
+
+  // 이미지 교체 (로컬 파일 업로드)
+  const handleReplaceImage = useCallback(async (file: File) => {
+    setIsUploading(true);
+    try {
+      const url = await uploadMediaToHosting(file);
+      useProjectStore.getState().updateScene(scene.id, {
+        imageUrl: url,
+        imageUpdatedAfterVideo: !!scene.videoUrl,
+      });
+      showToast('이미지 교체 완료');
+    } catch (err: unknown) {
+      showToast(`이미지 교체 실패: ${err instanceof Error ? err.message : '알 수 없는 오류'}`);
+    } finally {
+      setIsUploading(false);
+    }
+  }, [scene.id, scene.videoUrl]);
 
   return (
     <div className={`bg-gray-800/50 rounded-xl border transition-all ${
@@ -224,7 +262,7 @@ const EditRoomSceneCard: React.FC<EditRoomSceneCardProps> = ({
           </div>
 
           {/* 장면 조작 버튼 */}
-          <div className="flex items-center gap-2 pt-2 border-t border-gray-700/30">
+          <div className="flex items-center gap-2 pt-2 border-t border-gray-700/30 flex-wrap">
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onSplit(); }}
@@ -241,13 +279,43 @@ const EditRoomSceneCard: React.FC<EditRoomSceneCardProps> = ({
                 🔗 다음 장면 병합
               </button>
             )}
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); setShowMediaSearch(true); }}
-              className="text-sm text-gray-500 hover:text-cyan-400 transition-colors px-2 py-1 rounded hover:bg-gray-700/50 ml-auto"
-            >
-              🔍 미디어 검색
-            </button>
+            <div className="flex items-center gap-2 ml-auto">
+              {scene.imageUrl && (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); handleDownloadImage(); }}
+                  className="text-sm text-gray-500 hover:text-green-400 transition-colors px-2 py-1 rounded hover:bg-gray-700/50"
+                >
+                  📥 다운로드
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); uploadInputRef.current?.click(); }}
+                disabled={isUploading}
+                className="text-sm text-gray-500 hover:text-orange-400 transition-colors px-2 py-1 rounded hover:bg-gray-700/50 disabled:opacity-50"
+              >
+                {isUploading ? '⏳ 업로드 중...' : '📤 이미지 교체'}
+              </button>
+              <input
+                type="file"
+                ref={uploadInputRef}
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) handleReplaceImage(f);
+                  e.target.value = '';
+                }}
+              />
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setShowMediaSearch(true); }}
+                className="text-sm text-gray-500 hover:text-cyan-400 transition-colors px-2 py-1 rounded hover:bg-gray-700/50"
+              >
+                🔍 미디어 검색
+              </button>
+            </div>
           </div>
         </div>
       )}

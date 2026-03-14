@@ -1,6 +1,8 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useRef, useCallback, useMemo } from 'react';
 import type { Scene, SceneOverlayConfig, SceneEffectConfig } from '../../../types';
 import { useProjectStore } from '../../../stores/projectStore';
+import { uploadMediaToHosting } from '../../../services/uploadService';
+import { showToast } from '../../../stores/uiStore';
 import OverlayPreviewLayer from './OverlayPreviewLayer';
 
 // 자막 에디터와 동일한 picsum.photos 고정 ID (검증 완료)
@@ -93,6 +95,8 @@ interface SceneMediaPreviewProps {
 
 const SceneMediaPreview: React.FC<SceneMediaPreviewProps> = ({ scene, sceneIndex, overlays, effect }) => {
   const [showLarge, setShowLarge] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const lightboxUploadRef = useRef<HTMLInputElement>(null);
   const config = useProjectStore((s) => s.config);
   const showImageOverVideo = scene.imageUpdatedAfterVideo && !!scene.imageUrl;
   const mediaUrl = showImageOverVideo ? scene.imageUrl : (scene.videoUrl || scene.imageUrl);
@@ -142,6 +146,39 @@ const SceneMediaPreview: React.FC<SceneMediaPreviewProps> = ({ scene, sceneIndex
       transformOrigin: `${ax}% ${ay}%`,
     };
   }, [effect]);
+
+  const handleDownloadImage = useCallback(async () => {
+    const url = scene.imageUrl;
+    if (!url) return;
+    try {
+      const res = await fetch(url);
+      const blob = await res.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `scene-${sceneIndex + 1}.${blob.type.includes('png') ? 'png' : 'jpg'}`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } catch {
+      window.open(url, '_blank');
+    }
+  }, [scene.imageUrl, sceneIndex]);
+
+  const handleReplaceImage = useCallback(async (file: File) => {
+    setIsUploading(true);
+    try {
+      const url = await uploadMediaToHosting(file);
+      useProjectStore.getState().updateScene(scene.id, {
+        imageUrl: url,
+        imageUpdatedAfterVideo: !!scene.videoUrl,
+      });
+      showToast('이미지 교체 완료');
+      setShowLarge(false);
+    } catch (err: unknown) {
+      showToast(`이미지 교체 실패: ${err instanceof Error ? err.message : '알 수 없는 오류'}`);
+    } finally {
+      setIsUploading(false);
+    }
+  }, [scene.id, scene.videoUrl]);
 
   // 실제 CSS animation이 있을 때만 120% overscale 적용
   // filter-only 효과(high-contrast, rain 등)는 이미지 이동 없으므로 overscale 불필요
@@ -267,6 +304,37 @@ const SceneMediaPreview: React.FC<SceneMediaPreviewProps> = ({ scene, sceneIndex
             >
               X
             </button>
+            {/* 라이트박스 하단 액션 버튼 */}
+            <div className="flex items-center justify-center gap-3 mt-3">
+              {scene.imageUrl && !isVideo && (
+                <button
+                  type="button"
+                  onClick={handleDownloadImage}
+                  className="px-4 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-gray-200 rounded-lg text-sm font-bold shadow-md flex items-center gap-2 transition-colors"
+                >
+                  📥 다운로드
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => lightboxUploadRef.current?.click()}
+                disabled={isUploading}
+                className="px-4 py-2 bg-gray-800 hover:bg-gray-700 border border-orange-500/30 hover:border-orange-500/50 text-orange-400 rounded-lg text-sm font-bold shadow-md flex items-center gap-2 transition-colors disabled:opacity-50"
+              >
+                {isUploading ? '⏳ 업로드 중...' : '📤 이미지 교체'}
+              </button>
+              <input
+                type="file"
+                ref={lightboxUploadRef}
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) handleReplaceImage(f);
+                  e.target.value = '';
+                }}
+              />
+            </div>
           </div>
         </div>
       )}
