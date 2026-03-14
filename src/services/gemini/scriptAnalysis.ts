@@ -1072,8 +1072,9 @@ export const parseScriptToScenes = async (
     // [FIX #251] 청크 분할 재도입 — 대형 대본(30장면+)에서 브라우저 네트워크 타임아웃 방지
     // 65장면 대본이 단일 요청 시 125초에서 브라우저/프록시 타임아웃으로 실패한 사례 대응
     const CHUNK_SCENE_THRESHOLD = 30;
-    const CHUNK_SIZE = 25;
+    const CHUNK_SIZE = 10; // [FIX #258] 25→10: Pro가 10장면을 30~40초에 안정 응답 (125초 프록시 제한 내)
     const CHUNK_COOLDOWN_MS = 2000;
+    const CHUNK_CONCURRENCY = 3; // [FIX #258] 최대 3개 청크 병렬 처리
     const shouldChunk = (targetSceneCount || 0) >= CHUNK_SCENE_THRESHOLD;
 
     if (shouldChunk) {
@@ -1084,15 +1085,59 @@ export const parseScriptToScenes = async (
         onChunkProgress?.(0, totalChunks);
 
         const allScenes: Scene[] = [];
-        const CHUNK_TIMEOUT_MS = 180_000; // 3분 (청크는 작으므로 타임아웃 단축)
+        const CHUNK_TIMEOUT_MS = 60_000; // [FIX #258] 1분 (10장면 기준 Pro 30~40초 응답, 125초 프록시 제한 방지)
 
-        for (let ci = 0; ci < totalChunks; ci++) {
+        // [FIX #258] Phase 1: 디렉션 시트 생성 — 전체 맥락/캐릭터/타임라인 추출
+        // Flash Lite가 대본 전체를 1회 읽고, 각 청크에 전달할 비주얼 기준을 확정
+        // → 청크 간 인물 외모/시대/장소/분위기 일관성 보장
+        let directionSheet = '';
+        try {
+            console.log(`[parseScriptToScenes] 🎬 Phase 1: 디렉션 시트 생성 (전체 맥락 파악)...`);
+            const dirPrompt = `You are a VISUAL DIRECTOR planning a ${totalChunks}-part storyboard production.
+Analyze the ENTIRE script and create a compact Visual Direction Sheet for cross-chunk consistency.
+Artists will process ${CHUNK_SIZE} scenes at a time and will NOT see the full script — only their chunk + this sheet.
+
+EXTRACT ALL:
+1. TIMELINE: Every time period, location, and weather/environment change with scene number ranges
+2. CHARACTERS: ALL recurring people with SPECIFIC visual descriptions (ethnicity, age, build, hair, clothing, distinguishing features)
+3. VISUAL_SHIFTS: Where the visual tone/mood/color palette should change
+4. ENTITIES: ALL proper nouns — celebrities, brands, landmarks, historical figures, specific places — with scene numbers
+5. CONTINUITY: Any detail that MUST stay consistent across scenes (e.g. "rain starts at scene 15 and doesn't stop until scene 30")
+
+Return COMPACT JSON:
+{"timeline":[{"s":"1-15","era":"...","loc":"...","weather":"..."}],"characters":{"name":{"look":"ethnicity age clothing features","firstScene":1}},"shifts":[{"s":16,"note":"..."}],"entities":[{"name":"...","type":"person|brand|landmark","s":"3,15"}],"continuity":["..."]}
+
+Script:
+${cleanedScript}
+
+${baseSetting ? `[GLOBAL CONTEXT]\n${baseSetting}` : ''}`;
+
+            const dirPayload = {
+                contents: [{ role: 'user', parts: [{ text: dirPrompt }] }],
+                generationConfig: { responseMimeType: 'application/json', temperature: 0.2, maxOutputTokens: 8192 },
+                safetySettings: SAFETY_SETTINGS_BLOCK_NONE
+            };
+            const dirData = await requestGeminiProxy('gemini-3.1-pro-preview', dirPayload, 0, 30_000);
+            directionSheet = extractTextFromResponse(dirData) || '';
+            if (directionSheet) {
+                console.log(`[parseScriptToScenes] ✅ 디렉션 시트 완료 (${directionSheet.length}자)`);
+            }
+        } catch (e: any) {
+            console.warn(`[parseScriptToScenes] ⚠️ 디렉션 시트 생성 실패 (기존 방식으로 진행): ${e.message?.slice(0, 100)}`);
+        }
+
+        // [FIX #258] Phase 2: 청크 병렬 처리 — processChunk 함수 정의
+        const processChunk = async (ci: number): Promise<Scene[]> => {
             const chunkSceneTexts = sceneTexts.slice(ci * CHUNK_SIZE, (ci + 1) * CHUNK_SIZE);
             const chunkScript = chunkSceneTexts.join('\n');
             const chunkTarget = chunkSceneTexts.length;
 
+            const dirContext = directionSheet
+                ? `\n\n[VISUAL DIRECTION SHEET — CRITICAL: Use this to maintain visual consistency across all chunks]\n${directionSheet}`
+                : '';
+
             const chunkPayload = {
-                contents: [{ role: 'user', parts: [{ text: `Script:\n${chunkScript}\n\n[MANDATORY GLOBAL CONTEXT — Apply to EVERY scene as default. Override per-scene ONLY if scene content clearly depicts a different setting.]\n${baseSetting || 'No context provided.'}\n\n[CHUNK OVERRIDE] This is chunk ${ci + 1} of ${totalChunks}. You MUST generate EXACTLY ${chunkTarget} scenes for this chunk. Ignore any other target scene count in the system instructions.` }] }],
+                contents: [{ role: 'user', parts: [{ text: `Script:\n${chunkScript}\n\n[MANDATORY GLOBAL CONTEXT — Apply to EVERY scene as default. Override per-scene ONLY if scene content clearly depicts a different setting.]\n${baseSetting || 'No context provided.'}${dirContext}\n\n[CHUNK OVERRIDE] This is chunk ${ci + 1} of ${totalChunks}. You MUST generate EXACTLY ${chunkTarget} scenes for this chunk. Ignore any other target scene count in the system instructions.` }] }],
                 systemInstruction: { parts: [{ text: systemPrompt }] },
                 safetySettings: SAFETY_SETTINGS_BLOCK_NONE,
                 generationConfig: { responseMimeType: 'application/json', maxOutputTokens: 65536 }
@@ -1145,12 +1190,27 @@ export const parseScriptToScenes = async (
                 throw new Error(`대본 분석 실패 (청크 ${ci + 1}/${totalChunks}): ${msg}`);
             }
 
-            allScenes.push(...chunkResult);
-            onChunkProgress?.(ci + 1, totalChunks);
+            return chunkResult;
+        };
 
-            // 청크 간 쿨다운 (429 Rate Limit 방지, 마지막 청크 후 스킵)
-            if (ci < totalChunks - 1) {
-                console.log(`[parseScriptToScenes] 청크 간 쿨다운: ${CHUNK_COOLDOWN_MS / 1000}초`);
+        // [FIX #258] 병렬 배치 처리 — CHUNK_CONCURRENCY개씩 동시 실행
+        let completedChunks = 0;
+        for (let batchStart = 0; batchStart < totalChunks; batchStart += CHUNK_CONCURRENCY) {
+            const batchEnd = Math.min(batchStart + CHUNK_CONCURRENCY, totalChunks);
+            const batchIndices = Array.from({ length: batchEnd - batchStart }, (_, i) => batchStart + i);
+            console.log(`[parseScriptToScenes] 🚀 배치 ${Math.floor(batchStart / CHUNK_CONCURRENCY) + 1}: 청크 ${batchIndices.map(i => i + 1).join(',')} 병렬 처리`);
+
+            const batchResults = await Promise.all(batchIndices.map(ci => processChunk(ci)));
+
+            for (const result of batchResults) {
+                allScenes.push(...result);
+            }
+            completedChunks += batchIndices.length;
+            onChunkProgress?.(completedChunks, totalChunks);
+
+            // 배치 간 쿨다운 (429 Rate Limit 방지, 마지막 배치 후 스킵)
+            if (batchEnd < totalChunks) {
+                console.log(`[parseScriptToScenes] 배치 쿨다운: ${CHUNK_COOLDOWN_MS / 1000}초`);
                 await new Promise(r => setTimeout(r, CHUNK_COOLDOWN_MS));
             }
         }
@@ -1204,7 +1264,7 @@ export const parseScriptToScenes = async (
     } else {
         // [기존 로직] 단일 요청 (30장면 미만)
         console.log(`[parseScriptToScenes] 📝 대본 전체 전송 (${cleanedScript.length}자) — 단일 요청`);
-        const SCRIPT_TIMEOUT_MS = 300_000;
+        const SCRIPT_TIMEOUT_MS = 90_000; // [FIX #258] 1.5분 (30장면 미만은 Pro가 충분히 처리 가능, 기존 300초는 프록시 125초 제한에 무의미)
         const MAX_SHORT_RETRIES = 3;
         let lastShortError: Error | null = null;
         for (let attempt = 0; attempt < MAX_SHORT_RETRIES; attempt++) {
