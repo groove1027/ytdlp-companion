@@ -85,6 +85,167 @@ const repairTruncatedJson = (text: string): string | null => {
     return cleaned.length > 2 ? cleaned : null;
 };
 
+// --- Multi-language Split Profile System ---
+// 언어별 문장/절 길이 차이를 반영하여 적정 단락 수를 보장
+interface LangSplitProfile {
+    id: string;
+    clauseMax: number;      // LONG DETAILED: splitByClause maxChars
+    defaultMerge: number;   // LONG DEFAULT: 2문장 병합 한도
+    shortMax: number;       // SHORT: maxChars 타겟
+    shortMin: number;       // SHORT: 최소 파트 크기
+    nanoMax: number;        // NANO: maxChars 타겟
+    nanoMin: number;        // NANO: 최소 파트 크기
+    clauseRegex?: RegExp;   // 언어별 절 분할 패턴 (없으면 쉼표 기반)
+}
+
+const LANG_PROFILES: Record<string, LangSplitProfile> = {
+    ko: { id: 'ko', clauseMax: 100, defaultMerge: 150, shortMax: 80,  shortMin: 10, nanoMax: 16, nanoMin: 5 },
+    ja: { id: 'ja', clauseMax: 80,  defaultMerge: 120, shortMax: 60,  shortMin: 8,  nanoMax: 14, nanoMin: 4 },
+    zh: { id: 'zh', clauseMax: 60,  defaultMerge: 100, shortMax: 50,  shortMin: 6,  nanoMax: 12, nanoMin: 3 },
+    th: { id: 'th', clauseMax: 85,  defaultMerge: 130, shortMax: 60,  shortMin: 10, nanoMax: 18, nanoMin: 5 },
+    ar: { id: 'ar', clauseMax: 150, defaultMerge: 200, shortMax: 100, shortMin: 15, nanoMax: 24, nanoMin: 6 },
+    hi: { id: 'hi', clauseMax: 120, defaultMerge: 180, shortMax: 90,  shortMin: 12, nanoMax: 20, nanoMin: 5 },
+    ru: { id: 'ru', clauseMax: 180, defaultMerge: 250, shortMax: 110, shortMin: 18, nanoMax: 28, nanoMin: 7 },
+    vi: { id: 'vi', clauseMax: 150, defaultMerge: 220, shortMax: 100, shortMin: 15, nanoMax: 24, nanoMin: 6 },
+    id: { id: 'id', clauseMax: 160, defaultMerge: 240, shortMax: 100, shortMin: 15, nanoMax: 26, nanoMin: 7 },
+    de: { id: 'de', clauseMax: 220, defaultMerge: 320, shortMax: 130, shortMin: 20, nanoMax: 32, nanoMin: 8 },
+    en: { id: 'en', clauseMax: 200, defaultMerge: 300, shortMax: 120, shortMin: 20, nanoMax: 30, nanoMin: 8 },
+    // es/fr/pt/it 등 라틴 유럽 계열 공통
+    latin_eu: { id: 'latin_eu', clauseMax: 220, defaultMerge: 320, shortMax: 130, shortMin: 20, nanoMax: 32, nanoMin: 8 },
+};
+const DEFAULT_PROFILE = LANG_PROFILES.en;
+
+/**
+ * 대본 텍스트의 언어를 Unicode 블록 기반으로 감지하여 적정 분할 프로필을 반환.
+ * 한국어/일본어/중국어/태국어/아랍어/힌디어/러시아어/베트남어 + 라틴계 언어 구분.
+ */
+const detectScriptLang = (text: string): LangSplitProfile => {
+    const sample = text.slice(0, 3000).replace(/\s/g, '');
+    const total = sample.length;
+    if (total === 0) return DEFAULT_PROFILE;
+
+    // Unicode 블록별 문자 수 카운트
+    const ko = (sample.match(/[\uAC00-\uD7AF\u1100-\u11FF\u3130-\u318F]/g) || []).length;
+    const kana = (sample.match(/[\u3040-\u309F\u30A0-\u30FF\u31F0-\u31FF]/g) || []).length;
+    const cjk = (sample.match(/[\u4E00-\u9FFF\u3400-\u4DBF]/g) || []).length;
+    const thai = (sample.match(/[\u0E00-\u0E7F]/g) || []).length;
+    const arabic = (sample.match(/[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/g) || []).length;
+    const devanagari = (sample.match(/[\u0900-\u097F]/g) || []).length;
+    const cyrillic = (sample.match(/[\u0400-\u04FF\u0500-\u052F]/g) || []).length;
+
+    // 주요 스크립트 감지 (20% 이상 점유)
+    if (ko > total * 0.15) return LANG_PROFILES.ko;
+    if (kana > total * 0.05) return LANG_PROFILES.ja; // 일본어는 가나가 소량이라도 있으면
+    if (cjk > total * 0.15 && ko === 0 && kana === 0) return LANG_PROFILES.zh;
+    if (thai > total * 0.15) return LANG_PROFILES.th;
+    if (arabic > total * 0.15) return LANG_PROFILES.ar;
+    if (devanagari > total * 0.15) return LANG_PROFILES.hi;
+    if (cyrillic > total * 0.15) return LANG_PROFILES.ru;
+
+    // 라틴 스크립트 — 세부 언어 구분
+    const lower = text.slice(0, 3000).toLowerCase();
+    // 베트남어: 고유 다이어크리틱스 (ă, ơ, ư, đ, ả, ẫ, ễ, ộ 등)
+    if (/[ăơưđ]/.test(lower) || /[\u1EA0-\u1EF9]/.test(lower)) return LANG_PROFILES.vi;
+    // 인도네시아어/말레이어: 고유 어휘
+    if (/\b(dan|tetapi|atau|karena|dengan|untuk|yang|ini|itu|adalah|tidak|akan|sudah|belum)\b/.test(lower)) return LANG_PROFILES.id;
+    // 독일어: 고유 패턴
+    if (/\b(und|aber|oder|weil|dass|wenn|nicht|auch|noch|schon|über|für)\b/.test(lower)) return LANG_PROFILES.de;
+    // 스페인어
+    if (/\b(el|los|las|pero|también|porque|cuando|como|está|tiene|puede)\b/.test(lower)) return LANG_PROFILES.latin_eu;
+    // 프랑스어
+    if (/\b(le|les|des|mais|aussi|parce|quand|avec|dans|pour|plus|cette)\b/.test(lower)) return LANG_PROFILES.latin_eu;
+    // 포르투갈어
+    if (/\b(mas|também|porque|quando|como|mais|para|com|não|uma|este)\b/.test(lower)) return LANG_PROFILES.latin_eu;
+    // 이탈리아어
+    if (/\b(il|gli|che|anche|perché|quando|come|più|con|per|questo|della)\b/.test(lower)) return LANG_PROFILES.latin_eu;
+
+    // 기본: 영어 (가장 일반적인 라틴 스크립트)
+    return LANG_PROFILES.en;
+};
+
+/**
+ * 언어별 절(clause) 분할 — splitKoreanClauses의 다국어 확장판.
+ * 한국어: 연결어미/조사 기반 분할
+ * 영어/유럽어: 접속사/콤마 기반 분할
+ * CJK: 콤마/접속조사 기반 분할
+ */
+const splitClausesByLang = (text: string, profile: LangSplitProfile): string[] => {
+    const maxChars = profile.shortMax;
+    const minChars = profile.shortMin;
+    if (text.length <= maxChars) return [text];
+
+    let clauseRegex: RegExp;
+
+    switch (profile.id) {
+        case 'ko':
+            // 한국어: 연결어미 + 쉼표
+            clauseRegex = /(?<=[,，、])\s*|(?<=(?:되고|하고|했고|있고|없고|되어|하여|되며|하며|이며|에서|는데|지만|니까|므로|려고|면서|어서|해서|아서))\s+/;
+            break;
+        case 'ja':
+            // 일본어: 접속조사 + 読点
+            clauseRegex = /(?<=[、，])\s*|(?<=(?:が|けど|けれど|し|て|で|ながら|たり|ば|と|なら|ので|から))/;
+            break;
+        case 'zh':
+            // 중국어: 逗号 + 接续词
+            clauseRegex = /(?<=[，、,])\s*/;
+            break;
+        case 'th':
+            // 태국어: 스페이스(구절 경계) 또는 접속사
+            clauseRegex = /\s+(?=(?:และ|แต่|หรือ|เพราะ|ถ้า|เมื่อ))|(?<=[,，])\s*/;
+            break;
+        case 'ar':
+            // 아랍어: و(wa) + 쉼표
+            clauseRegex = /(?<=[\u060C,،])\s*|(?<=\s)(?=(?:و|لكن|أو|لأن|عندما|إذا))/;
+            break;
+        case 'hi':
+            // 힌디어: 접속사 + 쉼표
+            clauseRegex = /(?<=[,，])\s*|\s+(?=(?:और|लेकिन|या|क्योंकि|जब|अगर|तो|फिर))/;
+            break;
+        case 'ru':
+            // 러시아어: 접속사 + 쉼표
+            clauseRegex = /(?<=[,，])\s*|\s+(?=(?:и|но|или|а|что|потому|когда|если|хотя|чтобы))/;
+            break;
+        default:
+            // 영어/유럽어/베트남어/인도네시아어: 접속사 + 쉼표
+            clauseRegex = /(?<=[,;])\s*|\s+(?=(?:and|but|or|so|yet|because|although|while|when|if|since|then|however|therefore|meanwhile|y|pero|o|porque|cuando|et|mais|ou|car|und|aber|oder|weil|dan|tetapi|atau|karena|và|nhưng|hoặc|vì))\s*/i;
+            break;
+    }
+
+    const parts = text.split(clauseRegex).filter(p => p.trim());
+    if (parts.length <= 1) return [text];
+
+    // 파트 병합: maxChars까지 결합
+    const merged: string[] = [];
+    let buf = '';
+    for (const part of parts) {
+        const candidate = buf ? buf + ' ' + part : part;
+        if (candidate.length > maxChars && buf) {
+            merged.push(buf.trim());
+            buf = part;
+        } else {
+            buf = candidate;
+        }
+    }
+    if (buf.trim()) merged.push(buf.trim());
+
+    // minChars 미만 파트는 인접과 병합
+    const result: string[] = [];
+    for (let i = 0; i < merged.length; i++) {
+        if (merged[i].length < minChars) {
+            if (i + 1 < merged.length && (merged[i] + ' ' + merged[i + 1]).length <= maxChars * 1.3) {
+                merged[i + 1] = merged[i] + ' ' + merged[i + 1];
+            } else if (result.length > 0 && (result[result.length - 1] + ' ' + merged[i]).length <= maxChars * 1.3) {
+                result[result.length - 1] += ' ' + merged[i];
+            } else {
+                result.push(merged[i]);
+            }
+        } else {
+            result.push(merged[i]);
+        }
+    }
+    return result.length > 0 ? result : [text];
+};
+
 // --- Semantic Scene Break Detection ---
 // 장면/위치 마커 패턴: INT., EXT., 장면, Scene, CUT TO, FADE 등 영화 대본 형식
 const SCENE_MARKER_RE = /^(?:INT\.|EXT\.|INT\/EXT\.|장면\s*\d*|Scene\s*\d*|씬\s*\d*|CUT\s+TO|FADE\s+(?:IN|OUT|TO)|DISSOLVE\s+TO|SMASH\s+CUT)/i;
@@ -211,6 +372,9 @@ const flattenSegmentsToSentences = (
 export const countScenesLocally = (script: string, format: VideoFormat, smartSplit: boolean, longFormSplitType?: 'DEFAULT' | 'DETAILED'): number => {
     if (!smartSplit) return script.split('\n').filter(l => l.trim()).length;
 
+    // [FIX] 다국어 언어 감지 — 언어별 적정 분할 기준값 적용
+    const lang = detectScriptLang(script);
+
     // 1단계: 의미 단위(semantic segment)로 분할 — 장면 마커, 단락, 화자 변화 감지
     const segments = splitIntoSemanticSegments(script);
     if (segments.length === 0) return 0;
@@ -223,10 +387,10 @@ export const countScenesLocally = (script: string, format: VideoFormat, smartSpl
     switch (format) {
         case VideoFormat.LONG:
             if (longFormSplitType === 'DETAILED') {
-                // 1문장 = 1장면, 100자 초과 시 쉼표/절 단위 추가 분할
+                // 1문장 = 1장면, clauseMax 초과 시 쉼표/절 단위 추가 분할
                 let count = 0;
                 for (const t of tagged) {
-                    count += splitByClause(t.text, 100).length;
+                    count += splitByClause(t.text, lang.clauseMax).length;
                 }
                 return Math.max(1, count);
             } else {
@@ -236,12 +400,12 @@ export const countScenesLocally = (script: string, format: VideoFormat, smartSpl
                     if (
                         i + 1 < tagged.length &&
                         tagged[i].segIdx === tagged[i + 1].segIdx &&
-                        (tagged[i].text.length + tagged[i + 1].text.length) <= 150
+                        (tagged[i].text.length + tagged[i + 1].text.length) <= lang.defaultMerge
                     ) {
                         count++;
                         i += 2;
                     } else {
-                        count += splitByClause(tagged[i].text, 150).length;
+                        count += splitByClause(tagged[i].text, lang.defaultMerge).length;
                         i++;
                     }
                 }
@@ -249,23 +413,25 @@ export const countScenesLocally = (script: string, format: VideoFormat, smartSpl
             }
 
         case VideoFormat.SHORT:
-            // [FIX #265] 숏폼: 80자 타겟 (기존 45→80) — "1문장=1장면" 원칙 강화
-            // 45자는 한국어 문장 대부분을 절 단위로 재분할하여 장면 수 폭증 유발
-            // 80자로 완화하면 일반 문장은 그대로, 120자+ 복합문만 분할됨
             {
                 let count = 0;
                 for (const t of tagged) {
-                    count += splitKoreanClauses(t.text, 80, 10).length;
+                    count += (lang.id === 'ko'
+                        ? splitKoreanClauses(t.text, lang.shortMax, lang.shortMin)
+                        : splitClausesByLang(t.text, lang)
+                    ).length;
                 }
                 return Math.max(1, count);
             }
 
         case VideoFormat.NANO:
-            // 나노: 16자 타겟 (도파민 자막 스타일), 5자 미만 병합
             {
                 let count = 0;
                 for (const t of tagged) {
-                    count += splitKoreanClauses(t.text, 16, 5).length;
+                    count += (lang.id === 'ko'
+                        ? splitKoreanClauses(t.text, lang.nanoMax, lang.nanoMin)
+                        : splitClausesByLang(t.text, { ...lang, shortMax: lang.nanoMax, shortMin: lang.nanoMin })
+                    ).length;
                 }
                 return Math.max(1, count);
             }
@@ -386,6 +552,9 @@ const splitKoreanClauses = (text: string, maxChars: number, minChars: number): s
 export const splitScenesLocally = (script: string, format: VideoFormat, smartSplit: boolean, longFormSplitType?: 'DEFAULT' | 'DETAILED'): string[] => {
     if (!smartSplit) return script.split('\n').filter(l => l.trim());
 
+    // [FIX] 다국어 언어 감지 — 언어별 적정 분할 기준값 적용
+    const lang = detectScriptLang(script);
+
     // 1단계: 의미 단위(semantic segment)로 분할
     const segments = splitIntoSemanticSegments(script);
     if (segments.length === 0) return [];
@@ -399,9 +568,9 @@ export const splitScenesLocally = (script: string, format: VideoFormat, smartSpl
     switch (format) {
         case VideoFormat.LONG:
             if (longFormSplitType === 'DETAILED') {
-                // 1문장 = 1장면, 100자 초과 시 쉼표/절 단위 추가 분할
+                // 1문장 = 1장면, clauseMax 초과 시 쉼표/절 단위 추가 분할
                 for (const t of tagged) {
-                    scenes.push(...splitByClause(t.text, 100));
+                    scenes.push(...splitByClause(t.text, lang.clauseMax));
                 }
             } else {
                 // DEFAULT: 2문장 묶되 세그먼트 경계를 넘어 병합하지 않음
@@ -410,12 +579,12 @@ export const splitScenesLocally = (script: string, format: VideoFormat, smartSpl
                     if (
                         i + 1 < tagged.length &&
                         tagged[i].segIdx === tagged[i + 1].segIdx &&
-                        (tagged[i].text.length + tagged[i + 1].text.length) <= 150
+                        (tagged[i].text.length + tagged[i + 1].text.length) <= lang.defaultMerge
                     ) {
                         scenes.push(tagged[i].text + ' ' + tagged[i + 1].text);
                         i += 2;
                     } else {
-                        scenes.push(...splitByClause(tagged[i].text, 150));
+                        scenes.push(...splitByClause(tagged[i].text, lang.defaultMerge));
                         i++;
                     }
                 }
@@ -423,16 +592,18 @@ export const splitScenesLocally = (script: string, format: VideoFormat, smartSpl
             break;
 
         case VideoFormat.SHORT:
-            // [FIX #265] 숏폼: 80자 타겟 (기존 45→80) — countScenesLocally와 동일 규칙 적용
             for (const t of tagged) {
-                scenes.push(...splitKoreanClauses(t.text, 80, 10));
+                scenes.push(...(lang.id === 'ko'
+                    ? splitKoreanClauses(t.text, lang.shortMax, lang.shortMin)
+                    : splitClausesByLang(t.text, lang)));
             }
             break;
 
         case VideoFormat.NANO:
-            // 나노: 16자 타겟 (도파민 자막 스타일), 5자 미만 병합
             for (const t of tagged) {
-                scenes.push(...splitKoreanClauses(t.text, 16, 5));
+                scenes.push(...(lang.id === 'ko'
+                    ? splitKoreanClauses(t.text, lang.nanoMax, lang.nanoMin)
+                    : splitClausesByLang(t.text, { ...lang, shortMax: lang.nanoMax, shortMin: lang.nanoMin })));
             }
             break;
 
