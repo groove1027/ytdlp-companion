@@ -4279,13 +4279,16 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                     videoStore.setVideoBlob(dl.blob);
                                   } catch (e) { console.warn('[EditRoom] 영상 다운로드 실패:', e); }
                                 }
-                                await useEditPointStore.getState().importFromVideoAnalysis({
-                                  frames: thumbnails,
-                                  videoBlob: effectiveBlob,
-                                  videoFile: uploadedFiles[0] || null,
-                                  editTableText: versionText,
-                                  narrationText: '', // [FIX #215] 편집표에 이미 내레이션 포함 — 중복 전송 시 토큰 2배 + 429 유발
-                                });
+                                // [FIX #296] try-catch로 감싸 데이터 전달 실패해도 편집실 이동 보장
+                                try {
+                                  await useEditPointStore.getState().importFromVideoAnalysis({
+                                    frames: thumbnails,
+                                    videoBlob: effectiveBlob,
+                                    videoFile: uploadedFiles[0] || null,
+                                    editTableText: versionText,
+                                    narrationText: '', // [FIX #215] 편집표에 이미 내레이션 포함 — 중복 전송 시 토큰 2배 + 429 유발
+                                  });
+                                } catch (e) { console.warn('[EditRoom] 데이터 전달 실패:', e); }
                                 useVideoAnalysisStore.getState().setEditRoomSelectedVersionIdx(v.id - 1);
                                 useEditRoomStore.getState().setEditRoomSubTab('edit-point-matching');
                                 useNavigationStore.getState().setActiveTab('edit-room');
@@ -4750,13 +4753,16 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                   videoStore.setVideoBlob(dl.blob);
                 } catch (e) { console.warn('[EditRoom] 영상 다운로드 실패:', e); }
               }
-              await useEditPointStore.getState().importFromVideoAnalysis({
-                frames: thumbnails,
-                videoBlob: effectiveBlob,
-                videoFile: uploadedFiles[0] || null,
-                editTableText: rawResult,
-                narrationText: '', // [FIX #215] 편집표에 이미 내레이션 포함 — 중복 전송 시 토큰 2배 + 429 유발
-              });
+              // [FIX #296] try-catch로 감싸 데이터 전달 실패해도 편집실 이동 보장
+              try {
+                await useEditPointStore.getState().importFromVideoAnalysis({
+                  frames: thumbnails,
+                  videoBlob: effectiveBlob,
+                  videoFile: uploadedFiles[0] || null,
+                  editTableText: rawResult,
+                  narrationText: '', // [FIX #215] 편집표에 이미 내레이션 포함 — 중복 전송 시 토큰 2배 + 429 유발
+                });
+              } catch (e) { console.warn('[EditRoom] 데이터 전달 실패:', e); }
               useVideoAnalysisStore.getState().setEditRoomSelectedVersionIdx(0);
               useEditRoomStore.getState().setEditRoomSubTab('edit-point-matching');
               useNavigationStore.getState().setActiveTab('edit-room');

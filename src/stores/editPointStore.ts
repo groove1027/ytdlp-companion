@@ -719,21 +719,13 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
     } else if (videoBlob) {
       const file = new File([videoBlob], 'video-analysis-source.mp4', { type: 'video/mp4' });
       await get().addSourceVideos([file]);
-    } else {
-      showToast('소스 영상이 없습니다. 편집점 매칭 Step 1에서 영상을 직접 업로드해주세요.');
     }
+    // [FIX #296] 소스 영상 없어도 편집표만으로 진행 — 편집실 Step 1에서 안내 표시됨
 
-    // 편집표 자동 파싱
+    // [FIX #296] 편집표 자동 파싱 — 비동기 진행하여 탭 전환 차단하지 않음
+    // parseEditTable 내부에서 자체 성공/실패 토스트 표시
     if (editTableText.trim()) {
-      await get().parseEditTable();
-    }
-
-    // [FIX #287 #289] 성공 피드백 — 편집실에 데이터가 전달되었음을 알림
-    const { sourceVideos, edlEntries } = get();
-    if (sourceVideos.length > 0 && edlEntries.length > 0) {
-      showToast(`영상 분석 데이터가 편집실로 전달되었습니다 (${edlEntries.length}개 편집점)`);
-    } else if (sourceVideos.length > 0) {
-      showToast('영상이 편집실로 전달되었습니다. 편집표 파싱을 확인해주세요.');
+      get().parseEditTable().catch(e => console.warn('[EditPoint] 편집표 자동 파싱 실패:', e));
     }
   },
 

@@ -25,13 +25,16 @@ const VersionSelectorBar: React.FC = () => {
     const videoStore = useVideoAnalysisStore.getState();
     const versionText = buildVersionText(v);
 
-    await useEditPointStore.getState().importFromVideoAnalysis({
-      frames: thumbnails,
-      videoBlob: videoStore.videoBlob,
-      videoFile: null,
-      editTableText: versionText,
-      narrationText: '', // [FIX #215] 편집표에 이미 내레이션 포함 — 중복 전송 시 토큰 2배 + 429 유발
-    });
+    // [FIX #296] try-catch로 감싸 실패해도 버전 전환 반영
+    try {
+      await useEditPointStore.getState().importFromVideoAnalysis({
+        frames: thumbnails,
+        videoBlob: videoStore.videoBlob,
+        videoFile: null,
+        editTableText: versionText,
+        narrationText: '', // [FIX #215] 편집표에 이미 내레이션 포함 — 중복 전송 시 토큰 2배 + 429 유발
+      });
+    } catch (e) { console.warn('[VersionSelector] 데이터 전달 실패:', e); }
 
     useVideoAnalysisStore.getState().setEditRoomSelectedVersionIdx(idx);
     showToast(`버전 ${idx + 1} 로딩 완료: ${v.title}`);
