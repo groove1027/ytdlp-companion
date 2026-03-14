@@ -454,10 +454,12 @@ export const useVideoBatch = (
     // KIE 레이트 리밋 옵션: 10개/10초 버스트, 최대 100 동시 처리
     const kieBatchOpts = { isQuotaExhausted: isQuotaExhaustedError };
 
-    const runGrokHQBatch = async (duration: '6' | '10' | '15', speechMode: boolean) => {
+    const runGrokHQBatch = async (duration: '6' | '10' | '15', speechMode: boolean, sceneIds?: string[]) => {
         logger.trackAction('비디오 배치 생성 시작', 'Grok HQ');
         // [FIX BUG#10] Read current scenes from store to avoid stale closure
-        const genTargets = useProjectStore.getState().scenes.filter(s => s.imageUrl && !s.videoUrl && !s.isGeneratingVideo);
+        const allTargets = useProjectStore.getState().scenes.filter(s => s.imageUrl && !s.videoUrl && !s.isGeneratingVideo);
+        // [#243] 선택된 장면만 필터 (sceneIds 제공 시)
+        const genTargets = sceneIds && sceneIds.length > 0 ? allTargets.filter(s => sceneIds.includes(s.id)) : allTargets;
         if (genTargets.length === 0) { useUIStore.getState().setToast({ show: true, message: "작업할 대상이 없습니다." }); setTimeout(() => useUIStore.getState().setToast(null), 3000); return; }
         setIsBatching(true);
         setProgress({ current: 0, total: genTargets.length });
@@ -468,10 +470,12 @@ export const useVideoBatch = (
         logger.success("Grok HQ Batch Completed");
     };
 
-    const runVeoFastBatch = async () => {
+    const runVeoFastBatch = async (sceneIds?: string[]) => {
         logger.trackAction('비디오 배치 생성 시작', 'Veo Fast');
         // [FIX BUG#10] Read current scenes from store to avoid stale closure
-        const targets = useProjectStore.getState().scenes.filter(s => s.imageUrl && !s.videoUrl && !s.isGeneratingVideo);
+        const allTargets = useProjectStore.getState().scenes.filter(s => s.imageUrl && !s.videoUrl && !s.isGeneratingVideo);
+        // [#243] 선택된 장면만 필터 (sceneIds 제공 시)
+        const targets = sceneIds && sceneIds.length > 0 ? allTargets.filter(s => sceneIds.includes(s.id)) : allTargets;
         if (targets.length === 0) { useUIStore.getState().setToast({ show: true, message: "작업 대상이 없습니다." }); setTimeout(() => useUIStore.getState().setToast(null), 3000); return; }
         setIsBatching(true);
         setProgress({ current: 0, total: targets.length });
@@ -481,10 +485,12 @@ export const useVideoBatch = (
         setIsBatching(false);
     };
 
-    const runVeoQualityBatch = async () => {
+    const runVeoQualityBatch = async (sceneIds?: string[]) => {
         logger.trackAction('비디오 배치 생성 시작', 'Veo Quality');
         // [FIX BUG#10] Read current scenes from store to avoid stale closure
-        const targets = useProjectStore.getState().scenes.filter(s => s.imageUrl && !s.videoUrl && !s.isGeneratingVideo);
+        const allTargets = useProjectStore.getState().scenes.filter(s => s.imageUrl && !s.videoUrl && !s.isGeneratingVideo);
+        // [#243] 선택된 장면만 필터 (sceneIds 제공 시)
+        const targets = sceneIds && sceneIds.length > 0 ? allTargets.filter(s => sceneIds.includes(s.id)) : allTargets;
         if (targets.length === 0) { useUIStore.getState().setToast({ show: true, message: "작업 대상이 없습니다." }); setTimeout(() => useUIStore.getState().setToast(null), 3000); return; }
         setIsBatching(true);
         setProgress({ current: 0, total: targets.length });
@@ -495,10 +501,12 @@ export const useVideoBatch = (
         setIsBatching(false);
     };
 
-    const runUpscaleBatch = async () => {
+    const runUpscaleBatch = async (sceneIds?: string[]) => {
         logger.trackAction('비디오 배치 생성 시작', 'Upscale');
         // [FIX BUG#10] Read current scenes from store to avoid stale closure
-        const targets = useProjectStore.getState().scenes.filter(s => s.videoUrl && !s.isUpscaled && !s.isUpscaling && s.generationTaskId);
+        const allTargets = useProjectStore.getState().scenes.filter(s => s.videoUrl && !s.isUpscaled && !s.isUpscaling && s.generationTaskId);
+        // [#243] 선택된 장면만 필터 (sceneIds 제공 시)
+        const targets = sceneIds && sceneIds.length > 0 ? allTargets.filter(s => sceneIds.includes(s.id)) : allTargets;
         if (targets.length === 0) { useUIStore.getState().setToast({ show: true, message: "작업 대상이 없습니다." }); setTimeout(() => useUIStore.getState().setToast(null), 3000); return; }
         setIsBatching(true);
         setProgress({ current: 0, total: targets.length });

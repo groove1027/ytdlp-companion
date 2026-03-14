@@ -116,18 +116,25 @@ interface SceneCardProps {
   onUploadImage: (id: string, file: File) => void;
   onOpenDetail: (scene: Scene, index: number) => void;
   onCopyScript?: (sceneId: string) => void;
+  isSelected?: boolean;
+  onToggleSelect?: (id: string) => void;
 }
 
-const SceneCard: React.FC<SceneCardProps> = ({ scene, index, onUpdatePrompt, onDelete, onRegenerate, onTransform, onGrokVideo, onVeoVideo, onPlaySceneAudio, playingSceneId, sceneProgress, onAddAfter, onAutoPrompt, onReferenceUpload, onUploadImage, onOpenDetail, onCopyScript }) => {
+const SceneCard: React.FC<SceneCardProps> = ({ scene, index, onUpdatePrompt, onDelete, onRegenerate, onTransform, onGrokVideo, onVeoVideo, onPlaySceneAudio, playingSceneId, sceneProgress, onAddAfter, onAutoPrompt, onReferenceUpload, onUploadImage, onOpenDetail, onCopyScript, isSelected, onToggleSelect }) => {
   const refInputRef = useRef<HTMLInputElement>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
   return (
-  <div className="bg-gray-800 border border-gray-700 rounded-xl p-4 hover:border-gray-600 transition-colors">
+  <div className={`bg-gray-800 border rounded-xl p-4 hover:border-gray-600 transition-colors ${isSelected ? 'border-orange-500/60 ring-1 ring-orange-500/30' : 'border-gray-700'}`}>
     <div className="flex gap-4">
       {/* Left: scene info */}
       <div className="flex-1 min-w-0 space-y-3">
         {/* Scene header */}
         <div className="flex items-center gap-2">
+          {/* [#243] 장면 선택 체크박스 */}
+          {onToggleSelect && (
+            <input type="checkbox" checked={!!isSelected} onChange={() => onToggleSelect(scene.id)}
+              className="w-4 h-4 rounded border-gray-600 bg-gray-900 text-orange-500 focus:ring-orange-500/30 cursor-pointer flex-shrink-0" />
+          )}
           <span className="text-base font-bold text-gray-200">장면 {index + 1}</span>
           {scene.startTime !== undefined && (
             <span className="text-xs bg-gray-900 text-gray-400 px-2 py-0.5 rounded border border-gray-700 font-mono">
@@ -395,18 +402,27 @@ interface GridSceneCardProps {
   onUploadImage: (id: string, file: File) => void;
   onOpenDetail: (scene: Scene, index: number) => void;
   onCopyScript?: (sceneId: string) => void;
+  isSelected?: boolean;
+  onToggleSelect?: (id: string) => void;
 }
 
-const GridSceneCard: React.FC<GridSceneCardProps> = ({ scene, index, onRegenerate, onDelete, onGrokVideo, onVeoVideo, onPlaySceneAudio, playingSceneId, sceneProgress, onAddAfter, onReferenceUpload, onUploadImage, onOpenDetail, onCopyScript }) => {
+const GridSceneCard: React.FC<GridSceneCardProps> = ({ scene, index, onRegenerate, onDelete, onGrokVideo, onVeoVideo, onPlaySceneAudio, playingSceneId, sceneProgress, onAddAfter, onReferenceUpload, onUploadImage, onOpenDetail, onCopyScript, isSelected, onToggleSelect }) => {
   const isThisPlaying = playingSceneId === scene.id;
   const gridUploadRef = useRef<HTMLInputElement>(null);
 
   return (
-    <div className="bg-gray-800 border border-gray-700 rounded-xl overflow-hidden hover:border-gray-500 transition-colors">
+    <div className={`bg-gray-800 border rounded-xl overflow-hidden hover:border-gray-500 transition-colors ${isSelected ? 'border-orange-500/60 ring-1 ring-orange-500/30' : 'border-gray-700'}`}>
       {/* Image/Video area */}
       <div
         className="relative aspect-video bg-gray-900 cursor-pointer group"
       >
+        {/* [#243] 그리드 장면 선택 체크박스 */}
+        {onToggleSelect && (
+          <div className="absolute top-1.5 left-1.5 z-10" onClick={(e) => e.stopPropagation()}>
+            <input type="checkbox" checked={!!isSelected} onChange={() => onToggleSelect(scene.id)}
+              className="w-4 h-4 rounded border-gray-600 bg-gray-900/80 text-orange-500 focus:ring-orange-500/30 cursor-pointer" />
+          </div>
+        )}
         {scene.isGeneratingImage ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-900/80 backdrop-blur-sm">
             <div className="relative">
@@ -837,6 +853,8 @@ const StoryboardPanel: React.FC = () => {
   const [showDownloadDropdown, setShowDownloadDropdown] = useState(false);
   const [isBatchingImages, setIsBatchingImages] = useState(false);
   const [batchImageProgress, setBatchImageProgress] = useState({ current: 0, total: 0, success: 0, fail: 0 });
+  // [#243] 장면 선택 상태
+  const [selectedSceneIds, setSelectedSceneIds] = useState<Set<string>>(new Set());
   const { requireAuth } = useAuthGuard();
 
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -859,11 +877,44 @@ const StoryboardPanel: React.FC = () => {
   const elapsedBatch = useElapsedTimer(isAnyBatchRunning);
   const totalScenes = scenes.length;
 
+  // [#243] 장면 선택 헬퍼
+  const hasSelection = selectedSceneIds.size > 0;
+  const toggleSceneSelect = useCallback((id: string) => {
+    setSelectedSceneIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
+  const selectAllScenes = useCallback(() => {
+    setSelectedSceneIds(new Set(scenes.map(s => s.id)));
+  }, [scenes]);
+  const deselectAllScenes = useCallback(() => {
+    setSelectedSceneIds(new Set());
+  }, []);
+  // 선택된 장면 기준 eligible 카운트 (선택 있으면 선택 내에서만, 없으면 전체)
+  const selectedVideoEligible = hasSelection
+    ? scenes.filter(s => selectedSceneIds.has(s.id) && s.imageUrl && !s.videoUrl && !s.isGeneratingVideo).length
+    : videoEligible;
+  const selectedImageEligible = hasSelection
+    ? scenes.filter(s => selectedSceneIds.has(s.id) && !s.imageUrl && !s.isGeneratingImage).length
+    : imageEligible;
+  const selectedSceneIdsArray = useMemo(() => hasSelection ? Array.from(selectedSceneIds) : undefined, [selectedSceneIds, hasSelection]);
+
   // 배치 진행 중 로테이팅 팁
   const batchTip = useMemo(() => {
     const idx = Math.floor(elapsedBatch / 8) % BATCH_TIPS.length;
     return BATCH_TIPS[idx];
   }, [Math.floor(elapsedBatch / 8)]);
+
+  // [#243] scenes 변경 시 없어진 장면 ID 정리
+  useEffect(() => {
+    const sceneIdSet = new Set(scenes.map(s => s.id));
+    setSelectedSceneIds(prev => {
+      const filtered = new Set([...prev].filter(id => sceneIdSet.has(id)));
+      return filtered.size !== prev.size ? filtered : prev;
+    });
+  }, [scenes]);
 
   // 드롭다운 바깥 클릭 시 닫기
   useEffect(() => {
@@ -1279,11 +1330,13 @@ const StoryboardPanel: React.FC = () => {
   }, [updateScene, addCost, requireAuth]);
 
   // --- 배치 이미지 생성 ---
-  const handleBatchGenerateImages = useCallback(async () => {
+  const handleBatchGenerateImages = useCallback(async (sceneIds?: string[]) => {
     logger.trackAction('이미지 일괄 생성');
     if (!requireAuth('이미지 일괄 생성')) return;
     const { scenes: currentScenes } = useProjectStore.getState();
-    const targets = currentScenes.filter(s => !s.imageUrl && !s.isGeneratingImage);
+    const allTargets = currentScenes.filter(s => !s.imageUrl && !s.isGeneratingImage);
+    // [#243] 선택된 장면만 필터 (sceneIds 제공 시)
+    const targets = sceneIds && sceneIds.length > 0 ? allTargets.filter(s => sceneIds.includes(s.id)) : allTargets;
     if (targets.length === 0) return;
 
     setIsBatchingImages(true);
@@ -1484,6 +1537,22 @@ const StoryboardPanel: React.FC = () => {
               리스트
             </button>
           </div>
+          {/* [#243] 장면 선택 토글 */}
+          {totalScenes > 0 && (
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => hasSelection ? deselectAllScenes() : selectAllScenes()}
+                className={`px-2.5 py-1 text-xs rounded-lg border transition-colors ${
+                  hasSelection
+                    ? 'bg-orange-600/20 text-orange-300 border-orange-500/30 hover:bg-orange-600/30'
+                    : 'bg-gray-800 text-gray-400 border-gray-700 hover:bg-gray-700 hover:text-gray-200'
+                }`}
+              >
+                {hasSelection ? `${selectedSceneIds.size}개 선택 해제` : '장면 선택'}
+              </button>
+            </div>
+          )}
           {/* HTML/ZIP 저장 (30장면 이상이면 ZIP 자동 선택) */}
           <button
             type="button"
@@ -1600,87 +1669,95 @@ const StoryboardPanel: React.FC = () => {
 
             {showGenDropdown && (
               <div className="absolute right-0 top-full mt-1 w-72 bg-gray-800 border border-gray-700 rounded-xl shadow-2xl z-50 overflow-hidden">
+                {/* [#243] 선택 모드 안내 */}
+                {hasSelection && (
+                  <div className="px-4 py-1.5 bg-orange-600/10 border-b border-orange-500/20">
+                    <span className="text-[11px] text-orange-300 font-medium">선택한 {selectedSceneIds.size}개 장면만 생성</span>
+                  </div>
+                )}
                 <button
                   type="button"
-                  onClick={() => { handleBatchGenerateImages(); setShowGenDropdown(false); }}
+                  onClick={() => { handleBatchGenerateImages(selectedSceneIdsArray); setShowGenDropdown(false); }}
                   className="w-full text-left px-4 py-2.5 text-base text-gray-200 hover:bg-gray-700/60 transition-colors flex items-center gap-2"
                 >
                   <span className="w-2 h-2 rounded-full bg-orange-400" />
-                  <span className="flex-1">이미지 일괄 생성</span>
-                  <span className="text-[10px] text-orange-400/70">{fmtCost(PRICING.IMAGE_GENERATION * imageEligible, exRate)}</span>
+                  <span className="flex-1">이미지 {hasSelection ? `${selectedImageEligible}개` : '일괄'} 생성</span>
+                  <span className="text-[10px] text-orange-400/70">{fmtCost(PRICING.IMAGE_GENERATION * selectedImageEligible, exRate)}</span>
                 </button>
-                {imageEligible > 0 && videoEligible === 0 && totalScenes > 0 && (
+                {selectedImageEligible > 0 && selectedVideoEligible === 0 && totalScenes > 0 && (
                   <p className="px-4 py-1 text-[10px] text-yellow-400/80 bg-yellow-600/10">⚠️ 이미지가 없는 장면은 영상 생성 불가 — 이미지를 먼저 생성해주세요</p>
                 )}
                 <div className="border-t border-gray-700" />
                 <p className="px-4 py-1 text-xs text-gray-500 font-bold uppercase">Grok 720p (Kie)</p>
                 <button
                   type="button"
-                  onClick={() => { videoBatch.runGrokHQBatch('6', false); setShowGenDropdown(false); }}
+                  onClick={() => { videoBatch.runGrokHQBatch('6', false, selectedSceneIdsArray); setShowGenDropdown(false); }}
                   className="w-full text-left px-4 py-2 text-sm text-gray-200 hover:bg-gray-700/60 transition-colors flex items-center gap-2"
                 >
                   <span className="w-2 h-2 rounded-full bg-pink-400" />
-                  <span className="flex-1">Grok SFX Only 6초 (일괄)</span>
-                  <span className="text-[10px] text-pink-400/70">{fmtCost(PRICING.VIDEO_GROK_6S * videoEligible, exRate)}</span>
+                  <span className="flex-1">Grok SFX Only 6초 {hasSelection ? `(${selectedVideoEligible}개)` : '(일괄)'}</span>
+                  <span className="text-[10px] text-pink-400/70">{fmtCost(PRICING.VIDEO_GROK_6S * selectedVideoEligible, exRate)}</span>
                 </button>
                 <button
                   type="button"
-                  onClick={() => { videoBatch.runGrokHQBatch('10', false); setShowGenDropdown(false); }}
+                  onClick={() => { videoBatch.runGrokHQBatch('10', false, selectedSceneIdsArray); setShowGenDropdown(false); }}
                   className="w-full text-left px-4 py-2 text-sm text-gray-200 hover:bg-gray-700/60 transition-colors flex items-center gap-2"
                 >
                   <span className="w-2 h-2 rounded-full bg-pink-400" />
-                  <span className="flex-1">Grok SFX Only 10초 (일괄)</span>
-                  <span className="text-[10px] text-pink-400/70">{fmtCost(PRICING.VIDEO_GROK_10S * videoEligible, exRate)}</span>
+                  <span className="flex-1">Grok SFX Only 10초 {hasSelection ? `(${selectedVideoEligible}개)` : '(일괄)'}</span>
+                  <span className="text-[10px] text-pink-400/70">{fmtCost(PRICING.VIDEO_GROK_10S * selectedVideoEligible, exRate)}</span>
                 </button>
                 <button
                   type="button"
-                  onClick={() => { videoBatch.runGrokHQBatch('15', false); setShowGenDropdown(false); }}
+                  onClick={() => { videoBatch.runGrokHQBatch('15', false, selectedSceneIdsArray); setShowGenDropdown(false); }}
                   className="w-full text-left px-4 py-2 text-sm text-gray-200 hover:bg-gray-700/60 transition-colors flex items-center gap-2"
                 >
                   <span className="w-2 h-2 rounded-full bg-pink-400" />
-                  <span className="flex-1">Grok SFX Only 15초 (일괄)</span>
-                  <span className="text-[10px] text-pink-400/70">{fmtCost(PRICING.VIDEO_GROK_15S * videoEligible, exRate)}</span>
+                  <span className="flex-1">Grok SFX Only 15초 {hasSelection ? `(${selectedVideoEligible}개)` : '(일괄)'}</span>
+                  <span className="text-[10px] text-pink-400/70">{fmtCost(PRICING.VIDEO_GROK_15S * selectedVideoEligible, exRate)}</span>
                 </button>
                 <button
                   type="button"
-                  onClick={() => { videoBatch.runGrokHQBatch('6', true); setShowGenDropdown(false); }}
+                  onClick={() => { videoBatch.runGrokHQBatch('6', true, selectedSceneIdsArray); setShowGenDropdown(false); }}
                   className="w-full text-left px-4 py-2 text-sm text-gray-200 hover:bg-gray-700/60 transition-colors flex items-center gap-2"
                 >
                   <span className="w-2 h-2 rounded-full bg-fuchsia-400" />
-                  <span className="flex-1">Grok 나레이션 6초 (일괄)</span>
-                  <span className="text-[10px] text-fuchsia-400/70">{fmtCost(PRICING.VIDEO_GROK_6S * videoEligible, exRate)}</span>
+                  <span className="flex-1">Grok 나레이션 6초 {hasSelection ? `(${selectedVideoEligible}개)` : '(일괄)'}</span>
+                  <span className="text-[10px] text-fuchsia-400/70">{fmtCost(PRICING.VIDEO_GROK_6S * selectedVideoEligible, exRate)}</span>
                 </button>
                 <button
                   type="button"
-                  onClick={() => { videoBatch.runGrokHQBatch('10', true); setShowGenDropdown(false); }}
+                  onClick={() => { videoBatch.runGrokHQBatch('10', true, selectedSceneIdsArray); setShowGenDropdown(false); }}
                   className="w-full text-left px-4 py-2 text-sm text-gray-200 hover:bg-gray-700/60 transition-colors flex items-center gap-2"
                 >
                   <span className="w-2 h-2 rounded-full bg-fuchsia-400" />
-                  <span className="flex-1">Grok 나레이션 10초 (일괄)</span>
-                  <span className="text-[10px] text-fuchsia-400/70">{fmtCost(PRICING.VIDEO_GROK_10S * videoEligible, exRate)}</span>
+                  <span className="flex-1">Grok 나레이션 10초 {hasSelection ? `(${selectedVideoEligible}개)` : '(일괄)'}</span>
+                  <span className="text-[10px] text-fuchsia-400/70">{fmtCost(PRICING.VIDEO_GROK_10S * selectedVideoEligible, exRate)}</span>
                 </button>
                 <button
                   type="button"
-                  onClick={() => { videoBatch.runGrokHQBatch('15', true); setShowGenDropdown(false); }}
+                  onClick={() => { videoBatch.runGrokHQBatch('15', true, selectedSceneIdsArray); setShowGenDropdown(false); }}
                   className="w-full text-left px-4 py-2 text-sm text-gray-200 hover:bg-gray-700/60 transition-colors flex items-center gap-2"
                 >
                   <span className="w-2 h-2 rounded-full bg-fuchsia-400" />
-                  <span className="flex-1">Grok 나레이션 15초 (일괄)</span>
-                  <span className="text-[10px] text-fuchsia-400/70">{fmtCost(PRICING.VIDEO_GROK_15S * videoEligible, exRate)}</span>
+                  <span className="flex-1">Grok 나레이션 15초 {hasSelection ? `(${selectedVideoEligible}개)` : '(일괄)'}</span>
+                  <span className="text-[10px] text-fuchsia-400/70">{fmtCost(PRICING.VIDEO_GROK_15S * selectedVideoEligible, exRate)}</span>
                 </button>
                 <div className="border-t border-gray-700" />
                 <p className="px-4 py-1 text-xs text-gray-500 font-bold uppercase">Veo 3.1 1080p (Evolink)</p>
                 <button
                   type="button"
-                  onClick={() => { videoBatch.runVeoFastBatch(); setShowGenDropdown(false); }}
+                  onClick={() => { videoBatch.runVeoFastBatch(selectedSceneIdsArray); setShowGenDropdown(false); }}
                   className="w-full text-left px-4 py-2 text-sm text-gray-200 hover:bg-gray-700/60 transition-colors flex items-center gap-2"
                 >
                   <span className="w-2 h-2 rounded-full bg-blue-400" />
-                  <span className="flex-1">Veo 3.1 1080p (일괄)</span>
-                  <span className="text-[10px] text-blue-400/70">{fmtCost(PRICING.VIDEO_VEO * videoEligible, exRate)}</span>
+                  <span className="flex-1">Veo 3.1 1080p {hasSelection ? `(${selectedVideoEligible}개)` : '(일괄)'}</span>
+                  <span className="text-[10px] text-blue-400/70">{fmtCost(PRICING.VIDEO_VEO * selectedVideoEligible, exRate)}</span>
                 </button>
-                {videoEligible > 0 && (
-                  <p className="px-4 py-1.5 text-[10px] text-gray-500 border-t border-gray-700/50">대상 {videoEligible}개 장면 × 건당 비용 = 예상 합계</p>
+                {selectedVideoEligible > 0 && (
+                  <p className="px-4 py-1.5 text-[10px] text-gray-500 border-t border-gray-700/50">
+                    {hasSelection ? `선택 ${selectedSceneIds.size}개 중 ` : ''}대상 {selectedVideoEligible}개 장면 × 건당 비용 = 예상 합계
+                  </p>
                 )}
               </div>
             )}
@@ -1870,6 +1947,8 @@ const StoryboardPanel: React.FC = () => {
               onUploadImage={handleUploadImage}
               onOpenDetail={(scene, idx) => setDetailScene({ scene, index: idx })}
               onCopyScript={handleCopyScript}
+              isSelected={selectedSceneIds.has(scene.id)}
+              onToggleSelect={toggleSceneSelect}
             />
           ))}
         </div>
@@ -1895,6 +1974,8 @@ const StoryboardPanel: React.FC = () => {
               onUploadImage={handleUploadImage}
               onOpenDetail={(scene, idx) => setDetailScene({ scene, index: idx })}
               onCopyScript={handleCopyScript}
+              isSelected={selectedSceneIds.has(scene.id)}
+              onToggleSelect={toggleSceneSelect}
             />
           ))}
         </div>
