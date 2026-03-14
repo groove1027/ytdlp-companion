@@ -1242,6 +1242,35 @@ ${baseSetting ? `[GLOBAL CONTEXT]\n${baseSetting}` : ''}`;
                 throw new Error(`대본 분석 실패 (청크 ${ci + 1}/${totalChunks}): ${msg}`);
             }
 
+            // [FIX #269] 청크별 장면 수 검증 — AI가 chunkTarget보다 많이 생성 시 초과분 병합
+            if (chunkResult.length > chunkTarget) {
+                console.warn(`[processChunk] ⚠️ 청크 ${ci + 1}: AI가 ${chunkResult.length}장면 생성 (목표: ${chunkTarget}). 초과분 병합 중...`);
+                while (chunkResult.length > chunkTarget && chunkResult.length > 1) {
+                    let minLen = Infinity, minIdx = -1;
+                    for (let i = 0; i < chunkResult.length; i++) {
+                        const len = (chunkResult[i].scriptText || '').length;
+                        if (len < minLen) { minLen = len; minIdx = i; }
+                    }
+                    if (minIdx < 0) break;
+                    if (minIdx + 1 < chunkResult.length) {
+                        chunkResult[minIdx + 1] = {
+                            ...chunkResult[minIdx + 1],
+                            scriptText: ((chunkResult[minIdx].scriptText || '') + ' ' + (chunkResult[minIdx + 1].scriptText || '')).trim()
+                        };
+                        chunkResult.splice(minIdx, 1);
+                    } else if (minIdx > 0) {
+                        chunkResult[minIdx - 1] = {
+                            ...chunkResult[minIdx - 1],
+                            scriptText: ((chunkResult[minIdx - 1].scriptText || '') + ' ' + (chunkResult[minIdx].scriptText || '')).trim()
+                        };
+                        chunkResult.splice(minIdx, 1);
+                    } else {
+                        break;
+                    }
+                }
+                console.log(`[processChunk] ✅ 청크 ${ci + 1}: ${chunkResult.length}장면으로 트리밍 완료`);
+            }
+
             return chunkResult;
         };
 
@@ -1265,6 +1294,40 @@ ${baseSetting ? `[GLOBAL CONTEXT]\n${baseSetting}` : ''}`;
                 console.log(`[parseScriptToScenes] 배치 쿨다운: ${CHUNK_COOLDOWN_MS / 1000}초`);
                 await new Promise(r => setTimeout(r, CHUNK_COOLDOWN_MS));
             }
+        }
+
+        // [FIX #269] 청크 병합 후 최종 장면 수 검증 — 로컬 분할 수와 일치하도록 보정
+        const expectedTotal = sceneTexts.length;
+        if (allScenes.length > expectedTotal) {
+            console.warn(`[PostProcess-Chunked] ⚠️ 병합 후 장면 수 초과: ${allScenes.length} → ${expectedTotal} (초과분 ${allScenes.length - expectedTotal}개 병합)`);
+            while (allScenes.length > expectedTotal && allScenes.length > 1) {
+                let minLen = Infinity, minIdx = -1;
+                for (let i = 0; i < allScenes.length; i++) {
+                    const len = (allScenes[i].scriptText || '').length;
+                    if (len < minLen) { minLen = len; minIdx = i; }
+                }
+                if (minIdx < 0) break;
+                if (minIdx + 1 < allScenes.length) {
+                    allScenes[minIdx + 1] = {
+                        ...allScenes[minIdx + 1],
+                        scriptText: ((allScenes[minIdx].scriptText || '') + ' ' + (allScenes[minIdx + 1].scriptText || '')).trim()
+                    };
+                    allScenes.splice(minIdx, 1);
+                } else if (minIdx > 0) {
+                    allScenes[minIdx - 1] = {
+                        ...allScenes[minIdx - 1],
+                        scriptText: ((allScenes[minIdx - 1].scriptText || '') + ' ' + (allScenes[minIdx].scriptText || '')).trim()
+                    };
+                    allScenes.splice(minIdx, 1);
+                } else {
+                    break;
+                }
+            }
+            // ID 재할당
+            for (let i = 0; i < allScenes.length; i++) {
+                allScenes[i] = { ...allScenes[i], id: `scene-${Date.now()}-${i}` };
+            }
+            console.log(`[PostProcess-Chunked] ✅ 최종 장면 수: ${allScenes.length} (목표: ${expectedTotal})`);
         }
 
         // [CRITICAL] 청크 병합 후 캐릭터 빈도 재적용 — MAIN 사이 최소 2씬 갭 (청크 경계에서 갭 위반 가능)
