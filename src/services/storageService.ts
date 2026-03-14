@@ -86,8 +86,11 @@ const BENCHMARK_STORE = 'benchmarks';
 const AUDIO_BLOB_STORE = 'audio-blobs';
 const VIDEO_ANALYSIS_STORE = 'video-analysis';
 
-// Initialize DB (v7: adds video-analysis store for video analysis slots)
-export const dbPromise = openDB<StoryboardDB>(DB_NAME, 7, {
+// All required object stores
+const ALL_STORES = [PROJECT_STORE, SUMMARY_STORE, CHARACTER_STORE, MUSIC_STORE, BENCHMARK_STORE, AUDIO_BLOB_STORE, VIDEO_ANALYSIS_STORE] as const;
+
+// Initialize DB (v8: v7 stores + 누락 store 자동 복구)
+export const dbPromise = openDB<StoryboardDB>(DB_NAME, 8, {
   upgrade(db, oldVersion) {
     if (oldVersion < 1) {
       db.createObjectStore(PROJECT_STORE, { keyPath: 'id' });
@@ -109,6 +112,14 @@ export const dbPromise = openDB<StoryboardDB>(DB_NAME, 7, {
     }
     if (oldVersion < 7) {
       db.createObjectStore(VIDEO_ANALYSIS_STORE, { keyPath: 'id' });
+    }
+    // v8: 누락된 object store 자동 복구 (브라우저 데이터 부분 삭제 등)
+    if (oldVersion < 8) {
+      for (const name of ALL_STORES) {
+        if (!db.objectStoreNames.contains(name)) {
+          db.createObjectStore(name, { keyPath: 'id' });
+        }
+      }
     }
   },
 });

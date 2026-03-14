@@ -8,6 +8,7 @@
 
 ## 🟢 완료된 작업
 
+- [x] **#268 회원가입 버튼 UX 혼동 + IndexedDB 누락 store 복구** — (1) 회원가입 탭 버튼과 제출 버튼 텍스트 동일("회원가입")로 사용자 혼동 → 제출 버튼을 "✓ 가입 완료"로 변경 + 안내 문구 추가 (2) useCallback 선언 순서 재배치로 handleSignupComplete deps 정상화 (3) IndexedDB v7→v8 업그레이드: 누락된 object store 자동 복구 (AuthGate.tsx, storageService.ts, 2026-03-14)
 - [x] **#246 영상분석실 목표 시간 설정 기능** — 프리셋 섹션에 30초/45초/60초 셀렉터 추가, buildUserMessage에 동적 시간 지시 주입, Zustand store에 targetDuration 영속 상태 추가 (videoAnalysisStore.ts, VideoAnalysisRoom.tsx, 2026-03-14)
 - [x] **#219/#220/#224/#231/#234 GitHub 버그 5건 일괄 수정** — (1) Cloudinary Upload Preset 오류 한국어 안내 (2) 동일 videoUrl extractor 중복 생성 방지 (3) CharacterTwistLab 일괄 다운로드 ProcessingOverlay (4) v1beta contents system role 필터링 (5) 빈 타임라인 안내 메시지 구체화 (uploadService.ts, webcodecs/index.ts, CharacterTwistLab.tsx, evolinkService.ts, VisualTimeline.tsx, 2026-03-14)
 - [x] **참여도 히트맵 → 액션형 강화 시스템** — (1) 자동 진단 패널: 약한 구간(참여도<50) 자동 감지+그루핑+구체적 원인 표시 (2) 구간별 클릭→개선 팁: 히트맵 바 클릭 가능, 선택 구간 원문+맞춤 팁(질문 넣기/문장 쪼개기/반전 단어/훅 단어/직접 말 걸기) 표시 (3) AI 참여도 강화(EngagementBooster): Gemini 3.1 Pro가 약한 구간을 리라이트→Before/After 비교 UI→개별/전체 적용 (EngagementHeatmap.tsx, EngagementBooster.tsx 신규, 2026-03-14)

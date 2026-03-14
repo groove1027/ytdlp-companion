@@ -142,6 +142,17 @@ const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
     finally { setIsLoading(false); }
   }, [email, password, rememberMe, onAuthenticated]);
 
+  // ── 최종 회원가입 (handleSignupFormSubmit / handleVerifyOTP 보다 먼저 선언) ──
+  const handleSignupComplete = useCallback(async (firebaseIdToken?: string) => {
+    setIsLoading(true); setError('');
+    try {
+      const { signup } = await import('../services/authService');
+      const result = await signup(email, password, inviteCode, displayName.trim(), firebaseIdToken);
+      onAuthenticated(result.user);
+    } catch (err: unknown) { setError(err instanceof Error ? err.message : '회원가입 실패'); setSignupStep('form'); }
+    finally { setIsLoading(false); }
+  }, [email, password, inviteCode, displayName, onAuthenticated]);
+
   // ── 회원가입 폼 제출 ──
   const handleSignupFormSubmit = useCallback(() => {
     setError('');
@@ -151,7 +162,7 @@ const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
     if (!inviteCode.trim()) { setError('초대 코드를 입력해주세요.'); return; }
     if (!email.trim()) { setError('이메일을 입력해주세요.'); return; }
     handleSignupComplete();
-  }, [password, confirmPassword, inviteCode, email, displayName]);
+  }, [password, confirmPassword, inviteCode, email, displayName, handleSignupComplete]);
 
   // ── OTP 전송 ──
   const handleSendOTP = useCallback(async () => {
@@ -189,18 +200,7 @@ const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
       else setError(`인증 실패: ${msg}`);
       setIsLoading(false);
     }
-  }, [otpCode]);
-
-  // ── 최종 회원가입 ──
-  const handleSignupComplete = useCallback(async (firebaseIdToken?: string) => {
-    setIsLoading(true); setError('');
-    try {
-      const { signup } = await import('../services/authService');
-      const result = await signup(email, password, inviteCode, displayName.trim(), firebaseIdToken);
-      onAuthenticated(result.user);
-    } catch (err: unknown) { setError(err instanceof Error ? err.message : '회원가입 실패'); setSignupStep('form'); }
-    finally { setIsLoading(false); }
-  }, [email, password, inviteCode, displayName, onAuthenticated]);
+  }, [otpCode, handleSignupComplete]);
 
   const handleSubmit = (e: React.FormEvent) => { e.preventDefault(); mode === 'login' ? handleLogin() : handleSignupFormSubmit(); };
   const resetToSignupForm = () => { setSignupStep('form'); setOtpCode(''); setError(''); recaptchaRef.current = null; };
@@ -358,9 +358,12 @@ const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
                 </label>
               )}
               {error && <div className="bg-red-900/20 border border-red-500/30 rounded-xl px-4 py-3 text-sm text-red-400">{error}</div>}
+              {mode === 'signup' && (
+                <p className="text-xs text-center text-gray-500">모든 항목을 입력한 뒤 아래 버튼을 눌러주세요.</p>
+              )}
               <button type="submit" disabled={anyLoading}
                 className="w-full py-3.5 rounded-xl text-base font-bold text-white bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 disabled:from-gray-700 disabled:to-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed transition-all shadow-lg shadow-violet-500/20">
-                {isLoading ? '처리 중...' : mode === 'login' ? '로그인' : '회원가입'}
+                {isLoading ? '처리 중...' : mode === 'login' ? '로그인' : '✓ 가입 완료'}
               </button>
             </form>
 
