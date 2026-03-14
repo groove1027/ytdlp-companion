@@ -113,6 +113,7 @@ const SubtitleRemoverTab: React.FC = () => {
           }
         },
         subtitleLang,
+        videoDuration,
       );
 
       // 비용 추가
@@ -255,6 +256,19 @@ const SubtitleRemoverTab: React.FC = () => {
                     </div>
                   </>
                 )}
+              </div>
+            )}
+
+            {/* 15초 초과 영상 — 무료 플랜 제한 경고 */}
+            {videoFile && videoDuration > 15 && (
+              <div className="mt-3 p-2.5 rounded-lg bg-amber-900/20 border border-amber-500/30">
+                <p className="text-xs text-amber-300 font-medium">
+                  영상 길이가 {Math.floor(videoDuration / 60)}분 {Math.floor(videoDuration % 60)}초입니다.
+                  GhostCut 무료 플랜은 15초까지만 처리됩니다.
+                </p>
+                <p className="text-[11px] text-amber-400/70 mt-1">
+                  전체 영상을 처리하려면 GhostCut 유료 플랜이 필요합니다.
+                </p>
               </div>
             )}
 

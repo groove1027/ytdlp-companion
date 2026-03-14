@@ -563,6 +563,8 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
           dims.width,
           dims.height,
           (msg) => set({ cleanMessage: `[${i + 1}/${videosToClean.length}] ${msg}` }),
+          'ko',
+          video.durationSec ?? undefined,
         );
 
         const cleanedUrl = URL.createObjectURL(cleanedBlob);

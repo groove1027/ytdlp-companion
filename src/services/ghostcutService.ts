@@ -142,6 +142,8 @@ interface PollResult {
   videoUrl?: string;
   errorDetail?: string;
   message?: string;
+  duration?: number;
+  fileSize?: number;
 }
 
 /** 재시도 래퍼 — 일시적 네트워크 오류 대비 (최대 retries회 재시도, 지수 백오프) */
@@ -230,11 +232,11 @@ const formatElapsed = (sec: number): string => {
   return m > 0 ? `${m}분 ${s}초` : `${s}초`;
 };
 
-/** 작업 결과 폴링 (D1 경유, 최대 30분, 8초 간격, 네트워크 오류 자동 재시도) */
+/** 작업 결과 폴링 (D1 경유, 최대 45분, 8초 간격, 네트워크 오류 자동 재시도) */
 const pollResult = async (
   projectId: number,
   onProgress?: (message: string, elapsedSec: number) => void,
-): Promise<string> => {
+): Promise<{ videoUrl: string; duration?: number }> => {
   // [FIX #188] 폴링 시간 45분으로 확장 — 긴 영상 처리 대응
   const MAX_POLLS = 340; // 45분 / 8초
   const POLL_INTERVAL = 8000;
@@ -306,7 +308,7 @@ const pollResult = async (
     }
 
     if (data.status === 'done' && data.videoUrl) {
-      return data.videoUrl;
+      return { videoUrl: data.videoUrl, duration: data.duration };
     }
 
     if (data.status === 'failed') {
@@ -397,6 +399,25 @@ const downloadResult = async (resultUrl: string): Promise<Blob> => {
   throw new Error('downloadResult: unreachable');
 };
 
+/** 영상 Blob의 재생시간(초) 측정 — 브라우저 video 엘리먼트 활용 */
+const getVideoBlobDuration = (blob: Blob): Promise<number> => {
+  return new Promise((resolve) => {
+    const video = document.createElement('video');
+    video.preload = 'metadata';
+    const url = URL.createObjectURL(blob);
+    video.onloadedmetadata = () => {
+      const dur = video.duration;
+      URL.revokeObjectURL(url);
+      resolve(isFinite(dur) ? dur : 0);
+    };
+    video.onerror = () => {
+      URL.revokeObjectURL(url);
+      resolve(0);
+    };
+    video.src = url;
+  });
+};
+
 /**
  * GhostCut 자막 제거 전체 파이프라인
  * 1. 영상 Cloudinary 업로드 (URL 필요)
@@ -410,6 +431,7 @@ export const removeSubtitlesWithGhostCut = async (
   _height: number,
   onProgress?: (message: string, elapsedSec?: number) => void,
   lang: GhostCutLang = 'ko',
+  originalDuration?: number,
 ): Promise<Blob> => {
   logger.info('[GhostCut] 자막 제거 파이프라인 시작');
 
@@ -424,9 +446,23 @@ export const removeSubtitlesWithGhostCut = async (
   const { projectId } = await submitTask(videoUrl, lang);
   logger.info('[GhostCut] 작업 제출', { projectId, lang });
 
-  // 3. KV 경유 폴링 (최대 30분, 네트워크 오류 5회 연속까지 자동 복구)
-  const resultUrl = await pollResult(projectId, onProgress);
-  logger.info('[GhostCut] 처리 완료', { resultUrl });
+  // 3. KV 경유 폴링 (최대 45분, 네트워크 오류 5회 연속까지 자동 복구)
+  const { videoUrl: resultUrl, duration: resultDuration } = await pollResult(projectId, onProgress);
+  logger.info('[GhostCut] 처리 완료', { resultUrl, resultDuration });
+
+  // 3.5. 무료 플랜 15초 제한 감지
+  if (originalDuration && originalDuration > 20 && resultDuration != null && resultDuration <= 16) {
+    logger.warn('[GhostCut] 결과 영상이 원본보다 크게 짧음 — 무료 플랜 15초 제한', {
+      originalDuration: Math.round(originalDuration),
+      resultDuration: Math.round(resultDuration),
+    });
+    throw new Error(
+      `결과 영상이 ${Math.round(resultDuration)}초로 잘렸습니다 (원본 ${Math.round(originalDuration)}초).\n` +
+      'GhostCut 무료 플랜은 영상 길이를 15초로 제한합니다.\n' +
+      'GhostCut 유료 플랜으로 업그레이드하시면 전체 영상을 처리할 수 있습니다.\n' +
+      '→ https://ghostcut.jollytoday.com'
+    );
+  }
 
   // 4. 결과 다운로드 (최대 3회 재시도)
   onProgress?.('정제된 영상 다운로드 중...');
@@ -441,6 +477,23 @@ export const removeSubtitlesWithGhostCut = async (
       resultSize: resultBlob.size,
       ratio: Math.round(sizeRatio * 100) + '%',
     });
+  }
+
+  // 5.5. 폴백: poll에서 duration이 없었을 때 실제 blob 재생시간으로 무료 플랜 감지
+  if (originalDuration && originalDuration > 20 && resultDuration == null) {
+    const actualDuration = await getVideoBlobDuration(resultBlob);
+    if (actualDuration > 0 && actualDuration <= 16) {
+      logger.warn('[GhostCut] 결과 영상 실측 길이 ~15초 — 무료 플랜 15초 제한 감지', {
+        originalDuration: Math.round(originalDuration),
+        actualDuration: Math.round(actualDuration),
+      });
+      throw new Error(
+        `결과 영상이 ${Math.round(actualDuration)}초로 잘렸습니다 (원본 ${Math.round(originalDuration)}초).\n` +
+        'GhostCut 무료 플랜은 영상 길이를 15초로 제한합니다.\n' +
+        'GhostCut 유료 플랜으로 업그레이드하시면 전체 영상을 처리할 수 있습니다.\n' +
+        '→ https://ghostcut.jollytoday.com'
+      );
+    }
   }
 
   return resultBlob;
