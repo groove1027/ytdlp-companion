@@ -8,6 +8,7 @@
 
 ## 🟢 완료된 작업
 
+- [x] **#254 타입캐스트 성우 '김건' 등록** — BUILTIN_TYPECAST_VOICES에 tc_kimgun 추가 (male, young_adult, Narration/Podcast), 카운트 413→414 (typecastService.ts, 2026-03-14)
 - [x] **#240/#241 버그 2건 수정** — (1) #240: 편집실 MP4 내보내기에서 타입캐스트 나레이션 누락 — blob: URL 만료 시 씬의 IDB 복원 audioUrl 폴백 적용 + 오디오 로드 실패 시 콘솔 경고 추가 (2) #241: 영상분석 편집점 비주얼 미표시 — 배치 병합 텍스트 parseVersions 실패 시 타임코드 수집 0개 → 프레임 추출 스킵 버그, `parsed` 대신 스토어의 최종 `versions`로 타임코드 수집 (EditRoomTab.tsx, ffmpegService.ts, VideoAnalysisRoom.tsx, 2026-03-14)
 - [x] **#237/#238/#239 버그 3건 일괄 처리** — (1) #237: 이미 커밋 d4f9fef에서 수정 완료 → 코멘트+Close (2) #238: VideoAnalysisRoom downloadFile/downloadSrt DOM 미추가+즉시 URL 해제 버그 → document.body.appendChild + setTimeout 5초 지연으로 수정+코멘트+Close (3) #239: "창수" 음성은 타입캐스트 미제공 → 안내 코멘트+Close (VideoAnalysisRoom.tsx, 2026-03-14)
 - [x] **도움말(helpContent.ts) 전면 업데이트** — 배포된 앱과 불일치하던 도움말 콘텐츠 전면 수정: (1) 대본작성 탭: AI 모델 선택(Gemini/Claude), 3단계 마법사(소재→스타일→생성), 본능 기제, 벤치마크, 파일 불러오기, 단락 나누기 등 8개 섹션 완전 재작성 (2) 채널분석 탭: 소셜 분석실(인스타/틱톡), 조회수 알림 2개 서브탭 신규 추가 (3) 사운드스튜디오: 뮤직 레퍼런스 분석실 섹션 추가, 섹션 탭 수 3→4 수정, 음악 모델 V4.5/V4.5ALL 추가 (4) 이미지/영상 탭: 장면 분석 모드 설명 수정, 보기 모드(미리보기/그리드/리스트) 추가, 배치 영상 옵션 7가지 상세화, 안내 배너/삭제 기능/편집실 이동 추가 (5) 쇼핑콘텐츠: 서브탭 3→4 수정, 쇼핑 채널 AI 영상 섹션 신규 추가 (6) 전체 13개 탭 summary 보강 — 더 친절하고 상세하게 (helpContent.ts, 2026-03-14)

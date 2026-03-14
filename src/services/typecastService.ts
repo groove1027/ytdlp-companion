@@ -123,7 +123,7 @@ export const V30_EMOTIONS: string[] = ['normal','happy','sad','angry','whisper',
 export const V21_EMOTIONS: string[] = ['normal','happy','sad','angry','tonemid','toneup'];
 
 const BUILTIN_TYPECAST_VOICES: TypecastVoice[] = [
-  // ─── Korean Characters (413) ───
+  // ─── Korean Characters (414) ───
   { voice_id: 'tc_ari', name: '아리', gender: 'female', age: 'young_adult', language: ['kor','eng'], models: ['ssfm-v30','ssfm-v21'], emotions: ALL_EMOTIONS, use_cases: ['Conversational','Short-form'], preview_url: undefined, image_url: 'https://static2.typecast.ai/c/Ari/Ari_256.webp' },
   { voice_id: 'tc_anchorhwa', name: '앵커화', gender: 'female', age: 'young_adult', language: ['kor','eng'], models: ['ssfm-v30','ssfm-v21'], emotions: ALL_EMOTIONS, use_cases: ['News','Narration'], preview_url: undefined, image_url: 'https://static2.typecast.ai/c/AnchorHwa/anchorhwa_256.webp' },
   { voice_id: 'tc_bono', name: '보노', gender: 'male', age: 'young_adult', language: ['kor','eng'], models: ['ssfm-v30','ssfm-v21'], emotions: ALL_EMOTIONS, use_cases: ['Conversational','Podcast'], preview_url: undefined, image_url: 'https://static2.typecast.ai/c/Bono/bono2.webp' },
@@ -537,6 +537,7 @@ const BUILTIN_TYPECAST_VOICES: TypecastVoice[] = [
   { voice_id: 'tc_sky', name: '스카이', gender: 'male', age: 'young_adult', language: ['kor','eng'], models: ['ssfm-v30','ssfm-v21'], emotions: ALL_EMOTIONS, use_cases: ['News','Narration'], preview_url: undefined, image_url: 'https://static2.typecast.ai/c/skymain256.webp' },
   { voice_id: 'tc_taebaek', name: '태백', gender: 'male', age: 'young_adult', language: ['kor','eng'], models: ['ssfm-v30','ssfm-v21'], emotions: ALL_EMOTIONS, use_cases: ['Narration','Audiobook'], preview_url: undefined, image_url: 'https://static2.typecast.ai/c/taebaek_main256.webp' },
   { voice_id: 'tc_toby', name: '토비', gender: 'male', age: 'young_adult', language: ['kor','eng'], models: ['ssfm-v30','ssfm-v21'], emotions: ALL_EMOTIONS, use_cases: ['Narration','Short-form'], preview_url: undefined, image_url: 'https://static2.typecast.ai/c/tobymain256.webp' },
+  { voice_id: 'tc_kimgun', name: '김건', gender: 'male', age: 'young_adult', language: ['kor','eng'], models: ['ssfm-v30','ssfm-v21'], emotions: ALL_EMOTIONS, use_cases: ['Narration','Podcast'], preview_url: undefined, image_url: undefined },
 
   // ─── English Characters (17) ───
   { voice_id: 'tc_athena', name: 'Athena', gender: 'female', age: 'young_adult', language: ['eng','kor'], models: ['ssfm-v30','ssfm-v21'], emotions: ALL_EMOTIONS, use_cases: ['Narration','Audiobook'], preview_url: undefined, image_url: undefined },
