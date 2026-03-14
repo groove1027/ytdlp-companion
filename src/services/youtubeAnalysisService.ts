@@ -8,6 +8,7 @@ import type {
     ChannelInfo,
     ChannelScript,
     ChannelGuideline,
+    ContentRegion,
     KeywordAnalysisResult,
     RelatedKeyword,
     TopVideo,
@@ -1481,12 +1482,39 @@ const getVideoDescriptionFallback = async (videoId: string, apiKey: string): Pro
 // === CHANNEL STYLE ANALYSIS (AI) ===
 
 /**
+ * 대본 텍스트에서 콘텐츠 언어/지역을 자동 감지
+ * 한글 비율이 10% 미만이면 해외 콘텐츠로 판단
+ */
+export const detectContentRegion = (scripts: ChannelScript[]): ContentRegion => {
+    const sample = scripts.map(s => s.transcript || s.description || '').join(' ').slice(0, 5000);
+    const totalChars = sample.replace(/\s/g, '').length;
+    if (totalChars === 0) return 'domestic';
+    const koreanChars = (sample.match(/[\uAC00-\uD7AF]/g) || []).length;
+    return (koreanChars / totalChars) < 0.1 ? 'overseas' : 'domestic';
+};
+
+/**
+ * 해외 콘텐츠의 주요 언어를 추정 (영어/일본어/스페인어 등)
+ */
+const detectPrimaryLanguage = (scripts: ChannelScript[]): string => {
+    const sample = scripts.map(s => s.transcript || '').join(' ').slice(0, 3000);
+    const jpChars = (sample.match(/[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]/g) || []).length;
+    const latinChars = (sample.match(/[a-zA-Z]/g) || []).length;
+    const totalNonSpace = sample.replace(/\s/g, '').length;
+    if (totalNonSpace === 0) return 'English';
+    if (jpChars / totalNonSpace > 0.3) return 'Japanese';
+    if (latinChars / totalNonSpace > 0.5) return 'English';
+    return 'English'; // 기본값
+};
+
+/**
  * 채널 대본들을 분석하여 채널 스타일 가이드라인 생성
  * Evolink Gemini 3.1 Pro를 사용하여 채널의 말투, 구조, 패턴 분석
  */
 export const analyzeChannelStyle = async (
     scripts: ChannelScript[],
-    channelInfo: ChannelInfo
+    channelInfo: ChannelInfo,
+    contentRegion: ContentRegion = 'domestic'
 ): Promise<ChannelGuideline> => {
     logger.info('[YouTube] 채널 스타일 역설계 분석 시작', { channel: channelInfo.title, scriptCount: scripts.length });
 
@@ -1552,7 +1580,21 @@ export const analyzeChannelStyle = async (
         ? `\n\n[⚠ 데이터 품질 경고] ${scripts.length}개 영상 중 ${captionCount}개는 실제 자막(대본), ${descriptionCount}개는 영상 설명(description)으로 대체됨.\n영상 설명은 실제 말투/구조와 다를 수 있으므로, "영상 설명으로 대체" 표시된 영상은 주제/키워드 참고용으로만 활용하고, 말투·종결어미·호흡 분석은 자막이 확보된 영상 위주로 수행하세요.`
         : '';
 
+    // 해외 콘텐츠 여부에 따라 분석 차원 및 지침서 템플릿 분기
+    const isOverseas = contentRegion === 'overseas';
+    const primaryLang = isOverseas ? detectPrimaryLanguage(scripts) : 'Korean';
+
     // 초정밀 스타일 클로닝 역설계 프롬프트
+    const languageContext = isOverseas
+        ? `\n\n[Language & Cultural Context]
+이 채널은 해외(${primaryLang}) 콘텐츠입니다.
+⚠ 모든 문법·구조 분석은 반드시 ${primaryLang} 문법 체계를 기준으로 수행하세요.
+한국어 종결어미(~다, ~요, ~네요 등), 한국어 접속사, 한국어 문법 패턴은 절대 사용하지 마세요.
+대신 ${primaryLang}의 고유한 문법 구조(시제 분포, 능동/수동태 비율, 문장 유형, 접속사/전환어, 관사 사용 등)를 분석하세요.
+해당 문화권(북미/유럽/일본 등)의 콘텐츠 소비 패턴, 시청자 특성, 문화적 맥락을 반영하세요.
+결과는 한국어로 작성하되, 분석 기준은 원본 콘텐츠의 언어(${primaryLang})로 하세요.`
+        : '';
+
     const systemPrompt = `[Role Definition]
 당신은 세계 최고의 '텍스트 포렌식 전문가(Text Forensic Expert)'이자 'AI 페르소나 아키텍트'입니다.
 당신의 임무는 아래 제공될 [Raw Data (원본 대본)]를 나노 단위로 해부하여, 해당 화자의 언어 습관, 사고 방식, 무의식적 패턴까지 완벽하게 복제할 수 있는 [궁극의 시스템 프롬프트(System Prompt)]를 설계하는 것입니다.
@@ -1567,15 +1609,47 @@ export const analyzeChannelStyle = async (
 - 공통 패턴: 모든 영상에서 반복되는 스타일/어투/구조
 - 주제 다양성: 각 영상이 다루는 서로 다른 주제 범주
 - 개별 특성: 특정 영상에서만 나타나는 독특한 요소
-이 세 가지를 구분하여 분석하세요. 본문이 짧거나 없는 영상은 제목과 태그에서 주제를 유추하세요.
+이 세 가지를 구분하여 분석하세요. 본문이 짧거나 없는 영상은 제목과 태그에서 주제를 유추하세요.${languageContext}
 
 반드시 JSON 형식으로만 응답하세요. 마크다운 코드 블록 없이 순수 JSON만 출력하세요.`;
+
+    // 해외 콘텐츠용 분석 차원 (영어 문법 체계 기반)
+    const analysisDimensions = isOverseas
+        ? `1. [Cognitive Model] 사고 회로 및 세계관 분석 - 논리 구조, 대상 인식 필터, 문화적 전제(해당 문화권의 가치관·유머·상식 반영)
+2. [Syntactic Fingerprint] ${primaryLang} 문장 구조 분석 - 평균 문장 길이(단어 수), 시제 분포(현재/과거/미래 비율%), 능동태/수동태 비율, 문장 유형(단문/중문/복문 비율%), 수사 의문문 빈도, 접속사·전환어(however/moreover/but 등) 패턴, 관용구·축약형 사용 빈도
+3. [Visual Formatting] 줄바꿈 및 시각적 리듬 - 줄바꿈 트리거, 공백의 미학
+4. [Lexical Database] 핵심 어휘 및 치환 규칙 - 화자 고유의 ${primaryLang} 표현, 구어체/문어체 레벨(register), 은어/슬랭, 관용구(idioms), 비유적 표현
+5. [Narrative Arc] 서사 전개 패턴 - 도입부(Hook), 중반부(Build-up), 결말(Pay-off), 해당 문화권의 스토리텔링 관습 반영
+6. [Emotional Dynamics] 감정의 증폭과 급변 - 감정 기복 트리거, 반어적 표현, 해당 문화의 감정 표현 방식
+7. [Meta-Fiction] 제4의 벽 및 청자 설정 - 청자 호명 방식 (guys/folks/everyone 등)
+8. [Cultural Context] 문화적 맥락 - 해당 문화권의 레퍼런스, 밈, 유머 코드, 시청자 인구통계(연령/지역/관심사), 해당 국가의 콘텐츠 트렌드`
+        : `1. [Cognitive Model] 사고 회로 및 세계관 분석 - 논리 구조, 대상 인식 필터
+2. [Syntactic Fingerprint] 문장 구조 및 호흡 분석 - 평균 문장 길이, 종결어미 패턴(확률 분포), 수사 의문문, 접속사 빈도
+3. [Visual Formatting] 줄바꿈 및 시각적 리듬 - 줄바꿈 트리거, 공백의 미학
+4. [Lexical Database] 핵심 어휘 및 치환 규칙 - 나만의 사전, 비속어/은어 레벨, 의성어/의태어
+5. [Narrative Arc] 기-승-전-결 전개 패턴 - 도입부(Hook), 중반부(Build-up), 결말(Pay-off)
+6. [Emotional Dynamics] 감정의 증폭과 급변 - 감정 기복 트리거, 반어적 표현
+7. [Meta-Fiction] 제4의 벽 및 청자 설정 - 청자 호명 방식
+8. [Negative Constraints] 절대 금기 사항 - 캐릭터 붕괴 방지 금지 규칙`;
+
+    // 해외 콘텐츠용 fullGuidelineText 템플릿 (영어 문법 분석 구조)
+    const guidelineTemplate = isOverseas
+        ? `"위 8가지 분석을 종합한 궁극의 시스템 프롬프트. 아래 구조로 4000자 이상 매우 상세히 작성 (한국어로 작성하되, 문법·구조 분석은 ${primaryLang} 기준으로):\\n\\n[페르소나 선언] 이 AI의 정체성 한 줄 정의\\n[사고 회로] 논리 구조, 세계관, 문화적 전제 상세 규칙\\n[${primaryLang} 문장 구조 규칙] 평균 문장 길이(단어 수), 시제 분포표(present 40%, past 30% 등), 능동/수동태 비율, 문장 유형 분포(simple/compound/complex %), 수사 의문문 빈도, 접속사·전환어 패턴(however, but, so 등 빈도), 관용구·축약형 사용 규칙\\n[어휘 사전] 이 화자만의 고유 ${primaryLang} 표현 20개 이상 + 치환 규칙(일반 표현→화자 표현), register 레벨(formal/casual/colloquial)\\n[줄바꿈 규칙] 줄바꿈 트리거 조건, 공백 활용 패턴, 시각적 리듬\\n[서사 구조] 도입부 Hook 공식(3가지 이상 예시), 중반 Build-up 패턴, 결말 Pay-off 시그니처\\n[감정 역학] 감정 증폭 트리거, 급변 패턴, 반어법 사용 규칙\\n[청자 관계] 호명 방식(guys/folks 등), 제4의 벽 활용, 공감대 형성 전략\\n[문화적 맥락] 해당 문화권의 레퍼런스, 밈, 유머 코드, 콘텐츠 트렌드, 시청자 인구통계 반영 규칙\\n[절대 금기] 캐릭터 붕괴 방지 금지 규칙 5개 이상\\n[실전 예시] 이 화자 스타일로 쓴 ${primaryLang} 도입부 3개 + 결말부 2개 예시"`
+        : `"위 8가지 분석을 종합한 궁극의 시스템 프롬프트. 아래 구조로 4000자 이상 매우 상세히 작성:\\n\\n[페르소나 선언] 이 AI의 정체성 한 줄 정의\\n[사고 회로] 논리 구조, 세계관, 대상 인식 필터 상세 규칙\\n[문장 구조 규칙] 평균 문장 길이, 종결어미 확률 분포표(~다 30%, ~요 20% 등), 수사 의문문 빈도, 접속사 패턴\\n[어휘 사전] 이 화자만의 고유 표현 20개 이상 + 치환 규칙(일반어→화자 표현)\\n[줄바꿈 규칙] 줄바꿈 트리거 조건, 공백 활용 패턴, 시각적 리듬\\n[서사 구조] 도입부 Hook 공식(3가지 이상 예시), 중반 Build-up 패턴, 결말 Pay-off 시그니처\\n[감정 역학] 감정 증폭 트리거, 급변 패턴, 반어법 사용 규칙\\n[청자 관계] 호명 방식, 제4의 벽 활용, 공감대 형성 전략\\n[절대 금기] 캐릭터 붕괴 방지 금지 규칙 5개 이상\\n[실전 예시] 이 화자 스타일로 쓴 도입부 3개 + 결말부 2개 예시"`;
+
+    // 해외 콘텐츠용 tone/structure 필드 설명
+    const toneDesc = isOverseas
+        ? `"말투/어조 종합 분석 (${primaryLang} 시제·태·문장유형 분포 포함, 한국어 종결어미 분석 금지)"`
+        : `"말투/어조 종합 분석 (종결어미 패턴 확률 분포 포함)"`;
+    const structureDesc = isOverseas
+        ? `"서사 전개 패턴 상세 분석 (해당 문화권의 스토리텔링 관습 반영)"`
+        : `"기-승-전-결 전개 패턴 상세 분석"`;
 
     const userPrompt = `채널명: ${channelInfo.title}
 구독자: ${channelInfo.subscriberCount.toLocaleString()}명
 총 영상: ${channelInfo.videoCount}개
 분석 대상 영상 수: ${scripts.length}개
-
+${isOverseas ? `콘텐츠 언어: ${primaryLang} (해외 콘텐츠)\n` : ''}
 [분석 대상 영상 목록 — 반드시 전부 분석할 것]
 ${videoSummary}
 
@@ -1584,33 +1658,26 @@ ${videoSummary}
 특정 영상 1~2개에만 치우치지 말고, 모든 영상에서 공통점과 차이점을 추출하세요.
 각 영상의 제목, 태그, 본문(또는 설명)을 모두 참고하여 채널 전체의 주제 다양성과 스타일 패턴을 파악하세요.
 본문이 짧거나 없는 영상은 제목/태그/설명에서 주제와 스타일을 유추하세요.
-
+${isOverseas ? `\n[⚠ 해외 콘텐츠 분석 주의사항]\n이 콘텐츠는 ${primaryLang}로 제작되었습니다. 문장 구조 분석 시 반드시 ${primaryLang} 문법 체계(시제, 태, 절 구조, 접속사 등)를 기준으로 분석하세요.\n한국어 문법 요소(종결어미, 조사 등)로 분석하면 안 됩니다. 해당 문화권의 콘텐츠 특성과 시청자 배경도 함께 분석하세요.\n` : ''}
 [Raw Data (원본 대본) — ${scripts.length}개 영상]${descriptionWarning}
 ${combinedScripts}
 
 위 ${scripts.length}개 영상 전체를 아래 8가지 항목으로 철저하게 분석하여, 지침서(System Instruction) 안에 구체적인 규칙(Rule)으로 명시하시오.
 
-1. [Cognitive Model] 사고 회로 및 세계관 분석 - 논리 구조, 대상 인식 필터
-2. [Syntactic Fingerprint] 문장 구조 및 호흡 분석 - 평균 문장 길이, 종결어미 패턴(확률 분포), 수사 의문문, 접속사 빈도
-3. [Visual Formatting] 줄바꿈 및 시각적 리듬 - 줄바꿈 트리거, 공백의 미학
-4. [Lexical Database] 핵심 어휘 및 치환 규칙 - 나만의 사전, 비속어/은어 레벨, 의성어/의태어
-5. [Narrative Arc] 기-승-전-결 전개 패턴 - 도입부(Hook), 중반부(Build-up), 결말(Pay-off)
-6. [Emotional Dynamics] 감정의 증폭과 급변 - 감정 기복 트리거, 반어적 표현
-7. [Meta-Fiction] 제4의 벽 및 청자 설정 - 청자 호명 방식
-8. [Negative Constraints] 절대 금기 사항 - 캐릭터 붕괴 방지 금지 규칙
+${analysisDimensions}
 
 다음 JSON 형식으로 결과를 출력하세요 (${scripts.length}개 영상 전체를 종합 반영):
 {
   "channelName": "채널명",
-  "tone": "말투/어조 종합 분석 (종결어미 패턴 확률 분포 포함)",
-  "structure": "기-승-전-결 전개 패턴 상세 분석",
+  "tone": ${toneDesc},
+  "structure": ${structureDesc},
   "topics": ["${scripts.length}개 영상에서 추출한 주요 주제 — 각 영상의 제목/태그/본문에서 파악한 다양한 주제를 모두 포함"],
   "keywords": ["${scripts.length}개 영상 전체에서 추출한 핵심 키워드"],
-  "targetAudience": "타겟 시청자 분석 (${scripts.length}개 영상의 주제 다양성 반영)",
+  "targetAudience": "타겟 시청자 분석 (${scripts.length}개 영상의 주제 다양성 반영${isOverseas ? ', 해당 문화권의 인구통계·관심사 포함' : ''})",
   "avgLength": 평균글자수(숫자),
   "hookPattern": "도입부(Hook) 패턴 - 첫 문장 충격 요법 분석",
   "closingPattern": "결말(Pay-off) 패턴 - 시그니처 엔딩 분석",
-  "fullGuidelineText": "위 8가지 분석을 종합한 궁극의 시스템 프롬프트. 아래 구조로 4000자 이상 매우 상세히 작성:\n\n[페르소나 선언] 이 AI의 정체성 한 줄 정의\n[사고 회로] 논리 구조, 세계관, 대상 인식 필터 상세 규칙\n[문장 구조 규칙] 평균 문장 길이, 종결어미 확률 분포표(~다 30%, ~요 20% 등), 수사 의문문 빈도, 접속사 패턴\n[어휘 사전] 이 화자만의 고유 표현 20개 이상 + 치환 규칙(일반어→화자 표현)\n[줄바꿈 규칙] 줄바꿈 트리거 조건, 공백 활용 패턴, 시각적 리듬\n[서사 구조] 도입부 Hook 공식(3가지 이상 예시), 중반 Build-up 패턴, 결말 Pay-off 시그니처\n[감정 역학] 감정 증폭 트리거, 급변 패턴, 반어법 사용 규칙\n[청자 관계] 호명 방식, 제4의 벽 활용, 공감대 형성 전략\n[절대 금기] 캐릭터 붕괴 방지 금지 규칙 5개 이상\n[실전 예시] 이 화자 스타일로 쓴 도입부 3개 + 결말부 2개 예시"
+  "fullGuidelineText": ${guidelineTemplate}
 }`;
 
     try {
@@ -1683,7 +1750,7 @@ export const getVideoComments = async (videoId: string, maxResults: number = 30)
  * L2: 썸네일 시각 스타일 분석 (Gemini Vision — multimodal)
  * 영상당 2장 (커스텀 썸네일 + 중간 캡처) → Gemini에 배치 전송
  */
-const analyzeThumbnailStyle = async (scripts: ChannelScript[]): Promise<string> => {
+const analyzeThumbnailStyle = async (scripts: ChannelScript[], contentRegion: ContentRegion = 'domestic'): Promise<string> => {
     const ytScripts = scripts.filter(s => s.videoId && !s.videoId.startsWith('manual-') && !s.videoId.startsWith('file-'));
     if (ytScripts.length === 0) return '';
 
@@ -1693,8 +1760,9 @@ const analyzeThumbnailStyle = async (scripts: ChannelScript[]): Promise<string> 
         imageParts.push({ type: 'image_url', image_url: { url: `https://img.youtube.com/vi/${s.videoId}/2.jpg` } });
     }
 
+    const isOverseas = contentRegion === 'overseas';
     const messages: EvolinkChatMessage[] = [
-        { role: 'system', content: 'YouTube 채널 시각 스타일 분석 전문가. 한국어로 응답.' },
+        { role: 'system', content: `YouTube 채널 시각 스타일 분석 전문가. 한국어로 응답.${isOverseas ? ' 해외 채널이므로 해당 문화권의 시각적 트렌드와 디자인 관습을 반영하여 분석.' : ''}` },
         {
             role: 'user',
             content: [
@@ -1738,7 +1806,7 @@ const analyzeThumbnailStyle = async (scripts: ChannelScript[]): Promise<string> 
  * L3: 딥 영상 분석 (Gemini v1beta — YouTube URL 직접 입력)
  * 조회수 상위 2개 영상을 YouTube URL로 Gemini에 전달하여 편집/오디오 스타일 분석
  */
-const analyzeDeepVideoStyle = async (scripts: ChannelScript[]): Promise<{ editGuide: string; audioGuide: string }> => {
+const analyzeDeepVideoStyle = async (scripts: ChannelScript[], contentRegion: ContentRegion = 'domestic'): Promise<{ editGuide: string; audioGuide: string }> => {
     const ytScripts = scripts.filter(s => s.videoId && !s.videoId.startsWith('manual-') && !s.videoId.startsWith('file-'));
     if (ytScripts.length === 0) return { editGuide: '', audioGuide: '' };
 
@@ -1833,7 +1901,7 @@ const analyzeDeepVideoStyle = async (scripts: ChannelScript[]): Promise<{ editGu
 /**
  * L4: 댓글 감성 분석 — 상위 5개 영상의 인기 댓글 수집 + AI 분석
  */
-const analyzeCommentSentiment = async (scripts: ChannelScript[]): Promise<string> => {
+const analyzeCommentSentiment = async (scripts: ChannelScript[], contentRegion: ContentRegion = 'domestic'): Promise<string> => {
     const ytScripts = scripts.filter(s => s.videoId && !s.videoId.startsWith('manual-') && !s.videoId.startsWith('file-'));
     if (ytScripts.length === 0) return '';
 
@@ -1851,8 +1919,9 @@ const analyzeCommentSentiment = async (scripts: ChannelScript[]): Promise<string
     if (allComments.length < 5) return '';
 
     try {
+        const isOverseas = contentRegion === 'overseas';
         const res = await evolinkChat([
-            { role: 'system', content: 'YouTube 시청자 심리 및 댓글 분석 전문가. 정량적 데이터와 정성적 인사이트를 모두 포함하여 한국어로 매우 상세하게 응답.' },
+            { role: 'system', content: `YouTube 시청자 심리 및 댓글 분석 전문가. 정량적 데이터와 정성적 인사이트를 모두 포함하여 한국어로 매우 상세하게 응답.${isOverseas ? ' 해외 채널이므로 해당 문화권의 시청자 특성, 댓글 문화, 인구통계적 차이를 반영하여 분석.' : ''}` },
             { role: 'user', content: `아래는 YouTube 채널의 인기 영상 시청자 댓글입니다.\n${allComments.join('\n')}\n\n아래 항목을 각각 5줄 이상으로 매우 상세히 분석하세요:\n\n1. 핵심 반응 분석\n   - 시청자가 가장 좋아하는 요소 TOP 5 (편집/유머/정보/비주얼/음악/진정성 등)\n   - 각 요소별 대표 댓글 인용 2개씩\n   - 감정적 반응 강도 (열광/만족/호감/무관심 비율 추정)\n\n2. 시청자 요구사항 & 불만\n   - 원하는 콘텐츠 주제 TOP 5\n   - 개선 요청사항 (편집/음질/길이/빈도 등)\n   - 반복되는 질문 패턴\n\n3. 감정 분포 매트릭스\n   - 정보적 반응 vs 재미 반응 vs 감동 반응 vs 비판적 반응 비율(%)\n   - 댓글 톤 분석: 존댓말/반말/이모지/밈 비율\n   - 평균 댓글 길이 및 참여 깊이\n\n4. 커뮤니티 문화 DNA\n   - 인사이드 조크, 밈, 반복 문구 TOP 10\n   - 팬덤 특성 (네이밍, 인사법, 암묵적 규칙)\n   - 시청자 간 상호작용 패턴\n\n5. 타겟 시청자 프로필\n   - 추정 연령대 분포 (10대/20대/30대/40대+ 비율)\n   - 추정 성별 분포\n   - 관심사 키워드 클라우드 (상위 15개)\n   - 시청 동기 (학습/오락/정보/힐링/습관)\n\n6. 콘텐츠 전략 인사이트\n   - 조회수 높은 영상의 댓글 공통점\n   - 시청자 이탈 위험 신호\n   - 신규 시청자 유입 패턴\n   - 추천 콘텐츠 방향 3가지` }
         ], { temperature: 0.3, maxTokens: 6000 });
         return res.choices?.[0]?.message?.content || '';
@@ -1865,7 +1934,7 @@ const analyzeCommentSentiment = async (scripts: ChannelScript[]): Promise<string
 /**
  * L5: 메타데이터 패턴 분석 — 제목 공식, 태그 전략, 챕터 구조
  */
-const analyzeMetadataPatterns = async (scripts: ChannelScript[], channelInfo: ChannelInfo): Promise<string> => {
+const analyzeMetadataPatterns = async (scripts: ChannelScript[], channelInfo: ChannelInfo, contentRegion: ContentRegion = 'domestic'): Promise<string> => {
     if (scripts.length === 0) return '';
 
     const titles = scripts.map((s, i) => `${i + 1}. ${s.title} (조회수 ${s.viewCount.toLocaleString()})`).join('\n');
@@ -1885,7 +1954,7 @@ const analyzeMetadataPatterns = async (scripts: ChannelScript[], channelInfo: Ch
 
     try {
         const res = await evolinkChat([
-            { role: 'system', content: '유튜브 SEO 전문가이자 콘텐츠 전략 분석가. 제목 공식과 메타데이터 전략을 실전에서 바로 적용 가능할 정도로 매우 상세하게 분석. 한국어로 응답.' },
+            { role: 'system', content: `유튜브 SEO 전문가이자 콘텐츠 전략 분석가. 제목 공식과 메타데이터 전략을 실전에서 바로 적용 가능할 정도로 매우 상세하게 분석. 한국어로 응답.${contentRegion === 'overseas' ? ' 해외 채널이므로 해당 언어권의 SEO 전략, 제목 작성법, 태그 전략, 시청자 검색 패턴을 반영하여 분석.' : ''}` },
             { role: 'user', content: `채널: ${channelInfo.title} (구독자 ${channelInfo.subscriberCount.toLocaleString()}명)\n\n[제목 목록 + 조회수]\n${titles}\n\n[태그 클라우드]\n${topTags || '(태그 없음)'}\n\n[챕터 구조]\n${chapterExamples.join('\n') || '(챕터 없음)'}\n\n아래 항목을 각각 매우 상세히 분석하세요:\n\n1. 제목 공식 (가장 중요 — 바로 제목 지침서로 쓸 수 있을 수준)\n   a. 반복 패턴 분석: 문장 구조, 숫자 사용법, 이모지 패턴, 클릭베이트 요소\n   b. 공식화 가능한 제목 템플릿 10개 (변수 포함, 예: "[숫자] + [자극적 키워드] + [대상]")\n   c. 각 템플릿별 실전 예시 제목 3개씩\n   d. 조회수 높은 제목 vs 낮은 제목의 구조적 차이점\n   e. 제목 작성 규칙 체크리스트 (글자수, 키워드 위치, 감정 트리거, 금지 패턴)\n   f. 이 채널 스타일로 새 제목 5개 생성 예시\n\n2. 태그 전략\n   a. 핵심 SEO 키워드 패턴 (1차/2차/롱테일 분류)\n   b. 주제 분포 맵 (카테고리별 비율)\n   c. 경쟁 키워드 vs 틈새 키워드 비율\n   d. 추천 태그 세트 (새 영상용 20개)\n\n3. 챕터 구조 분석\n   a. 표준 영상 구조 (시간대별 구성)\n   b. 평균 세그먼트 수 및 길이\n   c. 챕터 네이밍 패턴\n\n4. 설명란 패턴\n   a. 설명란 구조 공식\n   b. CTA(Call to Action) 패턴\n   c. 링크/해시태그 활용법\n\n5. 업로드 패턴\n   a. 업로드 주기 분석\n   b. 조회수 높은 영상의 공통점 5가지\n   c. 시즈널/트렌드 대응 패턴` }
         ], { temperature: 0.3, maxTokens: 6000 });
         return res.choices?.[0]?.message?.content || '';
@@ -1905,26 +1974,28 @@ const analyzeMetadataPatterns = async (scripts: ChannelScript[], channelInfo: Ch
  */
 export const analyzeChannelStyleDNA = async (
     scripts: ChannelScript[],
-    channelInfo: ChannelInfo
+    channelInfo: ChannelInfo,
+    contentRegion: ContentRegion = 'domestic'
 ): Promise<ChannelGuideline> => {
     logger.info('[StyleDNA] 5-Layer 채널 스타일 DNA 분석 시작', {
         channel: channelInfo.title,
-        scriptCount: scripts.length
+        scriptCount: scripts.length,
+        contentRegion
     });
 
     // [FIX #209] 2파로 나눠 실행하여 rate limit 완화
     // Wave 1: L1 (텍스트, 필수) + L5 (메타데이터, 텍스트만) — 가벼운 호출 먼저
     const [textResult, metadataResult] = await Promise.allSettled([
-        analyzeChannelStyle(scripts, channelInfo),   // L1: 텍스트 포렌식
-        analyzeMetadataPatterns(scripts, channelInfo) // L5: 메타데이터
+        analyzeChannelStyle(scripts, channelInfo, contentRegion),   // L1: 텍스트 포렌식
+        analyzeMetadataPatterns(scripts, channelInfo, contentRegion) // L5: 메타데이터
     ]);
 
     // Wave 2: L2 (멀티모달) + L3 (영상 URL) + L4 (댓글) — 2초 후 실행
     await new Promise(r => setTimeout(r, 2000));
     const [thumbnailResult, deepVideoResult, commentResult] = await Promise.allSettled([
-        analyzeThumbnailStyle(scripts),              // L2: 썸네일 시각
-        analyzeDeepVideoStyle(scripts),              // L3: 딥 영상
-        analyzeCommentSentiment(scripts),            // L4: 댓글 감성
+        analyzeThumbnailStyle(scripts, contentRegion),              // L2: 썸네일 시각
+        analyzeDeepVideoStyle(scripts, contentRegion),              // L3: 딥 영상
+        analyzeCommentSentiment(scripts, contentRegion),            // L4: 댓글 감성
     ]);
 
     // L1 base guideline
@@ -2002,7 +2073,8 @@ export const analyzeChannelStyleDNA = async (
 export const retryFailedStyleDNA = async (
     scripts: ChannelScript[],
     channelInfo: ChannelInfo,
-    existingGuideline: ChannelGuideline
+    existingGuideline: ChannelGuideline,
+    contentRegion: ContentRegion = 'domestic'
 ): Promise<ChannelGuideline> => {
     const failed = existingGuideline.failedLayers || [];
     if (failed.length === 0) return existingGuideline;
@@ -2012,19 +2084,19 @@ export const retryFailedStyleDNA = async (
     const tasks: Promise<{ layer: string; result: unknown }>[] = [];
 
     if (failed.includes('L1')) {
-        tasks.push(analyzeChannelStyle(scripts, channelInfo).then(r => ({ layer: 'L1', result: r })).catch(() => ({ layer: 'L1', result: null })));
+        tasks.push(analyzeChannelStyle(scripts, channelInfo, contentRegion).then(r => ({ layer: 'L1', result: r })).catch(() => ({ layer: 'L1', result: null })));
     }
     if (failed.includes('L2')) {
-        tasks.push(analyzeThumbnailStyle(scripts).then(r => ({ layer: 'L2', result: r })).catch(() => ({ layer: 'L2', result: null })));
+        tasks.push(analyzeThumbnailStyle(scripts, contentRegion).then(r => ({ layer: 'L2', result: r })).catch(() => ({ layer: 'L2', result: null })));
     }
     if (failed.includes('L3')) {
-        tasks.push(analyzeDeepVideoStyle(scripts).then(r => ({ layer: 'L3', result: r })).catch(() => ({ layer: 'L3', result: null })));
+        tasks.push(analyzeDeepVideoStyle(scripts, contentRegion).then(r => ({ layer: 'L3', result: r })).catch(() => ({ layer: 'L3', result: null })));
     }
     if (failed.includes('L4')) {
-        tasks.push(analyzeCommentSentiment(scripts).then(r => ({ layer: 'L4', result: r })).catch(() => ({ layer: 'L4', result: null })));
+        tasks.push(analyzeCommentSentiment(scripts, contentRegion).then(r => ({ layer: 'L4', result: r })).catch(() => ({ layer: 'L4', result: null })));
     }
     if (failed.includes('L5')) {
-        tasks.push(analyzeMetadataPatterns(scripts, channelInfo).then(r => ({ layer: 'L5', result: r })).catch(() => ({ layer: 'L5', result: null })));
+        tasks.push(analyzeMetadataPatterns(scripts, channelInfo, contentRegion).then(r => ({ layer: 'L5', result: r })).catch(() => ({ layer: 'L5', result: null })));
     }
 
     const results = await Promise.all(tasks);

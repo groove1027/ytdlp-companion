@@ -3,7 +3,7 @@ import { parseFileToText, SUPPORTED_EXTENSIONS, SUPPORTED_FORMATS_LABEL } from '
 import { showToast } from '../../../stores/uiStore';
 import { logger } from '../../../services/LoggerService';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
-import type { ChannelInputSource, ParsedFileEntry, ContentFormat, ChannelScript } from '../../../types';
+import type { ChannelInputSource, ParsedFileEntry, ContentFormat, ContentRegion, ChannelScript } from '../../../types';
 
 const inp = 'bg-gray-900 border border-gray-600 rounded-lg text-white text-sm placeholder-gray-500 focus:ring-2';
 const MAX_FILES = 20;
@@ -31,6 +31,8 @@ interface ChannelInputPanelProps {
   onChannelUrlChange: (url: string) => void;
   contentFormat: ContentFormat;
   onContentFormatChange: (format: ContentFormat) => void;
+  contentRegion: ContentRegion;
+  onContentRegionChange: (region: ContentRegion) => void;
   videoCount: number;
   onVideoCountChange: (count: number) => void;
   videoSortOrder: 'latest' | 'popular';
@@ -49,7 +51,7 @@ interface ChannelInputPanelProps {
 
 const ChannelInputPanel: React.FC<ChannelInputPanelProps> = ({
   inputSource, onInputSourceChange,
-  channelUrl, onChannelUrlChange, contentFormat, onContentFormatChange, videoCount, onVideoCountChange, videoSortOrder, onVideoSortOrderChange, onYoutubeAnalyze,
+  channelUrl, onChannelUrlChange, contentFormat, onContentFormatChange, contentRegion, onContentRegionChange, videoCount, onVideoCountChange, videoSortOrder, onVideoSortOrderChange, onYoutubeAnalyze,
   uploadedFiles, onFilesChange,
   sourceName, onSourceNameChange, onFileManualAnalyze,
   isAnalyzing, error,
@@ -184,7 +186,7 @@ const ChannelInputPanel: React.FC<ChannelInputPanelProps> = ({
       {/* Tab 1: YouTube */}
       {inputSource === 'youtube' && (
         <>
-          <div className="flex items-center gap-4 mb-4">
+          <div className="flex items-center gap-4 mb-4 flex-wrap">
             <label className="text-sm font-medium text-gray-400">콘텐츠 형식</label>
             <div className="flex gap-2">
               {(['long', 'shorts'] as const).map(f => (
@@ -200,6 +202,23 @@ const ChannelInputPanel: React.FC<ChannelInputPanelProps> = ({
                   {f === 'long' ? '롱폼' : '쇼츠'}
                 </button>
               ))}
+            </div>
+            <div className="flex items-center gap-1.5 ml-3 pl-3 border-l border-gray-700">
+              <label className="text-sm font-medium text-gray-400">콘텐츠 지역</label>
+              {(['domestic', 'overseas'] as const).map(r => (
+                <button
+                  key={r}
+                  type="button"
+                  onClick={() => onContentRegionChange(r)}
+                  className={`px-3 py-1.5 text-sm font-semibold rounded-lg border transition-all ${contentRegion === r
+                    ? 'bg-blue-600/20 text-blue-400 border-blue-600/50'
+                    : 'bg-gray-900/50 text-gray-400 border-gray-700/50 hover:border-gray-500 hover:text-gray-200'
+                  }`}
+                >
+                  {r === 'domestic' ? '국내' : '해외'}
+                </button>
+              ))}
+              <span className="text-xs text-gray-600 ml-1">자동 감지</span>
             </div>
           </div>
           <div className="flex items-center gap-4 mb-4">

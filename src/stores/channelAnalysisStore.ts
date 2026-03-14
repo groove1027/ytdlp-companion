@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import {
   ChannelAnalysisSubTab,
   ChannelInputSource,
+  ContentRegion,
   KeywordAnalysisResult,
   RelatedKeyword,
   TopVideo,
@@ -48,6 +49,8 @@ interface ChannelAnalysisStore {
   topicInput: string;
   /** AI 주제 추천 결과 (탭 전환 시 유지) */
   topicRecommendations: LegacyTopicRecommendation[];
+  /** 콘텐츠 지역 구분 (국내/해외) */
+  contentRegion: ContentRegion;
 
   // Actions
   setSubTab: (tab: ChannelAnalysisSubTab) => void;
@@ -79,6 +82,7 @@ interface ChannelAnalysisStore {
   clearUploadedFiles: () => void;
   setTopicInput: (input: string) => void;
   setTopicRecommendations: (topics: LegacyTopicRecommendation[]) => void;
+  setContentRegion: (region: ContentRegion) => void;
   /** 저장된 벤치마크 목록 */
   savedBenchmarks: SavedBenchmarkData[];
   /** 현재 활성 슬롯 ID */
@@ -129,6 +133,7 @@ const INITIAL_STATE = {
   sourceName: '',
   topicInput: '',
   topicRecommendations: [] as LegacyTopicRecommendation[],
+  contentRegion: 'domestic' as ContentRegion,
   savedBenchmarks: [] as SavedBenchmarkData[],
   activeSlotId: null as string | null,
 };
@@ -220,6 +225,7 @@ export const useChannelAnalysisStore = create<ChannelAnalysisStore>((set) => ({
   clearUploadedFiles: () => set({ uploadedFiles: [], sourceName: '' }),
   setTopicInput: (input) => set({ topicInput: input }),
   setTopicRecommendations: (topics) => set({ topicRecommendations: topics }),
+  setContentRegion: (region) => set({ contentRegion: region }),
 
   // --- 벤치마크 IndexedDB 영속화 ---
   saveBenchmark: async () => {

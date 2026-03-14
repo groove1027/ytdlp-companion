@@ -810,6 +810,9 @@ export interface ChannelGuideline {
 /** 채널 분석실 입력 소스 */
 export type ChannelInputSource = 'youtube' | 'file' | 'manual';
 
+/** 콘텐츠 지역 구분 (국내/해외) */
+export type ContentRegion = 'domestic' | 'overseas';
+
 /** 업로드된 파일 파싱 결과 */
 export interface ParsedFileEntry {
   id: string;

@@ -7,7 +7,7 @@ import { useScriptWriterStore } from '../../../stores/scriptWriterStore';
 import { showToast } from '../../../stores/uiStore';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
-import { getChannelInfo, getRecentVideosByFormat, getVideoTranscript, analyzeChannelStyle, analyzeChannelStyleDNA, retryFailedStyleDNA, getRelatedKeywords, getTopVideos } from '../../../services/youtubeAnalysisService';
+import { getChannelInfo, getRecentVideosByFormat, getVideoTranscript, analyzeChannelStyle, analyzeChannelStyleDNA, retryFailedStyleDNA, detectContentRegion, getRelatedKeywords, getTopVideos } from '../../../services/youtubeAnalysisService';
 import type { TranscriptResult } from '../../../services/youtubeAnalysisService';
 import { getYoutubeApiKey } from '../../../services/apiService';
 import { evolinkChat } from '../../../services/evolinkService';
@@ -17,7 +17,7 @@ import ChannelInputPanel from './ChannelInputPanel';
 import AnalysisLoadingPanel, { notifyAnalysisComplete } from './AnalysisLoadingPanel';
 import AnalysisSlotBar from './AnalysisSlotBar';
 import ChannelRemakePanel from './ChannelRemakePanel';
-import type { LegacyTopicRecommendation, ContentFormat, ChannelScript, ChannelInfo, TopicInstinctAnalysis } from '../../../types';
+import type { LegacyTopicRecommendation, ContentFormat, ContentRegion, ChannelScript, ChannelInfo, TopicInstinctAnalysis } from '../../../types';
 
 const VIRAL_CFG = {
   high: { label: '높음', bg: 'bg-red-900/30', text: 'text-red-400', border: 'border-red-800/40', desc: '높은 조회수 잠재력' },
@@ -38,6 +38,7 @@ const ChannelAnalysisRoom: React.FC = () => {
     inputSource, uploadedFiles, sourceName,
     topicInput, topicRecommendations,
     savedBenchmarks, activeSlotId,
+    contentRegion, setContentRegion,
     setChannelInfo, setChannelScripts, setChannelGuideline, savePreset, loadPreset, removePreset,
     setInputSource, setUploadedFiles, setSourceName, syncQuota,
     setTopicInput, setTopicRecommendations,
@@ -57,6 +58,7 @@ const ChannelAnalysisRoom: React.FC = () => {
   const [videoSortOrder, setVideoSortOrder] = useState<'latest' | 'popular'>('latest');
   const [channelUrl, setChannelUrl] = useState('');
   const [progress, setProgress] = useState<{ step: number; message: string } | null>(null);
+  const [videoProgressCount, setVideoProgressCount] = useState<{ current: number; total: number } | null>(null);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
   // topicInput, topicRecommendations → Zustand 스토어에서 관리 (탭 전환 시 유지)
@@ -73,6 +75,7 @@ const ChannelAnalysisRoom: React.FC = () => {
   // --- YouTube 영상 다운로드 (yt-dlp 서버 프록시) ---
   const [showBulkModal, setShowBulkModal] = useState(false);
   const [bulkDownloadProgress, setBulkDownloadProgress] = useState<{ current: number; total: number; failed: number } | null>(null);
+  const bulkDownloadElapsed = useElapsedTimer(!!bulkDownloadProgress);
 
   // 서버 프록시 경유 다운로드 — Content-Disposition: attachment로 바로 파일 저장
   const downloadVideo = useCallback(async (videoId: string, title: string): Promise<boolean> => {
@@ -143,13 +146,16 @@ const ChannelAnalysisRoom: React.FC = () => {
       if (!filtered.length) { setError('해당 형식에 맞는 영상이 없습니다.'); setProgress(null); return; }
       const scripts: ChannelScript[] = [];
       let captionSuccessCount = 0;
+      setVideoProgressCount({ current: 0, total: filtered.length });
       for (let i = 0; i < filtered.length; i++) {
         setProgress({ step: 3, message: `대본 수집 중 (${i + 1}/${filtered.length})...` });
+        setVideoProgressCount({ current: i, total: filtered.length });
         const result: TranscriptResult = await getVideoTranscript(filtered[i].videoId);
         scripts.push({ ...filtered[i], transcript: result.text, transcriptSource: result.source });
         if (result.source === 'caption') captionSuccessCount++;
         syncQuota();
       }
+      setVideoProgressCount(null);
       // 자막 확보 현황 로깅
       const descOnlyCount = scripts.length - captionSuccessCount;
       if (descOnlyCount > 0) {
@@ -159,8 +165,15 @@ const ChannelAnalysisRoom: React.FC = () => {
         }
       }
       setChannelScripts(scripts);
-      setProgress({ step: 4, message: 'AI 채널 스타일 DNA 다층 분석 중... (텍스트 + 시각 + 편집 + 오디오 + 댓글)' });
-      const guideline = await analyzeChannelStyleDNA(scripts, info);
+      // 콘텐츠 지역 자동 감지 (대본 텍스트 기반)
+      const detectedRegion = detectContentRegion(scripts);
+      if (detectedRegion !== contentRegion) {
+        setContentRegion(detectedRegion);
+        logger.info('[채널분석] 콘텐츠 지역 자동 감지', { detected: detectedRegion });
+      }
+      const effectiveRegion = detectedRegion;
+      setProgress({ step: 4, message: `AI 채널 스타일 DNA 다층 분석 중... (${effectiveRegion === 'overseas' ? '해외 콘텐츠 모드' : '국내 콘텐츠 모드'})` });
+      const guideline = await analyzeChannelStyleDNA(scripts, info, effectiveRegion);
       guideline.contentFormat = effectiveFormat;
       setChannelGuideline(guideline);
       setProgress(null);
@@ -174,7 +187,7 @@ const ChannelAnalysisRoom: React.FC = () => {
       setError(`채널 분석 실패: ${msg}`);
       setProgress(null);
     }
-  }, [channelUrl, contentFormat, videoCount, videoSortOrder, setChannelInfo, setChannelScripts, setChannelGuideline]);
+  }, [channelUrl, contentFormat, contentRegion, videoCount, videoSortOrder, setChannelInfo, setChannelScripts, setChannelGuideline, setContentRegion]);
 
   // 파일/직접입력 스타일 분석
   const handleFileManualAnalyze = useCallback(async (scripts: ChannelScript[]) => {
@@ -197,8 +210,11 @@ const ChannelAnalysisRoom: React.FC = () => {
       setProgress({ step: 1, message: '텍스트 준비 중...' });
       setChannelInfo(stubInfo);
       setChannelScripts(scripts);
-      setProgress({ step: 4, message: 'AI 스타일 역설계 분석 중...' });
-      setChannelGuideline(await analyzeChannelStyle(scripts, stubInfo));
+      // 파일/직접입력도 콘텐츠 지역 자동 감지
+      const detectedRegion = detectContentRegion(scripts);
+      if (detectedRegion !== contentRegion) setContentRegion(detectedRegion);
+      setProgress({ step: 4, message: `AI 스타일 역설계 분석 중... (${detectedRegion === 'overseas' ? '해외 콘텐츠 모드' : '국내 콘텐츠 모드'})` });
+      setChannelGuideline(await analyzeChannelStyle(scripts, stubInfo, detectedRegion));
       setProgress(null);
       notifyAnalysisComplete();
       showToast('스타일 분석이 완료되었습니다.');
@@ -207,7 +223,7 @@ const ChannelAnalysisRoom: React.FC = () => {
       setError(`스타일 분석 실패: ${msg}`);
       setProgress(null);
     }
-  }, [sourceName, setChannelInfo, setChannelScripts, setChannelGuideline]);
+  }, [sourceName, contentRegion, setChannelInfo, setChannelScripts, setChannelGuideline, setContentRegion]);
 
   // [FIX #209] 실패한 레이어만 재분석
   const handleRetryFailed = useCallback(async () => {
@@ -215,7 +231,7 @@ const ChannelAnalysisRoom: React.FC = () => {
     setIsRetrying(true);
     setError('');
     try {
-      const updated = await retryFailedStyleDNA(channelScripts, channelInfo, channelGuideline);
+      const updated = await retryFailedStyleDNA(channelScripts, channelInfo, channelGuideline, contentRegion);
       updated.contentFormat = channelGuideline.contentFormat;
       setChannelGuideline(updated);
       if (!updated.failedLayers?.length) {
@@ -229,7 +245,7 @@ const ChannelAnalysisRoom: React.FC = () => {
     } finally {
       setIsRetrying(false);
     }
-  }, [channelGuideline, channelInfo, channelScripts, setChannelGuideline]);
+  }, [channelGuideline, channelInfo, channelScripts, contentRegion, setChannelGuideline]);
 
   // [#232] 소재 발굴 가이드 생성
   const handleGenerateSourceGuide = useCallback(async () => {
@@ -495,6 +511,8 @@ const ChannelAnalysisRoom: React.FC = () => {
           onChannelUrlChange={setChannelUrl}
           contentFormat={contentFormat}
           onContentFormatChange={setContentFormat}
+          contentRegion={contentRegion}
+          onContentRegionChange={setContentRegion}
           videoCount={videoCount}
           onVideoCountChange={setVideoCount}
           videoSortOrder={videoSortOrder}
@@ -525,6 +543,7 @@ const ChannelAnalysisRoom: React.FC = () => {
               estimatedTotalSec={150}
               accent="orange"
               description="채널의 콘텐츠 DNA를 5축(텍스트·시각·편집·오디오·댓글)으로 역설계합니다"
+              videoProgress={videoProgressCount ?? undefined}
             />
           </div>
         )}
@@ -571,25 +590,35 @@ const ChannelAnalysisRoom: React.FC = () => {
                 {inputSource === 'youtube' ? '분석에 사용된 영상 목록' : '스타일 분석에 활용되는 텍스트'}
               </span>
               {inputSource === 'youtube' && (
-                <button
-                  onClick={() => setShowBulkModal(true)}
-                  disabled={!!bulkDownloadProgress}
-                  className="min-w-[140px] px-3 py-1.5 text-xs font-semibold rounded-lg bg-red-600/20 text-red-400 border border-red-500/30 hover:bg-red-600/30 transition-all flex items-center justify-center gap-1.5 disabled:opacity-50"
-                >
-                  {bulkDownloadProgress ? (
-                    <>
-                      <div className="shrink-0 w-3.5 h-3.5 border-2 border-red-400/30 border-t-red-400 rounded-full animate-spin" />
-                      <span className="truncate">{bulkDownloadProgress.current}/{bulkDownloadProgress.total}</span>
-                      {bulkDownloadProgress.failed > 0 && <span className="shrink-0 text-yellow-400">({bulkDownloadProgress.failed})</span>}
-                    </>
-                  ) : (
-                    <>
-                      {/* 다운로드 화살표 아이콘 */}
-                      <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-                      MP4 일괄 다운로드
-                    </>
-                  )}
-                </button>
+                bulkDownloadProgress ? (
+                  <div className="min-w-[200px] bg-red-900/20 border border-red-500/30 rounded-lg px-3 py-2">
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="flex items-center gap-1.5">
+                        <div className="shrink-0 w-3 h-3 border-2 border-red-400/30 border-t-red-400 rounded-full animate-spin" />
+                        <span className="text-xs font-semibold text-red-300">다운로드 중</span>
+                      </div>
+                      <span className="text-xs text-red-400 font-mono tabular-nums">{bulkDownloadProgress.current}/{bulkDownloadProgress.total}</span>
+                    </div>
+                    <div className="h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-gradient-to-r from-red-500 to-red-400 rounded-full transition-all duration-300"
+                        style={{ width: `${(bulkDownloadProgress.current / bulkDownloadProgress.total) * 100}%` }}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between mt-1">
+                      <span className="text-[10px] text-gray-500 tabular-nums">{formatElapsed(bulkDownloadElapsed)} 경과</span>
+                      {bulkDownloadProgress.failed > 0 && <span className="text-[10px] text-yellow-400">{bulkDownloadProgress.failed}개 실패</span>}
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setShowBulkModal(true)}
+                    className="min-w-[140px] px-3 py-1.5 text-xs font-semibold rounded-lg bg-red-600/20 text-red-400 border border-red-500/30 hover:bg-red-600/30 transition-all flex items-center justify-center gap-1.5"
+                  >
+                    <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                    MP4 일괄 다운로드
+                  </button>
+                )
               )}
             </div>
           </div>
@@ -1313,20 +1342,37 @@ const ChannelAnalysisRoom: React.FC = () => {
 
             {/* 진행 상태 바 */}
             {bulkDownloadProgress && (
-              <div className="mb-4">
-                <div className="flex items-center justify-between text-sm mb-1.5">
-                  <span className="text-gray-300">다운로드 중...</span>
-                  <span className="text-red-400 font-mono">{bulkDownloadProgress.current}/{bulkDownloadProgress.total}</span>
+              <div className="mb-4 bg-red-900/15 border border-red-500/20 rounded-lg p-3">
+                <div className="flex items-center gap-2.5 mb-2">
+                  <div className="w-5 h-5 border-2 border-red-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                  <div className="flex-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-red-300 font-semibold">다운로드 중...</span>
+                      <span className="text-sm text-red-400 font-mono font-bold tabular-nums">{bulkDownloadProgress.current}/{bulkDownloadProgress.total}</span>
+                    </div>
+                  </div>
                 </div>
-                <div className="w-full bg-gray-700 rounded-full h-2">
+                <div className="w-full bg-gray-700 rounded-full h-2 overflow-hidden">
                   <div
-                    className="bg-gradient-to-r from-red-500 to-red-400 h-2 rounded-full transition-all duration-300"
+                    className="bg-gradient-to-r from-red-500 to-red-400 h-2 rounded-full transition-all duration-500"
                     style={{ width: `${(bulkDownloadProgress.current / bulkDownloadProgress.total) * 100}%` }}
                   />
                 </div>
-                {bulkDownloadProgress.failed > 0 && (
-                  <p className="text-xs text-yellow-400 mt-1">{bulkDownloadProgress.failed}개 실패</p>
-                )}
+                <div className="flex items-center justify-between mt-1.5">
+                  <span className="text-xs text-gray-500 tabular-nums">{formatElapsed(bulkDownloadElapsed)} 경과</span>
+                  <div className="flex items-center gap-2">
+                    {bulkDownloadProgress.current > 0 && bulkDownloadElapsed > 0 && (
+                      <span className="text-xs text-gray-500">
+                        남은 시간 약 <span className="text-red-400 font-medium">
+                          {formatElapsed(Math.max(0, Math.round((bulkDownloadElapsed / bulkDownloadProgress.current) * (bulkDownloadProgress.total - bulkDownloadProgress.current))))}
+                        </span>
+                      </span>
+                    )}
+                    {bulkDownloadProgress.failed > 0 && (
+                      <span className="text-xs text-yellow-400">{bulkDownloadProgress.failed}개 실패</span>
+                    )}
+                  </div>
+                </div>
               </div>
             )}
 
