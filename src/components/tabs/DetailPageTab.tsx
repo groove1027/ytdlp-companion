@@ -80,6 +80,7 @@ function extractJsonArray(text: string): DetailImageSegment[] | null {
       logicalSections: Array.isArray(item.logicalSections) ? item.logicalSections.map(String) : [],
       keyMessage: String(item.keyMessage || ''),
       visualPrompt: String(item.visualPrompt || ''),
+      koreanPrompt: String(item.koreanPrompt || ''),
     }));
   } catch (e) {
     logger.trackSwallowedError('DetailPageTab:parseSegments', e);
@@ -151,6 +152,14 @@ const DetailPageTab: React.FC = () => {
   const [previewUrls, setPreviewUrls] = useState<string[]>([]);
   const [isUploadingImages, setIsUploadingImages] = useState(false);
 
+  // --- Extended product info ---
+  const [weight, setWeight] = useState('');
+  const [dimensions, setDimensions] = useState('');
+  const [productOptions, setProductOptions] = useState<string[]>(['']);
+  const [designRefPreviews, setDesignRefPreviews] = useState<string[]>([]);
+  const [designRefUrls, setDesignRefUrls] = useState<string[]>([]);
+  const [isUploadingDesignRef, setIsUploadingDesignRef] = useState(false);
+
   // --- Detail page state ---
   const [pageLength, setPageLength] = useState<PageLength>('auto');
   const [customCount, setCustomCount] = useState(6);
@@ -198,6 +207,28 @@ const DetailPageTab: React.FC = () => {
     setPreviewUrls(prev => prev.filter((_, i) => i !== idx));
     setReferenceFiles(prev => prev.filter((_, i) => i !== idx));
     setReferenceUrls(prev => prev.filter((_, i) => i !== idx));
+  }, []);
+
+  const handleDesignRefUpload = useCallback(async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const newFiles = Array.from(files).filter(f => f.type.startsWith('image/'));
+    if (newFiles.length === 0) return;
+    setDesignRefPreviews(prev => [...prev, ...newFiles.map(f => URL.createObjectURL(f))]);
+    setIsUploadingDesignRef(true);
+    try {
+      const urls = await Promise.all(newFiles.map(f => uploadMediaToHosting(f)));
+      setDesignRefUrls(prev => [...prev, ...urls]);
+    } catch (e) {
+      logger.trackSwallowedError('DetailPageTab:uploadDesignRef', e);
+      showToast('디자인 레퍼런스 업로드 실패. 다시 시도해주세요.');
+    } finally {
+      setIsUploadingDesignRef(false);
+    }
+  }, []);
+
+  const removeDesignRef = useCallback((idx: number) => {
+    setDesignRefPreviews(prev => prev.filter((_, i) => i !== idx));
+    setDesignRefUrls(prev => prev.filter((_, i) => i !== idx));
   }, []);
 
   // ============================================================
@@ -260,11 +291,15 @@ const DetailPageTab: React.FC = () => {
 2. visualPrompt는 영어로 작성하며, 9:16 세로 비율의 이커머스 상세페이지 이미지에 적합한 상세한 시각 묘사를 포함하라.
 3. visualPrompt에 "Render the following Korean text prominently and aesthetically: [keyMessage 내용]"을 반드시 포함하라.
 4. 각 섹션이 어떤 판매 논리 전략을 사용하는지 logicalSections에 태그로 명시하라.
+5. koreanPrompt에는 visualPrompt의 한국어 번역(이미지 시각 묘사)을 작성하라. 사용자가 이해하기 쉬운 자연스러운 한국어로.
+6. 무게/용량/사이즈 정보가 있으면 Clarity 섹션에 자연스럽게 포함하라.
+7. 옵션 정보가 있으면 적절한 섹션에서 구매 결정에 도움이 되도록 활용하라.
 
 출력 형식 (JSON 배열만 출력, 다른 텍스트 없이):
-[{"title":"이미지 1 (후킹)","logicalSections":["Hook"],"keyMessage":"한글 카피","visualPrompt":"A high-quality 9:16 vertical e-commerce banner..."}]`;
+[{"title":"이미지 1 (후킹)","logicalSections":["Hook"],"keyMessage":"한글 카피","visualPrompt":"A high-quality 9:16 vertical e-commerce banner...","koreanPrompt":"고품질 세로 이커머스 배너..."}]`;
 
-      const userPrompt = `상품명: ${productName}\n카테고리: ${categoryLabel}\n${price ? `가격: ${price}\n` : ''}${promo ? `프로모션: ${promo}\n` : ''}핵심 특징: ${validFeatures.length > 0 ? validFeatures.join(', ') : '(없음)'}\n타겟 성별: ${gender}\n타겟 연령: ${ageRanges.join(', ')}\n${lengthInstruction}`;
+      const validOptions = productOptions.filter(o => o.trim());
+      const userPrompt = `상품명: ${productName}\n카테고리: ${categoryLabel}\n${price ? `가격: ${price}\n` : ''}${promo ? `프로모션: ${promo}\n` : ''}${weight ? `무게/용량: ${weight}\n` : ''}${dimensions ? `사이즈: ${dimensions}\n` : ''}${validOptions.length > 0 ? `옵션: ${validOptions.join(', ')}\n` : ''}핵심 특징: ${validFeatures.length > 0 ? validFeatures.join(', ') : '(없음)'}\n타겟 성별: ${gender}\n타겟 연령: ${ageRanges.join(', ')}\n${designRefUrls.length > 0 ? '디자인 레퍼런스 이미지가 첨부되었으니, 해당 디자인의 구성/레이아웃/분위기를 참고하되 내용은 이 상품에 맞게 작성하세요.\n' : ''}${lengthInstruction}`;
 
       const response = await evolinkChat(
         [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }],
@@ -279,7 +314,7 @@ const DetailPageTab: React.FC = () => {
     } finally {
       setIsPlanning(false);
     }
-  }, [requireAuth, productName, category, price, promo, features, gender, ageRanges, pageLength, customCount]);
+  }, [requireAuth, productName, category, price, promo, weight, dimensions, productOptions, features, gender, ageRanges, pageLength, customCount, designRefUrls]);
 
   const handleGenerateAll = useCallback(async () => {
     if (!requireAuth('상세페이지 생성')) return;
@@ -292,8 +327,10 @@ const DetailPageTab: React.FC = () => {
       const seg = segments[i];
       setSegments(prev => prev.map((s, idx) => idx === i ? { ...s, isGenerating: true, generationStatus: '생성 중...' } : s));
       try {
-        const fullPrompt = `High-quality vertical 9:16 e-commerce product detail page image. ${seg.visualPrompt}. The product is "${productName}". Render Korean text "${seg.keyMessage}" prominently with clean, modern typography. Professional commercial photography style with clean background.`;
-        const resultUrl = await evolinkGenerateImage(fullPrompt, '9:16', '2K', imageUrls);
+        const koreanContext = seg.koreanPrompt ? ` User's Korean description for reference: "${seg.koreanPrompt}".` : '';
+        const fullPrompt = `High-quality vertical 9:16 e-commerce product detail page image. ${seg.visualPrompt}. The product is "${productName}". Render Korean text "${seg.keyMessage}" prominently with clean, modern typography. Professional commercial photography style with clean background.${koreanContext}`;
+        const allImageUrls = [...(imageUrls || []), ...designRefUrls];
+        const resultUrl = await evolinkGenerateImage(fullPrompt, '9:16', '2K', allImageUrls.length > 0 ? allImageUrls : undefined);
         completed++;
         setGenerationProgress(Math.round((completed / segments.length) * 100));
         setSegments(prev => prev.map((s, idx) => idx === i ? { ...s, imageUrl: resultUrl, isGenerating: false, generationStatus: undefined } : s));
@@ -306,22 +343,23 @@ const DetailPageTab: React.FC = () => {
     }
     setIsGeneratingAll(false);
     showToast('이미지 생성 완료!');
-  }, [requireAuth, segments, referenceUrls, productName]);
+  }, [requireAuth, segments, referenceUrls, designRefUrls, productName]);
 
   const handleRegenerateOne = useCallback(async (segIdx: number) => {
     const seg = segments[segIdx];
     if (!seg) return;
     setSegments(prev => prev.map((s, idx) => idx === segIdx ? { ...s, isGenerating: true, generationStatus: '재생성 중...' } : s));
     try {
-      const imageUrls = referenceUrls.length > 0 ? referenceUrls : undefined;
-      const fullPrompt = `High-quality vertical 9:16 e-commerce product detail page image. ${seg.visualPrompt}. The product is "${productName}". Render Korean text "${seg.keyMessage}" prominently with clean, modern typography. Professional commercial photography style.`;
-      const resultUrl = await evolinkGenerateImage(fullPrompt, '9:16', '2K', imageUrls);
+      const allImageUrls = [...referenceUrls, ...designRefUrls];
+      const koreanContext = seg.koreanPrompt ? ` User's Korean description for reference: "${seg.koreanPrompt}".` : '';
+      const fullPrompt = `High-quality vertical 9:16 e-commerce product detail page image. ${seg.visualPrompt}. The product is "${productName}". Render Korean text "${seg.keyMessage}" prominently with clean, modern typography. Professional commercial photography style.${koreanContext}`;
+      const resultUrl = await evolinkGenerateImage(fullPrompt, '9:16', '2K', allImageUrls.length > 0 ? allImageUrls : undefined);
       setSegments(prev => prev.map((s, idx) => idx === segIdx ? { ...s, imageUrl: resultUrl, isGenerating: false, generationStatus: undefined } : s));
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setSegments(prev => prev.map((s, idx) => idx === segIdx ? { ...s, isGenerating: false, generationStatus: `실패: ${msg.substring(0, 60)}` } : s));
     }
-  }, [segments, referenceUrls, productName]);
+  }, [segments, referenceUrls, designRefUrls, productName]);
 
   // ============================================================
   // Thumbnail handlers
@@ -391,6 +429,9 @@ const DetailPageTab: React.FC = () => {
   const addFeature = () => setFeatures(prev => [...prev, '']);
   const removeFeature = (idx: number) => setFeatures(prev => prev.filter((_, i) => i !== idx));
   const toggleAge = (age: string) => setAgeRanges(prev => prev.includes(age) ? prev.filter(a => a !== age) : [...prev, age]);
+  const updateOption = (idx: number, value: string) => setProductOptions(prev => prev.map((o, i) => i === idx ? value : o));
+  const addOption = () => setProductOptions(prev => [...prev, '']);
+  const removeOption = (idx: number) => setProductOptions(prev => prev.filter((_, i) => i !== idx));
 
   const canProceedStep1 = productName.trim().length > 0;
   const allImagesGenerated = segments.length > 0 && segments.every(s => s.imageUrl);
@@ -541,6 +582,16 @@ const DetailPageTab: React.FC = () => {
                   <input type="text" value={promo} onChange={e => setPromo(e.target.value)} placeholder="예: 오늘만 1+1, 무료배송" className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:border-teal-500 focus:outline-none transition-colors" />
                 </div>
               </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-bold text-gray-300 mb-1.5">무게/용량 (선택)</label>
+                  <input type="text" value={weight} onChange={e => setWeight(e.target.value)} placeholder="예: 30ml, 500g, 1.5L" className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:border-teal-500 focus:outline-none transition-colors" />
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-gray-300 mb-1.5">사이즈 (선택)</label>
+                  <input type="text" value={dimensions} onChange={e => setDimensions(e.target.value)} placeholder="예: 가로 10cm x 세로 15cm, FREE" className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:border-teal-500 focus:outline-none transition-colors" />
+                </div>
+              </div>
 
               {/* Features */}
               <div>
@@ -558,6 +609,21 @@ const DetailPageTab: React.FC = () => {
                     </div>
                   ))}
                   {features.length < 8 && <button onClick={addFeature} className="text-xs text-gray-500 hover:text-teal-400 transition-colors">+ 특징 추가</button>}
+                </div>
+              </div>
+
+              {/* Options */}
+              <div>
+                <label className="text-sm font-bold text-gray-300 mb-1.5 block">상품 옵션 (선택)</label>
+                <p className="text-xs text-gray-500 mb-2">색상, 사이즈 변형, 맛 등 구매 시 선택 가능한 옵션</p>
+                <div className="space-y-2">
+                  {productOptions.map((opt, idx) => (
+                    <div key={idx} className="flex gap-2">
+                      <input type="text" value={opt} onChange={e => updateOption(idx, e.target.value)} placeholder={`옵션 ${idx + 1} (예: 블랙/화이트/네이비)`} className="flex-1 px-4 py-2.5 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:border-teal-500 focus:outline-none transition-colors text-sm" />
+                      {productOptions.length > 1 && <button onClick={() => removeOption(idx)} className="px-2 text-gray-500 hover:text-red-400 transition-colors text-lg">x</button>}
+                    </div>
+                  ))}
+                  {productOptions.length < 5 && <button onClick={addOption} className="text-xs text-gray-500 hover:text-teal-400 transition-colors">+ 옵션 추가</button>}
                 </div>
               </div>
 
@@ -582,6 +648,27 @@ const DetailPageTab: React.FC = () => {
               </div>
 
               {renderImageUpload()}
+
+              {/* Design Reference */}
+              <div>
+                <label className="block text-sm font-bold text-gray-300 mb-1.5">
+                  디자인 레퍼런스 (선택)
+                  {isUploadingDesignRef && <span className="ml-2 text-teal-400 text-xs font-normal">(업로드 중...)</span>}
+                </label>
+                <p className="text-xs text-gray-500 mb-2">경쟁사나 참고할 상세페이지 디자인 캡처를 업로드하면 구성/레이아웃/분위기를 참고합니다</p>
+                <div className="flex flex-wrap gap-3 mb-2">
+                  {designRefPreviews.map((url, idx) => (
+                    <div key={idx} className="relative w-20 h-20 rounded-lg overflow-hidden border border-gray-700 group">
+                      <img src={url} alt={`design-ref-${idx}`} className="w-full h-full object-cover" />
+                      <button onClick={() => removeDesignRef(idx)} className="absolute top-0.5 right-0.5 w-5 h-5 bg-black/70 text-white rounded-full text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">x</button>
+                    </div>
+                  ))}
+                  <label className="w-20 h-20 rounded-lg border-2 border-dashed border-gray-600 flex items-center justify-center cursor-pointer hover:border-teal-500/50 transition-colors">
+                    <span className="text-2xl text-gray-500">+</span>
+                    <input type="file" accept="image/*" multiple onChange={e => handleDesignRefUpload(e.target.files)} className="hidden" />
+                  </label>
+                </div>
+              </div>
 
               {/* Page Length */}
               <div>
@@ -646,8 +733,12 @@ const DetailPageTab: React.FC = () => {
                         <label className="text-xs text-gray-500 font-bold mb-1 block">Key Message (한글 카피)</label>
                         <textarea value={seg.keyMessage} onChange={e => setSegments(prev => prev.map((s, i) => i === idx ? { ...s, keyMessage: e.target.value } : s))} rows={2} className="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-white text-sm focus:border-teal-500 focus:outline-none resize-none" />
                       </div>
+                      <div className="mb-3">
+                        <label className="text-xs text-gray-500 font-bold mb-1 block">이미지 설명 (한글)</label>
+                        <textarea value={seg.koreanPrompt} onChange={e => setSegments(prev => prev.map((s, i) => i === idx ? { ...s, koreanPrompt: e.target.value } : s))} rows={2} className="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-white text-sm focus:border-teal-500 focus:outline-none resize-none" placeholder="이 이미지에 대한 한글 설명 (수정하면 재생성 시 반영됩니다)" />
+                      </div>
                       <details>
-                        <summary className="text-xs text-gray-500 font-bold cursor-pointer hover:text-gray-400 transition-colors">Visual Prompt (클릭하여 편집)</summary>
+                        <summary className="text-xs text-gray-500 font-bold cursor-pointer hover:text-gray-400 transition-colors">Visual Prompt — 영어 원문 (클릭하여 편집)</summary>
                         <textarea value={seg.visualPrompt} onChange={e => setSegments(prev => prev.map((s, i) => i === idx ? { ...s, visualPrompt: e.target.value } : s))} rows={3} className="w-full mt-2 px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-gray-300 text-xs focus:border-teal-500 focus:outline-none resize-none font-mono" />
                       </details>
                     </div>
@@ -728,9 +819,13 @@ const DetailPageTab: React.FC = () => {
                             <textarea value={seg.keyMessage} onChange={e => setSegments(prev => prev.map((s, i) => i === idx ? { ...s, keyMessage: e.target.value } : s))} rows={2} className="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-white text-sm focus:border-teal-500 focus:outline-none resize-none" />
                           </div>
                           <div>
-                            <label className="text-xs text-gray-500 font-bold mb-1 block">Visual Prompt (이미지 설명)</label>
-                            <textarea value={seg.visualPrompt} onChange={e => setSegments(prev => prev.map((s, i) => i === idx ? { ...s, visualPrompt: e.target.value } : s))} rows={3} className="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-gray-300 text-xs focus:border-teal-500 focus:outline-none resize-none font-mono" />
+                            <label className="text-xs text-gray-500 font-bold mb-1 block">이미지 설명 (한글로 수정 가능)</label>
+                            <textarea value={seg.koreanPrompt} onChange={e => setSegments(prev => prev.map((s, i) => i === idx ? { ...s, koreanPrompt: e.target.value } : s))} rows={2} className="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-white text-sm focus:border-teal-500 focus:outline-none resize-none" placeholder="한글로 원하는 이미지를 설명하세요" />
                           </div>
+                          <details>
+                            <summary className="text-xs text-gray-500 font-bold cursor-pointer hover:text-gray-400 transition-colors">Visual Prompt — 영어 원문</summary>
+                            <textarea value={seg.visualPrompt} onChange={e => setSegments(prev => prev.map((s, i) => i === idx ? { ...s, visualPrompt: e.target.value } : s))} rows={3} className="w-full mt-2 px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-gray-300 text-xs focus:border-teal-500 focus:outline-none resize-none font-mono" />
+                          </details>
                           <button onClick={() => handleRegenerateOne(idx)} disabled={seg.isGenerating} className={`w-full py-2 rounded-lg text-sm font-bold transition-all ${seg.isGenerating ? 'bg-gray-700 text-gray-500 cursor-not-allowed' : 'bg-teal-600/20 text-teal-400 border border-teal-500/30 hover:bg-teal-600/30'}`}>
                             {seg.isGenerating ? '재생성 중...' : '이 페이지만 재생성'}
                           </button>

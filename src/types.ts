@@ -657,6 +657,7 @@ export interface DetailImageSegment {
   logicalSections: string[];
   keyMessage: string;
   visualPrompt: string;
+  koreanPrompt: string;
   imageUrl?: string;
   isGenerating?: boolean;
   generationStatus?: string;
