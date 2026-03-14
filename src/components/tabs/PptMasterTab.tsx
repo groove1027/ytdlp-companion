@@ -53,6 +53,16 @@ interface SlideData {
 }
 
 type Step = 1 | 2 | 3 | 4;
+type GenPhase = 'idle' | 'toc' | 'chunks' | 'preview';
+
+const PROGRESS_TIPS = [
+  '💡 브라우저 탭을 열어둔 채로 기다리면 더 안정적이에요',
+  '📊 완성되면 PPTX로 바로 내보낼 수 있어요',
+  '🎨 슬라이드마다 제목·본문·키포인트·발표자 노트가 포함돼요',
+  '⚡ 장수가 많을수록 시간이 오래 걸려요 — 조금만 기다려주세요!',
+  '✨ AI가 텍스트를 분석하고 최적의 구조를 설계하고 있어요',
+  '🛠️ 완성 후 개별 슬라이드의 이미지만 따로 재생성할 수도 있어요',
+];
 
 const STEPS = [
   { id: 1 as Step, label: '내용 입력', icon: '📝' },
@@ -286,6 +296,7 @@ export default function PptMasterTab() {
   // Sample preview
   const [sampleImage, setSampleImage] = useState<string | null>(null);
   const [isGeneratingSample, setIsGeneratingSample] = useState(false);
+  const [genPhase, setGenPhase] = useState<GenPhase>('idle');
 
   const elapsed = useElapsedTimer(isGenerating);
   const elapsedBatch = useElapsedTimer(isBatchingImages);
@@ -404,7 +415,7 @@ export default function PptMasterTab() {
   // ─── AI 슬라이드 생성 ───
   const CHUNK_THRESHOLD = 30; // 30장 이상이면 Flash 목차 + Pro 청크 파이프라인
   const CHUNK_SIZE = 10;
-  const CHUNK_CONCURRENCY = 3;
+  const CHUNK_CONCURRENCY = 5;
 
   const handleGenerate = useCallback(async () => {
     if (!requireAuth('PPT 이미지 생성')) return;
@@ -413,6 +424,7 @@ export default function PptMasterTab() {
     setGenError('');
     setSlides([]);
     setPreviewMode(false);
+    setGenPhase('idle');
 
     try {
       const systemPrompt = buildSlideGenerationPrompt(selectedContentStyle, detailLevel, slideCount);
@@ -420,6 +432,7 @@ export default function PptMasterTab() {
 
       if (slideCount < CHUNK_THRESHOLD) {
         // ─── 기존 로직: 단일 요청 (30장 미만) ───
+        setGenPhase('chunks');
         const userPrompt = `아래 텍스트를 분석하여 ${slideCount}장의 프레젠테이션 슬라이드로 재구성하세요.\n\n---\n${inputText}\n---`;
         const maxTokens = Math.min(65000, Math.max(16000, slideCount * 800));
         const messages: EvolinkChatMessage[] = [
@@ -444,7 +457,7 @@ export default function PptMasterTab() {
         // ─── 청크 파이프라인: Flash Lite 목차 → Pro 청크 (30장 이상) ───
 
         // Phase 1: Flash Lite로 전체 목차 생성
-        showToast(`${slideCount}장 목차 생성 중...`);
+        setGenPhase('toc');
         const tocRes = await evolinkChat([
           { role: 'system', content: '프레젠테이션 구조 설계 전문가. 주어진 텍스트를 분석하여 슬라이드 목차를 설계한다. 반드시 JSON 배열로 반환. 마크다운 없이 순수 JSON만 출력.' },
           { role: 'user', content: `아래 텍스트를 ${slideCount}장 프레젠테이션 슬라이드의 목차로 설계하세요.\n\n각 슬라이드: {"slideNumber":N,"title":"슬라이드 제목","section":"섹션명","keyTopic":"핵심 주제 한 줄"}\n\n규칙:\n- 반드시 ${slideCount}개 항목\n- 논리적 섹션으로 그룹핑\n- 각 주제를 세분화하여 ${slideCount}장을 채울 것\n- 첫 번째 슬라이드는 타이틀, 마지막은 요약/CTA\n\n텍스트:\n${inputText}` },
@@ -464,8 +477,8 @@ export default function PptMasterTab() {
         addCost(PRICING.GEMINI_PRO_INPUT_PER_1M * 0.001, 'analysis'); // Flash Lite 비용 (Pro 대비 저렴)
 
         // Phase 2: Pro가 청크별 상세 생성
+        setGenPhase('chunks');
         const totalChunks = Math.ceil(tocParsed.length / CHUNK_SIZE);
-        showToast(`목차 ${tocParsed.length}장 완료! ${totalChunks}개 청크 상세 생성 중...`);
         setBatchProgress({ current: 0, total: totalChunks });
 
         const allSlides: SlideData[] = [];
@@ -522,8 +535,16 @@ export default function PptMasterTab() {
           completedChunks += batchIndices.length;
           setBatchProgress({ current: completedChunks, total: totalChunks });
 
+          // 프로그레시브 렌더링: 청크 완료될 때마다 즉시 화면에 표시
+          if (allSlides.length > 0) {
+            setSlides(allSlides.map((s, i) => ({
+              ...s, slideNumber: i + 1, keyPoints: s.keyPoints || [], visualHint: s.visualHint || '',
+            })));
+            if (step !== 4) setStep(4);
+          }
+
           // 배치 간 쿨다운 (429 방지)
-          if (batchEnd < totalChunks) await new Promise(r => setTimeout(r, 2000));
+          if (batchEnd < totalChunks) await new Promise(r => setTimeout(r, 1000));
         }
 
         if (allSlides.length === 0) throw new Error('모든 슬라이드 생성에 실패했습니다. 네트워크 연결을 확인하고 다시 시도해주세요.');
@@ -538,11 +559,11 @@ export default function PptMasterTab() {
       }
 
       // 공통: 결과 표시 + 미리보기 이미지 자동 생성
-      setStep(4);
+      if (step !== 4) setStep(4);
       if (slideCount > 10) {
         setPreviewMode(true);
+        setGenPhase('preview');
         const previewCount = Math.min(2, finalSlides.length);
-        showToast(`슬라이드 텍스트 완료! 미리보기 ${previewCount}장 이미지 생성 중...`);
         await generateImagesForRange(finalSlides, 0, previewCount);
         showToast(`미리보기 ${previewCount}장 이미지 생성 완료!`);
       } else {
@@ -556,9 +577,10 @@ export default function PptMasterTab() {
       setGenError(msg);
     } finally {
       setIsGenerating(false);
+      setGenPhase('idle');
       setBatchProgress({ current: 0, total: 0 });
     }
-  }, [requireAuth, inputText, selectedContentStyle, detailLevel, slideCount, addCost, generateImagesForRange]);
+  }, [requireAuth, inputText, selectedContentStyle, detailLevel, slideCount, addCost, generateImagesForRange, step]);
 
   // ─── 이미지 일괄 생성 ───
   const handleBatchImages = useCallback(async () => {
@@ -703,6 +725,50 @@ export default function PptMasterTab() {
           </React.Fragment>
         ))}
       </div>
+
+      {/* ━━ Generation Progress Panel ━━ */}
+      {isGenerating && (
+        <div className="bg-gradient-to-br from-sky-900/20 to-indigo-900/20 border border-sky-500/30 rounded-2xl p-5 mb-4 space-y-3">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 flex-shrink-0 border-2 border-sky-400 border-t-transparent rounded-full animate-spin" />
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-bold text-sky-300">
+                {genPhase === 'toc' && `📋 슬라이드 목차 설계 중 (${slideCount}장)`}
+                {genPhase === 'chunks' && (batchProgress.total > 0
+                  ? `✍️ 슬라이드 상세 작성 중 (${batchProgress.current}/${batchProgress.total} 구간)`
+                  : `✍️ 슬라이드 생성 중 (${slideCount}장)`)}
+                {genPhase === 'preview' && '🎨 미리보기 이미지 생성 중...'}
+                {genPhase === 'idle' && '⏳ 준비 중...'}
+              </div>
+              <div className="text-xs text-gray-400 mt-0.5">
+                {formatElapsed(elapsed)} 경과
+                {slides.length > 0 && <span className="ml-2 text-sky-400/70">• {slides.length}장 완성</span>}
+              </div>
+            </div>
+          </div>
+
+          {/* Progress Bar */}
+          {batchProgress.total > 0 && (
+            <div className="space-y-1">
+              <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-sky-500 to-indigo-500 rounded-full transition-all duration-700 ease-out"
+                  style={{ width: `${Math.max(2, (batchProgress.current / batchProgress.total) * 100)}%` }}
+                />
+              </div>
+              <div className="flex justify-between text-[10px] text-gray-500">
+                <span>{batchProgress.current}/{batchProgress.total} 구간 완료</span>
+                <span>{Math.round((batchProgress.current / batchProgress.total) * 100)}%</span>
+              </div>
+            </div>
+          )}
+
+          {/* Rotating Tip */}
+          <div className="text-xs text-gray-500 italic">
+            {PROGRESS_TIPS[Math.floor(elapsed / 8) % PROGRESS_TIPS.length]}
+          </div>
+        </div>
+      )}
 
       {/* ━━ Step 1: Content Input ━━ */}
       {step === 1 && (
