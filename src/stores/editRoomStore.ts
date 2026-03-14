@@ -1144,7 +1144,7 @@ export const useEditRoomStore = create<EditRoomStore>((set, get) => ({
         const resp = await evolinkChat([
           { role: 'system', content: `자막 텍스트를 자연스러운 줄 단위로 나눠라.\n각 줄 최대 ${cpl}자. 문맥/구두점/조사 경계에서 분할.\nJSON 응답: {"lines":["줄1","줄2",...]}` },
           { role: 'user', content: rawText }
-        ], { temperature: 0.1, responseFormat: { type: 'json_object' } });
+        ], { temperature: 0.1, responseFormat: { type: 'json_object' }, model: 'gemini-3.1-flash-lite-preview' });
         const parsed = JSON.parse(resp.choices[0].message.content || '{}');
         if (Array.isArray(parsed.lines) && parsed.lines.length > 1) {
           splitPoints = [];
