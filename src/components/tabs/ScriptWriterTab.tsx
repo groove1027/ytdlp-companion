@@ -10,6 +10,7 @@ import { buildSelectedInstinctPrompt } from '../../data/instinctPromptUtils';
 import { SCRIPT_STYLE_PRESETS, ScriptStylePreset } from '../../data/scriptStylePresets';
 import { VideoFormat, ContentFormat, TopicRecommendation, AspectRatio, ScriptAiModel } from '../../types';
 import { SCRIPT_AI_MODELS } from '../../constants';
+import AiModelLogo from '../ui/AiModelLogo';
 import { showToast } from '../../stores/uiStore';
 import { logger } from '../../services/LoggerService';
 import { countScenesLocally, splitScenesLocally, extractJsonFromText } from '../../services/gemini/scriptAnalysis';
@@ -1140,7 +1141,7 @@ ${instinctPrompt}
                             : 'bg-gray-800/60 border-gray-700/40 hover:border-gray-600'}`}
                       >
                         <div className="flex items-center gap-1.5 mb-1">
-                          <span className="text-base">{m.icon}</span>
+                          <AiModelLogo model={m.id} size={18} />
                           <span className={`text-sm font-bold ${isActive ? c.text : 'text-gray-300'}`}>{m.label}</span>
                         </div>
                         <p className={`text-xs leading-relaxed ${isActive ? 'text-gray-300' : 'text-gray-500'}`}>{m.description}</p>
@@ -1166,7 +1167,7 @@ ${instinctPrompt}
                   ${scriptAiModel === ScriptAiModel.GEMINI_PRO ? 'bg-emerald-900/10 border-emerald-700/20 text-emerald-300/80' :
                     scriptAiModel === ScriptAiModel.CLAUDE_SONNET ? 'bg-violet-900/10 border-violet-700/20 text-violet-300/80' :
                     'bg-amber-900/10 border-amber-700/20 text-amber-300/80'}`}>
-                  {selectedModel.icon} <span className="font-semibold">{selectedModel.label}</span> — {selectedModel.detail}
+                  <span className="inline-flex items-center gap-1"><AiModelLogo model={selectedModel.id} size={14} /> <span className="font-semibold">{selectedModel.label}</span></span> — {selectedModel.detail}
                   {!selectedModel.hasWebSearch && (
                     <span className="ml-1 text-gray-500">(웹 검색 미지원 — 최신 트렌드 반영이 필요하면 Gemini 추천)</span>
                   )}
@@ -1292,8 +1293,8 @@ ${instinctPrompt}
               <>
                 <span className="text-xs text-gray-500">적용 중:</span>
                 {scriptAiModel !== ScriptAiModel.GEMINI_PRO && (
-                  <span className={`text-xs px-1.5 py-0.5 rounded ${scriptAiModel === ScriptAiModel.CLAUDE_SONNET ? 'text-violet-300 bg-violet-900/30' : 'text-amber-300 bg-amber-900/30'}`}>
-                    {scriptAiModel === ScriptAiModel.CLAUDE_SONNET ? '🟣 Sonnet 4.6' : '🔴 Opus 4.6'}
+                  <span className={`inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded ${scriptAiModel === ScriptAiModel.CLAUDE_SONNET ? 'text-violet-300 bg-violet-900/30' : 'text-amber-300 bg-amber-900/30'}`}>
+                    <AiModelLogo model={scriptAiModel} size={12} /> {scriptAiModel === ScriptAiModel.CLAUDE_SONNET ? 'Sonnet 4.6' : 'Opus 4.6'}
                   </span>
                 )}
                 {instinctIds.length > 0 && <span className="text-xs text-violet-300 bg-violet-900/30 px-1.5 py-0.5 rounded">🧠 본능 {instinctIds.length}개</span>}
