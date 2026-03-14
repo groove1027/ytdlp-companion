@@ -7,6 +7,7 @@ import {
   GeneratedScript,
   VideoFormat,
   VideoAnalysisStylePreset,
+  ScriptAiModel,
 } from '../types';
 import { logger } from '../services/LoggerService';
 
@@ -19,7 +20,7 @@ const PERSISTED_KEYS = [
   'title', 'synopsis', 'manualText',
   'generatedScript', 'styledScript', 'styledStyleName', 'finalScript',
   'videoFormat', 'longFormSplitType', 'smartSplit', 'targetCharCount',
-  'splitResult', 'activeStep', 'videoAnalysisStyles',
+  'splitResult', 'activeStep', 'videoAnalysisStyles', 'scriptAiModel',
 ] as const;
 
 type PersistedKey = typeof PERSISTED_KEYS[number];
@@ -99,6 +100,8 @@ interface ScriptWriterStore {
   /** [FIX #249] AI 참여도 강화 결과 — 탭 전환 시 유실 방지 */
   engagementBoosterResults: EngagementBoosterResult[];
   engagementBoosterOpen: boolean;
+  /** 대본 작성 AI 모델 선택 (Gemini Pro / Claude Sonnet / Claude Opus) */
+  scriptAiModel: ScriptAiModel;
 
   // Actions
   setInputMode: (mode: ScriptInputMode) => void;
@@ -134,6 +137,8 @@ interface ScriptWriterStore {
   /** [FIX #249] 참여도 강화 결과 저장/초기화 */
   setEngagementBoosterResults: (results: EngagementBoosterResult[]) => void;
   setEngagementBoosterOpen: (open: boolean) => void;
+  /** 대본 작성 AI 모델 변경 */
+  setScriptAiModel: (model: ScriptAiModel) => void;
   /** 새 입력(파일 업로드 등) 시 이전 대본 콘텐츠만 초기화 — 포맷 설정은 보존 */
   clearPreviousContent: () => void;
   reset: () => void;
@@ -167,6 +172,7 @@ const INITIAL_STATE = {
   videoAnalysisStyles: [] as VideoAnalysisStylePreset[],
   engagementBoosterResults: [] as EngagementBoosterResult[],
   engagementBoosterOpen: false,
+  scriptAiModel: ScriptAiModel.GEMINI_PRO,
 };
 
 // localStorage에서 이전 드래프트 복원
@@ -237,6 +243,7 @@ export const useScriptWriterStore = create<ScriptWriterStore>((set) => ({
 
   setEngagementBoosterResults: (results) => set({ engagementBoosterResults: results }),
   setEngagementBoosterOpen: (open) => set({ engagementBoosterOpen: open }),
+  setScriptAiModel: (model) => set({ scriptAiModel: model }),
 
   // 새 파일 업로드 시 이전 대본 콘텐츠를 초기화하되, 포맷/분량 설정은 유지
   clearPreviousContent: () => {

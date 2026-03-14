@@ -1,5 +1,5 @@
 
-import { AspectRatio, VoiceName, ImageModel, VideoFormat, VideoModel, DialogueTone } from "./types";
+import { AspectRatio, VoiceName, ImageModel, VideoFormat, VideoModel, DialogueTone, ScriptAiModel } from "./types";
 
 // [2026-03-02] Real-time Pricing (조사 기반 실시간 반영)
 export const PRICING = {
@@ -39,6 +39,12 @@ export const PRICING = {
   GEMINI_PRO_INPUT_PER_1M: 1.60,     // Evolink Gemini 3.1 Pro Input ($1.60/1M tokens)
   GEMINI_PRO_OUTPUT_PER_1M: 9.60,    // Evolink Gemini 3.1 Pro Output ($9.60/1M tokens)
 
+  // Claude via Evolink (Standard Tier, ≤200K context, 2026-03-14 기준)
+  CLAUDE_SONNET_INPUT_PER_1M: 2.55,   // Claude Sonnet 4.6 Input ($2.55/1M tokens, -15%)
+  CLAUDE_SONNET_OUTPUT_PER_1M: 12.75, // Claude Sonnet 4.6 Output ($12.75/1M tokens, -15%)
+  CLAUDE_OPUS_INPUT_PER_1M: 4.13,     // Claude Opus 4.6 Input ($4.13/1M tokens, -17%)
+  CLAUDE_OPUS_OUTPUT_PER_1M: 21.25,   // Claude Opus 4.6 Output ($21.25/1M tokens, -15%)
+
   // Initial Flat Fee (Fallback estimation if token data missing)
   ANALYSIS_INITIAL: 0.005,
   ANALYSIS_IMAGE: 0.005,
@@ -50,6 +56,43 @@ export const PRICING = {
   // STT (Kie ElevenLabs Scribe v1)
   STT_SCRIBE_PER_CALL: 0.05,        // Kie ElevenLabs Speech-to-Text (~10 credits, $0.05/call)
 };
+
+/** 대본 작성 AI 모델 선택지 (Evolink Standard Tier, 2026-03-14 기준) */
+export const SCRIPT_AI_MODELS = [
+  {
+    id: ScriptAiModel.GEMINI_PRO,
+    label: 'Gemini 3.1 Pro',
+    icon: '🌐',
+    description: '웹 검색으로 최신 정보를 반영하는 빠른 대본 생성',
+    detail: '실시간 뉴스·트렌드 검색 기반 | 속도 빠름 | 가성비 최고',
+    color: 'emerald',
+    hasWebSearch: true,
+    inputPer1M: PRICING.GEMINI_PRO_INPUT_PER_1M,
+    outputPer1M: PRICING.GEMINI_PRO_OUTPUT_PER_1M,
+  },
+  {
+    id: ScriptAiModel.CLAUDE_SONNET,
+    label: 'Claude Sonnet 4.6',
+    icon: '🟣',
+    description: '자연스러운 한국어와 높은 대본 퀄리티',
+    detail: '문체·구어체 탁월 | 지시사항 100% 준수 | 밸런스형',
+    color: 'violet',
+    hasWebSearch: false,
+    inputPer1M: PRICING.CLAUDE_SONNET_INPUT_PER_1M,
+    outputPer1M: PRICING.CLAUDE_SONNET_OUTPUT_PER_1M,
+  },
+  {
+    id: ScriptAiModel.CLAUDE_OPUS,
+    label: 'Claude Opus 4.6',
+    icon: '🔴',
+    description: '최고 수준의 스토리텔링과 바이럴 구조',
+    detail: '감정곡선·떡밥회수 탁월 | 깊이 있는 서사 | 프리미엄',
+    color: 'amber',
+    hasWebSearch: false,
+    inputPer1M: PRICING.CLAUDE_OPUS_INPUT_PER_1M,
+    outputPer1M: PRICING.CLAUDE_OPUS_OUTPUT_PER_1M,
+  },
+] as const;
 
 export const IMAGE_MODELS = [
   // { id: ImageModel.FLASH, label: '🍌 Gemini 2.5 Flash ($0.02/장)' },

@@ -54,6 +54,13 @@ export enum VideoModel {
   VEO_QUALITY = 'veo-3.1-quality' // Legacy / Compat → VEO로 매핑
 }
 
+/** 대본 작성 AI 모델 선택 */
+export enum ScriptAiModel {
+  GEMINI_PRO = 'gemini-3.1-pro',
+  CLAUDE_SONNET = 'claude-sonnet-4-6',
+  CLAUDE_OPUS = 'claude-opus-4-6',
+}
+
 export interface VideoTaskParams {
     prompt: string;
     imageUrl: string;

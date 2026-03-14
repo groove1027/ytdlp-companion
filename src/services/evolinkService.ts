@@ -1,7 +1,7 @@
 
 import { monitoredFetch } from './apiService';
 import { logger } from './LoggerService';
-import { EvolinkImageModel } from '../types';
+import { EvolinkImageModel, ScriptAiModel } from '../types';
 import { useCostStore } from '../stores/costStore';
 import { PRICING } from '../constants';
 
@@ -238,13 +238,19 @@ export const evolinkChat = async (
 
     const data: EvolinkChatResponse = await response.json();
 
-    // Auto-track token-based cost (Pro vs Flash Lite)
+    // Auto-track token-based cost (Pro vs Flash Lite vs Claude)
     try {
         const usage = data.usage;
         if (usage) {
+            const isClaude = model.includes('claude');
+            const isOpus = model.includes('opus');
             const isFlash = model.includes('flash');
-            const inputRate = isFlash ? PRICING.GEMINI_FLASH_INPUT_PER_1M : PRICING.GEMINI_PRO_INPUT_PER_1M;
-            const outputRate = isFlash ? PRICING.GEMINI_FLASH_OUTPUT_PER_1M : PRICING.GEMINI_PRO_OUTPUT_PER_1M;
+            const inputRate = isClaude
+                ? (isOpus ? PRICING.CLAUDE_OPUS_INPUT_PER_1M : PRICING.CLAUDE_SONNET_INPUT_PER_1M)
+                : (isFlash ? PRICING.GEMINI_FLASH_INPUT_PER_1M : PRICING.GEMINI_PRO_INPUT_PER_1M);
+            const outputRate = isClaude
+                ? (isOpus ? PRICING.CLAUDE_OPUS_OUTPUT_PER_1M : PRICING.CLAUDE_SONNET_OUTPUT_PER_1M)
+                : (isFlash ? PRICING.GEMINI_FLASH_OUTPUT_PER_1M : PRICING.GEMINI_PRO_OUTPUT_PER_1M);
             const inputCost = (usage.prompt_tokens || 0) / 1_000_000 * inputRate;
             const outputCost = (usage.completion_tokens || 0) / 1_000_000 * outputRate;
             const totalCost = inputCost + outputCost;
@@ -633,6 +639,198 @@ export const evolinkNativeStream = async (
 
     logger.success('[Evolink Native Stream] 완료', { totalLength: accumulated.length, finishReason: lastFinishReason, webSearch: enableWebSearch });
     return accumulated;
+};
+
+// === CLAUDE MESSAGES API STREAMING (Anthropic 포맷) ===
+
+/**
+ * Evolink Claude Messages API 스트리밍 — Anthropic SSE 포맷
+ * 대본 생성 시 Claude Sonnet 4.6 / Opus 4.6 사용
+ * 엔드포인트: POST https://api.evolink.ai/v1/messages
+ */
+export const evolinkClaudeStream = async (
+    systemPrompt: string,
+    userPrompt: string,
+    onChunk: (text: string, accumulated: string) => void,
+    options: {
+        model: 'claude-sonnet-4-6' | 'claude-opus-4-6';
+        temperature?: number;
+        maxTokens?: number;
+        signal?: AbortSignal;
+        onFinish?: (reason: string) => void;
+    }
+): Promise<string> => {
+    const apiKey = getEvolinkKey();
+    if (!apiKey) throw new Error('Evolink API 키가 설정되지 않았습니다.');
+
+    const { model, temperature = 0.7, maxTokens = 16000, signal, onFinish } = options;
+
+    const payload = {
+        model,
+        max_tokens: maxTokens,
+        temperature,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userPrompt }],
+        stream: true,
+    };
+
+    logger.info('[Evolink Claude] Stream 요청 시작', { model, maxTokens });
+
+    const fetchInit: RequestInit = {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+    };
+    if (signal) fetchInit.signal = signal;
+
+    const response = await fetchWithRateLimitRetry(
+        `${EVOLINK_BASE_URL}/messages`, fetchInit, 3, 3000
+    );
+
+    if (!response.ok) {
+        const errorDetail = await parseEvolinkError(response);
+        logger.error(`[Evolink Claude] 실패 (${response.status})`, { error: errorDetail });
+        throw new Error(`Evolink Claude 오류 (${response.status}): ${errorDetail}`);
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('스트리밍 응답을 읽을 수 없습니다.');
+
+    const decoder = new TextDecoder();
+    let accumulated = '';
+    let buffer = '';
+    let lastStopReason = '';
+
+    const STREAM_IDLE_MS = 120_000; // Claude는 생각 시간이 길 수 있어 120초
+
+    while (true) {
+        let idleTimer: ReturnType<typeof setTimeout> | undefined;
+        const { done, value } = await Promise.race([
+            reader.read(),
+            new Promise<never>((_, reject) => {
+                idleTimer = setTimeout(() => {
+                    reader.cancel().catch(() => {});
+                    reject(new Error('Claude 스트리밍 120초 무응답 — 연결 중단'));
+                }, STREAM_IDLE_MS);
+            })
+        ]).finally(() => { if (idleTimer) clearTimeout(idleTimer); });
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed || !trimmed.startsWith('data: ')) continue;
+
+            try {
+                const json = JSON.parse(trimmed.slice(6));
+
+                // Anthropic SSE 이벤트 처리
+                if (json.type === 'content_block_delta' && json.delta?.type === 'text_delta') {
+                    const text = json.delta.text || '';
+                    if (text) {
+                        accumulated += text;
+                        onChunk(text, accumulated);
+                    }
+                } else if (json.type === 'message_delta' && json.delta?.stop_reason) {
+                    lastStopReason = json.delta.stop_reason;
+                }
+            } catch (e) {
+                logger.trackSwallowedError('evolinkService:claudeStreamChunk', e);
+            }
+        }
+    }
+
+    // finishReason 콜백 — Claude의 'max_tokens'를 Gemini 호환 'MAX_TOKENS'로 매핑
+    if (onFinish) {
+        const mappedReason = lastStopReason === 'max_tokens' ? 'MAX_TOKENS'
+            : lastStopReason === 'end_turn' ? 'STOP'
+            : lastStopReason || 'STOP';
+        onFinish(mappedReason);
+    }
+
+    // 비용 추정
+    try {
+        const isOpus = model.includes('opus');
+        const inputRate = isOpus ? PRICING.CLAUDE_OPUS_INPUT_PER_1M : PRICING.CLAUDE_SONNET_INPUT_PER_1M;
+        const outputRate = isOpus ? PRICING.CLAUDE_OPUS_OUTPUT_PER_1M : PRICING.CLAUDE_SONNET_OUTPUT_PER_1M;
+        const estInputTokens = Math.ceil((systemPrompt.length + userPrompt.length) / 4);
+        const estOutputTokens = Math.ceil(accumulated.length / 4);
+        const totalCost = (estInputTokens / 1_000_000 * inputRate) + (estOutputTokens / 1_000_000 * outputRate);
+        if (totalCost > 0) {
+            useCostStore.getState().addCost(totalCost, 'analysis');
+            logger.info('[Evolink Claude] 비용 추정', { model, estInputTokens, estOutputTokens, costUsd: totalCost.toFixed(6) });
+        }
+    } catch (e) { logger.trackSwallowedError('EvolinkService:evolinkClaudeStream/costTracking', e); }
+
+    logger.success('[Evolink Claude] 스트리밍 완료', { model, totalLength: accumulated.length, stopReason: lastStopReason });
+    return accumulated;
+};
+
+// === UNIFIED SCRIPT GENERATION STREAM ===
+
+/**
+ * 대본 생성 통합 스트리밍 — 선택된 AI 모델에 따라 분기
+ * - Gemini 3.1 Pro → evolinkNativeStream (v1beta, Google Search 그라운딩)
+ * - Claude Sonnet/Opus → evolinkClaudeStream (v1/messages, Anthropic 포맷)
+ */
+export const scriptGenerationStream = async (
+    systemPrompt: string,
+    userPrompt: string,
+    onChunk: (text: string, accumulated: string) => void,
+    options: {
+        model: ScriptAiModel;
+        temperature?: number;
+        maxOutputTokens?: number;
+        enableWebSearch?: boolean;
+        signal?: AbortSignal;
+        onFinish?: (reason: string) => void;
+    }
+): Promise<string> => {
+    const { model, temperature, maxOutputTokens, enableWebSearch, signal, onFinish } = options;
+
+    if (model === ScriptAiModel.GEMINI_PRO) {
+        return evolinkNativeStream(systemPrompt, userPrompt, onChunk, {
+            temperature,
+            maxOutputTokens,
+            enableWebSearch,
+            signal,
+            onFinish,
+        });
+    }
+
+    // Claude 모델 (Sonnet 4.6 / Opus 4.6)
+    const claudeModel = model === ScriptAiModel.CLAUDE_OPUS ? 'claude-opus-4-6' : 'claude-sonnet-4-6';
+
+    try {
+        return await evolinkClaudeStream(systemPrompt, userPrompt, onChunk, {
+            model: claudeModel,
+            temperature,
+            maxTokens: maxOutputTokens,
+            signal,
+            onFinish,
+        });
+    } catch (e) {
+        // Claude 실패 시 Gemini 폴백
+        const msg = e instanceof Error ? e.message : String(e);
+        if (signal?.aborted) throw e; // 사용자 취소는 폴백하지 않음
+        logger.warn(`[ScriptGen] Claude(${claudeModel}) 실패 — Gemini 폴백`, { error: msg });
+
+        return evolinkNativeStream(systemPrompt, userPrompt, onChunk, {
+            temperature,
+            maxOutputTokens,
+            enableWebSearch: true,
+            signal,
+            onFinish: (reason) => {
+                if (onFinish) onFinish(reason);
+            },
+        });
+    }
 };
 
 // === VIDEO ANALYSIS (Gemini v1beta — fileData) ===

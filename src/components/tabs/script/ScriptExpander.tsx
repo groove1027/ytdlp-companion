@@ -1,7 +1,8 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import { useScriptWriterStore } from '../../../stores/scriptWriterStore';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
-import { evolinkChat } from '../../../services/evolinkService';
+import { evolinkChat, scriptGenerationStream } from '../../../services/evolinkService';
+import { ScriptAiModel } from '../../../types';
 
 const MAX_CHARS = 30000;
 /** 한국어 나레이션 기준 약 650자/분 (5,000자 ≈ 7~8분) */
@@ -87,14 +88,26 @@ ${script}
 스타일과 흐름을 유지하면서 확장하세요. 확장된 전체 대본만 출력하세요.`;
     }
 
-    const res = await evolinkChat(
-      [
-        { role: 'system', content: '당신은 전문 영상 대본 작가입니다. 기존 대본을 자연스럽게 확장하여 더 풍성한 내용으로 만듭니다. 확장된 대본 텍스트만 출력하세요. JSON이나 마크다운 없이 순수 텍스트만 출력합니다.' },
-        { role: 'user', content: userContent }
-      ],
-      { temperature: 0.7, maxTokens: 16000 }
-    );
-    const expanded = res.choices?.[0]?.message?.content || '';
+    const { scriptAiModel } = useScriptWriterStore.getState();
+    let expanded = '';
+    if (scriptAiModel !== ScriptAiModel.GEMINI_PRO) {
+      // Claude: 스트리밍 API 사용 (선택 모델과 동일한 문체 유지)
+      expanded = await scriptGenerationStream(
+        '당신은 전문 영상 대본 작가입니다. 기존 대본을 자연스럽게 확장하여 더 풍성한 내용으로 만듭니다. 확장된 대본 텍스트만 출력하세요. JSON이나 마크다운 없이 순수 텍스트만 출력합니다.',
+        userContent,
+        () => {},
+        { model: scriptAiModel, temperature: 0.7, maxOutputTokens: 16000 }
+      );
+    } else {
+      const res = await evolinkChat(
+        [
+          { role: 'system', content: '당신은 전문 영상 대본 작가입니다. 기존 대본을 자연스럽게 확장하여 더 풍성한 내용으로 만듭니다. 확장된 대본 텍스트만 출력하세요. JSON이나 마크다운 없이 순수 텍스트만 출력합니다.' },
+          { role: 'user', content: userContent }
+        ],
+        { temperature: 0.7, maxTokens: 16000 }
+      );
+      expanded = res.choices?.[0]?.message?.content || '';
+    }
 
     // 긴 대본의 경우: 앞부분 원본 + AI 확장 결과를 합침
     if (script.length > MAX_INPUT && expanded.length > 0) {

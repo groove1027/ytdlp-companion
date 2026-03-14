@@ -4,11 +4,12 @@ import { useNavigationStore } from '../../stores/navigationStore';
 import { useChannelAnalysisStore } from '../../stores/channelAnalysisStore';
 import { useInstinctStore } from '../../stores/instinctStore';
 import { useProjectStore } from '../../stores/projectStore';
-import { evolinkChat, evolinkChatStream, evolinkNativeStream, getEvolinkKey } from '../../services/evolinkService';
+import { evolinkChat, evolinkChatStream, evolinkNativeStream, scriptGenerationStream, getEvolinkKey } from '../../services/evolinkService';
 import { recommendTopics } from '../../services/topicRecommendService';
 import { buildSelectedInstinctPrompt } from '../../data/instinctPromptUtils';
 import { SCRIPT_STYLE_PRESETS, ScriptStylePreset } from '../../data/scriptStylePresets';
-import { VideoFormat, ContentFormat, TopicRecommendation, AspectRatio } from '../../types';
+import { VideoFormat, ContentFormat, TopicRecommendation, AspectRatio, ScriptAiModel } from '../../types';
+import { SCRIPT_AI_MODELS } from '../../constants';
 import { showToast } from '../../stores/uiStore';
 import { logger } from '../../services/LoggerService';
 import { countScenesLocally, splitScenesLocally, extractJsonFromText } from '../../services/gemini/scriptAnalysis';
@@ -171,6 +172,7 @@ export default function ScriptWriterTab() {
     synopsis, setSynopsis,
     clearPreviousContent,
     videoAnalysisStyles, addVideoAnalysisStyle, removeVideoAnalysisStyle,
+    scriptAiModel, setScriptAiModel,
   } = useScriptWriterStore();
 
   const setActiveTab = useNavigationStore((s) => s.setActiveTab);
@@ -479,11 +481,12 @@ ${instinctPrompt}
       // [FIX #137] 토큰 배수 4x + 자동 이어쓰기로 롱폼 대본 잘림 해결
       let finishReason = '';
       const tokenBudget = Math.min(65536, Math.max(8000, Math.ceil(targetCharCount * 4)));
-      let result = await evolinkNativeStream(
+      const useWebSearch = scriptAiModel === ScriptAiModel.GEMINI_PRO;
+      let result = await scriptGenerationStream(
         systemPrompt,
         userPrompt,
         (_chunk, accumulated) => { setStreamingText(accumulated); },
-        { temperature: 0.7, maxOutputTokens: tokenBudget, enableWebSearch: true, signal: abortCtrl.signal, onFinish: (r) => { finishReason = r; } }
+        { model: scriptAiModel, temperature: 0.7, maxOutputTokens: tokenBudget, enableWebSearch: useWebSearch, signal: abortCtrl.signal, onFinish: (r) => { finishReason = r; } }
       );
 
       // [FIX #137] 이어쓰기: finishReason이 MAX_TOKENS이고 목표 분량 미달 시 자동 계속 생성 (최대 3회)
@@ -496,10 +499,10 @@ ${instinctPrompt}
         const remaining = targetCharCount - result.length;
         const contPrompt = `다음은 이전에 작성하던 대본의 마지막 부분입니다:\n\n"...${result.slice(-800)}"\n\n이 대본을 끊긴 부분부터 자연스럽게 이어서 계속 작성하세요.\n남은 분량: 약 ${remaining}자\n\n중요: 이미 쓴 내용을 반복하지 마세요. 끊긴 지점부터 바로 이어서 쓰세요. 대본 본문만 출력하세요.`;
         finishReason = '';
-        const contText = await evolinkNativeStream(
+        const contText = await scriptGenerationStream(
           systemPrompt, contPrompt,
           (_chunk, accumulated) => { setStreamingText(result + accumulated); },
-          { temperature: 0.7, maxOutputTokens: Math.min(32000, Math.max(4000, Math.ceil(remaining * 4))), signal: abortCtrl.signal, onFinish: (r) => { finishReason = r; } }
+          { model: scriptAiModel, temperature: 0.7, maxOutputTokens: Math.min(32000, Math.max(4000, Math.ceil(remaining * 4))), signal: abortCtrl.signal, onFinish: (r) => { finishReason = r; } }
         );
         result += contText;
       }
@@ -524,7 +527,7 @@ ${instinctPrompt}
       genAbortRef.current = null;
       finishGeneration();
     }
-  }, [instinctIds, targetCharCount, contentFormat, shortsSeconds, channelGuideline, channelScripts, benchmarkScript, startGeneration, finishGeneration, setGeneratedScript, setFinalScript]);
+  }, [instinctIds, targetCharCount, contentFormat, shortsSeconds, channelGuideline, channelScripts, benchmarkScript, startGeneration, finishGeneration, setGeneratedScript, setFinalScript, scriptAiModel]);
 
   // #158: 빌트인 + 영상분석 스타일 병합
   const allStylePresets: ScriptStylePreset[] = useMemo(() => {
@@ -601,11 +604,12 @@ ${instinctPrompt}
       // [FIX #137] 토큰 배수 4x + 자동 이어쓰기로 롱폼 대본 잘림 해결
       let finishReason = '';
       const tokenBudget = Math.min(65536, Math.max(8000, Math.ceil(targetCharCount * 4)));
-      let fullText = await evolinkNativeStream(
+      const useWebSearch = scriptAiModel === ScriptAiModel.GEMINI_PRO;
+      let fullText = await scriptGenerationStream(
         systemPrompt,
         userPrompt,
         (_chunk, accumulated) => { setStreamingText(accumulated); },
-        { temperature: 0.7, maxOutputTokens: tokenBudget, enableWebSearch: true, signal: abortCtrl.signal, onFinish: (r) => { finishReason = r; } }
+        { model: scriptAiModel, temperature: 0.7, maxOutputTokens: tokenBudget, enableWebSearch: useWebSearch, signal: abortCtrl.signal, onFinish: (r) => { finishReason = r; } }
       );
 
       // [FIX #137] 이어쓰기: finishReason이 MAX_TOKENS이고 목표 분량 미달 시 자동 계속 생성 (최대 3회)
@@ -618,10 +622,10 @@ ${instinctPrompt}
         const remaining = targetCharCount - fullText.length;
         const contPrompt = `다음은 이전에 작성하던 대본의 마지막 부분입니다:\n\n"...${fullText.slice(-800)}"\n\n이 대본을 끊긴 부분부터 자연스럽게 이어서 계속 작성하세요.\n남은 분량: 약 ${remaining}자\n\n중요: 이미 쓴 내용을 반복하지 마세요. 끊긴 지점부터 바로 이어서 쓰세요. 대본 본문만 출력하세요.`;
         finishReason = '';
-        const contText = await evolinkNativeStream(
+        const contText = await scriptGenerationStream(
           systemPrompt, contPrompt,
           (_chunk, accumulated) => { setStreamingText(fullText + accumulated); },
-          { temperature: 0.7, maxOutputTokens: Math.min(32000, Math.max(4000, Math.ceil(remaining * 4))), signal: abortCtrl.signal, onFinish: (r) => { finishReason = r; } }
+          { model: scriptAiModel, temperature: 0.7, maxOutputTokens: Math.min(32000, Math.max(4000, Math.ceil(remaining * 4))), signal: abortCtrl.signal, onFinish: (r) => { finishReason = r; } }
         );
         fullText += contText;
       }
@@ -669,7 +673,7 @@ ${instinctPrompt}
       finishGeneration();
     }
   }, [title, synopsis, targetCharCount, contentFormat, shortsSeconds, instinctIds, channelGuideline, channelScripts, benchmarkScript,
-    selectedTopic, selectedStyleId, allStylePresets, startGeneration, finishGeneration, setGeneratedScript, setFinalScript]);
+    selectedTopic, selectedStyleId, allStylePresets, startGeneration, finishGeneration, setGeneratedScript, setFinalScript, scriptAiModel]);
 
   const handleCancelGeneration = useCallback(() => {
     genAbortRef.current?.abort();
@@ -688,20 +692,22 @@ ${instinctPrompt}
     try {
       // [FIX #120] 프리셋 지침의 하드코딩 분량을 사용자 설정값으로 동적 교체
       const charCountOverride = `\n\n[분량 지시] 반드시 공백 제외 ${targetCharCount}자 이상의 대본을 작성하십시오. 지정된 분량보다 짧으면 Layer 확장 법칙을 적용하여 채우십시오.`;
-      const res = await evolinkChat(
-        [
-          {
-            role: 'system',
-            content: `${preset.systemPrompt}${charCountOverride}\n\n[중요 지시] 사용자가 제공한 대본을 위 스타일 지침서에 맞게 재작성하십시오. 대본의 핵심 내용과 주제는 유지하되, 문체/어미/톤/구조를 지침서에 맞게 완전히 변환하십시오. 순수 대본 텍스트만 출력하십시오.`
-          },
-          {
-            role: 'user',
-            content: `다음 대본을 '${preset.name}' 스타일로 재작성하세요 (목표: ${targetCharCount}자 이상):\n\n${currentScript}`
-          }
-        ],
-        { temperature: 0.7, maxTokens: Math.min(32000, Math.max(8000, Math.ceil(currentScript.length * 2))), timeoutMs: 120_000 }
-      );
-      const content = res.choices?.[0]?.message?.content || '';
+      const sysContent = `${preset.systemPrompt}${charCountOverride}\n\n[중요 지시] 사용자가 제공한 대본을 위 스타일 지침서에 맞게 재작성하십시오. 대본의 핵심 내용과 주제는 유지하되, 문체/어미/톤/구조를 지침서에 맞게 완전히 변환하십시오. 순수 대본 텍스트만 출력하십시오.`;
+      const usrContent = `다음 대본을 '${preset.name}' 스타일로 재작성하세요 (목표: ${targetCharCount}자 이상):\n\n${currentScript}`;
+      const maxTok = Math.min(32000, Math.max(8000, Math.ceil(currentScript.length * 2)));
+      let content = '';
+      if (scriptAiModel !== ScriptAiModel.GEMINI_PRO) {
+        // Claude: 스트리밍 API 사용 (스타일 변환도 선택된 모델 적용)
+        content = await scriptGenerationStream(sysContent, usrContent, () => {}, {
+          model: scriptAiModel, temperature: 0.7, maxOutputTokens: maxTok,
+        });
+      } else {
+        const res = await evolinkChat(
+          [{ role: 'system', content: sysContent }, { role: 'user', content: usrContent }],
+          { temperature: 0.7, maxTokens: maxTok, timeoutMs: 120_000 }
+        );
+        content = res.choices?.[0]?.message?.content || '';
+      }
       if (!content.trim()) throw new Error('스타일 변환 결과가 비어있습니다. 다시 시도해주세요.');
       setStyledScript(content, preset.name);
       setFinalScript(content);
@@ -711,7 +717,7 @@ ${instinctPrompt}
     } finally {
       setApplyingStyle(null);
     }
-  }, [selectedStyleId, generatedScript, manualText, title, setStyledScript, setFinalScript, allStylePresets]);
+  }, [selectedStyleId, generatedScript, manualText, title, setStyledScript, setFinalScript, allStylePresets, scriptAiModel, targetCharCount]);
 
   const toggleTool = (tool: OpenTool) => setOpenTool(prev => prev === tool ? null : tool);
   const hasAnyTool = instinctIds.length > 0 || !!benchmarkScript || !!channelGuideline;
@@ -1092,6 +1098,76 @@ ${instinctPrompt}
             <span className="text-sm font-bold text-white">대본 생성</span>
           </div>
 
+          {/* AI 모델 선택 + 실시간 가격 */}
+          {(() => {
+            const selectedModel = SCRIPT_AI_MODELS.find(m => m.id === scriptAiModel) || SCRIPT_AI_MODELS[0];
+            // 실시간 예상 비용: 입력(시스템+사용자 프롬프트 ~2000자) + 출력(targetCharCount)
+            const estInputTokens = 2000; // 프롬프트 평균 추정
+            const estOutputTokens = Math.ceil(targetCharCount / 4);
+            const estCost = (estInputTokens / 1_000_000 * selectedModel.inputPer1M) + (estOutputTokens / 1_000_000 * selectedModel.outputPer1M);
+            return (
+              <div className="mb-3">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-sm text-gray-400 flex-shrink-0">AI 모델</span>
+                  <span className="text-xs text-gray-600">|</span>
+                  <span className="text-xs text-cyan-400/80 font-medium">
+                    예상 비용: ${estCost.toFixed(3)} ({targetCharCount.toLocaleString()}자 기준)
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  {SCRIPT_AI_MODELS.map((m) => {
+                    const isActive = scriptAiModel === m.id;
+                    const colorMap: Record<string, { active: string; border: string; text: string; badge: string }> = {
+                      emerald: { active: 'bg-emerald-600/20', border: 'border-emerald-500/50', text: 'text-emerald-400', badge: 'bg-emerald-900/40 text-emerald-300' },
+                      violet: { active: 'bg-violet-600/20', border: 'border-violet-500/50', text: 'text-violet-400', badge: 'bg-violet-900/40 text-violet-300' },
+                      amber: { active: 'bg-amber-600/20', border: 'border-amber-500/50', text: 'text-amber-400', badge: 'bg-amber-900/40 text-amber-300' },
+                    };
+                    const c = colorMap[m.color] || colorMap.emerald;
+                    const perScript = (estInputTokens / 1_000_000 * m.inputPer1M) + (estOutputTokens / 1_000_000 * m.outputPer1M);
+                    return (
+                      <button key={m.id} type="button"
+                        onClick={() => setScriptAiModel(m.id)}
+                        className={`relative rounded-xl px-3 py-2.5 text-left transition-all border
+                          ${isActive
+                            ? `${c.active} ${c.border} shadow-md`
+                            : 'bg-gray-800/60 border-gray-700/40 hover:border-gray-600'}`}
+                      >
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <span className="text-base">{m.icon}</span>
+                          <span className={`text-sm font-bold ${isActive ? c.text : 'text-gray-300'}`}>{m.label}</span>
+                        </div>
+                        <p className={`text-xs leading-relaxed ${isActive ? 'text-gray-300' : 'text-gray-500'}`}>{m.description}</p>
+                        <div className="flex items-center gap-1.5 mt-1.5">
+                          <span className={`text-xs px-1.5 py-0.5 rounded ${isActive ? c.badge : 'bg-gray-800 text-gray-500'}`}>
+                            ${perScript.toFixed(3)}/편
+                          </span>
+                          {m.hasWebSearch && (
+                            <span className={`text-xs px-1.5 py-0.5 rounded ${isActive ? 'bg-emerald-900/40 text-emerald-300' : 'bg-gray-800 text-gray-500'}`}>
+                              웹검색
+                            </span>
+                          )}
+                        </div>
+                        {isActive && (
+                          <div className={`absolute top-2 right-2 w-2 h-2 rounded-full ${m.color === 'emerald' ? 'bg-emerald-400' : m.color === 'violet' ? 'bg-violet-400' : 'bg-amber-400'}`} />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+                {/* 선택 모델 상세 안내 */}
+                <div className={`mt-2 px-3 py-2 rounded-lg text-xs leading-relaxed border
+                  ${scriptAiModel === ScriptAiModel.GEMINI_PRO ? 'bg-emerald-900/10 border-emerald-700/20 text-emerald-300/80' :
+                    scriptAiModel === ScriptAiModel.CLAUDE_SONNET ? 'bg-violet-900/10 border-violet-700/20 text-violet-300/80' :
+                    'bg-amber-900/10 border-amber-700/20 text-amber-300/80'}`}>
+                  {selectedModel.icon} <span className="font-semibold">{selectedModel.label}</span> — {selectedModel.detail}
+                  {!selectedModel.hasWebSearch && (
+                    <span className="ml-1 text-gray-500">(웹 검색 미지원 — 최신 트렌드 반영이 필요하면 Gemini 추천)</span>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+
           {/* 콘텐츠 형식 선택: 롱폼 / 쇼츠 */}
           <div className="mb-3 flex items-center gap-3">
             <span className="text-sm text-gray-400 flex-shrink-0">형식</span>
@@ -1193,7 +1269,7 @@ ${instinctPrompt}
                   text-white rounded-lg text-sm font-bold transition-all whitespace-nowrap
                   shadow-lg shadow-violet-900/30"
               >
-                🚀 AI 대본 생성
+                🚀 {scriptAiModel === ScriptAiModel.GEMINI_PRO ? 'AI 대본 생성' : scriptAiModel === ScriptAiModel.CLAUDE_SONNET ? 'Sonnet 대본 생성' : 'Opus 대본 생성'}
               </button>
             )}
           </div>
@@ -1205,9 +1281,14 @@ ${instinctPrompt}
                 {selectedTopicFromStore ? '' : 'STEP 1에서 소재를 선택하거나 직접 입력하세요'}
               </span>
             )}
-            {canGenerate && hasAnyTool && (
+            {canGenerate && (
               <>
                 <span className="text-xs text-gray-500">적용 중:</span>
+                {scriptAiModel !== ScriptAiModel.GEMINI_PRO && (
+                  <span className={`text-xs px-1.5 py-0.5 rounded ${scriptAiModel === ScriptAiModel.CLAUDE_SONNET ? 'text-violet-300 bg-violet-900/30' : 'text-amber-300 bg-amber-900/30'}`}>
+                    {scriptAiModel === ScriptAiModel.CLAUDE_SONNET ? '🟣 Sonnet 4.6' : '🔴 Opus 4.6'}
+                  </span>
+                )}
                 {instinctIds.length > 0 && <span className="text-xs text-violet-300 bg-violet-900/30 px-1.5 py-0.5 rounded">🧠 본능 {instinctIds.length}개</span>}
                 {benchmarkScript && <span className="text-xs text-green-300 bg-green-900/30 px-1.5 py-0.5 rounded">📊 벤치마크</span>}
                 {channelGuideline && <span className="text-xs text-orange-300 bg-orange-900/30 px-1.5 py-0.5 rounded">📡 {channelGuideline.channelName}</span>}
