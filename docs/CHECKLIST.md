@@ -8,6 +8,7 @@
 
 ## 🟢 완료된 작업
 
+- [x] **yt-dlp Mixed Content 차단 해결 — Cloudflare Pages Function 프록시** — HTTPS 배포 사이트에서 HTTP yt-dlp VPS 호출 시 브라우저 Mixed Content 차단으로 프레임 추출 실패 → Layer 3 폴백(YouTube 썸네일 4장 반복). Cloudflare Pages Function `/ytdlp-proxy/[[path]]` 추가하여 HTTPS→HTTP 서버 사이드 프록시. getApiBaseUrl()에서 HTTPS 환경 자동 감지 → 프록시 경로 사용, HTTP 로컬 개발은 직접 접속 유지 (functions/ytdlp-proxy/[[path]].ts 신규, ytdlpApiService.ts, 2026-03-15)
 - [x] **영상분석실 목표 시간 "원본" 옵션 추가** — targetDuration 타입에 0(원본) 추가, 기본값 60→0(원본)으로 변경. 목표시간 셀렉터에 "원본" 버튼 추가. 원본 선택 시 AI에 시간 제약 지시 생략하여 원본 영상 길이 기준 분석 (videoAnalysisStore.ts, VideoAnalysisRoom.tsx, 2026-03-15)
 - [x] **#294 대본작성 해외 타겟 지역 설정 기능** — 대본 생성 시 타겟 지역(15개국)을 선택하면 해당 지역 언어·문화·자료 기반으로 대본 생성. (1) ScriptTargetRegion 타입 + SCRIPT_TARGET_REGIONS 상수 추가 (2) scriptWriterStore에 targetRegion 상태 추가 (localStorage 영속화) (3) ScriptWriterTab STEP 3에 타겟 지역 드롭다운 UI (4) 해외 타겟 선택 시 시스템 프롬프트에 언어 강제 지시 + 사용자 프롬프트에 지역 자료·문화 반영 지시 주입 (types.ts, constants.ts, scriptWriterStore.ts, ScriptWriterTab.tsx, 2026-03-15)
 - [x] **#296 영상분석 편집실 전환 시 소스 영상 없음 오류 + 탭 이동 차단 수정** — (1) videoBlob/uploadedFiles 페이지 새로고침 시 소실되어 "소스 영상이 없습니다" 토스트 → 소스 없어도 편집표만으로 진행, 편집실 Step 1에서 안내 (2) parseEditTable AI 호출이 탭 전환 차단 → 비동기 fire-and-forget로 즉시 이동 (3) 모든 callsite에 try-catch 추가 (editPointStore.ts, VideoAnalysisRoom.tsx, VersionSelectorBar.tsx, 2026-03-15)

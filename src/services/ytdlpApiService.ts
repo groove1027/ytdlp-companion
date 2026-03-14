@@ -18,16 +18,23 @@ import { logger } from './LoggerService';
 // ──────────────────────────────────────────────
 
 /** 기본 서버 설정 — localStorage로 오버라이드 가능 */
-const DEFAULT_API_URL = 'http://175.126.73.193:3100';
+const DEFAULT_DIRECT_URL = 'http://175.126.73.193:3100';
+const DEFAULT_PROXY_PATH = '/ytdlp-proxy'; // Cloudflare Pages Function 프록시
 const DEFAULT_API_KEY = 'bf9ce5c9b531c42a2dd6dcec61cff6c3eead93f20ba35365d3411ddf783dccb1';
 
 function getApiBaseUrl(): string {
   try {
-    return localStorage.getItem('YTDLP_API_URL') || DEFAULT_API_URL;
+    const stored = localStorage.getItem('YTDLP_API_URL');
+    if (stored) return stored;
   } catch (e) {
     logger.trackSwallowedError('ytdlpApiService:getApiBaseUrl', e);
-    return DEFAULT_API_URL;
   }
+  // HTTPS 배포 환경 → Cloudflare Pages Function 프록시 (Mixed Content 방지)
+  if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
+    return DEFAULT_PROXY_PATH;
+  }
+  // HTTP 로컬 개발 → 직접 접속
+  return DEFAULT_DIRECT_URL;
 }
 
 function getApiKey(): string {
@@ -42,7 +49,7 @@ function getApiKey(): string {
 /** 서버가 설정되어 있는지 확인 */
 export function isYtdlpServerConfigured(): boolean {
   const url = getApiBaseUrl();
-  return !!url && url.startsWith('http');
+  return !!url && (url.startsWith('http') || url.startsWith('/'));
 }
 
 // ──────────────────────────────────────────────
