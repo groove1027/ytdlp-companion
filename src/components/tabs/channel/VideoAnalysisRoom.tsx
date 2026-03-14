@@ -972,28 +972,32 @@ function generateSrt(scenes: SceneRow[], isTikitaka: boolean = false): string {
 
 /** SRT 파일 다운로드 */
 function downloadSrt(content: string, filename: string) {
+  // SRT는 BOM 필요 (자막 호환)
   const blob = new Blob(['\uFEFF' + content], { type: 'application/x-subrip;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   logger.registerBlobUrl(url, 'other', 'VideoAnalysisRoom:downloadSrt');
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
+  document.body.appendChild(a);
   a.click();
-  logger.unregisterBlobUrl(url);
-  URL.revokeObjectURL(url);
+  document.body.removeChild(a);
+  setTimeout(() => { logger.unregisterBlobUrl(url); URL.revokeObjectURL(url); }, 5000);
 }
 
 /** 파일 다운로드 헬퍼 */
 function downloadFile(content: string, filename: string, mime: string) {
-  const blob = new Blob(['\uFEFF' + content], { type: `${mime};charset=utf-8` });
+  // HTML 등 일반 파일에는 BOM 불필요
+  const blob = new Blob([content], { type: `${mime};charset=utf-8` });
   const url = URL.createObjectURL(blob);
   logger.registerBlobUrl(url, 'other', 'VideoAnalysisRoom:downloadFile');
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
+  document.body.appendChild(a);
   a.click();
-  logger.unregisterBlobUrl(url);
-  URL.revokeObjectURL(url);
+  document.body.removeChild(a);
+  setTimeout(() => { logger.unregisterBlobUrl(url); URL.revokeObjectURL(url); }, 5000);
 }
 
 /** 소스 영상 Blob에서 지정 구간들의 오디오를 추출 → 단일 AudioBuffer로 합성 */
