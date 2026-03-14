@@ -2461,9 +2461,9 @@ const BILINGUAL_INSTRUCTION = `
 
 원본이 한국어인 경우 이 규칙을 완전히 무시하고 기존 형식 그대로 출력하라.`;
 
-const buildUserMessage = (inputDesc: string, preset: AnalysisPreset, targetDuration: 30 | 45 | 60 = 60): string => {
-  // 목표 시간 관련 동적 지시 (프리셋별 기존 시간 규칙을 오버라이드)
-  const durationInstruction = `\n\n### ⏱️ 목표 시간 설정 (사용자 지정 — 최우선 적용)\n- **각 버전의 총 길이를 반드시 약 ${targetDuration}초로 맞추세요.**\n- 컷 수와 개별 컷 길이를 조절하여 합산이 ${targetDuration}초 내외(±5초)가 되도록 설계하세요.\n- ${targetDuration <= 30 ? '핵심 장면만 엄선하여 짧고 임팩트 있게.' : targetDuration <= 45 ? '주요 장면을 선별하되 적절한 호흡으로.' : '충분한 내용을 담아 풍부하게.'}`;
+const buildUserMessage = (inputDesc: string, preset: AnalysisPreset, targetDuration: 0 | 30 | 45 | 60 = 0): string => {
+  // 목표 시간 관련 동적 지시 (프리셋별 기존 시간 규칙을 오버라이드) — 0(원본)이면 생략
+  const durationInstruction = targetDuration === 0 ? '' : `\n\n### ⏱️ 목표 시간 설정 (사용자 지정 — 최우선 적용)\n- **각 버전의 총 길이를 반드시 약 ${targetDuration}초로 맞추세요.**\n- 컷 수와 개별 컷 길이를 조절하여 합산이 ${targetDuration}초 내외(±5초)가 되도록 설계하세요.\n- ${targetDuration <= 30 ? '핵심 장면만 엄선하여 짧고 임팩트 있게.' : targetDuration <= 45 ? '주요 장면을 선별하되 적절한 호흡으로.' : '충분한 내용을 담아 풍부하게.'}`;
 
   if (preset === 'alltts') {
     return `## 분석 대상
@@ -3981,7 +3981,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
           <div className="flex items-center gap-2">
             <span className="text-gray-400 text-sm">목표 시간</span>
             <div className="flex bg-gray-900/70 rounded-lg border border-gray-600/50 p-0.5">
-              {([30, 45, 60] as const).map(dur => (
+              {([0, 30, 45, 60] as const).map(dur => (
                 <button
                   key={dur} type="button"
                   onClick={() => setTargetDuration(dur)}
@@ -3991,7 +3991,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                       : 'text-gray-400 hover:text-gray-200 border border-transparent'
                   }`}
                 >
-                  {dur}초
+                  {dur === 0 ? '원본' : `${dur}초`}
                 </button>
               ))}
             </div>
