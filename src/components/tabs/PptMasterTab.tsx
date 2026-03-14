@@ -559,6 +559,10 @@ export default function PptMasterTab() {
   const [isGeneratingSample, setIsGeneratingSample] = useState(false);
   const [genPhase, setGenPhase] = useState<GenPhase>('idle');
 
+  // Image download progress
+  const [isDownloadingImages, setIsDownloadingImages] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState({ current: 0, total: 0 });
+
   const elapsed = useElapsedTimer(isGenerating);
   const elapsedBatch = useElapsedTimer(isBatchingImages);
   const elapsedSample = useElapsedTimer(isGeneratingSample);
@@ -1026,26 +1030,33 @@ export default function PptMasterTab() {
     }
   }, [requireAuth, slides, selectedDesignStyle, selectedContentStyle]);
 
-  // ─── HTML 내보내기 ───
+  // ─── HTML 내보내기 (앱 UI 재현 + 라이트박스) ───
   const handleExportHtml = useCallback(() => {
-    const htmlSlides = slides.map((slide, i) => {
-      const imgTag = slide.imageUrl
-        ? `<img src="${slide.imageUrl}" style="width:100%;height:100%;object-fit:cover;position:absolute;top:0;left:0;" />`
-        : '';
+    const accent = selectedDesignStyle.accentColor;
+    const slideCards = slides.map((slide, i) => {
+      const imgSection = slide.imageUrl
+        ? `<img src="${slide.imageUrl}" alt="Slide ${i + 1}" class="slide-img" onclick="openLightbox(${i})" />`
+        : `<div class="no-img">이미지 미생성</div>`;
       const kpHtml = slide.keyPoints.length > 0
-        ? `<ul style="list-style:none;padding:0;margin:16px 0 0;">${slide.keyPoints.map(kp => `<li style="color:${selectedDesignStyle.accentColor};font-size:14px;font-weight:bold;margin:4px 0;">• ${kp}</li>`).join('')}</ul>`
+        ? `<div class="kp-wrap">${slide.keyPoints.map(kp => `<span class="kp-badge">${kp}</span>`).join('')}</div>`
         : '';
-      return `
-      <div class="slide" style="page-break-after:always;position:relative;width:960px;height:540px;margin:20px auto;background:${selectedDesignStyle.bgColor};border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.3);">
-        ${imgTag}
-        <div style="position:relative;z-index:1;padding:40px;${slide.imageUrl ? 'background:rgba(0,0,0,0.5);height:100%;box-sizing:border-box;' : ''}">
-          <div style="font-size:10px;color:#888;margin-bottom:8px;">#${i + 1}</div>
-          <h2 style="font-size:28px;font-weight:bold;color:#fff;margin:0 0 16px;">${slide.title}</h2>
-          <p style="font-size:16px;color:#e0e0e0;line-height:1.6;white-space:pre-wrap;">${slide.body}</p>
-          ${kpHtml}
-        </div>
-      </div>`;
+      return `<div class="card">
+  <div class="img-wrap" style="background:${selectedDesignStyle.bgColor}">
+    ${imgSection}
+    <span class="num">#${i + 1}</span>
+  </div>
+  <div class="info">
+    <h3 class="title">${slide.title}</h3>
+    <p class="body">${slide.body}</p>
+    ${kpHtml}
+  </div>
+</div>`;
     }).join('\n');
+
+    const lightboxData = JSON.stringify(slides.map((s, i) => ({
+      num: i + 1, title: s.title, body: s.body, img: s.imageUrl || '',
+      kp: s.keyPoints,
+    }))).replace(/<\/script>/gi, '<\\/script>');
 
     const html = `<!DOCTYPE html>
 <html lang="ko">
@@ -1054,15 +1065,90 @@ export default function PptMasterTab() {
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>PPT 마스터 — ${selectedContentStyle.label} × ${selectedDesignStyle.label}</title>
 <style>
-  body { background:#111;font-family:'Apple SD Gothic Neo','Malgun Gothic',sans-serif;padding:40px 0; }
-  @media print { body { background:#fff; } .slide { box-shadow:none!important;margin:0 auto!important; } }
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#111827;color:#e5e7eb;font-family:'Apple SD Gothic Neo','Malgun Gothic','Noto Sans KR',sans-serif;min-height:100vh}
+.header{max-width:1200px;margin:0 auto;padding:24px 20px 0;display:flex;align-items:center;gap:12px}
+.header-icon{width:40px;height:40px;border-radius:12px;background:linear-gradient(135deg,#0ea5e9,#4338ca);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0}
+.header h1{font-size:20px;font-weight:800;color:#f3f4f6}
+.header .sub{font-size:12px;color:#6b7280;margin-top:2px}
+.meta{max-width:1200px;margin:12px auto 0;padding:0 20px;display:flex;gap:8px;flex-wrap:wrap}
+.meta-badge{font-size:11px;padding:4px 10px;border-radius:6px;background:rgba(14,165,233,0.15);color:#38bdf8;border:1px solid rgba(14,165,233,0.25)}
+.grid{max-width:1200px;margin:20px auto;padding:0 20px;display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
+.card{background:#1f2937;border:1px solid #374151;border-radius:12px;overflow:hidden;transition:border-color .15s}
+.card:hover{border-color:rgba(14,165,233,0.4)}
+.img-wrap{position:relative;aspect-ratio:16/9;overflow:hidden}
+.slide-img{width:100%;height:100%;object-fit:cover;cursor:zoom-in;transition:transform .2s}
+.slide-img:hover{transform:scale(1.03)}
+.no-img{width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:#6b7280;font-size:13px}
+.num{position:absolute;top:8px;left:8px;background:rgba(0,0,0,0.6);color:#fff;font-size:11px;font-weight:700;padding:2px 8px;border-radius:4px}
+.info{padding:12px}
+.title{font-size:13px;font-weight:700;color:#f3f4f6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.body{font-size:11px;color:#9ca3af;margin-top:4px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;line-height:1.5}
+.kp-wrap{display:flex;flex-wrap:wrap;gap:4px;margin-top:8px}
+.kp-badge{font-size:10px;background:rgba(14,165,233,0.12);color:#7dd3fc;border:1px solid rgba(14,165,233,0.25);padding:2px 6px;border-radius:4px}
+/* Lightbox */
+.lb-overlay{display:none;position:fixed;inset:0;z-index:100;background:rgba(0,0,0,0.88);align-items:center;justify-content:center;padding:16px}
+.lb-overlay.open{display:flex}
+.lb-inner{position:relative;max-width:960px;width:100%}
+.lb-close{position:absolute;top:-36px;right:0;font-size:28px;color:#9ca3af;background:none;border:none;cursor:pointer}
+.lb-close:hover{color:#fff}
+.lb-card{border-radius:16px;overflow:hidden;background:#111827;border:1px solid #374151}
+.lb-card img{width:100%;max-height:70vh;object-fit:contain;display:block}
+.lb-info{padding:16px}
+.lb-info .lb-num{display:inline-block;background:rgba(14,165,233,0.2);color:#7dd3fc;font-size:12px;font-weight:700;padding:2px 8px;border-radius:4px;margin-right:8px}
+.lb-info h4{display:inline;font-size:16px;font-weight:700;color:#fff}
+.lb-info p{font-size:13px;color:#9ca3af;margin-top:6px;line-height:1.5}
+.lb-info .lb-kp{display:flex;flex-wrap:wrap;gap:5px;margin-top:10px}
+.lb-info .lb-kp span{font-size:11px;background:rgba(14,165,233,0.12);color:#7dd3fc;border:1px solid rgba(14,165,233,0.25);padding:3px 8px;border-radius:5px}
+.lb-nav{display:flex;justify-content:space-between;align-items:center;margin-top:12px}
+.lb-nav button{padding:8px 16px;border-radius:8px;background:#1f2937;color:#fff;border:none;cursor:pointer;font-size:13px}
+.lb-nav button:disabled{opacity:.3;cursor:not-allowed}
+.lb-nav button:hover:not(:disabled){background:#374151}
+.lb-nav .lb-pos{font-size:13px;color:#6b7280}
+@media print{body{background:#fff}.header-icon{display:none}.card{break-inside:avoid}.lb-overlay{display:none!important}}
 </style>
 </head>
 <body>
-<h1 style="text-align:center;color:#fff;font-size:24px;margin-bottom:32px;">
-  ${selectedContentStyle.icon} ${selectedContentStyle.label} × ${selectedDesignStyle.label} (${slides.length}장)
-</h1>
-${htmlSlides}
+<div class="header">
+  <div class="header-icon">📊</div>
+  <div><h1>PPT 마스터</h1><div class="sub">${selectedContentStyle.icon} ${selectedContentStyle.label} × ${selectedDesignStyle.label}</div></div>
+</div>
+<div class="meta">
+  <span class="meta-badge">슬라이드 ${slides.length}장</span>
+  <span class="meta-badge">이미지 ${slides.filter(s => s.imageUrl).length}장</span>
+</div>
+<div class="grid">${slideCards}</div>
+
+<div class="lb-overlay" id="lb" onclick="if(event.target===this)closeLightbox()">
+  <div class="lb-inner">
+    <button class="lb-close" onclick="closeLightbox()">&times;</button>
+    <div class="lb-card">
+      <img id="lb-img" src="" alt="" />
+      <div class="lb-info">
+        <span class="lb-num" id="lb-num"></span>
+        <h4 id="lb-title"></h4>
+        <p id="lb-body"></p>
+        <div class="lb-kp" id="lb-kp"></div>
+      </div>
+    </div>
+    <div class="lb-nav">
+      <button id="lb-prev" onclick="navLb(-1)">← 이전</button>
+      <span class="lb-pos" id="lb-pos"></span>
+      <button id="lb-next" onclick="navLb(1)">다음 →</button>
+    </div>
+  </div>
+</div>
+
+<script>
+var SD=${lightboxData};
+var CI=-1;
+var WI=SD.filter(function(s){return !!s.img});
+function openLightbox(idx){CI=0;for(var i=0;i<WI.length;i++){if(WI[i].num===idx+1){CI=i;break}}renderLb();document.getElementById('lb').classList.add('open')}
+function closeLightbox(){document.getElementById('lb').classList.remove('open')}
+function navLb(d){var n=CI+d;if(n>=0&&n<WI.length){CI=n;renderLb()}}
+function renderLb(){var s=WI[CI];if(!s)return;document.getElementById('lb-img').src=s.img;document.getElementById('lb-num').textContent='#'+s.num;document.getElementById('lb-title').textContent=s.title;document.getElementById('lb-body').textContent=s.body;document.getElementById('lb-pos').textContent=(CI+1)+' / '+WI.length;document.getElementById('lb-prev').disabled=CI===0;document.getElementById('lb-next').disabled=CI===WI.length-1;var kpEl=document.getElementById('lb-kp');kpEl.innerHTML='';s.kp.forEach(function(k){var sp=document.createElement('span');sp.textContent=k;kpEl.appendChild(sp)})}
+document.addEventListener('keydown',function(e){if(!document.getElementById('lb').classList.contains('open'))return;if(e.key==='Escape')closeLightbox();if(e.key==='ArrowLeft')navLb(-1);if(e.key==='ArrowRight')navLb(1)});
+</script>
 </body>
 </html>`;
 
@@ -1076,7 +1162,7 @@ ${htmlSlides}
     showToast('HTML 파일 다운로드 완료!');
   }, [slides, selectedDesignStyle, selectedContentStyle]);
 
-  // ─── 전체 이미지 ZIP 다운로드 ───
+  // ─── 전체 이미지 ZIP 다운로드 (진행률 UI) ───
   const handleDownloadAllImages = useCallback(async () => {
     const slidesWithImg = slides.filter(s => s.imageUrl);
     if (slidesWithImg.length === 0) {
@@ -1084,20 +1170,19 @@ ${htmlSlides}
       return;
     }
 
+    setIsDownloadingImages(true);
+    setDownloadProgress({ current: 0, total: slidesWithImg.length });
+
     try {
       const zip = new JSZip();
-      for (const slide of slidesWithImg) {
+      for (let idx = 0; idx < slidesWithImg.length; idx++) {
+        const slide = slidesWithImg[idx];
         if (!slide.imageUrl) continue;
-        let data: Blob;
-        if (slide.imageUrl.startsWith('data:')) {
-          const resp = await fetch(slide.imageUrl);
-          data = await resp.blob();
-        } else {
-          const resp = await fetch(slide.imageUrl);
-          data = await resp.blob();
-        }
+        const resp = await fetch(slide.imageUrl);
+        const data = await resp.blob();
         const ext = slide.imageUrl.startsWith('data:image/png') ? 'png' : 'jpg';
         zip.file(`slide_${String(slide.slideNumber).padStart(3, '0')}.${ext}`, data);
+        setDownloadProgress({ current: idx + 1, total: slidesWithImg.length });
       }
       const blob = await zip.generateAsync({ type: 'blob' });
       const url = URL.createObjectURL(blob);
@@ -1110,6 +1195,9 @@ ${htmlSlides}
     } catch (err) {
       logger.trackSwallowedError('PptMasterTab:downloadAllImages', err);
       showToast('이미지 다운로드 실패');
+    } finally {
+      setIsDownloadingImages(false);
+      setDownloadProgress({ current: 0, total: 0 });
     }
   }, [slides]);
 
@@ -1521,10 +1609,15 @@ ${htmlSlides}
                 <button
                   type="button"
                   onClick={handleDownloadAllImages}
-                  disabled={slides.filter(s => s.imageUrl).length === 0}
-                  className="text-xs bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white px-3 py-1.5 rounded-lg font-bold transition-all disabled:opacity-50"
+                  disabled={slides.filter(s => s.imageUrl).length === 0 || isDownloadingImages}
+                  className="text-xs bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white px-3 py-1.5 rounded-lg font-bold transition-all disabled:opacity-50 flex items-center gap-1.5"
                 >
-                  전체 이미지 저장
+                  {isDownloadingImages ? (
+                    <>
+                      <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      ZIP 생성 중 {downloadProgress.current}/{downloadProgress.total}
+                    </>
+                  ) : `전체 이미지 저장 (${slides.filter(s => s.imageUrl).length}장)`}
                 </button>
               </div>
             )}
