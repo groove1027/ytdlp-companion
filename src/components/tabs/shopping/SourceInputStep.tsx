@@ -12,7 +12,7 @@ import {
 import { extractFramesForAnalysis, analyzeVideoProduct, generateShoppingScripts, analyzeCoupangProduct, generateCoupangShoppingScripts } from '../../../services/shoppingScriptService';
 import { crawlCoupangProduct, validateCoupangUrl, testProxyConnection } from '../../../services/coupangCrawlService';
 import { generateDeeplink, hasCoupangAffiliateKeys } from '../../../services/coupangAffiliateService';
-import { getCoupangProxyUrl, saveCoupangKeys, getCoupangAccessKey, getCoupangSecretKey } from '../../../services/apiService';
+import { getCoupangProxyUrl, saveCoupangKeys, getCoupangAccessKey, getCoupangSecretKey, syncApiKeysToServer } from '../../../services/apiService';
 import { showToast } from '../../../stores/uiStore';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
 import { detectNarration } from '../../../services/shoppingScriptService';
@@ -235,6 +235,7 @@ const SourceInputStep: React.FC = () => {
   // 쿠팡파트너스 설정 저장
   const handleSaveCoupangKeys = useCallback(() => {
     saveCoupangKeys(cpAccessKey, cpSecretKey, cpProxyUrl);
+    syncApiKeysToServer().catch(() => {});
     showToast('쿠팡파트너스 설정 저장 완료!');
     setShowCoupangSettings(false);
   }, [cpAccessKey, cpSecretKey, cpProxyUrl]);

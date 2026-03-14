@@ -227,6 +227,36 @@ wrangler d1 execute auth-db --file=schema.sql
 
 > 대시보드에서도 가능: D1 → auth-db → Console 탭에서 SQL 직접 입력/실행.
 
+#### 4-1-1. API 키 동기화 테이블 추가 (v4.5.1~)
+
+로그인 시 API 키가 자동 복원되도록 `user_settings` 테이블을 추가합니다.
+
+**Cloudflare 대시보드에서 실행:**
+
+1. Cloudflare 대시보드 → **Workers & Pages** → **D1 SQL Database** → `auth-db` 클릭
+2. **Console** 탭 클릭
+3. 아래 SQL을 붙여넣고 **Execute** 클릭:
+
+```sql
+-- API 키 설정 테이블 (사용자별 1행)
+CREATE TABLE IF NOT EXISTS user_settings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  email TEXT UNIQUE NOT NULL,
+  settings_json TEXT NOT NULL DEFAULT '{}',
+  updated_at TEXT DEFAULT (datetime('now'))
+);
+
+-- 이메일 인덱스 (빠른 조회)
+CREATE INDEX IF NOT EXISTS idx_user_settings_email ON user_settings(email);
+```
+
+**또는 CLI로 실행:**
+```bash
+wrangler d1 execute auth-db --command "CREATE TABLE IF NOT EXISTS user_settings (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT UNIQUE NOT NULL, settings_json TEXT NOT NULL DEFAULT '{}', updated_at TEXT DEFAULT (datetime('now'))); CREATE INDEX IF NOT EXISTS idx_user_settings_email ON user_settings(email);"
+```
+
+> 이 작업은 1회만 하면 됩니다. 이후 앱이 자동으로 API 키를 저장/복원합니다.
+
 ---
 
 ### 4-2. KV 네임스페이스 생성 (세션 + 초대 코드)

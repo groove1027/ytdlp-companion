@@ -182,6 +182,88 @@ export const getStoredKeys = () => {
     };
 };
 
+// ── 서버 동기화: API 키를 계정에 연동하여 어디서든 복원 ──
+
+/** localStorage → 서버 필드명 매핑 */
+const SETTINGS_KEY_MAP: [string, string][] = [
+    ['CUSTOM_KIE_KEY', 'kie'],
+    ['CUSTOM_EVOLINK_KEY', 'evolink'],
+    ['CUSTOM_CLOUD_NAME', 'cloudName'],
+    ['CUSTOM_UPLOAD_PRESET', 'uploadPreset'],
+    ['CUSTOM_APIMART_KEY', 'apimart'],
+    ['CUSTOM_REMOVE_BG_KEY', 'removeBg'],
+    ['CUSTOM_WAVESPEED_KEY', 'wavespeed'],
+    ['CUSTOM_XAI_KEY', 'xai'],
+    ['CUSTOM_YOUTUBE_API_KEY', 'youtubeApiKey'],
+    ['CUSTOM_TYPECAST_KEY', 'typecast'],
+    ['CUSTOM_GHOSTCUT_APP_KEY', 'ghostcutAppKey'],
+    ['CUSTOM_GHOSTCUT_APP_SECRET', 'ghostcutAppSecret'],
+    ['CUSTOM_COUPANG_ACCESS_KEY', 'coupangAccessKey'],
+    ['CUSTOM_COUPANG_SECRET_KEY', 'coupangSecretKey'],
+    ['CUSTOM_COUPANG_PROXY_URL', 'coupangProxyUrl'],
+];
+
+/** 현재 localStorage의 API 키를 서버에 백업 (로그인 상태에서만 동작) */
+export const syncApiKeysToServer = async (): Promise<void> => {
+    const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
+    if (!token) return;
+
+    const settings: Record<string, string> = {};
+    for (const [lsKey, field] of SETTINGS_KEY_MAP) {
+        const val = localStorage.getItem(lsKey);
+        if (val) settings[field] = val;
+    }
+
+    // 저장할 키가 하나도 없으면 스킵
+    if (Object.keys(settings).length === 0) return;
+
+    try {
+        await fetch('/api/auth/save-settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token, settings }),
+        });
+    } catch (e) {
+        logger.trackSwallowedError('apiService:syncApiKeysToServer', e);
+    }
+};
+
+/** 서버에서 API 키를 가져와 localStorage에 복원 (로그인 직후 호출) */
+export const restoreApiKeysFromServer = async (): Promise<boolean> => {
+    const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
+    if (!token) return false;
+
+    try {
+        const res = await fetch('/api/auth/get-settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token }),
+        });
+
+        if (!res.ok) return false;
+
+        const data = await res.json();
+        if (!data.settings) return false;
+
+        let restored = 0;
+        for (const [lsKey, field] of SETTINGS_KEY_MAP) {
+            const val = data.settings[field];
+            if (val && typeof val === 'string' && val.trim()) {
+                localStorage.setItem(lsKey, val.trim());
+                restored++;
+            }
+        }
+
+        if (restored > 0) {
+            logger.info(`API 키 ${restored}개를 서버에서 복원했습니다.`);
+        }
+        return restored > 0;
+    } catch (e) {
+        logger.trackSwallowedError('apiService:restoreApiKeysFromServer', e);
+        return false;
+    }
+};
+
 // [NEW] Centralized Fetch Wrapper for Logging (v2: timing + success logging + timeout)
 // timeoutMs: AbortController 기반 타임아웃 (기본 0 = 무제한, 양수 시 해당 ms 후 AbortError)
 export const monitoredFetch = async (url: string, options: RequestInit = {}, timeoutMs: number = 0): Promise<Response> => {

@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { getStoredKeys, saveApiKeys } from '../services/apiService';
+import { getStoredKeys, saveApiKeys, syncApiKeysToServer } from '../services/apiService';
 import { showToast } from '../stores/uiStore';
 import { useAuthGuard } from '../hooks/useAuthGuard';
 import { logger } from '../services/LoggerService';
@@ -349,6 +349,8 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
     const handleSave = () => {
         if (!requireAuth('API 키 저장')) return;
         saveApiKeys(keys.kie, keys.cloudName, keys.uploadPreset, undefined, keys.apimart, keys.removeBg, keys.wavespeed, keys.xai, keys.evolink, keys.youtubeApiKey, keys.typecast, keys.ghostcutAppKey, keys.ghostcutAppSecret);
+        // 서버에도 동기화 (계정에 연동 — 다른 기기에서도 복원 가능)
+        syncApiKeysToServer().catch(() => {});
         showToast('설정이 저장되었습니다. 페이지를 새로고침합니다.', 1500);
         setTimeout(() => window.location.reload(), 1500);
     };
