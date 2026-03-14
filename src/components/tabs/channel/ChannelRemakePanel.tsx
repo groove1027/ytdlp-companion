@@ -60,6 +60,7 @@ const ChannelRemakePanel: React.FC = () => {
 
   const [sourceInput, setSourceInput] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [generatingStep, setGeneratingStep] = useState(0);
   const [versions, setVersions] = useState<RemakeVersion[]>([]);
   const [error, setError] = useState('');
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
@@ -151,6 +152,7 @@ const ChannelRemakePanel: React.FC = () => {
     if (!channelGuideline || !sourceInput.trim()) return;
     if (!getEvolinkKey()) { setError('Evolink API 키를 먼저 설정해주세요.'); return; }
     setIsGenerating(true);
+    setGeneratingStep(0);
     setError('');
     setVersions([]);
 
@@ -168,34 +170,60 @@ const ChannelRemakePanel: React.FC = () => {
         ? '쇼츠 (60초 이내, 약 500-800자)' : '롱폼 (5-15분, 약 3000-8000자)';
       const systemPrompt = `너는 YouTube 영상 대본 리메이크 전문가다. 주어진 채널의 스타일(말투, 구조, 감정 전개)을 정확히 모방하여 원본 소스를 재작성한다. 콘텐츠 포맷: ${formatLabel}. 반드시 JSON으로 응답하라.`;
 
-      const results = await Promise.all(VERSION_CONFIGS.map(async (cfg) => {
-        const userPrompt = `[채널 스타일 DNA]\n${channelContext}\n\n[원본 소스 영상 내용]\n${sourceContent.slice(0, 4000)}\n\n[버전: ${cfg.label}]\n${cfg.instruction}\n\n아래 JSON 포맷으로 응답하라:\n{"title":"제목","subtitles":["소제목1","소제목2",...],"emotionGuide":"도입: ...\\n전개: ...\\n클라이막스: ...\\n마무리: ...","script":"전체 대본 텍스트"}`;
+      // 순차 실행: 429 Rate Limit 방지 (동시 3개 → 순차 + 2초 간격)
+      const results: RemakeVersion[] = [];
+      const failedLabels: string[] = [];
 
-        const response = await evolinkChat(
-          [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }],
-          { temperature: 0.8, maxTokens: 8192, responseFormat: { type: 'json_object' } }
-        );
-        const text = response.choices[0]?.message?.content || '';
+      for (let i = 0; i < VERSION_CONFIGS.length; i++) {
+        const cfg = VERSION_CONFIGS[i];
+        setGeneratingStep(i + 1);
+
+        // 두 번째/세 번째 요청 전 대기 (Rate Limit 방지)
+        if (i > 0) await new Promise(r => setTimeout(r, 2000));
+
         try {
-          const cleaned = text.replace(/^```(?:json)?\n?/g, '').replace(/\n?```$/g, '').trim();
-          const parsed = JSON.parse(cleaned);
-          return { label: cfg.label, icon: cfg.icon, description: cfg.desc,
-            title: parsed.title || cfg.label, subtitles: Array.isArray(parsed.subtitles) ? parsed.subtitles : [],
-            emotionGuide: parsed.emotionGuide || '', script: parsed.script || text } as RemakeVersion;
-        } catch {
-          return { label: cfg.label, icon: cfg.icon, description: cfg.desc,
-            title: cfg.label, subtitles: [], emotionGuide: '', script: text } as RemakeVersion;
+          const userPrompt = `[채널 스타일 DNA]\n${channelContext}\n\n[원본 소스 영상 내용]\n${sourceContent.slice(0, 4000)}\n\n[버전: ${cfg.label}]\n${cfg.instruction}\n\n아래 JSON 포맷으로 응답하라:\n{"title":"제목","subtitles":["소제목1","소제목2",...],"emotionGuide":"도입: ...\\n전개: ...\\n클라이막스: ...\\n마무리: ...","script":"전체 대본 텍스트","commentReactions":["예상 댓글 반응1","예상 댓글 반응2","예상 댓글 반응3"]}\n\ncommentReactions: 이 영상이 올라갔을 때 시청자들이 남길 법한 자연스러운 댓글 반응 3~5개를 작성하라. 실제 유튜브 댓글처럼 자연스럽게.`;
+
+          const response = await evolinkChat(
+            [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }],
+            { temperature: 0.8, maxTokens: 8192, responseFormat: { type: 'json_object' } }
+          );
+          const text = response.choices[0]?.message?.content || '';
+          try {
+            const cleaned = text.replace(/^```(?:json)?\n?/g, '').replace(/\n?```$/g, '').trim();
+            const parsed = JSON.parse(cleaned);
+            results.push({ label: cfg.label, icon: cfg.icon, description: cfg.desc,
+              title: parsed.title || cfg.label, subtitles: Array.isArray(parsed.subtitles) ? parsed.subtitles : [],
+              emotionGuide: parsed.emotionGuide || '', script: parsed.script || text,
+              commentReactions: Array.isArray(parsed.commentReactions) ? parsed.commentReactions : [] } as RemakeVersion);
+          } catch {
+            results.push({ label: cfg.label, icon: cfg.icon, description: cfg.desc,
+              title: cfg.label, subtitles: [], emotionGuide: '', script: text,
+              commentReactions: [] } as RemakeVersion);
+          }
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          logger.warn('[Remake] 버전 생성 실패, 다음 시도', { label: cfg.label, error: msg });
+          failedLabels.push(cfg.label);
         }
-      }));
+      }
+
+      if (results.length === 0) {
+        throw new Error('모든 버전 생성에 실패했습니다. 잠시 후 다시 시도해주세요.');
+      }
 
       setVersions(results);
-      showToast('3가지 버전이 생성되었습니다!');
+      if (failedLabels.length > 0) {
+        setError(`일부 버전 생성 실패 (${failedLabels.join(', ')}). 성공한 ${results.length}개 버전을 표시합니다.`);
+      }
+      showToast(`${results.length}가지 버전이 생성되었습니다!`);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       logger.error('[Remake] 생성 실패', msg);
       setError(`생성 실패: ${msg}`);
     } finally {
       setIsGenerating(false);
+      setGeneratingStep(0);
     }
   }, [channelGuideline, channelScripts, sourceInput]);
 
@@ -282,7 +310,7 @@ const ChannelRemakePanel: React.FC = () => {
         {isGenerating ? (
           <>
             <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-            3가지 버전 생성 중...
+            {generatingStep > 0 ? `${generatingStep}/3 ${VERSION_CONFIGS[generatingStep - 1]?.label || ''} 생성 중...` : '준비 중...'}
             {elapsed > 0 && <span className="text-xs text-blue-200 tabular-nums">{formatElapsed(elapsed)}</span>}
           </>
         ) : (
@@ -294,11 +322,23 @@ const ChannelRemakePanel: React.FC = () => {
       </button>
 
       {/* Results — 3 Version Cards */}
-      {versions.length === 3 && (
-        <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+      {versions.length > 0 && (
+        <div className="mt-6">
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-sm text-gray-400">{versions.length}가지 버전이 생성되었습니다</p>
+            <button
+              onClick={handleGenerate}
+              disabled={isGenerating}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs rounded-lg border border-gray-600 transition-all disabled:opacity-50"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+              다른 느낌으로 다시 생성
+            </button>
+          </div>
+          <div className={`grid grid-cols-1 ${versions.length >= 3 ? 'md:grid-cols-3' : versions.length === 2 ? 'md:grid-cols-2' : ''} gap-4`}>
           {versions.map((v, i) => {
             const isExpanded = expandedIdx === i;
-            const c = CARD_COLORS[i];
+            const c = CARD_COLORS[i % CARD_COLORS.length];
             return (
               <div key={i} className={`bg-gradient-to-b ${c.bg} rounded-xl border ${c.border} p-4 flex flex-col`}>
                 <div className="flex items-center gap-2 mb-2">
@@ -322,6 +362,21 @@ const ChannelRemakePanel: React.FC = () => {
                     {isExpanded ? v.script : v.script.slice(0, 200) + (v.script.length > 200 ? '...' : '')}
                   </p>
                 </div>
+
+                {v.commentReactions.length > 0 && (
+                  <div className="bg-cyan-900/20 rounded-lg p-3 border border-cyan-800/30 mb-3">
+                    <p className="text-[10px] font-medium text-cyan-400 mb-1.5 flex items-center gap-1">
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
+                      예상 댓글 반응
+                    </p>
+                    {v.commentReactions.slice(0, isExpanded ? 5 : 2).map((comment, ci) => (
+                      <p key={ci} className="text-xs text-gray-400 mb-1 pl-2 border-l-2 border-cyan-800/40">"{comment}"</p>
+                    ))}
+                    {!isExpanded && v.commentReactions.length > 2 && (
+                      <p className="text-[10px] text-gray-600 pl-2">+{v.commentReactions.length - 2}개 더</p>
+                    )}
+                  </div>
+                )}
 
                 {isExpanded && v.emotionGuide && (
                   <div className="bg-purple-900/20 rounded-lg p-3 border border-purple-800/30 mb-3">
@@ -347,6 +402,7 @@ const ChannelRemakePanel: React.FC = () => {
               </div>
             );
           })}
+          </div>
         </div>
       )}
     </div>

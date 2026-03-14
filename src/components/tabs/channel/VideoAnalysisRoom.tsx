@@ -1162,12 +1162,15 @@ function generateAnalysisHtml(
     }
 
     return `<div class="version" data-id="${v.id}">
-      <button class="version-header" onclick="toggleVersion(${v.id})">
+      <div class="version-header" onclick="handleVersionClick(event,${v.id})">
         <span class="vnum" style="background:${c.numBg}">${v.id}</span>
         <span class="vtitle">${escHtml(v.title)}</span>
+        <span class="copy-title" onclick="copyTitle(event,this)" data-title="${escHtml(v.title)}" title="제목 복사">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+        </span>
         ${v.scenes.length > 0 ? `<span class="vcount">${v.scenes.length}컷</span>` : ''}
         <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 9l-7 7-7-7"/></svg>
-      </button>
+      </div>
       <div class="version-body" id="vbody-${v.id}" style="display:none">
         ${v.concept ? `<p class="concept">${escHtml(v.concept)}</p>` : ''}
         ${v.rearrangement ? `<p class="rearrange"><span class="rearrange-label">재배치:</span> ${escHtml(v.rearrangement)}</p>` : ''}
@@ -1206,7 +1209,11 @@ a{color:#60a5fa;text-decoration:none}
 .version-header{width:100%;display:flex;align-items:center;gap:12px;padding:14px 16px;background:rgba(31,41,55,0.5);border:none;color:inherit;cursor:pointer;text-align:left;font-family:inherit;transition:background 0.15s}
 .version-header:hover{background:rgba(31,41,55,0.8)}
 .vnum{display:inline-flex;width:28px;height:28px;border-radius:50%;color:#fff;align-items:center;justify-content:center;font-size:.7rem;font-weight:700;flex-shrink:0}
-.vtitle{flex:1;font-size:.9rem;font-weight:700;color:#f3f4f6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.vtitle{flex:1;font-size:.9rem;font-weight:700;color:#f3f4f6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;user-select:text;cursor:text}
+.copy-title{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:6px;background:rgba(59,130,246,0.15);border:1px solid rgba(59,130,246,0.3);color:#60a5fa;cursor:pointer;flex-shrink:0;opacity:0;transition:opacity 0.15s,background 0.15s}
+.version-header:hover .copy-title{opacity:1}
+.copy-title:hover{background:rgba(59,130,246,0.3)}
+.copy-title.copied{background:rgba(34,197,94,0.2);border-color:rgba(34,197,94,0.4);color:#22c55e}
 .vcount{font-size:.65rem;color:#6b7280;background:rgba(75,85,99,0.3);padding:2px 8px;border-radius:4px;flex-shrink:0}
 .chevron{width:16px;height:16px;color:#6b7280;flex-shrink:0;transition:transform 0.25s ease}
 .version.expanded .chevron{transform:rotate(180deg)}
@@ -1325,14 +1332,34 @@ tr:hover{background:rgba(31,41,55,0.5)}
 </div>
 
 <script>
-// 아코디언 토글
+// 제목 복사
+function copyTitle(e, el) {
+  e.stopPropagation();
+  var title = el.getAttribute('data-title');
+  navigator.clipboard.writeText(title).then(function() {
+    el.classList.add('copied');
+    el.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>';
+    setTimeout(function() {
+      el.classList.remove('copied');
+      el.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>';
+    }, 1500);
+  });
+}
+
+// 아코디언 토글 (제목 텍스트 선택 시 토글 방지)
+function handleVersionClick(e, id) {
+  if (e.target.closest('.copy-title')) return;
+  if (e.target.classList.contains('vtitle') && window.getSelection().toString().length > 0) return;
+  toggleVersion(id);
+}
+
 function toggleVersion(id) {
-  const all = document.querySelectorAll('.version');
-  all.forEach(el => {
-    const vid = parseInt(el.getAttribute('data-id'));
+  var all = document.querySelectorAll('.version');
+  all.forEach(function(el) {
+    var vid = parseInt(el.getAttribute('data-id'));
     if (vid === id) {
       el.classList.toggle('expanded');
-      const body = document.getElementById('vbody-' + id);
+      var body = document.getElementById('vbody-' + id);
       body.style.display = el.classList.contains('expanded') ? 'block' : 'none';
     }
   });

@@ -910,6 +910,7 @@ export interface RemakeVersion {
   subtitles: string[];
   emotionGuide: string;
   script: string;
+  commentReactions: string[];
 }
 
 // --- 사운드 스튜디오 ---
