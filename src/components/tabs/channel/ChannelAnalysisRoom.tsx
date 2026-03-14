@@ -1100,10 +1100,10 @@ const ChannelAnalysisRoom: React.FC = () => {
             {savedPresets.map((p, i) => {
               const isActive = channelGuideline?.channelName === p.channelName;
               return (
-                <div key={i} className="group relative">
+                <div key={i} className="group relative flex items-center gap-1">
                   <button
                     onClick={() => loadPreset(p.channelName)}
-                    className={`px-4 py-2 pr-8 text-sm font-semibold rounded-lg border transition-all ${isActive
+                    className={`px-4 py-2 text-sm font-semibold rounded-lg border transition-all ${isActive
                       ? 'bg-blue-600/20 text-blue-400 border-blue-600/50'
                       : 'bg-gray-900/50 text-gray-300 border-gray-700/50 hover:border-blue-600/50 hover:bg-gray-900'
                     }`}
@@ -1111,9 +1111,16 @@ const ChannelAnalysisRoom: React.FC = () => {
                     {p.channelName}
                   </button>
                   <button
+                    onClick={() => { loadPreset(p.channelName); swSetContentFormat('shorts'); setActiveTab('script-writer'); }}
+                    className="px-2.5 py-2 text-sm font-semibold rounded-lg border border-violet-600/40 bg-violet-900/20 text-violet-400 hover:bg-violet-800/30 hover:border-violet-500/50 transition-all"
+                    title={`${p.channelName} 스타일로 쇼츠 대본 바로 작성`}
+                  >
+                    롱투숏
+                  </button>
+                  <button
                     type="button"
                     onClick={(e) => { e.stopPropagation(); removePreset(p.channelName); }}
-                    className="absolute right-1.5 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity text-gray-500 hover:text-red-400 hover:bg-red-500/10"
+                    className="w-5 h-5 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity text-gray-500 hover:text-red-400 hover:bg-red-500/10"
                     title="프리셋 삭제"
                   >
                     <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
