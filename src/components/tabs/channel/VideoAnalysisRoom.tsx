@@ -21,6 +21,8 @@ import { getQuotaUsage } from '../../../services/youtubeAnalysisService';
 import { extractStreamUrl, isYtdlpServerConfigured, getSocialMetadata, downloadSocialVideo } from '../../../services/ytdlpApiService';
 import { detectPlatform } from '../../../services/videoDownloadService';
 import { uploadMediaToHosting } from '../../../services/uploadService';
+import { detectSceneCuts, mergeWithAiTimecodes } from '../../../services/sceneDetection';
+import type { SceneCut } from '../../../services/sceneDetection';
 import type {
   VideoAnalysisPreset as AnalysisPreset,
   VideoSceneRow as SceneRow,
@@ -3249,6 +3251,29 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       const maxTimeSec = frames.reduce((mx, f) => Math.max(mx, f.timeSec), 0);
       setIsLongForm(maxTimeSec >= 300);
 
+      // ★ YouTube 병렬 다운로드 + 씬 감지 시작 (AI 분석과 동시 실행)
+      let parallelDownloadPromise: Promise<{ blob: Blob; sceneCuts: SceneCut[] } | null> = Promise.resolve(null);
+      if (inputMode === 'youtube' && isYouTubeUrl(youtubeUrl)) {
+        const dlVid = extractYouTubeVideoId(youtubeUrl);
+        if (dlVid) {
+          parallelDownloadPromise = (async () => {
+            try {
+              console.log('[Scene] ★ AI 분석과 병렬로 영상 다운로드 시작...');
+              const dlResult = await downloadVideoAsBlob(dlVid);
+              if (!dlResult) { console.warn('[Scene] 다운로드 실패 → 기존 폴백 사용'); return null; }
+              useVideoAnalysisStore.getState().setVideoBlob(dlResult.blob);
+              console.log(`[Scene] ✅ 다운로드 완료 (${(dlResult.blob.size / 1024 / 1024).toFixed(1)}MB), 씬 감지 시작...`);
+              const sceneCuts = await detectSceneCuts(dlResult.blob);
+              console.log(`[Scene] ✅ 씬 감지 완료: ${sceneCuts.length}개 컷 포인트`);
+              return { blob: dlResult.blob, sceneCuts };
+            } catch (e) {
+              console.warn('[Scene] 병렬 다운로드/씬 감지 실패:', e);
+              return null;
+            }
+          })();
+        }
+      }
+
       // 2단계: AI 분석 — 병렬 배치 또는 단일 호출
       // [FIX #189] AI 분석 전용 타임아웃 (프레임 추출/업로드 시간 제외, 순수 AI 분석에 5분)
       const AI_TIMEOUT_MS = 5 * 60 * 1000;
@@ -3478,9 +3503,13 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
           }
         }
       } else if (isYouTubeUrl(youtubeUrl)) {
-        // YouTube: 기존 3중 폴백
+        // ★ YouTube: 병렬 다운로드 결과 우선 → 실패 시 기존 3중 폴백
         ytVid = extractYouTubeVideoId(youtubeUrl);
-        let videoSource: string | null = null;
+
+        // 병렬 다운로드 + 씬 감지 결과 대기
+        const downloadResult = await parallelDownloadPromise;
+
+        // 메타데이터에서 영상 길이 가져오기
         if (ytVid) {
           try {
             const meta = await fetchYouTubeVideoMeta(ytVid);
@@ -3489,19 +3518,37 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
               if (m) durSec = (parseInt(m[1] || '0') * 3600) + (parseInt(m[2] || '0') * 60) + parseInt(m[3] || '0');
             }
           } catch (e) { logger.trackSwallowedError('VideoAnalysisRoom:handleAnalyze/fetchMeta', e); }
-
-          const streamUrl = await fetchYouTubeStreamUrl(ytVid).catch(() => null);
-          if (streamUrl) videoSource = streamUrl;
         }
 
-        const allTimecodes = collectTimecodesFromVersions(finalVersions, durSec);
-        console.log(`[Frame] 수집된 타임코드: ${allTimecodes.length}개 (영상 길이: ${durSec}초)`);
-        if (allTimecodes.length > 0) {
+        const aiTimecodes = collectTimecodesFromVersions(finalVersions, durSec);
+
+        if (downloadResult && aiTimecodes.length > 0) {
+          // ★ 정밀 경로: 다운로드 성공 → AI 타임코드를 실제 씬 컷에 스냅 → 정확한 프레임 추출
+          const mergedTimecodes = downloadResult.sceneCuts.length > 0
+            ? mergeWithAiTimecodes(aiTimecodes, downloadResult.sceneCuts)
+            : aiTimecodes;
+          console.log(`[Frame] ★ 정밀 매칭: AI ${aiTimecodes.length}개 타임코드 + 씬 감지 ${downloadResult.sceneCuts.length}개 컷 → ${mergedTimecodes.length}개 병합`);
+
+          const blobUrl = URL.createObjectURL(downloadResult.blob);
+          logger.registerBlobUrl(blobUrl, 'video', 'VideoAnalysisRoom:parallelDownload', downloadResult.blob.size / (1024 * 1024));
+          const exactFrames = await canvasExtractFrames(blobUrl, mergedTimecodes, true);
+          if (exactFrames.length > 0) {
+            console.log(`[Frame] ✅ 정밀 프레임 ${exactFrames.length}개 적용 (병렬 다운로드 + 씬 감지)`);
+            setThumbnails(exactFrames);
+          }
+        } else if (aiTimecodes.length > 0) {
+          // 폴백: 다운로드 실패 → 기존 3중 폴백
+          console.log('[Frame] 병렬 다운로드 실패 → 기존 3중 폴백');
+          let videoSource: string | null = null;
+          if (ytVid) {
+            const streamUrl = await fetchYouTubeStreamUrl(ytVid).catch(() => null);
+            if (streamUrl) videoSource = streamUrl;
+          }
           const exactFrames = await extractFramesWithFallback(
-            videoSource || '', allTimecodes, ytVid, durSec
+            videoSource || '', aiTimecodes, ytVid, durSec
           );
           if (exactFrames.length > 0) {
-            console.log(`[Frame] ✅ 최종 프레임 ${exactFrames.length}개 적용`);
+            console.log(`[Frame] ✅ 최종 프레임 ${exactFrames.length}개 적용 (폴백)`);
             setThumbnails(exactFrames);
           }
         }
