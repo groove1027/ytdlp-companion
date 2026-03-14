@@ -1124,16 +1124,18 @@ export const parseScriptToScenes = async (
     // [FIX #251] 청크 분할 재도입 — 대형 대본(30장면+)에서 브라우저 네트워크 타임아웃 방지
     // 65장면 대본이 단일 요청 시 125초에서 브라우저/프록시 타임아웃으로 실패한 사례 대응
     const CHUNK_SCENE_THRESHOLD = 30;
+    const SCRIPT_LENGTH_THRESHOLD = 3000; // [FIX #237] 3,000자 이상 대본은 강제 청킹 — 6,000자+ 단일 요청 타임아웃(429/90초) 방지, 청킹이 병렬 처리로 오히려 빠름
     const CHUNK_SIZE = 10; // [FIX #258] 25→10: Pro가 10장면을 30~40초에 안정 응답 (125초 프록시 제한 내)
     const CHUNK_COOLDOWN_MS = 2000;
     const CHUNK_CONCURRENCY = 3; // [FIX #258] 최대 3개 청크 병렬 처리
-    const shouldChunk = (targetSceneCount || 0) >= CHUNK_SCENE_THRESHOLD;
+    const shouldChunk = (targetSceneCount || 0) >= CHUNK_SCENE_THRESHOLD || cleanedScript.length >= SCRIPT_LENGTH_THRESHOLD;
 
     if (shouldChunk) {
         // 대본을 로컬 결정론적 분할기로 장면 텍스트 단위로 분할
         const sceneTexts = splitScenesLocally(cleanedScript, format, smartSplit, longFormSplitType);
         const totalChunks = Math.ceil(sceneTexts.length / CHUNK_SIZE);
-        console.log(`[parseScriptToScenes] 📦 청크 분할: ${sceneTexts.length}장면 → ${totalChunks}청크 (CHUNK_SIZE=${CHUNK_SIZE})`);
+        const chunkReason = (targetSceneCount || 0) >= CHUNK_SCENE_THRESHOLD ? `장면수(${targetSceneCount})≥${CHUNK_SCENE_THRESHOLD}` : `대본길이(${cleanedScript.length}자)≥${SCRIPT_LENGTH_THRESHOLD}`;
+        console.log(`[parseScriptToScenes] 📦 청크 분할: ${sceneTexts.length}장면 → ${totalChunks}청크 (CHUNK_SIZE=${CHUNK_SIZE}, 트리거: ${chunkReason})`);
         onChunkProgress?.(0, totalChunks);
 
         const allScenes: Scene[] = [];
