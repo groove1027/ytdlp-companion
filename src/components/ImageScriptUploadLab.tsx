@@ -32,7 +32,7 @@ const ImageScriptUploadLab: React.FC = () => {
             const zip = await JSZip.loadAsync(file);
             const imgFiles = Object.keys(zip.files)
               .filter(name => /\.(jpg|jpeg|png|webp|gif)$/i.test(name) && !name.startsWith('__MACOSX'))
-              .sort();
+              .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
 
             for (const imgName of imgFiles) {
               const blob = await zip.files[imgName].async('blob');
@@ -52,6 +52,8 @@ const ImageScriptUploadLab: React.FC = () => {
         }
       }
 
+      // 파일명 기준 자연수 정렬 (scene_1 < scene_2 < scene_10)
+      newImages.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
       setImages(prev => [...prev, ...newImages]);
     } finally {
       setIsLoading(false);
