@@ -315,6 +315,10 @@ export default function PptMasterTab() {
   }, [selectedDesignStyle, addCost]);
 
   // ─── AI 슬라이드 생성 ───
+  const CHUNK_THRESHOLD = 30; // 30장 이상이면 Flash 목차 + Pro 청크 파이프라인
+  const CHUNK_SIZE = 10;
+  const CHUNK_CONCURRENCY = 3;
+
   const handleGenerate = useCallback(async () => {
     if (!requireAuth('PPT 이미지 생성')) return;
     if (!inputText.trim()) return;
@@ -325,50 +329,120 @@ export default function PptMasterTab() {
 
     try {
       const systemPrompt = buildSlideGenerationPrompt(selectedContentStyle, detailLevel, slideCount);
-      const userPrompt = `아래 텍스트를 분석하여 ${slideCount}장의 프레젠테이션 슬라이드로 재구성하세요.\n\n---\n${inputText}\n---`;
 
-      const maxTokens = Math.min(65000, Math.max(16000, slideCount * 300));
-      const messages: EvolinkChatMessage[] = [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ];
-      const res = await evolinkChat(messages, { temperature: 0.7, maxTokens });
-      const raw = res.choices?.[0]?.message?.content || '';
-      const jsonStr = extractJsonFromText(raw);
-      if (!jsonStr) throw new Error('AI 응답에서 JSON을 추출할 수 없습니다.');
+      if (slideCount < CHUNK_THRESHOLD) {
+        // ─── 기존 로직: 단일 요청 (30장 미만) ───
+        const userPrompt = `아래 텍스트를 분석하여 ${slideCount}장의 프레젠테이션 슬라이드로 재구성하세요.\n\n---\n${inputText}\n---`;
+        const maxTokens = Math.min(65000, Math.max(16000, slideCount * 800));
+        const messages: EvolinkChatMessage[] = [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ];
+        const res = await evolinkChat(messages, { temperature: 0.7, maxTokens });
+        const raw = res.choices?.[0]?.message?.content || '';
+        const jsonStr = extractJsonFromText(raw);
+        if (!jsonStr) throw new Error('AI 응답에서 JSON을 추출할 수 없습니다.');
 
-      const parsed: SlideData[] = JSON.parse(jsonStr);
-      if (!Array.isArray(parsed) || parsed.length === 0) throw new Error('슬라이드 데이터가 비어있습니다.');
+        const parsed: SlideData[] = JSON.parse(jsonStr);
+        if (!Array.isArray(parsed) || parsed.length === 0) throw new Error('슬라이드 데이터가 비어있습니다.');
 
-      const processedSlides = parsed.map((s, i) => ({
-        ...s,
-        slideNumber: i + 1,
-        keyPoints: s.keyPoints || [],
-        visualHint: s.visualHint || '',
-      }));
+        const processedSlides = parsed.map((s, i) => ({
+          ...s, slideNumber: i + 1, keyPoints: s.keyPoints || [], visualHint: s.visualHint || '',
+        }));
+        setSlides(processedSlides);
+        addCost(PRICING.GEMINI_PRO_INPUT_PER_1M * 0.002, 'analysis');
 
-      setSlides(processedSlides);
-      addCost(PRICING.GEMINI_PRO_INPUT_PER_1M * 0.002, 'analysis');
-
-      // 10장 초과: 미리보기 모드 (처음 2장만 이미지 자동 생성)
-      if (processedSlides.length > 10) {
-        setPreviewMode(true);
-        setStep(4);
-        setBatchProgress({ current: 0, total: 2 });
-        // 자동으로 처음 2장 이미지 생성 (비동기)
-        setTimeout(async () => {
-          await generateImagesForRange(processedSlides, 0, Math.min(2, processedSlides.length));
-        }, 100);
-        showToast(`${processedSlides.length}장 슬라이드 생성! 미리보기 이미지 2장 생성 중...`);
       } else {
-        setStep(4);
-        showToast(`${processedSlides.length}장 슬라이드 생성 완료!`);
+        // ─── 청크 파이프라인: Flash Lite 목차 → Pro 청크 (30장 이상) ───
+
+        // Phase 1: Flash Lite로 전체 목차 생성
+        showToast(`${slideCount}장 목차 생성 중...`);
+        const tocRes = await evolinkChat([
+          { role: 'system', content: '프레젠테이션 구조 설계 전문가. 주어진 텍스트를 분석하여 슬라이드 목차를 설계한다. 반드시 JSON 배열로 반환. 마크다운 없이 순수 JSON만 출력.' },
+          { role: 'user', content: `아래 텍스트를 ${slideCount}장 프레젠테이션 슬라이드의 목차로 설계하세요.\n\n각 슬라이드: {"slideNumber":N,"title":"슬라이드 제목","section":"섹션명","keyTopic":"핵심 주제 한 줄"}\n\n규칙:\n- 반드시 ${slideCount}개 항목\n- 논리적 섹션으로 그룹핑\n- 각 주제를 세분화하여 ${slideCount}장을 채울 것\n- 첫 번째 슬라이드는 타이틀, 마지막은 요약/CTA\n\n텍스트:\n${inputText}` },
+        ], { temperature: 0.5, maxTokens: Math.min(40000, slideCount * 200), model: 'gemini-3.1-flash-lite-preview', responseFormat: { type: 'json_object' } });
+
+        const tocRaw = tocRes.choices?.[0]?.message?.content || '';
+        const tocJsonStr = extractJsonFromText(tocRaw);
+        if (!tocJsonStr) throw new Error('목차 생성 실패: JSON을 추출할 수 없습니다.');
+        let tocParsed = JSON.parse(tocJsonStr);
+        // 응답이 {slides:[...]} 형태일 수 있음
+        if (!Array.isArray(tocParsed) && typeof tocParsed === 'object') {
+          const arrVal = Object.values(tocParsed).find(v => Array.isArray(v));
+          if (arrVal) tocParsed = arrVal;
+        }
+        if (!Array.isArray(tocParsed) || tocParsed.length === 0) throw new Error('목차 데이터가 비어있습니다.');
+
+        addCost(PRICING.GEMINI_PRO_INPUT_PER_1M * 0.001, 'analysis'); // Flash Lite 비용 (Pro 대비 저렴)
+
+        // Phase 2: Pro가 청크별 상세 생성
+        const totalChunks = Math.ceil(tocParsed.length / CHUNK_SIZE);
+        showToast(`목차 ${tocParsed.length}장 완료! ${totalChunks}개 청크 상세 생성 중...`);
+        setBatchProgress({ current: 0, total: totalChunks });
+
+        const allSlides: SlideData[] = [];
+
+        const processChunk = async (chunkIdx: number): Promise<SlideData[]> => {
+          const startIdx = chunkIdx * CHUNK_SIZE;
+          const chunkToc = tocParsed.slice(startIdx, startIdx + CHUNK_SIZE);
+          const tocText = chunkToc.map((t: { slideNumber?: number; title?: string; section?: string; keyTopic?: string }, i: number) =>
+            `${startIdx + i + 1}. [${t.section || ''}] ${t.title || ''} — ${t.keyTopic || ''}`
+          ).join('\n');
+
+          const chunkMessages: EvolinkChatMessage[] = [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: `아래 목차의 슬라이드 ${startIdx + 1}~${startIdx + chunkToc.length}번에 대해 상세 내용을 생성하세요.\n\n[목차]\n${tocText}\n\n[원본 텍스트 참조]\n${inputText}\n\n반드시 ${chunkToc.length}개 슬라이드를 생성하세요. JSON 배열만 반환.` },
+          ];
+
+          const maxTokens = chunkToc.length * 800;
+          const res = await evolinkChat(chunkMessages, { temperature: 0.7, maxTokens });
+          const raw = res.choices?.[0]?.message?.content || '';
+          const jsonStr = extractJsonFromText(raw);
+          if (!jsonStr) throw new Error(`청크 ${chunkIdx + 1} JSON 추출 실패`);
+
+          const parsed: SlideData[] = JSON.parse(jsonStr);
+          if (!Array.isArray(parsed) || parsed.length === 0) throw new Error(`청크 ${chunkIdx + 1} 빈 응답`);
+          return parsed;
+        };
+
+        // 병렬 배치 처리 (CHUNK_CONCURRENCY개씩)
+        let completedChunks = 0;
+        for (let batchStart = 0; batchStart < totalChunks; batchStart += CHUNK_CONCURRENCY) {
+          const batchEnd = Math.min(batchStart + CHUNK_CONCURRENCY, totalChunks);
+          const batchIndices = Array.from({ length: batchEnd - batchStart }, (_, i) => batchStart + i);
+
+          const batchResults = await Promise.all(batchIndices.map(ci => processChunk(ci)));
+          for (const result of batchResults) allSlides.push(...result);
+
+          completedChunks += batchIndices.length;
+          setBatchProgress({ current: completedChunks, total: totalChunks });
+
+          // 배치 간 쿨다운 (429 방지)
+          if (batchEnd < totalChunks) await new Promise(r => setTimeout(r, 2000));
+        }
+
+        addCost(PRICING.GEMINI_PRO_INPUT_PER_1M * 0.002 * totalChunks, 'analysis');
+
+        const processedSlides = allSlides.map((s, i) => ({
+          ...s, slideNumber: i + 1, keyPoints: s.keyPoints || [], visualHint: s.visualHint || '',
+        }));
+        setSlides(processedSlides);
       }
+
+      // 공통: 결과 표시
+      if (slideCount > 10) {
+        setPreviewMode(true);
+        showToast(`슬라이드 생성 완료! 미리보기 모드`);
+      } else {
+        showToast(`슬라이드 생성 완료!`);
+      }
+      setStep(4);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : '슬라이드 생성 실패';
       setGenError(msg);
     } finally {
       setIsGenerating(false);
+      setBatchProgress({ current: 0, total: 0 });
     }
   }, [requireAuth, inputText, selectedContentStyle, detailLevel, slideCount, addCost, generateImagesForRange]);
 
