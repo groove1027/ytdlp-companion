@@ -7,6 +7,7 @@ import { useElapsedTimer, formatElapsed } from '../../hooks/useElapsedTimer';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
 import type { DetailImageSegment, PageLength } from '../../types';
 import type { EvolinkChatMessage } from '../../services/evolinkService';
+import { webcodecExtractFrames, isVideoDecoderSupported } from '../../services/webcodecs/videoDecoder';
 
 const ShoppingShortContent = lazy(() => import('./ShoppingShortTab'));
 const ShoppingChannelContent = lazy(() => import('./ShoppingChannelTab'));
@@ -14,6 +15,18 @@ const ShoppingChannelContent = lazy(() => import('./ShoppingChannelTab'));
 // --- Sub-tab type ---
 type SubTab = 'detail' | 'thumbnail' | 'shopping-short' | 'shopping-channel';
 type Step = 1 | 2 | 3;
+type ThumbMode = 'thumbnail' | 'studio' | 'cardnews';
+
+interface CardNewsSegment {
+  id: string;
+  cardNumber: number;
+  headline: string;
+  bodyText: string;
+  visualPrompt: string;
+  imageUrl?: string;
+  isGenerating?: boolean;
+  generationStatus?: string;
+}
 
 // --- Constants ---
 
@@ -64,6 +77,12 @@ const THUMB_TEXT_POSITIONS = [
   { id: 'top', label: '상단' },
   { id: 'center', label: '중앙' },
   { id: 'bottom', label: '하단' },
+];
+
+const CARD_NEWS_FORMATS = [
+  { id: '1:1', label: '1:1', desc: '인스타 피드' },
+  { id: '4:5', label: '4:5', desc: '인스타 세로' },
+  { id: '9:16', label: '9:16', desc: '스토리/릴스' },
 ];
 
 // --- Helper ---
@@ -169,7 +188,11 @@ const DetailPageTab: React.FC = () => {
   const [generationProgress, setGenerationProgress] = useState(0);
   const [isSuggestingFeatures, setIsSuggestingFeatures] = useState(false);
 
+  // --- Video reference ---
+  const [isExtractingFrames, setIsExtractingFrames] = useState(false);
+
   // --- Thumbnail state ---
+  const [thumbMode, setThumbMode] = useState<ThumbMode>('thumbnail');
   const [thumbStyle, setThumbStyle] = useState('clean');
   const [thumbElement, setThumbElement] = useState('none');
   const [thumbTextPosition, setThumbTextPosition] = useState('bottom');
@@ -177,8 +200,24 @@ const DetailPageTab: React.FC = () => {
   const [thumbResults, setThumbResults] = useState<string[]>([]);
   const [isGeneratingThumb, setIsGeneratingThumb] = useState(false);
   const [thumbCount, setThumbCount] = useState(4);
+  const [thumbRefPreviews, setThumbRefPreviews] = useState<string[]>([]);
+  const [thumbRefUrls, setThumbRefUrls] = useState<string[]>([]);
+  const [isUploadingThumbRef, setIsUploadingThumbRef] = useState(false);
 
-  const elapsed = useElapsedTimer(isPlanning || isGeneratingAll || isGeneratingThumb);
+  // --- Studio transform ---
+  const [studioResults, setStudioResults] = useState<string[]>([]);
+  const [isGeneratingStudio, setIsGeneratingStudio] = useState(false);
+
+  // --- Card news ---
+  const [cardNewsText, setCardNewsText] = useState('');
+  const [cardNewsFormat, setCardNewsFormat] = useState('1:1');
+  const [cardNewsCount, setCardNewsCount] = useState(4);
+  const [cardNewsSegments, setCardNewsSegments] = useState<CardNewsSegment[]>([]);
+  const [isCardNewsPlanning, setIsCardNewsPlanning] = useState(false);
+  const [isCardNewsGenerating, setIsCardNewsGenerating] = useState(false);
+  const [cardNewsProgress, setCardNewsProgress] = useState(0);
+
+  const elapsed = useElapsedTimer(isPlanning || isGeneratingAll || isGeneratingThumb || isGeneratingStudio || isCardNewsPlanning || isCardNewsGenerating);
 
   // ============================================================
   // Shared handlers
@@ -229,6 +268,60 @@ const DetailPageTab: React.FC = () => {
   const removeDesignRef = useCallback((idx: number) => {
     setDesignRefPreviews(prev => prev.filter((_, i) => i !== idx));
     setDesignRefUrls(prev => prev.filter((_, i) => i !== idx));
+  }, []);
+
+  const handleVideoRefUpload = useCallback(async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const videoFile = Array.from(files).find(f => f.type.startsWith('video/'));
+    if (!videoFile) { showToast('영상 파일을 선택해주세요.'); return; }
+    if (!isVideoDecoderSupported()) { showToast('이 브라우저에서는 영상 프레임 추출을 지원하지 않습니다.'); return; }
+    setIsExtractingFrames(true);
+    try {
+      const duration = await new Promise<number>((resolve, reject) => {
+        const video = document.createElement('video');
+        video.preload = 'metadata';
+        video.onloadedmetadata = () => { URL.revokeObjectURL(video.src); resolve(video.duration); };
+        video.onerror = () => reject(new Error('영상 로드 실패'));
+        video.src = URL.createObjectURL(videoFile);
+      });
+      const frameCount = Math.min(6, Math.max(2, Math.floor(duration / 5)));
+      const timestamps = Array.from({ length: frameCount }, (_, i) => (duration / (frameCount + 1)) * (i + 1));
+      const frames = await webcodecExtractFrames(videoFile, timestamps, { thumbWidth: 768 });
+      const blobs = await Promise.all(frames.map(async f => { const r = await fetch(f.url); return r.blob(); }));
+      const frameFiles = blobs.map((b, i) => new File([b], `video_frame_${i}.jpg`, { type: 'image/jpeg' }));
+      setPreviewUrls(prev => [...prev, ...blobs.map(b => URL.createObjectURL(b))]);
+      setReferenceFiles(prev => [...prev, ...frameFiles]);
+      const urls = await Promise.all(frameFiles.map(f => uploadMediaToHosting(f)));
+      setReferenceUrls(prev => [...prev, ...urls]);
+      showToast(`영상에서 ${frames.length}개 프레임을 추출했습니다.`);
+    } catch (e) {
+      logger.trackSwallowedError('DetailPageTab:extractVideoFrames', e);
+      showToast(`프레임 추출 실패: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setIsExtractingFrames(false);
+    }
+  }, []);
+
+  const handleThumbRefUpload = useCallback(async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const newFiles = Array.from(files).filter(f => f.type.startsWith('image/'));
+    if (newFiles.length === 0) return;
+    setThumbRefPreviews(prev => [...prev, ...newFiles.map(f => URL.createObjectURL(f))]);
+    setIsUploadingThumbRef(true);
+    try {
+      const urls = await Promise.all(newFiles.map(f => uploadMediaToHosting(f)));
+      setThumbRefUrls(prev => [...prev, ...urls]);
+    } catch (e) {
+      logger.trackSwallowedError('DetailPageTab:uploadThumbRef', e);
+      showToast('레퍼런스 업로드 실패.');
+    } finally {
+      setIsUploadingThumbRef(false);
+    }
+  }, []);
+
+  const removeThumbRef = useCallback((idx: number) => {
+    setThumbRefPreviews(prev => prev.filter((_, i) => i !== idx));
+    setThumbRefUrls(prev => prev.filter((_, i) => i !== idx));
   }, []);
 
   // ============================================================
@@ -396,6 +489,120 @@ const DetailPageTab: React.FC = () => {
   }, [requireAuth, productName, thumbStyle, thumbElement, thumbTextPosition, thumbTextOverlay, thumbCount, referenceUrls]);
 
   // ============================================================
+  // Studio transform handler
+  // ============================================================
+
+  const handleStudioTransform = useCallback(async () => {
+    if (!requireAuth('스튜디오 변환')) return;
+    if (referenceUrls.length === 0) { showToast('변환할 제품 사진을 먼저 업로드해주세요.'); return; }
+    setIsGeneratingStudio(true);
+    setStudioResults([]);
+    const results: string[] = [];
+    for (const refUrl of referenceUrls) {
+      try {
+        const prompt = `Professional product photography in a clean white studio. Transform this product photo into a high-end e-commerce product image. White seamless background, professional studio lighting with soft diffused shadows, no lens distortion. Product centered, well-lit, subtle reflection on glossy surface. Color-accurate, commercial catalog quality. Suitable for Coupang/Naver Smart Store listing. Remove any cluttered background completely.`;
+        const url = await evolinkGenerateImage(prompt, '1:1', '2K', [refUrl]);
+        results.push(url);
+        setStudioResults([...results]);
+      } catch (e) {
+        logger.trackSwallowedError('DetailPageTab:studioTransform', e);
+        results.push('');
+        setStudioResults([...results]);
+      }
+    }
+    setIsGeneratingStudio(false);
+    showToast('스튜디오 변환 완료!');
+  }, [requireAuth, referenceUrls]);
+
+  // ============================================================
+  // Card news handlers
+  // ============================================================
+
+  const handleCardNewsPlan = useCallback(async () => {
+    if (!requireAuth('카드뉴스 기획')) return;
+    if (!productName.trim()) { showToast('상품명을 입력해주세요.'); return; }
+    if (!cardNewsText.trim()) { showToast('카드뉴스 내용을 입력해주세요.'); return; }
+    setIsCardNewsPlanning(true);
+    try {
+      const systemPrompt = `당신은 인스타그램/쓰레드용 카드뉴스 전문 기획자입니다.
+주어진 상품 정보와 텍스트를 분석하여 카드뉴스 시리즈를 기획하세요.
+
+규칙:
+1. 각 카드는 한 가지 핵심 메시지에 집중
+2. headline은 짧고 강렬하게 (10자 이내, 한국어)
+3. bodyText는 카드에 들어갈 본문 (2~3줄, 한국어)
+4. visualPrompt는 영어로 카드 배경/이미지 설명
+5. 첫 카드는 주목을 끄는 Hook, 마지막 카드는 CTA(행동 유도)
+
+출력 형식 (JSON 배열만 출력, 다른 텍스트 없이):
+[{"cardNumber":1,"headline":"짧은 제목","bodyText":"본문 텍스트","visualPrompt":"English visual description for card background"}]`;
+      const userPrompt = `상품명: ${productName}\n카테고리: ${CATEGORIES.find(c => c.id === category)?.label || category}\n카드 수: ${cardNewsCount}장\n\n내용:\n${cardNewsText}`;
+      const response = await evolinkChat(
+        [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }],
+        { temperature: 0.7, maxTokens: 4096 }
+      );
+      const text = response.choices[0]?.message?.content || '';
+      const match = text.match(/\[[\s\S]*\]/);
+      if (!match) throw new Error('기획안 파싱 실패');
+      const arr = JSON.parse(match[0]);
+      const segs: CardNewsSegment[] = arr.map((item: Record<string, unknown>, idx: number) => ({
+        id: `card_${Date.now()}_${idx}`,
+        cardNumber: Number(item.cardNumber) || idx + 1,
+        headline: String(item.headline || ''),
+        bodyText: String(item.bodyText || ''),
+        visualPrompt: String(item.visualPrompt || ''),
+      }));
+      setCardNewsSegments(segs);
+    } catch (e) {
+      showToast(`기획 실패: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setIsCardNewsPlanning(false);
+    }
+  }, [requireAuth, productName, category, cardNewsText, cardNewsCount]);
+
+  const handleCardNewsGenerate = useCallback(async () => {
+    if (!requireAuth('카드뉴스 생성')) return;
+    if (cardNewsSegments.length === 0) return;
+    setIsCardNewsGenerating(true);
+    setCardNewsProgress(0);
+    const imageUrls = referenceUrls.length > 0 ? referenceUrls : undefined;
+    let completed = 0;
+    for (let i = 0; i < cardNewsSegments.length; i++) {
+      const seg = cardNewsSegments[i];
+      setCardNewsSegments(prev => prev.map((s, idx) => idx === i ? { ...s, isGenerating: true, generationStatus: '생성 중...' } : s));
+      try {
+        const prompt = `A sleek, modern card news image for Instagram/social media. ${seg.visualPrompt}. Render Korean headline "${seg.headline}" prominently at the top with bold, eye-catching typography. Include body text "${seg.bodyText}" below in clean, readable font. Product: "${productName}". Clean magazine-style layout, modern colors, professional graphic design quality.`;
+        const url = await evolinkGenerateImage(prompt, cardNewsFormat, '2K', imageUrls);
+        completed++;
+        setCardNewsProgress(Math.round((completed / cardNewsSegments.length) * 100));
+        setCardNewsSegments(prev => prev.map((s, idx) => idx === i ? { ...s, imageUrl: url, isGenerating: false, generationStatus: undefined } : s));
+      } catch (e) {
+        completed++;
+        setCardNewsProgress(Math.round((completed / cardNewsSegments.length) * 100));
+        const msg = e instanceof Error ? e.message : String(e);
+        setCardNewsSegments(prev => prev.map((s, idx) => idx === i ? { ...s, isGenerating: false, generationStatus: `실패: ${msg.substring(0, 60)}` } : s));
+      }
+    }
+    setIsCardNewsGenerating(false);
+    showToast('카드뉴스 생성 완료!');
+  }, [requireAuth, cardNewsSegments, cardNewsFormat, referenceUrls, productName]);
+
+  const handleCardNewsRegenerateOne = useCallback(async (segIdx: number) => {
+    const seg = cardNewsSegments[segIdx];
+    if (!seg) return;
+    setCardNewsSegments(prev => prev.map((s, idx) => idx === segIdx ? { ...s, isGenerating: true, generationStatus: '재생성 중...' } : s));
+    try {
+      const imageUrls = referenceUrls.length > 0 ? referenceUrls : undefined;
+      const prompt = `A sleek, modern card news image for Instagram/social media. ${seg.visualPrompt}. Render Korean headline "${seg.headline}" prominently at the top with bold, eye-catching typography. Include body text "${seg.bodyText}" below in clean, readable font. Product: "${productName}". Clean magazine-style layout, modern colors, professional graphic design quality.`;
+      const url = await evolinkGenerateImage(prompt, cardNewsFormat, '2K', imageUrls);
+      setCardNewsSegments(prev => prev.map((s, idx) => idx === segIdx ? { ...s, imageUrl: url, isGenerating: false, generationStatus: undefined } : s));
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setCardNewsSegments(prev => prev.map((s, idx) => idx === segIdx ? { ...s, isGenerating: false, generationStatus: `실패: ${msg.substring(0, 60)}` } : s));
+    }
+  }, [cardNewsSegments, referenceUrls, productName, cardNewsFormat]);
+
+  // ============================================================
   // Common helpers
   // ============================================================
 
@@ -458,7 +665,17 @@ const DetailPageTab: React.FC = () => {
           <input type="file" accept="image/*" multiple onChange={e => handleImageUpload(e.target.files)} className="hidden" />
         </label>
       </div>
-      <p className="text-xs text-gray-500">제품 사진 업로드 시 Img2Img로 제품 외형이 반영됩니다</p>
+      <div className="flex items-center gap-3 mt-2">
+        <p className="text-xs text-gray-500">제품 사진 업로드 시 Img2Img로 제품 외형이 반영됩니다</p>
+        <label className="text-xs px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 border border-gray-600 rounded-lg cursor-pointer transition-colors whitespace-nowrap flex items-center gap-1">
+          {isExtractingFrames ? (
+            <><span className="w-3 h-3 border border-gray-400 border-t-teal-400 rounded-full animate-spin" />프레임 추출 중...</>
+          ) : (
+            <>🎬 영상에서 추출</>
+          )}
+          <input type="file" accept="video/*" onChange={e => handleVideoRefUpload(e.target.files)} className="hidden" disabled={isExtractingFrames} />
+        </label>
+      </div>
     </div>
   );
 
@@ -846,11 +1063,24 @@ const DetailPageTab: React.FC = () => {
       )}
 
       {/* ============================================================ */}
-      {/* Sub-tab: Thumbnail */}
+      {/* Sub-tab: Thumbnail / Studio / Card News */}
       {/* ============================================================ */}
       {subTab === 'thumbnail' && (
         <div className="space-y-6">
-          {/* Product info (compact) */}
+          {/* Mode selector */}
+          <div className="flex gap-2 p-1 bg-gray-800/50 rounded-xl">
+            {([
+              { id: 'thumbnail' as ThumbMode, label: '썸네일', icon: '🖼️' },
+              { id: 'studio' as ThumbMode, label: '스튜디오 변환', icon: '📸' },
+              { id: 'cardnews' as ThumbMode, label: '카드뉴스', icon: '📰' },
+            ]).map(m => (
+              <button key={m.id} onClick={() => setThumbMode(m.id)} className={`flex-1 py-2.5 px-3 rounded-lg text-sm font-bold transition-all ${thumbMode === m.id ? 'bg-teal-600/20 text-teal-400 border border-teal-500/30 shadow-sm' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50'}`}>
+                {m.icon} {m.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Shared: Product info */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-bold text-gray-300 mb-1.5">상품명 *</label>
@@ -866,88 +1096,256 @@ const DetailPageTab: React.FC = () => {
 
           {renderImageUpload()}
 
-          {/* Style */}
-          <div>
-            <label className="block text-sm font-bold text-gray-300 mb-2">썸네일 스타일</label>
-            <div className="grid grid-cols-3 gap-2">
-              {THUMB_STYLES.map(s => (
-                <button key={s.id} onClick={() => setThumbStyle(s.id)} className={`px-3 py-3 rounded-lg text-sm font-bold transition-all text-left ${thumbStyle === s.id ? 'bg-teal-600/20 text-teal-400 border border-teal-500/30' : 'bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600'}`}>
-                  <div className="font-bold">{s.label}</div>
-                  <div className="text-xs text-gray-500 mt-0.5">{s.desc}</div>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Element */}
-          <div>
-            <label className="block text-sm font-bold text-gray-300 mb-2">요소</label>
-            <div className="flex gap-2">
-              {THUMB_ELEMENTS.map(el => (
-                <button key={el.id} onClick={() => setThumbElement(el.id)} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${thumbElement === el.id ? 'bg-teal-600/20 text-teal-400 border border-teal-500/30' : 'bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600'}`}>{el.label}</button>
-              ))}
-            </div>
-          </div>
-
-          {/* Text overlay */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-bold text-gray-300 mb-1.5">텍스트 오버레이</label>
-              <input type="text" value={thumbTextOverlay} onChange={e => setThumbTextOverlay(e.target.value)} placeholder="예: 역대급 세일" className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:border-teal-500 focus:outline-none transition-colors" />
-            </div>
-            <div>
-              <label className="block text-sm font-bold text-gray-300 mb-1.5">텍스트 위치</label>
-              <div className="flex gap-2">
-                {THUMB_TEXT_POSITIONS.map(p => (
-                  <button key={p.id} onClick={() => setThumbTextPosition(p.id)} className={`px-3 py-2 rounded-lg text-xs font-bold transition-all ${thumbTextPosition === p.id ? 'bg-teal-600/20 text-teal-400 border border-teal-500/30' : 'bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600'}`}>{p.label}</button>
-                ))}
+          {/* ---- Mode: Thumbnail ---- */}
+          {thumbMode === 'thumbnail' && (
+            <>
+              {/* Thumbnail reference */}
+              <div>
+                <label className="block text-sm font-bold text-gray-300 mb-1.5">
+                  디자인 레퍼런스 (선택)
+                  {isUploadingThumbRef && <span className="ml-2 text-teal-400 text-xs font-normal">(업로드 중...)</span>}
+                </label>
+                <p className="text-xs text-gray-500 mb-2">참고할 썸네일 디자인을 올리면 구도/분위기를 참고합니다</p>
+                <div className="flex flex-wrap gap-3">
+                  {thumbRefPreviews.map((url, idx) => (
+                    <div key={idx} className="relative w-20 h-20 rounded-lg overflow-hidden border border-gray-700 group">
+                      <img src={url} alt={`thumb-ref-${idx}`} className="w-full h-full object-cover" />
+                      <button onClick={() => removeThumbRef(idx)} className="absolute top-0.5 right-0.5 w-5 h-5 bg-black/70 text-white rounded-full text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">x</button>
+                    </div>
+                  ))}
+                  <label className="w-20 h-20 rounded-lg border-2 border-dashed border-gray-600 flex items-center justify-center cursor-pointer hover:border-teal-500/50 transition-colors">
+                    <span className="text-2xl text-gray-500">+</span>
+                    <input type="file" accept="image/*" multiple onChange={e => handleThumbRefUpload(e.target.files)} className="hidden" />
+                  </label>
+                </div>
               </div>
-            </div>
-          </div>
 
-          {/* Count */}
-          <div className="flex items-center gap-3">
-            <label className="text-sm font-bold text-gray-300">생성 개수</label>
-            <div className="flex gap-1">
-              {[1, 2, 4].map(n => (
-                <button key={n} onClick={() => setThumbCount(n)} className={`px-3 py-1.5 rounded-lg text-sm font-bold transition-all ${thumbCount === n ? 'bg-teal-600/20 text-teal-400 border border-teal-500/30' : 'bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600'}`}>{n}장</button>
-              ))}
-            </div>
-          </div>
+              {/* Style */}
+              <div>
+                <label className="block text-sm font-bold text-gray-300 mb-2">썸네일 스타일</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {THUMB_STYLES.map(s => (
+                    <button key={s.id} onClick={() => setThumbStyle(s.id)} className={`px-3 py-3 rounded-lg text-sm font-bold transition-all text-left ${thumbStyle === s.id ? 'bg-teal-600/20 text-teal-400 border border-teal-500/30' : 'bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600'}`}>
+                      <div className="font-bold">{s.label}</div>
+                      <div className="text-xs text-gray-500 mt-0.5">{s.desc}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
 
-          {/* Generate */}
-          <button onClick={handleGenerateThumbnails} disabled={!productName.trim() || isGeneratingThumb} className={`w-full py-4 rounded-xl text-lg font-bold transition-all ${productName.trim() && !isGeneratingThumb ? 'bg-gradient-to-r from-teal-600 to-cyan-600 hover:from-teal-500 hover:to-cyan-500 text-white shadow-lg shadow-teal-900/30' : 'bg-gray-700 text-gray-500 cursor-not-allowed'}`}>
-            {isGeneratingThumb ? (
-              <span className="flex items-center justify-center gap-2">
-                <span className="w-5 h-5 border-2 border-white/30 border-t-teal-400 rounded-full animate-spin" />
-                썸네일 생성 중... ({formatElapsed(elapsed)})
-              </span>
-            ) : `썸네일 ${thumbCount}장 생성`}
-          </button>
+              {/* Element */}
+              <div>
+                <label className="block text-sm font-bold text-gray-300 mb-2">요소</label>
+                <div className="flex gap-2">
+                  {THUMB_ELEMENTS.map(el => (
+                    <button key={el.id} onClick={() => setThumbElement(el.id)} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${thumbElement === el.id ? 'bg-teal-600/20 text-teal-400 border border-teal-500/30' : 'bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600'}`}>{el.label}</button>
+                  ))}
+                </div>
+              </div>
 
-          {/* Results */}
-          {thumbResults.length > 0 && (
-            <div>
-              <h3 className="text-lg font-bold text-white mb-3">생성 결과</h3>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                {thumbResults.map((url, idx) => (
-                  <div key={idx} className="relative group">
-                    {url ? (
-                      <div className="relative">
-                        <img src={url} alt={`thumb-${idx + 1}`} className="w-full aspect-square rounded-lg border border-gray-700 object-cover" loading="lazy" />
-                        <div className="absolute bottom-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button onClick={() => handleDownloadOne(url, `thumbnail_${idx + 1}_${productName || 'thumb'}.png`)} className="px-2 py-1 bg-black/70 text-white rounded text-xs hover:bg-black/90 transition-colors">다운로드</button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="w-full aspect-square bg-gray-800/60 border border-gray-700 rounded-lg flex items-center justify-center">
-                        <span className="text-sm text-red-400">실패</span>
-                      </div>
-                    )}
+              {/* Text overlay */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-bold text-gray-300 mb-1.5">텍스트 오버레이</label>
+                  <input type="text" value={thumbTextOverlay} onChange={e => setThumbTextOverlay(e.target.value)} placeholder="예: 역대급 세일" className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:border-teal-500 focus:outline-none transition-colors" />
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-gray-300 mb-1.5">텍스트 위치</label>
+                  <div className="flex gap-2">
+                    {THUMB_TEXT_POSITIONS.map(p => (
+                      <button key={p.id} onClick={() => setThumbTextPosition(p.id)} className={`px-3 py-2 rounded-lg text-xs font-bold transition-all ${thumbTextPosition === p.id ? 'bg-teal-600/20 text-teal-400 border border-teal-500/30' : 'bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600'}`}>{p.label}</button>
+                    ))}
                   </div>
-                ))}
+                </div>
               </div>
-            </div>
+
+              {/* Count + Generate */}
+              <div className="flex items-center gap-3">
+                <label className="text-sm font-bold text-gray-300">생성 개수</label>
+                <div className="flex gap-1">
+                  {[1, 2, 4].map(n => (
+                    <button key={n} onClick={() => setThumbCount(n)} className={`px-3 py-1.5 rounded-lg text-sm font-bold transition-all ${thumbCount === n ? 'bg-teal-600/20 text-teal-400 border border-teal-500/30' : 'bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600'}`}>{n}장</button>
+                  ))}
+                </div>
+              </div>
+              <button onClick={handleGenerateThumbnails} disabled={!productName.trim() || isGeneratingThumb} className={`w-full py-4 rounded-xl text-lg font-bold transition-all ${productName.trim() && !isGeneratingThumb ? 'bg-gradient-to-r from-teal-600 to-cyan-600 hover:from-teal-500 hover:to-cyan-500 text-white shadow-lg shadow-teal-900/30' : 'bg-gray-700 text-gray-500 cursor-not-allowed'}`}>
+                {isGeneratingThumb ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <span className="w-5 h-5 border-2 border-white/30 border-t-teal-400 rounded-full animate-spin" />
+                    썸네일 생성 중... ({formatElapsed(elapsed)})
+                  </span>
+                ) : `썸네일 ${thumbCount}장 생성`}
+              </button>
+              {thumbResults.length > 0 && (
+                <div>
+                  <h3 className="text-lg font-bold text-white mb-3">생성 결과</h3>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    {thumbResults.map((url, idx) => (
+                      <div key={idx} className="relative group">
+                        {url ? (
+                          <div className="relative">
+                            <img src={url} alt={`thumb-${idx + 1}`} className="w-full aspect-square rounded-lg border border-gray-700 object-cover" loading="lazy" />
+                            <div className="absolute bottom-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button onClick={() => handleDownloadOne(url, `thumbnail_${idx + 1}_${productName || 'thumb'}.png`)} className="px-2 py-1 bg-black/70 text-white rounded text-xs hover:bg-black/90 transition-colors">다운로드</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="w-full aspect-square bg-gray-800/60 border border-gray-700 rounded-lg flex items-center justify-center">
+                            <span className="text-sm text-red-400">실패</span>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
+          {/* ---- Mode: Studio Transform ---- */}
+          {thumbMode === 'studio' && (
+            <>
+              <div className="bg-gray-800/40 border border-gray-700 rounded-xl p-4">
+                <h3 className="text-sm font-bold text-white mb-2">📸 스튜디오 사진 변환</h3>
+                <p className="text-xs text-gray-400 mb-3">위에 업로드한 제품 사진을 전문 스튜디오에서 촬영한 것처럼 변환합니다. 흰색 배경, 전문 조명, 깔끔한 구도로 재생성됩니다.</p>
+                <button onClick={handleStudioTransform} disabled={referenceUrls.length === 0 || isGeneratingStudio} className={`w-full py-3 rounded-lg text-sm font-bold transition-all ${referenceUrls.length > 0 && !isGeneratingStudio ? 'bg-gradient-to-r from-teal-600 to-cyan-600 hover:from-teal-500 hover:to-cyan-500 text-white' : 'bg-gray-700 text-gray-500 cursor-not-allowed'}`}>
+                  {isGeneratingStudio ? (
+                    <span className="flex items-center justify-center gap-2">
+                      <span className="w-4 h-4 border-2 border-white/30 border-t-teal-400 rounded-full animate-spin" />
+                      변환 중... ({formatElapsed(elapsed)})
+                    </span>
+                  ) : referenceUrls.length === 0 ? '제품 사진을 먼저 업로드해주세요' : `스튜디오 변환 (${referenceUrls.length}장)`}
+                </button>
+              </div>
+              {studioResults.length > 0 && (
+                <div>
+                  <h3 className="text-lg font-bold text-white mb-3">변환 결과</h3>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                    {studioResults.map((url, idx) => (
+                      <div key={idx} className="relative group">
+                        {url ? (
+                          <div className="relative">
+                            <img src={url} alt={`studio-${idx + 1}`} className="w-full aspect-square rounded-lg border border-gray-700 object-cover" loading="lazy" />
+                            <div className="absolute bottom-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button onClick={() => handleDownloadOne(url, `studio_${idx + 1}_${productName || 'product'}.png`)} className="px-2 py-1 bg-black/70 text-white rounded text-xs hover:bg-black/90 transition-colors">다운로드</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="w-full aspect-square bg-gray-800/60 border border-gray-700 rounded-lg flex items-center justify-center">
+                            <span className="text-sm text-red-400">실패</span>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
+          {/* ---- Mode: Card News ---- */}
+          {thumbMode === 'cardnews' && (
+            <>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-bold text-gray-300 mb-1.5">카드뉴스 내용</label>
+                  <p className="text-xs text-gray-500 mb-2">상품 소개, 특징, 사용법 등을 자유롭게 작성하면 AI가 카드별로 나눠서 배치합니다</p>
+                  <textarea value={cardNewsText} onChange={e => setCardNewsText(e.target.value)} rows={5} placeholder="예: 이 세럼은 히알루론산 3종이 함유되어 깊은 보습을 제공합니다. 세안 후 2-3방울 도포하면 24시간 촉촉함이 유지됩니다. 피부과 테스트 완료, 무향료·무파라벤..." className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:border-teal-500 focus:outline-none transition-colors text-sm resize-none" />
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-bold text-gray-300 mb-2">비율</label>
+                    <div className="flex gap-2">
+                      {CARD_NEWS_FORMATS.map(f => (
+                        <button key={f.id} onClick={() => setCardNewsFormat(f.id)} className={`px-3 py-2 rounded-lg text-sm font-bold transition-all ${cardNewsFormat === f.id ? 'bg-teal-600/20 text-teal-400 border border-teal-500/30' : 'bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600'}`}>
+                          <div>{f.label}</div>
+                          <div className="text-xs text-gray-500">{f.desc}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-bold text-gray-300 mb-2">카드 수</label>
+                    <div className="flex gap-1">
+                      {[3, 4, 5, 6, 8].map(n => (
+                        <button key={n} onClick={() => setCardNewsCount(n)} className={`px-3 py-2 rounded-lg text-sm font-bold transition-all ${cardNewsCount === n ? 'bg-teal-600/20 text-teal-400 border border-teal-500/30' : 'bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600'}`}>{n}장</button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <button onClick={handleCardNewsPlan} disabled={!productName.trim() || !cardNewsText.trim() || isCardNewsPlanning} className={`w-full py-3 rounded-xl text-sm font-bold transition-all ${productName.trim() && cardNewsText.trim() && !isCardNewsPlanning ? 'bg-gradient-to-r from-teal-600 to-cyan-600 hover:from-teal-500 hover:to-cyan-500 text-white shadow-lg shadow-teal-900/30' : 'bg-gray-700 text-gray-500 cursor-not-allowed'}`}>
+                  {isCardNewsPlanning ? (
+                    <span className="flex items-center justify-center gap-2">
+                      <span className="w-4 h-4 border-2 border-white/30 border-t-teal-400 rounded-full animate-spin" />
+                      AI 카드뉴스 기획 중... ({formatElapsed(elapsed)})
+                    </span>
+                  ) : 'AI 카드뉴스 기획'}
+                </button>
+              </div>
+
+              {/* Card news plan results */}
+              {cardNewsSegments.length > 0 && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-lg font-bold text-white">카드뉴스 기획안 ({cardNewsSegments.length}장)</h3>
+                    <button onClick={handleCardNewsPlan} disabled={isCardNewsPlanning} className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-lg text-xs font-bold transition-colors disabled:opacity-50">다시 기획</button>
+                  </div>
+                  <div className="space-y-3">
+                    {cardNewsSegments.map((seg, idx) => (
+                      <div key={seg.id} className="bg-gray-800/60 border border-gray-700 rounded-xl p-3">
+                        <div className="flex items-start gap-3">
+                          <span className="w-7 h-7 flex items-center justify-center rounded-lg bg-teal-600/20 text-teal-400 text-xs font-bold border border-teal-500/30 shrink-0">{seg.cardNumber}</span>
+                          <div className="flex-1 min-w-0">
+                            <input value={seg.headline} onChange={e => setCardNewsSegments(prev => prev.map((s, i) => i === idx ? { ...s, headline: e.target.value } : s))} className="w-full bg-transparent text-white text-sm font-bold border-none outline-none mb-1" placeholder="제목" />
+                            <textarea value={seg.bodyText} onChange={e => setCardNewsSegments(prev => prev.map((s, i) => i === idx ? { ...s, bodyText: e.target.value } : s))} rows={2} className="w-full bg-gray-900/50 border border-gray-700 rounded-lg px-2 py-1.5 text-gray-300 text-xs focus:border-teal-500 focus:outline-none resize-none" placeholder="본문" />
+                          </div>
+                          {seg.imageUrl && (
+                            <img src={seg.imageUrl} alt={`card-${seg.cardNumber}`} className="w-16 h-16 rounded-lg object-cover border border-gray-700 shrink-0" />
+                          )}
+                        </div>
+                        {seg.generationStatus && <p className="text-xs text-red-400 mt-2">{seg.generationStatus}</p>}
+                        {seg.imageUrl && (
+                          <div className="mt-2 flex gap-2">
+                            <button onClick={() => handleCardNewsRegenerateOne(idx)} disabled={seg.isGenerating} className="text-xs px-2 py-1 bg-teal-600/20 text-teal-400 border border-teal-500/30 rounded hover:bg-teal-600/30 disabled:opacity-50">{seg.isGenerating ? '...' : '재생성'}</button>
+                            <button onClick={() => handleDownloadOne(seg.imageUrl!, `cardnews_${seg.cardNumber}_${productName || 'card'}.png`)} className="text-xs px-2 py-1 bg-gray-700 text-gray-300 rounded hover:bg-gray-600">다운로드</button>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  {isCardNewsGenerating && (
+                    <div className="w-full bg-gray-800 rounded-full h-2 overflow-hidden">
+                      <div className="h-full bg-gradient-to-r from-teal-500 to-cyan-500 transition-all duration-500" style={{ width: `${cardNewsProgress}%` }} />
+                    </div>
+                  )}
+                  <button onClick={handleCardNewsGenerate} disabled={isCardNewsGenerating} className={`w-full py-4 rounded-xl text-lg font-bold transition-all ${!isCardNewsGenerating ? 'bg-gradient-to-r from-teal-600 to-cyan-600 hover:from-teal-500 hover:to-cyan-500 text-white shadow-lg shadow-teal-900/30' : 'bg-gray-700 text-gray-500 cursor-not-allowed'}`}>
+                    {isCardNewsGenerating ? (
+                      <span className="flex items-center justify-center gap-2">
+                        <span className="w-5 h-5 border-2 border-white/30 border-t-teal-400 rounded-full animate-spin" />
+                        카드뉴스 생성 중 {cardNewsProgress}% ({formatElapsed(elapsed)})
+                      </span>
+                    ) : `카드뉴스 이미지 생성 (${cardNewsSegments.length}장)`}
+                  </button>
+                  {/* Full preview gallery */}
+                  {cardNewsSegments.some(s => s.imageUrl) && (
+                    <div>
+                      <h3 className="text-lg font-bold text-white mb-3">카드뉴스 미리보기</h3>
+                      <div className={`grid gap-3 ${cardNewsFormat === '1:1' ? 'grid-cols-2 md:grid-cols-3' : cardNewsFormat === '4:5' ? 'grid-cols-2' : 'grid-cols-2 md:grid-cols-3'}`}>
+                        {cardNewsSegments.filter(s => s.imageUrl).map((seg, idx) => (
+                          <div key={seg.id} className="relative group">
+                            <img src={seg.imageUrl} alt={`card-preview-${idx + 1}`} className={`w-full rounded-lg border border-gray-700 object-cover ${cardNewsFormat === '9:16' ? 'aspect-[9/16]' : cardNewsFormat === '4:5' ? 'aspect-[4/5]' : 'aspect-square'}`} loading="lazy" />
+                            <div className="absolute top-2 left-2 px-2 py-0.5 bg-black/60 text-white rounded text-xs font-bold">{seg.cardNumber}</div>
+                            <div className="absolute bottom-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button onClick={() => handleDownloadOne(seg.imageUrl!, `cardnews_${seg.cardNumber}.png`)} className="px-2 py-1 bg-black/70 text-white rounded text-xs hover:bg-black/90 transition-colors">다운로드</button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
           )}
         </div>
       )}
