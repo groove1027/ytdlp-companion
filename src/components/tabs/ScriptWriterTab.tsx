@@ -1650,59 +1650,63 @@ ${instinctPrompt}
 
         {/* ═══ Final CTA ═══ */}
         <div className="px-6 py-5 space-y-3">
-          <button
-            type="button"
-            onClick={handleSceneAnalysis}
-            disabled={!displayScript || isAnalyzingScenes}
-            className={`w-full relative overflow-hidden rounded-xl text-sm font-bold shadow-lg transition-all ${
-              isAnalyzingScenes
-                ? 'bg-gray-800 border border-gray-600 text-white'
-                : 'bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 disabled:opacity-25 disabled:cursor-not-allowed text-white border border-violet-400/40 shadow-violet-900/30'
-            }`}
-          >
-            {isAnalyzingScenes && (
-              <div className="absolute inset-y-0 left-0 bg-gradient-to-r from-amber-500 via-orange-500 to-yellow-500 rounded-xl transition-all duration-300 ease-out"
-                style={{ width: `${analysisProgress}%` }} />
-            )}
-            <div className="relative py-3.5 flex items-center justify-center gap-2">
-              {isAnalyzingScenes ? (
-                <>
-                  <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  <span>AI가 단락을 분석하고 있습니다... ({scriptText.length.toLocaleString()}자)</span>
-                  <span className="font-black text-lg text-white drop-shadow-md">{analysisProgress}%</span>
-                  {elapsedAnalysis > 0 && <span className="text-xs text-gray-400 tabular-nums">{formatElapsed(elapsedAnalysis)}</span>}
-                </>
-              ) : (
-                <>📝 단락 나누기 실행</>
+          <div className={`grid gap-2 ${isAnalyzingScenes ? '' : 'grid-cols-3'}`}>
+            <button
+              type="button"
+              onClick={handleSceneAnalysis}
+              disabled={!displayScript || isAnalyzingScenes}
+              className={`relative overflow-hidden rounded-xl text-sm font-bold shadow-lg transition-all ${
+                isAnalyzingScenes
+                  ? 'bg-gray-800 border border-gray-600 text-white'
+                  : 'bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 disabled:opacity-25 disabled:cursor-not-allowed text-white border border-violet-400/40 shadow-violet-900/30'
+              }`}
+            >
+              {isAnalyzingScenes && (
+                <div className="absolute inset-y-0 left-0 bg-gradient-to-r from-amber-500 via-orange-500 to-yellow-500 rounded-xl transition-all duration-300 ease-out"
+                  style={{ width: `${analysisProgress}%` }} />
               )}
-            </div>
-          </button>
+              <div className="relative py-3.5 flex items-center justify-center gap-2">
+                {isAnalyzingScenes ? (
+                  <>
+                    <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    <span>AI가 단락을 분석하고 있습니다... ({scriptText.length.toLocaleString()}자)</span>
+                    <span className="font-black text-lg text-white drop-shadow-md">{analysisProgress}%</span>
+                    {elapsedAnalysis > 0 && <span className="text-xs text-gray-400 tabular-nums">{formatElapsed(elapsedAnalysis)}</span>}
+                  </>
+                ) : (
+                  <>📝 단락 나누기</>
+                )}
+              </div>
+            </button>
 
-          <button
-            type="button"
-            onClick={handleGoToSoundStudio}
-            disabled={!displayScript.trim()}
-            className="w-full bg-gradient-to-r from-fuchsia-600 to-violet-600
-              hover:from-fuchsia-500 hover:to-violet-500 disabled:opacity-25 disabled:cursor-not-allowed
-              text-white rounded-xl text-sm font-bold border border-fuchsia-400/30 shadow-lg shadow-fuchsia-900/20
-              py-3.5 flex items-center justify-center gap-2 transition-all"
-          >
-            🎙 사운드 스튜디오로 대본 보내기
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
-          </button>
+            {!isAnalyzingScenes && (
+              <>
+                <button
+                  type="button"
+                  onClick={handleGoToSoundStudio}
+                  disabled={!displayScript.trim()}
+                  className="bg-gradient-to-r from-fuchsia-600 to-violet-600
+                    hover:from-fuchsia-500 hover:to-violet-500 disabled:opacity-25 disabled:cursor-not-allowed
+                    text-white rounded-xl text-sm font-bold border border-fuchsia-400/30 shadow-lg shadow-fuchsia-900/20
+                    py-3.5 flex items-center justify-center gap-2 transition-all"
+                >
+                  🎙 사운드 →
+                </button>
 
-          <button
-            type="button"
-            onClick={handleGoToImageVideo}
-            disabled={!displayScript.trim()}
-            className="w-full bg-gradient-to-r from-orange-600 to-amber-600
-              hover:from-orange-500 hover:to-amber-500 disabled:opacity-25 disabled:cursor-not-allowed
-              text-white rounded-xl text-sm font-bold border border-orange-400/30 shadow-lg shadow-orange-900/20
-              py-3.5 flex items-center justify-center gap-2 transition-all"
-          >
-            🎬 이미지/영상으로 대본 보내기
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
-          </button>
+                <button
+                  type="button"
+                  onClick={handleGoToImageVideo}
+                  disabled={!displayScript.trim()}
+                  className="bg-gradient-to-r from-orange-600 to-amber-600
+                    hover:from-orange-500 hover:to-amber-500 disabled:opacity-25 disabled:cursor-not-allowed
+                    text-white rounded-xl text-sm font-bold border border-orange-400/30 shadow-lg shadow-orange-900/20
+                    py-3.5 flex items-center justify-center gap-2 transition-all"
+                >
+                  🎬 이미지/영상 →
+                </button>
+              </>
+            )}
+          </div>
 
           {genError && (
             <div className="bg-red-900/30 border border-red-500/40 rounded-xl px-4 py-3">
