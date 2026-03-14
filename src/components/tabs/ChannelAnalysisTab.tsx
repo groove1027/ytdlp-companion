@@ -1,5 +1,6 @@
 import React, { Suspense, lazy, useEffect, useState } from 'react';
 import { useChannelAnalysisStore } from '../../stores/channelAnalysisStore';
+import { getYoutubeApiKeyPoolSize, getActiveYoutubeKeyIndex } from '../../services/apiService';
 import type { ChannelAnalysisSubTab } from '../../types';
 
 const KeywordLab = lazy(() => import('./channel/KeywordLab'));
@@ -140,10 +141,22 @@ const ChannelAnalysisTab: React.FC = () => {
                   </p>
                 </div>
 
+                {getYoutubeApiKeyPoolSize() > 1 && (
+                  <div className="bg-rose-900/20 border border-rose-500/20 rounded-lg p-2.5">
+                    <p className="text-[11px] text-rose-400 font-semibold">🔄 다중 키 모드 ({getYoutubeApiKeyPoolSize()}개)</p>
+                    <p className="text-[10px] text-rose-300/70">현재 키 #{getActiveYoutubeKeyIndex() + 1} 사용 중. 쿼터 초과 시 다음 키로 자동 전환됩니다.</p>
+                  </div>
+                )}
+
                 {apiUsagePercent >= 90 && (
                   <div className="bg-red-900/20 border border-red-500/20 rounded-lg p-2.5">
                     <p className="text-[11px] text-red-400 font-semibold">쿼터 한도 임박</p>
-                    <p className="text-[10px] text-red-300/70">일일 쿼터의 90% 이상을 사용했습니다. 추가 분석 시 한도 초과로 오류가 발생할 수 있습니다.</p>
+                    <p className="text-[10px] text-red-300/70">
+                      일일 쿼터의 90% 이상을 사용했습니다.
+                      {getYoutubeApiKeyPoolSize() > 1
+                        ? ' 쿼터 초과 시 다음 키로 자동 전환됩니다.'
+                        : ' 추가 분석 시 한도 초과로 오류가 발생할 수 있습니다.'}
+                    </p>
                   </div>
                 )}
               </div>

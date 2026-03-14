@@ -308,7 +308,7 @@ export const buildExportHtml = (
         ...data,
         _subtitleStyle: subtitleStyle?.template || null,
         _subtitles: subtitles || [],
-    })};</script>
+    }).replace(/<\//g, '<\\/')};</script>
     ${scriptBody}
 </head>
 <body class="min-h-screen flex flex-col">

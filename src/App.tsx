@@ -991,7 +991,17 @@ const App: React.FC = () => {
               }
           }
 
-          if (jsonData) handleLoadProject(jsonData);
+          if (jsonData) {
+              handleLoadProject(jsonData);
+          } else {
+              console.error('[Import] projectData를 찾을 수 없음', {
+                  hasScriptTag: !!doc.getElementById('project-data'),
+                  totalScripts: doc.querySelectorAll('script').length,
+                  fileSize: text.length,
+              });
+              useUIStore.getState().setToast({ show: true, message: '이 파일에서 프로젝트 데이터를 찾을 수 없습니다. 이 앱에서 내보낸 프로젝트 파일(.html 또는 .zip)만 불러올 수 있습니다.' });
+              setTimeout(() => useUIStore.getState().setToast(null), 5000);
+          }
       } catch (e) {
           console.error("Import failed", e);
           useUIStore.getState().setToast({ show: true, message: "파일을 불러오는데 실패했습니다. 올바른 프로젝트 파일인지 확인해주세요." }); setTimeout(() => useUIStore.getState().setToast(null), 4000);

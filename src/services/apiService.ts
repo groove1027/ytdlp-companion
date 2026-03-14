@@ -66,7 +66,57 @@ export const getEvolinkKey = (): string => {
     return sanitizeKey(key);
 };
 
+// ── YouTube API 키 풀 (다중 키 지원 — #271) ──
+const YOUTUBE_KEYS_POOL_KEY = 'YOUTUBE_API_KEYS_POOL';
+const YOUTUBE_ACTIVE_INDEX_KEY = 'YOUTUBE_API_KEY_ACTIVE_INDEX';
+
+export const getYoutubeApiKeyPool = (): string[] => {
+    try {
+        const raw = localStorage.getItem(YOUTUBE_KEYS_POOL_KEY);
+        if (raw) {
+            const pool = JSON.parse(raw);
+            if (Array.isArray(pool)) return pool.filter((k: unknown) => typeof k === 'string' && (k as string).trim());
+        }
+    } catch { /* parse error — return empty */ }
+    return [];
+};
+
+export const saveYoutubeApiKeyPool = (keys: string[]): void => {
+    const cleaned = keys.map(k => k.trim()).filter(Boolean);
+    if (cleaned.length === 0) {
+        localStorage.removeItem(YOUTUBE_KEYS_POOL_KEY);
+        localStorage.removeItem(YOUTUBE_ACTIVE_INDEX_KEY);
+    } else {
+        localStorage.setItem(YOUTUBE_KEYS_POOL_KEY, JSON.stringify(cleaned));
+        const idx = parseInt(localStorage.getItem(YOUTUBE_ACTIVE_INDEX_KEY) || '0', 10);
+        if (idx >= cleaned.length) localStorage.setItem(YOUTUBE_ACTIVE_INDEX_KEY, '0');
+    }
+};
+
+export const getYoutubeApiKeyPoolSize = (): number => getYoutubeApiKeyPool().length;
+
+export const getActiveYoutubeKeyIndex = (): number => {
+    const pool = getYoutubeApiKeyPool();
+    if (pool.length === 0) return 0;
+    const idx = parseInt(localStorage.getItem(YOUTUBE_ACTIVE_INDEX_KEY) || '0', 10);
+    return idx % pool.length;
+};
+
+export const rotateYoutubeApiKey = (): boolean => {
+    const pool = getYoutubeApiKeyPool();
+    if (pool.length <= 1) return false;
+    const idx = getActiveYoutubeKeyIndex();
+    const newIdx = (idx + 1) % pool.length;
+    localStorage.setItem(YOUTUBE_ACTIVE_INDEX_KEY, String(newIdx));
+    logger.info(`[YouTube] API 키 전환: ${idx + 1} → ${newIdx + 1} / ${pool.length}개`);
+    return true;
+};
+
 export const getYoutubeApiKey = (): string => {
+    const pool = getYoutubeApiKeyPool();
+    if (pool.length > 0) {
+        return sanitizeKey(pool[getActiveYoutubeKeyIndex()]);
+    }
     const key = localStorage.getItem('CUSTOM_YOUTUBE_API_KEY') || DEFAULT_YOUTUBE_API_KEY;
     return sanitizeKey(key);
 };
@@ -196,6 +246,7 @@ const SETTINGS_KEY_MAP: [string, string][] = [
     ['CUSTOM_WAVESPEED_KEY', 'wavespeed'],
     ['CUSTOM_XAI_KEY', 'xai'],
     ['CUSTOM_YOUTUBE_API_KEY', 'youtubeApiKey'],
+    ['YOUTUBE_API_KEYS_POOL', 'youtubeApiKeyPool'],
     ['CUSTOM_TYPECAST_KEY', 'typecast'],
     ['CUSTOM_GHOSTCUT_APP_KEY', 'ghostcutAppKey'],
     ['CUSTOM_GHOSTCUT_APP_SECRET', 'ghostcutAppSecret'],

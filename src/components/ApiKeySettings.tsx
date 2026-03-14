@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { getStoredKeys, saveApiKeys, syncApiKeysToServer } from '../services/apiService';
+import { getStoredKeys, saveApiKeys, syncApiKeysToServer, getYoutubeApiKeyPool, saveYoutubeApiKeyPool, getActiveYoutubeKeyIndex } from '../services/apiService';
 import { showToast } from '../stores/uiStore';
 import { useAuthGuard } from '../hooks/useAuthGuard';
 import { logger } from '../services/LoggerService';
@@ -243,6 +243,8 @@ const assignRemaining = (entries: DetectedKey[], assigned: Set<string>): Detecte
 const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
     const { requireAuth } = useAuthGuard();
     const [keys, setKeys] = useState({ kie: '', cloudName: '', uploadPreset: '', gemini: '', apimart: '', removeBg: '', wavespeed: '', xai: '', evolink: '', youtubeApiKey: '', typecast: '', ghostcutAppKey: '', ghostcutAppSecret: '' });
+    const [youtubeKeyPool, setYoutubeKeyPool] = useState<string[]>([]);
+    const [newYoutubeKey, setNewYoutubeKey] = useState('');
     const [showPassword, setShowPassword] = useState(false);
     const [showBulk, setShowBulk] = useState(false);
     const [bulkText, setBulkText] = useState('');
@@ -333,6 +335,16 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
                 ghostcutAppKey: stored.ghostcutAppKey,
                 ghostcutAppSecret: stored.ghostcutAppSecret,
             });
+            // YouTube API 키 풀 로드 (없으면 기존 단일 키로 초기화)
+            const pool = getYoutubeApiKeyPool();
+            if (pool.length > 0) {
+                setYoutubeKeyPool(pool);
+            } else if (stored.youtubeApiKey) {
+                setYoutubeKeyPool([stored.youtubeApiKey]);
+            } else {
+                setYoutubeKeyPool([]);
+            }
+            setNewYoutubeKey('');
         }
     }, [isOpen]);
 
@@ -348,7 +360,10 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
 
     const handleSave = () => {
         if (!requireAuth('API 키 저장')) return;
-        saveApiKeys(keys.kie, keys.cloudName, keys.uploadPreset, undefined, keys.apimart, keys.removeBg, keys.wavespeed, keys.xai, keys.evolink, keys.youtubeApiKey, keys.typecast, keys.ghostcutAppKey, keys.ghostcutAppSecret);
+        // YouTube API 키 풀 저장
+        saveYoutubeApiKeyPool(youtubeKeyPool);
+        const primaryYoutubeKey = youtubeKeyPool.length > 0 ? youtubeKeyPool[0] : '';
+        saveApiKeys(keys.kie, keys.cloudName, keys.uploadPreset, undefined, keys.apimart, keys.removeBg, keys.wavespeed, keys.xai, keys.evolink, primaryYoutubeKey, keys.typecast, keys.ghostcutAppKey, keys.ghostcutAppSecret);
         // 서버에도 동기화 (계정에 연동 — 다른 기기에서도 복원 가능)
         syncApiKeysToServer().catch(() => {});
         showToast('설정이 저장되었습니다. 페이지를 새로고침합니다.', 1500);
@@ -540,16 +555,73 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
 
                     {/* [DISABLED] 6. Remove.bg — 배경 제거 (기능 비활성화) */}
 
-                    {/* 7. YouTube Data API */}
+                    {/* 7. YouTube Data API — 다중 키 지원 (#271) */}
                     <div className="space-y-3 pb-4 border-b border-gray-700">
                         <div className="flex items-start justify-between">
                             <div className="flex flex-col">
                                 <h3 className="text-base font-bold text-rose-400 uppercase tracking-wider">📺 YOUTUBE API</h3>
                                 <span className="text-sm text-gray-400">YouTube Data API v3 — 채널분석, 키워드 검색</span>
+                                {youtubeKeyPool.length > 1 && (
+                                    <span className="text-xs text-rose-400/70 mt-1">
+                                        🔄 {youtubeKeyPool.length}개 키 등록됨 — 쿼터 소진 시 자동 전환
+                                    </span>
+                                )}
                             </div>
                             <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener noreferrer" className="shrink-0 ml-3 px-2.5 py-1 bg-rose-600/20 hover:bg-rose-600/40 border border-rose-500/30 text-rose-400 text-xs font-bold rounded-lg transition-all flex items-center gap-1">키 발급 ↗</a>
                         </div>
-                        <input type={showPassword ? "text" : "password"} value={keys.youtubeApiKey} onChange={(e) => setKeys({...keys, youtubeApiKey: e.target.value})} placeholder="YouTube Data API v3 Key" className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-base text-white" />
+                        {/* 키 목록 */}
+                        <div className="space-y-2">
+                            {youtubeKeyPool.map((key, idx) => (
+                                <div key={idx} className="flex items-center gap-2">
+                                    <span className={`text-xs w-5 text-center font-bold shrink-0 ${idx === getActiveYoutubeKeyIndex() ? 'text-rose-400' : 'text-gray-600'}`}>{idx + 1}</span>
+                                    <input
+                                        type={showPassword ? "text" : "password"}
+                                        value={key}
+                                        onChange={(e) => {
+                                            const updated = [...youtubeKeyPool];
+                                            updated[idx] = e.target.value;
+                                            setYoutubeKeyPool(updated);
+                                        }}
+                                        placeholder="YouTube Data API v3 Key"
+                                        className="flex-1 bg-gray-900 border border-gray-600 rounded p-2 text-base text-white"
+                                    />
+                                    {youtubeKeyPool.length > 1 && (
+                                        <button
+                                            onClick={() => setYoutubeKeyPool(youtubeKeyPool.filter((_, i) => i !== idx))}
+                                            className="text-gray-500 hover:text-red-400 p-1 transition-colors shrink-0"
+                                            title="이 키 삭제"
+                                        >
+                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12"/></svg>
+                                        </button>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                        {/* 키 추가 */}
+                        <div className="flex gap-2">
+                            <input
+                                type={showPassword ? "text" : "password"}
+                                value={newYoutubeKey}
+                                onChange={(e) => setNewYoutubeKey(e.target.value)}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter' && newYoutubeKey.trim()) {
+                                        setYoutubeKeyPool([...youtubeKeyPool, newYoutubeKey.trim()]);
+                                        setNewYoutubeKey('');
+                                    }
+                                }}
+                                placeholder={youtubeKeyPool.length === 0 ? 'YouTube Data API v3 Key' : '백업 키 추가 (쿼터 소진 시 자동 전환)'}
+                                className="flex-1 bg-gray-900 border border-gray-600 rounded p-2 text-base text-white"
+                            />
+                            <button
+                                onClick={() => {
+                                    if (newYoutubeKey.trim()) {
+                                        setYoutubeKeyPool([...youtubeKeyPool, newYoutubeKey.trim()]);
+                                        setNewYoutubeKey('');
+                                    }
+                                }}
+                                className="px-3 py-2 bg-rose-600/20 hover:bg-rose-600/40 border border-rose-500/30 text-rose-400 text-sm font-bold rounded transition-colors shrink-0"
+                            >+ 추가</button>
+                        </div>
                     </div>
 
                     {/* 8. GhostCut — AI 자막 제거 */}

@@ -1,6 +1,7 @@
 
-import { monitoredFetch, getYoutubeApiKey } from './apiService';
+import { monitoredFetch as rawFetch, getYoutubeApiKey, getYoutubeApiKeyPoolSize, getActiveYoutubeKeyIndex, rotateYoutubeApiKey } from './apiService';
 import { logger } from './LoggerService';
+import { showToast } from '../stores/uiStore';
 import { evolinkChat, requestEvolinkNative } from './evolinkService';
 import type { EvolinkChatMessage, EvolinkContentPart } from './evolinkService';
 import type {
@@ -12,6 +13,42 @@ import type {
     TopVideo,
     KeywordTag
 } from '../types';
+
+/**
+ * YouTube API 전용 monitoredFetch 래퍼 — 쿼터 초과 시 다음 키로 자동 전환 (#271)
+ * 일반 API 호출(Evolink 등)은 그대로 통과, YouTube API URL에서만 키 전환 로직 작동
+ */
+const monitoredFetch = async (url: string, options: RequestInit = {}, timeoutMs: number = 0): Promise<Response> => {
+    const response = await rawFetch(url, options, timeoutMs);
+
+    if (response.status === 403 && url.includes('googleapis.com/youtube')) {
+        const body = await response.clone().text().catch(() => '');
+        const lower = body.toLowerCase();
+
+        if (lower.includes('quotaexceeded') || lower.includes('dailylimitexceeded')) {
+            const currentKey = getYoutubeApiKey();
+            const urlKeyMatch = url.match(/[?&]key=([^&]+)/);
+            const urlKey = urlKeyMatch?.[1] || '';
+
+            if (urlKey && urlKey !== currentKey) {
+                // 이미 다른 호출에서 키가 전환됨 — 새 키로 재시도
+                const newUrl = url.replace(/([?&])key=[^&]+/, `$1key=${currentKey}`);
+                return rawFetch(newUrl, options, timeoutMs);
+            }
+
+            if (rotateYoutubeApiKey()) {
+                const newKey = getYoutubeApiKey();
+                const newUrl = url.replace(/([?&])key=[^&]+/, `$1key=${newKey}`);
+                const idx = getActiveYoutubeKeyIndex();
+                const total = getYoutubeApiKeyPoolSize();
+                showToast(`YouTube API 키 쿼터 초과 → 다음 키(${idx + 1}/${total})로 자동 전환`, 3000);
+                return rawFetch(newUrl, options, timeoutMs);
+            }
+        }
+    }
+
+    return response;
+};
 
 // === CONFIGURATION ===
 const YOUTUBE_API_BASE = 'https://www.googleapis.com/youtube/v3';
@@ -78,6 +115,12 @@ const trackQuota = (operation: string): boolean => {
     const record = loadQuotaRecord();
 
     if (record.used + cost > DAILY_QUOTA_LIMIT) {
+        // 다중 키 풀 사용 중이면 로컬 쿼터 제한 무시 — 실제 API 403 응답으로 키 전환
+        if (getYoutubeApiKeyPoolSize() > 1) {
+            record.used += cost;
+            saveQuotaRecord(record);
+            return true;
+        }
         logger.error('[YouTube Quota] 일일 쿼터 한도 초과', {
             used: record.used,
             cost,
@@ -2031,7 +2074,7 @@ export const validateYoutubeConnection = async (apiKey: string): Promise<{ succe
         // 연결 테스트도 search API 사용 (100 units) — 쿼터 기록
         trackQuota('search');
         const url = `${YOUTUBE_API_BASE}/search?part=snippet&q=test&maxResults=1&key=${apiKey}`;
-        const response = await monitoredFetch(url);
+        const response = await rawFetch(url);
 
         if (response.status === 400 || response.status === 403) {
             const data = await response.json();
