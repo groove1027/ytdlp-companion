@@ -89,9 +89,9 @@ const Step1Register: React.FC = () => {
             {sourceVideos.map((v) => (
               <div key={v.id} className="flex items-center gap-3 bg-gray-900/50 rounded-lg p-2 border border-gray-700/30">
                 {v.thumbnailDataUrl ? (
-                  <img src={v.thumbnailDataUrl} alt="" className="w-16 h-9 rounded object-cover flex-shrink-0" />
+                  <img src={v.thumbnailDataUrl} alt="" className={`rounded object-cover flex-shrink-0 ${v.width && v.height && v.height > v.width ? 'w-9 h-16' : 'w-16 h-9'}`} />
                 ) : (
-                  <div className="w-16 h-9 rounded bg-gray-700 flex items-center justify-center flex-shrink-0">
+                  <div className={`rounded bg-gray-700 flex items-center justify-center flex-shrink-0 ${v.width && v.height && v.height > v.width ? 'w-9 h-16' : 'w-16 h-9'}`}>
                     <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
                     </svg>

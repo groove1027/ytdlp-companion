@@ -135,9 +135,12 @@ async function getVideoThumbnail(file: File): Promise<string | undefined> {
     };
 
     video.onseeked = () => {
-      canvas.width = 160;
-      canvas.height = 90;
-      ctx?.drawImage(video, 0, 0, 160, 90);
+      const vw = video.videoWidth || 160;
+      const vh = video.videoHeight || 90;
+      const scale = 160 / Math.max(vw, vh);
+      canvas.width = Math.round(vw * scale);
+      canvas.height = Math.round(vh * scale);
+      ctx?.drawImage(video, 0, 0, canvas.width, canvas.height);
       const dataUrl = canvas.toDataURL('image/jpeg', 0.6);
       logger.unregisterBlobUrl(url);
       URL.revokeObjectURL(url);
@@ -218,9 +221,10 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       const sizeMB = Math.round((file.size / (1024 * 1024)) * 10) / 10;
-      const [duration, thumbnail] = await Promise.all([
+      const [duration, thumbnail, dims] = await Promise.all([
         getVideoDuration(file),
         getVideoThumbnail(file),
+        getVideoDimensions(file),
       ]);
 
       const blobUrl = URL.createObjectURL(file);
@@ -233,6 +237,8 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
         fileName: file.name,
         fileSizeMB: sizeMB,
         durationSec: duration,
+        width: dims.width,
+        height: dims.height,
         thumbnailDataUrl: thumbnail,
       });
     }
@@ -644,6 +650,26 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
               imageUrl: entry.referenceFrameUrl || sourceVideo?.thumbnailDataUrl,
             };
           });
+
+          // [FIX #260] 소스 영상의 실제 비율을 감지하여 프로젝트 config 자동 업데이트
+          const firstMappedVideo = sourceVideos.find(v =>
+            Object.values(sourceMapping).includes(v.id)
+          );
+          if (firstMappedVideo?.width && firstMappedVideo?.height) {
+            const ratio = firstMappedVideo.width / firstMappedVideo.height;
+            let detectedAR: string;
+            if (ratio < 0.75) detectedAR = '9:16';       // 세로 (portrait)
+            else if (ratio > 1.2) detectedAR = '16:9';   // 가로 (landscape)
+            else if (ratio >= 0.9 && ratio <= 1.1) detectedAR = '1:1'; // 정사각
+            else detectedAR = '4:3';                       // 클래식
+            const currentConfig = useProjectStore.getState().config;
+            if (currentConfig && currentConfig.aspectRatio !== detectedAR) {
+              useProjectStore.getState().setConfig({
+                ...currentConfig,
+                aspectRatio: detectedAR as any,
+              });
+            }
+          }
 
           useProjectStore.getState().setScenes(newScenes);
 

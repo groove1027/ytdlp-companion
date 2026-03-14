@@ -1510,6 +1510,9 @@ export interface SourceVideoFile {
   fileName: string;
   fileSizeMB: number;
   durationSec: number | null;
+  /** 원본 영상 해상도 (비율 감지용) */
+  width?: number;
+  height?: number;
   thumbnailDataUrl?: string;
   /** GhostCut으로 자막 제거된 영상 Blob URL */
   cleanedBlobUrl?: string;
