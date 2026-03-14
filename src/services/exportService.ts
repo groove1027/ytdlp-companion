@@ -440,8 +440,10 @@ export const exportProjectZip = async () => {
     const safeTitle = manifest.title.replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').substring(0, 30);
     link.download = `${safeTitle}_Project.zip`;
     link.click();
-    logger.unregisterBlobUrl(_zipUrl);
-    URL.revokeObjectURL(_zipUrl);
+    setTimeout(() => {
+      logger.unregisterBlobUrl(_zipUrl);
+      URL.revokeObjectURL(_zipUrl);
+    }, 60000);
 
   } catch (e) {
     console.error('[ZipExport] failed', e);

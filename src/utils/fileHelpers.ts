@@ -27,11 +27,13 @@ export const getSafeFilename = (index: number, text: string, ext: string): strin
 export const downloadHtmlFile = (content: string, filename: string): void => {
     const blob = new Blob([content], { type: 'text/html' });
     const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
+    const url = URL.createObjectURL(blob);
+    link.href = url;
     link.download = filename;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
 };
 
 export const optimizeForExport = (

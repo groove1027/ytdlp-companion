@@ -786,13 +786,25 @@ export const MemeAndSfxSearchModal: React.FC<{ onClose: () => void }> = ({ onClo
             className="relative max-w-3xl w-full mx-4 bg-gray-900 rounded-2xl border border-gray-700 overflow-hidden shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
-            {/* 미리보기 이미지 */}
+            {/* 미리보기 이미지/영상 */}
             <div className="relative bg-gray-950 flex items-center justify-center min-h-[300px] max-h-[70vh]">
-              <img
-                src={previewItem.url}
-                alt={previewItem.title}
-                className="max-w-full max-h-[70vh] object-contain"
-              />
+              {previewItem.format === 'mp4' || previewItem.url?.toLowerCase().endsWith('.mp4') ? (
+                <video
+                  src={previewItem.url}
+                  className="max-w-full max-h-[70vh] object-contain"
+                  autoPlay
+                  loop
+                  muted
+                  playsInline
+                  controls
+                />
+              ) : (
+                <img
+                  src={previewItem.url}
+                  alt={previewItem.title}
+                  className="max-w-full max-h-[70vh] object-contain"
+                />
+              )}
               {/* 소스 뱃지 */}
               <span className="absolute top-3 left-3 bg-black/70 text-xs text-gray-300 px-2 py-1 rounded-lg font-bold">
                 {previewItem.source === 'klipy' ? 'KLIPY' : previewItem.source === 'irasutoya' ? 'IRASUTOYA' : previewItem.source}

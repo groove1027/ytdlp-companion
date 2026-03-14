@@ -123,9 +123,10 @@ const GUIDE_SYSTEM_PROMPT = `당신은 유튜브 쇼츠 업로드 전문 컨설�
 interface Props {
   rawResult: string;
   versions: { title: string; concept: string }[];
+  onAiResultChange?: (result: string) => void;
 }
 
-const UploadMasterGuide: React.FC<Props> = ({ rawResult, versions }) => {
+const UploadMasterGuide: React.FC<Props> = ({ rawResult, versions, onAiResultChange }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [checked, setChecked] = useState<Record<string, boolean>>({});
   const [aiResult, setAiResult] = useState('');
@@ -171,13 +172,19 @@ const UploadMasterGuide: React.FC<Props> = ({ rawResult, versions }) => {
         fullText += chunk;
         setAiResult(fullText);
       });
+
+      // AI 분석 완료 시 모든 체크박스 자동 체크
+      const allIds: Record<string, boolean> = {};
+      SECTIONS.forEach(s => s.items.forEach(it => { allIds[it.id] = true; }));
+      setChecked(allIds);
+      onAiResultChange?.(fullText);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       showToast(`분석 실패: ${msg}`);
     } finally {
       setIsAnalyzing(false);
     }
-  }, [rawResult, versions, requireAuth]);
+  }, [rawResult, versions, requireAuth, onAiResultChange]);
 
   const colorMap: Record<string, { bg: string; border: string; text: string; check: string }> = {
     red:     { bg: 'bg-red-500/10',     border: 'border-red-500/20',     text: 'text-red-400',     check: 'accent-red-500' },
