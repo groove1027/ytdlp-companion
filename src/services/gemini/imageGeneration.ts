@@ -126,6 +126,51 @@ const SCRIPT_SYSTEM_NEGATIVES: { keywords: string[]; negatives: string }[] = [
     { keywords: ['tibetan', 'dzongkha'], negatives: '(Tibetan text: -2.0), (Tibetan script: -2.0)' },
 ];
 
+/**
+ * [FIX] 대본 텍스트에서 이미지에 렌더링할 핵심 텍스트를 추출
+ * textForceLock 모드에서 모델이 외계어 대신 정확한 한글을 렌더링하도록 명시적 텍스트 힌트 주입
+ * - 숫자+단위 패턴 (150만원, 3억, 2024년)
+ * - 따옴표 안 인용구
+ * - 화면/UI/간판 맥락에서의 핵심 명사
+ */
+const extractSceneTextHints = (scriptText: string, visualPrompt: string): string[] => {
+    if (!scriptText) return [];
+    const combined = `${scriptText} ${visualPrompt || ''}`;
+    const hints: string[] = [];
+
+    // 1. 숫자+단위 패턴 (150만원, 3억, 50%, 2024년, 100개, 1등)
+    const numberPatterns = scriptText.match(/\d[\d,.]*\s*[만억천백십]?\s*[원달러엔위안불유로파운드]|\d[\d,.]*\s*[만억천백십]|\d+\s*[년월일시분초%개명장건호층등위번째]/g);
+    if (numberPatterns) {
+        hints.push(...numberPatterns.map(p => p.trim()).slice(0, 2));
+    }
+
+    // 2. 따옴표 안의 한글 텍스트 (인용구, 대사)
+    const quotePatterns = scriptText.match(/["'"'「『]([가-힣\s\d]{2,10})["'"'」』]/g);
+    if (quotePatterns) {
+        const clean = quotePatterns.map(q => q.replace(/["'"'「『」』]/g, '').trim()).filter(q => q.length >= 2 && q.length <= 10);
+        hints.push(...clean.slice(0, 2));
+    }
+
+    // 3. 화면/UI/문서 관련 맥락에서 핵심 명사 추출
+    const visualTextContextWords = ['화면', '표시', '문자', '메시지', '알림', '보이', '적혀', '쓰여', '간판', '메뉴', '앱', '핸드폰', '스마트폰', '문서', '서류', '신문', '기사', '타이틀', '제목', '자막', '통장', '계좌', '잔액', '이체', '송금', '입금', '출금', '결제', '영수증'];
+    const hasVisualTextContext = visualTextContextWords.some(w => combined.includes(w));
+
+    if (hasVisualTextContext && hints.length < 4) {
+        // 시각적 맥락에서 의미 있는 한글 2~6자 명사 추출
+        const koreanWords = scriptText.match(/[가-힣]{2,6}/g);
+        if (koreanWords) {
+            const excludeGrammar = /^(하는|되는|있는|없는|있다|없다|하고|되고|그런|이런|저런|해서|에서|로서|처럼|만큼|이다|라고|한다|된다|하며|되며|하면|되면|했다|됐다|인데|으로|에게|부터|까지|대한|위한|통해|보면|것이|것을|것은|때문|하지|않는|않은|않고|이는|바로|다시|그리고|그래서|하지만|그런데|때문에|왜냐하면|이렇게|그렇게|이것은|그것은)$/;
+            const meaningful = koreanWords.filter(w => !excludeGrammar.test(w));
+            // 맥락 키워드 근처에 있는 단어 우선 선택
+            const contextual = meaningful.filter(w => visualTextContextWords.includes(w) || combined.indexOf(w) !== -1);
+            hints.push(...contextual.slice(0, 4 - hints.length));
+        }
+    }
+
+    // 중복 제거 + 최대 4개
+    return [...new Set(hints)].slice(0, 4);
+};
+
 // [CRITICAL UPDATE] Smart Bypass Logic in Generation
 export const generateSceneImage = async (
     scene: Scene,
@@ -546,7 +591,15 @@ export const generateSceneImage = async (
         (Visual Context: ${effectiveVisualPrompt})
         ${langInstruction}
 
-        [IMPORTANT: Do NOT render any visible text, words, letters, labels, captions, or watermarks in the image unless explicitly instructed below with a [Text: ...] directive.]
+        ${(() => {
+            if (!suppressText && textForceLock) {
+                const textHints = extractSceneTextHints(scene.scriptText, effectiveVisualPrompt);
+                if (textHints.length > 0) {
+                    return `[TEXT RENDERING GUIDE: When text naturally appears in this scene (on screens, signs, documents, UI elements), use these EXACT ${langName} strings: ${textHints.map(t => `"${t}"`).join(', ')}. Render these texts accurately — do NOT invent or approximate characters. If text is not contextually needed in the scene, omit it entirely.]`;
+                }
+            }
+            return '[IMPORTANT: Do NOT render any visible text, words, letters, labels, captions, or watermarks in the image unless explicitly instructed below with a [Text: ...] directive.]';
+        })()}
 
         [NEGATIVE] ${infographicNegative}
         `;
@@ -619,7 +672,16 @@ export const generateSceneImage = async (
 
         ${scene.characterPresent && baseAge && scene.castType === 'MAIN' ? `[Age: ${baseAge}]` : ''}
 
-        [IMPORTANT: Do NOT render any visible text, words, letters, labels, captions, or watermarks in the image unless explicitly instructed below with a [Text: ...] directive.]
+        ${(() => {
+            // [FIX] textForceLock 시 대본에서 핵심 텍스트를 추출하여 정확한 렌더링 유도
+            if (!suppressText && textForceLock) {
+                const textHints = extractSceneTextHints(scene.scriptText, effectiveVisualPrompt);
+                if (textHints.length > 0) {
+                    return `[TEXT RENDERING GUIDE: When text naturally appears in this scene (on screens, signs, documents, UI elements), use these EXACT ${langName} strings: ${textHints.map(t => `"${t}"`).join(', ')}. Render these texts accurately — do NOT invent or approximate characters. If text is not contextually needed in the scene, omit it entirely.]`;
+                }
+            }
+            return '[IMPORTANT: Do NOT render any visible text, words, letters, labels, captions, or watermarks in the image unless explicitly instructed below with a [Text: ...] directive.]';
+        })()}
 
         [NEGATIVE] ${negativePrompt}, ${styleNegative}, (Bad quality), (Distorted)
         `;
