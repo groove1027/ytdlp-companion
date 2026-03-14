@@ -933,101 +933,8 @@ export const parseScriptToScenes = async (
             }));
         }
 
-        // [CRITICAL FIX] AUTO 캐릭터 빈도 강제 적용 — MAIN 사이 최소 2씬 갭
-        // AUTO 모드: MAIN이 나온 후 최소 2개의 non-MAIN 씬(NOBODY/EXTRA)이 지나야 다음 MAIN 허용
-        // KEY_ENTITY는 갭 카운트에서 제외 (투명하게 건너뜀)
-        if (appearance === CharacterAppearance.AUTO) {
-            const MIN_GAP = 2; // MAIN 사이 최소 2씬 간격 (KEY_ENTITY 제외)
-            let gapSinceLastMain = MIN_GAP + 1; // 첫 MAIN은 허용
-            let fixCount = 0;
-            for (let i = 0; i < result.length; i++) {
-                if (result[i].castType === 'KEY_ENTITY') continue; // KEY_ENTITY는 갭 카운트에서 제외
-                if (result[i].castType === 'MAIN') {
-                    if (gapSinceLastMain < MIN_GAP) {
-                        result[i] = {
-                            ...result[i],
-                            castType: 'NOBODY',
-                            characterPresent: false,
-                            characterAction: '',
-                        };
-                        fixCount++;
-                        gapSinceLastMain++; // NOBODY로 전환되었으므로 갭 증가
-                        console.log(`[PostProcess] AUTO castType fix: scene ${i} forced MAIN→NOBODY (gap ${gapSinceLastMain - 1} < ${MIN_GAP})`);
-                    } else {
-                        gapSinceLastMain = 0; // MAIN 등장 → 갭 리셋
-                    }
-                } else {
-                    gapSinceLastMain++; // non-MAIN 씬 → 갭 증가
-                }
-            }
-            console.log(`[PostProcess] AUTO mode: ${fixCount} scene(s) fixed to NOBODY (min gap: ${MIN_GAP})`);
-        }
-
-        // [CRITICAL FIX] MINIMAL 캐릭터 빈도 강제 적용 — 최대 2회만 MAIN 허용
-        // MINIMAL 모드: 전체 장면의 ~10% (20장면 기준 2장면)만 MAIN, 나머지는 NOBODY로 강제 전환
-        // KEY_ENTITY는 예외 — 유명인/브랜드/장소는 반드시 표시되어야 함
-        if (appearance === CharacterAppearance.MINIMAL) {
-            const maxMain = Math.max(2, Math.round(result.length * 0.1));
-            let mainCount = 0;
-            for (let i = 0; i < result.length; i++) {
-                if (result[i].castType === 'KEY_ENTITY') continue;
-                if (result[i].castType === 'MAIN') {
-                    if (mainCount >= maxMain) {
-                        result[i] = {
-                            ...result[i],
-                            castType: 'NOBODY',
-                            characterPresent: false,
-                            characterAction: '',
-                        };
-                        console.log(`[PostProcess] MINIMAL castType fix: scene ${i} forced MAIN→NOBODY (max ${maxMain} MAIN exceeded, count=${mainCount})`);
-                    } else {
-                        mainCount++;
-                    }
-                }
-            }
-            console.log(`[PostProcess] MINIMAL mode: ${mainCount} MAIN scene(s) kept (max ${maxMain}), rest forced to NOBODY`);
-        }
-
-        // [CRITICAL FIX] NONE 캐릭터 모드 — 모든 장면에서 캐릭터 완전 제거
-        if (appearance === CharacterAppearance.NONE) {
-            for (let i = 0; i < result.length; i++) {
-                if (result[i].castType === 'KEY_ENTITY') continue;
-                result[i] = {
-                    ...result[i],
-                    castType: 'NOBODY',
-                    characterPresent: false,
-                    characterAction: '',
-                };
-            }
-            console.log(`[PostProcess] NONE mode: all non-KEY_ENTITY scenes forced to NOBODY`);
-        }
-
-        // [NEW] KEY_ENTITY 연출 구도 강제 다양화 — 같은 구도 연속 사용 금지
-        const ENTITY_COMPOSITIONS = ['ENTITY_SOLO', 'ENTITY_WITH_MAIN', 'MAIN_OBSERVING', 'ENTITY_FG_MAIN_BG', 'MAIN_FG_ENTITY_BG'] as const;
-        let entityCompIndex = 0;
-        let lastEntityComp = '';
-        for (let i = 0; i < result.length; i++) {
-            if (result[i].castType === 'KEY_ENTITY') {
-                // AI가 entityComposition을 지정하지 않았거나 이전과 동일한 경우 → 자동 로테이션
-                if (!result[i].entityComposition || result[i].entityComposition === lastEntityComp) {
-                    result[i] = { ...result[i], entityComposition: ENTITY_COMPOSITIONS[entityCompIndex % ENTITY_COMPOSITIONS.length] };
-                    console.log(`[PostProcess] Entity composition auto-assigned: scene ${i} → ${result[i].entityComposition}`);
-                }
-                lastEntityComp = result[i].entityComposition;
-                entityCompIndex++;
-
-                // KEY_ENTITY인데 entityName이 비어있으면 경고
-                if (!result[i].entityName) {
-                    console.warn(`[PostProcess] KEY_ENTITY scene ${i} has no entityName — castType may be incorrect`);
-                }
-
-                // ALWAYS 모드에서는 ENTITY_SOLO 금지 (항상 메인 캐릭터 출연)
-                if (appearance === CharacterAppearance.ALWAYS && result[i].entityComposition === 'ENTITY_SOLO') {
-                    result[i] = { ...result[i], entityComposition: 'ENTITY_WITH_MAIN' };
-                    console.log(`[PostProcess] ALWAYS mode: scene ${i} ENTITY_SOLO→ENTITY_WITH_MAIN`);
-                }
-            }
-        }
+        // [NOTE] AUTO/MINIMAL/NONE 캐릭터 빈도 교정 + Entity 구도 로테이션은
+        // force-split과 scene cap 이후에 실행 (아래 참조)
 
         // [FIX] NANO/DETAILED 강제 분할 후처리: AI가 분할을 충분히 하지 않았을 때 코드 레벨에서 강제 분할
         if (format === VideoFormat.NANO || (format === VideoFormat.LONG && longFormSplitType === 'DETAILED')) {
@@ -1103,6 +1010,77 @@ export const parseScriptToScenes = async (
             }
             // ID 재할당
             result = result.map((s, i) => ({ ...s, id: `scene-${Date.now()}-${i}` }));
+        }
+
+        // [FIX] AUTO/MINIMAL/NONE 캐릭터 빈도 교정 — force-split과 scene cap 이후에 실행
+        // 이전에는 force-split 전에 실행되어 분할된 장면이 MAIN을 상속하여 연속 등장 규칙 위반
+        if (appearance === CharacterAppearance.AUTO) {
+            const MIN_GAP = 2;
+            let gapSinceLastMain = MIN_GAP + 1;
+            let fixCount = 0;
+            for (let i = 0; i < result.length; i++) {
+                if (result[i].castType === 'KEY_ENTITY') continue;
+                if (result[i].castType === 'MAIN') {
+                    if (gapSinceLastMain < MIN_GAP) {
+                        result[i] = { ...result[i], castType: 'NOBODY', characterPresent: false, characterAction: '' };
+                        fixCount++;
+                        gapSinceLastMain++;
+                        console.log(`[PostProcess] AUTO castType fix: scene ${i} forced MAIN→NOBODY (gap ${gapSinceLastMain - 1} < ${MIN_GAP})`);
+                    } else {
+                        gapSinceLastMain = 0;
+                    }
+                } else {
+                    gapSinceLastMain++;
+                }
+            }
+            console.log(`[PostProcess] AUTO mode: ${fixCount} scene(s) fixed to NOBODY (min gap: ${MIN_GAP})`);
+        }
+
+        if (appearance === CharacterAppearance.MINIMAL) {
+            const maxMain = Math.max(2, Math.round(result.length * 0.1));
+            let mainCount = 0;
+            for (let i = 0; i < result.length; i++) {
+                if (result[i].castType === 'KEY_ENTITY') continue;
+                if (result[i].castType === 'MAIN') {
+                    if (mainCount >= maxMain) {
+                        result[i] = { ...result[i], castType: 'NOBODY', characterPresent: false, characterAction: '' };
+                        console.log(`[PostProcess] MINIMAL castType fix: scene ${i} forced MAIN→NOBODY (max ${maxMain} exceeded)`);
+                    } else {
+                        mainCount++;
+                    }
+                }
+            }
+            console.log(`[PostProcess] MINIMAL mode: ${mainCount} MAIN scene(s) kept (max ${maxMain})`);
+        }
+
+        if (appearance === CharacterAppearance.NONE) {
+            for (let i = 0; i < result.length; i++) {
+                if (result[i].castType === 'KEY_ENTITY') continue;
+                result[i] = { ...result[i], castType: 'NOBODY', characterPresent: false, characterAction: '' };
+            }
+            console.log(`[PostProcess] NONE mode: all non-KEY_ENTITY scenes forced to NOBODY`);
+        }
+
+        // [NEW] KEY_ENTITY 연출 구도 강제 다양화 — 같은 구도 연속 사용 금지
+        const ENTITY_COMPOSITIONS = ['ENTITY_SOLO', 'ENTITY_WITH_MAIN', 'MAIN_OBSERVING', 'ENTITY_FG_MAIN_BG', 'MAIN_FG_ENTITY_BG'] as const;
+        let entityCompIndex = 0;
+        let lastEntityComp = '';
+        for (let i = 0; i < result.length; i++) {
+            if (result[i].castType === 'KEY_ENTITY') {
+                if (!result[i].entityComposition || result[i].entityComposition === lastEntityComp) {
+                    result[i] = { ...result[i], entityComposition: ENTITY_COMPOSITIONS[entityCompIndex % ENTITY_COMPOSITIONS.length] };
+                    console.log(`[PostProcess] Entity composition auto-assigned: scene ${i} → ${result[i].entityComposition}`);
+                }
+                lastEntityComp = result[i].entityComposition;
+                entityCompIndex++;
+                if (!result[i].entityName) {
+                    console.warn(`[PostProcess] KEY_ENTITY scene ${i} has no entityName — castType may be incorrect`);
+                }
+                if (appearance === CharacterAppearance.ALWAYS && result[i].entityComposition === 'ENTITY_SOLO') {
+                    result[i] = { ...result[i], entityComposition: 'ENTITY_WITH_MAIN' };
+                    console.log(`[PostProcess] ALWAYS mode: scene ${i} ENTITY_SOLO→ENTITY_WITH_MAIN`);
+                }
+            }
         }
 
         return result;

@@ -8,6 +8,7 @@
 
 ## 🟢 완료된 작업
 
+- [x] **AUTO 캐릭터 빈도 연속 등장 버그 수정** — AUTO 모드에서 캐릭터가 연속 등장하던 문제. 원인: NANO/DETAILED force-split이 캐릭터 빈도 교정 이후에 실행되어 MAIN 장면이 분할 시 복제됨. 해결: AUTO/MINIMAL/NONE 빈도 교정 + Entity 구도 로테이션을 force-split과 scene cap 이후로 이동 (scriptAnalysis.ts, 2026-03-15)
 - [x] **NanoBanana 2 한글 텍스트 렌더링 정확도 개선** — textForceLock 모드에서 이미지 내 한글이 외계어로 나오던 문제. (1) extractSceneTextHints 함수: scene.scriptText에서 숫자+단위, 따옴표 인용구, UI/간판 맥락 핵심 명사를 추출 (2) textForceLock ON 시 "Do NOT render text" 지시 대신 추출된 정확한 한글 텍스트를 [TEXT RENDERING GUIDE]로 주입 (3) 인포그래픽/일반 모드 양쪽 적용 (imageGeneration.ts, 2026-03-15)
 - [x] **yt-dlp Mixed Content 차단 해결 — Cloudflare Pages Function 프록시** — HTTPS 배포 사이트에서 HTTP yt-dlp VPS 호출 시 브라우저 Mixed Content 차단으로 프레임 추출 실패 → Layer 3 폴백(YouTube 썸네일 4장 반복). Cloudflare Pages Function `/ytdlp-proxy/[[path]]` 추가하여 HTTPS→HTTP 서버 사이드 프록시. getApiBaseUrl()에서 HTTPS 환경 자동 감지 → 프록시 경로 사용, HTTP 로컬 개발은 직접 접속 유지 (functions/ytdlp-proxy/[[path]].ts 신규, ytdlpApiService.ts, 2026-03-15)
 - [x] **영상분석실 목표 시간 "원본" 옵션 추가** — targetDuration 타입에 0(원본) 추가, 기본값 60→0(원본)으로 변경. 목표시간 셀렉터에 "원본" 버튼 추가. 원본 선택 시 AI에 시간 제약 지시 생략하여 원본 영상 길이 기준 분석 (videoAnalysisStore.ts, VideoAnalysisRoom.tsx, 2026-03-15)
