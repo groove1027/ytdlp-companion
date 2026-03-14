@@ -3,11 +3,27 @@ import { useChannelAnalysisStore } from '../../stores/channelAnalysisStore';
 import { getYoutubeApiKeyPoolSize, getActiveYoutubeKeyIndex } from '../../services/apiService';
 import type { ChannelAnalysisSubTab } from '../../types';
 
-const KeywordLab = lazy(() => import('./channel/KeywordLab'));
-const ChannelAnalysisRoom = lazy(() => import('./channel/ChannelAnalysisRoom'));
-const VideoAnalysisRoom = lazy(() => import('./channel/VideoAnalysisRoom'));
-const SocialAnalysisRoom = lazy(() => import('./channel/SocialAnalysisRoom'));
-const ViewAlertPanel = lazy(() => import('./channel/ViewAlertPanel'));
+// [FIX #281] lazyRetry — 배포 후 chunk 해시 변경 시 자동 재시도 + 새로고침
+function lazyRetry(importFn: () => Promise<{ default: React.ComponentType<any> }>) {
+  return lazy(() =>
+    importFn().catch(() => {
+      return importFn().catch(() => {
+        const reloaded = sessionStorage.getItem('__chunk_reload');
+        if (!reloaded) {
+          sessionStorage.setItem('__chunk_reload', '1');
+          window.location.reload();
+        }
+        throw new Error('Failed to fetch dynamically imported module');
+      });
+    })
+  );
+}
+
+const KeywordLab = lazyRetry(() => import('./channel/KeywordLab'));
+const ChannelAnalysisRoom = lazyRetry(() => import('./channel/ChannelAnalysisRoom'));
+const VideoAnalysisRoom = lazyRetry(() => import('./channel/VideoAnalysisRoom'));
+const SocialAnalysisRoom = lazyRetry(() => import('./channel/SocialAnalysisRoom'));
+const ViewAlertPanel = lazyRetry(() => import('./channel/ViewAlertPanel'));
 
 const SUB_TABS: { id: ChannelAnalysisSubTab; label: string; icon: string }[] = [
   { id: 'keyword-lab', label: '키워드 랩', icon: '🔍' },

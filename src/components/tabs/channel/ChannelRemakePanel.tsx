@@ -56,6 +56,7 @@ const ChannelRemakePanel: React.FC = () => {
   const setGeneratedScript = useScriptWriterStore(s => s.setGeneratedScript);
   const setActiveStep = useScriptWriterStore(s => s.setActiveStep);
   const swSetContentFormat = useScriptWriterStore(s => s.setContentFormat);
+  const swSetSelectedTopic = useScriptWriterStore(s => s.setSelectedTopic);
   const setActiveTab = useNavigationStore(s => s.setActiveTab);
 
   const [sourceInput, setSourceInput] = useState('');
@@ -231,6 +232,9 @@ const ChannelRemakePanel: React.FC = () => {
     const charCount = version.script.length;
     const totalSec = Math.round((charCount / 650) * 60);
     const m = Math.floor(totalSec / 60);
+    // [FIX #280] selectedTopic을 먼저 null로 초기화 — ScriptWriterTab mount 시
+    // useEffect가 selectedTopic 기반으로 generatedScript/finalScript를 전부 지우는 버그 방지
+    swSetSelectedTopic(null);
     setTitle(version.title);
     setGeneratedScript({
       title: version.title, content: version.script, charCount,
@@ -242,7 +246,7 @@ const ChannelRemakePanel: React.FC = () => {
     setActiveStep(3);
     setActiveTab('script-writer');
     showToast(`"${version.title}" → 대본작성 탭으로 이동`);
-  }, [setTitle, setGeneratedScript, setFinalScript, swSetContentFormat, setActiveStep, setActiveTab, channelGuideline]);
+  }, [setTitle, setGeneratedScript, setFinalScript, swSetContentFormat, swSetSelectedTopic, setActiveStep, setActiveTab, channelGuideline]);
 
   if (!channelGuideline) return null;
 

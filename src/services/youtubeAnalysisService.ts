@@ -1749,26 +1749,16 @@ export const getVideoComments = async (videoId: string, maxResults: number = 30)
 /**
  * L2: 썸네일 시각 스타일 분석 (Gemini Vision — multimodal)
  * 영상당 2장 (커스텀 썸네일 + 중간 캡처) → Gemini에 배치 전송
+ * [FIX #282] 400 에러(콘텐츠 정책) 시 점진적 폴백: 이미지 축소 → 썸네일만
  */
 const analyzeThumbnailStyle = async (scripts: ChannelScript[], contentRegion: ContentRegion = 'domestic'): Promise<string> => {
     const ytScripts = scripts.filter(s => s.videoId && !s.videoId.startsWith('manual-') && !s.videoId.startsWith('file-'));
     if (ytScripts.length === 0) return '';
 
-    const imageParts: EvolinkContentPart[] = [];
-    for (const s of ytScripts.slice(0, 15)) {
-        imageParts.push({ type: 'image_url', image_url: { url: `https://img.youtube.com/vi/${s.videoId}/hqdefault.jpg` } });
-        imageParts.push({ type: 'image_url', image_url: { url: `https://img.youtube.com/vi/${s.videoId}/2.jpg` } });
-    }
-
     const isOverseas = contentRegion === 'overseas';
-    const messages: EvolinkChatMessage[] = [
-        { role: 'system', content: `YouTube 채널 시각 스타일 분석 전문가. 한국어로 응답.${isOverseas ? ' 해외 채널이므로 해당 문화권의 시각적 트렌드와 디자인 관습을 반영하여 분석.' : ''}` },
-        {
-            role: 'user',
-            content: [
-                {
-                    type: 'text',
-                    text: `아래 이미지는 같은 YouTube 채널의 썸네일(홀수번째)과 영상 중간 캡처(짝수번째)입니다. ${ytScripts.length}개 영상의 시각적 스타일 패턴을 분석하세요.
+    const systemContent = `YouTube 채널 시각 스타일 분석 전문가. 한국어로 응답.${isOverseas ? ' 해외 채널이므로 해당 문화권의 시각적 트렌드와 디자인 관습을 반영하여 분석.' : ''}`;
+
+    const promptText = (count: number, thumbnailOnly: boolean) => `아래 이미지는 같은 YouTube 채널의 ${thumbnailOnly ? '썸네일' : '썸네일(홀수번째)과 영상 중간 캡처(짝수번째)'}입니다. ${count}개 영상의 시각적 스타일 패턴을 분석하세요.
 
 분석 항목:
 1. 색상 팔레트: 지배적 색상 3~5개 (HEX 코드 추정), 색온도(K 추정), 채도 레벨(0~100%), 명암 대비 수준, 그라디언트/단색 경향
@@ -1786,20 +1776,54 @@ const analyzeThumbnailStyle = async (scripts: ChannelScript[], contentRegion: Co
    - 정보 그래픽: 차트/그래프/아이콘 스타일, 색상 체계
 7. 텍스처/화풍: 필터 효과, 빈티지/모던/미니멀/맥시멀 경향, 노이즈/그레인 유무
 
-이 채널의 시각적 스타일을 완벽히 복제할 수 있도록 매우 구체적으로 작성하세요. 이미지 생성 프롬프트로 바로 사용 가능할 정도의 구체적인 수치와 색상 코드를 포함하세요.`
-                },
-                ...imageParts
-            ] as EvolinkContentPart[]
+이 채널의 시각적 스타일을 완벽히 복제할 수 있도록 매우 구체적으로 작성하세요. 이미지 생성 프롬프트로 바로 사용 가능할 정도의 구체적인 수치와 색상 코드를 포함하세요.`;
+
+    // 이미지 구성: 전체(썸네일+프레임) → 축소(5개) → 썸네일만
+    const buildImages = (maxVideos: number, thumbnailOnly: boolean): EvolinkContentPart[] => {
+        const parts: EvolinkContentPart[] = [];
+        for (const s of ytScripts.slice(0, maxVideos)) {
+            parts.push({ type: 'image_url', image_url: { url: `https://img.youtube.com/vi/${s.videoId}/hqdefault.jpg` } });
+            if (!thumbnailOnly) {
+                parts.push({ type: 'image_url', image_url: { url: `https://img.youtube.com/vi/${s.videoId}/2.jpg` } });
+            }
         }
+        return parts;
+    };
+
+    const buildMessages = (maxVideos: number, thumbnailOnly: boolean): EvolinkChatMessage[] => {
+        const images = buildImages(maxVideos, thumbnailOnly);
+        const count = Math.min(ytScripts.length, maxVideos);
+        return [
+            { role: 'system', content: systemContent },
+            { role: 'user', content: [{ type: 'text', text: promptText(count, thumbnailOnly) }, ...images] as EvolinkContentPart[] }
+        ];
+    };
+
+    // [FIX #282] 점진적 폴백: 400 에러 시 이미지 수를 줄여 재시도
+    const attempts: { maxVideos: number; thumbnailOnly: boolean; label: string }[] = [
+        { maxVideos: 15, thumbnailOnly: false, label: '전체 (15×2)' },
+        { maxVideos: 5, thumbnailOnly: false, label: '축소 (5×2)' },
+        { maxVideos: 5, thumbnailOnly: true, label: '썸네일만 (5×1)' },
     ];
 
-    try {
-        const res = await evolinkChat(messages, { temperature: 0.3, maxTokens: 6000 });
-        return res.choices?.[0]?.message?.content || '';
-    } catch (e) {
-        logger.warn('[StyleDNA] L2 썸네일 분석 실패', e instanceof Error ? e.message : String(e));
-        return '';
+    for (let i = 0; i < attempts.length; i++) {
+        const { maxVideos, thumbnailOnly, label } = attempts[i];
+        try {
+            const messages = buildMessages(maxVideos, thumbnailOnly);
+            const res = await evolinkChat(messages, { temperature: 0.3, maxTokens: 6000 });
+            return res.choices?.[0]?.message?.content || '';
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            const is400 = msg.includes('400') || msg.includes('콘텐츠 정책');
+            if (is400 && i < attempts.length - 1) {
+                logger.warn(`[StyleDNA] L2 ${label} → 400 에러, 다음 시도로 폴백`, msg);
+                continue;
+            }
+            logger.warn('[StyleDNA] L2 썸네일 분석 실패', msg);
+            return '';
+        }
     }
+    return '';
 };
 
 /**
