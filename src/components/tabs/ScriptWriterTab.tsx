@@ -253,6 +253,24 @@ export default function ScriptWriterTab() {
     setActiveTab('sound-studio');
   }, [generatedScript, manualText, finalScript, styledScript, setFinalScript, setActiveTab]);
 
+  // ── 이미지/영상으로 직접 이동 (#223) ──
+  const handleGoToImageVideo = useCallback(() => {
+    const latest = finalScript || styledScript || generatedScript?.content || manualText || '';
+    if (!latest.trim()) return;
+    setFinalScript(latest);
+    const autoAspect = videoFormat !== VideoFormat.LONG ? AspectRatio.PORTRAIT : undefined;
+    useProjectStore.getState().setConfig((prev) => prev ? {
+      ...prev,
+      script: latest,
+      videoFormat,
+      smartSplit,
+      longFormSplitType,
+      ...(autoAspect ? { aspectRatio: autoAspect } : {}),
+    } : prev);
+    useProjectStore.getState().smartUpdateTitle('script-writer', latest.split('\n')[0] || '');
+    setActiveTab('image-video');
+  }, [generatedScript, manualText, finalScript, styledScript, videoFormat, smartSplit, longFormSplitType, setFinalScript, setActiveTab]);
+
   // ── 단락 나누기 ──
   const [showSplitGuide, setShowSplitGuide] = useState(true);
 
@@ -1662,6 +1680,19 @@ ${instinctPrompt}
               py-3.5 flex items-center justify-center gap-2 transition-all"
           >
             🎙 사운드 스튜디오로 대본 보내기
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
+          </button>
+
+          <button
+            type="button"
+            onClick={handleGoToImageVideo}
+            disabled={!displayScript.trim()}
+            className="w-full bg-gradient-to-r from-orange-600 to-amber-600
+              hover:from-orange-500 hover:to-amber-500 disabled:opacity-25 disabled:cursor-not-allowed
+              text-white rounded-xl text-sm font-bold border border-orange-400/30 shadow-lg shadow-orange-900/20
+              py-3.5 flex items-center justify-center gap-2 transition-all"
+          >
+            🎬 이미지/영상으로 대본 보내기
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
           </button>
 
