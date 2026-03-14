@@ -103,6 +103,7 @@ interface SlideData {
   speakerNote?: string;
   imageUrl?: string;
   isGeneratingImage?: boolean;
+  isRegeneratingContent?: boolean;
 }
 
 type Step = 1 | 2 | 3 | 4;
@@ -352,10 +353,13 @@ const SlidePreview: React.FC<{
   slide: SlideData;
   designStyle: DesignStyle;
   onRegenImage: (editInstruction?: string) => void;
+  onRegenContent: (instruction?: string) => void;
   onImageClick?: () => void;
-}> = ({ slide, designStyle, onRegenImage, onImageClick }) => {
+}> = ({ slide, designStyle, onRegenImage, onRegenContent, onImageClick }) => {
   const [editText, setEditText] = useState('');
   const [showEdit, setShowEdit] = useState(false);
+  const [contentEditText, setContentEditText] = useState('');
+  const [showContentEdit, setShowContentEdit] = useState(false);
 
   return (
     <div className="bg-gray-800 border border-gray-700 rounded-xl overflow-hidden">
@@ -398,31 +402,85 @@ const SlidePreview: React.FC<{
             ))}
           </div>
         )}
-        <div className="flex items-center gap-1.5">
+        {slide.isRegeneratingContent && (
+          <div className="flex items-center gap-2 text-[10px] text-violet-400">
+            <span className="w-3 h-3 border-2 border-violet-400 border-t-transparent rounded-full animate-spin" />
+            내용 재생성 중...
+          </div>
+        )}
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <button
+            type="button"
+            onClick={() => onRegenContent()}
+            disabled={slide.isGeneratingImage || slide.isRegeneratingContent}
+            className="text-[10px] text-violet-400 hover:text-violet-300 border border-violet-500/30 hover:border-violet-500/50 px-2 py-1 rounded transition-colors disabled:opacity-30"
+          >
+            내용 재생성
+          </button>
+          <button
+            type="button"
+            onClick={() => { setShowContentEdit(!showContentEdit); setShowEdit(false); }}
+            disabled={slide.isGeneratingImage || slide.isRegeneratingContent}
+            className="text-[10px] text-emerald-400 hover:text-emerald-300 border border-emerald-500/30 hover:border-emerald-500/50 px-2 py-1 rounded transition-colors disabled:opacity-30"
+          >
+            {showContentEdit ? '닫기' : '내용 수정'}
+          </button>
           <button
             type="button"
             onClick={() => onRegenImage()}
-            disabled={slide.isGeneratingImage}
+            disabled={slide.isGeneratingImage || slide.isRegeneratingContent}
             className="text-[10px] text-sky-400 hover:text-sky-300 border border-sky-500/30 hover:border-sky-500/50 px-2 py-1 rounded transition-colors disabled:opacity-30"
           >
             이미지 재생성
           </button>
           <button
             type="button"
-            onClick={() => setShowEdit(!showEdit)}
-            disabled={slide.isGeneratingImage}
+            onClick={() => { setShowEdit(!showEdit); setShowContentEdit(false); }}
+            disabled={slide.isGeneratingImage || slide.isRegeneratingContent}
             className="text-[10px] text-amber-400 hover:text-amber-300 border border-amber-500/30 hover:border-amber-500/50 px-2 py-1 rounded transition-colors disabled:opacity-30"
           >
-            {showEdit ? '닫기' : '수정 요청'}
+            {showEdit ? '닫기' : '이미지 수정'}
           </button>
         </div>
+        {showContentEdit && (
+          <div className="space-y-1.5 pt-1">
+            <input
+              type="text"
+              value={contentEditText}
+              onChange={(e) => setContentEditText(e.target.value)}
+              placeholder="예: 더 간결하게, 숫자 데이터 추가, 톤을 부드럽게"
+              className="w-full bg-gray-900 border border-gray-600 rounded-lg px-2.5 py-1.5 text-xs text-gray-200 placeholder-gray-600 focus:outline-none focus:border-violet-500/50"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && contentEditText.trim()) {
+                  onRegenContent(contentEditText.trim());
+                  setContentEditText('');
+                  setShowContentEdit(false);
+                }
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => {
+                if (contentEditText.trim()) {
+                  onRegenContent(contentEditText.trim());
+                  setContentEditText('');
+                  setShowContentEdit(false);
+                }
+              }}
+              disabled={!contentEditText.trim() || slide.isRegeneratingContent}
+              className="w-full text-[10px] bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-500 hover:to-purple-500 text-white px-2 py-1.5 rounded-lg font-bold transition-all disabled:opacity-30"
+            >
+              지시 반영하여 재생성
+            </button>
+          </div>
+        )}
         {showEdit && (
           <div className="space-y-1.5 pt-1">
             <input
               type="text"
               value={editText}
               onChange={(e) => setEditText(e.target.value)}
-              placeholder="예: 배경을 파란색으로, 글씨를 더 크게"
+              placeholder="예: 배경을 파란색으로, 아이콘 추가"
               className="w-full bg-gray-900 border border-gray-600 rounded-lg px-2.5 py-1.5 text-xs text-gray-200 placeholder-gray-600 focus:outline-none focus:border-amber-500/50"
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && editText.trim()) {
@@ -444,7 +502,7 @@ const SlidePreview: React.FC<{
               disabled={!editText.trim() || slide.isGeneratingImage}
               className="w-full text-[10px] bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white px-2 py-1.5 rounded-lg font-bold transition-all disabled:opacity-30"
             >
-              수정 반영하여 재생성
+              수정 반영하여 이미지 재생성
             </button>
           </div>
         )}
@@ -871,6 +929,52 @@ export default function PptMasterTab() {
       showToast('이미지 생성 실패');
     }
   }, [slides, selectedDesignStyle, selectedContentStyle, addCost]);
+
+  // ─── 개별 슬라이드 내용 재생성 (제목/본문/키포인트) ───
+  const handleRegenContent = useCallback(async (index: number, instruction?: string) => {
+    const slide = slides[index];
+    if (!slide) return;
+
+    setSlides(prev => prev.map((s, i) => i === index ? { ...s, isRegeneratingContent: true } : s));
+    try {
+      const contextSlides = slides
+        .filter((_, i) => i !== index)
+        .slice(Math.max(0, index - 2), index + 2)
+        .map(s => `#${s.slideNumber} "${s.title}"`).join(', ');
+
+      const userPrompt = instruction
+        ? `슬라이드 #${slide.slideNumber}의 내용을 다음 지시에 따라 재작성하세요: "${instruction}"\n\n현재 제목: "${slide.title}"\n현재 본문: "${slide.body}"\n인접 슬라이드: ${contextSlides}\n\n원본 텍스트 참조:\n${inputText.slice(0, 3000)}`
+        : `슬라이드 #${slide.slideNumber}의 내용을 새롭게 재작성하세요. 같은 주제를 다른 관점/표현으로 작성하세요.\n\n현재 제목: "${slide.title}"\n현재 본문: "${slide.body}"\n인접 슬라이드: ${contextSlides}\n\n원본 텍스트 참조:\n${inputText.slice(0, 3000)}`;
+
+      const messages: EvolinkChatMessage[] = [
+        { role: 'system', content: `${selectedContentStyle.systemPrompt}\n\n슬라이드 1장의 내용만 재작성하세요. 반드시 아래 JSON 형식으로만 출력하세요.\n{"title":"제목","body":"본문","keyPoints":["포인트1","포인트2"],"visualHint":"영문 비주얼 설명","speakerNote":"발표자 노트(선택)"}` },
+        { role: 'user', content: userPrompt },
+      ];
+
+      const res = await evolinkChat(messages, { temperature: 0.8, maxTokens: 2000 });
+      const raw = res.choices?.[0]?.message?.content || '';
+      const jsonStr = extractJsonFromText(raw);
+      if (!jsonStr) throw new Error('JSON 추출 실패');
+
+      const parsed = JSON.parse(jsonStr);
+      addCost(PRICING.GEMINI_PRO_INPUT_PER_1M * 0.0005, 'analysis');
+
+      setSlides(prev => prev.map((s, i) => i === index ? {
+        ...s,
+        title: parsed.title || s.title,
+        body: parsed.body || s.body,
+        keyPoints: Array.isArray(parsed.keyPoints) ? parsed.keyPoints : s.keyPoints,
+        visualHint: parsed.visualHint || s.visualHint,
+        speakerNote: parsed.speakerNote ?? s.speakerNote,
+        isRegeneratingContent: false,
+      } : s));
+      showToast(`슬라이드 #${slide.slideNumber} 내용 재생성 완료`);
+    } catch (e) {
+      logger.trackSwallowedError('PptMasterTab:regenerateSlideContent', e);
+      setSlides(prev => prev.map((s, i) => i === index ? { ...s, isRegeneratingContent: false } : s));
+      showToast('내용 재생성 실패');
+    }
+  }, [slides, selectedContentStyle, inputText, addCost]);
 
   // ─── PPTX 내보내기 (정적 import로 동적 모듈 로드 에러 해결) ───
   const handleExportPptx = useCallback(async () => {
@@ -1433,6 +1537,7 @@ ${htmlSlides}
                 slide={slide}
                 designStyle={selectedDesignStyle}
                 onRegenImage={(editInstruction?: string) => handleRegenImage(i, editInstruction)}
+                onRegenContent={(instruction?: string) => handleRegenContent(i, instruction)}
                 onImageClick={() => setSlideLightboxIdx(i)}
               />
             ))}

@@ -13,6 +13,7 @@ interface SlideData {
   speakerNote?: string;
   imageUrl?: string;
   isGeneratingImage?: boolean;
+  isRegeneratingContent?: boolean;
 }
 
 type Step = 1 | 2 | 3 | 4;
