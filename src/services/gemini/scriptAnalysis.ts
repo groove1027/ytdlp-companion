@@ -1118,7 +1118,7 @@ ${baseSetting ? `[GLOBAL CONTEXT]\n${baseSetting}` : ''}`;
                 generationConfig: { responseMimeType: 'application/json', temperature: 0.2, maxOutputTokens: 8192 },
                 safetySettings: SAFETY_SETTINGS_BLOCK_NONE
             };
-            const dirData = await requestGeminiProxy('gemini-3.1-pro-preview', dirPayload, 0, 30_000);
+            const dirData = await requestGeminiProxy('gemini-3.1-flash-lite-preview', dirPayload, 0, 30_000);
             directionSheet = extractTextFromResponse(dirData) || '';
             if (directionSheet) {
                 console.log(`[parseScriptToScenes] ✅ 디렉션 시트 완료 (${directionSheet.length}자)`);
