@@ -13,8 +13,8 @@
  *   /ytdlp-proxy/health               →  http://VPS:3100/health
  */
 
-// Cloudflare Workers는 IP 직접 fetch 차단 (error 1003) → nip.io 와일드카드 DNS 사용
-const YTDLP_SERVER = 'http://175-126-73-193.nip.io:3100';
+// Cloudflare Workers는 IP 직접 fetch 차단 (error 1003) → 자체 도메인 사용
+const YTDLP_SERVER = 'http://ytdlp.groovelab.uk:3100';
 
 interface CFContext {
   request: Request;
