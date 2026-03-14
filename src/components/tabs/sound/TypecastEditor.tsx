@@ -751,26 +751,55 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
 
   if (lines.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-12 px-6">
-        <div className="w-full max-w-lg space-y-4">
-          <div className="text-center space-y-1.5">
-            <p className="text-lg font-bold text-gray-200">나레이션 대본이 없습니다</p>
-            <p className="text-sm text-gray-500">대본작성 탭에서 작업하면 자동으로 연동됩니다.<br/>나레이션만 사용하려면 아래에 대본을 직접 붙여넣으세요.</p>
+      <div className="flex flex-col items-center justify-center py-16 px-6">
+        <div className="w-full max-w-xl space-y-6">
+          {/* 아이콘 + 타이틀 */}
+          <div className="text-center space-y-3">
+            <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-fuchsia-500/20 to-purple-600/20 border border-fuchsia-500/20 mb-1">
+              <svg className="w-8 h-8 text-fuchsia-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" />
+              </svg>
+            </div>
+            <h3 className="text-xl font-bold text-gray-100">나레이션 대본을 준비해주세요</h3>
+            <p className="text-sm text-gray-500 leading-relaxed">
+              대본작성 탭에서 작업하면 자동으로 연동됩니다.<br/>
+              나레이션만 사용하려면 아래에 대본을 직접 붙여넣으세요.
+            </p>
           </div>
-          <textarea
-            value={directScript}
-            onChange={e => setDirectScript(e.target.value)}
-            placeholder="대본을 여기에 붙여넣거나 직접 입력하세요..."
-            className="w-full h-40 bg-gray-800/80 border border-gray-600/50 rounded-lg p-3 text-sm text-gray-200 placeholder-gray-600 resize-none focus:outline-none focus:border-fuchsia-500/50 focus:ring-1 focus:ring-fuchsia-500/30"
-          />
+
+          {/* 입력 카드 */}
+          <div className="relative group">
+            <div className="absolute -inset-0.5 bg-gradient-to-r from-fuchsia-600/20 to-purple-600/20 rounded-xl blur-sm opacity-0 group-focus-within:opacity-100 transition-opacity duration-300" />
+            <textarea
+              value={directScript}
+              onChange={e => setDirectScript(e.target.value)}
+              placeholder="대본을 여기에 붙여넣거나 직접 입력하세요..."
+              className="relative w-full h-44 bg-gray-800/60 border border-gray-700/50 rounded-xl p-4 text-sm text-gray-200 placeholder-gray-600 resize-none focus:outline-none focus:border-fuchsia-500/40 focus:ring-1 focus:ring-fuchsia-500/20 transition-all duration-200"
+            />
+          </div>
+
+          {/* 버튼 */}
           <button
             type="button"
             onClick={handleApplyDirectScript}
             disabled={!directScript.trim()}
-            className={`w-full py-2.5 rounded-lg font-bold text-sm transition-all ${directScript.trim() ? 'bg-gradient-to-r from-fuchsia-600 to-purple-600 hover:from-fuchsia-500 hover:to-purple-500 text-white shadow-lg' : 'bg-gray-700 text-gray-500 cursor-not-allowed'}`}
+            className={`w-full py-3 rounded-xl font-bold text-sm transition-all duration-200 ${directScript.trim() ? 'bg-gradient-to-r from-fuchsia-600 to-purple-600 hover:from-fuchsia-500 hover:to-purple-500 text-white shadow-lg shadow-fuchsia-900/30 hover:shadow-fuchsia-800/40 hover:-translate-y-0.5' : 'bg-gray-800/60 text-gray-600 border border-gray-700/40 cursor-not-allowed'}`}
           >
-            대본 적용
+            {directScript.trim() ? '🎙️ 대본 적용하기' : '대본을 입력하면 시작할 수 있어요'}
           </button>
+
+          {/* 안내 힌트 */}
+          <div className="flex items-center justify-center gap-4 text-xs text-gray-600">
+            <span className="flex items-center gap-1">
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m9.86-2.06a4.5 4.5 0 00-1.242-7.244l-4.5-4.5a4.5 4.5 0 10-6.364 6.364L4.343 8.69" /></svg>
+              대본작성 탭 연동
+            </span>
+            <span className="w-px h-3 bg-gray-700/50" />
+            <span className="flex items-center gap-1">
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.087.16 2.185.283 3.293.369V21l4.076-4.076a1.526 1.526 0 011.037-.443 48.282 48.282 0 005.68-.494c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z" /></svg>
+              종결어미 기준 자동 분할
+            </span>
+          </div>
         </div>
       </div>
     );
