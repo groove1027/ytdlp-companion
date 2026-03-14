@@ -1012,14 +1012,15 @@ const StoryboardPanel: React.FC = () => {
     const rawStyle = useImageVideoStore.getState().style;
     const promptChars = useImageVideoStore.getState().characters;
     const promptCharArtStyle = promptChars.find(c => c.analysisStyle)?.analysisStyle || '';
+    // [FIX] 캐릭터 analysisStyle이 atmosphere/detectedStyle보다 우선 — 그림체 보존
     const currentStyle = (rawStyle && rawStyle !== 'custom')
       ? rawStyle
-      : (currentConfig?.atmosphere && currentConfig.atmosphere.trim() !== '')
-        ? currentConfig.atmosphere
-        : (currentConfig?.detectedStyleDescription && currentConfig.detectedStyleDescription.trim() !== '')
-          ? currentConfig.detectedStyleDescription
-          : (promptCharArtStyle.trim() !== '')
-            ? promptCharArtStyle
+      : (promptCharArtStyle.trim() !== '')
+        ? promptCharArtStyle
+        : (currentConfig?.atmosphere && currentConfig.atmosphere.trim() !== '')
+          ? currentConfig.atmosphere
+          : (currentConfig?.detectedStyleDescription && currentConfig.detectedStyleDescription.trim() !== '')
+            ? currentConfig.detectedStyleDescription
             : 'Cinematic';
     try {
       updateScene(sceneId, { generationStatus: 'AI 프롬프트 생성 중...' });
@@ -1107,14 +1108,15 @@ const StoryboardPanel: React.FC = () => {
         const rawAutoStyle = useImageVideoStore.getState().style;
         const autoChars = useImageVideoStore.getState().characters;
         const autoCharArtStyle = autoChars.find(c => c.analysisStyle)?.analysisStyle || '';
+        // [FIX] 캐릭터 analysisStyle이 atmosphere/detectedStyle보다 우선 — 그림체 보존
         const autoStyle = (rawAutoStyle && rawAutoStyle !== 'custom')
           ? rawAutoStyle
-          : (currentConfig.atmosphere && currentConfig.atmosphere.trim() !== '')
-            ? currentConfig.atmosphere
-            : (currentConfig.detectedStyleDescription && currentConfig.detectedStyleDescription.trim() !== '')
-              ? currentConfig.detectedStyleDescription
-              : (autoCharArtStyle.trim() !== '')
-                ? autoCharArtStyle
+          : (autoCharArtStyle.trim() !== '')
+            ? autoCharArtStyle
+            : (currentConfig.atmosphere && currentConfig.atmosphere.trim() !== '')
+              ? currentConfig.atmosphere
+              : (currentConfig.detectedStyleDescription && currentConfig.detectedStyleDescription.trim() !== '')
+                ? currentConfig.detectedStyleDescription
                 : 'Cinematic';
         const sceneIdx = currentScenes.findIndex(s => s.id === sceneId);
         const prevScene = sceneIdx > 0 ? currentScenes[sceneIdx - 1] : undefined;
@@ -1157,14 +1159,15 @@ const StoryboardPanel: React.FC = () => {
       // 5순위: "Cinematic" 기본값
       const charArtStyle = currentCharacters.find(c => c.analysisStyle)?.analysisStyle || '';
       const userSelectedStyle = currentStyle !== 'custom';
+      // [FIX] 캐릭터 analysisStyle이 atmosphere/detectedStyle보다 우선 — 그림체 보존
       const effectiveStyle = userSelectedStyle
         ? currentStyle
-        : (currentConfig.atmosphere && currentConfig.atmosphere.trim() !== '')
-          ? currentConfig.atmosphere
-          : (currentConfig.detectedStyleDescription && currentConfig.detectedStyleDescription.trim() !== '')
-            ? currentConfig.detectedStyleDescription
-            : (charArtStyle.trim() !== '')
-              ? charArtStyle
+        : (charArtStyle.trim() !== '')
+          ? charArtStyle
+          : (currentConfig.atmosphere && currentConfig.atmosphere.trim() !== '')
+            ? currentConfig.atmosphere
+            : (currentConfig.detectedStyleDescription && currentConfig.detectedStyleDescription.trim() !== '')
+              ? currentConfig.detectedStyleDescription
               : 'Cinematic';
       // [FIX #174] 커스텀 스타일 지시 병합 (handshake 제거, 다큐멘터리 톤 등)
       const customNote = useImageVideoStore.getState().customStyleNote?.trim();

@@ -663,10 +663,10 @@ export const parseScriptToScenes = async (
     [SMART CASTING RULES: User Preference "${appearance}"]
 
     1. **CASE: AUTO (The Pro Director)**
-       - **Limit**: Character ('MAIN') is STRICTLY FORBIDDEN from appearing in 2 consecutive scenes.
-       - **Rule**: You MUST alternate. After 1 character scene, the NEXT scene MUST be 'NOBODY', 'EXTRA', or 'KEY_ENTITY' (B-Roll/Insert).
-       - **Pacing**: Create a breathing rhythm (Character -> Visual/Entity -> Character -> Visual/Entity).
-       - **Variety**: If character appears twice in a row (ONLY if absolutely unavoidable), the second shot MUST have a drastically different 'shotSize' and 'cameraAngle'.
+       - **Limit**: Character ('MAIN') MUST appear only once every 3-5 scenes. After a MAIN scene, the next 2-4 scenes MUST be 'NOBODY', 'EXTRA', or 'KEY_ENTITY'.
+       - **Rule**: After 1 character scene → at least 2 non-character scenes (data visuals, scenery, objects, establishing shots, infographics, b-roll) → then character may appear again.
+       - **Pacing**: Create a natural documentary rhythm — the character introduces/reacts, then the visuals carry the story, then the character returns.
+       - **Variety**: MAIN scenes should show the character in different shotSize/cameraAngle. Non-character scenes provide visual variety.
        - **Infographics**:
          - If explaining complex data -> 'MAIN' (Presenter Mode).
          - If showing raw data/impact -> 'NOBODY' (Full Screen Chart).
@@ -917,16 +917,17 @@ export const parseScriptToScenes = async (
             }));
         }
 
-        // [CRITICAL FIX] AUTO 캐릭터 빈도 강제 적용 — 연속 MAIN 금지
-        // AUTO 모드: MAIN이 연속 2회 이상 나오면 안 됨 → 직전이 MAIN이면 현재를 NOBODY로 전환
-        // KEY_ENTITY는 연속 판정에서 제외 (투명하게 건너뜀)
+        // [CRITICAL FIX] AUTO 캐릭터 빈도 강제 적용 — MAIN 사이 최소 2씬 갭
+        // AUTO 모드: MAIN이 나온 후 최소 2개의 non-MAIN 씬(NOBODY/EXTRA)이 지나야 다음 MAIN 허용
+        // KEY_ENTITY는 갭 카운트에서 제외 (투명하게 건너뜀)
         if (appearance === CharacterAppearance.AUTO) {
-            let prevWasMain = false;
+            const MIN_GAP = 2; // MAIN 사이 최소 2씬 간격 (KEY_ENTITY 제외)
+            let gapSinceLastMain = MIN_GAP + 1; // 첫 MAIN은 허용
             let fixCount = 0;
             for (let i = 0; i < result.length; i++) {
-                if (result[i].castType === 'KEY_ENTITY') continue;
+                if (result[i].castType === 'KEY_ENTITY') continue; // KEY_ENTITY는 갭 카운트에서 제외
                 if (result[i].castType === 'MAIN') {
-                    if (prevWasMain) {
+                    if (gapSinceLastMain < MIN_GAP) {
                         result[i] = {
                             ...result[i],
                             castType: 'NOBODY',
@@ -934,16 +935,16 @@ export const parseScriptToScenes = async (
                             characterAction: '',
                         };
                         fixCount++;
-                        console.log(`[PostProcess] AUTO castType fix: scene ${i} forced MAIN→NOBODY (consecutive MAIN)`);
-                        // prevWasMain을 false로 리셋하지 않음 → 3연속 MAIN도 2번째부터 전부 NOBODY
+                        gapSinceLastMain++; // NOBODY로 전환되었으므로 갭 증가
+                        console.log(`[PostProcess] AUTO castType fix: scene ${i} forced MAIN→NOBODY (gap ${gapSinceLastMain - 1} < ${MIN_GAP})`);
                     } else {
-                        prevWasMain = true;
+                        gapSinceLastMain = 0; // MAIN 등장 → 갭 리셋
                     }
                 } else {
-                    prevWasMain = false;
+                    gapSinceLastMain++; // non-MAIN 씬 → 갭 증가
                 }
             }
-            console.log(`[PostProcess] AUTO mode: ${fixCount} consecutive MAIN scene(s) fixed to NOBODY`);
+            console.log(`[PostProcess] AUTO mode: ${fixCount} scene(s) fixed to NOBODY (min gap: ${MIN_GAP})`);
         }
 
         // [CRITICAL FIX] MINIMAL 캐릭터 빈도 강제 적용 — 최대 2회만 MAIN 허용
@@ -1215,20 +1216,22 @@ ${baseSetting ? `[GLOBAL CONTEXT]\n${baseSetting}` : ''}`;
             }
         }
 
-        // [CRITICAL] 청크 병합 후 캐릭터 빈도 재적용 — 연속 MAIN 금지 (청크 경계에서 연속될 수 있음)
+        // [CRITICAL] 청크 병합 후 캐릭터 빈도 재적용 — MAIN 사이 최소 2씬 갭 (청크 경계에서 갭 위반 가능)
         if (appearance === CharacterAppearance.AUTO) {
-            let prevWasMain = false;
+            const MIN_GAP = 2;
+            let gapSinceLastMain = MIN_GAP + 1;
             let fixCount = 0;
             for (let i = 0; i < allScenes.length; i++) {
                 if (allScenes[i].castType === 'KEY_ENTITY') continue;
                 if (allScenes[i].castType === 'MAIN') {
-                    if (prevWasMain) {
+                    if (gapSinceLastMain < MIN_GAP) {
                         allScenes[i] = { ...allScenes[i], castType: 'NOBODY', characterPresent: false, characterAction: '' };
                         fixCount++;
-                    } else { prevWasMain = true; }
-                } else { prevWasMain = false; }
+                        gapSinceLastMain++;
+                    } else { gapSinceLastMain = 0; }
+                } else { gapSinceLastMain++; }
             }
-            console.log(`[PostProcess-Chunked] AUTO mode re-enforced: ${fixCount} consecutive MAIN fixed across ${allScenes.length} scenes`);
+            console.log(`[PostProcess-Chunked] AUTO mode re-enforced: ${fixCount} scene(s) fixed (min gap: ${MIN_GAP}) across ${allScenes.length} scenes`);
         } else if (appearance === CharacterAppearance.MINIMAL) {
             const maxMain = Math.max(2, Math.round(allScenes.length * 0.1));
             let mainCount = 0;

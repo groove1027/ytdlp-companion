@@ -406,14 +406,15 @@ const App: React.FC = () => {
         const userStyle = useImageVideoStore.getState().style;
         const userSelectedStyle = userStyle && userStyle !== 'custom';
         const appCharArtStyle = resolvedConfig.characters?.find(c => c.analysisStyle)?.analysisStyle || '';
+        // [FIX] 캐릭터 analysisStyle이 있으면 atmosphere/detectedStyle보다 우선 — 그림체 보존
         const effectiveStyle = userSelectedStyle
             ? userStyle
-            : (resolvedConfig.atmosphere && resolvedConfig.atmosphere.trim() !== "")
-              ? resolvedConfig.atmosphere
-              : (resolvedConfig.detectedStyleDescription && resolvedConfig.detectedStyleDescription.trim() !== "")
-                ? resolvedConfig.detectedStyleDescription
-                : (appCharArtStyle.trim() !== "")
-                  ? appCharArtStyle
+            : (appCharArtStyle.trim() !== "")
+              ? appCharArtStyle
+              : (resolvedConfig.atmosphere && resolvedConfig.atmosphere.trim() !== "")
+                ? resolvedConfig.atmosphere
+                : (resolvedConfig.detectedStyleDescription && resolvedConfig.detectedStyleDescription.trim() !== "")
+                  ? resolvedConfig.detectedStyleDescription
                   : "Cinematic";
         // 사용자가 비주얼 미선택 + 캐릭터 아트 스타일로 폴백된 경우 → 캐릭터 그림체 보존 모드
         const appPreserveCharStyle = !userSelectedStyle && appCharArtStyle.trim() !== '' && effectiveStyle === appCharArtStyle;
@@ -851,13 +852,18 @@ const App: React.FC = () => {
           }
           // [FIX #252] 사용자 스타일 1순위 — handleGenerateImage와 동일한 폴백 체인
           const autoUserStyle = useImageVideoStore.getState().style;
+          // [FIX] 캐릭터 analysisStyle 우선 — 그림체 보존 + 누락 수정
+          const autoPromptChars = useImageVideoStore.getState().characters;
+          const autoPromptCharArtStyle = autoPromptChars.find(c => c.analysisStyle)?.analysisStyle || '';
           const autoStyle = (autoUserStyle && autoUserStyle !== 'custom')
               ? autoUserStyle
-              : (currentConfig.atmosphere && currentConfig.atmosphere.trim() !== '')
-                ? currentConfig.atmosphere
-                : (currentConfig.detectedStyleDescription && currentConfig.detectedStyleDescription.trim() !== '')
-                  ? currentConfig.detectedStyleDescription
-                  : 'Cinematic';
+              : (autoPromptCharArtStyle.trim() !== '')
+                ? autoPromptCharArtStyle
+                : (currentConfig.atmosphere && currentConfig.atmosphere.trim() !== '')
+                  ? currentConfig.atmosphere
+                  : (currentConfig.detectedStyleDescription && currentConfig.detectedStyleDescription.trim() !== '')
+                    ? currentConfig.detectedStyleDescription
+                    : 'Cinematic';
           const allScenes = useProjectStore.getState().scenes;
           const sceneIdx = allScenes.findIndex(s => s.id === sceneId);
           const prevScene = sceneIdx > 0 ? allScenes[sceneIdx - 1] : undefined;
