@@ -1443,11 +1443,15 @@ const EditRoomTab: React.FC = () => {
       const blob = await composeMp4({
         timeline,
         scenes: optimizedScenes,
-        narrationLines: lines.map((l) => ({
-          sceneId: l.sceneId,
-          audioUrl: l.audioUrl,
-          startTime: l.startTime,
-        })),
+        // [FIX #240] stale blob: URL 폴백 — 씬의 IDB 복원 audioUrl 우선 사용
+        narrationLines: lines.map((l) => {
+          let effectiveAudioUrl = l.audioUrl;
+          if (l.sceneId && (!effectiveAudioUrl || effectiveAudioUrl.startsWith('blob:'))) {
+            const scene = useProjectStore.getState().scenes.find((s) => s.id === l.sceneId);
+            if (scene?.audioUrl) effectiveAudioUrl = scene.audioUrl;
+          }
+          return { sceneId: l.sceneId, audioUrl: effectiveAudioUrl, startTime: l.startTime };
+        }),
         subtitleStyle: resolveSubtitleStyle(currentRenderSettings.includeSubtitles),
         bgmConfig: effectiveBgm,
         loudnessNorm: currentRenderSettings.loudness.enabled ? currentRenderSettings.loudness : undefined,

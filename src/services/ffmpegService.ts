@@ -549,6 +549,7 @@ export async function composeMp4(options: ComposeMp4Options): Promise<Blob> {
           await ffmpeg.writeFile(fileName, narData);
           narrationFileNames.push(fileName);
         } catch (e) {
+          console.warn(`[FfmpegService] 나레이션 ${ni + 1} 오디오 로드 실패 (${narLine.audioUrl?.slice(0, 60)}):`, e);
           logger.trackSwallowedError('FfmpegService:narrationLoad', e);
         }
         emitProgress('composing', ((ni + 1) / validNarrations.length) * 50, PHASE_WEIGHTS.audio, `나레이션 ${ni + 1}/${validNarrations.length} 로딩`);

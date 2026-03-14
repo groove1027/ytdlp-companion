@@ -3235,12 +3235,15 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
 
       // ★ 3중 폴백 프레임 추출 — 무조건 결과 보장
       // [FIX #156] 다중 업로드 영상: 모든 파일에서 프레임 추출
+      // [FIX #241] 타임코드 수집에 parsed 대신 스토어의 최종 versions 사용
+      //   — 배치 병합 텍스트 parseVersions 실패 시 parsed=[] → 타임코드 0개 → 비주얼 미표시 버그
+      const finalVersions = useVideoAnalysisStore.getState().versions;
       let ytVid: string | null = null;
       let durSec = 300; // 기본 5분 추정
 
       if (uploadedFiles.length > 0) {
         // 다중 업로드 모드: 모든 파일에서 타임코드 기반 프레임 추출
-        const allTimecodes = collectTimecodesFromVersions(parsed);
+        const allTimecodes = collectTimecodesFromVersions(finalVersions);
         console.log(`[Frame] 수집된 타임코드: ${allTimecodes.length}개 (업로드 ${uploadedFiles.length}개 영상)`);
         if (allTimecodes.length > 0) {
           // [FIX #189] 타임코드 기반 프레임 추출도 병렬화
@@ -3281,7 +3284,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
           if (streamUrl) videoSource = streamUrl;
         }
 
-        const allTimecodes = collectTimecodesFromVersions(parsed, durSec);
+        const allTimecodes = collectTimecodesFromVersions(finalVersions, durSec);
         console.log(`[Frame] 수집된 타임코드: ${allTimecodes.length}개 (영상 길이: ${durSec}초)`);
         if (allTimecodes.length > 0) {
           const exactFrames = await extractFramesWithFallback(
@@ -3296,7 +3299,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
         // 소셜 (TikTok 등): 이미 다운로드한 Blob으로 프레임 추출
         const existingBlob = useVideoAnalysisStore.getState().videoBlob;
         if (existingBlob) {
-          const allTimecodes = collectTimecodesFromVersions(parsed, durSec);
+          const allTimecodes = collectTimecodesFromVersions(finalVersions, durSec);
           if (allTimecodes.length > 0) {
             const blobUrl = URL.createObjectURL(existingBlob);
             logger.registerBlobUrl(blobUrl, 'video', 'VideoAnalysisRoom:socialPostAnalysis', existingBlob.size / (1024 * 1024));
