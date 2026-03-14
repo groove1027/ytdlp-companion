@@ -4,6 +4,7 @@ import AnalysisLoadingPanel, { notifyAnalysisComplete } from './AnalysisLoadingP
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { evolinkChatStream, evolinkVideoAnalysisStream, evolinkNativeStream, evolinkFrameAnalysisStream, getEvolinkKey } from '../../../services/evolinkService';
 import type { EvolinkChatMessage } from '../../../services/evolinkService';
+import { requestGeminiProxy, extractTextFromResponse, SAFETY_SETTINGS_BLOCK_NONE } from '../../../services/gemini/geminiProxy';
 
 import { showToast } from '../../../stores/uiStore';
 import { useNavigationStore } from '../../../stores/navigationStore';
@@ -3230,6 +3231,28 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       const totalVersions = (preset === 'deep' || preset === 'shopping') ? 5 : 10;
       const useParallelBatch = totalVersions === 10;
 
+      /** [FIX #262] 텍스트 전용 폴백 — Evolink 스트리밍 → Smart Routing (KIE 포함) */
+      const textFallbackAI = async (prompt: string, tokens: number): Promise<string> => {
+        const messages: EvolinkChatMessage[] = [
+          { role: 'system', content: scriptSystem },
+          { role: 'user', content: prompt },
+        ];
+        try {
+          return await evolinkChatStream(messages, () => {}, { temperature: 0.5, maxTokens: tokens, signal });
+        } catch (streamErr) {
+          if (signal.aborted) throw new DOMException('분석이 취소되었습니다.', 'AbortError');
+          console.warn('[VideoAnalysis] Evolink 스트리밍 실패, Smart Routing 폴백:', streamErr);
+          // requestGeminiProxy: Evolink v1 → v1beta → FlashLite → KIE 3.1 Pro 전체 라우팅
+          const payload = {
+            contents: [{ role: 'user', parts: [{ text: scriptSystem + '\n\n' + prompt }] }],
+            generationConfig: { temperature: 0.5, maxOutputTokens: tokens },
+            safetySettings: SAFETY_SETTINGS_BLOCK_NONE,
+          };
+          const data = await requestGeminiProxy('gemini-3.1-pro-preview', payload);
+          return extractTextFromResponse(data);
+        }
+      };
+
       /** 단일 AI 호출 실행 (공통 라우팅 로직) */
       const callAI = async (prompt: string, tokens: number): Promise<string> => {
         // [FIX #189] 다중 영상 URI가 있으면 v1beta에 전체 전달
@@ -3255,20 +3278,14 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                 console.warn('[VideoAnalysis] 프레임 분석도 실패, 텍스트 폴백:', frameErr);
               }
             }
-            const messages: EvolinkChatMessage[] = [
-              { role: 'system', content: scriptSystem },
-              { role: 'user', content: prompt },
-            ];
-            return await evolinkChatStream(messages, () => {}, { temperature: 0.5, maxTokens: tokens, signal });
+            // [FIX #262] Evolink 단독 → Smart Routing (KIE 포함) 폴백 체인
+            return await textFallbackAI(prompt, tokens);
           }
         } else if (uploadedFiles.length > 0 && frames.length > 0) {
           return await analyzeWithFrames(frames, prompt, scriptSystem, tokens, signal);
         } else {
-          const messages: EvolinkChatMessage[] = [
-            { role: 'system', content: scriptSystem },
-            { role: 'user', content: prompt },
-          ];
-          return await evolinkChatStream(messages, () => {}, { temperature: 0.5, maxTokens: tokens, signal });
+          // [FIX #262] 텍스트 전용 경로도 Smart Routing 적용
+          return await textFallbackAI(prompt, tokens);
         }
       };
 
