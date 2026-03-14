@@ -808,8 +808,6 @@ const StoryboardPanel: React.FC = () => {
   const currentStyle = useImageVideoStore((s) => s.style);
   const enableWebSearch = useImageVideoStore((s) => s.enableWebSearch);
   const isMultiCharacter = useImageVideoStore((s) => s.isMultiCharacter);
-  const pendingAutoImageGen = useImageVideoStore((s) => s.pendingAutoImageGen);
-  const setPendingAutoImageGen = useImageVideoStore((s) => s.setPendingAutoImageGen);
   // 오디오 재생 상태
   const globalAudioRef = useRef<HTMLAudioElement | null>(null);
   const sceneAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -1299,20 +1297,8 @@ const StoryboardPanel: React.FC = () => {
     setIsBatchingImages(false);
   }, [handleGenerateImage, requireAuth]);
 
-  // [FIX #175-1] 일반 탭 전환 시 자동 이미지 생성 없음 — 빈 슬롯으로 시작
-  // [FIX #266] 단, 스토리보드 '생성 직후'에는 자동 배치 이미지 생성 트리거
-  useEffect(() => {
-    if (!pendingAutoImageGen) return;
-    setPendingAutoImageGen(false);
-    // 이미지 없는 장면이 있을 때만 자동 생성
-    const { scenes: currentScenes } = useProjectStore.getState();
-    const needsGen = currentScenes.some(s => !s.imageUrl && !s.isGeneratingImage);
-    if (needsGen && !isBatchingImages) {
-      // 약간의 딜레이로 UI 렌더 후 실행
-      const timer = setTimeout(() => handleBatchGenerateImages(), 500);
-      return () => clearTimeout(timer);
-    }
-  }, [pendingAutoImageGen, setPendingAutoImageGen, handleBatchGenerateImages, isBatchingImages]);
+  // [FIX #175-1] 자동 이미지 생성 제거 — 빈 슬롯으로 시작, 사용자가 직접 생성 버튼 클릭 시에만 생성
+  // ⚠️ [절대 규칙] 스토리보드 생성 후 이미지 자동 생성 금지 — 비용 절감을 위해 사용자가 한두 컷 시험 후 일괄 생성하는 설계
 
   // --- 배치 진행 상태 ---
   const batchCurrent = isBatchingImages ? batchImageProgress.current : videoBatch.batchProgress.current;
@@ -1334,6 +1320,26 @@ const StoryboardPanel: React.FC = () => {
               영상 ({completedVideos}/{totalScenes})
             </span>
           )}
+        </div>
+      )}
+
+      {/* [FIX #266] 이미지 미생성 시 안내 배너 — 비용 절감을 위해 자동 생성하지 않음 */}
+      {totalScenes > 0 && completedImages === 0 && !isAnyBatchRunning && (
+        <div className="mb-4 bg-gradient-to-r from-orange-900/30 to-amber-900/20 border border-orange-500/40 rounded-2xl px-5 py-4">
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-500 to-amber-600 flex items-center justify-center flex-shrink-0 shadow-lg shadow-orange-500/20">
+              <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+            </div>
+            <div className="flex-1">
+              <p className="text-sm font-bold text-orange-300 mb-1">이미지를 먼저 한두 컷 시험해보세요!</p>
+              <p className="text-xs text-orange-200/70 leading-relaxed">
+                비용 절감을 위해 이미지는 자동 생성되지 않습니다.
+                장면 카드의 <span className="font-semibold text-orange-300">이미지</span> 버튼을 눌러 한두 컷 먼저 확인한 뒤,
+                마음에 들면 상단의 <span className="font-semibold text-orange-300">이미지/영상 생성 &gt; 이미지 일괄 생성</span>으로
+                전체를 한번에 만들 수 있어요.
+              </p>
+            </div>
+          </div>
         </div>
       )}
 

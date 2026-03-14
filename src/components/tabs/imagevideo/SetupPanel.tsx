@@ -93,7 +93,6 @@ const SetupPanel: React.FC = () => {
   const setCustomStyleNote = useImageVideoStore((s) => s.setCustomStyleNote);
   const targetSceneCount = useImageVideoStore((s) => s.targetSceneCount);
   const setTargetSceneCount = useImageVideoStore((s) => s.setTargetSceneCount);
-  const setPendingAutoImageGen = useImageVideoStore((s) => s.setPendingAutoImageGen);
 
   const [directInputMode, setDirectInputMode] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -401,7 +400,7 @@ const SetupPanel: React.FC = () => {
         !existingScriptText.includes(currentScript.slice(0, Math.min(100, currentScript.length)));
       if (isScriptChanged && config?.script) {
         showToast('대본이 변경되었습니다. 새 스토리보드를 생성합니다...');
-        if (await runSceneAnalysis()) { setPendingAutoImageGen(true); setActiveSubTab('storyboard'); }
+        if (await runSceneAnalysis()) setActiveSubTab('storyboard');
         return;
       }
       // 비주얼 프롬프트가 없으면 자동 생성 후 스토리보드 열기
@@ -414,8 +413,8 @@ const SetupPanel: React.FC = () => {
       return;
     }
     if (!config?.script) { showToast('대본을 먼저 입력해주세요'); return; }
-    if (await runSceneAnalysis()) { setPendingAutoImageGen(true); setActiveSubTab('storyboard'); }
-  }, [config?.script, runSceneAnalysis, setActiveSubTab, requireAuth, setPendingAutoImageGen]);
+    if (await runSceneAnalysis()) setActiveSubTab('storyboard');
+  }, [config?.script, runSceneAnalysis, setActiveSubTab, requireAuth]);
 
   if (!config) return null;
 
