@@ -280,6 +280,7 @@ export async function composeMp4(options: ComposeMp4Options): Promise<Blob> {
 
   const segmentFiles: string[] = [];
   let segIdx = 0;
+  let hadWasmCrash = false;
 
   for (const timing of timeline) {
     checkAbort();
@@ -358,10 +359,23 @@ export async function composeMp4(options: ComposeMp4Options): Promise<Blob> {
       }
 
       segmentFiles.push(outputName);
+      // [FIX #277] 입력 파일 즉시 삭제 — WASM FS 메모리 누적 방지
+      // 다수 장면 프로젝트에서 입력 파일(~10-30MB×N) 누적 → WASM linear memory 한계 초과
+      try { await ffmpeg.deleteFile(inputName); } catch (e) { /* already cleaned */ }
     } catch (execErr) {
       console.warn(`[ffmpegService] 장면 ${segIdx + 1} 인코딩 실패 (건너뜀):`, execErr);
       // 실패한 입력 파일 정리
       try { await ffmpeg.deleteFile(inputName); } catch (e) { logger.trackSwallowedError('FfmpegService:execErr/cleanup', e); }
+
+      // [FIX #277] WASM 메모리 고갈(RuntimeError) → 이후 인코딩도 실패하므로 루프 중단
+      // 성공적으로 인코딩된 장면만으로 계속 진행
+      if (execErr instanceof Error &&
+        (execErr.name === 'RuntimeError' || (execErr.message && execErr.message.includes('memory access out of bounds')))) {
+        console.error(`[ffmpegService] WASM 메모리 고갈 감지 — ${segmentFiles.length}/${timeline.length}개 장면으로 진행`);
+        hadWasmCrash = true;
+        segIdx++;
+        break;
+      }
     }
 
     segIdx++;
@@ -723,6 +737,11 @@ export async function composeMp4(options: ComposeMp4Options): Promise<Blob> {
   }
 
   ffmpeg.off('progress', progressHandler);
+
+  // [FIX #277] WASM 크래시 발생 시 인스턴스 리셋 — 다음 호출 시 새로 로드
+  if (hadWasmCrash) {
+    ffmpegInstance = null;
+  }
 
   const totalElapsed = Math.round((Date.now() - exportStartTime) / 1000);
   onProgress?.({ phase: 'done', percent: 100, message: '완료!', elapsedSec: totalElapsed, etaSec: 0 });
