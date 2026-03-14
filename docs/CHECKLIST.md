@@ -8,6 +8,7 @@
 
 ## 🟢 완료된 작업
 
+- [x] **#217 채널 스타일 대본 생성 429 Rate Limit 수정** — Promise.all 동시 3개 요청 → 순차 실행(2초 간격)으로 변경. 부분 성공 허용(1~2개만 성공해도 결과 표시). 진행 상태 "1/3 원본 충실 생성 중..." 표시. (ChannelRemakePanel.tsx, 2026-03-14)
 - [x] **#233 채널 스타일 대본 생성 강화** — (1) 댓글반응(commentReactions) 필드 추가: 프롬프트에 예상 댓글 3~5개 생성 지시 + RemakeVersion 타입 확장 + UI에 댓글반응 섹션 표시 (2) "다른 느낌으로 다시 생성" 버튼 추가: 결과 상단에 새로고침 버튼 배치 (types.ts, ChannelRemakePanel.tsx, 2026-03-14)
 - [x] **#254 타입캐스트 성우 '김건' 등록** — BUILTIN_TYPECAST_VOICES에 tc_kimgun 추가 (male, young_adult, Narration/Podcast), 카운트 413→414 (typecastService.ts, 2026-03-14)
 - [x] **#240/#241 버그 2건 수정** — (1) #240: 편집실 MP4 내보내기에서 타입캐스트 나레이션 누락 — blob: URL 만료 시 씬의 IDB 복원 audioUrl 폴백 적용 + 오디오 로드 실패 시 콘솔 경고 추가 (2) #241: 영상분석 편집점 비주얼 미표시 — 배치 병합 텍스트 parseVersions 실패 시 타임코드 수집 0개 → 프레임 추출 스킵 버그, `parsed` 대신 스토어의 최종 `versions`로 타임코드 수집 (EditRoomTab.tsx, ffmpegService.ts, VideoAnalysisRoom.tsx, 2026-03-14)
