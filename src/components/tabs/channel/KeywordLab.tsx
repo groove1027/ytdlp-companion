@@ -523,14 +523,17 @@ const KeywordLab: React.FC = () => {
                       )}
                       <div className="p-4">
                         <div className="flex gap-4">
-                          <div className="w-[220px] h-[130px] flex-shrink-0 rounded-lg overflow-hidden bg-gray-700 relative">
+                          <a href={`https://www.youtube.com/watch?v=${v.videoId}`} target="_blank" rel="noopener noreferrer" className="w-[220px] h-[130px] flex-shrink-0 rounded-lg overflow-hidden bg-gray-700 relative group cursor-pointer">
                             {v.thumbnail
-                              ? <img src={v.thumbnail} alt={v.title} className="w-full h-full object-cover" loading="lazy" decoding="async" />
+                              ? <img src={v.thumbnail} alt={v.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200" loading="lazy" decoding="async" />
                               : <div className="w-full h-full flex items-center justify-center text-gray-600 text-xs">No Thumb</div>}
                             <span className="absolute bottom-1.5 right-1.5 bg-black/80 text-white text-[13px] px-1.5 py-0.5 rounded font-mono font-semibold">{v.duration}</span>
-                          </div>
+                            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center">
+                              <svg className="w-10 h-10 text-white opacity-0 group-hover:opacity-90 transition-opacity drop-shadow-lg" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+                            </div>
+                          </a>
                           <div className="flex-1 min-w-0">
-                            <p className="text-sm font-bold text-gray-200 leading-snug">{v.title}</p>
+                            <a href={`https://www.youtube.com/watch?v=${v.videoId}`} target="_blank" rel="noopener noreferrer" className="text-sm font-bold text-gray-200 leading-snug hover:text-blue-400 transition-colors cursor-pointer block">{v.title}</a>
                             <p className="text-sm text-gray-500 mt-1.5">{v.channelTitle} · {v.channelSubscribers}</p>
                             <p className="text-sm text-gray-400 mt-0.5">{fmtNum(v.viewCount)} 조회</p>
                             <div className="flex flex-wrap items-center gap-1.5 mt-2.5">
@@ -553,6 +556,10 @@ const KeywordLab: React.FC = () => {
                           <span>💬 {fmtNum(v.commentCount)}</span>
                           <span className="text-orange-400">🔥 참여 {v.engagement.toFixed(1)}%</span>
                           <span className="text-pink-400 font-semibold">🔗 조회/구독 {fmtNum(v.viewToSubRatio)}%</span>
+                          <a href={`https://www.youtube.com/watch?v=${v.videoId}`} target="_blank" rel="noopener noreferrer" className="ml-auto text-red-400 hover:text-red-300 text-sm font-semibold flex items-center gap-1 transition-colors">
+                            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>
+                            YouTube
+                          </a>
                         </div>
                       </div>
                     </div>
