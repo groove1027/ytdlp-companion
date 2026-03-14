@@ -3254,8 +3254,9 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
         }
       };
 
-      /** 단일 AI 호출 실행 (공통 라우팅 로직) */
-      const callAI = async (prompt: string, tokens: number): Promise<string> => {
+      /** 단일 AI 호출 실행 (공통 라우팅 로직) — overrideFrames: 롱폼 배치별 구간 프레임 */
+      const callAI = async (prompt: string, tokens: number, overrideFrames?: TimedFrame[]): Promise<string> => {
+        const effectiveFrames = overrideFrames ?? frames;
         // [FIX #189] 다중 영상 URI가 있으면 v1beta에 전체 전달
         const effectiveUris = allVideoUris.length > 0 ? allVideoUris : videoUri ? [videoUri] : [];
         const effectiveMimes = allVideoUris.length > 0 ? allVideoMimes : [videoMime];
@@ -3271,9 +3272,9 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
             if (signal.aborted) throw new DOMException('분석이 취소되었습니다.', 'AbortError');
             console.warn('[VideoAnalysis] v1beta 실패, 폴백:', videoErr);
             // [FIX #264] 프레임 분석 실패 시에도 텍스트 폴백으로 이어지도록 try/catch 추가
-            if (frames.length > 0) {
+            if (effectiveFrames.length > 0) {
               try {
-                return await analyzeWithFrames(frames, prompt, scriptSystem, tokens, signal);
+                return await analyzeWithFrames(effectiveFrames, prompt, scriptSystem, tokens, signal);
               } catch (frameErr) {
                 if (signal.aborted) throw new DOMException('분석이 취소되었습니다.', 'AbortError');
                 console.warn('[VideoAnalysis] 프레임 분석도 실패, 텍스트 폴백:', frameErr);
@@ -3282,8 +3283,8 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
             // [FIX #262] Evolink 단독 → Smart Routing (KIE 포함) 폴백 체인
             return await textFallbackAI(prompt, tokens);
           }
-        } else if (uploadedFiles.length > 0 && frames.length > 0) {
-          return await analyzeWithFrames(frames, prompt, scriptSystem, tokens, signal);
+        } else if (uploadedFiles.length > 0 && effectiveFrames.length > 0) {
+          return await analyzeWithFrames(effectiveFrames, prompt, scriptSystem, tokens, signal);
         } else {
           // [FIX #262] 텍스트 전용 경로도 Smart Routing 적용
           return await textFallbackAI(prompt, tokens);
@@ -3308,10 +3309,33 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
         const runBatch = async (bi: number) => {
           const startVer = bi * VER_PER_BATCH + 1;
           const endVer = startVer + VER_PER_BATCH - 1;
-          const batchSuffix = `\n\n---\n## 🚨 BATCH SCOPE (반드시 준수)\n이 호출에서는 전체 ${totalVersions}개 버전 중 **VERSION ${startVer}~${endVer}만** 생성하세요.\n- ---VERSION ${startVer}--- 부터 ---VERSION ${endVer}--- 까지만 출력.\n- 다른 버전은 별도 호출에서 처리됩니다.\n${bi > 0 ? '- 프리즘 분석표 등 전처리 분석 섹션은 생략하고 바로 ---VERSION 블록부터 시작하세요.\n' : ''}\n---`;
+          let batchSuffix = `\n\n---\n## 🚨 BATCH SCOPE (반드시 준수)\n이 호출에서는 전체 ${totalVersions}개 버전 중 **VERSION ${startVer}~${endVer}만** 생성하세요.\n- ---VERSION ${startVer}--- 부터 ---VERSION ${endVer}--- 까지만 출력.\n- 다른 버전은 별도 호출에서 처리됩니다.\n${bi > 0 ? '- 프리즘 분석표 등 전처리 분석 섹션은 생략하고 바로 ---VERSION 블록부터 시작하세요.\n' : ''}\n---`;
+
+          // [FIX #236] 롱폼 다양성: 긴 영상(5분+)에서 각 배치가 다른 시간 구간에 집중
+          let batchFrames: TimedFrame[] | undefined;
+          if (maxTimeSec >= 300) {
+            const segDur = maxTimeSec / BATCH_COUNT;
+            const segStart = bi * segDur;
+            const segEnd = (bi + 1) * segDur;
+            batchSuffix += `\n\n## 🎯 롱폼 다양성 지시 (필수)\n이 영상은 총 ${formatTimeSec(Math.round(maxTimeSec))} 길이의 긴 영상입니다.\nVERSION ${startVer}~${endVer}는 **${formatTimeSec(Math.round(segStart))} ~ ${formatTimeSec(Math.round(segEnd))} 구간**의 핵심 장면·대화를 중심으로 리메이크하세요.\n- 타임코드 소스는 반드시 ${formatTimeSec(Math.round(segStart))}~${formatTimeSec(Math.round(segEnd))} 범위 내에서 선택\n- 이 구간의 주요 전개·인물·대화를 기반으로 편집표를 설계\n- 다른 시간대의 내용은 별도 버전에서 다루므로 이 구간에만 집중`;
+
+            // 프레임도 해당 구간 위주로 선별 (업로드 영상의 프레임 기반 분석 시)
+            if (frames.length > 0) {
+              const segmentFrames = frames.filter(f => f.timeSec >= segStart && f.timeSec < segEnd);
+              const globalAnchors = [frames[0], frames[frames.length - 1]];
+              const combined = [...globalAnchors, ...segmentFrames];
+              const seen = new Set<number>();
+              batchFrames = combined.filter(f => {
+                if (seen.has(f.timeSec)) return false;
+                seen.add(f.timeSec);
+                return true;
+              }).sort((a, b) => a.timeSec - b.timeSec);
+            }
+          }
+
           const batchPrompt = userPrompt + batchSuffix;
           const batchTokens = bi === 0 ? 16000 : 12000;
-          const batchText = await callAI(batchPrompt, batchTokens);
+          const batchText = await callAI(batchPrompt, batchTokens, batchFrames);
           allBatchTexts[bi] = batchText;
           // 프로그레시브 렌더링: 배치 완료 즉시 버전 표시
           const batchVersions = parseVersions(batchText);
