@@ -1033,6 +1033,40 @@ const SetupPanel: React.FC = () => {
         </div>
       )}
 
+      {/* ── 단락나누기 설정 안내 배너 (#261) ── */}
+      {scriptText.trim() && estimatedScenes > 0 && !isAnalyzing && totalScenes === 0 && (
+        <div className={`px-4 py-3 rounded-xl border ${
+          estimatedScenes >= 30
+            ? 'bg-orange-500/15 border-orange-500/40'
+            : 'bg-orange-500/10 border-orange-500/30'
+        }`}>
+          <div className="flex items-start gap-2.5">
+            <span className="text-lg mt-0.5 shrink-0">📋</span>
+            <div className="min-w-0">
+              <p className={`text-sm font-bold ${estimatedScenes >= 30 ? 'text-orange-300' : 'text-orange-400'}`}>
+                현재 설정으로 대본이 <span className="text-orange-200 text-base">{estimatedScenes}컷</span>으로 나뉘어 생성됩니다
+              </p>
+              <p className="text-xs text-orange-400/70 mt-1 leading-relaxed">
+                {vf === VideoFormat.LONG
+                  ? `롱폼 · ${LONG_SPLIT[lfs || 'DEFAULT'].label} (${LONG_SPLIT[lfs || 'DEFAULT'].desc})`
+                  : vf === VideoFormat.SHORT
+                  ? '숏폼 · 1문장 = 1장면'
+                  : vf === VideoFormat.NANO
+                  ? '나노 · 쉼표 단위 초고속 분할'
+                  : '수동 · 줄바꿈 기준 분할'
+                }
+                {ss ? ' · 스마트 분할 ON' : ' · 스마트 분할 OFF'}
+              </p>
+              {estimatedScenes >= 30 && (
+                <p className="text-xs text-orange-300/80 mt-1.5 font-medium">
+                  ⚠️ 컷 수가 많으면 분석 시간이 오래 걸리고 비용이 증가합니다. 대본작성 탭에서 분할 방식을 확인해보세요.
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── CTA ── */}
       <div className="pt-1 space-y-2">
         {totalScenes === 0 ? (

@@ -330,7 +330,7 @@ const SubtitleQuickPanel: React.FC<{ onOpenDetail: () => void }> = ({ onOpenDeta
       const res = await evolinkChat([
         { role: 'system', content: 'You are a subtitle line-break assistant. Return ONLY valid JSON.' },
         { role: 'user', content: `다음 자막 텍스트들을 한 줄당 최대 ${charsPerLine}자 이내로 자연스럽게 줄바꿈해주세요.\n기계적으로 글자 수에 맞춰 자르지 말고, 의미 단위/문맥에 맞게 나눠주세요.\n입력: ${JSON.stringify(payload)}\n출력 포맷: 동일 JSON 배열 [{id, text}] (text에 \\n 삽입)` },
-      ], { temperature: 0.2, responseFormat: { type: 'json_object' } });
+      ], { temperature: 0.2, responseFormat: { type: 'json_object' }, model: 'gemini-3.1-flash-lite-preview' });
       const raw = res.choices?.[0]?.message?.content || '[]';
       const parsed: { id: string; text: string }[] = JSON.parse(raw);
       if (Array.isArray(parsed)) {
