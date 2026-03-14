@@ -182,6 +182,8 @@ export async function composeMp4(options: ComposeMp4Options): Promise<Blob> {
     const videoFrameExtractors = new Map<string, VideoFrameExtractor>();
 
     const assetPromises: Promise<void>[] = [];
+    // [FIX #220] 동일 URL 비디오 장면은 하나의 extractor를 공유 → 메모리 절약 + 첫 장면 반복 방지
+    const videoExtractorByUrl = new Map<string, Promise<VideoFrameExtractor | null>>();
     for (const scene of scenes) {
       if (scene.imageUrl && !scene.videoUrl) {
         assetPromises.push(
@@ -190,10 +192,14 @@ export async function composeMp4(options: ComposeMp4Options): Promise<Blob> {
           }),
         );
       }
-      // 비디오 장면: 프레임 추출기 생성
+      // 비디오 장면: 프레임 추출기 생성 (동일 URL 공유)
       if (scene.videoUrl) {
+        if (!videoExtractorByUrl.has(scene.videoUrl)) {
+          videoExtractorByUrl.set(scene.videoUrl, createVideoExtractor(scene.videoUrl));
+        }
+        const extractorPromise = videoExtractorByUrl.get(scene.videoUrl)!;
         assetPromises.push(
-          createVideoExtractor(scene.videoUrl).then(extractor => {
+          extractorPromise.then(extractor => {
             if (extractor) videoFrameExtractors.set(scene.id, extractor);
           }),
         );

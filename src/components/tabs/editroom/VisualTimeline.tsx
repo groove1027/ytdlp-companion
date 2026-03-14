@@ -1304,7 +1304,8 @@ const VisualTimeline: React.FC = () => {
   if (timeline.length === 0) return (
     <div className="border border-gray-700 rounded-xl bg-gray-900/60 p-8 text-center text-gray-500">
       <p className="text-base mb-1">타임라인이 비어있습니다</p>
-      <p className="text-sm">장면 분석 후 타임라인이 자동 생성됩니다.</p>
+      <p className="text-sm mb-3">이미지/영상 탭에서 장면을 생성하면 타임라인이 자동으로 채워집니다.</p>
+      <p className="text-xs text-gray-600">편집점 매칭 결과는 '편집점 매칭' 서브탭에서 확인하세요. 타임라인은 이미지/영상 장면 기반입니다.</p>
     </div>
   );
 

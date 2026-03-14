@@ -465,6 +465,27 @@ export const requestEvolinkNative = async (
         }
     }
 
+    // [FIX #231] contents 배열 내 'system' role도 v1beta에서 거부됨
+    // → system role 텍스트를 첫 번째 user 메시지 앞에 합치고 제거
+    if (Array.isArray(payload.contents)) {
+        const contents = (payload.contents as { role?: string; parts: { text?: string }[] }[]);
+        const systemEntries = contents.filter(c => c.role === 'system');
+        if (systemEntries.length > 0) {
+            payload = { ...payload };
+            const sysTexts = systemEntries.map(c => c.parts?.map(p => p.text).filter(Boolean).join('\n') || '').filter(Boolean);
+            const filtered = contents.filter(c => c.role !== 'system').map(c => ({ ...c, parts: [...c.parts] }));
+            if (sysTexts.length > 0 && filtered.length > 0) {
+                const firstUser = filtered.find(c => c.role === 'user' || !c.role);
+                if (firstUser && firstUser.parts.length > 0 && firstUser.parts[0].text != null) {
+                    firstUser.parts[0] = { ...firstUser.parts[0], text: sysTexts.join('\n') + '\n\n' + firstUser.parts[0].text };
+                } else {
+                    filtered.unshift({ role: 'user', parts: [{ text: sysTexts.join('\n') }] });
+                }
+            }
+            payload.contents = filtered;
+        }
+    }
+
     // [FIX #32] 긴 대본 처리를 위한 확장 타임아웃 지원 (미지정 시 무제한)
     // [FIX #209/#245] 429 rate limit 시 1회 재시도 후 빠르게 폴백 (Smart Routing이 Kie로 전환)
     const response = await fetchWithRateLimitRetry(url, {

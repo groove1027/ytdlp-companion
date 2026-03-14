@@ -7,7 +7,7 @@ import { resizeImage, base64ToFile } from '../services/imageProcessingService';
 // import { getRemoveBgKey } from '../services/apiService';
 // import { removeBackground } from '../services/removeBgService';
 import { logger } from '../services/LoggerService';
-import { showToast } from '../stores/uiStore';
+import { showToast, useUIStore } from '../stores/uiStore';
 import { useAuthGuard } from '../hooks/useAuthGuard';
 import { useCostStore } from '../stores/costStore';
 import ImageLightbox from './ImageLightbox';
@@ -250,26 +250,36 @@ const CharacterTwistLab: React.FC = () => {
     const handleBatchDownload = async () => {
         const valid = results.filter(r => r.url);
         if (valid.length === 0) { showToast("다운로드할 이미지가 없습니다."); return; }
-        const { default: JSZip } = await import('jszip');
-        const zip = new JSZip();
-        await Promise.all(valid.map(async (res, idx) => {
-            try {
-                if (res.url.startsWith('data:') && res.url.includes(',')) {
-                    zip.file(`twist_variant_${idx + 1}.png`, res.url.split(',')[1], { base64: true });
-                } else {
-                    const response = await fetch(res.url);
-                    const blob = await response.blob();
-                    zip.file(`twist_variant_${idx + 1}.png`, blob);
-                }
-            } catch (e) { console.error("Batch download error", e); }
-        }));
-        const content = await zip.generateAsync({ type: "blob" });
-        const link = document.createElement('a');
-        link.href = URL.createObjectURL(content);
-        link.download = `twist_set_${Date.now()}.zip`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+        // [FIX #224] 다운로드 중 ProcessingOverlay 표시 → UI 멈춤 현상 해소
+        useUIStore.getState().setProcessing(true, 'ZIP 준비 중...', 'EXPORT');
+        try {
+            const { default: JSZip } = await import('jszip');
+            const zip = new JSZip();
+            await Promise.all(valid.map(async (res, idx) => {
+                try {
+                    if (res.url.startsWith('data:') && res.url.includes(',')) {
+                        zip.file(`twist_variant_${idx + 1}.png`, res.url.split(',')[1], { base64: true });
+                    } else {
+                        const response = await fetch(res.url);
+                        const blob = await response.blob();
+                        zip.file(`twist_variant_${idx + 1}.png`, blob);
+                    }
+                } catch (e) { console.error("Batch download error", e); }
+            }));
+            useUIStore.getState().setProcessing(true, 'ZIP 압축 중...', 'EXPORT');
+            const content = await zip.generateAsync({ type: "blob" });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(content);
+            link.download = `twist_set_${Date.now()}.zip`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        } catch (e) {
+            logger.trackSwallowedError('CharacterTwistLab:batchDownload', e);
+            showToast('다운로드 중 오류가 발생했습니다.');
+        } finally {
+            useUIStore.getState().setProcessing(false);
+        }
     };
 
     const getGridClass = () => aspectRatio === AspectRatio.LANDSCAPE ? "grid grid-cols-1 md:grid-cols-2 gap-6" : "grid grid-cols-2 md:grid-cols-4 gap-6";

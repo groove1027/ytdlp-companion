@@ -40,7 +40,12 @@ export const uploadMediaToHosting = async (file: File, _unusedKey?: string): Pro
     if (!response.ok) {
         const errData = await response.json();
         logger.error("Cloudinary Upload Response Error", errData);
-        throw new Error(errData.error?.message || `Cloudinary Upload Error: ${response.statusText}`);
+        const rawMsg = errData.error?.message || `Cloudinary Upload Error: ${response.statusText}`;
+        // [FIX #219] Upload preset 오류 시 사용자 친화적 안내
+        if (rawMsg.includes('Upload preset') || rawMsg.includes('preset')) {
+          throw new Error('Cloudinary Upload Preset이 올바르지 않습니다. [프로젝트] 탭 > API 설정에서 Cloudinary Cloud Name과 Upload Preset을 확인해주세요.');
+        }
+        throw new Error(rawMsg);
     }
 
     const data = await response.json();
