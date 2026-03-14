@@ -44,9 +44,13 @@ interface VideoAnalysisStore {
   savedSlots: SavedVideoAnalysisSlot[];
   activeSlotId: string | null;
 
+  // 목표 시간 설정 (30초 / 45초 / 60초)
+  targetDuration: 30 | 45 | 60;
+
   // Actions
   setInputMode: (mode: 'upload' | 'youtube') => void;
   setYoutubeUrl: (url: string) => void;
+  setTargetDuration: (dur: 30 | 45 | 60) => void;
   /** 다중 URL: 특정 인덱스의 URL 업데이트 */
   updateYoutubeUrl: (index: number, url: string) => void;
   /** 다중 URL: 빈 입력 칸 추가 (최대 5개) */
@@ -110,6 +114,7 @@ const INITIAL_STATE = {
   savedSlots: [] as SavedVideoAnalysisSlot[],
   activeSlotId: null as string | null,
   editRoomSelectedVersionIdx: null as number | null,
+  targetDuration: 60 as 30 | 45 | 60,
 };
 
 export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
@@ -118,6 +123,7 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
       ...INITIAL_STATE,
 
       setInputMode: (mode) => set({ inputMode: mode }),
+      setTargetDuration: (dur) => set({ targetDuration: dur }),
       setYoutubeUrl: (url) => set({ youtubeUrl: url, youtubeUrls: [url] }),
 
       updateYoutubeUrl: (index, url) => {
@@ -294,6 +300,7 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
           inputMode: state.inputMode,
           youtubeUrl: state.youtubeUrl,
           youtubeUrls: state.youtubeUrls,
+          targetDuration: state.targetDuration,
           selectedPreset: state.selectedPreset,
           rawResult: state.rawResult.length > 50000 ? state.rawResult.slice(0, 50000) : state.rawResult,
           versions: state.versions,

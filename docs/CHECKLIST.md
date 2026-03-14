@@ -8,6 +8,8 @@
 
 ## 🟢 완료된 작업
 
+- [x] **#246 영상분석실 목표 시간 설정 기능** — 프리셋 섹션에 30초/45초/60초 셀렉터 추가, buildUserMessage에 동적 시간 지시 주입, Zustand store에 targetDuration 영속 상태 추가 (videoAnalysisStore.ts, VideoAnalysisRoom.tsx, 2026-03-14)
+- [x] **#219/#220/#224/#231/#234 GitHub 버그 5건 일괄 수정** — (1) Cloudinary Upload Preset 오류 한국어 안내 (2) 동일 videoUrl extractor 중복 생성 방지 (3) CharacterTwistLab 일괄 다운로드 ProcessingOverlay (4) v1beta contents system role 필터링 (5) 빈 타임라인 안내 메시지 구체화 (uploadService.ts, webcodecs/index.ts, CharacterTwistLab.tsx, evolinkService.ts, VisualTimeline.tsx, 2026-03-14)
 - [x] **참여도 히트맵 → 액션형 강화 시스템** — (1) 자동 진단 패널: 약한 구간(참여도<50) 자동 감지+그루핑+구체적 원인 표시 (2) 구간별 클릭→개선 팁: 히트맵 바 클릭 가능, 선택 구간 원문+맞춤 팁(질문 넣기/문장 쪼개기/반전 단어/훅 단어/직접 말 걸기) 표시 (3) AI 참여도 강화(EngagementBooster): Gemini 3.1 Pro가 약한 구간을 리라이트→Before/After 비교 UI→개별/전체 적용 (EngagementHeatmap.tsx, EngagementBooster.tsx 신규, 2026-03-14)
 - [x] **목표 컷 수 UI 안내 문구 추가** — "생성 옵션" 섹션의 목표 컷 수 입력 필드에 기능 설명 텍스트 추가 (비직접입력 모드: 인라인 설명, 직접입력 모드: 툴팁) (SetupPanel.tsx, 2026-03-14)
 - [x] **#245 Evolink/Kie 429 근본 수정 + Kie 3.1 Pro 업그레이드 + 전체 429 처리 표준화** — (1) **Retry-After 헤더**: Evolink+Kie 공식 문서 준수 — 전체 10개 서비스 파일의 429 처리에 Retry-After 헤더 우선+지수 백오프 폴백 적용 (2) **Kie Gemini 3.1 Pro 업그레이드**: docs.kie.ai 확인 → `gemini-3-pro`→`gemini-3.1-pro` (더 이상 3.0 다운그레이드 아님, 전 구간 3.1 품질) (3) **NanoBanana Pro output_format**: "jpg"→"jpeg" (Kie 공식 문서 준수) (4) Smart Routing: Evolink Pro→FlashLite→Kie 3.1 Pro (5) 전체 7개 폴링 서비스 고정 5초→Retry-After+지수 백오프 (geminiProxy.ts, videoAnalysis.ts, evolinkService.ts, VideoGenService.ts, ttsService.ts, sfxService.ts, elevenlabsService.ts, musicService.ts, transcriptionService.ts, 2026-03-14)

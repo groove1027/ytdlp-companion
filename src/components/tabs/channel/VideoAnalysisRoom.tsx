@@ -2283,7 +2283,10 @@ const BILINGUAL_INSTRUCTION = `
 
 원본이 한국어인 경우 이 규칙을 완전히 무시하고 기존 형식 그대로 출력하라.`;
 
-const buildUserMessage = (inputDesc: string, preset: AnalysisPreset): string => {
+const buildUserMessage = (inputDesc: string, preset: AnalysisPreset, targetDuration: 30 | 45 | 60 = 60): string => {
+  // 목표 시간 관련 동적 지시 (프리셋별 기존 시간 규칙을 오버라이드)
+  const durationInstruction = `\n\n### ⏱️ 목표 시간 설정 (사용자 지정 — 최우선 적용)\n- **각 버전의 총 길이를 반드시 약 ${targetDuration}초로 맞추세요.**\n- 컷 수와 개별 컷 길이를 조절하여 합산이 ${targetDuration}초 내외(±5초)가 되도록 설계하세요.\n- ${targetDuration <= 30 ? '핵심 장면만 엄선하여 짧고 임팩트 있게.' : targetDuration <= 45 ? '주요 장면을 선별하되 적절한 호흡으로.' : '충분한 내용을 담아 풍부하게.'}`;
+
   if (preset === 'alltts') {
     return `## 분석 대상
 ${inputDesc}
@@ -2349,7 +2352,7 @@ ${inputDesc}
 제목: ...
 컨셉: ...
 
-(이 패턴으로 ---VERSION 10--- 까지 총 10개)` + BILINGUAL_INSTRUCTION;
+(이 패턴으로 ---VERSION 10--- 까지 총 10개)` + durationInstruction + BILINGUAL_INSTRUCTION;
   }
 
   if (preset === 'condensed') {
@@ -2399,7 +2402,7 @@ ${inputDesc}
 제목: ...
 컨셉: ...
 
-(이 패턴으로 ---VERSION 10--- 까지 총 10개)` + BILINGUAL_INSTRUCTION;
+(이 패턴으로 ---VERSION 10--- 까지 총 10개)` + durationInstruction + BILINGUAL_INSTRUCTION;
   }
 
   if (preset === 'tikitaka') {
@@ -2455,7 +2458,7 @@ ${inputDesc}
 컨셉: ...
 재배치 구조: ...
 
-(이 패턴으로 ---VERSION 10--- 까지 총 10개)` + BILINGUAL_INSTRUCTION;
+(이 패턴으로 ---VERSION 10--- 까지 총 10개)` + durationInstruction + BILINGUAL_INSTRUCTION;
   }
 
   // 심층 분석
@@ -2548,7 +2551,7 @@ ${inputDesc}
 제목: [변주 D: 분노/사회적 정의 — 제목]
 컨셉: [비효율, 위험성, 부조리 관점]
 
-(7열 마스터 편집 테이블)` + BILINGUAL_INSTRUCTION;
+(7열 마스터 편집 테이블)` + durationInstruction + BILINGUAL_INSTRUCTION;
   }
 
   // 쇼핑형 (V7.0 다이내믹 멀티-컷 편집 프로토콜 적용)
@@ -2600,7 +2603,7 @@ ${inputDesc}
 제목: [기능/스펙/효과 강조형 제목]
 컨셉: ...
 
-(이 패턴으로 ---VERSION 5--- 까지 총 5개)` + BILINGUAL_INSTRUCTION;
+(이 패턴으로 ---VERSION 5--- 까지 총 5개)` + durationInstruction + BILINGUAL_INSTRUCTION;
   }
 
   // 스낵형
@@ -2657,7 +2660,7 @@ ${inputDesc}
 
 (7열 마스터 편집 테이블 + Content ID 분석)
 
-(이 패턴으로 ---VERSION 10--- 까지 총 10개)` + BILINGUAL_INSTRUCTION;
+(이 패턴으로 ---VERSION 10--- 까지 총 10개)` + durationInstruction + BILINGUAL_INSTRUCTION;
 };
 
 // ═══════════════════════════════════════════════════
@@ -2671,6 +2674,7 @@ const VideoAnalysisRoom: React.FC = () => {
   const store = useVideoAnalysisStore();
   const {
     inputMode, youtubeUrl, youtubeUrls, selectedPreset, rawResult, versions, thumbnails, error, expandedId,
+    targetDuration, setTargetDuration,
     setInputMode, setYoutubeUrl, updateYoutubeUrl, addYoutubeUrl, removeYoutubeUrl,
     setSelectedPreset, setRawResult, setVersions, setThumbnails,
     setError, setExpandedId, cacheCurrentResult, restoreFromCache, resetResults,
@@ -3074,7 +3078,8 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
         abortCtrl.abort();
       }, AI_TIMEOUT_MS);
 
-      const userPrompt = buildUserMessage(inputDesc, preset);
+      const currentTargetDuration = useVideoAnalysisStore.getState().targetDuration;
+      const userPrompt = buildUserMessage(inputDesc, preset, currentTargetDuration);
       const signal = abortCtrl.signal;
 
       // 10버전 프리셋은 5병렬 × 2버전, 5버전 프리셋은 단일 호출
@@ -3594,10 +3599,31 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
 
       {/* ═══ 프리셋 ═══ */}
       <div className="bg-gray-800/50 rounded-xl border border-gray-700 p-6">
-        <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
-          <span className="w-8 h-8 bg-gradient-to-br from-blue-500 to-blue-700 rounded-lg flex items-center justify-center text-sm">🎯</span>
-          리메이크 프리셋
-        </h2>
+        <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+          <h2 className="text-lg font-bold text-white flex items-center gap-2">
+            <span className="w-8 h-8 bg-gradient-to-br from-blue-500 to-blue-700 rounded-lg flex items-center justify-center text-sm">🎯</span>
+            리메이크 프리셋
+          </h2>
+          {/* 목표 시간 셀렉터 */}
+          <div className="flex items-center gap-2">
+            <span className="text-gray-400 text-sm">목표 시간</span>
+            <div className="flex bg-gray-900/70 rounded-lg border border-gray-600/50 p-0.5">
+              {([30, 45, 60] as const).map(dur => (
+                <button
+                  key={dur} type="button"
+                  onClick={() => setTargetDuration(dur)}
+                  className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all ${
+                    targetDuration === dur
+                      ? 'bg-blue-600/30 text-blue-400 border border-blue-500/40'
+                      : 'text-gray-400 hover:text-gray-200 border border-transparent'
+                  }`}
+                >
+                  {dur}초
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {(Object.entries(PRESET_INFO) as [AnalysisPreset, typeof PRESET_INFO['tikitaka']][]).map(([key, info]) => {
             const isSel = selectedPreset === key && isAnalyzing;
