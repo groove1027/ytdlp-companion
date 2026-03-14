@@ -179,13 +179,27 @@ const flattenSegmentsToSentences = (
 ): { segIdx: number; text: string }[] => {
     const result: { segIdx: number; text: string }[] = [];
     for (let si = 0; si < segments.length; si++) {
-        const sentences = segments[si]
+        // [FIX #265] 연속 마침표("...", "!!", "??") 사전 정규화 — 유령 문장 방지
+        // "장난..." 같은 한국어 쇼츠 대본 패턴에서 각 "."가 별도 문장으로 분할되는 버그 수정
+        const normalized = segments[si]
+            .replace(/\.{2,}/g, '…')   // "..." → "…" (유니코드 말줄임표, 분할 대상 아님)
+            .replace(/。{2,}/g, '…')   // "。。。" → "…"
+            .replace(/!{2,}/g, '!')    // "!!!" → "!"
+            .replace(/！{2,}/g, '！')  // "！！！" → "！"
+            .replace(/\?{2,}/g, '?')   // "???" → "?"
+            .replace(/？{2,}/g, '？'); // "？？？" → "？"
+        const sentences = normalized
             .split(sentenceSplitRe).filter(s => s.trim());
         if (sentences.length === 0) {
             result.push({ segIdx: si, text: segments[si] });
         } else {
             for (const s of sentences) {
-                result.push({ segIdx: si, text: s });
+                // [FIX #265] 분할 후에도 남은 극소 조각(≤2자)은 이전 문장에 병합
+                if (s.trim().length <= 2 && result.length > 0 && result[result.length - 1].segIdx === si) {
+                    result[result.length - 1].text += s;
+                } else {
+                    result.push({ segIdx: si, text: s });
+                }
             }
         }
     }
@@ -235,11 +249,13 @@ export const countScenesLocally = (script: string, format: VideoFormat, smartSpl
             }
 
         case VideoFormat.SHORT:
-            // 숏폼: 45자 타겟, 연결어미 분할, 10자 미만 병합
+            // [FIX #265] 숏폼: 80자 타겟 (기존 45→80) — "1문장=1장면" 원칙 강화
+            // 45자는 한국어 문장 대부분을 절 단위로 재분할하여 장면 수 폭증 유발
+            // 80자로 완화하면 일반 문장은 그대로, 120자+ 복합문만 분할됨
             {
                 let count = 0;
                 for (const t of tagged) {
-                    count += splitKoreanClauses(t.text, 45, 10).length;
+                    count += splitKoreanClauses(t.text, 80, 10).length;
                 }
                 return Math.max(1, count);
             }
@@ -407,9 +423,9 @@ export const splitScenesLocally = (script: string, format: VideoFormat, smartSpl
             break;
 
         case VideoFormat.SHORT:
-            // 숏폼: 45자 타겟, 연결어미 분할, 10자 미만 병합
+            // [FIX #265] 숏폼: 80자 타겟 (기존 45→80) — countScenesLocally와 동일 규칙 적용
             for (const t of tagged) {
-                scenes.push(...splitKoreanClauses(t.text, 45, 10));
+                scenes.push(...splitKoreanClauses(t.text, 80, 10));
             }
             break;
 
@@ -1052,6 +1068,41 @@ export const parseScriptToScenes = async (
                 console.log(`[PostProcess] Force-split: ${result.length} → ${splitScenes.length} scenes (${format}/${longFormSplitType})`);
                 result = splitScenes;
             }
+        }
+
+        // [FIX #265] 안전 캡: targetSceneCount가 설정된 경우, 결과가 target의 120%를 초과하면 초과분 제거
+        // AI 과잉 생성 + 강제 분할로 장면 수가 폭증하는 것을 방지
+        if (targetSceneCount && targetSceneCount > 0 && result.length > Math.ceil(targetSceneCount * 1.2)) {
+            const cap = Math.ceil(targetSceneCount * 1.2);
+            console.warn(`[PostProcess] ⚠️ Scene cap: ${result.length} → ${cap} (target: ${targetSceneCount}, 120% cap)`);
+            // 가장 짧은 인접 장면들을 병합하여 캡 이내로 축소
+            while (result.length > cap && result.length > 1) {
+                // 가장 짧은 scriptText를 가진 장면 찾기
+                let minLen = Infinity, minIdx = -1;
+                for (let i = 0; i < result.length; i++) {
+                    const len = (result[i].scriptText || '').length;
+                    if (len < minLen) { minLen = len; minIdx = i; }
+                }
+                if (minIdx < 0) break;
+                // 인접 장면과 병합 (다음 장면 우선, 없으면 이전 장면)
+                if (minIdx + 1 < result.length) {
+                    result[minIdx + 1] = {
+                        ...result[minIdx + 1],
+                        scriptText: ((result[minIdx].scriptText || '') + ' ' + (result[minIdx + 1].scriptText || '')).trim()
+                    };
+                    result.splice(minIdx, 1);
+                } else if (minIdx > 0) {
+                    result[minIdx - 1] = {
+                        ...result[minIdx - 1],
+                        scriptText: ((result[minIdx - 1].scriptText || '') + ' ' + (result[minIdx].scriptText || '')).trim()
+                    };
+                    result.splice(minIdx, 1);
+                } else {
+                    break; // 병합 불가
+                }
+            }
+            // ID 재할당
+            result = result.map((s, i) => ({ ...s, id: `scene-${Date.now()}-${i}` }));
         }
 
         return result;
