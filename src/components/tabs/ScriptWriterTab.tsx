@@ -515,20 +515,24 @@ ${instinctPrompt}
         { model: scriptAiModel, temperature: 0.7, maxOutputTokens: tokenBudget, enableWebSearch: useWebSearch, signal: abortCtrl.signal, onFinish: (r) => { finishReason = r; } }
       );
 
-      // [FIX #137] 이어쓰기: finishReason이 MAX_TOKENS이고 목표 분량 미달 시 자동 계속 생성 (최대 3회)
-      const isLongForm = contentFormat !== 'shorts';
+      // [FIX #137 #273] 이어쓰기: finishReason이 MAX_TOKENS이면 자동 계속 생성 (최대 3회, 쇼츠 포함)
       const MAX_CONTINUATIONS = 3;
       for (let ci = 0; ci < MAX_CONTINUATIONS; ci++) {
         const isTruncated = finishReason === 'MAX_TOKENS' || finishReason === 'length';
-        if (!isLongForm || !isTruncated || result.length >= targetCharCount * 0.8) break;
+        if (!isTruncated) break;
+        // [FIX #273] 목표 분량 90% 이상 + 문장이 자연스럽게 끝나면 추가 불필요
+        if (result.length >= targetCharCount * 0.9 && /[.!?。다요죠네세까]$/.test(result.trimEnd())) break;
 
         const remaining = targetCharCount - result.length;
-        const contPrompt = `다음은 이전에 작성하던 대본의 마지막 부분입니다:\n\n"...${result.slice(-800)}"\n\n이 대본을 끊긴 부분부터 자연스럽게 이어서 계속 작성하세요.\n남은 분량: 약 ${remaining}자\n\n중요: 이미 쓴 내용을 반복하지 마세요. 끊긴 지점부터 바로 이어서 쓰세요. 대본 본문만 출력하세요.`;
+        const contPrompt = remaining > 0
+          ? `다음은 이전에 작성하던 대본의 마지막 부분입니다:\n\n"...${result.slice(-800)}"\n\n이 대본을 끊긴 부분부터 자연스럽게 이어서 계속 작성하세요.\n남은 분량: 약 ${remaining}자\n\n중요: 이미 쓴 내용을 반복하지 마세요. 끊긴 지점부터 바로 이어서 쓰세요. 대본 본문만 출력하세요.`
+          : `다음 대본의 마지막 문장이 중간에서 끊겼습니다:\n\n"...${result.slice(-400)}"\n\n끊긴 마지막 문장만 자연스럽게 완성하세요. 새로운 내용을 추가하지 마세요. 대본 본문만 출력하세요.`;
         finishReason = '';
+        const contBudget = Math.min(32000, Math.max(2000, Math.ceil(Math.max(remaining, 200) * 4)));
         const contText = await scriptGenerationStream(
           systemPrompt, contPrompt,
           (_chunk, accumulated) => { setStreamingText(result + accumulated); },
-          { model: scriptAiModel, temperature: 0.7, maxOutputTokens: Math.min(32000, Math.max(4000, Math.ceil(remaining * 4))), signal: abortCtrl.signal, onFinish: (r) => { finishReason = r; } }
+          { model: scriptAiModel, temperature: 0.7, maxOutputTokens: contBudget, signal: abortCtrl.signal, onFinish: (r) => { finishReason = r; } }
         );
         result += contText;
       }
@@ -638,20 +642,24 @@ ${instinctPrompt}
         { model: scriptAiModel, temperature: 0.7, maxOutputTokens: tokenBudget, enableWebSearch: useWebSearch, signal: abortCtrl.signal, onFinish: (r) => { finishReason = r; } }
       );
 
-      // [FIX #137] 이어쓰기: finishReason이 MAX_TOKENS이고 목표 분량 미달 시 자동 계속 생성 (최대 3회)
-      const isLongForm = contentFormat !== 'shorts';
+      // [FIX #137 #273] 이어쓰기: finishReason이 MAX_TOKENS이면 자동 계속 생성 (최대 3회, 쇼츠 포함)
       const MAX_CONTINUATIONS = 3;
       for (let ci = 0; ci < MAX_CONTINUATIONS; ci++) {
         const isTruncated = finishReason === 'MAX_TOKENS' || finishReason === 'length';
-        if (!isLongForm || !isTruncated || fullText.length >= targetCharCount * 0.8) break;
+        if (!isTruncated) break;
+        // [FIX #273] 목표 분량 90% 이상 + 문장이 자연스럽게 끝나면 추가 불필요
+        if (fullText.length >= targetCharCount * 0.9 && /[.!?。다요죠네세까]$/.test(fullText.trimEnd())) break;
 
         const remaining = targetCharCount - fullText.length;
-        const contPrompt = `다음은 이전에 작성하던 대본의 마지막 부분입니다:\n\n"...${fullText.slice(-800)}"\n\n이 대본을 끊긴 부분부터 자연스럽게 이어서 계속 작성하세요.\n남은 분량: 약 ${remaining}자\n\n중요: 이미 쓴 내용을 반복하지 마세요. 끊긴 지점부터 바로 이어서 쓰세요. 대본 본문만 출력하세요.`;
+        const contPrompt = remaining > 0
+          ? `다음은 이전에 작성하던 대본의 마지막 부분입니다:\n\n"...${fullText.slice(-800)}"\n\n이 대본을 끊긴 부분부터 자연스럽게 이어서 계속 작성하세요.\n남은 분량: 약 ${remaining}자\n\n중요: 이미 쓴 내용을 반복하지 마세요. 끊긴 지점부터 바로 이어서 쓰세요. 대본 본문만 출력하세요.`
+          : `다음 대본의 마지막 문장이 중간에서 끊겼습니다:\n\n"...${fullText.slice(-400)}"\n\n끊긴 마지막 문장만 자연스럽게 완성하세요. 새로운 내용을 추가하지 마세요. 대본 본문만 출력하세요.`;
         finishReason = '';
+        const contBudget = Math.min(32000, Math.max(2000, Math.ceil(Math.max(remaining, 200) * 4)));
         const contText = await scriptGenerationStream(
           systemPrompt, contPrompt,
           (_chunk, accumulated) => { setStreamingText(fullText + accumulated); },
-          { model: scriptAiModel, temperature: 0.7, maxOutputTokens: Math.min(32000, Math.max(4000, Math.ceil(remaining * 4))), signal: abortCtrl.signal, onFinish: (r) => { finishReason = r; } }
+          { model: scriptAiModel, temperature: 0.7, maxOutputTokens: contBudget, signal: abortCtrl.signal, onFinish: (r) => { finishReason = r; } }
         );
         fullText += contText;
       }
