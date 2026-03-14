@@ -752,7 +752,7 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
   if (lines.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-16 px-6">
-        <div className="w-full max-w-xl space-y-6">
+        <div className="w-full max-w-2xl space-y-6">
           {/* 아이콘 + 타이틀 */}
           <div className="text-center space-y-3">
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-fuchsia-500/20 to-purple-600/20 border border-fuchsia-500/20 mb-1">
