@@ -8,6 +8,7 @@
 
 ## 🟢 완료된 작업
 
+- [x] **#242 나레이션 파일 무음 제거 기능** — 파형 편집기(WaveformEditor)에 외부 오디오 파일 업로드 기능 추가. (1) 오디오 편집 탭 접근 시 대본 필수 조건 해제 (2) 빈 상태에서 드래그&드롭/파일선택 UI 표시 (3) WAV/MP3/M4A/OGG/FLAC/WebM 파일 업로드 → 기존 무음 감지/제거 기능 활용 (4) 헤더에 '불러오기' 버튼 추가 (SoundStudioTab.tsx, WaveformEditor.tsx, 2026-03-14)
 - [x] **#271 YouTube API 다중 키 지원** — 여러 API 키를 미리 등록해두고, 쿼터 소진 시 자동으로 다음 키로 전환하는 기능. (1) apiService에 키 풀 저장/로드/회전 함수 추가 (2) youtubeAnalysisService에 monitoredFetch 래퍼로 403 quotaExceeded 시 자동 키 전환 + 다중 키 시 로컬 쿼터 제한 무시 (3) ApiKeySettings에 다중 키 목록 UI (추가/삭제/편집) (4) 채널분석 탭 쿼터 패널에 다중 키 모드 표시 (5) 서버 동기화에 키 풀 포함 (apiService.ts, youtubeAnalysisService.ts, ApiKeySettings.tsx, ChannelAnalysisTab.tsx, 2026-03-14)
 - [x] **#272 HTML 스토리보드 불러오기 무반응 버그 수정** — (1) projectData를 찾을 수 없을 때 무시하던 코드에 에러 토스트 추가 (2) HTML 내보내기 시 JSON 내부의 `</script>` 문자열이 스크립트 태그를 조기 종료시키는 버그 방지 (.replace) (App.tsx, exportHtml.ts, 2026-03-14)
 - [x] **#217 채널 스타일 대본 생성 429 Rate Limit 수정** — Promise.all 동시 3개 요청 → 순차 실행(2초 간격)으로 변경. 부분 성공 허용(1~2개만 성공해도 결과 표시). 진행 상태 "1/3 원본 충실 생성 중..." 표시. (ChannelRemakePanel.tsx, 2026-03-14)
