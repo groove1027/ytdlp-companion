@@ -8,7 +8,7 @@
 
 ## 🟢 완료된 작업
 
-- [x] **PPT 마스터 슬라이드 이미지가 일러스트/그림으로 생성되는 버그 수정** — 스토리보드용 `generateSceneImage` 공유 사용이 근본 원인. PPT 전용 `generatePptSlideImage` 함수 신규 작성으로 스토리보드 모듈과 완전 분리. (1) `generateSceneImage` import 제거, `generateEvolinkImageWrapped`/`generateKieImage` 직접 호출 (2) PPT 전용 프롬프트: 슬라이드 제목·키포인트를 텍스트로 이미지에 포함하도록 지시 (3) Evolink 우선 → Kie 폴백 이중 경로 (4) 3곳(샘플 미리보기, 배치 생성, 개별 재생성) 모두 교체 — 스토리보드에 영향 없음 (PptMasterTab.tsx, 2026-03-14)
+- [x] **PPT 마스터 슬라이드 이미지가 일러스트/그림으로 생성되는 버그 수정** — 스토리보드용 `generateSceneImage` 공유 사용이 근본 원인. PPT 전용 `generatePptSlideImage` 함수 신규 작성으로 스토리보드와 완전 분리. (1) `generateSceneImage` import 완전 제거 → `generateEvolinkImageWrapped`/`generateKieImage` 직접 호출 (2) 3축 합성 프롬프트: 디자인 스타일(시각적 미학) + 콘텐츠 레이아웃(layoutHint — 배치 방식) + 슬라이드 데이터(제목·키포인트를 이미지 내 텍스트로 포함) (3) ContentStyle에 `layoutHint` 필드 추가 — 7개 스타일별 레이아웃 지시(스티브 잡스→1문장 중심, 벤토→2×2 그리드, 컨설턴트→P/S/I 3분할 등) (4) 3곳(샘플 미리보기, 배치 생성, 개별 재생성) 모두 교체 + useCallback 의존성 배열 보정 — 스토리보드 무영향 (PptMasterTab.tsx, slideStylePresets.ts, 2026-03-14)
 
 - [x] **#276 해외 채널 분석 시 문장 구조 규칙 영어 문법 적용 + 국내/해외 토글** — (1) 대본 텍스트에서 콘텐츠 언어/지역 자동 감지(한글 비율 10% 미만이면 해외로 판단) (2) 해외 콘텐츠 분석 시 L1 프롬프트에서 영어 문법 체계(시제 분포, 능동/수동태, 문장 유형, 접속사/전환어 등)로 분석 — 한국어 종결어미 분석 금지 (3) L2~L5에도 해외 문화권 맥락 반영 지시 추가 (4) 국내/해외 토글 UI 추가 (ChannelInputPanel.tsx) + 자동 감지 연동 (5) 해외 콘텐츠 fullGuidelineText에 [문화적 맥락] 섹션 추가 (types.ts, channelAnalysisStore.ts, youtubeAnalysisService.ts, ChannelInputPanel.tsx, ChannelAnalysisRoom.tsx, 2026-03-14)
 - [x] **#275 상세페이지/카드뉴스 비용 추적 + 카드뉴스 개별 프롬프트 편집** — (1) 버그: DetailPageTab 전체(상세페이지/썸네일/스튜디오/카드뉴스) 이미지 생성 시 addCost 미호출 → 6곳 모두 PRICING.IMAGE_GENERATION 비용 추적 추가 (2) 기능: 카드뉴스 기획안 각 카드에 개별 프롬프트 편집(제목/본문/이미지 설명) + "이 카드만 재생성" 버튼 추가, 상세페이지 Step 3과 동일한 details 접기 패턴 적용 (DetailPageTab.tsx, 2026-03-14)

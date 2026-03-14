@@ -40,38 +40,53 @@ function parseFileContent(content: string, fileName: string): string {
 }
 
 // ─── PPT 전용 이미지 생성 (스토리보드 모듈과 완전 독립) ───
+// 3축 합성: 디자인 스타일(시각) + 콘텐츠 레이아웃(배치) + 슬라이드 데이터(텍스트)
 
 async function generatePptSlideImage(
-  designPrompt: string,
+  designStyle: DesignStyle,
+  contentStyle: ContentStyle,
   title: string,
   keyPoints: string[],
   visualHint: string,
 ): Promise<string> {
-  const keyPointsText = keyPoints.length > 0
-    ? `Key text elements to include: ${keyPoints.slice(0, 4).join(' | ')}`
+  // 키포인트를 슬라이드 텍스트 요소로 구성
+  const keyPointsSection = keyPoints.length > 0
+    ? `The slide must also display these key points as readable text elements:\n${keyPoints.slice(0, 4).map((p, i) => `  ${i + 1}. "${p}"`).join('\n')}`
     : '';
 
   const prompt = [
-    `Create a professional presentation slide image in 16:9 landscape format.`,
-    `Design style: ${designPrompt}.`,
-    `The slide MUST contain the following text as the main title, rendered in large, bold, readable typography: "${title}".`,
-    keyPointsText,
-    `Visual concept for supporting graphics/icons: ${visualHint}.`,
-    `CRITICAL RULES:`,
-    `- This is a PRESENTATION SLIDE, not an illustration or photograph.`,
-    `- The title text "${title}" MUST be clearly readable and prominently placed.`,
-    `- Use clean layout with proper visual hierarchy: title at top, supporting visuals below.`,
-    `- Include design elements like icons, shapes, charts, or diagrams that match the visual concept.`,
-    `- Professional presentation aesthetic with balanced whitespace.`,
-    `- Do NOT generate photographic images or character illustrations.`,
+    // 1) 슬라이드 기본 지시
+    `Generate a PRESENTATION SLIDE image (16:9 landscape). This must look like an actual PowerPoint/Keynote slide screenshot — NOT an illustration, NOT a photograph, NOT artwork.`,
+    '',
+    // 2) 디자인 스타일 (시각적 미학)
+    `VISUAL DESIGN STYLE: ${designStyle.prompt}`,
+    `Background color base: ${designStyle.bgColor}, accent color: ${designStyle.accentColor}.`,
+    '',
+    // 3) 콘텐츠 레이아웃 (텍스트 배치 방식)
+    `SLIDE LAYOUT: ${contentStyle.layoutHint}`,
+    '',
+    // 4) 슬라이드 텍스트 콘텐츠 (실제로 이미지에 렌더링할 텍스트)
+    `SLIDE TITLE (must be rendered as large, bold, readable text on the slide): "${title}"`,
+    keyPointsSection,
+    '',
+    // 5) 보조 비주얼 (아이콘, 도형, 차트 등)
+    `Supporting visual elements (icons, shapes, diagrams): ${visualHint}`,
+    '',
+    // 6) 강제 규칙
+    `STRICT RULES:`,
+    `- The title "${title}" MUST be clearly visible and readable as typography on the slide.`,
+    `- This is a presentation slide with text and design elements — NOT a scene illustration.`,
+    `- Include appropriate icons, shapes, or infographic elements that complement the text.`,
+    `- Maintain proper visual hierarchy: title prominent, key points below, visuals supporting.`,
+    `- Do NOT include photographs of real people or character illustrations.`,
   ].filter(Boolean).join('\n');
 
-  // Evolink 우선, Kie 폴백
+  // Kie NanoBanana 2 우선 (스토리보드와 동일), Evolink 폴백
   try {
-    return await generateEvolinkImageWrapped(prompt, AspectRatio.LANDSCAPE);
-  } catch (e) {
-    logger.info('[PPT] Evolink 실패, Kie 폴백', e);
     return await generateKieImage(prompt, AspectRatio.LANDSCAPE);
+  } catch (e) {
+    logger.info('[PPT] Kie 실패, Evolink 폴백', e);
+    return await generateEvolinkImageWrapped(prompt, AspectRatio.LANDSCAPE);
   }
 }
 
@@ -476,7 +491,8 @@ export default function PptMasterTab() {
     try {
       const snippet = inputText.slice(0, 100);
       const imageUrl = await generatePptSlideImage(
-        selectedDesignStyle.prompt,
+        selectedDesignStyle,
+        selectedContentStyle,
         '샘플 미리보기',
         [snippet],
         'overview presentation intro slide',
@@ -490,7 +506,7 @@ export default function PptMasterTab() {
     } finally {
       setIsGeneratingSample(false);
     }
-  }, [requireAuth, inputText, selectedDesignStyle, addCost]);
+  }, [requireAuth, inputText, selectedDesignStyle, selectedContentStyle, addCost]);
 
   useEffect(() => { setSampleImage(null); }, [selectedDesignStyle.id]);
 
@@ -516,7 +532,8 @@ export default function PptMasterTab() {
       setSlides(prev => prev.map((s, i) => i === idx ? { ...s, isGeneratingImage: true } : s));
       try {
         const imageUrl = await generatePptSlideImage(
-          selectedDesignStyle.prompt,
+          selectedDesignStyle,
+          selectedContentStyle,
           slide.title,
           slide.keyPoints,
           slide.visualHint,
@@ -546,7 +563,7 @@ export default function PptMasterTab() {
       }
       if (active.length > 0) await Promise.race(active);
     }
-  }, [selectedDesignStyle, addCost]);
+  }, [selectedDesignStyle, selectedContentStyle, addCost]);
 
   // ─── AI 슬라이드 생성 ───
   const CHUNK_THRESHOLD = 30; // 30장 이상이면 Flash 목차 + Pro 청크 파이프라인
@@ -743,7 +760,8 @@ export default function PptMasterTab() {
     setSlides(prev => prev.map((s, i) => i === index ? { ...s, isGeneratingImage: true } : s));
     try {
       const imageUrl = await generatePptSlideImage(
-        selectedDesignStyle.prompt,
+        selectedDesignStyle,
+        selectedContentStyle,
         slide.title,
         slide.keyPoints,
         slide.visualHint,
@@ -755,7 +773,7 @@ export default function PptMasterTab() {
       setSlides(prev => prev.map((s, i) => i === index ? { ...s, isGeneratingImage: false } : s));
       showToast('이미지 생성 실패');
     }
-  }, [slides, selectedDesignStyle, addCost]);
+  }, [slides, selectedDesignStyle, selectedContentStyle, addCost]);
 
   // ─── PPTX 내보내기 ───
   const handleExportPptx = useCallback(async () => {
