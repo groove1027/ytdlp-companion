@@ -808,6 +808,8 @@ const StoryboardPanel: React.FC = () => {
   const currentStyle = useImageVideoStore((s) => s.style);
   const enableWebSearch = useImageVideoStore((s) => s.enableWebSearch);
   const isMultiCharacter = useImageVideoStore((s) => s.isMultiCharacter);
+  const pendingAutoImageGen = useImageVideoStore((s) => s.pendingAutoImageGen);
+  const setPendingAutoImageGen = useImageVideoStore((s) => s.setPendingAutoImageGen);
   // 오디오 재생 상태
   const globalAudioRef = useRef<HTMLAudioElement | null>(null);
   const sceneAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -1297,7 +1299,20 @@ const StoryboardPanel: React.FC = () => {
     setIsBatchingImages(false);
   }, [handleGenerateImage, requireAuth]);
 
-  // [FIX #175-1] 자동 이미지 생성 제거 — 빈 슬롯으로 시작, 사용자가 직접 생성 버튼 클릭 시에만 생성
+  // [FIX #175-1] 일반 탭 전환 시 자동 이미지 생성 없음 — 빈 슬롯으로 시작
+  // [FIX #266] 단, 스토리보드 '생성 직후'에는 자동 배치 이미지 생성 트리거
+  useEffect(() => {
+    if (!pendingAutoImageGen) return;
+    setPendingAutoImageGen(false);
+    // 이미지 없는 장면이 있을 때만 자동 생성
+    const { scenes: currentScenes } = useProjectStore.getState();
+    const needsGen = currentScenes.some(s => !s.imageUrl && !s.isGeneratingImage);
+    if (needsGen && !isBatchingImages) {
+      // 약간의 딜레이로 UI 렌더 후 실행
+      const timer = setTimeout(() => handleBatchGenerateImages(), 500);
+      return () => clearTimeout(timer);
+    }
+  }, [pendingAutoImageGen, setPendingAutoImageGen, handleBatchGenerateImages, isBatchingImages]);
 
   // --- 배치 진행 상태 ---
   const batchCurrent = isBatchingImages ? batchImageProgress.current : videoBatch.batchProgress.current;

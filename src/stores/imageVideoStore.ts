@@ -20,6 +20,8 @@ interface ImageVideoStore {
   dialogueMode: boolean;
   // [#177] 목표 컷 수 — 사용자가 원하는 장면 수 오버라이드
   targetSceneCount: number | null;
+  // [FIX #266] 스토리보드 생성 직후 자동 이미지 배치 생성 트리거 플래그
+  pendingAutoImageGen: boolean;
 
   setActiveSubTab: (tab: 'setup' | 'storyboard') => void;
   setStyle: (v: string) => void;
@@ -35,6 +37,7 @@ interface ImageVideoStore {
   setReferenceDialogue: (v: string) => void;
   setDialogueMode: (v: boolean) => void;
   setTargetSceneCount: (v: number | null) => void;
+  setPendingAutoImageGen: (v: boolean) => void;
 
   // 프로젝트 로드/리셋 시 일괄 복원
   restoreFromConfig: (data: { style?: string; characters?: CharacterReference[]; enableWebSearch?: boolean; isMultiCharacter?: boolean; dialogueTone?: DialogueTone; referenceDialogue?: string; dialogueMode?: boolean; customStyleNote?: string; targetSceneCount?: number | null }) => void;
@@ -71,6 +74,7 @@ export const useImageVideoStore = create<ImageVideoStore>((set) => ({
   referenceDialogue: '',
   dialogueMode: false,
   targetSceneCount: null,
+  pendingAutoImageGen: false,
 
   setActiveSubTab: (tab) => { logger.trackTabVisit('image-video', tab); set({ activeSubTab: tab }); },
   setStyle: (v) => { const prev = useImageVideoStore.getState().style; logger.trackSettingChange('iv.style', prev, v); set({ style: v }); syncToProjectConfig(); },
@@ -81,6 +85,7 @@ export const useImageVideoStore = create<ImageVideoStore>((set) => ({
   setReferenceDialogue: (v) => { set({ referenceDialogue: v }); syncToProjectConfig(); },
   setDialogueMode: (v) => { const prev = useImageVideoStore.getState().dialogueMode; logger.trackSettingChange('iv.dialogueMode', prev, v); set({ dialogueMode: v }); syncToProjectConfig(); },
   setTargetSceneCount: (v) => { set({ targetSceneCount: v }); },
+  setPendingAutoImageGen: (v) => { set({ pendingAutoImageGen: v }); },
   setCharacters: (chars) => {
     set((s) => ({ characters: typeof chars === 'function' ? chars(s.characters) : chars }));
     syncToProjectConfig();
@@ -121,5 +126,6 @@ export const useImageVideoStore = create<ImageVideoStore>((set) => ({
     referenceDialogue: '',
     dialogueMode: false,
     targetSceneCount: null,
+    pendingAutoImageGen: false,
   }),
 }));
