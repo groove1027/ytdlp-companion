@@ -90,7 +90,8 @@ function parseTikitakaTable(content: string): SceneRow[] {
   const lines = content.split('\n');
 
   // 헤더에서 효과자막 열 존재 여부 감지
-  const headerLine = lines.find(l => l.includes('|') && /모드/.test(l) && (/오디오/.test(l) || /내레이션/.test(l)));
+  // [FIX #291 #292] 스낵형 헤더 "자막 내용"도 감지 — 기존에는 "오디오"/"내레이션"만 매칭하여 스낵형 7열 파싱 실패
+  const headerLine = lines.find(l => l.includes('|') && /모드/.test(l) && (/오디오/.test(l) || /내레이션/.test(l) || /자막/.test(l)));
   const has7Cols = headerLine ? /효과\s*자막/.test(headerLine) : false;
 
   for (const line of lines) {

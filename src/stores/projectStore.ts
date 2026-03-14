@@ -354,12 +354,17 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     }
 
     // [NEW] imageVideoStore 복원 — 캐릭터/스타일/웹검색 설정을 config에서 복원
+    // [FIX #290] targetSceneCount + dialogueTone 등 누락 필드 추가 — 이전 프로젝트 값 잔류 방지
     import('./imageVideoStore').then(({ useImageVideoStore }) => {
       useImageVideoStore.getState().restoreFromConfig({
         style: project.config?.selectedVisualStyle,
         characters: project.config?.characters,
         enableWebSearch: project.config?.enableWebSearch,
         isMultiCharacter: project.config?.isMultiCharacter,
+        dialogueTone: project.config?.dialogueTone,
+        referenceDialogue: project.config?.referenceDialogue,
+        dialogueMode: project.config?.dialogueMode,
+        targetSceneCount: null, // 프로젝트 로드 시 항상 초기화 — AI가 적절한 수를 결정
       });
     }).catch(e => { logger.trackSwallowedError('ProjectStore:loadProject/restoreImageVideoStore', e); });
 

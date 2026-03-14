@@ -163,7 +163,12 @@ const ChannelRemakePanel: React.FC = () => {
       if (videoId) {
         const result = await getVideoTranscript(videoId);
         sourceContent = result.text;
-        if (sourceContent.length < 50) throw new Error('자막이 너무 짧습니다. 텍스트를 직접 붙여넣어 주세요.');
+        if (result.source === 'description' && sourceContent.length > 0) {
+          // [FIX #286] 자막 없는 영상도 제목+설명으로 분석 허용 (정확도 저하 경고)
+          showToast('이 영상의 자막을 찾을 수 없어 제목과 설명으로 대체합니다. 정확도가 낮을 수 있습니다.');
+        } else if (sourceContent.length < 50) {
+          throw new Error('이 영상에는 자막과 설명이 없어 분석할 수 없습니다. 영상 내용을 직접 텍스트로 붙여넣어 주세요.');
+        }
       }
 
       const channelContext = buildChannelContext(channelGuideline, channelScripts);

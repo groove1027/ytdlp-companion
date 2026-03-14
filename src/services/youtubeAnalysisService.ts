@@ -1470,13 +1470,17 @@ export const getVideoTranscript = async (videoId: string): Promise<TranscriptRes
     };
 };
 
-/** 영상 설명을 자막 대체로 사용 */
+/** 영상 설명을 자막 대체로 사용 — 제목+설명 결합 (#286) */
 const getVideoDescriptionFallback = async (videoId: string, apiKey: string): Promise<string> => {
     const url = `${YOUTUBE_API_BASE}/videos?part=snippet&id=${videoId}&key=${apiKey}`;
     const response = await monitoredFetch(url);
     if (!response.ok) return '';
     const data = await response.json();
-    return data.items?.[0]?.snippet?.description || '';
+    const snippet = data.items?.[0]?.snippet;
+    if (!snippet) return '';
+    const title = snippet.title || '';
+    const description = snippet.description || '';
+    return [title, description].filter(Boolean).join('\n\n');
 };
 
 // === CHANNEL STYLE ANALYSIS (AI) ===

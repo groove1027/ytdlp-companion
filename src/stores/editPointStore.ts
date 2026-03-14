@@ -727,6 +727,14 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
     if (editTableText.trim()) {
       await get().parseEditTable();
     }
+
+    // [FIX #287 #289] 성공 피드백 — 편집실에 데이터가 전달되었음을 알림
+    const { sourceVideos, edlEntries } = get();
+    if (sourceVideos.length > 0 && edlEntries.length > 0) {
+      showToast(`영상 분석 데이터가 편집실로 전달되었습니다 (${edlEntries.length}개 편집점)`);
+    } else if (sourceVideos.length > 0) {
+      showToast('영상이 편집실로 전달되었습니다. 편집표 파싱을 확인해주세요.');
+    }
   },
 
   reset: () => {

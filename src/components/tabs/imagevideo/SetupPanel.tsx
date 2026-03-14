@@ -1186,6 +1186,18 @@ const SetupPanel: React.FC = () => {
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
             </button>
 
+            {/* [FIX #290] 장면 초기화 — 이전 프로젝트 잔여 데이터 제거 */}
+            <button type="button" disabled={isAnalyzing}
+              onClick={() => {
+                if (!window.confirm(`현재 ${totalScenes}개 장면을 모두 삭제하고 처음부터 다시 분석하시겠습니까? (이미지/영상 포함 삭제)`)) return;
+                useProjectStore.getState().setScenes([]);
+                useImageVideoStore.getState().setTargetSceneCount(null);
+                showToast('장면이 초기화되었습니다. 대본을 확인 후 "스토리보드 생성"을 눌러주세요.');
+              }}
+              className="w-full text-xs text-gray-500 hover:text-red-400 py-2 transition-colors disabled:opacity-30">
+              장면 초기화 ({totalScenes}개 삭제)
+            </button>
+
           </div>
         )}
         {!config?.script && totalScenes === 0 && !directInputMode && (
