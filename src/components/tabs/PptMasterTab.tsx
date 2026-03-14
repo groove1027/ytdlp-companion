@@ -493,13 +493,30 @@ export default function PptMasterTab() {
           return parsed;
         };
 
+        // 재시도 래퍼 (1회 재시도, 3초 대기) — 네트워크 에러 방어
+        let failedChunks = 0;
+        const processChunkWithRetry = async (chunkIdx: number): Promise<SlideData[]> => {
+          try {
+            return await processChunk(chunkIdx);
+          } catch (firstErr) {
+            await new Promise(r => setTimeout(r, 3000));
+            try {
+              return await processChunk(chunkIdx);
+            } catch {
+              logger.trackSwallowedError('PptMasterTab:processChunk:retry', firstErr);
+              failedChunks++;
+              return [];
+            }
+          }
+        };
+
         // 병렬 배치 처리 (CHUNK_CONCURRENCY개씩)
         let completedChunks = 0;
         for (let batchStart = 0; batchStart < totalChunks; batchStart += CHUNK_CONCURRENCY) {
           const batchEnd = Math.min(batchStart + CHUNK_CONCURRENCY, totalChunks);
           const batchIndices = Array.from({ length: batchEnd - batchStart }, (_, i) => batchStart + i);
 
-          const batchResults = await Promise.all(batchIndices.map(ci => processChunk(ci)));
+          const batchResults = await Promise.all(batchIndices.map(ci => processChunkWithRetry(ci)));
           for (const result of batchResults) allSlides.push(...result);
 
           completedChunks += batchIndices.length;
@@ -509,7 +526,10 @@ export default function PptMasterTab() {
           if (batchEnd < totalChunks) await new Promise(r => setTimeout(r, 2000));
         }
 
-        addCost(PRICING.GEMINI_PRO_INPUT_PER_1M * 0.002 * totalChunks, 'analysis');
+        if (allSlides.length === 0) throw new Error('모든 슬라이드 생성에 실패했습니다. 네트워크 연결을 확인하고 다시 시도해주세요.');
+        if (failedChunks > 0) showToast(`⚠️ 일부 구간(${failedChunks}개)이 네트워크 문제로 실패했어요. ${allSlides.length}장만 생성되었습니다.`);
+
+        addCost(PRICING.GEMINI_PRO_INPUT_PER_1M * 0.002 * (totalChunks - failedChunks), 'analysis');
 
         finalSlides = allSlides.map((s, i) => ({
           ...s, slideNumber: i + 1, keyPoints: s.keyPoints || [], visualHint: s.visualHint || '',
@@ -529,7 +549,10 @@ export default function PptMasterTab() {
         showToast(`슬라이드 생성 완료!`);
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : '슬라이드 생성 실패';
+      const raw = err instanceof Error ? err.message : '슬라이드 생성 실패';
+      const msg = raw.toLowerCase().includes('failed to fetch') || raw.toLowerCase().includes('network')
+        ? '네트워크 연결이 끊어졌어요. 브라우저 탭을 닫지 말고 다시 시도해주세요. (장수를 줄이면 성공 확률이 올라요!)'
+        : raw;
       setGenError(msg);
     } finally {
       setIsGenerating(false);
