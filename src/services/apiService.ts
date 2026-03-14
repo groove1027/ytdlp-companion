@@ -1,5 +1,6 @@
 
 import { logger } from './LoggerService';
+import { showToast } from '../stores/uiStore';
 
 // Default Keys (Fallbacks)
 // [DEPLOYMENT] Reset to empty before deploying. These are dev-only defaults.
@@ -256,6 +257,7 @@ export const restoreApiKeysFromServer = async (): Promise<boolean> => {
 
         if (restored > 0) {
             logger.info(`API 키 ${restored}개를 서버에서 복원했습니다.`);
+            showToast(`저장된 API 키 ${restored}개가 자동으로 복원되었습니다.`, 4000);
         }
         return restored > 0;
     } catch (e) {

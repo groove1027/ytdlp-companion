@@ -377,6 +377,14 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
                     </button>
                 </div>
 
+                {/* ── 계정 연동 안내 ── */}
+                <div className="mb-4 px-3 py-2.5 bg-blue-600/10 border border-blue-500/20 rounded-lg flex items-start gap-2.5">
+                    <svg className="w-4 h-4 text-blue-400 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
+                    <p className="text-xs text-blue-300/90 leading-relaxed">
+                        API 키는 <strong className="text-blue-200">내 계정에 자동 저장</strong>됩니다. 다른 기기나 브라우저에서 로그인해도 설정이 그대로 유지돼요.
+                    </p>
+                </div>
+
                 {/* ── 일괄 가져오기/내보내기 ── */}
                 <div className="mb-5">
                     <button
