@@ -8,8 +8,8 @@ import { evolinkChat, evolinkChatStream, evolinkNativeStream, scriptGenerationSt
 import { recommendTopics } from '../../services/topicRecommendService';
 import { buildSelectedInstinctPrompt } from '../../data/instinctPromptUtils';
 import { SCRIPT_STYLE_PRESETS, ScriptStylePreset } from '../../data/scriptStylePresets';
-import { VideoFormat, ContentFormat, TopicRecommendation, AspectRatio, ScriptAiModel } from '../../types';
-import { SCRIPT_AI_MODELS } from '../../constants';
+import { VideoFormat, ContentFormat, TopicRecommendation, AspectRatio, ScriptAiModel, ScriptTargetRegion } from '../../types';
+import { SCRIPT_AI_MODELS, SCRIPT_TARGET_REGIONS } from '../../constants';
 import AiModelLogo from '../ui/AiModelLogo';
 import { showToast } from '../../stores/uiStore';
 import { logger } from '../../services/LoggerService';
@@ -136,6 +136,33 @@ function buildChannelStyleSection(
   return parts.join('\n');
 }
 
+/**
+ * [#294] 해외 타겟 지역이 선택된 경우, AI 프롬프트에 삽입할 지역/언어 지시 섹션 생성
+ * - 한국(ko) 선택 시 빈 문자열 반환 (기존 동작 유지)
+ */
+function buildTargetRegionSection(region: ScriptTargetRegion): string {
+  if (region === 'ko') return '';
+  const info = SCRIPT_TARGET_REGIONS.find(r => r.id === region);
+  if (!info) return '';
+  return `\n\n[타겟 지역 및 언어 — 반드시 준수]
+- 타겟 지역: ${info.label} (${info.langLabel})
+- 출력 언어: 반드시 ${info.lang}(${info.langLabel})로 작성하세요. 한국어로 작성하지 마세요.
+- 자료 검색: ${info.label} 지역의 자료, 사례, 뉴스, 통계를 기반으로 작성하세요. 한국 자료를 기반으로 하지 마세요.
+- 문화 반영: ${info.label} 시청자의 문화, 관습, 유머 코드, 표현 방식을 자연스럽게 반영하세요.
+- 현지화: 해당 지역에서 통용되는 단위(도량형, 화폐), 인물, 브랜드, 미디어 레퍼런스를 사용하세요.
+→ 위 지시를 반드시 지켜주세요. 대본 전체를 ${info.lang}로 작성하는 것이 최우선입니다.`;
+}
+
+/**
+ * [#294] 해외 타겟 시 시스템 프롬프트의 기본 역할 지시를 해당 언어로 보강
+ */
+function getRegionSystemPrefix(region: ScriptTargetRegion): string {
+  if (region === 'ko') return '';
+  const info = SCRIPT_TARGET_REGIONS.find(r => r.id === region);
+  if (!info) return '';
+  return `IMPORTANT: You MUST write the entire script in ${info.langLabel}. Do NOT write in Korean. All content, narration, and expressions must be in ${info.langLabel}, naturally reflecting ${info.label} culture and audience preferences.\n\n`;
+}
+
 const FORMAT_BUTTONS: { id: VideoFormat; label: string; color: string }[] = [
   { id: VideoFormat.LONG, label: '롱폼', color: 'bg-blue-600' },
   { id: VideoFormat.SHORT, label: '숏폼', color: 'bg-emerald-600' },
@@ -181,6 +208,7 @@ export default function ScriptWriterTab() {
     videoAnalysisStyles, addVideoAnalysisStyle, removeVideoAnalysisStyle,
     scriptAiModel, setScriptAiModel,
     referenceComments,
+    targetRegion, setTargetRegion,
   } = useScriptWriterStore();
 
   const setActiveTab = useNavigationStore((s) => s.setActiveTab);
@@ -479,7 +507,11 @@ ${scriptText}`;
     // [FIX #159] 채널 스타일 데이터를 종합하여 프롬프트에 반영
     const channelStyleSection = buildChannelStyleSection(channelGuideline, channelScripts, benchmarkScript, referenceComments);
 
-    const systemPrompt = `당신은 유튜브 바이럴 영상 전문 대본 작가입니다.
+    // [#294] 해외 타겟 지역 프롬프트 섹션
+    const regionSection = buildTargetRegionSection(targetRegion);
+    const regionSystemPrefix = getRegionSystemPrefix(targetRegion);
+
+    const systemPrompt = `${regionSystemPrefix}당신은 유튜브 바이럴 영상 전문 대본 작가입니다.
 주어진 소재와 본능 기제를 바탕으로 완성된 대본을 작성합니다.
 훅(도입부)에서 선택된 본능 기제가 시청자 심리를 강하게 자극하도록 설계하세요.${shortsSystemRule}${channelStyleSection ? '\n\n' + channelStyleSection : ''}`;
 
@@ -499,7 +531,7 @@ ${instinctPrompt}
 - 위 소재와 본능 기제를 결합한 완성 대본을 작성하세요
 - 대본 길이: 반드시 ${targetCharCount}자 이상 작성 (목표 분량에 도달할 때까지 내용을 충분히 전개하세요)
 - 훅(첫 3초)은 반드시 "${topic.hook}"을 기반으로 작성
-- 대본 형식: 나레이션 대본 (화자 지시 없이 내레이션만)${shortsRequirement}
+- 대본 형식: 나레이션 대본 (화자 지시 없이 내레이션만)${shortsRequirement}${regionSection}
 
 대본만 출력하세요. 제목이나 부가 설명 없이 본문만.`;
 
@@ -557,7 +589,7 @@ ${instinctPrompt}
       genAbortRef.current = null;
       finishGeneration();
     }
-  }, [instinctIds, targetCharCount, contentFormat, shortsSeconds, channelGuideline, channelScripts, benchmarkScript, referenceComments, startGeneration, finishGeneration, setGeneratedScript, setFinalScript, scriptAiModel]);
+  }, [instinctIds, targetCharCount, contentFormat, shortsSeconds, channelGuideline, channelScripts, benchmarkScript, referenceComments, startGeneration, finishGeneration, setGeneratedScript, setFinalScript, scriptAiModel, targetRegion]);
 
   // #158: 빌트인 + 영상분석 스타일 병합
   const allStylePresets: ScriptStylePreset[] = useMemo(() => {
@@ -598,10 +630,14 @@ ${instinctPrompt}
     // [FIX #159] 채널 스타일 데이터를 종합하여 프롬프트에 반영 (fullGuidelineText + 대본 샘플 포함)
     const channelStyleSection = buildChannelStyleSection(channelGuideline, channelScripts, benchmarkScript, referenceComments);
 
+    // [#294] 해외 타겟 지역 프롬프트 섹션
+    const regionSection = buildTargetRegionSection(targetRegion);
+    const regionSystemPrefix = getRegionSystemPrefix(targetRegion);
+
     // [FIX #170] 선택된 스타일 프리셋의 시스템 프롬프트를 생성 시 반영
     const activePreset = selectedStyleId ? allStylePresets.find(p => p.id === selectedStyleId) : null;
 
-    const baseSystemPrompt = `당신은 전문 영상 대본 작가입니다. 사용자의 요청에 따라 완성도 높은 ${isShorts ? '유튜브 쇼츠' : '영상'} 대본을 생성합니다.
+    const baseSystemPrompt = `${regionSystemPrefix}당신은 전문 영상 대본 작가입니다. 사용자의 요청에 따라 완성도 높은 ${isShorts ? '유튜브 쇼츠' : '영상'} 대본을 생성합니다.
 
 핵심 원칙:
 1. 대본에 포함되는 정보, 사례, 통계, 사건은 반드시 실제로 존재하는 것이어야 합니다.
@@ -626,7 +662,7 @@ ${instinctPrompt}
 - 제목: ${title}
 - 줄거리: ${synopsis}
 - 포맷: ${isShorts ? `쇼츠 (${shortsSeconds}초 이내, 세로형)` : '롱폼'}
-- 분량: ${formatLabel} (반드시 이 분량을 채우세요. 목표 글자수에 도달할 때까지 내용을 충분히 전개하세요)${instinctSection}${channelStyleSection ? '\n\n' + channelStyleSection : ''}${topicInstinctSection}
+- 분량: ${formatLabel} (반드시 이 분량을 채우세요. 목표 글자수에 도달할 때까지 내용을 충분히 전개하세요)${instinctSection}${channelStyleSection ? '\n\n' + channelStyleSection : ''}${topicInstinctSection}${regionSection}
 
 대본만 출력하세요. 제목이나 부가 설명 없이 본문만.`;
 
@@ -707,7 +743,7 @@ ${instinctPrompt}
       finishGeneration();
     }
   }, [title, synopsis, targetCharCount, contentFormat, shortsSeconds, instinctIds, channelGuideline, channelScripts, benchmarkScript, referenceComments,
-    selectedTopic, selectedStyleId, allStylePresets, startGeneration, finishGeneration, setGeneratedScript, setFinalScript, scriptAiModel]);
+    selectedTopic, selectedStyleId, allStylePresets, startGeneration, finishGeneration, setGeneratedScript, setFinalScript, scriptAiModel, targetRegion]);
 
   const handleCancelGeneration = useCallback(() => {
     genAbortRef.current?.abort();
@@ -1266,6 +1302,29 @@ ${instinctPrompt}
                 </select>
               </div>
             )}
+          </div>
+
+          {/* [#294] 타겟 지역 선택 */}
+          <div className="mb-3 flex items-center gap-3">
+            <span className="text-sm text-gray-400 flex-shrink-0">🌍 타겟</span>
+            <select
+              value={targetRegion}
+              onChange={(e) => setTargetRegion(e.target.value as ScriptTargetRegion)}
+              className="bg-gray-800 text-gray-200 text-sm rounded-lg border border-gray-700
+                px-3 py-1.5 focus:outline-none focus:border-violet-500/50 min-w-[140px]"
+            >
+              {SCRIPT_TARGET_REGIONS.map(r => (
+                <option key={r.id} value={r.id}>{r.flag} {r.label} ({r.lang})</option>
+              ))}
+            </select>
+            {targetRegion !== 'ko' && (() => {
+              const info = SCRIPT_TARGET_REGIONS.find(r => r.id === targetRegion);
+              return info ? (
+                <span className="text-xs text-cyan-400/80 font-medium">
+                  {info.lang}로 작성 · {info.label} 자료 기반
+                </span>
+              ) : null;
+            })()}
           </div>
 
           <div className="flex items-center gap-3 bg-gray-800/40 rounded-xl px-4 py-3 border border-gray-700/40">

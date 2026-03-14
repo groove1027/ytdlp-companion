@@ -8,6 +8,7 @@ import {
   VideoFormat,
   VideoAnalysisStylePreset,
   ScriptAiModel,
+  ScriptTargetRegion,
 } from '../types';
 import { logger } from '../services/LoggerService';
 
@@ -21,7 +22,7 @@ const PERSISTED_KEYS = [
   'generatedScript', 'styledScript', 'styledStyleName', 'finalScript',
   'videoFormat', 'longFormSplitType', 'smartSplit', 'targetCharCount',
   'splitResult', 'activeStep', 'videoAnalysisStyles', 'scriptAiModel',
-  'referenceComments',
+  'referenceComments', 'targetRegion',
 ] as const;
 
 type PersistedKey = typeof PERSISTED_KEYS[number];
@@ -105,6 +106,8 @@ interface ScriptWriterStore {
   scriptAiModel: ScriptAiModel;
   /** [#216] 사용자 수동 댓글 붙여넣기 — 채널 스타일 대본 생성 시 AI 참고 자료 */
   referenceComments: string;
+  /** [#294] 대본 타겟 지역 — 해외 타겟 시 해당 지역 언어·문화·자료 기반 대본 생성 */
+  targetRegion: ScriptTargetRegion;
 
   // Actions
   setInputMode: (mode: ScriptInputMode) => void;
@@ -144,6 +147,8 @@ interface ScriptWriterStore {
   setScriptAiModel: (model: ScriptAiModel) => void;
   /** [#216] 댓글 붙여넣기 설정 */
   setReferenceComments: (comments: string) => void;
+  /** [#294] 대본 타겟 지역 변경 */
+  setTargetRegion: (region: ScriptTargetRegion) => void;
   /** 새 입력(파일 업로드 등) 시 이전 대본 콘텐츠만 초기화 — 포맷 설정은 보존 */
   clearPreviousContent: () => void;
   reset: () => void;
@@ -179,6 +184,7 @@ const INITIAL_STATE = {
   engagementBoosterOpen: false,
   scriptAiModel: ScriptAiModel.GEMINI_PRO,
   referenceComments: '',
+  targetRegion: 'ko' as ScriptTargetRegion,
 };
 
 // localStorage에서 이전 드래프트 복원
@@ -251,6 +257,7 @@ export const useScriptWriterStore = create<ScriptWriterStore>((set) => ({
   setEngagementBoosterOpen: (open) => set({ engagementBoosterOpen: open }),
   setScriptAiModel: (model) => set({ scriptAiModel: model }),
   setReferenceComments: (comments) => set({ referenceComments: comments }),
+  setTargetRegion: (region) => set({ targetRegion: region }),
 
   // 새 파일 업로드 시 이전 대본 콘텐츠를 초기화하되, 포맷/분량 설정은 유지
   clearPreviousContent: () => {

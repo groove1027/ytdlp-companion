@@ -832,6 +832,12 @@ export type ChannelInputSource = 'youtube' | 'file' | 'manual';
 /** 콘텐츠 지역 구분 (국내/해외) */
 export type ContentRegion = 'domestic' | 'overseas';
 
+/** 대본 타겟 지역 (대본 생성 시 해당 지역 언어·문화 반영) */
+export type ScriptTargetRegion =
+  | 'ko' | 'en-us' | 'en-uk' | 'ja' | 'zh-cn' | 'zh-tw'
+  | 'es' | 'pt-br' | 'de' | 'fr' | 'hi' | 'ar'
+  | 'vi' | 'th' | 'id';
+
 /** 업로드된 파일 파싱 결과 */
 export interface ParsedFileEntry {
   id: string;

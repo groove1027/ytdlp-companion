@@ -1,5 +1,5 @@
 
-import { AspectRatio, VoiceName, ImageModel, VideoFormat, VideoModel, DialogueTone, ScriptAiModel } from "./types";
+import { AspectRatio, VoiceName, ImageModel, VideoFormat, VideoModel, DialogueTone, ScriptAiModel, ScriptTargetRegion } from "./types";
 
 // [2026-03-02] Real-time Pricing (조사 기반 실시간 반영)
 export const PRICING = {
@@ -93,6 +93,25 @@ export const SCRIPT_AI_MODELS = [
     outputPer1M: PRICING.CLAUDE_OPUS_OUTPUT_PER_1M,
   },
 ] as const;
+
+/** 대본 타겟 지역 선택지 — 해외 타겟 시 해당 지역 언어·문화 반영 (#294) */
+export const SCRIPT_TARGET_REGIONS: { id: ScriptTargetRegion; label: string; flag: string; lang: string; langLabel: string; searchLang: string }[] = [
+  { id: 'ko',    label: '한국',            flag: '🇰🇷', lang: '한국어',       langLabel: 'Korean',       searchLang: 'ko' },
+  { id: 'en-us', label: '북미',            flag: '🇺🇸', lang: '영어',         langLabel: 'English',      searchLang: 'en' },
+  { id: 'en-uk', label: '영국',            flag: '🇬🇧', lang: '영어',         langLabel: 'English (UK)', searchLang: 'en' },
+  { id: 'ja',    label: '일본',            flag: '🇯🇵', lang: '일본어',       langLabel: 'Japanese',     searchLang: 'ja' },
+  { id: 'zh-cn', label: '중국',            flag: '🇨🇳', lang: '중국어(간체)',  langLabel: 'Chinese (Simplified)',  searchLang: 'zh' },
+  { id: 'zh-tw', label: '대만',            flag: '🇹🇼', lang: '중국어(번체)',  langLabel: 'Chinese (Traditional)', searchLang: 'zh-TW' },
+  { id: 'es',    label: '스페인/중남미',    flag: '🇪🇸', lang: '스페인어',     langLabel: 'Spanish',      searchLang: 'es' },
+  { id: 'pt-br', label: '브라질',          flag: '🇧🇷', lang: '포르투갈어',   langLabel: 'Portuguese',   searchLang: 'pt' },
+  { id: 'de',    label: '독일',            flag: '🇩🇪', lang: '독일어',       langLabel: 'German',       searchLang: 'de' },
+  { id: 'fr',    label: '프랑스',          flag: '🇫🇷', lang: '프랑스어',     langLabel: 'French',       searchLang: 'fr' },
+  { id: 'hi',    label: '인도',            flag: '🇮🇳', lang: '힌디어',       langLabel: 'Hindi',        searchLang: 'hi' },
+  { id: 'ar',    label: '중동',            flag: '🇸🇦', lang: '아랍어',       langLabel: 'Arabic',       searchLang: 'ar' },
+  { id: 'vi',    label: '베트남',          flag: '🇻🇳', lang: '베트남어',     langLabel: 'Vietnamese',   searchLang: 'vi' },
+  { id: 'th',    label: '태국',            flag: '🇹🇭', lang: '태국어',       langLabel: 'Thai',         searchLang: 'th' },
+  { id: 'id',    label: '인도네시아',      flag: '🇮🇩', lang: '인도네시아어', langLabel: 'Indonesian',   searchLang: 'id' },
+];
 
 export const IMAGE_MODELS = [
   // { id: ImageModel.FLASH, label: '🍌 Gemini 2.5 Flash ($0.02/장)' },
