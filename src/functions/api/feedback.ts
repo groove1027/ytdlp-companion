@@ -8,6 +8,7 @@ const REPO_NAME = 'all-in-one-production';
 const LABEL_MAP: Record<string, string> = {
   bug: 'bug',
   error: 'bug',
+  auth: 'login/signup',
   suggestion: 'enhancement',
   other: 'feedback',
 };
@@ -15,6 +16,7 @@ const LABEL_MAP: Record<string, string> = {
 const TYPE_EMOJI: Record<string, string> = {
   bug: '\uD83D\uDC1B',
   error: '\uD83D\uDC1B',
+  auth: '\uD83D\uDD12',
   suggestion: '\uD83D\uDCA1',
   other: '\uD83D\uDCDD',
 };
@@ -127,7 +129,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       debugLogUrl?: string;
     };
 
-    const titlePrefix = data.type === 'bug' || data.type === 'error' ? 'Bug' : data.type === 'suggestion' ? 'Feature' : 'Feedback';
+    const titlePrefix = data.type === 'bug' || data.type === 'error' ? 'Bug' : data.type === 'auth' ? 'Auth' : data.type === 'suggestion' ? 'Feature' : 'Feedback';
     const titleText = data.message.replace(/\n/g, ' ').substring(0, 80);
     const title = `[${titlePrefix}] ${titleText}${data.message.length > 80 ? '...' : ''}`;
 

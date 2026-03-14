@@ -10,6 +10,7 @@ import type { FeedbackData, FeedbackScreenshot } from '../types';
 
 const FEEDBACK_TYPES = [
     { type: FeedbackType.BUG, icon: '\uD83D\uDC1B', label: '버그/오류' },
+    { type: FeedbackType.AUTH, icon: '\uD83D\uDD12', label: '로그인/가입' },
     { type: FeedbackType.SUGGESTION, icon: '\uD83D\uDCA1', label: '제안' },
     { type: FeedbackType.OTHER, icon: '\uD83D\uDCDD', label: '기타' },
 ] as const;
@@ -75,7 +76,8 @@ const FeedbackModal: React.FC = () => {
     const userEmail = savedUser?.email || '';
     const userDisplayName = savedUser?.displayName || '';
 
-    // 모달 열릴 때 localStorage에서 임시저장 복원
+    // 모달 열릴 때 localStorage에서 임시저장 복원 + defaultType 반영
+    const feedbackDefaultType = useUIStore((s) => s.feedbackDefaultType);
     useEffect(() => {
         if (showFeedbackModal) {
             const draft = loadDraft();
@@ -83,9 +85,11 @@ const FeedbackModal: React.FC = () => {
                 setSelectedType(draft.selectedType);
                 setMessage(draft.message);
                 setEmail(draft.email);
+            } else if (feedbackDefaultType) {
+                setSelectedType(feedbackDefaultType as FeedbackType);
             }
         }
-    }, [showFeedbackModal]);
+    }, [showFeedbackModal, feedbackDefaultType]);
 
     // 입력 내용이 변경될 때마다 localStorage에 임시저장
     useEffect(() => {
@@ -347,30 +351,47 @@ const FeedbackModal: React.FC = () => {
                     {/* 유형 선택 */}
                     <div>
                         <label className="text-sm font-bold text-gray-300 uppercase tracking-wider mb-2 block">유형 선택</label>
-                        <div className="grid grid-cols-3 gap-2">
-                            {FEEDBACK_TYPES.map((ft) => (
-                                <button
-                                    key={ft.type}
-                                    onClick={() => setSelectedType(ft.type)}
-                                    className={`py-2.5 rounded-lg text-base font-bold transition-all border ${
-                                        selectedType === ft.type
-                                            ? ft.type === FeedbackType.BUG
-                                                ? 'bg-red-600/30 border-red-400 text-red-300 shadow-lg shadow-red-500/10'
-                                                : ft.type === FeedbackType.SUGGESTION
-                                                    ? 'bg-emerald-600/30 border-emerald-400 text-emerald-300 shadow-lg shadow-emerald-500/10'
-                                                    : 'bg-blue-600/30 border-blue-400 text-blue-300 shadow-lg shadow-blue-500/10'
-                                            : 'bg-gray-900 border-gray-600 text-gray-400 hover:border-gray-500 hover:text-gray-200'
-                                    }`}
-                                >
-                                    {ft.icon} {ft.label}
-                                </button>
-                            ))}
+                        <div className="grid grid-cols-4 gap-2">
+                            {FEEDBACK_TYPES.map((ft) => {
+                                const activeClass = ft.type === FeedbackType.BUG
+                                    ? 'bg-red-600/30 border-red-400 text-red-300 shadow-lg shadow-red-500/10'
+                                    : ft.type === FeedbackType.AUTH
+                                        ? 'bg-amber-600/30 border-amber-400 text-amber-300 shadow-lg shadow-amber-500/10'
+                                        : ft.type === FeedbackType.SUGGESTION
+                                            ? 'bg-emerald-600/30 border-emerald-400 text-emerald-300 shadow-lg shadow-emerald-500/10'
+                                            : 'bg-blue-600/30 border-blue-400 text-blue-300 shadow-lg shadow-blue-500/10';
+                                return (
+                                    <button
+                                        key={ft.type}
+                                        onClick={() => setSelectedType(ft.type)}
+                                        className={`py-2.5 rounded-lg text-sm font-bold transition-all border ${
+                                            selectedType === ft.type
+                                                ? activeClass
+                                                : 'bg-gray-900 border-gray-600 text-gray-400 hover:border-gray-500 hover:text-gray-200'
+                                        }`}
+                                    >
+                                        {ft.icon} {ft.label}
+                                    </button>
+                                );
+                            })}
                         </div>
                     </div>
 
                     {/* 내용 입력 */}
                     <div>
                         <label className="text-sm font-bold text-gray-300 uppercase tracking-wider mb-2 block">내용</label>
+
+                        {/* 로그인/가입 선택 시 안내 문구 */}
+                        {selectedType === FeedbackType.AUTH && (
+                            <div className="mb-3 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30">
+                                <p className="text-amber-300 text-sm font-bold mb-2">아래 내용을 포함해 주시면 빠르게 해결해 드릴 수 있어요:</p>
+                                <ul className="text-amber-200/90 text-sm space-y-1 ml-1">
+                                    <li className="flex gap-2"><span className="text-amber-400 flex-shrink-0">1.</span><span><span className="text-amber-300 font-bold">어떤 방식</span>으로 가입/로그인 시도했는지 (이메일, Google, 카카오, 네이버)</span></li>
+                                    <li className="flex gap-2"><span className="text-amber-400 flex-shrink-0">2.</span><span><span className="text-amber-300 font-bold">화면에 나온 에러 메시지</span>가 있다면 그대로 알려주세요</span></li>
+                                    <li className="flex gap-2"><span className="text-amber-400 flex-shrink-0">3.</span><span><span className="text-amber-300 font-bold">스크린샷</span>을 첨부해주시면 더 빠른 해결이 가능합니다</span></li>
+                                </ul>
+                            </div>
+                        )}
 
                         {/* 버그/오류 선택 시 안내 문구 */}
                         {selectedType === FeedbackType.BUG && (
@@ -399,9 +420,11 @@ const FeedbackModal: React.FC = () => {
                             onChange={(e) => setMessage(e.target.value)}
                             placeholder={selectedType === FeedbackType.BUG
                                 ? '[탭/모드] → [기능/버튼] → [증상] 순서로 알려주세요...\n예: 대본작성 탭 → AI 생성 버튼 → 클릭해도 반응이 없습니다'
-                                : selectedType === FeedbackType.SUGGESTION
-                                    ? '어떤 기능이 추가되면 좋겠는지 알려주세요...'
-                                    : '자유롭게 의견을 작성해 주세요...'
+                                : selectedType === FeedbackType.AUTH
+                                    ? '예: 이메일로 회원가입하려는데 "유효하지 않은 초대 코드" 에러가 나와요'
+                                    : selectedType === FeedbackType.SUGGESTION
+                                        ? '어떤 기능이 추가되면 좋겠는지 알려주세요...'
+                                        : '자유롭게 의견을 작성해 주세요...'
                             }
                             className="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-base text-white placeholder-gray-400 resize-none focus:border-blue-500 focus:outline-none transition-colors"
                             rows={4}
