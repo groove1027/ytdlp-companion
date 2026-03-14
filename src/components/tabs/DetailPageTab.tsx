@@ -2,6 +2,8 @@ import React, { useState, useCallback, Suspense, lazy } from 'react';
 import { evolinkChat, evolinkGenerateImage } from '../../services/evolinkService';
 import { uploadMediaToHosting } from '../../services/uploadService';
 import { showToast } from '../../stores/uiStore';
+import { useCostStore } from '../../stores/costStore';
+import { PRICING } from '../../constants';
 import { logger } from '../../services/LoggerService';
 import { useElapsedTimer, formatElapsed } from '../../hooks/useElapsedTimer';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
@@ -155,6 +157,7 @@ const EmptyStepPreview: React.FC<{ step: Step }> = ({ step }) => {
 
 const DetailPageTab: React.FC = () => {
   const { requireAuth } = useAuthGuard();
+  const addCost = useCostStore(s => s.addCost);
   const [subTab, setSubTab] = useState<SubTab>('detail');
   const [step, setStep] = useState<Step>(1);
 
@@ -424,6 +427,7 @@ const DetailPageTab: React.FC = () => {
         const fullPrompt = `High-quality vertical 9:16 e-commerce product detail page image. ${seg.visualPrompt}. The product is "${productName}". Render Korean text "${seg.keyMessage}" prominently with clean, modern typography. Professional commercial photography style with clean background.${koreanContext}`;
         const allImageUrls = [...(imageUrls || []), ...designRefUrls];
         const resultUrl = await evolinkGenerateImage(fullPrompt, '9:16', '2K', allImageUrls.length > 0 ? allImageUrls : undefined);
+        addCost(PRICING.IMAGE_GENERATION, 'image');
         completed++;
         setGenerationProgress(Math.round((completed / segments.length) * 100));
         setSegments(prev => prev.map((s, idx) => idx === i ? { ...s, imageUrl: resultUrl, isGenerating: false, generationStatus: undefined } : s));
@@ -436,7 +440,7 @@ const DetailPageTab: React.FC = () => {
     }
     setIsGeneratingAll(false);
     showToast('이미지 생성 완료!');
-  }, [requireAuth, segments, referenceUrls, designRefUrls, productName]);
+  }, [requireAuth, segments, referenceUrls, designRefUrls, productName, addCost]);
 
   const handleRegenerateOne = useCallback(async (segIdx: number) => {
     const seg = segments[segIdx];
@@ -447,12 +451,13 @@ const DetailPageTab: React.FC = () => {
       const koreanContext = seg.koreanPrompt ? ` User's Korean description for reference: "${seg.koreanPrompt}".` : '';
       const fullPrompt = `High-quality vertical 9:16 e-commerce product detail page image. ${seg.visualPrompt}. The product is "${productName}". Render Korean text "${seg.keyMessage}" prominently with clean, modern typography. Professional commercial photography style.${koreanContext}`;
       const resultUrl = await evolinkGenerateImage(fullPrompt, '9:16', '2K', allImageUrls.length > 0 ? allImageUrls : undefined);
+      addCost(PRICING.IMAGE_GENERATION, 'image');
       setSegments(prev => prev.map((s, idx) => idx === segIdx ? { ...s, imageUrl: resultUrl, isGenerating: false, generationStatus: undefined } : s));
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setSegments(prev => prev.map((s, idx) => idx === segIdx ? { ...s, isGenerating: false, generationStatus: `실패: ${msg.substring(0, 60)}` } : s));
     }
-  }, [segments, referenceUrls, designRefUrls, productName]);
+  }, [segments, referenceUrls, designRefUrls, productName, addCost]);
 
   // ============================================================
   // Thumbnail handlers
@@ -476,6 +481,7 @@ const DetailPageTab: React.FC = () => {
       try {
         const prompt = `A high-quality 1:1 square e-commerce product thumbnail image. Style: ${styleLabel}, modern and appealing. Product: "${productName}". ${elementLabel !== '제품만' ? `Include ${elementLabel} interacting with the product.` : 'Focus only on the product.'} ${textPart} Variation ${i + 1} of ${thumbCount}. Professional commercial photography, bright lighting, clean composition.`;
         const url = await evolinkGenerateImage(prompt, '1:1', '2K', imageUrls);
+        addCost(PRICING.IMAGE_GENERATION, 'image');
         results.push(url);
         setThumbResults([...results]);
       } catch (e) {
@@ -486,7 +492,7 @@ const DetailPageTab: React.FC = () => {
     }
     setIsGeneratingThumb(false);
     showToast('썸네일 생성 완료!');
-  }, [requireAuth, productName, thumbStyle, thumbElement, thumbTextPosition, thumbTextOverlay, thumbCount, referenceUrls]);
+  }, [requireAuth, productName, thumbStyle, thumbElement, thumbTextPosition, thumbTextOverlay, thumbCount, referenceUrls, addCost]);
 
   // ============================================================
   // Studio transform handler
@@ -502,6 +508,7 @@ const DetailPageTab: React.FC = () => {
       try {
         const prompt = `Professional product photography in a clean white studio. Transform this product photo into a high-end e-commerce product image. White seamless background, professional studio lighting with soft diffused shadows, no lens distortion. Product centered, well-lit, subtle reflection on glossy surface. Color-accurate, commercial catalog quality. Suitable for Coupang/Naver Smart Store listing. Remove any cluttered background completely.`;
         const url = await evolinkGenerateImage(prompt, '1:1', '2K', [refUrl]);
+        addCost(PRICING.IMAGE_GENERATION, 'image');
         results.push(url);
         setStudioResults([...results]);
       } catch (e) {
@@ -512,7 +519,7 @@ const DetailPageTab: React.FC = () => {
     }
     setIsGeneratingStudio(false);
     showToast('스튜디오 변환 완료!');
-  }, [requireAuth, referenceUrls]);
+  }, [requireAuth, referenceUrls, addCost]);
 
   // ============================================================
   // Card news handlers
@@ -573,6 +580,7 @@ const DetailPageTab: React.FC = () => {
       try {
         const prompt = `A sleek, modern card news image for Instagram/social media. ${seg.visualPrompt}. Render Korean headline "${seg.headline}" prominently at the top with bold, eye-catching typography. Include body text "${seg.bodyText}" below in clean, readable font. Product: "${productName}". Clean magazine-style layout, modern colors, professional graphic design quality.`;
         const url = await evolinkGenerateImage(prompt, cardNewsFormat, '2K', imageUrls);
+        addCost(PRICING.IMAGE_GENERATION, 'image');
         completed++;
         setCardNewsProgress(Math.round((completed / cardNewsSegments.length) * 100));
         setCardNewsSegments(prev => prev.map((s, idx) => idx === i ? { ...s, imageUrl: url, isGenerating: false, generationStatus: undefined } : s));
@@ -585,7 +593,7 @@ const DetailPageTab: React.FC = () => {
     }
     setIsCardNewsGenerating(false);
     showToast('카드뉴스 생성 완료!');
-  }, [requireAuth, cardNewsSegments, cardNewsFormat, referenceUrls, productName]);
+  }, [requireAuth, cardNewsSegments, cardNewsFormat, referenceUrls, productName, addCost]);
 
   const handleCardNewsRegenerateOne = useCallback(async (segIdx: number) => {
     const seg = cardNewsSegments[segIdx];
@@ -595,12 +603,13 @@ const DetailPageTab: React.FC = () => {
       const imageUrls = referenceUrls.length > 0 ? referenceUrls : undefined;
       const prompt = `A sleek, modern card news image for Instagram/social media. ${seg.visualPrompt}. Render Korean headline "${seg.headline}" prominently at the top with bold, eye-catching typography. Include body text "${seg.bodyText}" below in clean, readable font. Product: "${productName}". Clean magazine-style layout, modern colors, professional graphic design quality.`;
       const url = await evolinkGenerateImage(prompt, cardNewsFormat, '2K', imageUrls);
+      addCost(PRICING.IMAGE_GENERATION, 'image');
       setCardNewsSegments(prev => prev.map((s, idx) => idx === segIdx ? { ...s, imageUrl: url, isGenerating: false, generationStatus: undefined } : s));
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setCardNewsSegments(prev => prev.map((s, idx) => idx === segIdx ? { ...s, isGenerating: false, generationStatus: `실패: ${msg.substring(0, 60)}` } : s));
     }
-  }, [cardNewsSegments, referenceUrls, productName, cardNewsFormat]);
+  }, [cardNewsSegments, referenceUrls, productName, cardNewsFormat, addCost]);
 
   // ============================================================
   // Common helpers
@@ -1292,24 +1301,50 @@ const DetailPageTab: React.FC = () => {
                   </div>
                   <div className="space-y-3">
                     {cardNewsSegments.map((seg, idx) => (
-                      <div key={seg.id} className="bg-gray-800/60 border border-gray-700 rounded-xl p-3">
-                        <div className="flex items-start gap-3">
-                          <span className="w-7 h-7 flex items-center justify-center rounded-lg bg-teal-600/20 text-teal-400 text-xs font-bold border border-teal-500/30 shrink-0">{seg.cardNumber}</span>
-                          <div className="flex-1 min-w-0">
-                            <input value={seg.headline} onChange={e => setCardNewsSegments(prev => prev.map((s, i) => i === idx ? { ...s, headline: e.target.value } : s))} className="w-full bg-transparent text-white text-sm font-bold border-none outline-none mb-1" placeholder="제목" />
-                            <textarea value={seg.bodyText} onChange={e => setCardNewsSegments(prev => prev.map((s, i) => i === idx ? { ...s, bodyText: e.target.value } : s))} rows={2} className="w-full bg-gray-900/50 border border-gray-700 rounded-lg px-2 py-1.5 text-gray-300 text-xs focus:border-teal-500 focus:outline-none resize-none" placeholder="본문" />
+                      <div key={seg.id} className="bg-gray-800/60 border border-gray-700 rounded-xl overflow-hidden">
+                        <div className="p-3">
+                          <div className="flex items-start gap-3">
+                            <span className="w-7 h-7 flex items-center justify-center rounded-lg bg-teal-600/20 text-teal-400 text-xs font-bold border border-teal-500/30 shrink-0">{seg.cardNumber}</span>
+                            <div className="flex-1 min-w-0">
+                              <input value={seg.headline} onChange={e => setCardNewsSegments(prev => prev.map((s, i) => i === idx ? { ...s, headline: e.target.value } : s))} className="w-full bg-transparent text-white text-sm font-bold border-none outline-none mb-1" placeholder="제목" />
+                              <textarea value={seg.bodyText} onChange={e => setCardNewsSegments(prev => prev.map((s, i) => i === idx ? { ...s, bodyText: e.target.value } : s))} rows={2} className="w-full bg-gray-900/50 border border-gray-700 rounded-lg px-2 py-1.5 text-gray-300 text-xs focus:border-teal-500 focus:outline-none resize-none" placeholder="본문" />
+                            </div>
+                            {seg.imageUrl && (
+                              <img src={seg.imageUrl} alt={`card-${seg.cardNumber}`} className="w-16 h-16 rounded-lg object-cover border border-gray-700 shrink-0" />
+                            )}
                           </div>
+                          {seg.generationStatus && <p className="text-xs text-red-400 mt-2">{seg.generationStatus}</p>}
                           {seg.imageUrl && (
-                            <img src={seg.imageUrl} alt={`card-${seg.cardNumber}`} className="w-16 h-16 rounded-lg object-cover border border-gray-700 shrink-0" />
+                            <div className="mt-2 flex gap-2">
+                              <button onClick={() => handleCardNewsRegenerateOne(idx)} disabled={seg.isGenerating} className="text-xs px-2 py-1 bg-teal-600/20 text-teal-400 border border-teal-500/30 rounded hover:bg-teal-600/30 disabled:opacity-50">{seg.isGenerating ? '...' : '재생성'}</button>
+                              <button onClick={() => handleDownloadOne(seg.imageUrl!, `cardnews_${seg.cardNumber}_${productName || 'card'}.png`)} className="text-xs px-2 py-1 bg-gray-700 text-gray-300 rounded hover:bg-gray-600">다운로드</button>
+                            </div>
                           )}
                         </div>
-                        {seg.generationStatus && <p className="text-xs text-red-400 mt-2">{seg.generationStatus}</p>}
-                        {seg.imageUrl && (
-                          <div className="mt-2 flex gap-2">
-                            <button onClick={() => handleCardNewsRegenerateOne(idx)} disabled={seg.isGenerating} className="text-xs px-2 py-1 bg-teal-600/20 text-teal-400 border border-teal-500/30 rounded hover:bg-teal-600/30 disabled:opacity-50">{seg.isGenerating ? '...' : '재생성'}</button>
-                            <button onClick={() => handleDownloadOne(seg.imageUrl!, `cardnews_${seg.cardNumber}_${productName || 'card'}.png`)} className="text-xs px-2 py-1 bg-gray-700 text-gray-300 rounded hover:bg-gray-600">다운로드</button>
+                        {/* 개별 프롬프트 편집 영역 */}
+                        <details className="border-t border-gray-700">
+                          <summary className="px-3 py-2 text-xs text-gray-400 font-bold cursor-pointer hover:text-teal-400 hover:bg-gray-800/60 transition-colors select-none flex items-center gap-1.5">
+                            <svg className="w-3 h-3 transition-transform details-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                            프롬프트 편집 — 카드 {seg.cardNumber}
+                          </summary>
+                          <div className="p-3 space-y-2 bg-gray-900/40">
+                            <div>
+                              <label className="text-xs text-gray-500 font-bold mb-1 block">제목 (한글)</label>
+                              <input value={seg.headline} onChange={e => setCardNewsSegments(prev => prev.map((s, i) => i === idx ? { ...s, headline: e.target.value } : s))} className="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-white text-sm focus:border-teal-500 focus:outline-none" placeholder="카드 제목" />
+                            </div>
+                            <div>
+                              <label className="text-xs text-gray-500 font-bold mb-1 block">본문 (한글)</label>
+                              <textarea value={seg.bodyText} onChange={e => setCardNewsSegments(prev => prev.map((s, i) => i === idx ? { ...s, bodyText: e.target.value } : s))} rows={2} className="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-white text-sm focus:border-teal-500 focus:outline-none resize-none" placeholder="카드 본문" />
+                            </div>
+                            <div>
+                              <label className="text-xs text-gray-500 font-bold mb-1 block">이미지 설명 (수정하면 재생성 시 반영)</label>
+                              <textarea value={seg.visualPrompt} onChange={e => setCardNewsSegments(prev => prev.map((s, i) => i === idx ? { ...s, visualPrompt: e.target.value } : s))} rows={2} className="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-gray-300 text-xs focus:border-teal-500 focus:outline-none resize-none font-mono" placeholder="카드 배경/이미지에 대한 설명" />
+                            </div>
+                            <button onClick={() => handleCardNewsRegenerateOne(idx)} disabled={seg.isGenerating} className={`w-full py-2 rounded-lg text-sm font-bold transition-all ${seg.isGenerating ? 'bg-gray-700 text-gray-500 cursor-not-allowed' : 'bg-teal-600/20 text-teal-400 border border-teal-500/30 hover:bg-teal-600/30'}`}>
+                              {seg.isGenerating ? '재생성 중...' : '이 카드만 재생성'}
+                            </button>
                           </div>
-                        )}
+                        </details>
                       </div>
                     ))}
                   </div>
