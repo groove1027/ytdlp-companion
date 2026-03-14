@@ -175,6 +175,126 @@ export const downloadVideos = async () => {
     setTimeout(() => useUIStore.getState().setToast(null), 4000);
 };
 
+/** 이미지+영상 통합 다운로드: 장면 순서대로, 영상 있으면 mp4, 없으면 이미지 jpg */
+export const downloadAllMedia = async () => {
+    const { scenes, config } = useProjectStore.getState();
+    const { setToast } = useUIStore.getState();
+    const { cropBlobToAspectRatio } = await import('../utils/fileHelpers');
+    const aspectRatio = config?.aspectRatio;
+
+    const mediaScenes = scenes.filter(s => s.videoUrl || s.imageUrl);
+    const total = mediaScenes.length;
+
+    if (total === 0) { setToast({ show: true, message: "다운로드할 미디어가 없습니다." }); setTimeout(() => setToast(null), 3000); return; }
+
+    const { default: JSZip } = await import('jszip');
+    const zip = new JSZip();
+    const linkOnlyScenes: { index: number }[] = [];
+
+    setToast({ show: true, message: "미디어 통합 다운로드 중...", current: 0, total: total });
+
+    let processed = 0;
+    for (const s of mediaScenes) {
+        const sceneIndex = scenes.indexOf(s);
+        const hasVideo = !!s.videoUrl;
+
+        if (hasVideo) {
+            // 영상 우선 다운로드
+            let blob: Blob | null = null;
+            try {
+                const res = await fetch(s.videoUrl!);
+                if (res.ok) blob = await res.blob();
+            } catch { /* CORS blocked */ }
+
+            if (!blob) {
+                let attempts = 0;
+                while (attempts < 3 && !blob) {
+                    try {
+                        attempts++;
+                        const proxyUrl = await uploadRemoteUrlToCloudinary(s.videoUrl!);
+                        const res = await fetch(proxyUrl);
+                        if (res.ok) blob = await res.blob();
+                        else throw new Error(`Proxy status ${res.status}`);
+                    } catch {
+                        if (attempts < 3) await new Promise(r => setTimeout(r, 2000));
+                    }
+                }
+            }
+
+            if (blob) {
+                zip.file(getSafeFilename(sceneIndex, s.scriptText, 'mp4'), blob);
+            } else {
+                // 영상 다운로드 실패 → 이미지로 폴백
+                if (s.imageUrl) {
+                    const imgBlob = await fetchImageBlob(s.imageUrl, aspectRatio, cropBlobToAspectRatio);
+                    if (imgBlob) zip.file(getSafeFilename(sceneIndex, s.scriptText, 'jpg'), imgBlob);
+                }
+                linkOnlyScenes.push({ index: sceneIndex + 1 });
+            }
+        } else if (s.imageUrl) {
+            // 이미지만 있는 장면
+            const imgBlob = await fetchImageBlob(s.imageUrl, aspectRatio, cropBlobToAspectRatio);
+            if (imgBlob) zip.file(getSafeFilename(sceneIndex, s.scriptText, 'jpg'), imgBlob);
+        }
+
+        processed++;
+        setToast(prev => ({ ...prev!, current: processed }));
+    }
+
+    setToast(prev => ({ ...prev!, message: "ZIP 압축 중..." }));
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    const content = await zip.generateAsync({ type: "blob" });
+    const link = document.createElement('a');
+    const _mediaZipUrl = URL.createObjectURL(content);
+    logger.registerBlobUrl(_mediaZipUrl, 'other', 'exportService:downloadAllMedia');
+    link.href = _mediaZipUrl;
+    link.download = `media_all_${Date.now()}.zip`;
+    link.click();
+    logger.unregisterBlobUrl(_mediaZipUrl);
+
+    const videoCount = mediaScenes.filter(s => s.videoUrl).length;
+    const imageOnlyCount = total - videoCount;
+    const failInfo = linkOnlyScenes.length > 0 ? ` (${linkOnlyScenes.length}편 영상 실패→이미지 대체)` : '';
+    setToast({ show: true, message: `통합 다운로드 완료! 영상 ${videoCount}편 + 이미지 ${imageOnlyCount}장${failInfo}` });
+    setTimeout(() => setToast(null), 5000);
+};
+
+/** 이미지 URL을 Blob으로 가져오는 헬퍼 (base64/remote 모두 지원, 비율 크롭 적용) */
+async function fetchImageBlob(
+    imageUrl: string,
+    aspectRatio: string | undefined,
+    cropBlobToAspectRatio: (blob: Blob, ratio: string) => Promise<Blob>
+): Promise<Blob | null> {
+    let blob: Blob | null = null;
+
+    if (imageUrl.startsWith('data:image')) {
+        const arr = imageUrl.split(',');
+        const mime = arr[0].match(/:(.*?);/)?.[1] || 'image/png';
+        const bstr = atob(arr[1]);
+        const u8 = new Uint8Array(bstr.length);
+        for (let i = 0; i < bstr.length; i++) u8[i] = bstr.charCodeAt(i);
+        blob = new Blob([u8], { type: mime });
+    } else {
+        try {
+            const res = await fetch(imageUrl);
+            if (res.ok) blob = await res.blob();
+        } catch { /* direct fetch failed */ }
+        if (!blob) {
+            try {
+                const proxyUrl = await uploadRemoteUrlToCloudinary(imageUrl);
+                const res = await fetch(proxyUrl);
+                if (res.ok) blob = await res.blob();
+            } catch { /* proxy also failed */ }
+        }
+    }
+
+    if (blob && aspectRatio) {
+        blob = await cropBlobToAspectRatio(blob, aspectRatio);
+    }
+    return blob;
+}
+
 export const downloadThumbnails = async () => {
     const { thumbnails } = useProjectStore.getState();
 

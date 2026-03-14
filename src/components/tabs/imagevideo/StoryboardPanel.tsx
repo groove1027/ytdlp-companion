@@ -1592,6 +1592,21 @@ const StoryboardPanel: React.FC = () => {
                   type="button"
                   onClick={async () => {
                     setShowDownloadDropdown(false);
+                    const { downloadAllMedia } = await import('../../../services/exportService');
+                    await downloadAllMedia();
+                  }}
+                  disabled={completedImages === 0 && completedVideos === 0}
+                  className="w-full text-left px-4 py-2.5 text-sm text-white hover:bg-gradient-to-r hover:from-orange-600/20 hover:to-blue-600/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-2 font-bold"
+                >
+                  <span className="w-2 h-2 rounded-full bg-gradient-to-r from-orange-400 to-blue-400" />
+                  📦 통합 다운로드
+                  <span className="ml-auto text-[11px] text-gray-400">{completedImages + completedVideos}개</span>
+                </button>
+                <div className="border-t border-gray-700" />
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setShowDownloadDropdown(false);
                     const { downloadImages } = await import('../../../services/exportService');
                     await downloadImages();
                   }}
