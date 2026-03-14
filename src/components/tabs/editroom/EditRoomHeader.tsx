@@ -73,7 +73,7 @@ const EditRoomHeader: React.FC<EditRoomHeaderProps> = ({
                 className="w-full text-left px-4 py-2.5 hover:bg-gray-700 text-base text-gray-200 flex items-center gap-2 rounded-b-lg"
               >
                 <span className="text-base">🎬</span> MP4 영상
-                <span className="text-sm text-amber-400 bg-amber-900/30 px-1.5 py-0.5 rounded ml-auto">FFmpeg</span>
+                <span className="text-sm text-blue-400 bg-blue-900/30 px-1.5 py-0.5 rounded ml-auto">WebCodecs</span>
               </button>
             </div>
           </>

@@ -31,7 +31,7 @@ const VIDEO_MODEL_LABELS: Record<string, string> = {
 
 const PHASE_LABELS: Record<ExportProgress['phase'], string> = {
   'initializing': '초기화',
-  'loading-ffmpeg': 'FFmpeg 로딩',
+  'loading-ffmpeg': '엔진 준비',
   'writing-assets': '에셋 준비',
   'composing': '합성 중',
   'encoding': '인코딩',
@@ -177,7 +177,7 @@ const EditRoomExportBar: React.FC<EditRoomExportBarProps> = ({
                 className="flex items-center gap-1.5 px-3 py-2 bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 text-white rounded-lg text-sm font-bold border border-blue-400/50 shadow-md transition-colors"
               >
                 🎬 MP4 영상
-                <span className="text-xs text-amber-200/70 bg-amber-800/30 px-1 py-0.5 rounded">FFmpeg</span>
+                <span className="text-xs text-blue-200/70 bg-blue-800/30 px-1 py-0.5 rounded">WebCodecs</span>
               </button>
             )}
           </div>
