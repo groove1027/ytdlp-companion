@@ -8,6 +8,7 @@
 
 ## 🟢 완료된 작업
 
+- [x] **#316 YouTube 영상 다운로드 3회 재시도 + 화질 다운그레이드** — downloadVideoViaProxy에 502/503/504/네트워크 에러 시 3회 지수 백오프 재시도 + 화질 다운그레이드(best→720p→480p→360p) 추가. extractFramesWithFallback에서 streamUrl 없어도 youtubeVideoId만으로 Layer 1 다운로드 시도. YouTube 썸네일 폴백(Layer 3)은 모든 재시도 소진 후에만 최후 수단 (ytdlpApiService.ts, VideoAnalysisRoom.tsx, 2026-03-15)
 - [x] **#316 영상 분석 비주얼·하단 액션 유실 방지** — localStorage persistence의 slimValue가 rawResult를 ''로 날리면 비주얼 칼럼, 하단 버튼, 업로드 가이드가 사라지는 버그. (1) UI 표시 조건을 rawResult→versions.length>0으로 전환 (2) cacheCurrentResult rawResult 없어도 versions 기반 캐시 허용 (3) cacheCurrentResult setTimeout 제거→동기 호출로 autoSave 전 캐시 확보 (4) slimValue rawResult 500자 보존 (5) YouTube 썸네일 자동 재생성 폴백 추가 (VideoAnalysisRoom.tsx, videoAnalysisStore.ts, 2026-03-15)
 - [x] **영상 분석 화자 분리(Speaker Diarization) 통합** — 업로드 영상에서 오디오 추출 → ElevenLabs Scribe diarize=true로 화자별 대사/타이밍 자동 분리 → Gemini 프롬프트에 화자 분리 전사 결과 삽입. 티키타카/컨덴스드/스낵/AllTTS 프리셋에서 활성화. Web Audio API 즉시 디코딩 + captureStream 폴백. (types.ts, transcriptionService.ts, videoAnalysis.ts, VideoAnalysisRoom.tsx, 2026-03-15)
 - [x] **#315 업데이트 시 전체 작업 상태 유실 방지** — 앱 업데이트(배포) 후 자동 새로고침 시 loadProject()가 모든 스토어(10개)를 reset하여 대본·사운드·편집실·채널분석 등 전체 작업 상태가 날아가던 문제. 자동 복원(skipCostRestore=true) 시 모든 스토어 reset을 건너뛰어 작업 상태 완전 보존 (projectStore.ts, 2026-03-15)
