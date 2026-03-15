@@ -158,7 +158,8 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
 
       cacheCurrentResult: (preset) => {
         const { rawResult, versions, thumbnails, resultCache } = get();
-        if (!rawResult) return;
+        // [FIX #316] rawResult가 비어도 versions가 있으면 캐시 허용 — slimValue로 rawResult 유실 시 비주얼 복구 불가 방지
+        if (!rawResult && versions.length === 0) return;
         set({
           resultCache: {
             ...resultCache,
@@ -388,7 +389,8 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
         setItem: (name, value) => {
           const slimValue = () => ({
             ...value,
-            state: { ...value.state, resultCache: {}, rawResult: '' },
+            // [FIX #316] rawResult를 완전히 지우지 않고 첫 500자만 보존 — UI 표시 조건(truthy) 유지
+            state: { ...value.state, resultCache: {}, rawResult: (value.state as any)?.rawResult?.slice(0, 500) || '' },
           });
           // 선제적 크기 체크 — JSON 직렬화 후 추정 크기가 크면 미리 축소
           const json = JSON.stringify(value);

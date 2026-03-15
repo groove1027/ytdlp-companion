@@ -2956,13 +2956,32 @@ const VideoAnalysisRoom: React.FC = () => {
   // 슬롯 목록 초기 로드
   React.useEffect(() => { loadAllSlots(); }, []);
 
-  // [FIX] 탭 전환 후 비주얼 유실 복구 — resultCache에서 thumbnails 복원
+  // [FIX #316] 탭 전환/새로고침 후 비주얼 유실 복구 — resultCache 우선, YouTube 폴백
   React.useEffect(() => {
     const s = useVideoAnalysisStore.getState();
     if (s.versions.length > 0 && s.thumbnails.length === 0 && s.selectedPreset) {
+      // 1차: resultCache에서 thumbnails 복원
       const cached = s.resultCache[s.selectedPreset];
       if (cached?.thumbs?.length > 0) {
         s.setThumbnails(cached.thumbs);
+      } else {
+        // 2차: YouTube URL에서 기본 썸네일 재생성
+        const urls = s.youtubeUrls?.filter((u: string) => u.trim()) || [];
+        if (urls.length > 0 && isYouTubeUrl(urls[0])) {
+          const fallbackFrames: TimedFrame[] = [];
+          for (let vi = 0; vi < urls.length; vi++) {
+            const vid = extractYouTubeVideoId(urls[vi]);
+            if (!vid) continue;
+            const base = `https://img.youtube.com/vi/${vid}`;
+            fallbackFrames.push(
+              { url: `${base}/hqdefault.jpg`, hdUrl: `${base}/maxresdefault.jpg`, timeSec: 0, sourceIndex: vi },
+              { url: `${base}/1.jpg`, hdUrl: `${base}/1.jpg`, timeSec: 15, sourceIndex: vi },
+              { url: `${base}/2.jpg`, hdUrl: `${base}/2.jpg`, timeSec: 30, sourceIndex: vi },
+              { url: `${base}/3.jpg`, hdUrl: `${base}/3.jpg`, timeSec: 45, sourceIndex: vi },
+            );
+          }
+          if (fallbackFrames.length > 0) s.setThumbnails(fallbackFrames);
+        }
       }
     }
   }, []);
@@ -3066,7 +3085,8 @@ const VideoAnalysisRoom: React.FC = () => {
     }
 
     // 현재 결과를 기존 프리셋 캐시에 저장 (전환 전 보존)
-    if (selectedPreset && rawResult) {
+    // [FIX #316] rawResult 유실 시에도 versions 기반 캐시 가능하도록 조건 완화
+    if (selectedPreset && (rawResult || versions.length > 0)) {
       cacheCurrentResult(selectedPreset);
     }
 
@@ -3714,8 +3734,8 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
         }
       }
 
-      // 결과 캐시에 저장 (Zustand 스토어)
-      setTimeout(() => cacheCurrentResult(preset), 100);
+      // [FIX #316] 결과 캐시에 저장 (동기 실행 — setTimeout 제거하여 autoSave 이전에 캐시 확보)
+      cacheCurrentResult(preset);
       notifyAnalysisComplete();
       // 자동 슬롯 저장
       setTimeout(() => useVideoAnalysisStore.getState().saveSlot(), 500);
@@ -4949,7 +4969,8 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       )}
 
       {/* ═══ 인기 쇼츠 음원 추천 (스낵형 전용) ═══ */}
-      {rawResult && selectedPreset === 'snack' && (
+      {/* [FIX #316] rawResult 대신 versions 기반 표시 — rawResult 유실 시에도 동작 */}
+      {versions.length > 0 && selectedPreset === 'snack' && (
         <div className="bg-gray-800/40 rounded-2xl border border-fuchsia-500/20 p-5 space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-bold text-fuchsia-400 flex items-center gap-2">
@@ -4999,14 +5020,16 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       )}
 
       {/* ═══ 업로드 마스터 지침서 ═══ */}
-      {rawResult && versions.length > 0 && (
+      {/* [FIX #316] rawResult 유실 시에도 versions 기반 표시 */}
+      {versions.length > 0 && (
         <Suspense fallback={<div className="h-12 bg-gray-800/40 rounded-2xl animate-pulse" />}>
-          <UploadMasterGuide rawResult={rawResult} versions={versions.map(v => ({ title: v.title, concept: v.concept }))} onAiResultChange={setGuideAiResult} />
+          <UploadMasterGuide rawResult={rawResult || ''} versions={versions.map(v => ({ title: v.title, concept: v.concept }))} onAiResultChange={setGuideAiResult} />
         </Suspense>
       )}
 
       {/* ═══ 하단 액션 ═══ */}
-      {rawResult && (
+      {/* [FIX #316] rawResult 유실 시에도 하단 액션 표시 */}
+      {versions.length > 0 && (
         <div className="flex justify-center gap-3 flex-wrap">
           <button
             type="button"
