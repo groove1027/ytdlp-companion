@@ -196,10 +196,9 @@ export function generateFcpXml(params: {
   // ── 시퀀스 마커 (장면 경계 — Shift+M으로 즉시 네비게이션) ──
   const markers = timings.map((t, i) => {
     const s = scenes[i];
-    const markerName = s.sceneDesc
-      ? `#${i + 1} ${s.sceneDesc.slice(0, 50)}`
-      : `Scene ${i + 1}`;
-    const markerComment = [s.dialogue, s.effectSub, s.audioContent]
+    const mTag = s.mode ? `[${s.mode.replace(/[\[\]]/g, '')}] ` : '';
+    const markerName = `${mTag}#${i + 1} ${(s.audioContent || s.dialogue || '').slice(0, 50)}`;
+    const markerComment = [s.effectSub, s.videoDirection]
       .filter(Boolean).join(' | ').slice(0, 200);
     return `
     <marker>
@@ -214,9 +213,9 @@ export function generateFcpXml(params: {
   const videoClips = timings.map((t, i) => {
     const s = scenes[i];
     const color = modeToLabelColor(s.mode);
-    const clipName = s.sceneDesc
-      ? `Scene ${String(i + 1).padStart(3, '0')}: ${s.sceneDesc.slice(0, 40)}`
-      : `Scene ${String(i + 1).padStart(3, '0')}`;
+    // [FIX #316] 클립 이름에 모드+오디오 내용 표시 — Premiere 타임라인에서 즉시 확인 가능
+    const modeTag = s.mode ? `${s.mode.replace(/[\[\]]/g, '')}` : '';
+    const clipName = `${modeTag ? `[${modeTag}] ` : ''}#${i + 1} ${(s.audioContent || s.dialogue || s.sceneDesc || '').slice(0, 50)}`;
     const fileTag = i === 0
       ? `<file id="file-1">
               <name>${safeFileName}</name>
@@ -268,6 +267,63 @@ export function generateFcpXml(params: {
             </link>
           </clipitem>`;
   }).join('');
+
+  // ── V2 자막 트랙 (generatoritem — 나레이션/대사 텍스트) ──
+  const subtitleClips = timings.filter(t => t.text).map((t, i) => {
+    const s = scenes[timings.indexOf(t)];
+    const mTag = s?.mode ? `[${s.mode.replace(/[\[\]]/g, '')}] ` : '';
+    return `
+          <generatoritem id="sub-${i + 1}">
+            <name>${escXml(`${mTag}${t.text.slice(0, 40)}`)}</name>
+            <duration>${toFrames(t.durationSec)}</duration>
+            <rate><ntsc>${ntscStr}</ntsc><timebase>${timebase}</timebase></rate>
+            <in>0</in>
+            <out>${toFrames(t.durationSec)}</out>
+            <start>${toFrames(t.tlStartSec)}</start>
+            <end>${toFrames(t.tlEndSec)}</end>
+            <enabled>TRUE</enabled>
+            <anamorphic>FALSE</anamorphic>
+            <alphatype>black</alphatype>
+            <effect>
+              <name>Text</name>
+              <effectid>Text</effectid>
+              <effectcategory>Text</effectcategory>
+              <effecttype>generator</effecttype>
+              <mediatype>video</mediatype>
+              <parameter><parameterid>str</parameterid><name>Text</name><value>${escXml(t.text)}</value></parameter>
+              <parameter><parameterid>fontsize</parameterid><name>Font Size</name><value>42</value></parameter>
+              <parameter><parameterid>fontstyle</parameterid><name>Font Style</name><value>1</value></parameter>
+              <parameter><parameterid>fontcolor</parameterid><name>Font Color</name><value>16777215</value></parameter>
+              <parameter><parameterid>origin</parameterid><name>Origin</name><value>0 0.38</value></parameter>
+            </effect>
+          </generatoritem>`;
+  }).join('');
+
+  // ── V3 효과자막 트랙 ──
+  const effectSubClips = timings.filter(t => t.effectText).map((t, i) => `
+          <generatoritem id="fx-${i + 1}">
+            <name>${escXml(t.effectText.slice(0, 40))}</name>
+            <duration>${toFrames(t.durationSec)}</duration>
+            <rate><ntsc>${ntscStr}</ntsc><timebase>${timebase}</timebase></rate>
+            <in>0</in>
+            <out>${toFrames(t.durationSec)}</out>
+            <start>${toFrames(t.tlStartSec)}</start>
+            <end>${toFrames(t.tlEndSec)}</end>
+            <enabled>TRUE</enabled>
+            <anamorphic>FALSE</anamorphic>
+            <effect>
+              <name>Text</name>
+              <effectid>Text</effectid>
+              <effectcategory>Text</effectcategory>
+              <effecttype>generator</effecttype>
+              <mediatype>video</mediatype>
+              <parameter><parameterid>str</parameterid><name>Text</name><value>${escXml(t.effectText)}</value></parameter>
+              <parameter><parameterid>fontsize</parameterid><name>Font Size</name><value>60</value></parameter>
+              <parameter><parameterid>fontstyle</parameterid><name>Font Style</name><value>4</value></parameter>
+              <parameter><parameterid>fontcolor</parameterid><name>Font Color</name><value>16776960</value></parameter>
+              <parameter><parameterid>origin</parameterid><name>Origin</name><value>0 0.2</value></parameter>
+            </effect>
+          </generatoritem>`).join('');
 
   // ── A1 오디오 클립 (링크 + 라벨) ──
   const audioClips = timings.map((t, i) => {
@@ -338,6 +394,10 @@ export function generateFcpXml(params: {
         </format>
         <track>${videoClips}
         </track>
+        <track><enabled>TRUE</enabled>${subtitleClips}
+        </track>${effectSubClips ? `
+        <track><enabled>TRUE</enabled>${effectSubClips}
+        </track>` : ''}
       </video>
       <audio>
         <numOutputChannels>2</numOutputChannels>
