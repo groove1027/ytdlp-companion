@@ -9,6 +9,7 @@
 ## 🟢 완료된 작업
 
 - [x] **#313 영상 분석 새로고침 시 대본 유실 방지** — 분석 중 beforeunload 경고 추가 (실수 새로고침 방지), 배치 완료 후 IndexedDB 자동 저장 (va-autosave 슬롯), 마운트 시 localStorage 유실된 경우 IndexedDB에서 30분 이내 자동 복구 + 토스트 알림 (videoAnalysisStore.ts, VideoAnalysisRoom.tsx, 2026-03-15)
+- [x] **#313-4 FCP XML clip-master/audio-master 겹침 제거** — 같은 트랙에 전체 영상(clip-master) + 개별 씬 클립이 겹쳐서 Premiere import 에러 발생 가능. clip-master/audio-master 삭제, 첫 번째 씬 클립에 file 정의 인라인 (nleExportService.ts, 2026-03-15)
 - [x] **#313-3 FCP XML xmeml v5 스펙 완전 준수** — (1) generateFcpXml: file 정의를 첫 clipitem 내부로 이동 (Apple xmeml DTD 준수) (2) generateFcpXmlFromEdl: 다중 소스 파일 첫 참조 clipitem에 인라인 정의 + 이후 빈 참조 (definedFiles Set 추적) — Premiere Pro + DaVinci Resolve 양쪽 호환 (nleExportService.ts, 2026-03-15)
 - [x] **#313-2 편집실(EditPoint) NLE 내보내기 — Premiere XML/CapCut/VREW** — 편집실 Step3에 Premiere XML, CapCut 패키지, VREW 패키지 카드 3개 추가. EdlEntry 기반 generateFcpXmlFromEdl() + buildEdlNlePackageZip() 구현. Vision AI 정제 타임코드 + 수동 배속 조정 반영된 정밀 편집점으로 NLE 프로젝트 생성 (types.ts, editPointStore.ts, Step3Export.tsx, nleExportService.ts, 2026-03-15)
 - [x] **#313 NLE 프로젝트 내보내기 — Premiere XML + CapCut/VREW 패키지** — 영상 분석실에서 직접 다운로드 가능한 NLE 패키지 3종. (1) Premiere Pro: FCP XML (xmeml v5) + SRT ZIP — 편집점+자막 트랙+미디어 참조 통합, Premiere/DaVinci Import 즉시 사용 (2) CapCut: 영상 Blob + SRT 3종(자막/나레이션/효과) ZIP (3) VREW: 동일 구성. 모든 타임코드는 장면감지 보정값 반영. nleExportService.ts 신규, VideoAnalysisRoom.tsx 버튼 3개 추가 (2026-03-15)

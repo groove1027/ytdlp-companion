@@ -137,8 +137,21 @@ export function generateFcpXml(params: {
 
   const toFrames = (sec: number) => Math.round(sec * fps);
 
-  // 비디오 클립 아이템 (V1 트랙)
-  const videoClips = timings.map((t, i) => `
+  // 비디오 클립 아이템 (V1 트랙 — 순차 배치, 첫 클립에 file 정의)
+  const videoClips = timings.map((t, i) => {
+    const fileTag = i === 0
+      ? `<file id="file-1">
+              <name>${safeFileName}</name>
+              <pathurl>file://localhost/media/${encodeURIComponent(videoFileName)}</pathurl>
+              <duration>${totalFrames}</duration>
+              <rate><ntsc>FALSE</ntsc><timebase>${fps}</timebase></rate>
+              <media>
+                <video><samplecharacteristics><width>${width}</width><height>${height}</height></samplecharacteristics></video>
+                <audio><samplecharacteristics><samplerate>48000</samplerate><depth>16</depth></samplecharacteristics></audio>
+              </media>
+            </file>`
+      : '<file id="file-1"/>';
+    return `
           <clipitem id="clip-${i + 1}">
             <name>${escXml(`Scene ${String(i + 1).padStart(3, '0')}`)}</name>
             <duration>${toFrames(t.durationSec)}</duration>
@@ -147,8 +160,9 @@ export function generateFcpXml(params: {
             <out>${toFrames(t.endSec)}</out>
             <start>${toFrames(t.startSec)}</start>
             <end>${toFrames(t.endSec)}</end>
-            <file id="file-1"/>
-          </clipitem>`).join('');
+            ${fileTag}
+          </clipitem>`;
+  }).join('');
 
   // 자막 아이템 (V2 트랙 — generatoritem)
   const subtitleClips = timings.filter(t => t.text).map((t, i) => `
@@ -239,36 +253,7 @@ export function generateFcpXml(params: {
             </codec>
           </samplecharacteristics>
         </format>
-        <track>
-          <clipitem id="clip-master">
-            <name>${safeFileName}</name>
-            <duration>${totalFrames}</duration>
-            <rate><ntsc>FALSE</ntsc><timebase>${fps}</timebase></rate>
-            <in>0</in>
-            <out>${totalFrames}</out>
-            <start>0</start>
-            <end>${totalFrames}</end>
-            <file id="file-1">
-              <name>${safeFileName}</name>
-              <pathurl>file://localhost/media/${encodeURIComponent(videoFileName)}</pathurl>
-              <duration>${totalFrames}</duration>
-              <rate><ntsc>FALSE</ntsc><timebase>${fps}</timebase></rate>
-              <media>
-                <video>
-                  <samplecharacteristics>
-                    <width>${width}</width>
-                    <height>${height}</height>
-                  </samplecharacteristics>
-                </video>
-                <audio>
-                  <samplecharacteristics>
-                    <samplerate>48000</samplerate>
-                    <depth>16</depth>
-                  </samplecharacteristics>
-                </audio>
-              </media>
-            </file>
-          </clipitem>${videoClips}
+        <track>${videoClips}
         </track>
         <track>
           <enabled>TRUE</enabled>${subtitleClips}
@@ -281,17 +266,7 @@ export function generateFcpXml(params: {
             <depth>16</depth>
           </samplecharacteristics>
         </format>
-        <track>
-          <clipitem id="audio-master">
-            <name>${safeFileName} Audio</name>
-            <duration>${totalFrames}</duration>
-            <rate><ntsc>FALSE</ntsc><timebase>${fps}</timebase></rate>
-            <in>0</in>
-            <out>${totalFrames}</out>
-            <start>0</start>
-            <end>${totalFrames}</end>
-            <file id="file-1"/>
-          </clipitem>${audioClips}
+        <track>${audioClips}
         </track>
       </audio>
     </media>
