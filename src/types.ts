@@ -1017,6 +1017,16 @@ export interface WhisperWord {
   startTime: number;
   endTime: number;
   confidence: number;        // 0~1
+  speakerId?: string;        // ElevenLabs Scribe 화자 ID (예: "speaker_0") — diarize=true 시
+}
+
+/** 화자 분리된 발화 단위 (diarize=true 시 생성) */
+export interface DiarizedUtterance {
+  speakerId: string;         // 화자 ID (예: "speaker_0", "speaker_1")
+  text: string;              // 발화 텍스트
+  startTime: number;         // 시작 시간 (초)
+  endTime: number;           // 종료 시간 (초)
+  words: WhisperWord[];      // 단어별 타이밍
 }
 
 export interface WhisperTranscriptResult {
@@ -1024,6 +1034,8 @@ export interface WhisperTranscriptResult {
   language: string;          // 감지된 언어
   segments: WhisperSegment[];
   duration: number;          // 전체 길이 (초)
+  utterances?: DiarizedUtterance[];  // 화자 분리 결과 (diarize=true 시)
+  speakerCount?: number;             // 감지된 화자 수
 }
 
 // --- AI 효과음 (SFX) ---

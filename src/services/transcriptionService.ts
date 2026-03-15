@@ -2,12 +2,13 @@
  * transcriptionService.ts
  * Kie AI (ElevenLabs Scribe v1) 기반 음성 전사 서비스
  * 사용자 업로드 오디오 → 텍스트 + 단어별 타임스탬프 추출
+ * [v4.6] diarize 옵션: 화자 분리 지원
  */
 
 import { monitoredFetch, getKieKey } from './apiService';
 import { uploadMediaToHosting } from './uploadService';
 import { logger } from './LoggerService';
-import type { WhisperTranscriptResult, WhisperSegment, ScriptLine } from '../types';
+import type { WhisperTranscriptResult, WhisperSegment, WhisperWord, DiarizedUtterance, ScriptLine } from '../types';
 
 const KIE_BASE_URL = 'https://api.kie.ai/api/v1';
 
@@ -22,16 +23,17 @@ export async function transcribeAudio(
   options?: {
     signal?: AbortSignal;
     onProgress?: (msg: string) => void;
+    diarize?: boolean;  // [v4.6] 화자 분리 활성화
   }
 ): Promise<WhisperTranscriptResult> {
   const apiKey = getKieKey();
   if (!apiKey) throw new Error('Kie API 키가 설정되지 않았습니다.');
 
-  const { signal, onProgress } = options || {};
+  const { signal, onProgress, diarize = false } = options || {};
 
   // 1. Cloudinary에 업로드
   onProgress?.('오디오 업로드 중...');
-  logger.info('[STT] Cloudinary 업로드 시작', { size: audioFile.size });
+  logger.info('[STT] Cloudinary 업로드 시작', { size: audioFile.size, diarize });
 
   const file = audioFile instanceof File
     ? audioFile
@@ -43,7 +45,7 @@ export async function transcribeAudio(
 
   // 2. Kie createTask
   onProgress?.('전사 태스크 생성 중...');
-  logger.info('[STT] Kie 전사 태스크 생성', { audioUrl });
+  logger.info('[STT] Kie 전사 태스크 생성', { audioUrl, diarize });
 
   const createResponse = await monitoredFetch(`${KIE_BASE_URL}/jobs/createTask`, {
     method: 'POST',
@@ -55,7 +57,7 @@ export async function transcribeAudio(
       model: 'elevenlabs/speech-to-text',
       input: {
         audio_url: audioUrl,
-        diarize: false,
+        diarize,
         tag_audio_events: false,
       },
     }),
@@ -74,16 +76,59 @@ export async function transcribeAudio(
   if (!taskId) throw new Error('전사 태스크 ID를 받지 못했습니다.');
 
   // 3. 폴링
-  onProgress?.('전사 중...');
-  const result = await pollKieTranscriptionTask(taskId, apiKey, { signal, onProgress });
+  onProgress?.(diarize ? '화자 분리 전사 중...' : '전사 중...');
+  const result = await pollKieTranscriptionTask(taskId, apiKey, { signal, onProgress, diarize });
 
   logger.success('[STT] 전사 완료', {
     language: result.language,
     segments: result.segments.length,
     duration: result.duration,
+    speakerCount: result.speakerCount,
+    utterances: result.utterances?.length,
   });
 
   return result;
+}
+
+/**
+ * [v4.6] 영상/오디오에서 화자 분리 전사 수행 (diarize=true 고정)
+ * 영상 분석 시 Gemini에 전달할 화자별 대사 데이터 생성
+ */
+export async function transcribeWithDiarization(
+  audioFile: File | Blob,
+  options?: {
+    signal?: AbortSignal;
+    onProgress?: (msg: string) => void;
+  }
+): Promise<WhisperTranscriptResult> {
+  return transcribeAudio(audioFile, { ...options, diarize: true });
+}
+
+/**
+ * [v4.6] 화자 분리 결과를 Gemini 프롬프트에 삽입할 텍스트로 포맷팅
+ * 형식: [화자A 0:05~0:12] 대사 텍스트
+ */
+export function formatDiarizedTranscript(result: WhisperTranscriptResult): string {
+  if (!result.utterances || result.utterances.length === 0) {
+    return '';
+  }
+
+  const lines = result.utterances.map(u => {
+    const start = formatTimestamp(u.startTime);
+    const end = formatTimestamp(u.endTime);
+    return `[${u.speakerId} ${start}~${end}] ${u.text}`;
+  });
+
+  return `## 화자 분리 전사 결과 (ElevenLabs Scribe — ${result.speakerCount ?? '?'}명 감지)\n` +
+    `언어: ${result.language} / 총 길이: ${formatTimestamp(result.duration)}\n\n` +
+    lines.join('\n');
+}
+
+/** 초 → "M:SS" 포맷 */
+function formatTimestamp(sec: number): string {
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
 /**
@@ -96,9 +141,10 @@ async function pollKieTranscriptionTask(
     signal?: AbortSignal;
     onProgress?: (msg: string) => void;
     maxAttempts?: number;
+    diarize?: boolean;
   }
 ): Promise<WhisperTranscriptResult> {
-  const { signal, onProgress, maxAttempts = 120 } = options || {};
+  const { signal, onProgress, maxAttempts = 120, diarize = false } = options || {};
   const opId = `pollKieTranscriptionTask-${taskId}`;
   logger.startAsyncOp(opId, 'pollKieTranscriptionTask', taskId);
 
@@ -149,8 +195,8 @@ async function pollKieTranscriptionTask(
       } else {
         parsed = resultJson;
       }
-      const result = parseTranscriptionResult(parsed);
-      logger.endAsyncOp(opId, 'completed', `segments=${result.segments.length}, lang=${result.language}`);
+      const result = parseTranscriptionResult(parsed, diarize);
+      logger.endAsyncOp(opId, 'completed', `segments=${result.segments.length}, lang=${result.language}, speakers=${result.speakerCount ?? 0}`);
       return result;
     }
 
@@ -160,7 +206,7 @@ async function pollKieTranscriptionTask(
     }
 
     // 진행 상태 업데이트
-    onProgress?.(`전사 중... (${attempt + 1}/${maxAttempts})`);
+    onProgress?.(diarize ? `화자 분리 전사 중... (${attempt + 1}/${maxAttempts})` : `전사 중... (${attempt + 1}/${maxAttempts})`);
   }
 
   logger.endAsyncOp(opId, 'failed', `전사 시간 초과 (${maxAttempts}회 폴링 실패)`);
@@ -174,8 +220,9 @@ async function pollKieTranscriptionTask(
 
 /**
  * Kie/ElevenLabs Scribe 응답을 WhisperTranscriptResult로 변환
+ * [v4.6] diarize=true 시 speaker_id 파싱 + DiarizedUtterance 생성
  */
-function parseTranscriptionResult(raw: Record<string, unknown>): WhisperTranscriptResult {
+function parseTranscriptionResult(raw: Record<string, unknown>, diarize = false): WhisperTranscriptResult {
   // ElevenLabs Scribe v1 응답 형식:
   // { text: string, language_code: string, words: [{ text, start, end, type, speaker_id }] }
   // Kie는 resultObject로 래핑하여 반환: { resultObject: { text, language_code, words, ... } }
@@ -187,7 +234,7 @@ function parseTranscriptionResult(raw: Record<string, unknown>): WhisperTranscri
 
   // 단어 → 문장 세그먼트로 그룹핑 (문장 종결 부호 기준)
   const segments: WhisperSegment[] = [];
-  let currentWords: { word: string; startTime: number; endTime: number; confidence: number }[] = [];
+  let currentWords: WhisperWord[] = [];
   let sentenceText = '';
 
   for (let idx = 0; idx < rawWords.length; idx++) {
@@ -196,13 +243,14 @@ function parseTranscriptionResult(raw: Record<string, unknown>): WhisperTranscri
     const startTime = (w.start as number) ?? (w.start_time as number) ?? 0;
     const endTime = (w.end as number) ?? (w.end_time as number) ?? 0;
     const confidence = (w.confidence as number) ?? 1;
+    const speakerId = diarize ? ((w.speaker_id as string) || undefined) : undefined;
 
     // 공백 토큰은 sentenceText에만 반영하고 words 배열에서 제외
     // (ElevenLabs Scribe는 " "를 별도 토큰으로 반환 → findWordBoundaryTime 오차 원인)
     sentenceText += wordText;
     const trimmed = wordText.trim();
     if (trimmed) {
-      currentWords.push({ word: trimmed, startTime, endTime, confidence });
+      currentWords.push({ word: trimmed, startTime, endTime, confidence, speakerId });
     }
 
     // 문장 종결 부호로 세그먼트 분리
@@ -234,12 +282,76 @@ function parseTranscriptionResult(raw: Record<string, unknown>): WhisperTranscri
     ? segments[segments.length - 1].endTime
     : (data.duration as number) || 0;
 
+  // [v4.6] diarize=true: 단어를 화자별 발화 단위(utterance)로 그룹핑
+  let utterances: DiarizedUtterance[] | undefined;
+  let speakerCount: number | undefined;
+
+  if (diarize) {
+    utterances = groupWordsBySpeaker(rawWords);
+    const speakerIds = new Set(utterances.map(u => u.speakerId));
+    speakerCount = speakerIds.size;
+  }
+
   return {
     text: fullText,
     language: languageCode,
     segments,
     duration,
+    utterances,
+    speakerCount,
   };
+}
+
+/**
+ * [v4.6] 연속된 같은 화자의 단어를 발화 단위(utterance)로 그룹핑
+ * speaker_id가 변경되면 새 utterance 시작
+ */
+function groupWordsBySpeaker(rawWords: Array<Record<string, unknown>>): DiarizedUtterance[] {
+  const utterances: DiarizedUtterance[] = [];
+  let currentSpeaker = '';
+  let currentWords: WhisperWord[] = [];
+  let currentText = '';
+
+  for (const w of rawWords) {
+    const wordText = (w.text as string) || (w.word as string) || '';
+    const startTime = (w.start as number) ?? (w.start_time as number) ?? 0;
+    const endTime = (w.end as number) ?? (w.end_time as number) ?? 0;
+    const confidence = (w.confidence as number) ?? 1;
+    const speakerId = (w.speaker_id as string) || 'speaker_unknown';
+    const trimmed = wordText.trim();
+
+    // 화자가 바뀌면 현재 utterance를 저장하고 새로 시작
+    if (speakerId !== currentSpeaker && currentWords.length > 0) {
+      utterances.push({
+        speakerId: currentSpeaker,
+        text: currentText.trim(),
+        startTime: currentWords[0].startTime,
+        endTime: currentWords[currentWords.length - 1].endTime,
+        words: [...currentWords],
+      });
+      currentWords = [];
+      currentText = '';
+    }
+
+    currentSpeaker = speakerId;
+    currentText += wordText;
+    if (trimmed) {
+      currentWords.push({ word: trimmed, startTime, endTime, confidence, speakerId });
+    }
+  }
+
+  // 마지막 utterance 저장
+  if (currentWords.length > 0 && currentText.trim()) {
+    utterances.push({
+      speakerId: currentSpeaker,
+      text: currentText.trim(),
+      startTime: currentWords[0].startTime,
+      endTime: currentWords[currentWords.length - 1].endTime,
+      words: [...currentWords],
+    });
+  }
+
+  return utterances;
 }
 
 /**

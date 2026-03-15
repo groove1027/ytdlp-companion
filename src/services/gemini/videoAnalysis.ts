@@ -1,10 +1,12 @@
 
 import { Scene, AspectRatio, ImageModel, RemakeStyleAnalysis } from '../../types';
+import type { WhisperTranscriptResult } from '../../types';
 import { getKieKey, monitoredFetch } from '../apiService';
 import { getEvolinkKey, fetchWithRateLimitRetry } from '../evolinkService';
 import { SAFETY_SETTINGS_BLOCK_NONE, requestGeminiProxy, requestKieChatFallback, extractTextFromResponse } from './geminiProxy';
 import { uploadMediaToHosting } from '../uploadService';
 import { generateKieImage, generateEvolinkImageWrapped } from '../VideoGenService';
+import { transcribeWithDiarization, formatDiarizedTranscript } from '../transcriptionService';
 import { logger } from '../LoggerService';
 
 // --- Types ---
@@ -965,3 +967,193 @@ ${texts}` }]
 
     return translations;
 };
+
+// --- 1-E: transcribeVideoAudio (화자 분리 전사) ---
+// 영상 파일에서 오디오를 추출하고 ElevenLabs Scribe로 화자 분리 전사
+// Web Audio API decodeAudioData로 즉시 디코딩 (실시간 재생 불필요)
+
+/**
+ * [v4.6] 영상 파일에서 오디오 추출 → 화자 분리 전사
+ * 결과를 Gemini 프롬프트에 삽입할 포맷 텍스트로 반환
+ */
+export const transcribeVideoAudio = async (
+    videoFile: File | Blob,
+    options?: {
+        signal?: AbortSignal;
+        onProgress?: (msg: string) => void;
+    }
+): Promise<{ transcript: WhisperTranscriptResult; formattedText: string } | null> => {
+    const { signal, onProgress } = options || {};
+
+    try {
+        onProgress?.('🔊 영상에서 오디오 추출 중...');
+        logger.info('[Diarization] 영상 오디오 추출 시작', { size: videoFile.size });
+
+        const audioBlob = await extractAudioFromVideoFast(videoFile);
+        if (!audioBlob || audioBlob.size < 5000) {
+            logger.info('[Diarization] 오디오 없거나 너무 짧음 — 화자 분리 생략');
+            return null;
+        }
+
+        logger.info('[Diarization] 오디오 추출 완료', { audioSize: audioBlob.size });
+
+        onProgress?.('🗣️ 화자 분리 전사 중...');
+        const transcript = await transcribeWithDiarization(audioBlob, { signal, onProgress });
+
+        if (!transcript.utterances || transcript.utterances.length === 0) {
+            logger.info('[Diarization] 화자 분리 결과 없음 — 대사 없는 영상으로 판단');
+            return null;
+        }
+
+        const formattedText = formatDiarizedTranscript(transcript);
+        logger.success('[Diarization] 화자 분리 전사 완료', {
+            speakerCount: transcript.speakerCount,
+            utterances: transcript.utterances.length,
+            duration: transcript.duration,
+        });
+
+        return { transcript, formattedText };
+    } catch (e) {
+        logger.warn('[Diarization] 화자 분리 전사 실패 (Gemini 단독 분석으로 폴백)', {
+            error: (e as Error).message,
+        });
+        return null;
+    }
+};
+
+/**
+ * [v4.6] Web Audio API로 영상에서 오디오 트랙 추출 (즉시 디코딩)
+ * shoppingScriptService의 captureStream 방식과 달리 실시간 재생 불필요
+ */
+async function extractAudioFromVideoFast(videoFile: File | Blob): Promise<Blob | null> {
+    try {
+        const arrayBuffer = await videoFile.arrayBuffer();
+        const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        const audioCtx = new AudioCtx();
+
+        let audioBuffer: AudioBuffer;
+        try {
+            audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+        } catch {
+            // 일부 비디오 코덱은 decodeAudioData 실패 → captureStream 폴백
+            audioCtx.close();
+            logger.info('[Diarization] decodeAudioData 실패 → captureStream 폴백');
+            return extractAudioWithCaptureStream(videoFile);
+        }
+
+        // AudioBuffer → WAV Blob 변환
+        const wavBlob = audioBufferToWav(audioBuffer);
+        audioCtx.close();
+        return wavBlob;
+    } catch (e) {
+        logger.trackSwallowedError('videoAnalysis:extractAudioFast', e);
+        return null;
+    }
+}
+
+/** captureStream 폴백 — decodeAudioData 실패 시 (실시간 재생 필요, 최대 120초) */
+function extractAudioWithCaptureStream(videoFile: File | Blob): Promise<Blob | null> {
+    return new Promise((resolve) => {
+        const video = document.createElement('video');
+        const srcUrl = URL.createObjectURL(videoFile);
+        video.src = srcUrl;
+        video.muted = false;
+        video.volume = 1;
+
+        video.onloadedmetadata = async () => {
+            try {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const stream: MediaStream = (video as any).captureStream ? (video as any).captureStream() : (video as any).mozCaptureStream();
+                const audioTracks = stream.getAudioTracks();
+                if (audioTracks.length === 0) {
+                    URL.revokeObjectURL(srcUrl);
+                    resolve(null);
+                    return;
+                }
+
+                const audioStream = new MediaStream(audioTracks);
+                const recorder = new MediaRecorder(audioStream, { mimeType: 'audio/webm' });
+                const chunks: Blob[] = [];
+
+                recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+                recorder.onstop = () => {
+                    URL.revokeObjectURL(srcUrl);
+                    resolve(chunks.length > 0 ? new Blob(chunks, { type: 'audio/webm' }) : null);
+                };
+
+                recorder.start();
+                video.play();
+
+                const maxDuration = Math.min(video.duration, 120) * 1000;
+                setTimeout(() => {
+                    if (recorder.state === 'recording') recorder.stop();
+                    video.pause();
+                }, maxDuration + 500);
+
+                video.onended = () => { if (recorder.state === 'recording') recorder.stop(); };
+            } catch {
+                URL.revokeObjectURL(srcUrl);
+                resolve(null);
+            }
+        };
+
+        video.onerror = () => {
+            URL.revokeObjectURL(srcUrl);
+            resolve(null);
+        };
+    });
+}
+
+/** AudioBuffer → WAV Blob 변환 (16-bit PCM) */
+function audioBufferToWav(buffer: AudioBuffer): Blob {
+    const numChannels = Math.min(buffer.numberOfChannels, 2); // 최대 스테레오
+    const sampleRate = buffer.sampleRate;
+    const bitsPerSample = 16;
+    const bytesPerSample = bitsPerSample / 8;
+    const blockAlign = numChannels * bytesPerSample;
+    const numSamples = buffer.length;
+    const dataSize = numSamples * blockAlign;
+    const headerSize = 44;
+    const totalSize = headerSize + dataSize;
+
+    const arrayBuffer = new ArrayBuffer(totalSize);
+    const view = new DataView(arrayBuffer);
+
+    // WAV header
+    writeString(view, 0, 'RIFF');
+    view.setUint32(4, totalSize - 8, true);
+    writeString(view, 8, 'WAVE');
+    writeString(view, 12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true); // PCM
+    view.setUint16(22, numChannels, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * blockAlign, true);
+    view.setUint16(32, blockAlign, true);
+    view.setUint16(34, bitsPerSample, true);
+    writeString(view, 36, 'data');
+    view.setUint32(40, dataSize, true);
+
+    // PCM data (interleaved)
+    const channels: Float32Array[] = [];
+    for (let ch = 0; ch < numChannels; ch++) {
+        channels.push(buffer.getChannelData(ch));
+    }
+
+    let offset = headerSize;
+    for (let i = 0; i < numSamples; i++) {
+        for (let ch = 0; ch < numChannels; ch++) {
+            const sample = Math.max(-1, Math.min(1, channels[ch][i]));
+            view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
+            offset += 2;
+        }
+    }
+
+    return new Blob([arrayBuffer], { type: 'audio/wav' });
+}
+
+function writeString(view: DataView, offset: number, str: string): void {
+    for (let i = 0; i < str.length; i++) {
+        view.setUint8(offset + i, str.charCodeAt(i));
+    }
+}
