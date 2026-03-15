@@ -8,6 +8,8 @@
 
 ## 🟢 완료된 작업
 
+- [x] **#298 편집실 AI 파싱 타임아웃 개선** — Evolink API 120초 타임아웃으로 편집점 파싱이 반복 실패하던 문제. 타임아웃 120s→180s 확대 + 타임아웃 에러도 재시도 대상에 추가 (editPointService.ts, 2026-03-15)
+- [x] **#299 목표 컷 수 상한 확대** — SetupPanel 목표 컷 수 max={30} 하드코딩으로 롱폼(93컷 등) 프로젝트에서 자유로운 조절 불가. max를 200으로 확대 (SetupPanel.tsx 4곳 + 안내 텍스트, 2026-03-15)
 - [x] **#297 렌더링 성능 개선 — 디코더 실패 시 적응형 타임아웃** — 비디오 프레임 디코더가 실패하면 매 프레임 30초씩 대기하던 문제. (1) videoDecoder: 연속 실패 감지(3회 MAX) + 적응형 타임아웃(30s→5s→2s→즉시 포기) (2) canvasRenderer: 실패 확정 장면은 즉시 검은 화면 스킵 + resolveFrame sceneStarts 사전 계산 (3) audioMixer: 나레이션 순차→병렬 로드(Promise.all) — 최악 5시간→37초로 단축 (videoDecoder.ts, canvasRenderer.ts, audioMixer.ts, 2026-03-15)
 - [x] **다국어 단락 분할 시스템** — 한국어 기준 하드코딩(100/150/80/16자)으로 영어 등 다른 언어에서 과도한 분할(151단락) 발생하던 문제. (1) detectScriptLang: Unicode 블록 + 어휘 패턴으로 15개 언어 자동 감지 (한/영/일/중/태/아랍/힌디/러시아/베트남/인니/독/스/프/포/이탈) (2) LangSplitProfile: 언어별 clauseMax/defaultMerge/shortMax/nanoMax 기준값 (3) splitClausesByLang: 언어별 접속사/절 분할 패턴 (한국어 연결어미, 영어 and/but, 일본어 が/て, 중국어 但是, 아랍어 و 등) (4) countScenesLocally + splitScenesLocally 양쪽 적용 (scriptAnalysis.ts, 2026-03-15)
 - [x] **AUTO 모드 EXTRA 캐스팅 적극 유도** — AUTO 모드에서 주인공 외 다른 인물이 등장하지 않던 문제. AI 프롬프트에 EXTRA 사용 규칙 강화: 대본에 타인이 언급/암시되면 NOBODY 대신 EXTRA 사용, 비MAIN 장면의 20-30%를 EXTRA로, 인포그래픽에서도 사회적 주제는 EXTRA 허용 (scriptAnalysis.ts, 2026-03-15)
