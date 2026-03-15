@@ -318,9 +318,14 @@ export default function ScriptWriterTab() {
     return { original: best.substring(0, 120) + (best.length > 120 ? '...' : ''), scenes };
   }, [scriptText, videoFormat, smartSplit, longFormSplitType]);
 
-  // [#325] 단락 → SRT 다운로드
+  // [#325][FIX #330] 단락 → SRT 다운로드 — 순서/공백 정규화
   const handleDownloadSegmentsSrt = useCallback(() => {
-    const segments = splitResult.length >= 2 ? splitResult : livePreviewData.scenes;
+    const raw = splitResult.length >= 2 ? splitResult : livePreviewData.scenes;
+    // [FIX #330] 각 세그먼트의 앞뒤 공백 제거 + 내부 연속 빈줄을 단일 줄바꿈으로 정규화
+    // (SRT에서 빈줄은 항목 구분자이므로 텍스트 내부에 있으면 파서가 오동작함)
+    const segments = raw
+      .map((t) => t.trim().replace(/\n{2,}/g, '\n').replace(/^\n+|\n+$/g, ''))
+      .filter((t) => t.length > 0);
     if (segments.length === 0) return;
     const CHARS_PER_SEC = 4;
     let offset = 0;

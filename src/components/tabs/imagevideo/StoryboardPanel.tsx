@@ -171,6 +171,15 @@ const SceneCard: React.FC<SceneCardProps> = ({ scene, index, onUpdatePrompt, onD
           {scene.isPromptFiltered && (
             <span className="text-[10px] bg-yellow-600/20 text-yellow-300 border border-yellow-500/30 px-1.5 py-0.5 rounded" title="금칙어 필터됨">필터됨</span>
           )}
+          {/* [#329] 장면별 인포그래픽 토글 */}
+          {useProjectStore.getState().config?.allowInfographics && (
+            <button type="button"
+              onClick={() => useProjectStore.getState().updateScene(scene.id, { isInfographic: !scene.isInfographic })}
+              className={`text-[10px] px-1.5 py-0.5 rounded border font-bold transition-colors ${scene.isInfographic ? 'bg-blue-600/20 text-blue-300 border-blue-500/30' : 'bg-gray-700/30 text-gray-500 border-gray-600 hover:text-gray-300 hover:border-gray-500'}`}
+              title={scene.isInfographic ? '인포그래픽 모드 해제' : '인포그래픽 모드 켜기'}>
+              {scene.isInfographic ? '📊 Info' : '📊 Off'}
+            </button>
+          )}
           <button type="button" onClick={() => onOpenDetail(scene, index)}
             className="text-[10px] text-gray-500 hover:text-gray-300 border border-gray-700 hover:border-gray-500 px-1.5 py-0.5 rounded transition-colors" title="모달에서 보기">
             상세
@@ -532,6 +541,12 @@ const GridSceneCard: React.FC<GridSceneCardProps> = ({ scene, index, onRegenerat
             {scene.isPromptFiltered && <span className="text-[9px] bg-yellow-600/20 text-yellow-300 border border-yellow-500/30 px-1 rounded" title="금칙어 필터됨">필터</span>}
             {scene.characterPresent && <span className="w-1.5 h-1.5 rounded-full bg-purple-400" title="캐릭터 출연" />}
             {scene.videoUrl && !scene.isGeneratingVideo && <span className="w-1.5 h-1.5 rounded-full bg-green-400" title="영상 완료" />}
+            {/* [#329] 그리드 인포그래픽 토글 */}
+            {useProjectStore.getState().config?.allowInfographics && (
+              <button type="button" onClick={(e) => { e.stopPropagation(); useProjectStore.getState().updateScene(scene.id, { isInfographic: !scene.isInfographic }); }}
+                className={`w-1.5 h-1.5 rounded-full ${scene.isInfographic ? 'bg-blue-400' : 'bg-gray-600'}`}
+                title={scene.isInfographic ? '📊 인포그래픽 ON (클릭하여 끄기)' : '📊 인포그래픽 OFF (클릭하여 켜기)'} />
+            )}
           </div>
           <div className="flex items-center gap-1">
             <ActionButton label="이미지" color="orange" compact
@@ -815,6 +830,17 @@ const SceneDetailModal: React.FC<SceneDetailModalProps> = ({
                   {scene.grokSpeechMode ? '나레이션 모드' : 'SFX 모드'}
                 </button>
               </div>
+              {/* [#329] 장면별 인포그래픽 토글 */}
+              {useProjectStore.getState().config?.allowInfographics && (
+                <div className="flex items-center gap-2 col-span-2">
+                  <span className="text-xs text-gray-500">인포그래픽:</span>
+                  <button type="button"
+                    onClick={() => useProjectStore.getState().updateScene(scene.id, { isInfographic: !scene.isInfographic })}
+                    className={`px-2.5 py-1 text-xs rounded-lg border transition-colors ${scene.isInfographic ? 'bg-blue-900/30 border-blue-500/30 text-blue-300' : 'bg-gray-800 border-gray-600 text-gray-400'}`}>
+                    {scene.isInfographic ? '📊 인포그래픽 ON' : '📊 인포그래픽 OFF'}
+                  </button>
+                </div>
+              )}
             </div>
             {/* Destructive actions */}
             <div className="flex items-center gap-2 mt-3 pt-3 border-t border-gray-700/50">
