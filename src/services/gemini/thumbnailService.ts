@@ -85,12 +85,16 @@ export const editThumbnailTextStyled = async (
 };
 
 export const generateCharacterVariations = async (concept: string, type: 'RANDOM' | 'CUSTOM', customStyle?: string) => {
+    const styleConstraint = customStyle
+        ? `\n\n[MANDATORY STYLE/TEXTURE CONSTRAINT] The following style MUST be preserved IDENTICALLY in ALL 4 variations — do NOT change, dilute, or replace it: "${customStyle}". Only vary features like pose, expression, accessories, props, or clothing details while keeping this exact texture/style locked.`
+        : '';
     const payload = {
         contents: [{
             role: 'user' as const,
             parts: [{
-                text: `Generate 4 distinct character variation prompts based on: ${concept}. Type: ${type}. Custom Style: ${customStyle}.
-                Return JSON array of strings.`
+                text: `Generate 4 distinct character variation prompts based on: ${concept}. Type: ${type}.${styleConstraint}
+Each prompt must explicitly include the specified style/texture keywords. Change 3-4 OTHER features (pose, expression, accessories, background) while keeping the art style and texture identical.
+Return JSON array of 4 strings.`
             }]
         }],
         generationConfig: { responseMimeType: 'application/json' },

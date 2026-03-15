@@ -547,11 +547,12 @@ ${instinctPrompt}
         { model: scriptAiModel, temperature: 0.7, maxOutputTokens: tokenBudget, enableWebSearch: useWebSearch, signal: abortCtrl.signal, onFinish: (r) => { finishReason = r; } }
       );
 
-      // [FIX #137 #273] 이어쓰기: finishReason이 MAX_TOKENS이면 자동 계속 생성 (최대 3회, 쇼츠 포함)
+      // [FIX #137 #273 #308] 이어쓰기: MAX_TOKENS 또는 분량 미달 시 자동 계속 생성 (최대 3회)
       const MAX_CONTINUATIONS = 3;
       for (let ci = 0; ci < MAX_CONTINUATIONS; ci++) {
         const isTruncated = finishReason === 'MAX_TOKENS' || finishReason === 'length';
-        if (!isTruncated) break;
+        const isTooShort = result.length < targetCharCount * 0.85;
+        if (!isTruncated && !isTooShort) break;
         // [FIX #273] 목표 분량 90% 이상 + 문장이 자연스럽게 끝나면 추가 불필요
         if (result.length >= targetCharCount * 0.9 && /[.!?。다요죠네세까]$/.test(result.trimEnd())) break;
 
@@ -678,11 +679,12 @@ ${instinctPrompt}
         { model: scriptAiModel, temperature: 0.7, maxOutputTokens: tokenBudget, enableWebSearch: useWebSearch, signal: abortCtrl.signal, onFinish: (r) => { finishReason = r; } }
       );
 
-      // [FIX #137 #273] 이어쓰기: finishReason이 MAX_TOKENS이면 자동 계속 생성 (최대 3회, 쇼츠 포함)
+      // [FIX #137 #273 #308] 이어쓰기: MAX_TOKENS 또는 분량 미달 시 자동 계속 생성 (최대 3회)
       const MAX_CONTINUATIONS = 3;
       for (let ci = 0; ci < MAX_CONTINUATIONS; ci++) {
         const isTruncated = finishReason === 'MAX_TOKENS' || finishReason === 'length';
-        if (!isTruncated) break;
+        const isTooShort = fullText.length < targetCharCount * 0.85;
+        if (!isTruncated && !isTooShort) break;
         // [FIX #273] 목표 분량 90% 이상 + 문장이 자연스럽게 끝나면 추가 불필요
         if (fullText.length >= targetCharCount * 0.9 && /[.!?。다요죠네세까]$/.test(fullText.trimEnd())) break;
 
