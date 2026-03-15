@@ -3402,19 +3402,45 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
         }
       }
 
-      // ★ [v4.6] 업로드 영상 화자 분리 전사 — AI 분석과 병렬 실행
-      // 업로드된 영상에서 오디오를 추출하고 ElevenLabs Scribe diarize=true로 화자 구분
-      // 결과를 Gemini 프롬프트에 삽입하여 화자별 대사를 정확하게 반영
+      // ★ [v4.6 + FIX #316] 화자 분리 전사 — 업로드 + YouTube 모두 지원
+      // 영상에서 오디오 추출 → ElevenLabs Scribe diarize=true → 화자별 대사+타이밍
+      // Gemini 프롬프트에 삽입하여 "누가 뭘 말했는지" 정확하게 반영
       let diarizedText = '';
-      if (uploadedFiles.length === 1 && (preset === 'tikitaka' || preset === 'condensed' || preset === 'snack' || preset === 'alltts')) {
+      const diarizePresets = ['tikitaka', 'condensed', 'snack', 'alltts'];
+      if (diarizePresets.includes(preset)) {
         try {
-          const diarResult = await transcribeVideoAudio(uploadedFiles[0], {
-            signal: abortCtrl.signal,
-            onProgress: (msg) => console.log(`[Diarization] ${msg}`),
-          });
-          if (diarResult) {
-            diarizedText = diarResult.formattedText;
-            console.log(`[Diarization] ✅ 화자 ${diarResult.transcript.speakerCount}명 감지, ${diarResult.transcript.utterances?.length}개 발화`);
+          let audioSource: File | Blob | null = null;
+
+          if (uploadedFiles.length === 1) {
+            // 업로드 모드: 파일 직접 사용
+            audioSource = uploadedFiles[0];
+          } else if (inputMode === 'youtube' && youtubeUrl) {
+            // [FIX #316] YouTube 모드: 병렬 다운로드 결과 대기 또는 즉시 다운로드
+            const dlResult = await parallelDownloadPromise;
+            if (dlResult?.blob) {
+              audioSource = dlResult.blob;
+              console.log(`[Diarization] YouTube 다운로드 Blob 사용 (${(dlResult.blob.size / 1024 / 1024).toFixed(1)}MB)`);
+            } else {
+              // 병렬 다운로드 실패 시 별도 다운로드
+              console.log('[Diarization] 병렬 다운로드 없음 → 별도 다운로드 시도');
+              const freshDl = await downloadVideoAsBlob(extractYouTubeVideoId(youtubeUrl) || youtubeUrl);
+              if (freshDl) {
+                audioSource = freshDl.blob;
+                useVideoAnalysisStore.getState().setVideoBlob(freshDl.blob);
+              }
+            }
+          }
+
+          if (audioSource) {
+            console.log(`[Diarization] 화자 분리 시작 (${(audioSource.size / 1024 / 1024).toFixed(1)}MB)...`);
+            const diarResult = await transcribeVideoAudio(audioSource instanceof File ? audioSource : new File([audioSource], 'video.mp4', { type: 'video/mp4' }), {
+              signal: abortCtrl.signal,
+              onProgress: (msg) => console.log(`[Diarization] ${msg}`),
+            });
+            if (diarResult) {
+              diarizedText = diarResult.formattedText;
+              console.log(`[Diarization] ✅ 화자 ${diarResult.transcript.speakerCount}명 감지, ${diarResult.transcript.utterances?.length}개 발화`);
+            }
           }
         } catch (e) {
           console.warn('[Diarization] 화자 분리 실패 (Gemini 단독 분석으로 진행):', e);
