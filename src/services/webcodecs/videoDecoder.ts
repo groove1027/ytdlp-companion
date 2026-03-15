@@ -121,6 +121,96 @@ export async function demuxMp4(blob: Blob): Promise<DemuxResult> {
   return { videoTrack, samples, description, arrayBuffer };
 }
 
+// ─── Video + Audio Merge (mp4box remux) ─────────────
+
+/**
+ * [FIX #316] 영상 전용 MP4 + 오디오 전용 M4A → 합본 MP4 생성
+ * mp4box로 양쪽 demux → Muxer(mp4-muxer)로 트랙 복사 리먹싱
+ * 디코딩/인코딩 없이 원본 비트스트림 그대로 복사 (품질 손실 0%)
+ */
+export async function mergeVideoAudio(videoBlob: Blob, audioBlob: Blob): Promise<Blob> {
+  const { Muxer, ArrayBufferTarget } = await import('mp4-muxer');
+
+  // 1. Demux video
+  const videoBuf = await videoBlob.arrayBuffer();
+  const videoFile = createFile();
+  let vTrack: Track | null = null;
+  videoFile.onReady = (info: Movie) => { vTrack = info.videoTracks[0] ?? null; };
+  videoFile.onError = () => {};
+  const vBuf = videoBuf as ArrayBuffer & { fileStart: number };
+  vBuf.fileStart = 0;
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  videoFile.appendBuffer(vBuf as any);
+  videoFile.flush();
+  if (!vTrack) throw new Error('영상 트랙을 찾을 수 없습니다');
+  const vSamples = videoFile.getTrackSamplesInfo((vTrack as Track).id) as Sample[];
+  if (!vSamples?.length) throw new Error('영상 샘플이 없습니다');
+
+  // 2. Demux audio
+  const audioBuf = await audioBlob.arrayBuffer();
+  const audioFile = createFile();
+  let aTrack: Track | null = null;
+  audioFile.onReady = (info: Movie) => { aTrack = info.audioTracks[0] ?? null; };
+  audioFile.onError = () => {};
+  const aBuf = audioBuf as ArrayBuffer & { fileStart: number };
+  aBuf.fileStart = 0;
+  audioFile.appendBuffer(aBuf as any);
+  audioFile.flush();
+  if (!aTrack) throw new Error('오디오 트랙을 찾을 수 없습니다');
+  const aSamples = audioFile.getTrackSamplesInfo((aTrack as Track).id) as Sample[];
+  if (!aSamples?.length) throw new Error('오디오 샘플이 없습니다');
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+
+  const vt = vTrack as Track;
+  const at = aTrack as Track;
+
+  // 3. Mux with mp4-muxer
+  const target = new ArrayBufferTarget();
+  const muxer = new Muxer({
+    target,
+    fastStart: 'in-memory',
+    video: {
+      codec: 'avc',
+      width: vt.video?.width ?? 1920,
+      height: vt.video?.height ?? 1080,
+    },
+    audio: {
+      codec: 'aac',
+      sampleRate: at.audio?.sample_rate ?? 48000,
+      numberOfChannels: at.audio?.channel_count ?? 2,
+    },
+  });
+
+  // Video samples → EncodedVideoChunk
+  for (const s of vSamples) {
+    const data = new Uint8Array(videoBuf, s.offset, s.size);
+    const chunk = new EncodedVideoChunk({
+      type: s.is_sync ? 'key' : 'delta',
+      timestamp: (s.cts * 1_000_000) / vt.timescale,
+      duration: (s.duration * 1_000_000) / vt.timescale,
+      data,
+    });
+    muxer.addVideoChunk(chunk);
+  }
+
+  // Audio samples → EncodedAudioChunk
+  for (const s of aSamples) {
+    const data = new Uint8Array(audioBuf, s.offset, s.size);
+    const chunk = new EncodedAudioChunk({
+      type: s.is_sync ? 'key' : 'delta',
+      timestamp: (s.cts * 1_000_000) / at.timescale,
+      duration: (s.duration * 1_000_000) / at.timescale,
+      data,
+    });
+    muxer.addAudioChunk(chunk);
+  }
+
+  muxer.finalize();
+  const merged = new Blob([target.buffer], { type: 'video/mp4' });
+  console.log(`[Merge] ✅ 영상(${(videoBlob.size / 1024 / 1024).toFixed(1)}MB) + 오디오(${(audioBlob.size / 1024 / 1024).toFixed(1)}MB) → 합본(${(merged.size / 1024 / 1024).toFixed(1)}MB)`);
+  return merged;
+}
+
 // ─── Decode Group Builder ────────────────────────────
 
 interface DecodeGroup {

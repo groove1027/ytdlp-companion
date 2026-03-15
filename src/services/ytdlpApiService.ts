@@ -219,11 +219,12 @@ export async function downloadVideoViaProxy(
   youtubeUrl: string,
   quality: VideoQuality = '720p',
   onProgress?: (progress: number) => void,
+  options?: { videoOnly?: boolean },
 ): Promise<{ blob: Blob; info: YtdlpStreamResult }> {
   // [FIX #316] 재시도 + 화질 다운그레이드 — 무슨 수를 써서라도 다운로드
   const MAX_RETRIES = 3;
+  const videoOnly = options?.videoOnly ?? false;
   const QUALITY_FALLBACK: VideoQuality[] = [quality, '720p', '480p', '360p'];
-  // 중복 제거 (요청 화질이 이미 720p면 720p→480p→360p)
   const qualities = [...new Set(QUALITY_FALLBACK)];
 
   let lastError: Error | null = null;
@@ -235,7 +236,8 @@ export async function downloadVideoViaProxy(
       try {
         const baseUrl = getApiBaseUrl();
         const apiKey = getApiKey();
-        const proxyUrl = `${baseUrl.replace(/\/$/, '')}/api/download?url=${encodeURIComponent(youtubeUrl)}&quality=${q}`;
+        const videoOnlyParam = videoOnly ? '&videoOnly=true' : '';
+        const proxyUrl = `${baseUrl.replace(/\/$/, '')}/api/download?url=${encodeURIComponent(youtubeUrl)}&quality=${q}${videoOnlyParam}`;
 
         const response = await monitoredFetch(proxyUrl, {
           headers: apiKey ? { 'X-API-Key': apiKey } : {},
@@ -245,6 +247,8 @@ export async function downloadVideoViaProxy(
         if (!response.ok) {
           throw new Error(`프록시 다운로드 실패 (HTTP ${response.status})`);
         }
+
+        const defaultInfo: YtdlpStreamResult = { url: '', audioUrl: null, title: '', duration: 0, thumbnail: '', width: 0, height: 0, filesize: null, format: q, codec: '', cached: false };
 
         if (onProgress && response.body) {
           const contentLength = parseInt(response.headers.get('Content-Length') || '0', 10);
@@ -262,26 +266,47 @@ export async function downloadVideoViaProxy(
             }
           }
 
-          return { blob: new Blob(chunks, { type: 'video/mp4' }), info: info || { url: '', audioUrl: null, title: '', duration: 0, thumbnail: '', width: 0, height: 0, filesize: null, format: q, codec: '', cached: false } };
+          return { blob: new Blob(chunks, { type: 'video/mp4' }), info: info || defaultInfo };
         }
 
-        return { blob: await response.blob(), info: info || { url: '', audioUrl: null, title: '', duration: 0, thumbnail: '', width: 0, height: 0, filesize: null, format: q, codec: '', cached: false } };
+        return { blob: await response.blob(), info: info || defaultInfo };
       } catch (e) {
         lastError = e instanceof Error ? e : new Error(String(e));
         const isRetryable = lastError.message.includes('502') || lastError.message.includes('503') || lastError.message.includes('504') || lastError.message.includes('Network') || lastError.message.includes('fetch');
-        if (!isRetryable) break; // 4xx 등 비재시도 에러는 즉시 다음 화질로
+        if (!isRetryable) break;
         const delay = 3000 * Math.pow(2, attempt) + Math.random() * 2000;
         logger.trackRetry(`downloadVideoViaProxy(${q})`, attempt + 1, MAX_RETRIES, `${lastError.message}, ${Math.round(delay)}ms 대기`);
         await new Promise(r => setTimeout(r, delay));
       }
     }
-    // 현재 화질 전부 실패 → 다음 화질로 다운그레이드
     if (q !== qualities[qualities.length - 1]) {
       logger.info(`[Download] ${q} 실패, 화질 다운그레이드 시도...`);
     }
   }
 
   throw lastError || new Error('프록시 다운로드 실패 (모든 재시도 소진)');
+}
+
+/**
+ * [FIX #316] 오디오 트랙만 다운로드 (영상+오디오 분리 다운로드 후 클라이언트 머지용)
+ */
+export async function downloadAudioViaProxy(
+  youtubeUrl: string,
+): Promise<Blob> {
+  const baseUrl = getApiBaseUrl();
+  const apiKey = getApiKey();
+  const proxyUrl = `${baseUrl.replace(/\/$/, '')}/api/download?url=${encodeURIComponent(youtubeUrl)}&quality=audio`;
+
+  const response = await monitoredFetch(proxyUrl, {
+    headers: apiKey ? { 'X-API-Key': apiKey } : {},
+    signal: AbortSignal.timeout(120_000), // 오디오는 작으므로 2분
+  });
+
+  if (!response.ok) {
+    throw new Error(`오디오 다운로드 실패 (HTTP ${response.status})`);
+  }
+
+  return response.blob();
 }
 
 /**

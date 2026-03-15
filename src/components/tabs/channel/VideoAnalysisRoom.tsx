@@ -487,16 +487,41 @@ async function fetchYouTubeStreamUrl(videoId: string): Promise<string | null> {
  */
 async function downloadVideoAsBlob(videoId: string): Promise<{ blobUrl: string; blob: Blob } | null> {
   try {
-    // [FIX #316] downloadVideoViaProxy 내부에서 3회 재시도 + 화질 다운그레이드 자동 수행
-    console.log('[Frame] 서버 프록시 경유 Blob 다운로드 시작 (재시도 + 화질 다운그레이드 포함)...');
-    const { downloadVideoViaProxy } = await import('../../../services/ytdlpApiService');
-    const { blob } = await downloadVideoViaProxy(videoId, 'best');
-    const blobUrl = URL.createObjectURL(blob);
-    logger.registerBlobUrl(blobUrl, 'video', 'VideoAnalysisRoom:downloadVideoAsBlob', blob.size / (1024 * 1024));
-    console.log(`[Frame] ✅ Blob 다운로드 완료: ${(blob.size / 1024 / 1024).toFixed(1)}MB`);
-    return { blobUrl, blob };
+    // [FIX #316] 1080p 분리 다운로드: 영상(videoOnly) 먼저 → 오디오 병렬 → 클라이언트 머지
+    // 서버 ffmpeg 머지 회피 → 502 방지 + 1080p 원본 품질 보장
+    console.log('[Frame] ★ 분리 다운로드 시작: 영상(videoOnly) + 오디오 병렬...');
+    const { downloadVideoViaProxy, downloadAudioViaProxy } = await import('../../../services/ytdlpApiService');
+
+    // 1단계: 영상 트랙만 다운로드 (videoOnly=true → 서버 머지 없이 1080p 즉시 성공)
+    const videoPromise = downloadVideoViaProxy(videoId, 'best', undefined, { videoOnly: true });
+    // 2단계: 오디오 트랙 병렬 다운로드 (작으므로 빠름)
+    const audioPromise = downloadAudioViaProxy(videoId).catch(e => {
+      console.warn('[Frame] 오디오 다운로드 실패 (영상만 사용):', e);
+      return null;
+    });
+
+    const [videoResult, audioBlob] = await Promise.all([videoPromise, audioPromise]);
+    const videoBlob = videoResult.blob;
+    console.log(`[Frame] ✅ 영상 다운로드 완료: ${(videoBlob.size / 1024 / 1024).toFixed(1)}MB`);
+
+    // 3단계: 영상+오디오 클라이언트 머지 (mp4box demux → mp4-muxer remux, 품질 손실 0%)
+    let finalBlob = videoBlob;
+    if (audioBlob && audioBlob.size > 0) {
+      try {
+        const { mergeVideoAudio } = await import('../../../services/webcodecs/videoDecoder');
+        finalBlob = await mergeVideoAudio(videoBlob, audioBlob);
+        console.log(`[Frame] ✅ 영상+오디오 머지 완료: ${(finalBlob.size / 1024 / 1024).toFixed(1)}MB`);
+      } catch (mergeErr) {
+        console.warn('[Frame] 머지 실패 (영상만 사용):', mergeErr);
+        // 머지 실패해도 영상만으로 프레임 추출 + NLE 내보내기 가능
+      }
+    }
+
+    const blobUrl = URL.createObjectURL(finalBlob);
+    logger.registerBlobUrl(blobUrl, 'video', 'VideoAnalysisRoom:downloadVideoAsBlob', finalBlob.size / (1024 * 1024));
+    return { blobUrl, blob: finalBlob };
   } catch (e) {
-    console.warn('[Frame] ❌ Blob 다운로드 최종 실패 (모든 재시도+화질 다운그레이드 소진):', e);
+    console.warn('[Frame] ❌ 다운로드 최종 실패:', e);
     return null;
   }
 }
