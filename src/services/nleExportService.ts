@@ -718,27 +718,32 @@ export async function buildNlePackageZip(params: {
     ].join('\n'));
 
   } else if (target === 'capcut') {
-    // CapCut — draft JSON 프로젝트 (실제 편집점 포함) + SRT 폴백
-    // Mac: draft_info.json / Windows: draft_content.json — 둘 다 생성
+    // [FIX #316] CapCut — FCP XML (편집점 보존) + draft JSON + SRT
+    // CapCut 2025+ File > Import > XML 지원 → 편집점이 타임라인에 바로 적용됨
+
+    // 1. FCP XML (가장 확실한 편집점 import 방법)
+    const capCutXml = generateFcpXml({ scenes, title, videoFileName: videoFileName || 'video.mp4', preset, width, height, fps, videoDurationSec });
+    zip.file(`${safeName}.xml`, capCutXml);
+
+    // 2. draft JSON (프로젝트 폴더 복사 방식 — 보조)
     const draftJson = generateCapCutDraftJson({ scenes, title, videoFileName: videoFileName || 'video.mp4', preset, width, height, fps, videoDurationSec });
-    zip.file('draft_content.json', draftJson);  // Windows
-    zip.file('draft_info.json', draftJson);     // Mac
+    zip.file('draft_content.json', draftJson);
+    zip.file('draft_info.json', draftJson);
     const draftMeta = JSON.stringify({
-      draft_fold_path: '',
-      draft_id: '',
-      draft_name: title,
-      draft_root_path: '',
-      tm_draft_create: Math.floor(Date.now() / 1000),
-      tm_draft_modified: Math.floor(Date.now() / 1000),
+      draft_fold_path: '', draft_id: '', draft_name: title, draft_root_path: '',
+      tm_draft_create: Math.floor(Date.now() / 1000), tm_draft_modified: Math.floor(Date.now() / 1000),
       tm_duration: Math.ceil((extractTimings(scenes, preset).at(-1)?.tlEndSec || 0) * 1_000_000),
     });
     zip.file('draft_meta_info.json', draftMeta);
 
+    // 3. 영상 파일 (media/ 하위 — XML pathurl과 일치)
     if (videoBlob) {
+      zip.file(`media/${videoFileName || 'video.mp4'}`, videoBlob);
+      // 루트에도 복사 (draft JSON용)
       zip.file(videoFileName || 'video.mp4', videoBlob);
     }
 
-    // SRT 폴백 (프로젝트 가져오기 안 될 경우 수동 자막 import용)
+    // 4. SRT 폴백
     const dlgSrt = generateNleSrt(scenes, 'dialogue', preset, true);
     if (dlgSrt) zip.file(`${safeName}_자막.srt`, BOM + dlgSrt);
     const fxSrt = generateNleSrt(scenes, 'effect', preset, true);
@@ -747,49 +752,55 @@ export async function buildNlePackageZip(params: {
     zip.file('README.txt', [
       `=== ${title} — CapCut ===`,
       '',
-      '[ 방법 1: 프로젝트 폴더 가져오기 — 편집 자동 적용 ]',
-      '1. ZIP을 원하는 위치에 압축 해제합니다.',
-      '2. 압축 해제한 폴더 전체를 아래 경로에 복사합니다:',
+      '★ 추천: XML import (편집점 + 컷 자동 적용)',
+      '1. CapCut 데스크톱을 열고 새 프로젝트를 생성합니다.',
+      '2. File > Import > XML File 클릭',
+      `3. "${safeName}.xml" 선택`,
+      '4. media/ 폴더 영상이 자동 연결되면서 편집점이 바로 적용됩니다.',
+      '',
+      '[ 대안: 프로젝트 폴더 복사 ]',
+      '1. ZIP 압축 해제한 폴더를 아래 경로에 복사:',
       '   • Mac: ~/Movies/CapCut/User Data/Projects/com.lveditor.draft/',
       '   • Win: %LOCALAPPDATA%\\CapCut\\User Data\\Projects\\com.lveditor.draft\\',
-      '3. CapCut 데스크톱을 다시 열면 프로젝트 목록에 나타납니다.',
+      '2. CapCut 재시작 → 프로젝트 목록에서 선택',
       '',
-      '⚠ 최신 CapCut에서 프로젝트가 안 열릴 경우 방법 2를 사용해주세요.',
-      '',
-      '[ 방법 2: 수동 가져오기 — SRT 자막 ]',
-      '1. CapCut > 새 프로젝트 > 영상 파일 import',
-      `2. 자막 > SRT 불러오기 > "${safeName}_자막.srt"`,
-      '3. 자막이 타임라인에 자동 배치됩니다.',
-      '',
-      `* 편집점: ${scenes.length}개`,
-      `* 해상도: ${width}x${height} / ${fps}fps`,
+      `* 편집점: ${scenes.length}개 / 해상도: ${width}x${height} / ${fps}fps`,
     ].join('\n'));
 
   } else {
-    // VREW — SRT + 영상 (.vrew 포맷은 비공개이므로 SRT가 유일한 공식 방법)
+    // [FIX #316] VREW — FCP XML (편집점 보존) + SRT + 영상
+    // VREW도 Premiere XML import 지원 (File > Import > XML)
+
+    // 1. FCP XML
+    const vrewXml = generateFcpXml({ scenes, title, videoFileName: videoFileName || 'video.mp4', preset, width, height, fps, videoDurationSec });
+    zip.file(`${safeName}.xml`, vrewXml);
+
+    // 2. 영상 파일 (media/ — XML pathurl 일치)
     if (videoBlob) {
-      zip.file(videoFileName || 'video.mp4', videoBlob);
+      zip.file(`media/${videoFileName || 'video.mp4'}`, videoBlob);
     }
 
-    const srt = generateNleSrt(scenes, 'dialogue', preset);
+    // 3. SRT
+    const srt = generateNleSrt(scenes, 'dialogue', preset, true);
     if (srt) zip.file(`${safeName}_자막.srt`, BOM + srt);
-
-    const narSrt = generateNleSrt(scenes, 'narration', preset);
+    const narSrt = generateNleSrt(scenes, 'narration', preset, true);
     if (narSrt) zip.file(`${safeName}_나레이션.srt`, BOM + narSrt);
-
-    const fxSrt = generateNleSrt(scenes, 'effect', preset);
+    const fxSrt = generateNleSrt(scenes, 'effect', preset, true);
     if (fxSrt) zip.file(`${safeName}_효과자막.srt`, BOM + fxSrt);
 
     zip.file('README.txt', [
       `=== ${title} — VREW ===`,
       '',
-      '1. VREW에서 영상 파일을 불러옵니다.',
-      `2. 자막 > SRT 파일 불러오기 > "${safeName}_자막.srt"를 선택합니다.`,
-      '3. 자막이 타임라인에 자동 배치됩니다.',
+      '★ 추천: XML import (편집점 + 컷 자동 적용)',
+      '1. VREW에서 File > 가져오기 > XML 파일',
+      `2. "${safeName}.xml" 선택 → 편집점 타임라인 자동 생성`,
+      '3. media/ 폴더 영상이 자동 연결됩니다.',
       '',
-      '* VREW 프로젝트(.vrew) 포맷은 비공개이므로 SRT 가져오기만 지원됩니다.',
-      '* 나레이션/효과자막 SRT도 별도 레이어로 추가 import 가능합니다.',
-      `* 총 ${scenes.length}개 편집점이 포함되어 있습니다.`,
+      '[ 대안: SRT 자막만 가져오기 ]',
+      '1. VREW에서 영상 파일을 불러옵니다.',
+      `2. 자막 > SRT 불러오기 > "${safeName}_자막.srt"`,
+      '',
+      `* 편집점: ${scenes.length}개 / 해상도: ${width}x${height} / ${fps}fps`,
     ].join('\n'));
   }
 
