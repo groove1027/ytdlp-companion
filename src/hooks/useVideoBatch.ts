@@ -60,23 +60,18 @@ export const useVideoBatch = (
     const abortControllers = useRef<Map<string, AbortController>>(new Map());
     const isMountedRef = useRef(true);
 
-    // [CRITICAL FIX 1] Cleanup on unmount — abort all ongoing operations
+    // [FIX] unmount 시 폴링을 abort하지 않음 — 크레딧이 이미 소모된 생성 작업은 완료되어야 함
+    // abort는 사용자가 명시적으로 취소할 때만 (cancelScene)
     useEffect(() => {
         isMountedRef.current = true;
-        return () => {
-            isMountedRef.current = false;
-            // Abort all active controllers on unmount
-            abortControllers.current.forEach((controller, sceneId) => {
-                controller.abort();
-                logger.warn(`[Unmount Cleanup] Aborted scene: ${sceneId}`);
-            });
-            abortControllers.current.clear();
-        };
+        return () => { isMountedRef.current = false; };
     }, []);
 
-    // Safe setState wrapper — skip updates if unmounted
-    const safeSetScenes: typeof setScenes = (updater) => {
-        if (isMountedRef.current) setScenes(updater);
+    // [FIX] 모든 scene 업데이트를 Zustand store 직접 호출로 변경
+    // 기존 safeSetScenes(setScenes prop wrapper)는 컴포넌트 unmount 시 stale dispatcher → 업데이트 소실
+    // useProjectStore.getState().updateScene()은 전역 store이므로 unmount 후에도 정상 동작
+    const storeUpdateScene = (sceneId: string, partial: Partial<Scene>) => {
+        useProjectStore.getState().updateScene(sceneId, partial);
     };
 
     const cancelScene = async (sceneId: string) => {
@@ -99,12 +94,11 @@ export const useVideoBatch = (
              }
         }
 
-        safeSetScenes(prev => prev.map(s => s.id === sceneId ? {
-            ...s,
+        storeUpdateScene(sceneId, {
             isGeneratingVideo: false,
             isUpscaling: false,
             videoGenerationError: "사용자 취소"
-        } : s));
+        });
         logger.warn(`Scene Cancelled: ${sceneId}`);
     };
 
@@ -148,14 +142,13 @@ export const useVideoBatch = (
         if (isSafeMode) statusMsg = "🛡️ Safe Mode: 무음/단순 프롬프트로 재시도...";
         if (retryCount > 0) statusMsg = `⏳ 서버 응답 지연/오류로 재시도 중... (${retryCount}/3)`;
 
-        safeSetScenes(prev => prev.map(s => s.id === sceneId ? {
-            ...s,
+        storeUpdateScene(sceneId, {
             isGeneratingVideo: true,
             videoGenerationError: undefined,
             videoModelUsed: effectiveModel,
             generationStatus: statusMsg,
             progress: 0
-        } : s));
+        });
 
         let vidGenStart = performance.now();
         try {
@@ -321,11 +314,11 @@ export const useVideoBatch = (
             }
 
             if (signal.aborted) throw new Error("Cancelled by user");
-            safeSetScenes(prev => prev.map(s => s.id === sceneId ? { ...s, generationTaskId: taskId } : s));
+            storeUpdateScene(sceneId, { generationTaskId: taskId });
 
             // 2. POLLING
             const handleProgress = (percent: number) => {
-                safeSetScenes(prev => prev.map(s => s.id === sceneId ? { ...s, progress: percent } : s));
+                storeUpdateScene(sceneId, { progress: percent });
             };
 
             const videoUrl = await provider.poll(taskId, signal, handleProgress);
@@ -337,12 +330,12 @@ export const useVideoBatch = (
 
             const isNativeHQ = effectiveModel === VideoModel.VEO || (effectiveModel === VideoModel.GROK && explicitUpscaleRequest);
 
-            safeSetScenes(prev => prev.map(s => s.id === sceneId ? {
-                ...s, videoUrl, isGeneratingVideo: false, isUpscaling: false, isUpscaled: false, isNativeHQ, generationTaskId: taskId, videoModelUsed: effectiveModel, generationStatus: undefined, progress: 100,
+            storeUpdateScene(sceneId, {
+                videoUrl, isGeneratingVideo: false, isUpscaling: false, isUpscaled: false, isNativeHQ, generationTaskId: taskId, videoModelUsed: effectiveModel, generationStatus: undefined, progress: 100,
                 imageUpdatedAfterVideo: false,
                 ...(generatedSfx ? { generatedSfx } : {}),
                 ...(generatedDialogue ? { generatedDialogue } : {}),
-            } : s));
+            });
 
             logger.success(`Scene ${sceneId} Process Complete`);
 
@@ -356,11 +349,11 @@ export const useVideoBatch = (
                 logger.error(`[Quota] Scene ${sceneId} — 잔액 부족으로 중단`, e.message);
                 useUIStore.getState().setToast({ show: true, message: '잔액이 부족합니다. 크레딧을 충전한 후 다시 시도해주세요.' });
                 setTimeout(() => useUIStore.getState().setToast(null), 6000);
-                safeSetScenes(prev => prev.map(s => s.id === sceneId ? {
-                    ...s, isGeneratingVideo: false, isUpscaling: false,
+                storeUpdateScene(sceneId, {
+                    isGeneratingVideo: false, isUpscaling: false,
                     videoGenerationError: '잔액 부족: 크레딧을 충전해주세요.',
                     generationStatus: undefined, progress: 0
-                } : s));
+                });
                 // 에러를 다시 던져서 runBatch가 남은 장면 처리를 중단하도록 함
                 throw e;
             }
@@ -417,9 +410,9 @@ export const useVideoBatch = (
             }
 
             logger.error(`Scene ${sceneId} Generation Failed`, e.message);
-            safeSetScenes(prev => prev.map(s => s.id === sceneId ? {
-                ...s, isGeneratingVideo: false, isUpscaling: false, videoGenerationError: e.message, generationStatus: undefined, progress: 0
-            } : s));
+            storeUpdateScene(sceneId, {
+                isGeneratingVideo: false, isUpscaling: false, videoGenerationError: e.message, generationStatus: undefined, progress: 0
+            });
         } finally {
             abortControllers.current.delete(sceneId);
         }
@@ -431,21 +424,21 @@ export const useVideoBatch = (
         abortControllers.current.set(sceneId, controller);
         const signal = controller.signal;
 
-        safeSetScenes(prev => prev.map(s => s.id === sceneId ? { ...s, isUpscaling: true, videoGenerationError: undefined } : s));
+        storeUpdateScene(sceneId, { isUpscaling: true, videoGenerationError: undefined });
         try {
             logger.info(`Starting Upscale Only for Scene ${sceneId}`);
             const upscaleId = await createPortableUpscaleTask(scene.generationTaskId);
             const newVideoUrl = await pollKieTask(upscaleId, signal);
-            safeSetScenes(prev => prev.map(s => s.id === sceneId ? {
-                ...s, videoUrl: newVideoUrl, isUpscaling: false, isUpscaled: true, imageUpdatedAfterVideo: false,
-            } : s));
+            storeUpdateScene(sceneId, {
+                videoUrl: newVideoUrl, isUpscaling: false, isUpscaled: true, imageUpdatedAfterVideo: false,
+            });
             logger.success(`Upscale Only Success for Scene ${sceneId}`);
         } catch (e: any) {
             if (e.message === "Cancelled by user" || signal.aborted) return;
             logger.error(`Upscale Only Failed for Scene ${sceneId}`, e.message);
-            safeSetScenes(prev => prev.map(s => s.id === sceneId ? {
-                ...s, isUpscaling: false, videoGenerationError: `업스케일 실패: ${e.message}`
-            } : s));
+            storeUpdateScene(sceneId, {
+                isUpscaling: false, videoGenerationError: `업스케일 실패: ${e.message}`
+            });
         } finally {
             abortControllers.current.delete(sceneId);
         }
@@ -529,11 +522,11 @@ export const useVideoBatch = (
             ? `구간 ${(scene.v2vSegmentIndex ?? 0) + 1}/${scene.v2vTotalSegments} `
             : '';
 
-        safeSetScenes(prev => prev.map(s => s.id === sceneId ? {
-            ...s, isGeneratingVideo: true, videoGenerationError: undefined,
+        storeUpdateScene(sceneId, {
+            isGeneratingVideo: true, videoGenerationError: undefined,
             generationStatus: `🎬 ${segLabel}V2V 변환 중 (xAI Grok)...`,
             progress: 0
-        } : s));
+        });
 
         try {
             if (!getXaiKey()) throw new Error("xAI API Key가 설정되지 않았습니다.");
@@ -544,10 +537,10 @@ export const useVideoBatch = (
             const taskId = await createXaiVideoEditTask(scene.sourceVideoUrl, prompt, resolution);
 
             if (signal.aborted) throw new Error("Cancelled by user");
-            safeSetScenes(prev => prev.map(s => s.id === sceneId ? { ...s, generationTaskId: taskId } : s));
+            storeUpdateScene(sceneId, { generationTaskId: taskId });
 
             const handleProgress = (percent: number) => {
-                safeSetScenes(prev => prev.map(s => s.id === sceneId ? { ...s, progress: percent } : s));
+                storeUpdateScene(sceneId, { progress: percent });
             };
 
             const videoUrl = await pollXaiVideoEditTask(taskId, signal, handleProgress);
@@ -558,18 +551,18 @@ export const useVideoBatch = (
                 : 8;
             if (onCostAdd) onCostAdd(PRICING.VIDEO_XAI_V2V_PER_SEC * segDuration, 'video');
 
-            safeSetScenes(prev => prev.map(s => s.id === sceneId ? {
-                ...s, videoUrl, isGeneratingVideo: false, isNativeHQ: false,
+            storeUpdateScene(sceneId, {
+                videoUrl, isGeneratingVideo: false, isNativeHQ: false,
                 generationTaskId: taskId, videoModelUsed: VideoModel.GROK,
                 generationStatus: undefined, progress: 100, imageUpdatedAfterVideo: false,
-            } : s));
+            });
 
         } catch (e: any) {
             if (e.message === "Cancelled by user" || signal.aborted) return;
-            safeSetScenes(prev => prev.map(s => s.id === sceneId ? {
-                ...s, isGeneratingVideo: false, videoGenerationError: e.message,
+            storeUpdateScene(sceneId, {
+                isGeneratingVideo: false, videoGenerationError: e.message,
                 generationStatus: undefined, progress: 0
-            } : s));
+            });
         } finally {
             abortControllers.current.delete(sceneId);
         }

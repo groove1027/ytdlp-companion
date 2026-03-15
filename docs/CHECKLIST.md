@@ -8,6 +8,7 @@
 
 ## 🟢 완료된 작업
 
+- [x] **영상 생성 후 탭 전환 시 영상 소실 수정** — useVideoBatch의 safeSetScenes가 컴포넌트 unmount 시 stale dispatcher로 인해 영상 URL 업데이트 소실 + unmount 시 모든 폴링 abort로 크레딧 소모된 생성 취소됨. (1) 모든 scene 업데이트를 useProjectStore.getState().updateScene() 직접 호출로 변경 (전역 store → unmount 후에도 정상 동작) (2) unmount 시 폴링 abort 제거 (사용자 명시 취소만 abort) (useVideoBatch.ts, 2026-03-15)
 - [x] **스토리보드 화면비율 미반영 수정** — 이미지/영상 탭 스토리보드가 사용자 지정 화면비율(9:16, 1:1, 4:3)을 무시하고 16:9로만 표시되던 문제. GridSceneCard + SceneDetailModal 플레이스홀더에 하드코딩된 `aspect-video` → `aspectRatioClass()` 동적 적용 (StoryboardPanel.tsx, 2026-03-15)
 - [x] **#302 편집실 AI 파싱 속도 개선 + WebCodecs 영상 자르기** — (1) 파싱 모델 gemini-3.1-pro→flash-lite 전환으로 3~5배 속도 향상 (2) 청크 크기 30→50 확대 (3) 청크별 진행률 표시 (4) WebCodecs 리먹싱 기반 영상 자르기: mp4box demux → 편집점별 샘플 추출 → mp4-muxer 리먹싱(디코딩/인코딩 없이 원본 복사) → ZIP 다운로드. 미지원 브라우저는 FFmpeg 스크립트 폴백 (clipCutter.ts 신규, editPointService.ts, editPointStore.ts, videoDecoder.ts, Step2Mapping.tsx, 2026-03-15)
 - [x] **#298 편집실 AI 파싱 타임아웃 개선** — Evolink API 120초 타임아웃으로 편집점 파싱이 반복 실패하던 문제. 타임아웃 120s→180s 확대 + 타임아웃 에러도 재시도 대상에 추가 (editPointService.ts, 2026-03-15)
