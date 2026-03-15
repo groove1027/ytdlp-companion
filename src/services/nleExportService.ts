@@ -78,6 +78,19 @@ function breakLines(text: string, maxChars: number = 14): string {
   return text.slice(0, breakAt).trim() + '\n' + text.slice(breakAt).trim();
 }
 
+/** UUID v4 생성 (캡컷 프로젝트용) */
+function uuid(): string {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0;
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+  }).toUpperCase();
+}
+
+/** 초 → 마이크로초 (캡컷 시간 단위) */
+function toUs(sec: number): number {
+  return Math.round(sec * 1_000_000);
+}
+
 // ──────────────────────────────────────────────
 // 장면 → 타이밍 정보 추출
 // ──────────────────────────────────────────────
@@ -343,6 +356,257 @@ export function generateFcpXml(params: {
 }
 
 // ──────────────────────────────────────────────
+// CapCut 프로젝트 (draft_content.json)
+// ──────────────────────────────────────────────
+
+export function generateCapCutDraftJson(params: {
+  scenes: VideoSceneRow[];
+  title: string;
+  videoFileName: string;
+  fps?: number;
+  width?: number;
+  height?: number;
+  preset?: VideoAnalysisPreset;
+  videoDurationSec?: number;
+}): string {
+  const { scenes, title, videoFileName, fps = 30, width = 1080, height = 1920, preset, videoDurationSec } = params;
+  const timings = extractTimings(scenes, preset);
+  if (timings.length === 0) return '';
+
+  const totalDurUs = toUs(timings[timings.length - 1].tlEndSec);
+  const maxEnd = Math.max(...timings.map(t => t.endSec));
+  const srcDurUs = toUs(Math.max(videoDurationSec || 0, maxEnd));
+
+  const projectId = uuid();
+  const materialVideoId = uuid();
+  const speedId = uuid();
+  const trackVideoId = uuid();
+
+  // 빈 배열 필드 (캡컷 필수 구조)
+  const emptyArr: never[] = [];
+
+  // ── 비디오 세그먼트 (편집점 = 실제 컷) ──
+  const videoSegments = timings.map(t => ({
+    cartoon: false,
+    clip: {
+      alpha: 1.0,
+      flip: { horizontal: false, vertical: false },
+      rotation: 0.0,
+      scale: { x: 1.0, y: 1.0 },
+      transform: { x: 0.0, y: 0.0 },
+    },
+    common_keyframes: emptyArr,
+    enable_adjust: true,
+    enable_color_correct_adjust: false,
+    enable_color_curves: true,
+    enable_color_match_adjust: false,
+    enable_color_wheels: true,
+    enable_lut: true,
+    enable_smart_color_adjust: false,
+    extra_material_refs: [speedId],
+    group_id: '',
+    hdr_settings: null,
+    id: uuid(),
+    intensifies_audio: false,
+    is_placeholder: false,
+    is_tone_modify: false,
+    keyframe_refs: emptyArr,
+    last_nonzero_volume: 1.0,
+    material_id: materialVideoId,
+    render_index: 0,
+    responsive_layout: {
+      enable: false,
+      horizontal_pos_layout: 0,
+      size_layout: 0,
+      target_follow: '',
+      vertical_pos_layout: 0,
+    },
+    reverse: false,
+    source_timerange: {
+      duration: toUs(t.durationSec),
+      start: toUs(t.startSec),
+    },
+    speed: 1.0,
+    target_timerange: {
+      duration: toUs(t.durationSec),
+      start: toUs(t.tlStartSec),
+    },
+    template_id: '',
+    template_scene: '',
+    track_attribute: 0,
+    track_render_index: 0,
+    uniform_scale: { on: true, value: 1.0 },
+    visible: true,
+    volume: 1.0,
+  }));
+
+  const draft = {
+    canvas_config: {
+      height,
+      ratio: 'original',
+      width,
+    },
+    color_space: 0,
+    config: {
+      adjust_max_index: 1,
+      attachment_info: emptyArr,
+      combination_max_index: 1,
+      export_range: null,
+      extract_audio_last_index: 1,
+      lyrics_recognition_id: '',
+      lyrics_sync: false,
+      lyrics_taskinfo: emptyArr,
+      maintrack_adsorb: true,
+      material_save_mode: 0,
+      original_sound_last_index: 1,
+      record_audio_last_index: 1,
+      sticker_max_index: 1,
+      subtitle_keywords_config: null,
+      subtitle_recognition_id: '',
+      subtitle_sync: false,
+      subtitle_taskinfo: emptyArr,
+      system_font_list: emptyArr,
+      video_mute: false,
+      zoom_info_params: null,
+    },
+    cover: null,
+    create_time: Math.floor(Date.now() / 1000),
+    duration: totalDurUs,
+    extra_info: '',
+    fps: fps,
+    free_render_index_mode_on: false,
+    group_container: null,
+    id: projectId,
+    keyframe_graph_list: emptyArr,
+    last_modified_platform: {
+      app_id: 3704,
+      app_source: '',
+      app_version: '5.0.0',
+      device_id: '',
+      hard_disk_id: '',
+      mac_address: '',
+      os: 'mac',
+      os_version: '',
+    },
+    materials: {
+      audios: emptyArr,
+      canvases: emptyArr,
+      drafts: emptyArr,
+      effects: emptyArr,
+      flowers: emptyArr,
+      handwrites: emptyArr,
+      head_animations: emptyArr,
+      images: emptyArr,
+      log_color_wheels: emptyArr,
+      loudnesses: emptyArr,
+      manual_deformations: emptyArr,
+      material_animations: emptyArr,
+      material_colors: emptyArr,
+      placeholders: emptyArr,
+      plugin_effects: emptyArr,
+      realtime_denoises: emptyArr,
+      shapes: emptyArr,
+      smart_crops: emptyArr,
+      smart_relayouts: emptyArr,
+      speeds: [{
+        curve_speed: null,
+        id: speedId,
+        mode: 0,
+        name: '',
+        speed: 1.0,
+        type: 'speed',
+      }],
+      stickers: emptyArr,
+      tail_animations: emptyArr,
+      text_templates: emptyArr,
+      texts: emptyArr,
+      transitions: emptyArr,
+      video_effects: emptyArr,
+      video_trackings: emptyArr,
+      videos: [{
+        audio_fade: null,
+        category_id: '',
+        category_name: 'local',
+        check_flag: 0,
+        crop: {
+          lower_left_x: 0.0, lower_left_y: 1.0,
+          lower_right_x: 1.0, lower_right_y: 1.0,
+          upper_left_x: 0.0, upper_left_y: 0.0,
+          upper_right_x: 1.0, upper_right_y: 0.0,
+        },
+        duration: srcDurUs,
+        extra_type_option: 0,
+        formula_id: '',
+        freeze: null,
+        has_audio: true,
+        height,
+        id: materialVideoId,
+        intensifies_audio_path: '',
+        intensifies_path: '',
+        is_ai_generate_content: false,
+        is_copyright: false,
+        is_text_edit_overdub: false,
+        is_unified_beauty_mode: false,
+        local_id: '',
+        local_material_id: '',
+        material_id: '',
+        material_name: videoFileName,
+        material_url: '',
+        media_path: '',
+        music_id: '',
+        object_locked: null,
+        origin_material_id: '',
+        path: videoFileName,
+        request_id: '',
+        reverse_path: '',
+        roughcut_time_range: null,
+        smart_motion: null,
+        source: 0,
+        source_platform: 0,
+        stable: null,
+        team_id: '',
+        type: 'video',
+        video_algorithm: null,
+        width,
+      }],
+      vocal_beautifys: emptyArr,
+      vocal_separations: emptyArr,
+    },
+    mutable_config: null,
+    name: title,
+    new_version: '81.0.0',
+    platform: {
+      app_id: 3704,
+      app_source: '',
+      app_version: '5.0.0',
+      device_id: '',
+      hard_disk_id: '',
+      mac_address: '',
+      os: 'mac',
+      os_version: '',
+    },
+    relationships: emptyArr,
+    render_index_track_mode_on: false,
+    retouch_cover: null,
+    source: 'default',
+    static_cover_image_path: '',
+    tracks: [{
+      attribute: 0,
+      flag: 0,
+      id: trackVideoId,
+      is_default_name: true,
+      name: '',
+      segments: videoSegments,
+      type: 'video',
+    }],
+    update_time: Math.floor(Date.now() / 1000),
+    version: 360000,
+  };
+
+  return JSON.stringify(draft);
+}
+
+// ──────────────────────────────────────────────
 // SRT 생성 (NLE 패키지용)
 // ──────────────────────────────────────────────
 
@@ -453,8 +717,48 @@ export async function buildNlePackageZip(params: {
       `• 해상도: ${width}x${height} / ${fps}fps`,
     ].join('\n'));
 
+  } else if (target === 'capcut') {
+    // CapCut — draft_content.json 프로젝트 (실제 편집점 포함) + SRT 폴백
+    const draftJson = generateCapCutDraftJson({ scenes, title, videoFileName: videoFileName || 'video.mp4', preset, width, height, fps, videoDurationSec });
+    zip.file('draft_content.json', draftJson);
+    zip.file('draft_meta_info.json', JSON.stringify({
+      draft_fold_path: '',
+      draft_id: '',
+      draft_name: title,
+      draft_root_path: '',
+      tm_draft_create: Math.floor(Date.now() / 1000),
+      tm_draft_modified: Math.floor(Date.now() / 1000),
+      tm_duration: Math.ceil((extractTimings(scenes, preset).at(-1)?.tlEndSec || 0) * 1_000_000),
+    }));
+
+    if (videoBlob) {
+      zip.file(videoFileName || 'video.mp4', videoBlob);
+    }
+
+    // SRT 폴백 (자막 별도 import용)
+    const dlgSrt = generateNleSrt(scenes, 'dialogue', preset, true);
+    if (dlgSrt) zip.file(`${safeName}_자막.srt`, BOM + dlgSrt);
+    const fxSrt = generateNleSrt(scenes, 'effect', preset, true);
+    if (fxSrt) zip.file(`${safeName}_효과자막.srt`, BOM + fxSrt);
+
+    zip.file('README.txt', [
+      `=== ${title} — CapCut ===`,
+      '',
+      '[ 방법 1: 프로젝트 가져오기 (편집 자동 적용) ]',
+      '1. ZIP을 원하는 위치에 압축 해제하세요.',
+      '2. CapCut 데스크톱 > 프로젝트 가져오기',
+      '3. 압축 해제한 폴더를 선택하면 편집이 적용된 타임라인이 열립니다.',
+      '',
+      '[ 방법 2: 수동 가져오기 (SRT 자막) ]',
+      '1. CapCut > 새 프로젝트 > 영상 파일 import',
+      `2. 자막 > SRT 불러오기 > "${safeName}_자막.srt"`,
+      '',
+      `* 편집점: ${scenes.length}개`,
+      `* 해상도: ${width}x${height} / ${fps}fps`,
+    ].join('\n'));
+
   } else {
-    // CapCut / VREW — SRT + 영상
+    // VREW — SRT + 영상
     if (videoBlob) {
       zip.file(videoFileName || 'video.mp4', videoBlob);
     }
@@ -468,11 +772,10 @@ export async function buildNlePackageZip(params: {
     const fxSrt = generateNleSrt(scenes, 'effect', preset);
     if (fxSrt) zip.file(`${safeName}_효과자막.srt`, BOM + fxSrt);
 
-    const appName = target === 'capcut' ? 'CapCut' : 'VREW';
     zip.file('README.txt', [
-      `=== ${title} — ${appName} ===`,
+      `=== ${title} — VREW ===`,
       '',
-      `1. ${appName}을 열고 새 프로젝트를 생성하세요.`,
+      '1. VREW를 열고 새 프로젝트를 생성하세요.',
       `2. "${videoFileName || 'video.mp4'}" 영상 파일을 import하세요.`,
       `3. 자막 > SRT 파일 불러오기 > "${safeName}_자막.srt"를 선택하세요.`,
       '4. 자막이 타임라인에 자동 배치됩니다.',
