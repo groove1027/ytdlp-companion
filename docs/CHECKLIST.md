@@ -8,6 +8,7 @@
 
 ## 🟢 완료된 작업
 
+- [x] **#323~327 이슈 일괄 처리** — (1) #324 무음제거 SRT 싱크: endTime이 새 오디오 길이 초과 시 보정 + 제거 결과 표시 UI (WaveformEditor.tsx) (2) #325 단락→SRT 다운로드: 대본 단락 미리보기에서 SRT 파일 직접 내보내기 (ScriptWriterTab.tsx, srtService.ts) (3) #323/#326/#327 기능 요청·안내 코멘트 (2026-03-16)
 - [x] **#328 NLE XML pathurl 수정 + 스테레오 오디오 채널 수정** — (1) pathurl `file://localhost/media/`→상대경로(파일명만)로 수정 — Premiere에서 같은 폴더 영상 자동 연결 (2) 오디오 `channelcount 2` + `numOutputChannels 2` 추가 — "Cannot Link Media: 2 vs 1 audio channel" 에러 해결. generateFcpXml + generateFcpXmlFromEdl 양쪽 모두 적용 (nleExportService.ts, 2026-03-16)
 - [x] **#316 NLE 9:16 화면비율 + FCP XML 스펙 완전 준수** — 기본값 1920x1080→1080x1920, videoBlob에서 실제 치수 자동 감지, samplecharacteristics에 anamorphic=FALSE + pixelaspectratio=square + fielddominance=none + colordepth=24. 시퀀스+파일정의+편집실 3곳 모두 적용 (nleExportService.ts, VideoAnalysisRoom.tsx, 2026-03-16)
 - [x] **#316 NLE 패키지 영상 자동 다운로드** — videoBlob 없으면(새로고침 후 등) 자동 다운로드하여 ZIP에 포함. 빈 ZIP 방지 (VideoAnalysisRoom.tsx, 2026-03-16)

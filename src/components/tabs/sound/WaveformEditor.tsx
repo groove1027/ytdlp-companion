@@ -102,6 +102,7 @@ const WaveformEditor: React.FC = () => {
   const [silenceRegions, setSilenceRegions] = useState<SilenceRegion[]>([]);
   const [isDetecting, setIsDetecting] = useState(false);
   const [isRemoving, setIsRemoving] = useState(false);
+  const [silenceRemovedInfo, setSilenceRemovedInfo] = useState<{ removed: number; before: number; after: number } | null>(null);
   const elapsedDetect = useElapsedTimer(isDetecting);
   const elapsedRemove = useElapsedTimer(isRemoving);
 
@@ -686,12 +687,18 @@ const WaveformEditor: React.FC = () => {
       setPendingEditedAudioUrl(newUrl);
       const timeRegs = regions.map((r) => ({ startTime: r.startTime, endTime: r.endTime }));
       const curLines = useSoundStudioStore.getState().lines;
+      const newDuration = newLen / sampleRate;
       for (const line of curLines) {
         if (line.startTime === undefined) continue;
-        const ns = mapTimeAfterCut(line.startTime, timeRegs);
-        const ne = mapTimeAfterCut(line.endTime ?? line.startTime, timeRegs);
-        updateLine(line.id, { startTime: ns, endTime: ne, duration: ne - ns });
+        let ns = mapTimeAfterCut(line.startTime, timeRegs);
+        let ne = mapTimeAfterCut(line.endTime ?? line.startTime, timeRegs);
+        // [FIX #324] endTime이 새 오디오 길이를 초과하면 보정
+        if (ne > newDuration) ne = newDuration;
+        if (ns > newDuration) ns = newDuration;
+        updateLine(line.id, { startTime: ns, endTime: ne, duration: Math.max(0, ne - ns) });
       }
+      const totalRemovedSec = regions.reduce((s, r) => s + (r.endTime - r.startTime), 0);
+      setSilenceRemovedInfo({ removed: totalRemovedSec, before: decoded.duration, after: newDuration });
       setSilenceRegions([]);
     } catch (err) { console.error('[WaveformEditor] 무음 제거 실패:', err); }
     finally { await ctx.close(); setIsRemoving(false); }
@@ -958,6 +965,12 @@ const WaveformEditor: React.FC = () => {
               </div>
               {silenceRegions.length > 0 && (
                 <p className="text-xs text-yellow-500">{silenceRegions.length}개 무음 구간 ({silenceRegions.reduce((s, r) => s + r.duration, 0).toFixed(1)}s)</p>
+              )}
+              {silenceRemovedInfo && !silenceRegions.length && (
+                <div className="text-xs bg-green-900/20 border border-green-600/20 rounded-lg px-2.5 py-1.5 space-y-0.5">
+                  <p className="text-green-400 font-bold">{silenceRemovedInfo.removed.toFixed(1)}초 무음 제거됨</p>
+                  <p className="text-gray-400">{silenceRemovedInfo.before.toFixed(1)}s → {silenceRemovedInfo.after.toFixed(1)}s (자막 타임코드도 자동 조정됨)</p>
+                </div>
               )}
               <p className="text-[10px] text-gray-600">30ms constant-power crossfade 적용</p>
             </div>

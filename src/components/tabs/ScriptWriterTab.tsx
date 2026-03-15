@@ -14,6 +14,7 @@ import AiModelLogo from '../ui/AiModelLogo';
 import { showToast } from '../../stores/uiStore';
 import { logger } from '../../services/LoggerService';
 import { countScenesLocally, splitScenesLocally, extractJsonFromText } from '../../services/gemini/scriptAnalysis';
+import { formatSrtTime } from '../../services/srtService';
 import { canCreateNewProject } from '../../services/storageService';
 import { parseFileToText, SUPPORTED_EXTENSIONS, SUPPORTED_FORMATS_LABEL } from '../../services/fileParserService';
 import BenchmarkPanel from './script/BenchmarkPanel';
@@ -316,6 +317,26 @@ export default function ScriptWriterTab() {
       videoFormat === VideoFormat.LONG ? longFormSplitType : undefined);
     return { original: best.substring(0, 120) + (best.length > 120 ? '...' : ''), scenes };
   }, [scriptText, videoFormat, smartSplit, longFormSplitType]);
+
+  // [#325] 단락 → SRT 다운로드
+  const handleDownloadSegmentsSrt = useCallback(() => {
+    const segments = splitResult.length >= 2 ? splitResult : livePreviewData.scenes;
+    if (segments.length === 0) return;
+    const CHARS_PER_SEC = 4;
+    let offset = 0;
+    const srtLines: string[] = [];
+    segments.forEach((text, i) => {
+      const dur = Math.max(2, text.length / CHARS_PER_SEC);
+      srtLines.push(`${i + 1}\n${formatSrtTime(offset)} --> ${formatSrtTime(offset + dur)}\n${text}`);
+      offset += dur + 0.5;
+    });
+    const content = srtLines.join('\n\n') + '\n';
+    const blob = new Blob(['\uFEFF' + content], { type: 'text/srt;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `segments_${Date.now()}.srt`; a.click();
+    URL.revokeObjectURL(url);
+  }, [splitResult, livePreviewData.scenes]);
 
   const [isAnalyzingScenes, setIsAnalyzingScenes] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState(0);
@@ -1671,6 +1692,11 @@ ${instinctPrompt}
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-bold text-blue-300">단락 미리보기</span>
                         <span className="text-xs px-1.5 py-0.5 rounded bg-yellow-900/30 text-yellow-300 border border-yellow-600/20 font-medium">로컬 추정</span>
+                        <button type="button" onClick={handleDownloadSegmentsSrt}
+                          className="text-xs px-2 py-0.5 rounded bg-emerald-900/30 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-800/40 transition-colors font-bold"
+                          title="단락을 SRT 자막 파일로 내보내기">
+                          SRT
+                        </button>
                       </div>
                       <span className="text-xs text-yellow-300/70 font-medium">이미지/영상 탭에서 이 단락을 확인 후 장면이 생성됩니다</span>
                     </div>
