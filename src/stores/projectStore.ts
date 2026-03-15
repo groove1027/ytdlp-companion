@@ -322,12 +322,25 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         });
         const data = await res.json();
         const taskData = data.data;
-        if (!taskData || taskData.status !== 'success') { failed++; continue; }
+        const status = (taskData?.status || '').toLowerCase();
+        const isSuccess = status === 'success' || taskData?.successFlag === 1;
+        if (!taskData || !isSuccess) {
+          console.warn(`[복구] ⏭️ ${taskId} — status: ${status}, successFlag: ${taskData?.successFlag}`);
+          failed++; continue;
+        }
 
+        // video URL 추출: resultJson 또는 response.resultUrls
+        let videoUrl: string | undefined;
         let result = taskData.resultJson;
-        if (typeof result === 'string') { try { result = JSON.parse(result); } catch { failed++; continue; } }
-        const videoUrl = result?.resultUrls?.[0];
-        if (!videoUrl) { failed++; continue; }
+        if (typeof result === 'string') { try { result = JSON.parse(result); } catch { /* noop */ } }
+        videoUrl = result?.resultUrls?.[0];
+        // Veo/Grok 폴백: response 필드
+        if (!videoUrl) videoUrl = taskData.response?.resultUrls?.[0];
+        if (!videoUrl) videoUrl = taskData.response?.video_url;
+        if (!videoUrl) {
+          console.warn(`[복구] ⏭️ ${taskId} — video URL 없음. resultJson:`, taskData.resultJson, 'response:', taskData.response);
+          failed++; continue;
+        }
 
         // input에서 원본 이미지 URL 추출하여 scene 매칭
         let inputData = taskData.input;
@@ -335,10 +348,16 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         const sourceImageUrl = inputData?.image_urls?.[0];
 
         const scenes = get().scenes;
+        // 1순위: 이미지 URL 정확 매칭
         let matchedScene = scenes.find(s => !s.videoUrl && s.imageUrl && sourceImageUrl && s.imageUrl === sourceImageUrl);
-        // 이미지 URL 직접 매칭 안 되면 generationTaskId로 매칭
+        // 2순위: Cloudinary/Evolink URL 부분 매칭 (경로 끝부분)
+        if (!matchedScene && sourceImageUrl) {
+          const urlSuffix = sourceImageUrl.split('/').pop();
+          if (urlSuffix) matchedScene = scenes.find(s => !s.videoUrl && s.imageUrl?.includes(urlSuffix));
+        }
+        // 3순위: generationTaskId 매칭
         if (!matchedScene) matchedScene = scenes.find(s => !s.videoUrl && s.generationTaskId === taskId);
-        // 그래도 없으면 videoUrl이 없는 첫 scene에 순서대로 매칭
+        // 4순위: videoUrl이 없는 첫 scene에 순서대로
         if (!matchedScene) matchedScene = scenes.find(s => !s.videoUrl && s.imageUrl);
 
         if (matchedScene) {
@@ -349,10 +368,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
             } : s),
           }));
           recovered++;
-          console.log(`[복구] ✅ ${taskId} → scene ${matchedScene.id}`);
+          console.log(`[복구] ✅ ${taskId} → scene ${matchedScene.id} (${videoUrl.substring(0, 60)}...)`);
         } else {
           failed++;
-          console.warn(`[복구] ⚠️ ${taskId} — 매칭 가능한 장면 없음`);
+          console.warn(`[복구] ⚠️ ${taskId} — 매칭 가능한 장면 없음 (모든 장면에 이미 영상 있음?)`);
         }
       } catch (e) {
         failed++;
