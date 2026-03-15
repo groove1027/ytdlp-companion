@@ -9,6 +9,7 @@
 ## 🟢 완료된 작업
 
 - [x] **#329 장면별 인포그래픽 토글 + #330 SRT 순서/공백 버그 수정** — (1) #329: 스토리보드 리스트/그리드/상세 모달에 장면별 📊 Info ON/OFF 토글 추가 (allowInfographics ON 시 표시) (2) #330: SRT 내보내기 시 세그먼트 텍스트 trim + 내부 연속 빈줄 정규화로 SRT 파서 오동작 방지 (StoryboardPanel.tsx, ScriptWriterTab.tsx, 2026-03-16)
+- [x] **NLE 내보내기 프로급 고도화** — (1) Video↔Audio 링크(동기 이동/트림) (2) 시퀀스 마커(장면마다 Shift+M 네비게이션) (3) 라벨 색상(모드별: N=Cerulean, S=Forest, SN=Caribbean, A=Mango / 편집실: 배속별) (4) 메타데이터(logginginfo+comments→Metadata패널) (5) 클립 이름 "Scene 001: [장면설명]" (6) 편집실 V2 generatoritem 제거 (7) README 프로급 가이드 (nleExportService.ts, 2026-03-16)
 - [x] **영상분석실 NLE 내보내기 치명적 버그 2건 수정** — (1) FCP XML 타임라인 배치: start/end가 소스 타임코드와 동일해서 원본 재생 → 누적 타임라인 위치(tlStartSec/tlEndSec)로 수정, 클립이 순차 배치됨 (2) V2 generatoritem Text 제거: 자막이 그래픽으로 번인 → SRT 파일만 제공 (3) Premiere SRT 타임코드를 편집 타임라인 기준으로 전환 (4) file duration을 원본 전체 길이로 수정 (nleExportService.ts, 2026-03-16)
 - [x] **D1 user_settings 테이블 누락 수정** — schema.sql에 user_settings 테이블 추가 + 프로덕션 D1에 직접 생성. API 키 서버 동기화(syncApiKeysToServer/restoreApiKeysFromServer)가 테이블 없어서 항상 500 실패하던 문제 해결 (schema.sql, 2026-03-16)
 - [x] **#323~327 이슈 일괄 처리** — (1) #324 무음제거 SRT 싱크: endTime이 새 오디오 길이 초과 시 보정 + 제거 결과 표시 UI (WaveformEditor.tsx) (2) #325 단락→SRT 다운로드: 대본 단락 미리보기에서 SRT 파일 직접 내보내기 (ScriptWriterTab.tsx, srtService.ts) (3) #323/#326/#327 기능 요청·안내 코멘트 (2026-03-16)

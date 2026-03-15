@@ -48,6 +48,16 @@ function escXml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
 }
 
+/** 장면 모드 → Premiere Pro 라벨 색상 (타임라인 시각 구분) */
+function modeToLabelColor(mode: string): string {
+  const m = (mode || '').toUpperCase().replace(/[\[\]]/g, '').trim();
+  if (m.includes('S-내레이션') || m.includes('S-나레이션') || m === 'SN') return 'Caribbean';
+  if (m.includes('S')) return 'Forest';
+  if (m.includes('N')) return 'Cerulean';
+  if (m.includes('A')) return 'Mango';
+  return 'Iris';
+}
+
 /** 숏폼 자막 줄바꿈 */
 function breakLines(text: string, maxChars: number = 14): string {
   if (text.length <= maxChars) return text;
@@ -133,26 +143,41 @@ export function generateFcpXml(params: {
   height?: number;
   preset?: VideoAnalysisPreset;
 }): string {
-  // [FIX #316] 기본값을 9:16(1080x1920)으로 변경 — 대부분 쇼츠/릴스 분석이므로
   const { scenes, title, videoFileName, fps = 30, width = 1080, height = 1920, preset } = params;
   const timings = extractTimings(scenes, preset);
   if (timings.length === 0) return '';
 
-  // [FIX] 시퀀스 총 길이 = 클립 누적 합 (소스 끝점이 아님)
   const totalDurSec = timings[timings.length - 1].tlEndSec;
   const totalFrames = Math.ceil(totalDurSec * fps);
   const safeTitle = escXml(title);
   const safeFileName = escXml(videoFileName);
-
   const toFrames = (sec: number) => Math.round(sec * fps);
-
-  // [FIX] 소스 파일 전체 길이(프레임) — file duration은 원본 영상 전체 길이여야 함
-  // 소스 끝점 중 가장 큰 값 사용
   const srcTotalFrames = Math.ceil(Math.max(...timings.map(t => t.endSec)) * fps);
 
-  // 비디오 클립 아이템 (V1 트랙 — 순차 배치, 첫 클립에 file 정의)
-  // [FIX] in/out = 소스 위치, start/end = 타임라인 누적 위치
+  // ── 시퀀스 마커 (장면 경계 — Shift+M으로 즉시 네비게이션) ──
+  const markers = timings.map((t, i) => {
+    const s = scenes[i];
+    const markerName = s.sceneDesc
+      ? `#${i + 1} ${s.sceneDesc.slice(0, 50)}`
+      : `Scene ${i + 1}`;
+    const markerComment = [s.dialogue, s.effectSub, s.audioContent]
+      .filter(Boolean).join(' | ').slice(0, 200);
+    return `
+    <marker>
+      <name>${escXml(markerName)}</name>
+      <comment>${escXml(markerComment)}</comment>
+      <in>${toFrames(t.tlStartSec)}</in>
+      <out>-1</out>
+    </marker>`;
+  }).join('');
+
+  // ── V1 비디오 클립 (링크 + 메타데이터 + 라벨) ──
   const videoClips = timings.map((t, i) => {
+    const s = scenes[i];
+    const color = modeToLabelColor(s.mode);
+    const clipName = s.sceneDesc
+      ? `Scene ${String(i + 1).padStart(3, '0')}: ${s.sceneDesc.slice(0, 40)}`
+      : `Scene ${String(i + 1).padStart(3, '0')}`;
     const fileTag = i === 0
       ? `<file id="file-1">
               <name>${safeFileName}</name>
@@ -167,7 +192,7 @@ export function generateFcpXml(params: {
       : '<file id="file-1"/>';
     return `
           <clipitem id="clip-${i + 1}">
-            <name>${escXml(`Scene ${String(i + 1).padStart(3, '0')}`)}</name>
+            <name>${escXml(clipName)}</name>
             <duration>${toFrames(t.durationSec)}</duration>
             <rate><ntsc>FALSE</ntsc><timebase>${fps}</timebase></rate>
             <in>${toFrames(t.startSec)}</in>
@@ -175,15 +200,36 @@ export function generateFcpXml(params: {
             <start>${toFrames(t.tlStartSec)}</start>
             <end>${toFrames(t.tlEndSec)}</end>
             ${fileTag}
+            <labels><label2>${color}</label2></labels>
+            <logginginfo>
+              <description>${escXml(s.sceneDesc || '')}</description>
+              <scene>${escXml(String(i + 1))}</scene>
+              <shottake>${escXml(s.videoDirection || '')}</shottake>
+              <lognote>${escXml(t.text)}</lognote>
+            </logginginfo>
+            <comments>
+              <mastercomment1>${escXml([s.dialogue, s.effectSub].filter(Boolean).join(' / '))}</mastercomment1>
+            </comments>
+            <link>
+              <linkclipref>clip-${i + 1}</linkclipref>
+              <mediatype>video</mediatype>
+              <trackindex>1</trackindex>
+              <clipindex>${i + 1}</clipindex>
+            </link>
+            <link>
+              <linkclipref>audio-${i + 1}</linkclipref>
+              <mediatype>audio</mediatype>
+              <trackindex>1</trackindex>
+              <clipindex>${i + 1}</clipindex>
+            </link>
           </clipitem>`;
   }).join('');
 
-  // [FIX] V2 자막 generatoritem 제거 — 자막은 SRT 파일로만 제공
-  // generatoritem Text는 프리미어에서 그래픽으로 번인되므로 사용하지 않음
-
-  // 오디오 클립 아이템 (A1 트랙)
-  // [FIX] start/end를 타임라인 누적 위치로 수정
-  const audioClips = timings.map((t, i) => `
+  // ── A1 오디오 클립 (링크 + 라벨) ──
+  const audioClips = timings.map((t, i) => {
+    const s = scenes[i];
+    const color = modeToLabelColor(s.mode);
+    return `
           <clipitem id="audio-${i + 1}">
             <name>${escXml(`Scene ${String(i + 1).padStart(3, '0')} Audio`)}</name>
             <duration>${toFrames(t.durationSec)}</duration>
@@ -193,7 +239,21 @@ export function generateFcpXml(params: {
             <start>${toFrames(t.tlStartSec)}</start>
             <end>${toFrames(t.tlEndSec)}</end>
             <file id="file-1"/>
-          </clipitem>`).join('');
+            <labels><label2>${color}</label2></labels>
+            <link>
+              <linkclipref>clip-${i + 1}</linkclipref>
+              <mediatype>video</mediatype>
+              <trackindex>1</trackindex>
+              <clipindex>${i + 1}</clipindex>
+            </link>
+            <link>
+              <linkclipref>audio-${i + 1}</linkclipref>
+              <mediatype>audio</mediatype>
+              <trackindex>1</trackindex>
+              <clipindex>${i + 1}</clipindex>
+            </link>
+          </clipitem>`;
+  }).join('');
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE xmeml>
@@ -210,7 +270,7 @@ export function generateFcpXml(params: {
       <string>${secondsToFcpTc(0, fps)}</string>
       <frame>0</frame>
       <displayformat>NDF</displayformat>
-    </timecode>
+    </timecode>${markers}
     <media>
       <video>
         <format>
@@ -327,14 +387,33 @@ export async function buildNlePackageZip(params: {
     const fxSrt = generateNleSrt(scenes, 'effect', preset, true);
     if (fxSrt) zip.file(`${safeName}_효과자막.srt`, BOM + fxSrt);
 
+    const presetLabel: Record<string, string> = {
+      tikitaka: '티키타카 리메이크', snack: '스낵 편집', condensed: '컨덴스드',
+      deep: '딥 분석', shopping: '쇼핑 리뷰', alltts: 'All TTS',
+    };
     zip.file('README.txt', [
       `=== ${title} — Premiere Pro / DaVinci Resolve ===`,
       '',
-      '1. ZIP을 압축 해제하세요.',
-      '2. Premiere Pro를 열고 File > Import를 클릭하세요.',
-      `3. "${safeName}.xml" 파일을 선택하면 타임라인이 자동 생성됩니다.`,
-      '4. media/ 폴더의 영상 파일이 자동 연결됩니다.',
-      '5. 추가 SRT 파일은 별도 import할 수 있습니다.',
+      '[ 가져오기 ]',
+      '1. ZIP을 원하는 위치에 압축 해제하세요.',
+      '2. Premiere Pro > File > Import (Ctrl+I)',
+      `3. "${safeName}.xml" 선택 → 타임라인 자동 생성`,
+      '4. media/ 폴더 영상이 자동 연결됩니다.',
+      '',
+      '[ 타임라인 활용 ]',
+      `• 마커(Marker): 장면마다 마커 설정됨 → Shift+M / Ctrl+Shift+M으로 이동`,
+      '• 클립 색상: 파랑(나레이션) / 초록(대사) / 청록(원본나레이션) / 주황(액션)',
+      '• 메타데이터: Window > Metadata 패널에서 장면 설명·대사 확인',
+      '• 비디오+오디오 연결됨: 함께 이동·트림됩니다.',
+      '',
+      '[ 자막 추가 (선택) ]',
+      `• File > Import > "${safeName}_자막.srt" → 타임라인에 드래그`,
+      '• SRT 타임코드는 편집 타임라인 기준입니다.',
+      '',
+      '[ 프로젝트 정보 ]',
+      `• 편집점: ${scenes.length}개`,
+      `• 프리셋: ${presetLabel[preset || ''] || '기본'}`,
+      `• 해상도: ${width}x${height} / ${fps}fps`,
     ].join('\n'));
 
   } else {
@@ -435,7 +514,19 @@ export function generateFcpXmlFromEdl(params: {
               </media>`);
   }
 
-  // V1 비디오 클립 — 각 file의 첫 등장 시 전체 정의, 이후 빈 참조 (xmeml v5 스펙)
+  // ── 시퀀스 마커 (편집점마다 — Shift+M으로 즉시 네비게이션) ──
+  const markers = clips.map((c, i) => {
+    const markerName = `${c.entry.order} ${c.entry.sourceDescription.slice(0, 50)}`;
+    return `
+    <marker>
+      <name>${escXml(markerName)}</name>
+      <comment>${escXml(c.entry.narrationText.slice(0, 200))}</comment>
+      <in>${toFrames(c.recStart)}</in>
+      <out>-1</out>
+    </marker>`;
+  }).join('');
+
+  // ── V1 비디오 클립 (링크 + 메타데이터 + 라벨) ──
   const definedFiles = new Set<string>();
   const videoClips = clips.map((c, i) => {
     const start = c.entry.refinedTimecodeStart ?? c.entry.timecodeStart;
@@ -448,9 +539,11 @@ export function generateFcpXmlFromEdl(params: {
     } else {
       fileTag = `<file id="${fid}"/>`;
     }
+    // 배속 기반 색상: 정배속=Iris, 고속=Mango, 저속=Lavender
+    const color = c.entry.speedFactor > 1.1 ? 'Mango' : c.entry.speedFactor < 0.9 ? 'Lavender' : 'Iris';
     return `
           <clipitem id="clip-${i + 1}">
-            <name>${escXml(`${c.entry.order} ${c.entry.sourceDescription.slice(0, 30)}`)}</name>
+            <name>${escXml(`${c.entry.order} ${c.entry.sourceDescription.slice(0, 35)}`)}</name>
             <duration>${toFrames(end - start)}</duration>
             <rate><ntsc>FALSE</ntsc><timebase>${fps}</timebase></rate>
             <in>${toFrames(start)}</in>
@@ -458,37 +551,35 @@ export function generateFcpXmlFromEdl(params: {
             <start>${toFrames(c.recStart)}</start>
             <end>${toFrames(c.recEnd)}</end>
             ${fileTag}
+            <labels><label2>${color}</label2></labels>
+            <logginginfo>
+              <description>${escXml(c.entry.sourceDescription)}</description>
+              <scene>${escXml(c.entry.order)}</scene>
+              <lognote>${escXml(c.entry.narrationText)}</lognote>
+            </logginginfo>
+            <comments>
+              <mastercomment1>${escXml(c.entry.narrationText.slice(0, 200))}</mastercomment1>
+            </comments>
+            <link>
+              <linkclipref>clip-${i + 1}</linkclipref>
+              <mediatype>video</mediatype>
+              <trackindex>1</trackindex>
+              <clipindex>${i + 1}</clipindex>
+            </link>
+            <link>
+              <linkclipref>audio-${i + 1}</linkclipref>
+              <mediatype>audio</mediatype>
+              <trackindex>1</trackindex>
+              <clipindex>${i + 1}</clipindex>
+            </link>
           </clipitem>`;
   }).join('');
 
-  // V2 자막 트랙
-  const subtitleClips = clips.filter(c => c.entry.narrationText).map((c, i) => `
-          <generatoritem id="sub-${i + 1}">
-            <name>${escXml(c.entry.narrationText.slice(0, 40))}</name>
-            <duration>${toFrames(c.recEnd - c.recStart)}</duration>
-            <rate><ntsc>FALSE</ntsc><timebase>${fps}</timebase></rate>
-            <in>0</in>
-            <out>${toFrames(c.recEnd - c.recStart)}</out>
-            <start>${toFrames(c.recStart)}</start>
-            <end>${toFrames(c.recEnd)}</end>
-            <enabled>TRUE</enabled>
-            <effect>
-              <name>Text</name>
-              <effectid>Text</effectid>
-              <effectcategory>Text</effectcategory>
-              <effecttype>generator</effecttype>
-              <mediatype>video</mediatype>
-              <parameter><parameterid>str</parameterid><name>Text</name><value>${escXml(c.entry.narrationText)}</value></parameter>
-              <parameter><parameterid>fontsize</parameterid><name>Font Size</name><value>42</value></parameter>
-              <parameter><parameterid>fontcolor</parameterid><name>Font Color</name><value>16777215</value></parameter>
-              <parameter><parameterid>origin</parameterid><name>Origin</name><value>0 0.38</value></parameter>
-            </effect>
-          </generatoritem>`).join('');
-
-  // A1 오디오 클립
+  // ── A1 오디오 클립 (링크 + 라벨) ──
   const audioClips = clips.map((c, i) => {
     const start = c.entry.refinedTimecodeStart ?? c.entry.timecodeStart;
     const end = c.entry.refinedTimecodeEnd ?? c.entry.timecodeEnd;
+    const color = c.entry.speedFactor > 1.1 ? 'Mango' : c.entry.speedFactor < 0.9 ? 'Lavender' : 'Iris';
     return `
           <clipitem id="audio-${i + 1}">
             <name>${escXml(`Audio ${c.entry.order}`)}</name>
@@ -499,6 +590,19 @@ export function generateFcpXmlFromEdl(params: {
             <start>${toFrames(c.recStart)}</start>
             <end>${toFrames(c.recEnd)}</end>
             <file id="${c.fileInfo.id}"/>
+            <labels><label2>${color}</label2></labels>
+            <link>
+              <linkclipref>clip-${i + 1}</linkclipref>
+              <mediatype>video</mediatype>
+              <trackindex>1</trackindex>
+              <clipindex>${i + 1}</clipindex>
+            </link>
+            <link>
+              <linkclipref>audio-${i + 1}</linkclipref>
+              <mediatype>audio</mediatype>
+              <trackindex>1</trackindex>
+              <clipindex>${i + 1}</clipindex>
+            </link>
           </clipitem>`;
   }).join('');
 
@@ -514,7 +618,7 @@ export function generateFcpXmlFromEdl(params: {
       <string>${secondsToFcpTc(0, fps)}</string>
       <frame>0</frame>
       <displayformat>NDF</displayformat>
-    </timecode>
+    </timecode>${markers}
     <media>
       <video>
         <format>
@@ -528,8 +632,6 @@ export function generateFcpXmlFromEdl(params: {
           </samplecharacteristics>
         </format>
         <track>${videoClips}
-        </track>
-        <track><enabled>TRUE</enabled>${subtitleClips}
         </track>
       </video>
       <audio>
@@ -581,13 +683,28 @@ export async function buildEdlNlePackageZip(params: {
     const xml = generateFcpXmlFromEdl({ entries, sourceVideos, sourceMapping, title });
     zip.file(`${safeName}.xml`, xml);
     if (srt) zip.file(`${safeName}_나레이션.srt`, BOM + srt);
+
+    const sourceNames = [...new Set(entries.map(e => e.sourceDescription))].join(', ');
     zip.file('README.txt', [
       `=== ${title} — Premiere Pro / DaVinci Resolve ===`,
       '',
-      '1. Premiere Pro: File > Import > XML 파일 선택',
-      '2. 타임라인에 편집점+자막이 자동 배치됩니다.',
-      '3. 소스 영상을 XML과 같은 폴더에 배치하세요.',
-      `* ${entries.length}개 편집점, Vision AI 정제 타임코드 반영`,
+      '[ 가져오기 ]',
+      '1. 소스 영상을 XML 파일과 같은 폴더에 배치하세요.',
+      '2. Premiere Pro > File > Import (Ctrl+I)',
+      `3. "${safeName}.xml" 선택 → 타임라인 자동 생성`,
+      '',
+      '[ 타임라인 활용 ]',
+      `• 마커(Marker): 편집점마다 마커 설정됨 → Shift+M / Ctrl+Shift+M으로 이동`,
+      '• 클립 색상: 보라(정배속) / 주황(고속) / 연보라(슬로우)',
+      '• 메타데이터: Window > Metadata에서 나레이션 텍스트 확인',
+      '• 비디오+오디오 연결됨: 함께 이동·트림됩니다.',
+      '',
+      '[ 자막 추가 (선택) ]',
+      `• File > Import > "${safeName}_나레이션.srt" → 타임라인에 드래그`,
+      '',
+      '[ 프로젝트 정보 ]',
+      `• 편집점: ${entries.length}개 (Vision AI 정제 타임코드)`,
+      `• 소스: ${sourceNames.slice(0, 100)}`,
     ].join('\n'));
   } else {
     // CapCut / VREW — 소스 영상 포함 불가(다중 소스), SRT만 제공
