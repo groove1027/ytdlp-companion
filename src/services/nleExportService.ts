@@ -394,7 +394,7 @@ export async function buildNlePackageZip(params: {
     ].join('\n'));
   }
 
-  return zip.generateAsync({ type: 'blob' });
+  return zip.generateAsync({ type: 'blob', compression: 'STORE' });
 }
 
 // ──────────────────────────────────────────────
@@ -630,5 +630,5 @@ export async function buildEdlNlePackageZip(params: {
     ].join('\n'));
   }
 
-  return zip.generateAsync({ type: 'blob' });
+  return zip.generateAsync({ type: 'blob', compression: 'STORE' });
 }

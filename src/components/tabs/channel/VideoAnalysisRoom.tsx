@@ -2979,6 +2979,7 @@ const VideoAnalysisRoom: React.FC = () => {
   const [isDragOver, setIsDragOver] = useState(false);
   const [guideAiResult, setGuideAiResult] = useState('');
   const [nleExporting, setNleExporting] = useState<{ target: string; step: string } | null>(null);
+  const nleDimsCache = useRef<{ w: number; h: number; fps: number } | null>(null);
   const validYoutubeUrls = youtubeUrls.filter(u => u.trim().length > 0);
   const hasInput = inputMode === 'youtube' ? validYoutubeUrls.length > 0 : uploadedFiles.length > 0;
 
@@ -4419,21 +4420,25 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                         showToast('영상을 다운로드할 수 없습니다. 다시 시도해주세요.', 4000);
                                         return;
                                       }
-                                      // Step 2: 영상 치수 감지
-                                      setNleExporting({ target, step: '영상 정보 확인 중...' });
+                                      // Step 2: 영상 치수 감지 (캐시 우선)
                                       const { buildNlePackageZip } = await import('../../../services/nleExportService');
                                       const fileName = youtubeUrl ? `${v.title.replace(/[^\w가-힣\s-]/g, '').slice(0, 30)}.mp4` : (uploadedFiles[0]?.name || 'video.mp4');
-                                      const dims = await new Promise<{ w: number; h: number; fps: number }>(resolve => {
-                                        const vid = document.createElement('video');
-                                        vid.muted = true; vid.preload = 'metadata';
-                                        vid.onloadedmetadata = () => {
-                                          resolve({ w: vid.videoWidth || 1080, h: vid.videoHeight || 1920, fps: 30 });
-                                          URL.revokeObjectURL(vid.src);
-                                        };
-                                        vid.onerror = () => resolve({ w: 1080, h: 1920, fps: 30 });
-                                        setTimeout(() => resolve({ w: 1080, h: 1920, fps: 30 }), 5000);
-                                        vid.src = URL.createObjectURL(videoBlob!);
-                                      });
+                                      let dims = nleDimsCache.current;
+                                      if (!dims) {
+                                        setNleExporting({ target, step: '영상 정보 확인 중...' });
+                                        dims = await new Promise<{ w: number; h: number; fps: number }>(resolve => {
+                                          const vid = document.createElement('video');
+                                          vid.muted = true; vid.preload = 'metadata';
+                                          vid.onloadedmetadata = () => {
+                                            resolve({ w: vid.videoWidth || 1080, h: vid.videoHeight || 1920, fps: 30 });
+                                            URL.revokeObjectURL(vid.src);
+                                          };
+                                          vid.onerror = () => resolve({ w: 1080, h: 1920, fps: 30 });
+                                          setTimeout(() => resolve({ w: 1080, h: 1920, fps: 30 }), 3000);
+                                          vid.src = URL.createObjectURL(videoBlob!);
+                                        });
+                                        nleDimsCache.current = dims;
+                                      }
                                       // Step 3: ZIP 패키지 생성
                                       setNleExporting({ target, step: 'ZIP 패키지 생성 중...' });
                                       const zipBlob = await buildNlePackageZip({ target, scenes: v.scenes, title: v.title, videoBlob, videoFileName: fileName, preset: selectedPreset || undefined, width: dims.w, height: dims.h, fps: dims.fps });
