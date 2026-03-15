@@ -13,8 +13,8 @@ import type { VideoSceneRow, VideoAnalysisPreset, EdlEntry, SourceVideoFile } fr
 // ──────────────────────────────────────────────
 
 function parseDuration(dur: string): number {
-  const m = dur.match(/([\d.]+)\s*초/);
-  return m ? parseFloat(m[1]) : 3;
+  const m = dur.match(/([\d.]+)\s*(?:초|s(?:ec(?:onds?)?)?)/i);
+  return m && parseFloat(m[1]) > 0 ? parseFloat(m[1]) : 3;
 }
 
 function timecodeToSeconds(tc: string): number {
@@ -123,6 +123,10 @@ function extractTimings(scenes: VideoSceneRow[], preset?: VideoAnalysisPreset): 
       }
     }
 
+    // [FIX] 음수/0 클립 방지 — endSec 교정 후 clipDur 계산
+    if (endSec <= startSec) {
+      endSec = startSec + Math.max(0.1, dur);
+    }
     const clipDur = endSec - startSec;
     const mainText = preset === 'snack'
       ? (s.dialogue || s.audioContent || s.sceneDesc)
@@ -202,7 +206,7 @@ export function generateFcpXml(params: {
     const fileTag = i === 0
       ? `<file id="file-1">
               <name>${safeFileName}</name>
-              <pathurl>media/${escXml(videoFileName)}</pathurl>
+              <pathurl>media/${encodeURIComponent(videoFileName)}</pathurl>
               <duration>${srcTotalFrames}</duration>
               <rate><ntsc>${ntscStr}</ntsc><timebase>${timebase}</timebase></rate>
               <media>
@@ -212,7 +216,8 @@ export function generateFcpXml(params: {
             </file>`
       : '<file id="file-1"/>';
     return `
-          <clipitem id="clip-${i + 1}">
+          <clipitem id="clip-${i + 1}" premiereChannelType="stereo">
+            <masterclipid>masterclip-1</masterclipid>
             <name>${escXml(clipName)}</name>
             <duration>${srcTotalFrames}</duration>
             <rate><ntsc>${ntscStr}</ntsc><timebase>${timebase}</timebase></rate>
@@ -221,6 +226,10 @@ export function generateFcpXml(params: {
             <start>${toFrames(t.tlStartSec)}</start>
             <end>${toFrames(t.tlEndSec)}</end>
             ${fileTag}
+            <sourcetrack>
+              <mediatype>video</mediatype>
+              <trackindex>1</trackindex>
+            </sourcetrack>
             <labels><label2>${color}</label2></labels>
             <logginginfo>
               <description>${escXml(s.sceneDesc || '')}</description>
@@ -252,6 +261,7 @@ export function generateFcpXml(params: {
     const color = modeToLabelColor(s.mode);
     return `
           <clipitem id="audio-${i + 1}">
+            <masterclipid>masterclip-1</masterclipid>
             <name>${escXml(`Scene ${String(i + 1).padStart(3, '0')} Audio`)}</name>
             <duration>${srcTotalFrames}</duration>
             <rate><ntsc>${ntscStr}</ntsc><timebase>${timebase}</timebase></rate>
@@ -260,6 +270,10 @@ export function generateFcpXml(params: {
             <start>${toFrames(t.tlStartSec)}</start>
             <end>${toFrames(t.tlEndSec)}</end>
             <file id="file-1"/>
+            <sourcetrack>
+              <mediatype>audio</mediatype>
+              <trackindex>1</trackindex>
+            </sourcetrack>
             <labels><label2>${color}</label2></labels>
             <link>
               <linkclipref>clip-${i + 1}</linkclipref>
@@ -567,7 +581,8 @@ export function generateFcpXmlFromEdl(params: {
     // 배속 기반 색상: 정배속=Iris, 고속=Mango, 저속=Lavender
     const color = c.entry.speedFactor > 1.1 ? 'Mango' : c.entry.speedFactor < 0.9 ? 'Lavender' : 'Iris';
     return `
-          <clipitem id="clip-${i + 1}">
+          <clipitem id="clip-${i + 1}" premiereChannelType="stereo">
+            <masterclipid>masterclip-${fid.replace('file-', '')}</masterclipid>
             <name>${escXml(`${c.entry.order} ${c.entry.sourceDescription.slice(0, 35)}`)}</name>
             <duration>${toFrames(c.fileInfo.dur)}</duration>
             <rate><ntsc>${ntscStr}</ntsc><timebase>${timebase}</timebase></rate>
@@ -576,6 +591,10 @@ export function generateFcpXmlFromEdl(params: {
             <start>${toFrames(c.recStart)}</start>
             <end>${toFrames(c.recEnd)}</end>
             ${fileTag}
+            <sourcetrack>
+              <mediatype>video</mediatype>
+              <trackindex>1</trackindex>
+            </sourcetrack>
             <labels><label2>${color}</label2></labels>
             <logginginfo>
               <description>${escXml(c.entry.sourceDescription)}</description>
@@ -607,6 +626,7 @@ export function generateFcpXmlFromEdl(params: {
     const color = c.entry.speedFactor > 1.1 ? 'Mango' : c.entry.speedFactor < 0.9 ? 'Lavender' : 'Iris';
     return `
           <clipitem id="audio-${i + 1}">
+            <masterclipid>masterclip-${c.fileInfo.id.replace('file-', '')}</masterclipid>
             <name>${escXml(`Audio ${c.entry.order}`)}</name>
             <duration>${toFrames(c.fileInfo.dur)}</duration>
             <rate><ntsc>${ntscStr}</ntsc><timebase>${timebase}</timebase></rate>
@@ -615,6 +635,10 @@ export function generateFcpXmlFromEdl(params: {
             <start>${toFrames(c.recStart)}</start>
             <end>${toFrames(c.recEnd)}</end>
             <file id="${c.fileInfo.id}"/>
+            <sourcetrack>
+              <mediatype>audio</mediatype>
+              <trackindex>1</trackindex>
+            </sourcetrack>
             <labels><label2>${color}</label2></labels>
             <link>
               <linkclipref>clip-${i + 1}</linkclipref>
