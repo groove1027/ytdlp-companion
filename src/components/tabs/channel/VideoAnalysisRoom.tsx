@@ -4327,14 +4327,40 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       )}
 
       {/* ═══ 10가지 버전 아코디언 ═══ */}
-      {versions.length > 0 && (
+      {versions.length > 0 && (() => {
+        const expectedTotal = (selectedPreset === 'deep' || selectedPreset === 'shopping') ? 5 : 10;
+        const isStillGenerating = isAnalyzing && versions.length < expectedTotal;
+        return (
         <div className="space-y-4">
+          {/* 진행 상황 배너 — 아직 생성 중일 때만 표시 */}
+          {isStillGenerating && (
+            <div className="bg-blue-900/30 border border-blue-500/30 rounded-xl p-4 flex items-center gap-4">
+              <div className="flex-shrink-0 w-10 h-10 rounded-full bg-blue-600/20 border border-blue-500/30 flex items-center justify-center">
+                <svg className="w-5 h-5 text-blue-400 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-blue-300 font-bold text-sm">
+                  {versions.length}/{expectedTotal}개 버전 생성 완료 — 나머지가 차례로 표시됩니다
+                </p>
+                <div className="mt-2 h-2 bg-gray-700/50 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-blue-500 to-violet-500 rounded-full transition-all duration-700 ease-out"
+                    style={{ width: `${Math.round((versions.length / expectedTotal) * 100)}%` }}
+                  />
+                </div>
+              </div>
+              <span className="flex-shrink-0 text-blue-400 font-mono text-sm font-bold">
+                {Math.round((versions.length / expectedTotal) * 100)}%
+              </span>
+            </div>
+          )}
+
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-bold text-white flex items-center gap-2">
               <span className="w-8 h-8 bg-gradient-to-br from-blue-500 to-violet-600 rounded-lg flex items-center justify-center text-sm">🎬</span>
-              {selectedPreset === 'shopping' ? `쇼핑 대본 ${versions.length}종`
+              {selectedPreset === 'shopping' ? `쇼핑 대본 ${versions.length}${isStillGenerating ? `/${expectedTotal}` : ''}종`
                 : selectedPreset === 'deep' ? '심층 분석 보고서'
-                : `리메이크 ${versions.length}가지 버전`}
+                : `리메이크 ${versions.length}${isStillGenerating ? `/${expectedTotal}` : ''}가지 버전`}
             </h2>
             <button
               type="button"
@@ -4879,7 +4905,8 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
             })}
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* ═══ 인기 쇼츠 음원 추천 (스낵형 전용) ═══ */}
       {/* [FIX #316] rawResult 대신 versions 기반 표시 — rawResult 유실 시에도 동작 */}

@@ -8,6 +8,7 @@
 
 ## 🟢 완료된 작업
 
+- [x] **D1 user_settings 테이블 누락 수정** — schema.sql에 user_settings 테이블 추가 + 프로덕션 D1에 직접 생성. API 키 서버 동기화(syncApiKeysToServer/restoreApiKeysFromServer)가 테이블 없어서 항상 500 실패하던 문제 해결 (schema.sql, 2026-03-16)
 - [x] **#323~327 이슈 일괄 처리** — (1) #324 무음제거 SRT 싱크: endTime이 새 오디오 길이 초과 시 보정 + 제거 결과 표시 UI (WaveformEditor.tsx) (2) #325 단락→SRT 다운로드: 대본 단락 미리보기에서 SRT 파일 직접 내보내기 (ScriptWriterTab.tsx, srtService.ts) (3) #323/#326/#327 기능 요청·안내 코멘트 (2026-03-16)
 - [x] **#328 NLE 버튼 로딩 진행 표시 + 중복 클릭 방지** — 버튼에 스피너 + 단계별 텍스트(준비 중→다운로드→영상 정보 확인→ZIP 생성) 표시. 다른 NLE 버튼 disabled. finally에서 자동 정리 (VideoAnalysisRoom.tsx, 2026-03-16)
 - [x] **#328 NLE XML pathurl 수정 + 스테레오 오디오 채널 수정** — (1) pathurl `file://localhost/media/`→`media/` 상대경로, `escXml` raw 파일명 (2) ZIP 내 영상 `media/` 하위폴더 배치 (3) 오디오 `channelcount 2` + `numOutputChannels 2` 추가. generateFcpXml + generateFcpXmlFromEdl 양쪽 (nleExportService.ts, 2026-03-16)
