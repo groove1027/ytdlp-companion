@@ -8,6 +8,7 @@
 
 ## 🟢 완료된 작업
 
+- [x] **#316 NLE 9:16 화면비율 + FCP XML 스펙 완전 준수** — 기본값 1920x1080→1080x1920, videoBlob에서 실제 치수 자동 감지, samplecharacteristics에 anamorphic=FALSE + pixelaspectratio=square + fielddominance=none + colordepth=24. 시퀀스+파일정의+편집실 3곳 모두 적용 (nleExportService.ts, VideoAnalysisRoom.tsx, 2026-03-16)
 - [x] **#316 NLE 패키지 영상 자동 다운로드** — videoBlob 없으면(새로고침 후 등) 자동 다운로드하여 ZIP에 포함. 빈 ZIP 방지 (VideoAnalysisRoom.tsx, 2026-03-16)
 - [x] **#316 Premiere ZIP 영상 포함 + 버전 카드 버튼 3그룹 정리** — Premiere ZIP에 videoBlob 포함 (이전엔 XML+SRT만). 10개 버튼→3그룹: NLE내보내기(큰 그라디언트)/기본액션(대본복사·프리뷰·편집실)/보조(SRT·HTML·대본작성·TTS) (nleExportService.ts, VideoAnalysisRoom.tsx, 2026-03-16)
 - [x] **#316 mergeVideoAudio ffmpeg.wasm -c copy 교체** — mp4-muxer 타임스케일 변환 반올림 오차로 B-프레임 튐 현상 발생 → ffmpeg.wasm `-c copy` 무손실 복사로 교체. 실제 영상 재생 테스트 통과 (videoDecoder.ts, 2026-03-15)
