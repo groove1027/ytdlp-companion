@@ -8,6 +8,7 @@
 
 ## 🟢 완료된 작업
 
+- [x] **#316 YouTube 1080p 분리 다운로드 + 클라이언트 머지** — 서버 ffmpeg 머지 회피(502 방지). 영상(videoOnly=true)+오디오 병렬 다운로드 → mp4box demux → mp4-muxer remux 클라이언트 머지(품질손실 0%) → 합본 Blob을 setVideoBlob 저장(NLE 내보내기 시 사운드 포함). downloadAudioViaProxy 신규, mergeVideoAudio 신규 (ytdlpApiService.ts, videoDecoder.ts, VideoAnalysisRoom.tsx, 2026-03-15)
 - [x] **#316 YouTube 영상 다운로드 3회 재시도 + 화질 다운그레이드** — downloadVideoViaProxy에 502/503/504/네트워크 에러 시 3회 지수 백오프 재시도 + 화질 다운그레이드(best→720p→480p→360p) 추가. extractFramesWithFallback에서 streamUrl 없어도 youtubeVideoId만으로 Layer 1 다운로드 시도. YouTube 썸네일 폴백(Layer 3)은 모든 재시도 소진 후에만 최후 수단 (ytdlpApiService.ts, VideoAnalysisRoom.tsx, 2026-03-15)
 - [x] **#316 영상 분석 비주얼·하단 액션 유실 방지** — localStorage persistence의 slimValue가 rawResult를 ''로 날리면 비주얼 칼럼, 하단 버튼, 업로드 가이드가 사라지는 버그. (1) UI 표시 조건을 rawResult→versions.length>0으로 전환 (2) cacheCurrentResult rawResult 없어도 versions 기반 캐시 허용 (3) cacheCurrentResult setTimeout 제거→동기 호출로 autoSave 전 캐시 확보 (4) slimValue rawResult 500자 보존 (5) YouTube 썸네일 자동 재생성 폴백 추가 (VideoAnalysisRoom.tsx, videoAnalysisStore.ts, 2026-03-15)
 - [x] **영상 분석 화자 분리(Speaker Diarization) 통합** — 업로드 영상에서 오디오 추출 → ElevenLabs Scribe diarize=true로 화자별 대사/타이밍 자동 분리 → Gemini 프롬프트에 화자 분리 전사 결과 삽입. 티키타카/컨덴스드/스낵/AllTTS 프리셋에서 활성화. Web Audio API 즉시 디코딩 + captureStream 폴백. (types.ts, transcriptionService.ts, videoAnalysis.ts, VideoAnalysisRoom.tsx, 2026-03-15)
