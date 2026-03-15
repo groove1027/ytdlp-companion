@@ -371,16 +371,15 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         }
 
         const scenes = get().scenes;
-        // 1순위: 이미지 URL 정확 매칭
-        let matchedScene = scenes.find(s => !s.videoUrl && s.imageUrl && sourceImageUrl && s.imageUrl === sourceImageUrl);
+        // 1순위: 이미지 URL 정확 매칭 (videoUrl 유무 무관 — 덮어쓰기 허용)
+        let matchedScene = scenes.find(s => s.imageUrl && sourceImageUrl && s.imageUrl === sourceImageUrl);
         // 2순위: Cloudinary/Evolink URL 부분 매칭 (경로 끝부분)
         if (!matchedScene && sourceImageUrl) {
           const urlSuffix = sourceImageUrl.split('/').pop();
-          if (urlSuffix) matchedScene = scenes.find(s => !s.videoUrl && s.imageUrl?.includes(urlSuffix));
+          if (urlSuffix) matchedScene = scenes.find(s => s.imageUrl?.includes(urlSuffix));
         }
         // 3순위: generationTaskId 매칭
-        if (!matchedScene) matchedScene = scenes.find(s => !s.videoUrl && s.generationTaskId === taskId);
-        // 순서 매칭 제거 — 잘못된 씬에 배치되는 것 방지
+        if (!matchedScene) matchedScene = scenes.find(s => s.generationTaskId === taskId);
 
         if (matchedScene) {
           set((state) => ({
