@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, PieChart, Pie, Cell, ReferenceLine } from 'recharts';
 import { useChannelAnalysisStore } from '../../../stores/channelAnalysisStore';
 import { useNavigationStore } from '../../../stores/navigationStore';
@@ -17,7 +17,7 @@ import ChannelInputPanel from './ChannelInputPanel';
 import AnalysisLoadingPanel, { notifyAnalysisComplete } from './AnalysisLoadingPanel';
 import AnalysisSlotBar from './AnalysisSlotBar';
 import ChannelRemakePanel from './ChannelRemakePanel';
-import type { LegacyTopicRecommendation, ContentFormat, ContentRegion, ChannelScript, ChannelInfo, TopicInstinctAnalysis } from '../../../types';
+import type { LegacyTopicRecommendation, ContentFormat, ContentRegion, ChannelScript, ChannelInfo, ChannelGuideline, TopicInstinctAnalysis } from '../../../types';
 
 const VIRAL_CFG = {
   high: { label: '높음', bg: 'bg-red-900/30', text: 'text-red-400', border: 'border-red-800/40', desc: '높은 조회수 잠재력' },
@@ -31,6 +31,101 @@ const VBadge: React.FC<{ s: 'high' | 'medium' | 'low' }> = ({ s }) => { const c 
 const DRow: React.FC<{ l: string; v: string }> = ({ l, v }) => <div><label className="block text-sm font-medium text-gray-500 mb-1">{l}</label><p className="text-sm text-gray-200 bg-gray-900/50 rounded-lg px-3 py-2 border border-gray-700/50">{v}</p></div>;
 const card = 'bg-gray-800 rounded-xl p-5 border border-gray-700 shadow-xl';
 const Spin = () => <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />;
+
+/* ─── [#331] 편집 가능 헬퍼 컴포넌트 ─── */
+const EditableDRow: React.FC<{ l: string; v: string; onSave: (val: string) => void }> = ({ l, v, onSave }) => {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(v);
+  const ref = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => { setDraft(v); }, [v]);
+  useEffect(() => {
+    if (editing && ref.current) {
+      ref.current.focus();
+      ref.current.style.height = 'auto';
+      ref.current.style.height = ref.current.scrollHeight + 'px';
+    }
+  }, [editing]);
+  return (
+    <div>
+      <label className="block text-sm font-medium text-gray-500 mb-1 flex items-center gap-1">
+        {l}
+        <svg className="w-3 h-3 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+      </label>
+      {editing ? (
+        <textarea
+          ref={ref}
+          value={draft}
+          onChange={e => { setDraft(e.target.value); e.target.style.height = 'auto'; e.target.style.height = e.target.scrollHeight + 'px'; }}
+          onBlur={() => { setEditing(false); if (draft.trim() !== v) onSave(draft.trim()); }}
+          onKeyDown={e => { if (e.key === 'Escape') { setDraft(v); setEditing(false); } }}
+          className="w-full text-sm text-gray-200 bg-gray-900/50 rounded-lg px-3 py-2 border border-blue-500/50 focus:ring-1 focus:ring-blue-500 resize-none outline-none"
+        />
+      ) : (
+        <p
+          onClick={() => setEditing(true)}
+          className="text-sm text-gray-200 bg-gray-900/50 rounded-lg px-3 py-2 border border-gray-700/50 hover:border-blue-500/30 cursor-pointer transition-colors"
+          title="클릭하여 수정"
+        >{v}</p>
+      )}
+    </div>
+  );
+};
+
+const EditableTextBlock: React.FC<{ value: string; onSave: (val: string) => void; maxH?: string }> = ({ value, onSave, maxH = 'max-h-96' }) => {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+  const ref = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => { setDraft(value); }, [value]);
+  useEffect(() => {
+    if (editing && ref.current) {
+      ref.current.focus();
+      ref.current.style.height = 'auto';
+      ref.current.style.height = Math.min(ref.current.scrollHeight, 384) + 'px';
+    }
+  }, [editing]);
+  return editing ? (
+    <textarea
+      ref={ref}
+      value={draft}
+      onChange={e => { setDraft(e.target.value); e.target.style.height = 'auto'; e.target.style.height = Math.min(e.target.scrollHeight, 384) + 'px'; }}
+      onBlur={() => { setEditing(false); if (draft.trim() !== value) onSave(draft.trim()); }}
+      onKeyDown={e => { if (e.key === 'Escape') { setDraft(value); setEditing(false); } }}
+      className={`w-full text-sm text-gray-300 bg-gray-900/50 rounded-lg p-4 border border-blue-500/50 focus:ring-1 focus:ring-blue-500 resize-none outline-none whitespace-pre-wrap ${maxH} overflow-y-auto custom-scrollbar`}
+    />
+  ) : (
+    <div
+      onClick={() => setEditing(true)}
+      className={`bg-gray-900/50 rounded-lg p-4 border border-gray-700/50 ${maxH} overflow-y-auto custom-scrollbar hover:border-blue-500/30 cursor-pointer transition-colors`}
+      title="클릭하여 수정"
+    >
+      <p className="text-sm text-gray-300 whitespace-pre-wrap">{value}</p>
+    </div>
+  );
+};
+
+const TagAdder: React.FC<{ onAdd: (val: string) => void; placeholder: string; colorClass: string }> = ({ onAdd, placeholder, colorClass }) => {
+  const [adding, setAdding] = useState(false);
+  const [val, setVal] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => { if (adding && inputRef.current) inputRef.current.focus(); }, [adding]);
+  if (!adding) return (
+    <button onClick={() => setAdding(true)} className={`px-2 py-0.5 text-sm rounded-full border border-dashed ${colorClass} transition-colors cursor-pointer`}>{placeholder}</button>
+  );
+  return (
+    <input
+      ref={inputRef}
+      value={val}
+      onChange={e => setVal(e.target.value)}
+      onBlur={() => { if (val.trim()) onAdd(val.trim()); setVal(''); setAdding(false); }}
+      onKeyDown={e => {
+        if (e.key === 'Enter' && val.trim()) { onAdd(val.trim()); setVal(''); setAdding(false); }
+        if (e.key === 'Escape') { setVal(''); setAdding(false); }
+      }}
+      placeholder="입력 후 Enter"
+      className="px-2 py-0.5 text-sm bg-gray-900 border border-blue-500/50 rounded-full text-white outline-none focus:ring-1 focus:ring-blue-500 w-28"
+    />
+  );
+};
 
 const ChannelAnalysisRoom: React.FC = () => {
   const {
@@ -326,6 +421,14 @@ const ChannelAnalysisRoom: React.FC = () => {
       setIsGeneratingSourceGuide(false);
     }
   }, [channelGuideline, setChannelGuideline, requireAuth]);
+
+  // [#331] 분석 결과 필드 개별 수정
+  const updateGuidelineField = useCallback(<K extends keyof ChannelGuideline>(field: K, value: ChannelGuideline[K]) => {
+    if (!channelGuideline) return;
+    const updated = { ...channelGuideline, [field]: value };
+    setChannelGuideline(updated);
+    showToast('수정사항이 반영되었습니다.');
+  }, [channelGuideline, setChannelGuideline]);
 
   // 프리셋 저장
   const handleSavePreset = useCallback(() => {
@@ -888,7 +991,10 @@ const ChannelAnalysisRoom: React.FC = () => {
       {channelGuideline && !progress && (
         <div className={card}>
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-bold text-white">스타일 분석 결과</h3>
+            <h3 className="text-lg font-bold text-white flex items-center gap-2">
+              스타일 분석 결과
+              <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-blue-900/30 text-blue-400 border border-blue-800/40">클릭하여 편집 가능</span>
+            </h3>
             <div className="flex items-center gap-2">
               <button onClick={handleCopyPrompt} className={`px-4 py-1.5 text-sm font-semibold rounded-lg border transition-all flex items-center gap-1.5 ${copied ? 'bg-green-600/20 text-green-400 border-green-600/50' : 'bg-orange-600/20 text-orange-400 border-orange-600/50 hover:bg-orange-600/30'}`}>
                 {copied ? '복사됨!' : `${channelGuideline.channelName} 스타일 프롬프트 복사하기`}
@@ -900,22 +1006,52 @@ const ChannelAnalysisRoom: React.FC = () => {
           </div>
 
           <div className="grid grid-cols-2 gap-3 mb-3">
-            <DRow l="말투/어조" v={channelGuideline.tone} />
-            <DRow l="영상 구조" v={channelGuideline.structure} />
-            <DRow l="도입부 패턴" v={channelGuideline.hookPattern} />
-            <DRow l="마무리 패턴" v={channelGuideline.closingPattern} />
-            <DRow l="타겟 시청자" v={channelGuideline.targetAudience} />
-            <DRow l="평균 글자수" v={String(channelGuideline.avgLength)} />
+            <EditableDRow l="말투/어조" v={channelGuideline.tone} onSave={v => updateGuidelineField('tone', v)} />
+            <EditableDRow l="영상 구조" v={channelGuideline.structure} onSave={v => updateGuidelineField('structure', v)} />
+            <EditableDRow l="도입부 패턴" v={channelGuideline.hookPattern} onSave={v => updateGuidelineField('hookPattern', v)} />
+            <EditableDRow l="마무리 패턴" v={channelGuideline.closingPattern} onSave={v => updateGuidelineField('closingPattern', v)} />
+            <EditableDRow l="타겟 시청자" v={channelGuideline.targetAudience} onSave={v => updateGuidelineField('targetAudience', v)} />
+            <EditableDRow l="평균 글자수" v={String(channelGuideline.avgLength)} onSave={v => updateGuidelineField('avgLength', parseInt(v) || 0)} />
           </div>
 
           <div className="flex flex-wrap gap-1.5 mb-3">
-            {channelGuideline.topics.map((t, i) => <span key={i} className="px-2 py-0.5 text-sm bg-blue-900/30 text-blue-400 rounded-full border border-blue-800/40">{t}</span>)}
-            {channelGuideline.keywords.map((k, i) => <span key={i} className="px-2 py-0.5 text-sm bg-purple-900/30 text-purple-400 rounded-full border border-purple-800/40">{k}</span>)}
+            {channelGuideline.topics.map((t, i) => (
+              <span key={`topic-${i}`} className="group/tag px-2 py-0.5 text-sm bg-blue-900/30 text-blue-400 rounded-full border border-blue-800/40 flex items-center gap-1">
+                {t}
+                <button
+                  onClick={() => updateGuidelineField('topics', channelGuideline.topics.filter((_, idx) => idx !== i))}
+                  className="w-3.5 h-3.5 rounded-full flex items-center justify-center opacity-0 group-hover/tag:opacity-100 transition-opacity hover:text-red-400 hover:bg-red-500/20"
+                  title="삭제"
+                >
+                  <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+              </span>
+            ))}
+            {channelGuideline.keywords.map((k, i) => (
+              <span key={`kw-${i}`} className="group/tag px-2 py-0.5 text-sm bg-purple-900/30 text-purple-400 rounded-full border border-purple-800/40 flex items-center gap-1">
+                {k}
+                <button
+                  onClick={() => updateGuidelineField('keywords', channelGuideline.keywords.filter((_, idx) => idx !== i))}
+                  className="w-3.5 h-3.5 rounded-full flex items-center justify-center opacity-0 group-hover/tag:opacity-100 transition-opacity hover:text-red-400 hover:bg-red-500/20"
+                  title="삭제"
+                >
+                  <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+              </span>
+            ))}
+            <TagAdder
+              onAdd={val => updateGuidelineField('topics', [...channelGuideline.topics, val])}
+              placeholder="+ 주제"
+              colorClass="text-blue-400 border-blue-800/40 bg-blue-900/20 hover:bg-blue-900/40"
+            />
+            <TagAdder
+              onAdd={val => updateGuidelineField('keywords', [...channelGuideline.keywords, val])}
+              placeholder="+ 키워드"
+              colorClass="text-purple-400 border-purple-800/40 bg-purple-900/20 hover:bg-purple-900/40"
+            />
           </div>
 
-          <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-700/50 max-h-96 overflow-y-auto custom-scrollbar">
-            <p className="text-sm text-gray-300 whitespace-pre-wrap">{channelGuideline.fullGuidelineText}</p>
-          </div>
+          <EditableTextBlock value={channelGuideline.fullGuidelineText} onSave={v => updateGuidelineField('fullGuidelineText', v)} />
         </div>
       )}
 
@@ -926,6 +1062,7 @@ const ChannelAnalysisRoom: React.FC = () => {
             <h3 className="text-lg font-bold text-white flex items-center gap-2">
               <span className="w-7 h-7 rounded-lg bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center text-white text-xs font-bold">D</span>
               채널 스타일 DNA
+              <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-blue-900/30 text-blue-400 border border-blue-800/40">클릭하여 편집 가능</span>
             </h3>
             {channelGuideline.failedLayers && channelGuideline.failedLayers.length > 0 && (
               <button
@@ -951,7 +1088,10 @@ const ChannelAnalysisRoom: React.FC = () => {
             {channelGuideline.visualGuide && (
               <div>
                 <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-sm font-medium text-blue-400">시각 스타일 (썸네일 + 영상 화면 분석)</label>
+                  <label className="text-sm font-medium text-blue-400 flex items-center gap-1">
+                    시각 스타일 (썸네일 + 영상 화면 분석)
+                    <svg className="w-3 h-3 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                  </label>
                   <button
                     onClick={async () => {
                       await navigator.clipboard.writeText(channelGuideline.visualGuide!);
@@ -963,15 +1103,16 @@ const ChannelAnalysisRoom: React.FC = () => {
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
                   </button>
                 </div>
-                <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-700/50 max-h-96 overflow-y-auto custom-scrollbar">
-                  <p className="text-sm text-gray-300 whitespace-pre-wrap">{channelGuideline.visualGuide}</p>
-                </div>
+                <EditableTextBlock value={channelGuideline.visualGuide} onSave={v => updateGuidelineField('visualGuide', v)} />
               </div>
             )}
             {channelGuideline.editGuide && (
               <div>
                 <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-sm font-medium text-amber-400">편집 스타일 (컷 리듬 / 전환 / 카메라 / 색보정)</label>
+                  <label className="text-sm font-medium text-amber-400 flex items-center gap-1">
+                    편집 스타일 (컷 리듬 / 전환 / 카메라 / 색보정)
+                    <svg className="w-3 h-3 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                  </label>
                   <button
                     onClick={async () => {
                       await navigator.clipboard.writeText(channelGuideline.editGuide!);
@@ -983,15 +1124,16 @@ const ChannelAnalysisRoom: React.FC = () => {
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
                   </button>
                 </div>
-                <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-700/50 max-h-96 overflow-y-auto custom-scrollbar">
-                  <p className="text-sm text-gray-300 whitespace-pre-wrap">{channelGuideline.editGuide}</p>
-                </div>
+                <EditableTextBlock value={channelGuideline.editGuide} onSave={v => updateGuidelineField('editGuide', v)} />
               </div>
             )}
             {channelGuideline.audioGuide && (
               <div>
                 <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-sm font-medium text-fuchsia-400">오디오 스타일 (BGM / 효과음 / 보이스톤)</label>
+                  <label className="text-sm font-medium text-fuchsia-400 flex items-center gap-1">
+                    오디오 스타일 (BGM / 효과음 / 보이스톤)
+                    <svg className="w-3 h-3 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                  </label>
                   <button
                     onClick={async () => {
                       await navigator.clipboard.writeText(channelGuideline.audioGuide!);
@@ -1003,15 +1145,16 @@ const ChannelAnalysisRoom: React.FC = () => {
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
                   </button>
                 </div>
-                <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-700/50 max-h-96 overflow-y-auto custom-scrollbar">
-                  <p className="text-sm text-gray-300 whitespace-pre-wrap">{channelGuideline.audioGuide}</p>
-                </div>
+                <EditableTextBlock value={channelGuideline.audioGuide} onSave={v => updateGuidelineField('audioGuide', v)} />
               </div>
             )}
             {channelGuideline.titleFormula && (
               <div>
                 <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-sm font-medium text-orange-400">제목 / 메타데이터 공식</label>
+                  <label className="text-sm font-medium text-orange-400 flex items-center gap-1">
+                    제목 / 메타데이터 공식
+                    <svg className="w-3 h-3 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                  </label>
                   <button
                     onClick={async () => {
                       await navigator.clipboard.writeText(channelGuideline.titleFormula!);
@@ -1023,15 +1166,16 @@ const ChannelAnalysisRoom: React.FC = () => {
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
                   </button>
                 </div>
-                <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-700/50 max-h-96 overflow-y-auto custom-scrollbar">
-                  <p className="text-sm text-gray-300 whitespace-pre-wrap">{channelGuideline.titleFormula}</p>
-                </div>
+                <EditableTextBlock value={channelGuideline.titleFormula} onSave={v => updateGuidelineField('titleFormula', v)} />
               </div>
             )}
             {channelGuideline.audienceInsight && (
               <div>
                 <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-sm font-medium text-cyan-400">시청자 인사이트 (댓글 감성 분석)</label>
+                  <label className="text-sm font-medium text-cyan-400 flex items-center gap-1">
+                    시청자 인사이트 (댓글 감성 분석)
+                    <svg className="w-3 h-3 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                  </label>
                   <button
                     onClick={async () => {
                       await navigator.clipboard.writeText(channelGuideline.audienceInsight!);
@@ -1043,9 +1187,7 @@ const ChannelAnalysisRoom: React.FC = () => {
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
                   </button>
                 </div>
-                <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-700/50 max-h-96 overflow-y-auto custom-scrollbar">
-                  <p className="text-sm text-gray-300 whitespace-pre-wrap">{channelGuideline.audienceInsight}</p>
-                </div>
+                <EditableTextBlock value={channelGuideline.audienceInsight} onSave={v => updateGuidelineField('audienceInsight', v)} />
               </div>
             )}
           </div>
@@ -1101,9 +1243,7 @@ const ChannelAnalysisRoom: React.FC = () => {
             분석된 채널의 주제/스타일을 기반으로, 어디서 어떻게 소재를 찾을 수 있는지 AI가 맞춤 전략을 제시합니다.
           </p>
           {channelGuideline.sourceDiscoveryGuide ? (
-            <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-700/50 max-h-[600px] overflow-y-auto custom-scrollbar">
-              <p className="text-sm text-gray-300 whitespace-pre-wrap leading-relaxed">{channelGuideline.sourceDiscoveryGuide}</p>
-            </div>
+            <EditableTextBlock value={channelGuideline.sourceDiscoveryGuide} onSave={v => updateGuidelineField('sourceDiscoveryGuide', v)} maxH="max-h-[600px]" />
           ) : (
             <div className="bg-gray-900/30 rounded-lg p-8 border border-dashed border-gray-700/50 flex flex-col items-center justify-center text-center">
               <div className="w-12 h-12 rounded-full bg-emerald-900/30 flex items-center justify-center mb-3">
