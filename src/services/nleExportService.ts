@@ -718,10 +718,12 @@ export async function buildNlePackageZip(params: {
     ].join('\n'));
 
   } else if (target === 'capcut') {
-    // CapCut — draft_content.json 프로젝트 (실제 편집점 포함) + SRT 폴백
+    // CapCut — draft JSON 프로젝트 (실제 편집점 포함) + SRT 폴백
+    // Mac: draft_info.json / Windows: draft_content.json — 둘 다 생성
     const draftJson = generateCapCutDraftJson({ scenes, title, videoFileName: videoFileName || 'video.mp4', preset, width, height, fps, videoDurationSec });
-    zip.file('draft_content.json', draftJson);
-    zip.file('draft_meta_info.json', JSON.stringify({
+    zip.file('draft_content.json', draftJson);  // Windows
+    zip.file('draft_info.json', draftJson);     // Mac
+    const draftMeta = JSON.stringify({
       draft_fold_path: '',
       draft_id: '',
       draft_name: title,
@@ -729,13 +731,14 @@ export async function buildNlePackageZip(params: {
       tm_draft_create: Math.floor(Date.now() / 1000),
       tm_draft_modified: Math.floor(Date.now() / 1000),
       tm_duration: Math.ceil((extractTimings(scenes, preset).at(-1)?.tlEndSec || 0) * 1_000_000),
-    }));
+    });
+    zip.file('draft_meta_info.json', draftMeta);
 
     if (videoBlob) {
       zip.file(videoFileName || 'video.mp4', videoBlob);
     }
 
-    // SRT 폴백 (자막 별도 import용)
+    // SRT 폴백 (프로젝트 가져오기 안 될 경우 수동 자막 import용)
     const dlgSrt = generateNleSrt(scenes, 'dialogue', preset, true);
     if (dlgSrt) zip.file(`${safeName}_자막.srt`, BOM + dlgSrt);
     const fxSrt = generateNleSrt(scenes, 'effect', preset, true);
@@ -744,21 +747,26 @@ export async function buildNlePackageZip(params: {
     zip.file('README.txt', [
       `=== ${title} — CapCut ===`,
       '',
-      '[ 방법 1: 프로젝트 가져오기 (편집 자동 적용) ]',
-      '1. ZIP을 원하는 위치에 압축 해제하세요.',
-      '2. CapCut 데스크톱 > 프로젝트 가져오기',
-      '3. 압축 해제한 폴더를 선택하면 편집이 적용된 타임라인이 열립니다.',
+      '[ 방법 1: 프로젝트 폴더 가져오기 — 편집 자동 적용 ]',
+      '1. ZIP을 원하는 위치에 압축 해제합니다.',
+      '2. 압축 해제한 폴더 전체를 아래 경로에 복사합니다:',
+      '   • Mac: ~/Movies/CapCut/User Data/Projects/com.lveditor.draft/',
+      '   • Win: %LOCALAPPDATA%\\CapCut\\User Data\\Projects\\com.lveditor.draft\\',
+      '3. CapCut 데스크톱을 다시 열면 프로젝트 목록에 나타납니다.',
       '',
-      '[ 방법 2: 수동 가져오기 (SRT 자막) ]',
+      '⚠ 최신 CapCut에서 프로젝트가 안 열릴 경우 방법 2를 사용해주세요.',
+      '',
+      '[ 방법 2: 수동 가져오기 — SRT 자막 ]',
       '1. CapCut > 새 프로젝트 > 영상 파일 import',
       `2. 자막 > SRT 불러오기 > "${safeName}_자막.srt"`,
+      '3. 자막이 타임라인에 자동 배치됩니다.',
       '',
       `* 편집점: ${scenes.length}개`,
       `* 해상도: ${width}x${height} / ${fps}fps`,
     ].join('\n'));
 
   } else {
-    // VREW — SRT + 영상
+    // VREW — SRT + 영상 (.vrew 포맷은 비공개이므로 SRT가 유일한 공식 방법)
     if (videoBlob) {
       zip.file(videoFileName || 'video.mp4', videoBlob);
     }
@@ -775,11 +783,11 @@ export async function buildNlePackageZip(params: {
     zip.file('README.txt', [
       `=== ${title} — VREW ===`,
       '',
-      '1. VREW를 열고 새 프로젝트를 생성하세요.',
-      `2. "${videoFileName || 'video.mp4'}" 영상 파일을 import하세요.`,
-      `3. 자막 > SRT 파일 불러오기 > "${safeName}_자막.srt"를 선택하세요.`,
-      '4. 자막이 타임라인에 자동 배치됩니다.',
+      '1. VREW에서 영상 파일을 불러옵니다.',
+      `2. 자막 > SRT 파일 불러오기 > "${safeName}_자막.srt"를 선택합니다.`,
+      '3. 자막이 타임라인에 자동 배치됩니다.',
       '',
+      '* VREW 프로젝트(.vrew) 포맷은 비공개이므로 SRT 가져오기만 지원됩니다.',
       '* 나레이션/효과자막 SRT도 별도 레이어로 추가 import 가능합니다.',
       `* 총 ${scenes.length}개 편집점이 포함되어 있습니다.`,
     ].join('\n'));
