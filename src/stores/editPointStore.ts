@@ -68,8 +68,8 @@ interface EditPointStore {
   autoCalcSpeed: () => void;
   applyAutoSpeed: () => void;
   setExportMode: (mode: EditPointExportMode) => void;
-  /** 빠른 FFmpeg 스크립트 다운로드 — Step 3 진입 없이 즉시 내보내기 */
-  quickExportFFmpeg: () => void;
+  /** WebCodecs로 영상을 클립별로 잘라 ZIP 다운로드 (폴백: FFmpeg 스크립트) */
+  quickExportClips: () => Promise<void>;
   setCleanSubtitles: (enabled: boolean) => void;
   runCleanSubtitles: () => Promise<void>;
   exportResult: () => Promise<void>;
@@ -527,23 +527,66 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
 
   setExportMode: (mode) => set({ exportMode: mode }),
 
-  quickExportFFmpeg: () => {
-    const { edlEntries, sourceMapping, sourceVideos } = get();
-    if (edlEntries.length === 0) {
-      showToast('편집 항목이 없습니다. 먼저 편집표를 파싱해주세요.');
-      return;
-    }
-    const fileNameMapping: Record<string, string> = {};
-    for (const [sourceId, videoId] of Object.entries(sourceMapping)) {
-      const video = sourceVideos.find((v) => v.id === videoId);
-      fileNameMapping[sourceId] = video?.fileName || sourceId;
-    }
-    try {
+  quickExportClips: async () => {
+    const { edlEntries, sourceMapping, sourceVideos, isProcessing } = get();
+    if (isProcessing) { showToast('이미 처리 중입니다.'); return; }
+    if (edlEntries.length === 0) { showToast('편집 항목이 없습니다.'); return; }
+
+    // WebCodecs 지원 확인
+    const { isClipCutSupported, cutClips } = await import('../services/webcodecs/clipCutter');
+    if (!isClipCutSupported()) {
+      // 폴백: FFmpeg 스크립트 다운로드
+      const fileNameMapping: Record<string, string> = {};
+      for (const [sourceId, videoId] of Object.entries(sourceMapping)) {
+        const video = sourceVideos.find((v) => v.id === videoId);
+        fileNameMapping[sourceId] = video?.fileName || sourceId;
+      }
       const script = generateFFmpegScript(edlEntries, fileNameMapping);
       downloadFile(script, 'edit_script.sh', 'text/x-shellscript');
-      showToast('FFmpeg 스크립트가 다운로드되었습니다.');
+      showToast('WebCodecs 미지원 브라우저입니다. FFmpeg 스크립트로 대체합니다.');
+      return;
+    }
+
+    // 소스 영상 찾기 (첫 번째 매핑된 영상)
+    const firstMappedVideoId = Object.values(sourceMapping)[0];
+    const sourceVideo = sourceVideos.find((v) => v.id === firstMappedVideoId);
+    if (!sourceVideo?.file) { showToast('소스 영상을 찾을 수 없습니다.'); return; }
+
+    set({
+      isProcessing: true,
+      processingPhase: 'cutting',
+      processingProgress: 0,
+      processingMessage: '영상 자르기 준비 중...',
+    });
+
+    try {
+      const clips = edlEntries.map((e) => ({
+        label: e.order,
+        startSec: e.refinedTimecodeStart ?? e.timecodeStart,
+        endSec: e.refinedTimecodeEnd ?? e.timecodeEnd,
+      }));
+
+      const zipBlob = await cutClips(sourceVideo.file, clips, (progress, message) => {
+        set({ processingProgress: progress, processingMessage: message });
+      });
+
+      // ZIP 다운로드
+      const url = URL.createObjectURL(zipBlob);
+      logger.registerBlobUrl(url, 'other', 'editPointStore:quickExportClips');
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'edit_clips.zip';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => { logger.unregisterBlobUrl(url); URL.revokeObjectURL(url); }, 5000);
+
+      showToast(`${clips.length}개 클립이 ZIP으로 다운로드되었습니다.`);
     } catch (err) {
-      showToast('FFmpeg 스크립트 생성 실패: ' + (err instanceof Error ? err.message : '알 수 없는 오류'));
+      const msg = err instanceof Error ? err.message : '알 수 없는 오류';
+      showToast('영상 자르기 실패: ' + msg);
+    } finally {
+      set({ isProcessing: false, processingPhase: '', processingProgress: 100, processingMessage: '' });
     }
   },
 

@@ -37,7 +37,7 @@ function blobToDataUrl(blob: Blob): Promise<string> {
 
 // ─── MP4 Demux ───────────────────────────────────────
 
-interface DemuxResult {
+export interface DemuxResult {
   videoTrack: Track;
   samples: Sample[];
   description?: Uint8Array;
@@ -81,7 +81,7 @@ function extractDescription(mp4file: ISOFile, track: Track): Uint8Array | undefi
  * Blob → mp4box demux
  * 반환: 비디오 트랙 정보 + 샘플 메타데이터 (데이터는 ArrayBuffer에서 직접 읽음)
  */
-async function demuxMp4(blob: Blob): Promise<DemuxResult> {
+export async function demuxMp4(blob: Blob): Promise<DemuxResult> {
   const arrayBuffer = await blob.arrayBuffer();
 
   const mp4file = createFile();

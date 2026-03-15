@@ -26,7 +26,7 @@ const Step2Mapping: React.FC = () => {
   const setSourceMapping = useEditPointStore((s) => s.setSourceMapping);
   const updateEdlEntry = useEditPointStore((s) => s.updateEdlEntry);
   const refineTimecodes = useEditPointStore((s) => s.refineTimecodes);
-  const quickExportFFmpeg = useEditPointStore((s) => s.quickExportFFmpeg);
+  const quickExportClips = useEditPointStore((s) => s.quickExportClips);
   const autoCalcSpeed = useEditPointStore((s) => s.autoCalcSpeed);
   const applyAutoSpeed = useEditPointStore((s) => s.applyAutoSpeed);
   const setStep = useEditPointStore((s) => s.setStep);
@@ -221,22 +221,22 @@ const Step2Mapping: React.FC = () => {
             </button>
           )}
 
-          {/* 빠른 FFmpeg 스크립트 다운로드 — Step 3 건너뛰고 즉시 내보내기 */}
+          {/* WebCodecs 빠른 영상 자르기 — 브라우저에서 직접 클립 생성 */}
           <button
             type="button"
-            onClick={quickExportFFmpeg}
+            onClick={quickExportClips}
             disabled={isProcessing || edlEntries.length === 0}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${
               !isProcessing && edlEntries.length > 0
                 ? 'bg-emerald-600/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-600/30'
                 : 'bg-gray-700 text-gray-500 cursor-not-allowed'
             }`}
-            title="정제 없이 편집표 기반으로 FFmpeg 스크립트를 바로 다운로드합니다"
+            title="WebCodecs로 영상을 클립별로 잘라 ZIP 다운로드합니다"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.121 14.121L19 19m-7-7l7-7m-7 7l-2.879 2.879M12 12L9.121 9.121m0 5.758a3 3 0 10-4.243 4.243 3 3 0 004.243-4.243zm0-5.758a3 3 0 10-4.243-4.243 3 3 0 004.243 4.243z" />
             </svg>
-            FFmpeg 스크립트
+            영상 자르기
           </button>
 
           <button

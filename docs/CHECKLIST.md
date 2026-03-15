@@ -8,7 +8,7 @@
 
 ## 🟢 완료된 작업
 
-- [x] **#302 편집실 AI 파싱 속도 대폭 개선 + 빠른 FFmpeg 다운로드** — (1) 파싱 모델 gemini-3.1-pro→flash-lite 전환으로 3~5배 속도 향상 (2) 청크 크기 30→50으로 확대하여 API 호출 횟수 감소 (3) 청크별 진행률 실시간 표시 (4) Step2에서 정제 없이 FFmpeg 스크립트 즉시 다운로드 버튼 추가 (editPointService.ts, editPointStore.ts, Step2Mapping.tsx, 2026-03-15)
+- [x] **#302 편집실 AI 파싱 속도 개선 + WebCodecs 영상 자르기** — (1) 파싱 모델 gemini-3.1-pro→flash-lite 전환으로 3~5배 속도 향상 (2) 청크 크기 30→50 확대 (3) 청크별 진행률 표시 (4) WebCodecs 리먹싱 기반 영상 자르기: mp4box demux → 편집점별 샘플 추출 → mp4-muxer 리먹싱(디코딩/인코딩 없이 원본 복사) → ZIP 다운로드. 미지원 브라우저는 FFmpeg 스크립트 폴백 (clipCutter.ts 신규, editPointService.ts, editPointStore.ts, videoDecoder.ts, Step2Mapping.tsx, 2026-03-15)
 - [x] **#298 편집실 AI 파싱 타임아웃 개선** — Evolink API 120초 타임아웃으로 편집점 파싱이 반복 실패하던 문제. 타임아웃 120s→180s 확대 + 타임아웃 에러도 재시도 대상에 추가 (editPointService.ts, 2026-03-15)
 - [x] **#299 목표 컷 수 상한 확대** — SetupPanel 목표 컷 수 max={30} 하드코딩으로 롱폼(93컷 등) 프로젝트에서 자유로운 조절 불가. max를 200으로 확대 (SetupPanel.tsx 4곳 + 안내 텍스트, 2026-03-15)
 - [x] **#297 렌더링 성능 개선 — 디코더 실패 시 적응형 타임아웃** — 비디오 프레임 디코더가 실패하면 매 프레임 30초씩 대기하던 문제. (1) videoDecoder: 연속 실패 감지(3회 MAX) + 적응형 타임아웃(30s→5s→2s→즉시 포기) (2) canvasRenderer: 실패 확정 장면은 즉시 검은 화면 스킵 + resolveFrame sceneStarts 사전 계산 (3) audioMixer: 나레이션 순차→병렬 로드(Promise.all) — 최악 5시간→37초로 단축 (videoDecoder.ts, canvasRenderer.ts, audioMixer.ts, 2026-03-15)
