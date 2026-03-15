@@ -8,6 +8,7 @@
 
 ## 🟢 완료된 작업
 
+- [x] **#313 NLE 프로젝트 내보내기 — Premiere XML + CapCut/VREW 패키지** — 영상 분석실에서 직접 다운로드 가능한 NLE 패키지 3종. (1) Premiere Pro: FCP XML (xmeml v5) + SRT ZIP — 편집점+자막 트랙+미디어 참조 통합, Premiere/DaVinci Import 즉시 사용 (2) CapCut: 영상 Blob + SRT 3종(자막/나레이션/효과) ZIP (3) VREW: 동일 구성. 모든 타임코드는 장면감지 보정값 반영. nleExportService.ts 신규, VideoAnalysisRoom.tsx 버튼 3개 추가 (2026-03-15)
 - [x] **#312-2 하단 "편집실로 보내기" 버튼 rawResult→보정된 editText 수정** — 하단 CTA 버튼이 rawResult(AI 원본 텍스트)를 편집실에 보내 보정된 타임코드가 무시되던 문제. firstVersion.scenes.map으로 보정된 timecodeSource 기반 편집표 생성 (VideoAnalysisRoom.tsx, 2026-03-15)
 - [x] **#312 장면감지 보정 타임코드 역전파 — SRT/편집실에 AI 원본 대신 보정값 전달** — 장면감지로 보정된 타임코드가 프레임 추출에만 사용되고 versions/SRT/편집실에는 AI 원본 타임코드가 그대로 남아있던 심각한 불일치 수정. applyCorrectedTimecodes() 함수로 YouTube/소셜/업로드 3경로 모두 보정된 타임코드를 versions.scenes.sourceTimeline/timecodeSource에 역전파 (VideoAnalysisRoom.tsx, 2026-03-15)
 - [x] **#311 소셜/업로드 영상 장면감지 보정 누락 수정** — 소셜(TikTok/Douyin/샤오홍슈)과 업로드 영상에서 detectSceneCuts + mergeWithAiTimecodes가 누락되어 AI 타임코드만 사용하던 문제. YouTube와 동일하게 장면감지 → 타임코드 보정 → 정밀 프레임 추출 파이프라인 적용. 다중 업로드는 첫 번째 파일에만 적용 (다중 소스 장면감지는 비용 대비 효과 낮음) (VideoAnalysisRoom.tsx, 2026-03-15)

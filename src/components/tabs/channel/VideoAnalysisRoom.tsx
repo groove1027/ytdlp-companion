@@ -4509,6 +4509,88 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>
                               TTS 생성
                             </button>
+                            {/* NLE 패키지 내보내기 */}
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                try {
+                                  showToast('Premiere XML 패키지 생성 중...', 3000);
+                                  const { buildNlePackageZip } = await import('../../../services/nleExportService');
+                                  const videoBlob = useVideoAnalysisStore.getState().videoBlob;
+                                  const fileName = youtubeUrl ? `${v.title.replace(/[^\w가-힣\s-]/g, '').slice(0, 30)}.mp4` : (uploadedFiles[0]?.name || 'video.mp4');
+                                  const zipBlob = await buildNlePackageZip({
+                                    target: 'premiere',
+                                    scenes: v.scenes,
+                                    title: v.title,
+                                    videoBlob,
+                                    videoFileName: fileName,
+                                    preset: selectedPreset || undefined,
+                                  });
+                                  const url = URL.createObjectURL(zipBlob);
+                                  const a = document.createElement('a'); a.href = url; a.download = `${v.title.replace(/[^\w가-힣\s-]/g, '').slice(0, 30)}_Premiere.zip`; a.click();
+                                  setTimeout(() => URL.revokeObjectURL(url), 10000);
+                                  showToast('Premiere XML 패키지 다운로드 완료!');
+                                } catch (e) { console.error('[NLE]', e); showToast('Premiere 패키지 생성 실패'); }
+                              }}
+                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-amber-600/20 text-amber-400 border border-amber-500/30 hover:bg-amber-600/30 transition-all"
+                            >
+                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 4V2a1 1 0 011-1h8a1 1 0 011 1v2m-9 0h10m-10 0H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2V6a2 2 0 00-2-2h-2" /></svg>
+                              Premiere
+                            </button>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                try {
+                                  showToast('CapCut 패키지 생성 중...', 3000);
+                                  const { buildNlePackageZip } = await import('../../../services/nleExportService');
+                                  const videoBlob = useVideoAnalysisStore.getState().videoBlob;
+                                  const fileName = youtubeUrl ? `${v.title.replace(/[^\w가-힣\s-]/g, '').slice(0, 30)}.mp4` : (uploadedFiles[0]?.name || 'video.mp4');
+                                  const zipBlob = await buildNlePackageZip({
+                                    target: 'capcut',
+                                    scenes: v.scenes,
+                                    title: v.title,
+                                    videoBlob,
+                                    videoFileName: fileName,
+                                    preset: selectedPreset || undefined,
+                                  });
+                                  const url = URL.createObjectURL(zipBlob);
+                                  const a = document.createElement('a'); a.href = url; a.download = `${v.title.replace(/[^\w가-힣\s-]/g, '').slice(0, 30)}_CapCut.zip`; a.click();
+                                  setTimeout(() => URL.revokeObjectURL(url), 10000);
+                                  showToast('CapCut 패키지 다운로드 완료!');
+                                } catch (e) { console.error('[NLE]', e); showToast('CapCut 패키지 생성 실패'); }
+                              }}
+                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-amber-600/20 text-amber-400 border border-amber-500/30 hover:bg-amber-600/30 transition-all"
+                            >
+                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                              CapCut
+                            </button>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                try {
+                                  showToast('VREW 패키지 생성 중...', 3000);
+                                  const { buildNlePackageZip } = await import('../../../services/nleExportService');
+                                  const videoBlob = useVideoAnalysisStore.getState().videoBlob;
+                                  const fileName = youtubeUrl ? `${v.title.replace(/[^\w가-힣\s-]/g, '').slice(0, 30)}.mp4` : (uploadedFiles[0]?.name || 'video.mp4');
+                                  const zipBlob = await buildNlePackageZip({
+                                    target: 'vrew',
+                                    scenes: v.scenes,
+                                    title: v.title,
+                                    videoBlob,
+                                    videoFileName: fileName,
+                                    preset: selectedPreset || undefined,
+                                  });
+                                  const url = URL.createObjectURL(zipBlob);
+                                  const a = document.createElement('a'); a.href = url; a.download = `${v.title.replace(/[^\w가-힣\s-]/g, '').slice(0, 30)}_VREW.zip`; a.click();
+                                  setTimeout(() => URL.revokeObjectURL(url), 10000);
+                                  showToast('VREW 패키지 다운로드 완료!');
+                                } catch (e) { console.error('[NLE]', e); showToast('VREW 패키지 생성 실패'); }
+                              }}
+                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-amber-600/20 text-amber-400 border border-amber-500/30 hover:bg-amber-600/30 transition-all"
+                            >
+                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                              VREW
+                            </button>
                           </>
                         )}
                       </div>
