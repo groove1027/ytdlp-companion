@@ -60,9 +60,10 @@ function modeToLabelColor(mode: string): string {
 
 /** 실측 FPS → xmeml v5 timebase + NTSC 플래그 매핑 */
 function fpsToNtsc(fps: number): { ntsc: boolean; timebase: number } {
-  if (Math.abs(fps - 23.976) < 0.05) return { ntsc: true, timebase: 24 };
-  if (Math.abs(fps - 29.97) < 0.05) return { ntsc: true, timebase: 30 };
-  if (Math.abs(fps - 59.94) < 0.05) return { ntsc: true, timebase: 60 };
+  // 임계값 0.01 — 23.976(NTSC)과 24.000(non-NTSC)의 차이=0.024이므로 0.05는 너무 넓음
+  if (Math.abs(fps - 23.976) < 0.01) return { ntsc: true, timebase: 24 };
+  if (Math.abs(fps - 29.97) < 0.01) return { ntsc: true, timebase: 30 };
+  if (Math.abs(fps - 59.94) < 0.01) return { ntsc: true, timebase: 60 };
   return { ntsc: false, timebase: Math.round(fps) };
 }
 
