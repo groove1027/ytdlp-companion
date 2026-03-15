@@ -143,7 +143,7 @@ export function generateFcpXml(params: {
     const fileTag = i === 0
       ? `<file id="file-1">
               <name>${safeFileName}</name>
-              <pathurl>${encodeURIComponent(videoFileName)}</pathurl>
+              <pathurl>media/${encodeURIComponent(videoFileName)}</pathurl>
               <duration>${totalFrames}</duration>
               <rate><ntsc>FALSE</ntsc><timebase>${fps}</timebase></rate>
               <media>
@@ -343,9 +343,9 @@ export async function buildNlePackageZip(params: {
     const xml = generateFcpXml({ scenes, title, videoFileName, preset, width, height, fps });
     zip.file(`${safeName}.xml`, xml);
 
-    // [FIX #316] 영상 파일 포함 — CapCut/VREW와 동일하게 videoBlob ZIP에 포함
+    // [FIX #328] 영상 파일을 media/ 하위폴더에 배치 — XML pathurl과 일치
     if (videoBlob) {
-      zip.file(videoFileName || 'video.mp4', videoBlob);
+      zip.file(`media/${videoFileName || 'video.mp4'}`, videoBlob);
     }
 
     // SRT (자막 레이어 분리)
@@ -361,7 +361,7 @@ export async function buildNlePackageZip(params: {
       '1. ZIP을 압축 해제하세요.',
       '2. Premiere Pro를 열고 File > Import를 클릭하세요.',
       `3. "${safeName}.xml" 파일을 선택하면 타임라인이 자동 생성됩니다.`,
-      `4. ZIP 압축 해제 후 영상 파일과 XML이 같은 폴더에 있으면 자동 연결됩니다.`,
+      '4. media/ 폴더의 영상 파일이 자동 연결됩니다.',
       '5. 추가 SRT 파일은 별도 import할 수 있습니다.',
     ].join('\n'));
 
