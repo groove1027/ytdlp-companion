@@ -279,7 +279,19 @@ const ChannelAnalysisRoom: React.FC = () => {
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error('[ChannelAnalysis] 채널 분석 실패:', e);
-      setError(`채널 분석 실패: ${msg}`);
+      // [FIX #336] 사용자 친화적 에러 메시지 — 기술 용어 대신 원인 + 해결 방법 안내
+      const hint = msg.includes('키가 설정되지') || msg.includes('인증 실패')
+        ? '💡 설정에서 Evolink API 키를 확인해주세요.'
+        : msg.includes('잔액 부족')
+          ? '💡 Evolink 크레딧이 소진되었어요. 충전 후 다시 시도해주세요.'
+          : msg.includes('429') || msg.includes('요청 제한')
+            ? '💡 AI 서버가 일시적으로 바빠요. 잠시 후 다시 시도해주세요.'
+            : msg.includes('400') || msg.includes('콘텐츠 정책')
+              ? '💡 AI가 이 채널의 일부 콘텐츠를 분석하지 못했어요. 잠시 후 "실패 항목 재분석" 버튼을 눌러보세요.'
+              : msg.includes('Failed to fetch') || msg.includes('network') || msg.includes('Network')
+                ? '💡 네트워크 연결이 불안정해요. 인터넷 확인 후 다시 시도해주세요.'
+                : '💡 잠시 후 다시 시도해보세요. 반복되면 피드백으로 알려주세요.';
+      setError(`채널 분석 중 문제가 발생했어요. ${hint}`);
       setProgress(null);
     }
   }, [channelUrl, contentFormat, contentRegion, videoCount, videoSortOrder, setChannelInfo, setChannelScripts, setChannelGuideline, setContentRegion]);
@@ -315,7 +327,15 @@ const ChannelAnalysisRoom: React.FC = () => {
       showToast('스타일 분석이 완료되었습니다.');
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      setError(`스타일 분석 실패: ${msg}`);
+      console.error('[ChannelAnalysis] 스타일 분석 실패:', e);
+      const hint = msg.includes('키가 설정되지') || msg.includes('인증 실패')
+        ? '💡 설정에서 Evolink API 키를 확인해주세요.'
+        : msg.includes('400') || msg.includes('콘텐츠 정책')
+          ? '💡 AI가 일부 콘텐츠를 분석하지 못했어요. 잠시 후 다시 시도해주세요.'
+          : msg.includes('Failed to fetch') || msg.includes('Network')
+            ? '💡 네트워크 연결이 불안정해요. 인터넷 확인 후 다시 시도해주세요.'
+            : '💡 잠시 후 다시 시도해보세요.';
+      setError(`스타일 분석 중 문제가 발생했어요. ${hint}`);
       setProgress(null);
     }
   }, [sourceName, contentRegion, setChannelInfo, setChannelScripts, setChannelGuideline, setContentRegion]);
@@ -336,7 +356,13 @@ const ChannelAnalysisRoom: React.FC = () => {
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      setError(`재분석 실패: ${msg}`);
+      console.error('[ChannelAnalysis] 재분석 실패:', e);
+      const hint = msg.includes('400') || msg.includes('콘텐츠 정책')
+        ? '💡 AI 서버가 해당 콘텐츠를 처리하지 못했어요. 잠시 후 다시 시도해주세요.'
+        : msg.includes('Failed to fetch') || msg.includes('Network')
+          ? '💡 네트워크 연결을 확인해주세요.'
+          : '💡 잠시 후 다시 시도해보세요.';
+      setError(`재분석 중 문제가 발생했어요. ${hint}`);
     } finally {
       setIsRetrying(false);
     }
