@@ -8,6 +8,7 @@
 
 ## 🟢 완료된 작업
 
+- [x] **#328 NLE XML pathurl 수정 + 스테레오 오디오 채널 수정** — (1) pathurl `file://localhost/media/`→상대경로(파일명만)로 수정 — Premiere에서 같은 폴더 영상 자동 연결 (2) 오디오 `channelcount 2` + `numOutputChannels 2` 추가 — "Cannot Link Media: 2 vs 1 audio channel" 에러 해결. generateFcpXml + generateFcpXmlFromEdl 양쪽 모두 적용 (nleExportService.ts, 2026-03-16)
 - [x] **#316 NLE 9:16 화면비율 + FCP XML 스펙 완전 준수** — 기본값 1920x1080→1080x1920, videoBlob에서 실제 치수 자동 감지, samplecharacteristics에 anamorphic=FALSE + pixelaspectratio=square + fielddominance=none + colordepth=24. 시퀀스+파일정의+편집실 3곳 모두 적용 (nleExportService.ts, VideoAnalysisRoom.tsx, 2026-03-16)
 - [x] **#316 NLE 패키지 영상 자동 다운로드** — videoBlob 없으면(새로고침 후 등) 자동 다운로드하여 ZIP에 포함. 빈 ZIP 방지 (VideoAnalysisRoom.tsx, 2026-03-16)
 - [x] **#316 Premiere ZIP 영상 포함 + 버전 카드 버튼 3그룹 정리** — Premiere ZIP에 videoBlob 포함 (이전엔 XML+SRT만). 10개 버튼→3그룹: NLE내보내기(큰 그라디언트)/기본액션(대본복사·프리뷰·편집실)/보조(SRT·HTML·대본작성·TTS) (nleExportService.ts, VideoAnalysisRoom.tsx, 2026-03-16)

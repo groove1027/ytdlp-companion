@@ -143,12 +143,12 @@ export function generateFcpXml(params: {
     const fileTag = i === 0
       ? `<file id="file-1">
               <name>${safeFileName}</name>
-              <pathurl>file://localhost/media/${encodeURIComponent(videoFileName)}</pathurl>
+              <pathurl>${encodeURIComponent(videoFileName)}</pathurl>
               <duration>${totalFrames}</duration>
               <rate><ntsc>FALSE</ntsc><timebase>${fps}</timebase></rate>
               <media>
                 <video><samplecharacteristics><width>${width}</width><height>${height}</height><anamorphic>FALSE</anamorphic><pixelaspectratio>square</pixelaspectratio><fielddominance>none</fielddominance></samplecharacteristics></video>
-                <audio><samplecharacteristics><samplerate>48000</samplerate><depth>16</depth></samplecharacteristics></audio>
+                <audio><channelcount>2</channelcount><samplecharacteristics><samplerate>48000</samplerate><depth>16</depth></samplecharacteristics></audio>
               </media>
             </file>`
       : '<file id="file-1"/>';
@@ -264,6 +264,7 @@ export function generateFcpXml(params: {
         </track>
       </video>
       <audio>
+        <numOutputChannels>2</numOutputChannels>
         <format>
           <samplecharacteristics>
             <samplerate>48000</samplerate>
@@ -360,7 +361,7 @@ export async function buildNlePackageZip(params: {
       '1. ZIP을 압축 해제하세요.',
       '2. Premiere Pro를 열고 File > Import를 클릭하세요.',
       `3. "${safeName}.xml" 파일을 선택하면 타임라인이 자동 생성됩니다.`,
-      `4. 영상 파일(${videoFileName})이 같은 폴더에 있어야 자동 연결됩니다.`,
+      `4. ZIP 압축 해제 후 영상 파일과 XML이 같은 폴더에 있으면 자동 연결됩니다.`,
       '5. 추가 SRT 파일은 별도 import할 수 있습니다.',
     ].join('\n'));
 
@@ -453,12 +454,12 @@ export function generateFcpXmlFromEdl(params: {
   for (const f of fileMap.values()) {
     fileDefs.set(f.id, `
               <name>${escXml(f.name)}</name>
-              <pathurl>file://localhost/media/${encodeURIComponent(f.name)}</pathurl>
+              <pathurl>${encodeURIComponent(f.name)}</pathurl>
               <duration>${toFrames(f.dur)}</duration>
               <rate><ntsc>FALSE</ntsc><timebase>${fps}</timebase></rate>
               <media>
                 <video><samplecharacteristics><width>${width}</width><height>${height}</height><anamorphic>FALSE</anamorphic><pixelaspectratio>square</pixelaspectratio><fielddominance>none</fielddominance></samplecharacteristics></video>
-                <audio><samplecharacteristics><samplerate>48000</samplerate><depth>16</depth></samplecharacteristics></audio>
+                <audio><channelcount>2</channelcount><samplecharacteristics><samplerate>48000</samplerate><depth>16</depth></samplecharacteristics></audio>
               </media>`);
   }
 
@@ -560,6 +561,7 @@ export function generateFcpXmlFromEdl(params: {
         </track>
       </video>
       <audio>
+        <numOutputChannels>2</numOutputChannels>
         <format><samplecharacteristics><samplerate>48000</samplerate><depth>16</depth></samplecharacteristics></format>
         <track>${audioClips}
         </track>
@@ -612,7 +614,7 @@ export async function buildEdlNlePackageZip(params: {
       '',
       '1. Premiere Pro: File > Import > XML 파일 선택',
       '2. 타임라인에 편집점+자막이 자동 배치됩니다.',
-      '3. 소스 영상은 media/ 폴더에 배치하세요.',
+      '3. 소스 영상을 XML과 같은 폴더에 배치하세요.',
       `* ${entries.length}개 편집점, Vision AI 정제 타임코드 반영`,
     ].join('\n'));
   } else {
