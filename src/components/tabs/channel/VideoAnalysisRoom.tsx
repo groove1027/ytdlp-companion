@@ -2979,7 +2979,7 @@ const VideoAnalysisRoom: React.FC = () => {
   const [isDragOver, setIsDragOver] = useState(false);
   const [guideAiResult, setGuideAiResult] = useState('');
   const [nleExporting, setNleExporting] = useState<{ target: string; step: string } | null>(null);
-  const nleDimsCache = useRef<{ w: number; h: number; fps: number } | null>(null);
+  const nleDimsCache = useRef<{ w: number; h: number; fps: number; dur: number } | null>(null);
   const validYoutubeUrls = youtubeUrls.filter(u => u.trim().length > 0);
   const hasInput = inputMode === 'youtube' ? validYoutubeUrls.length > 0 : uploadedFiles.length > 0;
 
@@ -4452,22 +4452,22 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                       let dims = nleDimsCache.current;
                                       if (!dims) {
                                         setNleExporting({ target, step: '영상 정보 확인 중...' });
-                                        dims = await new Promise<{ w: number; h: number; fps: number }>(resolve => {
+                                        dims = await new Promise<{ w: number; h: number; fps: number; dur: number }>(resolve => {
                                           const vid = document.createElement('video');
                                           vid.muted = true; vid.preload = 'metadata';
                                           vid.onloadedmetadata = () => {
-                                            resolve({ w: vid.videoWidth || 1080, h: vid.videoHeight || 1920, fps: 30 });
+                                            resolve({ w: vid.videoWidth || 1080, h: vid.videoHeight || 1920, fps: 30, dur: vid.duration || 0 });
                                             URL.revokeObjectURL(vid.src);
                                           };
-                                          vid.onerror = () => resolve({ w: 1080, h: 1920, fps: 30 });
-                                          setTimeout(() => resolve({ w: 1080, h: 1920, fps: 30 }), 3000);
+                                          vid.onerror = () => resolve({ w: 1080, h: 1920, fps: 30, dur: 0 });
+                                          setTimeout(() => resolve({ w: 1080, h: 1920, fps: 30, dur: 0 }), 3000);
                                           vid.src = URL.createObjectURL(videoBlob!);
                                         });
                                         nleDimsCache.current = dims;
                                       }
                                       // Step 3: ZIP 패키지 생성
                                       setNleExporting({ target, step: 'ZIP 패키지 생성 중...' });
-                                      const zipBlob = await buildNlePackageZip({ target, scenes: v.scenes, title: v.title, videoBlob, videoFileName: fileName, preset: selectedPreset || undefined, width: dims.w, height: dims.h, fps: dims.fps });
+                                      const zipBlob = await buildNlePackageZip({ target, scenes: v.scenes, title: v.title, videoBlob, videoFileName: fileName, preset: selectedPreset || undefined, width: dims.w, height: dims.h, fps: dims.fps, videoDurationSec: dims.dur });
                                       const url = URL.createObjectURL(zipBlob);
                                       const a = document.createElement('a'); a.href = url; a.download = `${v.title.replace(/[^\w가-힣\s-]/g, '').slice(0, 30)}_${label}.zip`; a.click();
                                       setTimeout(() => URL.revokeObjectURL(url), 10000);

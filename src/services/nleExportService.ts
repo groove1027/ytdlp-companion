@@ -104,8 +104,15 @@ function extractTimings(scenes: VideoSceneRow[], preset?: VideoAnalysisPreset): 
       startSec = timecodeToSeconds(range[1]);
       endSec = timecodeToSeconds(range[2]);
     } else {
-      startSec = accTime;
-      endSec = accTime + dur;
+      // [FIX] 단일 타임코드 ("00:26.000")도 소스 시작점으로 사용
+      const singleTc = srcTc.match(/(\d+:\d+(?:\.\d+)?)/);
+      if (singleTc) {
+        startSec = timecodeToSeconds(singleTc[1]);
+        endSec = startSec + dur;
+      } else {
+        startSec = accTime;
+        endSec = accTime + dur;
+      }
     }
 
     const clipDur = endSec - startSec;
@@ -142,8 +149,9 @@ export function generateFcpXml(params: {
   width?: number;
   height?: number;
   preset?: VideoAnalysisPreset;
+  videoDurationSec?: number;
 }): string {
-  const { scenes, title, videoFileName, fps = 30, width = 1080, height = 1920, preset } = params;
+  const { scenes, title, videoFileName, fps = 30, width = 1080, height = 1920, preset, videoDurationSec } = params;
   const timings = extractTimings(scenes, preset);
   if (timings.length === 0) return '';
 
@@ -152,7 +160,9 @@ export function generateFcpXml(params: {
   const safeTitle = escXml(title);
   const safeFileName = escXml(videoFileName);
   const toFrames = (sec: number) => Math.round(sec * fps);
-  const srcTotalFrames = Math.ceil(Math.max(...timings.map(t => t.endSec)) * fps);
+  // [FIX] 소스 영상 전체 길이 = max(실제 비디오 길이, 최대 타임코드 끝점)
+  const maxTimecodeEnd = Math.max(...timings.map(t => t.endSec));
+  const srcTotalFrames = Math.ceil(Math.max(videoDurationSec || 0, maxTimecodeEnd) * fps);
 
   // ── 시퀀스 마커 (장면 경계 — Shift+M으로 즉시 네비게이션) ──
   const markers = timings.map((t, i) => {
@@ -193,7 +203,7 @@ export function generateFcpXml(params: {
     return `
           <clipitem id="clip-${i + 1}">
             <name>${escXml(clipName)}</name>
-            <duration>${toFrames(t.durationSec)}</duration>
+            <duration>${srcTotalFrames}</duration>
             <rate><ntsc>FALSE</ntsc><timebase>${fps}</timebase></rate>
             <in>${toFrames(t.startSec)}</in>
             <out>${toFrames(t.endSec)}</out>
@@ -232,7 +242,7 @@ export function generateFcpXml(params: {
     return `
           <clipitem id="audio-${i + 1}">
             <name>${escXml(`Scene ${String(i + 1).padStart(3, '0')} Audio`)}</name>
-            <duration>${toFrames(t.durationSec)}</duration>
+            <duration>${srcTotalFrames}</duration>
             <rate><ntsc>FALSE</ntsc><timebase>${fps}</timebase></rate>
             <in>${toFrames(t.startSec)}</in>
             <out>${toFrames(t.endSec)}</out>
@@ -363,8 +373,9 @@ export async function buildNlePackageZip(params: {
   width?: number;
   height?: number;
   fps?: number;
+  videoDurationSec?: number;
 }): Promise<Blob> {
-  const { target, scenes, title, videoBlob, videoFileName, preset, width, height, fps } = params;
+  const { target, scenes, title, videoBlob, videoFileName, preset, width, height, fps, videoDurationSec } = params;
   const JSZip = (await import('jszip')).default;
   const zip = new JSZip();
   const safeName = title.replace(/[^\w가-힣\s-]/g, '').trim().slice(0, 40) || 'project';
@@ -372,7 +383,7 @@ export async function buildNlePackageZip(params: {
 
   if (target === 'premiere') {
     // FCP XML
-    const xml = generateFcpXml({ scenes, title, videoFileName, preset, width, height, fps });
+    const xml = generateFcpXml({ scenes, title, videoFileName, preset, width, height, fps, videoDurationSec });
     zip.file(`${safeName}.xml`, xml);
 
     // [FIX #328] 영상 파일을 media/ 하위폴더에 배치 — XML pathurl과 일치
@@ -544,7 +555,7 @@ export function generateFcpXmlFromEdl(params: {
     return `
           <clipitem id="clip-${i + 1}">
             <name>${escXml(`${c.entry.order} ${c.entry.sourceDescription.slice(0, 35)}`)}</name>
-            <duration>${toFrames(end - start)}</duration>
+            <duration>${toFrames(c.fileInfo.dur)}</duration>
             <rate><ntsc>FALSE</ntsc><timebase>${fps}</timebase></rate>
             <in>${toFrames(start)}</in>
             <out>${toFrames(end)}</out>
@@ -583,7 +594,7 @@ export function generateFcpXmlFromEdl(params: {
     return `
           <clipitem id="audio-${i + 1}">
             <name>${escXml(`Audio ${c.entry.order}`)}</name>
-            <duration>${toFrames(end - start)}</duration>
+            <duration>${toFrames(c.fileInfo.dur)}</duration>
             <rate><ntsc>FALSE</ntsc><timebase>${fps}</timebase></rate>
             <in>${toFrames(start)}</in>
             <out>${toFrames(end)}</out>
