@@ -2921,6 +2921,7 @@ const VideoAnalysisRoom: React.FC = () => {
     setError, setExpandedId, cacheCurrentResult, restoreFromCache, resetResults,
     clearPresetCache,
     savedSlots, activeSlotId, loadSlot, removeSlot, newAnalysis, loadAllSlots, saveSlot,
+    autoSave, tryAutoRecover,
   } = store;
 
   // 로컬 전용 (일시적 UI 상태 — 영속 불필요)
@@ -2964,6 +2965,21 @@ const VideoAnalysisRoom: React.FC = () => {
       }
     }
   }, []);
+
+  // [FIX #313] 새로고침 후 자동 복구 — localStorage 유실 시 IndexedDB에서 복원
+  React.useEffect(() => {
+    tryAutoRecover().then(recovered => {
+      if (recovered) showToast('이전 분석 결과를 자동으로 복원했어요 ✅', 4000);
+    });
+  }, []);
+
+  // [FIX #313] 분석 중 새로고침 방지 — 데이터 유실 경고
+  useEffect(() => {
+    if (!isAnalyzing) return;
+    const handler = (e: BeforeUnloadEvent) => { e.preventDefault(); };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [isAnalyzing]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); setIsDragOver(true); }, []);
   const handleDragLeave = useCallback((e: React.DragEvent) => { e.preventDefault(); setIsDragOver(false); }, []);
@@ -3529,6 +3545,9 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
         setVersions(parsed);
       }
 
+      // [FIX #313] 배치 완료 후 IndexedDB 자동 저장 — 프레임 추출 전에 저장하여 새로고침 시 복구 가능
+      autoSave().catch(() => {});
+
       // ★ 3중 폴백 프레임 추출 — 무조건 결과 보장
       // [FIX #156] 다중 업로드 영상: 모든 파일에서 프레임 추출
       // [FIX #241] 타임코드 수집에 parsed 대신 스토어의 최종 versions 사용
@@ -3705,6 +3724,8 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       setIsAnalyzing(false);
       setAnalysisPhase('idle');
       setBatchProgress(null);
+      // [FIX #313] 분석 종료 시 최종 자동 저장 (부분 결과 포함)
+      autoSave().catch(() => {});
     }
   };
 

@@ -92,6 +92,11 @@ interface VideoAnalysisStore {
   /** 새 분석 시작 — 결과 초기화 */
   newAnalysis: () => void;
 
+  /** [FIX #313] 분석 완료 후 IndexedDB 자동 저장 — 새로고침 시 복구용 */
+  autoSave: () => Promise<void>;
+  /** [FIX #313] 마운트 시 자동 복구 — localStorage 유실 시 IndexedDB에서 복원 */
+  tryAutoRecover: () => Promise<boolean>;
+
   /** 편집실 버전 셀렉터용 — 현재 선택된 버전 인덱스 */
   editRoomSelectedVersionIdx: number | null;
   setEditRoomSelectedVersionIdx: (idx: number | null) => void;
@@ -263,6 +268,61 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
 
       editRoomSelectedVersionIdx: null,
       setEditRoomSelectedVersionIdx: (idx) => set({ editRoomSelectedVersionIdx: idx }),
+
+      // [FIX #313] 분석 완료 후 IndexedDB 자동 저장 — 새로고침 시 복구용
+      autoSave: async () => {
+        const { youtubeUrl, youtubeUrls, inputMode, selectedPreset, rawResult, versions, resultCache } = get();
+        if (versions.length === 0) return;
+        const validUrls = youtubeUrls.filter(u => u.trim());
+        const slot: SavedVideoAnalysisSlot = {
+          id: 'va-autosave',
+          name: `자동 저장 — ${selectedPreset || '분석'}`,
+          youtubeUrl,
+          youtubeUrls: validUrls,
+          inputMode,
+          selectedPreset,
+          rawResult,
+          versions,
+          resultCache,
+          savedAt: Date.now(),
+        };
+        try {
+          await saveVideoAnalysisSlot(slot);
+        } catch (e) { console.warn('[VideoAnalysis] autoSave failed:', e); }
+      },
+
+      // [FIX #313] 마운트 시 자동 복구 — localStorage 유실 시 IndexedDB에서 복원
+      tryAutoRecover: async () => {
+        const { versions } = get();
+        if (versions.length > 0) return false;
+        try {
+          const all = await getAllVideoAnalysisSlots();
+          const autoSave = all.find(s => s.id === 'va-autosave');
+          if (!autoSave || autoSave.versions.length === 0) return false;
+          // 30분 이내의 자동 저장분만 복원
+          if (Date.now() - autoSave.savedAt > 30 * 60 * 1000) return false;
+          const urls = autoSave.youtubeUrls?.length
+            ? autoSave.youtubeUrls
+            : autoSave.youtubeUrl ? [autoSave.youtubeUrl] : [''];
+          const restoredThumbs = (autoSave.selectedPreset && autoSave.resultCache?.[autoSave.selectedPreset]?.thumbs) || [];
+          set({
+            youtubeUrl: autoSave.youtubeUrl,
+            youtubeUrls: urls,
+            inputMode: autoSave.inputMode,
+            selectedPreset: autoSave.selectedPreset,
+            rawResult: autoSave.rawResult,
+            versions: autoSave.versions,
+            resultCache: autoSave.resultCache,
+            thumbnails: restoredThumbs,
+            expandedId: null,
+            error: null,
+          });
+          return true;
+        } catch (e) {
+          console.warn('[VideoAnalysis] autoRecover failed:', e);
+          return false;
+        }
+      },
 
       newAnalysis: () => set({
         youtubeUrl: '',
