@@ -3606,17 +3606,22 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
         text = await callAI(userPrompt, maxTokens);
       }
 
-      const parsed = parseVersions(text);
       setRawResult(text);
-      // 병렬 배치 시 프로그레시브 버전이 더 완전할 수 있으므로 병합
+      // [FIX #316] 병렬 배치 시 합친 텍스트 재파싱 금지 — 중복 VERSION ID로 오디오 내용 뒤섞림 방지
+      // 프로그레시브 렌더링(runBatch)에서 배치별로 이미 ID 중복 체크하며 병합했으므로 그 결과를 사용
       if (useParallelBatch) {
+        // 프로그레시브 버전이 이미 배치별 먼저 도착 결과를 보존 → 추가 파싱 불필요
+        // 혹시 비어있으면 폴백으로 합친 텍스트 파싱
         const progressive = useVideoAnalysisStore.getState().versions;
-        const merged = [...parsed];
-        for (const v of progressive) {
-          if (!merged.some(m => m.id === v.id)) merged.push(v);
+        if (progressive.length === 0) {
+          const parsed = parseVersions(text);
+          // ID 중복 제거: 첫 번째 등장만 유지
+          const deduped = parsed.filter((v, idx, arr) => arr.findIndex(x => x.id === v.id) === idx);
+          setVersions(deduped.sort((a, b) => a.id - b.id));
         }
-        setVersions(merged.sort((a, b) => a.id - b.id));
+        // else: 프로그레시브 버전 유지 (이미 중복 없음)
       } else {
+        const parsed = parseVersions(text);
         setVersions(parsed);
       }
 
