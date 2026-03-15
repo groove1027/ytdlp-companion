@@ -126,7 +126,8 @@ export function generateFcpXml(params: {
   height?: number;
   preset?: VideoAnalysisPreset;
 }): string {
-  const { scenes, title, videoFileName, fps = 30, width = 1920, height = 1080, preset } = params;
+  // [FIX #316] 기본값을 9:16(1080x1920)으로 변경 — 대부분 쇼츠/릴스 분석이므로
+  const { scenes, title, videoFileName, fps = 30, width = 1080, height = 1920, preset } = params;
   const timings = extractTimings(scenes, preset);
   if (timings.length === 0) return '';
 
@@ -146,7 +147,7 @@ export function generateFcpXml(params: {
               <duration>${totalFrames}</duration>
               <rate><ntsc>FALSE</ntsc><timebase>${fps}</timebase></rate>
               <media>
-                <video><samplecharacteristics><width>${width}</width><height>${height}</height></samplecharacteristics></video>
+                <video><samplecharacteristics><width>${width}</width><height>${height}</height><anamorphic>FALSE</anamorphic><pixelaspectratio>square</pixelaspectratio><fielddominance>none</fielddominance></samplecharacteristics></video>
                 <audio><samplecharacteristics><samplerate>48000</samplerate><depth>16</depth></samplecharacteristics></audio>
               </media>
             </file>`
@@ -246,8 +247,11 @@ export function generateFcpXml(params: {
           <samplecharacteristics>
             <width>${width}</width>
             <height>${height}</height>
+            <anamorphic>FALSE</anamorphic>
             <pixelaspectratio>square</pixelaspectratio>
+            <fielddominance>none</fielddominance>
             <rate><ntsc>FALSE</ntsc><timebase>${fps}</timebase></rate>
+            <colordepth>24</colordepth>
             <codec>
               <name>Apple ProRes 422</name>
             </codec>
@@ -323,8 +327,11 @@ export async function buildNlePackageZip(params: {
   videoBlob: Blob | null;
   videoFileName: string;
   preset?: VideoAnalysisPreset;
+  width?: number;
+  height?: number;
+  fps?: number;
 }): Promise<Blob> {
-  const { target, scenes, title, videoBlob, videoFileName, preset } = params;
+  const { target, scenes, title, videoBlob, videoFileName, preset, width, height, fps } = params;
   const JSZip = (await import('jszip')).default;
   const zip = new JSZip();
   const safeName = title.replace(/[^\w가-힣\s-]/g, '').trim().slice(0, 40) || 'project';
@@ -332,7 +339,7 @@ export async function buildNlePackageZip(params: {
 
   if (target === 'premiere') {
     // FCP XML
-    const xml = generateFcpXml({ scenes, title, videoFileName, preset });
+    const xml = generateFcpXml({ scenes, title, videoFileName, preset, width, height, fps });
     zip.file(`${safeName}.xml`, xml);
 
     // [FIX #316] 영상 파일 포함 — CapCut/VREW와 동일하게 videoBlob ZIP에 포함
@@ -403,7 +410,8 @@ export function generateFcpXmlFromEdl(params: {
   width?: number;
   height?: number;
 }): string {
-  const { entries, sourceVideos, sourceMapping, title = 'Edit Project', fps = 30, width = 1920, height = 1080 } = params;
+  // [FIX #316] 기본값을 9:16(1080x1920)으로 변경
+  const { entries, sourceVideos, sourceMapping, title = 'Edit Project', fps = 30, width = 1080, height = 1920 } = params;
   if (entries.length === 0) return '';
 
   const toFrames = (sec: number) => Math.round(sec * fps);
@@ -449,7 +457,7 @@ export function generateFcpXmlFromEdl(params: {
               <duration>${toFrames(f.dur)}</duration>
               <rate><ntsc>FALSE</ntsc><timebase>${fps}</timebase></rate>
               <media>
-                <video><samplecharacteristics><width>${width}</width><height>${height}</height></samplecharacteristics></video>
+                <video><samplecharacteristics><width>${width}</width><height>${height}</height><anamorphic>FALSE</anamorphic><pixelaspectratio>square</pixelaspectratio><fielddominance>none</fielddominance></samplecharacteristics></video>
                 <audio><samplecharacteristics><samplerate>48000</samplerate><depth>16</depth></samplecharacteristics></audio>
               </media>`);
   }
@@ -539,8 +547,11 @@ export function generateFcpXmlFromEdl(params: {
         <format>
           <samplecharacteristics>
             <width>${width}</width><height>${height}</height>
+            <anamorphic>FALSE</anamorphic>
             <pixelaspectratio>square</pixelaspectratio>
+            <fielddominance>none</fielddominance>
             <rate><ntsc>FALSE</ntsc><timebase>${fps}</timebase></rate>
+            <colordepth>24</colordepth>
           </samplecharacteristics>
         </format>
         <track>${videoClips}

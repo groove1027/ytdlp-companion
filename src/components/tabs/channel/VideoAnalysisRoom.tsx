@@ -4419,7 +4419,21 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                       showToast(`${label} 패키지 생성 중...`, 3000);
                                       const { buildNlePackageZip } = await import('../../../services/nleExportService');
                                       const fileName = youtubeUrl ? `${v.title.replace(/[^\w가-힣\s-]/g, '').slice(0, 30)}.mp4` : (uploadedFiles[0]?.name || 'video.mp4');
-                                      const zipBlob = await buildNlePackageZip({ target, scenes: v.scenes, title: v.title, videoBlob, videoFileName: fileName, preset: selectedPreset || undefined });
+                                      // [FIX #316] 영상 치수 감지 — 9:16/16:9 자동 판별
+                                      const dims = await new Promise<{ w: number; h: number; fps: number }>(resolve => {
+                                        const vid = document.createElement('video');
+                                        vid.muted = true; vid.preload = 'metadata';
+                                        vid.onloadedmetadata = () => {
+                                          const w = vid.videoWidth || 1080;
+                                          const h = vid.videoHeight || 1920;
+                                          resolve({ w, h, fps: 30 });
+                                          URL.revokeObjectURL(vid.src);
+                                        };
+                                        vid.onerror = () => resolve({ w: 1080, h: 1920, fps: 30 });
+                                        setTimeout(() => resolve({ w: 1080, h: 1920, fps: 30 }), 5000);
+                                        vid.src = URL.createObjectURL(videoBlob!);
+                                      });
+                                      const zipBlob = await buildNlePackageZip({ target, scenes: v.scenes, title: v.title, videoBlob, videoFileName: fileName, preset: selectedPreset || undefined, width: dims.w, height: dims.h, fps: dims.fps });
                                       const url = URL.createObjectURL(zipBlob);
                                       const a = document.createElement('a'); a.href = url; a.download = `${v.title.replace(/[^\w가-힣\s-]/g, '').slice(0, 30)}_${label}.zip`; a.click();
                                       setTimeout(() => URL.revokeObjectURL(url), 10000);
