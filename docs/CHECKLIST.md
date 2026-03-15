@@ -8,7 +8,7 @@
 
 ## 🟢 완료된 작업
 
-- [x] **#315 업데이트 시 대본 유실 방지** — 앱 업데이트(배포) 후 자동 새로고침 시 loadProject()가 scriptWriterStore.reset()을 호출하여 localStorage 드래프트까지 삭제하던 문제. 자동 복원(skipCostRestore=true) 시에는 script writer reset을 건너뛰어 이미 복원된 드래프트 보존 (projectStore.ts, 2026-03-15)
+- [x] **#315 업데이트 시 전체 작업 상태 유실 방지** — 앱 업데이트(배포) 후 자동 새로고침 시 loadProject()가 모든 스토어(10개)를 reset하여 대본·사운드·편집실·채널분석 등 전체 작업 상태가 날아가던 문제. 자동 복원(skipCostRestore=true) 시 모든 스토어 reset을 건너뛰어 작업 상태 완전 보존 (projectStore.ts, 2026-03-15)
 - [x] **#313 영상 분석 새로고침 시 대본 유실 방지** — 분석 중 beforeunload 경고 추가 (실수 새로고침 방지), 배치 완료 후 IndexedDB 자동 저장 (va-autosave 슬롯), 마운트 시 localStorage 유실된 경우 IndexedDB에서 30분 이내 자동 복구 + 토스트 알림 (videoAnalysisStore.ts, VideoAnalysisRoom.tsx, 2026-03-15)
 - [x] **#313-4 FCP XML clip-master/audio-master 겹침 제거** — 같은 트랙에 전체 영상(clip-master) + 개별 씬 클립이 겹쳐서 Premiere import 에러 발생 가능. clip-master/audio-master 삭제, 첫 번째 씬 클립에 file 정의 인라인 (nleExportService.ts, 2026-03-15)
 - [x] **#313-3 FCP XML xmeml v5 스펙 완전 준수** — (1) generateFcpXml: file 정의를 첫 clipitem 내부로 이동 (Apple xmeml DTD 준수) (2) generateFcpXmlFromEdl: 다중 소스 파일 첫 참조 clipitem에 인라인 정의 + 이후 빈 참조 (definedFiles Set 추적) — Premiere Pro + DaVinci Resolve 양쪽 호환 (nleExportService.ts, 2026-03-15)

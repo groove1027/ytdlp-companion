@@ -421,21 +421,20 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
     logger.info('프로젝트 로드', { projectId: project.id, title: project.title, sceneCount: sanitizedScenes.length });
 
-    // [FIX] 이전 프로젝트의 찌꺼기 방지 — 먼저 관련 스토어 초기화
-    try { useEditRoomStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/resetEditRoom', e); }
-    try { useSoundStudioStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/resetSoundStudio', e); }
-    // [FIX #315] 자동 복원(새로고침/업데이트) 시 대본 드래프트 보존 — localStorage에서 이미 복원된 상태 유지
-    // 수동 프로젝트 전환 시에만 reset (skipCostRestore=false)
+    // [FIX #315] 자동 복원(새로고침/업데이트) 시 모든 스토어 상태 보존
+    // 수동 프로젝트 전환 시에만 reset (skipCostRestore=false) — 이전 프로젝트 찌꺼기 방지
     if (!options?.skipCostRestore) {
+      try { useEditRoomStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/resetEditRoom', e); }
+      try { useSoundStudioStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/resetSoundStudio', e); }
       try { useScriptWriterStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/resetScriptWriter', e); }
+      try { useChannelAnalysisStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/resetChannelAnalysis', e); }
+      try { useVideoAnalysisStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/resetVideoAnalysis', e); }
+      try { useEditPointStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/resetEditPoint', e); }
+      try { useEditorStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/resetEditor', e); }
+      try { useShoppingShortStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/resetShoppingShort', e); }
+      try { useUploadStore.getState().resetUpload(); } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/resetUpload', e); }
+      try { usePptMasterStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/resetPptMaster', e); }
     }
-    try { useChannelAnalysisStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/resetChannelAnalysis', e); }
-    try { useVideoAnalysisStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/resetVideoAnalysis', e); }
-    try { useEditPointStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/resetEditPoint', e); }
-    try { useEditorStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/resetEditor', e); }
-    try { useShoppingShortStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/resetShoppingShort', e); }
-    try { useUploadStore.getState().resetUpload(); } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/resetUpload', e); }
-    try { usePptMasterStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/resetPptMaster', e); }
 
     // Increment generation to invalidate any in-flight async migrations from previous loads
     const generation = get()._loadGeneration + 1;
