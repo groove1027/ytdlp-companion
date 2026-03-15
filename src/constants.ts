@@ -114,8 +114,9 @@ export const SCRIPT_TARGET_REGIONS: { id: ScriptTargetRegion; label: string; fla
 ];
 
 export const IMAGE_MODELS = [
+  { id: ImageModel.GOOGLE_IMAGEN, label: '🆓 Google Imagen 3.5 (무료 · 쿠키 필요 · 일 ~80장)' },
+  { id: ImageModel.NANO_COST, label: '⚡ NanoBanana 2 (₩87/장 · 최고 품질)' },
   // { id: ImageModel.FLASH, label: '🍌 Gemini 2.5 Flash ($0.02/장)' },
-  { id: ImageModel.NANO_COST, label: '⚡ Evolink Nanobanana 2 (고퀄리티 - $0.08/장)' },
 ];
 
 export const VIDEO_MODELS = [

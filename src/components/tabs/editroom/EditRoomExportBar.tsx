@@ -21,6 +21,7 @@ const IMAGE_MODEL_LABELS: Record<string, string> = {
   [ImageModel.FLASH]: 'Flash',
   [ImageModel.NANO_COST]: 'Nanobanana 2',
   [ImageModel.NANO_SPEED]: 'Nanobanana 2 Fast',
+  [ImageModel.GOOGLE_IMAGEN]: 'Google Imagen (무료)',
 };
 
 const VIDEO_MODEL_LABELS: Record<string, string> = {

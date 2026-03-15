@@ -44,8 +44,9 @@ export enum VoiceName {
 
 export enum ImageModel {
   FLASH = 'model_std_flash', // Obfuscated: Prevents Cloud Run auto-key generation
-  NANO_COST = 'model_pro_cost', // Obfuscated
-  NANO_SPEED = 'model_pro_speed' // Obfuscated
+  NANO_COST = 'model_pro_cost', // Obfuscated — NanoBanana 2 고퀄리티
+  NANO_SPEED = 'model_pro_speed', // Obfuscated — NanoBanana 2 빠른
+  GOOGLE_IMAGEN = 'model_google_imagen', // Google ImageFX (무료, 쿠키 필요)
 }
 
 export enum VideoModel {

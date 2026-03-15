@@ -166,14 +166,14 @@ export const useVideoBatch = (
             // [SMART RETRY: IMAGE WASHING]
             if (isRetry && !isSafeMode) {
                 try {
-                    logger.info(`[Auto-Retry] Washing image for Scene ${sceneId} using Nano Banana Pro...`);
-                    const washPrompt = "high quality, detailed, photorealistic, 8k"; 
+                    logger.info(`[Auto-Retry] Washing image for Scene ${sceneId} using Nano Banana 2...`);
+                    const washPrompt = "high quality, detailed, photorealistic, 8k";
                     const washedBase64 = await generateKieImage(
                         washPrompt,
                         config?.aspectRatio || AspectRatio.LANDSCAPE,
-                        scene.imageUrl, 
+                        scene.imageUrl,
                         undefined,
-                        "nano-banana-pro",
+                        "nano-banana-2",
                         0.25 
                     );
                     const washedFile = base64ToFile(washedBase64, `washed_scene_${sceneId}.png`);

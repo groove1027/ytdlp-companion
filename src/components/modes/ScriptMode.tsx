@@ -1056,7 +1056,7 @@ const ScriptMode: React.FC<ScriptModeProps> = ({
                                 {IMAGE_MODELS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
                             </select>
                             <p className="text-sm text-gray-500 mt-2">
-                                * <strong>현존하는 최고의 이미지 생성 모델인 Nano Banana Pro를 사용합니다!!</strong>
+                                * <strong>현존하는 최고의 이미지 생성 모델 Nano Banana 2를 사용합니다. Google Imagen은 무료!</strong>
                             </p>
                         </div>
                     </div>

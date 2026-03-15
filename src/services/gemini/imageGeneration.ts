@@ -745,20 +745,47 @@ export const generateSceneImage = async (
         provider: 'kie-primary',
     });
 
-    // [OFFICIAL DOC] 2단계 폴백: Kie Nanobanana 2 (1차) → Evolink Nanobanana 2 (2차)
-    // Kie: nano-banana-2, POST /api/v1/jobs/createTask (google_search)
-    // Evolink: gemini-3.1-flash-image-preview, POST /v1/images/generations (web_search)
+    // [UPDATED] 3단계 폴백: Google Imagen (무료, 선택 시) → Kie Nanobanana 2 → Evolink Nanobanana 2
     const genStartTime = performance.now();
+
+    // ── Step 0: Google Imagen (사용자가 선택 + 쿠키 유효 + 한도 남음) ──
+    if (model === ImageModel.GOOGLE_IMAGEN) {
+        try {
+            const { useGoogleCookieStore } = await import('../../stores/googleCookieStore');
+            const googleStore = useGoogleCookieStore.getState();
+            if (googleStore.canGenerateImage()) {
+                const { generateGoogleImage } = await import('../googleImageService');
+                if (updateStatus) updateStatus("🆓 Google Imagen 3.5 무료 생성 중...");
+                const result = await generateGoogleImage(finalPrompt, ratio, googleStore.cookie);
+                googleStore.incrementImageCount();
+                logger.trackGenerationResult({ type: 'image', sceneId: scene.id || '?', success: true, provider: 'Google', duration: Math.round(performance.now() - genStartTime) });
+                return { url: result.base64, isFallback: false, isFiltered: filterResult.wasFiltered };
+            } else {
+                console.warn("[ImageGen] Google 한도 초과 또는 쿠키 없음, NanoBanana 2로 폴백");
+                showToast('Google 무료 한도 초과 — NanoBanana 2로 전환합니다', 3000);
+            }
+        } catch (e) {
+            logger.trackGenerationResult({ type: 'image', sceneId: scene.id || '?', success: false, provider: 'Google', duration: Math.round(performance.now() - genStartTime), error: (e as Error).message });
+            console.warn("[ImageGen] Google Imagen 실패, NanoBanana 2로 폴백", e);
+            showToast('Google 이미지 생성 실패 — NanoBanana 2로 전환합니다', 3000);
+        }
+    }
+
+    // ── Step 1: Kie Nanobanana 2 (1차 유료) ──
+    // Kie: nano-banana-2, POST /api/v1/jobs/createTask (google_search)
+    const kieStartTime = performance.now();
     try {
         if (updateStatus) updateStatus(effectiveWebSearch ? "⚡ Kie Nanobanana 2 + 웹검색 생성 중..." : "⚡ Kie Nanobanana 2 생성 중...");
         const url = await generateKieImage(finalPrompt, ratio, finalCharImages, prodImg, "nano-banana-2", undefined, effectiveWebSearch);
-        logger.trackGenerationResult({ type: 'image', sceneId: scene.id || '?', success: true, provider: 'Kie', duration: Math.round(performance.now() - genStartTime) });
-        return { url, isFallback: false, isFiltered: filterResult.wasFiltered };
+        logger.trackGenerationResult({ type: 'image', sceneId: scene.id || '?', success: true, provider: 'Kie', duration: Math.round(performance.now() - kieStartTime) });
+        return { url, isFallback: model === ImageModel.GOOGLE_IMAGEN, isFiltered: filterResult.wasFiltered };
     } catch (e) {
-        logger.trackGenerationResult({ type: 'image', sceneId: scene.id || '?', success: false, provider: 'Kie', duration: Math.round(performance.now() - genStartTime), error: (e as Error).message });
+        logger.trackGenerationResult({ type: 'image', sceneId: scene.id || '?', success: false, provider: 'Kie', duration: Math.round(performance.now() - kieStartTime), error: (e as Error).message });
         console.warn("[ImageGen] Kie Nanobanana 2 실패, Evolink 폴백 시도", e);
     }
 
+    // ── Step 2: Evolink Nanobanana 2 (2차 유료 폴백) ──
+    // Evolink: gemini-3.1-flash-image-preview, POST /v1/images/generations (web_search)
     const fbStartTime = performance.now();
     showToast('이미지 생성 서버를 변경하여 재시도합니다...', 3000);
     try {
@@ -769,6 +796,6 @@ export const generateSceneImage = async (
     } catch (e) {
         logger.trackGenerationResult({ type: 'image', sceneId: scene.id || '?', success: false, provider: 'Evolink', duration: Math.round(performance.now() - fbStartTime), error: (e as Error).message });
         console.warn("[ImageGen] Evolink Nanobanana 2도 실패", e);
-        throw new Error(`이미지 생성 실패: Kie, Evolink 모두 실패. ${(e as Error).message}`);
+        throw new Error(`이미지 생성 실패: 모든 서버 실패. ${(e as Error).message}`);
     }
 };

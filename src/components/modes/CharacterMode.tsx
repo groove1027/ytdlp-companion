@@ -803,7 +803,7 @@ export default function CharacterMode() { return null; }
 //                     ))}
 //                 </div>
 //                 <p className="text-xs text-gray-500 mt-2">
-//                     * <strong>현존하는 최고의 이미지 생성 모델인 Nano Banana Pro를 사용합니다!!</strong>
+//                     * <strong>현존하는 최고의 이미지 생성 모델 Nano Banana 2를 사용합니다</strong>
 //                 </p>
 //             </div>
 //         </div>
