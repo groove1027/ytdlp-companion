@@ -8,6 +8,7 @@
 
 ## 🟢 완료된 작업
 
+- [x] **#316 Premiere ZIP 영상 포함 + 버전 카드 버튼 3그룹 정리** — Premiere ZIP에 videoBlob 포함 (이전엔 XML+SRT만). 10개 버튼→3그룹: NLE내보내기(큰 그라디언트)/기본액션(대본복사·프리뷰·편집실)/보조(SRT·HTML·대본작성·TTS) (nleExportService.ts, VideoAnalysisRoom.tsx, 2026-03-16)
 - [x] **#316 mergeVideoAudio ffmpeg.wasm -c copy 교체** — mp4-muxer 타임스케일 변환 반올림 오차로 B-프레임 튐 현상 발생 → ffmpeg.wasm `-c copy` 무손실 복사로 교체. 실제 영상 재생 테스트 통과 (videoDecoder.ts, 2026-03-15)
 - [x] **#316 YouTube 1080p 분리 다운로드 + 클라이언트 머지 (테스트 검증)** — 실제 영상(iAaeitG8P1E)으로 E2E 검증. B-프레임 DTS 처리 + AudioSpecificConfig 정확 추출. ffprobe: H.264 High 1080x1920 60fps + AAC LC 44100Hz stereo 확인 (videoDecoder.ts, 2026-03-15)
 - [x] **#316 YouTube 1080p 분리 다운로드 + 클라이언트 머지** — 서버 ffmpeg 머지 회피(502 방지). 영상(videoOnly=true)+오디오 병렬 다운로드 → mp4box demux → mp4-muxer remux 클라이언트 머지(품질손실 0%) → 합본 Blob을 setVideoBlob 저장(NLE 내보내기 시 사운드 포함). downloadAudioViaProxy 신규, mergeVideoAudio 신규 (ytdlpApiService.ts, videoDecoder.ts, VideoAnalysisRoom.tsx, 2026-03-15)
