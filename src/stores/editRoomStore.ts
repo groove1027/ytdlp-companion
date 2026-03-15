@@ -1132,10 +1132,9 @@ export const useEditRoomStore = create<EditRoomStore>((set, get) => ({
     for (const sceneId of state.sceneOrder) {
       const sub = updated[sceneId];
       if (!sub?.text?.trim()) continue;
-      // AI 분할 / Whisper 타이밍 계산용 (줄바꿈→공백으로 평탄화)
+      // AI 분할 / Whisper 타이밍 계산용 + 세그먼트 텍스트 슬라이싱용 (줄바꿈→공백으로 평탄화)
+      // [FIX #320] rawText로 통일 — preservedText와의 인덱스 불일치(줄바꿈 문자 차이)로 단어 중간 끊김 발생하던 버그 수정
       const rawText = sub.text.replace(/\n/g, ' ').trim();
-      // 렌더러 전달용 (줄바꿈 보존 — subtitleRenderer가 \n으로 멀티라인 처리)
-      const preservedText = sub.text.trim();
       if (rawText.length <= cpl) continue;
 
       // ── Step 1: AI 의미 단위 분할 → 글자 위치 배열 ──

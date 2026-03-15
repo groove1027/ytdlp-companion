@@ -1,6 +1,7 @@
 import React from 'react';
 import { ScriptLine } from '../../../types';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
+import { useSoundStudioStore } from '../../../stores/soundStudioStore';
 
 interface NarrationCreditBarProps {
   lines: ScriptLine[];
@@ -18,8 +19,10 @@ const NarrationCreditBar: React.FC<NarrationCreditBarProps> = ({
   onRegenerateModified,
 }) => {
   const elapsed = useElapsedTimer(isGenerating);
+  const ttsEngine = useSoundStudioStore((s) => s.ttsEngine);
+  const isFreeEngine = ttsEngine === 'supertonic';
   const totalChars = lines.reduce((sum, l) => sum + l.text.length, 0);
-  const estimatedCredits = totalChars * 2;
+  const estimatedCredits = isFreeEngine ? 0 : totalChars * 2;
   const doneCount = lines.filter((l) => l.ttsStatus === 'done').length;
   const modifiedCount = lines.filter((l) => !l.audioUrl || l.ttsStatus === 'idle' || l.ttsStatus === 'error').length;
   const totalCount = lines.length;
@@ -34,7 +37,10 @@ const NarrationCreditBar: React.FC<NarrationCreditBarProps> = ({
       {/* 크레딧 정보 */}
       <div className="text-gray-400">
         <span className="mr-1">&#128176;</span>
-        총 {totalChars.toLocaleString()}자 x 2 = <span className="text-yellow-400 font-semibold">{estimatedCredits.toLocaleString()}</span> 크레딧
+        {isFreeEngine
+          ? <span className="text-green-400 font-semibold">무료 음성</span>
+          : <>총 {totalChars.toLocaleString()}자 x 2 = <span className="text-yellow-400 font-semibold">{estimatedCredits.toLocaleString()}</span> 크레딧</>
+        }
       </div>
 
       {/* 생성 완료 카운트 */}

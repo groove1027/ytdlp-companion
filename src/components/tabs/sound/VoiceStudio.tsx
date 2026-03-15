@@ -2149,7 +2149,7 @@ const VoiceStudio: React.FC = () => {
           {lines.length > 0 && (
             <div className="flex items-center gap-3 px-4 py-2 text-xs text-gray-500">
               <span className="text-blue-300 font-bold">{lines.length}개 단락</span>
-              <span className="text-yellow-300/70">💰 {lines.reduce((s, l) => s + l.text.length, 0).toLocaleString()}자 × 2 = {(lines.reduce((s, l) => s + l.text.length, 0) * 2).toLocaleString()} 크레딧</span>
+              <span className="text-yellow-300/70">{ttsEngine === 'supertonic' ? '🆓 무료 음성' : `💰 ${lines.reduce((s, l) => s + l.text.length, 0).toLocaleString()}자 × 2 = ${(lines.reduce((s, l) => s + l.text.length, 0) * 2).toLocaleString()} 크레딧`}</span>
               <span>평균 {avgChars}자 · 예상 {estimatedDuration}</span>
             </div>
           )}
