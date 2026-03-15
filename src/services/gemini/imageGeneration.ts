@@ -333,6 +333,17 @@ export const generateSceneImage = async (
     if (characterAnalysisResult && characterAnalysisResult.trim() && scene.castType !== 'NOBODY' && scene.castType !== 'EXTRA') {
         subjectPrompt += `\n[IMPORTANT: CHARACTER IDENTITY — MUST MATCH EXACTLY]\n`;
         subjectPrompt += `${characterAnalysisResult}\n`;
+        // [FIX #319] 장면 대본에 등장하는 캐릭터 이름을 명시하여 올바른 캐릭터 레퍼런스 매칭
+        const scriptText = scene.scriptText || '';
+        const charNameMatches = characterAnalysisResult.match(/\[Character \d+: "([^"]+)"\]/g);
+        if (charNameMatches && scriptText) {
+            const mentionedNames = charNameMatches
+                .map(m => m.match(/"([^"]+)"/)?.[1])
+                .filter((name): name is string => !!name && scriptText.includes(name));
+            if (mentionedNames.length > 0) {
+                subjectPrompt += `[SCENE CHARACTER MATCH] This scene's script mentions: ${mentionedNames.join(', ')}. Use ONLY these characters' reference appearances for this scene. Do NOT apply other characters' features.\n`;
+            }
+        }
         subjectPrompt += `[CRITICAL CONSISTENCY RULES]\n`;
         subjectPrompt += `1. The character's face, hair, body proportions, and clothing MUST be IDENTICAL to the reference image in every detail.\n`;
         subjectPrompt += `2. The character MUST be naturally integrated into the scene — correct perspective, proper scale relative to environment.\n`;

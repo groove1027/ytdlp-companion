@@ -8,6 +8,7 @@
 
 ## 🟢 완료된 작업
 
+- [x] **#319/#320 사용자 피드백 7건 일괄 수정** — (1) 대본 분량 슬라이더 350→650 자/분 통일(350 점프 버그) (2) 목표 단락 축소 시 대본 누락 방지(장면 병합 시 visualPrompt/dialogue도 보존) (3) 캐릭터 레퍼런스 이름 매칭 강화(label을 분석 결과에 포함+장면별 매칭 힌트) (4) 그리드 뷰 장면 삭제 버튼 추가 (5) 무료 음성(Supertonic) 크레딧 팝업 스킵 (6) AI 자막 분할 단어 중간 끊김 수정(rawText/preservedText 인덱스 불일치) (7) 자막 상세편집 폰트 메뉴 스크롤 시 프리뷰 고정(sticky) (ScriptWriterTab.tsx, scriptAnalysis.ts, imageGeneration.ts, StoryboardPanel.tsx, TypecastEditor.tsx, editRoomStore.ts, SubtitleStyleEditor.tsx, EditRoomGlobalPanel.tsx, App.tsx, 2026-03-16)
 - [x] **#331 채널/영상 분석 결과 편집 기능** — 채널 분석 결과(말투, 구조, 패턴, DNA 텍스트, 주제/키워드)를 클릭하여 직접 수정 가능. "arrow point" 같은 원치 않는 키워드를 삭제해 이미지 생성 품질 개선. 수정 시 자동 저장(벤치마크). EditableDRow, EditableTextBlock, TagAdder 컴포넌트 추가 (ChannelAnalysisRoom.tsx, 2026-03-16)
 - [x] **#329 장면별 인포그래픽 토글 + #330 SRT 순서/공백 버그 수정** — (1) #329: 스토리보드 리스트/그리드/상세 모달에 장면별 📊 Info ON/OFF 토글 추가 (allowInfographics ON 시 표시) (2) #330: SRT 내보내기 시 세그먼트 텍스트 trim + 내부 연속 빈줄 정규화로 SRT 파서 오동작 방지 (StoryboardPanel.tsx, ScriptWriterTab.tsx, 2026-03-16)
 - [x] **NLE 내보내기 프로급 고도화** — (1) Video↔Audio 링크(동기 이동/트림) (2) 시퀀스 마커(장면마다 Shift+M 네비게이션) (3) 라벨 색상(모드별: N=Cerulean, S=Forest, SN=Caribbean, A=Mango / 편집실: 배속별) (4) 메타데이터(logginginfo+comments→Metadata패널) (5) 클립 이름 "Scene 001: [장면설명]" (6) 편집실 V2 generatoritem 제거 (7) README 프로급 가이드 (nleExportService.ts, 2026-03-16)

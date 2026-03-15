@@ -1173,15 +1173,27 @@ export const parseScriptToScenes = async (
                 if (minIdx < 0) break;
                 // 인접 장면과 병합 (다음 장면 우선, 없으면 이전 장면)
                 if (minIdx + 1 < result.length) {
+                    const merged = result[minIdx];
+                    const target = result[minIdx + 1];
                     result[minIdx + 1] = {
-                        ...result[minIdx + 1],
-                        scriptText: ((result[minIdx].scriptText || '') + ' ' + (result[minIdx + 1].scriptText || '')).trim()
+                        ...target,
+                        scriptText: ((merged.scriptText || '') + ' ' + (target.scriptText || '')).trim(),
+                        visualPrompt: ((merged.visualPrompt || '') + '; ' + (target.visualPrompt || '')).trim().replace(/^;\s*/, ''),
+                        dialogue: merged.dialogue && target.dialogue
+                            ? ((merged.dialogue || '') + ' ' + (target.dialogue || '')).trim()
+                            : target.dialogue || merged.dialogue || '',
                     };
                     result.splice(minIdx, 1);
                 } else if (minIdx > 0) {
+                    const merged = result[minIdx];
+                    const target = result[minIdx - 1];
                     result[minIdx - 1] = {
-                        ...result[minIdx - 1],
-                        scriptText: ((result[minIdx - 1].scriptText || '') + ' ' + (result[minIdx].scriptText || '')).trim()
+                        ...target,
+                        scriptText: ((target.scriptText || '') + ' ' + (merged.scriptText || '')).trim(),
+                        visualPrompt: ((target.visualPrompt || '') + '; ' + (merged.visualPrompt || '')).trim().replace(/^;\s*/, ''),
+                        dialogue: target.dialogue && merged.dialogue
+                            ? ((target.dialogue || '') + ' ' + (merged.dialogue || '')).trim()
+                            : target.dialogue || merged.dialogue || '',
                     };
                     result.splice(minIdx, 1);
                 } else {

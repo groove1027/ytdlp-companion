@@ -682,8 +682,8 @@ const EditRoomGlobalPanel: React.FC = () => {
 
       {/* 전체화면 모달 — 자막 상세 편집 */}
       {fullModal === 'subtitle' && (
-        <div className="fixed inset-0 z-50 bg-gray-900/95 overflow-y-auto">
-          <div className="sticky top-0 z-10 bg-gray-900 border-b border-gray-700 px-6 py-3 flex items-center justify-between">
+        <div className="fixed inset-0 z-50 bg-gray-900/95 flex flex-col">
+          <div className="flex-shrink-0 z-10 bg-gray-900 border-b border-gray-700 px-6 py-3 flex items-center justify-between">
             <div className="flex items-center gap-3">
               <span className="text-xl">🎨</span>
               <div>
@@ -699,10 +699,12 @@ const EditRoomGlobalPanel: React.FC = () => {
               닫기 X
             </button>
           </div>
-          <div className="max-w-7xl mx-auto px-4 py-6">
-            <Suspense fallback={<LoadingFallback />}>
-              <SubtitleStyleEditor />
-            </Suspense>
+          <div className="flex-1 overflow-y-auto">
+            <div className="max-w-7xl mx-auto px-4 py-6">
+              <Suspense fallback={<LoadingFallback />}>
+                <SubtitleStyleEditor />
+              </Suspense>
+            </div>
           </div>
         </div>
       )}

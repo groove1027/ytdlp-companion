@@ -1263,10 +1263,12 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
                 if (!activeSpeaker?.voiceId) { showToast('음성을 선택해주세요. 상단 음성 브라우저에서 캐릭터를 클릭하세요.'); return; }
                 // 이미 생성 완료면 바로 재생
                 if (mergedAudioUrl && lines.every(l => l.ttsStatus === 'done')) { handlePlayAll(); return; }
-                // 크레딧 소모 확인
-                const totalChars = lines.filter(l => l.ttsStatus !== 'done').reduce((s, l) => s + l.text.length, 0);
-                const credits = totalChars * 2;
-                if (credits > 0 && !window.confirm(`${totalChars.toLocaleString()}자 × 2 = ${credits.toLocaleString()} 크레딧이 소모됩니다.\n계속하시겠습니까?`)) return;
+                // 크레딧 소모 확인 — supertonic(무료 음성)은 크레딧 소모 없으므로 스킵
+                if (currentEngine !== 'supertonic') {
+                  const totalChars = lines.filter(l => l.ttsStatus !== 'done').reduce((s, l) => s + l.text.length, 0);
+                  const credits = totalChars * 2;
+                  if (credits > 0 && !window.confirm(`${totalChars.toLocaleString()}자 × 2 = ${credits.toLocaleString()} 크레딧이 소모됩니다.\n계속하시겠습니까?`)) return;
+                }
                 handlePlayAll();
               }}
               disabled={isGeneratingAll}
@@ -1421,10 +1423,10 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
                 <div className="bg-gray-900/50 border border-gray-700/50 rounded-lg px-4 py-3">
                   <div className="flex items-center justify-between">
                     <span className="text-xs text-gray-400">예상 차감 크레딧</span>
-                    <span className="text-sm font-bold text-yellow-300">{(() => {
+                    <span className="text-sm font-bold text-yellow-300">{currentEngine === 'supertonic' ? '무료' : (() => {
                       const targetLines = dlRange === 'selected' ? lines.filter((_, i) => dlSelectedLines.has(i)) : lines;
-                      return (targetLines.reduce((s, l) => s + l.text.length, 0) * 2).toLocaleString();
-                    })()} 크레딧</span>
+                      return (targetLines.reduce((s, l) => s + l.text.length, 0) * 2).toLocaleString() + ' 크레딧';
+                    })()}</span>
                   </div>
                   <div className="flex items-center justify-between mt-1">
                     <span className="text-xs text-gray-400">문장 수</span>

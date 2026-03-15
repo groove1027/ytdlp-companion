@@ -437,10 +437,11 @@ const App: React.FC = () => {
             })();
 
             // [NEW] Combine all character analysis results for visual consistency
+            // [FIX #319] 캐릭터 이름(label)을 분석 결과에 포함하여 장면별 매칭 정확도 향상
             const combinedCharAnalysis = resolvedConfig.characters
                 ?.filter(c => c.analysisResult)
-                .map(c => c.analysisResult)
-                .join('\n') || undefined;
+                .map((c, i) => `[Character ${i + 1}: "${c.label}"]\n${c.analysisResult}`)
+                .join('\n\n') || undefined;
 
             // [NEW] Derive scene index for shot size auto-rotation
             const appSceneIndex = resolvedScenes.findIndex(s => s.id === sceneId);

@@ -583,6 +583,10 @@ const GridSceneCard: React.FC<GridSceneCardProps> = ({ scene, index, onRegenerat
               className="w-5 h-5 rounded flex items-center justify-center text-gray-500 hover:text-green-400 transition-colors" title="장면 추가">
               <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4"/></svg>
             </button>
+            <button type="button" onClick={(e) => { e.stopPropagation(); if (window.confirm(`장면 #${index + 1}을 삭제할까요?`)) onDelete(index); }}
+              className="w-5 h-5 rounded flex items-center justify-center text-gray-500 hover:text-red-400 transition-colors" title="장면 삭제">
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+            </button>
           </div>
         </div>
       </div>
@@ -1137,7 +1141,7 @@ const StoryboardPanel: React.FC = () => {
       const prevScene = idx > 0 ? allScenes[idx - 1] : undefined;
       const nextScene = idx < allScenes.length - 1 ? allScenes[idx + 1] : undefined;
       const chars = useImageVideoStore.getState().characters;
-      const charDesc = chars.filter(c => c.analysisResult).map(c => c.analysisResult).join('\n') || undefined;
+      const charDesc = chars.filter(c => c.analysisResult).map((c, i) => `[Character ${i + 1}: "${c.label}"]\n${c.analysisResult}`).join('\n\n') || undefined;
       const prompt = await generatePromptFromScript(scene.scriptText, currentStyle, currentConfig?.textForceLock, {
         prevSceneText: prevScene?.scriptText,
         nextSceneText: nextScene?.scriptText,
@@ -1230,7 +1234,7 @@ const StoryboardPanel: React.FC = () => {
         const prevScene = sceneIdx > 0 ? currentScenes[sceneIdx - 1] : undefined;
         const nextScene = sceneIdx < currentScenes.length - 1 ? currentScenes[sceneIdx + 1] : undefined;
         const currentCharactersForCtx = useImageVideoStore.getState().characters;
-        const charDesc = currentCharactersForCtx.filter(c => c.analysisResult).map(c => c.analysisResult).join('\n') || undefined;
+        const charDesc = currentCharactersForCtx.filter(c => c.analysisResult).map((c, i) => `[Character ${i + 1}: "${c.label}"]\n${c.analysisResult}`).join('\n\n') || undefined;
         const autoPrompt = await generatePromptFromScript(scene.scriptText, autoStyle, currentConfig.textForceLock, {
           prevSceneText: prevScene?.scriptText,
           nextSceneText: nextScene?.scriptText,
@@ -1290,10 +1294,11 @@ const StoryboardPanel: React.FC = () => {
         : currentConfig.characterImage && (currentConfig.characterImage.startsWith('http') || currentConfig.characterImage.startsWith('data:')) ? [currentConfig.characterImage] : []);
 
       // [NEW] Combine all character analysis results for visual consistency
+      // [FIX #319] 캐릭터 이름(label)을 분석 결과에 포함하여 장면별 매칭 정확도 향상
       const combinedAnalysis = isCharNone ? '' : currentCharacters
         .filter(c => c.analysisResult)
-        .map(c => c.analysisResult)
-        .join('\n');
+        .map((c, i) => `[Character ${i + 1}: "${c.label}"]\n${c.analysisResult}`)
+        .join('\n\n');
 
       // [NEW] Derive scene index for shot size auto-rotation
       const currentSceneIndex = currentScenes.findIndex(s => s.id === sceneId);

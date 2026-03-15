@@ -600,7 +600,7 @@ ${instinctPrompt}
         title: topic.title,
         content: result,
         charCount: result.length,
-        estimatedDuration: `약 ${Math.round(result.length / 350)}분`,
+        estimatedDuration: `약 ${Math.round(result.length / 650)}분`,
         structure: [],
       });
       setFinalScript(result);
@@ -733,7 +733,7 @@ ${instinctPrompt}
       // JSON 파싱 시도 (이전 방식 호환) — 실패 시 plain text로 사용
       let finalContent = fullText;
       let finalTitle = title;
-      let finalDuration = `약 ${Math.round(fullText.length / 350)}분`;
+      let finalDuration = `약 ${Math.round(fullText.length / 650)}분`;
       let finalStructure: string[] = [];
 
       const jsonStr = extractJsonFromText(fullText);
@@ -1310,10 +1310,10 @@ ${instinctPrompt}
             ) : (
               <div className="flex items-center gap-2 ml-2">
                 <select
-                  value={Math.round(targetCharCount / 350)}
+                  value={Math.round(targetCharCount / 650)}
                   onChange={(e) => {
                     const min = Number(e.target.value);
-                    setTargetCharCount(min * 350);
+                    setTargetCharCount(min * 650);
                   }}
                   className="bg-gray-800 text-gray-200 text-sm rounded-lg border border-gray-700
                     px-2 py-1.5 focus:outline-none focus:border-blue-500/50"

@@ -1196,16 +1196,20 @@ export const useEditRoomStore = create<EditRoomStore>((set, get) => ({
       boundaries.push(lineDuration);
 
       // 오디오 상대시간 → 절대 타임라인 시간 변환
-      // preservedText를 슬라이스하여 원본 줄바꿈(\n)을 렌더러까지 전달
+      // [FIX #320] rawText 기준으로 슬라이싱 — splitPoints가 rawText 길이 기준이므로
+      // preservedText(줄바꿈 포함)와 인덱스 불일치로 단어 중간 끊김 발생하던 버그 수정
       const segments: SubtitleSegment[] = [];
       let textStart = 0;
       for (let i = 0; i <= splitPoints.length; i++) {
-        const textEnd = i < splitPoints.length ? splitPoints[i] : preservedText.length;
-        segments.push({
-          text: preservedText.slice(textStart, textEnd).trim(),
-          startTime: sub.startTime + boundaries[i],
-          endTime: sub.startTime + boundaries[i + 1],
-        });
+        const textEnd = i < splitPoints.length ? splitPoints[i] : rawText.length;
+        const segText = rawText.slice(textStart, textEnd).trim();
+        if (segText) {
+          segments.push({
+            text: segText,
+            startTime: sub.startTime + boundaries[i],
+            endTime: sub.startTime + boundaries[i + 1],
+          });
+        }
         textStart = textEnd;
       }
 
