@@ -487,15 +487,16 @@ async function fetchYouTubeStreamUrl(videoId: string): Promise<string | null> {
  */
 async function downloadVideoAsBlob(videoId: string): Promise<{ blobUrl: string; blob: Blob } | null> {
   try {
-    console.log('[Frame] 서버 프록시 경유 Blob 다운로드 시작...');
+    // [FIX #316] downloadVideoViaProxy 내부에서 3회 재시도 + 화질 다운그레이드 자동 수행
+    console.log('[Frame] 서버 프록시 경유 Blob 다운로드 시작 (재시도 + 화질 다운그레이드 포함)...');
     const { downloadVideoViaProxy } = await import('../../../services/ytdlpApiService');
     const { blob } = await downloadVideoViaProxy(videoId, 'best');
     const blobUrl = URL.createObjectURL(blob);
     logger.registerBlobUrl(blobUrl, 'video', 'VideoAnalysisRoom:downloadVideoAsBlob', blob.size / (1024 * 1024));
-    console.log(`[Frame] Blob 다운로드 완료: ${(blob.size / 1024 / 1024).toFixed(1)}MB`);
+    console.log(`[Frame] ✅ Blob 다운로드 완료: ${(blob.size / 1024 / 1024).toFixed(1)}MB`);
     return { blobUrl, blob };
   } catch (e) {
-    console.warn('[Frame] Blob 다운로드 실패:', e);
+    console.warn('[Frame] ❌ Blob 다운로드 최종 실패 (모든 재시도+화질 다운그레이드 소진):', e);
     return null;
   }
 }
@@ -765,12 +766,12 @@ async function extractFramesWithFallback(
   // ── YouTube/URL: 3중 폴백 (로컬 Blob 우선) ──
   const streamUrl = typeof videoSource === 'string' ? videoSource : null;
 
-  if (streamUrl && youtubeVideoId) {
-    // Layer 1: 서버 프록시로 Blob 다운로드 → 로컬 canvas (원본 품질, CORS 우회)
-    console.log('[Frame] Layer 1: 서버 프록시 Blob 다운로드 → 로컬 디코딩 시도');
+  // [FIX #316] Layer 1: streamUrl 없어도 youtubeVideoId만 있으면 다운로드 시도
+  // (downloadVideoViaProxy 내부에서 3회 재시도 + 화질 다운그레이드 자동 수행)
+  if (youtubeVideoId) {
+    console.log('[Frame] Layer 1: 서버 프록시 Blob 다운로드 → 로컬 디코딩 시도 (재시도+화질다운 포함)');
     const dlResult = await downloadVideoAsBlob(youtubeVideoId);
     if (dlResult) {
-      // 편집실 전달용 Blob 저장
       useVideoAnalysisStore.getState().setVideoBlob(dlResult.blob);
       const layer1 = await canvasExtractFrames(dlResult.blobUrl, timecodes, true);
       if (layer1.length > 0) {
@@ -778,8 +779,10 @@ async function extractFramesWithFallback(
         return layer1;
       }
     }
+  }
 
-    // Layer 2: crossOrigin 직접 추출 (Blob 실패 시 빠른 폴백)
+  // Layer 2: crossOrigin 직접 추출 (Blob 실패 시 빠른 폴백)
+  if (streamUrl) {
     console.log('[Frame] Layer 2: crossOrigin 추출 시도');
     const layer2 = await canvasExtractFrames(streamUrl, timecodes, false);
     if (layer2.length > 0) {
@@ -788,11 +791,11 @@ async function extractFramesWithFallback(
     }
   }
 
-  // Layer 3: YouTube 고정 썸네일 (무조건 성공)
+  // Layer 3: YouTube 고정 썸네일 (최후 수단 — 모든 재시도 소진 후에만 도달)
   if (youtubeVideoId) {
-    console.log('[Frame] Layer 3: YouTube 썸네일 폴백');
+    console.warn('[Frame] ⚠️ Layer 3: 모든 다운로드 재시도 실패 → YouTube 썸네일 최후 폴백');
     const layer3 = buildYouTubeThumbnailFallback(youtubeVideoId, timecodes, durationSec);
-    console.log(`[Frame] ✅ Layer 3 폴백: ${layer3.length}개`);
+    console.log(`[Frame] Layer 3 폴백: ${layer3.length}개 (정적 썸네일)`);
     return layer3;
   }
 

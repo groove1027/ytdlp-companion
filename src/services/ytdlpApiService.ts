@@ -220,43 +220,68 @@ export async function downloadVideoViaProxy(
   quality: VideoQuality = '720p',
   onProgress?: (progress: number) => void,
 ): Promise<{ blob: Blob; info: YtdlpStreamResult }> {
-  // 메타데이터 조회 (캐시 적중)
-  const info = await extractStreamUrl(youtubeUrl, quality);
+  // [FIX #316] 재시도 + 화질 다운그레이드 — 무슨 수를 써서라도 다운로드
+  const MAX_RETRIES = 3;
+  const QUALITY_FALLBACK: VideoQuality[] = [quality, '720p', '480p', '360p'];
+  // 중복 제거 (요청 화질이 이미 720p면 720p→480p→360p)
+  const qualities = [...new Set(QUALITY_FALLBACK)];
 
-  // 서버 프록시 엔드포인트로 다운로드 — Content-Disposition: attachment 헤더 포함
-  const baseUrl = getApiBaseUrl();
-  const apiKey = getApiKey();
-  const proxyUrl = `${baseUrl.replace(/\/$/, '')}/api/download?url=${encodeURIComponent(youtubeUrl)}&quality=${quality}`;
+  let lastError: Error | null = null;
 
-  const response = await monitoredFetch(proxyUrl, {
-    headers: apiKey ? { 'X-API-Key': apiKey } : {},
-    signal: AbortSignal.timeout(600_000), // 10분 — 30분+ 고화질 영상 대응
-  });
+  for (const q of qualities) {
+    const info = await extractStreamUrl(youtubeUrl, q).catch(() => null);
 
-  if (!response.ok) {
-    throw new Error(`프록시 다운로드 실패 (HTTP ${response.status})`);
-  }
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      try {
+        const baseUrl = getApiBaseUrl();
+        const apiKey = getApiKey();
+        const proxyUrl = `${baseUrl.replace(/\/$/, '')}/api/download?url=${encodeURIComponent(youtubeUrl)}&quality=${q}`;
 
-  if (onProgress && response.body) {
-    const contentLength = parseInt(response.headers.get('Content-Length') || '0', 10);
-    const reader = response.body.getReader();
-    const chunks: BlobPart[] = [];
-    let received = 0;
+        const response = await monitoredFetch(proxyUrl, {
+          headers: apiKey ? { 'X-API-Key': apiKey } : {},
+          signal: AbortSignal.timeout(600_000),
+        });
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      chunks.push(value);
-      received += (value as Uint8Array).length;
-      if (contentLength > 0) {
-        onProgress(received / contentLength);
+        if (!response.ok) {
+          throw new Error(`프록시 다운로드 실패 (HTTP ${response.status})`);
+        }
+
+        if (onProgress && response.body) {
+          const contentLength = parseInt(response.headers.get('Content-Length') || '0', 10);
+          const reader = response.body.getReader();
+          const chunks: BlobPart[] = [];
+          let received = 0;
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            chunks.push(value);
+            received += (value as Uint8Array).length;
+            if (contentLength > 0) {
+              onProgress(received / contentLength);
+            }
+          }
+
+          return { blob: new Blob(chunks, { type: 'video/mp4' }), info: info || { url: '', audioUrl: null, title: '', duration: 0, thumbnail: '', width: 0, height: 0, filesize: null, format: q, codec: '', cached: false } };
+        }
+
+        return { blob: await response.blob(), info: info || { url: '', audioUrl: null, title: '', duration: 0, thumbnail: '', width: 0, height: 0, filesize: null, format: q, codec: '', cached: false } };
+      } catch (e) {
+        lastError = e instanceof Error ? e : new Error(String(e));
+        const isRetryable = lastError.message.includes('502') || lastError.message.includes('503') || lastError.message.includes('504') || lastError.message.includes('Network') || lastError.message.includes('fetch');
+        if (!isRetryable) break; // 4xx 등 비재시도 에러는 즉시 다음 화질로
+        const delay = 3000 * Math.pow(2, attempt) + Math.random() * 2000;
+        logger.trackRetry(`downloadVideoViaProxy(${q})`, attempt + 1, MAX_RETRIES, `${lastError.message}, ${Math.round(delay)}ms 대기`);
+        await new Promise(r => setTimeout(r, delay));
       }
     }
-
-    return { blob: new Blob(chunks, { type: 'video/mp4' }), info };
+    // 현재 화질 전부 실패 → 다음 화질로 다운그레이드
+    if (q !== qualities[qualities.length - 1]) {
+      logger.info(`[Download] ${q} 실패, 화질 다운그레이드 시도...`);
+    }
   }
 
-  return { blob: await response.blob(), info };
+  throw lastError || new Error('프록시 다운로드 실패 (모든 재시도 소진)');
 }
 
 /**
