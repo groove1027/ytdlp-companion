@@ -153,9 +153,10 @@ async function parseEditChunkWithRetry(
       lastError = err instanceof Error ? err : new Error(String(err));
       const msg = lastError.message.toLowerCase();
 
-      // 재시도 가능한 에러 판별 (AI_TRUNCATED는 토큰 초과라 재시도 무의미)
+      // [FIX #298] 재시도 가능한 에러 판별 — 타임아웃도 재시도 대상 추가
       const isRetryable = msg.includes('429') || msg.includes('499') || msg.includes('rate') ||
-        msg.includes('network') || msg.includes('fetch') || msg.includes('요청 제한');
+        msg.includes('network') || msg.includes('fetch') || msg.includes('요청 제한') ||
+        msg.includes('timeout') || msg.includes('타임아웃') || msg.includes('시간 초과');
 
       if (!isRetryable || attempt === maxRetries) throw lastError;
 
@@ -184,7 +185,7 @@ ${narration}` : ''}`;
   // 입력이 크면 출력 여유를 더 확보 (Evolink 프록시 총 컨텍스트 제한 대응)
   const maxTokens = estimatedInput > 12000 ? 8192 : 16384;
 
-  // [FIX #214] 120초 타임아웃 — 편집점 파싱 무한 hang 방지
+  // [FIX #298] 타임아웃 120s→180s — 대형 편집표에서 Gemini 응답 지연 대응
   const response = await evolinkChat(
     [
       { role: 'system', content: EDIT_PARSE_SYSTEM_PROMPT },
@@ -194,7 +195,7 @@ ${narration}` : ''}`;
       temperature: 0.1,
       maxTokens,
       responseFormat: { type: 'json_object' },
-      timeoutMs: 120_000,
+      timeoutMs: 180_000,
     }
   );
 
@@ -239,7 +240,7 @@ Each entry: { "order", "narrationText", "sourceId" (format "S-XX"), "sourceDescr
     ? `Edit Table:\n${tableChunk}\n\nNarration:\n${narration}`
     : `Edit Table:\n${tableChunk}`;
 
-  // [FIX #214] 120초 타임아웃 — 폴백에서도 hang 방지
+  // [FIX #298] 타임아웃 120s→180s — 폴백에서도 대형 편집표 대응
   const response = await evolinkChat(
     [
       { role: 'system', content: compactPrompt },
@@ -248,7 +249,7 @@ Each entry: { "order", "narrationText", "sourceId" (format "S-XX"), "sourceDescr
     {
       temperature: 0.1,
       maxTokens: 16384,
-      timeoutMs: 120_000,
+      timeoutMs: 180_000,
       // JSON 모드 제거 — 텍스트로 받아서 수동 파싱
     }
   );

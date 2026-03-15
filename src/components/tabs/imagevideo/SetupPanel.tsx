@@ -600,14 +600,14 @@ const SetupPanel: React.FC = () => {
                   <input
                     type="number"
                     min={1}
-                    max={30}
+                    max={200}
                     value={targetSceneCount ?? ''}
                     placeholder={estimatedScenes > 0 ? String(estimatedScenes) : '자동'}
                     onChange={(e) => {
                       const raw = e.target.value;
                       if (raw === '') { setTargetSceneCount(null); return; }
                       const n = parseInt(raw, 10);
-                      if (!isNaN(n) && n >= 1 && n <= 30) setTargetSceneCount(n);
+                      if (!isNaN(n) && n >= 1 && n <= 200) setTargetSceneCount(n);
                     }}
                     className="w-16 bg-gray-900 border border-orange-500/40 rounded-lg px-2 py-1 text-sm text-orange-300 text-center placeholder-gray-600 focus:outline-none focus:border-orange-400 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                   />
@@ -720,14 +720,14 @@ const SetupPanel: React.FC = () => {
               <input
                 type="number"
                 min={1}
-                max={30}
+                max={200}
                 value={targetSceneCount ?? ''}
                 placeholder={estimatedScenes > 0 ? String(estimatedScenes) : '자동'}
                 onChange={(e) => {
                   const raw = e.target.value;
                   if (raw === '') { setTargetSceneCount(null); return; }
                   const n = parseInt(raw, 10);
-                  if (!isNaN(n) && n >= 1 && n <= 30) setTargetSceneCount(n);
+                  if (!isNaN(n) && n >= 1 && n <= 200) setTargetSceneCount(n);
                 }}
                 className="w-16 bg-gray-900 border border-orange-500/40 rounded-lg px-2 py-1.5 text-sm text-orange-300 text-center placeholder-gray-600 focus:outline-none focus:border-orange-400 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
               />
@@ -737,7 +737,7 @@ const SetupPanel: React.FC = () => {
                   ✕
                 </button>
               ) : (
-                <span className="text-[11px] text-gray-600 whitespace-nowrap">1~30</span>
+                <span className="text-[11px] text-gray-600 whitespace-nowrap">1~200</span>
               )}
             </div>
             </div>
