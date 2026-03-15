@@ -27,6 +27,18 @@ const BATCH_TIPS: string[] = [
   '배치 생성 중에도 완료된 장면은 바로 확인할 수 있어요',
 ];
 
+// --- Aspect Ratio Helper ---
+
+/** 프로젝트 설정의 AspectRatio → Tailwind CSS 클래스 */
+function aspectRatioClass(ar?: string): string {
+  switch (ar) {
+    case AspectRatio.PORTRAIT: return 'aspect-[9/16]';
+    case AspectRatio.SQUARE: return 'aspect-square';
+    case AspectRatio.CLASSIC: return 'aspect-[4/3]';
+    default: return 'aspect-video';
+  }
+}
+
 // --- Constants ---
 
 const IMAGE_MODEL = ImageModel.NANO_SPEED;
@@ -409,12 +421,13 @@ interface GridSceneCardProps {
 const GridSceneCard: React.FC<GridSceneCardProps> = ({ scene, index, onRegenerate, onDelete, onGrokVideo, onVeoVideo, onPlaySceneAudio, playingSceneId, sceneProgress, onAddAfter, onReferenceUpload, onUploadImage, onOpenDetail, onCopyScript, isSelected, onToggleSelect }) => {
   const isThisPlaying = playingSceneId === scene.id;
   const gridUploadRef = useRef<HTMLInputElement>(null);
+  const arClass = aspectRatioClass(useProjectStore((s) => s.config?.aspectRatio));
 
   return (
     <div className={`bg-gray-800 border rounded-xl overflow-hidden hover:border-gray-500 transition-colors ${isSelected ? 'border-orange-500/60 ring-1 ring-orange-500/30' : 'border-gray-700'}`}>
       {/* Image/Video area */}
       <div
-        className="relative aspect-video bg-gray-900 cursor-pointer group"
+        className={`relative ${arClass} bg-gray-900 cursor-pointer group`}
       >
         {/* [#243] 그리드 장면 선택 체크박스 */}
         {onToggleSelect && (
@@ -586,6 +599,7 @@ const SceneDetailModal: React.FC<SceneDetailModalProps> = ({
   // 스토어에서 최신 장면 데이터 구독 (stale prop 방지)
   const liveScene = useProjectStore((s) => s.scenes.find((sc) => sc.id === sceneProp.id));
   const scene = liveScene || sceneProp;
+  const modalArClass = aspectRatioClass(useProjectStore((s) => s.config?.aspectRatio));
   const refInputRef = useRef<HTMLInputElement>(null);
   const modalUploadRef = useRef<HTMLInputElement>(null);
 
@@ -658,7 +672,7 @@ const SceneDetailModal: React.FC<SceneDetailModalProps> = ({
                   }} />
               ) : (
                 <div
-                  className="w-full aspect-video bg-gray-800 border border-gray-700 border-dashed rounded-xl flex flex-col items-center justify-center cursor-pointer hover:border-orange-500/40 hover:bg-gray-800/80 transition-colors"
+                  className={`w-full ${modalArClass} bg-gray-800 border border-gray-700 border-dashed rounded-xl flex flex-col items-center justify-center cursor-pointer hover:border-orange-500/40 hover:bg-gray-800/80 transition-colors`}
                   onClick={() => modalUploadRef.current?.click()}
                 >
                   <svg className="w-8 h-8 text-gray-600 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
