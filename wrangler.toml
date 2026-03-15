@@ -1,5 +1,6 @@
 name = "all-in-one-production"
 compatibility_date = "2024-01-01"
+pages_build_output_dir = "src/dist"
 
 # Pages에서는 이 설정이 자동 적용되지만 로컬 개발 시 필요
 # 실제 ID는 위에서 생성 시 받은 값으로 교체
