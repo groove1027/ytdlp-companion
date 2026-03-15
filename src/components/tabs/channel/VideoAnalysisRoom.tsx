@@ -4397,9 +4397,27 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                   type="button"
                                   onClick={async () => {
                                     try {
+                                      // [FIX #316] videoBlob 없으면 자동 다운로드 (새로고침 후 등)
+                                      let videoBlob = useVideoAnalysisStore.getState().videoBlob;
+                                      if (!videoBlob) {
+                                        // 업로드 파일이 있으면 그걸 사용
+                                        if (uploadedFiles[0]) {
+                                          videoBlob = uploadedFiles[0];
+                                        } else if (inputMode === 'youtube' && youtubeUrl) {
+                                          showToast(`영상 다운로드 중... 잠시만 기다려주세요`, 5000);
+                                          const dlResult = await downloadVideoAsBlob(extractYouTubeVideoId(youtubeUrl) || youtubeUrl);
+                                          if (dlResult) {
+                                            videoBlob = dlResult.blob;
+                                            useVideoAnalysisStore.getState().setVideoBlob(dlResult.blob);
+                                          }
+                                        }
+                                      }
+                                      if (!videoBlob) {
+                                        showToast('영상을 다운로드할 수 없습니다. 다시 시도해주세요.', 4000);
+                                        return;
+                                      }
                                       showToast(`${label} 패키지 생성 중...`, 3000);
                                       const { buildNlePackageZip } = await import('../../../services/nleExportService');
-                                      const videoBlob = useVideoAnalysisStore.getState().videoBlob;
                                       const fileName = youtubeUrl ? `${v.title.replace(/[^\w가-힣\s-]/g, '').slice(0, 30)}.mp4` : (uploadedFiles[0]?.name || 'video.mp4');
                                       const zipBlob = await buildNlePackageZip({ target, scenes: v.scenes, title: v.title, videoBlob, videoFileName: fileName, preset: selectedPreset || undefined });
                                       const url = URL.createObjectURL(zipBlob);
