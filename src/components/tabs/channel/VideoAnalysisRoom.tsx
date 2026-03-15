@@ -843,6 +843,67 @@ function collectTimecodesFromVersions(versions: VersionItem[], durationSec?: num
   return deduped;
 }
 
+/**
+ * [FIX #312] 보정된 타임코드를 versions의 scenes에 역전파
+ * AI 원본 타임코드 → 장면감지 보정 타임코드로 sourceTimeline/timecodeSource 업데이트
+ * SRT 생성, 편집실 전달 등 모든 하류 경로에 보정값이 전파됨
+ */
+function applyCorrectedTimecodes(
+  versions: VersionItem[],
+  aiTimecodes: number[],
+  correctedTimecodes: number[],
+): VersionItem[] {
+  if (aiTimecodes.length !== correctedTimecodes.length) return versions;
+  // AI→보정 매핑 테이블: AI 원본 초 → 보정된 초
+  const corrections = new Map<number, number>();
+  for (let i = 0; i < aiTimecodes.length; i++) {
+    if (Math.abs(aiTimecodes[i] - correctedTimecodes[i]) > 0.05) {
+      corrections.set(aiTimecodes[i], correctedTimecodes[i]);
+    }
+  }
+  if (corrections.size === 0) return versions; // 변경 없음
+
+  const fmtTc = (sec: number): string => {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    const sStr = s % 1 === 0 ? String(Math.floor(s)).padStart(2, '0') : s.toFixed(1).padStart(4, '0');
+    return `${String(m).padStart(2, '0')}:${sStr}`;
+  };
+
+  // 가장 가까운 보정 매칭 찾기 (±0.5초 이내)
+  const findCorrected = (origSec: number): number | null => {
+    let best: number | null = null;
+    let bestDist = Infinity;
+    for (const [ai, corr] of corrections) {
+      const dist = Math.abs(ai - origSec);
+      if (dist < bestDist && dist <= 0.5) { bestDist = dist; best = corr; }
+    }
+    return best;
+  };
+
+  return versions.map(v => ({
+    ...v,
+    scenes: v.scenes.map(s => {
+      const tcStr = s.timecodeSource || s.sourceTimeline || '';
+      const range = tcStr.match(/(\d+:\d+(?:\.\d+)?)\s*([~\-–—])\s*(\d+:\d+(?:\.\d+)?)/);
+      if (!range) return s;
+      const origStart = timecodeToSeconds(range[1]);
+      const origEnd = timecodeToSeconds(range[3]);
+      const newStart = findCorrected(origStart);
+      const newEnd = findCorrected(origEnd);
+      if (newStart === null && newEnd === null) return s;
+      const startTc = fmtTc(newStart ?? origStart);
+      const endTc = fmtTc(newEnd ?? origEnd);
+      const newTc = `${startTc}${range[2]}${endTc}`;
+      return {
+        ...s,
+        sourceTimeline: s.sourceTimeline ? newTc : s.sourceTimeline,
+        timecodeSource: s.timecodeSource ? newTc : s.timecodeSource,
+      };
+    }),
+  }));
+}
+
 /** 업로드 영상에서 프레임 추출 — WebCodecs 우선, canvas 폴백 */
 async function extractVideoFrames(file: File, sourceIndex?: number): Promise<TimedFrame[]> {
   // ── WebCodecs 정밀 추출 우선 시도 ──
@@ -3482,6 +3543,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
         console.log(`[Frame] 수집된 타임코드: ${allTimecodes.length}개 (업로드 ${uploadedFiles.length}개 영상)`);
 
         // [FIX #311] 업로드 영상도 장면감지로 AI 타임코드 보정
+        const originalUploadTimecodes = [...allTimecodes];
         if (allTimecodes.length > 0 && uploadedFiles.length === 1) {
           try {
             const uploadBlob = uploadedFiles[0] instanceof File ? uploadedFiles[0] : new Blob([uploadedFiles[0]]);
@@ -3489,6 +3551,9 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
             if (uploadCuts.length > 0) {
               allTimecodes = mergeWithAiTimecodes(allTimecodes, uploadCuts);
               console.log(`[Scene] ✅ 업로드 씬 감지 보정 완료: ${uploadCuts.length}개 컷 → 타임코드 보정`);
+              // [FIX #312] 업로드도 보정 타임코드 역전파
+              const correctedVersions = applyCorrectedTimecodes(finalVersions, originalUploadTimecodes, allTimecodes);
+              useVideoAnalysisStore.getState().setVersions(correctedVersions);
             }
           } catch (e) {
             console.warn('[Scene] 업로드 씬 감지 실패 (AI 타임코드로 진행):', e);
@@ -3551,6 +3616,11 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
             console.log(`[Frame] ✅ 정밀 프레임 ${exactFrames.length}개 적용 (병렬 다운로드 + 씬 감지)`);
             setThumbnails(exactFrames);
           }
+          // [FIX #312] 보정된 타임코드를 versions에 역전파 → SRT/편집실에도 정확한 타임코드 전달
+          if (downloadResult.sceneCuts.length > 0) {
+            const correctedVersions = applyCorrectedTimecodes(finalVersions, aiTimecodes, mergedTimecodes);
+            useVideoAnalysisStore.getState().setVersions(correctedVersions);
+          }
         } else if (aiTimecodes.length > 0) {
           // 폴백: 다운로드 실패 → 기존 3중 폴백
           console.log('[Frame] 병렬 다운로드 실패 → 기존 3중 폴백');
@@ -3581,6 +3651,9 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
               if (socialCuts.length > 0) {
                 mergedTimecodes = mergeWithAiTimecodes(allTimecodes, socialCuts);
                 console.log(`[Scene] ✅ 소셜 씬 감지 완료: AI ${allTimecodes.length}개 + 씬 ${socialCuts.length}개 → ${mergedTimecodes.length}개 병합`);
+                // [FIX #312] 소셜도 보정 타임코드 역전파
+                const correctedVersions = applyCorrectedTimecodes(finalVersions, allTimecodes, mergedTimecodes);
+                useVideoAnalysisStore.getState().setVersions(correctedVersions);
               }
             } catch (e) {
               console.warn('[Scene] 소셜 씬 감지 실패 (AI 타임코드로 진행):', e);
