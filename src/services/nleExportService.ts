@@ -143,7 +143,7 @@ export function generateFcpXml(params: {
     const fileTag = i === 0
       ? `<file id="file-1">
               <name>${safeFileName}</name>
-              <pathurl>media/${encodeURIComponent(videoFileName)}</pathurl>
+              <pathurl>media/${escXml(videoFileName)}</pathurl>
               <duration>${totalFrames}</duration>
               <rate><ntsc>FALSE</ntsc><timebase>${fps}</timebase></rate>
               <media>
@@ -454,7 +454,7 @@ export function generateFcpXmlFromEdl(params: {
   for (const f of fileMap.values()) {
     fileDefs.set(f.id, `
               <name>${escXml(f.name)}</name>
-              <pathurl>${encodeURIComponent(f.name)}</pathurl>
+              <pathurl>${escXml(f.name)}</pathurl>
               <duration>${toFrames(f.dur)}</duration>
               <rate><ntsc>FALSE</ntsc><timebase>${fps}</timebase></rate>
               <media>
