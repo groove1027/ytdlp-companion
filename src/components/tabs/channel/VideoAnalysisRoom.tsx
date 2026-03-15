@@ -3102,10 +3102,20 @@ const VideoAnalysisRoom: React.FC = () => {
     } finally { setIsBgmLoading(false); }
   }, [isBgmLoading]);
 
+  // [FIX #335] ffmpeg.wasm 사전 로드 — 분석 시작 시 백그라운드로 30MB WASM 미리 다운로드
+  // NLE 패키지 생성 시 ffmpeg가 이미 캐시되어 있으면 머지가 즉시 실행됨
+  const ffmpegPreloaded = useRef(false);
+
   // ── 프리셋 전환 시 캐시 복원 or 신규 분석 ──
   const handleAnalyze = async (preset: AnalysisPreset, force = false) => {
     if (!requireAuth('영상 분석')) return;
     if (!hasInput) return;
+
+    // ffmpeg.wasm 사전 로드 (백그라운드, 분석 시작과 동시에)
+    if (!ffmpegPreloaded.current) {
+      ffmpegPreloaded.current = true;
+      import('../../../services/ffmpegService').then(m => m.loadFFmpeg()).catch(() => {});
+    }
 
     // API 키 사전 검증 — 키 없이 5배치 모두 실패하는 것을 방지
     if (!getEvolinkKey() && !getKieKey()) {
@@ -4459,29 +4469,17 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                     if (nleExporting) return;
                                     setNleExporting({ target, step: '준비 중...' });
                                     try {
-                                      // [FIX #335] Step 1: videoBlob 확보 — 서버 머지(오디오 포함) 우선, 실패 시 분리+ffmpeg 폴백
+                                      // [FIX #335] Step 1: videoBlob 확보 — 분리 다운로드+ffmpeg 머지 (오디오 보장)
                                       let videoBlob = useVideoAnalysisStore.getState().videoBlob;
                                       if (!videoBlob) {
                                         if (uploadedFiles[0]) {
                                           videoBlob = uploadedFiles[0];
                                         } else if (inputMode === 'youtube' && youtubeUrl) {
                                           setNleExporting({ target, step: '영상 다운로드 중...' });
-                                          try {
-                                            // 서버 머지(quality=best, videoOnly 없음) → 오디오 포함 합본
-                                            const { downloadVideoViaProxy } = await import('../../../services/ytdlpApiService');
-                                            const { blob } = await downloadVideoViaProxy(
-                                              extractYouTubeVideoId(youtubeUrl) || youtubeUrl, 'best',
-                                            );
-                                            videoBlob = blob;
-                                            useVideoAnalysisStore.getState().setVideoBlob(blob);
-                                          } catch {
-                                            // 서버 머지 실패 시 분리 다운로드+ffmpeg 머지 폴백
-                                            setNleExporting({ target, step: '영상 변환 중...' });
-                                            const dlResult = await downloadVideoAsBlob(extractYouTubeVideoId(youtubeUrl) || youtubeUrl);
-                                            if (dlResult) {
-                                              videoBlob = dlResult.blob;
-                                              useVideoAnalysisStore.getState().setVideoBlob(dlResult.blob);
-                                            }
+                                          const dlResult = await downloadVideoAsBlob(extractYouTubeVideoId(youtubeUrl) || youtubeUrl);
+                                          if (dlResult) {
+                                            videoBlob = dlResult.blob;
+                                            useVideoAnalysisStore.getState().setVideoBlob(dlResult.blob);
                                           }
                                         }
                                       }
