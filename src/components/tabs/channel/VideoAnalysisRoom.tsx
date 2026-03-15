@@ -4459,17 +4459,28 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                     if (nleExporting) return;
                                     setNleExporting({ target, step: '준비 중...' });
                                     try {
-                                      // Step 1: videoBlob 확보
+                                      // [FIX #335] Step 1: videoBlob 확보 — NLE용은 720p 합본 우선 (ffmpeg 머지 불필요, 5초)
                                       let videoBlob = useVideoAnalysisStore.getState().videoBlob;
                                       if (!videoBlob) {
                                         if (uploadedFiles[0]) {
                                           videoBlob = uploadedFiles[0];
                                         } else if (inputMode === 'youtube' && youtubeUrl) {
                                           setNleExporting({ target, step: '영상 다운로드 중...' });
-                                          const dlResult = await downloadVideoAsBlob(extractYouTubeVideoId(youtubeUrl) || youtubeUrl);
-                                          if (dlResult) {
-                                            videoBlob = dlResult.blob;
-                                            useVideoAnalysisStore.getState().setVideoBlob(dlResult.blob);
+                                          try {
+                                            // 720p 합본(pre-muxed, 오디오 포함) → ffmpeg.wasm 머지 불필요 → 5초 이내
+                                            const { downloadVideoViaProxy } = await import('../../../services/ytdlpApiService');
+                                            const { blob } = await downloadVideoViaProxy(
+                                              extractYouTubeVideoId(youtubeUrl) || youtubeUrl, '720p',
+                                            );
+                                            videoBlob = blob;
+                                            useVideoAnalysisStore.getState().setVideoBlob(blob);
+                                          } catch {
+                                            // 720p 실패 시 분리 다운로드+머지 폴백
+                                            const dlResult = await downloadVideoAsBlob(extractYouTubeVideoId(youtubeUrl) || youtubeUrl);
+                                            if (dlResult) {
+                                              videoBlob = dlResult.blob;
+                                              useVideoAnalysisStore.getState().setVideoBlob(dlResult.blob);
+                                            }
                                           }
                                         }
                                       }
