@@ -1179,9 +1179,9 @@ export const parseScriptToScenes = async (
                         ...target,
                         scriptText: ((merged.scriptText || '') + ' ' + (target.scriptText || '')).trim(),
                         visualPrompt: ((merged.visualPrompt || '') + '; ' + (target.visualPrompt || '')).trim().replace(/^;\s*/, ''),
-                        dialogue: merged.dialogue && target.dialogue
-                            ? ((merged.dialogue || '') + ' ' + (target.dialogue || '')).trim()
-                            : target.dialogue || merged.dialogue || '',
+                        generatedDialogue: merged.generatedDialogue && target.generatedDialogue
+                            ? ((merged.generatedDialogue || '') + ' ' + (target.generatedDialogue || '')).trim()
+                            : target.generatedDialogue || merged.generatedDialogue || '',
                     };
                     result.splice(minIdx, 1);
                 } else if (minIdx > 0) {
@@ -1191,9 +1191,9 @@ export const parseScriptToScenes = async (
                         ...target,
                         scriptText: ((target.scriptText || '') + ' ' + (merged.scriptText || '')).trim(),
                         visualPrompt: ((target.visualPrompt || '') + '; ' + (merged.visualPrompt || '')).trim().replace(/^;\s*/, ''),
-                        dialogue: target.dialogue && merged.dialogue
-                            ? ((target.dialogue || '') + ' ' + (merged.dialogue || '')).trim()
-                            : target.dialogue || merged.dialogue || '',
+                        generatedDialogue: target.generatedDialogue && merged.generatedDialogue
+                            ? ((target.generatedDialogue || '') + ' ' + (merged.generatedDialogue || '')).trim()
+                            : target.generatedDialogue || merged.generatedDialogue || '',
                     };
                     result.splice(minIdx, 1);
                 } else {
