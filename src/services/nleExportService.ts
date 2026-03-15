@@ -394,10 +394,6 @@ export function generateFcpXml(params: {
         </format>
         <track>${videoClips}
         </track>
-        <track><enabled>TRUE</enabled>${subtitleClips}
-        </track>${effectSubClips ? `
-        <track><enabled>TRUE</enabled>${effectSubClips}
-        </track>` : ''}
       </video>
       <audio>
         <numOutputChannels>2</numOutputChannels>
@@ -741,11 +737,17 @@ export async function buildNlePackageZip(params: {
       zip.file(`media/${videoFileName || 'video.mp4'}`, videoBlob);
     }
 
-    // [FIX] SRT 타임코드를 편집 타임라인 기준으로 생성 (Premiere XML과 일치)
+    // [FIX #316] SRT를 sidecar 방식으로 media/ 폴더에 배치 — Premiere Captions 자동 인식
+    // 영상 파일명과 동일한 이름.srt → Premiere가 자동으로 Captions 트랙에 로드
+    const videoBase = (videoFileName || 'video.mp4').replace(/\.[^.]+$/, '');
     const dlgSrt = generateNleSrt(scenes, 'dialogue', preset, true);
-    if (dlgSrt) zip.file(`${safeName}_자막.srt`, BOM + dlgSrt);
+    if (dlgSrt) zip.file(`media/${videoBase}.srt`, BOM + dlgSrt);
 
     const fxSrt = generateNleSrt(scenes, 'effect', preset, true);
+    if (fxSrt) zip.file(`media/${videoBase}_효과.srt`, BOM + fxSrt);
+
+    // 루트에도 SRT 복사 (수동 import 폴백용)
+    if (dlgSrt) zip.file(`${safeName}_자막.srt`, BOM + dlgSrt);
     if (fxSrt) zip.file(`${safeName}_효과자막.srt`, BOM + fxSrt);
 
     const presetLabel: Record<string, string> = {
@@ -759,17 +761,18 @@ export async function buildNlePackageZip(params: {
       '1. ZIP을 원하는 위치에 압축 해제하세요.',
       '2. Premiere Pro > File > Import (Ctrl+I)',
       `3. "${safeName}.xml" 선택 → 타임라인 자동 생성`,
-      '4. media/ 폴더 영상이 자동 연결됩니다.',
+      '4. media/ 폴더의 영상+자막이 자동 연결됩니다.',
+      '',
+      '[ 자막 (Captions) ]',
+      `• media/${videoBase}.srt 가 영상과 같은 이름으로 배치되어 있습니다.`,
+      '• Premiere에서 자동 인식되지 않을 경우:',
+      '  File > Import > Captions > media/ 폴더의 .srt 선택',
+      '• 자막 타임코드는 편집 타임라인 기준입니다.',
       '',
       '[ 타임라인 활용 ]',
       `• 마커(Marker): 장면마다 마커 설정됨 → Shift+M / Ctrl+Shift+M으로 이동`,
       '• 클립 색상: 파랑(나레이션) / 초록(대사) / 청록(원본나레이션) / 주황(액션)',
       '• 메타데이터: Window > Metadata 패널에서 장면 설명·대사 확인',
-      '• 비디오+오디오 연결됨: 함께 이동·트림됩니다.',
-      '',
-      '[ 자막 추가 (선택) ]',
-      `• File > Import > "${safeName}_자막.srt" → 타임라인에 드래그`,
-      '• SRT 타임코드는 편집 타임라인 기준입니다.',
       '',
       '[ 프로젝트 정보 ]',
       `• 편집점: ${scenes.length}개`,
