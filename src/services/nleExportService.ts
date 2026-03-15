@@ -58,6 +58,14 @@ function modeToLabelColor(mode: string): string {
   return 'Iris';
 }
 
+/** 실측 FPS → xmeml v5 timebase + NTSC 플래그 매핑 */
+function fpsToNtsc(fps: number): { ntsc: boolean; timebase: number } {
+  if (Math.abs(fps - 23.976) < 0.05) return { ntsc: true, timebase: 24 };
+  if (Math.abs(fps - 29.97) < 0.05) return { ntsc: true, timebase: 30 };
+  if (Math.abs(fps - 59.94) < 0.05) return { ntsc: true, timebase: 60 };
+  return { ntsc: false, timebase: Math.round(fps) };
+}
+
 /** 숏폼 자막 줄바꿈 */
 function breakLines(text: string, maxChars: number = 14): string {
   if (text.length <= maxChars) return text;
@@ -159,6 +167,9 @@ export function generateFcpXml(params: {
   const totalFrames = Math.ceil(totalDurSec * fps);
   const safeTitle = escXml(title);
   const safeFileName = escXml(videoFileName);
+  const { ntsc, timebase } = fpsToNtsc(fps);
+  const ntscStr = ntsc ? 'TRUE' : 'FALSE';
+  const tcFormat = ntsc ? 'DF' : 'NDF';
   const toFrames = (sec: number) => Math.round(sec * fps);
   // [FIX] 소스 영상 전체 길이 = max(실제 비디오 길이, 최대 타임코드 끝점)
   const maxTimecodeEnd = Math.max(...timings.map(t => t.endSec));
@@ -193,7 +204,7 @@ export function generateFcpXml(params: {
               <name>${safeFileName}</name>
               <pathurl>media/${escXml(videoFileName)}</pathurl>
               <duration>${srcTotalFrames}</duration>
-              <rate><ntsc>FALSE</ntsc><timebase>${fps}</timebase></rate>
+              <rate><ntsc>${ntscStr}</ntsc><timebase>${timebase}</timebase></rate>
               <media>
                 <video><samplecharacteristics><width>${width}</width><height>${height}</height><anamorphic>FALSE</anamorphic><pixelaspectratio>square</pixelaspectratio><fielddominance>none</fielddominance></samplecharacteristics></video>
                 <audio><channelcount>2</channelcount><samplecharacteristics><samplerate>48000</samplerate><depth>16</depth></samplecharacteristics></audio>
@@ -204,7 +215,7 @@ export function generateFcpXml(params: {
           <clipitem id="clip-${i + 1}">
             <name>${escXml(clipName)}</name>
             <duration>${srcTotalFrames}</duration>
-            <rate><ntsc>FALSE</ntsc><timebase>${fps}</timebase></rate>
+            <rate><ntsc>${ntscStr}</ntsc><timebase>${timebase}</timebase></rate>
             <in>${toFrames(t.startSec)}</in>
             <out>${toFrames(t.endSec)}</out>
             <start>${toFrames(t.tlStartSec)}</start>
@@ -243,7 +254,7 @@ export function generateFcpXml(params: {
           <clipitem id="audio-${i + 1}">
             <name>${escXml(`Scene ${String(i + 1).padStart(3, '0')} Audio`)}</name>
             <duration>${srcTotalFrames}</duration>
-            <rate><ntsc>FALSE</ntsc><timebase>${fps}</timebase></rate>
+            <rate><ntsc>${ntscStr}</ntsc><timebase>${timebase}</timebase></rate>
             <in>${toFrames(t.startSec)}</in>
             <out>${toFrames(t.endSec)}</out>
             <start>${toFrames(t.tlStartSec)}</start>
@@ -272,14 +283,14 @@ export function generateFcpXml(params: {
     <name>${safeTitle}</name>
     <duration>${totalFrames}</duration>
     <rate>
-      <ntsc>FALSE</ntsc>
-      <timebase>${fps}</timebase>
+      <ntsc>${ntscStr}</ntsc>
+      <timebase>${timebase}</timebase>
     </rate>
     <timecode>
-      <rate><ntsc>FALSE</ntsc><timebase>${fps}</timebase></rate>
+      <rate><ntsc>${ntscStr}</ntsc><timebase>${timebase}</timebase></rate>
       <string>${secondsToFcpTc(0, fps)}</string>
       <frame>0</frame>
-      <displayformat>NDF</displayformat>
+      <displayformat>${tcFormat}</displayformat>
     </timecode>${markers}
     <media>
       <video>
@@ -290,7 +301,7 @@ export function generateFcpXml(params: {
             <anamorphic>FALSE</anamorphic>
             <pixelaspectratio>square</pixelaspectratio>
             <fielddominance>none</fielddominance>
-            <rate><ntsc>FALSE</ntsc><timebase>${fps}</timebase></rate>
+            <rate><ntsc>${ntscStr}</ntsc><timebase>${timebase}</timebase></rate>
             <colordepth>24</colordepth>
             <codec>
               <name>Apple ProRes 422</name>
@@ -477,6 +488,9 @@ export function generateFcpXmlFromEdl(params: {
   const { entries, sourceVideos, sourceMapping, title = 'Edit Project', fps = 30, width = 1080, height = 1920 } = params;
   if (entries.length === 0) return '';
 
+  const { ntsc, timebase } = fpsToNtsc(fps);
+  const ntscStr = ntsc ? 'TRUE' : 'FALSE';
+  const tcFormat = ntsc ? 'DF' : 'NDF';
   const toFrames = (sec: number) => Math.round(sec * fps);
   const safeTitle = escXml(title);
 
@@ -518,7 +532,7 @@ export function generateFcpXmlFromEdl(params: {
               <name>${escXml(f.name)}</name>
               <pathurl>${escXml(f.name)}</pathurl>
               <duration>${toFrames(f.dur)}</duration>
-              <rate><ntsc>FALSE</ntsc><timebase>${fps}</timebase></rate>
+              <rate><ntsc>${ntscStr}</ntsc><timebase>${timebase}</timebase></rate>
               <media>
                 <video><samplecharacteristics><width>${width}</width><height>${height}</height><anamorphic>FALSE</anamorphic><pixelaspectratio>square</pixelaspectratio><fielddominance>none</fielddominance></samplecharacteristics></video>
                 <audio><channelcount>2</channelcount><samplecharacteristics><samplerate>48000</samplerate><depth>16</depth></samplecharacteristics></audio>
@@ -556,7 +570,7 @@ export function generateFcpXmlFromEdl(params: {
           <clipitem id="clip-${i + 1}">
             <name>${escXml(`${c.entry.order} ${c.entry.sourceDescription.slice(0, 35)}`)}</name>
             <duration>${toFrames(c.fileInfo.dur)}</duration>
-            <rate><ntsc>FALSE</ntsc><timebase>${fps}</timebase></rate>
+            <rate><ntsc>${ntscStr}</ntsc><timebase>${timebase}</timebase></rate>
             <in>${toFrames(start)}</in>
             <out>${toFrames(end)}</out>
             <start>${toFrames(c.recStart)}</start>
@@ -595,7 +609,7 @@ export function generateFcpXmlFromEdl(params: {
           <clipitem id="audio-${i + 1}">
             <name>${escXml(`Audio ${c.entry.order}`)}</name>
             <duration>${toFrames(c.fileInfo.dur)}</duration>
-            <rate><ntsc>FALSE</ntsc><timebase>${fps}</timebase></rate>
+            <rate><ntsc>${ntscStr}</ntsc><timebase>${timebase}</timebase></rate>
             <in>${toFrames(start)}</in>
             <out>${toFrames(end)}</out>
             <start>${toFrames(c.recStart)}</start>
@@ -623,12 +637,12 @@ export function generateFcpXmlFromEdl(params: {
   <sequence>
     <name>${safeTitle}</name>
     <duration>${totalFrames}</duration>
-    <rate><ntsc>FALSE</ntsc><timebase>${fps}</timebase></rate>
+    <rate><ntsc>${ntscStr}</ntsc><timebase>${timebase}</timebase></rate>
     <timecode>
-      <rate><ntsc>FALSE</ntsc><timebase>${fps}</timebase></rate>
+      <rate><ntsc>${ntscStr}</ntsc><timebase>${timebase}</timebase></rate>
       <string>${secondsToFcpTc(0, fps)}</string>
       <frame>0</frame>
-      <displayformat>NDF</displayformat>
+      <displayformat>${tcFormat}</displayformat>
     </timecode>${markers}
     <media>
       <video>
@@ -638,7 +652,7 @@ export function generateFcpXmlFromEdl(params: {
             <anamorphic>FALSE</anamorphic>
             <pixelaspectratio>square</pixelaspectratio>
             <fielddominance>none</fielddominance>
-            <rate><ntsc>FALSE</ntsc><timebase>${fps}</timebase></rate>
+            <rate><ntsc>${ntscStr}</ntsc><timebase>${timebase}</timebase></rate>
             <colordepth>24</colordepth>
           </samplecharacteristics>
         </format>

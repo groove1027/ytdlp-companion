@@ -4454,14 +4454,43 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                         setNleExporting({ target, step: '영상 정보 확인 중...' });
                                         dims = await new Promise<{ w: number; h: number; fps: number; dur: number }>(resolve => {
                                           const vid = document.createElement('video');
-                                          vid.muted = true; vid.preload = 'metadata';
-                                          vid.onloadedmetadata = () => {
-                                            resolve({ w: vid.videoWidth || 1080, h: vid.videoHeight || 1920, fps: 30, dur: vid.duration || 0 });
-                                            URL.revokeObjectURL(vid.src);
+                                          vid.muted = true; vid.playsInline = true; vid.preload = 'auto';
+                                          const url = URL.createObjectURL(videoBlob!);
+                                          let resolved = false;
+                                          const done = (r: { w: number; h: number; fps: number; dur: number }) => {
+                                            if (resolved) return; resolved = true;
+                                            vid.pause(); vid.removeAttribute('src'); vid.load();
+                                            URL.revokeObjectURL(url); resolve(r);
                                           };
-                                          vid.onerror = () => resolve({ w: 1080, h: 1920, fps: 30, dur: 0 });
-                                          setTimeout(() => resolve({ w: 1080, h: 1920, fps: 30, dur: 0 }), 3000);
-                                          vid.src = URL.createObjectURL(videoBlob!);
+                                          vid.onerror = () => done({ w: 1080, h: 1920, fps: 30, dur: 0 });
+                                          setTimeout(() => done({ w: vid.videoWidth || 1080, h: vid.videoHeight || 1920, fps: 30, dur: vid.duration || 0 }), 5000);
+                                          vid.onloadeddata = () => {
+                                            const w = vid.videoWidth || 1080;
+                                            const h = vid.videoHeight || 1920;
+                                            const dur = vid.duration || 0;
+                                            // requestVideoFrameCallback으로 실측 fps 감지
+                                            if ('requestVideoFrameCallback' in vid) {
+                                              let count = 0; let t0 = 0;
+                                              const onFrame = (_now: number, meta: { mediaTime: number }) => {
+                                                if (count === 0) t0 = meta.mediaTime;
+                                                count++;
+                                                if (count >= 8) {
+                                                  const elapsed = meta.mediaTime - t0;
+                                                  const raw = elapsed > 0 ? (count - 1) / elapsed : 30;
+                                                  const stds = [23.976, 24, 25, 29.97, 30, 50, 59.94, 60];
+                                                  const snapped = stds.reduce((a, b) => Math.abs(raw - a) < Math.abs(raw - b) ? a : b);
+                                                  done({ w, h, fps: snapped, dur });
+                                                  return;
+                                                }
+                                                (vid as unknown as { requestVideoFrameCallback: (cb: typeof onFrame) => void }).requestVideoFrameCallback(onFrame);
+                                              };
+                                              (vid as unknown as { requestVideoFrameCallback: (cb: typeof onFrame) => void }).requestVideoFrameCallback(onFrame);
+                                              vid.play().catch(() => done({ w, h, fps: 30, dur }));
+                                            } else {
+                                              done({ w, h, fps: 30, dur });
+                                            }
+                                          };
+                                          vid.src = url;
                                         });
                                         nleDimsCache.current = dims;
                                       }
