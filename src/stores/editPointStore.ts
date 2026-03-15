@@ -738,6 +738,33 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
         showToast('EDL + SRT 파일이 다운로드되었습니다.');
         break;
       }
+      case 'fcp-xml':
+      case 'capcut-pkg':
+      case 'vrew-pkg': {
+        try {
+          const { buildEdlNlePackageZip } = await import('../services/nleExportService');
+          const target = exportMode === 'fcp-xml' ? 'premiere' : exportMode === 'capcut-pkg' ? 'capcut' : 'vrew';
+          const label = exportMode === 'fcp-xml' ? 'Premiere XML' : exportMode === 'capcut-pkg' ? 'CapCut' : 'VREW';
+          showToast(`${label} 패키지 생성 중...`);
+          const zipBlob = await buildEdlNlePackageZip({
+            target,
+            entries: edlEntries,
+            sourceVideos,
+            sourceMapping,
+            title: 'Edit Project',
+          });
+          const url = URL.createObjectURL(zipBlob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `edit_project_${target}.zip`;
+          a.click();
+          setTimeout(() => URL.revokeObjectURL(url), 10000);
+          showToast(`${label} 패키지가 다운로드되었습니다.`);
+        } catch (err) {
+          showToast('NLE 패키지 생성 실패: ' + (err instanceof Error ? err.message : '알 수 없는 오류'));
+        }
+        break;
+      }
       case 'push-to-timeline':
       case 'direct-mp4': {
         // [FIX #98] require() → ES dynamic import (프로덕션 빌드 호환)

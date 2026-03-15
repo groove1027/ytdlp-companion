@@ -80,6 +80,39 @@ const Step3Export: React.FC = () => {
       description: '편집실 타임라인에 장면과 자막을 자동 배치합니다.',
       condition: true,
     },
+    {
+      mode: 'fcp-xml',
+      icon: (
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 4V2a1 1 0 011-1h8a1 1 0 011 1v2m-9 0h10m-10 0H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2V6a2 2 0 00-2-2h-2" />
+        </svg>
+      ),
+      title: 'Premiere XML',
+      description: 'FCP XML + SRT. Premiere Pro / DaVinci Resolve에서 편집점+자막 즉시 사용.',
+      condition: true,
+    },
+    {
+      mode: 'capcut-pkg',
+      icon: (
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+        </svg>
+      ),
+      title: 'CapCut 패키지',
+      description: '나레이션 SRT ZIP. CapCut에서 자막 import로 편집점 자동 배치.',
+      condition: true,
+    },
+    {
+      mode: 'vrew-pkg',
+      icon: (
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+        </svg>
+      ),
+      title: 'VREW 패키지',
+      description: '나레이션 SRT ZIP. VREW에서 자막 import로 편집점 자동 배치.',
+      condition: true,
+    },
   ];
 
   return (

@@ -6,7 +6,7 @@
  * - CapCut / VREW: SRT + 영상 ZIP 패키지
  */
 
-import type { VideoSceneRow, VideoAnalysisPreset } from '../types';
+import type { VideoSceneRow, VideoAnalysisPreset, EdlEntry, SourceVideoFile } from '../types';
 
 // ──────────────────────────────────────────────
 // 유틸
@@ -408,6 +408,227 @@ export async function buildNlePackageZip(params: {
       '',
       '* 나레이션/효과자막 SRT도 별도 레이어로 추가 import 가능합니다.',
       `* 총 ${scenes.length}개 편집점이 포함되어 있습니다.`,
+    ].join('\n'));
+  }
+
+  return zip.generateAsync({ type: 'blob' });
+}
+
+// ──────────────────────────────────────────────
+// 편집실(EditPoint) EdlEntry 기반 — FCP XML + ZIP
+// ──────────────────────────────────────────────
+
+/** EdlEntry[] → FCP XML (xmeml v5) — 편집실의 정밀 편집점 기반 */
+export function generateFcpXmlFromEdl(params: {
+  entries: EdlEntry[];
+  sourceVideos: SourceVideoFile[];
+  sourceMapping: Record<string, string>;
+  title?: string;
+  fps?: number;
+  width?: number;
+  height?: number;
+}): string {
+  const { entries, sourceVideos, sourceMapping, title = 'Edit Project', fps = 30, width = 1920, height = 1080 } = params;
+  if (entries.length === 0) return '';
+
+  const toFrames = (sec: number) => Math.round(sec * fps);
+  const safeTitle = escXml(title);
+
+  // 소스 파일 정보 (중복 제거)
+  const fileMap = new Map<string, { id: string; name: string; dur: number }>();
+  let fileIdx = 1;
+  for (const entry of entries) {
+    const videoId = sourceMapping[entry.sourceId];
+    if (videoId && !fileMap.has(videoId)) {
+      const sv = sourceVideos.find(v => v.id === videoId);
+      fileMap.set(videoId, {
+        id: `file-${fileIdx}`,
+        name: sv?.fileName || `source_${fileIdx}.mp4`,
+        dur: sv?.durationSec || 300,
+      });
+      fileIdx++;
+    }
+  }
+
+  // 총 길이 계산 (누적)
+  let recordIn = 0;
+  const clips: { entry: EdlEntry; recStart: number; recEnd: number; fileInfo: { id: string; name: string; dur: number } }[] = [];
+  for (const entry of entries) {
+    const start = entry.refinedTimecodeStart ?? entry.timecodeStart;
+    const end = entry.refinedTimecodeEnd ?? entry.timecodeEnd;
+    const dur = (end - start) / entry.speedFactor;
+    const videoId = sourceMapping[entry.sourceId];
+    const fileInfo = fileMap.get(videoId || '') || { id: 'file-1', name: 'source.mp4', dur: 300 };
+    clips.push({ entry, recStart: recordIn, recEnd: recordIn + dur, fileInfo });
+    recordIn += dur;
+  }
+
+  const totalFrames = toFrames(recordIn);
+
+  // 파일 정의 XML
+  const fileDefsXml = Array.from(fileMap.values()).map(f => `
+            <file id="${f.id}">
+              <name>${escXml(f.name)}</name>
+              <pathurl>file://localhost/media/${encodeURIComponent(f.name)}</pathurl>
+              <duration>${toFrames(f.dur)}</duration>
+              <rate><ntsc>FALSE</ntsc><timebase>${fps}</timebase></rate>
+              <media>
+                <video><samplecharacteristics><width>${width}</width><height>${height}</height></samplecharacteristics></video>
+                <audio><samplecharacteristics><samplerate>48000</samplerate><depth>16</depth></samplecharacteristics></audio>
+              </media>
+            </file>`).join('');
+
+  // V1 비디오 클립
+  const videoClips = clips.map((c, i) => {
+    const start = c.entry.refinedTimecodeStart ?? c.entry.timecodeStart;
+    const end = c.entry.refinedTimecodeEnd ?? c.entry.timecodeEnd;
+    return `
+          <clipitem id="clip-${i + 1}">
+            <name>${escXml(`${c.entry.order} ${c.entry.sourceDescription.slice(0, 30)}`)}</name>
+            <duration>${toFrames(end - start)}</duration>
+            <rate><ntsc>FALSE</ntsc><timebase>${fps}</timebase></rate>
+            <in>${toFrames(start)}</in>
+            <out>${toFrames(end)}</out>
+            <start>${toFrames(c.recStart)}</start>
+            <end>${toFrames(c.recEnd)}</end>
+            <file id="${c.fileInfo.id}"/>
+          </clipitem>`;
+  }).join('');
+
+  // V2 자막 트랙
+  const subtitleClips = clips.filter(c => c.entry.narrationText).map((c, i) => `
+          <generatoritem id="sub-${i + 1}">
+            <name>${escXml(c.entry.narrationText.slice(0, 40))}</name>
+            <duration>${toFrames(c.recEnd - c.recStart)}</duration>
+            <rate><ntsc>FALSE</ntsc><timebase>${fps}</timebase></rate>
+            <in>0</in>
+            <out>${toFrames(c.recEnd - c.recStart)}</out>
+            <start>${toFrames(c.recStart)}</start>
+            <end>${toFrames(c.recEnd)}</end>
+            <enabled>TRUE</enabled>
+            <effect>
+              <name>Text</name>
+              <effectid>Text</effectid>
+              <effectcategory>Text</effectcategory>
+              <effecttype>generator</effecttype>
+              <mediatype>video</mediatype>
+              <parameter><parameterid>str</parameterid><name>Text</name><value>${escXml(c.entry.narrationText)}</value></parameter>
+              <parameter><parameterid>fontsize</parameterid><name>Font Size</name><value>42</value></parameter>
+              <parameter><parameterid>fontcolor</parameterid><name>Font Color</name><value>16777215</value></parameter>
+              <parameter><parameterid>origin</parameterid><name>Origin</name><value>0 0.38</value></parameter>
+            </effect>
+          </generatoritem>`).join('');
+
+  // A1 오디오 클립
+  const audioClips = clips.map((c, i) => {
+    const start = c.entry.refinedTimecodeStart ?? c.entry.timecodeStart;
+    const end = c.entry.refinedTimecodeEnd ?? c.entry.timecodeEnd;
+    return `
+          <clipitem id="audio-${i + 1}">
+            <name>${escXml(`Audio ${c.entry.order}`)}</name>
+            <duration>${toFrames(end - start)}</duration>
+            <rate><ntsc>FALSE</ntsc><timebase>${fps}</timebase></rate>
+            <in>${toFrames(start)}</in>
+            <out>${toFrames(end)}</out>
+            <start>${toFrames(c.recStart)}</start>
+            <end>${toFrames(c.recEnd)}</end>
+            <file id="${c.fileInfo.id}"/>
+          </clipitem>`;
+  }).join('');
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE xmeml>
+<xmeml version="5">
+  <sequence>
+    <name>${safeTitle}</name>
+    <duration>${totalFrames}</duration>
+    <rate><ntsc>FALSE</ntsc><timebase>${fps}</timebase></rate>
+    <timecode>
+      <rate><ntsc>FALSE</ntsc><timebase>${fps}</timebase></rate>
+      <string>${secondsToFcpTc(0, fps)}</string>
+      <frame>0</frame>
+      <displayformat>NDF</displayformat>
+    </timecode>
+    <media>
+      <video>
+        <format>
+          <samplecharacteristics>
+            <width>${width}</width><height>${height}</height>
+            <pixelaspectratio>square</pixelaspectratio>
+            <rate><ntsc>FALSE</ntsc><timebase>${fps}</timebase></rate>
+          </samplecharacteristics>
+        </format>
+        <track>${fileDefsXml.length > 0 ? fileDefsXml.slice(0, fileDefsXml.indexOf('</file>') + 7) : ''}${videoClips}
+        </track>
+        <track><enabled>TRUE</enabled>${subtitleClips}
+        </track>
+      </video>
+      <audio>
+        <format><samplecharacteristics><samplerate>48000</samplerate><depth>16</depth></samplecharacteristics></format>
+        <track>${audioClips}
+        </track>
+      </audio>
+    </media>
+  </sequence>
+</xmeml>`;
+}
+
+/** EdlEntry[] → 나레이션 SRT (편집실용, 누적 타임코드) */
+export function generateEdlNarrationSrt(entries: EdlEntry[]): string {
+  let cumTime = 0;
+  let idx = 1;
+  const parts: string[] = [];
+  for (const e of entries) {
+    const start = e.refinedTimecodeStart ?? e.timecodeStart;
+    const end = e.refinedTimecodeEnd ?? e.timecodeEnd;
+    const dur = (end - start) / e.speedFactor;
+    if (e.narrationText.trim()) {
+      parts.push(`${idx}\n${secondsToSrtTime(cumTime)} --> ${secondsToSrtTime(cumTime + dur)}\n${breakLines(e.narrationText)}`);
+      idx++;
+    }
+    cumTime += dur;
+  }
+  return parts.join('\n\n');
+}
+
+/** 편집실 EdlEntry → NLE ZIP 패키지 (Premiere/CapCut/VREW) */
+export async function buildEdlNlePackageZip(params: {
+  target: NleTarget;
+  entries: EdlEntry[];
+  sourceVideos: SourceVideoFile[];
+  sourceMapping: Record<string, string>;
+  title?: string;
+}): Promise<Blob> {
+  const { target, entries, sourceVideos, sourceMapping, title = 'Edit Project' } = params;
+  const JSZip = (await import('jszip')).default;
+  const zip = new JSZip();
+  const safeName = title.replace(/[^\w가-힣\s-]/g, '').trim().slice(0, 40) || 'project';
+  const BOM = '\uFEFF';
+
+  const srt = generateEdlNarrationSrt(entries);
+
+  if (target === 'premiere') {
+    const xml = generateFcpXmlFromEdl({ entries, sourceVideos, sourceMapping, title });
+    zip.file(`${safeName}.xml`, xml);
+    if (srt) zip.file(`${safeName}_나레이션.srt`, BOM + srt);
+    zip.file('README.txt', [
+      `=== ${title} — Premiere Pro / DaVinci Resolve ===`,
+      '',
+      '1. Premiere Pro: File > Import > XML 파일 선택',
+      '2. 타임라인에 편집점+자막이 자동 배치됩니다.',
+      '3. 소스 영상은 media/ 폴더에 배치하세요.',
+      `* ${entries.length}개 편집점, Vision AI 정제 타임코드 반영`,
+    ].join('\n'));
+  } else {
+    // CapCut / VREW — 소스 영상 포함 불가(다중 소스), SRT만 제공
+    if (srt) zip.file(`${safeName}_나레이션.srt`, BOM + srt);
+    const appName = target === 'capcut' ? 'CapCut' : 'VREW';
+    zip.file('README.txt', [
+      `=== ${title} — ${appName} ===`,
+      '',
+      `1. ${appName}에서 소스 영상을 import하세요.`,
+      `2. 자막 > SRT 불러오기 > "${safeName}_나레이션.srt" 선택`,
+      `* ${entries.length}개 편집점 기반 나레이션 SRT`,
     ].join('\n'));
   }
 

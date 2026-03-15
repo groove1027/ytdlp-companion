@@ -1577,7 +1577,7 @@ export interface EdlEntry {
   autoSpeedFactor?: number;
 }
 
-export type EditPointExportMode = 'direct-mp4' | 'ffmpeg-script' | 'edl-file' | 'push-to-timeline';
+export type EditPointExportMode = 'direct-mp4' | 'ffmpeg-script' | 'edl-file' | 'push-to-timeline' | 'fcp-xml' | 'capcut-pkg' | 'vrew-pkg';
 
 // --- evolink.ai 모델 ---
 export enum EvolinkImageModel {
