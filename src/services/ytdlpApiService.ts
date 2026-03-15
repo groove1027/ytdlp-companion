@@ -19,7 +19,7 @@ import { logger } from './LoggerService';
 
 /** 기본 서버 설정 — localStorage로 오버라이드 가능 */
 const DEFAULT_DIRECT_URL = 'http://175.126.73.193:3100';
-const DEFAULT_PROXY_PATH = '/ytdlp-proxy'; // Cloudflare Pages Function 프록시
+const DEFAULT_PROXY_URL = 'https://ytdlp-proxy.groove1027.workers.dev'; // Cloudflare Worker 프록시
 const DEFAULT_API_KEY = 'bf9ce5c9b531c42a2dd6dcec61cff6c3eead93f20ba35365d3411ddf783dccb1';
 
 function getApiBaseUrl(): string {
@@ -29,9 +29,9 @@ function getApiBaseUrl(): string {
   } catch (e) {
     logger.trackSwallowedError('ytdlpApiService:getApiBaseUrl', e);
   }
-  // HTTPS 배포 환경 → Cloudflare Pages Function 프록시 (Mixed Content 방지)
+  // HTTPS 배포 환경 → Cloudflare Worker 프록시 (Mixed Content 방지)
   if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
-    return DEFAULT_PROXY_PATH;
+    return DEFAULT_PROXY_URL;
   }
   // HTTP 로컬 개발 → 직접 접속
   return DEFAULT_DIRECT_URL;
