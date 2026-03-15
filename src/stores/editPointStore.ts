@@ -68,6 +68,8 @@ interface EditPointStore {
   autoCalcSpeed: () => void;
   applyAutoSpeed: () => void;
   setExportMode: (mode: EditPointExportMode) => void;
+  /** 빠른 FFmpeg 스크립트 다운로드 — Step 3 진입 없이 즉시 내보내기 */
+  quickExportFFmpeg: () => void;
   setCleanSubtitles: (enabled: boolean) => void;
   runCleanSubtitles: () => Promise<void>;
   exportResult: () => Promise<void>;
@@ -300,7 +302,9 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
       const { sourceVideos } = get();
       const maxDur = sourceVideos.length === 1 && sourceVideos[0].durationSec
         ? sourceVideos[0].durationSec : undefined;
-      const entries = await parseEditTableWithAI(rawEditTable, rawNarration, maxDur);
+      const entries = await parseEditTableWithAI(rawEditTable, rawNarration, maxDur, (progress, message) => {
+        set({ processingProgress: progress, processingMessage: message });
+      });
 
       // [FIX #192] 소스 매핑을 edlEntries와 동일한 set()에서 원자적으로 처리
       // → Step2Mapping이 "매핑 안 됨" 에러를 잠깐 보여주는 깜빡임 방지
@@ -522,6 +526,26 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
   },
 
   setExportMode: (mode) => set({ exportMode: mode }),
+
+  quickExportFFmpeg: () => {
+    const { edlEntries, sourceMapping, sourceVideos } = get();
+    if (edlEntries.length === 0) {
+      showToast('편집 항목이 없습니다. 먼저 편집표를 파싱해주세요.');
+      return;
+    }
+    const fileNameMapping: Record<string, string> = {};
+    for (const [sourceId, videoId] of Object.entries(sourceMapping)) {
+      const video = sourceVideos.find((v) => v.id === videoId);
+      fileNameMapping[sourceId] = video?.fileName || sourceId;
+    }
+    try {
+      const script = generateFFmpegScript(edlEntries, fileNameMapping);
+      downloadFile(script, 'edit_script.sh', 'text/x-shellscript');
+      showToast('FFmpeg 스크립트가 다운로드되었습니다.');
+    } catch (err) {
+      showToast('FFmpeg 스크립트 생성 실패: ' + (err instanceof Error ? err.message : '알 수 없는 오류'));
+    }
+  },
 
   setCleanSubtitles: (enabled) => set({ cleanSubtitles: enabled }),
 

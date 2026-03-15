@@ -10,6 +10,12 @@ import { formatSrtTime } from './srtService';
 import { logger } from './LoggerService';
 
 /**
+ * [FIX #302] 편집표 파싱용 모델 — Flash Lite는 JSON 구조화 추출에 충분하며 Pro 대비 3~5배 빠름
+ * Pro는 Vision 정제(attemptVisionRefine)에서만 사용
+ */
+const EDIT_PARSE_MODEL = 'gemini-3.1-flash-lite-preview';
+
+/**
  * 잘린 JSON 응답에서 유효한 entries를 복구
  * AI 응답이 max_tokens로 잘렸을 때, 마지막 완전한 entry까지 추출
  */
@@ -185,7 +191,7 @@ ${narration}` : ''}`;
   // 입력이 크면 출력 여유를 더 확보 (Evolink 프록시 총 컨텍스트 제한 대응)
   const maxTokens = estimatedInput > 12000 ? 8192 : 16384;
 
-  // [FIX #298] 타임아웃 120s→180s — 대형 편집표에서 Gemini 응답 지연 대응
+  // [FIX #302] Flash Lite 모델 + 타임아웃 180s — 파싱 속도 3~5배 향상
   const response = await evolinkChat(
     [
       { role: 'system', content: EDIT_PARSE_SYSTEM_PROMPT },
@@ -196,6 +202,7 @@ ${narration}` : ''}`;
       maxTokens,
       responseFormat: { type: 'json_object' },
       timeoutMs: 180_000,
+      model: EDIT_PARSE_MODEL,
     }
   );
 
@@ -240,7 +247,7 @@ Each entry: { "order", "narrationText", "sourceId" (format "S-XX"), "sourceDescr
     ? `Edit Table:\n${tableChunk}\n\nNarration:\n${narration}`
     : `Edit Table:\n${tableChunk}`;
 
-  // [FIX #298] 타임아웃 120s→180s — 폴백에서도 대형 편집표 대응
+  // [FIX #302] Flash Lite 모델 + 타임아웃 180s — 폴백에서도 속도 향상
   const response = await evolinkChat(
     [
       { role: 'system', content: compactPrompt },
@@ -250,6 +257,7 @@ Each entry: { "order", "narrationText", "sourceId" (format "S-XX"), "sourceDescr
       temperature: 0.1,
       maxTokens: 16384,
       timeoutMs: 180_000,
+      model: EDIT_PARSE_MODEL,
       // JSON 모드 제거 — 텍스트로 받아서 수동 파싱
     }
   );
@@ -283,7 +291,8 @@ Each entry: { "order", "narrationText", "sourceId" (format "S-XX"), "sourceDescr
 export async function parseEditTableWithAI(
   rawTable: string,
   narration: string,
-  maxDuration?: number
+  maxDuration?: number,
+  onProgress?: (progress: number, message: string) => void,
 ): Promise<EdlEntry[]> {
   const totalEstTokens = estimateTokenCount(rawTable + narration + EDIT_PARSE_SYSTEM_PROMPT);
 
@@ -319,8 +328,8 @@ export async function parseEditTableWithAI(
     }
   }
 
-  // [FIX #215] 청크 크기 30행으로 확대 → API 호출 횟수 감소 (128행: 7청크→5청크)
-  const CHUNK_SIZE = 30;
+  // [FIX #302] 청크 크기 50행으로 확대 + Flash Lite 모델 → API 호출 횟수 대폭 감소 (100행: 4청크→2청크)
+  const CHUNK_SIZE = 50;
 
   // 청크 목록 생성
   const chunks: { table: string; narration: string; index: number }[] = [];
@@ -336,11 +345,15 @@ export async function parseEditTableWithAI(
     });
   }
 
-  // [FIX #215] 순차 처리 + 개별 청크 재시도 — 429 rate limit 방지
+  // [FIX #302] 순차 처리 + 개별 청크 재시도 + 진행률 콜백 — 429 rate limit 방지
   const allEntries: Record<string, unknown>[] = [];
   let failedChunks = 0;
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i];
+    onProgress?.(
+      Math.round((i / chunks.length) * 90),
+      `AI 편집표 분석 중... (${i + 1}/${chunks.length} 단계)`,
+    );
     try {
       const entries = await parseEditChunkWithRetry(chunk.table, chunk.narration, true);
       allEntries.push(...entries);
