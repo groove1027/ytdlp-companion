@@ -65,16 +65,19 @@ function breakLines(text: string, maxChars: number = 14): string {
 
 interface SceneTiming {
   index: number;
-  startSec: number;
-  endSec: number;
-  durationSec: number;
-  text: string;        // 나레이션/대사
-  effectText: string;  // 효과자막
+  startSec: number;      // 소스 영상 내 시작점
+  endSec: number;        // 소스 영상 내 종료점
+  durationSec: number;   // 클립 길이
+  tlStartSec: number;    // 타임라인 누적 시작점
+  tlEndSec: number;      // 타임라인 누적 종료점
+  text: string;          // 나레이션/대사
+  effectText: string;    // 효과자막
 }
 
 function extractTimings(scenes: VideoSceneRow[], preset?: VideoAnalysisPreset): SceneTiming[] {
   const result: SceneTiming[] = [];
   let accTime = 0;
+  let cumTime = 0; // 타임라인 누적 위치
 
   for (let i = 0; i < scenes.length; i++) {
     const s = scenes[i];
@@ -95,6 +98,7 @@ function extractTimings(scenes: VideoSceneRow[], preset?: VideoAnalysisPreset): 
       endSec = accTime + dur;
     }
 
+    const clipDur = endSec - startSec;
     const mainText = preset === 'snack'
       ? (s.dialogue || s.audioContent || s.sceneDesc)
       : (s.audioContent || s.dialogue || s.sceneDesc);
@@ -103,12 +107,15 @@ function extractTimings(scenes: VideoSceneRow[], preset?: VideoAnalysisPreset): 
       index: i,
       startSec,
       endSec,
-      durationSec: endSec - startSec,
+      durationSec: clipDur,
+      tlStartSec: cumTime,
+      tlEndSec: cumTime + clipDur,
       text: mainText || '',
       effectText: s.effectSub || '',
     });
 
     accTime = endSec;
+    cumTime += clipDur;
   }
   return result;
 }
@@ -131,20 +138,26 @@ export function generateFcpXml(params: {
   const timings = extractTimings(scenes, preset);
   if (timings.length === 0) return '';
 
-  const totalDurSec = timings[timings.length - 1].endSec;
+  // [FIX] 시퀀스 총 길이 = 클립 누적 합 (소스 끝점이 아님)
+  const totalDurSec = timings[timings.length - 1].tlEndSec;
   const totalFrames = Math.ceil(totalDurSec * fps);
   const safeTitle = escXml(title);
   const safeFileName = escXml(videoFileName);
 
   const toFrames = (sec: number) => Math.round(sec * fps);
 
+  // [FIX] 소스 파일 전체 길이(프레임) — file duration은 원본 영상 전체 길이여야 함
+  // 소스 끝점 중 가장 큰 값 사용
+  const srcTotalFrames = Math.ceil(Math.max(...timings.map(t => t.endSec)) * fps);
+
   // 비디오 클립 아이템 (V1 트랙 — 순차 배치, 첫 클립에 file 정의)
+  // [FIX] in/out = 소스 위치, start/end = 타임라인 누적 위치
   const videoClips = timings.map((t, i) => {
     const fileTag = i === 0
       ? `<file id="file-1">
               <name>${safeFileName}</name>
               <pathurl>media/${escXml(videoFileName)}</pathurl>
-              <duration>${totalFrames}</duration>
+              <duration>${srcTotalFrames}</duration>
               <rate><ntsc>FALSE</ntsc><timebase>${fps}</timebase></rate>
               <media>
                 <video><samplecharacteristics><width>${width}</width><height>${height}</height><anamorphic>FALSE</anamorphic><pixelaspectratio>square</pixelaspectratio><fielddominance>none</fielddominance></samplecharacteristics></video>
@@ -159,60 +172,17 @@ export function generateFcpXml(params: {
             <rate><ntsc>FALSE</ntsc><timebase>${fps}</timebase></rate>
             <in>${toFrames(t.startSec)}</in>
             <out>${toFrames(t.endSec)}</out>
-            <start>${toFrames(t.startSec)}</start>
-            <end>${toFrames(t.endSec)}</end>
+            <start>${toFrames(t.tlStartSec)}</start>
+            <end>${toFrames(t.tlEndSec)}</end>
             ${fileTag}
           </clipitem>`;
   }).join('');
 
-  // 자막 아이템 (V2 트랙 — generatoritem)
-  const subtitleClips = timings.filter(t => t.text).map((t, i) => `
-          <generatoritem id="sub-${i + 1}">
-            <name>${escXml(t.text.slice(0, 40))}</name>
-            <duration>${toFrames(t.durationSec)}</duration>
-            <rate><ntsc>FALSE</ntsc><timebase>${fps}</timebase></rate>
-            <in>0</in>
-            <out>${toFrames(t.durationSec)}</out>
-            <start>${toFrames(t.startSec)}</start>
-            <end>${toFrames(t.endSec)}</end>
-            <enabled>TRUE</enabled>
-            <anamorphic>FALSE</anamorphic>
-            <alphatype>black</alphatype>
-            <effect>
-              <name>Text</name>
-              <effectid>Text</effectid>
-              <effectcategory>Text</effectcategory>
-              <effecttype>generator</effecttype>
-              <mediatype>video</mediatype>
-              <parameter>
-                <parameterid>str</parameterid>
-                <name>Text</name>
-                <value>${escXml(t.text)}</value>
-              </parameter>
-              <parameter>
-                <parameterid>fontsize</parameterid>
-                <name>Font Size</name>
-                <value>42</value>
-              </parameter>
-              <parameter>
-                <parameterid>fontstyle</parameterid>
-                <name>Font Style</name>
-                <value>1</value>
-              </parameter>
-              <parameter>
-                <parameterid>fontcolor</parameterid>
-                <name>Font Color</name>
-                <value>16777215</value>
-              </parameter>
-              <parameter>
-                <parameterid>origin</parameterid>
-                <name>Origin</name>
-                <value>0 0.38</value>
-              </parameter>
-            </effect>
-          </generatoritem>`).join('');
+  // [FIX] V2 자막 generatoritem 제거 — 자막은 SRT 파일로만 제공
+  // generatoritem Text는 프리미어에서 그래픽으로 번인되므로 사용하지 않음
 
   // 오디오 클립 아이템 (A1 트랙)
+  // [FIX] start/end를 타임라인 누적 위치로 수정
   const audioClips = timings.map((t, i) => `
           <clipitem id="audio-${i + 1}">
             <name>${escXml(`Scene ${String(i + 1).padStart(3, '0')} Audio`)}</name>
@@ -220,8 +190,8 @@ export function generateFcpXml(params: {
             <rate><ntsc>FALSE</ntsc><timebase>${fps}</timebase></rate>
             <in>${toFrames(t.startSec)}</in>
             <out>${toFrames(t.endSec)}</out>
-            <start>${toFrames(t.startSec)}</start>
-            <end>${toFrames(t.endSec)}</end>
+            <start>${toFrames(t.tlStartSec)}</start>
+            <end>${toFrames(t.tlEndSec)}</end>
             <file id="file-1"/>
           </clipitem>`).join('');
 
@@ -259,9 +229,6 @@ export function generateFcpXml(params: {
         </format>
         <track>${videoClips}
         </track>
-        <track>
-          <enabled>TRUE</enabled>${subtitleClips}
-        </track>
       </video>
       <audio>
         <numOutputChannels>2</numOutputChannels>
@@ -287,6 +254,7 @@ export function generateNleSrt(
   scenes: VideoSceneRow[],
   layer: 'dialogue' | 'effect' | 'narration' = 'dialogue',
   preset?: VideoAnalysisPreset,
+  cumulativeTiming?: boolean,
 ): string {
   const timings = extractTimings(scenes, preset);
   let idx = 1;
@@ -307,8 +275,12 @@ export function generateNleSrt(
     }
     if (!text.trim()) continue;
 
+    // [FIX] Premiere용 SRT는 편집 타임라인 기준, CapCut/VREW는 원본 소스 기준
+    const srtStart = cumulativeTiming ? t.tlStartSec : t.startSec;
+    const srtEnd = cumulativeTiming ? t.tlEndSec : t.endSec;
+
     const lineText = breakLines(text);
-    entries.push(`${idx}\n${secondsToSrtTime(t.startSec)} --> ${secondsToSrtTime(t.endSec)}\n${lineText}`);
+    entries.push(`${idx}\n${secondsToSrtTime(srtStart)} --> ${secondsToSrtTime(srtEnd)}\n${lineText}`);
     idx++;
   }
 
@@ -348,11 +320,11 @@ export async function buildNlePackageZip(params: {
       zip.file(`media/${videoFileName || 'video.mp4'}`, videoBlob);
     }
 
-    // SRT (자막 레이어 분리)
-    const dlgSrt = generateNleSrt(scenes, 'dialogue', preset);
+    // [FIX] SRT 타임코드를 편집 타임라인 기준으로 생성 (Premiere XML과 일치)
+    const dlgSrt = generateNleSrt(scenes, 'dialogue', preset, true);
     if (dlgSrt) zip.file(`${safeName}_자막.srt`, BOM + dlgSrt);
 
-    const fxSrt = generateNleSrt(scenes, 'effect', preset);
+    const fxSrt = generateNleSrt(scenes, 'effect', preset, true);
     if (fxSrt) zip.file(`${safeName}_효과자막.srt`, BOM + fxSrt);
 
     zip.file('README.txt', [

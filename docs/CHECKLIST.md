@@ -8,6 +8,7 @@
 
 ## 🟢 완료된 작업
 
+- [x] **영상분석실 NLE 내보내기 치명적 버그 2건 수정** — (1) FCP XML 타임라인 배치: start/end가 소스 타임코드와 동일해서 원본 재생 → 누적 타임라인 위치(tlStartSec/tlEndSec)로 수정, 클립이 순차 배치됨 (2) V2 generatoritem Text 제거: 자막이 그래픽으로 번인 → SRT 파일만 제공 (3) Premiere SRT 타임코드를 편집 타임라인 기준으로 전환 (4) file duration을 원본 전체 길이로 수정 (nleExportService.ts, 2026-03-16)
 - [x] **D1 user_settings 테이블 누락 수정** — schema.sql에 user_settings 테이블 추가 + 프로덕션 D1에 직접 생성. API 키 서버 동기화(syncApiKeysToServer/restoreApiKeysFromServer)가 테이블 없어서 항상 500 실패하던 문제 해결 (schema.sql, 2026-03-16)
 - [x] **#323~327 이슈 일괄 처리** — (1) #324 무음제거 SRT 싱크: endTime이 새 오디오 길이 초과 시 보정 + 제거 결과 표시 UI (WaveformEditor.tsx) (2) #325 단락→SRT 다운로드: 대본 단락 미리보기에서 SRT 파일 직접 내보내기 (ScriptWriterTab.tsx, srtService.ts) (3) #323/#326/#327 기능 요청·안내 코멘트 (2026-03-16)
 - [x] **#328 NLE 버튼 로딩 진행 표시 + 중복 클릭 방지** — 버튼에 스피너 + 단계별 텍스트(준비 중→다운로드→영상 정보 확인→ZIP 생성) 표시. 다른 NLE 버튼 disabled. finally에서 자동 정리 (VideoAnalysisRoom.tsx, 2026-03-16)
