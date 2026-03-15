@@ -944,11 +944,11 @@ async function extractVideoFrames(file: File, sourceIndex?: number): Promise<Tim
       // duration 계산 (WebCodecs에 타임코드 배열 전달용)
       const dur = await getFileDuration(file);
       if (dur && dur > 1) {
-        const maxFrameCount = 60;
-        const interval = Math.max(2, dur / maxFrameCount);
+        const maxFrameCount = 120;
+        const interval = Math.max(0.5, dur / maxFrameCount);
         const count = Math.min(Math.ceil(dur / interval), maxFrameCount);
         const sampleTimecodes = Array.from({ length: count }, (_, i) =>
-          Math.min((i + 0.5) * interval, dur - 0.1));
+          Math.min((i + 0.25) * interval, dur - 0.1));
 
         const frames = await webcodecExtractFrames(file, sampleTimecodes);
         if (frames.length > 0) {
@@ -1013,13 +1013,13 @@ async function extractVideoFramesLegacy(file: File, sourceIndex?: number): Promi
         canvas.height = Math.round(vh * scale);
         const ctx = canvas.getContext('2d');
         if (!ctx) { logger.unregisterBlobUrl(url); URL.revokeObjectURL(url); resolve([]); return; }
-        // [FIX #155] 동적 간격: 짧은 영상은 2초 간격, 긴 영상은 간격을 넓혀 전체 커버
-        const maxFrameCount = 60;
-        const interval = Math.max(2, dur / maxFrameCount);
+        // [FIX #334] 0.5초 간격 추출 — 2초 간격은 비주얼 누락 + NLE trim 부정확 유발
+        const maxFrameCount = 120;
+        const interval = Math.max(0.5, dur / maxFrameCount);
         const count = Math.min(Math.ceil(dur / interval), maxFrameCount);
         for (let i = 0; i < count; i++) {
           if (timedOut) break; // [FIX #189] 타임아웃 시 루프 중단
-          const timeSec = Math.min((i + 0.5) * interval, dur - 0.1);
+          const timeSec = Math.min((i + 0.25) * interval, dur - 0.1);
           const seeked = await preciseSeek(video, timeSec, 15_000);
           if (!seeked) {
             console.warn(`[extractVideoFrames] 시크 타임아웃: ${timeSec.toFixed(2)}s — 건너뜀`);
