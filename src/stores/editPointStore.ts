@@ -84,7 +84,7 @@ interface EditPointStore {
   reset: () => void;
 }
 
-/** 비디오 파일에서 duration 추출 */
+/** 비디오 파일에서 duration 추출 (8초 타임아웃) */
 function getVideoDuration(file: File): Promise<number | null> {
   return new Promise((resolve) => {
     const video = document.createElement('video');
@@ -92,21 +92,39 @@ function getVideoDuration(file: File): Promise<number | null> {
     const url = URL.createObjectURL(file);
     logger.registerBlobUrl(url, 'video', 'editPointStore:getVideoDuration');
     video.src = url;
-    video.onloadedmetadata = () => {
-      const dur = video.duration;
+
+    let settled = false;
+    const cleanup = () => {
+      if (settled) return;
+      settled = true;
       logger.unregisterBlobUrl(url);
       URL.revokeObjectURL(url);
+    };
+
+    // [FIX #310] 8초 타임아웃 — onloadedmetadata 미발화 시 무한대기 방지
+    const timeout = setTimeout(() => {
+      if (!settled) {
+        console.warn('[EditPoint] getVideoDuration 타임아웃 (8s)');
+        cleanup();
+        resolve(null);
+      }
+    }, 8000);
+
+    video.onloadedmetadata = () => {
+      clearTimeout(timeout);
+      const dur = video.duration;
+      cleanup();
       resolve(isFinite(dur) ? dur : null);
     };
     video.onerror = () => {
-      logger.unregisterBlobUrl(url);
-      URL.revokeObjectURL(url);
+      clearTimeout(timeout);
+      cleanup();
       resolve(null);
     };
   });
 }
 
-/** 비디오 첫 프레임 썸네일 생성 — WebCodecs 우선 → Canvas 폴백 */
+/** 비디오 첫 프레임 썸네일 생성 — WebCodecs 우선 → Canvas 폴백 (8초 타임아웃) */
 async function getVideoThumbnail(file: File): Promise<string | undefined> {
   // ── WebCodecs 정밀 추출 우선 ──
   try {
@@ -121,7 +139,7 @@ async function getVideoThumbnail(file: File): Promise<string | undefined> {
     // WebCodecs 실패 → canvas 폴백
   }
 
-  // ── Canvas 폴백 ──
+  // ── Canvas 폴백 (8초 타임아웃 — onseeked 미발화 시 무한대기 방지) ──
   return new Promise((resolve) => {
     const video = document.createElement('video');
     const canvas = document.createElement('canvas');
@@ -132,11 +150,29 @@ async function getVideoThumbnail(file: File): Promise<string | undefined> {
     video.muted = true;
     video.preload = 'auto';
 
+    let settled = false;
+    const cleanup = () => {
+      if (settled) return;
+      settled = true;
+      logger.unregisterBlobUrl(url);
+      URL.revokeObjectURL(url);
+    };
+
+    // [FIX #310] 8초 타임아웃 — 특정 코덱/브라우저에서 onseeked 미발화 시 무한대기 방지
+    const timeout = setTimeout(() => {
+      if (!settled) {
+        console.warn('[EditPoint] getVideoThumbnail 타임아웃 (8s)');
+        cleanup();
+        resolve(undefined);
+      }
+    }, 8000);
+
     video.onloadeddata = () => {
       video.currentTime = 0.1;
     };
 
     video.onseeked = () => {
+      clearTimeout(timeout);
       const vw = video.videoWidth || 160;
       const vh = video.videoHeight || 90;
       const scale = 160 / Math.max(vw, vh);
@@ -144,20 +180,19 @@ async function getVideoThumbnail(file: File): Promise<string | undefined> {
       canvas.height = Math.round(vh * scale);
       ctx?.drawImage(video, 0, 0, canvas.width, canvas.height);
       const dataUrl = canvas.toDataURL('image/jpeg', 0.6);
-      logger.unregisterBlobUrl(url);
-      URL.revokeObjectURL(url);
+      cleanup();
       resolve(dataUrl);
     };
 
     video.onerror = () => {
-      logger.unregisterBlobUrl(url);
-      URL.revokeObjectURL(url);
+      clearTimeout(timeout);
+      cleanup();
       resolve(undefined);
     };
   });
 }
 
-/** 비디오 파일에서 width/height 추출 */
+/** 비디오 파일에서 width/height 추출 (8초 타임아웃) */
 function getVideoDimensions(file: File): Promise<{ width: number; height: number }> {
   return new Promise((resolve) => {
     const video = document.createElement('video');
@@ -165,16 +200,34 @@ function getVideoDimensions(file: File): Promise<{ width: number; height: number
     const url = URL.createObjectURL(file);
     logger.registerBlobUrl(url, 'video', 'editPointStore:getVideoDimensions');
     video.src = url;
-    video.onloadedmetadata = () => {
-      const w = video.videoWidth || 1920;
-      const h = video.videoHeight || 1080;
+
+    let settled = false;
+    const cleanup = () => {
+      if (settled) return;
+      settled = true;
       logger.unregisterBlobUrl(url);
       URL.revokeObjectURL(url);
+    };
+
+    // [FIX #310] 8초 타임아웃 — onloadedmetadata 미발화 시 무한대기 방지
+    const timeout = setTimeout(() => {
+      if (!settled) {
+        console.warn('[EditPoint] getVideoDimensions 타임아웃 (8s)');
+        cleanup();
+        resolve({ width: 1920, height: 1080 });
+      }
+    }, 8000);
+
+    video.onloadedmetadata = () => {
+      clearTimeout(timeout);
+      const w = video.videoWidth || 1920;
+      const h = video.videoHeight || 1080;
+      cleanup();
       resolve({ width: w, height: h });
     };
     video.onerror = () => {
-      logger.unregisterBlobUrl(url);
-      URL.revokeObjectURL(url);
+      clearTimeout(timeout);
+      cleanup();
       resolve({ width: 1920, height: 1080 });
     };
   });
@@ -223,11 +276,16 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       const sizeMB = Math.round((file.size / (1024 * 1024)) * 10) / 10;
-      const [duration, thumbnail, dims] = await Promise.all([
+
+      // [FIX #310] Promise.allSettled → 하나 실패해도 나머지 결과 사용 (무한대기 방지)
+      const results = await Promise.allSettled([
         getVideoDuration(file),
         getVideoThumbnail(file),
         getVideoDimensions(file),
       ]);
+      const duration = results[0].status === 'fulfilled' ? results[0].value : null;
+      const thumbnail = results[1].status === 'fulfilled' ? results[1].value : undefined;
+      const dims = results[2].status === 'fulfilled' ? results[2].value : { width: 1920, height: 1080 };
 
       const blobUrl = URL.createObjectURL(file);
       logger.registerBlobUrl(blobUrl, 'video', 'editPointStore:addSourceVideos', sizeMB);
@@ -790,9 +848,30 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
     // [FIX #296] 소스 영상 없어도 편집표만으로 진행 — 편집실 Step 1에서 안내 표시됨
 
     // [FIX #296] 편집표 자동 파싱 — 비동기 진행하여 탭 전환 차단하지 않음
-    // parseEditTable 내부에서 자체 성공/실패 토스트 표시
+    // [FIX #310] 파싱 완료 후 frames를 EdlEntry.referenceFrameUrl에 자동 매칭
     if (editTableText.trim()) {
-      get().parseEditTable().catch(e => console.warn('[EditPoint] 편집표 자동 파싱 실패:', e));
+      get().parseEditTable()
+        .then(() => {
+          // 파싱된 EdlEntry에 영상 분석실 프레임을 타임코드 기반 매칭
+          if (frames && frames.length > 0) {
+            const sortedFrames = [...frames].sort((a, b) => a.timeSec - b.timeSec);
+            set((state) => ({
+              edlEntries: state.edlEntries.map(entry => {
+                if (entry.referenceFrameUrl) return entry; // 이미 있으면 유지
+                // 타임코드 범위에 가장 가까운 프레임 찾기
+                const midTime = (entry.timecodeStart + entry.timecodeEnd) / 2;
+                let bestFrame = sortedFrames[0];
+                let bestDist = Infinity;
+                for (const f of sortedFrames) {
+                  const dist = Math.abs(f.timeSec - midTime);
+                  if (dist < bestDist) { bestDist = dist; bestFrame = f; }
+                }
+                return bestFrame ? { ...entry, referenceFrameUrl: bestFrame.hdUrl || bestFrame.url } : entry;
+              }),
+            }));
+          }
+        })
+        .catch(e => console.warn('[EditPoint] 편집표 자동 파싱 실패:', e));
     }
   },
 
