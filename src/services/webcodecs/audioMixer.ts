@@ -48,26 +48,35 @@ export async function mixAudio(
   narrationGain.gain.value = 1.0;
   narrationGain.connect(ctx.destination);
 
+  const narrationWithUrl = narrationLines.filter(l => l.audioUrl);
+  const narrationTotal = narrationWithUrl.length;
+
+  // [FIX #297] 나레이션 오디오 병렬 로드 — 순차 대기 제거 (N×500ms → max(500ms))
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+  const decodedNarrations = await Promise.all(
+    narrationWithUrl.map(async (line) => {
+      try {
+        const audioBuffer = await fetchAndDecode(ctx, line.audioUrl!);
+        return { line, buffer: audioBuffer };
+      } catch (e) {
+        console.warn('[AudioMixer] 나레이션 로드 실패:', line.audioUrl, e);
+        return null;
+      }
+    }),
+  );
+
   let narrationLoadCount = 0;
-  const narrationTotal = narrationLines.filter(l => l.audioUrl).length;
-
-  for (const line of narrationLines) {
+  for (const result of decodedNarrations) {
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-    if (!line.audioUrl) continue;
+    if (!result) continue;
 
-    try {
-      const audioBuffer = await fetchAndDecode(ctx, line.audioUrl);
-      const source = ctx.createBufferSource();
-      source.buffer = audioBuffer;
-      source.connect(narrationGain);
-      const startSec = line.startTime ?? 0;
-      source.start(startSec);
+    const source = ctx.createBufferSource();
+    source.buffer = result.buffer;
+    source.connect(narrationGain);
+    source.start(result.line.startTime ?? 0);
 
-      narrationLoadCount++;
-      onProgress?.(narrationLoadCount / (narrationTotal + 2) * 50);
-    } catch (e) {
-      console.warn('[AudioMixer] 나레이션 로드 실패:', line.audioUrl, e);
-    }
+    narrationLoadCount++;
+    onProgress?.(narrationLoadCount / (narrationTotal + 2) * 50);
   }
 
   // 2. BGM 트랙

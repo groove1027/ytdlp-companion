@@ -77,6 +77,12 @@ export async function renderAllFrames(
   const TOTAL_RENDER_TIMEOUT_MS = 600_000;
   const renderStartTime = performance.now();
 
+  // [FIX #297] sceneStarts 사전 계산 — 매 프레임 O(scenes) 재계산 제거
+  const precomputedSceneStarts = precomputeSceneStarts(timeline, sceneTransitions);
+
+  // [FIX #297] 실패한 비디오 장면 추적 — 연속 실패 시 해당 장면 전체 스킵
+  const failedVideoScenes = new Set<string>();
+
   for (let f = 0; f < totalFrames; f++) {
     // AbortSignal 체크 (매 30프레임마다 = ~1초)
     if (f % fps === 0 && signal?.aborted) {
@@ -97,7 +103,7 @@ export async function renderAllFrames(
     }
 
     const timeSec = f / fps;
-    const frameInfo = resolveFrame(timeSec, timeline, sceneTransitions);
+    const frameInfo = resolveFrame(timeSec, timeline, sceneTransitions, precomputedSceneStarts);
 
     ctx.clearRect(0, 0, width, height);
 
@@ -112,12 +118,12 @@ export async function renderAllFrames(
       // 이전 장면은 끝에서 transDur만큼 겹침 → 전환 시작 시 prevLocalTime = prevDur - transDur
       // 전환 진행에 따라 prevLocalTime = prevDur - transDur + frameInfo.localTime
       const prevLocalTime = prevTiming.imageDuration - transDur + frameInfo.localTime;
-      await renderSceneFrame(auxCtx, prevTiming, Math.max(0, prevLocalTime), imageBitmaps, videoFrameExtractors, width, height, fps);
+      await renderSceneFrame(auxCtx, prevTiming, Math.max(0, prevLocalTime), imageBitmaps, videoFrameExtractors, width, height, fps, failedVideoScenes);
       const prevFrame = await createImageBitmap(auxCanvas);
 
       // 현재 장면 프레임
       const currLocalTime = frameInfo.localTime;
-      await renderSceneFrame(ctx, currTiming, currLocalTime, imageBitmaps, videoFrameExtractors, width, height, fps);
+      await renderSceneFrame(ctx, currTiming, currLocalTime, imageBitmaps, videoFrameExtractors, width, height, fps, failedVideoScenes);
       const currFrame = await createImageBitmap(canvas);
 
       // 전환 블렌딩
@@ -143,7 +149,7 @@ export async function renderAllFrames(
     } else {
       // 일반 장면 프레임
       const timing = timeline[frameInfo.sceneIndex];
-      await renderSceneFrame(ctx, timing, frameInfo.localTime, imageBitmaps, videoFrameExtractors, width, height, fps);
+      await renderSceneFrame(ctx, timing, frameInfo.localTime, imageBitmaps, videoFrameExtractors, width, height, fps, failedVideoScenes);
 
       // 자막 렌더링
       if (frameInfo.subtitleText && subtitleStyle?.template) {
@@ -192,21 +198,33 @@ export function computeTotalDuration(
 
 // ─── 내부 헬퍼 ─────────────────────────────────────
 
+/** [FIX #297] sceneStarts 사전 계산 — 루프 밖에서 1회만 호출 */
+function precomputeSceneStarts(
+  timeline: UnifiedSceneTiming[],
+  sceneTransitions?: Record<string, SceneTransitionConfig>,
+): number[] {
+  const sceneStarts: number[] = [0];
+  for (let i = 0; i < timeline.length - 1; i++) {
+    const transDur = getNextTransDur(i, timeline, sceneTransitions);
+    sceneStarts.push(sceneStarts[i] + timeline[i].imageDuration - transDur);
+  }
+  return sceneStarts;
+}
+
 /** 전역 시간 → 장면/전환/자막 정보 매핑 */
 function resolveFrame(
   timeSec: number,
   timeline: UnifiedSceneTiming[],
   sceneTransitions?: Record<string, SceneTransitionConfig>,
+  sceneStarts?: number[],
 ): FrameInfo {
   if (timeline.length === 0) {
     return { sceneIndex: 0, localTime: 0, transitionProgress: null, prevSceneIndex: null, subtitleText: null };
   }
 
-  // 1. 장면별 렌더 시작 시각 계산
-  const sceneStarts: number[] = [0];
-  for (let i = 0; i < timeline.length - 1; i++) {
-    const transDur = getNextTransDur(i, timeline, sceneTransitions);
-    sceneStarts.push(sceneStarts[i] + timeline[i].imageDuration - transDur);
+  // [FIX #297] 사전 계산된 sceneStarts 사용, 없으면 기존 로직 (하위 호환)
+  if (!sceneStarts) {
+    sceneStarts = precomputeSceneStarts(timeline, sceneTransitions);
   }
 
   // 2. 전환 구간 우선 검사
@@ -312,6 +330,7 @@ async function renderSceneFrame(
   canvasW: number,
   canvasH: number,
   fps: number = 30,
+  failedVideoScenes?: Set<string>,
 ): Promise<void> {
   const bitmap = imageBitmaps.get(timing.sceneId);
   const videoExtractor = videoFrameExtractors.get(timing.sceneId);
@@ -365,30 +384,42 @@ async function renderSceneFrame(
     // filter 초기화
     if (filters.length > 0) ctx.filter = 'none';
   } else if (videoExtractor) {
-    // 비디오 장면: 현재 시간의 프레임을 추출하여 그리기
-    // [FIX #285] 프레임 추출 타임아웃 10s→30s — 저사양 GPU 메모리 압박 시 타임아웃 방지
-    try {
-      const frameBitmap = await Promise.race([
-        videoExtractor.getFrameAt((timing.videoTrimStartSec ?? 0) + localTime),
-        new Promise<null>((_, reject) =>
-          setTimeout(() => reject(new Error(`Frame extraction timeout at ${localTime.toFixed(2)}s`)), 30_000)
-        ),
-      ]);
-      if (frameBitmap) {
-        const scale = Math.max(canvasW / frameBitmap.width, canvasH / frameBitmap.height);
-        const dw = frameBitmap.width * scale;
-        const dh = frameBitmap.height * scale;
-        ctx.drawImage(frameBitmap, (canvasW - dw) / 2, (canvasH - dh) / 2, dw, dh);
-        frameBitmap.close();
-      } else {
+    // [FIX #297] 이미 실패 확정된 비디오 장면은 즉시 검은 화면 (30초 대기 제거)
+    if (failedVideoScenes?.has(timing.sceneId)) {
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, canvasW, canvasH);
+    } else {
+      // 비디오 장면: 현재 시간의 프레임을 추출하여 그리기
+      // [FIX #297] 외부 타임아웃을 35초로 — 내부 적응형 타임아웃(videoDecoder)이 먼저 반응하도록
+      try {
+        const frameBitmap = await Promise.race([
+          videoExtractor.getFrameAt((timing.videoTrimStartSec ?? 0) + localTime),
+          new Promise<null>((_, reject) =>
+            setTimeout(() => reject(new Error(`Frame extraction timeout at ${localTime.toFixed(2)}s`)), 35_000)
+          ),
+        ]);
+        if (frameBitmap) {
+          const scale = Math.max(canvasW / frameBitmap.width, canvasH / frameBitmap.height);
+          const dw = frameBitmap.width * scale;
+          const dh = frameBitmap.height * scale;
+          ctx.drawImage(frameBitmap, (canvasW - dw) / 2, (canvasH - dh) / 2, dw, dh);
+          frameBitmap.close();
+        } else {
+          ctx.fillStyle = '#000';
+          ctx.fillRect(0, 0, canvasW, canvasH);
+        }
+      } catch (e) {
+        logger.trackSwallowedError('canvasRenderer:extractFrame', e);
+        // [FIX #297] 디코더 연속 실패 시 해당 장면 전체를 실패로 마킹
+        const errMsg = e instanceof Error ? e.message : '';
+        if (errMsg.includes('연속') && errMsg.includes('실패') || errMsg.includes('추가 시도 중단')) {
+          failedVideoScenes?.add(timing.sceneId);
+          console.warn(`[canvasRenderer] 비디오 장면 "${timing.sceneId}" 디코더 포기 — 나머지 프레임 스킵`);
+        }
+        // 프레임 추출 실패 시 검은 화면으로 대체 (렌더링 중단하지 않음)
         ctx.fillStyle = '#000';
         ctx.fillRect(0, 0, canvasW, canvasH);
       }
-    } catch (e) {
-      logger.trackSwallowedError('canvasRenderer:extractFrame', e);
-      // 프레임 추출 실패 시 검은 화면으로 대체 (렌더링 중단하지 않음)
-      ctx.fillStyle = '#000';
-      ctx.fillRect(0, 0, canvasW, canvasH);
     }
   } else {
     // 에셋 없음: 검은 화면

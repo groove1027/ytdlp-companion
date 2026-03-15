@@ -424,6 +424,12 @@ export async function createStreamingVideoExtractor(
   let disposed = false;
   let decoderGeneration = 0;
 
+  // [FIX #297] 연속 실패 감지 — 디코더 고장 시 30초×N 대기 방지
+  let consecutiveFailures = 0;
+  const MAX_CONSECUTIVE_FAILURES = 3;
+  // 적응형 타임아웃: 실패할수록 짧아짐 (30s → 5s → 2s → 즉시 포기)
+  const ADAPTIVE_TIMEOUTS = [30_000, 5_000, 2_000];
+
   let pendingTarget: {
     sampleIdx: number;
     resolve: (bmp: ImageBitmap) => void;
@@ -552,12 +558,17 @@ export async function createStreamingVideoExtractor(
     async getFrameAt(timeSec: number): Promise<ImageBitmap> {
       if (disposed) throw new Error('디코더가 이미 해제됨');
 
+      // [FIX #297] 연속 실패 감지: 디코더가 완전히 고장난 경우 즉시 포기
+      if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+        throw new Error(`디코더 연속 ${MAX_CONSECUTIVE_FAILURES}회 실패, 추가 시도 중단`);
+      }
+
       const clampedTime = Math.max(0, Math.min(timeSec, duration));
       const targetIdx = findClosestSample(clampedTime);
 
       // 1. Cache hit
       const cached = removeFromCache(targetIdx);
-      if (cached) return cached;
+      if (cached) { consecutiveFailures = 0; return cached; }
 
       // 2. Decoder reset needed?
       const precedingKf = findPrecedingKeyframe(targetIdx);
@@ -578,22 +589,24 @@ export async function createStreamingVideoExtractor(
 
       // 4. Check cache again (output callback might have delivered synchronously)
       const cached2 = removeFromCache(targetIdx);
-      if (cached2) return cached2;
+      if (cached2) { consecutiveFailures = 0; return cached2; }
 
       // 5. Wait for output callback
+      // [FIX #297] 적응형 타임아웃: 실패할수록 짧아짐 (30s → 5s → 2s)
+      const timeoutMs = ADAPTIVE_TIMEOUTS[Math.min(consecutiveFailures, ADAPTIVE_TIMEOUTS.length - 1)];
       return new Promise<ImageBitmap>((resolve, reject) => {
-        // [FIX #285] 타임아웃 10s→30s: 저사양 GPU(Intel Iris Xe 등)에서 메모리 압박 시 디코딩 지연
         const timer = setTimeout(() => {
           if (pendingTarget?.sampleIdx === targetIdx) {
             pendingTarget = null;
-            reject(new Error(`프레임 디코딩 타임아웃: ${timeSec.toFixed(3)}s`));
+            consecutiveFailures++;
+            reject(new Error(`프레임 디코딩 타임아웃: ${timeSec.toFixed(3)}s (${timeoutMs}ms, 연속실패 ${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES})`));
           }
-        }, 30_000);
+        }, timeoutMs);
 
         pendingTarget = {
           sampleIdx: targetIdx,
-          resolve: (bmp) => { clearTimeout(timer); resolve(bmp); },
-          reject: (err) => { clearTimeout(timer); reject(err); },
+          resolve: (bmp) => { clearTimeout(timer); consecutiveFailures = 0; resolve(bmp); },
+          reject: (err) => { clearTimeout(timer); consecutiveFailures++; reject(err); },
         };
       });
     },
