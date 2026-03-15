@@ -8,6 +8,7 @@
 
 ## 🟢 완료된 작업
 
+- [x] **#316 mergeVideoAudio ffmpeg.wasm -c copy 교체** — mp4-muxer 타임스케일 변환 반올림 오차로 B-프레임 튐 현상 발생 → ffmpeg.wasm `-c copy` 무손실 복사로 교체. 실제 영상 재생 테스트 통과 (videoDecoder.ts, 2026-03-15)
 - [x] **#316 YouTube 1080p 분리 다운로드 + 클라이언트 머지 (테스트 검증)** — 실제 영상(iAaeitG8P1E)으로 E2E 검증. B-프레임 DTS 처리 + AudioSpecificConfig 정확 추출. ffprobe: H.264 High 1080x1920 60fps + AAC LC 44100Hz stereo 확인 (videoDecoder.ts, 2026-03-15)
 - [x] **#316 YouTube 1080p 분리 다운로드 + 클라이언트 머지** — 서버 ffmpeg 머지 회피(502 방지). 영상(videoOnly=true)+오디오 병렬 다운로드 → mp4box demux → mp4-muxer remux 클라이언트 머지(품질손실 0%) → 합본 Blob을 setVideoBlob 저장(NLE 내보내기 시 사운드 포함). downloadAudioViaProxy 신규, mergeVideoAudio 신규 (ytdlpApiService.ts, videoDecoder.ts, VideoAnalysisRoom.tsx, 2026-03-15)
 - [x] **#316 YouTube 영상 다운로드 3회 재시도 + 화질 다운그레이드** — downloadVideoViaProxy에 502/503/504/네트워크 에러 시 3회 지수 백오프 재시도 + 화질 다운그레이드(best→720p→480p→360p) 추가. extractFramesWithFallback에서 streamUrl 없어도 youtubeVideoId만으로 Layer 1 다운로드 시도. YouTube 썸네일 폴백(Layer 3)은 모든 재시도 소진 후에만 최후 수단 (ytdlpApiService.ts, VideoAnalysisRoom.tsx, 2026-03-15)
