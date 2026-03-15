@@ -3478,8 +3478,23 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
 
       if (uploadedFiles.length > 0) {
         // 다중 업로드 모드: 모든 파일에서 타임코드 기반 프레임 추출
-        const allTimecodes = collectTimecodesFromVersions(finalVersions);
+        let allTimecodes = collectTimecodesFromVersions(finalVersions);
         console.log(`[Frame] 수집된 타임코드: ${allTimecodes.length}개 (업로드 ${uploadedFiles.length}개 영상)`);
+
+        // [FIX #311] 업로드 영상도 장면감지로 AI 타임코드 보정
+        if (allTimecodes.length > 0 && uploadedFiles.length === 1) {
+          try {
+            const uploadBlob = uploadedFiles[0] instanceof File ? uploadedFiles[0] : new Blob([uploadedFiles[0]]);
+            const uploadCuts = await detectSceneCuts(uploadBlob);
+            if (uploadCuts.length > 0) {
+              allTimecodes = mergeWithAiTimecodes(allTimecodes, uploadCuts);
+              console.log(`[Scene] ✅ 업로드 씬 감지 보정 완료: ${uploadCuts.length}개 컷 → 타임코드 보정`);
+            }
+          } catch (e) {
+            console.warn('[Scene] 업로드 씬 감지 실패 (AI 타임코드로 진행):', e);
+          }
+        }
+
         if (allTimecodes.length > 0) {
           // [FIX #189] 타임코드 기반 프레임 추출도 병렬화
           const exactResults = await Promise.allSettled(
@@ -3553,14 +3568,27 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
           }
         }
       } else {
-        // 소셜 (TikTok 등): 이미 다운로드한 Blob으로 프레임 추출
+        // 소셜 (TikTok 등): 이미 다운로드한 Blob으로 장면감지 + 프레임 추출
         const existingBlob = useVideoAnalysisStore.getState().videoBlob;
         if (existingBlob) {
           const allTimecodes = collectTimecodesFromVersions(finalVersions, durSec);
           if (allTimecodes.length > 0) {
+            // [FIX #311] 소셜 영상도 장면감지 + AI 타임코드 보정 (YouTube와 동일 정밀도)
+            let mergedTimecodes = allTimecodes;
+            try {
+              console.log('[Scene] 소셜 영상 씬 감지 시작...');
+              const socialCuts = await detectSceneCuts(existingBlob);
+              if (socialCuts.length > 0) {
+                mergedTimecodes = mergeWithAiTimecodes(allTimecodes, socialCuts);
+                console.log(`[Scene] ✅ 소셜 씬 감지 완료: AI ${allTimecodes.length}개 + 씬 ${socialCuts.length}개 → ${mergedTimecodes.length}개 병합`);
+              }
+            } catch (e) {
+              console.warn('[Scene] 소셜 씬 감지 실패 (AI 타임코드로 진행):', e);
+            }
+
             const blobUrl = URL.createObjectURL(existingBlob);
             logger.registerBlobUrl(blobUrl, 'video', 'VideoAnalysisRoom:socialPostAnalysis', existingBlob.size / (1024 * 1024));
-            const exactFrames = await canvasExtractFrames(blobUrl, allTimecodes, true);
+            const exactFrames = await canvasExtractFrames(blobUrl, mergedTimecodes, true);
             if (exactFrames.length > 0) {
               console.log(`[Frame] ✅ 소셜 영상 타임코드 프레임 ${exactFrames.length}개 적용`);
               setThumbnails(exactFrames);

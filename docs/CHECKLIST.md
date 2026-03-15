@@ -8,6 +8,7 @@
 
 ## 🟢 완료된 작업
 
+- [x] **#311 소셜/업로드 영상 장면감지 보정 누락 수정** — 소셜(TikTok/Douyin/샤오홍슈)과 업로드 영상에서 detectSceneCuts + mergeWithAiTimecodes가 누락되어 AI 타임코드만 사용하던 문제. YouTube와 동일하게 장면감지 → 타임코드 보정 → 정밀 프레임 추출 파이프라인 적용. 다중 업로드는 첫 번째 파일에만 적용 (다중 소스 장면감지는 비용 대비 효과 낮음) (VideoAnalysisRoom.tsx, 2026-03-15)
 - [x] **#310 영상분석실→편집실 영상 전달 무한대기 수정 + frames 자동 매칭** — (1) getVideoThumbnail/getVideoDuration/getVideoDimensions 3개 함수에 8초 타임아웃 추가 — 특정 코덱/브라우저에서 video 이벤트 미발화 시 무한대기 방지 (2) addSourceVideos의 Promise.all→Promise.allSettled 전환 — 하나 실패해도 나머지로 영상 등록 완료 (3) importFromVideoAnalysis에서 버리고 있던 frames(타임코드 프레임)를 parseEditTable 완료 후 EdlEntry.referenceFrameUrl에 자동 매칭 — AI 재파싱 없이 원본 프레임 활용 (editPointStore.ts, 2026-03-15)
 - [x] **#308 롱폼 대본 분량 미달 이어쓰기 + #309 캐릭터 비틀기 질감 보존** — (1) 대본 생성 시 모델이 목표 분량 85% 미달로 조기 종료하면 finishReason과 무관하게 자동 이어쓰기 실행 (ScriptWriterTab.tsx 2곳) (2) generateCharacterVariations 프롬프트에 질감/스타일 보존 명시적 제약 추가 (thumbnailService.ts) + 이슈 12건 전체 코멘트/닫기 (2026-03-15)
 - [x] **동영상 프롬프트 상세화 + 미리보기 재생 수정** — (1) AI가 cameraMovement 13개 키워드만 생성하던 문제 → videoPrompt 필드 신설하여 30-60단어 상세 영상 모션 프롬프트 생성 (동작/환경/카메라/속도감 서술) (2) UI "동영상 프롬프트" 텍스트영역이 cameraMovement 대신 videoPrompt 표시/편집 (3) 영상 생성 시 videoPrompt를 메인 프롬프트로 사용 (없으면 visualPrompt 폴백) (4) 미리보기 탭 비디오에 key/playsInline/autoPlay/muted 추가하여 장면 전환 시 재생 정상화 (types.ts, scriptAnalysis.ts, StoryboardPanel.tsx, useVideoBatch.ts, projectStore.ts, 2026-03-15)
