@@ -240,6 +240,26 @@ export function generateFcpXml(params: {
           </samplecharacteristics>
         </format>
         <track>
+          <file id="file-1">
+            <name>${safeFileName}</name>
+            <pathurl>file://localhost/media/${encodeURIComponent(videoFileName)}</pathurl>
+            <duration>${totalFrames}</duration>
+            <rate><ntsc>FALSE</ntsc><timebase>${fps}</timebase></rate>
+            <media>
+              <video>
+                <samplecharacteristics>
+                  <width>${width}</width>
+                  <height>${height}</height>
+                </samplecharacteristics>
+              </video>
+              <audio>
+                <samplecharacteristics>
+                  <samplerate>48000</samplerate>
+                  <depth>16</depth>
+                </samplecharacteristics>
+              </audio>
+            </media>
+          </file>
           <clipitem id="clip-master">
             <name>${safeFileName}</name>
             <duration>${totalFrames}</duration>
@@ -248,29 +268,7 @@ export function generateFcpXml(params: {
             <out>${totalFrames}</out>
             <start>0</start>
             <end>${totalFrames}</end>
-            <file id="file-1">
-              <name>${safeFileName}</name>
-              <pathurl>file://localhost/media/${encodeURIComponent(videoFileName)}</pathurl>
-              <duration>${totalFrames}</duration>
-              <rate><ntsc>FALSE</ntsc><timebase>${fps}</timebase></rate>
-              <media>
-                <video>
-                  <samplecharacteristics>
-                    <width>${width}</width>
-                    <height>${height}</height>
-                  </samplecharacteristics>
-                </video>
-                <audio>
-                  <samplecharacteristics>
-                    <samplerate>48000</samplerate>
-                    <depth>16</depth>
-                  </samplecharacteristics>
-                </audio>
-              </media>
-            </file>
-            <labels>
-              <label2>Iris</label2>
-            </labels>
+            <file id="file-1"/>
           </clipitem>${videoClips}
         </track>
         <track>
@@ -558,7 +556,7 @@ export function generateFcpXmlFromEdl(params: {
             <rate><ntsc>FALSE</ntsc><timebase>${fps}</timebase></rate>
           </samplecharacteristics>
         </format>
-        <track>${fileDefsXml.length > 0 ? fileDefsXml.slice(0, fileDefsXml.indexOf('</file>') + 7) : ''}${videoClips}
+        <track>${fileDefsXml}${videoClips}
         </track>
         <track><enabled>TRUE</enabled>${subtitleClips}
         </track>
