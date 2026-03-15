@@ -2978,6 +2978,7 @@ const VideoAnalysisRoom: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [guideAiResult, setGuideAiResult] = useState('');
+  const [nleExporting, setNleExporting] = useState<{ target: string; step: string } | null>(null);
   const validYoutubeUrls = youtubeUrls.filter(u => u.trim().length > 0);
   const hasInput = inputMode === 'youtube' ? validYoutubeUrls.length > 0 : uploadedFiles.length > 0;
 
@@ -4395,16 +4396,18 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                 <button
                                   key={target}
                                   type="button"
+                                  disabled={nleExporting !== null}
                                   onClick={async () => {
+                                    if (nleExporting) return;
+                                    setNleExporting({ target, step: '준비 중...' });
                                     try {
-                                      // [FIX #316] videoBlob 없으면 자동 다운로드 (새로고침 후 등)
+                                      // Step 1: videoBlob 확보
                                       let videoBlob = useVideoAnalysisStore.getState().videoBlob;
                                       if (!videoBlob) {
-                                        // 업로드 파일이 있으면 그걸 사용
                                         if (uploadedFiles[0]) {
                                           videoBlob = uploadedFiles[0];
                                         } else if (inputMode === 'youtube' && youtubeUrl) {
-                                          showToast(`영상 다운로드 중... 잠시만 기다려주세요`, 5000);
+                                          setNleExporting({ target, step: '영상 다운로드 중...' });
                                           const dlResult = await downloadVideoAsBlob(extractYouTubeVideoId(youtubeUrl) || youtubeUrl);
                                           if (dlResult) {
                                             videoBlob = dlResult.blob;
@@ -4416,35 +4419,50 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                         showToast('영상을 다운로드할 수 없습니다. 다시 시도해주세요.', 4000);
                                         return;
                                       }
-                                      showToast(`${label} 패키지 생성 중...`, 3000);
+                                      // Step 2: 영상 치수 감지
+                                      setNleExporting({ target, step: '영상 정보 확인 중...' });
                                       const { buildNlePackageZip } = await import('../../../services/nleExportService');
                                       const fileName = youtubeUrl ? `${v.title.replace(/[^\w가-힣\s-]/g, '').slice(0, 30)}.mp4` : (uploadedFiles[0]?.name || 'video.mp4');
-                                      // [FIX #316] 영상 치수 감지 — 9:16/16:9 자동 판별
                                       const dims = await new Promise<{ w: number; h: number; fps: number }>(resolve => {
                                         const vid = document.createElement('video');
                                         vid.muted = true; vid.preload = 'metadata';
                                         vid.onloadedmetadata = () => {
-                                          const w = vid.videoWidth || 1080;
-                                          const h = vid.videoHeight || 1920;
-                                          resolve({ w, h, fps: 30 });
+                                          resolve({ w: vid.videoWidth || 1080, h: vid.videoHeight || 1920, fps: 30 });
                                           URL.revokeObjectURL(vid.src);
                                         };
                                         vid.onerror = () => resolve({ w: 1080, h: 1920, fps: 30 });
                                         setTimeout(() => resolve({ w: 1080, h: 1920, fps: 30 }), 5000);
                                         vid.src = URL.createObjectURL(videoBlob!);
                                       });
+                                      // Step 3: ZIP 패키지 생성
+                                      setNleExporting({ target, step: 'ZIP 패키지 생성 중...' });
                                       const zipBlob = await buildNlePackageZip({ target, scenes: v.scenes, title: v.title, videoBlob, videoFileName: fileName, preset: selectedPreset || undefined, width: dims.w, height: dims.h, fps: dims.fps });
                                       const url = URL.createObjectURL(zipBlob);
                                       const a = document.createElement('a'); a.href = url; a.download = `${v.title.replace(/[^\w가-힣\s-]/g, '').slice(0, 30)}_${label}.zip`; a.click();
                                       setTimeout(() => URL.revokeObjectURL(url), 10000);
                                       showToast(`${label} 패키지 다운로드 완료!`);
-                                    } catch (e) { console.error('[NLE]', e); showToast(`${label} 패키지 생성 실패`); }
+                                    } catch (e) { console.error('[NLE]', e); showToast(`${label} 패키지 생성 실패`); } finally { setNleExporting(null); }
                                   }}
-                                  className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold bg-gradient-to-r from-amber-600/30 to-orange-600/30 text-amber-300 border border-amber-500/40 hover:from-amber-600/40 hover:to-orange-600/40 hover:border-amber-400/60 transition-all shadow-sm"
+                                  className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold transition-all shadow-sm ${
+                                    nleExporting?.target === target
+                                      ? 'bg-gradient-to-r from-amber-600/50 to-orange-600/50 text-amber-200 border border-amber-400/60 cursor-wait'
+                                      : nleExporting
+                                        ? 'bg-gray-700/40 text-gray-500 border border-gray-600/20 cursor-not-allowed'
+                                        : 'bg-gradient-to-r from-amber-600/30 to-orange-600/30 text-amber-300 border border-amber-500/40 hover:from-amber-600/40 hover:to-orange-600/40 hover:border-amber-400/60'
+                                  }`}
                                 >
-                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">{icon}</svg>
-                                  {label}
-                                  <span className="text-[10px] text-amber-400/60 font-normal">ZIP</span>
+                                  {nleExporting?.target === target ? (
+                                    <>
+                                      <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+                                      <span className="text-xs">{nleExporting.step}</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">{icon}</svg>
+                                      {label}
+                                      <span className="text-[10px] text-amber-400/60 font-normal">ZIP</span>
+                                    </>
+                                  )}
                                 </button>
                               );
                             })}
