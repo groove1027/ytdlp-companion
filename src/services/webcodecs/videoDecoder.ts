@@ -159,16 +159,41 @@ export async function mergeVideoAudio(videoBlob: Blob, audioBlob: Blob): Promise
   if (!aTrack) throw new Error('오디오 트랙을 찾을 수 없습니다');
   const aSamples = audioFile.getTrackSamplesInfo((aTrack as Track).id) as Sample[];
   if (!aSamples?.length) throw new Error('오디오 샘플이 없습니다');
-  /* eslint-enable @typescript-eslint/no-explicit-any */
 
   const vt = vTrack as Track;
   const at = aTrack as Track;
 
-  // 3. Mux with mp4-muxer
+  // 3. Extract codec descriptions
+  const vDesc = extractDescription(videoFile, vt);
+  // AudioSpecificConfig from esds
+  let audioSpecificConfig: Uint8Array | undefined;
+  try {
+    const trak = (videoFile.moov as any)?.traks ? null
+      : null; // video file has no audio
+    const aTrak = ((audioFile as any).moov?.traks as any[])?.find(
+      (t: any) => t.tkhd?.track_id === at.id,
+    );
+    const esds = aTrak?.mdia?.minf?.stbl?.stsd?.entries?.[0]?.esds;
+    if (esds?.esd?.descs) {
+      for (const desc of esds.esd.descs) {
+        if (desc.descs) {
+          for (const sub of desc.descs) {
+            if (sub.tag === 5 && sub.data) {
+              audioSpecificConfig = new Uint8Array(sub.data);
+            }
+          }
+        }
+      }
+    }
+  } catch { /* ignore */ }
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+
+  // 4. Mux with mp4-muxer (리먹싱 — 품질 손실 0%)
   const target = new ArrayBufferTarget();
   const muxer = new Muxer({
     target,
     fastStart: 'in-memory',
+    firstTimestampBehavior: 'offset',
     video: {
       codec: 'avc',
       width: vt.video?.width ?? 1920,
@@ -181,28 +206,32 @@ export async function mergeVideoAudio(videoBlob: Blob, audioBlob: Blob): Promise
     },
   });
 
-  // Video samples → EncodedVideoChunk
+  // Video samples — DTS 기준 + compositionTimeOffset (B-프레임 대응)
+  let firstV = true;
   for (const s of vSamples) {
     const data = new Uint8Array(videoBuf, s.offset, s.size);
-    const chunk = new EncodedVideoChunk({
-      type: s.is_sync ? 'key' : 'delta',
-      timestamp: (s.cts * 1_000_000) / vt.timescale,
-      duration: (s.duration * 1_000_000) / vt.timescale,
-      data,
-    });
-    muxer.addVideoChunk(chunk);
+    const dts = Math.round((s.dts / vt.timescale) * 1_000_000);
+    const dur = Math.round((s.duration / vt.timescale) * 1_000_000);
+    const cts = Math.round((s.cts / vt.timescale) * 1_000_000);
+    const meta: Record<string, unknown> = { compositionTimeOffset: cts - dts };
+    if (firstV && vDesc) {
+      meta.decoderConfig = { codec: vt.codec, description: vDesc };
+      firstV = false;
+    }
+    muxer.addVideoChunkRaw(data, s.is_sync ? 'key' : 'delta', dts, dur, meta);
   }
 
-  // Audio samples → EncodedAudioChunk
+  // Audio samples
+  let firstA = true;
   for (const s of aSamples) {
     const data = new Uint8Array(audioBuf, s.offset, s.size);
-    const chunk = new EncodedAudioChunk({
-      type: s.is_sync ? 'key' : 'delta',
-      timestamp: (s.cts * 1_000_000) / at.timescale,
-      duration: (s.duration * 1_000_000) / at.timescale,
-      data,
-    });
-    muxer.addAudioChunk(chunk);
+    const dts = Math.round((s.dts / at.timescale) * 1_000_000);
+    const dur = Math.round((s.duration / at.timescale) * 1_000_000);
+    const meta = firstA && audioSpecificConfig
+      ? { decoderConfig: { codec: 'mp4a.40.2', description: audioSpecificConfig, numberOfChannels: at.audio?.channel_count ?? 2, sampleRate: at.audio?.sample_rate ?? 48000 } }
+      : undefined;
+    if (firstA) firstA = false;
+    muxer.addAudioChunkRaw(data, s.is_sync ? 'key' : 'delta', dts, dur, meta);
   }
 
   muxer.finalize();
