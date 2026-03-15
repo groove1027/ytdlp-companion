@@ -321,11 +321,21 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
           headers: { 'Authorization': `Bearer ${apiKey}` },
         });
         const data = await res.json();
-        const taskData = data.data;
-        const status = (taskData?.status || '').toLowerCase();
-        const isSuccess = status === 'success' || taskData?.successFlag === 1;
+
+        // [DEBUG] 처음 3개 task의 전체 응답 구조 로깅
+        if (recovered + failed < 3) {
+          console.log(`[복구 DEBUG] taskId=${taskId} 전체 응답:`, JSON.stringify(data).substring(0, 1500));
+        }
+
+        // KIE Grok 영상 task는 data 구조가 다를 수 있음 — 여러 경로 탐색
+        const taskData = data.data || data;
+        const status = (taskData?.status || taskData?.state || '').toLowerCase();
+        const isSuccess = status === 'success' || status === 'completed' || status === 'done'
+          || taskData?.successFlag === 1 || taskData?.success === true
+          || (taskData?.resultJson && typeof taskData.resultJson !== 'undefined')
+          || (taskData?.response?.resultUrls?.length > 0);
         if (!taskData || !isSuccess) {
-          console.warn(`[복구] ⏭️ ${taskId} — status: ${status}, successFlag: ${taskData?.successFlag}`);
+          if (recovered + failed < 5) console.warn(`[복구] ⏭️ ${taskId} — keys: ${Object.keys(taskData || {}).join(',')}, status: ${status}`);
           failed++; continue;
         }
 
