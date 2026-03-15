@@ -45,6 +45,12 @@ if (handleOAuthCallback() || handleTikTokOAuthCallback() || handleInstagramOAuth
   // V2V 테스트용 글로벌 노출 (브라우저 콘솔에서 window.testV2V 호출)
   (window as unknown as Record<string, unknown>).testV2V = testV2V;
 
+  // [FIX] 영상 복구 도구 글로벌 노출 — 브라우저 콘솔에서 window.recoverVideos(['taskId1', 'taskId2', ...]) 호출
+  (window as unknown as Record<string, unknown>).recoverVideos = async (taskIds: string[]) => {
+    const { useProjectStore } = await import('./stores/projectStore');
+    return useProjectStore.getState().recoverVideosByTaskIds(taskIds);
+  };
+
   const rootElement = document.getElementById('root');
   if (!rootElement) {
     throw new Error("Could not find root element to mount to");

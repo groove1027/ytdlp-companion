@@ -115,6 +115,9 @@ interface ProjectStore {
   clearAllSceneImages: () => void;
   clearAllSceneVideos: () => void;
   clearAllSceneMedia: () => void;
+
+  /** KIE task ID로 소실된 영상 복구 — 브라우저 콘솔에서 호출 가능 */
+  recoverVideosByTaskIds: (taskIds: string[]) => Promise<{ recovered: number; failed: number }>;
 }
 
 // Scene fields that may contain base64 image data and should be migrated
@@ -303,6 +306,63 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       videoPrompt: undefined, isPromptFiltered: false,
     })),
   })),
+
+  recoverVideosByTaskIds: async (taskIds) => {
+    const { getKieKey, monitoredFetch } = await import('../services/apiService');
+    const apiKey = getKieKey();
+    if (!apiKey) { console.error('[복구] KIE API Key가 없습니다.'); return { recovered: 0, failed: 0 }; }
+
+    let recovered = 0;
+    let failed = 0;
+
+    for (const taskId of taskIds) {
+      try {
+        const res = await monitoredFetch(`https://api.kie.ai/api/v1/jobs/recordInfo?taskId=${taskId}`, {
+          headers: { 'Authorization': `Bearer ${apiKey}` },
+        });
+        const data = await res.json();
+        const taskData = data.data;
+        if (!taskData || taskData.status !== 'success') { failed++; continue; }
+
+        let result = taskData.resultJson;
+        if (typeof result === 'string') { try { result = JSON.parse(result); } catch { failed++; continue; } }
+        const videoUrl = result?.resultUrls?.[0];
+        if (!videoUrl) { failed++; continue; }
+
+        // input에서 원본 이미지 URL 추출하여 scene 매칭
+        let inputData = taskData.input;
+        if (typeof inputData === 'string') { try { inputData = JSON.parse(inputData); } catch { /* noop */ } }
+        const sourceImageUrl = inputData?.image_urls?.[0];
+
+        const scenes = get().scenes;
+        let matchedScene = scenes.find(s => !s.videoUrl && s.imageUrl && sourceImageUrl && s.imageUrl === sourceImageUrl);
+        // 이미지 URL 직접 매칭 안 되면 generationTaskId로 매칭
+        if (!matchedScene) matchedScene = scenes.find(s => !s.videoUrl && s.generationTaskId === taskId);
+        // 그래도 없으면 videoUrl이 없는 첫 scene에 순서대로 매칭
+        if (!matchedScene) matchedScene = scenes.find(s => !s.videoUrl && s.imageUrl);
+
+        if (matchedScene) {
+          set((state) => ({
+            scenes: state.scenes.map(s => s.id === matchedScene!.id ? {
+              ...s, videoUrl, generationTaskId: taskId, isGeneratingVideo: false,
+              imageUpdatedAfterVideo: false, progress: 100,
+            } : s),
+          }));
+          recovered++;
+          console.log(`[복구] ✅ ${taskId} → scene ${matchedScene.id}`);
+        } else {
+          failed++;
+          console.warn(`[복구] ⚠️ ${taskId} — 매칭 가능한 장면 없음`);
+        }
+      } catch (e) {
+        failed++;
+        console.error(`[복구] ❌ ${taskId}:`, e);
+      }
+    }
+
+    console.log(`[복구 완료] ✅ ${recovered}개 복구, ❌ ${failed}개 실패`);
+    return { recovered, failed };
+  },
 
   loadProject: (project, options) => {
     const scenes = project.scenes || [];
