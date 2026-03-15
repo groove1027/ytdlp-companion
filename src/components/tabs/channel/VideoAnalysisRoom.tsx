@@ -394,8 +394,8 @@ function matchFrameToTimecode(timeSec: number, frames: TimedFrame[]): TimedFrame
     const dist = Math.abs(frames[i].timeSec - timeSec);
     if (dist < bestDist) { best = frames[i]; bestDist = dist; }
   }
-  // 1초 이상 떨어진 프레임은 부정확 → null 반환 (인덱스 폴백으로 전환)
-  if (bestDist > 1.0) return null;
+  // [FIX #334] 1초 제한 제거 — 프레임이 있으면 가장 가까운 것을 항상 반환
+  // 프레임 간격이 2~3초인 경우, 장면 타임코드가 사이에 걸리면 1초 이상 차이 → 비주얼 누락 발생
   return best;
 }
 
