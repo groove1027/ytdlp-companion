@@ -4,6 +4,7 @@ import { getStoredKeys, saveApiKeys, syncApiKeysToServer, getYoutubeApiKeyPool, 
 import { showToast } from '../stores/uiStore';
 import { useAuthGuard } from '../hooks/useAuthGuard';
 import { logger } from '../services/LoggerService';
+import { useGoogleCookieStore } from '../stores/googleCookieStore';
 
 interface ApiKeySettingsProps {
     isOpen: boolean;
@@ -638,6 +639,8 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
                             <input type={showPassword ? "text" : "password"} value={keys.ghostcutAppSecret} onChange={(e) => setKeys({...keys, ghostcutAppSecret: e.target.value})} placeholder="AppSecret" className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-base text-white" />
                         </div>
                     </div>
+                    {/* 9. Google 무료 이미지 — 쿠키 연결 */}
+                    <GoogleCookieSection />
                 </div>
 
                 <div className="flex gap-3 mt-8 pt-4 border-t border-gray-700">
@@ -647,6 +650,81 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
             </div>
         </div>
     );
+};
+
+/** Google 쿠키 연결 섹션 (ApiKeySettings 내부) */
+const GoogleCookieSection: React.FC = () => {
+  const { cookie, isValid, isValidating, userEmail, userName, setCookie, clearCookie, getRemainingImages, getRemainingVideos, dailyImageLimit, monthlyVideoLimit } = useGoogleCookieStore();
+  const [input, setInput] = useState('');
+
+  const handleConnect = async () => {
+    const val = input.trim();
+    if (!val) { showToast('쿠키를 붙여넣어주세요'); return; }
+    const ok = await setCookie(val);
+    if (ok) {
+      showToast('Google Imagen 연결 완료! 이미지와 영상을 무료로 생성할 수 있어요.', 3000);
+      setInput('');
+    } else {
+      showToast('쿠키 인증 실패. 올바른 쿠키인지 확인해주세요.', 5000);
+    }
+  };
+
+  return (
+    <div className="space-y-3 bg-gradient-to-br from-green-900/20 to-emerald-900/10 border border-green-500/20 rounded-xl p-4">
+      <div className="flex items-start justify-between">
+        <div className="flex flex-col">
+          <h3 className="text-base font-bold text-green-400 uppercase tracking-wider">🆓 GOOGLE IMAGEN (무료)</h3>
+          <span className="text-sm text-gray-400">Google 쿠키로 이미지/영상 무료 생성 (Imagen 3.5 + Veo 3.1)</span>
+        </div>
+        <a href="https://labs.google/fx/tools/image-fx" target="_blank" rel="noopener noreferrer"
+          className="shrink-0 ml-3 px-2.5 py-1 bg-green-600/20 hover:bg-green-600/40 border border-green-500/30 text-green-400 text-xs font-bold rounded-lg transition-all flex items-center gap-1">
+          labs.google 열기 ↗
+        </a>
+      </div>
+
+      {isValid ? (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 bg-green-900/30 border border-green-500/20 rounded-lg px-3 py-2">
+            <span className="text-green-400 text-sm font-bold">✅ 연결됨</span>
+            <span className="text-gray-300 text-sm">{userName || userEmail}</span>
+            <div className="flex-1" />
+            <span className="text-xs text-gray-500">오늘 이미지 {getRemainingImages()}/{dailyImageLimit} 남음 · 영상 {getRemainingVideos()}/{monthlyVideoLimit} 남음</span>
+            <button onClick={clearCookie} className="text-xs text-red-400 hover:text-red-300 transition-colors">해제</button>
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <div className="bg-gray-900/50 border border-gray-700/50 rounded-lg px-3 py-2 text-xs text-gray-500 space-y-1">
+            <p className="font-bold text-gray-400">쿠키 가져오는 법:</p>
+            <p>1. 위 [labs.google 열기] 버튼 클릭 → Google 로그인</p>
+            <p>2. F12 (개발자 도구) → Network 탭 → 새로고침 (F5)</p>
+            <p>3. 'session' 또는 'image-fx' 요청 클릭 → Headers → Cookie 값 전체 복사</p>
+            <p>4. 아래에 붙여넣기 → [연결] 클릭</p>
+          </div>
+          <div className="flex gap-2">
+            <input
+              type="password"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Google 쿠키를 붙여넣으세요..."
+              className="flex-1 bg-gray-900 border border-gray-600 rounded p-2 text-sm text-white placeholder-gray-600"
+            />
+            <button
+              onClick={handleConnect}
+              disabled={isValidating || !input.trim()}
+              className={`px-4 py-2 rounded text-sm font-bold transition-all ${
+                isValidating ? 'bg-gray-700 text-gray-500 animate-pulse' :
+                !input.trim() ? 'bg-gray-700 text-gray-500 cursor-not-allowed' :
+                'bg-green-600 hover:bg-green-500 text-white'
+              }`}
+            >
+              {isValidating ? '확인 중...' : '연결'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 };
 
 export default ApiKeySettings;
