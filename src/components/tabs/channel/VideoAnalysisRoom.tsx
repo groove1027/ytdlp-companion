@@ -4901,13 +4901,22 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                   videoStore.setVideoBlob(dl.blob);
                 } catch (e) { console.warn('[EditRoom] 영상 다운로드 실패:', e); }
               }
+              // [FIX #312] 첫 번째 버전의 보정된 편집표 사용 (rawResult는 AI 원본으로 보정 미반영)
+              const currentVersions = useVideoAnalysisStore.getState().versions;
+              const firstVersion = currentVersions[0];
+              const editText = firstVersion
+                ? `제목: ${firstVersion.title}\n컨셉: ${firstVersion.concept}\n\n| 순서 | 모드 | 오디오 내용 | 예상 시간 | 비디오 화면 지시 | 타임코드 소스 |\n| :--- | :--- | :--- | :--- | :--- | :--- |\n` +
+                  firstVersion.scenes.map(s =>
+                    `| ${s.cutNum} | ${s.mode} | ${s.audioContent} | ${s.duration} | ${s.videoDirection} | ${s.timecodeSource} |`
+                  ).join('\n')
+                : rawResult;
               // [FIX #296] try-catch로 감싸 데이터 전달 실패해도 편집실 이동 보장
               try {
                 await useEditPointStore.getState().importFromVideoAnalysis({
                   frames: thumbnails,
                   videoBlob: effectiveBlob,
                   videoFile: uploadedFiles[0] || null,
-                  editTableText: rawResult,
+                  editTableText: editText,
                   narrationText: '', // [FIX #215] 편집표에 이미 내레이션 포함 — 중복 전송 시 토큰 2배 + 429 유발
                 });
               } catch (e) { console.warn('[EditRoom] 데이터 전달 실패:', e); }

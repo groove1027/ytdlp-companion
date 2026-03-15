@@ -8,6 +8,7 @@
 
 ## 🟢 완료된 작업
 
+- [x] **#312-2 하단 "편집실로 보내기" 버튼 rawResult→보정된 editText 수정** — 하단 CTA 버튼이 rawResult(AI 원본 텍스트)를 편집실에 보내 보정된 타임코드가 무시되던 문제. firstVersion.scenes.map으로 보정된 timecodeSource 기반 편집표 생성 (VideoAnalysisRoom.tsx, 2026-03-15)
 - [x] **#312 장면감지 보정 타임코드 역전파 — SRT/편집실에 AI 원본 대신 보정값 전달** — 장면감지로 보정된 타임코드가 프레임 추출에만 사용되고 versions/SRT/편집실에는 AI 원본 타임코드가 그대로 남아있던 심각한 불일치 수정. applyCorrectedTimecodes() 함수로 YouTube/소셜/업로드 3경로 모두 보정된 타임코드를 versions.scenes.sourceTimeline/timecodeSource에 역전파 (VideoAnalysisRoom.tsx, 2026-03-15)
 - [x] **#311 소셜/업로드 영상 장면감지 보정 누락 수정** — 소셜(TikTok/Douyin/샤오홍슈)과 업로드 영상에서 detectSceneCuts + mergeWithAiTimecodes가 누락되어 AI 타임코드만 사용하던 문제. YouTube와 동일하게 장면감지 → 타임코드 보정 → 정밀 프레임 추출 파이프라인 적용. 다중 업로드는 첫 번째 파일에만 적용 (다중 소스 장면감지는 비용 대비 효과 낮음) (VideoAnalysisRoom.tsx, 2026-03-15)
 - [x] **#310 영상분석실→편집실 영상 전달 무한대기 수정 + frames 자동 매칭** — (1) getVideoThumbnail/getVideoDuration/getVideoDimensions 3개 함수에 8초 타임아웃 추가 — 특정 코덱/브라우저에서 video 이벤트 미발화 시 무한대기 방지 (2) addSourceVideos의 Promise.all→Promise.allSettled 전환 — 하나 실패해도 나머지로 영상 등록 완료 (3) importFromVideoAnalysis에서 버리고 있던 frames(타임코드 프레임)를 parseEditTable 완료 후 EdlEntry.referenceFrameUrl에 자동 매칭 — AI 재파싱 없이 원본 프레임 활용 (editPointStore.ts, 2026-03-15)
