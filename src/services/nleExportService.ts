@@ -335,6 +335,11 @@ export async function buildNlePackageZip(params: {
     const xml = generateFcpXml({ scenes, title, videoFileName, preset });
     zip.file(`${safeName}.xml`, xml);
 
+    // [FIX #316] 영상 파일 포함 — CapCut/VREW와 동일하게 videoBlob ZIP에 포함
+    if (videoBlob) {
+      zip.file(videoFileName || 'video.mp4', videoBlob);
+    }
+
     // SRT (자막 레이어 분리)
     const dlgSrt = generateNleSrt(scenes, 'dialogue', preset);
     if (dlgSrt) zip.file(`${safeName}_자막.srt`, BOM + dlgSrt);
@@ -345,13 +350,11 @@ export async function buildNlePackageZip(params: {
     zip.file('README.txt', [
       `=== ${title} — Premiere Pro / DaVinci Resolve ===`,
       '',
-      '1. Premiere Pro를 열고 File > Import를 클릭하세요.',
-      `2. "${safeName}.xml" 파일을 선택하면 타임라인이 자동 생성됩니다.`,
-      '3. 자막 트랙(V2)이 자동으로 배치되어 있습니다.',
-      '4. 추가 SRT 파일은 별도 import할 수 있습니다.',
-      '',
-      '* 영상 파일은 별도로 같은 폴더의 media/ 에 배치하세요.',
-      `* 원본 파일명: ${videoFileName}`,
+      '1. ZIP을 압축 해제하세요.',
+      '2. Premiere Pro를 열고 File > Import를 클릭하세요.',
+      `3. "${safeName}.xml" 파일을 선택하면 타임라인이 자동 생성됩니다.`,
+      `4. 영상 파일(${videoFileName})이 같은 폴더에 있어야 자동 연결됩니다.`,
+      '5. 추가 SRT 파일은 별도 import할 수 있습니다.',
     ].join('\n'));
 
   } else {

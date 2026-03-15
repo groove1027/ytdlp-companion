@@ -4379,313 +4379,143 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                         </div>
                       )}
 
-                      {/* 액션 버튼 */}
-                      <div className="flex gap-2 flex-wrap">
-                        {/* 대본 복사 드롭다운 (3종) */}
-                        <div className="relative" data-copy-menu>
-                          <button
-                            type="button"
-                            onClick={() => setCopyMenuVersionId(copyMenuVersionId === v.id ? null : v.id)}
-                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                              copiedVersion === v.id
-                                ? 'bg-green-600/20 text-green-400 border border-green-500/30'
-                                : 'bg-gray-700/50 text-gray-400 border border-gray-600/30 hover:text-white'
-                            }`}
-                          >
-                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
-                            {copiedVersion === v.id ? '복사됨' : '대본복사'}
-                            <svg className="w-3 h-3 ml-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" /></svg>
-                          </button>
-                          {copyMenuVersionId === v.id && (() => {
-                            // 프리셋별 복사 메뉴 라벨 최적화
-                            const ttsLabel = selectedPreset === 'snack' ? 'TTS용 자막 복사'
-                              : selectedPreset === 'alltts' ? 'TTS 대본 복사'
-                              : selectedPreset === 'deep' ? 'TTS용 나레이션 복사'
-                              : selectedPreset === 'shopping' ? 'TTS용 나레이션 복사'
-                              : 'TTS만 복사';
-                            const ttsDesc = selectedPreset === 'snack' ? '자막에서 기호 제거'
-                              : selectedPreset === 'alltts' ? '최소 정제 (원본 보존형)'
-                              : selectedPreset === 'deep' ? '단락 구분 포함'
-                              : '구두점/기호/화자 제거';
-                            const origLabel = selectedPreset === 'snack' ? '자막 원문 복사'
-                              : selectedPreset === 'shopping' ? '나레이션+효과 복사'
-                              : (selectedPreset === 'tikitaka' && v.detectedLang && v.detectedLang !== 'ko') ? '원어+한국어 대사 복사'
-                              : selectedPreset === 'deep' ? '나레이션 원문 복사'
-                              : '오리지널 대사 복사';
-                            const origDesc = selectedPreset === 'snack' ? '자막+효과자막 포함'
-                              : selectedPreset === 'shopping' ? '상품 효과자막 포함'
-                              : (selectedPreset === 'tikitaka' && v.detectedLang && v.detectedLang !== 'ko') ? `${v.detectedLang.toUpperCase()}+KR 쌍`
-                              : '원본 대사 그대로';
-                            const allLabel = selectedPreset === 'deep' ? '분석 보고서 복사'
-                              : selectedPreset === 'shopping' ? '쇼핑 대본 전체 복사'
-                              : '모두 복사';
-                            const allDesc = selectedPreset === 'deep' ? '나레이션+화면지시+효과'
-                              : selectedPreset === 'shopping' ? '나레이션+효과+타임코드'
-                              : '편집표 전체 (모드/효과/타임코드)';
-                            return (
-                            <div className="absolute left-0 top-full mt-1 z-50 bg-gray-800 border border-gray-600/50 rounded-lg shadow-xl overflow-hidden min-w-[180px]">
-                              <button
-                                type="button"
-                                onClick={() => handleCopyVersion(v, 'tts')}
-                                className="w-full flex items-center gap-2 px-3 py-2.5 text-xs text-left hover:bg-blue-600/20 transition-colors"
-                              >
-                                <span className="w-5 h-5 rounded bg-blue-600/20 flex items-center justify-center text-blue-400 text-[10px] font-bold">T</span>
-                                <div>
-                                  <div className="text-gray-200 font-medium">{ttsLabel}</div>
-                                  <div className="text-gray-500 text-[10px]">{ttsDesc}</div>
-                                </div>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleCopyVersion(v, 'original')}
-                                className="w-full flex items-center gap-2 px-3 py-2.5 text-xs text-left hover:bg-violet-600/20 transition-colors border-t border-gray-700/50"
-                              >
-                                <span className="w-5 h-5 rounded bg-violet-600/20 flex items-center justify-center text-violet-400 text-[10px] font-bold">O</span>
-                                <div>
-                                  <div className="text-gray-200 font-medium">{origLabel}</div>
-                                  <div className="text-gray-500 text-[10px]">{origDesc}</div>
-                                </div>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleCopyVersion(v, 'all')}
-                                className="w-full flex items-center gap-2 px-3 py-2.5 text-xs text-left hover:bg-emerald-600/20 transition-colors border-t border-gray-700/50"
-                              >
-                                <span className="w-5 h-5 rounded bg-emerald-600/20 flex items-center justify-center text-emerald-400 text-[10px] font-bold">A</span>
-                                <div>
-                                  <div className="text-gray-200 font-medium">{allLabel}</div>
-                                  <div className="text-gray-500 text-[10px]">{allDesc}</div>
-                                </div>
-                              </button>
-                            </div>
-                            );
-                          })()}
-                        </div>
+                      {/* [FIX #316] 액션 버튼 — 3개 그룹으로 정리 */}
+                      <div className="space-y-2.5">
+                        {/* ── 그룹 1: NLE 내보내기 (영상+자막 ZIP, 가장 눈에 띄게) ── */}
                         {hasScenes && (
-                          <>
-                            {/* 프리뷰 (영상 blob이 있을 때만) */}
-                            {useVideoAnalysisStore.getState().videoBlob && (
+                          <div className="flex gap-2 flex-wrap">
+                            {(['premiere', 'capcut', 'vrew'] as const).map(target => {
+                              const label = target === 'premiere' ? 'Premiere' : target === 'capcut' ? 'CapCut' : 'VREW';
+                              const icon = target === 'premiere'
+                                ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 4V2a1 1 0 011-1h8a1 1 0 011 1v2m-9 0h10m-10 0H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2V6a2 2 0 00-2-2h-2" />
+                                : target === 'capcut'
+                                ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                : <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />;
+                              return (
+                                <button
+                                  key={target}
+                                  type="button"
+                                  onClick={async () => {
+                                    try {
+                                      showToast(`${label} 패키지 생성 중...`, 3000);
+                                      const { buildNlePackageZip } = await import('../../../services/nleExportService');
+                                      const videoBlob = useVideoAnalysisStore.getState().videoBlob;
+                                      const fileName = youtubeUrl ? `${v.title.replace(/[^\w가-힣\s-]/g, '').slice(0, 30)}.mp4` : (uploadedFiles[0]?.name || 'video.mp4');
+                                      const zipBlob = await buildNlePackageZip({ target, scenes: v.scenes, title: v.title, videoBlob, videoFileName: fileName, preset: selectedPreset || undefined });
+                                      const url = URL.createObjectURL(zipBlob);
+                                      const a = document.createElement('a'); a.href = url; a.download = `${v.title.replace(/[^\w가-힣\s-]/g, '').slice(0, 30)}_${label}.zip`; a.click();
+                                      setTimeout(() => URL.revokeObjectURL(url), 10000);
+                                      showToast(`${label} 패키지 다운로드 완료!`);
+                                    } catch (e) { console.error('[NLE]', e); showToast(`${label} 패키지 생성 실패`); }
+                                  }}
+                                  className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold bg-gradient-to-r from-amber-600/30 to-orange-600/30 text-amber-300 border border-amber-500/40 hover:from-amber-600/40 hover:to-orange-600/40 hover:border-amber-400/60 transition-all shadow-sm"
+                                >
+                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">{icon}</svg>
+                                  {label}
+                                  <span className="text-[10px] text-amber-400/60 font-normal">ZIP</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {/* ── 그룹 2: 기본 액션 (대본복사, 프리뷰, 편집실로) ── */}
+                        <div className="flex gap-1.5 flex-wrap">
+                          {/* 대본 복사 드롭다운 (3종) */}
+                          <div className="relative" data-copy-menu>
+                            <button
+                              type="button"
+                              onClick={() => setCopyMenuVersionId(copyMenuVersionId === v.id ? null : v.id)}
+                              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all ${
+                                copiedVersion === v.id
+                                  ? 'bg-green-600/20 text-green-400 border border-green-500/30'
+                                  : 'bg-gray-700/40 text-gray-400 border border-gray-600/20 hover:text-white hover:border-gray-500/40'
+                              }`}
+                            >
+                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                              {copiedVersion === v.id ? '복사됨' : '대본복사'}
+                              <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" /></svg>
+                            </button>
+                            {copyMenuVersionId === v.id && (() => {
+                              const ttsLabel = selectedPreset === 'snack' ? 'TTS용 자막 복사' : selectedPreset === 'alltts' ? 'TTS 대본 복사' : selectedPreset === 'deep' ? 'TTS용 나레이션 복사' : selectedPreset === 'shopping' ? 'TTS용 나레이션 복사' : 'TTS만 복사';
+                              const ttsDesc = selectedPreset === 'snack' ? '자막에서 기호 제거' : selectedPreset === 'alltts' ? '최소 정제 (원본 보존형)' : selectedPreset === 'deep' ? '단락 구분 포함' : '구두점/기호/화자 제거';
+                              const origLabel = selectedPreset === 'snack' ? '자막 원문 복사' : selectedPreset === 'shopping' ? '나레이션+효과 복사' : (selectedPreset === 'tikitaka' && v.detectedLang && v.detectedLang !== 'ko') ? '원어+한국어 대사 복사' : selectedPreset === 'deep' ? '나레이션 원문 복사' : '오리지널 대사 복사';
+                              const origDesc = selectedPreset === 'snack' ? '자막+효과자막 포함' : selectedPreset === 'shopping' ? '상품 효과자막 포함' : (selectedPreset === 'tikitaka' && v.detectedLang && v.detectedLang !== 'ko') ? `${v.detectedLang.toUpperCase()}+KR 쌍` : '원본 대사 그대로';
+                              const allLabel = selectedPreset === 'deep' ? '분석 보고서 복사' : selectedPreset === 'shopping' ? '쇼핑 대본 전체 복사' : '모두 복사';
+                              const allDesc = selectedPreset === 'deep' ? '나레이션+화면지시+효과' : selectedPreset === 'shopping' ? '나레이션+효과+타임코드' : '편집표 전체 (모드/효과/타임코드)';
+                              return (
+                              <div className="absolute left-0 top-full mt-1 z-50 bg-gray-800 border border-gray-600/50 rounded-lg shadow-xl overflow-hidden min-w-[180px]">
+                                <button type="button" onClick={() => handleCopyVersion(v, 'tts')} className="w-full flex items-center gap-2 px-3 py-2.5 text-xs text-left hover:bg-blue-600/20 transition-colors">
+                                  <span className="w-5 h-5 rounded bg-blue-600/20 flex items-center justify-center text-blue-400 text-[10px] font-bold">T</span>
+                                  <div><div className="text-gray-200 font-medium">{ttsLabel}</div><div className="text-gray-500 text-[10px]">{ttsDesc}</div></div>
+                                </button>
+                                <button type="button" onClick={() => handleCopyVersion(v, 'original')} className="w-full flex items-center gap-2 px-3 py-2.5 text-xs text-left hover:bg-violet-600/20 transition-colors border-t border-gray-700/50">
+                                  <span className="w-5 h-5 rounded bg-violet-600/20 flex items-center justify-center text-violet-400 text-[10px] font-bold">O</span>
+                                  <div><div className="text-gray-200 font-medium">{origLabel}</div><div className="text-gray-500 text-[10px]">{origDesc}</div></div>
+                                </button>
+                                <button type="button" onClick={() => handleCopyVersion(v, 'all')} className="w-full flex items-center gap-2 px-3 py-2.5 text-xs text-left hover:bg-emerald-600/20 transition-colors border-t border-gray-700/50">
+                                  <span className="w-5 h-5 rounded bg-emerald-600/20 flex items-center justify-center text-emerald-400 text-[10px] font-bold">A</span>
+                                  <div><div className="text-gray-200 font-medium">{allLabel}</div><div className="text-gray-500 text-[10px]">{allDesc}</div></div>
+                                </button>
+                              </div>
+                              );
+                            })()}
+                          </div>
+                          {hasScenes && (
+                            <>
+                              {useVideoAnalysisStore.getState().videoBlob && (
+                                <button type="button" onClick={() => setPreviewVersion(v)} className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium bg-gray-700/40 text-gray-400 border border-gray-600/20 hover:text-violet-400 hover:border-violet-500/30 transition-all">
+                                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                                  프리뷰
+                                </button>
+                              )}
                               <button
                                 type="button"
-                                onClick={() => setPreviewVersion(v)}
-                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-violet-600/20 text-violet-400 border border-violet-500/30 hover:bg-violet-600/30 transition-all"
+                                onClick={async () => {
+                                  const isTk = true;
+                                  const versionText = isTk
+                                    ? `제목: ${v.title}\n컨셉: ${v.concept}\n\n| 순서 | 모드 | 오디오 내용 | 예상 시간 | 비디오 화면 지시 | 타임코드 소스 |\n| :--- | :--- | :--- | :--- | :--- | :--- |\n` + v.scenes.map(s => `| ${s.cutNum} | ${s.mode} | ${s.audioContent} | ${s.duration} | ${s.videoDirection} | ${s.timecodeSource} |`).join('\n')
+                                    : `제목: ${v.title}\n\n` + v.scenes.map(s => `[컷 ${s.cutNum}] ${s.timeline}\n대사: ${s.dialogue}\n효과: ${s.effectSub}\n장면: ${s.sceneDesc}`).join('\n\n');
+                                  const videoStore = useVideoAnalysisStore.getState();
+                                  let effectiveBlob = videoStore.videoBlob;
+                                  if (!effectiveBlob && !uploadedFiles[0] && inputMode === 'youtube' && youtubeUrl) {
+                                    try { const dl = await downloadSocialVideo(youtubeUrl, '720p'); effectiveBlob = dl.blob; videoStore.setVideoBlob(dl.blob); } catch (e) { console.warn('[EditRoom] 영상 다운로드 실패:', e); }
+                                  }
+                                  try { await useEditPointStore.getState().importFromVideoAnalysis({ frames: thumbnails, videoBlob: effectiveBlob, videoFile: uploadedFiles[0] || null, editTableText: versionText, narrationText: '' }); } catch (e) { console.warn('[EditRoom] 데이터 전달 실패:', e); }
+                                  useVideoAnalysisStore.getState().setEditRoomSelectedVersionIdx(v.id - 1);
+                                  useEditRoomStore.getState().setEditRoomSubTab('edit-point-matching');
+                                  useNavigationStore.getState().setActiveTab('edit-room');
+                                }}
+                                className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium bg-gray-700/40 text-gray-400 border border-gray-600/20 hover:text-amber-400 hover:border-amber-500/30 transition-all"
                               >
-                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
-                                프리뷰
+                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14.121 14.121L19 19m-7-7l7-7m-7 7l-2.879 2.879M12 12L9.121 9.121" /></svg>
+                                편집실로
                               </button>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => handleDownloadSrt(v)}
-                              disabled={renderingVersionId === v.id}
-                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-600/20 text-blue-400 border border-blue-500/30 hover:bg-blue-600/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                              {renderingVersionId === v.id ? (
-                                <>
-                                  <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
-                                  {renderProgress}%
-                                </>
-                              ) : (
-                                <>
-                                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3M3 17v3a2 2 0 002 2h14a2 2 0 002-2v-3" /></svg>
-                                  {useVideoAnalysisStore.getState().videoBlob ? 'SRT+영상' : 'SRT'}
-                                </>
-                              )}
+                            </>
+                          )}
+                        </div>
+
+                        {/* ── 그룹 3: 보조 액션 (SRT, HTML, 대본작성, TTS) ── */}
+                        {hasScenes && (
+                          <div className="flex gap-1.5 flex-wrap">
+                            <button type="button" onClick={() => handleDownloadSrt(v)} disabled={renderingVersionId === v.id}
+                              className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium bg-gray-700/40 text-gray-400 border border-gray-600/20 hover:text-blue-400 hover:border-blue-500/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed">
+                              {renderingVersionId === v.id ? (<><svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>{renderProgress}%</>
+                              ) : (<><svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3M3 17v3a2 2 0 002 2h14a2 2 0 002-2v-3" /></svg>{useVideoAnalysisStore.getState().videoBlob ? 'SRT+영상' : 'SRT'}</>)}
                             </button>
-                            <button
-                              type="button"
-                              onClick={() => handleDownloadVersionHtml(v)}
-                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-600/20 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-600/30 transition-all"
-                            >
-                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3M3 17v3a2 2 0 002 2h14a2 2 0 002-2v-3" /></svg>
-                              HTML
+                            <button type="button" onClick={() => handleDownloadVersionHtml(v)}
+                              className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium bg-gray-700/40 text-gray-400 border border-gray-600/20 hover:text-emerald-400 hover:border-emerald-500/30 transition-all">
+                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3M3 17v3a2 2 0 002 2h14a2 2 0 002-2v-3" /></svg>HTML
                             </button>
-                            <button
-                              type="button"
-                              onClick={async () => {
-                                const isTk = true; // 모든 프리셋 통일: 7열 마스터 편집 테이블
-                                const versionText = isTk
-                                  ? `제목: ${v.title}\n컨셉: ${v.concept}\n\n| 순서 | 모드 | 오디오 내용 | 예상 시간 | 비디오 화면 지시 | 타임코드 소스 |\n| :--- | :--- | :--- | :--- | :--- | :--- |\n` + v.scenes.map(s =>
-                                    `| ${s.cutNum} | ${s.mode} | ${s.audioContent} | ${s.duration} | ${s.videoDirection} | ${s.timecodeSource} |`
-                                  ).join('\n')
-                                  : `제목: ${v.title}\n\n` + v.scenes.map(s =>
-                                    `[컷 ${s.cutNum}] ${s.timeline}\n대사: ${s.dialogue}\n효과: ${s.effectSub}\n장면: ${s.sceneDesc}`
-                                  ).join('\n\n');
-                                const videoStore = useVideoAnalysisStore.getState();
-                                // [FIX #213] YouTube 모드에서 videoBlob이 없으면 다운로드 시도
-                                let effectiveBlob = videoStore.videoBlob;
-                                if (!effectiveBlob && !uploadedFiles[0] && inputMode === 'youtube' && youtubeUrl) {
-                                  try {
-                                    const dl = await downloadSocialVideo(youtubeUrl, '720p');
-                                    effectiveBlob = dl.blob;
-                                    videoStore.setVideoBlob(dl.blob);
-                                  } catch (e) { console.warn('[EditRoom] 영상 다운로드 실패:', e); }
-                                }
-                                // [FIX #296] try-catch로 감싸 데이터 전달 실패해도 편집실 이동 보장
-                                try {
-                                  await useEditPointStore.getState().importFromVideoAnalysis({
-                                    frames: thumbnails,
-                                    videoBlob: effectiveBlob,
-                                    videoFile: uploadedFiles[0] || null,
-                                    editTableText: versionText,
-                                    narrationText: '', // [FIX #215] 편집표에 이미 내레이션 포함 — 중복 전송 시 토큰 2배 + 429 유발
-                                  });
-                                } catch (e) { console.warn('[EditRoom] 데이터 전달 실패:', e); }
-                                useVideoAnalysisStore.getState().setEditRoomSelectedVersionIdx(v.id - 1);
-                                useEditRoomStore.getState().setEditRoomSubTab('edit-point-matching');
-                                useNavigationStore.getState().setActiveTab('edit-room');
-                              }}
-                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-amber-600/20 text-amber-400 border border-amber-500/30 hover:bg-amber-600/30 transition-all"
-                            >
-                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14.121 14.121L19 19m-7-7l7-7m-7 7l-2.879 2.879M12 12L9.121 9.121" /></svg>
-                              편집실로
+                            <button type="button" onClick={() => { if (!selectedPreset) return; const slotName = youtubeUrl || '영상 분석'; const style = buildVideoAnalysisStylePreset(v, selectedPreset, slotName); useScriptWriterStore.getState().addVideoAnalysisStyle(style); useNavigationStore.getState().setActiveTab('script-writer'); showToast(`"V${v.id} ${v.title}" 스타일이 대본작성에 적용되었어요`); }}
+                              className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium bg-gray-700/40 text-gray-400 border border-gray-600/20 hover:text-violet-400 hover:border-violet-500/30 transition-all">
+                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>대본작성 스타일
                             </button>
-                            {/* #158: 대본작성 스타일로 사용 */}
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (!selectedPreset) return;
-                                const slotName = youtubeUrl || '영상 분석';
-                                const style = buildVideoAnalysisStylePreset(v, selectedPreset, slotName);
-                                useScriptWriterStore.getState().addVideoAnalysisStyle(style);
-                                useNavigationStore.getState().setActiveTab('script-writer');
-                                showToast(`"V${v.id} ${v.title}" 스타일이 대본작성에 적용되었어요`);
-                              }}
-                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-violet-600/20 text-violet-400 border border-violet-500/30 hover:bg-violet-600/30 transition-all"
-                            >
-                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
-                              대본작성 스타일
+                            <button type="button" onClick={() => { const soundStore = useSoundStudioStore.getState(); let speakerId = soundStore.speakers[0]?.id || ''; if (!speakerId) { const ns = { id: `speaker-${Date.now()}`, name: '화자 1', color: '#c026d3', engine: 'typecast' as const, voiceId: '', language: 'ko' as const, speed: 1.0, pitch: 0, stability: 0.5, similarityBoost: 0.75, style: 0, useSpeakerBoost: true, lineCount: 0, totalDuration: 0 }; soundStore.addSpeaker(ns); speakerId = ns.id; } const newLines = v.scenes.filter(s => (s.audioContent || s.dialogue || '').trim()).map((s, i) => ({ id: `line-${Date.now()}-${i}`, speakerId, text: (s.audioContent || s.dialogue || '').trim(), index: i })); if (newLines.length === 0) { showToast('전송할 나레이션이 없습니다.', 3000); return; } soundStore.setLines(newLines); useNavigationStore.getState().setActiveTab('sound-studio'); showToast(`"V${v.id}" 나레이션 ${newLines.length}줄을 사운드 스튜디오로 전송했어요`); }}
+                              className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium bg-gray-700/40 text-gray-400 border border-gray-600/20 hover:text-fuchsia-400 hover:border-fuchsia-500/30 transition-all">
+                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>TTS 생성
                             </button>
-                            {/* #166: 나레이션 → 사운드 스튜디오 TTS 전송 */}
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const soundStore = useSoundStudioStore.getState();
-                                let speakerId = soundStore.speakers[0]?.id || '';
-                                if (!speakerId) {
-                                  const newSpeaker = {
-                                    id: `speaker-${Date.now()}`,
-                                    name: '화자 1',
-                                    color: '#c026d3',
-                                    engine: 'typecast' as const,
-                                    voiceId: '',
-                                    language: 'ko' as const,
-                                    speed: 1.0,
-                                    pitch: 0,
-                                    stability: 0.5,
-                                    similarityBoost: 0.75,
-                                    style: 0,
-                                    useSpeakerBoost: true,
-                                    lineCount: 0,
-                                    totalDuration: 0,
-                                  };
-                                  soundStore.addSpeaker(newSpeaker);
-                                  speakerId = newSpeaker.id;
-                                }
-                                const newLines = v.scenes
-                                  .filter(s => (s.audioContent || s.dialogue || '').trim())
-                                  .map((s, i) => ({
-                                    id: `line-${Date.now()}-${i}`,
-                                    speakerId,
-                                    text: (s.audioContent || s.dialogue || '').trim(),
-                                    index: i,
-                                  }));
-                                if (newLines.length === 0) {
-                                  showToast('전송할 나레이션이 없습니다.', 3000);
-                                  return;
-                                }
-                                soundStore.setLines(newLines);
-                                useNavigationStore.getState().setActiveTab('sound-studio');
-                                showToast(`"V${v.id}" 나레이션 ${newLines.length}줄을 사운드 스튜디오로 전송했어요`);
-                              }}
-                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-fuchsia-600/20 text-fuchsia-400 border border-fuchsia-500/30 hover:bg-fuchsia-600/30 transition-all"
-                            >
-                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>
-                              TTS 생성
-                            </button>
-                            {/* NLE 패키지 내보내기 */}
-                            <button
-                              type="button"
-                              onClick={async () => {
-                                try {
-                                  showToast('Premiere XML 패키지 생성 중...', 3000);
-                                  const { buildNlePackageZip } = await import('../../../services/nleExportService');
-                                  const videoBlob = useVideoAnalysisStore.getState().videoBlob;
-                                  const fileName = youtubeUrl ? `${v.title.replace(/[^\w가-힣\s-]/g, '').slice(0, 30)}.mp4` : (uploadedFiles[0]?.name || 'video.mp4');
-                                  const zipBlob = await buildNlePackageZip({
-                                    target: 'premiere',
-                                    scenes: v.scenes,
-                                    title: v.title,
-                                    videoBlob,
-                                    videoFileName: fileName,
-                                    preset: selectedPreset || undefined,
-                                  });
-                                  const url = URL.createObjectURL(zipBlob);
-                                  const a = document.createElement('a'); a.href = url; a.download = `${v.title.replace(/[^\w가-힣\s-]/g, '').slice(0, 30)}_Premiere.zip`; a.click();
-                                  setTimeout(() => URL.revokeObjectURL(url), 10000);
-                                  showToast('Premiere XML 패키지 다운로드 완료!');
-                                } catch (e) { console.error('[NLE]', e); showToast('Premiere 패키지 생성 실패'); }
-                              }}
-                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-amber-600/20 text-amber-400 border border-amber-500/30 hover:bg-amber-600/30 transition-all"
-                            >
-                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 4V2a1 1 0 011-1h8a1 1 0 011 1v2m-9 0h10m-10 0H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2V6a2 2 0 00-2-2h-2" /></svg>
-                              Premiere
-                            </button>
-                            <button
-                              type="button"
-                              onClick={async () => {
-                                try {
-                                  showToast('CapCut 패키지 생성 중...', 3000);
-                                  const { buildNlePackageZip } = await import('../../../services/nleExportService');
-                                  const videoBlob = useVideoAnalysisStore.getState().videoBlob;
-                                  const fileName = youtubeUrl ? `${v.title.replace(/[^\w가-힣\s-]/g, '').slice(0, 30)}.mp4` : (uploadedFiles[0]?.name || 'video.mp4');
-                                  const zipBlob = await buildNlePackageZip({
-                                    target: 'capcut',
-                                    scenes: v.scenes,
-                                    title: v.title,
-                                    videoBlob,
-                                    videoFileName: fileName,
-                                    preset: selectedPreset || undefined,
-                                  });
-                                  const url = URL.createObjectURL(zipBlob);
-                                  const a = document.createElement('a'); a.href = url; a.download = `${v.title.replace(/[^\w가-힣\s-]/g, '').slice(0, 30)}_CapCut.zip`; a.click();
-                                  setTimeout(() => URL.revokeObjectURL(url), 10000);
-                                  showToast('CapCut 패키지 다운로드 완료!');
-                                } catch (e) { console.error('[NLE]', e); showToast('CapCut 패키지 생성 실패'); }
-                              }}
-                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-amber-600/20 text-amber-400 border border-amber-500/30 hover:bg-amber-600/30 transition-all"
-                            >
-                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
-                              CapCut
-                            </button>
-                            <button
-                              type="button"
-                              onClick={async () => {
-                                try {
-                                  showToast('VREW 패키지 생성 중...', 3000);
-                                  const { buildNlePackageZip } = await import('../../../services/nleExportService');
-                                  const videoBlob = useVideoAnalysisStore.getState().videoBlob;
-                                  const fileName = youtubeUrl ? `${v.title.replace(/[^\w가-힣\s-]/g, '').slice(0, 30)}.mp4` : (uploadedFiles[0]?.name || 'video.mp4');
-                                  const zipBlob = await buildNlePackageZip({
-                                    target: 'vrew',
-                                    scenes: v.scenes,
-                                    title: v.title,
-                                    videoBlob,
-                                    videoFileName: fileName,
-                                    preset: selectedPreset || undefined,
-                                  });
-                                  const url = URL.createObjectURL(zipBlob);
-                                  const a = document.createElement('a'); a.href = url; a.download = `${v.title.replace(/[^\w가-힣\s-]/g, '').slice(0, 30)}_VREW.zip`; a.click();
-                                  setTimeout(() => URL.revokeObjectURL(url), 10000);
-                                  showToast('VREW 패키지 다운로드 완료!');
-                                } catch (e) { console.error('[NLE]', e); showToast('VREW 패키지 생성 실패'); }
-                              }}
-                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-amber-600/20 text-amber-400 border border-amber-500/30 hover:bg-amber-600/30 transition-all"
-                            >
-                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-                              VREW
-                            </button>
-                          </>
+                          </div>
                         )}
                       </div>
 
