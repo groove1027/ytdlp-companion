@@ -352,10 +352,23 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
           failed++; continue;
         }
 
-        // input에서 원본 이미지 URL 추출하여 scene 매칭
-        let inputData = taskData.input;
-        if (typeof inputData === 'string') { try { inputData = JSON.parse(inputData); } catch { /* noop */ } }
-        const sourceImageUrl = inputData?.image_urls?.[0];
+        // input에서 원본 이미지 URL 추출 — KIE Grok은 param.input 이중 JSON 중첩
+        let sourceImageUrl: string | undefined;
+        try {
+          let paramData = taskData.param;
+          if (typeof paramData === 'string') paramData = JSON.parse(paramData);
+          let inputData = paramData?.input;
+          if (typeof inputData === 'string') inputData = JSON.parse(inputData);
+          sourceImageUrl = inputData?.image_urls?.[0];
+        } catch { /* noop */ }
+        // 폴백: taskData.input 직접 접근
+        if (!sourceImageUrl) {
+          try {
+            let inputData = taskData.input;
+            if (typeof inputData === 'string') inputData = JSON.parse(inputData);
+            sourceImageUrl = inputData?.image_urls?.[0];
+          } catch { /* noop */ }
+        }
 
         const scenes = get().scenes;
         // 1순위: 이미지 URL 정확 매칭
@@ -367,8 +380,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         }
         // 3순위: generationTaskId 매칭
         if (!matchedScene) matchedScene = scenes.find(s => !s.videoUrl && s.generationTaskId === taskId);
-        // 4순위: videoUrl이 없는 첫 scene에 순서대로
-        if (!matchedScene) matchedScene = scenes.find(s => !s.videoUrl && s.imageUrl);
+        // 순서 매칭 제거 — 잘못된 씬에 배치되는 것 방지
 
         if (matchedScene) {
           set((state) => ({
