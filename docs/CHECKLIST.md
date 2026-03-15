@@ -8,6 +8,7 @@
 
 ## 🟢 완료된 작업
 
+- [x] **동영상 프롬프트 상세화 + 미리보기 재생 수정** — (1) AI가 cameraMovement 13개 키워드만 생성하던 문제 → videoPrompt 필드 신설하여 30-60단어 상세 영상 모션 프롬프트 생성 (동작/환경/카메라/속도감 서술) (2) UI "동영상 프롬프트" 텍스트영역이 cameraMovement 대신 videoPrompt 표시/편집 (3) 영상 생성 시 videoPrompt를 메인 프롬프트로 사용 (없으면 visualPrompt 폴백) (4) 미리보기 탭 비디오에 key/playsInline/autoPlay/muted 추가하여 장면 전환 시 재생 정상화 (types.ts, scriptAnalysis.ts, StoryboardPanel.tsx, useVideoBatch.ts, projectStore.ts, 2026-03-15)
 - [x] **소실된 영상 KIE task ID 복구 도구** — recoverVideosByTaskIds() 함수 추가. KIE recordInfo API로 완료된 task의 video URL을 가져와 이미지 URL 매칭으로 scene에 자동 주입. 브라우저 콘솔에서 `window.recoverVideos(['taskId1', ...])` 호출 가능 (projectStore.ts, index.tsx, 2026-03-15)
 - [x] **영상 생성 후 탭 전환 시 영상 소실 수정** — useVideoBatch의 safeSetScenes가 컴포넌트 unmount 시 stale dispatcher로 인해 영상 URL 업데이트 소실 + unmount 시 모든 폴링 abort로 크레딧 소모된 생성 취소됨. (1) 모든 scene 업데이트를 useProjectStore.getState().updateScene() 직접 호출로 변경 (전역 store → unmount 후에도 정상 동작) (2) unmount 시 폴링 abort 제거 (사용자 명시 취소만 abort) (useVideoBatch.ts, 2026-03-15)
 - [x] **스토리보드 화면비율 미반영 수정** — 이미지/영상 탭 스토리보드가 사용자 지정 화면비율(9:16, 1:1, 4:3)을 무시하고 16:9로만 표시되던 문제. GridSceneCard + SceneDetailModal 플레이스홀더에 하드코딩된 `aspect-video` → `aspectRatioClass()` 동적 적용 (StoryboardPanel.tsx, 2026-03-15)

@@ -1019,6 +1019,7 @@ export const parseScriptToScenes = async (
         "shotSize": "Extreme Close Up" | "Close Up" | "Medium Close Up" | "Medium Shot" | "Medium Wide" | "Wide Shot" | "Extreme Wide" | "Drone View" | "Macro",
         "cameraAngle": "Eye Level" | "Low Angle" | "High Angle" | "Dutch Angle" | "Bird's Eye" | "Worm's Eye" | "Over the Shoulder" | "POV (First Person)" | "Top Down",
         "cameraMovement": "Static" | "Slow Pan Left" | "Slow Pan Right" | "Tilt Up" | "Tilt Down" | "Dolly In" | "Dolly Out" | "Crane Up" | "Crane Down" | "Tracking Shot" | "Zoom In" | "Zoom Out" | "Orbit" | "Handheld Shake",
+        "videoPrompt": "A detailed VIDEO MOTION prompt (English, 30-60 words) describing HOW this scene should MOVE as a video clip. Focus on: (1) subject motion — what moves and how (walking, falling, floating, exploding), (2) environmental motion — wind, rain, particles, traffic, (3) camera dynamics — natural description of camera movement matching cameraMovement, (4) temporal flow — speed changes, rhythm. Write as a cinematographer's motion direction. Example: 'Cherry blossom petals swirl through warm spring air as the woman walks forward with a gentle smile, hair swaying in the breeze. Camera slowly pans left following her. Background pedestrians move naturally. Dreamy, nostalgic pace.' NEVER just repeat the visualPrompt — add MOTION and DYNAMICS.",
         "characterPresent": boolean,
         "characterAction": "Specific pose, gesture, expression, and body language for the character in THIS scene. Must be context-appropriate and UNIQUE per scene. Examples: 'leaning forward over a table with intense focus, furrowed brows, one hand gripping a pen', 'walking briskly through a crowded street, looking over shoulder nervously, coat collar pulled up', 'standing at a podium gesturing dramatically with right hand raised, confident smirk', 'sitting cross-legged on the floor reading a scroll with serene expression, soft smile', 'crouching behind cover, peering around the edge with wide eyes, hand on ground for balance', 'mid-stride reaching for a door handle, weight on front foot, determined expression', 'arms folded across chest, leaning against a wall with one foot up, skeptical raised eyebrow', 'hands cupped around a steaming mug, shoulders hunched, gazing out a frosted window wistfully', 'pointing emphatically at a holographic display, jaw set, other hand on hip', 'kneeling on one knee examining something on the ground, head tilted, brow furrowed in curiosity'. MUST vary pose, gesture, AND expression across every scene. NEVER repeat the same action. Include at least body position + hand gesture + facial expression. Empty string if characterPresent is false.",
         "requiresTextRendering": boolean,
@@ -1068,6 +1069,8 @@ export const parseScriptToScenes = async (
             shotSize: item.shotSize || 'Medium Shot',
             // [NEW] entityComposition — KEY_ENTITY 연출 구도
             entityComposition: item.entityComposition || '',
+            // [NEW] videoPrompt — 상세 영상 모션 프롬프트
+            videoPrompt: item.videoPrompt || '',
             // [v4.7] 대사 필드 매핑
             generatedDialogue: item.dialogue || '',
             dialogueSpeaker: item.dialogueSpeaker || '',

@@ -210,8 +210,9 @@ export const useVideoBatch = (
             // [FIX M9] Re-read scene from store to pick up any edits made during generation
             const freshScene = useProjectStore.getState().scenes.find(s => s.id === sceneId) || scene;
 
-            // Prompt Sanitization
-            let rawPrompt = freshScene.visualPrompt
+            // Prompt Sanitization — videoPrompt 우선, 없으면 visualPrompt 폴백
+            const promptSource = (freshScene.videoPrompt && freshScene.videoPrompt.trim()) ? freshScene.videoPrompt : freshScene.visualPrompt;
+            let rawPrompt = promptSource
                 .replace(/^(Prompt:|Scene depicting:|Image of:|Scene:)\s*/i, "")
                 .replace(/['"](.*?)['"]/g, "$1")
                 .trim();

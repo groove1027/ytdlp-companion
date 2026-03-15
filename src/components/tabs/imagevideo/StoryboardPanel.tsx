@@ -270,7 +270,7 @@ const SceneCard: React.FC<SceneCardProps> = ({ scene, index, onUpdatePrompt, onD
         <div>
           <span className="text-sm font-semibold text-gray-500 uppercase tracking-wider">동영상 프롬프트</span>
           <textarea
-            value={scene.cameraMovement ?? ''}
+            value={scene.videoPrompt ?? ''}
             onChange={(e) => onUpdatePrompt(scene.id, 'videoPrompt', e.target.value)}
             rows={2}
             className="w-full mt-1 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-blue-500/50 resize-none"
@@ -722,7 +722,7 @@ const SceneDetailModal: React.FC<SceneDetailModalProps> = ({
           {/* Video Prompt */}
           <div>
             <p className="text-xs font-semibold text-gray-500 uppercase mb-1.5">영상 프롬프트</p>
-            <textarea value={scene.cameraMovement ?? ''} onChange={(e) => onUpdatePrompt(scene.id, 'videoPrompt', e.target.value)} rows={2}
+            <textarea value={scene.videoPrompt ?? ''} onChange={(e) => onUpdatePrompt(scene.id, 'videoPrompt', e.target.value)} rows={2}
               className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-blue-500/50 resize-none"
               placeholder="영상 프롬프트를 입력하세요..." />
           </div>
@@ -1171,7 +1171,7 @@ const StoryboardPanel: React.FC = () => {
     if (field === 'visualPrompt') {
       updateScene(id, { visualPrompt: value });
     } else {
-      updateScene(id, { cameraMovement: value });
+      updateScene(id, { videoPrompt: value });
     }
   }, [updateScene]);
 
@@ -1904,7 +1904,7 @@ const StoryboardPanel: React.FC = () => {
               )}
               {/* 메인 미디어 */}
               {scenes[previewIndex].videoUrl ? (
-                <video src={scenes[previewIndex].videoUrl} controls className="w-full max-h-[70vh] object-contain bg-black" />
+                <video key={scenes[previewIndex].id} src={scenes[previewIndex].videoUrl} controls playsInline autoPlay muted className="w-full max-h-[70vh] object-contain bg-black" />
               ) : scenes[previewIndex].imageUrl ? (
                 <img src={scenes[previewIndex].imageUrl} alt={`장면 ${previewIndex + 1}`} className="w-full max-h-[70vh] object-contain" />
               ) : (

@@ -175,9 +175,10 @@ export interface Scene {
   isProductFocus?: boolean;
   keyVisual?: string;
   
-  cameraAngle?: string; 
-  cameraMovement?: string; 
-  shotSize?: string; 
+  cameraAngle?: string;
+  cameraMovement?: string;
+  videoPrompt?: string;  // 상세 영상 모션 프롬프트 (AI 생성, 동작/카메라/분위기 서술)
+  shotSize?: string;
   imageUrl?: string;
   
   referenceImage?: string; 

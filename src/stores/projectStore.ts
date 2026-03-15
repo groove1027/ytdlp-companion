@@ -294,7 +294,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   })),
   clearAllSceneVideos: () => set((state) => ({
     scenes: state.scenes.map((s) => ({
-      ...s, videoUrl: undefined, isGeneratingVideo: false, generationTaskId: undefined, videoPrompt: undefined,
+      ...s, videoUrl: undefined, isGeneratingVideo: false, generationTaskId: undefined,
     })),
   })),
   clearAllSceneMedia: () => set((state) => ({
@@ -303,7 +303,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       imageUrl: undefined, videoUrl: undefined,
       isGeneratingImage: false, isGeneratingVideo: false,
       generationStatus: undefined, generationTaskId: undefined,
-      videoPrompt: undefined, isPromptFiltered: false,
+      isPromptFiltered: false,
     })),
   })),
 
