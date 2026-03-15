@@ -207,7 +207,7 @@ export function generateFcpXml(params: {
     const fileTag = i === 0
       ? `<file id="file-1">
               <name>${safeFileName}</name>
-              <pathurl>media/${encodeURIComponent(videoFileName)}</pathurl>
+              <pathurl>media/${escXml(videoFileName)}</pathurl>
               <duration>${srcTotalFrames}</duration>
               <rate><ntsc>${ntscStr}</ntsc><timebase>${timebase}</timebase></rate>
               <media>
