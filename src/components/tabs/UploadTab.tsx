@@ -668,19 +668,66 @@ const StepAuth: React.FC = () => {
                       <div className="space-y-2">
                         <div className="flex items-center gap-2">
                           <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-600/30 border border-blue-500/40 text-blue-400 text-xs font-bold flex items-center justify-center">3</span>
-                          <h5 className="text-sm font-bold text-gray-200">OAuth 동의 화면 설정</h5>
+                          <h5 className="text-sm font-bold text-gray-200">OAuth 동의 화면 설정 + 테스트 사용자 등록</h5>
                         </div>
-                        <div className="ml-8 space-y-1.5 text-xs text-gray-400">
+                        <div className="ml-8 space-y-3 text-xs text-gray-400">
                           <a href="https://console.cloud.google.com/apis/credentials/consent" target="_blank" rel="noopener noreferrer"
                             className="inline-flex items-center gap-1.5 text-blue-400 hover:text-blue-300 transition-colors border border-blue-500/30 rounded-lg px-3 py-1.5 bg-blue-600/10 hover:bg-blue-600/20">
                             <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" /><polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" /></svg>
-                            OAuth 동의 화면 설정
+                            OAuth 동의 화면 설정 열기
                           </a>
-                          <p className="text-gray-500">User Type: <strong className="text-gray-300">"외부"</strong> 선택 후 <strong className="text-gray-300">"만들기"</strong></p>
-                          <p className="text-gray-500">앱 이름, 사용자 지원 이메일, 개발자 연락처만 입력하면 됩니다.</p>
-                          <p className="text-gray-500">나머지는 기본값으로 <strong className="text-gray-300">"저장 후 계속"</strong>을 눌러 끝까지 진행합니다.</p>
-                          <div className="bg-amber-600/10 border border-amber-500/20 rounded-lg px-2.5 py-1.5 text-amber-500/90 mt-1">
-                            <strong>중요!</strong> "테스트 사용자" 단계에서 본인의 Google 이메일을 추가하세요. (테스트 모드에서는 등록된 사용자만 접근 가능)
+
+                          {/* 3-A: 동의 화면 기본 설정 */}
+                          <div className="bg-gray-800/60 rounded-lg border border-gray-700/40 p-3 space-y-2">
+                            <p className="font-semibold text-gray-200">3-A. 동의 화면 기본 정보 입력</p>
+                            <p className="text-gray-500">위 링크를 클릭하면 <strong className="text-gray-300">"OAuth 동의 화면"</strong> 페이지가 열립니다.</p>
+                            <div className="space-y-1.5 pl-2 border-l-2 border-blue-500/30">
+                              <p className="text-gray-400">1. User Type에서 <strong className="text-green-400">"외부"</strong>를 선택하고 <strong className="text-gray-300">"만들기"</strong> 클릭</p>
+                              <p className="text-gray-400">2. <strong className="text-gray-300">앱 이름</strong>: 아무거나 입력 (예: "내 유튜브 업로드")</p>
+                              <p className="text-gray-400">3. <strong className="text-gray-300">사용자 지원 이메일</strong>: 본인 Gmail 주소 선택</p>
+                              <p className="text-gray-400">4. 맨 아래 <strong className="text-gray-300">개발자 연락처 이메일</strong>: 본인 Gmail 주소 입력</p>
+                              <p className="text-gray-400">5. <strong className="text-gray-300">"저장 후 계속"</strong> 클릭</p>
+                            </div>
+                            <p className="text-gray-500">나머지 항목(범위, 선택 항목 등)은 건드릴 필요 없이 <strong className="text-gray-300">"저장 후 계속"</strong>만 계속 눌러주세요.</p>
+                          </div>
+
+                          {/* 3-B: 테스트 사용자 등록 (핵심!) */}
+                          <div className="bg-amber-900/20 rounded-lg border border-amber-500/30 p-3 space-y-2">
+                            <div className="flex items-center gap-2">
+                              <span className="text-amber-400 text-sm">⚠️</span>
+                              <p className="font-bold text-amber-300 text-sm">3-B. 테스트 사용자 등록 (필수! 이걸 안 하면 "액세스 차단됨" 에러 발생)</p>
+                            </div>
+                            <p className="text-gray-300">"저장 후 계속"을 누르다 보면 <strong className="text-amber-300">"테스트 사용자"</strong> 단계가 나옵니다.</p>
+                            <p className="text-gray-300">여기서 <strong className="text-amber-200">반드시 본인의 Google(Gmail) 이메일을 추가</strong>해야 합니다!</p>
+                            <div className="bg-gray-900/80 rounded-lg border border-gray-700/50 p-3 space-y-2 mt-1">
+                              <p className="text-gray-200 font-semibold">따라하기:</p>
+                              <div className="space-y-1.5 pl-2 border-l-2 border-amber-500/40">
+                                <p className="text-gray-400">1. <strong className="text-green-400">"+ ADD USERS"</strong> 버튼을 클릭합니다</p>
+                                <p className="text-gray-400">2. 입력창에 <strong className="text-green-400">본인의 Gmail 주소</strong>를 입력합니다</p>
+                                <p className="text-gray-500 pl-3">(예: myname@gmail.com — YouTube에 로그인할 때 쓰는 그 이메일)</p>
+                                <p className="text-gray-400">3. <strong className="text-gray-300">"추가"</strong> 클릭 → <strong className="text-gray-300">"저장 후 계속"</strong> 클릭</p>
+                              </div>
+                            </div>
+                            <div className="bg-red-900/20 border border-red-500/20 rounded-lg px-3 py-2 mt-1 space-y-1">
+                              <p className="text-red-400 font-semibold">이걸 빠뜨리면 이런 에러가 뜹니다:</p>
+                              <p className="text-red-300/80">"액세스 차단됨: ○○○은(는) Google 인증 절차를 완료하지 않았습니다"</p>
+                              <p className="text-red-300/80">"403 오류: access_denied"</p>
+                              <p className="text-gray-400 mt-1">→ 이 에러가 뜨면 위 방법대로 테스트 사용자를 추가한 후 다시 시도해주세요!</p>
+                            </div>
+                          </div>
+
+                          {/* 3-C: 이미 만들었는데 테스트 사용자를 안 넣은 경우 */}
+                          <div className="bg-gray-800/60 rounded-lg border border-gray-700/40 p-3 space-y-2">
+                            <p className="font-semibold text-gray-200">3-C. 이미 동의 화면을 만들었는데 "액세스 차단됨"이 뜨는 경우</p>
+                            <p className="text-gray-500">이미 한번 설정을 끝냈더라도 테스트 사용자를 나중에 추가할 수 있습니다:</p>
+                            <div className="space-y-1.5 pl-2 border-l-2 border-blue-500/30">
+                              <p className="text-gray-400">1. <a href="https://console.cloud.google.com/apis/credentials/consent" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 underline">OAuth 동의 화면</a> 페이지로 이동</p>
+                              <p className="text-gray-400">2. 왼쪽 메뉴에서 <strong className="text-gray-300">"OAuth 동의 화면"</strong> 클릭</p>
+                              <p className="text-gray-400">3. 화면 중간~하단에 <strong className="text-green-400">"테스트 사용자"</strong> 섹션 찾기</p>
+                              <p className="text-gray-400">4. <strong className="text-green-400">"+ ADD USERS"</strong> 클릭 → 본인 Gmail 입력 → 저장</p>
+                              <p className="text-gray-400">5. 저장 후 이 앱에서 다시 <strong className="text-gray-300">"YouTube 연동하기"</strong> 클릭</p>
+                            </div>
+                            <p className="text-gray-500 mt-1">* 테스트 사용자는 최대 100명까지 등록할 수 있습니다.</p>
                           </div>
                         </div>
                       </div>
@@ -789,6 +836,36 @@ const StepAuth: React.FC = () => {
                       <svg className="w-4 h-4 text-red-400 mt-0.5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" /><line x1="15" y1="9" x2="9" y2="15" /><line x1="9" y1="9" x2="15" y2="15" /></svg>
                       <p className="text-red-400 font-medium">{ytAuthError}</p>
                     </div>
+                    {ytAuthError.includes('access_denied') && (
+                      <div className="border-t border-amber-500/20 px-3 py-3 space-y-3 bg-amber-900/10">
+                        <p className="font-bold text-amber-300 text-sm">"액세스 차단됨" — 테스트 사용자 등록이 안 되어 있어요!</p>
+                        <p className="text-gray-300">Google Cloud에서 만든 앱이 아직 "테스트 모드"인데, 로그인하려는 Google 계정이 테스트 사용자로 등록되지 않아서 생기는 문제입니다.</p>
+
+                        <div className="bg-gray-900/60 rounded-lg border border-gray-700/50 p-3 space-y-2">
+                          <p className="font-semibold text-gray-200">해결 방법 (1분이면 끝나요!):</p>
+                          <div className="space-y-1.5 pl-2 border-l-2 border-amber-500/40">
+                            <p className="text-gray-400">1. 아래 버튼을 클릭해서 <strong className="text-gray-200">OAuth 동의 화면</strong> 페이지를 엽니다</p>
+                            <p className="text-gray-400">2. 화면에서 <strong className="text-amber-300">"테스트 사용자"</strong> 섹션을 찾습니다</p>
+                            <p className="text-gray-400">3. <strong className="text-green-400">"+ ADD USERS"</strong> 버튼을 클릭합니다</p>
+                            <p className="text-gray-400">4. 입력창에 <strong className="text-green-400">본인의 Gmail 주소</strong>를 입력합니다</p>
+                            <p className="text-gray-500 pl-3">(YouTube에 로그인할 때 쓰는 그 Google 이메일 주소입니다)</p>
+                            <p className="text-gray-400">5. <strong className="text-gray-200">"추가"</strong> → <strong className="text-gray-200">"저장"</strong> 클릭</p>
+                            <p className="text-gray-400">6. 이 앱으로 돌아와서 아래 <strong className="text-gray-200">"YouTube 연동하기"</strong> 다시 클릭!</p>
+                          </div>
+                          <a href="https://console.cloud.google.com/apis/credentials/consent" target="_blank" rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1.5 text-amber-400 hover:text-amber-300 transition-colors border border-amber-500/30 rounded-lg px-3 py-1.5 bg-amber-600/10 hover:bg-amber-600/20 mt-1">
+                            <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" /><polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" /></svg>
+                            Google Cloud - OAuth 동의 화면 열기
+                          </a>
+                        </div>
+
+                        <div className="bg-gray-800/60 rounded-lg border border-gray-700/40 p-2.5 space-y-1">
+                          <p className="text-gray-500 text-[11px]">* "테스트 사용자" 섹션이 안 보이면 왼쪽 메뉴에서 "OAuth 동의 화면"을 클릭한 후 아래로 스크롤하세요.</p>
+                          <p className="text-gray-500 text-[11px]">* 테스트 사용자는 최대 100명까지 등록할 수 있습니다.</p>
+                          <p className="text-gray-500 text-[11px]">* 추가 후 바로 적용됩니다 — 기다릴 필요 없이 즉시 다시 시도해주세요!</p>
+                        </div>
+                      </div>
+                    )}
                     {ytAuthError.includes('invalid_client') && (
                       <div className="border-t border-red-500/20 px-3 py-3 space-y-3 bg-red-900/10">
                         <p className="font-bold text-red-300 text-sm">이 에러는 OAuth 클라이언트 설정이 잘못되었을 때 발생합니다</p>
