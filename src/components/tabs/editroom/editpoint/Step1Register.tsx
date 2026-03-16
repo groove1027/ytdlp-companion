@@ -25,6 +25,7 @@ const Step1Register: React.FC = () => {
   const setRawUrls = useEditPointStore((s) => s.setRawUrls);
   const downloadFromUrls = useEditPointStore((s) => s.downloadFromUrls);
   const autoGenerateEditTable = useEditPointStore((s) => s.autoGenerateEditTable);
+  const edlEntries = useEditPointStore((s) => s.edlEntries);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -46,6 +47,22 @@ const Step1Register: React.FC = () => {
   const canProceed = sourceVideos.length > 0 && rawEditTable.trim().length > 0;
   const hasEditTableButNoSource = sourceVideos.length === 0 && rawEditTable.trim().length > 0;
   const canAutoGenerate = sourceVideos.length > 0 && rawNarration.trim().length > 0 && rawEditTable.trim().length === 0;
+
+  /** AI 편집표 자동 생성 — 이미 편집표가 있으면 확인 후 실행 */
+  const handleAutoGenerateEditTable = () => {
+    if (rawEditTable.trim().length > 0) {
+      if (!window.confirm('편집표가 이미 작성되어 있습니다.\nAI 자동 생성을 실행하면 기존 내용이 덮어쓰기됩니다.\n추가 비용이 발생합니다.\n\n계속하시겠습니까?')) return;
+    }
+    autoGenerateEditTable();
+  };
+
+  /** AI 파싱 — 이미 파싱 결과가 있으면 확인 후 실행 */
+  const handleParseEditTable = () => {
+    if (edlEntries.length > 0) {
+      if (!window.confirm('이미 파싱된 편집 항목이 있습니다.\n다시 실행하면 기존 결과가 덮어쓰기되고 추가 비용이 발생합니다.\n\n다시 실행하시겠습니까?')) return;
+    }
+    parseEditTable();
+  };
 
   return (
     <div className="space-y-6">
@@ -245,7 +262,7 @@ const Step1Register: React.FC = () => {
         {canAutoGenerate && (
           <button
             type="button"
-            onClick={autoGenerateEditTable}
+            onClick={handleAutoGenerateEditTable}
             disabled={isProcessing}
             className="mt-3 w-full px-4 py-2 rounded-lg text-xs font-medium transition-all flex items-center justify-center gap-2 bg-violet-600/20 text-violet-400 border border-violet-500/30 hover:bg-violet-600/30 hover:border-violet-500/50"
           >
@@ -295,7 +312,7 @@ const Step1Register: React.FC = () => {
       <div className="flex justify-end">
         <button
           type="button"
-          onClick={parseEditTable}
+          onClick={handleParseEditTable}
           disabled={!canProceed || isProcessing}
           className={`px-6 py-2.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${
             canProceed && !isProcessing

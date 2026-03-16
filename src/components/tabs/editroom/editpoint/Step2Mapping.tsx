@@ -34,6 +34,23 @@ const Step2Mapping: React.FC = () => {
   const processingProgress = useEditPointStore((s) => s.processingProgress);
   const processingMessage = useEditPointStore((s) => s.processingMessage);
 
+  // 이미 AI 정제가 실행된 적 있는지 확인 (과금 재실행 방지)
+  const hasRefinedEntries = edlEntries.some((e) => e.refinedTimecodeStart != null);
+
+  /** AI 정제 — 이미 실행한 경우 확인 후 실행 */
+  const handleRefineTimecodes = () => {
+    if (hasRefinedEntries) {
+      if (!window.confirm('AI 정제가 이미 실행되었습니다.\n다시 실행하면 추가 비용이 발생합니다.\n\n다시 실행하시겠습니까?')) return;
+    }
+    refineTimecodes();
+  };
+
+  /** 영상 자르기 — 이미 실행한 경우 확인 후 실행 */
+  const handleQuickExportClips = () => {
+    if (isProcessing) return;
+    quickExportClips();
+  };
+
   // 매핑되지 않은 소스 확인
   const uniqueSourceIds = [...new Set(edlEntries.map((e) => e.sourceId))];
   const unmappedCount = uniqueSourceIds.filter((sid) => !sourceMapping[sid]).length;
@@ -224,7 +241,7 @@ const Step2Mapping: React.FC = () => {
           {/* WebCodecs 빠른 영상 자르기 — 브라우저에서 직접 클립 생성 */}
           <button
             type="button"
-            onClick={quickExportClips}
+            onClick={handleQuickExportClips}
             disabled={isProcessing || edlEntries.length === 0}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${
               !isProcessing && edlEntries.length > 0
@@ -241,7 +258,7 @@ const Step2Mapping: React.FC = () => {
 
           <button
             type="button"
-            onClick={refineTimecodes}
+            onClick={handleRefineTimecodes}
             disabled={isProcessing || unmappedCount === uniqueSourceIds.length}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${
               !isProcessing && unmappedCount < uniqueSourceIds.length

@@ -65,7 +65,7 @@ export default function BenchmarkPanel() {
     ).join('\n\n');
 
     const guidelineInfo = channelGuideline
-      ? `[채널 스타일 가이드]\n채널명: ${channelGuideline.channelName}\n말투: ${channelGuideline.tone}\n구조: ${channelGuideline.structure}\n주제: ${channelGuideline.topics.join(', ')}\n도입패턴: ${channelGuideline.hookPattern}\n마무리패턴: ${channelGuideline.closingPattern}`
+      ? `[채널 스타일 가이드]\n채널명: ${channelGuideline.channelName} (참조용 — 출력에 채널명 언급 금지)\n말투: ${channelGuideline.tone}\n구조: ${channelGuideline.structure}\n주제: ${channelGuideline.topics.join(', ')}\n도입패턴: ${channelGuideline.hookPattern}\n마무리패턴: ${channelGuideline.closingPattern}`
       : '';
 
     try {

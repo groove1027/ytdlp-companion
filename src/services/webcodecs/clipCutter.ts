@@ -79,6 +79,12 @@ export async function cutClips(
 
 /**
  * 단일 클립 리먹싱 — 디코딩/인코딩 없이 샘플 데이터 직접 복사
+ *
+ * [FIX] B-프레임이 있는 H.264 영상 대응:
+ *   mp4-muxer는 timestamp를 DTS로 취급하므로 반드시 단조 증가해야 함.
+ *   CTS(표시 순서)는 B-프레임에서 역행할 수 있으므로,
+ *   addVideoChunkRaw(data, type, DTS, duration, meta, compositionTimeOffset)를 사용하여
+ *   DTS(디코드 순서, 항상 단조 증가) + compositionTimeOffset(CTS-DTS) 분리 전달.
  */
 function remuxClip(
   samples: Sample[],
@@ -112,8 +118,8 @@ function remuxClip(
 
   if (endIdx < startIdx) endIdx = startIdx;
 
-  // 키프레임 기준 시작 오프셋 (클립 내 타임스탬프 0 기준점)
-  const baseTimeSec = samples[startIdx].cts / timescale;
+  // DTS 기준 시작 오프셋 (DTS는 항상 단조 증가 → mp4-muxer 호환)
+  const baseDtsTicks = samples[startIdx].dts;
 
   // mp4-muxer 생성 (비디오 전용)
   const target = new ArrayBufferTarget();
@@ -123,30 +129,28 @@ function remuxClip(
     video: { codec: 'avc', width, height },
   });
 
-  // 샘플 리먹싱
+  // 샘플 리먹싱 — addVideoChunkRaw로 DTS + compositionTimeOffset 분리 전달
   let isFirst = true;
   for (let j = startIdx; j <= endIdx; j++) {
     const s = samples[j];
     if (s.offset + s.size > arrayBuffer.byteLength) continue;
 
-    const sampleTimeSec = s.cts / timescale;
-    const adjustedTimeMicro = Math.max(0, Math.round((sampleTimeSec - baseTimeSec) * 1_000_000));
+    // DTS 기반 타임스탬프 (항상 단조 증가)
+    const dtsMicro = Math.max(0, Math.round(((s.dts - baseDtsTicks) / timescale) * 1_000_000));
     const durationMicro = Math.round((s.duration / timescale) * 1_000_000);
+    // compositionTimeOffset = (CTS - DTS) → B-프레임에서 음수 가능
+    const ctOffsetMicro = Math.round(((s.cts - s.dts) / timescale) * 1_000_000);
 
-    const chunk = new EncodedVideoChunk({
-      type: s.is_sync ? 'key' : 'delta',
-      timestamp: adjustedTimeMicro,
-      duration: durationMicro,
-      data: new Uint8Array(arrayBuffer, s.offset, s.size),
-    });
+    const data = new Uint8Array(arrayBuffer, s.offset, s.size);
+    const type: 'key' | 'delta' = s.is_sync ? 'key' : 'delta';
 
     // 첫 청크에 코덱 description 전달 (avcC 데이터)
-    if (isFirst && description) {
-      muxer.addVideoChunk(chunk, { decoderConfig: { codec: 'avc1.640028', description } } as EncodedVideoChunkMetadata);
-      isFirst = false;
-    } else {
-      muxer.addVideoChunk(chunk);
-    }
+    const meta = isFirst && description
+      ? { decoderConfig: { codec: 'avc1.640028', description } } as EncodedVideoChunkMetadata
+      : undefined;
+
+    muxer.addVideoChunkRaw(data, type, dtsMicro, durationMicro, meta, ctOffsetMicro);
+    isFirst = false;
   }
 
   muxer.finalize();

@@ -78,11 +78,12 @@ function buildChannelStyleSection(
   if (guideline) {
     // 기본 스타일 가이드
     parts.push(`[채널 스타일 가이드]
-채널명: ${guideline.channelName}
+채널명: ${guideline.channelName} (참조용 — 대본 본문에 이 채널명을 절대 언급하지 마세요)
 말투: ${guideline.tone}
 구조: ${guideline.structure}
 도입패턴: ${guideline.hookPattern}
-마무리패턴: ${guideline.closingPattern}`);
+마무리패턴: ${guideline.closingPattern}
+⚠️ 주의: 마무리 패턴의 형식·어조만 참고하세요. 채널명이 포함된 멘트(예: "${guideline.channelName}입니다", "${guideline.channelName}였습니다" 등)는 대본에 넣지 마세요.`);
 
     // #162: Style DNA layers — 채널 분석에서 추출된 추가 필드 반영
     if (guideline.visualGuide) {
@@ -143,7 +144,7 @@ function buildChannelStyleSection(
       // [FIX #392] 해외 채널 프리셋 사용 시 한국어 대본 강제
       parts.push('\n→ 위 채널은 해외 채널입니다. 콘텐츠 구조, 전개 방식, 편집 리듬, 도입/마무리 패턴은 충실히 참고하되, 대본은 반드시 한국어로 작성하세요. 영어나 다른 외국어로 작성하지 마세요. 한국 시청자가 자연스럽게 이해할 수 있는 한국어 표현을 사용하세요.');
     } else {
-      parts.push('\n→ 위 채널의 말투, 종결어미, 문장 호흡, 도입/마무리 패턴을 충실히 반영하여 대본을 작성하세요. 채널 고유의 스타일을 최우선으로 지키세요.');
+      parts.push('\n→ 위 채널의 말투, 종결어미, 문장 호흡, 도입/마무리 패턴의 형식과 어조를 충실히 반영하여 대본을 작성하세요. 단, 채널명은 대본 본문에 절대 포함하지 마세요. 채널 고유의 스타일(어투·구조·리듬)을 최우선으로 지키되, 채널명 언급은 제외하세요.');
     }
   }
 

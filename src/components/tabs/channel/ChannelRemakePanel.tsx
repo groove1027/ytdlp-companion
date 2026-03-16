@@ -18,8 +18,8 @@ function extractVideoId(url: string): string | null {
 
 function buildChannelContext(g: ChannelGuideline, scripts: ChannelScript[]): string {
   const parts = [
-    `채널명: ${g.channelName}`, `말투: ${g.tone}`, `구조: ${g.structure}`,
-    `도입패턴: ${g.hookPattern}`, `마무리패턴: ${g.closingPattern}`,
+    `채널명: ${g.channelName} (참조용 — 생성 대본에 채널명 언급 금지)`, `말투: ${g.tone}`, `구조: ${g.structure}`,
+    `도입패턴: ${g.hookPattern}`, `마무리패턴: ${g.closingPattern} (채널명이 포함된 멘트는 제외)`,
   ];
   if (g.visualGuide) parts.push(`시각 스타일: ${g.visualGuide.slice(0, 300)}`);
   if (g.editGuide) parts.push(`편집 스타일: ${g.editGuide.slice(0, 300)}`);
