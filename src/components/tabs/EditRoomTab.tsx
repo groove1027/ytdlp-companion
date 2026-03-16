@@ -1474,19 +1474,30 @@ const EditRoomTab: React.FC = () => {
       ? { ...bgmTrack, masterPreset: currentRenderSettings.masterPresetOverride }
       : bgmTrack;
 
+    // [FIX #396] STT 업로드 오디오는 개별 라인에 audioUrl이 없음 → mergedAudioUrl 폴백
+    const hasAnyLineAudio = lines.some((l) => l.audioUrl);
+    const mergedUrl = !hasAnyLineAudio
+      ? (useProjectStore.getState().config?.mergedAudioUrl || useSoundStudioStore.getState().mergedAudioUrl)
+      : null;
+
     try {
       const blob = await composeMp4({
         timeline,
         scenes: optimizedScenes,
         // [FIX #240] stale blob: URL 폴백 — 씬의 IDB 복원 audioUrl 우선 사용
-        narrationLines: lines.map((l) => {
-          let effectiveAudioUrl = l.audioUrl;
-          if (l.sceneId && (!effectiveAudioUrl || effectiveAudioUrl.startsWith('blob:'))) {
-            const scene = useProjectStore.getState().scenes.find((s) => s.id === l.sceneId);
-            if (scene?.audioUrl) effectiveAudioUrl = scene.audioUrl;
-          }
-          return { sceneId: l.sceneId, audioUrl: effectiveAudioUrl, startTime: l.startTime };
-        }),
+        // [FIX #396] 개별 라인 오디오 없으면 mergedAudioUrl을 단일 나레이션으로 사용
+        narrationLines: hasAnyLineAudio
+          ? lines.map((l) => {
+              let effectiveAudioUrl = l.audioUrl;
+              if (l.sceneId && (!effectiveAudioUrl || effectiveAudioUrl.startsWith('blob:'))) {
+                const scene = useProjectStore.getState().scenes.find((s) => s.id === l.sceneId);
+                if (scene?.audioUrl) effectiveAudioUrl = scene.audioUrl;
+              }
+              return { sceneId: l.sceneId, audioUrl: effectiveAudioUrl, startTime: l.startTime };
+            })
+          : mergedUrl
+            ? [{ audioUrl: mergedUrl, startTime: 0 }]
+            : [],
         subtitleStyle: resolveSubtitleStyle(currentRenderSettings.includeSubtitles),
         bgmConfig: effectiveBgm,
         loudnessNorm: currentRenderSettings.loudness.enabled ? currentRenderSettings.loudness : undefined,
@@ -1538,6 +1549,12 @@ const EditRoomTab: React.FC = () => {
       : bgmTrack;
     const subtitleStyle = resolveSubtitleStyle(currentRenderSettings.includeSubtitles);
 
+    // [FIX #396] STT 업로드 오디오 mergedAudioUrl 폴백 (개별 장면용)
+    const hasAnyLineAudio = lines.some((l) => l.audioUrl);
+    const mergedUrl = !hasAnyLineAudio
+      ? (useProjectStore.getState().config?.mergedAudioUrl || useSoundStudioStore.getState().mergedAudioUrl)
+      : null;
+
     const sceneIds = timeline.map((t) => t.sceneId);
     const totalScenes = sceneIds.length;
 
@@ -1569,13 +1586,18 @@ const EditRoomTab: React.FC = () => {
           transitionToNext: undefined,
         }];
 
-        const sceneNarrations = lines
-          .filter((l) => l.sceneId === sid)
-          .map((l) => ({
-            sceneId: l.sceneId,
-            audioUrl: l.audioUrl,
-            startTime: (l.startTime ?? 0) - offset,
-          }));
+        // [FIX #396] 개별 장면에서도 mergedAudioUrl 폴백 지원
+        const sceneNarrations = hasAnyLineAudio
+          ? lines
+              .filter((l) => l.sceneId === sid)
+              .map((l) => ({
+                sceneId: l.sceneId,
+                audioUrl: l.audioUrl,
+                startTime: (l.startTime ?? 0) - offset,
+              }))
+          : mergedUrl
+            ? [{ audioUrl: mergedUrl, startTime: 0, audioOffset: offset }]
+            : [];
 
         const blob = await composeMp4({
           timeline: singleTimeline,

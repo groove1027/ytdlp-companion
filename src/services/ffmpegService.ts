@@ -109,7 +109,7 @@ export async function loadFFmpeg(
 export interface ComposeMp4Options {
   timeline: UnifiedSceneTiming[];
   scenes: { id: string; imageUrl?: string; videoUrl?: string }[];
-  narrationLines: { sceneId?: string; audioUrl?: string; startTime?: number }[];
+  narrationLines: { sceneId?: string; audioUrl?: string; startTime?: number; audioOffset?: number }[];
   subtitleStyle?: SubtitleStyle | null;
   bgmConfig?: BgmConfig;
   loudnessNorm?: LoudnessNormConfig;

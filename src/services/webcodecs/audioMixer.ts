@@ -12,7 +12,7 @@ import type {
 
 export interface AudioMixerInput {
   timeline: UnifiedSceneTiming[];
-  narrationLines: { sceneId?: string; audioUrl?: string; startTime?: number }[];
+  narrationLines: { sceneId?: string; audioUrl?: string; startTime?: number; audioOffset?: number }[];
   bgmConfig?: BgmConfig;
   loudnessNorm?: LoudnessNormConfig;
   totalDuration: number;
@@ -73,7 +73,8 @@ export async function mixAudio(
     const source = ctx.createBufferSource();
     source.buffer = result.buffer;
     source.connect(narrationGain);
-    source.start(result.line.startTime ?? 0);
+    // [FIX #396] audioOffset: merged audio에서 특정 구간만 재생 (개별 장면 렌더)
+    source.start(result.line.startTime ?? 0, result.line.audioOffset ?? 0);
 
     narrationLoadCount++;
     onProgress?.(narrationLoadCount / (narrationTotal + 2) * 50);

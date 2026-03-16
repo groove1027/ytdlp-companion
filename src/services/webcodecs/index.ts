@@ -28,7 +28,7 @@ export { downloadMp4 } from '../ffmpegService';
 export interface ComposeMp4Options {
   timeline: UnifiedSceneTiming[];
   scenes: { id: string; imageUrl?: string; videoUrl?: string }[];
-  narrationLines: { sceneId?: string; audioUrl?: string; startTime?: number }[];
+  narrationLines: { sceneId?: string; audioUrl?: string; startTime?: number; audioOffset?: number }[];
   subtitleStyle?: SubtitleStyle | null;
   bgmConfig?: BgmConfig;
   loudnessNorm?: LoudnessNormConfig;
@@ -492,10 +492,10 @@ async function createVideoExtractor(url: string): Promise<VideoFrameExtractor | 
  * useUnifiedTimeline의 cumulative time → 전환 오버랩 차감된 render time
  */
 function adjustNarrationTimes(
-  narrationLines: { sceneId?: string; audioUrl?: string; startTime?: number }[],
+  narrationLines: { sceneId?: string; audioUrl?: string; startTime?: number; audioOffset?: number }[],
   timeline: UnifiedSceneTiming[],
   sceneTransitions?: Record<string, SceneTransitionConfig>,
-): { sceneId?: string; audioUrl?: string; startTime?: number }[] {
+): { sceneId?: string; audioUrl?: string; startTime?: number; audioOffset?: number }[] {
   if (timeline.length <= 1) return narrationLines;
 
   // sceneStarts 계산 (canvasRenderer.resolveFrame과 동일 로직 — 전환 유무와 무관하게 항상 수행)
