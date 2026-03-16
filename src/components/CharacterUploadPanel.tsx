@@ -153,10 +153,10 @@ const CharacterUploadPanel: React.FC<CharacterUploadPanelProps> = ({
           )}
         </div>
 
-        {/* 좌: 이미지 업로드 / 우: AI 분석 결과 — 좌측 저장 버튼 밑 기준 반응형 */}
-        <div className="relative">
-          {/* 좌측: 이미지 — 높이 기준점 */}
-          <div className="flex flex-col items-center gap-2 w-1/3">
+        {/* 좌: 이미지 업로드 / 우: AI 분석 결과 — flex 레이아웃 */}
+        <div className="flex gap-4">
+          {/* 좌측: 이미지 */}
+          <div className="flex flex-col items-center gap-2 w-1/3 flex-shrink-0">
             {char ? (
               <>
                 {/* 라벨 - 이미지 위 */}
@@ -216,8 +216,8 @@ const CharacterUploadPanel: React.FC<CharacterUploadPanelProps> = ({
             )}
           </div>
 
-          {/* 우측: AI 분석 결과 — 좌측 저장 버튼 밑까지 절대 위치 */}
-          <div className="absolute top-0 bottom-0 left-[calc(33.333%+1rem)] right-0 flex flex-col gap-2 overflow-hidden">
+          {/* 우측: AI 분석 결과 */}
+          <div className="flex-1 min-w-0 flex flex-col gap-2">
             <h4 className="text-sm font-bold text-purple-300 flex items-center gap-1.5 flex-shrink-0">
               <span>✨</span> AI 분석 결과
               <span className="text-[10px] font-normal text-gray-500 ml-1">· 클릭하여 직접 편집 가능</span>
@@ -243,16 +243,19 @@ const CharacterUploadPanel: React.FC<CharacterUploadPanelProps> = ({
               </div>
               <textarea
                 value={char?.analysisStyle || ''}
-                onChange={(e) => char && onUpdateAnalysis?.(char.id, 'analysisStyle', e.target.value)}
-                placeholder={char?.isAnalyzing ? '화풍, 색감, 렌더링 스타일 추출 중...' : '대기 중 — 클릭하여 직접 입력 가능'}
-                className={`text-xs leading-relaxed bg-gray-900/80 rounded-lg px-3 py-2.5 border flex-1 min-h-0 overflow-y-auto resize-none ${
-                  char?.isAnalyzing
+                onChange={(e) => {
+                  if (!char || char.isAnalyzing) return;
+                  onUpdateAnalysis?.(char.id, 'analysisStyle', e.target.value);
+                }}
+                placeholder={!char ? '이미지를 먼저 업로드하세요' : char.isAnalyzing ? '화풍, 색감, 렌더링 스타일 추출 중...' : '대기 중 — 클릭하여 직접 입력 가능'}
+                className={`text-xs leading-relaxed bg-gray-900/80 rounded-lg px-3 py-2.5 border flex-1 min-h-[3rem] overflow-y-auto resize-none ${
+                  !char || char.isAnalyzing
                     ? 'text-gray-500 cursor-not-allowed'
-                    : char?.analysisStyle
+                    : char.analysisStyle
                       ? 'text-gray-300 border-gray-600/50 hover:border-purple-400/60 focus:border-purple-400 focus:bg-gray-800/90 cursor-text'
                       : 'text-gray-600 border-dashed border-gray-700/30 italic hover:border-purple-400/40 cursor-text'
                 } focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-colors`}
-                readOnly={!onUpdateAnalysis || !!char?.isAnalyzing}
+                readOnly={!char || !!char.isAnalyzing}
               />
             </div>
 
@@ -264,16 +267,19 @@ const CharacterUploadPanel: React.FC<CharacterUploadPanelProps> = ({
               </div>
               <textarea
                 value={char?.analysisCharacter || ''}
-                onChange={(e) => char && onUpdateAnalysis?.(char.id, 'analysisCharacter', e.target.value)}
-                placeholder={char?.isAnalyzing ? '헤어, 의상, 체형, 액세서리 추출 중...' : '대기 중 — 클릭하여 직접 입력 가능'}
-                className={`text-xs leading-relaxed bg-gray-900/80 rounded-lg px-3 py-2.5 border flex-1 min-h-0 overflow-y-auto resize-none ${
-                  char?.isAnalyzing
+                onChange={(e) => {
+                  if (!char || char.isAnalyzing) return;
+                  onUpdateAnalysis?.(char.id, 'analysisCharacter', e.target.value);
+                }}
+                placeholder={!char ? '이미지를 먼저 업로드하세요' : char.isAnalyzing ? '헤어, 의상, 체형, 액세서리 추출 중...' : '대기 중 — 클릭하여 직접 입력 가능'}
+                className={`text-xs leading-relaxed bg-gray-900/80 rounded-lg px-3 py-2.5 border flex-1 min-h-[3rem] overflow-y-auto resize-none ${
+                  !char || char.isAnalyzing
                     ? 'text-gray-500 cursor-not-allowed'
-                    : char?.analysisCharacter
+                    : char.analysisCharacter
                       ? 'text-gray-300 border-gray-600/50 hover:border-cyan-400/60 focus:border-cyan-400 focus:bg-gray-800/90 cursor-text'
                       : 'text-gray-600 border-dashed border-gray-700/30 italic hover:border-cyan-400/40 cursor-text'
                 } focus:outline-none focus:ring-2 focus:ring-cyan-500/50 transition-colors`}
-                readOnly={!onUpdateAnalysis || !!char?.isAnalyzing}
+                readOnly={!char || !!char.isAnalyzing}
               />
             </div>
 
@@ -425,7 +431,10 @@ const CharacterUploadPanel: React.FC<CharacterUploadPanelProps> = ({
                     </div>
                     <textarea
                       value={char.analysisStyle || ''}
-                      onChange={(e) => onUpdateAnalysis?.(char.id, 'analysisStyle', e.target.value)}
+                      onChange={(e) => {
+                        if (char.isAnalyzing) return;
+                        onUpdateAnalysis?.(char.id, 'analysisStyle', e.target.value);
+                      }}
                       placeholder={char.isAnalyzing ? '화풍/색감 추출 중...' : '클릭하여 직접 입력'}
                       className={`text-[11px] leading-snug bg-black/30 rounded px-1.5 py-1.5 border resize-none ${
                         expandedAnalysisId === char.id ? 'max-h-none min-h-[4rem]' : 'max-h-[3.5rem] min-h-[2.5rem]'
@@ -436,7 +445,7 @@ const CharacterUploadPanel: React.FC<CharacterUploadPanelProps> = ({
                             ? 'text-gray-400 border-gray-700/50 hover:border-purple-400/60 focus:border-purple-400 focus:bg-gray-900/80 cursor-text'
                             : 'text-gray-600 border-dashed border-gray-700/30 italic hover:border-purple-400/40 cursor-text'
                       } focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-colors w-full`}
-                      readOnly={!onUpdateAnalysis || char.isAnalyzing}
+                      readOnly={!!char.isAnalyzing}
                     />
                   </div>
                   <div>
@@ -446,7 +455,10 @@ const CharacterUploadPanel: React.FC<CharacterUploadPanelProps> = ({
                     </div>
                     <textarea
                       value={char.analysisCharacter || ''}
-                      onChange={(e) => onUpdateAnalysis?.(char.id, 'analysisCharacter', e.target.value)}
+                      onChange={(e) => {
+                        if (char.isAnalyzing) return;
+                        onUpdateAnalysis?.(char.id, 'analysisCharacter', e.target.value);
+                      }}
                       placeholder={char.isAnalyzing ? '외형/의상 추출 중...' : '클릭하여 직접 입력'}
                       className={`text-[11px] leading-snug bg-black/30 rounded px-1.5 py-1.5 border resize-none ${
                         expandedAnalysisId === char.id ? 'max-h-none min-h-[4rem]' : 'max-h-[3.5rem] min-h-[2.5rem]'
@@ -457,7 +469,7 @@ const CharacterUploadPanel: React.FC<CharacterUploadPanelProps> = ({
                             ? 'text-gray-400 border-gray-700/50 hover:border-cyan-400/60 focus:border-cyan-400 focus:bg-gray-900/80 cursor-text'
                             : 'text-gray-600 border-dashed border-gray-700/30 italic hover:border-cyan-400/40 cursor-text'
                       } focus:outline-none focus:ring-2 focus:ring-cyan-500/50 transition-colors w-full`}
-                      readOnly={!onUpdateAnalysis || char.isAnalyzing}
+                      readOnly={!!char.isAnalyzing}
                     />
                   </div>
                   {/* Action buttons — re-analyze if auto failed or partial result */}
