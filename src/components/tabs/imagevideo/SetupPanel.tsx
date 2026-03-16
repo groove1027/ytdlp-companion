@@ -698,7 +698,7 @@ const SetupPanel: React.FC = () => {
             if (char) {
               const style = field === 'analysisStyle' ? value : (char.analysisStyle || '');
               const character = field === 'analysisCharacter' ? value : (char.analysisCharacter || '');
-              updates.analysisResult = [style, character].filter(Boolean).join('\n\n');
+              updates.analysisResult = [style, character].filter(Boolean).join(' | ');
             }
             useImageVideoStore.getState().updateCharacter(id, updates);
           }}
