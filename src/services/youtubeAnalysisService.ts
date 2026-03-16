@@ -16,6 +16,17 @@ import type {
 } from '../types';
 
 /**
+ * [FIX #388] AI 응답 JSON에서 제어 문자 제거 후 파싱
+ * Gemini가 문자열 리터럴 안에 제어 문자(\x00-\x1f)를 넣을 경우 JSON.parse가
+ * "Bad control character in string literal" 에러를 던짐 — 사전 sanitize로 방지
+ */
+const sanitizeJsonForParse = (raw: string): unknown => {
+    // 문자열 리터럴 내부의 제어 문자만 제거 (JSON 구조 문자는 보존)
+    const sanitized = raw.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '');
+    return JSON.parse(sanitized);
+};
+
+/**
  * YouTube API 전용 monitoredFetch 래퍼 — 쿼터 초과 시 다음 키로 자동 전환 (#271)
  * 일반 API 호출(Evolink 등)은 그대로 통과, YouTube API URL에서만 키 전환 로직 작동
  */
@@ -1695,14 +1706,15 @@ ${analysisDimensions}
 
         const content = chatResponse.choices?.[0]?.message?.content || '';
 
-        // JSON 파싱 (마크다운 코드 블록 처리)
+        // JSON 파싱 (마크다운 코드 블록 처리 + 제어 문자 sanitize)
         let jsonStr = content;
         const codeBlockMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
         if (codeBlockMatch) {
             jsonStr = codeBlockMatch[1].trim();
         }
 
-        const parsed = JSON.parse(jsonStr);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const parsed = sanitizeJsonForParse(jsonStr) as any;
 
         const result: ChannelGuideline = {
             channelName: parsed.channelName || channelInfo.title,
@@ -1918,7 +1930,7 @@ const analyzeDeepVideoStyle = async (scripts: ChannelScript[], contentRegion: Co
         let jsonStr = raw;
         const cb = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
         if (cb) jsonStr = cb[1].trim();
-        const parsed = JSON.parse(jsonStr);
+        const parsed = sanitizeJsonForParse(jsonStr) as Record<string, string>;
         return { editGuide: parsed.editGuide || combined, audioGuide: parsed.audioGuide || '' };
     } catch (e) {
         logger.trackSwallowedError('youtubeAnalysisService:splitGuides', e);

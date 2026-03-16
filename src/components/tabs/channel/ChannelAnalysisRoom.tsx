@@ -313,6 +313,11 @@ const ChannelAnalysisRoom: React.FC = () => {
       viewCount: 0,
     };
 
+    // [FIX #388] 글로벌 타임아웃: AI 분석 무한 대기 방지 (5분)
+    const ANALYSIS_TIMEOUT_MS = 5 * 60 * 1000;
+    const abortCtrl = new AbortController();
+    const timeout = setTimeout(() => abortCtrl.abort(), ANALYSIS_TIMEOUT_MS);
+
     try {
       setProgress({ step: 1, message: '텍스트 준비 중...' });
       setChannelInfo(stubInfo);
@@ -321,7 +326,14 @@ const ChannelAnalysisRoom: React.FC = () => {
       const detectedRegion = detectContentRegion(scripts);
       if (detectedRegion !== contentRegion) setContentRegion(detectedRegion);
       setProgress({ step: 4, message: `AI 스타일 역설계 분석 중... (${detectedRegion === 'overseas' ? '해외 콘텐츠 모드' : '국내 콘텐츠 모드'})` });
-      setChannelGuideline(await analyzeChannelStyle(scripts, stubInfo, detectedRegion));
+      const result = await Promise.race([
+        analyzeChannelStyle(scripts, stubInfo, detectedRegion),
+        new Promise<never>((_, reject) => {
+          abortCtrl.signal.addEventListener('abort', () =>
+            reject(new Error('분석 시간이 초과되었습니다. 잠시 후 다시 시도해주세요.')));
+        }),
+      ]);
+      setChannelGuideline(result);
       setProgress(null);
       notifyAnalysisComplete();
       showToast('스타일 분석이 완료되었습니다.');
@@ -330,13 +342,17 @@ const ChannelAnalysisRoom: React.FC = () => {
       console.error('[ChannelAnalysis] 스타일 분석 실패:', e);
       const hint = msg.includes('키가 설정되지') || msg.includes('인증 실패')
         ? '💡 설정에서 Evolink API 키를 확인해주세요.'
-        : msg.includes('400') || msg.includes('콘텐츠 정책')
-          ? '💡 AI가 일부 콘텐츠를 분석하지 못했어요. 잠시 후 다시 시도해주세요.'
-          : msg.includes('Failed to fetch') || msg.includes('Network')
-            ? '💡 네트워크 연결이 불안정해요. 인터넷 확인 후 다시 시도해주세요.'
-            : '💡 잠시 후 다시 시도해보세요.';
+        : msg.includes('시간이 초과')
+          ? '💡 AI 분석이 오래 걸리고 있어요. 잠시 후 다시 시도해주세요.'
+          : msg.includes('400') || msg.includes('콘텐츠 정책')
+            ? '💡 AI가 일부 콘텐츠를 분석하지 못했어요. 잠시 후 다시 시도해주세요.'
+            : msg.includes('Failed to fetch') || msg.includes('Network')
+              ? '💡 네트워크 연결이 불안정해요. 인터넷 확인 후 다시 시도해주세요.'
+              : '💡 잠시 후 다시 시도해보세요.';
       setError(`스타일 분석 중 문제가 발생했어요. ${hint}`);
       setProgress(null);
+    } finally {
+      clearTimeout(timeout);
     }
   }, [sourceName, contentRegion, setChannelInfo, setChannelScripts, setChannelGuideline, setContentRegion]);
 
