@@ -428,25 +428,28 @@ async function convertImageToMp4(
         (err) => { encodeError = err; },
     );
 
-    // 이미지를 캔버스에 cover 방식으로 그리기
-    const imgBitmap = await createImageBitmap(imageBlob);
-    const canvas = new OffscreenCanvas(width, height);
-    const ctx = canvas.getContext('2d')!;
+    try {
+        // 이미지를 캔버스에 cover 방식으로 그리기
+        const imgBitmap = await createImageBitmap(imageBlob);
+        const canvas = new OffscreenCanvas(width, height);
+        const ctx = canvas.getContext('2d')!;
 
-    const scale = Math.max(width / imgBitmap.width, height / imgBitmap.height);
-    const scaledW = imgBitmap.width * scale;
-    const scaledH = imgBitmap.height * scale;
-    const dx = (width - scaledW) / 2;
-    const dy = (height - scaledH) / 2;
-    ctx.drawImage(imgBitmap, dx, dy, scaledW, scaledH);
-    imgBitmap.close();
+        const scale = Math.max(width / imgBitmap.width, height / imgBitmap.height);
+        const scaledW = imgBitmap.width * scale;
+        const scaledH = imgBitmap.height * scale;
+        const dx = (width - scaledW) / 2;
+        const dy = (height - scaledH) / 2;
+        ctx.drawImage(imgBitmap, dx, dy, scaledW, scaledH);
+        imgBitmap.close();
 
-    // 프레임 인코딩
-    for (let i = 0; i < totalFrames; i++) {
-        encoder.encodeFrame(canvas, i);
+        // 프레임 인코딩
+        for (let i = 0; i < totalFrames; i++) {
+            encoder.encodeFrame(canvas, i);
+        }
+        await encoder.flush();
+    } finally {
+        encoder.encoder.close();
     }
-    await encoder.flush();
-    encoder.encoder.close();
 
     if (encodeError) throw encodeError;
 
