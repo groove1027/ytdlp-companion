@@ -47,6 +47,7 @@ export enum ImageModel {
   NANO_COST = 'model_pro_cost', // Obfuscated — NanoBanana 2 고퀄리티
   NANO_SPEED = 'model_pro_speed', // Obfuscated — NanoBanana 2 빠른
   GOOGLE_IMAGEN = 'model_google_imagen', // Google ImageFX (무료, 쿠키 필요)
+  GOOGLE_WHISK = 'model_google_whisk', // Google Whisk (무료, 쿠키 필요, 레퍼런스 이미지 리믹싱)
 }
 
 export enum VideoModel {

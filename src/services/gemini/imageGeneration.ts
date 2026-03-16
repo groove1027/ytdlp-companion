@@ -745,10 +745,10 @@ export const generateSceneImage = async (
         provider: 'kie-primary',
     });
 
-    // [UPDATED] 3단계 폴백: Google Imagen (무료, 선택 시) → Kie Nanobanana 2 → Evolink Nanobanana 2
+    // [UPDATED] 4단계 폴백: Google Imagen/Whisk (무료, 선택 시) → Kie Nanobanana 2 → Evolink Nanobanana 2
     const genStartTime = performance.now();
 
-    // ── Step 0: Google Imagen (사용자가 선택 + 쿠키 유효 + 한도 남음) ──
+    // ── Step 0a: Google Imagen (사용자가 선택 + 쿠키 유효 + 한도 남음) ──
     if (model === ImageModel.GOOGLE_IMAGEN) {
         try {
             const { useGoogleCookieStore } = await import('../../stores/googleCookieStore');
@@ -771,6 +771,29 @@ export const generateSceneImage = async (
         }
     }
 
+    // ── Step 0b: Google Whisk (레퍼런스 이미지 리믹싱, 쿠키 필요) ──
+    if (model === ImageModel.GOOGLE_WHISK) {
+        try {
+            const { useGoogleCookieStore } = await import('../../stores/googleCookieStore');
+            const googleStore = useGoogleCookieStore.getState();
+            if (googleStore.canGenerateImage()) {
+                const { generateWhiskImage } = await import('../googleImageService');
+                if (updateStatus) updateStatus("🎨 Google Whisk 리믹싱 생성 중...");
+                const result = await generateWhiskImage(finalPrompt, ratio, googleStore.cookie, finalCharImages.length > 0 ? finalCharImages : undefined);
+                googleStore.incrementImageCount();
+                logger.trackGenerationResult({ type: 'image', sceneId: scene.id || '?', success: true, provider: 'Whisk', duration: Math.round(performance.now() - genStartTime) });
+                return { url: result.base64, isFallback: false, isFiltered: filterResult.wasFiltered };
+            } else {
+                console.warn("[ImageGen] Google 한도 초과 또는 쿠키 없음, NanoBanana 2로 폴백");
+                showToast('Google 무료 한도 초과 — NanoBanana 2로 전환합니다', 3000);
+            }
+        } catch (e) {
+            logger.trackGenerationResult({ type: 'image', sceneId: scene.id || '?', success: false, provider: 'Whisk', duration: Math.round(performance.now() - genStartTime), error: (e as Error).message });
+            console.warn("[ImageGen] Google Whisk 실패, NanoBanana 2로 폴백", e);
+            showToast('Google Whisk 생성 실패 — NanoBanana 2로 전환합니다', 3000);
+        }
+    }
+
     // ── Step 1: Kie Nanobanana 2 (1차 유료) ──
     // Kie: nano-banana-2, POST /api/v1/jobs/createTask (google_search)
     const kieStartTime = performance.now();
@@ -779,7 +802,7 @@ export const generateSceneImage = async (
         if (updateStatus) updateStatus(effectiveWebSearch ? "⚡ Kie Nanobanana 2 + 웹검색 생성 중..." : "⚡ Kie Nanobanana 2 생성 중...");
         const url = await generateKieImage(finalPrompt, ratio, finalCharImages, prodImg, "nano-banana-2", undefined, effectiveWebSearch);
         logger.trackGenerationResult({ type: 'image', sceneId: scene.id || '?', success: true, provider: 'Kie', duration: Math.round(performance.now() - kieStartTime) });
-        return { url, isFallback: model === ImageModel.GOOGLE_IMAGEN, isFiltered: filterResult.wasFiltered };
+        return { url, isFallback: model === ImageModel.GOOGLE_IMAGEN || model === ImageModel.GOOGLE_WHISK, isFiltered: filterResult.wasFiltered };
     } catch (e) {
         kieErrorMsg = (e as Error).message || '';
         logger.trackGenerationResult({ type: 'image', sceneId: scene.id || '?', success: false, provider: 'Kie', duration: Math.round(performance.now() - kieStartTime), error: kieErrorMsg });
