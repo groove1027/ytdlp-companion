@@ -720,7 +720,13 @@ export const fetchTypecastVoices = async (forceRefresh = false): Promise<Typecas
         };
       });
 
-      // dashboard API가 한글명/이미지/언어를 모두 제공 → 별도 병합 불필요
+      // API 응답에 없는 빌트인 음성 병합 (수동 등록 음성 누락 방지)
+      const apiNames = new Set(voices.map(v => v.name));
+      const missingBuiltin = BUILTIN_TYPECAST_VOICES.filter(bv => !apiNames.has(bv.name));
+      if (missingBuiltin.length > 0) {
+        voices.push(...missingBuiltin);
+        logger.info(`[Typecast] 빌트인 전용 음성 ${missingBuiltin.length}개 병합: ${missingBuiltin.map(v => v.name).join(', ')}`);
+      }
       cachedVoices = voices;
       fetchPromise = null;
       const withImage = voices.filter(v => v.image_url).length;
