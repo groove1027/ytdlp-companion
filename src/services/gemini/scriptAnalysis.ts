@@ -1443,6 +1443,27 @@ ${baseSetting ? `[GLOBAL CONTEXT]\n${baseSetting}` : ''}`;
                 console.log(`[processChunk] ✅ 청크 ${ci + 1}: ${chunkResult.length}장면으로 트리밍 완료`);
             }
 
+            // [FIX #380] 원본 scriptText 강제 매핑 — AI가 요약/축약/누락해도 원문 100% 보존
+            // chunkSceneTexts는 splitScenesLocally()가 생성한 결정론적 분할 결과이므로 정확함
+            const aiCount = chunkResult.length;
+            // 1:1 매핑: AI 결과의 scriptText를 원본으로 교체
+            for (let i = 0; i < Math.min(chunkResult.length, chunkSceneTexts.length); i++) {
+                chunkResult[i] = { ...chunkResult[i], scriptText: chunkSceneTexts[i] };
+            }
+            // AI가 부족하게 생성한 경우: 누락된 원본 텍스트로 보충 장면 생성
+            if (chunkResult.length < chunkSceneTexts.length) {
+                const template = chunkResult[chunkResult.length - 1];
+                for (let i = chunkResult.length; i < chunkSceneTexts.length; i++) {
+                    chunkResult.push({
+                        ...template,
+                        id: `scene-${Date.now()}-supplement-${ci}-${i}`,
+                        scriptText: chunkSceneTexts[i],
+                    });
+                }
+                console.warn(`[processChunk] ⚠️ 청크 ${ci + 1}: AI ${aiCount}장면 → 원본 기준 ${chunkSceneTexts.length}장면으로 보충`);
+            }
+            console.log(`[processChunk] ✅ 청크 ${ci + 1}: 원본 scriptText 강제 매핑 완료 (${chunkResult.length}장면)`);
+
             return chunkResult;
         };
 
@@ -1628,6 +1649,31 @@ ${baseSetting ? `[GLOBAL CONTEXT]\n${baseSetting}` : ''}`;
     }
 
     // [REMOVED] Phase 2: Entity Enrichment — NanoBanana 2가 직접 웹 검색하므로 불필요
+
+    // [FIX #380] 비청크 경로: 원본 scriptText 강제 매핑 — AI 요약/축약/누락 방지
+    // 청크 경로는 processChunk 내부에서 이미 매핑됨
+    if (!shouldChunk && smartSplit && scenes.length > 0) {
+        const localTexts = splitScenesLocally(cleanedScript, format, smartSplit, longFormSplitType);
+        if (localTexts.length > 0) {
+            // 1:1 매핑: AI 결과의 scriptText를 로컬 분할 원본으로 교체
+            for (let i = 0; i < Math.min(scenes.length, localTexts.length); i++) {
+                scenes[i] = { ...scenes[i], scriptText: localTexts[i] };
+            }
+            // AI가 부족하게 생성한 경우: 누락된 원본 텍스트로 보충 장면 생성
+            if (scenes.length < localTexts.length) {
+                const template = scenes[scenes.length - 1];
+                for (let i = scenes.length; i < localTexts.length; i++) {
+                    scenes.push({
+                        ...template,
+                        id: `scene-${Date.now()}-supplement-${i}`,
+                        scriptText: localTexts[i],
+                    });
+                }
+                console.warn(`[parseScriptToScenes] ⚠️ 비청크 경로: AI ${scenes.length - (localTexts.length - scenes.length)}장면 → 원본 기준 ${localTexts.length}장면으로 보충`);
+            }
+            console.log(`[parseScriptToScenes] ✅ 비청크 경로: 원본 scriptText 강제 매핑 완료 (${scenes.length}장면, 로컬 분할: ${localTexts.length})`);
+        }
+    }
 
     return scenes;
 };
