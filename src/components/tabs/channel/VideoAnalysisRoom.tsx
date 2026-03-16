@@ -3726,11 +3726,10 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
           }
         }
       } else if (isYouTubeUrl(youtubeUrl)) {
-        // ★ YouTube: 병렬 다운로드 결과 우선 → 실패 시 기존 3중 폴백
+        // ★ [FIX #340 v2] YouTube: AI 타임코드 → YouTube 썸네일 즉시 매핑 (영상 다운로드 스킵 — 10x 속도 향상)
+        // Gemini 3.1 Pro가 이미 정확한 타임코드를 제공했으므로, 영상을 다운로드해서 프레임을 추출할 필요 없음.
+        // YouTube 썸네일 API로 즉시(수 초) 프레임을 보여주고, 정밀 프레임은 편집실에서 필요 시 추출.
         ytVid = extractYouTubeVideoId(youtubeUrl);
-
-        // 병렬 다운로드 + 씬 감지 결과 대기
-        const downloadResult = await parallelDownloadPromise;
 
         // 메타데이터에서 영상 길이 가져오기
         if (ytVid) {
@@ -3745,40 +3744,35 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
 
         const aiTimecodes = collectTimecodesFromVersions(finalVersions, durSec);
 
-        if (downloadResult && aiTimecodes.length > 0) {
-          // ★ 정밀 경로: 다운로드 성공 → AI 타임코드를 실제 씬 컷에 스냅 → 정확한 프레임 추출
-          const mergedTimecodes = downloadResult.sceneCuts.length > 0
-            ? mergeWithAiTimecodes(aiTimecodes, downloadResult.sceneCuts)
-            : aiTimecodes;
-          console.log(`[Frame] ★ 정밀 매칭: AI ${aiTimecodes.length}개 타임코드 + 씬 감지 ${downloadResult.sceneCuts.length}개 컷 → ${mergedTimecodes.length}개 병합`);
+        if (aiTimecodes.length > 0 && ytVid) {
+          // ★ 초고속 경로: AI 타임코드 → YouTube 썸네일 즉시 매핑 (다운로드 0초)
+          const fastFrames = buildYouTubeThumbnailFallback(ytVid, aiTimecodes, durSec);
+          console.log(`[Frame] ⚡ 초고속 YouTube 썸네일: AI ${aiTimecodes.length}개 타임코드 → ${fastFrames.length}개 프레임 (즉시)`);
+          setThumbnails(fastFrames);
 
-          const blobUrl = URL.createObjectURL(downloadResult.blob);
-          logger.registerBlobUrl(blobUrl, 'video', 'VideoAnalysisRoom:parallelDownload', downloadResult.blob.size / (1024 * 1024));
-          const exactFrames = await canvasExtractFrames(blobUrl, mergedTimecodes, true);
-          if (exactFrames.length > 0) {
-            console.log(`[Frame] ✅ 정밀 프레임 ${exactFrames.length}개 적용 (병렬 다운로드 + 씬 감지)`);
-            setThumbnails(exactFrames);
-          }
-          // [FIX #312] 보정된 타임코드를 versions에 역전파 → SRT/편집실에도 정확한 타임코드 전달
-          if (downloadResult.sceneCuts.length > 0) {
-            const correctedVersions = applyCorrectedTimecodes(finalVersions, aiTimecodes, mergedTimecodes);
-            useVideoAnalysisStore.getState().setVersions(correctedVersions);
-          }
-        } else if (aiTimecodes.length > 0) {
-          // 폴백: 다운로드 실패 → 기존 3중 폴백
-          console.log('[Frame] 병렬 다운로드 실패 → 기존 3중 폴백');
-          let videoSource: string | null = null;
-          if (ytVid) {
-            const streamUrl = await fetchYouTubeStreamUrl(ytVid).catch(() => null);
-            if (streamUrl) videoSource = streamUrl;
-          }
-          const exactFrames = await extractFramesWithFallback(
-            videoSource || '', aiTimecodes, ytVid, durSec
-          );
-          if (exactFrames.length > 0) {
-            console.log(`[Frame] ✅ 최종 프레임 ${exactFrames.length}개 적용 (폴백)`);
-            setThumbnails(exactFrames);
-          }
+          // 백그라운드: 병렬 다운로드 결과가 있으면 정밀 프레임으로 업그레이드 (비차단)
+          parallelDownloadPromise.then(downloadResult => {
+            if (!downloadResult || aiTimecodes.length === 0) return;
+            try {
+              const mergedTimecodes = downloadResult.sceneCuts.length > 0
+                ? mergeWithAiTimecodes(aiTimecodes, downloadResult.sceneCuts)
+                : aiTimecodes;
+              const blobUrl = URL.createObjectURL(downloadResult.blob);
+              logger.registerBlobUrl(blobUrl, 'video', 'VideoAnalysisRoom:parallelDownload', downloadResult.blob.size / (1024 * 1024));
+              canvasExtractFrames(blobUrl, mergedTimecodes, true).then(exactFrames => {
+                if (exactFrames.length > 0) {
+                  console.log(`[Frame] ✅ 정밀 프레임 ${exactFrames.length}개로 업그레이드 (백그라운드)`);
+                  setThumbnails(exactFrames);
+                  if (downloadResult.sceneCuts.length > 0) {
+                    const correctedVersions = applyCorrectedTimecodes(
+                      useVideoAnalysisStore.getState().versions, aiTimecodes, mergedTimecodes
+                    );
+                    useVideoAnalysisStore.getState().setVersions(correctedVersions);
+                  }
+                }
+              }).catch(() => {});
+            } catch (e) { console.warn('[Frame] 백그라운드 정밀 추출 실패 (YouTube 썸네일 유지):', e); }
+          }).catch(() => {});
         }
       } else {
         // 소셜 (TikTok 등): 이미 다운로드한 Blob으로 장면감지 + 프레임 추출
