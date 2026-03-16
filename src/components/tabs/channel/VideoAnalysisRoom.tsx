@@ -1059,7 +1059,8 @@ async function analyzeWithFrames(
   userPrompt: string,
   scriptSystem: string,
   maxTokens = 40000,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  temperature = 0.5, // [FIX #364] 롱폼 할루시네이션 방지: 외부에서 effectiveTemp 전달
 ): Promise<string> {
   // 최대 14프레임, 영상 전체를 균일하게 커버
   const maxFrames = 14;
@@ -1091,7 +1092,7 @@ async function analyzeWithFrames(
 
   return evolinkFrameAnalysisStream(
     frameData, scriptSystem, enrichedPrompt,
-    () => {}, { temperature: 0.5, maxOutputTokens: maxTokens, signal }
+    () => {}, { temperature, maxOutputTokens: maxTokens, signal }
   );
 }
 
@@ -3201,6 +3202,11 @@ const VideoAnalysisRoom: React.FC = () => {
         }
         frames = allFrames;
 
+        // [FIX #364] 업로드 모드: 프레임 타임스탬프에서 영상 길이 추정 (WebCodecs는 dur-0.1까지 추출)
+        if (allFrames.length > 0 && knownDurationSec === 0) {
+          knownDurationSec = allFrames.reduce((mx, f) => Math.max(mx, f.timeSec), 0);
+        }
+
         // [FIX #208] 프레임 추출 완전 실패 시 Cloudinary 업로드 → v1beta 영상 분석 폴백
         if (allFrames.length === 0 && uploadedFiles.length > 0) {
           showToast('⚠️ 프레임 추출 실패 — 영상을 업로드하여 분석합니다...', 5000);
@@ -3542,7 +3548,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
             // [FIX #264] 프레임 분석 실패 시에도 텍스트 폴백으로 이어지도록 try/catch 추가
             if (effectiveFrames.length > 0) {
               try {
-                return await analyzeWithFrames(effectiveFrames, prompt, scriptSystem, tokens, signal);
+                return await analyzeWithFrames(effectiveFrames, prompt, scriptSystem, tokens, signal, effectiveTemp);
               } catch (frameErr) {
                 if (signal.aborted) throw new DOMException('분석이 취소되었습니다.', 'AbortError');
                 console.warn('[VideoAnalysis] 프레임 분석도 실패, 텍스트 폴백:', frameErr);
@@ -3552,7 +3558,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
             return await textFallbackAI(prompt, tokens);
           }
         } else if (uploadedFiles.length > 0 && effectiveFrames.length > 0) {
-          return await analyzeWithFrames(effectiveFrames, prompt, scriptSystem, tokens, signal);
+          return await analyzeWithFrames(effectiveFrames, prompt, scriptSystem, tokens, signal, effectiveTemp);
         } else {
           // [FIX #262] 텍스트 전용 경로도 Smart Routing 적용
           return await textFallbackAI(prompt, tokens);
