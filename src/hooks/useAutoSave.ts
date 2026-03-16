@@ -95,22 +95,29 @@ export const useAutoSave = () => {
         // 클라우드 동기화 스케줄링 (10s debounce, fire-and-forget)
         scheduleSyncToCloud(currentProjectId);
 
-        // [FIX #395] soundStudioStore.mergedAudioUrl이 config에 없으면 동기화
-        // — 사용자가 오디오 업로드 후 "전송" 안 눌러도 자동 저장되도록
-        try {
-          const { useSoundStudioStore } = await import('../stores/soundStudioStore');
-          const soundMergedUrl = useSoundStudioStore.getState().mergedAudioUrl;
-          if (soundMergedUrl && !config.mergedAudioUrl) {
-            useProjectStore.getState().setConfig((prev) => prev ? { ...prev, mergedAudioUrl: soundMergedUrl } : prev);
-          }
-        } catch (e) { logger.trackSwallowedError('useAutoSave:doSave/syncMergedAudio', e); }
-
         // 오디오 blob을 IndexedDB에 영속화 (fire-and-forget)
+        // [FIX #395] soundStudioStore.mergedAudioUrl도 함께 확인 — "전송" 안 눌러도 업로드 오디오 blob 영속화
         try {
-          const effectiveMergedUrl = useProjectStore.getState().config?.mergedAudioUrl || config.mergedAudioUrl;
-          import('../services/audioStorageService').then(({ persistProjectAudio }) => {
-            persistProjectAudio(currentProjectId, scenes, effectiveMergedUrl).catch((e) => { logger.trackSwallowedError('useAutoSave:persistProjectAudio', e); });
-          });
+          let effectiveMergedUrl = config.mergedAudioUrl;
+          if (!effectiveMergedUrl) {
+            try {
+              const { useSoundStudioStore } = await import('../stores/soundStudioStore');
+              effectiveMergedUrl = useSoundStudioStore.getState().mergedAudioUrl || undefined;
+            } catch (e) { logger.trackSwallowedError('useAutoSave:doSave/readSoundStore', e); }
+          }
+          if (effectiveMergedUrl) {
+            // config에도 반영하여 다음 auto-save 시 fingerprint에 포함되도록 (setConfig은 scheduleSave 재트리거하지만 1회 후 수렴)
+            if (!config.mergedAudioUrl) {
+              useProjectStore.getState().setConfig((prev) => prev ? { ...prev, mergedAudioUrl: effectiveMergedUrl } : prev);
+            }
+            import('../services/audioStorageService').then(({ persistProjectAudio }) => {
+              persistProjectAudio(currentProjectId, scenes, effectiveMergedUrl).catch((e) => { logger.trackSwallowedError('useAutoSave:persistProjectAudio', e); });
+            });
+          } else {
+            import('../services/audioStorageService').then(({ persistProjectAudio }) => {
+              persistProjectAudio(currentProjectId, scenes, undefined).catch((e) => { logger.trackSwallowedError('useAutoSave:persistProjectAudio', e); });
+            });
+          }
         } catch (e) { logger.trackSwallowedError('useAutoSave:doSave/audioStorage', e); }
 
         // 저장소 용량 사전 경고 (90% 이상)
