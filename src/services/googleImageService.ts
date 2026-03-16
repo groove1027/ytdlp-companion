@@ -10,6 +10,7 @@ import { logger } from './LoggerService';
 
 const GOOGLE_AUTH_URL = 'https://labs.google/fx/api/auth/session';
 const GOOGLE_IMAGEFX_URL = 'https://aisandbox-pa.googleapis.com/v1:runImageFx';
+const GOOGLE_WHISK_URL = 'https://aisandbox-pa.googleapis.com/v1/whisk:generateImage';
 const PROXY_PATH = '/api/google-proxy';
 
 // 화면비 매핑
@@ -174,12 +175,10 @@ export async function generateGoogleImage(
 
 /**
  * Google Whisk로 이미지 리믹싱 생성 (레퍼런스 이미지 기반)
- * - 캐릭터 레퍼런스가 있으면 SUBJECT로, 없으면 텍스트만으로 생성
- * - 같은 Google 쿠키/프록시 인프라 사용
- * @param prompt 텍스트 프롬프트
- * @param aspectRatio 화면비
- * @param cookie Google 쿠키
- * @param referenceImages 레퍼런스 이미지 (base64 또는 URL)
+ * 엔드포인트: aisandbox-pa.googleapis.com/v1/whisk:generateImage
+ * - 캐릭터 레퍼런스 → subjectImageOptions (인물 주체)
+ * - 텍스트 프롬프트 → imageDescriptionOptions (장면 설명)
+ * - 레퍼런스 없으면 프롬프트만으로 생성
  */
 export async function generateWhiskImage(
   prompt: string,
@@ -197,34 +196,26 @@ export async function generateWhiskImage(
     refCount: referenceImages?.length || 0,
   });
 
-  // Whisk 입력 이미지 배열 구성
-  const inputImages: { encodedImage: string; imageType: string }[] = [];
+  // Whisk API 요청 본문 — v1/whisk:generateImage 전용 포맷
+  const requestBody: Record<string, unknown> = {
+    imageDescriptionOptions: {
+      prompt,
+    },
+    aspectRatio: googleAspect,
+    numResults: 1,
+  };
+
+  // 레퍼런스 이미지 → subjectImageOptions (주체 이미지)
   if (referenceImages && referenceImages.length > 0) {
-    for (const ref of referenceImages.slice(0, 3)) {
-      // base64 data URI → raw base64 추출
-      const raw = ref.startsWith('data:') ? ref.split(',')[1] || ref : ref;
-      inputImages.push({ encodedImage: raw, imageType: 'INPUT_IMAGE_TYPE_SUBJECT' });
-    }
+    const raw = referenceImages[0].startsWith('data:')
+      ? referenceImages[0].split(',')[1] || referenceImages[0]
+      : referenceImages[0];
+    requestBody.subjectImageOptions = { image: { encodedImage: raw } };
   }
 
-  const body = JSON.stringify({
-    userInput: {
-      candidatesCount: 1,
-      prompts: [prompt],
-      seed: 0,
-    },
-    clientContext: {
-      sessionId: `;${Date.now()}`,
-      tool: 'WHISK',
-    },
-    modelInput: {
-      modelNameType: 'IMAGEN_3_5',
-    },
-    ...(inputImages.length > 0 ? { inputImages } : {}),
-    aspectRatio: googleAspect,
-  });
+  const body = JSON.stringify(requestBody);
 
-  const res = await proxyFetch(GOOGLE_IMAGEFX_URL, {
+  const res = await proxyFetch(GOOGLE_WHISK_URL, {
     method: 'POST',
     body,
     cookie,
@@ -241,14 +232,18 @@ export async function generateWhiskImage(
   }
 
   const data = await res.json();
-  const images = data?.imagePanels?.[0]?.generatedImages;
+
+  // Whisk 응답 파싱 — imagePanels 또는 results 배열
+  const images = data?.imagePanels?.[0]?.generatedImages
+    || data?.results
+    || data?.images;
 
   if (!images || images.length === 0) {
     throw new Error('Google Whisk: 이미지가 생성되지 않았습니다.');
   }
 
   const img = images[0];
-  let base64 = img.encodedImage || '';
+  let base64 = img.encodedImage || img.image?.encodedImage || '';
 
   if (base64 && !base64.startsWith('data:')) {
     const mime = base64.startsWith('/9j/') ? 'image/jpeg' : 'image/png';
@@ -257,13 +252,11 @@ export async function generateWhiskImage(
 
   logger.success('[Google Whisk] 이미지 리믹싱 성공', {
     size: `${(base64.length / 1024).toFixed(0)}KB`,
-    mediaId: img.mediaGenerationId?.slice(0, 20),
-    refUsed: inputImages.length,
   });
 
   return {
     base64,
-    mediaId: img.mediaGenerationId || '',
+    mediaId: img.mediaGenerationId || img.id || '',
     seed: img.seed || 0,
   };
 }
