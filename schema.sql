@@ -21,3 +21,25 @@ CREATE TABLE IF NOT EXISTS user_settings (
 );
 
 CREATE INDEX IF NOT EXISTS idx_user_settings_email ON user_settings(email);
+
+-- 프로젝트 클라우드 동기화 (R2 메타데이터 인덱스)
+-- 실제 생성은 _syncHelpers.ts의 ensureProjectsTable()에서 자동 수행
+CREATE TABLE IF NOT EXISTS user_projects (
+  id TEXT NOT NULL,
+  email TEXT NOT NULL,
+  title TEXT NOT NULL DEFAULT '',
+  r2_key TEXT NOT NULL,
+  r2_size_bytes INTEGER DEFAULT 0,
+  scene_count INTEGER DEFAULT 0,
+  completed_images INTEGER DEFAULT 0,
+  completed_videos INTEGER DEFAULT 0,
+  mode TEXT DEFAULT 'SCRIPT',
+  aspect_ratio TEXT DEFAULT '9:16',
+  thumbnail_url TEXT DEFAULT '',
+  pipeline_steps_json TEXT DEFAULT '{}',
+  last_modified INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  synced_at TEXT DEFAULT (datetime('now')),
+  is_deleted INTEGER DEFAULT 0,
+  PRIMARY KEY (email, id)
+);

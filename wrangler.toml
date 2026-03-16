@@ -30,3 +30,7 @@ KAKAO_CLIENT_SECRET = ""
 # 네이버 (developers.naver.com)
 NAVER_CLIENT_ID = ""
 NAVER_CLIENT_SECRET = ""
+
+[[r2_buckets]]
+binding = "PROJECT_STORAGE"
+bucket_name = "project-storage"

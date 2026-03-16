@@ -48,6 +48,23 @@ function escXml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
 }
 
+/**
+ * 파일명에서 이모지·특수문자 제거 — NLE(Premiere/CapCut) pathurl 호환성 보장.
+ * 허용: 영문, 숫자, 한글(가-힣), 일본어(ぁ-ヶ), 중국어(一-龥), 공백, 하이픈, 언더스코어, 점
+ * 공백 연속 → 단일 공백, 양쪽 trim, 확장자 보장
+ */
+function sanitizeFileName(name: string): string {
+  // 확장자 분리
+  const extMatch = name.match(/\.[a-zA-Z0-9]{2,5}$/);
+  const ext = extMatch ? extMatch[0] : '';
+  const base = ext ? name.slice(0, -ext.length) : name;
+  const cleaned = base
+    .replace(/[^\w가-힣ぁ-ヶ一-龥\s\-_]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim() || 'video';
+  return cleaned + ext;
+}
+
 /** 장면 모드 → Premiere Pro 라벨 색상 (타임라인 시각 구분) */
 function modeToLabelColor(mode: string): string {
   const m = (mode || '').toUpperCase().replace(/[\[\]]/g, '').trim();
@@ -177,7 +194,8 @@ export function generateFcpXml(params: {
   preset?: VideoAnalysisPreset;
   videoDurationSec?: number;
 }): string {
-  const { scenes, title, videoFileName, fps = 30, width = 1080, height = 1920, preset, videoDurationSec } = params;
+  const { scenes, title, videoFileName: rawVideoFileName, fps = 30, width = 1080, height = 1920, preset, videoDurationSec } = params;
+  const videoFileName = sanitizeFileName(rawVideoFileName);
   const timings = extractTimings(scenes, preset);
   if (timings.length === 0) return '';
 
@@ -425,7 +443,8 @@ export function generateCapCutDraftJson(params: {
   preset?: VideoAnalysisPreset;
   videoDurationSec?: number;
 }): string {
-  const { scenes, title, videoFileName, fps = 30, width = 1080, height = 1920, preset, videoDurationSec } = params;
+  const { scenes, title, videoFileName: rawVideoFileName, fps = 30, width = 1080, height = 1920, preset, videoDurationSec } = params;
+  const videoFileName = sanitizeFileName(rawVideoFileName);
   const timings = extractTimings(scenes, preset);
   if (timings.length === 0) return '';
 
@@ -721,7 +740,8 @@ export async function buildNlePackageZip(params: {
   fps?: number;
   videoDurationSec?: number;
 }): Promise<Blob> {
-  const { target, scenes, title, videoBlob, videoFileName, preset, width, height, fps, videoDurationSec } = params;
+  const { target, scenes, title, videoBlob, videoFileName: rawVideoFileName, preset, width, height, fps, videoDurationSec } = params;
+  const videoFileName = sanitizeFileName(rawVideoFileName || 'video.mp4');
   const JSZip = (await import('jszip')).default;
   const zip = new JSZip();
   const safeName = title.replace(/[^\w가-힣\s-]/g, '').trim().slice(0, 40) || 'project';
@@ -903,7 +923,7 @@ export function generateFcpXmlFromEdl(params: {
       const sv = sourceVideos.find(v => v.id === videoId);
       fileMap.set(videoId, {
         id: `file-${fileIdx}`,
-        name: sv?.fileName || `source_${fileIdx}.mp4`,
+        name: sanitizeFileName(sv?.fileName || `source_${fileIdx}.mp4`),
         dur: sv?.durationSec || 300,
       });
       fileIdx++;

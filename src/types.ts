@@ -515,6 +515,28 @@ export interface ProjectSummary {
   sceneImageUrls?: string[];         // Hover Scrub용 장면 이미지 (최대 10개)
 }
 
+// ============================================================
+// Cloud Sync Types
+// ============================================================
+
+export type SyncStatus = 'synced' | 'syncing' | 'pending' | 'error' | 'local-only' | 'cloud-only';
+
+export interface CloudProjectSummary {
+  id: string;
+  title: string;
+  lastModified: number;
+  createdAt: number;
+  sceneCount: number;
+  completedImages: number;
+  completedVideos: number;
+  mode: string;
+  aspectRatio: string;
+  thumbnailUrl: string;
+  pipelineSteps: PipelineSteps;
+  r2SizeBytes: number;
+  syncedAt: string;
+}
+
 export interface StorageEstimate {
   usedMB: number;
   totalMB: number;

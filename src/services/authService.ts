@@ -1,5 +1,6 @@
 import { logger } from './LoggerService';
 import { restoreApiKeysFromServer } from './apiService';
+import { performFullSync } from './syncService';
 const AUTH_TOKEN_KEY = 'auth_token';
 const AUTH_USER_KEY = 'auth_user';
 
@@ -97,6 +98,8 @@ export const socialLogin = async (
   saveAuth(data.token, data.user, true);
   // 소셜 로그인 성공 후 서버에 저장된 API 키 자동 복원
   restoreApiKeysFromServer().catch((e) => { logger.trackSwallowedError('authService:socialLogin/restoreKeys', e); });
+  // 클라우드 프로젝트 동기화
+  performFullSync().catch((e) => { logger.trackSwallowedError('authService:socialLogin/fullSync', e); });
   return data;
 };
 
@@ -114,6 +117,8 @@ export const login = async (
   saveAuth(data.token, data.user, rememberMe);
   // 로그인 성공 후 서버에 저장된 API 키 자동 복원
   restoreApiKeysFromServer().catch((e) => { logger.trackSwallowedError('authService:login/restoreKeys', e); });
+  // 클라우드 프로젝트 동기화
+  performFullSync().catch((e) => { logger.trackSwallowedError('authService:login/fullSync', e); });
   return data;
 };
 
@@ -138,6 +143,8 @@ export const verifyToken = async (): Promise<AuthUser | null> => {
     saveAuth(token, data.user, isLocal);
     // 토큰 검증 성공 시 API 키가 비어있으면 서버에서 복원 시도
     restoreApiKeysFromServer().catch((e) => { logger.trackSwallowedError('authService:verifyToken/restoreKeys', e); });
+    // 앱 시작 시 클라우드 프로젝트 동기화
+    performFullSync().catch((e) => { logger.trackSwallowedError('authService:verifyToken/fullSync', e); });
     return data.user;
   } catch (e) {
     logger.trackSwallowedError('authService:validateToken', e);

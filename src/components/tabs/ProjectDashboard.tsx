@@ -5,6 +5,10 @@ import { showToast } from '../../stores/uiStore';
 import { exportProjectById } from '../../services/exportService';
 import { useNavigationStore } from '../../stores/navigationStore';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
+import { useSyncStore } from '../../stores/syncStore';
+import { performFullSync, deleteCloudProject } from '../../services/syncService';
+import { getToken } from '../../services/authService';
+import type { SyncStatus } from '../../types';
 
 interface ProjectDashboardProps {
   onSelectProject: (project: ProjectData) => void;
@@ -156,6 +160,25 @@ const BadgeList = ({ badges }: { badges: { label: string; color: string }[] }) =
   </div>
 );
 
+// --- 동기화 상태 아이콘 ---
+const SyncIcon: React.FC<{ status?: SyncStatus }> = ({ status }) => {
+  if (!status || status === 'local-only') return null;
+  switch (status) {
+    case 'synced':
+      return <span title="클라우드 동기화 완료" className="text-green-400 text-[11px]">&#9729;</span>;
+    case 'syncing':
+      return <span title="동기화 중..."><svg className="w-3 h-3 text-blue-400 animate-spin inline-block" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg></span>;
+    case 'pending':
+      return <span title="동기화 대기 중" className="text-yellow-400 text-[11px]">&#9650;</span>;
+    case 'error':
+      return <span title="동기화 오류" className="text-red-400 text-[11px]">&#9888;</span>;
+    case 'cloud-only':
+      return <span title="클라우드 전용" className="text-blue-400 text-[11px]">&#9729;</span>;
+    default:
+      return null;
+  }
+};
+
 // --- 카드 Props ---
 interface CardProps {
   summary: ProjectSummary;
@@ -164,10 +187,11 @@ interface CardProps {
   onOpen: () => void;
   onExport: () => void;
   isExporting?: boolean;
+  syncStatus?: SyncStatus;
 }
 
 // --- 그리드 카드 (v4.5 스마트 프로젝트) ---
-const ProjectCard: React.FC<CardProps> = ({ summary, isSelected, onToggleSelect, onOpen, onExport, isExporting }) => {
+const ProjectCard: React.FC<CardProps> = ({ summary, isSelected, onToggleSelect, onOpen, onExport, isExporting, syncStatus }) => {
   const thumb = summary.thumbnailUrl;
   const images = summary.sceneImageUrls || [];
   const hasImages = images.length > 0 || !!thumb;
@@ -265,7 +289,7 @@ const ProjectCard: React.FC<CardProps> = ({ summary, isSelected, onToggleSelect,
       <div className="p-3">
         <h3 className="text-sm font-bold text-white truncate mb-1">{summary.title}</h3>
         <div className="flex items-center justify-between text-[12px] text-gray-500">
-          <span>{formatRelativeTime(summary.lastModified)}</span>
+          <span className="flex items-center gap-1">{formatRelativeTime(summary.lastModified)} <SyncIcon status={syncStatus} /></span>
           <button
             onClick={e => { e.stopPropagation(); onExport(); }}
             disabled={isExporting}
@@ -285,7 +309,7 @@ const ProjectCard: React.FC<CardProps> = ({ summary, isSelected, onToggleSelect,
 };
 
 // --- 리스트 아이템 (v4.5) ---
-const ProjectListItem: React.FC<CardProps> = ({ summary, isSelected, onToggleSelect, onOpen, onExport, isExporting }) => {
+const ProjectListItem: React.FC<CardProps> = ({ summary, isSelected, onToggleSelect, onOpen, onExport, isExporting, syncStatus }) => {
   const thumb = summary.thumbnailUrl;
   const gradient = TAB_GRADIENTS[summary.lastActiveTab || ''] || 'from-gray-800/50 to-gray-700/20';
   const progress = getPipelineProgress(summary.pipelineSteps);
@@ -305,7 +329,7 @@ const ProjectListItem: React.FC<CardProps> = ({ summary, isSelected, onToggleSel
       <div className="flex-1 min-w-0">
         <h3 className="text-sm font-bold text-white truncate">{summary.title}</h3>
         <div className="flex items-center gap-3 text-[12px] text-gray-500">
-          <span>{formatRelativeTime(summary.lastModified)}</span>
+          <span className="flex items-center gap-1">{formatRelativeTime(summary.lastModified)} <SyncIcon status={syncStatus} /></span>
           {/* 미니 파이프라인 */}
           {summary.pipelineSteps && (
             <div className="flex items-center gap-0.5">
@@ -434,6 +458,10 @@ const GRID_COLS: Record<CardSize, string> = {
 
 const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, onNewProject, onImportProject, refreshTrigger }) => {
   const { requireAuth } = useAuthGuard();
+  const syncStatuses = useSyncStore((s) => s.projectSyncStatus);
+  const isSyncing = useSyncStore((s) => s.isSyncing);
+  const lastFullSyncAt = useSyncStore((s) => s.lastFullSyncAt);
+  const isLoggedIn = !!getToken();
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -491,7 +519,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, on
     }
   }, []);
 
-  useEffect(() => { loadSummaries(); }, [loadSummaries, refreshTrigger]);
+  useEffect(() => { loadSummaries(); }, [loadSummaries, refreshTrigger, lastFullSyncAt]);
 
   const [showNewProjectModal, setShowNewProjectModal] = useState(false);
   const nextProjectName = `새 프로젝트 ${summaries.length + 1}`;
@@ -520,7 +548,10 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, on
     if (selectedIds.size === 0) return;
     if (!confirm(`${selectedIds.size}개의 프로젝트를 삭제하시겠습니까?`)) return;
     try {
-      for (const id of selectedIds) await deleteProject(id);
+      for (const id of selectedIds) {
+        await deleteProject(id);
+        deleteCloudProject(id).catch(() => {});
+      }
     } catch (e) {
       console.error('[ProjectDashboard] 삭제 실패:', e);
       showToast('일부 프로젝트 삭제에 실패했습니다.', 4000);
@@ -714,6 +745,24 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, on
             className="text-sm px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-red-400 hover:text-red-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1">
             🗑️ 선택 삭제{selectedIds.size > 0 && ` (${selectedIds.size})`}
           </button>
+          {isLoggedIn && (
+            <>
+              {sep}
+              <button
+                onClick={() => { performFullSync().then(() => loadSummaries()); }}
+                disabled={isSyncing}
+                className="text-sm px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-blue-400 hover:text-blue-300 disabled:text-blue-400/60 transition-colors flex items-center gap-1.5"
+                title={lastFullSyncAt ? `마지막 동기화: ${formatRelativeTime(lastFullSyncAt)}` : '클라우드 동기화'}
+              >
+                {isSyncing ? (
+                  <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+                ) : (
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                )}
+                {isSyncing ? '동기화 중...' : '동기화'}
+              </button>
+            </>
+          )}
           {sep}
           <button onClick={() => setViewMode('grid')} className={iconBtnCls(viewMode === 'grid')} title="그리드 보기">
             <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path d="M5 3a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2V5a2 2 0 00-2-2H5zM5 11a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2v-2a2 2 0 00-2-2H5zM11 5a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V5zM11 13a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>
@@ -747,7 +796,8 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, on
           {paged.map(s => (
             <ProjectCard key={s.id} summary={s} isSelected={selectedIds.has(s.id)}
               onToggleSelect={() => toggleSelect(s.id)} onOpen={() => handleOpenProject(s.id)}
-              onExport={() => handleExportProject(s.id)} isExporting={exportingIds.has(s.id)} />
+              onExport={() => handleExportProject(s.id)} isExporting={exportingIds.has(s.id)}
+              syncStatus={syncStatuses[s.id]} />
           ))}
         </div>
       ) : (
@@ -755,7 +805,8 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, on
           {paged.map(s => (
             <ProjectListItem key={s.id} summary={s} isSelected={selectedIds.has(s.id)}
               onToggleSelect={() => toggleSelect(s.id)} onOpen={() => handleOpenProject(s.id)}
-              onExport={() => handleExportProject(s.id)} isExporting={exportingIds.has(s.id)} />
+              onExport={() => handleExportProject(s.id)} isExporting={exportingIds.has(s.id)}
+              syncStatus={syncStatuses[s.id]} />
           ))}
         </div>
       )}

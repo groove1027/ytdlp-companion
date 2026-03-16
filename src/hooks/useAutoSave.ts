@@ -4,6 +4,7 @@ import { useCostStore } from '../stores/costStore';
 import { saveProject, getStorageEstimate } from '../services/storageService';
 import { showToast, useUIStore } from '../stores/uiStore';
 import { logger } from '../services/LoggerService';
+import { scheduleSyncToCloud } from '../services/syncService';
 import type { Scene, ProjectConfig } from '../types';
 
 const AUTO_SAVE_DEBOUNCE_MS = 5000;
@@ -90,6 +91,9 @@ export const useAutoSave = () => {
 
         // UI 인디케이터 업데이트
         useUIStore.getState().setLastAutoSavedAt(Date.now());
+
+        // 클라우드 동기화 스케줄링 (10s debounce, fire-and-forget)
+        scheduleSyncToCloud(currentProjectId);
 
         // 오디오 blob을 IndexedDB에 영속화 (fire-and-forget)
         try {

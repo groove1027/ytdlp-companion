@@ -2,6 +2,7 @@ export interface Env {
   DB: D1Database;
   SESSIONS: KVNamespace;
   INVITE_CODES: KVNamespace;
+  PROJECT_STORAGE: R2Bucket;
   FIREBASE_API_KEY: string;
   KAKAO_CLIENT_SECRET: string;
   NAVER_CLIENT_ID: string;
