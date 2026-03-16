@@ -434,9 +434,16 @@ const SetupPanel: React.FC = () => {
     const enrichMode = existingScenes.length > 0 && !isScriptChanged && !targetDiffers;
     try {
       const ctx = await analyzeScriptContext(config.script, onCost, vf, ss, lfs);
+      // [FIX #403] 캐릭터 레퍼런스 분석 결과(편집 반영)를 스토리보드 생성에 주입
+      const currentChars = useImageVideoStore.getState().characters;
+      const charAnalysisDesc = currentChars
+        .filter(c => c.analysisResult)
+        .map((c, i) => `[Character ${i + 1}: "${c.label}"]\n${c.analysisResult}`)
+        .join('\n\n');
+      const effectiveCharDesc = [config.detectedCharacterDescription || '', charAnalysisDesc].filter(Boolean).join('\n\n');
       const parsed = await parseScriptToScenes(
         config.script, vf, ctx.visualTone || 'Cinematic',
-        config.detectedCharacterDescription || '', config.characterAppearance ?? CharacterAppearance.AUTO,
+        effectiveCharDesc, config.characterAppearance ?? CharacterAppearance.AUTO,
         config.allowInfographics ?? false, enrichMode ? false : ss,
         config.baseAge, config.textForceLock, JSON.stringify(ctx), ctx.detectedLocale, onCost,
         config.suppressText, enrichMode ? undefined : (vf === VideoFormat.LONG ? lfs : undefined),

@@ -8,6 +8,7 @@
 
 ## 🟢 완료된 작업
 
+- [x] **#403 캐릭터 레퍼런스 AI 감지 결과 편집 후 저장·반영 수정** — #368에서 편집 UI는 추가됐으나 (1) 자동저장 fingerprint에 캐릭터 데이터 미포함 → 편집 후 새로고침 시 원래값으로 복원되던 버그 수정 (2) 스토리보드 장면 분석 시 캐릭터 레퍼런스 분석 결과(편집 반영)를 detectedCharacterDescription에 병합하여 비주얼 프롬프트 생성에 반영 (useAutoSave.ts, SetupPanel.tsx, 2026-03-17)
 - [x] **#396 편집실 MP4 렌더링 시 STT 업로드 오디오 무음 출력 수정** — 이미지 먼저 생성 후 사운드스튜디오에서 오디오 업로드+전사(STT) 작업 후 MP4 렌더링하면 무음 출력되는 버그. 원인: segmentsToScriptLines()이 개별 라인에 audioUrl을 설정하지 않아 렌더링 파이프라인이 나레이션을 건너뜀. 수정: (1) handleExportMp4에서 개별 라인 audioUrl 없을 시 mergedAudioUrl을 단일 나레이션으로 폴백 (2) 개별 장면 렌더링에서도 audioOffset으로 merged 오디오의 해당 구간만 재생 (3) audioMixer에 audioOffset 파라미터 추가 (EditRoomTab.tsx, audioMixer.ts, webcodecs/index.ts, ffmpegService.ts, 2026-03-17)
 - [x] **#395 업로드 음성 사운드 스튜디오 복원 수정** — 새로고침 후 사운드 스튜디오에서 업로드한 음성이 사라지던 버그. (1) 프로젝트 로드 시 IDB에서 복원된 mergedAudioUrl을 soundStudioStore에 동기화 (2) non-blob URL도 즉시 동기화 (3) 오디오 업로드 후 "전송" 안 눌러도 자동 저장에서 config에 동기화하여 blob 영속화 (projectStore.ts, useAutoSave.ts, 2026-03-17)
 - [x] **#374 업로드 탭 UX 개선 — 설정 스텝 오표시 수정 + 사용 가이드 배너** — (1) settings 스텝이 항상 '완료' 표시되던 버그 수정 → 인증+영상 완료 시에만 '완료' 표시 (2) 플랫폼 미연결 시 처음 사용자를 위한 5단계 안내 배너 추가 (UploadTab.tsx, 2026-03-17)

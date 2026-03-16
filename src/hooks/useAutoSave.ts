@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useProjectStore } from '../stores/projectStore';
 import { useCostStore } from '../stores/costStore';
+import { useEditRoomStore } from '../stores/editRoomStore';
 import { saveProject, getStorageEstimate } from '../services/storageService';
 import { showToast, useUIStore } from '../stores/uiStore';
 import { logger } from '../services/LoggerService';
@@ -27,7 +28,11 @@ const computeFingerprint = (
   const cfgFp = config
     ? `${config.mode}:${config.videoFormat}:${config.aspectRatio}:${config.imageModel}:${(config.script || '').length}:${config.mergedAudioUrl ? 'M' : '-'}:ppt${config.pptSlides?.length || 0}:${config.pptContentStyleId || '-'}:${config.pptDesignStyleId || '-'}`
     : 'null';
-  return `${scenes.length}::${sceneFp}::${cfgFp}::${thumbnailCount}::${projectTitle}`;
+  // [FIX #403] 캐릭터 분석 편집도 dirty 감지 — 편집 후 자동저장되도록
+  const charFp = config?.characters?.map(c =>
+    `${c.id}:${(c.analysisStyle || '').length}:${(c.analysisCharacter || '').length}`
+  ).join(',') || '';
+  return `${scenes.length}::${sceneFp}::${cfgFp}::${thumbnailCount}::${projectTitle}::${charFp}`;
 };
 
 /** 즉시 저장 (beforeunload 긴급 저장 — best-effort, 비동기이므로 완료 보장 안 됨) */
@@ -76,6 +81,10 @@ export const useAutoSave = () => {
       if (fingerprint === lastFingerprintRef.current) return;
 
       try {
+        // [FIX #399] 편집실 자막 데이터도 함께 저장 — 새로고침 시 복원
+        const editRoomSubs = useEditRoomStore.getState().sceneSubtitles;
+        const hasSubtitleEdits = Object.keys(editRoomSubs).length > 0;
+
         await saveProject({
           id: currentProjectId,
           title: projectTitle || config.script?.substring(0, 30) || 'Untitled Project',
@@ -85,6 +94,7 @@ export const useAutoSave = () => {
           fullNarrationText: scenes.map((s) => s.scriptText).join(' ').substring(0, 500),
           lastModified: Date.now(),
           costStats,
+          ...(hasSubtitleEdits ? { sceneSubtitles: editRoomSubs } : {}),
         });
 
         lastFingerprintRef.current = fingerprint;
