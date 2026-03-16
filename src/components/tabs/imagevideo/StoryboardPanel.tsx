@@ -895,6 +895,8 @@ const StoryboardPanel: React.FC = () => {
   const [detailScene, setDetailScene] = useState<{ scene: Scene; index: number } | null>(null);
   const [showGenDropdown, setShowGenDropdown] = useState(false);
   const [showDownloadDropdown, setShowDownloadDropdown] = useState(false);
+  // [FIX #365] 이미지 모델 — Zustand 리액티브 셀렉터 (getState()는 UI 반영 안 됨)
+  const storyboardImageModel = useProjectStore(s => s.config?.imageModel) || ImageModel.NANO_COST;
   const [isBatchingImages, setIsBatchingImages] = useState(false);
   const [batchImageProgress, setBatchImageProgress] = useState({ current: 0, total: 0, success: 0, fail: 0 });
   // [#243] 장면 선택 상태
@@ -1748,7 +1750,7 @@ const StoryboardPanel: React.FC = () => {
                 <div className="px-4 py-2.5 border-b border-gray-700">
                   <label className="text-[11px] text-gray-400 font-bold uppercase tracking-wider mb-1.5 block">이미지 모델</label>
                   <select
-                    value={useProjectStore.getState().config.imageModel || ImageModel.NANO_COST}
+                    value={storyboardImageModel}
                     onChange={(e) => useProjectStore.getState().setConfig(prev => prev ? { ...prev, imageModel: e.target.value as ImageModel } : prev)}
                     className="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white focus:border-orange-500 outline-none"
                   >
