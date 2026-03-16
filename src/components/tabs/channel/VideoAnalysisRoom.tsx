@@ -3601,13 +3601,16 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
               );
               if (segUtterances.length > 0) {
                 const segLines = segUtterances.map(u => {
-                  const sm = Math.floor(u.startTime / 60);
-                  const ss = Math.floor(u.startTime % 60);
-                  const em = Math.floor(u.endTime / 60);
-                  const es = Math.floor(u.endTime % 60);
-                  return `[${u.speakerId} ${sm}:${ss.toString().padStart(2, '0')}~${em}:${es.toString().padStart(2, '0')}] ${u.text}`;
+                  // [FIX #364] formatTimeSec과 동일한 MM:SS 패딩 포맷 사용
+                  const sStr = `${String(Math.floor(u.startTime / 60)).padStart(2, '0')}:${String(Math.floor(u.startTime % 60)).padStart(2, '0')}`;
+                  const eStr = `${String(Math.floor(u.endTime / 60)).padStart(2, '0')}:${String(Math.floor(u.endTime % 60)).padStart(2, '0')}`;
+                  return `[${u.speakerId} ${sStr}~${eStr}] ${u.text}`;
                 });
-                segmentTranscriptBlock = `\n\n## 📜 이 구간(${formatTimeSec(Math.round(segStart))}~${formatTimeSec(Math.round(segEnd))})의 실제 전사 데이터\n아래는 이 구간에서 실제로 발화된 대사입니다. **[S] 모드 대사는 반드시 아래 전사에 존재하는 발화만 사용하세요. 아래에 없는 대사를 창작하면 안 됩니다.**\n\n${segLines.join('\n')}`;
+                // [FIX #364] 세그먼트 전사가 너무 길면 토큰 낭비 방지 — 최대 50개 발화로 제한
+                const MAX_SEG_LINES = 50;
+                const truncated = segLines.length > MAX_SEG_LINES;
+                const limitedLines = truncated ? segLines.slice(0, MAX_SEG_LINES) : segLines;
+                segmentTranscriptBlock = `\n\n## 📜 이 구간(${formatTimeSec(Math.round(segStart))}~${formatTimeSec(Math.round(segEnd))})의 실제 전사 데이터 (${segUtterances.length}개 발화)\n아래는 이 구간에서 실제로 발화된 대사입니다. **[S] 모드 대사는 반드시 아래 전사에 존재하는 발화만 사용하세요. 아래에 없는 대사를 창작하면 안 됩니다.**\n\n${limitedLines.join('\n')}${truncated ? `\n... (외 ${segLines.length - MAX_SEG_LINES}개 발화 생략 — 위 대사 중심으로 설계)` : ''}`;
               } else {
                 segmentTranscriptBlock = `\n\n## 📜 이 구간(${formatTimeSec(Math.round(segStart))}~${formatTimeSec(Math.round(segEnd))})의 전사 데이터\n이 구간에는 감지된 대사가 없습니다. [S] 모드 사용을 최소화하고 [N] 내레이션 중심으로 설계하세요.`;
               }
