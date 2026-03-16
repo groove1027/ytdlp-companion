@@ -295,6 +295,164 @@ async function fetchImageBlob(
     return blob;
 }
 
+/** 이미지를 대본 길이(TTS 길이)만큼의 MP4로 변환하여 ZIP 다운로드 (캡컷 편집용) */
+export const downloadImagesAsMp4 = async () => {
+    const { scenes, config } = useProjectStore.getState();
+    const { setToast } = useUIStore.getState();
+    const { cropBlobToAspectRatio } = await import('../utils/fileHelpers');
+    const aspectRatio = config?.aspectRatio;
+
+    const validScenes = scenes.filter(s => s.imageUrl && !s.isGeneratingImage);
+    const total = validScenes.length;
+
+    if (total === 0) {
+        setToast({ show: true, message: '변환할 이미지가 없습니다.' });
+        setTimeout(() => setToast(null), 3000);
+        return;
+    }
+
+    // WebCodecs 지원 여부 확인
+    if (typeof VideoEncoder === 'undefined') {
+        setToast({ show: true, message: 'MP4 변환은 Chrome 94 이상에서만 지원됩니다.' });
+        setTimeout(() => setToast(null), 4000);
+        return;
+    }
+
+    const { default: JSZip } = await import('jszip');
+    const zip = new JSZip();
+
+    // 해상도 결정
+    const resolution = getVideoResolution(aspectRatio || '16:9');
+
+    // 인코더 지원 확인
+    const { probeVideoEncoder } = await import('./webcodecs/videoEncoder');
+    const probe = await probeVideoEncoder(resolution.width, resolution.height);
+    if (!probe) {
+        setToast({ show: true, message: '이 브라우저에서 H.264 인코딩을 지원하지 않습니다.' });
+        setTimeout(() => setToast(null), 4000);
+        return;
+    }
+
+    setToast({ show: true, message: '이미지→MP4 변환 중...', current: 0, total });
+
+    let successCount = 0;
+    for (const s of validScenes) {
+        const sceneIndex = scenes.indexOf(s);
+        const durationSec = estimateSceneDuration(s);
+
+        try {
+            // 이미지 Blob 가져오기
+            let imgBlob = await fetchImageBlob(s.imageUrl!, aspectRatio, cropBlobToAspectRatio);
+            if (!imgBlob) continue;
+
+            // MP4 변환
+            const mp4Blob = await convertImageToMp4(imgBlob, durationSec, resolution, probe);
+            const filename = getSafeFilename(sceneIndex, s.scriptText, 'mp4');
+            zip.file(filename, mp4Blob);
+            successCount++;
+        } catch (e) {
+            logger.trackSwallowedError('ExportService:downloadImagesAsMp4/convert', e);
+        }
+
+        setToast(prev => ({ ...prev!, current: successCount }));
+    }
+
+    if (successCount === 0) {
+        setToast({ show: true, message: 'MP4 변환에 실패했습니다.' });
+        setTimeout(() => setToast(null), 3000);
+        return;
+    }
+
+    setToast(prev => ({ ...prev!, message: 'ZIP 압축 중...' }));
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    const content = await zip.generateAsync({ type: 'blob' });
+    const link = document.createElement('a');
+    const _mp4ZipUrl = URL.createObjectURL(content);
+    logger.registerBlobUrl(_mp4ZipUrl, 'other', 'exportService:downloadImagesAsMp4');
+    link.href = _mp4ZipUrl;
+    link.download = `images_as_mp4_${Date.now()}.zip`;
+    link.click();
+    logger.unregisterBlobUrl(_mp4ZipUrl);
+
+    setToast({ show: true, message: `이미지 ${successCount}장 → MP4 변환 다운로드 완료!` });
+    setTimeout(() => setToast(null), 4000);
+};
+
+/** 장면 오디오 길이(초)를 반환. TTS 길이 → 스크립트 길이 추정 순으로 폴백 */
+function estimateSceneDuration(scene: Scene): number {
+    if (scene.audioDuration && scene.audioDuration > 0) return scene.audioDuration;
+    // TTS 미생성 시: 한국어 기준 ~4자/초로 추정
+    const text = scene.scriptText || '';
+    const cleanLen = text.replace(/\s+/g, '').length;
+    return Math.max(2, Math.ceil(cleanLen / 4));
+}
+
+/** 화면 비율에 맞는 비디오 해상도 반환 */
+function getVideoResolution(aspectRatio: string): { width: number; height: number } {
+    switch (aspectRatio) {
+        case '9:16': return { width: 1080, height: 1920 };
+        case '1:1': return { width: 1080, height: 1080 };
+        case '4:3': return { width: 1440, height: 1080 };
+        case '3:4': return { width: 1080, height: 1440 };
+        case '16:9':
+        default: return { width: 1920, height: 1080 };
+    }
+}
+
+/** 이미지 Blob을 정지 화면 MP4로 변환 (WebCodecs + mp4-muxer) */
+async function convertImageToMp4(
+    imageBlob: Blob,
+    durationSec: number,
+    resolution: { width: number; height: number },
+    probe: { codec: string; hardwareAcceleration: 'prefer-hardware' | 'prefer-software' | 'no-preference' },
+): Promise<Blob> {
+    const { createEncoder } = await import('./webcodecs/videoEncoder');
+    const { createMp4Muxer } = await import('./webcodecs/mp4Muxer');
+
+    const { width, height } = resolution;
+    const fps = 1; // 정지 이미지이므로 1fps 충분 (파일 크기 최소화)
+    const totalFrames = Math.max(2, Math.round(durationSec));
+
+    const muxer = createMp4Muxer({ width, height, fps, hasAudio: false });
+
+    const chunks: Array<{ chunk: EncodedVideoChunk; meta?: EncodedVideoChunkMetadata }> = [];
+    const encoder = createEncoder(
+        { width, height, fps, bitrate: 2_000_000, keyframeIntervalFrames: totalFrames },
+        probe.codec,
+        probe.hardwareAcceleration,
+        (encoded) => chunks.push(encoded),
+        (err) => { throw err; },
+    );
+
+    // 이미지를 캔버스에 cover 방식으로 그리기
+    const imgBitmap = await createImageBitmap(imageBlob);
+    const canvas = new OffscreenCanvas(width, height);
+    const ctx = canvas.getContext('2d')!;
+
+    const scale = Math.max(width / imgBitmap.width, height / imgBitmap.height);
+    const scaledW = imgBitmap.width * scale;
+    const scaledH = imgBitmap.height * scale;
+    const dx = (width - scaledW) / 2;
+    const dy = (height - scaledH) / 2;
+    ctx.drawImage(imgBitmap, dx, dy, scaledW, scaledH);
+    imgBitmap.close();
+
+    // 프레임 인코딩
+    for (let i = 0; i < totalFrames; i++) {
+        encoder.encodeFrame(canvas, i);
+    }
+    await encoder.flush();
+    encoder.encoder.close();
+
+    // 먹서에 청크 추가
+    for (const c of chunks) {
+        muxer.addVideoChunk(c);
+    }
+
+    return muxer.finalize();
+}
+
 export const downloadThumbnails = async () => {
     const { thumbnails } = useProjectStore.getState();
 

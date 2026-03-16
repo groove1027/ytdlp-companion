@@ -1685,6 +1685,20 @@ const StoryboardPanel: React.FC = () => {
                   이미지 일괄 다운로드
                   <span className="ml-auto text-[11px] text-gray-500">{completedImages}장</span>
                 </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setShowDownloadDropdown(false);
+                    const { downloadImagesAsMp4 } = await import('../../../services/exportService');
+                    await downloadImagesAsMp4();
+                  }}
+                  disabled={completedImages === 0}
+                  className="w-full text-left px-4 py-2.5 text-sm text-gray-200 hover:bg-gray-700/60 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+                >
+                  <span className="w-2 h-2 rounded-full bg-amber-400" />
+                  🎬 이미지→MP4 변환
+                  <span className="ml-auto text-[11px] text-gray-500">{completedImages}장</span>
+                </button>
                 <div className="border-t border-gray-700" />
                 <button
                   type="button"

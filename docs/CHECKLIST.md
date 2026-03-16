@@ -8,6 +8,8 @@
 
 ## 🟢 완료된 작업
 
+- [x] **#392 해외 채널 프리셋 사용 시 대본이 영어로 생성되는 버그 수정** — 해외 채널 분석 후 프리셋 저장→대본 생성 시 영어로 출력되던 버그. (1) ChannelGuideline에 contentRegion 필드 추가 (2) 프리셋 저장 시 국내/해외 구분 보존 (3) 프리셋 로드 시 contentRegion 복원 (4) 대본 생성 프롬프트에서 해외 채널+한국어 타겟 감지 시 한국어 강제 지시문 추가 (types.ts, channelAnalysisStore.ts, ChannelAnalysisRoom.tsx, ScriptWriterTab.tsx, 2026-03-17)
+- [x] **#387 이미지→MP4 변환 다운로드 (캡컷 편집용)** — 이미지를 대본/TTS 길이만큼의 MP4로 변환하여 ZIP 다운로드. WebCodecs(H.264) + mp4-muxer 사용. TTS 미생성 시 한국어 기준 ~4자/초로 길이 추정. 프로젝트 화면 비율에 맞는 해상도 자동 적용 (exportService.ts, StoryboardPanel.tsx, 2026-03-17)
 - [x] **#391 이미지/영상 스타일 선택에 레퍼런스 이미지 업로드 추가** — SetupPanel의 비주얼 스타일 섹션에 최대 3장 레퍼런스 이미지 업로드 UI 추가. imageVideoStore에 styleReferenceImages 상태 추가 + projectConfig 영속화. 배치/개별 이미지 생성 시 글로벌 스타일 레퍼런스가 모든 장면에 자동 적용 (types.ts, imageVideoStore.ts, projectStore.ts, SetupPanel.tsx, App.tsx, StoryboardPanel.tsx, LoggerService.ts, 2026-03-16)
 - [x] **#375 스토리보드→편집실 화면 비율 불일치 수정** — 9:16으로 생성한 이미지가 편집실에서 1:1로 표시되는 버그. 편집실 진입 시 실제 이미지의 자연 비율을 감지하여 프로젝트 설정과 다르면 자동 동기화. editPointStore FIX #260 패턴과 동일한 방식 (EditRoomTab.tsx, 2026-03-16)
 - [x] **#378 영상 분석 95% 멈춤 수정** — 업로드 영상 분석 시 95%에서 무한 대기하는 버그. 원인: 전처리 단계(WebCodecs 프레임 추출 + 오디오 디코딩)에 타임아웃 보호 없이 저사양 GPU/특정 코덱에서 영구 행(hang). (1) WebCodecs 프레임 추출에 60초 타임아웃 추가 (extractVideoFrames + canvasExtractFrames) (2) 글로벌 분석 타임아웃을 AI 시작 시점→분석 시작 시점으로 이동 (전처리+AI 전체 8분 보호) (3) decodeAudioData 30초 타임아웃 추가 (4) captureStream 메타데이터 로딩 10초 타임아웃 추가 (VideoAnalysisRoom.tsx, videoAnalysis.ts, 2026-03-16)
