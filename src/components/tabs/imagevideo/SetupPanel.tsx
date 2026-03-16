@@ -335,7 +335,10 @@ const SetupPanel: React.FC = () => {
     const isScriptChanged = existingScenes.length > 0 && existingScriptText.length > 0 &&
       !currentScript.includes(existingScriptText.slice(0, Math.min(100, existingScriptText.length))) &&
       !existingScriptText.includes(currentScript.slice(0, Math.min(100, currentScript.length)));
-    const enrichMode = existingScenes.length > 0 && !isScriptChanged;
+    // [FIX #382] 사용자가 목표 컷수를 수동 설정했고 기존 장면수와 다르면 enrichMode 비활성화 → 새로 분할
+    const userTarget = useImageVideoStore.getState().targetSceneCount;
+    const targetDiffers = userTarget !== null && userTarget > 0 && userTarget !== existingScenes.length;
+    const enrichMode = existingScenes.length > 0 && !isScriptChanged && !targetDiffers;
     try {
       const ctx = await analyzeScriptContext(config.script, onCost, vf, ss, lfs);
       const parsed = await parseScriptToScenes(

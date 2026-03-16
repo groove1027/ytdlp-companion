@@ -678,11 +678,12 @@ const App: React.FC = () => {
           if (contextData.detectedLocale) finalConfig.detectedLocale = contextData.detectedLocale;
           if (contextData.culturalNuance) finalConfig.culturalNuance = contextData.culturalNuance;
 
-          // [CRITICAL] 예상 컷수 결정 — Pro/Thinking 정밀 분석 최우선, Flash UI 추정치는 폴백
+          // [CRITICAL] 예상 컷수 결정 — 사용자 수동 설정 최우선, Pro 분석 차선, Flash UI 추정 폴백
+          const userTarget = useImageVideoStore.getState().targetSceneCount;
           const proEstimate = typeof contextData.estimatedSceneCount === 'number' && contextData.estimatedSceneCount > 0 ? contextData.estimatedSceneCount : 0;
           const uiEstimate = newConfig.estimatedScenes && newConfig.estimatedScenes > 0 ? newConfig.estimatedScenes : 0;
-          const proSceneCount = proEstimate || uiEstimate || undefined;
-          console.log(`[Context] ★ Final targetSceneCount: ${proSceneCount} (Pro분석: ${proEstimate}, UI미리보기: ${uiEstimate})`);
+          const proSceneCount = (userTarget && userTarget > 0 ? userTarget : null) || proEstimate || uiEstimate || undefined;
+          console.log(`[Context] ★ Final targetSceneCount: ${proSceneCount} (사용자설정: ${userTarget}, Pro분석: ${proEstimate}, UI미리보기: ${uiEstimate})`);
 
           setProcessingMessage("🎬 장면별 연출 및 비유/서사 구분 분석 중...");
           // [CRITICAL FIX] atmosphere가 비어있으면 visualTone을 config에 저장하여

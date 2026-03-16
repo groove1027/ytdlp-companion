@@ -52,10 +52,10 @@ const syncToProjectConfig = () => {
   requestAnimationFrame(() => {
     const ps = getProjectStore();
     if (!ps) return;
-    const { style, characters, enableWebSearch, isMultiCharacter, dialogueTone, referenceDialogue, dialogueMode, customStyleNote } = useImageVideoStore.getState();
+    const { style, characters, enableWebSearch, isMultiCharacter, dialogueTone, referenceDialogue, dialogueMode, customStyleNote, targetSceneCount } = useImageVideoStore.getState();
     ps.getState().setConfig((prev: any) => {
       if (!prev) return prev;
-      return { ...prev, selectedVisualStyle: style, characters, enableWebSearch, isMultiCharacter, dialogueTone, referenceDialogue, dialogueMode, customStyleNote };
+      return { ...prev, selectedVisualStyle: style, characters, enableWebSearch, isMultiCharacter, dialogueTone, referenceDialogue, dialogueMode, customStyleNote, targetSceneCount };
     });
   });
 };
@@ -80,7 +80,7 @@ export const useImageVideoStore = create<ImageVideoStore>((set) => ({
   setDialogueTone: (v) => { const prev = useImageVideoStore.getState().dialogueTone; logger.trackSettingChange('iv.dialogueTone', prev, v); set({ dialogueTone: v }); syncToProjectConfig(); },
   setReferenceDialogue: (v) => { set({ referenceDialogue: v }); syncToProjectConfig(); },
   setDialogueMode: (v) => { const prev = useImageVideoStore.getState().dialogueMode; logger.trackSettingChange('iv.dialogueMode', prev, v); set({ dialogueMode: v }); syncToProjectConfig(); },
-  setTargetSceneCount: (v) => { set({ targetSceneCount: v }); },
+  setTargetSceneCount: (v) => { const prev = useImageVideoStore.getState().targetSceneCount; logger.trackSettingChange('iv.targetSceneCount', prev, v); set({ targetSceneCount: v }); syncToProjectConfig(); },
   setCharacters: (chars) => {
     set((s) => ({ characters: typeof chars === 'function' ? chars(s.characters) : chars }));
     syncToProjectConfig();

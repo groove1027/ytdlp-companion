@@ -469,7 +469,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         dialogueTone: project.config?.dialogueTone,
         referenceDialogue: project.config?.referenceDialogue,
         dialogueMode: project.config?.dialogueMode,
-        targetSceneCount: null, // 프로젝트 로드 시 항상 초기화 — AI가 적절한 수를 결정
+        targetSceneCount: project.config?.targetSceneCount ?? null, // [FIX #382] 저장된 목표 컷수 복원
       });
     }).catch(e => { logger.trackSwallowedError('ProjectStore:loadProject/restoreImageVideoStore', e); });
 

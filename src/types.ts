@@ -406,6 +406,7 @@ export interface ProjectConfig {
   isMixedMedia?: boolean;
 
   estimatedScenes?: number; // [NEW] 예상 컷수 → parseScriptToScenes에 전달하여 강제 반영
+  targetSceneCount?: number | null; // [FIX #382] 사용자 수동 목표 컷수 — estimatedScenes보다 우선
   cachedContextData?: Record<string, any>; // [NEW] Pro/Thinking 분석 결과 캐시 → 프로젝트 생성 시 재활용
 
   isThumbnailOnlyMode?: boolean; 
