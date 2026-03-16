@@ -103,7 +103,8 @@ function extractVideoFramesLegacy(file: File, count: number): Promise<{ frames: 
 
     video.onloadedmetadata = async () => {
       const dur = video.duration;
-      if (!dur || dur < 0.5) {
+      // [FIX #394] Infinity/NaN duration 방어 — fMP4 등에서 발생 가능
+      if (!dur || !isFinite(dur) || dur < 0.5) {
         logger.unregisterBlobUrl(blobUrl);
         URL.revokeObjectURL(blobUrl);
         reject(new Error('영상 길이를 읽을 수 없습니다.'));

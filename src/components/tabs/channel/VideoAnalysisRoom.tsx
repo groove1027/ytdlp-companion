@@ -659,7 +659,8 @@ function canvasExtractFramesLegacy(
       const dur = video.duration;
       const vw = video.videoWidth || 640;
       const vh = video.videoHeight || 360;
-      if (!dur || dur < 1) { cleanup(); resolve([]); return; }
+      // [FIX #394] Infinity/NaN duration 방어
+      if (!dur || !isFinite(dur) || dur < 1) { cleanup(); resolve([]); return; }
 
       // 썸네일: 640px 기준 스케일
       const thumbScale = Math.min(1, 640 / vw);
@@ -941,8 +942,48 @@ function applyCorrectedTimecodes(
   }));
 }
 
+/**
+ * [FIX #394] 영상이 브라우저에서 디코딩 가능한지 빠르게 확인 (최대 5초)
+ * loadeddata 이벤트: 첫 프레임 디코딩 완료 시 발생 — loadedmetadata보다 정확한 판별
+ * Instagram H.265/HEVC, 비표준 코덱 등 브라우저가 디코딩할 수 없는 영상을 빠르게 감지
+ */
+function canBrowserDecodeVideo(file: File): Promise<boolean> {
+  return new Promise((resolve) => {
+    const video = document.createElement('video');
+    video.muted = true;
+    video.preload = 'auto';
+    const url = URL.createObjectURL(file);
+    video.src = url;
+
+    const cleanup = () => { URL.revokeObjectURL(url); };
+    const timer = setTimeout(() => { cleanup(); resolve(false); }, 5_000);
+
+    video.onloadeddata = () => {
+      clearTimeout(timer);
+      const w = video.videoWidth;
+      const h = video.videoHeight;
+      cleanup();
+      resolve(w > 0 && h > 0);
+    };
+
+    video.onerror = () => {
+      clearTimeout(timer);
+      cleanup();
+      resolve(false);
+    };
+  });
+}
+
 /** 업로드 영상에서 프레임 추출 — WebCodecs 우선, canvas 폴백 */
 async function extractVideoFrames(file: File, sourceIndex?: number): Promise<TimedFrame[]> {
+  // [FIX #394] 빠른 디코드 프로브 — 브라우저가 프레임 디코딩 가능한지 5초 안에 확인
+  // Instagram H.265 등 지원되지 않는 코덱은 여기서 즉시 감지하여 150초 대기 방지
+  const canDecode = await canBrowserDecodeVideo(file);
+  if (!canDecode) {
+    console.warn(`[extractVideoFrames] 디코드 프로브 실패 (${file.name}) → 프레임 추출 스킵, Cloudinary 업로드 폴백`);
+    return [];
+  }
+
   // ── WebCodecs 정밀 추출 우선 시도 ──
   try {
     const { webcodecExtractFrames, isVideoDecoderSupported } =
@@ -1017,7 +1058,8 @@ async function extractVideoFramesLegacy(file: File, sourceIndex?: number): Promi
       video.src = url;
       video.onloadedmetadata = async () => {
         const dur = video.duration;
-        if (!dur || dur < 1) { logger.unregisterBlobUrl(url); URL.revokeObjectURL(url); resolve([]); return; }
+        // [FIX #394] Infinity/NaN duration 방어 — fMP4 등에서 발생 가능
+        if (!dur || !isFinite(dur) || dur < 1) { logger.unregisterBlobUrl(url); URL.revokeObjectURL(url); resolve([]); return; }
         const vw = video.videoWidth || 640;
         const vh = video.videoHeight || 360;
         const scale = Math.max(640 / vw, 1);
@@ -1030,14 +1072,23 @@ async function extractVideoFramesLegacy(file: File, sourceIndex?: number): Promi
         const maxFrameCount = 120;
         const interval = Math.max(0.5, dur / maxFrameCount);
         const count = Math.min(Math.ceil(dur / interval), maxFrameCount);
+        // [FIX #394] 연속 시크 실패 감지 — 디코딩 불가 영상에서 90초 대기 방지
+        let consecutiveSeekFails = 0;
+        const MAX_CONSECUTIVE_SEEK_FAILS = 3;
         for (let i = 0; i < count; i++) {
           if (timedOut) break; // [FIX #189] 타임아웃 시 루프 중단
+          if (consecutiveSeekFails >= MAX_CONSECUTIVE_SEEK_FAILS) {
+            console.warn(`[extractVideoFrames] ${file.name}: 연속 ${MAX_CONSECUTIVE_SEEK_FAILS}회 시크 실패 → 조기 종료 (${partialFrames.length}개 추출)`);
+            break;
+          }
           const timeSec = Math.min((i + 0.25) * interval, dur - 0.1);
           const seeked = await preciseSeek(video, timeSec, 15_000);
           if (!seeked) {
-            console.warn(`[extractVideoFrames] 시크 타임아웃: ${timeSec.toFixed(2)}s — 건너뜀`);
+            consecutiveSeekFails++;
+            console.warn(`[extractVideoFrames] 시크 타임아웃: ${timeSec.toFixed(2)}s — 건너뜀 (연속실패 ${consecutiveSeekFails}/${MAX_CONSECUTIVE_SEEK_FAILS})`);
             continue;
           }
+          consecutiveSeekFails = 0; // 성공 시 카운터 리셋
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
           partialFrames.push({
             url: canvas.toDataURL('image/jpeg', 0.85),
@@ -3210,6 +3261,9 @@ const VideoAnalysisRoom: React.FC = () => {
         const allFrames: TimedFrame[] = [];
         const fileDescs: string[] = [];
 
+        // [FIX #394] 전처리 진행 상황 표시 — 사용자가 "멈춘 건 아닌지" 불안하지 않도록
+        showToast('📹 영상 프레임 추출 중...', 3000);
+
         // [FIX #189] 다중 영상 프레임 추출 병렬화 — 순차(90s×N) → 병렬(max 90s)
         const frameResults = await Promise.allSettled(
           uploadedFiles.map((f, fi) => extractVideoFrames(f, fi))
@@ -3461,6 +3515,8 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       const diarizePresets = ['tikitaka', 'condensed', 'snack', 'alltts'];
       if (diarizePresets.includes(preset)) {
         try {
+          // [FIX #394] 화자 분리 진행 상황 표시
+          showToast('🗣️ 음성 분석 중...', 3000);
           let audioSource: File | Blob | null = null;
 
           if (uploadedFiles.length === 1) {

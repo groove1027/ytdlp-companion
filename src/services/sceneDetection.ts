@@ -67,7 +67,8 @@ export async function detectSceneCuts(
     });
 
     const dur = video.duration;
-    if (!dur || dur < 2) return [];
+    // [FIX #394] Infinity/NaN duration 방어
+    if (!dur || !isFinite(dur) || dur < 2) return [];
 
     // 영상 길이에 따라 자동 간격 결정
     const intervalSec = options?.intervalSec ?? (
