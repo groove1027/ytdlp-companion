@@ -19,8 +19,10 @@ import {
   generateNarrationSrt,
   estimateNarrationDuration,
   calcAutoSpeedFactor,
+  generateEditTableFromNarration,
 } from '../services/editPointService';
 import { removeSubtitlesWithGhostCut } from '../services/ghostcutService';
+import { downloadVideoViaProxy, downloadSocialVideo } from '../services/ytdlpApiService';
 import { showToast } from './uiStore';
 import { logger } from '../services/LoggerService';
 
@@ -32,6 +34,13 @@ interface EditPointStore {
   sourceVideos: SourceVideoFile[];
   rawEditTable: string;
   rawNarration: string;
+
+  // Step 1: URL 입력 모드
+  sourceInputMode: 'file' | 'url';
+  rawUrls: string;
+  isDownloadingUrls: boolean;
+  urlDownloadProgress: number;
+  urlDownloadMessage: string;
 
   // Step 2: 매핑
   edlEntries: EdlEntry[];
@@ -60,6 +69,12 @@ interface EditPointStore {
   setSourceId: (videoId: string, sourceId: string) => void;
   setRawEditTable: (text: string) => void;
   setRawNarration: (text: string) => void;
+  setSourceInputMode: (mode: 'file' | 'url') => void;
+  setRawUrls: (text: string) => void;
+  /** YouTube/소셜 URL 배열로 영상 다운로드 → 소스 등록 */
+  downloadFromUrls: () => Promise<void>;
+  /** 대본(내레이션) + 소스 영상 정보로 편집표 자동 생성 */
+  autoGenerateEditTable: () => Promise<void>;
   parseEditTable: () => Promise<void>;
   autoMapSources: () => void;
   setSourceMapping: (sourceId: string, videoId: string) => void;
@@ -254,6 +269,11 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
   sourceVideos: [],
   rawEditTable: '',
   rawNarration: '',
+  sourceInputMode: 'file',
+  rawUrls: '',
+  isDownloadingUrls: false,
+  urlDownloadProgress: 0,
+  urlDownloadMessage: '',
   edlEntries: [],
   sourceMapping: {},
   processingPhase: '',
@@ -333,6 +353,112 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
 
   setRawEditTable: (text) => set({ rawEditTable: text }),
   setRawNarration: (text) => set({ rawNarration: text }),
+  setSourceInputMode: (mode) => set({ sourceInputMode: mode }),
+  setRawUrls: (text) => set({ rawUrls: text }),
+
+  downloadFromUrls: async () => {
+    const { rawUrls, isDownloadingUrls } = get();
+    if (isDownloadingUrls) {
+      showToast('이미 다운로드 중입니다.');
+      return;
+    }
+
+    const urls = rawUrls.split('\n').map(l => l.trim()).filter(Boolean);
+    if (urls.length === 0) {
+      showToast('URL을 한 줄에 하나씩 입력해주세요.');
+      return;
+    }
+
+    set({ isDownloadingUrls: true, urlDownloadProgress: 0, urlDownloadMessage: `${urls.length}개 영상 다운로드 시작...` });
+
+    const files: File[] = [];
+    let failCount = 0;
+
+    for (let i = 0; i < urls.length; i++) {
+      const url = urls[i];
+      set({
+        urlDownloadProgress: Math.round((i / urls.length) * 100),
+        urlDownloadMessage: `[${i + 1}/${urls.length}] 다운로드 중... (영상당 1~3분 소요)`,
+      });
+
+      try {
+        const isYoutube = /youtube\.com|youtu\.be/i.test(url);
+        if (isYoutube) {
+          const { blob, info } = await downloadVideoViaProxy(url, '720p', (p) => {
+            set({ urlDownloadProgress: Math.round(((i + p) / urls.length) * 100) });
+          });
+          const title = info?.title || `video-${i + 1}`;
+          const safeName = title.replace(/[/\\?%*:|"<>]/g, '_').slice(0, 80);
+          files.push(new File([blob], `${safeName}.mp4`, { type: 'video/mp4' }));
+        } else {
+          const { blob, title } = await downloadSocialVideo(url, '720p', (p) => {
+            set({ urlDownloadProgress: Math.round(((i + p) / urls.length) * 100) });
+          });
+          const safeName = (title || `video-${i + 1}`).replace(/[/\\?%*:|"<>]/g, '_').slice(0, 80);
+          files.push(new File([blob], `${safeName}.mp4`, { type: 'video/mp4' }));
+        }
+      } catch (err) {
+        failCount++;
+        const msg = err instanceof Error ? err.message : '알 수 없는 오류';
+        logger.warn(`[EditPoint] URL 다운로드 실패 [${i + 1}]: ${msg}`);
+      }
+    }
+
+    set({ isDownloadingUrls: false, urlDownloadProgress: 100, urlDownloadMessage: '' });
+
+    if (files.length > 0) {
+      await get().addSourceVideos(files);
+      const resultMsg = failCount > 0
+        ? `${files.length}개 성공, ${failCount}개 실패`
+        : `${files.length}개 영상이 등록되었습니다.`;
+      showToast(resultMsg);
+    } else {
+      showToast('모든 URL 다운로드에 실패했습니다. URL을 확인해주세요.');
+    }
+  },
+
+  autoGenerateEditTable: async () => {
+    const { rawNarration, sourceVideos, isProcessing } = get();
+    if (isProcessing) {
+      showToast('이미 처리 중입니다.');
+      return;
+    }
+    if (!rawNarration.trim()) {
+      showToast('내레이션 대본을 먼저 입력해주세요.');
+      return;
+    }
+    if (sourceVideos.length === 0) {
+      showToast('소스 영상을 먼저 등록해주세요.');
+      return;
+    }
+
+    set({
+      isProcessing: true,
+      processingPhase: 'auto-gen',
+      processingProgress: 0,
+      processingMessage: 'AI가 대본을 분석해 편집표를 생성하고 있습니다...',
+    });
+
+    try {
+      const sources = sourceVideos.map(v => ({
+        sourceId: v.sourceId,
+        fileName: v.fileName,
+        durationSec: v.durationSec,
+      }));
+      const table = await generateEditTableFromNarration(rawNarration, sources);
+      set({
+        rawEditTable: table,
+        isProcessing: false,
+        processingPhase: '',
+        processingProgress: 100,
+        processingMessage: '',
+      });
+      showToast('편집표가 자동 생성되었습니다! 필요시 수정 후 "AI 파싱 실행"을 눌러주세요.');
+    } catch (err) {
+      set({ isProcessing: false, processingPhase: '', processingMessage: '' });
+      showToast('편집표 자동 생성 실패: ' + (err instanceof Error ? err.message : '알 수 없는 오류'));
+    }
+  },
 
   parseEditTable: async () => {
     const { rawEditTable, rawNarration, isProcessing } = get();
@@ -917,6 +1043,11 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
       sourceVideos: [],
       rawEditTable: '',
       rawNarration: '',
+      sourceInputMode: 'file',
+      rawUrls: '',
+      isDownloadingUrls: false,
+      urlDownloadProgress: 0,
+      urlDownloadMessage: '',
       edlEntries: [],
       sourceMapping: {},
       processingPhase: '',

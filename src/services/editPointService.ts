@@ -801,3 +801,58 @@ export function generateNarrationSrt(entries: EdlEntry[]): string {
 
   return srtLines.join('\n');
 }
+
+/**
+ * [#372] 대본(내레이션) + 소스 영상 정보로 편집표 텍스트 자동 생성
+ * 사용자가 원하는 대본을 입력하면, 소스 영상 길이에 맞춰 타임코드가 배분된 편집표를 AI가 생성
+ */
+export async function generateEditTableFromNarration(
+  narration: string,
+  sources: { sourceId: string; fileName: string; durationSec: number | null }[],
+): Promise<string> {
+  const sourceInfo = sources.map(s =>
+    `${s.sourceId}: "${s.fileName}" (${s.durationSec ? `${Math.round(s.durationSec)}초` : '길이 미확인'})`
+  ).join('\n');
+
+  const systemPrompt = `You are a professional video editor. Given a narration script and source video information, create an edit table (편집표) that maps narration segments to appropriate timecodes in the source videos.
+
+Rules:
+- Split the narration into logical segments (1-2 sentences each)
+- Assign each segment to a source video (distribute evenly if multiple sources)
+- Calculate reasonable timecode ranges based on narration length and video duration
+- Korean speech rate: ~4 characters/second, English: ~3 words/second
+- Ensure timecodes don't exceed source video duration
+- Use pipe-delimited format
+- sourceId format: S-XX (matching the provided source IDs)
+
+Output format (pipe-delimited table, Korean header):
+순번 | 내레이션 | 소스 | 소스설명 | 배속 | 타임코드 시작~끝 | 비고`;
+
+  const userContent = `## 소스 영상 정보:
+${sourceInfo}
+
+## 내레이션 대본:
+${narration}
+
+위 대본을 소스 영상의 타임코드에 맞게 편집표로 변환해주세요. 파이프(|) 구분자로 표를 만들어주세요.`;
+
+  const response = await evolinkChat(
+    [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userContent },
+    ],
+    {
+      temperature: 0.3,
+      maxTokens: 8192,
+      timeoutMs: 120_000,
+      model: EDIT_PARSE_MODEL,
+    }
+  );
+
+  const content = response.choices[0]?.message?.content || '';
+  if (!content.trim()) {
+    throw new Error('AI 응답이 비어있습니다.');
+  }
+
+  return content.trim();
+}
