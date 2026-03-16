@@ -436,6 +436,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       try { usePptMasterStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/resetPptMaster', e); }
     }
 
+    // [FIX #399] 저장된 자막 데이터 복원 — reset 후, initFromProject 전에 주입
+    if (project.sceneSubtitles && Object.keys(project.sceneSubtitles).length > 0) {
+      try { getEditRoomStore()?.setState({ sceneSubtitles: project.sceneSubtitles }); }
+      catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/restoreSubtitles', e); }
+    }
+
     // Increment generation to invalidate any in-flight async migrations from previous loads
     const generation = get()._loadGeneration + 1;
 

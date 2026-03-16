@@ -8,6 +8,8 @@
 
 ## 🟢 완료된 작업
 
+- [x] **#394 인스타그램 다운로드 영상 분석 시 무한 로딩 수정** — 인스타에서 받은 영상만 분석 시 로딩에서 멈추는 버그. 원인: 브라우저가 디코딩할 수 없는 코덱(H.265/HEVC 등)의 영상에서 WebCodecs 60s + Canvas 90s = 150초 대기 후에야 폴백. 수정: (1) canBrowserDecodeVideo() 5초 빠른 프로브로 디코딩 불가 영상 즉시 감지→Cloudinary 업로드 폴백 (2) Canvas 폴백에서 연속 3회 시크 실패 시 조기 종료 (3) 전처리 단계별 진행 토스트 표시 (4) 모든 duration 체크에 isFinite() 방어 추가 (VideoAnalysisRoom.tsx, SocialAnalysisRoom.tsx, sceneDetection.ts, 2026-03-17)
+- [x] **#399 편집실 자막 줄바꿈 불일치 + 새로고침 시 초기화 수정** — (1) AI자막처리 시 \n 줄바꿈 위치를 세그먼트 분할에 그대로 사용 (AI 재호출→불일치 방지) (2) sceneSubtitles를 ProjectData에 추가하여 IndexedDB 영속화 + 프로젝트 로드 시 복원 (editRoomStore.ts, types.ts, useAutoSave.ts, projectStore.ts, 2026-03-17)
 - [x] **#403 캐릭터 레퍼런스 AI 감지 결과 편집 후 저장·반영 수정** — #368에서 편집 UI는 추가됐으나 (1) 자동저장 fingerprint에 캐릭터 데이터 미포함 → 편집 후 새로고침 시 원래값으로 복원되던 버그 수정 (2) 스토리보드 장면 분석 시 캐릭터 레퍼런스 분석 결과(편집 반영)를 detectedCharacterDescription에 병합하여 비주얼 프롬프트 생성에 반영 (useAutoSave.ts, SetupPanel.tsx, 2026-03-17)
 - [x] **#396 편집실 MP4 렌더링 시 STT 업로드 오디오 무음 출력 수정** — 이미지 먼저 생성 후 사운드스튜디오에서 오디오 업로드+전사(STT) 작업 후 MP4 렌더링하면 무음 출력되는 버그. 원인: segmentsToScriptLines()이 개별 라인에 audioUrl을 설정하지 않아 렌더링 파이프라인이 나레이션을 건너뜀. 수정: (1) handleExportMp4에서 개별 라인 audioUrl 없을 시 mergedAudioUrl을 단일 나레이션으로 폴백 (2) 개별 장면 렌더링에서도 audioOffset으로 merged 오디오의 해당 구간만 재생 (3) audioMixer에 audioOffset 파라미터 추가 (EditRoomTab.tsx, audioMixer.ts, webcodecs/index.ts, ffmpegService.ts, 2026-03-17)
 - [x] **#395 업로드 음성 사운드 스튜디오 복원 수정** — 새로고침 후 사운드 스튜디오에서 업로드한 음성이 사라지던 버그. (1) 프로젝트 로드 시 IDB에서 복원된 mergedAudioUrl을 soundStudioStore에 동기화 (2) non-blob URL도 즉시 동기화 (3) 오디오 업로드 후 "전송" 안 눌러도 자동 저장에서 config에 동기화하여 blob 영속화 (projectStore.ts, useAutoSave.ts, 2026-03-17)

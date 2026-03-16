@@ -493,6 +493,7 @@ export interface ProjectData {
   createdAt?: number;
   lastModified: number;
   costStats?: CostStats;
+  sceneSubtitles?: Record<string, SceneSubtitleConfig>;
 }
 
 // ============================================================

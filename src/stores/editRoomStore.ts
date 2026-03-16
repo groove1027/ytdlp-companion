@@ -1137,27 +1137,42 @@ export const useEditRoomStore = create<EditRoomStore>((set, get) => ({
       const rawText = sub.text.replace(/\n/g, ' ').trim();
       if (rawText.length <= cpl) continue;
 
-      // ── Step 1: AI 의미 단위 분할 → 글자 위치 배열 ──
+      // ── Step 1: 분할점 결정 ──
+      // [FIX #399] 이미 \n 줄바꿈이 있으면 (AI자막처리 Step 1에서 설정됨) 그 위치를 그대로 사용
+      // → AI 재호출 시 텍스트 박스와 다른 위치에서 분할되는 버그 방지
       let splitPoints: number[];
-      try {
-        const resp = await evolinkChat([
-          { role: 'system', content: `자막 텍스트를 자연스러운 줄 단위로 나눠라.\n각 줄 최대 ${cpl}자. 문맥/구두점/조사 경계에서 분할.\nJSON 응답: {"lines":["줄1","줄2",...]}` },
-          { role: 'user', content: rawText }
-        ], { temperature: 0.1, responseFormat: { type: 'json_object' }, model: 'gemini-3.1-flash-lite-preview' });
-        const parsed = JSON.parse(resp.choices[0].message.content || '{}');
-        if (Array.isArray(parsed.lines) && parsed.lines.length > 1) {
-          splitPoints = [];
-          let cum = 0;
-          for (let i = 0; i < parsed.lines.length - 1; i++) {
-            cum += parsed.lines[i].length;
-            splitPoints.push(cum);
+      const textLines = sub.text.split('\n').map(l => l.trim()).filter(Boolean);
+      if (textLines.length > 1) {
+        // \n 위치를 rawText 기준 인덱스로 변환 (+1은 \n→공백 치환 보정)
+        splitPoints = [];
+        let cum = 0;
+        for (let i = 0; i < textLines.length - 1; i++) {
+          cum += textLines[i].length;
+          splitPoints.push(cum);
+          cum += 1; // rawText에서 \n이 공백으로 치환된 1글자 보정
+        }
+      } else {
+        // 줄바꿈 없으면 AI 의미 단위 분할
+        try {
+          const resp = await evolinkChat([
+            { role: 'system', content: `자막 텍스트를 자연스러운 줄 단위로 나눠라.\n각 줄 최대 ${cpl}자. 문맥/구두점/조사 경계에서 분할.\nJSON 응답: {"lines":["줄1","줄2",...]}` },
+            { role: 'user', content: rawText }
+          ], { temperature: 0.1, responseFormat: { type: 'json_object' }, model: 'gemini-3.1-flash-lite-preview' });
+          const parsed = JSON.parse(resp.choices[0].message.content || '{}');
+          if (Array.isArray(parsed.lines) && parsed.lines.length > 1) {
+            splitPoints = [];
+            let cum = 0;
+            for (let i = 0; i < parsed.lines.length - 1; i++) {
+              cum += parsed.lines[i].length;
+              splitPoints.push(cum);
+            }
+          } else {
+            splitPoints = fallbackSplitPoints(rawText, cpl);
           }
-        } else {
+        } catch (e) {
+          logger.trackSwallowedError('editRoomStore:aiSubtitleSplit', e);
           splitPoints = fallbackSplitPoints(rawText, cpl);
         }
-      } catch (e) {
-        logger.trackSwallowedError('editRoomStore:aiSubtitleSplit', e);
-        splitPoints = fallbackSplitPoints(rawText, cpl);
       }
 
       if (splitPoints.length === 0) continue;
