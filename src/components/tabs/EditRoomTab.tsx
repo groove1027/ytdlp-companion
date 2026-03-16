@@ -1699,6 +1699,25 @@ const EditRoomTab: React.FC = () => {
         {/* 타임라인 서브탭 */}
         {editRoomSubTab === 'timeline' && (
           <>
+            {/* [FIX #400] TTS 미생성 안내 배너 */}
+            {scenes.length > 0 && !lines.some((l) => l.audioUrl) && (
+              <div className="mb-4 p-3 rounded-xl border border-amber-500/30 bg-amber-600/10 flex items-start gap-3">
+                <span className="text-amber-400 text-lg mt-0.5">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </span>
+                <div>
+                  <p className="text-sm text-amber-300 font-bold">나레이션이 아직 없어요</p>
+                  <p className="text-xs text-gray-400 mt-1">
+                    현재 모든 장면이 기본 3초로 설정되어 있어서 타이밍이 균일합니다.
+                    <strong className="text-amber-400/80"> 사운드 스튜디오</strong>에서 나레이션을 생성하면 대사 길이에 맞춰 자동으로 씽크가 맞춰집니다.
+                    또는 타임라인에서 각 클립을 드래그하여 수동으로 길이를 조정할 수도 있습니다.
+                  </p>
+                </div>
+              </div>
+            )}
+
             {/* 총 길이 표시 */}
             {totalDuration > 0 && (
               <div className="flex items-center gap-3 mb-4 text-sm text-gray-500">

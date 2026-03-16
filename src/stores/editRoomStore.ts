@@ -420,10 +420,13 @@ export const useEditRoomStore = create<EditRoomStore>((set, get) => ({
     const sceneOverlays: Record<string, SceneOverlayConfig[]> = {};
     const sceneTransitions: Record<string, SceneTransitionConfig> = { ...get().sceneTransitions };
 
-    // Smart Motion 매칭: 전체 장면에 대해 최적 프리셋 계산 (연속 중복 회피 포함)
-    // Scene 메타데이터(castType/shotSize/cameraAngle)를 전달하여 앵커 포인트 정밀도 향상
+    // [FIX #400] sceneOrder 기반 lookupMap — 타이밍 계산을 반드시 sceneOrder 순서로 수행
+    const sceneMap = new Map(scenes.map((s) => [s.id, s]));
+
+    // Smart Motion 매칭: sceneOrder 순서로 계산 (연속 중복 회피가 표시 순서 기준이어야 정확)
+    const orderedScenes = sceneOrder.map((id) => sceneMap.get(id)).filter(Boolean) as typeof scenes;
     const smartMotions = assignSmartMotions(
-      scenes.map((s) => ({
+      orderedScenes.map((s) => ({
         visualPrompt: s.visualPrompt || '',
         scriptText: s.scriptText || '',
         sceneType: s.sceneType,
@@ -436,16 +439,18 @@ export const useEditRoomStore = create<EditRoomStore>((set, get) => ({
       }))
     );
 
-    // [CRITICAL FIX] 누적 타이밍으로 장면별 순차 시간 계산
-    // 이전 버그: 모든 장면이 startTime=0, endTime=3으로 겹쳐서 타임라인이 3초로 표시됨
+    // [CRITICAL FIX #400] 누적 타이밍을 sceneOrder 순서로 계산
+    // 이전 버그: scenes 배열 순서로 계산했지만 sceneOrder가 다르면 타이밍 불일치 → 갭/씽크 깨짐
     let cumTime = 0;
 
     // sceneId → line 빠른 검색용 맵 (index 폴백 포함)
     const lineByScene = new Map(lines.filter(l => l.sceneId).map(l => [l.sceneId!, l]));
     const lineByIndex = new Map(lines.map(l => [l.index, l]));
 
-    scenes.forEach((scene, idx) => {
-      const sceneId = scene.id;
+    // sceneOrder 순서로 반복 — useUnifiedTimeline과 동일한 순서로 타이밍 계산
+    sceneOrder.forEach((sceneId, idx) => {
+      const scene = sceneMap.get(sceneId);
+      if (!scene) return;
 
       // 효과 기본값: Smart Motion 매칭 결과 적용 (앵커 포인트 포함)
       if (!get().sceneEffects[sceneId]) {
@@ -461,8 +466,9 @@ export const useEditRoomStore = create<EditRoomStore>((set, get) => ({
         sceneEffects[sceneId] = get().sceneEffects[sceneId];
       }
 
-      // ScriptLine ↔ Scene 매칭: sceneId → 인덱스 폴백
-      const matchedLine = lineByScene.get(sceneId) || lines[idx] || lineByIndex.get(idx) || null;
+      // ScriptLine ↔ Scene 매칭: sceneId → 인덱스 폴백 (scenes 배열 내 원래 인덱스 사용)
+      const origIdx = scenes.indexOf(scene);
+      const matchedLine = lineByScene.get(sceneId) || lines[origIdx] || lineByIndex.get(origIdx) || null;
 
       // [CRITICAL FIX] 장면별 순차 타이밍 계산
       let startT: number, endT: number;

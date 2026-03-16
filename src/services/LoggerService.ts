@@ -1266,7 +1266,7 @@ class LoggerService {
       if (!erStore) throw new Error('not loaded');
       const er = erStore.getState();
       snap['ER.SubTab'] = er.editRoomSubTab || '?';
-      snap['ER.Scenes'] = String(er.scenes?.length || 0);
+      snap['ER.Scenes'] = String(er.sceneOrder?.length || 0);
       snap['ER.Effects'] = String(Object.keys(er.sceneEffects || {}).length);
       snap['ER.Subtitles'] = String(Object.keys(er.sceneSubtitles || {}).length);
       snap['ER.HasBGM'] = String(!!er.bgmConfig?.url);
