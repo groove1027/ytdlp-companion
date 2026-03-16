@@ -475,9 +475,9 @@ const ChannelAnalysisRoom: React.FC = () => {
   // 프리셋 저장
   const handleSavePreset = useCallback(() => {
     if (!channelGuideline) return;
-    savePreset(channelGuideline);
+    savePreset({ ...channelGuideline, contentRegion });
     showToast(`"${channelGuideline.channelName}" 프리셋이 저장되었습니다.`);
-  }, [channelGuideline, savePreset]);
+  }, [channelGuideline, contentRegion, savePreset]);
 
   // 스타일 프롬프트 복사
   const handleCopyPrompt = useCallback(async () => {

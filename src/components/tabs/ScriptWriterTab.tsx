@@ -71,6 +71,7 @@ function buildChannelStyleSection(
   scripts: import('../../types').ChannelScript[],
   benchmark: string,
   referenceComments?: string,
+  targetRegion?: ScriptTargetRegion,
 ): string {
   const parts: string[] = [];
 
@@ -113,11 +114,18 @@ function buildChannelStyleSection(
     ? captionScripts.slice(0, 3)
     : scripts.filter(s => s.transcript.length > 100).slice(0, 2);
 
+  // [FIX #392] 해외 채널 + 한국어 타겟이면 스타일만 참고하도록 지시
+  const isOverseasKo = guideline?.contentRegion === 'overseas' && (!targetRegion || targetRegion === 'ko');
+
   if (sampleScripts.length > 0) {
     const samples = sampleScripts.map((s, i) =>
       `--- 샘플 ${i + 1}: "${s.title}" ---\n${s.transcript.slice(0, 600)}`
     ).join('\n\n');
-    parts.push(`\n[채널 대본 샘플 (말투·어조·종결어미를 정확히 모방하세요)]\n${samples}`);
+    if (isOverseasKo) {
+      parts.push(`\n[채널 대본 샘플 (콘텐츠 구조·전개 방식·훅 패턴만 참고 — 대본은 반드시 한국어로 작성)]\n${samples}`);
+    } else {
+      parts.push(`\n[채널 대본 샘플 (말투·어조·종결어미를 정확히 모방하세요)]\n${samples}`);
+    }
   }
 
   // 벤치마크 대본 (사용자 선택)
@@ -131,7 +139,12 @@ function buildChannelStyleSection(
   }
 
   if (parts.length > 0) {
-    parts.push('\n→ 위 채널의 말투, 종결어미, 문장 호흡, 도입/마무리 패턴을 충실히 반영하여 대본을 작성하세요. 채널 고유의 스타일을 최우선으로 지키세요.');
+    if (isOverseasKo) {
+      // [FIX #392] 해외 채널 프리셋 사용 시 한국어 대본 강제
+      parts.push('\n→ 위 채널은 해외 채널입니다. 콘텐츠 구조, 전개 방식, 편집 리듬, 도입/마무리 패턴은 충실히 참고하되, 대본은 반드시 한국어로 작성하세요. 영어나 다른 외국어로 작성하지 마세요. 한국 시청자가 자연스럽게 이해할 수 있는 한국어 표현을 사용하세요.');
+    } else {
+      parts.push('\n→ 위 채널의 말투, 종결어미, 문장 호흡, 도입/마무리 패턴을 충실히 반영하여 대본을 작성하세요. 채널 고유의 스타일을 최우선으로 지키세요.');
+    }
   }
 
   return parts.join('\n');
@@ -534,7 +547,7 @@ ${scriptText}`;
       : '';
 
     // [FIX #159] 채널 스타일 데이터를 종합하여 프롬프트에 반영
-    const channelStyleSection = buildChannelStyleSection(channelGuideline, channelScripts, benchmarkScript, referenceComments);
+    const channelStyleSection = buildChannelStyleSection(channelGuideline, channelScripts, benchmarkScript, referenceComments, targetRegion);
 
     // [#294] 해외 타겟 지역 프롬프트 섹션
     const regionSection = buildTargetRegionSection(targetRegion);
@@ -658,7 +671,7 @@ ${instinctPrompt}
       : '';
 
     // [FIX #159] 채널 스타일 데이터를 종합하여 프롬프트에 반영 (fullGuidelineText + 대본 샘플 포함)
-    const channelStyleSection = buildChannelStyleSection(channelGuideline, channelScripts, benchmarkScript, referenceComments);
+    const channelStyleSection = buildChannelStyleSection(channelGuideline, channelScripts, benchmarkScript, referenceComments, targetRegion);
 
     // [#294] 해외 타겟 지역 프롬프트 섹션
     const regionSection = buildTargetRegionSection(targetRegion);

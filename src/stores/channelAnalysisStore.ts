@@ -204,8 +204,8 @@ export const useChannelAnalysisStore = create<ChannelAnalysisStore>((set) => ({
     const preset = state.savedPresets.find(p => p.channelName === channelName);
     if (!preset) return;
 
-    // 1) 가이드라인 즉시 반영
-    set({ channelGuideline: preset });
+    // 1) 가이드라인 즉시 반영 + [FIX #392] 해외 채널 여부도 복원
+    set({ channelGuideline: preset, ...(preset.contentRegion ? { contentRegion: preset.contentRegion } : {}) });
 
     // 2) IndexedDB 벤치마크에서 스크립트 복원 (비동기)
     (async () => {

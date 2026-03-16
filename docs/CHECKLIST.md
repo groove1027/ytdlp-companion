@@ -8,6 +8,7 @@
 
 ## 🟢 완료된 작업
 
+- [x] **#374 업로드 탭 UX 개선 — 설정 스텝 오표시 수정 + 사용 가이드 배너** — (1) settings 스텝이 항상 '완료' 표시되던 버그 수정 → 인증+영상 완료 시에만 '완료' 표시 (2) 플랫폼 미연결 시 처음 사용자를 위한 5단계 안내 배너 추가 (UploadTab.tsx, 2026-03-17)
 - [x] **#392 해외 채널 프리셋 사용 시 대본이 영어로 생성되는 버그 수정** — 해외 채널 분석 후 프리셋 저장→대본 생성 시 영어로 출력되던 버그. (1) ChannelGuideline에 contentRegion 필드 추가 (2) 프리셋 저장 시 국내/해외 구분 보존 (3) 프리셋 로드 시 contentRegion 복원 (4) 대본 생성 프롬프트에서 해외 채널+한국어 타겟 감지 시 한국어 강제 지시문 추가 (types.ts, channelAnalysisStore.ts, ChannelAnalysisRoom.tsx, ScriptWriterTab.tsx, 2026-03-17)
 - [x] **#387 이미지→MP4 변환 다운로드 (캡컷 편집용)** — 이미지를 대본/TTS 길이만큼의 MP4로 변환하여 ZIP 다운로드. WebCodecs(H.264) + mp4-muxer 사용. TTS 미생성 시 한국어 기준 ~4자/초로 길이 추정. 프로젝트 화면 비율에 맞는 해상도 자동 적용 (exportService.ts, StoryboardPanel.tsx, 2026-03-17)
 - [x] **#391 이미지/영상 스타일 선택에 레퍼런스 이미지 업로드 추가** — SetupPanel의 비주얼 스타일 섹션에 최대 3장 레퍼런스 이미지 업로드 UI 추가. imageVideoStore에 styleReferenceImages 상태 추가 + projectConfig 영속화. 배치/개별 이미지 생성 시 글로벌 스타일 레퍼런스가 모든 장면에 자동 적용 (types.ts, imageVideoStore.ts, projectStore.ts, SetupPanel.tsx, App.tsx, StoryboardPanel.tsx, LoggerService.ts, 2026-03-16)
