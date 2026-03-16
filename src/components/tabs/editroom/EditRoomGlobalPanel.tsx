@@ -332,8 +332,12 @@ const SubtitleQuickPanel: React.FC<{ onOpenDetail: () => void }> = ({ onOpenDeta
         { role: 'user', content: `다음 자막 텍스트들을 한 줄당 최대 ${charsPerLine}자 이내로 자연스럽게 줄바꿈해주세요.\n기계적으로 글자 수에 맞춰 자르지 말고, 의미 단위/문맥에 맞게 나눠주세요.\n입력: ${JSON.stringify(payload)}\n출력 포맷: 동일 JSON 배열 [{id, text}] (text에 \\n 삽입)` },
       ], { temperature: 0.2, responseFormat: { type: 'json_object' }, model: 'gemini-3.1-flash-lite-preview' });
       const raw = res.choices?.[0]?.message?.content || '[]';
-      const parsed: { id: string; text: string }[] = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
+      const obj = JSON.parse(raw);
+      // [FIX #404] AI가 배열을 객체로 감쌀 수 있음 ({results:[...]}, {items:[...]}, {data:[...]} 등)
+      const parsed: { id: string; text: string }[] = Array.isArray(obj)
+        ? obj
+        : (obj.results || obj.items || obj.data || obj.subtitles || (Array.isArray(Object.values(obj)[0]) ? Object.values(obj)[0] as { id: string; text: string }[] : []));
+      if (Array.isArray(parsed) && parsed.length > 0) {
         parsed.forEach(({ id, text }) => { if (id && text) setSceneSubtitle(id, { text }); });
       }
       removeAllSubtitlePunctuation();

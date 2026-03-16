@@ -233,19 +233,45 @@ function wrapText(
   const result: string[] = [];
 
   for (const para of paragraphs) {
-    const chars = para.split('');
-    let line = '';
-
-    for (const char of chars) {
-      const testLine = line + char;
-      if (ctx.measureText(testLine).width > maxWidth && line.length > 0) {
-        result.push(line);
-        line = char;
-      } else {
-        line = testLine;
+    // [FIX #404] 띄어쓰기 있으면 단어 단위로 줄바꿈 (한국어 단어 중간 끊김 방지)
+    if (para.includes(' ')) {
+      const words = para.split(' ');
+      let line = '';
+      for (const word of words) {
+        const testLine = line ? line + ' ' + word : word;
+        if (line && ctx.measureText(testLine).width > maxWidth) {
+          result.push(line);
+          // 단어 하나가 maxWidth 초과 시 글자 단위 분할
+          if (ctx.measureText(word).width > maxWidth) {
+            let sub = '';
+            for (const ch of word) {
+              if (sub && ctx.measureText(sub + ch).width > maxWidth) { result.push(sub); sub = ch; }
+              else sub += ch;
+            }
+            line = sub;
+          } else {
+            line = word;
+          }
+        } else {
+          line = testLine;
+        }
       }
+      if (line) result.push(line);
+    } else {
+      // 공백 없는 텍스트 (중국어/일본어) → 글자 단위 분할
+      const chars = para.split('');
+      let line = '';
+      for (const char of chars) {
+        const testLine = line + char;
+        if (ctx.measureText(testLine).width > maxWidth && line.length > 0) {
+          result.push(line);
+          line = char;
+        } else {
+          line = testLine;
+        }
+      }
+      if (line) result.push(line);
     }
-    if (line) result.push(line);
   }
 
   return result.length > 0 ? result : [''];

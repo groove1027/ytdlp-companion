@@ -1223,6 +1223,8 @@ const ScenePreviewPanel: React.FC<{
                 textAlign: 'center',
                 lineHeight: 1.4,
                 textShadow: '1px 1px 3px rgba(0,0,0,0.8), -1px -1px 3px rgba(0,0,0,0.8)',
+                // [FIX #404] 한국어 단어 중간 줄바꿈 방지 — 띄어쓰기 기준으로만 줄바꿈
+                wordBreak: 'keep-all',
                 // globalSubtitleStyle 오버라이드
                 ...subtitleCSS,
                 // 자막 애니메이션

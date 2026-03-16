@@ -571,22 +571,22 @@ const SubtitleStyleEditor: React.FC = () => {
   const displayText = useMemo(() => {
     if (!previewText) return previewText;
     // 사용자가 이미 줄바꿈을 넣었으면 그대로 유지, 각 줄에 대해서만 초과분 자동 줄바꿈
+    // [FIX #404] 띄어쓰기 있으면 단어 기반 분할 (한국어 포함), 없으면 글자 수 기반
     return previewText.split('\n').map(line => {
       if (line.length <= charsPerLine) return line;
-      const isCJK = /[\u3000-\u9FFF\uAC00-\uD7AF]/.test(line);
-      if (isCJK) {
+      if (line.includes(' ')) {
+        const words = line.split(' ');
         const parts: string[] = [];
-        for (let i = 0; i < line.length; i += charsPerLine) parts.push(line.slice(i, i + charsPerLine));
+        let cur = '';
+        for (const w of words) {
+          if (cur && (cur + ' ' + w).length > charsPerLine) { parts.push(cur); cur = w; }
+          else cur = cur ? cur + ' ' + w : w;
+        }
+        if (cur) parts.push(cur);
         return parts.join('\n');
       }
-      const words = line.split(' ');
       const parts: string[] = [];
-      let cur = '';
-      for (const w of words) {
-        if (cur && (cur + ' ' + w).length > charsPerLine) { parts.push(cur); cur = w; }
-        else cur = cur ? cur + ' ' + w : w;
-      }
-      if (cur) parts.push(cur);
+      for (let i = 0; i < line.length; i += charsPerLine) parts.push(line.slice(i, i + charsPerLine));
       return parts.join('\n');
     }).join('\n');
   }, [previewText, charsPerLine]);
@@ -925,6 +925,7 @@ const SubtitleStyleEditor: React.FC = () => {
               WebkitTextStroke: outlineW > 0 && outlineColor ? `${outlineW}px ${outlineColor}` : 'none',
               paintOrder: 'stroke fill',
               whiteSpace: 'pre-line',
+              wordBreak: 'keep-all',  // [FIX #404] 한국어 단어 중간 줄바꿈 방지
               ...animStyle,
             }}>{segmentDisplayText}</p>
           </div>
@@ -1080,8 +1081,12 @@ const SubtitleStyleEditor: React.FC = () => {
                         { role: 'user', content: `다음 자막 텍스트들을 한 줄당 최대 ${currentCpl}자 이내로 자연스럽게 줄바꿈해주세요.\n기계적으로 글자 수에 맞춰 자르지 말고, 의미 단위/문맥에 맞게 나눠주세요.\n입력: ${JSON.stringify(payload)}\n출력 포맷: 동일 JSON 배열 [{id, text}] (text에 \\n 삽입)` },
                       ], { temperature: 0.2, responseFormat: { type: 'json_object' }, model: 'gemini-3.1-flash-lite-preview' });
                       const raw = res.choices?.[0]?.message?.content || '[]';
-                      const parsed: { id: string; text: string }[] = JSON.parse(raw);
-                      if (Array.isArray(parsed)) {
+                      const obj = JSON.parse(raw);
+                      // [FIX #404] AI가 배열을 객체로 감쌀 수 있음
+                      const parsed: { id: string; text: string }[] = Array.isArray(obj)
+                        ? obj
+                        : (obj.results || obj.items || obj.data || obj.subtitles || (Array.isArray(Object.values(obj)[0]) ? Object.values(obj)[0] as { id: string; text: string }[] : []));
+                      if (Array.isArray(parsed) && parsed.length > 0) {
                         parsed.forEach(({ id, text }) => { if (id && text) setSceneSubtitle(id, { text }); });
                       }
                       // Step 2: 구두점 자동 제거

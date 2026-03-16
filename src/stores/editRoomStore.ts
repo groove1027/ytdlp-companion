@@ -105,13 +105,9 @@ async function findNearestSilenceGap(audioUrl: string, estimatedTime: number, to
 
 /** AI 실패 시 글자수 기반 분할 포인트 계산 (CJK/영어 자동 판별) */
 function fallbackSplitPoints(text: string, cpl: number): number[] {
-  const isCJK = /[\u3000-\u9FFF\uAC00-\uD7AF]/.test(text);
   const points: number[] = [];
-  if (isCJK) {
-    for (let i = cpl; i < text.length; i += cpl) {
-      points.push(i);
-    }
-  } else {
+  // [FIX #404] 띄어쓰기 있으면 단어 기반 분할 (한국어 포함), 없으면 글자 수 기반
+  if (text.includes(' ')) {
     const words = text.split(' ');
     let pos = 0;
     let lineLen = 0;
@@ -124,6 +120,10 @@ function fallbackSplitPoints(text: string, cpl: number): number[] {
         lineLen += wLen;
       }
       pos += w.length + 1; // +1 for space
+    }
+  } else {
+    for (let i = cpl; i < text.length; i += cpl) {
+      points.push(i);
     }
   }
   return points;
@@ -1444,15 +1444,9 @@ export const useEditRoomStore = create<EditRoomStore>((set, get) => ({
       const rawText = sub.text.replace(/\n/g, ' ').trim();
       if (rawText.length <= cpl) return; // 분할 불필요
 
-      // CJK 판별
-      const isCJK = /[\u3000-\u9FFF\uAC00-\uD7AF]/.test(rawText);
+      // [FIX #404] 띄어쓰기 있으면 단어 기반 분할 (한국어 포함), 없으면 글자 수 기반
       let lines: string[];
-      if (isCJK) {
-        lines = [];
-        for (let i = 0; i < rawText.length; i += cpl) {
-          lines.push(rawText.slice(i, i + cpl));
-        }
-      } else {
+      if (rawText.includes(' ')) {
         const words = rawText.split(' ');
         lines = [];
         let cur = '';
@@ -1461,6 +1455,11 @@ export const useEditRoomStore = create<EditRoomStore>((set, get) => ({
           else cur = cur ? cur + ' ' + w : w;
         }
         if (cur) lines.push(cur);
+      } else {
+        lines = [];
+        for (let i = 0; i < rawText.length; i += cpl) {
+          lines.push(rawText.slice(i, i + cpl));
+        }
       }
 
       if (lines.length <= 1) return;
