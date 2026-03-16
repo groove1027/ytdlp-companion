@@ -8,9 +8,9 @@
 
 ## 🟢 완료된 작업
 
+- [x] **#379 비주얼 스타일 미리보기 창에서 즐겨찾기 버튼 추가** — StylePreviewLightbox(캐러셀)에서 ★ 즐겨찾기 토글 버튼 추가. 스타일 이름 옆에 배치하여 창을 닫지 않고 즐겨찾기 등록/해제 가능. 기존 useFavorites 훅과 동일 localStorage 공유 (VisualStylePicker.tsx, 2026-03-17)
 - [x] **#385 목표 컷수 설정 시 실제 생성 및 표시에 미반영 수정** — #383 재발. 사용자가 50컷 설정했는데 배너에 73컷 표시 + 실제 73컷 생성. 원인: (1) 배너가 targetSceneCount를 무시하고 countScenesLocally() 결과만 표시 (2) 청킹 경로에서 splitScenesLocally()의 자연 분할 결과를 targetSceneCount에 맞게 병합하지 않음. 수정: (1) SetupPanel 배너에서 targetSceneCount 우선 표시 (2) scriptAnalysis.ts 청킹 전에 sceneTexts를 targetSceneCount 수로 균등 병합 (SetupPanel.tsx, scriptAnalysis.ts, 2026-03-17)
 - [x] **#377 Typecast '김건' 성우 API 모드에서 누락 수정** — API 키가 있을 때 Typecast API 응답이 빌트인 음성 목록을 완전히 대체하여, 수동 등록된 음성(김건 등)이 표시되지 않던 버그. API 응답에 없는 빌트인 음성을 자동 병합하도록 수정 (typecastService.ts, 2026-03-17)
-- [x] **#379 비주얼 스타일 미리보기 창에서 즐겨찾기 버튼 추가** — StylePreviewLightbox(캐러셀)에서 ★ 즐겨찾기 토글 버튼 추가. 스타일 이름 옆에 배치하여 창을 닫지 않고 즐겨찾기 등록/해제 가능. 기존 useFavorites 훅과 동일 localStorage 공유 (VisualStylePicker.tsx, 2026-03-17)
 - [x] **#404 AI 자막 처리 시 한국어 단어 중간 끊김 수정** — AI 자막 처리(20자) 결과가 "있습니다"→"있습/니다", "강원도"→"강/원도" 등 단어 중간에서 줄바꿈되는 버그. 원인: (1) 편집실 미리보기에 word-break: keep-all 누락 (2) CJK 폴백 분할이 한국어도 글자 수 기준 하드컷 (3) Canvas 렌더러도 동일 (4) AI 응답이 JSON 객체로 감싸면 파싱 실패. 수정: 6개 파일 8개소 — 미리보기/상세편집에 wordBreak:'keep-all', 폴백 분할/Canvas wrapText를 띄어쓰기 기반으로 변경, AI 응답 JSON 객체 래핑 처리 (EditRoomTab.tsx, editRoomStore.ts, SubtitleStyleEditor.tsx, subtitleRenderer.ts, EditRoomGlobalPanel.tsx, 2026-03-17)
 - [x] **#394 인스타그램 다운로드 영상 분석 시 무한 로딩 수정** — 인스타에서 받은 영상만 분석 시 로딩에서 멈추는 버그. 원인: 브라우저가 디코딩할 수 없는 코덱(H.265/HEVC 등)의 영상에서 WebCodecs 60s + Canvas 90s = 150초 대기 후에야 폴백. 수정: (1) canBrowserDecodeVideo() 5초 빠른 프로브로 디코딩 불가 영상 즉시 감지→Cloudinary 업로드 폴백 (2) Canvas 폴백에서 연속 3회 시크 실패 시 조기 종료 (3) 전처리 단계별 진행 토스트 표시 (4) 모든 duration 체크에 isFinite() 방어 추가 (VideoAnalysisRoom.tsx, SocialAnalysisRoom.tsx, sceneDetection.ts, 2026-03-17)
 - [x] **#399 편집실 자막 줄바꿈 불일치 + 새로고침 시 초기화 수정** — (1) AI자막처리 시 \n 줄바꿈 위치를 세그먼트 분할에 그대로 사용 (AI 재호출→불일치 방지) (2) sceneSubtitles를 ProjectData에 추가하여 IndexedDB 영속화 + 프로젝트 로드 시 복원 (editRoomStore.ts, types.ts, useAutoSave.ts, projectStore.ts, 2026-03-17)

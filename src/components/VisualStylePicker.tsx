@@ -99,11 +99,13 @@ function VisualStyleThumbnail({ catIdx, itemIdx, label, onZoom }: {
 
 // ─── StylePreviewLightbox ───
 
-function StylePreviewLightbox({ state, onClose, value, onChange }: {
+function StylePreviewLightbox({ state, onClose, value, onChange, isFav, toggleFav }: {
   state: LightboxState;
   onClose: () => void;
   value: string;
   onChange: (prompt: string) => void;
+  isFav: (prompt: string) => boolean;
+  toggleFav: (prompt: string) => void;
 }) {
   const [current, setCurrent] = useState(state);
   const [imgError, setImgError] = useState(false);
@@ -175,7 +177,15 @@ function StylePreviewLightbox({ state, onClose, value, onChange }: {
         </div>
 
         <div className="text-center mb-3">
-          <div className="text-xl font-bold text-white">{currentItem.label}</div>
+          <div className="flex items-center justify-center gap-2">
+            <div className="text-xl font-bold text-white">{currentItem.label}</div>
+            <button
+              type="button"
+              onClick={() => toggleFav(currentItem.prompt)}
+              className={`text-xl transition-all hover:scale-125 ${isFav(currentItem.prompt) ? 'text-yellow-400' : 'text-gray-600 hover:text-yellow-400'}`}
+              title={isFav(currentItem.prompt) ? '즐겨찾기 해제' : '즐겨찾기 추가'}
+            >★</button>
+          </div>
           <div className="text-sm text-gray-400 mt-1">{currentItem.desc}</div>
         </div>
 
@@ -365,7 +375,7 @@ export default function VisualStylePicker({ value, onChange, colorTheme, compact
       </div>
 
       {lightbox && (
-        <StylePreviewLightbox state={lightbox} onClose={() => setLightbox(null)} value={value} onChange={onChange} />
+        <StylePreviewLightbox state={lightbox} onClose={() => setLightbox(null)} value={value} onChange={onChange} isFav={isFav} toggleFav={toggleFav} />
       )}
     </>
   );
