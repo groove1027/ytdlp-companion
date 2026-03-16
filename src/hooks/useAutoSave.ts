@@ -95,10 +95,21 @@ export const useAutoSave = () => {
         // 클라우드 동기화 스케줄링 (10s debounce, fire-and-forget)
         scheduleSyncToCloud(currentProjectId);
 
+        // [FIX #395] soundStudioStore.mergedAudioUrl이 config에 없으면 동기화
+        // — 사용자가 오디오 업로드 후 "전송" 안 눌러도 자동 저장되도록
+        try {
+          const { useSoundStudioStore } = await import('../stores/soundStudioStore');
+          const soundMergedUrl = useSoundStudioStore.getState().mergedAudioUrl;
+          if (soundMergedUrl && !config.mergedAudioUrl) {
+            useProjectStore.getState().setConfig((prev) => prev ? { ...prev, mergedAudioUrl: soundMergedUrl } : prev);
+          }
+        } catch (e) { logger.trackSwallowedError('useAutoSave:doSave/syncMergedAudio', e); }
+
         // 오디오 blob을 IndexedDB에 영속화 (fire-and-forget)
         try {
+          const effectiveMergedUrl = useProjectStore.getState().config?.mergedAudioUrl || config.mergedAudioUrl;
           import('../services/audioStorageService').then(({ persistProjectAudio }) => {
-            persistProjectAudio(currentProjectId, scenes, config.mergedAudioUrl).catch((e) => { logger.trackSwallowedError('useAutoSave:persistProjectAudio', e); });
+            persistProjectAudio(currentProjectId, scenes, effectiveMergedUrl).catch((e) => { logger.trackSwallowedError('useAutoSave:persistProjectAudio', e); });
           });
         } catch (e) { logger.trackSwallowedError('useAutoSave:doSave/audioStorage', e); }
 

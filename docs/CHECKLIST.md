@@ -8,6 +8,7 @@
 
 ## 🟢 완료된 작업
 
+- [x] **#395 업로드 음성 사운드 스튜디오 복원 수정** — 새로고침 후 사운드 스튜디오에서 업로드한 음성이 사라지던 버그. (1) 프로젝트 로드 시 IDB에서 복원된 mergedAudioUrl을 soundStudioStore에 동기화 (2) non-blob URL도 즉시 동기화 (3) 오디오 업로드 후 "전송" 안 눌러도 자동 저장에서 config에 동기화하여 blob 영속화 (projectStore.ts, useAutoSave.ts, 2026-03-17)
 - [x] **#374 업로드 탭 UX 개선 — 설정 스텝 오표시 수정 + 사용 가이드 배너** — (1) settings 스텝이 항상 '완료' 표시되던 버그 수정 → 인증+영상 완료 시에만 '완료' 표시 (2) 플랫폼 미연결 시 처음 사용자를 위한 5단계 안내 배너 추가 (UploadTab.tsx, 2026-03-17)
 - [x] **#392 해외 채널 프리셋 사용 시 대본이 영어로 생성되는 버그 수정** — 해외 채널 분석 후 프리셋 저장→대본 생성 시 영어로 출력되던 버그. (1) ChannelGuideline에 contentRegion 필드 추가 (2) 프리셋 저장 시 국내/해외 구분 보존 (3) 프리셋 로드 시 contentRegion 복원 (4) 대본 생성 프롬프트에서 해외 채널+한국어 타겟 감지 시 한국어 강제 지시문 추가 (types.ts, channelAnalysisStore.ts, ChannelAnalysisRoom.tsx, ScriptWriterTab.tsx, 2026-03-17)
 - [x] **#387 이미지→MP4 변환 다운로드 (캡컷 편집용)** — 이미지를 대본/TTS 길이만큼의 MP4로 변환하여 ZIP 다운로드. WebCodecs(H.264) + mp4-muxer 사용. TTS 미생성 시 한국어 기준 ~4자/초로 길이 추정. 프로젝트 화면 비율에 맞는 해상도 자동 적용 (exportService.ts, StoryboardPanel.tsx, 2026-03-17)

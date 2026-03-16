@@ -501,6 +501,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
           if (currentConfig) {
             set({ config: { ...currentConfig, mergedAudioUrl: restored.mergedUrl } });
           }
+          // [FIX #395] soundStudioStore에도 동기화 — Sound Studio에서 병합 오디오 표시
+          try { useSoundStudioStore.getState().setMergedAudio(restored.mergedUrl); } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/syncMergedAudio', e); }
         } else if (get().config?.mergedAudioUrl?.startsWith('blob:')) {
           // IDB에 없는 stale blob URL 제거
           const currentConfig = get().config;
@@ -553,6 +555,11 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         });
       if (immediateLines.length > 0) {
         useSoundStudioStore.getState().setLines(immediateLines);
+      }
+      // [FIX #395] non-blob mergedAudioUrl도 즉시 soundStudioStore에 동기화
+      const immediateMergedUrl = project.config?.mergedAudioUrl;
+      if (immediateMergedUrl && !immediateMergedUrl.startsWith('blob:')) {
+        useSoundStudioStore.getState().setMergedAudio(immediateMergedUrl);
       }
     } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/immediateLines', e); }
 
