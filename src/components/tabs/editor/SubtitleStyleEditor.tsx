@@ -869,10 +869,10 @@ const SubtitleStyleEditor: React.FC = () => {
   } : {};
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-4 lg:items-start">
+    <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] gap-4 lg:items-start">
       <style>{ANIM_KEYFRAMES}{MOTION_KEYFRAMES}</style>
       {/* ═══ 좌측: 미리보기 + 템플릿 (sticky — 우측 스크롤 시 프리뷰 고정) ═══ */}
-      <div className="space-y-3 lg:sticky lg:top-0 lg:self-start">
+      <div className="min-w-0 space-y-3 lg:sticky lg:top-0 lg:self-start">
         {/* 미리보기 영역 */}
         <div
           ref={previewRef}
@@ -1474,7 +1474,7 @@ const SubtitleStyleEditor: React.FC = () => {
       </div>
 
       {/* ═══ 우측: 스타일 편집 (독립 스크롤 — 좌측 프리뷰와 분리) ═══ */}
-      <div className="bg-gray-800/50 rounded-xl border border-gray-700 p-4 space-y-4 overflow-y-auto lg:max-h-[calc(100vh-120px)]">
+      <div className="min-w-0 bg-gray-800/50 rounded-xl border border-gray-700 p-4 space-y-4 overflow-y-auto lg:max-h-[calc(100vh-120px)]">
 
         {/* ── 폰트 선택 ── */}
         <div className="space-y-1.5">

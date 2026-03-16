@@ -1,4 +1,5 @@
 import React, { Suspense, lazy, useState, useCallback, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import BgmOverlayPanel from './BgmOverlayPanel';
 import MemeAndSfxPanel, { MemeAndSfxSearchModal } from './MemeAndSfxPanel';
 import { useEditRoomStore } from '../../../stores/editRoomStore';
@@ -652,8 +653,8 @@ const EditRoomGlobalPanel: React.FC = () => {
         </div>
       </div>
 
-      {/* 전체화면 모달 — 이미지 효과 */}
-      {fullModal === 'effects' && (
+      {/* 전체화면 모달 — createPortal로 document.body에 렌더링 (Framer Motion transform 간섭 방지) */}
+      {fullModal === 'effects' && createPortal(
         <div className="fixed inset-0 z-50 bg-gray-900/95 overflow-y-auto">
           <div className="sticky top-0 z-10 bg-gray-900 border-b border-gray-700 px-6 py-3 flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -676,16 +677,18 @@ const EditRoomGlobalPanel: React.FC = () => {
               <EffectPresets />
             </Suspense>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
 
       {/* 전체화면 모달 — 밈 & 효과음 검색 */}
-      {fullModal === 'meme-sfx' && (
-        <MemeAndSfxSearchModal onClose={() => setFullModal(null)} />
+      {fullModal === 'meme-sfx' && createPortal(
+        <MemeAndSfxSearchModal onClose={() => setFullModal(null)} />,
+        document.body,
       )}
 
       {/* 전체화면 모달 — 자막 상세 편집 */}
-      {fullModal === 'subtitle' && (
+      {fullModal === 'subtitle' && createPortal(
         <div className="fixed inset-0 z-50 bg-gray-900/95 flex flex-col">
           <div className="flex-shrink-0 z-10 bg-gray-900 border-b border-gray-700 px-6 py-3 flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -710,7 +713,8 @@ const EditRoomGlobalPanel: React.FC = () => {
               </Suspense>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </>
   );
