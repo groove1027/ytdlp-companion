@@ -211,6 +211,7 @@ project-root/
 | storageService.ts, IndexedDB | `.claude/skills/data-storage.md` | "저장", "IndexedDB", "프로젝트", services/storage* |
 | HTML 내보내기, ZIP | `.claude/skills/export-system.md` | "내보내기", "export", "HTML", "다운로드", "ZIP" |
 | 외부 API 요청/응답 포맷 | `.claude/skills/{서비스별 개별 문서}` | "API", "엔드포인트", "요청", "응답", "에러코드", fetch 수정 시 — 해당 서비스 문서 개별 참조 |
+| **기술 스카우팅** | **`.claude/skills/tech-scout.md`** | `/scout`, "최신 기술", "라이브러리 추천", "업그레이드", "트렌딩" |
 
 ---
 

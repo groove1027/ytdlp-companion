@@ -1,5 +1,7 @@
 
 import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
+import { Toaster } from 'sonner';
+import { AnimatePresence, motion } from 'motion/react';
 import ConfigForm from './components/ConfigForm';
 // [v4.5] 레거시 UI 제거됨 — StoryboardScene, ThumbnailGenerator는 각 탭 컴포넌트에서 직접 import
 import ProcessingOverlay from './components/ProcessingOverlay';
@@ -40,7 +42,7 @@ import AuthPromptModal from './components/AuthPromptModal';
 import ProfileModal from './components/ProfileModal';
 import HelpGuideModal from './components/HelpGuideModal';
 import OnboardingTour from './components/OnboardingTour';
-import { useUIStore } from './stores/uiStore';
+import { useUIStore, showToast } from './stores/uiStore';
 import { useAuthStore } from './stores/authStore';
 import { useCostStore } from './stores/costStore';
 import { useProjectStore, autoRestoreOrCreateProject } from './stores/projectStore';
@@ -529,8 +531,7 @@ const App: React.FC = () => {
     // if (newConfig.mode === 'SCRIPT' || newConfig.mode === 'CHARACTER' || newConfig.mode === 'THUMBNAIL') {
     if (newConfig.mode === 'SCRIPT' || newConfig.mode === 'THUMBNAIL') {
         if (!getGeminiKey()) {
-            useUIStore.getState().setToast({ show: true, message: "⚠️ 라오장 통합 API Key가 없습니다. 좌측 메뉴 → API 설정에서 키를 입력해주세요." });
-            setTimeout(() => useUIStore.getState().setToast(null), 5000);
+            showToast("⚠️ 라오장 통합 API Key가 없습니다. 좌측 메뉴 → API 설정에서 키를 입력해주세요.", 5000);
             return;
         }
     }
@@ -544,7 +545,7 @@ const App: React.FC = () => {
              setCurrentProjectId(newId);
              // Cost is auto-tracked inside evolinkChat/requestEvolinkNative
          } else {
-             useUIStore.getState().setToast({ show: true, message: "브라우저 저장소 공간이 부족합니다. 기존 프로젝트를 삭제해주세요." }); setTimeout(() => useUIStore.getState().setToast(null), 5000);
+             showToast("브라우저 저장소 공간이 부족합니다. 기존 프로젝트를 삭제해주세요.", 5000);
              setProcessing(false);
              return;
          }
@@ -823,7 +824,7 @@ const App: React.FC = () => {
         if (errorMsg.includes("API Key")) {
             errorMsg = "통합 API Key 오류가 발생했습니다. 설정 메뉴에서 키를 확인해주세요.";
         }
-        useUIStore.getState().setToast({ show: true, message: `처리 중 오류: ${errorMsg}` }); setTimeout(() => useUIStore.getState().setToast(null), 5000);
+        showToast(`처리 중 오류: ${errorMsg}`, 5000);
         setProcessing(false);
     } 
   };
@@ -887,7 +888,7 @@ const App: React.FC = () => {
           setScenes(prev => prev.map(s => s.id === sceneId ? { ...s, visualPrompt: prompt } : s));
       } catch (e: any) {
           console.error("Auto Prompt Gen Error:", e);
-          useUIStore.getState().setToast({ show: true, message: `프롬프트 자동 변환 실패: ${e.message}` }); setTimeout(() => useUIStore.getState().setToast(null), 4000);
+          showToast(`프롬프트 자동 변환 실패: ${e.message}`, 4000);
       }
   }, [setScenes]);
 
@@ -895,7 +896,7 @@ const App: React.FC = () => {
   const handleInjectCharacter = useCallback((sceneId: string) => {
       const currentConfig = useProjectStore.getState().config;
       const charRef = currentConfig?.characterPublicUrl || currentConfig?.characterImage;
-      if (!charRef) { useUIStore.getState().setToast({ show: true, message: "캐릭터가 없습니다." }); setTimeout(() => useUIStore.getState().setToast(null), 3000); return; }
+      if (!charRef) { showToast("캐릭터가 없습니다.", 3000); return; }
       setScenes(prev => prev.map(s => s.id === sceneId ? { ...s, characterPresent: true, referenceImage: charRef } : s));
       handleGenerateImage(sceneId, "Ensure character matches reference.", undefined, currentConfig);
   }, [setScenes, handleGenerateImage]);
@@ -1007,12 +1008,11 @@ const App: React.FC = () => {
                   totalScripts: doc.querySelectorAll('script').length,
                   fileSize: text.length,
               });
-              useUIStore.getState().setToast({ show: true, message: '이 파일에서 프로젝트 데이터를 찾을 수 없습니다. 이 앱에서 내보낸 프로젝트 파일(.html 또는 .zip)만 불러올 수 있습니다.' });
-              setTimeout(() => useUIStore.getState().setToast(null), 5000);
+              showToast('이 파일에서 프로젝트 데이터를 찾을 수 없습니다. 이 앱에서 내보낸 프로젝트 파일(.html 또는 .zip)만 불러올 수 있습니다.', 5000);
           }
       } catch (e) {
           console.error("Import failed", e);
-          useUIStore.getState().setToast({ show: true, message: "파일을 불러오는데 실패했습니다. 올바른 프로젝트 파일인지 확인해주세요." }); setTimeout(() => useUIStore.getState().setToast(null), 4000);
+          showToast("파일을 불러오는데 실패했습니다. 올바른 프로젝트 파일인지 확인해주세요.", 4000);
       }
   };
 
@@ -1068,10 +1068,10 @@ const App: React.FC = () => {
                   </div>
                   <div className="p-4 border-t border-gray-700 flex justify-end gap-2 flex-wrap bg-gray-900 rounded-b-xl">
                       <button onClick={() => useUIStore.getState().setShowFullScriptModal(false)} className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-lg font-bold text-sm">닫기</button>
-                      <button onClick={() => { navigator.clipboard.writeText(origText).then(() => { useUIStore.getState().setToast({ show: true, message: "전체 대본이 클립보드에 복사되었습니다!" }); setTimeout(() => useUIStore.getState().setToast(null), 2000); }); }} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-bold text-sm">📋 원본 복사</button>
+                      <button onClick={() => { navigator.clipboard.writeText(origText).then(() => { showToast("전체 대본이 클립보드에 복사되었습니다!", 2000); }); }} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-bold text-sm">📋 원본 복사</button>
                       <button onClick={() => downloadTextFile(origText, 'script_original.txt')} className="px-4 py-2 bg-gray-600 hover:bg-gray-500 text-white rounded-lg font-bold text-sm">📥 원본 다운로드</button>
                       {hasKO && <>
-                          <button onClick={() => { navigator.clipboard.writeText(koText).then(() => { useUIStore.getState().setToast({ show: true, message: "한국어 대본이 클립보드에 복사되었습니다!" }); setTimeout(() => useUIStore.getState().setToast(null), 2000); }); }} className="px-4 py-2 bg-blue-700 hover:bg-blue-600 text-white rounded-lg font-bold text-sm">📋 한글 복사</button>
+                          <button onClick={() => { navigator.clipboard.writeText(koText).then(() => { showToast("한국어 대본이 클립보드에 복사되었습니다!", 2000); }); }} className="px-4 py-2 bg-blue-700 hover:bg-blue-600 text-white rounded-lg font-bold text-sm">📋 한글 복사</button>
                           <button onClick={() => downloadTextFile(koText, 'script_korean.txt')} className="px-4 py-2 bg-blue-800 hover:bg-blue-700 text-white rounded-lg font-bold text-sm">📥 한글 다운로드</button>
                       </>}
                   </div>
@@ -1396,7 +1396,15 @@ const App: React.FC = () => {
             return null;
           })()}
 
-          {/* [v4.5] 탭 기반 라우팅 */}
+          {/* [v4.5] 탭 기반 라우팅 — Motion 애니메이션 적용 */}
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={activeTab}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.15, ease: 'easeOut' }}
+            >
           {activeTab === 'channel-analysis' ? (
               <TabErrorBoundary><Suspense fallback={<TabFallback />}><ChannelAnalysisTab /></Suspense></TabErrorBoundary>
           ) : activeTab === 'script-writer' ? (
@@ -1434,6 +1442,8 @@ const App: React.FC = () => {
                 <ProjectDashboard onSelectProject={handleLoadProject} onNewProject={handleNewProject} onImportProject={handleImportProject} refreshTrigger={refreshTrigger} />
               </Suspense>
           )}
+            </motion.div>
+          </AnimatePresence>
       </main>
       </div>{/* flex wrapper 닫기 */}
 
@@ -1469,15 +1479,21 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* 전역 Toast 알림 */}
-      {toast && toast.show && !toast.total && (
-        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[9999] pointer-events-none" style={{ animation: 'toastIn 0.3s ease-out' }}>
-          <style>{`@keyframes toastIn { from { opacity:0; transform:translateY(-12px); } to { opacity:1; transform:translateY(0); } }`}</style>
-          <div className="bg-gray-900/95 text-white px-5 py-3 rounded-xl shadow-2xl border border-gray-600/50 backdrop-blur-sm text-sm font-medium flex items-center gap-2">
-            <span className="text-green-400">✓</span> {toast.message}
-          </div>
-        </div>
-      )}
+      {/* 전역 Toast 알림 — Sonner */}
+      <Toaster
+        position="top-center"
+        toastOptions={{
+          style: {
+            background: 'rgba(17, 24, 39, 0.95)',
+            color: '#fff',
+            border: '1px solid rgba(75, 85, 99, 0.5)',
+            backdropFilter: 'blur(8px)',
+            fontSize: '14px',
+            fontWeight: 500,
+          },
+        }}
+        theme="dark"
+      />
 
       {/* 프로그레스 Toast (다운로드 진행률) */}
       {toast && toast.show && toast.total && toast.total > 0 && (

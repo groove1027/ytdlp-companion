@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { toast as sonnerToast } from 'sonner';
 
 interface ToastState {
   show: boolean;
@@ -103,8 +104,16 @@ export const useUIStore = create<UIStore>((set) => ({
   setLastAutoSavedAt: (ts) => set({ lastAutoSavedAt: ts }),
 }));
 
-/** alert() 대체 유틸리티 — 어디서든 import해서 사용 */
+/** alert() 대체 유틸리티 — 어디서든 import해서 사용 (Sonner 기반) */
 export const showToast = (message: string, durationMs = 3000) => {
-  useUIStore.getState().setToast({ show: true, message });
-  setTimeout(() => useUIStore.getState().setToast(null), durationMs);
+  // 에러성 메시지는 error 스타일, 성공/복사 메시지는 success 스타일
+  const isError = /실패|에러|오류|없습니다|불가|부족|초과|차단/.test(message);
+  const isSuccess = /완료|성공|복사|저장|삭제|연결|적용/.test(message);
+  if (isError) {
+    sonnerToast.error(message, { duration: durationMs });
+  } else if (isSuccess) {
+    sonnerToast.success(message, { duration: durationMs });
+  } else {
+    sonnerToast(message, { duration: durationMs });
+  }
 };

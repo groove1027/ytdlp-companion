@@ -8,6 +8,7 @@
 
 ## 🟢 완료된 작업
 
+- [x] **Sonner + Motion 도입** — (1) 커스텀 토스트 시스템(showToast)을 Sonner 기반으로 교체: 에러/성공/일반 메시지 자동 분류, 중첩 토스트 지원, 스와이프 닫기, 애니메이션 내장. App.tsx의 인라인 setToast 9건을 showToast로 마이그레이션. 기존 66개 파일 402건 showToast 호출은 내부 구현 교체로 자동 적용. 프로그레스 토스트(current/total)는 기존 커스텀 렌더링 유지. (2) Motion(ex-Framer Motion) 도입: 탭 전환에 AnimatePresence + motion.div 적용하여 부드러운 fade+slide 애니메이션 추가 (uiStore.ts, App.tsx, package.json, 2026-03-17)
 - [x] **#386 영상 분석 95% 멈춤 재수정 — 전처리 abort signal 전파 누락** — #378에서 글로벌 타임아웃(8분)은 추가했으나, 전처리 단계의 Cloudinary 업로드와 화자 분리에서 abort signal이 전파되지 않아 타임아웃이 실질적으로 작동하지 않던 근본 원인 수정. (1) uploadMediaToHosting에 optional signal 파라미터 추가하여 fetch 취소 가능 (2) VideoAnalysisRoom.tsx의 Cloudinary 업로드/diarization catch에서 AbortError 재throw (3) 전처리 단계 사이에 abort 체크 삽입 (4) transcriptionService.ts Cloudinary 업로드에 signal 전달 (5) videoAnalysis.ts transcribeVideoAudio에서 abort 시 에러 전파 (uploadService.ts, VideoAnalysisRoom.tsx, transcriptionService.ts, videoAnalysis.ts, 2026-03-17)
 - [x] **#397 청크 실패 시 중간 대본 누락 + 장면 수 감소 수정** — 대형 대본 청크 병렬 처리에서 1개 청크가 빈 응답(empty scene list)이나 JSON 파싱 실패하면 Promise.all이 배치 전체를 폐기하여 ~1분 분량 누락 + 20장면 감소하던 버그. 3가지 수정: (1) isRetryable에 'empty scene list'/'JSON parse error' 추가하여 재시도 대상으로 변경 (2) Pro+Flash 모두 실패 시 throw 대신 원본 텍스트 기반 폴백 장면 생성 (3) Promise.all→Promise.allSettled로 변경하여 개별 청크 실패해도 나머지 보존 (scriptAnalysis.ts, 2026-03-17)
 - [x] **#379 비주얼 스타일 미리보기 창에서 즐겨찾기 버튼 추가** — StylePreviewLightbox(캐러셀)에서 ★ 즐겨찾기 토글 버튼 추가. 스타일 이름 옆에 배치하여 창을 닫지 않고 즐겨찾기 등록/해제 가능. 기존 useFavorites 훅과 동일 localStorage 공유 (VisualStylePicker.tsx, 2026-03-17)
