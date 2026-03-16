@@ -224,8 +224,8 @@ const AnalysisLoadingPanel: React.FC<AnalysisLoadingPanelProps> = ({
         </div>
       )}
 
-      {/* [FIX #157] 취소 버튼 — 2분 이상 경과 시 노출 */}
-      {onCancel && elapsedSec >= 120 && (
+      {/* [FIX #157,#354] 취소 버튼 — 30초 이상 경과 시 노출 */}
+      {onCancel && elapsedSec >= 30 && (
         <div className="flex justify-center">
           <button
             type="button"

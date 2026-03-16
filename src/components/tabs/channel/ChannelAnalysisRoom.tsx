@@ -431,7 +431,7 @@ const ChannelAnalysisRoom: React.FC = () => {
 - "주제 추천" 기능에 소재를 입력해서 AI 확장하는 방법
 - 분석한 채널의 스타일 프리셋을 활용해 대본을 자동 생성하는 흐름` }
         ],
-        { temperature: 0.5, maxTokens: 4000 }
+        { temperature: 0.5, maxTokens: 8000 }
       );
 
       const content = res.choices?.[0]?.message?.content || '';

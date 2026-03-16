@@ -48,6 +48,9 @@ export async function detectSceneCuts(
 ): Promise<SceneCut[]> {
   const threshold = options?.threshold ?? 25;
   const maxFrames = options?.maxFrames ?? 300;
+  // [FIX #354/#367] 전체 타임아웃 90초 — 무한 행 방지
+  const OVERALL_TIMEOUT_MS = 90_000;
+  const startTime = Date.now();
 
   // 1. video 엘리먼트로 영상 로드
   const url = URL.createObjectURL(blob);
@@ -93,6 +96,12 @@ export async function detectSceneCuts(
 
     // 4. 프레임별 시크 → 비교
     for (let i = 0; i < timePoints.length; i++) {
+      // [FIX #354/#367] 전체 타임아웃 체크
+      if (Date.now() - startTime > OVERALL_TIMEOUT_MS) {
+        console.warn(`[Scene] ⚠️ 씬 감지 ${OVERALL_TIMEOUT_MS / 1000}초 타임아웃 — ${i}/${timePoints.length} 프레임까지 분석 후 중단`);
+        break;
+      }
+
       const t = timePoints[i];
 
       // 시크

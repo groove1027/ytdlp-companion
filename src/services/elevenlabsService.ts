@@ -56,6 +56,13 @@ export const generateElevenLabsDialogueTTS = async (
   return generateSingleChunk(cleanedOptions, apiKey);
 };
 
+// [FIX #363] Dialogue V3 프리메이드 음성 이름 — 커뮤니티 음성 422 에러 시 폴백용
+const PREMADE_VOICE_NAMES = new Set([
+  'Adam', 'Alice', 'Bill', 'Brian', 'Callum', 'Charlie', 'Chris', 'Daniel',
+  'Eric', 'George', 'Harry', 'Jessica', 'Laura', 'Liam', 'Lily', 'Matilda',
+  'River', 'Roger', 'Sarah', 'Will',
+]);
+
 /** 단일 청크 TTS 생성 — dialogue 배열 포맷 사용 */
 const generateSingleChunk = async (
   options: ElevenLabsDialogueOptions,
@@ -78,37 +85,54 @@ const generateSingleChunk = async (
     languageCode: resolvedLangCode,
   });
 
-  const input: Record<string, unknown> = {
-    dialogue: [{ text, voice: voiceId }],
-    stability,
-    ...(resolvedLangCode ? { language_code: resolvedLangCode } : {}),
+  // [FIX #363] 실제 API 호출 (음성 유효성 422 시 프리메이드 폴백 1회 재시도)
+  const attemptCreate = async (voice: string): Promise<string> => {
+    const input: Record<string, unknown> = {
+      dialogue: [{ text, voice }],
+      stability,
+      ...(resolvedLangCode ? { language_code: resolvedLangCode } : {}),
+    };
+
+    const response = await monitoredFetch(`${KIE_BASE_URL}/jobs/createTask`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'elevenlabs/text-to-dialogue-v3',
+        input,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      if (response.status === 402) throw new Error('Kie 잔액 부족: 크레딧을 충전해주세요.');
+      if (response.status === 429) throw new Error('Kie 요청 제한 초과: 잠시 후 다시 시도해주세요.');
+      throw new Error(`ElevenLabs Dialogue V3 생성 오류 (${response.status}): ${errorText}`);
+    }
+
+    const data = await response.json();
+    if (data.code !== 200 || !data.data?.taskId) {
+      throw new Error(`ElevenLabs Dialogue V3 태스크 생성 실패: ${data.msg || '알 수 없는 오류'} (code: ${data.code})`);
+    }
+    return data.data.taskId;
   };
 
-  const response = await monitoredFetch(`${KIE_BASE_URL}/jobs/createTask`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: 'elevenlabs/text-to-dialogue-v3',
-      input,
-    }),
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    if (response.status === 402) throw new Error('Kie 잔액 부족: 크레딧을 충전해주세요.');
-    if (response.status === 429) throw new Error('Kie 요청 제한 초과: 잠시 후 다시 시도해주세요.');
-    throw new Error(`ElevenLabs Dialogue V3 생성 오류 (${response.status}): ${errorText}`);
+  let taskId: string;
+  try {
+    taskId = await attemptCreate(voiceId);
+  } catch (err) {
+    // [FIX #363] 커뮤니티 음성 422 "Invalid voice" → 프리메이드 'Sarah'로 폴백
+    const msg = err instanceof Error ? err.message : '';
+    if (msg.includes('Invalid voice') && !PREMADE_VOICE_NAMES.has(voiceId)) {
+      const fallbackVoice = 'Sarah';
+      logger.info(`[ElevenLabs] ⚠️ 음성 "${voiceId}" 미지원 → 프리메이드 "${fallbackVoice}"로 폴백`);
+      taskId = await attemptCreate(fallbackVoice);
+    } else {
+      throw err;
+    }
   }
-
-  const data = await response.json();
-  // Kie는 HTTP 200이지만 body에 에러 코드를 반환할 수 있음
-  if (data.code !== 200 || !data.data?.taskId) {
-    throw new Error(`ElevenLabs Dialogue V3 태스크 생성 실패: ${data.msg || '알 수 없는 오류'} (code: ${data.code})`);
-  }
-  const taskId = data.data.taskId;
 
   const audioUrl = await pollDialogueTask(taskId, apiKey);
 

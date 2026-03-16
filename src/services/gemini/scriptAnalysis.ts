@@ -1461,6 +1461,24 @@ ${baseSetting ? `[GLOBAL CONTEXT]\n${baseSetting}` : ''}`;
             completedChunks += batchIndices.length;
             onChunkProgress?.(completedChunks, totalChunks);
 
+        // [FIX #360] 청크 병합 후 scriptText 중복 장면 제거 — 동일 대본이 2~3회 반복 생성되는 버그 방지
+        const beforeDedup = allScenes.length;
+        const seenTexts = new Set<string>();
+        const deduped: typeof allScenes = [];
+        for (const scene of allScenes) {
+            const key = (scene.scriptText || '').trim();
+            if (key && seenTexts.has(key)) {
+                continue; // 중복 제거
+            }
+            if (key) seenTexts.add(key);
+            deduped.push(scene);
+        }
+        if (deduped.length < beforeDedup) {
+            console.warn(`[PostProcess-Chunked] ⚠️ 중복 장면 ${beforeDedup - deduped.length}개 제거: ${beforeDedup} → ${deduped.length}`);
+            allScenes.length = 0;
+            allScenes.push(...deduped);
+        }
+
             // 배치 간 쿨다운 (429 Rate Limit 방지, 마지막 배치 후 스킵)
             if (batchEnd < totalChunks) {
                 console.log(`[parseScriptToScenes] 배치 쿨다운: ${CHUNK_COOLDOWN_MS / 1000}초`);

@@ -8,6 +8,7 @@
 
 ## 🟢 완료된 작업
 
+- [x] **#350~367 이슈 18건 일괄 처리** — (1) #363 ElevenLabs 커뮤니티 음성 422 에러 → 프리메이드 음성 자동 폴백 (elevenlabsService.ts) (2) #356 소재가이드 텍스트 잘림 → maxTokens 4000→8000 (ChannelAnalysisRoom.tsx) (3) #354/#367 영상분석 멈춤+취소 불능 → 취소 버튼 30초로 단축+씬감지 90초 타임아웃 (AnalysisLoadingPanel.tsx, sceneDetection.ts) (4) #360 스토리보드 중복 장면 → scriptText 기반 중복 제거 (scriptAnalysis.ts) (5) #350~366 나머지 이슈 안내 코멘트+종료 (2026-03-16)
 - [x] **NLE 자막 트랙 내장 (Premiere V2/V3 + CapCut Text Track)** — FCP XML에 대사 자막(V2 generatoritem) + 효과 자막(V3 generatoritem) 트랙 직접 삽입. CapCut draft JSON에 texts 배열 + text type 트랙 추가. 편집실 XML에도 나레이션 자막 V2 트랙 추가. 프로젝트 열면 SRT import 없이 자막 즉시 표시 (nleExportService.ts, 2026-03-16)
 - [x] **NLE 내보내기 이모지/특수문자 파일명 호환성 수정** — videoFileName에 이모지·특수문자 포함 시 Premiere/CapCut에서 pathurl↔실제파일 불일치로 연결 끊어지는 버그. sanitizeFileName() 추가하여 generateFcpXml, generateCapCutDraftJson, buildNlePackageZip, generateFcpXmlFromEdl 4곳에서 파일명 정규화. XML pathurl과 ZIP 내 파일명 일치 보장 (nleExportService.ts, 2026-03-16)
 - [x] **#357 이미지 생성 정책 위반 시 프롬프트 순화 우회** — Kie NanoBanana 2가 Google 정책 위반으로 실패 시, Evolink 폴백에서 군사/폭력/정치 용어를 시각적 동등 중립 표현으로 자동 치환하여 재시도. `sanitizeForPolicyBypass()` + `isPolicyViolationError()` 추가, 교육/예술 콘텐츠 프리앰블 삽입 (contentFilter.ts, imageGeneration.ts, 2026-03-16)
