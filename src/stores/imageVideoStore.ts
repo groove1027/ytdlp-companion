@@ -106,9 +106,10 @@ export const useImageVideoStore = create<ImageVideoStore>((set) => ({
   },
 
   // 프로젝트 로드 시 config에서 복원
+  // [FIX #407] isAnalyzing은 런타임 전용 — 복원 시 항상 false로 리셋
   restoreFromConfig: (data) => set({
     style: data.style || 'custom',
-    characters: data.characters || [],
+    characters: (data.characters || []).map(c => ({ ...c, isAnalyzing: false })),
     enableWebSearch: data.enableWebSearch ?? true,
     isMultiCharacter: data.isMultiCharacter ?? false,
     customStyleNote: data.customStyleNote || '',

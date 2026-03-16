@@ -8,6 +8,7 @@
 
 ## 🟢 완료된 작업
 
+- [x] **#407 캐릭터 레퍼런스 AI 분석결과 편집 불가 수정** — 페이지 새로고침 후 캐릭터 분석 결과 textarea가 readOnly 상태로 고정되는 버그. 근본 원인: isAnalyzing(런타임 전용 플래그)이 IndexedDB에 true로 저장된 채 restoreFromConfig에서 리셋되지 않아, 새로고침 후 영원히 readOnly. 수정: (1) restoreFromConfig에서 모든 캐릭터의 isAnalyzing을 false로 강제 리셋 (2) textarea 시각 피드백 강화(focus:ring-2, cursor-text, 배경 변화) (imageVideoStore.ts, CharacterUploadPanel.tsx, 2026-03-17)
 - [x] **Zustand Immer + react-error-boundary 도입** — (1) 핵심 스토어 3개(projectStore, editRoomStore, editPointStore)에 Zustand immer 미들웨어 적용 — 불변성 자동 관리, 향후 뮤터블 스타일 업데이트 가능, 기존 API 100% 호환. (2) App.tsx TabErrorBoundary + ErrorBoundary.tsx를 react-error-boundary 라이브러리로 교체 — 클래스→함수형, 비동기 에러 캐치 강화, useErrorBoundary 훅 사용 가능 (projectStore.ts, editRoomStore.ts, editPointStore.ts, App.tsx, ErrorBoundary.tsx, package.json, 2026-03-17)
 - [x] **영상 자르기 B-프레임 DTS 오류 수정 + 과금 버튼 재실행 확인** — (1) clipCutter.ts의 remuxClip에서 CTS(표시 순서) 기반 타임스탬프를 사용하여 B-프레임 영상에서 "Timestamps must be monotonically increasing (DTS went from 100000 to 33333)" 오류 발생하던 버그 수정. addVideoChunkRaw로 DTS(디코드 순서, 항상 단조 증가) + compositionTimeOffset(CTS-DTS) 분리 전달. (2) AI 정제/AI 파싱/편집표 자동 생성 등 과금 관련 버튼에 재실행 시 window.confirm 확인 다이얼로그 추가 — 실수로 중복 클릭 시 추가 비용 발생 방지 (clipCutter.ts, Step2Mapping.tsx, Step1Register.tsx, 2026-03-17)
 - [x] **TanStack Virtual 스토리보드 가상 스크롤** — 100+ 장면에서 심각한 성능 저하 해결. StoryboardPanel의 그리드/리스트 뷰에 @tanstack/react-virtual 적용. 기존 scenes.map() 전체 렌더 → 가시 영역(15~18개)만 렌더. ~80% 컴포넌트 감소 (StoryboardPanel.tsx, package.json, 2026-03-17)

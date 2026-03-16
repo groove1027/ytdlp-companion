@@ -244,12 +244,14 @@ const CharacterUploadPanel: React.FC<CharacterUploadPanelProps> = ({
               <textarea
                 value={char?.analysisStyle || ''}
                 onChange={(e) => char && onUpdateAnalysis?.(char.id, 'analysisStyle', e.target.value)}
-                placeholder={char?.isAnalyzing ? '화풍, 색감, 렌더링 스타일 추출 중...' : '대기 중 — 직접 입력도 가능합니다'}
+                placeholder={char?.isAnalyzing ? '화풍, 색감, 렌더링 스타일 추출 중...' : '대기 중 — 클릭하여 직접 입력 가능'}
                 className={`text-xs leading-relaxed bg-gray-900/80 rounded-lg px-3 py-2.5 border flex-1 min-h-0 overflow-y-auto resize-none ${
-                  char?.analysisStyle
-                    ? 'text-gray-300 border-gray-600/50 hover:border-purple-500/40 focus:border-purple-500/60'
-                    : 'text-gray-600 border-dashed border-gray-700/30 italic'
-                } focus:outline-none focus:ring-1 focus:ring-purple-500/30 transition-colors`}
+                  char?.isAnalyzing
+                    ? 'text-gray-500 cursor-not-allowed'
+                    : char?.analysisStyle
+                      ? 'text-gray-300 border-gray-600/50 hover:border-purple-400/60 focus:border-purple-400 focus:bg-gray-800/90 cursor-text'
+                      : 'text-gray-600 border-dashed border-gray-700/30 italic hover:border-purple-400/40 cursor-text'
+                } focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-colors`}
                 readOnly={!onUpdateAnalysis || !!char?.isAnalyzing}
               />
             </div>
@@ -263,12 +265,14 @@ const CharacterUploadPanel: React.FC<CharacterUploadPanelProps> = ({
               <textarea
                 value={char?.analysisCharacter || ''}
                 onChange={(e) => char && onUpdateAnalysis?.(char.id, 'analysisCharacter', e.target.value)}
-                placeholder={char?.isAnalyzing ? '헤어, 의상, 체형, 액세서리 추출 중...' : '대기 중 — 직접 입력도 가능합니다'}
+                placeholder={char?.isAnalyzing ? '헤어, 의상, 체형, 액세서리 추출 중...' : '대기 중 — 클릭하여 직접 입력 가능'}
                 className={`text-xs leading-relaxed bg-gray-900/80 rounded-lg px-3 py-2.5 border flex-1 min-h-0 overflow-y-auto resize-none ${
-                  char?.analysisCharacter
-                    ? 'text-gray-300 border-gray-600/50 hover:border-cyan-500/40 focus:border-cyan-500/60'
-                    : 'text-gray-600 border-dashed border-gray-700/30 italic'
-                } focus:outline-none focus:ring-1 focus:ring-cyan-500/30 transition-colors`}
+                  char?.isAnalyzing
+                    ? 'text-gray-500 cursor-not-allowed'
+                    : char?.analysisCharacter
+                      ? 'text-gray-300 border-gray-600/50 hover:border-cyan-400/60 focus:border-cyan-400 focus:bg-gray-800/90 cursor-text'
+                      : 'text-gray-600 border-dashed border-gray-700/30 italic hover:border-cyan-400/40 cursor-text'
+                } focus:outline-none focus:ring-2 focus:ring-cyan-500/50 transition-colors`}
                 readOnly={!onUpdateAnalysis || !!char?.isAnalyzing}
               />
             </div>
@@ -422,14 +426,16 @@ const CharacterUploadPanel: React.FC<CharacterUploadPanelProps> = ({
                     <textarea
                       value={char.analysisStyle || ''}
                       onChange={(e) => onUpdateAnalysis?.(char.id, 'analysisStyle', e.target.value)}
-                      placeholder={char.isAnalyzing ? '화풍/색감 추출 중...' : '분석 전 — 직접 입력 가능'}
+                      placeholder={char.isAnalyzing ? '화풍/색감 추출 중...' : '클릭하여 직접 입력'}
                       className={`text-[11px] leading-snug bg-black/30 rounded px-1.5 py-1.5 border resize-none ${
                         expandedAnalysisId === char.id ? 'max-h-none min-h-[4rem]' : 'max-h-[3.5rem] min-h-[2.5rem]'
                       } overflow-y-auto ${
-                        char.analysisStyle
-                          ? 'text-gray-400 border-gray-700/50 hover:border-purple-500/40 focus:border-purple-500/60'
-                          : 'text-gray-600 border-dashed border-gray-700/30 italic'
-                      } focus:outline-none focus:ring-1 focus:ring-purple-500/30 transition-colors w-full`}
+                        char.isAnalyzing
+                          ? 'text-gray-500 cursor-not-allowed'
+                          : char.analysisStyle
+                            ? 'text-gray-400 border-gray-700/50 hover:border-purple-400/60 focus:border-purple-400 focus:bg-gray-900/80 cursor-text'
+                            : 'text-gray-600 border-dashed border-gray-700/30 italic hover:border-purple-400/40 cursor-text'
+                      } focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-colors w-full`}
                       readOnly={!onUpdateAnalysis || char.isAnalyzing}
                     />
                   </div>
@@ -441,14 +447,16 @@ const CharacterUploadPanel: React.FC<CharacterUploadPanelProps> = ({
                     <textarea
                       value={char.analysisCharacter || ''}
                       onChange={(e) => onUpdateAnalysis?.(char.id, 'analysisCharacter', e.target.value)}
-                      placeholder={char.isAnalyzing ? '외형/의상 추출 중...' : '분석 전 — 직접 입력 가능'}
+                      placeholder={char.isAnalyzing ? '외형/의상 추출 중...' : '클릭하여 직접 입력'}
                       className={`text-[11px] leading-snug bg-black/30 rounded px-1.5 py-1.5 border resize-none ${
                         expandedAnalysisId === char.id ? 'max-h-none min-h-[4rem]' : 'max-h-[3.5rem] min-h-[2.5rem]'
                       } overflow-y-auto ${
-                        char.analysisCharacter
-                          ? 'text-gray-400 border-gray-700/50 hover:border-cyan-500/40 focus:border-cyan-500/60'
-                          : 'text-gray-600 border-dashed border-gray-700/30 italic'
-                      } focus:outline-none focus:ring-1 focus:ring-cyan-500/30 transition-colors w-full`}
+                        char.isAnalyzing
+                          ? 'text-gray-500 cursor-not-allowed'
+                          : char.analysisCharacter
+                            ? 'text-gray-400 border-gray-700/50 hover:border-cyan-400/60 focus:border-cyan-400 focus:bg-gray-900/80 cursor-text'
+                            : 'text-gray-600 border-dashed border-gray-700/30 italic hover:border-cyan-400/40 cursor-text'
+                      } focus:outline-none focus:ring-2 focus:ring-cyan-500/50 transition-colors w-full`}
                       readOnly={!onUpdateAnalysis || char.isAnalyzing}
                     />
                   </div>
