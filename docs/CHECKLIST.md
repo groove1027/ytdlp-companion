@@ -8,6 +8,7 @@
 
 ## 🟢 완료된 작업
 
+- [x] **#397 청크 실패 시 중간 대본 누락 + 장면 수 감소 수정** — 대형 대본 청크 병렬 처리에서 1개 청크가 빈 응답(empty scene list)이나 JSON 파싱 실패하면 Promise.all이 배치 전체를 폐기하여 ~1분 분량 누락 + 20장면 감소하던 버그. 3가지 수정: (1) isRetryable에 'empty scene list'/'JSON parse error' 추가하여 재시도 대상으로 변경 (2) Pro+Flash 모두 실패 시 throw 대신 원본 텍스트 기반 폴백 장면 생성 (3) Promise.all→Promise.allSettled로 변경하여 개별 청크 실패해도 나머지 보존 (scriptAnalysis.ts, 2026-03-17)
 - [x] **#379 비주얼 스타일 미리보기 창에서 즐겨찾기 버튼 추가** — StylePreviewLightbox(캐러셀)에서 ★ 즐겨찾기 토글 버튼 추가. 스타일 이름 옆에 배치하여 창을 닫지 않고 즐겨찾기 등록/해제 가능. 기존 useFavorites 훅과 동일 localStorage 공유 (VisualStylePicker.tsx, 2026-03-17)
 - [x] **#385 목표 컷수 설정 시 실제 생성 및 표시에 미반영 수정** — #383 재발. 사용자가 50컷 설정했는데 배너에 73컷 표시 + 실제 73컷 생성. 원인: (1) 배너가 targetSceneCount를 무시하고 countScenesLocally() 결과만 표시 (2) 청킹 경로에서 splitScenesLocally()의 자연 분할 결과를 targetSceneCount에 맞게 병합하지 않음. 수정: (1) SetupPanel 배너에서 targetSceneCount 우선 표시 (2) scriptAnalysis.ts 청킹 전에 sceneTexts를 targetSceneCount 수로 균등 병합 (SetupPanel.tsx, scriptAnalysis.ts, 2026-03-17)
 - [x] **#377 Typecast '김건' 성우 API 모드에서 누락 수정** — API 키가 있을 때 Typecast API 응답이 빌트인 음성 목록을 완전히 대체하여, 수동 등록된 음성(김건 등)이 표시되지 않던 버그. API 응답에 없는 빌트인 음성을 자동 병합하도록 수정 (typecastService.ts, 2026-03-17)

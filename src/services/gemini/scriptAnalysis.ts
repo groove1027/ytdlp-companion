@@ -1391,7 +1391,7 @@ ${baseSetting ? `[GLOBAL CONTEXT]\n${baseSetting}` : ''}`;
                 if (attempt > 0) {
                     const backoffMs = 2000 * Math.pow(3, attempt - 1);
                     const errMsg = lastError?.message || '';
-                    const isRetryable = errMsg.includes('Failed to fetch') || errMsg.includes('Network Error') || errMsg.includes('fetch') || errMsg.includes('ERR_NETWORK') || errMsg.includes('524') || errMsg.includes('timeout') || errMsg.includes('타임아웃') || errMsg.includes('Empty Response') || errMsg.includes('네트워크');
+                    const isRetryable = errMsg.includes('Failed to fetch') || errMsg.includes('Network Error') || errMsg.includes('fetch') || errMsg.includes('ERR_NETWORK') || errMsg.includes('524') || errMsg.includes('timeout') || errMsg.includes('타임아웃') || errMsg.includes('Empty Response') || errMsg.includes('네트워크') || errMsg.includes('empty scene list') || errMsg.includes('JSON parse error');
                     if (!isRetryable) break;
                     logger.trackRetry(`청크 ${ci + 1}/${totalChunks}`, attempt + 1, MAX_RETRIES, `${backoffMs / 1000}초 대기`);
                     await new Promise(r => setTimeout(r, backoffMs));
@@ -1427,7 +1427,29 @@ ${baseSetting ? `[GLOBAL CONTEXT]\n${baseSetting}` : ''}`;
                 if (isBalanceError) {
                     throw new Error(`AI 크레딧이 부족합니다. Evolink 크레딧을 충전한 후 다시 시도해주세요.`);
                 }
-                throw new Error(`대본 분석 실패 (청크 ${ci + 1}/${totalChunks}): ${msg}`);
+                // [FIX #397] 청크 실패 시 폴백 장면 생성 — throw 대신 원본 텍스트로 기본 장면 생성
+                // 이전: throw → Promise.all 배치 전체 폐기 → 중간 대본 누락
+                // 이후: 실패 청크만 기본 프롬프트로 대체 → 나머지 청크 보존
+                console.warn(`[processChunk] ⚠️ 청크 ${ci + 1}/${totalChunks}: Pro+Flash 모두 실패 — 폴백 장면 생성 (${msg.slice(0, 80)})`);
+                chunkResult = chunkSceneTexts.map((text, i) => ({
+                    id: `scene-${Date.now()}-fallback-${ci}-${i}`,
+                    scriptText: text,
+                    visualPrompt: `Cinematic scene illustrating: ${text.slice(0, 120)}`,
+                    visualDescriptionKO: text.slice(0, 120),
+                    isGeneratingImage: false,
+                    isGeneratingVideo: false,
+                    isInfographic: false,
+                    characterPresent: false,
+                    castType: 'NOBODY' as const,
+                    shotSize: 'Medium Shot',
+                    videoPrompt: '',
+                    requiresTextRendering: false,
+                    textToRender: '',
+                    generatedDialogue: '',
+                    dialogueSpeaker: '',
+                    dialogueEmotion: '',
+                    dialogueSfx: '',
+                } as Scene));
             }
 
             // [FIX #269] 청크별 장면 수 검증 — AI가 chunkTarget보다 많이 생성 시 초과분 병합
@@ -1490,10 +1512,46 @@ ${baseSetting ? `[GLOBAL CONTEXT]\n${baseSetting}` : ''}`;
             const batchIndices = Array.from({ length: batchEnd - batchStart }, (_, i) => batchStart + i);
             console.log(`[parseScriptToScenes] 🚀 배치 ${Math.floor(batchStart / CHUNK_CONCURRENCY) + 1}: 청크 ${batchIndices.map(i => i + 1).join(',')} 병렬 처리`);
 
-            const batchResults = await Promise.all(batchIndices.map(ci => processChunk(ci)));
+            // [FIX #397] Promise.allSettled — 1개 청크 실패해도 나머지 청크 결과 보존
+            // 이전: Promise.all → 청크 1개 실패 시 배치 전체 폐기 (잔액 부족만 예외)
+            const batchSettled = await Promise.allSettled(batchIndices.map(ci => processChunk(ci)));
 
-            for (const result of batchResults) {
-                allScenes.push(...result);
+            for (let bi = 0; bi < batchSettled.length; bi++) {
+                const settled = batchSettled[bi];
+                const ci = batchIndices[bi];
+                if (settled.status === 'fulfilled') {
+                    allScenes.push(...settled.value);
+                } else {
+                    // 잔액 부족은 즉시 중단 (계속해도 무의미)
+                    const reason = settled.reason?.message || String(settled.reason);
+                    if (reason.includes('크레딧') || reason.includes('잔액') || reason.includes('insufficient') || reason.includes('QUOTA_EXHAUSTED')) {
+                        throw settled.reason;
+                    }
+                    // [FIX #397] 실패 청크 → 원본 텍스트로 폴백 장면 생성
+                    console.warn(`[parseScriptToScenes] ⚠️ 청크 ${ci + 1} 실패 — 폴백 장면 생성: ${reason.slice(0, 80)}`);
+                    const fallbackTexts = sceneTexts.slice(ci * CHUNK_SIZE, (ci + 1) * CHUNK_SIZE);
+                    for (let fi = 0; fi < fallbackTexts.length; fi++) {
+                        allScenes.push({
+                            id: `scene-${Date.now()}-fallback-${ci}-${fi}`,
+                            scriptText: fallbackTexts[fi],
+                            visualPrompt: `Cinematic scene illustrating: ${fallbackTexts[fi].slice(0, 120)}`,
+                            visualDescriptionKO: fallbackTexts[fi].slice(0, 120),
+                            isGeneratingImage: false,
+                            isGeneratingVideo: false,
+                            isInfographic: false,
+                            characterPresent: false,
+                            castType: 'NOBODY' as const,
+                            shotSize: 'Medium Shot',
+                            videoPrompt: '',
+                            requiresTextRendering: false,
+                            textToRender: '',
+                            generatedDialogue: '',
+                            dialogueSpeaker: '',
+                            dialogueEmotion: '',
+                            dialogueSfx: '',
+                        } as Scene);
+                    }
+                }
             }
             completedChunks += batchIndices.length;
             onChunkProgress?.(completedChunks, totalChunks);
