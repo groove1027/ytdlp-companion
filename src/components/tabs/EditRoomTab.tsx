@@ -1333,6 +1333,41 @@ const EditRoomTab: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [linesTimingKey]);
 
+  // [FIX #375] 편집실 진입 시 실제 이미지 비율 자동 감지 → 프로젝트 설정 동기화
+  // 스토리보드에서 9:16으로 생성한 이미지가 편집실에서 1:1 등으로 표시되는 문제 방지
+  const aspectSyncDone = React.useRef(false);
+  useEffect(() => {
+    if (aspectSyncDone.current || scenes.length === 0) return;
+    const firstWithImage = scenes.find(s => s.imageUrl);
+    if (!firstWithImage?.imageUrl) return;
+
+    const img = new Image();
+    img.onload = () => {
+      aspectSyncDone.current = true;
+      const w = img.naturalWidth;
+      const h = img.naturalHeight;
+      if (w === 0 || h === 0) return;
+
+      const ratio = w / h;
+      let detectedAR: string;
+      if (ratio < 0.75) detectedAR = '9:16';
+      else if (ratio > 1.2) detectedAR = '16:9';
+      else if (ratio >= 0.9 && ratio <= 1.1) detectedAR = '1:1';
+      else detectedAR = '4:3';
+
+      const currentConfig = useProjectStore.getState().config;
+      if (currentConfig && currentConfig.aspectRatio !== detectedAR) {
+        logger.info('[FIX #375] 편집실 비율 자동 보정', { from: currentConfig.aspectRatio, to: detectedAR });
+        useProjectStore.getState().setConfig({
+          ...currentConfig,
+          aspectRatio: detectedAR as any,
+        });
+      }
+    };
+    img.onerror = () => { aspectSyncDone.current = true; };
+    img.src = firstWithImage.imageUrl;
+  }, [scenes]);
+
   const handleExportSrt = useCallback(() => {
     logger.trackAction('SRT 내보내기');
     try {

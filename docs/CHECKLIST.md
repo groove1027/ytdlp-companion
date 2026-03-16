@@ -8,6 +8,7 @@
 
 ## 🟢 완료된 작업
 
+- [x] **#375 스토리보드→편집실 화면 비율 불일치 수정** — 9:16으로 생성한 이미지가 편집실에서 1:1로 표시되는 버그. 편집실 진입 시 실제 이미지의 자연 비율을 감지하여 프로젝트 설정과 다르면 자동 동기화. editPointStore FIX #260 패턴과 동일한 방식 (EditRoomTab.tsx, 2026-03-16)
 - [x] **#378 영상 분석 95% 멈춤 수정** — 업로드 영상 분석 시 95%에서 무한 대기하는 버그. 원인: 전처리 단계(WebCodecs 프레임 추출 + 오디오 디코딩)에 타임아웃 보호 없이 저사양 GPU/특정 코덱에서 영구 행(hang). (1) WebCodecs 프레임 추출에 60초 타임아웃 추가 (extractVideoFrames + canvasExtractFrames) (2) 글로벌 분석 타임아웃을 AI 시작 시점→분석 시작 시점으로 이동 (전처리+AI 전체 8분 보호) (3) decodeAudioData 30초 타임아웃 추가 (4) captureStream 메타데이터 로딩 10초 타임아웃 추가 (VideoAnalysisRoom.tsx, videoAnalysis.ts, 2026-03-16)
 - [x] **#382/#383 목표 컷수 설정 미적용 수정** — 사용자가 이미지/영상 탭에서 목표 컷수를 설정해도 AI가 무시하던 버그. (1) imageVideoStore의 targetSceneCount가 projectStore.config에 동기화되지 않던 문제 수정 (syncToProjectConfig에 추가) (2) SetupPanel의 enrichMode(기존 장면 보강 모드)에서 사용자 목표 컷수와 기존 장면수가 다르면 enrichMode 비활성화하여 새로 분할 (3) App.tsx ScriptMode 경로에서 imageVideoStore.targetSceneCount를 AI 추정치보다 최우선 적용 (4) projectStore 로드 시 저장된 targetSceneCount 복원 (types.ts, imageVideoStore.ts, SetupPanel.tsx, App.tsx, projectStore.ts, 2026-03-16)
 - [x] **#380 대본 장면 분할 시 원문 누락 수정** — AI가 scriptText를 요약/축약/누락하여 몇 문장이 빠지는 버그. (1) 청크 경로: processChunk 내에서 AI 결과에 splitScenesLocally() 원본 텍스트 강제 매핑 + AI 부족 생성 시 보충 장면 생성 (2) 비청크 경로: 단일 요청 후에도 동일하게 로컬 분할 결과 강제 매핑. 두 경로 모두 대본 원문 100% 보존 보장 (scriptAnalysis.ts, 2026-03-16)
