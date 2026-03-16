@@ -525,10 +525,10 @@ export const getAvailableVoices = (
  * 개별 AudioBuffer의 RMS를 측정하여 타겟 RMS로 정규화 (게인 적용)
  * [FIX #194] 클립 간 음량 편차 제거 — 병합 전 각 클립을 동일 라우드니스로 맞춤
  * @param buffer 정규화할 AudioBuffer (in-place 수정)
- * @param targetRmsDb 타겟 RMS (dB), 기본 -20dB (나레이션 표준)
+ * @param targetRmsDb 타겟 RMS (dB), 기본 -16dB (나레이션 — [FIX #314] -20→-16 볼륨 업)
  * @param peakLimitDb 피크 리미터 (dBFS), 기본 -1dB (클리핑 방지)
  */
-const normalizeBufferRms = (buffer: AudioBuffer, targetRmsDb: number = -20, peakLimitDb: number = -1): void => {
+const normalizeBufferRms = (buffer: AudioBuffer, targetRmsDb: number = -16, peakLimitDb: number = -1): void => {
     // Pass 1: RMS 측정
     let sumSquares = 0;
     let sampleCount = 0;

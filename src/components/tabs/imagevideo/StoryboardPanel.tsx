@@ -1582,21 +1582,36 @@ const StoryboardPanel: React.FC = () => {
               리스트
             </button>
           </div>
-          {/* [#243] 장면 선택 토글 */}
+          {/* [#344] 전체 선택 체크박스 */}
           {totalScenes > 0 && (
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={() => hasSelection ? deselectAllScenes() : selectAllScenes()}
-                className={`px-2.5 py-1 text-xs rounded-lg border transition-colors ${
-                  hasSelection
-                    ? 'bg-orange-600/20 text-orange-300 border-orange-500/30 hover:bg-orange-600/30'
-                    : 'bg-gray-800 text-gray-400 border-gray-700 hover:bg-gray-700 hover:text-gray-200'
-                }`}
-              >
-                {hasSelection ? `${selectedSceneIds.size}개 선택 해제` : '장면 선택'}
-              </button>
-            </div>
+            <label className="flex items-center gap-1.5 cursor-pointer group">
+              <input
+                type="checkbox"
+                checked={selectedSceneIds.size === totalScenes && totalScenes > 0}
+                ref={(el) => { if (el) el.indeterminate = hasSelection && selectedSceneIds.size !== totalScenes; }}
+                onChange={(e) => e.target.checked ? selectAllScenes() : deselectAllScenes()}
+                className="w-4 h-4 rounded border-gray-600 bg-gray-900 text-orange-500 focus:ring-orange-500/30 cursor-pointer"
+              />
+              <span className={`text-xs transition-colors ${hasSelection ? 'text-orange-300' : 'text-gray-400 group-hover:text-gray-200'}`}>
+                {hasSelection ? `${selectedSceneIds.size}/${totalScenes} 선택` : '전체 선택'}
+              </span>
+            </label>
+          )}
+          {/* [#346] 전체 프롬프트 복사 */}
+          {totalScenes > 0 && (
+            <button
+              type="button"
+              onClick={async () => {
+                const promptText = scenes
+                  .map((s, i) => `[장면 ${i + 1}]\n${s.visualPrompt || '(프롬프트 없음)'}`)
+                  .join('\n\n');
+                await navigator.clipboard.writeText(promptText);
+                showToast(`${scenes.length}개 장면의 프롬프트가 복사되었습니다.`);
+              }}
+              className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs font-medium rounded-lg border border-gray-600 transition-colors flex items-center gap-1.5"
+            >
+              📋 프롬프트 복사
+            </button>
           )}
           {/* HTML/ZIP 저장 (30장면 이상이면 ZIP 자동 선택) */}
           <button
