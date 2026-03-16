@@ -1037,7 +1037,7 @@ export const parseScriptToScenes = async (
     `;
 
     const payload = {
-        contents: [{ role: 'user', parts: [{ text: `Script:\n${cleanedScript}\n\n[MANDATORY GLOBAL CONTEXT — Apply to EVERY scene as default. Override per-scene ONLY if scene content clearly depicts a different setting.]\n${baseSetting || 'No context provided.'}` }] }],
+        contents: [{ role: 'user', parts: [{ text: `Script:\n${cleanedScript}\n\n[MANDATORY GLOBAL CONTEXT — Apply to EVERY scene as default. Override per-scene ONLY if scene content clearly depicts a different setting.]\n${baseSetting || 'No context provided.'}${characterDesc ? `\n\n[CHARACTER REFERENCE — Maintain visual consistency with this character description in every MAIN/EXTRA scene]\n${characterDesc}` : ''}` }] }],
         systemInstruction: { parts: [{ text: systemPrompt }] },
         // [CRITICAL] NO TOOLS HERE! This fixes the Empty Response error.
         safetySettings: SAFETY_SETTINGS_BLOCK_NONE,
@@ -1361,7 +1361,7 @@ ${baseSetting ? `[GLOBAL CONTEXT]\n${baseSetting}` : ''}`;
                 : '';
 
             const chunkPayload = {
-                contents: [{ role: 'user', parts: [{ text: `Script:\n${chunkScript}\n\n[MANDATORY GLOBAL CONTEXT — Apply to EVERY scene as default. Override per-scene ONLY if scene content clearly depicts a different setting.]\n${baseSetting || 'No context provided.'}${dirContext}\n\n[CHUNK OVERRIDE] This is chunk ${ci + 1} of ${totalChunks}. You MUST generate EXACTLY ${chunkTarget} scenes for this chunk. Ignore any other target scene count in the system instructions.` }] }],
+                contents: [{ role: 'user', parts: [{ text: `Script:\n${chunkScript}\n\n[MANDATORY GLOBAL CONTEXT — Apply to EVERY scene as default. Override per-scene ONLY if scene content clearly depicts a different setting.]\n${baseSetting || 'No context provided.'}${characterDesc ? `\n\n[CHARACTER REFERENCE — Maintain visual consistency with this character description in every MAIN/EXTRA scene]\n${characterDesc}` : ''}${dirContext}\n\n[CHUNK OVERRIDE] This is chunk ${ci + 1} of ${totalChunks}. You MUST generate EXACTLY ${chunkTarget} scenes for this chunk. Ignore any other target scene count in the system instructions.` }] }],
                 systemInstruction: { parts: [{ text: systemPrompt }] },
                 safetySettings: SAFETY_SETTINGS_BLOCK_NONE,
                 generationConfig: { responseMimeType: 'application/json', maxOutputTokens: 65536 }
