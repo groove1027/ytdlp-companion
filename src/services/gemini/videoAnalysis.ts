@@ -989,7 +989,11 @@ export const transcribeVideoAudio = async (
         onProgress?.('🔊 영상에서 오디오 추출 중...');
         logger.info('[Diarization] 영상 오디오 추출 시작', { size: videoFile.size });
 
+        // [FIX #386] abort 체크 — 오디오 추출 전 이미 취소된 경우 빠른 종료
+        if (signal?.aborted) throw new DOMException('분석이 취소되었습니다.', 'AbortError');
         const audioBlob = await extractAudioFromVideoFast(videoFile);
+        // [FIX #386] 오디오 추출 후 abort 체크
+        if (signal?.aborted) throw new DOMException('분석이 취소되었습니다.', 'AbortError');
         if (!audioBlob || audioBlob.size < 5000) {
             logger.info('[Diarization] 오디오 없거나 너무 짧음 — 화자 분리 생략');
             return null;
@@ -1014,6 +1018,8 @@ export const transcribeVideoAudio = async (
 
         return { transcript, formattedText };
     } catch (e) {
+        // [FIX #386] abort 시에는 null 반환 대신 에러 전파 — 호출자가 타임아웃을 감지하도록
+        if (signal?.aborted) throw e;
         logger.warn('[Diarization] 화자 분리 전사 실패 (Gemini 단독 분석으로 폴백)', {
             error: (e as Error).message,
         });

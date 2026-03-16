@@ -38,7 +38,7 @@ export async function transcribeAudio(
   const file = audioFile instanceof File
     ? audioFile
     : new File([audioFile], 'audio.wav', { type: audioFile.type || 'audio/wav' });
-  const audioUrl = await uploadMediaToHosting(file);
+  const audioUrl = await uploadMediaToHosting(file, undefined, signal);
   logger.success('[STT] Cloudinary 업로드 완료', { url: audioUrl });
 
   if (signal?.aborted) throw new Error('전사가 취소되었습니다.');

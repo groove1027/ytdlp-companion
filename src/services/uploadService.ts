@@ -2,7 +2,7 @@
 import { getCloudinaryConfig, monitoredFetch } from './apiService';
 import { logger } from './LoggerService';
 
-export const uploadMediaToHosting = async (file: File, _unusedKey?: string): Promise<string> => {
+export const uploadMediaToHosting = async (file: File, _unusedKey?: string, signal?: AbortSignal): Promise<string> => {
   const { cloudName, uploadPreset } = getCloudinaryConfig();
   
   if (!cloudName || !uploadPreset) {
@@ -35,6 +35,7 @@ export const uploadMediaToHosting = async (file: File, _unusedKey?: string): Pro
     const response = await monitoredFetch(`https://api.cloudinary.com/v1_1/${cloudName}/auto/upload`, {
       method: 'POST',
       body: formData,
+      ...(signal ? { signal } : {}),
     });
 
     if (!response.ok) {

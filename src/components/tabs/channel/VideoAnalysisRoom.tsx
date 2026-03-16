@@ -3291,11 +3291,13 @@ const VideoAnalysisRoom: React.FC = () => {
             const uploadedVideoMimes: string[] = [];
             for (let fi = 0; fi < uploadedFiles.length; fi++) {
               try {
-                const hostedUrl = await uploadMediaToHosting(uploadedFiles[fi]);
+                if (abortCtrl.signal.aborted) throw new DOMException('분석이 취소되었습니다.', 'AbortError');
+                const hostedUrl = await uploadMediaToHosting(uploadedFiles[fi], undefined, abortCtrl.signal);
                 uploadedVideoUris.push(hostedUrl);
                 uploadedVideoMimes.push(uploadedFiles[fi].type || 'video/mp4');
                 console.log(`[VideoAnalysis] 영상 ${fi + 1}/${uploadedFiles.length} 업로드 성공:`, hostedUrl.slice(0, 80));
               } catch (e) {
+                if (abortCtrl.signal.aborted) throw new DOMException('분석이 취소되었습니다.', 'AbortError');
                 console.warn(`[VideoAnalysis] 영상 ${fi + 1} 업로드 실패:`, e);
               }
             }
@@ -3308,6 +3310,8 @@ const VideoAnalysisRoom: React.FC = () => {
             videoUri = uploadedVideoUris[0];
             videoMime = uploadedVideoMimes[0];
           } catch (uploadErr) {
+            // [FIX #386] abort 시에는 원래 에러 전파 — AbortError 정보 유지
+            if (abortCtrl.signal.aborted) throw new DOMException('분석이 취소되었습니다.', 'AbortError');
             console.warn('[VideoAnalysis] Cloudinary 업로드도 실패:', uploadErr);
             throw new Error(
               '영상 프레임 추출에 실패했습니다.\n' +
@@ -3478,6 +3482,9 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       }
       setThumbnails(frames);
 
+      // [FIX #386] 프레임 추출 완료 후 abort 체크 — 전처리 중 타임아웃 시 AI 호출 전 빠른 종료
+      if (abortCtrl.signal.aborted) throw new DOMException('분석이 취소되었습니다.', 'AbortError');
+
       // [FIX #364] 롱폼 감지: 메타데이터 실제 길이 우선, 프레임 타임스탬프 폴백
       // (프레임은 75% 지점까지만 생성되므로 실제 길이가 더 정확)
       const frameMaxSec = frames.reduce((mx, f) => Math.max(mx, f.timeSec), 0);
@@ -3555,9 +3562,14 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
             }
           }
         } catch (e) {
+          // [FIX #386] abort 시에는 에러를 삼키지 않고 재throw — 타임아웃 후 AI 호출 진행 방지
+          if (abortCtrl.signal.aborted) throw new DOMException('분석이 취소되었습니다.', 'AbortError');
           console.warn('[Diarization] 화자 분리 실패 (Gemini 단독 분석으로 진행):', e);
         }
       }
+
+      // [FIX #386] 화자 분리 완료 후 abort 체크
+      if (abortCtrl.signal.aborted) throw new DOMException('분석이 취소되었습니다.', 'AbortError');
 
       // 화자 분리 결과가 있으면 inputDesc에 추가
       if (diarizedText) {
