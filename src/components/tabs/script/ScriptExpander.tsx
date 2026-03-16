@@ -3,6 +3,7 @@ import { useScriptWriterStore } from '../../../stores/scriptWriterStore';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
 import { evolinkChat, scriptGenerationStream } from '../../../services/evolinkService';
 import { ScriptAiModel } from '../../../types';
+import { showToast } from '../../../stores/uiStore';
 
 const MAX_CHARS = 30000;
 /** 한국어 나레이션 기준 약 650자/분 (5,000자 ≈ 7~8분) */
@@ -160,6 +161,9 @@ ${script}
 
       if (text.length <= currentScript.length) {
         setExpandError('확장 결과가 원본보다 짧습니다. 다시 시도해주세요.');
+      } else {
+        // [FIX #342] 확장 완료 알림 — 결과가 위 텍스트박스에 반영됨을 안내
+        showToast(`대본이 ${text.length.toLocaleString()}자로 확장되었습니다! 위 편집 영역에서 확인하세요.`, 4000);
       }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);

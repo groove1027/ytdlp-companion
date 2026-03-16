@@ -3664,10 +3664,18 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       // [FIX #313] 배치 완료 후 IndexedDB 자동 저장 — 프레임 추출 전에 저장하여 새로고침 시 복구 가능
       autoSave().catch(() => {});
 
+      // [FIX #340] 프레임 추출 단계 진입 시 진행률 업데이트 (95%에서 멈춘 것처럼 보이는 문제 해결)
+      setSimProgress(97);
+
       // ★ 3중 폴백 프레임 추출 — 무조건 결과 보장
       // [FIX #156] 다중 업로드 영상: 모든 파일에서 프레임 추출
       // [FIX #241] 타임코드 수집에 parsed 대신 스토어의 최종 versions 사용
       //   — 배치 병합 텍스트 parseVersions 실패 시 parsed=[] → 타임코드 0개 → 비주얼 미표시 버그
+      // [FIX #340] 프레임 추출 전체를 2분 타임아웃으로 보호 — 무한 대기 방지
+      const FRAME_EXTRACTION_TIMEOUT = 2 * 60 * 1000;
+      try {
+      await Promise.race([
+        (async () => {
       const finalVersions = useVideoAnalysisStore.getState().versions;
       let ytVid: string | null = null;
       let durSec = 300; // 기본 5분 추정
@@ -3802,6 +3810,17 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
               setThumbnails(exactFrames);
             }
           }
+        }
+      }
+
+        })(),
+        new Promise<void>((_, reject) => setTimeout(() => reject(new Error('FRAME_TIMEOUT')), FRAME_EXTRACTION_TIMEOUT)),
+      ]);
+      } catch (frameErr) {
+        if (frameErr instanceof Error && frameErr.message === 'FRAME_TIMEOUT') {
+          console.warn('[Frame] ⚠️ 프레임 추출 2분 타임아웃 — 프레임 없이 결과 표시');
+        } else {
+          console.warn('[Frame] 프레임 추출 실패 (결과는 정상 표시):', frameErr);
         }
       }
 

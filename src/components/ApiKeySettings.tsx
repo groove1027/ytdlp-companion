@@ -361,9 +361,13 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
 
     const handleSave = () => {
         if (!requireAuth('API 키 저장')) return;
+        // [FIX #337] 입력 중인 YouTube 키가 있으면 풀에 자동 추가 (사용자가 "+ 추가" 안 눌러도 저장)
+        const finalYoutubePool = newYoutubeKey.trim()
+            ? [...youtubeKeyPool, newYoutubeKey.trim()]
+            : youtubeKeyPool;
         // YouTube API 키 풀 저장
-        saveYoutubeApiKeyPool(youtubeKeyPool);
-        const primaryYoutubeKey = youtubeKeyPool.length > 0 ? youtubeKeyPool[0] : '';
+        saveYoutubeApiKeyPool(finalYoutubePool);
+        const primaryYoutubeKey = finalYoutubePool.length > 0 ? finalYoutubePool[0] : '';
         saveApiKeys(keys.kie, keys.cloudName, keys.uploadPreset, undefined, keys.apimart, keys.removeBg, keys.wavespeed, keys.xai, keys.evolink, primaryYoutubeKey, keys.typecast, keys.ghostcutAppKey, keys.ghostcutAppSecret);
         // 서버에도 동기화 (계정에 연동 — 다른 기기에서도 복원 가능)
         syncApiKeysToServer().catch(() => {});
