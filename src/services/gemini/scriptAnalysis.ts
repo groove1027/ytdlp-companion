@@ -1302,7 +1302,23 @@ export const parseScriptToScenes = async (
 
     if (shouldChunk) {
         // 대본을 로컬 결정론적 분할기로 장면 텍스트 단위로 분할
-        const sceneTexts = splitScenesLocally(cleanedScript, format, smartSplit, longFormSplitType);
+        let sceneTexts = splitScenesLocally(cleanedScript, format, smartSplit, longFormSplitType);
+
+        // [FIX #385] targetSceneCount가 설정되고 로컬 분할 수보다 작으면, 청킹 전에 병합하여 목표 컷수에 맞춤
+        // 이전에는 로컬 분할 결과(예: 73)를 그대로 청킹하여 targetSceneCount(예: 50)가 무시됨
+        if (targetSceneCount && targetSceneCount > 0 && sceneTexts.length > targetSceneCount) {
+            const originalCount = sceneTexts.length;
+            const merged: string[] = [];
+            const groupSize = sceneTexts.length / targetSceneCount;
+            for (let i = 0; i < targetSceneCount; i++) {
+                const start = Math.round(i * groupSize);
+                const end = Math.round((i + 1) * groupSize);
+                merged.push(sceneTexts.slice(start, end).join('\n'));
+            }
+            sceneTexts = merged;
+            console.log(`[parseScriptToScenes] 🎯 목표 컷수 적용: ${originalCount} → ${sceneTexts.length}장면 (target: ${targetSceneCount})`);
+        }
+
         const totalChunks = Math.ceil(sceneTexts.length / CHUNK_SIZE);
         const chunkReason = (targetSceneCount || 0) >= CHUNK_SCENE_THRESHOLD ? `장면수(${targetSceneCount})≥${CHUNK_SCENE_THRESHOLD}` : `대본길이(${cleanedScript.length}자)≥${SCRIPT_LENGTH_THRESHOLD}`;
         console.log(`[parseScriptToScenes] 📦 청크 분할: ${sceneTexts.length}장면 → ${totalChunks}청크 (CHUNK_SIZE=${CHUNK_SIZE}, 트리거: ${chunkReason})`);

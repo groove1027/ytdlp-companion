@@ -1155,18 +1155,23 @@ const SetupPanel: React.FC = () => {
         </div>
       )}
 
-      {/* ── 단락나누기 설정 안내 배너 (#261) ── */}
-      {scriptText.trim() && estimatedScenes > 0 && !isAnalyzing && totalScenes === 0 && (
+      {/* ── 단락나누기 설정 안내 배너 (#261) [FIX #385] targetSceneCount 반영 ── */}
+      {scriptText.trim() && estimatedScenes > 0 && !isAnalyzing && totalScenes === 0 && (() => {
+        const displayScenes = (targetSceneCount !== null && targetSceneCount > 0) ? targetSceneCount : estimatedScenes;
+        return (
         <div className={`px-4 py-3 rounded-xl border ${
-          estimatedScenes >= 10
+          displayScenes >= 10
             ? 'bg-orange-500/15 border-orange-500/40'
             : 'bg-orange-500/10 border-orange-500/30'
         }`}>
           <div className="flex items-start gap-2.5">
             <span className="text-lg mt-0.5 shrink-0">📋</span>
             <div className="min-w-0">
-              <p className={`text-sm font-bold ${estimatedScenes >= 10 ? 'text-orange-300' : 'text-orange-400'}`}>
-                현재 설정으로 대본이 <span className="text-orange-200 text-base">{estimatedScenes}컷</span>으로 나뉘어 생성됩니다
+              <p className={`text-sm font-bold ${displayScenes >= 10 ? 'text-orange-300' : 'text-orange-400'}`}>
+                현재 설정으로 대본이 <span className="text-orange-200 text-base">{displayScenes}컷</span>으로 나뉘어 생성됩니다
+                {targetSceneCount !== null && targetSceneCount > 0 && targetSceneCount !== estimatedScenes && (
+                  <span className="text-xs text-gray-400 font-normal ml-1">(자동 추정: {estimatedScenes}컷)</span>
+                )}
               </p>
               <p className="text-xs text-orange-400/70 mt-1 leading-relaxed">
                 {vf === VideoFormat.LONG
@@ -1179,7 +1184,7 @@ const SetupPanel: React.FC = () => {
                 }
                 {ss ? ' · 스마트 분할 ON' : ' · 스마트 분할 OFF'}
               </p>
-              {estimatedScenes >= 10 && (
+              {displayScenes >= 10 && (
                 <p className="text-xs text-orange-300/80 mt-1.5 font-medium">
                   ⚠️ 컷 수가 많으면 비용이 증가해요. 위의 <strong>목표 컷 수</strong>를 조절하거나 <strong>롱폼 호흡 중심</strong>으로 바꿔보세요.
                 </p>
@@ -1187,7 +1192,8 @@ const SetupPanel: React.FC = () => {
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* ── CTA ── */}
       <div className="pt-1 space-y-2">
