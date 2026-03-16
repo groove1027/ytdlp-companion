@@ -29,10 +29,20 @@ const computeFingerprint = (
     ? `${config.mode}:${config.videoFormat}:${config.aspectRatio}:${config.imageModel}:${(config.script || '').length}:${config.mergedAudioUrl ? 'M' : '-'}:ppt${config.pptSlides?.length || 0}:${config.pptContentStyleId || '-'}:${config.pptDesignStyleId || '-'}`
     : 'null';
   // [FIX #403] 캐릭터 분석 편집도 dirty 감지 — 편집 후 자동저장되도록
+  // sceneFp와 동일 패턴: length + charCodeAt(0) — 같은 길이라도 내용 변경 감지
   const charFp = config?.characters?.map(c =>
-    `${c.id}:${(c.analysisStyle || '').length}:${(c.analysisCharacter || '').length}`
+    `${c.id}:${(c.analysisStyle || '').length}:${(c.analysisStyle || '').charCodeAt(0) || 0}:${(c.analysisCharacter || '').length}:${(c.analysisCharacter || '').charCodeAt(0) || 0}`
   ).join(',') || '';
-  return `${scenes.length}::${sceneFp}::${cfgFp}::${thumbnailCount}::${projectTitle}::${charFp}`;
+  // [FIX #399] 자막 편집도 dirty 감지 — 자막만 수정해도 자동저장 트리거
+  const subFp = (() => {
+    try {
+      const subs = useEditRoomStore.getState().sceneSubtitles;
+      const keys = Object.keys(subs);
+      if (keys.length === 0) return '';
+      return keys.map(k => `${(subs[k]?.text || '').length}:${subs[k]?.segments?.length || 0}`).join(',');
+    } catch { return ''; }
+  })();
+  return `${scenes.length}::${sceneFp}::${cfgFp}::${thumbnailCount}::${projectTitle}::${charFp}::${subFp}`;
 };
 
 /** 즉시 저장 (beforeunload 긴급 저장 — best-effort, 비동기이므로 완료 보장 안 됨) */
@@ -40,6 +50,10 @@ const flushSave = () => {
   const { currentProjectId, config, scenes, thumbnails, projectTitle } = useProjectStore.getState();
   const { costStats } = useCostStore.getState();
   if (!currentProjectId || !config) return;
+
+  // [FIX #399] flushSave에도 sceneSubtitles 포함 — beforeunload 시 자막 손실 방지
+  const editRoomSubs = useEditRoomStore.getState().sceneSubtitles;
+  const hasSubtitleEdits = Object.keys(editRoomSubs).length > 0;
 
   try {
     const dbReq = indexedDB.open('ai-storyboard-v2');
@@ -56,6 +70,7 @@ const flushSave = () => {
           fullNarrationText: scenes.map((s) => s.scriptText).join(' ').substring(0, 500),
           lastModified: Date.now(),
           costStats,
+          ...(hasSubtitleEdits ? { sceneSubtitles: editRoomSubs } : {}),
         });
       } catch (e) { logger.trackSwallowedError('useAutoSave:flushSave/transaction', e); }
     };
@@ -182,10 +197,13 @@ export const useAutoSave = () => {
     document.addEventListener('visibilitychange', handleVisibilityChange);
     const unsub1 = useProjectStore.subscribe(scheduleSave);
     const unsub2 = useCostStore.subscribe(scheduleSave);
+    // [FIX #399] 자막 편집 시에도 자동저장 트리거
+    const unsub3 = useEditRoomStore.subscribe(scheduleSave);
 
     return () => {
       unsub1();
       unsub2();
+      unsub3();
       window.removeEventListener('beforeunload', handleBeforeUnload);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       if (debounceTimer) clearTimeout(debounceTimer);
