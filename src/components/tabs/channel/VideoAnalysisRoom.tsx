@@ -613,7 +613,12 @@ async function canvasExtractFrames(
       if (isVideoDecoderSupported()) {
         const resp = await fetch(videoUrl);
         const blob = await resp.blob();
-        const frames = await webcodecExtractFrames(blob, timecodes);
+        // [FIX #378] WebCodecs 60초 타임아웃
+        const WEBCODEC_TIMEOUT_MS = 60_000;
+        const frames = await Promise.race([
+          webcodecExtractFrames(blob, timecodes),
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error('WebCodecs 60s timeout')), WEBCODEC_TIMEOUT_MS)),
+        ]);
         if (frames.length > 0) {
           console.log(`[Frame] ✅ WebCodecs 정밀 추출 성공: ${frames.length}개 (키프레임 스냅 없음)`);
           logger.unregisterBlobUrl(videoUrl);
@@ -953,7 +958,12 @@ async function extractVideoFrames(file: File, sourceIndex?: number): Promise<Tim
         const sampleTimecodes = Array.from({ length: count }, (_, i) =>
           Math.min((i + 0.25) * interval, dur - 0.1));
 
-        const frames = await webcodecExtractFrames(file, sampleTimecodes);
+        // [FIX #378] WebCodecs 60초 타임아웃 — 특정 코덱/저사양 GPU에서 영구 대기 방지
+        const WEBCODEC_TIMEOUT_MS = 60_000;
+        const frames = await Promise.race([
+          webcodecExtractFrames(file, sampleTimecodes),
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error('WebCodecs 60s timeout')), WEBCODEC_TIMEOUT_MS)),
+        ]);
         if (frames.length > 0) {
           console.log(`[extractVideoFrames] ✅ WebCodecs 정밀 추출: ${frames.length}개`);
           return frames.map(f => ({
@@ -3155,7 +3165,8 @@ const VideoAnalysisRoom: React.FC = () => {
     const abortCtrl = new AbortController();
     analysisAbortRef.current = abortCtrl;
 
-    // [FIX #189] 글로벌 타임아웃은 AI 분석 시작 시점에 설정 (프레임 추출/업로드 시간 제외)
+    // [FIX #378] 글로벌 타임아웃: 전처리(프레임 추출/화자분리) + AI 분석 전체를 8분으로 보호
+    // (기존 #189: AI 시작 시점에만 5분 → 전처리 단계 무한 대기 가능했던 버그 수정)
     let globalTimeout: ReturnType<typeof setTimeout> | null = null;
 
     setSelectedPreset(preset);
@@ -3167,6 +3178,13 @@ const VideoAnalysisRoom: React.FC = () => {
     setIsLongForm(false);
     analysisStartRef.current = Date.now();
     resetResults();
+
+    // [FIX #378] 분석 시작 직후 글로벌 타임아웃 설정 — 전처리+AI 전체 보호
+    const TOTAL_ANALYSIS_TIMEOUT_MS = 8 * 60 * 1000; // 8분 (전처리 3분 + AI 5분)
+    globalTimeout = setTimeout(() => {
+      console.warn(`[VideoAnalysis] 전체 분석 타임아웃 (${TOTAL_ANALYSIS_TIMEOUT_MS / 60000}분) 도달 — 강제 중단`);
+      abortCtrl.abort();
+    }, TOTAL_ANALYSIS_TIMEOUT_MS);
 
     const scriptSystem = preset === 'tikitaka' ? TIKITAKA_SCRIPT_SYSTEM
       : preset === 'condensed' ? CONDENSED_SCRIPT_SYSTEM
@@ -3491,7 +3509,9 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       }
 
       // 2단계: AI 분석 — 병렬 배치 또는 단일 호출
-      // [FIX #189] AI 분석 전용 타임아웃 (프레임 추출/업로드 시간 제외, 순수 AI 분석에 5분)
+      // [FIX #378] 글로벌 타임아웃이 이미 분석 시작 시점에 설정됨 (전처리+AI 전체 8분 보호)
+      // 전처리가 빨리 끝난 경우 AI에 더 많은 시간 할당하기 위해 글로벌 타임아웃 리셋
+      if (globalTimeout) clearTimeout(globalTimeout);
       const AI_TIMEOUT_MS = 5 * 60 * 1000;
       globalTimeout = setTimeout(() => {
         console.warn(`[VideoAnalysis] AI 분석 타임아웃 (${AI_TIMEOUT_MS / 60000}분) 도달 — 강제 중단`);

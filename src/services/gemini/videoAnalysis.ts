@@ -1033,9 +1033,14 @@ async function extractAudioFromVideoFast(videoFile: File | Blob): Promise<Blob |
 
         let audioBuffer: AudioBuffer;
         try {
-            audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+            // [FIX #378] decodeAudioData 30초 타임아웃 — 대형 파일/저사양에서 무한 대기 방지
+            const DECODE_TIMEOUT_MS = 30_000;
+            audioBuffer = await Promise.race([
+                audioCtx.decodeAudioData(arrayBuffer),
+                new Promise<never>((_, reject) => setTimeout(() => reject(new Error('decodeAudioData 30s timeout')), DECODE_TIMEOUT_MS)),
+            ]);
         } catch {
-            // 일부 비디오 코덱은 decodeAudioData 실패 → captureStream 폴백
+            // 일부 비디오 코덱은 decodeAudioData 실패/타임아웃 → captureStream 폴백
             audioCtx.close();
             logger.info('[Diarization] decodeAudioData 실패 → captureStream 폴백');
             return extractAudioWithCaptureStream(videoFile);
@@ -1060,7 +1065,14 @@ function extractAudioWithCaptureStream(videoFile: File | Blob): Promise<Blob | n
         video.muted = false;
         video.volume = 1;
 
+        // [FIX #378] 메타데이터 로딩 10초 타임아웃 — onloadedmetadata 미발생 시 무한 대기 방지
+        const metaTimeout = setTimeout(() => {
+            URL.revokeObjectURL(srcUrl);
+            resolve(null);
+        }, 10_000);
+
         video.onloadedmetadata = async () => {
+            clearTimeout(metaTimeout);
             try {
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 const stream: MediaStream = (video as any).captureStream ? (video as any).captureStream() : (video as any).mozCaptureStream();
@@ -1098,6 +1110,7 @@ function extractAudioWithCaptureStream(videoFile: File | Blob): Promise<Blob | n
         };
 
         video.onerror = () => {
+            clearTimeout(metaTimeout);
             URL.revokeObjectURL(srcUrl);
             resolve(null);
         };
