@@ -691,6 +691,17 @@ const SetupPanel: React.FC = () => {
           onAdd={handleAddCharacter}
           onRemove={(id) => useImageVideoStore.getState().removeCharacter(id)}
           onUpdateLabel={(id, label) => useImageVideoStore.getState().updateCharacterLabel(id, label)}
+          onUpdateAnalysis={(id, field, value) => {
+            const updates: Record<string, string> = { [field]: value };
+            // analysisResult도 동기화 (존재 여부로 분석 완료 판단)
+            const char = useImageVideoStore.getState().characters.find(c => c.id === id);
+            if (char) {
+              const style = field === 'analysisStyle' ? value : (char.analysisStyle || '');
+              const character = field === 'analysisCharacter' ? value : (char.analysisCharacter || '');
+              updates.analysisResult = [style, character].filter(Boolean).join('\n\n');
+            }
+            useImageVideoStore.getState().updateCharacter(id, updates);
+          }}
           onAnalyze={handleAnalyzeCharacter}
           onAnalyzeAll={handleAnalyzeAllCharacters}
           maxCharacters={isMultiCharacter ? 5 : 1}

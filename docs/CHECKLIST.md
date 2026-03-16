@@ -8,6 +8,7 @@
 
 ## 🟢 완료된 작업
 
+- [x] **#368 캐릭터 레퍼런스 AI 감지 결과 직접 편집 기능** — 예술 스타일·캐릭터 특징 필드를 클릭하여 직접 수정 가능. 다른 플랫폼(AI Studio 등)에서 만든 스타일 프롬프트를 붙여넣기로 적용 가능. 싱글/멀티 캐릭터 모드 모두 지원. analysisResult 자동 동기화 (CharacterUploadPanel.tsx, SetupPanel.tsx, 2026-03-16)
 - [x] **#363 ElevenLabs 사운드 생성 오류 완벽 수정** — KIE API 미지원 커뮤니티 음성 366개 제거, KIE docs 기준 126개(프리메이드 21 + 커뮤니티 105) 검증된 음성만 유지. API 호출 전 VALID_KIE_VOICES 화이트리스트로 미지원 ID 원천 차단. EL_NAME_KO 한글 매핑도 유효 음성만으로 정리 (elevenlabsService.ts, 2026-03-16)
 - [x] **#364 티키타카 롱폼(10분+) 할루시네이션 70% 감소** — (1) 배치별 세그먼트 전사 데이터 추출·삽입으로 AI가 실제 대사만 참조 (2) 할루시네이션 절대 금지 프로토콜을 tikitaka 프롬프트에 추가 (3) 롱폼 temperature 0.5→0.3 하향 (4) 대사 없는 구간은 [N] 내레이션 중심 설계 지시 (VideoAnalysisRoom.tsx, 2026-03-16)
 - [x] **#365 Google Whisk 이미지 리믹싱 모델 추가** — ImageModel.GOOGLE_WHISK enum + IMAGE_MODELS 드롭다운 + generateWhiskImage() 함수 (레퍼런스 이미지 SUBJECT로 전송) + imageGeneration.ts Step 0b 분기 + EditRoomExportBar 라벨. Google 쿠키 기반 무료, 캐릭터 레퍼런스 이미지를 자동으로 리믹싱 참고 이미지로 활용. 실패 시 NanoBanana 2 폴백 (types.ts, constants.ts, googleImageService.ts, imageGeneration.ts, EditRoomExportBar.tsx, 2026-03-16)

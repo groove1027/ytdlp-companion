@@ -9,6 +9,7 @@ interface CharacterUploadPanelProps {
   onAdd: (imageBase64: string) => void;
   onRemove: (id: string) => void;
   onUpdateLabel: (id: string, label: string) => void;
+  onUpdateAnalysis?: (id: string, field: 'analysisStyle' | 'analysisCharacter', value: string) => void;
   onAnalyze?: (id: string) => void;
   onAnalyzeAll?: () => void;
   maxCharacters?: number;
@@ -22,6 +23,7 @@ const CharacterUploadPanel: React.FC<CharacterUploadPanelProps> = ({
   onAdd,
   onRemove,
   onUpdateLabel,
+  onUpdateAnalysis,
   onAnalyze,
   onAnalyzeAll,
   maxCharacters = 5,
@@ -238,11 +240,17 @@ const CharacterUploadPanel: React.FC<CharacterUploadPanelProps> = ({
                 <span className="text-xs font-semibold text-purple-400">🎨 감지된 예술 스타일</span>
                 <CopyBtn text={char?.analysisStyle || ''} accent="purple" />
               </div>
-              <p className={`text-xs leading-relaxed bg-gray-900/80 rounded-lg px-3 py-2.5 border flex-1 min-h-0 overflow-y-auto ${
-                char?.analysisStyle
-                  ? 'text-gray-300 border-gray-600/50'
-                  : 'text-gray-600 border-dashed border-gray-700/30 italic'
-              }`}>{char?.analysisStyle || (char?.isAnalyzing ? '화풍, 색감, 렌더링 스타일 추출 중...' : '대기 중')}</p>
+              <textarea
+                value={char?.analysisStyle || ''}
+                onChange={(e) => char && onUpdateAnalysis?.(char.id, 'analysisStyle', e.target.value)}
+                placeholder={char?.isAnalyzing ? '화풍, 색감, 렌더링 스타일 추출 중...' : '대기 중 — 직접 입력도 가능합니다'}
+                className={`text-xs leading-relaxed bg-gray-900/80 rounded-lg px-3 py-2.5 border flex-1 min-h-0 overflow-y-auto resize-none ${
+                  char?.analysisStyle
+                    ? 'text-gray-300 border-gray-600/50 hover:border-purple-500/40 focus:border-purple-500/60'
+                    : 'text-gray-600 border-dashed border-gray-700/30 italic'
+                } focus:outline-none focus:ring-1 focus:ring-purple-500/30 transition-colors`}
+                readOnly={!onUpdateAnalysis}
+              />
             </div>
 
             {/* 감지된 캐릭터 특징 */}
@@ -251,11 +259,17 @@ const CharacterUploadPanel: React.FC<CharacterUploadPanelProps> = ({
                 <span className="text-xs font-semibold text-cyan-400">🧑 감지된 캐릭터 특징</span>
                 <CopyBtn text={char?.analysisCharacter || ''} accent="cyan" />
               </div>
-              <p className={`text-xs leading-relaxed bg-gray-900/80 rounded-lg px-3 py-2.5 border flex-1 min-h-0 overflow-y-auto ${
-                char?.analysisCharacter
-                  ? 'text-gray-300 border-gray-600/50'
-                  : 'text-gray-600 border-dashed border-gray-700/30 italic'
-              }`}>{char?.analysisCharacter || (char?.isAnalyzing ? '헤어, 의상, 체형, 액세서리 추출 중...' : '대기 중')}</p>
+              <textarea
+                value={char?.analysisCharacter || ''}
+                onChange={(e) => char && onUpdateAnalysis?.(char.id, 'analysisCharacter', e.target.value)}
+                placeholder={char?.isAnalyzing ? '헤어, 의상, 체형, 액세서리 추출 중...' : '대기 중 — 직접 입력도 가능합니다'}
+                className={`text-xs leading-relaxed bg-gray-900/80 rounded-lg px-3 py-2.5 border flex-1 min-h-0 overflow-y-auto resize-none ${
+                  char?.analysisCharacter
+                    ? 'text-gray-300 border-gray-600/50 hover:border-cyan-500/40 focus:border-cyan-500/60'
+                    : 'text-gray-600 border-dashed border-gray-700/30 italic'
+                } focus:outline-none focus:ring-1 focus:ring-cyan-500/30 transition-colors`}
+                readOnly={!onUpdateAnalysis}
+              />
             </div>
 
             {/* Re-analyze button (in case auto failed or partial result) */}
@@ -404,26 +418,38 @@ const CharacterUploadPanel: React.FC<CharacterUploadPanelProps> = ({
                       <span className="text-[10px] font-semibold text-purple-400">감지된 예술 스타일</span>
                       <CopyBtn text={char.analysisStyle || ''} accent="purple" />
                     </div>
-                    <p className={`text-[11px] leading-snug bg-black/30 rounded px-1.5 py-1.5 border ${
-                      expandedAnalysisId === char.id ? 'max-h-none' : 'max-h-[3.5rem]'
-                    } overflow-y-auto ${
-                      char.analysisStyle
-                        ? 'text-gray-400 border-gray-700/50'
-                        : 'text-gray-600 border-dashed border-gray-700/30 italic'
-                    }`}>{char.analysisStyle || (char.isAnalyzing ? '화풍/색감 추출 중...' : '분석 전')}</p>
+                    <textarea
+                      value={char.analysisStyle || ''}
+                      onChange={(e) => onUpdateAnalysis?.(char.id, 'analysisStyle', e.target.value)}
+                      placeholder={char.isAnalyzing ? '화풍/색감 추출 중...' : '분석 전 — 직접 입력 가능'}
+                      className={`text-[11px] leading-snug bg-black/30 rounded px-1.5 py-1.5 border resize-none ${
+                        expandedAnalysisId === char.id ? 'max-h-none min-h-[4rem]' : 'max-h-[3.5rem] min-h-[2.5rem]'
+                      } overflow-y-auto ${
+                        char.analysisStyle
+                          ? 'text-gray-400 border-gray-700/50 hover:border-purple-500/40 focus:border-purple-500/60'
+                          : 'text-gray-600 border-dashed border-gray-700/30 italic'
+                      } focus:outline-none focus:ring-1 focus:ring-purple-500/30 transition-colors w-full`}
+                      readOnly={!onUpdateAnalysis}
+                    />
                   </div>
                   <div>
                     <div className="flex items-center justify-between mb-0.5">
                       <span className="text-[10px] font-semibold text-cyan-400">캐릭터 특징</span>
                       <CopyBtn text={char.analysisCharacter || ''} accent="cyan" />
                     </div>
-                    <p className={`text-[11px] leading-snug bg-black/30 rounded px-1.5 py-1.5 border ${
-                      expandedAnalysisId === char.id ? 'max-h-none' : 'max-h-[3.5rem]'
-                    } overflow-y-auto ${
-                      char.analysisCharacter
-                        ? 'text-gray-400 border-gray-700/50'
-                        : 'text-gray-600 border-dashed border-gray-700/30 italic'
-                    }`}>{char.analysisCharacter || (char.isAnalyzing ? '외형/의상 추출 중...' : '분석 전')}</p>
+                    <textarea
+                      value={char.analysisCharacter || ''}
+                      onChange={(e) => onUpdateAnalysis?.(char.id, 'analysisCharacter', e.target.value)}
+                      placeholder={char.isAnalyzing ? '외형/의상 추출 중...' : '분석 전 — 직접 입력 가능'}
+                      className={`text-[11px] leading-snug bg-black/30 rounded px-1.5 py-1.5 border resize-none ${
+                        expandedAnalysisId === char.id ? 'max-h-none min-h-[4rem]' : 'max-h-[3.5rem] min-h-[2.5rem]'
+                      } overflow-y-auto ${
+                        char.analysisCharacter
+                          ? 'text-gray-400 border-gray-700/50 hover:border-cyan-500/40 focus:border-cyan-500/60'
+                          : 'text-gray-600 border-dashed border-gray-700/30 italic'
+                      } focus:outline-none focus:ring-1 focus:ring-cyan-500/30 transition-colors w-full`}
+                      readOnly={!onUpdateAnalysis}
+                    />
                   </div>
                   {/* Action buttons — re-analyze if auto failed or partial result */}
                   {!char.isAnalyzing && (!char.analysisResult || !char.analysisStyle || !char.analysisCharacter) && onAnalyze && (
