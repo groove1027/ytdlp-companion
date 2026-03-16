@@ -411,7 +411,13 @@ export function generateFcpXml(params: {
           </samplecharacteristics>
         </format>
         <track>${videoClips}
-        </track>
+        </track>${subtitleClips ? `
+        <track>
+          <enabled>TRUE</enabled>${subtitleClips}
+        </track>` : ''}${effectSubClips ? `
+        <track>
+          <enabled>TRUE</enabled>${effectSubClips}
+        </track>` : ''}
       </video>
       <audio>
         <numOutputChannels>2</numOutputChannels>
@@ -515,6 +521,140 @@ export function generateCapCutDraftJson(params: {
     volume: 1.0,
   }));
 
+  // ── 텍스트 자막 머티리얼 + 세그먼트 (CapCut 네이티브 자막) ──
+  const textMaterials = timings.filter(t => t.text).map(t => {
+    const tid = uuid();
+    return { id: tid, text: t.text, effectText: t.effectText, tlStartSec: t.tlStartSec, durationSec: t.durationSec };
+  });
+  const fxMaterials = timings.filter(t => t.effectText).map(t => {
+    const tid = uuid();
+    return { id: tid, text: t.effectText, tlStartSec: t.tlStartSec, durationSec: t.durationSec };
+  });
+
+  const textObjects = textMaterials.map(m => ({
+    add_type: 0,
+    alignment: 1,
+    background_alpha: 0.0,
+    background_color: '',
+    background_height: 0.14,
+    background_horizontal_offset: 0.0,
+    background_round_radius: 0.0,
+    background_style: 0,
+    background_vertical_offset: 0.004,
+    background_width: 0.14,
+    bold_width: 0.0,
+    border_alpha: 1.0,
+    border_color: '',
+    border_width: 0.08,
+    check_flag: 7,
+    content: JSON.stringify({ styles: [{ range: [0, m.text.length], size: 8.0, bold: true, italic: false, color: [1.0, 1.0, 1.0], useLetterColor: true }], text: m.text }),
+    fixed_height: -1.0,
+    fixed_width: -1.0,
+    font_category_id: '',
+    font_category_name: '',
+    font_id: '',
+    font_name: '',
+    font_path: '',
+    font_resource_id: '',
+    font_size: 8.0,
+    font_source_platform: 0,
+    font_team_id: '',
+    font_title: 'default',
+    font_url: '',
+    fonts: [],
+    force_apply_line_max_width: false,
+    global_alpha: 1.0,
+    has_shadow: false,
+    id: m.id,
+    initial_scale: 1.0,
+    inner_padding: -1.0,
+    is_rich_text: false,
+    italic_degree: 0,
+    ktv_color: '',
+    language: '',
+    layer_weight: 1,
+    letter_spacing: 0.0,
+    line_feed: 1,
+    line_max_width: 0.82,
+    line_spacing: 0.02,
+    multi_language_current: 'none',
+    name: '',
+    original_size: [],
+    preset_category: '',
+    preset_category_id: '',
+    preset_has_set_alignment: false,
+    preset_id: '',
+    preset_index: 0,
+    preset_name: '',
+    recognize_task_id: '',
+    recognize_type: 0,
+    relevance_segment: [],
+    shadow_alpha: 0.9,
+    shadow_angle: -45.0,
+    shadow_color: '',
+    shadow_distance: 0.04,
+    shadow_point: { x: 0.6363961031, y: -0.6363961031 },
+    shadow_smoothing: 0.45,
+    shape_clip_x: false,
+    shape_clip_y: false,
+    style_name: '',
+    sub_type: 0,
+    subtitle_keywords: null,
+    subtitle_template_original_fontsize: 0.0,
+    text_alpha: 1.0,
+    text_color: '#FFFFFF',
+    text_curve: null,
+    text_preset_resource_id: '',
+    text_size: 30,
+    text_to_audio_ids: [],
+    tts_auto_update: false,
+    type: 'subtitle',
+    typesetting: 0,
+    underline: false,
+    underline_offset: 0.22,
+    underline_width: 0.05,
+    use_effect_default_color: true,
+    words: null,
+  }));
+
+  const textSegments = textMaterials.map(m => ({
+    cartoon: false,
+    clip: { alpha: 1.0, flip: { horizontal: false, vertical: false }, rotation: 0.0, scale: { x: 1.0, y: 1.0 }, transform: { x: 0.0, y: 0.0 } },
+    common_keyframes: emptyArr,
+    enable_adjust: false,
+    enable_color_correct_adjust: false,
+    enable_color_curves: false,
+    enable_color_match_adjust: false,
+    enable_color_wheels: false,
+    enable_lut: false,
+    enable_smart_color_adjust: false,
+    extra_material_refs: emptyArr,
+    group_id: '',
+    hdr_settings: null,
+    id: uuid(),
+    intensifies_audio: false,
+    is_placeholder: false,
+    is_tone_modify: false,
+    keyframe_refs: emptyArr,
+    last_nonzero_volume: 1.0,
+    material_id: m.id,
+    render_index: 11000,
+    responsive_layout: { enable: false, horizontal_pos_layout: 0, size_layout: 0, target_follow: '', vertical_pos_layout: 0 },
+    reverse: false,
+    source_timerange: { duration: toUs(m.durationSec), start: 0 },
+    speed: 1.0,
+    target_timerange: { duration: toUs(m.durationSec), start: toUs(m.tlStartSec) },
+    template_id: '',
+    template_scene: '',
+    track_attribute: 0,
+    track_render_index: 11000,
+    uniform_scale: { on: true, value: 1.0 },
+    visible: true,
+    volume: 1.0,
+  }));
+
+  const trackTextId = uuid();
+
   const draft = {
     canvas_config: {
       height,
@@ -594,7 +734,7 @@ export function generateCapCutDraftJson(params: {
       stickers: emptyArr,
       tail_animations: emptyArr,
       text_templates: emptyArr,
-      texts: emptyArr,
+      texts: textObjects,
       transitions: emptyArr,
       video_effects: emptyArr,
       video_trackings: emptyArr,
@@ -673,7 +813,15 @@ export function generateCapCutDraftJson(params: {
       name: '',
       segments: videoSegments,
       type: 'video',
-    }],
+    }, ...(textSegments.length > 0 ? [{
+      attribute: 0,
+      flag: 0,
+      id: trackTextId,
+      is_default_name: true,
+      name: '',
+      segments: textSegments,
+      type: 'text',
+    }] : [])],
     update_time: Math.floor(Date.now() / 1000),
     version: 360000,
   };
@@ -1025,6 +1173,36 @@ export function generateFcpXmlFromEdl(params: {
           </clipitem>`;
   }).join('');
 
+  // ── V2 나레이션 자막 트랙 (편집실 — narrationText 기반) ──
+  const edlSubtitleClips = clips.filter(c => c.entry.narrationText).map((c, i) => {
+    const durFrames = toFrames(c.recEnd - c.recStart);
+    return `
+          <generatoritem id="edl-sub-${i + 1}">
+            <name>${escXml(c.entry.narrationText.slice(0, 40))}</name>
+            <duration>${durFrames}</duration>
+            <rate><ntsc>${ntscStr}</ntsc><timebase>${timebase}</timebase></rate>
+            <in>0</in>
+            <out>${durFrames}</out>
+            <start>${toFrames(c.recStart)}</start>
+            <end>${toFrames(c.recEnd)}</end>
+            <enabled>TRUE</enabled>
+            <anamorphic>FALSE</anamorphic>
+            <alphatype>black</alphatype>
+            <effect>
+              <name>Text</name>
+              <effectid>Text</effectid>
+              <effectcategory>Text</effectcategory>
+              <effecttype>generator</effecttype>
+              <mediatype>video</mediatype>
+              <parameter><parameterid>str</parameterid><name>Text</name><value>${escXml(c.entry.narrationText)}</value></parameter>
+              <parameter><parameterid>fontsize</parameterid><name>Font Size</name><value>42</value></parameter>
+              <parameter><parameterid>fontstyle</parameterid><name>Font Style</name><value>1</value></parameter>
+              <parameter><parameterid>fontcolor</parameterid><name>Font Color</name><value>16777215</value></parameter>
+              <parameter><parameterid>origin</parameterid><name>Origin</name><value>0 0.38</value></parameter>
+            </effect>
+          </generatoritem>`;
+  }).join('');
+
   // ── A1 오디오 클립 (링크 + 라벨) ──
   const audioClips = clips.map((c, i) => {
     const start = c.entry.refinedTimecodeStart ?? c.entry.timecodeStart;
@@ -1087,7 +1265,10 @@ export function generateFcpXmlFromEdl(params: {
           </samplecharacteristics>
         </format>
         <track>${videoClips}
-        </track>
+        </track>${edlSubtitleClips ? `
+        <track>
+          <enabled>TRUE</enabled>${edlSubtitleClips}
+        </track>` : ''}
       </video>
       <audio>
         <numOutputChannels>2</numOutputChannels>
