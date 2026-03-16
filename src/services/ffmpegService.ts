@@ -601,6 +601,11 @@ export async function composeMp4(options: ComposeMp4Options): Promise<Blob> {
       const delayMs = Math.round(effectiveStartTime * 1000);
 
       const narFilters: string[] = [];
+      // [FIX #396] audioOffset: merged audio에서 특정 구간만 사용 (개별 장면 렌더)
+      if (narLine.audioOffset != null && narLine.audioOffset > 0) {
+        narFilters.push(`atrim=start=${narLine.audioOffset}`);
+        narFilters.push('asetpts=PTS-STARTPTS');
+      }
       if (sceneSpeed !== 1.0) narFilters.push(`atempo=${sceneSpeed}`);
       if (sceneVolume !== 1.0) narFilters.push(`volume=${sceneVolume}`);
       if (delayMs > 0) narFilters.push(`adelay=${delayMs}|${delayMs}`);

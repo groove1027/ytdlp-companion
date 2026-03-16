@@ -118,12 +118,14 @@ export async function mixAudio(
           bgmGain.gain.setValueAtTime(vol, Math.max(0, lineStart - rampTime));
           bgmGain.gain.linearRampToValueAtTime(duckVol, lineStart);
         }
-        // 마지막 나레이션 이후 복귀 (간이 구현)
+        // 마지막 나레이션 이후 복귀
+        // [FIX #396] merged audio의 실제 길이를 사용하여 정확한 복귀 시점 계산
         const lastNarration = narrationLines.filter(l => l.audioUrl && l.startTime != null)
           .sort((a, b) => (b.startTime ?? 0) - (a.startTime ?? 0))[0];
         if (lastNarration) {
-          // 대략 마지막 나레이션 2초 후 복귀
-          const recoverTime = (lastNarration.startTime ?? 0) + 2;
+          const lastNarBuffer = decodedNarrations.find(r => r && r.line === lastNarration);
+          const narDuration = lastNarBuffer ? lastNarBuffer.buffer.duration - (lastNarration.audioOffset ?? 0) : 2;
+          const recoverTime = (lastNarration.startTime ?? 0) + Math.max(2, narDuration);
           if (recoverTime < totalDuration) {
             bgmGain.gain.setValueAtTime(duckVol, recoverTime);
             bgmGain.gain.linearRampToValueAtTime(vol, recoverTime + rampTime);
