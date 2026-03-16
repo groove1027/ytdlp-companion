@@ -582,7 +582,7 @@ const VoiceStudio: React.FC = () => {
           text: emotionTag + line.text,
           voiceId: line.voiceId || speaker.voiceId,
           stability: speaker.stability ?? 0.5,
-          languageCode: speaker.language === 'ko' ? 'ko' : speaker.language === 'ja' ? 'ja' : 'en',
+          languageCode: speaker.language || 'auto',
         });
       } else if (speaker.engine === 'supertonic') {
         result = await generateSupertonicTTS(line.text, line.voiceId || speaker.voiceId, speaker.language || 'ko', line.lineSpeed ?? speaker.speed ?? 1.0);
@@ -831,7 +831,7 @@ const VoiceStudio: React.FC = () => {
             text: sampleText,
             voiceId: voice.id,
             stability: 0.5,
-            languageCode: lang === 'ko' ? 'ko' : lang === 'ja' ? 'ja' : 'en',
+            languageCode: lang || 'auto',
           });
           break;
         case 'supertonic':

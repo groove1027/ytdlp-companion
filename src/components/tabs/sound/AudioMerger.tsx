@@ -32,7 +32,7 @@ async function generateLineTTS(
         text,
         voiceId: speaker.voiceId,
         stability: speaker.stability ?? 0.5,
-        languageCode: speaker.language === 'ko' ? 'ko' : speaker.language === 'ja' ? 'ja' : 'en',
+        languageCode: speaker.language || 'auto',
       });
     case 'supertonic':
       return generateSupertonicTTS(text, speaker.voiceId, lang, speaker.speed);
