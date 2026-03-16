@@ -63,6 +63,10 @@ const VALID_KIE_VOICES = new Set([
   'Adam', 'Alice', 'Bill', 'Brian', 'Callum', 'Charlie', 'Chris', 'Daniel',
   'Eric', 'George', 'Harry', 'Jessica', 'Laura', 'Liam', 'Lily', 'Matilda',
   'River', 'Roger', 'Sarah', 'Will',
+  // 프리메이드 음성의 Voice ID 버전 (이전 저장 데이터 호환)
+  'pNInz6obpgDQGcFmaJgB', 'nPczCjzI2devNBz1zQrb', 'FGY2WhTYpPnrIDTdsKH5',
+  'cgSgspJ2msm6clMCkdW9', 'SOYHLrjzK2X1ezoPC6cr', 'N2lVS1w4EtoT3dr4eOWO',
+  'TX3LPaxmHKxFdv7VOQHJ', 'iP95p4xoKVk53GoZ742B',
   // KIE 지원 커뮤니티 Voice ID (docs.kie.ai 기준)
   'Sm1seazb4gs7RSlUVw7c', 'BIvP0GN1cAtSRTxNHnWS', 'aMSt68OGf4xUZAnLpTU8',
   'RILOU7YmBhvwJGDGjNmP', 'EkK5I93UQWFDigLMpZcX', 'Z3R5wn05IrDiVCyEkUrK',
