@@ -285,6 +285,19 @@ export const VISUAL_STYLES = [
       { label: '🌊 장노출', prompt: 'Long exposure photography, silky smooth water, light trails at night, star trails in sky, ethereal motion blur, dreamy, time-lapse feel', desc: '실크 같은 물, 빛의 궤적, 별의 궤적, 몽환적 모션 블러' },
       { label: '📷 필름 카메라', prompt: 'Film camera photography, Kodak Portra 400 film look, warm skin tones, natural grain, slightly overexposed, nostalgic analog feel, 35mm', desc: 'Kodak Portra 400 필름 룩, 따뜻한 피부톤, 자연스러운 그레인, 35mm 아날로그 감성' }
     ]
+  },
+  {
+    category: '🌍 컨트리볼 (Countryball)',
+    items: [
+      { label: '🇩🇪 화난 독일', prompt: 'Countryball Polandball meme art style, perfectly spherical round ball, NO arms NO legs NO limbs, crude hand-drawn thick black outlines, simple flat comic look, white background, germany flag sphere, wide open eyes, small pupils, extremely shocked, angry expression, visible mouth, clenched teeth', desc: '독일 국기 구체, 분노/충격 표정, 이빨 꽉 깨물기, 업무 스트레스' },
+      { label: '🇺🇸 피곤한 미국', prompt: 'Countryball Polandball meme art style, perfectly spherical round ball, NO arms NO legs NO limbs, crude hand-drawn thick black outlines, simple flat comic look, white background, usa flag sphere, half-closed eyes, horizontal eyelid lines, red eyes, unamused, tired, bored expression', desc: '미국 국기 구체, 나른하고 피곤한 표정, 충혈된 반쯤 감은 눈' },
+      { label: '🇳🇴 진지한 노르웨이', prompt: 'Countryball Polandball meme art style, perfectly spherical round ball, NO arms NO legs NO limbs, crude hand-drawn thick black outlines, simple flat comic look, white background, norway flag sphere, thick furrowed brows, slanted angry eyes, serious expression, stern look', desc: '노르웨이 국기 구체, V자 찌푸린 눈썹, 차갑고 단호한 북유럽 표정' },
+      { label: '🇰🇷 의기양양 한국', prompt: 'Countryball Polandball meme art style, perfectly spherical round ball, NO arms NO legs NO limbs, crude hand-drawn thick black outlines, simple flat comic look, white background, south korea flag sphere, confident, smug smile, devious expression, curved eyes, small smiling mouth line', desc: '태극기 구체, 자신만만한 썩소, K-게이머 느낌의 자신감' },
+      { label: '🇵🇱 당황한 폴란드', prompt: 'Countryball Polandball meme art style, perfectly spherical round ball, NO arms NO legs NO limbs, crude hand-drawn thick black outlines, simple flat comic look, white background, poland flag sphere, upside-down poland flag (red on top white on bottom), wide eyes, tearful, sweating, nervous, sad expression', desc: '뒤집힌 폴란드 국기(위 빨강 아래 흰색), 당황하며 우는 밈의 주인공' },
+      { label: '🇬🇧 신사 영국', prompt: 'Countryball Polandball meme art style, perfectly spherical round ball, NO arms NO legs NO limbs, crude hand-drawn thick black outlines, simple flat comic look, white background, uk flag sphere, wearing black top hat, wearing monocle on one eye, sipping tea, arrogant, elegant expression', desc: '영국 국기 구체, 탑햇+단안경+홍차, 거만한 신사 고정 프리셋' },
+      { label: '🇯🇵 카와이 일본', prompt: 'Countryball Polandball meme art style, perfectly spherical round ball, NO arms NO legs NO limbs, crude hand-drawn thick black outlines, simple flat comic look, white background, japan flag sphere, happy expression, kawaii, cat ears (nekomimi) attached to the sphere, closed smiling eyes', desc: '일본 국기 구체, 고양이 귀+눈웃음(^_^), 카와이 고정 프리셋' },
+      { label: '🇷🇺 광기의 러시아', prompt: 'Countryball Polandball meme art style, perfectly spherical round ball, NO arms NO legs NO limbs, crude hand-drawn thick black outlines, simple flat comic look, white background, russia flag sphere, small completely red eyes, creepy stare, emotionless, holding vodka bottle', desc: '러시아 국기 구체, 작고 빨간 눈+보드카, 감정 없는 광기 표정' }
+    ]
   }
 ];
 
