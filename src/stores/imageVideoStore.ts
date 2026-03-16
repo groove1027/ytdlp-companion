@@ -20,6 +20,8 @@ interface ImageVideoStore {
   dialogueMode: boolean;
   // [#177] 목표 컷 수 — 사용자가 원하는 장면 수 오버라이드
   targetSceneCount: number | null;
+  // [#391] 글로벌 스타일 레퍼런스 이미지
+  styleReferenceImages: string[];
 
   setActiveSubTab: (tab: 'setup' | 'storyboard') => void;
   setStyle: (v: string) => void;
@@ -35,9 +37,12 @@ interface ImageVideoStore {
   setReferenceDialogue: (v: string) => void;
   setDialogueMode: (v: boolean) => void;
   setTargetSceneCount: (v: number | null) => void;
+  setStyleReferenceImages: (v: string[]) => void;
+  addStyleReferenceImage: (img: string) => void;
+  removeStyleReferenceImage: (index: number) => void;
 
   // 프로젝트 로드/리셋 시 일괄 복원
-  restoreFromConfig: (data: { style?: string; characters?: CharacterReference[]; enableWebSearch?: boolean; isMultiCharacter?: boolean; dialogueTone?: DialogueTone; referenceDialogue?: string; dialogueMode?: boolean; customStyleNote?: string; targetSceneCount?: number | null }) => void;
+  restoreFromConfig: (data: { style?: string; characters?: CharacterReference[]; enableWebSearch?: boolean; isMultiCharacter?: boolean; dialogueTone?: DialogueTone; referenceDialogue?: string; dialogueMode?: boolean; customStyleNote?: string; targetSceneCount?: number | null; styleReferenceImages?: string[] }) => void;
   resetStore: () => void;
 }
 
@@ -52,10 +57,10 @@ const syncToProjectConfig = () => {
   requestAnimationFrame(() => {
     const ps = getProjectStore();
     if (!ps) return;
-    const { style, characters, enableWebSearch, isMultiCharacter, dialogueTone, referenceDialogue, dialogueMode, customStyleNote, targetSceneCount } = useImageVideoStore.getState();
+    const { style, characters, enableWebSearch, isMultiCharacter, dialogueTone, referenceDialogue, dialogueMode, customStyleNote, targetSceneCount, styleReferenceImages } = useImageVideoStore.getState();
     ps.getState().setConfig((prev: any) => {
       if (!prev) return prev;
-      return { ...prev, selectedVisualStyle: style, characters, enableWebSearch, isMultiCharacter, dialogueTone, referenceDialogue, dialogueMode, customStyleNote, targetSceneCount };
+      return { ...prev, selectedVisualStyle: style, characters, enableWebSearch, isMultiCharacter, dialogueTone, referenceDialogue, dialogueMode, customStyleNote, targetSceneCount, styleReferenceImages };
     });
   });
 };
@@ -71,6 +76,7 @@ export const useImageVideoStore = create<ImageVideoStore>((set) => ({
   referenceDialogue: '',
   dialogueMode: false,
   targetSceneCount: null,
+  styleReferenceImages: [],
 
   setActiveSubTab: (tab) => { logger.trackTabVisit('image-video', tab); set({ activeSubTab: tab }); },
   setStyle: (v) => { const prev = useImageVideoStore.getState().style; logger.trackSettingChange('iv.style', prev, v); set({ style: v }); syncToProjectConfig(); },
@@ -81,6 +87,9 @@ export const useImageVideoStore = create<ImageVideoStore>((set) => ({
   setReferenceDialogue: (v) => { set({ referenceDialogue: v }); syncToProjectConfig(); },
   setDialogueMode: (v) => { const prev = useImageVideoStore.getState().dialogueMode; logger.trackSettingChange('iv.dialogueMode', prev, v); set({ dialogueMode: v }); syncToProjectConfig(); },
   setTargetSceneCount: (v) => { const prev = useImageVideoStore.getState().targetSceneCount; logger.trackSettingChange('iv.targetSceneCount', prev, v); set({ targetSceneCount: v }); syncToProjectConfig(); },
+  setStyleReferenceImages: (v) => { set({ styleReferenceImages: v }); syncToProjectConfig(); },
+  addStyleReferenceImage: (img) => { set((s) => ({ styleReferenceImages: [...s.styleReferenceImages, img] })); syncToProjectConfig(); },
+  removeStyleReferenceImage: (index) => { set((s) => ({ styleReferenceImages: s.styleReferenceImages.filter((_, i) => i !== index) })); syncToProjectConfig(); },
   setCharacters: (chars) => {
     set((s) => ({ characters: typeof chars === 'function' ? chars(s.characters) : chars }));
     syncToProjectConfig();
@@ -107,6 +116,7 @@ export const useImageVideoStore = create<ImageVideoStore>((set) => ({
     referenceDialogue: data.referenceDialogue || '',
     dialogueMode: data.dialogueMode ?? false,
     targetSceneCount: data.targetSceneCount ?? null,
+    styleReferenceImages: data.styleReferenceImages || [],
   }),
 
   // 새 프로젝트 시 초기화
@@ -121,5 +131,6 @@ export const useImageVideoStore = create<ImageVideoStore>((set) => ({
     referenceDialogue: '',
     dialogueMode: false,
     targetSceneCount: null,
+    styleReferenceImages: [],
   }),
 }));

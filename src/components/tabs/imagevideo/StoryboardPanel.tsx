@@ -1295,6 +1295,12 @@ const StoryboardPanel: React.FC = () => {
         ? currentCharacters.map(c => c.imageUrl || c.imageBase64).filter((v): v is string => !!v && (v.startsWith('http') || v.startsWith('data:')))
         : currentConfig.characterImage && (currentConfig.characterImage.startsWith('http') || currentConfig.characterImage.startsWith('data:')) ? [currentConfig.characterImage] : []);
 
+      // [#391] 글로벌 스타일 레퍼런스 이미지 병합
+      const globalStyleRefs = useImageVideoStore.getState().styleReferenceImages?.filter(Boolean) || [];
+      if (globalStyleRefs.length > 0) {
+        charImages.push(...globalStyleRefs);
+      }
+
       // [NEW] Combine all character analysis results for visual consistency
       // [FIX #319] 캐릭터 이름(label)을 분석 결과에 포함하여 장면별 매칭 정확도 향상
       const combinedAnalysis = isCharNone ? '' : currentCharacters

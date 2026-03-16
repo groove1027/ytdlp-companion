@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useMemo } from 'react';
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useProjectStore, autoRestoreOrCreateProject } from '../../../stores/projectStore';
 import { useCostStore } from '../../../stores/costStore';
 import { useScriptWriterStore } from '../../../stores/scriptWriterStore';
@@ -21,6 +21,98 @@ import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
 
 let _sceneIdCounter = 0;
+
+/* ── [#391] Style Reference Image Upload ── */
+const MAX_STYLE_REF_IMAGES = 3;
+const StyleReferenceUpload: React.FC<{
+  images: string[];
+  onAdd: (img: string) => void;
+  onRemove: (index: number) => void;
+}> = ({ images, onAdd, onRemove }) => {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+
+  const handleFiles = useCallback((files: FileList | null) => {
+    if (!files) return;
+    const remaining = MAX_STYLE_REF_IMAGES - images.length;
+    if (remaining <= 0) { showToast(`최대 ${MAX_STYLE_REF_IMAGES}장까지 업로드할 수 있어요.`); return; }
+    const toProcess = Array.from(files).slice(0, remaining);
+    toProcess.forEach((file) => {
+      if (!file.type.startsWith('image/')) return;
+      const reader = new FileReader();
+      reader.onload = () => { if (typeof reader.result === 'string') onAdd(reader.result); };
+      reader.readAsDataURL(file);
+    });
+  }, [images.length, onAdd]);
+
+  return (
+    <div className="bg-gray-900/60 border border-orange-500/20 rounded-xl px-5 py-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="text-base">🖼️</span>
+          <span className="text-sm font-bold text-orange-300">이미지 레퍼런스</span>
+          <span className="text-xs text-gray-500">(선택, 최대 {MAX_STYLE_REF_IMAGES}장)</span>
+        </div>
+        {images.length > 0 && (
+          <span className="text-xs text-orange-400 bg-orange-900/30 border border-orange-500/30 px-2 py-0.5 rounded-lg font-bold">
+            {images.length}장
+          </span>
+        )}
+      </div>
+      <p className="text-xs text-gray-400 leading-relaxed">
+        벤치마킹 채널이나 원하는 스타일의 이미지를 업로드하면, <b className="text-orange-300">모든 장면의 이미지 생성 시 AI가 화풍·구도·색감을 참고</b>합니다.
+      </p>
+
+      {/* 이미지 미리보기 */}
+      {images.length > 0 && (
+        <div className="flex gap-2 flex-wrap">
+          {images.map((img, i) => (
+            <div key={i} className="relative group/sref w-20 h-20 rounded-lg overflow-hidden border border-orange-500/40">
+              <img src={img} alt={`Style ref ${i + 1}`} className="w-full h-full object-cover" />
+              <button
+                type="button"
+                onClick={() => onRemove(i)}
+                className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-600 hover:bg-red-500 text-white rounded-full text-[10px] flex items-center justify-center opacity-0 group-hover/sref:opacity-100 transition-opacity z-10"
+                title="제거"
+              >✕</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* 업로드 영역 */}
+      {images.length < MAX_STYLE_REF_IMAGES && (
+        <div
+          className={`border-2 border-dashed rounded-xl px-4 py-5 text-center cursor-pointer transition-all ${
+            isDragOver
+              ? 'border-orange-400 bg-orange-500/10'
+              : 'border-gray-600 hover:border-orange-500/50 hover:bg-gray-800/50'
+          }`}
+          onClick={() => fileRef.current?.click()}
+          onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
+          onDragLeave={() => setIsDragOver(false)}
+          onDrop={(e) => { e.preventDefault(); setIsDragOver(false); handleFiles(e.dataTransfer.files); }}
+        >
+          <div className="flex flex-col items-center gap-1.5">
+            <span className="text-2xl text-gray-500">{isDragOver ? '📥' : '🖼️'}</span>
+            <p className="text-sm text-gray-400 font-medium">
+              {isDragOver ? '놓으면 추가됩니다!' : '클릭 또는 드래그하여 레퍼런스 이미지 추가'}
+            </p>
+            <p className="text-[11px] text-gray-600">PNG, JPG, WebP (최대 {MAX_STYLE_REF_IMAGES}장)</p>
+          </div>
+        </div>
+      )}
+      <input
+        type="file"
+        ref={fileRef}
+        className="hidden"
+        accept="image/*"
+        multiple
+        onChange={(e) => { handleFiles(e.target.files); e.target.value = ''; }}
+      />
+    </div>
+  );
+};
 
 /* ── Toggle Switch ── */
 const Toggle: React.FC<{ checked: boolean; onChange: (v: boolean) => void }> = ({ checked, onChange }) => (
@@ -93,6 +185,7 @@ const SetupPanel: React.FC = () => {
   const setCustomStyleNote = useImageVideoStore((s) => s.setCustomStyleNote);
   const targetSceneCount = useImageVideoStore((s) => s.targetSceneCount);
   const setTargetSceneCount = useImageVideoStore((s) => s.setTargetSceneCount);
+  const styleReferenceImages = useImageVideoStore((s) => s.styleReferenceImages);
 
   const [directInputMode, setDirectInputMode] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -982,6 +1075,14 @@ const SetupPanel: React.FC = () => {
           colorTheme="blue"
           compact
         />
+
+        {/* [#391] 스타일 레퍼런스 이미지 — 벤치마킹 채널 등의 이미지를 업로드하면 AI가 화풍/구도/색감 참고 */}
+        <StyleReferenceUpload
+          images={styleReferenceImages}
+          onAdd={(img) => useImageVideoStore.getState().addStyleReferenceImage(img)}
+          onRemove={(idx) => useImageVideoStore.getState().removeStyleReferenceImage(idx)}
+        />
+
         {/* [FIX #174] 커스텀 스타일 지시 — handshake 제거, 다큐멘터리 톤 등 */}
         <div className="mt-3">
           <label className="text-xs text-gray-400 mb-1 block">추가 스타일 지시 (선택)</label>

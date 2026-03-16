@@ -838,6 +838,7 @@ class LoggerService {
       snap['IV.Characters'] = String(iv.characters?.length || 0);
       snap['IV.WebSearch'] = String(iv.enableWebSearch);
       snap['IV.MultiChar'] = String(iv.isMultiCharacter);
+      snap['IV.StyleRefs'] = String(iv.styleReferenceImages?.length || 0);
     } catch { /* ignore */ }
 
     try {

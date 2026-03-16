@@ -436,6 +436,12 @@ const App: React.FC = () => {
                 return legacy ? [legacy] : [];
             })();
 
+            // [#391] 글로벌 스타일 레퍼런스 이미지 병합 — 캐릭터 이미지 뒤에 추가하여 API가 스타일 참조로 사용
+            const globalStyleRefs = resolvedConfig.styleReferenceImages?.filter(Boolean) || [];
+            if (globalStyleRefs.length > 0) {
+                characterImages.push(...globalStyleRefs);
+            }
+
             // [NEW] Combine all character analysis results for visual consistency
             // [FIX #319] 캐릭터 이름(label)을 분석 결과에 포함하여 장면별 매칭 정확도 향상
             const combinedCharAnalysis = resolvedConfig.characters
