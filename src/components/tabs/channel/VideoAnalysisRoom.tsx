@@ -18,7 +18,7 @@ import AnalysisSlotBar from './AnalysisSlotBar';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
 import { getYoutubeApiKey, getKieKey, monitoredFetch } from '../../../services/apiService';
 import { getQuotaUsage } from '../../../services/youtubeAnalysisService';
-import { extractStreamUrl, isYtdlpServerConfigured, getSocialMetadata, downloadSocialVideo } from '../../../services/ytdlpApiService';
+import { extractStreamUrl, isYtdlpServerConfigured, getSocialMetadata, downloadSocialVideo, fetchFramesFromServer } from '../../../services/ytdlpApiService';
 import { detectPlatform } from '../../../services/videoDownloadService';
 import { uploadMediaToHosting } from '../../../services/uploadService';
 import { detectSceneCuts, mergeWithAiTimecodes } from '../../../services/sceneDetection';
@@ -3745,9 +3745,16 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
         const aiTimecodes = collectTimecodesFromVersions(finalVersions, durSec);
 
         if (aiTimecodes.length > 0 && ytVid) {
-          // ★ 초고속 경로: AI 타임코드 → YouTube 썸네일 즉시 매핑 (다운로드 0초)
-          const fastFrames = buildYouTubeThumbnailFallback(ytVid, aiTimecodes, durSec);
-          console.log(`[Frame] ⚡ 초고속 YouTube 썸네일: AI ${aiTimecodes.length}개 타임코드 → ${fastFrames.length}개 프레임 (즉시)`);
+          // ★ [FIX #340 v3] 서버 ffmpeg 프레임 추출 1순위 → YouTube 썸네일 폴백
+          // VPS의 ffmpeg가 YouTube CDN에서 해당 타임코드 프레임만 직접 추출 (수 초)
+          let fastFrames = await fetchFramesFromServer(ytVid, aiTimecodes, 640).catch(() => []);
+          if (fastFrames.length > 0) {
+            console.log(`[Frame] ⚡ 서버 ffmpeg 프레임 ${fastFrames.length}개 추출 완료 (AI 타임코드 직접)`);
+          } else {
+            // 폴백: YouTube 썸네일 즉시 매핑
+            fastFrames = buildYouTubeThumbnailFallback(ytVid, aiTimecodes, durSec);
+            console.log(`[Frame] ⚡ YouTube 썸네일 폴백: ${fastFrames.length}개 프레임`);
+          }
           setThumbnails(fastFrames);
 
           // 백그라운드: 병렬 다운로드 결과가 있으면 정밀 프레임으로 업그레이드 (비차단)

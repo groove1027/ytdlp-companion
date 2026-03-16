@@ -934,6 +934,182 @@ app.get('/api/version', async (req, res) => {
 });
 
 // ──────────────────────────────────────────────
+// 프레임 추출 엔드포인트 (#340 — AI 타임코드 기반 초고속 프레임)
+// ──────────────────────────────────────────────
+
+const FFMPEG_PATH = process.env.FFMPEG_PATH || 'ffmpeg';
+
+/**
+ * GET /api/frame?url=VIDEO_ID&t=15.5&w=640
+ * 특정 타임코드의 프레임을 JPEG로 반환합니다.
+ *
+ * 파라미터:
+ *   url  (필수) — YouTube VIDEO_ID
+ *   t    (필수) — 타임코드 (초, 소수점 지원)
+ *   w    (선택) — 출력 너비 (기본: 640, 최대: 1280)
+ *
+ * 응답: image/jpeg 바이너리
+ */
+app.get('/api/frame', authMiddleware, async (req, res) => {
+  const url = req.query.url;
+  const timeSec = parseFloat(req.query.t);
+  const width = Math.min(parseInt(req.query.w || '640', 10) || 640, 1280);
+
+  if (!url) return res.status(400).json({ error: 'url 파라미터가 필요합니다' });
+  if (isNaN(timeSec) || timeSec < 0) return res.status(400).json({ error: 't(타임코드) 파라미터가 필요합니다 (초 단위)' });
+
+  const videoId = extractVideoId(url);
+  if (!videoId) return res.status(400).json({ error: '올바른 YouTube URL이 아닙니다' });
+
+  if (activeRequests >= MAX_CONCURRENT) {
+    return res.status(429).json({ error: '서버가 바쁩니다. 잠시 후 다시 시도해주세요.' });
+  }
+
+  activeRequests++;
+
+  try {
+    // 1. 스트림 URL 가져오기 (캐시 우선)
+    let result = getCachedUrl(videoId, '360p');
+    if (!result) {
+      result = await extractStreamUrl(videoId, '360p');
+      setCachedUrl(videoId, '360p', result);
+    }
+
+    const streamUrl = result.url;
+    if (!streamUrl) return res.status(500).json({ error: '스트림 URL 추출 실패' });
+
+    log('info', `Frame extract: ${videoId} @ ${timeSec}s (${width}px)`);
+
+    // 2. ffmpeg로 해당 타임코드의 프레임 1장 추출 (JPEG)
+    const { execFile: execFileCb } = require('child_process');
+    const ffmpegArgs = [
+      '-ss', String(timeSec),     // 시크 (입력 전 → 초고속)
+      '-i', streamUrl,            // YouTube CDN 스트림
+      '-vframes', '1',            // 1프레임만
+      '-vf', `scale=${width}:-2`, // 지정 너비, 비율 유지
+      '-f', 'image2',             // 이미지 출력
+      '-q:v', '3',                // JPEG 품질 (2=최고, 5=보통)
+      'pipe:1',                   // stdout으로 출력
+    ];
+
+    const ffmpeg = execFileCb(FFMPEG_PATH, ffmpegArgs, {
+      timeout: 15000,
+      maxBuffer: 5 * 1024 * 1024,
+      encoding: 'buffer',
+    }, (err, stdout) => {
+      if (err) {
+        log('error', `ffmpeg frame error: ${err.message?.slice(0, 200)}`);
+        if (!res.headersSent) res.status(500).json({ error: '프레임 추출 실패' });
+        return;
+      }
+
+      if (!stdout || stdout.length === 0) {
+        if (!res.headersSent) res.status(500).json({ error: '빈 프레임 (타임코드가 영상 범위를 초과했을 수 있음)' });
+        return;
+      }
+
+      res.setHeader('Content-Type', 'image/jpeg');
+      res.setHeader('Content-Length', stdout.length);
+      res.setHeader('Cache-Control', 'public, max-age=86400');
+      res.send(stdout);
+    });
+
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    log('error', 'Frame extract error:', err);
+    if (!res.headersSent) res.status(500).json({ error: '프레임 추출 서버 오류' });
+  } finally {
+    activeRequests--;
+  }
+});
+
+/**
+ * POST /api/frames
+ * 여러 타임코드의 프레임을 한번에 추출 (배치)
+ *
+ * 요청: { url: "VIDEO_ID", timecodes: [15.5, 30.0, 45.2], w: 640 }
+ * 응답: { frames: [{ t: 15.5, url: "data:image/jpeg;base64,..." }, ...] }
+ */
+app.post('/api/frames', authMiddleware, express.json({ limit: '10kb' }), async (req, res) => {
+  const { url, timecodes, w = 640 } = req.body || {};
+
+  if (!url) return res.status(400).json({ error: 'url 파라미터가 필요합니다' });
+  if (!Array.isArray(timecodes) || timecodes.length === 0) return res.status(400).json({ error: 'timecodes 배열이 필요합니다' });
+  if (timecodes.length > 50) return res.status(400).json({ error: '최대 50개 타임코드까지 요청할 수 있습니다' });
+
+  const videoId = extractVideoId(url);
+  if (!videoId) return res.status(400).json({ error: '올바른 YouTube URL이 아닙니다' });
+
+  const width = Math.min(parseInt(w, 10) || 640, 1280);
+
+  if (activeRequests >= MAX_CONCURRENT) {
+    return res.status(429).json({ error: '서버가 바쁩니다. 잠시 후 다시 시도해주세요.' });
+  }
+
+  activeRequests++;
+
+  try {
+    // 스트림 URL 가져오기
+    let result = getCachedUrl(videoId, '360p');
+    if (!result) {
+      result = await extractStreamUrl(videoId, '360p');
+      setCachedUrl(videoId, '360p', result);
+    }
+
+    const streamUrl = result.url;
+    if (!streamUrl) return res.status(500).json({ error: '스트림 URL 추출 실패' });
+
+    log('info', `Batch frame extract: ${videoId} × ${timecodes.length} frames (${width}px)`);
+
+    // 병렬 프레임 추출 (최대 5개 동시)
+    const CONCURRENCY = 5;
+    const frames = [];
+    for (let i = 0; i < timecodes.length; i += CONCURRENCY) {
+      const batch = timecodes.slice(i, i + CONCURRENCY);
+      const results = await Promise.allSettled(
+        batch.map(t => new Promise((resolve, reject) => {
+          const args = [
+            '-ss', String(t),
+            '-i', streamUrl,
+            '-vframes', '1',
+            '-vf', `scale=${width}:-2`,
+            '-f', 'image2',
+            '-q:v', '4',
+            'pipe:1',
+          ];
+          require('child_process').execFile(FFMPEG_PATH, args, {
+            timeout: 10000,
+            maxBuffer: 2 * 1024 * 1024,
+            encoding: 'buffer',
+          }, (err, stdout) => {
+            if (err || !stdout || stdout.length === 0) {
+              reject(new Error('frame extraction failed'));
+            } else {
+              resolve({ t, data: stdout.toString('base64') });
+            }
+          });
+        }))
+      );
+      for (const r of results) {
+        if (r.status === 'fulfilled') {
+          frames.push({ t: r.value.t, url: `data:image/jpeg;base64,${r.value.data}` });
+        }
+      }
+    }
+
+    log('info', `Batch frame result: ${frames.length}/${timecodes.length} extracted`);
+    res.json({ frames, total: timecodes.length, extracted: frames.length });
+
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    log('error', 'Batch frame error:', err);
+    res.status(500).json({ error: '프레임 배치 추출 오류' });
+  } finally {
+    activeRequests--;
+  }
+});
+
+// ──────────────────────────────────────────────
 // 404 처리
 // ──────────────────────────────────────────────
 app.use((req, res) => {

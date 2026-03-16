@@ -463,3 +463,59 @@ export function getServerConfig(): { apiUrl: string; apiKey: string } {
     apiKey: getApiKey(),
   };
 }
+
+// ──────────────────────────────────────────────
+// [#340] 서버 사이드 프레임 추출 (ffmpeg 기반 — AI 타임코드 즉시 정밀 프레임)
+// ──────────────────────────────────────────────
+
+interface ExtractedFrame {
+  t: number;
+  url: string; // data:image/jpeg;base64,... or http URL
+}
+
+/**
+ * 서버에서 특정 타임코드들의 프레임을 배치 추출합니다.
+ * VPS의 ffmpeg가 YouTube CDN에서 직접 해당 초의 프레임만 뽑아줍니다.
+ *
+ * @param videoId YouTube VIDEO_ID
+ * @param timecodes 추출할 타임코드 배열 (초 단위)
+ * @param width 출력 너비 (기본 640)
+ * @returns TimedFrame 호환 배열
+ */
+export async function fetchFramesFromServer(
+  videoId: string,
+  timecodes: number[],
+  width: number = 640
+): Promise<{ url: string; hdUrl: string; timeSec: number }[]> {
+  if (timecodes.length === 0) return [];
+
+  const baseUrl = getApiBaseUrl();
+  const apiKey = getApiKey();
+  const url = `${baseUrl.replace(/\/$/, '')}/api/frames`;
+
+  try {
+    const res = await monitoredFetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': apiKey,
+      },
+      body: JSON.stringify({ url: videoId, timecodes, w: width }),
+    }, 60000); // 60초 타임아웃
+
+    if (!res.ok) {
+      logger.warn(`[Frame Server] /api/frames 실패: ${res.status}`);
+      return [];
+    }
+
+    const data: { frames: ExtractedFrame[] } = await res.json();
+    return (data.frames || []).map(f => ({
+      url: f.url,
+      hdUrl: f.url,
+      timeSec: f.t,
+    }));
+  } catch (e) {
+    logger.warn('[Frame Server] 서버 프레임 추출 실패 (YouTube 썸네일 폴백)', e instanceof Error ? e.message : '');
+    return [];
+  }
+}
