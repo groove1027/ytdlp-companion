@@ -157,6 +157,7 @@ const VISUAL_STYLES = [
       { label: '고대 벽화', prompt: 'Ancient mural style, Egyptian hieroglyphics meets Aztec patterns, flat perspective, gold and turquoise, ceremonial, mythological scenes' },
       { label: '사이키델릭', prompt: 'Psychedelic art, trippy swirling patterns, rainbow gradient colors, 1960s counterculture, kaleidoscope effect, mind-bending visuals, groovy' },
       { label: 'MS 페인트', prompt: 'A crude, MS Paint-style digital illustration characterized by jagged, pixelated black outlines and flat, solid colors without any shading or texture. The drawing has a simplistic, meme-like aesthetic' },
+      { label: '컨트리볼', prompt: 'Countryball Polandball meme art style, all characters are perfectly spherical round balls with national flag patterns painted on sphere surface, simple dot eyes (white circles with black outlines), NO arms NO legs NO limbs NO hands NO feet, crude hand-drawn thick black outlines, simple flat comic look, minimalist background, cute ball characters, political satire webcomic aesthetic, each country represented as a flag-painted sphere' },
     ]
   },
   {
@@ -168,19 +169,6 @@ const VISUAL_STYLES = [
       { label: '매크로 포토', prompt: 'Macro photography, extreme close-up, shallow depth of field, water droplets on petals, insect details, bokeh background, ultra sharp' },
       { label: '장노출', prompt: 'Long exposure photography, silky smooth water, light trails at night, star trails in sky, ethereal motion blur, dreamy, time-lapse feel' },
       { label: '필름 카메라', prompt: 'Film camera photography, Kodak Portra 400 film look, warm skin tones, natural grain, slightly overexposed, nostalgic analog feel, 35mm' },
-    ]
-  },
-  {
-    category: '컨트리볼 (Countryball)',
-    items: [
-      { label: '화난 독일', prompt: 'Countryball Polandball meme art style, perfectly spherical round ball, NO arms NO legs NO limbs, crude hand-drawn thick black outlines, simple flat comic look, white background, germany flag sphere, wide open eyes, small pupils, extremely shocked, angry expression, visible mouth, clenched teeth' },
-      { label: '피곤한 미국', prompt: 'Countryball Polandball meme art style, perfectly spherical round ball, NO arms NO legs NO limbs, crude hand-drawn thick black outlines, simple flat comic look, white background, usa flag sphere, half-closed eyes, horizontal eyelid lines, red eyes, unamused, tired, bored expression' },
-      { label: '진지한 노르웨이', prompt: 'Countryball Polandball meme art style, perfectly spherical round ball, NO arms NO legs NO limbs, crude hand-drawn thick black outlines, simple flat comic look, white background, norway flag sphere, thick furrowed brows, slanted angry eyes, serious expression, stern look' },
-      { label: '의기양양 한국', prompt: 'Countryball Polandball meme art style, perfectly spherical round ball, NO arms NO legs NO limbs, crude hand-drawn thick black outlines, simple flat comic look, white background, south korea flag sphere, confident, smug smile, devious expression, curved eyes, small smiling mouth line' },
-      { label: '당황한 폴란드', prompt: 'Countryball Polandball meme art style, perfectly spherical round ball, NO arms NO legs NO limbs, crude hand-drawn thick black outlines, simple flat comic look, white background, poland flag sphere, upside-down poland flag (red on top white on bottom), wide eyes, tearful, sweating, nervous, sad expression' },
-      { label: '신사 영국', prompt: 'Countryball Polandball meme art style, perfectly spherical round ball, NO arms NO legs NO limbs, crude hand-drawn thick black outlines, simple flat comic look, white background, uk flag sphere, wearing black top hat, wearing monocle on one eye, sipping tea, arrogant, elegant expression' },
-      { label: '카와이 일본', prompt: 'Countryball Polandball meme art style, perfectly spherical round ball, NO arms NO legs NO limbs, crude hand-drawn thick black outlines, simple flat comic look, white background, japan flag sphere, happy expression, kawaii, cat ears (nekomimi) attached to the sphere, closed smiling eyes' },
-      { label: '광기의 러시아', prompt: 'Countryball Polandball meme art style, perfectly spherical round ball, NO arms NO legs NO limbs, crude hand-drawn thick black outlines, simple flat comic look, white background, russia flag sphere, small completely red eyes, creepy stare, emotionless, holding vodka bottle' },
     ]
   }
 ];
