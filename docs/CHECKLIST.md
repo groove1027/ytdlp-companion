@@ -8,6 +8,7 @@
 
 ## 🟢 완료된 작업
 
+- [x] **#357 이미지 생성 정책 위반 시 프롬프트 순화 우회** — Kie NanoBanana 2가 Google 정책 위반으로 실패 시, Evolink 폴백에서 군사/폭력/정치 용어를 시각적 동등 중립 표현으로 자동 치환하여 재시도. `sanitizeForPolicyBypass()` + `isPolicyViolationError()` 추가, 교육/예술 콘텐츠 프리앰블 삽입 (contentFilter.ts, imageGeneration.ts, 2026-03-16)
 - [x] **비주얼 스타일 컨트리볼 단일 프리셋 통합** — 8개국 개별 카테고리 삭제 → "아트 & 컨셉"에 단일 "🌍 컨트리볼" 프리셋으로 통합. AI가 대본 맥락에서 국가 자동 인식. 미리보기 1장 (constants.ts, visual-previews/5/22.jpg, generate-visual-previews.mjs, 2026-03-16)
 - [x] **캐릭터 비틀기 컨트리볼(폴란드볼) 프리셋 추가** — CHARACTER_STYLES "🖌️ 2D & 일러스트" 카테고리에 컨트리볼 스타일 프리셋 추가. 완전한 구체, 국기 패턴 스킨, 단순한 점 눈, 사지 없음, 굵은 윤곽선의 밈 웹코믹 스타일 (constants.ts, 2026-03-16)
 - [x] **#339 크로스 디바이스 프로젝트 동기화** — (1) Cloudflare R2 버킷(project-storage) + D1 user_projects 테이블 인프라 (2) 백엔드 5개 엔드포인트: sync-project, list-projects, get-project, delete-project-cloud, sync-batch (3) 클라이언트 syncService.ts(동기화 핵심 로직) + syncStore.ts(상태 관리) (4) 자동저장 후 10s debounce 클라우드 동기화, 로그인/앱 시작 시 전체 동기화 (5) ProjectDashboard에 동기화 상태 아이콘 + 수동 동기화 버튼 (6) base64 이미지 → Cloudinary URL 변환 후 동기화 (7) Last-Write-Wins 충돌 해결 (wrangler.toml, _types.ts, _syncHelpers.ts, sync-project.ts, list-projects.ts, get-project.ts, delete-project-cloud.ts, sync-batch.ts, types.ts, syncStore.ts, syncService.ts, useAutoSave.ts, authService.ts, ProjectDashboard.tsx, schema.sql, 2026-03-16)
