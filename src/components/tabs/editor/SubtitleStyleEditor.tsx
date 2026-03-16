@@ -356,10 +356,17 @@ const SubtitleStyleEditor: React.FC = () => {
   const [animDur, setAnimDur] = useState(1);
   const [animDelay, setAnimDelay] = useState(0);
   const [animIter, setAnimIter] = useState(1); // 0 = infinite
-  // AI 줄바꿈
-  const [aiLineBreakChars, setAiLineBreakChars] = useState(34);
-  const [aiLineBreakInput, setAiLineBreakInput] = useState('34');
+  // AI 줄바꿈 — store charsPerLine과 동기화
+  const [aiLineBreakChars, setAiLineBreakChars] = useState(() => charsPerLine || 20);
+  const [aiLineBreakInput, setAiLineBreakInput] = useState(() => String(charsPerLine || 20));
   const [aiLineBreakLoading, setAiLineBreakLoading] = useState(false);
+  // charsPerLine이 외부(store)에서 변경되면 로컬 상태도 동기화
+  useEffect(() => {
+    if (charsPerLine > 0) {
+      setAiLineBreakChars(charsPerLine);
+      setAiLineBreakInput(String(charsPerLine));
+    }
+  }, [charsPerLine]);
   // 좌측 패널 탭
   const [leftTab, setLeftTab] = useState<'template' | 'animation'>('template');
   // 사용자 프리셋
@@ -1039,9 +1046,17 @@ const SubtitleStyleEditor: React.FC = () => {
                   min={5}
                   max={50}
                   value={aiLineBreakInput}
-                  onChange={(e) => setAiLineBreakInput(e.target.value)}
+                  onChange={(e) => {
+                    setAiLineBreakInput(e.target.value);
+                    // 유효한 숫자면 즉시 store에도 반영 (blur 전 버튼 클릭 대비)
+                    const n = Number(e.target.value);
+                    if (n >= 5 && n <= 50) {
+                      setAiLineBreakChars(n);
+                      setCharsPerLine(n);
+                    }
+                  }}
                   onBlur={() => {
-                    const v = Math.max(5, Math.min(50, Number(aiLineBreakInput) || 34));
+                    const v = Math.max(5, Math.min(50, Number(aiLineBreakInput) || 20));
                     setAiLineBreakChars(v);
                     setAiLineBreakInput(String(v));
                     setCharsPerLine(v);
@@ -1057,11 +1072,12 @@ const SubtitleStyleEditor: React.FC = () => {
                     if (entries.length === 0) { showToast('자막 텍스트가 없습니다'); return; }
                     setAiLineBreakLoading(true);
                     try {
-                      // Step 1: AI 줄바꿈
+                      // Step 1: AI 줄바꿈 — store에서 최신 값 직접 읽기 (blur→click 사이 클로저 지연 방지)
+                      const currentCpl = useEditRoomStore.getState().charsPerLine || aiLineBreakChars;
                       const payload = entries.map(([id, v]) => ({ id, text: v.text.replace(/\n/g, ' ') }));
                       const res = await evolinkChat([
                         { role: 'system', content: 'You are a subtitle line-break assistant. Return ONLY valid JSON.' },
-                        { role: 'user', content: `다음 자막 텍스트들을 한 줄당 최대 ${aiLineBreakChars}자 이내로 자연스럽게 줄바꿈해주세요.\n기계적으로 글자 수에 맞춰 자르지 말고, 의미 단위/문맥에 맞게 나눠주세요.\n입력: ${JSON.stringify(payload)}\n출력 포맷: 동일 JSON 배열 [{id, text}] (text에 \\n 삽입)` },
+                        { role: 'user', content: `다음 자막 텍스트들을 한 줄당 최대 ${currentCpl}자 이내로 자연스럽게 줄바꿈해주세요.\n기계적으로 글자 수에 맞춰 자르지 말고, 의미 단위/문맥에 맞게 나눠주세요.\n입력: ${JSON.stringify(payload)}\n출력 포맷: 동일 JSON 배열 [{id, text}] (text에 \\n 삽입)` },
                       ], { temperature: 0.2, responseFormat: { type: 'json_object' }, model: 'gemini-3.1-flash-lite-preview' });
                       const raw = res.choices?.[0]?.message?.content || '[]';
                       const parsed: { id: string; text: string }[] = JSON.parse(raw);

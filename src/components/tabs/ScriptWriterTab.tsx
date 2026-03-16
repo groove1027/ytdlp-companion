@@ -228,6 +228,9 @@ export default function ScriptWriterTab() {
   const [showChannelGuide, setShowChannelGuide] = useState(false);
   const [showAiHelper, setShowAiHelper] = useState(true);
   const [showManualInput, setShowManualInput] = useState(false);
+  // 글자수 입력: 로컬 문자열 상태 (타이핑 중 클램핑 방지 — #373)
+  const [targetCharInput, setTargetCharInput] = useState(String(targetCharCount));
+  useEffect(() => { setTargetCharInput(String(targetCharCount)); }, [targetCharCount]);
 
   // 채널분석 데이터 도착 시 채널 가이드 자동 펼침
   const channelGuideAutoRef = React.useRef(false);
@@ -1361,7 +1364,15 @@ ${instinctPrompt}
               min={contentFormat === 'shorts' ? 100 : 350}
               max={contentFormat === 'shorts' ? 1000 : 30000}
               step={contentFormat === 'shorts' ? 25 : 50}
-              value={targetCharCount} onChange={(e) => setTargetCharCount(Math.max(contentFormat === 'shorts' ? 100 : 350, Number(e.target.value)))}
+              value={targetCharInput}
+              onChange={(e) => setTargetCharInput(e.target.value)}
+              onBlur={() => {
+                const lo = contentFormat === 'shorts' ? 100 : 350;
+                const hi = contentFormat === 'shorts' ? 1000 : 30000;
+                const v = Math.max(lo, Math.min(hi, Number(targetCharInput) || lo));
+                setTargetCharCount(v);
+                setTargetCharInput(String(v));
+              }}
               className="w-[80px] px-2 py-1.5 rounded-md bg-gray-900/60 text-gray-200 text-sm text-center
                 border border-gray-700 focus:outline-none focus:border-violet-500/50" />
             <span className="text-sm text-gray-500">자</span>

@@ -8,6 +8,7 @@
 
 ## 🟢 완료된 작업
 
+- [x] **#373 자막 상세편집 글자수 설정 미적용 + 대본 글자수 입력 불가 수정** — (1) SubtitleStyleEditor aiLineBreakChars/aiLineBreakInput 초기값을 store charsPerLine과 동기화 (기존 34 하드코딩 제거) (2) AI자막처리 onClick에서 store에서 최신 charsPerLine 직접 읽기 (blur→click 클로저 지연 방지) (3) onChange에서도 즉시 store 반영 (4) ScriptWriterTab 글자수 input을 로컬 문자열 상태로 분리 — 타이핑 중 Math.max(350) 클램핑으로 입력 불가하던 버그 수정, blur 시에만 클램핑 (SubtitleStyleEditor.tsx, ScriptWriterTab.tsx, 2026-03-16)
 - [x] **#370 NLE 내보내기 오디오 누락 완전 수정** — (1) videoBlobHasAudio 상태를 videoAnalysisStore에 추가하여 오디오 포함 여부 추적 (2) NLE 내보내기 시 오디오 없는 영상 감지 → videoOnly 없이 서버 머지 다운로드 자동 재시도 (3) 재시도 실패 시에만 오디오 누락 경고 표시 (4) 기존 downloadResult 기반 경고가 null 비교 오류로 표시 안 되던 버그 수정 (videoAnalysisStore.ts, VideoAnalysisRoom.tsx, 2026-03-16)
 - [x] **#369 영상 분석 텍스트 폴백 시 엉뚱한 주제 생성 수정** — v1beta(Pro) API 잔액 부족 + 프레임 분석 실패 시 텍스트 폴백으로 전환되면서, 영상을 실제로 보지 못한 AI가 시스템 프롬프트의 "프레임 이미지 분석" 지시에 따라 존재하지 않는 장면을 상상하여 엉뚱한 주제 생성. 텍스트 전용 모드 안내를 프롬프트에 추가하여 메타데이터(제목/설명/태그/댓글/전사)만 기반으로 분석하도록 제한 (VideoAnalysisRoom.tsx, 2026-03-16)
 - [x] **#371 업로드 탭 메타데이터 단계를 1번으로 이동** — 플랫폼 인증 없이 제목/설명/태그 AI 생성 가능. 위저드 순서: metadata → auth → video → thumbnail → settings → upload. 외부 편집 도구(캡컷/픽셀링) 사용자가 메타데이터만 먼저 확보 가능 (UploadTab.tsx, uploadStore.ts, 2026-03-16)
