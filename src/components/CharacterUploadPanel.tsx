@@ -249,7 +249,7 @@ const CharacterUploadPanel: React.FC<CharacterUploadPanelProps> = ({
                     ? 'text-gray-300 border-gray-600/50 hover:border-purple-500/40 focus:border-purple-500/60'
                     : 'text-gray-600 border-dashed border-gray-700/30 italic'
                 } focus:outline-none focus:ring-1 focus:ring-purple-500/30 transition-colors`}
-                readOnly={!onUpdateAnalysis}
+                readOnly={!onUpdateAnalysis || !!char?.isAnalyzing}
               />
             </div>
 
@@ -268,7 +268,7 @@ const CharacterUploadPanel: React.FC<CharacterUploadPanelProps> = ({
                     ? 'text-gray-300 border-gray-600/50 hover:border-cyan-500/40 focus:border-cyan-500/60'
                     : 'text-gray-600 border-dashed border-gray-700/30 italic'
                 } focus:outline-none focus:ring-1 focus:ring-cyan-500/30 transition-colors`}
-                readOnly={!onUpdateAnalysis}
+                readOnly={!onUpdateAnalysis || !!char?.isAnalyzing}
               />
             </div>
 
@@ -429,7 +429,7 @@ const CharacterUploadPanel: React.FC<CharacterUploadPanelProps> = ({
                           ? 'text-gray-400 border-gray-700/50 hover:border-purple-500/40 focus:border-purple-500/60'
                           : 'text-gray-600 border-dashed border-gray-700/30 italic'
                       } focus:outline-none focus:ring-1 focus:ring-purple-500/30 transition-colors w-full`}
-                      readOnly={!onUpdateAnalysis}
+                      readOnly={!onUpdateAnalysis || char.isAnalyzing}
                     />
                   </div>
                   <div>
@@ -448,7 +448,7 @@ const CharacterUploadPanel: React.FC<CharacterUploadPanelProps> = ({
                           ? 'text-gray-400 border-gray-700/50 hover:border-cyan-500/40 focus:border-cyan-500/60'
                           : 'text-gray-600 border-dashed border-gray-700/30 italic'
                       } focus:outline-none focus:ring-1 focus:ring-cyan-500/30 transition-colors w-full`}
-                      readOnly={!onUpdateAnalysis}
+                      readOnly={!onUpdateAnalysis || char.isAnalyzing}
                     />
                   </div>
                   {/* Action buttons — re-analyze if auto failed or partial result */}
