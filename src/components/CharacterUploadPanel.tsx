@@ -220,6 +220,7 @@ const CharacterUploadPanel: React.FC<CharacterUploadPanelProps> = ({
           <div className="absolute top-0 bottom-0 left-[calc(33.333%+1rem)] right-0 flex flex-col gap-2 overflow-hidden">
             <h4 className="text-sm font-bold text-purple-300 flex items-center gap-1.5 flex-shrink-0">
               <span>✨</span> AI 분석 결과
+              <span className="text-[10px] font-normal text-gray-500 ml-1">· 클릭하여 직접 편집 가능</span>
             </h4>
 
             {/* 분석 중 안내 배너 */}
@@ -237,7 +238,7 @@ const CharacterUploadPanel: React.FC<CharacterUploadPanelProps> = ({
             {/* 감지된 예술 스타일 */}
             <div className="flex flex-col flex-1 min-h-0">
               <div className="flex items-center justify-between mb-1 flex-shrink-0">
-                <span className="text-xs font-semibold text-purple-400">🎨 감지된 예술 스타일</span>
+                <span className="text-xs font-semibold text-purple-400">🎨 예술 스타일</span>
                 <CopyBtn text={char?.analysisStyle || ''} accent="purple" />
               </div>
               <textarea
@@ -256,7 +257,7 @@ const CharacterUploadPanel: React.FC<CharacterUploadPanelProps> = ({
             {/* 감지된 캐릭터 특징 */}
             <div className="flex flex-col flex-1 min-h-0">
               <div className="flex items-center justify-between mb-1 flex-shrink-0">
-                <span className="text-xs font-semibold text-cyan-400">🧑 감지된 캐릭터 특징</span>
+                <span className="text-xs font-semibold text-cyan-400">🧑 캐릭터 특징</span>
                 <CopyBtn text={char?.analysisCharacter || ''} accent="cyan" />
               </div>
               <textarea
@@ -415,7 +416,7 @@ const CharacterUploadPanel: React.FC<CharacterUploadPanelProps> = ({
                 <div className="w-full mt-1 space-y-1">
                   <div>
                     <div className="flex items-center justify-between mb-0.5">
-                      <span className="text-[10px] font-semibold text-purple-400">감지된 예술 스타일</span>
+                      <span className="text-[10px] font-semibold text-purple-400">예술 스타일</span>
                       <CopyBtn text={char.analysisStyle || ''} accent="purple" />
                     </div>
                     <textarea
@@ -480,7 +481,7 @@ const CharacterUploadPanel: React.FC<CharacterUploadPanelProps> = ({
                 <div className="w-full mt-1 space-y-1">
                   <div>
                     <div className="flex items-center gap-1 mb-0.5">
-                      <span className="text-[10px] font-semibold text-purple-400/50">감지된 예술 스타일</span>
+                      <span className="text-[10px] font-semibold text-purple-400/50">예술 스타일</span>
                     </div>
                     <p className="text-[11px] leading-snug bg-black/20 rounded px-1.5 py-1.5 border border-dashed border-gray-700/30 max-h-[3.5rem] overflow-y-auto text-gray-600 italic">대기 중</p>
                   </div>
