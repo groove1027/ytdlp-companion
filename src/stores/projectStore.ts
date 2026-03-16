@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { immer } from 'zustand/middleware/immer';
 import { ProjectConfig, Scene, Thumbnail, ProjectData, VideoFormat, AspectRatio, ImageModel, PipelineSteps } from '../types';
 import { useCostStore } from './costStore';
 import { useSoundStudioStore } from './soundStudioStore';
@@ -130,7 +131,7 @@ const BASE64_FIELDS: (keyof Scene)[] = [
   'editedEndFrameUrl',
 ];
 
-export const useProjectStore = create<ProjectStore>((set, get) => ({
+export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
   config: null,
   scenes: [],
   thumbnails: [],
@@ -717,4 +718,4 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       };
     });
   },
-}));
+})));

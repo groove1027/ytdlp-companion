@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { immer } from 'zustand/middleware/immer';
 import {
   SceneEffectConfig,
   SceneSubtitleConfig,
@@ -378,7 +379,7 @@ const INITIAL_STATE = {
   _redoStack: [] as Array<{ sceneSubtitles: Record<string, SceneSubtitleConfig>; sceneOrder: string[]; scenesJson: string; linesJson: string }>,
 };
 
-export const useEditRoomStore = create<EditRoomStore>((set, get) => ({
+export const useEditRoomStore = create<EditRoomStore>()(immer((set, get) => ({
   ...INITIAL_STATE,
 
   initFromProject: () => {
@@ -1549,4 +1550,4 @@ export const useEditRoomStore = create<EditRoomStore>((set, get) => ({
   },
 
   reset: () => set({ ...INITIAL_STATE }),
-}));
+})));

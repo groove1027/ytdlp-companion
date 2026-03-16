@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import { Toaster } from 'sonner';
 import { AnimatePresence, motion } from 'motion/react';
+import { ErrorBoundary as ReactErrorBoundary, FallbackProps } from 'react-error-boundary';
 import ConfigForm from './components/ConfigForm';
 // [v4.5] 레거시 UI 제거됨 — StoryboardScene, ThumbnailGenerator는 각 탭 컴포넌트에서 직접 import
 import ProcessingOverlay from './components/ProcessingOverlay';
@@ -125,74 +126,71 @@ const TabFallback = () => (
   </div>
 );
 
-// ErrorBoundary — lazy 컴포넌트 런타임 에러 + 동적 import 실패 캐치
-class TabErrorBoundary extends React.Component<
-  { children: React.ReactNode },
-  { error: Error | null }
-> {
-  state: { error: Error | null } = { error: null };
-  static getDerivedStateFromError(error: Error) {
-    return { error };
-  }
-  componentDidCatch(error: Error) {
-    const isChunkError = error.message?.includes('Failed to fetch dynamically imported module')
-      || error.message?.includes('Loading chunk')
-      || error.message?.includes('Loading CSS chunk');
-    if (isChunkError) {
-      // lazyRetry에서 이미 1회 리로드 시도함 → 여기 도달 시 sessionStorage 초기화만
-      sessionStorage.removeItem('__chunk_reload');
-    }
-  }
-  render() {
-    if (this.state.error) {
-      const isChunkError = this.state.error.message?.includes('Failed to fetch dynamically imported module')
-        || this.state.error.message?.includes('Loading chunk')
-        || this.state.error.message?.includes('Loading CSS chunk');
+// ErrorBoundary — lazy 컴포넌트 런타임 에러 + 동적 import 실패 캐치 (react-error-boundary)
+function TabErrorFallback({ error: rawError, resetErrorBoundary }: FallbackProps) {
+  const error = rawError instanceof Error ? rawError : new Error(String(rawError));
+  const isChunkError = error.message?.includes('Failed to fetch dynamically imported module')
+    || error.message?.includes('Loading chunk')
+    || error.message?.includes('Loading CSS chunk');
 
-      // 캐시 무효화 강제 리로드
-      const handleHardReload = () => {
-        sessionStorage.removeItem('__chunk_reload');
-        // 캐시 무효화: timestamp 쿼리 추가
-        const url = new URL(window.location.href);
-        url.searchParams.set('_v', Date.now().toString());
-        window.location.replace(url.toString());
-      };
+  const handleHardReload = () => {
+    sessionStorage.removeItem('__chunk_reload');
+    const url = new URL(window.location.href);
+    url.searchParams.set('_v', Date.now().toString());
+    window.location.replace(url.toString());
+  };
 
-      return (
-        <div className="p-8 text-center">
-          <p className="text-red-400 text-lg font-bold mb-2">
-            {isChunkError ? '앱 업데이트 감지' : '탭 로딩 오류'}
-          </p>
-          {isChunkError ? (
-            <p className="text-gray-400 text-sm mb-4">
-              새 버전이 배포되었습니다. 아래 버튼을 누르면 최신 버전으로 전환됩니다.
-            </p>
-          ) : (
-            <pre className="text-red-300 text-sm bg-red-900/20 p-4 rounded-lg overflow-auto max-h-60 text-left mb-4">
-              {this.state.error.message}
-            </pre>
-          )}
-          <div className="flex gap-3 justify-center">
-            <button
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded text-white font-semibold"
-              onClick={handleHardReload}
-            >
-              최신 버전으로 새로고침
-            </button>
-            {!isChunkError && (
-              <button
-                className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-gray-300"
-                onClick={() => this.setState({ error: null })}
-              >
-                다시 시도
-              </button>
-            )}
-          </div>
-        </div>
-      );
-    }
-    return this.props.children;
-  }
+  return (
+    <div className="p-8 text-center">
+      <p className="text-red-400 text-lg font-bold mb-2">
+        {isChunkError ? '앱 업데이트 감지' : '탭 로딩 오류'}
+      </p>
+      {isChunkError ? (
+        <p className="text-gray-400 text-sm mb-4">
+          새 버전이 배포되었습니다. 아래 버튼을 누르면 최신 버전으로 전환됩니다.
+        </p>
+      ) : (
+        <pre className="text-red-300 text-sm bg-red-900/20 p-4 rounded-lg overflow-auto max-h-60 text-left mb-4">
+          {error.message}
+        </pre>
+      )}
+      <div className="flex gap-3 justify-center">
+        <button
+          className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded text-white font-semibold"
+          onClick={handleHardReload}
+        >
+          최신 버전으로 새로고침
+        </button>
+        {!isChunkError && (
+          <button
+            className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-gray-300"
+            onClick={resetErrorBoundary}
+          >
+            다시 시도
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TabErrorBoundary({ children }: { children: React.ReactNode }) {
+  return (
+    <ReactErrorBoundary
+      FallbackComponent={TabErrorFallback}
+      onError={(rawError) => {
+        const error = rawError instanceof Error ? rawError : new Error(String(rawError));
+        const isChunkError = error.message?.includes('Failed to fetch dynamically imported module')
+          || error.message?.includes('Loading chunk')
+          || error.message?.includes('Loading CSS chunk');
+        if (isChunkError) {
+          sessionStorage.removeItem('__chunk_reload');
+        }
+      }}
+    >
+      {children}
+    </ReactErrorBoundary>
+  );
 }
 
 // Utility functions moved to ./utils/fileHelpers.ts

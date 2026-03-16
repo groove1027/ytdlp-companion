@@ -4,6 +4,7 @@
  */
 
 import { create } from 'zustand';
+import { immer } from 'zustand/middleware/immer';
 import {
   EditPointStep,
   EditPointExportMode,
@@ -264,7 +265,7 @@ function downloadFile(content: string, filename: string, mimeType: string, addBo
   setTimeout(() => { logger.unregisterBlobUrl(url); URL.revokeObjectURL(url); }, 5000);
 }
 
-export const useEditPointStore = create<EditPointStore>((set, get) => ({
+export const useEditPointStore = create<EditPointStore>()(immer((set, get) => ({
   step: 'register',
   sourceVideos: [],
   rawEditTable: '',
@@ -1062,4 +1063,4 @@ export const useEditPointStore = create<EditPointStore>((set, get) => ({
       isCleaning: false,
     });
   },
-}));
+})));

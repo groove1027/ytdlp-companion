@@ -8,6 +8,7 @@
 
 ## 🟢 완료된 작업
 
+- [x] **Zustand Immer + react-error-boundary 도입** — (1) 핵심 스토어 3개(projectStore, editRoomStore, editPointStore)에 Zustand immer 미들웨어 적용 — 불변성 자동 관리, 향후 뮤터블 스타일 업데이트 가능, 기존 API 100% 호환. (2) App.tsx TabErrorBoundary + ErrorBoundary.tsx를 react-error-boundary 라이브러리로 교체 — 클래스→함수형, 비동기 에러 캐치 강화, useErrorBoundary 훅 사용 가능 (projectStore.ts, editRoomStore.ts, editPointStore.ts, App.tsx, ErrorBoundary.tsx, package.json, 2026-03-17)
 - [x] **영상 자르기 B-프레임 DTS 오류 수정 + 과금 버튼 재실행 확인** — (1) clipCutter.ts의 remuxClip에서 CTS(표시 순서) 기반 타임스탬프를 사용하여 B-프레임 영상에서 "Timestamps must be monotonically increasing (DTS went from 100000 to 33333)" 오류 발생하던 버그 수정. addVideoChunkRaw로 DTS(디코드 순서, 항상 단조 증가) + compositionTimeOffset(CTS-DTS) 분리 전달. (2) AI 정제/AI 파싱/편집표 자동 생성 등 과금 관련 버튼에 재실행 시 window.confirm 확인 다이얼로그 추가 — 실수로 중복 클릭 시 추가 비용 발생 방지 (clipCutter.ts, Step2Mapping.tsx, Step1Register.tsx, 2026-03-17)
 - [x] **TanStack Virtual 스토리보드 가상 스크롤** — 100+ 장면에서 심각한 성능 저하 해결. StoryboardPanel의 그리드/리스트 뷰에 @tanstack/react-virtual 적용. 기존 scenes.map() 전체 렌더 → 가시 영역(15~18개)만 렌더. ~80% 컴포넌트 감소 (StoryboardPanel.tsx, package.json, 2026-03-17)
 - [x] **Sonner + Motion 도입** — (1) 커스텀 토스트 시스템(showToast)을 Sonner 기반으로 교체: 에러/성공/일반 메시지 자동 분류, 중첩 토스트 지원, 스와이프 닫기, 애니메이션 내장. App.tsx의 인라인 setToast 9건을 showToast로 마이그레이션. 기존 66개 파일 402건 showToast 호출은 내부 구현 교체로 자동 적용. 프로그레스 토스트(current/total)는 기존 커스텀 렌더링 유지. (2) Motion(ex-Framer Motion) 도입: 탭 전환에 AnimatePresence + motion.div 적용하여 부드러운 fade+slide 애니메이션 추가 (uiStore.ts, App.tsx, package.json, 2026-03-17)
