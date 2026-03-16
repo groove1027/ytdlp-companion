@@ -39,6 +39,8 @@ interface VideoAnalysisStore {
 
   // 다운로드된 영상 (비영속 — 편집실 전달용)
   videoBlob: Blob | null;
+  // [FIX #370] 다운로드된 영상에 오디오가 포함되어 있는지 여부
+  videoBlobHasAudio: boolean | null;
 
   // 슬롯 관리
   savedSlots: SavedVideoAnalysisSlot[];
@@ -87,8 +89,8 @@ interface VideoAnalysisStore {
   removeSlot: (id: string) => Promise<void>;
   /** 앱 초기화 시 슬롯 목록 로드 */
   loadAllSlots: () => Promise<void>;
-  /** 영상 Blob 설정 (편집실 전달용) */
-  setVideoBlob: (blob: Blob | File | null) => void;
+  /** 영상 Blob 설정 (편집실 전달용, hasAudio: 오디오 포함 여부) */
+  setVideoBlob: (blob: Blob | File | null, hasAudio?: boolean) => void;
   /** 새 분석 시작 — 결과 초기화 */
   newAnalysis: () => void;
 
@@ -116,6 +118,7 @@ const INITIAL_STATE = {
   expandedId: null as number | null,
   resultCache: {} as Record<string, ResultCache>,
   videoBlob: null as Blob | null,
+  videoBlobHasAudio: null as boolean | null,
   savedSlots: [] as SavedVideoAnalysisSlot[],
   activeSlotId: null as string | null,
   editRoomSelectedVersionIdx: null as number | null,
@@ -265,7 +268,10 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
         } catch (e) { console.warn('[VideoSlot] loadAll failed:', e); }
       },
 
-      setVideoBlob: (blob) => set({ videoBlob: blob instanceof File ? blob : blob }),
+      setVideoBlob: (blob, hasAudio) => set({
+        videoBlob: blob instanceof File ? blob : blob,
+        videoBlobHasAudio: hasAudio ?? (blob instanceof File ? true : null),
+      }),
 
       editRoomSelectedVersionIdx: null,
       setEditRoomSelectedVersionIdx: (idx) => set({ editRoomSelectedVersionIdx: idx }),
@@ -337,6 +343,7 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
         expandedId: null,
         activeSlotId: null,
         videoBlob: null,
+        videoBlobHasAudio: null,
       }),
     }),
     {

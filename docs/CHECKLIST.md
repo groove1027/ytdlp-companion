@@ -8,7 +8,8 @@
 
 ## 🟢 완료된 작업
 
-- [x] **#370 NLE 내보내기 오디오 누락 경고** — downloadVideoAsBlob에 hasAudio 플래그 추가, NLE 패키지 토스트에서 오디오 누락 시 7초간 경고 메시지 표시 (VideoAnalysisRoom.tsx, 2026-03-16)
+- [x] **#370 NLE 내보내기 오디오 누락 완전 수정** — (1) videoBlobHasAudio 상태를 videoAnalysisStore에 추가하여 오디오 포함 여부 추적 (2) NLE 내보내기 시 오디오 없는 영상 감지 → videoOnly 없이 서버 머지 다운로드 자동 재시도 (3) 재시도 실패 시에만 오디오 누락 경고 표시 (4) 기존 downloadResult 기반 경고가 null 비교 오류로 표시 안 되던 버그 수정 (videoAnalysisStore.ts, VideoAnalysisRoom.tsx, 2026-03-16)
+- [x] **#369 영상 분석 텍스트 폴백 시 엉뚱한 주제 생성 수정** — v1beta(Pro) API 잔액 부족 + 프레임 분석 실패 시 텍스트 폴백으로 전환되면서, 영상을 실제로 보지 못한 AI가 시스템 프롬프트의 "프레임 이미지 분석" 지시에 따라 존재하지 않는 장면을 상상하여 엉뚱한 주제 생성. 텍스트 전용 모드 안내를 프롬프트에 추가하여 메타데이터(제목/설명/태그/댓글/전사)만 기반으로 분석하도록 제한 (VideoAnalysisRoom.tsx, 2026-03-16)
 - [x] **#371 업로드 탭 메타데이터 단계를 1번으로 이동** — 플랫폼 인증 없이 제목/설명/태그 AI 생성 가능. 위저드 순서: metadata → auth → video → thumbnail → settings → upload. 외부 편집 도구(캡컷/픽셀링) 사용자가 메타데이터만 먼저 확보 가능 (UploadTab.tsx, uploadStore.ts, 2026-03-16)
 - [x] **#368 캐릭터 레퍼런스 AI 감지 결과 직접 편집 기능** — 예술 스타일·캐릭터 특징 필드를 클릭하여 직접 수정 가능. 다른 플랫폼(AI Studio 등)에서 만든 스타일 프롬프트를 붙여넣기로 적용 가능. 싱글/멀티 캐릭터 모드 모두 지원. analysisResult 자동 동기화 (CharacterUploadPanel.tsx, SetupPanel.tsx, 2026-03-16)
 - [x] **#363 ElevenLabs 사운드 생성 오류 완벽 수정** — KIE API 미지원 커뮤니티 음성 366개 제거, KIE docs 기준 126개(프리메이드 21 + 커뮤니티 105) 검증된 음성만 유지. API 호출 전 VALID_KIE_VOICES 화이트리스트로 미지원 ID 원천 차단. EL_NAME_KO 한글 매핑도 유효 음성만으로 정리 (elevenlabsService.ts, 2026-03-16)

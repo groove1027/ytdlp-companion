@@ -800,7 +800,7 @@ async function extractFramesWithFallback(
     console.log('[Frame] Layer 1: 서버 프록시 Blob 다운로드 → 로컬 디코딩 시도 (재시도+화질다운 포함)');
     const dlResult = await downloadVideoAsBlob(youtubeVideoId);
     if (dlResult) {
-      useVideoAnalysisStore.getState().setVideoBlob(dlResult.blob);
+      useVideoAnalysisStore.getState().setVideoBlob(dlResult.blob, dlResult.hasAudio);
       const layer1 = await canvasExtractFrames(dlResult.blobUrl, timecodes, true);
       if (layer1.length > 0) {
         console.log(`[Frame] ✅ Layer 1 성공 (로컬 Blob): ${layer1.length}개`);
@@ -3422,7 +3422,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
               console.log('[Scene] ★ AI 분석과 병렬로 영상 다운로드 시작...');
               const dlResult = await downloadVideoAsBlob(dlVid);
               if (!dlResult) { console.warn('[Scene] 다운로드 실패 → 기존 폴백 사용'); return null; }
-              useVideoAnalysisStore.getState().setVideoBlob(dlResult.blob);
+              useVideoAnalysisStore.getState().setVideoBlob(dlResult.blob, dlResult.hasAudio);
               console.log(`[Scene] ✅ 다운로드 완료 (${(dlResult.blob.size / 1024 / 1024).toFixed(1)}MB), 씬 감지 시작...`);
               const sceneCuts = await detectSceneCuts(dlResult.blob);
               console.log(`[Scene] ✅ 씬 감지 완료: ${sceneCuts.length}개 컷 포인트`);
@@ -3460,7 +3460,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
               const freshDl = await downloadVideoAsBlob(extractYouTubeVideoId(youtubeUrl) || youtubeUrl);
               if (freshDl) {
                 audioSource = freshDl.blob;
-                useVideoAnalysisStore.getState().setVideoBlob(freshDl.blob);
+                useVideoAnalysisStore.getState().setVideoBlob(freshDl.blob, freshDl.hasAudio);
               }
             }
           }
@@ -3557,8 +3557,9 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                 console.warn('[VideoAnalysis] 프레임 분석도 실패, 텍스트 폴백:', frameErr);
               }
             }
-            // [FIX #262] Evolink 단독 → Smart Routing (KIE 포함) 폴백 체인
-            return await textFallbackAI(prompt, tokens);
+            // [FIX #369] 텍스트 전용 모드 — 영상/프레임 분석 모두 실패 시 메타데이터만으로 분석
+            const textOnlyNotice = '\n\n⚠️ [텍스트 전용 모드] 영상 원본 분석과 프레임 이미지 분석이 모두 실패했습니다. 첨부된 프레임 이미지나 영상 화면이 없으므로, 위에 제공된 메타데이터(제목, 설명, 태그, 댓글, 전사 텍스트)만을 기반으로 분석하세요. 실제로 보지 못한 장면이나 화면을 상상·추측하여 작성하지 마세요. 타임코드는 메타데이터의 영상 길이 정보를 기반으로 균등 배분하세요.';
+            return await textFallbackAI(prompt + textOnlyNotice, tokens);
           }
         } else if (uploadedFiles.length > 0 && effectiveFrames.length > 0) {
           return await analyzeWithFrames(effectiveFrames, prompt, scriptSystem, tokens, signal, effectiveTemp);
@@ -4545,22 +4546,45 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                     if (nleExporting) return;
                                     setNleExporting({ target, step: '준비 중...' });
                                     try {
-                                      // [FIX #335] Step 1: videoBlob 확보 — 분리 다운로드+ffmpeg 머지 (오디오 보장)
-                                      let downloadResult: { blobUrl: string; blob: Blob; hasAudio?: boolean } | null = null;
-                                      let videoBlob = useVideoAnalysisStore.getState().videoBlob;
+                                      // [FIX #370] Step 1: videoBlob 확보 — 오디오 포함 보장
+                                      const vaStore = useVideoAnalysisStore.getState();
+                                      let videoBlob = vaStore.videoBlob;
+                                      let audioConfirmed = vaStore.videoBlobHasAudio ?? true; // null이면 업로드/소셜 → 오디오 있음으로 간주
+
                                       if (!videoBlob) {
                                         if (uploadedFiles[0]) {
                                           videoBlob = uploadedFiles[0];
+                                          audioConfirmed = true;
                                         } else if (inputMode === 'youtube' && youtubeUrl) {
                                           setNleExporting({ target, step: '영상 다운로드 중...' });
                                           const dlResult = await downloadVideoAsBlob(extractYouTubeVideoId(youtubeUrl) || youtubeUrl);
                                           if (dlResult) {
                                             videoBlob = dlResult.blob;
-                                            downloadResult = dlResult; // [FIX #370] 오디오 상태 추적
-                                            useVideoAnalysisStore.getState().setVideoBlob(dlResult.blob);
+                                            audioConfirmed = dlResult.hasAudio;
+                                            useVideoAnalysisStore.getState().setVideoBlob(dlResult.blob, dlResult.hasAudio);
                                           }
                                         }
                                       }
+
+                                      // [FIX #370] 오디오 없는 영상 → 서버 머지 다운로드 재시도 (프록시에서 오디오 포함 버전)
+                                      if (videoBlob && !audioConfirmed && inputMode === 'youtube' && youtubeUrl) {
+                                        setNleExporting({ target, step: '오디오 포함 영상 다운로드 중...' });
+                                        try {
+                                          const { downloadVideoViaProxy } = await import('../../../services/ytdlpApiService');
+                                          const vid = extractYouTubeVideoId(youtubeUrl) || youtubeUrl;
+                                          // videoOnly 없이 다운로드 → 서버가 영상+오디오 합쳐서 반환
+                                          const merged = await downloadVideoViaProxy(vid, '720p');
+                                          if (merged.blob.size > 0) {
+                                            videoBlob = merged.blob;
+                                            audioConfirmed = true;
+                                            useVideoAnalysisStore.getState().setVideoBlob(merged.blob, true);
+                                            console.log(`[NLE] ✅ 오디오 포함 영상 재다운로드 성공: ${(merged.blob.size / 1024 / 1024).toFixed(1)}MB`);
+                                          }
+                                        } catch (redownloadErr) {
+                                          console.warn('[NLE] 오디오 포함 재다운로드 실패 (영상만 사용):', redownloadErr);
+                                        }
+                                      }
+
                                       if (!videoBlob) {
                                         showToast('영상을 다운로드할 수 없습니다. 다시 시도해주세요.', 4000);
                                         return;
@@ -4620,10 +4644,9 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                       const a = document.createElement('a'); a.href = url; a.download = `${v.title.replace(/[^\w가-힣\s-]/g, '').slice(0, 30)}_${label}.zip`; a.click();
                                       setTimeout(() => URL.revokeObjectURL(url), 10000);
                                       // [FIX #370] 오디오 누락 경고 — 오디오 없이 NLE 내보내기 시 사용자에게 안내
-                                      const hasAudioTrack = videoBlob && downloadResult?.hasAudio;
-                                      showToast(hasAudioTrack === false
-                                        ? `${label} 다운로드 완료! ⚠️ 원본 오디오를 불러오지 못했어요. Premiere에서 수동으로 오디오를 추가해주세요.`
-                                        : `${label} 패키지 다운로드 완료!`, hasAudioTrack === false ? 7000 : undefined);
+                                      showToast(!audioConfirmed
+                                        ? `${label} 다운로드 완료! ⚠️ 원본 오디오를 불러오지 못했어요. ${target === 'premiere' ? 'Premiere' : label}에서 수동으로 오디오를 추가해주세요.`
+                                        : `${label} 패키지 다운로드 완료!`, !audioConfirmed ? 7000 : undefined);
                                     } catch (e) { console.error('[NLE]', e); showToast(`${label} 패키지 생성 실패`); } finally { setNleExporting(null); }
                                   }}
                                   className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold transition-all shadow-sm ${
