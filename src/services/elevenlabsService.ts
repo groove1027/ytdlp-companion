@@ -129,16 +129,19 @@ const generateSingleChunk = async (
     logger.info(`[ElevenLabs] ⚠️ 음성 "${voiceId}" 미지원 → "Sarah"로 자동 교체 (API 호출 전 차단)`);
   }
 
+  // [FIX #363] Dialogue V3 stability는 Enum(0, 0.5, 1)만 허용 — 가장 가까운 값으로 보정
+  const resolvedStability = stability <= 0.25 ? 0 : stability >= 0.75 ? 1 : 0.5;
+
   logger.info('[ElevenLabs] Dialogue V3 생성 요청 (Kie 경유)', {
     voiceId: resolvedVoice,
     textLength: text.length,
-    stability,
+    stability: resolvedStability,
     languageCode: resolvedLangCode,
   });
 
   const input: Record<string, unknown> = {
     dialogue: [{ text, voice: resolvedVoice }],
-    stability,
+    stability: resolvedStability,
     ...(resolvedLangCode ? { language_code: resolvedLangCode } : {}),
   };
 
