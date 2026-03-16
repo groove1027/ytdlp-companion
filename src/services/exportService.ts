@@ -414,7 +414,7 @@ async function convertImageToMp4(
 
     const { width, height } = resolution;
     const fps = 1; // 정지 이미지이므로 1fps 충분 (파일 크기 최소화)
-    const totalFrames = Math.max(2, Math.round(durationSec));
+    const totalFrames = Math.max(2, Math.ceil(durationSec));
 
     const muxer = createMp4Muxer({ width, height, fps, hasAudio: false });
 
