@@ -124,7 +124,7 @@ const DEFAULT_EXPORT_CONFIG: ExportConfig = {
 const _saved = loadSavedAuth();
 
 const INITIAL_STATE = {
-  currentStep: 'auth' as UploadStep,
+  currentStep: 'metadata' as UploadStep,
   selectedPlatforms: _saved.selectedPlatforms ?? ['youtube'] as UploadPlatform[],
   youtubeAuth: _saved.youtubeAuth ?? { ...DEFAULT_YT_AUTH },
   tiktokAuth: _saved.tiktokAuth ?? { ...DEFAULT_TT_AUTH },

@@ -101,9 +101,9 @@ const PLATFORMS: PlatformInfo[] = [
 ];
 
 const STEPS: { id: UploadStep; label: string; sub: string; icon: JSX.Element }[] = [
+  { id: 'metadata', label: '메타데이터', sub: '제목, 설명, 태그', icon: <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg> },
   { id: 'auth', label: '인증', sub: '플랫폼 연결', icon: <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg> },
   { id: 'video', label: '영상', sub: '파일 선택', icon: <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg> },
-  { id: 'metadata', label: '메타데이터', sub: '제목, 설명, 태그', icon: <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg> },
   { id: 'thumbnail', label: '썸네일', sub: '커버 이미지', icon: <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg> },
   { id: 'settings', label: '설정', sub: '공개 범위', icon: <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg> },
   { id: 'upload', label: '업로드', sub: '최종 업로드', icon: <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg> },
@@ -2681,9 +2681,13 @@ const UploadTab: React.FC = () => {
   };
 
   // 스텝별 유효성 검사
+  // metadata가 1번 스텝 — 플랫폼 인증 없이도 제목/설명/태그 AI 생성 가능 (#371)
   const canProceedFromStep = (stepIndex: number): { ok: boolean; message: string } => {
     const stepId = STEPS[stepIndex].id;
     switch (stepId) {
+      case 'metadata':
+        // 메타데이터는 선택사항 — 인증/영상 없이도 다음 단계로 진행 가능
+        return { ok: true, message: '' };
       case 'auth':
         if (selectedPlatforms.length === 0) return { ok: false, message: '플랫폼을 1개 이상 선택해주세요.' };
         if (connectedCount === 0) return { ok: false, message: '선택한 플랫폼 중 1개 이상 인증을 완료해주세요.' };
@@ -2691,12 +2695,6 @@ const UploadTab: React.FC = () => {
       case 'video':
         if (!videoFile) return { ok: false, message: '업로드할 영상 파일을 선택해주세요.' };
         return { ok: true, message: '' };
-      case 'metadata': {
-        if (!metadata) return { ok: false, message: '메타데이터를 입력하거나 AI로 생성해주세요.' };
-        const hasTitle = (metadata.selectedTitle?.trim()) || (metadata.titles?.length && metadata.titles[0]?.trim());
-        if (!hasTitle) return { ok: false, message: '제목을 입력하거나 선택해주세요.' };
-        return { ok: true, message: '' };
-      }
       case 'thumbnail':
         return { ok: true, message: '' };
       case 'settings':
