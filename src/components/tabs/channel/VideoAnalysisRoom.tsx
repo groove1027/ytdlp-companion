@@ -2689,6 +2689,14 @@ ${inputDesc}
 - **첨부된 프레임 이미지를 꼼꼼히 분석**하여 비디오 화면 지시에 해당 타임코드의 정확한 장면을 구체적으로 묘사하라.
 - **효과자막 필수:** 모든 행에 예능형 효과자막을 반드시 작성. (감정/상황/태클/연출 등)
 
+### ☠️ 할루시네이션 절대 금지 (Anti-Hallucination Protocol)
+- **영상에 명시적으로 존재하지 않는 대사, 장면, 인물, 사건을 절대 창작하지 마라.** 위반 = 전체 폐기.
+- **화자 분리 전사 결과가 제공된 경우**: [S] 모드의 대사는 반드시 전사 결과에 실제로 존재하는 발화만 사용. 전사에 없는 대사를 추측하여 작성 금지.
+- **타임코드 소스**: 영상에서 실제로 관찰되는 장면/대화의 정확한 타임코드만 기재. 추정·보간·생성한 타임코드 금지.
+- **비디오 화면 지시**: 해당 타임코드에서 실제로 보이는 화면만 기술. 영상에 없는 장면을 상상하여 묘사 금지.
+- **'관찰'과 '해석' 분리**: [S] 모드는 관찰(실제 대사), [N] 모드만 해석(AI 창작 내레이션). [S]에 AI 창작 내용을 절대 혼입하지 마라.
+- **검증**: 편집 테이블 완성 후, 모든 [S] 행의 대사가 화자 분리 전사 또는 영상 오디오에 실제 존재하는지 자가 검증하라. 불확실하면 해당 대사를 [N] 내레이션으로 전환.
+
 ### ⚠️ 절대 규칙 (위반 시 전체 재작성)
 1. 출력 포맷은 **[마스터 편집 테이블 7열]** + **[Content ID 분석]** 조합만 사용.
 2. 모드는 **[N](내레이션), [S](현장음-대사), [A](현장음-액션)** 중 하나만 사용.
@@ -3416,6 +3424,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       // 영상에서 오디오 추출 → ElevenLabs Scribe diarize=true → 화자별 대사+타이밍
       // Gemini 프롬프트에 삽입하여 "누가 뭘 말했는지" 정확하게 반영
       let diarizedText = '';
+      let diarizedUtterances: Array<{ speakerId: string; text: string; startTime: number; endTime: number }> = [];
       const diarizePresets = ['tikitaka', 'condensed', 'snack', 'alltts'];
       if (diarizePresets.includes(preset)) {
         try {
@@ -3449,6 +3458,10 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
             });
             if (diarResult) {
               diarizedText = diarResult.formattedText;
+              // [FIX #364] 롱폼 배치별 세그먼트 전사를 위해 utterances도 보존
+              diarizedUtterances = (diarResult.transcript.utterances || []).map(u => ({
+                speakerId: u.speakerId, text: u.text, startTime: u.startTime, endTime: u.endTime,
+              }));
               console.log(`[Diarization] ✅ 화자 ${diarResult.transcript.speakerCount}명 감지, ${diarResult.transcript.utterances?.length}개 발화`);
             }
           }
@@ -3478,6 +3491,9 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       const totalVersions = (preset === 'deep' || preset === 'shopping') ? 5 : 10;
       const useParallelBatch = totalVersions === 10;
 
+      // [FIX #364] 롱폼 할루시네이션 방지: 5분+ 영상은 temperature를 낮춰 팩트 기반 생성 유도
+      const effectiveTemp = maxTimeSec >= 300 ? 0.3 : 0.5;
+
       /** [FIX #262] 텍스트 전용 폴백 — Evolink 스트리밍 → Smart Routing (KIE 포함) */
       const textFallbackAI = async (prompt: string, tokens: number): Promise<string> => {
         const messages: EvolinkChatMessage[] = [
@@ -3485,14 +3501,14 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
           { role: 'user', content: prompt },
         ];
         try {
-          return await evolinkChatStream(messages, () => {}, { temperature: 0.5, maxTokens: tokens, signal });
+          return await evolinkChatStream(messages, () => {}, { temperature: effectiveTemp, maxTokens: tokens, signal });
         } catch (streamErr) {
           if (signal.aborted) throw new DOMException('분석이 취소되었습니다.', 'AbortError');
           console.warn('[VideoAnalysis] Evolink 스트리밍 실패, Smart Routing 폴백:', streamErr);
           // requestGeminiProxy: Evolink v1 → v1beta → FlashLite → KIE 3.1 Pro 전체 라우팅
           const payload = {
             contents: [{ role: 'user', parts: [{ text: scriptSystem + '\n\n' + prompt }] }],
-            generationConfig: { temperature: 0.5, maxOutputTokens: tokens },
+            generationConfig: { temperature: effectiveTemp, maxOutputTokens: tokens },
             safetySettings: SAFETY_SETTINGS_BLOCK_NONE,
           };
           const data = await requestGeminiProxy('gemini-3.1-pro-preview', payload);
@@ -3512,7 +3528,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
               effectiveUris.length === 1 ? effectiveUris[0] : effectiveUris,
               effectiveMimes.length === 1 ? effectiveMimes[0] : effectiveMimes,
               scriptSystem, prompt,
-              () => {}, { temperature: 0.5, maxOutputTokens: tokens, signal }
+              () => {}, { temperature: effectiveTemp, maxOutputTokens: tokens, signal }
             );
           } catch (videoErr) {
             if (signal.aborted) throw new DOMException('분석이 취소되었습니다.', 'AbortError');
@@ -3557,13 +3573,35 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
           const endVer = startVer + VER_PER_BATCH - 1;
           let batchSuffix = `\n\n---\n## 🚨 BATCH SCOPE (반드시 준수)\n이 호출에서는 전체 ${totalVersions}개 버전 중 **VERSION ${startVer}~${endVer}만** 생성하세요.\n- ---VERSION ${startVer}--- 부터 ---VERSION ${endVer}--- 까지만 출력.\n- 다른 버전은 별도 호출에서 처리됩니다.\n${bi > 0 ? '- 프리즘 분석표 등 전처리 분석 섹션은 생략하고 바로 ---VERSION 블록부터 시작하세요.\n' : ''}\n---`;
 
-          // [FIX #236] 롱폼 다양성: 긴 영상(5분+)에서 각 배치가 다른 시간 구간에 집중
+          // [FIX #236 + #364] 롱폼 다양성 + 할루시네이션 방지: 긴 영상(5분+)에서 각 배치가 다른 시간 구간에 집중
+          // + 세그먼트별 전사 데이터를 명시적으로 제공하여 AI가 실제 대사만 사용하도록 강제
           let batchFrames: TimedFrame[] | undefined;
           if (maxTimeSec >= 300) {
             const segDur = maxTimeSec / BATCH_COUNT;
             const segStart = bi * segDur;
             const segEnd = (bi + 1) * segDur;
-            batchSuffix += `\n\n## 🎯 롱폼 다양성 지시 (필수)\n이 영상은 총 ${formatTimeSec(Math.round(maxTimeSec))} 길이의 긴 영상입니다.\nVERSION ${startVer}~${endVer}는 **${formatTimeSec(Math.round(segStart))} ~ ${formatTimeSec(Math.round(segEnd))} 구간**의 핵심 장면·대화를 중심으로 리메이크하세요.\n- 타임코드 소스는 반드시 ${formatTimeSec(Math.round(segStart))}~${formatTimeSec(Math.round(segEnd))} 범위 내에서 선택\n- 이 구간의 주요 전개·인물·대화를 기반으로 편집표를 설계\n- 다른 시간대의 내용은 별도 버전에서 다루므로 이 구간에만 집중`;
+
+            // [FIX #364] 세그먼트별 전사 데이터 추출 — 해당 구간의 실제 대사를 AI에 명시 제공
+            let segmentTranscriptBlock = '';
+            if (diarizedUtterances.length > 0) {
+              const segUtterances = diarizedUtterances.filter(
+                u => u.startTime < segEnd && u.endTime > segStart
+              );
+              if (segUtterances.length > 0) {
+                const segLines = segUtterances.map(u => {
+                  const sm = Math.floor(u.startTime / 60);
+                  const ss = Math.floor(u.startTime % 60);
+                  const em = Math.floor(u.endTime / 60);
+                  const es = Math.floor(u.endTime % 60);
+                  return `[${u.speakerId} ${sm}:${ss.toString().padStart(2, '0')}~${em}:${es.toString().padStart(2, '0')}] ${u.text}`;
+                });
+                segmentTranscriptBlock = `\n\n## 📜 이 구간(${formatTimeSec(Math.round(segStart))}~${formatTimeSec(Math.round(segEnd))})의 실제 전사 데이터\n아래는 이 구간에서 실제로 발화된 대사입니다. **[S] 모드 대사는 반드시 아래 전사에 존재하는 발화만 사용하세요. 아래에 없는 대사를 창작하면 안 됩니다.**\n\n${segLines.join('\n')}`;
+              } else {
+                segmentTranscriptBlock = `\n\n## 📜 이 구간(${formatTimeSec(Math.round(segStart))}~${formatTimeSec(Math.round(segEnd))})의 전사 데이터\n이 구간에는 감지된 대사가 없습니다. [S] 모드 사용을 최소화하고 [N] 내레이션 중심으로 설계하세요.`;
+              }
+            }
+
+            batchSuffix += `\n\n## 🎯 롱폼 구간 지시 (필수 — 할루시네이션 금지)\n이 영상은 총 ${formatTimeSec(Math.round(maxTimeSec))} 길이의 긴 영상입니다.\nVERSION ${startVer}~${endVer}는 **${formatTimeSec(Math.round(segStart))} ~ ${formatTimeSec(Math.round(segEnd))} 구간**의 핵심 장면·대화를 중심으로 리메이크하세요.\n- 타임코드 소스는 반드시 ${formatTimeSec(Math.round(segStart))}~${formatTimeSec(Math.round(segEnd))} 범위 내에서 선택\n- 이 구간의 주요 전개·인물·대화를 기반으로 편집표를 설계\n- 다른 시간대의 내용은 별도 버전에서 다루므로 이 구간에만 집중\n- ☠️ **이 구간에서 실제로 관찰·청취되지 않는 대사/장면을 창작하지 마라** — 전사 데이터와 프레임 이미지에 근거한 내용만 사용${segmentTranscriptBlock}`;
 
             // 프레임도 해당 구간 위주로 선별 (업로드 영상의 프레임 기반 분석 시)
             if (frames.length > 0) {

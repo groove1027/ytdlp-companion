@@ -8,6 +8,7 @@
 
 ## 🟢 완료된 작업
 
+- [x] **#364 티키타카 롱폼(10분+) 할루시네이션 70% 감소** — (1) 배치별 세그먼트 전사 데이터 추출·삽입으로 AI가 실제 대사만 참조 (2) 할루시네이션 절대 금지 프로토콜을 tikitaka 프롬프트에 추가 (3) 롱폼 temperature 0.5→0.3 하향 (4) 대사 없는 구간은 [N] 내레이션 중심 설계 지시 (VideoAnalysisRoom.tsx, 2026-03-16)
 - [x] **#365 Google Whisk 이미지 리믹싱 모델 추가** — ImageModel.GOOGLE_WHISK enum + IMAGE_MODELS 드롭다운 + generateWhiskImage() 함수 (레퍼런스 이미지 SUBJECT로 전송) + imageGeneration.ts Step 0b 분기 + EditRoomExportBar 라벨. Google 쿠키 기반 무료, 캐릭터 레퍼런스 이미지를 자동으로 리믹싱 참고 이미지로 활용. 실패 시 NanoBanana 2 폴백 (types.ts, constants.ts, googleImageService.ts, imageGeneration.ts, EditRoomExportBar.tsx, 2026-03-16)
 - [x] **#350~367 이슈 18건 일괄 처리** — (1) #363 ElevenLabs 커뮤니티 음성 422 에러 → 프리메이드 음성 자동 폴백 (elevenlabsService.ts) (2) #356 소재가이드 텍스트 잘림 → maxTokens 4000→8000 (ChannelAnalysisRoom.tsx) (3) #354/#367 영상분석 멈춤+취소 불능 → 취소 버튼 30초로 단축+씬감지 90초 타임아웃 (AnalysisLoadingPanel.tsx, sceneDetection.ts) (4) #360 스토리보드 중복 장면 → scriptText 기반 중복 제거 (scriptAnalysis.ts) (5) #350~366 나머지 이슈 안내 코멘트+종료 (2026-03-16)
 - [x] **NLE 자막 트랙 내장 (Premiere V2/V3 + CapCut Text Track)** — FCP XML에 대사 자막(V2 generatoritem) + 효과 자막(V3 generatoritem) 트랙 직접 삽입. CapCut draft JSON에 texts 배열 + text type 트랙 추가. 편집실 XML에도 나레이션 자막 V2 트랙 추가. 프로젝트 열면 SRT import 없이 자막 즉시 표시 (nleExportService.ts, 2026-03-16)
