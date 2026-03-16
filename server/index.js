@@ -357,8 +357,8 @@ const app = express();
 // 보안 헤더
 app.use(helmet());
 
-// JSON 파싱
-app.use(express.json({ limit: '1kb' }));
+// JSON 파싱 (10kb: /api/frames 배치 요청 지원)
+app.use(express.json({ limit: '10kb' }));
 
 // CORS 설정
 app.use(cors({
@@ -1030,7 +1030,7 @@ app.get('/api/frame', authMiddleware, async (req, res) => {
  * 요청: { url: "VIDEO_ID", timecodes: [15.5, 30.0, 45.2], w: 640 }
  * 응답: { frames: [{ t: 15.5, url: "data:image/jpeg;base64,..." }, ...] }
  */
-app.post('/api/frames', authMiddleware, express.json({ limit: '10kb' }), async (req, res) => {
+app.post('/api/frames', authMiddleware, async (req, res) => {
   const { url, timecodes, w = 640 } = req.body || {};
 
   if (!url) return res.status(400).json({ error: 'url 파라미터가 필요합니다' });

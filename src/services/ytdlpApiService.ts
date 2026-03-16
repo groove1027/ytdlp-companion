@@ -489,6 +489,9 @@ export async function fetchFramesFromServer(
 ): Promise<{ url: string; hdUrl: string; timeSec: number }[]> {
   if (timecodes.length === 0) return [];
 
+  // 서버 제한: 최대 50개. 초과 시 앞쪽 50개만 요청 (나머지는 YouTube 썸네일 폴백)
+  const limitedTimecodes = timecodes.slice(0, 50);
+
   const baseUrl = getApiBaseUrl();
   const apiKey = getApiKey();
   const url = `${baseUrl.replace(/\/$/, '')}/api/frames`;
@@ -500,7 +503,7 @@ export async function fetchFramesFromServer(
         'Content-Type': 'application/json',
         'X-API-Key': apiKey,
       },
-      body: JSON.stringify({ url: videoId, timecodes, w: width }),
+      body: JSON.stringify({ url: videoId, timecodes: limitedTimecodes, w: width }),
     }, 60000); // 60초 타임아웃
 
     if (!res.ok) {
