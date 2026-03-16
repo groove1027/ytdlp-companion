@@ -497,7 +497,8 @@ export const CHARACTER_STYLES = [
         { label: "수채화", prompt: "watercolor painting, wet on wet, paint bleeds, soft pastel colors, artistic", emoji: "💧" },
         { label: "유화", prompt: "impasto oil painting, thick brush strokes, textured canvas, van gogh style", emoji: "🎨" },
         { label: "스테인드 글라스", prompt: "stained glass window, colorful glass shards, lead lines, church light, translucent", emoji: "⛪" },
-        { label: "MS 페인트", prompt: "A crude, MS Paint-style digital illustration characterized by jagged, pixelated black outlines and flat, solid colors without any shading or texture. The drawing has a simplistic, meme-like aesthetic", emoji: "🖌️" }
+        { label: "MS 페인트", prompt: "A crude, MS Paint-style digital illustration characterized by jagged, pixelated black outlines and flat, solid colors without any shading or texture. The drawing has a simplistic, meme-like aesthetic", emoji: "🖌️" },
+        { label: "컨트리볼", prompt: "Countryball Polandball meme style, perfectly spherical round ball shape, country flag pattern as skin texture, small simple dot eyes (tiny white circles with black pupils), absolutely NO arms NO legs NO limbs NO hands NO feet, crude hand-drawn thick black outlines, simple flat comic look, white background, cute ball character, political satire webcomic aesthetic", emoji: "🌍" }
     ]
   },
   {
