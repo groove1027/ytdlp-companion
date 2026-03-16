@@ -39,7 +39,7 @@ const computeFingerprint = (
       const subs = useEditRoomStore.getState().sceneSubtitles;
       const keys = Object.keys(subs);
       if (keys.length === 0) return '';
-      return keys.map(k => `${(subs[k]?.text || '').length}:${subs[k]?.segments?.length || 0}`).join(',');
+      return keys.map(k => `${(subs[k]?.text || '').length}:${(subs[k]?.text || '').charCodeAt(0) || 0}:${subs[k]?.segments?.length || 0}`).join(',');
     } catch { return ''; }
   })();
   return `${scenes.length}::${sceneFp}::${cfgFp}::${thumbnailCount}::${projectTitle}::${charFp}::${subFp}`;
