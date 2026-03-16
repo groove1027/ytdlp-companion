@@ -12,6 +12,7 @@ import {
   ChannelGuideline,
   ParsedFileEntry,
   LegacyTopicRecommendation,
+  RemakeVersion,
 } from '../types';
 import { saveBenchmarkData, getAllSavedBenchmarks, deleteSavedBenchmark } from '../services/storageService';
 import { logger } from '../services/LoggerService';
@@ -51,6 +52,10 @@ interface ChannelAnalysisStore {
   topicRecommendations: LegacyTopicRecommendation[];
   /** 콘텐츠 지역 구분 (국내/해외) */
   contentRegion: ContentRegion;
+  /** [#414] 리메이크 대본 3버전 (프리셋 복원용) */
+  remakeVersions: RemakeVersion[];
+  /** [#414] 리메이크 소스 입력값 (프리셋 복원용) */
+  remakeSourceInput: string;
 
   // Actions
   setSubTab: (tab: ChannelAnalysisSubTab) => void;
@@ -83,6 +88,10 @@ interface ChannelAnalysisStore {
   setTopicInput: (input: string) => void;
   setTopicRecommendations: (topics: LegacyTopicRecommendation[]) => void;
   setContentRegion: (region: ContentRegion) => void;
+  /** [#414] 리메이크 버전 저장 + 자동 벤치마크 저장 */
+  setRemakeVersions: (versions: RemakeVersion[]) => void;
+  /** [#414] 리메이크 소스 입력 저장 */
+  setRemakeSourceInput: (input: string) => void;
   /** 저장된 벤치마크 목록 */
   savedBenchmarks: SavedBenchmarkData[];
   /** 현재 활성 슬롯 ID */
@@ -134,6 +143,8 @@ const INITIAL_STATE = {
   topicInput: '',
   topicRecommendations: [] as LegacyTopicRecommendation[],
   contentRegion: 'domestic' as ContentRegion,
+  remakeVersions: [] as RemakeVersion[],
+  remakeSourceInput: '',
   savedBenchmarks: [] as SavedBenchmarkData[],
   activeSlotId: null as string | null,
 };
@@ -198,7 +209,7 @@ export const useChannelAnalysisStore = create<ChannelAnalysisStore>((set) => ({
     return { savedPresets: updated };
   }),
 
-  // 프리셋 로드 (채널 가이드라인 + IndexedDB 벤치마크 스크립트 복원)
+  // 프리셋 로드 (채널 가이드라인 + IndexedDB 벤치마크 스크립트 + 리메이크 복원)
   loadPreset: (channelName) => {
     const state = useChannelAnalysisStore.getState();
     const preset = state.savedPresets.find(p => p.channelName === channelName);
@@ -207,13 +218,18 @@ export const useChannelAnalysisStore = create<ChannelAnalysisStore>((set) => ({
     // 1) 가이드라인 즉시 반영 + [FIX #392] 해외 채널 여부도 복원
     set({ channelGuideline: preset, ...(preset.contentRegion ? { contentRegion: preset.contentRegion } : {}) });
 
-    // 2) IndexedDB 벤치마크에서 스크립트 복원 (비동기)
+    // 2) IndexedDB 벤치마크에서 스크립트 + [#414] 리메이크 복원 (비동기)
     (async () => {
       try {
         const all = await getAllSavedBenchmarks();
         const bench = all.find(b => b.channelName === channelName);
-        if (bench && bench.scripts.length > 0) {
-          set({ channelScripts: bench.scripts, savedBenchmarks: all });
+        if (bench) {
+          set({
+            ...(bench.scripts.length > 0 ? { channelScripts: bench.scripts } : {}),
+            remakeVersions: bench.remakeVersions || [],
+            remakeSourceInput: bench.remakeSourceInput || '',
+            savedBenchmarks: all,
+          });
         }
       } catch (e) { logger.trackSwallowedError('channelAnalysisStore:loadBenchmarkScripts', e); /* 벤치마크 없으면 스크립트 없이 가이드라인만 표시 */ }
     })();
@@ -226,14 +242,22 @@ export const useChannelAnalysisStore = create<ChannelAnalysisStore>((set) => ({
   setTopicInput: (input) => set({ topicInput: input }),
   setTopicRecommendations: (topics) => set({ topicRecommendations: topics }),
   setContentRegion: (region) => set({ contentRegion: region }),
+  setRemakeVersions: (versions) => {
+    set({ remakeVersions: versions });
+    // 리메이크 버전 변경 시 자동 벤치마크 저장
+    if (versions.length > 0) {
+      setTimeout(() => useChannelAnalysisStore.getState().saveBenchmark(), 500);
+    }
+  },
+  setRemakeSourceInput: (input) => set({ remakeSourceInput: input }),
 
   // --- 벤치마크 IndexedDB 영속화 ---
   saveBenchmark: async () => {
-    const { channelInfo, channelScripts, channelGuideline, inputSource } = useChannelAnalysisStore.getState();
+    const { channelInfo, channelScripts, channelGuideline, inputSource, remakeVersions, remakeSourceInput } = useChannelAnalysisStore.getState();
     const name = channelInfo?.title || channelGuideline?.channelName || '미지정 채널';
     if (channelScripts.length === 0 && !channelGuideline) return;
     try {
-      await saveBenchmarkData(name, channelScripts, channelGuideline, channelInfo, inputSource);
+      await saveBenchmarkData(name, channelScripts, channelGuideline, channelInfo, inputSource, remakeVersions, remakeSourceInput);
       const all = await getAllSavedBenchmarks();
       const slotId = name.trim().toLowerCase().replace(/\s+/g, '-');
       set({ savedBenchmarks: all, activeSlotId: slotId });
@@ -250,6 +274,8 @@ export const useChannelAnalysisStore = create<ChannelAnalysisStore>((set) => ({
           channelGuideline: found.guideline,
           channelInfo: found.channelInfo || null,
           inputSource: found.inputSource || 'youtube',
+          remakeVersions: found.remakeVersions || [],
+          remakeSourceInput: found.remakeSourceInput || '',
           savedBenchmarks: all,
           activeSlotId: id,
         });
@@ -280,6 +306,8 @@ export const useChannelAnalysisStore = create<ChannelAnalysisStore>((set) => ({
     topicInput: '',
     activeSlotId: null,
     isAnalyzing: false,
+    remakeVersions: [],
+    remakeSourceInput: '',
   }),
 
   clearKeywordHistory: () => set({ keywordResults: [] }),

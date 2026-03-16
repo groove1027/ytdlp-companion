@@ -51,6 +51,11 @@ const CARD_COLORS = [
 const ChannelRemakePanel: React.FC = () => {
   const channelGuideline = useChannelAnalysisStore(s => s.channelGuideline);
   const channelScripts = useChannelAnalysisStore(s => s.channelScripts);
+  // [#414] 리메이크 버전/소스를 스토어에서 관리 (프리셋 복원용)
+  const versions = useChannelAnalysisStore(s => s.remakeVersions);
+  const setVersions = useChannelAnalysisStore(s => s.setRemakeVersions);
+  const sourceInput = useChannelAnalysisStore(s => s.remakeSourceInput);
+  const setSourceInput = useChannelAnalysisStore(s => s.setRemakeSourceInput);
   const setFinalScript = useScriptWriterStore(s => s.setFinalScript);
   const setTitle = useScriptWriterStore(s => s.setTitle);
   const setGeneratedScript = useScriptWriterStore(s => s.setGeneratedScript);
@@ -59,10 +64,8 @@ const ChannelRemakePanel: React.FC = () => {
   const swSetSelectedTopic = useScriptWriterStore(s => s.setSelectedTopic);
   const setActiveTab = useNavigationStore(s => s.setActiveTab);
 
-  const [sourceInput, setSourceInput] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatingStep, setGeneratingStep] = useState(0);
-  const [versions, setVersions] = useState<RemakeVersion[]>([]);
   const [error, setError] = useState('');
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
   const [isAnalyzingVideo, setIsAnalyzingVideo] = useState(false);

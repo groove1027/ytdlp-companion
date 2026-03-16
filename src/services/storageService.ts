@@ -1,6 +1,6 @@
 
 import { openDB, DBSchema } from 'idb';
-import { ProjectData, ProjectSummary, StorageEstimate, SavedCharacter, MusicLibraryItem, ChannelScript, ChannelGuideline, ChannelInfo, ChannelInputSource, VideoVersionItem, VideoAnalysisPreset, VideoTimedFrame } from '../types';
+import { ProjectData, ProjectSummary, StorageEstimate, SavedCharacter, MusicLibraryItem, ChannelScript, ChannelGuideline, ChannelInfo, ChannelInputSource, VideoVersionItem, VideoAnalysisPreset, VideoTimedFrame, RemakeVersion } from '../types';
 import { logger } from './LoggerService';
 
 // --- DB Schema ---
@@ -22,6 +22,10 @@ export interface SavedBenchmarkData {
   savedAt: number;
   channelInfo?: ChannelInfo | null;
   inputSource?: ChannelInputSource;
+  /** [#414] 리메이크 대본 3버전 (프리셋 복원용) */
+  remakeVersions?: RemakeVersion[];
+  /** [#414] 리메이크 소스 입력값 (프리셋 복원용) */
+  remakeSourceInput?: string;
 }
 
 /** IndexedDB에 저장되는 오디오 Blob 래퍼 */
@@ -395,10 +399,12 @@ export const saveBenchmarkData = async (
   guideline: ChannelGuideline | null,
   channelInfo?: ChannelInfo | null,
   inputSource?: ChannelInputSource,
+  remakeVersions?: RemakeVersion[],
+  remakeSourceInput?: string,
 ): Promise<void> => {
   const db = await dbPromise;
   const id = channelName.trim().toLowerCase().replace(/\s+/g, '-');
-  const saved: SavedBenchmarkData = { id, channelName, scripts, guideline, savedAt: Date.now(), channelInfo, inputSource };
+  const saved: SavedBenchmarkData = { id, channelName, scripts, guideline, savedAt: Date.now(), channelInfo, inputSource, remakeVersions, remakeSourceInput };
   await db.put(BENCHMARK_STORE, saved);
 };
 

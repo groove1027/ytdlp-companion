@@ -224,6 +224,7 @@ export default function ScriptWriterTab() {
     scriptAiModel, setScriptAiModel,
     referenceComments,
     targetRegion, setTargetRegion,
+    activeStep, setActiveStep,
   } = useScriptWriterStore();
 
   const setActiveTab = useNavigationStore((s) => s.setActiveTab);
@@ -245,6 +246,18 @@ export default function ScriptWriterTab() {
   // 글자수 입력: 로컬 문자열 상태 (타이핑 중 클램핑 방지 — #373)
   const [targetCharInput, setTargetCharInput] = useState(String(targetCharCount));
   useEffect(() => { setTargetCharInput(String(targetCharCount)); }, [targetCharCount]);
+  // [#414] 채널 리메이크에서 대본 선택 후 진입 시 대본 영역으로 자동 스크롤
+  const scriptSectionRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (activeStep === 3 && finalScript) {
+      // 약간 지연: 렌더링 완료 후 스크롤
+      const timer = setTimeout(() => {
+        scriptSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        setActiveStep(1); // 스크롤 완료 후 리셋 (1회성)
+      }, 200);
+      return () => clearTimeout(timer);
+    }
+  }, [activeStep, finalScript, setActiveStep]);
 
   // 채널분석 데이터 도착 시 채널 가이드 자동 펼침
   const channelGuideAutoRef = React.useRef(false);
@@ -1470,7 +1483,7 @@ ${instinctPrompt}
         </div>
 
         {/* ═══ C. 대본 결과 ═══ */}
-        <div className="px-6 py-4 border-b border-gray-700/30">
+        <div ref={scriptSectionRef} className="px-6 py-4 border-b border-gray-700/30">
 
           {/* 스트리밍 타임라인 */}
           {(isGenerating || streamingText) && (
