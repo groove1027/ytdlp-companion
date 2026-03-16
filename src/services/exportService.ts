@@ -336,14 +336,15 @@ export const downloadImagesAsMp4 = async () => {
     setToast({ show: true, message: '이미지→MP4 변환 중...', current: 0, total });
 
     let successCount = 0;
+    let processedCount = 0;
     for (const s of validScenes) {
         const sceneIndex = scenes.indexOf(s);
         const durationSec = estimateSceneDuration(s);
 
         try {
             // 이미지 Blob 가져오기
-            let imgBlob = await fetchImageBlob(s.imageUrl!, aspectRatio, cropBlobToAspectRatio);
-            if (!imgBlob) continue;
+            const imgBlob = await fetchImageBlob(s.imageUrl!, aspectRatio, cropBlobToAspectRatio);
+            if (!imgBlob) { processedCount++; setToast(prev => ({ ...prev!, current: processedCount })); continue; }
 
             // MP4 변환
             const mp4Blob = await convertImageToMp4(imgBlob, durationSec, resolution, probe);
@@ -354,7 +355,8 @@ export const downloadImagesAsMp4 = async () => {
             logger.trackSwallowedError('ExportService:downloadImagesAsMp4/convert', e);
         }
 
-        setToast(prev => ({ ...prev!, current: successCount }));
+        processedCount++;
+        setToast(prev => ({ ...prev!, current: processedCount }));
     }
 
     if (successCount === 0) {
@@ -417,12 +419,13 @@ async function convertImageToMp4(
     const muxer = createMp4Muxer({ width, height, fps, hasAudio: false });
 
     const chunks: Array<{ chunk: EncodedVideoChunk; meta?: EncodedVideoChunkMetadata }> = [];
+    let encodeError: Error | null = null;
     const encoder = createEncoder(
         { width, height, fps, bitrate: 2_000_000, keyframeIntervalFrames: totalFrames },
         probe.codec,
         probe.hardwareAcceleration,
         (encoded) => chunks.push(encoded),
-        (err) => { throw err; },
+        (err) => { encodeError = err; },
     );
 
     // 이미지를 캔버스에 cover 방식으로 그리기
@@ -444,6 +447,8 @@ async function convertImageToMp4(
     }
     await encoder.flush();
     encoder.encoder.close();
+
+    if (encodeError) throw encodeError;
 
     // 먹서에 청크 추가
     for (const c of chunks) {
