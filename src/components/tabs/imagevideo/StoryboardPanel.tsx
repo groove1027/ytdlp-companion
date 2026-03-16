@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { useProjectStore } from '../../../stores/projectStore';
 import { useCostStore } from '../../../stores/costStore';
 import { useImageVideoStore } from '../../../stores/imageVideoStore';
@@ -861,6 +862,165 @@ const SceneDetailModal: React.FC<SceneDetailModalProps> = ({
             </div>
           </div>
         </div>
+      </div>
+    </div>
+  );
+};
+
+// --- Virtual Grid View (TanStack Virtual) ---
+const GRID_COLS = 3;
+const GRID_ROW_HEIGHT = 320; // px per grid row (estimate)
+const GRID_GAP = 12;
+
+const VirtualGridView: React.FC<{
+  scenes: Scene[];
+  handleGenerateImage: (id: string, hint?: string) => void;
+  removeScene: (index: number) => void;
+  videoBatch: ReturnType<typeof useVideoBatch>;
+  handlePlaySceneAudio: (sceneId: string) => void;
+  playingSceneId: string | null;
+  sceneProgress: number;
+  handleAddSceneAfter: (index: number) => void;
+  handleReferenceUpload: (id: string, file: File) => void;
+  handleUploadImage: (id: string, file: File) => void;
+  setDetailScene: (d: { scene: Scene; index: number }) => void;
+  handleCopyScript: (sceneId: string) => void;
+  selectedSceneIds: Set<string>;
+  toggleSceneSelect: (id: string) => void;
+}> = ({ scenes, handleGenerateImage, removeScene, videoBatch, handlePlaySceneAudio, playingSceneId, sceneProgress, handleAddSceneAfter, handleReferenceUpload, handleUploadImage, setDetailScene, handleCopyScript, selectedSceneIds, toggleSceneSelect }) => {
+  const parentRef = useRef<HTMLDivElement>(null);
+  const rowCount = Math.ceil(scenes.length / GRID_COLS);
+
+  const virtualizer = useVirtualizer({
+    count: rowCount,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => GRID_ROW_HEIGHT + GRID_GAP,
+    overscan: 3,
+  });
+
+  return (
+    <div ref={parentRef} className="overflow-y-auto" style={{ maxHeight: 'calc(100vh - 280px)' }}>
+      <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
+        {virtualizer.getVirtualItems().map((virtualRow) => {
+          const startIdx = virtualRow.index * GRID_COLS;
+          const rowScenes = scenes.slice(startIdx, startIdx + GRID_COLS);
+          return (
+            <div
+              key={virtualRow.key}
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                transform: `translateY(${virtualRow.start}px)`,
+              }}
+              className="grid grid-cols-3 gap-3"
+            >
+              {rowScenes.map((scene, colIdx) => {
+                const idx = startIdx + colIdx;
+                return (
+                  <GridSceneCard
+                    key={scene.id}
+                    scene={scene}
+                    index={idx}
+                    onRegenerate={(id) => handleGenerateImage(id)}
+                    onDelete={removeScene}
+                    onGrokVideo={(id) => videoBatch.runSingleGrokHQ(id)}
+                    onVeoVideo={(id) => videoBatch.runSingleVeoFast(id)}
+                    onPlaySceneAudio={handlePlaySceneAudio}
+                    playingSceneId={playingSceneId}
+                    sceneProgress={sceneProgress}
+                    onAddAfter={handleAddSceneAfter}
+                    onReferenceUpload={handleReferenceUpload}
+                    onUploadImage={handleUploadImage}
+                    onOpenDetail={(scene, idx) => setDetailScene({ scene, index: idx })}
+                    onCopyScript={handleCopyScript}
+                    isSelected={selectedSceneIds.has(scene.id)}
+                    onToggleSelect={toggleSceneSelect}
+                  />
+                );
+              })}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+// --- Virtual List View (TanStack Virtual) ---
+const LIST_ROW_HEIGHT = 200; // px per list item (estimate)
+const LIST_GAP = 12;
+
+const VirtualListView: React.FC<{
+  scenes: Scene[];
+  handleUpdatePrompt: (id: string, field: 'visualPrompt' | 'videoPrompt', value: string) => void;
+  removeScene: (index: number) => void;
+  handleGenerateImage: (id: string, hint?: string) => void;
+  videoBatch: ReturnType<typeof useVideoBatch>;
+  handlePlaySceneAudio: (sceneId: string) => void;
+  playingSceneId: string | null;
+  sceneProgress: number;
+  handleAddSceneAfter: (index: number) => void;
+  handleAutoPrompt: (sceneId: string) => void;
+  handleReferenceUpload: (id: string, file: File) => void;
+  handleUploadImage: (id: string, file: File) => void;
+  setDetailScene: (d: { scene: Scene; index: number }) => void;
+  handleCopyScript: (sceneId: string) => void;
+  selectedSceneIds: Set<string>;
+  toggleSceneSelect: (id: string) => void;
+}> = ({ scenes, handleUpdatePrompt, removeScene, handleGenerateImage, videoBatch, handlePlaySceneAudio, playingSceneId, sceneProgress, handleAddSceneAfter, handleAutoPrompt, handleReferenceUpload, handleUploadImage, setDetailScene, handleCopyScript, selectedSceneIds, toggleSceneSelect }) => {
+  const parentRef = useRef<HTMLDivElement>(null);
+
+  const virtualizer = useVirtualizer({
+    count: scenes.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => LIST_ROW_HEIGHT + LIST_GAP,
+    overscan: 5,
+  });
+
+  return (
+    <div ref={parentRef} className="overflow-y-auto" style={{ maxHeight: 'calc(100vh - 280px)' }}>
+      <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
+        {virtualizer.getVirtualItems().map((virtualRow) => {
+          const idx = virtualRow.index;
+          const scene = scenes[idx];
+          return (
+            <div
+              key={virtualRow.key}
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                transform: `translateY(${virtualRow.start}px)`,
+              }}
+            >
+              <SceneCard
+                key={scene.id}
+                scene={scene}
+                index={idx}
+                onUpdatePrompt={handleUpdatePrompt}
+                onDelete={removeScene}
+                onRegenerate={(id) => handleGenerateImage(id)}
+                onTransform={(id) => handleGenerateImage(id, '다른 구도와 색감으로 변형해주세요')}
+                onGrokVideo={(id) => videoBatch.runSingleGrokHQ(id)}
+                onVeoVideo={(id) => videoBatch.runSingleVeoFast(id)}
+                onPlaySceneAudio={handlePlaySceneAudio}
+                playingSceneId={playingSceneId}
+                sceneProgress={sceneProgress}
+                onAddAfter={handleAddSceneAfter}
+                onAutoPrompt={handleAutoPrompt}
+                onReferenceUpload={handleReferenceUpload}
+                onUploadImage={handleUploadImage}
+                onOpenDetail={(scene, idx) => setDetailScene({ scene, index: idx })}
+                onCopyScript={handleCopyScript}
+                isSelected={selectedSceneIds.has(scene.id)}
+                onToggleSelect={toggleSceneSelect}
+              />
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -2037,56 +2197,41 @@ const StoryboardPanel: React.FC = () => {
           </div>
         </div>
       ) : viewMode === 'grid' ? (
-        <div className="grid grid-cols-3 gap-3">
-          {scenes.map((scene, idx) => (
-            <GridSceneCard
-              key={scene.id}
-              scene={scene}
-              index={idx}
-              onRegenerate={(id) => handleGenerateImage(id)}
-              onDelete={removeScene}
-              onGrokVideo={(id) => videoBatch.runSingleGrokHQ(id)}
-              onVeoVideo={(id) => videoBatch.runSingleVeoFast(id)}
-              onPlaySceneAudio={handlePlaySceneAudio}
-              playingSceneId={playingSceneId}
-              sceneProgress={sceneProgress}
-              onAddAfter={handleAddSceneAfter}
-              onReferenceUpload={handleReferenceUpload}
-              onUploadImage={handleUploadImage}
-              onOpenDetail={(scene, idx) => setDetailScene({ scene, index: idx })}
-              onCopyScript={handleCopyScript}
-              isSelected={selectedSceneIds.has(scene.id)}
-              onToggleSelect={toggleSceneSelect}
-            />
-          ))}
-        </div>
+        <VirtualGridView
+          scenes={scenes}
+          handleGenerateImage={handleGenerateImage}
+          removeScene={removeScene}
+          videoBatch={videoBatch}
+          handlePlaySceneAudio={handlePlaySceneAudio}
+          playingSceneId={playingSceneId}
+          sceneProgress={sceneProgress}
+          handleAddSceneAfter={handleAddSceneAfter}
+          handleReferenceUpload={handleReferenceUpload}
+          handleUploadImage={handleUploadImage}
+          setDetailScene={setDetailScene}
+          handleCopyScript={handleCopyScript}
+          selectedSceneIds={selectedSceneIds}
+          toggleSceneSelect={toggleSceneSelect}
+        />
       ) : (
-        <div className="space-y-3">
-          {scenes.map((scene, idx) => (
-            <SceneCard
-              key={scene.id}
-              scene={scene}
-              index={idx}
-              onUpdatePrompt={handleUpdatePrompt}
-              onDelete={removeScene}
-              onRegenerate={(id) => handleGenerateImage(id)}
-              onTransform={(id) => handleGenerateImage(id, '다른 구도와 색감으로 변형해주세요')}
-              onGrokVideo={(id) => videoBatch.runSingleGrokHQ(id)}
-              onVeoVideo={(id) => videoBatch.runSingleVeoFast(id)}
-              onPlaySceneAudio={handlePlaySceneAudio}
-              playingSceneId={playingSceneId}
-              sceneProgress={sceneProgress}
-              onAddAfter={handleAddSceneAfter}
-              onAutoPrompt={handleAutoPrompt}
-              onReferenceUpload={handleReferenceUpload}
-              onUploadImage={handleUploadImage}
-              onOpenDetail={(scene, idx) => setDetailScene({ scene, index: idx })}
-              onCopyScript={handleCopyScript}
-              isSelected={selectedSceneIds.has(scene.id)}
-              onToggleSelect={toggleSceneSelect}
-            />
-          ))}
-        </div>
+        <VirtualListView
+          scenes={scenes}
+          handleUpdatePrompt={handleUpdatePrompt}
+          removeScene={removeScene}
+          handleGenerateImage={handleGenerateImage}
+          videoBatch={videoBatch}
+          handlePlaySceneAudio={handlePlaySceneAudio}
+          playingSceneId={playingSceneId}
+          sceneProgress={sceneProgress}
+          handleAddSceneAfter={handleAddSceneAfter}
+          handleAutoPrompt={handleAutoPrompt}
+          handleReferenceUpload={handleReferenceUpload}
+          handleUploadImage={handleUploadImage}
+          setDetailScene={setDetailScene}
+          handleCopyScript={handleCopyScript}
+          selectedSceneIds={selectedSceneIds}
+          toggleSceneSelect={toggleSceneSelect}
+        />
       )}
     </>
   );

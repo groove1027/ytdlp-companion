@@ -14,6 +14,7 @@
     "@dnd-kit/utilities": "^3.2.2",
     "@ffmpeg/ffmpeg": "^0.12.15",
     "@ffmpeg/util": "^0.12.2",
+    "@tanstack/react-virtual": "^3.13.23",
     "firebase": "^12.10.0",
     "idb": "^8.0.0",
     "jszip": "^3.10.1",
