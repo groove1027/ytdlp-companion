@@ -8,6 +8,8 @@
 
 ## 🟢 완료된 작업
 
+- [x] **#370 NLE 내보내기 오디오 누락 경고** — downloadVideoAsBlob에 hasAudio 플래그 추가, NLE 패키지 토스트에서 오디오 누락 시 7초간 경고 메시지 표시 (VideoAnalysisRoom.tsx, 2026-03-16)
+- [x] **#371 업로드 탭 메타데이터 단계를 1번으로 이동** — 플랫폼 인증 없이 제목/설명/태그 AI 생성 가능. 위저드 순서: metadata → auth → video → thumbnail → settings → upload. 외부 편집 도구(캡컷/픽셀링) 사용자가 메타데이터만 먼저 확보 가능 (UploadTab.tsx, uploadStore.ts, 2026-03-16)
 - [x] **#368 캐릭터 레퍼런스 AI 감지 결과 직접 편집 기능** — 예술 스타일·캐릭터 특징 필드를 클릭하여 직접 수정 가능. 다른 플랫폼(AI Studio 등)에서 만든 스타일 프롬프트를 붙여넣기로 적용 가능. 싱글/멀티 캐릭터 모드 모두 지원. analysisResult 자동 동기화 (CharacterUploadPanel.tsx, SetupPanel.tsx, 2026-03-16)
 - [x] **#363 ElevenLabs 사운드 생성 오류 완벽 수정** — KIE API 미지원 커뮤니티 음성 366개 제거, KIE docs 기준 126개(프리메이드 21 + 커뮤니티 105) 검증된 음성만 유지. API 호출 전 VALID_KIE_VOICES 화이트리스트로 미지원 ID 원천 차단. EL_NAME_KO 한글 매핑도 유효 음성만으로 정리 (elevenlabsService.ts, 2026-03-16)
 - [x] **#364 티키타카 롱폼(10분+) 할루시네이션 70% 감소** — (1) 배치별 세그먼트 전사 데이터 추출·삽입으로 AI가 실제 대사만 참조 (2) 할루시네이션 절대 금지 프로토콜을 tikitaka 프롬프트에 추가 (3) 롱폼 temperature 0.5→0.3 하향 (4) 대사 없는 구간은 [N] 내레이션 중심 설계 지시 (VideoAnalysisRoom.tsx, 2026-03-16)

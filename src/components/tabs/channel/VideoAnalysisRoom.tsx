@@ -485,7 +485,7 @@ async function fetchYouTubeStreamUrl(videoId: string): Promise<string | null> {
  * YouTube CDN은 CORS 차단 → 서버 프록시(/api/download) 경유
  * 프레임 추출 전용 — 일반 다운로드는 triggerDirectDownload 사용
  */
-async function downloadVideoAsBlob(videoId: string): Promise<{ blobUrl: string; blob: Blob } | null> {
+async function downloadVideoAsBlob(videoId: string): Promise<{ blobUrl: string; blob: Blob; hasAudio: boolean } | null> {
   try {
     // [FIX #316] 1080p 분리 다운로드: 영상(videoOnly) 먼저 → 오디오 병렬 → 클라이언트 머지
     // 서버 ffmpeg 머지 회피 → 502 방지 + 1080p 원본 품질 보장
@@ -517,9 +517,12 @@ async function downloadVideoAsBlob(videoId: string): Promise<{ blobUrl: string; 
       }
     }
 
+    // [FIX #370] 오디오 포함 여부 추적 — NLE 내보내기 시 경고 표시용
+    const hasAudio = !!(audioBlob && audioBlob.size > 0 && finalBlob !== videoBlob);
+
     const blobUrl = URL.createObjectURL(finalBlob);
     logger.registerBlobUrl(blobUrl, 'video', 'VideoAnalysisRoom:downloadVideoAsBlob', finalBlob.size / (1024 * 1024));
-    return { blobUrl, blob: finalBlob };
+    return { blobUrl, blob: finalBlob, hasAudio };
   } catch (e) {
     console.warn('[Frame] ❌ 다운로드 최종 실패:', e);
     return null;
@@ -4543,6 +4546,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                     setNleExporting({ target, step: '준비 중...' });
                                     try {
                                       // [FIX #335] Step 1: videoBlob 확보 — 분리 다운로드+ffmpeg 머지 (오디오 보장)
+                                      let downloadResult: { blobUrl: string; blob: Blob; hasAudio?: boolean } | null = null;
                                       let videoBlob = useVideoAnalysisStore.getState().videoBlob;
                                       if (!videoBlob) {
                                         if (uploadedFiles[0]) {
@@ -4552,6 +4556,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                           const dlResult = await downloadVideoAsBlob(extractYouTubeVideoId(youtubeUrl) || youtubeUrl);
                                           if (dlResult) {
                                             videoBlob = dlResult.blob;
+                                            downloadResult = dlResult; // [FIX #370] 오디오 상태 추적
                                             useVideoAnalysisStore.getState().setVideoBlob(dlResult.blob);
                                           }
                                         }
@@ -4614,7 +4619,11 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                       const url = URL.createObjectURL(zipBlob);
                                       const a = document.createElement('a'); a.href = url; a.download = `${v.title.replace(/[^\w가-힣\s-]/g, '').slice(0, 30)}_${label}.zip`; a.click();
                                       setTimeout(() => URL.revokeObjectURL(url), 10000);
-                                      showToast(`${label} 패키지 다운로드 완료!`);
+                                      // [FIX #370] 오디오 누락 경고 — 오디오 없이 NLE 내보내기 시 사용자에게 안내
+                                      const hasAudioTrack = videoBlob && downloadResult?.hasAudio;
+                                      showToast(hasAudioTrack === false
+                                        ? `${label} 다운로드 완료! ⚠️ 원본 오디오를 불러오지 못했어요. Premiere에서 수동으로 오디오를 추가해주세요.`
+                                        : `${label} 패키지 다운로드 완료!`, hasAudioTrack === false ? 7000 : undefined);
                                     } catch (e) { console.error('[NLE]', e); showToast(`${label} 패키지 생성 실패`); } finally { setNleExporting(null); }
                                   }}
                                   className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold transition-all shadow-sm ${

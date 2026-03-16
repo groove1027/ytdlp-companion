@@ -2689,8 +2689,8 @@ const UploadTab: React.FC = () => {
         // 메타데이터는 선택사항 — 인증/영상 없이도 다음 단계로 진행 가능
         return { ok: true, message: '' };
       case 'auth':
-        if (selectedPlatforms.length === 0) return { ok: false, message: '플랫폼을 1개 이상 선택해주세요.' };
-        if (connectedCount === 0) return { ok: false, message: '선택한 플랫폼 중 1개 이상 인증을 완료해주세요.' };
+        // [FIX #371] 플랫폼 연동 없이도 다음 단계 진행 가능 — 메타데이터만 필요한 사용자 지원
+        // 실제 업로드 시에만 연동 검증 (upload 단계에서 체크)
         return { ok: true, message: '' };
       case 'video':
         if (!videoFile) return { ok: false, message: '업로드할 영상 파일을 선택해주세요.' };
