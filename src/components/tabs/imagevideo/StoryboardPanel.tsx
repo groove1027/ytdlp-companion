@@ -7,7 +7,7 @@ import { generatePromptFromScript } from '../../../services/gemini/imageAnalysis
 import { persistImage } from '../../../services/imageStorageService';
 import { uploadMediaToHosting } from '../../../services/uploadService';
 import { useVideoBatch } from '../../../hooks/useVideoBatch';
-import { PRICING } from '../../../constants';
+import { PRICING, IMAGE_MODELS } from '../../../constants';
 import { AspectRatio, ImageModel, CharacterAppearance, VideoFormat } from '../../../types';
 import type { Scene } from '../../../types';
 import { showToast, useUIStore } from '../../../stores/uiStore';
@@ -41,7 +41,7 @@ function aspectRatioClass(ar?: string): string {
 
 // --- Constants ---
 
-const IMAGE_MODEL = ImageModel.NANO_SPEED;
+// [FIX #365] 하드코딩 제거 → 프로젝트 config.imageModel 사용 (스토리보드 내 드롭다운으로 변경 가능)
 
 // --- Video Cost Helper ---
 const getGrokCost = (duration?: '6' | '10' | '15'): number =>
@@ -1257,7 +1257,7 @@ const StoryboardPanel: React.FC = () => {
     updateScene(sceneId, { isGeneratingImage: true, generationStatus: '이미지 생성 중...', generationCancelled: false });
 
     try {
-      const imageModel = IMAGE_MODEL;
+      const imageModel = currentConfig.imageModel || ImageModel.NANO_COST;
 
       // [FIX BUG#17] Read current style/characters from store getState() — always fresh
       const currentStyle = useImageVideoStore.getState().style;
@@ -1744,6 +1744,17 @@ const StoryboardPanel: React.FC = () => {
 
             {showGenDropdown && (
               <div className="absolute right-0 top-full mt-1 w-72 bg-gray-800 border border-gray-700 rounded-xl shadow-2xl z-50 overflow-hidden">
+                {/* [FIX #365] 이미지 모델 선택 */}
+                <div className="px-4 py-2.5 border-b border-gray-700">
+                  <label className="text-[11px] text-gray-400 font-bold uppercase tracking-wider mb-1.5 block">이미지 모델</label>
+                  <select
+                    value={useProjectStore.getState().config.imageModel || ImageModel.NANO_COST}
+                    onChange={(e) => useProjectStore.getState().setConfig(prev => prev ? { ...prev, imageModel: e.target.value as ImageModel } : prev)}
+                    className="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white focus:border-orange-500 outline-none"
+                  >
+                    {IMAGE_MODELS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
+                  </select>
+                </div>
                 {/* [#243] 선택 모드 안내 */}
                 {hasSelection && (
                   <div className="px-4 py-1.5 bg-orange-600/10 border-b border-orange-500/20">
