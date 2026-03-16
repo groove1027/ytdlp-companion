@@ -2662,7 +2662,8 @@ const UploadTab: React.FC = () => {
       case 'thumbnail':
         return thumbnailUrl ? 'done' : 'pending';
       case 'settings':
-        return 'done';
+        // 설정은 기본값이 있으므로, 인증+영상 완료 시에만 'done' 표시 (#374)
+        return (connectedCount > 0 && videoFile) ? 'done' : 'pending';
       case 'upload':
         return platformProgress.length > 0 && platformProgress.every(p => p.status === 'done')
           ? 'done' : 'pending';
@@ -3026,6 +3027,32 @@ const UploadTab: React.FC = () => {
             })}
           </div>
         </div>
+
+        {/* 2.5 처음 사용자 가이드 배너 (#374) */}
+        {connectedCount === 0 && !isUploading && (
+          <div className="bg-green-900/20 border border-green-500/30 rounded-xl p-5 mb-6">
+            <div className="flex items-start gap-3">
+              <div className="w-8 h-8 rounded-lg bg-green-500/20 flex items-center justify-center flex-shrink-0 mt-0.5">
+                <svg className="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+              </div>
+              <div className="flex-1 min-w-0">
+                <h4 className="text-sm font-bold text-green-300 mb-2">업로드 사용 가이드</h4>
+                <div className="text-sm text-gray-300 space-y-1.5">
+                  <p>완성된 영상을 여러 플랫폼에 한번에 올릴 수 있어요!</p>
+                  <ol className="list-decimal list-inside space-y-1 text-gray-400">
+                    <li><strong className="text-gray-300">플랫폼 선택</strong> — 위에서 업로드할 플랫폼을 골라주세요</li>
+                    <li><strong className="text-gray-300">플랫폼 로그인</strong> — 각 플랫폼의 계정을 연결해주세요 (OAuth 인증)</li>
+                    <li><strong className="text-gray-300">영상 선택</strong> — 편집실에서 만든 영상 파일을 선택하세요</li>
+                    <li><strong className="text-gray-300">제목/설명</strong> — AI가 자동으로 추천해드려요</li>
+                    <li><strong className="text-gray-300">업로드!</strong> — 버튼 하나로 여러 플랫폼에 동시 업로드</li>
+                  </ol>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* 3. 파이프라인 (상태 기반) */}
         <div className="flex items-center mb-8 px-2">
