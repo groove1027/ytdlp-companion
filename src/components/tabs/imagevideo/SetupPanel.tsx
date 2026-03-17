@@ -557,7 +557,7 @@ const SetupPanel: React.FC = () => {
             아래 단락 구조를 확인하세요. "스토리보드 생성" 시 이 단락을 기반으로 AI가 비주얼 프롬프트를 생성합니다.
           </p>
           {showImportedSplit && (
-            <div className="bg-gray-900/50 rounded-xl border border-gray-700/30 overflow-hidden max-h-[320px] overflow-auto">
+            <div className="bg-gray-900/50 rounded-xl border border-gray-700/30 max-h-[320px] overflow-auto">
               {importedSplitResult.map((para, i) => (
                 <div key={i}
                   className={`flex items-start gap-3 px-3 py-2.5 ${i % 2 === 0 ? 'bg-gray-800/10' : 'bg-gray-800/30'} border-b border-gray-700/15 last:border-b-0`}>
