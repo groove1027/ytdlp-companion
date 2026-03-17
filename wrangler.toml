@@ -31,7 +31,6 @@ KAKAO_CLIENT_SECRET = ""
 NAVER_CLIENT_ID = ""
 NAVER_CLIENT_SECRET = ""
 
-# R2 버킷 — Cloudflare 계정에서 R2 활성화 + 버킷 생성 후 주석 해제
-# [[r2_buckets]]
-# binding = "PROJECT_STORAGE"
-# bucket_name = "project-storage"
+[[r2_buckets]]
+binding = "PROJECT_STORAGE"
+bucket_name = "project-storage"
