@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { toast as sonnerToast } from 'sonner';
+import type { SmartErrorContext } from '../types';
 
 interface ToastState {
   show: boolean;
@@ -30,6 +31,8 @@ interface UIStore {
   toolboxOpen: boolean;
   postProductionOpen: boolean;
   lastAutoSavedAt: number | null;
+  smartErrorContext: SmartErrorContext | null;
+  feedbackPrefilledContext: SmartErrorContext | null;
 
   // Actions
   openSidebar: () => void;
@@ -52,6 +55,9 @@ interface UIStore {
   setToolboxOpen: (open: boolean) => void;
   setPostProductionOpen: (open: boolean) => void;
   setLastAutoSavedAt: (ts: number) => void;
+  setSmartErrorContext: (ctx: SmartErrorContext | null) => void;
+  setFeedbackPrefilledContext: (ctx: SmartErrorContext | null) => void;
+  dismissSmartError: () => void;
 }
 
 export const useUIStore = create<UIStore>((set) => ({
@@ -75,6 +81,8 @@ export const useUIStore = create<UIStore>((set) => ({
   toolboxOpen: false,
   postProductionOpen: false,
   lastAutoSavedAt: null,
+  smartErrorContext: null,
+  feedbackPrefilledContext: null,
 
   openSidebar: () => set({ isSidebarOpen: true }),
   closeSidebar: () => set({ isSidebarOpen: false }),
@@ -102,6 +110,9 @@ export const useUIStore = create<UIStore>((set) => ({
   setToolboxOpen: (open) => set({ toolboxOpen: open }),
   setPostProductionOpen: (open) => set({ postProductionOpen: open }),
   setLastAutoSavedAt: (ts) => set({ lastAutoSavedAt: ts }),
+  setSmartErrorContext: (ctx) => set({ smartErrorContext: ctx }),
+  setFeedbackPrefilledContext: (ctx) => set({ feedbackPrefilledContext: ctx }),
+  dismissSmartError: () => set({ smartErrorContext: null }),
 }));
 
 /** alert() 대체 유틸리티 — 어디서든 import해서 사용 (Sonner 기반) */

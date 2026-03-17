@@ -11,6 +11,8 @@ import { logger } from './services/LoggerService';
 
 // 글로벌 에러 핸들러 설치 (uncaught error, unhandled rejection, 탭 비활성화, 네트워크 변경)
 logger.installGlobalHandlers();
+// Breadcrumb 자동 캡처 설치 (클릭, 키보드, 스크롤 추적)
+logger.installBreadcrumbCapture();
 
 // [FIX #152] React + 서드파티 스크립트 DOM 충돌 방지 패치
 // 브라우저 확장이나 광고 스크립트가 React 관리 DOM 노드를 임의로 삽입/제거하면

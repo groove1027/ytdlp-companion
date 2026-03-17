@@ -80,6 +80,12 @@ export const submitFeedback = async (data: FeedbackData): Promise<FeedbackResult
         debugLogs = debugLogs.substring(0, DEBUG_LOG_THRESHOLD) + suffix;
     }
 
+    // 2b. 자동 스크린샷이 있으면 Cloudinary에 업로드
+    let autoScreenshotUrl: string | undefined;
+    if (data.autoScreenshotBase64) {
+        autoScreenshotUrl = await uploadScreenshotToCloudinary(data.autoScreenshotBase64).catch(() => undefined);
+    }
+
     // 3. Pages Function (/api/feedback) 으로 전송 → GitHub Issue 자동 생성
     const payload = {
         type: data.type,
@@ -93,6 +99,9 @@ export const submitFeedback = async (data: FeedbackData): Promise<FeedbackResult
         userDisplayName: data.userDisplayName,
         debugLogs,
         debugLogUrl,
+        breadcrumbs: data.breadcrumbs,
+        stateSnapshot: data.stateSnapshot,
+        autoScreenshotUrl,
     };
 
     const response = await monitoredFetch('/api/feedback', {

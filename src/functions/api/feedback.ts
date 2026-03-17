@@ -33,6 +33,9 @@ function formatIssueBody(data: {
   userDisplayName?: string;
   debugLogs?: string;
   debugLogUrl?: string;
+  breadcrumbs?: string;
+  stateSnapshot?: string;
+  autoScreenshotUrl?: string;
 }): string {
   const date = new Date(data.timestamp).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' });
   const sections: string[] = [];
@@ -49,6 +52,37 @@ function formatIssueBody(data: {
     data.screenshotUrls.forEach((url, i) => {
       sections.push(`![screenshot-${i + 1}](${url})`);
     });
+  }
+
+  // 자동 캡처 스크린샷
+  if (data.autoScreenshotUrl) {
+    sections.push('');
+    sections.push('### 자동 캡처 화면');
+    sections.push(`![auto-screenshot](${data.autoScreenshotUrl})`);
+  }
+
+  // Breadcrumb Trail (사용자 행동 추적)
+  if (data.breadcrumbs) {
+    sections.push('');
+    sections.push('<details>');
+    sections.push('<summary><strong>사용자 행동 기록 (Breadcrumb Trail)</strong> (클릭하여 펼치기)</summary>');
+    sections.push('');
+    sections.push('```');
+    sections.push(data.breadcrumbs.substring(0, 5000));
+    sections.push('```');
+    sections.push('</details>');
+  }
+
+  // State Snapshot (앱 상태)
+  if (data.stateSnapshot) {
+    sections.push('');
+    sections.push('<details>');
+    sections.push('<summary><strong>앱 상태 스냅샷</strong> (클릭하여 펼치기)</summary>');
+    sections.push('');
+    sections.push('```');
+    sections.push(data.stateSnapshot.substring(0, 8000));
+    sections.push('```');
+    sections.push('</details>');
   }
 
   sections.push('');
@@ -127,6 +161,9 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       userDisplayName?: string;
       debugLogs?: string;
       debugLogUrl?: string;
+      breadcrumbs?: string;
+      stateSnapshot?: string;
+      autoScreenshotUrl?: string;
     };
 
     const titlePrefix = data.type === 'bug' || data.type === 'error' ? 'Bug' : data.type === 'auth' ? 'Auth' : data.type === 'suggestion' ? 'Feature' : 'Feedback';

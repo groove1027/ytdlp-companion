@@ -11,6 +11,7 @@ import DebugConsole from './components/DebugConsole';
 import FeedbackModal from './components/FeedbackModal';
 import FeedbackHistoryPanel from './components/FeedbackHistoryPanel';
 import FeedbackNotificationBanner from './components/FeedbackNotificationBanner';
+import SmartErrorBanner from './components/SmartErrorBanner';
 import CostDashboard from './components/CostDashboard';
 import ApiKeySettings from './components/ApiKeySettings';
 import { ProjectConfig, Scene, AspectRatio, ProjectData, VideoFormat, ImageModel, CharacterAppearance, VideoModel, VoiceName, AppTab } from './types';
@@ -1459,6 +1460,7 @@ const App: React.FC = () => {
       <FeedbackModal />
       <FeedbackHistoryPanel />
       <FeedbackNotificationBanner />
+      <SmartErrorBanner />
       {authUser && (
         <ProfileModal
           authUser={authUser}

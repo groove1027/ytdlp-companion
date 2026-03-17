@@ -153,6 +153,17 @@ interface SwallowedErrorRecord {
   message: string;
 }
 
+// ── Breadcrumb (자동 행동 추적) ──
+interface BreadcrumbEntry {
+  timestamp: number;
+  action: string;
+  target?: string;
+  metadata?: string;
+}
+
+// ── Critical Error Callback ──
+type CriticalErrorCallback = (errorType: string, errorMessage: string, errorDetail?: string) => void;
+
 class LoggerService {
   private logs: LogEntry[] = [];
   private listeners: LogListener[] = [];
@@ -183,6 +194,12 @@ class LoggerService {
   private errorChains: ErrorChainEntry[] = [];
   private swallowedErrors: SwallowedErrorRecord[] = [];
   private _errorChainCounter = 0;
+
+  // ── Breadcrumb (자동 행동 추적) ──
+  private breadcrumbs: BreadcrumbEntry[] = [];
+  private _breadcrumbInstalled = false;
+  private _criticalErrorCallbacks: CriticalErrorCallback[] = [];
+  private _lastErrorNotifyTime = 0;
 
   private addLog(level: LogLevel, message: string, details?: any, extra?: Partial<LogEntry>) {
     const entry: LogEntry = {
@@ -217,6 +234,10 @@ class LoggerService {
     this.addLog('error', message, this.enrichErrorDetails(details));
     this.persistErrors();
     this._safeConsoleError(`[ERROR] ${message}`, details || '');
+    // API 에러인 경우 critical error 콜백 알림
+    if (message.includes('API') || message.includes('fetch') || message.includes('Timeout')) {
+      this._notifyCriticalError('api', message, typeof details === 'string' ? details : details?.message);
+    }
   }
 
   success(message: string, details?: any) {
@@ -455,6 +476,7 @@ class LoggerService {
       componentStack: componentStack.split('\n').slice(0, 10).join('\n'),
     }, { category: 'system' });
     this.persistErrors();
+    this._notifyCriticalError('render', error.message, componentStack.split('\n').slice(0, 5).join('\n'));
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -492,6 +514,7 @@ class LoggerService {
         stack: event.error?.stack?.split('\n').slice(0, 5).join('\n'),
       }, { category: 'system' });
       this.persistErrors();
+      this._notifyCriticalError('unhandled', event.message, event.filename);
     }, true); // capture phase로 리소스 에러도 잡기
 
     // Unhandled promise rejections
@@ -501,6 +524,7 @@ class LoggerService {
       const stack = reason instanceof Error ? reason.stack?.split('\n').slice(0, 5).join('\n') : undefined;
       this.addLog('error', `💥 Unhandled Rejection: ${message}`, { stack }, { category: 'system' });
       this.persistErrors();
+      this._notifyCriticalError('unhandled', message, stack);
     });
 
     // 탭 비활성화/활성화 감지
@@ -935,6 +959,12 @@ class LoggerService {
       ? `\n\n--- User Actions ---\n${actionTrail}`
       : '';
 
+    // Breadcrumb Trail (자동 캡처된 사용자 행동)
+    const breadcrumbTrail = this.getFormattedBreadcrumbs(30);
+    const breadcrumbSection = breadcrumbTrail !== '(기록된 행동 없음)'
+      ? `\n\n--- Breadcrumb Trail (Auto-Captured) ---\n${breadcrumbTrail}`
+      : '';
+
     // Setting changes
     const settingSection = this.settingChanges.length > 0
       ? `\n\n--- Setting Changes (${this.settingChanges.length}) ---\n${this.settingChanges.map(s => {
@@ -1100,6 +1130,7 @@ class LoggerService {
 
     return [
       header,
+      breadcrumbSection,
       failSection,
       swallowSection,
       chainSection,
@@ -1469,6 +1500,140 @@ class LoggerService {
       } catch { checks.push(`  ${key}: ❌ (access error)`); }
     }
     return checks.join('\n');
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // Breadcrumb: 자동 행동 추적
+  // ══════════════════════════════════════════════════════════════
+
+  /** Breadcrumb 수동 추가 */
+  addBreadcrumb(action: string, target?: string, metadata?: string) {
+    this.breadcrumbs = [...this.breadcrumbs, {
+      timestamp: Date.now(),
+      action,
+      target,
+      metadata,
+    }].slice(-80);
+  }
+
+  /** 최근 Breadcrumb을 포맷된 문자열로 반환 */
+  getFormattedBreadcrumbs(limit = 50): string {
+    if (this.breadcrumbs.length === 0) return '(기록된 행동 없음)';
+    return this.breadcrumbs.slice(-limit).map(b => {
+      const t = new Date(b.timestamp).toTimeString().substring(0, 8);
+      const target = b.target ? ` → ${b.target}` : '';
+      const meta = b.metadata ? ` (${b.metadata})` : '';
+      return `[${t}] ${b.action}${target}${meta}`;
+    }).join('\n');
+  }
+
+  /** 글로벌 클릭/인터랙션 리스너 설치 (앱 시작 시 1회) */
+  installBreadcrumbCapture() {
+    if (this._breadcrumbInstalled) return;
+    this._breadcrumbInstalled = true;
+
+    // 클릭 이벤트 위임 — 버튼, 링크, 탭 클릭 자동 캡처
+    document.addEventListener('click', (e) => {
+      const target = e.target as HTMLElement;
+      if (!target) return;
+
+      // 클릭된 요소 또는 가장 가까운 인터랙티브 요소 찾기
+      const interactive = target.closest('button, a, [role="button"], [role="tab"], input[type="checkbox"], input[type="radio"], select');
+      if (!interactive) return;
+
+      const tag = interactive.tagName.toLowerCase();
+      const text = (interactive.textContent || '').trim().substring(0, 60);
+      const ariaLabel = interactive.getAttribute('aria-label');
+      const title = interactive.getAttribute('title');
+      const label = ariaLabel || title || text || '(이름 없음)';
+
+      // 피드백 모달 내부 클릭은 무시 (재귀 방지)
+      if (interactive.closest('[data-feedback-modal]')) return;
+
+      if (tag === 'button' || interactive.getAttribute('role') === 'button') {
+        this.addBreadcrumb('버튼 클릭', label);
+      } else if (tag === 'a') {
+        this.addBreadcrumb('링크 클릭', label);
+      } else if (interactive.getAttribute('role') === 'tab') {
+        this.addBreadcrumb('탭 전환', label);
+      } else if (tag === 'select') {
+        this.addBreadcrumb('선택 변경', label);
+      } else if (tag === 'input') {
+        const inputType = (interactive as HTMLInputElement).type;
+        this.addBreadcrumb(`${inputType} 변경`, label);
+      }
+    }, true); // capture phase
+
+    // 키보드 단축키 캡처
+    document.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key !== 'Control' && e.key !== 'Meta') {
+        this.addBreadcrumb('단축키', `${e.metaKey ? 'Cmd' : 'Ctrl'}+${e.key}`);
+      } else if (e.key === 'Escape') {
+        this.addBreadcrumb('ESC 키');
+      } else if (e.key === 'Enter') {
+        const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
+        if (tag === 'input' || tag === 'textarea') {
+          this.addBreadcrumb('Enter 입력', tag);
+        }
+      }
+    }, true);
+
+    // 페이지 스크롤 (디바운스 — 2초 간격)
+    let lastScrollBreadcrumb = 0;
+    window.addEventListener('scroll', () => {
+      const now = Date.now();
+      if (now - lastScrollBreadcrumb > 2000) {
+        lastScrollBreadcrumb = now;
+        this.addBreadcrumb('스크롤', `Y=${Math.round(window.scrollY)}`);
+      }
+    }, { passive: true });
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // Critical Error 콜백 시스템
+  // ══════════════════════════════════════════════════════════════
+
+  /** 에러 발생 시 호출될 콜백 등록 */
+  onCriticalError(callback: CriticalErrorCallback) {
+    this._criticalErrorCallbacks.push(callback);
+    return () => {
+      this._criticalErrorCallbacks = this._criticalErrorCallbacks.filter(c => c !== callback);
+    };
+  }
+
+  /** 등록된 콜백들에게 에러 알림 (5초 쿨다운 — 연속 에러 폭탄 방지) */
+  private _notifyCriticalError(errorType: string, errorMessage: string, errorDetail?: string) {
+    const now = Date.now();
+    if (now - this._lastErrorNotifyTime < 5000) return;
+    this._lastErrorNotifyTime = now;
+    for (const cb of this._criticalErrorCallbacks) {
+      try { cb(errorType, errorMessage, errorDetail); } catch { /* ignore callback errors */ }
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // Auto-Screenshot (html2canvas)
+  // ══════════════════════════════════════════════════════════════
+
+  /** 현재 화면을 JPEG 데이터 URI로 캡처 (실패 시 null) */
+  async captureScreenshot(): Promise<string | null> {
+    try {
+      const html2canvas = (await import('html2canvas')).default;
+      const canvas = await html2canvas(document.body, {
+        scale: 0.4,
+        logging: false,
+        useCORS: true,
+        allowTaint: true,
+        backgroundColor: '#111827',
+        ignoreElements: (el) => {
+          // 모달 오버레이와 피드백 관련 요소 제외
+          return el.hasAttribute('data-feedback-modal') || el.hasAttribute('data-smart-error-banner');
+        },
+      });
+      return canvas.toDataURL('image/jpeg', 0.5);
+    } catch {
+      return null;
+    }
   }
 
   clear() {

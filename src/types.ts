@@ -25,6 +25,20 @@ export interface FeedbackData {
     userDisplayName?: string;
     debugLogs?: string;
     environmentInfo?: string;
+    breadcrumbs?: string;
+    stateSnapshot?: string;
+    autoScreenshotBase64?: string;
+}
+
+/** 에러 자동 감지 시 FeedbackModal에 전달되는 사전 채움 컨텍스트 */
+export interface SmartErrorContext {
+    errorType: 'api' | 'render' | 'unhandled' | 'timeout' | 'network';
+    errorMessage: string;
+    errorDetail?: string;
+    detectedAt: number;
+    breadcrumbs: string;
+    stateSnapshot: string;
+    autoScreenshotBase64?: string;
 }
 
 export enum AspectRatio {

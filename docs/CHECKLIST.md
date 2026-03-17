@@ -8,6 +8,25 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-17] 피드백 시스템 10x 고도화 — 자동 컨텍스트 수집
+- [x] **Breadcrumb Trail**: 글로벌 클릭/키보드/스크롤 자동 캡처 (LoggerService.installBreadcrumbCapture)
+- [x] **SmartErrorBanner**: 에러 감지 시 자동 팝업 → "개발팀에 알리기" 원클릭 피드백
+- [x] **State Snapshot**: 22개 Zustand 스토어 전체 상태 자동 포함 (수동 피드백에도 적용)
+- [x] **Auto-Screenshot**: html2canvas 동적 import → 에러 발생 시 화면 자동 캡처 → Cloudinary 업로드
+- [x] FeedbackModal: pre-filled context 수용 + "자동 감지된 오류 [AUTO]" 배지
+- [x] feedbackService: breadcrumbs/stateSnapshot/autoScreenshotUrl 페이로드 포함
+- [x] Cloudflare Pages Function: Breadcrumb Trail + State Snapshot + Auto Screenshot 접이식 섹션
+- [x] types.ts: SmartErrorContext, FeedbackData 확장
+- [x] uiStore: smartErrorContext, feedbackPrefilledContext 상태
+- [x] tsc + vite build + E2E Puppeteer 검증 통과
+
+### [2026-03-17] #463 Instagram/Threads App ID 검증 개선
+- [x] App ID 필드 placeholder를 "숫자 App ID (예: 1234567890)"로 변경
+- [x] 비숫자 입력 시 인라인 amber 경고 표시
+- [x] 저장 시 숫자 검증 + 에러 메시지로 차단
+- [x] tsc + vite build + E2E 검증 통과
+- [x] Cloudflare Pages 배포 완료
+
 ### [2026-03-17] 비디오 엔진 대규모 개편
 - [x] Grok 15초 → 10초 제한 (types, constants, UI, hooks, stores)
 - [x] Seedance 1.5 Pro 엔진 추가 (VideoGenService, provider 등록)

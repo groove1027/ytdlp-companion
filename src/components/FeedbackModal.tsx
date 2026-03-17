@@ -6,7 +6,7 @@ import { submitFeedback, FeedbackResult, requestNotificationPermission, getTrack
 import { getSavedUser } from '../services/authService';
 import { logger } from '../services/LoggerService';
 import { FeedbackType } from '../types';
-import type { FeedbackData, FeedbackScreenshot } from '../types';
+import type { FeedbackData, FeedbackScreenshot, SmartErrorContext } from '../types';
 
 const FEEDBACK_TYPES = [
     { type: FeedbackType.BUG, icon: '\uD83D\uDC1B', label: '버그/오류' },
@@ -76,10 +76,27 @@ const FeedbackModal: React.FC = () => {
     const userEmail = savedUser?.email || '';
     const userDisplayName = savedUser?.displayName || '';
 
+    // Pre-filled context (SmartErrorBanner에서 전달)
+    const feedbackPrefilledContext = useUIStore((s) => s.feedbackPrefilledContext);
+    const [prefilledCtx, setPrefilledCtx] = useState<SmartErrorContext | null>(null);
+
     // 모달 열릴 때 localStorage에서 임시저장 복원 + defaultType 반영
     const feedbackDefaultType = useUIStore((s) => s.feedbackDefaultType);
     useEffect(() => {
         if (showFeedbackModal) {
+            // SmartErrorBanner에서 전달된 pre-filled context 우선
+            if (feedbackPrefilledContext) {
+                setPrefilledCtx(feedbackPrefilledContext);
+                setSelectedType(FeedbackType.BUG);
+                const errorLabel = feedbackPrefilledContext.errorType === 'api' ? '[API 오류]'
+                    : feedbackPrefilledContext.errorType === 'render' ? '[화면 오류]'
+                    : feedbackPrefilledContext.errorType === 'timeout' ? '[시간 초과]'
+                    : feedbackPrefilledContext.errorType === 'network' ? '[네트워크]'
+                    : '[오류]';
+                setMessage(`${errorLabel} ${feedbackPrefilledContext.errorMessage}`);
+                useUIStore.getState().setFeedbackPrefilledContext(null);
+                return;
+            }
             const draft = loadDraft();
             if (draft) {
                 setSelectedType(draft.selectedType);
@@ -88,8 +105,10 @@ const FeedbackModal: React.FC = () => {
             } else if (feedbackDefaultType) {
                 setSelectedType(feedbackDefaultType as FeedbackType);
             }
+        } else {
+            setPrefilledCtx(null);
         }
-    }, [showFeedbackModal, feedbackDefaultType]);
+    }, [showFeedbackModal, feedbackDefaultType, feedbackPrefilledContext]);
 
     // 입력 내용이 변경될 때마다 localStorage에 임시저장
     useEffect(() => {
@@ -210,6 +229,12 @@ const FeedbackModal: React.FC = () => {
             // 환경 스냅샷 + 로그를 결합한 포맷 생성
             const debugLogs = attachLogs ? await logger.exportFormattedWithEnv() : undefined;
 
+            // Breadcrumb + State Snapshot (자동 수집 또는 pre-filled context에서)
+            const breadcrumbs = prefilledCtx?.breadcrumbs || logger.getFormattedBreadcrumbs(50);
+            const stateSnapshot = prefilledCtx?.stateSnapshot || Object.entries(logger.collectAllStoreSnapshots())
+                .map(([k, v]) => `${k}: ${v}`).join('\n');
+            const autoScreenshotBase64 = prefilledCtx?.autoScreenshotBase64 || undefined;
+
             const data: FeedbackData = {
                 type: selectedType,
                 message: message.trim(),
@@ -221,6 +246,9 @@ const FeedbackModal: React.FC = () => {
                 screenshots: screenshots.length > 0 ? screenshots : undefined,
                 userDisplayName: userDisplayName || undefined,
                 debugLogs,
+                breadcrumbs: breadcrumbs !== '(기록된 행동 없음)' ? breadcrumbs : undefined,
+                stateSnapshot,
+                autoScreenshotBase64,
             };
 
             const result = await submitFeedback(data);
@@ -259,6 +287,7 @@ const FeedbackModal: React.FC = () => {
 
     return (
         <div
+            data-feedback-modal
             className="fixed inset-0 bg-black/80 z-[9999] flex items-center justify-center p-4 animate-fade-in"
             onMouseDown={handleBackdropMouseDown}
             onMouseUp={handleBackdropMouseUp}
@@ -493,6 +522,21 @@ const FeedbackModal: React.FC = () => {
                             </div>
                         )}
                     </div>
+
+                    {/* 자동 감지 안내 배지 (SmartErrorBanner에서 전달 시) */}
+                    {prefilledCtx && (
+                        <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/30">
+                            <div className="flex items-center gap-2 mb-2">
+                                <span className="text-red-400 text-sm font-bold">자동 감지된 오류</span>
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-600/30 text-red-300 border border-red-500/30 font-bold">AUTO</span>
+                            </div>
+                            <div className="text-xs text-red-300/70 space-y-1">
+                                <p>행동 기록 {prefilledCtx.breadcrumbs.split('\n').length}건 자동 포함</p>
+                                <p>앱 상태 스냅샷 자동 포함</p>
+                                {prefilledCtx.autoScreenshotBase64 && <p>화면 캡처 자동 포함</p>}
+                            </div>
+                        </div>
+                    )}
 
                     {/* [FIX #175-6] 디버그 로그 — 항상 자동 포함, 사용자에게 간결히 안내만 */}
                     <div className="flex items-center gap-2 px-3 py-2 bg-gray-800/50 rounded-lg border border-gray-700/30">
