@@ -4387,7 +4387,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
               <span className="w-8 h-8 bg-gradient-to-br from-blue-500 to-violet-600 rounded-lg flex items-center justify-center text-sm">🎬</span>
               {selectedPreset === 'shopping' ? `쇼핑 대본 ${versions.length}${isStillGenerating ? `/${expectedTotal}` : ''}종`
                 : selectedPreset === 'deep' ? '심층 분석 보고서'
-                : `리메이크 ${versions.length}${isStillGenerating ? `/${expectedTotal}` : ''}가지 버전`}
+                : `${PRESET_INFO[selectedPreset as AnalysisPreset]?.label ?? ''} 리메이크 ${versions.length}${isStillGenerating ? `/${expectedTotal}` : ''}가지 버전`}
             </h2>
             <button
               type="button"

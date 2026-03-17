@@ -8,6 +8,10 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-18] #443 영상 분석실 결과 헤더에 프리셋 이름 표시
+- [x] VideoAnalysisRoom.tsx 결과 헤더에 PRESET_INFO 라벨 추가 (티키타카/스낵형/축약 리캡/All TTS)
+- [x] tsc + vite build + Puppeteer E2E 검증 통과
+
 ### [2026-03-18] #473 NLE 내보내기 나레이션 오디오 싱크 수정
 - [x] `buildEditRoomFcpXml`에 나레이션 전용 오디오 트랙(A2) 추가 — Premiere Pro/DaVinci/CapCut/VREW에서 나레이션 MP3 자동 배치
 - [x] `buildEditRoomNleZip`에서 narrationFileMap 추적하여 실제 다운로드된 나레이션 파일만 XML에 포함
