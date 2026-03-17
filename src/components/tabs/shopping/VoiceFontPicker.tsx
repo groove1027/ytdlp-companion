@@ -268,7 +268,6 @@ const TTSVoiceModal: React.FC<TTSVoiceModalProps> = ({
             <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-700/60 text-gray-400">
               {v.gender === 'female' ? '여' : '남'}
             </span>
-            {v.builtinOnly && <span className="text-[9px] px-1 py-0.5 rounded bg-orange-900/40 text-orange-400/80" title="API에서 조회되지 않는 음성">미지원</span>}
           </div>
           <p className="text-xs text-gray-500 truncate mt-0.5">
             {getKoreanUseCases(v.use_cases).slice(0, 3).join(' · ')}

@@ -167,7 +167,6 @@ export interface VoiceOption {
     preview?: string;      // 미리듣기 URL
     description?: string;  // 음성 설명 (예: "Warm, Captivating Storyteller")
     accent?: string;       // 악센트/국적 (예: "american", "british")
-    builtinOnly?: boolean; // 빌트인 전용 (API에서 조회 안 됨, TTS 불가)
 }
 
 export interface TTSResult {

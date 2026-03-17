@@ -46,8 +46,6 @@ export interface TypecastVoice {
   use_cases: string[];
   preview_url?: string;
   image_url?: string;
-  /** true = 빌트인 전용 음성 (API에서 조회 안 됨, TTS 불가) */
-  builtinOnly?: boolean;
 }
 
 export interface TypecastTTSOptions {
@@ -722,16 +720,7 @@ export const fetchTypecastVoices = async (forceRefresh = false): Promise<Typecas
         };
       });
 
-      // API 응답에 없는 빌트인 음성 병합 (수동 등록 음성 누락 방지)
-      // builtinOnly=true 표시 → TTS 시도 시 사전 차단
-      const apiNames = new Set(voices.map(v => v.name));
-      const missingBuiltin = BUILTIN_TYPECAST_VOICES
-        .filter(bv => !apiNames.has(bv.name))
-        .map(bv => ({ ...bv, builtinOnly: true }));
-      if (missingBuiltin.length > 0) {
-        voices.push(...missingBuiltin);
-        logger.info(`[Typecast] 빌트인 전용 음성 ${missingBuiltin.length}개 병합 (TTS 불가): ${missingBuiltin.map(v => v.name).join(', ')}`);
-      }
+      // [FIX #459] API에 없는 빌트인 음성은 TTS 불가 → 병합하지 않음 (사용자 혼란 방지)
       cachedVoices = voices;
       fetchPromise = null;
       const withImage = voices.filter(v => v.image_url).length;

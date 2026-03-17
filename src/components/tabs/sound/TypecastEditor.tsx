@@ -1697,7 +1697,7 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
                             {voice.image_url ? <img src={voice.image_url} alt="" className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-white font-bold bg-gradient-to-br from-purple-500 to-pink-500">{voice.name[0]}</div>}
                           </div>
                           <div className="flex-1 min-w-0">
-                            <p className="text-sm font-bold text-white truncate">{voice.name}{voice.builtinOnly && <span className="text-[9px] text-orange-400/80 font-normal ml-1">미지원</span>}</p>
+                            <p className="text-sm font-bold text-white truncate">{voice.name}</p>
                             <p className="text-xs text-gray-500 truncate">#{voice.use_cases.slice(0, 1).map(uc => UC_KO[uc] || uc).join('')} | {(TYPECAST_LANGUAGES.find(l => l.code === voice.language[0]) || TYPECAST_LANGUAGES[0]).flag} {(TYPECAST_LANGUAGES.find(l => l.code === voice.language[0]) || TYPECAST_LANGUAGES[0]).nameKo}</p>
                           </div>
                           {lines[pickerLineIdx]?.voiceId === voice.voice_id && <span className="text-green-400 text-sm">✓</span>}
@@ -1719,7 +1719,6 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
                     <div className="flex-1 min-w-0 cursor-pointer" onClick={() => handlePickCharacter(voice)}>
                       <p className="text-sm font-bold text-white truncate">{voice.name}
                         {lines[pickerLineIdx]?.voiceId === voice.voice_id && <span className="text-green-400 ml-1">✓</span>}
-                        {voice.builtinOnly && <span className="text-[9px] text-orange-400/80 font-normal ml-1" title="API에서 조회되지 않는 음성">미지원</span>}
                       </p>
                       <p className="text-xs text-gray-500 truncate">
                         #{voice.use_cases.slice(0, 2).map(uc => UC_KO[uc] || uc).join(' · ')} | {(TYPECAST_LANGUAGES.find(l => l.code === voice.language[0]) || TYPECAST_LANGUAGES[0]).flag} {(TYPECAST_LANGUAGES.find(l => l.code === voice.language[0]) || TYPECAST_LANGUAGES[0]).nameKo}{voice.language.length > 1 ? `+${voice.language.length - 1}` : ''}
