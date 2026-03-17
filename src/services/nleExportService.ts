@@ -1806,16 +1806,250 @@ export async function buildEditRoomNleZip(params: {
   const xml = buildEditRoomFcpXml({ timeline, scenes, title, fps, width: w, height: h, mediaFileMap, narrationFileMap });
   zip.file(`${safeName}.xml`, xml);
 
-  // CapCut 전용: draft_content.json + draft_meta_info.json (프로젝트 폴더 복사 방식)
+  // CapCut 전용: draft_content.json (이미지+자막+나레이션 타임라인 자동 배치)
   if (target === 'capcut') {
-    const totalDurUs = Math.ceil((timeline[timeline.length - 1]?.imageEndTime || 0) * 1_000_000);
-    const draftMeta = JSON.stringify({
-      draft_fold_path: '', draft_id: '', draft_name: title, draft_root_path: '',
+    const totalDurUs = toUs(timeline[timeline.length - 1]?.imageEndTime || 0);
+    const projectId = uuid();
+    const speedId = uuid();
+    const emptyArr: never[] = [];
+
+    // ── 미디어 머티리얼: 장면별 이미지/영상 ──
+    const videoMaterials: { id: string; path: string; dur: number; isPhoto: boolean }[] = [];
+    const audioMaterials: { id: string; path: string; dur: number }[] = [];
+
+    for (let i = 0; i < timeline.length; i++) {
+      const fileName = mediaFileMap.get(i);
+      if (!fileName) continue;
+      const isVideo = fileName.endsWith('.mp4');
+      videoMaterials.push({
+        id: uuid(),
+        path: `media/${fileName}`,
+        dur: toUs(timeline[i].imageDuration),
+        isPhoto: !isVideo,
+      });
+    }
+
+    for (let i = 0; i < timeline.length; i++) {
+      const narFileName = narrationFileMap.get(i);
+      if (!narFileName) continue;
+      audioMaterials.push({
+        id: uuid(),
+        path: `audio/${narFileName}`,
+        dur: toUs(timeline[i].imageDuration),
+      });
+    }
+
+    // ── 비디오 세그먼트 (메인 트랙) ──
+    const videoSegments = timeline.map((t, i) => {
+      const mat = videoMaterials[i];
+      if (!mat) return null;
+      return {
+        cartoon: false,
+        clip: { alpha: 1.0, flip: { horizontal: false, vertical: false }, rotation: 0.0, scale: { x: 1.0, y: 1.0 }, transform: { x: 0.0, y: 0.0 } },
+        common_keyframes: emptyArr,
+        enable_adjust: true,
+        enable_color_correct_adjust: false,
+        enable_color_curves: true,
+        enable_color_match_adjust: false,
+        enable_color_wheels: true,
+        enable_lut: true,
+        enable_smart_color_adjust: false,
+        extra_material_refs: [speedId],
+        group_id: '',
+        hdr_settings: null,
+        id: uuid(),
+        intensifies_audio: false,
+        is_placeholder: false,
+        is_tone_modify: false,
+        keyframe_refs: emptyArr,
+        last_nonzero_volume: 1.0,
+        material_id: mat.id,
+        render_index: 0,
+        responsive_layout: { enable: false, horizontal_pos_layout: 0, size_layout: 0, target_follow: '', vertical_pos_layout: 0 },
+        reverse: false,
+        source_timerange: { duration: toUs(t.imageDuration), start: 0 },
+        speed: 1.0,
+        target_timerange: { duration: toUs(t.imageDuration), start: toUs(t.imageStartTime) },
+        template_id: '',
+        template_scene: '',
+        track_attribute: 0,
+        track_render_index: 0,
+        uniform_scale: { on: true, value: 1.0 },
+        visible: true,
+        volume: 1.0,
+      };
+    }).filter(Boolean);
+
+    // ── 텍스트 머티리얼 + 세그먼트 (자막 트랙) ──
+    const textMaterials: { id: string; text: string; start: number; dur: number }[] = [];
+    for (const t of timeline) {
+      for (const seg of t.subtitleSegments) {
+        if (!seg.text.trim()) continue;
+        textMaterials.push({ id: uuid(), text: seg.text, start: toUs(seg.startTime), dur: toUs(seg.endTime - seg.startTime) });
+      }
+    }
+
+    const textObjects = textMaterials.map(m => ({
+      add_type: 0, alignment: 1, background_alpha: 0.0, background_color: '', background_height: 0.14,
+      background_horizontal_offset: 0.0, background_round_radius: 0.0, background_style: 0,
+      background_vertical_offset: 0.004, background_width: 0.14, bold_width: 0.0, border_alpha: 1.0,
+      border_color: '', border_width: 0.08, check_flag: 7,
+      content: JSON.stringify({ styles: [{ range: [0, m.text.length], size: 8.0, bold: true, italic: false, color: [1.0, 1.0, 1.0], useLetterColor: true }], text: m.text }),
+      fixed_height: -1.0, fixed_width: -1.0, font_category_id: '', font_category_name: '', font_id: '',
+      font_name: '', font_path: '', font_resource_id: '', font_size: 8.0, font_source_platform: 0,
+      font_team_id: '', font_title: 'default', font_url: '', fonts: [],
+      force_apply_line_max_width: false, global_alpha: 1.0, has_shadow: false, id: m.id,
+      initial_scale: 1.0, inner_padding: -1.0, is_rich_text: false, italic_degree: 0,
+      ktv_color: '', language: '', layer_weight: 1, letter_spacing: 0.0, line_feed: 1,
+      line_max_width: 0.82, line_spacing: 0.02, multi_language_current: 'none', name: '',
+      original_size: [], preset_category: '', preset_category_id: '', preset_has_set_alignment: false,
+      preset_id: '', preset_index: 0, preset_name: '', recognize_task_id: '', recognize_type: 0,
+      relevance_segment: [], shadow_alpha: 0.9, shadow_angle: -45.0, shadow_color: '',
+      shadow_distance: 0.04, shadow_point: { x: 0.6363961031, y: -0.6363961031 },
+      shadow_smoothing: 0.45, shape_clip_x: false, shape_clip_y: false, style_name: '',
+      sub_type: 0, subtitle_keywords: null, subtitle_template_original_fontsize: 0.0,
+      text_alpha: 1.0, text_color: '#FFFFFF', text_curve: null, text_preset_resource_id: '',
+      text_size: 30, text_to_audio_ids: [], tts_auto_update: false, type: 'subtitle',
+      typesetting: 0, underline: false, underline_offset: 0.22, underline_width: 0.05,
+      use_effect_default_color: true, words: null,
+    }));
+
+    const textSegments = textMaterials.map(m => ({
+      cartoon: false,
+      clip: { alpha: 1.0, flip: { horizontal: false, vertical: false }, rotation: 0.0, scale: { x: 1.0, y: 1.0 }, transform: { x: 0.0, y: 0.0 } },
+      common_keyframes: emptyArr, enable_adjust: false, enable_color_correct_adjust: false,
+      enable_color_curves: false, enable_color_match_adjust: false, enable_color_wheels: false,
+      enable_lut: false, enable_smart_color_adjust: false, extra_material_refs: emptyArr,
+      group_id: '', hdr_settings: null, id: uuid(), intensifies_audio: false,
+      is_placeholder: false, is_tone_modify: false, keyframe_refs: emptyArr,
+      last_nonzero_volume: 1.0, material_id: m.id, render_index: 11000,
+      responsive_layout: { enable: false, horizontal_pos_layout: 0, size_layout: 0, target_follow: '', vertical_pos_layout: 0 },
+      reverse: false, source_timerange: { duration: m.dur, start: 0 },
+      speed: 1.0, target_timerange: { duration: m.dur, start: m.start },
+      template_id: '', template_scene: '', track_attribute: 0, track_render_index: 11000,
+      uniform_scale: { on: true, value: 1.0 }, visible: true, volume: 1.0,
+    }));
+
+    // ── 오디오 세그먼트 (나레이션 트랙) ──
+    const audioSegments = timeline.map((t, i) => {
+      const mat = audioMaterials.find((_, ai) => {
+        // i번째 타임라인의 나레이션 찾기
+        let count = 0;
+        for (let j = 0; j < timeline.length; j++) {
+          if (narrationFileMap.has(j)) {
+            if (j === i) return count === ai;
+            count++;
+          }
+        }
+        return false;
+      });
+      const narIdx = [...narrationFileMap.keys()].indexOf(i);
+      if (narIdx === -1 || !audioMaterials[narIdx]) return null;
+      const aMat = audioMaterials[narIdx];
+      return {
+        cartoon: false,
+        clip: { alpha: 1.0, flip: { horizontal: false, vertical: false }, rotation: 0.0, scale: { x: 1.0, y: 1.0 }, transform: { x: 0.0, y: 0.0 } },
+        common_keyframes: emptyArr, enable_adjust: false, enable_color_correct_adjust: false,
+        enable_color_curves: false, enable_color_match_adjust: false, enable_color_wheels: false,
+        enable_lut: false, enable_smart_color_adjust: false, extra_material_refs: emptyArr,
+        group_id: '', hdr_settings: null, id: uuid(), intensifies_audio: false,
+        is_placeholder: false, is_tone_modify: false, keyframe_refs: emptyArr,
+        last_nonzero_volume: 1.0, material_id: aMat.id, render_index: 0,
+        responsive_layout: { enable: false, horizontal_pos_layout: 0, size_layout: 0, target_follow: '', vertical_pos_layout: 0 },
+        reverse: false, source_timerange: { duration: toUs(t.imageDuration), start: 0 },
+        speed: 1.0, target_timerange: { duration: toUs(t.imageDuration), start: toUs(t.imageStartTime) },
+        template_id: '', template_scene: '', track_attribute: 0, track_render_index: 0,
+        uniform_scale: { on: true, value: 1.0 }, visible: true, volume: 1.0,
+      };
+    }).filter(Boolean);
+
+    // ── draft_content.json 조립 ──
+    const draft = {
+      canvas_config: { height: h, ratio: 'original', width: w },
+      color_space: 0,
+      config: {
+        adjust_max_index: 1, attachment_info: emptyArr, combination_max_index: 1,
+        export_range: null, extract_audio_last_index: 1, lyrics_recognition_id: '',
+        lyrics_sync: false, lyrics_taskinfo: emptyArr, maintrack_adsorb: true,
+        material_save_mode: 0, original_sound_last_index: 1, record_audio_last_index: 1,
+        sticker_max_index: 1, subtitle_keywords_config: null, subtitle_recognition_id: '',
+        subtitle_sync: false, subtitle_taskinfo: emptyArr, system_font_list: emptyArr,
+        video_mute: false, zoom_info_params: null,
+      },
+      cover: null,
+      create_time: Math.floor(Date.now() / 1000),
+      duration: totalDurUs,
+      extra_info: '',
+      fps: fps,
+      free_render_index_mode_on: false,
+      group_container: null,
+      id: projectId,
+      keyframe_graph_list: emptyArr,
+      last_modified_platform: { app_id: 3704, app_source: '', app_version: '5.9.0', device_id: '', hard_disk_id: '', mac_address: '', os: 'mac', os_version: '' },
+      materials: {
+        audios: audioMaterials.map(m => ({
+          app_id: 0, category_id: '', category_name: 'local', check_flag: 0,
+          duration: m.dur, effect_id: '', formula_id: '', id: m.id,
+          intensifies_path: '', local_material_id: '', music_id: '', name: m.path.split('/').pop() || '',
+          path: m.path, request_id: '', resource_id: '', source_platform: 0,
+          team_id: '', text_id: '', tone_category_id: '', tone_category_name: '',
+          tone_effect_id: '', tone_effect_name: '', tone_platform: '', tone_second_category_id: '',
+          tone_second_category_name: '', tone_speaker: '', tone_type: '', type: 'extract_music',
+          video_id: '', wave_points: [],
+        })),
+        canvases: emptyArr, drafts: emptyArr, effects: emptyArr, flowers: emptyArr,
+        handwrites: emptyArr, head_animations: emptyArr, images: emptyArr,
+        log_color_wheels: emptyArr, loudnesses: emptyArr, manual_deformations: emptyArr,
+        material_animations: emptyArr, material_colors: emptyArr, placeholders: emptyArr,
+        plugin_effects: emptyArr, realtime_denoises: emptyArr, shapes: emptyArr,
+        smart_crops: emptyArr, smart_relayouts: emptyArr,
+        speeds: [{ curve_speed: null, id: speedId, mode: 0, name: '', speed: 1.0, type: 'speed' }],
+        stickers: emptyArr, tail_animations: emptyArr, text_templates: emptyArr,
+        texts: textObjects,
+        transitions: emptyArr, video_effects: emptyArr, video_trackings: emptyArr,
+        videos: videoMaterials.map(m => ({
+          audio_fade: null, category_id: '', category_name: 'local', check_flag: 0,
+          crop: { lower_left_x: 0, lower_left_y: 1, lower_right_x: 1, lower_right_y: 1, upper_left_x: 0, upper_left_y: 0, upper_right_x: 1, upper_right_y: 0 },
+          duration: m.dur, extra_type_option: 0, formula_id: '', freeze: null,
+          has_audio: !m.isPhoto, height: h, id: m.id,
+          intensifies_audio_path: '', intensifies_path: '', is_ai_generate_content: false,
+          is_copyright: false, is_text_edit_overdub: false, is_unified_beauty_mode: false,
+          local_id: '', local_material_id: '', material_id: '', material_name: m.path.split('/').pop() || '',
+          material_url: '', media_path: '', music_id: '', object_locked: null,
+          origin_material_id: '', path: m.path, request_id: '', reverse_path: '',
+          roughcut_time_range: null, smart_motion: null, source: 0, source_platform: 0,
+          stable: null, team_id: '', type: m.isPhoto ? 'photo' : 'video',
+          video_algorithm: null, width: w,
+        })),
+        vocal_beautifys: emptyArr, vocal_separations: emptyArr,
+      },
+      mutable_config: null,
+      name: title,
+      new_version: '110.0.0',
+      platform: { app_id: 3704, app_source: '', app_version: '5.9.0', device_id: '', hard_disk_id: '', mac_address: '', os: 'mac', os_version: '' },
+      relationships: emptyArr,
+      render_index_track_mode_on: false,
+      retouch_cover: null,
+      source: 'default',
+      static_cover_image_path: '',
+      tracks: [
+        { attribute: 0, flag: 0, id: uuid(), is_default_name: true, name: '', segments: videoSegments, type: 'video' },
+        ...(textSegments.length > 0 ? [{ attribute: 0, flag: 0, id: uuid(), is_default_name: true, name: '', segments: textSegments, type: 'text' }] : []),
+        ...(audioSegments.length > 0 ? [{ attribute: 0, flag: 0, id: uuid(), is_default_name: true, name: '', segments: audioSegments, type: 'audio' }] : []),
+      ],
+      update_time: Math.floor(Date.now() / 1000),
+      version: 360000,
+    };
+
+    const draftJson = JSON.stringify(draft);
+    zip.file('draft_content.json', draftJson);
+    zip.file('draft_info.json', draftJson);
+    zip.file('draft_meta_info.json', JSON.stringify({
+      draft_fold_path: '', draft_id: projectId, draft_name: title, draft_root_path: '',
       tm_draft_create: Math.floor(Date.now() / 1000),
       tm_draft_modified: Math.floor(Date.now() / 1000),
       tm_duration: totalDurUs,
-    });
-    zip.file('draft_meta_info.json', draftMeta);
+    }));
   }
 
   // README (CapCut은 SRT import 가장 안정적이라 SRT 중심으로 안내)
@@ -1844,28 +2078,30 @@ export async function buildEditRoomNleZip(params: {
     ].filter(Boolean).join('\n'));
   } else if (target === 'capcut') {
     zip.file('README.txt', [
-      `=== ${title} — CapCut 가져오기 안내 ===`,
+      `=== ${title} — CapCut 프로젝트 파일 ===`,
       '',
-      '★ 가장 확실한 방법: SRT 자막 가져오기',
-      '1. CapCut 데스크톱을 열고 새 프로젝트를 생성합니다.',
-      '2. media/ 폴더의 이미지/영상을 미디어 패널에 드래그합니다.',
-      '3. 이미지/영상을 순서대로 타임라인에 배치합니다.',
-      `4. 자막 탭 > "자막 가져오기" (Import Subtitles)`,
-      `5. "${safeName}_자막.srt" 또는 "${safeName}_장면자막.srt" 선택`,
-      '6. 자막이 타임라인에 자동 배치됩니다!',
+      '★ 추천: 프로젝트 폴더 복사 (이미지+자막+나레이션 자동 배치!)',
+      '1. CapCut 데스크톱을 완전히 종료합니다.',
+      '2. ZIP 압축을 해제합니다.',
+      '3. 압축 해제한 폴더를 아래 경로에 복사합니다:',
+      '   • Windows: %LOCALAPPDATA%\\CapCut\\User Data\\Projects\\com.lveditor.draft\\',
+      '   • Mac: ~/Movies/CapCut/User Data/Projects/com.lveditor.draft/',
+      '4. CapCut을 다시 실행하면 프로젝트 목록에 자동으로 나타납니다!',
+      '5. 이미지/영상, 자막, 나레이션이 모두 타임라인에 배치되어 있습니다.',
       '',
-      '[ 대안: XML 가져오기 (CapCut 2025+ 데스크톱) ]',
-      '• File > Import > XML File 메뉴가 있다면:',
-      `  "${safeName}.xml" 선택 → 편집점 자동 생성`,
+      '[ 대안 1: SRT 자막 가져오기 ]',
+      '1. CapCut에서 새 프로젝트 생성 후 media/ 이미지를 타임라인에 배치',
+      `2. 자막 > 자막 가져오기 > "${safeName}_자막.srt" 선택`,
       '',
-      '[ 나레이션 ]',
-      narrationFileMap.size > 0
-        ? `• 나레이션 ${narrationFileMap.size}개가 오디오 트랙에 자동 배치됩니다.`
-        : '• audio/ 폴더의 나레이션 MP3를 오디오 트랙에 배치하세요.',
+      '[ 대안 2: XML 가져오기 ]',
+      `• File > Import > XML File > "${safeName}.xml"`,
       '',
       `• ${timeline.length}개 장면 · ${w}x${h} · ${fps}fps`,
       videoCount > 0 || imageCount > 0
         ? `• 미디어 구성: 영상 ${videoCount}개 + 이미지 ${imageCount}개`
+        : '',
+      narrationFileMap.size > 0
+        ? `• 나레이션 ${narrationFileMap.size}개 자동 배치`
         : '',
     ].filter(Boolean).join('\n'));
   } else {
