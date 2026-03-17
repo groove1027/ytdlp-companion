@@ -1,12 +1,15 @@
 
-import React, { useState, useRef, useEffect, lazy, Suspense } from 'react';
+import React, { useState, useRef, useEffect, useCallback, Suspense } from 'react';
 import { Scene, AspectRatio, VideoFormat, VideoModel } from '../types';
 import type { CommunityMediaItem } from '../types';
 import { useProjectStore } from '../stores/projectStore';
-import { useUIStore } from '../stores/uiStore';
+import { useEditRoomStore } from '../stores/editRoomStore';
+import { useUIStore, showToast } from '../stores/uiStore';
 import { logger } from '../services/LoggerService';
+import { COMPACT_PAN_ZOOM_PRESETS, computeMotionStyle } from '../services/motionPreviewUtils';
+import { lazyRetry } from '../utils/retryImport';
 
-const MediaSearchModal = lazy(() => import('./MediaSearchModal'));
+const MediaSearchModal = lazyRetry(() => import('./MediaSearchModal'));
 
 interface StoryboardSceneProps {
   scene: Scene;
@@ -51,6 +54,47 @@ const StoryboardSceneInner: React.FC<StoryboardSceneProps> = ({
   const [showMediaSearch, setShowMediaSearch] = useState(false);
   const [editPromptText, setEditPromptText] = useState(scene.visualPrompt);
   const [showVisualPrompt, setShowVisualPrompt] = useState(false);
+  const [showMotionPicker, setShowMotionPicker] = useState(false);
+
+  // 모션 효과 상태 (editRoomStore 공유)
+  const sceneEffect = useEditRoomStore((s) => s.sceneEffects[scene.id]);
+  const setSceneEffect = useEditRoomStore((s) => s.setSceneEffect);
+  const hasMotionEffect = sceneEffect && sceneEffect.panZoomPreset !== 'none';
+  const motionStyle = hasMotionEffect ? computeMotionStyle(sceneEffect) : undefined;
+
+  const handleMotionPresetChange = useCallback((presetId: string) => {
+    const current = sceneEffect?.panZoomPreset;
+    setSceneEffect(scene.id, {
+      panZoomPreset: current === presetId ? 'none' : presetId,
+      motionEffect: sceneEffect?.motionEffect || 'none',
+    });
+  }, [scene.id, sceneEffect, setSceneEffect]);
+
+  const handleAIMotionDetect = useCallback(async () => {
+    try {
+      const { matchMotionToContent } = await import('../services/smartMotionMatcher');
+      const result = matchMotionToContent({
+        visualPrompt: scene.visualPrompt,
+        scriptText: scene.scriptText,
+        castType: scene.castType,
+        shotSize: scene.shotSize,
+        cameraAngle: scene.cameraAngle,
+        entityComposition: scene.entityComposition,
+        characterPresent: scene.characterPresent,
+      });
+      setSceneEffect(scene.id, {
+        panZoomPreset: result.panZoomPreset,
+        motionEffect: result.motionEffect,
+        anchorX: result.anchorX,
+        anchorY: result.anchorY,
+        anchorLabel: result.anchorLabel,
+      });
+      showToast(`모션 자동 설정: ${result.panZoomPreset} (${Math.round(result.confidence * 100)}% 확신)`);
+    } catch (e) {
+      showToast('모션 자동 감지 실패');
+      logger.trackSwallowedError('StoryboardScene:handleAIMotionDetect', e);
+    }
+  }, [scene, setSceneEffect]);
 
   // A-3: Debounced local state for scriptText
   const [localScriptText, setLocalScriptText] = useState(scene.scriptText);
@@ -276,8 +320,15 @@ const StoryboardSceneInner: React.FC<StoryboardSceneProps> = ({
                   </div>
               ) : scene.imageUrl ? (
                   <>
-                      {/* B-1: lazy loading + async decoding, B-2: fade-in transition */}
-                      <img src={scene.imageUrl} className={`w-full h-full ${isPortrait ? 'object-contain' : 'object-cover'} opacity-0 transition-opacity duration-300`} alt="Scene" loading="lazy" decoding="async" onLoad={(e) => { e.currentTarget.style.opacity = '1'; }} />
+                      {/* B-1: lazy loading + async decoding, B-2: fade-in transition, 모션 프리뷰 (#427) */}
+                      <div className="absolute inset-[-10%] w-[120%] h-[120%]" style={motionStyle}>
+                        <img src={scene.imageUrl} className={`w-full h-full ${isPortrait ? 'object-contain' : 'object-cover'} opacity-0 transition-opacity duration-300`} alt="Scene" loading="lazy" decoding="async" onLoad={(e) => { e.currentTarget.style.opacity = '1'; }} />
+                      </div>
+                      {hasMotionEffect && (
+                        <div className="absolute top-2 left-2 z-30 bg-amber-600/80 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full backdrop-blur-sm pointer-events-none">
+                          {COMPACT_PAN_ZOOM_PRESETS.find(p => p.id === sceneEffect?.panZoomPreset)?.icon || '🎬'} 모션
+                        </div>
+                      )}
                       <button onClick={handleDownloadImage} className="absolute top-2 right-2 bg-black/60 hover:bg-black/90 text-white p-1.5 rounded-full border border-white/20 opacity-0 group-hover/image:opacity-100 transition-opacity z-40" title="이미지 다운로드">
                         <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
                       </button>
@@ -433,6 +484,55 @@ const StoryboardSceneInner: React.FC<StoryboardSceneProps> = ({
                    >
                        💎 Veo 1080p (HQ)
                    </button>
+              </div>
+
+              {/* 이미지 모션 효과 — #427 */}
+              <hr className="border-gray-700 my-0.5" />
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setShowMotionPicker(!showMotionPicker)}
+                  className={`w-full flex items-center justify-between px-2 py-1.5 rounded text-sm font-bold border transition-all ${
+                    hasMotionEffect
+                      ? 'bg-amber-900/30 border-amber-600/50 text-amber-300'
+                      : 'bg-gray-800 border-gray-700 text-gray-500 hover:text-gray-300'
+                  }`}
+                >
+                  <span className="flex items-center gap-1">
+                    🎬 이미지 모션
+                    {hasMotionEffect && <span className="text-xs bg-amber-600/30 px-1 rounded">{sceneEffect?.panZoomPreset}</span>}
+                  </span>
+                  <span className="text-xs">{showMotionPicker ? '▲' : '▼'}</span>
+                </button>
+                {showMotionPicker && (
+                  <div className="mt-1 space-y-1.5 animate-fade-in">
+                    <div className="flex flex-wrap gap-1">
+                      {COMPACT_PAN_ZOOM_PRESETS.map((p) => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => handleMotionPresetChange(p.id)}
+                          className={`flex items-center gap-0.5 px-1.5 py-1 rounded text-xs font-bold border transition-all ${
+                            sceneEffect?.panZoomPreset === p.id
+                              ? 'bg-amber-600/20 border-amber-500/50 text-amber-300'
+                              : 'bg-gray-900/50 border-gray-700/50 text-gray-500 hover:text-gray-300 hover:border-gray-600'
+                          }`}
+                        >
+                          <span>{p.icon}</span>
+                          <span>{p.label}</span>
+                        </button>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleAIMotionDetect}
+                      disabled={!scene.scriptText?.trim()}
+                      className="w-full py-1 text-xs font-bold rounded border border-amber-700/50 text-amber-400 hover:bg-amber-900/20 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                    >
+                      ✨ AI 자동 감지
+                    </button>
+                  </div>
+                )}
               </div>
           </div>
 

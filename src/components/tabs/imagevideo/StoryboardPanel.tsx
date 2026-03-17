@@ -17,6 +17,8 @@ import { useNavigationStore } from '../../../stores/navigationStore';
 import ActionButton from '../../ui/ActionButton';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
+import { useEditRoomStore } from '../../../stores/editRoomStore';
+import { MOTION_KEYFRAMES } from '../../../services/motionPreviewUtils';
 import { logger } from '../../../services/LoggerService';
 
 // --- 배치 진행 중 로테이팅 팁 ---
@@ -1685,6 +1687,8 @@ const StoryboardPanel: React.FC = () => {
 
   return (
     <>
+      {/* 모션 프리뷰 CSS 키프레임 (#427) */}
+      <style>{MOTION_KEYFRAMES}</style>
       {/* Top status */}
       {totalScenes > 0 && (completedImages > 0 || completedVideos > 0) && (
         <div className="mb-4 flex items-center gap-4">
@@ -2058,6 +2062,28 @@ const StoryboardPanel: React.FC = () => {
                 {selectedImageEligible > 0 && selectedVideoEligible === 0 && totalScenes > 0 && (
                   <p className="px-4 py-1 text-[10px] text-yellow-400/80 bg-yellow-600/10">⚠️ 이미지가 없는 장면은 영상 생성 불가 — 이미지를 먼저 생성해주세요</p>
                 )}
+                <div className="border-t border-gray-700" />
+                {/* #427 모션 일괄 적용 */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowGenDropdown(false);
+                    showToast('모션 효과 자동 분석 중...');
+                    try {
+                      useEditRoomStore.getState().regenerateMotions();
+                      showToast(`${scenes.length}개 장면에 모션 효과가 적용되었습니다.`);
+                    } catch (e) {
+                      showToast('모션 일괄 적용 실패');
+                      logger.trackSwallowedError('StoryboardPanel:batchMotion', e);
+                    }
+                  }}
+                  disabled={totalScenes === 0}
+                  className="w-full text-left px-4 py-2.5 text-base text-gray-200 hover:bg-amber-600/10 transition-colors flex items-center gap-2"
+                >
+                  <span className="w-2 h-2 rounded-full bg-amber-400" />
+                  <span className="flex-1">🎬 모션 일괄 적용</span>
+                  <span className="text-[10px] text-amber-400/70">무료</span>
+                </button>
                 <div className="border-t border-gray-700" />
                 <p className="px-4 py-1 text-xs text-gray-500 font-bold uppercase">Grok 720p (Kie)</p>
                 <button

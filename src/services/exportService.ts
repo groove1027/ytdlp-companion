@@ -1,9 +1,10 @@
 
 import { logger } from './LoggerService';
 import { VideoFormat, ExportManifest } from '../types';
-import type { Scene, Thumbnail } from '../types';
+import type { Scene, Thumbnail, SceneEffectConfig } from '../types';
 import { useProjectStore } from '../stores/projectStore';
 import { useEditorStore } from '../stores/editorStore';
+import { useEditRoomStore } from '../stores/editRoomStore';
 import { useUIStore } from '../stores/uiStore';
 import { useCostStore } from '../stores/costStore';
 import { uploadRemoteUrlToCloudinary } from './uploadService';
@@ -337,19 +338,24 @@ export const downloadImagesAsMp4 = async () => {
 
     setToast({ show: true, message: '이미지→MP4 변환 중...', current: 0, total });
 
+    // 모션 효과 적용 (#427) — editRoomStore에서 장면별 효과 읽기
+    const sceneEffects = useEditRoomStore.getState().sceneEffects;
+
     let successCount = 0;
     let processedCount = 0;
     for (const s of validScenes) {
         const sceneIndex = scenes.indexOf(s);
         const durationSec = estimateSceneDuration(s);
+        const effect = sceneEffects[s.id];
+        const hasMotion = effect && effect.panZoomPreset !== 'none';
 
         try {
             // 이미지 Blob 가져오기
             const imgBlob = await fetchImageBlob(s.imageUrl!, aspectRatio, cropBlobToAspectRatio);
             if (!imgBlob) { processedCount++; setToast(prev => ({ ...prev!, current: processedCount })); continue; }
 
-            // MP4 변환
-            const mp4Blob = await convertImageToMp4(imgBlob, durationSec, resolution, probe);
+            // MP4 변환 (모션 효과 있으면 Ken Burns 적용)
+            const mp4Blob = await convertImageToMp4(imgBlob, durationSec, resolution, probe, hasMotion ? effect : undefined);
             const filename = getSafeFilename(sceneIndex, s.scriptText, 'mp4');
             zip.file(filename, mp4Blob);
             successCount++;
@@ -410,20 +416,25 @@ async function convertImageToMp4(
     durationSec: number,
     resolution: { width: number; height: number },
     probe: { codec: string; hardwareAcceleration: 'prefer-hardware' | 'prefer-software' | 'no-preference' },
+    effect?: SceneEffectConfig,
 ): Promise<Blob> {
     const { createEncoder } = await import('./webcodecs/videoEncoder');
     const { createMp4Muxer } = await import('./webcodecs/mp4Muxer');
 
     const { width, height } = resolution;
-    const fps = 1; // 정지 이미지이므로 1fps 충분 (파일 크기 최소화)
-    const totalFrames = Math.max(2, Math.ceil(durationSec));
+    const hasKenBurns = effect && effect.panZoomPreset !== 'none';
+    // 모션 있으면 24fps (부드러운 움직임), 없으면 1fps (파일 크기 최소화)
+    const fps = hasKenBurns ? 24 : 1;
+    const totalFrames = hasKenBurns
+        ? Math.max(2, Math.ceil(durationSec * fps))
+        : Math.max(2, Math.ceil(durationSec));
 
     const muxer = createMp4Muxer({ width, height, fps, hasAudio: false });
 
     const chunks: Array<{ chunk: EncodedVideoChunk; meta?: EncodedVideoChunkMetadata }> = [];
     let encodeError: Error | null = null;
     const encoder = createEncoder(
-        { width, height, fps, bitrate: 2_000_000, keyframeIntervalFrames: totalFrames },
+        { width, height, fps, bitrate: hasKenBurns ? 4_000_000 : 2_000_000, keyframeIntervalFrames: hasKenBurns ? fps * 2 : totalFrames },
         probe.codec,
         probe.hardwareAcceleration,
         (encoded) => chunks.push(encoded),
@@ -431,23 +442,38 @@ async function convertImageToMp4(
     );
 
     try {
-        // 이미지를 캔버스에 cover 방식으로 그리기
         const imgBitmap = await createImageBitmap(imageBlob);
         const canvas = new OffscreenCanvas(width, height);
         const ctx = canvas.getContext('2d')!;
 
-        const scale = Math.max(width / imgBitmap.width, height / imgBitmap.height);
-        const scaledW = imgBitmap.width * scale;
-        const scaledH = imgBitmap.height * scale;
-        const dx = (width - scaledW) / 2;
-        const dy = (height - scaledH) / 2;
-        ctx.drawImage(imgBitmap, dx, dy, scaledW, scaledH);
-        imgBitmap.close();
+        if (hasKenBurns) {
+            // Ken Burns 모션 적용: 매 프레임마다 변환 계산
+            const { computeKenBurns, drawKenBurnsFrame } = await import('./webcodecs/kenBurnsEngine');
 
-        // 프레임 인코딩
-        for (let i = 0; i < totalFrames; i++) {
-            encoder.encodeFrame(canvas, i);
+            for (let i = 0; i < totalFrames; i++) {
+                ctx.clearRect(0, 0, width, height);
+                const transform = computeKenBurns(
+                    effect!.panZoomPreset, i, totalFrames, width, height,
+                    effect!.anchorX, effect!.anchorY, fps,
+                );
+                drawKenBurnsFrame(ctx, imgBitmap, transform, width, height, effect!.anchorX, effect!.anchorY);
+                encoder.encodeFrame(canvas, i);
+            }
+        } else {
+            // 정지 이미지: cover 방식으로 한 번 그리고 반복
+            const scale = Math.max(width / imgBitmap.width, height / imgBitmap.height);
+            const scaledW = imgBitmap.width * scale;
+            const scaledH = imgBitmap.height * scale;
+            const dx = (width - scaledW) / 2;
+            const dy = (height - scaledH) / 2;
+            ctx.drawImage(imgBitmap, dx, dy, scaledW, scaledH);
+
+            for (let i = 0; i < totalFrames; i++) {
+                encoder.encodeFrame(canvas, i);
+            }
         }
+
+        imgBitmap.close();
         await encoder.flush();
     } finally {
         encoder.encoder.close();
@@ -455,7 +481,6 @@ async function convertImageToMp4(
 
     if (encodeError) throw encodeError;
 
-    // 먹서에 청크 추가
     for (const c of chunks) {
         muxer.addVideoChunk(c);
     }

@@ -8,6 +8,13 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-18] #427 스토리보드 이미지 모션 기능 추가
+- [x] `motionPreviewUtils.ts` 신규 — 모션 프리뷰 공유 유틸리티 (CSS 키프레임, computeMotionStyle 등)
+- [x] `StoryboardScene.tsx` — 컴팩트 모션 프리셋 8종 선택 UI + AI 자동 감지 + CSS 프리뷰 오버레이
+- [x] `StoryboardPanel.tsx` — 모션 CSS 키프레임 주입 + 배치 모션 일괄 적용 버튼
+- [x] `exportService.ts` — 이미지→MP4 변환 시 Ken Burns 모션 효과 적용 (24fps)
+- [x] tsc + vite build 검증 통과
+
 ### [2026-03-18] #438 롱폼 단락 나누기 '절약 중심' 모드 추가
 - [x] 롱폼 단락 나누기에 'ECONOMY' (절약 중심) 모드 추가 — 4~6문장 = 1장면, 비용/시간 절약
 - [x] 12개 언어 프로필에 economyMerge 파라미터 추가 (한국어: 400자)
