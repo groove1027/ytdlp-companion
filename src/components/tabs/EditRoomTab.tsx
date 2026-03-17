@@ -1408,10 +1408,20 @@ const EditRoomTab: React.FC = () => {
       showToast('내보낼 장면이 없습니다.');
       return;
     }
+    // [FIX #472] 영상이 없는 장면이 있으면 사전 안내
+    const videoSceneCount = scenes.filter(s => s.videoUrl).length;
+    if (videoSceneCount < scenes.length) {
+      const imageOnlyCount = scenes.length - videoSceneCount;
+      showToast(
+        videoSceneCount === 0
+          ? `${scenes.length}개 장면 모두 이미지로 내보냅니다. 영상 클립이 필요하면 이미지/영상 탭에서 영상을 먼저 생성해주세요.`
+          : `영상 ${videoSceneCount}개 + 이미지 ${imageOnlyCount}개로 내보냅니다. 모든 장면을 영상으로 내보내려면 이미지/영상 탭에서 나머지 영상을 생성해주세요.`
+      );
+    }
     showToast(`${targetLabel} 프로젝트 파일을 준비하고 있습니다...`);
     try {
       const projectTitle = useProjectStore.getState().projectTitle || '프로젝트';
-      const blob = await buildEditRoomNleZip({
+      const result = await buildEditRoomNleZip({
         target,
         timeline,
         scenes: scenes.map((s) => ({ id: s.id, imageUrl: s.imageUrl, videoUrl: s.videoUrl, scriptText: s.scriptText })),
@@ -1419,13 +1429,19 @@ const EditRoomTab: React.FC = () => {
         title: projectTitle,
         aspectRatio: projectAspectRatio,
       });
-      const url = URL.createObjectURL(blob);
+      const url = URL.createObjectURL(result.blob);
       const a = document.createElement('a');
       a.href = url;
       a.download = `${projectTitle.replace(/[^\w가-힣\-_ ]/g, '').slice(0, 30) || 'project'}_${target}.zip`;
       a.click();
       URL.revokeObjectURL(url);
-      showToast(`${targetLabel} 프로젝트 파일 다운로드 완료!`);
+      // [FIX #472] 내보내기 결과에 미디어 구성 표시
+      const mediaSummary = result.videoCount > 0 && result.imageCount > 0
+        ? ` (영상 ${result.videoCount} + 이미지 ${result.imageCount})`
+        : result.videoCount > 0
+          ? ` (영상 ${result.videoCount}개)`
+          : ` (이미지 ${result.imageCount}개)`;
+      showToast(`${targetLabel} 프로젝트 파일 다운로드 완료!${mediaSummary}`);
     } catch (err) {
       showToast(`${targetLabel} 내보내기 실패: ` + (err instanceof Error ? err.message : '알 수 없는 오류'));
     }

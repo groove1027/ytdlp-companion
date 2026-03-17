@@ -1436,8 +1436,10 @@ function buildEditRoomFcpXml(params: {
   fps: number;
   width: number;
   height: number;
+  /** 실제 ZIP에 들어간 미디어 파일명 맵 (index → 파일명). 없으면 scene.videoUrl 기준 추정 */
+  mediaFileMap?: Map<number, string>;
 }): string {
-  const { timeline, scenes, title, fps, width, height } = params;
+  const { timeline, scenes, title, fps, width, height, mediaFileMap } = params;
   if (timeline.length === 0) return '';
 
   const { ntsc, timebase } = fpsToNtsc(fps);
@@ -1464,9 +1466,10 @@ function buildEditRoomFcpXml(params: {
   // 비디오 클립 (장면마다 별도 파일 + 오디오 미디어 스펙 포함)
   const videoClips = timeline.map((t, i) => {
     const scene = scenes.find(s => s.id === t.sceneId);
-    const hasVideo = !!scene?.videoUrl;
-    const ext = hasVideo ? 'mp4' : 'jpg';
-    const fileName = `media/${String(i + 1).padStart(3, '0')}_scene.${ext}`;
+    // [FIX #472] mediaFileMap이 있으면 실제 다운로드된 파일 기준, 없으면 기존 로직
+    const actualFile = mediaFileMap?.get(i);
+    const ext = actualFile ? actualFile.split('.').pop()! : (scene?.videoUrl ? 'mp4' : 'jpg');
+    const fileName = actualFile ? `media/${actualFile}` : `media/${String(i + 1).padStart(3, '0')}_scene.${ext}`;
     const clipDurFrames = toFrames(t.imageDuration);
     const clipLabel = (scene?.scriptText || `장면 ${i + 1}`).slice(0, 40);
     return `
@@ -1674,6 +1677,14 @@ function buildEditRoomSceneSrt(timeline: UnifiedSceneTiming[], scenes: EditRoomS
   return entries.join('\n\n');
 }
 
+/** NLE 내보내기 결과 (ZIP + 미디어 통계) */
+export interface NleExportResult {
+  blob: Blob;
+  videoCount: number;
+  imageCount: number;
+  totalScenes: number;
+}
+
 /** 편집실 타임라인 → NLE 패키지 ZIP (CapCut / Premiere / VREW) */
 export async function buildEditRoomNleZip(params: {
   target: EditRoomNleTarget;
@@ -1683,7 +1694,7 @@ export async function buildEditRoomNleZip(params: {
   title: string;
   aspectRatio: string;
   fps?: number;
-}): Promise<Blob> {
+}): Promise<NleExportResult> {
   const { target, timeline, scenes, narrationLines, title, aspectRatio, fps = 30 } = params;
   const JSZip = (await import('jszip')).default;
   const zip = new JSZip();
@@ -1706,21 +1717,40 @@ export async function buildEditRoomNleZip(params: {
     zip.file(`${safeName}_장면자막.srt`, BOM + sceneSrt);
   }
 
-  // 미디어 에셋 수집 (이미지/영상/나레이션)
+  // [FIX #472] 미디어 에셋 수집 — 영상 다운로드 실패 시 이미지 폴백 + 실제 파일명 추적
+  const mediaFileMap = new Map<number, string>(); // index → 실제 파일명
+  let videoCount = 0;
+  let imageCount = 0;
+
   for (let i = 0; i < timeline.length; i++) {
     const t = timeline[i];
     const scene = scenes.find(s => s.id === t.sceneId);
     if (!scene) continue;
 
     const idx = String(i + 1).padStart(3, '0');
+    let added = false;
+
+    // 영상 우선 시도
     if (scene.videoUrl) {
       const blob = await fetchAssetBlob(scene.videoUrl);
-      if (blob) zip.file(`media/${idx}_scene.mp4`, blob);
-    } else if (scene.imageUrl) {
+      if (blob && blob.size > 0) {
+        const fileName = `${idx}_scene.mp4`;
+        zip.file(`media/${fileName}`, blob);
+        mediaFileMap.set(i, fileName);
+        videoCount++;
+        added = true;
+      }
+      // 영상 다운로드 실패 → 이미지 폴백
+    }
+
+    if (!added && scene.imageUrl) {
       const blob = await fetchAssetBlob(scene.imageUrl);
       if (blob) {
         const ext = scene.imageUrl.includes('.png') || scene.imageUrl.startsWith('data:image/png') ? 'png' : 'jpg';
-        zip.file(`media/${idx}_scene.${ext}`, blob);
+        const fileName = `${idx}_scene.${ext}`;
+        zip.file(`media/${fileName}`, blob);
+        mediaFileMap.set(i, fileName);
+        imageCount++;
       }
     }
 
@@ -1732,8 +1762,8 @@ export async function buildEditRoomNleZip(params: {
     }
   }
 
-  // FCP XML (Premiere/VREW/CapCut 공통)
-  const xml = buildEditRoomFcpXml({ timeline, scenes, title, fps, width: w, height: h });
+  // [FIX #472] FCP XML — mediaFileMap 전달하여 실제 파일명 기준으로 XML 생성
+  const xml = buildEditRoomFcpXml({ timeline, scenes, title, fps, width: w, height: h, mediaFileMap });
   zip.file(`${safeName}.xml`, xml);
 
   // CapCut 전용: draft_content.json + draft_meta_info.json (프로젝트 폴더 복사 방식)
@@ -1766,7 +1796,10 @@ export async function buildEditRoomNleZip(params: {
       '• audio/ 폴더의 나레이션 MP3를 오디오 트랙에 배치하세요.',
       '',
       `• ${timeline.length}개 장면 · ${w}x${h} · ${fps}fps`,
-    ].join('\n'));
+      videoCount > 0 || imageCount > 0
+        ? `• 미디어 구성: 영상 ${videoCount}개 + 이미지 ${imageCount}개`
+        : '',
+    ].filter(Boolean).join('\n'));
   } else if (target === 'capcut') {
     zip.file('README.txt', [
       `=== ${title} — CapCut 가져오기 안내 ===`,
@@ -1787,7 +1820,10 @@ export async function buildEditRoomNleZip(params: {
       '• audio/ 폴더의 나레이션 MP3를 오디오 트랙에 배치하세요.',
       '',
       `• ${timeline.length}개 장면 · ${w}x${h} · ${fps}fps`,
-    ].join('\n'));
+      videoCount > 0 || imageCount > 0
+        ? `• 미디어 구성: 영상 ${videoCount}개 + 이미지 ${imageCount}개`
+        : '',
+    ].filter(Boolean).join('\n'));
   } else {
     zip.file('README.txt', [
       `=== ${title} — VREW ===`,
@@ -1802,8 +1838,12 @@ export async function buildEditRoomNleZip(params: {
       `2. 자막 > SRT 불러오기 > "${safeName}_자막.srt"`,
       '',
       `• ${timeline.length}개 장면 · ${w}x${h} · ${fps}fps`,
-    ].join('\n'));
+      videoCount > 0 || imageCount > 0
+        ? `• 미디어 구성: 영상 ${videoCount}개 + 이미지 ${imageCount}개`
+        : '',
+    ].filter(Boolean).join('\n'));
   }
 
-  return zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+  const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+  return { blob, videoCount, imageCount, totalScenes: timeline.length };
 }
