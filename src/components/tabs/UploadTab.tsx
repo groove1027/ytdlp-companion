@@ -480,6 +480,11 @@ const StepAuth: React.FC = () => {
   // Instagram OAuth
   const handleSaveIgClient = () => {
     if (!igAppId.trim() || !igAppSecret.trim()) return;
+    if (!/^\d+$/.test(igAppId.trim())) {
+      setIgAuthError('App ID는 숫자로만 구성된 값이에요. Meta Developer 앱 대시보드 → 설정 → 기본 설정에서 확인해주세요.');
+      return;
+    }
+    setIgAuthError('');
     setInstagramAuth({ appId: igAppId.trim(), appSecret: igAppSecret.trim() });
     setIgEditingClient(false);
   };
@@ -496,6 +501,11 @@ const StepAuth: React.FC = () => {
   // Threads OAuth
   const handleSaveThClient = () => {
     if (!thAppId.trim() || !thAppSecret.trim()) return;
+    if (!/^\d+$/.test(thAppId.trim())) {
+      setThAuthError('App ID는 숫자로만 구성된 값이에요. Meta Developer 앱 대시보드 → 설정 → 기본 설정에서 확인해주세요.');
+      return;
+    }
+    setThAuthError('');
     setThreadsAuth({ appId: thAppId.trim(), appSecret: thAppSecret.trim() });
     setThEditingClient(false);
   };
@@ -1200,8 +1210,11 @@ const StepAuth: React.FC = () => {
                     <>
                       <div className="space-y-1">
                         <label className="text-xs text-gray-500">App ID</label>
-                        <input type="text" value={igAppId} onChange={(e) => setIgAppId(e.target.value)} placeholder="Meta App ID"
+                        <input type="text" value={igAppId} onChange={(e) => setIgAppId(e.target.value)} placeholder="숫자 App ID (예: 1234567890)"
                           className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-pink-500/50 font-mono" />
+                        {igAppId.trim() && !/^\d*$/.test(igAppId.trim()) && (
+                          <p className="text-[11px] text-amber-400 mt-1">App ID는 숫자로만 구성돼요. Meta Developer 대시보드 → 설정 → 기본 설정에서 확인해주세요.</p>
+                        )}
                       </div>
                       <div className="space-y-1">
                         <label className="text-xs text-gray-500">App Secret</label>
@@ -1346,8 +1359,11 @@ const StepAuth: React.FC = () => {
                     <>
                       <div className="space-y-1">
                         <label className="text-xs text-gray-500">App ID</label>
-                        <input type="text" value={thAppId} onChange={(e) => setThAppId(e.target.value)} placeholder="Meta App ID (Threads)"
+                        <input type="text" value={thAppId} onChange={(e) => setThAppId(e.target.value)} placeholder="숫자 App ID (예: 1234567890)"
                           className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-gray-500/50 font-mono" />
+                        {thAppId.trim() && !/^\d*$/.test(thAppId.trim()) && (
+                          <p className="text-[11px] text-amber-400 mt-1">App ID는 숫자로만 구성돼요. Meta Developer 대시보드 → 설정 → 기본 설정에서 확인해주세요.</p>
+                        )}
                       </div>
                       <div className="space-y-1">
                         <label className="text-xs text-gray-500">App Secret</label>
