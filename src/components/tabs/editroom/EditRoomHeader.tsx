@@ -7,6 +7,7 @@ interface EditRoomHeaderProps {
   onExportSrt: () => void;
   onExportZip: () => void;
   onExportMp4: () => void;
+  onExportNle?: (target: 'premiere' | 'capcut' | 'vrew') => void;
 }
 
 const EditRoomHeader: React.FC<EditRoomHeaderProps> = ({
@@ -14,6 +15,7 @@ const EditRoomHeader: React.FC<EditRoomHeaderProps> = ({
   onExportSrt,
   onExportZip,
   onExportMp4,
+  onExportNle,
 }) => {
   const projectTitle = useProjectStore((s) => s.projectTitle);
   const isExporting = useEditRoomStore((s) => s.isExporting);
@@ -67,6 +69,33 @@ const EditRoomHeader: React.FC<EditRoomHeaderProps> = ({
                 <span className="text-base">📦</span> SRT + 에셋 ZIP
               </button>
               <div className="border-t border-gray-700" />
+              {onExportNle && (
+                <>
+                  <div className="px-3 py-1.5 text-[10px] text-gray-500 uppercase tracking-wider font-bold">프로젝트 파일</div>
+                  <button
+                    type="button"
+                    onClick={() => { onExportNle('premiere'); setShowExportMenu(false); }}
+                    className="w-full text-left px-4 py-2.5 hover:bg-gray-700 text-base text-gray-200 flex items-center gap-2"
+                  >
+                    <span className="text-base">🎞</span> Premiere Pro
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { onExportNle('capcut'); setShowExportMenu(false); }}
+                    className="w-full text-left px-4 py-2.5 hover:bg-gray-700 text-base text-gray-200 flex items-center gap-2"
+                  >
+                    <span className="text-base">✂️</span> CapCut
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { onExportNle('vrew'); setShowExportMenu(false); }}
+                    className="w-full text-left px-4 py-2.5 hover:bg-gray-700 text-base text-gray-200 flex items-center gap-2"
+                  >
+                    <span className="text-base">📋</span> VREW
+                  </button>
+                  <div className="border-t border-gray-700" />
+                </>
+              )}
               <button
                 type="button"
                 onClick={() => { onExportMp4(); setShowExportMenu(false); }}

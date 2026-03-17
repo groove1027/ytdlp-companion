@@ -5,6 +5,8 @@ import { useEditRoomStore } from '../../stores/editRoomStore';
 import { useUnifiedTimeline, useTotalDuration } from '../../hooks/useUnifiedTimeline';
 import { downloadSrtFile, downloadSrtWithAssetsZip } from '../../services/srtService';
 import { composeMp4, downloadMp4 } from '../../services/webcodecs';
+import { buildEditRoomNleZip } from '../../services/nleExportService';
+import type { EditRoomNleTarget } from '../../services/nleExportService';
 import { showToast } from '../../stores/uiStore';
 import EditRoomHeader from './editroom/EditRoomHeader';
 import EditRoomSceneList from './editroom/EditRoomSceneList';
@@ -1397,6 +1399,38 @@ const EditRoomTab: React.FC = () => {
     }
   }, [timeline, scenes, lines, requireAuth, projectAspectRatio]);
 
+  // NLE 프로젝트 내보내기 (CapCut / Premiere / VREW)
+  const handleExportNle = useCallback(async (target: EditRoomNleTarget) => {
+    const targetLabel = target === 'premiere' ? 'Premiere Pro' : target === 'capcut' ? 'CapCut' : 'VREW';
+    logger.trackAction(`NLE 내보내기: ${targetLabel}`);
+    if (!requireAuth(`${targetLabel} 내보내기`)) return;
+    if (timeline.length === 0) {
+      showToast('내보낼 장면이 없습니다.');
+      return;
+    }
+    showToast(`${targetLabel} 프로젝트 파일을 준비하고 있습니다...`);
+    try {
+      const projectTitle = useProjectStore.getState().projectTitle || '프로젝트';
+      const blob = await buildEditRoomNleZip({
+        target,
+        timeline,
+        scenes: scenes.map((s) => ({ id: s.id, imageUrl: s.imageUrl, videoUrl: s.videoUrl, scriptText: s.scriptText })),
+        narrationLines: lines.filter((l) => !!l.audioUrl).map((l) => ({ sceneId: l.sceneId || '', audioUrl: l.audioUrl })),
+        title: projectTitle,
+        aspectRatio: projectAspectRatio,
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${projectTitle.replace(/[^\w가-힣\-_ ]/g, '').slice(0, 30) || 'project'}_${target}.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast(`${targetLabel} 프로젝트 파일 다운로드 완료!`);
+    } catch (err) {
+      showToast(`${targetLabel} 내보내기 실패: ` + (err instanceof Error ? err.message : '알 수 없는 오류'));
+    }
+  }, [timeline, scenes, lines, requireAuth, projectAspectRatio]);
+
   // MP4 버튼 → 렌더 설정 모달 열기
   const handleExportMp4Click = useCallback(() => {
     if (timeline.length === 0) {
@@ -1672,6 +1706,7 @@ const EditRoomTab: React.FC = () => {
           onExportSrt={handleExportSrt}
           onExportZip={handleExportZip}
           onExportMp4={handleExportMp4Click}
+          onExportNle={handleExportNle}
         />
 
         {/* 채널분석 버전 셀렉터 */}
@@ -1803,6 +1838,7 @@ const EditRoomTab: React.FC = () => {
           onExportZip={handleExportZip}
           onExportMp4={handleExportMp4Click}
           onCancelExport={handleCancelExport}
+          onExportNle={handleExportNle}
         />
       )}
 

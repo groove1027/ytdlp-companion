@@ -9,6 +9,7 @@ interface EditRoomExportBarProps {
   onExportZip: () => void;
   onExportMp4: () => void;
   onCancelExport?: () => void;
+  onExportNle?: (target: 'premiere' | 'capcut' | 'vrew') => void;
 }
 
 function formatTime(sec: number): string {
@@ -57,11 +58,18 @@ function mapPhaseToIndex(phase: ExportProgress['phase']): number {
   return 0;
 }
 
+const NLE_TARGETS = [
+  { key: 'premiere' as const, label: 'Premiere Pro', icon: '🎞' },
+  { key: 'capcut' as const, label: 'CapCut', icon: '✂️' },
+  { key: 'vrew' as const, label: 'VREW', icon: '📋' },
+];
+
 const EditRoomExportBar: React.FC<EditRoomExportBarProps> = ({
   onExportSrt,
   onExportZip,
   onExportMp4,
   onCancelExport,
+  onExportNle,
 }) => {
   const isExporting = useEditRoomStore((s) => s.isExporting);
   const exportProgress = useEditRoomStore((s) => s.exportProgress);
@@ -70,6 +78,7 @@ const EditRoomExportBar: React.FC<EditRoomExportBarProps> = ({
   const hasVideos = scenes.some((s) => !!s.videoUrl);
   const imgLabel = config ? (IMAGE_MODEL_LABELS[config.imageModel] ?? config.imageModel) : '';
   const vidLabel = config ? (VIDEO_MODEL_LABELS[config.videoModel] ?? config.videoModel) : '';
+  const [showNleMenu, setShowNleMenu] = React.useState(false);
 
   return (
     <div className="fixed bottom-0 left-56 right-0 z-30 bg-gray-900/95 backdrop-blur border-t border-gray-700">
@@ -163,6 +172,39 @@ const EditRoomExportBar: React.FC<EditRoomExportBarProps> = ({
             >
               📦 SRT + 에셋 ZIP
             </button>
+
+            {/* NLE 프로젝트 내보내기 드롭다운 */}
+            {onExportNle && (
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setShowNleMenu(!showNleMenu)}
+                  disabled={isExporting}
+                  className="flex items-center gap-1.5 px-3 py-2 bg-gradient-to-r from-emerald-700 to-teal-700 hover:from-emerald-600 hover:to-teal-600 border border-emerald-500/40 text-emerald-100 rounded-lg text-sm font-bold transition-colors disabled:opacity-50"
+                >
+                  🎬 프로젝트 파일 ▾
+                </button>
+                {showNleMenu && (
+                  <>
+                    <div className="fixed inset-0 z-30" onClick={() => setShowNleMenu(false)} />
+                    <div className="absolute bottom-full mb-1 left-0 z-40 bg-gray-800 border border-gray-600 rounded-lg shadow-xl min-w-[200px]">
+                      {NLE_TARGETS.map((t, i) => (
+                        <button
+                          key={t.key}
+                          type="button"
+                          onClick={() => { onExportNle(t.key); setShowNleMenu(false); }}
+                          className={`w-full text-left px-4 py-2.5 hover:bg-gray-700 text-sm text-gray-200 flex items-center gap-2 ${
+                            i === 0 ? 'rounded-t-lg' : i === NLE_TARGETS.length - 1 ? 'rounded-b-lg' : ''
+                          }`}
+                        >
+                          <span>{t.icon}</span> {t.label}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
 
             {isExporting ? (
               <button
