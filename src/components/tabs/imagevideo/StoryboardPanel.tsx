@@ -124,6 +124,8 @@ interface SceneCardProps {
   playingSceneId?: string | null;
   sceneProgress?: number;
   onAddAfter: (index: number) => void;
+  onSplit: (index: number) => void;
+  onMerge: (index: number) => void;
   onAutoPrompt: (id: string) => void;
   onReferenceUpload: (id: string, file: File) => void;
   onUploadImage: (id: string, file: File) => void;
@@ -131,9 +133,10 @@ interface SceneCardProps {
   onCopyScript?: (sceneId: string) => void;
   isSelected?: boolean;
   onToggleSelect?: (id: string) => void;
+  totalScenes: number;
 }
 
-const SceneCard: React.FC<SceneCardProps> = ({ scene, index, onUpdatePrompt, onDelete, onRegenerate, onTransform, onGrokVideo, onVeoVideo, onPlaySceneAudio, playingSceneId, sceneProgress, onAddAfter, onAutoPrompt, onReferenceUpload, onUploadImage, onOpenDetail, onCopyScript, isSelected, onToggleSelect }) => {
+const SceneCard: React.FC<SceneCardProps> = ({ scene, index, onUpdatePrompt, onDelete, onRegenerate, onTransform, onGrokVideo, onVeoVideo, onPlaySceneAudio, playingSceneId, sceneProgress, onAddAfter, onSplit, onMerge, onAutoPrompt, onReferenceUpload, onUploadImage, onOpenDetail, onCopyScript, isSelected, onToggleSelect, totalScenes }) => {
   const refInputRef = useRef<HTMLInputElement>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
   return (
@@ -323,6 +326,16 @@ const SceneCard: React.FC<SceneCardProps> = ({ scene, index, onUpdatePrompt, onD
             onClick={() => onVeoVideo(scene.id)} />
           <div className="w-px h-5 bg-gray-700 mx-0.5" />
           {/* Utility actions */}
+          <ActionButton label="나누기" color="orange"
+            tooltip="장면을 반으로 나누기"
+            icon={<svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h8M8 12h4m-4 5h8M3 3v18M21 3v18"/></svg>}
+            onClick={() => onSplit(index)} />
+          <ActionButton label="합치기" color="cyan"
+            tooltip="다음 장면과 합치기"
+            icon={<svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7"/></svg>}
+            disabled={index >= totalScenes - 1}
+            onClick={() => onMerge(index)} />
+          <div className="w-px h-5 bg-gray-700 mx-0.5" />
           <ActionButton label="추가" color="green"
             tooltip="뒤에 장면 추가"
             icon={<svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4"/></svg>}
@@ -420,15 +433,18 @@ interface GridSceneCardProps {
   playingSceneId?: string | null;
   sceneProgress?: number;
   onAddAfter: (index: number) => void;
+  onSplit: (index: number) => void;
+  onMerge: (index: number) => void;
   onReferenceUpload: (id: string, file: File) => void;
   onUploadImage: (id: string, file: File) => void;
   onOpenDetail: (scene: Scene, index: number) => void;
   onCopyScript?: (sceneId: string) => void;
   isSelected?: boolean;
   onToggleSelect?: (id: string) => void;
+  totalScenes: number;
 }
 
-const GridSceneCard: React.FC<GridSceneCardProps> = ({ scene, index, onRegenerate, onDelete, onGrokVideo, onVeoVideo, onPlaySceneAudio, playingSceneId, sceneProgress, onAddAfter, onReferenceUpload, onUploadImage, onOpenDetail, onCopyScript, isSelected, onToggleSelect }) => {
+const GridSceneCard: React.FC<GridSceneCardProps> = ({ scene, index, onRegenerate, onDelete, onGrokVideo, onVeoVideo, onPlaySceneAudio, playingSceneId, sceneProgress, onAddAfter, onSplit, onMerge, onReferenceUpload, onUploadImage, onOpenDetail, onCopyScript, isSelected, onToggleSelect, totalScenes }) => {
   const isThisPlaying = playingSceneId === scene.id;
   const gridUploadRef = useRef<HTMLInputElement>(null);
   const arClass = aspectRatioClass(useProjectStore((s) => s.config?.aspectRatio));
@@ -580,6 +596,16 @@ const GridSceneCard: React.FC<GridSceneCardProps> = ({ scene, index, onRegenerat
               </button>
             )}
             {scene.referenceImage && <span className="w-1.5 h-1.5 rounded-full bg-green-400" title="레퍼런스 이미지" />}
+            <button type="button" onClick={(e) => { e.stopPropagation(); onSplit(index); }}
+              className="w-5 h-5 rounded flex items-center justify-center text-gray-500 hover:text-orange-400 transition-colors" title="장면 나누기">
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h8M8 12h4m-4 5h8M3 3v18M21 3v18"/></svg>
+            </button>
+            {index < totalScenes - 1 && (
+              <button type="button" onClick={(e) => { e.stopPropagation(); onMerge(index); }}
+                className="w-5 h-5 rounded flex items-center justify-center text-gray-500 hover:text-cyan-400 transition-colors" title="다음 장면과 합치기">
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7"/></svg>
+              </button>
+            )}
             <button type="button" onClick={(e) => { e.stopPropagation(); onAddAfter(index); }}
               className="w-5 h-5 rounded flex items-center justify-center text-gray-500 hover:text-green-400 transition-colors" title="장면 추가">
               <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4"/></svg>
@@ -611,10 +637,13 @@ interface SceneDetailModalProps {
   onReferenceUpload: (id: string, file: File) => void;
   onUploadImage: (id: string, file: File) => void;
   onAddAfter: (index: number) => void;
+  onSplit: (index: number) => void;
+  onMerge: (index: number) => void;
+  totalScenes: number;
 }
 
 const SceneDetailModal: React.FC<SceneDetailModalProps> = ({
-  scene: sceneProp, index, onClose, onUpdatePrompt, onRegenerate, onTransform, onGrokVideo, onVeoVideo, onDelete, onAutoPrompt, onReferenceUpload, onUploadImage, onAddAfter
+  scene: sceneProp, index, onClose, onUpdatePrompt, onRegenerate, onTransform, onGrokVideo, onVeoVideo, onDelete, onAutoPrompt, onReferenceUpload, onUploadImage, onAddAfter, onSplit, onMerge, totalScenes
 }) => {
   // 스토어에서 최신 장면 데이터 구독 (stale prop 방지)
   const liveScene = useProjectStore((s) => s.scenes.find((sc) => sc.id === sceneProp.id));
@@ -847,8 +876,20 @@ const SceneDetailModal: React.FC<SceneDetailModalProps> = ({
                 </div>
               )}
             </div>
-            {/* Destructive actions */}
-            <div className="flex items-center gap-2 mt-3 pt-3 border-t border-gray-700/50">
+            {/* Scene management actions */}
+            <div className="flex flex-wrap items-center gap-2 mt-3 pt-3 border-t border-gray-700/50">
+              <button type="button" onClick={() => { onSplit(index); onClose(); }}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-orange-400 hover:bg-orange-900/20 border border-orange-500/20 rounded-lg transition-colors">
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h8M8 12h4m-4 5h8M3 3v18M21 3v18"/></svg>
+                장면 나누기
+              </button>
+              {index < totalScenes - 1 && (
+                <button type="button" onClick={() => { onMerge(index); onClose(); }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-cyan-400 hover:bg-cyan-900/20 border border-cyan-500/20 rounded-lg transition-colors">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7"/></svg>
+                  다음 장면과 합치기
+                </button>
+              )}
               <button type="button" onClick={() => onAddAfter(index)}
                 className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-green-400 hover:bg-green-900/20 border border-green-500/20 rounded-lg transition-colors">
                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4"/></svg>
@@ -881,13 +922,15 @@ const VirtualGridView: React.FC<{
   playingSceneId: string | null;
   sceneProgress: number;
   handleAddSceneAfter: (index: number) => void;
+  handleSplitScene: (index: number) => void;
+  handleMergeScene: (index: number) => void;
   handleReferenceUpload: (id: string, file: File) => void;
   handleUploadImage: (id: string, file: File) => void;
   setDetailScene: (d: { scene: Scene; index: number }) => void;
   handleCopyScript: (sceneId: string) => void;
   selectedSceneIds: Set<string>;
   toggleSceneSelect: (id: string) => void;
-}> = ({ scenes, handleGenerateImage, removeScene, videoBatch, handlePlaySceneAudio, playingSceneId, sceneProgress, handleAddSceneAfter, handleReferenceUpload, handleUploadImage, setDetailScene, handleCopyScript, selectedSceneIds, toggleSceneSelect }) => {
+}> = ({ scenes, handleGenerateImage, removeScene, videoBatch, handlePlaySceneAudio, playingSceneId, sceneProgress, handleAddSceneAfter, handleSplitScene, handleMergeScene, handleReferenceUpload, handleUploadImage, setDetailScene, handleCopyScript, selectedSceneIds, toggleSceneSelect }) => {
   const parentRef = useRef<HTMLDivElement>(null);
   const rowCount = Math.ceil(scenes.length / GRID_COLS);
 
@@ -931,8 +974,11 @@ const VirtualGridView: React.FC<{
                     playingSceneId={playingSceneId}
                     sceneProgress={sceneProgress}
                     onAddAfter={handleAddSceneAfter}
+                    onSplit={handleSplitScene}
+                    onMerge={handleMergeScene}
                     onReferenceUpload={handleReferenceUpload}
                     onUploadImage={handleUploadImage}
+                    totalScenes={scenes.length}
                     onOpenDetail={(scene, idx) => setDetailScene({ scene, index: idx })}
                     onCopyScript={handleCopyScript}
                     isSelected={selectedSceneIds.has(scene.id)}
@@ -962,6 +1008,8 @@ const VirtualListView: React.FC<{
   playingSceneId: string | null;
   sceneProgress: number;
   handleAddSceneAfter: (index: number) => void;
+  handleSplitScene: (index: number) => void;
+  handleMergeScene: (index: number) => void;
   handleAutoPrompt: (sceneId: string) => void;
   handleReferenceUpload: (id: string, file: File) => void;
   handleUploadImage: (id: string, file: File) => void;
@@ -969,7 +1017,7 @@ const VirtualListView: React.FC<{
   handleCopyScript: (sceneId: string) => void;
   selectedSceneIds: Set<string>;
   toggleSceneSelect: (id: string) => void;
-}> = ({ scenes, handleUpdatePrompt, removeScene, handleGenerateImage, videoBatch, handlePlaySceneAudio, playingSceneId, sceneProgress, handleAddSceneAfter, handleAutoPrompt, handleReferenceUpload, handleUploadImage, setDetailScene, handleCopyScript, selectedSceneIds, toggleSceneSelect }) => {
+}> = ({ scenes, handleUpdatePrompt, removeScene, handleGenerateImage, videoBatch, handlePlaySceneAudio, playingSceneId, sceneProgress, handleAddSceneAfter, handleSplitScene, handleMergeScene, handleAutoPrompt, handleReferenceUpload, handleUploadImage, setDetailScene, handleCopyScript, selectedSceneIds, toggleSceneSelect }) => {
   const parentRef = useRef<HTMLDivElement>(null);
 
   const virtualizer = useVirtualizer({
@@ -1010,6 +1058,8 @@ const VirtualListView: React.FC<{
                 playingSceneId={playingSceneId}
                 sceneProgress={sceneProgress}
                 onAddAfter={handleAddSceneAfter}
+                onSplit={handleSplitScene}
+                onMerge={handleMergeScene}
                 onAutoPrompt={handleAutoPrompt}
                 onReferenceUpload={handleReferenceUpload}
                 onUploadImage={handleUploadImage}
@@ -1017,6 +1067,7 @@ const VirtualListView: React.FC<{
                 onCopyScript={handleCopyScript}
                 isSelected={selectedSceneIds.has(scene.id)}
                 onToggleSelect={toggleSceneSelect}
+                totalScenes={scenes.length}
               />
             </div>
           );
@@ -1033,6 +1084,8 @@ const StoryboardPanel: React.FC = () => {
   const config = useProjectStore((s) => s.config);
   const updateScene = useProjectStore((s) => s.updateScene);
   const removeScene = useProjectStore((s) => s.removeScene);
+  const splitScene = useProjectStore((s) => s.splitScene);
+  const mergeScene = useProjectStore((s) => s.mergeScene);
   const setScenes = useProjectStore((s) => s.setScenes);
   const addCost = useCostStore((s) => s.addCost);
   const currentStyle = useImageVideoStore((s) => s.style);
@@ -1273,6 +1326,24 @@ const StoryboardPanel: React.FC = () => {
   const handleAddSceneAfter = useCallback((index: number) => {
     useProjectStore.getState().addSceneAfter(index);
     showToast(`장면 ${index + 2} 추가됨`);
+  }, []);
+
+  // --- 장면 나누기 / 합치기 ---
+  const handleSplitScene = useCallback((index: number) => {
+    const scene = useProjectStore.getState().scenes[index];
+    if (!scene?.scriptText || scene.scriptText.trim().length < 2) {
+      showToast('나눌 텍스트가 부족합니다');
+      return;
+    }
+    useProjectStore.getState().splitScene(index);
+    showToast(`장면 ${index + 1}을 둘로 나눴습니다`);
+  }, []);
+
+  const handleMergeScene = useCallback((index: number) => {
+    const total = useProjectStore.getState().scenes.length;
+    if (index >= total - 1) return;
+    useProjectStore.getState().mergeScene(index);
+    showToast(`장면 ${index + 1}과 ${index + 2}를 합쳤습니다`);
   }, []);
 
   // --- 대본 → 프롬프트 자동 변환 ---
@@ -2105,6 +2176,9 @@ const StoryboardPanel: React.FC = () => {
           onReferenceUpload={handleReferenceUpload}
           onUploadImage={handleUploadImage}
           onAddAfter={handleAddSceneAfter}
+          onSplit={handleSplitScene}
+          onMerge={handleMergeScene}
+          totalScenes={totalScenes}
         />
       )}
 
@@ -2206,6 +2280,8 @@ const StoryboardPanel: React.FC = () => {
           playingSceneId={playingSceneId}
           sceneProgress={sceneProgress}
           handleAddSceneAfter={handleAddSceneAfter}
+          handleSplitScene={handleSplitScene}
+          handleMergeScene={handleMergeScene}
           handleReferenceUpload={handleReferenceUpload}
           handleUploadImage={handleUploadImage}
           setDetailScene={setDetailScene}
@@ -2224,6 +2300,8 @@ const StoryboardPanel: React.FC = () => {
           playingSceneId={playingSceneId}
           sceneProgress={sceneProgress}
           handleAddSceneAfter={handleAddSceneAfter}
+          handleSplitScene={handleSplitScene}
+          handleMergeScene={handleMergeScene}
           handleAutoPrompt={handleAutoPrompt}
           handleReferenceUpload={handleReferenceUpload}
           handleUploadImage={handleUploadImage}
