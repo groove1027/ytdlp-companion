@@ -227,18 +227,26 @@ const EditRoomExportBar: React.FC<EditRoomExportBarProps> = ({
           </div>
 
           <div className="text-sm text-gray-600 text-right">
-            <p className="text-gray-500">
-              {hasVideos ? (
-                <span className="text-amber-400/80">
-                  {vidLabel} · {scenes.filter(s => !!s.videoUrl).length}개 클립
-                </span>
-              ) : (
-                <span className="text-gray-500">이미지: {imgLabel}</span>
-              )}
-            </p>
-            <p className="text-xs text-gray-600 mt-0.5">
-              {scenes.length}개 장면 · 브라우저 다운로드
-            </p>
+            {/* [FIX #474] 항상 영상/이미지 구성을 명확히 표시 */}
+            {(() => {
+              const vidCount = scenes.filter(s => !!s.videoUrl).length;
+              const imgCount = scenes.length - vidCount;
+              return (
+                <>
+                  <p className="text-gray-500 flex items-center justify-end gap-2">
+                    {vidCount > 0 && (
+                      <span className="text-amber-400/80">🎬 영상 {vidCount}개</span>
+                    )}
+                    {imgCount > 0 && (
+                      <span className={vidCount > 0 ? 'text-gray-500' : 'text-gray-400'}>🖼️ 이미지 {imgCount}개</span>
+                    )}
+                  </p>
+                  <p className="text-xs text-gray-600 mt-0.5">
+                    {scenes.length}개 장면 · {hasVideos ? vidLabel : imgLabel} · 브라우저 다운로드
+                  </p>
+                </>
+              );
+            })()}
           </div>
         </div>
       </div>

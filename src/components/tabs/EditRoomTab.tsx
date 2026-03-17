@@ -1408,15 +1408,14 @@ const EditRoomTab: React.FC = () => {
       showToast('내보낼 장면이 없습니다.');
       return;
     }
-    // [FIX #472] 영상이 없는 장면이 있으면 사전 안내
+    // [FIX #474] 영상이 없는 장면이 있으면 confirm 대화상자로 사전 확인 (Toast는 놓치기 쉬움)
     const videoSceneCount = scenes.filter(s => s.videoUrl).length;
     if (videoSceneCount < scenes.length) {
       const imageOnlyCount = scenes.length - videoSceneCount;
-      showToast(
-        videoSceneCount === 0
-          ? `${scenes.length}개 장면 모두 이미지로 내보냅니다. 영상 클립이 필요하면 이미지/영상 탭에서 영상을 먼저 생성해주세요.`
-          : `영상 ${videoSceneCount}개 + 이미지 ${imageOnlyCount}개로 내보냅니다. 모든 장면을 영상으로 내보내려면 이미지/영상 탭에서 나머지 영상을 생성해주세요.`
-      );
+      const msg = videoSceneCount === 0
+        ? `⚠️ 현재 ${scenes.length}개 장면이 모두 이미지입니다.\n\n영상 클립이 하나도 없는 상태에서 내보내면,\n${targetLabel}에서 모든 장면이 정지 이미지로 표시됩니다.\n\n그래도 이미지로 내보내시겠어요?\n(영상이 필요하면 '취소' 후 이미지/영상 탭에서 영상을 먼저 생성해주세요)`
+        : `⚠️ 미디어 구성 안내\n\n  🎬 영상: ${videoSceneCount}개\n  🖼️ 이미지: ${imageOnlyCount}개\n  📦 전체: ${scenes.length}개 장면\n\n영상이 없는 ${imageOnlyCount}개 장면은 정지 이미지로 내보내집니다.\n\n이대로 내보내시겠어요?\n(모든 장면을 영상으로 하려면 '취소' 후 이미지/영상 탭에서 나머지 영상을 생성해주세요)`;
+      if (!window.confirm(msg)) return;
     }
     showToast(`${targetLabel} 프로젝트 파일을 준비하고 있습니다...`);
     try {
