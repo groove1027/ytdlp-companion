@@ -274,7 +274,7 @@ export const VISUAL_STYLES = [
       { label: '🏛️ 고대 벽화', prompt: 'Ancient mural style, Egyptian hieroglyphics meets Aztec patterns, flat perspective, gold and turquoise, ceremonial, mythological scenes', desc: '이집트 상형문자와 아즈텍 패턴, 평면적 원근법, 금색과 터콰이즈, 신화적 장면' },
       { label: '🌈 사이키델릭', prompt: 'Psychedelic art, trippy swirling patterns, rainbow gradient colors, 1960s counterculture, kaleidoscope effect, mind-bending visuals, groovy', desc: '몽환적 소용돌이 패턴, 무지개 그라데이션, 1960년대 반문화, 만화경 효과' },
       { label: '🖌️ MS 페인트', prompt: 'A crude, MS Paint-style digital illustration characterized by jagged, pixelated black outlines and flat, solid colors without any shading or texture. The drawing has a simplistic, meme-like aesthetic', desc: '조잡한 MS 페인트 스타일, 들쭉날쭉한 픽셀 윤곽선, 평면 단색, 밈 감성' },
-      { label: '🌍 컨트리볼', prompt: 'Countryball Polandball meme art style, all characters are perfectly spherical round balls with national flag patterns painted on sphere surface, simple dot eyes (white circles with black outlines), NO arms NO legs NO limbs NO hands NO feet, crude hand-drawn thick black outlines, simple flat comic look, minimalist background, cute ball characters, political satire webcomic aesthetic, each country represented as a flag-painted sphere', desc: '컨트리볼/폴란드볼 밈, 국기 공 캐릭터, 사지 없음, 대본 맥락에서 국가 자동 인식' }
+      { label: '🌍 컨트리볼', prompt: 'Countryball Polandball meme art style, all characters are perfectly spherical round balls with national flag patterns painted on sphere surface, simple dot eyes (white circles with black outlines), simple expressive mouth on each ball (small curved line or open circle for speaking and emotions), NO arms NO legs NO limbs NO hands NO feet, crude hand-drawn thick black outlines, simple flat comic look, minimalist background, cute ball characters, political satire webcomic aesthetic, each country represented as a flag-painted sphere', desc: '컨트리볼/폴란드볼 밈, 국기 공 캐릭터, 입+눈 표정, 사지 없음, 대본 맥락에서 국가 자동 인식' }
     ]
   },
   {
@@ -500,7 +500,7 @@ export const CHARACTER_STYLES = [
         { label: "유화", prompt: "impasto oil painting, thick brush strokes, textured canvas, van gogh style", emoji: "🎨" },
         { label: "스테인드 글라스", prompt: "stained glass window, colorful glass shards, lead lines, church light, translucent", emoji: "⛪" },
         { label: "MS 페인트", prompt: "A crude, MS Paint-style digital illustration characterized by jagged, pixelated black outlines and flat, solid colors without any shading or texture. The drawing has a simplistic, meme-like aesthetic", emoji: "🖌️" },
-        { label: "컨트리볼", prompt: "Countryball Polandball meme style, perfectly spherical round ball shape, country flag pattern as skin texture, small simple dot eyes (tiny white circles with black pupils), absolutely NO arms NO legs NO limbs NO hands NO feet, crude hand-drawn thick black outlines, simple flat comic look, white background, cute ball character, political satire webcomic aesthetic", emoji: "🌍" }
+        { label: "컨트리볼", prompt: "Countryball Polandball meme style, perfectly spherical round ball shape, country flag pattern as skin texture, small simple dot eyes (tiny white circles with black pupils), simple expressive mouth on the ball (small curved line or open circle for speaking and emotions), absolutely NO arms NO legs NO limbs NO hands NO feet, crude hand-drawn thick black outlines, simple flat comic look, white background, cute ball character, political satire webcomic aesthetic", emoji: "🌍" }
     ]
   },
   {
