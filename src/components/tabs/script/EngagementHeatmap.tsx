@@ -1,8 +1,9 @@
 import React, { useMemo, useState, Suspense } from 'react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { useScriptWriterStore } from '../../../stores/scriptWriterStore';
+import { lazyRetry } from '../../../utils/retryImport';
 
-const EngagementBooster = React.lazy(() => import('./EngagementBooster'));
+const EngagementBooster = lazyRetry(() => import('./EngagementBooster'));
 
 const CHART_TOOLTIP = { backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '8px' };
 const AXIS_STYLE = { fill: '#9ca3af', fontSize: 11 };

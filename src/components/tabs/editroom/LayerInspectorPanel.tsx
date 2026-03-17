@@ -1,11 +1,12 @@
-import React, { lazy, Suspense } from 'react';
+import React, { Suspense } from 'react';
 import { useEditRoomStore } from '../../../stores/editRoomStore';
+import { lazyRetry } from '../../../utils/retryImport';
 
-const VideoInspector = lazy(() => import('./inspectors/VideoInspector'));
-const SubtitleInspector = lazy(() => import('./inspectors/SubtitleInspector'));
-const TransitionInspector = lazy(() => import('./inspectors/TransitionInspector'));
-const AudioInspector = lazy(() => import('./inspectors/AudioInspector'));
-const BgmInspector = lazy(() => import('./inspectors/BgmInspector'));
+const VideoInspector = lazyRetry(() => import('./inspectors/VideoInspector'));
+const SubtitleInspector = lazyRetry(() => import('./inspectors/SubtitleInspector'));
+const TransitionInspector = lazyRetry(() => import('./inspectors/TransitionInspector'));
+const AudioInspector = lazyRetry(() => import('./inspectors/AudioInspector'));
+const BgmInspector = lazyRetry(() => import('./inspectors/BgmInspector'));
 
 const LAYER_LABELS: Record<string, { label: string; icon: string; color: string }> = {
   video: { label: '영상', icon: '🎬', color: 'amber' },

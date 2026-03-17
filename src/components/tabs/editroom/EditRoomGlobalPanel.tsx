@@ -1,4 +1,4 @@
-import React, { Suspense, lazy, useState, useCallback, useEffect } from 'react';
+import React, { Suspense, useState, useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import BgmOverlayPanel from './BgmOverlayPanel';
 import MemeAndSfxPanel, { MemeAndSfxSearchModal } from './MemeAndSfxPanel';
@@ -11,10 +11,11 @@ import { loadFont } from '../../../services/fontLoaderService';
 import { evolinkChat } from '../../../services/evolinkService';
 import { showToast } from '../../../stores/uiStore';
 import type { SubtitleStyle, SubtitleTemplate } from '../../../types';
+import { lazyRetry } from '../../../utils/retryImport';
 
 // 기존 전체 에디터들 lazy load
-const SubtitleStyleEditor = lazy(() => import('../editor/SubtitleStyleEditor'));
-const EffectPresets = lazy(() => import('../editor/EffectPresets'));
+const SubtitleStyleEditor = lazyRetry(() => import('../editor/SubtitleStyleEditor'));
+const EffectPresets = lazyRetry(() => import('../editor/EffectPresets'));
 
 type PanelTab = 'effects' | 'subtitle' | 'bgm' | 'meme-sfx';
 type FullModal = 'effects' | 'subtitle' | 'meme-sfx' | null;

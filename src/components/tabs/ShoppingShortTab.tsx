@@ -1,10 +1,11 @@
-import React, { Suspense, lazy } from 'react';
+import React, { Suspense } from 'react';
 import { useShoppingShortStore } from '../../stores/shoppingShortStore';
 import type { ShoppingWizardStep } from '../../types';
+import { lazyRetry } from '../../utils/retryImport';
 
-const SourceInputStep = lazy(() => import('./shopping/SourceInputStep'));
-const ScriptSelectStep = lazy(() => import('./shopping/ScriptSelectStep'));
-const RenderStep = lazy(() => import('./shopping/RenderStep'));
+const SourceInputStep = lazyRetry(() => import('./shopping/SourceInputStep'));
+const ScriptSelectStep = lazyRetry(() => import('./shopping/ScriptSelectStep'));
+const RenderStep = lazyRetry(() => import('./shopping/RenderStep'));
 
 const WIZARD_STEPS: { id: ShoppingWizardStep; label: string; num: number }[] = [
   { id: 'source', label: '소스 입력', num: 1 },

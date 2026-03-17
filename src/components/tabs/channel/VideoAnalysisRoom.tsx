@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useEffect, lazy, Suspense } from 'react';
+import React, { useState, useRef, useCallback, useEffect, Suspense } from 'react';
 import { logger } from '../../../services/LoggerService';
 import AnalysisLoadingPanel, { notifyAnalysisComplete } from './AnalysisLoadingPanel';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
@@ -32,9 +32,10 @@ import type {
   VideoVersionItem as VersionItem,
   VideoTimedFrame as TimedFrame,
 } from '../../../types';
+import { lazyRetry } from '../../../utils/retryImport';
 
-const ScenarioPreviewPlayer = lazy(() => import('./ScenarioPreviewPlayer'));
-const UploadMasterGuide = lazy(() => import('./UploadMasterGuide'));
+const ScenarioPreviewPlayer = lazyRetry(() => import('./ScenarioPreviewPlayer'));
+const UploadMasterGuide = lazyRetry(() => import('./UploadMasterGuide'));
 
 // ═══════════════════════════════════════════════════
 // 유틸리티

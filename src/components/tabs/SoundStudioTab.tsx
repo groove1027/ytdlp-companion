@@ -1,23 +1,8 @@
-import React, { Suspense, lazy, useState, useCallback, useEffect } from 'react';
+import React, { Suspense, useState, useCallback, useEffect } from 'react';
 import { useSoundStudioStore } from '../../stores/soundStudioStore';
 import { stopAllAudio } from '../../stores/soundStudioStore';
 import { logger } from '../../services/LoggerService';
-
-// [FIX #281] lazyRetry — 배포 후 chunk 해시 변경 시 자동 재시도 + 새로고침
-function lazyRetry(importFn: () => Promise<{ default: React.ComponentType<any> }>) {
-  return lazy(() =>
-    importFn().catch(() => {
-      return importFn().catch(() => {
-        const reloaded = sessionStorage.getItem('__chunk_reload');
-        if (!reloaded) {
-          sessionStorage.setItem('__chunk_reload', '1');
-          window.location.reload();
-        }
-        throw new Error('Failed to fetch dynamically imported module');
-      });
-    })
-  );
-}
+import { lazyRetry } from '../../utils/retryImport';
 
 const VoiceStudio = lazyRetry(() => import('./sound/VoiceStudio'));
 const MusicStudio = lazyRetry(() => import('./sound/MusicStudio'));

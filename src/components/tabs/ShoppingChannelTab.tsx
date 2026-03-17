@@ -1,11 +1,12 @@
-import React, { Suspense, lazy } from 'react';
+import React, { Suspense } from 'react';
 import { useShoppingChannelStore } from '../../stores/shoppingChannelStore';
 import type { ShoppingChannelWizardStep } from '../../types';
+import { lazyRetry } from '../../utils/retryImport';
 
-const ProductInputStep = lazy(() => import('./shopping-channel/ProductInputStep'));
-const ConceptSetupStep = lazy(() => import('./shopping-channel/ConceptSetupStep'));
-const ScriptReviewStep = lazy(() => import('./shopping-channel/ScriptReviewStep'));
-const GenerationStep = lazy(() => import('./shopping-channel/GenerationStep'));
+const ProductInputStep = lazyRetry(() => import('./shopping-channel/ProductInputStep'));
+const ConceptSetupStep = lazyRetry(() => import('./shopping-channel/ConceptSetupStep'));
+const ScriptReviewStep = lazyRetry(() => import('./shopping-channel/ScriptReviewStep'));
+const GenerationStep = lazyRetry(() => import('./shopping-channel/GenerationStep'));
 
 const WIZARD_STEPS: { id: ShoppingChannelWizardStep; label: string; num: number }[] = [
   { id: 'product', label: '제품 입력', num: 1 },

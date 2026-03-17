@@ -1,13 +1,14 @@
 
-import React, { useState, useEffect, lazy, Suspense } from 'react';
+import React, { useState, useEffect, Suspense } from 'react';
 import { ProjectConfig, CharacterDraft, ScriptModeState } from '../types';
 import { getCloudinaryConfig, getKieKey, getApimartKey } from '../services/apiService';
+import { lazyRetry } from '../utils/retryImport';
 
 // [v4.5] CharacterMode/RemakeMode 주석처리됨 - 추후 복원 가능
-// const CharacterMode = lazy(() => import('./modes/CharacterMode'));
-const ScriptMode = lazy(() => import('./modes/ScriptMode'));
-// const RemakeMode = lazy(() => import('./modes/RemakeMode'));
-const ThumbnailMode = lazy(() => import('./modes/ThumbnailMode'));
+// const CharacterMode = lazyRetry(() => import('./modes/CharacterMode'));
+const ScriptMode = lazyRetry(() => import('./modes/ScriptMode'));
+// const RemakeMode = lazyRetry(() => import('./modes/RemakeMode'));
+const ThumbnailMode = lazyRetry(() => import('./modes/ThumbnailMode'));
 
 interface ConfigFormProps {
   onNext: (config: ProjectConfig) => void;

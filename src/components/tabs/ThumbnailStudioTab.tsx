@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useCallback, useRef, Suspense } from 'react';
 import { Thumbnail, VideoFormat } from '../../types';
 import { analyzeScriptContext } from '../../services/geminiService';
 import { useCostStore } from '../../stores/costStore';
@@ -11,8 +11,9 @@ import { useImageVideoStore } from '../../stores/imageVideoStore';
 import { compressImageUnderSize } from '../../utils/fileHelpers';
 import SetupPanel, { SetupState } from './thumbnail/SetupPanel';
 import { logger } from '../../services/LoggerService';
+import { lazyRetry } from '../../utils/retryImport';
 
-const ThumbnailGenerator = lazy(() => import('../ThumbnailGenerator'));
+const ThumbnailGenerator = lazyRetry(() => import('../ThumbnailGenerator'));
 
 interface AnalyzedContext {
   lang?: string;

@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo, useRef, lazy, Suspense } from 'react';
+import React, { useState, useCallback, useMemo, useRef, Suspense } from 'react';
 import type { SyntheticListenerMap } from '@dnd-kit/core/dist/hooks/utilities';
 import type { Scene, ScriptLine, UnifiedSceneTiming, SceneEffectConfig, SceneSubtitleConfig, SceneAudioConfig, SceneOverlayConfig, CommunityMediaItem } from '../../../types';
 import { useEditRoomStore } from '../../../stores/editRoomStore';
@@ -12,8 +12,9 @@ import SceneNarrationPlayer from './SceneNarrationPlayer';
 import SceneSubtitleEditor from './SceneSubtitleEditor';
 import SceneEffectPicker from './SceneEffectPicker';
 import OverlayPicker, { OVERLAY_PRESETS } from './OverlayPicker';
+import { lazyRetry } from '../../../utils/retryImport';
 
-const MediaSearchModal = lazy(() => import('../../MediaSearchModal'));
+const MediaSearchModal = lazyRetry(() => import('../../MediaSearchModal'));
 
 // 접힌 상태 배지용 한국어 레이블
 const PZ_LABELS: Record<string, string> = {

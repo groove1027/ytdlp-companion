@@ -717,8 +717,9 @@ export const useEditPointStore = create<EditPointStore>()(immer((set, get) => ({
     if (isProcessing) { showToast('이미 처리 중입니다.'); return; }
     if (edlEntries.length === 0) { showToast('편집 항목이 없습니다.'); return; }
 
-    // WebCodecs 지원 확인
-    const { isClipCutSupported, cutClips } = await import('../services/webcodecs/clipCutter');
+    // WebCodecs 지원 확인 (retryImport: 배포 후 chunk 404 자동 복구)
+    const { retryImport } = await import('../utils/retryImport');
+    const { isClipCutSupported, cutClips } = await retryImport(() => import('../services/webcodecs/clipCutter'));
     if (!isClipCutSupported()) {
       // 폴백: FFmpeg 스크립트 다운로드
       const fileNameMapping: Record<string, string> = {};
@@ -869,7 +870,8 @@ export const useEditPointStore = create<EditPointStore>()(immer((set, get) => ({
       case 'capcut-pkg':
       case 'vrew-pkg': {
         try {
-          const { buildEdlNlePackageZip } = await import('../services/nleExportService');
+          const { retryImport } = await import('../utils/retryImport');
+          const { buildEdlNlePackageZip } = await retryImport(() => import('../services/nleExportService'));
           const target = exportMode === 'fcp-xml' ? 'premiere' : exportMode === 'capcut-pkg' ? 'capcut' : 'vrew';
           const label = exportMode === 'fcp-xml' ? 'Premiere XML' : exportMode === 'capcut-pkg' ? 'CapCut' : 'VREW';
           showToast(`${label} 패키지 생성 중...`);

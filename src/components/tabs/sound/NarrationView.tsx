@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, Suspense, lazy } from 'react';
+import React, { useState, useCallback, useRef, Suspense } from 'react';
 import { logger } from '../../../services/LoggerService';
 import { useSoundStudioStore, registerAudio, unregisterAudio } from '../../../stores/soundStudioStore';
 import { useProjectStore } from '../../../stores/projectStore';
@@ -14,8 +14,9 @@ import NarrationLineItem from './NarrationLineItem';
 import NarrationCreditBar from './NarrationCreditBar';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
 import { runKieBatch } from '../../../utils/kieBatchRunner';
+import { lazyRetry } from '../../../utils/retryImport';
 
-const VoiceStudio = lazy(() => import('./VoiceStudio'));
+const VoiceStudio = lazyRetry(() => import('./VoiceStudio'));
 
 const NarrationView: React.FC = () => {
   const { requireAuth } = useAuthGuard();

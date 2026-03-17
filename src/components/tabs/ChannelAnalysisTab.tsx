@@ -1,23 +1,8 @@
-import React, { Suspense, lazy, useEffect, useState } from 'react';
+import React, { Suspense, useEffect, useState } from 'react';
 import { useChannelAnalysisStore } from '../../stores/channelAnalysisStore';
 import { getYoutubeApiKeyPoolSize, getActiveYoutubeKeyIndex } from '../../services/apiService';
 import type { ChannelAnalysisSubTab } from '../../types';
-
-// [FIX #281] lazyRetry — 배포 후 chunk 해시 변경 시 자동 재시도 + 새로고침
-function lazyRetry(importFn: () => Promise<{ default: React.ComponentType<any> }>) {
-  return lazy(() =>
-    importFn().catch(() => {
-      return importFn().catch(() => {
-        const reloaded = sessionStorage.getItem('__chunk_reload');
-        if (!reloaded) {
-          sessionStorage.setItem('__chunk_reload', '1');
-          window.location.reload();
-        }
-        throw new Error('Failed to fetch dynamically imported module');
-      });
-    })
-  );
-}
+import { lazyRetry } from '../../utils/retryImport';
 
 const KeywordLab = lazyRetry(() => import('./channel/KeywordLab'));
 const ChannelAnalysisRoom = lazyRetry(() => import('./channel/ChannelAnalysisRoom'));

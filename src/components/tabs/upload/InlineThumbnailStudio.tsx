@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, lazy, Suspense } from 'react';
+import React, { useState, useRef, useCallback, Suspense } from 'react';
 import type { Thumbnail, VideoFormat } from '../../../types';
 import { analyzeStyleReference } from '../../../services/geminiService';
 import { resizeImage } from '../../../services/imageProcessingService';
@@ -10,8 +10,9 @@ import { useUIStore, showToast } from '../../../stores/uiStore';
 import { extractYouTubeVideoId, fetchYouTubeThumbnail } from '../../../utils/thumbnailUtils';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
 import { logger } from '../../../services/LoggerService';
+import { lazyRetry } from '../../../utils/retryImport';
 
-const ThumbnailGenerator = lazy(() => import('../../ThumbnailGenerator'));
+const ThumbnailGenerator = lazyRetry(() => import('../../ThumbnailGenerator'));
 
 // --- 컴포넌트 ---
 

@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useCallback, Suspense } from 'react';
 import { Toaster } from 'sonner';
 import { AnimatePresence, motion } from 'motion/react';
 import { ErrorBoundary as ReactErrorBoundary, FallbackProps } from 'react-error-boundary';
@@ -48,25 +48,7 @@ import { useProjectStore, autoRestoreOrCreateProject } from './stores/projectSto
 import { useNavigationStore } from './stores/navigationStore';
 import { useImageVideoStore } from './stores/imageVideoStore';
 import { logger } from './services/LoggerService';
-
-// 청크 로딩 실패 시 1회 재시도 + 자동 리로드 (배포 후 구버전 캐시 문제 해결)
-function lazyRetry(importFn: () => Promise<{ default: React.ComponentType<any> }>) {
-  return lazy(() =>
-    importFn().catch(() => {
-      // 1회 재시도
-      return importFn().catch(() => {
-        // 재시도도 실패 → 아직 리로드 안 했으면 자동 리로드
-        const reloaded = sessionStorage.getItem('__chunk_reload');
-        if (!reloaded) {
-          sessionStorage.setItem('__chunk_reload', '1');
-          window.location.reload();
-        }
-        // 이미 리로드 했으면 에러 전파 → ErrorBoundary에서 처리
-        throw new Error('Failed to fetch dynamically imported module');
-      });
-    })
-  );
-}
+import { lazyRetry } from './utils/retryImport';
 
 // [v4.5] 새로운 탭 컴포넌트 (Lazy Loading + 자동 재시도)
 const ProjectDashboard = lazyRetry(() => import('./components/tabs/ProjectDashboard'));
@@ -270,6 +252,22 @@ const App: React.FC = () => {
     import('./stores/soundStudioStore').then(({ useSoundStudioStore }) => {
       useSoundStudioStore.getState().loadMusicLibrary();
     }).catch((e) => { logger.trackSwallowedError('App:loadMusicLibrary', e); });
+
+    // [FIX #482] 글로벌 안전망: bare await import() 청크 로드 실패 시 자동 리로드
+    const handleChunkRejection = (event: PromiseRejectionEvent) => {
+      const msg = event.reason instanceof Error ? event.reason.message : String(event.reason);
+      const isChunk = msg.includes('Failed to fetch dynamically imported module')
+        || msg.includes('Loading chunk')
+        || msg.includes('Loading CSS chunk')
+        || msg.includes('error loading dynamically imported module');
+      if (isChunk && !sessionStorage.getItem('__chunk_reload')) {
+        event.preventDefault();
+        sessionStorage.setItem('__chunk_reload', '1');
+        window.location.reload();
+      }
+    };
+    window.addEventListener('unhandledrejection', handleChunkRejection);
+    return () => window.removeEventListener('unhandledrejection', handleChunkRejection);
   }, []);
 
   // Auto-save via Zustand store subscriptions

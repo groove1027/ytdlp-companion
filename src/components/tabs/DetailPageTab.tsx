@@ -1,4 +1,4 @@
-import React, { useState, useCallback, Suspense, lazy } from 'react';
+import React, { useState, useCallback, Suspense } from 'react';
 import { evolinkChat, evolinkGenerateImage } from '../../services/evolinkService';
 import { uploadMediaToHosting } from '../../services/uploadService';
 import { showToast } from '../../stores/uiStore';
@@ -10,9 +10,10 @@ import { useAuthGuard } from '../../hooks/useAuthGuard';
 import type { DetailImageSegment, PageLength } from '../../types';
 import type { EvolinkChatMessage } from '../../services/evolinkService';
 import { webcodecExtractFrames, isVideoDecoderSupported } from '../../services/webcodecs/videoDecoder';
+import { lazyRetry } from '../../utils/retryImport';
 
-const ShoppingShortContent = lazy(() => import('./ShoppingShortTab'));
-const ShoppingChannelContent = lazy(() => import('./ShoppingChannelTab'));
+const ShoppingShortContent = lazyRetry(() => import('./ShoppingShortTab'));
+const ShoppingChannelContent = lazyRetry(() => import('./ShoppingChannelTab'));
 
 // --- Sub-tab type ---
 type SubTab = 'detail' | 'thumbnail' | 'shopping-short' | 'shopping-channel';
