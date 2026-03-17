@@ -351,11 +351,18 @@ const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
                 </>
               )}
               {mode === 'login' && (
-                <label className="flex items-center gap-2 cursor-pointer select-none">
-                  <input type="checkbox" checked={rememberMe} onChange={e => setRememberMe(e.target.checked)}
-                    className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-blue-500 focus:ring-blue-500/30 focus:ring-offset-0 cursor-pointer" />
-                  <span className="text-sm text-gray-400">로그인 상태 유지 (30일)</span>
-                </label>
+                <div className="flex items-center justify-between">
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input type="checkbox" checked={rememberMe} onChange={e => setRememberMe(e.target.checked)}
+                      className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-blue-500 focus:ring-blue-500/30 focus:ring-offset-0 cursor-pointer" />
+                    <span className="text-sm text-gray-400">로그인 상태 유지 (30일)</span>
+                  </label>
+                  <button type="button"
+                    onClick={() => useUIStore.getState().setShowFeedbackModal(true, 'auth')}
+                    className="text-xs text-blue-400/70 hover:text-blue-400 transition-colors">
+                    비밀번호를 잊으셨나요?
+                  </button>
+                </div>
               )}
               {error && <div className="bg-red-900/20 border border-red-500/30 rounded-xl px-4 py-3 text-sm text-red-400">{error}</div>}
               {mode === 'signup' && (
