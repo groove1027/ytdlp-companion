@@ -1428,7 +1428,7 @@ function buildEditRoomSrt(timeline: UnifiedSceneTiming[]): string {
   return entries.join('\n\n');
 }
 
-/** 편집실 타임라인 → FCP XML (xmeml v5) — 이미지/영상 클립 시퀀스 */
+/** 편집실 타임라인 → FCP XML (xmeml v5) — 이미지/영상 클립 시퀀스 + 오디오 트랙 */
 function buildEditRoomFcpXml(params: {
   timeline: UnifiedSceneTiming[];
   scenes: EditRoomScene[];
@@ -1461,16 +1461,17 @@ function buildEditRoomFcpXml(params: {
     </marker>`;
   }).join('');
 
-  // 비디오 클립 (장면마다 별도 파일)
+  // 비디오 클립 (장면마다 별도 파일 + 오디오 미디어 스펙 포함)
   const videoClips = timeline.map((t, i) => {
     const scene = scenes.find(s => s.id === t.sceneId);
     const hasVideo = !!scene?.videoUrl;
     const ext = hasVideo ? 'mp4' : 'jpg';
     const fileName = `media/${String(i + 1).padStart(3, '0')}_scene.${ext}`;
     const clipDurFrames = toFrames(t.imageDuration);
+    const clipLabel = (scene?.scriptText || `장면 ${i + 1}`).slice(0, 40);
     return `
-          <clipitem id="clip-${i + 1}">
-            <name>${escXml(`#${i + 1} ${(scene?.scriptText || '').slice(0, 40)}`)}</name>
+          <clipitem id="clip-${i + 1}" premiereChannelType="stereo">
+            <name>${escXml(`#${i + 1} ${clipLabel}`)}</name>
             <duration>${clipDurFrames}</duration>
             <rate><ntsc>${ntscStr}</ntsc><timebase>${timebase}</timebase></rate>
             <in>0</in>
@@ -1484,10 +1485,56 @@ function buildEditRoomFcpXml(params: {
               <rate><ntsc>${ntscStr}</ntsc><timebase>${timebase}</timebase></rate>
               <media>
                 <video><samplecharacteristics><width>${width}</width><height>${height}</height><anamorphic>FALSE</anamorphic><pixelaspectratio>square</pixelaspectratio><fielddominance>none</fielddominance></samplecharacteristics></video>
+                <audio><channelcount>2</channelcount><samplecharacteristics><samplerate>48000</samplerate><depth>16</depth></samplecharacteristics></audio>
               </media>
             </file>
             <sourcetrack><mediatype>video</mediatype><trackindex>1</trackindex></sourcetrack>
             <labels><label2>Iris</label2></labels>
+            <logginginfo>
+              <description>${escXml(scene?.scriptText || '')}</description>
+              <scene>${escXml(String(i + 1))}</scene>
+            </logginginfo>
+            <link>
+              <linkclipref>clip-${i + 1}</linkclipref>
+              <mediatype>video</mediatype>
+              <trackindex>1</trackindex>
+              <clipindex>${i + 1}</clipindex>
+            </link>
+            <link>
+              <linkclipref>audio-${i + 1}</linkclipref>
+              <mediatype>audio</mediatype>
+              <trackindex>1</trackindex>
+              <clipindex>${i + 1}</clipindex>
+            </link>
+          </clipitem>`;
+  }).join('');
+
+  // 오디오 클립 (비디오 클립에 링크)
+  const audioClips = timeline.map((t, i) => {
+    const clipDurFrames = toFrames(t.imageDuration);
+    return `
+          <clipitem id="audio-${i + 1}">
+            <name>${escXml(`Audio ${String(i + 1).padStart(3, '0')}`)}</name>
+            <duration>${clipDurFrames}</duration>
+            <rate><ntsc>${ntscStr}</ntsc><timebase>${timebase}</timebase></rate>
+            <in>0</in>
+            <out>${clipDurFrames}</out>
+            <start>${toFrames(t.imageStartTime)}</start>
+            <end>${toFrames(t.imageEndTime)}</end>
+            <file id="file-${i + 1}"/>
+            <sourcetrack><mediatype>audio</mediatype><trackindex>1</trackindex></sourcetrack>
+            <link>
+              <linkclipref>clip-${i + 1}</linkclipref>
+              <mediatype>video</mediatype>
+              <trackindex>1</trackindex>
+              <clipindex>${i + 1}</clipindex>
+            </link>
+            <link>
+              <linkclipref>audio-${i + 1}</linkclipref>
+              <mediatype>audio</mediatype>
+              <trackindex>1</trackindex>
+              <clipindex>${i + 1}</clipindex>
+            </link>
           </clipitem>`;
   }).join('');
 
@@ -1551,25 +1598,80 @@ function buildEditRoomFcpXml(params: {
           <enabled>TRUE</enabled>${subtitleClips}
         </track>` : ''}
       </video>
+      <audio>
+        <numOutputChannels>2</numOutputChannels>
+        <format>
+          <samplecharacteristics>
+            <samplerate>48000</samplerate>
+            <depth>16</depth>
+          </samplecharacteristics>
+        </format>
+        <outputs>
+          <group>
+            <index>1</index>
+            <numchannels>2</numchannels>
+            <downmix>0</downmix>
+            <channel><index>1</index></channel>
+            <channel><index>2</index></channel>
+          </group>
+        </outputs>
+        <track>
+          <outputchannelindex>1</outputchannelindex>${audioClips}
+        </track>
+      </audio>
     </media>
   </sequence>
 </xmeml>`;
 }
 
-/** 이미지/영상 URL에서 Blob으로 fetch */
+/** 이미지/영상 URL에서 Blob으로 fetch (data: / blob: / https: 모두 지원) */
 async function fetchAssetBlob(url: string): Promise<Blob | null> {
   if (!url) return null;
+  // data: URL → 직접 디코딩 (fetch 폴백 포함)
   if (url.startsWith('data:')) {
     try {
-      const res = await fetch(url);
-      return await res.blob();
-    } catch { return null; }
+      const arr = url.split(',');
+      const mime = arr[0].match(/:(.*?);/)?.[1] || 'application/octet-stream';
+      const bstr = atob(arr[1]);
+      const u8 = new Uint8Array(bstr.length);
+      for (let i = 0; i < bstr.length; i++) u8[i] = bstr.charCodeAt(i);
+      return new Blob([u8], { type: mime });
+    } catch {
+      // atob 실패 시 fetch 폴백
+      try { const r = await fetch(url); return await r.blob(); } catch { return null; }
+    }
   }
+  // blob: URL
+  if (url.startsWith('blob:')) {
+    try { const r = await fetch(url); return await r.blob(); } catch { return null; }
+  }
+  // https / http URL
   try {
     const res = await fetch(url);
     if (res.ok) return await res.blob();
   } catch { /* CORS 실패 시 무시 */ }
   return null;
+}
+
+/** 편집실 타임라인 → CapCut 네이티브 SRT (장면별 통합 자막 — 가장 안정적 import 방법) */
+function buildEditRoomSceneSrt(timeline: UnifiedSceneTiming[], scenes: EditRoomScene[]): string {
+  const entries: string[] = [];
+  for (let i = 0; i < timeline.length; i++) {
+    const t = timeline[i];
+    // 자막 세그먼트가 있으면 사용, 없으면 대본 텍스트 사용
+    const segs = t.subtitleSegments.filter(seg => seg.text.trim());
+    if (segs.length > 0) {
+      for (const seg of segs) {
+        entries.push(`${entries.length + 1}\n${secondsToSrtTime(seg.startTime)} --> ${secondsToSrtTime(seg.endTime)}\n${breakLines(seg.text)}`);
+      }
+    } else {
+      const scene = scenes.find(s => s.id === t.sceneId);
+      if (scene?.scriptText?.trim()) {
+        entries.push(`${entries.length + 1}\n${secondsToSrtTime(t.imageStartTime)} --> ${secondsToSrtTime(t.imageEndTime)}\n${breakLines(scene.scriptText)}`);
+      }
+    }
+  }
+  return entries.join('\n\n');
 }
 
 /** 편집실 타임라인 → NLE 패키지 ZIP (CapCut / Premiere / VREW) */
@@ -1594,9 +1696,15 @@ export async function buildEditRoomNleZip(params: {
   else if (aspectRatio === '1:1') { w = 1080; h = 1080; }
   else if (aspectRatio === '4:3') { w = 1440; h = 1080; }
 
-  // SRT 자막
+  // SRT 자막 (모든 타겟에서 생성)
   const srtContent = buildEditRoomSrt(timeline);
   if (srtContent) zip.file(`${safeName}_자막.srt`, BOM + srtContent);
+
+  // 장면별 통합 SRT (CapCut용 — 대본 텍스트 폴백 포함)
+  const sceneSrt = buildEditRoomSceneSrt(timeline, scenes);
+  if (sceneSrt && target === 'capcut') {
+    zip.file(`${safeName}_장면자막.srt`, BOM + sceneSrt);
+  }
 
   // 미디어 에셋 수집 (이미지/영상/나레이션)
   for (let i = 0; i < timeline.length; i++) {
@@ -1624,38 +1732,78 @@ export async function buildEditRoomNleZip(params: {
     }
   }
 
-  // FCP XML (모든 타겟에서 생성)
+  // FCP XML (Premiere/VREW/CapCut 공통)
   const xml = buildEditRoomFcpXml({ timeline, scenes, title, fps, width: w, height: h });
   zip.file(`${safeName}.xml`, xml);
 
-  const targetLabel = target === 'premiere' ? 'Premiere Pro / DaVinci Resolve'
-    : target === 'capcut' ? 'CapCut' : 'VREW';
+  // CapCut 전용: draft_content.json + draft_meta_info.json (프로젝트 폴더 복사 방식)
+  if (target === 'capcut') {
+    const totalDurUs = Math.ceil((timeline[timeline.length - 1]?.imageEndTime || 0) * 1_000_000);
+    const draftMeta = JSON.stringify({
+      draft_fold_path: '', draft_id: '', draft_name: title, draft_root_path: '',
+      tm_draft_create: Math.floor(Date.now() / 1000),
+      tm_draft_modified: Math.floor(Date.now() / 1000),
+      tm_duration: totalDurUs,
+    });
+    zip.file('draft_meta_info.json', draftMeta);
+  }
 
-  zip.file('README.txt', [
-    `=== ${title} — ${targetLabel} ===`,
-    '',
-    '★ 추천: XML import (편집점 + 이미지/영상 자동 배치)',
-    ...(target === 'premiere' ? [
+  // README (CapCut은 SRT import 가장 안정적이라 SRT 중심으로 안내)
+  if (target === 'premiere') {
+    zip.file('README.txt', [
+      `=== ${title} — Premiere Pro / DaVinci Resolve ===`,
+      '',
+      '[ 가져오기 ]',
       '1. ZIP을 원하는 위치에 압축 해제하세요.',
       '2. Premiere Pro > File > Import (Ctrl+I)',
       `3. "${safeName}.xml" 선택 → 타임라인 자동 생성`,
       '4. media/ 폴더의 이미지/영상이 자동 연결됩니다.',
-    ] : target === 'capcut' ? [
+      '',
+      '[ 자막 ]',
+      `• "${safeName}_자막.srt" → Captions 트랙으로 가져올 수 있습니다.`,
+      '',
+      '[ 나레이션 ]',
+      '• audio/ 폴더의 나레이션 MP3를 오디오 트랙에 배치하세요.',
+      '',
+      `• ${timeline.length}개 장면 · ${w}x${h} · ${fps}fps`,
+    ].join('\n'));
+  } else if (target === 'capcut') {
+    zip.file('README.txt', [
+      `=== ${title} — CapCut 가져오기 안내 ===`,
+      '',
+      '★ 가장 확실한 방법: SRT 자막 가져오기',
       '1. CapCut 데스크톱을 열고 새 프로젝트를 생성합니다.',
-      '2. File > Import > XML File 클릭',
-      `3. "${safeName}.xml" 선택`,
-      '4. media/ 폴더 이미지/영상이 자동 연결됩니다.',
-    ] : [
+      '2. media/ 폴더의 이미지/영상을 미디어 패널에 드래그합니다.',
+      '3. 이미지/영상을 순서대로 타임라인에 배치합니다.',
+      `4. 자막 탭 > "자막 가져오기" (Import Subtitles)`,
+      `5. "${safeName}_자막.srt" 또는 "${safeName}_장면자막.srt" 선택`,
+      '6. 자막이 타임라인에 자동 배치됩니다!',
+      '',
+      '[ 대안: XML 가져오기 (CapCut 2025+ 데스크톱) ]',
+      '• File > Import > XML File 메뉴가 있다면:',
+      `  "${safeName}.xml" 선택 → 편집점 자동 생성`,
+      '',
+      '[ 나레이션 ]',
+      '• audio/ 폴더의 나레이션 MP3를 오디오 트랙에 배치하세요.',
+      '',
+      `• ${timeline.length}개 장면 · ${w}x${h} · ${fps}fps`,
+    ].join('\n'));
+  } else {
+    zip.file('README.txt', [
+      `=== ${title} — VREW ===`,
+      '',
+      '★ 추천: XML 가져오기',
       '1. VREW에서 File > 가져오기 > XML 파일',
       `2. "${safeName}.xml" 선택 → 타임라인 자동 생성`,
       '3. media/ 폴더 이미지/영상이 자동 연결됩니다.',
-    ]),
-    '',
-    '[ 대안: SRT 자막만 가져오기 ]',
-    `• "${safeName}_자막.srt" 파일을 자막으로 가져올 수 있습니다.`,
-    '',
-    `• ${timeline.length}개 장면 · ${w}x${h} · ${fps}fps`,
-  ].join('\n'));
+      '',
+      '[ 대안: SRT 자막만 가져오기 ]',
+      '1. media/ 이미지/영상을 VREW에 import 후',
+      `2. 자막 > SRT 불러오기 > "${safeName}_자막.srt"`,
+      '',
+      `• ${timeline.length}개 장면 · ${w}x${h} · ${fps}fps`,
+    ].join('\n'));
+  }
 
-  return zip.generateAsync({ type: 'blob', compression: 'STORE' });
+  return zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
 }
