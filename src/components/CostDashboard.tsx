@@ -45,8 +45,8 @@ const CostDashboard: React.FC = () => {
                 </div>
             </div>
 
-            <span className="text-sm font-bold text-red-400 animate-pulse hidden md:inline-block border border-red-500/30 bg-red-900/20 px-2 py-1 rounded">
-                ※ 새로고침 시 초기화
+            <span className="text-sm font-bold text-emerald-400 hidden md:inline-block border border-emerald-500/30 bg-emerald-900/20 px-2 py-1 rounded">
+                ✓ 자동 저장됨
             </span>
 
             <div className={`

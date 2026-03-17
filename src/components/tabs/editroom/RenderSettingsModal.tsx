@@ -1,5 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import { useEditRoomStore } from '../../../stores/editRoomStore';
+import { useProjectStore } from '../../../stores/projectStore';
 import type { AudioMasterPreset, LoudnessNormConfig } from '../../../types';
 
 /** 플랫폼별 라우드니스 프리셋 */
@@ -36,10 +37,18 @@ interface RenderSettingsModalProps {
   onConfirm: () => void;
 }
 
+const ASPECT_RATIO_PRESETS = [
+  { value: '16:9', label: '16:9', desc: '가로형 (YouTube)', icon: '▬', w: 1920, h: 1080 },
+  { value: '9:16', label: '9:16', desc: '세로형 (숏츠/릴스)', icon: '▮', w: 1080, h: 1920 },
+  { value: '1:1', label: '1:1', desc: '정방형 (인스타)', icon: '■', w: 1080, h: 1080 },
+  { value: '4:3', label: '4:3', desc: '클래식', icon: '▭', w: 1440, h: 1080 },
+];
+
 const RenderSettingsModal: React.FC<RenderSettingsModalProps> = ({ onClose, onConfirm }) => {
   const renderSettings = useEditRoomStore((s) => s.renderSettings);
   const setRenderSettings = useEditRoomStore((s) => s.setRenderSettings);
   const bgmTrack = useEditRoomStore((s) => s.bgmTrack);
+  const projectAspectRatio = useProjectStore((s) => s.config?.aspectRatio || '16:9');
 
   const [localLoudness, setLocalLoudness] = useState<LoudnessNormConfig>(renderSettings.loudness);
   const [localPreset, setLocalPreset] = useState<AudioMasterPreset | null>(renderSettings.masterPresetOverride);
@@ -93,6 +102,46 @@ const RenderSettingsModal: React.FC<RenderSettingsModalProps> = ({ onClose, onCo
         </div>
 
         <div className="flex-1 overflow-y-auto p-5 space-y-5">
+
+          {/* ═══ 섹션: 화면 비율 ═══ */}
+          <div>
+            <div className="flex items-center gap-2 mb-1">
+              <span className="w-5 h-5 rounded-md bg-amber-600/20 flex items-center justify-center text-amber-400 text-xs">📐</span>
+              <span className="text-sm font-bold text-white">화면 비율</span>
+            </div>
+            <p className="text-[10px] text-gray-500 mb-3 ml-7">출력 영상의 화면 비율을 설정합니다.</p>
+            <div className="grid grid-cols-4 gap-1.5">
+              {ASPECT_RATIO_PRESETS.map((ar) => (
+                <button
+                  key={ar.value}
+                  type="button"
+                  onClick={() => {
+                    const currentConfig = useProjectStore.getState().config;
+                    if (currentConfig) {
+                      useProjectStore.getState().setConfig({ ...currentConfig, aspectRatio: ar.value as any });
+                    }
+                  }}
+                  className={`relative flex flex-col items-center gap-1 px-2 py-3 rounded-xl border-2 transition-all ${
+                    projectAspectRatio === ar.value
+                      ? 'bg-amber-600/10 border-amber-500/60 text-amber-400'
+                      : 'bg-gray-800/50 border-gray-700/50 text-gray-400 hover:border-gray-500 hover:text-gray-200'
+                  }`}
+                >
+                  {projectAspectRatio === ar.value && (
+                    <span className="absolute top-1 right-1 w-3.5 h-3.5 bg-amber-500 rounded-full flex items-center justify-center">
+                      <svg className="w-2 h-2 text-white" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7" /></svg>
+                    </span>
+                  )}
+                  <span className="text-base">{ar.icon}</span>
+                  <span className="text-sm font-bold">{ar.label}</span>
+                  <span className="text-[9px] text-gray-500">{ar.desc}</span>
+                  <span className="text-[8px] text-gray-600">{ar.w}×{ar.h}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="border-t border-gray-700/50" />
 
           {/* ═══ 섹션: 비트레이트 ═══ */}
           <div>
@@ -327,6 +376,8 @@ const RenderSettingsModal: React.FC<RenderSettingsModalProps> = ({ onClose, onCo
         {/* 하단 액션 */}
         <div className="px-5 py-3 border-t border-gray-700/50 bg-gray-800/30 flex items-center justify-between flex-shrink-0">
           <div className="text-[10px] text-gray-500 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+            <span className="text-amber-400 font-bold">{projectAspectRatio}</span>
+            <span className="text-gray-600">|</span>
             <span className="text-emerald-400 font-bold">{localBitrate} Mbps</span>
             <span className="text-gray-600">|</span>
             {localLoudness.enabled

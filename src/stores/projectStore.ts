@@ -36,7 +36,7 @@ export const autoRestoreOrCreateProject = async (): Promise<boolean> => {
   try {
     const { getProject, getMostRecentProjectId } = await import('../services/storageService');
 
-    // 1) localStorage의 마지막 프로젝트 복원 시도 (자동 복원 → 비용 리셋)
+    // 1) localStorage의 마지막 프로젝트 복원 시도 (자동 복원 → 비용도 함께 복원)
     const lastId = localStorage.getItem('last-project-id');
     if (lastId) {
       const project = await getProject(lastId);
@@ -47,7 +47,7 @@ export const autoRestoreOrCreateProject = async (): Promise<boolean> => {
       localStorage.removeItem('last-project-id');
     }
 
-    // 2) IndexedDB에서 가장 최근 프로젝트 복원 (자동 복원 → 비용 리셋)
+    // 2) IndexedDB에서 가장 최근 프로젝트 복원 (자동 복원 → 비용도 함께 복원)
     const recentId = await getMostRecentProjectId();
     if (recentId) {
       const project = await getProject(recentId);
@@ -456,10 +456,8 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
     });
     // [FIX] localStorage에 마지막 프로젝트 ID 저장 → 새 탭/새로고침 시 복원용
     try { if (project.id) localStorage.setItem('last-project-id', project.id); } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/setLastId', e); }
-    // 새로고침 자동 복원 시에는 비용 리셋, 수동 프로젝트 불러오기 시에만 비용 복원
-    if (options?.skipCostRestore) {
-      useCostStore.getState().resetCosts();
-    } else if (project.costStats) {
+    // [FIX] 새로고침 자동 복원 시에도 비용 복원 — 사용자 비용 추적 유실 방지
+    if (project.costStats) {
       useCostStore.getState().setCostStats(project.costStats);
     } else {
       useCostStore.getState().resetCosts();
@@ -645,22 +643,20 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
     try { localStorage.setItem('last-project-id', projectId); } catch (e) { logger.trackSwallowedError('ProjectStore:newProject/setLastId', e); }
     useCostStore.getState().resetCosts();
 
-    // [FIX] 빈 프로젝트 즉시 저장 제거 — useAutoSave가 실제 변경 시에만 저장.
-    // 명시적 "새 프로젝트" 생성(사용자 클릭) 시만 즉시 저장하도록 title 존재 여부로 구분.
-    if (title) {
-      import('../services/storageService').then(({ saveProject }) => {
-        saveProject({
-          id: projectId,
-          title: autoTitle,
-          config: { mode: 'SCRIPT', script: '', videoFormat: VideoFormat.SHORT, aspectRatio: AspectRatio.PORTRAIT, imageModel: ImageModel.NANO_COST, smartSplit: true } as ProjectConfig,
-          scenes: [],
-          thumbnails: [],
-          fullNarrationText: '',
-          lastModified: Date.now(),
-          costStats: useCostStore.getState().costStats,
-        }).catch((e) => { logger.trackSwallowedError('ProjectStore:newProject/saveProject', e); });
-      }).catch((e) => { logger.trackSwallowedError('ProjectStore:newProject/saveImport', e); });
-    }
+    // [FIX] 새 프로젝트 즉시 저장 — 새로고침 시 프로젝트 유실 방지
+    // (이전: title 있을 때만 저장 → 자동 생성된 프로젝트가 새로고침 시 사라짐)
+    import('../services/storageService').then(({ saveProject }) => {
+      saveProject({
+        id: projectId,
+        title: autoTitle,
+        config: { mode: 'SCRIPT', script: '', videoFormat: VideoFormat.SHORT, aspectRatio: AspectRatio.PORTRAIT, imageModel: ImageModel.NANO_COST, smartSplit: true } as ProjectConfig,
+        scenes: [],
+        thumbnails: [],
+        fullNarrationText: '',
+        lastModified: Date.now(),
+        costStats: useCostStore.getState().costStats,
+      }).catch((e) => { logger.trackSwallowedError('ProjectStore:newProject/saveProject', e); });
+    }).catch((e) => { logger.trackSwallowedError('ProjectStore:newProject/saveImport', e); });
 
     // [NEW] imageVideoStore 리셋 — 이전 프로젝트의 캐릭터/스타일이 남지 않도록
     import('./imageVideoStore').then(({ useImageVideoStore }) => {

@@ -1143,7 +1143,7 @@ const ScenePreviewPanel: React.FC<{
                 src={activeScene.videoUrl}
                 poster={activeScene.imageUrl}
                 style={{ display: 'block', width: '100%', height: '100%', objectFit: 'cover' as const, ...motionStyle }}
-                muted loop autoPlay playsInline
+                muted loop playsInline
               />
             ) : activeScene?.imageUrl ? (
               <img
@@ -1167,7 +1167,7 @@ const ScenePreviewPanel: React.FC<{
               poster={activeScene.imageUrl}
               className="absolute inset-0 w-full h-full object-cover"
               style={{ zIndex: 1, ...(motionStyle.filter ? { filter: motionStyle.filter as string } : {}) }}
-              muted loop autoPlay playsInline
+              muted loop playsInline
             />
           ) : activeScene?.imageUrl ? (
             <img
@@ -1718,14 +1718,45 @@ const EditRoomTab: React.FC = () => {
               </div>
             )}
 
-            {/* 총 길이 표시 */}
-            {totalDuration > 0 && (
-              <div className="flex items-center gap-3 mb-4 text-sm text-gray-500">
-                <span>총 길이: <span className="text-amber-400 font-mono">{Math.floor(totalDuration / 60)}:{String(Math.floor(totalDuration % 60)).padStart(2, '0')}</span></span>
-                <span>|</span>
-                <span>{sceneCount}개 장면</span>
+            {/* 총 길이 + 비율 설정 */}
+            <div className="flex items-center justify-between gap-3 mb-4">
+              {totalDuration > 0 && (
+                <div className="flex items-center gap-3 text-sm text-gray-500">
+                  <span>총 길이: <span className="text-amber-400 font-mono">{Math.floor(totalDuration / 60)}:{String(Math.floor(totalDuration % 60)).padStart(2, '0')}</span></span>
+                  <span>|</span>
+                  <span>{sceneCount}개 장면</span>
+                </div>
+              )}
+              {/* 화면 비율 선택 */}
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] text-gray-500 mr-1">비율</span>
+                {([
+                  { value: '16:9', label: '16:9', icon: '▬' },
+                  { value: '9:16', label: '9:16', icon: '▮' },
+                  { value: '1:1', label: '1:1', icon: '■' },
+                  { value: '4:3', label: '4:3', icon: '▭' },
+                ] as const).map((ar) => (
+                  <button
+                    key={ar.value}
+                    type="button"
+                    onClick={() => {
+                      const currentConfig = useProjectStore.getState().config;
+                      if (currentConfig) {
+                        useProjectStore.getState().setConfig({ ...currentConfig, aspectRatio: ar.value as any });
+                      }
+                    }}
+                    className={`px-2 py-1 rounded-md text-[10px] font-bold border transition-all ${
+                      projectAspectRatio === ar.value
+                        ? 'bg-amber-600/20 text-amber-400 border-amber-500/40'
+                        : 'bg-gray-800/50 text-gray-500 border-gray-700/50 hover:border-gray-500 hover:text-gray-300'
+                    }`}
+                    title={`화면 비율 ${ar.label}`}
+                  >
+                    <span className="mr-0.5">{ar.icon}</span>{ar.label}
+                  </button>
+                ))}
               </div>
-            )}
+            </div>
 
             {/* 미리보기 + 글로벌 패널 가로 배치 */}
             <div className="flex gap-4 mb-4 items-stretch">
