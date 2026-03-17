@@ -247,14 +247,16 @@ const CharacterUploadPanel: React.FC<CharacterUploadPanelProps> = ({
                   if (!char || char.isAnalyzing) return;
                   onUpdateAnalysis?.(char.id, 'analysisStyle', e.target.value);
                 }}
+                onPointerDown={(e) => { if (char && !char.isAnalyzing) (e.target as HTMLTextAreaElement).focus(); }}
                 placeholder={!char ? '이미지를 먼저 업로드하세요' : char.isAnalyzing ? '화풍, 색감, 렌더링 스타일 추출 중...' : '대기 중 — 클릭하여 직접 입력 가능'}
-                className={`text-xs leading-relaxed bg-gray-900/80 rounded-lg px-3 py-2.5 border flex-1 min-h-[3rem] overflow-y-auto resize-none ${
+                className={`text-xs leading-relaxed bg-gray-900/80 rounded-lg px-3 py-2.5 border flex-grow min-h-[4rem] overflow-y-auto resize-none ${
                   !char || char.isAnalyzing
                     ? 'text-gray-500 cursor-not-allowed'
                     : char.analysisStyle
                       ? 'text-gray-300 border-gray-600/50 hover:border-purple-400/60 focus:border-purple-400 focus:bg-gray-800/90 cursor-text'
                       : 'text-gray-600 border-dashed border-gray-700/30 italic hover:border-purple-400/40 cursor-text'
                 } focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-colors`}
+                style={{ pointerEvents: 'auto', WebkitUserSelect: 'text', userSelect: 'text' }}
                 readOnly={!char || !!char.isAnalyzing}
               />
             </div>
@@ -271,14 +273,16 @@ const CharacterUploadPanel: React.FC<CharacterUploadPanelProps> = ({
                   if (!char || char.isAnalyzing) return;
                   onUpdateAnalysis?.(char.id, 'analysisCharacter', e.target.value);
                 }}
+                onPointerDown={(e) => { if (char && !char.isAnalyzing) (e.target as HTMLTextAreaElement).focus(); }}
                 placeholder={!char ? '이미지를 먼저 업로드하세요' : char.isAnalyzing ? '헤어, 의상, 체형, 액세서리 추출 중...' : '대기 중 — 클릭하여 직접 입력 가능'}
-                className={`text-xs leading-relaxed bg-gray-900/80 rounded-lg px-3 py-2.5 border flex-1 min-h-[3rem] overflow-y-auto resize-none ${
+                className={`text-xs leading-relaxed bg-gray-900/80 rounded-lg px-3 py-2.5 border flex-grow min-h-[4rem] overflow-y-auto resize-none ${
                   !char || char.isAnalyzing
                     ? 'text-gray-500 cursor-not-allowed'
                     : char.analysisCharacter
                       ? 'text-gray-300 border-gray-600/50 hover:border-cyan-400/60 focus:border-cyan-400 focus:bg-gray-800/90 cursor-text'
                       : 'text-gray-600 border-dashed border-gray-700/30 italic hover:border-cyan-400/40 cursor-text'
                 } focus:outline-none focus:ring-2 focus:ring-cyan-500/50 transition-colors`}
+                style={{ pointerEvents: 'auto', WebkitUserSelect: 'text', userSelect: 'text' }}
                 readOnly={!char || !!char.isAnalyzing}
               />
             </div>
@@ -435,6 +439,7 @@ const CharacterUploadPanel: React.FC<CharacterUploadPanelProps> = ({
                         if (char.isAnalyzing) return;
                         onUpdateAnalysis?.(char.id, 'analysisStyle', e.target.value);
                       }}
+                      onPointerDown={(e) => { if (!char.isAnalyzing) (e.target as HTMLTextAreaElement).focus(); }}
                       placeholder={char.isAnalyzing ? '화풍/색감 추출 중...' : '클릭하여 직접 입력'}
                       className={`text-[11px] leading-snug bg-black/30 rounded px-1.5 py-1.5 border resize-none ${
                         expandedAnalysisId === char.id ? 'max-h-none min-h-[4rem]' : 'max-h-[3.5rem] min-h-[2.5rem]'
@@ -445,6 +450,7 @@ const CharacterUploadPanel: React.FC<CharacterUploadPanelProps> = ({
                             ? 'text-gray-400 border-gray-700/50 hover:border-purple-400/60 focus:border-purple-400 focus:bg-gray-900/80 cursor-text'
                             : 'text-gray-600 border-dashed border-gray-700/30 italic hover:border-purple-400/40 cursor-text'
                       } focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-colors w-full`}
+                      style={{ pointerEvents: 'auto', WebkitUserSelect: 'text', userSelect: 'text' }}
                       readOnly={!!char.isAnalyzing}
                     />
                   </div>
@@ -459,6 +465,7 @@ const CharacterUploadPanel: React.FC<CharacterUploadPanelProps> = ({
                         if (char.isAnalyzing) return;
                         onUpdateAnalysis?.(char.id, 'analysisCharacter', e.target.value);
                       }}
+                      onPointerDown={(e) => { if (!char.isAnalyzing) (e.target as HTMLTextAreaElement).focus(); }}
                       placeholder={char.isAnalyzing ? '외형/의상 추출 중...' : '클릭하여 직접 입력'}
                       className={`text-[11px] leading-snug bg-black/30 rounded px-1.5 py-1.5 border resize-none ${
                         expandedAnalysisId === char.id ? 'max-h-none min-h-[4rem]' : 'max-h-[3.5rem] min-h-[2.5rem]'
@@ -469,6 +476,7 @@ const CharacterUploadPanel: React.FC<CharacterUploadPanelProps> = ({
                             ? 'text-gray-400 border-gray-700/50 hover:border-cyan-400/60 focus:border-cyan-400 focus:bg-gray-900/80 cursor-text'
                             : 'text-gray-600 border-dashed border-gray-700/30 italic hover:border-cyan-400/40 cursor-text'
                       } focus:outline-none focus:ring-2 focus:ring-cyan-500/50 transition-colors w-full`}
+                      style={{ pointerEvents: 'auto', WebkitUserSelect: 'text', userSelect: 'text' }}
                       readOnly={!!char.isAnalyzing}
                     />
                   </div>

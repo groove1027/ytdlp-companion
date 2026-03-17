@@ -974,20 +974,24 @@ const ScriptMode: React.FC<ScriptModeProps> = ({
                             <div className="flex-grow flex flex-col gap-4">
                                 <div className="flex-1 flex flex-col min-h-0">
                                     <label className="block text-sm font-bold text-gray-400 mb-1">🎨 감지된 예술 스타일</label>
-                                    <textarea 
+                                    <textarea
                                         value={styleDescription}
                                         onChange={(e) => setStyleDescription(e.target.value)}
+                                        onPointerDown={(e) => (e.target as HTMLTextAreaElement).focus()}
                                         placeholder="자동 분석됨..."
-                                        className="w-full flex-grow bg-gray-900 border border-gray-600 rounded-lg p-3 text-white text-base focus:border-purple-500 outline-none resize-none"
+                                        className="w-full flex-grow min-h-[4rem] bg-gray-900 border border-gray-600 rounded-lg p-3 text-white text-base focus:border-purple-500 focus:ring-2 focus:ring-purple-500/50 outline-none resize-none cursor-text"
+                                        style={{ pointerEvents: 'auto', WebkitUserSelect: 'text', userSelect: 'text' }}
                                     />
                                 </div>
                                 <div className="flex-1 flex flex-col min-h-0">
                                     <label className="block text-sm font-bold text-gray-400 mb-1">👤 감지된 캐릭터 특징</label>
-                                    <textarea 
-                                        value={characterDescription} 
-                                        onChange={(e) => setCharacterDescription(e.target.value)} 
-                                        placeholder="자동 분석됨..." 
-                                        className="w-full flex-grow bg-gray-900 border border-gray-600 rounded-lg p-3 text-base text-white resize-none focus:border-blue-500 outline-none" 
+                                    <textarea
+                                        value={characterDescription}
+                                        onChange={(e) => setCharacterDescription(e.target.value)}
+                                        onPointerDown={(e) => (e.target as HTMLTextAreaElement).focus()}
+                                        placeholder="자동 분석됨..."
+                                        className="w-full flex-grow min-h-[4rem] bg-gray-900 border border-gray-600 rounded-lg p-3 text-base text-white resize-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none cursor-text"
+                                        style={{ pointerEvents: 'auto', WebkitUserSelect: 'text', userSelect: 'text' }}
                                     />
                                 </div>
                             </div>
