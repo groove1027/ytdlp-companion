@@ -1931,19 +1931,10 @@ export async function buildEditRoomNleZip(params: {
     }));
 
     // ── 오디오 세그먼트 (나레이션 트랙) ──
+    // narrationFileMap 키 순서와 audioMaterials 인덱스가 1:1 대응
+    const narrationKeys = [...narrationFileMap.keys()];
     const audioSegments = timeline.map((t, i) => {
-      const mat = audioMaterials.find((_, ai) => {
-        // i번째 타임라인의 나레이션 찾기
-        let count = 0;
-        for (let j = 0; j < timeline.length; j++) {
-          if (narrationFileMap.has(j)) {
-            if (j === i) return count === ai;
-            count++;
-          }
-        }
-        return false;
-      });
-      const narIdx = [...narrationFileMap.keys()].indexOf(i);
+      const narIdx = narrationKeys.indexOf(i);
       if (narIdx === -1 || !audioMaterials[narIdx]) return null;
       const aMat = audioMaterials[narIdx];
       return {
