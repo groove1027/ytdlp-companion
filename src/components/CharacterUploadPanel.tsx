@@ -1,5 +1,5 @@
 
-import React, { useRef, useState, useCallback } from 'react';
+import React, { useRef, useState, useCallback, useEffect } from 'react';
 import type { CharacterReference } from '../types';
 import { useElapsedTimer, formatElapsed } from '../hooks/useElapsedTimer';
 import { showToast } from '../stores/uiStore';
@@ -38,6 +38,25 @@ const CharacterUploadPanel: React.FC<CharacterUploadPanelProps> = ({
   const dragCounterRef = useRef(0);
   const anyAnalyzing = characters.some(c => c.isAnalyzing);
   const analyzeElapsed = useElapsedTimer(anyAnalyzing);
+
+  // [FIX] 캐릭터 없을 때도 textarea 편집 가능하도록 로컬 상태 보관
+  const [pendingStyle, setPendingStyle] = useState('');
+  const [pendingCharacter, setPendingCharacter] = useState('');
+  const prevCharCountRef = useRef(characters.length);
+
+  // 캐릭터가 새로 추가되면 로컬 보관 값을 자동 적용
+  useEffect(() => {
+    if (characters.length > prevCharCountRef.current && (pendingStyle || pendingCharacter)) {
+      const newChar = characters[characters.length - 1];
+      if (newChar && onUpdateAnalysis) {
+        if (pendingStyle) onUpdateAnalysis(newChar.id, 'analysisStyle', pendingStyle);
+        if (pendingCharacter) onUpdateAnalysis(newChar.id, 'analysisCharacter', pendingCharacter);
+        setPendingStyle('');
+        setPendingCharacter('');
+      }
+    }
+    prevCharCountRef.current = characters.length;
+  }, [characters.length, pendingStyle, pendingCharacter, onUpdateAnalysis, characters]);
 
   const handleSave = useCallback((char: CharacterReference) => {
     if (savedCharId) return;
@@ -239,25 +258,29 @@ const CharacterUploadPanel: React.FC<CharacterUploadPanelProps> = ({
             <div className="flex flex-col flex-1 min-h-0">
               <div className="flex items-center justify-between mb-1 flex-shrink-0">
                 <span className="text-xs font-semibold text-purple-400">🎨 예술 스타일</span>
-                <CopyBtn text={char?.analysisStyle || ''} accent="purple" />
+                <CopyBtn text={char?.analysisStyle || pendingStyle} accent="purple" />
               </div>
               <textarea
-                value={char?.analysisStyle || ''}
+                value={char ? (char.analysisStyle || '') : pendingStyle}
                 onChange={(e) => {
-                  if (!char || char.isAnalyzing) return;
-                  onUpdateAnalysis?.(char.id, 'analysisStyle', e.target.value);
+                  if (char?.isAnalyzing) return;
+                  if (char) {
+                    onUpdateAnalysis?.(char.id, 'analysisStyle', e.target.value);
+                  } else {
+                    setPendingStyle(e.target.value);
+                  }
                 }}
-                onPointerDown={(e) => { if (char && !char.isAnalyzing) (e.target as HTMLTextAreaElement).focus(); }}
-                placeholder={!char ? '이미지를 먼저 업로드하세요' : char.isAnalyzing ? '화풍, 색감, 렌더링 스타일 추출 중...' : '대기 중 — 클릭하여 직접 입력 가능'}
-                className={`text-xs leading-relaxed bg-gray-900/80 rounded-lg px-3 py-2.5 border flex-grow min-h-[4rem] overflow-y-auto resize-none ${
-                  !char || char.isAnalyzing
-                    ? 'text-gray-500 cursor-not-allowed'
-                    : char.analysisStyle
-                      ? 'text-gray-300 border-gray-600/50 hover:border-purple-400/60 focus:border-purple-400 focus:bg-gray-800/90 cursor-text'
-                      : 'text-gray-600 border-dashed border-gray-700/30 italic hover:border-purple-400/40 cursor-text'
+                onClick={(e) => (e.target as HTMLTextAreaElement).focus()}
+                placeholder={char?.isAnalyzing ? '화풍, 색감, 렌더링 스타일 추출 중...' : '클릭하여 직접 입력하거나 붙여넣기'}
+                className={`text-xs leading-relaxed bg-gray-900/80 rounded-lg px-3 py-2.5 border flex-grow min-h-[4rem] overflow-y-auto resize-none cursor-text ${
+                  char?.isAnalyzing
+                    ? 'text-gray-500'
+                    : (char?.analysisStyle || pendingStyle)
+                      ? 'text-gray-300 border-gray-600/50 hover:border-purple-400/60 focus:border-purple-400 focus:bg-gray-800/90'
+                      : 'text-gray-600 border-dashed border-gray-700/30 italic hover:border-purple-400/40'
                 } focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-colors`}
                 style={{ pointerEvents: 'auto', WebkitUserSelect: 'text', userSelect: 'text' }}
-                readOnly={!char || !!char.isAnalyzing}
+                readOnly={!!char?.isAnalyzing}
               />
             </div>
 
@@ -265,25 +288,29 @@ const CharacterUploadPanel: React.FC<CharacterUploadPanelProps> = ({
             <div className="flex flex-col flex-1 min-h-0">
               <div className="flex items-center justify-between mb-1 flex-shrink-0">
                 <span className="text-xs font-semibold text-cyan-400">🧑 캐릭터 특징</span>
-                <CopyBtn text={char?.analysisCharacter || ''} accent="cyan" />
+                <CopyBtn text={char?.analysisCharacter || pendingCharacter} accent="cyan" />
               </div>
               <textarea
-                value={char?.analysisCharacter || ''}
+                value={char ? (char.analysisCharacter || '') : pendingCharacter}
                 onChange={(e) => {
-                  if (!char || char.isAnalyzing) return;
-                  onUpdateAnalysis?.(char.id, 'analysisCharacter', e.target.value);
+                  if (char?.isAnalyzing) return;
+                  if (char) {
+                    onUpdateAnalysis?.(char.id, 'analysisCharacter', e.target.value);
+                  } else {
+                    setPendingCharacter(e.target.value);
+                  }
                 }}
-                onPointerDown={(e) => { if (char && !char.isAnalyzing) (e.target as HTMLTextAreaElement).focus(); }}
-                placeholder={!char ? '이미지를 먼저 업로드하세요' : char.isAnalyzing ? '헤어, 의상, 체형, 액세서리 추출 중...' : '대기 중 — 클릭하여 직접 입력 가능'}
-                className={`text-xs leading-relaxed bg-gray-900/80 rounded-lg px-3 py-2.5 border flex-grow min-h-[4rem] overflow-y-auto resize-none ${
-                  !char || char.isAnalyzing
-                    ? 'text-gray-500 cursor-not-allowed'
-                    : char.analysisCharacter
-                      ? 'text-gray-300 border-gray-600/50 hover:border-cyan-400/60 focus:border-cyan-400 focus:bg-gray-800/90 cursor-text'
-                      : 'text-gray-600 border-dashed border-gray-700/30 italic hover:border-cyan-400/40 cursor-text'
+                onClick={(e) => (e.target as HTMLTextAreaElement).focus()}
+                placeholder={char?.isAnalyzing ? '헤어, 의상, 체형, 액세서리 추출 중...' : '클릭하여 직접 입력하거나 붙여넣기'}
+                className={`text-xs leading-relaxed bg-gray-900/80 rounded-lg px-3 py-2.5 border flex-grow min-h-[4rem] overflow-y-auto resize-none cursor-text ${
+                  char?.isAnalyzing
+                    ? 'text-gray-500'
+                    : (char?.analysisCharacter || pendingCharacter)
+                      ? 'text-gray-300 border-gray-600/50 hover:border-cyan-400/60 focus:border-cyan-400 focus:bg-gray-800/90'
+                      : 'text-gray-600 border-dashed border-gray-700/30 italic hover:border-cyan-400/40'
                 } focus:outline-none focus:ring-2 focus:ring-cyan-500/50 transition-colors`}
                 style={{ pointerEvents: 'auto', WebkitUserSelect: 'text', userSelect: 'text' }}
-                readOnly={!char || !!char.isAnalyzing}
+                readOnly={!!char?.isAnalyzing}
               />
             </div>
 
@@ -439,7 +466,7 @@ const CharacterUploadPanel: React.FC<CharacterUploadPanelProps> = ({
                         if (char.isAnalyzing) return;
                         onUpdateAnalysis?.(char.id, 'analysisStyle', e.target.value);
                       }}
-                      onPointerDown={(e) => { if (!char.isAnalyzing) (e.target as HTMLTextAreaElement).focus(); }}
+                      onClick={(e) => { if (!char.isAnalyzing) (e.target as HTMLTextAreaElement).focus(); }}
                       placeholder={char.isAnalyzing ? '화풍/색감 추출 중...' : '클릭하여 직접 입력'}
                       className={`text-[11px] leading-snug bg-black/30 rounded px-1.5 py-1.5 border resize-none ${
                         expandedAnalysisId === char.id ? 'max-h-none min-h-[4rem]' : 'max-h-[3.5rem] min-h-[2.5rem]'
@@ -465,7 +492,7 @@ const CharacterUploadPanel: React.FC<CharacterUploadPanelProps> = ({
                         if (char.isAnalyzing) return;
                         onUpdateAnalysis?.(char.id, 'analysisCharacter', e.target.value);
                       }}
-                      onPointerDown={(e) => { if (!char.isAnalyzing) (e.target as HTMLTextAreaElement).focus(); }}
+                      onClick={(e) => { if (!char.isAnalyzing) (e.target as HTMLTextAreaElement).focus(); }}
                       placeholder={char.isAnalyzing ? '외형/의상 추출 중...' : '클릭하여 직접 입력'}
                       className={`text-[11px] leading-snug bg-black/30 rounded px-1.5 py-1.5 border resize-none ${
                         expandedAnalysisId === char.id ? 'max-h-none min-h-[4rem]' : 'max-h-[3.5rem] min-h-[2.5rem]'
@@ -511,13 +538,27 @@ const CharacterUploadPanel: React.FC<CharacterUploadPanelProps> = ({
                     <div className="flex items-center gap-1 mb-0.5">
                       <span className="text-[10px] font-semibold text-purple-400/50">예술 스타일</span>
                     </div>
-                    <p className="text-[11px] leading-snug bg-black/20 rounded px-1.5 py-1.5 border border-dashed border-gray-700/30 max-h-[3.5rem] overflow-y-auto text-gray-600 italic">대기 중</p>
+                    <textarea
+                      value={pendingStyle}
+                      onChange={(e) => setPendingStyle(e.target.value)}
+                      onClick={(e) => (e.target as HTMLTextAreaElement).focus()}
+                      placeholder="클릭하여 직접 입력"
+                      className="text-[11px] leading-snug bg-black/20 rounded px-1.5 py-1.5 border border-dashed border-gray-700/30 max-h-[3.5rem] min-h-[2rem] overflow-y-auto text-gray-400 italic cursor-text w-full resize-none focus:outline-none focus:ring-1 focus:ring-purple-500/50 focus:border-purple-400/40 focus:not-italic focus:text-gray-300"
+                      style={{ pointerEvents: 'auto', userSelect: 'text' }}
+                    />
                   </div>
                   <div>
                     <div className="flex items-center gap-1 mb-0.5">
                       <span className="text-[10px] font-semibold text-cyan-400/50">캐릭터 특징</span>
                     </div>
-                    <p className="text-[11px] leading-snug bg-black/20 rounded px-1.5 py-1.5 border border-dashed border-gray-700/30 max-h-[3.5rem] overflow-y-auto text-gray-600 italic">대기 중</p>
+                    <textarea
+                      value={pendingCharacter}
+                      onChange={(e) => setPendingCharacter(e.target.value)}
+                      onClick={(e) => (e.target as HTMLTextAreaElement).focus()}
+                      placeholder="클릭하여 직접 입력"
+                      className="text-[11px] leading-snug bg-black/20 rounded px-1.5 py-1.5 border border-dashed border-gray-700/30 max-h-[3.5rem] min-h-[2rem] overflow-y-auto text-gray-400 italic cursor-text w-full resize-none focus:outline-none focus:ring-1 focus:ring-cyan-500/50 focus:border-cyan-400/40 focus:not-italic focus:text-gray-300"
+                      style={{ pointerEvents: 'auto', userSelect: 'text' }}
+                    />
                   </div>
                 </div>
               </>

@@ -977,8 +977,8 @@ const ScriptMode: React.FC<ScriptModeProps> = ({
                                     <textarea
                                         value={styleDescription}
                                         onChange={(e) => setStyleDescription(e.target.value)}
-                                        onPointerDown={(e) => (e.target as HTMLTextAreaElement).focus()}
-                                        placeholder="자동 분석됨..."
+                                        onClick={(e) => (e.target as HTMLTextAreaElement).focus()}
+                                        placeholder="클릭하여 직접 입력하거나 붙여넣기"
                                         className="w-full flex-grow min-h-[4rem] bg-gray-900 border border-gray-600 rounded-lg p-3 text-white text-base focus:border-purple-500 focus:ring-2 focus:ring-purple-500/50 outline-none resize-none cursor-text"
                                         style={{ pointerEvents: 'auto', WebkitUserSelect: 'text', userSelect: 'text' }}
                                     />
@@ -988,8 +988,8 @@ const ScriptMode: React.FC<ScriptModeProps> = ({
                                     <textarea
                                         value={characterDescription}
                                         onChange={(e) => setCharacterDescription(e.target.value)}
-                                        onPointerDown={(e) => (e.target as HTMLTextAreaElement).focus()}
-                                        placeholder="자동 분석됨..."
+                                        onClick={(e) => (e.target as HTMLTextAreaElement).focus()}
+                                        placeholder="클릭하여 직접 입력하거나 붙여넣기"
                                         className="w-full flex-grow min-h-[4rem] bg-gray-900 border border-gray-600 rounded-lg p-3 text-base text-white resize-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none cursor-text"
                                         style={{ pointerEvents: 'auto', WebkitUserSelect: 'text', userSelect: 'text' }}
                                     />
