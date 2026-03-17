@@ -3,6 +3,7 @@ import { PRICING } from '../../../constants';
 import { useCostStore } from '../../../stores/costStore';
 import { createWanV2VTask, pollKieTask } from '../../../services/VideoGenService';
 import { uploadMediaToHosting } from '../../../services/uploadService';
+import { downloadFromUrl } from '../../../services/videoDownloadService';
 import { logger } from '../../../services/LoggerService';
 import { formatElapsed } from '../../../hooks/useElapsedTimer';
 
@@ -18,9 +19,14 @@ const QUICK_STYLES = [
 
 type RemakePhase = 'idle' | 'uploading' | 'processing' | 'done' | 'error';
 
+type InputMode = 'file' | 'url';
+
 const VideoRemakePanel: React.FC = () => {
+  const [inputMode, setInputMode] = useState<InputMode>('file');
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [videoPreviewUrl, setVideoPreviewUrl] = useState<string | null>(null);
+  const [urlInput, setUrlInput] = useState('');
+  const [isDownloading, setIsDownloading] = useState(false);
   const [v2vPrompt, setV2vPrompt] = useState('');
   const [resolution, setResolution] = useState<'720p' | '1080p'>('720p');
   const [isDragOver, setIsDragOver] = useState(false);
@@ -63,6 +69,7 @@ const VideoRemakePanel: React.FC = () => {
     if (videoPreviewUrl) URL.revokeObjectURL(videoPreviewUrl);
     setVideoFile(null);
     setVideoPreviewUrl(null);
+    setUrlInput('');
     setV2vPrompt('');
     setPhase('idle');
     setProgress('');
@@ -74,6 +81,21 @@ const VideoRemakePanel: React.FC = () => {
   const handleQuickStyle = (prompt: string) => {
     setV2vPrompt(prev => prev ? `${prev}, ${prompt}` : prompt);
   };
+
+  const handleUrlDownload = useCallback(async () => {
+    if (!urlInput.trim()) return;
+    setIsDownloading(true);
+    setError('');
+    try {
+      const result = await downloadFromUrl(urlInput.trim());
+      processVideoFile(new File([result.blob], result.filename, { type: 'video/mp4' }));
+      logger.info(`[Remake] URL 다운로드 성공: ${result.filename} (${(result.blob.size / 1024 / 1024).toFixed(1)}MB)`);
+    } catch (err: unknown) {
+      setError((err as Error).message || '영상 다운로드에 실패했습니다. 파일을 직접 업로드해주세요.');
+    } finally {
+      setIsDownloading(false);
+    }
+  }, [urlInput, processVideoFile]);
 
   const handleStart = useCallback(async () => {
     if (!videoFile || !v2vPrompt.trim()) return;
@@ -175,39 +197,82 @@ const VideoRemakePanel: React.FC = () => {
         </div>
       </div>
 
-      {/* Step 1: Video Upload */}
+      {/* Step 1: Video Input */}
       <div>
         <label className="block text-lg font-bold text-purple-400 mb-3">1. 원본 영상</label>
-        <div
-          onClick={() => !isWorking && videoInputRef.current?.click()}
-          onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
-          onDragLeave={(e) => { e.preventDefault(); setIsDragOver(false); }}
-          onDrop={(e) => {
-            e.preventDefault(); setIsDragOver(false);
-            if (e.dataTransfer.files?.[0]) processVideoFile(e.dataTransfer.files[0]);
-          }}
-          className={`w-full aspect-video rounded-xl border-2 border-dashed flex flex-col items-center justify-center cursor-pointer transition-all overflow-hidden bg-gray-900 ${isDragOver ? 'border-purple-500 bg-purple-900/20' : 'border-gray-600 hover:border-gray-400 hover:bg-gray-800'}`}
-        >
-          {videoPreviewUrl ? (
-            <div className="relative w-full h-full">
-              <video src={videoPreviewUrl} className="w-full h-full object-contain" controls />
-              {!isWorking && (
-                <button
-                  onClick={(e) => { e.stopPropagation(); handleClear(); }}
-                  className="absolute top-2 right-2 bg-red-600 text-white rounded-full p-2 hover:bg-red-700 shadow-md"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"/></svg>
-                </button>
-              )}
-            </div>
-          ) : (
+
+        {/* 입력 모드 탭 */}
+        <div className="flex gap-2 mb-3">
+          <button type="button" onClick={() => setInputMode('file')}
+            className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${inputMode === 'file' ? 'bg-purple-600/30 border border-purple-500 text-white' : 'bg-gray-800 border border-gray-700 text-gray-400 hover:border-gray-500'}`}>
+            📁 파일 업로드
+          </button>
+          <button type="button" onClick={() => setInputMode('url')}
+            className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${inputMode === 'url' ? 'bg-purple-600/30 border border-purple-500 text-white' : 'bg-gray-800 border border-gray-700 text-gray-400 hover:border-gray-500'}`}>
+            🔗 URL 링크
+          </button>
+        </div>
+
+        {/* 영상이 이미 로드된 경우 — 프리뷰 */}
+        {videoPreviewUrl ? (
+          <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-gray-900 border border-gray-700">
+            <video src={videoPreviewUrl} className="w-full h-full object-contain" controls />
+            {!isWorking && (
+              <button onClick={handleClear}
+                className="absolute top-2 right-2 bg-red-600 text-white rounded-full p-2 hover:bg-red-700 shadow-md">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"/></svg>
+              </button>
+            )}
+          </div>
+        ) : inputMode === 'file' ? (
+          /* 파일 업로드 모드 */
+          <div
+            onClick={() => !isWorking && videoInputRef.current?.click()}
+            onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
+            onDragLeave={(e) => { e.preventDefault(); setIsDragOver(false); }}
+            onDrop={(e) => { e.preventDefault(); setIsDragOver(false); if (e.dataTransfer.files?.[0]) processVideoFile(e.dataTransfer.files[0]); }}
+            className={`w-full aspect-video rounded-xl border-2 border-dashed flex flex-col items-center justify-center cursor-pointer transition-all bg-gray-900 ${isDragOver ? 'border-purple-500 bg-purple-900/20' : 'border-gray-600 hover:border-gray-400 hover:bg-gray-800'}`}
+          >
             <div className="text-center p-6">
               <p className="text-4xl mb-3">🎥</p>
               <p className="text-lg font-bold text-gray-300">MP4/MOV 파일을 드래그하거나 클릭</p>
-              <p className="text-sm text-gray-500 mt-1">최대 100MB · 10초 단위로 변환됩니다</p>
+              <p className="text-sm text-gray-500 mt-1">최대 100MB</p>
             </div>
-          )}
-        </div>
+          </div>
+        ) : (
+          /* URL 입력 모드 */
+          <div className="space-y-3">
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={urlInput}
+                onChange={(e) => setUrlInput(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleUrlDownload()}
+                placeholder="YouTube, TikTok, 더우인 등 영상 URL 붙여넣기"
+                disabled={isDownloading || isWorking}
+                className="flex-1 bg-gray-900 border border-gray-600 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:border-purple-500 outline-none disabled:opacity-50"
+              />
+              <button
+                type="button"
+                onClick={handleUrlDownload}
+                disabled={!urlInput.trim() || isDownloading || isWorking}
+                className="px-5 py-3 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-bold transition-all disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                {isDownloading ? (
+                  <><span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> 다운로드 중...</>
+                ) : '📥 다운로드'}
+              </button>
+            </div>
+            <div className="bg-amber-900/20 border border-amber-500/30 rounded-lg p-3 text-xs text-amber-300 leading-relaxed">
+              <p className="font-bold mb-1">💡 쇼츠/숏폼 영상을 권장합니다!</p>
+              <p className="text-amber-400/80">
+                리메이크는 10초 단위로 처리되므로, 60초 이내의 쇼츠(Shorts) 영상이 가장 적합해요.
+                긴 영상은 비용이 많이 들고 처리 시간도 오래 걸립니다.
+              </p>
+              <p className="text-gray-500 mt-1">지원: YouTube, TikTok, 더우인, 샤오홍슈 등</p>
+            </div>
+          </div>
+        )}
         <input type="file" ref={videoInputRef} onChange={(e) => e.target.files?.[0] && processVideoFile(e.target.files[0])} accept="video/mp4,video/quicktime" className="hidden" />
       </div>
 
