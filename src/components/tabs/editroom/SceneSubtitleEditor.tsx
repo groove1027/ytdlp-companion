@@ -138,11 +138,22 @@ const SceneSubtitleEditor: React.FC<SceneSubtitleEditorProps> = ({ subtitle, onC
         return result.join('\n');
       }
 
-      // 공백 없는 텍스트 (한국어/일본어/중국어) → 글자 수 기반 분할
+      // [FIX #410/#415] 공백 없는 텍스트 (한국어) → 문장 부호/종결 어미 기준 분할
       const result: string[] = [];
-      for (let i = 0; i < line.length; i += maxCharsPerLine) {
-        result.push(line.slice(i, i + maxCharsPerLine));
+      let remaining = line;
+      while (remaining.length > maxCharsPerLine) {
+        let breakIdx = -1;
+        const searchEnd = Math.min(remaining.length, maxCharsPerLine + 5);
+        for (let k = Math.min(searchEnd, remaining.length) - 1; k >= Math.max(0, maxCharsPerLine - 8); k--) {
+          const ch = remaining[k];
+          if ('.!?。！？,，、;；:：)）」』'.includes(ch)) { breakIdx = k + 1; break; }
+          if (k > 0 && '다요죠고며서'.includes(ch) && k < searchEnd - 1) { breakIdx = k + 1; break; }
+        }
+        if (breakIdx <= 0 || breakIdx > maxCharsPerLine + 5) breakIdx = maxCharsPerLine;
+        result.push(remaining.slice(0, breakIdx));
+        remaining = remaining.slice(breakIdx);
       }
+      if (remaining) result.push(remaining);
       return result.join('\n');
     }).join('\n');
   }, [autoLineBreak, maxCharsPerLine]);

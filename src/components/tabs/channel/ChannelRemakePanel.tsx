@@ -193,9 +193,11 @@ const ChannelRemakePanel: React.FC = () => {
         try {
           const userPrompt = `[채널 스타일 DNA]\n${channelContext}\n\n[원본 소스 영상 내용]\n${sourceContent.slice(0, 4000)}\n\n[버전: ${cfg.label}]\n${cfg.instruction}\n\n아래 JSON 포맷으로 응답하라:\n{"title":"제목","subtitles":["소제목1","소제목2",...],"emotionGuide":"도입: ...\\n전개: ...\\n클라이막스: ...\\n마무리: ...","script":"전체 대본 텍스트","commentReactions":["예상 댓글 반응1","예상 댓글 반응2","예상 댓글 반응3"]}\n\ncommentReactions: 이 영상이 올라갔을 때 시청자들이 남길 법한 자연스러운 댓글 반응 3~5개를 작성하라. 실제 유튜브 댓글처럼 자연스럽게.`;
 
+          // [FIX #467] 롱폼 대본은 8192 토큰으로 부족 → 포맷에 따라 동적 조정
+          const isLongForm = channelGuideline.contentFormat !== 'shorts';
           const response = await evolinkChat(
             [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }],
-            { temperature: 0.8, maxTokens: 8192, responseFormat: { type: 'json_object' } }
+            { temperature: 0.8, maxTokens: isLongForm ? 16384 : 8192, responseFormat: { type: 'json_object' } }
           );
           const text = response.choices[0]?.message?.content || '';
           try {

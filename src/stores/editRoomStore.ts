@@ -1451,9 +1451,10 @@ export const useEditRoomStore = create<EditRoomStore>()(immer((set, get) => ({
       const rawText = sub.text.replace(/\n/g, ' ').trim();
       if (rawText.length <= cpl) return; // 분할 불필요
 
-      // [FIX #404] 띄어쓰기 있으면 단어 기반 분할 (한국어 포함), 없으면 글자 수 기반
+      // [FIX #410/#415] 한국어 자막 분할 — 단어 중간 절단 방지
       let lines: string[];
       if (rawText.includes(' ')) {
+        // 띄어쓰기가 있으면 단어 기반 분할
         const words = rawText.split(' ');
         lines = [];
         let cur = '';
@@ -1463,10 +1464,25 @@ export const useEditRoomStore = create<EditRoomStore>()(immer((set, get) => ({
         }
         if (cur) lines.push(cur);
       } else {
+        // 공백 없는 텍스트 (한국어) → 문장 부호/종결 어미 기준 분할
         lines = [];
-        for (let i = 0; i < rawText.length; i += cpl) {
-          lines.push(rawText.slice(i, i + cpl));
+        let remaining = rawText;
+        while (remaining.length > cpl) {
+          let breakIdx = -1;
+          // cpl 범위 내에서 자연스러운 분할점 탐색 (뒤에서부터)
+          const searchEnd = Math.min(remaining.length, cpl + 5); // 약간의 여유
+          for (let k = Math.min(searchEnd, remaining.length) - 1; k >= Math.max(0, cpl - 8); k--) {
+            const ch = remaining[k];
+            // 문장부호 또는 한국어 종결 어미 뒤에서 분할
+            if ('.!?。！？,，、;；:：)）」』'.includes(ch)) { breakIdx = k + 1; break; }
+            // 한국어 종결 어미: 다, 요, 죠, 고, 며, 서, 는, 을, 를, 에, 로
+            if (k > 0 && '다요죠고며서'.includes(ch) && k < searchEnd - 1) { breakIdx = k + 1; break; }
+          }
+          if (breakIdx <= 0 || breakIdx > cpl + 5) breakIdx = cpl; // 적절한 분할점 없으면 글자 수 기반
+          lines.push(remaining.slice(0, breakIdx).trim());
+          remaining = remaining.slice(breakIdx).trim();
         }
+        if (remaining) lines.push(remaining);
       }
 
       if (lines.length <= 1) return;

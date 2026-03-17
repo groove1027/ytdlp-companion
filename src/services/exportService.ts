@@ -223,19 +223,20 @@ export const downloadAllMedia = async () => {
             }
 
             if (blob) {
-                zip.file(getSafeFilename(sceneIndex, s.scriptText, 'mp4'), blob);
+                // [FIX #444] 영상은 videos/ 폴더에 저장
+                zip.file(`videos/${getSafeFilename(sceneIndex, s.scriptText, 'mp4')}`, blob);
             } else {
                 // 영상 다운로드 실패 → 이미지로 폴백
                 if (s.imageUrl) {
                     const imgBlob = await fetchImageBlob(s.imageUrl, aspectRatio, cropBlobToAspectRatio);
-                    if (imgBlob) zip.file(getSafeFilename(sceneIndex, s.scriptText, 'jpg'), imgBlob);
+                    if (imgBlob) zip.file(`images/${getSafeFilename(sceneIndex, s.scriptText, 'jpg')}`, imgBlob);
                 }
                 linkOnlyScenes.push({ index: sceneIndex + 1 });
             }
         } else if (s.imageUrl) {
-            // 이미지만 있는 장면
+            // [FIX #444] 이미지는 images/ 폴더에 저장
             const imgBlob = await fetchImageBlob(s.imageUrl, aspectRatio, cropBlobToAspectRatio);
-            if (imgBlob) zip.file(getSafeFilename(sceneIndex, s.scriptText, 'jpg'), imgBlob);
+            if (imgBlob) zip.file(`images/${getSafeFilename(sceneIndex, s.scriptText, 'jpg')}`, imgBlob);
         }
 
         processed++;
