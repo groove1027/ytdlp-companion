@@ -8,8 +8,9 @@ import { uploadMediaToHosting } from '../../services/uploadService';
 import { resizeImage, base64ToFile } from '../../services/imageProcessingService';
 // import { getRemoveBgKey } from '../../services/apiService';
 // import { removeBackground } from '../../services/removeBgService';
-import { showToast } from '../../stores/uiStore';
+import { showToast, useUIStore } from '../../stores/uiStore';
 import { useCostStore } from '../../stores/costStore';
+import { useGoogleCookieStore } from '../../stores/googleCookieStore';
 import { useElapsedTimer, formatElapsed } from '../../hooks/useElapsedTimer';
 import { logger } from '../../services/LoggerService';
 
@@ -1059,9 +1060,23 @@ const ScriptMode: React.FC<ScriptModeProps> = ({
                             <select value={imageModel} onChange={(e) => setImageModel(e.target.value as any)} className="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white text-base focus:border-blue-500 outline-none">
                                 {IMAGE_MODELS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
                             </select>
-                            <p className="text-sm text-gray-500 mt-2">
+                            {(imageModel === ImageModel.GOOGLE_IMAGEN || imageModel === ImageModel.GOOGLE_WHISK) && !useGoogleCookieStore.getState().isValid ? (
+                              <div className="mt-2 flex items-start gap-2 bg-amber-900/20 border border-amber-500/30 rounded-lg px-3 py-2">
+                                <span className="text-amber-400 text-sm mt-0.5">⚠️</span>
+                                <div className="flex-1 text-sm text-amber-300/90 leading-relaxed">
+                                  Google 쿠키가 아직 연결되지 않았어요.{' '}
+                                  <button
+                                    type="button"
+                                    onClick={() => useUIStore.getState().setShowApiSettings(true)}
+                                    className="underline font-bold text-amber-200 hover:text-white transition-colors"
+                                  >⚙️ API 설정 → 하단 Google Imagen</button>에서 쿠키를 등록해주세요.
+                                </div>
+                              </div>
+                            ) : (
+                              <p className="text-sm text-gray-500 mt-2">
                                 * <strong>현존하는 최고의 이미지 생성 모델 Nano Banana 2를 사용합니다. Google Imagen은 무료!</strong>
-                            </p>
+                              </p>
+                            )}
                         </div>
                     </div>
 

@@ -12,6 +12,7 @@ import { PRICING, IMAGE_MODELS } from '../../../constants';
 import { AspectRatio, ImageModel, CharacterAppearance, VideoFormat } from '../../../types';
 import type { Scene } from '../../../types';
 import { showToast, useUIStore } from '../../../stores/uiStore';
+import { useGoogleCookieStore } from '../../../stores/googleCookieStore';
 import { useNavigationStore } from '../../../stores/navigationStore';
 import ActionButton from '../../ui/ActionButton';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
@@ -2007,6 +2008,16 @@ const StoryboardPanel: React.FC = () => {
                   >
                     {IMAGE_MODELS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
                   </select>
+                  {(storyboardImageModel === ImageModel.GOOGLE_IMAGEN || storyboardImageModel === ImageModel.GOOGLE_WHISK) && !useGoogleCookieStore.getState().isValid && (
+                    <button
+                      type="button"
+                      onClick={() => { useUIStore.getState().setShowApiSettings(true); setShowGenDropdown(false); }}
+                      className="mt-1.5 w-full text-left flex items-start gap-1.5 bg-amber-900/20 border border-amber-500/30 rounded-lg px-2.5 py-1.5 text-[11px] text-amber-300/90 leading-relaxed hover:bg-amber-900/30 transition-colors"
+                    >
+                      <span className="shrink-0">⚠️</span>
+                      <span>Google 쿠키 미연결 — <strong className="text-amber-200">API 설정</strong>에서 등록하기</span>
+                    </button>
+                  )}
                 </div>
                 {/* [#243] 선택 모드 안내 */}
                 {hasSelection && (
