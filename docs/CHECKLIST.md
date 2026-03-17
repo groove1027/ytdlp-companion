@@ -8,6 +8,16 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-17] 비디오 엔진 대규모 개편
+- [x] Grok 15초 → 10초 제한 (types, constants, UI, hooks, stores)
+- [x] Seedance 1.5 Pro 엔진 추가 (VideoGenService, provider 등록)
+- [x] Wan 2.6 V2V 엔진 추가 (VideoGenService, provider 등록)
+- [x] Veo 3.1 가격 업데이트 ($0.169)
+- [x] PRICING에 Seedance/Wan 가격 추가
+- [x] WaveSpeed 코드 전체 삭제 (7개 파일, apiService/App/ProjectSidebar/LoggerService 등)
+- [x] 영상 리메이크 패널 복원 (VideoRemakePanel — Wan 2.6 V2V, 이미지/영상 탭 서브탭)
+- [x] imageVideoStore 서브탭에 'remake' 추가
+
 - [x] **AI 분석 결과 textarea 클릭/입력/복사/붙여넣기 완전 해결** — 이미지/영상 탭 캐릭터 레퍼런스의 예술 스타일·캐릭터 특징 textarea가 클릭/입력 불가였던 근본 원인 수정. (1) readOnly 조건에서 !char 제거 → isAnalyzing일 때만 readOnly (2) 캐릭터 미업로드 시 로컬 상태로 입력값 보관, 캐릭터 추가 시 자동 적용 (3) 멀티캐릭터 빈 슬롯의 정적 `<p>대기 중</p>`을 편집 가능 textarea로 교체 (4) ScriptMode.tsx textarea도 onClick+placeholder 통일 (CharacterUploadPanel.tsx, ScriptMode.tsx, 2026-03-17)
 - [x] **티키타카 프리셋 시스템 프롬프트 교체 — 범용 리빌딩 프로토콜 v13.0** — 크로스 더빙 지침서 V3.0 + 화자 구분 프로토콜을 범용 티키타카 스크립트 리빌딩 프로토콜 v13.0으로 전면 교체. 3가지 모드(A:전수보존/B:압축추출/C:롱폼 스토리텔링) + 10가지 바이럴 패턴 전략 + 효과자막 + Content ID 회피 분석. 편집점 지침서 V14.0 유지. PRESET_INFO/helpContent 설명 업데이트. 기술문서 docs/tikitaka-rebuilding-protocol-v13.md 저장 (VideoAnalysisRoom.tsx, helpContent.ts, 2026-03-17)
 - [x] **새로고침 시 프로젝트/비용 유실 방지 + 편집실 비율 선택 + 영상 자동재생 제거** — (1) 새 프로젝트 생성 시 즉시 IndexedDB 저장하여 새로고침 전 프로젝트 유실 방지. (2) 자동 복원 시 제작 비용(costStats)도 함께 복원 — 기존 skipCostRestore 로직이 비용을 리셋하던 문제 수정. (3) 편집실 타임라인 + 렌더 설정 모달에 화면 비율 선택 UI(16:9/9:16/1:1/4:3) 추가 — 숏폼 영상 분석 후 세로형 편집 지원. (4) 편집실 메인 프리뷰 영상 autoPlay 제거 — 재생 버튼으로만 재생. (5) CostDashboard "새로고침 시 초기화" 경고를 "✓ 자동 저장됨"으로 변경 (projectStore.ts, EditRoomTab.tsx, RenderSettingsModal.tsx, CostDashboard.tsx, 2026-03-17)

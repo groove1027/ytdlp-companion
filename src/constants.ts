@@ -12,11 +12,12 @@ export const PRICING = {
   IMAGE_FLASH: 0.02,                 // Gemini 2.5 Flash ($0.02/image) — 비활성
 
   // Video Generation
-  VIDEO_VEO: 0.1681,                 // Evolink Veo 3.1 Fast Lite 1080p ($0.1681/video, 12.1 credits)
-  VIDEO_GROK_6S: 0.10,               // Kie Grok 720p 6s ($0.10/video, 20 credits)
-  VIDEO_GROK_10S: 0.15,              // Kie Grok 720p 10s ($0.15/video, 30 credits)
-  VIDEO_GROK_15S: 0.20,              // Kie Grok 720p 15s ($0.20/video)
-  VIDEO_XAI_V2V_PER_SEC: 0.05,       // xAI Grok Video-to-Video ($0.05/sec)
+  VIDEO_VEO: 0.169,                  // Evolink Veo 3.1 Fast 1080p ($0.169/video, 12.1 credits)
+  VIDEO_GROK_6S: 0.10,               // KIE Grok 720p 6s ($0.10/video, 20 credits)
+  VIDEO_GROK_10S: 0.15,              // KIE Grok 720p 10s ($0.15/video, 30 credits)
+  VIDEO_SEEDANCE_PER_SEC: 0.025,     // KIE Seedance 1.5 Pro per second ($0.025/s, ~1.78 credits/s)
+  VIDEO_WAN_V2V_720P_PER_SEC: 0.07,  // KIE Wan 2.6 V2V 720p per second ($0.07/s)
+  VIDEO_WAN_V2V_1080P_PER_SEC: 0.105, // KIE Wan 2.6 V2V 1080p per second ($0.105/s)
 
   // Music Generation (Kie SUNO)
   MUSIC_SUNO_PER_TRACK: 0.06,        // Kie SUNO ($0.06/track, 12 credits)
@@ -27,7 +28,6 @@ export const PRICING = {
   TTS_ELEVENLABS_MULTI_PER_1K: 0.06, // Kie ElevenLabs Multilingual V2 ($0.06/1K chars, 12 credits)
 
   // Post-Processing
-  WAVESPEED_PER_SEC: 0.01,           // WaveSpeed 워터마크/자막 제거 ($0.01/sec, 최소 $0.05)
   // REMOVE_BG_PER_IMAGE: 0.20,      // [DISABLED] Remove.bg 배경 제거
 
   // Analysis — Gemini 3 Flash via Evolink/Kie

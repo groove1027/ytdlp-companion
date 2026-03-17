@@ -13,9 +13,6 @@ import FeedbackHistoryPanel from './components/FeedbackHistoryPanel';
 import FeedbackNotificationBanner from './components/FeedbackNotificationBanner';
 import CostDashboard from './components/CostDashboard';
 import ApiKeySettings from './components/ApiKeySettings';
-/* WaveSpeed 비활성화 — import 주석처리
-import WatermarkRemoverModal from './components/WatermarkRemoverModal';
-*/
 import { ProjectConfig, Scene, AspectRatio, ProjectData, VideoFormat, ImageModel, CharacterAppearance, VideoModel, VoiceName, AppTab } from './types';
 import {
     parseScriptToScenes,
@@ -225,9 +222,6 @@ const App: React.FC = () => {
   const lightboxUrl = useUIStore((s) => s.lightboxUrl);
   const showFullScriptModal = useUIStore((s) => s.showFullScriptModal);
   const showApiSettings = useUIStore((s) => s.showApiSettings);
-  /* WaveSpeed 비활성화
-  const showWatermarkModal = useUIStore((s) => s.showWatermarkModal);
-  */
   const toast = useUIStore((s) => s.toast);
   const isProcessing = useUIStore((s) => s.isProcessing);
   const processingMessage = useUIStore((s) => s.processingMessage);
@@ -741,7 +735,7 @@ const App: React.FC = () => {
                   id: `scene-${Date.now()}-${i}`,
                   isGeneratingImage: true,
                   isGeneratingVideo: false,
-                  grokDuration: '15',
+                  grokDuration: '10',
                   grokSpeechMode: newConfig.dialogueMode ?? false,
                   isNativeHQ: false, 
                   isInfographic: newConfig.allowInfographics === true ? (s.isInfographic === true) : false, // [FIX] allowInfographics가 false면 무조건 false 강제
@@ -1082,10 +1076,6 @@ const App: React.FC = () => {
       {/* DebugConsole은 도구모음 내부로 이동 — 아래 사이드바 참조 */}
       {/* [v4.5] 모달: API 설정 */}
       <ApiKeySettings isOpen={showApiSettings} onClose={() => useUIStore.getState().setShowApiSettings(false)} />
-      {/* WaveSpeed 비활성화 — 워터마크 모달 주석처리
-      <WatermarkRemoverModal isOpen={showWatermarkModal} onClose={() => useUIStore.getState().setShowWatermarkModal(false)} />
-      */}
-      
       {/* [v4.5] 상단 헤더 바 (전체 너비) */}
       <header className="fixed top-0 left-0 right-0 h-16 bg-gray-900/95 backdrop-blur-md border-b border-gray-800 z-40 flex items-center px-6 gap-4">
         <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-purple-500 whitespace-nowrap">

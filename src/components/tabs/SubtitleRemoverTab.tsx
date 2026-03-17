@@ -4,7 +4,7 @@ import { getGhostCutKeys } from '../../services/apiService';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
 import { useElapsedTimer, formatElapsed } from '../../hooks/useElapsedTimer';
 import { useCostStore } from '../../stores/costStore';
-import { PRICING } from '../../constants';
+// GhostCut 자막 제거 비용은 건당 고정 (PRICING 불필요)
 import { logger } from '../../services/LoggerService';
 
 const REMOVAL_TIPS = [
@@ -131,8 +131,8 @@ const SubtitleRemoverTab: React.FC = () => {
         videoDuration,
       );
 
-      // 비용 추가
-      const cost = Math.max(videoDuration * PRICING.WAVESPEED_PER_SEC, 0.05);
+      // 비용 추가 (GhostCut 자막 제거 — 건당 고정 비용)
+      const cost = 0.10;
       addCost(cost, 'video');
 
       const url = URL.createObjectURL(resultBlob);
@@ -175,9 +175,7 @@ const SubtitleRemoverTab: React.FC = () => {
     if (fileInputRef.current) fileInputRef.current.value = '';
   }, [resultBlobUrl, videoPreviewUrl]);
 
-  const estimatedCost = videoDuration > 0
-    ? Math.max(videoDuration * PRICING.WAVESPEED_PER_SEC, 0.05)
-    : 0;
+  const estimatedCost = videoDuration > 0 ? 0.10 : 0;
 
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100 p-6 max-w-4xl mx-auto">

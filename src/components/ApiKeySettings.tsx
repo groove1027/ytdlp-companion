@@ -243,7 +243,7 @@ const assignRemaining = (entries: DetectedKey[], assigned: Set<string>): Detecte
 
 const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
     const { requireAuth } = useAuthGuard();
-    const [keys, setKeys] = useState({ kie: '', cloudName: '', uploadPreset: '', gemini: '', apimart: '', removeBg: '', wavespeed: '', xai: '', evolink: '', youtubeApiKey: '', typecast: '', ghostcutAppKey: '', ghostcutAppSecret: '' });
+    const [keys, setKeys] = useState({ kie: '', cloudName: '', uploadPreset: '', gemini: '', apimart: '', removeBg: '', xai: '', evolink: '', youtubeApiKey: '', typecast: '', ghostcutAppKey: '', ghostcutAppSecret: '' });
     const [youtubeKeyPool, setYoutubeKeyPool] = useState<string[]>([]);
     const [newYoutubeKey, setNewYoutubeKey] = useState('');
     const [showPassword, setShowPassword] = useState(false);
@@ -328,7 +328,6 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
                 gemini: stored.gemini,
                 apimart: stored.apimart,
                 removeBg: stored.removeBg,
-                wavespeed: stored.wavespeed,
                 xai: stored.xai,
                 evolink: stored.evolink,
                 youtubeApiKey: stored.youtubeApiKey,
@@ -368,7 +367,7 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
         // YouTube API 키 풀 저장
         saveYoutubeApiKeyPool(finalYoutubePool);
         const primaryYoutubeKey = finalYoutubePool.length > 0 ? finalYoutubePool[0] : '';
-        saveApiKeys(keys.kie, keys.cloudName, keys.uploadPreset, undefined, keys.apimart, keys.removeBg, keys.wavespeed, keys.xai, keys.evolink, primaryYoutubeKey, keys.typecast, keys.ghostcutAppKey, keys.ghostcutAppSecret);
+        saveApiKeys(keys.kie, keys.cloudName, keys.uploadPreset, undefined, keys.apimart, keys.removeBg, keys.xai, keys.evolink, primaryYoutubeKey, keys.typecast, keys.ghostcutAppKey, keys.ghostcutAppSecret);
         // 서버에도 동기화 (계정에 연동 — 다른 기기에서도 복원 가능)
         syncApiKeysToServer().catch(() => {});
         showToast('설정이 저장되었습니다. 페이지를 새로고침합니다.', 1500);

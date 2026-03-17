@@ -51,9 +51,10 @@ export enum ImageModel {
 }
 
 export enum VideoModel {
-  VEO = 'veo-3.1-evolink', // [UPDATED] Evolink Veo 3.1 Fast 1080p
-  GROK = 'grok',           // Kie Grok
-  // VEO_FAST = 'veo-3.1-fast', // [DEPRECATED] 720p — Evolink 1080p로 통합
+  VEO = 'veo-3.1-evolink',       // Evolink Veo 3.1 Fast 1080p ($0.169)
+  GROK = 'grok',                 // KIE Grok I2V 720p (6s/10s, $0.10~$0.15)
+  SEEDANCE = 'seedance-1.5-pro', // KIE Seedance 1.5 Pro I2V (4~12s, $0.025/s)
+  WAN_V2V = 'wan-2.6-v2v',       // KIE Wan 2.6 Video-to-Video ($0.07/s 720p)
   VEO_QUALITY = 'veo-3.1-quality' // Legacy / Compat → VEO로 매핑
 }
 
@@ -233,7 +234,7 @@ export interface Scene {
   sfxPrompt?: string;            // SFX 생성 프롬프트
   soundMood?: string;            // 장면 사운드 분위기 (AI 추천용)
 
-  grokDuration?: '6' | '10' | '15';
+  grokDuration?: '6' | '10';
   grokSpeechMode?: boolean;
 
   /** 커뮤니티 미디어 (밈/짤/일러스트/효과음) — 기존 이미지 대신 사용 */

@@ -22,6 +22,7 @@ function lazyRetry(importFn: () => Promise<{ default: React.ComponentType<any> }
 
 const SetupPanel = lazyRetry(() => import('./imagevideo/SetupPanel'));
 const StoryboardPanel = lazyRetry(() => import('./imagevideo/StoryboardPanel'));
+const VideoRemakePanel = lazyRetry(() => import('./imagevideo/VideoRemakePanel'));
 
 const LoadingFallback: React.FC = () => (
   <div className="flex items-center justify-center h-64">
@@ -36,7 +37,7 @@ const ImageVideoTab: React.FC = () => {
   const activeSubTab = useImageVideoStore((s) => s.activeSubTab);
   const setActiveSubTab = useImageVideoStore((s) => s.setActiveSubTab);
 
-  const handleSubTabClick = useCallback((tabId: 'setup' | 'storyboard') => {
+  const handleSubTabClick = useCallback((tabId: 'setup' | 'storyboard' | 'remake') => {
     logger.trackAction('이미지/영상 서브탭 전환', tabId);
     if (tabId === 'storyboard') {
       const { scenes } = useProjectStore.getState();
@@ -73,6 +74,7 @@ const ImageVideoTab: React.FC = () => {
           {([
             { id: 'setup' as const, label: '스타일 선택', icon: '🎨' },
             { id: 'storyboard' as const, label: '스토리보드', icon: '🎬' },
+            { id: 'remake' as const, label: '영상 리메이크', icon: '🔄' },
           ]).map((tab) => {
             const isActive = activeSubTab === tab.id;
             return (
@@ -99,6 +101,7 @@ const ImageVideoTab: React.FC = () => {
         <Suspense fallback={<LoadingFallback />}>
           {activeSubTab === 'setup' && <SetupPanel />}
           {activeSubTab === 'storyboard' && <StoryboardPanel />}
+          {activeSubTab === 'remake' && <VideoRemakePanel />}
         </Suspense>
       </div>
     </div>

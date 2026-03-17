@@ -763,7 +763,6 @@ class LoggerService {
         ['YouTube', 'CUSTOM_YOUTUBE_API_KEY'],
         ['Cloudinary', 'CUSTOM_CLOUD_NAME'],
         ['Remove.bg', 'CUSTOM_REMOVE_BG_KEY'],
-        ['WaveSpeed', 'CUSTOM_WAVESPEED_KEY'],
         ['Typecast', 'CUSTOM_TYPECAST_KEY'],
         ['GhostCut', 'CUSTOM_GHOSTCUT_APP_KEY'],
         ['xAI', 'CUSTOM_XAI_KEY'],

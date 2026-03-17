@@ -45,8 +45,8 @@ function aspectRatioClass(ar?: string): string {
 // [FIX #365] 하드코딩 제거 → 프로젝트 config.imageModel 사용 (스토리보드 내 드롭다운으로 변경 가능)
 
 // --- Video Cost Helper ---
-const getGrokCost = (duration?: '6' | '10' | '15'): number =>
-  duration === '15' ? PRICING.VIDEO_GROK_15S : duration === '6' ? PRICING.VIDEO_GROK_6S : PRICING.VIDEO_GROK_10S;
+const getGrokCost = (duration?: '6' | '10'): number =>
+  duration === '6' ? PRICING.VIDEO_GROK_6S : PRICING.VIDEO_GROK_10S;
 
 const fmtCost = (usd: number, rate: number): string => {
   const krw = Math.round(usd * rate);
@@ -305,14 +305,14 @@ const SceneCard: React.FC<SceneCardProps> = ({ scene, index, onUpdatePrompt, onD
           <div className="w-px h-5 bg-gray-700 mx-0.5" />
           {/* Grok video actions */}
           <ActionButton label="Grok" color="pink"
-            tooltip={`Grok 영상 (${scene.grokDuration || '15'}s ${scene.grokSpeechMode ? '나레이션' : 'SFX'}) — ${fmtCost(getGrokCost((scene.grokDuration || '15') as '6'|'10'|'15'), useCostStore.getState().exchangeRate || PRICING.EXCHANGE_RATE)}`}
+            tooltip={`Grok 영상 (${scene.grokDuration || '10'}s ${scene.grokSpeechMode ? '나레이션' : 'SFX'}) — ${fmtCost(getGrokCost((scene.grokDuration || '10') as '6'|'10'), useCostStore.getState().exchangeRate || PRICING.EXCHANGE_RATE)}`}
             disabled={!scene.imageUrl || scene.isGeneratingVideo}
             icon={<svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>}
             onClick={() => onGrokVideo(scene.id)} />
-          <button type="button" title="Grok 6초/10초/15초 전환"
-            onClick={() => useProjectStore.getState().updateScene(scene.id, { grokDuration: (scene.grokDuration === '6' ? '10' : scene.grokDuration === '10' ? '15' : '6') as '6' | '10' | '15' })}
+          <button type="button" title="Grok 6초/10초 전환"
+            onClick={() => useProjectStore.getState().updateScene(scene.id, { grokDuration: scene.grokDuration === '6' ? '10' : '6' })}
             className="h-7 px-1.5 rounded-lg border border-pink-500/20 bg-pink-600/10 text-[10px] font-bold text-pink-300 hover:bg-pink-600/20 transition-all">
-            {scene.grokDuration === '15' ? '15s' : scene.grokDuration === '6' ? '6s' : '10s'}
+            {scene.grokDuration === '6' ? '6s' : '10s'}
           </button>
           <ActionButton label={scene.grokSpeechMode ? '나레이션' : 'SFX'} color="fuchsia"
             tooltip="Grok SFX/나레이션 전환"
@@ -571,7 +571,7 @@ const GridSceneCard: React.FC<GridSceneCardProps> = ({ scene, index, onRegenerat
               icon={<svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>}
               onClick={(e) => { e.stopPropagation(); onRegenerate(scene.id); }} />
             <ActionButton label="Grok" color="pink" compact
-              tooltip={`Grok 영상 (${scene.grokDuration || '15'}s) — ${fmtCost(getGrokCost((scene.grokDuration || '15') as '6'|'10'|'15'), useCostStore.getState().exchangeRate || PRICING.EXCHANGE_RATE)}`}
+              tooltip={`Grok 영상 (${scene.grokDuration || '10'}s) — ${fmtCost(getGrokCost((scene.grokDuration || '10') as '6'|'10'), useCostStore.getState().exchangeRate || PRICING.EXCHANGE_RATE)}`}
               disabled={!scene.imageUrl || scene.isGeneratingVideo}
               icon={<svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>}
               onClick={(e) => { e.stopPropagation(); onGrokVideo(scene.id); }} />
@@ -831,7 +831,7 @@ const SceneDetailModal: React.FC<SceneDetailModalProps> = ({
                 {scene.isGeneratingVideo ? (
                   <><span className="w-4 h-4 border-2 border-pink-400/30 border-t-pink-400 rounded-full animate-spin" /> 생성 중 {elapsedVideo > 0 && <span className="tabular-nums text-xs text-pink-400/70">{formatElapsed(elapsedVideo)}</span>}</>
                 ) : (
-                  <><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg> Grok 영상 ({scene.grokDuration || '15'}s {scene.grokSpeechMode ? '나레이션' : 'SFX'}) <span className="text-pink-400/60 text-xs ml-1">{fmtCost(getGrokCost((scene.grokDuration || '15') as '6'|'10'|'15'), useCostStore.getState().exchangeRate || PRICING.EXCHANGE_RATE)}</span></>
+                  <><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg> Grok 영상 ({scene.grokDuration || '10'}s {scene.grokSpeechMode ? '나레이션' : 'SFX'}) <span className="text-pink-400/60 text-xs ml-1">{fmtCost(getGrokCost((scene.grokDuration || '10') as '6'|'10'), useCostStore.getState().exchangeRate || PRICING.EXCHANGE_RATE)}</span></>
                 )}
               </button>
               <button type="button" disabled={!scene.imageUrl || scene.isGeneratingVideo} onClick={() => onVeoVideo(scene.id)}
@@ -854,9 +854,9 @@ const SceneDetailModal: React.FC<SceneDetailModalProps> = ({
               <div className="flex items-center gap-2 col-span-2">
                 <span className="text-xs text-gray-500">Grok 설정:</span>
                 <button type="button"
-                  onClick={() => useProjectStore.getState().updateScene(scene.id, { grokDuration: (scene.grokDuration === '6' ? '10' : scene.grokDuration === '10' ? '15' : '6') as '6' | '10' | '15' })}
-                  className={`px-2.5 py-1 text-xs rounded-lg border transition-colors ${scene.grokDuration === '15' ? 'bg-pink-900/50 border-pink-400/40 text-pink-200' : scene.grokDuration === '6' ? 'bg-gray-800 border-gray-600 text-gray-400' : 'bg-pink-900/30 border-pink-500/30 text-pink-300'}`}>
-                  {scene.grokDuration === '15' ? '15초' : scene.grokDuration === '6' ? '6초' : '10초'}
+                  onClick={() => useProjectStore.getState().updateScene(scene.id, { grokDuration: scene.grokDuration === '6' ? '10' : '6' })}
+                  className={`px-2.5 py-1 text-xs rounded-lg border transition-colors ${scene.grokDuration === '6' ? 'bg-gray-800 border-gray-600 text-gray-400' : 'bg-pink-900/30 border-pink-500/30 text-pink-300'}`}>
+                  {scene.grokDuration === '6' ? '6초' : '10초'}
                 </button>
                 <button type="button"
                   onClick={() => useProjectStore.getState().updateScene(scene.id, { grokSpeechMode: !scene.grokSpeechMode })}
@@ -2048,12 +2048,12 @@ const StoryboardPanel: React.FC = () => {
                 </button>
                 <button
                   type="button"
-                  onClick={() => { videoBatch.runGrokHQBatch('15', false, selectedSceneIdsArray); setShowGenDropdown(false); }}
+                  onClick={() => { videoBatch.runGrokHQBatch('10', false, selectedSceneIdsArray); setShowGenDropdown(false); }}
                   className="w-full text-left px-4 py-2 text-sm text-gray-200 hover:bg-gray-700/60 transition-colors flex items-center gap-2"
                 >
                   <span className="w-2 h-2 rounded-full bg-pink-400" />
-                  <span className="flex-1">Grok SFX Only 15초 {hasSelection ? `(${selectedVideoEligible}개)` : '(일괄)'}</span>
-                  <span className="text-[10px] text-pink-400/70">{fmtCost(PRICING.VIDEO_GROK_15S * selectedVideoEligible, exRate)}</span>
+                  <span className="flex-1">Grok SFX Only 10초 {hasSelection ? `(${selectedVideoEligible}개)` : '(일괄)'}</span>
+                  <span className="text-[10px] text-pink-400/70">{fmtCost(PRICING.VIDEO_GROK_10S * selectedVideoEligible, exRate)}</span>
                 </button>
                 <button
                   type="button"
@@ -2075,12 +2075,12 @@ const StoryboardPanel: React.FC = () => {
                 </button>
                 <button
                   type="button"
-                  onClick={() => { videoBatch.runGrokHQBatch('15', true, selectedSceneIdsArray); setShowGenDropdown(false); }}
+                  onClick={() => { videoBatch.runGrokHQBatch('10', true, selectedSceneIdsArray); setShowGenDropdown(false); }}
                   className="w-full text-left px-4 py-2 text-sm text-gray-200 hover:bg-gray-700/60 transition-colors flex items-center gap-2"
                 >
                   <span className="w-2 h-2 rounded-full bg-fuchsia-400" />
-                  <span className="flex-1">Grok 나레이션 15초 {hasSelection ? `(${selectedVideoEligible}개)` : '(일괄)'}</span>
-                  <span className="text-[10px] text-fuchsia-400/70">{fmtCost(PRICING.VIDEO_GROK_15S * selectedVideoEligible, exRate)}</span>
+                  <span className="flex-1">Grok 나레이션 10초 {hasSelection ? `(${selectedVideoEligible}개)` : '(일괄)'}</span>
+                  <span className="text-[10px] text-fuchsia-400/70">{fmtCost(PRICING.VIDEO_GROK_10S * selectedVideoEligible, exRate)}</span>
                 </button>
                 <div className="border-t border-gray-700" />
                 <p className="px-4 py-1 text-xs text-gray-500 font-bold uppercase">Veo 3.1 1080p (Evolink)</p>

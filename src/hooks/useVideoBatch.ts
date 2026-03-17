@@ -108,7 +108,7 @@ export const useVideoBatch = (
         initialModel: VideoModel, 
         explicitUpscaleRequest: boolean, 
         forceModel: boolean = false,
-        overrideDuration?: '6' | '10' | '15',
+        overrideDuration?: '6' | '10',
         overrideSpeech?: boolean,
         isRetry: boolean = false,
         isSafeMode: boolean = false, // [NEW] Flag for simplified retry
@@ -246,7 +246,7 @@ export const useVideoBatch = (
             // Build prompt for Grok
             const audioSuffix = isSafeMode ? " [No Sound]" : " [Sound Effects Only] [No Music]";
             const enhancedPrompt = `${rawPrompt}${audioSuffix}`.trim();
-            const effectiveDuration = overrideDuration || freshScene.grokDuration || '15';
+            const effectiveDuration = overrideDuration || freshScene.grokDuration || '10';
             const effectiveSpeech = isSafeMode ? false : (overrideSpeech !== undefined ? overrideSpeech : (freshScene.grokSpeechMode || false));
 
             // [FIX] Build cultural context string from globalContext + per-scene fields
@@ -311,7 +311,7 @@ export const useVideoBatch = (
             if (effectiveModel === VideoModel.VEO) {
                 estimatedCost = PRICING.VIDEO_VEO;
             } else if (effectiveModel === VideoModel.GROK) {
-                estimatedCost = effectiveDuration === '15' ? PRICING.VIDEO_GROK_15S : effectiveDuration === '10' ? PRICING.VIDEO_GROK_10S : PRICING.VIDEO_GROK_6S;
+                estimatedCost = effectiveDuration === '10' ? PRICING.VIDEO_GROK_10S : PRICING.VIDEO_GROK_6S;
             }
 
             if (signal.aborted) throw new Error("Cancelled by user");
@@ -448,7 +448,7 @@ export const useVideoBatch = (
     // KIE 레이트 리밋 옵션: 10개/10초 버스트, 최대 100 동시 처리
     const kieBatchOpts = { isQuotaExhausted: isQuotaExhaustedError };
 
-    const runGrokHQBatch = async (duration: '6' | '10' | '15', speechMode: boolean, sceneIds?: string[]) => {
+    const runGrokHQBatch = async (duration: '6' | '10', speechMode: boolean, sceneIds?: string[]) => {
         logger.trackAction('비디오 배치 생성 시작', 'Grok HQ');
         // [FIX BUG#10] Read current scenes from store to avoid stale closure
         const allTargets = useProjectStore.getState().scenes.filter(s => s.imageUrl && !s.videoUrl && !s.isGeneratingVideo);
@@ -546,11 +546,11 @@ export const useVideoBatch = (
 
             const videoUrl = await pollXaiVideoEditTask(taskId, signal, handleProgress);
 
-            // Cost: ~$0.05/sec, use actual segment length when available
+            // Cost: Wan V2V 720p $0.07/sec
             const segDuration = (scene.v2vSegmentEndSec !== undefined && scene.v2vSegmentStartSec !== undefined)
                 ? (scene.v2vSegmentEndSec - scene.v2vSegmentStartSec)
                 : 8;
-            if (onCostAdd) onCostAdd(PRICING.VIDEO_XAI_V2V_PER_SEC * segDuration, 'video');
+            if (onCostAdd) onCostAdd(PRICING.VIDEO_WAN_V2V_720P_PER_SEC * segDuration, 'video');
 
             storeUpdateScene(sceneId, {
                 videoUrl, isGeneratingVideo: false, isNativeHQ: false,

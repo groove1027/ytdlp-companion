@@ -182,6 +182,7 @@ project-root/
 > | Grok Imagine Video | `grok-imagine-video.md` |
 > | Suno Complete | `suno-api-complete.md` |
 > | Typecast API | `typecast-api.md` |
+> | **KIE 비디오 모델 전체 (17개 모델 + 가격표)** | **`kie-video-models-complete.md`** |
 > | Typecast Download | `typecast-download.md` |
 > | API 요약 (참고용) | `api-reference.md` |
 

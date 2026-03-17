@@ -8,7 +8,6 @@ const DEFAULT_GEMINI_KEY = 'REDACTED_GEMINI_KEY';
 const DEFAULT_KIE_KEY = 'REDACTED_KIE_KEY';
 const DEFAULT_APIMART_KEY = 'REDACTED_APIMART_KEY';
 const DEFAULT_REMOVE_BG_KEY = 'REDACTED_REMOVEBG_KEY';
-const DEFAULT_WAVESPEED_KEY = '';
 const DEFAULT_XAI_KEY = 'REDACTED_XAI_KEY';
 const DEFAULT_EVOLINK_KEY = 'REDACTED_EVOLINK_KEY';
 const DEFAULT_YOUTUBE_API_KEY = 'REDACTED_YOUTUBE_KEY';
@@ -48,11 +47,6 @@ export const getApimartKey = (): string => {
 
 export const getRemoveBgKey = (): string => {
     const key = localStorage.getItem('CUSTOM_REMOVE_BG_KEY') || DEFAULT_REMOVE_BG_KEY;
-    return sanitizeKey(key);
-};
-
-export const getWaveSpeedKey = (): string => {
-    const key = localStorage.getItem('CUSTOM_WAVESPEED_KEY') || DEFAULT_WAVESPEED_KEY;
     return sanitizeKey(key);
 };
 
@@ -159,7 +153,7 @@ export const getFeedbackUrl = (): string => {
     return DEFAULT_FEEDBACK_URL;
 };
 
-export const saveApiKeys = (kie: string, cloudName?: string, uploadPreset?: string, gemini?: string, apimart?: string, removeBg?: string, wavespeed?: string, xai?: string, evolink?: string, youtubeApiKey?: string, typecast?: string, ghostcutAppKey?: string, ghostcutAppSecret?: string) => {
+export const saveApiKeys = (kie: string, cloudName?: string, uploadPreset?: string, gemini?: string, apimart?: string, removeBg?: string, xai?: string, evolink?: string, youtubeApiKey?: string, typecast?: string, ghostcutAppKey?: string, ghostcutAppSecret?: string) => {
     // Save raw input, but sanitized on retrieval
     if (kie.trim()) localStorage.setItem('CUSTOM_KIE_KEY', kie.trim());
     else localStorage.removeItem('CUSTOM_KIE_KEY');
@@ -181,9 +175,6 @@ export const saveApiKeys = (kie: string, cloudName?: string, uploadPreset?: stri
 
     if (uploadPreset?.trim()) localStorage.setItem('CUSTOM_UPLOAD_PRESET', uploadPreset.trim());
     else localStorage.removeItem('CUSTOM_UPLOAD_PRESET');
-
-    if (wavespeed && wavespeed.trim()) localStorage.setItem('CUSTOM_WAVESPEED_KEY', wavespeed.trim());
-    else localStorage.removeItem('CUSTOM_WAVESPEED_KEY');
 
     if (xai && xai.trim()) localStorage.setItem('CUSTOM_XAI_KEY', xai.trim());
     else localStorage.removeItem('CUSTOM_XAI_KEY');
@@ -223,7 +214,6 @@ export const getStoredKeys = () => {
         removeBg: localStorage.getItem('CUSTOM_REMOVE_BG_KEY') || '',
         cloudName: localStorage.getItem('CUSTOM_CLOUD_NAME') || '',
         uploadPreset: localStorage.getItem('CUSTOM_UPLOAD_PRESET') || '',
-        wavespeed: localStorage.getItem('CUSTOM_WAVESPEED_KEY') || '',
         xai: localStorage.getItem('CUSTOM_XAI_KEY') || '',
         evolink: localStorage.getItem('CUSTOM_EVOLINK_KEY') || '',
         youtubeApiKey: localStorage.getItem('CUSTOM_YOUTUBE_API_KEY') || '',
@@ -243,7 +233,6 @@ const SETTINGS_KEY_MAP: [string, string][] = [
     ['CUSTOM_UPLOAD_PRESET', 'uploadPreset'],
     ['CUSTOM_APIMART_KEY', 'apimart'],
     ['CUSTOM_REMOVE_BG_KEY', 'removeBg'],
-    ['CUSTOM_WAVESPEED_KEY', 'wavespeed'],
     ['CUSTOM_XAI_KEY', 'xai'],
     ['CUSTOM_YOUTUBE_API_KEY', 'youtubeApiKey'],
     ['YOUTUBE_API_KEYS_POOL', 'youtubeApiKeyPool'],

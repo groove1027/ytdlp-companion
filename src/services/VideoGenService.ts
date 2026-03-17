@@ -1,7 +1,7 @@
 
 import { AspectRatio, VideoModel, ImageModel, VideoTaskParams, VideoProvider } from "../types";
 import { uploadMediaToHosting, uploadRemoteUrlToCloudinary } from "./uploadService";
-import { getKieKey, getApimartKey, getWaveSpeedKey, getXaiKey, monitoredFetch } from "./apiService";
+import { getKieKey, getApimartKey, getXaiKey, monitoredFetch } from "./apiService";
 import { getEvolinkKey, evolinkGenerateImage as evolinkGenImg, createEvolinkVideoTask, pollEvolinkTask } from "./evolinkService";
 import { SAFETY_SETTINGS_BLOCK_NONE } from "./gemini/geminiProxy";
 import { logger } from "./LoggerService";
@@ -11,8 +11,6 @@ const KIE_BASE_URL = 'https://api.kie.ai/api/v1/jobs';
 const KIE_VEO_BASE_URL = 'https://api.kie.ai/api/v1/veo';
 const APIMART_BASE_URL = 'https://api.apimart.ai/v1/videos/generations';
 const APIMART_TASK_URL = 'https://api.apimart.ai/v1/tasks';
-const WAVESPEED_BASE_URL = 'https://api.wavespeed.ai/api/v3';
-const WAVESPEED_PREDICTIONS_URL = 'https://api.wavespeed.ai/api/v3/predictions';
 const XAI_BASE_URL = 'https://api.x.ai/v1';
 
 // === AUDIO GUARD CONSTANTS ===
@@ -761,172 +759,7 @@ export async function cancelKieTask(taskId: string): Promise<void> {
 }
 
 
-/* WaveSpeed 워터마크 제거 기능 주석처리
-// === WAVESPEED WATERMARK REMOVAL ===
-
-export async function createWatermarkRemovalTask(videoUrl: string): Promise<string> {
-    const apiKey = getWaveSpeedKey();
-    if (!apiKey) throw new Error("WaveSpeed API Key가 설정되지 않았습니다. API 설정에서 키를 입력해주세요.");
-
-    const response = await monitoredFetch(`${WAVESPEED_BASE_URL}/wavespeed-ai/video-watermark-remover`, {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${apiKey}`,
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ video: videoUrl })
-    });
-
-    if (!response.ok) {
-        if (response.status === 402) throw new Error("WaveSpeed 잔액이 부족합니다. 충전 후 다시 시도하세요.");
-        if (response.status === 401) throw new Error("WaveSpeed API Key가 유효하지 않습니다.");
-        const errText = await response.text();
-        throw new Error(`WaveSpeed API Error (${response.status}): ${errText}`);
-    }
-
-    const data = await response.json();
-    const taskId = data.data?.id;
-    if (!taskId) throw new Error("WaveSpeed Task ID를 찾을 수 없습니다.");
-    return taskId;
-}
-
-export async function pollWatermarkRemovalTask(
-    taskId: string,
-    signal?: AbortSignal,
-    onProgress?: (percent: number) => void
-): Promise<string> {
-    const apiKey = getWaveSpeedKey();
-    const url = `${WAVESPEED_PREDICTIONS_URL}/${taskId}/result`;
-
-    // 긴 영상 대응: 최대 720회 × 5초 = 3600초 (60분)
-    const MAX_POLLS = 720;
-    for (let i = 0; i < MAX_POLLS; i++) {
-        if (signal?.aborted) throw new Error("Cancelled");
-        await new Promise(r => setTimeout(r, 5000));
-
-        try {
-            const response = await monitoredFetch(url, {
-                headers: { 'Authorization': `Bearer ${apiKey}` },
-                signal
-            });
-            if (!response.ok) continue;
-
-            const data = await response.json();
-            const status = data.data?.status || data.status;
-
-            if (status === 'processing' || status === 'created') {
-                const progress = Math.min(90, Math.round((i / MAX_POLLS) * 90));
-                if (onProgress) onProgress(progress);
-            } else if (status === 'completed' || status === 'succeeded') {
-                if (onProgress) onProgress(100);
-                const outputUrl = data.data?.outputs?.[0] || data.data?.output;
-                if (outputUrl) return outputUrl;
-                throw new Error("워터마크 제거 결과 URL을 찾을 수 없습니다.");
-            } else if (status === 'failed') {
-                throw new Error(`워터마크 제거 실패: ${data.data?.error || 'Unknown Error'}`);
-            }
-        } catch (e: unknown) {
-            const err = e as Error;
-            if (err.name === 'AbortError' || err.message === "Cancelled") throw e;
-            if (err.message.includes("실패") || err.message.includes("찾을 수 없습니다")) throw e;
-        }
-    }
-    throw new Error("WaveSpeed 작업 시간 초과 (Timeout) — 60분 경과");
-}
-*/
-
 // === VIDEO-TO-VIDEO (V2V) APIs ===
-
-export type LumaModifyMode =
-    | 'adhere_1' | 'adhere_2' | 'adhere_3'
-    | 'flex_1' | 'flex_2' | 'flex_3'
-    | 'reimagine_1' | 'reimagine_2' | 'reimagine_3';
-
-// Poll WaveSpeed generic task (shared between watermark, V2V, etc.)
-async function pollWaveSpeedTask(
-    taskId: string,
-    signal?: AbortSignal,
-    onProgress?: (percent: number) => void
-): Promise<string> {
-    const apiKey = getWaveSpeedKey();
-    const url = `${WAVESPEED_PREDICTIONS_URL}/${taskId}/result`;
-
-    for (let i = 0; i < 200; i++) {
-        if (signal?.aborted) throw new Error("Cancelled");
-        await new Promise(r => setTimeout(r, 5000));
-
-        try {
-            const response = await monitoredFetch(url, {
-                headers: { 'Authorization': `Bearer ${apiKey}` },
-                signal
-            });
-            if (!response.ok) {
-                logger.trackRetry('WaveSpeed 폴링', i + 1, 200, `HTTP ${response.status}`);
-                continue;
-            }
-
-            const data = await response.json();
-            const status = data.data?.status || data.status;
-
-            if (status === 'processing' || status === 'created') {
-                const progress = Math.min(90, Math.round((i / 200) * 90));
-                if (onProgress) onProgress(progress);
-            } else if (status === 'completed' || status === 'succeeded') {
-                if (onProgress) onProgress(100);
-                const outputUrl = data.data?.outputs?.[0] || data.data?.output;
-                if (outputUrl) return outputUrl;
-                throw new Error("V2V 결과 URL을 찾을 수 없습니다.");
-            } else if (status === 'failed') {
-                throw new Error(`V2V 변환 실패: ${data.data?.error || 'Unknown Error'}`);
-            }
-        } catch (e: unknown) {
-            const err = e as Error;
-            if (err.name === 'AbortError' || err.message === "Cancelled") throw e;
-            if (err.message.includes("실패") || err.message.includes("찾을 수 없습니다")) throw e;
-            logger.trackRetry('WaveSpeed 폴링 (네트워크)', i + 1, 200, err.message);
-        }
-    }
-    throw new Error("V2V 작업 시간 초과 (Timeout)");
-}
-
-// Luma Modify Video via WaveSpeed ($0.019/sec, max 30s, 9 modes)
-export async function createLumaModifyTask(
-    videoUrl: string,
-    prompt: string,
-    mode: LumaModifyMode = 'flex_2',
-    firstFrameUrl?: string
-): Promise<string> {
-    const apiKey = getWaveSpeedKey();
-    if (!apiKey) throw new Error("WaveSpeed API Key가 설정되지 않았습니다.");
-
-    const body: Record<string, unknown> = { video: videoUrl, prompt, mode };
-    if (firstFrameUrl) body.first_frame = firstFrameUrl;
-
-    const response = await monitoredFetch(`${WAVESPEED_BASE_URL}/luma/modify-video`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-    });
-
-    if (!response.ok) {
-        if (response.status === 402) throw new Error("WaveSpeed 잔액이 부족합니다.");
-        if (response.status === 401) throw new Error("WaveSpeed API Key가 유효하지 않습니다.");
-        const errText = await response.text();
-        throw new Error(`Luma Modify API Error (${response.status}): ${errText}`);
-    }
-
-    const data = await response.json();
-    const taskId = data.data?.id;
-    if (!taskId) throw new Error("Luma Modify Task ID를 찾을 수 없습니다.");
-    logger.info(`[V2V] Luma Modify task created: ${taskId} (mode: ${mode})`);
-    return taskId;
-}
-
-export async function pollLumaModifyTask(
-    taskId: string, signal?: AbortSignal, onProgress?: (percent: number) => void
-): Promise<string> {
-    return pollWaveSpeedTask(taskId, signal, onProgress);
-}
 
 // Runway Aleph V2V via Kie AI (~$0.25, max 5s, best quality)
 export async function createRunwayAlephTask(
@@ -1017,7 +850,7 @@ export async function pollRunwayAlephTask(
     throw new Error("Runway Aleph 작업 시간 초과");
 }
 
-// Luma Modify Video via Kie AI (alternative to WaveSpeed)
+// Luma Modify Video via Kie AI
 export async function createKieLumaModifyTask(
     videoUrl: string,
     prompt: string
@@ -1191,15 +1024,14 @@ export async function pollXaiVideoEditTask(
 }
 
 // === V2V Quick Test Utility (브라우저 콘솔에서 사용) ===
-export type V2VProvider = 'xai' | 'luma-wavespeed' | 'luma-kie' | 'runway-aleph';
+export type V2VProvider = 'xai' | 'wan-v2v' | 'luma-kie' | 'runway-aleph';
 
 export async function testV2V(
     videoUrl: string,
     prompt: string,
-    provider: V2VProvider = 'xai',
-    mode: LumaModifyMode = 'flex_2'
+    provider: V2VProvider = 'wan-v2v'
 ): Promise<string> {
-    logger.info(`[V2V TEST] Provider: ${provider}, Mode: ${mode}`);
+    logger.info(`[V2V TEST] Provider: ${provider}`);
     logger.info(`[V2V TEST] Video: ${videoUrl}`);
     logger.info(`[V2V TEST] Prompt: ${prompt}`);
 
@@ -1207,15 +1039,15 @@ export async function testV2V(
     let resultUrl: string;
 
     switch (provider) {
+        case 'wan-v2v':
+            taskId = await createWanV2VTask(videoUrl, prompt);
+            logger.info(`[V2V TEST] Task created: ${taskId}. Polling...`);
+            resultUrl = await pollKieTask(taskId);
+            break;
         case 'xai':
             taskId = await createXaiVideoEditTask(videoUrl, prompt);
             logger.info(`[V2V TEST] Task created: ${taskId}. Polling...`);
             resultUrl = await pollXaiVideoEditTask(taskId);
-            break;
-        case 'luma-wavespeed':
-            taskId = await createLumaModifyTask(videoUrl, prompt, mode);
-            logger.info(`[V2V TEST] Task created: ${taskId}. Polling...`);
-            resultUrl = await pollLumaModifyTask(taskId);
             break;
         case 'luma-kie':
             taskId = await createKieLumaModifyTask(videoUrl, prompt);
@@ -1232,6 +1064,88 @@ export async function testV2V(
     logger.info(`[V2V TEST] SUCCESS! Result: ${resultUrl}`);
     console.log(`\n✅ V2V 테스트 완료!\n결과 영상: ${resultUrl}\n`);
     return resultUrl;
+}
+
+// === KIE SEEDANCE 1.5 PRO I2V ===
+
+export async function createSeedanceTask(
+    prompt: string,
+    imageUrl: string,
+    duration: number = 8,
+    resolution: '480p' | '720p' | '1080p' = '720p',
+    generateAudio: boolean = true
+): Promise<string> {
+    const apiKey = getKieKey();
+    if (!apiKey) throw new Error("Kie API Key가 설정되지 않았습니다. (Seedance용)");
+
+    let publicImageUrl = imageUrl;
+    if (imageUrl.startsWith("data:image")) {
+        const file = base64ToFile(imageUrl, "seedance_source.png");
+        publicImageUrl = await uploadMediaToHosting(file);
+    }
+
+    const response = await monitoredFetch(`${KIE_BASE_URL}/createTask`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            model: 'bytedance/seedance-1.5-pro',
+            input: {
+                prompt: sanitizePrompt(prompt),
+                input_urls: [publicImageUrl],
+                aspect_ratio: '16:9',
+                resolution,
+                duration: String(duration),
+                fixed_lens: false,
+                generate_audio: generateAudio
+            }
+        })
+    });
+
+    if (response.status === 402) throw new Error("Kie 잔액이 부족합니다. 충전 후 다시 시도하세요.");
+    if (response.status === 429) throw new Error("Kie 요청 제한 초과. 잠시 후 다시 시도하세요.");
+
+    const data = await response.json();
+    if (data.code !== 200) throw new Error(`Seedance API Error: ${data.msg}`);
+    logger.info(`[Seedance] Task created: ${data.data.taskId}`);
+    return data.data.taskId;
+}
+
+// === KIE WAN 2.6 VIDEO-TO-VIDEO ===
+
+export async function createWanV2VTask(
+    videoUrl: string,
+    prompt: string,
+    duration: '5' | '10' = '10',
+    resolution: '720p' | '1080p' = '720p'
+): Promise<string> {
+    const apiKey = getKieKey();
+    if (!apiKey) throw new Error("Kie API Key가 설정되지 않았습니다. (Wan V2V용)");
+
+    // 자막 제거 네거티브 지시를 프롬프트에 추가
+    const negativeSubtitle = " Remove all text, subtitles, captions, and watermarks from the video. Clean background without any overlaid text.";
+    const finalPrompt = sanitizePrompt(prompt) + negativeSubtitle;
+
+    const response = await monitoredFetch(`${KIE_BASE_URL}/createTask`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            model: 'wan/2-6-video-to-video',
+            input: {
+                prompt: finalPrompt,
+                video_urls: [videoUrl],
+                duration,
+                resolution
+            }
+        })
+    });
+
+    if (response.status === 402) throw new Error("Kie 잔액이 부족합니다. 충전 후 다시 시도하세요.");
+    if (response.status === 429) throw new Error("Kie 요청 제한 초과. 잠시 후 다시 시도하세요.");
+
+    const data = await response.json();
+    if (data.code !== 200) throw new Error(`Wan V2V API Error: ${data.msg}`);
+    logger.info(`[Wan V2V] Task created: ${data.data.taskId}`);
+    return data.data.taskId;
 }
 
 // === VIDEO PROVIDER ADAPTER PATTERN ===
@@ -1437,11 +1351,40 @@ const evolinkVeoProvider: VideoProvider = {
     },
 };
 
+// === SEEDANCE PROVIDER ===
+const seedanceProvider: VideoProvider = {
+    create: async (p) => {
+        const taskId = await createSeedanceTask(
+            p.prompt, p.imageUrl,
+            parseInt(p.duration || '8'),
+            '720p',
+            true // generate_audio
+        );
+        return taskId;
+    },
+    poll: (taskId, signal, onProgress) => pollKieTask(taskId, signal, onProgress),
+    cancel: async (taskId) => cancelKieTask(taskId),
+};
+
+// === WAN V2V PROVIDER ===
+const wanV2VProvider: VideoProvider = {
+    create: async (p) => {
+        // V2V는 sourceVideoUrl이 필요 (imageUrl을 videoUrl로 사용)
+        const videoUrl = p.imageUrl; // V2V 모드에서는 imageUrl 자리에 videoUrl이 들어옴
+        const taskId = await createWanV2VTask(videoUrl, p.prompt, '10', '720p');
+        return taskId;
+    },
+    poll: (taskId, signal, onProgress) => pollKieTask(taskId, signal, onProgress),
+    cancel: async (taskId) => cancelKieTask(taskId),
+};
+
 export function getVideoProvider(model: VideoModel): VideoProvider {
     switch (model) {
         case VideoModel.GROK: return grokProvider;
         case VideoModel.VEO: return evolinkVeoProvider;
         case VideoModel.VEO_QUALITY: return evolinkVeoProvider;
+        case VideoModel.SEEDANCE: return seedanceProvider;
+        case VideoModel.WAN_V2V: return wanV2VProvider;
         default: return evolinkVeoProvider;
     }
 }

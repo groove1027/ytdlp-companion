@@ -4,7 +4,7 @@ import { logger } from '../services/LoggerService';
 
 interface ImageVideoStore {
   // 서브탭 상태
-  activeSubTab: 'setup' | 'storyboard';
+  activeSubTab: 'setup' | 'storyboard' | 'remake';
   // SetupPanel ↔ StoryboardPanel 공유 상태
   style: string;
   characters: CharacterReference[];
@@ -23,7 +23,7 @@ interface ImageVideoStore {
   // [#391] 글로벌 스타일 레퍼런스 이미지
   styleReferenceImages: string[];
 
-  setActiveSubTab: (tab: 'setup' | 'storyboard') => void;
+  setActiveSubTab: (tab: 'setup' | 'storyboard' | 'remake') => void;
   setStyle: (v: string) => void;
   setCustomStyleNote: (v: string) => void;
   setCharacters: (chars: CharacterReference[] | ((prev: CharacterReference[]) => CharacterReference[])) => void;
