@@ -1,5 +1,5 @@
 
-import { uploadMediaToHosting } from './uploadService';
+import { uploadMediaToHosting, uploadRemoteUrlToCloudinary } from './uploadService';
 import { dataURLtoFile } from '../utils/fileHelpers';
 import { logger } from './LoggerService';
 import type { Scene } from '../types';
@@ -10,6 +10,20 @@ import type { Scene } from '../types';
 
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 1000; // 1s, 2s, 4s exponential backoff
+
+// [FIX #471] 임시 URL 호스트 목록 — 24시간 내 만료되므로 Cloudinary로 재업로드 필요
+const TEMP_URL_HOSTS = [
+    'tempfile.aiquickdraw.com',
+    'files.evolink.ai',
+];
+
+/** 임시(만료 예정) URL인지 판별 */
+const isTempUrl = (url: string): boolean => {
+    try {
+        const host = new URL(url).hostname;
+        return TEMP_URL_HOSTS.some(h => host.includes(h));
+    } catch { return false; }
+};
 
 // The Scene fields that may contain base64 image data and should be migrated
 const BASE64_SCENE_FIELDS: (keyof Scene)[] = [
@@ -43,17 +57,50 @@ const sleep = (ms: number): Promise<void> =>
 // ---------------------------------------------------------------------------
 
 /**
- * Persists a Base64 image to Cloudinary and returns the HTTPS URL.
- * If the input is already an HTTPS URL, returns it as-is (idempotent).
+ * Persists an image to Cloudinary and returns a permanent HTTPS URL.
+ *
+ * Handles three input types:
+ *   1. Permanent HTTPS URL (Cloudinary etc.) → returned as-is
+ *   2. Temporary HTTPS URL (tempfile/evolink) → re-uploaded to Cloudinary [FIX #471]
+ *   3. Base64 data URL → uploaded to Cloudinary
  *
  * Retries up to 3 times with exponential backoff (1s, 2s, 4s) on upload
- * failure. Falls back to returning the original data on final failure
- * (preserves current fallback behavior).
+ * failure. Falls back to returning the original data on final failure.
  */
 export const persistImage = async (imageData: string): Promise<string> => {
     if (!imageData) return imageData;
 
-    // Already a hosted URL -- no action needed
+    // [FIX #471] 임시 HTTP URL → Cloudinary 영구 업로드 (만료 전에 보존)
+    if ((imageData.startsWith('http://') || imageData.startsWith('https://')) && isTempUrl(imageData)) {
+        logger.info(`[persistImage] 임시 URL 감지, Cloudinary 영구화 시도: ${imageData.substring(0, 80)}...`);
+
+        // 1순위: Cloudinary 원격 URL 업로드 (서버→서버)
+        try {
+            const cloudinaryUrl = await uploadRemoteUrlToCloudinary(imageData);
+            logger.info(`[persistImage] 임시 URL → Cloudinary 영구화 성공`);
+            return cloudinaryUrl;
+        } catch (e1) {
+            logger.warn(`[persistImage] Cloudinary 원격 업로드 실패, 브라우저 fetch 시도`, e1);
+        }
+
+        // 2순위: 브라우저 직접 fetch → blob → File → upload
+        try {
+            const resp = await fetch(imageData);
+            if (!resp.ok) throw new Error(`Fetch failed (${resp.status})`);
+            const blob = await resp.blob();
+            const file = new File([blob], `img_${Date.now()}.png`, { type: blob.type || 'image/png' });
+            const url = await uploadMediaToHosting(file);
+            logger.info(`[persistImage] 임시 URL → fetch+upload 영구화 성공`);
+            return url;
+        } catch (e2) {
+            logger.warn(`[persistImage] 브라우저 fetch도 실패, 원본 URL 유지`, e2);
+        }
+
+        // 3순위: 원본 임시 URL 반환 (24시간 유효)
+        return imageData;
+    }
+
+    // Already a permanent hosted URL -- no action needed
     if (imageData.startsWith('http://') || imageData.startsWith('https://')) {
         return imageData;
     }

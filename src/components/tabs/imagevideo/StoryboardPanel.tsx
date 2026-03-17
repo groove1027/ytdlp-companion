@@ -911,8 +911,18 @@ const SceneDetailModal: React.FC<SceneDetailModalProps> = ({
 
 // --- Virtual Grid View (TanStack Virtual) ---
 const GRID_COLS = 3;
-const GRID_ROW_HEIGHT = 320; // px per grid row (estimate)
 const GRID_GAP = 12;
+const GRID_INFO_HEIGHT = 100; // bottom info section approximate height
+
+/** [FIX #468] 비율별 그리드 행 높이 추정 — 9:16에서 겹침 방지 */
+function estimateGridRowHeight(ar?: string): number {
+  switch (ar) {
+    case AspectRatio.PORTRAIT: return 800 + GRID_INFO_HEIGHT; // 9:16 — tall
+    case AspectRatio.SQUARE: return 480 + GRID_INFO_HEIGHT;   // 1:1
+    case AspectRatio.CLASSIC: return 420 + GRID_INFO_HEIGHT;  // 4:3
+    default: return 320 + GRID_INFO_HEIGHT;                   // 16:9
+  }
+}
 
 const VirtualGridView: React.FC<{
   scenes: Scene[];
@@ -933,14 +943,21 @@ const VirtualGridView: React.FC<{
   toggleSceneSelect: (id: string) => void;
 }> = ({ scenes, handleGenerateImage, removeScene, videoBatch, handlePlaySceneAudio, playingSceneId, sceneProgress, handleAddSceneAfter, handleSplitScene, handleMergeScene, handleReferenceUpload, handleUploadImage, setDetailScene, handleCopyScript, selectedSceneIds, toggleSceneSelect }) => {
   const parentRef = useRef<HTMLDivElement>(null);
+  const aspectRatio = useProjectStore((s) => s.config?.aspectRatio);
   const rowCount = Math.ceil(scenes.length / GRID_COLS);
 
   const virtualizer = useVirtualizer({
     count: rowCount,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => GRID_ROW_HEIGHT + GRID_GAP,
+    estimateSize: () => estimateGridRowHeight(aspectRatio) + GRID_GAP,
     overscan: 3,
   });
+
+  // [FIX #468] 비율 변경 시 virtualizer 캐시 초기화
+  useEffect(() => {
+    virtualizer.measure();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aspectRatio]);
 
   return (
     <div ref={parentRef} className="overflow-y-auto" style={{ maxHeight: 'calc(100vh - 280px)' }}>
@@ -951,6 +968,8 @@ const VirtualGridView: React.FC<{
           return (
             <div
               key={virtualRow.key}
+              data-index={virtualRow.index}
+              ref={virtualizer.measureElement}
               style={{
                 position: 'absolute',
                 top: 0,
@@ -1037,6 +1056,8 @@ const VirtualListView: React.FC<{
           return (
             <div
               key={virtualRow.key}
+              data-index={virtualRow.index}
+              ref={virtualizer.measureElement}
               style={{
                 position: 'absolute',
                 top: 0,
