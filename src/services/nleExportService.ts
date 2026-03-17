@@ -49,9 +49,10 @@ function escXml(s: string): string {
 }
 
 /**
- * 파일명에서 이모지·특수문자 제거 — NLE(Premiere/CapCut) pathurl 호환성 보장.
- * 허용: 영문, 숫자, 한글(가-힣), 일본어(ぁ-ヶ), 중국어(一-龥), 공백, 하이픈, 언더스코어, 점
- * 공백 연속 → 단일 공백, 양쪽 trim, 확장자 보장
+ * 파일명에서 이모지·특수문자 제거 — NLE(Premiere/CapCut/VREW) pathurl 호환성 보장.
+ * 허용: 영문, 숫자, 한글(가-힣), 일본어(ぁ-ヶ), 중국어(一-龥), 하이픈, 언더스코어
+ * 공백 → 언더스코어, 연속 언더스코어 → 단일, 양쪽 trim, 확장자 보장
+ * [FIX] 공백을 언더스코어로 변환하여 NLE pathurl 깨짐 방지
  */
 function sanitizeFileName(name: string): string {
   // 확장자 분리
@@ -60,9 +61,26 @@ function sanitizeFileName(name: string): string {
   const base = ext ? name.slice(0, -ext.length) : name;
   const cleaned = base
     .replace(/[^\w가-힣ぁ-ヶ一-龥\s\-_]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim() || 'video';
+    .replace(/\s+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    || 'video';
   return cleaned + ext;
+}
+
+/**
+ * 프로젝트명/ZIP 파일명 정제 — NLE 소프트웨어 호환성 보장
+ * sanitizeFileName과 동일 로직이나 확장자 없이 프로젝트명 전용
+ * [FIX] 공백→언더스코어, 이모지/특수문자 제거, 빈 결과 폴백
+ */
+export function sanitizeProjectName(name: string, maxLen = 40): string {
+  return name
+    .replace(/[^\w가-힣ぁ-ヶ一-龥\s\-_]/g, '')
+    .replace(/\s+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, maxLen)
+    || 'project';
 }
 
 /** 장면 모드 → Premiere Pro 라벨 색상 (타임라인 시각 구분) */
@@ -427,7 +445,17 @@ export function generateFcpXml(params: {
             <depth>16</depth>
           </samplecharacteristics>
         </format>
-        <track>${audioClips}
+        <outputs>
+          <group>
+            <index>1</index>
+            <numchannels>2</numchannels>
+            <downmix>0</downmix>
+            <channel><index>1</index></channel>
+            <channel><index>2</index></channel>
+          </group>
+        </outputs>
+        <track>
+          <outputchannelindex>1</outputchannelindex>${audioClips}
         </track>
       </audio>
     </media>
@@ -892,7 +920,7 @@ export async function buildNlePackageZip(params: {
   const videoFileName = sanitizeFileName(rawVideoFileName || 'video.mp4');
   const JSZip = (await import('jszip')).default;
   const zip = new JSZip();
-  const safeName = title.replace(/[^\w가-힣\s-]/g, '').trim().slice(0, 40) || 'project';
+  const safeName = sanitizeProjectName(title);
   const BOM = '\uFEFF';
 
   if (target === 'premiere') {
@@ -1273,7 +1301,17 @@ export function generateFcpXmlFromEdl(params: {
       <audio>
         <numOutputChannels>2</numOutputChannels>
         <format><samplecharacteristics><samplerate>48000</samplerate><depth>16</depth></samplecharacteristics></format>
-        <track>${audioClips}
+        <outputs>
+          <group>
+            <index>1</index>
+            <numchannels>2</numchannels>
+            <downmix>0</downmix>
+            <channel><index>1</index></channel>
+            <channel><index>2</index></channel>
+          </group>
+        </outputs>
+        <track>
+          <outputchannelindex>1</outputchannelindex>${audioClips}
         </track>
       </audio>
     </media>
@@ -1310,7 +1348,7 @@ export async function buildEdlNlePackageZip(params: {
   const { target, entries, sourceVideos, sourceMapping, title = 'Edit Project' } = params;
   const JSZip = (await import('jszip')).default;
   const zip = new JSZip();
-  const safeName = title.replace(/[^\w가-힣\s-]/g, '').trim().slice(0, 40) || 'project';
+  const safeName = sanitizeProjectName(title);
   const BOM = '\uFEFF';
 
   const srt = generateEdlNarrationSrt(entries);

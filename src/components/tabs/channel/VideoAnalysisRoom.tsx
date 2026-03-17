@@ -22,6 +22,7 @@ import { extractStreamUrl, isYtdlpServerConfigured, getSocialMetadata, downloadS
 import { detectPlatform } from '../../../services/videoDownloadService';
 import { uploadMediaToHosting } from '../../../services/uploadService';
 import { detectSceneCuts, mergeWithAiTimecodes } from '../../../services/sceneDetection';
+import { sanitizeProjectName } from '../../../services/nleExportService';
 import { transcribeVideoAudio } from '../../../services/gemini/videoAnalysis';
 import type { SceneCut } from '../../../services/sceneDetection';
 import type {
@@ -4112,7 +4113,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
   // SRT 다운로드 (프리셋별 최적화 + 효과자막/일반자막 레이어 분리 + 숏폼 줄바꿈)
   const handleDownloadSrt = useCallback(async (v: VersionItem) => {
     if (v.scenes.length === 0) return;
-    const safeName = v.title.replace(/[^\w가-힣\s-]/g, '').trim().slice(0, 40) || `version-${v.id}`;
+    const safeName = sanitizeProjectName(v.title) || `version-${v.id}`;
     const hasEffectSub = v.scenes.some(s => (s.effectSub || '').trim());
     const totalDur = v.scenes.reduce((acc, s) => acc + parseDuration(s.duration), 0);
     // 프리셋별 숏폼 판단: tikitaka/snack/condensed/alltts는 항상 숏폼 취급, deep은 항상 롱폼
@@ -4258,7 +4259,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
     if (!selectedPreset) return;
     const sourceInfo = inputMode === 'youtube' ? `영상: ${youtubeUrl}` : `파일: ${uploadedFiles[0]?.name || ''}`;
     const html = generateAnalysisHtml([v], selectedPreset, thumbnails, sourceInfo, guideAiResult);
-    const safeName = v.title.replace(/[^\w가-힣\s-]/g, '').trim().slice(0, 40);
+    const safeName = sanitizeProjectName(v.title);
     downloadFile(html, `${safeName || `version-${v.id}`}.html`, 'text/html');
   }, [selectedPreset, thumbnails, inputMode, youtubeUrl, uploadedFiles, guideAiResult]);
 
@@ -4679,7 +4680,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                       }
                                       // Step 2: 영상 치수 감지 (캐시 우선)
                                       const { buildNlePackageZip } = await import('../../../services/nleExportService');
-                                      const fileName = youtubeUrl ? `${v.title.replace(/[^\w가-힣\s-]/g, '').slice(0, 30)}.mp4` : (uploadedFiles[0]?.name || 'video.mp4');
+                                      const fileName = youtubeUrl ? `${sanitizeProjectName(v.title, 30)}.mp4` : (uploadedFiles[0]?.name || 'video.mp4');
                                       let dims = nleDimsCache.current;
                                       if (!dims) {
                                         setNleExporting({ target, step: '영상 정보 확인 중...' });
@@ -4729,7 +4730,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                       setNleExporting({ target, step: 'ZIP 패키지 생성 중...' });
                                       const zipBlob = await buildNlePackageZip({ target, scenes: v.scenes, title: v.title, videoBlob, videoFileName: fileName, preset: selectedPreset || undefined, width: dims.w, height: dims.h, fps: dims.fps, videoDurationSec: dims.dur });
                                       const url = URL.createObjectURL(zipBlob);
-                                      const a = document.createElement('a'); a.href = url; a.download = `${v.title.replace(/[^\w가-힣\s-]/g, '').slice(0, 30)}_${label}.zip`; a.click();
+                                      const a = document.createElement('a'); a.href = url; a.download = `${sanitizeProjectName(v.title, 30)}_${label}.zip`; a.click();
                                       setTimeout(() => URL.revokeObjectURL(url), 10000);
                                       // [FIX #370] 오디오 누락 경고 — 오디오 없이 NLE 내보내기 시 사용자에게 안내
                                       showToast(!audioConfirmed

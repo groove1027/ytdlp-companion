@@ -19,7 +19,9 @@ export const dataURLtoFile = (dataurl: string, filename: string): File | null =>
 };
 
 export const getSafeFilename = (index: number, text: string, ext: string): string => {
-    const safeText = text.replace(/[<>:"/\\|?*\x00-\x1F]/g, '').trim().substring(0, 15).replace(/\s+/g, '_');
+    const safeText = text
+        .replace(/[^\w가-힣ぁ-ヶ一-龥\s\-_]/g, '')
+        .trim().substring(0, 15).replace(/\s+/g, '_');
     const num = String(index + 1).padStart(2, '0');
     return `${num}_${safeText || 'Scene'}.${ext}`;
 };

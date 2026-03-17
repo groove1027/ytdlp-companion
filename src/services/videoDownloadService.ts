@@ -98,14 +98,14 @@ const downloadFromYtdlp = async (url: string): Promise<DownloadResult> => {
     logger.info('[VideoDownload] 소셜 엔드포인트 라우팅', { url });
     const { blob, title } = await downloadSocialVideo(url, '720p');
     logger.success('[VideoDownload] 소셜 다운로드 성공', { size: blob.size });
-    const filename = `${title || 'download'}.mp4`.replace(/[<>:"/\\|?*]/g, '');
-    return { blob, filename, source: 'ytdlp' };
+    const filename = (title || 'download').replace(/[^\w가-힣ぁ-ヶ一-龥\s\-_]/g, '').replace(/\s+/g, '_').replace(/_+/g, '_').replace(/^_+|_+$/g, '') || 'download';
+    return { blob, filename: `${filename}.mp4`, source: 'ytdlp' };
   }
 
   const { blob, info } = await downloadVideoViaProxy(url, 'best');
   logger.success('[VideoDownload] yt-dlp 프록시 성공', { size: blob.size });
-  const filename = `${info.title || 'download'}.mp4`.replace(/[<>:"/\\|?*]/g, '');
-  return { blob, filename, source: 'ytdlp' };
+  const filename = (info.title || 'download').replace(/[^\w가-힣ぁ-ヶ一-龥\s\-_]/g, '').replace(/\s+/g, '_').replace(/_+/g, '_').replace(/^_+|_+$/g, '') || 'download';
+  return { blob, filename: `${filename}.mp4`, source: 'ytdlp' };
 };
 
 /** 프록시 엔드포인트로 다운로드 시도 */

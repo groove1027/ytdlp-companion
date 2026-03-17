@@ -8,6 +8,7 @@ import { useUIStore } from '../stores/uiStore';
 import { useCostStore } from '../stores/costStore';
 import { uploadRemoteUrlToCloudinary } from './uploadService';
 import { getSafeFilename, processSequentially, optimizeForExport, downloadHtmlFile } from '../utils/fileHelpers';
+import { sanitizeProjectName } from './nleExportService';
 import { buildExportHtml } from '../templates/exportHtml';
 import { buildPromptGuideHtml } from '../templates/promptGuide';
 import { getFontByFamily } from '../constants/fontLibrary';
@@ -576,7 +577,7 @@ export const exportProjectHtml = async () => {
         const _htmlUrl = URL.createObjectURL(blob);
         logger.registerBlobUrl(_htmlUrl, 'other', 'exportService:exportProjectHtml');
         link.href = _htmlUrl;
-        const safeTitle = displayTitle.replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').substring(0, 30);
+        const safeTitle = sanitizeProjectName(displayTitle, 30);
         link.download = `${safeTitle}_Project_Export.html`;
         link.click();
         logger.unregisterBlobUrl(_htmlUrl);
@@ -723,7 +724,7 @@ export const exportProjectZip = async () => {
     const _zipUrl = URL.createObjectURL(blob);
     logger.registerBlobUrl(_zipUrl, 'other', 'exportService:exportProjectZip');
     link.href = _zipUrl;
-    const safeTitle = manifest.title.replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').substring(0, 30);
+    const safeTitle = sanitizeProjectName(manifest.title, 30);
     link.download = `${safeTitle}_Project.zip`;
     link.click();
     setTimeout(() => {
@@ -838,7 +839,7 @@ export const exportProjectById = async (projectId: string): Promise<void> => {
             const _byIdZipUrl = URL.createObjectURL(blob);
             logger.registerBlobUrl(_byIdZipUrl, 'other', 'exportService:exportProjectById:zip');
             link.href = _byIdZipUrl;
-            const safeTitle = displayTitle.replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').substring(0, 30);
+            const safeTitle = sanitizeProjectName(displayTitle, 30);
             link.download = `${safeTitle}_Project.zip`;
             link.click();
             logger.unregisterBlobUrl(_byIdZipUrl);
@@ -873,7 +874,7 @@ export const exportProjectById = async (projectId: string): Promise<void> => {
             const _byIdHtmlUrl = URL.createObjectURL(blob);
             logger.registerBlobUrl(_byIdHtmlUrl, 'other', 'exportService:exportProjectById:html');
             link.href = _byIdHtmlUrl;
-            const safeTitle = displayTitle.replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').substring(0, 30);
+            const safeTitle = sanitizeProjectName(displayTitle, 30);
             link.download = `${safeTitle}_Project_Export.html`;
             link.click();
             logger.unregisterBlobUrl(_byIdHtmlUrl);

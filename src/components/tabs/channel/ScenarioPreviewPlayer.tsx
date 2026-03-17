@@ -13,6 +13,7 @@ import type {
   VideoSceneRow,
 } from '../../../types';
 import { showToast } from '../../../stores/uiStore';
+import { sanitizeProjectName } from '../../../services/nleExportService';
 import PreviewNarrationPanel, { type TtsEntry } from './PreviewNarrationPanel';
 import { logger } from '../../../services/LoggerService';
 
@@ -395,7 +396,7 @@ const ScenarioPreviewPlayer: React.FC<Props> = ({
 
       const blob = await exportDone;
       const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
-      const safeName = version.title.replace(/[^\w가-힣\s-]/g, '').trim().slice(0, 40) || `version-${version.id}`;
+      const safeName = sanitizeProjectName(version.title) || `version-${version.id}`;
 
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);

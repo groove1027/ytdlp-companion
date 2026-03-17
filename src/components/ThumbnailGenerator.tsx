@@ -572,7 +572,7 @@ const ThumbnailGenerator: React.FC<ThumbnailGeneratorProps> = ({
   };
 
   const handleDownload = async (url: string, index: number, type: 'long' | 'short', textOverlay: string) => {
-    const safeText = textOverlay.replace(/[<>:"/\\|?*\x00-\x1F]/g, "").trim().substring(0, 15).replace(/\s+/g, '_');
+    const safeText = textOverlay.replace(/[^\w가-힣ぁ-ヶ一-龥\s\-_]/g, '').trim().substring(0, 15).replace(/\s+/g, '_');
     const num = String(index + 1).padStart(2, '0');
     const filename = `${num}_${safeText || 'Thumbnail'}.jpg`;
     
