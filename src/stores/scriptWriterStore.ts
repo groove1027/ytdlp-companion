@@ -93,7 +93,7 @@ interface ScriptWriterStore {
   expansionTarget: number | null;
   activeStep: number;  // 1~4 단계
   videoFormat: VideoFormat;
-  longFormSplitType: 'DEFAULT' | 'DETAILED';
+  longFormSplitType: 'DEFAULT' | 'DETAILED' | 'ECONOMY';
   smartSplit: boolean;
   targetCharCount: number;
   splitResult: string[];         // 장면 분석 결과 (AI 분할된 장면 배열)
@@ -132,7 +132,7 @@ interface ScriptWriterStore {
   finishExpansion: () => void;
   setActiveStep: (step: number) => void;
   setVideoFormat: (format: VideoFormat) => void;
-  setLongFormSplitType: (type: 'DEFAULT' | 'DETAILED') => void;
+  setLongFormSplitType: (type: 'DEFAULT' | 'DETAILED' | 'ECONOMY') => void;
   setSmartSplit: (v: boolean) => void;
   setTargetCharCount: (count: number) => void;
   setSplitResult: (scenes: string[]) => void;

@@ -71,7 +71,7 @@ const ScriptMode: React.FC<ScriptModeProps> = ({
     const [atmosphere, setAtmosphere] = useState(initialState?.atmosphere || '');
     const [aspectRatio, setAspectRatio] = useState<AspectRatio>(initialState?.aspectRatio || AspectRatio.LANDSCAPE);
     const [videoFormat, setVideoFormat] = useState<VideoFormat>(initialState?.videoFormat || VideoFormat.SHORT);
-    const [longFormSplitType, setLongFormSplitType] = useState<'DEFAULT' | 'DETAILED'>(initialState?.longFormSplitType || 'DEFAULT'); // [NEW] Long Form Split State
+    const [longFormSplitType, setLongFormSplitType] = useState<'DEFAULT' | 'DETAILED' | 'ECONOMY'>(initialState?.longFormSplitType || 'DEFAULT'); // [NEW] Long Form Split State — ECONOMY: #438
     const [imageModel, setImageModel] = useState<ImageModel>(initialState?.imageModel || ImageModel.NANO_COST);
     
     // UI Options
@@ -632,10 +632,16 @@ const ScriptMode: React.FC<ScriptModeProps> = ({
             return (
                 <div className="bg-purple-900/30 border border-purple-500/30 rounded-xl p-4 animate-fade-in mb-3">
                     <h4 className="flex items-center gap-2 text-purple-200 font-bold mb-2 text-base">
-                        <span className="text-lg">{longFormSplitType === 'DEFAULT' ? '🐢' : '🐇'}</span> {longFormSplitType === 'DEFAULT' ? '호흡 중심 모드 (2문장 = 1장면)' : '디테일 중심 모드 (1문장 = 1장면)'}
+                        <span className="text-lg">{longFormSplitType === 'ECONOMY' ? '💰' : longFormSplitType === 'DEFAULT' ? '🐢' : '🐇'}</span> {longFormSplitType === 'ECONOMY' ? '절약 중심 모드 (4~6문장 = 1장면)' : longFormSplitType === 'DEFAULT' ? '호흡 중심 모드 (2문장 = 1장면)' : '디테일 중심 모드 (1문장 = 1장면)'}
                     </h4>
 
-                    {longFormSplitType === 'DEFAULT' ? (
+                    {longFormSplitType === 'ECONOMY' ? (
+                        <>
+                            <p className="text-sm text-gray-300 mb-3">
+                                비용 절약 모드. <strong>4~6문장을 하나의 장면</strong>으로 합쳐 이미지 생성 비용과 시간을 최소화합니다.
+                            </p>
+                        </>
+                    ) : longFormSplitType === 'DEFAULT' ? (
                         <>
                             <p className="text-sm text-gray-300 mb-3">
                                 긴 호흡의 강의/세미나 스타일. <strong>2문장을 하나의 장면</strong>으로 합쳐 자연스러운 흐름을 유지합니다.
@@ -1032,6 +1038,17 @@ const ScriptMode: React.FC<ScriptModeProps> = ({
                                 <div className="flex bg-gray-900/50 p-1 rounded-lg border border-gray-600 mt-2">
                                     <button
                                         type="button"
+                                        onClick={() => setLongFormSplitType('ECONOMY')}
+                                        className={`flex-1 py-1.5 px-2 rounded-md text-sm font-bold transition-all flex items-center justify-center gap-1 ${
+                                            longFormSplitType === 'ECONOMY'
+                                            ? 'bg-emerald-600 text-white shadow-md'
+                                            : 'text-gray-400 hover:text-gray-200'
+                                        }`}
+                                    >
+                                        <span>💰</span> 절약 (4~6문장)
+                                    </button>
+                                    <button
+                                        type="button"
                                         onClick={() => setLongFormSplitType('DEFAULT')}
                                         className={`flex-1 py-1.5 px-2 rounded-md text-sm font-bold transition-all flex items-center justify-center gap-1 ${
                                             longFormSplitType === 'DEFAULT'
@@ -1039,7 +1056,7 @@ const ScriptMode: React.FC<ScriptModeProps> = ({
                                             : 'text-gray-400 hover:text-gray-200'
                                         }`}
                                     >
-                                        <span>🐢</span> 호흡 중심 (2문장=1장면)
+                                        <span>🐢</span> 호흡 (2문장)
                                     </button>
                                     <button
                                         type="button"
@@ -1050,7 +1067,7 @@ const ScriptMode: React.FC<ScriptModeProps> = ({
                                             : 'text-gray-400 hover:text-gray-200'
                                         }`}
                                     >
-                                        <span>🐇</span> 디테일 중심 (1문장=1장면)
+                                        <span>🐇</span> 디테일 (1문장)
                                     </button>
                                 </div>
                             )}

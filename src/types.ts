@@ -346,7 +346,7 @@ export interface ScriptModeState {
     atmosphere: string;
     aspectRatio: AspectRatio;
     videoFormat: VideoFormat;
-    longFormSplitType?: 'DEFAULT' | 'DETAILED'; // [NEW] Long Form Split Option
+    longFormSplitType?: 'DEFAULT' | 'DETAILED' | 'ECONOMY'; // [NEW] Long Form Split Option — ECONOMY: #438
     imageModel: ImageModel;
     allowInfographics: boolean;
     characterAppearance: CharacterAppearance;
@@ -394,8 +394,8 @@ export interface ProjectConfig {
   aspectRatio: AspectRatio;
   voice: VoiceName;
   videoFormat: VideoFormat;
-  longFormSplitType?: 'DEFAULT' | 'DETAILED'; // [NEW] Long Form Split Option
-  creationMode?: CreationMode; 
+  longFormSplitType?: 'DEFAULT' | 'DETAILED' | 'ECONOMY'; // [NEW] Long Form Split Option — ECONOMY: #438
+  creationMode?: CreationMode;
   
   characterImage?: string;
   characterPublicUrl?: string;

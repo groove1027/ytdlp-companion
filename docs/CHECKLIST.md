@@ -8,6 +8,13 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-18] #438 롱폼 단락 나누기 '절약 중심' 모드 추가
+- [x] 롱폼 단락 나누기에 'ECONOMY' (절약 중심) 모드 추가 — 4~6문장 = 1장면, 비용/시간 절약
+- [x] 12개 언어 프로필에 economyMerge 파라미터 추가 (한국어: 400자)
+- [x] ScriptWriterTab, SetupPanel, ScriptMode 3곳 UI 업데이트 (emerald 색상 버튼)
+- [x] parseScriptToScenes AI 프롬프트에 ECONOMY 분할 규칙 추가
+- [x] tsc + vite build 검증 통과
+
 ### [2026-03-18] #443 영상 분석실 결과 헤더에 프리셋 이름 표시
 - [x] VideoAnalysisRoom.tsx 결과 헤더에 PRESET_INFO 라벨 추가 (티키타카/스낵형/축약 리캡/All TTS)
 - [x] tsc + vite build + Puppeteer E2E 검증 통과

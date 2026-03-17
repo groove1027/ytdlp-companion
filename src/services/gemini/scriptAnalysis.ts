@@ -91,6 +91,7 @@ interface LangSplitProfile {
     id: string;
     clauseMax: number;      // LONG DETAILED: splitByClause maxChars
     defaultMerge: number;   // LONG DEFAULT: 2문장 병합 한도
+    economyMerge: number;   // LONG ECONOMY: 다문장 적극 병합 한도 (#438)
     shortMax: number;       // SHORT: maxChars 타겟
     shortMin: number;       // SHORT: 최소 파트 크기
     nanoMax: number;        // NANO: maxChars 타겟
@@ -99,19 +100,19 @@ interface LangSplitProfile {
 }
 
 const LANG_PROFILES: Record<string, LangSplitProfile> = {
-    ko: { id: 'ko', clauseMax: 100, defaultMerge: 150, shortMax: 80,  shortMin: 10, nanoMax: 16, nanoMin: 5 },
-    ja: { id: 'ja', clauseMax: 80,  defaultMerge: 120, shortMax: 60,  shortMin: 8,  nanoMax: 14, nanoMin: 4 },
-    zh: { id: 'zh', clauseMax: 60,  defaultMerge: 100, shortMax: 50,  shortMin: 6,  nanoMax: 12, nanoMin: 3 },
-    th: { id: 'th', clauseMax: 85,  defaultMerge: 130, shortMax: 60,  shortMin: 10, nanoMax: 18, nanoMin: 5 },
-    ar: { id: 'ar', clauseMax: 150, defaultMerge: 200, shortMax: 100, shortMin: 15, nanoMax: 24, nanoMin: 6 },
-    hi: { id: 'hi', clauseMax: 120, defaultMerge: 180, shortMax: 90,  shortMin: 12, nanoMax: 20, nanoMin: 5 },
-    ru: { id: 'ru', clauseMax: 180, defaultMerge: 250, shortMax: 110, shortMin: 18, nanoMax: 28, nanoMin: 7 },
-    vi: { id: 'vi', clauseMax: 150, defaultMerge: 220, shortMax: 100, shortMin: 15, nanoMax: 24, nanoMin: 6 },
-    id: { id: 'id', clauseMax: 160, defaultMerge: 240, shortMax: 100, shortMin: 15, nanoMax: 26, nanoMin: 7 },
-    de: { id: 'de', clauseMax: 220, defaultMerge: 320, shortMax: 130, shortMin: 20, nanoMax: 32, nanoMin: 8 },
-    en: { id: 'en', clauseMax: 200, defaultMerge: 300, shortMax: 120, shortMin: 20, nanoMax: 30, nanoMin: 8 },
+    ko: { id: 'ko', clauseMax: 100, defaultMerge: 150, economyMerge: 400, shortMax: 80,  shortMin: 10, nanoMax: 16, nanoMin: 5 },
+    ja: { id: 'ja', clauseMax: 80,  defaultMerge: 120, economyMerge: 320, shortMax: 60,  shortMin: 8,  nanoMax: 14, nanoMin: 4 },
+    zh: { id: 'zh', clauseMax: 60,  defaultMerge: 100, economyMerge: 260, shortMax: 50,  shortMin: 6,  nanoMax: 12, nanoMin: 3 },
+    th: { id: 'th', clauseMax: 85,  defaultMerge: 130, economyMerge: 350, shortMax: 60,  shortMin: 10, nanoMax: 18, nanoMin: 5 },
+    ar: { id: 'ar', clauseMax: 150, defaultMerge: 200, economyMerge: 520, shortMax: 100, shortMin: 15, nanoMax: 24, nanoMin: 6 },
+    hi: { id: 'hi', clauseMax: 120, defaultMerge: 180, economyMerge: 470, shortMax: 90,  shortMin: 12, nanoMax: 20, nanoMin: 5 },
+    ru: { id: 'ru', clauseMax: 180, defaultMerge: 250, economyMerge: 650, shortMax: 110, shortMin: 18, nanoMax: 28, nanoMin: 7 },
+    vi: { id: 'vi', clauseMax: 150, defaultMerge: 220, economyMerge: 570, shortMax: 100, shortMin: 15, nanoMax: 24, nanoMin: 6 },
+    id: { id: 'id', clauseMax: 160, defaultMerge: 240, economyMerge: 620, shortMax: 100, shortMin: 15, nanoMax: 26, nanoMin: 7 },
+    de: { id: 'de', clauseMax: 220, defaultMerge: 320, economyMerge: 830, shortMax: 130, shortMin: 20, nanoMax: 32, nanoMin: 8 },
+    en: { id: 'en', clauseMax: 200, defaultMerge: 300, economyMerge: 780, shortMax: 120, shortMin: 20, nanoMax: 30, nanoMin: 8 },
     // es/fr/pt/it 등 라틴 유럽 계열 공통
-    latin_eu: { id: 'latin_eu', clauseMax: 220, defaultMerge: 320, shortMax: 130, shortMin: 20, nanoMax: 32, nanoMin: 8 },
+    latin_eu: { id: 'latin_eu', clauseMax: 220, defaultMerge: 320, economyMerge: 830, shortMax: 130, shortMin: 20, nanoMax: 32, nanoMin: 8 },
 };
 const DEFAULT_PROFILE = LANG_PROFILES.en;
 
@@ -369,7 +370,7 @@ const flattenSegmentsToSentences = (
 
 // [IMPROVED] Deterministic Local Scene Count — 의미 단위 경계를 존중하면서 정확한 장면 수 계산
 // 장면 마커/단락 경계/화자 변화를 감지하여 자연스러운 장면 분할
-export const countScenesLocally = (script: string, format: VideoFormat, smartSplit: boolean, longFormSplitType?: 'DEFAULT' | 'DETAILED'): number => {
+export const countScenesLocally = (script: string, format: VideoFormat, smartSplit: boolean, longFormSplitType?: 'DEFAULT' | 'DETAILED' | 'ECONOMY'): number => {
     if (!smartSplit) return script.split('\n').filter(l => l.trim()).length;
 
     // [FIX] 다국어 언어 감지 — 언어별 적정 분할 기준값 적용
@@ -392,6 +393,19 @@ export const countScenesLocally = (script: string, format: VideoFormat, smartSpl
                 for (const t of tagged) {
                     count += splitByClause(t.text, lang.clauseMax).length;
                 }
+                return Math.max(1, count);
+            } else if (longFormSplitType === 'ECONOMY') {
+                // [FIX #438] ECONOMY: 다문장 적극 병합 (세그먼트 경계 무시, 비용 절약)
+                let count = 0, bufLen = 0;
+                for (const t of tagged) {
+                    if (bufLen > 0 && bufLen + t.text.length + 1 > lang.economyMerge) {
+                        count++;
+                        bufLen = t.text.length;
+                    } else {
+                        bufLen += (bufLen > 0 ? 1 : 0) + t.text.length;
+                    }
+                }
+                if (bufLen > 0) count++;
                 return Math.max(1, count);
             } else {
                 // DEFAULT: 2문장 = 1장면, 세그먼트 경계를 넘어 병합하지 않음
@@ -549,7 +563,7 @@ const splitKoreanClauses = (text: string, maxChars: number, minChars: number): s
 };
 
 /** 대본을 장면 단위로 실제 분할하여 텍스트 배열로 반환 — 의미 단위 경계 존중 */
-export const splitScenesLocally = (script: string, format: VideoFormat, smartSplit: boolean, longFormSplitType?: 'DEFAULT' | 'DETAILED'): string[] => {
+export const splitScenesLocally = (script: string, format: VideoFormat, smartSplit: boolean, longFormSplitType?: 'DEFAULT' | 'DETAILED' | 'ECONOMY'): string[] => {
     if (!smartSplit) return script.split('\n').filter(l => l.trim());
 
     // [FIX] 다국어 언어 감지 — 언어별 적정 분할 기준값 적용
@@ -572,6 +586,18 @@ export const splitScenesLocally = (script: string, format: VideoFormat, smartSpl
                 for (const t of tagged) {
                     scenes.push(...splitByClause(t.text, lang.clauseMax));
                 }
+            } else if (longFormSplitType === 'ECONOMY') {
+                // [FIX #438] ECONOMY: 다문장 적극 병합 (세그먼트 경계 무시, 비용 절약)
+                let buf = '';
+                for (const t of tagged) {
+                    if (buf && (buf.length + t.text.length + 1) > lang.economyMerge) {
+                        scenes.push(buf);
+                        buf = t.text;
+                    } else {
+                        buf = buf ? buf + ' ' + t.text : t.text;
+                    }
+                }
+                if (buf) scenes.push(buf);
             } else {
                 // DEFAULT: 2문장 묶되 세그먼트 경계를 넘어 병합하지 않음
                 let i = 0;
@@ -635,7 +661,7 @@ export const analyzeScriptContext = async (
     onCost?: (c: number) => void,
     format?: VideoFormat,
     smartSplit?: boolean,
-    longFormSplitType?: 'DEFAULT' | 'DETAILED'
+    longFormSplitType?: 'DEFAULT' | 'DETAILED' | 'ECONOMY'
 ) => {
     // Cost is now auto-tracked inside evolinkChat/requestEvolinkNative
 
@@ -648,6 +674,8 @@ export const analyzeScriptContext = async (
             case VideoFormat.LONG:
                 splitRule = longFormSplitType === 'DETAILED'
                     ? "1 sentence = 1 scene. EXCEPTION: If sentence ends with '?', merge with next answer sentence (2→1 scene)."
+                    : longFormSplitType === 'ECONOMY'
+                    ? "Aggressively merge 4-6 sentences = 1 scene. Minimize total scenes for cost efficiency. Only split on major topic/visual changes."
                     : "2 sentences = 1 scene. EXCEPTION: If '?' present, merge up to 3 sentences. Only split to 1 sentence on drastic visual transition.";
                 break;
             case VideoFormat.SHORT:
@@ -748,7 +776,7 @@ Script: ${truncatedScript}`;
 
 // [REWRITTEN] 로컬 결정론적 카운트 — AI 추정 완전 제거, API 비용 $0
 // parseScriptToScenes 후처리와 동일한 규칙이므로 예상 = 실제 보장
-export const estimateSceneCount = async (script: string, format: VideoFormat, smartSplit: boolean, _onCost?: (c: number) => void, longFormSplitType?: 'DEFAULT' | 'DETAILED') => {
+export const estimateSceneCount = async (script: string, format: VideoFormat, smartSplit: boolean, _onCost?: (c: number) => void, longFormSplitType?: 'DEFAULT' | 'DETAILED' | 'ECONOMY') => {
     if (!script.trim()) return 0;
     const count = countScenesLocally(script, format, smartSplit, longFormSplitType);
     console.log(`[estimateSceneCount] 📐 로컬 결정론적 카운트: ${count}컷 (API 호출 없음, $0)`);
@@ -770,7 +798,7 @@ export const parseScriptToScenes = async (
     detectedLocale?: string,
     onCost?: (c: number) => void,
     suppressText?: boolean, // [NEW] No Text Mode Argument
-    longFormSplitType?: 'DEFAULT' | 'DETAILED', // [NEW] Long Form Split Type
+    longFormSplitType?: 'DEFAULT' | 'DETAILED' | 'ECONOMY', // [NEW] Long Form Split Type
     targetSceneCount?: number, // [NEW] 예상 컷수 — 이 수치에 맞춰 장면 분할 강제
     dialogueTone?: DialogueTone, // [v4.7] 대사 톤 프리셋
     characterProfiles?: CharacterProfile[], // [v4.7] 캐릭터 프로필 배열
@@ -798,6 +826,15 @@ export const parseScriptToScenes = async (
                     1. **DEFAULT = 1 SENTENCE**: Treat every single sentence as ONE scene to maximize visual detail.
                     2. **QUESTION EXCEPTION**: If a sentence ends with '?', you MUST merge it with the IMMEDIATE next sentence (Answer) into ONE scene.
                     3. **NO MERGING**: Do not merge other sentences unless they are extremely short fragments (less than 3 words).
+                    `;
+                } else if (longFormSplitType === 'ECONOMY') {
+                    splitInstruction = `
+                    [CRITICAL: LONG-FORM ECONOMY SPLIT RULE — MINIMIZE SCENES]
+                    1. **AGGRESSIVE MERGE = 4-6 Sentences**: You MUST merge 4 to 6 consecutive sentences into ONE scene.
+                    2. **TOPIC BOUNDARY ONLY**: Only start a new scene when the TOPIC or VISUAL SETTING changes significantly (new chapter, location change, time skip).
+                    3. **IGNORE MINOR TRANSITIONS**: Do NOT split on minor sentence-level transitions. Keep scenes long and stable.
+                    4. **COST PRIORITY**: The goal is to minimize total scene count for cost efficiency. Fewer scenes = better.
+                    5. **TARGET**: Aim for roughly 1/3 the scenes that "DEFAULT" mode would produce.
                     `;
                 } else {
                     splitInstruction = `

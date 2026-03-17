@@ -135,7 +135,8 @@ const FORMAT_DESC: Record<VideoFormat, string> = {
   [VideoFormat.NANO]: '틱톡/도파민 — 쉼표 단위 초고속 분할',
   [VideoFormat.MANUAL]: '사용자가 직접 입력한 줄바꿈을 기준으로 분할합니다',
 };
-const LONG_SPLIT: Record<'DEFAULT' | 'DETAILED', { label: string; desc: string }> = {
+const LONG_SPLIT: Record<'DEFAULT' | 'DETAILED' | 'ECONOMY', { label: string; desc: string }> = {
+  ECONOMY: { label: '절약 중심', desc: '4~6문장 → 1장면 (최소 컷, 비용 절약)' },
   DEFAULT: { label: '호흡 중심', desc: '2~3문장 → 1장면 (적은 컷, 강의/설명)' },
   DETAILED: { label: '디테일 중심', desc: '1문장 → 1장면 (많은 컷, 다큐/사연)' },
 };
@@ -652,12 +653,12 @@ const SetupPanel: React.FC = () => {
               </div>
               {config.videoFormat === VideoFormat.LONG && (
                 <div className="flex bg-gray-800/60 p-0.5 rounded-lg border border-gray-600">
-                  {(['DEFAULT', 'DETAILED'] as const).map(type => (
+                  {(['ECONOMY', 'DEFAULT', 'DETAILED'] as const).map(type => (
                     <button key={type} type="button"
                       onClick={() => updateConfig('longFormSplitType', type)}
                       className={`py-1 px-2.5 rounded-md text-sm font-bold transition-all ${
                         (config.longFormSplitType || 'DEFAULT') === type
-                          ? (type === 'DEFAULT' ? 'bg-violet-600 text-white' : 'bg-indigo-600 text-white')
+                          ? (type === 'ECONOMY' ? 'bg-emerald-600 text-white' : type === 'DEFAULT' ? 'bg-violet-600 text-white' : 'bg-indigo-600 text-white')
                           : 'text-gray-400 hover:text-gray-200'
                       }`}>{LONG_SPLIT[type].label}</button>
                   ))}

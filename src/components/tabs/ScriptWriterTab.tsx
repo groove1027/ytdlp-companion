@@ -21,22 +21,7 @@ import BenchmarkPanel from './script/BenchmarkPanel';
 import TopicRecommendCards from './script/TopicRecommendCards';
 import { useElapsedTimer, formatElapsed } from '../../hooks/useElapsedTimer';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
-
-// 청크 로딩 실패 시 1회 재시도 + 자동 리로드
-function lazyRetry(importFn: () => Promise<{ default: React.ComponentType<any> }>) {
-  return React.lazy(() =>
-    importFn().catch(() =>
-      importFn().catch(() => {
-        const reloaded = sessionStorage.getItem('__chunk_reload');
-        if (!reloaded) {
-          sessionStorage.setItem('__chunk_reload', '1');
-          window.location.reload();
-        }
-        throw new Error('Failed to fetch dynamically imported module');
-      })
-    )
-  );
-}
+import { lazyRetry } from '../../utils/retryImport';
 
 const InstinctBrowser = lazyRetry(() => import('./script/InstinctBrowser'));
 const ScriptExpander = lazyRetry(() => import('./script/ScriptExpander'));
@@ -192,7 +177,8 @@ const FORMAT_DESC: Record<VideoFormat, string> = {
   [VideoFormat.MANUAL]: '사용자가 직접 입력한 줄바꿈을 기준으로 분할합니다',
 };
 
-const LONG_SPLIT: Record<'DEFAULT' | 'DETAILED', { label: string; desc: string }> = {
+const LONG_SPLIT: Record<'DEFAULT' | 'DETAILED' | 'ECONOMY', { label: string; desc: string }> = {
+  ECONOMY: { label: '절약 중심', desc: '4~6문장 → 1장면 (최소 컷, 비용 절약)' },
   DEFAULT: { label: '호흡 중심', desc: '2~3문장 → 1장면 (적은 컷, 강의/설명)' },
   DETAILED: { label: '디테일 중심', desc: '1문장 → 1장면 (많은 컷, 다큐/사연)' },
 };
@@ -425,7 +411,7 @@ export default function ScriptWriterTab() {
 
     try {
       const formatLabel = videoFormat === VideoFormat.LONG
-        ? (longFormSplitType === 'DETAILED' ? '롱폼 디테일 중심' : '롱폼 호흡 중심')
+        ? (longFormSplitType === 'DETAILED' ? '롱폼 디테일 중심' : longFormSplitType === 'ECONOMY' ? '롱폼 절약 중심' : '롱폼 호흡 중심')
         : videoFormat === VideoFormat.SHORT ? '숏폼' : '나노';
 
       const prompt = `다음 대본을 "${formatLabel}" 형식으로 장면 분할해주세요.
@@ -1737,11 +1723,11 @@ ${instinctPrompt}
             </div>
             {videoFormat === VideoFormat.LONG && (
               <div className="flex bg-gray-800/60 p-0.5 rounded-lg border border-gray-600">
-                {(['DEFAULT', 'DETAILED'] as const).map(type => (
+                {(['ECONOMY', 'DEFAULT', 'DETAILED'] as const).map(type => (
                   <button key={type} type="button" onClick={() => setLongFormSplitType(type)}
                     className={`py-1 px-2.5 rounded-md text-sm font-bold transition-all ${
                       longFormSplitType === type
-                        ? (type === 'DEFAULT' ? 'bg-violet-600 text-white' : 'bg-indigo-600 text-white')
+                        ? (type === 'ECONOMY' ? 'bg-emerald-600 text-white' : type === 'DEFAULT' ? 'bg-violet-600 text-white' : 'bg-indigo-600 text-white')
                         : 'text-gray-400 hover:text-gray-200'
                     }`}>{LONG_SPLIT[type].label}</button>
                 ))}
