@@ -61,15 +61,15 @@ export default function EngagementHeatmap({ scriptText, instinctCount }: Props) 
     return { data: ps.slice(0, 20).map((p, i) => scoreParagraph(p, i, ps.length)), paragraphs: ps };
   }, [scriptText]);
 
-  if (data.length < 2) return null;
-
-  const avgE = Math.round(data.reduce((a, d) => a + d.engagement, 0) / data.length);
-  const avgH = Math.round(data.reduce((a, d) => a + d.hook, 0) / data.length);
-  const avgT = Math.round(data.reduce((a, d) => a + d.tension, 0) / data.length);
+  const avgE = data.length >= 2 ? Math.round(data.reduce((a, d) => a + d.engagement, 0) / data.length) : 0;
+  const avgH = data.length >= 2 ? Math.round(data.reduce((a, d) => a + d.hook, 0) / data.length) : 0;
+  const avgT = data.length >= 2 ? Math.round(data.reduce((a, d) => a + d.tension, 0) / data.length) : 0;
   const weakN = data.filter(d => d.engagement < WEAK).length;
 
+  // [FIX #452] useMemo를 early return 전에 배치 — React Hooks 규칙 위반 수정
   // 전체 진단 메시지: 연속된 약한 구간을 그루핑
   const diagMsgs = useMemo(() => {
+    if (data.length < 2) return [];
     const idxs = data.map((d, i) => d.engagement < WEAK ? i : -1).filter(i => i >= 0);
     if (!idxs.length) return [];
     const ranges: [number, number][] = [];
@@ -87,6 +87,9 @@ export default function EngagementHeatmap({ scriptText, instinctCount }: Props) 
   }, [data]);
 
   const sel = selIdx !== null ? data[selIdx] : null;
+
+  // [FIX #452] early return을 모든 hooks 아래로 이동
+  if (data.length < 2) return null;
 
   return (
     <div className="bg-gray-800/40 rounded-xl border border-emerald-700/30 p-4 space-y-3">

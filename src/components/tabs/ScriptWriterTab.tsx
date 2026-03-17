@@ -1,4 +1,4 @@
-import React, { Suspense, useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import React, { Suspense, useState, useCallback, useEffect, useMemo, useRef, useDeferredValue } from 'react';
 import { useScriptWriterStore } from '../../stores/scriptWriterStore';
 import { useNavigationStore } from '../../stores/navigationStore';
 import { useChannelAnalysisStore } from '../../stores/channelAnalysisStore';
@@ -333,20 +333,31 @@ export default function ScriptWriterTab() {
   // ── 단락 나누기 ──
   const [showSplitGuide, setShowSplitGuide] = useState(true);
 
+  // [FIX #452] 대본 빠른 편집 시 비용 높은 scene 계산을 지연시켜 "탭 로딩 오류" 방지
+  const deferredScriptText = useDeferredValue(scriptText);
+
   const estimatedScenes = useMemo(() => {
-    if (!scriptText.trim()) return 0;
-    return countScenesLocally(scriptText, videoFormat, smartSplit,
-      videoFormat === VideoFormat.LONG ? longFormSplitType : undefined);
-  }, [scriptText, videoFormat, smartSplit, longFormSplitType]);
+    if (!deferredScriptText.trim()) return 0;
+    try {
+      return countScenesLocally(deferredScriptText, videoFormat, smartSplit,
+        videoFormat === VideoFormat.LONG ? longFormSplitType : undefined);
+    } catch {
+      return 0;
+    }
+  }, [deferredScriptText, videoFormat, smartSplit, longFormSplitType]);
 
   const livePreviewData = useMemo(() => {
-    if (!scriptText.trim()) return { original: '', scenes: [] as string[] };
-    const parts = scriptText.split(/\n{2,}/);
-    const best = parts.reduce((a, b) => a.length >= b.length ? a : b, '');
-    const scenes = splitScenesLocally(best, videoFormat, smartSplit,
-      videoFormat === VideoFormat.LONG ? longFormSplitType : undefined);
-    return { original: best.substring(0, 120) + (best.length > 120 ? '...' : ''), scenes };
-  }, [scriptText, videoFormat, smartSplit, longFormSplitType]);
+    if (!deferredScriptText.trim()) return { original: '', scenes: [] as string[] };
+    try {
+      const parts = deferredScriptText.split(/\n{2,}/);
+      const best = parts.reduce((a, b) => a.length >= b.length ? a : b, '');
+      const scenes = splitScenesLocally(best, videoFormat, smartSplit,
+        videoFormat === VideoFormat.LONG ? longFormSplitType : undefined);
+      return { original: best.substring(0, 120) + (best.length > 120 ? '...' : ''), scenes };
+    } catch {
+      return { original: '', scenes: [] as string[] };
+    }
+  }, [deferredScriptText, videoFormat, smartSplit, longFormSplitType]);
 
   // [#325][FIX #330] 단락 → SRT 다운로드 — 순서/공백 정규화
   const handleDownloadSegmentsSrt = useCallback(() => {
@@ -472,6 +483,33 @@ ${scriptText}`;
       setIsAnalyzingScenes(false);
     }
   }, [scriptText, videoFormat, longFormSplitType, smartSplit, isAnalyzingScenes, setSplitResult, setActiveTab, setFinalScript]);
+
+  // [FIX #450/#451] 빈줄 정리 — AI 대본의 연속 빈줄을 제거하여 단락 수 정상화
+  const blankLineCount = useMemo(() => {
+    if (!scriptText) return 0;
+    const matches = scriptText.match(/\n\s*\n/g);
+    return matches ? matches.length : 0;
+  }, [scriptText]);
+
+  const handleCleanBlankLines = useCallback(() => {
+    if (!scriptText) return;
+    // 연속된 빈줄(공백만 있는 줄 포함)을 단일 줄바꿈으로 변환
+    const cleaned = scriptText
+      .replace(/\n(\s*\n)+/g, '\n')     // 2개 이상 연속 빈줄 → 단일 줄바꿈
+      .replace(/^\n+/, '')              // 맨 앞 빈줄 제거
+      .replace(/\n+$/, '');             // 맨 뒤 빈줄 제거
+    if (cleaned === scriptText) {
+      showToast('정리할 빈줄이 없습니다');
+      return;
+    }
+    if (generatedScript) {
+      setGeneratedScript({ ...generatedScript, content: cleaned, charCount: cleaned.length });
+    } else {
+      setManualText(cleaned);
+    }
+    if (!styledScript) setFinalScript(cleaned);
+    showToast(`빈줄 ${blankLineCount}개를 정리했습니다`);
+  }, [scriptText, generatedScript, styledScript, blankLineCount, setGeneratedScript, setManualText, setFinalScript]);
 
   const [fileLoading, setFileLoading] = useState(false);
   const [fileError, setFileError] = useState('');
@@ -1553,11 +1591,23 @@ ${instinctPrompt}
             />
           </div>
           <div className="flex items-center justify-between mt-2">
-            {scriptText.length > 0 ? (
-              <span className="text-sm font-bold text-violet-400 bg-violet-500/10 border border-violet-500/30 px-3 py-1.5 rounded-lg">
-                {scriptText.length.toLocaleString()}자 · {estimateTime(scriptText.length)}
-              </span>
-            ) : <span />}
+            <div className="flex items-center gap-2">
+              {scriptText.length > 0 ? (
+                <span className="text-sm font-bold text-violet-400 bg-violet-500/10 border border-violet-500/30 px-3 py-1.5 rounded-lg">
+                  {scriptText.length.toLocaleString()}자 · {estimateTime(scriptText.length)}
+                </span>
+              ) : <span />}
+              {blankLineCount > 3 && (
+                <button
+                  type="button"
+                  onClick={handleCleanBlankLines}
+                  className="text-xs px-2.5 py-1.5 rounded-lg bg-amber-900/25 text-amber-300 border border-amber-500/30 hover:bg-amber-800/35 transition-colors font-medium"
+                  title="연속된 빈줄을 제거하여 단락 수를 줄입니다"
+                >
+                  🧹 빈줄 정리 ({blankLineCount}개)
+                </button>
+              )}
+            </div>
             <span className="text-xs text-gray-600">{SUPPORTED_FORMATS_LABEL}</span>
           </div>
 

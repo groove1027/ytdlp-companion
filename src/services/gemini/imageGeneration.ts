@@ -225,9 +225,23 @@ export const generateSceneImage = async (
     // [AUTO WEB SEARCH] KEY_ENTITY 장면은 실존 인물/브랜드/장소 정확도를 위해 웹서치 자동 활성화
     const effectiveWebSearch = enableWebSearch || scene.castType === 'KEY_ENTITY';
 
+    // [FIX #453] entityName에서 비라틴 문자(한글/한자/일본어 등) 제거
+    // AI가 entityName에 "Syngman Rhee (이승만)" 형태로 한글을 포함하면 이미지에 텍스트로 렌더링됨
+    const sanitizeEntityName = (name: string | undefined): string => {
+        if (!name) return 'Notable entity';
+        // 괄호 안의 비라틴 텍스트 제거: "Name (한글)" → "Name"
+        let cleaned = name.replace(/\s*\([^)]*[\u3000-\u9FFF\uAC00-\uD7AF\u1100-\u11FF\u3130-\u318F][^)]*\)/g, '');
+        // 나머지 비라틴 문자 제거 (CJK, 한글 등)
+        cleaned = cleaned.replace(/[\u3000-\u9FFF\uAC00-\uD7AF\u1100-\u11FF\u3130-\u318F\uA960-\uA97F\uD7B0-\uD7FF]/g, '');
+        // 연속 공백 정리
+        cleaned = cleaned.replace(/\s{2,}/g, ' ').trim();
+        return cleaned || 'Notable entity';
+    };
+
     // 1. Determine Subject & Reference Usage based on 'castType' + 'entityComposition'
     if (scene.castType === 'KEY_ENTITY') {
-        const entityDesc = scene.entityName || 'Notable entity';
+        const entityDesc = sanitizeEntityName(scene.entityName);
+        const safeEntityName = sanitizeEntityName(scene.entityName);
         const entityComp = scene.entityComposition || 'ENTITY_SOLO';
 
         // [NEW] 5가지 연출 구도에 따른 프롬프트 + 캐릭터 레퍼런스 제어
@@ -235,9 +249,9 @@ export const generateSceneImage = async (
             case 'ENTITY_SOLO':
                 // 엔티티 단독 — 메인 캐릭터 완전 제외
                 finalCharImages = [];
-                subjectPrompt = `[IMPORTANT: The SOLE SUBJECT is ${scene.entityName}]\n`;
-                subjectPrompt += `(Subject: ${scene.entityName}), (Appearance: ${entityDesc}), `;
-                subjectPrompt += `(Full portrait of ${scene.entityName}, no other characters visible), `;
+                subjectPrompt = `[IMPORTANT: The SOLE SUBJECT is ${safeEntityName}]\n`;
+                subjectPrompt += `(Subject: ${safeEntityName}), (Appearance: ${entityDesc}), `;
+                subjectPrompt += `(Full portrait of ${safeEntityName}, no other characters visible), `;
                 negativePrompt += "(main character face), (custom character), ";
                 break;
 
@@ -245,8 +259,8 @@ export const generateSceneImage = async (
                 // 엔티티 + 메인 캐릭터 동반 출연 — 자연스러운 상호작용
                 // 캐릭터 레퍼런스 유지
                 subjectPrompt = `[IMPORTANT: TWO SUBJECTS in the same frame]\n`;
-                subjectPrompt += `(Primary Subject: ${scene.entityName}, ${entityDesc}), `;
-                subjectPrompt += `(Secondary Subject: Main Character, standing/interacting beside ${scene.entityName}), `;
+                subjectPrompt += `(Primary Subject: ${safeEntityName}, ${entityDesc}), `;
+                subjectPrompt += `(Secondary Subject: Main Character, standing/interacting beside ${safeEntityName}), `;
                 subjectPrompt += `(Both characters naturally interacting in the scene, proper perspective and depth), `;
                 break;
 
@@ -255,7 +269,7 @@ export const generateSceneImage = async (
                 // 캐릭터 레퍼런스 유지 (어깨/뒷모습 참조용)
                 subjectPrompt = `[IMPORTANT: OVER-THE-SHOULDER composition]\n`;
                 subjectPrompt += `(Over-the-shoulder shot: Main Character's back/shoulder visible in left foreground, out of focus), `;
-                subjectPrompt += `(Focus Subject: ${scene.entityName} visible in the middle/background, ${entityDesc}), `;
+                subjectPrompt += `(Focus Subject: ${safeEntityName} visible in the middle/background, ${entityDesc}), `;
                 subjectPrompt += `(Shallow depth of field, main character blurred foreground framing), `;
                 break;
 
@@ -263,7 +277,7 @@ export const generateSceneImage = async (
                 // 엔티티 전경(클로즈업), 메인 캐릭터 후경(작게)
                 // 캐릭터 레퍼런스 유지
                 subjectPrompt = `[IMPORTANT: FOREGROUND-BACKGROUND split composition]\n`;
-                subjectPrompt += `(Foreground: Close-up of ${scene.entityName}, ${entityDesc}, sharp focus, prominent), `;
+                subjectPrompt += `(Foreground: Close-up of ${safeEntityName}, ${entityDesc}, sharp focus, prominent), `;
                 subjectPrompt += `(Background: Main Character visible but smaller, slightly blurred, reacting or observing), `;
                 subjectPrompt += `(Strong depth separation, cinematic rack focus feel), `;
                 break;
@@ -273,14 +287,14 @@ export const generateSceneImage = async (
                 // 캐릭터 레퍼런스 유지
                 subjectPrompt = `[IMPORTANT: Main character foreground, entity in background context]\n`;
                 subjectPrompt += `(Foreground: Main Character prominent, expressive reaction visible), `;
-                subjectPrompt += `(Background: ${scene.entityName} visible in the scene context, ${entityDesc}), `;
+                subjectPrompt += `(Background: ${safeEntityName} visible in the scene context, ${entityDesc}), `;
                 subjectPrompt += `(Main character is the visual anchor, entity provides narrative context), `;
                 break;
 
             default:
                 // 폴백 — 단독
                 finalCharImages = [];
-                subjectPrompt = `(Subject: ${scene.entityName}), (Appearance: ${entityDesc}), `;
+                subjectPrompt = `(Subject: ${safeEntityName}), (Appearance: ${entityDesc}), `;
                 negativePrompt += "(main character face), (custom character), ";
         }
     } else if (scene.castType === 'EXTRA') {
