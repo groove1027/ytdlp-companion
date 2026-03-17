@@ -1753,7 +1753,9 @@ export async function buildEditRoomNleZip(params: {
 
   // [FIX #472] 미디어 에셋 수집 — 영상 다운로드 실패 시 이미지 폴백 + 실제 파일명 추적
   const mediaFileMap = new Map<number, string>(); // index → 실제 파일명
+  const mediaBlobMap = new Map<number, Blob>(); // index → Blob (CapCut 루트 복사용)
   const narrationFileMap = new Map<number, string>(); // index → 나레이션 오디오 파일명
+  const narrationBlobMap = new Map<number, Blob>(); // index → Blob
   let videoCount = 0;
   let imageCount = 0;
 
@@ -1772,6 +1774,7 @@ export async function buildEditRoomNleZip(params: {
         const fileName = `${idx}_scene.mp4`;
         zip.file(`media/${fileName}`, blob);
         mediaFileMap.set(i, fileName);
+        mediaBlobMap.set(i, blob);
         videoCount++;
         added = true;
       }
@@ -1785,6 +1788,7 @@ export async function buildEditRoomNleZip(params: {
         const fileName = `${idx}_scene.${ext}`;
         zip.file(`media/${fileName}`, blob);
         mediaFileMap.set(i, fileName);
+        mediaBlobMap.set(i, blob);
         imageCount++;
       }
     }
@@ -1797,6 +1801,7 @@ export async function buildEditRoomNleZip(params: {
         const narFileName = `${idx}_narration.mp3`;
         zip.file(`audio/${narFileName}`, blob);
         narrationFileMap.set(i, narFileName);
+        narrationBlobMap.set(i, blob);
       }
     }
   }
@@ -1813,7 +1818,17 @@ export async function buildEditRoomNleZip(params: {
     const speedId = uuid();
     const emptyArr: never[] = [];
 
-    // ── 미디어 머티리얼: 장면별 이미지/영상 ──
+    // ── 미디어를 ZIP 루트에도 복사 (CapCut은 draft 폴더 루트에서 파일을 찾음) ──
+    for (const [i, fileName] of mediaFileMap.entries()) {
+      const blob = mediaBlobMap.get(i);
+      if (blob) zip.file(fileName, blob);
+    }
+    for (const [i, narFileName] of narrationFileMap.entries()) {
+      const blob = narrationBlobMap.get(i);
+      if (blob) zip.file(narFileName, blob);
+    }
+
+    // ── 미디어 머티리얼: 장면별 이미지/영상 (경로는 파일명만 — CapCut 루트 기준) ──
     const videoMaterials: { id: string; path: string; dur: number; isPhoto: boolean }[] = [];
     const audioMaterials: { id: string; path: string; dur: number }[] = [];
 
@@ -1823,7 +1838,7 @@ export async function buildEditRoomNleZip(params: {
       const isVideo = fileName.endsWith('.mp4');
       videoMaterials.push({
         id: uuid(),
-        path: `media/${fileName}`,
+        path: fileName,
         dur: toUs(timeline[i].imageDuration),
         isPhoto: !isVideo,
       });
@@ -1834,7 +1849,7 @@ export async function buildEditRoomNleZip(params: {
       if (!narFileName) continue;
       audioMaterials.push({
         id: uuid(),
-        path: `audio/${narFileName}`,
+        path: narFileName,
         dur: toUs(timeline[i].imageDuration),
       });
     }
