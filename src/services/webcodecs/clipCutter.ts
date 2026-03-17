@@ -118,21 +118,25 @@ function remuxClip(
 
   if (endIdx < startIdx) endIdx = startIdx;
 
+  // [FIX #469/#441] 범위 내 샘플을 DTS 기준으로 정렬 — B-프레임이 있는 MP4에서 CTS 순서로 저장된 경우 대응
+  const rangeSamples = samples.slice(startIdx, endIdx + 1).sort((a, b) => a.dts - b.dts);
+
   // DTS 기준 시작 오프셋 (DTS는 항상 단조 증가 → mp4-muxer 호환)
-  const baseDtsTicks = samples[startIdx].dts;
+  const baseDtsTicks = rangeSamples.length > 0 ? rangeSamples[0].dts : 0;
 
   // mp4-muxer 생성 (비디오 전용)
+  // [FIX #469] firstTimestampBehavior: 'offset' → 첫 DTS가 0이 아니어도 자동 보정
   const target = new ArrayBufferTarget();
   const muxer = new Muxer({
     target,
     fastStart: 'in-memory',
+    firstTimestampBehavior: 'offset',
     video: { codec: 'avc', width, height },
   });
 
   // 샘플 리먹싱 — addVideoChunkRaw로 DTS + compositionTimeOffset 분리 전달
   let isFirst = true;
-  for (let j = startIdx; j <= endIdx; j++) {
-    const s = samples[j];
+  for (const s of rangeSamples) {
     if (s.offset + s.size > arrayBuffer.byteLength) continue;
 
     // DTS 기반 타임스탬프 (항상 단조 증가)
