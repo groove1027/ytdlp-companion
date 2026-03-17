@@ -1438,8 +1438,10 @@ function buildEditRoomFcpXml(params: {
   height: number;
   /** 실제 ZIP에 들어간 미디어 파일명 맵 (index → 파일명). 없으면 scene.videoUrl 기준 추정 */
   mediaFileMap?: Map<number, string>;
+  /** [FIX #473] 실제 ZIP에 들어간 나레이션 오디오 파일명 맵 (index → 파일명) */
+  narrationFileMap?: Map<number, string>;
 }): string {
-  const { timeline, scenes, title, fps, width, height, mediaFileMap } = params;
+  const { timeline, scenes, title, fps, width, height, mediaFileMap, narrationFileMap } = params;
   if (timeline.length === 0) return '';
 
   const { ntsc, timebase } = fpsToNtsc(fps);
@@ -1570,6 +1572,35 @@ function buildEditRoomFcpXml(params: {
             </effect>
           </generatoritem>`).join('');
 
+  // [FIX #473] 나레이션 오디오 트랙 (A2) — 장면별 나레이션 MP3를 타임라인 올바른 위치에 자동 배치
+  const narrationClips = timeline.map((t, i) => {
+    const narFile = narrationFileMap?.get(i);
+    if (!narFile) return '';
+    const clipDurFrames = toFrames(t.imageDuration);
+    return `
+          <clipitem id="narration-${i + 1}" premiereChannelType="stereo">
+            <name>${escXml(`Narration ${String(i + 1).padStart(3, '0')}`)}</name>
+            <duration>${clipDurFrames}</duration>
+            <rate><ntsc>${ntscStr}</ntsc><timebase>${timebase}</timebase></rate>
+            <in>0</in>
+            <out>${clipDurFrames}</out>
+            <start>${toFrames(t.imageStartTime)}</start>
+            <end>${toFrames(t.imageEndTime)}</end>
+            <file id="narfile-${i + 1}">
+              <name>${escXml(narFile)}</name>
+              <pathurl>${escXml(`audio/${narFile}`)}</pathurl>
+              <duration>${clipDurFrames}</duration>
+              <rate><ntsc>${ntscStr}</ntsc><timebase>${timebase}</timebase></rate>
+              <media>
+                <audio><channelcount>2</channelcount><samplecharacteristics><samplerate>48000</samplerate><depth>16</depth></samplecharacteristics></audio>
+              </media>
+            </file>
+            <sourcetrack><mediatype>audio</mediatype><trackindex>1</trackindex></sourcetrack>
+            <labels><label2>Caribbean</label2></labels>
+          </clipitem>`;
+  }).join('');
+  const hasNarrationTrack = narrationClips.replace(/\s/g, '').length > 0;
+
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE xmeml>
 <xmeml version="5">
@@ -1620,7 +1651,10 @@ function buildEditRoomFcpXml(params: {
         </outputs>
         <track>
           <outputchannelindex>1</outputchannelindex>${audioClips}
-        </track>
+        </track>${hasNarrationTrack ? `
+        <track>
+          <outputchannelindex>1</outputchannelindex>${narrationClips}
+        </track>` : ''}
       </audio>
     </media>
   </sequence>
@@ -1719,6 +1753,7 @@ export async function buildEditRoomNleZip(params: {
 
   // [FIX #472] 미디어 에셋 수집 — 영상 다운로드 실패 시 이미지 폴백 + 실제 파일명 추적
   const mediaFileMap = new Map<number, string>(); // index → 실제 파일명
+  const narrationFileMap = new Map<number, string>(); // index → 나레이션 오디오 파일명
   let videoCount = 0;
   let imageCount = 0;
 
@@ -1758,12 +1793,17 @@ export async function buildEditRoomNleZip(params: {
     const narration = narrationLines.find(l => l.sceneId === t.sceneId);
     if (narration?.audioUrl) {
       const blob = await fetchAssetBlob(narration.audioUrl);
-      if (blob) zip.file(`audio/${idx}_narration.mp3`, blob);
+      if (blob) {
+        const narFileName = `${idx}_narration.mp3`;
+        zip.file(`audio/${narFileName}`, blob);
+        narrationFileMap.set(i, narFileName);
+      }
     }
   }
 
   // [FIX #472] FCP XML — mediaFileMap 전달하여 실제 파일명 기준으로 XML 생성
-  const xml = buildEditRoomFcpXml({ timeline, scenes, title, fps, width: w, height: h, mediaFileMap });
+  // [FIX #473] narrationFileMap 전달하여 나레이션 오디오를 A2 트랙에 자동 배치
+  const xml = buildEditRoomFcpXml({ timeline, scenes, title, fps, width: w, height: h, mediaFileMap, narrationFileMap });
   zip.file(`${safeName}.xml`, xml);
 
   // CapCut 전용: draft_content.json + draft_meta_info.json (프로젝트 폴더 복사 방식)
@@ -1793,7 +1833,9 @@ export async function buildEditRoomNleZip(params: {
       `• "${safeName}_자막.srt" → Captions 트랙으로 가져올 수 있습니다.`,
       '',
       '[ 나레이션 ]',
-      '• audio/ 폴더의 나레이션 MP3를 오디오 트랙에 배치하세요.',
+      narrationFileMap.size > 0
+        ? `• 나레이션 ${narrationFileMap.size}개가 A2 오디오 트랙에 자동 배치됩니다.`
+        : '• audio/ 폴더의 나레이션 MP3를 오디오 트랙에 배치하세요.',
       '',
       `• ${timeline.length}개 장면 · ${w}x${h} · ${fps}fps`,
       videoCount > 0 || imageCount > 0
@@ -1817,7 +1859,9 @@ export async function buildEditRoomNleZip(params: {
       `  "${safeName}.xml" 선택 → 편집점 자동 생성`,
       '',
       '[ 나레이션 ]',
-      '• audio/ 폴더의 나레이션 MP3를 오디오 트랙에 배치하세요.',
+      narrationFileMap.size > 0
+        ? `• 나레이션 ${narrationFileMap.size}개가 오디오 트랙에 자동 배치됩니다.`
+        : '• audio/ 폴더의 나레이션 MP3를 오디오 트랙에 배치하세요.',
       '',
       `• ${timeline.length}개 장면 · ${w}x${h} · ${fps}fps`,
       videoCount > 0 || imageCount > 0

@@ -8,6 +8,12 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-18] #473 NLE 내보내기 나레이션 오디오 싱크 수정
+- [x] `buildEditRoomFcpXml`에 나레이션 전용 오디오 트랙(A2) 추가 — Premiere Pro/DaVinci/CapCut/VREW에서 나레이션 MP3 자동 배치
+- [x] `buildEditRoomNleZip`에서 narrationFileMap 추적하여 실제 다운로드된 나레이션 파일만 XML에 포함
+- [x] README 텍스트 동적 업데이트 (나레이션 있으면 "A2 트랙에 자동 배치" 안내)
+- [x] tsc + vite build + E2E Puppeteer 검증 통과
+
 ### [2026-03-17] 피드백 시스템 10x 고도화 — 자동 컨텍스트 수집
 - [x] **Breadcrumb Trail**: 글로벌 클릭/키보드/스크롤 자동 캡처 (LoggerService.installBreadcrumbCapture)
 - [x] **SmartErrorBanner**: 에러 감지 시 자동 팝업 → "개발팀에 알리기" 원클릭 피드백
