@@ -2833,6 +2833,7 @@ const VideoAnalysisRoom: React.FC = () => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisPhase, setAnalysisPhase] = useState<'idle' | 'analyzing'>('idle');
   const analysisAbortRef = useRef<AbortController | null>(null);
+  const failsafeFiredRef = useRef(false); // [FIX #454] 페일세이프 타이머가 이미 처리했는지 추적
   const [copiedVersion, setCopiedVersion] = useState<number | null>(null);
   const [copyMenuVersionId, setCopyMenuVersionId] = useState<number | null>(null);
   const [elapsedSec, setElapsedSec] = useState(0);
@@ -3029,6 +3030,7 @@ const VideoAnalysisRoom: React.FC = () => {
     setSimProgress(0);
     setBatchProgress(null);
     setIsLongForm(false);
+    failsafeFiredRef.current = false; // [FIX #454] 페일세이프 플래그 초기화
     analysisStartRef.current = Date.now();
     resetResults();
 
@@ -3379,8 +3381,8 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       }
 
       // 2단계: AI 분석 — 병렬 배치 또는 단일 호출
-      // [FIX #378] 글로벌 타임아웃이 이미 분석 시작 시점에 설정됨 (전처리+AI 전체 8분 보호)
-      // 전처리가 빨리 끝난 경우 AI에 더 많은 시간 할당하기 위해 글로벌 타임아웃 리셋
+      // [FIX #454] 전처리 완료 후 글로벌 타임아웃을 AI 전용으로 교체
+      // 단, 글로벌 타임아웃(8분)이 아직 남아있으면 유지하고 AI 타임아웃만 추가
       if (globalTimeout) clearTimeout(globalTimeout);
       const AI_TIMEOUT_MS = 5 * 60 * 1000;
       globalTimeout = setTimeout(() => {
@@ -3784,12 +3786,15 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       console.error('[VideoAnalysis] 분석 실패:', isAbort ? '(사용자 취소/타임아웃)' : err);
 
       if (isAbort) {
-        // [FIX #189] 타임아웃 중단 시 부분 결과 존재 여부에 따라 메시지 차별화
-        const partialVersions = useVideoAnalysisStore.getState().versions;
-        if (partialVersions.length > 0) {
-          showToast(`⚠️ 시간 초과로 ${partialVersions.length}개 버전만 생성되었습니다.`, 5000);
-        } else {
-          showToast('분석이 중단되었습니다. 다시 시도해주세요.', 4000);
+        // [FIX #454] 페일세이프 타이머가 이미 토스트를 표시한 경우 중복 방지
+        if (!failsafeFiredRef.current) {
+          // [FIX #189] 타임아웃 중단 시 부분 결과 존재 여부에 따라 메시지 차별화
+          const partialVersions = useVideoAnalysisStore.getState().versions;
+          if (partialVersions.length > 0) {
+            showToast(`⚠️ 시간 초과로 ${partialVersions.length}개 버전만 생성되었습니다.`, 5000);
+          } else {
+            showToast('분석이 중단되었습니다. 다시 시도해주세요.', 4000);
+          }
         }
       } else {
         setError(`분석 실패: ${msg}`);
@@ -4090,7 +4095,21 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       const progress = Math.min(95, Math.round(100 * (1 - Math.exp(-elapsed / (ESTIMATED_TOTAL_SEC * 0.55)))));
       setSimProgress(progress);
     }, 500);
-    return () => clearInterval(iv);
+
+    // [FIX #454] 페일세이프 최대 실행 시간 — 10분 후 강제 종료
+    // 어떤 이유로든 handleAnalyze가 완료되지 않으면 UI가 영원히 멈추는 것을 방지
+    const FAILSAFE_MAX_MS = 10 * 60 * 1000;
+    const failsafeTimer = setTimeout(() => {
+      console.error('[VideoAnalysis] ⚠️ 페일세이프 10분 타임아웃 — isAnalyzing 강제 해제');
+      failsafeFiredRef.current = true; // [FIX #454] catch 블록의 중복 토스트 방지
+      analysisAbortRef.current?.abort();
+      setIsAnalyzing(false);
+      setAnalysisPhase('idle');
+      setBatchProgress(null);
+      showToast('⚠️ 분석 시간이 초과되었습니다. 다시 시도해주세요.', 6000);
+    }, FAILSAFE_MAX_MS);
+
+    return () => { clearInterval(iv); clearTimeout(failsafeTimer); };
   }, [isAnalyzing]);
 
   // ESC — 미리보기 → 버전 접기 순서

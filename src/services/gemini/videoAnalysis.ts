@@ -991,7 +991,8 @@ export const transcribeVideoAudio = async (
 
         // [FIX #386] abort 체크 — 오디오 추출 전 이미 취소된 경우 빠른 종료
         if (signal?.aborted) throw new DOMException('분석이 취소되었습니다.', 'AbortError');
-        const audioBlob = await extractAudioFromVideoFast(videoFile);
+        // [FIX #454] signal을 extractAudioFromVideoFast에 전달 — 타임아웃 시 즉시 중단
+        const audioBlob = await extractAudioFromVideoFast(videoFile, signal);
         // [FIX #386] 오디오 추출 후 abort 체크
         if (signal?.aborted) throw new DOMException('분석이 취소되었습니다.', 'AbortError');
         if (!audioBlob || audioBlob.size < 5000) {
@@ -1030,10 +1031,32 @@ export const transcribeVideoAudio = async (
 /**
  * [v4.6] Web Audio API로 영상에서 오디오 트랙 추출 (즉시 디코딩)
  * shoppingScriptService의 captureStream 방식과 달리 실시간 재생 불필요
+ * [FIX #454] signal 전달 + 오디오 5분 캡 + 전체 90초 타임아웃 추가
  */
-async function extractAudioFromVideoFast(videoFile: File | Blob): Promise<Blob | null> {
+async function extractAudioFromVideoFast(videoFile: File | Blob, signal?: AbortSignal): Promise<Blob | null> {
+    // [FIX #454] 전체 오디오 추출 과정에 90초 하드 타임아웃 — 어떤 경로든 90초 내 반환 보장
+    const AUDIO_EXTRACT_HARD_TIMEOUT_MS = 90_000;
+    let hardTimer: ReturnType<typeof setTimeout> | undefined;
     try {
+        return await Promise.race([
+            extractAudioFromVideoFastInner(videoFile, signal),
+            new Promise<null>((resolve) => {
+                hardTimer = setTimeout(() => {
+                    logger.warn('[Diarization] 오디오 추출 90초 하드 타임아웃 — null 반환');
+                    resolve(null);
+                }, AUDIO_EXTRACT_HARD_TIMEOUT_MS);
+            }),
+        ]);
+    } finally {
+        if (hardTimer) clearTimeout(hardTimer);
+    }
+}
+
+async function extractAudioFromVideoFastInner(videoFile: File | Blob, signal?: AbortSignal): Promise<Blob | null> {
+    try {
+        if (signal?.aborted) return null;
         const arrayBuffer = await videoFile.arrayBuffer();
+        if (signal?.aborted) return null;
         const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
         const audioCtx = new AudioCtx();
 
@@ -1048,8 +1071,34 @@ async function extractAudioFromVideoFast(videoFile: File | Blob): Promise<Blob |
         } catch {
             // 일부 비디오 코덱은 decodeAudioData 실패/타임아웃 → captureStream 폴백
             audioCtx.close();
+            if (signal?.aborted) return null;
             logger.info('[Diarization] decodeAudioData 실패 → captureStream 폴백');
-            return extractAudioWithCaptureStream(videoFile);
+            return extractAudioWithCaptureStream(videoFile, signal);
+        }
+
+        if (signal?.aborted) { audioCtx.close(); return null; }
+
+        // [FIX #454] 화자 분리에는 오디오 전체가 필요 없음 — 최대 5분(300초)으로 캡
+        // 긴 영상의 WAV가 수백MB가 되어 Cloudinary 업로드 시 무한 대기하는 문제 방지
+        const MAX_AUDIO_DURATION_SEC = 300;
+        if (audioBuffer.duration > MAX_AUDIO_DURATION_SEC) {
+            const originalDuration = Math.round(audioBuffer.duration);
+            const cappedLength = Math.floor(MAX_AUDIO_DURATION_SEC * audioBuffer.sampleRate);
+            const offlineCtx = new OfflineAudioContext(
+                Math.min(audioBuffer.numberOfChannels, 2),
+                cappedLength,
+                audioBuffer.sampleRate
+            );
+            const source = offlineCtx.createBufferSource();
+            source.buffer = audioBuffer;
+            source.connect(offlineCtx.destination);
+            source.start(0, 0, MAX_AUDIO_DURATION_SEC);
+            try {
+                audioBuffer = await offlineCtx.startRendering();
+                logger.info(`[Diarization] 오디오 ${MAX_AUDIO_DURATION_SEC}초로 캡 (원본: ${originalDuration}초)`);
+            } catch {
+                logger.warn('[Diarization] OfflineAudioContext 렌더링 실패 — 원본 AudioBuffer 사용');
+            }
         }
 
         // AudioBuffer → WAV Blob 변환
@@ -1062,30 +1111,53 @@ async function extractAudioFromVideoFast(videoFile: File | Blob): Promise<Blob |
     }
 }
 
-/** captureStream 폴백 — decodeAudioData 실패 시 (실시간 재생 필요, 최대 120초) */
-function extractAudioWithCaptureStream(videoFile: File | Blob): Promise<Blob | null> {
+/** captureStream 폴백 — decodeAudioData 실패 시 (실시간 재생 필요, 최대 60초)
+ * [FIX #454] signal 지원 + 최대 60초로 단축 (화자 분리에 120초 불필요)
+ */
+function extractAudioWithCaptureStream(videoFile: File | Blob, signal?: AbortSignal): Promise<Blob | null> {
+    if (signal?.aborted) return Promise.resolve(null);
     return new Promise((resolve) => {
+        let resolved = false;
+        const done = (result: Blob | null) => { if (!resolved) { resolved = true; resolve(result); } };
+
         const video = document.createElement('video');
         const srcUrl = URL.createObjectURL(videoFile);
         video.src = srcUrl;
         video.muted = false;
         video.volume = 1;
 
+        const cleanup = () => {
+            video.pause();
+            video.removeAttribute('src');
+            video.load();
+            URL.revokeObjectURL(srcUrl);
+        };
+
+        // [FIX #454] abort signal 리스너 — 분석 취소/타임아웃 시 즉시 종료
+        const abortHandler = () => {
+            cleanup();
+            done(null);
+        };
+        signal?.addEventListener('abort', abortHandler, { once: true });
+
         // [FIX #378] 메타데이터 로딩 10초 타임아웃 — onloadedmetadata 미발생 시 무한 대기 방지
         const metaTimeout = setTimeout(() => {
-            URL.revokeObjectURL(srcUrl);
-            resolve(null);
+            signal?.removeEventListener('abort', abortHandler);
+            cleanup();
+            done(null);
         }, 10_000);
 
         video.onloadedmetadata = async () => {
             clearTimeout(metaTimeout);
+            if (signal?.aborted) { cleanup(); signal?.removeEventListener('abort', abortHandler); done(null); return; }
             try {
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 const stream: MediaStream = (video as any).captureStream ? (video as any).captureStream() : (video as any).mozCaptureStream();
                 const audioTracks = stream.getAudioTracks();
                 if (audioTracks.length === 0) {
-                    URL.revokeObjectURL(srcUrl);
-                    resolve(null);
+                    signal?.removeEventListener('abort', abortHandler);
+                    cleanup();
+                    done(null);
                     return;
                 }
 
@@ -1095,14 +1167,16 @@ function extractAudioWithCaptureStream(videoFile: File | Blob): Promise<Blob | n
 
                 recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
                 recorder.onstop = () => {
-                    URL.revokeObjectURL(srcUrl);
-                    resolve(chunks.length > 0 ? new Blob(chunks, { type: 'audio/webm' }) : null);
+                    signal?.removeEventListener('abort', abortHandler);
+                    cleanup();
+                    done(chunks.length > 0 ? new Blob(chunks, { type: 'audio/webm' }) : null);
                 };
 
                 recorder.start();
-                video.play();
+                video.play().catch(() => {});
 
-                const maxDuration = Math.min(video.duration, 120) * 1000;
+                // [FIX #454] 최대 60초로 단축 (120초 → 60초) — 화자 분리에 충분
+                const maxDuration = Math.min(video.duration, 60) * 1000;
                 setTimeout(() => {
                     if (recorder.state === 'recording') recorder.stop();
                     video.pause();
@@ -1110,15 +1184,17 @@ function extractAudioWithCaptureStream(videoFile: File | Blob): Promise<Blob | n
 
                 video.onended = () => { if (recorder.state === 'recording') recorder.stop(); };
             } catch {
-                URL.revokeObjectURL(srcUrl);
-                resolve(null);
+                signal?.removeEventListener('abort', abortHandler);
+                cleanup();
+                done(null);
             }
         };
 
         video.onerror = () => {
             clearTimeout(metaTimeout);
-            URL.revokeObjectURL(srcUrl);
-            resolve(null);
+            signal?.removeEventListener('abort', abortHandler);
+            cleanup();
+            done(null);
         };
     });
 }
