@@ -46,6 +46,8 @@ export interface TypecastVoice {
   use_cases: string[];
   preview_url?: string;
   image_url?: string;
+  /** true = 빌트인 전용 음성 (API에서 조회 안 됨, TTS 불가) */
+  builtinOnly?: boolean;
 }
 
 export interface TypecastTTSOptions {
@@ -721,11 +723,14 @@ export const fetchTypecastVoices = async (forceRefresh = false): Promise<Typecas
       });
 
       // API 응답에 없는 빌트인 음성 병합 (수동 등록 음성 누락 방지)
+      // builtinOnly=true 표시 → TTS 시도 시 사전 차단
       const apiNames = new Set(voices.map(v => v.name));
-      const missingBuiltin = BUILTIN_TYPECAST_VOICES.filter(bv => !apiNames.has(bv.name));
+      const missingBuiltin = BUILTIN_TYPECAST_VOICES
+        .filter(bv => !apiNames.has(bv.name))
+        .map(bv => ({ ...bv, builtinOnly: true }));
       if (missingBuiltin.length > 0) {
         voices.push(...missingBuiltin);
-        logger.info(`[Typecast] 빌트인 전용 음성 ${missingBuiltin.length}개 병합: ${missingBuiltin.map(v => v.name).join(', ')}`);
+        logger.info(`[Typecast] 빌트인 전용 음성 ${missingBuiltin.length}개 병합 (TTS 불가): ${missingBuiltin.map(v => v.name).join(', ')}`);
       }
       cachedVoices = voices;
       fetchPromise = null;
@@ -752,6 +757,37 @@ export const clearTypecastVoiceCache = (): void => {
 
 // === TTS Generation ===
 
+/** Typecast 실제 voice_id 형식 검증: tc_ + 24자리 hex (MongoDB ObjectId) */
+const isValidTypecastVoiceId = (voiceId: string): boolean =>
+  /^tc_[a-f0-9]{12,}$/.test(voiceId);
+
+/**
+ * 빌트인 전용 음성(가짜 ID)이면 같은 이름의 API 음성으로 교체 시도.
+ * 교체 실패 시 에러를 던진다.
+ */
+const resolveVoiceId = (voiceId: string): string => {
+  if (isValidTypecastVoiceId(voiceId)) return voiceId;
+
+  // 가짜 ID → 캐시에서 이름으로 검색하여 실제 ID 추출
+  if (cachedVoices) {
+    const fakeVoice = cachedVoices.find(v => v.voice_id === voiceId);
+    if (fakeVoice) {
+      // 같은 이름이지만 유효한 hex ID를 가진 음성 찾기
+      const realVoice = cachedVoices.find(
+        v => v.name === fakeVoice.name && v.voice_id !== voiceId && isValidTypecastVoiceId(v.voice_id),
+      );
+      if (realVoice) {
+        logger.info(`[Typecast] 빌트인 ID "${voiceId}" → 실제 ID "${realVoice.voice_id}" 자동 교체 (${fakeVoice.name})`);
+        return realVoice.voice_id;
+      }
+    }
+  }
+
+  throw new Error(
+    `이 음성은 현재 TTS에 사용할 수 없습니다. 다른 음성을 선택해주세요. (voice_id: ${voiceId})`,
+  );
+};
+
 /** 모델별 감정 프리셋 유효성 검증 — 지원하지 않는 감정은 'normal'로 폴백 */
 const validateEmotionForModel = (
   model: string,
@@ -776,6 +812,12 @@ export const generateTypecastTTS = async (
   // [FIX #228] 화자/모드 태그 제거 후 TTS 생성
   const cleanText = stripSpeakerTags(text);
   if (!cleanText.trim()) throw new Error('TTS 텍스트가 비어있습니다.');
+
+  // [FIX #459] 빌트인 전용 가짜 voice_id → 실제 API voice_id로 교체
+  const resolvedVoiceId = resolveVoiceId(options.voiceId);
+  if (resolvedVoiceId !== options.voiceId) {
+    options = { ...options, voiceId: resolvedVoiceId };
+  }
 
   // 모델 호환성: voice가 선택 모델을 지원하지 않으면 자동 폴백
   const requestedModel = options.model || 'ssfm-v30';
@@ -879,8 +921,9 @@ const generateSingle = async (
     if (response.status === 429) throw new Error('Typecast 요청 제한 초과. 잠시 후 다시 시도하세요.');
     try {
       const errJson = JSON.parse(errText);
-      const msg = errJson?.message?.msg || errText;
-      const code = errJson?.message?.error_code || '';
+      // [FIX #459] Typecast 에러: flat {error_code, message} 또는 nested {message: {msg, error_code}} 형식 모두 처리
+      const msg = errJson?.message?.msg || (typeof errJson?.message === 'string' ? errJson.message : errText);
+      const code = errJson?.message?.error_code || errJson?.error_code || '';
       throw new Error(`Typecast TTS 오류 (${response.status}${code ? ` ${code}` : ''}): ${msg}`);
     } catch (e) {
       if (e instanceof Error && e.message.startsWith('Typecast TTS')) throw e;

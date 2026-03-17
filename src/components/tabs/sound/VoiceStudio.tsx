@@ -703,6 +703,7 @@ const VoiceStudio: React.FC = () => {
         gender: (v.gender === 'male' ? 'male' : 'female') as 'male' | 'female',
         engine: 'typecast' as TTSEngine,
         preview: v.preview_url,
+        builtinOnly: v.builtinOnly,
       })).sort((a, b) => (a.gender === 'female' ? 0 : 1) - (b.gender === 'female' ? 0 : 1));
     }
     // ElevenLabs: elevenlabsService에서 직접 음성 목록 사용 + 검색/필터
@@ -2032,6 +2033,7 @@ const VoiceStudio: React.FC = () => {
                       <span className={`text-base font-semibold truncate block ${isActiveVoice ? 'text-purple-300' : 'text-gray-200'}`}>
                         {voice.engine === 'elevenlabs' ? elNameKo(voice.name) : voice.name}
                         {voice.engine === 'supertonic' && <span className="text-xs text-gray-500 font-normal ml-1">({voice.id})</span>}
+                        {voice.builtinOnly && <span className="text-[9px] text-orange-400/80 font-normal ml-1" title="API에서 조회되지 않는 음성 — TTS 생성이 안 될 수 있습니다">미지원</span>}
                       </span>
                       {voice.description && <span className="text-[10px] text-gray-500 truncate block">{voice.engine === 'elevenlabs' ? (EL_DESC_KO[voice.description] || voice.description) : voice.description}</span>}
                     </div>
