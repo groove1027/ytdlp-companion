@@ -8,6 +8,12 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-18] 사운드 스튜디오 TTS 버그 2건 수정 (#553, #549)
+- [x] `VoiceStudio.tsx` — `handleGenerateLine()`이 항상 `speakers[0]`를 쓰던 문제 수정, 각 줄의 `line.speakerId` 기반으로 해당 화자를 우선 선택하도록 변경
+- [x] `TypecastEditor.tsx` — `handlePlayAll()`에서 줄 생성 실패 감지/집계 추가, 402(크레딧 부족) 계열 오류 시 일괄 생성 즉시 중단 + 실패 줄 요약 토스트 표시
+- [x] `TypecastEditor.tsx` — `syncEditorToStore()`에서 텍스트가 유지된 줄의 기존 `speakerId`를 보존하도록 매칭 로직 보강 (멀티 캐릭터 음성 할당 유지)
+- [x] `tsc --noEmit` + `vite build` + `rg` 재검증 통과
+
 ### [2026-03-18] 이미지 생성 버그 5건 수정 (#537, #538, #540, #542, #551)
 - [x] `imageGeneration.ts` — Google 무료 모델(Imagen/Whisk) 실패 시 유료 NanoBanana로 자동 전환하던 로직 제거, 무료 실패는 즉시 에러로 처리
 - [x] `imageGeneration.ts` — 무료 모델 경로에서 NanoBanana 전용 프롬프트 최적화 적용 제거, 레퍼런스 존재 시 Imagen 선택이어도 Whisk 리믹스 경로 사용

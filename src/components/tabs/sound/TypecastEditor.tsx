@@ -11,7 +11,7 @@ import { generateSpeech as generateSupertonicSpeech, isModelLoaded as isSuperton
 import type { ScriptLine, TTSLanguage, Speaker, TTSEngine } from '../../../types';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
 import { TYPECAST_EMOTIONS, TYPECAST_MODELS } from '../../../constants';
-import { showToast } from '../../../stores/uiStore';
+import { showToast, useUIStore } from '../../../stores/uiStore';
 import MiniWaveform from './MiniWaveform';
 
 // Supertonic 2 음성 카탈로그 (10개, HuggingFace Supertone/supertonic-2 기준)
@@ -43,6 +43,7 @@ const ELEVENLABS_EMOTIONS: { id: string; label: string; icon: string; tag: strin
   { id: 'cheerful', label: '명랑', icon: '😄', tag: '[cheerfully]', stability: 0.3 },
   { id: 'crying', label: '울먹임', icon: '😭', tag: '[crying]', stability: 0.0 },
 ];
+const CREDIT_ERROR_RE = /(402|payment required|quota_exhausted|insufficient|잔액 부족|크레딧(이|을)?\s*부족)/i;
 
 interface TypecastEditorProps {
   onGenerateLine: (lineId: string) => Promise<void> | void;
@@ -402,16 +403,52 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
     const newTexts: string[] = [];
     paragraphs.forEach(p => { const t = getCleanParagraphText(p); if (t) newTexts.push(t); });
     const currentLines = useSoundStudioStore.getState().lines;
-    const speakerId = currentLines[0]?.speakerId || speakers[0]?.id || '';
     const currentTexts = currentLines.map(l => l.text);
     if (newTexts.length !== currentTexts.length || newTexts.some((t, i) => t !== currentTexts[i])) {
+      const usedLineIds = new Set<string>();
+      const textBuckets = new Map<string, ScriptLine[]>();
+      currentLines.forEach((line) => {
+        if (!textBuckets.has(line.text)) textBuckets.set(line.text, []);
+        textBuckets.get(line.text)!.push(line);
+      });
+      const takeTextMatchedLine = (text: string): ScriptLine | undefined => {
+        const bucket = textBuckets.get(text);
+        if (!bucket) return undefined;
+        while (bucket.length > 0) {
+          const candidate = bucket.shift();
+          if (!candidate) continue;
+          if (usedLineIds.has(candidate.id)) continue;
+          usedLineIds.add(candidate.id);
+          return candidate;
+        }
+        return undefined;
+      };
+
       setLines(newTexts.map((text, i) => {
         const ex = currentLines[i];
-        if (ex && ex.text === text) return ex;
-        return { id: ex?.id || `line-${Date.now()}-${i}`, speakerId, text, index: i,
-          emotion: ex?.emotion, lineSpeed: ex?.lineSpeed, voiceId: ex?.voiceId, voiceName: ex?.voiceName, voiceImage: ex?.voiceImage,
-          ttsStatus: (ex?.text === text ? ex?.ttsStatus : 'idle') as ScriptLine['ttsStatus'],
-          audioUrl: ex?.text === text ? ex?.audioUrl : undefined };
+        let sourceLine: ScriptLine | undefined;
+        if (ex && ex.text === text && !usedLineIds.has(ex.id)) {
+          usedLineIds.add(ex.id);
+          sourceLine = ex;
+        } else {
+          sourceLine = takeTextMatchedLine(text);
+        }
+        const fallbackSpeakerId = ex?.speakerId || speakers[0]?.id || '';
+        const preservedSpeakerId = sourceLine?.speakerId || fallbackSpeakerId;
+        const isTextPreserved = sourceLine?.text === text;
+        return {
+          id: sourceLine?.id || ex?.id || `line-${Date.now()}-${i}`,
+          speakerId: preservedSpeakerId,
+          text,
+          index: i,
+          emotion: sourceLine?.emotion ?? ex?.emotion,
+          lineSpeed: sourceLine?.lineSpeed ?? ex?.lineSpeed,
+          voiceId: sourceLine?.voiceId ?? ex?.voiceId,
+          voiceName: sourceLine?.voiceName ?? ex?.voiceName,
+          voiceImage: sourceLine?.voiceImage ?? ex?.voiceImage,
+          ttsStatus: (isTextPreserved ? (sourceLine?.ttsStatus ?? ex?.ttsStatus ?? 'idle') : 'idle') as ScriptLine['ttsStatus'],
+          audioUrl: isTextPreserved ? (sourceLine?.audioUrl ?? ex?.audioUrl) : undefined,
+        };
       }));
     }
     isSyncing.current = false;
@@ -709,12 +746,46 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
     setIsGeneratingAll(true);
     setGenProgress({ current: 0, total: lines.length });
     try {
+      const failedLines: number[] = [];
+      let haltedByCredit = false;
       for (let i = 0; i < lines.length; i++) {
-        if (!lines[i].audioUrl || lines[i].ttsStatus !== 'done') {
-          await onGenerateLine(lines[i].id);
+        const line = lines[i];
+        if (!line.audioUrl || line.ttsStatus !== 'done') {
+          let thrownMessage = '';
+          try {
+            await onGenerateLine(line.id);
+          } catch (e) {
+            thrownMessage = e instanceof Error ? e.message : String(e);
+            logger.trackSwallowedError('TypecastEditor:handlePlayAll/onGenerateLine', e);
+          }
+
+          const latestLine = useSoundStudioStore.getState().lines.find((l) => l.id === line.id);
+          const hasFailed = !latestLine?.audioUrl || latestLine.ttsStatus === 'error';
+          if (hasFailed) {
+            failedLines.push(i + 1);
+            const toastMessage = useUIStore.getState().toast?.message || '';
+            const failureMessage = `${thrownMessage} ${toastMessage}`.trim();
+            if (CREDIT_ERROR_RE.test(failureMessage)) {
+              haltedByCredit = true;
+              setGenProgress({ current: i + 1, total: lines.length });
+              break;
+            }
+          }
         }
         setGenProgress({ current: i + 1, total: lines.length });
       }
+
+      if (failedLines.length > 0) {
+        const preview = failedLines.slice(0, 5).join(', ');
+        const suffix = failedLines.length > 5 ? ` 외 ${failedLines.length - 5}줄` : '';
+        if (haltedByCredit) {
+          showToast(`크레딧 부족으로 일괄 생성을 중단했습니다. 실패 줄: ${preview}${suffix}`, 5000);
+        } else {
+          showToast(`일부 줄 생성 실패 (${failedLines.length}줄): ${preview}${suffix}`, 5000);
+        }
+        return;
+      }
+
       const urls = useSoundStudioStore.getState().lines.filter(l => l.audioUrl).map(l => l.audioUrl as string);
       if (urls.length > 0) {
         const merged = await mergeAudioFiles(urls);

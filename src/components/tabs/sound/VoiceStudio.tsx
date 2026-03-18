@@ -562,7 +562,10 @@ const VoiceStudio: React.FC = () => {
   const handleGenerateLine = useCallback(async (lineId: string) => {
     logger.trackAction('나레이션 생성 시작', lineId);
     if (!requireAuth('TTS 음성 생성')) return;
-    const speaker = speakers[0];
+    const lineIdx = lines.findIndex(l => l.id === lineId);
+    if (lineIdx < 0) return;
+    const line = lines[lineIdx];
+    const speaker = (line.speakerId ? speakers.find(s => s.id === line.speakerId) : null) || speakers[0];
     if (!speaker?.voiceId) {
       showToast('음성을 선택해주세요.');
       return;
@@ -571,9 +574,6 @@ const VoiceStudio: React.FC = () => {
       showToast('Typecast API 키가 설정되지 않았습니다. 설정에서 키를 입력해주세요.');
       return;
     }
-    const lineIdx = lines.findIndex(l => l.id === lineId);
-    if (lineIdx < 0) return;
-    const line = lines[lineIdx];
     if (!line.text?.trim()) {
       showToast('텍스트가 비어있습니다.');
       return;
@@ -664,9 +664,10 @@ const VoiceStudio: React.FC = () => {
   const handleGenerateAll = useCallback(async () => {
     logger.trackAction('나레이션 일괄 생성 시작');
     if (!requireAuth('TTS 일괄 생성')) return;
-    const speaker = speakers[0];
     if (isGeneratingAll) return;
-    if (!speaker?.voiceId) {
+    // 멀티캐릭터: 어떤 speaker라도 voiceId가 있으면 진행 가능
+    const hasAnyVoice = speakers.some(s => s.voiceId);
+    if (!hasAnyVoice) {
       showToast('음성을 선택해주세요. 음성 브라우저에서 캐릭터를 클릭하세요.');
       return;
     }
