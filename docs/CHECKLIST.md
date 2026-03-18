@@ -8,6 +8,12 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-18] #498 스타일 기반 주제추천 자동 저장
+- [x] `storageService.ts` — `SavedBenchmarkData`에 `topicRecommendations` 필드 추가 + `saveBenchmarkData()` 파라미터 확장
+- [x] `channelAnalysisStore.ts` — `setTopicRecommendations()` auto-save 트리거 + `saveBenchmark()` topicRecommendations 전달 + `loadBenchmark()`/`loadPreset()` 복원
+- [x] `BenchmarkPanel.tsx` — 주제 추천 생성 시 channelAnalysisStore 동기화 + 벤치마크 로드 시 scriptWriterStore 복원 + UI에 저장된 추천 개수 표시
+- [x] tsc + vite build + Puppeteer E2E 검증 통과 (IndexedDB 저장→복원→UI 표시 전체 사이클)
+
 ### [2026-03-18] #398 영상 분석실 — 원본 순서 유지 옵션 추가
 - [x] `videoAnalysisStore.ts` — `keepOriginalOrder` 상태 + `setKeepOriginalOrder` 액션 + localStorage 영속화
 - [x] `VideoAnalysisRoom.tsx` — 프리셋 헤더에 "원본 순서 유지" 토글 UI 추가 (amber 테마)

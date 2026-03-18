@@ -246,6 +246,7 @@ export const useChannelAnalysisStore = create<ChannelAnalysisStore>((set) => ({
             ...(bench.scripts.length > 0 ? { channelScripts: bench.scripts } : {}),
             remakeVersions: bench.remakeVersions || [],
             remakeSourceInput: bench.remakeSourceInput || '',
+            topicRecommendations: bench.topicRecommendations || [],
             savedBenchmarks: all,
           });
         }
@@ -258,7 +259,13 @@ export const useChannelAnalysisStore = create<ChannelAnalysisStore>((set) => ({
   setSourceName: (name) => set({ sourceName: name }),
   clearUploadedFiles: () => set({ uploadedFiles: [], sourceName: '' }),
   setTopicInput: (input) => set({ topicInput: input }),
-  setTopicRecommendations: (topics) => set({ topicRecommendations: topics }),
+  setTopicRecommendations: (topics) => {
+    set({ topicRecommendations: topics });
+    // [#498] 주제 추천 결과 변경 시 자동 벤치마크 저장
+    if (topics.length > 0) {
+      setTimeout(() => useChannelAnalysisStore.getState().saveBenchmark(), 500);
+    }
+  },
   setContentRegion: (region) => set({ contentRegion: region }),
   setChannelUrl: (url) => set({ channelUrl: url }),
   setContentFormat: (format) => set({ contentFormat: format }),
@@ -275,11 +282,11 @@ export const useChannelAnalysisStore = create<ChannelAnalysisStore>((set) => ({
 
   // --- 벤치마크 IndexedDB 영속화 ---
   saveBenchmark: async () => {
-    const { channelInfo, channelScripts, channelGuideline, inputSource, remakeVersions, remakeSourceInput, channelUrl } = useChannelAnalysisStore.getState();
+    const { channelInfo, channelScripts, channelGuideline, inputSource, remakeVersions, remakeSourceInput, channelUrl, topicRecommendations } = useChannelAnalysisStore.getState();
     const name = channelInfo?.title || channelGuideline?.channelName || '미지정 채널';
     if (channelScripts.length === 0 && !channelGuideline) return;
     try {
-      await saveBenchmarkData(name, channelScripts, channelGuideline, channelInfo, inputSource, remakeVersions, remakeSourceInput, channelUrl);
+      await saveBenchmarkData(name, channelScripts, channelGuideline, channelInfo, inputSource, remakeVersions, remakeSourceInput, channelUrl, topicRecommendations);
       const all = await getAllSavedBenchmarks();
       const slotId = name.trim().toLowerCase().replace(/\s+/g, '-');
       set({ savedBenchmarks: all, activeSlotId: slotId });
@@ -302,6 +309,7 @@ export const useChannelAnalysisStore = create<ChannelAnalysisStore>((set) => ({
           remakeVersions: found.remakeVersions || [],
           remakeSourceInput: found.remakeSourceInput || '',
           channelUrl: restoredUrl,
+          topicRecommendations: found.topicRecommendations || [],
           savedBenchmarks: all,
           activeSlotId: id,
         });

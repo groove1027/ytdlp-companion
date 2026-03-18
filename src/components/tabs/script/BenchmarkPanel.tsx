@@ -106,14 +106,17 @@ ${scriptSummaries}
         throw new Error('AI 응답을 파싱할 수 없습니다. 다시 시도해주세요.');
       }
       if (Array.isArray(parsed) && parsed.length > 0) {
-        setTopics(parsed.map((t, i) => ({
+        const mapped = parsed.map((t, i) => ({
           id: t.id || i + 1,
           title: t.title || `주제 ${i + 1}`,
           mainSubject: t.mainSubject || '',
           similarity: t.similarity || '',
           scriptFlow: t.scriptFlow || '',
           viralScore: (['high', 'medium', 'low'].includes(t.viralScore) ? t.viralScore : 'medium') as LegacyTopicRecommendation['viralScore'],
-        })));
+        }));
+        setTopics(mapped);
+        // [#498] 채널 분석 스토어에도 동기화 → IndexedDB 자동 저장 트리거
+        useChannelAnalysisStore.getState().setTopicRecommendations(mapped);
       }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -251,12 +254,17 @@ ${scriptSummaries}
               {savedBenchmarks.map((bm) => (
                 <div key={bm.id} className="flex items-center gap-2">
                   <button
-                    onClick={() => loadBenchmark(bm.id)}
+                    onClick={async () => {
+                      await loadBenchmark(bm.id);
+                      // [#498] 저장된 주제 추천 결과도 scriptWriterStore에 복원
+                      const restored = useChannelAnalysisStore.getState().topicRecommendations;
+                      if (restored.length > 0) setTopics(restored);
+                    }}
                     className="flex-1 text-left p-2 rounded-lg border bg-gray-800/30 border-gray-700/30 text-gray-300 hover:border-blue-500/50 hover:bg-blue-900/10 transition-colors text-sm"
                   >
                     <div className="font-medium">{bm.channelName}</div>
                     <div className="text-xs text-gray-500">
-                      {bm.scripts.length}개 대본 / {new Date(bm.savedAt).toLocaleDateString('ko')}
+                      {bm.scripts.length}개 대본{bm.topicRecommendations && bm.topicRecommendations.length > 0 ? ` / 추천 ${bm.topicRecommendations.length}개` : ''} / {new Date(bm.savedAt).toLocaleDateString('ko')}
                     </div>
                   </button>
                   <button
