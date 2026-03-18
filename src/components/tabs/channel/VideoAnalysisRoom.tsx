@@ -4417,28 +4417,46 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                       const vaStore = useVideoAnalysisStore.getState();
                                       let videoBlob = vaStore.videoBlob;
                                       let audioConfirmed = vaStore.videoBlobHasAudio ?? true; // null이면 업로드/소셜 → 오디오 있음으로 간주
+                                      let downloadedSourceTitle = '';
+                                      const sourceUrl = (youtubeUrl || validYoutubeUrls[0] || '').trim();
+                                      const isYoutubeSource = !!sourceUrl && isYouTubeUrl(sourceUrl);
+
+                                      if (videoBlob && videoBlob.size <= 0) {
+                                        videoBlob = null;
+                                        audioConfirmed = true;
+                                      }
 
                                       if (!videoBlob) {
                                         if (uploadedFiles[0]) {
                                           videoBlob = uploadedFiles[0];
                                           audioConfirmed = true;
-                                        } else if (inputMode === 'youtube' && youtubeUrl) {
+                                        } else if (inputMode === 'youtube' && sourceUrl) {
                                           setNleExporting({ target, step: '영상 다운로드 중...' });
-                                          const dlResult = await downloadVideoAsBlob(extractYouTubeVideoId(youtubeUrl) || youtubeUrl);
-                                          if (dlResult) {
-                                            videoBlob = dlResult.blob;
-                                            audioConfirmed = dlResult.hasAudio;
-                                            useVideoAnalysisStore.getState().setVideoBlob(dlResult.blob, dlResult.hasAudio);
+                                          if (isYoutubeSource) {
+                                            const dlResult = await downloadVideoAsBlob(extractYouTubeVideoId(sourceUrl) || sourceUrl);
+                                            if (dlResult) {
+                                              videoBlob = dlResult.blob;
+                                              audioConfirmed = dlResult.hasAudio;
+                                              useVideoAnalysisStore.getState().setVideoBlob(dlResult.blob, dlResult.hasAudio);
+                                            }
+                                          } else {
+                                            const dlResult = await downloadSocialVideo(sourceUrl, '720p');
+                                            if (dlResult.blob.size > 0) {
+                                              videoBlob = dlResult.blob;
+                                              downloadedSourceTitle = dlResult.title || '';
+                                              audioConfirmed = true;
+                                              useVideoAnalysisStore.getState().setVideoBlob(dlResult.blob, true);
+                                            }
                                           }
                                         }
                                       }
 
                                       // [FIX #370] 오디오 없는 영상 → 서버 머지 다운로드 재시도 (프록시에서 오디오 포함 버전)
-                                      if (videoBlob && !audioConfirmed && inputMode === 'youtube' && youtubeUrl) {
+                                      if (videoBlob && !audioConfirmed && inputMode === 'youtube' && sourceUrl && isYoutubeSource) {
                                         setNleExporting({ target, step: '오디오 포함 영상 다운로드 중...' });
                                         try {
                                           const { downloadVideoViaProxy } = await import('../../../services/ytdlpApiService');
-                                          const vid = extractYouTubeVideoId(youtubeUrl) || youtubeUrl;
+                                          const vid = extractYouTubeVideoId(sourceUrl) || sourceUrl;
                                           // videoOnly 없이 다운로드 → 서버가 영상+오디오 합쳐서 반환
                                           const merged = await downloadVideoViaProxy(vid, '720p');
                                           if (merged.blob.size > 0) {
@@ -4458,7 +4476,10 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                       }
                                       // Step 2: 영상 치수 감지 (캐시 우선)
                                       const { buildNlePackageZip } = await import('../../../services/nleExportService');
-                                      const fileName = youtubeUrl ? `${sanitizeProjectName(v.title, 30)}.mp4` : (uploadedFiles[0]?.name || 'video.mp4');
+                                      const baseName = downloadedSourceTitle
+                                        ? sanitizeProjectName(downloadedSourceTitle, 30)
+                                        : sanitizeProjectName(v.title, 30);
+                                      const fileName = uploadedFiles[0]?.name || `${baseName}.mp4`;
                                       let dims = nleDimsCache.current;
                                       if (!dims) {
                                         setNleExporting({ target, step: '영상 정보 확인 중...' });

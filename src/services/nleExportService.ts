@@ -111,6 +111,20 @@ function fpsToNtsc(fps: number): { ntsc: boolean; timebase: number } {
   return { ntsc: false, timebase: Math.round(fps) };
 }
 
+function hasLandscapeAspect(width: number, height: number): boolean {
+  if (width <= 0 || height <= 0) return false;
+  return width >= height;
+}
+
+function getSubtitleOrigin(width: number, height: number): { main: string; effect: string } {
+  // 9:16(숏폼): 얼굴 영역(중상단) 회피를 위해 하단 고정
+  if (!hasLandscapeAspect(width, height)) {
+    return { main: '0 -0.38', effect: '0 -0.2' };
+  }
+  // 16:9(롱폼): 표준 lower-third
+  return { main: '0 -0.35', effect: '0 -0.17' };
+}
+
 /** 숏폼 자막 줄바꿈 */
 function breakLines(text: string, maxChars: number = 14): string {
   if (text.length <= maxChars) return text;
@@ -234,6 +248,7 @@ export function generateFcpXml(params: {
   const ntscStr = ntsc ? 'TRUE' : 'FALSE';
   const tcFormat = ntsc ? 'DF' : 'NDF';
   const toFrames = (sec: number) => Math.round(sec * fps);
+  const subtitleOrigin = getSubtitleOrigin(width, height);
   // [FIX] 소스 영상 전체 길이 = max(실제 비디오 길이, 최대 타임코드 끝점)
   const maxTimecodeEnd = Math.max(...timings.map(t => t.endSec));
   const srcTotalFrames = Math.ceil(Math.max(videoDurationSec || 0, maxTimecodeEnd) * fps);
@@ -339,7 +354,7 @@ export function generateFcpXml(params: {
               <parameter><parameterid>fontsize</parameterid><name>Font Size</name><value>42</value></parameter>
               <parameter><parameterid>fontstyle</parameterid><name>Font Style</name><value>1</value></parameter>
               <parameter><parameterid>fontcolor</parameterid><name>Font Color</name><value>16777215</value></parameter>
-              <parameter><parameterid>origin</parameterid><name>Origin</name><value>0 0.38</value></parameter>
+              <parameter><parameterid>origin</parameterid><name>Origin</name><value>${subtitleOrigin.main}</value></parameter>
             </effect>
           </generatoritem>`;
   }).join('');
@@ -366,7 +381,7 @@ export function generateFcpXml(params: {
               <parameter><parameterid>fontsize</parameterid><name>Font Size</name><value>60</value></parameter>
               <parameter><parameterid>fontstyle</parameterid><name>Font Style</name><value>4</value></parameter>
               <parameter><parameterid>fontcolor</parameterid><name>Font Color</name><value>16776960</value></parameter>
-              <parameter><parameterid>origin</parameterid><name>Origin</name><value>0 0.2</value></parameter>
+              <parameter><parameterid>origin</parameterid><name>Origin</name><value>${subtitleOrigin.effect}</value></parameter>
             </effect>
           </generatoritem>`).join('');
 
@@ -932,11 +947,17 @@ export async function buildNlePackageZip(params: {
   videoDurationSec?: number;
 }): Promise<Blob> {
   const { target, scenes, title, videoBlob, videoFileName: rawVideoFileName, preset, width, height, fps, videoDurationSec } = params;
-  const videoFileName = sanitizeFileName(rawVideoFileName || 'video.mp4');
+  const sanitizedVideoFileName = sanitizeFileName(rawVideoFileName || 'video.mp4');
+  const videoFileName = /\.[a-zA-Z0-9]{2,5}$/.test(sanitizedVideoFileName) ? sanitizedVideoFileName : `${sanitizedVideoFileName || 'video'}.mp4`;
+  const hasValidVideoBlob = !!videoBlob && videoBlob.size > 0;
   const JSZip = (await import('jszip')).default;
   const zip = new JSZip();
   const safeName = sanitizeProjectName(title);
   const BOM = '\uFEFF';
+
+  if (!hasValidVideoBlob) {
+    throw new Error('원본 영상 파일을 찾을 수 없어 NLE 패키지를 만들 수 없습니다. 원본 영상을 다시 불러온 뒤 시도해주세요.');
+  }
 
   if (target === 'premiere') {
     // FCP XML
@@ -1136,6 +1157,7 @@ export function generateFcpXmlFromEdl(params: {
   const ntscStr = ntsc ? 'TRUE' : 'FALSE';
   const tcFormat = ntsc ? 'DF' : 'NDF';
   const toFrames = (sec: number) => Math.round(sec * fps);
+  const subtitleOrigin = getSubtitleOrigin(width, height);
   const safeTitle = escXml(title);
 
   // 소스 파일 정보 (중복 제거)
@@ -1274,7 +1296,7 @@ export function generateFcpXmlFromEdl(params: {
               <parameter><parameterid>fontsize</parameterid><name>Font Size</name><value>42</value></parameter>
               <parameter><parameterid>fontstyle</parameterid><name>Font Style</name><value>1</value></parameter>
               <parameter><parameterid>fontcolor</parameterid><name>Font Color</name><value>16777215</value></parameter>
-              <parameter><parameterid>origin</parameterid><name>Origin</name><value>0 0.38</value></parameter>
+              <parameter><parameterid>origin</parameterid><name>Origin</name><value>${subtitleOrigin.main}</value></parameter>
             </effect>
           </generatoritem>`;
   }).join('');
@@ -1505,6 +1527,7 @@ function buildEditRoomFcpXml(params: {
   const ntscStr = ntsc ? 'TRUE' : 'FALSE';
   const tcFormat = ntsc ? 'DF' : 'NDF';
   const toFrames = (sec: number) => Math.round(sec * fps);
+  const subtitleOrigin = getSubtitleOrigin(width, height);
   const totalDurSec = timeline[timeline.length - 1].imageEndTime;
   const totalFrames = Math.ceil(totalDurSec * fps);
   const safeTitle = escXml(title);
@@ -1625,7 +1648,7 @@ function buildEditRoomFcpXml(params: {
               <parameter><parameterid>fontsize</parameterid><name>Font Size</name><value>42</value></parameter>
               <parameter><parameterid>fontstyle</parameterid><name>Font Style</name><value>1</value></parameter>
               <parameter><parameterid>fontcolor</parameterid><name>Font Color</name><value>16777215</value></parameter>
-              <parameter><parameterid>origin</parameterid><name>Origin</name><value>0 0.38</value></parameter>
+              <parameter><parameterid>origin</parameterid><name>Origin</name><value>${subtitleOrigin.main}</value></parameter>
             </effect>
           </generatoritem>`).join('');
 

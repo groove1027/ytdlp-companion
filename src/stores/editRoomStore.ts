@@ -479,16 +479,16 @@ export const useEditRoomStore = create<EditRoomStore>()(immer((set, get) => ({
         startT = matchedLine.startTime;
         // [BUG FIX] 항상 startTime + duration으로 계산 — endTime 필드 불일치 방지
         endT = matchedLine.startTime + matchedLine.duration;
-      } else if (matchedLine?.duration != null && matchedLine.duration > 0) {
-        // 2순위: duration만 있고 startTime 없음 → 누적 시간 기반
-        startT = cumTime;
-        endT = cumTime + matchedLine.duration;
       } else if (scene.startTime != null && scene.endTime != null && scene.endTime > scene.startTime) {
-        // 3순위: Scene 자체 타이밍
+        // 2순위: Scene 저장 타이밍 (사운드 스튜디오 전송값)
         startT = scene.startTime;
         endT = scene.endTime;
+      } else if (matchedLine?.duration != null && matchedLine.duration > 0) {
+        // 3순위: duration만 있고 startTime 없음 → 누적 시간 기반
+        startT = cumTime;
+        endT = cumTime + matchedLine.duration;
       } else if (scene.audioDuration && scene.audioDuration > 0) {
-        // 4순위: audioDuration → 누적 시간 기반
+        // 4순위: Scene audioDuration → 누적 시간 기반
         startT = cumTime;
         endT = cumTime + scene.audioDuration;
       } else {

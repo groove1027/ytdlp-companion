@@ -436,6 +436,12 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
         const fallbackSpeakerId = ex?.speakerId || speakers[0]?.id || '';
         const preservedSpeakerId = sourceLine?.speakerId || fallbackSpeakerId;
         const isTextPreserved = sourceLine?.text === text;
+        const preservedDuration = sourceLine?.duration ?? ex?.duration;
+        const preservedStartTime = sourceLine?.startTime ?? ex?.startTime;
+        const preservedEndTime = sourceLine?.endTime ?? ex?.endTime;
+        const preservedSceneId = sourceLine?.sceneId ?? ex?.sceneId;
+        const preservedAudioSource = sourceLine?.audioSource ?? ex?.audioSource;
+        const preservedUploadedAudioId = sourceLine?.uploadedAudioId ?? ex?.uploadedAudioId;
         return {
           id: sourceLine?.id || ex?.id || `line-${Date.now()}-${i}`,
           speakerId: preservedSpeakerId,
@@ -446,6 +452,14 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
           voiceId: sourceLine?.voiceId ?? ex?.voiceId,
           voiceName: sourceLine?.voiceName ?? ex?.voiceName,
           voiceImage: sourceLine?.voiceImage ?? ex?.voiceImage,
+          sceneId: preservedSceneId,
+          audioSource: preservedAudioSource,
+          uploadedAudioId: preservedUploadedAudioId,
+          ...(isTextPreserved ? {
+            duration: preservedDuration,
+            startTime: preservedStartTime,
+            endTime: preservedEndTime,
+          } : {}),
           ttsStatus: (isTextPreserved ? (sourceLine?.ttsStatus ?? ex?.ttsStatus ?? 'idle') : 'idle') as ScriptLine['ttsStatus'],
           audioUrl: isTextPreserved ? (sourceLine?.audioUrl ?? ex?.audioUrl) : undefined,
         };

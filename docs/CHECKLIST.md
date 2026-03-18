@@ -8,6 +8,13 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-19] Premiere ZIP 내보내기 버그 2건 수정 (#535, #539)
+- [x] `nleExportService.ts` — 9:16/16:9 비율 기반 자막 위치 동적화: 기본 자막 `origin`을 9:16=`0 -0.38`, 16:9=`0 -0.35`로 조정
+- [x] `nleExportService.ts` — 효과자막(`effectSubClips`) `origin`도 화면 하단 기준으로 조정(숏폼 얼굴 가림 방지)
+- [x] `VideoAnalysisRoom.tsx` — NLE 내보내기 시 원격 URL 소스(YouTube/소셜)에서 `videoBlob`이 비어 있으면 다운로드 분기 보강
+- [x] `nleExportService.ts` — 0바이트/누락 `videoBlob`일 때 ZIP 생성을 중단해 깨진 Premiere 패키지(미디어 미로딩) 차단
+- [x] `tsc --noEmit` + `vite build` + `rg` 재검증 통과
+
 ### [2026-03-18] 사운드 스튜디오 TTS 버그 2건 수정 (#553, #549)
 - [x] `VoiceStudio.tsx` — `handleGenerateLine()`이 항상 `speakers[0]`를 쓰던 문제 수정, 각 줄의 `line.speakerId` 기반으로 해당 화자를 우선 선택하도록 변경
 - [x] `TypecastEditor.tsx` — `handlePlayAll()`에서 줄 생성 실패 감지/집계 추가, 402(크레딧 부족) 계열 오류 시 일괄 생성 즉시 중단 + 실패 줄 요약 토스트 표시

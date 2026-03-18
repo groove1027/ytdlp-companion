@@ -52,8 +52,10 @@ export function useUnifiedTimeline(): UnifiedSceneTiming[] {
       // 1. editRoomStore에 사용자 수정 타이밍(_userTiming)이 있으면 최우선
       // 2. ScriptLine에 정확한 TTS 타이밍이 있으면 사용
       // 3. editRoomStore에 유효한 타이밍이 있으면 사용
-      // 4. ScriptLine duration만 있으면 누적 시간 + duration
-      // 5. 기본값 (이전 장면 끝 + 3초)
+      // 4. Scene(start/end) 저장 타이밍
+      // 5. ScriptLine duration만 있으면 누적 시간 + duration
+      // 6. Scene audioDuration
+      // 7. 기본값 (이전 장면 끝 + 3초)
       let startTime: number;
       let endTime: number;
 
@@ -73,10 +75,20 @@ export function useUnifiedTimeline(): UnifiedSceneTiming[] {
         // editRoom 타이밍 (누적 시간보다 뒤에 있어야 유효 — 겹침 방지)
         startTime = editSub.startTime;
         endTime = editSub.endTime;
+      } else if (scene.startTime != null && scene.endTime != null &&
+                 scene.endTime > scene.startTime &&
+                 scene.endTime > cumulativeTime - 0.01) {
+        // Scene 저장 타이밍 (사운드 스튜디오 전송값)
+        startTime = scene.startTime;
+        endTime = scene.endTime;
       } else if (matchedLine?.duration != null && matchedLine.duration > 0) {
         // duration만 있을 때 — 누적 기반
         startTime = cumulativeTime;
         endTime = cumulativeTime + matchedLine.duration;
+      } else if (scene.audioDuration != null && scene.audioDuration > 0) {
+        // Scene 오디오 길이 기반 폴백
+        startTime = cumulativeTime;
+        endTime = cumulativeTime + scene.audioDuration;
       } else {
         startTime = cumulativeTime;
         endTime = cumulativeTime + 3; // 기본 3초

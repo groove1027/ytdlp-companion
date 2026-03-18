@@ -4,6 +4,18 @@ import { useNavigationStore } from '../stores/navigationStore';
 import { showToast } from '../stores/uiStore';
 import type { Scene } from '../types';
 
+function resolveLineDuration(line: {
+  duration?: number;
+  startTime?: number;
+  endTime?: number;
+}): number | undefined {
+  if (line.duration != null && line.duration > 0) return line.duration;
+  if (line.startTime != null && line.endTime != null && line.endTime > line.startTime) {
+    return line.endTime - line.startTime;
+  }
+  return undefined;
+}
+
 /**
  * 사운드 스튜디오의 오디오 데이터를 이미지/영상 탭으로 동기화하고 탭 전환.
  *
@@ -22,10 +34,12 @@ export function transferSoundToImageVideo(): void {
   // 2. 타이밍 무결성 보정 — audioUrl 있지만 startTime 없는 라인
   let offset = 0;
   for (const line of lines) {
-    if (line.audioUrl && line.startTime === undefined && line.duration) {
-      soundStore.updateLine(line.id, { startTime: offset, endTime: offset + line.duration });
+    const resolvedDuration = resolveLineDuration(line);
+    if (line.audioUrl && resolvedDuration != null && resolvedDuration > 0 &&
+        (line.startTime === undefined || line.endTime === undefined || line.endTime <= line.startTime)) {
+      soundStore.updateLine(line.id, { startTime: offset, endTime: offset + resolvedDuration });
     }
-    offset = line.endTime ?? (offset + (line.duration || 0));
+    offset = line.endTime ?? (offset + (resolvedDuration || 0));
   }
 
   // 보정 후 최신 라인 재읽기
@@ -35,16 +49,23 @@ export function transferSoundToImageVideo(): void {
 
   // 3. sceneId 기반 직접 동기화 (기존 장면의 모든 메타데이터 보존)
   if (existingScenes.length > 0) {
-    for (const line of finalLines) {
-      if (line.sceneId) {
-        projectStore.updateScene(line.sceneId, {
-          audioUrl: line.audioUrl,
-          audioDuration: line.duration,
-          startTime: line.startTime,
-          endTime: line.endTime,
-          scriptText: line.text,
-        });
-      }
+    const canUseIndexFallback = existingScenes.length === finalLines.length;
+    for (let i = 0; i < finalLines.length; i++) {
+      const line = finalLines[i];
+      const fallbackScene = existingScenes[i];
+      const targetSceneId = line.sceneId || (canUseIndexFallback ? fallbackScene?.id : undefined);
+      if (!targetSceneId) continue;
+
+      const resolvedDuration = resolveLineDuration(line);
+      const scenePatch: Partial<Scene> = {
+        scriptText: line.text,
+      };
+      if (line.audioUrl !== undefined) scenePatch.audioUrl = line.audioUrl;
+      if (resolvedDuration != null && resolvedDuration > 0) scenePatch.audioDuration = resolvedDuration;
+      if (line.startTime !== undefined) scenePatch.startTime = line.startTime;
+      if (line.endTime !== undefined) scenePatch.endTime = line.endTime;
+
+      projectStore.updateScene(targetSceneId, scenePatch);
     }
   } else {
     // Scene이 없으면 lines에서 새로 생성
@@ -57,7 +78,7 @@ export function transferSoundToImageVideo(): void {
       visualDescriptionKO: '',
       characterPresent: false,
       audioUrl: line.audioUrl,
-      audioDuration: line.duration,
+      audioDuration: resolveLineDuration(line),
       startTime: line.startTime,
       endTime: line.endTime,
       isGeneratingImage: false,
