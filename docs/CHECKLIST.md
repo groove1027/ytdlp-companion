@@ -8,6 +8,12 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-18] 배치 3: 내보내기 3종 UI 연결 (#3~5)
+- [x] `StoryboardPanel.tsx` — 다운로드 드롭다운에 `🖼️ 썸네일 ZIP`, `🎨 비주얼 프롬프트`, `🎬 비디오 프롬프트` 버튼 추가
+- [x] `StoryboardPanel.tsx` — `downloadThumbnails()`, `exportVisualPromptsHtml()`, `exportVideoPromptsHtml()`를 `retryImport` 패턴으로 연결
+- [x] `StoryboardPanel.tsx` — 썸네일/프롬프트 내보내기만 필요한 경우에도 드롭다운을 열 수 있도록 활성 조건 보정
+- [x] `tsc --noEmit` + `vite build` + `grep` 재검증 통과
+
 ### [2026-03-18] Seedance 1.5 Pro 비디오 생성 UI 연결 (#1~2)
 - [x] `useVideoBatch.ts` — Seedance 단일 생성/일괄 생성 함수 추가, 기본 길이 8초로 연결, 비용 계산 반영
 - [x] `StoryboardScene.tsx` — Seedance 개별 생성 버튼, 배지, 진행 상태 색상 연결

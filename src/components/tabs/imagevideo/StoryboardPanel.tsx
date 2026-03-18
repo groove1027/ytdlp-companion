@@ -1173,6 +1173,7 @@ const VirtualListView: React.FC<{
 
 const StoryboardPanel: React.FC = () => {
   const scenes = useProjectStore((s) => s.scenes);
+  const thumbnails = useProjectStore((s) => s.thumbnails);
   const config = useProjectStore((s) => s.config);
   const updateScene = useProjectStore((s) => s.updateScene);
   const removeScene = useProjectStore((s) => s.removeScene);
@@ -1228,6 +1229,7 @@ const StoryboardPanel: React.FC = () => {
 
   const completedImages = scenes.filter((s) => s.imageUrl && !s.isGeneratingImage).length;
   const completedVideos = scenes.filter((s) => s.videoUrl && !s.isGeneratingVideo).length;
+  const completedThumbnails = thumbnails.filter((t) => t.imageUrl).length;
   const videoEligible = scenes.filter((s) => s.imageUrl && !s.videoUrl && !s.isGeneratingVideo).length;
   const imageEligible = scenes.filter((s) => !s.imageUrl && !s.isGeneratingImage).length;
   const exRate = useCostStore.getState().exchangeRate || PRICING.EXCHANGE_RATE;
@@ -1235,6 +1237,7 @@ const StoryboardPanel: React.FC = () => {
   const isAnyBatchRunning = isBatchingImages || videoBatch.isBatching || isBatchUploading;
   const elapsedBatch = useElapsedTimer(isAnyBatchRunning);
   const totalScenes = scenes.length;
+  const hasDownloadActions = totalScenes > 0 || completedThumbnails > 0 || completedImages > 0 || completedVideos > 0;
   const allSceneScriptText = useMemo(() => scenes
     .map((scene) => getSceneNarrationText(scene))
     .filter((text) => text.length > 0)
@@ -2125,7 +2128,7 @@ const StoryboardPanel: React.FC = () => {
             <button
               type="button"
               onClick={() => setShowDownloadDropdown(!showDownloadDropdown)}
-              disabled={completedImages === 0 && completedVideos === 0}
+              disabled={!hasDownloadActions}
               className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed text-gray-300 text-xs font-medium rounded-lg border border-gray-600 transition-colors flex items-center gap-1.5"
             >
               ⬇️ 다운로드
@@ -2175,6 +2178,51 @@ const StoryboardPanel: React.FC = () => {
                   <span className="w-2 h-2 rounded-full bg-amber-400" />
                   🎬 이미지→MP4 변환
                   <span className="ml-auto text-[11px] text-gray-500">{completedImages}장</span>
+                </button>
+                <div className="border-t border-gray-700" />
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setShowDownloadDropdown(false);
+                    const { downloadThumbnails } = await retryImport(() => import('../../../services/exportService'));
+                    await downloadThumbnails();
+                  }}
+                  disabled={completedThumbnails === 0}
+                  className="w-full text-left px-4 py-2.5 text-sm text-orange-200 hover:bg-orange-600/15 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+                >
+                  <span className="w-2 h-2 rounded-full bg-orange-400" />
+                  🖼️ 썸네일 ZIP
+                  <span className="ml-auto text-[11px] text-orange-300/70">{completedThumbnails}장</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setShowDownloadDropdown(false);
+                    const { exportVisualPromptsHtml } = await retryImport(() => import('../../../services/exportService'));
+                    exportVisualPromptsHtml();
+                    showToast('비주얼 프롬프트 HTML이 저장되었습니다.');
+                  }}
+                  disabled={totalScenes === 0}
+                  className="w-full text-left px-4 py-2.5 text-sm text-orange-200 hover:bg-orange-600/15 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+                >
+                  <span className="w-2 h-2 rounded-full bg-orange-300" />
+                  🎨 비주얼 프롬프트
+                  <span className="ml-auto text-[11px] text-orange-300/70">{totalScenes}개</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setShowDownloadDropdown(false);
+                    const { exportVideoPromptsHtml } = await retryImport(() => import('../../../services/exportService'));
+                    exportVideoPromptsHtml();
+                    showToast('비디오 프롬프트 HTML이 저장되었습니다.');
+                  }}
+                  disabled={totalScenes === 0}
+                  className="w-full text-left px-4 py-2.5 text-sm text-orange-200 hover:bg-orange-600/15 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+                >
+                  <span className="w-2 h-2 rounded-full bg-amber-300" />
+                  🎬 비디오 프롬프트
+                  <span className="ml-auto text-[11px] text-orange-300/70">{totalScenes}개</span>
                 </button>
                 <div className="border-t border-gray-700" />
                 <button
