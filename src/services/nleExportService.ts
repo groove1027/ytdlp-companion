@@ -3,7 +3,8 @@
  *
  * NLE(Non-Linear Editor) 프로젝트 내보내기 서비스
  * - Premiere Pro / DaVinci Resolve: FCP XML (xmeml v5)
- * - CapCut / VREW: SRT + 영상 ZIP 패키지
+ * - CapCut: FCP XML + draft JSON + SRT + 영상 ZIP 패키지
+ * - VREW: SRT + 영상 ZIP 패키지 (VREW는 XML import 미지원, SRT만 지원)
  */
 
 import type { VideoSceneRow, VideoAnalysisPreset, EdlEntry, SourceVideoFile, UnifiedSceneTiming } from '../types';
@@ -1035,19 +1036,15 @@ export async function buildNlePackageZip(params: {
     ].join('\n'));
 
   } else {
-    // [FIX #316] VREW — FCP XML (편집점 보존) + SRT + 영상
-    // VREW도 Premiere XML import 지원 (File > Import > XML)
+    // VREW — SRT 자막 + 영상 패키지
+    // VREW는 SRT import만 지원 (XML import 미지원, XML은 export만 가능)
 
-    // 1. FCP XML
-    const vrewXml = generateFcpXml({ scenes, title, videoFileName: videoFileName || 'video.mp4', preset, width, height, fps, videoDurationSec });
-    zip.file(`${safeName}.xml`, vrewXml);
-
-    // 2. 영상 파일 (media/ — XML pathurl 일치)
+    // 1. 영상 파일
     if (videoBlob) {
       zip.file(`media/${videoFileName || 'video.mp4'}`, videoBlob);
     }
 
-    // 3. SRT
+    // 2. SRT 자막
     const srt = generateNleSrt(scenes, 'dialogue', preset, true);
     if (srt) zip.file(`${safeName}_자막.srt`, BOM + srt);
     const narSrt = generateNleSrt(scenes, 'narration', preset, true);
@@ -1058,17 +1055,18 @@ export async function buildNlePackageZip(params: {
     zip.file('README.txt', [
       `=== ${title} — VREW ===`,
       '',
-      '★ 추천: XML import (편집점 + 컷 자동 적용)',
-      '1. VREW에서 File > 가져오기 > XML 파일',
-      `2. "${safeName}.xml" 선택 → 편집점 타임라인 자동 생성`,
-      '3. media/ 폴더 영상이 자동 연결됩니다.',
+      '[ 사용법 ]',
+      '1. VREW를 열고 media/ 폴더의 영상을 불러옵니다.',
+      `2. 자막 > 자막 파일 불러오기 > "${safeName}_자막.srt" 선택`,
+      '3. 자막이 타임라인에 자동 배치됩니다.',
       '',
-      '[ 대안: SRT 자막만 가져오기 ]',
-      '1. VREW에서 영상 파일을 불러옵니다.',
-      `2. 자막 > SRT 불러오기 > "${safeName}_자막.srt"`,
+      '[ 포함된 파일 ]',
+      `• ${safeName}_자막.srt — 대사 자막`,
+      narSrt ? `• ${safeName}_나레이션.srt — 나레이션` : null,
+      fxSrt ? `• ${safeName}_효과자막.srt — 효과 자막` : null,
       '',
       `* 편집점: ${scenes.length}개 / 해상도: ${width}x${height} / ${fps}fps`,
-    ].join('\n'));
+    ].filter(Boolean).join('\n'));
   }
 
   return zip.generateAsync({ type: 'blob', compression: 'STORE' });
@@ -1395,8 +1393,8 @@ export async function buildEdlNlePackageZip(params: {
     zip.file('README.txt', [
       `=== ${title} — ${appName} ===`,
       '',
-      `1. ${appName}에서 소스 영상을 import하세요.`,
-      `2. 자막 > SRT 불러오기 > "${safeName}_나레이션.srt" 선택`,
+      `1. ${appName}에서 소스 영상을 불러옵니다.`,
+      `2. 자막 > 자막 파일 불러오기 > "${safeName}_나레이션.srt" 선택`,
       `* ${entries.length}개 편집점 기반 나레이션 SRT`,
     ].join('\n'));
   }
@@ -1753,9 +1751,9 @@ export async function buildEditRoomNleZip(params: {
   const srtContent = buildEditRoomSrt(timeline);
   if (srtContent) zip.file(`${safeName}_자막.srt`, BOM + srtContent);
 
-  // 장면별 통합 SRT (CapCut용 — 대본 텍스트 폴백 포함)
+  // 장면별 통합 SRT (CapCut/VREW용 — 대본 텍스트 폴백 포함)
   const sceneSrt = buildEditRoomSceneSrt(timeline, scenes);
-  if (sceneSrt && target === 'capcut') {
+  if (sceneSrt && (target === 'capcut' || target === 'vrew')) {
     zip.file(`${safeName}_장면자막.srt`, BOM + sceneSrt);
   }
 
@@ -1816,8 +1814,11 @@ export async function buildEditRoomNleZip(params: {
 
   // [FIX #472] FCP XML — mediaFileMap 전달하여 실제 파일명 기준으로 XML 생성
   // [FIX #473] narrationFileMap 전달하여 나레이션 오디오를 A2 트랙에 자동 배치
-  const xml = buildEditRoomFcpXml({ timeline, scenes, title, fps, width: w, height: h, mediaFileMap, narrationFileMap });
-  zip.file(`${safeName}.xml`, xml);
+  // VREW는 XML import 미지원 — premiere/capcut만 XML 포함
+  if (target !== 'vrew') {
+    const xml = buildEditRoomFcpXml({ timeline, scenes, title, fps, width: w, height: h, mediaFileMap, narrationFileMap });
+    zip.file(`${safeName}.xml`, xml);
+  }
 
   // CapCut 전용: draft_content.json (이미지+자막+나레이션 타임라인 자동 배치)
   if (target === 'capcut') {
@@ -2119,17 +2120,17 @@ export async function buildEditRoomNleZip(params: {
         : '',
     ].filter(Boolean).join('\n'));
   } else {
+    // VREW — SRT 자막 중심 (VREW는 XML import 미지원)
     zip.file('README.txt', [
       `=== ${title} — VREW ===`,
       '',
-      '★ 추천: XML 가져오기',
-      '1. VREW에서 File > 가져오기 > XML 파일',
-      `2. "${safeName}.xml" 선택 → 타임라인 자동 생성`,
-      '3. media/ 폴더 이미지/영상이 자동 연결됩니다.',
-      '',
-      '[ 대안: SRT 자막만 가져오기 ]',
-      '1. media/ 이미지/영상을 VREW에 import 후',
-      `2. 자막 > SRT 불러오기 > "${safeName}_자막.srt"`,
+      '[ 사용법 ]',
+      '1. VREW를 열고 media/ 폴더의 영상/이미지를 불러옵니다.',
+      `2. 자막 > 자막 파일 불러오기 > "${safeName}_자막.srt" 선택`,
+      '3. 자막이 타임라인에 자동 배치됩니다.',
+      narrationFileMap.size > 0
+        ? `4. audio/ 폴더의 나레이션 MP3(${narrationFileMap.size}개)를 오디오 트랙에 수동 배치하세요.`
+        : null,
       '',
       `• ${timeline.length}개 장면 · ${w}x${h} · ${fps}fps`,
       videoCount > 0 || imageCount > 0

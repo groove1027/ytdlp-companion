@@ -8,6 +8,14 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-18] VREW 내보내기 수정 — XML 제거 + SRT 전용 워크플로우
+- [x] `nleExportService.ts` — buildNlePackageZip VREW 브랜치: 불필요한 FCP XML 생성 제거 (VREW는 XML import 미지원)
+- [x] `nleExportService.ts` — buildEditRoomNleZip: XML 생성을 `target !== 'vrew'` 조건으로 제한
+- [x] `nleExportService.ts` — 3개 함수 모두 VREW README를 올바른 메뉴 경로로 수정 (자막 > 자막 파일 불러오기)
+- [x] `nleExportService.ts` — VREW용 장면별 SRT 추가 (buildEditRoomNleZip)
+- [x] `nleExportService.ts` — VREW README에 나레이션 오디오 안내 추가
+- [x] tsc + vite build + grep 5회 + 논리 검증 40회 + Puppeteer E2E 검증 통과
+
 ### [2026-03-18] 영상 분석실 5병렬 배치 → 단일 호출 전환 (API 비용 절감)
 - [x] `VideoAnalysisRoom.tsx` — 5병렬 배치 로직 전체 제거 (runBatch, Promise.allSettled, 재시도 로직)
 - [x] `VideoAnalysisRoom.tsx` — 모든 프리셋(snack/tikitaka/condensed/alltts 포함) 단일 callAI 호출로 통합
