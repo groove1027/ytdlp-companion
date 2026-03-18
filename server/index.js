@@ -16,9 +16,6 @@ const helmet = require('helmet');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const { execFile } = require('child_process');
-const { promisify } = require('util');
-
-const execFileAsync = promisify(execFile);
 
 // ──────────────────────────────────────────────
 // 환경변수
@@ -30,6 +27,13 @@ const YTDLP_PATH = process.env.YTDLP_PATH || '/usr/local/bin/yt-dlp';
 const MAX_CONCURRENT = parseInt(process.env.MAX_CONCURRENT || '5', 10);
 const CACHE_TTL = parseInt(process.env.CACHE_TTL || '3600', 10);
 const LOG_LEVEL = process.env.LOG_LEVEL || 'info';
+const PROCESS_WATCHDOG_MARGIN_MS = parseInt(process.env.PROCESS_WATCHDOG_MARGIN_MS || '5000', 10);
+const SLOT_STALE_WARN_MS = parseInt(process.env.SLOT_STALE_WARN_MS || '120000', 10);
+const SLOT_STALE_FORCE_RELEASE_MS = parseInt(process.env.SLOT_STALE_FORCE_RELEASE_MS || '300000', 10);
+const BATCH_INTERNAL_CONCURRENCY = Math.max(1, Math.min(
+  parseInt(process.env.BATCH_INTERNAL_CONCURRENCY || '2', 10),
+  4
+));
 
 // ──────────────────────────────────────────────
 // 로깅
@@ -115,6 +119,198 @@ function socialCacheKey(url, suffix) {
 // 동시 실행 제한
 // ──────────────────────────────────────────────
 let activeRequests = 0;
+let slotSequence = 0;
+const activeSlotLeases = new Map(); // slotId -> { acquiredAt, label, release }
+
+function killProcessHard(processRef, context) {
+  if (!processRef || typeof processRef.kill !== 'function') return;
+  if (processRef.exitCode !== null && processRef.exitCode !== undefined) return;
+  if (processRef.signalCode) return;
+  try {
+    processRef.kill('SIGKILL');
+    log('warn', `Force-killed process pid=${processRef.pid || 'unknown'} (${context})`);
+  } catch (e) {
+    log('warn', `Failed to kill process (${context}): ${e.message}`);
+  }
+}
+
+function createRequestRuntime(req) {
+  const children = new Set();
+  const abortHandlers = new Set();
+  let closed = false;
+
+  const cleanup = () => {
+    if (closed) return;
+    closed = true;
+    for (const child of children) {
+      killProcessHard(child, 'request-closed');
+    }
+    children.clear();
+    for (const handler of abortHandlers) {
+      try {
+        handler();
+      } catch (e) {
+        log('warn', `Abort cleanup handler failed: ${e.message}`);
+      }
+    }
+    abortHandlers.clear();
+  };
+
+  req.on('close', cleanup);
+
+  return {
+    isClosed: () => closed,
+    cleanup,
+    trackChild: (child) => {
+      if (!child) return () => {};
+      children.add(child);
+      return () => children.delete(child);
+    },
+    addAbortHandler: (handler) => {
+      if (closed) {
+        try {
+          handler();
+        } catch (e) {
+          log('warn', `Abort handler immediate run failed: ${e.message}`);
+        }
+        return () => {};
+      }
+      abortHandlers.add(handler);
+      return () => abortHandlers.delete(handler);
+    },
+  };
+}
+
+function safeExecFile(file, args, options = {}, requestRuntime = null) {
+  const timeout = typeof options.timeout === 'number' ? options.timeout : 0;
+  const watchdogMs = timeout > 0 ? timeout + PROCESS_WATCHDOG_MARGIN_MS : null;
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let watchdogTimer = null;
+    let untrackChild = () => {};
+    let child = null;
+
+    const finalize = (err, stdout, stderr) => {
+      if (settled) return;
+      settled = true;
+      if (watchdogTimer) clearTimeout(watchdogTimer);
+      untrackChild();
+
+      if (err) {
+        if (stdout !== undefined && err.stdout === undefined) err.stdout = stdout;
+        if (stderr !== undefined && err.stderr === undefined) err.stderr = stderr;
+        reject(err);
+      } else {
+        resolve({ stdout, stderr });
+      }
+    };
+
+    try {
+      child = execFile(
+        file,
+        args,
+        { ...options, killSignal: 'SIGKILL' },
+        (err, stdout, stderr) => finalize(err, stdout, stderr)
+      );
+    } catch (e) {
+      finalize(e);
+      return;
+    }
+
+    if (requestRuntime) {
+      untrackChild = requestRuntime.trackChild(child);
+      if (requestRuntime.isClosed()) {
+        killProcessHard(child, `${file}:request-already-closed`);
+      }
+    }
+
+    if (watchdogMs) {
+      watchdogTimer = setTimeout(() => {
+        if (settled) return;
+        killProcessHard(child, `${file}:watchdog-timeout`);
+        const timeoutErr = new Error(`Process watchdog timeout (${watchdogMs}ms)`);
+        timeoutErr.code = 'WATCHDOG_TIMEOUT';
+        timeoutErr.killed = true;
+        timeoutErr.signal = 'SIGKILL';
+        finalize(timeoutErr, '', '');
+      }, watchdogMs);
+      if (typeof watchdogTimer.unref === 'function') watchdogTimer.unref();
+    }
+  });
+}
+
+function acquireSlot(label, requestRuntime = null) {
+  if (activeRequests >= MAX_CONCURRENT) return null;
+
+  activeRequests++;
+  const slotId = ++slotSequence;
+  const lease = {
+    acquiredAt: Date.now(),
+    label,
+    release: null,
+    detachAbortHandler: null,
+  };
+
+  const release = (reason = 'normal') => {
+    if (!activeSlotLeases.has(slotId)) return false;
+    activeSlotLeases.delete(slotId);
+    if (lease.detachAbortHandler) {
+      lease.detachAbortHandler();
+      lease.detachAbortHandler = null;
+    }
+    activeRequests = Math.max(0, activeRequests - 1);
+    if (reason === 'request-closed' || reason === 'stale-watchdog') {
+      log('warn', `Slot released (${reason}): ${lease.label}`);
+    }
+    return true;
+  };
+
+  lease.release = release;
+
+  if (requestRuntime) {
+    lease.detachAbortHandler = requestRuntime.addAbortHandler(() => {
+      release('request-closed');
+    });
+  }
+
+  activeSlotLeases.set(slotId, lease);
+  return release;
+}
+
+async function mapWithConcurrency(items, concurrency, worker) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+
+  async function runWorker() {
+    while (true) {
+      const currentIndex = nextIndex++;
+      if (currentIndex >= items.length) return;
+      results[currentIndex] = await worker(items[currentIndex], currentIndex);
+    }
+  }
+
+  const workerCount = Math.min(concurrency, items.length);
+  await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
+  return results;
+}
+
+// 슬롯 누수 안전장치 (1분마다 검사)
+const slotWatchdog = setInterval(() => {
+  const now = Date.now();
+  for (const lease of activeSlotLeases.values()) {
+    const heldMs = now - lease.acquiredAt;
+    if (heldMs > SLOT_STALE_FORCE_RELEASE_MS) {
+      log('error', `Force releasing stale slot (${Math.round(heldMs / 1000)}s): ${lease.label}`);
+      lease.release('stale-watchdog');
+      continue;
+    }
+    if (heldMs > SLOT_STALE_WARN_MS) {
+      log('warn', `Long-held slot (${Math.round(heldMs / 1000)}s): ${lease.label}`);
+    }
+  }
+}, 60 * 1000);
+if (typeof slotWatchdog.unref === 'function') slotWatchdog.unref();
 
 // ──────────────────────────────────────────────
 // YouTube URL 검증
@@ -171,14 +367,14 @@ function validateSocialUrl(url) {
 // ──────────────────────────────────────────────
 // 범용 스트림 URL 추출 (TikTok, Douyin 등)
 // ──────────────────────────────────────────────
-async function extractStreamUrlGeneric(rawUrl, quality) {
+async function extractStreamUrlGeneric(rawUrl, quality, requestRuntime = null) {
   const format = buildFormatString(quality);
   const normalizedUrl = rawUrl.startsWith('http') ? rawUrl : `https://${rawUrl}`;
 
   log('info', `Extracting (generic): ${normalizedUrl} (quality: ${quality || 'best'})`);
 
   try {
-    const { stdout } = await execFileAsync(YTDLP_PATH, [
+    const { stdout } = await safeExecFile(YTDLP_PATH, [
       '-f', format,
       '--no-warnings',
       '--no-playlist',
@@ -188,7 +384,7 @@ async function extractStreamUrlGeneric(rawUrl, quality) {
     ], {
       timeout: 45000,
       maxBuffer: 10 * 1024 * 1024,
-    });
+    }, requestRuntime);
 
     const info = JSON.parse(stdout);
 
@@ -264,7 +460,7 @@ function buildFormatString(quality) {
   }
 }
 
-async function extractStreamUrl(videoId, quality) {
+async function extractStreamUrl(videoId, quality, requestRuntime = null) {
   const format = buildFormatString(quality);
   const youtubeUrl = `https://www.youtube.com/watch?v=${videoId}`;
 
@@ -275,7 +471,7 @@ async function extractStreamUrl(videoId, quality) {
     // --no-warnings: 경고 숨김
     // --no-playlist: 단일 영상만
     // -j: JSON 메타데이터 출력
-    const { stdout } = await execFileAsync(YTDLP_PATH, [
+    const { stdout } = await safeExecFile(YTDLP_PATH, [
       '-f', format,
       '--no-warnings',
       '--no-playlist',
@@ -285,7 +481,7 @@ async function extractStreamUrl(videoId, quality) {
     ], {
       timeout: 30000,  // 30초 타임아웃
       maxBuffer: 10 * 1024 * 1024,  // 10MB 버퍼
-    });
+    }, requestRuntime);
 
     const info = JSON.parse(stdout);
 
@@ -453,6 +649,7 @@ app.get('/api/extract', authMiddleware, handleExtract);
 app.post('/api/extract', authMiddleware, handleExtract);
 
 async function handleExtract(req, res) {
+  const requestRuntime = createRequestRuntime(req);
   try {
     // 파라미터 추출 (GET: query, POST: body)
     const url = req.query.url || req.body?.url;
@@ -484,17 +681,16 @@ async function handleExtract(req, res) {
     }
 
     // 동시 실행 제한
-    if (activeRequests >= MAX_CONCURRENT) {
+    const release = acquireSlot('/api/extract', requestRuntime);
+    if (!release) {
       return res.status(429).json({
         error: '서버가 바쁩니다. 잠시 후 다시 시도해주세요.',
         retryAfter: 5,
       });
     }
 
-    activeRequests++;
-
     try {
-      const result = await extractStreamUrl(videoId, quality);
+      const result = await extractStreamUrl(videoId, quality, requestRuntime);
 
       // 캐시에 저장
       setCachedUrl(videoId, quality, result);
@@ -504,7 +700,7 @@ async function handleExtract(req, res) {
       res.json({ ...result, cached: false });
 
     } finally {
-      activeRequests--;
+      release();
     }
 
   } catch (err) {
@@ -537,6 +733,7 @@ async function handleExtract(req, res) {
  * 제한: 최대 10개
  */
 app.post('/api/batch', authMiddleware, async (req, res) => {
+  const requestRuntime = createRequestRuntime(req);
   try {
     const { urls, quality = 'best' } = req.body || {};
 
@@ -548,38 +745,51 @@ app.post('/api/batch', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: '최대 10개까지 요청할 수 있습니다' });
     }
 
-    const results = await Promise.all(
-      urls.map(async (url) => {
+    const release = acquireSlot('/api/batch', requestRuntime);
+    if (!release) {
+      const results = urls.map((url) => {
         const videoId = extractVideoId(url);
         if (!videoId) {
           return { videoId: null, url: url, error: '올바른 YouTube URL이 아닙니다' };
         }
-
-        // 캐시 확인
         const cached = getCachedUrl(videoId, quality);
         if (cached) {
           return { videoId, ...cached, cached: true, cachedAt: undefined };
         }
+        return { videoId, error: '서버가 바쁩니다' };
+      });
+      return res.json({ results });
+    }
 
-        try {
-          if (activeRequests >= MAX_CONCURRENT) {
-            return { videoId, error: '서버가 바쁩니다' };
+    try {
+      const results = await mapWithConcurrency(
+        urls,
+        BATCH_INTERNAL_CONCURRENCY,
+        async (url) => {
+          const videoId = extractVideoId(url);
+          if (!videoId) {
+            return { videoId: null, url: url, error: '올바른 YouTube URL이 아닙니다' };
           }
-          activeRequests++;
+
+          const cached = getCachedUrl(videoId, quality);
+          if (cached) {
+            return { videoId, ...cached, cached: true, cachedAt: undefined };
+          }
+
           try {
-            const result = await extractStreamUrl(videoId, quality);
+            const result = await extractStreamUrl(videoId, quality, requestRuntime);
             setCachedUrl(videoId, quality, result);
             return { videoId, ...result, cached: false };
-          } finally {
-            activeRequests--;
+          } catch (err) {
+            return { videoId, error: err.message || 'URL 추출 실패' };
           }
-        } catch (err) {
-          return { videoId, error: err.message || 'URL 추출 실패' };
         }
-      })
-    );
+      );
 
-    res.json({ results });
+      res.json({ results });
+    } finally {
+      release();
+    }
 
   } catch (err) {
     log('error', 'Batch error:', err);
@@ -593,6 +803,7 @@ app.post('/api/batch', authMiddleware, async (req, res) => {
  * 빠르게 제목, 길이, 썸네일만 필요할 때 사용.
  */
 app.get('/api/info', authMiddleware, async (req, res) => {
+  const requestRuntime = createRequestRuntime(req);
   try {
     const url = req.query.url;
     if (!url) {
@@ -606,14 +817,14 @@ app.get('/api/info', authMiddleware, async (req, res) => {
 
     const youtubeUrl = `https://www.youtube.com/watch?v=${videoId}`;
 
-    const { stdout } = await execFileAsync(YTDLP_PATH, [
+    const { stdout } = await safeExecFile(YTDLP_PATH, [
       '--no-warnings',
       '--no-playlist',
       '--no-check-certificates',
       '--skip-download',
       '-j',
       youtubeUrl,
-    ], { timeout: 15000, maxBuffer: 10 * 1024 * 1024 });
+    ], { timeout: 15000, maxBuffer: 10 * 1024 * 1024 }, requestRuntime);
 
     const info = JSON.parse(stdout);
 
@@ -643,6 +854,7 @@ app.get('/api/info', authMiddleware, async (req, res) => {
  * (브라우저 CORS 제약 우회용 프록시)
  */
 app.get('/api/download', authMiddleware, async (req, res) => {
+  const requestRuntime = createRequestRuntime(req);
   const url = req.query.url;
   const quality = req.query.quality || '720p';
 
@@ -655,17 +867,16 @@ app.get('/api/download', authMiddleware, async (req, res) => {
     return res.status(400).json({ error: '올바른 YouTube URL이 아닙니다' });
   }
 
-  if (activeRequests >= MAX_CONCURRENT) {
+  const release = acquireSlot('/api/download', requestRuntime);
+  if (!release) {
     return res.status(429).json({ error: '서버가 바쁩니다. 잠시 후 다시 시도해주세요.' });
   }
-
-  activeRequests++;
 
   try {
     // 캐시 또는 추출
     let result = getCachedUrl(videoId, quality);
     if (!result) {
-      result = await extractStreamUrl(videoId, quality);
+      result = await extractStreamUrl(videoId, quality, requestRuntime);
       setCachedUrl(videoId, quality, result);
     }
 
@@ -681,29 +892,64 @@ app.get('/api/download', authMiddleware, async (req, res) => {
     const http = require('http');
     const protocol = streamUrl.startsWith('https') ? https : http;
 
-    protocol.get(streamUrl, { timeout: 60000 }, (upstream) => {
-      if (upstream.statusCode !== 200) {
-        res.status(502).json({ error: `YouTube CDN 응답 오류 (${upstream.statusCode})` });
-        upstream.resume();
-        return;
-      }
+    await new Promise((resolve) => {
+      let settled = false;
+      let upstreamReq = null;
+      let upstreamRes = null;
+      let detachAbortHandler = () => {};
 
-      const safeTitle = (result.title || videoId).replace(/[^a-zA-Z0-9가-힣\s._-]/g, '').substring(0, 80);
-      res.setHeader('Content-Type', 'video/mp4');
-      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(safeTitle)}.mp4"`);
-      if (upstream.headers['content-length']) {
-        res.setHeader('Content-Length', upstream.headers['content-length']);
-      }
+      const finalize = () => {
+        if (settled) return;
+        settled = true;
+        detachAbortHandler();
+        resolve();
+      };
 
-      upstream.pipe(res);
+      res.once('finish', finalize);
+      res.once('close', finalize);
 
-      upstream.on('error', (err) => {
-        log('error', `Proxy stream error: ${err.message}`);
-        if (!res.headersSent) res.status(502).json({ error: '스트림 전송 중 오류' });
+      detachAbortHandler = requestRuntime.addAbortHandler(() => {
+        if (upstreamReq) upstreamReq.destroy();
+        if (upstreamRes) upstreamRes.destroy();
+        finalize();
       });
-    }).on('error', (err) => {
-      log('error', `Proxy request error: ${err.message}`);
-      if (!res.headersSent) res.status(502).json({ error: 'YouTube CDN 연결 실패' });
+
+      upstreamReq = protocol.get(streamUrl, { timeout: 60000 }, (upstream) => {
+        upstreamRes = upstream;
+        if (upstream.statusCode !== 200) {
+          if (!res.headersSent) {
+            res.status(502).json({ error: `YouTube CDN 응답 오류 (${upstream.statusCode})` });
+          }
+          upstream.resume();
+          finalize();
+          return;
+        }
+
+        const safeTitle = (result.title || videoId).replace(/[^a-zA-Z0-9가-힣\s._-]/g, '').substring(0, 80);
+        res.setHeader('Content-Type', 'video/mp4');
+        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(safeTitle)}.mp4"`);
+        if (upstream.headers['content-length']) {
+          res.setHeader('Content-Length', upstream.headers['content-length']);
+        }
+
+        upstream.pipe(res);
+
+        upstream.on('error', (err) => {
+          log('error', `Proxy stream error: ${err.message}`);
+          if (!res.headersSent) res.status(502).json({ error: '스트림 전송 중 오류' });
+          finalize();
+        });
+      });
+
+      upstreamReq.on('timeout', () => {
+        upstreamReq.destroy(new Error('upstream timeout'));
+      });
+
+      upstreamReq.on('error', (err) => {
+        log('error', `Proxy request error: ${err.message}`);
+        if (!res.headersSent) res.status(502).json({ error: 'YouTube CDN 연결 실패' });
+        finalize();
+      });
     });
 
   } catch (err) {
@@ -713,7 +959,7 @@ app.get('/api/download', authMiddleware, async (req, res) => {
     log('error', 'Download proxy error:', err);
     if (!res.headersSent) res.status(500).json({ error: '다운로드 프록시 오류' });
   } finally {
-    activeRequests--;
+    release();
   }
 });
 
@@ -730,6 +976,7 @@ app.get('/api/download', authMiddleware, async (req, res) => {
  *         viewCount, likeCount, commentCount, uploadDate, comments[], commentsError? }
  */
 app.post('/api/social/metadata', authMiddleware, async (req, res) => {
+  const requestRuntime = createRequestRuntime(req);
   try {
     const { url, includeComments } = req.body || {};
     if (!url) {
@@ -747,11 +994,10 @@ app.post('/api/social/metadata', authMiddleware, async (req, res) => {
       return res.json({ ...cached.data, cached: true });
     }
 
-    if (activeRequests >= MAX_CONCURRENT) {
+    const release = acquireSlot('/api/social/metadata', requestRuntime);
+    if (!release) {
       return res.status(429).json({ error: '서버가 바쁩니다. 잠시 후 다시 시도해주세요.', retryAfter: 5 });
     }
-
-    activeRequests++;
 
     try {
       const normalizedUrl = url.startsWith('http') ? url : `https://${url}`;
@@ -772,10 +1018,10 @@ app.post('/api/social/metadata', authMiddleware, async (req, res) => {
 
       args.push(normalizedUrl);
 
-      const { stdout } = await execFileAsync(YTDLP_PATH, args, {
+      const { stdout } = await safeExecFile(YTDLP_PATH, args, {
         timeout,
         maxBuffer: 50 * 1024 * 1024, // 댓글 포함 시 큰 JSON 가능
-      });
+      }, requestRuntime);
 
       const info = JSON.parse(stdout);
 
@@ -824,7 +1070,7 @@ app.post('/api/social/metadata', authMiddleware, async (req, res) => {
       res.json({ ...result, cached: false });
 
     } finally {
-      activeRequests--;
+      release();
     }
 
   } catch (err) {
@@ -843,6 +1089,7 @@ app.post('/api/social/metadata', authMiddleware, async (req, res) => {
  * 요청: { url, quality? }
  */
 app.post('/api/social/download', authMiddleware, async (req, res) => {
+  const requestRuntime = createRequestRuntime(req);
   const { url, quality = '720p' } = req.body || {};
 
   if (!url) {
@@ -852,11 +1099,10 @@ app.post('/api/social/download', authMiddleware, async (req, res) => {
     return res.status(400).json({ error: '지원하지 않는 URL입니다' });
   }
 
-  if (activeRequests >= MAX_CONCURRENT) {
+  const release = acquireSlot('/api/social/download', requestRuntime);
+  if (!release) {
     return res.status(429).json({ error: '서버가 바쁩니다. 잠시 후 다시 시도해주세요.' });
   }
-
-  activeRequests++;
 
   try {
     // 캐시 확인 또는 추출
@@ -865,7 +1111,7 @@ app.post('/api/social/download', authMiddleware, async (req, res) => {
     if (result && (Date.now() - result.cachedAt) / 1000 < CACHE_TTL) {
       result = result.data;
     } else {
-      result = await extractStreamUrlGeneric(url, quality);
+      result = await extractStreamUrlGeneric(url, quality, requestRuntime);
       socialCache.set(cacheKey, { data: result, cachedAt: Date.now() });
       if (socialCache.size > 500) {
         const oldest = socialCache.keys().next().value;
@@ -884,29 +1130,64 @@ app.post('/api/social/download', authMiddleware, async (req, res) => {
     const http = require('http');
     const protocol = streamUrl.startsWith('https') ? https : http;
 
-    protocol.get(streamUrl, { timeout: 60000 }, (upstream) => {
-      if (upstream.statusCode !== 200) {
-        res.status(502).json({ error: `CDN 응답 오류 (${upstream.statusCode})` });
-        upstream.resume();
-        return;
-      }
+    await new Promise((resolve) => {
+      let settled = false;
+      let upstreamReq = null;
+      let upstreamRes = null;
+      let detachAbortHandler = () => {};
 
-      const safeTitle = (result.title || 'download').replace(/[^a-zA-Z0-9가-힣\s._-]/g, '').substring(0, 80);
-      res.setHeader('Content-Type', 'video/mp4');
-      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(safeTitle)}.mp4"`);
-      if (upstream.headers['content-length']) {
-        res.setHeader('Content-Length', upstream.headers['content-length']);
-      }
+      const finalize = () => {
+        if (settled) return;
+        settled = true;
+        detachAbortHandler();
+        resolve();
+      };
 
-      upstream.pipe(res);
+      res.once('finish', finalize);
+      res.once('close', finalize);
 
-      upstream.on('error', (err) => {
-        log('error', `Social proxy stream error: ${err.message}`);
-        if (!res.headersSent) res.status(502).json({ error: '스트림 전송 중 오류' });
+      detachAbortHandler = requestRuntime.addAbortHandler(() => {
+        if (upstreamReq) upstreamReq.destroy();
+        if (upstreamRes) upstreamRes.destroy();
+        finalize();
       });
-    }).on('error', (err) => {
-      log('error', `Social proxy request error: ${err.message}`);
-      if (!res.headersSent) res.status(502).json({ error: 'CDN 연결 실패' });
+
+      upstreamReq = protocol.get(streamUrl, { timeout: 60000 }, (upstream) => {
+        upstreamRes = upstream;
+        if (upstream.statusCode !== 200) {
+          if (!res.headersSent) {
+            res.status(502).json({ error: `CDN 응답 오류 (${upstream.statusCode})` });
+          }
+          upstream.resume();
+          finalize();
+          return;
+        }
+
+        const safeTitle = (result.title || 'download').replace(/[^a-zA-Z0-9가-힣\s._-]/g, '').substring(0, 80);
+        res.setHeader('Content-Type', 'video/mp4');
+        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(safeTitle)}.mp4"`);
+        if (upstream.headers['content-length']) {
+          res.setHeader('Content-Length', upstream.headers['content-length']);
+        }
+
+        upstream.pipe(res);
+
+        upstream.on('error', (err) => {
+          log('error', `Social proxy stream error: ${err.message}`);
+          if (!res.headersSent) res.status(502).json({ error: '스트림 전송 중 오류' });
+          finalize();
+        });
+      });
+
+      upstreamReq.on('timeout', () => {
+        upstreamReq.destroy(new Error('upstream timeout'));
+      });
+
+      upstreamReq.on('error', (err) => {
+        log('error', `Social proxy request error: ${err.message}`);
+        if (!res.headersSent) res.status(502).json({ error: 'CDN 연결 실패' });
+        finalize();
+      });
     });
 
   } catch (err) {
@@ -916,7 +1197,7 @@ app.post('/api/social/download', authMiddleware, async (req, res) => {
     log('error', 'Social download proxy error:', err);
     if (!res.headersSent) res.status(500).json({ error: '다운로드 프록시 오류' });
   } finally {
-    activeRequests--;
+    release();
   }
 });
 
@@ -925,8 +1206,9 @@ app.post('/api/social/download', authMiddleware, async (req, res) => {
  * yt-dlp 버전 정보 (인증 불필요)
  */
 app.get('/api/version', async (req, res) => {
+  const requestRuntime = createRequestRuntime(req);
   try {
-    const { stdout } = await execFileAsync(YTDLP_PATH, ['--version'], { timeout: 5000 });
+    const { stdout } = await safeExecFile(YTDLP_PATH, ['--version'], { timeout: 5000 }, requestRuntime);
     res.json({ ytdlp: stdout.trim(), server: '1.0.0' });
   } catch {
     res.status(500).json({ error: 'yt-dlp 버전 확인 실패' });
@@ -951,6 +1233,7 @@ const FFMPEG_PATH = process.env.FFMPEG_PATH || 'ffmpeg';
  * 응답: image/jpeg 바이너리
  */
 app.get('/api/frame', authMiddleware, async (req, res) => {
+  const requestRuntime = createRequestRuntime(req);
   const url = req.query.url;
   const timeSec = parseFloat(req.query.t);
   const width = Math.min(parseInt(req.query.w || '640', 10) || 640, 1280);
@@ -961,17 +1244,16 @@ app.get('/api/frame', authMiddleware, async (req, res) => {
   const videoId = extractVideoId(url);
   if (!videoId) return res.status(400).json({ error: '올바른 YouTube URL이 아닙니다' });
 
-  if (activeRequests >= MAX_CONCURRENT) {
+  const release = acquireSlot('/api/frame', requestRuntime);
+  if (!release) {
     return res.status(429).json({ error: '서버가 바쁩니다. 잠시 후 다시 시도해주세요.' });
   }
-
-  activeRequests++;
 
   try {
     // 1. 스트림 URL 가져오기 (캐시 우선)
     let result = getCachedUrl(videoId, '360p');
     if (!result) {
-      result = await extractStreamUrl(videoId, '360p');
+      result = await extractStreamUrl(videoId, '360p', requestRuntime);
       setCachedUrl(videoId, '360p', result);
     }
 
@@ -981,7 +1263,6 @@ app.get('/api/frame', authMiddleware, async (req, res) => {
     log('info', `Frame extract: ${videoId} @ ${timeSec}s (${width}px)`);
 
     // 2. ffmpeg로 해당 타임코드의 프레임 1장 추출 (JPEG)
-    const { execFile: execFileCb } = require('child_process');
     const ffmpegArgs = [
       '-ss', String(timeSec),     // 시크 (입력 전 → 초고속)
       '-i', streamUrl,            // YouTube CDN 스트림
@@ -992,34 +1273,36 @@ app.get('/api/frame', authMiddleware, async (req, res) => {
       'pipe:1',                   // stdout으로 출력
     ];
 
-    const ffmpeg = execFileCb(FFMPEG_PATH, ffmpegArgs, {
-      timeout: 15000,
-      maxBuffer: 5 * 1024 * 1024,
-      encoding: 'buffer',
-    }, (err, stdout) => {
-      if (err) {
-        log('error', `ffmpeg frame error: ${err.message?.slice(0, 200)}`);
-        if (!res.headersSent) res.status(500).json({ error: '프레임 추출 실패' });
-        return;
-      }
+    let stdout;
+    try {
+      const resultFrame = await safeExecFile(FFMPEG_PATH, ffmpegArgs, {
+        timeout: 15000,
+        maxBuffer: 5 * 1024 * 1024,
+        encoding: 'buffer',
+      }, requestRuntime);
+      stdout = resultFrame.stdout;
+    } catch (ffmpegErr) {
+      log('error', `ffmpeg frame error: ${ffmpegErr.message?.slice(0, 200)}`);
+      if (!res.headersSent) res.status(500).json({ error: '프레임 추출 실패' });
+      return;
+    }
 
-      if (!stdout || stdout.length === 0) {
-        if (!res.headersSent) res.status(500).json({ error: '빈 프레임 (타임코드가 영상 범위를 초과했을 수 있음)' });
-        return;
-      }
+    if (!stdout || stdout.length === 0) {
+      if (!res.headersSent) res.status(500).json({ error: '빈 프레임 (타임코드가 영상 범위를 초과했을 수 있음)' });
+      return;
+    }
 
-      res.setHeader('Content-Type', 'image/jpeg');
-      res.setHeader('Content-Length', stdout.length);
-      res.setHeader('Cache-Control', 'public, max-age=86400');
-      res.send(stdout);
-    });
+    res.setHeader('Content-Type', 'image/jpeg');
+    res.setHeader('Content-Length', stdout.length);
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.send(stdout);
 
   } catch (err) {
     if (err.status) return res.status(err.status).json({ error: err.message });
     log('error', 'Frame extract error:', err);
     if (!res.headersSent) res.status(500).json({ error: '프레임 추출 서버 오류' });
   } finally {
-    activeRequests--;
+    release();
   }
 });
 
@@ -1031,6 +1314,7 @@ app.get('/api/frame', authMiddleware, async (req, res) => {
  * 응답: { frames: [{ t: 15.5, url: "data:image/jpeg;base64,..." }, ...] }
  */
 app.post('/api/frames', authMiddleware, async (req, res) => {
+  const requestRuntime = createRequestRuntime(req);
   const { url, timecodes, w = 640 } = req.body || {};
 
   if (!url) return res.status(400).json({ error: 'url 파라미터가 필요합니다' });
@@ -1042,17 +1326,16 @@ app.post('/api/frames', authMiddleware, async (req, res) => {
 
   const width = Math.min(parseInt(w, 10) || 640, 1280);
 
-  if (activeRequests >= MAX_CONCURRENT) {
+  const release = acquireSlot('/api/frames', requestRuntime);
+  if (!release) {
     return res.status(429).json({ error: '서버가 바쁩니다. 잠시 후 다시 시도해주세요.' });
   }
-
-  activeRequests++;
 
   try {
     // 스트림 URL 가져오기
     let result = getCachedUrl(videoId, '360p');
     if (!result) {
-      result = await extractStreamUrl(videoId, '360p');
+      result = await extractStreamUrl(videoId, '360p', requestRuntime);
       setCachedUrl(videoId, '360p', result);
     }
 
@@ -1077,17 +1360,21 @@ app.post('/api/frames', authMiddleware, async (req, res) => {
             '-q:v', '4',
             'pipe:1',
           ];
-          require('child_process').execFile(FFMPEG_PATH, args, {
+          safeExecFile(FFMPEG_PATH, args, {
             timeout: 10000,
             maxBuffer: 2 * 1024 * 1024,
             encoding: 'buffer',
-          }, (err, stdout) => {
-            if (err || !stdout || stdout.length === 0) {
-              reject(new Error('frame extraction failed'));
-            } else {
+          }, requestRuntime)
+            .then(({ stdout }) => {
+              if (!stdout || stdout.length === 0) {
+                reject(new Error('frame extraction failed'));
+                return;
+              }
               resolve({ t, data: stdout.toString('base64') });
-            }
-          });
+            })
+            .catch(() => {
+              reject(new Error('frame extraction failed'));
+            });
         }))
       );
       for (const r of results) {
@@ -1105,7 +1392,7 @@ app.post('/api/frames', authMiddleware, async (req, res) => {
     log('error', 'Batch frame error:', err);
     res.status(500).json({ error: '프레임 배치 추출 오류' });
   } finally {
-    activeRequests--;
+    release();
   }
 });
 
@@ -1138,7 +1425,7 @@ app.listen(PORT, '0.0.0.0', () => {
   log('info', `Cache TTL: ${CACHE_TTL}s`);
 
   // yt-dlp 존재 확인
-  execFileAsync(YTDLP_PATH, ['--version'], { timeout: 5000 })
+  safeExecFile(YTDLP_PATH, ['--version'], { timeout: 5000 })
     .then(({ stdout }) => log('info', `yt-dlp version: ${stdout.trim()}`))
     .catch(() => log('error', `yt-dlp not found at ${YTDLP_PATH} — install it first!`));
 });
