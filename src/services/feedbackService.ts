@@ -160,6 +160,50 @@ export function getTrackedIssues(): TrackedIssue[] {
     } catch { return []; }
 }
 
+/** [#515] 서버에서 사용자의 피드백 히스토리를 복구 — 새 세션/기기에서 로그인 시 호출 */
+export async function restoreFeedbackHistory(email: string): Promise<number> {
+    if (!email) return 0;
+    try {
+        const res = await monitoredFetch(`/api/feedback-restore?email=${encodeURIComponent(email)}`);
+        if (!res.ok) return 0;
+        const data = await res.json() as {
+            issues: {
+                issueNumber: number;
+                submittedAt: number;
+                feedbackType: string;
+                messagePreview: string;
+                state: 'open' | 'closed';
+                closedAt: string | null;
+            }[];
+        };
+        if (!data.issues || data.issues.length === 0) return 0;
+
+        const existing = getTrackedIssues();
+        const existingNums = new Set(existing.map(i => i.issueNumber));
+        let restored = 0;
+
+        for (const issue of data.issues) {
+            if (!existingNums.has(issue.issueNumber)) {
+                existing.push({
+                    issueNumber: issue.issueNumber,
+                    submittedAt: issue.submittedAt,
+                    dismissed: false,
+                    feedbackType: issue.feedbackType,
+                    messagePreview: issue.messagePreview,
+                    cachedState: issue.state,
+                    cachedClosedAt: issue.closedAt,
+                });
+                restored++;
+            }
+        }
+
+        if (restored > 0) {
+            localStorage.setItem(FEEDBACK_ISSUES_KEY, JSON.stringify(existing));
+        }
+        return restored;
+    } catch { return 0; }
+}
+
 export function dismissFeedbackIssue(issueNumber: number): void {
     try {
         const issues: TrackedIssue[] = JSON.parse(localStorage.getItem(FEEDBACK_ISSUES_KEY) || '[]');

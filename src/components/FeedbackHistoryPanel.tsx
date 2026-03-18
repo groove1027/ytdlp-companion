@@ -1,7 +1,8 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useUIStore } from '../stores/uiStore';
-import { fetchAllFeedbackStatuses, getTrackedIssues, type FeedbackStatus } from '../services/feedbackService';
+import { fetchAllFeedbackStatuses, getTrackedIssues, restoreFeedbackHistory, type FeedbackStatus } from '../services/feedbackService';
+import { useAuthStore } from '../stores/authStore';
 import { logger } from '../services/LoggerService';
 
 const TYPE_META: Record<string, { icon: string; label: string }> = {
@@ -51,8 +52,20 @@ const FeedbackHistoryPanel: React.FC = () => {
                     latestComment: t.cachedComment || null,
                     closedAt: t.cachedClosedAt || null,
                 })));
+                refresh();
+            } else {
+                // [#515] 로컬 히스토리가 비어있으면 서버에서 복구 시도
+                const email = useAuthStore.getState().authUser?.email;
+                if (email) {
+                    setLoading(true);
+                    restoreFeedbackHistory(email).then((restored) => {
+                        if (restored > 0) refresh();
+                        else setLoading(false);
+                    }).catch(() => setLoading(false));
+                } else {
+                    refresh();
+                }
             }
-            refresh();
         }
     }, [show, refresh]);
 
