@@ -1726,9 +1726,9 @@ const StoryboardPanel: React.FC = () => {
         imageUpdatedAfterVideo: !!sceneAfterGen?.videoUrl,
       });
 
-      const cost = result.isFallback
-        ? PRICING.IMAGE_GENERATION_FALLBACK
-        : PRICING.IMAGE_GENERATION;
+      // [FIX #531] Google Imagen/Whisk (무료 모델) 성공 시 비용 $0 — 폴백(NanoBanana 2)만 과금
+      const isFreeModel = imageModel === ImageModel.GOOGLE_IMAGEN || imageModel === ImageModel.GOOGLE_WHISK;
+      const cost = (isFreeModel && !result.isFallback) ? 0 : (result.isFallback ? PRICING.IMAGE_GENERATION_FALLBACK : PRICING.IMAGE_GENERATION);
       addCost(cost, 'image');
 
       // Background: Base64 → Cloudinary
@@ -2195,7 +2195,7 @@ const StoryboardPanel: React.FC = () => {
                 >
                   <span className="w-2 h-2 rounded-full bg-orange-400" />
                   <span className="flex-1">이미지 {hasSelection ? `${selectedImageEligible}개` : '일괄'} 생성</span>
-                  <span className="text-[10px] text-orange-400/70">{fmtCost(PRICING.IMAGE_GENERATION * selectedImageEligible, exRate)}</span>
+                  <span className="text-[10px] text-orange-400/70">{(storyboardImageModel === ImageModel.GOOGLE_IMAGEN || storyboardImageModel === ImageModel.GOOGLE_WHISK) ? '🆓 무료' : fmtCost(PRICING.IMAGE_GENERATION * selectedImageEligible, exRate)}</span>
                 </button>
                 {selectedImageEligible > 0 && selectedVideoEligible === 0 && totalScenes > 0 && (
                   <p className="px-4 py-1 text-[10px] text-yellow-400/80 bg-yellow-600/10">⚠️ 이미지가 없는 장면은 영상 생성 불가 — 이미지를 먼저 생성해주세요</p>

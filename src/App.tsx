@@ -479,7 +479,9 @@ const App: React.FC = () => {
         const imageUrl = result.url;
         const isFallback = result.isFallback;
 
-        const basePrice = isFallback ? PRICING.IMAGE_GENERATION_FALLBACK : PRICING.IMAGE_GENERATION;
+        // [FIX #531] Google Imagen/Whisk (무료 모델) 성공 시 비용 $0 — 폴백(NanoBanana 2)만 과금
+        const isFreeModel = resolvedConfig.imageModel === ImageModel.GOOGLE_IMAGEN || resolvedConfig.imageModel === ImageModel.GOOGLE_WHISK;
+        const basePrice = (isFreeModel && !isFallback) ? 0 : (isFallback ? PRICING.IMAGE_GENERATION_FALLBACK : PRICING.IMAGE_GENERATION);
         addCost(basePrice * costMultiplier, 'image');
 
         // Show image immediately (may be Base64)
