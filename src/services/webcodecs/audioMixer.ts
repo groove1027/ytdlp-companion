@@ -191,9 +191,12 @@ export async function encodeAudioAAC(
     throw new Error('AudioEncoder not supported');
   }
 
+  // [FIX #530] 에러를 변수에 캡처 (throw하면 Uncaught가 됨 — videoEncoder.ts와 동일 패턴)
+  let encoderError: Error | null = null;
+
   const encoder = new AudioEncoder({
     output: onChunk,
-    error: (e) => { throw e; },
+    error: (e) => { encoderError = e; },
   });
 
   // AAC-LC 확인
@@ -228,6 +231,12 @@ export async function encodeAudioAAC(
   // 청크 단위로 AudioData 생성 및 인코딩 (960 프레임 = AAC 프레임 크기)
   const FRAMES_PER_CHUNK = 960;
   for (let offset = 0; offset < numberOfFrames; offset += FRAMES_PER_CHUNK) {
+    // [FIX #530] 인코딩 에러 발생 시 즉시 중단
+    if (encoderError) {
+      encoder.close();
+      throw new Error(`오디오 인코딩 중 오류 발생: ${encoderError.message}`);
+    }
+
     const chunkFrames = Math.min(FRAMES_PER_CHUNK, numberOfFrames - offset);
     const chunkData = new Float32Array(chunkFrames * channels);
     chunkData.set(interleaved.subarray(offset * channels, (offset + chunkFrames) * channels));
@@ -246,6 +255,13 @@ export async function encodeAudioAAC(
   }
 
   await encoder.flush();
+
+  // [FIX #530] flush 후에도 에러 체크 — 비동기 에러가 flush 중 발생할 수 있음
+  if (encoderError) {
+    encoder.close();
+    throw new Error(`오디오 인코딩 중 오류 발생: ${encoderError.message}`);
+  }
+
   encoder.close();
 }
 

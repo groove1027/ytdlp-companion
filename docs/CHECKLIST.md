@@ -8,6 +8,12 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-18] #530 MP4 내보내기 Uncaught EncodingError 수정
+- [x] `audioMixer.ts` — AudioEncoder error callback: `throw e` → `encoderError = e` 변수 캡처 패턴으로 교체
+- [x] encode 루프 내 + flush 후 encoderError 체크 → 정상 throw → 호출자 catch 포착 → FFmpeg 폴백 정상 트리거
+- [x] videoEncoder.ts와 동일한 에러 처리 패턴 통일
+- [x] tsc + vite build + grep 5회 + 논리 검증 30회 + E2E 통과
+
 ### [2026-03-18] CapCut draft_info.json 구조 수정 — "자료 다운로드 중" 무한 대기 해결
 - [x] `nleExportService.ts` — buildNlePackageZip: draft_info.json을 draft_content 복사 → 올바른 메타데이터 구조로 교체
 - [x] `nleExportService.ts` — buildEditRoomNleZip: 동일 수정 적용 (draft_info.json 메타데이터 구조)
