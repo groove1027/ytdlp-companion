@@ -8,6 +8,14 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-18] CapCut 프로젝트 파일 호환성 수정 — draft JSON 구조 전면 개선
+- [x] `nleExportService.ts` — generateCapCutDraftJson: path에 draft placeholder 패턴 적용 (CapCut 미디어 인식)
+- [x] `nleExportService.ts` — check_flag 0→63487, material_id 빈값→실제ID, crop_ratio/crop_scale 추가
+- [x] `nleExportService.ts` — app_id 3704→359289, app_source→'cc', app_version→'6.7.0', new_version→'140.0.0'
+- [x] `nleExportService.ts` — keyframes 필수 객체 추가, draft_meta_info에 draft_materials 배열 추가
+- [x] `nleExportService.ts` — buildEditRoomNleZip CapCut 섹션 동일 수정 적용
+- [x] tsc + vite build + grep 5회 + 논리 검증 40회 통과
+
 ### [2026-03-18] VREW 내보내기 수정 — XML 제거 + SRT 전용 워크플로우
 - [x] `nleExportService.ts` — buildNlePackageZip VREW 브랜치: 불필요한 FCP XML 생성 제거 (VREW는 XML import 미지원)
 - [x] `nleExportService.ts` — buildEditRoomNleZip: XML 생성을 `target !== 'vrew'` 조건으로 제한

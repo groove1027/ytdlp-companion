@@ -485,11 +485,11 @@ export function generateCapCutDraftJson(params: {
   height?: number;
   preset?: VideoAnalysisPreset;
   videoDurationSec?: number;
-}): string {
+}): { json: string; projectId: string } {
   const { scenes, title, videoFileName: rawVideoFileName, fps = 30, width = 1080, height = 1920, preset, videoDurationSec } = params;
   const videoFileName = sanitizeFileName(rawVideoFileName);
   const timings = extractTimings(scenes, preset);
-  if (timings.length === 0) return '';
+  if (timings.length === 0) return { json: '', projectId: '' };
 
   const totalDurUs = toUs(timings[timings.length - 1].tlEndSec);
   const maxEnd = Math.max(...timings.map(t => t.endSec));
@@ -499,6 +499,8 @@ export function generateCapCutDraftJson(params: {
   const materialVideoId = uuid();
   const speedId = uuid();
   const trackVideoId = uuid();
+  // CapCut draft path placeholder — CapCut이 프로젝트 폴더 경로로 자동 치환
+  const draftPathPrefix = `##_draftpath_placeholder_${projectId}_##`;
 
   // 빈 배열 필드 (캡컷 필수 구조)
   const emptyArr: never[] = [];
@@ -730,10 +732,11 @@ export function generateCapCutDraftJson(params: {
     group_container: null,
     id: projectId,
     keyframe_graph_list: emptyArr,
+    keyframes: { adjusts: emptyArr, audios: emptyArr, effects: emptyArr, filters: emptyArr, handwrites: emptyArr, stickers: emptyArr, texts: emptyArr, videos: emptyArr },
     last_modified_platform: {
-      app_id: 3704,
-      app_source: '',
-      app_version: '5.0.0',
+      app_id: 359289,
+      app_source: 'cc',
+      app_version: '6.7.0',
       device_id: '',
       hard_disk_id: '',
       mac_address: '',
@@ -779,13 +782,15 @@ export function generateCapCutDraftJson(params: {
         audio_fade: null,
         category_id: '',
         category_name: 'local',
-        check_flag: 0,
+        check_flag: 63487,
         crop: {
           lower_left_x: 0.0, lower_left_y: 1.0,
           lower_right_x: 1.0, lower_right_y: 1.0,
           upper_left_x: 0.0, upper_left_y: 0.0,
           upper_right_x: 1.0, upper_right_y: 0.0,
         },
+        crop_ratio: 'free',
+        crop_scale: 1.0,
         duration: srcDurUs,
         extra_type_option: 0,
         formula_id: '',
@@ -801,14 +806,14 @@ export function generateCapCutDraftJson(params: {
         is_unified_beauty_mode: false,
         local_id: '',
         local_material_id: '',
-        material_id: '',
+        material_id: materialVideoId,
         material_name: videoFileName,
         material_url: '',
         media_path: '',
         music_id: '',
         object_locked: null,
         origin_material_id: '',
-        path: videoFileName,
+        path: `${draftPathPrefix}/${videoFileName}`,
         request_id: '',
         reverse_path: '',
         roughcut_time_range: null,
@@ -826,11 +831,12 @@ export function generateCapCutDraftJson(params: {
     },
     mutable_config: null,
     name: title,
-    new_version: '81.0.0',
+    new_version: '140.0.0',
+    path: '',
     platform: {
-      app_id: 3704,
-      app_source: '',
-      app_version: '5.0.0',
+      app_id: 359289,
+      app_source: 'cc',
+      app_version: '6.7.0',
       device_id: '',
       hard_disk_id: '',
       mac_address: '',
@@ -863,7 +869,7 @@ export function generateCapCutDraftJson(params: {
     version: 360000,
   };
 
-  return JSON.stringify(draft);
+  return { json: JSON.stringify(draft), projectId };
 }
 
 // ──────────────────────────────────────────────
@@ -993,13 +999,19 @@ export async function buildNlePackageZip(params: {
     const capCutXml = generateFcpXml({ scenes, title, videoFileName: videoFileName || 'video.mp4', preset, width, height, fps, videoDurationSec });
     zip.file(`${safeName}.xml`, capCutXml);
 
-    // 2. draft JSON (프로젝트 폴더 복사 방식 — 보조)
-    const draftJson = generateCapCutDraftJson({ scenes, title, videoFileName: videoFileName || 'video.mp4', preset, width, height, fps, videoDurationSec });
-    zip.file('draft_content.json', draftJson);
-    zip.file('draft_info.json', draftJson);
+    // 2. draft JSON (프로젝트 폴더 복사 방식)
+    const draftResult = generateCapCutDraftJson({ scenes, title, videoFileName: videoFileName || 'video.mp4', preset, width, height, fps, videoDurationSec });
+    zip.file('draft_content.json', draftResult.json);
+    zip.file('draft_info.json', draftResult.json);
+    const nowTs = Math.floor(Date.now() / 1000);
     const draftMeta = JSON.stringify({
-      draft_fold_path: '', draft_id: '', draft_name: title, draft_root_path: '',
-      tm_draft_create: Math.floor(Date.now() / 1000), tm_draft_modified: Math.floor(Date.now() / 1000),
+      draft_fold_path: '', draft_id: draftResult.projectId, draft_name: title, draft_root_path: '',
+      draft_removable_storage_device: 0,
+      draft_materials: [
+        { type: 0, value: [] }, { type: 1, value: [] }, { type: 2, value: [] },
+        { type: 3, value: [] }, { type: 6, value: [] }, { type: 7, value: [] }, { type: 8, value: [] },
+      ],
+      tm_draft_create: nowTs, tm_draft_modified: nowTs,
       tm_duration: Math.ceil((extractTimings(scenes, preset).at(-1)?.tlEndSec || 0) * 1_000_000),
     });
     zip.file('draft_meta_info.json', draftMeta);
@@ -1020,17 +1032,17 @@ export async function buildNlePackageZip(params: {
     zip.file('README.txt', [
       `=== ${title} — CapCut ===`,
       '',
-      '★ 추천: XML import (편집점 + 컷 자동 적용)',
-      '1. CapCut 데스크톱을 열고 새 프로젝트를 생성합니다.',
-      '2. File > Import > XML File 클릭',
-      `3. "${safeName}.xml" 선택`,
-      '4. media/ 폴더 영상이 자동 연결되면서 편집점이 바로 적용됩니다.',
-      '',
-      '[ 대안: 프로젝트 폴더 복사 ]',
-      '1. ZIP 압축 해제한 폴더를 아래 경로에 복사:',
+      '★ 추천: 프로젝트 폴더 복사 (편집점 + 자막 + 영상 자동 배치)',
+      '1. CapCut 데스크톱을 완전히 종료합니다.',
+      '2. ZIP 압축을 해제합니다.',
+      '3. 압축 해제한 폴더를 아래 경로에 복사합니다:',
       '   • Mac: ~/Movies/CapCut/User Data/Projects/com.lveditor.draft/',
-      '   • Win: %LOCALAPPDATA%\\CapCut\\User Data\\Projects\\com.lveditor.draft\\',
-      '2. CapCut 재시작 → 프로젝트 목록에서 선택',
+      '   • Windows: %LOCALAPPDATA%\\CapCut\\User Data\\Projects\\com.lveditor.draft\\',
+      '4. CapCut을 다시 실행하면 프로젝트 목록에 자동으로 나타납니다!',
+      '',
+      '[ 대안: XML import ]',
+      '1. CapCut 데스크톱 > File > Import > XML File',
+      `2. "${safeName}.xml" 선택`,
       '',
       `* 편집점: ${scenes.length}개 / 해상도: ${width}x${height} / ${fps}fps`,
     ].join('\n'));
@@ -2000,13 +2012,14 @@ export async function buildEditRoomNleZip(params: {
       group_container: null,
       id: projectId,
       keyframe_graph_list: emptyArr,
-      last_modified_platform: { app_id: 3704, app_source: '', app_version: '5.9.0', device_id: '', hard_disk_id: '', mac_address: '', os: 'mac', os_version: '' },
+      keyframes: { adjusts: emptyArr, audios: emptyArr, effects: emptyArr, filters: emptyArr, handwrites: emptyArr, stickers: emptyArr, texts: emptyArr, videos: emptyArr },
+      last_modified_platform: { app_id: 359289, app_source: 'cc', app_version: '6.7.0', device_id: '', hard_disk_id: '', mac_address: '', os: 'mac', os_version: '' },
       materials: {
         audios: audioMaterials.map(m => ({
           app_id: 0, category_id: '', category_name: 'local', check_flag: 0,
           duration: m.dur, effect_id: '', formula_id: '', id: m.id,
           intensifies_path: '', local_material_id: '', music_id: '', name: m.path.split('/').pop() || '',
-          path: m.path, request_id: '', resource_id: '', source_platform: 0,
+          path: `##_draftpath_placeholder_${projectId}_##/${m.path}`, request_id: '', resource_id: '', source_platform: 0,
           team_id: '', text_id: '', tone_category_id: '', tone_category_name: '',
           tone_effect_id: '', tone_effect_name: '', tone_platform: '', tone_second_category_id: '',
           tone_second_category_name: '', tone_speaker: '', tone_type: '', type: 'extract_music',
@@ -2023,15 +2036,16 @@ export async function buildEditRoomNleZip(params: {
         texts: textObjects,
         transitions: emptyArr, video_effects: emptyArr, video_trackings: emptyArr,
         videos: videoMaterials.map(m => ({
-          audio_fade: null, category_id: '', category_name: 'local', check_flag: 0,
+          audio_fade: null, category_id: '', category_name: 'local', check_flag: 63487,
           crop: { lower_left_x: 0, lower_left_y: 1, lower_right_x: 1, lower_right_y: 1, upper_left_x: 0, upper_left_y: 0, upper_right_x: 1, upper_right_y: 0 },
+          crop_ratio: 'free', crop_scale: 1.0,
           duration: m.dur, extra_type_option: 0, formula_id: '', freeze: null,
           has_audio: !m.isPhoto, height: h, id: m.id,
           intensifies_audio_path: '', intensifies_path: '', is_ai_generate_content: false,
           is_copyright: false, is_text_edit_overdub: false, is_unified_beauty_mode: false,
-          local_id: '', local_material_id: '', material_id: '', material_name: m.path.split('/').pop() || '',
+          local_id: '', local_material_id: '', material_id: m.id, material_name: m.path.split('/').pop() || '',
           material_url: '', media_path: '', music_id: '', object_locked: null,
-          origin_material_id: '', path: m.path, request_id: '', reverse_path: '',
+          origin_material_id: '', path: `##_draftpath_placeholder_${projectId}_##/${m.path}`, request_id: '', reverse_path: '',
           roughcut_time_range: null, smart_motion: null, source: 0, source_platform: 0,
           stable: null, team_id: '', type: m.isPhoto ? 'photo' : 'video',
           video_algorithm: null, width: w,
@@ -2040,8 +2054,9 @@ export async function buildEditRoomNleZip(params: {
       },
       mutable_config: null,
       name: title,
-      new_version: '110.0.0',
-      platform: { app_id: 3704, app_source: '', app_version: '5.9.0', device_id: '', hard_disk_id: '', mac_address: '', os: 'mac', os_version: '' },
+      new_version: '140.0.0',
+      path: '',
+      platform: { app_id: 359289, app_source: 'cc', app_version: '6.7.0', device_id: '', hard_disk_id: '', mac_address: '', os: 'mac', os_version: '' },
       relationships: emptyArr,
       render_index_track_mode_on: false,
       retouch_cover: null,
@@ -2061,6 +2076,11 @@ export async function buildEditRoomNleZip(params: {
     zip.file('draft_info.json', draftJson);
     zip.file('draft_meta_info.json', JSON.stringify({
       draft_fold_path: '', draft_id: projectId, draft_name: title, draft_root_path: '',
+      draft_removable_storage_device: 0,
+      draft_materials: [
+        { type: 0, value: [] }, { type: 1, value: [] }, { type: 2, value: [] },
+        { type: 3, value: [] }, { type: 6, value: [] }, { type: 7, value: [] }, { type: 8, value: [] },
+      ],
       tm_draft_create: Math.floor(Date.now() / 1000),
       tm_draft_modified: Math.floor(Date.now() / 1000),
       tm_duration: totalDurUs,
