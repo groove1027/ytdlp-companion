@@ -13,13 +13,17 @@ import { AspectRatio, ImageModel, CharacterAppearance, VideoFormat } from '../..
 import type { Scene } from '../../../types';
 import { showToast, useUIStore } from '../../../stores/uiStore';
 import { useGoogleCookieStore } from '../../../stores/googleCookieStore';
+import { useSoundStudioStore } from '../../../stores/soundStudioStore';
 import { retryImport } from '../../../utils/retryImport';
 import { useNavigationStore } from '../../../stores/navigationStore';
 import ActionButton from '../../ui/ActionButton';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
+import { useUnifiedTimeline, useTotalDuration } from '../../../hooks/useUnifiedTimeline';
 import { useEditRoomStore } from '../../../stores/editRoomStore';
 import { MOTION_KEYFRAMES } from '../../../services/motionPreviewUtils';
+import { buildEditRoomNleZip } from '../../../services/nleExportService';
+import type { EditRoomNleTarget } from '../../../services/nleExportService';
 import { logger } from '../../../services/LoggerService';
 
 // --- 배치 진행 중 로테이팅 팁 ---
@@ -127,6 +131,86 @@ const getSceneNarrationText = (scene: Scene): string => {
     .map((value) => (typeof value === 'string' ? value.trim() : ''))
     .find((value) => value.length > 0);
   return text || '';
+};
+
+type LongFormExportBannerVariant = 'advisory' | 'required';
+
+const LONG_FORM_EXPORT_COPY: Record<LongFormExportBannerVariant, {
+  title: string;
+  paragraphs: string[];
+  footer?: string;
+}> = {
+  advisory: {
+    title: '🎬 프로 편집 프로그램으로 내보내기',
+    paragraphs: [
+      '5분 이상 영상의 최종 렌더링은\n캡컷, 프리미어 같은 편집 프로그램에서 하는 것이 정석입니다.',
+      'Canva, 캡컷 웹, InVideo 등 모든 웹 서비스가 동일하며,\n이들도 긴 영상은 데스크톱 앱이나 별도 서버에서 렌더링합니다.',
+      '걱정 마세요 — 내보내기를 누르면 편집점, 자막, 나레이션이\n자동 배치된 프로젝트 파일이 만들어집니다.\n캡컷/프리미어에서 열고 바로 렌더링만 하면 끝!',
+    ],
+    footer: '📎 MP4 직접 다운로드 (1~3분 미리보기용)',
+  },
+  required: {
+    title: '🎬 10분 이상 — 캡컷 또는 프리미어 필수',
+    paragraphs: [
+      '세계 어떤 웹 서비스도 브라우저에서 10분 이상 영상을\n렌더링하지 않습니다. 이건 기술적 한계가 아니라 업계 표준입니다.',
+      '넷플릭스도, 유튜브도 영상 인코딩은 전용 서버에서 합니다.\n크리에이터의 최종 렌더링은 편집 프로그램의 몫이에요.',
+      '내보내기 한 번이면 모든 편집이 그대로 넘어갑니다 👇',
+    ],
+  },
+};
+
+const LongFormExportBanner: React.FC<{
+  variant: LongFormExportBannerVariant;
+  exportingTarget: EditRoomNleTarget | null;
+  onExport: (target: EditRoomNleTarget) => void;
+}> = ({ variant, exportingTarget, onExport }) => {
+  const copy = LONG_FORM_EXPORT_COPY[variant];
+
+  return (
+    <div className="mb-4 rounded-2xl border border-amber-500/30 bg-amber-900/30 px-5 py-4">
+      <div className="space-y-3">
+        <div className="flex items-start gap-3">
+          <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl border border-amber-400/30 bg-amber-500/15 text-lg">
+            🎬
+          </div>
+          <div className="space-y-2">
+            <p className="text-base font-bold text-amber-200">{copy.title}</p>
+            {copy.paragraphs.map((paragraph) => (
+              <p key={paragraph} className="whitespace-pre-line text-sm leading-relaxed text-amber-100/90">
+                {paragraph}
+              </p>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-2 pt-1">
+          {([
+            { target: 'capcut' as const, label: '🎬 캡컷으로 내보내기' },
+            { target: 'premiere' as const, label: '🎬 프리미어로 내보내기' },
+          ]).map(({ target, label }) => (
+            <button
+              key={target}
+              type="button"
+              onClick={() => onExport(target)}
+              disabled={exportingTarget !== null}
+              className="inline-flex items-center gap-2 rounded-xl border border-amber-400/40 bg-amber-500/15 px-4 py-2 text-sm font-semibold text-amber-100 transition-colors hover:bg-amber-500/25 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {exportingTarget === target && (
+                <span className="h-3.5 w-3.5 rounded-full border-2 border-amber-100/30 border-t-amber-100 animate-spin" />
+              )}
+              <span>{label}</span>
+            </button>
+          ))}
+        </div>
+
+        {copy.footer && (
+          <div className="border-t border-amber-500/20 pt-3">
+            <p className="text-sm font-semibold text-amber-200">{copy.footer}</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 };
 
 // --- Scene Card ---
@@ -1175,15 +1259,19 @@ const StoryboardPanel: React.FC = () => {
   const scenes = useProjectStore((s) => s.scenes);
   const thumbnails = useProjectStore((s) => s.thumbnails);
   const config = useProjectStore((s) => s.config);
+  const projectTitle = useProjectStore((s) => s.projectTitle);
   const updateScene = useProjectStore((s) => s.updateScene);
   const removeScene = useProjectStore((s) => s.removeScene);
   const splitScene = useProjectStore((s) => s.splitScene);
   const mergeScene = useProjectStore((s) => s.mergeScene);
   const setScenes = useProjectStore((s) => s.setScenes);
   const addCost = useCostStore((s) => s.addCost);
+  const lines = useSoundStudioStore((s) => s.lines);
   const currentStyle = useImageVideoStore((s) => s.style);
   const enableWebSearch = useImageVideoStore((s) => s.enableWebSearch);
   const isMultiCharacter = useImageVideoStore((s) => s.isMultiCharacter);
+  const timeline = useUnifiedTimeline();
+  const totalDuration = useTotalDuration();
   // 오디오 재생 상태
   const globalAudioRef = useRef<HTMLAudioElement | null>(null);
   const sceneAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -1202,6 +1290,7 @@ const StoryboardPanel: React.FC = () => {
   const [showGenDropdown, setShowGenDropdown] = useState(false);
   const [showDownloadDropdown, setShowDownloadDropdown] = useState(false);
   const [isAllScriptCopied, setIsAllScriptCopied] = useState(false);
+  const [nleExportingTarget, setNleExportingTarget] = useState<EditRoomNleTarget | null>(null);
   // [FIX #365] 이미지 모델 — Zustand 리액티브 셀렉터 (getState()는 UI 반영 안 됨)
   const storyboardImageModel = useProjectStore(s => s.config?.imageModel) || ImageModel.NANO_COST;
   const [isBatchingImages, setIsBatchingImages] = useState(false);
@@ -1237,11 +1326,46 @@ const StoryboardPanel: React.FC = () => {
   const isAnyBatchRunning = isBatchingImages || videoBatch.isBatching || isBatchUploading;
   const elapsedBatch = useElapsedTimer(isAnyBatchRunning);
   const totalScenes = scenes.length;
+  const projectAspectRatio = config?.aspectRatio || '16:9';
   const hasDownloadActions = totalScenes > 0 || completedThumbnails > 0 || completedImages > 0 || completedVideos > 0;
   const allSceneScriptText = useMemo(() => scenes
     .map((scene) => getSceneNarrationText(scene))
     .filter((text) => text.length > 0)
     .join('\n\n'), [scenes]);
+  const longFormBannerVariant: LongFormExportBannerVariant | null = totalDuration >= 600
+    ? 'required'
+    : totalDuration >= 300
+      ? 'advisory'
+      : null;
+
+  const storyboardNarrationLines = useMemo(() => {
+    const sceneById = new Map(scenes.map((scene) => [scene.id, scene]));
+    const lineNarrations = lines
+      .map((line, index) => {
+        const scene = line.sceneId ? sceneById.get(line.sceneId) : scenes[index];
+        const sceneId = line.sceneId || scene?.id || '';
+        let audioUrl = line.audioUrl;
+
+        if ((!audioUrl || audioUrl.startsWith('blob:')) && scene?.audioUrl) {
+          audioUrl = scene.audioUrl;
+        }
+
+        if (!sceneId || !audioUrl) {
+          return null;
+        }
+
+        return { sceneId, audioUrl };
+      })
+      .filter((value): value is { sceneId: string; audioUrl: string } => value !== null);
+
+    if (lineNarrations.length > 0) {
+      return lineNarrations;
+    }
+
+    return scenes
+      .filter((scene) => !!scene.audioUrl)
+      .map((scene) => ({ sceneId: scene.id, audioUrl: scene.audioUrl! }));
+  }, [lines, scenes]);
 
   // [#243] 장면 선택 헬퍼
   const hasSelection = selectedSceneIds.size > 0;
@@ -1272,6 +1396,69 @@ const StoryboardPanel: React.FC = () => {
     const idx = Math.floor(elapsedBatch / 8) % BATCH_TIPS.length;
     return BATCH_TIPS[idx];
   }, [Math.floor(elapsedBatch / 8)]);
+
+  const handleExportStoryboardNle = useCallback(async (target: EditRoomNleTarget) => {
+    const targetLabel = target === 'premiere' ? 'Premiere Pro' : 'CapCut';
+    logger.trackAction(`스토리보드 NLE 내보내기: ${targetLabel}`);
+
+    if (!requireAuth(`${targetLabel} 내보내기`)) {
+      return;
+    }
+
+    if (timeline.length === 0) {
+      showToast('내보낼 장면이 없습니다.');
+      return;
+    }
+
+    const videoSceneCount = scenes.filter((scene) => scene.videoUrl).length;
+    if (videoSceneCount < scenes.length) {
+      const imageOnlyCount = scenes.length - videoSceneCount;
+      const msg = videoSceneCount === 0
+        ? `⚠️ 현재 ${scenes.length}개 장면이 모두 이미지입니다.\n\n영상 클립이 하나도 없는 상태에서 내보내면,\n${targetLabel}에서 모든 장면이 정지 이미지로 표시됩니다.\n\n그래도 이미지로 내보내시겠어요?\n(영상이 필요하면 '취소' 후 이미지/영상 탭에서 영상을 먼저 생성해주세요)`
+        : `⚠️ 미디어 구성 안내\n\n  🎬 영상: ${videoSceneCount}개\n  🖼️ 이미지: ${imageOnlyCount}개\n  📦 전체: ${scenes.length}개 장면\n\n영상이 없는 ${imageOnlyCount}개 장면은 정지 이미지로 내보내집니다.\n\n이대로 내보내시겠어요?\n(모든 장면을 영상으로 하려면 '취소' 후 이미지/영상 탭에서 나머지 영상을 생성해주세요)`;
+      if (!window.confirm(msg)) {
+        return;
+      }
+    }
+
+    setNleExportingTarget(target);
+    showToast(`${targetLabel} 프로젝트 파일을 준비하고 있습니다...`);
+
+    try {
+      const exportTitle = projectTitle || '프로젝트';
+      const result = await buildEditRoomNleZip({
+        target,
+        timeline,
+        scenes: scenes.map((scene) => ({
+          id: scene.id,
+          imageUrl: scene.imageUrl,
+          videoUrl: scene.videoUrl,
+          scriptText: scene.scriptText,
+        })),
+        narrationLines: storyboardNarrationLines,
+        title: exportTitle,
+        aspectRatio: projectAspectRatio,
+      });
+
+      const url = URL.createObjectURL(result.blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${exportTitle.replace(/[^\w가-힣\-_ ]/g, '').slice(0, 30) || 'project'}_${target}.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+
+      const mediaSummary = result.videoCount > 0 && result.imageCount > 0
+        ? ` (영상 ${result.videoCount} + 이미지 ${result.imageCount})`
+        : result.videoCount > 0
+          ? ` (영상 ${result.videoCount}개)`
+          : ` (이미지 ${result.imageCount}개)`;
+      showToast(`${targetLabel} 프로젝트 파일 다운로드 완료!${mediaSummary}`);
+    } catch (err) {
+      showToast(`${targetLabel} 내보내기 실패: ` + (err instanceof Error ? err.message : '알 수 없는 오류'));
+    } finally {
+      setNleExportingTarget(null);
+    }
+  }, [projectAspectRatio, projectTitle, requireAuth, scenes, storyboardNarrationLines, timeline]);
 
   // [#243] scenes 변경 시 없어진 장면 ID 정리
   useEffect(() => {
@@ -1999,6 +2186,14 @@ const StoryboardPanel: React.FC = () => {
           </div>
           <p className="text-xs text-gray-500 mt-1.5">전체 나레이션 오디오 ({totalScenes}개 장면 매핑)</p>
         </div>
+      )}
+
+      {longFormBannerVariant && (
+        <LongFormExportBanner
+          variant={longFormBannerVariant}
+          exportingTarget={nleExportingTarget}
+          onExport={handleExportStoryboardNle}
+        />
       )}
 
       {/* Header + actions */}

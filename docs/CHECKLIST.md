@@ -8,6 +8,13 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-18] 배치 4: 5분+/10분+ 롱폼 안내 배너 (#6~7)
+- [x] `StoryboardPanel.tsx` — `useUnifiedTimeline` / `useTotalDuration` 기반 총 길이 계산 재사용
+- [x] `StoryboardPanel.tsx` — 총 길이 5분~10분일 때 안내 배너(#6) 표시 + 캡컷/프리미어 내보내기 버튼 추가
+- [x] `StoryboardPanel.tsx` — 총 길이 10분 이상일 때 강화 안내 배너(#7) 표시 + 동일 NLE 내보내기 버튼 연결
+- [x] `StoryboardPanel.tsx` — 스토리보드에서 `buildEditRoomNleZip()` 재사용하여 캡컷/프리미어 ZIP 직접 내보내기 연결
+- [x] `tsc --noEmit` + `vite build` + `grep` 재검증 통과
+
 ### [2026-03-18] 배치 3: 내보내기 3종 UI 연결 (#3~5)
 - [x] `StoryboardPanel.tsx` — 다운로드 드롭다운에 `🖼️ 썸네일 ZIP`, `🎨 비주얼 프롬프트`, `🎬 비디오 프롬프트` 버튼 추가
 - [x] `StoryboardPanel.tsx` — `downloadThumbnails()`, `exportVisualPromptsHtml()`, `exportVideoPromptsHtml()`를 `retryImport` 패턴으로 연결
