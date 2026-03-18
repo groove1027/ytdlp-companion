@@ -8,6 +8,14 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-18] 영상 분석실 5병렬 배치 → 단일 호출 전환 (API 비용 절감)
+- [x] `VideoAnalysisRoom.tsx` — 5병렬 배치 로직 전체 제거 (runBatch, Promise.allSettled, 재시도 로직)
+- [x] `VideoAnalysisRoom.tsx` — 모든 프리셋(snack/tikitaka/condensed/alltts 포함) 단일 callAI 호출로 통합
+- [x] `VideoAnalysisRoom.tsx` — batchProgress state, setBatchProgress 호출 전부 제거
+- [x] `VideoAnalysisRoom.tsx` — callAI 함수에서 overrideFrames 파라미터 제거
+- [x] `AnalysisLoadingPanel.tsx` — completedBatches/totalBatches props 및 배치 진행률 점 UI 제거
+- [x] tsc + vite build + grep 전수 조사 + 논리 검증 30회 + Puppeteer E2E 검증 통과
+
 ### [2026-03-18] #511 영상 분석실 SRT 전용 다운로드 버튼 추가
 - [x] `VideoAnalysisRoom.tsx` — `handleDownloadSrtOnly` 함수 추가 (영상 렌더링 없이 SRT만 즉시 다운로드)
 - [x] `VideoAnalysisRoom.tsx` — "SRT" 전용 버튼 + "SRT+영상" 조건부 버튼 분리

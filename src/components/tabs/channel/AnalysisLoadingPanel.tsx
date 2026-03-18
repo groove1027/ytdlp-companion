@@ -34,10 +34,6 @@ interface AnalysisLoadingPanelProps {
   description?: string;
   /** [FIX #157] 분석 취소 콜백 */
   onCancel?: () => void;
-  /** 병렬 배치 진행 현황: 완료된 배치 수 */
-  completedBatches?: number;
-  /** 병렬 배치 총 수 */
-  totalBatches?: number;
   /** 롱폼 영상 여부 (5분+ 시 추가 경고 표시) */
   isLongForm?: boolean;
   /** 개별 영상 진행 현황 (예: 대본 수집 시 "3/10 완료") */
@@ -76,8 +72,6 @@ const AnalysisLoadingPanel: React.FC<AnalysisLoadingPanelProps> = ({
   accent = 'blue',
   description,
   onCancel,
-  completedBatches,
-  totalBatches,
   isLongForm,
   videoProgress,
 }) => {
@@ -278,27 +272,6 @@ const AnalysisLoadingPanel: React.FC<AnalysisLoadingPanelProps> = ({
               롱폼 영상은 분석할 내용이 많아 <span className="text-yellow-200 font-bold">5~10분 이상</span> 걸릴 수 있습니다.
               다른 탭에서 작업하셔도 됩니다 — 완료 시 알림이 갑니다!
             </p>
-          </div>
-        )}
-        {completedBatches != null && totalBatches != null && totalBatches > 1 && (
-          <div className="flex items-center gap-2 mt-1">
-            <div className="flex gap-1">
-              {Array.from({ length: totalBatches }, (_, i) => (
-                <div
-                  key={i}
-                  className={`w-6 h-2 rounded-full transition-all duration-500 ${
-                    i < completedBatches
-                      ? 'bg-green-400'
-                      : i === completedBatches
-                        ? `${accent === 'blue' ? 'bg-blue-400' : 'bg-orange-400'} animate-pulse`
-                        : 'bg-gray-600'
-                  }`}
-                />
-              ))}
-            </div>
-            <span className="text-xs text-gray-400 font-medium">
-              병렬 분석 <span className="text-green-400 font-bold">{completedBatches}</span>/{totalBatches} 완료
-            </span>
           </div>
         )}
         <p className="text-sm text-gray-400 mt-2 leading-relaxed">

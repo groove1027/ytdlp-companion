@@ -3381,7 +3381,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
         inputDesc += `\n\n---\n${diarizedText}\n\n위 화자 분리 전사 결과는 ElevenLabs AI가 영상 오디오에서 자동 추출한 것입니다.\n각 화자(speaker_0, speaker_1, ...)의 대사와 타이밍을 편집 테이블에 정확히 반영하세요.\n동일 컷에서 화자가 바뀌면 반드시 행을 분리하세요.`;
       }
 
-      // 2단계: AI 분석 — 병렬 배치 또는 단일 호출
+      // 2단계: AI 분석 — 단일 호출
       // [FIX #454] 전처리 완료 후 글로벌 타임아웃을 AI 전용으로 교체
       // 단, 글로벌 타임아웃(8분)이 아직 남아있으면 유지하고 AI 타임아웃만 추가
       if (globalTimeout) clearTimeout(globalTimeout);
@@ -3408,7 +3408,6 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       const signal = abortCtrl.signal;
 
       // 모든 프리셋 단일 호출 (5병렬 배치 제거 — API 비용 ~1/5 절감)
-      const totalVersions = (preset === 'deep' || preset === 'shopping') ? 5 : 10;
 
       // [FIX #364] 롱폼 할루시네이션 방지: 5분+ 영상은 temperature를 낮춰 팩트 기반 생성 유도
       const effectiveTemp = maxTimeSec >= 300 ? 0.3 : 0.5;
