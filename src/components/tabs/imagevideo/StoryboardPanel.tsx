@@ -451,18 +451,46 @@ const GridSceneCard: React.FC<GridSceneCardProps> = ({ scene, index, onRegenerat
   const isThisPlaying = playingSceneId === scene.id;
   const gridUploadRef = useRef<HTMLInputElement>(null);
   const arClass = aspectRatioClass(useProjectStore((s) => s.config?.aspectRatio));
+  const [isDragOver, setIsDragOver] = useState(false);
 
   return (
     <div className={`bg-gray-800 border rounded-xl overflow-hidden hover:border-gray-500 transition-colors ${isSelected ? 'border-orange-500/60 ring-1 ring-orange-500/30' : 'border-gray-700'}`}>
       {/* Image/Video area */}
       <div
-        className={`relative ${arClass} bg-gray-900 cursor-pointer group`}
+        className={`relative ${arClass} bg-gray-900 cursor-pointer group ${isDragOver ? 'ring-2 ring-orange-400 ring-inset' : ''}`}
+        onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
+        onDragEnter={(e) => { e.preventDefault(); setIsDragOver(true); }}
+        onDragLeave={(e) => { e.preventDefault(); setIsDragOver(false); }}
+        onDrop={(e) => {
+          e.preventDefault();
+          setIsDragOver(false);
+          const files = e.dataTransfer.files;
+          if (files.length === 1) {
+            e.stopPropagation();
+            const file = files[0];
+            if (file.type.startsWith('image/') || file.type.startsWith('video/')) {
+              onUploadImage(scene.id, file);
+            }
+          }
+          // multiple files: don't stopPropagation — let parent handle batch
+        }}
       >
         {/* [#243] 그리드 장면 선택 체크박스 */}
         {onToggleSelect && (
           <div className="absolute top-1.5 left-1.5 z-10" onClick={(e) => e.stopPropagation()}>
             <input type="checkbox" checked={!!isSelected} onChange={() => onToggleSelect(scene.id)}
               className="w-4 h-4 rounded border-gray-600 bg-gray-900/80 text-orange-500 focus:ring-orange-500/30 cursor-pointer" />
+          </div>
+        )}
+        {/* Drag-drop overlay */}
+        {isDragOver && !scene.isGeneratingImage && (
+          <div className="absolute inset-0 bg-orange-500/20 border-2 border-dashed border-orange-400 flex items-center justify-center z-20 pointer-events-none">
+            <div className="text-center">
+              <svg className="w-8 h-8 text-orange-400 mx-auto mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+              </svg>
+              <span className="text-sm font-bold text-orange-300">여기에 놓기</span>
+            </div>
           </div>
         )}
         {scene.isGeneratingImage ? (
@@ -1136,6 +1164,9 @@ const StoryboardPanel: React.FC = () => {
   const storyboardImageModel = useProjectStore(s => s.config?.imageModel) || ImageModel.NANO_COST;
   const [isBatchingImages, setIsBatchingImages] = useState(false);
   const [batchImageProgress, setBatchImageProgress] = useState({ current: 0, total: 0, success: 0, fail: 0 });
+  // [#518] 이미지 일괄 업로드 상태
+  const [isBatchUploading, setIsBatchUploading] = useState(false);
+  const [batchUploadProgress, setBatchUploadProgress] = useState({ current: 0, total: 0, success: 0, fail: 0 });
   // [#243] 장면 선택 상태
   const [selectedSceneIds, setSelectedSceneIds] = useState<Set<string>>(new Set());
   const { requireAuth } = useAuthGuard();
@@ -1146,6 +1177,9 @@ const StoryboardPanel: React.FC = () => {
   // BUG#16: ref to track latest batch progress
   const batchImageProgressRef = useRef(batchImageProgress);
   batchImageProgressRef.current = batchImageProgress;
+  const batchUploadProgressRef = useRef(batchUploadProgress);
+  batchUploadProgressRef.current = batchUploadProgress;
+  const batchUploadRef = useRef<HTMLInputElement>(null);
 
   // 배치 비디오 훅
   const videoBatch = useVideoBatch(scenes, setScenes, config, addCost);
@@ -1156,7 +1190,7 @@ const StoryboardPanel: React.FC = () => {
   const imageEligible = scenes.filter((s) => !s.imageUrl && !s.isGeneratingImage).length;
   const exRate = useCostStore.getState().exchangeRate || PRICING.EXCHANGE_RATE;
 
-  const isAnyBatchRunning = isBatchingImages || videoBatch.isBatching;
+  const isAnyBatchRunning = isBatchingImages || videoBatch.isBatching || isBatchUploading;
   const elapsedBatch = useElapsedTimer(isAnyBatchRunning);
   const totalScenes = scenes.length;
 
@@ -1453,6 +1487,78 @@ const StoryboardPanel: React.FC = () => {
     }
   }, [updateScene]);
 
+  // --- [#518] 이미지 일괄 업로드 (드래그 & 드롭 / 파일 선택) ---
+  const handleBatchUploadFiles = useCallback(async (files: FileList | File[]) => {
+    const imageFiles = Array.from(files)
+      .filter(f => f.type.startsWith('image/') || f.type.startsWith('video/'))
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+
+    if (imageFiles.length === 0) {
+      showToast('이미지/영상 파일이 없습니다.');
+      return;
+    }
+
+    const { scenes: currentScenes } = useProjectStore.getState();
+    if (currentScenes.length === 0) {
+      showToast('장면이 없습니다. 대본 분석을 먼저 실행해주세요.');
+      return;
+    }
+
+    const count = Math.min(imageFiles.length, currentScenes.length);
+    const extra = imageFiles.length > currentScenes.length
+      ? `\n(파일 ${imageFiles.length}개 중 장면 수(${currentScenes.length})만큼만 사용됩니다)`
+      : '';
+    if (!confirm(`${imageFiles.length}개 파일을 파일이름 순서대로 장면 1~${count}에 업로드합니다.${extra}\n이미 이미지가 있는 장면은 덮어씁니다.\n\n계속할까요?`)) {
+      return;
+    }
+
+    setIsBatchUploading(true);
+    setBatchUploadProgress({ current: 0, total: count, success: 0, fail: 0 });
+
+    // Build file → scene mapping
+    const fileMap = new Map<string, File>();
+    for (let i = 0; i < count; i++) {
+      fileMap.set(currentScenes[i].id, imageFiles[i]);
+    }
+
+    const targets = currentScenes.slice(0, count);
+
+    await runImageBatch(
+      targets,
+      5,
+      async (scene) => {
+        const file = fileMap.get(scene.id);
+        if (!file) return false;
+        updateScene(scene.id, { isGeneratingImage: true, generationStatus: '업로드 중...' });
+        try {
+          const url = await uploadMediaToHosting(file);
+          const isVideo = file.type.startsWith('video/');
+          if (isVideo) {
+            updateScene(scene.id, { videoUrl: url, isGeneratingImage: false, generationStatus: undefined });
+          } else {
+            const sceneNow = useProjectStore.getState().scenes.find(s => s.id === scene.id);
+            updateScene(scene.id, { imageUrl: url, isGeneratingImage: false, generationStatus: undefined, imageUpdatedAfterVideo: !!sceneNow?.videoUrl });
+          }
+          return true;
+        } catch {
+          updateScene(scene.id, { isGeneratingImage: false, generationStatus: undefined });
+          return false;
+        }
+      },
+      () => setBatchUploadProgress(prev => ({ ...prev, current: prev.current + 1, success: prev.success + 1 })),
+      () => setBatchUploadProgress(prev => ({ ...prev, current: prev.current + 1, fail: prev.fail + 1 })),
+    );
+
+    const finalProgress = batchUploadProgressRef.current;
+    if (finalProgress.fail > 0) {
+      showToast(`${finalProgress.fail}개 업로드 실패 (${finalProgress.success}개 성공)`, 5000);
+    } else {
+      showToast(`${finalProgress.success}개 이미지 일괄 업로드 완료`);
+    }
+
+    setIsBatchUploading(false);
+  }, [updateScene]);
+
   // --- 프롬프트 수정 ---
   const handleUpdatePrompt = useCallback((id: string, field: 'visualPrompt' | 'videoPrompt', value: string) => {
     if (field === 'visualPrompt') {
@@ -1684,8 +1790,8 @@ const StoryboardPanel: React.FC = () => {
   // ⚠️ [절대 규칙] 스토리보드 생성 후 이미지 자동 생성 금지 — 비용 절감을 위해 사용자가 한두 컷 시험 후 일괄 생성하는 설계
 
   // --- 배치 진행 상태 ---
-  const batchCurrent = isBatchingImages ? batchImageProgress.current : videoBatch.batchProgress.current;
-  const batchTotal = isBatchingImages ? batchImageProgress.total : videoBatch.batchProgress.total;
+  const batchCurrent = isBatchUploading ? batchUploadProgress.current : isBatchingImages ? batchImageProgress.current : videoBatch.batchProgress.current;
+  const batchTotal = isBatchUploading ? batchUploadProgress.total : isBatchingImages ? batchImageProgress.total : videoBatch.batchProgress.total;
   const batchPercent = batchTotal > 0 ? Math.round((batchCurrent / batchTotal) * 100) : 0;
 
   return (
@@ -1731,20 +1837,20 @@ const StoryboardPanel: React.FC = () => {
       {/* Batch progress bar — 향상된 진행 패널 */}
       {isAnyBatchRunning && (
         <div className={`mb-4 rounded-xl border p-4 space-y-3 ${
-          isBatchingImages
+          isBatchUploading || isBatchingImages
             ? 'bg-orange-900/20 border-orange-500/30'
             : 'bg-blue-900/20 border-blue-500/30'
         }`}>
           {/* 헤더: 스피너 + 라벨 + 카운터 */}
           <div className="flex items-center gap-3">
             <div className={`w-7 h-7 border-2 rounded-full animate-spin ${
-              isBatchingImages
+              isBatchUploading || isBatchingImages
                 ? 'border-orange-400 border-t-transparent'
                 : 'border-blue-400 border-t-transparent'
             }`} />
             <div className="flex-1 min-w-0">
-              <div className={`text-sm font-bold ${isBatchingImages ? 'text-orange-300' : 'text-blue-300'}`}>
-                {isBatchingImages ? '이미지 일괄 생성' : '영상 일괄 생성'}
+              <div className={`text-sm font-bold ${isBatchUploading || isBatchingImages ? 'text-orange-300' : 'text-blue-300'}`}>
+                {isBatchUploading ? '이미지 일괄 업로드' : isBatchingImages ? '이미지 일괄 생성' : '영상 일괄 생성'}
               </div>
               <div className="text-xs text-gray-400 flex items-center gap-2">
                 <span className="tabular-nums">{formatElapsed(elapsedBatch)} 경과</span>
@@ -1758,11 +1864,11 @@ const StoryboardPanel: React.FC = () => {
               </div>
             </div>
             <div className="text-right flex-shrink-0">
-              <span className={`text-lg font-bold tabular-nums ${isBatchingImages ? 'text-orange-300' : 'text-blue-300'}`}>
+              <span className={`text-lg font-bold tabular-nums ${isBatchUploading || isBatchingImages ? 'text-orange-300' : 'text-blue-300'}`}>
                 {batchCurrent}/{batchTotal}
               </span>
-              {isBatchingImages && batchImageProgress.fail > 0 && (
-                <div className="text-xs text-red-400 mt-0.5">{batchImageProgress.fail}개 실패</div>
+              {((isBatchUploading && batchUploadProgress.fail > 0) || (isBatchingImages && batchImageProgress.fail > 0)) && (
+                <div className="text-xs text-red-400 mt-0.5">{isBatchUploading ? batchUploadProgress.fail : batchImageProgress.fail}개 실패</div>
               )}
             </div>
           </div>
@@ -1772,9 +1878,11 @@ const StoryboardPanel: React.FC = () => {
             <div
               style={{ width: `${batchPercent}%` }}
               className={`h-full rounded-full transition-all duration-700 ${
-                isBatchingImages
-                  ? batchImageProgress.fail > 0 ? 'bg-gradient-to-r from-orange-500 to-red-500' : 'bg-gradient-to-r from-orange-500 to-amber-500'
-                  : 'bg-gradient-to-r from-blue-500 to-violet-500'
+                isBatchUploading
+                  ? batchUploadProgress.fail > 0 ? 'bg-gradient-to-r from-orange-500 to-red-500' : 'bg-gradient-to-r from-orange-500 to-amber-500'
+                  : isBatchingImages
+                    ? batchImageProgress.fail > 0 ? 'bg-gradient-to-r from-orange-500 to-red-500' : 'bg-gradient-to-r from-orange-500 to-amber-500'
+                    : 'bg-gradient-to-r from-blue-500 to-violet-500'
               }`}
             />
           </div>
@@ -1880,6 +1988,33 @@ const StoryboardPanel: React.FC = () => {
             >
               📋 프롬프트 복사
             </button>
+          )}
+          {/* [#518] 이미지 일괄 업로드 */}
+          {totalScenes > 0 && (
+            <>
+              <button
+                type="button"
+                onClick={() => batchUploadRef.current?.click()}
+                disabled={isAnyBatchRunning}
+                className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed text-gray-300 text-xs font-medium rounded-lg border border-gray-600 transition-colors flex items-center gap-1.5"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
+                일괄 업로드
+              </button>
+              <input
+                type="file"
+                ref={batchUploadRef}
+                accept="image/*,video/*"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  if (e.target.files && e.target.files.length > 0) {
+                    handleBatchUploadFiles(e.target.files);
+                  }
+                  e.target.value = '';
+                }}
+              />
+            </>
           )}
           {/* HTML/ZIP 저장 (30장면 이상이면 ZIP 자동 선택) */}
           <button
@@ -2243,7 +2378,19 @@ const StoryboardPanel: React.FC = () => {
         />
       )}
 
-      {/* Scene list / grid / preview */}
+      {/* Scene list / grid / preview — [#518] grid-level batch drop handler */}
+      <div
+        onDragOver={(e) => { if (e.dataTransfer.types.includes('Files')) e.preventDefault(); }}
+        onDrop={(e) => {
+          e.preventDefault();
+          const files = e.dataTransfer.files;
+          if (files.length > 1) {
+            handleBatchUploadFiles(files);
+          } else if (files.length === 1 && totalScenes > 0) {
+            showToast('개별 장면 카드에 놓아주세요. 여러 파일을 한번에 놓으면 일괄 업로드됩니다.');
+          }
+        }}
+      >
       {totalScenes === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-gray-500">
           <p className="text-lg mb-2">장면이 없습니다</p>
@@ -2372,6 +2519,7 @@ const StoryboardPanel: React.FC = () => {
           toggleSceneSelect={toggleSceneSelect}
         />
       )}
+      </div>
     </>
   );
 };
