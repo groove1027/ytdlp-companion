@@ -522,6 +522,20 @@ class LoggerService {
       const reason = event.reason;
       const message = reason instanceof Error ? reason.message : String(reason);
       const stack = reason instanceof Error ? reason.stack?.split('\n').slice(0, 5).join('\n') : undefined;
+
+      // [FIX #519] AbortError / TimeoutError는 정상적인 요청 취소/타임아웃 — 사용자에게 경고하지 않음
+      // fetch() abort 시 브라우저가 "The user aborted a request." DOMException을 발생시키는데,
+      // 스트리밍 중 Promise.race 경합이나 타임아웃으로 인한 고아 프로미스가 unhandled rejection으로 표면화됨
+      const isAbortOrTimeout = (reason instanceof DOMException && (reason.name === 'AbortError' || reason.name === 'TimeoutError'))
+        || message.includes('aborted')
+        || message.includes('signal timed out')
+        || message.includes('분석이 취소되었습니다');
+
+      if (isAbortOrTimeout) {
+        this.addLog('warn', `⚠️ 요청 취소 (무시): ${message}`, undefined, { category: 'system' });
+        return;
+      }
+
       this.addLog('error', `💥 Unhandled Rejection: ${message}`, { stack }, { category: 'system' });
       this.persistErrors();
       this._notifyCriticalError('unhandled', message, stack);

@@ -3496,10 +3496,10 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       // [FIX #241] 타임코드 수집에 parsed 대신 스토어의 최종 versions 사용
       //   — 배치 병합 텍스트 parseVersions 실패 시 parsed=[] → 타임코드 0개 → 비주얼 미표시 버그
       // [FIX #340] 프레임 추출 전체를 2분 타임아웃으로 보호 — 무한 대기 방지
+      // [FIX #519] 타임아웃 시 내부 IIFE의 고아 rejection이 unhandled rejection으로 표면화 방지
       const FRAME_EXTRACTION_TIMEOUT = 2 * 60 * 1000;
       try {
-      await Promise.race([
-        (async () => {
+      const innerFrameWork = (async () => {
       const finalVersions = useVideoAnalysisStore.getState().versions;
       let ytVid: string | null = null;
       let durSec = 300; // 기본 5분 추정
@@ -3638,7 +3638,12 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
         }
       }
 
-        })(),
+        })();
+      // innerFrameWork에 .catch 연결하여 타임아웃으로 Promise.race가 이미 settled된 후의
+      // 고아 rejection이 unhandledrejection으로 표면화되는 것을 방지
+      innerFrameWork.catch(() => {}); // [FIX #519] 고아 rejection 흡수
+      await Promise.race([
+        innerFrameWork,
         new Promise<void>((_, reject) => setTimeout(() => reject(new Error('FRAME_TIMEOUT')), FRAME_EXTRACTION_TIMEOUT)),
       ]);
       } catch (frameErr) {
@@ -3656,7 +3661,10 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       setTimeout(() => useVideoAnalysisStore.getState().saveSlot(), 500);
     } catch (err) {
       // [FIX #157] 사용자 취소 또는 타임아웃에 의한 abort 처리
-      const isAbort = err instanceof DOMException && err.name === 'AbortError';
+      // [FIX #519] AbortError는 DOMException 또는 일반 Error로 올 수 있음 + 브라우저 원문("The user aborted a request.") 포함 감지
+      const isAbort = (err instanceof DOMException && err.name === 'AbortError')
+        || abortCtrl.signal.aborted
+        || (err instanceof Error && (err.message.includes('aborted') || err.message.includes('취소')));
       const msg = isAbort ? '분석이 취소되었습니다.' : (err instanceof Error ? err.message : String(err));
       console.error('[VideoAnalysis] 분석 실패:', isAbort ? '(사용자 취소/타임아웃)' : err);
 
