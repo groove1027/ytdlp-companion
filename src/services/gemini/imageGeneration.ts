@@ -1,6 +1,6 @@
 
 import { Scene, AspectRatio, ImageModel } from '../../types';
-import { getMicroTexture, isBlackAndWhiteStyle, getStyleNegativePrompt, getIntegrativeInfographicInstruction, isRealisticStyle } from './promptHelpers';
+import { getMicroTexture, isBlackAndWhiteStyle, getStyleNegativePrompt, getIntegrativeInfographicInstruction, isRealisticStyle, sanitizeStyleForImageGen, getAntiTextNegative } from './promptHelpers';
 import { generateKieImage, generateEvolinkImageWrapped } from '../VideoGenService';
 import { filterPromptContent, sanitizeForPolicyBypass, isPolicyViolationError } from './contentFilter';
 import { logger } from '../LoggerService';
@@ -197,7 +197,9 @@ export const generateSceneImage = async (
     preserveCharacterStyle?: boolean // [NEW] 캐릭터 예술 스타일 보존 모드 (사용자가 비주얼 미선택 + 캐릭터 분석 스타일 사용 시)
 ) => {
     // [CRITICAL FIX] Prioritize explicit style argument over detected style description
-    const effectiveStyle = (style && style.trim() !== "") ? style : (styleDesc || "High Quality");
+    const rawStyle = (style && style.trim() !== "") ? style : (styleDesc || "High Quality");
+    // [FIX #458/#480] 텍스트 유도 키워드 제거 — "Chinese calligraphy" → "ink brush strokes" 등
+    const effectiveStyle = sanitizeStyleForImageGen(rawStyle);
 
     // [FIX] feedback이 있으면 scene.visualPrompt 대신 사용 (사용자 수정 프롬프트 우선)
     // [FIX] visualPrompt가 비어있으면 scriptText를 최종 폴백으로 사용
@@ -626,7 +628,7 @@ export const generateSceneImage = async (
             return '[IMPORTANT: Do NOT render any visible text, words, letters, labels, captions, or watermarks in the image unless explicitly instructed below with a [Text: ...] directive.]';
         })()}
 
-        [NEGATIVE] ${infographicNegative}
+        [NEGATIVE] ${infographicNegative}, ${getAntiTextNegative(rawStyle)}
         `;
 
         // Only allow text if explicitly requested by AI analysis AND short AND not suppressed
@@ -708,7 +710,7 @@ export const generateSceneImage = async (
             return '[IMPORTANT: Do NOT render any visible text, words, letters, labels, captions, or watermarks in the image unless explicitly instructed below with a [Text: ...] directive.]';
         })()}
 
-        [NEGATIVE] ${negativePrompt}, ${styleNegative}, (Bad quality), (Distorted)
+        [NEGATIVE] ${negativePrompt}, ${styleNegative}, ${getAntiTextNegative(rawStyle)}, (Bad quality), (Distorted)
         `;
 
         // [FIXED] Removed textForceLock from the trigger condition.

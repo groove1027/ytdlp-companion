@@ -73,8 +73,9 @@ export async function renderAllFrames(
 
   // [FIX #44] 프레임별 타임아웃 — 단일 프레임이 30초 이상 걸리면 중단
   const PER_FRAME_TIMEOUT_MS = 30_000;
-  // [FIX #44] 전체 렌더링 타임아웃 — 10분 초과 시 중단 (OOM 예방)
-  const TOTAL_RENDER_TIMEOUT_MS = 600_000;
+  // [FIX #44/#493] 전체 렌더링 타임아웃 — 영상 길이에 비례 (최소 10분, 장면당 3초 여유)
+  // 132장면(~6분 영상) → 약 20분 타임아웃 허용
+  const TOTAL_RENDER_TIMEOUT_MS = Math.max(600_000, Math.ceil(totalDuration) * 3_000);
   const renderStartTime = performance.now();
 
   // [FIX #297] sceneStarts 사전 계산 — 매 프레임 O(scenes) 재계산 제거

@@ -1,4 +1,24 @@
 
+// [FIX #458/#480] Helper: 이미지 생성용 스타일 정제 — 텍스트 유도 키워드 제거
+// "Chinese calligraphy" 등이 이미지에 한자를 삽입하는 원인
+export const sanitizeStyleForImageGen = (style: string): string => {
+    return style
+        .replace(/Chinese\s+calligraphy/gi, 'ink brush strokes, ink wash art')
+        .replace(/Japanese\s+calligraphy/gi, 'ink brush strokes, sumi-e art')
+        .replace(/Arabic\s+calligraphy/gi, 'ornamental brush strokes')
+        .replace(/\bcalligraphy\b/gi, 'ink brush painting');
+};
+
+// [FIX #458/#480] Helper: 텍스트 유도 스타일에 대한 강화 네거티브 프롬프트
+export const getAntiTextNegative = (style: string): string => {
+    const s = style.toLowerCase();
+    if (s.includes('calligraphy') || s.includes('wuxia') || s.includes('무협') ||
+        s.includes('chinese') || s.includes('japanese') || s.includes('oriental')) {
+        return '(Chinese characters: -2.0), (Japanese characters: -2.0), (kanji: -2.0), (hanzi: -2.0), (written text: -2.0), (calligraphic text: -2.0), (text overlay: -2.0), (inscriptions: -2.0)';
+    }
+    return '';
+};
+
 // [NEW] Helper: Map visual style to subtle typography texture (Restored for internal fill texture)
 export const getMicroTexture = (style: string): string => {
     const s = style.toLowerCase();

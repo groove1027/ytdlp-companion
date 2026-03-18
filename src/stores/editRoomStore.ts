@@ -502,7 +502,8 @@ export const useEditRoomStore = create<EditRoomStore>()(immer((set, get) => ({
       const existingSub = get().sceneSubtitles[sceneId];
       sceneSubtitles[sceneId] = {
         ...existingSub,
-        text: existingSub?.text || scene.generatedDialogue || matchedLine?.text || scene.scriptText || '',
+        // [FIX #499] 나레이션(matchedLine) 우선 — generatedDialogue는 영상용 대사이므로 자막과 충돌
+        text: existingSub?.text || matchedLine?.text || scene.generatedDialogue || scene.scriptText || '',
         startTime: startT,
         endTime: endT,
         animationPreset: existingSub?.animationPreset || 'none',

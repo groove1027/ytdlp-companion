@@ -1609,8 +1609,11 @@ const StoryboardPanel: React.FC = () => {
       }
 
       const sceneAfterGen = useProjectStore.getState().scenes.find(s => s.id === sceneId);
+      // [#492] 이전 이미지 백업 — 되돌리기 지원
+      const prevImg = sceneAfterGen?.imageUrl;
       updateScene(sceneId, {
         imageUrl,
+        previousImageUrl: prevImg || undefined,
         isGeneratingImage: false,
         generationStatus: undefined,
         isPromptFiltered: result.isFiltered || false,

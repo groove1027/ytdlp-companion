@@ -331,9 +331,12 @@ export const useVideoBatch = (
 
             const isNativeHQ = effectiveModel === VideoModel.VEO || (effectiveModel === VideoModel.GROK && explicitUpscaleRequest);
 
+            // [#492] 이전 영상 백업 — 되돌리기 지원
+            const prevVideo = useProjectStore.getState().scenes.find(s => s.id === sceneId)?.videoUrl;
             storeUpdateScene(sceneId, {
                 videoUrl, isGeneratingVideo: false, isUpscaling: false, isUpscaled: false, isNativeHQ, generationTaskId: taskId, videoModelUsed: effectiveModel, generationStatus: undefined, progress: 100,
                 imageUpdatedAfterVideo: false,
+                previousVideoUrl: prevVideo || undefined,
                 ...(generatedSfx ? { generatedSfx } : {}),
                 ...(generatedDialogue ? { generatedDialogue } : {}),
             });
@@ -430,8 +433,11 @@ export const useVideoBatch = (
             logger.info(`Starting Upscale Only for Scene ${sceneId}`);
             const upscaleId = await createPortableUpscaleTask(scene.generationTaskId);
             const newVideoUrl = await pollKieTask(upscaleId, signal);
+            // [#492] 업스케일 전 영상 백업
+            const prevUpscale = useProjectStore.getState().scenes.find(s => s.id === sceneId)?.videoUrl;
             storeUpdateScene(sceneId, {
                 videoUrl: newVideoUrl, isUpscaling: false, isUpscaled: true, imageUpdatedAfterVideo: false,
+                previousVideoUrl: prevUpscale || undefined,
             });
             logger.success(`Upscale Only Success for Scene ${sceneId}`);
         } catch (e: any) {
@@ -552,10 +558,13 @@ export const useVideoBatch = (
                 : 8;
             if (onCostAdd) onCostAdd(PRICING.VIDEO_WAN_V2V_720P_PER_SEC * segDuration, 'video');
 
+            // [#492] 이전 영상 백업 (V2V)
+            const prevV2V = useProjectStore.getState().scenes.find(s => s.id === sceneId)?.videoUrl;
             storeUpdateScene(sceneId, {
                 videoUrl, isGeneratingVideo: false, isNativeHQ: false,
                 generationTaskId: taskId, videoModelUsed: VideoModel.GROK,
                 generationStatus: undefined, progress: 100, imageUpdatedAfterVideo: false,
+                previousVideoUrl: prevV2V || undefined,
             });
 
         } catch (e: any) {

@@ -197,7 +197,9 @@ export interface Scene {
   videoPrompt?: string;  // 상세 영상 모션 프롬프트 (AI 생성, 동작/카메라/분위기 서술)
   shotSize?: string;
   imageUrl?: string;
-  
+  previousImageUrl?: string;  // [#492] 재생성 전 이전 이미지 (되돌리기용)
+  previousVideoUrl?: string;  // [#492] 재생성 전 이전 영상 (되돌리기용)
+
   referenceImage?: string; 
 
   sourceFrameUrl?: string;

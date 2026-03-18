@@ -486,6 +486,7 @@ const App: React.FC = () => {
         setScenes(prev => prev.map(s => s.id === sceneId ? {
             ...s,
             imageUrl,
+            previousImageUrl: s.imageUrl || undefined,  // [#492] 이전 이미지 백업
             isGeneratingImage: false,
             isNativeHQ: useNativeHQ,
             visualPrompt: feedback ? feedback : s.visualPrompt,
