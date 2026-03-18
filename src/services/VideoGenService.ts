@@ -68,77 +68,7 @@ export function sanitizePrompt(prompt: string): string {
         .trim();
 }
 
-// === CONNECTION VALIDATORS ===
-
-export async function validateKieConnection(apiKey: string): Promise<{ success: boolean; message: string }> {
-    if (!apiKey) return { success: false, message: "API Key가 입력되지 않았습니다." };
-    try {
-        const response = await monitoredFetch(`${KIE_BASE_URL}/recordInfo?taskId=ping_test`, {
-            headers: { 'Authorization': `Bearer ${apiKey}` }
-        });
-        if (response.status === 401 || response.status === 403) return { success: false, message: "인증 실패: 유효하지 않은 Key입니다." };
-        const data = await response.json();
-        if (data.code === 401) return { success: false, message: "인증 실패 (Code 401)" };
-        return { success: true, message: "연결 성공!" };
-    } catch (e: any) {
-        return { success: false, message: `연결 오류: ${e.message}` };
-    }
-}
-
-export async function validateApimartConnection(apiKey: string): Promise<{ success: boolean; message: string }> {
-    if (!apiKey) return { success: false, message: "API Key가 입력되지 않았습니다." };
-    try {
-        const response = await monitoredFetch(APIMART_BASE_URL, {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model: "veo3.1-fast", prompt: "ping", image_urls: [] })
-        });
-        if (response.status === 401 || response.status === 403) return { success: false, message: "인증 실패: Key를 확인하세요." };
-        if (response.status === 400 || response.ok) return { success: true, message: "연결 성공!" };
-        return { success: false, message: `서버 응답: ${response.status}` };
-    } catch (e: any) {
-        return { success: false, message: `연결 오류: ${e.message}` };
-    }
-}
-
-export async function validateXaiConnection(apiKey: string): Promise<{ success: boolean; message: string }> {
-    if (!apiKey) return { success: false, message: "API Key가 입력되지 않았습니다." };
-    try {
-        const response = await monitoredFetch(`${XAI_BASE_URL}/videos/generations`, {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model: "grok-imagine-video", prompt: "test", duration: 1 })
-        });
-        if (response.status === 401 || response.status === 403)
-            return { success: false, message: "인증 실패: Key를 확인하세요." };
-        if (response.ok) return { success: true, message: "연결 성공! ($0.05 테스트 비용 발생)" };
-        return { success: false, message: `서버 응답 오류 (${response.status})` };
-    } catch (e: unknown) {
-        const err = e as Error;
-        return { success: false, message: `연결 오류: ${err.message}` };
-    }
-}
-
 // === API METHODS ===
-
-// Process image source into API-compatible part format (extracted for reuse)
-export function processImagePart(imgSource: string): Record<string, unknown> | null {
-    try {
-        if (imgSource.startsWith("http")) {
-            return { fileData: { fileUri: imgSource, mimeType: "image/jpeg" } };
-        } else if (imgSource.includes("data:")) {
-            const arr = imgSource.split(',');
-            const mimeType = arr[0].match(/:(.*?);/)?.[1] || "image/jpeg";
-            const base64Data = arr[1].replace(/[\n\r\s]+/g, '');
-            return { inline_data: { mime_type: mimeType, data: base64Data } };
-        }
-        return null;
-    } catch (e) {
-        console.error("Image processing failed:", e);
-        return null;
-    }
-}
-
 
 // [OFFICIAL DOC] Kie Nanobanana 2 이미지 생성
 // 기술문서: https://docs.kie.ai/market/google/nanobanana2
@@ -611,53 +541,6 @@ export async function pollKieVeoTask(
         if (!errMsg.includes('Timeout')) logger.endAsyncOp(opId, 'failed', errMsg);
         throw err;
     }
-}
-
-// Create REMAKE Veo Task (FIRST_AND_LAST_FRAMES_2_VIDEO)
-export async function createRemakeVeoTask(
-    prompt: string,
-    startImageUrl: string,
-    endImageUrl: string,
-    aspectRatio: AspectRatio
-): Promise<string> {
-    const apiKey = getKieKey();
-    if (!apiKey) throw new Error("Kie API Key가 설정되지 않았습니다. (REMAKE Veo용)");
-
-    // Base64 → 공개 URL 변환
-    let publicStart = startImageUrl;
-    let publicEnd = endImageUrl;
-    if (startImageUrl.startsWith("data:image")) {
-        const file = base64ToFile(startImageUrl, "remake_start.png");
-        publicStart = await uploadMediaToHosting(file);
-    }
-    if (endImageUrl.startsWith("data:image")) {
-        const file = base64ToFile(endImageUrl, "remake_end.png");
-        publicEnd = await uploadMediaToHosting(file);
-    }
-
-    const input = {
-        model: "veo3_fast",
-        generationType: "FIRST_AND_LAST_FRAMES_2_VIDEO",
-        imageUrls: [publicStart, publicEnd],
-        prompt: `${STYLE_LOCK_TAGS} ${AUDIO_SAFETY_TAGS} [Camera: Preserve original motion]`,
-        aspectRatio: aspectRatio === AspectRatio.PORTRAIT ? "9:16" : "16:9",
-        enableTranslation: true
-    };
-
-    const response = await monitoredFetch(`${KIE_VEO_BASE_URL}/generate`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(input)
-    });
-
-    if (!response.ok) {
-        if (response.status === 402) throw new Error("Kie 잔액이 부족합니다. 충전 후 다시 시도하세요.");
-        const errText = await response.text();
-        throw new Error(`Kie Veo Remake API Error (${response.status}): ${errText}`);
-    }
-
-    const data = await response.json();
-    return data.data?.taskId || data.data;
 }
 
 // Create Grok generation task via Kie.ai

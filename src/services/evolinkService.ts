@@ -1,7 +1,7 @@
 
 import { monitoredFetch } from './apiService';
 import { logger } from './LoggerService';
-import { EvolinkImageModel, ScriptAiModel } from '../types';
+import { ScriptAiModel } from '../types';
 import { useCostStore } from '../stores/costStore';
 import { PRICING } from '../constants';
 

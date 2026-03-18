@@ -1,5 +1,5 @@
 
-import { AspectRatio, VoiceName, ImageModel, VideoFormat, VideoModel, DialogueTone, ScriptAiModel, ScriptTargetRegion } from "./types";
+import { AspectRatio, VoiceName, ImageModel, VideoFormat, DialogueTone, ScriptAiModel, ScriptTargetRegion } from "./types";
 
 // [2026-03-02] Real-time Pricing (조사 기반 실시간 반영)
 export const PRICING = {
@@ -118,11 +118,6 @@ export const IMAGE_MODELS = [
   { id: ImageModel.GOOGLE_WHISK, label: '🎨 Google Whisk (무료 · 쿠키 필요 · 레퍼런스 리믹싱)' },
   { id: ImageModel.NANO_COST, label: '⚡ NanoBanana 2 (₩87/장 · 최고 품질)' },
   // { id: ImageModel.FLASH, label: '🍌 Gemini 2.5 Flash ($0.02/장)' },
-];
-
-export const VIDEO_MODELS = [
-  { id: VideoModel.VEO, label: '💎 Evolink Veo 3.1 1080p', description: '최저가 1080p ($0.17) - Fast Engine' },
-  { id: VideoModel.GROK, label: '🚀 Grok (Kie)', description: '빠른 생성 ($0.10~0.20)' }
 ];
 
 export const VIDEO_FORMATS = [
@@ -565,16 +560,6 @@ export const TYPECAST_EMOTIONS: { id: string; label: string; labelKo: string; ic
   { id: 'whisper',  label: 'Whisper',   labelKo: '속삭임', icon: '🤫', description: '조용하고 은밀한 톤' },
   { id: 'toneup',   label: 'Tone Up',   labelKo: '톤업',   icon: '📈', description: '에너지 넘치는 상승 톤' },
   { id: 'tonedown', label: 'Tone Down', labelKo: '톤다운', icon: '📉', description: '차분하고 낮은 톤' },
-];
-
-// v2.1 전용 감정 프리셋 (whisper/tonedown 미지원, tonemid 추가)
-export const TYPECAST_V21_EMOTIONS: { id: string; label: string; labelKo: string; icon: string; description: string }[] = [
-  { id: 'normal',  label: 'Normal',   labelKo: '기본',     icon: '😐', description: '자연스러운 기본 톤' },
-  { id: 'happy',   label: 'Happy',    labelKo: '행복',     icon: '😊', description: '밝고 경쾌한 톤' },
-  { id: 'sad',     label: 'Sad',      labelKo: '슬픔',     icon: '😢', description: '차분하고 우울한 톤' },
-  { id: 'angry',   label: 'Angry',    labelKo: '분노',     icon: '😠', description: '격앙되고 단호한 톤' },
-  { id: 'tonemid', label: 'Tone Mid', labelKo: '중간 톤',  icon: '🔸', description: '중간 톤 (v2.1 전용)' },
-  { id: 'toneup',  label: 'Tone Up',  labelKo: '톤업',     icon: '📈', description: '에너지 넘치는 상승 톤' },
 ];
 
 export const TYPECAST_MODELS: { id: string; label: string; labelShort: string; description: string; supportsSmartEmotion: boolean }[] = [

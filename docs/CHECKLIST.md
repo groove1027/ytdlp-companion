@@ -8,6 +8,15 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-18] 죽은 코드 삭제 배치 1 (#8~#12)
+- [x] `VideoGenService.ts` — 미사용 함수 5개 삭제: `validateKieConnection`, `validateApimartConnection`, `validateXaiConnection`, `processImagePart`, `createRemakeVeoTask`
+- [x] `types.ts` — 미사용 `EvolinkImageModel` enum 삭제
+- [x] `types.ts` — `Scene` 미사용 속성 11개 삭제: `compositionConfig`, `subjectFocus`, `isProductFocus`, `keyVisual`, `physicsRules`, `bgmUrl`, `bgmPrompt`, `sfxUrl`, `sfxPrompt`, `soundMood`, `temporalContext`
+- [x] `constants.ts` — 미사용 상수 2개 삭제: `VIDEO_MODELS`, `TYPECAST_V21_EMOTIONS`
+- [x] `evolinkService.ts` — 삭제된 enum 관련 import 정리
+- [x] 사용처가 남은 항목은 보존: `createApimartVeoTask`, `pollApimartVeoTask`, `generateFFmpegScript`, `generateEdlFile`, `CompositionMode`, `SceneType`, `sceneType`, `isUserEditedPrompt`, `isPromptFiltered`
+- [x] `tsc --noEmit` + `vite build` + grep 재검증 통과
+
 ### [2026-03-18] #544 스토리보드 다운로드 영역 "대본 복사" 버튼 추가
 - [x] `StoryboardPanel.tsx` 상단에 장면 대본 추출 헬퍼 `getSceneNarrationText` 추가 (`scriptText` 우선, `audioScript`/`narration`/`script` 폴백)
 - [x] 다운로드 버튼 근처에 오렌지 액센트 `📋 대본 복사` 버튼 추가

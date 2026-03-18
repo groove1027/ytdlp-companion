@@ -169,15 +169,12 @@ export interface Scene {
   // [NEW] KEY_ENTITY 연출 구도 — AUTO 모드에서 유명인/브랜드/장소 등장 시 다채로운 연출 강제
   entityComposition?: 'ENTITY_SOLO' | 'ENTITY_WITH_MAIN' | 'MAIN_OBSERVING' | 'ENTITY_FG_MAIN_BG' | 'MAIN_FG_ENTITY_BG';
   
-  temporalContext?: 'PRESENT' | 'PAST' | 'FUTURE';
-
   // [NEW] Per-scene contextual grounding (장면별 맥락)
   sceneLocation?: string;  // "Forbidden City, Beijing", "Victorian London"
   sceneEra?: string;       // "Qing Dynasty", "1800s Industrial Revolution"
   sceneCulture?: string;   // "Chinese Imperial", "British Industrial"
 
   sceneType?: SceneType;
-  physicsRules?: string; 
   visualPeakTime?: number; 
   endTime?: number; 
   
@@ -186,11 +183,6 @@ export interface Scene {
   fontStyle?: string; 
   
   compositionMode?: CompositionMode;
-  compositionConfig?: CompositionConfig;
-  
-  subjectFocus?: string;
-  isProductFocus?: boolean;
-  keyVisual?: string;
   
   cameraAngle?: string;
   cameraMovement?: string;
@@ -242,13 +234,6 @@ export interface Scene {
   dialogueEmotion?: string;
   dialogueSfx?: string;
   emotionalBeat?: EmotionalBeat;
-
-  // [v4.6] 장면별 사운드 디자인
-  bgmUrl?: string;               // 장면 배경음악 URL
-  bgmPrompt?: string;            // BGM 생성 프롬프트
-  sfxUrl?: string;               // 장면 효과음 URL
-  sfxPrompt?: string;            // SFX 생성 프롬프트
-  soundMood?: string;            // 장면 사운드 분위기 (AI 추천용)
 
   grokDuration?: '6' | '10';
   grokSpeechMode?: boolean;
@@ -1637,12 +1622,6 @@ export interface EdlEntry {
 }
 
 export type EditPointExportMode = 'direct-mp4' | 'ffmpeg-script' | 'edl-file' | 'push-to-timeline' | 'fcp-xml' | 'capcut-pkg' | 'vrew-pkg';
-
-// --- evolink.ai 모델 ---
-export enum EvolinkImageModel {
-  NANO_BANANA_2 = 'nano-banana-2',
-  NANO_BANANA_PRO = 'nano-banana-pro'
-}
 
 // ═══ 영상 분석실 (VideoAnalysisRoom) ═══
 
