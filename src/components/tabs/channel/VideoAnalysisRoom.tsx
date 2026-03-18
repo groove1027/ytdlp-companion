@@ -2421,9 +2421,16 @@ const BILINGUAL_INSTRUCTION = `
 
 원본이 한국어인 경우 이 규칙을 완전히 무시하고 기존 형식 그대로 출력하라.`;
 
-const buildUserMessage = (inputDesc: string, preset: AnalysisPreset, targetDuration: 0 | 30 | 45 | 60 = 0, versionCount: number = 10): string => {
+const buildUserMessage = (inputDesc: string, preset: AnalysisPreset, targetDuration: 0 | 30 | 45 | 60 = 0, versionCount: number = 10, videoDurationSec: number = 0): string => {
   // 목표 시간 관련 동적 지시 (프리셋별 기존 시간 규칙을 오버라이드) — 0(원본)이면 생략
   const durationInstruction = targetDuration === 0 ? '' : `\n\n### ⏱️ 목표 시간 설정 (사용자 지정 — 최우선 적용)\n- **각 버전의 총 길이를 반드시 약 ${targetDuration}초로 맞추세요.**\n- 컷 수와 개별 컷 길이를 조절하여 합산이 ${targetDuration}초 내외(±5초)가 되도록 설계하세요.\n- ${targetDuration <= 30 ? '핵심 장면만 엄선하여 짧고 임팩트 있게.' : targetDuration <= 45 ? '주요 장면을 선별하되 적절한 호흡으로.' : '충분한 내용을 담아 풍부하게.'}`;
+  // [FIX #529] alltts 롱폼 지원: 원본(targetDuration=0)이고 영상이 90초 초과이면 롱폼 분량 보존 지시 추가
+  const isLongFormAllTts = preset === 'alltts' && targetDuration === 0 && videoDurationSec > 90;
+  const longFormMinRows = isLongFormAllTts ? Math.max(15, Math.round(videoDurationSec / 10)) : 8;
+  const longFormMaxRows = isLongFormAllTts ? Math.max(20, Math.round(videoDurationSec / 7)) : 12;
+  const longFormOverride = isLongFormAllTts
+    ? `\n\n### ⏱️ 원본 분량 보존 — 롱폼 모드 (최우선 적용)\n- 원본 영상은 약 ${Math.round(videoDurationSec / 60)}분(${videoDurationSec}초)입니다.\n- 각 버전의 총 길이를 **원본과 동일하게 약 ${Math.round(videoDurationSec / 60)}분**으로 맞추세요.\n- **"쇼츠 영상 대본"이 아닌, 원본 길이에 맞는 풀 스크립트**를 작성하세요.\n- 컷(행) 수를 대폭 늘려 원본의 모든 정보를 빠짐없이 담으세요 (최소 ${longFormMinRows}행 이상).\n- 각 컷의 타임코드가 영상 전체(00:00~${Math.floor(videoDurationSec / 60).toString().padStart(2, '0')}:${Math.round(videoDurationSec % 60).toString().padStart(2, '0')})에 골고루 분포되어야 합니다.\n- 축약·요약·생략 절대 금지: 원본 정보량 100%를 그대로 유지하되 텍스트만 재조립하세요.`
+    : '';
 
   if (preset === 'alltts') {
     return `## 분석 대상
@@ -2476,7 +2483,7 @@ ${inputDesc}
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | 1 | [N] | (내레이션) "리빌딩된 후킹 문장" | [효과자막] | 3.5초 | 장면 묘사 | 00:03.200 |
 | 2 | [N] | (내레이션) "재조립된 정보 전달" | [효과자막] | 4.0초 | 장면 묘사 | 00:15.800 |
-(총 8~12행)
+(총 ${longFormMinRows}~${longFormMaxRows}행)
 
 [Content ID 회피 정밀 분석]
 텍스트 일치율: X.X%
@@ -2490,7 +2497,7 @@ ${inputDesc}
 제목: ...
 컨셉: ...
 
-(이 패턴으로 ---VERSION ${versionCount}--- 까지 총 ${versionCount}개)` + durationInstruction + BILINGUAL_INSTRUCTION;
+(이 패턴으로 ---VERSION ${versionCount}--- 까지 총 ${versionCount}개)` + durationInstruction + longFormOverride + BILINGUAL_INSTRUCTION;
   }
 
   if (preset === 'condensed') {
@@ -3368,7 +3375,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       const effectiveVersionCount = (preset === 'deep' || preset === 'shopping')
         ? Math.min(currentVersionCount, 5)
         : currentVersionCount;
-      let userPrompt = buildUserMessage(inputDesc, preset, currentTargetDuration, effectiveVersionCount);
+      let userPrompt = buildUserMessage(inputDesc, preset, currentTargetDuration, effectiveVersionCount, knownDurationSec);
 
       // [FIX #398] 원본 순서 유지 모드: 비선형 재배치 지시를 오버라이드
       if (currentKeepOrder && (preset === 'snack' || preset === 'tikitaka')) {
@@ -3780,9 +3787,9 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
     const safeName = sanitizeProjectName(v.title) || `version-${v.id}`;
     const hasEffectSub = v.scenes.some(s => (s.effectSub || '').trim());
     const totalDur = v.scenes.reduce((acc, s) => acc + parseDuration(s.duration), 0);
-    // 프리셋별 숏폼 판단: tikitaka/snack/condensed/alltts는 항상 숏폼 취급, deep은 항상 롱폼
+    // 프리셋별 숏폼 판단: tikitaka/snack/condensed는 항상 숏폼 취급, deep은 항상 롱폼, alltts는 실제 길이로 판단 [FIX #529]
     const isShortForm = selectedPreset === 'deep' ? false
-      : (selectedPreset === 'tikitaka' || selectedPreset === 'snack' || selectedPreset === 'alltts') ? true
+      : (selectedPreset === 'tikitaka' || selectedPreset === 'snack') ? true
       : totalDur <= 90;
     // 프리셋별 SRT 레이어 파일명
     const dlgLabel = selectedPreset === 'snack' ? '자막' : selectedPreset === 'shopping' ? '나레이션' : '일반자막';
@@ -3924,8 +3931,9 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
     const safeName = sanitizeProjectName(v.title) || `version-${v.id}`;
     const hasEffectSub = v.scenes.some(s => (s.effectSub || '').trim());
     const totalDur = v.scenes.reduce((acc, s) => acc + parseDuration(s.duration), 0);
+    // [FIX #529] alltts는 실제 길이로 숏폼 판단
     const isShortForm = selectedPreset === 'deep' ? false
-      : (selectedPreset === 'tikitaka' || selectedPreset === 'snack' || selectedPreset === 'alltts') ? true
+      : (selectedPreset === 'tikitaka' || selectedPreset === 'snack') ? true
       : totalDur <= 90;
     const dlgLabel = selectedPreset === 'snack' ? '자막' : selectedPreset === 'shopping' ? '나레이션' : '일반자막';
     const fxLabel = selectedPreset === 'snack' ? '이원화자막' : selectedPreset === 'shopping' ? '상품효과' : '효과자막';
