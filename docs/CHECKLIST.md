@@ -8,6 +8,12 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-18] #511 영상 분석실 SRT 전용 다운로드 버튼 추가
+- [x] `VideoAnalysisRoom.tsx` — `handleDownloadSrtOnly` 함수 추가 (영상 렌더링 없이 SRT만 즉시 다운로드)
+- [x] `VideoAnalysisRoom.tsx` — "SRT" 전용 버튼 + "SRT+영상" 조건부 버튼 분리
+- [x] `ScenarioPreviewPlayer.tsx` — `onDownloadSrtOnly` optional prop 추가 + "SRT" / "SRT+영상" 버튼 분리
+- [x] tsc + vite build + Puppeteer E2E 검증 통과
+
 ### [2026-03-18] #498 스타일 기반 주제추천 자동 저장
 - [x] `storageService.ts` — `SavedBenchmarkData`에 `topicRecommendations` 필드 추가 + `saveBenchmarkData()` 파라미터 확장
 - [x] `channelAnalysisStore.ts` — `setTopicRecommendations()` auto-save 트리거 + `saveBenchmark()` topicRecommendations 전달 + `loadBenchmark()`/`loadPreset()` 복원

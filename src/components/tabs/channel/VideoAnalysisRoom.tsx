@@ -2840,7 +2840,7 @@ const VideoAnalysisRoom: React.FC = () => {
   const [copyMenuVersionId, setCopyMenuVersionId] = useState<number | null>(null);
   const [elapsedSec, setElapsedSec] = useState(0);
   const [simProgress, setSimProgress] = useState(0);
-  const [batchProgress, setBatchProgress] = useState<{ completed: number; total: number } | null>(null);
+  // [REMOVED] batchProgress state — 5병렬 배치 제거됨 (단일 호출 전환으로 비용 절감)
   const [isLongForm, setIsLongForm] = useState(false);
   const [previewFrame, setPreviewFrame] = useState<{ frame: TimedFrame; scene: SceneRow; versionTitle: string } | null>(null);
   const [previewVersion, setPreviewVersion] = useState<VersionItem | null>(null);
@@ -3030,7 +3030,6 @@ const VideoAnalysisRoom: React.FC = () => {
     setAnalysisPhase('analyzing');
     setElapsedSec(0);
     setSimProgress(0);
-    setBatchProgress(null);
     setIsLongForm(false);
     failsafeFiredRef.current = false; // [FIX #454] 페일세이프 플래그 초기화
     analysisStartRef.current = Date.now();
@@ -3408,9 +3407,8 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
 
       const signal = abortCtrl.signal;
 
-      // 10버전 프리셋은 5병렬 × 2버전, 5버전 프리셋은 단일 호출
+      // 모든 프리셋 단일 호출 (5병렬 배치 제거 — API 비용 ~1/5 절감)
       const totalVersions = (preset === 'deep' || preset === 'shopping') ? 5 : 10;
-      const useParallelBatch = totalVersions === 10;
 
       // [FIX #364] 롱폼 할루시네이션 방지: 5분+ 영상은 temperature를 낮춰 팩트 기반 생성 유도
       const effectiveTemp = maxTimeSec >= 300 ? 0.3 : 0.5;
@@ -3437,9 +3435,9 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
         }
       };
 
-      /** 단일 AI 호출 실행 (공통 라우팅 로직) — overrideFrames: 롱폼 배치별 구간 프레임 */
-      const callAI = async (prompt: string, tokens: number, overrideFrames?: TimedFrame[]): Promise<string> => {
-        const effectiveFrames = overrideFrames ?? frames;
+      /** 단일 AI 호출 실행 (공통 라우팅 로직) */
+      const callAI = async (prompt: string, tokens: number): Promise<string> => {
+        const effectiveFrames = frames;
         // [FIX #189] 다중 영상 URI가 있으면 v1beta에 전체 전달
         const effectiveUris = allVideoUris.length > 0 ? allVideoUris : videoUri ? [videoUri] : [];
         const effectiveMimes = allVideoUris.length > 0 ? allVideoMimes : [videoMime];
@@ -3477,152 +3475,16 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
 
       let text: string;
 
-      if (useParallelBatch) {
-        // ★ 5병렬 배치 × 2버전 — 체감 대기시간 획기적 감소
-        const BATCH_COUNT = 5;
-        const VER_PER_BATCH = 2;
-        const allBatchTexts: string[] = new Array(BATCH_COUNT).fill('');
-        let completedCount = 0;
-        setBatchProgress({ completed: 0, total: BATCH_COUNT });
-
-        if (uploadedFiles.length > 0 && frames.length > 0 && !videoUri) {
-          showToast('프레임 기반 분석 모드로 진행합니다. 잠시만 기다려주세요...', 4000);
-        }
-
-        /** 단일 배치 실행 + 프로그레시브 렌더링 */
-        const runBatch = async (bi: number) => {
-          const startVer = bi * VER_PER_BATCH + 1;
-          const endVer = startVer + VER_PER_BATCH - 1;
-          let batchSuffix = `\n\n---\n## 🚨 BATCH SCOPE (반드시 준수)\n이 호출에서는 전체 ${totalVersions}개 버전 중 **VERSION ${startVer}~${endVer}만** 생성하세요.\n- ---VERSION ${startVer}--- 부터 ---VERSION ${endVer}--- 까지만 출력.\n- 다른 버전은 별도 호출에서 처리됩니다.\n${bi > 0 ? '- 프리즘 분석표 등 전처리 분석 섹션은 생략하고 바로 ---VERSION 블록부터 시작하세요.\n' : ''}\n---`;
-
-          // [FIX #236 + #364] 롱폼 다양성 + 할루시네이션 방지: 긴 영상(5분+)에서 각 배치가 다른 시간 구간에 집중
-          // + 세그먼트별 전사 데이터를 명시적으로 제공하여 AI가 실제 대사만 사용하도록 강제
-          let batchFrames: TimedFrame[] | undefined;
-          if (maxTimeSec >= 300) {
-            const segDur = maxTimeSec / BATCH_COUNT;
-            const segStart = bi * segDur;
-            const segEnd = (bi + 1) * segDur;
-
-            // [FIX #364] 세그먼트별 전사 데이터 추출 — 해당 구간의 실제 대사를 AI에 명시 제공
-            let segmentTranscriptBlock = '';
-            if (diarizedUtterances.length > 0) {
-              const segUtterances = diarizedUtterances.filter(
-                u => u.startTime < segEnd && u.endTime > segStart
-              );
-              if (segUtterances.length > 0) {
-                const segLines = segUtterances.map(u => {
-                  // [FIX #364] formatTimeSec과 동일한 MM:SS 패딩 포맷 사용
-                  const sStr = `${String(Math.floor(u.startTime / 60)).padStart(2, '0')}:${String(Math.floor(u.startTime % 60)).padStart(2, '0')}`;
-                  const eStr = `${String(Math.floor(u.endTime / 60)).padStart(2, '0')}:${String(Math.floor(u.endTime % 60)).padStart(2, '0')}`;
-                  return `[${u.speakerId} ${sStr}~${eStr}] ${u.text}`;
-                });
-                // [FIX #364] 세그먼트 전사가 너무 길면 토큰 낭비 방지 — 최대 50개 발화로 제한
-                const MAX_SEG_LINES = 50;
-                const truncated = segLines.length > MAX_SEG_LINES;
-                const limitedLines = truncated ? segLines.slice(0, MAX_SEG_LINES) : segLines;
-                segmentTranscriptBlock = `\n\n## 📜 이 구간(${formatTimeSec(Math.round(segStart))}~${formatTimeSec(Math.round(segEnd))})의 실제 전사 데이터 (${segUtterances.length}개 발화)\n아래는 이 구간에서 실제로 발화된 대사입니다. **[S] 모드 대사는 반드시 아래 전사에 존재하는 발화만 사용하세요. 아래에 없는 대사를 창작하면 안 됩니다.**\n\n${limitedLines.join('\n')}${truncated ? `\n... (외 ${segLines.length - MAX_SEG_LINES}개 발화 생략 — 위 대사 중심으로 설계)` : ''}`;
-              } else {
-                segmentTranscriptBlock = `\n\n## 📜 이 구간(${formatTimeSec(Math.round(segStart))}~${formatTimeSec(Math.round(segEnd))})의 전사 데이터\n이 구간에는 감지된 대사가 없습니다. [S] 모드 사용을 최소화하고 [N] 내레이션 중심으로 설계하세요.`;
-              }
-            }
-
-            batchSuffix += `\n\n## 🎯 롱폼 구간 지시 (필수 — 할루시네이션 금지)\n이 영상은 총 ${formatTimeSec(Math.round(maxTimeSec))} 길이의 긴 영상입니다.\nVERSION ${startVer}~${endVer}는 **${formatTimeSec(Math.round(segStart))} ~ ${formatTimeSec(Math.round(segEnd))} 구간**의 핵심 장면·대화를 중심으로 리메이크하세요.\n- 타임코드 소스는 반드시 ${formatTimeSec(Math.round(segStart))}~${formatTimeSec(Math.round(segEnd))} 범위 내에서 선택\n- 이 구간의 주요 전개·인물·대화를 기반으로 편집표를 설계\n- 다른 시간대의 내용은 별도 버전에서 다루므로 이 구간에만 집중\n- ☠️ **이 구간에서 실제로 관찰·청취되지 않는 대사/장면을 창작하지 마라** — 전사 데이터와 프레임 이미지에 근거한 내용만 사용${segmentTranscriptBlock}`;
-
-            // 프레임도 해당 구간 위주로 선별 (업로드 영상의 프레임 기반 분석 시)
-            if (frames.length > 0) {
-              const segmentFrames = frames.filter(f => f.timeSec >= segStart && f.timeSec < segEnd);
-              const globalAnchors = [frames[0], frames[frames.length - 1]];
-              const combined = [...globalAnchors, ...segmentFrames];
-              const seen = new Set<number>();
-              batchFrames = combined.filter(f => {
-                if (seen.has(f.timeSec)) return false;
-                seen.add(f.timeSec);
-                return true;
-              }).sort((a, b) => a.timeSec - b.timeSec);
-            }
-          }
-
-          const batchPrompt = userPrompt + batchSuffix;
-          const batchTokens = bi === 0 ? 16000 : 12000;
-          const batchText = await callAI(batchPrompt, batchTokens, batchFrames);
-          allBatchTexts[bi] = batchText;
-          // 프로그레시브 렌더링: 배치 완료 즉시 버전 표시
-          const batchVersions = parseVersions(batchText);
-          const current = useVideoAnalysisStore.getState().versions;
-          const merged = [...current];
-          for (const v of batchVersions) {
-            if (!merged.some(m => m.id === v.id)) merged.push(v);
-          }
-          setVersions(merged.sort((a, b) => a.id - b.id));
-          completedCount++;
-          setBatchProgress({ completed: completedCount, total: BATCH_COUNT });
-          console.log(`[VideoAnalysis] 배치 ${bi + 1}/${BATCH_COUNT} 완료 (버전 ${startVer}~${endVer})`);
-        };
-
-        // 1차 병렬 실행
-        const batchPromises = Array.from({ length: BATCH_COUNT }, (_, bi) => runBatch(bi));
-        const results = await Promise.allSettled(batchPromises);
-
-        // 실패한 배치 수집 → 최대 2회 재시도
-        const MAX_RETRY = 2;
-        let failedIndices = results
-          .map((r, i) => r.status === 'rejected' ? i : -1)
-          .filter(i => i >= 0);
-
-        for (let retry = 0; retry < MAX_RETRY && failedIndices.length > 0; retry++) {
-          if (signal.aborted) break;
-          // [FIX #198] 429 재시도 전 지수 백오프 대기 — 즉시 재시도 시 동일 429 반복 방지
-          const retryDelay = 5000 * Math.pow(2, retry) + Math.random() * 2000; // 5s+j, 10s+j
-          console.log(`[VideoAnalysis] 재시도 ${retry + 1}/${MAX_RETRY}: 배치 ${failedIndices.map(i => i + 1).join(', ')} — ${Math.round(retryDelay / 1000)}초 대기`);
-          await new Promise(r => setTimeout(r, retryDelay));
-          const retryResults = await Promise.allSettled(
-            failedIndices.map(bi => runBatch(bi))
-          );
-          failedIndices = failedIndices.filter((_, ri) => retryResults[ri].status === 'rejected');
-        }
-
-        const totalSuccess = BATCH_COUNT - failedIndices.length;
-        if (totalSuccess === 0) {
-          if (signal.aborted) throw new DOMException('분석이 취소되었습니다.', 'AbortError');
-          // 첫 번째 실패 원인을 포함하여 디버깅 용이하게
-          const firstFailure = results.find(r => r.status === 'rejected') as PromiseRejectedResult | undefined;
-          const reason = firstFailure?.reason instanceof Error ? firstFailure.reason.message : String(firstFailure?.reason || '');
-          throw new Error(reason.includes('API') || reason.includes('키')
-            ? `API 키가 설정되지 않았습니다. 설정에서 API 키를 등록해주세요.`
-            : `모든 병렬 분석 배치가 실패했습니다. (${reason.slice(0, 80) || '원인 불명'})`);
-        }
-        if (failedIndices.length > 0) {
-          showToast(`${BATCH_COUNT}개 배치 중 ${totalSuccess}개 성공 — 일부 버전이 누락될 수 있습니다.`, 5000);
-        }
-
-        text = allBatchTexts.filter(Boolean).join('\n\n');
-      } else {
-        // ★ 단일 호출 — deep/shopping (5버전 + 대량 전처리 분석)
-        const maxTokens = preset === 'deep' ? 65000 : 40000;
-        if (uploadedFiles.length > 0 && frames.length > 0 && !videoUri) {
-          showToast('프레임 기반 분석 모드로 진행합니다. 잠시만 기다려주세요...', 4000);
-        }
-        text = await callAI(userPrompt, maxTokens);
+      // ★ 단일 호출 — 모든 프리셋 (5병렬 배치 제거 → API 입력 토큰 ~1/5 절감)
+      const maxTokens = preset === 'deep' ? 65000 : (preset === 'shopping' ? 40000 : 65000);
+      if (uploadedFiles.length > 0 && frames.length > 0 && !videoUri) {
+        showToast('프레임 기반 분석 모드로 진행합니다. 잠시만 기다려주세요...', 4000);
       }
+      text = await callAI(userPrompt, maxTokens);
 
       setRawResult(text);
-      // [FIX #316] 병렬 배치 시 합친 텍스트 재파싱 금지 — 중복 VERSION ID로 오디오 내용 뒤섞림 방지
-      // 프로그레시브 렌더링(runBatch)에서 배치별로 이미 ID 중복 체크하며 병합했으므로 그 결과를 사용
-      if (useParallelBatch) {
-        // 프로그레시브 버전이 이미 배치별 먼저 도착 결과를 보존 → 추가 파싱 불필요
-        // 혹시 비어있으면 폴백으로 합친 텍스트 파싱
-        const progressive = useVideoAnalysisStore.getState().versions;
-        if (progressive.length === 0) {
-          const parsed = parseVersions(text);
-          // ID 중복 제거: 첫 번째 등장만 유지
-          const deduped = parsed.filter((v, idx, arr) => arr.findIndex(x => x.id === v.id) === idx);
-          setVersions(deduped.sort((a, b) => a.id - b.id));
-        }
-        // else: 프로그레시브 버전 유지 (이미 중복 없음)
-      } else {
-        const parsed = parseVersions(text);
-        setVersions(parsed);
-      }
+      const parsed = parseVersions(text);
+      setVersions(parsed);
 
       // [FIX #313] 배치 완료 후 IndexedDB 자동 저장 — 프레임 추출 전에 저장하여 새로고침 시 복구 가능
       autoSave().catch(() => {});
@@ -3825,7 +3687,6 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       analysisAbortRef.current = null;
       setIsAnalyzing(false);
       setAnalysisPhase('idle');
-      setBatchProgress(null);
       // [FIX #313] 분석 종료 시 최종 자동 저장 (부분 결과 포함)
       autoSave().catch(() => {});
     }
@@ -4074,6 +3935,40 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
     }
   }, [selectedPreset]);
 
+  // SRT 전용 다운로드 (영상 렌더링 없이 SRT만 즉시 다운로드)
+  const handleDownloadSrtOnly = useCallback(async (v: VersionItem) => {
+    if (v.scenes.length === 0) return;
+    const safeName = sanitizeProjectName(v.title) || `version-${v.id}`;
+    const hasEffectSub = v.scenes.some(s => (s.effectSub || '').trim());
+    const totalDur = v.scenes.reduce((acc, s) => acc + parseDuration(s.duration), 0);
+    const isShortForm = selectedPreset === 'deep' ? false
+      : (selectedPreset === 'tikitaka' || selectedPreset === 'snack' || selectedPreset === 'alltts') ? true
+      : totalDur <= 90;
+    const dlgLabel = selectedPreset === 'snack' ? '자막' : selectedPreset === 'shopping' ? '나레이션' : '일반자막';
+    const fxLabel = selectedPreset === 'snack' ? '이원화자막' : selectedPreset === 'shopping' ? '상품효과' : '효과자막';
+    const isTk = true;
+    if (hasEffectSub) {
+      const JSZip = (await import('jszip')).default;
+      const zip = new JSZip();
+      zip.file(`${safeName}_${dlgLabel}.srt`, '\uFEFF' + generateSrt(v.scenes, isTk, 'dialogue', isShortForm, selectedPreset || undefined));
+      zip.file(`${safeName}_${fxLabel}.srt`, '\uFEFF' + generateSrt(v.scenes, isTk, 'effect', isShortForm, selectedPreset || undefined));
+      zip.file(`${safeName}_통합.srt`, '\uFEFF' + generateSrt(v.scenes, isTk, 'combined', isShortForm, selectedPreset || undefined));
+      const zipBlob = await zip.generateAsync({ type: 'blob' });
+      const zipUrl = URL.createObjectURL(zipBlob);
+      logger.registerBlobUrl(zipUrl, 'other', 'VideoAnalysisRoom:srtOnlyZip');
+      const a = document.createElement('a');
+      a.href = zipUrl;
+      a.download = `${safeName}_자막.zip`;
+      a.click();
+      logger.unregisterBlobUrl(zipUrl);
+      URL.revokeObjectURL(zipUrl);
+      showToast(`${dlgLabel} + ${fxLabel} + 통합 SRT가 ZIP으로 다운로드되었어요`);
+    } else {
+      const srt = generateSrt(v.scenes, isTk, 'dialogue', isShortForm, selectedPreset || undefined);
+      downloadSrt(srt, `${safeName}.srt`);
+    }
+  }, [selectedPreset]);
+
   // HTML 다운로드 (개별 버전)
   const handleDownloadVersionHtml = useCallback((v: VersionItem) => {
     if (!selectedPreset) return;
@@ -4098,8 +3993,8 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
   }, []);
 
   // 경과 시간 + 시뮬레이션 진행률 타이머
-  // 병렬 배치: ~50초, 단일 호출(deep/shopping): ~90초
-  const ESTIMATED_TOTAL_SEC = batchProgress ? 50 : 90;
+  // 단일 호출: ~90초 (모든 프리셋 통합)
+  const ESTIMATED_TOTAL_SEC = 90;
   useEffect(() => {
     if (!isAnalyzing) return;
     const iv = setInterval(() => {
@@ -4119,7 +4014,6 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       analysisAbortRef.current?.abort();
       setIsAnalyzing(false);
       setAnalysisPhase('idle');
-      setBatchProgress(null);
       showToast('⚠️ 분석 시간이 초과되었습니다. 다시 시도해주세요.', 6000);
     }, FAILSAFE_MAX_MS);
 
@@ -4367,14 +4261,12 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
             { label: '버전 생성', icon: '✨' },
             { label: '편집 가이드', icon: '📋' },
           ]}
-          message={batchProgress ? `5병렬 AI 분석 진행 중...` : '리메이크 버전 생성 중...'}
+          message="리메이크 버전 생성 중..."
           elapsedSec={elapsedSec}
           estimatedTotalSec={ESTIMATED_TOTAL_SEC}
           accent="blue"
-          description={batchProgress ? '5개 배치가 동시에 분석 중 — 첫 결과가 곧 표시됩니다' : 'AI가 영상을 분석하고 장면별 편집 가이드를 작성하고 있습니다'}
+          description="AI가 영상을 분석하고 장면별 편집 가이드를 작성하고 있습니다"
           onCancel={handleCancelAnalysis}
-          completedBatches={batchProgress?.completed}
-          totalBatches={batchProgress?.total}
           isLongForm={isLongForm}
         />
       )}
@@ -4404,7 +4296,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-blue-300 font-bold text-sm">
-                  {versions.length}/{expectedTotal}개 버전 생성 완료 — 나머지가 차례로 표시됩니다
+                  {versions.length}/{expectedTotal}개 버전 생성 완료
                 </p>
                 <div className="mt-2 h-2 bg-gray-700/50 rounded-full overflow-hidden">
                   <div
@@ -4700,11 +4592,17 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                         {/* ── 그룹 3: 보조 액션 (SRT, HTML, 대본작성, TTS) ── */}
                         {hasScenes && (
                           <div className="flex gap-1.5 flex-wrap">
-                            <button type="button" onClick={() => handleDownloadSrt(v)} disabled={renderingVersionId === v.id}
-                              className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium bg-gray-700/40 text-gray-400 border border-gray-600/20 hover:text-blue-400 hover:border-blue-500/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed">
-                              {renderingVersionId === v.id ? (<><svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>{renderProgress}%</>
-                              ) : (<><svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3M3 17v3a2 2 0 002 2h14a2 2 0 002-2v-3" /></svg>{useVideoAnalysisStore.getState().videoBlob ? 'SRT+영상' : 'SRT'}</>)}
+                            <button type="button" onClick={() => handleDownloadSrtOnly(v)}
+                              className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium bg-gray-700/40 text-gray-400 border border-gray-600/20 hover:text-blue-400 hover:border-blue-500/30 transition-all">
+                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3M3 17v3a2 2 0 002 2h14a2 2 0 002-2v-3" /></svg>SRT
                             </button>
+                            {useVideoAnalysisStore.getState().videoBlob && (
+                              <button type="button" onClick={() => handleDownloadSrt(v)} disabled={renderingVersionId === v.id}
+                                className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium bg-gray-700/40 text-gray-400 border border-gray-600/20 hover:text-blue-400 hover:border-blue-500/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed">
+                                {renderingVersionId === v.id ? (<><svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>{renderProgress}%</>
+                                ) : (<><svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3M3 17v3a2 2 0 002 2h14a2 2 0 002-2v-3" /></svg>SRT+영상</>)}
+                              </button>
+                            )}
                             <button type="button" onClick={() => handleDownloadVersionHtml(v)}
                               className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium bg-gray-700/40 text-gray-400 border border-gray-600/20 hover:text-emerald-400 hover:border-emerald-500/30 transition-all">
                               <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3M3 17v3a2 2 0 002 2h14a2 2 0 002-2v-3" /></svg>HTML
@@ -5218,6 +5116,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
             videoBlob={useVideoAnalysisStore.getState().videoBlob!}
             onClose={() => setPreviewVersion(null)}
             onDownloadSrt={() => handleDownloadSrt(previewVersion)}
+            onDownloadSrtOnly={() => handleDownloadSrtOnly(previewVersion)}
           />
         </Suspense>
       )}

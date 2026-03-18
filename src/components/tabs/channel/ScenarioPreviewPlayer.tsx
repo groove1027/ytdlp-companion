@@ -57,6 +57,7 @@ interface Props {
   videoBlob: Blob;
   onClose: () => void;
   onDownloadSrt: () => void;
+  onDownloadSrtOnly?: () => void;
 }
 
 // 모드 색상 (VideoAnalysisRoom과 통일)
@@ -138,7 +139,7 @@ const SortableSceneButton: React.FC<SortableSceneButtonProps> = ({
 // ═══════════════════════════════════════
 
 const ScenarioPreviewPlayer: React.FC<Props> = ({
-  version, videoBlob, onClose, onDownloadSrt,
+  version, videoBlob, onClose, onDownloadSrt, onDownloadSrtOnly,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const sceneEndRef = useRef<number>(0);
@@ -618,10 +619,17 @@ const ScenarioPreviewPlayer: React.FC<Props> = ({
 
             {/* 내보내기 버튼 */}
             <div className="flex items-center gap-2">
+              {onDownloadSrtOnly && (
+                <button onClick={onDownloadSrtOnly}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-600/20 text-blue-400 border border-blue-500/30 hover:bg-blue-600/30 transition-all">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3M3 17v3a2 2 0 002 2h14a2 2 0 002-2v-3" /></svg>
+                  SRT
+                </button>
+              )}
               <button onClick={onDownloadSrt}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-600/20 text-blue-400 border border-blue-500/30 hover:bg-blue-600/30 transition-all">
                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3M3 17v3a2 2 0 002 2h14a2 2 0 002-2v-3" /></svg>
-                SRT
+                SRT+영상
               </button>
               <button
                 onClick={handleExportMp4}
