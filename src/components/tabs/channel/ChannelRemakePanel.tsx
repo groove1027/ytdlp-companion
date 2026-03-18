@@ -56,6 +56,8 @@ const ChannelRemakePanel: React.FC = () => {
   const setVersions = useChannelAnalysisStore(s => s.setRemakeVersions);
   const sourceInput = useChannelAnalysisStore(s => s.remakeSourceInput);
   const setSourceInput = useChannelAnalysisStore(s => s.setRemakeSourceInput);
+  const remakeVersionCount = useChannelAnalysisStore(s => s.remakeVersionCount);
+  const setRemakeVersionCount = useChannelAnalysisStore(s => s.setRemakeVersionCount);
   const setFinalScript = useScriptWriterStore(s => s.setFinalScript);
   const setTitle = useScriptWriterStore(s => s.setTitle);
   const setGeneratedScript = useScriptWriterStore(s => s.setGeneratedScript);
@@ -183,7 +185,8 @@ const ChannelRemakePanel: React.FC = () => {
       const results: RemakeVersion[] = [];
       const failedLabels: string[] = [];
 
-      for (let i = 0; i < VERSION_CONFIGS.length; i++) {
+      const effectiveCount = Math.min(remakeVersionCount, VERSION_CONFIGS.length);
+      for (let i = 0; i < effectiveCount; i++) {
         const cfg = VERSION_CONFIGS[i];
         setGeneratingStep(i + 1);
 
@@ -269,8 +272,32 @@ const ChannelRemakePanel: React.FC = () => {
         </div>
         <div>
           <h3 className="text-lg font-bold text-white">이 채널 스타일로 대본 만들기</h3>
-          <p className="text-xs text-gray-500">{channelGuideline.channelName} 스타일 · 3가지 버전 동시 생성</p>
+          <p className="text-xs text-gray-500">{channelGuideline.channelName} 스타일 · {remakeVersionCount}가지 버전 생성</p>
         </div>
+      </div>
+
+      {/* 버전 수 선택 */}
+      <div className="flex items-center gap-3 mb-3">
+        <span className="text-xs text-gray-500 flex-shrink-0">버전 수</span>
+        <div className="flex bg-gray-900/70 rounded-lg border border-gray-600/50 p-0.5">
+          {[1, 2, 3].map(n => (
+            <button
+              key={n} type="button"
+              onClick={() => setRemakeVersionCount(n)}
+              disabled={isGenerating}
+              className={`px-3 py-1 text-sm font-medium rounded-md transition-all ${
+                remakeVersionCount === n
+                  ? 'bg-blue-600/30 text-blue-400 border border-blue-500/40'
+                  : 'text-gray-400 hover:text-gray-200 border border-transparent'
+              } ${isGenerating ? 'opacity-50 cursor-not-allowed' : ''}`}
+            >
+              {n}개
+            </button>
+          ))}
+        </div>
+        <span className="text-[10px] text-gray-600">
+          {remakeVersionCount === 1 ? '비용 절약' : remakeVersionCount === 3 ? '풀 비교' : '밸런스'}
+        </span>
       </div>
 
       {/* Input */}
@@ -324,7 +351,7 @@ const ChannelRemakePanel: React.FC = () => {
         {isGenerating ? (
           <>
             <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-            {generatingStep > 0 ? `${generatingStep}/3 ${VERSION_CONFIGS[generatingStep - 1]?.label || ''} 생성 중...` : '준비 중...'}
+            {generatingStep > 0 ? `${generatingStep}/${Math.min(remakeVersionCount, VERSION_CONFIGS.length)} ${VERSION_CONFIGS[generatingStep - 1]?.label || ''} 생성 중...` : '준비 중...'}
             {elapsed > 0 && <span className="text-xs text-blue-200 tabular-nums">{formatElapsed(elapsed)}</span>}
           </>
         ) : (

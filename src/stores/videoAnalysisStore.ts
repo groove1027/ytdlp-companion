@@ -52,11 +52,15 @@ interface VideoAnalysisStore {
   // [FIX #398] 원본 순서 유지 옵션 (스낵형/티키타카에서 비선형 재배치 대신 원본 타임라인 유지)
   keepOriginalOrder: boolean;
 
+  // 버전 수 선택 (사용자 비용 조절용)
+  versionCount: number;
+
   // Actions
   setInputMode: (mode: 'upload' | 'youtube') => void;
   setYoutubeUrl: (url: string) => void;
   setTargetDuration: (dur: 0 | 30 | 45 | 60) => void;
   setKeepOriginalOrder: (val: boolean) => void;
+  setVersionCount: (count: number) => void;
   /** 다중 URL: 특정 인덱스의 URL 업데이트 */
   updateYoutubeUrl: (index: number, url: string) => void;
   /** 다중 URL: 빈 입력 칸 추가 (최대 5개) */
@@ -128,6 +132,7 @@ const INITIAL_STATE = {
   editRoomSelectedVersionIdx: null as number | null,
   targetDuration: 0 as 0 | 30 | 45 | 60,
   keepOriginalOrder: false,
+  versionCount: 10,
 };
 
 export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
@@ -138,6 +143,7 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
       setInputMode: (mode) => set({ inputMode: mode }),
       setTargetDuration: (dur) => set({ targetDuration: dur }),
       setKeepOriginalOrder: (val) => set({ keepOriginalOrder: val }),
+      setVersionCount: (count) => set({ versionCount: count }),
       setYoutubeUrl: (url) => set({ youtubeUrl: url, youtubeUrls: [url] }),
 
       updateYoutubeUrl: (index, url) => {
@@ -376,6 +382,7 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
           youtubeUrls: state.youtubeUrls,
           targetDuration: state.targetDuration,
           keepOriginalOrder: state.keepOriginalOrder,
+          versionCount: state.versionCount,
           selectedPreset: state.selectedPreset,
           rawResult: state.rawResult.length > 50000 ? state.rawResult.slice(0, 50000) : state.rawResult,
           versions: state.versions,

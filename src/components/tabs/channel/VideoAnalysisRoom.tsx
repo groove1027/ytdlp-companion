@@ -2421,7 +2421,7 @@ const BILINGUAL_INSTRUCTION = `
 
 원본이 한국어인 경우 이 규칙을 완전히 무시하고 기존 형식 그대로 출력하라.`;
 
-const buildUserMessage = (inputDesc: string, preset: AnalysisPreset, targetDuration: 0 | 30 | 45 | 60 = 0): string => {
+const buildUserMessage = (inputDesc: string, preset: AnalysisPreset, targetDuration: 0 | 30 | 45 | 60 = 0, versionCount: number = 10): string => {
   // 목표 시간 관련 동적 지시 (프리셋별 기존 시간 규칙을 오버라이드) — 0(원본)이면 생략
   const durationInstruction = targetDuration === 0 ? '' : `\n\n### ⏱️ 목표 시간 설정 (사용자 지정 — 최우선 적용)\n- **각 버전의 총 길이를 반드시 약 ${targetDuration}초로 맞추세요.**\n- 컷 수와 개별 컷 길이를 조절하여 합산이 ${targetDuration}초 내외(±5초)가 되도록 설계하세요.\n- ${targetDuration <= 30 ? '핵심 장면만 엄선하여 짧고 임팩트 있게.' : targetDuration <= 45 ? '주요 장면을 선별하되 적절한 호흡으로.' : '충분한 내용을 담아 풍부하게.'}`;
 
@@ -2440,8 +2440,8 @@ ${inputDesc}
 
 ### ⚠️ 절대 규칙 (위반 시 전체 재작성)
 1. **1단계(프리즘 분석표)를 반드시 먼저 출력:** 원본 vs 리빌딩 1:1 정밀 대조 + 순서 재구성 + 회피 전략 명시.
-2. **2단계에서 6가지 원칙을 모두 적용하여 10개 대본 생성.**
-3. 각 대본은 **정보의 순서를 각기 다르게 배치**하여 10개 간의 유사성도 완전히 분산시켜라.
+2. **2단계에서 6가지 원칙을 모두 적용하여 ${versionCount}개 대본 생성.**
+3. 각 대본은 **정보의 순서를 각기 다르게 배치**하여 ${versionCount}개 간의 유사성도 완전히 분산시켜라.
 4. 모든 행은 **[N](내레이션)** 모드만 사용. 전체 오디오가 TTS이므로 [S], [A] 금지.
 5. 예상 시간은 **X.X초** 형식 (한국어 4글자/초). 비디오 화면 지시는 해당 장면 정확히 묘사.
 6. 타임코드 소스는 **MM:SS.ms** 형식 (원본 영상 내 실제 위치).
@@ -2490,7 +2490,7 @@ ${inputDesc}
 제목: ...
 컨셉: ...
 
-(이 패턴으로 ---VERSION 10--- 까지 총 10개)` + durationInstruction + BILINGUAL_INSTRUCTION;
+(이 패턴으로 ---VERSION ${versionCount}--- 까지 총 ${versionCount}개)` + durationInstruction + BILINGUAL_INSTRUCTION;
   }
 
   if (preset === 'condensed') {
@@ -2498,7 +2498,7 @@ ${inputDesc}
 ${inputDesc}
 
 ## 지시 사항
-위 영상의 **전체 내용을 시간순으로 파악**하여, **10가지 서로 다른 축약 리캡 버전**을 설계하세요.
+위 영상의 **전체 내용을 시간순으로 파악**하여, **${versionCount}가지 서로 다른 축약 리캡 버전**을 설계하세요.
 각 버전은 전체 스토리를 60초 내외로 압축하되, **원본의 시간 흐름을 절대 뒤바꾸지 마세요.**
 
 ### 🚨 최우선 규칙: 시간순 압축
@@ -2514,11 +2514,7 @@ ${inputDesc}
 3. 타임코드는 **MM:SS.ms** 형식. 반드시 **시간순 오름차순**이어야 한다.
 4. 예상 시간은 **X.X초** 형식. 내레이션 길이 기준 (한국어 4글자/초).
 5. 비디오 화면 지시는 해당 타임코드에서 **실제로 보이는 화면**을 정확히 기술.
-6. **각 버전은 서로 다른 요약 전략**으로 차별화:
-   - 버전 1~3: 스토리 중심 (전체 줄거리 요약)
-   - 버전 4~6: 감정 중심 (감정적 하이라이트 위주)
-   - 버전 7~8: 반전/서스펜스 중심 (궁금증 유발)
-   - 버전 9~10: 인물/관계 중심 (캐릭터 기반 요약)
+6. **각 버전은 서로 다른 요약 전략**으로 차별화 (스토리 중심, 감정 중심, 반전/서스펜스 중심, 인물/관계 중심 등에서 가장 효과적인 ${versionCount}가지를 선택).
 7. **버전당 8~15개 행.** 총 45~75초 설계.
 8. **효과자막 필수:** 감정/상황 강조 (2~8자).
 9. **각 VERSION 사이에 불필요한 설명 없이 바로 다음 VERSION.**
@@ -2540,7 +2536,7 @@ ${inputDesc}
 제목: ...
 컨셉: ...
 
-(이 패턴으로 ---VERSION 10--- 까지 총 10개)` + durationInstruction + BILINGUAL_INSTRUCTION;
+(이 패턴으로 ---VERSION ${versionCount}--- 까지 총 ${versionCount}개)` + durationInstruction + BILINGUAL_INSTRUCTION;
   }
 
   if (preset === 'tikitaka') {
@@ -2548,8 +2544,8 @@ ${inputDesc}
 ${inputDesc}
 
 ## 지시 사항
-위 영상의 **실제 제목, 설명, 태그, 댓글, 첨부된 프레임 이미지 등 모든 정보를 철저히 분석**하여 **10가지 서로 다른 바이럴 티키타카 리메이크 버전**을 설계하세요.
-각 버전은 시스템 프롬프트의 2단계에 정의된 **10가지 바이럴 패턴 전략을 1번부터 10번까지 순서대로 하나씩 적용**해야 합니다.
+위 영상의 **실제 제목, 설명, 태그, 댓글, 첨부된 프레임 이미지 등 모든 정보를 철저히 분석**하여 **${versionCount}가지 서로 다른 바이럴 티키타카 리메이크 버전**을 설계하세요.
+각 버전은 시스템 프롬프트의 2단계에 정의된 **10가지 바이럴 패턴 전략 중 가장 효과적인 ${versionCount}가지를 선택**하여 적용해야 합니다.
 
 ### 🚨 최우선 규칙
 - **원본 분량 100% 유지:** 원본 대본의 대사를 요약/축약/생략하지 마라. 모든 핵심 대사, 추임새, 리액션, 현장음을 빠짐없이 포함. (모드 A 적용 시)
@@ -2604,7 +2600,7 @@ ${inputDesc}
 컨셉: ...
 재배치 구조: ...
 
-(이 패턴으로 ---VERSION 10--- 까지 총 10개)` + durationInstruction + BILINGUAL_INSTRUCTION;
+(이 패턴으로 ---VERSION ${versionCount}--- 까지 총 ${versionCount}개)` + durationInstruction + BILINGUAL_INSTRUCTION;
   }
 
   // 심층 분석
@@ -2629,8 +2625,8 @@ ${inputDesc}
 5. **단계 2: PRODUCTION**
    - **Part 1: 심층 조사 보고서** — 🔍이게 무엇인지, 🧑‍🔬전문 용어, 💡원리, ⚙️작동 방식, 🤔이유, ✨장단점, 💰가격, ⏳시간/기간, ❗️관련 유용 정보 — 각 항목 상세 기술.
    - **Part 2: 최종 제작 기획서** — 바이럴 제목 후보 30개 + 평가, 60초 Shorts 스토리 구조, 최종 대본(내레이션 스타일 가이드 100% 준수, code 블록으로 출력).
-6. **단계 3: EMOTIONAL VARIATIONS** — 4대 본능 자극 대본 확장 (물욕/탐욕, 본능/매력, 감동/인간미, 분노/사회적 정의).
-7. **모든 대본(표준 + 변주 A~D)은 반드시 ---VERSION N--- + 7열 마스터 편집 테이블로 출력.**
+6. **단계 3: EMOTIONAL VARIATIONS** — 4대 본능 자극 대본 확장 (물욕/탐욕, 본능/매력, 감동/인간미, 분노/사회적 정의)${versionCount < 5 ? (versionCount > 1 ? ` 중 가장 효과적인 ${versionCount - 1}가지 선택` : '. 단, 사용자가 1개만 요청했으므로 변주는 생략하고 표준 대본만 출력') : ''}.
+7. **총 ${versionCount}개 대본을 반드시 ---VERSION N--- + 7열 마스터 편집 테이블로 출력.**${versionCount >= 5 ? ' VERSION 1은 표준 대본, 나머지는 변주 A~D.' : versionCount > 1 ? ` VERSION 1은 표준 대본, 나머지 ${versionCount - 1}개는 4대 본능 변주 중 선택.` : ' VERSION 1은 표준 대본.'}
 8. 모든 행은 **[N](내레이션)** 모드만 사용. 예상 시간은 **X.X초** 형식 (한국어 4글자/초).
 9. 효과자막 필수: 상황/감정 강조 예능형 텍스트 (2~8자).
 10. **추가 영상 소스 검색 키워드** — 한국어 25개 + 영어 25개 마크다운 테이블.
@@ -2675,29 +2671,7 @@ ${inputDesc}
 | 2 | [N] | (내레이션) "핵심 전개" | [효과자막] | 5.0초 | 핵심 장면 묘사 | 01:30 |
 (총 8~12행, 60초 내외)
 
----VERSION 2---
-제목: [변주 A: 물욕/탐욕 — 제목]
-컨셉: [가격, 가치, 희소성 관점의 대본]
-
-(7열 마스터 편집 테이블)
-
----VERSION 3---
-제목: [변주 B: 본능/매력 — 제목]
-컨셉: [시각적 쾌감, 원초적 아름다움 관점]
-
-(7열 마스터 편집 테이블)
-
----VERSION 4---
-제목: [변주 C: 감동/인간미 — 제목]
-컨셉: [노력, 장인 정신, 역사 관점]
-
-(7열 마스터 편집 테이블)
-
----VERSION 5---
-제목: [변주 D: 분노/사회적 정의 — 제목]
-컨셉: [비효율, 위험성, 부조리 관점]
-
-(7열 마스터 편집 테이블)` + durationInstruction + BILINGUAL_INSTRUCTION;
+(이 패턴으로 ---VERSION ${versionCount}--- 까지 총 ${versionCount}개.${versionCount > 1 ? ' VERSION 1은 표준 대본, 나머지는 4대 본능 자극 변주' : ' VERSION 1은 표준 대본'})` + durationInstruction + BILINGUAL_INSTRUCTION;
   }
 
   // 쇼핑형 (V7.0 다이내믹 멀티-컷 편집 프로토콜 적용)
@@ -2724,12 +2698,7 @@ ${inputDesc}
 6. 타임코드는 **MM:SS.ms** 형식 엄수 (안전 마진 ±0.1초 적용).
 7. 효과자막 필수: 제품 매력을 강조하는 예능형 텍스트 (2~8자).
 8. 내레이션은 나노 단위로 분할: 순서를 1-1(a), 1-1(b) 형태로 쪼개어 교차 컷.
-9. 5개 대본은 반드시 **서로 다른 소구점/톤/구조**로 차별화:
-   - 대본 1: 본능/직관 자극형
-   - 대본 2: 기능/스펙/효과 강조형
-   - 대본 3: 감성/로망/인테리어 자극형
-   - 대본 4: 상황 제시/공감 유도형
-   - 대본 5: 가성비/선물 추천형
+9. ${versionCount}개 대본은 반드시 **서로 다른 소구점/톤/구조**로 차별화 (본능/직관 자극, 기능/스펙 강조, 감성/로망 자극, 상황 공감 유도, 가성비/선물 추천 등에서 가장 효과적인 ${versionCount}가지 선택).
 10. 첨부된 프레임 이미지/영상 내용을 꼼꼼히 분석하여 제품의 실제 모습, 기능, 사용 장면을 정확히 반영하라.
 
 ### 출력 포맷 (V7.0 다이내믹 멀티-컷 편집 테이블)
@@ -2749,7 +2718,7 @@ ${inputDesc}
 제목: [기능/스펙/효과 강조형 제목]
 컨셉: ...
 
-(이 패턴으로 ---VERSION 5--- 까지 총 5개)` + durationInstruction + BILINGUAL_INSTRUCTION;
+(이 패턴으로 ---VERSION ${versionCount}--- 까지 총 ${versionCount}개)` + durationInstruction + BILINGUAL_INSTRUCTION;
   }
 
   // 스낵형
@@ -2757,7 +2726,7 @@ ${inputDesc}
 ${inputDesc}
 
 ## 지시 사항
-위 영상의 **실제 제목, 설명, 태그, 댓글 등 모든 정보를 철저히 분석**하여, 지침서에 따라 **10가지 서로 다른 숏폼 리메이크 버전**을 설계하세요.
+위 영상의 **실제 제목, 설명, 태그, 댓글 등 모든 정보를 철저히 분석**하여, 지침서에 따라 **${versionCount}가지 서로 다른 숏폼 리메이크 버전**을 설계하세요.
 
 ### 🚨 최우선 규칙: 영상 내용 충실 반영
 - **제목은 위에 제공된 영상의 실제 내용/주제를 기반으로** 작성해야 합니다. 영상과 무관한 제목 작성 시 전체 폐기.
@@ -2806,7 +2775,7 @@ ${inputDesc}
 
 (7열 마스터 편집 테이블 + Content ID 분석)
 
-(이 패턴으로 ---VERSION 10--- 까지 총 10개)` + durationInstruction + BILINGUAL_INSTRUCTION;
+(이 패턴으로 ---VERSION ${versionCount}--- 까지 총 ${versionCount}개)` + durationInstruction + BILINGUAL_INSTRUCTION;
 };
 
 // ═══════════════════════════════════════════════════
@@ -2822,6 +2791,7 @@ const VideoAnalysisRoom: React.FC = () => {
     inputMode, youtubeUrl, youtubeUrls, selectedPreset, rawResult, versions, thumbnails, error, expandedId,
     targetDuration, setTargetDuration,
     keepOriginalOrder, setKeepOriginalOrder,
+    versionCount, setVersionCount,
     setInputMode, setYoutubeUrl, updateYoutubeUrl, addYoutubeUrl, removeYoutubeUrl,
     setSelectedPreset, setRawResult, setVersions, setThumbnails,
     setError, setExpandedId, cacheCurrentResult, restoreFromCache, resetResults,
@@ -3393,7 +3363,12 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
 
       const currentTargetDuration = useVideoAnalysisStore.getState().targetDuration;
       const currentKeepOrder = useVideoAnalysisStore.getState().keepOriginalOrder;
-      let userPrompt = buildUserMessage(inputDesc, preset, currentTargetDuration);
+      const currentVersionCount = useVideoAnalysisStore.getState().versionCount;
+      // deep/shopping은 최대 5개, 나머지는 최대 10개
+      const effectiveVersionCount = (preset === 'deep' || preset === 'shopping')
+        ? Math.min(currentVersionCount, 5)
+        : currentVersionCount;
+      let userPrompt = buildUserMessage(inputDesc, preset, currentTargetDuration, effectiveVersionCount);
 
       // [FIX #398] 원본 순서 유지 모드: 비선형 재배치 지시를 오버라이드
       if (currentKeepOrder && (preset === 'snack' || preset === 'tikitaka')) {
@@ -3475,7 +3450,8 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       let text: string;
 
       // ★ 단일 호출 — 모든 프리셋 (5병렬 배치 제거 → API 입력 토큰 ~1/5 절감)
-      const maxTokens = preset === 'deep' ? 65000 : (preset === 'shopping' ? 40000 : 65000);
+      // maxTokens: 1시간 롱폼 기준 버전당 8,000 토큰 확보, 최소 25,000 보장, 상한 65,000
+      const maxTokens = Math.min(Math.max(8000 * effectiveVersionCount, 25000), 65000);
       if (uploadedFiles.length > 0 && frames.length > 0 && !videoUri) {
         showToast('프레임 기반 분석 모드로 진행합니다. 잠시만 기다려주세요...', 4000);
       }
@@ -4206,6 +4182,32 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
             스낵형·티키타카에서 장면 순서를 뒤섞지 않고 원본 타임라인 순서 그대로 자막을 추출합니다.
           </p>
         )}
+        {/* 버전 수 선택 */}
+        <div className="flex items-center gap-3 mt-3">
+          <span className="text-xs text-gray-500 flex-shrink-0">버전 수</span>
+          <div className="flex bg-gray-900/70 rounded-lg border border-gray-600/50 p-0.5">
+            {[1, 3, 5, 10].map(n => (
+              <button
+                key={n} type="button"
+                onClick={() => setVersionCount(n)}
+                disabled={isAnalyzing}
+                className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all ${
+                  versionCount === n
+                    ? 'bg-orange-600/30 text-orange-400 border border-orange-500/40'
+                    : 'text-gray-400 hover:text-gray-200 border border-transparent'
+                } ${isAnalyzing ? 'opacity-50 cursor-not-allowed' : ''}`}
+              >
+                {n}개
+              </button>
+            ))}
+          </div>
+          <span className="text-[10px] text-gray-600">
+            {versionCount <= 3 ? '비용 절약' : versionCount >= 10 ? '풀 비교' : '밸런스'}
+            {' · ~'}
+            {versionCount === 1 ? '20' : versionCount === 3 ? '70' : versionCount === 5 ? '100' : '200'}원
+          </span>
+        </div>
+
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mt-4">
           {(Object.entries(PRESET_INFO) as [AnalysisPreset, typeof PRESET_INFO['tikitaka']][]).map(([key, info]) => {
             const isSel = selectedPreset === key && isAnalyzing;
@@ -4291,7 +4293,8 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
 
       {/* ═══ 10가지 버전 아코디언 ═══ */}
       {versions.length > 0 && (() => {
-        const expectedTotal = (selectedPreset === 'deep' || selectedPreset === 'shopping') ? 5 : 10;
+        const expectedTotal = (selectedPreset === 'deep' || selectedPreset === 'shopping')
+          ? Math.min(versionCount, 5) : versionCount;
         const isStillGenerating = isAnalyzing && versions.length < expectedTotal;
         return (
         <div className="space-y-4">

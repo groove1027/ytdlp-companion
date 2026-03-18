@@ -65,6 +65,8 @@ interface ChannelAnalysisStore {
   remakeVersions: RemakeVersion[];
   /** [#414] 리메이크 소스 입력값 (프리셋 복원용) */
   remakeSourceInput: string;
+  /** 리메이크 버전 수 (사용자 비용 조절용, 1~3) */
+  remakeVersionCount: number;
 
   // Actions
   setSubTab: (tab: ChannelAnalysisSubTab) => void;
@@ -106,6 +108,7 @@ interface ChannelAnalysisStore {
   setRemakeVersions: (versions: RemakeVersion[]) => void;
   /** [#414] 리메이크 소스 입력 저장 */
   setRemakeSourceInput: (input: string) => void;
+  setRemakeVersionCount: (count: number) => void;
   /** 저장된 벤치마크 목록 */
   savedBenchmarks: SavedBenchmarkData[];
   /** 현재 활성 슬롯 ID */
@@ -163,6 +166,7 @@ const INITIAL_STATE = {
   videoSortOrder: 'latest' as 'latest' | 'popular',
   remakeVersions: [] as RemakeVersion[],
   remakeSourceInput: '',
+  remakeVersionCount: 3,
   savedBenchmarks: [] as SavedBenchmarkData[],
   activeSlotId: null as string | null,
 };
@@ -279,6 +283,7 @@ export const useChannelAnalysisStore = create<ChannelAnalysisStore>((set) => ({
     }
   },
   setRemakeSourceInput: (input) => set({ remakeSourceInput: input }),
+  setRemakeVersionCount: (count) => set({ remakeVersionCount: count }),
 
   // --- 벤치마크 IndexedDB 영속화 ---
   saveBenchmark: async () => {
