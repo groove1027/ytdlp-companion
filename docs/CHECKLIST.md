@@ -8,6 +8,10 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-19] #508 리메이크 일치율 표시 위치를 대본 상단으로 이동
+- [x] `VideoAnalysisRoom.tsx` — Content ID 블록(일치율·유사도·변형률)을 장면 테이블 위로 이동 (React UI + HTML 내보내기 모두)
+- [x] `tsc --noEmit` + `vite build` 19회 검증 루프 통과
+
 ### [2026-03-19] #483 분석 결과 제목 복사 기능 추가
 - [x] `VideoAnalysisRoom.tsx` — 버전 제목에 복사 버튼 추가 + 텍스트 선택 가능 (`select-text`)
 - [x] `ChannelRemakePanel.tsx` — 리메이크 결과 제목에 복사 버튼 추가
