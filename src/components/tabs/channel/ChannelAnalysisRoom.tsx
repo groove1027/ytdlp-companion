@@ -242,9 +242,14 @@ const ChannelAnalysisRoom: React.FC = () => {
       for (let i = 0; i < filtered.length; i++) {
         setProgress({ step: 3, message: `대본 수집 중 (${i + 1}/${filtered.length})...` });
         setVideoProgressCount({ current: i, total: filtered.length });
-        const result: TranscriptResult = await getVideoTranscript(filtered[i].videoId);
-        scripts.push({ ...filtered[i], transcript: result.text, transcriptSource: result.source });
-        if (result.source === 'caption') captionSuccessCount++;
+        try {
+          const result: TranscriptResult = await getVideoTranscript(filtered[i].videoId);
+          scripts.push({ ...filtered[i], transcript: result.text, transcriptSource: result.source });
+          if (result.source === 'caption') captionSuccessCount++;
+        } catch (e) {
+          logger.warn(`[채널분석] 영상 ${i + 1}/${filtered.length} 대본 수집 실패 — 빈 텍스트로 대체`, { videoId: filtered[i].videoId });
+          scripts.push({ ...filtered[i], transcript: '', transcriptSource: 'description' });
+        }
         syncQuota();
       }
       setVideoProgressCount(null);

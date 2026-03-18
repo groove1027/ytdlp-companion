@@ -1074,12 +1074,26 @@ const PIPED_CAPTION_INSTANCES = [
  * OAuth 불필요, 쿼터 소비 없음
  */
 const fetchTranscriptViaInvidious = async (videoId: string): Promise<string | null> => {
+    let consecutiveCorsFailures = 0;
     for (const instance of INVIDIOUS_CAPTION_INSTANCES) {
+        // CORS 연속 실패 2회 → 나머지 인스턴스도 동일하므로 조기 종료
+        if (consecutiveCorsFailures >= 2) {
+            logger.info('[YouTube] Invidious CORS 연속 차단 — 나머지 인스턴스 건너뜀');
+            break;
+        }
         try {
             // 1단계: 사용 가능한 자막 목록 조회
             const listUrl = `${instance}/api/v1/captions/${videoId}`;
-            const listRes = await fetch(listUrl, { signal: AbortSignal.timeout(6000) });
+            const ctrl = new AbortController();
+            const timer = setTimeout(() => ctrl.abort(), 6000);
+            let listRes: Response;
+            try {
+                listRes = await fetch(listUrl, { signal: ctrl.signal });
+            } finally {
+                clearTimeout(timer);
+            }
             if (!listRes.ok) continue;
+            consecutiveCorsFailures = 0; // 성공 응답이면 CORS 아님
 
             const listData = await listRes.json();
             const captions: { label: string; language_code: string; url: string }[] = listData.captions || [];
@@ -1097,7 +1111,14 @@ const fetchTranscriptViaInvidious = async (videoId: string): Promise<string | nu
             const captionUrl = preferredTrack.url.startsWith('http')
                 ? preferredTrack.url
                 : `${instance}${preferredTrack.url}`;
-            const captionRes = await fetch(captionUrl, { signal: AbortSignal.timeout(8000) });
+            const ctrl2 = new AbortController();
+            const timer2 = setTimeout(() => ctrl2.abort(), 8000);
+            let captionRes: Response;
+            try {
+                captionRes = await fetch(captionUrl, { signal: ctrl2.signal });
+            } finally {
+                clearTimeout(timer2);
+            }
             if (!captionRes.ok) continue;
 
             const rawText = await captionRes.text();
@@ -1109,6 +1130,8 @@ const fetchTranscriptViaInvidious = async (videoId: string): Promise<string | nu
                 return cleaned;
             }
         } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            if (msg === 'Failed to fetch') consecutiveCorsFailures++;
             logger.trackSwallowedError('youtubeAnalysisService:invidiousCaption', e);
             continue;
         }
@@ -1121,11 +1144,25 @@ const fetchTranscriptViaInvidious = async (videoId: string): Promise<string | nu
  * GET /streams/{videoId} → subtitles 배열 포함
  */
 const fetchTranscriptViaPiped = async (videoId: string): Promise<string | null> => {
+    let consecutiveCorsFailures = 0;
     for (const instance of PIPED_CAPTION_INSTANCES) {
+        // CORS 연속 실패 2회 → 나머지 인스턴스도 동일하므로 조기 종료
+        if (consecutiveCorsFailures >= 2) {
+            logger.info('[YouTube] Piped CORS 연속 차단 — 나머지 인스턴스 건너뜀');
+            break;
+        }
         try {
             const streamsUrl = `${instance}/streams/${videoId}`;
-            const res = await fetch(streamsUrl, { signal: AbortSignal.timeout(8000) });
+            const ctrl = new AbortController();
+            const timer = setTimeout(() => ctrl.abort(), 8000);
+            let res: Response;
+            try {
+                res = await fetch(streamsUrl, { signal: ctrl.signal });
+            } finally {
+                clearTimeout(timer);
+            }
             if (!res.ok) continue;
+            consecutiveCorsFailures = 0;
 
             const data = await res.json();
             if (data.error || !data.title) continue;
@@ -1144,7 +1181,14 @@ const fetchTranscriptViaPiped = async (videoId: string): Promise<string | null> 
             if (!preferredTrack) continue;
 
             // 자막 텍스트 다운로드
-            const captionRes = await fetch(preferredTrack.url, { signal: AbortSignal.timeout(8000) });
+            const ctrl2 = new AbortController();
+            const timer2 = setTimeout(() => ctrl2.abort(), 8000);
+            let captionRes: Response;
+            try {
+                captionRes = await fetch(preferredTrack.url, { signal: ctrl2.signal });
+            } finally {
+                clearTimeout(timer2);
+            }
             if (!captionRes.ok) continue;
 
             const rawText = await captionRes.text();
@@ -1156,6 +1200,8 @@ const fetchTranscriptViaPiped = async (videoId: string): Promise<string | null> 
                 return cleaned;
             }
         } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            if (msg === 'Failed to fetch') consecutiveCorsFailures++;
             logger.trackSwallowedError('youtubeAnalysisService:pipedCaption', e);
             continue;
         }
@@ -1471,14 +1517,19 @@ export const getVideoTranscript = async (videoId: string): Promise<TranscriptRes
 
     // === 6단계: 영상 설명 폴백 (최후 수단) ===
     logger.warn('[YouTube] 모든 자막 소스 실패 — 영상 설명으로 대체 (분석 품질 저하 가능)', { videoId });
-    trackQuota('videos.list');
-    const description = await getVideoDescriptionFallback(videoId, apiKey);
-    return {
-        text: description
-            ? `[⚠ 자막 미확보 — 영상 설명(description)으로 대체됨. 실제 대본이 아니므로 말투·구조 분석 정확도가 낮을 수 있음]\n\n${description}`
-            : '',
-        source: 'description',
-    };
+    try {
+        trackQuota('videos.list');
+        const description = await getVideoDescriptionFallback(videoId, apiKey);
+        return {
+            text: description
+                ? `[⚠ 자막 미확보 — 영상 설명(description)으로 대체됨. 실제 대본이 아니므로 말투·구조 분석 정확도가 낮을 수 있음]\n\n${description}`
+                : '',
+            source: 'description',
+        };
+    } catch (e) {
+        logger.trackSwallowedError('youtubeAnalysisService:descriptionFallback', e);
+        return { text: '', source: 'description' };
+    }
 };
 
 /** 영상 설명을 자막 대체로 사용 — 제목+설명 결합 (#286) */
