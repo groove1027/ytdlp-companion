@@ -1081,7 +1081,15 @@ const App: React.FC = () => {
       <ApiKeySettings isOpen={showApiSettings} onClose={() => useUIStore.getState().setShowApiSettings(false)} />
       {/* [v4.5] 상단 헤더 바 (전체 너비) */}
       <header className="fixed top-0 left-0 right-0 h-16 bg-gray-900/95 backdrop-blur-md border-b border-gray-800 z-40 flex items-center px-6 gap-4">
-        <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-purple-500 whitespace-nowrap">
+        <h1
+          onClick={goToDashboard}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goToDashboard(); } }}
+          role="button"
+          tabIndex={0}
+          aria-label="홈으로 돌아가기"
+          className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-purple-500 whitespace-nowrap cursor-pointer hover:from-blue-300 hover:to-purple-400 transition-all select-none focus:outline-none focus:ring-2 focus:ring-blue-400/50 rounded"
+          title="홈으로 돌아가기"
+        >
           All In One Production <span className="text-sm text-gray-400 ml-1 font-medium">v4.5</span>
         </h1>
         <div className="ml-auto flex items-center gap-3">

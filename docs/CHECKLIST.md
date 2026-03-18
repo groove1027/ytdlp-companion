@@ -8,6 +8,11 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-19] #413 로고 클릭 시 홈(프로젝트 대시보드)으로 이동
+- [x] `App.tsx` — 상단 헤더 "All In One Production v4.5" 텍스트에 onClick={goToDashboard} 추가
+- [x] 접근성: role="button", tabIndex, aria-label, 키보드(Enter/Space) 지원, focus ring
+- [x] `tsc --noEmit` + `vite build` 17회 검증 루프 통과
+
 ### [2026-03-19] #569/#568 무료 이미지 일괄생성 오류 수정
 - [x] `StoryboardPanel.tsx` — 무료 모델 배치 동시성 20→3 축소 + 사전 쿠키 검증 추가
 - [x] `imageGeneration.ts` — Whisk 직접 선택 시에도 실패→ImageFX 폴백 추가 (기존: throw)
