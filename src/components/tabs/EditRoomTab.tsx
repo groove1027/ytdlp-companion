@@ -1452,7 +1452,7 @@ const EditRoomTab: React.FC = () => {
       a.href = url;
       a.download = `${projectTitle.replace(/[^\w가-힣\-_ ]/g, '').slice(0, 30) || 'project'}_${target}.zip`;
       a.click();
-      URL.revokeObjectURL(url);
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
       // [FIX #472] 내보내기 결과에 미디어 구성 표시
       const mediaSummary = result.videoCount > 0 && result.imageCount > 0
         ? ` (영상 ${result.videoCount} + 이미지 ${result.imageCount})`

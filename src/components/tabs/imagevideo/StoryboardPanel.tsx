@@ -1450,7 +1450,7 @@ const StoryboardPanel: React.FC = () => {
       a.href = url;
       a.download = `${exportTitle.replace(/[^\w가-힣\-_ ]/g, '').slice(0, 30) || 'project'}_${target}.zip`;
       a.click();
-      URL.revokeObjectURL(url);
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
 
       const mediaSummary = result.videoCount > 0 && result.imageCount > 0
         ? ` (영상 ${result.videoCount} + 이미지 ${result.imageCount})`

@@ -99,7 +99,7 @@ const Step3Export: React.FC = () => {
         </svg>
       ),
       title: 'CapCut 패키지',
-      description: '나레이션 SRT ZIP. CapCut에서 자막 import로 편집점 자동 배치.',
+      description: 'FCP XML + SRT. CapCut 데스크톱에서 XML 가져오기로 편집점 복원.',
       condition: true,
     },
     {

@@ -35,6 +35,15 @@
 - [x] `StoryboardPanel.tsx` — 그리드/배치 이미지 생성 시 최신 선택 모델 사용 보강, 배치 시작 시 스타일/모델 스냅샷 고정으로 전체 씬 스타일 일관성 보장
 - [x] `tsc --noEmit` + `vite build` + `grep` 재검증 통과
 
+### [2026-03-19] CapCut 내보내기 전수 점검 후 핵심 버그 5건 수정
+- [x] `nleExportService.ts` — `buildEditRoomNleZip` CapCut 메타데이터의 `draft_fold_path` / `draft_root_path`를 프로젝트 경로로 복원하여 편집실/스토리보드 폴더 복사 import 안정화
+- [x] `nleExportService.ts` — `buildEdlNlePackageZip` CapCut 분기를 SRT-only에서 `FCP XML + SRT`로 확장하여 Edit Point Step3의 실제 편집점 복원 지원
+- [x] `nleExportService.ts` — `generateNleSrt`를 `timeline/source` 모드로 명확화하고 CapCut/VREW 수동 import용 SRT를 원본 소스 타임 기준으로 수정
+- [x] `nleExportService.ts` — 편집실/스토리보드 NLE export에서 미디어 누락 장면을 조용히 넘기지 않고 명시적 오류로 중단하도록 보강
+- [x] `EditRoomTab.tsx`, `StoryboardPanel.tsx` — NLE ZIP 다운로드의 `URL.revokeObjectURL()` 즉시 해제 제거, 10초 지연 해제로 브라우저별 다운로드 안정성 보강
+- [x] `Step3Export.tsx` — CapCut 카드 설명을 실제 구현(XML import 기반)과 일치하도록 수정
+- [x] `tsc --noEmit` + `vite build` + grep 재검증 통과
+
 ### [2026-03-18] NLE 내보내기 싱크 버그 3건 수정 (Premiere/CapCut)
 - [x] `nleExportService.ts` — 나레이션 클립 길이를 `scene.imageDuration` 고정값 대신 `line.duration`/오디오 메타데이터 실측값으로 적용
 - [x] `nleExportService.ts` — `find()` 기반 1개 선택을 제거하고 `filter()`로 scene별 다중 나레이션 라인을 모두 수집해 순차 배치

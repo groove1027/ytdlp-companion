@@ -149,6 +149,11 @@ function toUs(sec: number): number {
   return Math.round(sec * 1_000_000);
 }
 
+/** CapCut 프로젝트 루트 경로 */
+function getCapCutDraftRoot(projectId: string): string {
+  return `/com.lveditor.draft/${projectId}`;
+}
+
 // ──────────────────────────────────────────────
 // 장면 → 타이밍 정보 추출
 // ──────────────────────────────────────────────
@@ -895,7 +900,7 @@ export function generateNleSrt(
   scenes: VideoSceneRow[],
   layer: 'dialogue' | 'effect' | 'narration' = 'dialogue',
   preset?: VideoAnalysisPreset,
-  cumulativeTiming?: boolean,
+  timingMode: 'timeline' | 'source' = 'timeline',
 ): string {
   const timings = extractTimings(scenes, preset);
   let idx = 1;
@@ -916,9 +921,9 @@ export function generateNleSrt(
     }
     if (!text.trim()) continue;
 
-    // [FIX] Premiere용 SRT는 편집 타임라인 기준, CapCut/VREW는 원본 소스 기준
-    const srtStart = cumulativeTiming ? t.tlStartSec : t.startSec;
-    const srtEnd = cumulativeTiming ? t.tlEndSec : t.endSec;
+    // Premiere/XML 연동은 편집 타임라인 기준, CapCut/VREW 수동 SRT import는 원본 소스 기준
+    const srtStart = timingMode === 'timeline' ? t.tlStartSec : t.startSec;
+    const srtEnd = timingMode === 'timeline' ? t.tlEndSec : t.endSec;
 
     const lineText = breakLines(text);
     entries.push(`${idx}\n${secondsToSrtTime(srtStart)} --> ${secondsToSrtTime(srtEnd)}\n${lineText}`);
@@ -972,10 +977,10 @@ export async function buildNlePackageZip(params: {
     // [FIX #316] SRT를 sidecar 방식으로 media/ 폴더에 배치 — Premiere Captions 자동 인식
     // 영상 파일명과 동일한 이름.srt → Premiere가 자동으로 Captions 트랙에 로드
     const videoBase = (videoFileName || 'video.mp4').replace(/\.[^.]+$/, '');
-    const dlgSrt = generateNleSrt(scenes, 'dialogue', preset, true);
+    const dlgSrt = generateNleSrt(scenes, 'dialogue', preset, 'timeline');
     if (dlgSrt) zip.file(`media/${videoBase}.srt`, BOM + dlgSrt);
 
-    const fxSrt = generateNleSrt(scenes, 'effect', preset, true);
+    const fxSrt = generateNleSrt(scenes, 'effect', preset, 'timeline');
     if (fxSrt) zip.file(`media/${videoBase}_효과.srt`, BOM + fxSrt);
 
     // 루트에도 SRT 복사 (수동 import 폴백용)
@@ -1036,7 +1041,7 @@ export async function buildNlePackageZip(params: {
       draft_cover: '',
       draft_deeplink_url: '',
       draft_enterprise_info: { draft_enterprise_extra: '', draft_enterprise_id: '', draft_enterprise_name: '' },
-      draft_fold_path: `/com.lveditor.draft/${draftResult.projectId}`,
+      draft_fold_path: getCapCutDraftRoot(draftResult.projectId),
       draft_id: draftResult.projectId,
       draft_is_ai_shorts: false,
       draft_is_article_video_draft: false,
@@ -1047,7 +1052,7 @@ export async function buildNlePackageZip(params: {
       draft_name: title,
       draft_new_version: '',
       draft_removable_storage_device: 0,
-      draft_root_path: `/com.lveditor.draft/${draftResult.projectId}`,
+      draft_root_path: getCapCutDraftRoot(draftResult.projectId),
       draft_segment_extra_info: null,
       draft_timeline_materials_size: 0,
       draft_timeline_materials_size_: {},
@@ -1056,7 +1061,7 @@ export async function buildNlePackageZip(params: {
       tm_duration: draftTotalDurUs,
     }));
     const draftMeta = JSON.stringify({
-      draft_fold_path: `/com.lveditor.draft/${draftResult.projectId}`, draft_id: draftResult.projectId, draft_name: title, draft_root_path: `/com.lveditor.draft/${draftResult.projectId}`,
+      draft_fold_path: getCapCutDraftRoot(draftResult.projectId), draft_id: draftResult.projectId, draft_name: title, draft_root_path: getCapCutDraftRoot(draftResult.projectId),
       draft_removable_storage_device: 0,
       draft_materials: [
         { type: 0, value: [] }, { type: 1, value: [] }, { type: 2, value: [] },
@@ -1075,9 +1080,9 @@ export async function buildNlePackageZip(params: {
     }
 
     // 4. SRT 폴백
-    const dlgSrt = generateNleSrt(scenes, 'dialogue', preset, true);
+    const dlgSrt = generateNleSrt(scenes, 'dialogue', preset, 'source');
     if (dlgSrt) zip.file(`${safeName}_자막.srt`, BOM + dlgSrt);
-    const fxSrt = generateNleSrt(scenes, 'effect', preset, true);
+    const fxSrt = generateNleSrt(scenes, 'effect', preset, 'source');
     if (fxSrt) zip.file(`${safeName}_효과자막.srt`, BOM + fxSrt);
 
     zip.file('README.txt', [
@@ -1095,6 +1100,11 @@ export async function buildNlePackageZip(params: {
       '1. CapCut 데스크톱 > File > Import > XML File',
       `2. "${safeName}.xml" 선택`,
       '',
+      '[ 대안: 원본 영상 + SRT import ]',
+      `1. media/${videoFileName || 'video.mp4'} 불러오기`,
+      `2. 자막 > 자막 가져오기 > "${safeName}_자막.srt" 선택`,
+      '3. SRT는 원본 소스 영상 시간 기준입니다.',
+      '',
       `* 편집점: ${scenes.length}개 / 해상도: ${width}x${height} / ${fps}fps`,
     ].join('\n'));
 
@@ -1108,11 +1118,11 @@ export async function buildNlePackageZip(params: {
     }
 
     // 2. SRT 자막
-    const srt = generateNleSrt(scenes, 'dialogue', preset, true);
+    const srt = generateNleSrt(scenes, 'dialogue', preset, 'source');
     if (srt) zip.file(`${safeName}_자막.srt`, BOM + srt);
-    const narSrt = generateNleSrt(scenes, 'narration', preset, true);
+    const narSrt = generateNleSrt(scenes, 'narration', preset, 'source');
     if (narSrt) zip.file(`${safeName}_나레이션.srt`, BOM + narSrt);
-    const fxSrt = generateNleSrt(scenes, 'effect', preset, true);
+    const fxSrt = generateNleSrt(scenes, 'effect', preset, 'source');
     if (fxSrt) zip.file(`${safeName}_효과자막.srt`, BOM + fxSrt);
 
     zip.file('README.txt', [
@@ -1122,6 +1132,7 @@ export async function buildNlePackageZip(params: {
       '1. VREW를 열고 media/ 폴더의 영상을 불러옵니다.',
       `2. 자막 > 자막 파일 불러오기 > "${safeName}_자막.srt" 선택`,
       '3. 자막이 타임라인에 자동 배치됩니다.',
+      '4. SRT는 원본 소스 영상 시간 기준입니다.',
       '',
       '[ 포함된 파일 ]',
       `• ${safeName}_자막.srt — 대사 자막`,
@@ -1450,14 +1461,35 @@ export async function buildEdlNlePackageZip(params: {
       `• 편집점: ${entries.length}개 (Vision AI 정제 타임코드)`,
       `• 소스: ${sourceNames.slice(0, 100)}`,
     ].join('\n'));
-  } else {
-    // CapCut / VREW — 소스 영상 포함 불가(다중 소스), SRT만 제공
+  } else if (target === 'capcut') {
+    const xml = generateFcpXmlFromEdl({ entries, sourceVideos, sourceMapping, title });
+    zip.file(`${safeName}.xml`, xml);
     if (srt) zip.file(`${safeName}_나레이션.srt`, BOM + srt);
-    const appName = target === 'capcut' ? 'CapCut' : 'VREW';
+    const sourceNames = [...new Set(entries.map(e => e.sourceDescription))].join(', ');
     zip.file('README.txt', [
-      `=== ${title} — ${appName} ===`,
+      `=== ${title} — CapCut ===`,
       '',
-      `1. ${appName}에서 소스 영상을 불러옵니다.`,
+      '[ 가져오기 ]',
+      '1. 소스 영상을 XML 파일과 같은 폴더에 배치하세요.',
+      '2. CapCut 데스크톱 > File > Import > XML File',
+      `3. "${safeName}.xml" 선택 → 컷 순서와 길이가 복원됩니다.`,
+      '',
+      '[ 자막 ]',
+      srt
+        ? `• "${safeName}_나레이션.srt" 를 자막 가져오기로 추가할 수 있습니다.`
+        : '• 나레이션 SRT는 비어 있어 포함되지 않았습니다.',
+      '',
+      '[ 프로젝트 정보 ]',
+      `• 편집점: ${entries.length}개 (Vision AI 정제 타임코드)`,
+      `• 소스: ${sourceNames.slice(0, 100)}`,
+    ].join('\n'));
+  } else {
+    // VREW — 소스 영상 포함 불가(다중 소스), SRT만 제공
+    if (srt) zip.file(`${safeName}_나레이션.srt`, BOM + srt);
+    zip.file('README.txt', [
+      `=== ${title} — VREW ===`,
+      '',
+      '1. VREW에서 소스 영상을 불러옵니다.',
       `2. 자막 > 자막 파일 불러오기 > "${safeName}_나레이션.srt" 선택`,
       `* ${entries.length}개 편집점 기반 나레이션 SRT`,
     ].join('\n'));
@@ -1550,6 +1582,9 @@ function buildEditRoomFcpXml(params: {
     const scene = scenes.find(s => s.id === t.sceneId);
     // [FIX #472] mediaFileMap이 있으면 실제 다운로드된 파일 기준, 없으면 기존 로직
     const actualFile = mediaFileMap?.get(i);
+    if (mediaFileMap && !actualFile) {
+      throw new Error(`장면 ${i + 1}의 미디어 파일을 찾을 수 없습니다. 이미지/영상을 다시 확인해주세요.`);
+    }
     const ext = actualFile ? actualFile.split('.').pop()! : (scene?.videoUrl ? 'mp4' : 'jpg');
     const fileName = actualFile ? `media/${actualFile}` : `media/${String(i + 1).padStart(3, '0')}_scene.${ext}`;
     const clipDurFrames = toFrames(t.imageDuration);
@@ -1870,6 +1905,7 @@ export async function buildEditRoomNleZip(params: {
   const mediaBlobMap = new Map<number, Blob>(); // index → Blob (CapCut 루트 복사용)
   const narrationClips: EditRoomNarrationClip[] = []; // 나레이션 배치 정보 (다중 라인 지원)
   const narrationBlobEntries: Array<{ fileName: string; blob: Blob }> = []; // ZIP 루트 복사용
+  const missingSceneMedia: number[] = [];
   let videoCount = 0;
   let imageCount = 0;
 
@@ -1904,9 +1940,19 @@ export async function buildEditRoomNleZip(params: {
         mediaFileMap.set(i, fileName);
         mediaBlobMap.set(i, blob);
         imageCount++;
+        added = true;
       }
     }
 
+    if (!added) {
+      missingSceneMedia.push(i + 1);
+    }
+  }
+
+  if (missingSceneMedia.length > 0) {
+    const preview = missingSceneMedia.slice(0, 8).map((n) => `#${n}`).join(', ');
+    const suffix = missingSceneMedia.length > 8 ? ' 외' : '';
+    throw new Error(`내보낼 수 없는 장면이 있습니다: ${preview}${suffix}. 각 장면에 이미지나 영상을 준비한 뒤 다시 시도해주세요.`);
   }
 
   // 나레이션 오디오: sceneId 기준으로 모든 라인 수집(filter) + 순차 배치
@@ -2242,7 +2288,7 @@ export async function buildEditRoomNleZip(params: {
       draft_cover: '',
       draft_deeplink_url: '',
       draft_enterprise_info: { draft_enterprise_extra: '', draft_enterprise_id: '', draft_enterprise_name: '' },
-      draft_fold_path: '',
+      draft_fold_path: getCapCutDraftRoot(projectId),
       draft_id: projectId,
       draft_is_ai_shorts: false,
       draft_is_article_video_draft: false,
@@ -2253,7 +2299,7 @@ export async function buildEditRoomNleZip(params: {
       draft_name: title,
       draft_new_version: '',
       draft_removable_storage_device: 0,
-      draft_root_path: '',
+      draft_root_path: getCapCutDraftRoot(projectId),
       draft_segment_extra_info: null,
       draft_timeline_materials_size: 0,
       draft_timeline_materials_size_: {},
@@ -2262,7 +2308,7 @@ export async function buildEditRoomNleZip(params: {
       tm_duration: totalDurUs,
     }));
     zip.file('draft_meta_info.json', JSON.stringify({
-      draft_fold_path: '', draft_id: projectId, draft_name: title, draft_root_path: '',
+      draft_fold_path: getCapCutDraftRoot(projectId), draft_id: projectId, draft_name: title, draft_root_path: getCapCutDraftRoot(projectId),
       draft_removable_storage_device: 0,
       draft_materials: [
         { type: 0, value: [] }, { type: 1, value: [] }, { type: 2, value: [] },
