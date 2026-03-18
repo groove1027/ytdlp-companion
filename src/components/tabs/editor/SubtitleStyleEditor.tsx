@@ -42,6 +42,15 @@ type Orientation = 'horizontal' | 'vertical';
 
 const FONT_CAT_KEYS: (FontCategory | 'all')[] = ['all', 'gothic', 'serif', 'display', 'handwriting', 'art', 'pixel'];
 
+const AI_SUBTITLE_ESTIMATED_COST_PER_SCENE = 0.015;
+
+const formatAiSubtitleEstimatedCost = (sceneCount: number): string => (sceneCount * AI_SUBTITLE_ESTIMATED_COST_PER_SCENE).toFixed(2);
+
+const isAbortLikeError = (error: unknown): boolean =>
+  error instanceof DOMException
+    ? error.name === 'AbortError'
+    : error instanceof Error && (error.name === 'AbortError' || error.message.includes('취소'));
+
 // ─── 슬라이더 + 직접입력 (blur/Enter 시에만 클램핑 — 타이핑 중 자유 입력) ───
 const SliderRow: React.FC<{ label: string; value: number; set: (v: number) => void; min: number; max: number; step: number; unit?: string }> = ({ label, value, set, min, max, step, unit }) => {
   const display = step < 1 ? value.toFixed(1) : String(value);
@@ -333,6 +342,9 @@ const SubtitleStyleEditor: React.FC = () => {
   const splitSubtitlesByCharsPerLine = useEditRoomStore((s) => s.splitSubtitlesByCharsPerLine);
   const createSubtitleSegments = useEditRoomStore((s) => s.createSubtitleSegments);
   const [aiSegmentLoading, setAiSegmentLoading] = useState(false);
+  const [aiProcessProgress, setAiProcessProgress] = useState<{ current: number; total: number } | null>(null);
+  const aiProcessAbortControllerRef = useRef<AbortController | null>(null);
+  const aiLastStartedSceneRef = useRef(0);
   const [fontCat, setFontCat] = useState<FontCategory | 'all'>('all');
   const [fontSearch, setFontSearch] = useState('');
   const [fontDropOpen, setFontDropOpen] = useState(false);
@@ -360,6 +372,7 @@ const SubtitleStyleEditor: React.FC = () => {
   const [aiLineBreakChars, setAiLineBreakChars] = useState(() => charsPerLine || 20);
   const [aiLineBreakInput, setAiLineBreakInput] = useState(() => String(charsPerLine || 20));
   const [aiLineBreakLoading, setAiLineBreakLoading] = useState(false);
+  const aiProcessLoading = aiLineBreakLoading || aiSegmentLoading;
   // charsPerLine이 외부(store)에서 변경되면 로컬 상태도 동기화
   useEffect(() => {
     if (charsPerLine > 0) {
@@ -778,6 +791,121 @@ const SubtitleStyleEditor: React.FC = () => {
     if (tpl) setSubtitleStyle({ template: { ...tpl, textAlign: align } });
   }, [tpl, setSubtitleStyle]);
 
+  const handleCancelAiProcess = useCallback(() => {
+    aiProcessAbortControllerRef.current?.abort();
+  }, []);
+
+  const handleAiSubtitleProcess = useCallback(async () => {
+    const targetSceneIds = sceneOrder.filter((sceneId) => sceneSubtitlesMap[sceneId]?.text?.trim());
+    if (targetSceneIds.length === 0) { showToast('자막 텍스트가 없습니다'); return; }
+
+    const estimatedCost = formatAiSubtitleEstimatedCost(targetSceneIds.length);
+    const confirmed = window.confirm(`${targetSceneIds.length}개 장면 처리 예정 (예상 비용: ~$${estimatedCost}). 시작하시겠습니까?`);
+    if (!confirmed) return;
+
+    const controller = new AbortController();
+    aiProcessAbortControllerRef.current = controller;
+    aiLastStartedSceneRef.current = 0;
+    setAiProcessProgress({ current: 0, total: targetSceneIds.length });
+    setAiLineBreakLoading(true);
+
+    try {
+      const currentCpl = useEditRoomStore.getState().charsPerLine || aiLineBreakChars;
+      const payload = targetSceneIds.map((sceneId) => ({
+        id: sceneId,
+        text: sceneSubtitlesMap[sceneId]?.text?.replace(/\n/g, ' ') || '',
+      }));
+      const res = await evolinkChat([
+        { role: 'system', content: 'You are a subtitle line-break assistant. Return ONLY valid JSON.' },
+        { role: 'user', content: `다음 자막 텍스트들을 한 줄당 최대 ${currentCpl}자 이내로 자연스럽게 줄바꿈해주세요.\n기계적으로 글자 수에 맞춰 자르지 말고, 의미 단위/문맥에 맞게 나눠주세요.\n입력: ${JSON.stringify(payload)}\n출력 포맷: 동일 JSON 배열 [{id, text}] (text에 \\n 삽입)` },
+      ], { temperature: 0.2, responseFormat: { type: 'json_object' }, signal: controller.signal, model: 'gemini-3.1-flash-lite-preview' });
+      const raw = res.choices?.[0]?.message?.content || '[]';
+      const obj = JSON.parse(raw);
+      if (controller.signal.aborted) throw new DOMException('AI 자막 처리가 취소되었습니다.', 'AbortError');
+
+      // [FIX #404] AI가 배열을 객체로 감쌀 수 있음
+      const parsed: { id: string; text: string }[] = Array.isArray(obj)
+        ? obj
+        : (obj.results || obj.items || obj.data || obj.subtitles || (Array.isArray(Object.values(obj)[0]) ? Object.values(obj)[0] as { id: string; text: string }[] : []));
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        parsed.forEach(({ id, text }) => { if (id && text) setSceneSubtitle(id, { text }); });
+      }
+
+      if (controller.signal.aborted) throw new DOMException('AI 자막 처리가 취소되었습니다.', 'AbortError');
+      removeAllSubtitlePunctuation();
+
+      setAiLineBreakLoading(false);
+      setAiSegmentLoading(true);
+      const total = await createSubtitleSegments({
+        signal: controller.signal,
+        onProgress: (current, totalScenes) => {
+          aiLastStartedSceneRef.current = current;
+          setAiProcessProgress({ current, total: totalScenes });
+        },
+      });
+      showToast(total > 0
+        ? `AI 자막 처리 완료: 줄바꿈 → 구두점 제거 → ${total}개 세그먼트 분할`
+        : `AI 줄바꿈 + 구두점 제거 완료 (분할 불필요)`
+      );
+    } catch (err) {
+      if (controller.signal.aborted || isAbortLikeError(err)) {
+        const completedScenes = Math.max(0, aiLastStartedSceneRef.current - 1);
+        showToast(`AI 자막 처리가 취소되었습니다. ${completedScenes}개 장면까지 처리 완료.`);
+        return;
+      }
+      showToast('AI 자막 처리 실패: ' + (err instanceof Error ? err.message : '알 수 없는 오류'));
+    } finally {
+      aiProcessAbortControllerRef.current = null;
+      aiLastStartedSceneRef.current = 0;
+      setAiProcessProgress(null);
+      setAiLineBreakLoading(false);
+      setAiSegmentLoading(false);
+    }
+  }, [sceneOrder, sceneSubtitlesMap, aiLineBreakChars, setSceneSubtitle, removeAllSubtitlePunctuation, createSubtitleSegments]);
+
+  const handleAiSegmentOnly = useCallback(async () => {
+    const targetSceneIds = sceneOrder.filter((sceneId) => sceneSubtitlesMap[sceneId]?.text?.trim());
+    if (targetSceneIds.length === 0) { showToast('자막 텍스트가 없습니다'); return; }
+
+    const estimatedCost = formatAiSubtitleEstimatedCost(targetSceneIds.length);
+    const confirmed = window.confirm(`${targetSceneIds.length}개 장면 처리 예정 (예상 비용: ~$${estimatedCost}). 시작하시겠습니까?`);
+    if (!confirmed) return;
+
+    const controller = new AbortController();
+    aiProcessAbortControllerRef.current = controller;
+    aiLastStartedSceneRef.current = 0;
+    setAiProcessProgress({ current: 0, total: targetSceneIds.length });
+    setAiSegmentLoading(true);
+
+    try {
+      const total = await createSubtitleSegments({
+        signal: controller.signal,
+        onProgress: (current, totalScenes) => {
+          aiLastStartedSceneRef.current = current;
+          setAiProcessProgress({ current, total: totalScenes });
+        },
+      });
+      if (total > 0) {
+        showToast(`${total}개 세그먼트 생성 완료 (AI + 오디오 싱크)`);
+      } else {
+        showToast('분할할 자막이 없습니다 (모두 한줄 이내)');
+      }
+    } catch (e) {
+      if (controller.signal.aborted || isAbortLikeError(e)) {
+        const completedScenes = Math.max(0, aiLastStartedSceneRef.current - 1);
+        showToast(`AI 자막 처리가 취소되었습니다. ${completedScenes}개 장면까지 처리 완료.`);
+        return;
+      }
+      logger.trackSwallowedError('SubtitleStyleEditor:aiSegment', e);
+      showToast('AI 분할 실패 — 빠른 분할을 사용하세요');
+    } finally {
+      aiProcessAbortControllerRef.current = null;
+      aiLastStartedSceneRef.current = 0;
+      setAiProcessProgress(null);
+      setAiSegmentLoading(false);
+    }
+  }, [sceneOrder, sceneSubtitlesMap, createSubtitleSegments]);
+
   const toggleBold = useCallback(() => {
     if (!tpl) return;
     const next = tpl.fontWeight >= 700 ? 400 : 700;
@@ -1065,60 +1193,32 @@ const SubtitleStyleEditor: React.FC = () => {
                   className="w-14 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-amber-400 font-mono text-center focus:outline-none focus:border-amber-500/50"
                 />
                 <span className="text-xs text-gray-500">자</span>
-                <button
-                  type="button"
-                  disabled={aiLineBreakLoading || aiSegmentLoading}
-                  onClick={async () => {
-                    const entries = Object.entries(sceneSubtitlesMap).filter(([, v]) => v?.text?.trim());
-                    if (entries.length === 0) { showToast('자막 텍스트가 없습니다'); return; }
-                    setAiLineBreakLoading(true);
-                    try {
-                      // Step 1: AI 줄바꿈 — store에서 최신 값 직접 읽기 (blur→click 사이 클로저 지연 방지)
-                      const currentCpl = useEditRoomStore.getState().charsPerLine || aiLineBreakChars;
-                      const payload = entries.map(([id, v]) => ({ id, text: v.text.replace(/\n/g, ' ') }));
-                      const res = await evolinkChat([
-                        { role: 'system', content: 'You are a subtitle line-break assistant. Return ONLY valid JSON.' },
-                        { role: 'user', content: `다음 자막 텍스트들을 한 줄당 최대 ${currentCpl}자 이내로 자연스럽게 줄바꿈해주세요.\n기계적으로 글자 수에 맞춰 자르지 말고, 의미 단위/문맥에 맞게 나눠주세요.\n입력: ${JSON.stringify(payload)}\n출력 포맷: 동일 JSON 배열 [{id, text}] (text에 \\n 삽입)` },
-                      ], { temperature: 0.2, responseFormat: { type: 'json_object' }, model: 'gemini-3.1-flash-lite-preview' });
-                      const raw = res.choices?.[0]?.message?.content || '[]';
-                      const obj = JSON.parse(raw);
-                      // [FIX #404] AI가 배열을 객체로 감쌀 수 있음
-                      const parsed: { id: string; text: string }[] = Array.isArray(obj)
-                        ? obj
-                        : (obj.results || obj.items || obj.data || obj.subtitles || (Array.isArray(Object.values(obj)[0]) ? Object.values(obj)[0] as { id: string; text: string }[] : []));
-                      if (Array.isArray(parsed) && parsed.length > 0) {
-                        parsed.forEach(({ id, text }) => { if (id && text) setSceneSubtitle(id, { text }); });
-                      }
-                      // Step 2: 구두점 자동 제거
-                      removeAllSubtitlePunctuation();
-                      // Step 3: AI 자막 분할
-                      setAiSegmentLoading(true);
-                      const total = await createSubtitleSegments();
-                      showToast(total > 0
-                        ? `AI 자막 처리 완료: 줄바꿈 → 구두점 제거 → ${total}개 세그먼트 분할`
-                        : `AI 줄바꿈 + 구두점 제거 완료 (분할 불필요)`
-                      );
-                    } catch (err) {
-                      showToast('AI 자막 처리 실패: ' + (err instanceof Error ? err.message : '알 수 없는 오류'));
-                    } finally {
-                      setAiLineBreakLoading(false);
-                      setAiSegmentLoading(false);
-                    }
-                  }}
-                  className={`flex-1 px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${
-                    aiLineBreakLoading || aiSegmentLoading
-                      ? 'bg-gray-700 text-gray-500 cursor-not-allowed border-gray-600'
-                      : 'bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 text-white border-blue-400/50'
-                  }`}
-                >
-                  {aiLineBreakLoading || aiSegmentLoading ? (
+                {aiProcessLoading ? (
+                  <button
+                    type="button"
+                    onClick={handleCancelAiProcess}
+                    className="flex-1 px-3 py-1.5 rounded-lg text-xs font-bold border transition-all bg-red-600/20 text-red-300 border-red-500/30 hover:bg-red-600/30"
+                  >
                     <span className="flex items-center justify-center gap-1">
-                      <span className="w-3 h-3 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />
-                      {aiLineBreakLoading && !aiSegmentLoading ? '줄바꿈 중...' : '분할 중...'}
+                      <span className="w-3 h-3 border-2 border-red-200/40 border-t-red-200 rounded-full animate-spin" />
+                      처리 중 ({aiProcessProgress?.current ?? 0}/{aiProcessProgress?.total ?? 0}) — 취소
                     </span>
-                  ) : 'AI 자막 처리'}
-                </button>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleAiSubtitleProcess}
+                    className="flex-1 px-3 py-1.5 rounded-lg text-xs font-bold border transition-all bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white border-amber-400/50"
+                  >
+                    AI 자막 처리
+                  </button>
+                )}
               </div>
+              {aiProcessLoading && aiProcessProgress && (
+                <p className="text-[11px] text-amber-300 leading-snug">
+                  진행 상황: {aiProcessProgress.current}/{aiProcessProgress.total} 장면 처리 중
+                </p>
+              )}
               {/* 개별 실행 (접이식) */}
               <details className="group">
                 <summary className="text-[11px] text-gray-600 cursor-pointer hover:text-gray-400 transition-colors select-none">
@@ -1128,33 +1228,18 @@ const SubtitleStyleEditor: React.FC = () => {
                   <div className="flex gap-2">
                     <button
                       type="button"
-                      disabled={aiSegmentLoading}
-                      onClick={async () => {
-                        setAiSegmentLoading(true);
-                        try {
-                          const total = await createSubtitleSegments();
-                          if (total > 0) {
-                            showToast(`${total}개 세그먼트 생성 완료 (AI + 오디오 싱크)`);
-                          } else {
-                            showToast('분할할 자막이 없습니다 (모두 한줄 이내)');
-                          }
-                        } catch (e) {
-                          logger.trackSwallowedError('SubtitleStyleEditor:aiSegment', e);
-                          showToast('AI 분할 실패 — 빠른 분할을 사용하세요');
-                        } finally {
-                          setAiSegmentLoading(false);
-                        }
-                      }}
+                      disabled={aiProcessLoading}
+                      onClick={handleAiSegmentOnly}
                       className={`flex-1 px-3 py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
-                        aiSegmentLoading
+                        aiProcessLoading
                           ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
                           : 'bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white border border-amber-400/50'
                       }`}
                     >
-                      {aiSegmentLoading ? (
+                      {aiProcessLoading ? (
                         <span className="flex items-center gap-1">
                           <span className="w-3 h-3 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />
-                          분할 중...
+                          처리 중...
                         </span>
                       ) : 'AI 자막 분할'}
                     </button>

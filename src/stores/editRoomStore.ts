@@ -45,13 +45,23 @@ const persistSceneOrder = (order: string[]) => {
  * 오디오 파형 무음 구간 감지 → 가장 가까운 자연스러운 분할 시점 반환
  * TTS 오디오의 문장/구 사이 무음을 찾아 정밀 분할 (Web Audio API, 로컬 처리)
  */
-async function findNearestSilenceGap(audioUrl: string, estimatedTime: number, totalDuration: number): Promise<number> {
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new DOMException('AI 자막 처리가 취소되었습니다.', 'AbortError');
+  }
+}
+
+async function findNearestSilenceGap(audioUrl: string, estimatedTime: number, totalDuration: number, signal?: AbortSignal): Promise<number> {
+  let ctx: AudioContext | null = null;
   try {
-    const response = await fetch(audioUrl);
+    throwIfAborted(signal);
+    const response = await fetch(audioUrl, signal ? { signal } : undefined);
+    throwIfAborted(signal);
     const arrayBuffer = await response.arrayBuffer();
     const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    const ctx = new AudioCtx();
+    ctx = new AudioCtx();
     const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+    throwIfAborted(signal);
 
     const channelData = audioBuffer.getChannelData(0);
     const sampleRate = audioBuffer.sampleRate;
@@ -84,8 +94,6 @@ async function findNearestSilenceGap(audioUrl: string, estimatedTime: number, to
       }
     }
 
-    ctx.close();
-
     if (gaps.length === 0) return estimatedTime;
 
     // 추정 시간에 가장 가까운 무음 구간
@@ -99,8 +107,17 @@ async function findNearestSilenceGap(audioUrl: string, estimatedTime: number, to
     // 전체 길이의 30% 이내에서만 보정 (너무 멀면 문자비례 유지)
     return minDist <= totalDuration * 0.3 ? nearest : estimatedTime;
   } catch (e) {
+    if (signal?.aborted) throw new DOMException('AI 자막 처리가 취소되었습니다.', 'AbortError');
     logger.trackSwallowedError('editRoomStore:snapToSilence', e);
     return estimatedTime;
+  } finally {
+    if (ctx) {
+      try {
+        await ctx.close();
+      } catch {
+        // close 실패는 분할 처리 흐름을 막지 않음
+      }
+    }
   }
 }
 
@@ -145,12 +162,15 @@ function findWordBoundaryTime(words: WhisperWord[], splitCharIndex: number, full
 }
 
 /** 오디오 URL에서 Blob을 가져와 Whisper 전사 수행 */
-async function tryWhisperTranscribe(audioUrl: string): Promise<WhisperWord[] | null> {
+async function tryWhisperTranscribe(audioUrl: string, signal?: AbortSignal): Promise<WhisperWord[] | null> {
   try {
     if (!audioUrl || audioUrl.startsWith('blob:invalid')) return null;
-    const response = await fetch(audioUrl);
+    throwIfAborted(signal);
+    const response = await fetch(audioUrl, signal ? { signal } : undefined);
+    throwIfAborted(signal);
     const blob = await response.blob();
-    const result = await transcribeAudio(blob);
+    const result = await transcribeAudio(blob, { signal });
+    throwIfAborted(signal);
     useCostStore.getState().addCost(PRICING.STT_SCRIBE_PER_CALL, 'tts');
     const allWords: WhisperWord[] = [];
     for (const seg of result.segments) {
@@ -163,10 +183,16 @@ async function tryWhisperTranscribe(audioUrl: string): Promise<WhisperWord[] | n
     }
     return allWords.length > 0 ? allWords : null;
   } catch (e) {
+    if (signal?.aborted) throw new DOMException('AI 자막 처리가 취소되었습니다.', 'AbortError');
     logger.trackSwallowedError('editRoomStore:parseWhisperWords', e);
     return null;
   }
 }
+
+type SubtitleSegmentProcessOptions = {
+  signal?: AbortSignal;
+  onProgress?: (current: number, total: number) => void;
+};
 
 interface EditRoomStore {
   // 장면별 설정 (Record<sceneId, config>)
@@ -243,7 +269,7 @@ interface EditRoomStore {
   setBottomFade: (v: number) => void;
   setIsTimelinePlaying: (v: boolean) => void;
   splitSubtitlesByCharsPerLine: () => number;
-  createSubtitleSegments: () => Promise<number>;
+  createSubtitleSegments: (options?: SubtitleSegmentProcessOptions) => Promise<number>;
   setSceneEffect: (sceneId: string, effect: Partial<SceneEffectConfig>) => void;
   setSceneSubtitle: (sceneId: string, subtitle: Partial<SceneSubtitleConfig>) => void;
   setSceneAudioSettings: (sceneId: string, audio: Partial<SceneAudioConfig>) => void;
@@ -1130,14 +1156,21 @@ export const useEditRoomStore = create<EditRoomStore>()(immer((set, get) => ({
 
   setIsTimelinePlaying: (v) => set({ isTimelinePlaying: v }),
 
-  createSubtitleSegments: async () => {
+  createSubtitleSegments: async (options) => {
+    const { signal, onProgress } = options || {};
     const state = get();
     const cpl = state.charsPerLine;
     const soundLines = useSoundStudioStore.getState().lines;
     let totalSegments = 0;
     const updated = { ...state.sceneSubtitles };
+    const targetSceneIds = state.sceneOrder.filter((sceneId) => updated[sceneId]?.text?.trim());
+    const totalScenes = targetSceneIds.length;
 
-    for (const sceneId of state.sceneOrder) {
+    for (let sceneIndex = 0; sceneIndex < targetSceneIds.length; sceneIndex++) {
+      throwIfAborted(signal);
+      onProgress?.(sceneIndex + 1, totalScenes);
+
+      const sceneId = targetSceneIds[sceneIndex];
       const sub = updated[sceneId];
       if (!sub?.text?.trim()) continue;
       // AI 분할 / Whisper 타이밍 계산용 + 세그먼트 텍스트 슬라이싱용 (줄바꿈→공백으로 평탄화)
@@ -1165,7 +1198,8 @@ export const useEditRoomStore = create<EditRoomStore>()(immer((set, get) => ({
           const resp = await evolinkChat([
             { role: 'system', content: `자막 텍스트를 자연스러운 줄 단위로 나눠라.\n각 줄 최대 ${cpl}자. 문맥/구두점/조사 경계에서 분할.\nJSON 응답: {"lines":["줄1","줄2",...]}` },
             { role: 'user', content: rawText }
-          ], { temperature: 0.1, responseFormat: { type: 'json_object' }, model: 'gemini-3.1-flash-lite-preview' });
+          ], { temperature: 0.1, responseFormat: { type: 'json_object' }, signal, model: 'gemini-3.1-flash-lite-preview' });
+          throwIfAborted(signal);
           const parsed = JSON.parse(resp.choices[0].message.content || '{}');
           if (Array.isArray(parsed.lines) && parsed.lines.length > 1) {
             splitPoints = [];
@@ -1178,6 +1212,7 @@ export const useEditRoomStore = create<EditRoomStore>()(immer((set, get) => ({
             splitPoints = fallbackSplitPoints(rawText, cpl);
           }
         } catch (e) {
+          if (signal?.aborted) throw new DOMException('AI 자막 처리가 취소되었습니다.', 'AbortError');
           logger.trackSwallowedError('editRoomStore:aiSubtitleSplit', e);
           splitPoints = fallbackSplitPoints(rawText, cpl);
         }
@@ -1195,7 +1230,8 @@ export const useEditRoomStore = create<EditRoomStore>()(immer((set, get) => ({
       const boundaries: number[] = [0];
 
       // Whisper 전사 시도 (단어별 타임스탬프) + 캐시 저장
-      const whisperWords = audioUrl ? await tryWhisperTranscribe(audioUrl) : null;
+      const whisperWords = audioUrl ? await tryWhisperTranscribe(audioUrl, signal) : null;
+      throwIfAborted(signal);
       if (whisperWords) {
         set(prev => ({ _whisperCache: { ...prev._whisperCache, [sceneId]: whisperWords } }));
       }
@@ -1208,7 +1244,8 @@ export const useEditRoomStore = create<EditRoomStore>()(immer((set, get) => ({
           const ratio = sp / totalChars;
           const estimated = lineDuration * ratio;
           if (audioUrl && !audioUrl.startsWith('blob:invalid')) {
-            const actual = await findNearestSilenceGap(audioUrl, estimated, lineDuration);
+            const actual = await findNearestSilenceGap(audioUrl, estimated, lineDuration, signal);
+            throwIfAborted(signal);
             boundaries.push(actual);
           } else {
             boundaries.push(lineDuration * ratio);

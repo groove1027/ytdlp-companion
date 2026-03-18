@@ -8,6 +8,18 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-19] #573 AI 자막 처리 예상 비용 표시 + 취소 버튼 추가
+- [x] `editRoomStore.ts` — `createSubtitleSegments`에 `AbortSignal` + `onProgress` 콜백 추가, 내부 AI/STT/무음감지 전 구간에 취소 전파
+- [x] `EditRoomGlobalPanel.tsx` — 시작 전 예상 비용 확인 대화상자, 취소 버튼(red), 진행 표시(amber), AbortController 연결
+- [x] `SubtitleStyleEditor.tsx` — 동일 구조 적용: 예상 비용 + 취소 + 진행 표시, 개별 세그먼트 분할도 취소 지원
+- [x] `tsc --noEmit` + `vite build` 10회 검증 루프 통과
+
+### [2026-03-19] #571 Google Whisk 레퍼런스 이미지 생성 실패 수정
+- [x] `googleImageService.ts` — Whisk API 전면 재작성: 신규 포맷(`clientContext`/`imageModelSettings`/`prompt`/`mediaCategory`) 적용, 레퍼런스 이미지는 multi-step 워크플로(생성→캡션→업로드→runImageRecipe)로 전환
+- [x] `imageGeneration.ts` — Whisk 실패 시 ImageFX 자동 폴백 로직 추가 (Imagen 모델 자동 라우팅 시)
+- [x] `google-proxy.ts` — 신규 엔드포인트(`whisk:runImageRecipe`, `trpc/*`) 주석 추가
+- [x] `tsc --noEmit` + `vite build` + `rg` 재검증 통과
+
 ### [2026-03-19] #570 Google 이미지 스타일 레퍼런스 미적용 수정
 - [x] `googleImageService.ts`, `google-proxy.ts` — Google Whisk를 신규 워크플로/레시피 API 포맷으로 전환하고 레퍼런스 이미지 업로드·캡션·리믹싱 경로를 프록시로 중계
 - [x] `imageGeneration.ts` — 캐릭터 참조와 글로벌 스타일 레퍼런스를 분리해서 관리하도록 정리, `NOBODY/EXTRA` 장면에서도 스타일 레퍼런스가 유지되게 수정

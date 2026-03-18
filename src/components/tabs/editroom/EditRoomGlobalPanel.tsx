@@ -40,6 +40,15 @@ const WEIGHT_LABELS: Record<number, string> = {
   500: 'Medium', 600: 'SemiBold', 700: 'Bold', 800: 'ExtraBold', 900: 'Black',
 };
 
+const AI_SUBTITLE_ESTIMATED_COST_PER_SCENE = 0.015;
+
+const formatAiSubtitleEstimatedCost = (sceneCount: number): string => (sceneCount * AI_SUBTITLE_ESTIMATED_COST_PER_SCENE).toFixed(2);
+
+const isAbortLikeError = (error: unknown): boolean =>
+  error instanceof DOMException
+    ? error.name === 'AbortError'
+    : error instanceof Error && (error.name === 'AbortError' || error.message.includes('취소'));
+
 // ─── 이미지 효과 퀵 패널 (대표 프리셋 + 클릭 적용) ───
 const PZ_QUICK = [
   { id: 'fast', label: '빠른', icon: '⚡' },
@@ -266,6 +275,7 @@ const EffectsQuickPanel: React.FC<{ onOpenDetail: () => void }> = ({ onOpenDetai
 const SubtitleQuickPanel: React.FC<{ onOpenDetail: () => void }> = ({ onOpenDetail }) => {
   const globalStyle = useEditRoomStore((s) => s.globalSubtitleStyle);
   const setGlobalSubtitleStyle = useEditRoomStore((s) => s.setGlobalSubtitleStyle);
+  const sceneOrder = useEditRoomStore((s) => s.sceneOrder);
   const sceneSubtitlesMap = useEditRoomStore((s) => s.sceneSubtitles);
   const setSceneSubtitle = useEditRoomStore((s) => s.setSceneSubtitle);
   const createSubtitleSegments = useEditRoomStore((s) => s.createSubtitleSegments);
@@ -274,6 +284,9 @@ const SubtitleQuickPanel: React.FC<{ onOpenDetail: () => void }> = ({ onOpenDeta
   const setCharsPerLine = useEditRoomStore((s) => s.setCharsPerLine);
 
   const [aiLoading, setAiLoading] = useState(false);
+  const [aiProgress, setAiProgress] = useState<{ current: number; total: number } | null>(null);
+  const aiAbortControllerRef = React.useRef<AbortController | null>(null);
+  const aiLastStartedSceneRef = React.useRef(0);
   const bottomFade = useEditRoomStore((s) => s.bottomFade);
   const setBottomFade = useEditRoomStore((s) => s.setBottomFade);
 
@@ -323,18 +336,34 @@ const SubtitleQuickPanel: React.FC<{ onOpenDetail: () => void }> = ({ onOpenDeta
     setExpandedFontId(null);
   }, [updateStyle]);
 
+  const handleCancelAiProcess = useCallback(() => {
+    aiAbortControllerRef.current?.abort();
+  }, []);
+
   const handleAiProcess = useCallback(async () => {
-    const entries = Object.entries(sceneSubtitlesMap).filter(([, v]) => v?.text?.trim());
-    if (entries.length === 0) { showToast('자막 텍스트가 없습니다'); return; }
+    const targetSceneIds = sceneOrder.filter((sceneId) => sceneSubtitlesMap[sceneId]?.text?.trim());
+    if (targetSceneIds.length === 0) { showToast('자막 텍스트가 없습니다'); return; }
+    const estimatedCost = formatAiSubtitleEstimatedCost(targetSceneIds.length);
+    const confirmed = window.confirm(`${targetSceneIds.length}개 장면 처리 예정 (예상 비용: ~$${estimatedCost}). 시작하시겠습니까?`);
+    if (!confirmed) return;
+
+    const controller = new AbortController();
+    aiAbortControllerRef.current = controller;
+    aiLastStartedSceneRef.current = 0;
+    setAiProgress({ current: 0, total: targetSceneIds.length });
     setAiLoading(true);
     try {
-      const payload = entries.map(([id, v]) => ({ id, text: v.text.replace(/\n/g, ' ') }));
+      const payload = targetSceneIds.map((sceneId) => ({
+        id: sceneId,
+        text: sceneSubtitlesMap[sceneId]?.text?.replace(/\n/g, ' ') || '',
+      }));
       const res = await evolinkChat([
         { role: 'system', content: 'You are a subtitle line-break assistant. Return ONLY valid JSON.' },
         { role: 'user', content: `다음 자막 텍스트들을 한 줄당 ${charsPerLine}자에 최대한 가깝게 채워서 자연스럽게 줄바꿈해주세요.\n각 줄이 너무 짧으면 안 됩니다. ${charsPerLine}자의 70~100% 범위를 목표로 하되, 의미 단위/문맥에 맞게 나눠주세요.\n5자 이하의 극단적으로 짧은 줄은 절대 만들지 마세요.\n입력: ${JSON.stringify(payload)}\n출력 포맷: 동일 JSON 배열 [{id, text}] (text에 \\n 삽입)` },
-      ], { temperature: 0.2, responseFormat: { type: 'json_object' }, model: 'gemini-3.1-flash-lite-preview' });
+      ], { temperature: 0.2, responseFormat: { type: 'json_object' }, signal: controller.signal, model: 'gemini-3.1-flash-lite-preview' });
       const raw = res.choices?.[0]?.message?.content || '[]';
       const obj = JSON.parse(raw);
+      if (controller.signal.aborted) throw new DOMException('AI 자막 처리가 취소되었습니다.', 'AbortError');
       // [FIX #404] AI가 배열을 객체로 감쌀 수 있음 ({results:[...]}, {items:[...]}, {data:[...]} 등)
       const parsed: { id: string; text: string }[] = Array.isArray(obj)
         ? obj
@@ -342,18 +371,33 @@ const SubtitleQuickPanel: React.FC<{ onOpenDetail: () => void }> = ({ onOpenDeta
       if (Array.isArray(parsed) && parsed.length > 0) {
         parsed.forEach(({ id, text }) => { if (id && text) setSceneSubtitle(id, { text }); });
       }
+      if (controller.signal.aborted) throw new DOMException('AI 자막 처리가 취소되었습니다.', 'AbortError');
       removeAllSubtitlePunctuation();
-      const total = await createSubtitleSegments();
+      const total = await createSubtitleSegments({
+        signal: controller.signal,
+        onProgress: (current, totalScenes) => {
+          aiLastStartedSceneRef.current = current;
+          setAiProgress({ current, total: totalScenes });
+        },
+      });
       showToast(total > 0
         ? `AI 자막 처리 완료: 줄바꿈 → 구두점 제거 → ${total}개 세그먼트`
         : `AI 줄바꿈 + 구두점 제거 완료`
       );
     } catch (err) {
+      if (controller.signal.aborted || isAbortLikeError(err)) {
+        const completedScenes = Math.max(0, aiLastStartedSceneRef.current - 1);
+        showToast(`AI 자막 처리가 취소되었습니다. ${completedScenes}개 장면까지 처리 완료.`);
+        return;
+      }
       showToast('AI 자막 처리 실패: ' + (err instanceof Error ? err.message : '알 수 없는 오류'));
     } finally {
+      aiAbortControllerRef.current = null;
+      aiLastStartedSceneRef.current = 0;
+      setAiProgress(null);
       setAiLoading(false);
     }
-  }, [sceneSubtitlesMap, charsPerLine, setSceneSubtitle, removeAllSubtitlePunctuation, createSubtitleSegments]);
+  }, [sceneOrder, sceneSubtitlesMap, charsPerLine, setSceneSubtitle, removeAllSubtitlePunctuation, createSubtitleSegments]);
 
   // 선택한 템플릿 중 인기 8개만 표시
   const quickTemplates = React.useMemo(() => SUBTITLE_TEMPLATES.slice(0, 8), []);
@@ -374,20 +418,32 @@ const SubtitleQuickPanel: React.FC<{ onOpenDetail: () => void }> = ({ onOpenDeta
             />
             <span className="text-[10px] text-gray-500">자/줄</span>
           </div>
-          <button
-            type="button"
-            disabled={aiLoading}
-            onClick={handleAiProcess}
-            className="flex-1 px-3 py-1 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white rounded-lg text-xs font-bold border border-amber-400/50 transition-colors disabled:opacity-50"
-          >
-            {aiLoading ? (
+          {aiLoading ? (
+            <button
+              type="button"
+              onClick={handleCancelAiProcess}
+              className="flex-1 px-3 py-1 rounded-lg text-xs font-bold transition-colors bg-red-600/20 text-red-300 border border-red-500/30 hover:bg-red-600/30"
+            >
               <span className="flex items-center justify-center gap-1">
-                <span className="w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                처리 중...
+                <span className="w-3 h-3 border-2 border-red-200/40 border-t-red-200 rounded-full animate-spin" />
+                처리 중 ({aiProgress?.current ?? 0}/{aiProgress?.total ?? 0}) — 취소
               </span>
-            ) : 'AI 자막 처리'}
-          </button>
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={handleAiProcess}
+              className="flex-1 px-3 py-1 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white rounded-lg text-xs font-bold border border-amber-400/50 transition-colors"
+            >
+              AI 자막 처리
+            </button>
+          )}
         </div>
+        {aiLoading && aiProgress && (
+          <p className="text-[10px] text-amber-300 leading-snug">
+            진행 상황: {aiProgress.current}/{aiProgress.total} 장면 처리 중
+          </p>
+        )}
         <p className="text-[10px] text-gray-500 leading-snug">
           AI 줄바꿈({charsPerLine}자 기준) → 구두점(. , ! ? 등) 제거 → 자막 세그먼트 자동 생성
         </p>
