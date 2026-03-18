@@ -8,6 +8,12 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-18] Seedance 1.5 Pro 비디오 생성 UI 연결 (#1~2)
+- [x] `useVideoBatch.ts` — Seedance 단일 생성/일괄 생성 함수 추가, 기본 길이 8초로 연결, 비용 계산 반영
+- [x] `StoryboardScene.tsx` — Seedance 개별 생성 버튼, 배지, 진행 상태 색상 연결
+- [x] `StoryboardPanel.tsx` — 리스트/그리드/상세 액션과 일괄 생성 드롭다운에 Seedance 옵션 추가
+- [x] `tsc --noEmit` + `vite build` + `grep` 재검증 통과
+
 ### [2026-03-18] 죽은 코드 삭제 배치 1 (#8~#12)
 - [x] `VideoGenService.ts` — 미사용 함수 5개 삭제: `validateKieConnection`, `validateApimartConnection`, `validateXaiConnection`, `processImagePart`, `createRemakeVeoTask`
 - [x] `types.ts` — 미사용 `EvolinkImageModel` enum 삭제

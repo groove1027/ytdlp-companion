@@ -188,7 +188,7 @@ export const useVideoBatch = (
                 publicImageUrl = await uploadMediaToHosting(file);
             }
             
-            // Dialogue for Grok (Skip in Safe Mode)
+            // Dialogue for Grok only (Skip in Safe Mode)
             let generatedDialogue = undefined;
             let generatedSfx = undefined;
 
@@ -197,14 +197,12 @@ export const useVideoBatch = (
                 generatedDialogue = scene.generatedDialogue;
                 generatedSfx = scene.generatedSfx || scene.dialogueSfx;
                 logger.info(`[v4.7] Reusing pre-generated dialogue for Scene ${sceneId}: "${generatedDialogue}"`);
-            } else if (!isSafeMode && (overrideSpeech !== undefined ? overrideSpeech : (scene.grokSpeechMode || false))) {
-                 if (effectiveModel !== VideoModel.VEO && effectiveModel !== VideoModel.VEO_QUALITY) {
-                    logger.info(`Generating Dialogue for Scene ${sceneId}...`);
-                    const audioData = await generateCharacterDialogue(scene.scriptText, scene.visualPrompt);
-                    generatedDialogue = audioData.dialogue;
-                    generatedSfx = audioData.sfx;
-                    logger.success(`Dialogue Generated: "${generatedDialogue}"`);
-                 }
+            } else if (effectiveModel === VideoModel.GROK && !isSafeMode && (overrideSpeech !== undefined ? overrideSpeech : (scene.grokSpeechMode || false))) {
+                logger.info(`Generating Dialogue for Scene ${sceneId}...`);
+                const audioData = await generateCharacterDialogue(scene.scriptText, scene.visualPrompt);
+                generatedDialogue = audioData.dialogue;
+                generatedSfx = audioData.sfx;
+                logger.success(`Dialogue Generated: "${generatedDialogue}"`);
             }
 
             // [FIX M9] Re-read scene from store to pick up any edits made during generation
@@ -246,8 +244,12 @@ export const useVideoBatch = (
             // Build prompt for Grok
             const audioSuffix = isSafeMode ? " [No Sound]" : " [Sound Effects Only] [No Music]";
             const enhancedPrompt = `${rawPrompt}${audioSuffix}`.trim();
-            const effectiveDuration = overrideDuration || freshScene.grokDuration || '10';
-            const effectiveSpeech = isSafeMode ? false : (overrideSpeech !== undefined ? overrideSpeech : (freshScene.grokSpeechMode || false));
+            const effectiveDuration = effectiveModel === VideoModel.SEEDANCE
+                ? '8'
+                : (overrideDuration || freshScene.grokDuration || '10');
+            const effectiveSpeech = effectiveModel === VideoModel.GROK && !isSafeMode
+                ? (overrideSpeech !== undefined ? overrideSpeech : (freshScene.grokSpeechMode || false))
+                : false;
 
             // [FIX] Build cultural context string from globalContext + per-scene fields
             // This prevents Veo from defaulting to generic/Chinese-style visuals
@@ -308,10 +310,12 @@ export const useVideoBatch = (
             });
 
             // Cost calculation
-            if (effectiveModel === VideoModel.VEO) {
+            if (effectiveModel === VideoModel.VEO || effectiveModel === VideoModel.VEO_QUALITY) {
                 estimatedCost = PRICING.VIDEO_VEO;
             } else if (effectiveModel === VideoModel.GROK) {
                 estimatedCost = effectiveDuration === '10' ? PRICING.VIDEO_GROK_10S : PRICING.VIDEO_GROK_6S;
+            } else if (effectiveModel === VideoModel.SEEDANCE) {
+                estimatedCost = PRICING.VIDEO_SEEDANCE_PER_SEC * Number(effectiveDuration);
             }
 
             if (signal.aborted) throw new Error("Cancelled by user");
@@ -470,6 +474,20 @@ export const useVideoBatch = (
         logger.success("Grok HQ Batch Completed");
     };
 
+    const runSeedanceBatch = async (sceneIds?: string[]) => {
+        logger.trackAction('비디오 배치 생성 시작', 'Seedance 1.5 Pro');
+        const allTargets = useProjectStore.getState().scenes.filter(s => s.imageUrl && !s.videoUrl && !s.isGeneratingVideo);
+        const targets = sceneIds && sceneIds.length > 0 ? allTargets.filter(s => sceneIds.includes(s.id)) : allTargets;
+        if (targets.length === 0) { useUIStore.getState().setToast({ show: true, message: "작업 대상이 없습니다." }); setTimeout(() => useUIStore.getState().setToast(null), 3000); return; }
+        setIsBatching(true);
+        setProgress({ current: 0, total: targets.length });
+        await runKieBatch(targets, async (scene) => {
+            await processScene(scene.id, scene, VideoModel.SEEDANCE, false, true);
+        }, () => setProgress(prev => ({ ...prev, current: prev.current + 1 })), kieBatchOpts);
+        setIsBatching(false);
+        logger.success("Seedance Batch Completed");
+    };
+
     const runVeoFastBatch = async (sceneIds?: string[]) => {
         logger.trackAction('비디오 배치 생성 시작', 'Veo Fast');
         // [FIX BUG#10] Read current scenes from store to avoid stale closure
@@ -607,6 +625,7 @@ export const useVideoBatch = (
     // [HIGH FIX 1] runSingleVeoQuality uses VEO_QUALITY instead of VEO
     const runSingleGrok = (id: string) => { const s = useProjectStore.getState().scenes.find(x => x.id === id); if (s) processScene(id, s, VideoModel.GROK, false, true).catch(e => logger.error(`runSingleGrok failed: ${id}`, e)); };
     const runSingleGrokHQ = (id: string) => { const s = useProjectStore.getState().scenes.find(x => x.id === id); if (s) processScene(id, s, VideoModel.GROK, true, true).catch(e => logger.error(`runSingleGrokHQ failed: ${id}`, e)); };
+    const runSingleSeedance = (id: string) => { const s = useProjectStore.getState().scenes.find(x => x.id === id); if (s) processScene(id, s, VideoModel.SEEDANCE, false, true).catch(e => logger.error(`runSingleSeedance failed: ${id}`, e)); };
     const runSingleVeoFast = (id: string) => { const s = useProjectStore.getState().scenes.find(x => x.id === id); if (s) processScene(id, s, VideoModel.VEO, false, true).catch(e => logger.error(`runSingleVeoFast failed: ${id}`, e)); };
     const runSingleVeoQuality = (id: string) => { const s = useProjectStore.getState().scenes.find(x => x.id === id); if (s) processScene(id, s, VideoModel.VEO_QUALITY, false, true).catch(e => logger.error(`runSingleVeoQuality failed: ${id}`, e)); };
     const runSingleUpscale = (id: string) => { const s = useProjectStore.getState().scenes.find(x => x.id === id); if (s) processUpscaleOnly(id, s).catch(e => logger.error(`runSingleUpscale failed: ${id}`, e)); };
@@ -616,6 +635,7 @@ export const useVideoBatch = (
         batchProgress: progress,
         detailedStatus,
         runGrokHQBatch,
+        runSeedanceBatch,
         runVeoFastBatch,
         runVeoQualityBatch,
         runUpscaleBatch,
@@ -623,6 +643,7 @@ export const useVideoBatch = (
         runRemakeBatchWithScenes,
         runSingleGrok,
         runSingleGrokHQ,
+        runSingleSeedance,
         runSingleVeoFast,
         runSingleVeoQuality,
         runSingleUpscale,

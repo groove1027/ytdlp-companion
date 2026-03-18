@@ -51,6 +51,8 @@ function aspectRatioClass(ar?: string): string {
 // --- Video Cost Helper ---
 const getGrokCost = (duration?: '6' | '10'): number =>
   duration === '6' ? PRICING.VIDEO_GROK_6S : PRICING.VIDEO_GROK_10S;
+const getSeedanceCost = (): number =>
+  PRICING.VIDEO_SEEDANCE_PER_SEC * 8;
 
 const fmtCost = (usd: number, rate: number): string => {
   const krw = Math.round(usd * rate);
@@ -137,6 +139,7 @@ interface SceneCardProps {
   onRegenerate: (id: string) => void;
   onTransform: (id: string) => void;
   onGrokVideo: (id: string) => void;
+  onSeedanceVideo: (id: string) => void;
   onVeoVideo: (id: string) => void;
   onPlaySceneAudio?: (sceneId: string) => void;
   playingSceneId?: string | null;
@@ -154,7 +157,7 @@ interface SceneCardProps {
   totalScenes: number;
 }
 
-const SceneCard: React.FC<SceneCardProps> = ({ scene, index, onUpdatePrompt, onDelete, onRegenerate, onTransform, onGrokVideo, onVeoVideo, onPlaySceneAudio, playingSceneId, sceneProgress, onAddAfter, onSplit, onMerge, onAutoPrompt, onReferenceUpload, onUploadImage, onOpenDetail, onCopyScript, isSelected, onToggleSelect, totalScenes }) => {
+const SceneCard: React.FC<SceneCardProps> = ({ scene, index, onUpdatePrompt, onDelete, onRegenerate, onTransform, onGrokVideo, onSeedanceVideo, onVeoVideo, onPlaySceneAudio, playingSceneId, sceneProgress, onAddAfter, onSplit, onMerge, onAutoPrompt, onReferenceUpload, onUploadImage, onOpenDetail, onCopyScript, isSelected, onToggleSelect, totalScenes }) => {
   const refInputRef = useRef<HTMLInputElement>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
   return (
@@ -327,6 +330,11 @@ const SceneCard: React.FC<SceneCardProps> = ({ scene, index, onUpdatePrompt, onD
             disabled={!scene.imageUrl || scene.isGeneratingVideo}
             icon={<svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>}
             onClick={() => onGrokVideo(scene.id)} />
+          <ActionButton label="Seedance" color="fuchsia"
+            tooltip={`Seedance 1.5 Pro 8초 — ${fmtCost(getSeedanceCost(), useCostStore.getState().exchangeRate || PRICING.EXCHANGE_RATE)}`}
+            disabled={!scene.imageUrl || scene.isGeneratingVideo}
+            icon={<svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>}
+            onClick={() => onSeedanceVideo(scene.id)} />
           <button type="button" title="Grok 6초/10초 전환"
             onClick={() => useProjectStore.getState().updateScene(scene.id, { grokDuration: scene.grokDuration === '6' ? '10' : '6' })}
             className="h-7 px-1.5 rounded-lg border border-pink-500/20 bg-pink-600/10 text-[10px] font-bold text-pink-300 hover:bg-pink-600/20 transition-all">
@@ -446,6 +454,7 @@ interface GridSceneCardProps {
   onRegenerate: (id: string) => void;
   onDelete: (index: number) => void;
   onGrokVideo: (id: string) => void;
+  onSeedanceVideo: (id: string) => void;
   onVeoVideo: (id: string) => void;
   onPlaySceneAudio?: (sceneId: string) => void;
   playingSceneId?: string | null;
@@ -462,7 +471,7 @@ interface GridSceneCardProps {
   totalScenes: number;
 }
 
-const GridSceneCard: React.FC<GridSceneCardProps> = ({ scene, index, onRegenerate, onDelete, onGrokVideo, onVeoVideo, onPlaySceneAudio, playingSceneId, sceneProgress, onAddAfter, onSplit, onMerge, onReferenceUpload, onUploadImage, onOpenDetail, onCopyScript, isSelected, onToggleSelect, totalScenes }) => {
+const GridSceneCard: React.FC<GridSceneCardProps> = ({ scene, index, onRegenerate, onDelete, onGrokVideo, onSeedanceVideo, onVeoVideo, onPlaySceneAudio, playingSceneId, sceneProgress, onAddAfter, onSplit, onMerge, onReferenceUpload, onUploadImage, onOpenDetail, onCopyScript, isSelected, onToggleSelect, totalScenes }) => {
   const isThisPlaying = playingSceneId === scene.id;
   const gridUploadRef = useRef<HTMLInputElement>(null);
   const arClass = aspectRatioClass(useProjectStore((s) => s.config?.aspectRatio));
@@ -621,6 +630,11 @@ const GridSceneCard: React.FC<GridSceneCardProps> = ({ scene, index, onRegenerat
               disabled={!scene.imageUrl || scene.isGeneratingVideo}
               icon={<svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>}
               onClick={(e) => { e.stopPropagation(); onGrokVideo(scene.id); }} />
+            <ActionButton label="Seedance" color="fuchsia" compact
+              tooltip={`Seedance 1.5 Pro 8초 — ${fmtCost(getSeedanceCost(), useCostStore.getState().exchangeRate || PRICING.EXCHANGE_RATE)}`}
+              disabled={!scene.imageUrl || scene.isGeneratingVideo}
+              icon={<svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>}
+              onClick={(e) => { e.stopPropagation(); onSeedanceVideo(scene.id); }} />
             <ActionButton label="Veo" color="blue" compact
               tooltip={`Veo 3.1 영상 — ${fmtCost(PRICING.VIDEO_VEO, useCostStore.getState().exchangeRate || PRICING.EXCHANGE_RATE)}`}
               disabled={!scene.imageUrl || scene.isGeneratingVideo}
@@ -677,6 +691,7 @@ interface SceneDetailModalProps {
   onRegenerate: (id: string) => void;
   onTransform: (id: string) => void;
   onGrokVideo: (id: string) => void;
+  onSeedanceVideo: (id: string) => void;
   onVeoVideo: (id: string) => void;
   onDelete: (index: number) => void;
   onAutoPrompt: (id: string) => void;
@@ -689,7 +704,7 @@ interface SceneDetailModalProps {
 }
 
 const SceneDetailModal: React.FC<SceneDetailModalProps> = ({
-  scene: sceneProp, index, onClose, onUpdatePrompt, onRegenerate, onTransform, onGrokVideo, onVeoVideo, onDelete, onAutoPrompt, onReferenceUpload, onUploadImage, onAddAfter, onSplit, onMerge, totalScenes
+  scene: sceneProp, index, onClose, onUpdatePrompt, onRegenerate, onTransform, onGrokVideo, onSeedanceVideo, onVeoVideo, onDelete, onAutoPrompt, onReferenceUpload, onUploadImage, onAddAfter, onSplit, onMerge, totalScenes
 }) => {
   // 스토어에서 최신 장면 데이터 구독 (stale prop 방지)
   const liveScene = useProjectStore((s) => s.scenes.find((sc) => sc.id === sceneProp.id));
@@ -888,6 +903,14 @@ const SceneDetailModal: React.FC<SceneDetailModalProps> = ({
                   <><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg> Veo 3.1 1080p <span className="text-blue-400/60 text-xs ml-1">{fmtCost(PRICING.VIDEO_VEO, useCostStore.getState().exchangeRate || PRICING.EXCHANGE_RATE)}</span></>
                 )}
               </button>
+              <button type="button" disabled={!scene.imageUrl || scene.isGeneratingVideo} onClick={() => onSeedanceVideo(scene.id)}
+                className={`col-span-2 flex items-center gap-2 px-3 py-2 rounded-lg border transition-colors text-sm ${scene.isGeneratingVideo ? 'bg-fuchsia-600/20 border-fuchsia-500/30 text-fuchsia-300 cursor-wait' : 'bg-fuchsia-600/10 border-fuchsia-500/20 text-fuchsia-300 hover:bg-fuchsia-600/20 disabled:opacity-30 disabled:cursor-not-allowed'}`}>
+                {scene.isGeneratingVideo ? (
+                  <><span className="w-4 h-4 border-2 border-fuchsia-400/30 border-t-fuchsia-400 rounded-full animate-spin" /> 생성 중 {elapsedVideo > 0 && <span className="tabular-nums text-xs text-fuchsia-400/70">{formatElapsed(elapsedVideo)}</span>}</>
+                ) : (
+                  <><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg> Seedance 1.5 Pro 8초 <span className="text-fuchsia-400/60 text-xs ml-1">{fmtCost(getSeedanceCost(), useCostStore.getState().exchangeRate || PRICING.EXCHANGE_RATE)}</span></>
+                )}
+              </button>
               {/* Video generation status */}
               {scene.isGeneratingVideo && (
                 <div className="col-span-2 flex items-center gap-2 px-3 py-1.5 bg-pink-600/10 border border-pink-500/20 rounded-lg">
@@ -1034,6 +1057,7 @@ const VirtualGridView: React.FC<{
                     onRegenerate={(id) => handleGenerateImage(id)}
                     onDelete={removeScene}
                     onGrokVideo={(id) => videoBatch.runSingleGrokHQ(id)}
+                    onSeedanceVideo={(id) => videoBatch.runSingleSeedance(id)}
                     onVeoVideo={(id) => videoBatch.runSingleVeoFast(id)}
                     onPlaySceneAudio={handlePlaySceneAudio}
                     playingSceneId={playingSceneId}
@@ -1120,6 +1144,7 @@ const VirtualListView: React.FC<{
                 onRegenerate={(id) => handleGenerateImage(id)}
                 onTransform={(id) => handleGenerateImage(id, '다른 구도와 색감으로 변형해주세요')}
                 onGrokVideo={(id) => videoBatch.runSingleGrokHQ(id)}
+                onSeedanceVideo={(id) => videoBatch.runSingleSeedance(id)}
                 onVeoVideo={(id) => videoBatch.runSingleVeoFast(id)}
                 onPlaySceneAudio={handlePlaySceneAudio}
                 playingSceneId={playingSceneId}
@@ -2336,6 +2361,17 @@ const StoryboardPanel: React.FC = () => {
                   <span className="text-[10px] text-fuchsia-400/70">{fmtCost(PRICING.VIDEO_GROK_10S * selectedVideoEligible, exRate)}</span>
                 </button>
                 <div className="border-t border-gray-700" />
+                <p className="px-4 py-1 text-xs text-gray-500 font-bold uppercase">Seedance 1.5 Pro (Kie)</p>
+                <button
+                  type="button"
+                  onClick={() => { videoBatch.runSeedanceBatch(selectedSceneIdsArray); setShowGenDropdown(false); }}
+                  className="w-full text-left px-4 py-2 text-sm text-gray-200 hover:bg-gray-700/60 transition-colors flex items-center gap-2"
+                >
+                  <span className="w-2 h-2 rounded-full bg-fuchsia-400" />
+                  <span className="flex-1">Seedance 1.5 Pro 8초 {hasSelection ? `(${selectedVideoEligible}개)` : '(일괄)'}</span>
+                  <span className="text-[10px] text-fuchsia-400/70">{fmtCost(getSeedanceCost() * selectedVideoEligible, exRate)}</span>
+                </button>
+                <div className="border-t border-gray-700" />
                 <p className="px-4 py-1 text-xs text-gray-500 font-bold uppercase">Veo 3.1 1080p (Evolink)</p>
                 <button
                   type="button"
@@ -2423,6 +2459,7 @@ const StoryboardPanel: React.FC = () => {
           onRegenerate={(id) => handleGenerateImage(id)}
           onTransform={(id) => handleGenerateImage(id, '다른 구도와 색감으로 변형해주세요')}
           onGrokVideo={(id) => videoBatch.runSingleGrokHQ(id)}
+          onSeedanceVideo={(id) => videoBatch.runSingleSeedance(id)}
           onVeoVideo={(id) => videoBatch.runSingleVeoFast(id)}
           onDelete={removeScene}
           onAutoPrompt={handleAutoPrompt}

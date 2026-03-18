@@ -18,6 +18,7 @@ interface StoryboardSceneProps {
   videoFormat: VideoFormat;
   onGenerateImage: (id: string, feedback?: string) => void;
   onGenerateGrokHQ: (id: string) => void;
+  onGenerateSeedance: (id: string) => void;
   onGenerateVeoFast: (id: string) => void;
   onGenerateVeoQuality: (id: string) => void;
   onUploadImage: (id: string, file: File) => void;
@@ -41,6 +42,7 @@ const StoryboardSceneInner: React.FC<StoryboardSceneProps> = ({
   aspectRatio,
   onGenerateImage,
   onGenerateGrokHQ,
+  onGenerateSeedance,
   onGenerateVeoFast,
   onGenerateVeoQuality,
   onUploadImage,
@@ -225,6 +227,8 @@ const StoryboardSceneInner: React.FC<StoryboardSceneProps> = ({
           case VideoModel.VEO:
               return <span className="text-sm bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white px-2 py-0.5 rounded border border-violet-400/50 font-bold flex-shrink-0">💎 Veo 1080p</span>;
           // VEO_FAST removed — Evolink 1080p로 통합
+          case VideoModel.SEEDANCE:
+              return <span className="text-sm bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white px-2 py-0.5 rounded border border-violet-400/50 font-bold flex-shrink-0">✨ Seedance 1.5 Pro</span>;
           case VideoModel.GROK:
               if (isNativeHQ) return <span className="text-sm bg-gradient-to-r from-amber-500 to-orange-500 text-white px-2 py-0.5 rounded font-bold shadow-sm flex-shrink-0">🚀 Grok 720p</span>;
               return <span className="text-sm bg-pink-900/80 text-pink-200 px-2 py-0.5 rounded border border-pink-700 font-bold flex-shrink-0">🚀 Grok (Basic)</span>;
@@ -233,6 +237,7 @@ const StoryboardSceneInner: React.FC<StoryboardSceneProps> = ({
   };
 
   const isVeo = scene.videoModelUsed === VideoModel.VEO || scene.videoModelUsed === VideoModel.VEO_QUALITY;
+  const isVioletVideoModel = scene.videoModelUsed === VideoModel.VEO || scene.videoModelUsed === VideoModel.VEO_QUALITY || scene.videoModelUsed === VideoModel.SEEDANCE;
 
   const formatTime = (seconds?: number) => {
       if (seconds === undefined) return '';
@@ -247,6 +252,13 @@ const StoryboardSceneInner: React.FC<StoryboardSceneProps> = ({
               <div className="bg-black/80 backdrop-blur text-white text-sm px-2 py-1 rounded-l-full border-y border-l border-purple-500/50 flex items-center gap-1 animate-pulse shadow-lg select-none">
                   <div className="w-2 h-2 rounded-full bg-purple-500 shadow-[0_0_5px_#a855f7]"></div>
                   <span className="drop-shadow-md font-medium tracking-tight">✨ 1080p 업그레이드 중... ({Math.round(progress)}%)</span>
+              </div>
+          );
+      } else if (scene.videoModelUsed === VideoModel.SEEDANCE) {
+          return (
+              <div className="bg-black/80 backdrop-blur text-white text-sm px-2 py-1 rounded-l-full border-y border-l border-fuchsia-500/50 flex items-center gap-1 shadow-lg select-none">
+                  <div className="w-2 h-2 rounded-full bg-fuchsia-500 shadow-[0_0_5px_#d946ef]"></div>
+                  <span className="drop-shadow-md font-medium tracking-tight">✨ Seedance 1.5 Pro 재생성 중... ({Math.round(progress)}%)</span>
               </div>
           );
       } else if (scene.videoModelUsed === VideoModel.VEO) {
@@ -421,12 +433,12 @@ const StoryboardSceneInner: React.FC<StoryboardSceneProps> = ({
                                    {/* Phase label */}
                                    <div className="flex items-center justify-center gap-2 mb-1">
                                      <div className={`w-5 h-5 flex-shrink-0 border-2 rounded-full animate-spin ${
-                                       scene.videoModelUsed === VideoModel.VEO || scene.videoModelUsed === VideoModel.VEO_QUALITY
+                                       isVioletVideoModel
                                          ? 'border-violet-400 border-t-transparent'
                                          : 'border-blue-400 border-t-transparent'
                                      }`} />
                                      <span className={`text-sm font-bold ${
-                                       scene.videoModelUsed === VideoModel.VEO || scene.videoModelUsed === VideoModel.VEO_QUALITY
+                                       isVioletVideoModel
                                          ? 'text-violet-300' : 'text-blue-300'
                                      }`}>
                                        {scene.generationStatus || (progress < 5 ? '📤 업로드 및 요청 중...' : progress < 30 ? '⏳ 대기열 처리 중...' : progress < 80 ? '🎬 영상 생성 중...' : '📦 인코딩 마무리 중...')}
@@ -435,7 +447,7 @@ const StoryboardSceneInner: React.FC<StoryboardSceneProps> = ({
                                    {/* Animated progress bar */}
                                    <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
                                      <div className={`h-full rounded-full transition-all duration-700 ease-out ${
-                                       scene.videoModelUsed === VideoModel.VEO || scene.videoModelUsed === VideoModel.VEO_QUALITY
+                                       isVioletVideoModel
                                          ? 'bg-gradient-to-r from-violet-500 to-fuchsia-500'
                                          : 'bg-gradient-to-r from-blue-500 to-violet-500'
                                      }`} style={{ width: `${Math.max(2, Math.round(progress))}%` }} />
@@ -479,7 +491,19 @@ const StoryboardSceneInner: React.FC<StoryboardSceneProps> = ({
 
               <hr className="border-gray-700 my-0.5" />
 
-              {/* [UPDATED LAYOUT] Row 2: Split Veo Fast / Veo Quality */}
+              <div className="flex gap-1 h-9">
+                  <button
+                      onClick={() => onGenerateSeedance(scene.id)}
+                      disabled={scene.isGeneratingVideo}
+                      className={`flex-1 bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500 text-white text-sm font-bold rounded border border-violet-400/50 shadow-md transition-all flex items-center justify-center gap-1 ${scene.isGeneratingVideo ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  >
+                      {scene.videoUrl ? '🔄 Seedance 1.5 Pro' : '✨ Seedance 1.5 Pro (8s)'}
+                  </button>
+              </div>
+
+              <hr className="border-gray-700 my-0.5" />
+
+              {/* [UPDATED LAYOUT] Row 3: Split Veo Fast / Veo Quality */}
               <div className="flex gap-1 h-9">
                   {/* Left: Veo 720p (Evolink) */}
                   <button
