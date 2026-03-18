@@ -44,8 +44,16 @@ function secondsToFcpTc(s: number, fps: number): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}:${String(f).padStart(2, '0')}`;
 }
 
+/**
+ * XML 텍스트 이스케이프 + 이모지/특수 심볼 제거
+ * [FIX] 이모지(U+10000~U+10FFFF 보충 유니코드)가 FCP XML에 포함되면
+ * Premiere Pro/CapCut/VREW의 XML 파서가 깨져서 미디어 링크 실패 발생.
+ * BMP(U+0000~U+FFFF) 내 문자만 허용하여 모든 NLE 소프트웨어 호환성 보장.
+ */
 function escXml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+  return s
+    .replace(/[\u{10000}-\u{10FFFF}]/gu, '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
 }
 
 /**
