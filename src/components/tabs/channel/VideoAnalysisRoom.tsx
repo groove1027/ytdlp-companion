@@ -1526,8 +1526,8 @@ function generateAnalysisHtml(
       <div class="version-body" id="vbody-${v.id}" style="display:none">
         ${v.concept ? `<p class="concept">${escHtml(v.concept)}</p>` : ''}
         ${v.rearrangement ? `<p class="rearrange"><span class="rearrange-label">재배치:</span> ${escHtml(v.rearrangement)}</p>` : ''}
-        ${tableHtml}
         ${cidHtml}
+        ${tableHtml}
       </div>
     </div>`;
   }).join('\n');
@@ -4419,14 +4419,29 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
               return (
                 <div key={v.id} className={`rounded-xl border transition-all ${isExp ? `${c.bg} ${c.border}` : 'bg-gray-800/50 border-gray-700/50 hover:border-gray-600'}`}>
                   {/* 헤더 */}
-                  <button type="button" onClick={() => setExpandedId(isExp ? null : v.id)} className="w-full flex items-center gap-3 px-4 py-3.5 text-left">
-                    <span className={`w-7 h-7 rounded-full ${c.numBg} flex items-center justify-center text-xs font-bold text-white flex-shrink-0`}>{v.id}</span>
-                    <span className={`flex-1 text-sm font-bold truncate ${isExp ? c.text : 'text-gray-200'}`}>{v.title}</span>
+                  <div className="w-full flex items-center gap-3 px-4 py-3.5">
+                    <button type="button" onClick={() => setExpandedId(isExp ? null : v.id)} className="flex items-center gap-3 flex-1 min-w-0 text-left">
+                      <span className={`w-7 h-7 rounded-full ${c.numBg} flex items-center justify-center text-xs font-bold text-white flex-shrink-0`}>{v.id}</span>
+                      <span className={`flex-1 text-sm font-bold truncate select-text ${isExp ? c.text : 'text-gray-200'}`}>{v.title}</span>
+                    </button>
+                    {/* [FIX #483] 제목 복사 버튼 */}
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(v.title).then(() => showToast('제목이 복사되었습니다')); }}
+                      className="p-1.5 rounded-lg text-gray-500 hover:text-blue-400 hover:bg-blue-500/10 transition-all flex-shrink-0"
+                      title="제목 복사"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                      </svg>
+                    </button>
                     {hasScenes && <span className="text-xs text-gray-500 bg-gray-700/50 px-1.5 py-0.5 rounded flex-shrink-0">{v.scenes.length}컷</span>}
-                    <svg className={`w-4 h-4 text-gray-500 transition-transform duration-200 flex-shrink-0 ${isExp ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
-                    </svg>
-                  </button>
+                    <button type="button" onClick={() => setExpandedId(isExp ? null : v.id)} className="flex-shrink-0">
+                      <svg className={`w-4 h-4 text-gray-500 transition-transform duration-200 ${isExp ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </button>
+                  </div>
 
                   {/* 펼쳐진 내용 */}
                   {isExp && (
@@ -4888,6 +4903,53 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                         </div>
                       )}
 
+                      {/* Content ID 회피 및 바이럴 분석 — 장면 테이블 상단 배치 (#508) */}
+                      {v.contentId && (
+                        <div className="bg-gray-900/40 rounded-lg border border-gray-700/40 p-3 space-y-2">
+                          <p className="text-xs font-bold text-gray-400 flex items-center gap-1.5">
+                            <span className="w-4 h-4 bg-emerald-600 rounded flex items-center justify-center text-[10px] text-white">ID</span>
+                            Content ID 회피 및 바이럴 분석
+                          </p>
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                            <div className="bg-gray-800/60 rounded-lg px-2.5 py-1.5 border border-gray-700/30">
+                              <p className="text-[11px] text-gray-500">텍스트 일치율</p>
+                              <p className="text-sm font-bold text-emerald-400 font-mono">{v.contentId.textMatchRate}%</p>
+                            </div>
+                            <div className="bg-gray-800/60 rounded-lg px-2.5 py-1.5 border border-gray-700/30">
+                              <p className="text-[11px] text-gray-500">구조 유사도</p>
+                              <p className="text-sm font-bold text-cyan-400 font-mono">{v.contentId.structureSimilarity}%</p>
+                            </div>
+                            <div className="bg-gray-800/60 rounded-lg px-2.5 py-1.5 border border-gray-700/30">
+                              <p className="text-[11px] text-gray-500">순서 유사도</p>
+                              <p className="text-sm font-bold text-blue-400 font-mono">{v.contentId.orderSimilarity}%</p>
+                            </div>
+                            <div className="bg-gray-800/60 rounded-lg px-2.5 py-1.5 border border-gray-700/30">
+                              <p className="text-[11px] text-gray-500">키워드 변형률</p>
+                              <p className="text-sm font-bold text-violet-400 font-mono">{v.contentId.keywordVariation}%</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-3 flex-wrap">
+                            <span className={`inline-block px-2 py-0.5 rounded text-xs font-bold border ${
+                              v.contentId.safetyGrade.includes('매우') ? 'bg-emerald-600/20 text-emerald-300 border-emerald-500/30'
+                              : v.contentId.safetyGrade.includes('안전') ? 'bg-green-600/20 text-green-300 border-green-500/30'
+                              : 'bg-yellow-600/20 text-yellow-300 border-yellow-500/30'
+                            }`}>
+                              {v.contentId.safetyGrade}
+                            </span>
+                            {v.contentId.viralPoint !== '-' && (
+                              <span className="text-xs text-orange-400">
+                                <span className="text-gray-500">바이럴:</span> {v.contentId.viralPoint}
+                              </span>
+                            )}
+                          </div>
+                          {v.contentId.judgement !== '-' && (
+                            <p className="text-xs text-gray-500 leading-relaxed">
+                              <span className="text-gray-400 font-bold">판정:</span> {v.contentId.judgement}
+                            </p>
+                          )}
+                        </div>
+                      )}
+
                       {/* 프리셋별 장면 테이블 */}
                       {hasScenes ? (
                         <div className="overflow-x-auto">
@@ -5018,52 +5080,6 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                         </div>
                       )}
 
-                      {/* Content ID 회피 및 바이럴 분석 */}
-                      {v.contentId && (
-                        <div className="bg-gray-900/40 rounded-lg border border-gray-700/40 p-3 space-y-2">
-                          <p className="text-xs font-bold text-gray-400 flex items-center gap-1.5">
-                            <span className="w-4 h-4 bg-emerald-600 rounded flex items-center justify-center text-[10px] text-white">ID</span>
-                            Content ID 회피 및 바이럴 분석
-                          </p>
-                          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                            <div className="bg-gray-800/60 rounded-lg px-2.5 py-1.5 border border-gray-700/30">
-                              <p className="text-[11px] text-gray-500">텍스트 일치율</p>
-                              <p className="text-sm font-bold text-emerald-400 font-mono">{v.contentId.textMatchRate}%</p>
-                            </div>
-                            <div className="bg-gray-800/60 rounded-lg px-2.5 py-1.5 border border-gray-700/30">
-                              <p className="text-[11px] text-gray-500">구조 유사도</p>
-                              <p className="text-sm font-bold text-cyan-400 font-mono">{v.contentId.structureSimilarity}%</p>
-                            </div>
-                            <div className="bg-gray-800/60 rounded-lg px-2.5 py-1.5 border border-gray-700/30">
-                              <p className="text-[11px] text-gray-500">순서 유사도</p>
-                              <p className="text-sm font-bold text-blue-400 font-mono">{v.contentId.orderSimilarity}%</p>
-                            </div>
-                            <div className="bg-gray-800/60 rounded-lg px-2.5 py-1.5 border border-gray-700/30">
-                              <p className="text-[11px] text-gray-500">키워드 변형률</p>
-                              <p className="text-sm font-bold text-violet-400 font-mono">{v.contentId.keywordVariation}%</p>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-3 flex-wrap">
-                            <span className={`inline-block px-2 py-0.5 rounded text-xs font-bold border ${
-                              v.contentId.safetyGrade.includes('매우') ? 'bg-emerald-600/20 text-emerald-300 border-emerald-500/30'
-                              : v.contentId.safetyGrade.includes('안전') ? 'bg-green-600/20 text-green-300 border-green-500/30'
-                              : 'bg-yellow-600/20 text-yellow-300 border-yellow-500/30'
-                            }`}>
-                              {v.contentId.safetyGrade}
-                            </span>
-                            {v.contentId.viralPoint !== '-' && (
-                              <span className="text-xs text-orange-400">
-                                <span className="text-gray-500">바이럴:</span> {v.contentId.viralPoint}
-                              </span>
-                            )}
-                          </div>
-                          {v.contentId.judgement !== '-' && (
-                            <p className="text-xs text-gray-500 leading-relaxed">
-                              <span className="text-gray-400 font-bold">판정:</span> {v.contentId.judgement}
-                            </p>
-                          )}
-                        </div>
-                      )}
                     </div>
                   )}
                 </div>

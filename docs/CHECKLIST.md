@@ -8,6 +8,11 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-19] #483 분석 결과 제목 복사 기능 추가
+- [x] `VideoAnalysisRoom.tsx` — 버전 제목에 복사 버튼 추가 + 텍스트 선택 가능 (`select-text`)
+- [x] `ChannelRemakePanel.tsx` — 리메이크 결과 제목에 복사 버튼 추가
+- [x] `tsc --noEmit` + `vite build` 14회 검증 루프 통과
+
 ### [2026-03-19] #418 타입캐스트 멀티캐릭터 줄별 설정 수정
 - [x] `TypecastEditor.tsx` — handlePickCharacter/ElevenLabs/Supertonic: 같은 voiceId 그룹 전체 변경 → 클릭한 줄만 변경
 - [x] `TypecastEditor.tsx` — 우측 사이드바에 줄별 캐릭터 이름 뱃지 추가 (클릭 시 피커 열기)
