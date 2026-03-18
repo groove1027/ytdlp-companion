@@ -493,9 +493,10 @@ export const useEditRoomStore = create<EditRoomStore>()(immer((set, get) => ({
         sceneEffects[sceneId] = get().sceneEffects[sceneId];
       }
 
-      // ScriptLine ↔ Scene 매칭: sceneId → 인덱스 폴백 (scenes 배열 내 원래 인덱스 사용)
-      const origIdx = scenes.indexOf(scene);
-      const matchedLine = lineByScene.get(sceneId) || lines[origIdx] || lineByIndex.get(origIdx) || null;
+      // [FIX #421] ScriptLine ↔ Scene 매칭: sceneId → sceneOrder 인덱스 폴백
+      // 이전: scenes 배열 원래 인덱스(origIdx) 사용 → sceneOrder와 불일치 시 싱크 깨짐
+      // 이후: sceneOrder 인덱스(idx) 사용 → useUnifiedTimeline과 동일한 매칭 규칙
+      const matchedLine = lineByScene.get(sceneId) || lineByIndex.get(idx) || null;
 
       // [CRITICAL FIX] 장면별 순차 타이밍 계산
       let startT: number, endT: number;
@@ -1344,12 +1345,42 @@ export const useEditRoomStore = create<EditRoomStore>()(immer((set, get) => ({
     const state = get();
     const sub = state.sceneSubtitles[sceneId];
     if (!sub) return;
+    const dur = newEnd - newStart;
+
+    // [FIX #421] _userTiming 플래그 추가 — 드래그 타이밍이 TTS 타이밍보다 우선되도록
+    const newSub = { ...sub, startTime: newStart, endTime: newEnd, _userTiming: true } as typeof sub & { _userTiming: boolean };
+
+    // segments가 있으면 timeShift만큼 함께 이동
+    if (sub.segments && sub.segments.length > 0) {
+      const timeShift = newStart - sub.startTime;
+      newSub.segments = sub.segments.map(seg => ({
+        ...seg,
+        startTime: seg.startTime + timeShift,
+        endTime: seg.endTime + timeShift,
+      }));
+    }
+
     set({
       sceneSubtitles: {
         ...state.sceneSubtitles,
-        [sceneId]: { ...sub, startTime: newStart, endTime: newEnd },
+        [sceneId]: newSub,
       },
     });
+
+    // [FIX #421] projectStore + soundStudioStore 동기화 — 싱크 불일치 방지
+    useProjectStore.getState().updateScene(sceneId, {
+      startTime: newStart,
+      endTime: newEnd,
+    });
+    const soundLines = useSoundStudioStore.getState().lines;
+    const matchedLine = soundLines.find(l => l.sceneId === sceneId);
+    if (matchedLine) {
+      useSoundStudioStore.getState().updateLine(matchedLine.id, {
+        startTime: newStart,
+        endTime: newEnd,
+        duration: dur,
+      });
+    }
   },
 
   packTimingsSequential: () => {

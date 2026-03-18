@@ -1764,7 +1764,23 @@ ${baseSetting ? `[GLOBAL CONTEXT]\n${baseSetting}` : ''}`;
     // [FIX #380] 비청크 경로: 원본 scriptText 강제 매핑 — AI 요약/축약/누락 방지
     // 청크 경로는 processChunk 내부에서 이미 매핑됨
     if (!shouldChunk && smartSplit && scenes.length > 0) {
-        const localTexts = splitScenesLocally(cleanedScript, format, smartSplit, longFormSplitType);
+        let localTexts = splitScenesLocally(cleanedScript, format, smartSplit, longFormSplitType);
+
+        // [FIX #421] 비청크 경로에서도 targetSceneCount 반영 — 로컬 분할 수를 목표에 맞춤
+        // 이전: 로컬 분할 결과를 그대로 사용 → 사용자 지정 컷 수 무시
+        if (targetSceneCount && targetSceneCount > 0 && localTexts.length > targetSceneCount) {
+            const originalCount = localTexts.length;
+            const merged: string[] = [];
+            const groupSize = localTexts.length / targetSceneCount;
+            for (let i = 0; i < targetSceneCount; i++) {
+                const start = Math.round(i * groupSize);
+                const end = Math.round((i + 1) * groupSize);
+                merged.push(localTexts.slice(start, end).join('\n\n'));
+            }
+            localTexts = merged;
+            console.log(`[parseScriptToScenes] 비청크 경로: 로컬 분할 ${originalCount} → target ${targetSceneCount}로 병합`);
+        }
+
         if (localTexts.length > 0) {
             // 1:1 매핑: AI 결과의 scriptText를 로컬 분할 원본으로 교체
             for (let i = 0; i < Math.min(scenes.length, localTexts.length); i++) {
@@ -1781,6 +1797,26 @@ ${baseSetting ? `[GLOBAL CONTEXT]\n${baseSetting}` : ''}`;
                     });
                 }
                 console.warn(`[parseScriptToScenes] ⚠️ 비청크 경로: AI ${scenes.length - (localTexts.length - scenes.length)}장면 → 원본 기준 ${localTexts.length}장면으로 보충`);
+            }
+            // [FIX #421] 초과분 트림 — AI가 목표보다 많이 생성한 경우
+            // [P2 FIX] targetSceneCount를 기준으로 트림 — localTexts.length 대신 목표 컷수 사용
+            const trimTarget = (targetSceneCount && targetSceneCount > 0) ? targetSceneCount : localTexts.length;
+            if (scenes.length > trimTarget) {
+                while (scenes.length > trimTarget && scenes.length > 1) {
+                    let minLen = Infinity, minIdx = -1;
+                    for (let j = 0; j < scenes.length; j++) {
+                        const len = (scenes[j].scriptText || '').length;
+                        if (len < minLen) { minLen = len; minIdx = j; }
+                    }
+                    if (minIdx < 0) break;
+                    if (minIdx + 1 < scenes.length) {
+                        scenes[minIdx + 1] = { ...scenes[minIdx + 1], scriptText: ((scenes[minIdx].scriptText || '') + ' ' + (scenes[minIdx + 1].scriptText || '')).trim() };
+                        scenes.splice(minIdx, 1);
+                    } else if (minIdx > 0) {
+                        scenes[minIdx - 1] = { ...scenes[minIdx - 1], scriptText: ((scenes[minIdx - 1].scriptText || '') + ' ' + (scenes[minIdx].scriptText || '')).trim() };
+                        scenes.splice(minIdx, 1);
+                    } else break;
+                }
             }
             console.log(`[parseScriptToScenes] ✅ 비청크 경로: 원본 scriptText 강제 매핑 완료 (${scenes.length}장면, 로컬 분할: ${localTexts.length})`);
         }

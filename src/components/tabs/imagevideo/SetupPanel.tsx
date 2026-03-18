@@ -507,6 +507,25 @@ const SetupPanel: React.FC = () => {
         if (await runSceneAnalysis()) setActiveSubTab('storyboard');
         return;
       }
+      // [FIX #421] 목표 컷 수가 변경되었으면 기존 장면 무시하고 재분석
+      const userTarget = useImageVideoStore.getState().targetSceneCount;
+      if (userTarget && userTarget > 0 && existingScenes.length !== userTarget) {
+        showToast(`목표 컷 수가 변경되었습니다 (${existingScenes.length}→${userTarget}). 새 스토리보드를 생성합니다...`);
+        // [P1 FIX] 재분석 성공 후에만 장면 교체 — 실패 시 기존 장면 보존
+        // runSceneAnalysis 내부에서 setScenes를 호출하므로 별도 초기화 불필요
+        // enrichMode=false가 되어야 하므로, 임시로 장면을 비우고 실패 시 복원
+        const backup = [...existingScenes];
+        useProjectStore.getState().setScenes([]);
+        const success = await runSceneAnalysis();
+        if (success) {
+          setActiveSubTab('storyboard');
+        } else {
+          // 재분석 실패 → 기존 장면 복원
+          useProjectStore.getState().setScenes(backup);
+          showToast('스토리보드 재생성에 실패했습니다. 기존 장면을 유지합니다.');
+        }
+        return;
+      }
       // 비주얼 프롬프트가 없으면 자동 생성 후 스토리보드 열기
       const hasPrompts = existingScenes.some(s => s.visualPrompt && s.visualPrompt.trim().length > 0);
       if (!hasPrompts && config?.script) {

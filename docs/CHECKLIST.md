@@ -8,6 +8,14 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-19] #421 편집실 싱크 + 스토리보드 컷수 + 레퍼런스 이미지 + 타임라인 매칭 수정
+- [x] `editRoomStore.ts` — updateSubtitleTiming에 _userTiming 플래그 + projectStore/soundStudioStore 동기화 추가
+- [x] `editRoomStore.ts` — 초기화 시 lineByIndex 매칭을 useUnifiedTimeline과 통일 (origIdx → sceneOrder idx)
+- [x] `SetupPanel.tsx` — targetSceneCount 변경 시 재분석 강제 (실패 시 기존 장면 복원)
+- [x] `StoryboardPanel.tsx` — 그리드 카드에 레퍼런스 이미지 업로드 버튼 추가
+- [x] `scriptAnalysis.ts` — 비청크 경로에서도 targetSceneCount 반영 (로컬 분할 병합 + 트림)
+- [x] Codex 5.4 분석 + Codex review + P1/P2 수정 + 10회 검증 루프 통과
+
 ### [2026-03-19] #508 리메이크 일치율 표시 위치를 대본 상단으로 이동
 - [x] `VideoAnalysisRoom.tsx` — Content ID 블록(일치율·유사도·변형률)을 장면 테이블 위로 이동 (React UI + HTML 내보내기 모두)
 - [x] `tsc --noEmit` + `vite build` 19회 검증 루프 통과
