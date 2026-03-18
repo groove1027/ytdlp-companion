@@ -738,6 +738,7 @@ const App: React.FC = () => {
                   isGeneratingImage: true,
                   isGeneratingVideo: false,
                   grokDuration: '10',
+                  seedanceDuration: '8',
                   grokSpeechMode: newConfig.dialogueMode ?? false,
                   isNativeHQ: false, 
                   isInfographic: newConfig.allowInfographics === true ? (s.isInfographic === true) : false, // [FIX] allowInfographics가 false면 무조건 false 강제

@@ -8,6 +8,22 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-19] #572 대본작성 103단락 → 96단락 롤백 복원 버그 수정
+- [x] `types.ts` — `ProjectData.scriptWriterState` 추가로 프로젝트 저장본에 대본작성 스냅샷 포함
+- [x] `scriptWriterStore.ts` — 대본작성 저장 필드 정규화 헬퍼 추가 (`getScriptWriterDraftSnapshot`, `restoreScriptWriterDraft`)
+- [x] `useAutoSave.ts` — 대본작성 스토어 변경도 자동저장 트리거에 포함, 프로젝트 저장 시 최신 대본작성 스냅샷/최신 스크립트 함께 저장
+- [x] `projectStore.ts` — 프로젝트 로드 시 `scriptWriterState` 우선 복원, 구버전 프로젝트는 `config.script` 기반 fallback 복원
+- [x] `projectStore.ts` — 새 프로젝트 즉시 저장본에도 빈 `scriptWriterState` 포함
+- [x] `tsconfig.json` — `dist` 제외로 표준 `tsc --noEmit` 검증이 빌드 산출물 해시 파일에 영향받지 않도록 정리
+- [x] `tsc --noEmit` + `vite build` + `grep` 재검증 통과
+
+### [2026-03-19] 영상분석실 NLE 내보내기 버튼 무한 로딩 수정
+- [x] `VideoAnalysisRoom.tsx` — NLE 내보내기 전용 `downloadSourceVideoForNleExport()` 추가
+- [x] `VideoAnalysisRoom.tsx` — 내보내기 시 `downloadVideoAsBlob()`의 브라우저 ffmpeg 병합 경로 대신 서버 프록시의 오디오 포함 MP4 직접 다운로드 사용
+- [x] `VideoAnalysisRoom.tsx` — 180초 명시적 타임아웃 추가로 `영상 다운로드 중...`/`오디오 포함 영상 다운로드 중...` 고착 방지
+- [x] `VideoAnalysisRoom.tsx` — NLE 내보내기 실패 토스트에 실제 오류 메시지 포함
+- [x] `tsc --noEmit` + `vite build` + `grep` 재검증
+
 ### [2026-03-19] 영상분석 TTS 타이밍/탭 전환 유실/이미지 배치 취소 기능 수정 (#564, #563, #433)
 - [x] `VideoAnalysisRoom.tsx` — ALL TTS → 사운드 스튜디오 전송 시 `VideoSceneRow`의 원본 타임코드(`startTime/endTime/duration`)를 라인에 함께 매핑
 - [x] `VoiceStudio.tsx` — 고정 타임라인 라인(`startTime/endTime` 존재)은 TTS 생성 후에도 장면 레이아웃 duration을 유지하고, 씬 동기화 시 원본 타이밍을 우선 반영

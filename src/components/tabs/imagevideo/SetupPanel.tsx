@@ -472,7 +472,7 @@ const SetupPanel: React.FC = () => {
           return { ...ex, visualPrompt: ai.visualPrompt || ex.visualPrompt, visualDescriptionKO: ai.visualDescriptionKO || ex.visualDescriptionKO, characterPresent: ai.characterPresent ?? ex.characterPresent, castType: ai.castType || ex.castType, cameraAngle: ai.cameraAngle || ex.cameraAngle, cameraMovement: ai.cameraMovement || ex.cameraMovement, shotSize: ai.shotSize || ex.shotSize, isInfographic: ai.isInfographic ?? ex.isInfographic, sceneLocation: ai.sceneLocation || ex.sceneLocation, sceneEra: ai.sceneEra || ex.sceneEra, sceneCulture: ai.sceneCulture || ex.sceneCulture, characterAction: ai.characterAction || ex.characterAction, entityName: ai.entityName || ex.entityName, entityComposition: ai.entityComposition || ex.entityComposition, generatedDialogue: ai.generatedDialogue || ex.generatedDialogue, dialogueSpeaker: ai.dialogueSpeaker || ex.dialogueSpeaker, dialogueEmotion: ai.dialogueEmotion || ex.dialogueEmotion, dialogueSfx: ai.dialogueSfx || ex.dialogueSfx, emotionalBeat: ai.emotionalBeat || ex.emotionalBeat };
         }));
       } else {
-        useProjectStore.getState().setScenes(parsed.map((s, i) => ({ ...s, id: `scene-${Date.now()}-${++_sceneIdCounter}-${i}`, isGeneratingImage: false, isGeneratingVideo: false })));
+        useProjectStore.getState().setScenes(parsed.map((s, i) => ({ ...s, id: `scene-${Date.now()}-${++_sceneIdCounter}-${i}`, isGeneratingImage: false, isGeneratingVideo: false, seedanceDuration: '8' })));
       }
       // [CRITICAL FIX] globalContext를 반드시 구성하여 저장 — 이미지 생성 시 문화/장소/시대 맥락이 주입됨
       const globalContextObj = {

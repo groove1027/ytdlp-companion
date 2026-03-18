@@ -9,6 +9,7 @@ import {
   VideoAnalysisStylePreset,
   ScriptAiModel,
   ScriptTargetRegion,
+  ScriptWriterDraftState,
 } from '../types';
 import { logger } from '../services/LoggerService';
 
@@ -23,24 +24,26 @@ const PERSISTED_KEYS = [
   'videoFormat', 'longFormSplitType', 'smartSplit', 'targetCharCount',
   'splitResult', 'activeStep', 'videoAnalysisStyles', 'scriptAiModel',
   'referenceComments', 'targetRegion',
-] as const;
+] as const satisfies ReadonlyArray<keyof ScriptWriterDraftState>;
 
-type PersistedKey = typeof PERSISTED_KEYS[number];
-type PersistedState = Pick<ScriptWriterStore, PersistedKey>;
+type PersistedState = ScriptWriterDraftState;
+
+function pickPersistedState(source: Record<string, unknown>): Partial<PersistedState> {
+  const result: Partial<Record<keyof PersistedState, unknown>> = {};
+  for (const key of PERSISTED_KEYS) {
+    if (key in source) {
+      result[key] = source[key];
+    }
+  }
+  return result as Partial<PersistedState>;
+}
 
 function loadDraft(): Partial<PersistedState> {
   try {
     const raw = localStorage.getItem(DRAFT_STORAGE_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw) as Record<string, unknown>;
-    // 저장된 키 중 허용된 것만 반환
-    const result: Record<string, unknown> = {};
-    for (const key of PERSISTED_KEYS) {
-      if (key in parsed) {
-        result[key] = parsed[key];
-      }
-    }
-    return result as Partial<PersistedState>;
+    return pickPersistedState(parsed);
   } catch (e) {
     logger.trackSwallowedError('ScriptWriterStore:loadDraft', e);
     return {};
@@ -49,10 +52,7 @@ function loadDraft(): Partial<PersistedState> {
 
 function saveDraft(state: Record<string, unknown>): void {
   try {
-    const draft: Record<string, unknown> = {};
-    for (const key of PERSISTED_KEYS) {
-      draft[key] = state[key];
-    }
+    const draft = pickPersistedState(state);
     localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draft));
   } catch (e) {
     logger.trackSwallowedError('ScriptWriterStore:saveDraft', e);
@@ -187,6 +187,35 @@ const INITIAL_STATE = {
   targetRegion: 'ko' as ScriptTargetRegion,
 };
 
+const DEFAULT_DRAFT_STATE: ScriptWriterDraftState = {
+  inputMode: INITIAL_STATE.inputMode,
+  contentFormat: INITIAL_STATE.contentFormat,
+  shortsSeconds: INITIAL_STATE.shortsSeconds,
+  benchmarkScript: INITIAL_STATE.benchmarkScript,
+  title: INITIAL_STATE.title,
+  synopsis: INITIAL_STATE.synopsis,
+  manualText: INITIAL_STATE.manualText,
+  generatedScript: INITIAL_STATE.generatedScript,
+  styledScript: INITIAL_STATE.styledScript,
+  styledStyleName: INITIAL_STATE.styledStyleName,
+  finalScript: INITIAL_STATE.finalScript,
+  videoFormat: INITIAL_STATE.videoFormat,
+  longFormSplitType: INITIAL_STATE.longFormSplitType,
+  smartSplit: INITIAL_STATE.smartSplit,
+  targetCharCount: INITIAL_STATE.targetCharCount,
+  splitResult: INITIAL_STATE.splitResult,
+  activeStep: INITIAL_STATE.activeStep,
+  videoAnalysisStyles: INITIAL_STATE.videoAnalysisStyles,
+  scriptAiModel: INITIAL_STATE.scriptAiModel,
+  referenceComments: INITIAL_STATE.referenceComments,
+  targetRegion: INITIAL_STATE.targetRegion,
+};
+
+const normalizeDraft = (draft?: Partial<ScriptWriterDraftState> | null): ScriptWriterDraftState => ({
+  ...DEFAULT_DRAFT_STATE,
+  ...pickPersistedState((draft || {}) as Record<string, unknown>),
+});
+
 // localStorage에서 이전 드래프트 복원
 const restoredDraft = loadDraft();
 
@@ -286,6 +315,25 @@ export const useScriptWriterStore = create<ScriptWriterStore>((set) => ({
     set({ ...INITIAL_STATE });
   },
 }));
+
+export const getScriptWriterDraftSnapshot = (): ScriptWriterDraftState =>
+  normalizeDraft(useScriptWriterStore.getState() as unknown as Record<string, unknown>);
+
+export const getLatestScriptWriterText = (draft?: Partial<ScriptWriterDraftState> | null): string => {
+  if (!draft) return '';
+  return draft.finalScript || draft.styledScript || draft.generatedScript?.content || draft.manualText || '';
+};
+
+export const restoreScriptWriterDraft = (draft?: Partial<ScriptWriterDraftState> | null): void => {
+  const normalized = normalizeDraft(draft);
+  useScriptWriterStore.setState({
+    ...INITIAL_STATE,
+    ...normalized,
+    isGenerating: false,
+    isExpanding: false,
+    expansionTarget: null,
+  });
+};
 
 // 상태 변경 시 자동으로 localStorage에 저장
 useScriptWriterStore.subscribe((state) => {

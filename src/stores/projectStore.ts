@@ -1,9 +1,9 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import { ProjectConfig, Scene, Thumbnail, ProjectData, VideoFormat, AspectRatio, ImageModel, PipelineSteps } from '../types';
+import { ProjectConfig, Scene, Thumbnail, ProjectData, VideoFormat, AspectRatio, ImageModel, PipelineSteps, ScriptWriterDraftState } from '../types';
 import { useCostStore } from './costStore';
 import { useSoundStudioStore } from './soundStudioStore';
-import { useScriptWriterStore } from './scriptWriterStore';
+import { getScriptWriterDraftSnapshot, restoreScriptWriterDraft, useScriptWriterStore } from './scriptWriterStore';
 import { useChannelAnalysisStore } from './channelAnalysisStore';
 import { useVideoAnalysisStore } from './videoAnalysisStore';
 import { useEditPointStore } from './editPointStore';
@@ -23,6 +23,28 @@ const useEditRoomStore = { getState: () => getEditRoomStore()?.getState() || { r
 // Monotonic counter to guarantee unique scene IDs even within the same millisecond
 let _idCounter = 0;
 const uniqueSceneId = () => `s-${Date.now()}-${++_idCounter}`;
+
+const buildScriptWriterRestoreState = (project: ProjectData): Partial<ScriptWriterDraftState> | null => {
+  if (project.scriptWriterState) {
+    return project.scriptWriterState;
+  }
+
+  const fallbackScript = (project.config?.script || '').trim();
+  if (!fallbackScript && !project.config) {
+    return null;
+  }
+
+  return {
+    title: project.title || '',
+    manualText: fallbackScript,
+    finalScript: fallbackScript,
+    videoFormat: project.config?.videoFormat || VideoFormat.SHORT,
+    longFormSplitType: project.config?.longFormSplitType || 'DEFAULT',
+    smartSplit: project.config?.smartSplit ?? true,
+    activeStep: fallbackScript ? 3 : 1,
+    targetCharCount: Math.max(fallbackScript.length, 5000),
+  };
+};
 
 /**
  * 프로젝트가 없을 때: 기존 프로젝트 복원 → 없으면 새로 생성.
@@ -422,8 +444,9 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
 
     logger.info('프로젝트 로드', { projectId: project.id, title: project.title, sceneCount: sanitizedScenes.length });
 
-    // [FIX #315] 자동 복원(새로고침/업데이트) 시 모든 스토어 상태 보존
-    // 수동 프로젝트 전환 시에만 reset (skipCostRestore=false) — 이전 프로젝트 찌꺼기 방지
+    // [FIX #315] 자동 복원 시 분석/편집 스토어는 보존
+    // 다만 대본작성 본문은 프로젝트 저장본이 진실값이므로 항상 해당 프로젝트 상태로 다시 맞춘다.
+    // 수동 프로젝트 전환 시에는 reset도 함께 수행 (skipCostRestore=false).
     if (!options?.skipCostRestore) {
       try { useEditRoomStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/resetEditRoom', e); }
       try { useSoundStudioStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/resetSoundStudio', e); }
@@ -462,6 +485,10 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
     } else {
       useCostStore.getState().resetCosts();
     }
+
+    try {
+      restoreScriptWriterDraft(buildScriptWriterRestoreState(project));
+    } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/restoreScriptWriter', e); }
 
     // [NEW] imageVideoStore 복원 — 캐릭터/스타일/웹검색 설정을 config에서 복원
     // [FIX #290] targetSceneCount + dialogueTone 등 누락 필드 추가 — 이전 프로젝트 값 잔류 방지
@@ -655,6 +682,7 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
         config: { mode: 'SCRIPT', script: '', videoFormat: VideoFormat.SHORT, aspectRatio: AspectRatio.PORTRAIT, imageModel: ImageModel.NANO_COST, smartSplit: true } as ProjectConfig,
         scenes: [],
         thumbnails: [],
+        scriptWriterState: getScriptWriterDraftSnapshot(),
         fullNarrationText: '',
         lastModified: Date.now(),
         costStats: useCostStore.getState().costStats,

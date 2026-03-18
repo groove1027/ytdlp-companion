@@ -79,6 +79,31 @@ export enum ScriptAiModel {
   CLAUDE_OPUS = 'claude-opus-4-6',
 }
 
+/** 프로젝트 저장 시 함께 보존할 대본작성 상태 스냅샷 */
+export interface ScriptWriterDraftState {
+  inputMode: ScriptInputMode;
+  contentFormat: ContentFormat;
+  shortsSeconds: number;
+  benchmarkScript: string;
+  title: string;
+  synopsis: string;
+  manualText: string;
+  generatedScript: GeneratedScript | null;
+  styledScript: string;
+  styledStyleName: string;
+  finalScript: string;
+  videoFormat: VideoFormat;
+  longFormSplitType: 'DEFAULT' | 'DETAILED' | 'ECONOMY';
+  smartSplit: boolean;
+  targetCharCount: number;
+  splitResult: string[];
+  activeStep: number;
+  videoAnalysisStyles: VideoAnalysisStylePreset[];
+  scriptAiModel: ScriptAiModel;
+  referenceComments: string;
+  targetRegion: ScriptTargetRegion;
+}
+
 export interface VideoTaskParams {
     prompt: string;
     imageUrl: string;
@@ -91,7 +116,7 @@ export interface VideoTaskParams {
     // Grok-specific
     useTopaz?: boolean;
     atmosphere?: string;
-    duration?: string;
+    duration?: '4' | '6' | '8' | '10' | '12';
     speechMode?: boolean;
     generatedDialogue?: string;
     generatedSfx?: string;
@@ -237,6 +262,7 @@ export interface Scene {
 
   grokDuration?: '6' | '10';
   grokSpeechMode?: boolean;
+  seedanceDuration?: '4' | '8' | '12';
 
   /** 커뮤니티 미디어 (밈/짤/일러스트/효과음) — 기존 이미지 대신 사용 */
   communityMediaItem?: CommunityMediaItem;
@@ -491,6 +517,7 @@ export interface ProjectData {
   config: ProjectConfig;
   scenes: Scene[];
   thumbnails: Thumbnail[];
+  scriptWriterState?: ScriptWriterDraftState;
   fullNarrationText: string;
   createdAt?: number;
   lastModified: number;

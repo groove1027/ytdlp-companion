@@ -2,11 +2,12 @@ import { useEffect, useRef } from 'react';
 import { useProjectStore } from '../stores/projectStore';
 import { useCostStore } from '../stores/costStore';
 import { useEditRoomStore } from '../stores/editRoomStore';
+import { getLatestScriptWriterText, getScriptWriterDraftSnapshot, useScriptWriterStore } from '../stores/scriptWriterStore';
 import { saveProject, getStorageEstimate } from '../services/storageService';
 import { showToast, useUIStore } from '../stores/uiStore';
 import { logger } from '../services/LoggerService';
 import { scheduleSyncToCloud } from '../services/syncService';
-import type { Scene, ProjectConfig } from '../types';
+import type { Scene, ProjectConfig, ProjectData, ScriptWriterDraftState } from '../types';
 
 const AUTO_SAVE_DEBOUNCE_MS = 5000;
 const PERIODIC_SAVE_MS = 30_000; // 30초 주기 안전망
@@ -21,6 +22,7 @@ const computeFingerprint = (
   config: ProjectConfig | null,
   thumbnailCount: number,
   projectTitle: string,
+  scriptWriterState: ScriptWriterDraftState,
 ): string => {
   const sceneFp = scenes.map(s =>
     `${s.id}:${(s.scriptText || '').length}:${s.scriptText?.charCodeAt(0) || 0}:${s.imageUrl ? 'I' : '-'}:${s.videoUrl ? 'V' : '-'}:${s.audioUrl ? 'A' : '-'}:${(s.visualPrompt || '').length}:${s.audioDuration || 0}`
@@ -42,18 +44,58 @@ const computeFingerprint = (
       return keys.map(k => `${(subs[k]?.text || '').length}:${(subs[k]?.text || '').charCodeAt(0) || 0}:${subs[k]?.segments?.length || 0}`).join(',');
     } catch { return ''; }
   })();
-  return `${scenes.length}::${sceneFp}::${cfgFp}::${thumbnailCount}::${projectTitle}::${charFp}::${subFp}`;
+  const scriptFp = JSON.stringify(scriptWriterState);
+  return `${scenes.length}::${sceneFp}::${cfgFp}::${thumbnailCount}::${projectTitle}::${charFp}::${subFp}::${scriptFp}`;
+};
+
+const buildEffectiveConfig = (
+  config: ProjectConfig,
+  scriptWriterState: ScriptWriterDraftState,
+): ProjectConfig => {
+  const latestScript = getLatestScriptWriterText(scriptWriterState).trim();
+  if (!latestScript) return config;
+
+  return {
+    ...config,
+    script: latestScript,
+    videoFormat: scriptWriterState.videoFormat,
+    smartSplit: scriptWriterState.smartSplit,
+    longFormSplitType: scriptWriterState.longFormSplitType,
+  };
+};
+
+const buildProjectSnapshot = (): { project: ProjectData; fingerprint: string } | null => {
+  const { currentProjectId, config, scenes, thumbnails, projectTitle } = useProjectStore.getState();
+  const { costStats } = useCostStore.getState();
+  if (!currentProjectId || !config) return null;
+
+  const scriptWriterState = getScriptWriterDraftSnapshot();
+  const effectiveConfig = buildEffectiveConfig(config, scriptWriterState);
+  const editRoomSubs = useEditRoomStore.getState().sceneSubtitles;
+  const hasSubtitleEdits = Object.keys(editRoomSubs).length > 0;
+  const title = projectTitle || effectiveConfig.script?.substring(0, 30) || 'Untitled Project';
+
+  return {
+    project: {
+      id: currentProjectId,
+      title,
+      config: effectiveConfig,
+      scenes,
+      thumbnails,
+      scriptWriterState,
+      fullNarrationText: scenes.map((s) => s.scriptText).join(' ').substring(0, 500),
+      lastModified: Date.now(),
+      costStats,
+      ...(hasSubtitleEdits ? { sceneSubtitles: editRoomSubs } : {}),
+    },
+    fingerprint: computeFingerprint(scenes, effectiveConfig, thumbnails.length, title, scriptWriterState),
+  };
 };
 
 /** 즉시 저장 (beforeunload 긴급 저장 — best-effort, 비동기이므로 완료 보장 안 됨) */
 const flushSave = () => {
-  const { currentProjectId, config, scenes, thumbnails, projectTitle } = useProjectStore.getState();
-  const { costStats } = useCostStore.getState();
-  if (!currentProjectId || !config) return;
-
-  // [FIX #399] flushSave에도 sceneSubtitles 포함 — beforeunload 시 자막 손실 방지
-  const editRoomSubs = useEditRoomStore.getState().sceneSubtitles;
-  const hasSubtitleEdits = Object.keys(editRoomSubs).length > 0;
+  const snapshot = buildProjectSnapshot();
+  if (!snapshot) return;
 
   try {
     const dbReq = indexedDB.open('ai-storyboard-v2');
@@ -61,17 +103,7 @@ const flushSave = () => {
       const db = dbReq.result;
       try {
         const tx = db.transaction(['projects'], 'readwrite');
-        tx.objectStore('projects').put({
-          id: currentProjectId,
-          title: projectTitle || config.script?.substring(0, 30) || 'Untitled Project',
-          config,
-          scenes,
-          thumbnails,
-          fullNarrationText: scenes.map((s) => s.scriptText).join(' ').substring(0, 500),
-          lastModified: Date.now(),
-          costStats,
-          ...(hasSubtitleEdits ? { sceneSubtitles: editRoomSubs } : {}),
-        });
+        tx.objectStore('projects').put(snapshot.project);
       } catch (e) { logger.trackSwallowedError('useAutoSave:flushSave/transaction', e); }
     };
   } catch (e) { logger.trackSwallowedError('useAutoSave:flushSave/indexedDB', e); }
@@ -86,31 +118,15 @@ export const useAutoSave = () => {
 
     /** 핵심 저장 로직 — fingerprint 비교 후 변경분만 저장 */
     const doSave = async () => {
-      const { currentProjectId, config, scenes, thumbnails, projectTitle } = useProjectStore.getState();
-      const { costStats } = useCostStore.getState();
-
-      if (!currentProjectId || !config) return;
+      const snapshot = buildProjectSnapshot();
+      if (!snapshot) return;
 
       // Fingerprint 기반 dirty check — 실제 변경이 없으면 저장 스킵
-      const fingerprint = computeFingerprint(scenes, config, thumbnails.length, projectTitle);
+      const { project, fingerprint } = snapshot;
       if (fingerprint === lastFingerprintRef.current) return;
 
       try {
-        // [FIX #399] 편집실 자막 데이터도 함께 저장 — 새로고침 시 복원
-        const editRoomSubs = useEditRoomStore.getState().sceneSubtitles;
-        const hasSubtitleEdits = Object.keys(editRoomSubs).length > 0;
-
-        await saveProject({
-          id: currentProjectId,
-          title: projectTitle || config.script?.substring(0, 30) || 'Untitled Project',
-          config,
-          scenes,
-          thumbnails,
-          fullNarrationText: scenes.map((s) => s.scriptText).join(' ').substring(0, 500),
-          lastModified: Date.now(),
-          costStats,
-          ...(hasSubtitleEdits ? { sceneSubtitles: editRoomSubs } : {}),
-        });
+        await saveProject(project);
 
         lastFingerprintRef.current = fingerprint;
 
@@ -118,12 +134,12 @@ export const useAutoSave = () => {
         useUIStore.getState().setLastAutoSavedAt(Date.now());
 
         // 클라우드 동기화 스케줄링 (10s debounce, fire-and-forget)
-        scheduleSyncToCloud(currentProjectId);
+        scheduleSyncToCloud(project.id);
 
         // 오디오 blob을 IndexedDB에 영속화 (fire-and-forget)
         // [FIX #395] soundStudioStore.mergedAudioUrl도 함께 확인 — "전송" 안 눌러도 업로드 오디오 blob 영속화
         try {
-          let effectiveMergedUrl = config.mergedAudioUrl;
+          let effectiveMergedUrl = project.config.mergedAudioUrl;
           if (!effectiveMergedUrl) {
             try {
               const { useSoundStudioStore } = await import('../stores/soundStudioStore');
@@ -132,15 +148,15 @@ export const useAutoSave = () => {
           }
           if (effectiveMergedUrl) {
             // config에도 반영하여 다음 auto-save 시 fingerprint에 포함되도록 (setConfig은 scheduleSave 재트리거하지만 1회 후 수렴)
-            if (!config.mergedAudioUrl) {
+            if (!project.config.mergedAudioUrl) {
               useProjectStore.getState().setConfig((prev) => prev ? { ...prev, mergedAudioUrl: effectiveMergedUrl } : prev);
             }
             import('../services/audioStorageService').then(({ persistProjectAudio }) => {
-              persistProjectAudio(currentProjectId, scenes, effectiveMergedUrl).catch((e) => { logger.trackSwallowedError('useAutoSave:persistProjectAudio', e); });
+              persistProjectAudio(project.id, project.scenes, effectiveMergedUrl).catch((e) => { logger.trackSwallowedError('useAutoSave:persistProjectAudio', e); });
             });
           } else {
             import('../services/audioStorageService').then(({ persistProjectAudio }) => {
-              persistProjectAudio(currentProjectId, scenes, undefined).catch((e) => { logger.trackSwallowedError('useAutoSave:persistProjectAudio', e); });
+              persistProjectAudio(project.id, project.scenes, undefined).catch((e) => { logger.trackSwallowedError('useAutoSave:persistProjectAudio', e); });
             });
           }
         } catch (e) { logger.trackSwallowedError('useAutoSave:doSave/audioStorage', e); }
@@ -199,11 +215,14 @@ export const useAutoSave = () => {
     const unsub2 = useCostStore.subscribe(scheduleSave);
     // [FIX #399] 자막 편집 시에도 자동저장 트리거
     const unsub3 = useEditRoomStore.subscribe(scheduleSave);
+    // [FIX #572] 대본작성 변경도 프로젝트 저장 대상으로 편입
+    const unsub4 = useScriptWriterStore.subscribe(scheduleSave);
 
     return () => {
       unsub1();
       unsub2();
       unsub3();
+      unsub4();
       window.removeEventListener('beforeunload', handleBeforeUnload);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       if (debounceTimer) clearTimeout(debounceTimer);
