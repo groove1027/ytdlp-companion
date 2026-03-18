@@ -72,8 +72,9 @@ async function normalizeReferenceImage(ref: string): Promise<string | null> {
   const trimmed = ref.trim();
   if (!trimmed) return null;
 
+  // data URL은 그대로 반환 — tRPC captionImage/uploadImage는 data URL 전체를 rawBytes로 기대
   if (trimmed.startsWith('data:image/')) {
-    return dataUrlToBase64(trimmed);
+    return trimmed;
   }
 
   if (isHttpLikeUrl(trimmed)) {
@@ -82,14 +83,17 @@ async function normalizeReferenceImage(ref: string): Promise<string | null> {
       if (!res.ok) return null;
       const blob = await res.blob();
       if (!blob.type.startsWith('image/')) return null;
-      const dataUrl = await blobToDataUrl(blob);
-      return dataUrlToBase64(dataUrl);
+      return await blobToDataUrl(blob);
     } catch {
       return null;
     }
   }
 
-  return trimmed;
+  // 순수 base64인 경우 data URL로 변환
+  if (trimmed.startsWith('/9j/')) {
+    return `data:image/jpeg;base64,${trimmed}`;
+  }
+  return `data:image/png;base64,${trimmed}`;
 }
 
 /** tRPC 응답 포맷 언래핑 — labs.google/fx/api/trpc/* 엔드포인트용 */
