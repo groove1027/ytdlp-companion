@@ -8,6 +8,14 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-18] NLE 내보내기 싱크 버그 3건 수정 (Premiere/CapCut)
+- [x] `nleExportService.ts` — 나레이션 클립 길이를 `scene.imageDuration` 고정값 대신 `line.duration`/오디오 메타데이터 실측값으로 적용
+- [x] `nleExportService.ts` — `find()` 기반 1개 선택을 제거하고 `filter()`로 scene별 다중 나레이션 라인을 모두 수집해 순차 배치
+- [x] `nleExportService.ts` — sceneId 없는 라인(merged 오디오 폴백)도 오디오 트랙에 배치되도록 보강
+- [x] `EditRoomTab.tsx` — NLE 내보내기 경로에 `mergedAudioUrl` 폴백 추가 (MP4와 동일 동작)
+- [x] `soundStudioStore.ts` — `addLineAfter()`로 생성되는 신규 라인이 기준 라인의 `sceneId`를 상속하도록 수정
+- [x] `tsc --noEmit` + `vite build` + `grep` 재검증 통과
+
 ### [2026-03-18] 배치 4: 5분+/10분+ 롱폼 안내 배너 (#6~7)
 - [x] `StoryboardPanel.tsx` — `useUnifiedTimeline` / `useTotalDuration` 기반 총 길이 계산 재사용
 - [x] `StoryboardPanel.tsx` — 총 길이 5분~10분일 때 안내 배너(#6) 표시 + 캡컷/프리미어 내보내기 버튼 추가

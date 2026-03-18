@@ -1458,8 +1458,17 @@ interface EditRoomScene {
 }
 
 interface EditRoomNarrationLine {
-  sceneId: string;
+  sceneId?: string;
   audioUrl?: string;
+  duration?: number;
+  startTime?: number;
+  index?: number;
+}
+
+interface EditRoomNarrationClip {
+  fileName: string;
+  startSec: number;
+  durationSec: number;
 }
 
 /** 편집실 타임라인 → SRT 문자열 */
@@ -1486,10 +1495,10 @@ function buildEditRoomFcpXml(params: {
   height: number;
   /** 실제 ZIP에 들어간 미디어 파일명 맵 (index → 파일명). 없으면 scene.videoUrl 기준 추정 */
   mediaFileMap?: Map<number, string>;
-  /** [FIX #473] 실제 ZIP에 들어간 나레이션 오디오 파일명 맵 (index → 파일명) */
-  narrationFileMap?: Map<number, string>;
+  /** 실제 ZIP에 들어간 나레이션 오디오 클립 목록 */
+  narrationClips?: EditRoomNarrationClip[];
 }): string {
-  const { timeline, scenes, title, fps, width, height, mediaFileMap, narrationFileMap } = params;
+  const { timeline, scenes, title, fps, width, height, mediaFileMap, narrationClips } = params;
   if (timeline.length === 0) return '';
 
   const { ntsc, timebase } = fpsToNtsc(fps);
@@ -1620,11 +1629,11 @@ function buildEditRoomFcpXml(params: {
             </effect>
           </generatoritem>`).join('');
 
-  // [FIX #473] 나레이션 오디오 트랙 (A2) — 장면별 나레이션 MP3를 타임라인 올바른 위치에 자동 배치
-  const narrationClips = timeline.map((t, i) => {
-    const narFile = narrationFileMap?.get(i);
-    if (!narFile) return '';
-    const clipDurFrames = toFrames(t.imageDuration);
+  // 나레이션 오디오 트랙 (A2) — 라인 단위 다중 나레이션 MP3를 실제 길이로 배치
+  const narrationTrackClips = (narrationClips || []).map((clip, i) => {
+    const clipDurFrames = Math.max(1, toFrames(clip.durationSec));
+    const clipStartFrames = Math.max(0, toFrames(clip.startSec));
+    const clipEndFrames = clipStartFrames + clipDurFrames;
     return `
           <clipitem id="narration-${i + 1}" premiereChannelType="stereo">
             <name>${escXml(`Narration ${String(i + 1).padStart(3, '0')}`)}</name>
@@ -1632,11 +1641,11 @@ function buildEditRoomFcpXml(params: {
             <rate><ntsc>${ntscStr}</ntsc><timebase>${timebase}</timebase></rate>
             <in>0</in>
             <out>${clipDurFrames}</out>
-            <start>${toFrames(t.imageStartTime)}</start>
-            <end>${toFrames(t.imageEndTime)}</end>
+            <start>${clipStartFrames}</start>
+            <end>${clipEndFrames}</end>
             <file id="narfile-${i + 1}">
-              <name>${escXml(narFile)}</name>
-              <pathurl>${escXml(`audio/${narFile}`)}</pathurl>
+              <name>${escXml(clip.fileName)}</name>
+              <pathurl>${escXml(`audio/${clip.fileName}`)}</pathurl>
               <duration>${clipDurFrames}</duration>
               <rate><ntsc>${ntscStr}</ntsc><timebase>${timebase}</timebase></rate>
               <media>
@@ -1647,7 +1656,7 @@ function buildEditRoomFcpXml(params: {
             <labels><label2>Caribbean</label2></labels>
           </clipitem>`;
   }).join('');
-  const hasNarrationTrack = narrationClips.replace(/\s/g, '').length > 0;
+  const hasNarrationTrack = narrationTrackClips.replace(/\s/g, '').length > 0;
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE xmeml>
@@ -1701,7 +1710,7 @@ function buildEditRoomFcpXml(params: {
           <outputchannelindex>1</outputchannelindex>${audioClips}
         </track>${hasNarrationTrack ? `
         <track>
-          <outputchannelindex>1</outputchannelindex>${narrationClips}
+          <outputchannelindex>1</outputchannelindex>${narrationTrackClips}
         </track>` : ''}
       </audio>
     </media>
@@ -1736,6 +1745,40 @@ async function fetchAssetBlob(url: string): Promise<Blob | null> {
     if (res.ok) return await res.blob();
   } catch { /* CORS 실패 시 무시 */ }
   return null;
+}
+
+/** Blob 오디오의 실제 재생 길이(초) 측정 */
+async function measureBlobAudioDuration(blob: Blob): Promise<number | null> {
+  if (typeof window === 'undefined' || typeof Audio === 'undefined') return null;
+  const blobUrl = URL.createObjectURL(blob);
+  try {
+    return await new Promise<number | null>((resolve) => {
+      const audio = new Audio();
+      const cleanup = () => {
+        audio.onloadedmetadata = null;
+        audio.onerror = null;
+      };
+      const timeoutId = window.setTimeout(() => {
+        cleanup();
+        resolve(null);
+      }, 5000);
+      audio.preload = 'metadata';
+      audio.onloadedmetadata = () => {
+        cleanup();
+        window.clearTimeout(timeoutId);
+        const duration = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : null;
+        resolve(duration);
+      };
+      audio.onerror = () => {
+        cleanup();
+        window.clearTimeout(timeoutId);
+        resolve(null);
+      };
+      audio.src = blobUrl;
+    });
+  } finally {
+    URL.revokeObjectURL(blobUrl);
+  }
 }
 
 /** 편집실 타임라인 → CapCut 네이티브 SRT (장면별 통합 자막 — 가장 안정적 import 방법) */
@@ -1802,8 +1845,8 @@ export async function buildEditRoomNleZip(params: {
   // [FIX #472] 미디어 에셋 수집 — 영상 다운로드 실패 시 이미지 폴백 + 실제 파일명 추적
   const mediaFileMap = new Map<number, string>(); // index → 실제 파일명
   const mediaBlobMap = new Map<number, Blob>(); // index → Blob (CapCut 루트 복사용)
-  const narrationFileMap = new Map<number, string>(); // index → 나레이션 오디오 파일명
-  const narrationBlobMap = new Map<number, Blob>(); // index → Blob
+  const narrationClips: EditRoomNarrationClip[] = []; // 나레이션 배치 정보 (다중 라인 지원)
+  const narrationBlobEntries: Array<{ fileName: string; blob: Blob }> = []; // ZIP 루트 복사용
   let videoCount = 0;
   let imageCount = 0;
 
@@ -1841,24 +1884,90 @@ export async function buildEditRoomNleZip(params: {
       }
     }
 
-    // 나레이션 오디오
-    const narration = narrationLines.find(l => l.sceneId === t.sceneId);
-    if (narration?.audioUrl) {
-      const blob = await fetchAssetBlob(narration.audioUrl);
-      if (blob) {
-        const narFileName = `${idx}_narration.mp3`;
-        zip.file(`audio/${narFileName}`, blob);
-        narrationFileMap.set(i, narFileName);
-        narrationBlobMap.set(i, blob);
-      }
-    }
   }
 
+  // 나레이션 오디오: sceneId 기준으로 모든 라인 수집(filter) + 순차 배치
+  const narrationSortKey = (line: EditRoomNarrationLine): number => {
+    if (typeof line.startTime === 'number' && Number.isFinite(line.startTime)) return line.startTime;
+    if (typeof line.index === 'number' && Number.isFinite(line.index)) return line.index;
+    return Number.POSITIVE_INFINITY;
+  };
+  const sceneOffsets = new Map<string, number>(); // 장면 내 순차 배치용 누적 오프셋(초)
+
+  const resolveNarrationDuration = async (line: EditRoomNarrationLine, blob: Blob, fallbackSec: number): Promise<number> => {
+    if (typeof line.duration === 'number' && Number.isFinite(line.duration) && line.duration > 0) {
+      return line.duration;
+    }
+    const measured = await measureBlobAudioDuration(blob);
+    if (typeof measured === 'number' && measured > 0) return measured;
+    return Math.max(0.1, fallbackSec);
+  };
+
+  for (let i = 0; i < timeline.length; i++) {
+    const t = timeline[i];
+    const sceneNarrations = narrationLines
+      .filter((line) => !!line.audioUrl && line.sceneId === t.sceneId)
+      .sort((a, b) => narrationSortKey(a) - narrationSortKey(b));
+    if (sceneNarrations.length === 0) continue;
+
+    const idx = String(i + 1).padStart(3, '0');
+    let seqInScene = 0;
+    let sceneOffset = sceneOffsets.get(t.sceneId) || 0;
+
+    for (const line of sceneNarrations) {
+      const audioUrl = line.audioUrl;
+      if (!audioUrl) continue;
+      const blob = await fetchAssetBlob(audioUrl);
+      if (!blob) continue;
+
+      const durationSec = await resolveNarrationDuration(line, blob, t.imageDuration);
+      const lineStart = typeof line.startTime === 'number' && Number.isFinite(line.startTime) && line.startTime >= 0
+        ? line.startTime
+        : t.imageStartTime + sceneOffset;
+      const startSec = Math.max(0, lineStart);
+      const localEndOffset = Math.max(0, (startSec - t.imageStartTime) + durationSec);
+      sceneOffset = Math.max(sceneOffset, localEndOffset);
+
+      seqInScene++;
+      const narFileName = `${idx}_narration_${String(seqInScene).padStart(2, '0')}.mp3`;
+      zip.file(`audio/${narFileName}`, blob);
+      narrationBlobEntries.push({ fileName: narFileName, blob });
+      narrationClips.push({ fileName: narFileName, startSec, durationSec });
+    }
+
+    sceneOffsets.set(t.sceneId, sceneOffset);
+  }
+
+  // sceneId가 없는 나레이션(예: mergedAudioUrl 폴백)도 전체 타임라인에 배치
+  const unboundNarrations = narrationLines
+    .filter((line) => !!line.audioUrl && !line.sceneId)
+    .sort((a, b) => narrationSortKey(a) - narrationSortKey(b));
+  let unboundOffset = 0;
+  for (let i = 0; i < unboundNarrations.length; i++) {
+    const line = unboundNarrations[i];
+    const audioUrl = line.audioUrl;
+    if (!audioUrl) continue;
+    const blob = await fetchAssetBlob(audioUrl);
+    if (!blob) continue;
+    const durationSec = await resolveNarrationDuration(line, blob, timeline[0]?.imageDuration || 3);
+    const startSec = typeof line.startTime === 'number' && Number.isFinite(line.startTime) && line.startTime >= 0
+      ? line.startTime
+      : unboundOffset;
+    unboundOffset = Math.max(unboundOffset, startSec + durationSec);
+
+    const narFileName = `global_narration_${String(i + 1).padStart(3, '0')}.mp3`;
+    zip.file(`audio/${narFileName}`, blob);
+    narrationBlobEntries.push({ fileName: narFileName, blob });
+    narrationClips.push({ fileName: narFileName, startSec, durationSec });
+  }
+
+  narrationClips.sort((a, b) => a.startSec - b.startSec);
+
   // [FIX #472] FCP XML — mediaFileMap 전달하여 실제 파일명 기준으로 XML 생성
-  // [FIX #473] narrationFileMap 전달하여 나레이션 오디오를 A2 트랙에 자동 배치
+  // 나레이션은 line.duration/오디오 메타데이터 기반 실제 길이로 A2 트랙에 배치
   // VREW는 XML import 미지원 — premiere/capcut만 XML 포함
   if (target !== 'vrew') {
-    const xml = buildEditRoomFcpXml({ timeline, scenes, title, fps, width: w, height: h, mediaFileMap, narrationFileMap });
+    const xml = buildEditRoomFcpXml({ timeline, scenes, title, fps, width: w, height: h, mediaFileMap, narrationClips });
     zip.file(`${safeName}.xml`, xml);
   }
 
@@ -1874,14 +1983,13 @@ export async function buildEditRoomNleZip(params: {
       const blob = mediaBlobMap.get(i);
       if (blob) zip.file(fileName, blob);
     }
-    for (const [i, narFileName] of narrationFileMap.entries()) {
-      const blob = narrationBlobMap.get(i);
-      if (blob) zip.file(narFileName, blob);
+    for (const { fileName, blob } of narrationBlobEntries) {
+      zip.file(fileName, blob);
     }
 
     // ── 미디어 머티리얼: 장면별 이미지/영상 (Map으로 인덱스 보존 — 미디어 누락 시 밀림 방지) ──
     const videoMaterialMap = new Map<number, { id: string; path: string; dur: number; isPhoto: boolean }>();
-    const audioMaterialMap = new Map<number, { id: string; path: string; dur: number }>();
+    const audioMaterialsWithStart: Array<{ id: string; path: string; dur: number; start: number }> = [];
 
     for (let i = 0; i < timeline.length; i++) {
       const fileName = mediaFileMap.get(i);
@@ -1895,18 +2003,16 @@ export async function buildEditRoomNleZip(params: {
       });
     }
 
-    for (let i = 0; i < timeline.length; i++) {
-      const narFileName = narrationFileMap.get(i);
-      if (!narFileName) continue;
-      audioMaterialMap.set(i, {
+    const videoMaterials = [...videoMaterialMap.values()];
+    for (const clip of narrationClips) {
+      audioMaterialsWithStart.push({
         id: uuid(),
-        path: narFileName,
-        dur: toUs(timeline[i].imageDuration),
+        path: clip.fileName,
+        dur: toUs(clip.durationSec),
+        start: toUs(clip.startSec),
       });
     }
-
-    const videoMaterials = [...videoMaterialMap.values()];
-    const audioMaterials = [...audioMaterialMap.values()];
+    const audioMaterials = audioMaterialsWithStart.map(({ id, path, dur }) => ({ id, path, dur }));
 
     // ── 비디오 세그먼트 (메인 트랙) — Map lookup으로 정확한 인덱스 매칭 ──
     const videoSegments = timeline.map((t, i) => {
@@ -1999,10 +2105,8 @@ export async function buildEditRoomNleZip(params: {
       uniform_scale: { on: true, value: 1.0 }, visible: true, volume: 1.0,
     }));
 
-    // ── 오디오 세그먼트 (나레이션 트랙) — Map lookup으로 정확한 인덱스 매칭 ──
-    const audioSegments = timeline.map((t, i) => {
-      const aMat = audioMaterialMap.get(i);
-      if (!aMat) return null;
+    // ── 오디오 세그먼트 (나레이션 트랙) — 라인 단위 다중 배치 ──
+    const audioSegments = audioMaterialsWithStart.map((aMat) => {
       return {
         cartoon: false,
         clip: { alpha: 1.0, flip: { horizontal: false, vertical: false }, rotation: 0.0, scale: { x: 1.0, y: 1.0 }, transform: { x: 0.0, y: 0.0 } },
@@ -2013,12 +2117,12 @@ export async function buildEditRoomNleZip(params: {
         is_placeholder: false, is_tone_modify: false, keyframe_refs: emptyArr,
         last_nonzero_volume: 1.0, material_id: aMat.id, render_index: 0,
         responsive_layout: { enable: false, horizontal_pos_layout: 0, size_layout: 0, target_follow: '', vertical_pos_layout: 0 },
-        reverse: false, source_timerange: { duration: toUs(t.imageDuration), start: 0 },
-        speed: 1.0, target_timerange: { duration: toUs(t.imageDuration), start: toUs(t.imageStartTime) },
+        reverse: false, source_timerange: { duration: aMat.dur, start: 0 },
+        speed: 1.0, target_timerange: { duration: aMat.dur, start: aMat.start },
         template_id: '', template_scene: '', track_attribute: 0, track_render_index: 0,
         uniform_scale: { on: true, value: 1.0 }, visible: true, volume: 1.0,
       };
-    }).filter(Boolean);
+    });
 
     // ── draft_content.json 조립 ──
     const draft = {
@@ -2162,8 +2266,8 @@ export async function buildEditRoomNleZip(params: {
       `• "${safeName}_자막.srt" → Captions 트랙으로 가져올 수 있습니다.`,
       '',
       '[ 나레이션 ]',
-      narrationFileMap.size > 0
-        ? `• 나레이션 ${narrationFileMap.size}개가 A2 오디오 트랙에 자동 배치됩니다.`
+      narrationClips.length > 0
+        ? `• 나레이션 ${narrationClips.length}개가 A2 오디오 트랙에 자동 배치됩니다.`
         : '• audio/ 폴더의 나레이션 MP3를 오디오 트랙에 배치하세요.',
       '',
       `• ${timeline.length}개 장면 · ${w}x${h} · ${fps}fps`,
@@ -2195,8 +2299,8 @@ export async function buildEditRoomNleZip(params: {
       videoCount > 0 || imageCount > 0
         ? `• 미디어 구성: 영상 ${videoCount}개 + 이미지 ${imageCount}개`
         : '',
-      narrationFileMap.size > 0
-        ? `• 나레이션 ${narrationFileMap.size}개 자동 배치`
+      narrationClips.length > 0
+        ? `• 나레이션 ${narrationClips.length}개 자동 배치`
         : '',
     ].filter(Boolean).join('\n'));
   } else {
@@ -2208,8 +2312,8 @@ export async function buildEditRoomNleZip(params: {
       '1. VREW를 열고 media/ 폴더의 영상/이미지를 불러옵니다.',
       `2. 자막 > 자막 파일 불러오기 > "${safeName}_자막.srt" 선택`,
       '3. 자막이 타임라인에 자동 배치됩니다.',
-      narrationFileMap.size > 0
-        ? `4. audio/ 폴더의 나레이션 MP3(${narrationFileMap.size}개)를 오디오 트랙에 수동 배치하세요.`
+      narrationClips.length > 0
+        ? `4. audio/ 폴더의 나레이션 MP3(${narrationClips.length}개)를 오디오 트랙에 수동 배치하세요.`
         : null,
       '',
       `• ${timeline.length}개 장면 · ${w}x${h} · ${fps}fps`,

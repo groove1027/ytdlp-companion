@@ -1411,11 +1411,39 @@ const EditRoomTab: React.FC = () => {
     showToast(`${targetLabel} 프로젝트 파일을 준비하고 있습니다...`);
     try {
       const projectTitle = useProjectStore.getState().projectTitle || '프로젝트';
+      // [FIX #396] STT 업로드 오디오는 개별 라인 audioUrl이 없을 수 있어 mergedAudioUrl 폴백 필요
+      const hasAnyLineAudio = lines.some((l) => l.audioUrl);
+      const mergedUrl = !hasAnyLineAudio
+        ? (useProjectStore.getState().config?.mergedAudioUrl || useSoundStudioStore.getState().mergedAudioUrl)
+        : null;
+
+      const narrationLinesForNle = hasAnyLineAudio
+        ? lines
+            .map((line, idx) => {
+              let effectiveAudioUrl = line.audioUrl;
+              if (line.sceneId && (!effectiveAudioUrl || effectiveAudioUrl.startsWith('blob:'))) {
+                const scene = useProjectStore.getState().scenes.find((s) => s.id === line.sceneId);
+                if (scene?.audioUrl) effectiveAudioUrl = scene.audioUrl;
+              }
+              if (!effectiveAudioUrl) return null;
+              return {
+                sceneId: line.sceneId || timeline[idx]?.sceneId || '',
+                audioUrl: effectiveAudioUrl,
+                duration: line.duration,
+                startTime: line.startTime,
+                index: line.index ?? idx,
+              };
+            })
+            .filter((value): value is NonNullable<typeof value> => value !== null)
+        : mergedUrl
+          ? [{ sceneId: timeline[0]?.sceneId || '', audioUrl: mergedUrl, startTime: 0 }]
+          : [];
+
       const result = await buildEditRoomNleZip({
         target,
         timeline,
         scenes: scenes.map((s) => ({ id: s.id, imageUrl: s.imageUrl, videoUrl: s.videoUrl, scriptText: s.scriptText })),
-        narrationLines: lines.filter((l) => !!l.audioUrl).map((l) => ({ sceneId: l.sceneId || '', audioUrl: l.audioUrl })),
+        narrationLines: narrationLinesForNle,
         title: projectTitle,
         aspectRatio: projectAspectRatio,
       });

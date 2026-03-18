@@ -294,14 +294,17 @@ export const useSoundStudioStore = create<SoundStudioStore>((set) => ({
 
   addLineAfter: (afterId, text) => set((state) => {
     const idx = state.lines.findIndex((l) => l.id === afterId);
+    const anchor = idx >= 0 ? state.lines[idx] : state.lines[state.lines.length - 1];
+    const insertAt = idx >= 0 ? idx + 1 : state.lines.length;
     const newLine: ScriptLine = {
       id: `line-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      speakerId: state.lines[idx]?.speakerId || '',
+      speakerId: anchor?.speakerId || '',
       text,
-      index: idx + 1,
+      index: insertAt,
+      sceneId: anchor?.sceneId,
     };
     const next = [...state.lines];
-    next.splice(idx + 1, 0, newLine);
+    next.splice(insertAt, 0, newLine);
     return { lines: next.map((l, i) => ({ ...l, index: i })) };
   }),
 
