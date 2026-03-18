@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import {
   ChannelAnalysisSubTab,
   ChannelInputSource,
+  ContentFormat,
   ContentRegion,
   KeywordAnalysisResult,
   RelatedKeyword,
@@ -52,6 +53,14 @@ interface ChannelAnalysisStore {
   topicRecommendations: LegacyTopicRecommendation[];
   /** 콘텐츠 지역 구분 (국내/해외) */
   contentRegion: ContentRegion;
+  /** [FIX #509] 채널 URL (탭 전환 시에도 유지) */
+  channelUrl: string;
+  /** [FIX #509] 콘텐츠 형식 (탭 전환 시에도 유지) */
+  contentFormat: ContentFormat;
+  /** [FIX #509] 분석 영상 수 (탭 전환 시에도 유지) */
+  videoCount: number;
+  /** [FIX #509] 영상 정렬 순서 (탭 전환 시에도 유지) */
+  videoSortOrder: 'latest' | 'popular';
   /** [#414] 리메이크 대본 3버전 (프리셋 복원용) */
   remakeVersions: RemakeVersion[];
   /** [#414] 리메이크 소스 입력값 (프리셋 복원용) */
@@ -88,6 +97,11 @@ interface ChannelAnalysisStore {
   setTopicInput: (input: string) => void;
   setTopicRecommendations: (topics: LegacyTopicRecommendation[]) => void;
   setContentRegion: (region: ContentRegion) => void;
+  /** [FIX #509] */
+  setChannelUrl: (url: string) => void;
+  setContentFormat: (format: ContentFormat) => void;
+  setVideoCount: (count: number) => void;
+  setVideoSortOrder: (order: 'latest' | 'popular') => void;
   /** [#414] 리메이크 버전 저장 + 자동 벤치마크 저장 */
   setRemakeVersions: (versions: RemakeVersion[]) => void;
   /** [#414] 리메이크 소스 입력 저장 */
@@ -143,6 +157,10 @@ const INITIAL_STATE = {
   topicInput: '',
   topicRecommendations: [] as LegacyTopicRecommendation[],
   contentRegion: 'domestic' as ContentRegion,
+  channelUrl: '',
+  contentFormat: 'long' as ContentFormat,
+  videoCount: 10,
+  videoSortOrder: 'latest' as 'latest' | 'popular',
   remakeVersions: [] as RemakeVersion[],
   remakeSourceInput: '',
   savedBenchmarks: [] as SavedBenchmarkData[],
@@ -242,6 +260,10 @@ export const useChannelAnalysisStore = create<ChannelAnalysisStore>((set) => ({
   setTopicInput: (input) => set({ topicInput: input }),
   setTopicRecommendations: (topics) => set({ topicRecommendations: topics }),
   setContentRegion: (region) => set({ contentRegion: region }),
+  setChannelUrl: (url) => set({ channelUrl: url }),
+  setContentFormat: (format) => set({ contentFormat: format }),
+  setVideoCount: (count) => set({ videoCount: count }),
+  setVideoSortOrder: (order) => set({ videoSortOrder: order }),
   setRemakeVersions: (versions) => {
     set({ remakeVersions: versions });
     // 리메이크 버전 변경 시 자동 벤치마크 저장
@@ -253,11 +275,11 @@ export const useChannelAnalysisStore = create<ChannelAnalysisStore>((set) => ({
 
   // --- 벤치마크 IndexedDB 영속화 ---
   saveBenchmark: async () => {
-    const { channelInfo, channelScripts, channelGuideline, inputSource, remakeVersions, remakeSourceInput } = useChannelAnalysisStore.getState();
+    const { channelInfo, channelScripts, channelGuideline, inputSource, remakeVersions, remakeSourceInput, channelUrl } = useChannelAnalysisStore.getState();
     const name = channelInfo?.title || channelGuideline?.channelName || '미지정 채널';
     if (channelScripts.length === 0 && !channelGuideline) return;
     try {
-      await saveBenchmarkData(name, channelScripts, channelGuideline, channelInfo, inputSource, remakeVersions, remakeSourceInput);
+      await saveBenchmarkData(name, channelScripts, channelGuideline, channelInfo, inputSource, remakeVersions, remakeSourceInput, channelUrl);
       const all = await getAllSavedBenchmarks();
       const slotId = name.trim().toLowerCase().replace(/\s+/g, '-');
       set({ savedBenchmarks: all, activeSlotId: slotId });
@@ -269,6 +291,9 @@ export const useChannelAnalysisStore = create<ChannelAnalysisStore>((set) => ({
       const all = await getAllSavedBenchmarks();
       const found = all.find((b) => b.id === id);
       if (found) {
+        // [FIX #509] channelUrl 복원: 저장된 URL → channelInfo에서 재구성 → 빈 문자열
+        const restoredUrl = found.channelUrl
+          || (found.channelInfo?.channelId ? `https://www.youtube.com/channel/${found.channelInfo.channelId}` : '');
         set({
           channelScripts: found.scripts,
           channelGuideline: found.guideline,
@@ -276,6 +301,7 @@ export const useChannelAnalysisStore = create<ChannelAnalysisStore>((set) => ({
           inputSource: found.inputSource || 'youtube',
           remakeVersions: found.remakeVersions || [],
           remakeSourceInput: found.remakeSourceInput || '',
+          channelUrl: restoredUrl,
           savedBenchmarks: all,
           activeSlotId: id,
         });
@@ -308,6 +334,7 @@ export const useChannelAnalysisStore = create<ChannelAnalysisStore>((set) => ({
     isAnalyzing: false,
     remakeVersions: [],
     remakeSourceInput: '',
+    channelUrl: '',
   }),
 
   clearKeywordHistory: () => set({ keywordResults: [] }),

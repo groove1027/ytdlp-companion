@@ -134,6 +134,8 @@ const ChannelAnalysisRoom: React.FC = () => {
     topicInput, topicRecommendations,
     savedBenchmarks, activeSlotId,
     contentRegion, setContentRegion,
+    // [FIX #509] channelUrl, contentFormat, videoCount, videoSortOrder → 스토어에서 관리 (탭 전환 시 유지)
+    channelUrl, setChannelUrl, contentFormat, setContentFormat, videoCount, setVideoCount, videoSortOrder, setVideoSortOrder,
     setChannelInfo, setChannelScripts, setChannelGuideline, savePreset, loadPreset, removePreset,
     setInputSource, setUploadedFiles, setSourceName, syncQuota,
     setTopicInput, setTopicRecommendations,
@@ -147,11 +149,6 @@ const ChannelAnalysisRoom: React.FC = () => {
 
   useEffect(() => { loadAllBenchmarks(); }, []);
 
-
-  const [contentFormat, setContentFormat] = useState<ContentFormat>('long');
-  const [videoCount, setVideoCount] = useState(10);
-  const [videoSortOrder, setVideoSortOrder] = useState<'latest' | 'popular'>('latest');
-  const [channelUrl, setChannelUrl] = useState('');
   const [progress, setProgress] = useState<{ step: number; message: string } | null>(null);
   const [videoProgressCount, setVideoProgressCount] = useState<{ current: number; total: number } | null>(null);
   const [error, setError] = useState('');
@@ -634,7 +631,7 @@ const ChannelAnalysisRoom: React.FC = () => {
       <AnalysisSlotBar
         slots={savedBenchmarks.map(b => ({ id: b.id, name: b.channelName, savedAt: b.savedAt }))}
         activeSlotId={activeSlotId}
-        onNewAnalysis={() => { newAnalysis(); setChannelUrl(''); }}
+        onNewAnalysis={() => newAnalysis()}
         onLoadSlot={loadBenchmark}
         onDeleteSlot={removeBenchmark}
         hasCurrentResults={!!channelGuideline && !activeSlotId}

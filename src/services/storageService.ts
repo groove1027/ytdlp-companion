@@ -26,6 +26,8 @@ export interface SavedBenchmarkData {
   remakeVersions?: RemakeVersion[];
   /** [#414] 리메이크 소스 입력값 (프리셋 복원용) */
   remakeSourceInput?: string;
+  /** [FIX #509] 채널 분석에 사용된 URL */
+  channelUrl?: string;
 }
 
 /** IndexedDB에 저장되는 오디오 Blob 래퍼 */
@@ -401,10 +403,11 @@ export const saveBenchmarkData = async (
   inputSource?: ChannelInputSource,
   remakeVersions?: RemakeVersion[],
   remakeSourceInput?: string,
+  channelUrl?: string,
 ): Promise<void> => {
   const db = await dbPromise;
   const id = channelName.trim().toLowerCase().replace(/\s+/g, '-');
-  const saved: SavedBenchmarkData = { id, channelName, scripts, guideline, savedAt: Date.now(), channelInfo, inputSource, remakeVersions, remakeSourceInput };
+  const saved: SavedBenchmarkData = { id, channelName, scripts, guideline, savedAt: Date.now(), channelInfo, inputSource, remakeVersions, remakeSourceInput, channelUrl };
   await db.put(BENCHMARK_STORE, saved);
 };
 
