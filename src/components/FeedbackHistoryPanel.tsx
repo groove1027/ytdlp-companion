@@ -40,7 +40,7 @@ const FeedbackHistoryPanel: React.FC = () => {
 
     useEffect(() => {
         if (show) {
-            // 로컬 데이터로 즉시 렌더 후 GitHub 상태 비동기 업데이트
+            // [FIX #526] 로컬 데이터로 즉시 렌더 + 서버 복구를 항상 시도 (병합)
             const tracked = getTrackedIssues();
             if (tracked.length > 0) {
                 setStatuses(tracked.sort((a, b) => b.submittedAt - a.submittedAt).map(t => ({
@@ -52,19 +52,16 @@ const FeedbackHistoryPanel: React.FC = () => {
                     latestComment: t.cachedComment || null,
                     closedAt: t.cachedClosedAt || null,
                 })));
-                refresh();
-            } else {
-                // [#515] 로컬 히스토리가 비어있으면 서버에서 복구 시도
-                const email = useAuthStore.getState().authUser?.email;
-                if (email) {
-                    setLoading(true);
-                    restoreFeedbackHistory(email).then((restored) => {
-                        if (restored > 0) refresh();
-                        else setLoading(false);
-                    }).catch(() => setLoading(false));
-                } else {
+            }
+            // 서버 복구를 항상 시도 (로컬 데이터 유무와 무관 — 다른 기기에서 보낸 것도 병합)
+            const email = useAuthStore.getState().authUser?.email;
+            if (email) {
+                setLoading(true);
+                restoreFeedbackHistory(email).then(() => {
                     refresh();
-                }
+                }).catch(() => refresh());
+            } else {
+                refresh();
             }
         }
     }, [show, refresh]);

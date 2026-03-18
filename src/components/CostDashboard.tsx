@@ -1,14 +1,30 @@
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useCostStore } from '../stores/costStore';
 
 const CostDashboard: React.FC = () => {
     const costStats = useCostStore((s) => s.costStats);
     const exchangeRate = useCostStore((s) => s.exchangeRate);
     const exchangeDate = useCostStore((s) => s.exchangeDate);
+    const resetCosts = useCostStore((s) => s.resetCosts);
 
     const [highlight, setHighlight] = useState(false);
     const [showTooltip, setShowTooltip] = useState(false);
+    const [confirmReset, setConfirmReset] = useState(false);
+
+    // [FIX #561] 비용 초기화
+    const handleReset = useCallback(() => {
+        if (!confirmReset) { setConfirmReset(true); return; }
+        resetCosts();
+        setConfirmReset(false);
+    }, [confirmReset, resetCosts]);
+
+    useEffect(() => {
+        if (confirmReset) {
+            const t = setTimeout(() => setConfirmReset(false), 3000);
+            return () => clearTimeout(t);
+        }
+    }, [confirmReset]);
 
     useEffect(() => {
         setHighlight(true);
@@ -95,6 +111,22 @@ const CostDashboard: React.FC = () => {
                         <span className="font-bold text-white bg-gray-800 px-2 py-0.5 rounded-full">{costStats.musicCount ?? 0}곡</span>
                     </div>
                 </div>
+                {/* [FIX #561] 비용 초기화 버튼 */}
+                {costStats.totalUsd > 0 && (
+                    <div className="mt-3 pt-2 border-t border-gray-700">
+                        <button
+                            type="button"
+                            onClick={handleReset}
+                            className={`w-full text-xs py-1.5 rounded-lg font-bold transition-all ${
+                                confirmReset
+                                    ? 'bg-red-600/30 border border-red-500/50 text-red-300 hover:bg-red-600/50'
+                                    : 'bg-gray-800 border border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-600'
+                            }`}
+                        >
+                            {confirmReset ? '정말 초기화할까요? (다시 클릭)' : '🔄 비용 초기화'}
+                        </button>
+                    </div>
+                )}
             </div>
         </div>
     );

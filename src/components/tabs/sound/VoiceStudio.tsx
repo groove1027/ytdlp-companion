@@ -363,9 +363,16 @@ const VoiceStudio: React.FC = () => {
     prevStoreScriptRef.current = storeScript;
     if (lines.length > 0) return;
 
-    // 1순위: scenes에서 파생
+    // 1순위: scenes에서 파생 (단, 현재 대본과 일치하는 경우에만)
     const scenes = useProjectStore.getState().scenes;
-    if (scenes.length > 0) {
+    // [FIX #558] scenes의 텍스트가 현재 대본과 불일치하면 스킵 → storeScript 기반 분할 사용
+    const scenesText = scenes.map(s => s.scriptText || '').join('');
+    const scriptTextClean = storeScript.replace(/\s+/g, '');
+    const scenesTextClean = scenesText.replace(/\s+/g, '');
+    const scenesMatchScript = scenesTextClean.length > 0 && (
+      scriptTextClean.includes(scenesTextClean.slice(0, 100)) || scenesTextClean.includes(scriptTextClean.slice(0, 100))
+    );
+    if (scenes.length > 0 && scenesMatchScript) {
       let defaultSpeakerId = speakers[0]?.id || '';
       if (speakers.length === 0) {
         const newSpeaker: Speaker = {

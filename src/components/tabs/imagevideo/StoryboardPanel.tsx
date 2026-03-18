@@ -2095,13 +2095,27 @@ const StoryboardPanel: React.FC = () => {
       preserveCharacterStyle: batchPreserveCharStyle,
     };
 
+    // [FIX #569] 무료 모델은 사전 쿠키 검증 + 동시성 축소 (20→3)
+    const isFreeModel = batchImageModel === ImageModel.GOOGLE_IMAGEN || batchImageModel === ImageModel.GOOGLE_WHISK;
+    if (isFreeModel) {
+      try {
+        const { useGoogleCookieStore } = await import('../../../stores/googleCookieStore');
+        const gStore = useGoogleCookieStore.getState();
+        if (!gStore.canGenerateImage()) {
+          showToast('Google 무료 생성 한도 초과 또는 쿠키가 만료되었습니다. API 설정에서 쿠키를 확인해주세요.', 5000);
+          return;
+        }
+      } catch { /* 검증 실패 시 진행 허용 */ }
+    }
+    const batchConcurrency = isFreeModel ? 3 : 20;
+
     setIsBatchingImages(true);
     setIsBatchImageCancelRequested(false);
     setBatchImageProgress({ current: 0, total: targets.length, success: 0, fail: 0 });
 
     await runImageBatch(
       targets,
-      20,
+      batchConcurrency,
       async (scene) => handleGenerateImage(scene.id, undefined, batchOverrides),
       () => setBatchImageProgress(prev => ({
         ...prev,

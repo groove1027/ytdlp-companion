@@ -787,10 +787,11 @@ export const generateSceneImage = async (
                 throw new Error('Google 무료 생성 한도를 초과했거나 쿠키가 만료되었습니다. API 설정에서 쿠키를 확인해주세요.');
             }
 
+            // Whisk용 우선순위: scene(사용자 직접 지정) → character(일관성) → style(분위기)
             const prioritizedReferenceImages = buildReferenceImages(
                 sceneReferenceImage,
-                globalStyleReferenceImages,
                 finalCharImages,
+                globalStyleReferenceImages,
             );
             const hasReferenceImages = prioritizedReferenceImages.length > 0;
             const shouldUseWhisk = model === ImageModel.GOOGLE_WHISK || (model === ImageModel.GOOGLE_IMAGEN && hasReferenceImages);
@@ -812,14 +813,10 @@ export const generateSceneImage = async (
                     });
                     return { url: result.base64, isFallback: false, isFiltered: filterResult.wasFiltered };
                 } catch (whiskErr) {
-                    // Imagen 모델에서 자동 라우팅된 경우 → ImageFX로 폴백 (레퍼런스 없이)
-                    if (model === ImageModel.GOOGLE_IMAGEN) {
-                        logger.warn('[generation] Whisk 리믹스 실패, ImageFX로 폴백', { error: (whiskErr as Error).message });
-                        if (updateStatus) updateStatus("🆓 Whisk 실패 → Google Imagen 3.5로 전환 중...");
-                        // 아래 ImageFX 생성 로직으로 계속 진행
-                    } else {
-                        throw whiskErr; // Whisk 모델 직접 선택 시 에러 전파
-                    }
+                    // [FIX #568] Whisk 실패 시 항상 ImageFX로 폴백 (모델 무관)
+                    logger.warn('[generation] Whisk 실패, ImageFX로 폴백', { error: (whiskErr as Error).message, model: String(model) });
+                    if (updateStatus) updateStatus("🆓 Whisk 실패 → Google Imagen 3.5로 전환 중...");
+                    // 아래 ImageFX 생성 로직으로 계속 진행
                 }
             }
 

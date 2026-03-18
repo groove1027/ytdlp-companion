@@ -8,6 +8,22 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-19] #569/#568 무료 이미지 일괄생성 오류 수정
+- [x] `StoryboardPanel.tsx` — 무료 모델 배치 동시성 20→3 축소 + 사전 쿠키 검증 추가
+- [x] `imageGeneration.ts` — Whisk 직접 선택 시에도 실패→ImageFX 폴백 추가 (기존: throw)
+- [x] `tsc --noEmit` + `vite build` 13회 검증 루프 통과
+
+### [2026-03-19] #559/#558 대본→사운드 파이프라인 수정
+- [x] `ScriptWriterTab.tsx` — 단락 나누기 후 sound-studio로 이동 (기존: image-video 하드코딩)
+- [x] `VoiceStudio.tsx` — scenes 기반 라인 빌드 시 storeScript와 일치 여부 확인, 불일치 시 storeScript 폴백
+- [x] `tsc --noEmit` + `vite build` 13회 검증 루프 통과
+
+### [2026-03-19] #526/#561 피드백 내역 표시 + 비용 초기화
+- [x] `FeedbackModal.tsx` — 히스토리 버튼 항상 표시 (기존: getTrackedIssues().length > 0 조건부)
+- [x] `FeedbackHistoryPanel.tsx` — 서버 복구를 항상 시도 (로컬 데이터 유무와 무관하게 병합)
+- [x] `CostDashboard.tsx` — 비용 초기화 버튼 추가 (2단계 확인)
+- [x] `tsc --noEmit` + `vite build` 13회 검증 루프 통과
+
 ### [2026-03-19] #573 AI 자막 처리 예상 비용 표시 + 취소 버튼 추가
 - [x] `editRoomStore.ts` — `createSubtitleSegments`에 `AbortSignal` + `onProgress` 콜백 추가, 내부 AI/STT/무음감지 전 구간에 취소 전파
 - [x] `EditRoomGlobalPanel.tsx` — 시작 전 예상 비용 확인 대화상자, 취소 버튼(red), 진행 표시(amber), AbortController 연결

@@ -505,7 +505,8 @@ ${scriptText}`;
       } : prev);
       projStore.smartUpdateTitle('script-writer', scriptText.split('\n')[0] || '');
       setAnalysisProgress(100);
-      setActiveTab('image-video');
+      // [FIX #559] 파이프라인 순서 존중: 사운드 스튜디오 → 이미지/영상
+      setActiveTab('sound-studio');
     } catch (err) {
       clearInterval(simInterval);
       const msg = err instanceof Error ? err.message : String(err);
