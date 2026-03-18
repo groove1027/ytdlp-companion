@@ -919,7 +919,7 @@ export interface TopicRecommendation {
   synopsis: string;
   whyViral: string;
   instinctMatch: string;
-  referenceVideos: { title: string; viewCount: string }[];
+  referenceVideos: { title: string; viewCount: string; url?: string }[];
   estimatedViralScore: number;
 }
 

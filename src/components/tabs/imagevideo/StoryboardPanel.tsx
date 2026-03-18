@@ -13,6 +13,7 @@ import { AspectRatio, ImageModel, CharacterAppearance, VideoFormat } from '../..
 import type { Scene } from '../../../types';
 import { showToast, useUIStore } from '../../../stores/uiStore';
 import { useGoogleCookieStore } from '../../../stores/googleCookieStore';
+import { retryImport } from '../../../utils/retryImport';
 import { useNavigationStore } from '../../../stores/navigationStore';
 import ActionButton from '../../ui/ActionButton';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
@@ -1593,9 +1594,11 @@ const StoryboardPanel: React.FC = () => {
               : (currentConfig.detectedStyleDescription && currentConfig.detectedStyleDescription.trim() !== '')
                 ? currentConfig.detectedStyleDescription
                 : 'Cinematic';
-        const sceneIdx = currentScenes.findIndex(s => s.id === sceneId);
-        const prevScene = sceneIdx > 0 ? currentScenes[sceneIdx - 1] : undefined;
-        const nextScene = sceneIdx < currentScenes.length - 1 ? currentScenes[sceneIdx + 1] : undefined;
+        // [FIX #525] 배치 생성 시 stale 데이터 방지 — 최신 스토어에서 인접 씬 읽기
+        const freshScenes = useProjectStore.getState().scenes;
+        const sceneIdx = freshScenes.findIndex(s => s.id === sceneId);
+        const prevScene = sceneIdx > 0 ? freshScenes[sceneIdx - 1] : undefined;
+        const nextScene = sceneIdx < freshScenes.length - 1 ? freshScenes[sceneIdx + 1] : undefined;
         const currentCharactersForCtx = useImageVideoStore.getState().characters;
         const charDesc = currentCharactersForCtx.filter(c => c.analysisResult).map((c, i) => `[Character ${i + 1}: "${c.label}"]\n${c.analysisResult}`).join('\n\n') || undefined;
         const autoPrompt = await generatePromptFromScript(scene.scriptText, autoStyle, currentConfig.textForceLock, {
@@ -2022,11 +2025,11 @@ const StoryboardPanel: React.FC = () => {
             onClick={async () => {
               try {
                 if (totalScenes >= 30) {
-                  const { exportProjectZip } = await import('../../../services/exportService');
+                  const { exportProjectZip } = await retryImport(() => import('../../../services/exportService'));
                   await exportProjectZip();
                   showToast('ZIP 파일이 저장되었습니다.');
                 } else {
-                  const { exportProjectHtml } = await import('../../../services/exportService');
+                  const { exportProjectHtml } = await retryImport(() => import('../../../services/exportService'));
                   await exportProjectHtml();
                   showToast('HTML 파일이 저장되었습니다.');
                 }
@@ -2055,7 +2058,7 @@ const StoryboardPanel: React.FC = () => {
                   type="button"
                   onClick={async () => {
                     setShowDownloadDropdown(false);
-                    const { downloadAllMedia } = await import('../../../services/exportService');
+                    const { downloadAllMedia } = await retryImport(() => import('../../../services/exportService'));
                     await downloadAllMedia();
                   }}
                   disabled={completedImages === 0 && completedVideos === 0}
@@ -2070,7 +2073,7 @@ const StoryboardPanel: React.FC = () => {
                   type="button"
                   onClick={async () => {
                     setShowDownloadDropdown(false);
-                    const { downloadImages } = await import('../../../services/exportService');
+                    const { downloadImages } = await retryImport(() => import('../../../services/exportService'));
                     await downloadImages();
                   }}
                   disabled={completedImages === 0}
@@ -2084,7 +2087,7 @@ const StoryboardPanel: React.FC = () => {
                   type="button"
                   onClick={async () => {
                     setShowDownloadDropdown(false);
-                    const { downloadImagesAsMp4 } = await import('../../../services/exportService');
+                    const { downloadImagesAsMp4 } = await retryImport(() => import('../../../services/exportService'));
                     await downloadImagesAsMp4();
                   }}
                   disabled={completedImages === 0}
@@ -2099,7 +2102,7 @@ const StoryboardPanel: React.FC = () => {
                   type="button"
                   onClick={async () => {
                     setShowDownloadDropdown(false);
-                    const { downloadVideos } = await import('../../../services/exportService');
+                    const { downloadVideos } = await retryImport(() => import('../../../services/exportService'));
                     await downloadVideos();
                   }}
                   disabled={completedVideos === 0}

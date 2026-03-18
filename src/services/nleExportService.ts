@@ -1015,7 +1015,7 @@ export async function buildNlePackageZip(params: {
       draft_cover: '',
       draft_deeplink_url: '',
       draft_enterprise_info: { draft_enterprise_extra: '', draft_enterprise_id: '', draft_enterprise_name: '' },
-      draft_fold_path: '',
+      draft_fold_path: `/com.lveditor.draft/${draftResult.projectId}`,
       draft_id: draftResult.projectId,
       draft_is_ai_shorts: false,
       draft_is_article_video_draft: false,
@@ -1026,7 +1026,7 @@ export async function buildNlePackageZip(params: {
       draft_name: title,
       draft_new_version: '',
       draft_removable_storage_device: 0,
-      draft_root_path: '',
+      draft_root_path: `/com.lveditor.draft/${draftResult.projectId}`,
       draft_segment_extra_info: null,
       draft_timeline_materials_size: 0,
       draft_timeline_materials_size_: {},
@@ -1035,7 +1035,7 @@ export async function buildNlePackageZip(params: {
       tm_duration: draftTotalDurUs,
     }));
     const draftMeta = JSON.stringify({
-      draft_fold_path: '', draft_id: draftResult.projectId, draft_name: title, draft_root_path: '',
+      draft_fold_path: `/com.lveditor.draft/${draftResult.projectId}`, draft_id: draftResult.projectId, draft_name: title, draft_root_path: `/com.lveditor.draft/${draftResult.projectId}`,
       draft_removable_storage_device: 0,
       draft_materials: [
         { type: 0, value: [] }, { type: 1, value: [] }, { type: 2, value: [] },

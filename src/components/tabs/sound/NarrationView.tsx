@@ -177,7 +177,17 @@ const NarrationView: React.FC = () => {
               const buf = await resp.arrayBuffer();
               const decoded = await ctx.decodeAudioData(buf);
               duration = decoded.duration;
-            } catch (e) { logger.trackSwallowedError('NarrationView:buildTimeline/decodeDuration', e); /* 디코딩 실패 시 기존 duration 사용 */ }
+            } catch {
+              // [FIX #496] fetch/decode 실패 시 Audio element로 duration 재시도
+              try {
+                const audio = new Audio(line.audioUrl);
+                duration = await new Promise<number>((resolve) => {
+                  audio.onloadedmetadata = () => resolve(audio.duration || line.duration || 3);
+                  audio.onerror = () => resolve(line.duration || 3);
+                  setTimeout(() => resolve(line.duration || 3), 5000); // 5초 타임아웃
+                });
+              } catch { /* 최종 폴백: 기존 duration 유지 */ }
+            }
           }
           const startTime = currentTime;
           const endTime = currentTime + duration;

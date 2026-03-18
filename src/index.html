@@ -17,20 +17,25 @@
       @font-face { font-family: 'Pretendard Variable'; font-display: swap; src: local('Pretendard Variable'); }
       @font-face { font-family: Pretendard; font-display: swap; src: local(Pretendard); }
 
-      /* Custom scrollbar for dark theme */
+      /* [FIX #503] Custom scrollbar for dark theme — 크기 확대 + 클릭 영역 개선 */
       ::-webkit-scrollbar {
-        width: 8px;
-        height: 8px;
+        width: 10px;
+        height: 10px;
       }
       ::-webkit-scrollbar-track {
         background: #1f2937;
       }
       ::-webkit-scrollbar-thumb {
         background: #4b5563;
-        border-radius: 4px;
+        border-radius: 2px;
+        min-height: 40px;
+        min-width: 40px;
       }
       ::-webkit-scrollbar-thumb:hover {
         background: #6b7280;
+      }
+      ::-webkit-scrollbar-thumb:active {
+        background: #9ca3af;
       }
       .scrollbar-hide::-webkit-scrollbar { display: none; }
       .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }

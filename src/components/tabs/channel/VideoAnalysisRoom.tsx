@@ -2425,11 +2425,20 @@ const buildUserMessage = (inputDesc: string, preset: AnalysisPreset, targetDurat
   // 목표 시간 관련 동적 지시 (프리셋별 기존 시간 규칙을 오버라이드) — 0(원본)이면 생략
   const durationInstruction = targetDuration === 0 ? '' : `\n\n### ⏱️ 목표 시간 설정 (사용자 지정 — 최우선 적용)\n- **각 버전의 총 길이를 반드시 약 ${targetDuration}초로 맞추세요.**\n- 컷 수와 개별 컷 길이를 조절하여 합산이 ${targetDuration}초 내외(±5초)가 되도록 설계하세요.\n- ${targetDuration <= 30 ? '핵심 장면만 엄선하여 짧고 임팩트 있게.' : targetDuration <= 45 ? '주요 장면을 선별하되 적절한 호흡으로.' : '충분한 내용을 담아 풍부하게.'}`;
   // [FIX #529] alltts 롱폼 지원: 원본(targetDuration=0)이고 영상이 90초 초과이면 롱폼 분량 보존 지시 추가
-  const isLongFormAllTts = preset === 'alltts' && targetDuration === 0 && videoDurationSec > 90;
-  const longFormMinRows = isLongFormAllTts ? Math.max(15, Math.round(videoDurationSec / 10)) : 8;
-  const longFormMaxRows = isLongFormAllTts ? Math.max(20, Math.round(videoDurationSec / 7)) : 12;
+  // [FIX #529 강화] videoDurationSec가 0이어도 inputDesc에서 영상 길이 힌트가 있으면 롱폼 감지
+  let effectiveDuration = videoDurationSec;
+  if (effectiveDuration === 0 && preset === 'alltts' && targetDuration === 0) {
+    // inputDesc에서 영상 길이 파싱 시도 (예: "PT30M12S", "30:12", "1812초" 등)
+    const ptMatch = inputDesc.match(/PT(\d+)M/);
+    const colonMatch = inputDesc.match(/(\d{1,3}):(\d{2})/);
+    if (ptMatch) effectiveDuration = parseInt(ptMatch[1]) * 60;
+    else if (colonMatch) effectiveDuration = parseInt(colonMatch[1]) * 60 + parseInt(colonMatch[2]);
+  }
+  const isLongFormAllTts = preset === 'alltts' && targetDuration === 0 && effectiveDuration > 90;
+  const longFormMinRows = isLongFormAllTts ? Math.max(15, Math.round(effectiveDuration / 10)) : 8;
+  const longFormMaxRows = isLongFormAllTts ? Math.max(20, Math.round(effectiveDuration / 7)) : 12;
   const longFormOverride = isLongFormAllTts
-    ? `\n\n### ⏱️ 원본 분량 보존 — 롱폼 모드 (최우선 적용)\n- 원본 영상은 약 ${Math.round(videoDurationSec / 60)}분(${videoDurationSec}초)입니다.\n- 각 버전의 총 길이를 **원본과 동일하게 약 ${Math.round(videoDurationSec / 60)}분**으로 맞추세요.\n- **"쇼츠 영상 대본"이 아닌, 원본 길이에 맞는 풀 스크립트**를 작성하세요.\n- 컷(행) 수를 대폭 늘려 원본의 모든 정보를 빠짐없이 담으세요 (최소 ${longFormMinRows}행 이상).\n- 각 컷의 타임코드가 영상 전체(00:00~${Math.floor(videoDurationSec / 60).toString().padStart(2, '0')}:${Math.round(videoDurationSec % 60).toString().padStart(2, '0')})에 골고루 분포되어야 합니다.\n- 축약·요약·생략 절대 금지: 원본 정보량 100%를 그대로 유지하되 텍스트만 재조립하세요.`
+    ? `\n\n### ⏱️ 원본 분량 보존 — 롱폼 모드 (최우선 적용)\n- 원본 영상은 약 ${Math.round(effectiveDuration / 60)}분(${effectiveDuration}초)입니다.\n- 각 버전의 총 길이를 **원본과 동일하게 약 ${Math.round(effectiveDuration / 60)}분**으로 맞추세요.\n- **"쇼츠 영상 대본"이 아닌, 원본 길이에 맞는 풀 스크립트**를 작성하세요.\n- 컷(행) 수를 대폭 늘려 원본의 모든 정보를 빠짐없이 담으세요 (최소 ${longFormMinRows}행 이상).\n- 각 컷의 타임코드가 영상 전체(00:00~${Math.floor(effectiveDuration / 60).toString().padStart(2, '0')}:${Math.round(effectiveDuration % 60).toString().padStart(2, '0')})에 골고루 분포되어야 합니다.\n- 축약·요약·생략 절대 금지: 원본 정보량 100%를 그대로 유지하되 텍스트만 재조립하세요.`
     : '';
 
   if (preset === 'alltts') {
@@ -3012,8 +3021,10 @@ const VideoAnalysisRoom: React.FC = () => {
     analysisStartRef.current = Date.now();
     resetResults();
 
-    // [FIX #378] 분석 시작 직후 글로벌 타임아웃 설정 — 전처리+AI 전체 보호
-    const TOTAL_ANALYSIS_TIMEOUT_MS = 8 * 60 * 1000; // 8분 (전처리 3분 + AI 5분)
+    // [FIX #378 + #523] 분석 시작 직후 글로벌 타임아웃 설정 — 전처리+AI 전체 보호
+    // 롱폼(10분+) 영상은 STT+프레임 추출에 시간이 더 필요하므로 타임아웃 확대
+    // targetDuration이 0(원본 분량)이면 롱폼 가능성 높음
+    const TOTAL_ANALYSIS_TIMEOUT_MS = (targetDuration === 0 || targetDuration > 600) ? 15 * 60 * 1000 : 8 * 60 * 1000; // 롱폼 15분, 일반 8분
     globalTimeout = setTimeout(() => {
       console.warn(`[VideoAnalysis] 전체 분석 타임아웃 (${TOTAL_ANALYSIS_TIMEOUT_MS / 60000}분) 도달 — 강제 중단`);
       abortCtrl.abort();

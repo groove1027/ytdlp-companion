@@ -331,7 +331,7 @@ const SubtitleQuickPanel: React.FC<{ onOpenDetail: () => void }> = ({ onOpenDeta
       const payload = entries.map(([id, v]) => ({ id, text: v.text.replace(/\n/g, ' ') }));
       const res = await evolinkChat([
         { role: 'system', content: 'You are a subtitle line-break assistant. Return ONLY valid JSON.' },
-        { role: 'user', content: `다음 자막 텍스트들을 한 줄당 최대 ${charsPerLine}자 이내로 자연스럽게 줄바꿈해주세요.\n기계적으로 글자 수에 맞춰 자르지 말고, 의미 단위/문맥에 맞게 나눠주세요.\n입력: ${JSON.stringify(payload)}\n출력 포맷: 동일 JSON 배열 [{id, text}] (text에 \\n 삽입)` },
+        { role: 'user', content: `다음 자막 텍스트들을 한 줄당 ${charsPerLine}자에 최대한 가깝게 채워서 자연스럽게 줄바꿈해주세요.\n각 줄이 너무 짧으면 안 됩니다. ${charsPerLine}자의 70~100% 범위를 목표로 하되, 의미 단위/문맥에 맞게 나눠주세요.\n5자 이하의 극단적으로 짧은 줄은 절대 만들지 마세요.\n입력: ${JSON.stringify(payload)}\n출력 포맷: 동일 JSON 배열 [{id, text}] (text에 \\n 삽입)` },
       ], { temperature: 0.2, responseFormat: { type: 'json_object' }, model: 'gemini-3.1-flash-lite-preview' });
       const raw = res.choices?.[0]?.message?.content || '[]';
       const obj = JSON.parse(raw);

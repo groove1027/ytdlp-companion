@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useShoppingChannelStore } from '../../../stores/shoppingChannelStore';
 import { generateChannelScripts, generateScenePrompts } from '../../../services/shoppingChannelService';
 import { showToast } from '../../../stores/uiStore';
@@ -21,13 +21,16 @@ const ScriptReviewStep: React.FC = () => {
   const [editingScript, setEditingScript] = useState<ShoppingScript | null>(null);
   const [isPreparingScenes, setIsPreparingScenes] = useState(false);
 
-  // 자동 대본 생성 (최초 진입 시)
+  // [FIX #517] 자동 대본 생성 (최초 진입 시 — 이미 생성된 스크립트가 있으면 스킵)
+  // 빈 의존성 배열→올바른 의존성으로 교체하여 재마운트 시 불필요한 재생성 방지
+  const autoGenTriggeredRef = useRef(false);
   useEffect(() => {
-    if (generatedScripts.length === 0 && productAnalysis && !isGeneratingScripts) {
+    if (generatedScripts.length === 0 && productAnalysis && !isGeneratingScripts && !autoGenTriggeredRef.current) {
+      autoGenTriggeredRef.current = true;
       handleGenerate();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [generatedScripts.length, productAnalysis, isGeneratingScripts]);
 
   const handleGenerate = useCallback(async () => {
     if (!productAnalysis) return;

@@ -66,7 +66,7 @@ JSON 배열 형식 (정확히 5개):
     "synopsis": "1-2줄 줄거리",
     "whyViral": "바이럴 예상 이유 (1줄)",
     "instinctMatch": "트렌드 카테고리",
-    "referenceVideos": [{"title": "참고 영상/트렌드", "viewCount": "추정 조회수"}],
+    "referenceVideos": [{"title": "참고 영상/트렌드", "viewCount": "추정 조회수", "url": "https://www.youtube.com/watch?v=실제영상ID"}],
     "estimatedViralScore": 85
   }
 ]`;
@@ -87,7 +87,7 @@ JSON 배열 형식 (정확히 5개):
     "synopsis": "1-2줄 줄거리",
     "whyViral": "바이럴 예상 이유 (심리 분석 1줄)",
     "instinctMatch": "적용된 본능 기제",
-    "referenceVideos": [{"title": "참고 영상/트렌드", "viewCount": "추정 조회수"}],
+    "referenceVideos": [{"title": "참고 영상/트렌드", "viewCount": "추정 조회수", "url": "https://www.youtube.com/watch?v=실제영상ID"}],
     "estimatedViralScore": 85
   }
 ]` : '';

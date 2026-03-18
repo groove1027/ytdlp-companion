@@ -121,8 +121,8 @@ const SubtitleRemoverTab: React.FC = () => {
             setPercent(90);
           } else if (elapsedSec != null) {
             // 경과 시간 기반 진행률 (30~85% 범위, 최대 예상시간 기반)
-            // GhostCut은 영상 1초당 약 10~15초 처리 소요 (실측 기반)
-            const estimatedTotal = Math.max(videoDuration * 12, 120);
+            // [FIX #486] GhostCut은 영상 1초당 약 15~25초 처리 소요 (롱폼 실측 반영)
+            const estimatedTotal = Math.max(videoDuration * 20, 180);
             const ratio = Math.min(elapsedSec / estimatedTotal, 1);
             setPercent(Math.round(30 + ratio * 55)); // 30% ~ 85%
           }

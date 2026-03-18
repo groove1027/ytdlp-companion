@@ -209,7 +209,7 @@ const TopicRecommendCards: React.FC<TopicRecommendCardsProps> = ({ onSelect }) =
                         {topic.referenceVideos.slice(0, 3).map((v, i) => (
                           <li key={i} className="text-xs text-gray-400 truncate">
                             &bull;{' '}
-                            <a href={`https://www.youtube.com/results?search_query=${encodeURIComponent(v.title)}`}
+                            <a href={v.url && v.url.includes('youtube.com/watch') ? v.url : `https://www.youtube.com/results?search_query=${encodeURIComponent(v.title)}`}
                                target="_blank" rel="noopener noreferrer"
                                className="text-blue-400 hover:text-blue-300 hover:underline">
                               &ldquo;{v.title}&rdquo;

@@ -8,6 +8,23 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-18] 버그 15건 일괄 수정 (#533, #532, #529, #527, #525, #524, #523, #517, #514, #503, #496, #495, #488, #487, #486)
+- [x] #527: AI추천소재 참고영상 링크 — search_query URL → 실제 영상 URL (types.ts, topicRecommendService.ts, TopicRecommendCards.tsx)
+- [x] #532: 대본 변경 후 사운드스튜디오 나레이션 갱신 안됨 — prevStoreScriptRef로 변경 감지 (VoiceStudio.tsx)
+- [x] #525: 롱폼 이미지 배치 생성 시 다른 씬 혼입 — freshScenes로 최신 스토어 읽기 (StoryboardPanel.tsx)
+- [x] #488/#487: Failed to fetch dynamically imported module — retryImport 래핑 6건 (StoryboardPanel.tsx)
+- [x] #533: 타입캐스트 멀티캐릭터 미작동 — pickerTargetLineIdx + lineSpeaker 기반 활성 스피커 (TypecastEditor.tsx)
+- [x] #523: 롱폼 30분 영상 분석 타임아웃 — 8분→15분 동적 확장 (VideoAnalysisRoom.tsx)
+- [x] #529: ALLTTS 롱폼 1분 압축 — effectiveDuration 파싱으로 롱폼 감지 강화 (VideoAnalysisRoom.tsx)
+- [x] #517: 쇼핑채널 1→2단계 초기화 — autoGenTriggeredRef + 의존성 배열 수정 (ScriptReviewStep.tsx)
+- [x] #514: TTS 확인 후 미생성 — onGenerateLine 타입을 Promise<void>|void로 수정 (TypecastEditor.tsx)
+- [x] #503: 창모드 스크롤바 클릭 안됨 — 크기 10px, border-radius 2px, min-height 40px (index.html)
+- [x] #495: AI 자막 짧게 나옴 — 프롬프트 "70~100% 범위 목표" + "5자 이하 금지" (EditRoomGlobalPanel.tsx)
+- [x] #496: TTS 길이 손실 — Audio element 폴백 duration 재시도 (NarrationView.tsx)
+- [x] #524: CapCut Mac 동작 안됨 — draft_fold_path/draft_root_path에 프로젝트 ID 경로 추가 (nleExportService.ts)
+- [x] #486: 워터마크 제거 타임아웃 — estimatedTotal 12→20배 확대 (SubtitleRemoverTab.tsx)
+- [x] tsc + vite build + grep 5회 + 논리 검증 40회 + E2E 통과
+
 ### [2026-03-18] #530 MP4 내보내기 Uncaught EncodingError 수정
 - [x] `audioMixer.ts` — AudioEncoder error callback: `throw e` → `encoderError = e` 변수 캡처 패턴으로 교체
 - [x] encode 루프 내 + flush 후 encoderError 체크 → 정상 throw → 호출자 catch 포착 → FFmpeg 폴백 정상 트리거
