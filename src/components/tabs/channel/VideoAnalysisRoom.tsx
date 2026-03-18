@@ -387,8 +387,9 @@ function formatTimeSec(s: number): string {
   return `${String(min).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
 }
 
-/** TimedFrame 배열에서 주어진 초에 정확히 매칭되는 프레임 찾기 (최대 1초 허용) */
+/** TimedFrame 배열에서 주어진 초에 가장 가까운 프레임 찾기 (최대 거리 제한 적용) */
 function matchFrameToTimecode(timeSec: number, frames: TimedFrame[]): TimedFrame | null {
+  const MAX_FRAME_MATCH_DISTANCE_SEC = 5;
   if (frames.length === 0) return null;
   let best = frames[0];
   let bestDist = Math.abs(best.timeSec - timeSec);
@@ -396,9 +397,7 @@ function matchFrameToTimecode(timeSec: number, frames: TimedFrame[]): TimedFrame
     const dist = Math.abs(frames[i].timeSec - timeSec);
     if (dist < bestDist) { best = frames[i]; bestDist = dist; }
   }
-  // [FIX #334] 1초 제한 제거 — 프레임이 있으면 가장 가까운 것을 항상 반환
-  // 프레임 간격이 2~3초인 경우, 장면 타임코드가 사이에 걸리면 1초 이상 차이 → 비주얼 누락 발생
-  return best;
+  return bestDist <= MAX_FRAME_MATCH_DISTANCE_SEC ? best : null;
 }
 
 /** YouTube 영상의 실제 메타데이터 (제목, 설명, 태그, 통계) 가져오기 */
@@ -529,6 +528,40 @@ async function downloadVideoAsBlob(videoId: string): Promise<{ blobUrl: string; 
     console.warn('[Frame] ❌ 다운로드 최종 실패:', e);
     return null;
   }
+}
+
+async function withAsyncTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timeoutId: number | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timeoutId = window.setTimeout(() => reject(new Error(`${label} 시간이 초과되었습니다. 잠시 후 다시 시도해주세요.`)), ms);
+      }),
+    ]);
+  } finally {
+    if (timeoutId !== null) window.clearTimeout(timeoutId);
+  }
+}
+
+async function downloadSourceVideoForNleExport(sourceUrl: string): Promise<{ blob: Blob; hasAudio: boolean; title: string }> {
+  if (isYouTubeUrl(sourceUrl)) {
+    const { downloadVideoViaProxy } = await import('../../../services/ytdlpApiService');
+    const videoId = extractYouTubeVideoId(sourceUrl) || sourceUrl;
+    const { blob, info } = await withAsyncTimeout(
+      downloadVideoViaProxy(videoId, '720p'),
+      180000,
+      '원본 영상 다운로드',
+    );
+    return { blob, hasAudio: true, title: info.title || '' };
+  }
+
+  const { blob, title } = await withAsyncTimeout(
+    downloadSocialVideo(sourceUrl, '720p'),
+    180000,
+    '원본 영상 다운로드',
+  );
+  return { blob, hasAudio: true, title: title || '' };
 }
 
 /** YouTube 고정 썸네일 폴백 — 타임코드별 가장 가까운 위치 매핑 (최후 수단) */
@@ -849,8 +882,11 @@ function collectTimecodesFromVersions(versions: VersionItem[], durationSec?: num
       const cleaned = p.trim();
       const range = cleaned.match(/(\d+:\d+(?:\.\d+)?)\s*[~\-–—]\s*(\d+:\d+(?:\.\d+)?)/);
       if (range) {
-        // display 코드는 범위의 시작점만 사용 → 시작점만 추출
-        raw.push(timecodeToSeconds(range[1]));
+        const start = timecodeToSeconds(range[1]);
+        const end = timecodeToSeconds(range[2]);
+        raw.push(start);
+        const mid = (start + end) / 2;
+        if (mid > 0) raw.push(mid);
       } else {
         const sec = timecodeToSeconds(cleaned);
         if (sec > 0) raw.push(sec);
@@ -4446,22 +4482,13 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                           videoBlob = uploadedFiles[0];
                                           audioConfirmed = true;
                                         } else if (inputMode === 'youtube' && sourceUrl) {
-                                          setNleExporting({ target, step: '영상 다운로드 중...' });
-                                          if (isYoutubeSource) {
-                                            const dlResult = await downloadVideoAsBlob(extractYouTubeVideoId(sourceUrl) || sourceUrl);
-                                            if (dlResult) {
-                                              videoBlob = dlResult.blob;
-                                              audioConfirmed = dlResult.hasAudio;
-                                              useVideoAnalysisStore.getState().setVideoBlob(dlResult.blob, dlResult.hasAudio);
-                                            }
-                                          } else {
-                                            const dlResult = await downloadSocialVideo(sourceUrl, '720p');
-                                            if (dlResult.blob.size > 0) {
-                                              videoBlob = dlResult.blob;
-                                              downloadedSourceTitle = dlResult.title || '';
-                                              audioConfirmed = true;
-                                              useVideoAnalysisStore.getState().setVideoBlob(dlResult.blob, true);
-                                            }
+                                          setNleExporting({ target, step: isYoutubeSource ? '오디오 포함 영상 다운로드 중...' : '영상 다운로드 중...' });
+                                          const dlResult = await downloadSourceVideoForNleExport(sourceUrl);
+                                          if (dlResult.blob.size > 0) {
+                                            videoBlob = dlResult.blob;
+                                            downloadedSourceTitle = dlResult.title || '';
+                                            audioConfirmed = dlResult.hasAudio;
+                                            useVideoAnalysisStore.getState().setVideoBlob(dlResult.blob, dlResult.hasAudio);
                                           }
                                         }
                                       }
@@ -4550,7 +4577,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                       showToast(!audioConfirmed
                                         ? `${label} 다운로드 완료! ⚠️ 원본 오디오를 불러오지 못했어요. ${target === 'premiere' ? 'Premiere' : label}에서 수동으로 오디오를 추가해주세요.`
                                         : `${label} 패키지 다운로드 완료!`, !audioConfirmed ? 7000 : undefined);
-                                    } catch (e) { console.error('[NLE]', e); showToast(`${label} 패키지 생성 실패`); } finally { setNleExporting(null); }
+                                    } catch (e) { console.error('[NLE]', e); showToast(`${label} 패키지 생성 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`, 5000); } finally { setNleExporting(null); }
                                   }}
                                   className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold transition-all shadow-sm ${
                                     nleExporting?.target === target

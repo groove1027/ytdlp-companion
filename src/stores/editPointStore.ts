@@ -1010,18 +1010,20 @@ export const useEditPointStore = create<EditPointStore>()(immer((set, get) => ({
         .then(() => {
           // 파싱된 EdlEntry에 영상 분석실 프레임을 타임코드 기반 매칭
           if (frames && frames.length > 0) {
+            const FRAME_MATCH_MAX_DISTANCE_SEC = 5;
             const sortedFrames = [...frames].sort((a, b) => a.timeSec - b.timeSec);
             set((state) => ({
               edlEntries: state.edlEntries.map(entry => {
                 if (entry.referenceFrameUrl) return entry; // 이미 있으면 유지
-                // 타임코드 범위에 가장 가까운 프레임 찾기
-                const midTime = (entry.timecodeStart + entry.timecodeEnd) / 2;
-                let bestFrame = sortedFrames[0];
+                // 편집점 썸네일은 컷 시작점 기준으로 매칭
+                const targetTime = entry.timecodeStart;
+                let bestFrame: (typeof sortedFrames)[number] | null = null;
                 let bestDist = Infinity;
                 for (const f of sortedFrames) {
-                  const dist = Math.abs(f.timeSec - midTime);
+                  const dist = Math.abs(f.timeSec - targetTime);
                   if (dist < bestDist) { bestDist = dist; bestFrame = f; }
                 }
+                if (!bestFrame || bestDist > FRAME_MATCH_MAX_DISTANCE_SEC) return entry;
                 return bestFrame ? { ...entry, referenceFrameUrl: bestFrame.hdUrl || bestFrame.url } : entry;
               }),
             }));
