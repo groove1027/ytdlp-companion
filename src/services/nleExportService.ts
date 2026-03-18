@@ -1002,8 +1002,38 @@ export async function buildNlePackageZip(params: {
     // 2. draft JSON (프로젝트 폴더 복사 방식)
     const draftResult = generateCapCutDraftJson({ scenes, title, videoFileName: videoFileName || 'video.mp4', preset, width, height, fps, videoDurationSec });
     zip.file('draft_content.json', draftResult.json);
-    zip.file('draft_info.json', draftResult.json);
     const nowTs = Math.floor(Date.now() / 1000);
+    const draftTotalDurUs = Math.ceil((extractTimings(scenes, preset).at(-1)?.tlEndSec || 0) * 1_000_000);
+    // draft_info.json — CapCut 프로젝트 메타데이터 (draft_content와 별도 구조)
+    zip.file('draft_info.json', JSON.stringify({
+      draft_cloud_capcut_purchase_info: '',
+      draft_cloud_last_action_download: false,
+      draft_cloud_purchase: '',
+      draft_cloud_template_id: '',
+      draft_cloud_tutorial_info: '',
+      draft_cloud_videocut_purchase_info: '',
+      draft_cover: '',
+      draft_deeplink_url: '',
+      draft_enterprise_info: { draft_enterprise_extra: '', draft_enterprise_id: '', draft_enterprise_name: '' },
+      draft_fold_path: '',
+      draft_id: draftResult.projectId,
+      draft_is_ai_shorts: false,
+      draft_is_article_video_draft: false,
+      draft_is_from_deeplink: '',
+      draft_is_invisible: false,
+      draft_materials_copied: false,
+      draft_materials_video_cnt: 1,
+      draft_name: title,
+      draft_new_version: '',
+      draft_removable_storage_device: 0,
+      draft_root_path: '',
+      draft_segment_extra_info: null,
+      draft_timeline_materials_size: 0,
+      draft_timeline_materials_size_: {},
+      tm_draft_create: nowTs,
+      tm_draft_modified: nowTs,
+      tm_duration: draftTotalDurUs,
+    }));
     const draftMeta = JSON.stringify({
       draft_fold_path: '', draft_id: draftResult.projectId, draft_name: title, draft_root_path: '',
       draft_removable_storage_device: 0,
@@ -1012,7 +1042,7 @@ export async function buildNlePackageZip(params: {
         { type: 3, value: [] }, { type: 6, value: [] }, { type: 7, value: [] }, { type: 8, value: [] },
       ],
       tm_draft_create: nowTs, tm_draft_modified: nowTs,
-      tm_duration: Math.ceil((extractTimings(scenes, preset).at(-1)?.tlEndSec || 0) * 1_000_000),
+      tm_duration: draftTotalDurUs,
     });
     zip.file('draft_meta_info.json', draftMeta);
 
@@ -2073,7 +2103,37 @@ export async function buildEditRoomNleZip(params: {
 
     const draftJson = JSON.stringify(draft);
     zip.file('draft_content.json', draftJson);
-    zip.file('draft_info.json', draftJson);
+    const editNowTs = Math.floor(Date.now() / 1000);
+    // draft_info.json — CapCut 프로젝트 메타데이터 (draft_content와 별도 구조)
+    zip.file('draft_info.json', JSON.stringify({
+      draft_cloud_capcut_purchase_info: '',
+      draft_cloud_last_action_download: false,
+      draft_cloud_purchase: '',
+      draft_cloud_template_id: '',
+      draft_cloud_tutorial_info: '',
+      draft_cloud_videocut_purchase_info: '',
+      draft_cover: '',
+      draft_deeplink_url: '',
+      draft_enterprise_info: { draft_enterprise_extra: '', draft_enterprise_id: '', draft_enterprise_name: '' },
+      draft_fold_path: '',
+      draft_id: projectId,
+      draft_is_ai_shorts: false,
+      draft_is_article_video_draft: false,
+      draft_is_from_deeplink: '',
+      draft_is_invisible: false,
+      draft_materials_copied: false,
+      draft_materials_video_cnt: videoMaterials.length,
+      draft_name: title,
+      draft_new_version: '',
+      draft_removable_storage_device: 0,
+      draft_root_path: '',
+      draft_segment_extra_info: null,
+      draft_timeline_materials_size: 0,
+      draft_timeline_materials_size_: {},
+      tm_draft_create: editNowTs,
+      tm_draft_modified: editNowTs,
+      tm_duration: totalDurUs,
+    }));
     zip.file('draft_meta_info.json', JSON.stringify({
       draft_fold_path: '', draft_id: projectId, draft_name: title, draft_root_path: '',
       draft_removable_storage_device: 0,
@@ -2081,8 +2141,8 @@ export async function buildEditRoomNleZip(params: {
         { type: 0, value: [] }, { type: 1, value: [] }, { type: 2, value: [] },
         { type: 3, value: [] }, { type: 6, value: [] }, { type: 7, value: [] }, { type: 8, value: [] },
       ],
-      tm_draft_create: Math.floor(Date.now() / 1000),
-      tm_draft_modified: Math.floor(Date.now() / 1000),
+      tm_draft_create: editNowTs,
+      tm_draft_modified: editNowTs,
       tm_duration: totalDurUs,
     }));
   }

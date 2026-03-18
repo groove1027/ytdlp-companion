@@ -8,6 +8,13 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-18] CapCut draft_info.json 구조 수정 — "자료 다운로드 중" 무한 대기 해결
+- [x] `nleExportService.ts` — buildNlePackageZip: draft_info.json을 draft_content 복사 → 올바른 메타데이터 구조로 교체
+- [x] `nleExportService.ts` — buildEditRoomNleZip: 동일 수정 적용 (draft_info.json 메타데이터 구조)
+- [x] `draft_cloud_last_action_download: false` 필드 추가 — CapCut 클라우드 다운로드 시도 방지
+- [x] draft_info.json 크기: 기존 수십KB(draft_content 복사) → 892바이트(메타데이터만)
+- [x] tsc + vite build + grep 5회 + 논리 검증 30회 + Puppeteer E2E 통과
+
 ### [2026-03-18] CapCut 프로젝트 파일 호환성 수정 — draft JSON 구조 전면 개선
 - [x] `nleExportService.ts` — generateCapCutDraftJson: path에 draft placeholder 패턴 적용 (CapCut 미디어 인식)
 - [x] `nleExportService.ts` — check_flag 0→63487, material_id 빈값→실제ID, crop_ratio/crop_scale 추가
