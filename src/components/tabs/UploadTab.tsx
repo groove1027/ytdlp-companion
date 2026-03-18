@@ -1720,7 +1720,7 @@ const StepMetadata: React.FC = () => {
             >
               <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path d="M10 2a1 1 0 011 1v1.323l3.954 1.582 1.599-.8a1 1 0 01.894 1.79l-1.233.616 1.738 5.42a1 1 0 01-.285 1.05A3.989 3.989 0 0115 15a3.989 3.989 0 01-2.667-1.019 1 1 0 01-.285-1.05l1.715-5.349L11 6.477V16h2a1 1 0 110 2H7a1 1 0 110-2h2V6.477L6.237 7.582l1.715 5.349a1 1 0 01-.285 1.05A3.989 3.989 0 015 15a3.989 3.989 0 01-2.667-1.019 1 1 0 01-.285-1.05l1.738-5.42-1.233-.617a1 1 0 01.894-1.788l1.599.799L9 4.323V3a1 1 0 011-1z"/></svg>
               AI 자동 분석 및 적용
-              <span className="text-xs opacity-70 ml-1">(제목 5개 + 설명 + 해시태그 + 태그 + 쇼핑 태그)</span>
+              <span className="text-xs opacity-70 ml-1">(제목 5개 + 설명 + 타임테이블 + 해시태그 + 태그)</span>
             </button>
             <button
               type="button"
@@ -1792,7 +1792,7 @@ const StepMetadata: React.FC = () => {
             </p>
           </div>
           <div className="flex flex-wrap gap-2 mb-3">
-            {['1. 정책 검사', '2. 제목 5개', '3. 설명', '4. 공개 해시태그', ...(selectedPlatforms.includes('youtube') ? ['5. 비공개 태그'] : []), '6. 쇼핑 태그'].map((step, idx) => {
+            {['1. 정책 검사', '2. 제목 5개', '3. 설명', '4. 타임테이블', '5. 공개 해시태그', ...(selectedPlatforms.includes('youtube') ? ['6. 비공개 태그'] : []), '7. 쇼핑 태그'].map((step, idx) => {
               const activeIdx = elapsed < 3 ? 0 : elapsed < 8 ? 1 : elapsed < 15 ? 2 : elapsed < 20 ? 3 : elapsed < 25 ? 4 : 5;
               const isDone = idx < activeIdx;
               const isActive = idx === activeIdx;
@@ -1936,6 +1936,30 @@ const StepMetadata: React.FC = () => {
           className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-purple-500/50 resize-none"
         />
       </div>}
+
+      {/* Timetable (YouTube Chapters) */}
+      {metadata && metadata.timetable && selectedPlatforms.includes('youtube') && (
+        <div>
+          <label className="text-sm font-semibold text-gray-300 mb-1.5 flex items-center justify-between">
+            <span className="flex items-center gap-2">
+              타임테이블
+              <span className="text-[11px] text-green-400 bg-green-900/20 px-2 py-0.5 rounded border border-green-500/20">YouTube 챕터</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => { navigator.clipboard.writeText(metadata.timetable!); showToast('타임테이블이 클립보드에 복사되었습니다'); }}
+              className="text-gray-500 hover:text-gray-300 transition-colors p-1 rounded hover:bg-gray-700/50"
+              title="타임테이블 복사"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+            </button>
+          </label>
+          <div className="bg-gray-900/70 border border-gray-700 rounded-lg px-4 py-3">
+            <pre className="text-sm text-gray-300 whitespace-pre-line font-mono leading-relaxed">{metadata.timetable}</pre>
+          </div>
+          <p className="text-xs text-gray-600 mt-1">YouTube 설명란에 붙여넣으면 자동으로 챕터가 생성됩니다.</p>
+        </div>
+      )}
 
       {/* Policy Check Result */}
       {metadata?.policyCheck && (
@@ -2219,6 +2243,12 @@ const StepMetadata: React.FC = () => {
                   <p className="text-sm text-gray-200">{title.slice(0, 100)}</p>
                   <p className="text-xs text-gray-400 mt-2"><span className="text-gray-500 font-semibold">설명</span> <span className="text-gray-600">({(description || '').length}/5000자)</span></p>
                   <p className="text-sm text-gray-300 whitespace-pre-line line-clamp-3">{(description || '').slice(0, 200)}{(description || '').length > 200 ? '...' : ''}</p>
+                  {metadata.timetable && (
+                    <>
+                      <p className="text-xs text-gray-400 mt-2"><span className="text-gray-500 font-semibold">타임테이블</span></p>
+                      <pre className="text-sm text-green-300/80 whitespace-pre-line font-mono">{metadata.timetable.split('\n').slice(0, 4).join('\n')}{metadata.timetable.split('\n').length > 4 ? '\n...' : ''}</pre>
+                    </>
+                  )}
                   <p className="text-xs text-gray-400 mt-2"><span className="text-gray-500 font-semibold">공개 해시태그</span></p>
                   <p className="text-sm text-cyan-300">{(metadata.publicHashtags || []).map(h => `#${h}`).join(' ') || '-'}</p>
                   <p className="text-xs text-gray-400 mt-2"><span className="text-gray-500 font-semibold">비공개 태그</span> <span className="text-gray-600">({(metadata.hiddenTags || []).length}개)</span></p>

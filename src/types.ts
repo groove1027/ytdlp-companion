@@ -1304,6 +1304,7 @@ export interface VideoMetadata {
   titles: string[];            // AI 생성 5개 제목 옵션
   selectedTitle: string;
   description: string;         // 700자 교육적 설명문 (구독 CTA 금지)
+  timetable?: string;          // YouTube 챕터/타임테이블 (0:00 포맷)
   publicHashtags: string[];    // 정확히 5개 공개 해시태그 (설명 하단, #shorts 금지)
   hiddenTags: string[];        // 비공개 태그 (YouTube Studio 태그 박스, 한국어만, 풀 용량)
   tags: string[];              // 하위호환: hiddenTags 미러

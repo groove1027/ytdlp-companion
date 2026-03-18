@@ -86,6 +86,14 @@ danger일 경우에도 나머지 단계는 계속 진행하되, 경고 메시지
   🚫 절대 금지: 상투적 인사말(건강 유의 등)
 - SEO 키워드 자연스럽게 녹여내고 줄바꿈+이모티콘으로 가독성 확보
 
+[타임테이블(Timetable)] — YouTube 챕터 마커용
+- 대본의 장면/주제 전환점을 기반으로 타임테이블 생성
+- 반드시 0:00부터 시작 (YouTube 챕터 인식 조건)
+- 각 항목은 "M:SS 챕터제목" 형식 (예: 0:00 인트로, 0:30 첫번째 주제)
+- 장면 구성이 있으면 장면 수에 맞춰, 없으면 대본 흐름에 따라 5~10개 챕터 생성
+- 챕터 제목은 짧고 핵심적으로 (10자 이내 권장)
+- 쇼츠(1분 이내)는 초 단위 간격, 롱폼은 분 단위 간격으로 배치
+
 [공개 해시태그(Public Hashtags)] — 설명란 최하단
 - 정확히 5개
 - 🚫 #shorts 절대 금지
@@ -103,6 +111,7 @@ JSON 출력 형식 (반드시 이 형식으로):
 {
   "titles": ["제목1", "제목2", "제목3", "제목4", "제목5"],
   "description": "700자 교육적 설명문 (줄바꿈 포함, 구독CTA 절대 금지)",
+  "timetable": "0:00 인트로\\n0:15 첫번째 주제\\n0:30 두번째 주제\\n...",
   "publicHashtags": ["키워드1", "키워드2", "키워드3", "키워드4", "키워드5"],
   "hiddenTags": ["한국어태그1", "한국어태그2", "한국어태그3", ...],
   "category": "YouTube 카테고리명",
@@ -222,10 +231,14 @@ ${sceneContext}
     ? parsed.thumbnailSuggestions.map(String)
     : [];
 
+  // Timetable (YouTube chapters)
+  const timetable = typeof parsed.timetable === 'string' ? parsed.timetable : undefined;
+
   return {
     titles,
     selectedTitle: titles[0] || '제목 없음',
     description,
+    timetable,
     publicHashtags,
     hiddenTags,
     tags: hiddenTags, // backward compat
