@@ -8,6 +8,13 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-18] 이미지 생성 버그 5건 수정 (#537, #538, #540, #542, #551)
+- [x] `imageGeneration.ts` — Google 무료 모델(Imagen/Whisk) 실패 시 유료 NanoBanana로 자동 전환하던 로직 제거, 무료 실패는 즉시 에러로 처리
+- [x] `imageGeneration.ts` — 무료 모델 경로에서 NanoBanana 전용 프롬프트 최적화 적용 제거, 레퍼런스 존재 시 Imagen 선택이어도 Whisk 리믹스 경로 사용
+- [x] `googleImageService.ts` — Whisk 레퍼런스 이미지 URL/base64 혼합 입력 지원(원격 URL fetch→base64 변환), 처리 불가 시 명시 에러 반환
+- [x] `StoryboardPanel.tsx` — 그리드/배치 이미지 생성 시 최신 선택 모델 사용 보강, 배치 시작 시 스타일/모델 스냅샷 고정으로 전체 씬 스타일 일관성 보장
+- [x] `tsc --noEmit` + `vite build` + `grep` 재검증 통과
+
 ### [2026-03-18] NLE 내보내기 싱크 버그 3건 수정 (Premiere/CapCut)
 - [x] `nleExportService.ts` — 나레이션 클립 길이를 `scene.imageDuration` 고정값 대신 `line.duration`/오디오 메타데이터 실측값으로 적용
 - [x] `nleExportService.ts` — `find()` 기반 1개 선택을 제거하고 `filter()`로 scene별 다중 나레이션 라인을 모두 수집해 순차 배치

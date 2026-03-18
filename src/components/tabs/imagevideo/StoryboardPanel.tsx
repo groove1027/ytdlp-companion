@@ -1830,8 +1830,14 @@ const StoryboardPanel: React.FC = () => {
     }
   }, [updateScene]);
 
+  type ImageGenerationOverrides = {
+    imageModel?: ImageModel;
+    finalStyle?: string;
+    preserveCharacterStyle?: boolean;
+  };
+
   // --- 단일 이미지 생성 (스토어에서 style/characters 읽기 — BUG#17 fix) ---
-  const handleGenerateImage = useCallback(async (sceneId: string, feedback?: string): Promise<boolean> => {
+  const handleGenerateImage = useCallback(async (sceneId: string, feedback?: string, overrides?: ImageGenerationOverrides): Promise<boolean> => {
     logger.trackAction('이미지 생성', sceneId);
     if (!requireAuth('이미지 생성')) return false;
     const { scenes: currentScenes, config: currentConfig } = useProjectStore.getState();
@@ -1884,10 +1890,10 @@ const StoryboardPanel: React.FC = () => {
     updateScene(sceneId, { isGeneratingImage: true, generationStatus: '이미지 생성 중...', generationCancelled: false });
 
     try {
-      const imageModel = currentConfig.imageModel || ImageModel.NANO_COST;
+      const imageModel = overrides?.imageModel || currentConfig.imageModel || storyboardImageModel || ImageModel.NANO_COST;
 
       // [FIX BUG#17] Read current style/characters from store getState() — always fresh
-      const currentStyle = useImageVideoStore.getState().style;
+      const liveStyle = useImageVideoStore.getState().style;
       const currentCharacters = useImageVideoStore.getState().characters;
 
       // [CRITICAL FIX] 스타일 결정 — App.tsx 초기 배치 생성과 완전 동일한 로직
@@ -1897,10 +1903,10 @@ const StoryboardPanel: React.FC = () => {
       // 4순위: 캐릭터 분석 예술 스타일 (analysisStyle) — 캐릭터 그림체 보존
       // 5순위: "Cinematic" 기본값
       const charArtStyle = currentCharacters.find(c => c.analysisStyle)?.analysisStyle || '';
-      const userSelectedStyle = currentStyle !== 'custom';
+      const userSelectedStyle = liveStyle !== 'custom';
       // [FIX] 캐릭터 analysisStyle이 atmosphere/detectedStyle보다 우선 — 그림체 보존
       const effectiveStyle = userSelectedStyle
-        ? currentStyle
+        ? liveStyle
         : (charArtStyle.trim() !== '')
           ? charArtStyle
           : (currentConfig.atmosphere && currentConfig.atmosphere.trim() !== '')
@@ -1910,9 +1916,11 @@ const StoryboardPanel: React.FC = () => {
               : 'Cinematic';
       // [FIX #174] 커스텀 스타일 지시 병합 (handshake 제거, 다큐멘터리 톤 등)
       const customNote = useImageVideoStore.getState().customStyleNote?.trim();
-      const finalStyle = customNote ? `${effectiveStyle}. ${customNote}` : effectiveStyle;
+      const computedFinalStyle = customNote ? `${effectiveStyle}. ${customNote}` : effectiveStyle;
+      const finalStyle = overrides?.finalStyle && overrides.finalStyle.trim() ? overrides.finalStyle : computedFinalStyle;
       // 사용자가 비주얼 미선택 + 캐릭터 아트 스타일로 폴백된 경우 → 캐릭터 그림체 보존 모드
-      const preserveCharStyle = !userSelectedStyle && charArtStyle.trim() !== '' && effectiveStyle === charArtStyle;
+      const computedPreserveCharStyle = !userSelectedStyle && charArtStyle.trim() !== '' && effectiveStyle === charArtStyle;
+      const preserveCharStyle = overrides?.preserveCharacterStyle ?? computedPreserveCharStyle;
 
       // [FIX #283] characterAppearance가 NONE이면 캐릭터 참조 이미지/분석 결과를 전달하지 않음
       const isCharNone = currentConfig.characterAppearance === CharacterAppearance.NONE;
@@ -2008,17 +2016,41 @@ const StoryboardPanel: React.FC = () => {
       updateScene(sceneId, { isGeneratingImage: false, generationStatus: `실패: ${msg}` });
       return false;
     }
-  }, [updateScene, addCost, requireAuth]);
+  }, [updateScene, addCost, requireAuth, storyboardImageModel]);
 
   // --- 배치 이미지 생성 ---
   const handleBatchGenerateImages = useCallback(async (sceneIds?: string[]) => {
     logger.trackAction('이미지 일괄 생성');
     if (!requireAuth('이미지 일괄 생성')) return;
-    const { scenes: currentScenes } = useProjectStore.getState();
+    const { scenes: currentScenes, config: currentConfig } = useProjectStore.getState();
+    if (!currentConfig) return;
     const allTargets = currentScenes.filter(s => !s.imageUrl && !s.isGeneratingImage);
     // [#243] 선택된 장면만 필터 (sceneIds 제공 시)
     const targets = sceneIds && sceneIds.length > 0 ? allTargets.filter(s => sceneIds.includes(s.id)) : allTargets;
     if (targets.length === 0) return;
+
+    const batchStore = useImageVideoStore.getState();
+    const batchCharacters = batchStore.characters;
+    const batchCharArtStyle = batchCharacters.find(c => c.analysisStyle)?.analysisStyle || '';
+    const batchUserSelectedStyle = batchStore.style !== 'custom';
+    const batchEffectiveStyle = batchUserSelectedStyle
+      ? batchStore.style
+      : (batchCharArtStyle.trim() !== '')
+        ? batchCharArtStyle
+        : (currentConfig.atmosphere && currentConfig.atmosphere.trim() !== '')
+          ? currentConfig.atmosphere
+          : (currentConfig.detectedStyleDescription && currentConfig.detectedStyleDescription.trim() !== '')
+            ? currentConfig.detectedStyleDescription
+            : 'Cinematic';
+    const batchCustomNote = batchStore.customStyleNote?.trim();
+    const batchFinalStyle = batchCustomNote ? `${batchEffectiveStyle}. ${batchCustomNote}` : batchEffectiveStyle;
+    const batchPreserveCharStyle = !batchUserSelectedStyle && batchCharArtStyle.trim() !== '' && batchEffectiveStyle === batchCharArtStyle;
+    const batchImageModel = currentConfig.imageModel || storyboardImageModel || ImageModel.NANO_COST;
+    const batchOverrides: ImageGenerationOverrides = {
+      imageModel: batchImageModel,
+      finalStyle: batchFinalStyle,
+      preserveCharacterStyle: batchPreserveCharStyle,
+    };
 
     setIsBatchingImages(true);
     setBatchImageProgress({ current: 0, total: targets.length, success: 0, fail: 0 });
@@ -2026,7 +2058,7 @@ const StoryboardPanel: React.FC = () => {
     await runImageBatch(
       targets,
       20,
-      async (scene) => handleGenerateImage(scene.id),
+      async (scene) => handleGenerateImage(scene.id, undefined, batchOverrides),
       () => setBatchImageProgress(prev => ({
         ...prev,
         current: prev.current + 1,

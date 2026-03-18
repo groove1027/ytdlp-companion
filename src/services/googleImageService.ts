@@ -47,6 +47,47 @@ async function proxyFetch(targetUrl: string, options: {
   });
 }
 
+function isHttpLikeUrl(value: string): boolean {
+  return value.startsWith('http://') || value.startsWith('https://') || value.startsWith('blob:');
+}
+
+function dataUrlToBase64(dataUrl: string): string {
+  return dataUrl.split(',')[1] || dataUrl;
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('이미지 변환 실패'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function normalizeReferenceImage(ref: string): Promise<string | null> {
+  const trimmed = ref.trim();
+  if (!trimmed) return null;
+
+  if (trimmed.startsWith('data:image/')) {
+    return dataUrlToBase64(trimmed);
+  }
+
+  if (isHttpLikeUrl(trimmed)) {
+    try {
+      const res = await monitoredFetch(trimmed);
+      if (!res.ok) return null;
+      const blob = await res.blob();
+      if (!blob.type.startsWith('image/')) return null;
+      const dataUrl = await blobToDataUrl(blob);
+      return dataUrlToBase64(dataUrl);
+    } catch {
+      return null;
+    }
+  }
+
+  return trimmed;
+}
+
 /** Google 쿠키로 Bearer 토큰 발급 */
 export async function getGoogleAccessToken(cookie: string): Promise<{ token: string; email: string; name: string }> {
   // 캐시된 토큰이 유효하면 재사용 (30초 버퍼)
@@ -207,10 +248,17 @@ export async function generateWhiskImage(
 
   // 레퍼런스 이미지 → subjectImageOptions (주체 이미지)
   if (referenceImages && referenceImages.length > 0) {
-    const raw = referenceImages[0].startsWith('data:')
-      ? referenceImages[0].split(',')[1] || referenceImages[0]
-      : referenceImages[0];
-    requestBody.subjectImageOptions = { image: { encodedImage: raw } };
+    let encodedReference: string | null = null;
+    for (const ref of referenceImages) {
+      encodedReference = await normalizeReferenceImage(ref);
+      if (encodedReference) break;
+    }
+
+    if (!encodedReference) {
+      throw new Error('Google Whisk: 레퍼런스 이미지를 읽을 수 없습니다. 이미지 URL/파일을 확인해주세요.');
+    }
+
+    requestBody.subjectImageOptions = { image: { encodedImage: encodedReference } };
   }
 
   const body = JSON.stringify(requestBody);
