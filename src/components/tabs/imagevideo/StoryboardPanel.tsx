@@ -9,7 +9,7 @@ import { persistImage } from '../../../services/imageStorageService';
 import { uploadMediaToHosting } from '../../../services/uploadService';
 import { useVideoBatch } from '../../../hooks/useVideoBatch';
 import { PRICING, IMAGE_MODELS } from '../../../constants';
-import { AspectRatio, ImageModel, CharacterAppearance, VideoFormat } from '../../../types';
+import { AspectRatio, ImageModel, CharacterAppearance, VideoFormat, VideoModel } from '../../../types';
 import type { Scene } from '../../../types';
 import { showToast, useUIStore } from '../../../stores/uiStore';
 import { useGoogleCookieStore } from '../../../stores/googleCookieStore';
@@ -55,8 +55,14 @@ function aspectRatioClass(ar?: string): string {
 // --- Video Cost Helper ---
 const getGrokCost = (duration?: '6' | '10'): number =>
   duration === '6' ? PRICING.VIDEO_GROK_6S : PRICING.VIDEO_GROK_10S;
-const getSeedanceCost = (): number =>
-  PRICING.VIDEO_SEEDANCE_PER_SEC * 8;
+type SeedanceDuration = '4' | '8' | '12';
+const getSeedanceCost = (duration: SeedanceDuration = '8'): number => {
+  if (duration === '4') return PRICING.VIDEO_SEEDANCE_4S;
+  if (duration === '12') return PRICING.VIDEO_SEEDANCE_12S;
+  return PRICING.VIDEO_SEEDANCE_8S;
+};
+const getNextSeedanceDuration = (duration: SeedanceDuration): SeedanceDuration =>
+  duration === '4' ? '8' : duration === '8' ? '12' : '4';
 
 const fmtCost = (usd: number, rate: number): string => {
   const krw = Math.round(usd * rate);
@@ -417,10 +423,15 @@ const SceneCard: React.FC<SceneCardProps> = ({ scene, index, onUpdatePrompt, onD
             icon={<svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>}
             onClick={() => onGrokVideo(scene.id)} />
           <ActionButton label="Seedance" color="fuchsia"
-            tooltip={`Seedance 1.5 Pro 8초 — ${fmtCost(getSeedanceCost(), useCostStore.getState().exchangeRate || PRICING.EXCHANGE_RATE)}`}
+            tooltip={`Seedance 1.5 Pro ${(scene.seedanceDuration || '8') as SeedanceDuration}초 — ${fmtCost(getSeedanceCost((scene.seedanceDuration || '8') as SeedanceDuration), useCostStore.getState().exchangeRate || PRICING.EXCHANGE_RATE)}`}
             disabled={!scene.imageUrl || scene.isGeneratingVideo}
             icon={<svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>}
             onClick={() => onSeedanceVideo(scene.id)} />
+          <button type="button" title="Seedance 4초/8초/12초 전환"
+            onClick={() => useProjectStore.getState().updateScene(scene.id, { seedanceDuration: getNextSeedanceDuration((scene.seedanceDuration || '8') as SeedanceDuration) })}
+            className="h-7 px-1.5 rounded-lg border border-orange-500/30 bg-orange-600/10 text-[10px] font-bold text-orange-300 hover:bg-orange-600/20 transition-all">
+            {(scene.seedanceDuration || '8')}s
+          </button>
           <button type="button" title="Grok 6초/10초 전환"
             onClick={() => useProjectStore.getState().updateScene(scene.id, { grokDuration: scene.grokDuration === '6' ? '10' : '6' })}
             className="h-7 px-1.5 rounded-lg border border-pink-500/20 bg-pink-600/10 text-[10px] font-bold text-pink-300 hover:bg-pink-600/20 transition-all">
@@ -717,10 +728,16 @@ const GridSceneCard: React.FC<GridSceneCardProps> = ({ scene, index, onRegenerat
               icon={<svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>}
               onClick={(e) => { e.stopPropagation(); onGrokVideo(scene.id); }} />
             <ActionButton label="Seedance" color="fuchsia" compact
-              tooltip={`Seedance 1.5 Pro 8초 — ${fmtCost(getSeedanceCost(), useCostStore.getState().exchangeRate || PRICING.EXCHANGE_RATE)}`}
+              tooltip={`Seedance 1.5 Pro ${(scene.seedanceDuration || '8') as SeedanceDuration}초 — ${fmtCost(getSeedanceCost((scene.seedanceDuration || '8') as SeedanceDuration), useCostStore.getState().exchangeRate || PRICING.EXCHANGE_RATE)}`}
               disabled={!scene.imageUrl || scene.isGeneratingVideo}
               icon={<svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>}
               onClick={(e) => { e.stopPropagation(); onSeedanceVideo(scene.id); }} />
+            <button type="button"
+              onClick={(e) => { e.stopPropagation(); useProjectStore.getState().updateScene(scene.id, { seedanceDuration: getNextSeedanceDuration((scene.seedanceDuration || '8') as SeedanceDuration) }); }}
+              className="h-7 px-1.5 rounded-lg border border-orange-500/30 bg-orange-600/10 text-[10px] font-bold text-orange-300 hover:bg-orange-600/20 transition-all"
+              title="Seedance 4초/8초/12초 전환">
+              {(scene.seedanceDuration || '8')}s
+            </button>
             <ActionButton label="Veo" color="blue" compact
               tooltip={`Veo 3.1 영상 — ${fmtCost(PRICING.VIDEO_VEO, useCostStore.getState().exchangeRate || PRICING.EXCHANGE_RATE)}`}
               disabled={!scene.imageUrl || scene.isGeneratingVideo}
@@ -796,6 +813,8 @@ const SceneDetailModal: React.FC<SceneDetailModalProps> = ({
   const liveScene = useProjectStore((s) => s.scenes.find((sc) => sc.id === sceneProp.id));
   const scene = liveScene || sceneProp;
   const modalArClass = aspectRatioClass(useProjectStore((s) => s.config?.aspectRatio));
+  const selectedVideoModel = useProjectStore((s) => s.config?.videoModel);
+  const seedanceDuration = (scene.seedanceDuration || '8') as SeedanceDuration;
   const refInputRef = useRef<HTMLInputElement>(null);
   const modalUploadRef = useRef<HTMLInputElement>(null);
 
@@ -994,7 +1013,7 @@ const SceneDetailModal: React.FC<SceneDetailModalProps> = ({
                 {scene.isGeneratingVideo ? (
                   <><span className="w-4 h-4 border-2 border-fuchsia-400/30 border-t-fuchsia-400 rounded-full animate-spin" /> 생성 중 {elapsedVideo > 0 && <span className="tabular-nums text-xs text-fuchsia-400/70">{formatElapsed(elapsedVideo)}</span>}</>
                 ) : (
-                  <><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg> Seedance 1.5 Pro 8초 <span className="text-fuchsia-400/60 text-xs ml-1">{fmtCost(getSeedanceCost(), useCostStore.getState().exchangeRate || PRICING.EXCHANGE_RATE)}</span></>
+                  <><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg> Seedance 1.5 Pro {seedanceDuration}초 <span className="text-fuchsia-400/60 text-xs ml-1">{fmtCost(getSeedanceCost(seedanceDuration), useCostStore.getState().exchangeRate || PRICING.EXCHANGE_RATE)}</span></>
                 )}
               </button>
               {/* Video generation status */}
@@ -1019,6 +1038,22 @@ const SceneDetailModal: React.FC<SceneDetailModalProps> = ({
                   {scene.grokSpeechMode ? '나레이션 모드' : 'SFX 모드'}
                 </button>
               </div>
+              {(selectedVideoModel === VideoModel.SEEDANCE || scene.videoModelUsed === VideoModel.SEEDANCE) && (
+                <div className="flex items-center gap-2 col-span-2">
+                  <span className="text-xs text-gray-500">Seedance 설정:</span>
+                  {(['4', '8', '12'] as SeedanceDuration[]).map((duration) => (
+                    <button key={duration} type="button"
+                      onClick={() => useProjectStore.getState().updateScene(scene.id, { seedanceDuration: duration })}
+                      className={`px-2.5 py-1 text-xs rounded-lg border transition-colors ${
+                        seedanceDuration === duration
+                          ? 'bg-orange-900/30 border-orange-500/30 text-orange-300'
+                          : 'bg-gray-800 border-gray-600 text-gray-400'
+                      }`}>
+                      {duration}초
+                    </button>
+                  ))}
+                </div>
+              )}
               {/* [#329] 장면별 인포그래픽 토글 */}
               {useProjectStore.getState().config?.allowInfographics && (
                 <div className="flex items-center gap-2 col-span-2">
@@ -2674,15 +2709,18 @@ const StoryboardPanel: React.FC = () => {
                 </button>
                 <div className="border-t border-gray-700" />
                 <p className="px-4 py-1 text-xs text-gray-500 font-bold uppercase">Seedance 1.5 Pro (Kie)</p>
-                <button
-                  type="button"
-                  onClick={() => { videoBatch.runSeedanceBatch(selectedSceneIdsArray); setShowGenDropdown(false); }}
-                  className="w-full text-left px-4 py-2 text-sm text-gray-200 hover:bg-gray-700/60 transition-colors flex items-center gap-2"
-                >
-                  <span className="w-2 h-2 rounded-full bg-fuchsia-400" />
-                  <span className="flex-1">Seedance 1.5 Pro 8초 {hasSelection ? `(${selectedVideoEligible}개)` : '(일괄)'}</span>
-                  <span className="text-[10px] text-fuchsia-400/70">{fmtCost(getSeedanceCost() * selectedVideoEligible, exRate)}</span>
-                </button>
+                {(['4', '8', '12'] as SeedanceDuration[]).map((duration) => (
+                  <button
+                    key={duration}
+                    type="button"
+                    onClick={() => { videoBatch.runSeedanceBatch(selectedSceneIdsArray, duration); setShowGenDropdown(false); }}
+                    className="w-full text-left px-4 py-2 text-sm text-gray-200 hover:bg-gray-700/60 transition-colors flex items-center gap-2"
+                  >
+                    <span className="w-2 h-2 rounded-full bg-orange-400" />
+                    <span className="flex-1">Seedance 1.5 Pro {duration}초 {hasSelection ? `(${selectedVideoEligible}개)` : '(일괄)'}</span>
+                    <span className="text-[10px] text-orange-400/70">{fmtCost(getSeedanceCost(duration) * selectedVideoEligible, exRate)}</span>
+                  </button>
+                ))}
                 <div className="border-t border-gray-700" />
                 <p className="px-4 py-1 text-xs text-gray-500 font-bold uppercase">Veo 3.1 1080p (Evolink)</p>
                 <button

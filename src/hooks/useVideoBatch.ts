@@ -44,6 +44,16 @@ function isQuotaExhaustedError(error: unknown): boolean {
     return false;
 }
 
+type GrokDuration = '6' | '10';
+type SeedanceDuration = '4' | '8' | '12';
+type VideoDurationOverride = GrokDuration | SeedanceDuration;
+
+const isGrokDuration = (duration?: VideoDurationOverride): duration is GrokDuration =>
+    duration === '6' || duration === '10';
+
+const isSeedanceDuration = (duration?: VideoDurationOverride): duration is SeedanceDuration =>
+    duration === '4' || duration === '8' || duration === '12';
+
 // [REMOVED] 기존 슬라이딩 윈도우 runBatch → kieBatchRunner.ts의 runKieBatch로 교체
 // KIE 레이트 리밋: 10개/10초 버스트 제출, 최대 100 동시 처리
 
@@ -108,7 +118,7 @@ export const useVideoBatch = (
         initialModel: VideoModel, 
         explicitUpscaleRequest: boolean, 
         forceModel: boolean = false,
-        overrideDuration?: '6' | '10',
+        overrideDuration?: VideoDurationOverride,
         overrideSpeech?: boolean,
         isRetry: boolean = false,
         isSafeMode: boolean = false, // [NEW] Flag for simplified retry
@@ -244,9 +254,15 @@ export const useVideoBatch = (
             // Build prompt for Grok
             const audioSuffix = isSafeMode ? " [No Sound]" : " [Sound Effects Only] [No Music]";
             const enhancedPrompt = `${rawPrompt}${audioSuffix}`.trim();
+            const seedanceDuration: SeedanceDuration = isSeedanceDuration(overrideDuration)
+                ? overrideDuration
+                : (freshScene.seedanceDuration || '8');
+            const grokDuration: GrokDuration = isGrokDuration(overrideDuration)
+                ? overrideDuration
+                : (freshScene.grokDuration || '10');
             const effectiveDuration = effectiveModel === VideoModel.SEEDANCE
-                ? '8'
-                : (overrideDuration || freshScene.grokDuration || '10');
+                ? seedanceDuration
+                : grokDuration;
             const effectiveSpeech = effectiveModel === VideoModel.GROK && !isSafeMode
                 ? (overrideSpeech !== undefined ? overrideSpeech : (freshScene.grokSpeechMode || false))
                 : false;
@@ -458,7 +474,7 @@ export const useVideoBatch = (
     // KIE 레이트 리밋 옵션: 10개/10초 버스트, 최대 100 동시 처리
     const kieBatchOpts = { isQuotaExhausted: isQuotaExhaustedError };
 
-    const runGrokHQBatch = async (duration: '6' | '10', speechMode: boolean, sceneIds?: string[]) => {
+    const runGrokHQBatch = async (duration: GrokDuration, speechMode: boolean, sceneIds?: string[]) => {
         logger.trackAction('비디오 배치 생성 시작', 'Grok HQ');
         // [FIX BUG#10] Read current scenes from store to avoid stale closure
         const allTargets = useProjectStore.getState().scenes.filter(s => s.imageUrl && !s.videoUrl && !s.isGeneratingVideo);
@@ -474,7 +490,7 @@ export const useVideoBatch = (
         logger.success("Grok HQ Batch Completed");
     };
 
-    const runSeedanceBatch = async (sceneIds?: string[]) => {
+    const runSeedanceBatch = async (sceneIds?: string[], duration?: SeedanceDuration) => {
         logger.trackAction('비디오 배치 생성 시작', 'Seedance 1.5 Pro');
         const allTargets = useProjectStore.getState().scenes.filter(s => s.imageUrl && !s.videoUrl && !s.isGeneratingVideo);
         const targets = sceneIds && sceneIds.length > 0 ? allTargets.filter(s => sceneIds.includes(s.id)) : allTargets;
@@ -482,7 +498,7 @@ export const useVideoBatch = (
         setIsBatching(true);
         setProgress({ current: 0, total: targets.length });
         await runKieBatch(targets, async (scene) => {
-            await processScene(scene.id, scene, VideoModel.SEEDANCE, false, true);
+            await processScene(scene.id, scene, VideoModel.SEEDANCE, false, true, duration || scene.seedanceDuration || '8');
         }, () => setProgress(prev => ({ ...prev, current: prev.current + 1 })), kieBatchOpts);
         setIsBatching(false);
         logger.success("Seedance Batch Completed");
@@ -625,7 +641,7 @@ export const useVideoBatch = (
     // [HIGH FIX 1] runSingleVeoQuality uses VEO_QUALITY instead of VEO
     const runSingleGrok = (id: string) => { const s = useProjectStore.getState().scenes.find(x => x.id === id); if (s) processScene(id, s, VideoModel.GROK, false, true).catch(e => logger.error(`runSingleGrok failed: ${id}`, e)); };
     const runSingleGrokHQ = (id: string) => { const s = useProjectStore.getState().scenes.find(x => x.id === id); if (s) processScene(id, s, VideoModel.GROK, true, true).catch(e => logger.error(`runSingleGrokHQ failed: ${id}`, e)); };
-    const runSingleSeedance = (id: string) => { const s = useProjectStore.getState().scenes.find(x => x.id === id); if (s) processScene(id, s, VideoModel.SEEDANCE, false, true).catch(e => logger.error(`runSingleSeedance failed: ${id}`, e)); };
+    const runSingleSeedance = (id: string) => { const s = useProjectStore.getState().scenes.find(x => x.id === id); if (s) processScene(id, s, VideoModel.SEEDANCE, false, true, s.seedanceDuration || '8').catch(e => logger.error(`runSingleSeedance failed: ${id}`, e)); };
     const runSingleVeoFast = (id: string) => { const s = useProjectStore.getState().scenes.find(x => x.id === id); if (s) processScene(id, s, VideoModel.VEO, false, true).catch(e => logger.error(`runSingleVeoFast failed: ${id}`, e)); };
     const runSingleVeoQuality = (id: string) => { const s = useProjectStore.getState().scenes.find(x => x.id === id); if (s) processScene(id, s, VideoModel.VEO_QUALITY, false, true).catch(e => logger.error(`runSingleVeoQuality failed: ${id}`, e)); };
     const runSingleUpscale = (id: string) => { const s = useProjectStore.getState().scenes.find(x => x.id === id); if (s) processUpscaleOnly(id, s).catch(e => logger.error(`runSingleUpscale failed: ${id}`, e)); };

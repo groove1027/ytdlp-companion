@@ -8,6 +8,17 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-19] Seedance 1.5 Pro 4/8/12초 선택 + 전체 파이프라인 연동
+- [x] `types.ts` — `Scene.seedanceDuration?: '4' | '8' | '12'`, `VideoTaskParams.duration(4|6|8|10|12)` 정의가 이미 반영되어 있어 그대로 재사용
+- [x] `useVideoBatch.ts` — Seedance duration 하드코딩(`'8'`) 제거, `override -> scene.seedanceDuration -> '8'` 흐름으로 교체
+- [x] `useVideoBatch.ts` — `runSeedanceBatch`/`runSingleSeedance`에서 duration 전달 경로 명시
+- [x] `StoryboardPanel.tsx` — 리스트/그리드/상세 모달 Seedance 비용/라벨을 선택 duration 기준으로 표시
+- [x] `StoryboardPanel.tsx` — Seedance duration 선택 UI 추가(4/8/12, 오렌지 액센트), 배치 생성 드롭다운도 4/8/12초 선택 지원
+- [x] `StoryboardScene.tsx` — 개별 장면 카드 Seedance 버튼에 duration 토글(4→8→12) 추가 및 라벨 동기화
+- [x] `constants.ts` — `PRICING.VIDEO_SEEDANCE_4S/8S/12S` 추가, Seedance UI 비용 계산에 연결
+- [x] `App.tsx`, `SetupPanel.tsx` — 신규 장면 기본 `seedanceDuration: '8'` 초기값이 이미 적용되어 있어 추가 수정 없이 유지 확인
+- [x] `tsc --noEmit` + `vite build` + `rg` 재검증 통과
+
 ### [2026-03-19] #572 대본작성 103단락 → 96단락 롤백 복원 버그 수정
 - [x] `types.ts` — `ProjectData.scriptWriterState` 추가로 프로젝트 저장본에 대본작성 스냅샷 포함
 - [x] `scriptWriterStore.ts` — 대본작성 저장 필드 정규화 헬퍼 추가 (`getScriptWriterDraftSnapshot`, `restoreScriptWriterDraft`)

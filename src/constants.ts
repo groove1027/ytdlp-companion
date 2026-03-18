@@ -15,6 +15,9 @@ export const PRICING = {
   VIDEO_VEO: 0.169,                  // Evolink Veo 3.1 Fast 1080p ($0.169/video, 12.1 credits)
   VIDEO_GROK_6S: 0.10,               // KIE Grok 720p 6s ($0.10/video, 20 credits)
   VIDEO_GROK_10S: 0.15,              // KIE Grok 720p 10s ($0.15/video, 30 credits)
+  VIDEO_SEEDANCE_4S: 0.10,           // KIE Seedance 1.5 Pro 4s
+  VIDEO_SEEDANCE_8S: 0.20,           // KIE Seedance 1.5 Pro 8s
+  VIDEO_SEEDANCE_12S: 0.30,          // KIE Seedance 1.5 Pro 12s
   VIDEO_SEEDANCE_PER_SEC: 0.025,     // KIE Seedance 1.5 Pro per second ($0.025/s, ~1.78 credits/s)
   VIDEO_WAN_V2V_720P_PER_SEC: 0.07,  // KIE Wan 2.6 V2V 720p per second ($0.07/s)
   VIDEO_WAN_V2V_1080P_PER_SEC: 0.105, // KIE Wan 2.6 V2V 1080p per second ($0.105/s)

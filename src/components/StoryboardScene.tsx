@@ -220,6 +220,8 @@ const StoryboardSceneInner: React.FC<StoryboardSceneProps> = ({
   };
 
   const isPortrait = aspectRatio === AspectRatio.PORTRAIT;
+  const seedanceDuration = (scene.seedanceDuration || '8') as '4' | '8' | '12';
+  const nextSeedanceDuration: '4' | '8' | '12' = seedanceDuration === '4' ? '8' : seedanceDuration === '8' ? '12' : '4';
 
   const getModelBadge = (model?: VideoModel, isNativeHQ?: boolean) => {
       if (!model) return null;
@@ -497,7 +499,12 @@ const StoryboardSceneInner: React.FC<StoryboardSceneProps> = ({
                       disabled={scene.isGeneratingVideo}
                       className={`flex-1 bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500 text-white text-sm font-bold rounded border border-violet-400/50 shadow-md transition-all flex items-center justify-center gap-1 ${scene.isGeneratingVideo ? 'opacity-50 cursor-not-allowed' : ''}`}
                   >
-                      {scene.videoUrl ? '🔄 Seedance 1.5 Pro' : '✨ Seedance 1.5 Pro (8s)'}
+                      {scene.videoUrl ? '🔄 Seedance 1.5 Pro' : `✨ Seedance 1.5 Pro (${seedanceDuration}s)`}
+                  </button>
+                  <button
+                      onClick={() => useProjectStore.getState().updateScene(scene.id, { seedanceDuration: nextSeedanceDuration })}
+                      className="w-[20%] text-xs px-1 rounded font-mono border flex items-center justify-center bg-orange-900/30 border-orange-500/30 text-orange-300">
+                      ⏱️ {seedanceDuration}s
                   </button>
               </div>
 
