@@ -45,7 +45,7 @@ const ELEVENLABS_EMOTIONS: { id: string; label: string; icon: string; tag: strin
 ];
 
 interface TypecastEditorProps {
-  onGenerateLine: (lineId: string) => void;
+  onGenerateLine: (lineId: string) => Promise<void> | void;
   isGeneratingLine: string | null;
   onOpenVoiceBrowser: (forLineIndex?: number) => void;
   changingLineIndex: number | null;
@@ -98,7 +98,16 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
   const [maxMode, setMaxMode] = useState(false);
 
   const ttsEngine = useSoundStudioStore(s => s.ttsEngine);
-  const activeSpeaker = speakers[0] || null;
+  // [FIX #533] 멀티캐릭터: 클릭된 라인의 speakerId로 해당 Speaker를 찾아 사용
+  const [pickerTargetLineIdx, setPickerTargetLineIdx] = useState<number>(0);
+  const activeSpeaker = (() => {
+    const targetLine = lines[pickerTargetLineIdx];
+    if (targetLine?.speakerId) {
+      const found = speakers.find(s => s.id === targetLine.speakerId);
+      if (found) return found;
+    }
+    return speakers[0] || null;
+  })();
   const currentEngine = activeSpeaker?.engine || ttsEngine || 'typecast';
 
   // 모달 미리듣기 오디오
@@ -152,6 +161,7 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
 
   // 캐릭터 피커 열기 — 엔진별 분기
   const openCharacterPicker = useCallback(async (lineIdx: number) => {
+    setPickerTargetLineIdx(lineIdx); // [FIX #533] 멀티캐릭터: 클릭된 라인 추적
     if (currentEngine === 'elevenlabs') {
       setPickerLineIdx(lineIdx);
       setElPickerOpen(true);
@@ -419,10 +429,14 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
     let html = '';
     let lineNum = 0;
     lines.forEach((line, idx) => {
-      const vid = line.voiceId || activeSpeaker?.voiceId || '';
-      const vname = line.voiceName || activeSpeaker?.name || '';
-      const vimg = line.voiceImage || activeSpeaker?.imageUrl || '';
-      const prevVid = idx > 0 ? (lines[idx - 1].voiceId || activeSpeaker?.voiceId || '') : '';
+      // [FIX #533] 멀티캐릭터: 라인별 speakerId로 해당 Speaker 찾기
+      const lineSpeaker = line.speakerId ? speakers.find(s => s.id === line.speakerId) : null;
+      const vid = line.voiceId || lineSpeaker?.voiceId || activeSpeaker?.voiceId || '';
+      const vname = line.voiceName || lineSpeaker?.name || activeSpeaker?.name || '';
+      const vimg = line.voiceImage || lineSpeaker?.imageUrl || activeSpeaker?.imageUrl || '';
+      const prevLine = idx > 0 ? lines[idx - 1] : null;
+      const prevLineSpeaker = prevLine?.speakerId ? speakers.find(s => s.id === prevLine.speakerId) : null;
+      const prevVid = prevLine ? (prevLine.voiceId || prevLineSpeaker?.voiceId || activeSpeaker?.voiceId || '') : '';
       const showHeader = idx === 0 || vid !== prevVid;
       lineNum++;
       const numBadge = `<span contenteditable="false" class="tc-line-num absolute left-[32px] top-2 w-5 h-5 rounded-full bg-gray-700 flex items-center justify-center text-[10px] font-bold text-gray-400 z-10 select-none">${lineNum}</span>`;
@@ -1843,9 +1857,9 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
         };
 
         // 고유값 추출
-        const uniqueAccents = [...new Set(ELEVENLABS_VOICES.map(v => v.accent))].sort();
-        const uniqueUseCases = [...new Set(ELEVENLABS_VOICES.map(v => v.useCase))].sort();
-        const uniqueAges = [...new Set(ELEVENLABS_VOICES.map(v => v.age))].sort();
+        const uniqueAccents = [...new Set(ELEVENLABS_VOICES.map(v => v.accent).filter(Boolean))].sort();
+        const uniqueUseCases = [...new Set(ELEVENLABS_VOICES.map(v => v.useCase).filter(Boolean))].sort();
+        const uniqueAges = [...new Set(ELEVENLABS_VOICES.map(v => v.age).filter(Boolean))].sort();
 
         // 필터링
         const elFiltered = ELEVENLABS_VOICES.filter(v => {

@@ -16,7 +16,7 @@ import type { TTSEngine, ShoppingCTAPreset, SubtitleTemplate } from '../../../ty
 // --- TTS 엔진 정보 ---
 const TTS_ENGINES: { id: TTSEngine; label: string; voiceCount: number; icon: string; desc: string; badge: string }[] = [
   { id: 'typecast', label: 'Typecast', voiceCount: 542, icon: '🎭', desc: 'AI 음성. 다양한 감정 + Smart Emotion', badge: 'API 키' },
-  { id: 'elevenlabs', label: 'ElevenLabs', voiceCount: 30, icon: '🔊', desc: '70개 언어 자동 감지, Stability 조절', badge: 'Kie 키' },
+  { id: 'elevenlabs', label: 'ElevenLabs', voiceCount: ELEVENLABS_VOICES.length, icon: '🔊', desc: '70개 언어 자동 감지, Stability 조절', badge: 'Kie 키' },
   { id: 'supertonic', label: 'Supertonic 2', voiceCount: 10, icon: '🧠', desc: '로컬 ONNX 모델, API 키 불필요', badge: '로컬 무료' },
 ];
 

@@ -51,7 +51,7 @@ const TTS_ENGINES: { id: TTSEngine; label: string; voiceCount: number; icon: str
   {
     id: 'elevenlabs' as TTSEngine,
     label: 'ElevenLabs',
-    voiceCount: 30,
+    voiceCount: 0, // placeholder — UI에서 ELEVENLABS_VOICES.length로 표시
     icon: '\uD83D\uDD0A',
     iconColor: '#10b981',
     description: 'ElevenLabs Text-to-Dialogue V3 \u2014 70\uAC1C \uC5B8\uC5B4 \uC790\uB3D9 \uAC10\uC9C0, Stability \uC870\uC808\uB85C \uAC10\uC815/\uC548\uC815\uC131 \uC81C\uC5B4. Kie API \uACBD\uC720\uB85C \uBCC4\uB3C4 \uD0A4 \uC5C6\uC774 \uC0AC\uC6A9 \uAC00\uB2A5\uD569\uB2C8\uB2E4.',
@@ -313,9 +313,9 @@ const VoiceStudio: React.FC = () => {
     const useCases = new Map<string, number>();
     const ages = new Map<string, number>();
     for (const v of ELEVENLABS_VOICES) {
-      accents.set(v.accent, (accents.get(v.accent) || 0) + 1);
-      useCases.set(v.useCase, (useCases.get(v.useCase) || 0) + 1);
-      ages.set(v.age, (ages.get(v.age) || 0) + 1);
+      if (v.accent) accents.set(v.accent, (accents.get(v.accent) || 0) + 1);
+      if (v.useCase) useCases.set(v.useCase, (useCases.get(v.useCase) || 0) + 1);
+      if (v.age) ages.set(v.age, (ages.get(v.age) || 0) + 1);
     }
     const sortDesc = (m: Map<string, number>) => Array.from(m.entries()).sort((a, b) => b[1] - a[1]);
     return {
@@ -347,7 +347,20 @@ const VoiceStudio: React.FC = () => {
   // 대본이 있고 라인이 비어있으면 자동 동기화
   // 1순위: projectStore scenes에서 파생 (sceneId 연결, 기존 오디오 복원)
   // 2순위 폴백: storeScript 단락 분할
+  // [FIX #532] 대본이 변경되면 기존 라인도 갱신 (이전 대본이 남는 버그 수정)
+  const prevStoreScriptRef = React.useRef(storeScript);
   useEffect(() => {
+    // 대본 내용이 실질적으로 변경된 경우 라인 초기화하여 재동기화
+    if (lines.length > 0 && storeScript && prevStoreScriptRef.current !== storeScript) {
+      const currentText = lines.map(l => l.text).join('\n');
+      // 기존 라인 텍스트와 새 대본이 다르면 초기화
+      if (currentText.replace(/\s+/g, '') !== storeScript.replace(/\s+/g, '')) {
+        prevStoreScriptRef.current = storeScript;
+        setLines([]);
+        return; // 다음 렌더에서 빈 lines로 재진입하여 새 대본으로 동기화
+      }
+    }
+    prevStoreScriptRef.current = storeScript;
     if (lines.length > 0) return;
 
     // 1순위: scenes에서 파생
