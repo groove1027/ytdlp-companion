@@ -58,11 +58,11 @@ export const autoRestoreOrCreateProject = async (): Promise<boolean> => {
     }
 
     // 3) 프로젝트가 아예 없을 때만 새로 생성
-    useProjectStore.getState().newProject();
+    useProjectStore.getState().newProject(undefined, { preserveAnalysisState: true });
     return true;
   } catch (e) {
     console.warn('[autoRestoreOrCreateProject] failed, creating new:', e);
-    useProjectStore.getState().newProject();
+    useProjectStore.getState().newProject(undefined, { preserveAnalysisState: true });
     return true;
   }
 };
@@ -105,7 +105,7 @@ interface ProjectStore {
 
   // Project lifecycle
   loadProject: (project: ProjectData, options?: { skipCostRestore?: boolean }) => void;
-  newProject: (title?: string) => void;
+  newProject: (title?: string, options?: { preserveAnalysisState?: boolean }) => void;
 
   // [v4.5] 스마트 프로젝트
   smartUpdateTitle: (tab: string, hint: string) => void;
@@ -601,13 +601,16 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
     });
   },
 
-  newProject: (title?: string) => {
+  newProject: (title?: string, options?: { preserveAnalysisState?: boolean }) => {
+    const preserveAnalysisState = options?.preserveAnalysisState === true;
     // [FIX] 이전 프로젝트 찌꺼기 방지 — 모든 관련 스토어 초기화
     try { useEditRoomStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:newProject/resetEditRoom', e); }
     try { useSoundStudioStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:newProject/resetSoundStudio', e); }
     try { useScriptWriterStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:newProject/resetScriptWriter', e); }
-    try { useChannelAnalysisStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:newProject/resetChannelAnalysis', e); }
-    try { useVideoAnalysisStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:newProject/resetVideoAnalysis', e); }
+    if (!preserveAnalysisState) {
+      try { useChannelAnalysisStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:newProject/resetChannelAnalysis', e); }
+      try { useVideoAnalysisStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:newProject/resetVideoAnalysis', e); }
+    }
     try { useEditPointStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:newProject/resetEditPoint', e); }
     try { useEditorStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:newProject/resetEditor', e); }
     try { useShoppingShortStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:newProject/resetShoppingShort', e); }

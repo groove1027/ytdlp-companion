@@ -627,17 +627,35 @@ const VoiceStudio: React.FC = () => {
         ctx.close();
       } catch (e) { logger.trackSwallowedError('VoiceStudio:generateTTS/decodeDuration', e); }
 
+      const hasFixedTimeline =
+        typeof line.startTime === 'number' &&
+        typeof line.endTime === 'number' &&
+        Number.isFinite(line.startTime) &&
+        Number.isFinite(line.endTime) &&
+        line.endTime > line.startTime;
+      const fixedDuration = hasFixedTimeline
+        ? Math.max(0.1, line.endTime - line.startTime)
+        : undefined;
+
       updateLine(lineId, {
         audioUrl: result.audioUrl,
         ttsStatus: 'done',
-        ...(realDuration != null ? { duration: realDuration } : {}),
+        ...(fixedDuration != null
+          ? { duration: fixedDuration }
+          : (realDuration != null ? { duration: realDuration } : {})),
       });
 
       // Scene 오디오/타이밍 동기화 (sceneId 기반)
       if (line.sceneId) {
         useProjectStore.getState().updateScene(line.sceneId, {
           audioUrl: result.audioUrl,
-          ...(realDuration != null ? { audioDuration: realDuration } : {}),
+          ...(fixedDuration != null
+            ? {
+                startTime: line.startTime,
+                endTime: line.endTime,
+                audioDuration: fixedDuration,
+              }
+            : (realDuration != null ? { audioDuration: realDuration } : {})),
         });
       }
 

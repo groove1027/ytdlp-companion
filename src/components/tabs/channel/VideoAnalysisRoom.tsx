@@ -1169,6 +1169,21 @@ function timecodeToSeconds(tc: string): number {
   return parseInt(m[1], 10) * 60 + parseInt(m[2], 10) + (m[3] ? parseFloat('0.' + m[3]) : 0);
 }
 
+/** 분석 장면의 타임코드에서 원본 타이밍 구간 추출 */
+function parseSceneTimingWindow(scene: SceneRow): { startSec: number; endSec: number; durationSec: number } | null {
+  const rawTc = scene.timecodeSource || scene.sourceTimeline || scene.timeline || '';
+  const range = rawTc.match(/(\d+:\d+(?:\.\d+)?)\s*[~\-–—/]\s*(\d+:\d+(?:\.\d+)?)/);
+  if (!range) return null;
+  const startSec = timecodeToSeconds(range[1]);
+  const endSec = timecodeToSeconds(range[2]);
+  if (!Number.isFinite(startSec) || !Number.isFinite(endSec) || endSec <= startSec) return null;
+  return {
+    startSec,
+    endSec,
+    durationSec: Math.max(0.1, endSec - startSec),
+  };
+}
+
 /** 초 → SRT 타임코드 (00:00:03,000) */
 function secondsToSrtTime(s: number): string {
   const total = Math.max(0, s);
@@ -4471,7 +4486,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                       }
 
                                       if (!videoBlob) {
-                                        showToast('영상을 다운로드할 수 없습니다. 다시 시도해주세요.', 4000);
+                                        showToast('⚠️ 영상 서버가 바빠서 다운로드에 실패했어요. 잠시 후 다시 시도해주세요.', 5000);
                                         return;
                                       }
                                       // Step 2: 영상 치수 감지 (캐시 우선)
@@ -4661,7 +4676,62 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                               className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium bg-gray-700/40 text-gray-400 border border-gray-600/20 hover:text-violet-400 hover:border-violet-500/30 transition-all">
                               <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>대본작성 스타일
                             </button>
-                            <button type="button" onClick={() => { const soundStore = useSoundStudioStore.getState(); let speakerId = soundStore.speakers[0]?.id || ''; if (!speakerId) { const ns = { id: `speaker-${Date.now()}`, name: '화자 1', color: '#c026d3', engine: 'typecast' as const, voiceId: '', language: 'ko' as const, speed: 1.0, pitch: 0, stability: 0.5, similarityBoost: 0.75, style: 0, useSpeakerBoost: true, lineCount: 0, totalDuration: 0 }; soundStore.addSpeaker(ns); speakerId = ns.id; } const newLines = v.scenes.filter(s => (s.audioContent || s.dialogue || '').trim()).map((s, i) => ({ id: `line-${Date.now()}-${i}`, speakerId, text: (s.audioContent || s.dialogue || '').trim(), index: i })); if (newLines.length === 0) { showToast('전송할 나레이션이 없습니다.', 3000); return; } soundStore.setLines(newLines); useNavigationStore.getState().setActiveTab('sound-studio'); showToast(`"V${v.id}" 나레이션 ${newLines.length}줄을 사운드 스튜디오로 전송했어요`); }}
+                            <button type="button" onClick={() => {
+                              const soundStore = useSoundStudioStore.getState();
+                              let speakerId = soundStore.speakers[0]?.id || '';
+                              if (!speakerId) {
+                                const ns = {
+                                  id: `speaker-${Date.now()}`,
+                                  name: '화자 1',
+                                  color: '#c026d3',
+                                  engine: 'typecast' as const,
+                                  voiceId: '',
+                                  language: 'ko' as const,
+                                  speed: 1.0,
+                                  pitch: 0,
+                                  stability: 0.5,
+                                  similarityBoost: 0.75,
+                                  style: 0,
+                                  useSpeakerBoost: true,
+                                  lineCount: 0,
+                                  totalDuration: 0,
+                                };
+                                soundStore.addSpeaker(ns);
+                                speakerId = ns.id;
+                              }
+
+                              // [FIX #564] ALL TTS 전송 시 원본 영상 타이밍(start/end/duration) 유지
+                              // TTS 길이는 오디오 클립 길이로만 사용하고, 장면 레이아웃은 원본 타임코드 기준으로 고정
+                              let fallbackCursorSec = 0;
+                              const newLines = v.scenes
+                                .filter(s => (s.audioContent || s.dialogue || '').trim())
+                                .map((s, i) => {
+                                  const timing = parseSceneTimingWindow(s);
+                                  const fallbackDuration = Math.max(0.1, parseDuration(s.duration));
+                                  const startTime = timing ? timing.startSec : fallbackCursorSec;
+                                  const endTime = timing ? timing.endSec : (startTime + fallbackDuration);
+                                  const duration = timing ? timing.durationSec : fallbackDuration;
+                                  fallbackCursorSec = Math.max(fallbackCursorSec, endTime);
+
+                                  return {
+                                    id: `line-${Date.now()}-${i}`,
+                                    speakerId,
+                                    text: (s.audioContent || s.dialogue || '').trim(),
+                                    index: i,
+                                    startTime,
+                                    endTime,
+                                    duration,
+                                    ttsStatus: 'idle' as const,
+                                  };
+                                });
+                              if (newLines.length === 0) {
+                                showToast('전송할 나레이션이 없습니다.', 3000);
+                                return;
+                              }
+                              soundStore.setLines(newLines);
+                              useNavigationStore.getState().setActiveTab('sound-studio');
+                              showToast(`"V${v.id}" 나레이션 ${newLines.length}줄을 사운드 스튜디오로 전송했어요`);
+                            }}
                               className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium bg-gray-700/40 text-gray-400 border border-gray-600/20 hover:text-fuchsia-400 hover:border-fuchsia-500/30 transition-all">
                               <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>TTS 생성
                             </button>

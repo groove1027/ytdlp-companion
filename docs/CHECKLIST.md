@@ -8,6 +8,13 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-19] 영상분석 TTS 타이밍/탭 전환 유실/이미지 배치 취소 기능 수정 (#564, #563, #433)
+- [x] `VideoAnalysisRoom.tsx` — ALL TTS → 사운드 스튜디오 전송 시 `VideoSceneRow`의 원본 타임코드(`startTime/endTime/duration`)를 라인에 함께 매핑
+- [x] `VoiceStudio.tsx` — 고정 타임라인 라인(`startTime/endTime` 존재)은 TTS 생성 후에도 장면 레이아웃 duration을 유지하고, 씬 동기화 시 원본 타이밍을 우선 반영
+- [x] `projectStore.ts` — 자동 프로젝트 생성(`autoRestoreOrCreateProject`) 경로에서 `newProject(..., { preserveAnalysisState: true })`로 영상분석/채널분석 상태 리셋 방지
+- [x] `StoryboardPanel.tsx` — 이미지 일괄 생성 중 `취소` 버튼 추가, 취소 요청 시 신규 작업만 중단하고 진행 중 작업 완료 후 멈춤 + 완료/전체 카운트 표시
+- [x] `tsc --noEmit` + `vite build` + `grep` 재검증 통과
+
 ### [2026-03-19] Premiere ZIP 내보내기 버그 2건 수정 (#535, #539)
 - [x] `nleExportService.ts` — 9:16/16:9 비율 기반 자막 위치 동적화: 기본 자막 `origin`을 9:16=`0 -0.38`, 16:9=`0 -0.35`로 조정
 - [x] `nleExportService.ts` — 효과자막(`effectSubClips`) `origin`도 화면 하단 기준으로 조정(숏폼 얼굴 가림 방지)

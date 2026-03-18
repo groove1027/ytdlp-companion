@@ -272,9 +272,13 @@ export async function downloadVideoViaProxy(
         return { blob: await response.blob(), info: info || defaultInfo };
       } catch (e) {
         lastError = e instanceof Error ? e : new Error(String(e));
-        const isRetryable = lastError.message.includes('502') || lastError.message.includes('503') || lastError.message.includes('504') || lastError.message.includes('Network') || lastError.message.includes('fetch');
+        const isRateLimit = lastError.message.includes('429');
+        const isRetryable = isRateLimit || lastError.message.includes('502') || lastError.message.includes('503') || lastError.message.includes('504') || lastError.message.includes('Network') || lastError.message.includes('fetch');
         if (!isRetryable) break;
-        const delay = 3000 * Math.pow(2, attempt) + Math.random() * 2000;
+        // [FIX #567] 429 → retryAfter 기반 대기 (최소 5초 지수 백오프), 일반 에러 → 3초 기반
+        const delay = isRateLimit
+          ? 5000 * Math.pow(2, attempt) + Math.random() * 2000
+          : 3000 * Math.pow(2, attempt) + Math.random() * 2000;
         logger.trackRetry(`downloadVideoViaProxy(${q})`, attempt + 1, MAX_RETRIES, `${lastError.message}, ${Math.round(delay)}ms 대기`);
         await new Promise(r => setTimeout(r, delay));
       }
@@ -297,16 +301,25 @@ export async function downloadAudioViaProxy(
   const apiKey = getApiKey();
   const proxyUrl = `${baseUrl.replace(/\/$/, '')}/api/download?url=${encodeURIComponent(youtubeUrl)}&quality=audio`;
 
-  const response = await monitoredFetch(proxyUrl, {
-    headers: apiKey ? { 'X-API-Key': apiKey } : {},
-    signal: AbortSignal.timeout(120_000), // 오디오는 작으므로 2분
-  });
+  // [FIX #567] 429 재시도 — 서버 과부하 시 retryAfter 기반 대기
+  const MAX_RETRIES = 3;
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    const response = await monitoredFetch(proxyUrl, {
+      headers: apiKey ? { 'X-API-Key': apiKey } : {},
+      signal: AbortSignal.timeout(120_000),
+    });
 
-  if (!response.ok) {
+    if (response.ok) return response.blob();
+
+    if (response.status === 429 && attempt < MAX_RETRIES - 1) {
+      const delay = 5000 * Math.pow(2, attempt) + Math.random() * 2000;
+      logger.trackRetry('downloadAudioViaProxy', attempt + 1, MAX_RETRIES, `429, ${Math.round(delay)}ms 대기`);
+      await new Promise(r => setTimeout(r, delay));
+      continue;
+    }
     throw new Error(`오디오 다운로드 실패 (HTTP ${response.status})`);
   }
-
-  return response.blob();
+  throw new Error('오디오 다운로드 실패 (모든 재시도 소진)');
 }
 
 /**
@@ -496,29 +509,47 @@ export async function fetchFramesFromServer(
   const apiKey = getApiKey();
   const url = `${baseUrl.replace(/\/$/, '')}/api/frames`;
 
-  try {
-    const res = await monitoredFetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-API-Key': apiKey,
-      },
-      body: JSON.stringify({ url: videoId, timecodes: limitedTimecodes, w: width }),
-    }, 60000); // 60초 타임아웃
+  // [FIX #567] 429 재시도 — 서버 과부하 시 대기 후 재시도 (최대 2회)
+  const MAX_FRAME_RETRIES = 2;
+  for (let attempt = 0; attempt <= MAX_FRAME_RETRIES; attempt++) {
+    try {
+      const res = await monitoredFetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Key': apiKey,
+        },
+        body: JSON.stringify({ url: videoId, timecodes: limitedTimecodes, w: width }),
+      }, 60000); // 60초 타임아웃
 
-    if (!res.ok) {
+      if (res.ok) {
+        const data: { frames: ExtractedFrame[] } = await res.json();
+        return (data.frames || []).map(f => ({
+          url: f.url,
+          hdUrl: f.url,
+          timeSec: f.t,
+        }));
+      }
+
+      // 429: 서버 바쁨 → retryAfter 기반 대기 후 재시도
+      if (res.status === 429 && attempt < MAX_FRAME_RETRIES) {
+        const delay = 5000 * Math.pow(2, attempt) + Math.random() * 2000;
+        logger.warn(`[Frame Server] /api/frames 429 — ${Math.round(delay / 1000)}초 후 재시도 (${attempt + 1}/${MAX_FRAME_RETRIES})`);
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+
       logger.warn(`[Frame Server] /api/frames 실패: ${res.status}`);
       return [];
+    } catch (e) {
+      if (attempt < MAX_FRAME_RETRIES) {
+        const delay = 5000 * Math.pow(2, attempt);
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+      logger.warn('[Frame Server] 서버 프레임 추출 실패 (YouTube 썸네일 폴백)', e instanceof Error ? e.message : '');
+      return [];
     }
-
-    const data: { frames: ExtractedFrame[] } = await res.json();
-    return (data.frames || []).map(f => ({
-      url: f.url,
-      hdUrl: f.url,
-      timeSec: f.t,
-    }));
-  } catch (e) {
-    logger.warn('[Frame Server] 서버 프레임 추출 실패 (YouTube 썸네일 폴백)', e instanceof Error ? e.message : '');
-    return [];
   }
+  return [];
 }

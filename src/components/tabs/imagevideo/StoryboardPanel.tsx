@@ -71,11 +71,12 @@ async function runImageBatch(
   fn: (scene: Scene) => Promise<boolean>,
   onSuccess: () => void,
   onFail: () => void,
+  shouldStop?: () => boolean,
 ) {
   const queue = [...items];
   const active: Promise<void>[] = [];
   while (queue.length > 0 || active.length > 0) {
-    while (queue.length > 0 && active.length < limit) {
+    while (queue.length > 0 && active.length < limit && !shouldStop?.()) {
       const item = queue.shift()!;
       const p = fn(item).then((ok) => {
         if (ok) onSuccess(); else onFail();
@@ -88,6 +89,7 @@ async function runImageBatch(
       active.push(p);
       await new Promise(resolve => setTimeout(resolve, 100));
     }
+    if (shouldStop?.() && active.length === 0) break;
     if (active.length > 0) await Promise.race(active);
   }
 }
@@ -1294,6 +1296,7 @@ const StoryboardPanel: React.FC = () => {
   // [FIX #365] 이미지 모델 — Zustand 리액티브 셀렉터 (getState()는 UI 반영 안 됨)
   const storyboardImageModel = useProjectStore(s => s.config?.imageModel) || ImageModel.NANO_COST;
   const [isBatchingImages, setIsBatchingImages] = useState(false);
+  const [isBatchImageCancelRequested, setIsBatchImageCancelRequested] = useState(false);
   const [batchImageProgress, setBatchImageProgress] = useState({ current: 0, total: 0, success: 0, fail: 0 });
   // [#518] 이미지 일괄 업로드 상태
   const [isBatchUploading, setIsBatchUploading] = useState(false);
@@ -1309,6 +1312,8 @@ const StoryboardPanel: React.FC = () => {
   // BUG#16: ref to track latest batch progress
   const batchImageProgressRef = useRef(batchImageProgress);
   batchImageProgressRef.current = batchImageProgress;
+  const batchImageCancelRef = useRef(isBatchImageCancelRequested);
+  batchImageCancelRef.current = isBatchImageCancelRequested;
   const batchUploadProgressRef = useRef(batchUploadProgress);
   batchUploadProgressRef.current = batchUploadProgress;
   const batchUploadRef = useRef<HTMLInputElement>(null);
@@ -2019,6 +2024,12 @@ const StoryboardPanel: React.FC = () => {
   }, [updateScene, addCost, requireAuth, storyboardImageModel]);
 
   // --- 배치 이미지 생성 ---
+  const handleCancelBatchImageGeneration = useCallback(() => {
+    if (!isBatchingImages) return;
+    setIsBatchImageCancelRequested(true);
+    showToast('이미지 일괄 생성 취소 요청됨 — 진행 중인 작업까지만 완료 후 중지합니다.');
+  }, [isBatchingImages]);
+
   const handleBatchGenerateImages = useCallback(async (sceneIds?: string[]) => {
     logger.trackAction('이미지 일괄 생성');
     if (!requireAuth('이미지 일괄 생성')) return;
@@ -2053,6 +2064,7 @@ const StoryboardPanel: React.FC = () => {
     };
 
     setIsBatchingImages(true);
+    setIsBatchImageCancelRequested(false);
     setBatchImageProgress({ current: 0, total: targets.length, success: 0, fail: 0 });
 
     await runImageBatch(
@@ -2069,17 +2081,21 @@ const StoryboardPanel: React.FC = () => {
         current: prev.current + 1,
         fail: prev.fail + 1,
       })),
+      () => batchImageCancelRef.current,
     );
 
     // BUG#16: 배치 완료 후 성공/실패 요약 표시
     const finalProgress = batchImageProgressRef.current;
-    if (finalProgress.fail > 0) {
+    if (batchImageCancelRef.current) {
+      showToast(`이미지 일괄 생성이 중단되었습니다. (${finalProgress.current}/${finalProgress.total} 완료)`, 5000);
+    } else if (finalProgress.fail > 0) {
       showToast(`${finalProgress.fail}개 장면 이미지 생성 실패 (${finalProgress.success}개 성공)`, 5000);
     } else {
       showToast(`${finalProgress.success}개 장면 이미지 생성 완료`);
     }
 
     setIsBatchingImages(false);
+    setIsBatchImageCancelRequested(false);
   }, [handleGenerateImage, requireAuth]);
 
   // [FIX #175-1] 자동 이미지 생성 제거 — 빈 슬롯으로 시작, 사용자가 직접 생성 버튼 클릭 시에만 생성
@@ -2166,6 +2182,20 @@ const StoryboardPanel: React.FC = () => {
               {((isBatchUploading && batchUploadProgress.fail > 0) || (isBatchingImages && batchImageProgress.fail > 0)) && (
                 <div className="text-xs text-red-400 mt-0.5">{isBatchUploading ? batchUploadProgress.fail : batchImageProgress.fail}개 실패</div>
               )}
+              {isBatchingImages && (
+                <button
+                  type="button"
+                  onClick={handleCancelBatchImageGeneration}
+                  disabled={isBatchImageCancelRequested}
+                  className={`mt-1 px-2.5 py-0.5 rounded-md text-[11px] font-semibold border transition-colors ${
+                    isBatchImageCancelRequested
+                      ? 'text-gray-400 border-gray-600/50 cursor-not-allowed'
+                      : 'text-red-300 border-red-500/40 bg-red-600/15 hover:bg-red-600/25'
+                  }`}
+                >
+                  {isBatchImageCancelRequested ? '취소 요청됨' : '취소'}
+                </button>
+              )}
             </div>
           </div>
 
@@ -2189,6 +2219,11 @@ const StoryboardPanel: React.FC = () => {
               <span className="text-xs text-orange-400 flex-shrink-0 mt-px">💡</span>
               <p className="text-xs text-gray-400">{batchTip}</p>
             </div>
+          )}
+          {isBatchingImages && isBatchImageCancelRequested && (
+            <p className="text-xs text-red-300/90">
+              취소 처리 중: 완료 {batchImageProgress.current}/{batchImageProgress.total}
+            </p>
           )}
         </div>
       )}
