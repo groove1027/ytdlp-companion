@@ -341,6 +341,16 @@ const NarrationView: React.FC = () => {
     [updateLine],
   );
 
+  // ===============================
+  // 줄별 화자 변경 (#418)
+  // ===============================
+  const handleChangeSpeaker = useCallback(
+    (lineId: string, speakerId: string) => {
+      updateLine(lineId, { speakerId, audioUrl: undefined, ttsStatus: 'idle' });
+    },
+    [updateLine],
+  );
+
   const handleApplyDirectScript = useCallback(() => {
     if (!directScript.trim()) return;
     const sentences = splitBySentenceEndings(directScript);
@@ -531,6 +541,7 @@ const NarrationView: React.FC = () => {
               lineNumber={lineNumber}
               isLast={idx === lines.length - 1}
               speaker={speakers.find(s => s.id === line.speakerId) || activeSpeaker}
+              speakers={speakers}
               globalEmotion={globalEmotion}
               globalSpeed={globalSpeed}
               smartEmotion={smartEmotion}
@@ -542,6 +553,7 @@ const NarrationView: React.FC = () => {
               onRemoveLine={handleRemoveLine}
               onUpdateEmotion={handleUpdateEmotion}
               onUpdateSpeed={handleUpdateSpeed}
+              onChangeSpeaker={handleChangeSpeaker}
             />);
           })
         )}

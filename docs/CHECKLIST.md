@@ -8,6 +8,12 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-19] #418 타입캐스트 멀티캐릭터 줄별 설정 수정
+- [x] `TypecastEditor.tsx` — handlePickCharacter/ElevenLabs/Supertonic: 같은 voiceId 그룹 전체 변경 → 클릭한 줄만 변경
+- [x] `TypecastEditor.tsx` — 우측 사이드바에 줄별 캐릭터 이름 뱃지 추가 (클릭 시 피커 열기)
+- [x] `NarrationLineItem.tsx` + `NarrationView.tsx` — speakers/onChangeSpeaker prop 추가 (미래 대비)
+- [x] Codex 5.4 전수 분석 + tsc + vite build + 10회 검증 루프 통과
+
 ### [2026-03-19] #413 로고 클릭 시 홈(프로젝트 대시보드)으로 이동
 - [x] `App.tsx` — 상단 헤더 "All In One Production v4.5" 텍스트에 onClick={goToDashboard} 추가
 - [x] 접근성: role="button", tabIndex, aria-label, 키보드(Enter/Space) 지원, focus ring

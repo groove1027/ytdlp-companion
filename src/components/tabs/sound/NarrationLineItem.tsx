@@ -8,6 +8,7 @@ interface NarrationLineItemProps {
   lineNumber: number | null;  // null = character voice line (no number)
   isLast: boolean;
   speaker: Speaker | null;
+  speakers: Speaker[];
   globalEmotion: string;
   globalSpeed: number;
   smartEmotion: boolean;
@@ -19,6 +20,7 @@ interface NarrationLineItemProps {
   onRemoveLine: (lineId: string) => void;
   onUpdateEmotion: (lineId: string, emotion: string) => void;
   onUpdateSpeed: (lineId: string, speed: number) => void;
+  onChangeSpeaker: (lineId: string, speakerId: string) => void;
 }
 
 const NarrationLineItem: React.FC<NarrationLineItemProps> = ({
@@ -27,6 +29,7 @@ const NarrationLineItem: React.FC<NarrationLineItemProps> = ({
   lineNumber,
   isLast,
   speaker,
+  speakers,
   globalEmotion,
   globalSpeed,
   smartEmotion,
@@ -38,6 +41,7 @@ const NarrationLineItem: React.FC<NarrationLineItemProps> = ({
   onRemoveLine,
   onUpdateEmotion,
   onUpdateSpeed,
+  onChangeSpeaker,
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editText, setEditText] = useState(line.text);
@@ -90,12 +94,30 @@ const NarrationLineItem: React.FC<NarrationLineItemProps> = ({
 
   return (
     <div className={`group relative flex items-start gap-3 px-4 py-3 hover:bg-gray-800/50 border-b border-gray-800 transition-colors ${isModified ? 'border-l-2 border-l-yellow-500/60' : isError ? 'border-l-2 border-l-red-500/60' : ''}`}>
-      {/* 라인 번호 + 타임코드 / 캐릭터 뱃지 */}
+      {/* 라인 번호 + 화자 선택 + 타임코드 / 캐릭터 뱃지 */}
       {lineNumber != null ? (
         <div className="flex-shrink-0 flex flex-col items-center gap-0.5 mt-0.5">
           <div className="w-7 h-7 rounded-full bg-gray-700 flex items-center justify-center text-xs font-bold text-gray-400">
             {lineNumber}
           </div>
+          {/* 줄별 화자 선택 드롭다운 (멀티캐릭터) */}
+          {speakers.length > 1 && (
+            <select
+              value={line.speakerId || speakers[0]?.id || ''}
+              onChange={(e) => onChangeSpeaker(line.id, e.target.value)}
+              className="w-20 appearance-none bg-gray-700/60 border border-fuchsia-600/30 text-[9px] text-fuchsia-300 rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-fuchsia-500 truncate cursor-pointer"
+              title={speaker?.name || '화자 선택'}
+            >
+              {speakers.map((sp) => (
+                <option key={sp.id} value={sp.id}>{sp.name}</option>
+              ))}
+            </select>
+          )}
+          {speakers.length <= 1 && speaker && (
+            <span className="text-[9px] text-fuchsia-400/60 truncate max-w-[80px]" title={speaker.name}>
+              {speaker.name}
+            </span>
+          )}
           {line.startTime != null && (
             <span className="text-[9px] text-gray-500 font-mono tabular-nums leading-none">
               {Math.floor(line.startTime / 60)}:{String(Math.floor(line.startTime % 60)).padStart(2, '0')}

@@ -227,12 +227,11 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
     isSyncing.current = false;
   }, [speakers]);
 
-  // 캐릭터 선택 → 같은 캐릭터의 연속된 줄 전체 변경 + 에디터 재구성
+  // [FIX #418] 캐릭터 선택 → 클릭한 줄만 변경 (기존: 같은 voiceId 그룹 전체 변경 → 멀티캐릭터 불가)
   const handlePickCharacter = useCallback((voice: TypecastVoice) => {
     if (pickerLineIdx === null) return;
     const line = lines[pickerLineIdx];
     if (!line) return;
-    const oldVoiceId = line.voiceId || activeSpeaker?.voiceId || '';
     const update = {
       voiceId: voice.voice_id,
       voiceName: voice.name,
@@ -245,7 +244,6 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
     const langMap: Record<string, TTSLanguage> = { kor: 'ko', jpn: 'ja', eng: 'en' };
     const detectedLang = langMap[primaryLang] || 'ko';
     if (activeSpeaker) {
-      // [FIX #175-2] 캐릭터 선택 시 Speaker.voiceId도 즉시 동기화 — 별도 Typecast 탭에서 적용할 필요 없음
       updateSpeaker(activeSpeaker.id, {
         language: detectedLang,
         voiceId: voice.voice_id,
@@ -254,33 +252,21 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
       });
       setTcLanguage(detectedLang);
     }
-    // 클릭한 줄부터 같은 voiceId인 연속 줄 모두 변경
+    // [FIX #418] 클릭한 줄만 변경 — 멀티캐릭터: 줄별 독립 설정 가능
     updateLine(line.id, update);
-    for (let i = pickerLineIdx + 1; i < lines.length; i++) {
-      const nextVid = lines[i].voiceId || activeSpeaker?.voiceId || '';
-      if (nextVid !== oldVoiceId) break;
-      updateLine(lines[i].id, update);
-    }
-    // 위쪽도 같은 그룹이면 변경
-    for (let i = pickerLineIdx - 1; i >= 0; i--) {
-      const prevVid = lines[i].voiceId || activeSpeaker?.voiceId || '';
-      if (prevVid !== oldVoiceId) break;
-      updateLine(lines[i].id, update);
-    }
     // 모달 닫기
     if (pickerAudioRef.current) { pickerAudioRef.current.pause(); pickerAudioRef.current = null; }
     setPickerPlayingId(null);
     setPickerLineIdx(null);
     // 에디터 재구성 (다음 틱에서 store 반영 후)
     setTimeout(() => forceRebuildEditor(), 50);
-  }, [pickerLineIdx, lines, updateLine, activeSpeaker]);
+  }, [pickerLineIdx, lines, updateLine, forceRebuildEditor, activeSpeaker]);
 
-  // ElevenLabs 캐릭터 선택 → 같은 캐릭터의 연속 줄 전체 변경
+  // [FIX #418] ElevenLabs 캐릭터 선택 → 클릭한 줄만 변경
   const handlePickElevenLabsVoice = useCallback((voice: ElevenLabsVoice) => {
     if (pickerLineIdx === null) return;
     const line = lines[pickerLineIdx];
     if (!line) return;
-    const oldVoiceId = line.voiceId || activeSpeaker?.voiceId || '';
     const update = {
       voiceId: voice.id,
       voiceName: elNameKo(voice.name),
@@ -289,16 +275,6 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
       ttsStatus: 'idle' as const,
     };
     updateLine(line.id, update);
-    for (let i = pickerLineIdx + 1; i < lines.length; i++) {
-      const nextVid = lines[i].voiceId || activeSpeaker?.voiceId || '';
-      if (nextVid !== oldVoiceId) break;
-      updateLine(lines[i].id, update);
-    }
-    for (let i = pickerLineIdx - 1; i >= 0; i--) {
-      const prevVid = lines[i].voiceId || activeSpeaker?.voiceId || '';
-      if (prevVid !== oldVoiceId) break;
-      updateLine(lines[i].id, update);
-    }
     if (pickerAudioRef.current) { pickerAudioRef.current.pause(); pickerAudioRef.current = null; }
     setPickerPlayingId(null);
     setElPickerOpen(false);
@@ -306,12 +282,11 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
     setTimeout(() => forceRebuildEditor(), 50);
   }, [pickerLineIdx, lines, updateLine, forceRebuildEditor, activeSpeaker]);
 
-  // Supertonic 캐릭터 선택 → 같은 캐릭터의 연속 줄 전체 변경
+  // [FIX #418] Supertonic 캐릭터 선택 → 클릭한 줄만 변경
   const handlePickSupertonicVoice = useCallback((voiceId: string, voiceName: string) => {
     if (pickerLineIdx === null) return;
     const line = lines[pickerLineIdx];
     if (!line) return;
-    const oldVoiceId = line.voiceId || activeSpeaker?.voiceId || '';
     const update = {
       voiceId,
       voiceName,
@@ -320,16 +295,6 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
       ttsStatus: 'idle' as const,
     };
     updateLine(line.id, update);
-    for (let i = pickerLineIdx + 1; i < lines.length; i++) {
-      const nextVid = lines[i].voiceId || activeSpeaker?.voiceId || '';
-      if (nextVid !== oldVoiceId) break;
-      updateLine(lines[i].id, update);
-    }
-    for (let i = pickerLineIdx - 1; i >= 0; i--) {
-      const prevVid = lines[i].voiceId || activeSpeaker?.voiceId || '';
-      if (prevVid !== oldVoiceId) break;
-      updateLine(lines[i].id, update);
-    }
     if (pickerAudioRef.current) { pickerAudioRef.current.pause(); pickerAudioRef.current = null; }
     setPickerPlayingId(null);
     setStPickerOpen(false);
@@ -1289,9 +1254,19 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
               <div key={line.id}>
                 {/* 캐릭터 헤더 높이 맞춤 spacer */}
                 {showHeader && <div style={{ height: '56px' }} />}
-                {/* 감정/속도 컨트롤 */}
-                <div className={`flex items-center gap-1 px-1.5 py-2.5 border-b border-gray-700/15 ${idx === activeIdx ? 'bg-yellow-500/5' : ''}`}
+                {/* [FIX #418] 줄별 캐릭터 이름 + 감정/속도 컨트롤 */}
+                <div className={`flex flex-col gap-0.5 px-1.5 py-2 border-b border-gray-700/15 ${idx === activeIdx ? 'bg-yellow-500/5' : ''}`}
                   style={{ minHeight: '44px' }}>
+                  {/* 줄별 캐릭터 표시 — 클릭 시 피커 열기 */}
+                  {line.voiceName && (
+                    <button type="button"
+                      onClick={() => openCharacterPicker(idx)}
+                      className="text-[9px] text-fuchsia-400 truncate max-w-full text-left hover:text-fuchsia-300 transition-colors"
+                      title={`${line.voiceName} — 클릭해서 변경`}>
+                      🎭 {line.voiceName}
+                    </button>
+                  )}
+                  <div className="flex items-center gap-1">
                   <select value={
                     currentEngine === 'elevenlabs'
                       ? (ELEVENLABS_EMOTIONS.some(em => em.id === line.emotion) ? line.emotion : 'none')
@@ -1315,6 +1290,7 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
                     title={`${line.text.length}/2000자`}>
                     {line.text.length > 0 ? `${line.text.length}` : ''}
                   </span>
+                  </div>
                 </div>
               </div>
             );
