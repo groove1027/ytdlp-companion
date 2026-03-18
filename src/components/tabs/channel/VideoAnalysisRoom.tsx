@@ -2821,6 +2821,7 @@ const VideoAnalysisRoom: React.FC = () => {
   const {
     inputMode, youtubeUrl, youtubeUrls, selectedPreset, rawResult, versions, thumbnails, error, expandedId,
     targetDuration, setTargetDuration,
+    keepOriginalOrder, setKeepOriginalOrder,
     setInputMode, setYoutubeUrl, updateYoutubeUrl, addYoutubeUrl, removeYoutubeUrl,
     setSelectedPreset, setRawResult, setVersions, setThumbnails,
     setError, setExpandedId, cacheCurrentResult, restoreFromCache, resetResults,
@@ -3392,7 +3393,19 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       }, AI_TIMEOUT_MS);
 
       const currentTargetDuration = useVideoAnalysisStore.getState().targetDuration;
-      const userPrompt = buildUserMessage(inputDesc, preset, currentTargetDuration);
+      const currentKeepOrder = useVideoAnalysisStore.getState().keepOriginalOrder;
+      let userPrompt = buildUserMessage(inputDesc, preset, currentTargetDuration);
+
+      // [FIX #398] 원본 순서 유지 모드: 비선형 재배치 지시를 오버라이드
+      if (currentKeepOrder && (preset === 'snack' || preset === 'tikitaka')) {
+        userPrompt += `\n\n### ⚠️ 사용자 설정: 원본 순서 유지 모드 (최우선 적용)
+- **비선형 재배치를 하지 마세요.** 원본 영상의 시간순서를 그대로 유지하세요.
+- 1번 컷부터 마지막 컷까지 원본 영상의 타임라인 순서를 따르세요.
+- "후킹과 비선형 재배치" 규칙을 무시하고, 대신 원본 순서 그대로 편집표를 작성하세요.
+- 나머지 규칙(자막 이원화, 속도감, 컷 길이, 효과자막, 이모지 등)은 모두 동일하게 적용하세요.
+- 사용자가 이미 기획한 장면 순서를 유지하면서 자막만 추출하는 것이 목적입니다.`;
+      }
+
       const signal = abortCtrl.signal;
 
       // 10버전 프리셋은 5병렬 × 2버전, 5버전 프리셋은 단일 호출
@@ -4268,8 +4281,31 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
               ))}
             </div>
           </div>
+          {/* [FIX #398] 원본 순서 유지 토글 — 스낵형/티키타카의 비선형 재배치를 비활성화 */}
+          <button
+            type="button"
+            onClick={() => setKeepOriginalOrder(!keepOriginalOrder)}
+            disabled={isAnalyzing}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm transition-all ${
+              keepOriginalOrder
+                ? 'bg-amber-600/20 border-amber-500/40 text-amber-400'
+                : 'bg-gray-900/50 border-gray-600/50 text-gray-400 hover:border-gray-500 hover:text-gray-300'
+            } ${isAnalyzing ? 'opacity-50 cursor-not-allowed' : ''}`}
+            title="스낵형·티키타카에서 비선형 재배치 대신 원본 영상의 시간 순서를 유지합니다"
+          >
+            <span className={`w-8 h-4 rounded-full relative transition-all ${keepOriginalOrder ? 'bg-amber-500' : 'bg-gray-600'}`}>
+              <span className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all ${keepOriginalOrder ? 'left-4' : 'left-0.5'}`} />
+            </span>
+            원본 순서 유지
+          </button>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        {/* [FIX #398] 원본 순서 유지 모드 안내 */}
+        {keepOriginalOrder && (
+          <p className="text-amber-400/70 text-xs mt-2">
+            스낵형·티키타카에서 장면 순서를 뒤섞지 않고 원본 타임라인 순서 그대로 자막을 추출합니다.
+          </p>
+        )}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mt-4">
           {(Object.entries(PRESET_INFO) as [AnalysisPreset, typeof PRESET_INFO['tikitaka']][]).map(([key, info]) => {
             const isSel = selectedPreset === key && isAnalyzing;
             const cMap: Record<string, { bg: string; border: string; text: string; hover: string }> = {

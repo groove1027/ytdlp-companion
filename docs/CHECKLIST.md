@@ -8,6 +8,12 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-18] #398 영상 분석실 — 원본 순서 유지 옵션 추가
+- [x] `videoAnalysisStore.ts` — `keepOriginalOrder` 상태 + `setKeepOriginalOrder` 액션 + localStorage 영속화
+- [x] `VideoAnalysisRoom.tsx` — 프리셋 헤더에 "원본 순서 유지" 토글 UI 추가 (amber 테마)
+- [x] `VideoAnalysisRoom.tsx` — 스낵형/티키타카 분석 시 프롬프트 오버라이드 (비선형 재배치 → 시간순 유지)
+- [x] tsc + vite build + Puppeteer E2E 검증 통과
+
 ### [2026-03-18] #427 스토리보드 이미지 모션 기능 추가
 - [x] `motionPreviewUtils.ts` 신규 — 모션 프리뷰 공유 유틸리티 (CSS 키프레임, computeMotionStyle 등)
 - [x] `StoryboardScene.tsx` — 컴팩트 모션 프리셋 8종 선택 UI + AI 자동 감지 + CSS 프리뷰 오버레이
