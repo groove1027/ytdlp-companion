@@ -8,6 +8,13 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-18] #544 스토리보드 다운로드 영역 "대본 복사" 버튼 추가
+- [x] `StoryboardPanel.tsx` 상단에 장면 대본 추출 헬퍼 `getSceneNarrationText` 추가 (`scriptText` 우선, `audioScript`/`narration`/`script` 폴백)
+- [x] 다운로드 버튼 근처에 오렌지 액센트 `📋 대본 복사` 버튼 추가
+- [x] 클릭 시 전체 장면 대본을 합쳐 `navigator.clipboard.writeText()`로 복사
+- [x] 성공 시 버튼 라벨 `✅ 복사됨!` 2초 표시 후 자동 복구 + 실패 시 토스트 처리
+- [x] `tsc --noEmit` + `vite build` + `grep` 재검증 통과
+
 ### [2026-03-18] 버그 15건 일괄 수정 (#533, #532, #529, #527, #525, #524, #523, #517, #514, #503, #496, #495, #488, #487, #486)
 - [x] #527: AI추천소재 참고영상 링크 — search_query URL → 실제 영상 URL (types.ts, topicRecommendService.ts, TopicRecommendCards.tsx)
 - [x] #532: 대본 변경 후 사운드스튜디오 나레이션 갱신 안됨 — prevStoreScriptRef로 변경 감지 (VoiceStudio.tsx)

@@ -113,6 +113,20 @@ const fmtTime = (sec: number): string => {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(ms).padStart(2, '0')}`;
 };
 
+type SceneTextFallback = {
+  narration?: string;
+  script?: string;
+};
+
+const getSceneNarrationText = (scene: Scene): string => {
+  const fallback = scene as SceneTextFallback;
+  const candidates = [scene.scriptText, scene.audioScript, fallback.narration, fallback.script];
+  const text = candidates
+    .map((value) => (typeof value === 'string' ? value.trim() : ''))
+    .find((value) => value.length > 0);
+  return text || '';
+};
+
 // --- Scene Card ---
 
 interface SceneCardProps {
@@ -1161,6 +1175,7 @@ const StoryboardPanel: React.FC = () => {
   const [detailScene, setDetailScene] = useState<{ scene: Scene; index: number } | null>(null);
   const [showGenDropdown, setShowGenDropdown] = useState(false);
   const [showDownloadDropdown, setShowDownloadDropdown] = useState(false);
+  const [isAllScriptCopied, setIsAllScriptCopied] = useState(false);
   // [FIX #365] 이미지 모델 — Zustand 리액티브 셀렉터 (getState()는 UI 반영 안 됨)
   const storyboardImageModel = useProjectStore(s => s.config?.imageModel) || ImageModel.NANO_COST;
   const [isBatchingImages, setIsBatchingImages] = useState(false);
@@ -1174,6 +1189,7 @@ const StoryboardPanel: React.FC = () => {
 
   const dropdownRef = useRef<HTMLDivElement>(null);
   const downloadDropdownRef = useRef<HTMLDivElement>(null);
+  const allScriptCopiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // BUG#16: ref to track latest batch progress
   const batchImageProgressRef = useRef(batchImageProgress);
@@ -1194,6 +1210,10 @@ const StoryboardPanel: React.FC = () => {
   const isAnyBatchRunning = isBatchingImages || videoBatch.isBatching || isBatchUploading;
   const elapsedBatch = useElapsedTimer(isAnyBatchRunning);
   const totalScenes = scenes.length;
+  const allSceneScriptText = useMemo(() => scenes
+    .map((scene) => getSceneNarrationText(scene))
+    .filter((text) => text.length > 0)
+    .join('\n\n'), [scenes]);
 
   // [#243] 장면 선택 헬퍼
   const hasSelection = selectedSceneIds.size > 0;
@@ -1362,19 +1382,45 @@ const StoryboardPanel: React.FC = () => {
   // --- 대본 복사 ---
   const handleCopyScript = useCallback((sceneId: string) => {
     const scene = scenes.find((s) => s.id === sceneId);
-    if (!scene?.scriptText) { showToast('대본이 없습니다'); return; }
-    navigator.clipboard.writeText(scene.scriptText).then(() => {
+    const text = scene ? getSceneNarrationText(scene) : '';
+    if (!text) { showToast('대본이 없습니다'); return; }
+    navigator.clipboard.writeText(text).then(() => {
       showToast('대본이 클립보드에 복사되었습니다.');
     }).catch(() => {
       showToast('복사 실패');
     });
   }, [scenes]);
 
+  const handleCopyAllScripts = useCallback(async () => {
+    if (!allSceneScriptText) {
+      showToast('복사할 대본이 없습니다.');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(allSceneScriptText);
+      setIsAllScriptCopied(true);
+      if (allScriptCopiedTimerRef.current) {
+        clearTimeout(allScriptCopiedTimerRef.current);
+      }
+      allScriptCopiedTimerRef.current = setTimeout(() => {
+        setIsAllScriptCopied(false);
+        allScriptCopiedTimerRef.current = null;
+      }, 2000);
+      showToast('전체 대본이 클립보드에 복사되었습니다.');
+    } catch (e: unknown) {
+      logger.trackSwallowedError('StoryboardPanel:copyAllScripts/clipboard', e);
+      showToast('복사 실패');
+    }
+  }, [allSceneScriptText]);
+
   // cleanup on unmount
   useEffect(() => {
     return () => {
       cancelAnimationFrame(globalAnimRef.current);
       cancelAnimationFrame(sceneAnimRef.current);
+      if (allScriptCopiedTimerRef.current) {
+        clearTimeout(allScriptCopiedTimerRef.current);
+      }
       globalAudioRef.current?.pause();
       sceneAudioRef.current?.pause();
       window.speechSynthesis.cancel();
@@ -2040,6 +2086,14 @@ const StoryboardPanel: React.FC = () => {
             className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs font-medium rounded-lg border border-gray-600 transition-colors flex items-center gap-1.5"
           >
             {totalScenes >= 30 ? '📦 스토리보드 저장' : '💾 스토리보드 저장'}
+          </button>
+          <button
+            type="button"
+            onClick={handleCopyAllScripts}
+            disabled={!allSceneScriptText}
+            className="px-3 py-1.5 bg-orange-600/20 hover:bg-orange-600/30 disabled:opacity-40 disabled:cursor-not-allowed text-orange-300 text-xs font-medium rounded-lg border border-orange-500/40 transition-colors flex items-center gap-1.5"
+          >
+            {isAllScriptCopied ? '✅ 복사됨!' : '📋 대본 복사'}
           </button>
           {/* Download dropdown */}
           <div className="relative" ref={downloadDropdownRef}>
