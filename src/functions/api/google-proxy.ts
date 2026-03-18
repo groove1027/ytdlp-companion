@@ -5,7 +5,9 @@
  * - labs.google/fx/api/auth/session (인증)
  * - aisandbox-pa.googleapis.com/v1:runImageFx (이미지 생성)
  * - aisandbox-pa.googleapis.com/v1/whisk:generateImage (Whisk 이미지)
+ * - aisandbox-pa.googleapis.com/v1/whisk:runImageRecipe (Whisk 레퍼런스 리믹싱)
  * - aisandbox-pa.googleapis.com/v1/whisk:generateVideo (Veo 3.1 영상)
+ * - labs.google/fx/api/trpc/* (워크플로/캡션/업로드)
  *
  * POST /api/google-proxy
  * Body: { targetUrl, method?, body?, cookie, token? }

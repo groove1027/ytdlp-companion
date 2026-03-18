@@ -8,6 +8,14 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-19] #570 Google 이미지 스타일 레퍼런스 미적용 수정
+- [x] `googleImageService.ts`, `google-proxy.ts` — Google Whisk를 신규 워크플로/레시피 API 포맷으로 전환하고 레퍼런스 이미지 업로드·캡션·리믹싱 경로를 프록시로 중계
+- [x] `imageGeneration.ts` — 캐릭터 참조와 글로벌 스타일 레퍼런스를 분리해서 관리하도록 정리, `NOBODY/EXTRA` 장면에서도 스타일 레퍼런스가 유지되게 수정
+- [x] `imageGeneration.ts` — Google Whisk / Kie / Evolink 호출 모두 `장면 레퍼런스 → 글로벌 스타일 레퍼런스 → 캐릭터 레퍼런스` 우선순위로 동일 전달되게 통일
+- [x] `App.tsx` — 개별 이미지 생성 시 project config 지연과 무관하게 최신 `styleReferenceImages`를 store 우선으로 읽고 별도 인자로 전달
+- [x] `StoryboardPanel.tsx` — 배치/재시도 경로도 스타일 레퍼런스를 캐릭터 참조와 섞지 않고 별도 전달하도록 수정
+- [x] `tsc --noEmit` + `vite build` + `rg` 재검증 통과
+
 ### [2026-03-19] Seedance 1.5 Pro 4/8/12초 선택 + 전체 파이프라인 연동
 - [x] `types.ts` — `Scene.seedanceDuration?: '4' | '8' | '12'`, `VideoTaskParams.duration(4|6|8|10|12)` 정의가 이미 반영되어 있어 그대로 재사용
 - [x] `useVideoBatch.ts` — Seedance duration 하드코딩(`'8'`) 제거, `override -> scene.seedanceDuration -> '8'` 흐름으로 교체

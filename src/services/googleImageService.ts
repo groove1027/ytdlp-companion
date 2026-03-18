@@ -11,6 +11,10 @@ import { logger } from './LoggerService';
 const GOOGLE_AUTH_URL = 'https://labs.google/fx/api/auth/session';
 const GOOGLE_IMAGEFX_URL = 'https://aisandbox-pa.googleapis.com/v1:runImageFx';
 const GOOGLE_WHISK_URL = 'https://aisandbox-pa.googleapis.com/v1/whisk:generateImage';
+const GOOGLE_WHISK_RECIPE_URL = 'https://aisandbox-pa.googleapis.com/v1/whisk:runImageRecipe';
+const GOOGLE_TRPC_WORKFLOW_URL = 'https://labs.google/fx/api/trpc/media.createOrUpdateWorkflow';
+const GOOGLE_TRPC_CAPTION_URL = 'https://labs.google/fx/api/trpc/backbone.captionImage';
+const GOOGLE_TRPC_UPLOAD_URL = 'https://labs.google/fx/api/trpc/backbone.uploadImage';
 const PROXY_PATH = '/api/google-proxy';
 
 // 화면비 매핑
@@ -86,6 +90,79 @@ async function normalizeReferenceImage(ref: string): Promise<string | null> {
   }
 
   return trimmed;
+}
+
+/** tRPC 응답 포맷 언래핑 — labs.google/fx/api/trpc/* 엔드포인트용 */
+function unwrapTrpcResponse(json: Record<string, unknown>): Record<string, unknown> {
+  const nested = json?.result as Record<string, unknown> | undefined;
+  const data = nested?.data as Record<string, unknown> | undefined;
+  const innerJson = data?.json as Record<string, unknown> | undefined;
+  return (innerJson?.result || innerJson || json) as Record<string, unknown>;
+}
+
+/** Whisk 워크플로 생성 — 이미지 생성 시 필요한 프로젝트 ID 반환 */
+async function createWhiskWorkflow(cookie: string): Promise<string> {
+  const res = await proxyFetch(GOOGLE_TRPC_WORKFLOW_URL, {
+    method: 'POST',
+    body: JSON.stringify({
+      json: { workflowMetadata: { workflowName: `auto-${Date.now()}` } },
+    }),
+    cookie,
+  });
+
+  if (!res.ok) throw new Error(`Whisk 워크플로 생성 실패 (${res.status})`);
+  const data = await res.json();
+  const result = unwrapTrpcResponse(data);
+  return (result as { workflowId: string }).workflowId;
+}
+
+/** 레퍼런스 이미지 캡션 자동 생성 */
+async function captionWhiskImage(rawBytes: string, cookie: string, workflowId: string): Promise<string> {
+  const res = await proxyFetch(GOOGLE_TRPC_CAPTION_URL, {
+    method: 'POST',
+    body: JSON.stringify({
+      json: {
+        clientContext: { workflowId },
+        captionInput: {
+          candidatesCount: 1,
+          mediaInput: {
+            mediaCategory: 'MEDIA_CATEGORY_SUBJECT',
+            rawBytes,
+          },
+        },
+      },
+    }),
+    cookie,
+  });
+
+  if (!res.ok) throw new Error(`Whisk 캡션 생성 실패 (${res.status})`);
+  const data = await res.json();
+  const result = unwrapTrpcResponse(data);
+  const candidates = (result as { candidates?: { output: string }[] }).candidates;
+  return candidates?.[0]?.output || 'reference image';
+}
+
+/** 레퍼런스 이미지를 Whisk 서버에 업로드 — mediaGenerationId 반환 */
+async function uploadWhiskImage(rawBytes: string, caption: string, workflowId: string, cookie: string): Promise<string> {
+  const res = await proxyFetch(GOOGLE_TRPC_UPLOAD_URL, {
+    method: 'POST',
+    body: JSON.stringify({
+      json: {
+        clientContext: { workflowId },
+        uploadMediaInput: {
+          mediaCategory: 'MEDIA_CATEGORY_SUBJECT',
+          rawBytes,
+          caption,
+        },
+      },
+    }),
+    cookie,
+  });
+
+  if (!res.ok) throw new Error(`Whisk 이미지 업로드 실패 (${res.status})`);
+  const data = await res.json();
+  const result = unwrapTrpcResponse(data);
+  return (result as { uploadMediaGenerationId: string }).uploadMediaGenerationId;
 }
 
 /** Google 쿠키로 Bearer 토큰 발급 */
@@ -215,11 +292,9 @@ export async function generateGoogleImage(
 }
 
 /**
- * Google Whisk로 이미지 리믹싱 생성 (레퍼런스 이미지 기반)
- * 엔드포인트: aisandbox-pa.googleapis.com/v1/whisk:generateImage
- * - 캐릭터 레퍼런스 → subjectImageOptions (인물 주체)
- * - 텍스트 프롬프트 → imageDescriptionOptions (장면 설명)
- * - 레퍼런스 없으면 프롬프트만으로 생성
+ * Google Whisk로 이미지 생성 (2026-03 신규 API 포맷)
+ * - 레퍼런스 없으면: v1/whisk:generateImage (워크플로 기반)
+ * - 레퍼런스 있으면: v1/whisk:runImageRecipe (업로드 → 레시피 생성)
  */
 export async function generateWhiskImage(
   prompt: string,
@@ -228,40 +303,32 @@ export async function generateWhiskImage(
   referenceImages?: string[],
 ): Promise<{ base64: string; mediaId: string; seed: number }> {
   const { token } = await getGoogleAccessToken(cookie);
-
   const googleAspect = ASPECT_RATIO_MAP[aspectRatio] || 'IMAGE_ASPECT_RATIO_LANDSCAPE';
 
-  logger.info('[Google Whisk] 이미지 리믹싱 요청', {
+  logger.info('[Google Whisk] 이미지 생성 요청', {
     prompt: prompt.slice(0, 50),
     aspectRatio: googleAspect,
     refCount: referenceImages?.length || 0,
   });
 
-  // Whisk API 요청 본문 — v1/whisk:generateImage 전용 포맷
-  const requestBody: Record<string, unknown> = {
-    imageDescriptionOptions: {
-      prompt,
-    },
-    aspectRatio: googleAspect,
-    numResults: 1,
-  };
-
-  // 레퍼런스 이미지 → subjectImageOptions (주체 이미지)
+  // 레퍼런스 이미지가 있으면 multi-step 레시피 생성 사용
   if (referenceImages && referenceImages.length > 0) {
-    let encodedReference: string | null = null;
-    for (const ref of referenceImages) {
-      encodedReference = await normalizeReferenceImage(ref);
-      if (encodedReference) break;
-    }
-
-    if (!encodedReference) {
-      throw new Error('Google Whisk: 레퍼런스 이미지를 읽을 수 없습니다. 이미지 URL/파일을 확인해주세요.');
-    }
-
-    requestBody.subjectImageOptions = { image: { encodedImage: encodedReference } };
+    return generateWhiskWithReferences(prompt, googleAspect, cookie, token, referenceImages);
   }
 
-  const body = JSON.stringify(requestBody);
+  // 레퍼런스 없음 → 기본 Whisk 이미지 생성
+  const workflowId = await createWhiskWorkflow(cookie);
+
+  const body = JSON.stringify({
+    clientContext: { workflowId },
+    imageModelSettings: {
+      imageModel: 'IMAGEN_3_5',
+      aspectRatio: googleAspect,
+    },
+    seed: 0,
+    prompt,
+    mediaCategory: 'MEDIA_CATEGORY_BOARD',
+  });
 
   const res = await proxyFetch(GOOGLE_WHISK_URL, {
     method: 'POST',
@@ -280,31 +347,102 @@ export async function generateWhiskImage(
   }
 
   const data = await res.json();
+  return parseWhiskImageResponse(data);
+}
 
-  // Whisk 응답 파싱 — imagePanels 또는 results 배열
-  const images = data?.imagePanels?.[0]?.generatedImages
-    || data?.results
-    || data?.images;
+/** 레퍼런스 이미지 기반 Whisk 레시피 생성 (multi-step) */
+async function generateWhiskWithReferences(
+  prompt: string,
+  googleAspect: string,
+  cookie: string,
+  token: string,
+  referenceImages: string[],
+): Promise<{ base64: string; mediaId: string; seed: number }> {
+  const workflowId = await createWhiskWorkflow(cookie);
+
+  // 첫 번째 유효한 레퍼런스 이미지 업로드
+  const mediaInputs: { caption: string; mediaInput: { mediaCategory: string; mediaGenerationId: string } }[] = [];
+  for (const ref of referenceImages) {
+    const rawBytes = await normalizeReferenceImage(ref);
+    if (!rawBytes) continue;
+
+    const caption = await captionWhiskImage(rawBytes, cookie, workflowId);
+    const mediaId = await uploadWhiskImage(rawBytes, caption, workflowId, cookie);
+    mediaInputs.push({
+      caption,
+      mediaInput: {
+        mediaCategory: 'MEDIA_CATEGORY_SUBJECT',
+        mediaGenerationId: mediaId,
+      },
+    });
+    break; // 첫 번째 유효한 레퍼런스만 사용
+  }
+
+  if (mediaInputs.length === 0) {
+    throw new Error('Google Whisk: 레퍼런스 이미지를 읽을 수 없습니다. 이미지 URL/파일을 확인해주세요.');
+  }
+
+  logger.info('[Google Whisk] 레퍼런스 업로드 완료, 레시피 생성 중...');
+
+  const body = JSON.stringify({
+    clientContext: { workflowId, tool: 'BACKBONE' },
+    seed: 0,
+    imageModelSettings: {
+      imageModel: 'GEM_PIX',
+      aspectRatio: googleAspect,
+    },
+    userInstruction: prompt,
+    recipeMediaInputs: mediaInputs,
+  });
+
+  const res = await proxyFetch(GOOGLE_WHISK_RECIPE_URL, {
+    method: 'POST',
+    body,
+    cookie,
+    token,
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    if (res.status === 401 || res.status === 403) {
+      invalidateGoogleToken();
+      throw new Error('Google 쿠키가 만료되었습니다. 쿠키를 갱신해주세요.');
+    }
+    throw new Error(`Google Whisk 리믹싱 실패 (${res.status}): ${errText.slice(0, 200)}`);
+  }
+
+  const data = await res.json();
+  const result = parseWhiskImageResponse(data);
+
+  logger.success('[Google Whisk] 레퍼런스 리믹싱 성공', {
+    size: `${(result.base64.length / 1024).toFixed(0)}KB`,
+  });
+
+  return result;
+}
+
+/** Whisk 이미지 응답 파싱 (generateImage / runImageRecipe 공통) */
+function parseWhiskImageResponse(data: Record<string, unknown>): { base64: string; mediaId: string; seed: number } {
+  const panels = (data as { imagePanels?: { generatedImages?: Record<string, unknown>[] }[] }).imagePanels;
+  const images = panels?.[0]?.generatedImages
+    || (data as { results?: Record<string, unknown>[] }).results
+    || (data as { images?: Record<string, unknown>[] }).images;
 
   if (!images || images.length === 0) {
     throw new Error('Google Whisk: 이미지가 생성되지 않았습니다.');
   }
 
-  const img = images[0];
-  let base64 = img.encodedImage || img.image?.encodedImage || '';
+  const img = images[0] as Record<string, unknown>;
+  let base64 = (img.encodedImage || (img.image as Record<string, unknown>)?.encodedImage || '') as string;
 
   if (base64 && !base64.startsWith('data:')) {
     const mime = base64.startsWith('/9j/') ? 'image/jpeg' : 'image/png';
     base64 = `data:${mime};base64,${base64}`;
   }
 
-  logger.success('[Google Whisk] 이미지 리믹싱 성공', {
-    size: `${(base64.length / 1024).toFixed(0)}KB`,
-  });
-
   return {
     base64,
-    mediaId: img.mediaGenerationId || img.id || '',
-    seed: img.seed || 0,
+    mediaId: (img.mediaGenerationId || img.id || '') as string,
+    seed: (img.seed || 0) as number,
   };
 }

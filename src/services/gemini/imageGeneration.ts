@@ -80,6 +80,27 @@ const optimizePromptForNanobanana2 = (rawPrompt: string): string => {
     return p + avoidSection;
 };
 
+const normalizeReferenceImages = (images?: string | string[]): string[] => {
+    if (!images) return [];
+    const items = typeof images === 'string' ? [images] : images;
+    return items
+        .map((image) => image?.trim())
+        .filter((image): image is string => !!image);
+};
+
+const buildReferenceImages = (
+    sceneReferenceImage: string | undefined,
+    styleReferenceImages: string[],
+    characterReferenceImages: string[],
+): string[] => {
+    const merged = [
+        ...(sceneReferenceImage ? [sceneReferenceImage] : []),
+        ...styleReferenceImages,
+        ...characterReferenceImages,
+    ];
+    return Array.from(new Set(merged));
+};
+
 // [NEW] Data-driven script system negatives for universal language support
 // Grouped by writing system family to maximize coverage while keeping prompt size manageable
 const SCRIPT_SYSTEM_NEGATIVES: { keywords: string[]; negatives: string }[] = [
@@ -194,7 +215,8 @@ export const generateSceneImage = async (
     characterAnalysisResult?: string, // [NEW] Character analysis result for visual consistency
     sceneIndex?: number, // [NEW] Scene index for shot size auto-rotation
     enableWebSearch?: boolean, // [NEW] Kie google_search / Evolink web_search
-    preserveCharacterStyle?: boolean // [NEW] 캐릭터 예술 스타일 보존 모드 (사용자가 비주얼 미선택 + 캐릭터 분석 스타일 사용 시)
+    preserveCharacterStyle?: boolean, // [NEW] 캐릭터 예술 스타일 보존 모드 (사용자가 비주얼 미선택 + 캐릭터 분석 스타일 사용 시)
+    styleReferenceImages?: string[],
 ) => {
     // [CRITICAL FIX] Prioritize explicit style argument over detected style description
     const rawStyle = (style && style.trim() !== "") ? style : (styleDesc || "High Quality");
@@ -214,11 +236,9 @@ export const generateSceneImage = async (
 
     // === SMART BYPASS LOGIC ===
     // Normalize characterImages to array
-    const charImagesArray: string[] = !characterImages
-        ? []
-        : typeof characterImages === 'string'
-            ? [characterImages]
-            : characterImages;
+    const charImagesArray = normalizeReferenceImages(characterImages);
+    const globalStyleReferenceImages = normalizeReferenceImages(styleReferenceImages);
+    const sceneReferenceImage = scene.referenceImage?.trim() ? scene.referenceImage : undefined;
 
     let finalCharImages: string[] = charImagesArray;
     let negativePrompt = "";
@@ -728,19 +748,18 @@ export const generateSceneImage = async (
         }
     }
 
-    // [NEW] Per-scene reference image: append to finalCharImages so APIs receive it as additional reference
-    if (scene.referenceImage && scene.referenceImage.trim()) {
-        if (!finalCharImages.includes(scene.referenceImage)) {
-            finalCharImages = [...finalCharImages, scene.referenceImage];
-        }
-    }
-
     // [CONTENT FILTER] 금칙어 필터링 — API 전송 전 안전하지 않은 용어 제거
     const filterResult = filterPromptContent(prompt);
     const finalPrompt = filterResult.cleanedPrompt;
     if (filterResult.wasFiltered) {
         console.warn("[ContentFilter] 금칙어 제거됨:", filterResult.removedTerms.join(', '));
     }
+
+    const referenceImagesForProviders = buildReferenceImages(
+        sceneReferenceImage,
+        globalStyleReferenceImages,
+        finalCharImages,
+    );
 
     // [DIAGNOSTIC] 이미지 생성 파라미터 기록
     logger.trackImageGeneration({
@@ -750,7 +769,7 @@ export const generateSceneImage = async (
         aspectRatio: ratio,
         imageModel: String(model),
         castType: scene.castType,
-        hasCharacterRef: finalCharImages.length > 0,
+        hasCharacterRef: referenceImagesForProviders.length > 0,
         hasFeedback: !!(feedback && feedback.trim()),
         enableWebSearch: effectiveWebSearch || false,
         promptLength: finalPrompt.length,
@@ -768,28 +787,40 @@ export const generateSceneImage = async (
                 throw new Error('Google 무료 생성 한도를 초과했거나 쿠키가 만료되었습니다. API 설정에서 쿠키를 확인해주세요.');
             }
 
-            const prioritizedReferenceImages = [
-                ...(scene.referenceImage && scene.referenceImage.trim() ? [scene.referenceImage] : []),
-                ...finalCharImages.filter((img) => !(scene.referenceImage && img === scene.referenceImage)),
-            ];
+            const prioritizedReferenceImages = buildReferenceImages(
+                sceneReferenceImage,
+                globalStyleReferenceImages,
+                finalCharImages,
+            );
             const hasReferenceImages = prioritizedReferenceImages.length > 0;
             const shouldUseWhisk = model === ImageModel.GOOGLE_WHISK || (model === ImageModel.GOOGLE_IMAGEN && hasReferenceImages);
 
             if (shouldUseWhisk) {
-                const { generateWhiskImage } = await import('../googleImageService');
-                if (updateStatus) {
-                    updateStatus(model === ImageModel.GOOGLE_IMAGEN ? "🎨 Google Imagen(Whisk 리믹스) 무료 생성 중..." : "🎨 Google Whisk 리믹싱 생성 중...");
+                try {
+                    const { generateWhiskImage } = await import('../googleImageService');
+                    if (updateStatus) {
+                        updateStatus(model === ImageModel.GOOGLE_IMAGEN ? "🎨 Google Imagen(Whisk 리믹스) 무료 생성 중..." : "🎨 Google Whisk 리믹싱 생성 중...");
+                    }
+                    const result = await generateWhiskImage(finalPrompt, ratio, googleStore.cookie, hasReferenceImages ? prioritizedReferenceImages : undefined);
+                    googleStore.incrementImageCount();
+                    logger.trackGenerationResult({
+                        type: 'image',
+                        sceneId: scene.id || '?',
+                        success: true,
+                        provider: model === ImageModel.GOOGLE_IMAGEN ? 'Google-WhiskRef' : 'Whisk',
+                        duration: Math.round(performance.now() - genStartTime),
+                    });
+                    return { url: result.base64, isFallback: false, isFiltered: filterResult.wasFiltered };
+                } catch (whiskErr) {
+                    // Imagen 모델에서 자동 라우팅된 경우 → ImageFX로 폴백 (레퍼런스 없이)
+                    if (model === ImageModel.GOOGLE_IMAGEN) {
+                        logger.warn('[generation] Whisk 리믹스 실패, ImageFX로 폴백', { error: (whiskErr as Error).message });
+                        if (updateStatus) updateStatus("🆓 Whisk 실패 → Google Imagen 3.5로 전환 중...");
+                        // 아래 ImageFX 생성 로직으로 계속 진행
+                    } else {
+                        throw whiskErr; // Whisk 모델 직접 선택 시 에러 전파
+                    }
                 }
-                const result = await generateWhiskImage(finalPrompt, ratio, googleStore.cookie, hasReferenceImages ? prioritizedReferenceImages : undefined);
-                googleStore.incrementImageCount();
-                logger.trackGenerationResult({
-                    type: 'image',
-                    sceneId: scene.id || '?',
-                    success: true,
-                    provider: model === ImageModel.GOOGLE_IMAGEN ? 'Google-WhiskRef' : 'Whisk',
-                    duration: Math.round(performance.now() - genStartTime),
-                });
-                return { url: result.base64, isFallback: false, isFiltered: filterResult.wasFiltered };
             }
 
             const { generateGoogleImage } = await import('../googleImageService');
@@ -822,7 +853,7 @@ export const generateSceneImage = async (
     let kieErrorMsg = '';
     try {
         if (updateStatus) updateStatus(effectiveWebSearch ? "⚡ Kie Nanobanana 2 + 웹검색 생성 중..." : "⚡ Kie Nanobanana 2 생성 중...");
-        const url = await generateKieImage(optimizedPrompt, ratio, finalCharImages, prodImg, "nano-banana-2", undefined, effectiveWebSearch);
+        const url = await generateKieImage(optimizedPrompt, ratio, referenceImagesForProviders, prodImg, "nano-banana-2", undefined, effectiveWebSearch);
         logger.trackGenerationResult({ type: 'image', sceneId: scene.id || '?', success: true, provider: 'Kie', duration: Math.round(performance.now() - kieStartTime) });
         return { url, isFallback: false, isFiltered: filterResult.wasFiltered };
     } catch (e) {
@@ -843,7 +874,7 @@ export const generateSceneImage = async (
     showToast(wasPolicyBlock ? '보안 정책 우회 — 프롬프트를 순화하여 재시도합니다...' : '이미지 생성 서버를 변경하여 재시도합니다...', 3000);
     try {
         if (updateStatus) updateStatus(wasPolicyBlock ? "🛡️ 프롬프트 순화 + Evolink 재시도 중..." : effectiveWebSearch ? "Evolink + 웹검색 폴백 시도 중..." : "Evolink Nanobanana 2 폴백 시도 중...");
-        const url = await generateEvolinkImageWrapped(fallbackPrompt, ratio, finalCharImages, prodImg, "2K", effectiveWebSearch);
+        const url = await generateEvolinkImageWrapped(fallbackPrompt, ratio, referenceImagesForProviders, prodImg, "2K", effectiveWebSearch);
         logger.trackGenerationResult({ type: 'image', sceneId: scene.id || '?', success: true, provider: 'Evolink', duration: Math.round(performance.now() - fbStartTime), isFallback: true });
         return { url, isFallback: true, isFiltered: filterResult.wasFiltered };
     } catch (e) {
