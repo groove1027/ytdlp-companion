@@ -1793,7 +1793,7 @@ const StepMetadata: React.FC = () => {
           </div>
           <div className="flex flex-wrap gap-2 mb-3">
             {['1. 정책 검사', '2. 제목 5개', '3. 설명', '4. 타임테이블', '5. 공개 해시태그', ...(selectedPlatforms.includes('youtube') ? ['6. 비공개 태그'] : []), '7. 쇼핑 태그'].map((step, idx) => {
-              const activeIdx = elapsed < 3 ? 0 : elapsed < 8 ? 1 : elapsed < 15 ? 2 : elapsed < 20 ? 3 : elapsed < 25 ? 4 : 5;
+              const activeIdx = elapsed < 3 ? 0 : elapsed < 7 ? 1 : elapsed < 12 ? 2 : elapsed < 16 ? 3 : elapsed < 20 ? 4 : elapsed < 24 ? 5 : 6;
               const isDone = idx < activeIdx;
               const isActive = idx === activeIdx;
               return (
@@ -1864,6 +1864,26 @@ const StepMetadata: React.FC = () => {
             </div>
           </div>
         </>
+      )}
+
+      {/* 전체 복사 버튼 — 설명 + 타임테이블 + 해시태그를 한번에 */}
+      {metadata && (description || metadata.timetable || metadata.publicHashtags?.length) && selectedPlatforms.includes('youtube') && (
+        <button
+          type="button"
+          onClick={() => {
+            const parts: string[] = [];
+            if (description) parts.push(description);
+            if (metadata.timetable) parts.push('\n' + metadata.timetable);
+            if (metadata.publicHashtags?.length) parts.push('\n' + metadata.publicHashtags.map(h => `#${h}`).join(' '));
+            navigator.clipboard.writeText(parts.join('\n'));
+            showToast('설명 + 타임테이블 + 해시태그가 클립보드에 복사되었습니다');
+          }}
+          className="w-full py-2.5 rounded-lg text-sm font-bold text-green-300 bg-green-900/20 hover:bg-green-900/30 border border-green-500/30 transition-colors flex items-center justify-center gap-2"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+          YouTube 설명 전체 복사
+          <span className="text-xs text-gray-500">(설명 + 타임테이블 + 해시태그)</span>
+        </button>
       )}
 
       {/* Title selection — AI 제목이 있을 때 */}
@@ -2939,10 +2959,11 @@ const UploadTab: React.FC = () => {
               return;
             }
           }
-          // 쇼핑 태그 링크를 설명에 추가
+          // 타임테이블 + 쇼핑 태그 링크를 설명에 추가
           const shopLinks = store.shoppingTags.filter(t => t.link).map(t => `${t.keyword}: ${t.link}`);
           const ytDesc = [
             meta?.description || '',
+            ...(meta?.timetable ? ['\n\n' + meta.timetable] : []),
             ...(meta?.publicHashtags?.length ? ['\n' + meta.publicHashtags.map(h => `#${h}`).join(' ')] : []),
             ...(shopLinks.length ? ['\n\n--- 추천 제품 ---', ...shopLinks] : []),
           ].join('\n');
