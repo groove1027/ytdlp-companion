@@ -1828,15 +1828,15 @@ export async function buildEditRoomNleZip(params: {
       if (blob) zip.file(narFileName, blob);
     }
 
-    // ── 미디어 머티리얼: 장면별 이미지/영상 (경로는 파일명만 — CapCut 루트 기준) ──
-    const videoMaterials: { id: string; path: string; dur: number; isPhoto: boolean }[] = [];
-    const audioMaterials: { id: string; path: string; dur: number }[] = [];
+    // ── 미디어 머티리얼: 장면별 이미지/영상 (Map으로 인덱스 보존 — 미디어 누락 시 밀림 방지) ──
+    const videoMaterialMap = new Map<number, { id: string; path: string; dur: number; isPhoto: boolean }>();
+    const audioMaterialMap = new Map<number, { id: string; path: string; dur: number }>();
 
     for (let i = 0; i < timeline.length; i++) {
       const fileName = mediaFileMap.get(i);
       if (!fileName) continue;
       const isVideo = fileName.endsWith('.mp4');
-      videoMaterials.push({
+      videoMaterialMap.set(i, {
         id: uuid(),
         path: fileName,
         dur: toUs(timeline[i].imageDuration),
@@ -1847,16 +1847,19 @@ export async function buildEditRoomNleZip(params: {
     for (let i = 0; i < timeline.length; i++) {
       const narFileName = narrationFileMap.get(i);
       if (!narFileName) continue;
-      audioMaterials.push({
+      audioMaterialMap.set(i, {
         id: uuid(),
         path: narFileName,
         dur: toUs(timeline[i].imageDuration),
       });
     }
 
-    // ── 비디오 세그먼트 (메인 트랙) ──
+    const videoMaterials = [...videoMaterialMap.values()];
+    const audioMaterials = [...audioMaterialMap.values()];
+
+    // ── 비디오 세그먼트 (메인 트랙) — Map lookup으로 정확한 인덱스 매칭 ──
     const videoSegments = timeline.map((t, i) => {
-      const mat = videoMaterials[i];
+      const mat = videoMaterialMap.get(i);
       if (!mat) return null;
       return {
         cartoon: false,
@@ -1945,13 +1948,10 @@ export async function buildEditRoomNleZip(params: {
       uniform_scale: { on: true, value: 1.0 }, visible: true, volume: 1.0,
     }));
 
-    // ── 오디오 세그먼트 (나레이션 트랙) ──
-    // narrationFileMap 키 순서와 audioMaterials 인덱스가 1:1 대응
-    const narrationKeys = [...narrationFileMap.keys()];
+    // ── 오디오 세그먼트 (나레이션 트랙) — Map lookup으로 정확한 인덱스 매칭 ──
     const audioSegments = timeline.map((t, i) => {
-      const narIdx = narrationKeys.indexOf(i);
-      if (narIdx === -1 || !audioMaterials[narIdx]) return null;
-      const aMat = audioMaterials[narIdx];
+      const aMat = audioMaterialMap.get(i);
+      if (!aMat) return null;
       return {
         cartoon: false,
         clip: { alpha: 1.0, flip: { horizontal: false, vertical: false }, rotation: 0.0, scale: { x: 1.0, y: 1.0 }, transform: { x: 0.0, y: 0.0 } },
