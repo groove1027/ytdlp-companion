@@ -163,6 +163,51 @@ function getRegionSystemPrefix(region: ScriptTargetRegion): string {
   return `IMPORTANT: You MUST write the entire script in ${info.langLabel}. Do NOT write in Korean. All content, narration, and expressions must be in ${info.langLabel}, naturally reflecting ${info.label} culture and audience preferences.\n\n`;
 }
 
+function buildTopicRecommendChannelGuide(
+  guideline: import('../../types').ChannelGuideline | null,
+): string {
+  if (!guideline) return '';
+
+  const topicLine = Array.isArray(guideline.topics) ? guideline.topics.filter(Boolean).slice(0, 8).join(', ') : '';
+  const keywordLine = Array.isArray(guideline.keywords) ? guideline.keywords.filter(Boolean).slice(0, 12).join(', ') : '';
+  const parts = [
+    `[채널 가이드라인]`,
+    `채널명: ${guideline.channelName} (참조용 — 출력에 채널명 직접 언급 금지)`,
+    guideline.contentRegion ? `콘텐츠 지역: ${guideline.contentRegion}` : '',
+    guideline.tone ? `말투: ${guideline.tone}` : '',
+    guideline.structure ? `구조: ${guideline.structure}` : '',
+    topicLine ? `핵심 주제: ${topicLine}` : '',
+    keywordLine ? `핵심 키워드: ${keywordLine}` : '',
+    guideline.targetAudience ? `타깃 시청자: ${guideline.targetAudience}` : '',
+    guideline.hookPattern ? `도입 패턴: ${guideline.hookPattern}` : '',
+    guideline.closingPattern ? `마무리 패턴: ${guideline.closingPattern}` : '',
+    guideline.titleFormula ? `제목 공식: ${guideline.titleFormula}` : '',
+    guideline.audienceInsight ? `시청자 인사이트: ${guideline.audienceInsight}` : '',
+    guideline.sourceDiscoveryGuide ? `소재 발굴 가이드: ${guideline.sourceDiscoveryGuide.slice(0, 800)}` : '',
+  ].filter(Boolean);
+
+  if (guideline.fullGuidelineText) {
+    parts.push(`상세 스타일 요약: ${guideline.fullGuidelineText.slice(0, 1200)}`);
+  }
+
+  return parts.join('\n');
+}
+
+function buildTopicRecommendSeedKeyword(
+  guideline: import('../../types').ChannelGuideline | null,
+): string {
+  if (!guideline) return '';
+
+  const values = [
+    ...(Array.isArray(guideline.topics) ? guideline.topics : []),
+    ...(Array.isArray(guideline.keywords) ? guideline.keywords : []),
+  ]
+    .map(v => v.trim())
+    .filter(Boolean);
+
+  return Array.from(new Set(values)).slice(0, 6).join(', ');
+}
+
 const FORMAT_BUTTONS: { id: VideoFormat; label: string; color: string }[] = [
   { id: VideoFormat.LONG, label: '롱폼', color: 'bg-blue-600' },
   { id: VideoFormat.SHORT, label: '숏폼', color: 'bg-emerald-600' },
@@ -530,10 +575,13 @@ ${scriptText}`;
     store.setIsRecommending(true);
     store.clearTopics();
     try {
+      const channelTopicGuide = buildTopicRecommendChannelGuide(channelGuideline);
+      const channelSeedKeyword = buildTopicRecommendSeedKeyword(channelGuideline);
       const topics = await recommendTopics({
         mechanismIds: instinctIds,
         onProgress: (step, percent) => store.setRecommendProgress({ step, percent }),
-        channelGuideline: channelGuideline?.tone,
+        channelGuideline: channelTopicGuide || undefined,
+        keyword: channelSeedKeyword || undefined,
       });
       store.setRecommendedTopics(topics);
     } catch (err) {

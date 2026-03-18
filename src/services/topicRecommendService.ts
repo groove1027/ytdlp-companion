@@ -25,6 +25,7 @@ export const recommendTopics = async (options: RecommendOptions): Promise<TopicR
   const { mechanismIds, onProgress, channelGuideline, keyword } = options;
 
   const hasMechanisms = mechanismIds.length > 0;
+  const hasChannelGuideline = Boolean(channelGuideline?.trim());
 
   onProgress(hasMechanisms ? '본능 기제 분석 중...' : '트렌드 분석 준비 중...', 10);
   const instinctPrompt = hasMechanisms ? buildSelectedInstinctPrompt(mechanismIds) : '';
@@ -38,8 +39,15 @@ export const recommendTopics = async (options: RecommendOptions): Promise<TopicR
     ? `당신은 유튜브 바이럴 콘텐츠 기획 전문가입니다.
 Google 검색을 활용하여 최신 바이럴 트렌드와 인기 유튜브 영상을 조사한 뒤,
 사용자가 선택한 심리 본능 기제를 결합하여 폭발적 조회수가 예상되는 새로운 콘텐츠 소재 5개를 추천합니다.
+${hasChannelGuideline ? '채널 가이드라인이 주어지면 그 채널의 핵심 주제, 키워드, 타깃 시청자 범위를 절대 벗어나지 마세요. 다른 장르로 새지 말고 같은 니치 안에서만 변주하세요.' : ''}
 반드시 JSON 배열로만 응답하세요. 마크다운 코드블록 없이 순수 JSON만.`
-    : `당신은 유튜브 바이럴 콘텐츠 기획 전문가입니다.
+    : hasChannelGuideline
+      ? `당신은 유튜브 바이럴 콘텐츠 기획 전문가입니다.
+Google 검색을 활용하여 채널 가이드라인과 직접 맞닿아 있는 최신 바이럴 트렌드, 인기 유튜브 영상, 화제 이슈를 조사한 뒤,
+해당 채널이 실제로 업로드해도 어색하지 않은 새로운 콘텐츠 소재 5개를 추천합니다.
+채널의 핵심 주제, 키워드, 타깃 시청자 범위를 절대 벗어나지 마세요. 서로 다른 세부 각도는 허용되지만 모두 같은 채널 니치 안에 있어야 합니다.
+반드시 JSON 배열로만 응답하세요. 마크다운 코드블록 없이 순수 JSON만.`
+      : `당신은 유튜브 바이럴 콘텐츠 기획 전문가입니다.
 Google 검색을 활용하여 지금 가장 뜨거운 바이럴 트렌드, 인기 유튜브 영상, 화제 이슈를 조사한 뒤,
 폭발적 조회수가 예상되는 새로운 콘텐츠 소재 5개를 추천합니다.
 다양한 장르(지식/정보, 엔터테인먼트, 브이로그, 리뷰, 스토리텔링 등)를 포함하세요.
@@ -53,7 +61,26 @@ ${instinctPrompt}
 ${hookKeywords.join(', ')}
 ${keyword ? `\n[사용자 지정 키워드]\n${keyword}` : ''}
 ${channelGuideline ? `\n[채널 가이드라인]\n${channelGuideline}` : ''}`
-    : `${keyword ? `[사용자 지정 키워드]\n${keyword}\n\n` : ''}${channelGuideline ? `[채널 가이드라인]\n${channelGuideline}\n\n` : ''}[작업 지시]
+    : hasChannelGuideline
+      ? `${keyword ? `[사용자 지정 키워드]\n${keyword}\n\n` : ''}${channelGuideline ? `${channelGuideline}\n\n` : ''}[작업 지시]
+지금 유튜브에서 이 채널의 핵심 주제와 직접 맞닿아 있는 최신 트렌드, 이슈, 인기 영상을 Google 검색으로 조사하고,
+이를 바탕으로 이 채널이 실제 업로드해도 자연스러운 새로운 콘텐츠 소재 5개를 추천하세요.
+각 소재는 서로 다른 세부각도/에피소드여야 하지만 모두 같은 채널 카테고리 안에 있어야 합니다.
+군사/역사 채널이면 군사/역사 범위를, 경제 채널이면 경제 범위를, 리뷰 채널이면 리뷰 범위를 벗어나지 마세요.
+
+JSON 배열 형식 (정확히 5개):
+[
+  {
+    "title": "영상 제목 (30자 이내, 클릭 유도형)",
+    "hook": "첫 3초 훅 문장",
+    "synopsis": "1-2줄 줄거리",
+    "whyViral": "바이럴 예상 이유 (채널 적합성 포함 1줄)",
+    "instinctMatch": "채널 내 세부 카테고리 또는 트렌드 유형",
+    "referenceVideos": [{"title": "참고 영상/트렌드", "viewCount": "추정 조회수", "url": "https://www.youtube.com/watch?v=실제영상ID"}],
+    "estimatedViralScore": 85
+  }
+]`
+      : `${keyword ? `[사용자 지정 키워드]\n${keyword}\n\n` : ''}${channelGuideline ? `[채널 가이드라인]\n${channelGuideline}\n\n` : ''}[작업 지시]
 지금 유튜브에서 가장 화제인 트렌드, 이슈, 인기 영상을 Google 검색으로 조사하고,
 이를 바탕으로 새로운 콘텐츠 소재 5개를 추천하세요.
 각 소재는 다른 카테고리/장르여야 합니다.
@@ -77,7 +104,7 @@ JSON 배열 형식 (정확히 5개):
 [작업 지시]
 1. 먼저 Google 검색으로 위 키워드와 관련된 최근 유튜브 바이럴 영상, 트렌드, 화제 주제를 조사하세요.
 2. 조사 결과를 바탕으로, 위 본능 기제를 활용한 완전히 새로운 유튜브 영상 소재 5개를 추천하세요.
-3. 기존 영상을 그대로 복사하지 말고, 본능 기제로 독창적으로 응용한 소재를 만드세요.
+${hasChannelGuideline ? '3. 채널 가이드라인이 있으면 반드시 그 채널의 핵심 주제, 키워드, 타깃 시청자 범위 안에서만 소재를 변주하세요. 다른 장르로 확장하지 마세요.\n4. 기존 영상을 그대로 복사하지 말고, 채널 니치를 유지한 채 본능 기제로 독창적으로 응용한 소재를 만드세요.' : '3. 기존 영상을 그대로 복사하지 말고, 본능 기제로 독창적으로 응용한 소재를 만드세요.'}
 
 JSON 배열 형식 (정확히 5개):
 [
