@@ -271,6 +271,7 @@ const SetupPanel: React.FC = () => {
   const targetSceneCount = useImageVideoStore((s) => s.targetSceneCount);
   const setTargetSceneCount = useImageVideoStore((s) => s.setTargetSceneCount);
   const styleReferenceImages = useImageVideoStore((s) => s.styleReferenceImages);
+  const enableGoogleReference = useImageVideoStore((s) => s.enableGoogleReference);
 
   const [directInputMode, setDirectInputMode] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -283,6 +284,7 @@ const SetupPanel: React.FC = () => {
   const [showImportedSplit, setShowImportedSplit] = useState(true);
   const elapsed = useElapsedTimer(isAnalyzing);
   const { requireAuth } = useAuthGuard();
+  const wasGoogleReferenceEnabledRef = useRef(enableGoogleReference);
 
   useEffect(() => { if (!config) autoRestoreOrCreateProject(); }, [config]);
 
@@ -560,6 +562,21 @@ const SetupPanel: React.FC = () => {
       }
     });
   }, []);
+
+  useEffect(() => {
+    const wasEnabled = wasGoogleReferenceEnabledRef.current;
+    wasGoogleReferenceEnabledRef.current = enableGoogleReference;
+
+    if (!enableGoogleReference || wasEnabled) return;
+    if (scenes.length === 0) return;
+
+    const hasSearchableEmptyScene = scenes.some((scene) =>
+      !scene.imageUrl?.trim() && (!!scene.scriptText || !!scene.visualPrompt),
+    );
+    if (!hasSearchableEmptyScene) return;
+
+    startGoogleReferenceAutoApply(scenes, config?.globalContext || '');
+  }, [config?.globalContext, enableGoogleReference, scenes, startGoogleReferenceAutoApply]);
 
   /* ── 장면 분석 ── */
   const runSceneAnalysis = useCallback(async (skipConfirm = false): Promise<boolean> => {

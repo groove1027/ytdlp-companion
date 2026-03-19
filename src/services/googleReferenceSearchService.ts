@@ -477,6 +477,9 @@ function detectGoogleSearchBlock(html: string): string | null {
   if (/Before you continue to Google Search|consent\.google/i.test(html)) {
     return '구글 동의 페이지가 반환되었습니다. 프록시 헤더를 확인한 뒤 다시 시도해주세요.';
   }
+  if (/SG_SS=|window\.sgs|srcpg=sgs|cad=sg_trbl|If you're having trouble accessing Google Search/i.test(html)) {
+    return '구글 검색 보안 확인 페이지가 반환되었습니다. 잠시 후 다시 시도해주세요.';
+  }
   return null;
 }
 
