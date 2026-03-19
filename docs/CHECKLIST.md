@@ -8,6 +8,11 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-19] 이미지/영상 대본 표시 오염 + 기존 장면 구글 자동배치 누락 수정
+- [x] `SetupPanel.tsx` — `대본작성에서 넘어온 단락` 박스가 현재 프로젝트 대본과 실제로 일치할 때만 해당 결과를 쓰고, 불일치 시에는 현재 적용된 대본 자체를 단락 기준으로 그대로 표시하도록 수정
+- [x] `SetupPanel.tsx` — 구글 레퍼런스 모드가 켜진 상태에서 기존 장면이 이미 있어도 `스토리보드 생성`이 단순 탭 이동으로 끝나지 않도록, 빈 이미지 장면에 자동 레퍼런스 배치를 다시 태우도록 수정
+- [x] `tsc --noEmit` + `vite build` + `rg` 재검증 통과
+
 ### [2026-03-19] #610 CapCut ZIP 가져오기 시 영상 미표시 문제 수정
 - [x] `nleExportService.ts` — `buildNlePackageZip()` / `buildEditRoomNleZip()` CapCut 분기에 실제 프로젝트 폴더 필수 파일인 `draft_settings` 생성을 공통화해 ZIP 자체만으로 프로젝트 인식이 가능하도록 수정
 - [x] `verify-capcut-issue574.mjs`, `verify-capcut-issue574-browser.mjs` — 테스트가 ZIP 밖에서 `draft_settings`를 덧쓰던 가짜 성공 경로를 제거하고, 생성 ZIP 내부에 파일이 실제 포함되는지 검증하도록 수정

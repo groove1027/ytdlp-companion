@@ -219,6 +219,33 @@ function mergeSceneAnalysis(base: Scene, ai?: Scene): Scene {
   };
 }
 
+function normalizeScriptForComparison(value: string): string {
+  return (value || '')
+    .toLowerCase()
+    .replace(/\s+/g, '')
+    .replace(/[^0-9a-z가-힣]/g, '');
+}
+
+function areScriptsEquivalent(a: string, b: string): boolean {
+  const left = normalizeScriptForComparison(a);
+  const right = normalizeScriptForComparison(b);
+
+  if (!left || !right) return false;
+  if (left === right) return true;
+
+  const shorter = left.length <= right.length ? left : right;
+  const longer = left.length <= right.length ? right : left;
+  if (shorter.length < 24) return longer.includes(shorter);
+
+  return longer.includes(shorter.slice(0, Math.min(120, shorter.length)))
+    && shorter.length / longer.length >= 0.7;
+}
+
+function doesSplitResultMatchScript(parts: string[], script: string): boolean {
+  if (parts.length === 0 || !script.trim()) return false;
+  return areScriptsEquivalent(parts.join('\n'), script);
+}
+
 const SetupPanel: React.FC = () => {
   const config = useProjectStore((s) => s.config);
   const setConfig = useProjectStore((s) => s.setConfig);
@@ -262,12 +289,13 @@ const SetupPanel: React.FC = () => {
   // 대본작성 탭에서 단락 분석 결과가 있으면 자동 이어받기
   // [FIX #160] splitResult 변경을 구독하여 탭 전환 후에도 확실히 반영
   const scriptWriterSplitResult = useScriptWriterStore((s) => s.splitResult);
+  const scriptWriterLatestText = useScriptWriterStore((s) => s.finalScript || s.styledScript || s.generatedScript?.content || s.manualText || '');
   useEffect(() => {
-    if (scriptWriterSplitResult.length > 0) {
+    if (scriptWriterSplitResult.length > 0 && areScriptsEquivalent(scriptWriterLatestText, config?.script || '')) {
       setImportedSplitResult(scriptWriterSplitResult);
       setShowImportedSplit(true);
     }
-  }, [scriptWriterSplitResult]);
+  }, [config?.script, scriptWriterLatestText, scriptWriterSplitResult]);
 
   const hasAudioScenes = scenes.length > 0 && scenes.some(s => !!s.audioUrl);
   const totalScenes = scenes.length;
@@ -275,6 +303,19 @@ const SetupPanel: React.FC = () => {
 
   // 글자수 기반 예상 컷수 + 단락 미리보기
   const scriptText = config?.script || '';
+  const importedSplitMatchesCurrentScript = useMemo(
+    () => doesSplitResultMatchScript(importedSplitResult, scriptText),
+    [importedSplitResult, scriptText],
+  );
+  const currentScriptSegments = useMemo(() => {
+    const segments = scriptText
+      .split(/\n+/)
+      .map((segment) => segment.trim())
+      .filter(Boolean);
+
+    return segments.length > 0 ? segments : (scriptText.trim() ? [scriptText.trim()] : []);
+  }, [scriptText]);
+  const displayedScriptSegments = importedSplitMatchesCurrentScript ? importedSplitResult : currentScriptSegments;
   const vf = config?.videoFormat || VideoFormat.SHORT;
   const ss = config?.smartSplit ?? true;
   const lfs = config?.longFormSplitType;
@@ -390,6 +431,7 @@ const SetupPanel: React.FC = () => {
   const handleApplyDraft = useCallback(() => {
     if (!scriptDraft.trim()) return;
     updateConfig('script', scriptDraft.trim());
+    setImportedSplitResult([]);
     showToast(`대본 ${scriptDraft.trim().length.toLocaleString()}자 적용됨`);
   }, [scriptDraft, updateConfig]);
 
@@ -489,6 +531,36 @@ const SetupPanel: React.FC = () => {
     showToast(`"${saved.label}" 불러옴`);
   }, [setCharacters]);
 
+  const startGoogleReferenceAutoApply = useCallback((targetScenes: Scene[], globalContext: string) => {
+    if (!useImageVideoStore.getState().enableGoogleReference) return;
+
+    const hasSearchableEmptyScene = targetScenes.some((scene) =>
+      !scene.imageUrl?.trim() && (!!scene.scriptText || !!scene.visualPrompt),
+    );
+    if (!hasSearchableEmptyScene) return;
+
+    const updateSceneFn = useProjectStore.getState().updateScene;
+    void autoApplyGoogleReferences(targetScenes, globalContext, updateSceneFn, ({ appliedCount, failedCount, blockedCount, fallbackCount }) => {
+      if (appliedCount > 0 && failedCount === 0) {
+        showToast(
+          fallbackCount > 0
+            ? `${appliedCount}개 장면에 대체 레퍼런스 이미지를 자동 배치했어요!`
+            : `${appliedCount}개 장면에 구글 레퍼런스 이미지를 자동 배치했어요!`,
+        );
+        return;
+      }
+
+      if (appliedCount > 0) {
+        showToast(`${appliedCount}개 장면은 자동 배치했고 ${failedCount}개 장면은 비어 있어요.`);
+        return;
+      }
+
+      if (blockedCount > 0) {
+        showToast('구글 검색이 차단돼 자동 레퍼런스 이미지를 가져오지 못했어요. 잠시 후 다시 시도해주세요.', 4500);
+      }
+    });
+  }, []);
+
   /* ── 장면 분석 ── */
   const runSceneAnalysis = useCallback(async (skipConfirm = false): Promise<boolean> => {
     if (!requireAuth('장면 분석')) return false;
@@ -544,27 +616,7 @@ const SetupPanel: React.FC = () => {
         }));
         useProjectStore.getState().setScenes(localScenes);
         setIsAnalyzing(false); setChunkProgress(null);
-        // 백그라운드에서 즉시 구글 이미지 자동 배치
-        const updateSceneFn = useProjectStore.getState().updateScene;
-        void autoApplyGoogleReferences(localScenes, '', updateSceneFn, ({ appliedCount, failedCount, blockedCount, fallbackCount }) => {
-          if (appliedCount > 0 && failedCount === 0) {
-            showToast(
-              fallbackCount > 0
-                ? `${appliedCount}개 장면에 대체 레퍼런스 이미지를 배치했어요!`
-                : `${appliedCount}개 장면에 구글 레퍼런스 이미지를 배치했어요!`,
-            );
-            return;
-          }
-
-          if (appliedCount > 0) {
-            showToast(`${appliedCount}개 장면은 적용했고 ${failedCount}개 장면은 비어 있어요.`);
-            return;
-          }
-
-          if (blockedCount > 0) {
-            showToast('구글 검색이 차단돼 레퍼런스 이미지를 가져오지 못했어요. 잠시 후 다시 시도해주세요.', 4500);
-          }
-        });
+        startGoogleReferenceAutoApply(localScenes, '');
         return true;
       }
 
@@ -631,31 +683,9 @@ const SetupPanel: React.FC = () => {
       useProjectStore.getState().setConfig((prev) => prev ? { ...prev, cachedContextData: ctx as Record<string, unknown>, globalContext: JSON.stringify(globalContextObj), detectedStyleDescription: ctx.visualTone || prev.detectedStyleDescription, detectedLanguage: ctx.detectedLanguage || prev.detectedLanguage, detectedLanguageName: ctx.detectedLanguageName || prev.detectedLanguageName, detectedLocale: ctx.detectedLocale || prev.detectedLocale } : prev);
 
       // [NEW] 구글 레퍼런스 모드 ON이면 장면 분석 직후 자동으로 구글 이미지 배치
-      if (useImageVideoStore.getState().enableGoogleReference) {
-        const latestScenes = useProjectStore.getState().scenes;
-        const globalCtxStr = JSON.stringify(globalContextObj);
-        const updateSceneFn = useProjectStore.getState().updateScene;
-        // 백그라운드 실행 — 분석 완료 UX를 막지 않음
-        void autoApplyGoogleReferences(latestScenes, globalCtxStr, updateSceneFn, ({ appliedCount, failedCount, blockedCount, fallbackCount }) => {
-          if (appliedCount > 0 && failedCount === 0) {
-            showToast(
-              fallbackCount > 0
-                ? `${appliedCount}개 장면에 대체 레퍼런스 이미지를 자동 배치했어요!`
-                : `${appliedCount}개 장면에 구글 레퍼런스 이미지를 자동 배치했어요!`,
-            );
-            return;
-          }
-
-          if (appliedCount > 0) {
-            showToast(`${appliedCount}개 장면은 자동 배치했고 ${failedCount}개 장면은 비어 있어요.`);
-            return;
-          }
-
-          if (blockedCount > 0) {
-            showToast('구글 검색이 차단돼 자동 레퍼런스 이미지를 가져오지 못했어요. 잠시 후 다시 시도해주세요.', 4500);
-          }
-        });
-      }
+      const latestScenes = useProjectStore.getState().scenes;
+      const globalCtxStr = JSON.stringify(globalContextObj);
+      startGoogleReferenceAutoApply(latestScenes, globalCtxStr);
 
       setIsAnalyzing(false); setChunkProgress(null); return true;
     } catch (e: unknown) {
@@ -664,7 +694,7 @@ const SetupPanel: React.FC = () => {
       setAnalyzeError(isJsonErr ? `AI 응답 형식 오류 — "스토리보드 생성"을 다시 눌러주세요. (${msg})` : msg);
       setIsAnalyzing(false); setChunkProgress(null); return false;
     }
-  }, [config, isAnalyzing, addCost, requireAuth]);
+  }, [config, isAnalyzing, addCost, requireAuth, startGoogleReferenceAutoApply]);
 
   const handleCreateStoryboard = useCallback(async () => {
     if (!requireAuth('스토리보드 생성')) return;
@@ -712,12 +742,15 @@ const SetupPanel: React.FC = () => {
         showToast('비주얼 프롬프트를 자동 생성합니다...');
         await runSceneAnalysis();
       }
+      if (useImageVideoStore.getState().enableGoogleReference) {
+        startGoogleReferenceAutoApply(useProjectStore.getState().scenes, config?.globalContext || '');
+      }
       setActiveSubTab('storyboard');
       return;
     }
     if (!config?.script) { showToast('대본을 먼저 입력해주세요'); return; }
     if (await runSceneAnalysis()) setActiveSubTab('storyboard');
-  }, [config?.script, runSceneAnalysis, setActiveSubTab, requireAuth, uploadedScenesNeedRegroup]);
+  }, [config?.globalContext, config?.script, runSceneAnalysis, setActiveSubTab, requireAuth, startGoogleReferenceAutoApply, uploadedScenesNeedRegroup]);
 
   if (!config) return null;
 
@@ -738,14 +771,16 @@ const SetupPanel: React.FC = () => {
       )}
 
       {/* ── 대본작성 단락 확인 ── */}
-      {importedSplitResult.length > 0 && !directInputMode && (
+      {displayedScriptSegments.length > 0 && !directInputMode && (
         <div className="bg-gray-800/60 border border-violet-500/30 rounded-2xl p-5">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <span className="text-base">📝</span>
-              <h3 className="text-sm font-bold text-violet-300">대본작성에서 넘어온 단락</h3>
+              <h3 className="text-sm font-bold text-violet-300">
+                {importedSplitMatchesCurrentScript ? '대본작성에서 넘어온 단락' : '현재 적용된 대본'}
+              </h3>
               <span className="text-xs font-bold text-violet-300 bg-violet-500/15 border border-violet-500/30 px-2 py-0.5 rounded-lg">
-                {importedSplitResult.length}개 단락
+                {displayedScriptSegments.length}개 단락
               </span>
             </div>
             <button type="button" onClick={() => setShowImportedSplit(!showImportedSplit)}
@@ -754,11 +789,13 @@ const SetupPanel: React.FC = () => {
             </button>
           </div>
           <p className="text-xs text-gray-400 mb-3">
-            아래 단락 구조를 확인하세요. "스토리보드 생성" 시 이 단락을 기반으로 AI가 비주얼 프롬프트를 생성합니다.
+            {importedSplitMatchesCurrentScript
+              ? '아래 단락 구조를 확인하세요. "스토리보드 생성" 시 이 단락을 기반으로 AI가 비주얼 프롬프트를 생성합니다.'
+              : '현재 프로젝트에 적용된 실제 대본을 단락 기준으로 그대로 표시합니다. 이전 대본작성 결과는 현재 대본과 일치할 때만 보여줍니다.'}
           </p>
           {showImportedSplit && (
             <div className="bg-gray-900/50 rounded-xl border border-gray-700/30 max-h-[320px] overflow-auto">
-              {importedSplitResult.map((para, i) => (
+              {displayedScriptSegments.map((para, i) => (
                 <div key={i}
                   className={`flex items-start gap-3 px-3 py-2.5 ${i % 2 === 0 ? 'bg-gray-800/10' : 'bg-gray-800/30'} border-b border-gray-700/15 last:border-b-0`}>
                   <span className="flex-shrink-0 w-7 h-7 rounded-md bg-violet-900/30 border border-violet-600/20 flex items-center justify-center text-xs font-bold text-violet-300">
