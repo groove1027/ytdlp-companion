@@ -2058,6 +2058,17 @@ const VoiceStudio: React.FC = () => {
               </div>
             )}
 
+            {/* ElevenLabs 한국어 안내 배너 */}
+            {browsedEngine === 'elevenlabs' && (
+              <div className="bg-gradient-to-r from-blue-900/30 to-indigo-900/20 border border-blue-500/30 rounded-xl p-3.5 mx-1 mb-3 flex items-start gap-3">
+                <span className="text-xl flex-shrink-0 mt-0.5">{'\uD83C\uDDF0\uD83C\uDDF7'}</span>
+                <div>
+                  <p className="text-sm font-bold text-blue-200 mb-1">한국어 나레이션도 가능해요!</p>
+                  <p className="text-xs text-blue-300/80 leading-relaxed">영어 이름의 음성이지만 <strong className="text-blue-200">한국어 텍스트를 입력하면 자동으로 한국어 발음</strong>으로 생성됩니다. 70개 이상의 언어를 자동 감지해요.</p>
+                </div>
+              </div>
+            )}
+
             {/* ===== 기타 엔진 음성 목록 — 좌 여성 / 우 남성 ===== */}
             {browsedEngine !== 'typecast' && (() => {
               const sortByFav = (arr: VoiceOption[]) => [...arr].sort((a, b) => {

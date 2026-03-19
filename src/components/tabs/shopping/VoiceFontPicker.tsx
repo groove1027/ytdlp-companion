@@ -479,6 +479,14 @@ const TTSVoiceModal: React.FC<TTSVoiceModalProps> = ({
           </div>
         </div>
 
+        {/* ElevenLabs 한국어 안내 배너 */}
+        {engine === 'elevenlabs' && (
+          <div className="bg-gradient-to-r from-blue-900/30 to-indigo-900/20 border border-blue-500/30 rounded-xl p-3 mx-6 mb-2 flex items-start gap-2.5">
+            <span className="text-lg flex-shrink-0">{'\uD83C\uDDF0\uD83C\uDDF7'}</span>
+            <p className="text-xs text-blue-300/80 leading-relaxed">영어 이름이지만 <strong className="text-blue-200">한국어 텍스트 입력 시 자동으로 한국어 발음</strong>으로 생성돼요. 70개 이상의 언어를 자동 감지합니다.</p>
+          </div>
+        )}
+
         {/* ── 보이스 리스트 ── */}
         <div className="flex-1 overflow-y-auto px-6 py-2 space-y-1.5 scrollbar-thin" style={{ minHeight: 0 }}>
           {isLoadingVoices && engine === 'typecast' ? (
