@@ -483,6 +483,7 @@ export async function autoApplyGoogleReferences(
   globalContext: string,
   updateScene: (id: string, partial: Partial<Scene>) => void,
   onComplete?: (appliedCount: number) => void,
+  forceReplace?: boolean,
 ): Promise<void> {
   const runId = ++_autoApplyRunId;
   let appliedCount = 0;
@@ -496,9 +497,12 @@ export async function autoApplyGoogleReferences(
     if (!scene.scriptText && !scene.visualPrompt) continue;
 
     // [P1 FIX] 매 씬 처리 전 최신 스토어에서 imageUrl 재확인 — stale 스냅샷 덮어쓰기 방지
-    const latestScenes = getLatestScenes();
-    const latestScene = latestScenes.find(s => s.id === scene.id);
-    if (latestScene?.imageUrl?.trim()) continue;
+    // forceReplace=true이면 이미 이미지가 있어도 교체 (일괄 적용에서 사용)
+    if (!forceReplace) {
+      const latestScenes = getLatestScenes();
+      const latestScene = latestScenes.find(s => s.id === scene.id);
+      if (latestScene?.imageUrl?.trim()) continue;
+    }
 
     const prevScene = i > 0 ? scenes[i - 1] : null;
     const nextScene = i < scenes.length - 1 ? scenes[i + 1] : null;

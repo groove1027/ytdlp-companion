@@ -1326,6 +1326,7 @@ const StoryboardPanel: React.FC = () => {
   const currentStyle = useImageVideoStore((s) => s.style);
   const enableWebSearch = useImageVideoStore((s) => s.enableWebSearch);
   const isMultiCharacter = useImageVideoStore((s) => s.isMultiCharacter);
+  const enableGoogleReference = useImageVideoStore((s) => s.enableGoogleReference);
   const timeline = useUnifiedTimeline();
   const totalDuration = useTotalDuration();
   // 오디오 재생 상태
@@ -2110,6 +2111,30 @@ const StoryboardPanel: React.FC = () => {
     showToast('이미지 일괄 생성 취소 요청됨 — 진행 중인 작업까지만 완료 후 중지합니다.');
   }, [isBatchingImages]);
 
+  // [#602] 구글 이미지 일괄 적용 — 기존 프로젝트에서도 사용 가능
+  const handleBatchGoogleReference = useCallback(async (sceneIds?: string[]) => {
+    logger.trackAction('구글 이미지 일괄 적용');
+    const { scenes: currentScenes, config: currentConfig } = useProjectStore.getState();
+    if (!currentConfig) return;
+    const allTargets = sceneIds && sceneIds.length > 0
+      ? currentScenes.filter(s => sceneIds.includes(s.id))
+      : currentScenes;
+    if (allTargets.length === 0) return;
+    setIsBatchingImages(true);
+    setBatchImageProgress({ current: 0, total: allTargets.length, success: 0, fail: 0 });
+    const { autoApplyGoogleReferences } = await import('../../../services/googleReferenceSearchService');
+    await autoApplyGoogleReferences(
+      allTargets,
+      currentConfig.globalContext || '',
+      updateScene,
+      (count) => {
+        showToast(`${count}개 장면에 구글 이미지를 배치했어요!`);
+      },
+      true, // forceReplace — 이미 이미지가 있는 씬도 교체
+    );
+    setIsBatchingImages(false);
+  }, [updateScene]);
+
   const handleBatchGenerateImages = useCallback(async (sceneIds?: string[]) => {
     logger.trackAction('이미지 일괄 생성');
     if (!requireAuth('이미지 일괄 생성')) return;
@@ -2675,6 +2700,18 @@ const StoryboardPanel: React.FC = () => {
                   <div className="px-4 py-1.5 bg-orange-600/10 border-b border-orange-500/20">
                     <span className="text-[11px] text-orange-300 font-medium">선택한 {selectedSceneIds.size}개 장면만 생성</span>
                   </div>
+                )}
+                {/* [#602] 구글 이미지 일괄 적용 버튼 */}
+                {enableGoogleReference && (
+                  <button
+                    type="button"
+                    onClick={() => { handleBatchGoogleReference(selectedSceneIdsArray); setShowGenDropdown(false); }}
+                    className="w-full text-left px-4 py-2.5 text-base text-gray-200 hover:bg-orange-900/30 transition-colors flex items-center gap-2"
+                  >
+                    <span className="w-2 h-2 rounded-full bg-green-400" />
+                    <span className="flex-1">구글 이미지 {hasSelection ? `${selectedSceneIds.size}개` : '일괄'} 적용</span>
+                    <span className="text-[10px] text-green-400/70">🆓 무료</span>
+                  </button>
                 )}
                 <button
                   type="button"

@@ -526,6 +526,32 @@ const SetupPanel: React.FC = () => {
       ? sceneDrafts.map((scene) => (scene.scriptText || scene.audioScript || '').trim()).filter(Boolean).join('\n')
       : config.script;
     try {
+      // [#602] 구글 레퍼런스 모드 — AI 프롬프트 생성 스킵, 단순 분할 → 즉시 구글 이미지 배치
+      if (useImageVideoStore.getState().enableGoogleReference && !enrichMode) {
+        const sceneTexts = sceneDrafts
+          ? sceneDrafts.map(s => (s.scriptText || s.audioScript || '').trim())
+          : splitScenesLocally(config.script, vf, ss, vf === VideoFormat.LONG ? lfs : undefined);
+        const localScenes: Scene[] = sceneTexts.map((text, i) => ({
+          id: `scene-${Date.now()}-${++_sceneIdCounter}-${i}`,
+          scriptText: text.trim(),
+          audioScript: text.trim(),
+          visualPrompt: '',
+          visualDescriptionKO: text.trim().slice(0, 80),
+          characterPresent: false,
+          isGeneratingImage: false,
+          isGeneratingVideo: false,
+          seedanceDuration: '8' as const,
+        }));
+        useProjectStore.getState().setScenes(localScenes);
+        setIsAnalyzing(false); setChunkProgress(null);
+        // 백그라운드에서 즉시 구글 이미지 자동 배치
+        const updateSceneFn = useProjectStore.getState().updateScene;
+        void autoApplyGoogleReferences(localScenes, '', updateSceneFn, (count) => {
+          if (count > 0) showToast(`${count}개 장면에 구글 레퍼런스 이미지를 배치했어요!`);
+        });
+        return true;
+      }
+
       const ctx = await analyzeScriptContext(
         analysisScript,
         onCost,
@@ -648,8 +674,9 @@ const SetupPanel: React.FC = () => {
         return;
       }
       // 비주얼 프롬프트가 없으면 자동 생성 후 스토리보드 열기
+      // [#602] 구글 레퍼런스 모드에서는 프롬프트 생성 불필요 — 바로 스토리보드 열기
       const hasPrompts = existingScenes.some(s => s.visualPrompt && s.visualPrompt.trim().length > 0);
-      if (!hasPrompts && config?.script) {
+      if (!hasPrompts && config?.script && !useImageVideoStore.getState().enableGoogleReference) {
         showToast('비주얼 프롬프트를 자동 생성합니다...');
         await runSceneAnalysis();
       }
