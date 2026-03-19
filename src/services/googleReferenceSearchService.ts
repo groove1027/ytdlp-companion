@@ -63,6 +63,8 @@ export interface GoogleReferenceApplySummary {
   fallbackCount: number;
 }
 
+export const SCENE_REFERENCE_BATCH_CONCURRENCY = 6;
+
 const GOOGLE_IMGRES_REGEX = /\/imgres\?imgurl=[^"'<>\\\s]+/g;
 const GOOGLE_THUMBNAIL_REGEX = /https?:\/\/encrypted-tbn0\.gstatic\.com\/images\?q=tbn:[^"'<>\\\s]+/g;
 const GOOGLE_AF_INIT_REGEX = /AF_initDataCallback\(([\s\S]*?)\);/g;
@@ -76,6 +78,20 @@ const WIKIMEDIA_THUMB_WIDTH_MAP: Record<string, string> = {
   xxlarge: '960',
   huge: '1280',
 };
+const GOOGLE_SEARCH_COOLDOWN_MS = 15 * 60 * 1000;
+const REFERENCE_SEARCH_CACHE_TTL_MS = 30 * 60 * 1000;
+const GOOGLE_SEARCH_MAX_CONCURRENCY = 2;
+
+type CachedReferenceSearch = {
+  expiresAt: number;
+  response: GoogleSearchResponse;
+};
+
+const referenceSearchCache = new Map<string, CachedReferenceSearch>();
+const referenceSearchInflight = new Map<string, Promise<GoogleSearchResponse>>();
+let googleSearchCooldownUntil = 0;
+let googleSearchActiveCount = 0;
+const googleSearchWaiters: Array<() => void> = [];
 
 // ─── 검색어 생성 로직 ───
 
@@ -468,6 +484,57 @@ function isBlockedSearchMessage(message: string): boolean {
   return /차단|captcha|429|동의 페이지/i.test(message);
 }
 
+function isGoogleSearchCooldownActive(): boolean {
+  return Date.now() < googleSearchCooldownUntil;
+}
+
+function getReferenceSearchCacheKey(query: string, start: number, imgSize: string): string {
+  return `${query}::${start}::${imgSize}`;
+}
+
+function getCachedReferenceSearch(key: string): GoogleSearchResponse | null {
+  const cached = referenceSearchCache.get(key);
+  if (!cached) return null;
+  if (cached.expiresAt <= Date.now()) {
+    referenceSearchCache.delete(key);
+    return null;
+  }
+  return cached.response;
+}
+
+function setCachedReferenceSearch(key: string, response: GoogleSearchResponse): void {
+  referenceSearchCache.set(key, {
+    expiresAt: Date.now() + REFERENCE_SEARCH_CACHE_TTL_MS,
+    response,
+  });
+}
+
+function markGoogleSearchRateLimited(message: string): void {
+  const nextCooldownUntil = Date.now() + GOOGLE_SEARCH_COOLDOWN_MS;
+  if (nextCooldownUntil <= googleSearchCooldownUntil) return;
+  googleSearchCooldownUntil = nextCooldownUntil;
+  logger.warn(
+    `[GoogleRef] Google 검색 차단 감지 — ${Math.round(GOOGLE_SEARCH_COOLDOWN_MS / 60000)}분간 Google 스킵, Wikimedia 직행`,
+    message,
+  );
+}
+
+async function acquireGoogleSearchSlot(): Promise<() => void> {
+  if (googleSearchActiveCount >= GOOGLE_SEARCH_MAX_CONCURRENCY) {
+    await new Promise<void>((resolve) => {
+      googleSearchWaiters.push(resolve);
+    });
+  }
+
+  googleSearchActiveCount += 1;
+
+  return () => {
+    googleSearchActiveCount = Math.max(0, googleSearchActiveCount - 1);
+    const next = googleSearchWaiters.shift();
+    next?.();
+  };
+}
+
 interface WikimediaImageInfo {
   url?: string;
   thumburl?: string;
@@ -570,58 +637,98 @@ export async function searchGoogleImages(
   imgSize: string = 'large',
 ): Promise<GoogleSearchResponse> {
   const normalizedQuery = normalizeQueryText(query) || '풍경 사진';
-  const url = buildSearchUrl(normalizedQuery, start, imgSize);
-  logger.info('[GoogleRef] 검색 요청', `query="${normalizedQuery}" start=${start}`);
+  const cacheKey = getReferenceSearchCacheKey(normalizedQuery, start, imgSize);
+  const cached = getCachedReferenceSearch(cacheKey);
+  if (cached) return cached;
 
+  const inflight = referenceSearchInflight.get(cacheKey);
+  if (inflight) return inflight;
+
+  const request = (async (): Promise<GoogleSearchResponse> => {
+    if (isGoogleSearchCooldownActive()) {
+      const fallbackResponse = await searchWikimediaImages(normalizedQuery, start, imgSize);
+      setCachedReferenceSearch(cacheKey, fallbackResponse);
+      return fallbackResponse;
+    }
+
+    const releaseSlot = await acquireGoogleSearchSlot();
+    try {
+      if (isGoogleSearchCooldownActive()) {
+        const fallbackResponse = await searchWikimediaImages(normalizedQuery, start, imgSize);
+        setCachedReferenceSearch(cacheKey, fallbackResponse);
+        return fallbackResponse;
+      }
+
+      const url = buildSearchUrl(normalizedQuery, start, imgSize);
+      logger.info('[GoogleRef] 검색 요청', `query="${normalizedQuery}" start=${start}`);
+
+      try {
+        const res = await proxyFetchGoogleSearch(url);
+
+        if (!res.ok) {
+          const errText = await res.text().catch(() => '');
+          logger.error('[GoogleRef] 검색 실패', `status=${res.status} ${errText}`);
+          if (res.status === 429) {
+            throw new Error('구글 검색 요청이 너무 많아 잠시 차단되었습니다. 잠시 후 다시 시도해주세요.');
+          }
+          if (res.status === 403) {
+            throw new Error('프록시에서 구글 이미지 검색을 차단했습니다. 프록시 허용 호스트를 확인해주세요.');
+          }
+          throw new Error(`구글 검색 실패 (${res.status})`);
+        }
+
+        const html = await res.text();
+        const blockedMessage = detectGoogleSearchBlock(html);
+        if (blockedMessage) {
+          throw new Error(blockedMessage);
+        }
+
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        const allItems = mergeUniqueResults(
+          extractDomResults(doc),
+          extractRegexResults(html),
+          extractAfInitResults(html),
+        );
+        const pageOffset = (Math.max(1, start) - 1) % GOOGLE_IMAGE_PAGE_SIZE;
+        const items = allItems.slice(pageOffset, pageOffset + GOOGLE_IMAGE_RESULT_WINDOW);
+
+        if (items.length > 0) {
+          const googleResponse = {
+            items,
+            totalResults: allItems.length,
+            query: normalizedQuery,
+            provider: 'google' as const,
+          };
+          setCachedReferenceSearch(cacheKey, googleResponse);
+          return googleResponse;
+        }
+
+        logger.warn('[GoogleRef] 구글 결과 0건, Wikimedia 폴백 시도', normalizedQuery);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!isBlockedSearchMessage(message) && !/구글 검색 실패/i.test(message)) {
+          throw error;
+        }
+        if (isBlockedSearchMessage(message)) {
+          markGoogleSearchRateLimited(message);
+        }
+        logger.warn('[GoogleRef] Wikimedia 폴백 전환', message);
+      }
+    } finally {
+      releaseSlot();
+    }
+
+    const fallbackResponse = await searchWikimediaImages(normalizedQuery, start, imgSize);
+    setCachedReferenceSearch(cacheKey, fallbackResponse);
+    return fallbackResponse;
+  })();
+
+  referenceSearchInflight.set(cacheKey, request);
   try {
-    const res = await proxyFetchGoogleSearch(url);
-
-    if (!res.ok) {
-      const errText = await res.text().catch(() => '');
-      logger.error('[GoogleRef] 검색 실패', `status=${res.status} ${errText}`);
-      if (res.status === 429) {
-        throw new Error('구글 검색 요청이 너무 많아 잠시 차단되었습니다. 잠시 후 다시 시도해주세요.');
-      }
-      if (res.status === 403) {
-        throw new Error('프록시에서 구글 이미지 검색을 차단했습니다. 프록시 허용 호스트를 확인해주세요.');
-      }
-      throw new Error(`구글 검색 실패 (${res.status})`);
-    }
-
-    const html = await res.text();
-    const blockedMessage = detectGoogleSearchBlock(html);
-    if (blockedMessage) {
-      throw new Error(blockedMessage);
-    }
-
-    const doc = new DOMParser().parseFromString(html, 'text/html');
-    const allItems = mergeUniqueResults(
-      extractDomResults(doc),
-      extractRegexResults(html),
-      extractAfInitResults(html),
-    );
-    const pageOffset = (Math.max(1, start) - 1) % GOOGLE_IMAGE_PAGE_SIZE;
-    const items = allItems.slice(pageOffset, pageOffset + GOOGLE_IMAGE_RESULT_WINDOW);
-
-    if (items.length > 0) {
-      return {
-        items,
-        totalResults: allItems.length,
-        query: normalizedQuery,
-        provider: 'google',
-      };
-    }
-
-    logger.warn('[GoogleRef] 구글 결과 0건, Wikimedia 폴백 시도', normalizedQuery);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (!isBlockedSearchMessage(message) && !/구글 검색 실패/i.test(message)) {
-      throw error;
-    }
-    logger.warn('[GoogleRef] Wikimedia 폴백 전환', message);
+    return await request;
+  } finally {
+    referenceSearchInflight.delete(cacheKey);
   }
-
-  return searchWikimediaImages(normalizedQuery, start, imgSize);
 }
 
 /**
@@ -641,9 +748,9 @@ export async function searchSceneReferenceImages(
 
 /**
  * 스토리보드 생성 직후 자동 구글 레퍼런스 이미지 배치
- * - 각 씬마다 순차적으로 검색 → 첫 번째 결과를 imageUrl에 적용
+ * - 제한 병렬로 검색 → 첫 번째 결과를 imageUrl에 적용
  * - 이미 imageUrl이 있는 씬은 건너뜀
- * - 200ms 간격으로 API rate limit 준수
+ * - Google은 내부 동시성 제한 + 429 쿨다운, 차단 시 Wikimedia 직행
  * - runId로 중복 실행 방지 (새 분석 시 이전 실행 취소)
  */
 let _autoApplyRunId = 0;
@@ -660,72 +767,75 @@ export async function autoApplyGoogleReferences(
   let failedCount = 0;
   let blockedCount = 0;
   let fallbackCount = 0;
+  let startedCount = 0;
+  const candidates = scenes
+    .map((scene, index) => ({ scene, index }))
+    .filter(({ scene }) => !!scene.scriptText || !!scene.visualPrompt);
+  let cursor = 0;
 
-  for (let i = 0; i < scenes.length; i++) {
-    // 새 실행이 시작되면 이전 실행 중단
-    if (_autoApplyRunId !== runId) return;
-
-    const scene = scenes[i];
-    // 검색할 내용이 없으면 건너뜀
-    if (!scene.scriptText && !scene.visualPrompt) continue;
-
-    // [P1 FIX] 매 씬 처리 전 최신 스토어에서 imageUrl 재확인 — stale 스냅샷 덮어쓰기 방지
-    // forceReplace=true이면 이미 이미지가 있어도 교체 (일괄 적용에서 사용)
-    if (!forceReplace) {
-      const latestScenes = getLatestScenes();
-      const latestScene = latestScenes.find(s => s.id === scene.id);
-      if (latestScene?.imageUrl?.trim()) continue;
-    }
-
-    const prevScene = i > 0 ? scenes[i - 1] : null;
-    const nextScene = i < scenes.length - 1 ? scenes[i + 1] : null;
-
-    // 진행 상태 표시
-    updateScene(scene.id, {
-      isGeneratingImage: true,
-      generationStatus: `구글 레퍼런스 검색 중... (${i + 1}/${scenes.length})`,
-    });
-
-    try {
-      const query = buildSearchQuery(scene, prevScene, nextScene, globalContext);
-      const response = await searchGoogleImages(query, 1);
-
-      // 새 실행이 시작되면 이전 실행 중단
+  const worker = async () => {
+    while (true) {
       if (_autoApplyRunId !== runId) return;
 
-      if (response.items.length > 0) {
-        if (response.provider === 'wikimedia') fallbackCount++;
-        updateScene(scene.id, {
-          imageUrl: response.items[0].link,
-          isGeneratingImage: false,
-          generationStatus: response.provider === 'wikimedia' ? '대체 레퍼런스 적용됨' : '구글 레퍼런스 적용됨',
-          imageUpdatedAfterVideo: !!scene.videoUrl,
-        });
-        appliedCount++;
-      } else {
+      const current = candidates[cursor];
+      cursor += 1;
+      if (!current) return;
+
+      const { scene, index } = current;
+
+      if (!forceReplace) {
+        const latestScenes = getLatestScenes();
+        const latestScene = latestScenes.find((s) => s.id === scene.id);
+        if (latestScene?.imageUrl?.trim()) continue;
+      }
+
+      startedCount += 1;
+      const prevScene = index > 0 ? scenes[index - 1] : null;
+      const nextScene = index < scenes.length - 1 ? scenes[index + 1] : null;
+
+      updateScene(scene.id, {
+        isGeneratingImage: true,
+        generationStatus: `레퍼런스 검색 중... (${startedCount}/${candidates.length})`,
+      });
+
+      try {
+        const query = buildSearchQuery(scene, prevScene, nextScene, globalContext);
+        const response = await searchGoogleImages(query, 1);
+
+        if (_autoApplyRunId !== runId) return;
+
+        if (response.items.length > 0) {
+          if (response.provider === 'wikimedia') fallbackCount++;
+          updateScene(scene.id, {
+            imageUrl: response.items[0].link,
+            isGeneratingImage: false,
+            generationStatus: response.provider === 'wikimedia' ? '대체 레퍼런스 적용됨' : '구글 레퍼런스 적용됨',
+            imageUpdatedAfterVideo: !!scene.videoUrl,
+          });
+          appliedCount++;
+        } else {
+          failedCount++;
+          updateScene(scene.id, {
+            isGeneratingImage: false,
+            generationStatus: '검색 결과 없음',
+          });
+        }
+      } catch (err) {
+        if (_autoApplyRunId !== runId) return;
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error('[GoogleRef] 자동 배치 실패', `scene=${scene.id} ${message}`);
         failedCount++;
+        if (isBlockedSearchMessage(message)) blockedCount++;
         updateScene(scene.id, {
           isGeneratingImage: false,
-          generationStatus: '검색 결과 없음',
+          generationStatus: `검색 실패: ${message}`,
         });
       }
-    } catch (err) {
-      if (_autoApplyRunId !== runId) return;
-      const message = err instanceof Error ? err.message : String(err);
-      logger.error('[GoogleRef] 자동 배치 실패', `scene=${scene.id} ${message}`);
-      failedCount++;
-      if (isBlockedSearchMessage(message)) blockedCount++;
-      updateScene(scene.id, {
-        isGeneratingImage: false,
-        generationStatus: `검색 실패: ${message}`,
-      });
     }
+  };
 
-    // API rate limit: 200ms 대기
-    if (i < scenes.length - 1) {
-      await new Promise(r => setTimeout(r, 200));
-    }
-  }
+  const workerCount = Math.min(SCENE_REFERENCE_BATCH_CONCURRENCY, candidates.length || 1);
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
 
   if (_autoApplyRunId === runId) {
     onComplete?.({ appliedCount, failedCount, blockedCount, fallbackCount });

@@ -15,6 +15,12 @@
 - [x] `SetupPanel.tsx` — 스토리보드 생성 직후 자동 레퍼런스 배치 결과를 적용 수/실패 수/차단 여부 기준으로 요약하도록 수정
 - [x] `tsc --noEmit` + `vite build` + `rg` 재검증 통과
 
+### [2026-03-19] #617 구글 레퍼런스 429 지연 완화
+- [x] `googleReferenceSearchService.ts` — Google 검색 결과 캐시, 동일 검색어 in-flight 중복 제거, 429 차단 감지 후 15분 쿨다운으로 Wikimedia 직행, Google 동시성 2개 제한 추가
+- [x] `googleReferenceSearchService.ts` — 스토리보드 자동 레퍼런스 배치를 순차 처리에서 제한 병렬 처리로 전환해 장면 수가 많을 때 누적 지연을 줄이도록 수정
+- [x] `GoogleReferencePanel.tsx` — 전체 레퍼런스 검색도 제한 병렬 큐로 전환하고, 검색 중 예외가 나도 버튼 잠김 상태가 남지 않도록 정리
+- [x] `tsc --noEmit` + `vite build` + `rg` 재검증 통과
+
 ### [2026-03-19] #595 GhostCut 자막 제거 결과가 원본처럼 보이는 문제 수정
 - [x] `ghostcutPayload.ts` — GhostCut Smart Text Removal 요청 바디를 별도 함수로 분리하고, 공식 자동 텍스트 제거 예시에 맞춰 `needChineseOcclude=1`, `videoInpaintLang`, `needMask=0` 조합을 고정
 - [x] `ghostcutService.ts` — 제출 바디를 공용 빌더로 교체해 실제 서비스 호출이 잘못된 마스킹 모드로 빠지지 않도록 정리

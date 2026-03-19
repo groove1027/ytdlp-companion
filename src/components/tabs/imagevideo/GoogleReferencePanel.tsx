@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useMemo } from 'react';
 import { useProjectStore } from '../../../stores/projectStore';
 import { useImageVideoStore } from '../../../stores/imageVideoStore';
-import { searchSceneReferenceImages, buildSearchQuery } from '../../../services/googleReferenceSearchService';
+import { searchSceneReferenceImages, buildSearchQuery, SCENE_REFERENCE_BATCH_CONCURRENCY } from '../../../services/googleReferenceSearchService';
 import type { GoogleImageResult, ReferenceSearchProvider } from '../../../services/googleReferenceSearchService';
 import type { Scene } from '../../../types';
 import { showToast } from '../../../stores/uiStore';
@@ -124,47 +124,56 @@ const GoogleReferencePanel: React.FC = () => {
   const searchAllScenes = useCallback(async () => {
     if (!hasScenes) { showToast('장면 분석을 먼저 실행하세요.'); return; }
     setIsSearchingAll(true);
-    const validScenes = scenes.filter(s => !!s.scriptText || !!s.visualPrompt);
-    let successCount = 0;
-    let blockedCount = 0;
-    let fallbackCount = 0;
+    try {
+      const validScenes = scenes.filter(s => !!s.scriptText || !!s.visualPrompt);
+      let successCount = 0;
+      let blockedCount = 0;
+      let fallbackCount = 0;
+      const queue = validScenes.map((scene) => ({ scene, sceneIndex: scenes.indexOf(scene) }));
+      let cursor = 0;
 
-    for (let i = 0; i < validScenes.length; i++) {
-      const sceneIndex = scenes.indexOf(validScenes[i]);
-      const result = await searchScene(validScenes[i], sceneIndex);
-      if (result.ok) {
-        successCount++;
-        if (result.provider === 'wikimedia') fallbackCount++;
-      } else if (result.blocked) {
-        blockedCount++;
-      }
-      // API 부하 방지 — 사이에 200ms 대기
-      if (i < validScenes.length - 1) {
-        await new Promise(r => setTimeout(r, 200));
-      }
-    }
-    setIsSearchingAll(false);
+      const worker = async () => {
+        while (true) {
+          const current = queue[cursor];
+          cursor += 1;
+          if (!current) return;
 
-    if (successCount === validScenes.length) {
+          const result = await searchScene(current.scene, current.sceneIndex);
+          if (result.ok) {
+            successCount++;
+            if (result.provider === 'wikimedia') fallbackCount++;
+          } else if (result.blocked) {
+            blockedCount++;
+          }
+        }
+      };
+
+      const workerCount = Math.min(SCENE_REFERENCE_BATCH_CONCURRENCY, queue.length || 1);
+      await Promise.all(Array.from({ length: workerCount }, () => worker()));
+
+      if (successCount === validScenes.length) {
+        showToast(
+          fallbackCount > 0
+            ? `${successCount}개 장면의 대체 레퍼런스 이미지를 가져왔어요!`
+            : `${successCount}개 장면의 레퍼런스 이미지를 가져왔어요!`,
+        );
+        return;
+      }
+
+      if (successCount > 0) {
+        showToast(`${successCount}개 장면은 가져왔고 ${validScenes.length - successCount}개 장면은 비어 있어요.`);
+        return;
+      }
+
       showToast(
-        fallbackCount > 0
-          ? `${successCount}개 장면의 대체 레퍼런스 이미지를 가져왔어요!`
-          : `${successCount}개 장면의 레퍼런스 이미지를 가져왔어요!`,
+        blockedCount > 0
+          ? '구글 검색이 차단돼 레퍼런스 이미지를 가져오지 못했어요. 잠시 후 다시 시도하거나 직접 업로드해주세요.'
+          : '레퍼런스 이미지를 가져오지 못했어요. 검색어를 짧게 바꾸거나 직접 업로드해주세요.',
+        4500,
       );
-      return;
+    } finally {
+      setIsSearchingAll(false);
     }
-
-    if (successCount > 0) {
-      showToast(`${successCount}개 장면은 가져왔고 ${validScenes.length - successCount}개 장면은 비어 있어요.`);
-      return;
-    }
-
-    showToast(
-      blockedCount > 0
-        ? '구글 검색이 차단돼 레퍼런스 이미지를 가져오지 못했어요. 잠시 후 다시 시도하거나 직접 업로드해주세요.'
-        : '레퍼런스 이미지를 가져오지 못했어요. 검색어를 짧게 바꾸거나 직접 업로드해주세요.',
-      4500,
-    );
   }, [hasScenes, scenes, searchScene]);
 
   // 이미지 선택 → scene.imageUrl에 적용
