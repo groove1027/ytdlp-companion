@@ -507,6 +507,9 @@ class LoggerService {
         return; // 리소스 에러는 여기서 처리
       }
 
+      // [FIX #624] 브라우저 확장 프로그램 에러 필터링 — 앱 에러가 아니므로 무시
+      if (this._isExtensionError(event.filename, event.error?.stack)) return;
+
       this.addLog('error', `💥 Uncaught: ${event.message}`, {
         file: event.filename?.split('/').pop(),
         line: event.lineno,
@@ -522,6 +525,10 @@ class LoggerService {
       const reason = event.reason;
       const message = reason instanceof Error ? reason.message : String(reason);
       const stack = reason instanceof Error ? reason.stack?.split('\n').slice(0, 5).join('\n') : undefined;
+
+      // [FIX #624] 브라우저 확장 프로그램에서 발생한 rejection 필터링
+      const fullStack = reason instanceof Error ? reason.stack : undefined;
+      if (this._isExtensionError(undefined, fullStack)) return;
 
       // [FIX #519] AbortError / TimeoutError는 정상적인 요청 취소/타임아웃 — 사용자에게 경고하지 않음
       // fetch() abort 시 브라우저가 "The user aborted a request." DOMException을 발생시키는데,
@@ -1613,6 +1620,20 @@ class LoggerService {
     return () => {
       this._criticalErrorCallbacks = this._criticalErrorCallbacks.filter(c => c !== callback);
     };
+  }
+
+  // [FIX #624] 브라우저 확장 프로그램(Chrome/Firefox/Safari) 에러 감지
+  private _isExtensionError(filename?: string, stack?: string): boolean {
+    const extPattern = /\b(?:chrome|moz|safari(?:-web)?)-extension:\/\//i;
+    // filename이 확장 프로그램 URL이면 즉시 필터링
+    if (filename && extPattern.test(filename)) return true;
+    // 스택 트레이스의 모든 URL이 확장 프로그램인 경우 필터링
+    if (stack) {
+      const urlPattern = /(?:https?|chrome-extension|moz-extension|safari(?:-web)?-extension):\/\/[^\s)]+/gi;
+      const urls = stack.match(urlPattern);
+      if (urls && urls.length > 0 && urls.every(u => extPattern.test(u))) return true;
+    }
+    return false;
   }
 
   /** 등록된 콜백들에게 에러 알림 (5초 쿨다운 — 연속 에러 폭탄 방지) */
