@@ -299,6 +299,8 @@ const SubtitleQuickPanel: React.FC<{ onOpenDetail: () => void }> = ({ onOpenDeta
   const currentFontFamily = tpl?.fontFamily || 'Pretendard';
   const currentFontWeight = tpl?.fontWeight || 700;
   const currentFontSize = tpl?.fontSize || 48;
+  const aiTargetSceneCount = sceneOrder.filter((sceneId) => sceneSubtitlesMap[sceneId]?.text?.trim()).length;
+  const aiEstimatedCost = formatAiSubtitleEstimatedCost(aiTargetSceneCount);
 
   const filteredFonts = React.useMemo(() => {
     let list = getFontsByCategory(fontCat);
@@ -446,6 +448,9 @@ const SubtitleQuickPanel: React.FC<{ onOpenDetail: () => void }> = ({ onOpenDeta
         )}
         <p className="text-[10px] text-gray-500 leading-snug">
           AI 줄바꿈({charsPerLine}자 기준) → 구두점(. , ! ? 등) 제거 → 자막 세그먼트 자동 생성
+        </p>
+        <p className="text-[10px] text-amber-300/90 leading-snug">
+          처리 대상 {aiTargetSceneCount}개 장면, 예상 비용 약 ${aiEstimatedCost}
         </p>
       </div>
 

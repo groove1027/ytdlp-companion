@@ -669,17 +669,11 @@ export const useEditRoomStore = create<EditRoomStore>()(immer((set, get) => ({
     newOrder.splice(toIndex, 0, removed);
     set({ sceneOrder: newOrder });
     persistSceneOrder(newOrder);
+    get().packTimingsSequential();
   },
 
   reorderAndPack: (fromIndex, toIndex) => {
-    const state = get();
-    const newOrder = [...state.sceneOrder];
-    const [removed] = newOrder.splice(fromIndex, 1);
-    newOrder.splice(toIndex, 0, removed);
-    set({ sceneOrder: newOrder });
-    persistSceneOrder(newOrder);
-    // 순서 변경 후 갭 없이 재배치
-    get().packTimingsSequential();
+    get().reorderScenes(fromIndex, toIndex);
   },
 
   splitScene: async (sceneId, splitPoint) => {

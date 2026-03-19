@@ -373,6 +373,8 @@ const SubtitleStyleEditor: React.FC = () => {
   const [aiLineBreakInput, setAiLineBreakInput] = useState(() => String(charsPerLine || 20));
   const [aiLineBreakLoading, setAiLineBreakLoading] = useState(false);
   const aiProcessLoading = aiLineBreakLoading || aiSegmentLoading;
+  const aiTargetSceneCount = sceneOrder.filter((sceneId) => sceneSubtitlesMap[sceneId]?.text?.trim()).length;
+  const aiEstimatedCost = formatAiSubtitleEstimatedCost(aiTargetSceneCount);
   // charsPerLine이 외부(store)에서 변경되면 로컬 상태도 동기화
   useEffect(() => {
     if (charsPerLine > 0) {
@@ -1219,6 +1221,9 @@ const SubtitleStyleEditor: React.FC = () => {
                   진행 상황: {aiProcessProgress.current}/{aiProcessProgress.total} 장면 처리 중
                 </p>
               )}
+              <p className="text-[11px] text-amber-300/90 leading-snug">
+                처리 대상 {aiTargetSceneCount}개 장면, 예상 비용 약 ${aiEstimatedCost}
+              </p>
               {/* 개별 실행 (접이식) */}
               <details className="group">
                 <summary className="text-[11px] text-gray-600 cursor-pointer hover:text-gray-400 transition-colors select-none">

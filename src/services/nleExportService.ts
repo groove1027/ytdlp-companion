@@ -1587,6 +1587,7 @@ function buildEditRoomFcpXml(params: {
     }
     const ext = actualFile ? actualFile.split('.').pop()! : (scene?.videoUrl ? 'mp4' : 'jpg');
     const fileName = actualFile ? `media/${actualFile}` : `media/${String(i + 1).padStart(3, '0')}_scene.${ext}`;
+    const hasEmbeddedAudio = actualFile ? actualFile.toLowerCase().endsWith('.mp4') : !!scene?.videoUrl;
     const clipDurFrames = toFrames(t.imageDuration);
     const clipLabel = (scene?.scriptText || `장면 ${i + 1}`).slice(0, 40);
     return `
@@ -1604,8 +1605,10 @@ function buildEditRoomFcpXml(params: {
               <duration>${clipDurFrames}</duration>
               <rate><ntsc>${ntscStr}</ntsc><timebase>${timebase}</timebase></rate>
               <media>
-                <video><samplecharacteristics><width>${width}</width><height>${height}</height><anamorphic>FALSE</anamorphic><pixelaspectratio>square</pixelaspectratio><fielddominance>none</fielddominance></samplecharacteristics></video>
-                <audio><channelcount>2</channelcount><samplecharacteristics><samplerate>48000</samplerate><depth>16</depth></samplecharacteristics></audio>
+                <video><samplecharacteristics><width>${width}</width><height>${height}</height><anamorphic>FALSE</anamorphic><pixelaspectratio>square</pixelaspectratio><fielddominance>none</fielddominance></samplecharacteristics></video>${hasEmbeddedAudio
+                  ? `
+                <audio><channelcount>2</channelcount><samplecharacteristics><samplerate>48000</samplerate><depth>16</depth></samplecharacteristics></audio>`
+                  : ''}
               </media>
             </file>
             <sourcetrack><mediatype>video</mediatype><trackindex>1</trackindex></sourcetrack>
@@ -1619,18 +1622,22 @@ function buildEditRoomFcpXml(params: {
               <mediatype>video</mediatype>
               <trackindex>1</trackindex>
               <clipindex>${i + 1}</clipindex>
-            </link>
+            </link>${hasEmbeddedAudio ? `
             <link>
               <linkclipref>audio-${i + 1}</linkclipref>
               <mediatype>audio</mediatype>
               <trackindex>1</trackindex>
               <clipindex>${i + 1}</clipindex>
-            </link>
+            </link>` : ''}
           </clipitem>`;
   }).join('');
 
   // 오디오 클립 (비디오 클립에 링크)
   const audioClips = timeline.map((t, i) => {
+    const actualFile = mediaFileMap?.get(i);
+    const scene = scenes.find(s => s.id === t.sceneId);
+    const hasEmbeddedAudio = actualFile ? actualFile.toLowerCase().endsWith('.mp4') : !!scene?.videoUrl;
+    if (!hasEmbeddedAudio) return '';
     const clipDurFrames = toFrames(t.imageDuration);
     return `
           <clipitem id="audio-${i + 1}">
@@ -1657,6 +1664,7 @@ function buildEditRoomFcpXml(params: {
             </link>
           </clipitem>`;
   }).join('');
+  const hasSceneAudioTrack = audioClips.replace(/\s/g, '').length > 0;
 
   // 자막 트랙
   const subtitleClips = timeline
@@ -1764,9 +1772,9 @@ function buildEditRoomFcpXml(params: {
             <channel><index>2</index></channel>
           </group>
         </outputs>
-        <track>
+        ${hasSceneAudioTrack ? `<track>
           <outputchannelindex>1</outputchannelindex>${audioClips}
-        </track>${hasNarrationTrack ? `
+        </track>` : ''}${hasNarrationTrack ? `
         <track>
           <outputchannelindex>1</outputchannelindex>${narrationTrackClips}
         </track>` : ''}
@@ -1860,6 +1868,62 @@ function buildEditRoomSceneSrt(timeline: UnifiedSceneTiming[], scenes: EditRoomS
   return entries.join('\n\n');
 }
 
+function normalizeEditRoomTimelineForExport(
+  timeline: UnifiedSceneTiming[],
+  narrationLines: EditRoomNarrationLine[],
+): { timeline: UnifiedSceneTiming[]; narrationLines: EditRoomNarrationLine[] } {
+  if (timeline.length === 0) {
+    return { timeline, narrationLines };
+  }
+
+  const timeShiftBySceneId = new Map<string, number>();
+  let cursor = 0;
+
+  const normalizedTimeline = timeline.map((scene, index) => {
+    const sceneStart = cursor;
+    const sceneEnd = sceneStart + scene.imageDuration;
+    const timeShift = sceneStart - scene.imageStartTime;
+    timeShiftBySceneId.set(scene.sceneId, timeShift);
+
+    const subtitleSegments = scene.subtitleSegments.map((segment) => {
+      const shiftedStart = segment.startTime + timeShift;
+      const shiftedEnd = segment.endTime + timeShift;
+      const startTime = Math.min(sceneEnd, Math.max(sceneStart, shiftedStart));
+      const endTime = Math.min(sceneEnd, Math.max(startTime, shiftedEnd));
+      return {
+        ...segment,
+        startTime,
+        endTime,
+      };
+    });
+
+    cursor = sceneEnd;
+    return {
+      ...scene,
+      sceneIndex: index,
+      imageStartTime: sceneStart,
+      imageEndTime: sceneEnd,
+      subtitleSegments,
+    };
+  });
+
+  const normalizedNarrationLines = narrationLines.map((line) => {
+    if (!line.sceneId) return line;
+    const timeShift = timeShiftBySceneId.get(line.sceneId);
+    if (timeShift === undefined) return line;
+    if (typeof line.startTime !== 'number' || !Number.isFinite(line.startTime)) return line;
+    return {
+      ...line,
+      startTime: Math.max(0, line.startTime + timeShift),
+    };
+  });
+
+  return {
+    timeline: normalizedTimeline,
+    narrationLines: normalizedNarrationLines,
+  };
+}
+
 /** NLE 내보내기 결과 (ZIP + 미디어 통계) */
 export interface NleExportResult {
   blob: Blob;
@@ -1878,7 +1942,8 @@ export async function buildEditRoomNleZip(params: {
   aspectRatio: string;
   fps?: number;
 }): Promise<NleExportResult> {
-  const { target, timeline, scenes, narrationLines, title, aspectRatio, fps = 30 } = params;
+  const { target, timeline: rawTimeline, scenes, narrationLines: rawNarrationLines, title, aspectRatio, fps = 30 } = params;
+  const { timeline, narrationLines } = normalizeEditRoomTimelineForExport(rawTimeline, rawNarrationLines);
   const JSZip = (await import('jszip')).default;
   const zip = new JSZip();
   const safeName = sanitizeProjectName(title);
