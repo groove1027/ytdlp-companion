@@ -249,12 +249,12 @@ const Step1Register: React.FC = () => {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
           </svg>
           내레이션 대본
-          <span className="text-[10px] text-gray-500 font-normal">(직접 작성 또는 붙여넣기)</span>
+          <span className="text-[10px] text-gray-500 font-normal">(일반 편집점/편집실 매칭용, 직접 작성 또는 붙여넣기)</span>
         </h3>
         <textarea
           value={rawNarration}
           onChange={(e) => setRawNarration(e.target.value)}
-          placeholder="원하는 대본을 입력하세요. 소스 영상의 타임코드에 맞춰 편집표가 자동 생성됩니다."
+          placeholder="원하는 대본을 입력하세요. 일반 편집점 프로토콜 기준으로 킬 샷 우선, sourceId, MM:SS.sss 타임코드가 포함된 편집표를 자동 생성합니다."
           className="w-full h-28 bg-gray-900 border border-gray-600 rounded-lg p-3 text-xs text-gray-200 resize-y focus:border-amber-500 focus:outline-none placeholder-gray-600"
         />
 
@@ -279,7 +279,7 @@ const Step1Register: React.FC = () => {
                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
                 </svg>
-                AI 편집표 자동 생성 (대본 + 소스 영상 기반)
+                AI 편집표 자동 생성 (일반 편집점/편집실 매칭)
               </>
             )}
           </button>
@@ -298,12 +298,12 @@ const Step1Register: React.FC = () => {
           )}
         </h3>
         <p className="text-[11px] text-gray-500 mb-2">
-          엑셀/구글시트에서 복사 붙여넣기 하거나, 파이프(|)/탭/마크다운 테이블 형식으로 입력하세요.
+          엑셀/구글시트에서 복사 붙여넣기 하거나, 파이프(|)/탭/마크다운 테이블 형식으로 입력하세요. 일반 편집점 매칭용 sourceId(S-XX)와 MM:SS.sss 타임코드가 포함되면 가장 안정적입니다.
         </p>
         <textarea
           value={rawEditTable}
           onChange={(e) => setRawEditTable(e.target.value)}
-          placeholder={`순번 | 내레이션 | 소스 | 소스설명 | 배속 | 타임코드 | 비고\n1-1a | 첫 번째 내레이션... | S-01 | 해변 풍경 | 1.0 | 00:07.500~00:15.200 | 속도감 있게`}
+          placeholder={`순번 | 내레이션 | 소스 | 소스설명 | 배속 | 타임코드 시작~끝 | 비고\n1-1(a) | 첫 번째 후킹 앞부분 | S-01 | 제품/장면의 킬 샷 클로즈업 | 1.0 | 00:07.500~00:09.100 | 킬 샷 / 정배속\n1-1(b) | 후킹 뒷부분 | S-02 | 디테일 클로즈업 | 1.0 | 00:12.300~00:13.800 | 1문장 2컷`}
           className="w-full h-36 bg-gray-900 border border-gray-600 rounded-lg p-3 text-xs text-gray-200 font-mono resize-y focus:border-amber-500 focus:outline-none placeholder-gray-600"
         />
       </div>

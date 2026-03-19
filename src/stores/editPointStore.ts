@@ -437,7 +437,7 @@ export const useEditPointStore = create<EditPointStore>()(immer((set, get) => ({
       isProcessing: true,
       processingPhase: 'auto-gen',
       processingProgress: 0,
-      processingMessage: 'AI가 대본을 분석해 편집표를 생성하고 있습니다...',
+      processingMessage: 'AI가 일반 편집점/편집실 매칭용 편집표를 생성하고 있습니다...',
     });
 
     try {
@@ -445,6 +445,7 @@ export const useEditPointStore = create<EditPointStore>()(immer((set, get) => ({
         sourceId: v.sourceId,
         fileName: v.fileName,
         durationSec: v.durationSec,
+        file: v.file,
       }));
       const table = await generateEditTableFromNarration(rawNarration, sources);
       set({
@@ -454,7 +455,7 @@ export const useEditPointStore = create<EditPointStore>()(immer((set, get) => ({
         processingProgress: 100,
         processingMessage: '',
       });
-      showToast('편집표가 자동 생성되었습니다! 필요시 수정 후 "AI 파싱 실행"을 눌러주세요.');
+      showToast('일반 편집점/편집실 매칭용 편집표가 자동 생성되었습니다. 필요하면 수정 후 "AI 파싱 실행"을 눌러주세요.');
     } catch (err) {
       set({ isProcessing: false, processingPhase: '', processingMessage: '' });
       showToast('편집표 자동 생성 실패: ' + (err instanceof Error ? err.message : '알 수 없는 오류'));

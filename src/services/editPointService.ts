@@ -3,8 +3,8 @@
  * 편집표 AI 파싱 + 타임코드 정제 + 내보내기 생성 서비스
  */
 
-import { EdlEntry } from '../types';
-import { evolinkChat } from './evolinkService';
+import { EdlEntry, SourceVideoFile } from '../types';
+import { evolinkChat, type EvolinkChatMessage, type EvolinkContentPart } from './evolinkService';
 import { extractFramesFromVideo } from './gemini/videoAnalysis';
 import { formatSrtTime } from './srtService';
 import { logger } from './LoggerService';
@@ -14,6 +14,30 @@ import { logger } from './LoggerService';
  * Pro는 Vision 정제(attemptVisionRefine)에서만 사용
  */
 const EDIT_PARSE_MODEL = 'gemini-3.1-flash-lite-preview';
+const EDIT_POINT_AUTOGEN_MODEL = 'gemini-3.1-pro-preview';
+const MAX_AUTOGEN_PREVIEW_SOURCES = 4;
+
+const EDIT_POINT_MATCHING_SYSTEM_PROMPT = `당신은 "일반 편집점/편집실 매칭" 전용 시니어 편집감독이다.
+목표: 내레이션과 실제 소스 프리뷰를 바탕으로 편집실에서 바로 사용할 수 있는 편집표를 만든다.
+
+핵심 규칙:
+1. 첫 행(1-1(a))은 무조건 가장 강한 킬 샷으로 시작한다. 논리 순서보다 후킹 강도가 우선이다.
+2. 모든 행은 [소스 ID] + [정확한 타임코드 MM:SS.sss] + [실제 장면 설명] 삼위일체를 지켜야 한다.
+3. 내레이션 한 문장이 2.5초를 넘으면 반드시 2컷 이상으로 쪼개고, 순번을 1-1(a), 1-1(b)처럼 나눈다.
+4. 타임코드는 반드시 MM:SS.sss 형식으로 적는다. "대략", "근처" 같은 표현은 금지한다.
+5. 대표 프레임에 붙은 [S-XX @ MM:SS.sss] 라벨은 신뢰 가능한 앵커 좌표다. 가능하면 그 근처에서만 컷을 설계한다.
+6. 소스 설명에는 실제 프리뷰에서 보이는 장면만 적고, 보이지 않는 장면이나 기능을 상상해서 쓰지 않는다.
+7. 행의 sourceId 또는 timecode를 확인할 수 없으면 그 행은 만들지 않는다. 단, 프리뷰가 없는 소스만 써야 할 경우 note에 "시각 검증 필요"를 남긴다.
+8. 배속은 정배속(1.0) 우선으로 설계하고, 정말 필요할 때만 조정한다.
+9. 총 편집 구성은 사용 가능한 소스 길이를 넘기지 말고, 첫 3초 안에 가장 강한 후킹이 오도록 순서를 짠다.
+
+출력 규칙:
+- 파이프(|) 구분 편집표만 출력한다.
+- 헤더는 정확히 아래 형식을 사용한다.
+순번 | 내레이션 | 소스 | 소스설명 | 배속 | 타임코드 시작~끝 | 비고
+- 타임코드 형식 예시: 00:12.300~00:14.100
+- 소스 ID는 제공된 값만 사용한다. (예: S-01)
+- 비고에는 "킬 샷", "정배속", "시각 검증 필요" 같은 편집 메모만 짧게 적는다.`;
 
 /**
  * 잘린 JSON 응답에서 유효한 entries를 복구
@@ -138,6 +162,52 @@ function estimateTokenCount(text: string): number {
   const koreanChars = (text.match(/[\uAC00-\uD7AF\u3130-\u318F]/g) || []).length;
   const otherChars = text.length - koreanChars;
   return Math.ceil(koreanChars * 1.5 + otherChars / 3);
+}
+
+function buildAutogenPreviewTimestamps(durationSec: number | null): number[] {
+  if (!durationSec || durationSec <= 0) return [];
+
+  const ratios = durationSec <= 12
+    ? [0.1, 0.32, 0.56, 0.82]
+    : durationSec <= 60
+    ? [0.08, 0.28, 0.52, 0.8]
+    : [0.05, 0.2, 0.45, 0.72];
+
+  const maxSec = Math.max(durationSec - 0.1, 0.1);
+  return [...new Set(
+    ratios.map((ratio) => Math.min(maxSec, Math.max(0.1, Number((durationSec * ratio).toFixed(3)))))
+  )];
+}
+
+async function buildSourcePreviewParts(
+  sources: Pick<SourceVideoFile, 'sourceId' | 'fileName' | 'durationSec' | 'file'>[],
+): Promise<EvolinkContentPart[]> {
+  const parts: EvolinkContentPart[] = [];
+
+  for (const source of sources.slice(0, MAX_AUTOGEN_PREVIEW_SOURCES)) {
+    const timestamps = buildAutogenPreviewTimestamps(source.durationSec);
+    if (!source.file || timestamps.length === 0) continue;
+
+    parts.push({
+      type: 'text',
+      text: `## 소스 프리뷰 ${source.sourceId}\n파일: ${source.fileName}\n길이: ${source.durationSec ? secondsToTimecode(source.durationSec) : '미확인'}`,
+    });
+
+    try {
+      const frames = await extractFramesFromVideo(source.file, timestamps);
+      for (const timestamp of timestamps) {
+        const frameUrl = frames.get(timestamp);
+        if (!frameUrl) continue;
+        const compressed = await compressImage(frameUrl, 256, 144, 0.45);
+        parts.push({ type: 'text', text: `[${source.sourceId} @ ${secondsToTimecode(timestamp)}] 대표 프레임` });
+        parts.push({ type: 'image_url', image_url: { url: compressed } });
+      }
+    } catch (e) {
+      logger.trackSwallowedError('EditPointService:buildSourcePreviewParts', e);
+    }
+  }
+
+  return parts;
 }
 
 /**
@@ -803,49 +873,49 @@ export function generateNarrationSrt(entries: EdlEntry[]): string {
 }
 
 /**
- * [#372] 대본(내레이션) + 소스 영상 정보로 편집표 텍스트 자동 생성
- * 사용자가 원하는 대본을 입력하면, 소스 영상 길이에 맞춰 타임코드가 배분된 편집표를 AI가 생성
+ * [#372/#585] 일반 편집점/편집실 매칭용 편집표 자동 생성
+ * 내레이션 + 소스 영상 정보(+ 대표 프레임)로 타임코드가 포함된 편집표를 만든다.
  */
 export async function generateEditTableFromNarration(
   narration: string,
-  sources: { sourceId: string; fileName: string; durationSec: number | null }[],
+  sources: Pick<SourceVideoFile, 'sourceId' | 'fileName' | 'durationSec' | 'file'>[],
 ): Promise<string> {
-  const sourceInfo = sources.map(s =>
-    `${s.sourceId}: "${s.fileName}" (${s.durationSec ? `${Math.round(s.durationSec)}초` : '길이 미확인'})`
-  ).join('\n');
+  const sourceInfo = sources.map((source, index) => {
+    const previewNote = index < MAX_AUTOGEN_PREVIEW_SOURCES && source.file ? ' / 대표 프레임 앵커 제공' : '';
+    return `${source.sourceId}: "${source.fileName}" (${source.durationSec ? `${Math.round(source.durationSec)}초` : '길이 미확인'})${previewNote}`;
+  }).join('\n');
+  const previewParts = await buildSourcePreviewParts(sources);
+  const userIntro = `## 작업 유형
+일반 편집점/편집실 매칭
 
-  const systemPrompt = `You are a professional video editor. Given a narration script and source video information, create an edit table (편집표) that maps narration segments to appropriate timecodes in the source videos.
-
-Rules:
-- Split the narration into logical segments (1-2 sentences each)
-- Assign each segment to a source video (distribute evenly if multiple sources)
-- Calculate reasonable timecode ranges based on narration length and video duration
-- Korean speech rate: ~4 characters/second, English: ~3 words/second
-- Ensure timecodes don't exceed source video duration
-- Use pipe-delimited format
-- sourceId format: S-XX (matching the provided source IDs)
-
-Output format (pipe-delimited table, Korean header):
-순번 | 내레이션 | 소스 | 소스설명 | 배속 | 타임코드 시작~끝 | 비고`;
-
-  const userContent = `## 소스 영상 정보:
+## 소스 영상 정보
 ${sourceInfo}
 
-## 내레이션 대본:
+## 내레이션 대본
 ${narration}
 
-위 대본을 소스 영상의 타임코드에 맞게 편집표로 변환해주세요. 파이프(|) 구분자로 표를 만들어주세요.`;
+지침:
+- 대표 프레임에 적힌 [S-XX @ MM:SS.sss]를 실제 소스 타임코드 앵커로 사용하세요.
+- 첫 행은 킬 샷이어야 합니다.
+- 타임코드 또는 sourceId를 확인할 수 없는 행은 출력하지 마세요.
+- 결과는 파이프(|) 구분 편집표만 출력하세요.`;
+  const userMessage: EvolinkChatMessage = {
+    role: 'user',
+    content: previewParts.length > 0
+      ? [{ type: 'text', text: userIntro }, ...previewParts]
+      : userIntro,
+  };
 
   const response = await evolinkChat(
     [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userContent },
+      { role: 'system', content: EDIT_POINT_MATCHING_SYSTEM_PROMPT },
+      userMessage,
     ],
     {
-      temperature: 0.3,
+      temperature: 0.2,
       maxTokens: 8192,
-      timeoutMs: 120_000,
-      model: EDIT_PARSE_MODEL,
+      timeoutMs: 180_000,
+      model: EDIT_POINT_AUTOGEN_MODEL,
     }
   );
 

@@ -30,7 +30,7 @@ const EditPointMatchingPanel: React.FC = () => {
             </span>
             편집점 매칭
           </h2>
-          <p className="text-xs text-gray-500 mt-1">소스 영상 + 편집표 → AI 자동 편집점 인식 → 내보내기</p>
+          <p className="text-xs text-gray-500 mt-1">일반 편집점/편집실 매칭: 소스 영상 + 대본/편집표 → AI 생성·정제 → 타임라인·내보내기</p>
         </div>
         <button
           type="button"
