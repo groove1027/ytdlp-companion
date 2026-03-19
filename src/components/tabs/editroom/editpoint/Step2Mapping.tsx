@@ -260,6 +260,7 @@ const Step2Mapping: React.FC = () => {
             type="button"
             onClick={handleRefineTimecodes}
             disabled={isProcessing || unmappedCount === uniqueSourceIds.length}
+            title="대표 프레임과 문장을 다시 비교해 시작/끝 타임코드를 더 정확히 좁혀주는 선택 기능입니다"
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${
               !isProcessing && unmappedCount < uniqueSourceIds.length
                 ? 'bg-violet-600/20 text-violet-300 border border-violet-500/30 hover:bg-violet-600/30'

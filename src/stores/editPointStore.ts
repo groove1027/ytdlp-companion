@@ -140,6 +140,14 @@ function getVideoDuration(file: File): Promise<number | null> {
   });
 }
 
+function normalizeClipCutErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : '알 수 없는 오류';
+  if (/monotonically increasing|timestamp/i.test(message)) {
+    return '원본 영상의 프레임 시간 정보가 브라우저 무손실 자르기와 맞지 않아 실패했습니다. 다시 시도하거나 FFmpeg 스크립트 내보내기를 사용해주세요.';
+  }
+  return message;
+}
+
 /** 비디오 첫 프레임 썸네일 생성 — WebCodecs 우선 → Canvas 폴백 (8초 타임아웃) */
 async function getVideoThumbnail(file: File): Promise<string | undefined> {
   // ── WebCodecs 정밀 추출 우선 ──
@@ -770,8 +778,7 @@ export const useEditPointStore = create<EditPointStore>()(immer((set, get) => ({
 
       showToast(`${clips.length}개 클립이 ZIP으로 다운로드되었습니다.`);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : '알 수 없는 오류';
-      showToast('영상 자르기 실패: ' + msg);
+      showToast('영상 자르기 실패: ' + normalizeClipCutErrorMessage(err));
     } finally {
       set({ isProcessing: false, processingPhase: '', processingProgress: 100, processingMessage: '' });
     }

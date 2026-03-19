@@ -8,8 +8,9 @@
  */
 
 import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
-import type { Sample, Track } from 'mp4box';
+import type { Sample } from 'mp4box';
 import { demuxMp4, isVideoDecoderSupported } from './videoDecoder';
+import { buildMuxVideoTiming } from './muxVideoTiming';
 import { logger } from '../LoggerService';
 
 export interface ClipRange {
@@ -58,7 +59,7 @@ export async function cutClips(
       `클립 ${i + 1}/${clips.length} 자르는 중... (${clip.label})`,
     );
 
-    const blob = remuxClip(samples, arrayBuffer, timescale, width, height, description, clip);
+    const blob = remuxClip(samples, arrayBuffer, timescale, width, height, codec, description, clip);
     const safeName = clip.label.replace(/[^a-zA-Z0-9가-힣_-]/g, '_');
     clipBlobs.push({ name: `${String(i + 1).padStart(3, '0')}_${safeName}.mp4`, blob });
   }
@@ -81,10 +82,9 @@ export async function cutClips(
  * 단일 클립 리먹싱 — 디코딩/인코딩 없이 샘플 데이터 직접 복사
  *
  * [FIX] B-프레임이 있는 H.264 영상 대응:
- *   mp4-muxer는 timestamp를 DTS로 취급하므로 반드시 단조 증가해야 함.
- *   CTS(표시 순서)는 B-프레임에서 역행할 수 있으므로,
- *   addVideoChunkRaw(data, type, DTS, duration, meta, compositionTimeOffset)를 사용하여
- *   DTS(디코드 순서, 항상 단조 증가) + compositionTimeOffset(CTS-DTS) 분리 전달.
+ *   mp4-muxer의 timestamp 인자는 PTS(CTS)이며,
+ *   내부에서 timestamp - compositionTimeOffset으로 DTS를 계산한다.
+ *   따라서 timestamp에 DTS를 넣으면 B-프레임에서 음수 DTS가 만들어질 수 있다.
  */
 function remuxClip(
   samples: Sample[],
@@ -92,6 +92,7 @@ function remuxClip(
   timescale: number,
   width: number,
   height: number,
+  codec: string,
   description: Uint8Array | undefined,
   clip: ClipRange,
 ): Blob {
@@ -134,26 +135,29 @@ function remuxClip(
     video: { codec: 'avc', width, height },
   });
 
-  // 샘플 리먹싱 — addVideoChunkRaw로 DTS + compositionTimeOffset 분리 전달
+  // 샘플 리먹싱 — timestamp(PTS) + compositionTimeOffset(PTS-DTS) 전달
   let isFirst = true;
   for (const s of rangeSamples) {
     if (s.offset + s.size > arrayBuffer.byteLength) continue;
 
-    // DTS 기반 타임스탬프 (항상 단조 증가)
-    const dtsMicro = Math.max(0, Math.round(((s.dts - baseDtsTicks) / timescale) * 1_000_000));
-    const durationMicro = Math.round((s.duration / timescale) * 1_000_000);
-    // compositionTimeOffset = (CTS - DTS) → B-프레임에서 음수 가능
-    const ctOffsetMicro = Math.round(((s.cts - s.dts) / timescale) * 1_000_000);
+    const timing = buildMuxVideoTiming(s, timescale, baseDtsTicks);
 
     const data = new Uint8Array(arrayBuffer, s.offset, s.size);
     const type: 'key' | 'delta' = s.is_sync ? 'key' : 'delta';
 
     // 첫 청크에 코덱 description 전달 (avcC 데이터)
     const meta = isFirst && description
-      ? { decoderConfig: { codec: 'avc1.640028', description } } as EncodedVideoChunkMetadata
+      ? { decoderConfig: { codec, description } } as EncodedVideoChunkMetadata
       : undefined;
 
-    muxer.addVideoChunkRaw(data, type, dtsMicro, durationMicro, meta, ctOffsetMicro);
+    muxer.addVideoChunkRaw(
+      data,
+      type,
+      timing.timestampMicro,
+      timing.durationMicro,
+      meta,
+      timing.compositionTimeOffsetMicro,
+    );
     isFirst = false;
   }
 

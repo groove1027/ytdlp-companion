@@ -8,6 +8,29 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-20] #633 편집실 WebCodecs 영상 자르기 DTS 역행 수정 + AI 정제 안내 보강
+- [x] `clipCutter.ts`, `muxVideoTiming.ts` — B-프레임 H.264에서 `mp4-muxer`의 `timestamp`를 DTS가 아니라 PTS로 넘기도록 수정해 `Timestamps must be monotonically increasing` 실패를 차단
+- [x] `clipCutter.ts` — 첫 청크 `decoderConfig.codec`를 원본 트랙 코덱 문자열로 맞추고, muxer 트랙 코덱은 지원 포맷인 `avc`로 유지
+- [x] `editPointStore.ts` — 브라우저 무손실 자르기에서 타임스탬프 계열 예외가 다시 발생해도 기술적인 영어 문구 대신 한국어 안내 토스트를 노출하도록 보강
+- [x] `Step2Mapping.tsx` — `AI 정제 실행` 버튼에 기능 설명 툴팁 추가
+- [x] `verify-editroom-clipcut-633.mjs` — 실제 B-프레임 MP4 샘플(`test/output/grok10s_evolink.mp4`)로 기존 계산식 실패 재현 + 수정 후 실제 `mp4-muxer` remux 성공까지 검증 추가
+- [x] 검증 통과:
+  `node --experimental-strip-types test/verify-editroom-clipcut-633.mjs`
+  `cd src && node_modules/typescript/bin/tsc --noEmit`
+  `cd src && node_modules/.bin/vite build`
+
+### [2026-03-20] #610 CapCut main timeline mirror scaffold 추가 + 실제 편집기 진입 검증
+- [x] `nleExportService.ts` — CapCut ZIP에 `Timelines/<main_timeline_id>/draft_info.json`, `attachment_pc_common.json`, `attachment_editing.json`, `common_attachment/attachment_pc_timeline.json`, `attachment_script_video.json`, `attachment_action_scene.json`, `draft.extra`, `draft_cover.jpg`, `template.tmp`, `template-2.tmp`를 main timeline mirror scaffold로 추가
+- [x] `verify-capcut-video-room.mjs`, `verify-capcut-issue574-browser.mjs` — 새 main timeline mirror scaffold 존재를 ZIP 수준에서 검증하도록 보강
+- [x] `tsc --noEmit` + `vite build` + `rg` 재검증 통과
+- [x] 브라우저 ZIP 검증 통과:
+  `PLAYWRIGHT_HEADFUL=1 node test/verify-capcut-video-room.mjs`
+  `PLAYWRIGHT_HEADFUL=1 node test/verify-capcut-issue574-browser.mjs`
+- [x] 실제 CapCut 편집기 진입 확인:
+  main timeline mirror scaffold를 갖춘 direct draft에서 홈이 아닌 편집 타임라인 화면으로 진입했고, CapCut 메인 프로세스가 실제 `materials/video/verify_video_room.mp4` 파일 핸들을 열었음
+- [x] 사용자 수동 확인:
+  직접 눌러봤을 때 육안상 재생이 정상 동작한다고 확인받음
+
 ### [2026-03-20] NLE 내보내기 4이슈 수정 (#622 #610 #575 #589)
 - [x] `nleExportService.ts` — **#622** CapCut SRT 타이밍을 `source` → `timeline`으로 변경, 원본시간 SRT 별도 제공
 - [x] `nleExportService.ts` — **#610** CapCut ZIP 내 모든 파일을 `projectId/` 폴더에 배치 (영상분석실 + 편집실 모두)
@@ -68,6 +91,10 @@
 - [x] `types.ts` — NLE motion keyframe/track 타입 추가
 - [x] `verify-editroom-motion-export-browser.mjs` — 브라우저에서 실제 ZIP을 생성해 CapCut draft와 Premiere XML 내부에 모션 keyframe이 들어가는지 검증하는 회귀 테스트 추가
 - [x] 기존 브라우저 검증 스크립트(`verify-capcut-video-room.mjs`, `verify-capcut-issue574-browser.mjs`, `verify-nle-export-matrix-browser.mjs`)가 Vite 번들 namespace export도 읽도록 보정
+- [x] `nleMotionExport.ts`, `kenBurnsEngine.ts`, `nleExportService.ts` — Premiere 경로만 frame 단위 샘플링과 `FCPCurve` interpolation 힌트를 사용하도록 보강해 편집실 easing 재현도를 상향
+- [x] `verify-editroom-motion-export-browser.mjs` — Premiere XML이 `FCPCurve`와 고밀도 scale keyframe(80개 이상)을 실제로 내보내는지 검증 추가
+- [x] `nleExportService.ts` — Premiere 전용 정지 이미지를 시퀀스 해상도로 정규화하고 `Scale`에 편집실 `OVERSCALE(1.2)`를 반영해 기본 프레이밍 싱크율 상향
+- [x] `verify-editroom-motion-export-browser.mjs` — Premiere ZIP 안의 첫 정지 이미지가 `1920x1080`으로 정규화되고 첫 scale 값이 `120% 이상`인지 검증 추가
 - [x] `tsc --noEmit` + `vite build` + `rg` 재검증 통과
 - [x] 실제 검증 통과:
   `node test/verify-editroom-motion-export-browser.mjs`
