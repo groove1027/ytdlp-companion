@@ -90,6 +90,7 @@ const ACCENT_FLAGS: Record<string, string> = {
   mexican: '\uD83C\uDDF2\uD83C\uDDFD',
   argentine: '\uD83C\uDDE6\uD83C\uDDF7',
   brazilian: '\uD83C\uDDE7\uD83C\uDDF7',
+  korean: '\uD83C\uDDF0\uD83C\uDDF7',
   seoul: '\uD83C\uDDF0\uD83C\uDDF7',
   malaysian: '\uD83C\uDDF2\uD83C\uDDFE',
   istanbul: '\uD83C\uDDF9\uD83C\uDDF7',
@@ -131,7 +132,7 @@ const ACCENT_FLAGS: Record<string, string> = {
 const EL_ACCENT_KO: Record<string, string> = {
   american: '미국', british: '영국', australian: '호주', indian: '인도',
   'latin american': '라틴 아메리카', mexican: '멕시코', argentine: '아르헨티나', brazilian: '브라질',
-  seoul: '서울', malaysian: '말레이시아', istanbul: '이스탄불', 'modern standard': '표준 아랍어',
+  korean: '한국', seoul: '서울', malaysian: '말레이시아', istanbul: '이스탄불', 'modern standard': '표준 아랍어',
   oslo: '노르웨이', 'beijing mandarin': '베이징', 'taiwan mandarin': '대만',
   'singapore mandarin': '싱가포르', stockholm: '스웨덴', parisian: '파리',
   kanto: '간토', kyushu: '규슈', flemish: '벨기에', moscow: '모스크바',
@@ -196,6 +197,7 @@ const EL_DESC_KO: Record<string, string> = {
   'Crisp, Professional': '깔끔하고 전문적인',
   'Whimsical, Dreamy': '환상적이고 몽환적인',
   'Commanding Presence': '압도적인 존재감',
+  'Inviting, Professional Korean Male': '친근하고 전문적인 한국어 남성',
 };
 
 const SAMPLE_TEXTS: Record<string, string> = {

@@ -124,6 +124,10 @@ interface DownloadVideoViaProxyOptions {
   signal?: AbortSignal;
 }
 
+interface DownloadSocialVideoOptions {
+  signal?: AbortSignal;
+}
+
 interface CombinedAbortSignalContext {
   signal: AbortSignal;
   didTimeout: () => boolean;
@@ -363,6 +367,14 @@ export async function downloadVideoViaProxy(
           const reader = response.body.getReader();
           const chunks: BlobPart[] = [];
           let received = 0;
+          let lastProgress = 0;
+          const reportProgress = (value: number) => {
+            const clamped = Math.max(0, Math.min(1, value));
+            if (clamped >= 1 || clamped - lastProgress >= 0.01) {
+              lastProgress = clamped;
+              onProgress(clamped);
+            }
+          };
 
           try {
             while (true) {
@@ -374,7 +386,15 @@ export async function downloadVideoViaProxy(
               chunks.push(value);
               received += (value as Uint8Array).length;
               if (contentLength > 0) {
-                onProgress(Math.min(1, received / contentLength));
+                reportProgress(received / contentLength);
+              } else {
+                // Content-Length가 없으면 byte 누적 기반 의사 진행률(최대 95%) 표시
+                // 초반 급상승을 피하기 위해 완만한 지수 함수 사용
+                const pseudoProgress = Math.min(
+                  0.95,
+                  0.05 + (1 - Math.exp(-received / (1024 * 1024 * 20))) * 0.9,
+                );
+                reportProgress(pseudoProgress);
               }
             }
           } catch (streamError) {
@@ -386,7 +406,7 @@ export async function downloadVideoViaProxy(
             throw streamError;
           }
 
-          onProgress(1);
+          reportProgress(1);
           return { blob: new Blob(chunks, { type: 'video/mp4' }), info: info || defaultInfo };
         }
 
@@ -541,51 +561,72 @@ export async function downloadSocialVideo(
   url: string,
   quality: VideoQuality = '720p',
   onProgress?: (progress: number) => void,
+  options?: DownloadSocialVideoOptions,
 ): Promise<{ blob: Blob; title: string }> {
   const baseUrl = getApiBaseUrl();
   const apiKey = getApiKey();
   const proxyUrl = `${baseUrl.replace(/\/$/, '')}/api/social/download`;
+  const abortContext = createCombinedAbortSignalContext(options?.signal, 300_000);
 
-  const response = await monitoredFetch(proxyUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(apiKey ? { 'X-API-Key': apiKey } : {}),
-    },
-    body: JSON.stringify({ url, quality }),
-    signal: AbortSignal.timeout(300_000), // 5분 — 소셜 영상 대응
-  });
+  try {
+    const response = await monitoredFetch(proxyUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(apiKey ? { 'X-API-Key': apiKey } : {}),
+      },
+      body: JSON.stringify({ url, quality }),
+      signal: abortContext.signal, // 5분 타임아웃 + 외부 취소 신호 결합
+    });
 
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
-    throw new Error(body.error || `다운로드 실패 (${response.status})`);
-  }
-
-  // Content-Disposition에서 파일명 추출
-  const disposition = response.headers.get('Content-Disposition') || '';
-  const filenameMatch = disposition.match(/filename="?([^"]+)"?/);
-  const title = filenameMatch ? decodeURIComponent(filenameMatch[1]).replace(/\.mp4$/, '') : 'download';
-
-  if (onProgress && response.body) {
-    const contentLength = parseInt(response.headers.get('Content-Length') || '0', 10);
-    const reader = response.body.getReader();
-    const chunks: BlobPart[] = [];
-    let received = 0;
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      chunks.push(value);
-      received += (value as Uint8Array).length;
-      if (contentLength > 0) {
-        onProgress(received / contentLength);
-      }
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
+      throw new Error(body.error || `다운로드 실패 (${response.status})`);
     }
 
-    return { blob: new Blob(chunks, { type: 'video/mp4' }), title };
-  }
+    // Content-Disposition에서 파일명 추출
+    const disposition = response.headers.get('Content-Disposition') || '';
+    const filenameMatch = disposition.match(/filename="?([^"]+)"?/);
+    const title = filenameMatch ? decodeURIComponent(filenameMatch[1]).replace(/\.mp4$/, '') : 'download';
 
-  return { blob: await response.blob(), title };
+    if (onProgress && response.body) {
+      const contentLength = parseInt(response.headers.get('Content-Length') || '0', 10);
+      const reader = response.body.getReader();
+      const chunks: BlobPart[] = [];
+      let received = 0;
+
+      try {
+        while (true) {
+          if (abortContext.signal.aborted) {
+            throw createAbortError();
+          }
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          received += (value as Uint8Array).length;
+          if (contentLength > 0) {
+            onProgress(Math.min(1, received / contentLength));
+          }
+        }
+      } catch (streamError) {
+        try {
+          await reader.cancel();
+        } catch (cancelError) {
+          logger.trackSwallowedError('ytdlpApiService:downloadSocialVideo:reader.cancel', cancelError);
+        }
+        throw streamError;
+      }
+
+      onProgress(1);
+      return { blob: new Blob(chunks, { type: 'video/mp4' }), title };
+    }
+
+    const blob = await response.blob();
+    if (onProgress) onProgress(1);
+    return { blob, title };
+  } finally {
+    abortContext.dispose();
+  }
 }
 
 /**

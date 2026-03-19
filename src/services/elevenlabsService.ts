@@ -106,6 +106,8 @@ const VALID_KIE_VOICES = new Set([
   'HgyIHe81F3nXywNwkraY', 'AeRdCCKzvd23BpJoofzx', 'LruHrtVF6PSyGItzMNHS',
   'Qggl4b0xRMiqOwhPtVWT', 'zA6D7RyKdc2EClouEMkP', '1wGbFxmAM3Fgw63G1zZJ',
   'hqfrgApggtO1785R4Fsn', 'sH0WdfE5fsKuM2otdQZr', 'MJ0RnG71ty4LH3dvNfSd',
+  // [FIX #580] 준박 (Joon Park) 한국어 커뮤니티 음성 추가
+  '7Nah3cbXKVmGX7gQUuwz',
 ]);
 
 /** 단일 청크 TTS 생성 — dialogue 배열 포맷 사용 */
@@ -282,7 +284,7 @@ export interface ElevenLabsVoice {
 
 /**
  * ElevenLabs Dialogue V3 지원 음성 목록
- * 프리메이드 21개 + KIE API 지원 커뮤니티 105개 = 총 126개
+ * 프리메이드 21개 + KIE API 지원 커뮤니티 106개 = 총 127개
  * [FIX #363] KIE API에서 지원하지 않는 커뮤니티 음성 366개 제거 — 사용자에게 오류 없는 목록만 표시
  */
 export const ELEVENLABS_VOICES: ElevenLabsVoice[] = [
@@ -415,6 +417,8 @@ export const ELEVENLABS_VOICES: ElevenLabsVoice[] = [
   { id: 'hqfrgApggtO1785R4Fsn', name: 'Theodore HQ', gender: 'male', accent: '', description: 'Serene and Grounded', useCase: '', age: '', previewUrl: 'https://static.aiquickdraw.com/elevenlabs/voice/hqfrgApggtO1785R4Fsn.mp3' },
   { id: 'sH0WdfE5fsKuM2otdQZr', name: 'Koraly', gender: 'female', accent: '', description: 'Soft-spoken and Gentle', useCase: '', age: '', previewUrl: 'https://static.aiquickdraw.com/elevenlabs/voice/sH0WdfE5fsKuM2otdQZr.mp3' },
   { id: 'MJ0RnG71ty4LH3dvNfSd', name: 'Leon', gender: 'male', accent: '', description: 'Soothing and Grounded', useCase: '', age: '', previewUrl: 'https://static.aiquickdraw.com/elevenlabs/voice/MJ0RnG71ty4LH3dvNfSd.mp3' },
+  // [FIX #580] 준박 (Joon Park) — 한국어 남성 커뮤니티 음성
+  { id: '7Nah3cbXKVmGX7gQUuwz', name: 'Joon Park', gender: 'male', accent: 'korean', description: 'Inviting, Professional Korean Male', useCase: 'conversational', age: 'young', previewUrl: 'https://static.aiquickdraw.com/elevenlabs/voice/7Nah3cbXKVmGX7gQUuwz.mp3' },
 ];
 
 /** ElevenLabs 음성 이름 → 한국어 표기 매핑 (프리메이드 + KIE 커뮤니티) */
@@ -460,6 +464,8 @@ export const EL_NAME_KO: Record<string, string> = {
   Nathaniel: '나다니엘', Benjamin: '벤자민', Clara: '클라라',
   AImee: '에이미', Allison: '앨리슨', 'Theodore HQ': '테오도르 HQ',
   Koraly: '코랄리', Leon: '레온',
+  // [FIX #580] 준박 한국어 음성
+  'Joon Park': '준박',
 };
 
 export const elNameKo = (name: string): string => {
