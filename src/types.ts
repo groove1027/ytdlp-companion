@@ -432,6 +432,7 @@ export interface ProjectConfig {
   characterAppearance?: CharacterAppearance;
   
   isMixedMedia?: boolean;
+  customStyleNote?: string;
 
   estimatedScenes?: number; // [NEW] 예상 컷수 → parseScriptToScenes에 전달하여 강제 반영
   targetSceneCount?: number | null; // [FIX #382] 사용자 수동 목표 컷수 — estimatedScenes보다 우선
@@ -1425,6 +1426,32 @@ export interface SubtitleSegment {
   text: string;
   startTime: number;
   endTime: number;
+}
+
+export interface LayeredSubtitleSegment extends SubtitleSegment {
+  lineId: string;
+  layerKind: 'dialogue' | 'effect';
+}
+
+export interface NarrationSyncSceneTiming {
+  sceneIndex: number;
+  sourceStartSec: number;
+  sourceEndSec: number;
+  sourceDurationSec: number;
+  narrationDurationSec: number;
+  targetDurationSec: number;
+  autoSpeedFactor: number;
+  trimStartSec: number;
+  trimEndSec: number;
+  timelineStartSec: number;
+  timelineEndSec: number;
+  subtitleSegments: LayeredSubtitleSegment[];
+  effectSubtitleSegments: LayeredSubtitleSegment[];
+}
+
+export interface NarrationSyncTimeline {
+  scenes: NarrationSyncSceneTiming[];
+  totalDurationSec: number;
 }
 
 export interface SceneSubtitleConfig {

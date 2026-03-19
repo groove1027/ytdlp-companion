@@ -8,6 +8,14 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-19] #603 이미지/영상 레퍼런스 저장 누락 수정
+- [x] `types.ts` — 저장 중인 `customStyleNote` 필드를 `ProjectConfig`에 반영하고, 현재 작업 트리의 `narrationSyncService.ts`가 참조하는 자막/타임라인 타입 export를 보강해 검증이 막히지 않도록 정리
+- [x] `useAutoSave.ts` — 자동저장 fingerprint에 이미지/영상 설정(`styleReferenceImages`, 비주얼 스타일, 구글 레퍼런스 모드, 대사/컷수 옵션, 캐릭터 메타데이터 등)을 포함해 레퍼런스만 바꾼 경우에도 저장이 스킵되지 않도록 수정
+- [x] `imageVideoStore.ts` — 스타일 레퍼런스 이미지 추가/삭제/교체 시 `projectStore.config`를 즉시 동기화해 업로드 직후 새로고침/탭 종료에도 저장 누락 가능성을 줄임
+- [x] `projectStore.ts` — 프로젝트 로드 시 `customStyleNote`도 함께 복원하도록 누락 필드를 보강
+- [x] `tsc --noEmit` + `vite build` + `rg` 재검증 3회 루프 통과
+- [x] 커밋 + 푸시 + Cloudflare Pages 배포 완료
+
 ### [2026-03-19] 배포 직전 최종 검증 추가 수정
 - [x] `ScriptWriterTab.tsx` — 대본작성 탭 AI 단락 분석 응답에서 JSON 문자열만 추출한 뒤 배열로 다시 파싱하도록 보강하여, AI 결과가 항상 버려지고 로컬 분할로만 떨어지던 문제 수정
 - [x] `PptMasterTab.tsx` — PPT 이미지 일괄 ZIP 다운로드의 raw `fetch()`를 `monitoredFetch()`로 교체해 프로젝트 네트워크 규칙 재준수

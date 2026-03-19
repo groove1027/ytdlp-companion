@@ -56,17 +56,24 @@ let _projectStoreRef: any = null;
 import('./projectStore').then(m => { _projectStoreRef = m.useProjectStore; }).catch(() => {});
 const getProjectStore = () => _projectStoreRef;
 
-const syncToProjectConfig = () => {
-  // requestAnimationFrame으로 현재 렌더 사이클 밖에서 실행 (Zustand 업데이트 충돌 방지)
-  requestAnimationFrame(() => {
-    const ps = getProjectStore();
-    if (!ps) return;
-    const { style, characters, enableWebSearch, isMultiCharacter, dialogueTone, referenceDialogue, dialogueMode, customStyleNote, targetSceneCount, styleReferenceImages, enableGoogleReference } = useImageVideoStore.getState();
-    ps.getState().setConfig((prev: any) => {
-      if (!prev) return prev;
-      return { ...prev, selectedVisualStyle: style, characters, enableWebSearch, isMultiCharacter, dialogueTone, referenceDialogue, dialogueMode, customStyleNote, targetSceneCount, styleReferenceImages, enableGoogleReference };
-    });
+const applyProjectConfigSync = () => {
+  const ps = getProjectStore();
+  if (!ps) return;
+  const { style, characters, enableWebSearch, isMultiCharacter, dialogueTone, referenceDialogue, dialogueMode, customStyleNote, targetSceneCount, styleReferenceImages, enableGoogleReference } = useImageVideoStore.getState();
+  ps.getState().setConfig((prev: any) => {
+    if (!prev) return prev;
+    return { ...prev, selectedVisualStyle: style, characters, enableWebSearch, isMultiCharacter, dialogueTone, referenceDialogue, dialogueMode, customStyleNote, targetSceneCount, styleReferenceImages, enableGoogleReference };
   });
+};
+
+const syncToProjectConfig = (options?: { immediate?: boolean }) => {
+  if (options?.immediate || typeof requestAnimationFrame !== 'function') {
+    applyProjectConfigSync();
+    return;
+  }
+
+  // requestAnimationFrame으로 현재 렌더 사이클 밖에서 실행 (Zustand 업데이트 충돌 방지)
+  requestAnimationFrame(applyProjectConfigSync);
 };
 
 export const useImageVideoStore = create<ImageVideoStore>((set) => ({
@@ -92,9 +99,9 @@ export const useImageVideoStore = create<ImageVideoStore>((set) => ({
   setReferenceDialogue: (v) => { set({ referenceDialogue: v }); syncToProjectConfig(); },
   setDialogueMode: (v) => { const prev = useImageVideoStore.getState().dialogueMode; logger.trackSettingChange('iv.dialogueMode', prev, v); set({ dialogueMode: v }); syncToProjectConfig(); },
   setTargetSceneCount: (v) => { const prev = useImageVideoStore.getState().targetSceneCount; logger.trackSettingChange('iv.targetSceneCount', prev, v); set({ targetSceneCount: v }); syncToProjectConfig(); },
-  setStyleReferenceImages: (v) => { set({ styleReferenceImages: v }); syncToProjectConfig(); },
-  addStyleReferenceImage: (img) => { set((s) => ({ styleReferenceImages: [...s.styleReferenceImages, img] })); syncToProjectConfig(); },
-  removeStyleReferenceImage: (index) => { set((s) => ({ styleReferenceImages: s.styleReferenceImages.filter((_, i) => i !== index) })); syncToProjectConfig(); },
+  setStyleReferenceImages: (v) => { set({ styleReferenceImages: v }); syncToProjectConfig({ immediate: true }); },
+  addStyleReferenceImage: (img) => { set((s) => ({ styleReferenceImages: [...s.styleReferenceImages, img] })); syncToProjectConfig({ immediate: true }); },
+  removeStyleReferenceImage: (index) => { set((s) => ({ styleReferenceImages: s.styleReferenceImages.filter((_, i) => i !== index) })); syncToProjectConfig({ immediate: true }); },
   setEnableGoogleReference: (v) => { const prev = useImageVideoStore.getState().enableGoogleReference; logger.trackSettingChange('iv.googleRef', prev, v); if (!v) cancelAutoApply(); set({ enableGoogleReference: v }); syncToProjectConfig(); },
   setCharacters: (chars) => {
     set((s) => ({ characters: typeof chars === 'function' ? chars(s.characters) : chars }));

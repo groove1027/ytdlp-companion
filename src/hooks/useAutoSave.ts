@@ -12,6 +12,91 @@ import type { Scene, ProjectConfig, ProjectData, ScriptWriterDraftState } from '
 const AUTO_SAVE_DEBOUNCE_MS = 5000;
 const PERIODIC_SAVE_MS = 30_000; // 30초 주기 안전망
 
+const buildStringFingerprint = (value?: string | null): string => {
+  const normalized = value ?? '';
+  if (!normalized) return '0:0:0:0';
+  const middleIndex = Math.floor(normalized.length / 2);
+  return [
+    normalized.length,
+    normalized.charCodeAt(0) || 0,
+    normalized.charCodeAt(middleIndex) || 0,
+    normalized.charCodeAt(normalized.length - 1) || 0,
+  ].join(':');
+};
+
+const buildStringArrayFingerprint = (values?: string[] | null): string =>
+  values?.map((value, index) => `${index}-${buildStringFingerprint(value)}`).join(',') || '';
+
+const buildCharacterFingerprint = (config: ProjectConfig | null): string =>
+  config?.characters?.map((character) => {
+    const imageSource = character.imageUrl || character.imageBase64 || '';
+    return [
+      character.id,
+      buildStringFingerprint(character.label),
+      buildStringFingerprint(imageSource),
+      buildStringFingerprint(character.analysisStyle),
+      buildStringFingerprint(character.analysisCharacter),
+      buildStringFingerprint(character.analysisResult),
+    ].join(':');
+  }).join('|') || '';
+
+const buildConfigFingerprint = (config: ProjectConfig | null): string => {
+  if (!config) return 'null';
+
+  const rawTranscriptSegments = config.rawUploadedTranscriptSegments;
+  const rawTranscriptLast = rawTranscriptSegments && rawTranscriptSegments.length > 0
+    ? rawTranscriptSegments[rawTranscriptSegments.length - 1]
+    : undefined;
+  const pptFingerprint = config.pptSlides?.map((slide) => [
+    slide.slideNumber,
+    buildStringFingerprint(slide.title),
+    buildStringFingerprint(slide.body),
+    slide.keyPoints.length,
+    buildStringFingerprint(slide.visualHint),
+    buildStringFingerprint(slide.imageUrl),
+  ].join(':')).join('|') || '';
+
+  return [
+    config.mode,
+    config.videoFormat,
+    config.aspectRatio,
+    config.imageModel,
+    config.videoModel || '',
+    config.voice || '',
+    buildStringFingerprint(config.script),
+    buildStringFingerprint(config.selectedVisualStyle),
+    buildStringFingerprint(config.atmosphere),
+    buildStringFingerprint(config.customStyleNote),
+    buildStringFingerprint(config.referenceDialogue),
+    buildStringFingerprint(config.detectedStyleDescription),
+    String(config.enableWebSearch ?? ''),
+    String(config.isMultiCharacter ?? ''),
+    String(config.dialogueMode ?? ''),
+    String(config.dialogueTone || ''),
+    String(config.targetSceneCount ?? ''),
+    String(config.smartSplit ?? ''),
+    String(config.allowInfographics ?? ''),
+    String(config.suppressText ?? ''),
+    String(config.isMixedMedia ?? ''),
+    String(config.enableGoogleReference ?? ''),
+    String(config.longFormSplitType || ''),
+    buildStringArrayFingerprint(config.styleReferenceImages),
+    buildStringFingerprint(config.mergedAudioUrl),
+    String(config.narrationSource || ''),
+    Math.round(config.sourceNarrationDurationSec || 0),
+    Math.round(config.transcriptDurationSec || 0),
+    `rt${rawTranscriptSegments?.length || 0}`,
+    Math.round(rawTranscriptSegments?.[0]?.startTime || 0),
+    Math.round(rawTranscriptLast?.endTime || 0),
+    `ppt${config.pptSlides?.length || 0}`,
+    buildStringFingerprint(config.pptContentStyleId),
+    buildStringFingerprint(config.pptDesignStyleId),
+    buildStringFingerprint(config.pptDetailLevel),
+    String(config.pptSlideCount || ''),
+    pptFingerprint,
+  ].join('::');
+};
+
 /**
  * 장면+설정의 빠른 핑거프린트 — 변경 감지용.
  * 기존 dirty check(장면 수 + 이미지/영상 카운트)보다 훨씬 포괄적:
@@ -24,21 +109,12 @@ const computeFingerprint = (
   projectTitle: string,
   scriptWriterState: ScriptWriterDraftState,
 ): string => {
-  const rawTranscriptSegments = config?.rawUploadedTranscriptSegments;
-  const rawTranscriptLast = rawTranscriptSegments && rawTranscriptSegments.length > 0
-    ? rawTranscriptSegments[rawTranscriptSegments.length - 1]
-    : undefined;
   const sceneFp = scenes.map(s =>
     `${s.id}:${(s.scriptText || '').length}:${s.scriptText?.charCodeAt(0) || 0}:${s.imageUrl ? 'I' : '-'}:${s.videoUrl ? 'V' : '-'}:${s.audioUrl ? 'A' : '-'}:${(s.visualPrompt || '').length}:${s.audioDuration || 0}`
   ).join('|');
-  const cfgFp = config
-    ? `${config.mode}:${config.videoFormat}:${config.aspectRatio}:${config.imageModel}:${(config.script || '').length}:${config.mergedAudioUrl ? 'M' : '-'}:${config.narrationSource || '-'}:${Math.round(config.sourceNarrationDurationSec || 0)}:${Math.round(config.transcriptDurationSec || 0)}:rt${rawTranscriptSegments?.length || 0}:${Math.round(rawTranscriptSegments?.[0]?.startTime || 0)}:${Math.round(rawTranscriptLast?.endTime || 0)}:ppt${config.pptSlides?.length || 0}:${config.pptContentStyleId || '-'}:${config.pptDesignStyleId || '-'}`
-    : 'null';
-  // [FIX #403] 캐릭터 분석 편집도 dirty 감지 — 편집 후 자동저장되도록
-  // sceneFp와 동일 패턴: length + charCodeAt(0) — 같은 길이라도 내용 변경 감지
-  const charFp = config?.characters?.map(c =>
-    `${c.id}:${(c.analysisStyle || '').length}:${(c.analysisStyle || '').charCodeAt(0) || 0}:${(c.analysisCharacter || '').length}:${(c.analysisCharacter || '').charCodeAt(0) || 0}`
-  ).join(',') || '';
+  const cfgFp = buildConfigFingerprint(config);
+  // [FIX #603] 이미지/영상 설정과 캐릭터 메타 변경도 dirty 감지
+  const charFp = buildCharacterFingerprint(config);
   // [FIX #399] 자막 편집도 dirty 감지 — 자막만 수정해도 자동저장 트리거
   const subFp = (() => {
     try {

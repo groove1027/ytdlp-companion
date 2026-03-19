@@ -502,6 +502,7 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
         dialogueTone: project.config?.dialogueTone,
         referenceDialogue: project.config?.referenceDialogue,
         dialogueMode: project.config?.dialogueMode,
+        customStyleNote: project.config?.customStyleNote,
         targetSceneCount: project.config?.targetSceneCount ?? null, // [FIX #382] 저장된 목표 컷수 복원
         styleReferenceImages: project.config?.styleReferenceImages, // [#391] 글로벌 스타일 레퍼런스 복원
         enableGoogleReference: project.config?.enableGoogleReference, // [NEW] 구글 레퍼런스 모드 복원
