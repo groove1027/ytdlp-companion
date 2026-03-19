@@ -1392,36 +1392,48 @@ const parseTimedtextXmlToPlainText = (xml: string): string => {
     return textLines.join(' ');
 };
 
-/** YouTube timedtext XML (srv3) 파싱 — 타임코드 보존 버전 (영상 분석 AI 입력용) */
+/** YouTube timedtext XML 파싱 — 타임코드 보존 버전 (영상 분석 AI 입력용)
+ *  srv1: <text start="초" dur="초">텍스트</text>
+ *  srv3: <p t="밀리초" d="밀리초">텍스트</p>
+ *  두 포맷 모두 지원 */
 const parseTimedtextXmlWithTimecodes = (xml: string): { start: number; dur: number; text: string }[] => {
     const cues: { start: number; dur: number; text: string }[] = [];
+    const cleanHtml = (s: string) => s
+        .replace(/<[^>]+>/g, '')
+        .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, ' ')
+        .replace(/\n/g, ' ').trim();
 
-    // <text start="1.28" dur="3.76">텍스트</text> 패턴
-    const textRegex = /<text\s+start="([\d.]+)"\s+dur="([\d.]+)"[^>]*>([\s\S]*?)<\/text>/gi;
-    let match: RegExpExecArray | null;
     let prevText = '';
-    while ((match = textRegex.exec(xml)) !== null) {
-        const start = parseFloat(match[1]);
-        const dur = parseFloat(match[2]);
-        const raw = match[3]
-            .replace(/<[^>]+>/g, '')
-            .replace(/&amp;/g, '&')
-            .replace(/&lt;/g, '<')
-            .replace(/&gt;/g, '>')
-            .replace(/&quot;/g, '"')
-            .replace(/&#39;/g, "'")
-            .replace(/&nbsp;/g, ' ')
-            .replace(/\n/g, ' ')
-            .trim();
+
+    // srv1 포맷: <text start="1.28" dur="3.76">텍스트</text> (초 단위)
+    const srv1Regex = /<text\s+start="([\d.]+)"\s+dur="([\d.]+)"[^>]*>([\s\S]*?)<\/text>/gi;
+    let match: RegExpExecArray | null;
+    while ((match = srv1Regex.exec(xml)) !== null) {
+        const raw = cleanHtml(match[3]);
         if (raw && raw !== prevText) {
-            cues.push({ start, dur, text: raw });
+            cues.push({ start: parseFloat(match[1]), dur: parseFloat(match[2]), text: raw });
             prevText = raw;
         }
     }
+
+    // srv3 포맷: <p t="1280" d="3760">텍스트</p> (밀리초 단위)
+    if (cues.length === 0) {
+        const srv3Regex = /<p\s[^>]*?t="(\d+)"[^>]*?d="(\d+)"[^>]*>([\s\S]*?)<\/p>/gi;
+        while ((match = srv3Regex.exec(xml)) !== null) {
+            const raw = cleanHtml(match[3]);
+            if (raw && raw !== prevText) {
+                cues.push({ start: parseInt(match[1]) / 1000, dur: parseInt(match[2]) / 1000, text: raw });
+                prevText = raw;
+            }
+        }
+    }
+
     return cues;
 };
 
-/** 타임코드 보존 cue 배열 → Gemini 입력용 포맷 문자열 */
+/** 타임코드 보존 cue 배열 → Gemini 입력용 포맷 문자열
+ *  롱폼(300+ cue) 시 균등 샘플링으로 프롬프트 토큰 폭증 방지 */
 const formatTimedCuesForAI = (cues: { start: number; dur: number; text: string }[]): string => {
     if (cues.length === 0) return '';
     const fmtTime = (sec: number): string => {
@@ -1429,10 +1441,29 @@ const formatTimedCuesForAI = (cues: { start: number; dur: number; text: string }
         const s = sec % 60;
         return `${m}:${s.toFixed(1).padStart(4, '0')}`;
     };
-    const lines = cues.map(c => `[${fmtTime(c.start)}~${fmtTime(c.start + c.dur)}] ${c.text}`);
+
+    // 롱폼 토큰 제한: 최대 300 cue (약 10분 영상 기준 충분, 이상은 균등 샘플링)
+    const MAX_CUES = 300;
+    let selectedCues = cues;
+    if (cues.length > MAX_CUES) {
+        const step = cues.length / MAX_CUES;
+        selectedCues = [];
+        for (let i = 0; i < MAX_CUES; i++) {
+            selectedCues.push(cues[Math.floor(i * step)]);
+        }
+        // 마지막 cue도 포함 (영상 끝부분 커버)
+        if (selectedCues[selectedCues.length - 1] !== cues[cues.length - 1]) {
+            selectedCues.push(cues[cues.length - 1]);
+        }
+    }
+
+    const lines = selectedCues.map(c => `[${fmtTime(c.start)}~${fmtTime(c.start + c.dur)}] ${c.text}`);
+    const sampledNote = cues.length > MAX_CUES
+        ? `\n(원본 ${cues.length}개 자막 중 ${selectedCues.length}개를 균등 샘플링하여 표시)\n`
+        : '';
     return `## 영상 자막 전사 (YouTube 자동/수동 자막 — 정확한 타임코드 포함)\n` +
         `아래 각 줄의 [시작~끝] 타임코드는 원본 영상의 실제 시간입니다.\n` +
-        `편집 테이블의 타임코드 소스를 작성할 때, 반드시 이 실제 타임코드를 기준으로 하세요.\n\n` +
+        `편집 테이블의 타임코드 소스를 작성할 때, 반드시 이 실제 타임코드를 기준으로 하세요.${sampledNote}\n` +
         lines.join('\n');
 };
 
