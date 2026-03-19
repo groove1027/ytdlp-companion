@@ -1,11 +1,11 @@
 /**
  * Google 이미지 검색 레퍼런스 서비스
- * - Google Custom Search JSON API (무료 100회/일)
+ * - Google Images HTML 스크래핑 (Cloudflare Pages 프록시 경유)
  * - 대본 맥락에서 검색어 자동 생성
  * - 비용 0원 — AI 이미지 생성 API 호출 없음
  */
 
-import { monitoredFetch, getYoutubeApiKey } from './apiService';
+import { monitoredFetch } from './apiService';
 import { logger } from './LoggerService';
 import type { Scene } from '../types';
 
@@ -14,10 +14,26 @@ let _projectStoreRef: { getState: () => { scenes: Scene[] } } | null = null;
 import('../stores/projectStore').then(m => { _projectStoreRef = m.useProjectStore; }).catch(() => {});
 const getLatestScenes = (): Scene[] => _projectStoreRef?.getState().scenes ?? [];
 
-// ─── Google CSE 설정 ───
-const CSE_API_URL = 'https://www.googleapis.com/customsearch/v1';
-// 공개 CSE ID — 이미지 검색용 (전체 웹 검색)
-const DEFAULT_CSE_CX = '00a27b5dc0c2a4200';
+// ─── Google Images 설정 ───
+const PROXY_PATH = '/api/google-proxy';
+const GOOGLE_IMAGE_SEARCH_URL = 'https://www.google.com/search';
+const GOOGLE_IMAGE_PAGE_SIZE = 100;
+const GOOGLE_IMAGE_RESULT_WINDOW = 10;
+const GOOGLE_IMAGE_HEADERS = {
+  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+  'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+  'Cache-Control': 'no-cache',
+  'Pragma': 'no-cache',
+  'Upgrade-Insecure-Requests': '1',
+  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
+} as const;
+const GOOGLE_IMG_SIZE_MAP: Record<string, string> = {
+  medium: 'm',
+  large: 'l',
+  xlarge: '2mp',
+  xxlarge: '4mp',
+  huge: '6mp',
+};
 
 // ─── 타입 ───
 export interface GoogleImageResult {
@@ -36,6 +52,11 @@ export interface GoogleSearchResponse {
   totalResults: number;
   query: string;
 }
+
+const GOOGLE_IMGRES_REGEX = /\/imgres\?imgurl=[^"'<>\\\s]+/g;
+const GOOGLE_THUMBNAIL_REGEX = /https?:\/\/encrypted-tbn0\.gstatic\.com\/images\?q=tbn:[^"'<>\\\s]+/g;
+const GOOGLE_AF_INIT_REGEX = /AF_initDataCallback\(([\s\S]*?)\);/g;
+const GOOGLE_HTTP_DIMENSION_REGEX = /\["((?:https?:)?\/\/[^"]+)",(\d+),(\d+)\]/g;
 
 // ─── 검색어 생성 로직 ───
 
@@ -94,18 +115,293 @@ export function buildSearchQuery(
   return query || '풍경 사진';
 }
 
-// ─── Google CSE API 호출 ───
-
-/** CSE API 키 조회 (apiService.ts의 공식 getter 사용 — 키 풀 회전 + sanitize 포함) */
-function getCseApiKey(): string {
-  return getYoutubeApiKey();
+function getGoogleLocale(): { hl: string; gl: string } {
+  const locale = typeof navigator !== 'undefined' ? navigator.language.toLowerCase() : 'ko-kr';
+  return locale.startsWith('ko') ? { hl: 'ko', gl: 'kr' } : { hl: 'en', gl: 'us' };
 }
 
-/** CSE cx 조회 */
-function getCseCx(): string {
-  const custom = localStorage.getItem('CUSTOM_CSE_CX');
-  if (custom && custom.trim()) return custom.trim();
-  return DEFAULT_CSE_CX;
+function decodeGoogleValue(value: string | null | undefined): string {
+  if (!value) return '';
+  let decoded = value
+    .trim()
+    .replace(/^['"]|['"]$/g, '')
+    .replace(/&amp;/g, '&')
+    .replace(/\\u003d/gi, '=')
+    .replace(/\\u0026/gi, '&')
+    .replace(/\\u002f/gi, '/')
+    .replace(/\\u003f/gi, '?')
+    .replace(/\\x3d/gi, '=')
+    .replace(/\\x26/gi, '&')
+    .replace(/\\\//g, '/');
+
+  for (let i = 0; i < 3; i++) {
+    try {
+      const next = decodeURIComponent(decoded);
+      if (next === decoded) break;
+      decoded = next;
+    } catch {
+      break;
+    }
+  }
+
+  return decoded;
+}
+
+function normalizeScriptBlock(value: string): string {
+  return value
+    .replace(/\\u003d/gi, '=')
+    .replace(/\\u0026/gi, '&')
+    .replace(/\\u002f/gi, '/')
+    .replace(/\\u003f/gi, '?')
+    .replace(/\\x3d/gi, '=')
+    .replace(/\\x26/gi, '&')
+    .replace(/\\\//g, '/');
+}
+
+function isHttpUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+function normalizeUrl(value: string | null | undefined): string {
+  const decoded = decodeGoogleValue(value);
+  if (!decoded) return '';
+  if (decoded.startsWith('//')) return `https:${decoded}`;
+  if (decoded.startsWith('/')) {
+    try {
+      return new URL(decoded, 'https://www.google.com').toString();
+    } catch {
+      return '';
+    }
+  }
+  return isHttpUrl(decoded) ? decoded : '';
+}
+
+function isUsefulImageUrl(value: string): boolean {
+  return isHttpUrl(value)
+    && !value.startsWith('data:')
+    && !value.includes('/images/branding/searchlogo');
+}
+
+function cleanText(value: string | null | undefined): string {
+  return (value || '').replace(/\s+/g, ' ').trim();
+}
+
+function getDisplayLink(contextLink: string, link: string): string {
+  try {
+    return new URL(contextLink || link).hostname.replace(/^www\./, '');
+  } catch {
+    return '';
+  }
+}
+
+function buildSearchUrl(query: string, start: number, imgSize: string): string {
+  const safeStart = Math.max(1, start);
+  const { hl, gl } = getGoogleLocale();
+  const params = new URLSearchParams({
+    q: query,
+    tbm: 'isch',
+    safe: 'active',
+    hl,
+    gl,
+    ijn: String(Math.floor((safeStart - 1) / GOOGLE_IMAGE_PAGE_SIZE)),
+    start: String(safeStart - 1),
+  });
+
+  const size = GOOGLE_IMG_SIZE_MAP[imgSize];
+  if (size) params.set('imgsz', size);
+
+  return `${GOOGLE_IMAGE_SEARCH_URL}?${params.toString()}`;
+}
+
+async function proxyFetchGoogleSearch(targetUrl: string): Promise<Response> {
+  return monitoredFetch(PROXY_PATH, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      targetUrl,
+      method: 'GET',
+      headers: GOOGLE_IMAGE_HEADERS,
+    }),
+  });
+}
+
+function extractThumbnailFromElement(anchor: Element): string {
+  const images = Array.from(anchor.querySelectorAll('img'));
+  for (const image of images) {
+    const srcSet = image.getAttribute('srcset')?.split(',')[0]?.trim().split(/\s+/)[0] || '';
+    const candidates = [
+      image.getAttribute('data-src'),
+      image.getAttribute('data-iurl'),
+      image.getAttribute('src'),
+      srcSet,
+    ];
+
+    for (const candidate of candidates) {
+      const normalized = normalizeUrl(candidate);
+      if (isUsefulImageUrl(normalized)) return normalized;
+    }
+  }
+
+  return '';
+}
+
+function parseImgresHref(href: string | null): GoogleImageResult | null {
+  if (!href) return null;
+
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(decodeGoogleValue(href), 'https://www.google.com');
+  } catch {
+    return null;
+  }
+
+  if (parsedUrl.pathname !== '/imgres') return null;
+
+  const link = normalizeUrl(parsedUrl.searchParams.get('imgurl'));
+  if (!isUsefulImageUrl(link)) return null;
+
+  const contextLink = normalizeUrl(parsedUrl.searchParams.get('imgrefurl'));
+  const width = parseInt(parsedUrl.searchParams.get('w') || '0', 10);
+  const height = parseInt(parsedUrl.searchParams.get('h') || '0', 10);
+
+  return {
+    title: '',
+    link,
+    displayLink: getDisplayLink(contextLink, link),
+    snippet: '',
+    thumbnailLink: '',
+    contextLink,
+    width: Number.isFinite(width) ? width : 0,
+    height: Number.isFinite(height) ? height : 0,
+  };
+}
+
+function extractDomResults(doc: Document): GoogleImageResult[] {
+  const results: GoogleImageResult[] = [];
+  const seen = new Set<string>();
+  const anchors = Array.from(doc.querySelectorAll('a[href*="/imgres?"], a[href^="https://www.google.com/imgres?"]'));
+
+  for (const anchor of anchors) {
+    const parsed = parseImgresHref(anchor.getAttribute('href'));
+    if (!parsed || seen.has(parsed.link)) continue;
+
+    const title = cleanText(
+      anchor.getAttribute('title')
+      || anchor.getAttribute('aria-label')
+      || anchor.querySelector('img')?.getAttribute('alt')
+      || anchor.textContent,
+    );
+
+    results.push({
+      ...parsed,
+      title: title || parsed.displayLink,
+      snippet: title || parsed.displayLink,
+      thumbnailLink: extractThumbnailFromElement(anchor),
+    });
+    seen.add(parsed.link);
+  }
+
+  return results;
+}
+
+function pushUniqueResult(results: GoogleImageResult[], seen: Set<string>, item: GoogleImageResult): void {
+  if (!item.link || seen.has(item.link)) return;
+  results.push(item);
+  seen.add(item.link);
+}
+
+function extractRegexResults(html: string): GoogleImageResult[] {
+  const results: GoogleImageResult[] = [];
+  const seen = new Set<string>();
+  const matches = html.matchAll(GOOGLE_IMGRES_REGEX);
+
+  for (const match of matches) {
+    const parsed = parseImgresHref(match[0]);
+    if (!parsed || seen.has(parsed.link)) continue;
+
+    const start = Math.max(0, match.index || 0);
+    const chunk = html.slice(Math.max(0, start - 1800), Math.min(html.length, start + 2200));
+    const thumbnail = normalizeUrl(chunk.match(GOOGLE_THUMBNAIL_REGEX)?.[0] || '');
+
+    pushUniqueResult(results, seen, {
+      ...parsed,
+      title: parsed.displayLink || parsed.link,
+      snippet: parsed.displayLink || parsed.link,
+      thumbnailLink: isUsefulImageUrl(thumbnail) ? thumbnail : '',
+    });
+  }
+
+  return results;
+}
+
+function extractAfInitResults(html: string): GoogleImageResult[] {
+  const results: GoogleImageResult[] = [];
+  const seen = new Set<string>();
+  const scriptBlocks = Array.from(html.matchAll(GOOGLE_AF_INIT_REGEX), match => match[1]);
+
+  for (const block of scriptBlocks) {
+    const normalizedBlock = normalizeScriptBlock(block);
+    const thumbnails = Array.from(
+      new Set(
+        (normalizedBlock.match(GOOGLE_THUMBNAIL_REGEX) || [])
+          .map(url => normalizeUrl(url))
+          .filter(isUsefulImageUrl),
+      ),
+    );
+    const originals = Array.from(normalizedBlock.matchAll(GOOGLE_HTTP_DIMENSION_REGEX));
+
+    let thumbIndex = 0;
+    for (const original of originals) {
+      const link = normalizeUrl(original[1]);
+      if (!isUsefulImageUrl(link) || link.includes('gstatic.com') || seen.has(link)) continue;
+
+      const width = parseInt(original[2] || '0', 10);
+      const height = parseInt(original[3] || '0', 10);
+      const thumbnailLink = thumbnails[thumbIndex] || '';
+      thumbIndex += 1;
+
+      pushUniqueResult(results, seen, {
+        title: getDisplayLink('', link) || link,
+        link,
+        displayLink: getDisplayLink('', link),
+        snippet: getDisplayLink('', link),
+        thumbnailLink,
+        contextLink: '',
+        width: Number.isFinite(width) ? width : 0,
+        height: Number.isFinite(height) ? height : 0,
+      });
+    }
+  }
+
+  return results;
+}
+
+function mergeUniqueResults(...lists: GoogleImageResult[][]): GoogleImageResult[] {
+  const merged: GoogleImageResult[] = [];
+  const seen = new Set<string>();
+
+  for (const list of lists) {
+    for (const item of list) {
+      pushUniqueResult(merged, seen, item);
+    }
+  }
+
+  return merged;
+}
+
+function detectGoogleSearchBlock(html: string): string | null {
+  if (/unusual traffic|자동화된 요청|captcha|Our systems have detected unusual traffic/i.test(html)) {
+    return '구글이 현재 검색 요청을 차단했습니다. 잠시 후 다시 시도해주세요.';
+  }
+  if (/Before you continue to Google Search|consent\.google/i.test(html)) {
+    return '구글 동의 페이지가 반환되었습니다. 프록시 헤더를 확인한 뒤 다시 시도해주세요.';
+  }
+  return null;
 }
 
 /**
@@ -119,60 +415,41 @@ export async function searchGoogleImages(
   start: number = 1,
   imgSize: string = 'large',
 ): Promise<GoogleSearchResponse> {
-  const apiKey = getCseApiKey();
-  const cx = getCseCx();
-
-  if (!apiKey) {
-    throw new Error('Google API 키가 설정되지 않았습니다. 설정 > API 키에서 YouTube/Google API 키를 입력하세요.');
-  }
-
-  const params = new URLSearchParams({
-    key: apiKey,
-    cx,
-    q: query,
-    searchType: 'image',
-    num: '10',
-    start: String(start),
-    imgSize,
-    safe: 'active',
-  });
-
-  const url = `${CSE_API_URL}?${params.toString()}`;
+  const url = buildSearchUrl(query, start, imgSize);
   logger.info('[GoogleRef] 검색 요청', `query="${query}" start=${start}`);
 
-  const res = await monitoredFetch(url, {
-    method: 'GET',
-    headers: { 'Accept': 'application/json' },
-  });
+  const res = await proxyFetchGoogleSearch(url);
 
   if (!res.ok) {
     const errText = await res.text().catch(() => '');
     logger.error('[GoogleRef] 검색 실패', `status=${res.status} ${errText}`);
     if (res.status === 429) {
-      throw new Error('일일 검색 한도(100회)를 초과했습니다. 내일 다시 시도해주세요.');
+      throw new Error('구글 검색 요청이 너무 많아 잠시 차단되었습니다. 잠시 후 다시 시도해주세요.');
     }
     if (res.status === 403) {
-      throw new Error('Google API 키 인증에 실패했습니다. API 키를 확인해주세요.');
+      throw new Error('프록시에서 구글 이미지 검색을 차단했습니다. 프록시 허용 호스트를 확인해주세요.');
     }
     throw new Error(`구글 검색 실패 (${res.status})`);
   }
 
-  const data = await res.json();
+  const html = await res.text();
+  const blockedMessage = detectGoogleSearchBlock(html);
+  if (blockedMessage) {
+    throw new Error(blockedMessage);
+  }
 
-  const items: GoogleImageResult[] = (data.items || []).map((item: Record<string, unknown>) => ({
-    title: (item.title as string) || '',
-    link: (item.link as string) || '',
-    displayLink: (item.displayLink as string) || '',
-    snippet: (item.snippet as string) || '',
-    thumbnailLink: ((item.image as Record<string, unknown>)?.thumbnailLink as string) || '',
-    contextLink: ((item.image as Record<string, unknown>)?.contextLink as string) || '',
-    width: ((item.image as Record<string, unknown>)?.width as number) || 0,
-    height: ((item.image as Record<string, unknown>)?.height as number) || 0,
-  }));
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const allItems = mergeUniqueResults(
+    extractDomResults(doc),
+    extractRegexResults(html),
+    extractAfInitResults(html),
+  );
+  const pageOffset = (Math.max(1, start) - 1) % GOOGLE_IMAGE_PAGE_SIZE;
+  const items = allItems.slice(pageOffset, pageOffset + GOOGLE_IMAGE_RESULT_WINDOW);
 
   return {
     items,
-    totalResults: parseInt((data.searchInformation as Record<string, unknown>)?.totalResults as string || '0', 10),
+    totalResults: allItems.length,
     query,
   };
 }
