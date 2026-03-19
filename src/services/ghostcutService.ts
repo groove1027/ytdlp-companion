@@ -12,6 +12,7 @@
 import { getGhostCutKeys, monitoredFetch } from './apiService';
 import { uploadMediaToHosting } from './uploadService';
 import { logger } from './LoggerService';
+import { buildGhostCutSubmitPayload, type GhostCutLang } from './ghostcutPayload';
 
 // Cloudflare Pages Function 프록시 경유 (CORS 우회)
 const GHOSTCUT_SUBMIT_URL = '/api/ghostcut/submit';
@@ -166,9 +167,6 @@ const fetchWithRetry = async (
   throw new Error('fetchWithRetry: unreachable');
 };
 
-/** GhostCut 지원 자막 언어 코드 (공식 문서 4.1.2) */
-export type GhostCutLang = 'ko' | 'zh' | 'en' | 'all' | 'ja' | 'ar';
-
 /** 작업 제출 (callback URL 포함) */
 const submitTask = async (videoUrl: string, lang: GhostCutLang = 'ko'): Promise<{ projectId: number; taskId: number }> => {
   const { appKey, appSecret } = getGhostCutKeys();
@@ -179,23 +177,7 @@ const submitTask = async (videoUrl: string, lang: GhostCutLang = 'ko'): Promise<
   // callback URL: 현재 도메인의 /api/ghostcut/callback
   const callbackUrl = `${window.location.origin}/api/ghostcut/callback`;
 
-  const body = JSON.stringify({
-    urls: [videoUrl],
-    callback: callbackUrl,
-    needChineseOcclude: 1,   // 1=자동 텍스트 제거 (공식 문서 4.1.2 필수 파라미터)
-    videoInpaintLang: lang,  // 제거 대상 언어 (zh/en/all/ja/ko/ar 지원)
-    resolution: '1080p',
-    needCrop: 0,
-    needMask: 1,             // 워터마크/로고 마스크 제거 병행
-    needMirror: 0,
-    needRescale: 0,
-    needShift: 0,
-    needTransition: 0,
-    needTrim: 0,
-    music: 0,                // 음악 처리 비활성 (영상 길이 변경 방지)
-    musicRegion: '',
-    randomBorder: 0,
-  });
+  const body = JSON.stringify(buildGhostCutSubmitPayload(videoUrl, callbackUrl, lang));
 
   const sign = await generateSign(body, appSecret);
 

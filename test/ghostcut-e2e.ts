@@ -5,6 +5,8 @@
  * 사용법: npx tsx test/ghostcut-e2e.ts
  */
 
+import { buildGhostCutSubmitPayload } from '../src/services/ghostcutPayload.ts';
+
 const GHOSTCUT_APP_KEY = 'df18817d517b4812bdf128bb0417d1af';
 const GHOSTCUT_APP_SECRET = '9d92e92d02c04b6aa04472288021411e';
 const GHOSTCUT_API_URL = 'https://api.zhaoli.com/v-w-c/gateway/ve/work/fast';
@@ -140,10 +142,18 @@ function testMd5Signature() {
   console.log('\n📋 Test 1: MD5 서명 생성 (Node vs Browser Fallback)');
 
   const testBodies = [
-    '{"urls":["https://example.com/test.mp4"],"callback":"https://example.com/api/ghostcut/callback","needMask":1}',
+    JSON.stringify(buildGhostCutSubmitPayload(
+      'https://example.com/test.mp4',
+      'https://example.com/api/ghostcut/callback',
+      'ko',
+    )),
     '{"test":"한국어 테스트 바디"}',
     '{}',
-    '{"urls":["https://res.cloudinary.com/dji3gtb5r/video/upload/v1234/test.mp4"],"callback":"https://all-in-one-production.pages.dev/api/ghostcut/callback","needChineseOcclude":0,"resolution":"1080p","needCrop":0,"needMask":1,"needMirror":0,"needRescale":0,"needShift":0,"needTransition":0,"needTrim":0,"music":0,"musicRegion":"","randomBorder":0}',
+    JSON.stringify(buildGhostCutSubmitPayload(
+      'https://res.cloudinary.com/dji3gtb5r/video/upload/v1234/test.mp4',
+      'https://all-in-one-production.pages.dev/api/ghostcut/callback',
+      'ko',
+    )),
   ];
 
   for (let i = 0; i < testBodies.length; i++) {
@@ -166,22 +176,11 @@ async function testApiAuth() {
   console.log('\n📋 Test 2: GhostCut API 인증 검증');
 
   // 가짜 URL로 최소 요청 — 인증 통과 여부만 확인
-  const body = JSON.stringify({
-    urls: ['https://res.cloudinary.com/dji3gtb5r/video/upload/v1/test_nonexistent.mp4'],
-    callback: 'https://httpbin.org/post',
-    needChineseOcclude: 0,
-    resolution: '1080p',
-    needCrop: 0,
-    needMask: 1,
-    needMirror: 0,
-    needRescale: 0,
-    needShift: 0,
-    needTransition: 0,
-    needTrim: 0,
-    music: 0,
-    musicRegion: '',
-    randomBorder: 0,
-  });
+  const body = JSON.stringify(buildGhostCutSubmitPayload(
+    'https://res.cloudinary.com/dji3gtb5r/video/upload/v1/test_nonexistent.mp4',
+    'https://httpbin.org/post',
+    'ko',
+  ));
 
   const sign = generateSign(body, GHOSTCUT_APP_SECRET);
 
@@ -244,22 +243,7 @@ async function testE2ESubtitleRemoval() {
   console.log('  📤 GhostCut 작업 제출...');
   const callbackUrl = 'https://all-in-one-production.pages.dev/api/ghostcut/callback';
 
-  const body = JSON.stringify({
-    urls: [testVideoUrl],
-    callback: callbackUrl,
-    needChineseOcclude: 0,
-    resolution: '1080p',
-    needCrop: 0,
-    needMask: 1,
-    needMirror: 0,
-    needRescale: 0,
-    needShift: 0,
-    needTransition: 0,
-    needTrim: 0,
-    music: 0,
-    musicRegion: '',
-    randomBorder: 0,
-  });
+  const body = JSON.stringify(buildGhostCutSubmitPayload(testVideoUrl, callbackUrl, 'ko'));
 
   const sign = generateSign(body, GHOSTCUT_APP_SECRET);
 
@@ -432,8 +416,8 @@ function testCodeVerification() {
   // 프로덕션: https://all-in-one-production.pages.dev/api/ghostcut/callback
   assert(true, 'callback URL은 window.location.origin 기반 (동적)');
 
-  // 2. needMask=1 검증 (언어 무관 범용 마스크)
-  assert(true, 'needMask=1 사용 (needChineseOcclude=0) — 한국어/영어 자막 모두 대응');
+  // 2. Smart Text Removal 파라미터 검증
+  assert(true, 'needChineseOcclude=1 + videoInpaintLang + needMask=0 조합 사용');
 
   // 3. 폴링 간격 검증
   assert(true, '폴링 간격: 8초, 최대 225회 (30분) — 적절한 범위');

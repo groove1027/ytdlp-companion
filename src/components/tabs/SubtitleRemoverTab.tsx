@@ -1,11 +1,12 @@
 import React, { useState, useRef, useCallback } from 'react';
-import { removeSubtitlesWithGhostCut, type GhostCutLang } from '../../services/ghostcutService';
+import { removeSubtitlesWithGhostCut } from '../../services/ghostcutService';
 import { getGhostCutKeys } from '../../services/apiService';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
 import { useElapsedTimer, formatElapsed } from '../../hooks/useElapsedTimer';
 import { useCostStore } from '../../stores/costStore';
 // GhostCut 자막 제거 비용은 건당 고정 (PRICING 불필요)
 import { logger } from '../../services/LoggerService';
+import type { GhostCutLang } from '../../services/ghostcutPayload';
 
 const REMOVAL_TIPS = [
   '🎬 AI가 영상의 모든 프레임에서 텍스트를 탐지하고 있어요',
@@ -312,6 +313,9 @@ const SubtitleRemoverTab: React.FC = () => {
                   <option value="all">중국어+영어 동시 (Chinese & English)</option>
                   <option value="ar">아랍어 (Arabic)</option>
                 </select>
+                <p className="mt-1 text-[11px] text-gray-500">
+                  영문 워터마크나 중국어 문구가 함께 있으면 "중국어+영어 동시"로 다시 시도해보세요.
+                </p>
               </div>
             )}
 
