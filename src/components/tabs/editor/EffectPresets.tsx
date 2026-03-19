@@ -395,7 +395,7 @@ const EffectPresets: React.FC = () => {
           <style>{MOTION_KEYFRAMES}</style>
           <div className="bg-black p-3 flex justify-center">
             <div
-              className={`relative ${previewWrapClass} rounded-xl border border-gray-700 overflow-hidden bg-black`}
+              className={`relative isolate ${previewWrapClass} rounded-xl border border-gray-700 overflow-hidden bg-black`}
               style={previewAspectStyle}
             >
               {/* ★ 메인 미리보기(EditRoomTab)와 동일한 렌더링 구조:

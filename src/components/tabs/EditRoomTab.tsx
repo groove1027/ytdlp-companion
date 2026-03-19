@@ -1089,7 +1089,7 @@ const ScenePreviewPanel: React.FC<{
       <style>{PREVIEW_MOTION_KEYFRAMES}</style>
 
       {/* 메인 프리뷰 + 좌우 네비게이션 — 비율 반응형 */}
-      <div ref={previewContainerRef} className="relative bg-black overflow-hidden"
+      <div ref={previewContainerRef} className="relative isolate bg-black overflow-hidden"
         style={{
           ...(isPortrait || isSquare
             ? { maxHeight: '70vh', aspectRatio: cssAspect, marginLeft: 'auto', marginRight: 'auto' }

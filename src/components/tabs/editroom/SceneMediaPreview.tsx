@@ -191,7 +191,7 @@ const SceneMediaPreview: React.FC<SceneMediaPreviewProps> = ({ scene, sceneIndex
     <>
       {hasMotionAnim && <style>{MOTION_KEYFRAMES}</style>}
       <div
-        className={`relative ${thumbClass} flex-shrink-0 rounded-lg overflow-hidden border border-gray-700 group cursor-pointer`}
+        className={`relative isolate ${thumbClass} flex-shrink-0 rounded-lg overflow-hidden border border-gray-700 group cursor-pointer`}
         style={!mediaUrl ? {
           backgroundImage: `url(${picsumThumb})`,
           backgroundSize: 'cover',
@@ -270,7 +270,7 @@ const SceneMediaPreview: React.FC<SceneMediaPreviewProps> = ({ scene, sceneIndex
       {/* 라이트박스 */}
       {showLarge && (
         <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center" onClick={() => setShowLarge(false)}>
-          <div className="relative max-w-4xl max-h-[80vh]" onClick={(e) => e.stopPropagation()}>
+          <div className="relative isolate max-w-4xl max-h-[80vh]" onClick={(e) => e.stopPropagation()}>
             {isVideo ? (
               <video src={scene.videoUrl} className="max-w-full max-h-[80vh] rounded-lg" controls autoPlay />
             ) : mediaUrl ? (

@@ -44,7 +44,7 @@ function makeParticles(
       size,
       duration: `${dur.toFixed(1)}s`,
       delay: `${delay.toFixed(1)}s`,
-      opacity: (0.5 + 0.5 * i) * (0.6 + (j % 3) * 0.15),
+      opacity: Math.min(1, (0.85 + 0.9 * i) * (0.75 + (j % 3) * 0.2)),
       color: opts.color,
       shape: opts.shape,
     });
@@ -65,21 +65,51 @@ interface ParticleConfig {
 }
 
 const PARTICLE_CONFIGS: Record<string, (i: number) => ParticleConfig> = {
-  snow: (i) => ({ dir: 'down', count: 15 + Math.floor(15 * i), color: 'white', shape: 'circle', sizeRange: [2, 5], durationRange: [4, 8] }),
-  rain: (i) => ({ dir: 'down', count: 25 + Math.floor(20 * i), color: 'rgba(180,200,255,0.6)', shape: 'line', sizeRange: [10, 25], durationRange: [1, 2.5] }),
-  sparkle: (i) => ({ dir: 'down-sway', count: 10 + Math.floor(10 * i), color: 'rgba(255,255,200,0.9)', shape: 'circle', sizeRange: [1, 4], durationRange: [2, 5] }),
-  dust: (i) => ({ dir: 'down-sway', count: 8 + Math.floor(8 * i), color: 'rgba(200,180,140,0.5)', shape: 'circle', sizeRange: [2, 4], durationRange: [6, 12] }),
-  fireflies: (i) => ({ dir: 'down-sway', count: 8 + Math.floor(8 * i), color: 'rgba(200,255,100,0.8)', shape: 'circle', sizeRange: [2, 5], durationRange: [4, 8] }),
-  bubbles: (i) => ({ dir: 'up', count: 8 + Math.floor(8 * i), color: 'rgba(150,200,255,0.4)', shape: 'circle', sizeRange: [4, 10], durationRange: [4, 8] }),
-  confetti: (i) => ({ dir: 'down-sway', count: 15 + Math.floor(12 * i), color: '', shape: 'rect', sizeRange: [4, 8], durationRange: [3, 6] }),
-  'cherry-blossom': (i) => ({ dir: 'down-sway', count: 10 + Math.floor(8 * i), color: 'rgba(255,180,200,0.6)', shape: 'ellipse', sizeRange: [4, 8], durationRange: [5, 10] }),
-  embers: (i) => ({ dir: 'up', count: 10 + Math.floor(10 * i), color: 'rgba(255,120,0,0.8)', shape: 'circle', sizeRange: [2, 4], durationRange: [3, 6] }),
-  stars: (i) => ({ dir: 'down-sway', count: 15 + Math.floor(15 * i), color: 'white', shape: 'circle', sizeRange: [1, 3], durationRange: [3, 7] }),
+  snow: (i) => ({ dir: 'down', count: 30 + Math.floor(35 * i), color: 'rgba(255,255,255,0.95)', shape: 'circle', sizeRange: [4, 9], durationRange: [4, 8] }),
+  rain: (i) => ({ dir: 'down', count: 90 + Math.floor(70 * i), color: 'rgba(200,230,255,0.98)', shape: 'line', sizeRange: [28, 50], durationRange: [1, 2.1] }),
+  sparkle: (i) => ({ dir: 'down-sway', count: 22 + Math.floor(18 * i), color: 'rgba(255,255,210,0.98)', shape: 'circle', sizeRange: [3, 8], durationRange: [2, 5] }),
+  dust: (i) => ({ dir: 'down-sway', count: 18 + Math.floor(18 * i), color: 'rgba(210,190,150,0.75)', shape: 'circle', sizeRange: [5, 10], durationRange: [6, 12] }),
+  fireflies: (i) => ({ dir: 'down-sway', count: 16 + Math.floor(16 * i), color: 'rgba(215,255,120,0.98)', shape: 'circle', sizeRange: [4, 9], durationRange: [4, 8] }),
+  bubbles: (i) => ({ dir: 'up', count: 16 + Math.floor(14 * i), color: 'rgba(170,220,255,0.85)', shape: 'circle', sizeRange: [10, 20], durationRange: [4, 8] }),
+  confetti: (i) => ({ dir: 'down-sway', count: 28 + Math.floor(22 * i), color: '', shape: 'rect', sizeRange: [7, 14], durationRange: [3, 6] }),
+  'cherry-blossom': (i) => ({ dir: 'down-sway', count: 20 + Math.floor(16 * i), color: 'rgba(255,190,210,0.9)', shape: 'ellipse', sizeRange: [8, 14], durationRange: [5, 10] }),
+  embers: (i) => ({ dir: 'up', count: 22 + Math.floor(18 * i), color: 'rgba(255,140,30,0.98)', shape: 'circle', sizeRange: [4, 8], durationRange: [3, 6] }),
+  stars: (i) => ({ dir: 'down-sway', count: 24 + Math.floor(22 * i), color: 'rgba(255,255,255,0.98)', shape: 'circle', sizeRange: [3, 7], durationRange: [3, 7] }),
 };
 
 const CONFETTI_COLORS = ['#ff6b6b', '#51cf66', '#339af0', '#fcc419', '#cc5de8', '#22b8cf'];
 
-function renderParticleOverlay(presetId: string, intensity: number, speed: number, opacity: number): React.ReactNode {
+function getParticleDecoration(presetId: string, particle: Particle, color: string): React.CSSProperties {
+  switch (presetId) {
+    case 'snow':
+      return { boxShadow: `0 0 ${Math.max(4, particle.size * 1.4)}px rgba(255,255,255,0.45)` };
+    case 'rain':
+      return { width: '3px', borderRadius: '999px', boxShadow: `0 0 ${Math.max(10, particle.size * 0.8)}px rgba(185,220,255,0.75)` };
+    case 'sparkle':
+    case 'fireflies':
+    case 'embers':
+    case 'stars':
+      return { boxShadow: `0 0 ${Math.max(10, particle.size * 3)}px ${color}` };
+    case 'dust':
+      return { filter: 'blur(1.4px)', boxShadow: `0 0 ${Math.max(8, particle.size * 2)}px rgba(210,190,150,0.35)` };
+    case 'bubbles':
+      return { border: `2px solid ${color}`, boxShadow: `0 0 ${Math.max(8, particle.size * 1.3)}px rgba(170,220,255,0.3)` };
+    case 'confetti':
+      return { boxShadow: '0 0 10px rgba(255,255,255,0.16)' };
+    case 'cherry-blossom':
+      return { boxShadow: `0 0 ${Math.max(8, particle.size * 1.2)}px rgba(255,190,210,0.22)` };
+    default:
+      return {};
+  }
+}
+
+function renderParticleOverlay(
+  presetId: string,
+  intensity: number,
+  speed: number,
+  opacity: number,
+  blendMode: OverlayBlendMode,
+): React.ReactNode {
   const configFn = PARTICLE_CONFIGS[presetId];
   if (!configFn) return null;
 
@@ -89,10 +119,17 @@ function renderParticleOverlay(presetId: string, intensity: number, speed: numbe
   const animBase = cfg.dir === 'up' ? 'particle-rise' : cfg.dir === 'down-sway' ? 'particle-fall-sway' : 'particle-fall';
 
   return (
-    <div className="absolute inset-0 pointer-events-none overflow-hidden" style={{ opacity: opacity / 100 }}>
+    <div
+      className="absolute inset-0 pointer-events-none overflow-hidden"
+      style={{
+        opacity: opacity / 100,
+        mixBlendMode: CSS_BLEND[blendMode] as React.CSSProperties['mixBlendMode'],
+      }}
+    >
       {particles.map((p) => {
         const color = presetId === 'confetti' ? CONFETTI_COLORS[p.id % CONFETTI_COLORS.length] : p.color;
         const animDur = `${(parseFloat(p.duration) / speed).toFixed(1)}s`;
+        const decoration = getParticleDecoration(presetId, p, color);
 
         const baseStyle: React.CSSProperties = {
           position: 'absolute',
@@ -106,22 +143,22 @@ function renderParticleOverlay(presetId: string, intensity: number, speed: numbe
 
         if (p.shape === 'line') {
           return (
-            <div key={p.id} style={{ ...baseStyle, width: '1px', height: `${p.size}px`, background: color }} />
+            <div key={p.id} style={{ ...baseStyle, width: '1px', height: `${p.size}px`, background: color, ...decoration }} />
           );
         }
         if (p.shape === 'ellipse') {
           return (
-            <div key={p.id} style={{ ...baseStyle, width: `${p.size}px`, height: `${p.size * 0.6}px`, borderRadius: '50%', background: color, transform: `rotate(${(p.id * 37) % 360}deg)` }} />
+            <div key={p.id} style={{ ...baseStyle, width: `${p.size}px`, height: `${p.size * 0.6}px`, borderRadius: '50%', background: color, transform: `rotate(${(p.id * 37) % 360}deg)`, ...decoration }} />
           );
         }
         if (p.shape === 'rect') {
           return (
-            <div key={p.id} style={{ ...baseStyle, width: `${p.size}px`, height: `${p.size * 0.5}px`, background: color, transform: `rotate(${(p.id * 53) % 360}deg)` }} />
+            <div key={p.id} style={{ ...baseStyle, width: `${p.size}px`, height: `${p.size * 0.5}px`, background: color, transform: `rotate(${(p.id * 53) % 360}deg)`, ...decoration }} />
           );
         }
         // circle (default)
         return (
-          <div key={p.id} style={{ ...baseStyle, width: `${p.size}px`, height: `${p.size}px`, borderRadius: '50%', background: presetId === 'bubbles' ? 'transparent' : color, border: presetId === 'bubbles' ? `1px solid ${color}` : 'none' }} />
+          <div key={p.id} style={{ ...baseStyle, width: `${p.size}px`, height: `${p.size}px`, borderRadius: '50%', background: presetId === 'bubbles' ? 'transparent' : color, border: presetId === 'bubbles' ? `1px solid ${color}` : 'none', ...decoration }} />
         );
       })}
     </div>
@@ -161,8 +198,14 @@ function getStaticStyle(presetId: string, intensity: number): React.CSSPropertie
       return { background: `linear-gradient(${135+30*i}deg, rgba(255,140,50,${0.4*i}) 0%, rgba(255,80,120,${0.3*i}) 50%, transparent 80%)`, animation: 'ov-glow 4s ease-in-out infinite alternate' };
     case 'bokeh': {
       const c: string[] = [];
-      for (let j = 0; j < Math.floor(4+5*i); j++) { const x=(j*37+10)%100; const y=(j*53+15)%100; const r=10+j*5*i; c.push(`radial-gradient(${r}px circle at ${x}% ${y}%, rgba(255,200,100,${(0.25*i).toFixed(3)}), transparent)`); }
-      return { background: c.join(', '), animation: 'ov-glow 4s ease-in-out infinite alternate' };
+      for (let j = 0; j < Math.floor(8 + 10 * i); j++) {
+        const x = (j * 37 + 10) % 100;
+        const y = (j * 53 + 15) % 100;
+        const r = 20 + j * 8 * i;
+        const rgb = j % 3 === 0 ? '255,220,140' : j % 3 === 1 ? '255,190,120' : '255,245,210';
+        c.push(`radial-gradient(${r}px circle at ${x}% ${y}%, rgba(${rgb},${(0.42 * i).toFixed(3)}) 0%, rgba(${rgb},${(0.16 * i).toFixed(3)}) 38%, transparent 72%)`);
+      }
+      return { background: c.join(', '), filter: 'blur(2px)', animation: 'ov-glow 4s ease-in-out infinite alternate' };
     }
     case 'vignette':
       return { background: `radial-gradient(ellipse at center, transparent ${60-30*i}%, rgba(0,0,0,${0.5*i}) 100%)` };
@@ -179,7 +222,12 @@ function getStaticStyle(presetId: string, intensity: number): React.CSSPropertie
       return { background: rays.join(', '), animation: 'ov-glow 4s ease-in-out infinite alternate' };
     }
     case 'heat-haze':
-      return { backdropFilter: `blur(${0.3*i}px)`, animation: 'ov-heat 3s ease-in-out infinite' };
+      return {
+        backgroundImage: `repeating-linear-gradient(90deg, rgba(255,210,120,${(0.08 * i).toFixed(3)}) 0px, rgba(255,210,120,${(0.08 * i).toFixed(3)}) 18px, rgba(255,255,255,${(0.03 * i).toFixed(3)}) 28px, transparent 52px)`,
+        backdropFilter: `blur(${(1.2 + 1.8 * i).toFixed(2)}px) saturate(${(1 + 0.18 * i).toFixed(2)})`,
+        animation: 'ov-heat 2.4s ease-in-out infinite',
+        transform: 'scale(1.02)',
+      };
     case 'chromatic-aberration':
       return { boxShadow: `inset ${5*i}px 0 ${4*i}px rgba(255,0,0,${0.35*i}), inset ${-5*i}px 0 ${4*i}px rgba(0,0,255,${0.35*i})` };
     case 'speed-lines': {
@@ -282,8 +330,8 @@ const OverlayPreviewLayer: React.FC<OverlayPreviewLayerProps> = ({ overlays }) =
       {layers.map((o, idx) => {
         if (o.isParticle) {
           return (
-            <React.Fragment key={`${o.presetId}-${idx}`}>
-              {renderParticleOverlay(o.presetId, o.intensity, o.speed, o.opacity)}
+              <React.Fragment key={`${o.presetId}-${idx}`}>
+              {renderParticleOverlay(o.presetId, o.intensity, o.speed, o.opacity, o.blendMode)}
             </React.Fragment>
           );
         }
