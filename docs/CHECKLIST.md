@@ -8,9 +8,18 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-20] 티키타카 편집점 V14.0 전용 분리 복구
+- [x] `docs/tikitaka-edit-point-protocol-v14.md`, `src/data/tikitakaEditPointProtocol.ts` — 사용자 제공 티키타카 편집점 원문을 축약 없이 그대로 별도 기술 문서로 저장하고, 앱 코드가 동일한 V14 원문을 단일 소스로 재사용하도록 공통 경로 구성
+- [x] `VideoAnalysisRoom.tsx` — 티키타카 프리셋의 편집점 부분만 공통 V8이 아니라 전용 `티키타카 편집점 V14`를 읽도록 되돌리고, 프리셋 설명과 사용자 지시문도 V14 기준으로 정렬
+- [x] `helpContent.ts` — 영상 분석실 도움말의 티키타카 안내 문구를 전용 V14 기준으로 정정
+- [x] 검증 통과:
+  `cd src && node_modules/typescript/bin/tsc --noEmit`
+  `cd src && node_modules/.bin/vite build`
+  `rg -n 'TIKITAKA_EDIT_POINT_PROTOCOL|TIKITAKA_EDIT_POINT_PROTOCOL_SHORT_LABEL|tikitaka-edit-point-protocol-v14|티키타카 편집점 V14' src/components/tabs/channel/VideoAnalysisRoom.tsx src/data/tikitakaEditPointProtocol.ts src/data/helpContent.ts docs/tikitaka-edit-point-protocol-v14.md`
+
 ### [2026-03-20] 편집점 기술 문서 V8.0 공통화 + 편집점 프리셋 전면 교체
 - [x] `docs/edit-point-protocol-v8.md`, `src/data/editPointProtocol.ts` — 사용자 제공 편집점 원문을 축약 없이 그대로 문서화하고, 앱 코드가 동일한 V8 원문을 단일 소스로 재사용하도록 공통 경로 구성
-- [x] `VideoAnalysisRoom.tsx` — `tikitaka`/`snack`/`condensed`/`shopping` 프리셋 시스템 프롬프트와 사용자 지시문을 `편집점 V8.0` 기준으로 교체하고, `[S-XX] + MM:SS.ms + 장면 내용` 무결성 규칙과 예시 출력 포맷을 정렬
+- [x] `VideoAnalysisRoom.tsx` — `snack`/`condensed`/`shopping` 프리셋 시스템 프롬프트와 사용자 지시문을 `편집점 V8.0` 기준으로 교체하고, `[S-XX] + MM:SS.ms + 장면 내용` 무결성 규칙과 예시 출력 포맷을 정렬
 - [x] `VideoAnalysisRoom.tsx` — 컨덴스드 프리셋은 V8 정밀 편집 규칙을 적용하되, 시간순 리캡 특성상 킬 샷 선배치를 예외 처리하도록 명시
 - [x] `editPointService.ts`, `Step1Register.tsx` — 일반 편집점/편집실 자동 편집표 생성 경로도 공통 V8 원문을 사용하도록 교체하고, 안내 문구와 내부 AI 규약의 타임코드 표기를 `MM:SS.ms`로 통일
 - [x] 검증 통과:
