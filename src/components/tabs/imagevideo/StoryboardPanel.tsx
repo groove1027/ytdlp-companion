@@ -423,7 +423,7 @@ const SceneCard: React.FC<SceneCardProps> = ({ scene, index, onUpdatePrompt, onD
             icon={<svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>}
             onClick={() => onGrokVideo(scene.id)} />
           <ActionButton label="Seedance" color="fuchsia"
-            tooltip={`Seedance 1.5 Pro ${(scene.seedanceDuration || '8') as SeedanceDuration}초 — ${fmtCost(getSeedanceCost((scene.seedanceDuration || '8') as SeedanceDuration), useCostStore.getState().exchangeRate || PRICING.EXCHANGE_RATE)}`}
+            tooltip={`Seedance 1.5 Pro ${(scene.seedanceDuration || '8') as SeedanceDuration}초 — ${fmtCost(getSeedanceCost((scene.seedanceDuration || '8') as SeedanceDuration), useCostStore.getState().exchangeRate || PRICING.EXCHANGE_RATE)} (애니메이션 최고 퀄리티!)`}
             disabled={!scene.imageUrl || scene.isGeneratingVideo}
             icon={<svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>}
             onClick={() => onSeedanceVideo(scene.id)} />
@@ -441,7 +441,6 @@ const SceneCard: React.FC<SceneCardProps> = ({ scene, index, onUpdatePrompt, onD
             tooltip="Grok SFX/나레이션 전환"
             onClick={() => useProjectStore.getState().updateScene(scene.id, { grokSpeechMode: !scene.grokSpeechMode })} />
           <div className="w-px h-5 bg-gray-700 mx-0.5" />
-          {/* Veo video */}
           <ActionButton label="Veo 영상" color="blue"
             tooltip={`Veo 3.1 1080p — ${fmtCost(PRICING.VIDEO_VEO, useCostStore.getState().exchangeRate || PRICING.EXCHANGE_RATE)}`}
             disabled={!scene.imageUrl || scene.isGeneratingVideo}
@@ -1027,6 +1026,15 @@ const SceneDetailModal: React.FC<SceneDetailModalProps> = ({
                   <><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg> Seedance 1.5 Pro {seedanceDuration}초 <span className="text-fuchsia-400/60 text-xs ml-1">{fmtCost(getSeedanceCost(seedanceDuration), useCostStore.getState().exchangeRate || PRICING.EXCHANGE_RATE)}</span></>
                 )}
               </button>
+              {/* 애니메이션 Seedance 추천 안내 */}
+              <div className="col-span-2 flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-fuchsia-900/25 to-violet-900/15 border border-fuchsia-500/30 rounded-lg">
+                <span className="text-base flex-shrink-0">🎨</span>
+                <p className="text-xs text-fuchsia-200 leading-snug">
+                  <span className="font-bold text-fuchsia-300">애니메이션/일러스트</span> 스타일은
+                  <span className="font-bold text-white"> Seedance 1.5 Pro</span>가 가장 퀄리티가 좋아요!
+                  <span className="text-fuchsia-400/70"> (실사는 Grok/Veo 추천)</span>
+                </p>
+              </div>
               {/* Video generation status */}
               {scene.isGeneratingVideo && (
                 <div className="col-span-2 flex items-center gap-2 px-3 py-1.5 bg-pink-600/10 border border-pink-500/20 rounded-lg">
