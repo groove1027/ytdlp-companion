@@ -39,6 +39,7 @@ const NarrationView: React.FC = () => {
   const speakers = useSoundStudioStore((s) => s.speakers);
   const setLines = useSoundStudioStore((s) => s.setLines);
   const updateLine = useSoundStudioStore((s) => s.updateLine);
+  const changeSpeakerWithPropagation = useSoundStudioStore((s) => s.changeSpeakerWithPropagation);
   const addLineAfter = useSoundStudioStore((s) => s.addLineAfter);
   const mergeLineWithNext = useSoundStudioStore((s) => s.mergeLineWithNext);
   const removeLine = useSoundStudioStore((s) => s.removeLine);
@@ -359,9 +360,29 @@ const NarrationView: React.FC = () => {
   // ===============================
   const handleChangeSpeaker = useCallback(
     (lineId: string, speakerId: string) => {
-      updateLine(lineId, { speakerId, audioUrl: undefined, ttsStatus: 'idle' });
+      const changedLines = changeSpeakerWithPropagation(lineId, speakerId);
+      if (changedLines.length === 0) return;
+
+      const projectStore = useProjectStore.getState();
+      for (const line of changedLines) {
+        if (!line.sceneId) continue;
+        projectStore.updateScene(line.sceneId, {
+          audioUrl: undefined,
+          audioDuration: undefined,
+          startTime: undefined,
+          endTime: undefined,
+        });
+      }
+
+      projectStore.setConfig((prev) => prev ? {
+        ...prev,
+        mergedAudioUrl: undefined,
+        narrationSource: undefined,
+        uploadedAudioId: undefined,
+        rawUploadedTranscriptSegments: undefined,
+      } : prev);
     },
-    [updateLine],
+    [changeSpeakerWithPropagation],
   );
 
   const handleApplyDirectScript = useCallback(() => {

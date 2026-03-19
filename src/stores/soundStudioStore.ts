@@ -61,6 +61,32 @@ const loadFavoriteVoices = (): string[] => {
 const isUploadedLine = (line: Pick<ScriptLine, 'audioSource' | 'uploadedAudioId'> | undefined): boolean =>
   !!line && (line.audioSource === 'uploaded' || !!line.uploadedAudioId);
 
+function resetLineForSpeakerChange(line: ScriptLine, speakerId: string): ScriptLine {
+  if (!isUploadedLine(line)) {
+    return {
+      ...line,
+      speakerId,
+      audioUrl: undefined,
+      ttsStatus: 'idle',
+      duration: undefined,
+      startTime: undefined,
+      endTime: undefined,
+    };
+  }
+
+  return {
+    ...line,
+    speakerId,
+    audioUrl: undefined,
+    ttsStatus: 'idle',
+    audioSource: undefined,
+    uploadedAudioId: undefined,
+    startTime: undefined,
+    endTime: undefined,
+    duration: undefined,
+  };
+}
+
 function shouldInvalidateUploadedSetLines(prevLines: ScriptLine[], nextLines: ScriptLine[]): boolean {
   if (!prevLines.some(isUploadedLine)) return false;
   if (prevLines.length !== nextLines.length) return true;
@@ -153,6 +179,7 @@ interface SoundStudioStore {
   // Actions — 라인 관리
   setLines: (lines: ScriptLine[] | ((prev: ScriptLine[]) => ScriptLine[])) => void;
   updateLine: (id: string, partial: Partial<ScriptLine>) => void;
+  changeSpeakerWithPropagation: (lineId: string, speakerId: string) => ScriptLine[];
   removeLine: (id: string) => void;
   addLineAfter: (afterId: string, text: string) => void;
   mergeLineWithNext: (id: string) => void;
@@ -343,6 +370,43 @@ export const useSoundStudioStore = create<SoundStudioStore>((set) => ({
       ...(shouldInvalidateUploaded ? { mergedAudioUrl: null, uploadedAudios: [] } : {}),
     };
   }),
+
+  changeSpeakerWithPropagation: (lineId, speakerId) => {
+    let changedLines: ScriptLine[] = [];
+
+    set((state) => {
+      const startIndex = state.lines.findIndex((line) => line.id === lineId);
+      if (startIndex < 0) return state;
+
+      const nextLines = [...state.lines];
+      const originSpeakerId = state.lines[startIndex].speakerId;
+      let shouldInvalidateUploaded = false;
+
+      const applySpeakerChange = (index: number) => {
+        const updatedLine = resetLineForSpeakerChange(nextLines[index], speakerId);
+        shouldInvalidateUploaded = shouldInvalidateUploaded || isUploadedLine(nextLines[index]);
+        nextLines[index] = updatedLine;
+        changedLines.push(updatedLine);
+      };
+
+      applySpeakerChange(startIndex);
+
+      for (let index = startIndex + 1; index < state.lines.length; index += 1) {
+        const currentLine = state.lines[index];
+        if (currentLine.voiceName) continue;
+        if (currentLine.speakerId && currentLine.speakerId !== originSpeakerId) break;
+        applySpeakerChange(index);
+      }
+
+      return {
+        lines: nextLines,
+        mergedAudioUrl: null,
+        ...(shouldInvalidateUploaded ? { uploadedAudios: [] } : {}),
+      };
+    });
+
+    return changedLines;
+  },
 
   removeLine: (id) => set((state) => {
     const removedLine = state.lines.find((line) => line.id === id);
