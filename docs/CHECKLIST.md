@@ -8,6 +8,56 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-19] #610 CapCut 최신 프로젝트 포맷 재정렬
+- [x] `nleExportService.ts` — CapCut `draft_info.json`을 다시 실제 타임라인 본문으로 복원하고 `draft_meta_info.json`에 메타데이터를 분리
+- [x] `nleExportService.ts` — 최신 CapCut 데스크톱 포맷에 맞춰 `Timelines/project.json`, `attachment_editing.json`, `attachment_pc_common.json`, `timeline_layout.json`, `draft_virtual_store.json`, `draft_biz_config.json`, `draft_agency_config.json`, `performance_opt_info.json` 생성 추가
+- [x] `nleExportService.ts` — `draft_settings`에 비율/타임라인 설정값(`custom_ratio_*`, `timeline_use_*`) 추가, 플랫폼/app_version을 현재 CapCut 포맷에 맞게 상향
+- [x] `verify-capcut-issue574-browser.mjs`, `verify-capcut-video-room.mjs` — `draft_info.json == draft_content.json`, `draft_meta_info.json` id 보존, `Timelines/project.json.main_timeline_id` 매칭 검증 추가
+- [x] `tsc --noEmit` + `vite build` + `rg` 재검증 통과
+- [x] Chrome 기반 브라우저 검증 2건 통과:
+  `node test/verify-capcut-issue574-browser.mjs`
+  `node test/verify-capcut-video-room.mjs`
+- [ ] CapCut 앱 UI에서 실제 타임라인 오픈/재생 자동 검증은 계속 확인 중
+
+### [2026-03-19] 영상 리메이크 NLE 실동작 매트릭스 검증 보강
+- [x] `nleExportService.ts` — `generateCapCutDraftJson()`이 영상 리메이크 경로에서도 나레이션 `audios` 머티리얼과 `audio` 트랙을 실제 draft에 넣도록 보강
+- [x] `nleExportService.ts` — `buildNlePackageZip()` CapCut 분기에서 나레이션 MP3를 `audio/`뿐 아니라 draft 루트에도 복사해 실제 CapCut draft 경로와 일치하도록 수정
+- [x] `nleExportService.ts` — `buildVideoAnalysisSceneLineId()` / `buildVideoAnalysisNarrationLines()` 추가, 영상 분석실 sound store line을 현재 버전 장면과 안전하게 다시 매칭하는 브리지 구현
+- [x] `VideoAnalysisRoom.tsx` — NLE 버튼이 sound store의 현재 나레이션 오디오를 실제로 `buildNlePackageZip()`에 전달하도록 연결하고, 매칭이 애매할 때는 자막-only 폴백 토스트를 띄우도록 보강
+- [x] `VideoAnalysisRoom.tsx` — 소리 스튜디오 전송 시 line마다 안정적인 `sceneId`를 심어 split/merge 후에도 장면 기준 재매칭이 가능하도록 수정
+- [x] `verify-capcut-issue574.mjs` — 깨져 있던 Node 직접 import 방식을 제거하고 브라우저 실동작 검증 스크립트 래퍼로 정리
+- [x] `verify-nle-export-matrix-browser.mjs` — 영상 리메이크 `buildNlePackageZip()` 기준으로 CapCut 오디오 트랙, auto speed, Premiere XML `timeremap`, SRT/미디어 패키징을 한 번에 검증하는 매트릭스 테스트 추가
+- [x] `verify-video-analysis-narration-bridge-browser.mjs` — sceneId 매칭, 레거시 인덱스 매칭, 중복 sceneId 거부, 실제 CapCut ZIP 생성까지 포함한 영상 분석실 브리지 전용 검증 추가
+- [x] `verify-capcut-video-room.mjs`, `verify-capcut-issue574-browser.mjs`, `verify-editroom-motion-export-browser.mjs`, `verify-nle-export-matrix-browser.mjs` — 큰 ZIP도 안전하게 전달되도록 브라우저 base64 직렬화 방식을 `FileReader` 기반으로 보강
+- [x] `tsc --noEmit` + `vite build` + `rg` 재검증 통과
+- [x] 실제 검증 통과:
+  `node test/verify-video-analysis-narration-bridge-browser.mjs`
+  `node test/verify-nle-export-matrix-browser.mjs`
+  `node test/verify-capcut-issue574.mjs`
+  `node test/verify-capcut-video-room.mjs`
+  `node test/verify-editroom-motion-export-browser.mjs`
+- [x] 실제 CapCut 앱에서 `VERIFY_NLE_MATRIX_CAPCUT` draft 폴더 열기 성공, CapCut 프로세스/윈도우 확인
+
+### [2026-03-19] 편집실 이미지 모션의 Premiere/CapCut 네이티브 키프레임 export 추가
+- [x] `nleMotionExport.ts` — 편집실 미리보기와 같은 `computeKenBurns` 수학을 재사용해 `translateX/Y`, `scale`, `rotation`, `opacity` canonical motion track으로 정규화하는 계층 추가
+- [x] `nleExportService.ts` — 정지 이미지 장면을 Premiere XML의 `Basic Motion` keyframe(`scale`/`center`/`rotation`/`opacity`)과 CapCut `common_keyframes`(`KFTypePositionX/Y`, `KFTypeScaleX/Y`, `KFTypeRotation`, `KFTypeGlobalAlpha`)로 내보내도록 수정
+- [x] `types.ts` — NLE motion keyframe/track 타입 추가
+- [x] `verify-editroom-motion-export-browser.mjs` — 브라우저에서 실제 ZIP을 생성해 CapCut draft와 Premiere XML 내부에 모션 keyframe이 들어가는지 검증하는 회귀 테스트 추가
+- [x] 기존 브라우저 검증 스크립트(`verify-capcut-video-room.mjs`, `verify-capcut-issue574-browser.mjs`, `verify-nle-export-matrix-browser.mjs`)가 Vite 번들 namespace export도 읽도록 보정
+- [x] `tsc --noEmit` + `vite build` + `rg` 재검증 통과
+- [x] 실제 검증 통과:
+  `node test/verify-editroom-motion-export-browser.mjs`
+  `node test/verify-capcut-video-room.mjs`
+  `node test/verify-capcut-issue574-browser.mjs`
+  `node test/verify-nle-export-matrix-browser.mjs`
+
+### [2026-03-19] 편집실 오버레이 가시성 보정
+- [x] `OverlayPreviewLayer.tsx` — 파티클 오버레이도 선택한 블렌드 모드를 실제로 적용하도록 수정
+- [x] `EditRoomTab.tsx`, `SceneMediaPreview.tsx`, `EffectPresets.tsx` — 오버레이가 미리보기 바깥 배경과 섞여 흐려지지 않도록 미리보기 컨테이너에 isolation 적용
+- [x] `tsc --noEmit` + `vite build` + `rg` 재검증 통과
+- [x] `verify-editroom-overlay-browser.mjs` — 메인 Chrome 프로필을 쓰지 않는 임시 프로필 헤드리스 검증 추가, 실제 편집실 프리뷰 캡처 3장과 픽셀 diff로 `screen` 블렌드 + `isolate` 적용 확인
+- [x] 실제 브라우저 40/40 프리셋 검증 통과 — `node test/verify-editroom-overlay-browser.mjs`, `summary.json` 기준 `failedPresetIds=[]`, `screenCheckFailures=[]`
+
 ### [2026-03-19] 이미지/영상 대본 표시 오염 + 기존 장면 구글 자동배치 누락 수정
 - [x] `SetupPanel.tsx` — `대본작성에서 넘어온 단락` 박스가 현재 프로젝트 대본과 실제로 일치할 때만 해당 결과를 쓰고, 불일치 시에는 현재 적용된 대본 자체를 단락 기준으로 그대로 표시하도록 수정
 - [x] `SetupPanel.tsx` — 구글 레퍼런스 모드가 켜진 상태에서 기존 장면이 이미 있어도 `스토리보드 생성`이 단순 탭 이동으로 끝나지 않도록, 빈 이미지 장면에 자동 레퍼런스 배치를 다시 태우도록 수정

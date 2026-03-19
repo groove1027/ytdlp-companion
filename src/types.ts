@@ -1563,6 +1563,25 @@ export interface UnifiedSceneTiming {
   transitionToNext?: SceneTransitionConfig;
 }
 
+export type NleMotionProperty = 'translateX' | 'translateY' | 'scale' | 'rotation' | 'opacity';
+
+export interface NleMotionKeyframe {
+  timeSec: number;
+  value: number;
+}
+
+export interface NleMotionTrack {
+  durationSec: number;
+  translateX: NleMotionKeyframe[];
+  translateY: NleMotionKeyframe[];
+  scale: NleMotionKeyframe[];
+  rotation: NleMotionKeyframe[];
+  opacity: NleMotionKeyframe[];
+  hasTransformMotion: boolean;
+  hasOpacityMotion: boolean;
+  unsupportedEffects: string[];
+}
+
 export interface SrtEntry {
   index: number;
   startTime: number;  // 초

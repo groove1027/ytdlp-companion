@@ -22,7 +22,7 @@ import { extractStreamUrl, isYtdlpServerConfigured, getSocialMetadata, downloadS
 import { detectPlatform } from '../../../services/videoDownloadService';
 import { uploadMediaToHosting } from '../../../services/uploadService';
 import { detectSceneCuts, mergeWithAiTimecodes } from '../../../services/sceneDetection';
-import { sanitizeProjectName } from '../../../services/nleExportService';
+import { buildVideoAnalysisSceneLineId, sanitizeProjectName } from '../../../services/nleExportService';
 import type { EditRoomNleTarget } from '../../../services/nleExportService';
 import { transcribeVideoAudio } from '../../../services/gemini/videoAnalysis';
 import type { SceneCut } from '../../../services/sceneDetection';
@@ -5071,11 +5071,22 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                         return;
                                       }
                                       // Step 2: 영상 치수 감지 (캐시 우선)
-                                      const { buildNlePackageZip } = await import('../../../services/nleExportService');
+                                      const { buildNlePackageZip, buildVideoAnalysisNarrationLines } = await import('../../../services/nleExportService');
                                       const baseName = downloadedSourceTitle
                                         ? sanitizeProjectName(downloadedSourceTitle, 30)
                                         : sanitizeProjectName(v.title, 30);
                                       const fileName = uploadedFiles[0]?.name || `${baseName}.mp4`;
+                                      const soundLines = useSoundStudioStore.getState().lines;
+                                      const narrationLines = buildVideoAnalysisNarrationLines({
+                                        scenes: v.scenes,
+                                        soundLines,
+                                        versionId: v.id,
+                                      });
+                                      const hasSoundNarrationAudio = soundLines.some((line) => !!line.audioUrl);
+                                      const hasMatchedNarrationAudio = narrationLines.some((line) => !!line.audioUrl);
+                                      if (hasSoundNarrationAudio && !hasMatchedNarrationAudio) {
+                                        showToast('소리 스튜디오의 나레이션이 현재 버전과 1:1로 맞지 않아 이번 NLE에는 컷/자막만 포함했어요. 장면당 1개 라인 상태에서 다시 시도해주세요.', 5000);
+                                      }
                                       let dims = nleDimsCache.current;
                                       if (!dims) {
                                         if (isCancelled()) return;
@@ -5125,7 +5136,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                       // Step 3: ZIP 패키지 생성
                                       if (isCancelled()) return;
                                       setNleExporting({ target, step: 'ZIP 패키지 생성 중...', startedAt });
-                                      const zipBlob = await buildNlePackageZip({ target, scenes: v.scenes, title: v.title, videoBlob, videoFileName: fileName, preset: selectedPreset || undefined, width: dims.w, height: dims.h, fps: dims.fps, videoDurationSec: dims.dur });
+                                      const zipBlob = await buildNlePackageZip({ target, scenes: v.scenes, title: v.title, videoBlob, videoFileName: fileName, preset: selectedPreset || undefined, width: dims.w, height: dims.h, fps: dims.fps, videoDurationSec: dims.dur, narrationLines });
                                       if (isCancelled()) return;
                                       const url = URL.createObjectURL(zipBlob);
                                       const a = document.createElement('a'); a.href = url; a.download = `${sanitizeProjectName(v.title, 30)}_${label}.zip`; a.click();
@@ -5310,8 +5321,8 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                               // TTS 길이는 오디오 클립 길이로만 사용하고, 장면 레이아웃은 원본 타임코드 기준으로 고정
                               let fallbackCursorSec = 0;
                               const newLines = v.scenes
-                                .filter(s => (s.audioContent || s.dialogue || '').trim())
-                                .map((s, i) => {
+                                .flatMap((s, sceneIndex) => {
+                                  if (!(s.audioContent || s.dialogue || '').trim()) return [];
                                   const timing = parseSceneTimingWindow(s);
                                   const fallbackDuration = Math.max(0.1, parseDuration(s.duration));
                                   const startTime = timing ? timing.startSec : fallbackCursorSec;
@@ -5319,16 +5330,17 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                   const duration = timing ? timing.durationSec : fallbackDuration;
                                   fallbackCursorSec = Math.max(fallbackCursorSec, endTime);
 
-                                  return {
-                                    id: `line-${Date.now()}-${i}`,
+                                  return [{
+                                    id: `line-${Date.now()}-${sceneIndex}`,
                                     speakerId,
                                     text: (s.audioContent || s.dialogue || '').trim(),
-                                    index: i,
+                                    index: sceneIndex,
+                                    sceneId: buildVideoAnalysisSceneLineId(v.id, sceneIndex),
                                     startTime,
                                     endTime,
                                     duration,
                                     ttsStatus: 'idle' as const,
-                                  };
+                                  }];
                                 });
                               if (newLines.length === 0) {
                                 showToast('전송할 나레이션이 없습니다.', 3000);
