@@ -763,13 +763,13 @@ Script: ${truncatedScript}`;
     try {
         // 1차: Gemini 3.1 Pro (최고 품질)
         console.log('[analyzeScriptContext] 🧠 Gemini 3.1 Pro 호출');
-        const data = await requestGeminiProxy('gemini-3.1-pro-preview', payload);
+        const data = await requestGeminiProxy('gemini-3.1-pro-preview', payload, 0, undefined, { taskProfile: 'short_analysis' });
         return parseNativeResponse(data, 'Gemini3.1-Pro');
     } catch (e) {
         console.warn('[analyzeScriptContext] Pro failed:', e);
         // 2차: Gemini 3.1 Pro 재시도 (최종 폴백)
         console.log('[analyzeScriptContext] 🔄 Gemini 3.1 Pro 최종 폴백');
-        const data = await requestGeminiProxy('gemini-3.1-pro-preview', payload);
+        const data = await requestGeminiProxy('gemini-3.1-pro-preview', payload, 0, undefined, { taskProfile: 'short_analysis' });
         return parseNativeResponse(data, 'Gemini3.1-Pro-Retry');
     }
 };
@@ -1394,7 +1394,7 @@ ${baseSetting ? `[GLOBAL CONTEXT]\n${baseSetting}` : ''}`;
                 generationConfig: { responseMimeType: 'application/json', temperature: 0.2, maxOutputTokens: 8192 },
                 safetySettings: SAFETY_SETTINGS_BLOCK_NONE
             };
-            const dirData = await requestGeminiProxy('gemini-3.1-flash-lite-preview', dirPayload, 0, 30_000);
+            const dirData = await requestGeminiProxy('gemini-3.1-flash-lite-preview', dirPayload, 0, 30_000, { taskProfile: 'short_analysis' });
             directionSheet = extractTextFromResponse(dirData) || '';
             if (directionSheet) {
                 console.log(`[parseScriptToScenes] ✅ 디렉션 시트 완료 (${directionSheet.length}자)`);
@@ -1435,7 +1435,7 @@ ${baseSetting ? `[GLOBAL CONTEXT]\n${baseSetting}` : ''}`;
                 }
                 try {
                     console.log(`[parseScriptToScenes] 청크 ${ci + 1}/${totalChunks}: Pro 호출 (시도 ${attempt + 1}/${MAX_RETRIES}, ${chunkTarget}장면)`);
-                    const data = await requestGeminiProxy('gemini-3.1-pro-preview', chunkPayload, 0, CHUNK_TIMEOUT_MS);
+                    const data = await requestGeminiProxy('gemini-3.1-pro-preview', chunkPayload, 0, CHUNK_TIMEOUT_MS, { taskProfile: 'structured_large_json' });
                     chunkResult = extractAndProcess(data, `Chunk${ci + 1}-Pro`, true);
                     lastError = null;
                     break;
@@ -1449,7 +1449,7 @@ ${baseSetting ? `[GLOBAL CONTEXT]\n${baseSetting}` : ''}`;
             if (lastError) {
                 try {
                     console.log(`[parseScriptToScenes] 청크 ${ci + 1}/${totalChunks}: Flash 폴백`);
-                    const data = await requestGeminiProxy('gemini-3-flash', chunkPayload, 0, CHUNK_TIMEOUT_MS, { skipNative: true });
+                    const data = await requestGeminiProxy('gemini-3-flash', chunkPayload, 0, CHUNK_TIMEOUT_MS, { skipNative: true, taskProfile: 'structured_large_json' });
                     chunkResult = extractAndProcess(data, `Chunk${ci + 1}-Flash`, true);
                     lastError = null;
                 } catch (flashErr: any) {
@@ -1722,7 +1722,7 @@ ${baseSetting ? `[GLOBAL CONTEXT]\n${baseSetting}` : ''}`;
             }
             try {
                 console.log(`[parseScriptToScenes] Gemini 3.1 Pro 호출 (시도 ${attempt + 1}/${MAX_SHORT_RETRIES})`);
-                const data = await requestGeminiProxy('gemini-3.1-pro-preview', payload, 0, SCRIPT_TIMEOUT_MS);
+                const data = await requestGeminiProxy('gemini-3.1-pro-preview', payload, 0, SCRIPT_TIMEOUT_MS, { taskProfile: 'structured_large_json' });
                 scenes = extractAndProcess(data, 'Gemini3.1-Pro');
                 lastShortError = null;
                 break;
@@ -1735,7 +1735,7 @@ ${baseSetting ? `[GLOBAL CONTEXT]\n${baseSetting}` : ''}`;
             try {
                 console.log(`[parseScriptToScenes] Flash 폴백 시도`);
                 logger.info(`[parseScriptToScenes] Flash 폴백 시도`, { lastError: lastShortError.message?.slice(0, 100) });
-                const data = await requestGeminiProxy('gemini-3-flash', payload, 0, SCRIPT_TIMEOUT_MS, { skipNative: true });
+                const data = await requestGeminiProxy('gemini-3-flash', payload, 0, SCRIPT_TIMEOUT_MS, { skipNative: true, taskProfile: 'structured_large_json' });
                 scenes = extractAndProcess(data, 'Gemini-Flash');
                 lastShortError = null;
             } catch (flashErr: any) {

@@ -1,14 +1,18 @@
 
-import { monitoredFetch } from './apiService';
+import { getKieKey, monitoredFetch } from './apiService';
 import { logger } from './LoggerService';
 import { ScriptAiModel } from '../types';
 import { useCostStore } from '../stores/costStore';
 import { PRICING } from '../constants';
+import type { TaskProfile } from './gemini/geminiProxy';
 
 // === CONFIGURATION ===
 const EVOLINK_BASE_URL = 'https://api.evolink.ai/v1';
 const EVOLINK_V1BETA_URL = 'https://api.evolink.ai/v1beta';
+const KIE_BASE_URL = 'https://api.kie.ai';
 const DEFAULT_EVOLINK_KEY = '';
+let _kieRateLimitedUntil = 0;
+const KIE_RATE_LIMIT_COOLDOWN_MS = 60_000;
 
 // === KEY MANAGEMENT ===
 
@@ -18,6 +22,66 @@ export const getEvolinkKey = (): string => {
     if (!raw) return '';
     // ASCII printable만 유지 (sanitize)
     return raw.replace(/[^\x21-\x7E]/g, '').trim();
+};
+
+const extractRetryAfterMs = (response: Response): number | undefined => {
+    const header = response.headers.get('Retry-After') || response.headers.get('retry-after');
+    if (!header) return undefined;
+    const sec = parseInt(header, 10);
+    return (!isNaN(sec) && sec > 0) ? sec * 1000 : undefined;
+};
+
+const markKieRateLimited = (retryAfterMs?: number) => {
+    const cooldownMs = retryAfterMs && retryAfterMs > 0
+        ? Math.min(retryAfterMs, 120_000)
+        : KIE_RATE_LIMIT_COOLDOWN_MS;
+    _kieRateLimitedUntil = Math.max(_kieRateLimitedUntil, Date.now() + cooldownMs);
+    logger.warn(`[Kie] 429 Rate Limit 감지 — ${Math.round(cooldownMs / 1000)}초간 KIE 스킵`);
+};
+
+const isKieRateLimited = (): boolean => Date.now() < _kieRateLimitedUntil;
+
+const createTimedAbortSignal = (signal?: AbortSignal, timeoutMs?: number) => {
+    const effectiveTimeoutMs = timeoutMs && timeoutMs > 0 ? timeoutMs : 0;
+    if (!signal && !effectiveTimeoutMs) {
+        return {
+            signal: undefined as AbortSignal | undefined,
+            cleanup: () => {},
+            didTimeout: () => false
+        };
+    }
+    if (!effectiveTimeoutMs) {
+        return {
+            signal,
+            cleanup: () => {},
+            didTimeout: () => false
+        };
+    }
+
+    const controller = new AbortController();
+    let timedOut = false;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const abortFromParent = () => controller.abort();
+
+    if (signal?.aborted) {
+        controller.abort();
+    } else if (signal) {
+        signal.addEventListener('abort', abortFromParent, { once: true });
+    }
+
+    timeoutId = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+    }, effectiveTimeoutMs);
+
+    return {
+        signal: controller.signal,
+        cleanup: () => {
+            if (timeoutId) clearTimeout(timeoutId);
+            if (signal) signal.removeEventListener('abort', abortFromParent);
+        },
+        didTimeout: () => timedOut
+    };
 };
 
 // === TYPES ===
@@ -38,6 +102,7 @@ export interface EvolinkChatOptions {
     maxTokens?: number;
     stream?: boolean;
     responseFormat?: { type: string; json_schema?: Record<string, unknown> };
+    taskProfile?: TaskProfile;
     signal?: AbortSignal;
     /** monitoredFetch 타임아웃 (ms). 미지정 시 무제한, 긴 대본 처리 시 명시적으로 설정 */
     timeoutMs?: number;
@@ -98,6 +163,209 @@ export interface EvolinkTaskDetail {
     error?: string;
     error_message?: string;
 }
+
+const KIE_JSON_ONLY_SYSTEM_PROMPT = "\n\n[CRITICAL OUTPUT FORMAT] You MUST respond with valid JSON only. No markdown code blocks (no ```json). No conversational text. Output ONLY the raw JSON.";
+
+const extractStructuredJsonText = (text: string): string | null => {
+    const trimmed = text.trim();
+    if (!trimmed) return null;
+
+    const candidates = [trimmed];
+    const codeBlockMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    if (codeBlockMatch?.[1]) candidates.push(codeBlockMatch[1].trim());
+
+    const objectStart = trimmed.indexOf('{');
+    const objectEnd = trimmed.lastIndexOf('}');
+    if (objectStart !== -1 && objectEnd > objectStart) {
+        candidates.push(trimmed.slice(objectStart, objectEnd + 1));
+    }
+
+    const arrayStart = trimmed.indexOf('[');
+    const arrayEnd = trimmed.lastIndexOf(']');
+    if (arrayStart !== -1 && arrayEnd > arrayStart) {
+        candidates.push(trimmed.slice(arrayStart, arrayEnd + 1));
+    }
+
+    for (const candidate of candidates) {
+        try {
+            JSON.parse(candidate);
+            return candidate;
+        } catch {
+            continue;
+        }
+    }
+
+    return null;
+};
+
+const shouldEnforceKieJson = (
+    taskProfile: TaskProfile | undefined,
+    responseFormat?: EvolinkChatOptions['responseFormat']
+): boolean => Boolean(responseFormat) || taskProfile === 'structured_large_json';
+
+const shouldPreferKieTask = (taskProfile: TaskProfile | undefined, model: string): boolean => {
+    if (model.toLowerCase().includes('flash')) return false;
+    return taskProfile === 'structured_large_json' || taskProfile === 'long_text_generation';
+};
+
+const getKieModelSlug = (model: string): 'gemini-3.1-pro' | 'gemini-3-flash' => (
+    model.includes('flash') ? 'gemini-3-flash' : 'gemini-3.1-pro'
+);
+
+const prepareKieMessages = (
+    messages: EvolinkChatMessage[],
+    enforceJsonOnly: boolean
+): EvolinkChatMessage[] => {
+    const nextMessages = messages.map((message) => ({ ...message }));
+    if (!enforceJsonOnly) return nextMessages;
+
+    const systemMessage = nextMessages.find((message) => message.role === 'system' && typeof message.content === 'string');
+    if (systemMessage && typeof systemMessage.content === 'string') {
+        if (!systemMessage.content.includes(KIE_JSON_ONLY_SYSTEM_PROMPT.trim())) {
+            systemMessage.content += KIE_JSON_ONLY_SYSTEM_PROMPT;
+        }
+        return nextMessages;
+    }
+
+    nextMessages.unshift({
+        role: 'system',
+        content: KIE_JSON_ONLY_SYSTEM_PROMPT.trim()
+    });
+    return nextMessages;
+};
+
+const mapKieFinishReason = (reason: string): string => {
+    if (reason === 'length') return 'MAX_TOKENS';
+    if (reason === 'stop') return 'STOP';
+    return reason || 'STOP';
+};
+
+const trackGeminiStyleCost = (
+    usage: EvolinkChatResponse['usage'] | undefined,
+    model: string,
+    logLabel: string
+) => {
+    try {
+        if (!usage) return;
+        const isClaude = model.includes('claude');
+        const isOpus = model.includes('opus');
+        const isFlash = model.includes('flash');
+        const inputRate = isClaude
+            ? (isOpus ? PRICING.CLAUDE_OPUS_INPUT_PER_1M : PRICING.CLAUDE_SONNET_INPUT_PER_1M)
+            : (isFlash ? PRICING.GEMINI_FLASH_INPUT_PER_1M : PRICING.GEMINI_PRO_INPUT_PER_1M);
+        const outputRate = isClaude
+            ? (isOpus ? PRICING.CLAUDE_OPUS_OUTPUT_PER_1M : PRICING.CLAUDE_SONNET_OUTPUT_PER_1M)
+            : (isFlash ? PRICING.GEMINI_FLASH_OUTPUT_PER_1M : PRICING.GEMINI_PRO_OUTPUT_PER_1M);
+        const inputCost = (usage.prompt_tokens || 0) / 1_000_000 * inputRate;
+        const outputCost = (usage.completion_tokens || 0) / 1_000_000 * outputRate;
+        const totalCost = inputCost + outputCost;
+        if (totalCost > 0) {
+            useCostStore.getState().addCost(totalCost, 'analysis');
+            logger.info(logLabel, {
+                promptTokens: usage.prompt_tokens,
+                completionTokens: usage.completion_tokens,
+                costUsd: totalCost.toFixed(6)
+            });
+        }
+    } catch (e) {
+        logger.trackSwallowedError(`${logLabel}:costTracking`, e);
+    }
+};
+
+const kieChatCompletion = async (
+    messages: EvolinkChatMessage[],
+    options: EvolinkChatOptions = {}
+): Promise<EvolinkChatResponse> => {
+    const apiKey = getKieKey();
+    if (!apiKey) {
+        throw new Error('Kie API 키가 설정되지 않았습니다. 설정에서 키를 입력해주세요.');
+    }
+    if (isKieRateLimited()) {
+        throw new Error('Kie rate limited (cooldown), skipping');
+    }
+
+    const {
+        temperature = 0.7,
+        maxTokens = 4096,
+        responseFormat,
+        signal,
+        timeoutMs,
+        model = 'gemini-3.1-pro-preview',
+        taskProfile
+    } = options;
+
+    const kieModel = getKieModelSlug(model);
+    const expectsJson = shouldEnforceKieJson(taskProfile, responseFormat);
+    const kieMessages = prepareKieMessages(messages, expectsJson);
+    const effectiveTimeoutMs = timeoutMs ?? 60_000;
+    const body: Record<string, unknown> = {
+        model: kieModel,
+        messages: kieMessages,
+        temperature,
+        max_tokens: maxTokens,
+        stream: false,
+        include_thoughts: false,
+        reasoning_effort: 'high'
+    };
+
+    logger.info('[Kie] Chat completion 요청', { model: kieModel, messageCount: messages.length, timeoutMs: effectiveTimeoutMs });
+
+    const fetchOptions: RequestInit = {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify(body)
+    };
+    const timedSignal = createTimedAbortSignal(signal, effectiveTimeoutMs);
+    if (timedSignal.signal) fetchOptions.signal = timedSignal.signal;
+
+    let response: Response;
+    try {
+        response = await fetchWithRateLimitRetry(`${KIE_BASE_URL}/${kieModel}/v1/chat/completions`, fetchOptions, 3, 3000, effectiveTimeoutMs);
+    } catch (e) {
+        if (timedSignal.didTimeout()) {
+            throw new Error(`Kie 요청 시간 초과 (${Math.round(effectiveTimeoutMs / 1000)}초)`);
+        }
+        throw e;
+    } finally {
+        timedSignal.cleanup();
+    }
+
+    if (!response.ok) {
+        if (response.status === 429) markKieRateLimited(extractRetryAfterMs(response));
+        const errorDetail = await parseEvolinkError(response);
+        throw new Error(`Kie 오류 (${response.status}): ${errorDetail}`);
+    }
+
+    const data: EvolinkChatResponse = await response.json();
+    const finishReason = data.choices?.[0]?.finish_reason;
+    const content = data.choices?.[0]?.message?.content || '';
+
+    trackGeminiStyleCost(data.usage, kieModel, '[Kie] 비용 자동 추적');
+
+    if (!content.trim()) {
+        throw new Error(`Kie 빈 응답 (model: ${kieModel}). finish_reason: ${finishReason || 'unknown'}`);
+    }
+    if (expectsJson) {
+        const normalizedJson = extractStructuredJsonText(content);
+        if (!normalizedJson) {
+            throw new Error(`Kie JSON 응답 형식 오류 (model: ${kieModel}).`);
+        }
+        if (data.choices?.[0]?.message) {
+            data.choices[0].message.content = normalizedJson;
+        }
+    }
+
+    logger.success('[Kie] Chat completion 성공', {
+        model: kieModel,
+        tokens: data.usage?.total_tokens,
+        finishReason
+    });
+
+    return data;
+};
 
 // === HELPER: Evolink 에러 핸들링 ===
 function handleEvolinkError(status: number, errorDetail: string): never {
@@ -187,11 +455,6 @@ export const evolinkChat = async (
     messages: EvolinkChatMessage[],
     options: EvolinkChatOptions = {}
 ): Promise<EvolinkChatResponse> => {
-    const apiKey = getEvolinkKey();
-    if (!apiKey) {
-        throw new Error('Evolink API 키가 설정되지 않았습니다. 설정에서 키를 입력해주세요.');
-    }
-
     const {
         temperature = 0.7,
         maxTokens = 4096,
@@ -199,8 +462,30 @@ export const evolinkChat = async (
         responseFormat,
         signal,
         timeoutMs,
-        model = 'gemini-3.1-pro-preview'
+        model = 'gemini-3.1-pro-preview',
+        taskProfile = 'default'
     } = options;
+
+    if (shouldPreferKieTask(taskProfile, model)) {
+        try {
+            return await kieChatCompletion(messages, options);
+        } catch (e) {
+            if (signal?.aborted) throw e;
+            const errorMessage = e instanceof Error ? e.message : String(e);
+            if (errorMessage.includes('429') || errorMessage.toLowerCase().includes('rate limit')) {
+                markKieRateLimited();
+            }
+            logger.warn('[Evolink] Kie 우선 경로 실패 — Evolink 폴백', {
+                taskProfile,
+                error: errorMessage.slice(0, 200)
+            });
+        }
+    }
+
+    const apiKey = getEvolinkKey();
+    if (!apiKey) {
+        throw new Error('Evolink API 키가 설정되지 않았습니다. 설정에서 키를 입력해주세요.');
+    }
 
     const body: Record<string, unknown> = {
         model,
@@ -239,31 +524,7 @@ export const evolinkChat = async (
     const data: EvolinkChatResponse = await response.json();
 
     // Auto-track token-based cost (Pro vs Flash Lite vs Claude)
-    try {
-        const usage = data.usage;
-        if (usage) {
-            const isClaude = model.includes('claude');
-            const isOpus = model.includes('opus');
-            const isFlash = model.includes('flash');
-            const inputRate = isClaude
-                ? (isOpus ? PRICING.CLAUDE_OPUS_INPUT_PER_1M : PRICING.CLAUDE_SONNET_INPUT_PER_1M)
-                : (isFlash ? PRICING.GEMINI_FLASH_INPUT_PER_1M : PRICING.GEMINI_PRO_INPUT_PER_1M);
-            const outputRate = isClaude
-                ? (isOpus ? PRICING.CLAUDE_OPUS_OUTPUT_PER_1M : PRICING.CLAUDE_SONNET_OUTPUT_PER_1M)
-                : (isFlash ? PRICING.GEMINI_FLASH_OUTPUT_PER_1M : PRICING.GEMINI_PRO_OUTPUT_PER_1M);
-            const inputCost = (usage.prompt_tokens || 0) / 1_000_000 * inputRate;
-            const outputCost = (usage.completion_tokens || 0) / 1_000_000 * outputRate;
-            const totalCost = inputCost + outputCost;
-            if (totalCost > 0) {
-                useCostStore.getState().addCost(totalCost, 'analysis');
-                logger.info('[Evolink] 비용 자동 추적', {
-                    promptTokens: usage.prompt_tokens,
-                    completionTokens: usage.completion_tokens,
-                    costUsd: totalCost.toFixed(6)
-                });
-            }
-        }
-    } catch (e) { logger.trackSwallowedError('EvolinkService:evolinkChat/costTracking', e); }
+    trackGeminiStyleCost(data.usage, model, '[Evolink] 비용 자동 추적');
 
     // [FIX #249] 응답 잘림 경고 — JSON 불완전 가능성
     const finishReason = data.choices?.[0]?.finish_reason;
@@ -662,6 +923,142 @@ export const evolinkNativeStream = async (
     return accumulated;
 };
 
+export const kieChatStream = async (
+    systemPrompt: string,
+    userPrompt: string,
+    onChunk: (text: string, accumulated: string) => void,
+    options: {
+        temperature?: number;
+        maxTokens?: number;
+        signal?: AbortSignal;
+        onFinish?: (reason: string) => void;
+    } = {}
+): Promise<string> => {
+    const apiKey = getKieKey();
+    if (!apiKey) throw new Error('Kie API 키가 설정되지 않았습니다.');
+    if (isKieRateLimited()) throw new Error('Kie rate limited (cooldown), skipping');
+
+    const { temperature = 0.7, maxTokens = 16000, signal, onFinish } = options;
+    const requestTimeoutMs = 60_000;
+    const body: Record<string, unknown> = {
+        model: 'gemini-3.1-pro',
+        messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+        ],
+        temperature,
+        max_tokens: maxTokens,
+        stream: true,
+        include_thoughts: false,
+        reasoning_effort: 'high'
+    };
+
+    logger.info('[Kie] Stream 요청 시작', { maxTokens });
+
+    const timedSignal = createTimedAbortSignal(signal, requestTimeoutMs);
+    let response: Response;
+    try {
+        response = await fetchWithRateLimitRetry(`${KIE_BASE_URL}/gemini-3.1-pro/v1/chat/completions`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apiKey}`,
+            },
+            body: JSON.stringify(body),
+            signal: timedSignal.signal,
+        }, 3, 3000, requestTimeoutMs);
+    } catch (e) {
+        if (timedSignal.didTimeout()) {
+            throw new Error(`Kie 스트리밍 연결 시간 초과 (${Math.round(requestTimeoutMs / 1000)}초)`);
+        }
+        throw e;
+    } finally {
+        timedSignal.cleanup();
+    }
+
+    if (!response.ok) {
+        if (response.status === 429) markKieRateLimited(extractRetryAfterMs(response));
+        const errorDetail = await parseEvolinkError(response);
+        throw new Error(`Kie 스트리밍 오류 (${response.status}): ${errorDetail}`);
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('스트리밍 응답을 읽을 수 없습니다.');
+
+    const decoder = new TextDecoder();
+    let accumulated = '';
+    let buffer = '';
+    let lastFinishReason = '';
+    const STREAM_IDLE_MS = 60_000;
+
+    const processSseLine = (line: string) => {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed === 'data: [DONE]') return;
+        if (!trimmed.startsWith('data: ')) return;
+
+        try {
+            const json = JSON.parse(trimmed.slice(6));
+            const delta = json.choices?.[0]?.delta?.content;
+            if (typeof delta === 'string' && delta) {
+                accumulated += delta;
+                onChunk(delta, accumulated);
+            }
+            if (typeof json.choices?.[0]?.finish_reason === 'string') {
+                lastFinishReason = json.choices[0].finish_reason;
+            }
+        } catch (e) {
+            logger.trackSwallowedError('evolinkService:kieStreamChunk', e);
+        }
+    };
+
+    while (true) {
+        let idleTimer: ReturnType<typeof setTimeout> | undefined;
+        const { done, value } = await Promise.race([
+            reader.read(),
+            new Promise<never>((_, reject) => {
+                idleTimer = setTimeout(() => {
+                    reader.cancel().catch(() => {});
+                    reject(new Error('Kie 스트리밍 60초 무응답 — 연결 중단'));
+                }, STREAM_IDLE_MS);
+            })
+        ]).finally(() => { if (idleTimer) clearTimeout(idleTimer); });
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+            processSseLine(line);
+        }
+    }
+
+    if (buffer.trim()) {
+        processSseLine(buffer);
+    }
+
+    if (!accumulated.trim()) {
+        throw new Error('Kie 스트리밍 빈 응답');
+    }
+
+    if (onFinish) onFinish(mapKieFinishReason(lastFinishReason));
+
+    try {
+        const estInputTokens = Math.ceil((systemPrompt.length + userPrompt.length) / 4);
+        const estOutputTokens = Math.ceil(accumulated.length / 4);
+        const inputCost = estInputTokens / 1_000_000 * PRICING.GEMINI_PRO_INPUT_PER_1M;
+        const outputCost = estOutputTokens / 1_000_000 * PRICING.GEMINI_PRO_OUTPUT_PER_1M;
+        const totalCost = inputCost + outputCost;
+        if (totalCost > 0) {
+            useCostStore.getState().addCost(totalCost, 'analysis');
+            logger.info('[Kie] 스트리밍 비용 추정', { estInputTokens, estOutputTokens, costUsd: totalCost.toFixed(6) });
+        }
+    } catch (e) { logger.trackSwallowedError('EvolinkService:kieChatStream/costTracking', e); }
+
+    logger.success('[Kie] 스트리밍 완료', { totalLength: accumulated.length, finishReason: lastFinishReason });
+    return accumulated;
+};
+
 // === CLAUDE MESSAGES API STREAMING (Anthropic 포맷) ===
 
 /**
@@ -816,13 +1213,36 @@ export const scriptGenerationStream = async (
     const { model, temperature, maxOutputTokens, enableWebSearch, signal, onFinish } = options;
 
     if (model === ScriptAiModel.GEMINI_PRO) {
-        return evolinkNativeStream(systemPrompt, userPrompt, onChunk, {
-            temperature,
-            maxOutputTokens,
-            enableWebSearch,
-            signal,
-            onFinish,
-        });
+        if (enableWebSearch) {
+            return evolinkNativeStream(systemPrompt, userPrompt, onChunk, {
+                temperature,
+                maxOutputTokens,
+                enableWebSearch,
+                signal,
+                onFinish,
+            });
+        }
+
+        try {
+            return await kieChatStream(systemPrompt, userPrompt, onChunk, {
+                temperature,
+                maxTokens: maxOutputTokens,
+                signal,
+                onFinish,
+            });
+        } catch (e) {
+            if (signal?.aborted) throw e;
+            const msg = e instanceof Error ? e.message : String(e);
+            logger.warn('[ScriptGen] Kie SSE 실패 — Evolink Native 폴백', { error: msg });
+
+            return evolinkNativeStream(systemPrompt, userPrompt, onChunk, {
+                temperature,
+                maxOutputTokens,
+                enableWebSearch: false,
+                signal,
+                onFinish,
+            });
+        }
     }
 
     // Claude 모델 (Sonnet 4.6 / Opus 4.6)

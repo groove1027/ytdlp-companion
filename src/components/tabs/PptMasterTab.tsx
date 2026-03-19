@@ -21,6 +21,7 @@ import {
 import { useElapsedTimer, formatElapsed } from '../../hooks/useElapsedTimer';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
 import { usePptMasterStore, getSelectedContentStyle, getSelectedDesignStyle } from '../../stores/pptMasterStore';
+import { monitoredFetch } from '../../services/apiService';
 import pptxgenjs from 'pptxgenjs';
 import JSZip from 'jszip';
 
@@ -117,6 +118,7 @@ const PROGRESS_TIPS = [
   '✨ AI가 텍스트를 분석하고 최적의 구조를 설계하고 있어요',
   '🛠️ 완성 후 개별 슬라이드의 이미지만 따로 재생성할 수도 있어요',
 ];
+const PPT_CHAT_TIMEOUT_MS = 60_000;
 
 const STEPS = [
   { id: 1 as Step, label: '내용 입력', icon: '📝' },
@@ -750,7 +752,7 @@ export default function PptMasterTab() {
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt },
         ];
-        const res = await evolinkChat(messages, { temperature: 0.7, maxTokens });
+        const res = await evolinkChat(messages, { temperature: 0.7, maxTokens, timeoutMs: PPT_CHAT_TIMEOUT_MS, taskProfile: 'structured_large_json' });
         const raw = res.choices?.[0]?.message?.content || '';
         const jsonStr = extractJsonFromText(raw);
         if (!jsonStr) throw new Error('AI 응답에서 JSON을 추출할 수 없습니다.');
@@ -772,7 +774,7 @@ export default function PptMasterTab() {
         const tocRes = await evolinkChat([
           { role: 'system', content: '프레젠테이션 구조 설계 전문가. 주어진 텍스트를 분석하여 슬라이드 목차를 설계한다. 반드시 JSON 배열로 반환. 마크다운 없이 순수 JSON만 출력.' },
           { role: 'user', content: `아래 텍스트를 ${slideCount}장 프레젠테이션 슬라이드의 목차로 설계하세요.\n\n각 슬라이드: {"slideNumber":N,"title":"슬라이드 제목","section":"섹션명","keyTopic":"핵심 주제 한 줄"}\n\n규칙:\n- 반드시 ${slideCount}개 항목\n- 논리적 섹션으로 그룹핑\n- 각 주제를 세분화하여 ${slideCount}장을 채울 것\n- 첫 번째 슬라이드는 타이틀, 마지막은 요약/CTA\n\n텍스트:\n${inputText}` },
-        ], { temperature: 0.5, maxTokens: Math.min(40000, slideCount * 200), model: 'gemini-3.1-flash-lite-preview', responseFormat: { type: 'json_object' } });
+        ], { temperature: 0.5, maxTokens: Math.min(40000, slideCount * 200), timeoutMs: PPT_CHAT_TIMEOUT_MS, model: 'gemini-3.1-flash-lite-preview', responseFormat: { type: 'json_object' }, taskProfile: 'structured_large_json' });
 
         const tocRaw = tocRes.choices?.[0]?.message?.content || '';
         const tocJsonStr = extractJsonFromText(tocRaw);
@@ -807,7 +809,7 @@ export default function PptMasterTab() {
           ];
 
           const maxTokens = chunkToc.length * 800;
-          const res = await evolinkChat(chunkMessages, { temperature: 0.7, maxTokens });
+          const res = await evolinkChat(chunkMessages, { temperature: 0.7, maxTokens, timeoutMs: PPT_CHAT_TIMEOUT_MS, taskProfile: 'structured_large_json' });
           const raw = res.choices?.[0]?.message?.content || '';
           const jsonStr = extractJsonFromText(raw);
           if (!jsonStr) throw new Error(`청크 ${chunkIdx + 1} JSON 추출 실패`);
@@ -955,7 +957,7 @@ export default function PptMasterTab() {
         { role: 'user', content: userPrompt },
       ];
 
-      const res = await evolinkChat(messages, { temperature: 0.8, maxTokens: 2000 });
+      const res = await evolinkChat(messages, { temperature: 0.8, maxTokens: 2000, timeoutMs: PPT_CHAT_TIMEOUT_MS, taskProfile: 'structured_large_json' });
       const raw = res.choices?.[0]?.message?.content || '';
       const jsonStr = extractJsonFromText(raw);
       if (!jsonStr) throw new Error('JSON 추출 실패');
@@ -1178,7 +1180,7 @@ document.addEventListener('keydown',function(e){if(!document.getElementById('lb'
       for (let idx = 0; idx < slidesWithImg.length; idx++) {
         const slide = slidesWithImg[idx];
         if (!slide.imageUrl) continue;
-        const resp = await fetch(slide.imageUrl);
+        const resp = await monitoredFetch(slide.imageUrl);
         const data = await resp.blob();
         const ext = slide.imageUrl.startsWith('data:image/png') ? 'png' : 'jpg';
         zip.file(`slide_${String(slide.slideNumber).padStart(3, '0')}.${ext}`, data);

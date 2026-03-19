@@ -9,17 +9,29 @@ import { useCostStore } from '../../stores/costStore';
 // 429는 모델별 rate limit일 수 있으므로 Pro만 쿨다운, Flash Lite는 별도 시도
 let _evolinkProRateLimitedUntil = 0;
 const EVOLINK_RATE_LIMIT_COOLDOWN_MS = 60_000; // 기본 60초 쿨다운 (Evolink 공식 문서: "retry after 60 seconds")
+let _kieRateLimitedUntil = 0;
+const KIE_RATE_LIMIT_COOLDOWN_MS = 60_000;
 
 const markEvolinkProRateLimited = (retryAfterMs?: number) => {
     // Retry-After 헤더 값이 있으면 그 시간 사용, 없으면 기본 60초
     const cooldownMs = retryAfterMs && retryAfterMs > 0
         ? Math.min(retryAfterMs, 120_000) // 최대 120초 캡
         : EVOLINK_RATE_LIMIT_COOLDOWN_MS;
-    _evolinkProRateLimitedUntil = Date.now() + cooldownMs;
+    _evolinkProRateLimitedUntil = Math.max(_evolinkProRateLimitedUntil, Date.now() + cooldownMs);
     logger.warn(`[Evolink] Pro 429 Rate Limit 감지 — ${Math.round(cooldownMs / 1000)}초간 Pro 스킵, Flash Lite 우선`);
 };
 
 const isEvolinkProRateLimited = (): boolean => Date.now() < _evolinkProRateLimitedUntil;
+
+const markKieRateLimited = (retryAfterMs?: number) => {
+    const cooldownMs = retryAfterMs && retryAfterMs > 0
+        ? Math.min(retryAfterMs, 120_000)
+        : KIE_RATE_LIMIT_COOLDOWN_MS;
+    _kieRateLimitedUntil = Math.max(_kieRateLimitedUntil, Date.now() + cooldownMs);
+    logger.warn(`[Kie] 429 Rate Limit 감지 — ${Math.round(cooldownMs / 1000)}초간 KIE 스킵`);
+};
+
+const isKieRateLimited = (): boolean => Date.now() < _kieRateLimitedUntil;
 
 // [FIX #245] 429 응답에서 Retry-After 헤더 추출 (초 → ms 변환)
 const extractRetryAfterMs = (response: Response): number | undefined => {
@@ -27,16 +39,6 @@ const extractRetryAfterMs = (response: Response): number | undefined => {
     if (!header) return undefined;
     const sec = parseInt(header, 10);
     return (!isNaN(sec) && sec > 0) ? sec * 1000 : undefined;
-};
-
-// Local Type Definition to replace Google SDK Type enum
-const SchemaType = {
-    STRING: 'STRING',
-    NUMBER: 'NUMBER',
-    INTEGER: 'INTEGER',
-    BOOLEAN: 'BOOLEAN',
-    ARRAY: 'ARRAY',
-    OBJECT: 'OBJECT'
 };
 
 // [NEW] Safety Settings: Disable all filters to prevent blocking innocent scripts (e.g. "drill holes")
@@ -47,6 +49,105 @@ export const SAFETY_SETTINGS_BLOCK_NONE = [
     { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' }
 ];
 
+// 작업 프로필 — KIE vs Evolink 라우팅 힌트
+export type TaskProfile =
+    | 'structured_large_json'
+    | 'long_text_generation'
+    | 'file_analysis'
+    | 'short_analysis'
+    | 'default';
+
+const KIE_JSON_ONLY_SYSTEM_PROMPT = "\n\n[CRITICAL OUTPUT FORMAT] You MUST respond with valid JSON only. No markdown code blocks (no ```json). No conversational text. Output ONLY the raw JSON.";
+
+const extractStructuredJsonText = (text: string): string | null => {
+    const trimmed = text.trim();
+    if (!trimmed) return null;
+
+    const candidates = [trimmed];
+    const codeBlockMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    if (codeBlockMatch?.[1]) candidates.push(codeBlockMatch[1].trim());
+
+    const objectStart = trimmed.indexOf('{');
+    const objectEnd = trimmed.lastIndexOf('}');
+    if (objectStart !== -1 && objectEnd > objectStart) {
+        candidates.push(trimmed.slice(objectStart, objectEnd + 1));
+    }
+
+    const arrayStart = trimmed.indexOf('[');
+    const arrayEnd = trimmed.lastIndexOf(']');
+    if (arrayStart !== -1 && arrayEnd > arrayStart) {
+        candidates.push(trimmed.slice(arrayStart, arrayEnd + 1));
+    }
+
+    for (const candidate of candidates) {
+        try {
+            JSON.parse(candidate);
+            return candidate;
+        } catch {
+            continue;
+        }
+    }
+
+    return null;
+};
+
+const shouldValidateKieJson = (taskProfile: TaskProfile, googlePayload: any): boolean => (
+    taskProfile === 'structured_large_json' || googlePayload?.generationConfig?.responseMimeType === 'application/json'
+);
+
+const trackGeminiProxyCost = (
+    usage: { prompt_tokens?: number; completion_tokens?: number } | undefined,
+    model: string,
+    logLabel: string
+) => {
+    try {
+        if (!usage) return;
+        const isFlash = model.includes('flash');
+        const inputRate = isFlash ? PRICING.GEMINI_FLASH_INPUT_PER_1M : PRICING.GEMINI_PRO_INPUT_PER_1M;
+        const outputRate = isFlash ? PRICING.GEMINI_FLASH_OUTPUT_PER_1M : PRICING.GEMINI_PRO_OUTPUT_PER_1M;
+        const inputCost = (usage.prompt_tokens || 0) / 1_000_000 * inputRate;
+        const outputCost = (usage.completion_tokens || 0) / 1_000_000 * outputRate;
+        const totalCost = inputCost + outputCost;
+        if (totalCost > 0) {
+            useCostStore.getState().addCost(totalCost, 'analysis');
+            logger.info(logLabel, {
+                promptTokens: usage.prompt_tokens,
+                completionTokens: usage.completion_tokens,
+                costUsd: totalCost.toFixed(6)
+            });
+        }
+    } catch (e) {
+        logger.trackSwallowedError(`${logLabel}:costTracking`, e);
+    }
+};
+
+const ensureSystemInstruction = (messages: Record<string, unknown>[], instruction: string) => {
+    const systemMessage = messages.find((message) => message.role === 'system');
+    if (systemMessage && typeof systemMessage.content === 'string') {
+        if (!systemMessage.content.includes(instruction.trim())) {
+            systemMessage.content += instruction;
+        }
+        return;
+    }
+    messages.unshift({ role: 'system', content: instruction.trim() });
+};
+
+const applyKieStructuredOutput = (openAIBody: Record<string, unknown>, _googlePayload: Record<string, unknown>) => {
+    const messages = Array.isArray(openAIBody.messages)
+        ? openAIBody.messages as Record<string, unknown>[]
+        : [];
+    if (!openAIBody.response_format) return;
+
+    // KIE strict json_schema는 빈 객체만 반환하는 사례가 있어 response_format을 제거하고
+    // 시스템 프롬프트 기반 JSON 강제만 유지한다.
+    delete openAIBody.response_format;
+    ensureSystemInstruction(messages, KIE_JSON_ONLY_SYSTEM_PROMPT);
+};
+
+const getKieModelSlug = (model: string): 'gemini-3.1-pro' | 'gemini-3-flash' => (
+    model.includes('pro') ? 'gemini-3.1-pro' : 'gemini-3-flash'
+);
+
 // Helper: Convert Google Payload to OpenAI Payload for Kie
 const convertGoogleToOpenAI = (model: string, googlePayload: any) => {
     const messages = [];
@@ -54,7 +155,10 @@ const convertGoogleToOpenAI = (model: string, googlePayload: any) => {
 
     // System Instruction -> System Message
     if (googlePayload.systemInstruction) {
-        systemInstructionText = googlePayload.systemInstruction.parts?.[0]?.text || "";
+        systemInstructionText = googlePayload.systemInstruction.parts
+            ?.map((part: any) => typeof part?.text === 'string' ? part.text : '')
+            .filter(Boolean)
+            .join('\n') || "";
     }
 
     // Contents -> User/Assistant Messages (Handling History)
@@ -136,7 +240,7 @@ const convertGoogleToOpenAI = (model: string, googlePayload: any) => {
         response_format = { type: "json_object" };
         // [FIX] response_format만으로는 JSON 출력이 보장되지 않음
         // 시스템 프롬프트로 JSON 출력을 이중 강제
-        const jsonSystemPrompt = "[CRITICAL] You MUST respond with valid JSON ONLY. No markdown code blocks (no ```json). No conversational text (no 'Here is...'). Output ONLY the raw JSON object.";
+        const jsonSystemPrompt = KIE_JSON_ONLY_SYSTEM_PROMPT.trim();
         if (systemInstructionText) {
             systemInstructionText = jsonSystemPrompt + "\n\n" + systemInstructionText;
         } else {
@@ -212,18 +316,38 @@ const needsV1Beta = (googlePayload: any): boolean => {
 };
 
 // [FIX #191] skipNative 옵션 — 재시도/Flash 폴백 시 Evolink Native 스킵
-interface GeminiProxyOptions { skipNative?: boolean; }
+interface GeminiProxyOptions {
+    skipNative?: boolean;
+    taskProfile?: TaskProfile;
+}
+
+type GeminiProxyOptionsInput = GeminiProxyOptions | TaskProfile | undefined;
+
+const normalizeGeminiProxyOptions = (options: GeminiProxyOptionsInput): GeminiProxyOptions => {
+    if (typeof options === 'string') {
+        return { taskProfile: options };
+    }
+    return options || {};
+};
+
+const shouldPreferKieFirst = (taskProfile: TaskProfile, requiresBeta: boolean, model: string): boolean => {
+    if (requiresBeta) return false;
+    if (model.toLowerCase().includes('flash')) return false;
+    return taskProfile === 'structured_large_json' || taskProfile === 'long_text_generation';
+};
 
 // --- CORE PROXY REQUEST FUNCTION ---
 // [FIX #244] Smart Routing: 페이로드 분석 → 최적 경로 자동 선택
 // - Google Search/fileData 포함 → v1beta 우선 (특수 기능 필요)
 // - 텍스트 전용 → v1 우선 (안정적, 동일 Gemini 3.1 Pro, v1beta 불안정 회피)
 // - Kie는 항상 최종 폴백 (Gemini 3.1 Pro — 동급 품질)
-export const requestGeminiProxy = async (model: string, googlePayload: any, _retryCount: number = 0, timeoutMs?: number, options?: GeminiProxyOptions): Promise<any> => {
+export const requestGeminiProxy = async (model: string, googlePayload: any, _retryCount: number = 0, timeoutMs?: number, options?: GeminiProxyOptionsInput): Promise<any> => {
     let lastError: any = null;
-    const shouldSkipNative = options?.skipNative || _retryCount > 0;
+    const resolvedOptions = normalizeGeminiProxyOptions(options);
+    const shouldSkipNative = resolvedOptions.skipNative || _retryCount > 0;
     const NATIVE_MAX_WAIT_MS = 60_000;
     const requiresBeta = needsV1Beta(googlePayload);
+    const taskProfile = resolvedOptions.taskProfile || 'default';
 
     // --- [Inner Helper] Evolink v1beta (Google Native Format, Gemini 3.1 Pro) ---
     // v1beta 전용 기능: Google Search grounding, fileData(영상/오디오)
@@ -393,15 +517,101 @@ export const requestGeminiProxy = async (model: string, googlePayload: any, _ret
         throw new Error(`Evolink Flash Lite Error (${flashResponse.status}): ${errText}`);
     };
 
+    const tryKieChat = async (): Promise<any> => {
+        const kieKey = getKieKey();
+        if (!kieKey) throw new Error("Kie API Key가 설정되지 않았습니다.");
+        if (isKieRateLimited()) throw new Error('Kie rate limited (cooldown), skipping');
+
+        const kieModelSlug = getKieModelSlug(model);
+        const expectsJson = shouldValidateKieJson(taskProfile, googlePayload);
+        const effectiveTimeoutMs = timeoutMs ?? 60_000;
+
+        logger.warn(`[Gemini] Kie 호출 (model: ${kieModelSlug}, taskProfile: ${taskProfile})`);
+        console.log(`[GeminiService] Trying Kie (${kieModelSlug}, taskProfile: ${taskProfile})...`);
+
+        const url = `https://api.kie.ai/${kieModelSlug}/v1/chat/completions`;
+        const openAIBody = convertGoogleToOpenAI(model, googlePayload);
+        openAIBody.model = kieModelSlug;
+        openAIBody.stream = false;
+        openAIBody.include_thoughts = false;
+
+        const isThinkingModel = model.includes('thinking');
+        openAIBody.reasoning_effort = isThinkingModel ? "high" : (googlePayload._reasoningEffort || "high");
+
+        applyKieStructuredOutput(openAIBody, googlePayload);
+
+        const response = await fetchWithRateLimitRetry(url, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${kieKey}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(openAIBody)
+        }, 3, 3000, effectiveTimeoutMs);
+
+        if (!response.ok) {
+            if (response.status === 429) markKieRateLimited(extractRetryAfterMs(response));
+            const errText = await response.text();
+            throw new Error(`Kie Error (${response.status}): ${errText}`);
+        }
+
+        const json = await response.json();
+        const choice = json.choices?.[0];
+        const content = choice?.message?.content || "";
+        const toolCalls = choice?.message?.tool_calls;
+
+        trackGeminiProxyCost(json.usage, kieModelSlug, '[Kie Chat] 비용 추적');
+
+        if (!toolCalls?.length && !content.trim()) {
+            throw new Error(`Kie 빈 응답 (model: ${kieModelSlug}). finish_reason: ${choice?.finish_reason || 'unknown'}`);
+        }
+
+        const normalizedContent = !toolCalls?.length && expectsJson
+            ? extractStructuredJsonText(content)
+            : content;
+        if (!toolCalls?.length && expectsJson && !normalizedContent) {
+            throw new Error(`Kie JSON 응답 형식 오류 (model: ${kieModelSlug}).`);
+        }
+
+        const parts: Record<string, unknown>[] = [];
+
+        if (toolCalls && toolCalls.length > 0) {
+            const fc = toolCalls[0].function;
+            parts.push({
+                functionCall: {
+                    name: fc.name,
+                    args: JSON.parse(fc.arguments || "{}")
+                }
+            });
+        } else {
+            parts.push({ text: normalizedContent || content });
+        }
+
+        return {
+            candidates: [{
+                content: {
+                    parts
+                }
+            }]
+        };
+    };
+
     // --- [FIX #244/#245] Smart Routing ---
     // 텍스트 전용: v1(Pro) → v1beta(Pro) → Flash Lite → Kie 3.1 Pro
     // Google Search/fileData: v1beta(Pro) → v1(Pro) → Flash Lite → Kie 3.1 Pro
     // 전 구간 3.1급 품질 유지 — Kie도 3.1 Pro 지원 (docs.kie.ai 2026-03 확인)
-    const priorities: Array<{ name: string; fn: () => Promise<any> }> = requiresBeta
+    const evolinkPriorities: Array<{ name: string; fn: () => Promise<any> }> = requiresBeta
         ? [{ name: 'v1beta(Pro)', fn: tryEvolinkV1Beta }, { name: 'v1(Pro)', fn: tryEvolinkV1Chat }, { name: 'FlashLite', fn: tryEvolinkFlashLite }]
         : [{ name: 'v1(Pro)', fn: tryEvolinkV1Chat }, { name: 'v1beta(Pro)', fn: tryEvolinkV1Beta }, { name: 'FlashLite', fn: tryEvolinkFlashLite }];
+    const kieFirst = shouldPreferKieFirst(taskProfile, requiresBeta, model);
+    const priorities: Array<{ name: string; fn: () => Promise<any> }> = kieFirst
+        ? [{ name: 'Kie', fn: tryKieChat }, ...evolinkPriorities]
+        : evolinkPriorities;
 
-    console.log(`[GeminiService] Smart Routing: ${requiresBeta ? 'v1beta(Pro)→v1(Pro)→FlashLite→Kie3.1' : 'v1(Pro)→v1beta(Pro)→FlashLite→Kie3.1'}`);
+    const routeLabel = kieFirst
+        ? `Kie3.1→${requiresBeta ? 'v1beta(Pro)→v1(Pro)→FlashLite' : 'v1(Pro)→v1beta(Pro)→FlashLite'}`
+        : (requiresBeta ? 'v1beta(Pro)→v1(Pro)→FlashLite→Kie3.1' : 'v1(Pro)→v1beta(Pro)→FlashLite→Kie3.1');
+    console.log(`[GeminiService] Smart Routing (${taskProfile}): ${routeLabel}`);
 
     for (const { name, fn } of priorities) {
         try {
@@ -412,106 +622,26 @@ export const requestGeminiProxy = async (model: string, googlePayload: any, _ret
             if (name.includes('Pro') && (e.message?.includes('429') || e.message?.toLowerCase().includes('rate limit'))) {
                 markEvolinkProRateLimited();
             }
+            if (name === 'Kie' && (e.message?.includes('429') || e.message?.toLowerCase().includes('rate limit'))) {
+                markKieRateLimited();
+            }
             lastError = e;
         }
     }
 
-    // Kie (최종 폴백) — Gemini 3.1 Pro (Kie docs.kie.ai 2026-03 확인: gemini-3.1-pro 지원)
+    // Kie (최종 폴백) — structured_large_json/long_text_generation은 이미 선시도했으므로 재시도하지 않음
     try {
-        const kieKey = getKieKey();
-        if (!kieKey) {
-            if (lastError) throw lastError;
-            throw new Error("Evolink and Kie API Keys are missing.");
+        if (!kieFirst) {
+            return await tryKieChat();
         }
-
-        // [FIX #245] Kie Gemini 3.1 Pro 지원 — 더 이상 3.0 다운그레이드 아님
-        // docs.kie.ai/market/gemini/gemini-3-1-pro 확인: api.kie.ai/gemini-3.1-pro/v1/chat/completions
-        let kieModelSlug = 'gemini-3-flash';
-        if (model.includes('pro')) kieModelSlug = 'gemini-3.1-pro';
-        else if (model.includes('flash')) kieModelSlug = 'gemini-3-flash';
-
-        logger.warn(`[Gemini] Kie 폴백 호출 (model: ${kieModelSlug})`);
-        console.log(`[GeminiService] Switching to Kie Fallback (${kieModelSlug})...`);
-
-        const url = `https://api.kie.ai/${kieModelSlug}/v1/chat/completions`;
-        const openAIBody = convertGoogleToOpenAI(model, googlePayload);
-        openAIBody.model = kieModelSlug;
-
-        // [PERF] Kie 전용 파라미터 추가
-        openAIBody.include_thoughts = false; // 앱에서 reasoning_content 미사용 — 불필요 토큰 절약
-        // Thinking 모델 요청이면 reasoning_effort: "high" 강제 (Kie 기술 문서 준수)
-        const isThinkingModel = model.includes('thinking');
-        openAIBody.reasoning_effort = isThinkingModel ? "high" : (googlePayload._reasoningEffort || "high");
-
-        // [FIX] Kie API response_format 호환성 처리
-        // - Flash: response_format 미지원 (공식 문서에 파라미터 미포함)
-        // - Pro: json_object 미지원, json_schema만 지원하나 출력 스키마가 호출마다 다름
-        //   (analyzeScriptContext=object, parseScriptToScenes=array 등)
-        //   → 두 경우 모두 시스템 프롬프트로 JSON 출력 강제
-        if (openAIBody.response_format) {
-            const jsonEnforcement = "\n\n[CRITICAL OUTPUT FORMAT] You MUST respond with valid JSON only. No markdown code blocks (no ```json). No conversational text. Output ONLY the raw JSON.";
-            const sysMsg = openAIBody.messages?.find((m: any) => m.role === 'system');
-            if (sysMsg) {
-                sysMsg.content += jsonEnforcement;
-            } else {
-                openAIBody.messages.unshift({ role: 'system', content: jsonEnforcement.trim() });
-            }
-            delete openAIBody.response_format;
-        }
-
-        // [FIX #32] Kie 폴백에도 동일한 타임아웃 적용
-        const response = await monitoredFetch(url, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${kieKey}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(openAIBody)
-        }, timeoutMs);
-
-        if (response.ok) {
-            const json = await response.json();
-            const choice = json.choices?.[0];
-            const content = choice?.message?.content || "";
-            const toolCalls = choice?.message?.tool_calls;
-
-            // [FIX #119] 빈 응답 검증 — 200이어도 content 없으면 에러 처리
-            if (!toolCalls?.length && !content.trim()) {
-                throw new Error(`Kie 빈 응답 (model: ${kieModelSlug}). finish_reason: ${choice?.finish_reason || 'unknown'}`);
-            }
-
-            let parts: any[] = [];
-
-            if (toolCalls && toolCalls.length > 0) {
-                const fc = toolCalls[0].function;
-                parts.push({
-                    functionCall: {
-                        name: fc.name,
-                        args: JSON.parse(fc.arguments || "{}")
-                    }
-                });
-            } else {
-                parts.push({ text: content });
-            }
-
-            return {
-                candidates: [{
-                    content: {
-                        parts: parts
-                    }
-                }]
-            };
-        }
-
-        const errText = await response.text();
-        throw new Error(`Kie Error (${response.status}): ${errText}`);
-
+        if (lastError) throw lastError;
+        throw new Error("Evolink and Kie API Keys are missing.");
     } catch (e: any) {
         // [FIX] 1회 자동 재시도 (모든 프록시 실패 시)
         if (_retryCount < 1) {
             logger.trackRetry('GeminiProxy 전체', _retryCount + 1, 2, (lastError || e)?.message);
             await new Promise(r => setTimeout(r, 2000));
-            return requestGeminiProxy(model, googlePayload, _retryCount + 1, timeoutMs, options);
+            return requestGeminiProxy(model, googlePayload, _retryCount + 1, timeoutMs, resolvedOptions);
         }
         console.error("[GeminiService] All Proxies Failed after retry.", e);
         throw new Error(`All proxies failed. Last error: ${(lastError || e)?.message || 'Unknown'}`);
@@ -525,40 +655,36 @@ export const requestGeminiProxy = async (model: string, googlePayload: any, _ret
 export const requestKieChatFallback = async (model: string, googlePayload: any, timeoutMs?: number): Promise<any> => {
     const kieKey = getKieKey();
     if (!kieKey) throw new Error("Kie API Key가 설정되지 않았습니다.");
+    if (isKieRateLimited()) throw new Error('Kie rate limited (cooldown), skipping');
 
     // [FIX #245] Kie Gemini 3.1 Pro 지원 (docs.kie.ai 2026-03 확인)
-    const kieModelSlug = model.includes('pro') ? 'gemini-3.1-pro' : 'gemini-3-flash';
+    const kieModelSlug = getKieModelSlug(model);
+    const expectsJson = shouldValidateKieJson('default', googlePayload);
+    const effectiveTimeoutMs = timeoutMs ?? 60_000;
     const url = `https://api.kie.ai/${kieModelSlug}/v1/chat/completions`;
 
     const openAIBody = convertGoogleToOpenAI(model, googlePayload);
     openAIBody.model = kieModelSlug;
+    openAIBody.stream = false;
     openAIBody.include_thoughts = false;
-    openAIBody.reasoning_effort = googlePayload?.generationConfig?._reasoningEffort || "high";
+    openAIBody.reasoning_effort = googlePayload?._reasoningEffort || googlePayload?.generationConfig?._reasoningEffort || "high";
 
-    // [FIX] Kie response_format 비호환 → 시스템 프롬프트로 JSON 강제
-    if (openAIBody.response_format) {
-        const jsonEnforcement = "\n\n[CRITICAL OUTPUT FORMAT] You MUST respond with valid JSON only. No markdown code blocks (no ```json). No conversational text. Output ONLY the raw JSON.";
-        const sysMsg = openAIBody.messages?.find((m: any) => m.role === 'system');
-        if (sysMsg) {
-            sysMsg.content += jsonEnforcement;
-        } else {
-            openAIBody.messages.unshift({ role: 'system', content: jsonEnforcement.trim() });
-        }
-        delete openAIBody.response_format;
-    }
+    // [FIX] KIE는 response_format을 제거하고 시스템 프롬프트 기반 JSON 강제만 유지
+    applyKieStructuredOutput(openAIBody, googlePayload);
 
     logger.info(`[Kie Chat] ${kieModelSlug} 호출`, { model, timeoutMs });
 
-    const response = await monitoredFetch(url, {
+    const response = await fetchWithRateLimitRetry(url, {
         method: 'POST',
         headers: {
             'Authorization': `Bearer ${kieKey}`,
             'Content-Type': 'application/json'
         },
         body: JSON.stringify(openAIBody)
-    }, timeoutMs);
+    }, 3, 3000, effectiveTimeoutMs);
 
     if (!response.ok) {
+        if (response.status === 429) markKieRateLimited(extractRetryAfterMs(response));
         const errText = await response.text();
         throw new Error(`Kie Chat Error (${response.status}): ${errText}`);
     }
@@ -568,8 +694,17 @@ export const requestKieChatFallback = async (model: string, googlePayload: any, 
     const content = choice?.message?.content || "";
     const toolCalls = choice?.message?.tool_calls;
 
+    trackGeminiProxyCost(json.usage, kieModelSlug, '[Kie Chat Fallback] 비용 추적');
+
     if (!toolCalls?.length && !content.trim()) {
         throw new Error(`Kie 빈 응답 (model: ${kieModelSlug}). finish_reason: ${choice?.finish_reason || 'unknown'}`);
+    }
+
+    const normalizedContent = !toolCalls?.length && expectsJson
+        ? extractStructuredJsonText(content)
+        : content;
+    if (!toolCalls?.length && expectsJson && !normalizedContent) {
+        throw new Error(`Kie JSON 응답 형식 오류 (model: ${kieModelSlug}).`);
     }
 
     // OpenAI 응답 → Google Native 포맷 변환
@@ -583,7 +718,7 @@ export const requestKieChatFallback = async (model: string, googlePayload: any, 
             }
         });
     } else {
-        parts.push({ text: content });
+        parts.push({ text: normalizedContent || content });
     }
 
     return {

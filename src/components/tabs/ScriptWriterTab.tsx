@@ -478,8 +478,19 @@ ${scriptText}`;
       setAnalysisProgress(95);
 
       const responseText = response.choices?.[0]?.message?.content || '';
-      const parsed = extractJsonFromText(responseText);
-      const scenes = Array.isArray(parsed) ? parsed.filter((s: unknown) => typeof s === 'string' && (s as string).trim()) as string[] : [];
+      const jsonStr = extractJsonFromText(responseText);
+      let scenes: string[] = [];
+
+      if (jsonStr) {
+        try {
+          const parsed = JSON.parse(jsonStr);
+          scenes = Array.isArray(parsed)
+            ? parsed.filter((s): s is string => typeof s === 'string' && s.trim().length > 0)
+            : [];
+        } catch (error) {
+          logger.warn('ScriptWriterTab: handleSceneAnalysis JSON parse failed, using local fallback', error);
+        }
+      }
 
       if (scenes.length === 0) {
         const fallback = splitScenesLocally(scriptText, videoFormat, smartSplit,
@@ -694,7 +705,7 @@ ${instinctPrompt}
         const contText = await scriptGenerationStream(
           systemPrompt, contPrompt,
           (_chunk, accumulated) => { setStreamingText(result + accumulated); },
-          { model: scriptAiModel, temperature: 0.7, maxOutputTokens: contBudget, signal: abortCtrl.signal, onFinish: (r) => { finishReason = r; } }
+          { model: scriptAiModel, temperature: 0.7, maxOutputTokens: contBudget, enableWebSearch: useWebSearch, signal: abortCtrl.signal, onFinish: (r) => { finishReason = r; } }
         );
         result += contText;
       }
@@ -826,7 +837,7 @@ ${instinctPrompt}
         const contText = await scriptGenerationStream(
           systemPrompt, contPrompt,
           (_chunk, accumulated) => { setStreamingText(fullText + accumulated); },
-          { model: scriptAiModel, temperature: 0.7, maxOutputTokens: contBudget, signal: abortCtrl.signal, onFinish: (r) => { finishReason = r; } }
+          { model: scriptAiModel, temperature: 0.7, maxOutputTokens: contBudget, enableWebSearch: useWebSearch, signal: abortCtrl.signal, onFinish: (r) => { finishReason = r; } }
         );
         fullText += contText;
       }
