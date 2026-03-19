@@ -78,6 +78,36 @@ const WIKIMEDIA_THUMB_WIDTH_MAP: Record<string, string> = {
   xxlarge: '960',
   huge: '1280',
 };
+const HANGUL_REGEX = /[가-힣]/;
+const WIKIMEDIA_KO_EN_MAP: Record<string, string[]> = {
+  '한국': ['korea', 'korean'],
+  '한옥': ['hanok', 'traditional house'],
+  '서울': ['seoul', 'korea'],
+  '부산': ['busan', 'korea'],
+  '제주': ['jeju', 'korea'],
+  '궁궐': ['palace'],
+  '궁전': ['palace'],
+  '절': ['temple'],
+  '사찰': ['buddhist temple'],
+  '전통': ['traditional', 'heritage'],
+  '마당': ['courtyard', 'yard'],
+  '거리': ['street'],
+  '골목': ['alley', 'street'],
+  '마을': ['village'],
+  '도시': ['city'],
+  '시골': ['countryside', 'village'],
+  '시장': ['market'],
+  '집': ['house'],
+  '건물': ['building', 'architecture'],
+  '풍경': ['landscape', 'scenery'],
+  '바다': ['sea', 'ocean'],
+  '해변': ['beach'],
+  '산': ['mountain'],
+  '하늘': ['sky'],
+  '노을': ['sunset'],
+  '인물': ['person', 'portrait'],
+  '사람': ['person'],
+};
 const GOOGLE_SEARCH_COOLDOWN_MS = 15 * 60 * 1000;
 const REFERENCE_SEARCH_CACHE_TTL_MS = 30 * 60 * 1000;
 const GOOGLE_SEARCH_MAX_CONCURRENCY = 2;
@@ -265,6 +295,72 @@ function isUsefulImageUrl(value: string): boolean {
 
 function cleanText(value: string | null | undefined): string {
   return (value || '').replace(/\s+/g, ' ').trim();
+}
+
+function buildWikimediaQueryCandidates(query: string): string[] {
+  const normalized = normalizeQueryText(query);
+  if (!normalized) return ['landscape photo'];
+
+  const candidates = [normalized];
+  if (!HANGUL_REGEX.test(normalized)) {
+    return candidates;
+  }
+
+  const tokenSet = new Set(
+    normalized
+      .split(/\s+/)
+      .map((token) => token.trim())
+      .filter(Boolean),
+  );
+
+  const primaryTerms: string[] = [];
+  const secondaryTerms: string[] = [];
+  for (const token of tokenSet) {
+    const mapped = WIKIMEDIA_KO_EN_MAP[token];
+    if (mapped) {
+      primaryTerms.push(mapped[0]);
+      secondaryTerms.push(...mapped.slice(1));
+      continue;
+    }
+
+    for (const [ko, english] of Object.entries(WIKIMEDIA_KO_EN_MAP)) {
+      if (token.includes(ko) || ko.includes(token)) {
+        primaryTerms.push(english[0]);
+        secondaryTerms.push(...english.slice(1));
+        break;
+      }
+    }
+  }
+
+  const primaryCandidate = dedupeQueryParts(primaryTerms)
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const expandedCandidate = dedupeQueryParts([...primaryTerms, ...secondaryTerms])
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (primaryCandidate) {
+    candidates.unshift(primaryCandidate);
+    if (!/\bkorean\b/i.test(primaryCandidate)) {
+      candidates.unshift(`korean ${primaryCandidate}`.trim());
+    }
+    if (!/\bkorea\b/i.test(primaryCandidate)) {
+      candidates.unshift(`korea ${primaryCandidate}`.trim());
+    }
+  }
+
+  if (expandedCandidate && expandedCandidate !== primaryCandidate) {
+    candidates.splice(primaryCandidate ? 3 : 0, 0, expandedCandidate);
+  }
+
+  if (!primaryCandidate) {
+    candidates.unshift(`korea ${normalized}`.trim());
+  }
+
+  return dedupeQueryParts(candidates).slice(0, 4);
 }
 
 function getDisplayLink(contextLink: string, link: string): string {
@@ -484,7 +580,7 @@ function detectGoogleSearchBlock(html: string): string | null {
 }
 
 function isBlockedSearchMessage(message: string): boolean {
-  return /차단|captcha|429|동의 페이지/i.test(message);
+  return /차단|captcha|429|동의 페이지|보안 확인 페이지|trouble accessing google search/i.test(message);
 }
 
 function isGoogleSearchCooldownActive(): boolean {
@@ -589,40 +685,56 @@ async function searchWikimediaImages(
   start: number = 1,
   imgSize: string = 'large',
 ): Promise<GoogleSearchResponse> {
-  const url = buildWikimediaSearchUrl(query, start, imgSize);
-  logger.info('[GoogleRef] Wikimedia 폴백 검색', `query="${query}" start=${start}`);
+  const queryCandidates = buildWikimediaQueryCandidates(query);
+  let lastResponse: GoogleSearchResponse | null = null;
 
-  const res = await monitoredFetch(url, {
-    headers: {
-      Accept: 'application/json',
-    },
-  });
+  for (const candidate of queryCandidates) {
+    const url = buildWikimediaSearchUrl(candidate, start, imgSize);
+    logger.info('[GoogleRef] Wikimedia 폴백 검색', `query="${candidate}" start=${start}`);
 
-  if (!res.ok) {
-    throw new Error(`대체 이미지 검색 실패 (${res.status})`);
+    const res = await monitoredFetch(url, {
+      headers: {
+        Accept: 'application/json',
+      },
+    });
+
+    if (!res.ok) {
+      throw new Error(`대체 이미지 검색 실패 (${res.status})`);
+    }
+
+    const data = await res.json() as WikimediaApiResponse;
+    const pages = Object.values(data.query?.pages || {}).sort((a, b) => (a.index || 0) - (b.index || 0));
+    const items = pages.flatMap((page) => {
+      const info = page.imageinfo?.[0];
+      if (!info?.url) return [];
+
+      return [{
+        title: formatWikimediaTitle(page.title),
+        link: info.url,
+        displayLink: 'commons.wikimedia.org',
+        snippet: formatWikimediaTitle(page.title),
+        thumbnailLink: info.thumburl || info.url,
+        contextLink: info.descriptionurl || '',
+        width: Number.isFinite(info.width) ? info.width || 0 : 0,
+        height: Number.isFinite(info.height) ? info.height || 0 : 0,
+      }];
+    });
+
+    lastResponse = {
+      items,
+      totalResults: items.length,
+      query: candidate,
+      provider: 'wikimedia',
+    };
+
+    if (items.length > 0) {
+      return lastResponse;
+    }
   }
 
-  const data = await res.json() as WikimediaApiResponse;
-  const pages = Object.values(data.query?.pages || {}).sort((a, b) => (a.index || 0) - (b.index || 0));
-  const items = pages.flatMap((page) => {
-    const info = page.imageinfo?.[0];
-    if (!info?.url) return [];
-
-    return [{
-      title: formatWikimediaTitle(page.title),
-      link: info.url,
-      displayLink: 'commons.wikimedia.org',
-      snippet: formatWikimediaTitle(page.title),
-      thumbnailLink: info.thumburl || info.url,
-      contextLink: info.descriptionurl || '',
-      width: Number.isFinite(info.width) ? info.width || 0 : 0,
-      height: Number.isFinite(info.height) ? info.height || 0 : 0,
-    }];
-  });
-
-  return {
-    items,
-    totalResults: items.length,
+  return lastResponse || {
+    items: [],
+    totalResults: 0,
     query,
     provider: 'wikimedia',
   };

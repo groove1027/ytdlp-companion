@@ -229,6 +229,7 @@
 - [x] `functions/api/google-proxy.ts`, `src/functions/api/google-proxy.ts`, `src/functions/api/googleProxyHandler.ts` — Google 프록시 핸들러를 공통 모듈로 분리하고 Cloudflare Pages가 실제 배포에서 읽는 루트 `functions/` 경로에도 동일 엔드포인트를 노출해 `/api/google-proxy` 누락 가능성을 제거
 - [x] `googleProxyHandler.ts` — 프록시 응답 본문을 `text()`가 아니라 `arrayBuffer()`로 전달하도록 수정해 이미지 바이너리 중계가 깨지지 않게 보강
 - [x] `googleReferenceSearchService.ts` — Google이 `SG_SS/sgs` 보안 확인 HTML을 반환할 때도 차단으로 인식해 즉시 Wikimedia 폴백 쿨다운으로 전환하도록 보강
+- [x] `googleReferenceSearchService.ts` — 차단 안내 메시지(`보안 확인 페이지`)도 폴백 대상으로 처리하고, 한국어 질의는 Wikimedia용 영문 후보 질의를 순차 생성해 결과가 0건으로 끝나는 케이스를 줄이도록 보강
 - [x] `SetupPanel.tsx` — 기존 장면이 이미 있는 상태에서 구글 레퍼런스 스위치를 켜면 빈 장면에 즉시 자동 레퍼런스 배치를 시작하도록 연결
 - [x] 검증 통과:
   `cd src && node_modules/typescript/bin/tsc --noEmit`
@@ -238,6 +239,7 @@
   `curl -i -X OPTIONS http://127.0.0.1:8788/api/google-proxy`
   `curl -s -o /tmp/google-proxy-smoke.json -w "%{http_code}" -X POST http://127.0.0.1:8788/api/google-proxy -H 'Content-Type: application/json' -d '{}'`
   `curl -s -o /tmp/google-search-smoke.html -w "%{http_code}" -X POST http://127.0.0.1:8788/api/google-proxy -H 'Content-Type: application/json' -d '{"targetUrl":"https://www.google.com/search?tbm=isch&q=%ED%95%9C%EA%B5%AD+%ED%95%9C%EC%98%A5"}'`
+  `node ./test/verify-google-reference-browser.mjs`
 
 ### [2026-03-19] 배포 직전 최종 의심 검증 보강
 - [x] `geminiProxy.ts` — KIE 429 전역 쿨다운을 추가해 구조화 작업 3개 동시 호출 시에도 연속 429가 나면 다음 시도부터 즉시 Evolink로 우회되도록 보강
