@@ -168,27 +168,78 @@ function toUs(sec: number): number {
   return Math.round(sec * 1_000_000);
 }
 
-/** CapCut 프로젝트 루트 경로 */
-function getCapCutDraftRoot(projectId: string): string {
-  return `/com.lveditor.draft/${projectId}`;
+type CapCutDesktopPlatform = 'mac' | 'windows';
+
+interface CapCutProjectScaffoldIds {
+  draftFolderId: string;
+  draftId: string;
+  timelineId: string;
+  timelineProjectId: string;
 }
 
-function buildCapCutDraftSettings(nowSec: number, width?: number, height?: number): string {
+interface CapCutProjectPathInfo {
+  draftFoldPath: string;
+  draftRootPath: string;
+  draftPathPlaceholder: string;
+}
+
+const CAPCUT_DRAFT_EXTRA_BASE64 = 'aQUAAABpAAAAAGVpAAAAAAIAAAB7fXpCe7g=';
+const CAPCUT_CRYPTO_KEY_STORE_BASE64 = 'AAAAsngBLYw9DoIwHMX/Ytw5iJVAwIIjpcbZuJNam9gotIGSSOJVjKMbg2dwY3H0FB7BWIzT+8jvvTsAjA+ireE2OB+uViZc6r2octuDazNMH9Gzfy+CDeq6T/+6uH/AtFrAyAKO0kaqkh1zrkojTubXgtNUElbWnLW3FrVqKi5qj6tiK0s2DLyMUhwTnCKckRiFy3mA4hgHKKJpkvjE9wnFOWt2Us2KkA2fX7XXM/Y=';
+
+function detectCapCutDesktopPlatform(): CapCutDesktopPlatform {
+  if (typeof navigator !== 'undefined') {
+    const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
+    const platform = String(
+      nav.userAgentData?.platform
+      || nav.platform
+      || nav.userAgent
+      || '',
+    ).toLowerCase();
+    if (platform.includes('win')) return 'windows';
+  }
+  return 'mac';
+}
+
+/** CapCut 프로젝트 루트 경로 */
+function getCapCutDraftRoot(): string {
+  return '/com.lveditor.draft';
+}
+
+function getCapCutDraftFolderPath(draftFolderId: string): string {
+  return `${getCapCutDraftRoot()}/${draftFolderId}`;
+}
+
+function buildCapCutPathInfo(draftFolderId: string): CapCutProjectPathInfo {
+  return {
+    draftFoldPath: getCapCutDraftFolderPath(draftFolderId),
+    draftRootPath: getCapCutDraftRoot(),
+    draftPathPlaceholder: `##_draftpath_placeholder_${draftFolderId}_##`,
+  };
+}
+
+function buildCapCutDraftSettings(
+  nowSec: number,
+  width?: number,
+  height?: number,
+  platform: CapCutDesktopPlatform = detectCapCutDesktopPlatform(),
+  realEditKeys = 1,
+  realEditSeconds = 0,
+): string {
   return [
     '[General]',
-    'cloud_last_modify_platform=mac',
+    `cloud_last_modify_platform=${platform}`,
     ...(width && height ? [`custom_ratio_height=${height}`, `custom_ratio_width=${width}`] : []),
     `draft_create_time=${nowSec}`,
     `draft_last_edit_time=${nowSec}`,
-    'real_edit_keys=1',
-    'real_edit_seconds=0',
+    `real_edit_keys=${Math.max(1, Math.round(realEditKeys))}`,
+    `real_edit_seconds=${Math.max(0, Math.round(realEditSeconds))}`,
     'timeline_use_close_gap=true',
     'timeline_use_split_scene=true',
     '',
   ].join('\n');
 }
 
-function buildCapCutPlatformInfo(): {
+function buildCapCutPlatformInfo(platform: CapCutDesktopPlatform = detectCapCutDesktopPlatform()): {
   app_id: number;
   app_source: string;
   app_version: string;
@@ -205,7 +256,7 @@ function buildCapCutPlatformInfo(): {
     device_id: '',
     hard_disk_id: '',
     mac_address: '',
-    os: 'mac',
+    os: platform,
     os_version: '',
   };
 }
@@ -223,14 +274,24 @@ function buildCapCutDraftMetaMaterials(): Array<{ type: number; value: never[] }
 }
 
 function buildCapCutDraftMetaInfo(params: {
-  projectId: string;
+  draftFolderId: string;
+  draftId: string;
   title: string;
   tmDuration: number;
   tmDraftModifiedUs: number;
   draftTimelineMaterialsSize?: number;
+  draftCover?: string;
 }): string {
-  const { projectId, title, tmDuration, tmDraftModifiedUs, draftTimelineMaterialsSize = 0 } = params;
-  const draftRoot = getCapCutDraftRoot(projectId);
+  const {
+    draftFolderId,
+    draftId,
+    title,
+    tmDuration,
+    tmDraftModifiedUs,
+    draftTimelineMaterialsSize = 0,
+    draftCover = 'draft_cover.jpg',
+  } = params;
+  const pathInfo = buildCapCutPathInfo(draftFolderId);
 
   return JSON.stringify({
     cloud_draft_cover: false,
@@ -243,7 +304,7 @@ function buildCapCutDraftMetaInfo(params: {
     draft_cloud_template_id: '',
     draft_cloud_tutorial_info: '',
     draft_cloud_videocut_purchase_info: '',
-    draft_cover: 'draft_cover.jpg',
+    draft_cover: draftCover,
     draft_deeplink_url: '',
     draft_enterprise_info: {
       draft_enterprise_extra: '',
@@ -251,8 +312,8 @@ function buildCapCutDraftMetaInfo(params: {
       draft_enterprise_name: '',
       enterprise_material: [],
     },
-    draft_fold_path: draftRoot,
-    draft_id: projectId,
+    draft_fold_path: pathInfo.draftFoldPath,
+    draft_id: draftId,
     draft_is_ae_produce: false,
     draft_is_ai_packaging_used: false,
     draft_is_ai_shorts: false,
@@ -268,7 +329,7 @@ function buildCapCutDraftMetaInfo(params: {
     draft_need_rename_folder: false,
     draft_new_version: '',
     draft_removable_storage_device: '',
-    draft_root_path: draftRoot,
+    draft_root_path: pathInfo.draftRootPath,
     draft_segment_extra_info: [],
     draft_timeline_materials_size_: draftTimelineMaterialsSize,
     draft_type: '',
@@ -284,6 +345,240 @@ function buildCapCutDraftMetaInfo(params: {
     tm_draft_removed: 0,
     tm_duration: tmDuration,
   });
+}
+
+function decodeCapCutTemplateBinary(base64: string): Uint8Array {
+  const binary = globalThis.atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+async function buildCapCutDraftCoverBlob(width = 320, height = 180): Promise<Blob> {
+  if (typeof document === 'undefined') {
+    return new Blob([], { type: 'image/jpeg' });
+  }
+
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(2, Math.round(width));
+  canvas.height = Math.max(2, Math.round(height));
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+    gradient.addColorStop(0, '#111827');
+    gradient.addColorStop(1, '#374151');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+
+  const blob = await new Promise<Blob | null>((resolve) => {
+    canvas.toBlob((value) => resolve(value), 'image/jpeg', 0.84);
+  });
+  return blob || new Blob([], { type: 'image/jpeg' });
+}
+
+function buildCapCutAttachmentScriptVideo(): string {
+  return JSON.stringify({
+    script_video: {
+      attachment_valid: false,
+      language: '',
+      overdub_recover: [],
+      overdub_sentence_ids: [],
+      parts: [],
+      sync_subtitle: false,
+      translate_segments: [],
+      translate_type: '',
+      version: '1.0.0',
+    },
+  });
+}
+
+function buildCapCutAttachmentActionScene(): string {
+  return JSON.stringify({
+    action_scene: {
+      removed_segments: [],
+      segment_infos: [],
+    },
+  });
+}
+
+function buildCapCutCooperateCreate(): string {
+  return JSON.stringify({
+    roomInfo: {
+      room_id: '',
+    },
+  });
+}
+
+function buildCapCutOpaqueDraftExtra(): Uint8Array {
+  return decodeCapCutTemplateBinary(CAPCUT_DRAFT_EXTRA_BASE64);
+}
+
+function buildCapCutOpaqueCryptoKeyStore(): Uint8Array {
+  return decodeCapCutTemplateBinary(CAPCUT_CRYPTO_KEY_STORE_BASE64);
+}
+
+function buildCapCutCanvasMaterial(id: string): Record<string, unknown> {
+  return {
+    album_image: '',
+    blur: 0.0,
+    color: '',
+    id,
+    image: '',
+    image_id: '',
+    image_name: '',
+    source_platform: 0,
+    team_id: '',
+    type: 'canvas_color',
+  };
+}
+
+function buildCapCutMaterialAnimation(id: string): Record<string, unknown> {
+  return {
+    animations: [],
+    id,
+    multi_language_current: 'none',
+    type: 'sticker_animation',
+  };
+}
+
+function buildCapCutContainedMaterialPath(
+  draftFolderId: string,
+  category: 'audio' | 'image' | 'video',
+  fileName: string,
+): string {
+  return `${buildCapCutPathInfo(draftFolderId).draftPathPlaceholder}/materials/${category}/${fileName}`;
+}
+
+function buildCapCutSegmentShell(params: {
+  clip: Record<string, unknown>;
+  commonKeyframes: unknown[];
+  enableAdjust: boolean;
+  extraMaterialRefs: string[];
+  materialId: string;
+  renderIndex: number;
+  sourceDurationUs: number;
+  sourceStartUs: number;
+  speed: number;
+  targetDurationUs: number;
+  targetStartUs: number;
+  trackRenderIndex: number;
+}): Record<string, unknown> {
+  const {
+    clip,
+    commonKeyframes,
+    enableAdjust,
+    extraMaterialRefs,
+    materialId,
+    renderIndex,
+    sourceDurationUs,
+    sourceStartUs,
+    speed,
+    targetDurationUs,
+    targetStartUs,
+    trackRenderIndex,
+  } = params;
+
+  return {
+    caption_info: null,
+    cartoon: false,
+    clip,
+    color_correct_alg_result: '',
+    common_keyframes: commonKeyframes,
+    desc: '',
+    digital_human_template_group_id: '',
+    enable_adjust: enableAdjust,
+    enable_adjust_mask: false,
+    enable_color_adjust_pro: false,
+    enable_color_correct_adjust: false,
+    enable_color_curves: enableAdjust,
+    enable_color_match_adjust: false,
+    enable_color_wheels: enableAdjust,
+    enable_hsl: false,
+    enable_hsl_curves: enableAdjust,
+    enable_lut: enableAdjust,
+    enable_mask_shadow: false,
+    enable_mask_stroke: false,
+    enable_smart_color_adjust: false,
+    enable_video_mask: enableAdjust,
+    extra_material_refs: extraMaterialRefs,
+    group_id: '',
+    hdr_settings: enableAdjust ? { intensity: 1.0, mode: 1, nits: 1000 } : null,
+    id: uuid(),
+    intensifies_audio: false,
+    is_loop: false,
+    is_placeholder: false,
+    is_tone_modify: false,
+    keyframe_refs: [],
+    last_nonzero_volume: 1.0,
+    lyric_keyframes: null,
+    material_id: materialId,
+    raw_segment_id: '',
+    render_index: renderIndex,
+    render_timerange: { duration: 0, start: 0 },
+    responsive_layout: {
+      enable: false,
+      horizontal_pos_layout: 0,
+      size_layout: 0,
+      target_follow: '',
+      vertical_pos_layout: 0,
+    },
+    reverse: false,
+    source: 'segmentsourcenormal',
+    source_timerange: {
+      duration: sourceDurationUs,
+      start: sourceStartUs,
+    },
+    speed,
+    state: 0,
+    target_timerange: {
+      duration: targetDurationUs,
+      start: targetStartUs,
+    },
+    template_id: '',
+    template_scene: 'default',
+    track_attribute: 0,
+    track_render_index: trackRenderIndex,
+    uniform_scale: { on: true, value: 1.0 },
+    visible: true,
+    volume: 1.0,
+  };
+}
+
+function buildCapCutKeyValue(entries: Array<{ segmentId: string; materialName: string }>): string {
+  const keyValueEntries = Object.fromEntries(entries.map(({ segmentId, materialName }) => [
+    segmentId,
+    {
+      filter_category: '',
+      filter_detail: '',
+      is_brand: 0,
+      is_from_artist_shop: 0,
+      is_vip: '0',
+      keywordSource: '',
+      materialCategory: 'media',
+      materialId: '',
+      materialName,
+      materialSubcategory: 'local',
+      materialSubcategoryId: '',
+      materialThirdcategory: '가져오기',
+      materialThirdcategoryId: '',
+      material_copyright: '',
+      material_is_purchased: '',
+      rank: '2',
+      rec_id: '',
+      requestId: '',
+      role: '',
+      searchId: '',
+      searchKeyword: '',
+      segmentId,
+      team_id: '',
+      textTemplateVersion: '',
+    },
+  ]));
+
+  return JSON.stringify(keyValueEntries);
 }
 
 function buildCapCutEmptyMaterialBuckets(): Record<string, never[]> {
@@ -348,7 +643,7 @@ function buildCapCutEmptyMaterialBuckets(): Record<string, never[]> {
   };
 }
 
-function buildCapCutTimelineProject(mainTimelineId: string, nowUs: number): string {
+function buildCapCutTimelineProject(timelineProjectId: string, mainTimelineId: string, nowUs: number): string {
   return JSON.stringify({
     config: {
       color_space: -1,
@@ -356,7 +651,7 @@ function buildCapCutTimelineProject(mainTimelineId: string, nowUs: number): stri
       use_float_render: false,
     },
     create_time: nowUs,
-    id: uuid(),
+    id: timelineProjectId,
     main_timeline_id: mainTimelineId,
     timelines: [
       {
@@ -503,21 +798,35 @@ function buildCapCutDraftVirtualStore(): string {
   return JSON.stringify({
     draft_materials: [],
     draft_virtual_store: [
-      { type: 0, value: [] },
+      {
+        type: 0,
+        value: [{
+          creation_time: 0,
+          display_name: '',
+          filter_type: 0,
+          id: '',
+          import_time: 0,
+          import_time_us: 0,
+          sort_sub_type: 0,
+          sort_type: 0,
+          subdraft_filter_type: 0,
+        }],
+      },
       { type: 1, value: [] },
       { type: 2, value: [] },
     ],
   });
 }
 
-function buildCapCutDraftBizConfig(mainTimelineId: string): string {
+function buildCapCutDraftBizConfig(mainTimelineId: string, trackIds: string[]): string {
+  const trackSettings = Object.fromEntries(trackIds.map((trackId) => [trackId, { height: 74 }]));
   return JSON.stringify({
     timeline_settings: {
       [mainTimelineId]: {
         linkage_enabled: true,
       },
     },
-    track_settings: {},
+    track_settings: trackSettings,
   });
 }
 
@@ -1047,7 +1356,12 @@ export function generateCapCutDraftJson(params: {
   preset?: VideoAnalysisPreset;
   videoDurationSec?: number;
   narrationLines?: ExportNarrationLine[];
-}): { json: string; projectId: string } {
+}): {
+  json: string;
+  keyValueJson: string;
+  scaffoldIds: CapCutProjectScaffoldIds;
+  trackIds: string[];
+} {
   const { scenes, title, videoFileName: rawVideoFileName, fps = 30, width = 1080, height = 1920, preset, videoDurationSec, narrationLines = [] } = params;
   const videoFileName = sanitizeFileName(rawVideoFileName);
   const syncTimeline = buildNarrationSyncedTimeline(scenes, narrationLines, preset);
@@ -1062,26 +1376,42 @@ export function generateCapCutDraftJson(params: {
     text: t.subtitleSegments.map(s => s.text).join(' '),
     effectText: t.effectSubtitleSegments.map(s => s.text).join(' '),
   }));
-  if (timings.length === 0) return { json: '', projectId: '' };
+  if (timings.length === 0) {
+    return {
+      json: '',
+      keyValueJson: '{}',
+      scaffoldIds: {
+        draftFolderId: '',
+        draftId: '',
+        timelineId: '',
+        timelineProjectId: '',
+      },
+      trackIds: [],
+    };
+  }
 
   const totalDurUs = toUs(syncTimeline.totalDurationSec);
   const maxEnd = Math.max(...nsTimings.map(t => t.sourceEndSec));
   const srcDurUs = toUs(Math.max(videoDurationSec || 0, maxEnd));
 
-  const projectId = uuid();
+  const platform = detectCapCutDesktopPlatform();
+  const scaffoldIds: CapCutProjectScaffoldIds = {
+    draftFolderId: uuid(),
+    draftId: uuid(),
+    timelineId: uuid(),
+    timelineProjectId: uuid(),
+  };
   const materialVideoId = uuid();
   const speedId = uuid();
+  const canvasId = uuid();
   const trackVideoId = uuid();
-  // CapCut draft path placeholder — CapCut이 프로젝트 폴더 경로로 자동 치환
-  const draftPathPrefix = `##_draftpath_placeholder_${projectId}_##`;
-  const platformInfo = buildCapCutPlatformInfo();
+  const platformInfo = buildCapCutPlatformInfo(platform);
 
   // 빈 배열 필드 (캡컷 필수 구조)
   const emptyArr: never[] = [];
 
   // ── 비디오 세그먼트 (편집점 = 실제 컷) ──
-  const videoSegments = timings.map(t => ({
-    cartoon: false,
+  const videoSegments = timings.map(t => buildCapCutSegmentShell({
     clip: {
       alpha: 1.0,
       flip: { horizontal: false, vertical: false },
@@ -1089,49 +1419,17 @@ export function generateCapCutDraftJson(params: {
       scale: { x: 1.0, y: 1.0 },
       transform: { x: 0.0, y: 0.0 },
     },
-    common_keyframes: emptyArr,
-    enable_adjust: true,
-    enable_color_correct_adjust: false,
-    enable_color_curves: true,
-    enable_color_match_adjust: false,
-    enable_color_wheels: true,
-    enable_lut: true,
-    enable_smart_color_adjust: false,
-    extra_material_refs: [speedId],
-    group_id: '',
-    hdr_settings: null,
-    id: uuid(),
-    intensifies_audio: false,
-    is_placeholder: false,
-    is_tone_modify: false,
-    keyframe_refs: emptyArr,
-    last_nonzero_volume: 1.0,
-    material_id: materialVideoId,
-    render_index: 0,
-    responsive_layout: {
-      enable: false,
-      horizontal_pos_layout: 0,
-      size_layout: 0,
-      target_follow: '',
-      vertical_pos_layout: 0,
-    },
-    reverse: false,
-    source_timerange: {
-      duration: toUs(t.durationSec),
-      start: toUs(t.startSec),
-    },
+    commonKeyframes: emptyArr,
+    enableAdjust: true,
+    extraMaterialRefs: [speedId, canvasId],
+    materialId: materialVideoId,
+    renderIndex: 0,
+    sourceDurationUs: toUs(t.durationSec),
+    sourceStartUs: toUs(t.startSec),
     speed: nsTimings[timings.indexOf(t)]?.autoSpeedFactor ?? 1.0,
-    target_timerange: {
-      duration: toUs(t.durationSec),
-      start: toUs(t.tlStartSec),
-    },
-    template_id: '',
-    template_scene: '',
-    track_attribute: 0,
-    track_render_index: 0,
-    uniform_scale: { on: true, value: 1.0 },
-    visible: true,
-    volume: 1.0,
+    targetDurationUs: toUs(t.durationSec),
+    targetStartUs: toUs(t.tlStartSec),
+    trackRenderIndex: 0,
   }));
 
   // ── 텍스트 자막 머티리얼 + 세그먼트 (CapCut 네이티브 자막) ──
@@ -1230,40 +1528,59 @@ export function generateCapCutDraftJson(params: {
     words: null,
   }));
 
-  const textSegments = textMaterials.map(m => ({
-    cartoon: false,
+  const textSegments = textMaterials.map(m => buildCapCutSegmentShell({
     clip: { alpha: 1.0, flip: { horizontal: false, vertical: false }, rotation: 0.0, scale: { x: 1.0, y: 1.0 }, transform: { x: 0.0, y: 0.0 } },
-    common_keyframes: emptyArr,
-    enable_adjust: false,
-    enable_color_correct_adjust: false,
-    enable_color_curves: false,
-    enable_color_match_adjust: false,
-    enable_color_wheels: false,
-    enable_lut: false,
-    enable_smart_color_adjust: false,
-    extra_material_refs: emptyArr,
-    group_id: '',
-    hdr_settings: null,
-    id: uuid(),
-    intensifies_audio: false,
-    is_placeholder: false,
-    is_tone_modify: false,
-    keyframe_refs: emptyArr,
-    last_nonzero_volume: 1.0,
-    material_id: m.id,
-    render_index: 11000,
-    responsive_layout: { enable: false, horizontal_pos_layout: 0, size_layout: 0, target_follow: '', vertical_pos_layout: 0 },
-    reverse: false,
-    source_timerange: { duration: toUs(m.durationSec), start: 0 },
+    commonKeyframes: emptyArr,
+    enableAdjust: false,
+    extraMaterialRefs: emptyArr,
+    materialId: m.id,
+    renderIndex: 11000,
+    sourceDurationUs: toUs(m.durationSec),
+    sourceStartUs: 0,
     speed: 1.0,
-    target_timerange: { duration: toUs(m.durationSec), start: toUs(m.tlStartSec) },
-    template_id: '',
-    template_scene: '',
-    track_attribute: 0,
-    track_render_index: 11000,
-    uniform_scale: { on: true, value: 1.0 },
-    visible: true,
-    volume: 1.0,
+    targetDurationUs: toUs(m.durationSec),
+    targetStartUs: toUs(m.tlStartSec),
+    trackRenderIndex: 11000,
+  }));
+
+  // [FIX #575] 효과 자막 머티리얼 + 세그먼트 — 기존 fxMaterials가 미사용이었음
+  const fxTextObjects = fxMaterials.map(m => ({
+    add_type: 0, alignment: 1, background_alpha: 0.0, background_color: '', background_height: 0.14,
+    background_horizontal_offset: 0.0, background_round_radius: 0.0, background_style: 0,
+    background_vertical_offset: 0.004, background_width: 0.14, bold_width: 0.0, border_alpha: 1.0,
+    border_color: '#000000', border_width: 0.08, check_flag: 7,
+    content: JSON.stringify({ styles: [{ range: [0, m.text.length], size: 6.0, bold: true, italic: true, color: [1.0, 1.0, 0.0], useLetterColor: true }], text: m.text }),
+    fixed_height: -1.0, fixed_width: -1.0, font_category_id: '', font_category_name: '', font_id: '',
+    font_name: '', font_path: '', font_resource_id: '', font_size: 6.0, font_source_platform: 0,
+    font_team_id: '', font_title: 'default', font_url: '', fonts: [],
+    force_apply_line_max_width: false, global_alpha: 1.0, has_shadow: false, id: m.id,
+    initial_scale: 1.0, inner_padding: -1.0, is_rich_text: false, italic_degree: 0,
+    ktv_color: '', language: '', layer_weight: 1, letter_spacing: 0.0, line_feed: 1,
+    line_max_width: 0.82, line_spacing: 0.02, multi_language_current: 'none', name: '',
+    original_size: [], preset_category: '', preset_category_id: '', preset_has_set_alignment: false,
+    preset_id: '', preset_index: 0, preset_name: '', recognize_task_id: '', recognize_type: 0,
+    relevance_segment: [], shadow_alpha: 0.9, shadow_angle: -45.0, shadow_color: '',
+    shadow_distance: 0.04, shadow_point: { x: 0.6363961031, y: -0.6363961031 },
+    shadow_smoothing: 0.45, shape_clip_x: false, shape_clip_y: false, style_name: '',
+    sub_type: 0, subtitle_keywords: null, subtitle_template_original_fontsize: 0.0,
+    text_alpha: 1.0, text_color: '#FFFF00', text_curve: null, text_preset_resource_id: '',
+    text_size: 24, text_to_audio_ids: [], tts_auto_update: false, type: 'subtitle',
+    typesetting: 0, underline: false, underline_offset: 0.22, underline_width: 0.05,
+    use_effect_default_color: true, words: null,
+  }));
+  const fxTextSegments = fxMaterials.map(m => buildCapCutSegmentShell({
+    clip: { alpha: 1.0, flip: { horizontal: false, vertical: false }, rotation: 0.0, scale: { x: 1.0, y: 1.0 }, transform: { x: 0.0, y: 0.25 } },
+    commonKeyframes: emptyArr,
+    enableAdjust: false,
+    extraMaterialRefs: emptyArr,
+    materialId: m.id,
+    renderIndex: 12000,
+    sourceDurationUs: toUs(m.durationSec),
+    sourceStartUs: 0,
+    speed: 1.0,
+    targetDurationUs: toUs(m.durationSec),
+    targetStartUs: toUs(m.tlStartSec),
+    trackRenderIndex: 12000,
   }));
 
   const audioMaterialsWithStart = narrationLines.flatMap((line, lineIndex) => {
@@ -1288,50 +1605,34 @@ export function generateCapCutDraftJson(params: {
     }];
   });
   const audioMaterials = audioMaterialsWithStart.map(({ id, fileName, dur }) => ({ id, fileName, dur }));
-  const audioSegments = audioMaterialsWithStart.map((audioMaterial) => ({
-    cartoon: false,
+  const audioSegments = audioMaterialsWithStart.map((audioMaterial) => buildCapCutSegmentShell({
     clip: { alpha: 1.0, flip: { horizontal: false, vertical: false }, rotation: 0.0, scale: { x: 1.0, y: 1.0 }, transform: { x: 0.0, y: 0.0 } },
-    common_keyframes: emptyArr,
-    enable_adjust: false,
-    enable_color_correct_adjust: false,
-    enable_color_curves: false,
-    enable_color_match_adjust: false,
-    enable_color_wheels: false,
-    enable_lut: false,
-    enable_smart_color_adjust: false,
-    extra_material_refs: emptyArr,
-    group_id: '',
-    hdr_settings: null,
-    id: uuid(),
-    intensifies_audio: false,
-    is_placeholder: false,
-    is_tone_modify: false,
-    keyframe_refs: emptyArr,
-    last_nonzero_volume: 1.0,
-    material_id: audioMaterial.id,
-    render_index: 0,
-    responsive_layout: {
-      enable: false,
-      horizontal_pos_layout: 0,
-      size_layout: 0,
-      target_follow: '',
-      vertical_pos_layout: 0,
-    },
-    reverse: false,
-    source_timerange: { duration: audioMaterial.dur, start: 0 },
+    commonKeyframes: emptyArr,
+    enableAdjust: false,
+    extraMaterialRefs: emptyArr,
+    materialId: audioMaterial.id,
+    renderIndex: 0,
+    sourceDurationUs: audioMaterial.dur,
+    sourceStartUs: 0,
     speed: 1.0,
-    target_timerange: { duration: audioMaterial.dur, start: audioMaterial.start },
-    template_id: '',
-    template_scene: '',
-    track_attribute: 0,
-    track_render_index: 0,
-    uniform_scale: { on: true, value: 1.0 },
-    visible: true,
-    volume: 1.0,
+    targetDurationUs: audioMaterial.dur,
+    targetStartUs: audioMaterial.start,
+    trackRenderIndex: 0,
   }));
 
   const trackTextId = uuid();
   const trackAudioId = uuid();
+  const trackFxTextId = uuid();
+  const keyValueEntries = [
+    ...videoSegments.map((segment) => ({
+      segmentId: String(segment['id'] || ''),
+      materialName: videoFileName,
+    })),
+    ...audioSegments.map((segment, index) => ({
+      segmentId: String(segment['id'] || ''),
+      materialName: audioMaterials[index]?.fileName || '',
+    })).filter((entry) => entry.materialName),
+  ];
 
   const draft = {
     canvas_config: {
@@ -1396,7 +1697,7 @@ export function generateCapCutDraftJson(params: {
     fps: fps,
     free_render_index_mode_on: false,
     group_container: null,
-    id: projectId,
+    id: scaffoldIds.timelineId,
     is_drop_frame_timecode: false,
     keyframe_graph_list: emptyArr,
     keyframes: { adjusts: emptyArr, audios: emptyArr, effects: emptyArr, filters: emptyArr, handwrites: emptyArr, stickers: emptyArr, texts: emptyArr, videos: emptyArr },
@@ -1405,37 +1706,70 @@ export function generateCapCutDraftJson(params: {
     materials: {
       ...buildCapCutEmptyMaterialBuckets(),
       audios: audioMaterials.map((material) => ({
+        ai_music_enter_from: '',
+        ai_music_generate_scene: 0,
+        ai_music_type: 0,
+        aigc_history_id: '',
+        aigc_item_id: '',
         app_id: 0,
         category_id: '',
         category_name: 'local',
-        check_flag: 0,
+        check_flag: 1,
+        cloned_model_type: '',
+        copyright_limit_type: 'none',
         duration: material.dur,
         effect_id: '',
         formula_id: '',
         id: material.id,
         intensifies_path: '',
+        is_ai_clone_tone: false,
+        is_ai_clone_tone_post: false,
+        is_text_edit_overdub: false,
+        is_ugc: false,
         local_material_id: '',
+        lyric_type: 0,
+        mock_tone_speaker: '',
+        moyin_emotion: '',
         music_id: '',
         name: material.fileName,
-        path: `${draftPathPrefix}/${material.fileName}`,
+        path: buildCapCutContainedMaterialPath(scaffoldIds.draftFolderId, 'audio', material.fileName),
+        pgc_id: '',
+        pgc_name: '',
+        query: '',
         request_id: '',
         resource_id: '',
+        search_id: '',
+        similiar_music_info: { original_song_id: '', original_song_name: '' },
+        sound_separate_type: '',
+        source_from: '',
         source_platform: 0,
         team_id: '',
         text_id: '',
+        third_resource_id: '',
         tone_category_id: '',
         tone_category_name: '',
         tone_effect_id: '',
         tone_effect_name: '',
+        tone_emotion_name_key: '',
+        tone_emotion_role: '',
+        tone_emotion_scale: 0.0,
+        tone_emotion_selection: '',
+        tone_emotion_style: '',
         tone_platform: '',
         tone_second_category_id: '',
         tone_second_category_name: '',
         tone_speaker: '',
         tone_type: '',
+        tts_benefit_info: { benefit_amount: -1, benefit_log_extra: '', benefit_log_id: '', benefit_type: 'none' },
+        tts_generate_scene: '',
+        tts_task_id: '',
         type: 'extract_music',
+        unique_id: '',
         video_id: '',
         wave_points: [],
       })),
+      canvases: [buildCapCutCanvasMaterial(canvasId)],
+      material_animations: [buildCapCutMaterialAnimation(uuid())],
       speeds: [{
         curve_speed: null,
         id: speedId,
@@ -1447,15 +1781,26 @@ export function generateCapCutDraftJson(params: {
       stickers: emptyArr,
       tail_animations: emptyArr,
       text_templates: emptyArr,
-      texts: textObjects,
+      texts: [...textObjects, ...fxTextObjects],
       transitions: emptyArr,
       video_effects: emptyArr,
       video_trackings: emptyArr,
       videos: [{
+        aigc_history_id: '',
+        aigc_item_id: '',
+        aigc_type: 'none',
         audio_fade: null,
+        beauty_body_auto_preset: null,
+        beauty_body_preset_id: '',
+        beauty_face_auto_preset: { name: '', preset_id: '', rate_map: '', scene: '' },
+        beauty_face_auto_preset_infos: [],
+        beauty_face_preset_infos: [],
+        cartoon_path: '',
         category_id: '',
-        category_name: 'local',
-        check_flag: 63487,
+        category_name: '',
+        check_flag: 62978047,
+        content_feature_info: null,
+        corner_pin: null,
         crop: {
           lower_left_x: 0.0, lower_left_y: 1.0,
           lower_right_x: 1.0, lower_right_y: 1.0,
@@ -1469,6 +1814,7 @@ export function generateCapCutDraftJson(params: {
         formula_id: '',
         freeze: null,
         has_audio: true,
+        has_sound_separated: false,
         height,
         id: materialVideoId,
         intensifies_audio_path: '',
@@ -1477,32 +1823,94 @@ export function generateCapCutDraftJson(params: {
         is_copyright: false,
         is_text_edit_overdub: false,
         is_unified_beauty_mode: false,
+        live_photo_cover_path: '',
+        live_photo_timestamp: -1,
         local_id: '',
+        local_material_from: '',
         local_material_id: '',
-        material_id: materialVideoId,
+        material_id: '',
         material_name: videoFileName,
         material_url: '',
+        matting: {
+          custom_matting_id: '',
+          enable_matting_stroke: false,
+          expansion: 0,
+          feather: 0,
+          flag: 0,
+          has_use_quick_brush: false,
+          has_use_quick_eraser: false,
+          interactiveTime: [],
+          path: '',
+          reverse: false,
+          strokes: [],
+        },
         media_path: '',
         music_id: '',
+        multi_camera_info: null,
         object_locked: null,
         origin_material_id: '',
-        path: `${draftPathPrefix}/${videoFileName}`,
+        path: buildCapCutContainedMaterialPath(scaffoldIds.draftFolderId, 'video', videoFileName),
+        picture_from: 'none',
+        picture_set_category_id: '',
+        picture_set_category_name: '',
         request_id: '',
+        reverse_intensifies_path: '',
         reverse_path: '',
-        roughcut_time_range: null,
+        smart_match_info: null,
         smart_motion: null,
+        stable: {
+          matrix_path: '',
+          stable_level: 0,
+          time_range: { duration: 0, start: 0 },
+        },
         source: 0,
         source_platform: 0,
-        stable: null,
+        surface_trackings: [],
         team_id: '',
         type: 'video',
-        video_algorithm: null,
+        unique_id: '',
+        video_algorithm: {
+          ai_background_configs: [],
+          ai_expression_driven: null,
+          ai_in_painting_config: [],
+          ai_motion_driven: null,
+          aigc_generate: null,
+          aigc_generate_list: [],
+          algorithms: [],
+          complement_frame_config: null,
+          deflicker: null,
+          gameplay_configs: [],
+          image_interpretation: null,
+          motion_blur_config: null,
+          mouth_shape_driver: null,
+          noise_reduction: null,
+          path: '',
+          quality_enhance: null,
+          skip_algorithm_index: [],
+          smart_complement_frame: null,
+          story_video_modify_video_config: { is_overwrite_last_video: false, task_id: '', tracker_task_id: '' },
+          super_resolution: null,
+          time_range: { duration: 0, start: 0 },
+        },
+        video_mask_shadow: { alpha: 0.0, angle: 0.0, blur: 0.0, color: '', distance: 0.0, path: '', resource_id: '' },
+        video_mask_stroke: {
+          alpha: 0.0,
+          color: '',
+          distance: 0.0,
+          horizontal_shift: 0.0,
+          path: '',
+          resource_id: '',
+          size: 0.0,
+          texture: 0.0,
+          type: '',
+          vertical_shift: 0.0,
+        },
         width,
       }],
     },
     mutable_config: null,
     name: '',
-    new_version: '159.0.0',
+    new_version: '163.0.0',
     path: '',
     platform: platformInfo,
     relationships: emptyArr,
@@ -1536,13 +1944,26 @@ export function generateCapCutDraftJson(params: {
       name: '',
       segments: audioSegments,
       type: 'audio',
+    }] : []), ...(fxTextSegments.length > 0 ? [{
+      attribute: 0,
+      flag: 0,
+      id: trackFxTextId,
+      is_default_name: true,
+      name: '',
+      segments: fxTextSegments,
+      type: 'text',
     }] : [])],
     uneven_animation_template_info: { composition: '', content: '', order: '', sub_template_info_list: emptyArr },
     update_time: 0,
     version: 360000,
   };
 
-  return { json: JSON.stringify(draft), projectId };
+  return {
+    json: JSON.stringify(draft),
+    keyValueJson: buildCapCutKeyValue(keyValueEntries),
+    scaffoldIds,
+    trackIds: [trackVideoId, ...(textSegments.length > 0 ? [trackTextId] : []), ...(audioSegments.length > 0 ? [trackAudioId] : []), ...(fxTextSegments.length > 0 ? [trackFxTextId] : [])],
+  };
 }
 
 // ──────────────────────────────────────────────
@@ -1679,62 +2100,78 @@ export async function buildNlePackageZip(params: {
     ].join('\n'));
 
   } else if (target === 'capcut') {
-    // [FIX #316] CapCut — FCP XML (편집점 보존) + draft JSON + SRT
-    // CapCut 2025+ File > Import > XML 지원 → 편집점이 타임라인에 바로 적용됨
+    // [FIX #610] CapCut — 프로젝트 폴더 구조 완전 호환
+    // ZIP 내 모든 파일을 projectId 폴더 아래에 배치하여 CapCut이 미디어를 정확히 찾을 수 있게 함
+    // 사용자는 이 폴더를 com.lveditor.draft/ 아래에 그대로 복사하면 됨
 
-    // 1. FCP XML (가장 확실한 편집점 import 방법)
+    // FCP XML (폴백 — ZIP 루트에 배치)
     const capCutXml = generateFcpXml({ scenes, title, videoFileName: videoFileName || 'video.mp4', preset, width, height, fps, videoDurationSec, narrationLines: packagedNarrationLines });
     zip.file(`${safeName}.xml`, capCutXml);
 
-    // 2. draft JSON (프로젝트 폴더 복사 방식)
+    // draft JSON (프로젝트 폴더 복사 방식)
     const draftResult = generateCapCutDraftJson({ scenes, title, videoFileName: videoFileName || 'video.mp4', preset, width, height, fps, videoDurationSec, narrationLines: packagedNarrationLines });
     const draftContent = JSON.parse(draftResult.json);
-    zip.file('draft_content.json', draftResult.json);
+    const pId = draftResult.scaffoldIds.draftFolderId;
     const nowTs = Math.floor(Date.now() / 1000);
     const nowUs = Date.now() * 1000;
-    zip.file('draft_settings', buildCapCutDraftSettings(nowTs, width, height));
-    const draftTotalDurUs = Math.ceil((extractTimings(scenes, preset).at(-1)?.tlEndSec || 0) * 1_000_000);
-    // CapCut은 draft_info.json을 실제 타임라인 본문으로 읽는다.
-    zip.file('draft_info.json', draftResult.json);
-    zip.file('draft_meta_info.json', buildCapCutDraftMetaInfo({
-      projectId: draftResult.projectId,
+    const draftTotalDurUs = draftContent.duration || Math.ceil((extractTimings(scenes, preset).at(-1)?.tlEndSec || 0) * 1_000_000);
+    const draftTimelineMaterialsSize = (
+      draftContent.materials?.videos?.length || 0
+    ) + (
+      draftContent.materials?.texts?.length || 0
+    ) + (
+      draftContent.materials?.audios?.length || 0
+    );
+    const draftCoverBlob = await buildCapCutDraftCoverBlob(width || 320, height || 180);
+
+    // [FIX #610] 모든 draft 파일을 projectId/ 폴더 아래에 배치
+    zip.file(`${pId}/draft_content.json`, draftResult.json);
+    zip.file(`${pId}/draft_info.json`, draftResult.json);
+    zip.file(`${pId}/draft_settings`, buildCapCutDraftSettings(nowTs, width, height, detectCapCutDesktopPlatform(), draftTimelineMaterialsSize, draftTotalDurUs / 1_000_000));
+    zip.file(`${pId}/draft_meta_info.json`, buildCapCutDraftMetaInfo({
+      draftFolderId: pId,
+      draftId: draftResult.scaffoldIds.draftId,
       title,
       tmDuration: draftTotalDurUs,
       tmDraftModifiedUs: nowUs,
-      draftTimelineMaterialsSize: (
-        draftContent.materials?.videos?.length || 0
-      ) + (
-        draftContent.materials?.texts?.length || 0
-      ) + (
-        draftContent.materials?.audios?.length || 0
-      ),
+      draftTimelineMaterialsSize,
     }));
-    zip.file('Timelines/project.json', buildCapCutTimelineProject(draftResult.projectId, nowUs));
-    zip.file('common_attachment/attachment_pc_timeline.json', buildCapCutAttachmentPcTimeline());
-    zip.file('attachment_pc_common.json', buildCapCutAttachmentPcCommon());
-    zip.file('attachment_editing.json', buildCapCutAttachmentEditing());
-    zip.file('timeline_layout.json', buildCapCutTimelineLayout(draftResult.projectId));
-    zip.file('draft_virtual_store.json', buildCapCutDraftVirtualStore());
-    zip.file('key_value.json', '{}');
-    zip.file('draft_biz_config.json', buildCapCutDraftBizConfig(draftResult.projectId));
-    zip.file('draft_agency_config.json', buildCapCutDraftAgencyConfig());
-    zip.file('performance_opt_info.json', buildCapCutPerformanceOptInfo());
+    zip.file(`${pId}/Timelines/project.json`, buildCapCutTimelineProject(draftResult.scaffoldIds.timelineProjectId, draftResult.scaffoldIds.timelineId, nowUs));
+    zip.file(`${pId}/common_attachment/attachment_pc_timeline.json`, buildCapCutAttachmentPcTimeline());
+    zip.file(`${pId}/common_attachment/attachment_script_video.json`, buildCapCutAttachmentScriptVideo());
+    zip.file(`${pId}/common_attachment/attachment_action_scene.json`, buildCapCutAttachmentActionScene());
+    zip.file(`${pId}/common_attachment/coperate_create.json`, buildCapCutCooperateCreate());
+    zip.file(`${pId}/attachment_pc_common.json`, buildCapCutAttachmentPcCommon());
+    zip.file(`${pId}/attachment_editing.json`, buildCapCutAttachmentEditing());
+    zip.file(`${pId}/timeline_layout.json`, buildCapCutTimelineLayout(draftResult.scaffoldIds.timelineId));
+    zip.file(`${pId}/draft_virtual_store.json`, buildCapCutDraftVirtualStore());
+    zip.file(`${pId}/key_value.json`, draftResult.keyValueJson);
+    zip.file(`${pId}/draft_biz_config.json`, buildCapCutDraftBizConfig(draftResult.scaffoldIds.timelineId, draftResult.trackIds));
+    zip.file(`${pId}/draft_agency_config.json`, buildCapCutDraftAgencyConfig());
+    zip.file(`${pId}/performance_opt_info.json`, buildCapCutPerformanceOptInfo());
+    zip.file(`${pId}/draft.extra`, buildCapCutOpaqueDraftExtra());
+    zip.file(`${pId}/crypto_key_store.dat`, buildCapCutOpaqueCryptoKeyStore());
+    zip.file(`${pId}/draft_cover.jpg`, draftCoverBlob);
 
-    // 3. 영상 파일 (media/ 하위 — XML pathurl과 일치)
+    // CapCut 자체 draft는 materials/ 아래 self-contained 미디어를 사용
     if (videoBlob) {
+      zip.file(`${pId}/materials/video/${videoFileName || 'video.mp4'}`, videoBlob);
+      // XML용 media/ 폴더에도 배치
       zip.file(`media/${videoFileName || 'video.mp4'}`, videoBlob);
-      // 루트에도 복사 (draft JSON용)
-      zip.file(videoFileName || 'video.mp4', videoBlob);
     }
     for (const narrationEntry of packagedNarrationBlobs) {
-      zip.file(narrationEntry.fileName, narrationEntry.blob);
+      zip.file(`${pId}/materials/audio/${narrationEntry.fileName}`, narrationEntry.blob);
     }
 
-    // 4. SRT 폴백
-    const dlgSrt = generateNleSrt(scenes, 'dialogue', preset, 'source', packagedNarrationLines);
+    // 4. SRT — CapCut 타임라인 기준 (draft JSON의 target_timerange와 싱크)
+    // [FIX #622] 기존 source timing → timeline timing 변경 — CapCut은 클립을 재배치하므로 source 기준 SRT는 싱크 어긋남
+    const dlgSrt = generateNleSrt(scenes, 'dialogue', preset, 'timeline', packagedNarrationLines);
     if (dlgSrt) zip.file(`${safeName}_자막.srt`, BOM + dlgSrt);
-    const fxSrt = generateNleSrt(scenes, 'effect', preset, 'source', packagedNarrationLines);
+    const fxSrt = generateNleSrt(scenes, 'effect', preset, 'timeline', packagedNarrationLines);
     if (fxSrt) zip.file(`${safeName}_효과자막.srt`, BOM + fxSrt);
+    // 원본 소스 시간 기준 SRT도 별도 제공 (수동 import 폴백용)
+    const dlgSrtSrc = generateNleSrt(scenes, 'dialogue', preset, 'source', packagedNarrationLines);
+    if (dlgSrtSrc) zip.file(`${safeName}_자막_원본시간.srt`, BOM + dlgSrtSrc);
 
     zip.file('README.txt', [
       `=== ${title} — CapCut ===`,
@@ -1742,9 +2179,10 @@ export async function buildNlePackageZip(params: {
       '★ 추천: 프로젝트 폴더 복사 (편집점 + 자막 + 영상 자동 배치)',
       '1. CapCut 데스크톱을 완전히 종료합니다.',
       '2. ZIP 압축을 해제합니다.',
-      '3. 압축 해제한 폴더를 아래 경로에 복사합니다:',
+      `3. 압축 해제된 폴더 안의 "${pId}" 폴더를 아래 경로에 복사합니다:`,
       '   • Mac: ~/Movies/CapCut/User Data/Projects/com.lveditor.draft/',
       '   • Windows: %LOCALAPPDATA%\\CapCut\\User Data\\Projects\\com.lveditor.draft\\',
+      `   → 최종 경로 예: .../com.lveditor.draft/${pId}/draft_content.json`,
       '4. CapCut을 다시 실행하면 프로젝트 목록에 자동으로 나타납니다!',
       '',
       '[ 대안: XML import ]',
@@ -1753,8 +2191,9 @@ export async function buildNlePackageZip(params: {
       '',
       '[ 대안: 원본 영상 + SRT import ]',
       `1. media/${videoFileName || 'video.mp4'} 불러오기`,
-      `2. 자막 > 자막 가져오기 > "${safeName}_자막.srt" 선택`,
-      '3. SRT는 원본 소스 영상 시간 기준입니다.',
+      `2. 자막 > 자막 가져오기 > "${safeName}_자막_원본시간.srt" 선택`,
+      '3. 이 SRT는 원본 소스 영상 시간 기준입니다.',
+      `   (프로젝트 폴더 방식에서는 "${safeName}_자막.srt"를 사용하세요 — 타임라인 기준)`,
       '',
       `* 편집점: ${scenes.length}개 / 해상도: ${width}x${height} / ${fps}fps`,
     ].join('\n'));
@@ -2958,20 +3397,35 @@ export async function buildEditRoomNleZip(params: {
     zip.file(`${safeName}.xml`, xml);
   }
 
+  // [FIX #610] CapCut projectId — README에서도 참조해야 하므로 블록 밖에서 생성
+  const editRoomCapCutProjectId = target === 'capcut' ? uuid() : '';
+
   // CapCut 전용: draft_content.json (이미지+자막+나레이션 타임라인 자동 배치)
   if (target === 'capcut') {
     const totalDurUs = toUs(timeline[timeline.length - 1]?.imageEndTime || 0);
-    const projectId = uuid();
+    const projectId = editRoomCapCutProjectId;
+    const scaffoldIds: CapCutProjectScaffoldIds = {
+      draftFolderId: projectId,
+      draftId: uuid(),
+      timelineId: uuid(),
+      timelineProjectId: uuid(),
+    };
     const speedId = uuid();
+    const canvasId = uuid();
     const emptyArr: never[] = [];
+    const platformInfo = buildCapCutPlatformInfo(detectCapCutDesktopPlatform());
+    const trackVideoId = uuid();
+    const trackTextId = uuid();
+    const trackAudioId = uuid();
 
-    // ── 미디어를 ZIP 루트에도 복사 (CapCut은 draft 폴더 루트에서 파일을 찾음) ──
     for (const [i, fileName] of mediaFileMap.entries()) {
       const blob = mediaBlobMap.get(i);
-      if (blob) zip.file(fileName, blob);
+      if (!blob) continue;
+      const isVideo = fileName.endsWith('.mp4');
+      zip.file(`${projectId}/materials/${isVideo ? 'video' : 'image'}/${fileName}`, blob);
     }
     for (const { fileName, blob } of narrationBlobEntries) {
-      zip.file(fileName, blob);
+      zip.file(`${projectId}/materials/audio/${fileName}`, blob);
     }
 
     // ── 미디어 머티리얼: 장면별 이미지/영상 (Map으로 인덱스 보존 — 미디어 누락 시 밀림 방지) ──
@@ -3002,48 +3456,31 @@ export async function buildEditRoomNleZip(params: {
     const audioMaterials = audioMaterialsWithStart.map(({ id, path, dur }) => ({ id, path, dur }));
 
     // ── 비디오 세그먼트 (메인 트랙) — Map lookup으로 정확한 인덱스 매칭 ──
-    const videoSegments = timeline.map((t, i) => {
+    const rawVideoSegments: Array<Record<string, unknown> | null> = timeline.map((t, i) => {
       const mat = videoMaterialMap.get(i);
       if (!mat) return null;
       const motionTrack = mat.isPhoto ? compileNleMotionTrack(t, w, h, fps) : null;
       const clipSettings = buildCapCutClipSettings(motionTrack, w, h);
       const commonKeyframes = buildCapCutCommonKeyframes(motionTrack, w, h);
       return {
-        cartoon: false,
-        clip: clipSettings,
-        common_keyframes: commonKeyframes,
-        enable_adjust: true,
-        enable_color_correct_adjust: false,
-        enable_color_curves: true,
-        enable_color_match_adjust: false,
-        enable_color_wheels: true,
-        enable_lut: true,
-        enable_smart_color_adjust: false,
-        extra_material_refs: [speedId],
-        group_id: '',
-        hdr_settings: null,
-        id: uuid(),
-        intensifies_audio: false,
-        is_placeholder: false,
-        is_tone_modify: false,
-        keyframe_refs: emptyArr,
-        last_nonzero_volume: 1.0,
-        material_id: mat.id,
-        render_index: 0,
-        responsive_layout: { enable: false, horizontal_pos_layout: 0, size_layout: 0, target_follow: '', vertical_pos_layout: 0 },
-        reverse: false,
-        source_timerange: { duration: toUs(t.imageDuration), start: 0 },
-        speed: 1.0,
-        target_timerange: { duration: toUs(t.imageDuration), start: toUs(t.imageStartTime) },
-        template_id: '',
-        template_scene: '',
-        track_attribute: 0,
-        track_render_index: 0,
+        ...buildCapCutSegmentShell({
+          clip: clipSettings,
+          commonKeyframes,
+          enableAdjust: true,
+          extraMaterialRefs: [speedId, canvasId],
+          materialId: mat.id,
+          renderIndex: 0,
+          sourceDurationUs: toUs(t.imageDuration),
+          sourceStartUs: 0,
+          speed: 1.0,
+          targetDurationUs: toUs(t.imageDuration),
+          targetStartUs: toUs(t.imageStartTime),
+          trackRenderIndex: 0,
+        }),
         uniform_scale: { on: !(motionTrack?.scale.length), value: clipSettings.scale.x },
-        visible: true,
-        volume: 1.0,
       };
-    }).filter(Boolean);
+    }).filter(Boolean) as Array<Record<string, unknown>>;
+    const videoSegments = rawVideoSegments;
 
     // ── 텍스트 머티리얼 + 세그먼트 (자막 트랙) ──
     const textMaterials: { id: string; text: string; start: number; dur: number }[] = [];
@@ -3079,42 +3516,46 @@ export async function buildEditRoomNleZip(params: {
       use_effect_default_color: true, words: null,
     }));
 
-    const textSegments = textMaterials.map(m => ({
-      cartoon: false,
+    const textSegments = textMaterials.map(m => buildCapCutSegmentShell({
       clip: { alpha: 1.0, flip: { horizontal: false, vertical: false }, rotation: 0.0, scale: { x: 1.0, y: 1.0 }, transform: { x: 0.0, y: 0.0 } },
-      common_keyframes: emptyArr, enable_adjust: false, enable_color_correct_adjust: false,
-      enable_color_curves: false, enable_color_match_adjust: false, enable_color_wheels: false,
-      enable_lut: false, enable_smart_color_adjust: false, extra_material_refs: emptyArr,
-      group_id: '', hdr_settings: null, id: uuid(), intensifies_audio: false,
-      is_placeholder: false, is_tone_modify: false, keyframe_refs: emptyArr,
-      last_nonzero_volume: 1.0, material_id: m.id, render_index: 11000,
-      responsive_layout: { enable: false, horizontal_pos_layout: 0, size_layout: 0, target_follow: '', vertical_pos_layout: 0 },
-      reverse: false, source_timerange: { duration: m.dur, start: 0 },
-      speed: 1.0, target_timerange: { duration: m.dur, start: m.start },
-      template_id: '', template_scene: '', track_attribute: 0, track_render_index: 11000,
-      uniform_scale: { on: true, value: 1.0 }, visible: true, volume: 1.0,
+      commonKeyframes: emptyArr,
+      enableAdjust: false,
+      extraMaterialRefs: emptyArr,
+      materialId: m.id,
+      renderIndex: 11000,
+      sourceDurationUs: m.dur,
+      sourceStartUs: 0,
+      speed: 1.0,
+      targetDurationUs: m.dur,
+      targetStartUs: m.start,
+      trackRenderIndex: 11000,
     }));
 
     // ── 오디오 세그먼트 (나레이션 트랙) — 라인 단위 다중 배치 ──
-    const audioSegments = audioMaterialsWithStart.map((aMat) => {
-      return {
-        cartoon: false,
-        clip: { alpha: 1.0, flip: { horizontal: false, vertical: false }, rotation: 0.0, scale: { x: 1.0, y: 1.0 }, transform: { x: 0.0, y: 0.0 } },
-        common_keyframes: emptyArr, enable_adjust: false, enable_color_correct_adjust: false,
-        enable_color_curves: false, enable_color_match_adjust: false, enable_color_wheels: false,
-        enable_lut: false, enable_smart_color_adjust: false, extra_material_refs: emptyArr,
-        group_id: '', hdr_settings: null, id: uuid(), intensifies_audio: false,
-        is_placeholder: false, is_tone_modify: false, keyframe_refs: emptyArr,
-        last_nonzero_volume: 1.0, material_id: aMat.id, render_index: 0,
-        responsive_layout: { enable: false, horizontal_pos_layout: 0, size_layout: 0, target_follow: '', vertical_pos_layout: 0 },
-        reverse: false, source_timerange: { duration: aMat.dur, start: 0 },
-        speed: 1.0, target_timerange: { duration: aMat.dur, start: aMat.start },
-        template_id: '', template_scene: '', track_attribute: 0, track_render_index: 0,
-        uniform_scale: { on: true, value: 1.0 }, visible: true, volume: 1.0,
-      };
-    });
-
-    const platformInfo = buildCapCutPlatformInfo();
+    const audioSegments = audioMaterialsWithStart.map((aMat) => buildCapCutSegmentShell({
+      clip: { alpha: 1.0, flip: { horizontal: false, vertical: false }, rotation: 0.0, scale: { x: 1.0, y: 1.0 }, transform: { x: 0.0, y: 0.0 } },
+      commonKeyframes: emptyArr,
+      enableAdjust: false,
+      extraMaterialRefs: emptyArr,
+      materialId: aMat.id,
+      renderIndex: 0,
+      sourceDurationUs: aMat.dur,
+      sourceStartUs: 0,
+      speed: 1.0,
+      targetDurationUs: aMat.dur,
+      targetStartUs: aMat.start,
+      trackRenderIndex: 0,
+    }));
+    const keyValueEntries = [
+      ...videoSegments.map((segment, index) => ({
+        segmentId: String(segment['id'] || ''),
+        materialName: videoMaterials[index]?.path || '',
+      })).filter((entry) => entry.materialName),
+      ...audioSegments.map((segment, index) => ({
+        segmentId: String(segment['id'] || ''),
+        materialName: audioMaterials[index]?.path || '',
+      })).filter((entry) => entry.materialName),
+    ];
 
     // ── draft_content.json 조립 ──
     const draft = {
@@ -3162,7 +3603,7 @@ export async function buildEditRoomNleZip(params: {
       fps: fps,
       free_render_index_mode_on: false,
       group_container: null,
-      id: projectId,
+      id: scaffoldIds.timelineId,
       is_drop_frame_timecode: false,
       keyframe_graph_list: emptyArr,
       keyframes: { adjusts: emptyArr, audios: emptyArr, effects: emptyArr, filters: emptyArr, handwrites: emptyArr, stickers: emptyArr, texts: emptyArr, videos: emptyArr },
@@ -3171,19 +3612,81 @@ export async function buildEditRoomNleZip(params: {
       materials: {
         ...buildCapCutEmptyMaterialBuckets(),
         audios: audioMaterials.map(m => ({
-          app_id: 0, category_id: '', category_name: 'local', check_flag: 0,
-          duration: m.dur, effect_id: '', formula_id: '', id: m.id,
-          intensifies_path: '', local_material_id: '', music_id: '', name: m.path.split('/').pop() || '',
-          path: `##_draftpath_placeholder_${projectId}_##/${m.path}`, request_id: '', resource_id: '', source_platform: 0,
-          team_id: '', text_id: '', tone_category_id: '', tone_category_name: '',
-          tone_effect_id: '', tone_effect_name: '', tone_platform: '', tone_second_category_id: '',
-          tone_second_category_name: '', tone_speaker: '', tone_type: '', type: 'extract_music',
-          video_id: '', wave_points: [],
+          ai_music_enter_from: '',
+          ai_music_generate_scene: 0,
+          ai_music_type: 0,
+          aigc_history_id: '',
+          aigc_item_id: '',
+          app_id: 0,
+          category_id: '',
+          category_name: 'local',
+          check_flag: 1,
+          cloned_model_type: '',
+          copyright_limit_type: 'none',
+          duration: m.dur,
+          effect_id: '',
+          formula_id: '',
+          id: m.id,
+          intensifies_path: '',
+          is_ai_clone_tone: false,
+          is_ai_clone_tone_post: false,
+          is_text_edit_overdub: false,
+          is_ugc: false,
+          local_material_id: '',
+          lyric_type: 0,
+          mock_tone_speaker: '',
+          moyin_emotion: '',
+          music_id: '',
+          name: m.path.split('/').pop() || '',
+          path: buildCapCutContainedMaterialPath(projectId, 'audio', m.path.split('/').pop() || ''),
+          pgc_id: '',
+          pgc_name: '',
+          query: '',
+          request_id: '',
+          resource_id: '',
+          search_id: '',
+          similiar_music_info: { original_song_id: '', original_song_name: '' },
+          sound_separate_type: '',
+          source_from: '',
+          source_platform: 0,
+          team_id: '',
+          text_id: '',
+          third_resource_id: '',
+          tone_category_id: '',
+          tone_category_name: '',
+          tone_effect_id: '',
+          tone_effect_name: '',
+          tone_emotion_name_key: '',
+          tone_emotion_role: '',
+          tone_emotion_scale: 0.0,
+          tone_emotion_selection: '',
+          tone_emotion_style: '',
+          tone_platform: '',
+          tone_second_category_id: '',
+          tone_second_category_name: '',
+          tone_speaker: '',
+          tone_type: '',
+          tts_benefit_info: { benefit_amount: -1, benefit_log_extra: '', benefit_log_id: '', benefit_type: 'none' },
+          tts_generate_scene: '',
+          tts_task_id: '',
+          type: 'extract_music',
+          unique_id: '',
+          video_id: '',
+          wave_points: [],
         })),
-        canvases: emptyArr, drafts: emptyArr, effects: emptyArr, flowers: emptyArr,
-        handwrites: emptyArr, head_animations: emptyArr, images: emptyArr,
-        log_color_wheels: emptyArr, loudnesses: emptyArr, manual_deformations: emptyArr,
-        material_animations: emptyArr, material_colors: emptyArr, placeholders: emptyArr,
+        canvases: [buildCapCutCanvasMaterial(canvasId)],
+        drafts: emptyArr,
+        effects: emptyArr,
+        flowers: emptyArr,
+        handwrites: emptyArr,
+        head_animations: emptyArr,
+        images: emptyArr,
+        log_color_wheels: emptyArr,
+        loudnesses: emptyArr,
+        manual_deformations: emptyArr,
+        material_animations: [buildCapCutMaterialAnimation(uuid())],
+        material_colors: emptyArr,
+        placeholders: emptyArr,
         plugin_effects: emptyArr, realtime_denoises: emptyArr, shapes: emptyArr,
         smart_crops: emptyArr, smart_relayouts: emptyArr,
         speeds: [{ curve_speed: null, id: speedId, mode: 0, name: '', speed: 1.0, type: 'speed' }],
@@ -3191,24 +3694,118 @@ export async function buildEditRoomNleZip(params: {
         texts: textObjects,
         transitions: emptyArr, video_effects: emptyArr, video_trackings: emptyArr,
         videos: videoMaterials.map(m => ({
-          audio_fade: null, category_id: '', category_name: 'local', check_flag: 63487,
+          aigc_history_id: '',
+          aigc_item_id: '',
+          aigc_type: 'none',
+          audio_fade: null,
+          beauty_body_auto_preset: null,
+          beauty_body_preset_id: '',
+          beauty_face_auto_preset: { name: '', preset_id: '', rate_map: '', scene: '' },
+          beauty_face_auto_preset_infos: [],
+          beauty_face_preset_infos: [],
+          cartoon_path: '',
+          category_id: '',
+          category_name: '',
+          check_flag: 62978047,
+          content_feature_info: null,
+          corner_pin: null,
           crop: { lower_left_x: 0, lower_left_y: 1, lower_right_x: 1, lower_right_y: 1, upper_left_x: 0, upper_left_y: 0, upper_right_x: 1, upper_right_y: 0 },
           crop_ratio: 'free', crop_scale: 1.0,
           duration: m.dur, extra_type_option: 0, formula_id: '', freeze: null,
-          has_audio: !m.isPhoto, height: h, id: m.id,
+          has_audio: !m.isPhoto,
+          has_sound_separated: false,
+          height: h,
+          id: m.id,
           intensifies_audio_path: '', intensifies_path: '', is_ai_generate_content: false,
           is_copyright: false, is_text_edit_overdub: false, is_unified_beauty_mode: false,
-          local_id: '', local_material_id: '', material_id: m.id, material_name: m.path.split('/').pop() || '',
-          material_url: '', media_path: '', music_id: '', object_locked: null,
-          origin_material_id: '', path: `##_draftpath_placeholder_${projectId}_##/${m.path}`, request_id: '', reverse_path: '',
-          roughcut_time_range: null, smart_motion: null, source: 0, source_platform: 0,
-          stable: null, team_id: '', type: m.isPhoto ? 'photo' : 'video',
-          video_algorithm: null, width: w,
+          live_photo_cover_path: '',
+          live_photo_timestamp: -1,
+          local_id: '',
+          local_material_from: '',
+          local_material_id: '',
+          material_id: '',
+          material_name: m.path.split('/').pop() || '',
+          material_url: '',
+          matting: {
+            custom_matting_id: '',
+            enable_matting_stroke: false,
+            expansion: 0,
+            feather: 0,
+            flag: 0,
+            has_use_quick_brush: false,
+            has_use_quick_eraser: false,
+            interactiveTime: [],
+            path: '',
+            reverse: false,
+            strokes: [],
+          },
+          media_path: '',
+          music_id: '',
+          multi_camera_info: null,
+          object_locked: null,
+          origin_material_id: '',
+          path: buildCapCutContainedMaterialPath(projectId, m.isPhoto ? 'image' : 'video', m.path.split('/').pop() || ''),
+          picture_from: m.isPhoto ? 'default' : 'none',
+          picture_set_category_id: '',
+          picture_set_category_name: '',
+          request_id: '',
+          reverse_intensifies_path: '',
+          reverse_path: '',
+          smart_match_info: null,
+          smart_motion: null,
+          source: 0,
+          source_platform: 0,
+          stable: {
+            matrix_path: '',
+            stable_level: 0,
+            time_range: { duration: 0, start: 0 },
+          },
+          surface_trackings: [],
+          team_id: '',
+          type: m.isPhoto ? 'photo' : 'video',
+          unique_id: '',
+          video_algorithm: {
+            ai_background_configs: [],
+            ai_expression_driven: null,
+            ai_in_painting_config: [],
+            ai_motion_driven: null,
+            aigc_generate: null,
+            aigc_generate_list: [],
+            algorithms: [],
+            complement_frame_config: null,
+            deflicker: null,
+            gameplay_configs: [],
+            image_interpretation: null,
+            motion_blur_config: null,
+            mouth_shape_driver: null,
+            noise_reduction: null,
+            path: '',
+            quality_enhance: null,
+            skip_algorithm_index: [],
+            smart_complement_frame: null,
+            story_video_modify_video_config: { is_overwrite_last_video: false, task_id: '', tracker_task_id: '' },
+            super_resolution: null,
+            time_range: { duration: 0, start: 0 },
+          },
+          video_mask_shadow: { alpha: 0.0, angle: 0.0, blur: 0.0, color: '', distance: 0.0, path: '', resource_id: '' },
+          video_mask_stroke: {
+            alpha: 0.0,
+            color: '',
+            distance: 0.0,
+            horizontal_shift: 0.0,
+            path: '',
+            resource_id: '',
+            size: 0.0,
+            texture: 0.0,
+            type: '',
+            vertical_shift: 0.0,
+          },
+          width: w,
         })),
       },
       mutable_config: null,
       name: '',
-      new_version: '159.0.0',
+      new_version: '163.0.0',
       path: '',
       platform: platformInfo,
       relationships: emptyArr,
@@ -3219,9 +3816,9 @@ export async function buildEditRoomNleZip(params: {
       static_cover_image_path: '',
       time_marks: null,
       tracks: [
-        { attribute: 0, flag: 0, id: uuid(), is_default_name: true, name: '', segments: videoSegments, type: 'video' },
-        ...(textSegments.length > 0 ? [{ attribute: 0, flag: 0, id: uuid(), is_default_name: true, name: '', segments: textSegments, type: 'text' }] : []),
-        ...(audioSegments.length > 0 ? [{ attribute: 0, flag: 0, id: uuid(), is_default_name: true, name: '', segments: audioSegments, type: 'audio' }] : []),
+        { attribute: 0, flag: 0, id: trackVideoId, is_default_name: true, name: '', segments: videoSegments, type: 'video' },
+        ...(textSegments.length > 0 ? [{ attribute: 0, flag: 0, id: trackTextId, is_default_name: true, name: '', segments: textSegments, type: 'text' }] : []),
+        ...(audioSegments.length > 0 ? [{ attribute: 0, flag: 0, id: trackAudioId, is_default_name: true, name: '', segments: audioSegments, type: 'audio' }] : []),
       ],
       uneven_animation_template_info: { composition: '', content: '', order: '', sub_template_info_list: emptyArr },
       update_time: 0,
@@ -3229,28 +3826,37 @@ export async function buildEditRoomNleZip(params: {
     };
 
     const draftJson = JSON.stringify(draft);
-    zip.file('draft_content.json', draftJson);
     const editNowTs = Math.floor(Date.now() / 1000);
     const editNowUs = Date.now() * 1000;
-    zip.file('draft_settings', buildCapCutDraftSettings(editNowTs, w, h));
-    zip.file('draft_info.json', draftJson);
-    zip.file('draft_meta_info.json', buildCapCutDraftMetaInfo({
-      projectId,
+    const draftTimelineMaterialsSize = videoMaterials.length + textObjects.length + audioMaterials.length;
+    const draftCoverBlob = await buildCapCutDraftCoverBlob(w, h);
+    zip.file(`${projectId}/draft_content.json`, draftJson);
+    zip.file(`${projectId}/draft_settings`, buildCapCutDraftSettings(editNowTs, w, h, detectCapCutDesktopPlatform(), draftTimelineMaterialsSize, totalDurUs / 1_000_000));
+    zip.file(`${projectId}/draft_info.json`, draftJson);
+    zip.file(`${projectId}/draft_meta_info.json`, buildCapCutDraftMetaInfo({
+      draftFolderId: projectId,
+      draftId: scaffoldIds.draftId,
       title,
       tmDuration: totalDurUs,
       tmDraftModifiedUs: editNowUs,
-      draftTimelineMaterialsSize: videoMaterials.length + textObjects.length + audioMaterials.length,
+      draftTimelineMaterialsSize,
     }));
-    zip.file('Timelines/project.json', buildCapCutTimelineProject(projectId, editNowUs));
-    zip.file('common_attachment/attachment_pc_timeline.json', buildCapCutAttachmentPcTimeline());
-    zip.file('attachment_pc_common.json', buildCapCutAttachmentPcCommon());
-    zip.file('attachment_editing.json', buildCapCutAttachmentEditing());
-    zip.file('timeline_layout.json', buildCapCutTimelineLayout(projectId));
-    zip.file('draft_virtual_store.json', buildCapCutDraftVirtualStore());
-    zip.file('key_value.json', '{}');
-    zip.file('draft_biz_config.json', buildCapCutDraftBizConfig(projectId));
-    zip.file('draft_agency_config.json', buildCapCutDraftAgencyConfig());
-    zip.file('performance_opt_info.json', buildCapCutPerformanceOptInfo());
+    zip.file(`${projectId}/Timelines/project.json`, buildCapCutTimelineProject(scaffoldIds.timelineProjectId, scaffoldIds.timelineId, editNowUs));
+    zip.file(`${projectId}/common_attachment/attachment_pc_timeline.json`, buildCapCutAttachmentPcTimeline());
+    zip.file(`${projectId}/common_attachment/attachment_script_video.json`, buildCapCutAttachmentScriptVideo());
+    zip.file(`${projectId}/common_attachment/attachment_action_scene.json`, buildCapCutAttachmentActionScene());
+    zip.file(`${projectId}/common_attachment/coperate_create.json`, buildCapCutCooperateCreate());
+    zip.file(`${projectId}/attachment_pc_common.json`, buildCapCutAttachmentPcCommon());
+    zip.file(`${projectId}/attachment_editing.json`, buildCapCutAttachmentEditing());
+    zip.file(`${projectId}/timeline_layout.json`, buildCapCutTimelineLayout(scaffoldIds.timelineId));
+    zip.file(`${projectId}/draft_virtual_store.json`, buildCapCutDraftVirtualStore());
+    zip.file(`${projectId}/key_value.json`, buildCapCutKeyValue(keyValueEntries));
+    zip.file(`${projectId}/draft_biz_config.json`, buildCapCutDraftBizConfig(scaffoldIds.timelineId, [trackVideoId, ...(textSegments.length > 0 ? [trackTextId] : []), ...(audioSegments.length > 0 ? [trackAudioId] : [])]));
+    zip.file(`${projectId}/draft_agency_config.json`, buildCapCutDraftAgencyConfig());
+    zip.file(`${projectId}/performance_opt_info.json`, buildCapCutPerformanceOptInfo());
+    zip.file(`${projectId}/draft.extra`, buildCapCutOpaqueDraftExtra());
+    zip.file(`${projectId}/crypto_key_store.dat`, buildCapCutOpaqueCryptoKeyStore());
+    zip.file(`${projectId}/draft_cover.jpg`, draftCoverBlob);
   }
 
   // README (CapCut은 SRT import 가장 안정적이라 SRT 중심으로 안내)
@@ -3284,9 +3890,10 @@ export async function buildEditRoomNleZip(params: {
       '★ 추천: 프로젝트 폴더 복사 (이미지+자막+나레이션 자동 배치!)',
       '1. CapCut 데스크톱을 완전히 종료합니다.',
       '2. ZIP 압축을 해제합니다.',
-      '3. 압축 해제한 폴더를 아래 경로에 복사합니다:',
+      `3. 압축 해제된 폴더 안의 "${editRoomCapCutProjectId}" 폴더를 아래 경로에 복사합니다:`,
       '   • Windows: %LOCALAPPDATA%\\CapCut\\User Data\\Projects\\com.lveditor.draft\\',
       '   • Mac: ~/Movies/CapCut/User Data/Projects/com.lveditor.draft/',
+      `   → 최종 경로 예: .../com.lveditor.draft/${editRoomCapCutProjectId}/draft_content.json`,
       '4. CapCut을 다시 실행하면 프로젝트 목록에 자동으로 나타납니다!',
       '5. 이미지/영상, 자막, 나레이션이 모두 타임라인에 배치되어 있습니다.',
       '',

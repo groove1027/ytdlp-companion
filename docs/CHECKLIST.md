@@ -8,6 +8,15 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-20] NLE 내보내기 4이슈 수정 (#622 #610 #575 #589)
+- [x] `nleExportService.ts` — **#622** CapCut SRT 타이밍을 `source` → `timeline`으로 변경, 원본시간 SRT 별도 제공
+- [x] `nleExportService.ts` — **#610** CapCut ZIP 내 모든 파일을 `projectId/` 폴더에 배치 (영상분석실 + 편집실 모두)
+- [x] `nleExportService.ts` — **#575** 효과 자막(fxTextObjects/fxTextSegments) CapCut draft에 추가, 별도 text 트랙으로 분리
+- [x] `nleExportService.ts` — **#589** 편집실 CapCut 경로 모션 키프레임 확인 (기존 구현 정상 동작)
+- [x] README.txt 업데이트: projectId 폴더 복사 안내 + SRT 사용 안내 개선
+- [x] tsc --noEmit 통과, vite build 통과, Puppeteer E2E 확인
+- [x] Codex 5.4 MCP 3회 논리 검증 루프 완료, 검증 스크립트 20/20 통과
+
 ### [2026-03-20] NLE 실검증 Playwright + 네이티브 앱 통합 러너 추가
 - [x] `src/package.json`, `src/package-lock.json` — `playwright-core` 추가, `verify:nle:playwright` 실행 스크립트 등록
 - [x] `test/helpers/playwrightHarness.mjs` — 시스템 Chrome 기반 Playwright 브라우저/퍼시스턴트 컨텍스트 공통 런처 추가
