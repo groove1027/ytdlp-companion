@@ -127,6 +127,9 @@ const fmtTime = (sec: number): string => {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(ms).padStart(2, '0')}`;
 };
 
+const getSceneStatusTone = (status?: string): string =>
+  /실패|차단|없음/i.test(status || '') ? 'text-amber-300' : 'text-cyan-300';
+
 type SceneTextFallback = {
   narration?: string;
   script?: string;
@@ -524,6 +527,11 @@ const SceneCard: React.FC<SceneCardProps> = ({ scene, index, onUpdatePrompt, onD
               <>
                 <svg className="w-5 h-5 text-gray-600 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
                 <span className="text-gray-600 text-[10px]">클릭하여 업로드</span>
+                {scene.generationStatus && (
+                  <span className={`mt-1 px-2 text-center text-[9px] leading-relaxed ${getSceneStatusTone(scene.generationStatus)}`}>
+                    {scene.generationStatus}
+                  </span>
+                )}
               </>
             )}
           </div>
@@ -645,6 +653,11 @@ const GridSceneCard: React.FC<GridSceneCardProps> = ({ scene, index, onRegenerat
           >
             <svg className="w-6 h-6 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
             <span className="text-[10px]">클릭하여 업로드</span>
+            {scene.generationStatus && (
+              <span className={`mt-2 max-w-[78%] text-center text-[10px] leading-relaxed ${getSceneStatusTone(scene.generationStatus)}`}>
+                {scene.generationStatus}
+              </span>
+            )}
           </div>
         )}
         <input type="file" ref={gridUploadRef} accept="image/*,video/*" className="hidden"
@@ -1920,7 +1933,7 @@ const StoryboardPanel: React.FC = () => {
           updateScene(sceneId, {
             imageUrl: result.items[0].link,
             isGeneratingImage: false,
-            generationStatus: '구글 레퍼런스 적용됨',
+            generationStatus: result.provider === 'wikimedia' ? '대체 레퍼런스 적용됨' : '구글 레퍼런스 적용됨',
             imageUpdatedAfterVideo: !!scene.videoUrl,
           });
           return true;
@@ -2127,8 +2140,27 @@ const StoryboardPanel: React.FC = () => {
       allTargets,
       currentConfig.globalContext || '',
       updateScene,
-      (count) => {
-        showToast(`${count}개 장면에 구글 이미지를 배치했어요!`);
+      ({ appliedCount, failedCount, blockedCount, fallbackCount }) => {
+        if (appliedCount > 0 && failedCount === 0) {
+          showToast(
+            fallbackCount > 0
+              ? `${appliedCount}개 장면에 대체 레퍼런스 이미지를 배치했어요!`
+              : `${appliedCount}개 장면에 구글 이미지를 배치했어요!`,
+          );
+          return;
+        }
+
+        if (appliedCount > 0) {
+          showToast(`${appliedCount}개 장면은 적용했고 ${failedCount}개 장면은 비어 있어요.`);
+          return;
+        }
+
+        showToast(
+          blockedCount > 0
+            ? '구글 검색이 차단돼 레퍼런스 이미지를 배치하지 못했어요. 잠시 후 다시 시도해주세요.'
+            : '레퍼런스 이미지를 배치하지 못했어요. 검색어를 줄이거나 직접 업로드해주세요.',
+          4500,
+        );
       },
       true, // forceReplace — 이미 이미지가 있는 씬도 교체
     );

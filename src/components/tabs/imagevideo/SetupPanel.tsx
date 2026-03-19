@@ -546,8 +546,24 @@ const SetupPanel: React.FC = () => {
         setIsAnalyzing(false); setChunkProgress(null);
         // 백그라운드에서 즉시 구글 이미지 자동 배치
         const updateSceneFn = useProjectStore.getState().updateScene;
-        void autoApplyGoogleReferences(localScenes, '', updateSceneFn, (count) => {
-          if (count > 0) showToast(`${count}개 장면에 구글 레퍼런스 이미지를 배치했어요!`);
+        void autoApplyGoogleReferences(localScenes, '', updateSceneFn, ({ appliedCount, failedCount, blockedCount, fallbackCount }) => {
+          if (appliedCount > 0 && failedCount === 0) {
+            showToast(
+              fallbackCount > 0
+                ? `${appliedCount}개 장면에 대체 레퍼런스 이미지를 배치했어요!`
+                : `${appliedCount}개 장면에 구글 레퍼런스 이미지를 배치했어요!`,
+            );
+            return;
+          }
+
+          if (appliedCount > 0) {
+            showToast(`${appliedCount}개 장면은 적용했고 ${failedCount}개 장면은 비어 있어요.`);
+            return;
+          }
+
+          if (blockedCount > 0) {
+            showToast('구글 검색이 차단돼 레퍼런스 이미지를 가져오지 못했어요. 잠시 후 다시 시도해주세요.', 4500);
+          }
         });
         return true;
       }
@@ -620,8 +636,24 @@ const SetupPanel: React.FC = () => {
         const globalCtxStr = JSON.stringify(globalContextObj);
         const updateSceneFn = useProjectStore.getState().updateScene;
         // 백그라운드 실행 — 분석 완료 UX를 막지 않음
-        void autoApplyGoogleReferences(latestScenes, globalCtxStr, updateSceneFn, (count) => {
-          if (count > 0) showToast(`${count}개 장면에 구글 레퍼런스 이미지를 자동 배치했어요!`);
+        void autoApplyGoogleReferences(latestScenes, globalCtxStr, updateSceneFn, ({ appliedCount, failedCount, blockedCount, fallbackCount }) => {
+          if (appliedCount > 0 && failedCount === 0) {
+            showToast(
+              fallbackCount > 0
+                ? `${appliedCount}개 장면에 대체 레퍼런스 이미지를 자동 배치했어요!`
+                : `${appliedCount}개 장면에 구글 레퍼런스 이미지를 자동 배치했어요!`,
+            );
+            return;
+          }
+
+          if (appliedCount > 0) {
+            showToast(`${appliedCount}개 장면은 자동 배치했고 ${failedCount}개 장면은 비어 있어요.`);
+            return;
+          }
+
+          if (blockedCount > 0) {
+            showToast('구글 검색이 차단돼 자동 레퍼런스 이미지를 가져오지 못했어요. 잠시 후 다시 시도해주세요.', 4500);
+          }
         });
       }
 

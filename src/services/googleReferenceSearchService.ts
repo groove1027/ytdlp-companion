@@ -47,21 +47,95 @@ export interface GoogleImageResult {
   height: number;
 }
 
+export type ReferenceSearchProvider = 'google' | 'wikimedia';
+
 export interface GoogleSearchResponse {
   items: GoogleImageResult[];
   totalResults: number;
   query: string;
+  provider: ReferenceSearchProvider;
+}
+
+export interface GoogleReferenceApplySummary {
+  appliedCount: number;
+  failedCount: number;
+  blockedCount: number;
+  fallbackCount: number;
 }
 
 const GOOGLE_IMGRES_REGEX = /\/imgres\?imgurl=[^"'<>\\\s]+/g;
 const GOOGLE_THUMBNAIL_REGEX = /https?:\/\/encrypted-tbn0\.gstatic\.com\/images\?q=tbn:[^"'<>\\\s]+/g;
 const GOOGLE_AF_INIT_REGEX = /AF_initDataCallback\(([\s\S]*?)\);/g;
 const GOOGLE_HTTP_DIMENSION_REGEX = /\["((?:https?:)?\/\/[^"]+)",(\d+),(\d+)\]/g;
+const WIKIMEDIA_API_URL = 'https://commons.wikimedia.org/w/api.php';
+const QUERY_SPLIT_REGEX = /[\n\r.!?…。,:;|/\\]+/;
+const WIKIMEDIA_THUMB_WIDTH_MAP: Record<string, string> = {
+  medium: '360',
+  large: '480',
+  xlarge: '720',
+  xxlarge: '960',
+  huge: '1280',
+};
 
 // ─── 검색어 생성 로직 ───
 
 /** AI 생성용 잡음 제거 (8k, cinematic lighting 등) */
 const NOISE_PATTERNS = /\b(8k|4k|hdr|cinematic|masterpiece|highly detailed|no text|hyper.?realistic|ultra.?realistic|photorealistic|octane render|unreal engine|detailed|best quality|high quality|digital art|concept art|illustration|professional|award.?winning|trending on artstation|artstation|deviantart|pixiv)\b/gi;
+
+function normalizeQueryText(value: string): string {
+  return value
+    .replace(NOISE_PATTERNS, ' ')
+    .replace(/[()[\]{}"'`“”‘’]/g, ' ')
+    .replace(/[_*]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function dedupeQueryParts(parts: string[]): string[] {
+  const deduped: string[] = [];
+
+  for (const raw of parts) {
+    const part = normalizeQueryText(raw);
+    if (part.length < 2) continue;
+
+    const duplicateIndex = deduped.findIndex((existing) => {
+      const a = existing.toLowerCase();
+      const b = part.toLowerCase();
+      return a === b || a.includes(b) || b.includes(a);
+    });
+
+    if (duplicateIndex >= 0) {
+      if (part.length > deduped[duplicateIndex].length) {
+        deduped[duplicateIndex] = part;
+      }
+      continue;
+    }
+
+    deduped.push(part);
+  }
+
+  return deduped;
+}
+
+function extractQueryFragments(value: string | undefined, maxFragments: number, maxLen: number): string[] {
+  if (!value) return [];
+
+  const normalized = normalizeQueryText(value);
+  if (!normalized) return [];
+
+  const splitParts = normalized
+    .split(QUERY_SPLIT_REGEX)
+    .map((part) => normalizeQueryText(part).slice(0, maxLen).trim())
+    .filter((part) => part.length >= 2);
+
+  const fragments = dedupeQueryParts(splitParts.length > 0 ? splitParts : [normalized.slice(0, maxLen)]);
+  return fragments.slice(0, maxFragments);
+}
+
+function pushQueryFragments(parts: string[], value: string | undefined, maxFragments: number, maxLen: number): void {
+  const next = dedupeQueryParts([...parts, ...extractQueryFragments(value, maxFragments, maxLen)]);
+  parts.splice(0, parts.length, ...next.slice(0, 4));
+}
 
 /** 장면 데이터에서 검색 키워드 추출 */
 export function buildSearchQuery(
@@ -73,45 +147,31 @@ export function buildSearchQuery(
   const parts: string[] = [];
 
   // 1순위: entityName (실존 인물/브랜드)
-  if (scene.entityName) {
-    parts.push(scene.entityName);
-  }
+  pushQueryFragments(parts, scene.entityName, 1, 36);
 
   // 2순위: sceneLocation + sceneEra (장소/시대)
-  if (scene.sceneLocation) parts.push(scene.sceneLocation);
-  if (scene.sceneEra) parts.push(scene.sceneEra);
+  pushQueryFragments(parts, scene.sceneLocation, 1, 28);
+  pushQueryFragments(parts, scene.sceneEra, 1, 18);
 
-  // 3순위: visualDescriptionKO에서 핵심어 추출 (한국어)
-  if (scene.visualDescriptionKO && parts.length < 3) {
-    const desc = scene.visualDescriptionKO.slice(0, 100);
-    parts.push(desc);
-  }
+  // 3순위: visualPrompt 우선 사용 — 위키미디어 폴백 시 영어 키워드가 더 잘 맞음
+  if (parts.length < 3) pushQueryFragments(parts, scene.visualPrompt, 2, 30);
 
-  // 4순위: visualPrompt에서 잡음 제거 후 핵심만
-  if (parts.length < 2 && scene.visualPrompt) {
-    const clean = scene.visualPrompt
-      .replace(NOISE_PATTERNS, '')
-      .replace(/[,]+/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, 80);
-    if (clean.length > 5) parts.push(clean);
-  }
-
-  // 5순위: scriptText에서 핵심 구
-  if (parts.length < 2 && scene.scriptText) {
-    const script = scene.scriptText.slice(0, 60).replace(/[""''"\n]/g, ' ').trim();
-    if (script.length > 3) parts.push(script);
-  }
+  // 4순위: visualDescriptionKO / scriptText의 첫 핵심 구절만 사용
+  if (parts.length < 4) pushQueryFragments(parts, scene.visualDescriptionKO, 1, 28);
+  if (parts.length < 4) pushQueryFragments(parts, scene.scriptText, 1, 24);
 
   // 보강: globalContext에서 맥락
-  if (parts.length < 2 && globalContext) {
-    const ctx = globalContext.slice(0, 40).trim();
-    if (ctx) parts.push(ctx);
+  if (parts.length < 4) pushQueryFragments(parts, globalContext, 1, 20);
+
+  // 인접 씬 문맥은 키워드가 거의 없을 때만 보강
+  if (parts.length < 2) {
+    pushQueryFragments(parts, prevScene?.entityName || prevScene?.sceneLocation || prevScene?.visualDescriptionKO, 1, 18);
+  }
+  if (parts.length < 2) {
+    pushQueryFragments(parts, nextScene?.entityName || nextScene?.sceneLocation || nextScene?.visualDescriptionKO, 1, 18);
   }
 
-  // 합치고 중복 제거
-  const query = parts.join(' ').replace(/\s+/g, ' ').trim().slice(0, 150);
+  const query = dedupeQueryParts(parts).join(' ').replace(/\s+/g, ' ').trim().slice(0, 90);
   return query || '풍경 사진';
 }
 
@@ -404,6 +464,100 @@ function detectGoogleSearchBlock(html: string): string | null {
   return null;
 }
 
+function isBlockedSearchMessage(message: string): boolean {
+  return /차단|captcha|429|동의 페이지/i.test(message);
+}
+
+interface WikimediaImageInfo {
+  url?: string;
+  thumburl?: string;
+  descriptionurl?: string;
+  width?: number;
+  height?: number;
+}
+
+interface WikimediaPage {
+  title: string;
+  index?: number;
+  imageinfo?: WikimediaImageInfo[];
+}
+
+interface WikimediaApiResponse {
+  query?: {
+    pages?: Record<string, WikimediaPage>;
+  };
+}
+
+function buildWikimediaSearchUrl(query: string, start: number, imgSize: string): string {
+  const params = new URLSearchParams({
+    action: 'query',
+    generator: 'search',
+    gsrsearch: query,
+    gsrnamespace: '6',
+    gsrlimit: String(GOOGLE_IMAGE_RESULT_WINDOW),
+    gsroffset: String(Math.max(0, start - 1)),
+    prop: 'imageinfo',
+    iiprop: 'url|size',
+    iiurlwidth: WIKIMEDIA_THUMB_WIDTH_MAP[imgSize] || WIKIMEDIA_THUMB_WIDTH_MAP.large,
+    format: 'json',
+    origin: '*',
+  });
+
+  return `${WIKIMEDIA_API_URL}?${params.toString()}`;
+}
+
+function formatWikimediaTitle(title: string): string {
+  return title
+    .replace(/^File:/i, '')
+    .replace(/\.[a-z0-9]{2,5}$/i, '')
+    .replace(/_/g, ' ')
+    .trim();
+}
+
+async function searchWikimediaImages(
+  query: string,
+  start: number = 1,
+  imgSize: string = 'large',
+): Promise<GoogleSearchResponse> {
+  const url = buildWikimediaSearchUrl(query, start, imgSize);
+  logger.info('[GoogleRef] Wikimedia 폴백 검색', `query="${query}" start=${start}`);
+
+  const res = await monitoredFetch(url, {
+    headers: {
+      Accept: 'application/json',
+    },
+  });
+
+  if (!res.ok) {
+    throw new Error(`대체 이미지 검색 실패 (${res.status})`);
+  }
+
+  const data = await res.json() as WikimediaApiResponse;
+  const pages = Object.values(data.query?.pages || {}).sort((a, b) => (a.index || 0) - (b.index || 0));
+  const items = pages.flatMap((page) => {
+    const info = page.imageinfo?.[0];
+    if (!info?.url) return [];
+
+    return [{
+      title: formatWikimediaTitle(page.title),
+      link: info.url,
+      displayLink: 'commons.wikimedia.org',
+      snippet: formatWikimediaTitle(page.title),
+      thumbnailLink: info.thumburl || info.url,
+      contextLink: info.descriptionurl || '',
+      width: Number.isFinite(info.width) ? info.width || 0 : 0,
+      height: Number.isFinite(info.height) ? info.height || 0 : 0,
+    }];
+  });
+
+  return {
+    items,
+    totalResults: items.length,
+    query,
+    provider: 'wikimedia',
+  };
+}
+
 /**
  * Google 이미지 검색 실행
  * @param query 검색어
@@ -415,43 +569,59 @@ export async function searchGoogleImages(
   start: number = 1,
   imgSize: string = 'large',
 ): Promise<GoogleSearchResponse> {
-  const url = buildSearchUrl(query, start, imgSize);
-  logger.info('[GoogleRef] 검색 요청', `query="${query}" start=${start}`);
+  const normalizedQuery = normalizeQueryText(query) || '풍경 사진';
+  const url = buildSearchUrl(normalizedQuery, start, imgSize);
+  logger.info('[GoogleRef] 검색 요청', `query="${normalizedQuery}" start=${start}`);
 
-  const res = await proxyFetchGoogleSearch(url);
+  try {
+    const res = await proxyFetchGoogleSearch(url);
 
-  if (!res.ok) {
-    const errText = await res.text().catch(() => '');
-    logger.error('[GoogleRef] 검색 실패', `status=${res.status} ${errText}`);
-    if (res.status === 429) {
-      throw new Error('구글 검색 요청이 너무 많아 잠시 차단되었습니다. 잠시 후 다시 시도해주세요.');
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      logger.error('[GoogleRef] 검색 실패', `status=${res.status} ${errText}`);
+      if (res.status === 429) {
+        throw new Error('구글 검색 요청이 너무 많아 잠시 차단되었습니다. 잠시 후 다시 시도해주세요.');
+      }
+      if (res.status === 403) {
+        throw new Error('프록시에서 구글 이미지 검색을 차단했습니다. 프록시 허용 호스트를 확인해주세요.');
+      }
+      throw new Error(`구글 검색 실패 (${res.status})`);
     }
-    if (res.status === 403) {
-      throw new Error('프록시에서 구글 이미지 검색을 차단했습니다. 프록시 허용 호스트를 확인해주세요.');
+
+    const html = await res.text();
+    const blockedMessage = detectGoogleSearchBlock(html);
+    if (blockedMessage) {
+      throw new Error(blockedMessage);
     }
-    throw new Error(`구글 검색 실패 (${res.status})`);
+
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const allItems = mergeUniqueResults(
+      extractDomResults(doc),
+      extractRegexResults(html),
+      extractAfInitResults(html),
+    );
+    const pageOffset = (Math.max(1, start) - 1) % GOOGLE_IMAGE_PAGE_SIZE;
+    const items = allItems.slice(pageOffset, pageOffset + GOOGLE_IMAGE_RESULT_WINDOW);
+
+    if (items.length > 0) {
+      return {
+        items,
+        totalResults: allItems.length,
+        query: normalizedQuery,
+        provider: 'google',
+      };
+    }
+
+    logger.warn('[GoogleRef] 구글 결과 0건, Wikimedia 폴백 시도', normalizedQuery);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!isBlockedSearchMessage(message) && !/구글 검색 실패/i.test(message)) {
+      throw error;
+    }
+    logger.warn('[GoogleRef] Wikimedia 폴백 전환', message);
   }
 
-  const html = await res.text();
-  const blockedMessage = detectGoogleSearchBlock(html);
-  if (blockedMessage) {
-    throw new Error(blockedMessage);
-  }
-
-  const doc = new DOMParser().parseFromString(html, 'text/html');
-  const allItems = mergeUniqueResults(
-    extractDomResults(doc),
-    extractRegexResults(html),
-    extractAfInitResults(html),
-  );
-  const pageOffset = (Math.max(1, start) - 1) % GOOGLE_IMAGE_PAGE_SIZE;
-  const items = allItems.slice(pageOffset, pageOffset + GOOGLE_IMAGE_RESULT_WINDOW);
-
-  return {
-    items,
-    totalResults: allItems.length,
-    query,
-  };
+  return searchWikimediaImages(normalizedQuery, start, imgSize);
 }
 
 /**
@@ -482,11 +652,14 @@ export async function autoApplyGoogleReferences(
   scenes: Scene[],
   globalContext: string,
   updateScene: (id: string, partial: Partial<Scene>) => void,
-  onComplete?: (appliedCount: number) => void,
+  onComplete?: (summary: GoogleReferenceApplySummary) => void,
   forceReplace?: boolean,
 ): Promise<void> {
   const runId = ++_autoApplyRunId;
   let appliedCount = 0;
+  let failedCount = 0;
+  let blockedCount = 0;
+  let fallbackCount = 0;
 
   for (let i = 0; i < scenes.length; i++) {
     // 새 실행이 시작되면 이전 실행 중단
@@ -521,14 +694,16 @@ export async function autoApplyGoogleReferences(
       if (_autoApplyRunId !== runId) return;
 
       if (response.items.length > 0) {
+        if (response.provider === 'wikimedia') fallbackCount++;
         updateScene(scene.id, {
           imageUrl: response.items[0].link,
           isGeneratingImage: false,
-          generationStatus: '구글 레퍼런스 적용됨',
+          generationStatus: response.provider === 'wikimedia' ? '대체 레퍼런스 적용됨' : '구글 레퍼런스 적용됨',
           imageUpdatedAfterVideo: !!scene.videoUrl,
         });
         appliedCount++;
       } else {
+        failedCount++;
         updateScene(scene.id, {
           isGeneratingImage: false,
           generationStatus: '검색 결과 없음',
@@ -536,10 +711,13 @@ export async function autoApplyGoogleReferences(
       }
     } catch (err) {
       if (_autoApplyRunId !== runId) return;
-      logger.error('[GoogleRef] 자동 배치 실패', `scene=${scene.id} ${err instanceof Error ? err.message : String(err)}`);
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error('[GoogleRef] 자동 배치 실패', `scene=${scene.id} ${message}`);
+      failedCount++;
+      if (isBlockedSearchMessage(message)) blockedCount++;
       updateScene(scene.id, {
         isGeneratingImage: false,
-        generationStatus: '레퍼런스 검색 실패',
+        generationStatus: `검색 실패: ${message}`,
       });
     }
 
@@ -550,7 +728,7 @@ export async function autoApplyGoogleReferences(
   }
 
   if (_autoApplyRunId === runId) {
-    onComplete?.(appliedCount);
+    onComplete?.({ appliedCount, failedCount, blockedCount, fallbackCount });
   }
 }
 

@@ -2,7 +2,7 @@ import React, { useState, useCallback, useMemo } from 'react';
 import { useProjectStore } from '../../../stores/projectStore';
 import { useImageVideoStore } from '../../../stores/imageVideoStore';
 import { searchSceneReferenceImages, buildSearchQuery } from '../../../services/googleReferenceSearchService';
-import type { GoogleImageResult } from '../../../services/googleReferenceSearchService';
+import type { GoogleImageResult, ReferenceSearchProvider } from '../../../services/googleReferenceSearchService';
 import type { Scene } from '../../../types';
 import { showToast } from '../../../stores/uiStore';
 
@@ -34,6 +34,7 @@ interface ScenePreview {
   error: string;
   searchQuery: string;
   resultPage: number;
+  provider?: ReferenceSearchProvider;
 }
 
 const GoogleReferencePanel: React.FC = () => {
@@ -68,6 +69,7 @@ const GoogleReferencePanel: React.FC = () => {
         error: '',
         searchQuery: buildSearchQuery(scene, prevScene, nextScene, config?.globalContext),
         resultPage: page,
+        provider: existing?.provider,
       });
       return next;
     });
@@ -89,20 +91,32 @@ const GoogleReferencePanel: React.FC = () => {
           error: response.items.length === 0 ? '검색 결과가 없습니다' : '',
           searchQuery: response.query,
           resultPage: page,
+          provider: response.provider,
         });
         return next;
       });
+
+      return {
+        ok: response.items.length > 0,
+        provider: response.provider,
+      };
     } catch (err) {
+      const message = err instanceof Error ? err.message : '검색 실패';
       setScenePreviews(prev => {
         const next = new Map(prev);
         const existing = next.get(scene.id);
         next.set(scene.id, {
-          ...(existing || { scene, index: sceneIndex, results: [], selectedIdx: 0, searchQuery: '', resultPage: 1 }),
+          ...(existing || { scene, index: sceneIndex, results: [], selectedIdx: 0, searchQuery: '', resultPage: 1, provider: undefined }),
           loading: false,
-          error: err instanceof Error ? err.message : '검색 실패',
+          error: message,
         });
         return next;
       });
+
+      return {
+        ok: false,
+        blocked: /차단|captcha|429/i.test(message),
+      };
     }
   }, [scenes, config?.globalContext]);
 
@@ -111,25 +125,55 @@ const GoogleReferencePanel: React.FC = () => {
     if (!hasScenes) { showToast('장면 분석을 먼저 실행하세요.'); return; }
     setIsSearchingAll(true);
     const validScenes = scenes.filter(s => !!s.scriptText || !!s.visualPrompt);
+    let successCount = 0;
+    let blockedCount = 0;
+    let fallbackCount = 0;
+
     for (let i = 0; i < validScenes.length; i++) {
       const sceneIndex = scenes.indexOf(validScenes[i]);
-      await searchScene(validScenes[i], sceneIndex);
+      const result = await searchScene(validScenes[i], sceneIndex);
+      if (result.ok) {
+        successCount++;
+        if (result.provider === 'wikimedia') fallbackCount++;
+      } else if (result.blocked) {
+        blockedCount++;
+      }
       // API 부하 방지 — 사이에 200ms 대기
       if (i < validScenes.length - 1) {
         await new Promise(r => setTimeout(r, 200));
       }
     }
     setIsSearchingAll(false);
-    showToast(`${validScenes.length}개 장면의 레퍼런스 이미지를 가져왔어요!`);
+
+    if (successCount === validScenes.length) {
+      showToast(
+        fallbackCount > 0
+          ? `${successCount}개 장면의 대체 레퍼런스 이미지를 가져왔어요!`
+          : `${successCount}개 장면의 레퍼런스 이미지를 가져왔어요!`,
+      );
+      return;
+    }
+
+    if (successCount > 0) {
+      showToast(`${successCount}개 장면은 가져왔고 ${validScenes.length - successCount}개 장면은 비어 있어요.`);
+      return;
+    }
+
+    showToast(
+      blockedCount > 0
+        ? '구글 검색이 차단돼 레퍼런스 이미지를 가져오지 못했어요. 잠시 후 다시 시도하거나 직접 업로드해주세요.'
+        : '레퍼런스 이미지를 가져오지 못했어요. 검색어를 짧게 바꾸거나 직접 업로드해주세요.',
+      4500,
+    );
   }, [hasScenes, scenes, searchScene]);
 
   // 이미지 선택 → scene.imageUrl에 적용
-  const applyImage = useCallback((sceneId: string, imageUrl: string) => {
+  const applyImage = useCallback((sceneId: string, imageUrl: string, provider: ReferenceSearchProvider = 'google') => {
     const targetScene = scenes.find(s => s.id === sceneId);
     updateScene(sceneId, {
       imageUrl,
       isGeneratingImage: false,
-      generationStatus: '구글 레퍼런스 이미지 적용',
+      generationStatus: provider === 'wikimedia' ? '대체 레퍼런스 이미지 적용' : '구글 레퍼런스 이미지 적용',
       imageUpdatedAfterVideo: !!targetScene?.videoUrl,
     });
     showToast('레퍼런스 이미지가 적용되었어요!');
@@ -176,6 +220,7 @@ const GoogleReferencePanel: React.FC = () => {
         error: '',
         searchQuery: customQuery,
         resultPage: 1,
+        provider: undefined,
       });
       return next;
     });
@@ -194,6 +239,7 @@ const GoogleReferencePanel: React.FC = () => {
           error: response.items.length === 0 ? '검색 결과가 없습니다' : '',
           searchQuery: customQuery,
           resultPage: 1,
+          provider: response.provider,
         });
         return next;
       });
@@ -209,6 +255,7 @@ const GoogleReferencePanel: React.FC = () => {
           error: err instanceof Error ? err.message : '검색 실패',
           searchQuery: customQuery,
           resultPage: 1,
+          provider: undefined,
         });
         return next;
       });
@@ -304,6 +351,15 @@ const GoogleReferencePanel: React.FC = () => {
                       <div className="flex items-center gap-2 flex-shrink-0">
                         {preview?.results && preview.results.length > 0 && (
                           <span className="text-[10px] text-green-400">{preview.results.length}장</span>
+                        )}
+                        {preview?.provider && preview.results.length > 0 && (
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded border ${
+                            preview.provider === 'wikimedia'
+                              ? 'text-cyan-300 border-cyan-500/30 bg-cyan-500/10'
+                              : 'text-orange-300 border-orange-500/30 bg-orange-500/10'
+                          }`}>
+                            {preview.provider === 'wikimedia' ? 'Wikimedia' : 'Google'}
+                          </span>
                         )}
                         {!preview && (
                           <button
@@ -467,7 +523,7 @@ const GoogleReferencePanel: React.FC = () => {
                             <div className="flex gap-2">
                               <button
                                 type="button"
-                                onClick={() => applyImage(scene.id, preview.results[preview.selectedIdx]?.link)}
+                                onClick={() => applyImage(scene.id, preview.results[preview.selectedIdx]?.link, preview.provider || 'google')}
                                 className="flex-1 py-2 bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-white rounded-lg text-xs font-bold transition-all"
                               >
                                 이 이미지 적용
