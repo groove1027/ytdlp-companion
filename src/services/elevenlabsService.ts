@@ -310,7 +310,7 @@ export const ELEVENLABS_VOICES: ElevenLabsVoice[] = [
   { id: 'Adam', name: 'Adam', gender: 'male', accent: 'american', description: 'Dominant, Firm', useCase: 'social_media', age: 'middle_aged', previewUrl: 'https://storage.googleapis.com/eleven-public-prod/premade/voices/pNInz6obpgDQGcFmaJgB/d6905d7a-dd26-4187-bfff-1bd3a5ea7cac.mp3' },
   { id: 'Bill', name: 'Bill', gender: 'male', accent: 'american', description: 'Wise, Mature, Balanced', useCase: 'advertisement', age: 'old', previewUrl: 'https://storage.googleapis.com/eleven-public-prod/premade/voices/pqHfZKP75CvOlQylNhV4/d782b3ff-84ba-4029-848c-acf01285524d.mp3' },
   { id: 'River', name: 'River', gender: 'neutral', accent: 'american', description: 'Relaxed, Neutral, Informative', useCase: 'conversational', age: 'middle_aged', previewUrl: 'https://storage.googleapis.com/eleven-public-prod/premade/voices/SAz9YHcvj6GT2YYXdXww/e6c95f0b-2227-491a-b3d7-2249240decb7.mp3' },
-  // ── KIE API 지원 커뮤니티 음성 (105개, docs.kie.ai 기준) ──
+  // ── KIE API 지원 커뮤니티 음성 (106개, docs.kie.ai 기준) ──
   // [FIX] accent/age/useCase: KIE 문서에 미제공 — 빈 값 (가짜 'standard' 제거, ElevenLabs API 인증 시 업데이트 가능)
   { id: 'Sm1seazb4gs7RSlUVw7c', name: 'Anika', gender: 'female', accent: '', description: 'Animated, Friendly and Engaging', useCase: '', age: '', previewUrl: 'https://static.aiquickdraw.com/elevenlabs/voice/Sm1seazb4gs7RSlUVw7c.mp3' },
   { id: 'BIvP0GN1cAtSRTxNHnWS', name: 'Ellen', gender: 'female', accent: '', description: 'Serious, Direct and Confident', useCase: '', age: '', previewUrl: 'https://static.aiquickdraw.com/elevenlabs/voice/BIvP0GN1cAtSRTxNHnWS.mp3' },
