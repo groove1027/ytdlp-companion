@@ -484,6 +484,9 @@ export interface ProjectConfig {
 
   // [#391] 글로벌 스타일 레퍼런스 이미지 (SetupPanel에서 업로드, 모든 장면에 적용)
   styleReferenceImages?: string[];
+
+  // [NEW] 구글 이미지 검색 레퍼런스 모드
+  enableGoogleReference?: boolean;
 }
 
 // PPT 마스터 슬라이드 데이터 (프로젝트 저장용)

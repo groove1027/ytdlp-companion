@@ -20,6 +20,7 @@ import { logger } from '../../../services/LoggerService';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
 import { areUploadedTranscriptScenesSynced, buildUploadedTranscriptScenes } from '../../../utils/uploadedTranscriptScenes';
+import GoogleReferencePanel from './GoogleReferencePanel';
 
 let _sceneIdCounter = 0;
 
@@ -1080,6 +1081,11 @@ const SetupPanel: React.FC = () => {
           <Toggle checked={enableWebSearch} onChange={(v) => setEnableWebSearch(v)} />
         </div>
       </div>
+
+      {/* ════════════════════════════════════════════ */}
+      {/* [NEW] 구글 레퍼런스 이미지 — 비주얼 스타일 상단  */}
+      {/* ════════════════════════════════════════════ */}
+      <GoogleReferencePanel />
 
       {/* ════════════════════════════════════════════ */}
       {/* 항상 표시: 비주얼 스타일                         */}

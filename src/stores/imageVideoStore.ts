@@ -22,6 +22,8 @@ interface ImageVideoStore {
   targetSceneCount: number | null;
   // [#391] 글로벌 스타일 레퍼런스 이미지
   styleReferenceImages: string[];
+  // [NEW] 구글 이미지 검색 레퍼런스 모드
+  enableGoogleReference: boolean;
 
   setActiveSubTab: (tab: 'setup' | 'storyboard' | 'remake') => void;
   setStyle: (v: string) => void;
@@ -40,9 +42,10 @@ interface ImageVideoStore {
   setStyleReferenceImages: (v: string[]) => void;
   addStyleReferenceImage: (img: string) => void;
   removeStyleReferenceImage: (index: number) => void;
+  setEnableGoogleReference: (v: boolean) => void;
 
   // 프로젝트 로드/리셋 시 일괄 복원
-  restoreFromConfig: (data: { style?: string; characters?: CharacterReference[]; enableWebSearch?: boolean; isMultiCharacter?: boolean; dialogueTone?: DialogueTone; referenceDialogue?: string; dialogueMode?: boolean; customStyleNote?: string; targetSceneCount?: number | null; styleReferenceImages?: string[] }) => void;
+  restoreFromConfig: (data: { style?: string; characters?: CharacterReference[]; enableWebSearch?: boolean; isMultiCharacter?: boolean; dialogueTone?: DialogueTone; referenceDialogue?: string; dialogueMode?: boolean; customStyleNote?: string; targetSceneCount?: number | null; styleReferenceImages?: string[]; enableGoogleReference?: boolean }) => void;
   resetStore: () => void;
 }
 
@@ -57,10 +60,10 @@ const syncToProjectConfig = () => {
   requestAnimationFrame(() => {
     const ps = getProjectStore();
     if (!ps) return;
-    const { style, characters, enableWebSearch, isMultiCharacter, dialogueTone, referenceDialogue, dialogueMode, customStyleNote, targetSceneCount, styleReferenceImages } = useImageVideoStore.getState();
+    const { style, characters, enableWebSearch, isMultiCharacter, dialogueTone, referenceDialogue, dialogueMode, customStyleNote, targetSceneCount, styleReferenceImages, enableGoogleReference } = useImageVideoStore.getState();
     ps.getState().setConfig((prev: any) => {
       if (!prev) return prev;
-      return { ...prev, selectedVisualStyle: style, characters, enableWebSearch, isMultiCharacter, dialogueTone, referenceDialogue, dialogueMode, customStyleNote, targetSceneCount, styleReferenceImages };
+      return { ...prev, selectedVisualStyle: style, characters, enableWebSearch, isMultiCharacter, dialogueTone, referenceDialogue, dialogueMode, customStyleNote, targetSceneCount, styleReferenceImages, enableGoogleReference };
     });
   });
 };
@@ -77,6 +80,7 @@ export const useImageVideoStore = create<ImageVideoStore>((set) => ({
   dialogueMode: false,
   targetSceneCount: null,
   styleReferenceImages: [],
+  enableGoogleReference: false,
 
   setActiveSubTab: (tab) => { logger.trackTabVisit('image-video', tab); set({ activeSubTab: tab }); },
   setStyle: (v) => { const prev = useImageVideoStore.getState().style; logger.trackSettingChange('iv.style', prev, v); set({ style: v }); syncToProjectConfig(); },
@@ -90,6 +94,7 @@ export const useImageVideoStore = create<ImageVideoStore>((set) => ({
   setStyleReferenceImages: (v) => { set({ styleReferenceImages: v }); syncToProjectConfig(); },
   addStyleReferenceImage: (img) => { set((s) => ({ styleReferenceImages: [...s.styleReferenceImages, img] })); syncToProjectConfig(); },
   removeStyleReferenceImage: (index) => { set((s) => ({ styleReferenceImages: s.styleReferenceImages.filter((_, i) => i !== index) })); syncToProjectConfig(); },
+  setEnableGoogleReference: (v) => { const prev = useImageVideoStore.getState().enableGoogleReference; logger.trackSettingChange('iv.googleRef', prev, v); set({ enableGoogleReference: v }); syncToProjectConfig(); },
   setCharacters: (chars) => {
     set((s) => ({ characters: typeof chars === 'function' ? chars(s.characters) : chars }));
     syncToProjectConfig();
@@ -118,6 +123,7 @@ export const useImageVideoStore = create<ImageVideoStore>((set) => ({
     dialogueMode: data.dialogueMode ?? false,
     targetSceneCount: data.targetSceneCount ?? null,
     styleReferenceImages: data.styleReferenceImages || [],
+    enableGoogleReference: data.enableGoogleReference ?? false,
   }),
 
   // 새 프로젝트 시 초기화
@@ -133,5 +139,6 @@ export const useImageVideoStore = create<ImageVideoStore>((set) => ({
     dialogueMode: false,
     targetSceneCount: null,
     styleReferenceImages: [],
+    enableGoogleReference: false,
   }),
 }));

@@ -504,6 +504,7 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
         dialogueMode: project.config?.dialogueMode,
         targetSceneCount: project.config?.targetSceneCount ?? null, // [FIX #382] 저장된 목표 컷수 복원
         styleReferenceImages: project.config?.styleReferenceImages, // [#391] 글로벌 스타일 레퍼런스 복원
+        enableGoogleReference: project.config?.enableGoogleReference, // [NEW] 구글 레퍼런스 모드 복원
       });
     }).catch(e => { logger.trackSwallowedError('ProjectStore:loadProject/restoreImageVideoStore', e); });
 
