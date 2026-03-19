@@ -12,7 +12,7 @@
 import { getGhostCutKeys, monitoredFetch } from './apiService';
 import { uploadMediaToHosting } from './uploadService';
 import { logger } from './LoggerService';
-import { buildGhostCutSubmitPayload, type GhostCutLang } from './ghostcutPayload';
+import { buildGhostCutSubmitPayload } from './ghostcutPayload';
 
 // Cloudflare Pages Function 프록시 경유 (CORS 우회)
 const GHOSTCUT_SUBMIT_URL = '/api/ghostcut/submit';
@@ -168,7 +168,7 @@ const fetchWithRetry = async (
 };
 
 /** 작업 제출 (callback URL 포함) */
-const submitTask = async (videoUrl: string, lang: GhostCutLang = 'ko'): Promise<{ projectId: number; taskId: number }> => {
+const submitTask = async (videoUrl: string): Promise<{ projectId: number; taskId: number }> => {
   const { appKey, appSecret } = getGhostCutKeys();
   if (!appKey || !appSecret) {
     throw new Error('GhostCut API 키가 설정되지 않았습니다. API 설정에서 AppKey와 AppSecret을 입력해주세요.');
@@ -177,7 +177,7 @@ const submitTask = async (videoUrl: string, lang: GhostCutLang = 'ko'): Promise<
   // callback URL: 현재 도메인의 /api/ghostcut/callback
   const callbackUrl = `${window.location.origin}/api/ghostcut/callback`;
 
-  const body = JSON.stringify(buildGhostCutSubmitPayload(videoUrl, callbackUrl, lang));
+  const body = JSON.stringify(buildGhostCutSubmitPayload(videoUrl, callbackUrl));
 
   const sign = await generateSign(body, appSecret);
 
@@ -412,7 +412,6 @@ export const removeSubtitlesWithGhostCut = async (
   _width: number,
   _height: number,
   onProgress?: (message: string, elapsedSec?: number) => void,
-  lang: GhostCutLang = 'ko',
   originalDuration?: number,
 ): Promise<Blob> => {
   logger.info('[GhostCut] 자막 제거 파이프라인 시작');
@@ -425,8 +424,8 @@ export const removeSubtitlesWithGhostCut = async (
 
   // 2. 작업 제출 (callback URL 자동 포함)
   onProgress?.('GhostCut AI 자막 제거 시작...');
-  const { projectId } = await submitTask(videoUrl, lang);
-  logger.info('[GhostCut] 작업 제출', { projectId, lang });
+  const { projectId } = await submitTask(videoUrl);
+  logger.info('[GhostCut] 작업 제출', { projectId, mode: 'auto-detect' });
 
   // 3. KV 경유 폴링 (최대 45분, 네트워크 오류 5회 연속까지 자동 복구)
   const { videoUrl: resultUrl, duration: resultDuration } = await pollResult(projectId, onProgress);

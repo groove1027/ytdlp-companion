@@ -1,10 +1,7 @@
-export type GhostCutLang = 'ko' | 'zh' | 'en' | 'all' | 'ja' | 'ar';
-
 export interface GhostCutSubmitPayload {
   urls: string[];
   callback: string;
   needChineseOcclude: 1;
-  videoInpaintLang: GhostCutLang;
   resolution: '1080p';
   needCrop: 0;
   needMask: 0;
@@ -19,18 +16,17 @@ export interface GhostCutSubmitPayload {
 }
 
 /**
- * Smart Text Removal 공식 요청 예시는 needChineseOcclude=1 + needMask=0 조합이다.
- * needMask=1은 수동 마스킹 성격이 강해 자동 OCR 텍스트 제거 경로와 섞지 않는다.
+ * Smart Text Removal은 공개 예시와 실호출 비교 기준으로 자동 언어 감지 경로를 사용한다.
+ * `videoInpaintLang`를 강제로 넣은 결과는 기존 실패 산출물과 매우 유사했고,
+ * 같은 샘플에서 해당 필드를 제거했을 때 하단 자막 영역 변화가 가장 크게 확인됐다.
  */
 export const buildGhostCutSubmitPayload = (
   videoUrl: string,
   callbackUrl: string,
-  lang: GhostCutLang = 'ko',
 ): GhostCutSubmitPayload => ({
   urls: [videoUrl],
   callback: callbackUrl,
   needChineseOcclude: 1,
-  videoInpaintLang: lang,
   resolution: '1080p',
   needCrop: 0,
   needMask: 0,

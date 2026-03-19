@@ -145,14 +145,12 @@ function testMd5Signature() {
     JSON.stringify(buildGhostCutSubmitPayload(
       'https://example.com/test.mp4',
       'https://example.com/api/ghostcut/callback',
-      'ko',
     )),
     '{"test":"한국어 테스트 바디"}',
     '{}',
     JSON.stringify(buildGhostCutSubmitPayload(
       'https://res.cloudinary.com/dji3gtb5r/video/upload/v1234/test.mp4',
       'https://all-in-one-production.pages.dev/api/ghostcut/callback',
-      'ko',
     )),
   ];
 
@@ -179,7 +177,6 @@ async function testApiAuth() {
   const body = JSON.stringify(buildGhostCutSubmitPayload(
     'https://res.cloudinary.com/dji3gtb5r/video/upload/v1/test_nonexistent.mp4',
     'https://httpbin.org/post',
-    'ko',
   ));
 
   const sign = generateSign(body, GHOSTCUT_APP_SECRET);
@@ -243,7 +240,7 @@ async function testE2ESubtitleRemoval() {
   console.log('  📤 GhostCut 작업 제출...');
   const callbackUrl = 'https://all-in-one-production.pages.dev/api/ghostcut/callback';
 
-  const body = JSON.stringify(buildGhostCutSubmitPayload(testVideoUrl, callbackUrl, 'ko'));
+  const body = JSON.stringify(buildGhostCutSubmitPayload(testVideoUrl, callbackUrl));
 
   const sign = generateSign(body, GHOSTCUT_APP_SECRET);
 
@@ -417,7 +414,7 @@ function testCodeVerification() {
   assert(true, 'callback URL은 window.location.origin 기반 (동적)');
 
   // 2. Smart Text Removal 파라미터 검증
-  assert(true, 'needChineseOcclude=1 + videoInpaintLang + needMask=0 조합 사용');
+  assert(true, 'needChineseOcclude=1 + needMask=0 + videoInpaintLang 미포함 조합 사용');
 
   // 3. 폴링 간격 검증
   assert(true, '폴링 간격: 8초, 최대 225회 (30분) — 적절한 범위');

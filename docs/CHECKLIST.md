@@ -8,6 +8,14 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-19] #610 CapCut ZIP 가져오기 시 영상 미표시 문제 수정
+- [x] `nleExportService.ts` — `buildNlePackageZip()` / `buildEditRoomNleZip()` CapCut 분기에 실제 프로젝트 폴더 필수 파일인 `draft_settings` 생성을 공통화해 ZIP 자체만으로 프로젝트 인식이 가능하도록 수정
+- [x] `verify-capcut-issue574.mjs`, `verify-capcut-issue574-browser.mjs` — 테스트가 ZIP 밖에서 `draft_settings`를 덧쓰던 가짜 성공 경로를 제거하고, 생성 ZIP 내부에 파일이 실제 포함되는지 검증하도록 수정
+- [x] `verify-capcut-video-room.mjs` — 영상 분석실 `buildNlePackageZip()` 경로 전용 CapCut 검증 스크립트 추가
+- [x] `tsc --noEmit` + `vite build` + `rg` 재검증 통과
+- [x] 브라우저 검증 2건 통과: `VERIFY_574_FINAL_CAPCUT`, `VERIFY_CAPCUT_VIDEO_ROOM` 폴더 생성 확인
+- [x] CapCut 실행 후 `VERIFY_CAPCUT_VIDEO_ROOM/draft_meta_info.json`가 실제 절대경로/새 draft id로 갱신되는 것 확인 (실제 프로젝트 인식 검증)
+
 ### [2026-03-19] #617 구글 레퍼런스 이미지 빈 슬롯/성공 오표시 수정
 - [x] `googleReferenceSearchService.ts` — 장면 검색어를 짧고 중복 없는 키워드 위주로 재구성하고, Google Images가 `429`/차단/0건일 때 Wikimedia Commons 공개 API로 자동 폴백하도록 보강
 - [x] `GoogleReferencePanel.tsx` — 검색 결과에 실제 출처(Google/Wikimedia)를 표시하고, 전체 검색 토스트를 성공/부분 성공/차단 실패 기준으로 사실대로 노출하도록 수정
@@ -22,10 +30,9 @@
 - [x] `tsc --noEmit` + `vite build` + `rg` 재검증 통과
 
 ### [2026-03-19] #595 GhostCut 자막 제거 결과가 원본처럼 보이는 문제 수정
-- [x] `ghostcutPayload.ts` — GhostCut Smart Text Removal 요청 바디를 별도 함수로 분리하고, 공식 자동 텍스트 제거 예시에 맞춰 `needChineseOcclude=1`, `videoInpaintLang`, `needMask=0` 조합을 고정
-- [x] `ghostcutService.ts` — 제출 바디를 공용 빌더로 교체해 실제 서비스 호출이 잘못된 마스킹 모드로 빠지지 않도록 정리
-- [x] `SubtitleRemoverTab.tsx` — 언어 선택 안내 문구를 보강해 영문 워터마크/중문 문구 혼재 영상에서 재시도 방향을 바로 보이게 수정
-- [x] `ghostcut-e2e.ts`, `ghostcut-payload.test.ts` — GhostCut 테스트 바디와 정적 검증 문구를 실제 서비스 규칙과 일치시키고, 요청 payload 회귀 테스트 추가
+- [x] `ghostcutPayload.ts`, `ghostcutService.ts` — 실호출 비교 결과 `videoInpaintLang`을 강제로 넣은 출력이 기존 실패 산출물과 매우 유사해, `work/fast` payload를 `needChineseOcclude=1` + `needMask=0` + 언어 자동 감지 조합으로 재정리
+- [x] `SubtitleRemoverTab.tsx`, `editPointStore.ts` — GhostCut 언어 강제 선택/고정 전달을 제거하고, 화면 안내도 실제 동작과 맞게 자동 감지 기준으로 정리
+- [x] `ghostcut-e2e.ts`, `ghostcut-payload.test.ts` — 회귀 테스트를 언어 자동 감지 payload 기준으로 갱신
 
 ### [2026-03-19] #603 이미지/영상 레퍼런스 저장 누락 수정
 - [x] `types.ts` — 저장 중인 `customStyleNote` 필드를 `ProjectConfig`에 반영하고, 현재 작업 트리의 `narrationSyncService.ts`가 참조하는 자막/타임라인 타입 export를 보강해 검증이 막히지 않도록 정리

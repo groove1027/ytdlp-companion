@@ -6,7 +6,6 @@ import { useElapsedTimer, formatElapsed } from '../../hooks/useElapsedTimer';
 import { useCostStore } from '../../stores/costStore';
 // GhostCut 자막 제거 비용은 건당 고정 (PRICING 불필요)
 import { logger } from '../../services/LoggerService';
-import type { GhostCutLang } from '../../services/ghostcutPayload';
 
 const REMOVAL_TIPS = [
   '🎬 AI가 영상의 모든 프레임에서 텍스트를 탐지하고 있어요',
@@ -33,7 +32,6 @@ const SubtitleRemoverTab: React.FC = () => {
   const [error, setError] = useState('');
   const [resultBlobUrl, setResultBlobUrl] = useState<string | null>(null);
   const [videoDuration, setVideoDuration] = useState(0);
-  const [subtitleLang, setSubtitleLang] = useState<GhostCutLang>('ko');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const isProcessing = phase === 'uploading' || phase === 'processing';
@@ -128,7 +126,6 @@ const SubtitleRemoverTab: React.FC = () => {
             setPercent(Math.round(30 + ratio * 55)); // 30% ~ 85%
           }
         },
-        subtitleLang,
         videoDuration,
       );
 
@@ -152,7 +149,7 @@ const SubtitleRemoverTab: React.FC = () => {
       setError(message);
       // 진행률 유지 (어디서 실패했는지 사용자에게 표시)
     }
-  }, [videoFile, requireAuth, addCost, videoDuration, percent, subtitleLang]);
+  }, [videoFile, requireAuth, addCost, videoDuration, percent]);
 
   const handleDownload = useCallback(() => {
     if (!resultBlobUrl) return;
@@ -296,25 +293,11 @@ const SubtitleRemoverTab: React.FC = () => {
               </div>
             )}
 
-            {/* 자막 언어 선택 */}
+            {/* 자동 감지 안내 */}
             {videoFile && (
               <div className="mt-3">
-                <label className="block text-sm text-gray-400 mb-1.5">자막 언어</label>
-                <select
-                  value={subtitleLang}
-                  onChange={(e) => setSubtitleLang(e.target.value as GhostCutLang)}
-                  disabled={phase === 'uploading' || phase === 'processing'}
-                  className="w-full px-3 py-2 rounded-lg bg-gray-700 border border-gray-600 text-gray-200 text-sm focus:border-cyan-500 focus:outline-none disabled:opacity-50"
-                >
-                  <option value="ko">한국어 (Korean)</option>
-                  <option value="en">영어 (English)</option>
-                  <option value="zh">중국어 (Chinese)</option>
-                  <option value="ja">일본어 (Japanese)</option>
-                  <option value="all">중국어+영어 동시 (Chinese & English)</option>
-                  <option value="ar">아랍어 (Arabic)</option>
-                </select>
-                <p className="mt-1 text-[11px] text-gray-500">
-                  영문 워터마크나 중국어 문구가 함께 있으면 "중국어+영어 동시"로 다시 시도해보세요.
+                <p className="text-[11px] text-gray-500">
+                  GhostCut이 자막 언어를 자동 감지합니다. 한국어/영어/중국어가 섞인 영상도 그대로 시도해보세요.
                 </p>
               </div>
             )}
