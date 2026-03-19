@@ -156,6 +156,7 @@ interface SoundStudioStore {
   removeLine: (id: string) => void;
   addLineAfter: (afterId: string, text: string) => void;
   mergeLineWithNext: (id: string) => void;
+  changeSpeakerWithPropagation: (lineId: string, speakerId: string) => ScriptLine[];
 
   // Actions — TTS
   setTtsEngine: (engine: TTSEngine) => void;
@@ -398,6 +399,72 @@ export const useSoundStudioStore = create<SoundStudioStore>((set) => ({
       ...(shouldInvalidateUploaded ? { mergedAudioUrl: null, uploadedAudios: [] } : {}),
     };
   }),
+
+  // --- 화자 전파 (선택한 줄부터 다음 명시적 화자가 나올 때까지 전파) ---
+  changeSpeakerWithPropagation: (lineId, speakerId) => {
+    const affectedLines: ScriptLine[] = [];
+    let didChange = false;
+    let shouldInvalidateUploaded = false;
+
+    set((state) => {
+      const startIndex = state.lines.findIndex((l) => l.id === lineId);
+      if (startIndex < 0) return state;
+
+      const previousSpeakerId = state.lines[startIndex].speakerId || '';
+      if (previousSpeakerId === speakerId) return state;
+
+      const nextLines = [...state.lines];
+
+      for (let i = startIndex; i < nextLines.length; i++) {
+        const current = state.lines[i];
+
+        // 캐릭터 음성 라인(voiceName이 있는)은 건너뜀
+        if (current.voiceName) continue;
+
+        // 시작 줄이 아닌 경우: 빈 speakerId이거나 이전과 같은 speakerId일 때만 전파
+        if (i > startIndex) {
+          const canPropagate = !current.speakerId || current.speakerId === previousSpeakerId;
+          if (!canPropagate) break;
+        }
+
+        const wasUploaded = isUploadedLine(current);
+        shouldInvalidateUploaded = shouldInvalidateUploaded || wasUploaded;
+
+        const updated: ScriptLine = wasUploaded
+          ? {
+              ...current,
+              speakerId,
+              audioUrl: undefined,
+              audioSource: undefined,
+              uploadedAudioId: undefined,
+              startTime: undefined,
+              endTime: undefined,
+              duration: undefined,
+              ttsStatus: 'idle' as const,
+            }
+          : {
+              ...current,
+              speakerId,
+              audioUrl: undefined,
+              ttsStatus: 'idle' as const,
+            };
+
+        nextLines[i] = updated;
+        affectedLines.push(updated);
+        didChange = true;
+      }
+
+      if (!didChange) return state;
+
+      return {
+        lines: nextLines,
+        mergedAudioUrl: null,
+        ...(shouldInvalidateUploaded ? { uploadedAudios: [] } : {}),
+      };
+    });
+
+    return affectedLines;
+  },
 
   // --- TTS ---
   setTtsEngine: (engine) => set({ ttsEngine: engine }),

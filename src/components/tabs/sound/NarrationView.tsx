@@ -42,6 +42,7 @@ const NarrationView: React.FC = () => {
   const addLineAfter = useSoundStudioStore((s) => s.addLineAfter);
   const mergeLineWithNext = useSoundStudioStore((s) => s.mergeLineWithNext);
   const removeLine = useSoundStudioStore((s) => s.removeLine);
+  const changeSpeakerWithPropagation = useSoundStudioStore((s) => s.changeSpeakerWithPropagation);
   const isGeneratingTTS = useSoundStudioStore((s) => s.isGeneratingTTS);
   const ttsProgress = useSoundStudioStore((s) => s.ttsProgress);
   const mergedAudioUrl = useSoundStudioStore((s) => s.mergedAudioUrl);
@@ -355,13 +356,31 @@ const NarrationView: React.FC = () => {
   );
 
   // ===============================
-  // 줄별 화자 변경 (#418)
+  // 줄별 화자 변경 — 다음 명시적 화자까지 전파 (#418)
   // ===============================
   const handleChangeSpeaker = useCallback(
     (lineId: string, speakerId: string) => {
-      updateLine(lineId, { speakerId, audioUrl: undefined, ttsStatus: 'idle' });
+      const changedLines = changeSpeakerWithPropagation(lineId, speakerId);
+      // 변경된 라인에 연결된 Scene의 stale 오디오 + 타이밍 메타데이터 제거
+      changedLines.forEach((line) => {
+        if (line.sceneId) {
+          useProjectStore.getState().updateScene(line.sceneId, {
+            audioUrl: undefined,
+            audioDuration: undefined,
+            startTime: undefined,
+            endTime: undefined,
+          });
+        }
+      });
+      // projectStore의 병합 나레이션도 초기화 (편집실/내보내기 stale 방지)
+      if (changedLines.length > 0) {
+        const store = useProjectStore.getState();
+        if (store.config?.mergedAudioUrl) {
+          store.setConfig((prev) => prev ? { ...prev, mergedAudioUrl: undefined } : prev);
+        }
+      }
     },
-    [updateLine],
+    [changeSpeakerWithPropagation],
   );
 
   const handleApplyDirectScript = useCallback(() => {
