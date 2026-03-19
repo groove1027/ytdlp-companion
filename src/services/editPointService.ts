@@ -4,6 +4,7 @@
  */
 
 import { EdlEntry, SourceVideoFile } from '../types';
+import { EDIT_POINT_PROTOCOL, EDIT_POINT_PROTOCOL_SHORT_LABEL } from '../data/editPointProtocol';
 import { evolinkChat, type EvolinkChatMessage, type EvolinkContentPart } from './evolinkService';
 import { extractFramesFromVideo } from './gemini/videoAnalysis';
 import { formatSrtTime } from './srtService';
@@ -17,15 +18,19 @@ const EDIT_PARSE_MODEL = 'gemini-3.1-flash-lite-preview';
 const EDIT_POINT_AUTOGEN_MODEL = 'gemini-3.1-pro-preview';
 const MAX_AUTOGEN_PREVIEW_SOURCES = 4;
 
-const EDIT_POINT_MATCHING_SYSTEM_PROMPT = `당신은 "일반 편집점/편집실 매칭" 전용 시니어 편집감독이다.
+const EDIT_POINT_MATCHING_SYSTEM_PROMPT = `${EDIT_POINT_PROTOCOL}
+
+---
+
+당신은 "일반 편집점/편집실 매칭" 전용 시니어 편집감독이다.
 목표: 내레이션과 실제 소스 프리뷰를 바탕으로 편집실에서 바로 사용할 수 있는 편집표를 만든다.
 
 핵심 규칙:
 1. 첫 행(1-1(a))은 무조건 가장 강한 킬 샷으로 시작한다. 논리 순서보다 후킹 강도가 우선이다.
-2. 모든 행은 [소스 ID] + [정확한 타임코드 MM:SS.sss] + [실제 장면 설명] 삼위일체를 지켜야 한다.
+2. 모든 행은 [소스 ID] + [정확한 타임코드 MM:SS.ms] + [실제 장면 설명] 삼위일체를 지켜야 한다.
 3. 내레이션 한 문장이 2.5초를 넘으면 반드시 2컷 이상으로 쪼개고, 순번을 1-1(a), 1-1(b)처럼 나눈다.
-4. 타임코드는 반드시 MM:SS.sss 형식으로 적는다. "대략", "근처" 같은 표현은 금지한다.
-5. 대표 프레임에 붙은 [S-XX @ MM:SS.sss] 라벨은 신뢰 가능한 앵커 좌표다. 가능하면 그 근처에서만 컷을 설계한다.
+4. 타임코드는 반드시 MM:SS.ms 형식으로 적는다. "대략", "근처" 같은 표현은 금지한다.
+5. 대표 프레임에 붙은 [S-XX @ MM:SS.ms] 라벨은 신뢰 가능한 앵커 좌표다. 가능하면 그 근처에서만 컷을 설계한다.
 6. 소스 설명에는 실제 프리뷰에서 보이는 장면만 적고, 보이지 않는 장면이나 기능을 상상해서 쓰지 않는다.
 7. 행의 sourceId 또는 timecode를 확인할 수 없으면 그 행은 만들지 않는다. 단, 프리뷰가 없는 소스만 써야 할 경우 note에 "시각 검증 필요"를 남긴다.
 8. 배속은 정배속(1.0) 우선으로 설계하고, 정말 필요할 때만 조정한다.
@@ -37,7 +42,7 @@ const EDIT_POINT_MATCHING_SYSTEM_PROMPT = `당신은 "일반 편집점/편집실
 순번 | 내레이션 | 소스 | 소스설명 | 배속 | 타임코드 시작~끝 | 비고
 - 타임코드 형식 예시: 00:12.300~00:14.100
 - 소스 ID는 제공된 값만 사용한다. (예: S-01)
-- 비고에는 "킬 샷", "정배속", "시각 검증 필요" 같은 편집 메모만 짧게 적는다.`;
+- 비고에는 "킬 샷", "정배속", "시각 검증 필요", "${EDIT_POINT_PROTOCOL_SHORT_LABEL}" 같은 편집 메모만 짧게 적는다.`;
 
 /**
  * 잘린 JSON 응답에서 유효한 entries를 복구
@@ -81,7 +86,7 @@ export function parseTimecodeToSeconds(tc: string): number {
 }
 
 /**
- * 초 → 타임코드 문자열 ("MM:SS.sss")
+ * 초 → 타임코드 문자열 ("MM:SS.ms")
  */
 function secondsToTimecode(sec: number): string {
   const m = Math.floor(sec / 60);
@@ -311,7 +316,7 @@ async function parseEditChunkFallback(
   narration: string,
 ): Promise<Record<string, unknown>[]> {
   const compactPrompt = `Parse this edit table into JSON. Return ONLY a JSON object with "entries" array.
-Each entry: { "order", "narrationText", "sourceId" (format "S-XX"), "sourceDescription", "speedFactor" (default 1.0), "timecodeStart" (format "MM:SS.sss", default "00:00.000"), "timecodeEnd", "note" }`;
+Each entry: { "order", "narrationText", "sourceId" (format "S-XX"), "sourceDescription", "speedFactor" (default 1.0), "timecodeStart" (format "MM:SS.ms", default "00:00.000"), "timecodeEnd", "note" }`;
 
   const userContent = narration
     ? `Edit Table:\n${tableChunk}\n\nNarration:\n${narration}`
@@ -509,7 +514,7 @@ async function attemptVisionRefine(
       [
         {
           role: 'system',
-          content: `Video cut finder. Clip: "${desc}"\nTC: ${startTC}~${endTC}\nReturn ONLY JSON: {"refinedStart":"MM:SS.sss","refinedEnd":"MM:SS.sss","confidence":0.85}`,
+          content: `Video cut finder. Clip: "${desc}"\nTC: ${startTC}~${endTC}\nReturn ONLY JSON: {"refinedStart":"MM:SS.ms","refinedEnd":"MM:SS.ms","confidence":0.85}`,
         },
         { role: 'user', content: imageContent },
       ],
@@ -550,7 +555,7 @@ async function attemptTextOnlyRefine(
         {
           role: 'system',
           content: `You are a video editor. Refine timecodes based on editing best practices.
-Return ONLY JSON: {"refinedStart":"MM:SS.sss","refinedEnd":"MM:SS.sss","confidence":0.5}`,
+Return ONLY JSON: {"refinedStart":"MM:SS.ms","refinedEnd":"MM:SS.ms","confidence":0.5}`,
         },
         {
           role: 'user',
@@ -895,7 +900,7 @@ ${sourceInfo}
 ${narration}
 
 지침:
-- 대표 프레임에 적힌 [S-XX @ MM:SS.sss]를 실제 소스 타임코드 앵커로 사용하세요.
+- 대표 프레임에 적힌 [S-XX @ MM:SS.ms]를 실제 소스 타임코드 앵커로 사용하세요.
 - 첫 행은 킬 샷이어야 합니다.
 - 타임코드 또는 sourceId를 확인할 수 없는 행은 출력하지 마세요.
 - 결과는 파이프(|) 구분 편집표만 출력하세요.`;

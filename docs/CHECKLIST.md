@@ -8,6 +8,28 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-20] 편집점 기술 문서 V8.0 공통화 + 편집점 프리셋 전면 교체
+- [x] `docs/edit-point-protocol-v8.md`, `src/data/editPointProtocol.ts` — 사용자 제공 편집점 원문을 축약 없이 그대로 문서화하고, 앱 코드가 동일한 V8 원문을 단일 소스로 재사용하도록 공통 경로 구성
+- [x] `VideoAnalysisRoom.tsx` — `tikitaka`/`snack`/`condensed`/`shopping` 프리셋 시스템 프롬프트와 사용자 지시문을 `편집점 V8.0` 기준으로 교체하고, `[S-XX] + MM:SS.ms + 장면 내용` 무결성 규칙과 예시 출력 포맷을 정렬
+- [x] `VideoAnalysisRoom.tsx` — 컨덴스드 프리셋은 V8 정밀 편집 규칙을 적용하되, 시간순 리캡 특성상 킬 샷 선배치를 예외 처리하도록 명시
+- [x] `editPointService.ts`, `Step1Register.tsx` — 일반 편집점/편집실 자동 편집표 생성 경로도 공통 V8 원문을 사용하도록 교체하고, 안내 문구와 내부 AI 규약의 타임코드 표기를 `MM:SS.ms`로 통일
+- [x] 검증 통과:
+  `cd src && node_modules/typescript/bin/tsc --noEmit`
+  `cd src && node_modules/.bin/vite build`
+  `rg -n 'EDIT_POINT_PROTOCOL|EDIT_POINT_PROTOCOL_SHORT_LABEL|edit-point-protocol-v8' src/components/tabs/channel/VideoAnalysisRoom.tsx src/services/editPointService.ts src/components/tabs/editroom/editpoint/Step1Register.tsx src/data/editPointProtocol.ts docs/edit-point-protocol-v8.md`
+  `rg -n "V14\.0|V7\.0|MM:SS\.sss" src/components/tabs/channel/VideoAnalysisRoom.tsx src/services/editPointService.ts src/components/tabs/editroom/editpoint/Step1Register.tsx src/data/editPointProtocol.ts`
+
+### [2026-03-20] 영상분석실 Premiere subtitle XML 전환 + 9:16 중앙 65pt 반영
+- [x] `nleExportService.ts` — 영상분석실 Premiere ZIP이 graphics 자막 `generatoritem` 대신 dialogue/effect subtitle XML(TTML) 파일을 함께 패키징하고, 프로젝트 XML은 컷/오디오 중심으로 유지되도록 분리
+- [x] `nleExportService.ts` — dialogue subtitle 줄바꿈을 export 직전에 Gemini Flash Lite로 우선 정리하고, 키/네트워크 실패 시 기존 12자 휴리스틱으로 폴백하도록 추가
+- [x] `nleExportService.ts` — 9:16 dialogue subtitle caption XML 기본값을 화면 중앙 영역 + `65pt` + 문단 가운데 정렬로 고정하고, effect subtitle은 `( … )` 형태로 감싸며 README에 caption import 절차를 명시
+- [x] `verify-nle-export-matrix-browser.mjs` — Premiere ZIP에 subtitle XML 2종이 들어가고, 프로젝트 XML에서 graphics subtitle이 제거되며, dialogue caption XML이 `65pt`/중앙 배치를 갖고 effect subtitle이 괄호로 감싸지는지 검증하도록 보강
+- [x] 검증 통과:
+  `cd src && node_modules/typescript/bin/tsc --noEmit`
+  `cd src && node_modules/.bin/vite build`
+  `rg -n "buildDialogueSubtitleOverrides|generatePremiereCaptionXml|includeGraphicSubtitleTracks|65pt|subtitle XML" src test docs`
+  `node test/verify-nle-export-matrix-browser.mjs`
+
 ### [2026-03-20] 쇼핑 프리셋 기술 문서 v36.0 전면 반영
 - [x] `docs/shopping-script-guideline-v36.md`, `src/raw-imports.d.ts`, `src/data/shoppingScriptGuideline.ts` — 사용자 제공 원문을 축약 없이 그대로 문서화하고, 앱 코드가 동일 원문을 단일 소스로 재사용하도록 공통 경로 구성
 - [x] `shoppingScriptService.ts`, `scriptStylePresets.ts` — 쇼핑 대본 생성 시스템 프롬프트와 대본작성 쇼핑 프리셋이 공통 v36.0 원문을 그대로 사용하도록 교체

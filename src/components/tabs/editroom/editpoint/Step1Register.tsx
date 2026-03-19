@@ -1,4 +1,5 @@
 import React, { useCallback, useRef } from 'react';
+import { EDIT_POINT_PROTOCOL_SHORT_LABEL } from '../../../../data/editPointProtocol';
 import { useEditPointStore } from '../../../../stores/editPointStore';
 
 const Step1Register: React.FC = () => {
@@ -254,7 +255,7 @@ const Step1Register: React.FC = () => {
         <textarea
           value={rawNarration}
           onChange={(e) => setRawNarration(e.target.value)}
-          placeholder="원하는 대본을 입력하세요. 일반 편집점 프로토콜 기준으로 킬 샷 우선, sourceId, MM:SS.sss 타임코드가 포함된 편집표를 자동 생성합니다."
+          placeholder={`원하는 대본을 입력하세요. ${EDIT_POINT_PROTOCOL_SHORT_LABEL} 기준으로 킬 샷 우선, sourceId, MM:SS.ms 타임코드가 포함된 편집표를 자동 생성합니다.`}
           className="w-full h-28 bg-gray-900 border border-gray-600 rounded-lg p-3 text-xs text-gray-200 resize-y focus:border-amber-500 focus:outline-none placeholder-gray-600"
         />
 
@@ -298,7 +299,7 @@ const Step1Register: React.FC = () => {
           )}
         </h3>
         <p className="text-[11px] text-gray-500 mb-2">
-          엑셀/구글시트에서 복사 붙여넣기 하거나, 파이프(|)/탭/마크다운 테이블 형식으로 입력하세요. 일반 편집점 매칭용 sourceId(S-XX)와 MM:SS.sss 타임코드가 포함되면 가장 안정적입니다.
+          엑셀/구글시트에서 복사 붙여넣기 하거나, 파이프(|)/탭/마크다운 테이블 형식으로 입력하세요. 일반 편집점 매칭용 sourceId(S-XX)와 MM:SS.ms 타임코드가 포함되면 가장 안정적입니다.
         </p>
         <textarea
           value={rawEditTable}
