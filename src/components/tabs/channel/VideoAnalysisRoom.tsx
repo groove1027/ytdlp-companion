@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useEffect, Suspense } from 'react';
+import React, { useState, useRef, useCallback, useEffect, useMemo, Suspense } from 'react';
 import { logger } from '../../../services/LoggerService';
 import AnalysisLoadingPanel, { notifyAnalysisComplete } from './AnalysisLoadingPanel';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
@@ -2543,25 +2543,177 @@ const BILINGUAL_INSTRUCTION = `
 
 원본이 한국어인 경우 이 규칙을 완전히 무시하고 기존 형식 그대로 출력하라.`;
 
-const buildUserMessage = (inputDesc: string, preset: AnalysisPreset, targetDuration: 0 | 30 | 45 | 60 = 0, versionCount: number = 10, videoDurationSec: number = 0): string => {
+const SHORT_FORM_SOURCE_MAX_SEC = 120;
+const SHORT_FORM_ROW_CAP = 24;
+
+const clampNumber = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
+
+const resolveEffectiveVideoDurationSec = (inputDesc: string, videoDurationSec: number): number => {
+  if (videoDurationSec > 0) return Math.round(videoDurationSec);
+
+  const labeledSecondsMatch = inputDesc.match(/(?:영상 길이|총 길이)[^\n]*\((\d+)초\)/);
+  if (labeledSecondsMatch) return parseInt(labeledSecondsMatch[1], 10);
+
+  const plainSecondsMatch = inputDesc.match(/(?:영상 길이|총 길이)[^\n]*?(\d+)초/);
+  if (plainSecondsMatch) return parseInt(plainSecondsMatch[1], 10);
+
+  const isoMatch = inputDesc.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
+  if (isoMatch) {
+    const hours = parseInt(isoMatch[1] || '0', 10);
+    const minutes = parseInt(isoMatch[2] || '0', 10);
+    const seconds = parseInt(isoMatch[3] || '0', 10);
+    const totalSeconds = (hours * 3600) + (minutes * 60) + seconds;
+    if (totalSeconds > 0) return totalSeconds;
+  }
+
+  return 0;
+};
+
+const collapseSceneCutsForPrompt = (sceneCuts: SceneCut[], minGapSec: number = 0.75): SceneCut[] => {
+  if (sceneCuts.length === 0) return [];
+
+  const sortedCuts = [...sceneCuts].sort((a, b) => a.timeSec - b.timeSec);
+  const collapsedCuts: SceneCut[] = [];
+
+  for (const cut of sortedCuts) {
+    const lastCut = collapsedCuts[collapsedCuts.length - 1];
+    if (!lastCut || (cut.timeSec - lastCut.timeSec) >= minGapSec) {
+      collapsedCuts.push(cut);
+      continue;
+    }
+    if (cut.score > lastCut.score) {
+      collapsedCuts[collapsedCuts.length - 1] = cut;
+    }
+  }
+
+  return collapsedCuts;
+};
+
+const estimateSourceCutCountFromSceneCuts = (sceneCuts: SceneCut[] | null | undefined): number => {
+  if (!sceneCuts || sceneCuts.length === 0) return 0;
+  return collapseSceneCutsForPrompt(sceneCuts).length + 1;
+};
+
+const waitForPromptSceneCutCount = async (
+  sceneCutPromise: Promise<SceneCut[] | null> | null,
+  timeoutMs: number = 2500,
+): Promise<number> => {
+  if (!sceneCutPromise) return 0;
+  try {
+    const sceneCuts = await Promise.race<SceneCut[] | null>([
+      sceneCutPromise,
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs)),
+    ]);
+    return estimateSourceCutCountFromSceneCuts(sceneCuts);
+  } catch {
+    return 0;
+  }
+};
+
+interface RemixRowGuide {
+  effectiveDurationSec: number;
+  isShortFormSource: boolean;
+  minRows: number;
+  targetRows: number;
+  maxRows: number;
+  totalLengthLabel: string;
+}
+
+const buildRemixRowGuide = (
+  preset: 'tikitaka' | 'snack',
+  inputDesc: string,
+  videoDurationSec: number,
+  sourceCutCount: number,
+  targetDuration: 0 | 30 | 45 | 60,
+): RemixRowGuide | null => {
+  const effectiveDurationSec = resolveEffectiveVideoDurationSec(inputDesc, videoDurationSec);
+
+  if (targetDuration !== 0) {
+    const rowFloor = preset === 'tikitaka' ? 6 : 5;
+    const rowCap = preset === 'tikitaka' ? 15 : 15;
+    const targetRows = clampNumber(
+      Math.round(targetDuration / (preset === 'tikitaka' ? 4.5 : 4)),
+      rowFloor,
+      rowCap,
+    );
+    return {
+      effectiveDurationSec,
+      isShortFormSource: effectiveDurationSec > 0 && effectiveDurationSec < SHORT_FORM_SOURCE_MAX_SEC,
+      minRows: Math.max(rowFloor, targetRows - 2),
+      targetRows,
+      maxRows: Math.min(rowCap, targetRows + 2),
+      totalLengthLabel: `${Math.max(20, targetDuration - 5)}~${targetDuration + 5}초`,
+    };
+  }
+
+  if (effectiveDurationSec <= 0) return null;
+
+  if (effectiveDurationSec < SHORT_FORM_SOURCE_MAX_SEC) {
+    const durationBasedTargetRows = clampNumber(
+      Math.round(effectiveDurationSec / (preset === 'tikitaka' ? 3 : 3.2)),
+      preset === 'tikitaka' ? 6 : 5,
+      SHORT_FORM_ROW_CAP,
+    );
+    const targetRows = clampNumber(
+      sourceCutCount > 0 ? Math.max(sourceCutCount, durationBasedTargetRows) : durationBasedTargetRows,
+      preset === 'tikitaka' ? 6 : 5,
+      SHORT_FORM_ROW_CAP,
+    );
+    return {
+      effectiveDurationSec,
+      isShortFormSource: true,
+      minRows: Math.max(preset === 'tikitaka' ? 6 : 5, targetRows - (sourceCutCount > 0 ? 1 : 2)),
+      targetRows,
+      maxRows: Math.min(SHORT_FORM_ROW_CAP, targetRows + 2),
+      totalLengthLabel: `${Math.max(Math.round(effectiveDurationSec * 0.85), Math.round(effectiveDurationSec * 0.9))}~${Math.round(effectiveDurationSec * 1.1)}초`,
+    };
+  }
+
+  const targetRows = clampNumber(
+    Math.round(60 / (preset === 'tikitaka' ? 4.5 : 4)),
+    preset === 'tikitaka' ? 8 : 5,
+    15,
+  );
+  return {
+    effectiveDurationSec,
+    isShortFormSource: false,
+    minRows: Math.max(preset === 'tikitaka' ? 8 : 5, targetRows - 2),
+    targetRows,
+    maxRows: Math.min(15, targetRows + 2),
+    totalLengthLabel: '55~65초',
+  };
+};
+
+const buildUserMessage = (
+  inputDesc: string,
+  preset: AnalysisPreset,
+  targetDuration: 0 | 30 | 45 | 60 = 0,
+  versionCount: number = 10,
+  videoDurationSec: number = 0,
+  sourceCutCount: number = 0,
+): string => {
   // 목표 시간 관련 동적 지시 (프리셋별 기존 시간 규칙을 오버라이드) — 0(원본)이면 생략
   const durationInstruction = targetDuration === 0 ? '' : `\n\n### ⏱️ 목표 시간 설정 (사용자 지정 — 최우선 적용)\n- **각 버전의 총 길이를 반드시 약 ${targetDuration}초로 맞추세요.**\n- 컷 수와 개별 컷 길이를 조절하여 합산이 ${targetDuration}초 내외(±5초)가 되도록 설계하세요.\n- ${targetDuration <= 30 ? '핵심 장면만 엄선하여 짧고 임팩트 있게.' : targetDuration <= 45 ? '주요 장면을 선별하되 적절한 호흡으로.' : '충분한 내용을 담아 풍부하게.'}`;
+  const effectiveDuration = resolveEffectiveVideoDurationSec(inputDesc, videoDurationSec);
   // [FIX #529] alltts 롱폼 지원: 원본(targetDuration=0)이고 영상이 90초 초과이면 롱폼 분량 보존 지시 추가
-  // [FIX #529 강화] videoDurationSec가 0이어도 inputDesc에서 영상 길이 힌트가 있으면 롱폼 감지
-  let effectiveDuration = videoDurationSec;
-  if (effectiveDuration === 0 && preset === 'alltts' && targetDuration === 0) {
-    // inputDesc에서 영상 길이 파싱 시도 (예: "PT30M12S", "30:12", "1812초" 등)
-    const ptMatch = inputDesc.match(/PT(\d+)M/);
-    const colonMatch = inputDesc.match(/(\d{1,3}):(\d{2})/);
-    if (ptMatch) effectiveDuration = parseInt(ptMatch[1]) * 60;
-    else if (colonMatch) effectiveDuration = parseInt(colonMatch[1]) * 60 + parseInt(colonMatch[2]);
-  }
   const isLongFormAllTts = preset === 'alltts' && targetDuration === 0 && effectiveDuration > 90;
   const longFormMinRows = isLongFormAllTts ? Math.max(15, Math.round(effectiveDuration / 10)) : 8;
   const longFormMaxRows = isLongFormAllTts ? Math.max(20, Math.round(effectiveDuration / 7)) : 12;
   const longFormOverride = isLongFormAllTts
     ? `\n\n### ⏱️ 원본 분량 보존 — 롱폼 모드 (최우선 적용)\n- 원본 영상은 약 ${Math.round(effectiveDuration / 60)}분(${effectiveDuration}초)입니다.\n- 각 버전의 총 길이를 **원본과 동일하게 약 ${Math.round(effectiveDuration / 60)}분**으로 맞추세요.\n- **"쇼츠 영상 대본"이 아닌, 원본 길이에 맞는 풀 스크립트**를 작성하세요.\n- 컷(행) 수를 대폭 늘려 원본의 모든 정보를 빠짐없이 담으세요 (최소 ${longFormMinRows}행 이상).\n- 각 컷의 타임코드가 영상 전체(00:00~${Math.floor(effectiveDuration / 60).toString().padStart(2, '0')}:${Math.round(effectiveDuration % 60).toString().padStart(2, '0')})에 골고루 분포되어야 합니다.\n- 축약·요약·생략 절대 금지: 원본 정보량 100%를 그대로 유지하되 텍스트만 재조립하세요.`
     : '';
+  const tikitakaRowGuide = buildRemixRowGuide('tikitaka', inputDesc, videoDurationSec, sourceCutCount, targetDuration);
+  const snackRowGuide = buildRemixRowGuide('snack', inputDesc, videoDurationSec, sourceCutCount, targetDuration);
+  const tikitakaRowRule = tikitakaRowGuide
+    ? tikitakaRowGuide.isShortFormSource && targetDuration === 0
+      ? `8. **원본이 숏폼(${tikitakaRowGuide.effectiveDurationSec}초)이므로 컷 수를 줄이지 마라.** ${sourceCutCount > 0 ? `감지된 원본 컷은 약 ${sourceCutCount}컷이다.` : '원본 컷 수를 최대한 유지하라.'} 버전당 최소 ${tikitakaRowGuide.minRows}개, 권장 ${tikitakaRowGuide.targetRows}개, 최대 ${tikitakaRowGuide.maxRows}개 행으로 설계하고, 총 길이도 원본과 유사한 ${tikitakaRowGuide.totalLengthLabel}로 맞춰라. 필요하면 행을 더 쪼개서라도 컷 밀도를 유지하라. 모든 행에 7열 완비.`
+      : `8. **${targetDuration === 0 && tikitakaRowGuide.effectiveDurationSec >= SHORT_FORM_SOURCE_MAX_SEC ? `원본이 롱폼(${tikitakaRowGuide.effectiveDurationSec}초)이므로` : '버전별 목표 길이에 맞춰'} ${tikitakaRowGuide.totalLengthLabel}로 설계.** 버전당 최소 ${tikitakaRowGuide.minRows}개, 권장 ${tikitakaRowGuide.targetRows}개, 최대 ${tikitakaRowGuide.maxRows}개 행. 모든 행에 7열 완비.`
+    : '8. **버전당 최소 8개 이상, 최대 15개 행.** 총 60초 내외 설계. 모든 행에 7열 완비.';
+  const snackRowRule = snackRowGuide
+    ? snackRowGuide.isShortFormSource && targetDuration === 0
+      ? `11. **원본이 숏폼(${snackRowGuide.effectiveDurationSec}초)이므로 원본 컷 수를 유지하라.** ${sourceCutCount > 0 ? `감지된 원본 컷은 약 ${sourceCutCount}컷이다.` : '원본 컷 수를 최대한 유지하라.'} 총 길이는 ${snackRowGuide.totalLengthLabel} 내외, 버전당 최소 ${snackRowGuide.minRows}개, 권장 ${snackRowGuide.targetRows}개, 최대 ${snackRowGuide.maxRows}개 컷으로 설계. 각 VERSION 사이에 불필요한 설명 텍스트 금지.`
+      : `11. **${targetDuration === 0 && snackRowGuide.effectiveDurationSec >= SHORT_FORM_SOURCE_MAX_SEC ? `원본이 롱폼(${snackRowGuide.effectiveDurationSec}초)이므로` : '버전별 목표 길이에 맞춰'} 총 길이 ${snackRowGuide.totalLengthLabel} 내외.** 버전당 최소 ${snackRowGuide.minRows}개, 권장 ${snackRowGuide.targetRows}개, 최대 ${snackRowGuide.maxRows}개 컷. 각 VERSION 사이에 불필요한 설명 텍스트 금지.`
+    : '11. **총 길이 45~60초 내외.** 버전당 5~15개 컷. 각 VERSION 사이에 불필요한 설명 텍스트 금지.';
 
   if (preset === 'alltts') {
     return `## 분석 대상
@@ -2707,7 +2859,7 @@ ${inputDesc}
 5. 비디오 화면 지시는 **(1) [컷1] 정확한 장면 묘사 (시간) / (2) [컷2] 장면 묘사 (시간)** 형식. HTML 태그 금지. 해당 타임코드에서 실제로 보이는 화면을 정확히 기술.
 6. 슬로우 모션 금지 — 정배속 멀티 컷 분할 전략 사용.
 7. **각 버전은 서로 다른 바이럴 전략** (전략 1~10 순서대로 적용).
-8. **버전당 최소 8개 이상, 최대 15개 행.** 총 60초 내외 설계. 모든 행에 7열 완비.
+${tikitakaRowRule}
 9. **각 VERSION 사이에 불필요한 설명 텍스트 없이 바로 다음 VERSION.**
 10. 효과자막은 **예능형 텍스트** (예: [동공지진], (팩트폭행), [부들부들], (BGM: 비장한 음악), [갑분싸]). 2~10자.
 
@@ -2882,7 +3034,7 @@ ${inputDesc}
 8. 하나의 컷은 가급적 **2~4초**를 넘기지 않는다.
 9. 영상에 등장하는 **모든 소재가 최소 1회 이상** 등장해야 한다.
 10. **각 버전은 서로 다른 후킹 전략, 톤, 편집 방향**으로 차별화.
-11. **총 길이 45~60초 내외.** 버전당 5~15개 컷. 각 VERSION 사이에 불필요한 설명 텍스트 금지.
+${snackRowRule}
 
 ### 출력 포맷 (7열 마스터 편집 테이블 — 이 형식을 정확히 따르세요)
 
@@ -3431,6 +3583,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       const frameMaxSec = frames.reduce((mx, f) => Math.max(mx, f.timeSec), 0);
       const maxTimeSec = Math.max(frameMaxSec, knownDurationSec);
       setIsLongForm(maxTimeSec >= 300);
+      let singleSourceSceneCutsPromise: Promise<SceneCut[] | null> | null = null;
 
       // ★ YouTube 병렬 다운로드 + 씬 감지 시작 (AI 분석과 동시 실행)
       let parallelDownloadPromise: Promise<{ blob: Blob; sceneCuts: SceneCut[] } | null> = Promise.resolve(null);
@@ -3452,6 +3605,17 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
               return null;
             }
           })();
+          singleSourceSceneCutsPromise = parallelDownloadPromise
+            .then((result) => result?.sceneCuts || null)
+            .catch(() => null);
+        }
+      } else if (!isMultiSource && uploadedFiles.length === 1) {
+        const uploadBlob = uploadedFiles[0] instanceof File ? uploadedFiles[0] : new Blob([uploadedFiles[0]]);
+        singleSourceSceneCutsPromise = detectSceneCuts(uploadBlob).catch(() => null);
+      } else if (!isMultiSource) {
+        const existingBlob = useVideoAnalysisStore.getState().videoBlob;
+        if (existingBlob) {
+          singleSourceSceneCutsPromise = detectSceneCuts(existingBlob).catch(() => null);
         }
       }
 
@@ -3540,7 +3704,10 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       const effectiveVersionCount = (preset === 'deep' || preset === 'shopping')
         ? Math.min(currentVersionCount, 5)
         : currentVersionCount;
-      let userPrompt = buildUserMessage(inputDesc, preset, currentTargetDuration, effectiveVersionCount, knownDurationSec);
+      const sourceCutCountHint = (preset === 'tikitaka' || preset === 'snack')
+        ? await waitForPromptSceneCutCount(singleSourceSceneCutsPromise)
+        : 0;
+      let userPrompt = buildUserMessage(inputDesc, preset, currentTargetDuration, effectiveVersionCount, knownDurationSec, sourceCutCountHint);
 
       // [FIX #398] 원본 순서 유지 모드: 비선형 재배치 지시를 오버라이드
       if (currentKeepOrder && (preset === 'snack' || preset === 'tikitaka')) {
@@ -3621,9 +3788,26 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
 
       let text: string;
 
-      // ★ 단일 호출 — 모든 프리셋 (5병렬 배치 제거 → API 입력 토큰 ~1/5 절감)
-      // maxTokens: 1시간 롱폼 기준 버전당 8,000 토큰 확보, 최소 25,000 보장, 상한 65,000
-      const maxTokens = Math.min(Math.max(8000 * effectiveVersionCount, 25000), 65000);
+      // ★ [FIX #582] 동적 maxTokens — 프리셋/버전수/영상길이 기반 최적화
+      // 숏폼+소규모 버전: 토큰 절감 → API 응답 속도 향상
+      const perVersionTokens: Record<string, number> = {
+        snack: 900, condensed: 1100, tikitaka: 1400,
+        shopping: 1500, alltts: 2200, deep: 2600,
+      };
+      const fixedOverheadTokens: Record<string, number> = {
+        snack: 800, condensed: 1000, tikitaka: 1400,
+        shopping: 1600, alltts: 2500, deep: 6000,
+      };
+      const pvt = perVersionTokens[preset] || 1400;
+      const fot = fixedOverheadTokens[preset] || 1400;
+      const sourceFactor = knownDurationSec > 600 ? 1.25 : knownDurationSec > 180 ? 1.10 : 1.0;
+      const minTokensCap = preset === 'deep' ? 18000 : 10000;
+      const isHeavyPreset = preset === 'deep' || preset === 'alltts';
+      const maxTokensCap = knownDurationSec <= 75 ? 28000
+        : isHeavyPreset && knownDurationSec > 300 ? 65000
+        : isHeavyPreset ? 50000
+        : 36000;
+      const maxTokens = Math.min(Math.max(Math.round(fot + pvt * effectiveVersionCount * sourceFactor), minTokensCap), maxTokensCap);
       if (uploadedFiles.length > 0 && frames.length > 0 && !videoUri) {
         showToast('프레임 기반 분석 모드로 진행합니다. 잠시만 기다려주세요...', 4000);
       }
@@ -3662,8 +3846,8 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
         if (allTimecodes.length > 0 && uploadedFiles.length === 1) {
           try {
             const uploadBlob = uploadedFiles[0] instanceof File ? uploadedFiles[0] : new Blob([uploadedFiles[0]]);
-            const uploadCuts = await detectSceneCuts(uploadBlob);
-            if (uploadCuts.length > 0) {
+            const uploadCuts = await (singleSourceSceneCutsPromise ?? detectSceneCuts(uploadBlob).catch(() => null));
+            if (uploadCuts && uploadCuts.length > 0) {
               allTimecodes = mergeWithAiTimecodes(allTimecodes, uploadCuts);
               console.log(`[Scene] ✅ 업로드 씬 감지 보정 완료: ${uploadCuts.length}개 컷 → 타임코드 보정`);
               // [FIX #312] 업로드도 보정 타임코드 역전파
@@ -3763,8 +3947,8 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
             let mergedTimecodes = allTimecodes;
             try {
               console.log('[Scene] 소셜 영상 씬 감지 시작...');
-              const socialCuts = await detectSceneCuts(existingBlob);
-              if (socialCuts.length > 0) {
+              const socialCuts = await (singleSourceSceneCutsPromise ?? detectSceneCuts(existingBlob).catch(() => null));
+              if (socialCuts && socialCuts.length > 0) {
                 mergedTimecodes = mergeWithAiTimecodes(allTimecodes, socialCuts);
                 console.log(`[Scene] ✅ 소셜 씬 감지 완료: AI ${allTimecodes.length}개 + 씬 ${socialCuts.length}개 → ${mergedTimecodes.length}개 병합`);
                 // [FIX #312] 소셜도 보정 타임코드 역전파
@@ -4148,9 +4332,21 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
     analysisAbortRef.current?.abort();
   }, []);
 
-  // 경과 시간 + 시뮬레이션 진행률 타이머
-  // 단일 호출: ~90초 (모든 프리셋 통합)
-  const ESTIMATED_TOTAL_SEC = 90;
+  // [FIX #582] 경과 시간 + 시뮬레이션 진행률 타이머
+  // 동적 예상 시간: 프리셋/버전수/영상길이 기반 (하드코딩 90초 제거)
+  const ESTIMATED_TOTAL_SEC = useMemo(() => {
+    const vc = versionCount || 10;
+    const presetBase: Record<string, number> = {
+      snack: 6, condensed: 8, tikitaka: 12, shopping: 14, alltts: 16, deep: 24,
+    };
+    const perVersionSec: Record<string, number> = {
+      snack: 2.2, condensed: 2.6, tikitaka: 3.4, shopping: 3.8, alltts: 4.2, deep: 5.0,
+    };
+    const p = selectedPreset || 'snack';
+    const inputOverhead = inputMode === 'youtube' ? 8 : 12;
+    const durationOverhead = isLongForm ? 45 : 15;
+    return Math.round(inputOverhead + durationOverhead + (presetBase[p] || 12) + (perVersionSec[p] || 3.4) * vc);
+  }, [selectedPreset, versionCount, inputMode, isLongForm]);
   useEffect(() => {
     if (!isAnalyzing) return;
     const iv = setInterval(() => {
