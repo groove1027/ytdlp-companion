@@ -2648,7 +2648,7 @@ const buildRemixRowGuide = (
 
   if (effectiveDurationSec <= 0) return null;
 
-  if (effectiveDurationSec < SHORT_FORM_SOURCE_MAX_SEC) {
+  if (effectiveDurationSec <= SHORT_FORM_SOURCE_MAX_SEC) {
     const durationBasedTargetRows = clampNumber(
       Math.round(effectiveDurationSec / (preset === 'tikitaka' ? 3 : 3.2)),
       preset === 'tikitaka' ? 6 : 5,
@@ -2665,7 +2665,7 @@ const buildRemixRowGuide = (
       minRows: Math.max(preset === 'tikitaka' ? 6 : 5, targetRows - (sourceCutCount > 0 ? 1 : 2)),
       targetRows,
       maxRows: Math.min(SHORT_FORM_ROW_CAP, targetRows + 2),
-      totalLengthLabel: `${Math.max(Math.round(effectiveDurationSec * 0.85), Math.round(effectiveDurationSec * 0.9))}~${Math.round(effectiveDurationSec * 1.1)}초`,
+      totalLengthLabel: `${Math.round(effectiveDurationSec * 0.9)}~${Math.round(effectiveDurationSec * 1.1)}초`,
     };
   }
 
@@ -3790,22 +3790,24 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
 
       // ★ [FIX #582] 동적 maxTokens — 프리셋/버전수/영상길이 기반 최적화
       // 숏폼+소규모 버전: 토큰 절감 → API 응답 속도 향상
+      // [FIX #582 v2] Codex 리뷰 P1: alltts/deep 롱폼 perVersion을 프롬프트 실제 요구량에 맞게 상향
+      // [FIX #582 v3] Codex 144조합 검증 결과 반영: snack/tikitaka/alltts perVersion 상향
       const perVersionTokens: Record<string, number> = {
-        snack: 900, condensed: 1100, tikitaka: 1400,
-        shopping: 1500, alltts: 2200, deep: 2600,
+        snack: 1400, condensed: 1100, tikitaka: 1900,
+        shopping: 1500, alltts: 4000, deep: 4000,
       };
       const fixedOverheadTokens: Record<string, number> = {
-        snack: 800, condensed: 1000, tikitaka: 1400,
-        shopping: 1600, alltts: 2500, deep: 6000,
+        snack: 1000, condensed: 1000, tikitaka: 1600,
+        shopping: 1600, alltts: 3500, deep: 8000,
       };
       const pvt = perVersionTokens[preset] || 1400;
       const fot = fixedOverheadTokens[preset] || 1400;
-      const sourceFactor = knownDurationSec > 600 ? 1.25 : knownDurationSec > 180 ? 1.10 : 1.0;
-      const minTokensCap = preset === 'deep' ? 18000 : 10000;
+      const sourceFactor = knownDurationSec > 600 ? 1.3 : knownDurationSec > 180 ? 1.15 : 1.0;
+      const minTokensCap = preset === 'deep' ? 25000 : preset === 'alltts' ? 22000 : 14000;
       const isHeavyPreset = preset === 'deep' || preset === 'alltts';
       const maxTokensCap = knownDurationSec <= 75 ? 28000
         : isHeavyPreset && knownDurationSec > 300 ? 65000
-        : isHeavyPreset ? 50000
+        : isHeavyPreset ? 55000
         : 36000;
       const maxTokens = Math.min(Math.max(Math.round(fot + pvt * effectiveVersionCount * sourceFactor), minTokensCap), maxTokensCap);
       if (uploadedFiles.length > 0 && frames.length > 0 && !videoUri) {
@@ -3815,6 +3817,16 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
 
       setRawResult(text);
       const parsed = parseVersions(text);
+      // [FIX #582 v2] Codex P1: 응답 잘림 감지 — 요청 버전수보다 적게 파싱되면 경고
+      if (parsed.length < effectiveVersionCount && parsed.length > 0) {
+        const lastVersion = parsed[parsed.length - 1];
+        // 마지막 버전이 불완전하면 제거 (scenes가 2개 미만이면 불완전 판정)
+        if (lastVersion.scenes.length < 2) {
+          parsed.pop();
+          console.warn(`[VideoAnalysis] ⚠️ 마지막 버전 불완전 — 제거 (scenes=${lastVersion.scenes.length})`);
+        }
+        showToast(`⚠️ ${effectiveVersionCount}개 중 ${parsed.length}개 버전만 생성되었어요. 버전 수를 줄이면 더 안정적이에요.`, 6000);
+      }
       setVersions(parsed);
 
       // [FIX #313] 배치 완료 후 IndexedDB 자동 저장 — 프레임 추출 전에 저장하여 새로고침 시 복구 가능
@@ -4332,8 +4344,10 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
     analysisAbortRef.current?.abort();
   }, []);
 
-  // [FIX #582] 경과 시간 + 시뮬레이션 진행률 타이머
+  // [FIX #582 v2] 경과 시간 + 시뮬레이션 진행률 타이머
   // 동적 예상 시간: 프리셋/버전수/영상길이 기반 (하드코딩 90초 제거)
+  // Codex P2: 분석 시작 시점 스냅샷으로 mid-analysis 값 변경에 의한 점프 방지
+  const estimatedTotalSecRef = useRef(90);
   const ESTIMATED_TOTAL_SEC = useMemo(() => {
     const vc = versionCount || 10;
     const presetBase: Record<string, number> = {
@@ -4349,11 +4363,14 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
   }, [selectedPreset, versionCount, inputMode, isLongForm]);
   useEffect(() => {
     if (!isAnalyzing) return;
+    // 분석 시작 시 현재 예상치를 스냅샷 — 이후 isLongForm 변경으로 인한 진행률 점프 방지
+    estimatedTotalSecRef.current = ESTIMATED_TOTAL_SEC;
+    const snapshotEstimate = estimatedTotalSecRef.current;
     const iv = setInterval(() => {
       const elapsed = Math.floor((Date.now() - analysisStartRef.current) / 1000);
       setElapsedSec(elapsed);
       // 비선형 진행률: 빠르게 시작 → 점진적 감속 (95%에서 수렴)
-      const progress = Math.min(95, Math.round(100 * (1 - Math.exp(-elapsed / (ESTIMATED_TOTAL_SEC * 0.55)))));
+      const progress = Math.min(95, Math.round(100 * (1 - Math.exp(-elapsed / (snapshotEstimate * 0.55)))));
       setSimProgress(progress);
     }, 500);
 

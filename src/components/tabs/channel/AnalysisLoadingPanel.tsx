@@ -262,7 +262,7 @@ const AnalysisLoadingPanel: React.FC<AnalysisLoadingPanelProps> = ({
         <div className="flex items-center gap-3 mb-2">
           <span className="text-2xl">⏱️</span>
           <p className={`text-lg font-bold ${accent === 'blue' ? 'text-blue-300' : 'text-orange-300'}`}>
-            예상 소요시간: <span className="text-white text-xl">{isLongForm ? '5~10분+' : estimatedTotalSec <= 60 ? '약 1분 이내' : estimatedTotalSec <= 120 ? '약 1~2분' : `약 ${Math.ceil(estimatedTotalSec / 60)}분`}</span>
+            예상 소요시간: <span className="text-white text-xl">{estimatedTotalSec <= 60 ? '약 1분 이내' : estimatedTotalSec <= 120 ? '약 1~2분' : estimatedTotalSec <= 300 ? `약 ${Math.ceil(estimatedTotalSec / 60)}분` : '5분 이상'}</span>
           </p>
         </div>
         {isLongForm && (
