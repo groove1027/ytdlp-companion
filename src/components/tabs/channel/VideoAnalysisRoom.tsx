@@ -2893,8 +2893,16 @@ const VideoAnalysisRoom: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [guideAiResult, setGuideAiResult] = useState('');
-  const [nleExporting, setNleExporting] = useState<{ target: string; step: string } | null>(null);
+  const [nleExporting, setNleExporting] = useState<{ target: string; step: string; progress?: number; startedAt?: number } | null>(null);
+  const [nleElapsed, setNleElapsed] = useState(0);
+  const nleAbortRef = useRef<AbortController | null>(null);
   const nleDimsCache = useRef<{ w: number; h: number; fps: number; dur: number } | null>(null);
+  // 경과시간 실시간 업데이트
+  useEffect(() => {
+    if (!nleExporting?.startedAt) { setNleElapsed(0); return; }
+    const t = setInterval(() => setNleElapsed(Math.round((Date.now() - nleExporting.startedAt!) / 1000)), 1000);
+    return () => clearInterval(t);
+  }, [nleExporting?.startedAt]);
   const validYoutubeUrls = youtubeUrls.filter(u => u.trim().length > 0);
   const hasInput = inputMode === 'youtube' ? validYoutubeUrls.length > 0 : uploadedFiles.length > 0;
 
@@ -4424,16 +4432,17 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                       <span className={`w-7 h-7 rounded-full ${c.numBg} flex items-center justify-center text-xs font-bold text-white flex-shrink-0`}>{v.id}</span>
                       <span className={`flex-1 text-sm font-bold truncate select-text ${isExp ? c.text : 'text-gray-200'}`}>{v.title}</span>
                     </button>
-                    {/* [FIX #483] 제목 복사 버튼 */}
+                    {/* [FIX #483] 제목 복사 버튼 — 더 눈에 띄게 */}
                     <button
                       type="button"
                       onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(v.title).then(() => showToast('제목이 복사되었습니다')); }}
-                      className="p-1.5 rounded-lg text-gray-500 hover:text-blue-400 hover:bg-blue-500/10 transition-all flex-shrink-0"
+                      className="px-2 py-1 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-400 hover:bg-blue-500/20 hover:border-blue-400/40 transition-all flex-shrink-0 flex items-center gap-1 text-[10px] font-bold"
                       title="제목 복사"
                     >
-                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
                       </svg>
+                      복사
                     </button>
                     {hasScenes && <span className="text-xs text-gray-500 bg-gray-700/50 px-1.5 py-0.5 rounded flex-shrink-0">{v.scenes.length}컷</span>}
                     <button type="button" onClick={() => setExpandedId(isExp ? null : v.id)} className="flex-shrink-0">
@@ -4474,15 +4483,24 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                 <button
                                   key={target}
                                   type="button"
-                                  disabled={nleExporting !== null}
+                                  disabled={nleExporting !== null && nleExporting.target !== target}
                                   onClick={async () => {
+                                    // 취소 처리: 이미 진행 중인 같은 타겟 클릭 시 취소
+                                    if (nleExporting?.target === target) {
+                                      nleAbortRef.current?.abort();
+                                      setNleExporting(null);
+                                      showToast('다운로드가 취소되었습니다.');
+                                      return;
+                                    }
                                     if (nleExporting) return;
-                                    setNleExporting({ target, step: '준비 중...' });
+                                    const startedAt = Date.now();
+                                    nleAbortRef.current = new AbortController();
+                                    setNleExporting({ target, step: '준비 중...', startedAt });
                                     try {
-                                      // [FIX #370] Step 1: videoBlob 확보 — 오디오 포함 보장
+                                      // Step 1: videoBlob 확보 — 오디오 포함 보장
                                       const vaStore = useVideoAnalysisStore.getState();
                                       let videoBlob = vaStore.videoBlob;
-                                      let audioConfirmed = vaStore.videoBlobHasAudio ?? true; // null이면 업로드/소셜 → 오디오 있음으로 간주
+                                      let audioConfirmed = vaStore.videoBlobHasAudio ?? true;
                                       let downloadedSourceTitle = '';
                                       const sourceUrl = (youtubeUrl || validYoutubeUrls[0] || '').trim();
                                       const isYoutubeSource = !!sourceUrl && isYouTubeUrl(sourceUrl);
@@ -4492,12 +4510,31 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                         audioConfirmed = true;
                                       }
 
-                                      if (!videoBlob) {
+                                      // YouTube 소스인 경우 항상 오디오 포함 영상을 새로 다운로드 (분석용 blob은 video-only일 수 있음)
+                                      if (inputMode === 'youtube' && sourceUrl && isYoutubeSource && (!videoBlob || !audioConfirmed)) {
+                                        setNleExporting({ target, step: '오디오 포함 영상 다운로드 중...', progress: 0, startedAt });
+                                        try {
+                                          const { downloadVideoViaProxy } = await import('../../../services/ytdlpApiService');
+                                          const vid = extractYouTubeVideoId(sourceUrl) || sourceUrl;
+                                          const merged = await downloadVideoViaProxy(vid, '720p', (p) => {
+                                            setNleExporting(prev => prev ? { ...prev, progress: Math.round(p * 100) } : prev);
+                                          });
+                                          if (merged.blob.size > 0) {
+                                            videoBlob = merged.blob;
+                                            downloadedSourceTitle = merged.info?.title || '';
+                                            audioConfirmed = true;
+                                            useVideoAnalysisStore.getState().setVideoBlob(merged.blob, true);
+                                          }
+                                        } catch (dlErr) {
+                                          if (nleAbortRef.current?.signal.aborted) return;
+                                          console.warn('[NLE] 오디오 포함 다운로드 실패:', dlErr);
+                                        }
+                                      } else if (!videoBlob) {
                                         if (uploadedFiles[0]) {
                                           videoBlob = uploadedFiles[0];
                                           audioConfirmed = true;
                                         } else if (inputMode === 'youtube' && sourceUrl) {
-                                          setNleExporting({ target, step: isYoutubeSource ? '오디오 포함 영상 다운로드 중...' : '영상 다운로드 중...' });
+                                          setNleExporting({ target, step: '영상 다운로드 중...', progress: 0, startedAt });
                                           const dlResult = await downloadSourceVideoForNleExport(sourceUrl);
                                           if (dlResult.blob.size > 0) {
                                             videoBlob = dlResult.blob;
@@ -4508,24 +4545,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                         }
                                       }
 
-                                      // [FIX #370] 오디오 없는 영상 → 서버 머지 다운로드 재시도 (프록시에서 오디오 포함 버전)
-                                      if (videoBlob && !audioConfirmed && inputMode === 'youtube' && sourceUrl && isYoutubeSource) {
-                                        setNleExporting({ target, step: '오디오 포함 영상 다운로드 중...' });
-                                        try {
-                                          const { downloadVideoViaProxy } = await import('../../../services/ytdlpApiService');
-                                          const vid = extractYouTubeVideoId(sourceUrl) || sourceUrl;
-                                          // videoOnly 없이 다운로드 → 서버가 영상+오디오 합쳐서 반환
-                                          const merged = await downloadVideoViaProxy(vid, '720p');
-                                          if (merged.blob.size > 0) {
-                                            videoBlob = merged.blob;
-                                            audioConfirmed = true;
-                                            useVideoAnalysisStore.getState().setVideoBlob(merged.blob, true);
-                                            console.log(`[NLE] ✅ 오디오 포함 영상 재다운로드 성공: ${(merged.blob.size / 1024 / 1024).toFixed(1)}MB`);
-                                          }
-                                        } catch (redownloadErr) {
-                                          console.warn('[NLE] 오디오 포함 재다운로드 실패 (영상만 사용):', redownloadErr);
-                                        }
-                                      }
+                                      if (nleAbortRef.current?.signal.aborted) return;
 
                                       if (!videoBlob) {
                                         showToast('⚠️ 영상 서버가 바빠서 다운로드에 실패했어요. 잠시 후 다시 시도해주세요.', 5000);
@@ -4592,11 +4612,14 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                       showToast(!audioConfirmed
                                         ? `${label} 다운로드 완료! ⚠️ 원본 오디오를 불러오지 못했어요. ${target === 'premiere' ? 'Premiere' : label}에서 수동으로 오디오를 추가해주세요.`
                                         : `${label} 패키지 다운로드 완료!`, !audioConfirmed ? 7000 : undefined);
-                                    } catch (e) { console.error('[NLE]', e); showToast(`${label} 패키지 생성 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`, 5000); } finally { setNleExporting(null); }
+                                    } catch (e) {
+                                      if (nleAbortRef.current?.signal.aborted) return;
+                                      console.error('[NLE]', e); showToast(`${label} 패키지 생성 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`, 5000);
+                                    } finally { nleAbortRef.current = null; setNleExporting(null); }
                                   }}
                                   className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold transition-all shadow-sm ${
                                     nleExporting?.target === target
-                                      ? 'bg-gradient-to-r from-amber-600/50 to-orange-600/50 text-amber-200 border border-amber-400/60 cursor-wait'
+                                      ? 'bg-gradient-to-r from-amber-600/50 to-orange-600/50 text-amber-200 border border-amber-400/60 cursor-pointer hover:from-red-600/40 hover:to-red-500/40'
                                       : nleExporting
                                         ? 'bg-gray-700/40 text-gray-500 border border-gray-600/20 cursor-not-allowed'
                                         : 'bg-gradient-to-r from-amber-600/30 to-orange-600/30 text-amber-300 border border-amber-500/40 hover:from-amber-600/40 hover:to-orange-600/40 hover:border-amber-400/60'
@@ -4605,7 +4628,16 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                   {nleExporting?.target === target ? (
                                     <>
                                       <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
-                                      <span className="text-xs">{nleExporting.step}</span>
+                                      <span className="text-xs flex items-center gap-1.5">
+                                        {nleExporting.step}
+                                        {nleExporting.progress != null && nleExporting.progress > 0 && (
+                                          <span className="font-mono text-amber-300">{nleExporting.progress}%</span>
+                                        )}
+                                        {nleElapsed > 0 && (
+                                          <span className="text-amber-400/60">({nleElapsed}초)</span>
+                                        )}
+                                      </span>
+                                      <span className="text-[10px] text-red-300/80 ml-1">클릭하면 취소</span>
                                     </>
                                   ) : (
                                     <>

@@ -8,6 +8,13 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-19] NLE 다운로드 UX 개선 + 오디오 수정 + 제목 복사 가시성
+- [x] `VideoAnalysisRoom.tsx` — NLE 다운로드 취소 기능 추가 (진행 중 버튼 재클릭 시 AbortController 취소)
+- [x] `VideoAnalysisRoom.tsx` — 다운로드 진행률(%) + 경과시간(초) 실시간 표시
+- [x] `VideoAnalysisRoom.tsx` — YouTube 소스 NLE 내보내기 시 항상 오디오 포함 영상 다운로드
+- [x] `VideoAnalysisRoom.tsx` + `ChannelRemakePanel.tsx` — 제목 복사 버튼 가시성 강화
+- [x] `tsc --noEmit` + `vite build` 10회 검증 루프 통과
+
 ### [2026-03-19] #421 편집실 싱크 + 스토리보드 컷수 + 레퍼런스 이미지 + 타임라인 매칭 수정
 - [x] `editRoomStore.ts` — updateSubtitleTiming에 _userTiming 플래그 + projectStore/soundStudioStore 동기화 추가
 - [x] `editRoomStore.ts` — 초기화 시 lineByIndex 매칭을 useUnifiedTimeline과 통일 (origIdx → sceneOrder idx)
