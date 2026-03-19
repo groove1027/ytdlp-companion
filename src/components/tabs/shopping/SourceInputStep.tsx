@@ -17,6 +17,7 @@ import { showToast } from '../../../stores/uiStore';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
 import { detectNarration } from '../../../services/shoppingScriptService';
 import type { ShoppingSourceType } from '../../../types';
+import { SHOPPING_SCRIPT_GUIDELINE_VERSION } from '../../../data/shoppingScriptGuideline';
 
 // ═══════════════════════════════════════════════════════════════
 // 소스 타입 토글
@@ -146,7 +147,7 @@ const SourceInputStep: React.FC = () => {
       setAnalysisProgress('AI 상품 프리셋 생성 중...');
       const analysis = await analyzeVideoProduct(frames, narration);
       setProductAnalysis(analysis);
-      setAnalysisProgress('v31.0 대본 생성 중...');
+      setAnalysisProgress(`${SHOPPING_SCRIPT_GUIDELINE_VERSION} 대본 생성 중...`);
       const scripts = await generateShoppingScripts(analysis, sourceVideo.duration, ctaPreset, narration);
       setGeneratedScripts(scripts);
       if (scripts.length > 0) setSelectedScriptId(scripts[0].id);
@@ -203,7 +204,7 @@ const SourceInputStep: React.FC = () => {
       setProductAnalysis(analysis);
       setNarrationText(null); // 쿠팡은 나레이션 없음
 
-      setAnalysisProgress('v31.0 대본 생성 중...');
+      setAnalysisProgress(`${SHOPPING_SCRIPT_GUIDELINE_VERSION} 대본 생성 중...`);
       const scripts = await generateCoupangShoppingScripts(analysis, coupangCrawlResult, ctaPreset);
       setGeneratedScripts(scripts);
       if (scripts.length > 0) setSelectedScriptId(scripts[0].id);
@@ -625,7 +626,7 @@ const SourceInputStep: React.FC = () => {
                     <span className="animate-spin h-5 w-5 border-2 border-white/30 border-t-white rounded-full" />
                     {analysisProgress || 'AI 분석 중...'}
                   </span>
-                ) : '바이럴 대본 생성 (AI 분석 → 동적 타겟팅 → v31.0 대본)'}
+                ) : `바이럴 대본 생성 (AI 분석 → 동적 타겟팅 → ${SHOPPING_SCRIPT_GUIDELINE_VERSION} 대본)`}
               </button>
               {analysisError && <p className="mt-2 text-sm text-red-400">{analysisError}</p>}
             </div>

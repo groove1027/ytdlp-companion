@@ -5,6 +5,7 @@ import VoiceFontPicker from './VoiceFontPicker';
 import { showToast } from '../../../stores/uiStore';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
 import type { SubtitleRemovalMethod } from '../../../types';
+import { SHOPPING_SCRIPT_PRESET_SUBTITLE } from '../../../data/shoppingScriptGuideline';
 
 const SUBTITLE_REMOVAL_OPTIONS: { id: SubtitleRemovalMethod; label: string; desc: string; icon: string }[] = [
   { id: 'ghostcut', label: 'AI 제거', desc: 'GhostCut AI 자동 자막 제거', icon: '🤖' },
@@ -105,7 +106,7 @@ const ScriptSelectStep: React.FC = () => {
             <div className="w-9 h-9 rounded-xl bg-lime-600/20 flex items-center justify-center text-lg">🎯</div>
             <div>
               <h3 className="text-lg font-bold text-lime-300">프리셋</h3>
-              <p className="text-xs text-gray-500">v31.0 동적 타겟팅 기반 상품 프리셋</p>
+              <p className="text-xs text-gray-500">{SHOPPING_SCRIPT_PRESET_SUBTITLE}</p>
             </div>
           </div>
           {productAnalysis && !isEditingPreset && (

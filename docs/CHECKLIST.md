@@ -8,6 +8,16 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-20] 쇼핑 프리셋 기술 문서 v36.0 전면 반영
+- [x] `docs/shopping-script-guideline-v36.md`, `src/raw-imports.d.ts`, `src/data/shoppingScriptGuideline.ts` — 사용자 제공 원문을 축약 없이 그대로 문서화하고, 앱 코드가 동일 원문을 단일 소스로 재사용하도록 공통 경로 구성
+- [x] `shoppingScriptService.ts`, `scriptStylePresets.ts` — 쇼핑 대본 생성 시스템 프롬프트와 대본작성 쇼핑 프리셋이 공통 v36.0 원문을 그대로 사용하도록 교체
+- [x] `VideoAnalysisRoom.tsx` — 영상분석실 쇼핑형 프리셋 버튼 설명, 실제 쇼핑형 시스템 프롬프트, 쇼핑 안내 문구를 v36.0 기준으로 정렬하고 V7.0 편집 프로토콜 뒤에 새 원문을 그대로 합성
+- [x] `ScriptSelectStep.tsx`, `SourceInputStep.tsx`, `tutorial-narration-script.md` — 쇼핑 탭 프리셋 라벨, 진행 상태, CTA 문구, 사용자 안내 문서의 버전 표기를 v36.0으로 통일
+- [x] 검증 통과:
+  `cd src && node_modules/typescript/bin/tsc --noEmit`
+  `cd src && node_modules/.bin/vite build`
+  `rg -n "SHOPPING_SCRIPT_GUIDELINE|SHOPPING_SCRIPT_GUIDELINE_SHORT_LABEL|SHOPPING_SCRIPT_GUIDELINE_VERSION|SHOPPING_SCRIPT_PRESET_SUBTITLE|shopping-script-guideline-v36|동적 타겟팅 기반 쇼핑형 대본 생성 지침서 v36\.0" src docs`
+
 ### [2026-03-20] #610 Chromium CapCut 직접 설치 + 브라우저별 ZIP 폴백
 - [x] `nleExportService.ts` — `isCapCutDirectInstallSupported`, `beginCapCutDirectInstallSelection`, `installCapCutZipToDirectory`를 추가해 Chromium 브라우저에서 CapCut drafts 폴더 선택 후 ZIP을 바로 설치하고 media path를 절대경로로 패치하도록 보강
 - [x] `EditRoomTab.tsx`, `StoryboardPanel.tsx`, `VideoAnalysisRoom.tsx` — CapCut 버튼 클릭 시 직접 설치 안내 메시지 → 폴더 선택 → 성공 시 즉시 설치, 실패/취소/비지원 브라우저 시 ZIP 다운로드 + 설치 스크립트 안내로 폴백하도록 연결
