@@ -8,6 +8,12 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-19] 영상 분석 적응형 배치 분할 + 버전 병합 안정화
+- [x] `VideoAnalysisRoom.tsx` — 예상 출력 토큰이 55k 안전 한도를 넘으면 버전 수를 자동으로 2개 이상 배치로 분할하고 `Promise.allSettled` 병렬 호출로 처리하도록 변경
+- [x] `VideoAnalysisRoom.tsx` — `buildUserMessage()`에 `versionOffset`/`batchVersionCount` 지원 추가, 배치별 VERSION 번호 범위를 강제하면서 기존 단일 호출 경로와 호환 유지
+- [x] `VideoAnalysisRoom.tsx` — 배치별 `parseVersions()` 결과를 병합할 때 로컬 번호를 전역 번호로 정규화하고, 불완전한 마지막 버전과 실패 배치를 분리 처리하도록 보강
+- [x] `tsc --noEmit` + `vite build` + `rg` 재검증 통과
+
 ### [2026-03-19] #585 일반 편집점/편집실 매칭 프롬프트 강화
 - [x] `editPointService.ts` — 쇼핑형이 아니라 일반 편집점/편집실 매칭 경로의 자동 편집표 생성 프롬프트를 V7.0 규칙(킬 샷 우선, sourceId+타임코드+장면 무결성, 1문장 2컷, MM:SS.sss) 기준으로 재작성
 - [x] `editPointService.ts` — 자동 편집표 생성 시 소스 영상 대표 프레임 앵커를 함께 보내 일반 편집점 소스/타임코드 매칭 근거를 강화

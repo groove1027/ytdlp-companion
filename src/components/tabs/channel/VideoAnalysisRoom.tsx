@@ -942,6 +942,94 @@ async function extractFramesWithFallback(
   return [];
 }
 
+const PER_CALL_SAFE_LIMIT = 55000;
+const MIN_COMPLETE_SCENES_PER_VERSION = 2;
+
+function finalizeVersionedPrompt(
+  prompt: string,
+  versionStart: number,
+  versionCount: number,
+): string {
+  if (versionCount < 1) return prompt;
+
+  const versionEnd = versionStart + versionCount - 1;
+  const secondVersion = Math.min(versionStart + 1, versionEnd);
+  let finalizedPrompt = prompt.replace(/---VERSION 1---/g, `---VERSION ${versionStart}---`);
+
+  if (versionCount > 1) {
+    finalizedPrompt = finalizedPrompt.replace(/---VERSION 2---/g, `---VERSION ${secondVersion}---`);
+  } else {
+    // 1개만 생성하는 배치: VERSION 2 예시 행 제거 (AI 혼란 방지)
+    finalizedPrompt = finalizedPrompt.replace(/\n.*---VERSION 2---.*$/gm, '');
+  }
+  if (versionStart !== 1) {
+    finalizedPrompt = finalizedPrompt
+      .replace(/VERSION 1은/g, `VERSION ${versionStart}은`)
+      .replace(/VERSION 2는/g, `VERSION ${secondVersion}는`)
+      .replace(/VERSION 2가/g, `VERSION ${secondVersion}가`);
+  }
+
+  finalizedPrompt = finalizedPrompt.replace(
+    new RegExp(`---VERSION ${versionCount}---`, 'g'),
+    `---VERSION ${versionEnd}---`,
+  );
+
+  const rangeLabel = versionCount === 1
+    ? `---VERSION ${versionStart}--- 1개만`
+    : `---VERSION ${versionStart}---부터 ---VERSION ${versionEnd}---까지 총 ${versionCount}개만`;
+  const numberRangeLabel = versionCount === 1 ? `${versionStart}` : `${versionStart}~${versionEnd}`;
+  return `${finalizedPrompt}
+
+### 🔢 이번 호출의 VERSION 범위 (최우선 적용)
+- 이번 호출에서는 ${rangeLabel} 생성하세요.
+- VERSION 번호를 1부터 다시 시작하지 말고, 반드시 ${numberRangeLabel} 범위를 사용하세요.
+- 누락/중복 없이 순서대로 출력하고, 지정 범위를 벗어나는 VERSION은 생성하지 마세요.`;
+}
+
+function trimTrailingIncompleteVersions(items: VersionItem[]): { versions: VersionItem[]; removedCount: number } {
+  const trimmed = [...items];
+  let removedCount = 0;
+  while (trimmed.length > 0 && trimmed[trimmed.length - 1].scenes.length < MIN_COMPLETE_SCENES_PER_VERSION) {
+    trimmed.pop();
+    removedCount += 1;
+  }
+  return { versions: trimmed, removedCount };
+}
+
+function normalizeBatchVersionIds(
+  items: VersionItem[],
+  versionOffset: number,
+  batchVersionCount: number,
+): VersionItem[] {
+  if (items.length === 0) return [];
+
+  const startId = versionOffset + 1;
+  const endId = versionOffset + batchVersionCount;
+  const usedIds = new Set<number>();
+  const normalized: VersionItem[] = [];
+  const nextAvailableId = () => {
+    for (let id = startId; id <= endId; id += 1) {
+      if (!usedIds.has(id)) return id;
+    }
+    return endId + normalized.length + 1;
+  };
+
+  for (const item of items) {
+    if (normalized.length >= batchVersionCount) break;
+
+    const candidates = [
+      item.id >= startId && item.id <= endId ? item.id : undefined,
+      item.id >= 1 && item.id <= batchVersionCount ? versionOffset + item.id : undefined,
+    ].filter((value): value is number => typeof value === 'number');
+
+    const normalizedId = candidates.find(candidate => !usedIds.has(candidate)) ?? nextAvailableId();
+    usedIds.add(normalizedId);
+    normalized.push(normalizedId === item.id ? item : { ...item, id: normalizedId });
+  }
+
+  return normalized.sort((a, b) => a.id - b.id);
+}
+
 /** 분석 결과(versions)에서 모든 타임코드를 초 단위로 수집 (정밀 추출) */
 function collectTimecodesFromVersions(versions: VersionItem[], durationSec?: number): number[] {
   const raw: number[] = [];
@@ -2691,7 +2779,11 @@ const buildUserMessage = (
   versionCount: number = 10,
   videoDurationSec: number = 0,
   sourceCutCount: number = 0,
+  versionOffset: number = 0,
+  batchVersionCount: number = versionCount,
 ): string => {
+  versionCount = Math.max(1, batchVersionCount);
+  const versionStart = Math.max(1, versionOffset + 1);
   // 목표 시간 관련 동적 지시 (프리셋별 기존 시간 규칙을 오버라이드) — 0(원본)이면 생략
   const durationInstruction = targetDuration === 0 ? '' : `\n\n### ⏱️ 목표 시간 설정 (사용자 지정 — 최우선 적용)\n- **각 버전의 총 길이를 반드시 약 ${targetDuration}초로 맞추세요.**\n- 컷 수와 개별 컷 길이를 조절하여 합산이 ${targetDuration}초 내외(±5초)가 되도록 설계하세요.\n- ${targetDuration <= 30 ? '핵심 장면만 엄선하여 짧고 임팩트 있게.' : targetDuration <= 45 ? '주요 장면을 선별하되 적절한 호흡으로.' : '충분한 내용을 담아 풍부하게.'}`;
   const effectiveDuration = resolveEffectiveVideoDurationSec(inputDesc, videoDurationSec);
@@ -2716,7 +2808,7 @@ const buildUserMessage = (
     : '11. **총 길이 45~60초 내외.** 버전당 5~15개 컷. 각 VERSION 사이에 불필요한 설명 텍스트 금지.';
 
   if (preset === 'alltts') {
-    return `## 분석 대상
+    return finalizeVersionedPrompt(`## 분석 대상
 ${inputDesc}
 
 ## 지시 사항
@@ -2780,11 +2872,11 @@ ${inputDesc}
 제목: ...
 컨셉: ...
 
-(이 패턴으로 ---VERSION ${versionCount}--- 까지 총 ${versionCount}개)` + durationInstruction + longFormOverride + BILINGUAL_INSTRUCTION;
+(이 패턴으로 ---VERSION ${versionCount}--- 까지 총 ${versionCount}개)` + durationInstruction + longFormOverride + BILINGUAL_INSTRUCTION, versionStart, versionCount);
   }
 
   if (preset === 'condensed') {
-    return `## 분석 대상
+    return finalizeVersionedPrompt(`## 분석 대상
 ${inputDesc}
 
 ## 지시 사항
@@ -2826,11 +2918,11 @@ ${inputDesc}
 제목: ...
 컨셉: ...
 
-(이 패턴으로 ---VERSION ${versionCount}--- 까지 총 ${versionCount}개)` + durationInstruction + BILINGUAL_INSTRUCTION;
+(이 패턴으로 ---VERSION ${versionCount}--- 까지 총 ${versionCount}개)` + durationInstruction + BILINGUAL_INSTRUCTION, versionStart, versionCount);
   }
 
   if (preset === 'tikitaka') {
-    return `## 분석 대상
+    return finalizeVersionedPrompt(`## 분석 대상
 ${inputDesc}
 
 ## 지시 사항
@@ -2890,12 +2982,12 @@ ${tikitakaRowRule}
 컨셉: ...
 재배치 구조: ...
 
-(이 패턴으로 ---VERSION ${versionCount}--- 까지 총 ${versionCount}개)` + durationInstruction + BILINGUAL_INSTRUCTION;
+(이 패턴으로 ---VERSION ${versionCount}--- 까지 총 ${versionCount}개)` + durationInstruction + BILINGUAL_INSTRUCTION, versionStart, versionCount);
   }
 
   // 심층 분석
   if (preset === 'deep') {
-    return `## 분석 대상
+    return finalizeVersionedPrompt(`## 분석 대상
 ${inputDesc}
 
 ## 지시 사항
@@ -2961,12 +3053,12 @@ ${inputDesc}
 | 2 | [N] | (내레이션) "핵심 전개" | [효과자막] | 5.0초 | 핵심 장면 묘사 | 01:30 |
 (총 8~12행, 60초 내외)
 
-(이 패턴으로 ---VERSION ${versionCount}--- 까지 총 ${versionCount}개.${versionCount > 1 ? ' VERSION 1은 표준 대본, 나머지는 4대 본능 자극 변주' : ' VERSION 1은 표준 대본'})` + durationInstruction + BILINGUAL_INSTRUCTION;
+(이 패턴으로 ---VERSION ${versionCount}--- 까지 총 ${versionCount}개.${versionCount > 1 ? ' VERSION 1은 표준 대본, 나머지는 4대 본능 자극 변주' : ' VERSION 1은 표준 대본'})` + durationInstruction + BILINGUAL_INSTRUCTION, versionStart, versionCount);
   }
 
   // 쇼핑형 (V7.0 다이내믹 멀티-컷 편집 프로토콜 적용)
   if (preset === 'shopping') {
-    return `## 분석 대상
+    return finalizeVersionedPrompt(`## 분석 대상
 ${inputDesc}
 
 ## 지시 사항
@@ -3008,11 +3100,11 @@ ${inputDesc}
 제목: [기능/스펙/효과 강조형 제목]
 컨셉: ...
 
-(이 패턴으로 ---VERSION ${versionCount}--- 까지 총 ${versionCount}개)` + durationInstruction + BILINGUAL_INSTRUCTION;
+(이 패턴으로 ---VERSION ${versionCount}--- 까지 총 ${versionCount}개)` + durationInstruction + BILINGUAL_INSTRUCTION, versionStart, versionCount);
   }
 
   // 스낵형
-  return `## 분석 대상
+  return finalizeVersionedPrompt(`## 분석 대상
 ${inputDesc}
 
 ## 지시 사항
@@ -3065,7 +3157,7 @@ ${snackRowRule}
 
 (7열 마스터 편집 테이블 + Content ID 분석)
 
-(이 패턴으로 ---VERSION ${versionCount}--- 까지 총 ${versionCount}개)` + durationInstruction + BILINGUAL_INSTRUCTION;
+(이 패턴으로 ---VERSION ${versionCount}--- 까지 총 ${versionCount}개)` + durationInstruction + BILINGUAL_INSTRUCTION, versionStart, versionCount);
 };
 
 // ═══════════════════════════════════════════════════
@@ -3687,7 +3779,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
         inputDesc += `\n\n---\n${diarizedText}\n\n위 화자 분리 전사 결과는 ElevenLabs AI가 영상 오디오에서 자동 추출한 것입니다.\n각 화자(speaker_0, speaker_1, ...)의 대사와 타이밍을 편집 테이블에 정확히 반영하세요.\n동일 컷에서 화자가 바뀌면 반드시 행을 분리하세요.`;
       }
 
-      // 2단계: AI 분석 — 단일 호출
+      // 2단계: AI 분석 — 적응형 단일/배치 호출
       // [FIX #454] 전처리 완료 후 글로벌 타임아웃을 AI 전용으로 교체
       // 단, 글로벌 타임아웃(8분)이 아직 남아있으면 유지하고 AI 타임아웃만 추가
       if (globalTimeout) clearTimeout(globalTimeout);
@@ -3707,21 +3799,36 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       const sourceCutCountHint = (preset === 'tikitaka' || preset === 'snack')
         ? await waitForPromptSceneCutCount(singleSourceSceneCutsPromise)
         : 0;
-      let userPrompt = buildUserMessage(inputDesc, preset, currentTargetDuration, effectiveVersionCount, knownDurationSec, sourceCutCountHint);
-
-      // [FIX #398] 원본 순서 유지 모드: 비선형 재배치 지시를 오버라이드
-      if (currentKeepOrder && (preset === 'snack' || preset === 'tikitaka')) {
-        userPrompt += `\n\n### ⚠️ 사용자 설정: 원본 순서 유지 모드 (최우선 적용)
+      const keepOrderInstruction = currentKeepOrder && (preset === 'snack' || preset === 'tikitaka')
+        ? `\n\n### ⚠️ 사용자 설정: 원본 순서 유지 모드 (최우선 적용)
 - **비선형 재배치를 하지 마세요.** 원본 영상의 시간순서를 그대로 유지하세요.
 - 1번 컷부터 마지막 컷까지 원본 영상의 타임라인 순서를 따르세요.
 - "후킹과 비선형 재배치" 규칙을 무시하고, 대신 원본 순서 그대로 편집표를 작성하세요.
 - 나머지 규칙(자막 이원화, 속도감, 컷 길이, 효과자막, 이모지 등)은 모두 동일하게 적용하세요.
-- 사용자가 이미 기획한 장면 순서를 유지하면서 자막만 추출하는 것이 목적입니다.`;
-      }
+- 사용자가 이미 기획한 장면 순서를 유지하면서 자막만 추출하는 것이 목적입니다.`
+        : '';
+      const buildPromptForBatch = (
+        versionOffset: number = 0,
+        batchVersionCount: number = effectiveVersionCount,
+      ): string => {
+        let prompt = buildUserMessage(
+          inputDesc,
+          preset,
+          currentTargetDuration,
+          effectiveVersionCount,
+          knownDurationSec,
+          sourceCutCountHint,
+          versionOffset,
+          batchVersionCount,
+        );
+        if (keepOrderInstruction) prompt += keepOrderInstruction;
+        return prompt;
+      };
+      const userPrompt = buildPromptForBatch();
 
       const signal = abortCtrl.signal;
 
-      // 모든 프리셋 단일 호출 (5병렬 배치 제거 — API 비용 ~1/5 절감)
+      // 기본은 단일 호출, 필요 시에만 적응형 병렬 배치로 분할
 
       // [FIX #364] 롱폼 할루시네이션 방지: 5분+ 영상은 temperature를 낮춰 팩트 기반 생성 유도
       const effectiveTemp = maxTimeSec >= 300 ? 0.3 : 0.5;
@@ -3787,14 +3894,19 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       };
 
       let text: string;
+      let parsed: VersionItem[];
 
       // ★ [FIX #582] 동적 maxTokens — 프리셋/버전수/영상길이 기반 최적화
       // 숏폼+소규모 버전: 토큰 절감 → API 응답 속도 향상
       // [FIX #582 v2] Codex 리뷰 P1: alltts/deep 롱폼 perVersion을 프롬프트 실제 요구량에 맞게 상향
       // [FIX #582 v3] Codex 144조합 검증 결과 반영: snack/tikitaka/alltts perVersion 상향
+      // alltts: 롱폼 영상은 버전당 행 수가 duration/10 이상 → 토큰도 비례 증가
+      const allttsPerVersion = knownDurationSec >= 600
+        ? Math.round(4000 * Math.max(1, knownDurationSec / 600))
+        : 4000;
       const perVersionTokens: Record<string, number> = {
         snack: 1400, condensed: 1100, tikitaka: 1900,
-        shopping: 1500, alltts: 4000, deep: 4000,
+        shopping: 1500, alltts: allttsPerVersion, deep: 4000,
       };
       const fixedOverheadTokens: Record<string, number> = {
         snack: 1000, condensed: 1000, tikitaka: 1600,
@@ -3802,29 +3914,107 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       };
       const pvt = perVersionTokens[preset] || 1400;
       const fot = fixedOverheadTokens[preset] || 1400;
-      const sourceFactor = knownDurationSec > 600 ? 1.3 : knownDurationSec > 180 ? 1.15 : 1.0;
+      const sourceFactor = knownDurationSec >= 600 ? 1.3 : knownDurationSec > 180 ? 1.15 : 1.0;
       const minTokensCap = preset === 'deep' ? 25000 : preset === 'alltts' ? 22000 : 14000;
       const isHeavyPreset = preset === 'deep' || preset === 'alltts';
       const maxTokensCap = knownDurationSec <= 75 ? 28000
         : isHeavyPreset && knownDurationSec > 300 ? 65000
         : isHeavyPreset ? 55000
         : 36000;
-      const maxTokens = Math.min(Math.max(Math.round(fot + pvt * effectiveVersionCount * sourceFactor), minTokensCap), maxTokensCap);
+      const estimatedTotalTokens = Math.round(fot + pvt * effectiveVersionCount * sourceFactor);
+      const safeLimitPerCall = Math.max(PER_CALL_SAFE_LIMIT - fot, pvt);
+      const maxVersionsPerCall = Math.max(1, Math.floor(safeLimitPerCall / Math.max(1, pvt * sourceFactor)));
+      const shouldSplitBatches = estimatedTotalTokens > PER_CALL_SAFE_LIMIT
+        && effectiveVersionCount > 1
+        && maxVersionsPerCall < effectiveVersionCount;
+      // 균등 분할: [9,1] 대신 [5,5] 형태로 배치 크기를 균등하게 분배
+      const batchCount = shouldSplitBatches ? Math.ceil(effectiveVersionCount / maxVersionsPerCall) : 1;
+      const versionsPerBatch = shouldSplitBatches ? Math.ceil(effectiveVersionCount / batchCount) : effectiveVersionCount;
+      const buildMaxTokens = (
+        requestedVersionCount: number,
+        perCallCap: number = maxTokensCap,
+      ): number => Math.min(
+        Math.max(Math.round(fot + pvt * requestedVersionCount * sourceFactor), minTokensCap),
+        perCallCap,
+      );
+      const maxTokens = buildMaxTokens(effectiveVersionCount);
+      const splitMaxTokensCap = Math.min(maxTokensCap, PER_CALL_SAFE_LIMIT);
+      const analysisBatches = shouldSplitBatches
+        ? Array.from(
+            { length: Math.ceil(effectiveVersionCount / versionsPerBatch) },
+            (_, batchIndex) => {
+              const versionOffset = batchIndex * versionsPerBatch;
+              const versionCount = Math.min(versionsPerBatch, effectiveVersionCount - versionOffset);
+              return {
+                versionOffset,
+                versionCount,
+                maxTokens: buildMaxTokens(versionCount, splitMaxTokensCap),
+              };
+            },
+          )
+        : [{ versionOffset: 0, versionCount: effectiveVersionCount, maxTokens }];
       if (uploadedFiles.length > 0 && frames.length > 0 && !videoUri) {
         showToast('프레임 기반 분석 모드로 진행합니다. 잠시만 기다려주세요...', 4000);
       }
-      text = await callAI(userPrompt, maxTokens);
+      if (!shouldSplitBatches) {
+        text = await callAI(userPrompt, maxTokens);
+        parsed = parseVersions(text);
+      } else {
+        console.log(`[VideoAnalysis] 적응형 배치 분할 활성화: ${analysisBatches.length}개 배치 (${versionsPerBatch}버전/배치, 예상 ${estimatedTotalTokens} tokens)`);
+        const batchResults = await Promise.allSettled(
+          analysisBatches.map(async (batch) => {
+            const batchPrompt = buildPromptForBatch(batch.versionOffset, batch.versionCount);
+            const batchText = await callAI(batchPrompt, batch.maxTokens);
+            const batchParsed = parseVersions(batchText);
+            const { versions: trimmedBatchParsed, removedCount } = trimTrailingIncompleteVersions(batchParsed);
+            return {
+              ...batch,
+              text: batchText,
+              parsed: normalizeBatchVersionIds(trimmedBatchParsed, batch.versionOffset, batch.versionCount),
+              removedCount,
+            };
+          }),
+        );
+        const successfulBatches = batchResults
+          .flatMap((result) => result.status === 'fulfilled' ? [result.value] : [])
+          .sort((a, b) => a.versionOffset - b.versionOffset);
+        if (successfulBatches.length === 0) {
+          const firstRejected = batchResults.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+          throw firstRejected?.reason ?? new Error('모든 분석 배치가 실패했습니다.');
+        }
+
+        const failedBatchCount = batchResults.length - successfulBatches.length;
+        const removedIncompleteCount = successfulBatches.reduce((sum, batch) => sum + batch.removedCount, 0);
+        if (removedIncompleteCount > 0) {
+          console.warn(`[VideoAnalysis] ⚠️ 배치 응답에서 불완전한 마지막 버전 ${removedIncompleteCount}개 제거`);
+        }
+        if (failedBatchCount > 0) {
+          showToast(`⚠️ ${analysisBatches.length}개 배치 중 ${failedBatchCount}개가 실패했어요. 성공한 배치만 먼저 반영합니다.`, 6000);
+        }
+
+        text = successfulBatches.map(batch => batch.text).join('\n\n');
+        const seenVersionIds = new Set<number>();
+        parsed = successfulBatches
+          .flatMap(batch => batch.parsed)
+          .filter((version) => {
+            if (seenVersionIds.has(version.id)) return false;
+            seenVersionIds.add(version.id);
+            return true;
+          })
+          .sort((a, b) => a.id - b.id);
+      }
 
       setRawResult(text);
-      const parsed = parseVersions(text);
+      const trimmedParsed = trimTrailingIncompleteVersions(parsed);
+      parsed = trimmedParsed.versions;
+      if (trimmedParsed.removedCount > 0) {
+        console.warn(`[VideoAnalysis] ⚠️ 마지막 버전 불완전 — 제거 (${trimmedParsed.removedCount}개)`);
+      }
       // [FIX #582 v2] Codex P1: 응답 잘림 감지 — 요청 버전수보다 적게 파싱되면 경고
-      if (parsed.length < effectiveVersionCount && parsed.length > 0) {
-        const lastVersion = parsed[parsed.length - 1];
-        // 마지막 버전이 불완전하면 제거 (scenes가 2개 미만이면 불완전 판정)
-        if (lastVersion.scenes.length < 2) {
-          parsed.pop();
-          console.warn(`[VideoAnalysis] ⚠️ 마지막 버전 불완전 — 제거 (scenes=${lastVersion.scenes.length})`);
-        }
+      if (parsed.length === 0) {
+        throw new Error('AI 응답에서 유효한 버전을 파싱할 수 없었습니다. 다시 시도해주세요.');
+      }
+      if (parsed.length < effectiveVersionCount) {
         showToast(`⚠️ ${effectiveVersionCount}개 중 ${parsed.length}개 버전만 생성되었어요. 버전 수를 줄이면 더 안정적이에요.`, 6000);
       }
       setVersions(parsed);
