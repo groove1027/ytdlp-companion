@@ -8,6 +8,21 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-20] #610 CapCut 설치 스크립트 추가 + 실제 미디어 링크 검증
+- [x] `nleExportService.ts` — CapCut ZIP 루트에 `install_capcut_project.command`, `install_capcut_project.bat`, `install_capcut_project.ps1`를 추가해 설치 시점에 media path를 현재 PC 절대경로로 패치하도록 보강
+- [x] `nleExportService.ts` — CapCut README를 수동 폴더 복사 안내에서 `설치 스크립트 실행` 안내로 전환하고, 상대경로만으로는 `Media Not Found`가 날 수 있다는 설명 추가
+- [x] `verify-capcut-video-room.mjs`, `verify-capcut-issue574-browser.mjs` — installer script 3종과 README 안내 문구가 ZIP에 실제로 들어가는지 회귀 검증 추가
+- [x] `tsc --noEmit` + `vite build` + `rg` 재검증 통과
+- [x] 브라우저 ZIP 검증 재통과:
+  `PLAYWRIGHT_HEADFUL=1 node test/verify-capcut-video-room.mjs`
+  `PLAYWRIGHT_HEADFUL=1 node test/verify-capcut-issue574-browser.mjs`
+- [x] 실제 설치 검증:
+  생성된 `install_capcut_project.command`를 실행해 CapCut drafts 폴더에 복사/패치 성공
+- [x] 실제 미디어 링크 검증:
+  CapCut 타임라인에서 `verify_video_room.mp4` 클립명이 보이고 `Media Not Found` 오버레이가 사라졌으며, `lsof -p 75432` 기준 CapCut 메인 프로세스가 `/Users/jihoo/Movies/CapCut/User Data/Projects/com.lveditor.draft/verify_capcut_video_room (4)/materials/video/verify_video_room.mp4`를 실제로 열고 있음
+- [x] 직관 검증:
+  연결된 실제 파일을 초록 `CUT 1` / 파랑 `CUT 2` 테스트 영상으로 교체했을 때 CapCut 타임라인 화면도 동일하게 바뀌는 것을 사용자 스크린샷으로 확인
+
 ### [2026-03-20] AGENTS 이슈 코멘트 가독성 규칙 고정
 - [x] `AGENTS.md` — GitHub 이슈 코멘트 스타일에 줄바꿈 규칙 추가
 - [x] `AGENTS.md` — 한 문단 금지, 4줄 고정 형식, 문장별 줄바꿈 템플릿 명시

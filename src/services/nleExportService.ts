@@ -15,12 +15,14 @@ import type {
   ScriptLine,
   UnifiedSceneTiming,
   NarrationSyncSceneTiming,
+  NleMotionInterpolation,
   NleMotionKeyframe,
   NleMotionTrack,
 } from '../types';
 import { buildNarrationSyncedTimeline, breakDialogueLines } from './narrationSyncService';
 import type { NarrationLineLike } from './narrationSyncService';
 import { compileNleMotionTrack } from './nleMotionExport';
+import { OVERSCALE } from './webcodecs/kenBurnsEngine';
 
 interface ExportNarrationLine extends NarrationLineLike {
   sceneId?: string;
@@ -183,6 +185,9 @@ interface CapCutProjectPathInfo {
   draftPathPlaceholder: string;
 }
 
+const CAPCUT_MAC_INSTALLER_NAME = 'install_capcut_project.command';
+const CAPCUT_WINDOWS_BATCH_INSTALLER_NAME = 'install_capcut_project.bat';
+const CAPCUT_WINDOWS_POWERSHELL_INSTALLER_NAME = 'install_capcut_project.ps1';
 const CAPCUT_DRAFT_EXTRA_BASE64 = 'aQUAAABpAAAAAGVpAAAAAAIAAAB7fXpCe7g=';
 const CAPCUT_CRYPTO_KEY_STORE_BASE64 = 'AAAAsngBLYw9DoIwHMX/Ytw5iJVAwIIjpcbZuJNam9gotIGSSOJVjKMbg2dwY3H0FB7BWIzT+8jvvTsAjA+ireE2OB+uViZc6r2octuDazNMH9Gzfy+CDeq6T/+6uH/AtFrAyAKO0kaqkh1zrkojTubXgtNUElbWnLW3FrVqKi5qj6tiK0s2DLyMUhwTnCKckRiFy3mA4hgHKKJpkvjE9wnFOWt2Us2KkA2fX7XXM/Y=';
 
@@ -450,6 +455,128 @@ function buildCapCutContainedMaterialPath(
   fileName: string,
 ): string {
   return `${buildCapCutPathInfo(draftFolderId).draftPathPlaceholder}/materials/${category}/${fileName}`;
+}
+
+function buildCapCutMacInstallerScript(projectFolderId: string): string {
+  return [
+    '#!/bin/bash',
+    'set -euo pipefail',
+    '',
+    `PROJECT_ID="${projectFolderId}"`,
+    'SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"',
+    'TARGET_ROOT="$HOME/Movies/CapCut/User Data/Projects/com.lveditor.draft"',
+    'SOURCE_PROJECT_PATH="$SCRIPT_DIR/$PROJECT_ID"',
+    '',
+    'if [ ! -d "$SOURCE_PROJECT_PATH" ] && [ -f "$SCRIPT_DIR/draft_content.json" ]; then',
+    '  SOURCE_PROJECT_PATH="$SCRIPT_DIR"',
+    'fi',
+    '',
+    'if [ ! -f "$SOURCE_PROJECT_PATH/draft_content.json" ]; then',
+    '  echo "CapCut 프로젝트 폴더를 찾지 못했습니다: $SOURCE_PROJECT_PATH"',
+    '  if [ -t 0 ]; then read -r -p "Enter를 누르면 종료합니다." _; fi',
+    '  exit 1',
+    'fi',
+    '',
+    'TARGET_PROJECT_PATH="$TARGET_ROOT/$PROJECT_ID"',
+    'mkdir -p "$TARGET_ROOT"',
+    '',
+    'if [ "$SOURCE_PROJECT_PATH" != "$TARGET_PROJECT_PATH" ]; then',
+    '  rm -rf "$TARGET_PROJECT_PATH"',
+    '  cp -R "$SOURCE_PROJECT_PATH" "$TARGET_PROJECT_PATH"',
+    'fi',
+    '',
+    'export PLACEHOLDER="##_draftpath_placeholder_${PROJECT_ID}_##"',
+    'export TARGET_PROJECT_PATH',
+    'export TARGET_ROOT',
+    '',
+    'find "$TARGET_PROJECT_PATH" -type f \\( -name "draft_content.json" -o -name "draft_info.json" -o -name "draft_meta_info.json" -o -path "*/Timelines/*/draft_info.json" \\) -print0 | while IFS= read -r -d "" file; do',
+    "  perl -0pi -e '",
+    '    s#\\Q$ENV{PLACEHOLDER}\\E#$ENV{TARGET_PROJECT_PATH}#g;',
+    '    s#"path":"materials/#"path":"$ENV{TARGET_PROJECT_PATH}/materials/#g;',
+    '    s#"media_path":"materials/#"media_path":"$ENV{TARGET_PROJECT_PATH}/materials/#g;',
+    '    s#"draft_fold_path":"[^"]*"#"draft_fold_path":"$ENV{TARGET_PROJECT_PATH}"#g;',
+    '    s#"draft_root_path":"[^"]*"#"draft_root_path":"$ENV{TARGET_ROOT}"#g;',
+    "  ' \"$file\"",
+    'done',
+    '',
+    'open -a "CapCut" "$TARGET_PROJECT_PATH" || true',
+    'echo ""',
+    'echo "CapCut 프로젝트 설치 완료: $TARGET_PROJECT_PATH"',
+    'if [ -t 0 ]; then read -r -p "Enter를 누르면 종료합니다." _; fi',
+    '',
+  ].join('\n');
+}
+
+function buildCapCutWindowsPowerShellInstallerScript(projectFolderId: string): string {
+  return [
+    "$ErrorActionPreference = 'Stop'",
+    `$ProjectId = '${projectFolderId}'`,
+    '$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path',
+    "$TargetRoot = Join-Path $env:LOCALAPPDATA 'CapCut\\User Data\\Projects\\com.lveditor.draft'",
+    '$SourceProjectPath = Join-Path $ScriptDir $ProjectId',
+    '',
+    "if (-not (Test-Path $SourceProjectPath) -and (Test-Path (Join-Path $ScriptDir 'draft_content.json'))) {",
+    '  $SourceProjectPath = $ScriptDir',
+    '}',
+    '',
+    "if (-not (Test-Path (Join-Path $SourceProjectPath 'draft_content.json'))) {",
+    "  throw \"CapCut 프로젝트 폴더를 찾지 못했습니다: $SourceProjectPath\"",
+    '}',
+    '',
+    '$TargetProjectPath = Join-Path $TargetRoot $ProjectId',
+    'New-Item -ItemType Directory -Force -Path $TargetRoot | Out-Null',
+    '',
+    'if ($SourceProjectPath -ne $TargetProjectPath) {',
+    '  Remove-Item $TargetProjectPath -Recurse -Force -ErrorAction SilentlyContinue',
+    '  Copy-Item $SourceProjectPath $TargetProjectPath -Recurse -Force',
+    '}',
+    '',
+    '$Placeholder = "##_draftpath_placeholder_$ProjectId_##"',
+    "$TargetProjectPathJson = $TargetProjectPath -replace '\\\\', '/'",
+    "$TargetRootJson = $TargetRoot -replace '\\\\', '/'",
+    '',
+    '$JsonFiles = Get-ChildItem -Path $TargetProjectPath -File -Recurse | Where-Object {',
+    "  $_.Name -in @('draft_content.json', 'draft_info.json', 'draft_meta_info.json') -or",
+    "  $_.FullName -like '*\\Timelines\\*\\draft_info.json'",
+    '}',
+    '',
+    'foreach ($file in $JsonFiles) {',
+    '  $content = Get-Content -Path $file.FullName -Raw -Encoding UTF8',
+    '  $content = $content.Replace($Placeholder, $TargetProjectPathJson)',
+    "  $content = $content.Replace('\"path\":\"materials/', '\"path\":\"' + $TargetProjectPathJson + '/materials/')",
+    "  $content = $content.Replace('\"media_path\":\"materials/', '\"media_path\":\"' + $TargetProjectPathJson + '/materials/')",
+    "  $content = [regex]::Replace($content, '\"draft_fold_path\":\"[^\"]*\"', '\"draft_fold_path\":\"' + $TargetProjectPathJson + '\"')",
+    "  $content = [regex]::Replace($content, '\"draft_root_path\":\"[^\"]*\"', '\"draft_root_path\":\"' + $TargetRootJson + '\"')",
+    '  Set-Content -Path $file.FullName -Value $content -Encoding UTF8',
+    '}',
+    '',
+    '$CapCutCandidates = @(',
+    "  (Join-Path $env:LOCALAPPDATA 'CapCut\\CapCut.exe'),",
+    "  (Join-Path $env:ProgramFiles 'CapCut\\CapCut.exe'),",
+    "  (Join-Path ${env:ProgramFiles(x86)} 'CapCut\\CapCut.exe')",
+    ') | Where-Object { $_ -and (Test-Path $_) }',
+    '',
+    'if ($CapCutCandidates.Count -gt 0) {',
+    '  Start-Process -FilePath $CapCutCandidates[0] | Out-Null',
+    '}',
+    '',
+    'Write-Host ""',
+    'Write-Host "CapCut 프로젝트 설치 완료: $TargetProjectPath"',
+    'if ([Environment]::UserInteractive) {',
+    '  Read-Host "Enter를 누르면 종료합니다." | Out-Null',
+    '}',
+    '',
+  ].join('\r\n');
+}
+
+function buildCapCutWindowsBatchInstallerScript(): string {
+  return [
+    '@echo off',
+    'setlocal',
+    `powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0${CAPCUT_WINDOWS_POWERSHELL_INSTALLER_NAME}"`,
+    'if errorlevel 1 pause',
+    '',
+  ].join('\r\n');
 }
 
 function buildCapCutSegmentShell(params: {
@@ -778,6 +905,59 @@ function buildCapCutAttachmentEditing(): string {
       video_recording_create_draft: '',
     },
   });
+}
+
+function addCapCutMainTimelineMirror(params: {
+  zip: { file: (path: string, data: string | Blob | Uint8Array) => unknown };
+  projectFolderId: string;
+  mainTimelineId: string;
+  draftJson: string;
+  attachmentPcCommonJson: string;
+  attachmentEditingJson: string;
+  attachmentPcTimelineJson: string;
+  attachmentScriptVideoJson: string;
+  attachmentActionSceneJson: string;
+  draftExtra: Uint8Array;
+  draftCover: Blob;
+}): void {
+  const {
+    zip,
+    projectFolderId,
+    mainTimelineId,
+    draftJson,
+    attachmentPcCommonJson,
+    attachmentEditingJson,
+    attachmentPcTimelineJson,
+    attachmentScriptVideoJson,
+    attachmentActionSceneJson,
+    draftExtra,
+    draftCover,
+  } = params;
+  const timelineBase = `${projectFolderId}/Timelines/${mainTimelineId}`;
+
+  zip.file(`${timelineBase}/draft_info.json`, draftJson);
+  zip.file(`${timelineBase}/attachment_pc_common.json`, attachmentPcCommonJson);
+  zip.file(`${timelineBase}/attachment_editing.json`, attachmentEditingJson);
+  zip.file(`${timelineBase}/common_attachment/attachment_pc_timeline.json`, attachmentPcTimelineJson);
+  zip.file(`${timelineBase}/common_attachment/attachment_script_video.json`, attachmentScriptVideoJson);
+  zip.file(`${timelineBase}/common_attachment/attachment_action_scene.json`, attachmentActionSceneJson);
+  zip.file(`${timelineBase}/draft.extra`, draftExtra);
+  zip.file(`${timelineBase}/draft_cover.jpg`, draftCover);
+  zip.file(`${timelineBase}/template.tmp`, '');
+  zip.file(`${timelineBase}/template-2.tmp`, '');
+}
+
+function addCapCutDesktopInstallerFiles(params: {
+  zip: { file: (path: string, data: string | Blob | Uint8Array, options?: Record<string, unknown>) => unknown };
+  projectFolderId: string;
+}): void {
+  const { zip, projectFolderId } = params;
+
+  zip.file(CAPCUT_MAC_INSTALLER_NAME, buildCapCutMacInstallerScript(projectFolderId), {
+    unixPermissions: '755',
+  });
+  zip.file(CAPCUT_WINDOWS_POWERSHELL_INSTALLER_NAME, buildCapCutWindowsPowerShellInstallerScript(projectFolderId));
+  zip.file(CAPCUT_WINDOWS_BATCH_INSTALLER_NAME, buildCapCutWindowsBatchInstallerScript());
 }
 
 function buildCapCutTimelineLayout(mainTimelineId: string): string {
@@ -2123,6 +2303,12 @@ export async function buildNlePackageZip(params: {
       draftContent.materials?.audios?.length || 0
     );
     const draftCoverBlob = await buildCapCutDraftCoverBlob(width || 320, height || 180);
+    const attachmentPcTimelineJson = buildCapCutAttachmentPcTimeline();
+    const attachmentScriptVideoJson = buildCapCutAttachmentScriptVideo();
+    const attachmentActionSceneJson = buildCapCutAttachmentActionScene();
+    const attachmentPcCommonJson = buildCapCutAttachmentPcCommon();
+    const attachmentEditingJson = buildCapCutAttachmentEditing();
+    const draftExtra = buildCapCutOpaqueDraftExtra();
 
     // [FIX #610] 모든 draft 파일을 projectId/ 폴더 아래에 배치
     zip.file(`${pId}/draft_content.json`, draftResult.json);
@@ -2137,21 +2323,38 @@ export async function buildNlePackageZip(params: {
       draftTimelineMaterialsSize,
     }));
     zip.file(`${pId}/Timelines/project.json`, buildCapCutTimelineProject(draftResult.scaffoldIds.timelineProjectId, draftResult.scaffoldIds.timelineId, nowUs));
-    zip.file(`${pId}/common_attachment/attachment_pc_timeline.json`, buildCapCutAttachmentPcTimeline());
-    zip.file(`${pId}/common_attachment/attachment_script_video.json`, buildCapCutAttachmentScriptVideo());
-    zip.file(`${pId}/common_attachment/attachment_action_scene.json`, buildCapCutAttachmentActionScene());
+    zip.file(`${pId}/common_attachment/attachment_pc_timeline.json`, attachmentPcTimelineJson);
+    zip.file(`${pId}/common_attachment/attachment_script_video.json`, attachmentScriptVideoJson);
+    zip.file(`${pId}/common_attachment/attachment_action_scene.json`, attachmentActionSceneJson);
     zip.file(`${pId}/common_attachment/coperate_create.json`, buildCapCutCooperateCreate());
-    zip.file(`${pId}/attachment_pc_common.json`, buildCapCutAttachmentPcCommon());
-    zip.file(`${pId}/attachment_editing.json`, buildCapCutAttachmentEditing());
+    zip.file(`${pId}/attachment_pc_common.json`, attachmentPcCommonJson);
+    zip.file(`${pId}/attachment_editing.json`, attachmentEditingJson);
     zip.file(`${pId}/timeline_layout.json`, buildCapCutTimelineLayout(draftResult.scaffoldIds.timelineId));
     zip.file(`${pId}/draft_virtual_store.json`, buildCapCutDraftVirtualStore());
     zip.file(`${pId}/key_value.json`, draftResult.keyValueJson);
     zip.file(`${pId}/draft_biz_config.json`, buildCapCutDraftBizConfig(draftResult.scaffoldIds.timelineId, draftResult.trackIds));
     zip.file(`${pId}/draft_agency_config.json`, buildCapCutDraftAgencyConfig());
     zip.file(`${pId}/performance_opt_info.json`, buildCapCutPerformanceOptInfo());
-    zip.file(`${pId}/draft.extra`, buildCapCutOpaqueDraftExtra());
+    zip.file(`${pId}/draft.extra`, draftExtra);
     zip.file(`${pId}/crypto_key_store.dat`, buildCapCutOpaqueCryptoKeyStore());
     zip.file(`${pId}/draft_cover.jpg`, draftCoverBlob);
+    addCapCutDesktopInstallerFiles({
+      zip,
+      projectFolderId: pId,
+    });
+    addCapCutMainTimelineMirror({
+      zip,
+      projectFolderId: pId,
+      mainTimelineId: draftResult.scaffoldIds.timelineId,
+      draftJson: draftResult.json,
+      attachmentPcCommonJson,
+      attachmentEditingJson,
+      attachmentPcTimelineJson,
+      attachmentScriptVideoJson,
+      attachmentActionSceneJson,
+      draftExtra,
+      draftCover: draftCoverBlob,
+    });
 
     // CapCut 자체 draft는 materials/ 아래 self-contained 미디어를 사용
     if (videoBlob) {
@@ -2176,14 +2379,16 @@ export async function buildNlePackageZip(params: {
     zip.file('README.txt', [
       `=== ${title} — CapCut ===`,
       '',
-      '★ 추천: 프로젝트 폴더 복사 (편집점 + 자막 + 영상 자동 배치)',
+      '★ 추천: 설치 스크립트 실행 (절대경로 패치 + 미디어 자동 연결)',
       '1. CapCut 데스크톱을 완전히 종료합니다.',
       '2. ZIP 압축을 해제합니다.',
-      `3. 압축 해제된 폴더 안의 "${pId}" 폴더를 아래 경로에 복사합니다:`,
-      '   • Mac: ~/Movies/CapCut/User Data/Projects/com.lveditor.draft/',
-      '   • Windows: %LOCALAPPDATA%\\CapCut\\User Data\\Projects\\com.lveditor.draft\\',
-      `   → 최종 경로 예: .../com.lveditor.draft/${pId}/draft_content.json`,
-      '4. CapCut을 다시 실행하면 프로젝트 목록에 자동으로 나타납니다!',
+      `3. Mac은 "${CAPCUT_MAC_INSTALLER_NAME}", Windows는 "${CAPCUT_WINDOWS_BATCH_INSTALLER_NAME}"를 실행합니다.`,
+      `4. 스크립트가 "${pId}" 폴더를 CapCut 프로젝트 경로에 복사하고 미디어 경로를 이 PC 기준 절대경로로 바꿉니다.`,
+      '5. 설치가 끝나면 CapCut을 다시 실행하거나, 이미 켜졌다면 프로젝트 카드를 다시 눌러 확인합니다.',
+      '',
+      '[ 수동 복사만 하면 안 되는 이유 ]',
+      '• 최신 CapCut 데스크톱은 imported draft의 media path를 상대경로만으로는 못 찾는 경우가 있습니다.',
+      '• 그래서 설치 시점에 현재 컴퓨터 경로로 media path를 다시 써줘야 Media Not Found가 사라집니다.',
       '',
       '[ 대안: XML import ]',
       '1. CapCut 데스크톱 > File > Import > XML File',
@@ -2733,6 +2938,7 @@ function buildFcpScalarParameterXml(
   keyframes: NleMotionKeyframe[],
   fps: number,
   mapper: (value: number) => number,
+  interpolation: NleMotionInterpolation,
 ): string {
   if (keyframes.length === 0) return '';
   const baseValue = roundMotionValue(mapper(keyframes[0].value), 4);
@@ -2740,7 +2946,7 @@ function buildFcpScalarParameterXml(
                 <keyframe>
                   <when>${Math.max(0, Math.round(keyframe.timeSec * fps))}</when>
                   <value>${roundMotionValue(mapper(keyframe.value), 4)}</value>
-                  <interpolation><name>linear</name></interpolation>
+                  <interpolation><name>${interpolation}</name></interpolation>
                 </keyframe>`).join('');
   return `
               <parameter>
@@ -2755,6 +2961,7 @@ function buildFcpCenterParameterXml(
   fps: number,
   width: number,
   height: number,
+  interpolation: NleMotionInterpolation,
 ): string {
   const timeSet = new Set<number>();
   track.translateX.forEach(({ timeSec }) => timeSet.add(timeSec));
@@ -2771,7 +2978,7 @@ function buildFcpCenterParameterXml(
                 <keyframe>
                   <when>${Math.max(0, Math.round(timeSec * fps))}</when>
                   <value><horiz>${x}</horiz><vert>${y}</vert></value>
-                  <interpolation><name>linear</name></interpolation>
+                  <interpolation><name>${interpolation}</name></interpolation>
                 </keyframe>`;
   }).join('');
 
@@ -2788,13 +2995,14 @@ function buildFcpMotionFilterXml(
   fps: number,
   width: number,
   height: number,
+  scaleBase = 1,
 ): string {
   if (!hasNleMotion(track) || !track) return '';
 
-  const scaleXml = buildFcpScalarParameterXml('scale', 'Scale', track.scale, fps, (value) => value * 100);
-  const centerXml = buildFcpCenterParameterXml(track, fps, width, height);
-  const rotationXml = buildFcpScalarParameterXml('rotation', 'Rotation', track.rotation, fps, (value) => value);
-  const opacityXml = buildFcpScalarParameterXml('opacity', 'Opacity', track.opacity, fps, (value) => value * 100);
+  const scaleXml = buildFcpScalarParameterXml('scale', 'Scale', track.scale, fps, (value) => value * scaleBase * 100, track.transformInterpolation);
+  const centerXml = buildFcpCenterParameterXml(track, fps, width, height, track.transformInterpolation);
+  const rotationXml = buildFcpScalarParameterXml('rotation', 'Rotation', track.rotation, fps, (value) => value, track.transformInterpolation);
+  const opacityXml = buildFcpScalarParameterXml('opacity', 'Opacity', track.opacity, fps, (value) => value * 100, track.opacityInterpolation);
   const parameters = [scaleXml, centerXml, rotationXml, opacityXml].filter(Boolean).join('');
   if (!parameters) return '';
 
@@ -2839,8 +3047,9 @@ function buildEditRoomFcpXml(params: {
   mediaFileMap?: Map<number, string>;
   /** 실제 ZIP에 들어간 나레이션 오디오 클립 목록 */
   narrationClips?: EditRoomNarrationClip[];
+  stillImageScaleBase?: number;
 }): string {
-  const { timeline, scenes, title, fps, width, height, mediaFileMap, narrationClips } = params;
+  const { timeline, scenes, title, fps, width, height, mediaFileMap, narrationClips, stillImageScaleBase = 1 } = params;
   if (timeline.length === 0) return '';
 
   const { ntsc, timebase } = fpsToNtsc(fps);
@@ -2879,8 +3088,10 @@ function buildEditRoomFcpXml(params: {
     const isStillImage = !hasEmbeddedAudio;
     const clipDurFrames = toFrames(t.imageDuration);
     const clipLabel = (scene?.scriptText || `장면 ${i + 1}`).slice(0, 40);
-    const motionTrack = isStillImage ? compileNleMotionTrack(t, width, height, fps) : null;
-    const motionFilterXml = buildFcpMotionFilterXml(motionTrack, fps, width, height);
+    const motionTrack = isStillImage
+      ? compileNleMotionTrack(t, width, height, fps, { sampleMode: 'per-frame', simplify: false })
+      : null;
+    const motionFilterXml = buildFcpMotionFilterXml(motionTrack, fps, width, height, isStillImage ? stillImageScaleBase : 1);
     return `
           <clipitem id="clip-${i + 1}" premiereChannelType="stereo">
             <name>${escXml(`#${i + 1} ${clipLabel}`)}</name>
@@ -3105,6 +3316,54 @@ async function fetchAssetBlob(url: string): Promise<Blob | null> {
   return null;
 }
 
+function getStillImageMime(blob: Blob): 'image/png' | 'image/jpeg' {
+  return blob.type === 'image/png' ? 'image/png' : 'image/jpeg';
+}
+
+async function normalizeStillImageBlobForPremiere(
+  blob: Blob,
+  width: number,
+  height: number,
+): Promise<Blob> {
+  if (typeof document === 'undefined' || typeof Image === 'undefined' || width <= 0 || height <= 0) {
+    return blob;
+  }
+
+  const mime = getStillImageMime(blob);
+  const blobUrl = URL.createObjectURL(blob);
+  try {
+    return await new Promise<Blob>((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(2, Math.round(width));
+        canvas.height = Math.max(2, Math.round(height));
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(blob);
+          return;
+        }
+
+        if (mime === 'image/jpeg') {
+          ctx.fillStyle = '#000000';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+        } else {
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        // EditRoom 프리뷰와 동일하게 시퀀스 크기에 맞춰 강제로 리사이즈한다.
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob((value) => resolve(value || blob), mime, mime === 'image/jpeg' ? 0.92 : undefined);
+      };
+      img.onerror = () => resolve(blob);
+      img.src = blobUrl;
+    });
+  } finally {
+    URL.revokeObjectURL(blobUrl);
+  }
+}
+
 /** Blob 오디오의 실제 재생 길이(초) 측정 */
 async function measureBlobAudioDuration(blob: Blob): Promise<number | null> {
   if (typeof window === 'undefined' || typeof Audio === 'undefined') return null;
@@ -3289,9 +3548,12 @@ export async function buildEditRoomNleZip(params: {
     }
 
     if (!added && scene.imageUrl) {
-      const blob = await fetchAssetBlob(scene.imageUrl);
-      if (blob) {
-        const ext = scene.imageUrl.includes('.png') || scene.imageUrl.startsWith('data:image/png') ? 'png' : 'jpg';
+      const originalBlob = await fetchAssetBlob(scene.imageUrl);
+      if (originalBlob) {
+        const blob = target === 'premiere'
+          ? await normalizeStillImageBlobForPremiere(originalBlob, w, h)
+          : originalBlob;
+        const ext = getStillImageMime(blob) === 'image/png' ? 'png' : 'jpg';
         const fileName = `${idx}_scene.${ext}`;
         zip.file(`media/${fileName}`, blob);
         mediaFileMap.set(i, fileName);
@@ -3393,7 +3655,17 @@ export async function buildEditRoomNleZip(params: {
   // 나레이션은 line.duration/오디오 메타데이터 기반 실제 길이로 A2 트랙에 배치
   // VREW는 XML import 미지원 — premiere/capcut만 XML 포함
   if (target !== 'vrew') {
-    const xml = buildEditRoomFcpXml({ timeline, scenes, title, fps, width: w, height: h, mediaFileMap, narrationClips });
+    const xml = buildEditRoomFcpXml({
+      timeline,
+      scenes,
+      title,
+      fps,
+      width: w,
+      height: h,
+      mediaFileMap,
+      narrationClips,
+      stillImageScaleBase: target === 'premiere' ? OVERSCALE : 1,
+    });
     zip.file(`${safeName}.xml`, xml);
   }
 
@@ -3830,6 +4102,12 @@ export async function buildEditRoomNleZip(params: {
     const editNowUs = Date.now() * 1000;
     const draftTimelineMaterialsSize = videoMaterials.length + textObjects.length + audioMaterials.length;
     const draftCoverBlob = await buildCapCutDraftCoverBlob(w, h);
+    const attachmentPcTimelineJson = buildCapCutAttachmentPcTimeline();
+    const attachmentScriptVideoJson = buildCapCutAttachmentScriptVideo();
+    const attachmentActionSceneJson = buildCapCutAttachmentActionScene();
+    const attachmentPcCommonJson = buildCapCutAttachmentPcCommon();
+    const attachmentEditingJson = buildCapCutAttachmentEditing();
+    const draftExtra = buildCapCutOpaqueDraftExtra();
     zip.file(`${projectId}/draft_content.json`, draftJson);
     zip.file(`${projectId}/draft_settings`, buildCapCutDraftSettings(editNowTs, w, h, detectCapCutDesktopPlatform(), draftTimelineMaterialsSize, totalDurUs / 1_000_000));
     zip.file(`${projectId}/draft_info.json`, draftJson);
@@ -3842,21 +4120,38 @@ export async function buildEditRoomNleZip(params: {
       draftTimelineMaterialsSize,
     }));
     zip.file(`${projectId}/Timelines/project.json`, buildCapCutTimelineProject(scaffoldIds.timelineProjectId, scaffoldIds.timelineId, editNowUs));
-    zip.file(`${projectId}/common_attachment/attachment_pc_timeline.json`, buildCapCutAttachmentPcTimeline());
-    zip.file(`${projectId}/common_attachment/attachment_script_video.json`, buildCapCutAttachmentScriptVideo());
-    zip.file(`${projectId}/common_attachment/attachment_action_scene.json`, buildCapCutAttachmentActionScene());
+    zip.file(`${projectId}/common_attachment/attachment_pc_timeline.json`, attachmentPcTimelineJson);
+    zip.file(`${projectId}/common_attachment/attachment_script_video.json`, attachmentScriptVideoJson);
+    zip.file(`${projectId}/common_attachment/attachment_action_scene.json`, attachmentActionSceneJson);
     zip.file(`${projectId}/common_attachment/coperate_create.json`, buildCapCutCooperateCreate());
-    zip.file(`${projectId}/attachment_pc_common.json`, buildCapCutAttachmentPcCommon());
-    zip.file(`${projectId}/attachment_editing.json`, buildCapCutAttachmentEditing());
+    zip.file(`${projectId}/attachment_pc_common.json`, attachmentPcCommonJson);
+    zip.file(`${projectId}/attachment_editing.json`, attachmentEditingJson);
     zip.file(`${projectId}/timeline_layout.json`, buildCapCutTimelineLayout(scaffoldIds.timelineId));
     zip.file(`${projectId}/draft_virtual_store.json`, buildCapCutDraftVirtualStore());
     zip.file(`${projectId}/key_value.json`, buildCapCutKeyValue(keyValueEntries));
     zip.file(`${projectId}/draft_biz_config.json`, buildCapCutDraftBizConfig(scaffoldIds.timelineId, [trackVideoId, ...(textSegments.length > 0 ? [trackTextId] : []), ...(audioSegments.length > 0 ? [trackAudioId] : [])]));
     zip.file(`${projectId}/draft_agency_config.json`, buildCapCutDraftAgencyConfig());
     zip.file(`${projectId}/performance_opt_info.json`, buildCapCutPerformanceOptInfo());
-    zip.file(`${projectId}/draft.extra`, buildCapCutOpaqueDraftExtra());
+    zip.file(`${projectId}/draft.extra`, draftExtra);
     zip.file(`${projectId}/crypto_key_store.dat`, buildCapCutOpaqueCryptoKeyStore());
     zip.file(`${projectId}/draft_cover.jpg`, draftCoverBlob);
+    addCapCutDesktopInstallerFiles({
+      zip,
+      projectFolderId: projectId,
+    });
+    addCapCutMainTimelineMirror({
+      zip,
+      projectFolderId: projectId,
+      mainTimelineId: scaffoldIds.timelineId,
+      draftJson,
+      attachmentPcCommonJson,
+      attachmentEditingJson,
+      attachmentPcTimelineJson,
+      attachmentScriptVideoJson,
+      attachmentActionSceneJson,
+      draftExtra,
+      draftCover: draftCoverBlob,
+    });
   }
 
   // README (CapCut은 SRT import 가장 안정적이라 SRT 중심으로 안내)
@@ -3887,15 +4182,17 @@ export async function buildEditRoomNleZip(params: {
     zip.file('README.txt', [
       `=== ${title} — CapCut 프로젝트 파일 ===`,
       '',
-      '★ 추천: 프로젝트 폴더 복사 (이미지+자막+나레이션 자동 배치!)',
+      '★ 추천: 설치 스크립트 실행 (이미지/영상 + 자막 + 나레이션 자동 연결)',
       '1. CapCut 데스크톱을 완전히 종료합니다.',
       '2. ZIP 압축을 해제합니다.',
-      `3. 압축 해제된 폴더 안의 "${editRoomCapCutProjectId}" 폴더를 아래 경로에 복사합니다:`,
-      '   • Windows: %LOCALAPPDATA%\\CapCut\\User Data\\Projects\\com.lveditor.draft\\',
-      '   • Mac: ~/Movies/CapCut/User Data/Projects/com.lveditor.draft/',
-      `   → 최종 경로 예: .../com.lveditor.draft/${editRoomCapCutProjectId}/draft_content.json`,
-      '4. CapCut을 다시 실행하면 프로젝트 목록에 자동으로 나타납니다!',
-      '5. 이미지/영상, 자막, 나레이션이 모두 타임라인에 배치되어 있습니다.',
+      `3. Mac은 "${CAPCUT_MAC_INSTALLER_NAME}", Windows는 "${CAPCUT_WINDOWS_BATCH_INSTALLER_NAME}"를 실행합니다.`,
+      `4. 스크립트가 "${editRoomCapCutProjectId}" 폴더를 CapCut 프로젝트 경로에 복사하고 media path를 현재 PC 절대경로로 맞춥니다.`,
+      '5. 설치가 끝나면 CapCut에서 프로젝트 카드를 열면 됩니다.',
+      '6. 이미지/영상, 자막, 나레이션이 모두 타임라인에 배치되어 있습니다.',
+      '',
+      '[ 수동 복사만 하면 안 되는 이유 ]',
+      '• 최신 CapCut 데스크톱은 imported draft의 media path를 상대경로로 둘 경우 Media Not Found가 날 수 있습니다.',
+      '• 설치 스크립트가 그 경로를 현재 PC 기준 절대경로로 바꿔줍니다.',
       '',
       '[ 대안 1: SRT 자막 가져오기 ]',
       '1. CapCut에서 새 프로젝트 생성 후 media/ 이미지를 타임라인에 배치',

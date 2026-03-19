@@ -131,6 +131,7 @@ async function main() {
       const draftMetaInfo = JSON.parse(await readZipText('draft_meta_info.json'));
       const timelineProject = JSON.parse(await readZipText('Timelines/project.json'));
       const draftSettings = await readZipText('draft_settings');
+      const readme = await zipInstance.file('README.txt').async('string');
       const videoTrack = draftContent.tracks.find((track) => track.type === 'video');
 
       return {
@@ -141,7 +142,23 @@ async function main() {
         mainTimelineId: timelineProject.main_timeline_id,
         draftSettings,
         draftVideoCount: draftInfo.materials.videos.length,
-        hasRootVideo: hasZipEntry('verify_video_room.mp4'),
+        draftFoldPath: draftMetaInfo.draft_fold_path,
+        draftRootPath: draftMetaInfo.draft_root_path,
+        draftPath: draftInfo.materials.videos[0]?.path || '',
+        hasMaterialsVideo: hasZipEntry('materials/video/verify_video_room.mp4'),
+        hasDraftCover: hasZipEntry('draft_cover.jpg'),
+        hasDraftExtra: hasZipEntry('draft.extra'),
+        hasCryptoKeyStore: hasZipEntry('crypto_key_store.dat'),
+        hasAttachmentScriptVideo: hasZipEntry('common_attachment/attachment_script_video.json'),
+        hasTimelineDraftInfo: hasZipEntry(`Timelines/${timelineProject.main_timeline_id}/draft_info.json`),
+        hasTimelineAttachmentPcCommon: hasZipEntry(`Timelines/${timelineProject.main_timeline_id}/attachment_pc_common.json`),
+        hasTimelineAttachmentEditing: hasZipEntry(`Timelines/${timelineProject.main_timeline_id}/attachment_editing.json`),
+        hasTimelineAttachmentPcTimeline: hasZipEntry(`Timelines/${timelineProject.main_timeline_id}/common_attachment/attachment_pc_timeline.json`),
+        hasTimelineTemplate2: hasZipEntry(`Timelines/${timelineProject.main_timeline_id}/template-2.tmp`),
+        hasMacInstaller: !!zipInstance.file('install_capcut_project.command'),
+        hasWindowsBatchInstaller: !!zipInstance.file('install_capcut_project.bat'),
+        hasWindowsPowerShellInstaller: !!zipInstance.file('install_capcut_project.ps1'),
+        readme,
         hasMediaVideo: !!zipInstance.file('media/verify_video_room.mp4'),
         videoStarts: videoTrack.segments.map((segment) => segment.target_timerange.start),
       };
@@ -151,9 +168,17 @@ async function main() {
     const zip = await JSZip.loadAsync(zipBuffer);
 
     assert(summary.draftSettings.includes('draft_create_time='), 'CapCut ZIP should include draft_settings');
-    assert(summary.draftSettings.includes('real_edit_keys=1'), 'draft_settings should preserve edit metadata');
-    assert(summary.hasRootVideo, 'CapCut ZIP should include root-level video file');
+    assert(summary.draftSettings.includes('real_edit_keys='), 'draft_settings should preserve edit metadata');
+    assert(summary.hasMaterialsVideo, 'CapCut ZIP should include materials/video self-contained media');
     assert(summary.hasMediaVideo, 'CapCut ZIP should include media/ video file');
+    assert(summary.hasDraftCover && summary.hasDraftExtra && summary.hasCryptoKeyStore, 'CapCut ZIP should include desktop scaffold files');
+    assert(summary.hasAttachmentScriptVideo, 'CapCut ZIP should include common attachment scaffold files');
+    assert(summary.hasTimelineDraftInfo && summary.hasTimelineAttachmentPcCommon && summary.hasTimelineAttachmentEditing && summary.hasTimelineAttachmentPcTimeline && summary.hasTimelineTemplate2, 'CapCut ZIP should mirror main timeline scaffold under Timelines/<id>');
+    assert(summary.hasMacInstaller && summary.hasWindowsBatchInstaller && summary.hasWindowsPowerShellInstaller, 'CapCut ZIP should include installer scripts for path patching');
+    assert(summary.draftFoldPath.startsWith('/com.lveditor.draft/'), `draft_fold_path mismatch: ${summary.draftFoldPath}`);
+    assert(summary.draftRootPath === '/com.lveditor.draft', `draft_root_path mismatch: ${summary.draftRootPath}`);
+    assert(summary.draftPath.includes('/materials/video/verify_video_room.mp4'), `draft media path mismatch: ${summary.draftPath}`);
+    assert(summary.readme.includes('install_capcut_project.command') && summary.readme.includes('install_capcut_project.bat'), 'README should guide users to run the installer scripts');
     assert(summary.draftVideoCount === 1, `Unexpected draft video count: ${summary.draftVideoCount}`);
     assert(summary.draftInfoId === summary.draftContentId, 'draft_info.json should contain the same project timeline as draft_content.json');
     assert(summary.mainTimelineId === summary.draftContentId, 'Timelines/project.json should point at the draft timeline id');

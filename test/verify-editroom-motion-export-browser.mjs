@@ -245,10 +245,17 @@ async function main() {
       const zipBuffer = await result.blob.arrayBuffer();
       const zipInstance = await JSZipCtor.loadAsync(zipBuffer);
       const xmlContent = await zipInstance.file('verify_editroom_motion_export.xml').async('string');
+      const firstMediaEntryName = Object.keys(zipInstance.files).find((entryName) => /media\/001_scene\.(jpg|png)$/.test(entryName));
+      const firstMediaBlob = firstMediaEntryName ? await zipInstance.file(firstMediaEntryName).async('blob') : null;
+      const firstMediaBitmap = firstMediaBlob ? await createImageBitmap(firstMediaBlob) : null;
+      const firstScaleBaseValue = Number((xmlContent.match(/<parameter>\s*<parameterid>scale<\/parameterid>[\s\S]*?<value>([^<]+)<\/value>/) || [])[1] || 0);
 
       return {
         zipBase64: await blobToBase64(result.blob),
         xmlContent,
+        firstMediaWidth: firstMediaBitmap?.width || 0,
+        firstMediaHeight: firstMediaBitmap?.height || 0,
+        firstScaleBaseValue,
       };
     }, { image1, image2, narration1, narration2, nleModuleUrl, jszipModuleUrl });
 
@@ -277,6 +284,12 @@ async function main() {
     assert(summary.xmlContent.includes('<parameterid>opacity</parameterid>'), 'FCP XML should include opacity keyframes');
     assert(premiereSummary.xmlContent.includes('<effectcategory>motion</effectcategory>'), 'Premiere XML should include Basic Motion effect');
     assert(premiereSummary.xmlContent.includes('<parameterid>center</parameterid>'), 'Premiere XML should include center keyframes');
+    assert(premiereSummary.xmlContent.includes('<interpolation><name>FCPCurve</name></interpolation>'), 'Premiere XML should include FCPCurve interpolation for eased motion');
+    const premiereScaleBlock = premiereSummary.xmlContent.match(/<parameter>\s*<parameterid>scale<\/parameterid>[\s\S]*?<\/parameter>/)?.[0] || '';
+    const premiereScaleKeyframeCount = (premiereScaleBlock.match(/<keyframe>/g) || []).length;
+    assert(premiereScaleKeyframeCount >= 80, `Premiere scale should use dense frame sampling, got ${premiereScaleKeyframeCount} keyframes`);
+    assert(premiereSummary.firstScaleBaseValue >= 120, `Premiere base scale should include EditRoom overscale, got ${premiereSummary.firstScaleBaseValue}`);
+    assert(premiereSummary.firstMediaWidth === 1920 && premiereSummary.firstMediaHeight === 1080, `Premiere still image should be normalized to 1920x1080, got ${premiereSummary.firstMediaWidth}x${premiereSummary.firstMediaHeight}`);
 
     await extractZipToDirectory(zip, CAPCUT_OUTPUT_FOLDER);
     await extractZipToDirectory(premiereZip, PREMIERE_OUTPUT_FOLDER);

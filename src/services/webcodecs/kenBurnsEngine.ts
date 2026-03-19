@@ -33,6 +33,12 @@ interface PresetDef {
   alternate: boolean;
 }
 
+export interface KenBurnsPresetMeta {
+  baseDur: number;
+  easing: 'ease-in-out' | 'linear';
+  alternate: boolean;
+}
+
 /**
  * CSS @keyframes와 정확히 매칭되는 프리셋 정의
  * - EditRoomTab.tsx의 previewPanZoomAnim과 PREVIEW_MOTION_KEYFRAMES 기준
@@ -348,6 +354,16 @@ export function computeKenBurns(
     translateX: (kf.tx / 100) * drawW,
     translateY: (kf.ty / 100) * drawH,
     rotate: kf.rotate,
+  };
+}
+
+export function getKenBurnsPresetMeta(preset: EffectPresetId | string): KenBurnsPresetMeta | null {
+  const def = PRESET_DEFS[preset];
+  if (!def) return null;
+  return {
+    baseDur: def.baseDur,
+    easing: def.easing,
+    alternate: def.alternate,
   };
 }
 

@@ -235,7 +235,7 @@ async function main() {
     assert(summary.audioStarts[0] === 0 && summary.audioStarts[1] === 3_000_000, `audio starts mismatch: ${summary.audioStarts.join(', ')}`);
     assert(summary.videoDurations[0] === 2_000_000 && summary.videoDurations[1] === 1_000_000 && summary.videoDurations[2] === 2_000_000, `video durations mismatch: ${summary.videoDurations.join(', ')}`);
     assert(summary.videoSpeeds[0] < 1 && summary.videoSpeeds[1] === 1 && summary.videoSpeeds[2] < 1, `video speeds mismatch: ${summary.videoSpeeds.join(', ')}`);
-    assert(hasDraftEntry('001_narration.mp3') && hasDraftEntry('003_narration.mp3'), 'CapCut ZIP should include matched narration files');
+    assert(hasDraftEntry('materials/audio/001_narration.mp3') && hasDraftEntry('materials/audio/003_narration.mp3'), 'CapCut ZIP should include matched narration files');
 
     await extractZipToDirectory(zip, OUTPUT_FOLDER);
 

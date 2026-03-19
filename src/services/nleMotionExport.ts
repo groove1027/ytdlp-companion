@@ -1,5 +1,10 @@
-import type { NleMotionKeyframe, NleMotionTrack, UnifiedSceneTiming } from '../types';
-import { computeKenBurns, OVERSCALE } from './webcodecs/kenBurnsEngine';
+import type {
+  NleMotionInterpolation,
+  NleMotionKeyframe,
+  NleMotionTrack,
+  UnifiedSceneTiming,
+} from '../types';
+import { computeKenBurns, getKenBurnsPresetMeta, OVERSCALE } from './webcodecs/kenBurnsEngine';
 
 interface ScalarFrame {
   value: number;
@@ -21,7 +26,12 @@ interface TransformSample {
   opacity: number;
 }
 
-const SAMPLE_POINTS_PER_SEC = 10;
+interface NleMotionCompileOptions {
+  sampleMode?: 'adaptive' | 'per-frame';
+  simplify?: boolean;
+}
+
+const DEFAULT_SAMPLE_POINTS_PER_SEC = 10;
 const FILTER_PRESETS = new Set(['vintage', 'noir']);
 const FILTER_MOTION_EFFECTS = new Set(['film', 'sepia', 'high-contrast', 'multi-bright', 'rain', 'vintage-style']);
 
@@ -45,10 +55,13 @@ export function compileNleMotionTrack(
   canvasW: number,
   canvasH: number,
   fps = 30,
+  options: NleMotionCompileOptions = {},
 ): NleMotionTrack {
   const durationSec = Math.max(0.001, timing.imageDuration || 0);
   const totalFrames = Math.max(1, Math.ceil(durationSec * fps));
-  const sampleTimes = buildSampleTimes(durationSec, fps);
+  const sampleMode = options.sampleMode || 'adaptive';
+  const shouldSimplify = options.simplify ?? sampleMode !== 'per-frame';
+  const sampleTimes = buildSampleTimes(durationSec, fps, sampleMode);
   const anchorX = timing.anchorX ?? 50;
   const anchorY = timing.anchorY ?? 45;
   const samples = sampleTimes.map((timeSec) => {
@@ -64,41 +77,38 @@ export function compileNleMotionTrack(
     };
   });
 
-  const translateX = stripStaticTrack(
-    simplifyTrack(
-      samples.map(({ timeSec, translateX: value }) => ({ timeSec, value })),
-      0.35,
-    ),
+  const translateX = finalizeTrack(
+    samples.map(({ timeSec, translateX: value }) => ({ timeSec, value })),
+    0.35,
     0.01,
+    shouldSimplify,
   );
-  const translateY = stripStaticTrack(
-    simplifyTrack(
-      samples.map(({ timeSec, translateY: value }) => ({ timeSec, value })),
-      0.35,
-    ),
+  const translateY = finalizeTrack(
+    samples.map(({ timeSec, translateY: value }) => ({ timeSec, value })),
+    0.35,
     0.01,
+    shouldSimplify,
   );
-  const scale = stripStaticTrack(
-    simplifyTrack(
-      samples.map(({ timeSec, scale: value }) => ({ timeSec, value })),
-      0.0008,
-    ),
+  const scale = finalizeTrack(
+    samples.map(({ timeSec, scale: value }) => ({ timeSec, value })),
+    0.0008,
     0.0005,
+    shouldSimplify,
   );
-  const rotation = stripStaticTrack(
-    simplifyTrack(
-      samples.map(({ timeSec, rotation: value }) => ({ timeSec, value })),
-      0.04,
-    ),
+  const rotation = finalizeTrack(
+    samples.map(({ timeSec, rotation: value }) => ({ timeSec, value })),
+    0.04,
     0.03,
+    shouldSimplify,
   );
-  const opacity = stripStaticTrack(
-    simplifyTrack(
-      samples.map(({ timeSec, opacity: value }) => ({ timeSec, value })),
-      0.008,
-    ),
+  const opacity = finalizeTrack(
+    samples.map(({ timeSec, opacity: value }) => ({ timeSec, value })),
+    0.008,
     0.005,
+    shouldSimplify,
   );
+  const transformInterpolation = resolveTransformInterpolation(timing);
+  const opacityInterpolation = resolveOpacityInterpolation(timing.motionEffect);
 
   return {
     durationSec,
@@ -109,6 +119,8 @@ export function compileNleMotionTrack(
     opacity,
     hasTransformMotion: [translateX, translateY, scale, rotation].some((track) => track.length > 0),
     hasOpacityMotion: opacity.length > 0,
+    transformInterpolation,
+    opacityInterpolation,
     unsupportedEffects: collectUnsupportedEffects(timing),
   };
 }
@@ -124,16 +136,34 @@ function collectUnsupportedEffects(timing: UnifiedSceneTiming): string[] {
   return effects;
 }
 
-function buildSampleTimes(durationSec: number, fps: number): number[] {
+function buildSampleTimes(durationSec: number, fps: number, sampleMode: NleMotionCompileOptions['sampleMode']): number[] {
   const totalFrames = Math.max(1, Math.ceil(durationSec * fps));
-  const frameStep = Math.max(1, Math.round(fps / SAMPLE_POINTS_PER_SEC));
   const times = new Set<number>([0, durationSec]);
-  for (let frame = 0; frame < totalFrames; frame += frameStep) {
-    times.add(frame / fps);
+  if (sampleMode === 'per-frame') {
+    for (let frame = 0; frame < totalFrames; frame++) {
+      times.add(frame / fps);
+    }
+  } else {
+    const frameStep = Math.max(1, Math.round(fps / DEFAULT_SAMPLE_POINTS_PER_SEC));
+    for (let frame = 0; frame < totalFrames; frame += frameStep) {
+      times.add(frame / fps);
+    }
   }
   return [...times]
     .map((timeSec) => Math.max(0, Math.min(durationSec, timeSec)))
     .sort((a, b) => a - b);
+}
+
+function finalizeTrack(
+  track: NleMotionKeyframe[],
+  simplifyEpsilon: number,
+  staticEpsilon: number,
+  shouldSimplify: boolean,
+): NleMotionKeyframe[] {
+  const processedTrack = shouldSimplify
+    ? simplifyTrack(track, simplifyEpsilon)
+    : track;
+  return stripStaticTrack(processedTrack, staticEpsilon);
 }
 
 function computeCombinedTransform(
@@ -224,6 +254,18 @@ function computeOpacity(motionEffect: string | undefined, timeSec: number, durat
   const phase = getAnimPhase(timeSec, durationSec, def.baseDur, def.alternate);
   const easedPhase = def.easing === 'ease-in-out' ? easeInOut(phase) : phase;
   return interpolateScalarFrames(def.frames, easedPhase);
+}
+
+function resolveTransformInterpolation(timing: UnifiedSceneTiming): NleMotionInterpolation {
+  const easingList = [timing.effectPreset, timing.motionEffect]
+    .map((preset) => (preset ? getKenBurnsPresetMeta(preset)?.easing : null))
+    .filter((easing): easing is 'ease-in-out' | 'linear' => !!easing);
+  return easingList.includes('ease-in-out') ? 'FCPCurve' : 'linear';
+}
+
+function resolveOpacityInterpolation(motionEffect: string | undefined): NleMotionInterpolation {
+  if (!motionEffect) return 'linear';
+  return OPACITY_ANIMS[motionEffect]?.easing === 'ease-in-out' ? 'FCPCurve' : 'linear';
 }
 
 function getAnimPhase(

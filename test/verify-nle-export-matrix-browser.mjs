@@ -183,9 +183,9 @@ async function main() {
     assert(summary.capcut.videoDurations.every((duration) => duration === 2_000_000), `CapCut video durations mismatch: ${summary.capcut.videoDurations.join(', ')}`);
     assert(summary.capcut.audioDurations.every((duration) => duration === 2_000_000), `CapCut audio durations mismatch: ${summary.capcut.audioDurations.join(', ')}`);
     assert(summary.capcut.videoSpeeds.every((speed) => speed < 1), `CapCut auto speed should slow clips: ${summary.capcut.videoSpeeds.join(', ')}`);
-    assert(summary.capcut.audioMaterialPaths.every((audioPath) => /_narration\.mp3$/.test(audioPath)), `CapCut audio material paths mismatch: ${summary.capcut.audioMaterialPaths.join(', ')}`);
-    assert(capcutHasEntry('001_narration.mp3') && capcutHasEntry('002_narration.mp3'), 'CapCut ZIP should include draft-root narration files');
-    assert(!!capcutZip.file('audio/001_narration.mp3') && !!capcutZip.file('audio/002_narration.mp3'), 'CapCut ZIP should include audio/ narration files');
+    assert(summary.capcut.audioMaterialPaths.every((audioPath) => /materials\/audio\/.+_narration\.mp3$/.test(audioPath)), `CapCut audio material paths mismatch: ${summary.capcut.audioMaterialPaths.join(', ')}`);
+    assert(capcutHasEntry('materials/audio/001_narration.mp3') && capcutHasEntry('materials/audio/002_narration.mp3'), 'CapCut ZIP should include self-contained narration files');
+    assert(!!premiereZip.file('audio/001_narration.mp3') && !!premiereZip.file('audio/002_narration.mp3'), 'Premiere ZIP should include audio/ narration files');
 
     assert(summary.premiere.xml.includes('<effectid>timeremap</effectid>'), 'Premiere XML should include timeremap for slowed clips');
     assert(summary.premiere.xml.includes('<parameter><parameterid>speed</parameterid><value>50</value></parameter>'), 'Premiere XML should include 50% speed parameter');

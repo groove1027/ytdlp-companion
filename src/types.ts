@@ -1564,6 +1564,7 @@ export interface UnifiedSceneTiming {
 }
 
 export type NleMotionProperty = 'translateX' | 'translateY' | 'scale' | 'rotation' | 'opacity';
+export type NleMotionInterpolation = 'linear' | 'FCPCurve';
 
 export interface NleMotionKeyframe {
   timeSec: number;
@@ -1579,6 +1580,8 @@ export interface NleMotionTrack {
   opacity: NleMotionKeyframe[];
   hasTransformMotion: boolean;
   hasOpacityMotion: boolean;
+  transformInterpolation: NleMotionInterpolation;
+  opacityInterpolation: NleMotionInterpolation;
   unsupportedEffects: string[];
 }
 

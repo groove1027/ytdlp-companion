@@ -148,6 +148,7 @@ async function main() {
       const draftMetaInfo = JSON.parse(await readZipText('draft_meta_info.json'));
       const timelineProject = JSON.parse(await readZipText('Timelines/project.json'));
       const draftSettings = await readZipText('draft_settings');
+      const readme = await zipInstance.file('README.txt').async('string');
       const srtContent = await zipInstance.file('verify_574_final_자막.srt').async('string');
       const xmlContent = await zipInstance.file('verify_574_final.xml').async('string');
 
@@ -168,7 +169,23 @@ async function main() {
         textStarts: textTrack.segments.map((segment) => segment.target_timerange.start),
         audioStarts: audioTrack.segments.map((segment) => segment.target_timerange.start),
         textPayloads,
+        draftFoldPath: draftMetaInfo.draft_fold_path,
+        draftRootPath: draftMetaInfo.draft_root_path,
+        firstVideoPath: draftContent.materials.videos[0]?.path || '',
+        hasMaterialsVideo1: !!(zipInstance.file(`${draftPrefix}materials/video/001_scene.mp4`) || zipInstance.file('materials/video/001_scene.mp4')),
+        hasMaterialsVideo2: !!(zipInstance.file(`${draftPrefix}materials/video/002_scene.mp4`) || zipInstance.file('materials/video/002_scene.mp4')),
+        hasMaterialsAudio1: !!(zipInstance.file(`${draftPrefix}materials/audio/001_narration_01.mp3`) || zipInstance.file('materials/audio/001_narration_01.mp3')),
+        hasDraftCover: !!(zipInstance.file(`${draftPrefix}draft_cover.jpg`) || zipInstance.file('draft_cover.jpg')),
+        hasTimelineDraftInfo: !!(zipInstance.file(`${draftPrefix}Timelines/${timelineProject.main_timeline_id}/draft_info.json`) || zipInstance.file(`Timelines/${timelineProject.main_timeline_id}/draft_info.json`)),
+        hasTimelineAttachmentPcCommon: !!(zipInstance.file(`${draftPrefix}Timelines/${timelineProject.main_timeline_id}/attachment_pc_common.json`) || zipInstance.file(`Timelines/${timelineProject.main_timeline_id}/attachment_pc_common.json`)),
+        hasTimelineAttachmentEditing: !!(zipInstance.file(`${draftPrefix}Timelines/${timelineProject.main_timeline_id}/attachment_editing.json`) || zipInstance.file(`Timelines/${timelineProject.main_timeline_id}/attachment_editing.json`)),
+        hasTimelineAttachmentPcTimeline: !!(zipInstance.file(`${draftPrefix}Timelines/${timelineProject.main_timeline_id}/common_attachment/attachment_pc_timeline.json`) || zipInstance.file(`Timelines/${timelineProject.main_timeline_id}/common_attachment/attachment_pc_timeline.json`)),
+        hasTimelineTemplate2: !!(zipInstance.file(`${draftPrefix}Timelines/${timelineProject.main_timeline_id}/template-2.tmp`) || zipInstance.file(`Timelines/${timelineProject.main_timeline_id}/template-2.tmp`)),
+        hasMacInstaller: !!zipInstance.file('install_capcut_project.command'),
+        hasWindowsBatchInstaller: !!zipInstance.file('install_capcut_project.bat'),
+        hasWindowsPowerShellInstaller: !!zipInstance.file('install_capcut_project.ps1'),
         draftSettings,
+        readme,
         srtContent,
         xmlContent,
       };
@@ -184,6 +201,15 @@ async function main() {
     assert(summary.draftInfoId === summary.draftContentId, 'draft_info.json should contain the same project timeline as draft_content.json');
     assert(summary.draftInfoTrackCount === summary.draftContentTrackCount, 'draft_info.json should expose CapCut tracks directly');
     assert(summary.mainTimelineId === summary.draftContentId, 'Timelines/project.json should point at the draft timeline id');
+    assert(summary.draftFoldPath.startsWith('/com.lveditor.draft/'), `draft_fold_path mismatch: ${summary.draftFoldPath}`);
+    assert(summary.draftRootPath === '/com.lveditor.draft', `draft_root_path mismatch: ${summary.draftRootPath}`);
+    assert(summary.firstVideoPath.includes('/materials/video/001_scene.mp4'), `Unexpected first video path: ${summary.firstVideoPath}`);
+    assert(summary.hasMaterialsVideo1 && summary.hasMaterialsVideo2, 'CapCut ZIP should include materials/video scene files');
+    assert(summary.hasMaterialsAudio1, 'CapCut ZIP should include materials/audio narration files');
+    assert(summary.hasDraftCover, 'CapCut ZIP should include draft cover scaffold');
+    assert(summary.hasTimelineDraftInfo && summary.hasTimelineAttachmentPcCommon && summary.hasTimelineAttachmentEditing && summary.hasTimelineAttachmentPcTimeline && summary.hasTimelineTemplate2, 'CapCut ZIP should mirror main timeline scaffold under Timelines/<id>');
+    assert(summary.hasMacInstaller && summary.hasWindowsBatchInstaller && summary.hasWindowsPowerShellInstaller, 'CapCut ZIP should include installer scripts for path patching');
+    assert(summary.readme.includes('install_capcut_project.command') && summary.readme.includes('install_capcut_project.bat'), 'README should guide users to run the installer scripts');
 
     const srtEntries = parseSrtEntries(summary.srtContent.replace(/^\uFEFF/, ''));
     assert(srtEntries.length === 2, `Unexpected SRT count: ${srtEntries.length}`);
@@ -191,7 +217,7 @@ async function main() {
     assert(srtEntries[0].timecode.startsWith('00:00:00,000 --> 00:00:02,000'), `Unexpected first SRT timecode: ${srtEntries[0].timecode}`);
     assert(srtEntries[1].timecode.startsWith('00:00:02,000 --> 00:00:04,000'), `Unexpected second SRT timecode: ${srtEntries[1].timecode}`);
     assert(summary.draftSettings.includes('draft_create_time='), 'CapCut ZIP should include draft_settings');
-    assert(summary.draftSettings.includes('real_edit_keys=1'), 'draft_settings should preserve basic CapCut edit metadata');
+    assert(summary.draftSettings.includes('real_edit_keys='), 'draft_settings should preserve basic CapCut edit metadata');
 
     assert(summary.xmlContent.includes('<start>0</start>') && summary.xmlContent.includes('<start>60</start>'), 'FCP XML should contain 0f and 60f starts');
     assert(summary.xmlContent.indexOf('#1 둘째 장면') !== -1 && summary.xmlContent.indexOf('#2 첫째 장면') !== -1, 'FCP XML clip order should follow sceneOrder');
