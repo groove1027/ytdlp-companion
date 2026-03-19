@@ -185,9 +185,26 @@ interface CapCutProjectPathInfo {
   draftPathPlaceholder: string;
 }
 
+type CapCutWritableLike = {
+  write: (data: Blob | BufferSource | string) => Promise<void>;
+  close: () => Promise<void>;
+};
+
+type CapCutFileHandleLike = {
+  createWritable: () => Promise<CapCutWritableLike>;
+};
+
+type CapCutDirectoryHandleLike = {
+  name: string;
+  getDirectoryHandle: (name: string, options?: { create?: boolean }) => Promise<CapCutDirectoryHandleLike>;
+  getFileHandle: (name: string, options?: { create?: boolean }) => Promise<CapCutFileHandleLike>;
+  removeEntry?: (name: string, options?: { recursive?: boolean }) => Promise<void>;
+};
+
 const CAPCUT_MAC_INSTALLER_NAME = 'install_capcut_project.command';
 const CAPCUT_WINDOWS_BATCH_INSTALLER_NAME = 'install_capcut_project.bat';
 const CAPCUT_WINDOWS_POWERSHELL_INSTALLER_NAME = 'install_capcut_project.ps1';
+const CAPCUT_DIRECT_INSTALL_PATH_STORAGE_KEY = 'capcutDirectInstallDraftsRootPath';
 const CAPCUT_DRAFT_EXTRA_BASE64 = 'aQUAAABpAAAAAGVpAAAAAAIAAAB7fXpCe7g=';
 const CAPCUT_CRYPTO_KEY_STORE_BASE64 = 'AAAAsngBLYw9DoIwHMX/Ytw5iJVAwIIjpcbZuJNam9gotIGSSOJVjKMbg2dwY3H0FB7BWIzT+8jvvTsAjA+ireE2OB+uViZc6r2octuDazNMH9Gzfy+CDeq6T/+6uH/AtFrAyAKO0kaqkh1zrkojTubXgtNUElbWnLW3FrVqKi5qj6tiK0s2DLyMUhwTnCKckRiFy3mA4hgHKKJpkvjE9wnFOWt2Us2KkA2fX7XXM/Y=';
 
@@ -577,6 +594,202 @@ function buildCapCutWindowsBatchInstallerScript(): string {
     'if errorlevel 1 pause',
     '',
   ].join('\r\n');
+}
+
+function getCapCutDirectInstallPathExample(): string {
+  return detectCapCutDesktopPlatform() === 'windows'
+    ? 'C:\\Users\\<사용자이름>\\AppData\\Local\\CapCut\\User Data\\Projects\\com.lveditor.draft'
+    : '/Users/<사용자이름>/Movies/CapCut/User Data/Projects/com.lveditor.draft';
+}
+
+function getStoredCapCutDirectInstallPath(): string {
+  if (typeof window === 'undefined') return '';
+  try {
+    return window.localStorage.getItem(CAPCUT_DIRECT_INSTALL_PATH_STORAGE_KEY)?.trim() || '';
+  } catch {
+    return '';
+  }
+}
+
+function setStoredCapCutDirectInstallPath(pathValue: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(CAPCUT_DIRECT_INSTALL_PATH_STORAGE_KEY, pathValue);
+  } catch {
+    // Ignore storage failures and continue with the current session only.
+  }
+}
+
+function normalizeCapCutDraftsRootPath(rawPath: string): string {
+  const trimmed = rawPath.trim();
+  if (!trimmed) {
+    throw new Error('CapCut 프로젝트 폴더 경로가 비어 있습니다.');
+  }
+  if (/^(~|%[A-Z_]+%|\$[A-Z_]+)/i.test(trimmed)) {
+    throw new Error('~ 나 환경 변수 대신 실제 절대경로를 입력해주세요.');
+  }
+
+  const normalized = trimmed.replace(/\\/g, '/').replace(/\/+$/g, '');
+  const isAbsoluteWindows = /^[A-Za-z]:\//.test(normalized);
+  const isAbsolutePosix = normalized.startsWith('/');
+
+  if (!isAbsoluteWindows && !isAbsolutePosix) {
+    throw new Error('CapCut 프로젝트 폴더의 실제 절대경로를 입력해주세요.');
+  }
+  if (!normalized.endsWith('/com.lveditor.draft')) {
+    throw new Error('CapCut 프로젝트 폴더(com.lveditor.draft) 경로를 입력해주세요.');
+  }
+  return normalized;
+}
+
+function isCapCutDraftJsonPath(relativePath: string): boolean {
+  return relativePath === 'draft_content.json'
+    || relativePath === 'draft_info.json'
+    || relativePath === 'draft_meta_info.json'
+    || /^Timelines\/[^/]+\/draft_info\.json$/.test(relativePath);
+}
+
+function patchCapCutDraftJsonPaths(jsonText: string, draftsRootPath: string, projectId: string): string {
+  const targetRoot = normalizeCapCutDraftsRootPath(draftsRootPath);
+  const targetProjectPath = `${targetRoot}/${projectId}`;
+  return jsonText
+    .split(`##_draftpath_placeholder_${projectId}_##`).join(targetProjectPath)
+    .replace(/"path":"materials\//g, `"path":"${targetProjectPath}/materials/`)
+    .replace(/"media_path":"materials\//g, `"media_path":"${targetProjectPath}/materials/`)
+    .replace(/"draft_fold_path":"[^"]*"/g, `"draft_fold_path":"${targetProjectPath}"`)
+    .replace(/"draft_root_path":"[^"]*"/g, `"draft_root_path":"${targetRoot}"`);
+}
+
+async function writeCapCutDirectoryEntry(
+  rootHandle: CapCutDirectoryHandleLike,
+  relativePath: string,
+  content: string | Blob,
+): Promise<void> {
+  const pathParts = relativePath.split('/').filter(Boolean);
+  if (pathParts.length === 0) return;
+
+  let currentHandle = rootHandle;
+  for (const segment of pathParts.slice(0, -1)) {
+    currentHandle = await currentHandle.getDirectoryHandle(segment, { create: true });
+  }
+
+  const fileName = pathParts[pathParts.length - 1];
+  const fileHandle = await currentHandle.getFileHandle(fileName, { create: true });
+  const writable = await fileHandle.createWritable();
+  await writable.write(content);
+  await writable.close();
+}
+
+export function isCapCutDirectInstallSupported(): boolean {
+  if (typeof window === 'undefined' || !window.isSecureContext) return false;
+  return typeof (window as Window & { showDirectoryPicker?: unknown }).showDirectoryPicker === 'function';
+}
+
+export function getCapCutManualInstallHint(): string {
+  return `압축을 푼 뒤 Mac은 "${CAPCUT_MAC_INSTALLER_NAME}", Windows는 "${CAPCUT_WINDOWS_BATCH_INSTALLER_NAME}"를 실행해주세요.`;
+}
+
+export async function beginCapCutDirectInstallSelection(): Promise<{
+  draftsRootHandle: CapCutDirectoryHandleLike;
+  draftsRootPath: string;
+} | null> {
+  if (!isCapCutDirectInstallSupported() || typeof window === 'undefined') {
+    return null;
+  }
+
+  const wantsDirectInstall = window.confirm([
+    '이 브라우저에서는 CapCut에 바로 설치할 수 있습니다.',
+    '',
+    '[확인] ZIP 대신 CapCut 프로젝트 폴더에 바로 설치',
+    '[취소] 기존처럼 ZIP 다운로드',
+    '',
+    '확인을 누르면 다음 단계에서 CapCut 프로젝트 폴더(com.lveditor.draft)를 선택합니다.',
+  ].join('\n'));
+
+  if (!wantsDirectInstall) {
+    return null;
+  }
+
+  const savedPath = getStoredCapCutDirectInstallPath();
+  const draftsRootPath = window.prompt([
+    'CapCut 프로젝트 폴더의 절대경로를 확인해주세요.',
+    '폴더 선택창 보안 제한 때문에 이 경로 문자열은 한 번 저장해둬야 미디어 절대경로를 정확히 패치할 수 있습니다.',
+    '',
+    `예시: ${getCapCutDirectInstallPathExample()}`,
+  ].join('\n'), savedPath || getCapCutDirectInstallPathExample());
+
+  if (draftsRootPath === null) {
+    return null;
+  }
+
+  const normalizedRootPath = normalizeCapCutDraftsRootPath(draftsRootPath);
+
+  try {
+    const draftsRootHandle = await (window as Window & {
+      showDirectoryPicker?: (options?: { id?: string; mode?: 'read' | 'readwrite' }) => Promise<FileSystemDirectoryHandle>;
+    }).showDirectoryPicker?.({
+      id: 'capcut-drafts-root',
+      mode: 'readwrite',
+    });
+
+    if (!draftsRootHandle) {
+      return null;
+    }
+    if (draftsRootHandle.name !== 'com.lveditor.draft') {
+      throw new Error('CapCut 프로젝트 폴더(com.lveditor.draft)를 선택해주세요.');
+    }
+
+    setStoredCapCutDirectInstallPath(normalizedRootPath);
+    return {
+      draftsRootHandle: draftsRootHandle as unknown as CapCutDirectoryHandleLike,
+      draftsRootPath: normalizedRootPath,
+    };
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      return null;
+    }
+    throw error;
+  }
+}
+
+export async function installCapCutZipToDirectory(params: {
+  zipBlob: Blob;
+  draftsRootHandle: CapCutDirectoryHandleLike;
+  draftsRootPath: string;
+}): Promise<{ projectId: string; targetProjectPath: string }> {
+  const { zipBlob, draftsRootHandle, draftsRootPath } = params;
+  const JSZip = (await import('jszip')).default;
+  const zip = await JSZip.loadAsync(await zipBlob.arrayBuffer());
+  const draftEntryName = Object.keys(zip.files).find((entryName) => entryName.endsWith('/draft_content.json'));
+
+  if (!draftEntryName) {
+    throw new Error('CapCut 프로젝트 파일을 ZIP에서 찾지 못했습니다.');
+  }
+
+  const projectId = draftEntryName.split('/')[0] || '';
+  if (!projectId) {
+    throw new Error('CapCut projectId를 확인할 수 없습니다.');
+  }
+
+  const normalizedRootPath = normalizeCapCutDraftsRootPath(draftsRootPath);
+  const targetProjectPath = `${normalizedRootPath}/${projectId}`;
+
+  if (typeof draftsRootHandle.removeEntry === 'function') {
+    await draftsRootHandle.removeEntry(projectId, { recursive: true }).catch(() => {});
+  }
+
+  const projectRootHandle = await draftsRootHandle.getDirectoryHandle(projectId, { create: true });
+  const projectEntries = Object.values(zip.files).filter((entry) => !entry.dir && entry.name.startsWith(`${projectId}/`));
+
+  for (const entry of projectEntries) {
+    const relativePath = entry.name.slice(projectId.length + 1);
+    const content = isCapCutDraftJsonPath(relativePath)
+      ? patchCapCutDraftJsonPaths(await entry.async('string'), normalizedRootPath, projectId)
+      : await entry.async('blob');
+    await writeCapCutDirectoryEntry(projectRootHandle, relativePath, content);
+  }
+
+  return { projectId, targetProjectPath };
 }
 
 function buildCapCutSegmentShell(params: {
@@ -2379,7 +2592,8 @@ export async function buildNlePackageZip(params: {
     zip.file('README.txt', [
       `=== ${title} — CapCut ===`,
       '',
-      '★ 추천: 설치 스크립트 실행 (절대경로 패치 + 미디어 자동 연결)',
+      '★ Chrome/Edge 등 Chromium 브라우저에서는 앱의 "CapCut에 바로 설치" 흐름을 쓰면 ZIP 압축 해제 없이 바로 설치할 수 있습니다.',
+      '★ Safari/Firefox 또는 수동 설치가 필요하면 아래 설치 스크립트를 실행하세요.',
       '1. CapCut 데스크톱을 완전히 종료합니다.',
       '2. ZIP 압축을 해제합니다.',
       `3. Mac은 "${CAPCUT_MAC_INSTALLER_NAME}", Windows는 "${CAPCUT_WINDOWS_BATCH_INSTALLER_NAME}"를 실행합니다.`,
@@ -4182,7 +4396,8 @@ export async function buildEditRoomNleZip(params: {
     zip.file('README.txt', [
       `=== ${title} — CapCut 프로젝트 파일 ===`,
       '',
-      '★ 추천: 설치 스크립트 실행 (이미지/영상 + 자막 + 나레이션 자동 연결)',
+      '★ Chrome/Edge 등 Chromium 브라우저에서는 앱의 "CapCut에 바로 설치" 흐름을 쓰면 ZIP 압축 해제 없이 바로 설치할 수 있습니다.',
+      '★ Safari/Firefox 또는 수동 설치가 필요하면 아래 설치 스크립트를 실행하세요.',
       '1. CapCut 데스크톱을 완전히 종료합니다.',
       '2. ZIP 압축을 해제합니다.',
       `3. Mac은 "${CAPCUT_MAC_INSTALLER_NAME}", Windows는 "${CAPCUT_WINDOWS_BATCH_INSTALLER_NAME}"를 실행합니다.`,

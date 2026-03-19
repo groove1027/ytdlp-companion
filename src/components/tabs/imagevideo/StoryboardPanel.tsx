@@ -22,7 +22,13 @@ import { useAuthGuard } from '../../../hooks/useAuthGuard';
 import { useUnifiedTimeline, useTotalDuration } from '../../../hooks/useUnifiedTimeline';
 import { useEditRoomStore } from '../../../stores/editRoomStore';
 import { MOTION_KEYFRAMES } from '../../../services/motionPreviewUtils';
-import { buildEditRoomNleZip } from '../../../services/nleExportService';
+import {
+  beginCapCutDirectInstallSelection,
+  buildEditRoomNleZip,
+  getCapCutManualInstallHint,
+  installCapCutZipToDirectory,
+  isCapCutDirectInstallSupported,
+} from '../../../services/nleExportService';
 import type { EditRoomNleTarget } from '../../../services/nleExportService';
 import { logger } from '../../../services/LoggerService';
 
@@ -1495,9 +1501,18 @@ const StoryboardPanel: React.FC = () => {
     }
 
     setNleExportingTarget(target);
-    showToast(`${targetLabel} 프로젝트 파일을 준비하고 있습니다...`);
 
     try {
+      const directInstallSelection = target === 'capcut' && isCapCutDirectInstallSupported()
+        ? await beginCapCutDirectInstallSelection()
+        : null;
+      showToast(
+        target === 'capcut'
+          ? directInstallSelection
+            ? 'CapCut 프로젝트를 준비 중입니다. 완료되면 선택한 폴더에 바로 설치합니다...'
+            : 'CapCut ZIP을 준비하고 있습니다...'
+          : `${targetLabel} 프로젝트 파일을 준비하고 있습니다...`,
+      );
       const exportTitle = projectTitle || '프로젝트';
       const result = await buildEditRoomNleZip({
         target,
@@ -1512,20 +1527,47 @@ const StoryboardPanel: React.FC = () => {
         title: exportTitle,
         aspectRatio: projectAspectRatio,
       });
-
-      const url = URL.createObjectURL(result.blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${exportTitle.replace(/[^\w가-힣\-_ ]/g, '').slice(0, 30) || 'project'}_${target}.zip`;
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      const downloadFileName = `${exportTitle.replace(/[^\w가-힣\-_ ]/g, '').slice(0, 30) || 'project'}_${target}.zip`;
 
       const mediaSummary = result.videoCount > 0 && result.imageCount > 0
         ? ` (영상 ${result.videoCount} + 이미지 ${result.imageCount})`
         : result.videoCount > 0
           ? ` (영상 ${result.videoCount}개)`
           : ` (이미지 ${result.imageCount}개)`;
-      showToast(`${targetLabel} 프로젝트 파일 다운로드 완료!${mediaSummary}`);
+
+      if (target === 'capcut' && directInstallSelection) {
+        try {
+          await installCapCutZipToDirectory({
+            zipBlob: result.blob,
+            draftsRootHandle: directInstallSelection.draftsRootHandle,
+            draftsRootPath: directInstallSelection.draftsRootPath,
+          });
+          showToast(`CapCut 프로젝트를 바로 설치했습니다!${mediaSummary} CapCut에서 프로젝트 카드를 열어 확인해주세요.`, 6000);
+          return;
+        } catch (installError) {
+          const fallbackUrl = URL.createObjectURL(result.blob);
+          const fallbackLink = document.createElement('a');
+          fallbackLink.href = fallbackUrl;
+          fallbackLink.download = downloadFileName;
+          fallbackLink.click();
+          setTimeout(() => URL.revokeObjectURL(fallbackUrl), 10000);
+          showToast(`CapCut 직접 설치에 실패해 ZIP으로 전환했습니다. ${getCapCutManualInstallHint()} (${installError instanceof Error ? installError.message : '알 수 없는 오류'})`, 8000);
+          return;
+        }
+      }
+
+      const url = URL.createObjectURL(result.blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = downloadFileName;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      showToast(
+        target === 'capcut'
+          ? `CapCut ZIP 다운로드 완료!${mediaSummary} ${getCapCutManualInstallHint()}`
+          : `${targetLabel} 프로젝트 파일 다운로드 완료!${mediaSummary}`,
+        target === 'capcut' ? 7000 : undefined,
+      );
     } catch (err) {
       showToast(`${targetLabel} 내보내기 실패: ` + (err instanceof Error ? err.message : '알 수 없는 오류'));
     } finally {

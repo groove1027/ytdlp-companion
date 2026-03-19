@@ -22,7 +22,14 @@ import { extractStreamUrl, isYtdlpServerConfigured, getSocialMetadata, downloadS
 import { detectPlatform } from '../../../services/videoDownloadService';
 import { uploadMediaToHosting } from '../../../services/uploadService';
 import { detectSceneCuts, mergeWithAiTimecodes } from '../../../services/sceneDetection';
-import { buildVideoAnalysisSceneLineId, sanitizeProjectName } from '../../../services/nleExportService';
+import {
+  beginCapCutDirectInstallSelection,
+  buildVideoAnalysisSceneLineId,
+  getCapCutManualInstallHint,
+  installCapCutZipToDirectory,
+  isCapCutDirectInstallSupported,
+  sanitizeProjectName,
+} from '../../../services/nleExportService';
 import type { EditRoomNleTarget } from '../../../services/nleExportService';
 import { transcribeVideoAudio } from '../../../services/gemini/videoAnalysis';
 import type { SceneCut } from '../../../services/sceneDetection';
@@ -5004,6 +5011,9 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                     nleActiveTaskRef.current = { target, controller: myAbort };
                                     nleAbortRef.current = myAbort;
                                     const isCancelled = () => myAbort.signal.aborted;
+                                    const directInstallSelection = target === 'capcut' && isCapCutDirectInstallSupported()
+                                      ? await beginCapCutDirectInstallSelection()
+                                      : null;
                                     setNleExporting({ target, step: '준비 중...', startedAt });
                                     try {
                                       // Step 1: videoBlob 확보 — 오디오 포함 보장
@@ -5138,14 +5148,42 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                       setNleExporting({ target, step: 'ZIP 패키지 생성 중...', startedAt });
                                       const zipBlob = await buildNlePackageZip({ target, scenes: v.scenes, title: v.title, videoBlob, videoFileName: fileName, preset: selectedPreset || undefined, width: dims.w, height: dims.h, fps: dims.fps, videoDurationSec: dims.dur, narrationLines });
                                       if (isCancelled()) return;
+                                      const downloadFileName = `${sanitizeProjectName(v.title, 30)}_${label}.zip`;
+                                      if (target === 'capcut' && directInstallSelection) {
+                                        try {
+                                          await installCapCutZipToDirectory({
+                                            zipBlob,
+                                            draftsRootHandle: directInstallSelection.draftsRootHandle,
+                                            draftsRootPath: directInstallSelection.draftsRootPath,
+                                          });
+                                          if (isCancelled()) return;
+                                          showToast(!audioConfirmed
+                                            ? 'CapCut 프로젝트를 바로 설치했지만 원본 오디오는 자동 확인되지 않았어요. CapCut에서 오디오 트랙만 한 번 확인해주세요.'
+                                            : 'CapCut 프로젝트를 바로 설치했습니다! CapCut에서 프로젝트 카드를 열어 확인해주세요.', !audioConfirmed ? 7000 : 5000);
+                                          return;
+                                        } catch (installError) {
+                                          const fallbackUrl = URL.createObjectURL(zipBlob);
+                                          const fallbackLink = document.createElement('a');
+                                          fallbackLink.href = fallbackUrl;
+                                          fallbackLink.download = downloadFileName;
+                                          fallbackLink.click();
+                                          setTimeout(() => URL.revokeObjectURL(fallbackUrl), 10000);
+                                          if (isCancelled()) return;
+                                          showToast(`CapCut 직접 설치에 실패해 ZIP으로 전환했습니다. ${getCapCutManualInstallHint()} (${installError instanceof Error ? installError.message : '알 수 없는 오류'})`, 8000);
+                                          return;
+                                        }
+                                      }
+
                                       const url = URL.createObjectURL(zipBlob);
-                                      const a = document.createElement('a'); a.href = url; a.download = `${sanitizeProjectName(v.title, 30)}_${label}.zip`; a.click();
+                                      const a = document.createElement('a'); a.href = url; a.download = downloadFileName; a.click();
                                       setTimeout(() => URL.revokeObjectURL(url), 10000);
                                       // [FIX #370] 오디오 누락 경고 — 오디오 없이 NLE 내보내기 시 사용자에게 안내
                                       if (isCancelled()) return;
-                                      showToast(!audioConfirmed
-                                        ? `${label} 다운로드 완료! ⚠️ 원본 오디오를 불러오지 못했어요. ${target === 'premiere' ? 'Premiere' : label}에서 수동으로 오디오를 추가해주세요.`
-                                        : `${label} 패키지 다운로드 완료!`, !audioConfirmed ? 7000 : undefined);
+                                      showToast(target === 'capcut'
+                                        ? `CapCut ZIP 다운로드 완료! ${getCapCutManualInstallHint()}`
+                                        : !audioConfirmed
+                                          ? `${label} 다운로드 완료! ⚠️ 원본 오디오를 불러오지 못했어요. ${target === 'premiere' ? 'Premiere' : label}에서 수동으로 오디오를 추가해주세요.`
+                                          : `${label} 패키지 다운로드 완료!`, target === 'capcut' || !audioConfirmed ? 7000 : undefined);
                                     } catch (e) {
                                       if (isCancelled()) return;
                                       console.error('[NLE]', e); showToast(`${label} 패키지 생성 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`, 5000);

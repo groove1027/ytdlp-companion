@@ -8,6 +8,21 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-20] #610 Chromium CapCut 직접 설치 + 브라우저별 ZIP 폴백
+- [x] `nleExportService.ts` — `isCapCutDirectInstallSupported`, `beginCapCutDirectInstallSelection`, `installCapCutZipToDirectory`를 추가해 Chromium 브라우저에서 CapCut drafts 폴더 선택 후 ZIP을 바로 설치하고 media path를 절대경로로 패치하도록 보강
+- [x] `EditRoomTab.tsx`, `StoryboardPanel.tsx`, `VideoAnalysisRoom.tsx` — CapCut 버튼 클릭 시 직접 설치 안내 메시지 → 폴더 선택 → 성공 시 즉시 설치, 실패/취소/비지원 브라우저 시 ZIP 다운로드 + 설치 스크립트 안내로 폴백하도록 연결
+- [x] `nleExportService.ts` — CapCut README에 Chromium 직접 설치 안내와 Safari/Firefox 수동 설치 스크립트 fallback 안내를 추가
+- [x] `verify-capcut-video-room.mjs`, `verify-capcut-issue574-browser.mjs` — OPFS directory handle에 직접 설치한 뒤 `draft_content.json`, `draft_meta_info.json`의 media path / draft_fold_path / draft_root_path가 Mac/Windows 절대경로로 실제 패치되는지 회귀 검증 추가
+- [x] 검증 통과:
+  `cd src && node_modules/typescript/bin/tsc --noEmit`
+  `cd src && node_modules/.bin/vite build`
+  `rg -n "beginCapCutDirectInstallSelection|installCapCutZipToDirectory|isCapCutDirectInstallSupported|getCapCutManualInstallHint" src test`
+  `PLAYWRIGHT_HEADFUL=1 node test/verify-capcut-video-room.mjs`
+  `PLAYWRIGHT_HEADFUL=1 node test/verify-capcut-issue574-browser.mjs`
+  `node test/verify-editroom-motion-export-browser.mjs`
+  `node test/verify-nle-export-matrix-browser.mjs`
+  `node test/verify-video-analysis-narration-bridge-browser.mjs`
+
 ### [2026-03-20] #610 CapCut 설치 스크립트 추가 + 실제 미디어 링크 검증
 - [x] `nleExportService.ts` — CapCut ZIP 루트에 `install_capcut_project.command`, `install_capcut_project.bat`, `install_capcut_project.ps1`를 추가해 설치 시점에 media path를 현재 PC 절대경로로 패치하도록 보강
 - [x] `nleExportService.ts` — CapCut README를 수동 폴더 복사 안내에서 `설치 스크립트 실행` 안내로 전환하고, 상대경로만으로는 `Media Not Found`가 날 수 있다는 설명 추가

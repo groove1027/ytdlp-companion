@@ -5,7 +5,13 @@ import { useEditRoomStore } from '../../stores/editRoomStore';
 import { useUnifiedTimeline, useTotalDuration } from '../../hooks/useUnifiedTimeline';
 import { downloadSrtFile, downloadSrtWithAssetsZip } from '../../services/srtService';
 import { composeMp4, downloadMp4 } from '../../services/webcodecs';
-import { buildEditRoomNleZip } from '../../services/nleExportService';
+import {
+  beginCapCutDirectInstallSelection,
+  buildEditRoomNleZip,
+  getCapCutManualInstallHint,
+  installCapCutZipToDirectory,
+  isCapCutDirectInstallSupported,
+} from '../../services/nleExportService';
 import type { EditRoomNleTarget } from '../../services/nleExportService';
 import { showToast } from '../../stores/uiStore';
 import EditRoomHeader from './editroom/EditRoomHeader';
@@ -1408,8 +1414,17 @@ const EditRoomTab: React.FC = () => {
         : `⚠️ 미디어 구성 안내\n\n  🎬 영상: ${videoSceneCount}개\n  🖼️ 이미지: ${imageOnlyCount}개\n  📦 전체: ${scenes.length}개 장면\n\n영상이 없는 ${imageOnlyCount}개 장면은 정지 이미지로 내보내집니다.\n\n이대로 내보내시겠어요?\n(모든 장면을 영상으로 하려면 '취소' 후 이미지/영상 탭에서 나머지 영상을 생성해주세요)`;
       if (!window.confirm(msg)) return;
     }
-    showToast(`${targetLabel} 프로젝트 파일을 준비하고 있습니다...`);
     try {
+      const directInstallSelection = target === 'capcut' && isCapCutDirectInstallSupported()
+        ? await beginCapCutDirectInstallSelection()
+        : null;
+      showToast(
+        target === 'capcut'
+          ? directInstallSelection
+            ? 'CapCut 프로젝트를 준비 중입니다. 완료되면 선택한 폴더에 바로 설치합니다...'
+            : 'CapCut ZIP을 준비하고 있습니다...'
+          : `${targetLabel} 프로젝트 파일을 준비하고 있습니다...`,
+      );
       const projectTitle = useProjectStore.getState().projectTitle || '프로젝트';
       // [FIX #396] STT 업로드 오디오는 개별 라인 audioUrl이 없을 수 있어 mergedAudioUrl 폴백 필요
       const hasAnyLineAudio = lines.some((l) => l.audioUrl);
@@ -1447,19 +1462,47 @@ const EditRoomTab: React.FC = () => {
         title: projectTitle,
         aspectRatio: projectAspectRatio,
       });
-      const url = URL.createObjectURL(result.blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${projectTitle.replace(/[^\w가-힣\-_ ]/g, '').slice(0, 30) || 'project'}_${target}.zip`;
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      const downloadFileName = `${projectTitle.replace(/[^\w가-힣\-_ ]/g, '').slice(0, 30) || 'project'}_${target}.zip`;
       // [FIX #472] 내보내기 결과에 미디어 구성 표시
       const mediaSummary = result.videoCount > 0 && result.imageCount > 0
         ? ` (영상 ${result.videoCount} + 이미지 ${result.imageCount})`
         : result.videoCount > 0
           ? ` (영상 ${result.videoCount}개)`
           : ` (이미지 ${result.imageCount}개)`;
-      showToast(`${targetLabel} 프로젝트 파일 다운로드 완료!${mediaSummary}`);
+
+      if (target === 'capcut' && directInstallSelection) {
+        try {
+          await installCapCutZipToDirectory({
+            zipBlob: result.blob,
+            draftsRootHandle: directInstallSelection.draftsRootHandle,
+            draftsRootPath: directInstallSelection.draftsRootPath,
+          });
+          showToast(`CapCut 프로젝트를 바로 설치했습니다!${mediaSummary} CapCut에서 프로젝트 카드를 열어 확인해주세요.`, 6000);
+          return;
+        } catch (installError) {
+          const fallbackUrl = URL.createObjectURL(result.blob);
+          const fallbackLink = document.createElement('a');
+          fallbackLink.href = fallbackUrl;
+          fallbackLink.download = downloadFileName;
+          fallbackLink.click();
+          setTimeout(() => URL.revokeObjectURL(fallbackUrl), 10000);
+          showToast(`CapCut 직접 설치에 실패해 ZIP으로 전환했습니다. ${getCapCutManualInstallHint()} (${installError instanceof Error ? installError.message : '알 수 없는 오류'})`, 8000);
+          return;
+        }
+      }
+
+      const url = URL.createObjectURL(result.blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = downloadFileName;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      showToast(
+        target === 'capcut'
+          ? `CapCut ZIP 다운로드 완료!${mediaSummary} ${getCapCutManualInstallHint()}`
+          : `${targetLabel} 프로젝트 파일 다운로드 완료!${mediaSummary}`,
+        target === 'capcut' ? 7000 : undefined,
+      );
     } catch (err) {
       showToast(`${targetLabel} 내보내기 실패: ` + (err instanceof Error ? err.message : '알 수 없는 오류'));
     }

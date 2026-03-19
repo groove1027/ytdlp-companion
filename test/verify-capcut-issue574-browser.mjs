@@ -72,8 +72,14 @@ async function main() {
         nleService.buildEditRoomNleZip ||
         nleModule.buildEditRoomNleZip ||
         nleModule.b;
+      const installCapCutZipToDirectory =
+        nleService.installCapCutZipToDirectory ||
+        nleModule.installCapCutZipToDirectory;
       if (typeof buildEditRoomNleZip !== 'function') {
         throw new Error(`buildEditRoomNleZip export not found: ${Object.keys(nleModule).join(', ')}`);
+      }
+      if (typeof installCapCutZipToDirectory !== 'function') {
+        throw new Error(`installCapCutZipToDirectory export not found: ${Object.keys(nleModule).join(', ')}`);
       }
       const zipModule = await import(jszipModuleUrl);
       const JSZipCtor = zipModule.default || zipModule.J || zipModule.j || zipModule;
@@ -151,6 +157,22 @@ async function main() {
       const readme = await zipInstance.file('README.txt').async('string');
       const srtContent = await zipInstance.file('verify_574_final_자막.srt').async('string');
       const xmlContent = await zipInstance.file('verify_574_final.xml').async('string');
+      const opfsRoot = await navigator.storage.getDirectory();
+      if (typeof opfsRoot.removeEntry === 'function') {
+        await opfsRoot.removeEntry('capcut-direct-install-issue574', { recursive: true }).catch(() => {});
+      }
+      const directInstallRoot = await opfsRoot.getDirectoryHandle('capcut-direct-install-issue574', { create: true });
+      const directInstallResult = await installCapCutZipToDirectory({
+        zipBlob: result.blob,
+        draftsRootHandle: directInstallRoot,
+        draftsRootPath: 'C:\\Users\\Tester\\AppData\\Local\\CapCut\\User Data\\Projects\\com.lveditor.draft',
+      });
+      const directProjectHandle = await directInstallRoot.getDirectoryHandle(directInstallResult.projectId);
+      const directDraftContentText = await (await (await directProjectHandle.getFileHandle('draft_content.json')).getFile()).text();
+      const directDraftMetaText = await (await (await directProjectHandle.getFileHandle('draft_meta_info.json')).getFile()).text();
+      const directDraftContent = JSON.parse(directDraftContentText);
+      const directDraftMetaInfo = JSON.parse(directDraftMetaText);
+      await (await (await (await directProjectHandle.getDirectoryHandle('materials')).getDirectoryHandle('audio')).getFileHandle('001_narration_01.mp3')).getFile();
 
       const videoTrack = draftContent.tracks.find((track) => track.type === 'video');
       const textTrack = draftContent.tracks.find((track) => track.type === 'text');
@@ -188,6 +210,10 @@ async function main() {
         readme,
         srtContent,
         xmlContent,
+        directInstallProjectId: directInstallResult.projectId,
+        directInstallFirstVideoPath: directDraftContent.materials.videos[0]?.path || '',
+        directInstallDraftFoldPath: directDraftMetaInfo.draft_fold_path,
+        directInstallDraftRootPath: directDraftMetaInfo.draft_root_path,
       };
     }, { scene1Video, scene2Video, narration1, narration2, nleModuleUrl, jszipModuleUrl });
 
@@ -210,6 +236,9 @@ async function main() {
     assert(summary.hasTimelineDraftInfo && summary.hasTimelineAttachmentPcCommon && summary.hasTimelineAttachmentEditing && summary.hasTimelineAttachmentPcTimeline && summary.hasTimelineTemplate2, 'CapCut ZIP should mirror main timeline scaffold under Timelines/<id>');
     assert(summary.hasMacInstaller && summary.hasWindowsBatchInstaller && summary.hasWindowsPowerShellInstaller, 'CapCut ZIP should include installer scripts for path patching');
     assert(summary.readme.includes('install_capcut_project.command') && summary.readme.includes('install_capcut_project.bat'), 'README should guide users to run the installer scripts');
+    assert(summary.directInstallFirstVideoPath === `C:/Users/Tester/AppData/Local/CapCut/User Data/Projects/com.lveditor.draft/${summary.directInstallProjectId}/materials/video/001_scene.mp4`, `Windows direct install path mismatch: ${summary.directInstallFirstVideoPath}`);
+    assert(summary.directInstallDraftFoldPath === `C:/Users/Tester/AppData/Local/CapCut/User Data/Projects/com.lveditor.draft/${summary.directInstallProjectId}`, `Windows direct install draft_fold_path mismatch: ${summary.directInstallDraftFoldPath}`);
+    assert(summary.directInstallDraftRootPath === 'C:/Users/Tester/AppData/Local/CapCut/User Data/Projects/com.lveditor.draft', `Windows direct install draft_root_path mismatch: ${summary.directInstallDraftRootPath}`);
 
     const srtEntries = parseSrtEntries(summary.srtContent.replace(/^\uFEFF/, ''));
     assert(srtEntries.length === 2, `Unexpected SRT count: ${srtEntries.length}`);

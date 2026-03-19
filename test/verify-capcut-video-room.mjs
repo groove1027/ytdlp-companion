@@ -56,8 +56,14 @@ async function main() {
       const buildNlePackageZip =
         nleService.buildNlePackageZip ||
         nleModule.buildNlePackageZip;
+      const installCapCutZipToDirectory =
+        nleService.installCapCutZipToDirectory ||
+        nleModule.installCapCutZipToDirectory;
       if (typeof buildNlePackageZip !== 'function') {
         throw new Error(`buildNlePackageZip export not found: ${Object.keys(nleModule).join(', ')}`);
+      }
+      if (typeof installCapCutZipToDirectory !== 'function') {
+        throw new Error(`installCapCutZipToDirectory export not found: ${Object.keys(nleModule).join(', ')}`);
       }
       const zipModule = await import(jszipModuleUrl);
       const JSZipCtor = zipModule.default || zipModule.J || zipModule.j || zipModule;
@@ -133,6 +139,22 @@ async function main() {
       const draftSettings = await readZipText('draft_settings');
       const readme = await zipInstance.file('README.txt').async('string');
       const videoTrack = draftContent.tracks.find((track) => track.type === 'video');
+      const opfsRoot = await navigator.storage.getDirectory();
+      if (typeof opfsRoot.removeEntry === 'function') {
+        await opfsRoot.removeEntry('capcut-direct-install-video-room', { recursive: true }).catch(() => {});
+      }
+      const directInstallRoot = await opfsRoot.getDirectoryHandle('capcut-direct-install-video-room', { create: true });
+      const directInstallResult = await installCapCutZipToDirectory({
+        zipBlob,
+        draftsRootHandle: directInstallRoot,
+        draftsRootPath: '/Users/tester/Movies/CapCut/User Data/Projects/com.lveditor.draft',
+      });
+      const directProjectHandle = await directInstallRoot.getDirectoryHandle(directInstallResult.projectId);
+      const directDraftContentText = await (await (await directProjectHandle.getFileHandle('draft_content.json')).getFile()).text();
+      const directDraftMetaText = await (await (await directProjectHandle.getFileHandle('draft_meta_info.json')).getFile()).text();
+      const directDraftContent = JSON.parse(directDraftContentText);
+      const directDraftMetaInfo = JSON.parse(directDraftMetaText);
+      await (await (await (await directProjectHandle.getDirectoryHandle('materials')).getDirectoryHandle('video')).getFileHandle('verify_video_room.mp4')).getFile();
 
       return {
         zipBase64: await blobToBase64(zipBlob),
@@ -161,6 +183,10 @@ async function main() {
         readme,
         hasMediaVideo: !!zipInstance.file('media/verify_video_room.mp4'),
         videoStarts: videoTrack.segments.map((segment) => segment.target_timerange.start),
+        directInstallProjectId: directInstallResult.projectId,
+        directInstallDraftPath: directDraftContent.materials.videos[0]?.path || '',
+        directInstallDraftFoldPath: directDraftMetaInfo.draft_fold_path,
+        directInstallDraftRootPath: directDraftMetaInfo.draft_root_path,
       };
     }, { sourceVideo, nleModuleUrl, jszipModuleUrl });
 
@@ -178,6 +204,9 @@ async function main() {
     assert(summary.draftFoldPath.startsWith('/com.lveditor.draft/'), `draft_fold_path mismatch: ${summary.draftFoldPath}`);
     assert(summary.draftRootPath === '/com.lveditor.draft', `draft_root_path mismatch: ${summary.draftRootPath}`);
     assert(summary.draftPath.includes('/materials/video/verify_video_room.mp4'), `draft media path mismatch: ${summary.draftPath}`);
+    assert(summary.directInstallDraftPath === `/Users/tester/Movies/CapCut/User Data/Projects/com.lveditor.draft/${summary.directInstallProjectId}/materials/video/verify_video_room.mp4`, `direct install media path mismatch: ${summary.directInstallDraftPath}`);
+    assert(summary.directInstallDraftFoldPath === `/Users/tester/Movies/CapCut/User Data/Projects/com.lveditor.draft/${summary.directInstallProjectId}`, `direct install draft_fold_path mismatch: ${summary.directInstallDraftFoldPath}`);
+    assert(summary.directInstallDraftRootPath === '/Users/tester/Movies/CapCut/User Data/Projects/com.lveditor.draft', `direct install draft_root_path mismatch: ${summary.directInstallDraftRootPath}`);
     assert(summary.readme.includes('install_capcut_project.command') && summary.readme.includes('install_capcut_project.bat'), 'README should guide users to run the installer scripts');
     assert(summary.draftVideoCount === 1, `Unexpected draft video count: ${summary.draftVideoCount}`);
     assert(summary.draftInfoId === summary.draftContentId, 'draft_info.json should contain the same project timeline as draft_content.json');
