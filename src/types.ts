@@ -455,6 +455,11 @@ export interface ProjectConfig {
 
   characterDraft?: CharacterDraft;
   mergedAudioUrl?: string;        // 전체 병합 오디오 (사운드 스튜디오에서 전송)
+  narrationSource?: 'tts' | 'uploaded-audio'; // 나레이션 원천 구분
+  uploadedAudioId?: string;       // 업로드 STT 원본 audio ID
+  sourceNarrationDurationSec?: number; // 실제 업로드 오디오 길이 (초)
+  transcriptDurationSec?: number; // STT 결과 총 길이 (초)
+  rawUploadedTranscriptSegments?: WhisperSegment[]; // 업로드 STT 원본 세그먼트
   sceneOrder?: string[];           // 편집실 장면 순서 (영속화)
   bgmConfig?: BgmConfig;           // 편집실 BGM 설정 (영속화)
 

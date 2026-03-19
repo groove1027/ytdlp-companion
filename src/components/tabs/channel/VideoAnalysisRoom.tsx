@@ -17,7 +17,7 @@ import { buildVideoAnalysisStylePreset } from '../../../utils/videoStyleExtracto
 import AnalysisSlotBar from './AnalysisSlotBar';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
 import { getYoutubeApiKey, getKieKey, monitoredFetch } from '../../../services/apiService';
-import { getQuotaUsage } from '../../../services/youtubeAnalysisService';
+import { getQuotaUsage, fetchTimedTranscriptForAnalysis } from '../../../services/youtubeAnalysisService';
 import { extractStreamUrl, isYtdlpServerConfigured, getSocialMetadata, downloadSocialVideo, fetchFramesFromServer } from '../../../services/ytdlpApiService';
 import { detectPlatform } from '../../../services/videoDownloadService';
 import { uploadMediaToHosting } from '../../../services/uploadService';
@@ -544,16 +544,20 @@ async function withAsyncTimeout<T>(promise: Promise<T>, ms: number, label: strin
   }
 }
 
-async function downloadSourceVideoForNleExport(sourceUrl: string): Promise<{ blob: Blob; hasAudio: boolean; title: string }> {
+async function downloadSourceVideoForNleExport(
+  sourceUrl: string,
+  options?: { signal?: AbortSignal },
+): Promise<{ blob: Blob; hasAudio: boolean; title: string }> {
   if (isYouTubeUrl(sourceUrl)) {
     const { downloadVideoViaProxy } = await import('../../../services/ytdlpApiService');
     const videoId = extractYouTubeVideoId(sourceUrl) || sourceUrl;
     const { blob, info } = await withAsyncTimeout(
-      downloadVideoViaProxy(videoId, '720p'),
+      downloadVideoViaProxy(videoId, '720p', undefined, { signal: options?.signal }),
       180000,
       '원본 영상 다운로드',
     );
-    return { blob, hasAudio: true, title: info.title || '' };
+    const hasAudio = await verifyBlobHasAudio(blob);
+    return { blob, hasAudio, title: info.title || '' };
   }
 
   const { blob, title } = await withAsyncTimeout(
@@ -561,7 +565,73 @@ async function downloadSourceVideoForNleExport(sourceUrl: string): Promise<{ blo
     180000,
     '원본 영상 다운로드',
   );
-  return { blob, hasAudio: true, title: title || '' };
+  const hasAudio = await verifyBlobHasAudio(blob);
+  return { blob, hasAudio, title: title || '' };
+}
+
+/** 블롭에 실제 오디오 트랙이 있는지 검증 (video element 프로빙 — 짧게 재생 후 확인) */
+async function verifyBlobHasAudio(blob: Blob): Promise<boolean> {
+  return new Promise<boolean>(resolve => {
+    const vid = document.createElement('video');
+    vid.muted = true;
+    vid.preload = 'auto';
+    vid.volume = 0;
+    const url = URL.createObjectURL(blob);
+    let resolved = false;
+    let timeoutId = 0;
+    const done = (result: boolean) => {
+      if (resolved) return;
+      resolved = true;
+      window.clearTimeout(timeoutId);
+      try { vid.pause(); } catch { /* noop */ }
+      vid.removeAttribute('src');
+      vid.load();
+      URL.revokeObjectURL(url);
+      resolve(result);
+    };
+    const getDecodedBytes = (): number | null => {
+      const decoded = (vid as unknown as { webkitAudioDecodedByteCount?: number }).webkitAudioDecodedByteCount;
+      return typeof decoded === 'number' ? decoded : null;
+    };
+    const getAudioTrackByCapture = (): boolean | null => {
+      const capture = (vid as unknown as { captureStream?: () => MediaStream; mozCaptureStream?: () => MediaStream }).captureStream
+        ?? (vid as unknown as { mozCaptureStream?: () => MediaStream }).mozCaptureStream;
+      if (!capture) return null;
+      try {
+        return capture.call(vid).getAudioTracks().length > 0;
+      } catch {
+        return null;
+      }
+    };
+    timeoutId = window.setTimeout(() => done(false), 5000); // 검증 불가 시 보수적으로 false
+    vid.onloadedmetadata = () => {
+      // 1순위: Firefox mozHasAudio
+      const moz = (vid as unknown as { mozHasAudio?: boolean }).mozHasAudio;
+      if (typeof moz === 'boolean') { done(moz); return; }
+      // 2순위: audioTracks API (Safari, Firefox)
+      const tracks = (vid as unknown as { audioTracks?: { length: number } }).audioTracks;
+      if (tracks != null) { done(tracks.length > 0); return; }
+      // 3순위: captureStream의 오디오 트랙 확인
+      const captured = getAudioTrackByCapture();
+      if (captured != null) { done(captured); return; }
+      // 4순위: Chrome webkitAudioDecodedByteCount — 짧게 재생 후 확인
+      const decodedBeforePlay = getDecodedBytes();
+      if (decodedBeforePlay != null && decodedBeforePlay > 0) { done(true); return; }
+      vid.play().then(() => {
+        window.setTimeout(() => {
+          const decoded = getDecodedBytes();
+          if (decoded != null) { done(decoded > 0); return; }
+          const afterPlayCaptured = getAudioTrackByCapture();
+          done(afterPlayCaptured ?? false);
+        }, 300); // 300ms 재생 후 체크
+      }).catch(() => {
+        const afterFailCaptured = getAudioTrackByCapture();
+        done(afterFailCaptured ?? false);
+      });
+    };
+    vid.onerror = () => done(false);
+    vid.src = url;
+  });
 }
 
 /** YouTube 고정 썸네일 폴백 — 타임코드별 가장 가까운 위치 매핑 (최후 수단) */
@@ -3191,6 +3261,12 @@ const VideoAnalysisRoom: React.FC = () => {
           const primaryVid = extractYouTubeVideoId(urls[0]);
           if (primaryVid) videoUri = urls[0].trim();
 
+          // [FIX #perf] 메타데이터 + 타임코드 보존 자막을 병렬로 수집
+          // 타임드 자막은 AI에게 실제 타임코드를 제공하여 정확도 향상 + 화자분리 대체
+          const timedTranscriptPromise = primaryVid
+            ? fetchTimedTranscriptForAnalysis(primaryVid).catch(() => null)
+            : Promise.resolve(null);
+
           const metaResults = await Promise.allSettled(
             urls.map(async (url) => {
               const vid = extractYouTubeVideoId(url);
@@ -3202,6 +3278,9 @@ const VideoAnalysisRoom: React.FC = () => {
               return { vid, url, meta, comments };
             })
           );
+
+          // 타임드 자막 결과 수집 (메타데이터와 병렬 실행됨)
+          const timedTranscript = await timedTranscriptPromise;
 
           const allFrames: TimedFrame[] = [];
           const descs: string[] = [];
@@ -3248,6 +3327,12 @@ ${meta.description.slice(0, 1500)}${meta.description.length > 1500 ? '\n...(이�
             inputDesc = `## 다중 영상 짜집기 분석 (${urls.length}개 소스)\n아래 ${urls.length}개 영상의 핵심 장면을 조합하여 하나의 새로운 영상을 만들어야 합니다.\n각 소스의 가장 매력적인 구간을 골라 짜집기(재편집) 편집표를 작성해주세요.\n\n` + descs.join('\n\n---\n\n');
           } else {
             inputDesc = descs[0] || `YouTube 영상 URL: ${urls[0]?.trim() || ''}`;
+          }
+
+          // [FIX #perf] 타임드 자막이 있으면 inputDesc에 추가 — AI가 실제 타임코드 기반으로 편집표 작성
+          if (timedTranscript) {
+            inputDesc += `\n\n---\n${timedTranscript}`;
+            console.log(`[VideoAnalysis] ✅ 타임코드 보존 자막 Gemini 입력에 추가 완료`);
           }
         } else {
           // ── 소셜 모드 (TikTok / Douyin / Xiaohongshu 등) ──
@@ -4494,7 +4579,9 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                     }
                                     if (nleExporting) return;
                                     const startedAt = Date.now();
-                                    nleAbortRef.current = new AbortController();
+                                    const myAbort = new AbortController();
+                                    nleAbortRef.current = myAbort;
+                                    const isCancelled = () => myAbort.signal.aborted;
                                     setNleExporting({ target, step: '준비 중...', startedAt });
                                     try {
                                       // Step 1: videoBlob 확보 — 오디오 포함 보장
@@ -4512,21 +4599,27 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
 
                                       // YouTube 소스인 경우 항상 오디오 포함 영상을 새로 다운로드 (분석용 blob은 video-only일 수 있음)
                                       if (inputMode === 'youtube' && sourceUrl && isYoutubeSource && (!videoBlob || !audioConfirmed)) {
+                                        if (isCancelled()) return;
                                         setNleExporting({ target, step: '오디오 포함 영상 다운로드 중...', progress: 0, startedAt });
                                         try {
                                           const { downloadVideoViaProxy } = await import('../../../services/ytdlpApiService');
                                           const vid = extractYouTubeVideoId(sourceUrl) || sourceUrl;
                                           const merged = await downloadVideoViaProxy(vid, '720p', (p) => {
-                                            setNleExporting(prev => prev ? { ...prev, progress: Math.round(p * 100) } : prev);
-                                          });
+                                            if (nleAbortRef.current !== myAbort || myAbort.signal.aborted) return;
+                                            setNleExporting(prev => {
+                                              if (!prev || prev.target !== target) return prev;
+                                              return { ...prev, progress: Math.round(p * 100), startedAt: prev.startedAt ?? startedAt };
+                                            });
+                                          }, { signal: myAbort.signal });
                                           if (merged.blob.size > 0) {
                                             videoBlob = merged.blob;
                                             downloadedSourceTitle = merged.info?.title || '';
-                                            audioConfirmed = true;
-                                            useVideoAnalysisStore.getState().setVideoBlob(merged.blob, true);
+                                            // 실제 오디오 존재 여부 검증 (서버가 video-only 반환할 수 있으므로)
+                                            audioConfirmed = await verifyBlobHasAudio(merged.blob);
+                                            useVideoAnalysisStore.getState().setVideoBlob(merged.blob, audioConfirmed);
                                           }
                                         } catch (dlErr) {
-                                          if (nleAbortRef.current?.signal.aborted) return;
+                                          if (isCancelled()) return;
                                           console.warn('[NLE] 오디오 포함 다운로드 실패:', dlErr);
                                         }
                                       } else if (!videoBlob) {
@@ -4534,8 +4627,9 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                           videoBlob = uploadedFiles[0];
                                           audioConfirmed = true;
                                         } else if (inputMode === 'youtube' && sourceUrl) {
+                                          if (isCancelled()) return;
                                           setNleExporting({ target, step: '영상 다운로드 중...', progress: 0, startedAt });
-                                          const dlResult = await downloadSourceVideoForNleExport(sourceUrl);
+                                          const dlResult = await downloadSourceVideoForNleExport(sourceUrl, { signal: myAbort.signal });
                                           if (dlResult.blob.size > 0) {
                                             videoBlob = dlResult.blob;
                                             downloadedSourceTitle = dlResult.title || '';
@@ -4545,7 +4639,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                         }
                                       }
 
-                                      if (nleAbortRef.current?.signal.aborted) return;
+                                      if (isCancelled()) return;
 
                                       if (!videoBlob) {
                                         showToast('⚠️ 영상 서버가 바빠서 다운로드에 실패했어요. 잠시 후 다시 시도해주세요.', 5000);
@@ -4559,7 +4653,8 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                       const fileName = uploadedFiles[0]?.name || `${baseName}.mp4`;
                                       let dims = nleDimsCache.current;
                                       if (!dims) {
-                                        setNleExporting({ target, step: '영상 정보 확인 중...' });
+                                        if (isCancelled()) return;
+                                        setNleExporting({ target, step: '영상 정보 확인 중...', startedAt });
                                         dims = await new Promise<{ w: number; h: number; fps: number; dur: number }>(resolve => {
                                           const vid = document.createElement('video');
                                           vid.muted = true; vid.playsInline = true; vid.preload = 'auto';
@@ -4603,19 +4698,28 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                         nleDimsCache.current = dims;
                                       }
                                       // Step 3: ZIP 패키지 생성
-                                      setNleExporting({ target, step: 'ZIP 패키지 생성 중...' });
+                                      if (isCancelled()) return;
+                                      setNleExporting({ target, step: 'ZIP 패키지 생성 중...', startedAt });
                                       const zipBlob = await buildNlePackageZip({ target, scenes: v.scenes, title: v.title, videoBlob, videoFileName: fileName, preset: selectedPreset || undefined, width: dims.w, height: dims.h, fps: dims.fps, videoDurationSec: dims.dur });
+                                      if (isCancelled()) return;
                                       const url = URL.createObjectURL(zipBlob);
                                       const a = document.createElement('a'); a.href = url; a.download = `${sanitizeProjectName(v.title, 30)}_${label}.zip`; a.click();
                                       setTimeout(() => URL.revokeObjectURL(url), 10000);
                                       // [FIX #370] 오디오 누락 경고 — 오디오 없이 NLE 내보내기 시 사용자에게 안내
+                                      if (isCancelled()) return;
                                       showToast(!audioConfirmed
                                         ? `${label} 다운로드 완료! ⚠️ 원본 오디오를 불러오지 못했어요. ${target === 'premiere' ? 'Premiere' : label}에서 수동으로 오디오를 추가해주세요.`
                                         : `${label} 패키지 다운로드 완료!`, !audioConfirmed ? 7000 : undefined);
                                     } catch (e) {
-                                      if (nleAbortRef.current?.signal.aborted) return;
+                                      if (isCancelled()) return;
                                       console.error('[NLE]', e); showToast(`${label} 패키지 생성 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`, 5000);
-                                    } finally { nleAbortRef.current = null; setNleExporting(null); }
+                                    } finally {
+                                      // 자기 작업의 controller만 정리 (다른 작업이 시작됐으면 건드리지 않음)
+                                      if (nleAbortRef.current === myAbort) {
+                                        nleAbortRef.current = null;
+                                        setNleExporting(null);
+                                      }
+                                    }
                                   }}
                                   className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold transition-all shadow-sm ${
                                     nleExporting?.target === target

@@ -29,6 +29,15 @@
             "command": "bash /Users/jihoo/Downloads/all-in-one-production-build4/.claude/hooks/post-edit-check.sh"
           }
         ]
+      },
+      {
+        "matcher": "mcp__codex__codex|mcp__codex__review",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash /Users/jihoo/Downloads/all-in-one-production-build4/.claude/hooks/codex-enforce.sh"
+          }
+        ]
       }
     ]
   },

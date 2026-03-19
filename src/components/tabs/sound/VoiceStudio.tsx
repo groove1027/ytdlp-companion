@@ -586,8 +586,19 @@ const VoiceStudio: React.FC = () => {
       return;
     }
 
+    const usesUploadedNarration = line.audioSource === 'uploaded' || !!line.uploadedAudioId;
     setIsGeneratingLine(lineId);
-    updateLine(lineId, { ttsStatus: 'generating' });
+    updateLine(lineId, usesUploadedNarration
+      ? {
+          audioUrl: undefined,
+          audioSource: 'tts',
+          uploadedAudioId: undefined,
+          startTime: undefined,
+          endTime: undefined,
+          duration: undefined,
+          ttsStatus: 'generating',
+        }
+      : { ttsStatus: 'generating' });
 
     try {
       const prevText = lineIdx > 0 ? lines[lineIdx - 1]?.text?.slice(-200) : undefined;
@@ -634,7 +645,7 @@ const VoiceStudio: React.FC = () => {
         ctx.close();
       } catch (e) { logger.trackSwallowedError('VoiceStudio:generateTTS/decodeDuration', e); }
 
-      const hasFixedTimeline =
+      const hasFixedTimeline = !usesUploadedNarration &&
         typeof line.startTime === 'number' &&
         typeof line.endTime === 'number' &&
         Number.isFinite(line.startTime) &&
@@ -646,6 +657,8 @@ const VoiceStudio: React.FC = () => {
 
       updateLine(lineId, {
         audioUrl: result.audioUrl,
+        audioSource: 'tts',
+        uploadedAudioId: undefined,
         ttsStatus: 'done',
         ...(fixedDuration != null
           ? { duration: fixedDuration }
@@ -1024,11 +1037,12 @@ const VoiceStudio: React.FC = () => {
     if (!transcriptResult || !uploadedFile || !uploadedBlobUrl) return;
 
     const audioId = `upload-${Date.now()}`;
+    const resolvedSourceDuration = uploadedDuration > 0 ? uploadedDuration : transcriptResult.duration;
     addUploadedAudio({
       id: audioId,
       fileName: uploadedFile.name,
       audioUrl: uploadedBlobUrl,
-      duration: uploadedDuration,
+      duration: resolvedSourceDuration,
       fileSize: uploadedFile.size,
       mimeType: uploadedFile.type,
       uploadedAt: Date.now(),
@@ -1038,6 +1052,16 @@ const VoiceStudio: React.FC = () => {
     const newLines = segmentsToScriptLines(transcriptResult.segments, audioId, defaultSpeakerId);
     setLines(newLines);
     setMergedAudio(uploadedBlobUrl);
+    useProjectStore.getState().setConfig((prev) => prev ? {
+      ...prev,
+      script: transcriptResult.segments.map((segment) => segment.text).join('\n'),
+      mergedAudioUrl: uploadedBlobUrl,
+      narrationSource: 'uploaded-audio',
+      uploadedAudioId: audioId,
+      sourceNarrationDurationSec: resolvedSourceDuration || undefined,
+      transcriptDurationSec: transcriptResult.duration || undefined,
+      rawUploadedTranscriptSegments: transcriptResult.segments,
+    } : prev);
   }, [transcriptResult, uploadedFile, uploadedBlobUrl, uploadedDuration, speakers, addUploadedAudio, setLines, setMergedAudio]);
 
   const formatFileSize = (bytes: number) => {

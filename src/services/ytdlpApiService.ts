@@ -119,6 +119,106 @@ export interface SocialMetadata {
 
 export type VideoQuality = 'best' | '1080p' | '720p' | '480p' | '360p' | 'audio';
 
+interface DownloadVideoViaProxyOptions {
+  videoOnly?: boolean;
+  signal?: AbortSignal;
+}
+
+interface CombinedAbortSignalContext {
+  signal: AbortSignal;
+  didTimeout: () => boolean;
+  didExternalAbort: () => boolean;
+  dispose: () => void;
+}
+
+const ABORT_ERROR_NAME = 'AbortError';
+
+function createAbortError(): Error {
+  if (typeof DOMException !== 'undefined') {
+    return new DOMException('The operation was aborted.', ABORT_ERROR_NAME);
+  }
+  const error = new Error('The operation was aborted.');
+  error.name = ABORT_ERROR_NAME;
+  return error;
+}
+
+function isAbortError(error: unknown): boolean {
+  if (typeof DOMException !== 'undefined' && error instanceof DOMException) {
+    return error.name === ABORT_ERROR_NAME;
+  }
+  if (error instanceof Error) {
+    return error.name === ABORT_ERROR_NAME || /aborted|abort/i.test(error.message);
+  }
+  return false;
+}
+
+function sleepWithSignal(ms: number, signal?: AbortSignal): Promise<void> {
+  if (!signal) return new Promise(resolve => setTimeout(resolve, ms));
+  if (signal.aborted) return Promise.reject(createAbortError());
+
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timeoutId);
+      signal.removeEventListener('abort', onAbort);
+      reject(createAbortError());
+    };
+    const timeoutId = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+function createCombinedAbortSignalContext(externalSignal: AbortSignal | undefined, timeoutMs: number): CombinedAbortSignalContext {
+  let timedOut = false;
+  const timeoutController = new AbortController();
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    timeoutController.abort();
+  }, timeoutMs);
+
+  if (!externalSignal) {
+    return {
+      signal: timeoutController.signal,
+      didTimeout: () => timedOut,
+      didExternalAbort: () => false,
+      dispose: () => clearTimeout(timeoutId),
+    };
+  }
+
+  const abortSignalAny = (AbortSignal as unknown as { any?: (signals: AbortSignal[]) => AbortSignal }).any;
+  if (typeof abortSignalAny === 'function') {
+    return {
+      signal: abortSignalAny([externalSignal, timeoutController.signal]),
+      didTimeout: () => timedOut,
+      didExternalAbort: () => externalSignal.aborted,
+      dispose: () => clearTimeout(timeoutId),
+    };
+  }
+
+  const bridgeController = new AbortController();
+  const onExternalAbort = () => bridgeController.abort();
+  const onTimeoutAbort = () => bridgeController.abort();
+
+  if (externalSignal.aborted || timeoutController.signal.aborted) {
+    bridgeController.abort();
+  }
+  externalSignal.addEventListener('abort', onExternalAbort, { once: true });
+  timeoutController.signal.addEventListener('abort', onTimeoutAbort, { once: true });
+
+  return {
+    signal: bridgeController.signal,
+    didTimeout: () => timedOut,
+    didExternalAbort: () => externalSignal.aborted,
+    dispose: () => {
+      clearTimeout(timeoutId);
+      externalSignal.removeEventListener('abort', onExternalAbort);
+      timeoutController.signal.removeEventListener('abort', onTimeoutAbort);
+    },
+  };
+}
+
 // ──────────────────────────────────────────────
 // API 호출 헬퍼
 // ──────────────────────────────────────────────
@@ -219,20 +319,28 @@ export async function downloadVideoViaProxy(
   youtubeUrl: string,
   quality: VideoQuality = '720p',
   onProgress?: (progress: number) => void,
-  options?: { videoOnly?: boolean },
+  options?: DownloadVideoViaProxyOptions,
 ): Promise<{ blob: Blob; info: YtdlpStreamResult }> {
   // [FIX #316] 재시도 + 화질 다운그레이드 — 무슨 수를 써서라도 다운로드
   const MAX_RETRIES = 3;
   const videoOnly = options?.videoOnly ?? false;
+  const externalSignal = options?.signal;
   const QUALITY_FALLBACK: VideoQuality[] = [quality, '720p', '480p', '360p'];
   const qualities = [...new Set(QUALITY_FALLBACK)];
 
   let lastError: Error | null = null;
 
   for (const q of qualities) {
+    if (externalSignal?.aborted) {
+      throw createAbortError();
+    }
     const info = await extractStreamUrl(youtubeUrl, q).catch(() => null);
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      if (externalSignal?.aborted) {
+        throw createAbortError();
+      }
+      const abortContext = createCombinedAbortSignalContext(externalSignal, 600_000);
       try {
         const baseUrl = getApiBaseUrl();
         const apiKey = getApiKey();
@@ -241,7 +349,7 @@ export async function downloadVideoViaProxy(
 
         const response = await monitoredFetch(proxyUrl, {
           headers: apiKey ? { 'X-API-Key': apiKey } : {},
-          signal: AbortSignal.timeout(600_000),
+          signal: abortContext.signal,
         });
 
         if (!response.ok) {
@@ -256,31 +364,65 @@ export async function downloadVideoViaProxy(
           const chunks: BlobPart[] = [];
           let received = 0;
 
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            chunks.push(value);
-            received += (value as Uint8Array).length;
-            if (contentLength > 0) {
-              onProgress(received / contentLength);
+          try {
+            while (true) {
+              if (abortContext.signal.aborted) {
+                throw createAbortError();
+              }
+              const { done, value } = await reader.read();
+              if (done) break;
+              chunks.push(value);
+              received += (value as Uint8Array).length;
+              if (contentLength > 0) {
+                onProgress(Math.min(1, received / contentLength));
+              }
             }
+          } catch (streamError) {
+            try {
+              await reader.cancel();
+            } catch (cancelError) {
+              logger.trackSwallowedError('ytdlpApiService:downloadVideoViaProxy:reader.cancel', cancelError);
+            }
+            throw streamError;
           }
 
+          onProgress(1);
           return { blob: new Blob(chunks, { type: 'video/mp4' }), info: info || defaultInfo };
         }
 
-        return { blob: await response.blob(), info: info || defaultInfo };
+        const blob = await response.blob();
+        if (onProgress) onProgress(1);
+        return { blob, info: info || defaultInfo };
       } catch (e) {
-        lastError = e instanceof Error ? e : new Error(String(e));
+        if (abortContext.didExternalAbort() || externalSignal?.aborted) {
+          throw createAbortError();
+        }
+
+        if (isAbortError(e) && !abortContext.didTimeout()) {
+          throw e instanceof Error ? e : new Error(String(e));
+        }
+
+        lastError = abortContext.didTimeout()
+          ? new Error('프록시 다운로드 시간 초과')
+          : (e instanceof Error ? e : new Error(String(e)));
         const isRateLimit = lastError.message.includes('429');
-        const isRetryable = isRateLimit || lastError.message.includes('502') || lastError.message.includes('503') || lastError.message.includes('504') || lastError.message.includes('Network') || lastError.message.includes('fetch');
+        const isRetryable = abortContext.didTimeout()
+          || isRateLimit
+          || lastError.message.includes('502')
+          || lastError.message.includes('503')
+          || lastError.message.includes('504')
+          || lastError.message.includes('Network')
+          || lastError.message.includes('fetch');
         if (!isRetryable) break;
+        if (attempt >= MAX_RETRIES - 1) break;
         // [FIX #567] 429 → retryAfter 기반 대기 (최소 5초 지수 백오프), 일반 에러 → 3초 기반
         const delay = isRateLimit
           ? 5000 * Math.pow(2, attempt) + Math.random() * 2000
           : 3000 * Math.pow(2, attempt) + Math.random() * 2000;
         logger.trackRetry(`downloadVideoViaProxy(${q})`, attempt + 1, MAX_RETRIES, `${lastError.message}, ${Math.round(delay)}ms 대기`);
-        await new Promise(r => setTimeout(r, delay));
+        await sleepWithSignal(delay, externalSignal);
+      } finally {
+        abortContext.dispose();
       }
     }
     if (q !== qualities[qualities.length - 1]) {

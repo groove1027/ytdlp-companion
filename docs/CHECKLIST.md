@@ -8,6 +8,16 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-19] #579 업로드 음성 duration 보존 + 롱폼 재구성 수정
+- [x] `types.ts` — 업로드 STT 메타데이터(`narrationSource`, 실제 길이, 전사 길이, 원본 세그먼트) 영속화 필드 추가
+- [x] `uploadedTranscriptScenes.ts` — 업로드 전사 원본을 현재 분할 설정에 맞는 장면/라인으로 재구성하는 헬퍼 추가
+- [x] `VoiceStudio.tsx`, `soundToImageBridge.ts` — 업로드 전사 적용/전송 시 실제 오디오 길이와 원본 STT 세그먼트를 project config까지 함께 저장
+- [x] `SetupPanel.tsx` — setup 예상 시간을 실제 오디오 길이 우선으로 표시, 업로드 STT 프로젝트는 롱폼/목표 컷 변경 시 enrich 대신 재구성 후 프롬프트 생성
+- [x] `projectStore.ts`, `useAutoSave.ts` — 새로고침 후에도 업로드 STT 원본 라인 복원 + 자동저장 fingerprint 확장
+- [x] `soundStudioStore.ts`, `TypecastEditor.tsx`, `NarrationView.tsx`, `VoiceStudio.tsx` — 업로드 전사 줄을 편집/TTS 재생성하면 업로드 메타데이터와 병합 오디오를 런타임에서 해제하도록 보강
+- [x] `soundToImageBridge.ts` — 업로드 전사 재전송 시 현재 분할 설정 기준으로 장면을 다시 묶고, 텍스트가 유지된 장면만 기존 메타데이터를 보존하도록 보강
+- [x] `tsc --noEmit` + `vite build` + `rg` 재검증 완료
+
 ### [2026-03-19] NLE 다운로드 UX 개선 + 오디오 수정 + 제목 복사 가시성
 - [x] `VideoAnalysisRoom.tsx` — NLE 다운로드 취소 기능 추가 (진행 중 버튼 재클릭 시 AbortController 취소)
 - [x] `VideoAnalysisRoom.tsx` — 다운로드 진행률(%) + 경과시간(초) 실시간 표시

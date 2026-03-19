@@ -9,7 +9,7 @@ import { persistImage } from '../../../services/imageStorageService';
 // import { removeBackground } from '../../../services/removeBgService';
 import { PRICING, DIALOGUE_TONE_PRESETS } from '../../../constants';
 import { VideoFormat, CharacterAppearance, AspectRatio, DialogueTone } from '../../../types';
-import type { CharacterReference, SavedCharacter } from '../../../types';
+import type { CharacterReference, SavedCharacter, Scene } from '../../../types';
 import VisualStylePicker, { getVisualStyleLabel } from '../../VisualStylePicker';
 import { useChannelAnalysisStore } from '../../../stores/channelAnalysisStore';
 import CharacterUploadPanel from '../../CharacterUploadPanel';
@@ -19,6 +19,7 @@ import { showToast } from '../../../stores/uiStore';
 import { logger } from '../../../services/LoggerService';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
+import { areUploadedTranscriptScenesSynced, buildUploadedTranscriptScenes } from '../../../utils/uploadedTranscriptScenes';
 
 let _sceneIdCounter = 0;
 
@@ -162,6 +163,60 @@ function estimateTime(chars: number): string {
   return `약 ${m}분 ${s}초`;
 }
 
+function formatNarrationDuration(sec: number): string {
+  const rounded = Math.max(0, Math.round(sec));
+  const m = Math.floor(rounded / 60);
+  const s = rounded % 60;
+  if (m === 0) return `${s}초`;
+  if (s === 0) return `${m}분`;
+  return `${m}분 ${s}초`;
+}
+
+function computeSceneDurationSec(scenes: Scene[]): number | null {
+  const timedEnds = scenes
+    .map((scene) => {
+      if (scene.endTime != null && scene.endTime > 0) return scene.endTime;
+      if (scene.startTime != null && scene.audioDuration != null && scene.audioDuration > 0) {
+        return scene.startTime + scene.audioDuration;
+      }
+      return null;
+    })
+    .filter((value): value is number => value != null);
+
+  if (timedEnds.length > 0) {
+    return Math.max(...timedEnds);
+  }
+
+  const summed = scenes.reduce((total, scene) => total + (scene.audioDuration || 0), 0);
+  return summed > 0 ? summed : null;
+}
+
+function mergeSceneAnalysis(base: Scene, ai?: Scene): Scene {
+  if (!ai) return base;
+  return {
+    ...base,
+    visualPrompt: ai.visualPrompt || base.visualPrompt,
+    visualDescriptionKO: ai.visualDescriptionKO || base.visualDescriptionKO,
+    characterPresent: ai.characterPresent ?? base.characterPresent,
+    castType: ai.castType || base.castType,
+    cameraAngle: ai.cameraAngle || base.cameraAngle,
+    cameraMovement: ai.cameraMovement || base.cameraMovement,
+    shotSize: ai.shotSize || base.shotSize,
+    isInfographic: ai.isInfographic ?? base.isInfographic,
+    sceneLocation: ai.sceneLocation || base.sceneLocation,
+    sceneEra: ai.sceneEra || base.sceneEra,
+    sceneCulture: ai.sceneCulture || base.sceneCulture,
+    characterAction: ai.characterAction || base.characterAction,
+    entityName: ai.entityName || base.entityName,
+    entityComposition: ai.entityComposition || base.entityComposition,
+    generatedDialogue: ai.generatedDialogue || base.generatedDialogue,
+    dialogueSpeaker: ai.dialogueSpeaker || base.dialogueSpeaker,
+    dialogueEmotion: ai.dialogueEmotion || base.dialogueEmotion,
+    dialogueSfx: ai.dialogueSfx || base.dialogueSfx,
+    emotionalBeat: ai.emotionalBeat || base.emotionalBeat,
+  };
+}
+
 const SetupPanel: React.FC = () => {
   const config = useProjectStore((s) => s.config);
   const setConfig = useProjectStore((s) => s.setConfig);
@@ -221,6 +276,30 @@ const SetupPanel: React.FC = () => {
   const vf = config?.videoFormat || VideoFormat.SHORT;
   const ss = config?.smartSplit ?? true;
   const lfs = config?.longFormSplitType;
+  const uploadedTranscriptScenes = useMemo(
+    () => buildUploadedTranscriptScenes(config, targetSceneCount),
+    [config, targetSceneCount],
+  );
+  const uploadedScenesNeedRegroup = useMemo(
+    () => !!uploadedTranscriptScenes && !areUploadedTranscriptScenesSynced(scenes, uploadedTranscriptScenes),
+    [scenes, uploadedTranscriptScenes],
+  );
+  const actualNarrationDuration = useMemo(() => {
+    if (config?.sourceNarrationDurationSec && config.sourceNarrationDurationSec > 0) {
+      return config.sourceNarrationDurationSec;
+    }
+    if (config?.transcriptDurationSec && config.transcriptDurationSec > 0) {
+      return config.transcriptDurationSec;
+    }
+    return computeSceneDurationSec(scenes);
+  }, [config?.sourceNarrationDurationSec, config?.transcriptDurationSec, scenes]);
+  const durationLabel = actualNarrationDuration != null
+    ? formatNarrationDuration(actualNarrationDuration)
+    : estimateTime(scriptText.length);
+  const durationMismatchSec = useMemo(() => {
+    if (!config?.sourceNarrationDurationSec || !config?.transcriptDurationSec) return 0;
+    return Math.abs(config.sourceNarrationDurationSec - config.transcriptDurationSec);
+  }, [config?.sourceNarrationDurationSec, config?.transcriptDurationSec]);
 
   const estimatedScenes = useMemo(() => {
     if (!scriptText.trim()) return 0;
@@ -422,6 +501,8 @@ const SetupPanel: React.FC = () => {
     const ss = config.smartSplit ?? true;
     const lfs = config.longFormSplitType;
     const existingScenes = useProjectStore.getState().scenes;
+    const uploadedBaseScenes = buildUploadedTranscriptScenes(config, useImageVideoStore.getState().targetSceneCount);
+    const usesUploadedTranscriptTiming = !!uploadedBaseScenes;
     // [FIX #83] 대본이 변경된 경우 enrichMode 비활성화 — 기존 장면 교체
     // 기존 장면의 나레이션 텍스트와 현재 대본을 비교하여 대본 불일치 시 전면 교체
     const existingScriptText = existingScenes.map(s => (s.scriptText || '').trim()).join(' ').trim();
@@ -432,9 +513,24 @@ const SetupPanel: React.FC = () => {
     // [FIX #382] 사용자가 목표 컷수를 수동 설정했고 기존 장면수와 다르면 enrichMode 비활성화 → 새로 분할
     const userTarget = useImageVideoStore.getState().targetSceneCount;
     const targetDiffers = userTarget !== null && userTarget > 0 && userTarget !== existingScenes.length;
-    const enrichMode = existingScenes.length > 0 && !isScriptChanged && !targetDiffers;
+    const uploadedNeedsRegroup = !!uploadedBaseScenes && !areUploadedTranscriptScenesSynced(existingScenes, uploadedBaseScenes);
+    const enrichMode = usesUploadedTranscriptTiming
+      ? existingScenes.length > 0 && !isScriptChanged && !targetDiffers && !uploadedNeedsRegroup
+      : existingScenes.length > 0 && !isScriptChanged && !targetDiffers;
+    const sceneDrafts = usesUploadedTranscriptTiming
+      ? (enrichMode ? existingScenes : uploadedBaseScenes)
+      : null;
+    const analysisScript = sceneDrafts
+      ? sceneDrafts.map((scene) => (scene.scriptText || scene.audioScript || '').trim()).filter(Boolean).join('\n')
+      : config.script;
     try {
-      const ctx = await analyzeScriptContext(config.script, onCost, vf, ss, lfs);
+      const ctx = await analyzeScriptContext(
+        analysisScript,
+        onCost,
+        vf,
+        sceneDrafts ? false : ss,
+        sceneDrafts ? undefined : lfs,
+      );
       // [FIX #403] 캐릭터 레퍼런스 분석 결과(편집 반영)를 스토리보드 생성에 주입
       const currentChars = useImageVideoStore.getState().characters;
       const charAnalysisDesc = currentChars
@@ -443,12 +539,12 @@ const SetupPanel: React.FC = () => {
         .join('\n\n');
       const effectiveCharDesc = [config.detectedCharacterDescription || '', charAnalysisDesc].filter(Boolean).join('\n\n');
       const parsed = await parseScriptToScenes(
-        config.script, vf, ctx.visualTone || 'Cinematic',
+        analysisScript, vf, ctx.visualTone || 'Cinematic',
         effectiveCharDesc, config.characterAppearance ?? CharacterAppearance.AUTO,
-        config.allowInfographics ?? false, enrichMode ? false : ss,
+        config.allowInfographics ?? false, sceneDrafts ? false : (enrichMode ? false : ss),
         config.baseAge, config.textForceLock, JSON.stringify(ctx), ctx.detectedLocale, onCost,
-        config.suppressText, enrichMode ? undefined : (vf === VideoFormat.LONG ? lfs : undefined),
-        enrichMode ? existingScenes.length : (useImageVideoStore.getState().targetSceneCount ?? ctx.estimatedSceneCount),
+        config.suppressText, sceneDrafts ? undefined : (enrichMode ? undefined : (vf === VideoFormat.LONG ? lfs : undefined)),
+        sceneDrafts ? sceneDrafts.length : (enrichMode ? existingScenes.length : (useImageVideoStore.getState().targetSceneCount ?? ctx.estimatedSceneCount)),
         config.dialogueTone, // [v4.7] 대사 톤
         config.extractedCharacters || ctx.characters, // [v4.7] 캐릭터 프로필
         config.referenceDialogue, // [v4.7] 참조 대사
@@ -466,11 +562,17 @@ const SetupPanel: React.FC = () => {
         if (!s.sceneCulture && defaultCulture) s.sceneCulture = defaultCulture;
       }
 
-      if (enrichMode) {
-        useProjectStore.getState().setScenes(existingScenes.map((ex, i) => {
-          const ai = parsed[i]; if (!ai) return ex;
-          return { ...ex, visualPrompt: ai.visualPrompt || ex.visualPrompt, visualDescriptionKO: ai.visualDescriptionKO || ex.visualDescriptionKO, characterPresent: ai.characterPresent ?? ex.characterPresent, castType: ai.castType || ex.castType, cameraAngle: ai.cameraAngle || ex.cameraAngle, cameraMovement: ai.cameraMovement || ex.cameraMovement, shotSize: ai.shotSize || ex.shotSize, isInfographic: ai.isInfographic ?? ex.isInfographic, sceneLocation: ai.sceneLocation || ex.sceneLocation, sceneEra: ai.sceneEra || ex.sceneEra, sceneCulture: ai.sceneCulture || ex.sceneCulture, characterAction: ai.characterAction || ex.characterAction, entityName: ai.entityName || ex.entityName, entityComposition: ai.entityComposition || ex.entityComposition, generatedDialogue: ai.generatedDialogue || ex.generatedDialogue, dialogueSpeaker: ai.dialogueSpeaker || ex.dialogueSpeaker, dialogueEmotion: ai.dialogueEmotion || ex.dialogueEmotion, dialogueSfx: ai.dialogueSfx || ex.dialogueSfx, emotionalBeat: ai.emotionalBeat || ex.emotionalBeat };
-        }));
+      if (sceneDrafts) {
+        const baseScenes = enrichMode ? existingScenes : sceneDrafts;
+        useProjectStore.getState().setScenes(baseScenes.map((base, i) => ({
+          ...mergeSceneAnalysis(base, parsed[i]),
+          id: base.id || `scene-${Date.now()}-${++_sceneIdCounter}-${i}`,
+          isGeneratingImage: false,
+          isGeneratingVideo: false,
+          seedanceDuration: base.seedanceDuration || '8',
+        })));
+      } else if (enrichMode) {
+        useProjectStore.getState().setScenes(existingScenes.map((ex, i) => mergeSceneAnalysis(ex, parsed[i])));
       } else {
         useProjectStore.getState().setScenes(parsed.map((s, i) => ({ ...s, id: `scene-${Date.now()}-${++_sceneIdCounter}-${i}`, isGeneratingImage: false, isGeneratingVideo: false, seedanceDuration: '8' })));
       }
@@ -507,6 +609,11 @@ const SetupPanel: React.FC = () => {
         if (await runSceneAnalysis()) setActiveSubTab('storyboard');
         return;
       }
+      if (uploadedScenesNeedRegroup && config?.script) {
+        showToast('업로드 전사를 현재 분할 설정에 맞게 다시 구성합니다...');
+        if (await runSceneAnalysis()) setActiveSubTab('storyboard');
+        return;
+      }
       // [FIX #421] 목표 컷 수가 변경되었으면 기존 장면 무시하고 재분석
       const userTarget = useImageVideoStore.getState().targetSceneCount;
       if (userTarget && userTarget > 0 && existingScenes.length !== userTarget) {
@@ -537,7 +644,7 @@ const SetupPanel: React.FC = () => {
     }
     if (!config?.script) { showToast('대본을 먼저 입력해주세요'); return; }
     if (await runSceneAnalysis()) setActiveSubTab('storyboard');
-  }, [config?.script, runSceneAnalysis, setActiveSubTab, requireAuth]);
+  }, [config?.script, runSceneAnalysis, setActiveSubTab, requireAuth, uploadedScenesNeedRegroup]);
 
   if (!config) return null;
 
@@ -710,8 +817,13 @@ const SetupPanel: React.FC = () => {
             {scriptText.trim() && (
               <div className="flex items-center gap-3 flex-wrap">
                 <span className="text-sm font-bold text-orange-400 bg-orange-500/10 border border-orange-500/30 px-3 py-1.5 rounded-lg">
-                  {scriptText.length.toLocaleString()}자 · {estimateTime(scriptText.length)}
+                  {scriptText.length.toLocaleString()}자 · {durationLabel}
                 </span>
+                {durationMismatchSec >= 10 && (
+                  <span className="text-xs font-bold text-amber-300 bg-amber-500/10 border border-amber-500/30 px-3 py-1.5 rounded-lg">
+                    실제 오디오 {formatNarrationDuration(config?.sourceNarrationDurationSec || 0)} / 전사 {formatNarrationDuration(config?.transcriptDurationSec || 0)}
+                  </span>
+                )}
                 {estimatedScenes > 0 && (
                   <span className="text-sm font-bold text-blue-300 bg-blue-900/30 px-2 py-1 rounded-lg border border-blue-700/40">
                     예상 약 {estimatedScenes}컷

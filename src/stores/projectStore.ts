@@ -13,6 +13,7 @@ import { useUploadStore } from './uploadStore';
 import { persistImage, isBase64Image } from '../services/imageStorageService';
 import { logger } from '../services/LoggerService';
 import { usePptMasterStore } from './pptMasterStore';
+import { buildUploadedTranscriptLines, isUploadedTranscriptConfig } from '../utils/uploadedTranscriptScenes';
 
 // editRoomStore → projectStore 순환 참조 방지: lazy import 사용
 let _editRoomStoreRef: any = null;
@@ -535,31 +536,49 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
           }
           // [FIX #395] soundStudioStore에도 동기화 — Sound Studio에서 병합 오디오 표시
           try { useSoundStudioStore.getState().setMergedAudio(restored.mergedUrl); } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/syncMergedAudio', e); }
+          if (isUploadedTranscriptConfig(get().config)) {
+            useSoundStudioStore.setState({
+              uploadedAudios: [{
+                id: get().config?.uploadedAudioId || 'uploaded-restored',
+                fileName: 'uploaded-audio',
+                audioUrl: restored.mergedUrl,
+                duration: get().config?.sourceNarrationDurationSec || get().config?.transcriptDurationSec || 0,
+                fileSize: 0,
+                mimeType: 'audio/*',
+                uploadedAt: Date.now(),
+              }],
+            });
+          } else {
+            useSoundStudioStore.setState({ uploadedAudios: [] });
+          }
         } else if (get().config?.mergedAudioUrl?.startsWith('blob:')) {
           // IDB에 없는 stale blob URL 제거
           const currentConfig = get().config;
           if (currentConfig) {
             set({ config: { ...currentConfig, mergedAudioUrl: undefined } });
           }
+          useSoundStudioStore.setState({ uploadedAudios: [] });
         }
 
         // soundStudioStore lines 재생성 (복원된 URL 사용)
         try {
+          const currentConfig = get().config;
           const finalScenes = get().scenes;
-          const restoredLines = finalScenes
-            .filter((s) => s.scriptText || s.audioUrl)
-            .map((s, i) => ({
-              id: `line-${Date.now()}-${i}`,
-              speakerId: '',
-              text: s.scriptText || s.audioScript || '',
-              index: i,
-              sceneId: s.id,
-              audioUrl: s.audioUrl,
-              duration: s.audioDuration,
-              startTime: s.startTime,
-              endTime: s.endTime,
-              ttsStatus: (s.audioUrl ? 'done' : 'idle') as 'done' | 'idle',
-            }));
+          const restoredLines = buildUploadedTranscriptLines(currentConfig)
+            || finalScenes
+              .filter((s) => s.scriptText || s.audioUrl)
+              .map((s, i) => ({
+                id: `line-${Date.now()}-${i}`,
+                speakerId: '',
+                text: s.scriptText || s.audioScript || '',
+                index: i,
+                sceneId: s.id,
+                audioUrl: s.audioUrl,
+                duration: s.audioDuration,
+                startTime: s.startTime,
+                endTime: s.endTime,
+                ttsStatus: (s.audioUrl ? 'done' : 'idle') as 'done' | 'idle',
+              }));
           if (restoredLines.length > 0) {
             useSoundStudioStore.getState().setLines(restoredLines);
           }
@@ -567,24 +586,25 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
       }).catch((e) => { logger.trackSwallowedError('ProjectStore:loadProject/audioImport', e); });
 
       // 즉시 동기 처리: non-blob audioUrl로 soundStudioStore lines 초기 세팅
-      const immediateLines = sanitizedScenes
-        .filter((s) => s.scriptText || s.audioUrl)
-        .map((s, i) => {
-          const isStaleBlob = s.audioUrl?.startsWith('blob:');
-          const validAudioUrl = isStaleBlob ? undefined : s.audioUrl;
-          return {
-            id: `line-${Date.now()}-${i}`,
-            speakerId: '',
-            text: s.scriptText || s.audioScript || '',
-            index: i,
-            sceneId: s.id,
-            audioUrl: validAudioUrl,
-            duration: s.audioDuration,
-            startTime: s.startTime,
-            endTime: s.endTime,
-            ttsStatus: (validAudioUrl ? 'done' : 'idle') as 'done' | 'idle',
-          };
-        });
+      const immediateLines = buildUploadedTranscriptLines(project.config)
+        || sanitizedScenes
+          .filter((s) => s.scriptText || s.audioUrl)
+          .map((s, i) => {
+            const isStaleBlob = s.audioUrl?.startsWith('blob:');
+            const validAudioUrl = isStaleBlob ? undefined : s.audioUrl;
+            return {
+              id: `line-${Date.now()}-${i}`,
+              speakerId: '',
+              text: s.scriptText || s.audioScript || '',
+              index: i,
+              sceneId: s.id,
+              audioUrl: validAudioUrl,
+              duration: s.audioDuration,
+              startTime: s.startTime,
+              endTime: s.endTime,
+              ttsStatus: (validAudioUrl ? 'done' : 'idle') as 'done' | 'idle',
+            };
+          });
       if (immediateLines.length > 0) {
         useSoundStudioStore.getState().setLines(immediateLines);
       }
@@ -592,6 +612,21 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
       const immediateMergedUrl = project.config?.mergedAudioUrl;
       if (immediateMergedUrl && !immediateMergedUrl.startsWith('blob:')) {
         useSoundStudioStore.getState().setMergedAudio(immediateMergedUrl);
+      }
+      if (isUploadedTranscriptConfig(project.config) && immediateMergedUrl) {
+        useSoundStudioStore.setState({
+          uploadedAudios: [{
+            id: project.config.uploadedAudioId || 'uploaded-restored',
+            fileName: 'uploaded-audio',
+            audioUrl: immediateMergedUrl,
+            duration: project.config.sourceNarrationDurationSec || project.config.transcriptDurationSec || 0,
+            fileSize: 0,
+            mimeType: 'audio/*',
+            uploadedAt: Date.now(),
+          }],
+        });
+      } else {
+        useSoundStudioStore.setState({ uploadedAudios: [] });
       }
     } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/immediateLines', e); }
 

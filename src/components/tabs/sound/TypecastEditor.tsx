@@ -399,14 +399,14 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
           sourceLine = takeTextMatchedLine(text);
         }
         const fallbackSpeakerId = ex?.speakerId || speakers[0]?.id || '';
-        const preservedSpeakerId = sourceLine?.speakerId || fallbackSpeakerId;
         const isTextPreserved = sourceLine?.text === text;
+        const preservedSpeakerId = sourceLine?.speakerId || fallbackSpeakerId;
         const preservedDuration = sourceLine?.duration ?? ex?.duration;
         const preservedStartTime = sourceLine?.startTime ?? ex?.startTime;
         const preservedEndTime = sourceLine?.endTime ?? ex?.endTime;
         const preservedSceneId = sourceLine?.sceneId ?? ex?.sceneId;
-        const preservedAudioSource = sourceLine?.audioSource ?? ex?.audioSource;
-        const preservedUploadedAudioId = sourceLine?.uploadedAudioId ?? ex?.uploadedAudioId;
+        const preservedAudioSource = isTextPreserved ? (sourceLine?.audioSource ?? ex?.audioSource) : undefined;
+        const preservedUploadedAudioId = isTextPreserved ? (sourceLine?.uploadedAudioId ?? ex?.uploadedAudioId) : undefined;
         return {
           id: sourceLine?.id || ex?.id || `line-${Date.now()}-${i}`,
           speakerId: preservedSpeakerId,

@@ -58,6 +58,24 @@ const loadFavoriteVoices = (): string[] => {
   catch (e) { logger.trackSwallowedError('soundStudioStore:loadFavoriteVoices', e); return []; }
 };
 
+const isUploadedLine = (line: Pick<ScriptLine, 'audioSource' | 'uploadedAudioId'> | undefined): boolean =>
+  !!line && (line.audioSource === 'uploaded' || !!line.uploadedAudioId);
+
+function shouldInvalidateUploadedSetLines(prevLines: ScriptLine[], nextLines: ScriptLine[]): boolean {
+  if (!prevLines.some(isUploadedLine)) return false;
+  if (prevLines.length !== nextLines.length) return true;
+
+  return prevLines.some((prevLine, index) => {
+    if (!isUploadedLine(prevLine)) return false;
+    const nextLine = nextLines[index];
+    if (!nextLine || !isUploadedLine(nextLine)) return true;
+
+    return nextLine.text !== prevLine.text
+      || (nextLine.startTime ?? null) !== (prevLine.startTime ?? null)
+      || (nextLine.endTime ?? null) !== (prevLine.endTime ?? null);
+  });
+}
+
 type SoundSubTab = 'narration' | 'waveform';
 type MusicStudioTab = 'generate' | 'lyrics' | 'tools';
 
@@ -280,17 +298,60 @@ export const useSoundStudioStore = create<SoundStudioStore>((set) => ({
   })),
 
   // --- 라인 ---
-  setLines: (lines) => set((state) => ({
-    lines: typeof lines === 'function' ? lines(state.lines) : lines,
-  })),
+  setLines: (lines) => set((state) => {
+    const nextLines = typeof lines === 'function' ? lines(state.lines) : lines;
+    const shouldInvalidateUploaded = shouldInvalidateUploadedSetLines(state.lines, nextLines);
+    return {
+      lines: nextLines,
+      ...(shouldInvalidateUploaded ? { mergedAudioUrl: null, uploadedAudios: [] } : {}),
+    };
+  }),
 
-  updateLine: (id, partial) => set((state) => ({
-    lines: state.lines.map((l) => l.id === id ? { ...l, ...partial } : l),
-  })),
+  updateLine: (id, partial) => set((state) => {
+    let shouldInvalidateUploaded = false;
+    const nextLines = state.lines.map((line) => {
+      if (line.id !== id) return line;
 
-  removeLine: (id) => set((state) => ({
-    lines: state.lines.filter((l) => l.id !== id).map((l, i) => ({ ...l, index: i })),
-  })),
+      const lineWasUploaded = isUploadedLine(line);
+      const clearsAudio = Object.prototype.hasOwnProperty.call(partial, 'audioUrl') && partial.audioUrl === undefined;
+      const changesUploadedContent =
+        (partial.text !== undefined && partial.text !== line.text)
+        || partial.voiceId !== undefined
+        || partial.voiceName !== undefined
+        || partial.voiceImage !== undefined
+        || partial.emotion !== undefined
+        || partial.lineSpeed !== undefined
+        || partial.audioSource === 'tts';
+
+      shouldInvalidateUploaded = lineWasUploaded && (clearsAudio || changesUploadedContent);
+
+      if (!shouldInvalidateUploaded) return { ...line, ...partial };
+
+      return {
+        ...line,
+        ...partial,
+        audioSource: partial.audioSource,
+        uploadedAudioId: partial.uploadedAudioId,
+        startTime: partial.startTime,
+        endTime: partial.endTime,
+        duration: partial.duration,
+      };
+    });
+
+    return {
+      lines: nextLines,
+      ...(shouldInvalidateUploaded ? { mergedAudioUrl: null, uploadedAudios: [] } : {}),
+    };
+  }),
+
+  removeLine: (id) => set((state) => {
+    const removedLine = state.lines.find((line) => line.id === id);
+    const shouldInvalidateUploaded = isUploadedLine(removedLine);
+    return {
+      lines: state.lines.filter((l) => l.id !== id).map((l, i) => ({ ...l, index: i })),
+      ...(shouldInvalidateUploaded ? { mergedAudioUrl: null, uploadedAudios: [] } : {}),
+    };
+  }),
 
   addLineAfter: (afterId, text) => set((state) => {
     const idx = state.lines.findIndex((l) => l.id === afterId);
@@ -305,16 +366,37 @@ export const useSoundStudioStore = create<SoundStudioStore>((set) => ({
     };
     const next = [...state.lines];
     next.splice(insertAt, 0, newLine);
-    return { lines: next.map((l, i) => ({ ...l, index: i })) };
+    return {
+      lines: next.map((l, i) => ({ ...l, index: i })),
+      ...(isUploadedLine(anchor) ? { mergedAudioUrl: null, uploadedAudios: [] } : {}),
+    };
   }),
 
   mergeLineWithNext: (id) => set((state) => {
     const idx = state.lines.findIndex((l) => l.id === id);
     if (idx < 0 || idx >= state.lines.length - 1) return state;
-    const merged = { ...state.lines[idx], text: state.lines[idx].text + ' ' + state.lines[idx + 1].text };
+    const current = state.lines[idx];
+    const nextLine = state.lines[idx + 1];
+    const shouldInvalidateUploaded = isUploadedLine(current) || isUploadedLine(nextLine);
+    const merged = shouldInvalidateUploaded
+      ? {
+          ...current,
+          text: current.text + ' ' + nextLine.text,
+          audioUrl: undefined,
+          duration: undefined,
+          startTime: undefined,
+          endTime: undefined,
+          audioSource: undefined,
+          uploadedAudioId: undefined,
+          ttsStatus: 'idle' as const,
+        }
+      : { ...current, text: current.text + ' ' + nextLine.text };
     const next = [...state.lines];
     next.splice(idx, 2, merged);
-    return { lines: next.map((l, i) => ({ ...l, index: i })) };
+    return {
+      lines: next.map((l, i) => ({ ...l, index: i })),
+      ...(shouldInvalidateUploaded ? { mergedAudioUrl: null, uploadedAudios: [] } : {}),
+    };
   }),
 
   // --- TTS ---

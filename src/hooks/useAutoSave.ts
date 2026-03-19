@@ -24,11 +24,15 @@ const computeFingerprint = (
   projectTitle: string,
   scriptWriterState: ScriptWriterDraftState,
 ): string => {
+  const rawTranscriptSegments = config?.rawUploadedTranscriptSegments;
+  const rawTranscriptLast = rawTranscriptSegments && rawTranscriptSegments.length > 0
+    ? rawTranscriptSegments[rawTranscriptSegments.length - 1]
+    : undefined;
   const sceneFp = scenes.map(s =>
     `${s.id}:${(s.scriptText || '').length}:${s.scriptText?.charCodeAt(0) || 0}:${s.imageUrl ? 'I' : '-'}:${s.videoUrl ? 'V' : '-'}:${s.audioUrl ? 'A' : '-'}:${(s.visualPrompt || '').length}:${s.audioDuration || 0}`
   ).join('|');
   const cfgFp = config
-    ? `${config.mode}:${config.videoFormat}:${config.aspectRatio}:${config.imageModel}:${(config.script || '').length}:${config.mergedAudioUrl ? 'M' : '-'}:ppt${config.pptSlides?.length || 0}:${config.pptContentStyleId || '-'}:${config.pptDesignStyleId || '-'}`
+    ? `${config.mode}:${config.videoFormat}:${config.aspectRatio}:${config.imageModel}:${(config.script || '').length}:${config.mergedAudioUrl ? 'M' : '-'}:${config.narrationSource || '-'}:${Math.round(config.sourceNarrationDurationSec || 0)}:${Math.round(config.transcriptDurationSec || 0)}:rt${rawTranscriptSegments?.length || 0}:${Math.round(rawTranscriptSegments?.[0]?.startTime || 0)}:${Math.round(rawTranscriptLast?.endTime || 0)}:ppt${config.pptSlides?.length || 0}:${config.pptContentStyleId || '-'}:${config.pptDesignStyleId || '-'}`
     : 'null';
   // [FIX #403] 캐릭터 분석 편집도 dirty 감지 — 편집 후 자동저장되도록
   // sceneFp와 동일 패턴: length + charCodeAt(0) — 같은 길이라도 내용 변경 감지
@@ -52,6 +56,8 @@ const buildEffectiveConfig = (
   config: ProjectConfig,
   scriptWriterState: ScriptWriterDraftState,
 ): ProjectConfig => {
+  if (config.narrationSource === 'uploaded-audio') return config;
+
   const latestScript = getLatestScriptWriterText(scriptWriterState).trim();
   if (!latestScript) return config;
 

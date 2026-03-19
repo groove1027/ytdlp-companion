@@ -2,7 +2,8 @@ import { useSoundStudioStore } from '../stores/soundStudioStore';
 import { useProjectStore } from '../stores/projectStore';
 import { useNavigationStore } from '../stores/navigationStore';
 import { showToast } from '../stores/uiStore';
-import type { Scene } from '../types';
+import type { ProjectConfig, Scene, WhisperSegment } from '../types';
+import { areUploadedTranscriptScenesSynced, buildUploadedTranscriptScenes } from './uploadedTranscriptScenes';
 
 function resolveLineDuration(line: {
   duration?: number;
@@ -14,6 +15,41 @@ function resolveLineDuration(line: {
     return line.endTime - line.startTime;
   }
   return undefined;
+}
+
+function normalizeSceneText(text: string): string {
+  return text.replace(/\s+/g, '').trim();
+}
+
+function rebuildUploadedTranscriptScenes(existingScenes: Scene[], plannedScenes: Scene[]): Scene[] {
+  return plannedScenes.map((plannedScene, index) => {
+    const currentScene = existingScenes[index];
+    if (!currentScene) return plannedScene;
+
+    const currentText = normalizeSceneText(currentScene.scriptText || currentScene.audioScript || '');
+    const plannedText = normalizeSceneText(plannedScene.scriptText || plannedScene.audioScript || '');
+    if (currentText !== plannedText) {
+      return {
+        ...plannedScene,
+        id: currentScene.id || plannedScene.id,
+        isNativeHQ: currentScene.isNativeHQ ?? plannedScene.isNativeHQ,
+        seedanceDuration: currentScene.seedanceDuration || plannedScene.seedanceDuration,
+      };
+    }
+
+    return {
+      ...currentScene,
+      id: currentScene.id || plannedScene.id,
+      scriptText: plannedScene.scriptText,
+      audioScript: plannedScene.audioScript,
+      startTime: plannedScene.startTime,
+      endTime: plannedScene.endTime,
+      audioDuration: plannedScene.audioDuration,
+      isGeneratingImage: false,
+      isGeneratingVideo: false,
+      seedanceDuration: currentScene.seedanceDuration || plannedScene.seedanceDuration,
+    };
+  });
 }
 
 /**
@@ -46,9 +82,68 @@ export function transferSoundToImageVideo(): void {
   const finalLines = useSoundStudioStore.getState().lines;
   const projectStore = useProjectStore.getState();
   const existingScenes = projectStore.scenes;
+  const lineSegments = finalLines.map((line) => {
+    const resolvedDuration = resolveLineDuration(line) || 0;
+    const startTime = line.startTime ?? 0;
+    const endTime = line.endTime ?? (startTime + resolvedDuration);
+    return {
+      text: line.text,
+      startTime,
+      endTime,
+    };
+  });
+  const isUploadedTranscriptTransfer = finalLines.length > 0
+    && finalLines.every((line) => line.audioSource === 'uploaded' || !!line.uploadedAudioId);
+  const needsSceneRegroup = existingScenes.length > 0
+    && existingScenes.length !== finalLines.length
+    && finalLines.length > 0
+    && finalLines.every((line) => !line.sceneId);
+  const uploadedTranscriptSegments: WhisperSegment[] | undefined = isUploadedTranscriptTransfer
+    ? lineSegments
+    : undefined;
+  const uploadedAudioId = isUploadedTranscriptTransfer
+    ? finalLines.find((line) => line.uploadedAudioId)?.uploadedAudioId
+    : undefined;
+  const transcriptDurationSec = uploadedTranscriptSegments && uploadedTranscriptSegments.length > 0
+    ? uploadedTranscriptSegments[uploadedTranscriptSegments.length - 1].endTime
+    : undefined;
+  const currentConfig = projectStore.config;
+  const nextNarrationSource: ProjectConfig['narrationSource'] = isUploadedTranscriptTransfer ? 'uploaded-audio' : 'tts';
+  const nextConfig: ProjectConfig | null = currentConfig ? {
+    ...currentConfig,
+    script: finalLines.map((l) => l.text).join('\n'),
+    mergedAudioUrl: mergedAudioUrl || undefined,
+    narrationSource: nextNarrationSource,
+    uploadedAudioId: isUploadedTranscriptTransfer ? uploadedAudioId : undefined,
+    sourceNarrationDurationSec: isUploadedTranscriptTransfer
+      ? (currentConfig.sourceNarrationDurationSec || transcriptDurationSec)
+      : undefined,
+    transcriptDurationSec: isUploadedTranscriptTransfer ? transcriptDurationSec : undefined,
+    rawUploadedTranscriptSegments: isUploadedTranscriptTransfer ? uploadedTranscriptSegments : undefined,
+  } : null;
+  const regroupConfig: ProjectConfig | null = currentConfig ? {
+    ...currentConfig,
+    script: finalLines.map((l) => l.text).join('\n'),
+    narrationSource: 'uploaded-audio',
+    uploadedAudioId: uploadedAudioId || currentConfig.uploadedAudioId,
+    sourceNarrationDurationSec: currentConfig.sourceNarrationDurationSec || transcriptDurationSec,
+    transcriptDurationSec,
+    rawUploadedTranscriptSegments: lineSegments,
+  } : null;
+  const regroupedUploadedScenes = (isUploadedTranscriptTransfer || needsSceneRegroup) && regroupConfig
+    ? buildUploadedTranscriptScenes(regroupConfig, regroupConfig.targetSceneCount ?? null)
+    : null;
 
   // 3. sceneId 기반 직접 동기화 (기존 장면의 모든 메타데이터 보존)
-  if (existingScenes.length > 0) {
+  if (regroupedUploadedScenes && regroupedUploadedScenes.length > 0) {
+    if (!areUploadedTranscriptScenesSynced(existingScenes, regroupedUploadedScenes)) {
+      projectStore.setScenes(
+        existingScenes.length > 0
+          ? rebuildUploadedTranscriptScenes(existingScenes, regroupedUploadedScenes)
+          : regroupedUploadedScenes,
+      );
+    }
+  } else if (existingScenes.length > 0) {
     const canUseIndexFallback = existingScenes.length === finalLines.length;
     for (let i = 0; i < finalLines.length; i++) {
       const line = finalLines[i];
@@ -89,11 +184,7 @@ export function transferSoundToImageVideo(): void {
   }
 
   // 4. config 업데이트
-  projectStore.setConfig((prev) => prev ? {
-    ...prev,
-    script: finalLines.map((l) => l.text).join('\n'),
-    mergedAudioUrl: mergedAudioUrl || undefined,
-  } : prev);
+  projectStore.setConfig((prev) => prev ? (nextConfig || prev) : prev);
 
   // 5. 탭 전환 + 완료 알림
   useNavigationStore.getState().setActiveTab('image-video');

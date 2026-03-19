@@ -64,8 +64,19 @@ const NarrationView: React.FC = () => {
       const speaker = speakers.find(s => s.id === line.speakerId) || activeSpeaker;
       if (!speaker) return;
 
+      const usesUploadedNarration = line.audioSource === 'uploaded' || !!line.uploadedAudioId;
       // 상태: generating
-      updateLine(lineId, { ttsStatus: 'generating' });
+      updateLine(lineId, usesUploadedNarration
+        ? {
+            audioUrl: undefined,
+            audioSource: 'tts',
+            uploadedAudioId: undefined,
+            startTime: undefined,
+            endTime: undefined,
+            duration: undefined,
+            ttsStatus: 'generating',
+          }
+        : { ttsStatus: 'generating' });
 
       try {
         // Smart Prompt 컨텍스트
@@ -102,6 +113,8 @@ const NarrationView: React.FC = () => {
 
         updateLine(lineId, {
           audioUrl: result.audioUrl,
+          audioSource: 'tts',
+          uploadedAudioId: undefined,
           ttsStatus: 'done',
           ...(realDuration != null ? { duration: realDuration } : {}),
         });

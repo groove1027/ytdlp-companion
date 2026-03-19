@@ -1392,6 +1392,91 @@ const parseTimedtextXmlToPlainText = (xml: string): string => {
     return textLines.join(' ');
 };
 
+/** YouTube timedtext XML (srv3) 파싱 — 타임코드 보존 버전 (영상 분석 AI 입력용) */
+const parseTimedtextXmlWithTimecodes = (xml: string): { start: number; dur: number; text: string }[] => {
+    const cues: { start: number; dur: number; text: string }[] = [];
+
+    // <text start="1.28" dur="3.76">텍스트</text> 패턴
+    const textRegex = /<text\s+start="([\d.]+)"\s+dur="([\d.]+)"[^>]*>([\s\S]*?)<\/text>/gi;
+    let match: RegExpExecArray | null;
+    let prevText = '';
+    while ((match = textRegex.exec(xml)) !== null) {
+        const start = parseFloat(match[1]);
+        const dur = parseFloat(match[2]);
+        const raw = match[3]
+            .replace(/<[^>]+>/g, '')
+            .replace(/&amp;/g, '&')
+            .replace(/&lt;/g, '<')
+            .replace(/&gt;/g, '>')
+            .replace(/&quot;/g, '"')
+            .replace(/&#39;/g, "'")
+            .replace(/&nbsp;/g, ' ')
+            .replace(/\n/g, ' ')
+            .trim();
+        if (raw && raw !== prevText) {
+            cues.push({ start, dur, text: raw });
+            prevText = raw;
+        }
+    }
+    return cues;
+};
+
+/** 타임코드 보존 cue 배열 → Gemini 입력용 포맷 문자열 */
+const formatTimedCuesForAI = (cues: { start: number; dur: number; text: string }[]): string => {
+    if (cues.length === 0) return '';
+    const fmtTime = (sec: number): string => {
+        const m = Math.floor(sec / 60);
+        const s = sec % 60;
+        return `${m}:${s.toFixed(1).padStart(4, '0')}`;
+    };
+    const lines = cues.map(c => `[${fmtTime(c.start)}~${fmtTime(c.start + c.dur)}] ${c.text}`);
+    return `## 영상 자막 전사 (YouTube 자동/수동 자막 — 정확한 타임코드 포함)\n` +
+        `아래 각 줄의 [시작~끝] 타임코드는 원본 영상의 실제 시간입니다.\n` +
+        `편집 테이블의 타임코드 소스를 작성할 때, 반드시 이 실제 타임코드를 기준으로 하세요.\n\n` +
+        lines.join('\n');
+};
+
+/**
+ * [FIX #perf] YouTube timedtext에서 타임코드 보존 자막을 가져옴
+ * VideoAnalysisRoom에서 AI 분석 전 호출하여, Gemini에 실제 타임코드를 제공
+ * 기존 getVideoTranscript와 독립적 — 실패해도 분석 진행에 영향 없음
+ */
+export const fetchTimedTranscriptForAnalysis = async (videoId: string): Promise<string | null> => {
+    // timedtext XML만 시도 (타임코드 보존 가능한 유일한 소스)
+    const attempts = [
+        { lang: 'ko', kind: '' },
+        { lang: 'ko', kind: 'asr' },
+        { lang: 'en', kind: '' },
+        { lang: 'en', kind: 'asr' },
+        { lang: 'ja', kind: '' },
+        { lang: 'ja', kind: 'asr' },
+    ];
+
+    for (const { lang, kind } of attempts) {
+        try {
+            const kindParam = kind ? `&kind=${kind}` : '';
+            const url = `https://www.youtube.com/api/timedtext?v=${videoId}&lang=${lang}${kindParam}&fmt=srv3`;
+            const res = await monitoredFetch(url, { signal: AbortSignal.timeout(8000) });
+            if (!res.ok) continue;
+
+            const xmlText = await res.text();
+            if (!xmlText || xmlText.length < 50) continue;
+
+            const cues = parseTimedtextXmlWithTimecodes(xmlText);
+            if (cues.length > 3) {
+                logger.success('[YouTube] 타임코드 보존 자막 가져오기 성공', {
+                    videoId, lang, kind: kind || 'manual', cueCount: cues.length,
+                });
+                return formatTimedCuesForAI(cues);
+            }
+        } catch (e) {
+            logger.trackSwallowedError('youtubeAnalysisService:timedTranscriptForAnalysis', e);
+            continue;
+        }
+    }
+    return null;
+};
+
 /** VTT/SRT 자막 텍스트를 일반 텍스트로 변환 (타임코드, 태그 제거, 중복 제거) */
 const parseVttToPlainText = (raw: string): string => {
     const lines = raw.split('\n');
