@@ -1,9 +1,9 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import puppeteer from '../src/node_modules/puppeteer/lib/esm/puppeteer/puppeteer.js';
 import JSZip from '../src/node_modules/jszip/lib/index.js';
 import { getBuiltModuleUrls, startDistServer } from './helpers/distBrowserHarness.mjs';
+import { launchPlaywrightBrowser } from './helpers/playwrightHarness.mjs';
 
 const CAPCUT_PROJECTS_ROOT = path.join(os.homedir(), 'Movies', 'CapCut', 'User Data', 'Projects', 'com.lveditor.draft');
 const SAMPLE_ROOT = path.join(CAPCUT_PROJECTS_ROOT, 'VERIFY_MATCH_CAPCUT');
@@ -44,10 +44,7 @@ async function main() {
   const baseUrl = externalBaseUrl || distServer.baseUrl;
   const { appUrl, nleModuleUrl, jszipModuleUrl } = await getBuiltModuleUrls(baseUrl);
 
-  const browser = await puppeteer.launch({
-    headless: 'new',
-    args: ['--no-sandbox'],
-  });
+  const browser = await launchPlaywrightBrowser();
 
   try {
     const page = await browser.newPage();
@@ -119,11 +116,21 @@ async function main() {
 
       const zipBuffer = await zipBlob.arrayBuffer();
       const zipInstance = await JSZipCtor.loadAsync(zipBuffer);
-      const draftContent = JSON.parse(await zipInstance.file('draft_content.json').async('string'));
-      const draftInfo = JSON.parse(await zipInstance.file('draft_info.json').async('string'));
-      const draftMetaInfo = JSON.parse(await zipInstance.file('draft_meta_info.json').async('string'));
-      const timelineProject = JSON.parse(await zipInstance.file('Timelines/project.json').async('string'));
-      const draftSettings = await zipInstance.file('draft_settings').async('string');
+      const draftEntryName = Object.keys(zipInstance.files).find((entryName) => entryName.endsWith('/draft_content.json'));
+      const draftPrefix = draftEntryName ? draftEntryName.slice(0, -'draft_content.json'.length) : '';
+      const readZipText = async (entryName) => {
+        const entry = zipInstance.file(entryName) || zipInstance.file(`${draftPrefix}${entryName}`);
+        if (!entry) {
+          throw new Error(`Missing ZIP entry "${entryName}". Entries: ${Object.keys(zipInstance.files).join(', ')}`);
+        }
+        return entry.async('string');
+      };
+      const hasZipEntry = (entryName) => !!(zipInstance.file(entryName) || zipInstance.file(`${draftPrefix}${entryName}`));
+      const draftContent = JSON.parse(await readZipText('draft_content.json'));
+      const draftInfo = JSON.parse(await readZipText('draft_info.json'));
+      const draftMetaInfo = JSON.parse(await readZipText('draft_meta_info.json'));
+      const timelineProject = JSON.parse(await readZipText('Timelines/project.json'));
+      const draftSettings = await readZipText('draft_settings');
       const videoTrack = draftContent.tracks.find((track) => track.type === 'video');
 
       return {
@@ -134,7 +141,7 @@ async function main() {
         mainTimelineId: timelineProject.main_timeline_id,
         draftSettings,
         draftVideoCount: draftInfo.materials.videos.length,
-        hasRootVideo: !!zipInstance.file('verify_video_room.mp4'),
+        hasRootVideo: hasZipEntry('verify_video_room.mp4'),
         hasMediaVideo: !!zipInstance.file('media/verify_video_room.mp4'),
         videoStarts: videoTrack.segments.map((segment) => segment.target_timerange.start),
       };

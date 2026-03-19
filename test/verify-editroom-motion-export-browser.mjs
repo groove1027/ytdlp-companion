@@ -1,13 +1,14 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import puppeteer from '../src/node_modules/puppeteer/lib/esm/puppeteer/puppeteer.js';
 import JSZip from '../src/node_modules/jszip/lib/index.js';
 import { getBuiltModuleUrls, startDistServer } from './helpers/distBrowserHarness.mjs';
+import { launchPlaywrightBrowser } from './helpers/playwrightHarness.mjs';
 
 const CAPCUT_PROJECTS_ROOT = path.join(os.homedir(), 'Movies', 'CapCut', 'User Data', 'Projects', 'com.lveditor.draft');
 const SAMPLE_ROOT = path.join(CAPCUT_PROJECTS_ROOT, 'VERIFY_MATCH_CAPCUT');
-const OUTPUT_FOLDER = path.join(process.cwd(), 'test', 'output', 'verify_editroom_motion_export');
+const CAPCUT_OUTPUT_FOLDER = process.env.CAPCUT_EDITROOM_MOTION_OUTPUT || path.join(process.cwd(), 'test', 'output', 'verify_editroom_motion_export');
+const PREMIERE_OUTPUT_FOLDER = process.env.PREMIERE_EDITROOM_MOTION_OUTPUT || path.join(process.cwd(), 'test', 'output', 'verify_editroom_motion_export_premiere');
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -50,10 +51,7 @@ async function main() {
   const baseUrl = externalBaseUrl || distServer.baseUrl;
   const { appUrl, nleModuleUrl, jszipModuleUrl } = await getBuiltModuleUrls(baseUrl);
 
-  const browser = await puppeteer.launch({
-    headless: 'new',
-    args: ['--no-sandbox'],
-  });
+  const browser = await launchPlaywrightBrowser();
 
   try {
     const page = await browser.newPage();
@@ -134,9 +132,18 @@ async function main() {
 
       const zipBuffer = await result.blob.arrayBuffer();
       const zipInstance = await JSZipCtor.loadAsync(zipBuffer);
-      const draftContent = JSON.parse(await zipInstance.file('draft_content.json').async('string'));
+      const draftEntryName = Object.keys(zipInstance.files).find((entryName) => entryName.endsWith('/draft_content.json'));
+      const draftPrefix = draftEntryName ? draftEntryName.slice(0, -'draft_content.json'.length) : '';
+      const readZipText = async (entryName) => {
+        const entry = zipInstance.file(entryName) || zipInstance.file(`${draftPrefix}${entryName}`);
+        if (!entry) {
+          throw new Error(`Missing ZIP entry "${entryName}". Entries: ${Object.keys(zipInstance.files).join(', ')}`);
+        }
+        return entry.async('string');
+      };
+      const draftContent = JSON.parse(await readZipText('draft_content.json'));
       const xmlContent = await zipInstance.file('verify_editroom_motion_export.xml').async('string');
-      const draftSettings = await zipInstance.file('draft_settings').async('string');
+      const draftSettings = await readZipText('draft_settings');
 
       const videoTrack = draftContent.tracks.find((track) => track.type === 'video');
       const segments = videoTrack.segments;
@@ -162,8 +169,92 @@ async function main() {
       };
     }, { image1, image2, narration1, narration2, nleModuleUrl, jszipModuleUrl });
 
+    const premiereSummary = await page.evaluate(async ({ image1, image2, narration1, narration2, nleModuleUrl, jszipModuleUrl }) => {
+      const nleModule = await import(nleModuleUrl);
+      const nleService = nleModule.n || nleModule.default || nleModule;
+      const buildEditRoomNleZip =
+        nleService.buildEditRoomNleZip ||
+        nleModule.buildEditRoomNleZip ||
+        nleModule.b;
+      if (typeof buildEditRoomNleZip !== 'function') {
+        throw new Error(`buildEditRoomNleZip export not found: ${Object.keys(nleModule).join(', ')}`);
+      }
+      const zipModule = await import(jszipModuleUrl);
+      const JSZipCtor = zipModule.default || zipModule.J || zipModule.j || zipModule;
+      const blobToBase64 = async (blob) => {
+        const dataUrl = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result || ''));
+          reader.onerror = () => reject(reader.error || new Error('Failed to encode blob'));
+          reader.readAsDataURL(blob);
+        });
+        return dataUrl.slice(dataUrl.indexOf(',') + 1);
+      };
+
+      const timeline = [
+        {
+          sceneId: 'motion-1',
+          sceneIndex: 0,
+          imageStartTime: 0,
+          imageEndTime: 3,
+          imageDuration: 3,
+          subtitleSegments: [{ lineId: 'sub-1', text: '첫 장면', startTime: 0, endTime: 3 }],
+          effectPreset: 'zoom',
+          motionEffect: 'rotate',
+          anchorX: 64,
+          anchorY: 38,
+          volume: 100,
+          speed: 1,
+        },
+        {
+          sceneId: 'motion-2',
+          sceneIndex: 1,
+          imageStartTime: 3,
+          imageEndTime: 6,
+          imageDuration: 3,
+          subtitleSegments: [{ lineId: 'sub-2', text: '둘 장면', startTime: 3, endTime: 6 }],
+          effectPreset: 'smooth',
+          motionEffect: 'fade',
+          anchorX: 50,
+          anchorY: 45,
+          volume: 100,
+          speed: 1,
+        },
+      ];
+
+      const scenes = [
+        { id: 'motion-1', imageUrl: image1, scriptText: '첫 장면' },
+        { id: 'motion-2', imageUrl: image2, scriptText: '둘 장면' },
+      ];
+
+      const narrationLines = [
+        { sceneId: 'motion-1', audioUrl: narration1, startTime: 0, duration: 2, index: 0 },
+        { sceneId: 'motion-2', audioUrl: narration2, startTime: 3, duration: 2, index: 1 },
+      ];
+
+      const result = await buildEditRoomNleZip({
+        target: 'premiere',
+        timeline,
+        scenes,
+        narrationLines,
+        title: 'verify_editroom_motion_export',
+        aspectRatio: '16:9',
+        fps: 30,
+      });
+
+      const zipBuffer = await result.blob.arrayBuffer();
+      const zipInstance = await JSZipCtor.loadAsync(zipBuffer);
+      const xmlContent = await zipInstance.file('verify_editroom_motion_export.xml').async('string');
+
+      return {
+        zipBase64: await blobToBase64(result.blob),
+        xmlContent,
+      };
+    }, { image1, image2, narration1, narration2, nleModuleUrl, jszipModuleUrl });
+
     const zipBuffer = Buffer.from(summary.zipBase64, 'base64');
     const zip = await JSZip.loadAsync(zipBuffer);
+    const premiereZip = await JSZip.loadAsync(Buffer.from(premiereSummary.zipBase64, 'base64'));
 
     assert(summary.draftSettings.includes('draft_create_time='), 'CapCut ZIP should include draft_settings');
     assert(summary.firstTypes.includes('KFTypePositionX'), `Missing KFTypePositionX: ${summary.firstTypes.join(', ')}`);
@@ -184,12 +275,16 @@ async function main() {
     assert(summary.xmlContent.includes('<parameterid>scale</parameterid>'), 'FCP XML should include scale keyframes');
     assert(summary.xmlContent.includes('<parameterid>rotation</parameterid>'), 'FCP XML should include rotation keyframes');
     assert(summary.xmlContent.includes('<parameterid>opacity</parameterid>'), 'FCP XML should include opacity keyframes');
+    assert(premiereSummary.xmlContent.includes('<effectcategory>motion</effectcategory>'), 'Premiere XML should include Basic Motion effect');
+    assert(premiereSummary.xmlContent.includes('<parameterid>center</parameterid>'), 'Premiere XML should include center keyframes');
 
-    await extractZipToDirectory(zip, OUTPUT_FOLDER);
+    await extractZipToDirectory(zip, CAPCUT_OUTPUT_FOLDER);
+    await extractZipToDirectory(premiereZip, PREMIERE_OUTPUT_FOLDER);
 
     console.log(JSON.stringify({
       ok: true,
-      outputFolder: OUTPUT_FOLDER,
+      capcutOutputFolder: CAPCUT_OUTPUT_FOLDER,
+      premiereOutputFolder: PREMIERE_OUTPUT_FOLDER,
       firstTypes: summary.firstTypes,
       secondTypes: summary.secondTypes,
       firstPosXValues: summary.firstPosXValues,

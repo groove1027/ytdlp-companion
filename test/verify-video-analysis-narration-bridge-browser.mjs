@@ -1,13 +1,13 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import puppeteer from '../src/node_modules/puppeteer/lib/esm/puppeteer/puppeteer.js';
 import JSZip from '../src/node_modules/jszip/lib/index.js';
 import { getBuiltModuleUrls, startDistServer } from './helpers/distBrowserHarness.mjs';
+import { launchPlaywrightBrowser } from './helpers/playwrightHarness.mjs';
 
 const CAPCUT_PROJECTS_ROOT = path.join(os.homedir(), 'Movies', 'CapCut', 'User Data', 'Projects', 'com.lveditor.draft');
 const SAMPLE_ROOT = path.join(CAPCUT_PROJECTS_ROOT, 'VERIFY_MATCH_CAPCUT');
-const OUTPUT_FOLDER = path.join(process.cwd(), 'test', 'output', 'verify_video_analysis_narration_bridge');
+const OUTPUT_FOLDER = process.env.CAPCUT_VIDEO_ANALYSIS_BRIDGE_OUTPUT || path.join(process.cwd(), 'test', 'output', 'verify_video_analysis_narration_bridge');
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -43,10 +43,7 @@ async function main() {
   const baseUrl = externalBaseUrl || distServer.baseUrl;
   const { appUrl, nleModuleUrl, jszipModuleUrl } = await getBuiltModuleUrls(baseUrl);
 
-  const browser = await puppeteer.launch({
-    headless: 'new',
-    args: ['--no-sandbox'],
-  });
+  const browser = await launchPlaywrightBrowser();
 
   try {
     const page = await browser.newPage();
@@ -201,7 +198,16 @@ async function main() {
       });
       const zipBuffer = await zipBlob.arrayBuffer();
       const zipInstance = await JSZipCtor.loadAsync(zipBuffer);
-      const draftContent = JSON.parse(await zipInstance.file('draft_content.json').async('string'));
+      const draftEntryName = Object.keys(zipInstance.files).find((entryName) => entryName.endsWith('/draft_content.json'));
+      const draftPrefix = draftEntryName ? draftEntryName.slice(0, -'draft_content.json'.length) : '';
+      const readZipText = async (entryName) => {
+        const entry = zipInstance.file(entryName) || zipInstance.file(`${draftPrefix}${entryName}`);
+        if (!entry) {
+          throw new Error(`Missing ZIP entry "${entryName}". Entries: ${Object.keys(zipInstance.files).join(', ')}`);
+        }
+        return entry.async('string');
+      };
+      const draftContent = JSON.parse(await readZipText('draft_content.json'));
       const audioTrack = draftContent.tracks.find((track) => track.type === 'audio');
       const videoTrack = draftContent.tracks.find((track) => track.type === 'video');
 
@@ -217,6 +223,9 @@ async function main() {
     }, { sourceVideo, narration1, narration2, nleModuleUrl, jszipModuleUrl });
 
     const zip = await JSZip.loadAsync(Buffer.from(summary.zipBase64, 'base64'));
+    const draftEntryName = Object.keys(zip.files).find((entryName) => entryName.endsWith('/draft_content.json'));
+    const draftPrefix = draftEntryName ? draftEntryName.slice(0, -'draft_content.json'.length) : '';
+    const hasDraftEntry = (entryName) => !!(zip.file(entryName) || zip.file(`${draftPrefix}${entryName}`));
 
     assert(summary.sceneIdNarrationLines.length === 3, `sceneId bridge count mismatch: ${summary.sceneIdNarrationLines.length}`);
     assert(summary.sceneIdNarrationLines[0].audioUrl && !summary.sceneIdNarrationLines[1].audioUrl && summary.sceneIdNarrationLines[2].audioUrl, 'sceneId bridge should preserve narrated/non-narrated scenes');
@@ -226,7 +235,7 @@ async function main() {
     assert(summary.audioStarts[0] === 0 && summary.audioStarts[1] === 3_000_000, `audio starts mismatch: ${summary.audioStarts.join(', ')}`);
     assert(summary.videoDurations[0] === 2_000_000 && summary.videoDurations[1] === 1_000_000 && summary.videoDurations[2] === 2_000_000, `video durations mismatch: ${summary.videoDurations.join(', ')}`);
     assert(summary.videoSpeeds[0] < 1 && summary.videoSpeeds[1] === 1 && summary.videoSpeeds[2] < 1, `video speeds mismatch: ${summary.videoSpeeds.join(', ')}`);
-    assert(!!zip.file('001_narration.mp3') && !!zip.file('003_narration.mp3'), 'CapCut ZIP should include matched narration files');
+    assert(hasDraftEntry('001_narration.mp3') && hasDraftEntry('003_narration.mp3'), 'CapCut ZIP should include matched narration files');
 
     await extractZipToDirectory(zip, OUTPUT_FOLDER);
 

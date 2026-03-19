@@ -8,6 +8,21 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-20] NLE 실검증 Playwright + 네이티브 앱 통합 러너 추가
+- [x] `src/package.json`, `src/package-lock.json` — `playwright-core` 추가, `verify:nle:playwright` 실행 스크립트 등록
+- [x] `test/helpers/playwrightHarness.mjs` — 시스템 Chrome 기반 Playwright 브라우저/퍼시스턴트 컨텍스트 공통 런처 추가
+- [x] `test/verify-capcut-video-room.mjs`, `test/verify-capcut-issue574-browser.mjs`, `test/verify-editroom-motion-export-browser.mjs`, `test/verify-nle-export-matrix-browser.mjs`, `test/verify-video-analysis-narration-bridge-browser.mjs`, `test/verify-editroom-overlay-browser.mjs` — Puppeteer 검증을 Playwright 기반으로 전환
+- [x] `test/verify-editroom-motion-export-browser.mjs` — Premiere 패키지까지 같이 추출하도록 확장해 네이티브 Premiere import 검증 입력물 생성
+- [x] `test/helpers/nativeNleAppVerifier.mjs`, `test/verify-nle-playwright-full.mjs` — Playwright 브라우저 검증 후 CapCut 실제 프로젝트 열기와 Premiere 실제 XML import를 순차 확인하는 통합 러너 추가
+- [x] 실제 실행 명령:
+  `cd src && npm run verify:nle:playwright`
+- [x] 실제 통합 검증 통과:
+  `node test/verify-capcut-issue574.mjs`
+  `node test/verify-video-analysis-narration-bridge-browser.mjs`
+  `node test/verify-editroom-motion-export-browser.mjs`
+  `node test/verify-nle-export-matrix-browser.mjs`
+  `cd src && npm run verify:nle:playwright`
+
 ### [2026-03-19] #610 CapCut 최신 프로젝트 포맷 재정렬
 - [x] `nleExportService.ts` — CapCut `draft_info.json`을 다시 실제 타임라인 본문으로 복원하고 `draft_meta_info.json`에 메타데이터를 분리
 - [x] `nleExportService.ts` — 최신 CapCut 데스크톱 포맷에 맞춰 `Timelines/project.json`, `attachment_editing.json`, `attachment_pc_common.json`, `timeline_layout.json`, `draft_virtual_store.json`, `draft_biz_config.json`, `draft_agency_config.json`, `performance_opt_info.json` 생성 추가

@@ -2,12 +2,11 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { spawn } from 'node:child_process';
-import puppeteer from '../src/node_modules/puppeteer/lib/esm/puppeteer/puppeteer.js';
 import sharp from '../src/node_modules/sharp/lib/index.js';
+import { launchPlaywrightPersistentContext } from './helpers/playwrightHarness.mjs';
 
 const DEV_PORT = 5187;
 const BASE_URL = `http://127.0.0.1:${DEV_PORT}`;
-const CHROME_PATH = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const OUTPUT_DIR = path.join(process.cwd(), 'test', 'output', 'verify_editroom_overlay');
 const SCENE_ID = 'verify-overlay-scene';
 
@@ -92,7 +91,7 @@ async function stopDevServer(devServer) {
 }
 
 async function seedEditRoom(page, sceneImage) {
-  await page.goto(BASE_URL, { waitUntil: 'networkidle2', timeout: 120000 });
+  await page.goto(BASE_URL, { waitUntil: 'networkidle', timeout: 120000 });
 
   await page.evaluate(async ({ sceneId, sceneImage }) => {
     localStorage.setItem('dismiss_announce_0317', '1');
@@ -307,22 +306,18 @@ async function main() {
   const sceneImage = svgDataUrl();
   const tempProfileDir = await fs.mkdtemp(path.join(os.tmpdir(), 'editroom-overlay-'));
   const devServer = await startDevServer();
-  let browser = null;
+  let context = null;
 
   try {
-    browser = await puppeteer.launch({
-      executablePath: CHROME_PATH,
-      userDataDir: tempProfileDir,
-      headless: 'new',
-      defaultViewport: { width: 1600, height: 1200 },
+    context = await launchPlaywrightPersistentContext(tempProfileDir, {
+      headless: true,
+      viewport: { width: 1600, height: 1200 },
       args: [
-        '--no-sandbox',
-        '--disable-dev-shm-usage',
         '--window-size=1600,1200',
       ],
     });
 
-    const page = await browser.newPage();
+    const page = context.pages()[0] || await context.newPage();
     await seedEditRoom(page, sceneImage);
 
     const preview = await getPreviewHandle(page);
@@ -422,7 +417,7 @@ async function main() {
       ...failedPresets.map((preset) => `Overlay visibility failure: ${preset.id}(${preset.diff.changedRatio.toFixed(4)}/${preset.diff.meanRgbDiff.toFixed(4)})`),
     ].join('\n'));
   } finally {
-    if (browser) await browser.close();
+    if (context) await context.close();
     await stopDevServer(devServer);
     await fs.rm(tempProfileDir, { recursive: true, force: true });
   }

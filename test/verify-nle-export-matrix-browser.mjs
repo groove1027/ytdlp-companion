@@ -1,9 +1,9 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import puppeteer from '../src/node_modules/puppeteer/lib/esm/puppeteer/puppeteer.js';
 import JSZip from '../src/node_modules/jszip/lib/index.js';
 import { getBuiltModuleUrls, startDistServer } from './helpers/distBrowserHarness.mjs';
+import { launchPlaywrightBrowser } from './helpers/playwrightHarness.mjs';
 
 const CAPCUT_PROJECTS_ROOT = path.join(os.homedir(), 'Movies', 'CapCut', 'User Data', 'Projects', 'com.lveditor.draft');
 const SAMPLE_ROOT = path.join(CAPCUT_PROJECTS_ROOT, 'VERIFY_MATCH_CAPCUT');
@@ -45,10 +45,7 @@ async function main() {
   const baseUrl = externalBaseUrl || distServer.baseUrl;
   const { appUrl, nleModuleUrl, jszipModuleUrl } = await getBuiltModuleUrls(baseUrl);
 
-  const browser = await puppeteer.launch({
-    headless: 'new',
-    args: ['--no-sandbox'],
-  });
+  const browser = await launchPlaywrightBrowser();
 
   try {
     const page = await browser.newPage();
@@ -124,7 +121,16 @@ async function main() {
       });
       const capcutZipBuffer = await capcutZipBlob.arrayBuffer();
       const capcutZip = await JSZipCtor.loadAsync(capcutZipBuffer);
-      const capcutDraft = JSON.parse(await capcutZip.file('draft_content.json').async('string'));
+      const capcutDraftEntryName = Object.keys(capcutZip.files).find((entryName) => entryName.endsWith('/draft_content.json'));
+      const capcutDraftPrefix = capcutDraftEntryName ? capcutDraftEntryName.slice(0, -'draft_content.json'.length) : '';
+      const capcutReadZipText = async (entryName) => {
+        const entry = capcutZip.file(entryName) || capcutZip.file(`${capcutDraftPrefix}${entryName}`);
+        if (!entry) {
+          throw new Error(`Missing ZIP entry "${entryName}". Entries: ${Object.keys(capcutZip.files).join(', ')}`);
+        }
+        return entry.async('string');
+      };
+      const capcutDraft = JSON.parse(await capcutReadZipText('draft_content.json'));
       const capcutVideoTrack = capcutDraft.tracks.find((track) => track.type === 'video');
       const capcutAudioTrack = capcutDraft.tracks.find((track) => track.type === 'audio');
 
@@ -167,6 +173,9 @@ async function main() {
 
     const capcutZip = await JSZip.loadAsync(Buffer.from(summary.capcutZipBase64, 'base64'));
     const premiereZip = await JSZip.loadAsync(Buffer.from(summary.premiereZipBase64, 'base64'));
+    const capcutDraftEntryName = Object.keys(capcutZip.files).find((entryName) => entryName.endsWith('/draft_content.json'));
+    const capcutDraftPrefix = capcutDraftEntryName ? capcutDraftEntryName.slice(0, -'draft_content.json'.length) : '';
+    const capcutHasEntry = (entryName) => !!(capcutZip.file(entryName) || capcutZip.file(`${capcutDraftPrefix}${entryName}`));
 
     assert(summary.capcut.audioTrackCount === 2, `CapCut narration track count mismatch: ${summary.capcut.audioTrackCount}`);
     assert(summary.capcut.videoStarts[0] === 0 && summary.capcut.videoStarts[1] === 2_000_000, `CapCut video starts mismatch: ${summary.capcut.videoStarts.join(', ')}`);
@@ -175,7 +184,7 @@ async function main() {
     assert(summary.capcut.audioDurations.every((duration) => duration === 2_000_000), `CapCut audio durations mismatch: ${summary.capcut.audioDurations.join(', ')}`);
     assert(summary.capcut.videoSpeeds.every((speed) => speed < 1), `CapCut auto speed should slow clips: ${summary.capcut.videoSpeeds.join(', ')}`);
     assert(summary.capcut.audioMaterialPaths.every((audioPath) => /_narration\.mp3$/.test(audioPath)), `CapCut audio material paths mismatch: ${summary.capcut.audioMaterialPaths.join(', ')}`);
-    assert(!!capcutZip.file('001_narration.mp3') && !!capcutZip.file('002_narration.mp3'), 'CapCut ZIP should include root narration files');
+    assert(capcutHasEntry('001_narration.mp3') && capcutHasEntry('002_narration.mp3'), 'CapCut ZIP should include draft-root narration files');
     assert(!!capcutZip.file('audio/001_narration.mp3') && !!capcutZip.file('audio/002_narration.mp3'), 'CapCut ZIP should include audio/ narration files');
 
     assert(summary.premiere.xml.includes('<effectid>timeremap</effectid>'), 'Premiere XML should include timeremap for slowed clips');
