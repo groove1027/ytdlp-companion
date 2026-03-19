@@ -7,7 +7,15 @@
  * - VREW: SRT + 영상 ZIP 패키지 (VREW는 XML import 미지원, SRT만 지원)
  */
 
-import type { VideoSceneRow, VideoAnalysisPreset, EdlEntry, SourceVideoFile, UnifiedSceneTiming } from '../types';
+import type { VideoSceneRow, VideoAnalysisPreset, EdlEntry, SourceVideoFile, UnifiedSceneTiming, NarrationSyncSceneTiming } from '../types';
+import { buildNarrationSyncedTimeline, breakDialogueLines } from './narrationSyncService';
+import type { NarrationLineLike } from './narrationSyncService';
+
+interface ExportNarrationLine extends NarrationLineLike {
+  sceneId?: string;
+  audioUrl?: string;
+  audioFileName?: string;
+}
 
 // ──────────────────────────────────────────────
 // 유틸
@@ -239,10 +247,23 @@ export function generateFcpXml(params: {
   height?: number;
   preset?: VideoAnalysisPreset;
   videoDurationSec?: number;
+  narrationLines?: ExportNarrationLine[];
 }): string {
-  const { scenes, title, videoFileName: rawVideoFileName, fps = 30, width = 1080, height = 1920, preset, videoDurationSec } = params;
+  const { scenes, title, videoFileName: rawVideoFileName, fps = 30, width = 1080, height = 1920, preset, videoDurationSec, narrationLines = [] } = params;
   const videoFileName = sanitizeFileName(rawVideoFileName);
-  const timings = extractTimings(scenes, preset);
+  const syncTimeline = buildNarrationSyncedTimeline(scenes, narrationLines, preset);
+  const nsTimings = syncTimeline.scenes;
+  // 하위 호환: 기존 코드가 SceneTiming 필드를 사용하므로 매핑
+  const timings: SceneTiming[] = nsTimings.map(t => ({
+    index: t.sceneIndex,
+    startSec: t.sourceStartSec + t.trimStartSec,
+    endSec: t.sourceStartSec + t.trimEndSec,
+    durationSec: t.targetDurationSec,
+    tlStartSec: t.timelineStartSec,
+    tlEndSec: t.timelineEndSec,
+    text: t.subtitleSegments.map(s => s.text).join(' '),
+    effectText: t.effectSubtitleSegments.map(s => s.text).join(' '),
+  }));
   if (timings.length === 0) return '';
 
   const totalDurSec = timings[timings.length - 1].tlEndSec;
@@ -303,7 +324,17 @@ export function generateFcpXml(params: {
             <out>${toFrames(t.endSec)}</out>
             <start>${toFrames(t.tlStartSec)}</start>
             <end>${toFrames(t.tlEndSec)}</end>
-            ${fileTag}
+            ${fileTag}${nsTimings[i]?.autoSpeedFactor != null && nsTimings[i].autoSpeedFactor < 0.999 ? `
+            <filter>
+              <effect>
+                <name>Time Remap</name>
+                <effectid>timeremap</effectid>
+                <effecttype>motion</effecttype>
+                <mediatype>video</mediatype>
+                <parameter><parameterid>speed</parameterid><value>${Math.round(nsTimings[i].autoSpeedFactor * 100)}</value></parameter>
+                <parameter><parameterid>frameblending</parameterid><value>TRUE</value></parameter>
+              </effect>
+            </filter>` : ''}
             <sourcetrack>
               <mediatype>video</mediatype>
               <trackindex>1</trackindex>
@@ -333,13 +364,14 @@ export function generateFcpXml(params: {
           </clipitem>`;
   }).join('');
 
-  // ── V2 자막 트랙 (generatoritem — 나레이션/대사 텍스트) ──
+  // ── V2 일반자막 트랙 (Subtitle — 숏츠 60pt/12자 줄바꿈) ──
+  const isShorts = !hasLandscapeAspect(width, height);
+  const dialogueFontSize = isShorts ? 60 : 42;
   const subtitleClips = timings.filter(t => t.text).map((t, i) => {
-    const s = scenes[timings.indexOf(t)];
-    const mTag = s?.mode ? `[${s.mode.replace(/[\[\]]/g, '')}] ` : '';
+    const displayText = isShorts ? breakDialogueLines(t.text, 12) : breakLines(t.text);
     return `
           <generatoritem id="sub-${i + 1}">
-            <name>${escXml(`${mTag}${t.text.slice(0, 40)}`)}</name>
+            <name>${escXml(displayText.replace(/\n/g, ' ').slice(0, 40))}</name>
             <duration>${toFrames(t.durationSec)}</duration>
             <rate><ntsc>${ntscStr}</ntsc><timebase>${timebase}</timebase></rate>
             <in>0</in>
@@ -355,8 +387,8 @@ export function generateFcpXml(params: {
               <effectcategory>Text</effectcategory>
               <effecttype>generator</effecttype>
               <mediatype>video</mediatype>
-              <parameter><parameterid>str</parameterid><name>Text</name><value>${escXml(t.text)}</value></parameter>
-              <parameter><parameterid>fontsize</parameterid><name>Font Size</name><value>42</value></parameter>
+              <parameter><parameterid>str</parameterid><name>Text</name><value>${escXml(displayText)}</value></parameter>
+              <parameter><parameterid>fontsize</parameterid><name>Font Size</name><value>${dialogueFontSize}</value></parameter>
               <parameter><parameterid>fontstyle</parameterid><name>Font Style</name><value>1</value></parameter>
               <parameter><parameterid>fontcolor</parameterid><name>Font Color</name><value>16777215</value></parameter>
               <parameter><parameterid>origin</parameterid><name>Origin</name><value>${subtitleOrigin.main}</value></parameter>
@@ -485,7 +517,36 @@ export function generateFcpXml(params: {
         </outputs>
         <track>
           <outputchannelindex>1</outputchannelindex>${audioClips}
-        </track>
+        </track>${(() => {
+    const narClips = narrationLines.filter(l => l.audioFileName);
+    if (narClips.length === 0) return '';
+    return `
+        <track>
+          <outputchannelindex>1</outputchannelindex>${narClips.map((line, i) => {
+      const startSec = line.startTime ?? nsTimings[i]?.timelineStartSec ?? 0;
+      const durationSec = Math.max(0.1, line.duration ?? nsTimings[i]?.targetDurationSec ?? 3);
+      const durFrames = toFrames(durationSec);
+      const startFrames = toFrames(startSec);
+      return `
+          <clipitem id="narration-${i + 1}" premiereChannelType="stereo">
+            <name>${escXml(`Narration ${String(i + 1).padStart(3, '0')}`)}</name>
+            <duration>${durFrames}</duration>
+            <rate><ntsc>${ntscStr}</ntsc><timebase>${timebase}</timebase></rate>
+            <in>0</in><out>${durFrames}</out>
+            <start>${startFrames}</start><end>${startFrames + durFrames}</end>
+            <file id="narfile-${i + 1}">
+              <name>${escXml(line.audioFileName!)}</name>
+              <pathurl>${escXml(`audio/${line.audioFileName!}`)}</pathurl>
+              <duration>${durFrames}</duration>
+              <rate><ntsc>${ntscStr}</ntsc><timebase>${timebase}</timebase></rate>
+              <media><audio><channelcount>2</channelcount><samplecharacteristics><samplerate>48000</samplerate><depth>16</depth></samplecharacteristics></audio></media>
+            </file>
+            <sourcetrack><mediatype>audio</mediatype><trackindex>1</trackindex></sourcetrack>
+            <labels><label2>Caribbean</label2></labels>
+          </clipitem>`;
+    }).join('')}
+        </track>`;
+  })()}
       </audio>
     </media>
   </sequence>
@@ -505,14 +566,26 @@ export function generateCapCutDraftJson(params: {
   height?: number;
   preset?: VideoAnalysisPreset;
   videoDurationSec?: number;
+  narrationLines?: ExportNarrationLine[];
 }): { json: string; projectId: string } {
-  const { scenes, title, videoFileName: rawVideoFileName, fps = 30, width = 1080, height = 1920, preset, videoDurationSec } = params;
+  const { scenes, title, videoFileName: rawVideoFileName, fps = 30, width = 1080, height = 1920, preset, videoDurationSec, narrationLines = [] } = params;
   const videoFileName = sanitizeFileName(rawVideoFileName);
-  const timings = extractTimings(scenes, preset);
+  const syncTimeline = buildNarrationSyncedTimeline(scenes, narrationLines, preset);
+  const nsTimings = syncTimeline.scenes;
+  const timings: SceneTiming[] = nsTimings.map(t => ({
+    index: t.sceneIndex,
+    startSec: t.sourceStartSec + t.trimStartSec,
+    endSec: t.sourceStartSec + t.trimEndSec,
+    durationSec: t.targetDurationSec,
+    tlStartSec: t.timelineStartSec,
+    tlEndSec: t.timelineEndSec,
+    text: t.subtitleSegments.map(s => s.text).join(' '),
+    effectText: t.effectSubtitleSegments.map(s => s.text).join(' '),
+  }));
   if (timings.length === 0) return { json: '', projectId: '' };
 
-  const totalDurUs = toUs(timings[timings.length - 1].tlEndSec);
-  const maxEnd = Math.max(...timings.map(t => t.endSec));
+  const totalDurUs = toUs(syncTimeline.totalDurationSec);
+  const maxEnd = Math.max(...nsTimings.map(t => t.sourceEndSec));
   const srcDurUs = toUs(Math.max(videoDurationSec || 0, maxEnd));
 
   const projectId = uuid();
@@ -566,7 +639,7 @@ export function generateCapCutDraftJson(params: {
       duration: toUs(t.durationSec),
       start: toUs(t.startSec),
     },
-    speed: 1.0,
+    speed: nsTimings[timings.indexOf(t)]?.autoSpeedFactor ?? 1.0,
     target_timerange: {
       duration: toUs(t.durationSec),
       start: toUs(t.tlStartSec),
@@ -901,33 +974,25 @@ export function generateNleSrt(
   layer: 'dialogue' | 'effect' | 'narration' = 'dialogue',
   preset?: VideoAnalysisPreset,
   timingMode: 'timeline' | 'source' = 'timeline',
+  narrationLines: ExportNarrationLine[] = [],
 ): string {
-  const timings = extractTimings(scenes, preset);
+  const syncTimeline = buildNarrationSyncedTimeline(scenes, narrationLines, preset);
+  const nsTimings = syncTimeline.scenes;
   let idx = 1;
   const entries: string[] = [];
 
-  for (const t of timings) {
-    let text = '';
-    switch (layer) {
-      case 'dialogue':
-        text = t.text;
-        break;
-      case 'effect':
-        text = t.effectText;
-        break;
-      case 'narration':
-        text = t.text; // 나레이션 = 메인 텍스트
-        break;
+  for (const t of nsTimings) {
+    const segments = layer === 'effect' ? t.effectSubtitleSegments : t.subtitleSegments;
+    for (const seg of segments) {
+      if (!seg.text.trim()) continue;
+      const srtStart = timingMode === 'timeline' ? seg.startTime : t.sourceStartSec + t.trimStartSec;
+      const srtEnd = timingMode === 'timeline' ? seg.endTime : t.sourceStartSec + t.trimEndSec;
+      const lineText = (layer === 'dialogue' || layer === 'narration')
+        ? breakDialogueLines(seg.text, 12)
+        : breakLines(seg.text);
+      entries.push(`${idx}\n${secondsToSrtTime(srtStart)} --> ${secondsToSrtTime(srtEnd)}\n${lineText}`);
+      idx++;
     }
-    if (!text.trim()) continue;
-
-    // Premiere/XML 연동은 편집 타임라인 기준, CapCut/VREW 수동 SRT import는 원본 소스 기준
-    const srtStart = timingMode === 'timeline' ? t.tlStartSec : t.startSec;
-    const srtEnd = timingMode === 'timeline' ? t.tlEndSec : t.endSec;
-
-    const lineText = breakLines(text);
-    entries.push(`${idx}\n${secondsToSrtTime(srtStart)} --> ${secondsToSrtTime(srtEnd)}\n${lineText}`);
-    idx++;
   }
 
   return entries.join('\n\n');
@@ -950,8 +1015,9 @@ export async function buildNlePackageZip(params: {
   height?: number;
   fps?: number;
   videoDurationSec?: number;
+  narrationLines?: ExportNarrationLine[];
 }): Promise<Blob> {
-  const { target, scenes, title, videoBlob, videoFileName: rawVideoFileName, preset, width, height, fps, videoDurationSec } = params;
+  const { target, scenes, title, videoBlob, videoFileName: rawVideoFileName, preset, width, height, fps, videoDurationSec, narrationLines = [] } = params;
   const sanitizedVideoFileName = sanitizeFileName(rawVideoFileName || 'video.mp4');
   const videoFileName = /\.[a-zA-Z0-9]{2,5}$/.test(sanitizedVideoFileName) ? sanitizedVideoFileName : `${sanitizedVideoFileName || 'video'}.mp4`;
   const hasValidVideoBlob = !!videoBlob && videoBlob.size > 0;
@@ -964,9 +1030,22 @@ export async function buildNlePackageZip(params: {
     throw new Error('원본 영상 파일을 찾을 수 없어 NLE 패키지를 만들 수 없습니다. 원본 영상을 다시 불러온 뒤 시도해주세요.');
   }
 
+  // 나레이션 오디오 패키징 — audioUrl → blob → ZIP에 추가 + audioFileName 설정
+  const packagedNarrationLines: ExportNarrationLine[] = [];
+  for (let i = 0; i < narrationLines.length; i++) {
+    const line = narrationLines[i];
+    if (!line.audioUrl) { packagedNarrationLines.push(line); continue; }
+    const blob = await fetchAssetBlob(line.audioUrl);
+    if (!blob) { packagedNarrationLines.push(line); continue; }
+    const fileName = `${String(i + 1).padStart(3, '0')}_narration.mp3`;
+    const duration = line.duration ?? await measureBlobAudioDuration(blob) ?? 3;
+    zip.file(`audio/${fileName}`, blob);
+    packagedNarrationLines.push({ ...line, audioFileName: fileName, duration });
+  }
+
   if (target === 'premiere') {
     // FCP XML
-    const xml = generateFcpXml({ scenes, title, videoFileName, preset, width, height, fps, videoDurationSec });
+    const xml = generateFcpXml({ scenes, title, videoFileName, preset, width, height, fps, videoDurationSec, narrationLines: packagedNarrationLines });
     zip.file(`${safeName}.xml`, xml);
 
     // [FIX #328] 영상 파일을 media/ 하위폴더에 배치 — XML pathurl과 일치
@@ -977,10 +1056,10 @@ export async function buildNlePackageZip(params: {
     // [FIX #316] SRT를 sidecar 방식으로 media/ 폴더에 배치 — Premiere Captions 자동 인식
     // 영상 파일명과 동일한 이름.srt → Premiere가 자동으로 Captions 트랙에 로드
     const videoBase = (videoFileName || 'video.mp4').replace(/\.[^.]+$/, '');
-    const dlgSrt = generateNleSrt(scenes, 'dialogue', preset, 'timeline');
+    const dlgSrt = generateNleSrt(scenes, 'dialogue', preset, 'timeline', packagedNarrationLines);
     if (dlgSrt) zip.file(`media/${videoBase}.srt`, BOM + dlgSrt);
 
-    const fxSrt = generateNleSrt(scenes, 'effect', preset, 'timeline');
+    const fxSrt = generateNleSrt(scenes, 'effect', preset, 'timeline', packagedNarrationLines);
     if (fxSrt) zip.file(`media/${videoBase}_효과.srt`, BOM + fxSrt);
 
     // 루트에도 SRT 복사 (수동 import 폴백용)
@@ -1022,11 +1101,11 @@ export async function buildNlePackageZip(params: {
     // CapCut 2025+ File > Import > XML 지원 → 편집점이 타임라인에 바로 적용됨
 
     // 1. FCP XML (가장 확실한 편집점 import 방법)
-    const capCutXml = generateFcpXml({ scenes, title, videoFileName: videoFileName || 'video.mp4', preset, width, height, fps, videoDurationSec });
+    const capCutXml = generateFcpXml({ scenes, title, videoFileName: videoFileName || 'video.mp4', preset, width, height, fps, videoDurationSec, narrationLines: packagedNarrationLines });
     zip.file(`${safeName}.xml`, capCutXml);
 
     // 2. draft JSON (프로젝트 폴더 복사 방식)
-    const draftResult = generateCapCutDraftJson({ scenes, title, videoFileName: videoFileName || 'video.mp4', preset, width, height, fps, videoDurationSec });
+    const draftResult = generateCapCutDraftJson({ scenes, title, videoFileName: videoFileName || 'video.mp4', preset, width, height, fps, videoDurationSec, narrationLines: packagedNarrationLines });
     zip.file('draft_content.json', draftResult.json);
     const nowTs = Math.floor(Date.now() / 1000);
     const draftTotalDurUs = Math.ceil((extractTimings(scenes, preset).at(-1)?.tlEndSec || 0) * 1_000_000);
@@ -1080,9 +1159,9 @@ export async function buildNlePackageZip(params: {
     }
 
     // 4. SRT 폴백
-    const dlgSrt = generateNleSrt(scenes, 'dialogue', preset, 'source');
+    const dlgSrt = generateNleSrt(scenes, 'dialogue', preset, 'source', packagedNarrationLines);
     if (dlgSrt) zip.file(`${safeName}_자막.srt`, BOM + dlgSrt);
-    const fxSrt = generateNleSrt(scenes, 'effect', preset, 'source');
+    const fxSrt = generateNleSrt(scenes, 'effect', preset, 'source', packagedNarrationLines);
     if (fxSrt) zip.file(`${safeName}_효과자막.srt`, BOM + fxSrt);
 
     zip.file('README.txt', [
@@ -1118,11 +1197,11 @@ export async function buildNlePackageZip(params: {
     }
 
     // 2. SRT 자막
-    const srt = generateNleSrt(scenes, 'dialogue', preset, 'source');
+    const srt = generateNleSrt(scenes, 'dialogue', preset, 'source', packagedNarrationLines);
     if (srt) zip.file(`${safeName}_자막.srt`, BOM + srt);
-    const narSrt = generateNleSrt(scenes, 'narration', preset, 'source');
+    const narSrt = generateNleSrt(scenes, 'narration', preset, 'source', packagedNarrationLines);
     if (narSrt) zip.file(`${safeName}_나레이션.srt`, BOM + narSrt);
-    const fxSrt = generateNleSrt(scenes, 'effect', preset, 'source');
+    const fxSrt = generateNleSrt(scenes, 'effect', preset, 'source', packagedNarrationLines);
     if (fxSrt) zip.file(`${safeName}_효과자막.srt`, BOM + fxSrt);
 
     zip.file('README.txt', [

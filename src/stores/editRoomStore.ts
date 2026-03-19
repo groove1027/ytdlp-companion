@@ -198,6 +198,7 @@ interface EditRoomStore {
   // 장면별 설정 (Record<sceneId, config>)
   sceneEffects: Record<string, SceneEffectConfig>;
   sceneSubtitles: Record<string, SceneSubtitleConfig>;
+  effectSubs: Record<string, string>;
   sceneAudioSettings: Record<string, SceneAudioConfig>;
   sceneOverlays: Record<string, SceneOverlayConfig[]>;
   sceneTransitions: Record<string, SceneTransitionConfig>;
@@ -356,6 +357,7 @@ const DEFAULT_TRACK_EFFECTS: Record<AudioTrackId, TrackEffectConfig> = {
 const INITIAL_STATE = {
   sceneEffects: {} as Record<string, SceneEffectConfig>,
   sceneSubtitles: {} as Record<string, SceneSubtitleConfig>,
+  effectSubs: {} as Record<string, string>,
   sceneAudioSettings: {} as Record<string, SceneAudioConfig>,
   sceneOverlays: {} as Record<string, SceneOverlayConfig[]>,
   sceneTransitions: {} as Record<string, SceneTransitionConfig>,
@@ -443,6 +445,7 @@ export const useEditRoomStore = create<EditRoomStore>()(immer((set, get) => ({
     // 장면별 기본 설정 초기화
     const sceneEffects: Record<string, SceneEffectConfig> = {};
     const sceneSubtitles: Record<string, SceneSubtitleConfig> = {};
+    const effectSubs: Record<string, string> = {};
     const sceneAudioSettings: Record<string, SceneAudioConfig> = {};
     const sceneOverlays: Record<string, SceneOverlayConfig[]> = {};
     const sceneTransitions: Record<string, SceneTransitionConfig> = { ...get().sceneTransitions };
@@ -546,6 +549,12 @@ export const useEditRoomStore = create<EditRoomStore>()(immer((set, get) => ({
         sceneAudioSettings[sceneId] = get().sceneAudioSettings[sceneId];
       }
 
+      // 효과자막 hydrate — Scene에 effectSub가 있으면 store에 반영
+      const sceneRecord = scene as unknown as Record<string, unknown>;
+      if (typeof sceneRecord['effectSub'] === 'string' && sceneRecord['effectSub']) {
+        effectSubs[sceneId] = sceneRecord['effectSub'] as string;
+      }
+
       // 오버레이 기본값 (빈 배열 유지)
       sceneOverlays[sceneId] = get().sceneOverlays[sceneId] || [];
 
@@ -565,6 +574,7 @@ export const useEditRoomStore = create<EditRoomStore>()(immer((set, get) => ({
       sceneOrder,
       sceneEffects,
       sceneSubtitles,
+      effectSubs,
       sceneAudioSettings,
       sceneOverlays,
       sceneTransitions,
