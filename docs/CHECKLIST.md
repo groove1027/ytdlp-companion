@@ -8,6 +8,10 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-20] AGENTS 이슈 코멘트 가독성 규칙 고정
+- [x] `AGENTS.md` — GitHub 이슈 코멘트 스타일에 줄바꿈 규칙 추가
+- [x] `AGENTS.md` — 한 문단 금지, 4줄 고정 형식, 문장별 줄바꿈 템플릿 명시
+
 ### [2026-03-20] #633 편집실 WebCodecs 영상 자르기 DTS 역행 수정 + AI 정제 안내 보강
 - [x] `clipCutter.ts`, `muxVideoTiming.ts` — B-프레임 H.264에서 `mp4-muxer`의 `timestamp`를 DTS가 아니라 PTS로 넘기도록 수정해 `Timestamps must be monotonically increasing` 실패를 차단
 - [x] `clipCutter.ts` — 첫 청크 `decoderConfig.codec`를 원본 트랙 코덱 문자열로 맞추고, muxer 트랙 코덱은 지원 포맷인 `avc`로 유지
