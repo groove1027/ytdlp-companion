@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { CharacterReference, DialogueTone } from '../types';
 import { logger } from '../services/LoggerService';
+import { cancelAutoApply } from '../services/googleReferenceSearchService';
 
 interface ImageVideoStore {
   // 서브탭 상태
@@ -94,7 +95,7 @@ export const useImageVideoStore = create<ImageVideoStore>((set) => ({
   setStyleReferenceImages: (v) => { set({ styleReferenceImages: v }); syncToProjectConfig(); },
   addStyleReferenceImage: (img) => { set((s) => ({ styleReferenceImages: [...s.styleReferenceImages, img] })); syncToProjectConfig(); },
   removeStyleReferenceImage: (index) => { set((s) => ({ styleReferenceImages: s.styleReferenceImages.filter((_, i) => i !== index) })); syncToProjectConfig(); },
-  setEnableGoogleReference: (v) => { const prev = useImageVideoStore.getState().enableGoogleReference; logger.trackSettingChange('iv.googleRef', prev, v); set({ enableGoogleReference: v }); syncToProjectConfig(); },
+  setEnableGoogleReference: (v) => { const prev = useImageVideoStore.getState().enableGoogleReference; logger.trackSettingChange('iv.googleRef', prev, v); if (!v) cancelAutoApply(); set({ enableGoogleReference: v }); syncToProjectConfig(); },
   setCharacters: (chars) => {
     set((s) => ({ characters: typeof chars === 'function' ? chars(s.characters) : chars }));
     syncToProjectConfig();

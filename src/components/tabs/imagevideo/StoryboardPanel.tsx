@@ -1903,6 +1903,35 @@ const StoryboardPanel: React.FC = () => {
     let scene = currentScenes.find(s => s.id === sceneId);
     if (!scene || !currentConfig) return false;
 
+    // [NEW] 구글 레퍼런스 모드 — AI 생성 대신 구글 검색으로 대체
+    if (useImageVideoStore.getState().enableGoogleReference && !feedback && !overrides) {
+      updateScene(sceneId, { isGeneratingImage: true, generationStatus: '구글 레퍼런스 검색 중...' });
+      try {
+        const { searchGoogleImages, buildSearchQuery } = await import('../../../services/googleReferenceSearchService');
+        const sceneIndex = currentScenes.findIndex(s => s.id === sceneId);
+        const prevScene = sceneIndex > 0 ? currentScenes[sceneIndex - 1] : null;
+        const nextScene = sceneIndex < currentScenes.length - 1 ? currentScenes[sceneIndex + 1] : null;
+        const query = buildSearchQuery(scene, prevScene, nextScene, currentConfig.globalContext);
+        // 이미 이미지가 있으면 다음 페이지에서 검색 (재생성)
+        const startIdx = scene.imageUrl?.trim() ? Math.floor(Math.random() * 9) + 1 : 1;
+        const result = await searchGoogleImages(query, startIdx);
+        if (result.items.length > 0) {
+          updateScene(sceneId, {
+            imageUrl: result.items[0].link,
+            isGeneratingImage: false,
+            generationStatus: '구글 레퍼런스 적용됨',
+            imageUpdatedAfterVideo: !!scene.videoUrl,
+          });
+          return true;
+        }
+        updateScene(sceneId, { isGeneratingImage: false, generationStatus: '검색 결과 없음' });
+        return false;
+      } catch (err) {
+        updateScene(sceneId, { isGeneratingImage: false, generationStatus: `검색 실패: ${err instanceof Error ? err.message : '오류'}` });
+        return false;
+      }
+    }
+
     // [FIX] visualPrompt가 비어있으면 자동 생성 (대본 내용 기반)
     if (!feedback && (!scene.visualPrompt || !scene.visualPrompt.trim()) && scene.scriptText) {
       updateScene(sceneId, { generationStatus: '비주얼 프롬프트 자동 생성 중...' });

@@ -9,6 +9,11 @@ import { monitoredFetch, getYoutubeApiKey } from './apiService';
 import { logger } from './LoggerService';
 import type { Scene } from '../types';
 
+// Lazy import to avoid circular dependency — 비동기 초기화 후 동기 접근
+let _projectStoreRef: { getState: () => { scenes: Scene[] } } | null = null;
+import('../stores/projectStore').then(m => { _projectStoreRef = m.useProjectStore; }).catch(() => {});
+const getLatestScenes = (): Scene[] => _projectStoreRef?.getState().scenes ?? [];
+
 // ─── Google CSE 설정 ───
 const CSE_API_URL = 'https://www.googleapis.com/customsearch/v1';
 // 공개 CSE ID — 이미지 검색용 (전체 웹 검색)
@@ -185,6 +190,92 @@ export async function searchSceneReferenceImages(
 ): Promise<GoogleSearchResponse> {
   const query = buildSearchQuery(scene, prevScene, nextScene, globalContext);
   return searchGoogleImages(query, startIndex);
+}
+
+/**
+ * 스토리보드 생성 직후 자동 구글 레퍼런스 이미지 배치
+ * - 각 씬마다 순차적으로 검색 → 첫 번째 결과를 imageUrl에 적용
+ * - 이미 imageUrl이 있는 씬은 건너뜀
+ * - 200ms 간격으로 API rate limit 준수
+ * - runId로 중복 실행 방지 (새 분석 시 이전 실행 취소)
+ */
+let _autoApplyRunId = 0;
+
+export async function autoApplyGoogleReferences(
+  scenes: Scene[],
+  globalContext: string,
+  updateScene: (id: string, partial: Partial<Scene>) => void,
+  onComplete?: (appliedCount: number) => void,
+): Promise<void> {
+  const runId = ++_autoApplyRunId;
+  let appliedCount = 0;
+
+  for (let i = 0; i < scenes.length; i++) {
+    // 새 실행이 시작되면 이전 실행 중단
+    if (_autoApplyRunId !== runId) return;
+
+    const scene = scenes[i];
+    // 검색할 내용이 없으면 건너뜀
+    if (!scene.scriptText && !scene.visualPrompt) continue;
+
+    // [P1 FIX] 매 씬 처리 전 최신 스토어에서 imageUrl 재확인 — stale 스냅샷 덮어쓰기 방지
+    const latestScenes = getLatestScenes();
+    const latestScene = latestScenes.find(s => s.id === scene.id);
+    if (latestScene?.imageUrl?.trim()) continue;
+
+    const prevScene = i > 0 ? scenes[i - 1] : null;
+    const nextScene = i < scenes.length - 1 ? scenes[i + 1] : null;
+
+    // 진행 상태 표시
+    updateScene(scene.id, {
+      isGeneratingImage: true,
+      generationStatus: `구글 레퍼런스 검색 중... (${i + 1}/${scenes.length})`,
+    });
+
+    try {
+      const query = buildSearchQuery(scene, prevScene, nextScene, globalContext);
+      const response = await searchGoogleImages(query, 1);
+
+      // 새 실행이 시작되면 이전 실행 중단
+      if (_autoApplyRunId !== runId) return;
+
+      if (response.items.length > 0) {
+        updateScene(scene.id, {
+          imageUrl: response.items[0].link,
+          isGeneratingImage: false,
+          generationStatus: '구글 레퍼런스 적용됨',
+          imageUpdatedAfterVideo: !!scene.videoUrl,
+        });
+        appliedCount++;
+      } else {
+        updateScene(scene.id, {
+          isGeneratingImage: false,
+          generationStatus: '검색 결과 없음',
+        });
+      }
+    } catch (err) {
+      if (_autoApplyRunId !== runId) return;
+      logger.error('[GoogleRef] 자동 배치 실패', `scene=${scene.id} ${err instanceof Error ? err.message : String(err)}`);
+      updateScene(scene.id, {
+        isGeneratingImage: false,
+        generationStatus: '레퍼런스 검색 실패',
+      });
+    }
+
+    // API rate limit: 200ms 대기
+    if (i < scenes.length - 1) {
+      await new Promise(r => setTimeout(r, 200));
+    }
+  }
+
+  if (_autoApplyRunId === runId) {
+    onComplete?.(appliedCount);
+  }
+}
+
+/** 자동 배치 실행 중단 (새 분석 시작 등) */
+export function cancelAutoApply(): void {
+  _autoApplyRunId++;
 }
 
 /**

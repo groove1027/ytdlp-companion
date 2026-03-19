@@ -21,6 +21,7 @@ import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
 import { areUploadedTranscriptScenesSynced, buildUploadedTranscriptScenes } from '../../../utils/uploadedTranscriptScenes';
 import GoogleReferencePanel from './GoogleReferencePanel';
+import { autoApplyGoogleReferences } from '../../../services/googleReferenceSearchService';
 
 let _sceneIdCounter = 0;
 
@@ -586,6 +587,18 @@ const SetupPanel: React.FC = () => {
         keyEntities: ctx.keyEntities || '',
       };
       useProjectStore.getState().setConfig((prev) => prev ? { ...prev, cachedContextData: ctx as Record<string, unknown>, globalContext: JSON.stringify(globalContextObj), detectedStyleDescription: ctx.visualTone || prev.detectedStyleDescription, detectedLanguage: ctx.detectedLanguage || prev.detectedLanguage, detectedLanguageName: ctx.detectedLanguageName || prev.detectedLanguageName, detectedLocale: ctx.detectedLocale || prev.detectedLocale } : prev);
+
+      // [NEW] 구글 레퍼런스 모드 ON이면 장면 분석 직후 자동으로 구글 이미지 배치
+      if (useImageVideoStore.getState().enableGoogleReference) {
+        const latestScenes = useProjectStore.getState().scenes;
+        const globalCtxStr = JSON.stringify(globalContextObj);
+        const updateSceneFn = useProjectStore.getState().updateScene;
+        // 백그라운드 실행 — 분석 완료 UX를 막지 않음
+        void autoApplyGoogleReferences(latestScenes, globalCtxStr, updateSceneFn, (count) => {
+          if (count > 0) showToast(`${count}개 장면에 구글 레퍼런스 이미지를 자동 배치했어요!`);
+        });
+      }
+
       setIsAnalyzing(false); setChunkProgress(null); return true;
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
