@@ -106,8 +106,6 @@ const VALID_KIE_VOICES = new Set([
   'HgyIHe81F3nXywNwkraY', 'AeRdCCKzvd23BpJoofzx', 'LruHrtVF6PSyGItzMNHS',
   'Qggl4b0xRMiqOwhPtVWT', 'zA6D7RyKdc2EClouEMkP', '1wGbFxmAM3Fgw63G1zZJ',
   'hqfrgApggtO1785R4Fsn', 'sH0WdfE5fsKuM2otdQZr', 'MJ0RnG71ty4LH3dvNfSd',
-  // [FIX #580] 준박 (Joon Park) 한국어 커뮤니티 음성 추가
-  '7Nah3cbXKVmGX7gQUuwz',
 ]);
 
 /** 단일 청크 TTS 생성 — dialogue 배열 포맷 사용 */
@@ -284,7 +282,7 @@ export interface ElevenLabsVoice {
 
 /**
  * ElevenLabs Dialogue V3 지원 음성 목록
- * 프리메이드 21개 + KIE API 지원 커뮤니티 106개 = 총 127개
+ * 프리메이드 21개 + KIE API 지원 커뮤니티 105개 = 총 126개
  * [FIX #363] KIE API에서 지원하지 않는 커뮤니티 음성 366개 제거 — 사용자에게 오류 없는 목록만 표시
  */
 export const ELEVENLABS_VOICES: ElevenLabsVoice[] = [
@@ -310,7 +308,7 @@ export const ELEVENLABS_VOICES: ElevenLabsVoice[] = [
   { id: 'Adam', name: 'Adam', gender: 'male', accent: 'american', description: 'Dominant, Firm', useCase: 'social_media', age: 'middle_aged', previewUrl: 'https://storage.googleapis.com/eleven-public-prod/premade/voices/pNInz6obpgDQGcFmaJgB/d6905d7a-dd26-4187-bfff-1bd3a5ea7cac.mp3' },
   { id: 'Bill', name: 'Bill', gender: 'male', accent: 'american', description: 'Wise, Mature, Balanced', useCase: 'advertisement', age: 'old', previewUrl: 'https://storage.googleapis.com/eleven-public-prod/premade/voices/pqHfZKP75CvOlQylNhV4/d782b3ff-84ba-4029-848c-acf01285524d.mp3' },
   { id: 'River', name: 'River', gender: 'neutral', accent: 'american', description: 'Relaxed, Neutral, Informative', useCase: 'conversational', age: 'middle_aged', previewUrl: 'https://storage.googleapis.com/eleven-public-prod/premade/voices/SAz9YHcvj6GT2YYXdXww/e6c95f0b-2227-491a-b3d7-2249240decb7.mp3' },
-  // ── KIE API 지원 커뮤니티 음성 (106개, docs.kie.ai 기준) ──
+  // ── KIE API 지원 커뮤니티 음성 (105개, docs.kie.ai 기준) ──
   // [FIX] accent/age/useCase: KIE 문서에 미제공 — 빈 값 (가짜 'standard' 제거, ElevenLabs API 인증 시 업데이트 가능)
   { id: 'Sm1seazb4gs7RSlUVw7c', name: 'Anika', gender: 'female', accent: '', description: 'Animated, Friendly and Engaging', useCase: '', age: '', previewUrl: 'https://static.aiquickdraw.com/elevenlabs/voice/Sm1seazb4gs7RSlUVw7c.mp3' },
   { id: 'BIvP0GN1cAtSRTxNHnWS', name: 'Ellen', gender: 'female', accent: '', description: 'Serious, Direct and Confident', useCase: '', age: '', previewUrl: 'https://static.aiquickdraw.com/elevenlabs/voice/BIvP0GN1cAtSRTxNHnWS.mp3' },
@@ -417,8 +415,6 @@ export const ELEVENLABS_VOICES: ElevenLabsVoice[] = [
   { id: 'hqfrgApggtO1785R4Fsn', name: 'Theodore HQ', gender: 'male', accent: '', description: 'Serene and Grounded', useCase: '', age: '', previewUrl: 'https://static.aiquickdraw.com/elevenlabs/voice/hqfrgApggtO1785R4Fsn.mp3' },
   { id: 'sH0WdfE5fsKuM2otdQZr', name: 'Koraly', gender: 'female', accent: '', description: 'Soft-spoken and Gentle', useCase: '', age: '', previewUrl: 'https://static.aiquickdraw.com/elevenlabs/voice/sH0WdfE5fsKuM2otdQZr.mp3' },
   { id: 'MJ0RnG71ty4LH3dvNfSd', name: 'Leon', gender: 'male', accent: '', description: 'Soothing and Grounded', useCase: '', age: '', previewUrl: 'https://static.aiquickdraw.com/elevenlabs/voice/MJ0RnG71ty4LH3dvNfSd.mp3' },
-  // [FIX #580] 준박 (Joon Park) — 한국어 남성 커뮤니티 음성
-  { id: '7Nah3cbXKVmGX7gQUuwz', name: 'Joon Park', gender: 'male', accent: 'korean', description: 'Inviting, Professional Korean Male', useCase: 'conversational', age: 'young', previewUrl: 'https://static.aiquickdraw.com/elevenlabs/voice/7Nah3cbXKVmGX7gQUuwz.mp3' },
 ];
 
 /** ElevenLabs 음성 이름 → 한국어 표기 매핑 (프리메이드 + KIE 커뮤니티) */
@@ -464,8 +460,6 @@ export const EL_NAME_KO: Record<string, string> = {
   Nathaniel: '나다니엘', Benjamin: '벤자민', Clara: '클라라',
   AImee: '에이미', Allison: '앨리슨', 'Theodore HQ': '테오도르 HQ',
   Koraly: '코랄리', Leon: '레온',
-  // [FIX #580] 준박 한국어 음성
-  'Joon Park': '준박',
 };
 
 export const elNameKo = (name: string): string => {

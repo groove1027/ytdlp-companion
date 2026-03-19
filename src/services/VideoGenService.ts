@@ -24,6 +24,17 @@ const STYLE_LOCK_TAGS = "[CRITICAL: Preserve exact art style of input image] [Ma
 // === CHARACTER CONSISTENCY CONSTANTS ===
 // [FIX #252] Grok 영상 생성 시 캐릭터 일관성 유지를 위한 프롬프트 지시
 const CHARACTER_CONSISTENCY_TAGS = "[Maintain character consistency throughout the video] [Preserve exact facial features, hairstyle, and body proportions from the input image] [Keep clothing details, colors, and accessories identical] [Consistent lighting and skin tone] [Keep all subjects inside the camera frame]";
+const KIE_QUOTA_ERROR_RE = /(credits?\s+insufficient|insufficient\s+(credits?|quota)|current balance.*(enough|continue)|quota[_\s-]*exhausted|잔액 부족|크레딧(이|을)?\s*부족)/i;
+
+interface KieTaskCreateResponse {
+    code?: number;
+    msg?: string;
+    message?: string;
+    data?: {
+        taskId?: string;
+        [key: string]: unknown;
+    };
+}
 
 // === HELPER FUNCTIONS ===
 
@@ -66,6 +77,47 @@ export function sanitizePrompt(prompt: string): string {
         .replace(/\b(INSTRUCTION|TASK|TYPOGRAPHY|NEGATIVE|LAYOUT|RULE|POSITION|SIZE|GOAL)\b:?/gi, "") 
         .replace(/\s+/g, " ")
         .trim();
+}
+
+function isKieQuotaErrorMessage(message: string): boolean {
+    return KIE_QUOTA_ERROR_RE.test(message);
+}
+
+function extractKieErrorDetail(payload: KieTaskCreateResponse | null, rawText: string): string {
+    return payload?.msg || payload?.message || rawText || '알 수 없는 오류';
+}
+
+async function parseKieCreateTaskResponse(response: Response, failureLabel: string): Promise<KieTaskCreateResponse> {
+    const rawText = await response.text().catch(() => '');
+    let payload: KieTaskCreateResponse | null = null;
+
+    if (rawText) {
+        try {
+            const parsed = JSON.parse(rawText) as unknown;
+            if (parsed && typeof parsed === 'object') {
+                payload = parsed as KieTaskCreateResponse;
+            }
+        } catch {
+            payload = null;
+        }
+    }
+
+    const errorDetail = extractKieErrorDetail(payload, rawText);
+
+    if (response.status === 402 || payload?.code === 402 || isKieQuotaErrorMessage(errorDetail)) {
+        throw new Error("Kie 잔액 부족: 크레딧을 충전해주세요.");
+    }
+    if (response.status === 429 || payload?.code === 429) {
+        throw new Error("Kie 요청 제한 초과. 잠시 후 다시 시도하세요.");
+    }
+    if (!response.ok) {
+        throw new Error(`${failureLabel} (${response.status}): ${errorDetail}`);
+    }
+    if (payload && payload.code !== undefined && payload.code !== 200) {
+        throw new Error(`${failureLabel}: ${errorDetail}`);
+    }
+
+    return payload ?? {};
 }
 
 // === API METHODS ===
@@ -163,12 +215,7 @@ export async function generateKieImage(
         body: JSON.stringify({ model: targetModel, input: inputPayload })
     });
 
-    if (!response.ok) {
-        const errText = await response.text().catch(() => '');
-        throw new Error(`Kie API 요청 실패 (${response.status}): ${errText}`);
-    }
-    const data = await response.json();
-    if (data.code !== 200) throw new Error(`Kie 태스크 생성 실패: ${data.msg || data.message || JSON.stringify(data)}`);
+    const data = await parseKieCreateTaskResponse(response, 'Kie 태스크 생성 실패');
 
     const taskId = data.data?.taskId;
     if (!taskId) throw new Error('Kie 태스크 ID를 받지 못했습니다.');
@@ -610,13 +657,10 @@ export async function createPortableGrokTask(
         body: JSON.stringify({ model: 'grok-imagine/image-to-video', input })
     });
 
-    // [FIX] 402/429 에러 코드 구별 처리
-    if (response.status === 402) throw new Error("Kie 잔액이 부족합니다. 충전 후 다시 시도하세요.");
-    if (response.status === 429) throw new Error("Kie 요청 제한 초과. 잠시 후 다시 시도하세요.");
-
-    const data = await response.json();
-    if (data.code !== 200) throw new Error(`Kie API Error: ${data.msg}`);
-    return data.data.taskId;
+    const data = await parseKieCreateTaskResponse(response, 'Kie Grok 태스크 생성 실패');
+    const taskId = data.data?.taskId;
+    if (!taskId) throw new Error('Kie Grok 태스크 ID를 받지 못했습니다.');
+    return taskId;
 }
 
 export async function createPortableUpscaleTask(originalTaskId: string): Promise<string> {
@@ -626,12 +670,11 @@ export async function createPortableUpscaleTask(originalTaskId: string): Promise
         headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ model: 'grok-imagine/upscale', input: { task_id: originalTaskId } })
     });
-    // [FIX] 402/429 에러 코드 구별 처리
-    if (response.status === 402) throw new Error("Kie 잔액이 부족합니다. 충전 후 다시 시도하세요.");
-    if (response.status === 429) throw new Error("Kie 요청 제한 초과. 잠시 후 다시 시도하세요.");
-    const data = await response.json();
-    if (data.code !== 200) throw new Error(`Kie API Error: ${data.msg}`);
-    return data.data.taskId;
+
+    const data = await parseKieCreateTaskResponse(response, 'Kie 업스케일 태스크 생성 실패');
+    const taskId = data.data?.taskId;
+    if (!taskId) throw new Error('Kie 업스케일 태스크 ID를 받지 못했습니다.');
+    return taskId;
 }
 
 export async function cancelKieTask(taskId: string): Promise<void> {
@@ -984,13 +1027,11 @@ export async function createSeedanceTask(
         })
     });
 
-    if (response.status === 402) throw new Error("Kie 잔액이 부족합니다. 충전 후 다시 시도하세요.");
-    if (response.status === 429) throw new Error("Kie 요청 제한 초과. 잠시 후 다시 시도하세요.");
-
-    const data = await response.json();
-    if (data.code !== 200) throw new Error(`Seedance API Error: ${data.msg}`);
-    logger.info(`[Seedance] Task created: ${data.data.taskId}`);
-    return data.data.taskId;
+    const data = await parseKieCreateTaskResponse(response, 'Seedance 태스크 생성 실패');
+    const taskId = data.data?.taskId;
+    if (!taskId) throw new Error('Seedance 태스크 ID를 받지 못했습니다.');
+    logger.info(`[Seedance] Task created: ${taskId}`);
+    return taskId;
 }
 
 // === KIE WAN 2.6 VIDEO-TO-VIDEO ===
@@ -1022,13 +1063,11 @@ export async function createWanV2VTask(
         })
     });
 
-    if (response.status === 402) throw new Error("Kie 잔액이 부족합니다. 충전 후 다시 시도하세요.");
-    if (response.status === 429) throw new Error("Kie 요청 제한 초과. 잠시 후 다시 시도하세요.");
-
-    const data = await response.json();
-    if (data.code !== 200) throw new Error(`Wan V2V API Error: ${data.msg}`);
-    logger.info(`[Wan V2V] Task created: ${data.data.taskId}`);
-    return data.data.taskId;
+    const data = await parseKieCreateTaskResponse(response, 'Wan V2V 태스크 생성 실패');
+    const taskId = data.data?.taskId;
+    if (!taskId) throw new Error('Wan V2V 태스크 ID를 받지 못했습니다.');
+    logger.info(`[Wan V2V] Task created: ${taskId}`);
+    return taskId;
 }
 
 // === VIDEO PROVIDER ADAPTER PATTERN ===
@@ -1046,7 +1085,12 @@ const grokProvider: VideoProvider = {
             );
             return `kie:${taskId}`;
         } catch (e) {
-            logger.warn(`[Grok] Kie 실패, Evolink Veo 폴백 시도: ${(e as Error).message}`);
+            const errMsg = e instanceof Error ? e.message : String(e);
+            if (isKieQuotaErrorMessage(errMsg)) {
+                logger.error(`[Grok] Kie 잔액 부족으로 Evolink 폴백 생략`, errMsg);
+                throw e;
+            }
+            logger.warn(`[Grok] Kie 실패, Evolink Veo 폴백 시도: ${errMsg}`);
             logger.trackErrorChain(String(e), 'VideoGenService:grokProvider:kie_to_evolink_fallback');
             const taskId = await createEvolinkVeoTask(p);
             return `evolink:${taskId}`;

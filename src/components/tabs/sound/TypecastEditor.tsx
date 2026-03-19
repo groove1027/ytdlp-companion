@@ -1915,7 +1915,6 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
           'Crisp, Professional': '깔끔하고 전문적인',
           'Whimsical, Dreamy': '환상적이고 몽환적인',
           'Commanding Presence': '압도적인 존재감',
-          'Inviting, Professional Korean Male': '친근하고 전문적인 한국어 남성',
         };
 
         // 고유값 추출

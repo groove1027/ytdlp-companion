@@ -36,10 +36,11 @@ function base64ToFile(base64: string, filename: string): File {
 }
 
 // [FIX #172] 잔액 부족(QUOTA_EXHAUSTED) 에러 감지 헬퍼
+const QUOTA_EXHAUSTED_RE = /(QUOTA_EXHAUSTED|잔액 부족|credits?\s+insufficient|insufficient\s+(credits?|quota)|user quota is not enough|current balance.*(enough|continue)|크레딧(이|을)?\s*부족)/i;
+
 function isQuotaExhaustedError(error: unknown): boolean {
     if (error instanceof Error) {
-        const msg = error.message;
-        return msg.includes('QUOTA_EXHAUSTED') || msg.includes('잔액 부족');
+        return QUOTA_EXHAUSTED_RE.test(error.message);
     }
     return false;
 }

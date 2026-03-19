@@ -8,6 +8,11 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-19] #581 Grok 자동결제 실패 시 잘못된 Evolink 폴백 중단 + 잔액 부족 안내 수정
+- [x] `VideoGenService.ts` — Kie `createTask` 응답이 HTTP 200이어도 `Credits insufficient`/`current balance` 메시지를 잔액 부족으로 정규화하는 공통 파서 추가
+- [x] `VideoGenService.ts` — Grok 생성에서 Kie 잔액 부족 시 `Evolink Veo`로 잘못 폴백하지 않도록 차단하고 Kie 충전 안내를 그대로 노출
+- [x] `useVideoBatch.ts` — 영문 잔액 부족 문구(`credits insufficient`, `user quota is not enough`)도 배치 중단 조건으로 인식하도록 확장
+
 ### [2026-03-19] 영상 분석 리메이크 프리셋 속도 + 타임코드 정확도 개선
 - [x] `youtubeAnalysisService.ts` — YouTube timedtext XML에서 타임코드를 보존하는 `parseTimedtextXmlWithTimecodes` 함수 추가 (srv1+srv3 이중 포맷 지원)
 - [x] `youtubeAnalysisService.ts` — 타임코드 보존 cue를 Gemini 입력용 "[시간~시간] 텍스트" 포맷으로 변환하는 `formatTimedCuesForAI` 함수 추가 (롱폼 MAX_CUES 300 토큰 제한)
@@ -372,8 +377,8 @@
 - [x] **#369 영상 분석 텍스트 폴백 시 엉뚱한 주제 생성 수정** — v1beta(Pro) API 잔액 부족 + 프레임 분석 실패 시 텍스트 폴백으로 전환되면서, 영상을 실제로 보지 못한 AI가 시스템 프롬프트의 "프레임 이미지 분석" 지시에 따라 존재하지 않는 장면을 상상하여 엉뚱한 주제 생성. 텍스트 전용 모드 안내를 프롬프트에 추가하여 메타데이터(제목/설명/태그/댓글/전사)만 기반으로 분석하도록 제한 (VideoAnalysisRoom.tsx, 2026-03-16)
 - [x] **#371 업로드 탭 메타데이터 단계를 1번으로 이동** — 플랫폼 인증 없이 제목/설명/태그 AI 생성 가능. 위저드 순서: metadata → auth → video → thumbnail → settings → upload. 외부 편집 도구(캡컷/픽셀링) 사용자가 메타데이터만 먼저 확보 가능 (UploadTab.tsx, uploadStore.ts, 2026-03-16)
 - [x] **#368 캐릭터 레퍼런스 AI 감지 결과 직접 편집 기능** — 예술 스타일·캐릭터 특징 필드를 클릭하여 직접 수정 가능. 다른 플랫폼(AI Studio 등)에서 만든 스타일 프롬프트를 붙여넣기로 적용 가능. 싱글/멀티 캐릭터 모드 모두 지원. analysisResult 자동 동기화 (CharacterUploadPanel.tsx, SetupPanel.tsx, 2026-03-16)
-- [x] **#363 ElevenLabs 사운드 생성 오류 완벽 수정** — KIE API 미지원 커뮤니티 음성 366개 제거, KIE docs 기준 127개(프리메이드 21 + 커뮤니티 106) 검증된 음성만 유지. API 호출 전 VALID_KIE_VOICES 화이트리스트로 미지원 ID 원천 차단. EL_NAME_KO 한글 매핑도 유효 음성만으로 정리 (elevenlabsService.ts, 2026-03-16)
-- [x] **#580 ElevenLabs 준박(Joon Park) 한국어 음성 추가** — Voice ID `7Nah3cbXKVmGX7gQUuwz` 추가. ELEVENLABS_VOICES + VALID_KIE_VOICES + EL_NAME_KO 3곳 동시 반영 (elevenlabsService.ts, 2026-03-19)
+- [x] **#363 ElevenLabs 사운드 생성 오류 완벽 수정** — KIE API 미지원 커뮤니티 음성 366개 제거, KIE docs 기준 126개(프리메이드 21 + 커뮤니티 105) 검증된 음성만 유지. API 호출 전 VALID_KIE_VOICES 화이트리스트로 미지원 ID 원천 차단. EL_NAME_KO 한글 매핑도 유효 음성만으로 정리 (elevenlabsService.ts, 2026-03-16)
+- [x] **#580 ElevenLabs 준박(Joon Park) 요청 → KIE API 미지원 확인** — Voice ID `7Nah3cbXKVmGX7gQUuwz` E2E 테스트: turbo-2-5(500), multilingual-v2(500), dialogue-v3(422) 전 모델 거부. KIE가 지원하지 않는 음성. 영어 음성+한국어 텍스트 조합은 ElevenLabs가 자동 한국어 발음 처리하므로 정상 작동 (2026-03-19)
 - [x] **#364 티키타카 롱폼(10분+) 할루시네이션 70% 감소** — (1) 배치별 세그먼트 전사 데이터 추출·삽입으로 AI가 실제 대사만 참조 (2) 할루시네이션 절대 금지 프로토콜을 tikitaka 프롬프트에 추가 (3) 롱폼 temperature 0.5→0.3 하향 (4) 대사 없는 구간은 [N] 내레이션 중심 설계 지시 (VideoAnalysisRoom.tsx, 2026-03-16)
 - [x] **#365 Google Whisk 이미지 리믹싱 모델 추가** — ImageModel.GOOGLE_WHISK enum + IMAGE_MODELS 드롭다운 + generateWhiskImage() 함수 (레퍼런스 이미지 SUBJECT로 전송) + imageGeneration.ts Step 0b 분기 + EditRoomExportBar 라벨. Google 쿠키 기반 무료, 캐릭터 레퍼런스 이미지를 자동으로 리믹싱 참고 이미지로 활용. 실패 시 NanoBanana 2 폴백 (types.ts, constants.ts, googleImageService.ts, imageGeneration.ts, EditRoomExportBar.tsx, 2026-03-16)
 - [x] **#350~367 이슈 18건 일괄 처리** — (1) #363 ElevenLabs 커뮤니티 음성 422 에러 → 프리메이드 음성 자동 폴백 (elevenlabsService.ts) (2) #356 소재가이드 텍스트 잘림 → maxTokens 4000→8000 (ChannelAnalysisRoom.tsx) (3) #354/#367 영상분석 멈춤+취소 불능 → 취소 버튼 30초로 단축+씬감지 90초 타임아웃 (AnalysisLoadingPanel.tsx, sceneDetection.ts) (4) #360 스토리보드 중복 장면 → scriptText 기반 중복 제거 (scriptAnalysis.ts) (5) #350~366 나머지 이슈 안내 코멘트+종료 (2026-03-16)

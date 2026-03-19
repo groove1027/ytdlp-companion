@@ -302,7 +302,7 @@ const TTSVoiceModal: React.FC<TTSVoiceModalProps> = ({
   const renderElevenLabsCard = (v: ElevenLabsVoice) => {
     const isSelected = voiceId === v.id;
     const isPlaying = playingId === v.id;
-    const accentFlag = v.accent.includes('korean') ? '🇰🇷' : v.accent.includes('british') ? '🇬🇧' : v.accent.includes('american') ? '🇺🇸' : v.accent.includes('australian') ? '🇦🇺' : v.accent.includes('indian') ? '🇮🇳' : v.accent.includes('latin') ? '🌎' : '🌐';
+    const accentFlag = v.accent.includes('british') ? '🇬🇧' : v.accent.includes('american') ? '🇺🇸' : v.accent.includes('australian') ? '🇦🇺' : v.accent.includes('indian') ? '🇮🇳' : v.accent.includes('latin') ? '🌎' : '🌐';
     return (
       <button
         key={v.id}
