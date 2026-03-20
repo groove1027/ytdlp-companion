@@ -719,6 +719,13 @@ ${instinctPrompt}
       });
       setFinalScript(result);
       setStreamingText('');
+      // [FIX #666/#597] 대본 잘림 감지 → 사용자에게 이어쓰기 안내
+      const trimmedEnd = result.trimEnd();
+      const looksComplete = /[.!?。\n]$/.test(trimmedEnd)
+        && /(끝|감사합니다|였습니다|됩니다|봅시다|보겠습니다|주세요|드립니다|했다\.|입니다\.)/.test(trimmedEnd.slice(-30));
+      if (!looksComplete && result.length > 100) {
+        showToast('대본이 중간에 끊겼을 수 있어요. 아래 "대본 이어쓰기" 섹션에서 나머지를 생성할 수 있습니다.', 8000);
+      }
     } catch (err) {
       if (abortCtrl.signal.aborted || (err instanceof DOMException && err.name === 'AbortError')) {
         setGenError('');
@@ -872,6 +879,13 @@ ${instinctPrompt}
       });
       setFinalScript(finalContent);
       setStreamingText('');
+      // [FIX #666/#597] 대본 잘림 감지 → 이어쓰기 안내 (일반 생성 경로)
+      const trimmedEnd2 = finalContent.trimEnd();
+      const looksComplete2 = /[.!?。\n]$/.test(trimmedEnd2)
+        && /(끝|감사합니다|였습니다|됩니다|봅시다|보겠습니다|주세요|드립니다|했다\.|입니다\.)/.test(trimmedEnd2.slice(-30));
+      if (!looksComplete2 && finalContent.length > 100) {
+        showToast('대본이 중간에 끊겼을 수 있어요. 아래 "대본 이어쓰기" 섹션에서 나머지를 생성할 수 있습니다.', 8000);
+      }
     } catch (e: unknown) {
       if (abortCtrl.signal.aborted || (e instanceof DOMException && e.name === 'AbortError')) {
         setGenError('');

@@ -399,7 +399,38 @@ const VoiceStudio: React.FC = () => {
       return;
     }
 
-    // 2순위 폴백: storeScript를 자연스러운 문장 단위로 분할 (나레이션 TTS용)
+    // [FIX #591/#590] 2순위: scriptWriterStore의 splitResult가 있으면 우선 사용 (단락 나누기 결과와 일치)
+    // splitResult는 string[] 타입. 현재 대본과 일치하는 경우에만 사용
+    const splitResult = useScriptWriterStore.getState().splitResult;
+    const splitJoined = splitResult ? splitResult.join('').replace(/\s+/g, '') : '';
+    const splitMatchesScript = splitJoined.length > 0 && (
+      scriptTextClean.includes(splitJoined.slice(0, 100)) || splitJoined.includes(scriptTextClean.slice(0, 100))
+    );
+    if (splitResult && splitResult.length > 0 && splitMatchesScript) {
+      const splitTexts = splitResult.filter((t: string) => t.trim());
+      if (splitTexts.length > 0) {
+        let defaultSpeakerId2 = speakers[0]?.id || '';
+        if (speakers.length === 0) {
+          const newSpeaker: Speaker = {
+            id: `speaker-${Date.now()}`, name: '화자 1', color: SPEAKER_COLORS[0],
+            engine: 'typecast' as TTSEngine, voiceId: '', language: 'ko',
+            speed: 1.0, pitch: 0, stability: 0.5, similarityBoost: 0.75,
+            style: 0, useSpeakerBoost: true, lineCount: splitTexts.length, totalDuration: 0,
+          };
+          addSpeaker(newSpeaker);
+          defaultSpeakerId2 = newSpeaker.id;
+        }
+        setLines(splitTexts.map((text: string, i: number) => ({
+          id: `line-${Date.now()}-${i}`,
+          speakerId: defaultSpeakerId2,
+          text,
+          index: i,
+        })));
+        return;
+      }
+    }
+
+    // 3순위 폴백: storeScript를 자연스러운 문장 단위로 분할 (나레이션 TTS용)
     if (!storeScript.trim()) return;
     const rawParts = splitBySentenceEndings(storeScript);
     if (rawParts.length === 0) return;

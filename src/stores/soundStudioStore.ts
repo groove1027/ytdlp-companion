@@ -325,12 +325,22 @@ export const useSoundStudioStore = create<SoundStudioStore>((set) => ({
   })),
 
   // --- 라인 ---
+  // [FIX #662] 라인 텍스트/순서/개수가 변경되면 mergedAudioUrl 무효화
+  // (업로드 오디오뿐 아니라 TTS 변경에도 적용 — 삭제한 문장이 재생되는 버그 수정)
+  // 단, 빈 배열 → 새 라인(초기 동기화/프로젝트 복원)은 무효화 스킵
   setLines: (lines) => set((state) => {
     const nextLines = typeof lines === 'function' ? lines(state.lines) : lines;
     const shouldInvalidateUploaded = shouldInvalidateUploadedSetLines(state.lines, nextLines);
+    // 기존 라인이 비어있으면 초기 동기화/복원 → merged audio 유지
+    const isInitialSync = state.lines.length === 0;
+    const textChanged = !isInitialSync && (
+      state.lines.length !== nextLines.length
+      || state.lines.some((prev, i) => nextLines[i]?.text !== prev.text)
+    );
     return {
       lines: nextLines,
-      ...(shouldInvalidateUploaded ? { mergedAudioUrl: null, uploadedAudios: [] } : {}),
+      ...((shouldInvalidateUploaded || textChanged) ? { mergedAudioUrl: null } : {}),
+      ...(shouldInvalidateUploaded ? { uploadedAudios: [] } : {}),
     };
   }),
 

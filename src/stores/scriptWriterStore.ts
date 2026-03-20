@@ -228,7 +228,18 @@ export const useScriptWriterStore = create<ScriptWriterStore>((set) => ({
   expansionTarget: null,
 
   setInputMode: (mode) => set({ inputMode: mode }),
-  setContentFormat: (format) => set({ contentFormat: format }),
+  // [FIX #641] 포맷 변경 시 targetCharCount도 동기화 — 쇼츠인데 5000자 프롬프트 방지
+  setContentFormat: (format) => set((state) => {
+    const isShorts = format === 'shorts';
+    const currentTarget = state.targetCharCount;
+    // 쇼츠 전환 시 현재 값이 너무 크면 합리적 범위로 클램프 (최소 200자)
+    const targetCharCount = isShorts && currentTarget > 500
+      ? Math.max(200, Math.min(currentTarget, (state.shortsSeconds || 60) * 4))
+      : !isShorts && currentTarget < 500
+        ? 3000
+        : currentTarget;
+    return { contentFormat: format, targetCharCount };
+  }),
   setShortsSeconds: (seconds) => set({ shortsSeconds: seconds }),
   setBenchmarkScript: (script) => set({ benchmarkScript: script }),
 
@@ -248,7 +259,12 @@ export const useScriptWriterStore = create<ScriptWriterStore>((set) => ({
 
   setSelectedTopic: (topic) => set({ selectedTopic: topic }),
 
-  setGeneratedScript: (script) => set({ generatedScript: script }),
+  // [FIX #648/#596] 새 대본 생성 시 finalScript도 갱신 → 이전 대본이 나레이션에 남는 버그 수정
+  // 단, styledScript가 활성화된 상태면 finalScript 유지 (스타일 적용본 선택 보호)
+  setGeneratedScript: (script) => set((state) => ({
+    generatedScript: script,
+    ...(script?.content && !state.styledScript ? { finalScript: script.content } : {}),
+  })),
 
   setStyledScript: (script, styleName) => set({ styledScript: script, styledStyleName: styleName }),
   clearStyledScript: () => set({ styledScript: '', styledStyleName: '' }),

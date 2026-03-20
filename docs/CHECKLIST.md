@@ -8,6 +8,15 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-21] 대본/나레이션 버그 9건 수정 (#666, #662, #648, #641, #605, #597, #596, #591, #590)
+- [x] **#605**: 스토리보드 전체 나레이션 재생이 중간부터 시작 → ended 상태면 restart, 중간이면 resume
+- [x] **#641**: 쇼츠인데 대본 2-3분 분량 → setContentFormat에 targetCharCount 동기화
+- [x] **#648/#596**: 대본 작성 후 나레이션에 이전 대본 잔존 → setGeneratedScript가 finalScript 동기화
+- [x] **#662**: 단락 삭제 후 나레이션에 삭제된 문장 반복 → setLines에서 텍스트 변경 시 mergedAudioUrl 무효화
+- [x] **#591/#590**: 단락나누기 71개인데 나레이션 21개 → VoiceStudio가 splitResult 우선 사용
+- [x] **#666/#597**: 대본 미완성/짤림 → 잘림 감지 시 이어쓰기 안내 토스트 (2경로 모두)
+- [x] tsc --noEmit: 0 에러 / vite build: 성공
+
 ### [2026-03-21] 내보내기 긴급 버그 8건 수정 (#667, #665, #664, #657, #655, #652, #646, #560)
 - [x] **#665/#657**: CapCut 직접 설치 시 showDirectoryPicker user gesture 소실 → picker를 confirm/prompt 이전으로 이동 + 예외 처리
 - [x] **#664**: SRT+영상 타임코드 파싱에 `/` 구분자 미지원 → 전체 regex 통일 `[~\-–—/]` (VideoAnalysisRoom, narrationSyncService, nleExportService)

@@ -1671,6 +1671,11 @@ const StoryboardPanel: React.FC = () => {
       globalAudioRef.current.onloadedmetadata = () => setGlobalDuration(globalAudioRef.current!.duration);
       globalAudioRef.current.onended = () => { setIsGlobalPlaying(false); setGlobalTime(0); cancelAnimationFrame(globalAnimRef.current); };
     }
+    // [FIX #605] 재생 끝난 상태에서 버튼 누르면 처음부터, 중간에서 누르면 이어듣기
+    if (globalAudioRef.current.ended || globalAudioRef.current.currentTime >= (globalAudioRef.current.duration || 1) - 0.5) {
+      globalAudioRef.current.currentTime = 0;
+      setGlobalTime(0);
+    }
     globalAudioRef.current.play().then(() => { setIsGlobalPlaying(true); startGlobalTick(); }).catch((e) => { logger.trackSwallowedError('StoryboardPanel:globalPlay', e); });
   }, [config?.mergedAudioUrl, isGlobalPlaying, startGlobalTick]);
 
