@@ -25,6 +25,18 @@ const ASPECT_CLASS: Record<string, string> = {
   '4:3': 'aspect-[4/3]',
 };
 
+const PROVIDER_LABELS: Record<ReferenceSearchProvider, string> = {
+  google: 'Google',
+  bing: 'Bing',
+  wikimedia: 'Wikimedia',
+};
+
+const PROVIDER_BADGE_STYLES: Record<ReferenceSearchProvider, string> = {
+  google: 'text-orange-300 border-orange-500/30 bg-orange-500/10',
+  bing: 'text-sky-300 border-sky-500/30 bg-sky-500/10',
+  wikimedia: 'text-cyan-300 border-cyan-500/30 bg-cyan-500/10',
+};
+
 interface ScenePreview {
   scene: Scene;
   index: number;
@@ -141,7 +153,7 @@ const GoogleReferencePanel: React.FC = () => {
           const result = await searchScene(current.scene, current.sceneIndex);
           if (result.ok) {
             successCount++;
-            if (result.provider === 'wikimedia') fallbackCount++;
+            if (result.provider && result.provider !== 'google') fallbackCount++;
           } else if (result.blocked) {
             blockedCount++;
           }
@@ -167,7 +179,7 @@ const GoogleReferencePanel: React.FC = () => {
 
       showToast(
         blockedCount > 0
-          ? '구글 검색이 차단돼 레퍼런스 이미지를 가져오지 못했어요. 잠시 후 다시 시도하거나 직접 업로드해주세요.'
+          ? '구글 검색이 차단됐고 대체 검색에서도 이미지를 찾지 못했어요. 잠시 후 다시 시도하거나 직접 업로드해주세요.'
           : '레퍼런스 이미지를 가져오지 못했어요. 검색어를 짧게 바꾸거나 직접 업로드해주세요.',
         4500,
       );
@@ -182,7 +194,7 @@ const GoogleReferencePanel: React.FC = () => {
     updateScene(sceneId, {
       imageUrl,
       isGeneratingImage: false,
-      generationStatus: provider === 'wikimedia' ? '대체 레퍼런스 이미지 적용' : '구글 레퍼런스 이미지 적용',
+      generationStatus: provider === 'google' ? '구글 레퍼런스 이미지 적용' : '대체 레퍼런스 이미지 적용',
       imageUpdatedAfterVideo: !!targetScene?.videoUrl,
     });
     showToast('레퍼런스 이미지가 적용되었어요!');
@@ -362,12 +374,8 @@ const GoogleReferencePanel: React.FC = () => {
                           <span className="text-[10px] text-green-400">{preview.results.length}장</span>
                         )}
                         {preview?.provider && preview.results.length > 0 && (
-                          <span className={`text-[10px] px-1.5 py-0.5 rounded border ${
-                            preview.provider === 'wikimedia'
-                              ? 'text-cyan-300 border-cyan-500/30 bg-cyan-500/10'
-                              : 'text-orange-300 border-orange-500/30 bg-orange-500/10'
-                          }`}>
-                            {preview.provider === 'wikimedia' ? 'Wikimedia' : 'Google'}
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded border ${PROVIDER_BADGE_STYLES[preview.provider]}`}>
+                            {PROVIDER_LABELS[preview.provider]}
                           </span>
                         )}
                         {!preview && (

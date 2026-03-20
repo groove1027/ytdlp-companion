@@ -8,6 +8,7 @@
 import { monitoredFetch } from './apiService';
 import { logger } from './LoggerService';
 import type { Scene } from '../types';
+import { useGoogleCookieStore } from '../stores/googleCookieStore';
 
 // Lazy import to avoid circular dependency — 비동기 초기화 후 동기 접근
 let _projectStoreRef: { getState: () => { scenes: Scene[] } } | null = null;
@@ -17,6 +18,7 @@ const getLatestScenes = (): Scene[] => _projectStoreRef?.getState().scenes ?? []
 // ─── Google Images 설정 ───
 const PROXY_PATH = '/api/google-proxy';
 const GOOGLE_IMAGE_SEARCH_URL = 'https://www.google.com/search';
+const BING_IMAGE_SEARCH_URL = 'https://www.bing.com/images/search';
 const GOOGLE_IMAGE_PAGE_SIZE = 100;
 const GOOGLE_IMAGE_RESULT_WINDOW = 10;
 const GOOGLE_IMAGE_HEADERS = {
@@ -47,7 +49,7 @@ export interface GoogleImageResult {
   height: number;
 }
 
-export type ReferenceSearchProvider = 'google' | 'wikimedia';
+export type ReferenceSearchProvider = 'google' | 'bing' | 'wikimedia';
 
 export interface GoogleSearchResponse {
   items: GoogleImageResult[];
@@ -122,6 +124,14 @@ const referenceSearchInflight = new Map<string, Promise<GoogleSearchResponse>>()
 let googleSearchCooldownUntil = 0;
 let googleSearchActiveCount = 0;
 const googleSearchWaiters: Array<() => void> = [];
+
+interface BingImageMetadata {
+  murl?: string;
+  purl?: string;
+  turl?: string;
+  t?: string;
+  desc?: string;
+}
 
 // ─── 검색어 생성 로직 ───
 
@@ -226,6 +236,22 @@ function getGoogleLocale(): { hl: string; gl: string } {
   return locale.startsWith('ko') ? { hl: 'ko', gl: 'kr' } : { hl: 'en', gl: 'us' };
 }
 
+function getBingLocale(): { market: string; cc: string } {
+  const locale = typeof navigator !== 'undefined' ? navigator.language.toLowerCase() : 'ko-kr';
+  return locale.startsWith('ko')
+    ? { market: 'ko-KR', cc: 'KR' }
+    : { market: 'en-US', cc: 'US' };
+}
+
+function getGoogleSearchCookie(): string {
+  try {
+    const { cookie, isValid } = useGoogleCookieStore.getState();
+    return isValid ? cookie.trim() : '';
+  } catch {
+    return '';
+  }
+}
+
 function decodeGoogleValue(value: string | null | undefined): string {
   if (!value) return '';
   let decoded = value
@@ -295,6 +321,20 @@ function isUsefulImageUrl(value: string): boolean {
 
 function cleanText(value: string | null | undefined): string {
   return (value || '').replace(/\s+/g, ' ').trim();
+}
+
+function decodeHtmlEntities(value: string): string {
+  return value
+    .replace(/&quot;/g, '"')
+    .replace(/&#34;/g, '"')
+    .replace(/&#39;/g, '\'')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>');
+}
+
+function cleanBingText(value: string | null | undefined): string {
+  return cleanText(decodeHtmlEntities(value || '').replace(/[]/g, ''));
 }
 
 function buildWikimediaQueryCandidates(query: string): string[] {
@@ -390,7 +430,22 @@ function buildSearchUrl(query: string, start: number, imgSize: string): string {
   return `${GOOGLE_IMAGE_SEARCH_URL}?${params.toString()}`;
 }
 
-async function proxyFetchGoogleSearch(targetUrl: string): Promise<Response> {
+function buildBingSearchUrl(query: string, start: number): string {
+  const { market, cc } = getBingLocale();
+  const params = new URLSearchParams({
+    q: query,
+    form: 'HDRSC3',
+    first: String(Math.max(1, start)),
+    count: String(GOOGLE_IMAGE_RESULT_WINDOW),
+    mkt: market,
+    setlang: market,
+    cc,
+  });
+
+  return `${BING_IMAGE_SEARCH_URL}?${params.toString()}`;
+}
+
+async function proxyFetchReferenceSearch(targetUrl: string, cookie?: string): Promise<Response> {
   return monitoredFetch(PROXY_PATH, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -398,6 +453,7 @@ async function proxyFetchGoogleSearch(targetUrl: string): Promise<Response> {
       targetUrl,
       method: 'GET',
       headers: GOOGLE_IMAGE_HEADERS,
+      cookie,
     }),
   });
 }
@@ -548,6 +604,44 @@ function extractAfInitResults(html: string): GoogleImageResult[] {
         height: Number.isFinite(height) ? height : 0,
       });
     }
+  }
+
+  return results;
+}
+
+function parseBingMetadata(value: string | null): BingImageMetadata | null {
+  if (!value) return null;
+
+  try {
+    return JSON.parse(decodeHtmlEntities(value)) as BingImageMetadata;
+  } catch {
+    return null;
+  }
+}
+
+function extractBingResults(doc: Document): GoogleImageResult[] {
+  const results: GoogleImageResult[] = [];
+  const seen = new Set<string>();
+  const anchors = Array.from(doc.querySelectorAll('a.iusc'));
+
+  for (const anchor of anchors) {
+    const metadata = parseBingMetadata(anchor.getAttribute('m'));
+    if (!metadata) continue;
+
+    const link = normalizeUrl(metadata.murl);
+    if (!isUsefulImageUrl(link)) continue;
+
+    const contextLink = normalizeUrl(metadata.purl);
+    pushUniqueResult(results, seen, {
+      title: cleanBingText(metadata.t || anchor.getAttribute('title') || anchor.getAttribute('aria-label')) || getDisplayLink(contextLink, link),
+      link,
+      displayLink: getDisplayLink(contextLink, link),
+      snippet: cleanBingText(metadata.desc || metadata.t) || getDisplayLink(contextLink, link),
+      thumbnailLink: normalizeUrl(metadata.turl) || extractThumbnailFromElement(anchor),
+      contextLink,
+      width: 0,
+      height: 0,
+    });
   }
 
   return results;
@@ -740,6 +834,48 @@ async function searchWikimediaImages(
   };
 }
 
+async function searchBingImages(
+  query: string,
+  start: number = 1,
+): Promise<GoogleSearchResponse> {
+  const url = buildBingSearchUrl(query, start);
+  logger.info('[GoogleRef] Bing 폴백 검색', `query="${query}" start=${start}`);
+
+  const res = await proxyFetchReferenceSearch(url);
+  if (!res.ok) {
+    throw new Error(`Bing 이미지 검색 실패 (${res.status})`);
+  }
+
+  const html = await res.text();
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const items = extractBingResults(doc).slice(0, GOOGLE_IMAGE_RESULT_WINDOW);
+  return {
+    items,
+    totalResults: items.length,
+    query,
+    provider: 'bing',
+  };
+}
+
+async function searchAlternativeReferenceImages(
+  query: string,
+  start: number,
+  imgSize: string,
+): Promise<GoogleSearchResponse> {
+  try {
+    const bingResponse = await searchBingImages(query, start);
+    if (bingResponse.items.length > 0) {
+      return bingResponse;
+    }
+    logger.warn('[GoogleRef] Bing 결과 0건, Wikimedia 폴백 시도', query);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn('[GoogleRef] Bing 폴백 실패', message);
+  }
+
+  return searchWikimediaImages(query, start, imgSize);
+}
+
 /**
  * Google 이미지 검색 실행
  * @param query 검색어
@@ -761,7 +897,7 @@ export async function searchGoogleImages(
 
   const request = (async (): Promise<GoogleSearchResponse> => {
     if (isGoogleSearchCooldownActive()) {
-      const fallbackResponse = await searchWikimediaImages(normalizedQuery, start, imgSize);
+      const fallbackResponse = await searchAlternativeReferenceImages(normalizedQuery, start, imgSize);
       setCachedReferenceSearch(cacheKey, fallbackResponse);
       return fallbackResponse;
     }
@@ -769,16 +905,17 @@ export async function searchGoogleImages(
     const releaseSlot = await acquireGoogleSearchSlot();
     try {
       if (isGoogleSearchCooldownActive()) {
-        const fallbackResponse = await searchWikimediaImages(normalizedQuery, start, imgSize);
+        const fallbackResponse = await searchAlternativeReferenceImages(normalizedQuery, start, imgSize);
         setCachedReferenceSearch(cacheKey, fallbackResponse);
         return fallbackResponse;
       }
 
       const url = buildSearchUrl(normalizedQuery, start, imgSize);
+      const googleCookie = getGoogleSearchCookie();
       logger.info('[GoogleRef] 검색 요청', `query="${normalizedQuery}" start=${start}`);
 
       try {
-        const res = await proxyFetchGoogleSearch(url);
+        const res = await proxyFetchReferenceSearch(url, googleCookie || undefined);
 
         if (!res.ok) {
           const errText = await res.text().catch(() => '');
@@ -818,7 +955,7 @@ export async function searchGoogleImages(
           return googleResponse;
         }
 
-        logger.warn('[GoogleRef] 구글 결과 0건, Wikimedia 폴백 시도', normalizedQuery);
+        logger.warn('[GoogleRef] 구글 결과 0건, Bing 폴백 시도', normalizedQuery);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (!isBlockedSearchMessage(message) && !/구글 검색 실패/i.test(message)) {
@@ -827,13 +964,13 @@ export async function searchGoogleImages(
         if (isBlockedSearchMessage(message)) {
           markGoogleSearchRateLimited(message);
         }
-        logger.warn('[GoogleRef] Wikimedia 폴백 전환', message);
+        logger.warn('[GoogleRef] Bing/Wikimedia 폴백 전환', message);
       }
     } finally {
       releaseSlot();
     }
 
-    const fallbackResponse = await searchWikimediaImages(normalizedQuery, start, imgSize);
+    const fallbackResponse = await searchAlternativeReferenceImages(normalizedQuery, start, imgSize);
     setCachedReferenceSearch(cacheKey, fallbackResponse);
     return fallbackResponse;
   })();
@@ -920,11 +1057,11 @@ export async function autoApplyGoogleReferences(
         if (_autoApplyRunId !== runId) return;
 
         if (response.items.length > 0) {
-          if (response.provider === 'wikimedia') fallbackCount++;
+          if (response.provider !== 'google') fallbackCount++;
           updateScene(scene.id, {
             imageUrl: response.items[0].link,
             isGeneratingImage: false,
-            generationStatus: response.provider === 'wikimedia' ? '대체 레퍼런스 적용됨' : '구글 레퍼런스 적용됨',
+            generationStatus: response.provider === 'google' ? '구글 레퍼런스 적용됨' : '대체 레퍼런스 적용됨',
             imageUpdatedAfterVideo: !!scene.videoUrl,
           });
           appliedCount++;

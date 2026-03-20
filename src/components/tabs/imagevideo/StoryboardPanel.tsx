@@ -1975,7 +1975,7 @@ const StoryboardPanel: React.FC = () => {
           updateScene(sceneId, {
             imageUrl: result.items[0].link,
             isGeneratingImage: false,
-            generationStatus: result.provider === 'wikimedia' ? '대체 레퍼런스 적용됨' : '구글 레퍼런스 적용됨',
+            generationStatus: result.provider === 'google' ? '구글 레퍼런스 적용됨' : '대체 레퍼런스 적용됨',
             imageUpdatedAfterVideo: !!scene.videoUrl,
           });
           return true;
@@ -2199,7 +2199,7 @@ const StoryboardPanel: React.FC = () => {
 
         showToast(
           blockedCount > 0
-            ? '구글 검색이 차단돼 레퍼런스 이미지를 배치하지 못했어요. 잠시 후 다시 시도해주세요.'
+            ? '구글 검색이 차단됐고 대체 검색에서도 이미지를 찾지 못했어요. 잠시 후 다시 시도해주세요.'
             : '레퍼런스 이미지를 배치하지 못했어요. 검색어를 줄이거나 직접 업로드해주세요.',
           4500,
         );

@@ -1,8 +1,9 @@
 /**
- * Google API CORS 프록시 — Cloudflare Pages Function
+ * Reference search / Google API CORS 프록시 — Cloudflare Pages Function
  *
- * 브라우저에서 직접 호출할 수 없는 Google 내부 API를 서버사이드에서 중계합니다.
+ * 브라우저에서 직접 호출할 수 없는 검색/Google 내부 API를 서버사이드에서 중계합니다.
  * - google.com/search (이미지 검색 HTML)
+ * - bing.com/images/search (이미지 검색 HTML 폴백)
  * - labs.google/fx/api/auth/session (인증)
  * - aisandbox-pa.googleapis.com/v1:runImageFx (이미지 생성)
  * - aisandbox-pa.googleapis.com/v1/whisk:generateImage (Whisk 이미지)
@@ -22,9 +23,10 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Headers': 'Content-Type',
 };
 
-// 허용된 Google API 도메인 (보안: 임의 URL 프록시 방지)
+// 허용된 검색/Google API 도메인 (보안: 임의 URL 프록시 방지)
 const ALLOWED_HOSTS = [
   'google.com',
+  'bing.com',
   'labs.google',
   'aisandbox-pa.googleapis.com',
 ];
@@ -51,6 +53,10 @@ function isGoogleSearchHost(hostname: string): boolean {
   return hostname === 'google.com' || hostname.endsWith('.google.com');
 }
 
+function isBingSearchHost(hostname: string): boolean {
+  return hostname === 'bing.com' || hostname.endsWith('.bing.com');
+}
+
 function isAllowedUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
@@ -58,6 +64,9 @@ function isAllowedUrl(url: string): boolean {
     if (!hostAllowed) return false;
     if (isGoogleSearchHost(parsed.hostname)) {
       return parsed.pathname === '/search';
+    }
+    if (isBingSearchHost(parsed.hostname)) {
+      return parsed.pathname === '/images/search';
     }
     return true;
   } catch {
@@ -78,13 +87,15 @@ function pickForwardHeaders(input: unknown): Record<string, string> {
 }
 
 function buildProxyHeaders(parsedUrl: URL, hasBody: boolean, forwardedHeaders: Record<string, string>): Record<string, string> {
-  const baseHeaders: Record<string, string> = isGoogleSearchHost(parsedUrl.hostname)
+  const isReferenceSearchHost = isGoogleSearchHost(parsedUrl.hostname) || isBingSearchHost(parsedUrl.hostname);
+
+  const baseHeaders: Record<string, string> = isReferenceSearchHost
     ? {
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
         'Cache-Control': 'no-cache',
         'Pragma': 'no-cache',
-        'Referer': `${parsedUrl.origin}/`,
+        'Referer': isBingSearchHost(parsedUrl.hostname) ? `${parsedUrl.origin}/images/` : `${parsedUrl.origin}/`,
         'Upgrade-Insecure-Requests': '1',
       }
     : {

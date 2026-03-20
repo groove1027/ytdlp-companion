@@ -105,10 +105,25 @@ async function verifyProxyEndpoint() {
   const html = await searchResponse.text();
   assert(html.length > 1000, 'Expected proxy search POST to return a non-trivial HTML payload');
 
+  const bingResponse = await fetch(`${PROXY_BASE_URL}/api/google-proxy`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      targetUrl: 'https://www.bing.com/images/search?q=%ED%95%9C%EA%B5%AD+%ED%95%9C%EC%98%A5',
+    }),
+  });
+
+  assert(bingResponse.ok, `Expected proxy Bing POST to succeed, got ${bingResponse.status}`);
+  const bingHtml = await bingResponse.text();
+  assert(bingHtml.length > 1000, 'Expected proxy Bing POST to return a non-trivial HTML payload');
+  assert(/class="iusc"|murl|thId/i.test(bingHtml), 'Expected Bing image payload markers in proxy response');
+
   return {
     emptyStatus: emptyResponse.status,
     searchStatus: searchResponse.status,
     payloadLength: html.length,
+    bingStatus: bingResponse.status,
+    bingPayloadLength: bingHtml.length,
   };
 }
 
@@ -167,9 +182,17 @@ async function verifyBrowserFlow() {
     });
 
     assert(result.resultCount > 0, `Expected at least one reference result, got ${result.resultCount}`);
+    assert(
+      result.provider === 'google' || result.provider === 'bing',
+      `Expected Google or Bing provider before Wikimedia fallback, got ${result.provider}`,
+    );
+    assert(
+      !/wikimedia/i.test(result.firstLink),
+      `Expected non-Wikimedia reference source, got ${result.firstLink}`,
+    );
     assert(result.finalImageUrl, 'Expected auto-apply to assign an imageUrl');
     assert(
-      /레퍼런스 적용됨/.test(result.finalStatus),
+      /(구글|대체) 레퍼런스 적용됨/.test(result.finalStatus),
       `Expected success status after auto-apply, got "${result.finalStatus}"`,
     );
 
