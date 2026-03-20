@@ -31,6 +31,53 @@ const VBadge: React.FC<{ s: 'high' | 'medium' | 'low' }> = ({ s }) => { const c 
 const DRow: React.FC<{ l: string; v: string }> = ({ l, v }) => <div><label className="block text-sm font-medium text-gray-500 mb-1">{l}</label><p className="text-sm text-gray-200 bg-gray-900/50 rounded-lg px-3 py-2 border border-gray-700/50">{v}</p></div>;
 const card = 'bg-gray-800 rounded-xl p-5 border border-gray-700 shadow-xl';
 const Spin = () => <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />;
+const CHANNEL_ANALYSIS_TRANSCRIPT_CONCURRENCY = 3;
+
+const getChannelTranscriptBudgetSec = (targetCount: number): number =>
+  Math.max(45, Math.ceil(Math.max(1, targetCount) / CHANNEL_ANALYSIS_TRANSCRIPT_CONCURRENCY) * 40);
+
+const estimateChannelAnalysisTotalSec = (
+  currentStep: number | null,
+  elapsedSec: number,
+  targetCount: number,
+  completedItems: number,
+  isYoutubeFlow: boolean,
+): number => {
+  const safeTargetCount = Math.max(1, targetCount);
+  const phaseBaseSec = isYoutubeFlow
+    ? [0, 8, 12, getChannelTranscriptBudgetSec(safeTargetCount), 90]
+    : [0, 6, 0, 0, 75];
+  const baseTotalSec = phaseBaseSec.slice(1).reduce((sum, sec) => sum + sec, 0);
+  if (!currentStep) return baseTotalSec;
+
+  const completedBaseSec = phaseBaseSec.slice(1, currentStep).reduce((sum, sec) => sum + sec, 0);
+  const remainingBaseSec = phaseBaseSec.slice(currentStep + 1).reduce((sum, sec) => sum + sec, 0);
+  const currentStepElapsedSec = Math.max(1, elapsedSec - completedBaseSec);
+  let currentStepEstimateSec = phaseBaseSec[currentStep] || 0;
+
+  if (currentStep === 3 && completedItems > 0) {
+    currentStepEstimateSec = Math.max(
+      currentStepEstimateSec,
+      Math.round(currentStepElapsedSec / completedItems * safeTargetCount),
+    );
+  } else if (currentStep === 3) {
+    currentStepEstimateSec = Math.max(currentStepEstimateSec, Math.round(currentStepElapsedSec * 1.25));
+  } else if (currentStep === 4) {
+    const overtimeSec = Math.max(0, currentStepElapsedSec - currentStepEstimateSec);
+    currentStepEstimateSec += Math.round(overtimeSec * 1.2);
+  } else {
+    currentStepEstimateSec = Math.max(currentStepEstimateSec, currentStepElapsedSec);
+  }
+
+  return Math.min(
+    900,
+    Math.max(
+      baseTotalSec,
+      completedBaseSec + currentStepEstimateSec + remainingBaseSec,
+      elapsedSec + 20,
+    ),
+  );
+};
 
 /* ─── [#331] 편집 가능 헬퍼 컴포넌트 ─── */
 const EditableDRow: React.FC<{ l: string; v: string; onSave: (val: string) => void }> = ({ l, v, onSave }) => {
@@ -168,6 +215,17 @@ const ChannelAnalysisRoom: React.FC = () => {
   const [showBulkModal, setShowBulkModal] = useState(false);
   const [bulkDownloadProgress, setBulkDownloadProgress] = useState<{ current: number; total: number; failed: number } | null>(null);
   const bulkDownloadElapsed = useElapsedTimer(!!bulkDownloadProgress);
+  const analysisTargetCount = videoProgressCount?.total || channelScripts.length || videoCount;
+  const progressEstimatedTotalSec = useMemo(
+    () => estimateChannelAnalysisTotalSec(
+      progress?.step ?? null,
+      progressElapsed,
+      analysisTargetCount,
+      videoProgressCount?.current ?? 0,
+      inputSource === 'youtube',
+    ),
+    [analysisTargetCount, inputSource, progress?.step, progressElapsed, videoProgressCount?.current],
+  );
 
   // 서버 프록시 경유 다운로드 — Content-Disposition: attachment로 바로 파일 저장
   const downloadVideo = useCallback(async (videoId: string, title: string): Promise<boolean> => {
@@ -236,22 +294,44 @@ const ChannelAnalysisRoom: React.FC = () => {
       const filtered = await getRecentVideosByFormat(info.channelId, effectiveFormat, videoCount, videoSortOrder);
       syncQuota();
       if (!filtered.length) { setError('해당 형식에 맞는 영상이 없습니다.'); setProgress(null); return; }
-      const scripts: ChannelScript[] = [];
+      const scripts: ChannelScript[] = new Array(filtered.length);
       let captionSuccessCount = 0;
       setVideoProgressCount({ current: 0, total: filtered.length });
-      for (let i = 0; i < filtered.length; i++) {
-        setProgress({ step: 3, message: `대본 수집 중 (${i + 1}/${filtered.length})...` });
-        setVideoProgressCount({ current: i, total: filtered.length });
+      setProgress({ step: 3, message: `대본 수집 중 (0/${filtered.length})...` });
+      let nextTranscriptIndex = 0;
+      let completedTranscripts = 0;
+
+      const collectTranscript = async (index: number) => {
         try {
-          const result: TranscriptResult = await getVideoTranscript(filtered[i].videoId);
-          scripts.push({ ...filtered[i], transcript: result.text, transcriptSource: result.source });
+          const result: TranscriptResult = await getVideoTranscript(filtered[index].videoId);
+          scripts[index] = { ...filtered[index], transcript: result.text, transcriptSource: result.source };
           if (result.source === 'caption') captionSuccessCount++;
         } catch (e) {
-          logger.warn(`[채널분석] 영상 ${i + 1}/${filtered.length} 대본 수집 실패 — 빈 텍스트로 대체`, { videoId: filtered[i].videoId });
-          scripts.push({ ...filtered[i], transcript: '', transcriptSource: 'description' });
+          logger.warn(`[채널분석] 영상 ${index + 1}/${filtered.length} 대본 수집 실패 — 빈 텍스트로 대체`, { videoId: filtered[index].videoId });
+          scripts[index] = { ...filtered[index], transcript: '', transcriptSource: 'description' };
+        } finally {
+          completedTranscripts += 1;
+          setVideoProgressCount({ current: completedTranscripts, total: filtered.length });
+          setProgress({ step: 3, message: `대본 수집 중 (${completedTranscripts}/${filtered.length})...` });
+          syncQuota();
         }
-        syncQuota();
-      }
+      };
+
+      const runTranscriptWorker = async () => {
+        while (nextTranscriptIndex < filtered.length) {
+          const currentIndex = nextTranscriptIndex;
+          nextTranscriptIndex += 1;
+          await collectTranscript(currentIndex);
+        }
+      };
+
+      await Promise.all(
+        Array.from(
+          { length: Math.min(CHANNEL_ANALYSIS_TRANSCRIPT_CONCURRENCY, filtered.length) },
+          () => runTranscriptWorker(),
+        ),
+      );
+
       setVideoProgressCount(null);
       // 자막 확보 현황 로깅
       const descOnlyCount = scripts.length - captionSuccessCount;
@@ -687,7 +767,7 @@ const ChannelAnalysisRoom: React.FC = () => {
               ]}
               message={progress.message}
               elapsedSec={progressElapsed}
-              estimatedTotalSec={150}
+              estimatedTotalSec={progressEstimatedTotalSec}
               accent="orange"
               description="채널의 콘텐츠 DNA를 5축(텍스트·시각·편집·오디오·댓글)으로 역설계합니다"
               videoProgress={videoProgressCount ?? undefined}

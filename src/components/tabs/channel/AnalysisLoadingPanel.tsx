@@ -63,6 +63,15 @@ const ENCOURAGEMENTS: string[] = [
   '다른 탭에서 작업해도 괜찮아요 — 완료되면 알려드릴게요',
 ];
 
+const formatEstimatedLabel = (sec: number) => {
+  const roundedSec = Math.max(10, Math.ceil(sec / 10) * 10);
+  const minutes = Math.floor(roundedSec / 60);
+  const seconds = roundedSec % 60;
+  if (minutes === 0) return `약 ${roundedSec}초`;
+  if (seconds === 0) return `약 ${minutes}분`;
+  return `약 ${minutes}분 ${String(seconds).padStart(2, '0')}초`;
+};
+
 const AnalysisLoadingPanel: React.FC<AnalysisLoadingPanelProps> = ({
   currentStep,
   steps,
@@ -105,13 +114,17 @@ const AnalysisLoadingPanel: React.FC<AnalysisLoadingPanelProps> = ({
     return ENCOURAGEMENTS[idx];
   }, [Math.floor(elapsedSec / 30)]);
 
+  const totalEstimateSec = estimatedTotalSec > elapsedSec
+    ? estimatedTotalSec
+    : elapsedSec + Math.max(20, Math.round(estimatedTotalSec * 0.15));
+
   // 비선형 진행률
-  const simProgress = Math.min(95, Math.round(100 * (1 - Math.exp(-elapsedSec / (estimatedTotalSec * 0.55)))));
+  const simProgress = Math.min(95, Math.round(100 * (1 - Math.exp(-elapsedSec / (totalEstimateSec * 0.55)))));
 
   // 예상 남은 시간
   const remainSec = simProgress > 5
     ? Math.max(0, Math.round(elapsedSec / simProgress * (100 - simProgress)))
-    : Math.max(0, estimatedTotalSec - elapsedSec);
+    : Math.max(0, totalEstimateSec - elapsedSec);
 
   const formatSec = (sec: number) => {
     const m = Math.floor(sec / 60);
@@ -158,7 +171,7 @@ const AnalysisLoadingPanel: React.FC<AnalysisLoadingPanelProps> = ({
         <div className="relative w-12 h-12 flex items-center justify-center">
           {/* 외곽 회전 링 */}
           <div className={`absolute inset-0 border-2 border-gray-700 ${accent === 'blue' ? 'border-t-blue-400' : 'border-t-orange-400'} rounded-full animate-spin`} />
-          <span className="text-lg font-bold tabular-nums ${accentColors.timeColor}">{simProgress}%</span>
+          <span className={`text-lg font-bold tabular-nums ${accentColors.timeColor}`}>{simProgress}%</span>
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-white font-semibold">{message}</p>
@@ -262,7 +275,7 @@ const AnalysisLoadingPanel: React.FC<AnalysisLoadingPanelProps> = ({
         <div className="flex items-center gap-3 mb-2">
           <span className="text-2xl">⏱️</span>
           <p className={`text-lg font-bold ${accent === 'blue' ? 'text-blue-300' : 'text-orange-300'}`}>
-            예상 소요시간: <span className="text-white text-xl">{estimatedTotalSec <= 60 ? '약 1분 이내' : estimatedTotalSec <= 120 ? '약 1~2분' : estimatedTotalSec <= 300 ? `약 ${Math.ceil(estimatedTotalSec / 60)}분` : '5분 이상'}</span>
+            예상 소요시간: <span className="text-white text-xl">{formatEstimatedLabel(totalEstimateSec)}</span>
           </p>
         </div>
         {isLongForm && (

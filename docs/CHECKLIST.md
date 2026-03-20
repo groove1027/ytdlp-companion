@@ -8,6 +8,17 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-20] 채널 스타일 클로닝 ETA 실시간 보정 + 대본 수집 병렬화
+- [x] `ChannelAnalysisRoom.tsx` — 채널 스타일 클로닝 로딩 패널의 `estimatedTotalSec` 고정값(`150초`)을 제거하고, 현재 단계/경과시간/수집 완료량 기준으로 총 소요시간을 실시간 재예측하도록 변경
+- [x] `ChannelAnalysisRoom.tsx` — YouTube 대본 수집을 순차 처리에서 최대 3개 제한 병렬 처리로 바꾸고, 완료 개수 기준 진행 메시지와 영상 진행 바가 즉시 갱신되도록 정리
+- [x] `AnalysisLoadingPanel.tsx` — 예상 소요시간 배너를 구간형 `"약 1~2분"` 문구에서 실제 분·초 기반 실시간 표기로 교체하고, 이미 초기 추정치를 넘긴 경우에도 자동으로 총 예상 시간이 늘어나도록 보정
+- [x] 검증 통과:
+  `cd src && node_modules/typescript/bin/tsc --noEmit`
+  `cd src && node_modules/.bin/vite build`
+  `rg -n "CHANNEL_ANALYSIS_TRANSCRIPT_CONCURRENCY|estimateChannelAnalysisTotalSec|formatEstimatedLabel|대본 수집 중 \\(" src/components/tabs/channel/ChannelAnalysisRoom.tsx src/components/tabs/channel/AnalysisLoadingPanel.tsx`
+- [x] 참고:
+  이번 턴에서는 로컬 타입체크/빌드/grep 재검증까지 완료했고, 실제 브라우저에서 채널 분석을 다시 돌려 체감 시간을 계측하는 실측 검증은 이어서 진행 가능
+
 ### [2026-03-20] 무료 레퍼런스 맥락 검색 품질 고도화 + Flash Lite 재정렬
 - [x] `googleReferenceSearchService.ts` — 장면 검색어를 긴 문장 절단 방식에서 `장소/주체/문화/시대/행동` 중심의 짧은 검색 플랜으로 재구성하고, 한국어 장면에 대해 영어 확장/행동 힌트/`photo` 변형 쿼리를 함께 생성하도록 보강
 - [x] `googleReferenceSearchService.ts` — Bing 폴백 결과를 제목/설명/도메인/이미지 크기/문맥 일치도로 휴리스틱 정렬하고, 저품질 소셜/핀보드/기사형 컨텍스트는 상단 후보 풀에서 분리하도록 필터링 강화
