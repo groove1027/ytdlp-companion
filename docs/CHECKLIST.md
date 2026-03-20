@@ -8,6 +8,21 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-21] 채널 스타일 클로닝 선공개 흐름 재사용형 브라우저 E2E 추가
+- [x] `test/verify-channel-guide-progressive-browser.mjs` — 빌드된 앱을 실제 브라우저로 띄운 뒤, 인증/YouTube/Evolink 경로를 고정 응답으로 모킹하고 `수집된 영상 (10개)` 선공개, `(채널명) 지침서` 선공개, 로딩 패널 유지, `전체 복사` 클립보드 반영, IndexedDB `copyableSystemPrompt` 저장까지 한 번에 검증하는 재사용형 Playwright 러너 추가
+- [x] 검증 통과:
+  `node test/verify-channel-guide-progressive-browser.mjs`
+  `cd src && node_modules/typescript/bin/tsc --noEmit`
+  `cd src && node_modules/.bin/vite build`
+  `rg -n "verify-channel-guide-progressive-browser|copyableSystemPrompt|전체 복사" test src docs`
+- [x] 실제 확인값:
+  `earlyGalleryVisible=true`
+  `earlyProgressVisible=true`
+  `guideReadyDuringProgress=true`
+  `loadingStillVisible=true`
+  `clipboardHasSystemPrompt=true`
+  `persistedGuide.hasGuide=true`
+
 ### [2026-03-20] 채널 스타일 클로닝 지침서 선공개 + 원문 기술문서 보존
 - [x] `docs/channel-style-cloning-guideline-v1.md`, `src/data/channelStyleCloningGuideline.ts` — 사용자가 제공한 `초정밀 스타일 클로닝을 위한 역설계 프롬프트 v.1` 원문을 별도 기술 문서로 저장하고, 앱 코드가 같은 원문을 무손실 그대로 참조하도록 공통 경로 추가
 - [x] `src/types.ts`, `src/services/youtubeAnalysisService.ts` — 채널 분석 결과에 `copyableSystemPrompt` 필드를 추가하고, 기본 텍스트 포렌식 결과가 준비되는 즉시 복사 가능한 `(채널명) 지침서` 시스템 프롬프트를 생성하도록 확장
