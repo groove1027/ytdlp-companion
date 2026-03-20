@@ -545,9 +545,7 @@ const SetupPanel: React.FC = () => {
     void autoApplyGoogleReferences(targetScenes, globalContext, updateSceneFn, ({ appliedCount, failedCount, blockedCount, fallbackCount }) => {
       if (appliedCount > 0 && failedCount === 0) {
         showToast(
-          fallbackCount > 0
-            ? `${appliedCount}개 장면에 대체 레퍼런스 이미지를 자동 배치했어요!`
-            : `${appliedCount}개 장면에 구글 레퍼런스 이미지를 자동 배치했어요!`,
+          `${appliedCount}개 장면에 무료 레퍼런스 이미지를 자동 배치했어요!${fallbackCount > 0 ? ' (대체 소스 포함)' : ''}`,
         );
         return;
       }
@@ -558,7 +556,7 @@ const SetupPanel: React.FC = () => {
       }
 
       if (blockedCount > 0) {
-        showToast('구글 검색이 차단됐고 대체 검색에서도 이미지를 찾지 못했어요. 잠시 후 다시 시도해주세요.', 4500);
+        showToast('기본 검색 경로가 차단됐고 대체 검색에서도 이미지를 찾지 못했어요. 잠시 후 다시 시도해주세요.', 4500);
       }
     });
   }, []);
@@ -1209,7 +1207,7 @@ const SetupPanel: React.FC = () => {
       </div>
 
       {/* ════════════════════════════════════════════ */}
-      {/* [NEW] 구글 레퍼런스 이미지 — 비주얼 스타일 상단  */}
+      {/* [NEW] 무료 이미지 레퍼런스 — 비주얼 스타일 상단  */}
       {/* ════════════════════════════════════════════ */}
       <GoogleReferencePanel />
 

@@ -1959,9 +1959,9 @@ const StoryboardPanel: React.FC = () => {
     let scene = currentScenes.find(s => s.id === sceneId);
     if (!scene || !currentConfig) return false;
 
-    // [NEW] 구글 레퍼런스 모드 — AI 생성 대신 구글 검색으로 대체
+    // [NEW] 무료 레퍼런스 모드 — AI 생성 대신 웹 검색으로 대체
     if (useImageVideoStore.getState().enableGoogleReference && !feedback && !overrides) {
-      updateScene(sceneId, { isGeneratingImage: true, generationStatus: '구글 레퍼런스 검색 중...' });
+      updateScene(sceneId, { isGeneratingImage: true, generationStatus: '무료 레퍼런스 검색 중...' });
       try {
         const { searchGoogleImages, buildSearchQuery } = await import('../../../services/googleReferenceSearchService');
         const sceneIndex = currentScenes.findIndex(s => s.id === sceneId);
@@ -2185,9 +2185,7 @@ const StoryboardPanel: React.FC = () => {
       ({ appliedCount, failedCount, blockedCount, fallbackCount }) => {
         if (appliedCount > 0 && failedCount === 0) {
           showToast(
-            fallbackCount > 0
-              ? `${appliedCount}개 장면에 대체 레퍼런스 이미지를 배치했어요!`
-              : `${appliedCount}개 장면에 구글 이미지를 배치했어요!`,
+            `${appliedCount}개 장면에 무료 레퍼런스 이미지를 배치했어요!${fallbackCount > 0 ? ' (대체 소스 포함)' : ''}`,
           );
           return;
         }
@@ -2199,7 +2197,7 @@ const StoryboardPanel: React.FC = () => {
 
         showToast(
           blockedCount > 0
-            ? '구글 검색이 차단됐고 대체 검색에서도 이미지를 찾지 못했어요. 잠시 후 다시 시도해주세요.'
+            ? '기본 검색 경로가 차단됐고 대체 검색에서도 이미지를 찾지 못했어요. 잠시 후 다시 시도해주세요.'
             : '레퍼런스 이미지를 배치하지 못했어요. 검색어를 줄이거나 직접 업로드해주세요.',
           4500,
         );

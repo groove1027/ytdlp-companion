@@ -8,6 +8,14 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-20] 무료 이미지 레퍼런스 문구 정합성 정리
+- [x] `GoogleReferencePanel.tsx` — 상단 기능명을 `구글 레퍼런스 이미지`에서 `무료 이미지 레퍼런스`로 바꾸고, 안내 문구에 Google/Bing/Wikimedia 등 실제 무료 소스 사용 가능성을 명시
+- [x] `SetupPanel.tsx`, `StoryboardPanel.tsx`, `GoogleReferencePanel.tsx` — 자동 배치/일괄 적용/실패 토스트와 진행 상태를 기능명 기준으로는 중립 문구로 통일하고, 장면별 공급자 상태 표시는 기존처럼 실제 결과(`구글` 또는 `대체`)를 유지
+- [x] 검증 통과:
+  `cd src && node_modules/typescript/bin/tsc --noEmit`
+  `cd src && node_modules/.bin/vite build`
+  `rg -n "무료 이미지 레퍼런스|무료 레퍼런스 검색 중|기본 검색 경로가 차단됐고|구글 레퍼런스 이미지 적용|대체 레퍼런스 이미지 적용" src/components src/services`
+
 ### [2026-03-20] 영상분석실 리메이크 프리셋 대기시간 단축
 - [x] `VideoAnalysisRoom.tsx` — TikTok/더우인/샤오홍슈 소셜 소스 전처리를 URL별 순차 처리에서 `메타데이터 + 다운로드 + 샘플 프레임` 병렬 처리로 바꿔 다중 소스 리메이크 준비 시간을 단축
 - [x] `VideoAnalysisRoom.tsx` — `tikitaka`/`snack`/`condensed` 리메이크 프리셋은 화자분리 전사를 최대 20초까지만 기다리고, 길어지면 편집표 생성을 먼저 진행하도록 대기 예산을 추가

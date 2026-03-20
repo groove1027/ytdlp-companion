@@ -165,9 +165,7 @@ const GoogleReferencePanel: React.FC = () => {
 
       if (successCount === validScenes.length) {
         showToast(
-          fallbackCount > 0
-            ? `${successCount}개 장면의 대체 레퍼런스 이미지를 가져왔어요!`
-            : `${successCount}개 장면의 레퍼런스 이미지를 가져왔어요!`,
+          `${successCount}개 장면의 무료 레퍼런스 이미지를 가져왔어요!${fallbackCount > 0 ? ' (대체 소스 포함)' : ''}`,
         );
         return;
       }
@@ -179,7 +177,7 @@ const GoogleReferencePanel: React.FC = () => {
 
       showToast(
         blockedCount > 0
-          ? '구글 검색이 차단됐고 대체 검색에서도 이미지를 찾지 못했어요. 잠시 후 다시 시도하거나 직접 업로드해주세요.'
+          ? '기본 검색 경로가 차단됐고 대체 검색에서도 이미지를 찾지 못했어요. 잠시 후 다시 시도하거나 직접 업로드해주세요.'
           : '레퍼런스 이미지를 가져오지 못했어요. 검색어를 짧게 바꾸거나 직접 업로드해주세요.',
         4500,
       );
@@ -296,7 +294,7 @@ const GoogleReferencePanel: React.FC = () => {
           <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-orange-500 to-amber-600 flex items-center justify-center text-sm">
             <span>🔍</span>
           </div>
-          <h3 className="text-base font-bold text-white">구글 레퍼런스 이미지</h3>
+          <h3 className="text-base font-bold text-white">무료 이미지 레퍼런스</h3>
           <span className="text-[10px] font-bold px-2 py-0.5 rounded border bg-green-900/30 text-green-300 border-green-500/30">
             무료
           </span>
@@ -309,7 +307,7 @@ const GoogleReferencePanel: React.FC = () => {
           {/* 안내 */}
           <div className="px-4 py-3 bg-orange-500/10 border border-orange-500/20 rounded-xl">
             <p className="text-xs text-orange-300">
-              대본 맥락을 분석해 구글에서 레퍼런스 이미지를 가져옵니다. AI 이미지 생성 비용 없이 빠르게 시안을 확인할 수 있어요.
+              대본 맥락을 분석해 웹에서 무료 레퍼런스 이미지를 가져옵니다. Google, Bing, Wikimedia 같은 사용 가능한 소스에서 빠르게 시안을 확인할 수 있어요.
             </p>
           </div>
 
