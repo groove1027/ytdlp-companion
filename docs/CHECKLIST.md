@@ -8,6 +8,18 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-20] 영상분석실 리메이크 프리셋 대기시간 단축
+- [x] `VideoAnalysisRoom.tsx` — TikTok/더우인/샤오홍슈 소셜 소스 전처리를 URL별 순차 처리에서 `메타데이터 + 다운로드 + 샘플 프레임` 병렬 처리로 바꿔 다중 소스 리메이크 준비 시간을 단축
+- [x] `VideoAnalysisRoom.tsx` — `tikitaka`/`snack`/`condensed` 리메이크 프리셋은 화자분리 전사를 최대 20초까지만 기다리고, 길어지면 편집표 생성을 먼저 진행하도록 대기 예산을 추가
+- [x] `VideoAnalysisRoom.tsx` — 리메이크 분석 완료 시점을 프레임 정밀 보정과 분리해 AI 응답 파싱 직후 결과를 먼저 표시하고, 썸네일/타임코드 보정은 백그라운드에서 이어가도록 변경
+- [x] `VideoAnalysisRoom.tsx` — 리메이크 프리셋용 프롬프트 씬컷 힌트 대기시간을 2.5초에서 1.2초로 줄여 불필요한 선대기를 축소
+- [x] 검증 통과:
+  `cd src && node_modules/typescript/bin/tsc --noEmit`
+  `cd src && node_modules/.bin/vite build`
+  `rg -n "REMIX_PROMPT_SCENE_CUT_TIMEOUT_MS|REMIX_DIARIZATION_WAIT_BUDGET_MS|DEFAULT_DIARIZATION_WAIT_BUDGET_MS|downloadSocialVideo\\(|getSocialMetadata\\(|transcribeVideoAudio\\(" src/components/tabs/channel/VideoAnalysisRoom.tsx`
+- [x] 참고:
+  실제 Google AI Studio/YouTube 외부 API 시간을 포함한 실측 E2E 벤치마크는 이번 턴에서 돌리지 않았고, 우선 코드 경로의 순차 대기를 제거하는 구조 변경과 빌드 검증까지 완료
+
 ### [2026-03-20] 영상분석실 Premiere native `.prproj` subtitle 내장 전환
 - [x] `nleExportService.ts` — 영상분석실 Premiere ZIP이 FCP XML 보조 방식이 아니라 native `.prproj`를 함께 생성하고, dialogue/effect subtitle을 `CaptionDataClipTrack` 2개로 타임라인에 직접 내장하도록 추가
 - [x] `nleExportService.ts` — Premiere `VideoClip` / `AudioClip` / `TranscriptClip` 내부 `<Clip>` 경로, caption `DataStream` / `ClipChannelGroup`, narration `SecondaryContent` 참조를 실제 `.prproj` 템플릿 구조에 맞춰 교정

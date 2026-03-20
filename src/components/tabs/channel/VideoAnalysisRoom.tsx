@@ -2556,6 +2556,10 @@ const waitForPromptSceneCutCount = async (
   }
 };
 
+const REMIX_PROMPT_SCENE_CUT_TIMEOUT_MS = 1200;
+const REMIX_DIARIZATION_WAIT_BUDGET_MS = 20000;
+const DEFAULT_DIARIZATION_WAIT_BUDGET_MS = 45000;
+
 interface RemixRowGuide {
   effectiveDurationSec: number;
   isShortFormSource: boolean;
@@ -3453,56 +3457,64 @@ ${meta.description.slice(0, 1500)}${meta.description.length > 1500 ? '\n...(이�
 
           const allFrames: TimedFrame[] = [];
           const descs: string[] = [];
+          showToast(
+            urls.length > 1
+              ? `${platformLabel} ${urls.length}개 소스를 병렬 분석 준비 중...`
+              : `${platformLabel} 영상 분석 준비 중...`,
+            2500,
+          );
 
-          for (let vi = 0; vi < urls.length; vi++) {
-            const url = urls[vi].trim();
-            if (!url) continue;
-            const sourceLabel = urls.length > 1 ? `[소스 ${vi + 1}] ` : '';
+          const socialResults = await Promise.allSettled(
+            urls.map(async (rawUrl, vi) => {
+              const url = rawUrl.trim();
+              if (!url) return null;
+              const sourceLabel = urls.length > 1 ? `[소스 ${vi + 1}] ` : '';
+              const [socialMetaResult, downloadResult] = await Promise.allSettled([
+                getSocialMetadata(url, true),
+                downloadSocialVideo(url, '720p', undefined, { signal: abortCtrl.signal }),
+              ]);
 
-            // 소셜 메타데이터 수집 (댓글 포함)
-            let socialMeta: Awaited<ReturnType<typeof getSocialMetadata>> | null = null;
-            try {
-              socialMeta = await getSocialMetadata(url, true);
-            } catch (e) {
-              console.warn(`[VideoAnalysis] 소셜 메타데이터 수집 실패 (${url}):`, e);
-            }
+              const socialMeta = socialMetaResult.status === 'fulfilled' ? socialMetaResult.value : null;
+              if (socialMetaResult.status === 'rejected') {
+                console.warn(`[VideoAnalysis] 소셜 메타데이터 수집 실패 (${url}):`, socialMetaResult.reason);
+              }
 
-            // 영상 Blob 다운로드 → 프레임 추출
-            let videoBlob: Blob | null = null;
-            try {
-              showToast(`${platformLabel} 영상 다운로드 중...`, 3000);
-              const dl = await downloadSocialVideo(url, '720p');
-              videoBlob = dl.blob;
-              useVideoAnalysisStore.getState().setVideoBlob(videoBlob);
-            } catch (e) {
-              console.warn(`[VideoAnalysis] 소셜 영상 다운로드 실패 (${url}):`, e);
-            }
+              const videoBlob = downloadResult.status === 'fulfilled' ? downloadResult.value.blob : null;
+              if (downloadResult.status === 'rejected') {
+                console.warn(`[VideoAnalysis] 소셜 영상 다운로드 실패 (${url}):`, downloadResult.reason);
+              }
 
-            if (videoBlob) {
-              const blobUrl = URL.createObjectURL(videoBlob);
-              logger.registerBlobUrl(blobUrl, 'video', 'VideoAnalysisRoom:socialDownload', videoBlob.size / (1024 * 1024));
               const durationSec = socialMeta?.duration || 60;
-              if (durationSec > knownDurationSec) knownDurationSec = durationSec;
-              // 대표 타임코드로 초기 프레임 추출
-              const sampleTimes = [0, Math.round(durationSec * 0.25), Math.round(durationSec * 0.5), Math.round(durationSec * 0.75)];
-              const socialFrames = await canvasExtractFrames(blobUrl, sampleTimes, true);
               const sourceName = socialMeta?.title ? socialMeta.title.slice(0, 30) : `${platformLabel} ${vi + 1}`;
-              allFrames.push(...socialFrames.map(f => ({ ...f, sourceFileName: sourceName, sourceIndex: vi })));
-            } else if (socialMeta?.thumbnail) {
-              // Blob 실패 시 썸네일 폴백
-              const durationSec = socialMeta.duration || 60;
-              const sourceName = socialMeta.title?.slice(0, 30) || `${platformLabel} ${vi + 1}`;
-              allFrames.push(
-                { url: socialMeta.thumbnail, hdUrl: socialMeta.thumbnail, timeSec: 0, sourceFileName: sourceName, sourceIndex: vi },
-                { url: socialMeta.thumbnail, hdUrl: socialMeta.thumbnail, timeSec: Math.round(durationSec * 0.5), sourceFileName: sourceName, sourceIndex: vi },
-              );
-            }
+              let extractedFrames: TimedFrame[] = [];
 
-            if (socialMeta) {
-              const commentText = socialMeta.comments?.length > 0
-                ? `\n\n### 상위 댓글 ${Math.min(socialMeta.comments.length, 10)}개\n${socialMeta.comments.slice(0, 10).map((c, i) => `${i + 1}. ${c.author}: ${c.text.slice(0, 150)}`).join('\n')}`
-                : '';
-              descs.push(`${sourceLabel}## ${platformLabel} 영상 정보
+              if (videoBlob) {
+                const blobUrl = URL.createObjectURL(videoBlob);
+                logger.registerBlobUrl(blobUrl, 'video', 'VideoAnalysisRoom:socialDownload', videoBlob.size / (1024 * 1024));
+                const sampleTimes = [0, Math.round(durationSec * 0.25), Math.round(durationSec * 0.5), Math.round(durationSec * 0.75)];
+                try {
+                  extractedFrames = (await canvasExtractFrames(blobUrl, sampleTimes, true)).map(f => ({
+                    ...f,
+                    sourceFileName: sourceName,
+                    sourceIndex: vi,
+                  }));
+                } catch (frameError) {
+                  if (abortCtrl.signal.aborted) throw new DOMException('분석이 취소되었습니다.', 'AbortError');
+                  console.warn(`[VideoAnalysis] 소셜 프레임 추출 실패 (${url}):`, frameError);
+                }
+              } else if (socialMeta?.thumbnail) {
+                extractedFrames = [
+                  { url: socialMeta.thumbnail, hdUrl: socialMeta.thumbnail, timeSec: 0, sourceFileName: sourceName, sourceIndex: vi },
+                  { url: socialMeta.thumbnail, hdUrl: socialMeta.thumbnail, timeSec: Math.round(durationSec * 0.5), sourceFileName: sourceName, sourceIndex: vi },
+                ];
+              }
+
+              const desc = socialMeta
+                ? (() => {
+                    const commentText = socialMeta.comments?.length > 0
+                      ? `\n\n### 상위 댓글 ${Math.min(socialMeta.comments.length, 10)}개\n${socialMeta.comments.slice(0, 10).map((c, i) => `${i + 1}. ${c.author}: ${c.text.slice(0, 150)}`).join('\n')}`
+                      : '';
+                    return `${sourceLabel}## ${platformLabel} 영상 정보
 - **제목**: ${socialMeta.title || '(제목 없음)'}
 - **크리에이터**: ${socialMeta.uploader || '알 수 없음'}
 - **조회수**: ${(socialMeta.viewCount || 0).toLocaleString()}회
@@ -3511,10 +3523,30 @@ ${meta.description.slice(0, 1500)}${meta.description.length > 1500 ? '\n...(이�
 - **URL**: ${url}
 
 ### 영상 설명
-${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '').length > 1500 ? '\n...(이하 생략)' : ''}${commentText}`);
-            } else {
-              descs.push(`${sourceLabel}${platformLabel} 영상 URL: ${url}`);
-            }
+${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '').length > 1500 ? '\n...(이하 생략)' : ''}${commentText}`;
+                  })()
+                : `${sourceLabel}${platformLabel} 영상 URL: ${url}`;
+
+              return {
+                desc,
+                durationSec,
+                frames: extractedFrames,
+                videoBlob,
+              };
+            }),
+          );
+
+          let socialBlobForStore: Blob | null = null;
+          for (const result of socialResults) {
+            if (result.status !== 'fulfilled' || !result.value) continue;
+            const { desc, durationSec, frames: sourceFrames, videoBlob } = result.value;
+            descs.push(desc);
+            allFrames.push(...sourceFrames);
+            if (durationSec > knownDurationSec) knownDurationSec = durationSec;
+            if (!socialBlobForStore && videoBlob) socialBlobForStore = videoBlob;
+          }
+          if (socialBlobForStore) {
+            useVideoAnalysisStore.getState().setVideoBlob(socialBlobForStore);
           }
 
           frames = allFrames;
@@ -3579,6 +3611,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       let diarizedText = '';
       let diarizedUtterances: Array<{ speakerId: string; text: string; startTime: number; endTime: number }> = [];
       const diarizePresets = ['tikitaka', 'condensed', 'snack', 'alltts'];
+      const remixFastDiarizationPresets: AnalysisPreset[] = ['tikitaka', 'condensed', 'snack'];
 
       // [FIX #perf] YouTube 타임드 자막이 있으면 화자분리 불필요 (불리언 플래그 기반 — 문자열 검사보다 안전)
       const needsDiarization = diarizePresets.includes(preset) && !hasTimedTranscript;
@@ -3611,10 +3644,44 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
 
           if (audioSource) {
             console.log(`[Diarization] 화자 분리 시작 (${(audioSource.size / 1024 / 1024).toFixed(1)}MB)...`);
-            const diarResult = await transcribeVideoAudio(audioSource instanceof File ? audioSource : new File([audioSource], 'video.mp4', { type: 'video/mp4' }), {
-              signal: abortCtrl.signal,
-              onProgress: (msg) => console.log(`[Diarization] ${msg}`),
-            });
+            const diarizationAbortCtrl = new AbortController();
+            const diarizationBudgetMs = remixFastDiarizationPresets.includes(preset)
+              ? REMIX_DIARIZATION_WAIT_BUDGET_MS
+              : DEFAULT_DIARIZATION_WAIT_BUDGET_MS;
+            let diarizationTimedOut = false;
+            let diarizationBudgetTimer: number | null = null;
+            const relayAbort = () => diarizationAbortCtrl.abort();
+            abortCtrl.signal.addEventListener('abort', relayAbort, { once: true });
+            let diarResult: Awaited<ReturnType<typeof transcribeVideoAudio>> = null;
+            try {
+              const diarizationPromise = transcribeVideoAudio(
+                audioSource instanceof File ? audioSource : new File([audioSource], 'video.mp4', { type: 'video/mp4' }),
+                {
+                  signal: diarizationAbortCtrl.signal,
+                  onProgress: (msg) => console.log(`[Diarization] ${msg}`),
+                },
+              ).catch((error) => {
+                if (diarizationAbortCtrl.signal.aborted && !abortCtrl.signal.aborted) return null;
+                throw error;
+              });
+              diarResult = await Promise.race([
+                diarizationPromise,
+                new Promise<null>((resolve) => {
+                  diarizationBudgetTimer = window.setTimeout(() => {
+                    diarizationTimedOut = true;
+                    diarizationAbortCtrl.abort();
+                    resolve(null);
+                  }, diarizationBudgetMs);
+                }),
+              ]);
+            } finally {
+              if (diarizationBudgetTimer !== null) window.clearTimeout(diarizationBudgetTimer);
+              abortCtrl.signal.removeEventListener('abort', relayAbort);
+            }
+            if (diarizationTimedOut) {
+              console.log(`[Diarization] ⚡ ${diarizationBudgetMs / 1000}s 예산 초과 — 리메이크 분석 먼저 진행`);
+              showToast('음성 분석이 길어져서 편집표 생성을 먼저 진행합니다.', 3500);
+            }
             if (diarResult) {
               diarizedText = diarResult.formattedText;
               // [FIX #364] 롱폼 배치별 세그먼트 전사를 위해 utterances도 보존
@@ -3659,7 +3726,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
         ? Math.min(currentVersionCount, 5)
         : currentVersionCount;
       const sourceCutCountHint = (preset === 'tikitaka' || preset === 'snack')
-        ? await waitForPromptSceneCutCount(singleSourceSceneCutsPromise)
+        ? await waitForPromptSceneCutCount(singleSourceSceneCutsPromise, REMIX_PROMPT_SCENE_CUT_TIMEOUT_MS)
         : 0;
       const keepOrderInstruction = currentKeepOrder && (preset === 'snack' || preset === 'tikitaka')
         ? `\n\n### ⚠️ 사용자 설정: 원본 순서 유지 모드 (최우선 적용)
@@ -3887,14 +3954,13 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       // [FIX #340] 프레임 추출 단계 진입 시 진행률 업데이트 (95%에서 멈춘 것처럼 보이는 문제 해결)
       setSimProgress(97);
 
-      // ★ 3중 폴백 프레임 추출 — 무조건 결과 보장
+      // ★ 3중 폴백 프레임 추출 — 결과 표시는 먼저, 정밀 프레임/타임코드 보정은 백그라운드
       // [FIX #156] 다중 업로드 영상: 모든 파일에서 프레임 추출
       // [FIX #241] 타임코드 수집에 parsed 대신 스토어의 최종 versions 사용
       //   — 배치 병합 텍스트 parseVersions 실패 시 parsed=[] → 타임코드 0개 → 비주얼 미표시 버그
       // [FIX #340] 프레임 추출 전체를 2분 타임아웃으로 보호 — 무한 대기 방지
       // [FIX #519] 타임아웃 시 내부 IIFE의 고아 rejection이 unhandled rejection으로 표면화 방지
       const FRAME_EXTRACTION_TIMEOUT = 2 * 60 * 1000;
-      try {
       const innerFrameWork = (async () => {
       const finalVersions = useVideoAnalysisStore.getState().versions;
       let ytVid: string | null = null;
@@ -4038,17 +4104,19 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       // innerFrameWork에 .catch 연결하여 타임아웃으로 Promise.race가 이미 settled된 후의
       // 고아 rejection이 unhandledrejection으로 표면화되는 것을 방지
       innerFrameWork.catch(() => {}); // [FIX #519] 고아 rejection 흡수
-      await Promise.race([
+      Promise.race([
         innerFrameWork,
         new Promise<void>((_, reject) => setTimeout(() => reject(new Error('FRAME_TIMEOUT')), FRAME_EXTRACTION_TIMEOUT)),
-      ]);
-      } catch (frameErr) {
+      ]).catch((frameErr) => {
         if (frameErr instanceof Error && frameErr.message === 'FRAME_TIMEOUT') {
-          console.warn('[Frame] ⚠️ 프레임 추출 2분 타임아웃 — 프레임 없이 결과 표시');
+          console.warn('[Frame] ⚠️ 프레임 추출 2분 타임아웃 — 기존 썸네일 유지');
         } else {
           console.warn('[Frame] 프레임 추출 실패 (결과는 정상 표시):', frameErr);
         }
-      }
+      }).finally(() => {
+        cacheCurrentResult(preset);
+        autoSave().catch(() => {});
+      });
 
       // [FIX #316] 결과 캐시에 저장 (동기 실행 — setTimeout 제거하여 autoSave 이전에 캐시 확보)
       cacheCurrentResult(preset);
