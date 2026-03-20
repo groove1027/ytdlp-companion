@@ -893,6 +893,7 @@ export interface ChannelGuideline {
   contentFormat?: ContentFormat; // 감지된 콘텐츠 형식 (롱폼/숏폼)
   failedLayers?: string[];     // [FIX #209] 실패한 DNA 레이어 (재분석 트리거용)
   sourceDiscoveryGuide?: string; // [#232] 소재 발굴 가이드 (AI 생성)
+  copyableSystemPrompt?: string; // 채널 스타일 클로닝용 복사 가능한 시스템 프롬프트
   contentRegion?: ContentRegion; // [FIX #392] 국내/해외 채널 구분 (프리셋 저장 시 보존, 대본 생성 시 언어 제어용)
 }
 

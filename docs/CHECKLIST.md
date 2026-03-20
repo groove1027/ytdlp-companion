@@ -8,6 +8,18 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-20] 채널 스타일 클로닝 지침서 선공개 + 원문 기술문서 보존
+- [x] `docs/channel-style-cloning-guideline-v1.md`, `src/data/channelStyleCloningGuideline.ts` — 사용자가 제공한 `초정밀 스타일 클로닝을 위한 역설계 프롬프트 v.1` 원문을 별도 기술 문서로 저장하고, 앱 코드가 같은 원문을 무손실 그대로 참조하도록 공통 경로 추가
+- [x] `src/types.ts`, `src/services/youtubeAnalysisService.ts` — 채널 분석 결과에 `copyableSystemPrompt` 필드를 추가하고, 기본 텍스트 포렌식 결과가 준비되는 즉시 복사 가능한 `(채널명) 지침서` 시스템 프롬프트를 생성하도록 확장
+- [x] `src/services/youtubeAnalysisService.ts`, `src/components/tabs/channel/ChannelAnalysisRoom.tsx` — 5-Layer DNA 분석을 `기본 지침서 우선 공개 -> 나머지 DNA 레이어 후속 분석` 흐름으로 나누고, `수집된 영상 10개`와 새 지침서 카드를 전체 분석 완료 전에도 먼저 노출하도록 UI 가드 조건 정리
+- [x] `src/components/tabs/channel/ChannelAnalysisRoom.tsx` — `(채널명) 지침서` 카드와 `전체 복사` 버튼, 지침서 생성 중 상태 배지, 영상별 자막 확보/설명 대체/수집 중 배지를 추가
+- [x] 검증 통과:
+  `cd src && node_modules/typescript/bin/tsc --noEmit`
+  `cd src && node_modules/.bin/vite build`
+  `rg -n "CHANNEL_STYLE_CLONING_GUIDELINE|copyableSystemPrompt|onBaseGuideline|guideCardTitle|channel-style-cloning-guideline-v1" src docs`
+- [x] 참고:
+  원문 프롬프트는 별도 기술 문서에 그대로 남겨뒀고, 채널 분석 저장/불러오기 경로는 `ChannelGuideline` 전체 객체를 저장하므로 새 지침서 텍스트도 이후 재참조 가능
+
 ### [2026-03-20] 채널 스타일 클로닝 ETA 실시간 보정 + 대본 수집 병렬화
 - [x] `ChannelAnalysisRoom.tsx` — 채널 스타일 클로닝 로딩 패널의 `estimatedTotalSec` 고정값(`150초`)을 제거하고, 현재 단계/경과시간/수집 완료량 기준으로 총 소요시간을 실시간 재예측하도록 변경
 - [x] `ChannelAnalysisRoom.tsx` — YouTube 대본 수집을 순차 처리에서 최대 3개 제한 병렬 처리로 바꾸고, 완료 개수 기준 진행 메시지와 영상 진행 바가 즉시 갱신되도록 정리

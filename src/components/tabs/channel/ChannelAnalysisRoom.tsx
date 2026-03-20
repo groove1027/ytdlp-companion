@@ -199,7 +199,7 @@ const ChannelAnalysisRoom: React.FC = () => {
   const [progress, setProgress] = useState<{ step: number; message: string } | null>(null);
   const [videoProgressCount, setVideoProgressCount] = useState<{ current: number; total: number } | null>(null);
   const [error, setError] = useState('');
-  const [copied, setCopied] = useState(false);
+  const [copiedTarget, setCopiedTarget] = useState<'style' | 'guide' | null>(null);
   // topicInput, topicRecommendations → Zustand 스토어에서 관리 (탭 전환 시 유지)
   const topics = topicRecommendations;
   const setTopics = setTopicRecommendations;
@@ -280,6 +280,9 @@ const ChannelAnalysisRoom: React.FC = () => {
       return;
     }
     setError('');
+    setChannelGuideline(null);
+    setChannelScripts([]);
+    setChannelInfo(null);
     try {
       setProgress({ step: 1, message: '채널 정보 조회 중...' });
       const info = await getChannelInfo(channelUrl);
@@ -294,6 +297,7 @@ const ChannelAnalysisRoom: React.FC = () => {
       const filtered = await getRecentVideosByFormat(info.channelId, effectiveFormat, videoCount, videoSortOrder);
       syncQuota();
       if (!filtered.length) { setError('해당 형식에 맞는 영상이 없습니다.'); setProgress(null); return; }
+      setChannelScripts(filtered);
       const scripts: ChannelScript[] = new Array(filtered.length);
       let captionSuccessCount = 0;
       setVideoProgressCount({ current: 0, total: filtered.length });
@@ -350,8 +354,17 @@ const ChannelAnalysisRoom: React.FC = () => {
       }
       const effectiveRegion = detectedRegion;
       setProgress({ step: 4, message: `AI 채널 스타일 DNA 다층 분석 중... (${effectiveRegion === 'overseas' ? '해외 콘텐츠 모드' : '국내 콘텐츠 모드'})` });
-      const guideline = await analyzeChannelStyleDNA(scripts, info, effectiveRegion);
+      const guideline = await analyzeChannelStyleDNA(scripts, info, effectiveRegion, {
+        onBaseGuideline: (baseGuideline) => {
+          setChannelGuideline({
+            ...baseGuideline,
+            contentFormat: effectiveFormat,
+            contentRegion: effectiveRegion,
+          });
+        },
+      });
       guideline.contentFormat = effectiveFormat;
+      guideline.contentRegion = effectiveRegion;
       setChannelGuideline(guideline);
       setProgress(null);
       notifyAnalysisComplete();
@@ -383,6 +396,7 @@ const ChannelAnalysisRoom: React.FC = () => {
     logger.trackAction('파일/수동 분석 시작');
     if (scripts.length === 0) return;
     setError('');
+    setChannelGuideline(null);
     const name = sourceName.trim() || '업로드된 글';
 
     const stubInfo: ChannelInfo = {
@@ -415,6 +429,7 @@ const ChannelAnalysisRoom: React.FC = () => {
             reject(new Error('분석 시간이 초과되었습니다. 잠시 후 다시 시도해주세요.')));
         }),
       ]);
+      result.contentRegion = detectedRegion;
       setChannelGuideline(result);
       setProgress(null);
       notifyAnalysisComplete();
@@ -561,27 +576,33 @@ const ChannelAnalysisRoom: React.FC = () => {
     showToast(`"${channelGuideline.channelName}" 프리셋이 저장되었습니다.`);
   }, [channelGuideline, contentRegion, savePreset]);
 
-  // 스타일 프롬프트 복사
-  const handleCopyPrompt = useCallback(async () => {
-    if (!channelGuideline?.fullGuidelineText) return;
+  const copyTextToClipboard = useCallback(async (text: string, target: 'style' | 'guide', successMessage: string) => {
     try {
-      await navigator.clipboard.writeText(channelGuideline.fullGuidelineText);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-      showToast('스타일 프롬프트가 클립보드에 복사되었습니다.');
+      await navigator.clipboard.writeText(text);
     } catch (e) {
-      logger.trackSwallowedError('ChannelAnalysisRoom:handleCopyPrompt/clipboard', e);
+      logger.trackSwallowedError(`ChannelAnalysisRoom:copyTextToClipboard/${target}`, e);
       const ta = document.createElement('textarea');
-      ta.value = channelGuideline.fullGuidelineText;
+      ta.value = text;
       document.body.appendChild(ta);
       ta.select();
       document.execCommand('copy');
       document.body.removeChild(ta);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-      showToast('스타일 프롬프트가 클립보드에 복사되었습니다.');
     }
-  }, [channelGuideline]);
+    setCopiedTarget(target);
+    setTimeout(() => setCopiedTarget((current) => current === target ? null : current), 2000);
+    showToast(successMessage);
+  }, []);
+
+  // 스타일 프롬프트 복사
+  const handleCopyPrompt = useCallback(async () => {
+    if (!channelGuideline?.fullGuidelineText) return;
+    await copyTextToClipboard(channelGuideline.fullGuidelineText, 'style', '스타일 프롬프트가 클립보드에 복사되었습니다.');
+  }, [channelGuideline, copyTextToClipboard]);
+
+  const handleCopyGuidePrompt = useCallback(async () => {
+    if (!channelGuideline?.copyableSystemPrompt) return;
+    await copyTextToClipboard(channelGuideline.copyableSystemPrompt, 'guide', '지침서가 클립보드에 복사되었습니다.');
+  }, [channelGuideline, copyTextToClipboard]);
 
   // 주제 추천
   const [topicError, setTopicError] = useState('');
@@ -710,6 +731,9 @@ const ChannelAnalysisRoom: React.FC = () => {
     setActiveTab('script-writer');
   }, [swSetTopics, swSetSelectedTopic, swSetContentFormat, contentFormat, setActiveTab]);
 
+  const guideCardTitle = `${channelGuideline?.channelName || channelInfo?.title || sourceName.trim() || '채널'} 지침서`;
+  const isGuidePending = !!progress && channelScripts.length > 0 && !channelGuideline?.copyableSystemPrompt;
+
   return (
     <div className="space-y-6 animate-fade-in-up">
       {/* 분석 슬롯 바 */}
@@ -806,7 +830,7 @@ const ChannelAnalysisRoom: React.FC = () => {
       </div>
 
       {/* 수집된 영상/텍스트 갤러리 */}
-      {channelScripts.length > 0 && !progress && (
+      {channelScripts.length > 0 && (
         <div className={card}>
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-bold text-white">
@@ -816,6 +840,11 @@ const ChannelAnalysisRoom: React.FC = () => {
               <span className="text-sm text-gray-500">
                 {inputSource === 'youtube' ? '분석에 사용된 영상 목록' : '스타일 분석에 활용되는 텍스트'}
               </span>
+              {progress && (
+                <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-orange-600/15 text-orange-300 border border-orange-500/30">
+                  {progress.step >= 4 ? 'AI 분석 계속 진행 중' : '수집 진행 중'}
+                </span>
+              )}
               {inputSource === 'youtube' && (
                 bulkDownloadProgress ? (
                   <div className="min-w-[200px] bg-red-900/20 border border-red-500/30 rounded-lg px-3 py-2">
@@ -885,6 +914,28 @@ const ChannelAnalysisRoom: React.FC = () => {
                         {s.title}
                       </p>
                     </a>
+                    <div className="mt-2 flex items-center justify-between gap-2">
+                      <span className={`px-2 py-0.5 text-[10px] font-semibold rounded-full border ${
+                        s.transcriptSource === 'caption'
+                          ? 'bg-green-600/15 text-green-300 border-green-500/30'
+                          : s.transcriptSource === 'description'
+                            ? 'bg-yellow-600/15 text-yellow-300 border-yellow-500/30'
+                            : 'bg-gray-700/40 text-gray-400 border-gray-600/40'
+                      }`}>
+                        {s.transcriptSource === 'caption'
+                          ? '자막 확보'
+                          : s.transcriptSource === 'description'
+                            ? '설명 대체'
+                            : progress?.step === 3
+                              ? '대본 수집 중'
+                              : progress?.step === 4
+                                ? '분석 투입 완료'
+                                : '수집 대기'}
+                      </span>
+                      {s.tags && s.tags.length > 0 && (
+                        <span className="text-[10px] text-gray-500">{Math.min(s.tags.length, 30)}개 태그</span>
+                      )}
+                    </div>
                     <div className="flex items-center justify-between mt-1.5">
                       <div className="flex items-center gap-2 text-xs text-gray-500">
                         <span>조회수 {fmtViews(s.viewCount)}회</span>
@@ -916,6 +967,73 @@ const ChannelAnalysisRoom: React.FC = () => {
                   <p className="text-xs text-gray-500 mt-1 line-clamp-2">{(s.transcript || s.description || '').substring(0, 150)}</p>
                 </div>
               ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {(channelInfo || channelGuideline) && channelScripts.length > 0 && (
+        <div className={card}>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between mb-4">
+            <div>
+              <h3 className="text-lg font-bold text-white">{guideCardTitle}</h3>
+              <p className="text-sm text-gray-400 mt-1">
+                원본 표본을 바탕으로 즉시 복사해 쓸 수 있는 시스템 프롬프트입니다.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              {progress && (
+                <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-blue-600/15 text-blue-300 border border-blue-500/30">
+                  {channelGuideline?.copyableSystemPrompt ? '지침서 먼저 준비됨' : '지침서 생성 중'}
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={handleCopyGuidePrompt}
+                disabled={!channelGuideline?.copyableSystemPrompt}
+                className={`px-4 py-1.5 text-sm font-semibold rounded-lg border transition-all ${
+                  copiedTarget === 'guide'
+                    ? 'bg-green-600/20 text-green-400 border-green-600/50'
+                    : channelGuideline?.copyableSystemPrompt
+                      ? 'bg-blue-600/20 text-blue-300 border-blue-500/40 hover:bg-blue-600/30'
+                      : 'bg-gray-800 text-gray-500 border-gray-700 cursor-not-allowed'
+                }`}
+              >
+                {copiedTarget === 'guide' ? '복사됨!' : '전체 복사'}
+              </button>
+            </div>
+          </div>
+
+          {channelGuideline?.copyableSystemPrompt ? (
+            <>
+              <div className="mb-3 flex items-center gap-2 text-xs text-gray-500">
+                <span className="px-2 py-0.5 rounded-full bg-gray-900/70 border border-gray-700/70 text-gray-300">
+                  원본 표본 {channelScripts.length}개 반영
+                </span>
+                {progress && (
+                  <span className="px-2 py-0.5 rounded-full bg-orange-600/10 border border-orange-500/30 text-orange-300">
+                    나머지 DNA 분석 계속 진행 중
+                  </span>
+                )}
+              </div>
+              <EditableTextBlock
+                value={channelGuideline.copyableSystemPrompt}
+                onSave={v => updateGuidelineField('copyableSystemPrompt', v)}
+                maxH="max-h-[620px]"
+              />
+            </>
+          ) : (
+            <div className="rounded-xl border border-blue-500/20 bg-blue-900/10 px-4 py-5">
+              <div className="flex items-center gap-3 mb-2">
+                <div className="w-4 h-4 border-2 border-blue-400/30 border-t-blue-300 rounded-full animate-spin" />
+                <p className="text-sm font-semibold text-blue-200">
+                  {isGuidePending ? '원본 대본을 바탕으로 지침서를 조립하고 있습니다.' : '지침서 준비 대기 중입니다.'}
+                </p>
+              </div>
+              <p className="text-sm text-gray-400 leading-relaxed">
+                수집된 표본에서 말투, 구조, 도입부, 마무리 패턴을 추출한 뒤 복사 가능한 코드 블록 형태로 정리합니다.
+                준비가 끝나면 여기서 바로 확인하고 복사할 수 있습니다.
+              </p>
             </div>
           )}
         </div>
@@ -1120,8 +1238,8 @@ const ChannelAnalysisRoom: React.FC = () => {
               <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-blue-900/30 text-blue-400 border border-blue-800/40">클릭하여 편집 가능</span>
             </h3>
             <div className="flex items-center gap-2">
-              <button onClick={handleCopyPrompt} className={`px-4 py-1.5 text-sm font-semibold rounded-lg border transition-all flex items-center gap-1.5 ${copied ? 'bg-green-600/20 text-green-400 border-green-600/50' : 'bg-orange-600/20 text-orange-400 border-orange-600/50 hover:bg-orange-600/30'}`}>
-                {copied ? '복사됨!' : `${channelGuideline.channelName} 스타일 프롬프트 복사하기`}
+              <button onClick={handleCopyPrompt} className={`px-4 py-1.5 text-sm font-semibold rounded-lg border transition-all flex items-center gap-1.5 ${copiedTarget === 'style' ? 'bg-green-600/20 text-green-400 border-green-600/50' : 'bg-orange-600/20 text-orange-400 border-orange-600/50 hover:bg-orange-600/30'}`}>
+                {copiedTarget === 'style' ? '복사됨!' : `${channelGuideline.channelName} 스타일 프롬프트 복사하기`}
               </button>
               <button onClick={handleSavePreset} className="px-4 py-1.5 bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 text-white text-sm font-semibold rounded-lg transition-all">
                 프리셋 저장

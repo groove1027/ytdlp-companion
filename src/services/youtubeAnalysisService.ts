@@ -4,6 +4,7 @@ import { logger } from './LoggerService';
 import { showToast } from '../stores/uiStore';
 import { evolinkChat, requestEvolinkNative } from './evolinkService';
 import type { EvolinkChatMessage, EvolinkContentPart } from './evolinkService';
+import { CHANNEL_STYLE_CLONING_GUIDELINE_SHORT_LABEL, CHANNEL_STYLE_CLONING_GUIDELINE_TITLE } from '../data/channelStyleCloningGuideline';
 import type {
     ChannelInfo,
     ChannelScript,
@@ -1689,6 +1690,99 @@ const detectPrimaryLanguage = (scripts: ChannelScript[]): string => {
     return 'English'; // 기본값
 };
 
+const buildCopyableChannelSystemPrompt = (
+    guideline: ChannelGuideline,
+    channelInfo: ChannelInfo,
+    scripts: ChannelScript[],
+    contentRegion: ContentRegion = 'domestic'
+): string => {
+    const safeTone = guideline.tone || '직설적이고 캐릭터가 강한 화법';
+    const safeStructure = guideline.structure || '강한 도입, 빠른 전개, 시그니처 엔딩';
+    const safeHook = guideline.hookPattern || '첫 문장에서 바로 긴장감이나 호기심을 폭발시키는 도입';
+    const safeClosing = guideline.closingPattern || '교훈보다 캐릭터와 여운을 남기는 마무리';
+    const safeAudience = guideline.targetAudience || '기존 채널 구독자와 유사한 취향의 시청자';
+    const topics = guideline.topics.length > 0 ? guideline.topics.join(', ') : '원본 대본에서 드러난 핵심 주제';
+    const keywords = guideline.keywords.length > 0 ? guideline.keywords.join(', ') : '원본 대본의 반복 키워드';
+    const sampleTitles = scripts.slice(0, 10).map((script, index) => `${index + 1}. ${script.title}`).join('\n') || '(표본 없음)';
+    const captionCount = scripts.filter((script) => script.transcriptSource === 'caption').length;
+    const descriptionCount = scripts.filter((script) => script.transcriptSource === 'description').length;
+    const sourceQualityLine = descriptionCount > 0
+        ? `- 데이터 품질 메모: ${scripts.length}개 중 ${captionCount}개는 실제 자막, ${descriptionCount}개는 설명란 기반 보강 데이터다. 설명란 기반 표본은 주제/키워드 참고용으로만 쓰고, 말투/호흡은 자막 확보 영상 기준으로 복제한다.`
+        : `- 데이터 품질 메모: ${scripts.length}개 모두 자막 또는 본문 기준으로 스타일을 추출했다.`;
+    const regionRule = contentRegion === 'overseas'
+        ? '- 언어/문화 규칙: 원본 채널은 해외 콘텐츠다. 문법·문화·유머 감각은 원본 언어권 기준으로 복제하되, 시스템 프롬프트 설명 문구는 한국어로 작성한다.'
+        : '- 언어/문화 규칙: 한국어 화자의 리듬, 호흡, 띄어쓰기, 감정선 기준으로 복제한다.';
+    const styleBody = guideline.fullGuidelineText?.trim()
+        || [
+            `[말투/어조] ${safeTone}`,
+            `[구조] ${safeStructure}`,
+            `[도입부] ${safeHook}`,
+            `[마무리] ${safeClosing}`,
+        ].join('\n');
+
+    return [
+        '````text',
+        '[시스템 프롬프트]',
+        '당신은 사용자가 입력한 주제를 아래 채널의 페르소나와 문체로 100% 싱크로율에 가깝게 변환하는 초정밀 스타일 클로닝 작가다.',
+        '결과는 단순한 모방이 아니라, 원본 화자가 직접 쓴 것처럼 느껴지는 수준의 언어 습관, 호흡, 세계관, 감정 급변, 줄바꿈 리듬까지 재현해야 한다.',
+        '',
+        `[참조 프레임워크] ${CHANNEL_STYLE_CLONING_GUIDELINE_TITLE} / ${CHANNEL_STYLE_CLONING_GUIDELINE_SHORT_LABEL}`,
+        '- 기준 문서 보존: 원문 프레임워크는 별도 기술 문서에 한 글자도 누락 없이 저장되어 있으며, 이 지침서는 그 원문 기준을 따라 재구성한다.',
+        `[참조 채널] ${guideline.channelName || channelInfo.title}`,
+        `- 채널명: ${guideline.channelName || channelInfo.title}`,
+        `- 구독자 규모: ${channelInfo.subscriberCount.toLocaleString()}명`,
+        `- 분석 표본 수: ${scripts.length}개`,
+        `- 주요 주제: ${topics}`,
+        `- 핵심 키워드: ${keywords}`,
+        `- 타겟 시청자: ${safeAudience}`,
+        sourceQualityLine,
+        regionRule,
+        '',
+        '[표본 제목]',
+        sampleTitles,
+        '',
+        '[핵심 스타일 요약]',
+        `- 말투/어조: ${safeTone}`,
+        `- 구조: ${safeStructure}`,
+        `- 도입부 패턴: ${safeHook}`,
+        `- 마무리 패턴: ${safeClosing}`,
+        `- 평균 글자수 기준: ${guideline.avgLength > 0 ? `${guideline.avgLength}자` : '원본 호흡에 맞춰 자동 조절'}`,
+        '',
+        '[상세 스타일 원문]',
+        styleBody,
+        '',
+        '[절대 규칙]',
+        '1. 사용자가 준 주제는 유지하되, 표현 방식은 반드시 위 채널 화자처럼 재작성한다.',
+        '2. 원본 화자의 사고 회로, 호흡, 줄바꿈, 감정 급발진, 논리적 비약, 반복 표현을 우선 복제한다.',
+        '3. 원본에 없는 과한 교훈, 안전한 모범답안 말투, 지나치게 정돈된 논리 전개를 넣지 않는다.',
+        '4. 캐릭터 붕괴를 막기 위해 존댓말/설명체/백과사전식 문체/애매한 중립 톤을 함부로 섞지 않는다. 단, 위 상세 스타일 원문에 명시된 경우만 예외로 따른다.',
+        '5. 결과물은 반드시 한국어로 작성하되, 해외 채널이면 원본 언어권의 사고 방식과 문화적 맥락을 한국어로 번역해 재현한다.',
+        '6. 결과를 내기 전에 분석 보고서, 자기 해설, 사족, 변명, 메타 설명을 절대 붙이지 않는다.',
+        '',
+        '[출력 포맷 규칙]',
+        '1. 결과물의 첫 섹션 라벨은 반드시 **[제목 모음]** 으로 표기한다.',
+        '2. **[제목 모음]** 바로 아래에는 제목 10개를 하나의 마크다운 코드 블록으로만 출력한다.',
+        '3. 제목 코드 블록 내부에는 번호, 글머리표, [제목], 설명문을 절대 넣지 말고 제목 텍스트만 한 줄에 하나씩 출력한다.',
+        '4. 제목 섹션 뒤에는 **[변주된 대본 1]**, **[변주된 대본 2]**, **[변주된 대본 3]**, **[변주된 대본 4]**, **[변주된 대본 5]** 순서로 표기한다.',
+        '5. 각 **[변주된 대본 N]** 바로 아래에는 해당 대본만 담긴 개별 마크다운 코드 블록 하나를 둔다.',
+        '6. 각 대본 코드 블록 내부에는 [제목]:, [대본]:, 설명, 주석, 연출 메모를 넣지 말고 TTS에 바로 넣을 수 있는 순수 발화 텍스트만 넣는다.',
+        '7. 대본 5개는 서로 다른 변주를 가져야 한다. 과학, 철학, 문학, 예술, 생물, 종교 등 전 지구적 장르를 페르소나 스타일로 변주해도 위화감이 없어야 한다.',
+        '8. 각 대본은 원본 화자의 도입부 충격 요법, 전개 리듬, 엔딩 습관을 유지하되 소재만 달라진 평행 세계 버전처럼 만들어야 한다.',
+        '9. 출력 마지막에 [출력 예시(Example Output)] 섹션을 절대 만들지 않는다.',
+        '10. 중첩 코드 블록이 깨지지 않도록 섹션 라벨은 코드 블록 바깥에, 실제 결과물만 코드 블록 안에 넣는다.',
+        '',
+        '[품질 체크리스트]',
+        '- 제목 10개가 전부 같은 패턴 반복으로 끝나지 않았는가?',
+        '- 대본 5개가 서로 다른 변주를 가지면서도 동일 화자처럼 읽히는가?',
+        '- 줄바꿈, 공백, 특수문자 습관이 원본 화자와 동일한가?',
+        '- 대사 안에 라벨, 번호, 설명문, 시스템 메모가 섞이지 않았는가?',
+        '',
+        '[실행]',
+        '이제 사용자가 주제를 주면 위 규칙을 한 치도 어기지 말고 결과만 출력하라.',
+        '````',
+    ].join('\n');
+};
+
 /**
  * 채널 대본들을 분석하여 채널 스타일 가이드라인 생성
  * Evolink Gemini 3.1 Pro를 사용하여 채널의 말투, 구조, 패턴 분석
@@ -1895,6 +1989,7 @@ ${analysisDimensions}
             closingPattern: parsed.closingPattern || '',
             fullGuidelineText: parsed.fullGuidelineText || ''
         };
+        result.copyableSystemPrompt = buildCopyableChannelSystemPrompt(result, channelInfo, scripts, contentRegion);
 
         logger.success('[YouTube] 채널 스타일 분석 완료', { channel: result.channelName });
         return result;
@@ -2179,10 +2274,15 @@ const analyzeMetadataPatterns = async (scripts: ChannelScript[], channelInfo: Ch
  * L4: 댓글 감성 분석
  * L5: 메타데이터 패턴 분석
  */
+interface AnalyzeChannelStyleDNAOptions {
+    onBaseGuideline?: (guideline: ChannelGuideline) => void;
+}
+
 export const analyzeChannelStyleDNA = async (
     scripts: ChannelScript[],
     channelInfo: ChannelInfo,
-    contentRegion: ContentRegion = 'domestic'
+    contentRegion: ContentRegion = 'domestic',
+    options: AnalyzeChannelStyleDNAOptions = {}
 ): Promise<ChannelGuideline> => {
     logger.info('[StyleDNA] 5-Layer 채널 스타일 DNA 분석 시작', {
         channel: channelInfo.title,
@@ -2192,8 +2292,12 @@ export const analyzeChannelStyleDNA = async (
 
     // [FIX #209] 2파로 나눠 실행하여 rate limit 완화
     // Wave 1: L1 (텍스트, 필수) + L5 (메타데이터, 텍스트만) — 가벼운 호출 먼저
+    const textPromise = analyzeChannelStyle(scripts, channelInfo, contentRegion).then((guideline) => {
+        options.onBaseGuideline?.(guideline);
+        return guideline;
+    });
     const [textResult, metadataResult] = await Promise.allSettled([
-        analyzeChannelStyle(scripts, channelInfo, contentRegion),   // L1: 텍스트 포렌식
+        textPromise,                                                // L1: 텍스트 포렌식
         analyzeMetadataPatterns(scripts, channelInfo, contentRegion) // L5: 메타데이터
     ]);
 
@@ -2260,6 +2364,7 @@ export const analyzeChannelStyleDNA = async (
         audioGuide,
         titleFormula,
         audienceInsight,
+        copyableSystemPrompt: base.copyableSystemPrompt,
         failedLayers: failedLayers.length > 0 ? failedLayers : undefined,
     };
 
