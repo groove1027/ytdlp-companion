@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import JSZip from '../src/node_modules/jszip/lib/index.js';
 import { getBuiltModuleUrls, startDistServer } from './helpers/distBrowserHarness.mjs';
 import { launchPlaywrightBrowser } from './helpers/playwrightHarness.mjs';
@@ -12,6 +13,16 @@ const PREMIERE_OUTPUT_FOLDER = process.env.PREMIERE_MATRIX_OUTPUT || path.join(p
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+function extractPremiereCaptionTexts(prprojXml) {
+  const matches = Array.from(
+    prprojXml.matchAll(/<FormattedTextData Encoding="base64" BinaryHash="[^"]+">([\s\S]*?)<\/FormattedTextData>/g),
+  );
+  return matches
+    .map(([, base64]) => Buffer.from(String(base64).replace(/\s+/g, ''), 'base64').toString('utf8'))
+    .map((text) => text.replace(/\u0000/g, '').replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
 }
 
 async function toDataUrl(filePath, mime) {
@@ -147,10 +158,6 @@ async function main() {
         videoDurationSec: 4,
         narrationLines,
       });
-      const premiereZipBuffer = await premiereZipBlob.arrayBuffer();
-      const premiereZip = await JSZipCtor.loadAsync(premiereZipBuffer);
-      const premiereXml = await premiereZip.file('verify_nle_matrix_premiere.xml').async('string');
-      const premiereSrt = await premiereZip.file('media/verify_nle_matrix.srt').async('string');
 
       return {
         capcutZipBase64: await blobToBase64(capcutZipBlob),
@@ -163,10 +170,6 @@ async function main() {
           audioDurations: capcutAudioTrack?.segments?.map((segment) => segment.target_timerange.duration) || [],
           audioMaterialPaths: capcutDraft.materials.audios.map((material) => material.path),
           audioTrackCount: capcutAudioTrack?.segments?.length || 0,
-        },
-        premiere: {
-          xml: premiereXml,
-          srt: premiereSrt,
         },
       };
     }, { sourceVideo, narration1, narration2, nleModuleUrl, jszipModuleUrl });
@@ -187,15 +190,49 @@ async function main() {
     assert(capcutHasEntry('materials/audio/001_narration.mp3') && capcutHasEntry('materials/audio/002_narration.mp3'), 'CapCut ZIP should include self-contained narration files');
     assert(!!premiereZip.file('audio/001_narration.mp3') && !!premiereZip.file('audio/002_narration.mp3'), 'Premiere ZIP should include audio/ narration files');
 
-    assert(summary.premiere.xml.includes('<effectid>timeremap</effectid>'), 'Premiere XML should include timeremap for slowed clips');
-    assert(summary.premiere.xml.includes('<parameter><parameterid>speed</parameterid><value>50</value></parameter>'), 'Premiere XML should include 50% speed parameter');
-    assert(summary.premiere.xml.includes('<parameter><parameterid>fontsize</parameterid><name>Font Size</name><value>60</value></parameter>'), 'Premiere XML should include 60pt dialogue font size');
-    assert(summary.premiere.xml.includes('<parameter><parameterid>origin</parameterid><name>Origin</name><value>0 -0.38</value></parameter>'), 'Premiere XML should keep portrait subtitle origin');
-    assert(summary.premiere.xml.includes('<pathurl>audio/001_narration.mp3</pathurl>') && summary.premiere.xml.includes('<pathurl>audio/002_narration.mp3</pathurl>'), 'Premiere XML should reference packaged narration audio');
-    assert(summary.premiere.srt.replace(/^\uFEFF/, '').includes('\n'), 'Premiere SRT should contain wrapped subtitle lines');
+    const premierePrprojEntry = premiereZip.file('verify_nle_matrix_premiere.prproj');
+    assert(!!premierePrprojEntry, 'Premiere ZIP should include native .prproj');
+    const premierePrprojXml = zlib.gunzipSync(await premierePrprojEntry.async('nodebuffer')).toString('utf8');
+    const premierePrprojCaptionTexts = extractPremiereCaptionTexts(premierePrprojXml).join('\n');
+    const premierePrprojCaptionTrackCount = (premierePrprojXml.match(/<CaptionDataClipTrack ObjectUID=/g) || []).length;
+    const premierePrprojCaptionItemCount = (premierePrprojXml.match(/<CaptionDataClipTrackItem ObjectID=/g) || []).length;
+    const premiereXml = await premiereZip.file('verify_nle_matrix_premiere.xml').async('string');
+    const premiereSrt = await premiereZip.file('media/verify_nle_matrix.srt').async('string');
+    const premiereDialogueCaptionXml = await premiereZip.file('media/verify_nle_matrix.xml').async('string');
+    const premiereEffectCaptionXml = await premiereZip.file('media/verify_nle_matrix_효과.xml').async('string');
+    const premiereReadme = await premiereZip.file('README.txt').async('string');
+    const premiereSubtitleImportGuide = await premiereZip.file('PREMIERE_SUBTITLE_IMPORT.txt').async('string');
+
+    assert(premierePrprojXml.includes('media/verify_nle_matrix.mp4'), 'Premiere .prproj should reference packaged video media');
+    assert(premierePrprojXml.includes('audio/001_narration.mp3') && premierePrprojXml.includes('audio/002_narration.mp3'), 'Premiere .prproj should reference packaged narration audio');
+    assert(premierePrprojCaptionTrackCount >= 2, `Premiere .prproj should contain dialogue/effect caption tracks: ${premierePrprojCaptionTrackCount}`);
+    assert(premierePrprojCaptionItemCount >= 4, `Premiere .prproj should contain caption items for both scenes: ${premierePrprojCaptionItemCount}`);
+    assert(premierePrprojCaptionTexts.includes('첫 번째 문장은'), 'Premiere .prproj caption payload should include first dialogue text');
+    assert(premierePrprojCaptionTexts.includes('두 번째 장면도'), 'Premiere .prproj caption payload should include second dialogue text');
+    assert(premierePrprojCaptionTexts.includes('(강조 자막 첫 장면)'), 'Premiere .prproj caption payload should include first wrapped effect text');
+    assert(premierePrprojCaptionTexts.includes('(강조 자막 둘째 장면)'), 'Premiere .prproj caption payload should include second wrapped effect text');
+    assert(premiereXml.includes('<effectid>timeremap</effectid>'), 'Premiere XML should include timeremap for slowed clips');
+    assert(premiereXml.includes('<parameter><parameterid>speed</parameterid><value>50</value></parameter>'), 'Premiere XML should include 50% speed parameter');
+    assert(!premiereXml.includes('<generatoritem id="sub-'), 'Premiere XML should not include graphic subtitle generators');
+    assert(!premiereXml.includes('<generatoritem id="fx-'), 'Premiere XML should not include graphic effect subtitle generators');
+    assert(premiereXml.includes('<pathurl>audio/001_narration.mp3</pathurl>') && premiereXml.includes('<pathurl>audio/002_narration.mp3</pathurl>'), 'Premiere XML should reference packaged narration audio');
+    assert(premiereSrt.replace(/^\uFEFF/, '').includes('\n'), 'Premiere SRT should contain wrapped subtitle lines');
+    assert(premiereDialogueCaptionXml.includes('tts:fontSize="65pt"'), 'Premiere dialogue subtitle XML should keep 65pt');
+    assert(premiereDialogueCaptionXml.includes('tts:origin="10% 25%"'), 'Premiere dialogue subtitle XML should center portrait captions');
+    assert(premiereDialogueCaptionXml.includes('style="dialogueParagraphStyle"'), 'Premiere dialogue subtitle XML should center-align each paragraph');
+    assert(premiereDialogueCaptionXml.includes('<br/>'), 'Premiere dialogue subtitle XML should preserve wrapped lines');
+    assert(premiereEffectCaptionXml.includes('effectStyle'), 'Premiere effect subtitle XML should be packaged separately');
+    assert(premiereEffectCaptionXml.includes('(강조 자막 첫 장면)'), 'Premiere effect subtitle XML should wrap effect text with parentheses');
+    assert((await premiereZip.file('media/verify_nle_matrix_효과.srt').async('string')).includes('(강조 자막 첫 장면)'), 'Premiere effect SRT fallback should wrap effect text with parentheses');
+    assert(premiereReadme.includes('"verify_nle_matrix_premiere.prproj"'), 'Premiere README should guide opening the native .prproj first');
+    assert(premiereReadme.includes('subtitle track이 타임라인에 올라온 상태여야 합니다.'), 'Premiere README should state subtitle tracks are already embedded');
+    assert(premiereSubtitleImportGuide.includes('native .prproj를 열면 subtitle track이 이미 올라가 있습니다.'), 'Premiere subtitle guide should treat XML as fallback');
     assert(!!premiereZip.file('media/verify_nle_matrix.mp4'), 'Premiere ZIP should include media video');
     assert(!!premiereZip.file('media/verify_nle_matrix.srt'), 'Premiere ZIP should include media dialogue SRT');
     assert(!!premiereZip.file('media/verify_nle_matrix_효과.srt'), 'Premiere ZIP should include media effect SRT');
+    assert(!!premiereZip.file('media/verify_nle_matrix.xml'), 'Premiere ZIP should include media dialogue subtitle XML');
+    assert(!!premiereZip.file('media/verify_nle_matrix_효과.xml'), 'Premiere ZIP should include media effect subtitle XML');
+    assert(!!premiereZip.file('PREMIERE_SUBTITLE_IMPORT.txt'), 'Premiere ZIP should include subtitle import guide');
 
     await extractZipToDirectory(capcutZip, CAPCUT_OUTPUT_FOLDER);
     await extractZipToDirectory(premiereZip, PREMIERE_OUTPUT_FOLDER);

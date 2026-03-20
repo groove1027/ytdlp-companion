@@ -5036,8 +5036,12 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                       if (isCancelled()) return;
                                       showToast(target === 'capcut'
                                         ? `CapCut ZIP 다운로드 완료! ${getCapCutManualInstallHint()}`
+                                        : target === 'premiere'
+                                          ? !audioConfirmed
+                                            ? 'Premiere ZIP 다운로드 완료! 압축 해제 후 .prproj를 먼저 열어 subtitle track이 이미 올라와 있는지 확인하세요. 원본 오디오는 Premiere에서 한 번 확인해주세요.'
+                                            : 'Premiere ZIP 다운로드 완료! 압축 해제 후 .prproj를 먼저 여세요. subtitle track이 타임라인에 포함되어 있어야 합니다.'
                                         : !audioConfirmed
-                                          ? `${label} 다운로드 완료! ⚠️ 원본 오디오를 불러오지 못했어요. ${target === 'premiere' ? 'Premiere' : label}에서 수동으로 오디오를 추가해주세요.`
+                                          ? `${label} 다운로드 완료! ⚠️ 원본 오디오를 불러오지 못했어요. ${label}에서 수동으로 오디오를 추가해주세요.`
                                           : `${label} 패키지 다운로드 완료!`, target === 'capcut' || !audioConfirmed ? 7000 : undefined);
                                     } catch (e) {
                                       if (isCancelled()) return;
