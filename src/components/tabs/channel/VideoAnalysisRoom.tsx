@@ -53,9 +53,15 @@ import {
   SHOPPING_SCRIPT_GUIDELINE_SHORT_LABEL,
 } from '../../../data/shoppingScriptGuideline';
 import { lazyRetry } from '../../../utils/retryImport';
+import { runAbortableTaskWithBudget, waitForSoftTimeout } from '../../../utils/asyncBudget';
 
 const ScenarioPreviewPlayer = lazyRetry(() => import('./ScenarioPreviewPlayer'));
 const UploadMasterGuide = lazyRetry(() => import('./UploadMasterGuide'));
+
+const REMIX_YOUTUBE_DOWNLOAD_WAIT_BUDGET_SHORT_MS = 25_000;
+const REMIX_YOUTUBE_DOWNLOAD_WAIT_BUDGET_LONG_MS = 35_000;
+const REMIX_DIARIZATION_WAIT_BUDGET_SHORT_MS = 30_000;
+const REMIX_DIARIZATION_WAIT_BUDGET_LONG_MS = 45_000;
 
 // ═══════════════════════════════════════════════════
 // 유틸리티
@@ -3767,20 +3773,31 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
         !isMultiSource && cachedSourcePrep && cachedSourcePrep.singleSourceSceneCuts !== undefined
           ? Promise.resolve(cachedSourcePrep.singleSourceSceneCuts)
           : null;
+      let parallelDownloadBlobPromise: Promise<{ blob: Blob; hasAudio: boolean } | null> = Promise.resolve(null);
 
       // ★ YouTube 병렬 다운로드 + 씬 감지 시작 (AI 분석과 동시 실행)
       let parallelDownloadPromise: Promise<{ blob: Blob; sceneCuts: SceneCut[] } | null> = Promise.resolve(null);
       if (!singleSourceSceneCutsPromise && inputMode === 'youtube' && isYouTubeUrl(youtubeUrl)) {
         const dlVid = extractYouTubeVideoId(youtubeUrl);
         if (dlVid) {
-          parallelDownloadPromise = (async () => {
+          parallelDownloadBlobPromise = (async () => {
             try {
               console.log('[Scene] ★ AI 분석과 병렬로 영상 다운로드 시작...');
               const dlResult = await downloadVideoAsBlob(dlVid);
               if (!dlResult) { console.warn('[Scene] 다운로드 실패 → 기존 폴백 사용'); return null; }
               useVideoAnalysisStore.getState().setVideoBlob(dlResult.blob, dlResult.hasAudio);
-              console.log(`[Scene] ✅ 다운로드 완료 (${(dlResult.blob.size / 1024 / 1024).toFixed(1)}MB), 씬 감지 시작...`);
-              const sceneCuts = await detectSceneCuts(dlResult.blob);
+              console.log(`[Scene] ✅ 다운로드 완료 (${(dlResult.blob.size / 1024 / 1024).toFixed(1)}MB)`);
+              return { blob: dlResult.blob, hasAudio: dlResult.hasAudio };
+            } catch (e) {
+              console.warn('[Scene] 병렬 다운로드 실패:', e);
+              return null;
+            }
+          })();
+          parallelDownloadPromise = parallelDownloadBlobPromise.then(async (downloadResult) => {
+            if (!downloadResult?.blob) return null;
+            try {
+              console.log('[Scene] 다운로드 완료, 씬 감지 시작...');
+              const sceneCuts = await detectSceneCuts(downloadResult.blob);
               console.log(`[Scene] ✅ 씬 감지 완료: ${sceneCuts.length}개 컷 포인트`);
               const cachedEntry = sourcePrepCacheRef.current.get(sourceCacheKey);
               if (cachedEntry) {
@@ -3789,12 +3806,12 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                   singleSourceSceneCuts: sceneCuts,
                 });
               }
-              return { blob: dlResult.blob, sceneCuts };
+              return { blob: downloadResult.blob, sceneCuts };
             } catch (e) {
-              console.warn('[Scene] 병렬 다운로드/씬 감지 실패:', e);
-              return null;
+              console.warn('[Scene] 병렬 씬 감지 실패:', e);
+              return { blob: downloadResult.blob, sceneCuts: [] };
             }
-          })();
+          });
           singleSourceSceneCutsPromise = parallelDownloadPromise
             .then((result) => result?.sceneCuts || null)
             .catch(() => null);
@@ -3829,6 +3846,12 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       const diarizePresets = ['tikitaka', 'condensed', 'snack', 'alltts'];
       const needsDiarization = diarizePresets.includes(preset) && !hasTimedTranscript;
       const cachedDiarization = !force ? sourceDiarizationCacheRef.current.get(sourceCacheKey) : null;
+      const remixDownloadWaitBudgetMs = maxTimeSec >= 300
+        ? REMIX_YOUTUBE_DOWNLOAD_WAIT_BUDGET_LONG_MS
+        : REMIX_YOUTUBE_DOWNLOAD_WAIT_BUDGET_SHORT_MS;
+      const remixDiarizationWaitBudgetMs = maxTimeSec >= 300
+        ? REMIX_DIARIZATION_WAIT_BUDGET_LONG_MS
+        : REMIX_DIARIZATION_WAIT_BUDGET_SHORT_MS;
 
       if (needsDiarization && cachedDiarization) {
         diarizedText = cachedDiarization.diarizedText;
@@ -3839,44 +3862,61 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
           // [FIX #394] 화자 분리 진행 상황 표시
           showToast('🗣️ 음성 분석 중...', 3000);
           let audioSource: File | Blob | null = null;
+          let skippedForBudget = false;
 
           if (uploadedFiles.length === 1) {
             // 업로드 모드: 파일 직접 사용
             audioSource = uploadedFiles[0];
           } else if (inputMode === 'youtube' && youtubeUrl) {
-            // [FIX #316] YouTube 모드: 병렬 다운로드 결과 대기 또는 즉시 다운로드
-            const dlResult = await parallelDownloadPromise;
+            // [FIX #668] YouTube 리메이크는 씬 감지가 아니라 영상 Blob까지만 짧게 기다린다.
+            // 다운로드가 지연되면 화자 분리를 생략하고 AI 분석을 먼저 진행한다.
+            const { timedOut, value: dlResult } = await waitForSoftTimeout(parallelDownloadBlobPromise, remixDownloadWaitBudgetMs, {
+              signal: abortCtrl.signal,
+            });
             if (dlResult?.blob) {
               audioSource = dlResult.blob;
               console.log(`[Diarization] YouTube 다운로드 Blob 사용 (${(dlResult.blob.size / 1024 / 1024).toFixed(1)}MB)`);
-            } else {
-              // 병렬 다운로드 실패 시 별도 다운로드
-              console.log('[Diarization] 병렬 다운로드 없음 → 별도 다운로드 시도');
-              const freshDl = await downloadVideoAsBlob(extractYouTubeVideoId(youtubeUrl) || youtubeUrl);
-              if (freshDl) {
-                audioSource = freshDl.blob;
-                useVideoAnalysisStore.getState().setVideoBlob(freshDl.blob, freshDl.hasAudio);
-              }
+            } else if (timedOut) {
+              skippedForBudget = true;
+              console.warn(`[Diarization] YouTube 원본 대기 ${remixDownloadWaitBudgetMs}ms 초과 — 화자 분리 생략`);
+              showToast('원본 영상 다운로드가 지연되어 이번에는 메타데이터 기준으로 먼저 분석합니다.', 5000);
+            }
+          }
+          if (!audioSource) {
+            const existingBlob = useVideoAnalysisStore.getState().videoBlob;
+            if (existingBlob) {
+              audioSource = existingBlob;
+              console.log(`[Diarization] 저장된 원본 Blob 재사용 (${(existingBlob.size / 1024 / 1024).toFixed(1)}MB)`);
             }
           }
 
           if (audioSource) {
             console.log(`[Diarization] 화자 분리 시작 (${(audioSource.size / 1024 / 1024).toFixed(1)}MB)...`);
             let recoveryToastShown = false;
-            const diarResult = await transcribeVideoAudio(
-              audioSource instanceof File ? audioSource : new File([audioSource], 'video.mp4', { type: 'video/mp4' }),
-              {
-                signal: abortCtrl.signal,
-                onProgress: (msg) => {
-                  console.log(`[Diarization] ${msg}`);
-                  if (!recoveryToastShown && msg.includes('자동 복구')) {
-                    recoveryToastShown = true;
-                    showToast('🔁 음성 전사 자동 복구 중...', 4000);
-                  }
+            const diarizationResult = await runAbortableTaskWithBudget(
+              (diarizationSignal) => transcribeVideoAudio(
+                audioSource instanceof File ? audioSource : new File([audioSource], 'video.mp4', { type: 'video/mp4' }),
+                {
+                  signal: diarizationSignal,
+                  onProgress: (msg) => {
+                    console.log(`[Diarization] ${msg}`);
+                    if (!recoveryToastShown && msg.includes('자동 복구')) {
+                      recoveryToastShown = true;
+                      showToast('🔁 음성 전사 자동 복구 중...', 4000);
+                    }
+                  },
+                  failOnError: true,
                 },
-                failOnError: true,
-              },
+              ),
+              remixDiarizationWaitBudgetMs,
+              { signal: abortCtrl.signal },
             );
+            const diarResult = diarizationResult.value;
+            if (diarizationResult.timedOut) {
+              skippedForBudget = true;
+              console.warn(`[Diarization] 화자 분리 ${remixDiarizationWaitBudgetMs}ms 초과 — 이번 분석은 화자 분리 없이 진행`);
+              showToast('음성 전사가 길어져 이번에는 먼저 편집표를 만들고 나머지 보정은 뒤에서 계속 진행합니다.', 5000);
+            }
             if (diarResult) {
               diarizedText = diarResult.formattedText;
               // [FIX #364] 롱폼 배치별 세그먼트 전사를 위해 utterances도 보존
@@ -3889,6 +3929,8 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
               });
               console.log(`[Diarization] ✅ 화자 ${diarResult.transcript.speakerCount}명 감지, ${diarResult.transcript.utterances?.length}개 발화`);
             }
+          } else if (!skippedForBudget) {
+            console.warn('[Diarization] 사용할 오디오를 확보하지 못해 화자 분리 없이 진행');
           }
         } catch (e) {
           if (abortCtrl.signal.aborted) throw new DOMException('분석이 취소되었습니다.', 'AbortError');

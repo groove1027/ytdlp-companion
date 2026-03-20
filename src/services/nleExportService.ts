@@ -604,6 +604,229 @@ function replacePremiereTrackRefs(doc: Document, container: Element, objectIds: 
   container.insertBefore(trackItems, container.firstChild);
 }
 
+const PREMIERE_TEMPLATE_SCENE_VIDEO_RE = /^scene_\d+_video\.mp4$/i;
+const PREMIERE_TEMPLATE_PROJECT_VIDEO_PATH_RE = /project_videos_\d+\/scene_\d+_video\.mp4$/i;
+const PREMIERE_TEMPLATE_AUDIO_PLACEHOLDER_RE = /(?:^|\/)제목없음\.mp3$/;
+
+function getPremiereRootObjects(root: Element): Element[] {
+  return Array.from(root.children);
+}
+
+function getPremiereClipProjectItemName(element: Element): string {
+  const projectItem = getPremiereDirectChild(element, 'ProjectItem');
+  return projectItem ? (getPremiereDirectChild(projectItem, 'Name')?.textContent || '').trim() : '';
+}
+
+function getPremiereRootObjectTextValues(element: Element): string[] {
+  const values = new Set<string>();
+  if (element.tagName === 'ClipProjectItem') {
+    values.add(getPremiereClipProjectItemName(element));
+  }
+  ['Name', 'Title', 'RelativePath', 'FilePath', 'ActualMediaFilePath'].forEach((tagName) => {
+    const value = getPremiereDirectChild(element, tagName)?.textContent?.trim();
+    if (value) values.add(value);
+  });
+  return [...values];
+}
+
+function isPremiereTemplatePlaceholderValue(value: string): boolean {
+  const normalized = value.trim().replace(/\\/g, '/');
+  if (!normalized) return false;
+  const fileName = normalized.split('/').pop() || normalized;
+  return PREMIERE_TEMPLATE_SCENE_VIDEO_RE.test(fileName)
+    || PREMIERE_TEMPLATE_PROJECT_VIDEO_PATH_RE.test(normalized)
+    || PREMIERE_TEMPLATE_AUDIO_PLACEHOLDER_RE.test(normalized);
+}
+
+function collectPremiereObjectRefs(element: Element): Set<string> {
+  const refs = new Set<string>();
+  const visit = (node: Element) => {
+    const objectRef = node.getAttribute('ObjectRef');
+    if (objectRef) refs.add(objectRef);
+    const objectURef = node.getAttribute('ObjectURef');
+    if (objectURef) refs.add(objectURef);
+    Array.from(node.children).forEach((child) => visit(child));
+  };
+  visit(element);
+  return refs;
+}
+
+function removePremiereBinItemRef(root: Element, objectURef: string): void {
+  if (!objectURef) return;
+  root.querySelectorAll(`Item[ObjectURef="${objectURef}"]`).forEach((item) => {
+    item.parentElement?.removeChild(item);
+  });
+}
+
+function normalizePremiereIndexedRefs(root: Element, containerTagName: string, childTagName: string): void {
+  root.querySelectorAll(containerTagName).forEach((container) => {
+    Array.from(container.children)
+      .filter((child) => child.tagName === childTagName)
+      .forEach((child, index) => {
+        child.setAttribute('Index', String(index));
+      });
+  });
+}
+
+function normalizePremiereBinItems(root: Element): void {
+  const availableUids = new Set(
+    getPremiereRootObjects(root)
+      .map((element) => element.getAttribute('ObjectUID') || '')
+      .filter(Boolean),
+  );
+  root.querySelectorAll('Items').forEach((items) => {
+    Array.from(items.children)
+      .filter((child) => child.tagName === 'Item')
+      .forEach((item) => {
+        const objectURef = item.getAttribute('ObjectURef') || '';
+        if (objectURef && !availableUids.has(objectURef)) {
+          items.removeChild(item);
+        }
+      });
+
+    Array.from(items.children)
+      .filter((child) => child.tagName === 'Item')
+      .forEach((item, index) => {
+        item.setAttribute('Index', String(index));
+      });
+  });
+}
+
+function removePremiereDanglingRefs(
+  root: Element,
+  removable: Set<Element>,
+  removableObjectIds: Set<string>,
+  removableObjectUids: Set<string>,
+): void {
+  getPremiereRootObjects(root)
+    .filter((element) => !removable.has(element))
+    .forEach((element) => {
+      Array.from(element.querySelectorAll('[ObjectRef],[ObjectURef]')).forEach((node) => {
+        const objectRef = node.getAttribute('ObjectRef') || '';
+        const objectURef = node.getAttribute('ObjectURef') || '';
+        if (
+          (objectRef && removableObjectIds.has(objectRef))
+          || (objectURef && removableObjectUids.has(objectURef))
+        ) {
+          node.parentElement?.removeChild(node);
+        }
+      });
+    });
+
+  normalizePremiereBinItems(root);
+  normalizePremiereIndexedRefs(root, 'Clips', 'Clip');
+  normalizePremiereIndexedRefs(root, 'TrackItems', 'TrackItem');
+  normalizePremiereIndexedRefs(root, 'AudioComponentChains', 'AudioComponentChain');
+  normalizePremiereIndexedRefs(root, 'SecondaryContents', 'SecondaryContentItem');
+}
+
+function cleanupPremiereTemplatePlaceholders(
+  root: Element,
+  sourceMasterClipUid: string,
+  safeVideoName: string,
+  protectedObjectRefs: string[],
+): void {
+  const rootObjects = getPremiereRootObjects(root);
+  const objectById = new Map<string, Element>();
+  const objectByUid = new Map<string, Element>();
+  rootObjects.forEach((element) => {
+    const objectId = element.getAttribute('ObjectID');
+    if (objectId) objectById.set(objectId, element);
+    const objectUid = element.getAttribute('ObjectUID');
+    if (objectUid) objectByUid.set(objectUid, element);
+  });
+
+  const protectedRoots = new Set<Element>();
+  const protectedQueue = protectedObjectRefs
+    .map((ref) => objectById.get(ref) || objectByUid.get(ref))
+    .filter((element): element is Element => !!element);
+  while (protectedQueue.length > 0) {
+    const current = protectedQueue.pop()!;
+    if (protectedRoots.has(current)) continue;
+    protectedRoots.add(current);
+    collectPremiereObjectRefs(current).forEach((ref) => {
+      const target = objectById.get(ref) || objectByUid.get(ref);
+      if (target && !protectedRoots.has(target)) {
+        protectedQueue.push(target);
+      }
+    });
+  }
+
+  const seed = new Set<Element>();
+  rootObjects.forEach((element) => {
+    if (protectedRoots.has(element)) return;
+
+    if (element.tagName === 'ClipProjectItem') {
+      const projectItem = getPremiereDirectChild(element, 'ProjectItem');
+      const nameNode = projectItem ? getPremiereDirectChild(projectItem, 'Name') : null;
+      const clipName = (nameNode?.textContent || '').trim();
+      if (!isPremiereTemplatePlaceholderValue(clipName)) return;
+
+      const masterClipRef = getPremiereDirectChild(element, 'MasterClip')?.getAttribute('ObjectURef') || '';
+      if (masterClipRef === sourceMasterClipUid && PREMIERE_TEMPLATE_SCENE_VIDEO_RE.test(clipName)) {
+        if (nameNode) nameNode.textContent = safeVideoName;
+        return;
+      }
+
+      removePremiereBinItemRef(root, element.getAttribute('ObjectUID') || '');
+      seed.add(element);
+      return;
+    }
+
+    const hasPlaceholderValue = getPremiereRootObjectTextValues(element).some((value) => (
+      value !== safeVideoName && isPremiereTemplatePlaceholderValue(value)
+    ));
+    if (hasPlaceholderValue) {
+      seed.add(element);
+    }
+  });
+
+  if (seed.size === 0) {
+    normalizePremiereBinItems(root);
+    return;
+  }
+
+  const removable = new Set<Element>(seed);
+  const queue = [...seed];
+  while (queue.length > 0) {
+    const current = queue.pop()!;
+    collectPremiereObjectRefs(current).forEach((ref) => {
+      const target = objectById.get(ref) || objectByUid.get(ref);
+      if (target && !removable.has(target) && !protectedRoots.has(target)) {
+        removable.add(target);
+        queue.push(target);
+      }
+    });
+  }
+
+  const removableObjectIds = new Set(
+    Array.from(removable)
+      .map((element) => element.getAttribute('ObjectID') || '')
+      .filter(Boolean),
+  );
+  const removableObjectUids = new Set(
+    Array.from(removable)
+      .map((element) => element.getAttribute('ObjectUID') || '')
+      .filter(Boolean),
+  );
+
+  Array.from(removable).forEach((element) => {
+    removePremiereBinItemRef(root, element.getAttribute('ObjectUID') || '');
+  });
+  removePremiereDanglingRefs(root, removable, removableObjectIds, removableObjectUids);
+
+  Array.from(removable).forEach((element) => {
+    if (element.parentElement === root) {
+      root.removeChild(element);
+    }
+  });
+  normalizePremiereBinItems(root);
+  normalizePremiereIndexedRefs(root, 'Clips', 'Clip');
+  normalizePremiereIndexedRefs(root, 'TrackItems', 'TrackItem');
+  normalizePremiereIndexedRefs(root, 'AudioComponentChains', 'AudioComponentChain');
+  normalizePremiereIndexedRefs(root, 'SecondaryContents', 'SecondaryContentItem');
+}
+
 function setPremiereTrackItemTimes(trackItemElement: Element, startTicks: number, endTicks: number): void {
   const trackItem = getPremiereDirectChild(trackItemElement, 'TrackItem');
   if (!trackItem) throw new Error('Premiere ClipTrackItem.TrackItem을 찾지 못했습니다.');
@@ -1174,6 +1397,16 @@ async function generatePremiereNativeProjectBytes(params: {
   replacePremiereTrackRefs(doc, getPremiereTrackTransitions(narrationTrack), []);
   replacePremiereTrackRefs(doc, getPremiereTrackTransitions(dialogueCaptionTrack), []);
   replacePremiereTrackRefs(doc, getPremiereTrackTransitions(effectCaptionTrack), []);
+  cleanupPremiereTemplatePlaceholders(
+    root,
+    sourceMasterClip.getAttribute('ObjectUID') || '',
+    safeVideoName,
+    [
+      sourceMasterClip.getAttribute('ObjectUID') || '',
+      sourceVideoMediaSource.getAttribute('ObjectID') || '',
+      sourceAudioMediaSource.getAttribute('ObjectID') || '',
+    ].filter(Boolean),
+  );
 
   const projectXml = `<?xml version="1.0" encoding="UTF-8" ?>\n${new XMLSerializer().serializeToString(doc)}`;
   return transformPremiereProjectBytes(new TextEncoder().encode(projectXml), 'compress');

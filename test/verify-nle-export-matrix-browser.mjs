@@ -205,6 +205,9 @@ async function main() {
 
     assert(premierePrprojXml.includes('media/verify_nle_matrix.mp4'), 'Premiere .prproj should reference packaged video media');
     assert(premierePrprojXml.includes('audio/001_narration.mp3') && premierePrprojXml.includes('audio/002_narration.mp3'), 'Premiere .prproj should reference packaged narration audio');
+    assert(!/<Name>scene_\d+_video\.mp4<\/Name>/.test(premierePrprojXml), 'Premiere .prproj should not keep stale scene_* template clip items');
+    assert(!/project_videos_\d+\/scene_\d+_video\.mp4/.test(premierePrprojXml), 'Premiere .prproj should not reference stale project_videos scene media');
+    assert(!/제목없음\.mp3/.test(premierePrprojXml), 'Premiere .prproj should not keep stale template audio placeholders');
     assert(premierePrprojCaptionTrackCount >= 2, `Premiere .prproj should contain dialogue/effect caption tracks: ${premierePrprojCaptionTrackCount}`);
     assert(premierePrprojCaptionItemCount >= 4, `Premiere .prproj should contain caption items for both scenes: ${premierePrprojCaptionItemCount}`);
     assert(premierePrprojCaptionTexts.includes('첫 번째 문장은'), 'Premiere .prproj caption payload should include first dialogue text');
