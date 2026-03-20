@@ -1989,6 +1989,16 @@ ${analysisDimensions}
             closingPattern: parsed.closingPattern || '',
             fullGuidelineText: parsed.fullGuidelineText || ''
         };
+
+        // [FIX #660/#658] 필수 필드 검증 — 핵심 필드가 비어있으면 L1 부분 실패로 처리
+        const essentialFields = ['tone', 'structure', 'targetAudience', 'hookPattern', 'closingPattern'];
+        const emptyEssentials = essentialFields.filter(f => !(result as unknown as Record<string, unknown>)[f]);
+        if (emptyEssentials.length >= 3) {
+            // 핵심 필드 3개 이상 비어있으면 AI 응답이 불완전 → 재시도 유도
+            logger.warn('[YouTube] L1 분석 필수 필드 부족, 재시도 필요', { emptyFields: emptyEssentials });
+            throw new Error(`채널 스타일 분석 결과가 불완전합니다 (${emptyEssentials.length}개 항목 누락). 다시 시도해주세요.`);
+        }
+
         result.copyableSystemPrompt = buildCopyableChannelSystemPrompt(result, channelInfo, scripts, contentRegion);
 
         logger.success('[YouTube] 채널 스타일 분석 완료', { channel: result.channelName });

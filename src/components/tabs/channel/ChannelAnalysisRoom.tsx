@@ -374,18 +374,25 @@ const ChannelAnalysisRoom: React.FC = () => {
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error('[ChannelAnalysis] 채널 분석 실패:', e);
-      // [FIX #336] 사용자 친화적 에러 메시지 — 기술 용어 대신 원인 + 해결 방법 안내
-      const hint = msg.includes('키가 설정되지') || msg.includes('인증 실패')
-        ? '💡 설정에서 Evolink API 키를 확인해주세요.'
-        : msg.includes('잔액 부족')
-          ? '💡 Evolink 크레딧이 소진되었어요. 충전 후 다시 시도해주세요.'
-          : msg.includes('429') || msg.includes('요청 제한')
-            ? '💡 AI 서버가 일시적으로 바빠요. 잠시 후 다시 시도해주세요.'
-            : msg.includes('400') || msg.includes('콘텐츠 정책')
-              ? '💡 AI가 이 채널의 일부 콘텐츠를 분석하지 못했어요. 잠시 후 "실패 항목 재분석" 버튼을 눌러보세요.'
-              : msg.includes('Failed to fetch') || msg.includes('network') || msg.includes('Network')
-                ? '💡 네트워크 연결이 불안정해요. 인터넷 확인 후 다시 시도해주세요.'
-                : '💡 잠시 후 다시 시도해보세요. 반복되면 피드백으로 알려주세요.';
+      // [FIX #651/#578] 사용자 친화적 에러 메시지 — YouTube/Evolink/네트워크 분기
+      // URL 관련 에러를 API 키 에러보다 먼저 체크 (유효하지 않은 YouTube URL vs 유효하지 않은 API 키 구분)
+      const hint = msg.includes('채널 정보 조회') || msg.includes('채널을 찾을 수 없') || msg.includes('유효하지 않은 YouTube') || msg.includes('존재하지 않는 영상') || msg.includes('채널 정보를 추출')
+        ? '💡 입력하신 URL을 다시 확인해주세요. 올바른 YouTube 채널/영상 주소인지 확인해보세요.'
+        : msg.includes('키가 설정되지') || msg.includes('인증 실패') || msg.includes('유효하지 않') || msg.includes('활성화되지 않은')
+          ? '💡 API 설정에서 키를 확인해주세요. YouTube/Evolink 키가 올바른지 확인해보세요.'
+          : msg.includes('잔액 부족') || msg.includes('크레딧')
+            ? '💡 Evolink 크레딧이 소진되었어요. 충전 후 다시 시도해주세요.'
+            : msg.includes('quota') || msg.includes('쿼터') || msg.includes('quotaExceeded')
+              ? '💡 YouTube API 일일 사용량이 초과됐어요. 내일 다시 시도하거나, API 설정에서 본인 YouTube 키를 등록해보세요.'
+              : msg.includes('403') || msg.includes('permission') || msg.includes('forbidden') || msg.includes('접근 권한')
+                ? '💡 API 접근이 차단됐어요. API 설정에서 키를 확인해주세요.'
+                : msg.includes('429') || msg.includes('요청 제한')
+                  ? '💡 AI 서버가 일시적으로 바빠요. 잠시 후 다시 시도해주세요.'
+                  : msg.includes('400') || msg.includes('콘텐츠 정책')
+                    ? '💡 AI가 이 채널의 일부 콘텐츠를 분석하지 못했어요. "실패 항목 재분석" 버튼을 눌러보세요.'
+                    : msg.includes('Failed to fetch') || msg.includes('network') || msg.includes('Network')
+                      ? '💡 네트워크 연결이 불안정해요. 인터넷 확인 후 다시 시도해주세요.'
+                      : '💡 잠시 후 다시 시도해보세요. 반복되면 피드백으로 알려주세요.';
       setError(`채널 분석 중 문제가 발생했어요. ${hint}`);
       setProgress(null);
     }
@@ -713,8 +720,16 @@ const ChannelAnalysisRoom: React.FC = () => {
         }));
       }
     } catch (e: unknown) {
+      // [FIX #625/#598] 주제 추천 에러 메시지 사용자 친화적으로
       const msg = e instanceof Error ? e.message : String(e);
-      setTopicError(`주제 추천 실패: ${msg}`);
+      const topicHint = msg.includes('키가 설정되지') || msg.includes('인증')
+        ? 'API 설정에서 Evolink 키를 확인해주세요.'
+        : msg.includes('429') || msg.includes('요청 제한')
+          ? 'AI 서버가 바빠요. 잠시 후 다시 눌러주세요.'
+          : msg.includes('잔액') || msg.includes('크레딧')
+            ? 'Evolink 크레딧이 부족해요. 충전 후 다시 시도해주세요.'
+            : '잠시 후 다시 시도해주세요. 반복되면 피드백으로 알려주세요.';
+      setTopicError(`주제 추천에 실패했어요. ${topicHint}`);
     } finally {
       setIsAnalyzing(false);
     }
