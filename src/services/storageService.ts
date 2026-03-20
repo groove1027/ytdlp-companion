@@ -50,7 +50,7 @@ export interface SavedVideoAnalysisSlot {
   selectedPreset: VideoAnalysisPreset | null;
   rawResult: string;
   versions: VideoVersionItem[];
-  resultCache: Record<string, { raw: string; versions: VideoVersionItem[]; thumbs: VideoTimedFrame[] }>;
+  resultCache: Record<string, { sourceKey?: string; raw: string; versions: VideoVersionItem[]; thumbs: VideoTimedFrame[] }>;
   savedAt: number;
 }
 

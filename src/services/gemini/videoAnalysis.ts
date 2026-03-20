@@ -981,9 +981,10 @@ export const transcribeVideoAudio = async (
     options?: {
         signal?: AbortSignal;
         onProgress?: (msg: string) => void;
+        failOnError?: boolean;
     }
 ): Promise<{ transcript: WhisperTranscriptResult; formattedText: string } | null> => {
-    const { signal, onProgress } = options || {};
+    const { signal, onProgress, failOnError = false } = options || {};
 
     try {
         onProgress?.('🔊 영상에서 오디오 추출 중...');
@@ -1024,6 +1025,9 @@ export const transcribeVideoAudio = async (
         logger.warn('[Diarization] 화자 분리 전사 실패 (Gemini 단독 분석으로 폴백)', {
             error: (e as Error).message,
         });
+        if (failOnError) {
+            throw e instanceof Error ? e : new Error(String(e));
+        }
         return null;
     }
 };

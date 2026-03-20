@@ -8,6 +8,18 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-20] 영상분석실 리메이크 대사 보존 우선 + 원본별 재사용 캐시
+- [x] `VideoAnalysisRoom.tsx` — 리메이크 프리셋의 화자분리 전사를 시간 예산으로 끊고 먼저 진행하던 경로를 제거하고, 전사 실패 시 대사 누락을 막기 위해 분석을 중단하도록 변경
+- [x] `VideoAnalysisRoom.tsx` — 같은 링크/같은 업로드 원본이면 프리셋을 바꿔도 소스 준비(프레임/메타데이터/타임드 자막/씬컷 힌트)와 화자분리 전사 결과를 원본 키 기준으로 재사용하도록 로컬 캐시 추가
+- [x] `videoAnalysisStore.ts`, `storageService.ts` — 프리셋 결과 캐시에 `sourceKey`를 함께 저장하고, 같은 프리셋이라도 원본이 달라지면 이전 결과를 복원하지 않도록 안전장치 추가
+- [x] `videoAnalysis.ts` — `transcribeVideoAudio()`에 `failOnError` 옵션을 추가해 대사 보존이 필요한 경로에서 음성 전사 실패를 명시적으로 상위에 전달하도록 보강
+- [x] 검증 통과:
+  `cd src && node_modules/typescript/bin/tsc --noEmit`
+  `cd src && node_modules/.bin/vite build`
+  `rg -n "buildVideoAnalysisSourceCacheKey|sourcePrepCacheRef|sourceDiarizationCacheRef|cacheCurrentResult\\(|restoreFromCache\\(|failOnError|sourceKey\\?: string" src/components/tabs/channel/VideoAnalysisRoom.tsx src/stores/videoAnalysisStore.ts src/services/gemini/videoAnalysis.ts src/services/storageService.ts`
+- [x] 실제 브라우저 확인:
+  업로드 샘플 `test/output/grok10s_evolink.mp4`로 직접 실행했을 때 첫 번째 `티키타카`는 `전처리 1.8초 / 음성 15초 / AI 2분 39초 / 첫 결과 2분 55초`, 이어서 두 번째 `스낵형` 시작 직후 `소스 준비 캐시 재사용`과 `음성 단계 0.0초` 로그를 확인
+
 ### [2026-03-20] 무료 이미지 레퍼런스 문구 정합성 정리
 - [x] `GoogleReferencePanel.tsx` — 상단 기능명을 `구글 레퍼런스 이미지`에서 `무료 이미지 레퍼런스`로 바꾸고, 안내 문구에 Google/Bing/Wikimedia 등 실제 무료 소스 사용 가능성을 명시
 - [x] `SetupPanel.tsx`, `StoryboardPanel.tsx`, `GoogleReferencePanel.tsx` — 자동 배치/일괄 적용/실패 토스트와 진행 상태를 기능명 기준으로는 중립 문구로 통일하고, 장면별 공급자 상태 표시는 기존처럼 실제 결과(`구글` 또는 `대체`)를 유지

@@ -15,6 +15,7 @@ import {
 import type { SavedVideoAnalysisSlot } from '../services/storageService';
 
 interface ResultCache {
+  sourceKey?: string;
   raw: string;
   versions: VideoVersionItem[];
   thumbs: VideoTimedFrame[];
@@ -75,9 +76,9 @@ interface VideoAnalysisStore {
   setExpandedId: (id: number | null) => void;
 
   /** 현재 결과를 프리셋 캐시에 저장 */
-  cacheCurrentResult: (preset: VideoAnalysisPreset) => void;
+  cacheCurrentResult: (preset: VideoAnalysisPreset, sourceKey: string) => void;
   /** 프리셋 캐시에서 복원 */
-  restoreFromCache: (preset: VideoAnalysisPreset) => boolean;
+  restoreFromCache: (preset: VideoAnalysisPreset, sourceKey: string) => boolean;
   /** 캐시 삭제 */
   clearCache: () => void;
   /** 특정 프리셋 캐시만 삭제 */
@@ -171,21 +172,22 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
       setError: (error) => set({ error }),
       setExpandedId: (id) => set({ expandedId: id }),
 
-      cacheCurrentResult: (preset) => {
+      cacheCurrentResult: (preset, sourceKey) => {
         const { rawResult, versions, thumbnails, resultCache } = get();
         // [FIX #316] rawResult가 비어도 versions가 있으면 캐시 허용 — slimValue로 rawResult 유실 시 비주얼 복구 불가 방지
         if (!rawResult && versions.length === 0) return;
         set({
           resultCache: {
             ...resultCache,
-            [preset]: { raw: rawResult, versions, thumbs: thumbnails },
+            [preset]: { sourceKey, raw: rawResult, versions, thumbs: thumbnails },
           },
         });
       },
 
-      restoreFromCache: (preset) => {
+      restoreFromCache: (preset, sourceKey) => {
         const cached = get().resultCache[preset];
-        if (!cached || cached.versions.length === 0) return false;
+        if (!cached || cached.sourceKey !== sourceKey) return false;
+        if (cached.versions.length === 0) return false;
         set({
           selectedPreset: preset,
           rawResult: cached.raw,

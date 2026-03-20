@@ -2568,8 +2568,56 @@ const waitForPromptSceneCutCount = async (
 };
 
 const REMIX_PROMPT_SCENE_CUT_TIMEOUT_MS = 1200;
-const REMIX_DIARIZATION_WAIT_BUDGET_MS = 20000;
-const DEFAULT_DIARIZATION_WAIT_BUDGET_MS = 45000;
+const SOURCE_PREP_CACHE_LIMIT = 6;
+
+interface SourcePreparationCacheEntry {
+  videoUri: string;
+  videoMime: string;
+  allVideoUris: string[];
+  allVideoMimes: string[];
+  knownDurationSec: number;
+  frames: TimedFrame[];
+  inputDesc: string;
+  hasTimedTranscript: boolean;
+  singleSourceSceneCuts?: SceneCut[] | null;
+}
+
+interface SourceDiarizationCacheEntry {
+  diarizedText: string;
+  diarizedUtterances: Array<{ speakerId: string; text: string; startTime: number; endTime: number }>;
+}
+
+const buildVideoAnalysisSourceCacheKey = (
+  inputMode: 'upload' | 'youtube',
+  urls: string[],
+  files: File[],
+): string => {
+  if (inputMode === 'upload') {
+    const fileSignature = files.map((file) => [
+      file.name,
+      file.size,
+      file.lastModified,
+      file.type,
+    ].join(':')).join('|');
+    return `upload:${fileSignature}`;
+  }
+
+  const normalizedUrls = urls
+    .map((url) => url.trim())
+    .filter(Boolean)
+    .join('|');
+  return `link:${normalizedUrls}`;
+};
+
+const setLimitedCacheEntry = <T,>(cache: Map<string, T>, key: string, value: T, limit: number = SOURCE_PREP_CACHE_LIMIT): void => {
+  if (cache.has(key)) cache.delete(key);
+  cache.set(key, value);
+  while (cache.size > limit) {
+    const oldestKey = cache.keys().next().value;
+    if (!oldestKey) break;
+    cache.delete(oldestKey);
+  }
+};
 
 interface RemixRowGuide {
   effectiveDurationSec: number;
@@ -3078,6 +3126,8 @@ const VideoAnalysisRoom: React.FC = () => {
   const [displayLangMode, setDisplayLangMode] = useState<'ko' | 'bilingual' | 'original'>('bilingual');
   const analysisStartRef = useRef<number>(0);
   const analysisRunIdRef = useRef(0);
+  const sourcePrepCacheRef = useRef<Map<string, SourcePreparationCacheEntry>>(new Map());
+  const sourceDiarizationCacheRef = useRef<Map<string, SourceDiarizationCacheEntry>>(new Map());
   const analysisPerfRef = useRef<{
     runId: number;
     startedAt: number;
@@ -3330,6 +3380,7 @@ const VideoAnalysisRoom: React.FC = () => {
   const handleAnalyze = async (preset: AnalysisPreset, force = false) => {
     if (!requireAuth('영상 분석')) return;
     if (!hasInput) return;
+    const sourceCacheKey = buildVideoAnalysisSourceCacheKey(inputMode, validYoutubeUrls, uploadedFiles);
 
     // ffmpeg.wasm 사전 로드 (백그라운드, 분석 시작과 동시에)
     if (!ffmpegPreloaded.current) {
@@ -3347,16 +3398,18 @@ const VideoAnalysisRoom: React.FC = () => {
     // 현재 결과를 기존 프리셋 캐시에 저장 (전환 전 보존)
     // [FIX #316] rawResult 유실 시에도 versions 기반 캐시 가능하도록 조건 완화
     if (selectedPreset && (rawResult || versions.length > 0)) {
-      cacheCurrentResult(selectedPreset);
+      cacheCurrentResult(selectedPreset, sourceCacheKey);
     }
 
     // 강제 재생성 시 해당 프리셋 캐시 삭제
     if (force) {
       clearPresetCache(preset);
+      sourcePrepCacheRef.current.delete(sourceCacheKey);
+      sourceDiarizationCacheRef.current.delete(sourceCacheKey);
     }
 
     // 캐시에 이미 결과가 있으면 복원만 하고 종료
-    if (!force && restoreFromCache(preset)) return;
+    if (!force && restoreFromCache(preset, sourceCacheKey)) return;
 
     // [FIX #157] 이전 분석 abort + 새 AbortController 생성
     analysisAbortRef.current?.abort();
@@ -3405,8 +3458,19 @@ const VideoAnalysisRoom: React.FC = () => {
       let inputDesc = '';
       let hasTimedTranscript = false; // [FIX #perf] YouTube 타임드 자막 성공 여부 (화자분리 스킵 판단용)
       const isMultiSource = (inputMode === 'youtube' && validYoutubeUrls.length > 1) || (inputMode === 'upload' && uploadedFiles.length > 1);
+      const cachedSourcePrep = !force ? sourcePrepCacheRef.current.get(sourceCacheKey) : null;
 
-      if (uploadedFiles.length > 0) {
+      if (cachedSourcePrep) {
+        videoUri = cachedSourcePrep.videoUri;
+        videoMime = cachedSourcePrep.videoMime;
+        allVideoUris = [...cachedSourcePrep.allVideoUris];
+        allVideoMimes = [...cachedSourcePrep.allVideoMimes];
+        knownDurationSec = cachedSourcePrep.knownDurationSec;
+        frames = cachedSourcePrep.frames;
+        inputDesc = cachedSourcePrep.inputDesc;
+        hasTimedTranscript = cachedSourcePrep.hasTimedTranscript;
+        console.log(`[VideoAnalysis] ⚡ 소스 준비 캐시 재사용: ${sourceCacheKey}`);
+      } else if (uploadedFiles.length > 0) {
         // 업로드 모드: 모든 파일의 프레임 추출 + 메타데이터 수집
         videoMime = uploadedFiles[0].type || 'video/mp4';
         const allFrames: TimedFrame[] = [];
@@ -3675,6 +3739,19 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
           }
         }
       }
+
+      if (!cachedSourcePrep) {
+        setLimitedCacheEntry(sourcePrepCacheRef.current, sourceCacheKey, {
+          videoUri,
+          videoMime,
+          allVideoUris: [...allVideoUris],
+          allVideoMimes: [...allVideoMimes],
+          knownDurationSec,
+          frames,
+          inputDesc,
+          hasTimedTranscript,
+        });
+      }
       setThumbnails(frames);
 
       // [FIX #386] 프레임 추출 완료 후 abort 체크 — 전처리 중 타임아웃 시 AI 호출 전 빠른 종료
@@ -3686,11 +3763,14 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       const maxTimeSec = Math.max(frameMaxSec, knownDurationSec);
       setIsLongForm(maxTimeSec >= 300);
       addAnalysisPerfStage(perfRunId, 'preload', '전처리');
-      let singleSourceSceneCutsPromise: Promise<SceneCut[] | null> | null = null;
+      let singleSourceSceneCutsPromise: Promise<SceneCut[] | null> | null =
+        !isMultiSource && cachedSourcePrep && cachedSourcePrep.singleSourceSceneCuts !== undefined
+          ? Promise.resolve(cachedSourcePrep.singleSourceSceneCuts)
+          : null;
 
       // ★ YouTube 병렬 다운로드 + 씬 감지 시작 (AI 분석과 동시 실행)
       let parallelDownloadPromise: Promise<{ blob: Blob; sceneCuts: SceneCut[] } | null> = Promise.resolve(null);
-      if (inputMode === 'youtube' && isYouTubeUrl(youtubeUrl)) {
+      if (!singleSourceSceneCutsPromise && inputMode === 'youtube' && isYouTubeUrl(youtubeUrl)) {
         const dlVid = extractYouTubeVideoId(youtubeUrl);
         if (dlVid) {
           parallelDownloadPromise = (async () => {
@@ -3702,6 +3782,13 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
               console.log(`[Scene] ✅ 다운로드 완료 (${(dlResult.blob.size / 1024 / 1024).toFixed(1)}MB), 씬 감지 시작...`);
               const sceneCuts = await detectSceneCuts(dlResult.blob);
               console.log(`[Scene] ✅ 씬 감지 완료: ${sceneCuts.length}개 컷 포인트`);
+              const cachedEntry = sourcePrepCacheRef.current.get(sourceCacheKey);
+              if (cachedEntry) {
+                setLimitedCacheEntry(sourcePrepCacheRef.current, sourceCacheKey, {
+                  ...cachedEntry,
+                  singleSourceSceneCuts: sceneCuts,
+                });
+              }
               return { blob: dlResult.blob, sceneCuts };
             } catch (e) {
               console.warn('[Scene] 병렬 다운로드/씬 감지 실패:', e);
@@ -3712,14 +3799,26 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
             .then((result) => result?.sceneCuts || null)
             .catch(() => null);
         }
-      } else if (!isMultiSource && uploadedFiles.length === 1) {
+      } else if (!singleSourceSceneCutsPromise && !isMultiSource && uploadedFiles.length === 1) {
         const uploadBlob = uploadedFiles[0] instanceof File ? uploadedFiles[0] : new Blob([uploadedFiles[0]]);
         singleSourceSceneCutsPromise = detectSceneCuts(uploadBlob).catch(() => null);
-      } else if (!isMultiSource) {
+      } else if (!singleSourceSceneCutsPromise && !isMultiSource) {
         const existingBlob = useVideoAnalysisStore.getState().videoBlob;
         if (existingBlob) {
           singleSourceSceneCutsPromise = detectSceneCuts(existingBlob).catch(() => null);
         }
+      }
+      if (singleSourceSceneCutsPromise) {
+        singleSourceSceneCutsPromise = singleSourceSceneCutsPromise.then((sceneCuts) => {
+          const cachedEntry = sourcePrepCacheRef.current.get(sourceCacheKey);
+          if (cachedEntry) {
+            setLimitedCacheEntry(sourcePrepCacheRef.current, sourceCacheKey, {
+              ...cachedEntry,
+              singleSourceSceneCuts: sceneCuts,
+            });
+          }
+          return sceneCuts;
+        });
       }
 
       // ★ [v4.6 + FIX #316 + FIX #perf] 화자 분리 전사 — 조건부 실행
@@ -3728,12 +3827,14 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       let diarizedText = '';
       let diarizedUtterances: Array<{ speakerId: string; text: string; startTime: number; endTime: number }> = [];
       const diarizePresets = ['tikitaka', 'condensed', 'snack', 'alltts'];
-      const remixFastDiarizationPresets: AnalysisPreset[] = ['tikitaka', 'condensed', 'snack'];
-
-      // [FIX #perf] YouTube 타임드 자막이 있으면 화자분리 불필요 (불리언 플래그 기반 — 문자열 검사보다 안전)
       const needsDiarization = diarizePresets.includes(preset) && !hasTimedTranscript;
+      const cachedDiarization = !force ? sourceDiarizationCacheRef.current.get(sourceCacheKey) : null;
 
-      if (needsDiarization) {
+      if (needsDiarization && cachedDiarization) {
+        diarizedText = cachedDiarization.diarizedText;
+        diarizedUtterances = cachedDiarization.diarizedUtterances;
+        console.log(`[Diarization] ⚡ 전사 캐시 재사용: ${sourceCacheKey}`);
+      } else if (needsDiarization) {
         try {
           // [FIX #394] 화자 분리 진행 상황 표시
           showToast('🗣️ 음성 분석 중...', 3000);
@@ -3761,57 +3862,31 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
 
           if (audioSource) {
             console.log(`[Diarization] 화자 분리 시작 (${(audioSource.size / 1024 / 1024).toFixed(1)}MB)...`);
-            const diarizationAbortCtrl = new AbortController();
-            const diarizationBudgetMs = remixFastDiarizationPresets.includes(preset)
-              ? REMIX_DIARIZATION_WAIT_BUDGET_MS
-              : DEFAULT_DIARIZATION_WAIT_BUDGET_MS;
-            let diarizationTimedOut = false;
-            let diarizationBudgetTimer: number | null = null;
-            const relayAbort = () => diarizationAbortCtrl.abort();
-            abortCtrl.signal.addEventListener('abort', relayAbort, { once: true });
-            let diarResult: Awaited<ReturnType<typeof transcribeVideoAudio>> = null;
-            try {
-              const diarizationPromise = transcribeVideoAudio(
-                audioSource instanceof File ? audioSource : new File([audioSource], 'video.mp4', { type: 'video/mp4' }),
-                {
-                  signal: diarizationAbortCtrl.signal,
-                  onProgress: (msg) => console.log(`[Diarization] ${msg}`),
-                },
-              ).catch((error) => {
-                if (diarizationAbortCtrl.signal.aborted && !abortCtrl.signal.aborted) return null;
-                throw error;
-              });
-              diarResult = await Promise.race([
-                diarizationPromise,
-                new Promise<null>((resolve) => {
-                  diarizationBudgetTimer = window.setTimeout(() => {
-                    diarizationTimedOut = true;
-                    diarizationAbortCtrl.abort();
-                    resolve(null);
-                  }, diarizationBudgetMs);
-                }),
-              ]);
-            } finally {
-              if (diarizationBudgetTimer !== null) window.clearTimeout(diarizationBudgetTimer);
-              abortCtrl.signal.removeEventListener('abort', relayAbort);
-            }
-            if (diarizationTimedOut) {
-              console.log(`[Diarization] ⚡ ${diarizationBudgetMs / 1000}s 예산 초과 — 리메이크 분석 먼저 진행`);
-              showToast('음성 분석이 길어져서 편집표 생성을 먼저 진행합니다.', 3500);
-            }
+            const diarResult = await transcribeVideoAudio(
+              audioSource instanceof File ? audioSource : new File([audioSource], 'video.mp4', { type: 'video/mp4' }),
+              {
+                signal: abortCtrl.signal,
+                onProgress: (msg) => console.log(`[Diarization] ${msg}`),
+                failOnError: true,
+              },
+            );
             if (diarResult) {
               diarizedText = diarResult.formattedText;
               // [FIX #364] 롱폼 배치별 세그먼트 전사를 위해 utterances도 보존
               diarizedUtterances = (diarResult.transcript.utterances || []).map(u => ({
                 speakerId: u.speakerId, text: u.text, startTime: u.startTime, endTime: u.endTime,
               }));
+              setLimitedCacheEntry(sourceDiarizationCacheRef.current, sourceCacheKey, {
+                diarizedText,
+                diarizedUtterances,
+              });
               console.log(`[Diarization] ✅ 화자 ${diarResult.transcript.speakerCount}명 감지, ${diarResult.transcript.utterances?.length}개 발화`);
             }
           }
         } catch (e) {
-          // [FIX #386] abort 시에는 에러를 삼키지 않고 재throw — 타임아웃 후 AI 호출 진행 방지
           if (abortCtrl.signal.aborted) throw new DOMException('분석이 취소되었습니다.', 'AbortError');
-          console.warn('[Diarization] 화자 분리 실패 (Gemini 단독 분석으로 진행):', e);
+          console.warn('[Diarization] 화자 분리 실패 — 대사 누락 방지를 위해 분석 중단:', e);
+          throw new Error('대사 누락을 막기 위해 음성 전사에 실패한 경우 분석을 진행하지 않도록 변경했습니다. 잠시 후 다시 시도해주세요.');
         }
       } else if (hasTimedTranscript) {
         console.log('[Diarization] ⚡ YouTube 타임드 자막으로 대체 — 화자분리 스킵 (속도 최적화)');
@@ -4247,7 +4322,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
           backgroundState: backgroundFramePerfState,
           showToastSummary: false,
         });
-        cacheCurrentResult(preset);
+        cacheCurrentResult(preset, sourceCacheKey);
         autoSave().catch(() => {});
       });
 
@@ -4257,7 +4332,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
         backgroundState: 'running',
         showToastSummary: true,
       });
-      cacheCurrentResult(preset);
+      cacheCurrentResult(preset, sourceCacheKey);
       notifyAnalysisComplete();
       // 자동 슬롯 저장
       setTimeout(() => useVideoAnalysisStore.getState().saveSlot(), 500);
