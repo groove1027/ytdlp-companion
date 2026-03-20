@@ -283,7 +283,7 @@ function parseVersions(raw: string): VersionItem[] {
         let timeline = rawTimeline;
         let sourceTimeline = '';
         // 1) 배치 필드 안에 "(원본 ...)" 형태로 원본 구간이 포함된 경우 우선 분리
-        const embedSrc = rawTimeline.match(/\((?:원본[:\s：]*)?(\d{1,2}:\d{2}(?:\.\d+)?\s*[~\-–—]\s*\d{1,2}:\d{2}(?:\.\d+)?)[^)]*\)/);
+        const embedSrc = rawTimeline.match(/\((?:원본[:\s：]*)?(\d{1,2}:\d{2}(?:\.\d+)?\s*[~\-–—/]\s*\d{1,2}:\d{2}(?:\.\d+)?)[^)]*\)/);
         if (embedSrc) {
           sourceTimeline = embedSrc[1].trim();
           timeline = rawTimeline.replace(/\s*\([^)]*\)/, '').trim();
@@ -292,7 +292,7 @@ function parseVersions(raw: string): VersionItem[] {
         if (!sourceTimeline) {
           const rawSource = extractField(sContent, '원본') || '';
           // 타임코드 패턴만 추출 (MM:SS~MM:SS 또는 M:SS~M:SS)
-          const tcMatch = rawSource.match(/(\d{1,2}:\d{2}(?:\.\d+)?)\s*[~\-–—]\s*(\d{1,2}:\d{2}(?:\.\d+)?)/);
+          const tcMatch = rawSource.match(/(\d{1,2}:\d{2}(?:\.\d+)?)\s*[~\-–—/]\s*(\d{1,2}:\d{2}(?:\.\d+)?)/);
           sourceTimeline = tcMatch ? `${tcMatch[1]}~${tcMatch[2]}` : rawSource.replace(/[()]/g, '').trim();
         }
 
@@ -1064,7 +1064,7 @@ function collectTimecodesFromVersions(versions: VersionItem[], durationSec?: num
     const parts = tc.split(/[/,]/);
     parts.forEach(p => {
       const cleaned = p.trim();
-      const range = cleaned.match(/(\d+:\d+(?:\.\d+)?)\s*[~\-–—]\s*(\d+:\d+(?:\.\d+)?)/);
+      const range = cleaned.match(/(\d+:\d+(?:\.\d+)?)\s*[~\-–—/]\s*(\d+:\d+(?:\.\d+)?)/);
       if (range) {
         const start = timecodeToSeconds(range[1]);
         const end = timecodeToSeconds(range[2]);
@@ -1078,7 +1078,7 @@ function collectTimecodesFromVersions(versions: VersionItem[], durationSec?: num
     });
     // 배치 타임라인 폴백 — display 코드가 midpoint를 사용하므로 동일하게 추출
     if (s.timeline) {
-      const range = s.timeline.match(/(\d+:\d+(?:\.\d+)?)\s*[~\-–—]\s*(\d+:\d+(?:\.\d+)?)/);
+      const range = s.timeline.match(/(\d+:\d+(?:\.\d+)?)\s*[~\-–—/]\s*(\d+:\d+(?:\.\d+)?)/);
       if (range) {
         raw.push(timecodeToSeconds(range[1]));
         const mid = (timecodeToSeconds(range[1]) + timecodeToSeconds(range[2])) / 2;
@@ -1145,7 +1145,7 @@ function applyCorrectedTimecodes(
     ...v,
     scenes: v.scenes.map(s => {
       const tcStr = s.timecodeSource || s.sourceTimeline || '';
-      const range = tcStr.match(/(\d+:\d+(?:\.\d+)?)\s*([~\-–—])\s*(\d+:\d+(?:\.\d+)?)/);
+      const range = tcStr.match(/(\d+:\d+(?:\.\d+)?)\s*([~\-–—/])\s*(\d+:\d+(?:\.\d+)?)/);
       if (!range) return s;
       const origStart = timecodeToSeconds(range[1]);
       const origEnd = timecodeToSeconds(range[3]);
@@ -1467,8 +1467,9 @@ function generateSrt(
   }
   // 스낵형: 원본 타임코드 우선, 없으면 배치 타임코드 폴백
   const entries = scenes.map((scene, i) => {
+    // [FIX #664] `/` 구분자 지원
     const srcTc = scene.sourceTimeline || scene.timeline;
-    const parts = srcTc.match(/(\d+:\d+(?:\.\d+)?)\s*[~\-–—]\s*(\d+:\d+(?:\.\d+)?)/);
+    const parts = srcTc.match(/(\d+:\d+(?:\.\d+)?)\s*[~\-–—/]\s*(\d+:\d+(?:\.\d+)?)/);
     const start = parts ? timecodeToSeconds(parts[1]) : i * 3;
     const end = parts ? timecodeToSeconds(parts[2]) : (i + 1) * 3;
     const text = getLayerText(scene);
@@ -1638,7 +1639,7 @@ function generateAnalysisHtml(
         const firstTc = tc.split(/[/~,]/)[0].trim();
         let tSec = timecodeToSeconds(firstTc);
         if (tSec <= 0 && s.timeline) {
-          const range = s.timeline.match(/(\d+:\d+(?:\.\d+)?)\s*[~\-–—]\s*(\d+:\d+(?:\.\d+)?)/);
+          const range = s.timeline.match(/(\d+:\d+(?:\.\d+)?)\s*[~\-–—/]\s*(\d+:\d+(?:\.\d+)?)/);
           if (range) tSec = (timecodeToSeconds(range[1]) + timecodeToSeconds(range[2])) / 2;
         }
         const matched = tSec > 0
@@ -4573,8 +4574,9 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       // 1) 타임코드 파싱 → segments
       const segments: { startSec: number; durationSec: number }[] = [];
       for (const s of v.scenes) {
+        // [FIX #664] sourceTimeline/timeline에서 타임코드 범위 파싱 — `/` 구분자도 지원
         const srcTc = s.sourceTimeline || s.timeline;
-        const parts = srcTc.match(/(\d+:\d+(?:\.\d+)?)\s*[~\-–—]\s*(\d+:\d+(?:\.\d+)?)/);
+        const parts = srcTc.match(/(\d+:\d+(?:\.\d+)?)\s*[~\-–—/]\s*(\d+:\d+(?:\.\d+)?)/);
         const start = parts ? timecodeToSeconds(parts[1]) : 0;
         const end = parts ? timecodeToSeconds(parts[2]) : parseDuration(s.duration);
         segments.push({ startSec: start, durationSec: Math.max(0.1, end - start) });
@@ -5216,9 +5218,15 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                     nleActiveTaskRef.current = { target, controller: myAbort };
                                     nleAbortRef.current = myAbort;
                                     const isCancelled = () => myAbort.signal.aborted;
-                                    const directInstallSelection = target === 'capcut' && isCapCutDirectInstallSupported()
-                                      ? await beginCapCutDirectInstallSelection()
-                                      : null;
+                                    // [FIX #665/#657] showDirectoryPicker를 가장 먼저 호출해야 user gesture 유지
+                                    let directInstallSelection: Awaited<ReturnType<typeof beginCapCutDirectInstallSelection>> = null;
+                                    if (target === 'capcut' && isCapCutDirectInstallSupported()) {
+                                      try {
+                                        directInstallSelection = await beginCapCutDirectInstallSelection();
+                                      } catch (pickerErr) {
+                                        console.warn('[VideoAnalysisRoom] CapCut 직접 설치 선택 실패, ZIP으로 진행:', pickerErr);
+                                      }
+                                    }
                                     setNleExporting({ target, step: '준비 중...', startedAt });
                                     try {
                                       // Step 1: videoBlob 확보 — 오디오 포함 보장
@@ -5837,7 +5845,15 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                   </td>
                                   <td className="py-2 px-2 align-top text-gray-400 leading-relaxed text-xs">{scene.videoDirection || '-'}</td>
                                   <td className="py-2 px-2 align-top">
-                                    <div className="text-blue-400 font-mono text-xs leading-relaxed">{scene.timecodeSource || '-'}</div>
+                                    {/* [FIX #560] 타임코드를 범위(시작~끝)로 표시 — 단일 시점만 있으면 sourceTimeline/timeline에서 범위 보충 */}
+                                    <div className="text-blue-400 font-mono text-xs leading-relaxed">{(() => {
+                                      const tc = scene.timecodeSource || '';
+                                      if (tc && /\d+:\d+.*[~\-–—/].*\d+:\d+/.test(tc)) return tc;
+                                      const rangeSrc = scene.sourceTimeline || scene.timeline || '';
+                                      const rangeMatch = rangeSrc.match(/(\d+:\d+(?:\.\d+)?)\s*[~\-–—/]\s*(\d+:\d+(?:\.\d+)?)/);
+                                      if (rangeMatch) return `${rangeMatch[1]}~${rangeMatch[2]}`;
+                                      return tc || '-';
+                                    })()}</div>
                                   </td>
                                   {thumbnails.length > 0 && (() => {
                                     // 티키타카: timecodeSource, 스낵형: sourceTimeline (원본) 우선
@@ -5847,7 +5863,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                     let sceneTimeSec = timecodeToSeconds(firstTc);
                                     // 소스 타임코드 없으면 배치 타임코드 시도
                                     if (sceneTimeSec <= 0 && scene.timeline) {
-                                      const range = scene.timeline.match(/(\d+:\d+(?:\.\d+)?)\s*[~\-–—]\s*(\d+:\d+(?:\.\d+)?)/);
+                                      const range = scene.timeline.match(/(\d+:\d+(?:\.\d+)?)\s*[~\-–—/]\s*(\d+:\d+(?:\.\d+)?)/);
                                       if (range) {
                                         const mid = (timecodeToSeconds(range[1]) + timecodeToSeconds(range[2])) / 2;
                                         if (mid > 0) sceneTimeSec = mid;

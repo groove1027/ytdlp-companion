@@ -161,7 +161,8 @@ export function buildNarrationSyncedTimeline(
 
   const timings: NarrationSyncSceneTiming[] = scenes.map((scene, sceneIndex) => {
     const rawTc = scene.timecodeSource || scene.sourceTimeline || '';
-    const range = rawTc.match(/(\d+:\d+(?:\.\d+)?)\s*[~\-–—]\s*(\d+:\d+(?:\.\d+)?)/);
+    // [FIX #664] `/` 구분자 지원
+    const range = rawTc.match(/(\d+:\d+(?:\.\d+)?)\s*[~\-–—/]\s*(\d+:\d+(?:\.\d+)?)/);
 
     let sourceStartSec: number;
     let sourceEndSec: number;

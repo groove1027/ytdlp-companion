@@ -1952,19 +1952,33 @@ export async function beginCapCutDirectInstallSelection(): Promise<{
     return null;
   }
 
-  const wantsDirectInstall = window.confirm([
-    '이 브라우저에서는 CapCut에 바로 설치할 수 있습니다.',
-    '',
-    '[확인] ZIP 대신 CapCut 프로젝트 폴더에 바로 설치',
-    '[취소] 기존처럼 ZIP 다운로드',
-    '',
-    '확인을 누르면 다음 단계에서 CapCut 프로젝트 폴더(com.lveditor.draft)를 선택합니다.',
-  ].join('\n'));
+  // [FIX #665/#657] showDirectoryPicker를 가장 먼저 호출해야 user gesture 컨텍스트가 유지됨
+  // confirm/prompt를 먼저 호출하면 브라우저가 제스처 만료로 showDirectoryPicker를 차단함
+  let draftsRootHandle: FileSystemDirectoryHandle | undefined;
+  try {
+    draftsRootHandle = await (window as Window & {
+      showDirectoryPicker?: (options?: { id?: string; mode?: 'read' | 'readwrite'; startIn?: string }) => Promise<FileSystemDirectoryHandle>;
+    }).showDirectoryPicker?.({
+      id: 'capcut-drafts-root',
+      mode: 'readwrite',
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      return null; // 사용자가 폴더 선택 취소 → ZIP 다운로드로 폴백
+    }
+    throw error;
+  }
 
-  if (!wantsDirectInstall) {
+  if (!draftsRootHandle) {
     return null;
   }
 
+  if (draftsRootHandle.name !== 'com.lveditor.draft') {
+    window.alert('CapCut 프로젝트 폴더(com.lveditor.draft)를 선택해주세요.\n다시 시도하면 올바른 폴더를 선택해주세요.');
+    return null;
+  }
+
+  // 폴더 선택 완료 후 경로 확인 (이 시점에서는 제스처 불필요)
   const savedPath = getStoredCapCutDirectInstallPath();
   const draftsRootPath = window.prompt([
     'CapCut 프로젝트 폴더의 절대경로를 확인해주세요.',
@@ -1978,33 +1992,11 @@ export async function beginCapCutDirectInstallSelection(): Promise<{
   }
 
   const normalizedRootPath = normalizeCapCutDraftsRootPath(draftsRootPath);
-
-  try {
-    const draftsRootHandle = await (window as Window & {
-      showDirectoryPicker?: (options?: { id?: string; mode?: 'read' | 'readwrite' }) => Promise<FileSystemDirectoryHandle>;
-    }).showDirectoryPicker?.({
-      id: 'capcut-drafts-root',
-      mode: 'readwrite',
-    });
-
-    if (!draftsRootHandle) {
-      return null;
-    }
-    if (draftsRootHandle.name !== 'com.lveditor.draft') {
-      throw new Error('CapCut 프로젝트 폴더(com.lveditor.draft)를 선택해주세요.');
-    }
-
-    setStoredCapCutDirectInstallPath(normalizedRootPath);
-    return {
-      draftsRootHandle: draftsRootHandle as unknown as CapCutDirectoryHandleLike,
-      draftsRootPath: normalizedRootPath,
-    };
-  } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') {
-      return null;
-    }
-    throw error;
-  }
+  setStoredCapCutDirectInstallPath(normalizedRootPath);
+  return {
+    draftsRootHandle: draftsRootHandle as unknown as CapCutDirectoryHandleLike,
+    draftsRootPath: normalizedRootPath,
+  };
 }
 
 export async function installCapCutZipToDirectory(params: {
@@ -2625,7 +2617,8 @@ function extractTimings(scenes: VideoSceneRow[], preset?: VideoAnalysisPreset): 
 
     // 보정된 소스 타임코드가 있으면 우선 사용
     const srcTc = s.timecodeSource || s.sourceTimeline || '';
-    const range = srcTc.match(/(\d+:\d+(?:\.\d+)?)\s*[~\-–—]\s*(\d+:\d+(?:\.\d+)?)/);
+    // [FIX #664] `/` 구분자 지원
+    const range = srcTc.match(/(\d+:\d+(?:\.\d+)?)\s*[~\-–—/]\s*(\d+:\d+(?:\.\d+)?)/);
 
     let startSec: number;
     let endSec: number;

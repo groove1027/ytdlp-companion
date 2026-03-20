@@ -1523,7 +1523,18 @@ const StoryboardPanel: React.FC = () => {
       return;
     }
 
-    const videoSceneCount = scenes.filter((scene) => scene.videoUrl).length;
+    // [FIX #665/#657] CapCut 직접 설치: showDirectoryPicker를 confirm보다 먼저 호출해야 user gesture 유지
+    let directInstallSelection: Awaited<ReturnType<typeof beginCapCutDirectInstallSelection>> = null;
+    if (target === 'capcut' && isCapCutDirectInstallSupported()) {
+      try {
+        directInstallSelection = await beginCapCutDirectInstallSelection();
+      } catch (pickerErr) {
+        console.warn('[StoryboardPanel] CapCut 직접 설치 선택 실패, ZIP으로 진행:', pickerErr);
+      }
+    }
+
+    // [FIX #652] imageUpdatedAfterVideo이면 이미지로 취급
+    const videoSceneCount = scenes.filter((scene) => scene.videoUrl && !scene.imageUpdatedAfterVideo).length;
     if (videoSceneCount < scenes.length) {
       const imageOnlyCount = scenes.length - videoSceneCount;
       const msg = videoSceneCount === 0
@@ -1537,9 +1548,6 @@ const StoryboardPanel: React.FC = () => {
     setNleExportingTarget(target);
 
     try {
-      const directInstallSelection = target === 'capcut' && isCapCutDirectInstallSupported()
-        ? await beginCapCutDirectInstallSelection()
-        : null;
       showToast(
         target === 'capcut'
           ? directInstallSelection
@@ -1551,10 +1559,11 @@ const StoryboardPanel: React.FC = () => {
       const result = await buildEditRoomNleZip({
         target,
         timeline,
+        // [FIX #652] imageUpdatedAfterVideo이면 videoUrl 제외 → 이미지로 내보내기
         scenes: scenes.map((scene) => ({
           id: scene.id,
           imageUrl: scene.imageUrl,
-          videoUrl: scene.videoUrl,
+          videoUrl: scene.imageUpdatedAfterVideo ? undefined : scene.videoUrl,
           scriptText: scene.scriptText,
         })),
         narrationLines: storyboardNarrationLines,

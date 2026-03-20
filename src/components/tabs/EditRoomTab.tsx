@@ -1405,8 +1405,18 @@ const EditRoomTab: React.FC = () => {
       showToast('내보낼 장면이 없습니다.');
       return;
     }
+    // [FIX #665/#657] CapCut 직접 설치: showDirectoryPicker를 confirm보다 먼저 호출해야 user gesture 유지
+    let directInstallSelection: Awaited<ReturnType<typeof beginCapCutDirectInstallSelection>> = null;
+    if (target === 'capcut' && isCapCutDirectInstallSupported()) {
+      try {
+        directInstallSelection = await beginCapCutDirectInstallSelection();
+      } catch (pickerErr) {
+        // showDirectoryPicker 예외 → ZIP 폴백 (directInstallSelection = null)
+        console.warn('[EditRoom] CapCut 직접 설치 선택 실패, ZIP으로 진행:', pickerErr);
+      }
+    }
     // [FIX #474] 영상이 없는 장면이 있으면 confirm 대화상자로 사전 확인 (Toast는 놓치기 쉬움)
-    const videoSceneCount = scenes.filter(s => s.videoUrl).length;
+    const videoSceneCount = scenes.filter(s => s.videoUrl && !s.imageUpdatedAfterVideo).length;
     if (videoSceneCount < scenes.length) {
       const imageOnlyCount = scenes.length - videoSceneCount;
       const msg = videoSceneCount === 0
@@ -1415,9 +1425,6 @@ const EditRoomTab: React.FC = () => {
       if (!window.confirm(msg)) return;
     }
     try {
-      const directInstallSelection = target === 'capcut' && isCapCutDirectInstallSupported()
-        ? await beginCapCutDirectInstallSelection()
-        : null;
       showToast(
         target === 'capcut'
           ? directInstallSelection
@@ -1457,7 +1464,8 @@ const EditRoomTab: React.FC = () => {
       const result = await buildEditRoomNleZip({
         target,
         timeline,
-        scenes: scenes.map((s) => ({ id: s.id, imageUrl: s.imageUrl, videoUrl: s.videoUrl, scriptText: s.scriptText })),
+        // [FIX #652] imageUpdatedAfterVideo이면 videoUrl 제외 → 이미지로 내보내기
+        scenes: scenes.map((s) => ({ id: s.id, imageUrl: s.imageUrl, videoUrl: s.imageUpdatedAfterVideo ? undefined : s.videoUrl, scriptText: s.scriptText })),
         narrationLines: narrationLinesForNle,
         title: projectTitle,
         aspectRatio: projectAspectRatio,
@@ -1547,7 +1555,8 @@ const EditRoomTab: React.FC = () => {
         blobUrls.push(blobUrl);
         imageUrl = blobUrl;
       }
-      return { id: s.id, imageUrl, videoUrl: s.videoUrl };
+      // [FIX #652] 이미지가 영상 이후 재생성됐으면 videoUrl 무시 → 이미지로 취급
+      return { id: s.id, imageUrl, videoUrl: s.imageUpdatedAfterVideo ? undefined : s.videoUrl };
     });
     return { optimized, blobUrls };
   }, [scenes]);
@@ -1624,8 +1633,13 @@ const EditRoomTab: React.FC = () => {
 
       if (!abortController.signal.aborted) {
         setExportedVideoBlob(blob);
-        downloadMp4(blob, 'output.mp4');
-        showToast('MP4 내보내기 완료!');
+        // [FIX #646] 다운로드 시도 — 실패해도 blob은 보존하여 재다운로드 가능
+        try {
+          downloadMp4(blob, 'output.mp4');
+          showToast('MP4 내보내기 완료! 다운로드가 시작됩니다.');
+        } catch (dlErr) {
+          showToast('렌더링은 완료됐지만 다운로드에 실패했어요. 아래 "재다운로드" 버튼을 눌러주세요.', 8000);
+        }
       }
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') {

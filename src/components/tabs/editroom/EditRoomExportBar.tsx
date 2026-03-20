@@ -1,6 +1,7 @@
 import React from 'react';
 import { useEditRoomStore } from '../../../stores/editRoomStore';
 import { useProjectStore } from '../../../stores/projectStore';
+import { downloadMp4 } from '../../../services/webcodecs';
 import { ImageModel, VideoModel } from '../../../types';
 import type { ExportProgress } from '../../../types';
 
@@ -73,9 +74,12 @@ const EditRoomExportBar: React.FC<EditRoomExportBarProps> = ({
 }) => {
   const isExporting = useEditRoomStore((s) => s.isExporting);
   const exportProgress = useEditRoomStore((s) => s.exportProgress);
+  // [FIX #646] 렌더 완료 후 재다운로드 버튼 지원
+  const exportedVideoBlob = useEditRoomStore((s) => s.exportedVideoBlob);
   const scenes = useProjectStore((s) => s.scenes);
   const config = useProjectStore((s) => s.config);
-  const hasVideos = scenes.some((s) => !!s.videoUrl);
+  // [FIX #652] imageUpdatedAfterVideo이면 이미지로 취급
+  const hasVideos = scenes.some((s) => !!s.videoUrl && !s.imageUpdatedAfterVideo);
   const imgLabel = config ? (IMAGE_MODEL_LABELS[config.imageModel] ?? config.imageModel) : '';
   const vidLabel = config ? (VIDEO_MODEL_LABELS[config.videoModel] ?? config.videoModel) : '';
   const [showNleMenu, setShowNleMenu] = React.useState(false);
@@ -215,21 +219,39 @@ const EditRoomExportBar: React.FC<EditRoomExportBarProps> = ({
                 취소
               </button>
             ) : (
-              <button
-                type="button"
-                onClick={onExportMp4}
-                className="flex items-center gap-1.5 px-3 py-2 bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 text-white rounded-lg text-sm font-bold border border-blue-400/50 shadow-md transition-colors"
-              >
-                🎬 MP4 영상
-                <span className="text-xs text-blue-200/70 bg-blue-800/30 px-1 py-0.5 rounded">WebCodecs</span>
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={onExportMp4}
+                  className="flex items-center gap-1.5 px-3 py-2 bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 text-white rounded-lg text-sm font-bold border border-blue-400/50 shadow-md transition-colors"
+                >
+                  🎬 MP4 영상
+                  <span className="text-xs text-blue-200/70 bg-blue-800/30 px-1 py-0.5 rounded">WebCodecs</span>
+                </button>
+                {/* [FIX #646] 렌더 완료 후 재다운로드 버튼 */}
+                {exportedVideoBlob && !isExporting && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      try {
+                        downloadMp4(exportedVideoBlob, 'output.mp4');
+                      } catch (e) {
+                        window.alert('다운로드에 실패했습니다. 브라우저 설정에서 다운로드를 허용해주세요.');
+                      }
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-2 bg-amber-700/80 hover:bg-amber-600 border border-amber-500/50 text-amber-100 rounded-lg text-sm font-bold transition-colors"
+                  >
+                    💾 재다운로드
+                  </button>
+                )}
+              </>
             )}
           </div>
 
           <div className="text-sm text-gray-600 text-right">
             {/* [FIX #474] 항상 영상/이미지 구성을 명확히 표시 */}
             {(() => {
-              const vidCount = scenes.filter(s => !!s.videoUrl).length;
+              const vidCount = scenes.filter(s => !!s.videoUrl && !s.imageUpdatedAfterVideo).length;
               const imgCount = scenes.length - vidCount;
               return (
                 <>

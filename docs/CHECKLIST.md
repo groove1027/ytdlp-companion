@@ -8,6 +8,16 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-21] 내보내기 긴급 버그 8건 수정 (#667, #665, #664, #657, #655, #652, #646, #560)
+- [x] **#665/#657**: CapCut 직접 설치 시 showDirectoryPicker user gesture 소실 → picker를 confirm/prompt 이전으로 이동 + 예외 처리
+- [x] **#664**: SRT+영상 타임코드 파싱에 `/` 구분자 미지원 → 전체 regex 통일 `[~\-–—/]` (VideoAnalysisRoom, narrationSyncService, nleExportService)
+- [x] **#652**: 이미지 재생성 후 영상으로 렌더 시도 → imageUpdatedAfterVideo 체크 (EditRoomTab, EditRoomSceneCard, EditRoomExportBar, StoryboardPanel)
+- [x] **#646**: 렌더 완료 후 다운로드 안됨 → downloadMp4 try-catch + 재다운로드 버튼 추가
+- [x] **#560**: 편집점 타임코드 단일 시점만 표시 → sourceTimeline/timeline에서 범위 보충
+- [x] **#667**: Premiere Pro ZIP 클립 이름 (이미 수정됨, 배포로 해결)
+- [x] **#655**: CapCut 확인 오류 (#665/#657 수정으로 함께 해결)
+- [x] tsc --noEmit: 0 에러 / vite build: 성공
+
 ### [2026-03-21] 채널 스타일 클로닝 선공개 흐름 재사용형 브라우저 E2E 추가
 - [x] `test/verify-channel-guide-progressive-browser.mjs` — 빌드된 앱을 실제 브라우저로 띄운 뒤, 인증/YouTube/Evolink 경로를 고정 응답으로 모킹하고 `수집된 영상 (10개)` 선공개, `(채널명) 지침서` 선공개, 로딩 패널 유지, `전체 복사` 클립보드 반영, IndexedDB `copyableSystemPrompt` 저장까지 한 번에 검증하는 재사용형 Playwright 러너 추가
 - [x] 검증 통과:

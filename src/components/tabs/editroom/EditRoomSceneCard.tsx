@@ -106,7 +106,8 @@ const EditRoomSceneCard: React.FC<EditRoomSceneCardProps> = ({
   }, [lines, scene.id, sceneIndex]);
 
   const narrationDuration = matchedLine?.duration ?? 0;
-  const isVideo = !!scene.videoUrl;
+  // [FIX #652] imageUpdatedAfterVideo이면 이미지 우선 표시
+  const isVideo = !!scene.videoUrl && !scene.imageUpdatedAfterVideo;
   const durationMismatch = isVideo && narrationDuration > 0
     && Math.abs(narrationDuration - timing.imageDuration) > 1.0;
 
