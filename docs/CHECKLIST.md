@@ -8,6 +8,20 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-20] 무료 레퍼런스 맥락 검색 품질 고도화 + Flash Lite 재정렬
+- [x] `googleReferenceSearchService.ts` — 장면 검색어를 긴 문장 절단 방식에서 `장소/주체/문화/시대/행동` 중심의 짧은 검색 플랜으로 재구성하고, 한국어 장면에 대해 영어 확장/행동 힌트/`photo` 변형 쿼리를 함께 생성하도록 보강
+- [x] `googleReferenceSearchService.ts` — Bing 폴백 결과를 제목/설명/도메인/이미지 크기/문맥 일치도로 휴리스틱 정렬하고, 저품질 소셜/핀보드/기사형 컨텍스트는 상단 후보 풀에서 분리하도록 필터링 강화
+- [x] `googleReferenceSearchService.ts`, `evolinkService.ts` — 수동 검색/재검색의 `best` 모드에서 `gemini-3.1-flash-lite-preview` 재정렬이 실제 기본 Evolink 키 경로로 동작하도록 연결하고, 자동 일괄 배치는 `fast` 모드 휴리스틱만 쓰도록 분리
+- [x] `GoogleReferencePanel.tsx`, `StoryboardPanel.tsx` — 전체 일괄 검색은 `fast`, 장면별 수동 검색/재검색은 `best` 모드로 타도록 검색 품질 경로를 분리
+- [x] `verify-google-reference-ranking-playwright.mjs` — Playwright 기반 로컬 검증 러너를 추가해 `/api/google-proxy` 재지정, AI 재정렬 요청 감시, 장면별 상위 결과 도메인 검증을 자동화
+- [x] 검증 통과:
+  `cd src && node_modules/typescript/bin/tsc --noEmit`
+  `cd src && node_modules/.bin/vite build`
+  `rg -n "getStoredEvolinkKey|joinQueryParts\\(|ARTICLE_CONTEXT_PATH_PATTERN|partitionReferenceResultsBySignal|rankingMode|verify-google-reference-ranking-playwright" src/services/evolinkService.ts src/services/googleReferenceSearchService.ts src/components/tabs/imagevideo/GoogleReferencePanel.tsx src/components/tabs/imagevideo/StoryboardPanel.tsx test/verify-google-reference-ranking-playwright.mjs`
+  `node test/verify-google-reference-ranking-playwright.mjs`
+- [x] 실제 브라우저 확인:
+  Playwright로 `한옥 마당`, `서울 궁궐 복도`, `전통 시장 상인` 3개 장면을 `best` 검색으로 실행했을 때 Evolink Flash Lite 재정렬 요청 `3건/3건 200 OK`를 확인했고, 상위 결과가 Pinterest/YouTube/블로그/기사형 링크 대신 `stock.adobe.com`, `shutterstock.com`, `pixabay.com`, `visitkorea.or.kr` 같은 이미지 중심 출처로 정리되는 것을 확인
+
 ### [2026-03-20] 영상분석실 리메이크 전사 자동 복구 경로 추가
 - [x] `transcriptionService.ts` — Kie 전사 태스크 생성에 429/5xx 재시도를 추가하고, `transcribeWithDiarization()`이 같은 업로드 URL을 재사용해 `화자분리 재시도 -> 전체 대사 보존 전사 -> 구간 전사` 순서로 자동 복구하도록 보강
 - [x] `transcriptionService.ts` — 화자 분리 결과에 usable utterance가 없을 때 세그먼트 기반 utterance를 다시 구성해 대사 타임코드가 비지 않도록 정규화하고, 구간 전사 시에는 겹침 윈도우를 둔 75초 단위 WAV 분할로 전체 대사를 병합 복원하도록 추가

@@ -2017,7 +2017,10 @@ const StoryboardPanel: React.FC = () => {
           generationStatus: hasExistingReference ? `다른 레퍼런스 검색 중... (${safePage}페이지)` : '무료 레퍼런스 검색 중...',
         });
 
-        const result = await searchGoogleImages(query, startIdx);
+        const result = await searchGoogleImages(query, startIdx, 'large', {
+          context: { scene, prevScene, nextScene, globalContext: currentConfig.globalContext },
+          rankingMode: 'best',
+        });
         if (result.items.length > 0) {
           updateScene(sceneId, {
             imageUrl: result.items[0].link,

@@ -1,5 +1,5 @@
 
-import { getKieKey, monitoredFetch } from './apiService';
+import { getKieKey, getEvolinkKey as getStoredEvolinkKey, monitoredFetch } from './apiService';
 import { logger } from './LoggerService';
 import { ScriptAiModel } from '../types';
 import { useCostStore } from '../stores/costStore';
@@ -10,7 +10,6 @@ import type { TaskProfile } from './gemini/geminiProxy';
 const EVOLINK_BASE_URL = 'https://api.evolink.ai/v1';
 const EVOLINK_V1BETA_URL = 'https://api.evolink.ai/v1beta';
 const KIE_BASE_URL = 'https://api.kie.ai';
-const DEFAULT_EVOLINK_KEY = '';
 let _kieRateLimitedUntil = 0;
 const KIE_RATE_LIMIT_COOLDOWN_MS = 60_000;
 
@@ -18,10 +17,7 @@ const KIE_RATE_LIMIT_COOLDOWN_MS = 60_000;
 
 /** localStorage에서 Evolink API 키 조회, fallback 사용 */
 export const getEvolinkKey = (): string => {
-    const raw = localStorage.getItem('CUSTOM_EVOLINK_KEY') || DEFAULT_EVOLINK_KEY;
-    if (!raw) return '';
-    // ASCII printable만 유지 (sanitize)
-    return raw.replace(/[^\x21-\x7E]/g, '').trim();
+    return getStoredEvolinkKey();
 };
 
 const extractRetryAfterMs = (response: Response): number | undefined => {

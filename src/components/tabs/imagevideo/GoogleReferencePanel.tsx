@@ -65,7 +65,12 @@ const GoogleReferencePanel: React.FC = () => {
   const aspectClass = ASPECT_CLASS[aspectRatio] || 'aspect-video';
 
   // 개별 장면 검색
-  const searchScene = useCallback(async (scene: Scene, sceneIndex: number, page: number = 1) => {
+  const searchScene = useCallback(async (
+    scene: Scene,
+    sceneIndex: number,
+    page: number = 1,
+    rankingMode: 'fast' | 'best' = 'best',
+  ) => {
     const prevScene = sceneIndex > 0 ? scenes[sceneIndex - 1] : null;
     const nextScene = sceneIndex < scenes.length - 1 ? scenes[sceneIndex + 1] : null;
 
@@ -89,7 +94,7 @@ const GoogleReferencePanel: React.FC = () => {
     try {
       const startIndex = (page - 1) * 10 + 1;
       const response = await searchSceneReferenceImages(
-        scene, prevScene, nextScene, config?.globalContext, startIndex,
+        scene, prevScene, nextScene, config?.globalContext, startIndex, rankingMode,
       );
 
       setScenePreviews(prev => {
@@ -150,7 +155,7 @@ const GoogleReferencePanel: React.FC = () => {
           cursor += 1;
           if (!current) return;
 
-          const result = await searchScene(current.scene, current.sceneIndex);
+          const result = await searchScene(current.scene, current.sceneIndex, 1, 'fast');
           if (result.ok) {
             successCount++;
             if (result.provider && result.provider !== 'google') fallbackCount++;
@@ -220,7 +225,7 @@ const GoogleReferencePanel: React.FC = () => {
     const sp = scenePreviews.get(sceneId);
     if (!sp) return;
     const nextPage = sp.resultPage + 1;
-    await searchScene(sp.scene, sp.index, nextPage);
+    await searchScene(sp.scene, sp.index, nextPage, 'best');
   }, [scenePreviews, searchScene]);
 
   // 검색어 편집 후 재검색
@@ -249,7 +254,7 @@ const GoogleReferencePanel: React.FC = () => {
 
     try {
       const { searchGoogleImages } = await import('../../../services/googleReferenceSearchService');
-      const response = await searchGoogleImages(customQuery, 1);
+      const response = await searchGoogleImages(customQuery, 1, 'large', { rankingMode: 'best' });
       setScenePreviews(prev => {
         const next = new Map(prev);
         next.set(sceneId, {
