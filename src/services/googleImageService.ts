@@ -16,6 +16,7 @@ const GOOGLE_TRPC_WORKFLOW_URL = 'https://labs.google/fx/api/trpc/media.createOr
 const GOOGLE_TRPC_CAPTION_URL = 'https://labs.google/fx/api/trpc/backbone.captionImage';
 const GOOGLE_TRPC_UPLOAD_URL = 'https://labs.google/fx/api/trpc/backbone.uploadImage';
 const PROXY_PATH = '/api/google-proxy';
+const GOOGLE_SESSION_EXPIRED_MESSAGE = 'Google 세션이 만료됐어요. API 설정에서 쿠키를 다시 연결해주세요.';
 
 // 화면비 매핑
 const ASPECT_RATIO_MAP: Record<string, string> = {
@@ -30,6 +31,21 @@ const ASPECT_RATIO_MAP: Record<string, string> = {
 // ─── 세션 캐시 ───
 let cachedToken: string | null = null;
 let tokenExpiry: number = 0;
+
+async function invalidateGoogleSession(): Promise<void> {
+  invalidateGoogleToken();
+  try {
+    const { useGoogleCookieStore } = await import('../stores/googleCookieStore');
+    useGoogleCookieStore.getState().clearCookie();
+  } catch {
+    /* dynamic import 실패 무시 */
+  }
+}
+
+async function throwGoogleSessionExpired(): Promise<never> {
+  await invalidateGoogleSession();
+  throw new Error(GOOGLE_SESSION_EXPIRED_MESSAGE);
+}
 
 /** 프록시를 통해 Google API 호출 */
 async function proxyFetch(targetUrl: string, options: {
@@ -114,7 +130,12 @@ async function createWhiskWorkflow(cookie: string): Promise<string> {
     cookie,
   });
 
-  if (!res.ok) throw new Error(`Whisk 워크플로 생성 실패 (${res.status})`);
+  if (!res.ok) {
+    if (res.status === 401 || res.status === 403) {
+      return throwGoogleSessionExpired();
+    }
+    throw new Error(`Whisk 워크플로 생성 실패 (${res.status})`);
+  }
   const data = await res.json();
   const result = unwrapTrpcResponse(data);
   return (result as { workflowId: string }).workflowId;
@@ -139,7 +160,12 @@ async function captionWhiskImage(rawBytes: string, cookie: string, workflowId: s
     cookie,
   });
 
-  if (!res.ok) throw new Error(`Whisk 캡션 생성 실패 (${res.status})`);
+  if (!res.ok) {
+    if (res.status === 401 || res.status === 403) {
+      return throwGoogleSessionExpired();
+    }
+    throw new Error(`Whisk 캡션 생성 실패 (${res.status})`);
+  }
   const data = await res.json();
   const result = unwrapTrpcResponse(data);
   const candidates = (result as { candidates?: { output: string }[] }).candidates;
@@ -163,7 +189,12 @@ async function uploadWhiskImage(rawBytes: string, caption: string, workflowId: s
     cookie,
   });
 
-  if (!res.ok) throw new Error(`Whisk 이미지 업로드 실패 (${res.status})`);
+  if (!res.ok) {
+    if (res.status === 401 || res.status === 403) {
+      return throwGoogleSessionExpired();
+    }
+    throw new Error(`Whisk 이미지 업로드 실패 (${res.status})`);
+  }
   const data = await res.json();
   const result = unwrapTrpcResponse(data);
   return (result as { uploadMediaGenerationId: string }).uploadMediaGenerationId;
@@ -179,17 +210,20 @@ export async function getGoogleAccessToken(cookie: string): Promise<{ token: str
   const res = await proxyFetch(GOOGLE_AUTH_URL, { cookie });
 
   if (!res.ok) {
-    throw new Error(`Google 인증 실패 (${res.status})`);
+    if (res.status === 401 || res.status === 403) {
+      return throwGoogleSessionExpired();
+    }
+    throw new Error(`Google 인증에 실패했어요 (${res.status}). 잠시 후 다시 시도해주세요.`);
   }
 
   const data = await res.json();
 
   if (data.error) {
-    throw new Error(`Google 세션 에러: ${data.error} — 쿠키를 갱신해주세요`);
+    return throwGoogleSessionExpired();
   }
 
   if (!data.access_token) {
-    throw new Error('Google access_token이 없습니다. 쿠키가 만료되었을 수 있습니다.');
+    return throwGoogleSessionExpired();
   }
 
   cachedToken = data.access_token;
@@ -259,12 +293,10 @@ export async function generateGoogleImage(
   });
 
   if (!res.ok) {
-    const errText = await res.text();
     if (res.status === 401 || res.status === 403) {
-      invalidateGoogleToken();
-      throw new Error('Google 쿠키가 만료되었습니다. 쿠키를 갱신해주세요.');
+      return throwGoogleSessionExpired();
     }
-    throw new Error(`Google ImageFX 생성 실패 (${res.status}): ${errText.slice(0, 200)}`);
+    throw new Error(`Google 이미지 생성에 실패했어요 (${res.status}). 잠시 후 다시 시도해주세요.`);
   }
 
   const data = await res.json();
@@ -344,8 +376,7 @@ export async function generateWhiskImage(
   if (!res.ok) {
     const errText = await res.text();
     if (res.status === 401 || res.status === 403) {
-      invalidateGoogleToken();
-      throw new Error('Google 쿠키가 만료되었습니다. 쿠키를 갱신해주세요.');
+      return throwGoogleSessionExpired();
     }
     throw new Error(`Google Whisk 생성 실패 (${res.status}): ${errText.slice(0, 200)}`);
   }
@@ -409,8 +440,7 @@ async function generateWhiskWithReferences(
   if (!res.ok) {
     const errText = await res.text();
     if (res.status === 401 || res.status === 403) {
-      invalidateGoogleToken();
-      throw new Error('Google 쿠키가 만료되었습니다. 쿠키를 갱신해주세요.');
+      return throwGoogleSessionExpired();
     }
     throw new Error(`Google Whisk 리믹싱 실패 (${res.status}): ${errText.slice(0, 200)}`);
   }

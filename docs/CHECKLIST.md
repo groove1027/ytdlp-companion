@@ -8,6 +8,21 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-21] 구글 세션/이미지 버그 5건 수정 (#659, #607, #606, #588, #587)
+- [x] 세션 만료 시 clearCookie + 사용량 카운터 보존 + 에러 메시지 사용자 친화적
+- [x] 빈 결과 캐시 2분, 쿨다운 5분, 전체 TTL 10분
+- [x] 모든 401/403 경로 throwGoogleSessionExpired 헬퍼로 통일
+- [x] 비세션 에러를 쿠키 문제로 오인하지 않도록 메시지 분류 개선
+
+### [2026-03-21] Google 세션 무효화 경로 보강 + 자동 레퍼런스 재시도 허용
+- [x] `googleImageService.ts` — `getGoogleAccessToken`, ImageFX/Whisk 본 요청, Whisk 보조 tRPC(`workflow/caption/upload`)의 `401/403`를 공통 세션 만료 처리로 통일하고, 쿠키 스토어 무효화 + 동일 사용자 메시지를 한 경로로 정리
+- [x] `googleImageService.ts` — 토큰 발급 단계에서 세션 만료를 처리한 뒤 호출자(`generateGoogleImage`, `generateWhiskImage`)가 같은 실패를 다시 무효화하지 않도록 중복 경로를 제거
+- [x] `googleReferenceSearchService.ts` — 빈 결과 2분 캐시는 유지하되, `autoApplyGoogleReferences()`에서는 `bypassEmptyCache`로 동일 쿼리의 빈 결과 재시도를 막지 않도록 조정
+- [x] 검증 통과:
+  `cd src && node_modules/typescript/bin/tsc --noEmit`
+  `cd src && node_modules/.bin/vite build`
+  `rg -n "getGoogleAccessToken|generateGoogleImage|generateWhiskImage|searchGoogleImages|autoApplyGoogleReferences|throwGoogleSessionExpired|bypassEmptyCache" src`
+
 ### [2026-03-21] 대본/나레이션 버그 9건 수정 (#666, #662, #648, #641, #605, #597, #596, #591, #590)
 - [x] **#605**: 스토리보드 전체 나레이션 재생이 중간부터 시작 → ended 상태면 restart, 중간이면 resume
 - [x] **#641**: 쇼츠인데 대본 2-3분 분량 → setContentFormat에 targetCharCount 동기화

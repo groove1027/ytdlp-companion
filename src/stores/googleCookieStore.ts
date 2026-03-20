@@ -117,13 +117,15 @@ export const useGoogleCookieStore = create<GoogleCookieState>((set, get) => ({
 
   clearCookie: () => {
     invalidateGoogleToken();
+    // [FIX #606] 세션 무효화 시 사용량 카운터는 보존 (clearCookie는 세션만 정리)
+    const state = get();
     const cleared = {
       cookie: '', userEmail: '', userName: '', isValid: false,
-      dailyImageCount: 0, dailyImageDate: today(),
-      monthlyVideoCount: 0, monthlyVideoMonth: thisMonth(),
+      dailyImageCount: state.dailyImageCount, dailyImageDate: state.dailyImageDate,
+      monthlyVideoCount: state.monthlyVideoCount, monthlyVideoMonth: state.monthlyVideoMonth,
     };
     set(cleared);
-    localStorage.removeItem(LS_KEY);
+    persist(cleared);
   },
 
   incrementImageCount: () => {

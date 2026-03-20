@@ -827,7 +827,13 @@ export const generateSceneImage = async (
             logger.trackGenerationResult({ type: 'image', sceneId: scene.id || '?', success: true, provider: 'Google', duration: Math.round(performance.now() - genStartTime) });
             return { url: result.base64, isFallback: false, isFiltered: filterResult.wasFiltered };
         } catch (e) {
-            const message = (e as Error).message || 'Google 무료 이미지 생성 실패';
+            // [FIX #606] 에러 메시지를 사용자 친화적으로 정리 — 비세션 에러는 쿠키 문제로 오인하지 않음
+            const rawMsg = (e as Error).message || '';
+            const isSessionError = rawMsg.includes('세션이 만료') || rawMsg.includes('쿠키');
+            const isQuotaError = rawMsg.includes('한도') || rawMsg.includes('초과');
+            const message = isSessionError || isQuotaError
+              ? rawMsg
+              : `무료 이미지 생성에 실패했어요. 잠시 후 다시 시도해주세요.`;
             logger.trackGenerationResult({
                 type: 'image',
                 sceneId: scene.id || '?',

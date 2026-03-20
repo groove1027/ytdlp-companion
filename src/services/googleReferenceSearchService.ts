@@ -117,8 +117,9 @@ const WIKIMEDIA_KO_EN_MAP: Record<string, string[]> = {
   '인물': ['person', 'portrait'],
   '사람': ['person'],
 };
-const GOOGLE_SEARCH_COOLDOWN_MS = 15 * 60 * 1000;
-const REFERENCE_SEARCH_CACHE_TTL_MS = 30 * 60 * 1000;
+// [FIX #659/#607] 쿨다운과 캐시 TTL을 완화 — 빈 결과가 30분 캐시되어 연쇄 실패하는 문제 수정
+const GOOGLE_SEARCH_COOLDOWN_MS = 5 * 60 * 1000; // 15분 → 5분
+const REFERENCE_SEARCH_CACHE_TTL_MS = 10 * 60 * 1000; // 30분 → 10분
 const GOOGLE_SEARCH_MAX_CONCURRENCY = 2;
 const REFERENCE_AI_RERANK_CANDIDATE_COUNT = 8;
 const REFERENCE_AI_RERANK_TIMEOUT_MS = 12_000;
@@ -1258,8 +1259,11 @@ function getCachedReferenceSearch(key: string): GoogleSearchResponse | null {
 }
 
 function setCachedReferenceSearch(key: string, response: GoogleSearchResponse): void {
+  // [FIX #659] 빈 결과는 짧게 캐시 (2분) — 재시도 시 빠르게 다시 검색
+  const hasResults = response.items && response.items.length > 0;
+  const ttl = hasResults ? REFERENCE_SEARCH_CACHE_TTL_MS : 2 * 60 * 1000;
   referenceSearchCache.set(key, {
-    expiresAt: Date.now() + REFERENCE_SEARCH_CACHE_TTL_MS,
+    expiresAt: Date.now() + ttl,
     response,
   });
 }
@@ -1474,10 +1478,12 @@ export async function searchGoogleImages(
   options?: {
     context?: ReferenceSearchContext;
     rankingMode?: 'fast' | 'best';
+    bypassEmptyCache?: boolean;
   },
 ): Promise<GoogleSearchResponse> {
   const normalizedQuery = normalizeQueryText(query) || '풍경 사진';
   const rankingMode = options?.rankingMode || 'fast';
+  const bypassEmptyCache = options?.bypassEmptyCache === true;
   const plan = getReferencePlan(normalizedQuery, options?.context);
   const cacheKey = getReferenceSearchCacheKey(
     normalizedQuery,
@@ -1487,7 +1493,7 @@ export async function searchGoogleImages(
     plan.contextSignature,
   );
   const cached = getCachedReferenceSearch(cacheKey);
-  if (cached) return cached;
+  if (cached && !(bypassEmptyCache && cached.items.length === 0)) return cached;
 
   const inflight = referenceSearchInflight.get(cacheKey);
   if (inflight) return inflight;
@@ -1657,6 +1663,7 @@ export async function autoApplyGoogleReferences(
         const response = await searchGoogleImages(query, 1, 'large', {
           context: { scene, prevScene, nextScene, globalContext },
           rankingMode: 'fast',
+          bypassEmptyCache: true,
         });
 
         if (_autoApplyRunId !== runId) return;
