@@ -8,6 +8,17 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-20] 무료 레퍼런스 재검색 UI 가시화 + 다음 결과 순차 전환
+- [x] `StoryboardPanel.tsx` — 스토리보드 카드/그리드/상세 모달의 이미지 액션 문구를 `이미지 생성` 대신 `레퍼런스 검색/레퍼런스 재검색`으로 바꾸고, 무료 레퍼런스 모드에서는 `변형` 버튼을 숨겨 혼선을 제거
+- [x] `StoryboardPanel.tsx` — 무료 레퍼런스 재검색 시 랜덤이 아니라 장면별 `referenceSearchPage`를 기준으로 다음 결과 페이지를 순차 탐색하도록 바꾸고, 다시 눌렀을 때 새 이미지로 교체되게 보강
+- [x] `types.ts`, `googleReferenceSearchService.ts`, `GoogleReferencePanel.tsx` — 장면별 마지막 레퍼런스 검색어/페이지를 저장해 자동 적용, 패널 수동 적용, 카드 재검색이 같은 상태를 공유하도록 정리
+- [x] 검증 통과:
+  `cd src && node_modules/typescript/bin/tsc --noEmit`
+  `cd src && node_modules/.bin/vite build`
+  `rg -n "referenceSearchPage|referenceSearchQuery|getReferenceActionLabel|getReferenceActionTooltip|레퍼런스 재검색|다른 레퍼런스 검색 중" src/types.ts src/services/googleReferenceSearchService.ts src/components/tabs/imagevideo/GoogleReferencePanel.tsx src/components/tabs/imagevideo/StoryboardPanel.tsx`
+- [x] 실제 브라우저 확인:
+  Playwright로 `한옥 마당에서 아침 햇살이 비치는 장면` 1컷을 만든 뒤 장면 카드의 `재검색` 버튼이 보이는 것과, 첫 클릭 후 `referenceSearchPage 1 -> 2`, 이미지 URL이 다른 결과로 바뀌는 것까지 확인
+
 ### [2026-03-20] 영상분석실 리메이크 대사 보존 우선 + 원본별 재사용 캐시
 - [x] `VideoAnalysisRoom.tsx` — 리메이크 프리셋의 화자분리 전사를 시간 예산으로 끊고 먼저 진행하던 경로를 제거하고, 전사 실패 시 대사 누락을 막기 위해 분석을 중단하도록 변경
 - [x] `VideoAnalysisRoom.tsx` — 같은 링크/같은 업로드 원본이면 프리셋을 바꿔도 소스 준비(프레임/메타데이터/타임드 자막/씬컷 힌트)와 화자분리 전사 결과를 원본 키 기준으로 재사용하도록 로컬 캐시 추가

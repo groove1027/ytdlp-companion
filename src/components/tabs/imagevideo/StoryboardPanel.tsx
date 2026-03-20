@@ -42,6 +42,9 @@ const BATCH_TIPS: string[] = [
   '배치 생성 중에도 완료된 장면은 바로 확인할 수 있어요',
 ];
 
+const REFERENCE_RESULT_PAGE_SIZE = 10;
+const MAX_REFERENCE_RESULT_PAGE = 5;
+
 // --- Aspect Ratio Helper ---
 
 /** 프로젝트 설정의 AspectRatio → Tailwind CSS 클래스 */
@@ -52,6 +55,20 @@ function aspectRatioClass(ar?: string): string {
     case AspectRatio.CLASSIC: return 'aspect-[4/3]';
     default: return 'aspect-video';
   }
+}
+
+function isReferenceImageScene(scene: Scene): boolean {
+  return /(구글|대체) 레퍼런스/.test(scene.generationStatus || '') || !!scene.referenceSearchQuery;
+}
+
+function getReferenceActionLabel(scene: Scene): string {
+  return scene.imageUrl ? '레퍼런스 재검색' : '레퍼런스 검색';
+}
+
+function getReferenceActionTooltip(scene: Scene): string {
+  return scene.imageUrl
+    ? '마음에 안 들면 다시 눌러 새 레퍼런스를 찾습니다'
+    : '장면 맥락에 맞는 무료 레퍼런스를 검색합니다';
 }
 
 // --- Constants ---
@@ -259,6 +276,7 @@ interface SceneCardProps {
 }
 
 const SceneCard: React.FC<SceneCardProps> = ({ scene, index, onUpdatePrompt, onDelete, onRegenerate, onTransform, onGrokVideo, onSeedanceVideo, onVeoVideo, onPlaySceneAudio, playingSceneId, sceneProgress, onAddAfter, onSplit, onMerge, onAutoPrompt, onReferenceUpload, onUploadImage, onOpenDetail, onCopyScript, isSelected, onToggleSelect, totalScenes }) => {
+  const enableGoogleReference = useImageVideoStore((s) => s.enableGoogleReference);
   const refInputRef = useRef<HTMLInputElement>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
   return (
@@ -416,14 +434,16 @@ const SceneCard: React.FC<SceneCardProps> = ({ scene, index, onUpdatePrompt, onD
         {/* Action buttons — categorized with dividers */}
         <div className="flex items-center gap-1.5 flex-wrap">
           {/* Image actions */}
-          <ActionButton label="이미지 생성" color="orange"
-            tooltip="이미지 생성" disabled={scene.isGeneratingImage}
+          <ActionButton label={enableGoogleReference ? getReferenceActionLabel(scene) : '이미지 생성'} color="orange"
+            tooltip={enableGoogleReference ? getReferenceActionTooltip(scene) : '이미지 생성'} disabled={scene.isGeneratingImage}
             icon={<svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>}
             onClick={() => onRegenerate(scene.id)} />
-          <ActionButton label="변형" color="violet"
-            tooltip="다른 구도로 변형" disabled={scene.isGeneratingImage}
-            icon={<svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>}
-            onClick={() => onTransform(scene.id)} />
+          {!enableGoogleReference && (
+            <ActionButton label="변형" color="violet"
+              tooltip="다른 구도로 변형" disabled={scene.isGeneratingImage}
+              icon={<svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>}
+              onClick={() => onTransform(scene.id)} />
+          )}
           <div className="w-px h-5 bg-gray-700 mx-0.5" />
           {/* Grok video actions */}
           <ActionButton label="Grok" color="pink"
@@ -478,6 +498,11 @@ const SceneCard: React.FC<SceneCardProps> = ({ scene, index, onUpdatePrompt, onD
             tooltip="장면 삭제"
             icon={<svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>}
             onClick={() => onDelete(index)} />
+          {enableGoogleReference && (
+            <p className="w-full text-[10px] text-orange-300/80">
+              마음에 안 들면 <span className="font-bold text-orange-200">{getReferenceActionLabel(scene)}</span> 버튼을 다시 누르면 새 레퍼런스를 찾습니다.
+            </p>
+          )}
         </div>
       </div>
 
@@ -515,7 +540,7 @@ const SceneCard: React.FC<SceneCardProps> = ({ scene, index, onUpdatePrompt, onD
             {scene.isGeneratingImage && (
               <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 backdrop-blur-sm rounded-lg">
                 <div className="w-5 h-5 border-2 border-gray-500 border-t-orange-400 rounded-full animate-spin" />
-                <span className="text-[9px] text-orange-300 mt-1 animate-pulse">생성 중</span>
+                <span className="text-[9px] text-orange-300 mt-1 animate-pulse">{enableGoogleReference ? '검색 중' : '생성 중'}</span>
               </div>
             )}
           </div>
@@ -583,6 +608,7 @@ interface GridSceneCardProps {
 
 const GridSceneCard: React.FC<GridSceneCardProps> = ({ scene, index, onRegenerate, onDelete, onGrokVideo, onSeedanceVideo, onVeoVideo, onPlaySceneAudio, playingSceneId, sceneProgress, onAddAfter, onSplit, onMerge, onReferenceUpload, onUploadImage, onOpenDetail, onCopyScript, isSelected, onToggleSelect, totalScenes }) => {
   const isThisPlaying = playingSceneId === scene.id;
+  const enableGoogleReference = useImageVideoStore((s) => s.enableGoogleReference);
   const gridUploadRef = useRef<HTMLInputElement>(null);
   const arClass = aspectRatioClass(useProjectStore((s) => s.config?.aspectRatio));
   const [isDragOver, setIsDragOver] = useState(false);
@@ -633,7 +659,7 @@ const GridSceneCard: React.FC<GridSceneCardProps> = ({ scene, index, onRegenerat
               <div className="animate-spin h-8 w-8 border-2 border-orange-500 border-t-transparent rounded-full" />
               <div className="absolute inset-0 animate-ping h-8 w-8 border border-orange-400/30 rounded-full" />
             </div>
-            <span className="text-[10px] text-orange-300 mt-2 animate-pulse font-medium">이미지 생성 중...</span>
+            <span className="text-[10px] text-orange-300 mt-2 animate-pulse font-medium">{enableGoogleReference ? '레퍼런스 검색 중...' : '이미지 생성 중...'}</span>
           </div>
         ) : scene.videoUrl && !scene.isGeneratingVideo && !scene.imageUpdatedAfterVideo ? (
           <video
@@ -736,8 +762,8 @@ const GridSceneCard: React.FC<GridSceneCardProps> = ({ scene, index, onRegenerat
             )}
           </div>
           <div className="flex items-center gap-1">
-            <ActionButton label="이미지" color="orange" compact
-              tooltip="이미지 생성" disabled={scene.isGeneratingImage}
+            <ActionButton label={enableGoogleReference ? (scene.imageUrl ? '재검색' : '검색') : '이미지'} color="orange" compact
+              tooltip={enableGoogleReference ? getReferenceActionTooltip(scene) : '이미지 생성'} disabled={scene.isGeneratingImage}
               icon={<svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>}
               onClick={(e) => { e.stopPropagation(); onRegenerate(scene.id); }} />
             <ActionButton label="Grok" color="pink" compact
@@ -841,6 +867,7 @@ const SceneDetailModal: React.FC<SceneDetailModalProps> = ({
   // 스토어에서 최신 장면 데이터 구독 (stale prop 방지)
   const liveScene = useProjectStore((s) => s.scenes.find((sc) => sc.id === sceneProp.id));
   const scene = liveScene || sceneProp;
+  const enableGoogleReference = useImageVideoStore((s) => s.enableGoogleReference);
   const modalArClass = aspectRatioClass(useProjectStore((s) => s.config?.aspectRatio));
   const selectedVideoModel = useProjectStore((s) => s.config?.videoModel);
   const seedanceDuration = (scene.seedanceDuration || '8') as SeedanceDuration;
@@ -997,21 +1024,28 @@ const SceneDetailModal: React.FC<SceneDetailModalProps> = ({
             <div className="grid grid-cols-2 gap-2">
               {/* Image actions */}
               <button type="button" disabled={scene.isGeneratingImage} onClick={() => onRegenerate(scene.id)}
-                className={`flex items-center gap-2 px-3 py-2 rounded-lg border transition-colors text-sm ${scene.isGeneratingImage ? 'bg-orange-600/20 border-orange-500/30 text-orange-300 cursor-wait' : 'bg-orange-600/10 border-orange-500/20 text-orange-300 hover:bg-orange-600/20 disabled:opacity-30 disabled:cursor-not-allowed'}`}>
+                className={`${enableGoogleReference ? 'col-span-2 ' : ''}flex items-center gap-2 px-3 py-2 rounded-lg border transition-colors text-sm ${scene.isGeneratingImage ? 'bg-orange-600/20 border-orange-500/30 text-orange-300 cursor-wait' : 'bg-orange-600/10 border-orange-500/20 text-orange-300 hover:bg-orange-600/20 disabled:opacity-30 disabled:cursor-not-allowed'}`}>
                 {scene.isGeneratingImage ? (
-                  <><span className="w-4 h-4 border-2 border-orange-400/30 border-t-orange-400 rounded-full animate-spin" /> 생성 중 {elapsedImage > 0 && <span className="tabular-nums text-xs text-orange-400/70">{formatElapsed(elapsedImage)}</span>}</>
+                  <><span className="w-4 h-4 border-2 border-orange-400/30 border-t-orange-400 rounded-full animate-spin" /> {enableGoogleReference ? '검색 중' : '생성 중'} {elapsedImage > 0 && <span className="tabular-nums text-xs text-orange-400/70">{formatElapsed(elapsedImage)}</span>}</>
                 ) : (
-                  <><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg> 이미지 생성</>
+                  <><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg> {enableGoogleReference ? getReferenceActionLabel(scene) : '이미지 생성'}</>
                 )}
               </button>
-              <button type="button" disabled={scene.isGeneratingImage} onClick={() => onTransform(scene.id)}
-                className={`flex items-center gap-2 px-3 py-2 rounded-lg border transition-colors text-sm ${scene.isGeneratingImage ? 'bg-blue-600/20 border-blue-500/30 text-blue-300 cursor-wait' : 'bg-blue-600/10 border-blue-500/20 text-blue-300 hover:bg-blue-600/20 disabled:opacity-30 disabled:cursor-not-allowed'}`}>
-                {scene.isGeneratingImage ? (
-                  <><span className="w-4 h-4 border-2 border-blue-400/30 border-t-blue-400 rounded-full animate-spin" /> 변형 중 {elapsedImage > 0 && <span className="tabular-nums text-xs text-blue-400/70">{formatElapsed(elapsedImage)}</span>}</>
-                ) : (
-                  <><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg> 변형 생성</>
-                )}
-              </button>
+              {!enableGoogleReference && (
+                <button type="button" disabled={scene.isGeneratingImage} onClick={() => onTransform(scene.id)}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg border transition-colors text-sm ${scene.isGeneratingImage ? 'bg-blue-600/20 border-blue-500/30 text-blue-300 cursor-wait' : 'bg-blue-600/10 border-blue-500/20 text-blue-300 hover:bg-blue-600/20 disabled:opacity-30 disabled:cursor-not-allowed'}`}>
+                  {scene.isGeneratingImage ? (
+                    <><span className="w-4 h-4 border-2 border-blue-400/30 border-t-blue-400 rounded-full animate-spin" /> 변형 중 {elapsedImage > 0 && <span className="tabular-nums text-xs text-blue-400/70">{formatElapsed(elapsedImage)}</span>}</>
+                  ) : (
+                    <><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg> 변형 생성</>
+                  )}
+                </button>
+              )}
+              {enableGoogleReference && (
+                <div className="col-span-2 px-3 py-1.5 bg-orange-600/10 border border-orange-500/20 rounded-lg text-xs text-orange-200">
+                  마음에 안 들면 <span className="font-bold">{getReferenceActionLabel(scene)}</span> 버튼을 다시 눌러 새 레퍼런스를 찾으세요.
+                </div>
+              )}
               {/* Image generation status */}
               {scene.isGeneratingImage && scene.generationStatus && (
                 <div className="col-span-2 flex items-center gap-2 px-3 py-1.5 bg-orange-600/10 border border-orange-500/20 rounded-lg">
@@ -1961,26 +1995,47 @@ const StoryboardPanel: React.FC = () => {
 
     // [NEW] 무료 레퍼런스 모드 — AI 생성 대신 웹 검색으로 대체
     if (useImageVideoStore.getState().enableGoogleReference && !feedback && !overrides) {
-      updateScene(sceneId, { isGeneratingImage: true, generationStatus: '무료 레퍼런스 검색 중...' });
       try {
         const { searchGoogleImages, buildSearchQuery } = await import('../../../services/googleReferenceSearchService');
         const sceneIndex = currentScenes.findIndex(s => s.id === sceneId);
         const prevScene = sceneIndex > 0 ? currentScenes[sceneIndex - 1] : null;
         const nextScene = sceneIndex < currentScenes.length - 1 ? currentScenes[sceneIndex + 1] : null;
         const query = buildSearchQuery(scene, prevScene, nextScene, currentConfig.globalContext);
-        // 이미 이미지가 있으면 다음 페이지에서 검색 (재생성)
-        const startIdx = scene.imageUrl?.trim() ? Math.floor(Math.random() * 9) + 1 : 1;
+        const hasExistingReference = !!scene.imageUrl?.trim() && isReferenceImageScene(scene);
+        const hasStoredReferencePage = typeof scene.referenceSearchPage === 'number' && scene.referenceSearchPage > 0;
+        const safePage = !hasExistingReference
+          ? 1
+          : scene.referenceSearchQuery && scene.referenceSearchQuery !== query
+            ? 1
+            : hasStoredReferencePage
+              ? (scene.referenceSearchPage! >= MAX_REFERENCE_RESULT_PAGE ? 1 : scene.referenceSearchPage! + 1)
+              : 2;
+        const startIdx = ((safePage - 1) * REFERENCE_RESULT_PAGE_SIZE) + 1;
+
+        updateScene(sceneId, {
+          isGeneratingImage: true,
+          generationStatus: hasExistingReference ? `다른 레퍼런스 검색 중... (${safePage}페이지)` : '무료 레퍼런스 검색 중...',
+        });
+
         const result = await searchGoogleImages(query, startIdx);
         if (result.items.length > 0) {
           updateScene(sceneId, {
             imageUrl: result.items[0].link,
+            previousImageUrl: scene.imageUrl || undefined,
             isGeneratingImage: false,
             generationStatus: result.provider === 'google' ? '구글 레퍼런스 적용됨' : '대체 레퍼런스 적용됨',
             imageUpdatedAfterVideo: !!scene.videoUrl,
+            referenceSearchPage: safePage,
+            referenceSearchQuery: query,
           });
           return true;
         }
-        updateScene(sceneId, { isGeneratingImage: false, generationStatus: '검색 결과 없음' });
+        updateScene(sceneId, {
+          isGeneratingImage: false,
+          generationStatus: '검색 결과 없음',
+          referenceSearchPage: safePage,
+          referenceSearchQuery: query,
+        });
         return false;
       } catch (err) {
         updateScene(sceneId, { isGeneratingImage: false, generationStatus: `검색 실패: ${err instanceof Error ? err.message : '오류'}` });

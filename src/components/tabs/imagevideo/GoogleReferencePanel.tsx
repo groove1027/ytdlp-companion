@@ -189,14 +189,17 @@ const GoogleReferencePanel: React.FC = () => {
   // 이미지 선택 → scene.imageUrl에 적용
   const applyImage = useCallback((sceneId: string, imageUrl: string, provider: ReferenceSearchProvider = 'google') => {
     const targetScene = scenes.find(s => s.id === sceneId);
+    const preview = scenePreviews.get(sceneId);
     updateScene(sceneId, {
       imageUrl,
       isGeneratingImage: false,
       generationStatus: provider === 'google' ? '구글 레퍼런스 이미지 적용' : '대체 레퍼런스 이미지 적용',
       imageUpdatedAfterVideo: !!targetScene?.videoUrl,
+      referenceSearchPage: preview?.resultPage || 1,
+      referenceSearchQuery: preview?.searchQuery,
     });
     showToast('레퍼런스 이미지가 적용되었어요!');
-  }, [scenes, updateScene]);
+  }, [scenePreviews, scenes, updateScene]);
 
   // 결과 내 다음/이전 이미지 전환
   const navigateResult = useCallback((sceneId: string, direction: 'prev' | 'next') => {

@@ -1049,9 +1049,9 @@ export async function autoApplyGoogleReferences(
         isGeneratingImage: true,
         generationStatus: `레퍼런스 검색 중... (${startedCount}/${candidates.length})`,
       });
+      const query = buildSearchQuery(scene, prevScene, nextScene, globalContext);
 
       try {
-        const query = buildSearchQuery(scene, prevScene, nextScene, globalContext);
         const response = await searchGoogleImages(query, 1);
 
         if (_autoApplyRunId !== runId) return;
@@ -1063,6 +1063,8 @@ export async function autoApplyGoogleReferences(
             isGeneratingImage: false,
             generationStatus: response.provider === 'google' ? '구글 레퍼런스 적용됨' : '대체 레퍼런스 적용됨',
             imageUpdatedAfterVideo: !!scene.videoUrl,
+            referenceSearchPage: 1,
+            referenceSearchQuery: query,
           });
           appliedCount++;
         } else {
@@ -1070,6 +1072,8 @@ export async function autoApplyGoogleReferences(
           updateScene(scene.id, {
             isGeneratingImage: false,
             generationStatus: '검색 결과 없음',
+            referenceSearchPage: 1,
+            referenceSearchQuery: query,
           });
         }
       } catch (err) {
@@ -1081,6 +1085,8 @@ export async function autoApplyGoogleReferences(
         updateScene(scene.id, {
           isGeneratingImage: false,
           generationStatus: `검색 실패: ${message}`,
+          referenceSearchPage: 1,
+          referenceSearchQuery: query,
         });
       }
     }

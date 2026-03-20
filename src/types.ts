@@ -237,6 +237,8 @@ export interface Scene {
   isUpscaled?: boolean;
   isNativeHQ?: boolean;
   imageUpdatedAfterVideo?: boolean; // 이미지가 영상 이후에 재생성됨 → 카드에서 이미지 우선 표시
+  referenceSearchPage?: number; // 무료 레퍼런스 재검색용 현재 결과 페이지
+  referenceSearchQuery?: string; // 무료 레퍼런스 재검색용 마지막 검색어
   isInfographic?: boolean;
   isLoopMode?: boolean; 
   
