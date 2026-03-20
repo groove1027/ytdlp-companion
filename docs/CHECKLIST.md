@@ -8,6 +8,19 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-20] 영상분석실 리메이크 전사 자동 복구 경로 추가
+- [x] `transcriptionService.ts` — Kie 전사 태스크 생성에 429/5xx 재시도를 추가하고, `transcribeWithDiarization()`이 같은 업로드 URL을 재사용해 `화자분리 재시도 -> 전체 대사 보존 전사 -> 구간 전사` 순서로 자동 복구하도록 보강
+- [x] `transcriptionService.ts` — 화자 분리 결과에 usable utterance가 없을 때 세그먼트 기반 utterance를 다시 구성해 대사 타임코드가 비지 않도록 정규화하고, 구간 전사 시에는 겹침 윈도우를 둔 75초 단위 WAV 분할로 전체 대사를 병합 복원하도록 추가
+- [x] `VideoAnalysisRoom.tsx` — 전사 자동 복구가 시작되면 사용자에게 토스트로 알리고, 모든 복구 경로가 실패했을 때만 대사 누락 방지를 위해 분석을 중단하는 최종 에러 문구로 교체
+- [x] 검증 통과:
+  `cd src && node_modules/typescript/bin/tsc --noEmit`
+  `cd src && node_modules/.bin/vite build`
+  `rg -n "transcribeWithDiarization\\(|transcribeAudioInChunks|requestKieTranscription|createKieTranscriptionTask|buildTranscriptionRequestFile|자동 복구" src/services/transcriptionService.ts src/components/tabs/channel/VideoAnalysisRoom.tsx`
+- [x] 실제 브라우저 확인:
+  업로드 샘플 `test/output/grok10s_evolink.mp4`로 직접 실행했을 때 첫 번째 `티키타카`는 `전처리 2.0초 / 음성 26초 / AI 1분 48초 / 첫 결과 2분 16초`, 이어서 두 번째 `스낵형` 시작 직후 `소스 준비 캐시 재사용`과 `음성 단계 0.0초`, 완료 시 `총 1분 30초` 요약까지 확인
+- [x] 참고:
+  이번 실브라우저 검증은 정상 전사 경로와 재사용 경로 재확인까지 수행했고, 외부 STT를 의도적으로 실패시키는 강제 장애 주입은 이번 턴에서 별도로 만들지 않음
+
 ### [2026-03-20] 무료 레퍼런스 재검색 UI 가시화 + 다음 결과 순차 전환
 - [x] `StoryboardPanel.tsx` — 스토리보드 카드/그리드/상세 모달의 이미지 액션 문구를 `이미지 생성` 대신 `레퍼런스 검색/레퍼런스 재검색`으로 바꾸고, 무료 레퍼런스 모드에서는 `변형` 버튼을 숨겨 혼선을 제거
 - [x] `StoryboardPanel.tsx` — 무료 레퍼런스 재검색 시 랜덤이 아니라 장면별 `referenceSearchPage`를 기준으로 다음 결과 페이지를 순차 탐색하도록 바꾸고, 다시 눌렀을 때 새 이미지로 교체되게 보강

@@ -3862,11 +3862,18 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
 
           if (audioSource) {
             console.log(`[Diarization] 화자 분리 시작 (${(audioSource.size / 1024 / 1024).toFixed(1)}MB)...`);
+            let recoveryToastShown = false;
             const diarResult = await transcribeVideoAudio(
               audioSource instanceof File ? audioSource : new File([audioSource], 'video.mp4', { type: 'video/mp4' }),
               {
                 signal: abortCtrl.signal,
-                onProgress: (msg) => console.log(`[Diarization] ${msg}`),
+                onProgress: (msg) => {
+                  console.log(`[Diarization] ${msg}`);
+                  if (!recoveryToastShown && msg.includes('자동 복구')) {
+                    recoveryToastShown = true;
+                    showToast('🔁 음성 전사 자동 복구 중...', 4000);
+                  }
+                },
                 failOnError: true,
               },
             );
@@ -3885,8 +3892,8 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
           }
         } catch (e) {
           if (abortCtrl.signal.aborted) throw new DOMException('분석이 취소되었습니다.', 'AbortError');
-          console.warn('[Diarization] 화자 분리 실패 — 대사 누락 방지를 위해 분석 중단:', e);
-          throw new Error('대사 누락을 막기 위해 음성 전사에 실패한 경우 분석을 진행하지 않도록 변경했습니다. 잠시 후 다시 시도해주세요.');
+          console.warn('[Diarization] 자동 복구 전사 실패 — 대사 누락 방지를 위해 분석 중단:', e);
+          throw new Error('음성 전사를 자동 복구까지 모두 시도했지만 실패했습니다. 대사 누락을 막기 위해 이번 분석은 중단합니다. 잠시 후 다시 시도해주세요.');
         }
       } else if (hasTimedTranscript) {
         console.log('[Diarization] ⚡ YouTube 타임드 자막으로 대체 — 화자분리 스킵 (속도 최적화)');

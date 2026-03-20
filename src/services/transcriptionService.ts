@@ -11,6 +11,385 @@ import { logger } from './LoggerService';
 import type { WhisperTranscriptResult, WhisperSegment, WhisperWord, DiarizedUtterance, ScriptLine } from '../types';
 
 const KIE_BASE_URL = 'https://api.kie.ai/api/v1';
+const CREATE_TASK_MAX_ATTEMPTS = 2;
+const CHUNK_FALLBACK_WINDOW_SECONDS = 75;
+const CHUNK_FALLBACK_OVERLAP_SECONDS = 2;
+const CHUNK_FALLBACK_MIN_DURATION_SECONDS = 90;
+const AUDIO_CHUNK_DECODE_TIMEOUT_MS = 25_000;
+
+function buildTranscriptionRequestFile(audioFile: File | Blob): File {
+  if (audioFile instanceof File) return audioFile;
+  return new File([audioFile], 'audio.wav', { type: audioFile.type || 'audio/wav' });
+}
+
+async function waitForRetry(ms: number, signal?: AbortSignal): Promise<void> {
+  if (!signal) {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+    return;
+  }
+  if (signal.aborted) throw new DOMException('전사가 취소되었습니다.', 'AbortError');
+  await new Promise<void>((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new DOMException('전사가 취소되었습니다.', 'AbortError'));
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+async function uploadAudioForTranscription(
+  file: File,
+  options?: {
+    signal?: AbortSignal;
+    onProgress?: (msg: string) => void;
+    diarize?: boolean;
+  },
+): Promise<string> {
+  const { signal, onProgress, diarize = false } = options || {};
+  onProgress?.('오디오 업로드 중...');
+  logger.info('[STT] Cloudinary 업로드 시작', { size: file.size, diarize });
+  const audioUrl = await uploadMediaToHosting(file, undefined, signal);
+  logger.success('[STT] Cloudinary 업로드 완료', { url: audioUrl });
+  if (signal?.aborted) throw new DOMException('전사가 취소되었습니다.', 'AbortError');
+  return audioUrl;
+}
+
+async function createKieTranscriptionTask(
+  audioUrl: string,
+  apiKey: string,
+  options?: {
+    signal?: AbortSignal;
+    diarize?: boolean;
+    maxAttempts?: number;
+  },
+): Promise<string> {
+  const { signal, diarize = false, maxAttempts = CREATE_TASK_MAX_ATTEMPTS } = options || {};
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    if (signal?.aborted) throw new DOMException('전사가 취소되었습니다.', 'AbortError');
+
+    const createResponse = await monitoredFetch(`${KIE_BASE_URL}/jobs/createTask`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'elevenlabs/speech-to-text',
+        input: {
+          audio_url: audioUrl,
+          diarize,
+          tag_audio_events: false,
+        },
+      }),
+      signal,
+    });
+
+    if (createResponse.ok) {
+      const createData = await createResponse.json() as { data?: { taskId?: string } };
+      const taskId = createData.data?.taskId;
+      if (taskId) return taskId;
+      throw new Error('전사 태스크 ID를 받지 못했습니다.');
+    }
+
+    const errorText = await createResponse.text();
+    if (createResponse.status === 402) throw new Error('Kie 잔액 부족: 크레딧을 충전해주세요.');
+
+    const retryable = createResponse.status === 429 || createResponse.status >= 500;
+    const isLastAttempt = attempt === maxAttempts - 1;
+    if (!retryable || isLastAttempt) {
+      if (createResponse.status === 429) throw new Error('Kie 요청 제한 초과: 잠시 후 다시 시도해주세요.');
+      throw new Error(`전사 태스크 생성 실패 (${createResponse.status}): ${errorText}`);
+    }
+
+    const waitMs = createResponse.status === 429
+      ? Math.min(4000 * (attempt + 1), 12000)
+      : Math.min(1500 * (attempt + 1), 6000);
+    logger.trackRetry('전사 태스크 생성', attempt + 1, maxAttempts, `${createResponse.status} 응답, ${waitMs}ms 대기`);
+    await waitForRetry(waitMs, signal);
+  }
+
+  throw new Error('전사 태스크를 생성하지 못했습니다.');
+}
+
+function buildUtterancesFromSegments(
+  segments: WhisperSegment[],
+  speakerId: string = 'speaker_0',
+): DiarizedUtterance[] {
+  return segments
+    .filter((segment) => segment.text.trim().length > 0)
+    .map((segment) => ({
+      speakerId,
+      text: segment.text.trim(),
+      startTime: segment.startTime,
+      endTime: segment.endTime,
+      words: (segment.words || []).map((word) => ({
+        ...word,
+        speakerId,
+      })),
+    }));
+}
+
+function shouldBackfillUtterances(
+  utterances: DiarizedUtterance[] | undefined,
+  segments: WhisperSegment[],
+): boolean {
+  if (segments.length === 0) return false;
+  if (!utterances || utterances.length === 0) return true;
+  return utterances.every((utterance) => !utterance.speakerId || utterance.speakerId === 'speaker_unknown');
+}
+
+function normalizeTranscriptResult(
+  result: WhisperTranscriptResult,
+  ensureUtterances = false,
+): WhisperTranscriptResult {
+  const segments = result.segments.filter((segment) => segment.text.trim().length > 0);
+  const text = result.text.trim() || segments.map((segment) => segment.text.trim()).join(' ').trim();
+  const duration = result.duration || segments[segments.length - 1]?.endTime || 0;
+
+  if (!ensureUtterances || !shouldBackfillUtterances(result.utterances, segments)) {
+    return { ...result, text, segments, duration };
+  }
+
+  return {
+    ...result,
+    text,
+    segments,
+    duration,
+    utterances: buildUtterancesFromSegments(segments),
+    speakerCount: segments.length > 0 ? 1 : 0,
+  };
+}
+
+function hasTranscriptContent(result: WhisperTranscriptResult): boolean {
+  if (result.text.trim().length > 0) return true;
+  return result.segments.some((segment) => segment.text.trim().length > 0);
+}
+
+async function requestKieTranscription(
+  audioUrl: string,
+  apiKey: string,
+  options?: {
+    signal?: AbortSignal;
+    onProgress?: (msg: string) => void;
+    diarize?: boolean;
+    ensureUtterances?: boolean;
+    maxCreateAttempts?: number;
+  },
+): Promise<WhisperTranscriptResult> {
+  const { signal, onProgress, diarize = false, ensureUtterances = false, maxCreateAttempts } = options || {};
+  onProgress?.('전사 태스크 생성 중...');
+  logger.info('[STT] Kie 전사 태스크 생성', { audioUrl, diarize });
+
+  const taskId = await createKieTranscriptionTask(audioUrl, apiKey, {
+    signal,
+    diarize,
+    maxAttempts: maxCreateAttempts,
+  });
+
+  onProgress?.(diarize ? '화자 분리 전사 중...' : '전사 중...');
+  const result = normalizeTranscriptResult(
+    await pollKieTranscriptionTask(taskId, apiKey, { signal, onProgress, diarize }),
+    ensureUtterances,
+  );
+
+  if (!hasTranscriptContent(result)) {
+    throw new Error(diarize ? '화자 분리 전사 결과가 비어 있습니다.' : '전사 결과가 비어 있습니다.');
+  }
+
+  return result;
+}
+
+interface ChunkWindow {
+  uniqueStart: number;
+  uniqueEnd: number;
+  sourceStart: number;
+  sourceEnd: number;
+}
+
+function buildChunkWindows(duration: number): ChunkWindow[] {
+  const windows: ChunkWindow[] = [];
+
+  for (let uniqueStart = 0; uniqueStart < duration; uniqueStart += CHUNK_FALLBACK_WINDOW_SECONDS) {
+    const uniqueEnd = Math.min(duration, uniqueStart + CHUNK_FALLBACK_WINDOW_SECONDS);
+    windows.push({
+      uniqueStart,
+      uniqueEnd,
+      sourceStart: Math.max(0, uniqueStart - CHUNK_FALLBACK_OVERLAP_SECONDS),
+      sourceEnd: Math.min(duration, uniqueEnd + CHUNK_FALLBACK_OVERLAP_SECONDS),
+    });
+  }
+
+  return windows;
+}
+
+async function decodeAudioBufferForChunking(
+  audioFile: File,
+  signal?: AbortSignal,
+): Promise<{ audioContext: AudioContext; audioBuffer: AudioBuffer }> {
+  if (signal?.aborted) throw new DOMException('전사가 취소되었습니다.', 'AbortError');
+  const arrayBuffer = await audioFile.arrayBuffer();
+  if (signal?.aborted) throw new DOMException('전사가 취소되었습니다.', 'AbortError');
+
+  const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+  const audioContext = new AudioCtx();
+
+  try {
+    const audioBuffer = await Promise.race([
+      audioContext.decodeAudioData(arrayBuffer),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('decodeAudioData timeout')), AUDIO_CHUNK_DECODE_TIMEOUT_MS)),
+    ]);
+    return { audioContext, audioBuffer };
+  } catch (error) {
+    await audioContext.close();
+    throw error;
+  }
+}
+
+function sliceAudioBufferToWav(buffer: AudioBuffer, startSec: number, endSec: number): Blob {
+  const startSample = Math.floor(startSec * buffer.sampleRate);
+  const endSample = Math.max(startSample + 1, Math.floor(endSec * buffer.sampleRate));
+  const sampleCount = endSample - startSample;
+  const mono = new Float32Array(sampleCount);
+
+  for (let channel = 0; channel < buffer.numberOfChannels; channel++) {
+    const source = buffer.getChannelData(channel);
+    for (let i = 0; i < sampleCount; i++) {
+      mono[i] += source[startSample + i] / buffer.numberOfChannels;
+    }
+  }
+
+  const wavBuffer = new ArrayBuffer(44 + sampleCount * 2);
+  const view = new DataView(wavBuffer);
+  const writeText = (offset: number, text: string) => {
+    for (let i = 0; i < text.length; i++) view.setUint8(offset + i, text.charCodeAt(i));
+  };
+
+  writeText(0, 'RIFF');
+  view.setUint32(4, 36 + sampleCount * 2, true);
+  writeText(8, 'WAVE');
+  writeText(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, buffer.sampleRate, true);
+  view.setUint32(28, buffer.sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeText(36, 'data');
+  view.setUint32(40, sampleCount * 2, true);
+
+  let offset = 44;
+  for (let i = 0; i < sampleCount; i++) {
+    const sample = Math.max(-1, Math.min(1, mono[i]));
+    view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
+    offset += 2;
+  }
+
+  return new Blob([wavBuffer], { type: 'audio/wav' });
+}
+
+function isSegmentInUniqueWindow(segment: WhisperSegment, uniqueStart: number, uniqueEnd: number): boolean {
+  const midpoint = (segment.startTime + segment.endTime) / 2;
+  return midpoint >= uniqueStart && midpoint < uniqueEnd + 0.001;
+}
+
+function shiftSegmentsIntoWindow(
+  segments: WhisperSegment[],
+  offsetSeconds: number,
+  uniqueStart: number,
+  uniqueEnd: number,
+): WhisperSegment[] {
+  return segments
+    .map((segment) => ({
+      ...segment,
+      startTime: segment.startTime + offsetSeconds,
+      endTime: segment.endTime + offsetSeconds,
+      words: segment.words?.map((word) => ({
+        ...word,
+        startTime: word.startTime + offsetSeconds,
+        endTime: word.endTime + offsetSeconds,
+      })),
+    }))
+    .filter((segment) => isSegmentInUniqueWindow(segment, uniqueStart, uniqueEnd));
+}
+
+async function transcribeChunkWithRetry(
+  chunkFile: File,
+  options?: {
+    signal?: AbortSignal;
+    attempts?: number;
+  },
+): Promise<WhisperTranscriptResult> {
+  const { signal, attempts = 2 } = options || {};
+
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      return await transcribeAudio(chunkFile, { signal });
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      if (attempt === attempts - 1) throw error;
+      logger.trackRetry('전사 구간 복구', attempt + 1, attempts, '구간 전사 재시도');
+      await waitForRetry(1200 * (attempt + 1), signal);
+    }
+  }
+
+  throw new Error('구간 전사 재시도에 실패했습니다.');
+}
+
+async function transcribeAudioInChunks(
+  audioFile: File,
+  options?: {
+    signal?: AbortSignal;
+    onProgress?: (msg: string) => void;
+  },
+): Promise<WhisperTranscriptResult> {
+  const { signal, onProgress } = options || {};
+  const { audioContext, audioBuffer } = await decodeAudioBufferForChunking(audioFile, signal);
+
+  try {
+    if (audioBuffer.duration < CHUNK_FALLBACK_MIN_DURATION_SECONDS) {
+      throw new Error('구간 전사를 적용하기에는 오디오가 너무 짧습니다.');
+    }
+
+    const windows = buildChunkWindows(audioBuffer.duration);
+    if (windows.length < 2) throw new Error('구간 전사 윈도우를 생성하지 못했습니다.');
+
+    const mergedSegments: WhisperSegment[] = [];
+    let mergedLanguage = 'unknown';
+
+    for (let index = 0; index < windows.length; index++) {
+      if (signal?.aborted) throw new DOMException('전사가 취소되었습니다.', 'AbortError');
+
+      const window = windows[index];
+      onProgress?.(`전사 자동 복구 중... (구간 전사 ${index + 1}/${windows.length})`);
+      const chunkBlob = sliceAudioBufferToWav(audioBuffer, window.sourceStart, window.sourceEnd);
+      const chunkFile = new File([chunkBlob], `audio-part-${index + 1}.wav`, { type: 'audio/wav' });
+      const chunkResult = await transcribeChunkWithRetry(chunkFile, { signal });
+      if (mergedLanguage === 'unknown' && chunkResult.language) mergedLanguage = chunkResult.language;
+      mergedSegments.push(...shiftSegmentsIntoWindow(chunkResult.segments, window.sourceStart, window.uniqueStart, window.uniqueEnd));
+    }
+
+    const result = normalizeTranscriptResult({
+      text: mergedSegments.map((segment) => segment.text.trim()).join(' ').trim(),
+      language: mergedLanguage,
+      segments: mergedSegments.sort((a, b) => a.startTime - b.startTime),
+      duration: audioBuffer.duration,
+    }, true);
+
+    if (!hasTranscriptContent(result)) {
+      throw new Error('구간 전사 결과가 비어 있습니다.');
+    }
+
+    return result;
+  } finally {
+    await audioContext.close();
+  }
+}
 
 /**
  * 오디오 파일을 전사하여 텍스트 + 타임스탬프 추출
@@ -30,54 +409,9 @@ export async function transcribeAudio(
   if (!apiKey) throw new Error('Kie API 키가 설정되지 않았습니다.');
 
   const { signal, onProgress, diarize = false } = options || {};
-
-  // 1. Cloudinary에 업로드
-  onProgress?.('오디오 업로드 중...');
-  logger.info('[STT] Cloudinary 업로드 시작', { size: audioFile.size, diarize });
-
-  const file = audioFile instanceof File
-    ? audioFile
-    : new File([audioFile], 'audio.wav', { type: audioFile.type || 'audio/wav' });
-  const audioUrl = await uploadMediaToHosting(file, undefined, signal);
-  logger.success('[STT] Cloudinary 업로드 완료', { url: audioUrl });
-
-  if (signal?.aborted) throw new Error('전사가 취소되었습니다.');
-
-  // 2. Kie createTask
-  onProgress?.('전사 태스크 생성 중...');
-  logger.info('[STT] Kie 전사 태스크 생성', { audioUrl, diarize });
-
-  const createResponse = await monitoredFetch(`${KIE_BASE_URL}/jobs/createTask`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: 'elevenlabs/speech-to-text',
-      input: {
-        audio_url: audioUrl,
-        diarize,
-        tag_audio_events: false,
-      },
-    }),
-    signal,
-  });
-
-  if (!createResponse.ok) {
-    const errorText = await createResponse.text();
-    if (createResponse.status === 402) throw new Error('Kie 잔액 부족: 크레딧을 충전해주세요.');
-    if (createResponse.status === 429) throw new Error('Kie 요청 제한 초과: 잠시 후 다시 시도해주세요.');
-    throw new Error(`전사 태스크 생성 실패 (${createResponse.status}): ${errorText}`);
-  }
-
-  const createData = await createResponse.json();
-  const taskId = createData.data?.taskId;
-  if (!taskId) throw new Error('전사 태스크 ID를 받지 못했습니다.');
-
-  // 3. 폴링
-  onProgress?.(diarize ? '화자 분리 전사 중...' : '전사 중...');
-  const result = await pollKieTranscriptionTask(taskId, apiKey, { signal, onProgress, diarize });
+  const file = buildTranscriptionRequestFile(audioFile);
+  const audioUrl = await uploadAudioForTranscription(file, { signal, onProgress, diarize });
+  const result = await requestKieTranscription(audioUrl, apiKey, { signal, onProgress, diarize });
 
   logger.success('[STT] 전사 완료', {
     language: result.language,
@@ -101,7 +435,55 @@ export async function transcribeWithDiarization(
     onProgress?: (msg: string) => void;
   }
 ): Promise<WhisperTranscriptResult> {
-  return transcribeAudio(audioFile, { ...options, diarize: true });
+  const apiKey = getKieKey();
+  if (!apiKey) throw new Error('Kie API 키가 설정되지 않았습니다.');
+
+  const { signal, onProgress } = options || {};
+  const file = buildTranscriptionRequestFile(audioFile);
+  const audioUrl = await uploadAudioForTranscription(file, { signal, onProgress, diarize: true });
+
+  try {
+    return await requestKieTranscription(audioUrl, apiKey, {
+      signal,
+      onProgress,
+      diarize: true,
+      ensureUtterances: true,
+    });
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    logger.warn('[STT] 화자 분리 1차 실패 — 자동 복구 재시도', { error: error instanceof Error ? error.message : String(error) });
+  }
+
+  try {
+    onProgress?.('전사 자동 복구 중... (화자 분리 재시도)');
+    return await requestKieTranscription(audioUrl, apiKey, {
+      signal,
+      onProgress,
+      diarize: true,
+      ensureUtterances: true,
+      maxCreateAttempts: 3,
+    });
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    logger.warn('[STT] 화자 분리 재시도 실패 — 전체 대사 전사로 복구', { error: error instanceof Error ? error.message : String(error) });
+  }
+
+  try {
+    onProgress?.('전사 자동 복구 중... (전체 대사 보존 전사)');
+    return await requestKieTranscription(audioUrl, apiKey, {
+      signal,
+      onProgress,
+      diarize: false,
+      ensureUtterances: true,
+      maxCreateAttempts: 3,
+    });
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    logger.warn('[STT] 전체 대사 전사 실패 — 구간 전사로 복구', { error: error instanceof Error ? error.message : String(error) });
+  }
+
+  onProgress?.('전사 자동 복구 중... (구간 전사)');
+  return transcribeAudioInChunks(file, { signal, onProgress });
 }
 
 /**
@@ -119,7 +501,11 @@ export function formatDiarizedTranscript(result: WhisperTranscriptResult): strin
     return `[${u.speakerId} ${start}~${end}] ${u.text}`;
   });
 
-  return `## 화자 분리 전사 결과 (ElevenLabs Scribe — ${result.speakerCount ?? '?'}명 감지)\n` +
+  const header = (result.speakerCount ?? 0) > 1
+    ? `## 화자 분리 전사 결과 (ElevenLabs Scribe — ${result.speakerCount ?? '?'}명 감지)`
+    : '## 음성 전사 결과 (ElevenLabs Scribe — 전체 대사 보존)';
+
+  return `${header}\n` +
     `언어: ${result.language} / 총 길이: ${formatTimestamp(result.duration)}\n\n` +
     lines.join('\n');
 }
