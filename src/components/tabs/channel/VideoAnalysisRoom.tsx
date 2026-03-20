@@ -2434,6 +2434,17 @@ const PRESET_INFO: Record<AnalysisPreset, { label: string; description: string; 
   alltts: { label: 'All TTS', description: '스크립트 리빌딩 v3.6 — 원본 100% 보존 + 텍스트 유사도 0% 수렴. 전체 TTS 대본 10종 생성', color: 'violet' },
 };
 
+const formatAnalysisPerfMs = (ms: number): string => {
+  const safeMs = Number.isFinite(ms) ? Math.max(0, ms) : 0;
+  const totalSec = safeMs / 1000;
+  if (totalSec >= 60) {
+    const min = Math.floor(totalSec / 60);
+    const sec = totalSec - min * 60;
+    return `${min}분 ${sec >= 10 ? sec.toFixed(0) : sec.toFixed(1)}초`;
+  }
+  return `${totalSec >= 10 ? totalSec.toFixed(0) : totalSec.toFixed(1)}초`;
+};
+
 const VERSION_COLORS = [
   { bg: 'bg-red-500/15', border: 'border-red-500/30', text: 'text-red-400', numBg: 'bg-red-500' },
   { bg: 'bg-orange-500/15', border: 'border-orange-500/30', text: 'text-orange-400', numBg: 'bg-orange-500' },
@@ -3066,6 +3077,23 @@ const VideoAnalysisRoom: React.FC = () => {
   const [renderProgress, setRenderProgress] = useState(0);
   const [displayLangMode, setDisplayLangMode] = useState<'ko' | 'bilingual' | 'original'>('bilingual');
   const analysisStartRef = useRef<number>(0);
+  const analysisRunIdRef = useRef(0);
+  const analysisPerfRef = useRef<{
+    runId: number;
+    startedAt: number;
+    lastAt: number;
+    stageDurations: Record<string, number>;
+    preset: AnalysisPreset | null;
+    inputLabel: string;
+  }>({
+    runId: 0,
+    startedAt: 0,
+    lastAt: 0,
+    stageDurations: {},
+    preset: null,
+    inputLabel: '',
+  });
+  const [lastAnalysisPerfLines, setLastAnalysisPerfLines] = useState<string[]>([]);
 
   // ── 인기 쇼츠 음원 추천 ──
   const [trendingBgm, setTrendingBgm] = useState<{ title: string; artist: string; videoId: string; thumbnail: string }[]>([]);
@@ -3086,7 +3114,94 @@ const VideoAnalysisRoom: React.FC = () => {
     return () => clearInterval(t);
   }, [nleExporting?.startedAt]);
   const validYoutubeUrls = youtubeUrls.filter(u => u.trim().length > 0);
+  const primaryAnalysisSourceUrl = validYoutubeUrls[0] || '';
   const hasInput = inputMode === 'youtube' ? validYoutubeUrls.length > 0 : uploadedFiles.length > 0;
+
+  const resetAnalysisPerf = useCallback((preset: AnalysisPreset): number => {
+    const now = performance.now();
+    const nextRunId = analysisRunIdRef.current + 1;
+    analysisRunIdRef.current = nextRunId;
+    const inputLabel = inputMode === 'youtube'
+      ? `${isYouTubeUrl(primaryAnalysisSourceUrl) ? 'YouTube' : primaryAnalysisSourceUrl ? '소셜' : '링크'} ${validYoutubeUrls.length}개`
+      : `업로드 ${uploadedFiles.length}개`;
+    analysisPerfRef.current = {
+      runId: nextRunId,
+      startedAt: now,
+      lastAt: now,
+      stageDurations: {},
+      preset,
+      inputLabel,
+    };
+    setLastAnalysisPerfLines([]);
+    console.log(`[VideoAnalysis][Perf] 시작: ${PRESET_INFO[preset].label} · ${inputLabel}`);
+    return nextRunId;
+  }, [inputMode, primaryAnalysisSourceUrl, uploadedFiles.length, validYoutubeUrls.length]);
+
+  const addAnalysisPerfStage = useCallback((
+    runId: number,
+    stageKey: string,
+    label: string,
+    explicitMs?: number,
+  ): number => {
+    const perf = analysisPerfRef.current;
+    if (perf.runId !== runId || !perf.startedAt) return 0;
+    const now = performance.now();
+    const stageMs = explicitMs ?? Math.max(0, now - perf.lastAt);
+    if (explicitMs === undefined) perf.lastAt = now;
+    perf.stageDurations[stageKey] = (perf.stageDurations[stageKey] || 0) + stageMs;
+    console.log(`[VideoAnalysis][Perf] ${label}: ${formatAnalysisPerfMs(stageMs)} (누적 ${formatAnalysisPerfMs(now - perf.startedAt)})`);
+    return stageMs;
+  }, []);
+
+  const updateAnalysisPerfSummary = useCallback((
+    runId: number,
+    status: 'success' | 'cancelled' | 'failed',
+    options?: {
+      backgroundState?: 'running' | 'done' | 'timeout' | 'failed';
+      showToastSummary?: boolean;
+    },
+  ) => {
+    const perf = analysisPerfRef.current;
+    if (perf.runId !== runId || !perf.startedAt) return;
+    const now = performance.now();
+    const totalMs = Math.max(0, now - perf.startedAt);
+    const stageDurations = perf.stageDurations;
+    const presetLabel = perf.preset ? PRESET_INFO[perf.preset].label : '리메이크';
+    const statusLabel = status === 'success' ? '완료' : status === 'cancelled' ? '중단' : '실패';
+    const backgroundMs = stageDurations.backgroundFrames || 0;
+    const backgroundLine = options?.backgroundState === 'running'
+      ? '백그라운드 프레임 보정 진행 중'
+      : options?.backgroundState === 'timeout'
+        ? `백그라운드 프레임 ${formatAnalysisPerfMs(backgroundMs)} · 타임아웃`
+        : options?.backgroundState === 'failed'
+          ? `백그라운드 프레임 ${formatAnalysisPerfMs(backgroundMs)} · 실패`
+          : backgroundMs > 0
+            ? `백그라운드 프레임 ${formatAnalysisPerfMs(backgroundMs)} · 완료`
+            : '백그라운드 프레임 대기 없음';
+    const summaryLines = [
+      `최근 분석: ${presetLabel} · ${perf.inputLabel}`,
+      `총 ${formatAnalysisPerfMs(totalMs)} · 전처리 ${formatAnalysisPerfMs(stageDurations.preload || 0)} · 음성 ${formatAnalysisPerfMs(stageDurations.diarization || 0)} · AI ${formatAnalysisPerfMs(stageDurations.ai || 0)} · 결과 ${formatAnalysisPerfMs(stageDurations.result || 0)}`,
+      `${backgroundLine} · 상태 ${statusLabel}`,
+    ];
+    setLastAnalysisPerfLines(summaryLines);
+    console.log(`[VideoAnalysis][Perf] 요약: ${summaryLines.join(' | ')}`);
+    if (typeof console.table === 'function') {
+      console.table([
+        { stage: '전처리', seconds: Number(((stageDurations.preload || 0) / 1000).toFixed(1)) },
+        { stage: '음성', seconds: Number(((stageDurations.diarization || 0) / 1000).toFixed(1)) },
+        { stage: 'AI', seconds: Number(((stageDurations.ai || 0) / 1000).toFixed(1)) },
+        { stage: '결과', seconds: Number(((stageDurations.result || 0) / 1000).toFixed(1)) },
+        { stage: '백그라운드 프레임', seconds: Number((backgroundMs / 1000).toFixed(1)) },
+        { stage: '총합', seconds: Number((totalMs / 1000).toFixed(1)) },
+      ]);
+    }
+    if (options?.showToastSummary && status === 'success') {
+      showToast(
+        `분석 ${formatAnalysisPerfMs(totalMs)} · 전처리 ${formatAnalysisPerfMs(stageDurations.preload || 0)} · AI ${formatAnalysisPerfMs(stageDurations.ai || 0)}`,
+        6500,
+      );
+    }
+  }, []);
 
   // 슬롯 목록 초기 로드
   React.useEffect(() => { loadAllSlots(); }, []);
@@ -3260,6 +3375,7 @@ const VideoAnalysisRoom: React.FC = () => {
     setIsLongForm(false);
     failsafeFiredRef.current = false; // [FIX #454] 페일세이프 플래그 초기화
     analysisStartRef.current = Date.now();
+    const perfRunId = resetAnalysisPerf(preset);
     resetResults();
 
     // [FIX #378 + #523] 분석 시작 직후 글로벌 타임아웃 설정 — 전처리+AI 전체 보호
@@ -3569,6 +3685,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       const frameMaxSec = frames.reduce((mx, f) => Math.max(mx, f.timeSec), 0);
       const maxTimeSec = Math.max(frameMaxSec, knownDurationSec);
       setIsLongForm(maxTimeSec >= 300);
+      addAnalysisPerfStage(perfRunId, 'preload', '전처리');
       let singleSourceSceneCutsPromise: Promise<SceneCut[] | null> | null = null;
 
       // ★ YouTube 병렬 다운로드 + 씬 감지 시작 (AI 분석과 동시 실행)
@@ -3707,6 +3824,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       if (diarizedText) {
         inputDesc += `\n\n---\n${diarizedText}\n\n위 화자 분리 전사 결과는 ElevenLabs AI가 영상 오디오에서 자동 추출한 것입니다.\n각 화자(speaker_0, speaker_1, ...)의 대사와 타이밍을 편집 테이블에 정확히 반영하세요.\n동일 컷에서 화자가 바뀌면 반드시 행을 분리하세요.`;
       }
+      addAnalysisPerfStage(perfRunId, 'diarization', '음성 단계');
 
       // 2단계: AI 분석 — 적응형 단일/배치 호출
       // [FIX #454] 전처리 완료 후 글로벌 타임아웃을 AI 전용으로 교체
@@ -3947,6 +4065,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
         showToast(`⚠️ ${effectiveVersionCount}개 중 ${parsed.length}개 버전만 생성되었어요. 버전 수를 줄이면 더 안정적이에요.`, 6000);
       }
       setVersions(parsed);
+      addAnalysisPerfStage(perfRunId, 'ai', 'AI 분석');
 
       // [FIX #313] 배치 완료 후 IndexedDB 자동 저장 — 프레임 추출 전에 저장하여 새로고침 시 복구 가능
       autoSave().catch(() => {});
@@ -3961,6 +4080,8 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       // [FIX #340] 프레임 추출 전체를 2분 타임아웃으로 보호 — 무한 대기 방지
       // [FIX #519] 타임아웃 시 내부 IIFE의 고아 rejection이 unhandled rejection으로 표면화 방지
       const FRAME_EXTRACTION_TIMEOUT = 2 * 60 * 1000;
+      const backgroundFramePerfStartedAt = performance.now();
+      let backgroundFramePerfState: 'done' | 'timeout' | 'failed' = 'done';
       const innerFrameWork = (async () => {
       const finalVersions = useVideoAnalysisStore.getState().versions;
       let ytVid: string | null = null;
@@ -4109,16 +4230,33 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
         new Promise<void>((_, reject) => setTimeout(() => reject(new Error('FRAME_TIMEOUT')), FRAME_EXTRACTION_TIMEOUT)),
       ]).catch((frameErr) => {
         if (frameErr instanceof Error && frameErr.message === 'FRAME_TIMEOUT') {
+          backgroundFramePerfState = 'timeout';
           console.warn('[Frame] ⚠️ 프레임 추출 2분 타임아웃 — 기존 썸네일 유지');
         } else {
+          backgroundFramePerfState = 'failed';
           console.warn('[Frame] 프레임 추출 실패 (결과는 정상 표시):', frameErr);
         }
       }).finally(() => {
+        addAnalysisPerfStage(
+          perfRunId,
+          'backgroundFrames',
+          '백그라운드 프레임 보정',
+          Math.max(0, performance.now() - backgroundFramePerfStartedAt),
+        );
+        updateAnalysisPerfSummary(perfRunId, 'success', {
+          backgroundState: backgroundFramePerfState,
+          showToastSummary: false,
+        });
         cacheCurrentResult(preset);
         autoSave().catch(() => {});
       });
 
       // [FIX #316] 결과 캐시에 저장 (동기 실행 — setTimeout 제거하여 autoSave 이전에 캐시 확보)
+      addAnalysisPerfStage(perfRunId, 'result', '결과 표시');
+      updateAnalysisPerfSummary(perfRunId, 'success', {
+        backgroundState: 'running',
+        showToastSummary: true,
+      });
       cacheCurrentResult(preset);
       notifyAnalysisComplete();
       // 자동 슬롯 저장
@@ -4131,6 +4269,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
         || (err instanceof Error && (err.message.includes('aborted') || err.message.includes('취소')));
       const msg = isAbort ? '분석이 취소되었습니다.' : (err instanceof Error ? err.message : String(err));
       console.error('[VideoAnalysis] 분석 실패:', isAbort ? '(사용자 취소/타임아웃)' : err);
+      updateAnalysisPerfSummary(perfRunId, isAbort ? 'cancelled' : 'failed');
 
       if (isAbort) {
         // [FIX #454] 페일세이프 타이머가 이미 토스트를 표시한 경우 중복 방지
@@ -4793,6 +4932,25 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
           <div>
             <p className="text-red-400 font-semibold text-sm">분석 오류</p>
             <p className="text-red-300/70 text-sm mt-1">{error}</p>
+          </div>
+        </div>
+      )}
+
+      {lastAnalysisPerfLines.length > 0 && (
+        <div className="bg-cyan-950/25 border border-cyan-500/20 rounded-xl p-4 space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-cyan-300 font-semibold text-sm">최근 리메이크 분석 소요시간</p>
+            <span className="text-[10px] text-cyan-300/70">성능 로그</span>
+          </div>
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-2">
+            {lastAnalysisPerfLines.map((line, index) => (
+              <div
+                key={`${index}-${line}`}
+                className="px-3 py-2 rounded-lg bg-gray-950/50 border border-gray-800/80 text-xs text-gray-300"
+              >
+                {line}
+              </div>
+            ))}
           </div>
         </div>
       )}
