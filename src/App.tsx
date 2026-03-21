@@ -40,7 +40,7 @@ import AuthGate from './components/AuthGate';
 import AuthPromptModal from './components/AuthPromptModal';
 import ProfileModal from './components/ProfileModal';
 import HelpGuideModal from './components/HelpGuideModal';
-import OnboardingTour from './components/OnboardingTour';
+// [REMOVED] OnboardingTour — 사용자 혼란 유발로 제거
 import { useUIStore, showToast } from './stores/uiStore';
 import { useAuthStore } from './stores/authStore';
 import { useCostStore } from './stores/costStore';
@@ -1134,26 +1134,7 @@ const App: React.FC = () => {
         </div>
       </header>
 
-      {/* 공지 배너 — 2026-03-17 배포 정상화 + 클라우드 동기화 안내 */}
-      {!localStorage.getItem('dismiss_announce_0317') && (
-        <div data-announce-banner className="fixed top-16 left-0 right-0 z-40 bg-gradient-to-r from-blue-600/95 to-violet-600/95 backdrop-blur-sm border-b border-blue-400/30 px-4 py-3 shadow-lg">
-          <div className="max-w-5xl mx-auto flex items-start gap-3">
-            <span className="text-xl flex-shrink-0 mt-0.5">📢</span>
-            <div className="flex-1 text-sm text-white/95 leading-relaxed">
-              <p className="font-bold text-white mb-1">업데이트 안내</p>
-              <p>그동안 수정사항이 사이트에 반영되지 않는 문제가 있었습니다. 현재 <strong>모든 수정이 반영 완료</strong>되었고, 앞으로는 자동 배포됩니다.</p>
-              <p className="mt-1">또한 <strong>로그인하시면 API 설정과 프로젝트가 클라우드에 자동 저장</strong>되어, 다른 기기에서도 이어서 작업할 수 있습니다 🎉</p>
-            </div>
-            <button
-              onClick={() => { localStorage.setItem('dismiss_announce_0317', '1'); window.dispatchEvent(new Event('storage')); document.querySelector('[data-announce-banner]')?.remove(); }}
-              className="flex-shrink-0 text-white/70 hover:text-white transition-colors mt-0.5"
-              data-announce-close
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"/></svg>
-            </button>
-          </div>
-        </div>
-      )}
+      {/* [REMOVED] 공지 배너 — 2026-03-17 배포 정상화 안내 (기간 만료로 제거) */}
 
       {/* [v4.5] 헤더 아래: 좌측 사이드바 + 우측 콘텐츠 */}
       <div className="flex pt-16 min-h-screen">
@@ -1479,9 +1460,8 @@ const App: React.FC = () => {
         />
       )}
 
-      {/* 도움말 & 온보딩 */}
+      {/* 도움말 */}
       <HelpGuideModal />
-      <OnboardingTour />
 
       {/* Soft Gate 모달 */}
       <AuthPromptModal />
