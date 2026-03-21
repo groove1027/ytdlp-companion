@@ -90,20 +90,84 @@ async function createKieTranscriptionTask(
     });
 
     if (createResponse.ok) {
-      const createData = await createResponse.json() as { data?: { taskId?: string } };
+      // [FIX #674] guarded JSON 파싱 (VideoGenService.parseKieCreateTaskResponse 패턴)
+      let createData: {
+        code?: number;
+        msg?: string;
+        message?: string;
+        data?: { taskId?: string; [key: string]: unknown };
+      } = {};
+      try {
+        const rawText = await createResponse.text();
+        if (rawText) {
+          const parsed = JSON.parse(rawText);
+          if (parsed && typeof parsed === 'object') createData = parsed;
+        }
+      } catch {
+        throw new Error('전사 서비스 응답을 처리하지 못했습니다. 잠시 후 다시 시도해주세요.');
+      }
+
+      // [FIX #674] KIE API는 HTTP 200이면서 body에 에러 코드를 포함할 수 있음
+      // (sfxService, elevenlabsService, VideoGenService는 이미 처리 — transcriptionService만 누락)
+      if (createData.code === 402) {
+        throw new Error('음성 전사 크레딧이 부족합니다. API 키 설정에서 잔액을 확인해주세요.');
+      }
+      // [FIX #674] 501/505: 터미널 에러 — 재시도 불필요, 즉시 실패
+      if (createData.code === 501) {
+        logger.error('[STT] 전사 태스크 생성 터미널 에러', { code: 501, msg: createData.msg });
+        throw new Error('전사에 실패했습니다. 다른 오디오 파일로 다시 시도해주세요.');
+      }
+      if (createData.code === 505) {
+        logger.error('[STT] 전사 태스크 생성 터미널 에러', { code: 505, msg: createData.msg });
+        throw new Error('전사 서비스가 현재 사용할 수 없습니다. 잠시 후 다시 시도해주세요.');
+      }
+
+      const bodyRetryable = createData.code === 429 || (createData.code !== undefined && createData.code >= 500);
+      if (bodyRetryable) {
+        const isLastAttempt = attempt === maxAttempts - 1;
+        if (!isLastAttempt) {
+          const waitMs = createData.code === 429
+            ? Math.min(4000 * (attempt + 1), 12000)
+            : Math.min(1500 * (attempt + 1), 6000);
+          logger.trackRetry('전사 태스크 생성', attempt + 1, maxAttempts, `body code ${createData.code}, ${waitMs}ms 대기`);
+          await waitForRetry(waitMs, signal);
+          continue;
+        }
+        if (createData.code === 429) {
+          throw new Error('요청이 너무 많습니다. 잠시 후 다시 시도해주세요.');
+        }
+      }
+
+      if (createData.code !== undefined && createData.code !== 200) {
+        const detail = createData.msg || createData.message || '';
+        logger.error('[STT] 전사 태스크 생성 실패', { code: createData.code, msg: detail });
+        throw new Error(`전사 준비 중 문제가 발생했습니다. 잠시 후 다시 시도해주세요.`);
+      }
+
       const taskId = createData.data?.taskId;
       if (taskId) return taskId;
-      throw new Error('전사 태스크 ID를 받지 못했습니다.');
+
+      // taskId가 없을 때: 응답 구조 로깅 (디버깅용)
+      logger.error('[STT] 전사 태스크 ID 누락 — 응답 구조 확인 필요', {
+        responseKeys: Object.keys(createData),
+        dataKeys: createData.data ? Object.keys(createData.data) : null,
+        code: createData.code,
+        msg: createData.msg,
+      });
+      throw new Error('전사 준비 중 문제가 발생했습니다. 잠시 후 다시 시도해주세요.');
     }
 
-    const errorText = await createResponse.text();
-    if (createResponse.status === 402) throw new Error('Kie 잔액 부족: 크레딧을 충전해주세요.');
+    const errorText = await createResponse.text().catch(() => '');
+    logger.error('[STT] 전사 태스크 생성 HTTP 에러', { status: createResponse.status, body: errorText.substring(0, 300) });
+    if (createResponse.status === 402) throw new Error('음성 전사 크레딧이 부족합니다. API 키 설정에서 잔액을 확인해주세요.');
+    if (createResponse.status === 501) throw new Error('전사에 실패했습니다. 다른 오디오 파일로 다시 시도해주세요.');
+    if (createResponse.status === 505) throw new Error('전사 서비스가 현재 사용할 수 없습니다. 잠시 후 다시 시도해주세요.');
 
     const retryable = createResponse.status === 429 || createResponse.status >= 500;
     const isLastAttempt = attempt === maxAttempts - 1;
     if (!retryable || isLastAttempt) {
-      if (createResponse.status === 429) throw new Error('Kie 요청 제한 초과: 잠시 후 다시 시도해주세요.');
-      throw new Error(`전사 태스크 생성 실패 (${createResponse.status}): ${errorText}`);
+      if (createResponse.status === 429) throw new Error('요청이 너무 많습니다. 잠시 후 다시 시도해주세요.');
+      throw new Error('전사 준비 중 문제가 발생했습니다. 잠시 후 다시 시도해주세요.');
     }
 
     const waitMs = createResponse.status === 429
@@ -537,13 +601,13 @@ async function pollKieTranscriptionTask(
   logger.info('[STT] 폴링 시작', { taskId });
 
   try {
+  let lastRetryReason = '';
+
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    if (signal?.aborted) throw new Error('전사가 취소되었습니다.');
+    if (signal?.aborted) throw new DOMException('전사가 취소되었습니다.', 'AbortError');
 
     const delay = attempt < 5 ? 2000 : 3000;
-    await new Promise((resolve) => setTimeout(resolve, delay));
-
-    if (signal?.aborted) throw new Error('전사가 취소되었습니다.');
+    await waitForRetry(delay, signal);
 
     const response = await monitoredFetch(
       `${KIE_BASE_URL}/jobs/recordInfo?taskId=${taskId}`,
@@ -554,32 +618,129 @@ async function pollKieTranscriptionTask(
     );
 
     if (!response.ok) {
+      if (response.status === 402) {
+        throw new Error('음성 전사 크레딧이 부족합니다. API 키 설정에서 잔액을 확인해주세요.');
+      }
       if (response.status === 429) {
-        // [FIX #245] Retry-After 헤더 우선, 없으면 지수 백오프
+        lastRetryReason = 'rate-limit';
         const retryAfter = response.headers.get('Retry-After');
         const waitMs = retryAfter ? Math.min(parseInt(retryAfter, 10) * 1000 || 5000, 60000) : Math.min(2000 * Math.pow(2, Math.min(attempt, 5)), 30000);
         logger.trackRetry('전사 폴링 (429)', attempt + 1, maxAttempts, `Rate limited, ${Math.round(waitMs)}ms 대기`);
-        await new Promise((resolve) => setTimeout(resolve, waitMs));
+        await waitForRetry(waitMs, signal);
         continue;
       }
-      throw new Error(`전사 폴링 오류 (${response.status})`);
+      // [FIX #674] 422 "recordInfo is null": 태스크 아직 준비 안 됨 → 재시도
+      if (response.status === 422) {
+        lastRetryReason = 'not-ready';
+        logger.trackRetry('전사 폴링 (422)', attempt + 1, maxAttempts, 'recordInfo not ready');
+        continue;
+      }
+      if (response.status === 455) {
+        throw new Error('전사 서비스가 점검 중입니다. 잠시 후 다시 시도해주세요.');
+      }
+      // [FIX #674] 501(Generation Failed): 복구 불가 → 즉시 실패
+      if (response.status === 501) {
+        logger.error('[STT] 폴링 터미널 에러', { status: response.status });
+        throw new Error('전사에 실패했습니다. 다른 오디오 파일로 다시 시도해주세요.');
+      }
+      // [FIX #674] 505(Feature Disabled): 서비스 사용 불가 → 즉시 실패
+      if (response.status === 505) {
+        logger.error('[STT] 폴링 터미널 에러', { status: response.status });
+        throw new Error('전사 서비스가 현재 사용할 수 없습니다. 잠시 후 다시 시도해주세요.');
+      }
+      // [FIX #674] 일반 5xx는 일시적 서버 장애 → 재시도
+      if (response.status >= 500) {
+        lastRetryReason = 'server-error';
+        const waitMs = Math.min(2000 * Math.pow(2, Math.min(attempt, 4)), 16000);
+        logger.trackRetry('전사 폴링 (5xx)', attempt + 1, maxAttempts, `HTTP ${response.status}, ${Math.round(waitMs)}ms 대기`);
+        await waitForRetry(waitMs, signal);
+        continue;
+      }
+      throw new Error('전사 진행 상태 확인 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.');
     }
 
-    const data = await response.json();
-    const state = data.data?.state;
+    // [FIX #674] guarded JSON 파싱 + body-level 에러 코드 확인
+    let data: Record<string, unknown> = {};
+    try {
+      const rawText = await response.text();
+      if (rawText) {
+        const parsed = JSON.parse(rawText);
+        if (parsed && typeof parsed === 'object') data = parsed;
+      }
+    } catch {
+      lastRetryReason = 'parse-error';
+      logger.warn('[STT] 폴링 응답 JSON 파싱 실패 — 다음 폴링으로 진행');
+      continue;
+    }
+
+    if (data.code === 402) throw new Error('음성 전사 크레딧이 부족합니다. API 키 설정에서 잔액을 확인해주세요.');
+    if (data.code === 429) {
+      lastRetryReason = 'rate-limit';
+      const waitMs = Math.min(2000 * Math.pow(2, Math.min(attempt, 5)), 30000);
+      logger.trackRetry('전사 폴링 (body 429)', attempt + 1, maxAttempts, `body code 429, ${Math.round(waitMs)}ms 대기`);
+      await waitForRetry(waitMs, signal);
+      continue;
+    }
+    // [FIX #674] body-level 501: Generation Failed → 즉시 실패
+    if (data.code === 501) {
+      logger.error('[STT] 폴링 body 터미널 에러', { code: data.code, msg: data.msg });
+      throw new Error('전사에 실패했습니다. 다른 오디오 파일로 다시 시도해주세요.');
+    }
+    // [FIX #674] body-level 505: Feature Disabled → 즉시 실패
+    if (data.code === 505) {
+      logger.error('[STT] 폴링 body 터미널 에러', { code: data.code, msg: data.msg });
+      throw new Error('전사 서비스가 현재 사용할 수 없습니다. 잠시 후 다시 시도해주세요.');
+    }
+    if (data.code !== undefined && data.code !== 200 && (data.code as number) >= 500) {
+      lastRetryReason = 'server-error';
+      logger.warn('[STT] 폴링 응답 body 서버 에러', { code: data.code, msg: data.msg });
+      const waitMs = Math.min(2000 * Math.pow(2, Math.min(attempt, 3)), 10000);
+      await waitForRetry(waitMs, signal);
+      continue;
+    }
+    // [FIX #674] body-level 422: "recordInfo is null" (태스크 아직 준비 안 됨) → 재시도
+    if (data.code === 422) {
+      lastRetryReason = 'not-ready';
+      logger.trackRetry('전사 폴링 (body 422)', attempt + 1, maxAttempts, 'recordInfo not ready');
+      continue;
+    }
+    // [FIX #674] body-level 4xx (400/404 등): 복구 불가 → 즉시 실패
+    if (data.code !== undefined && data.code !== 200) {
+      logger.error('[STT] 폴링 응답 body 클라이언트 에러', { code: data.code, msg: data.msg });
+      throw new Error('전사 진행 중 문제가 발생했습니다. 다시 시도해주세요.');
+    }
+
+    // 정상 응답 도달 시 lastRetryReason 리셋
+    lastRetryReason = '';
+
+    const taskData = (data.data ?? {}) as Record<string, unknown>;
+    const state = taskData.state as string | undefined;
 
     if (state === 'success') {
-      const resultJson = data.data?.resultJson;
+      const resultJson = taskData.resultJson;
+      // [FIX #674] resultJson이 null/undefined인 경우 방어
+      if (resultJson == null) {
+        logger.error('[STT] 전사 성공이지만 resultJson이 비어 있음', { taskId });
+        throw new Error('전사 결과를 처리하지 못했습니다. 다시 시도해주세요.');
+      }
       let parsed: Record<string, unknown>;
       if (typeof resultJson === 'string') {
         try {
-          parsed = JSON.parse(resultJson);
+          const jsonValue = JSON.parse(resultJson);
+          if (!jsonValue || typeof jsonValue !== 'object') {
+            logger.error('[STT] 전사 결과가 유효한 객체가 아님', { type: typeof jsonValue });
+            throw new Error('invalid');
+          }
+          parsed = jsonValue;
         } catch (e) {
-          const preview = resultJson.slice(0, 200);
-          throw new Error(`전사 결과 JSON 파싱 실패: ${e instanceof Error ? e.message : String(e)} — 응답 미리보기: ${preview}`);
+          logger.error('[STT] 전사 결과 파싱 실패', { error: e instanceof Error ? e.message : String(e) });
+          throw new Error('전사 결과를 처리하지 못했습니다. 다시 시도해주세요.');
         }
+      } else if (typeof resultJson === 'object') {
+        parsed = resultJson as Record<string, unknown>;
       } else {
-        parsed = resultJson;
+        logger.error('[STT] 전사 결과 형식이 예상과 다름', { type: typeof resultJson });
+        throw new Error('전사 결과를 처리하지 못했습니다. 다시 시도해주세요.');
       }
       const result = parseTranscriptionResult(parsed, diarize);
       logger.endAsyncOp(opId, 'completed', `segments=${result.segments.length}, lang=${result.language}, speakers=${result.speakerCount ?? 0}`);
@@ -587,16 +748,25 @@ async function pollKieTranscriptionTask(
     }
 
     if (state === 'fail') {
-      const failMsg = data.data?.failMsg || '알 수 없는 오류';
-      throw new Error(`전사 실패: ${failMsg}`);
+      const failMsg = (taskData.failMsg as string) || '';
+      logger.error('[STT] 전사 실패', { failMsg, failCode: taskData.failCode });
+      throw new Error('전사에 실패했습니다. 다른 오디오 파일로 다시 시도해주세요.');
     }
 
     // 진행 상태 업데이트
     onProgress?.(diarize ? `화자 분리 전사 중... (${attempt + 1}/${maxAttempts})` : `전사 중... (${attempt + 1}/${maxAttempts})`);
   }
 
-  logger.endAsyncOp(opId, 'failed', `전사 시간 초과 (${maxAttempts}회 폴링 실패)`);
-  throw new Error(`전사 시간 초과 (${maxAttempts}회 폴링 실패)`);
+  // [FIX #674] 마지막 재시도 사유에 따라 정확한 에러 메시지 반환
+  // 메시지에 '시간 초과' 포함 → catch 블록의 endAsyncOp 중복 호출 방지
+  logger.endAsyncOp(opId, 'failed', `전사 시간 초과 (${maxAttempts}회 폴링 실패, lastReason=${lastRetryReason})`);
+  if (lastRetryReason === 'rate-limit') {
+    throw new Error('전사 시간 초과: 요청이 너무 많아 완료하지 못했습니다. 잠시 후 다시 시도해주세요.');
+  }
+  if (lastRetryReason === 'server-error') {
+    throw new Error('전사 시간 초과: 서비스가 일시적으로 불안정합니다. 잠시 후 다시 시도해주세요.');
+  }
+  throw new Error('전사 처리 시간이 초과되었습니다. 오디오 파일이 너무 길 수 있습니다.');
   } catch (err: unknown) {
     const errMsg = err instanceof Error ? err.message : String(err);
     if (!errMsg.includes('시간 초과')) logger.endAsyncOp(opId, 'failed', errMsg);
