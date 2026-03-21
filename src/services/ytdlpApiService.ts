@@ -2,12 +2,11 @@
  * ytdlpApiService.ts
  *
  * 자체 호스팅 yt-dlp API 서버와 통신하는 프론트엔드 서비스.
- * Cobalt 대신 안정적인 YouTube 다운로드를 제공합니다.
+ * 로컬 컴패니언 앱 → VPS 프록시 순서로 자동 전환합니다.
  *
- * 아키텍처:
- *   브라우저 → Cloudflare → VPS(yt-dlp) → 스트림 URL 반환
- *                                            ↓
- *   브라우저 ← YouTube CDN에서 직접 다운로드 ←──┘
+ * 아키텍처 (우선순위):
+ *   1순위: 브라우저 → localhost 컴패니언 앱(yt-dlp 로컬) → YouTube CDN 직접 (YouPlayer급)
+ *   2순위: 브라우저 → Cloudflare → VPS(yt-dlp) → YouTube CDN (기존 폴백)
  */
 
 import { monitoredFetch } from './apiService';
@@ -22,6 +21,120 @@ const DEFAULT_DIRECT_URL = 'http://175.126.73.193:3100';
 const DEFAULT_PROXY_URL = 'https://ytdlp-proxy.groove1027.workers.dev'; // Cloudflare Worker 프록시
 const DEFAULT_API_KEY = 'bf9ce5c9b531c42a2dd6dcec61cff6c3eead93f20ba35365d3411ddf783dccb1';
 
+/** 로컬 컴패니언 앱 URL (YouPlayer급 안정성 — yt-dlp 로컬 실행) */
+const LOCAL_COMPANION_URL = 'http://localhost:9876';
+
+// ──────────────────────────────────────────────
+// 로컬 컴패니언 앱 감지 (캐시 + 주기적 재검증)
+// ──────────────────────────────────────────────
+
+let _companionAvailable: boolean | null = null;
+let _companionCheckTime = 0;
+let _companionCheckPromise: Promise<boolean> | null = null; // inflight 중복 방지
+const COMPANION_CHECK_INTERVAL_MS = 30_000; // 30초마다 재검증
+const COMPANION_HEALTH_TIMEOUT_MS = 800;    // 800ms 내 응답 필수
+
+/** 로컬 컴패니언 앱이 실행 중인지 확인 (캐시 + 비동기 + inflight 중복 방지) */
+async function isCompanionAvailable(): Promise<boolean> {
+  const now = Date.now();
+  // 캐시 유효 → 즉시 반환
+  if (_companionAvailable !== null && (now - _companionCheckTime) < COMPANION_CHECK_INTERVAL_MS) {
+    return _companionAvailable;
+  }
+  // 이미 진행 중인 health check가 있으면 그 결과를 공유
+  if (_companionCheckPromise) return _companionCheckPromise;
+
+  _companionCheckPromise = _doCompanionCheck(now).finally(() => {
+    _companionCheckPromise = null;
+  });
+  return _companionCheckPromise;
+}
+
+async function _doCompanionCheck(now: number): Promise<boolean> {
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), COMPANION_HEALTH_TIMEOUT_MS);
+    const res = await fetch(`${LOCAL_COMPANION_URL}/health`, {
+      signal: controller.signal,
+      mode: 'cors',
+    });
+    clearTimeout(timeoutId);
+
+    if (res.ok) {
+      const data = await res.json().catch(() => null);
+      // 서명 핸드셰이크: 컴패니언 앱만이 반환하는 식별 헤더/필드 확인
+      if (!data || data.app !== 'ytdlp-companion') {
+        // 알 수 없는 localhost 서비스 → 신뢰하지 않음
+        _companionAvailable = false;
+        _companionCheckTime = now;
+        return false;
+      }
+      _companionAvailable = true;
+      _companionCheckTime = now;
+      logger.info(`[Companion] 로컬 헬퍼 감지됨 (v${data?.version || '?'}, yt-dlp ${data?.ytdlpVersion || '?'})`);
+      return true;
+    }
+  } catch {
+    // 연결 실패 = 컴패니언 미설치 또는 미실행
+  }
+
+  _companionAvailable = false;
+  _companionCheckTime = now;
+  return false;
+}
+
+/** 동기 버전 — 마지막 캐시된 결과 반환 (UI 즉시 표시용) */
+export function isCompanionDetected(): boolean {
+  return _companionAvailable === true;
+}
+
+/** 컴패니언 상태 강제 재확인 (설정 페이지 등에서 수동 호출) */
+export async function recheckCompanion(): Promise<boolean> {
+  _companionAvailable = null;
+  _companionCheckTime = 0;
+  return isCompanionAvailable();
+}
+
+/** 앱 시작 시 백그라운드로 컴패니언 감지 (UI 블로킹 없음) */
+function initCompanionDetection(): void {
+  if (typeof window === 'undefined') return;
+  // 500ms 지연 후 백그라운드 감지 (앱 초기 로딩 방해 없음)
+  setTimeout(() => {
+    isCompanionAvailable().catch(() => {});
+  }, 500);
+}
+
+// 모듈 로드 시 자동 실행
+initCompanionDetection();
+
+// ──────────────────────────────────────────────
+// API Base URL 결정 (컴패니언 우선)
+// ──────────────────────────────────────────────
+
+/** 비동기 버전 — 실제 API 호출 전에 사용 (컴패니언 감지 포함) */
+async function getApiBaseUrlAsync(): Promise<string> {
+  try {
+    const stored = localStorage.getItem('YTDLP_API_URL');
+    if (stored) return stored;
+  } catch (e) {
+    logger.trackSwallowedError('ytdlpApiService:getApiBaseUrlAsync', e);
+  }
+
+  // 1순위: 로컬 컴패니언 앱
+  if (await isCompanionAvailable()) {
+    return LOCAL_COMPANION_URL;
+  }
+
+  // 2순위: HTTPS → Cloudflare Worker 프록시
+  if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
+    return DEFAULT_PROXY_URL;
+  }
+  // 3순위: HTTP → VPS 직접
+  return DEFAULT_DIRECT_URL;
+}
+
+/** 동기 버전 — 캐시된 컴패니언 상태 기반 (즉시 반환 필요한 곳) */
 function getApiBaseUrl(): string {
   try {
     const stored = localStorage.getItem('YTDLP_API_URL');
@@ -29,11 +142,17 @@ function getApiBaseUrl(): string {
   } catch (e) {
     logger.trackSwallowedError('ytdlpApiService:getApiBaseUrl', e);
   }
-  // HTTPS 배포 환경 → Cloudflare Worker 프록시 (Mixed Content 방지)
+
+  // 1순위: 컴패니언 캐시가 있으면 사용
+  if (_companionAvailable === true) {
+    return LOCAL_COMPANION_URL;
+  }
+
+  // 2순위: HTTPS → Cloudflare Worker 프록시
   if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
     return DEFAULT_PROXY_URL;
   }
-  // HTTP 로컬 개발 → 직접 접속
+  // 3순위: HTTP → VPS 직접
   return DEFAULT_DIRECT_URL;
 }
 
@@ -228,33 +347,63 @@ function createCombinedAbortSignalContext(externalSignal: AbortSignal | undefine
 // ──────────────────────────────────────────────
 
 async function apiCall<T>(path: string, options?: RequestInit): Promise<T> {
-  const baseUrl = getApiBaseUrl();
-  if (!baseUrl) {
+  const apiKey = getApiKey();
+  // 커스텀 URL 설정 시 → 그 서버만 사용
+  const hasCustom = (() => { try { return !!localStorage.getItem('YTDLP_API_URL'); } catch { return false; } })();
+
+  // 폴백 체인 구성: 컴패니언 → CF Worker → VPS 직접
+  const servers: { url: string; needsKey: boolean }[] = [];
+  if (hasCustom) {
+    const customUrl = await getApiBaseUrlAsync();
+    servers.push({ url: customUrl, needsKey: customUrl !== LOCAL_COMPANION_URL });
+  } else {
+    if (await isCompanionAvailable()) {
+      servers.push({ url: LOCAL_COMPANION_URL, needsKey: false });
+    }
+    const isHttps = typeof window !== 'undefined' && window.location.protocol === 'https:';
+    servers.push({ url: DEFAULT_PROXY_URL, needsKey: true });
+    // HTTP 직접 접속은 HTTPS 환경에서 mixed content로 차단됨 → HTTP 환경에서만 폴백
+    if (!isHttps) {
+      servers.push({ url: DEFAULT_DIRECT_URL, needsKey: true });
+    }
+  }
+
+  if (servers.length === 0) {
     throw new Error('yt-dlp API 서버가 설정되지 않았습니다. 설정에서 서버 주소를 입력해주세요.');
   }
 
-  const apiKey = getApiKey();
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...(apiKey ? { 'X-API-Key': apiKey } : {}),
-  };
+  let lastError: Error | null = null;
+  for (const server of servers) {
+    const fullUrl = `${server.url.replace(/\/$/, '')}${path}`;
+    try {
+      const response = await monitoredFetch(fullUrl, {
+        ...options,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(server.needsKey && apiKey ? { 'X-API-Key': apiKey } : {}),
+          ...(options?.headers as Record<string, string> || {}),
+        },
+      });
 
-  const url = `${baseUrl.replace(/\/$/, '')}${path}`;
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
+        throw new Error(body.error || `서버 오류 (${response.status})`);
+      }
 
-  const response = await monitoredFetch(url, {
-    ...options,
-    headers: {
-      ...headers,
-      ...(options?.headers as Record<string, string> || {}),
-    },
-  });
-
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
-    throw new Error(body.error || `서버 오류 (${response.status})`);
+      return response.json();
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      // 컴패니언 실패 시 상태 무효화
+      if (server.url === LOCAL_COMPANION_URL) {
+        _companionAvailable = false;
+        _companionCheckTime = Date.now();
+        logger.warn('[Companion] API 요청 실패 — 다음 서버로 폴백:', lastError.message);
+      }
+      // 커스텀 URL이면 폴백 없이 즉시 throw
+      if (hasCustom) throw lastError;
+    }
   }
-
-  return response.json();
+  throw lastError || new Error('yt-dlp API 요청 실패 (모든 서버 시도 소진)');
 }
 
 // ──────────────────────────────────────────────
@@ -296,11 +445,14 @@ export function triggerDirectDownload(
   quality: VideoQuality = 'best',
   _title?: string,
 ): void {
+  // 컴패니언 우선 (캐시 기반 동기 판단)
   const baseUrl = getApiBaseUrl();
+  const isCompanion = baseUrl === LOCAL_COMPANION_URL;
   const apiKey = getApiKey();
 
-  // 서버 프록시 URL — Content-Disposition: attachment 헤더로 바로 다운로드
-  const proxyUrl = `${baseUrl.replace(/\/$/, '')}/api/download?url=${encodeURIComponent(youtubeUrl)}&quality=${quality}&key=${encodeURIComponent(apiKey)}`;
+  // 컴패니언은 API 키 불필요
+  const keyParam = isCompanion ? '' : `&key=${encodeURIComponent(apiKey)}`;
+  const proxyUrl = `${baseUrl.replace(/\/$/, '')}/api/download?url=${encodeURIComponent(youtubeUrl)}&quality=${quality}${keyParam}`;
 
   const a = document.createElement('a');
   a.href = proxyUrl;
@@ -333,26 +485,31 @@ export async function downloadVideoViaProxy(
   const qualities = [...new Set(QUALITY_FALLBACK)];
 
   let lastError: Error | null = null;
+  let lastGoodInfo: YtdlpStreamResult | null = null;
 
   for (const q of qualities) {
     if (externalSignal?.aborted) {
       throw createAbortError();
     }
     const info = await extractStreamUrl(youtubeUrl, q).catch(() => null);
+    if (info) lastGoodInfo = info;
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       if (externalSignal?.aborted) {
         throw createAbortError();
       }
       const abortContext = createCombinedAbortSignalContext(externalSignal, 600_000);
+      const dlBaseUrl = await getApiBaseUrlAsync();
+      const isCompanionDl = dlBaseUrl === LOCAL_COMPANION_URL;
       try {
-        const baseUrl = getApiBaseUrl();
+        const baseUrl = dlBaseUrl;
+        const isCompanion = isCompanionDl;
         const apiKey = getApiKey();
         const videoOnlyParam = videoOnly ? '&videoOnly=true' : '';
         const proxyUrl = `${baseUrl.replace(/\/$/, '')}/api/download?url=${encodeURIComponent(youtubeUrl)}&quality=${q}${videoOnlyParam}`;
 
         const response = await monitoredFetch(proxyUrl, {
-          headers: apiKey ? { 'X-API-Key': apiKey } : {},
+          headers: !isCompanion && apiKey ? { 'X-API-Key': apiKey } : {},
           signal: abortContext.signal,
         });
 
@@ -425,6 +582,12 @@ export async function downloadVideoViaProxy(
         lastError = abortContext.didTimeout()
           ? new Error('프록시 다운로드 시간 초과')
           : (e instanceof Error ? e : new Error(String(e)));
+        // 컴패니언 실패 시 즉시 상태 무효화 → 다음 재시도는 VPS로
+        if (isCompanionDl && _companionAvailable) {
+          _companionAvailable = false;
+          _companionCheckTime = Date.now();
+          logger.warn('[Companion] 다운로드 실패 — VPS 폴백 전환');
+        }
         const isRateLimit = lastError.message.includes('429');
         const isRetryable = abortContext.didTimeout()
           || isRateLimit
@@ -450,6 +613,44 @@ export async function downloadVideoViaProxy(
     }
   }
 
+  // [FIX #702] Cloudflare Worker 프록시 전부 실패 시 직접 VPS 서버 폴백
+  // 커스텀 URL 사용 중이면 기본 VPS로 폴백하지 않음 (키 누출 방지)
+  const hasCustomUrlDl = (() => { try { return !!localStorage.getItem('YTDLP_API_URL'); } catch { return false; } })();
+  const directVpsUrl = DEFAULT_DIRECT_URL;
+  const currentBaseUrl = getApiBaseUrl();
+  if (!hasCustomUrlDl && directVpsUrl && currentBaseUrl !== directVpsUrl) {
+    logger.info('[Download] Cloudflare 프록시 전부 실패 — VPS 직접 접속 폴백 시도');
+    const defaultInfo: YtdlpStreamResult = { url: '', audioUrl: null, title: '', duration: 0, thumbnail: '', width: 0, height: 0, filesize: null, format: quality, codec: '', cached: false };
+    for (const q of ['360p', '480p'] as VideoQuality[]) {
+      if (externalSignal?.aborted) throw createAbortError();
+      const abortContext = createCombinedAbortSignalContext(externalSignal, 600_000);
+      try {
+        const apiKey = getApiKey();
+        const videoOnlyParam = videoOnly ? '&videoOnly=true' : '';
+        const directUrl = `${directVpsUrl.replace(/\/$/, '')}/api/download?url=${encodeURIComponent(youtubeUrl)}&quality=${q}${videoOnlyParam}`;
+
+        const response = await monitoredFetch(directUrl, {
+          headers: apiKey ? { 'X-API-Key': apiKey } : {},
+          signal: abortContext.signal,
+        });
+
+        if (!response.ok) continue;
+
+        const blob = await response.blob();
+        if (blob.size > 0) {
+          logger.success(`[Download] VPS 직접 폴백 성공 (${q}, ${(blob.size / 1024 / 1024).toFixed(1)}MB)`);
+          if (onProgress) onProgress(1);
+          return { blob, info: lastGoodInfo || defaultInfo };
+        }
+      } catch (vpsErr) {
+        if (externalSignal?.aborted) throw createAbortError();
+        logger.warn(`[Download] VPS 직접 폴백 실패 (${q}):`, vpsErr instanceof Error ? vpsErr.message : '');
+      } finally {
+        abortContext.dispose();
+      }
+    }
+  }
+
   throw lastError || new Error('프록시 다운로드 실패 (모든 재시도 소진)');
 }
 
@@ -459,29 +660,89 @@ export async function downloadVideoViaProxy(
 export async function downloadAudioViaProxy(
   youtubeUrl: string,
 ): Promise<Blob> {
-  const baseUrl = getApiBaseUrl();
+  const baseUrl = await getApiBaseUrlAsync();
+  const isCompanion = baseUrl === LOCAL_COMPANION_URL;
   const apiKey = getApiKey();
   const proxyUrl = `${baseUrl.replace(/\/$/, '')}/api/download?url=${encodeURIComponent(youtubeUrl)}&quality=audio`;
 
   // [FIX #567] 429 재시도 — 서버 과부하 시 retryAfter 기반 대기
+  // [FIX #702] try-catch로 감싸서 네트워크 에러/타임아웃 시에도 VPS 폴백 도달 가능
   const MAX_RETRIES = 3;
-  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-    const response = await monitoredFetch(proxyUrl, {
-      headers: apiKey ? { 'X-API-Key': apiKey } : {},
-      signal: AbortSignal.timeout(120_000),
-    });
+  let proxyLastError: Error | null = null;
+  try {
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      try {
+        const response = await monitoredFetch(proxyUrl, {
+          headers: !isCompanion && apiKey ? { 'X-API-Key': apiKey } : {},
+          signal: AbortSignal.timeout(120_000),
+        });
 
-    if (response.ok) return response.blob();
+        if (response.ok) return response.blob();
 
-    if (response.status === 429 && attempt < MAX_RETRIES - 1) {
-      const delay = 5000 * Math.pow(2, attempt) + Math.random() * 2000;
-      logger.trackRetry('downloadAudioViaProxy', attempt + 1, MAX_RETRIES, `429, ${Math.round(delay)}ms 대기`);
-      await new Promise(r => setTimeout(r, delay));
-      continue;
+        // [FIX #702] 502/503/504도 재시도 대상으로 추가 — Cloudflare Worker 프록시 일시적 장애 대응
+        const isRetryable = response.status === 429 || response.status === 502 || response.status === 503 || response.status === 504;
+        if (isRetryable && attempt < MAX_RETRIES - 1) {
+          const delay = response.status === 429
+            ? 5000 * Math.pow(2, attempt) + Math.random() * 2000
+            : 3000 * Math.pow(2, attempt) + Math.random() * 2000;
+          logger.trackRetry('downloadAudioViaProxy', attempt + 1, MAX_RETRIES, `${response.status}, ${Math.round(delay)}ms 대기`);
+          await new Promise(r => setTimeout(r, delay));
+          continue;
+        }
+        proxyLastError = new Error(`오디오 다운로드 실패 (HTTP ${response.status})`);
+        // 비 재시도 에러(400/401/404 등)는 즉시 루프 탈출
+        break;
+      } catch (fetchErr) {
+        proxyLastError = fetchErr instanceof Error ? fetchErr : new Error(String(fetchErr));
+        if (attempt < MAX_RETRIES - 1) {
+          const delay = 3000 * Math.pow(2, attempt) + Math.random() * 2000;
+          logger.trackRetry('downloadAudioViaProxy', attempt + 1, MAX_RETRIES, `${proxyLastError.message}, ${Math.round(delay)}ms 대기`);
+          await new Promise(r => setTimeout(r, delay));
+          continue;
+        }
+      }
     }
-    throw new Error(`오디오 다운로드 실패 (HTTP ${response.status})`);
+  } catch (outerErr) {
+    proxyLastError = outerErr instanceof Error ? outerErr : new Error(String(outerErr));
   }
-  throw new Error('오디오 다운로드 실패 (모든 재시도 소진)');
+
+  // [FIX #702+] 1차 서버 전부 실패 → 컴패니언 상태 무효화 + 모든 VPS 폴백 시도
+  if (isCompanion) {
+    _companionAvailable = false;
+    _companionCheckTime = Date.now();
+    logger.warn('[AudioDownload] 컴패니언 실패 — VPS 폴백');
+  }
+
+  // 커스텀 URL 사용 중이면 기본 서버로 폴백하지 않음 (키 누출 방지)
+  const hasCustomUrlAudio = (() => { try { return !!localStorage.getItem('YTDLP_API_URL'); } catch { return false; } })();
+  const fallbackUrls: { url: string }[] = [];
+  if (!hasCustomUrlAudio) {
+    if (baseUrl !== DEFAULT_PROXY_URL) {
+      fallbackUrls.push({ url: DEFAULT_PROXY_URL });
+    }
+    if (baseUrl !== DEFAULT_DIRECT_URL) {
+      fallbackUrls.push({ url: DEFAULT_DIRECT_URL });
+    }
+  }
+
+  for (const fb of fallbackUrls) {
+    try {
+      logger.info(`[AudioDownload] 폴백 시도 → ${fb.url.includes('workers.dev') ? 'CF Worker' : 'VPS 직접'}`);
+      const directUrl = `${fb.url.replace(/\/$/, '')}/api/download?url=${encodeURIComponent(youtubeUrl)}&quality=audio`;
+      const response = await monitoredFetch(directUrl, {
+        headers: apiKey ? { 'X-API-Key': apiKey } : {},
+        signal: AbortSignal.timeout(120_000),
+      });
+      if (response.ok) {
+        logger.success('[AudioDownload] 폴백 성공');
+        return response.blob();
+      }
+    } catch (fbErr) {
+      logger.warn('[AudioDownload] 폴백 실패:', fbErr instanceof Error ? fbErr.message : '');
+    }
+  }
+
+  throw proxyLastError || new Error('오디오 다운로드 실패 (모든 재시도 소진)');
 }
 
 /**
@@ -514,7 +775,7 @@ export async function getVideoInfo(youtubeUrl: string): Promise<YtdlpVideoInfo> 
  * 서버 상태를 확인합니다.
  */
 export async function checkHealth(): Promise<YtdlpHealthStatus> {
-  const baseUrl = getApiBaseUrl();
+  const baseUrl = await getApiBaseUrlAsync();
   if (!baseUrl) {
     throw new Error('서버 주소가 설정되지 않았습니다');
   }
@@ -563,70 +824,94 @@ export async function downloadSocialVideo(
   onProgress?: (progress: number) => void,
   options?: DownloadSocialVideoOptions,
 ): Promise<{ blob: Blob; title: string }> {
-  const baseUrl = getApiBaseUrl();
+  const baseUrl = await getApiBaseUrlAsync();
+  const isCompanion = baseUrl === LOCAL_COMPANION_URL;
   const apiKey = getApiKey();
-  const proxyUrl = `${baseUrl.replace(/\/$/, '')}/api/social/download`;
-  const abortContext = createCombinedAbortSignalContext(options?.signal, 300_000);
 
-  try {
-    const response = await monitoredFetch(proxyUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(apiKey ? { 'X-API-Key': apiKey } : {}),
-      },
-      body: JSON.stringify({ url, quality }),
-      signal: abortContext.signal, // 5분 타임아웃 + 외부 취소 신호 결합
-    });
+  // 커스텀 URL 설정 시 → 그 서버만 사용 (폴백 없음)
+  const hasCustomUrl = (() => { try { return !!localStorage.getItem('YTDLP_API_URL'); } catch { return false; } })();
+  const serversToTry: { url: string; needsKey: boolean }[] = [];
+  if (hasCustomUrl) {
+    serversToTry.push({ url: baseUrl, needsKey: !isCompanion });
+  } else {
+    if (isCompanion) serversToTry.push({ url: LOCAL_COMPANION_URL, needsKey: false });
+    const vpsUrl = typeof window !== 'undefined' && window.location.protocol === 'https:'
+      ? DEFAULT_PROXY_URL : DEFAULT_DIRECT_URL;
+    serversToTry.push({ url: vpsUrl, needsKey: true });
+  }
 
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
-      throw new Error(body.error || `다운로드 실패 (${response.status})`);
-    }
+  let lastError: Error | null = null;
+  for (const server of serversToTry) {
+    if (options?.signal?.aborted) throw createAbortError();
+    const proxyUrl = `${server.url.replace(/\/$/, '')}/api/social/download`;
+    const abortContext = createCombinedAbortSignalContext(options?.signal, 300_000);
 
-    // Content-Disposition에서 파일명 추출
-    const disposition = response.headers.get('Content-Disposition') || '';
-    const filenameMatch = disposition.match(/filename="?([^"]+)"?/);
-    const title = filenameMatch ? decodeURIComponent(filenameMatch[1]).replace(/\.mp4$/, '') : 'download';
+    try {
+      const response = await monitoredFetch(proxyUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(server.needsKey && apiKey ? { 'X-API-Key': apiKey } : {}),
+        },
+        body: JSON.stringify({ url, quality }),
+        signal: abortContext.signal,
+      });
 
-    if (onProgress && response.body) {
-      const contentLength = parseInt(response.headers.get('Content-Length') || '0', 10);
-      const reader = response.body.getReader();
-      const chunks: BlobPart[] = [];
-      let received = 0;
-
-      try {
-        while (true) {
-          if (abortContext.signal.aborted) {
-            throw createAbortError();
-          }
-          const { done, value } = await reader.read();
-          if (done) break;
-          chunks.push(value);
-          received += (value as Uint8Array).length;
-          if (contentLength > 0) {
-            onProgress(Math.min(1, received / contentLength));
-          }
-        }
-      } catch (streamError) {
-        try {
-          await reader.cancel();
-        } catch (cancelError) {
-          logger.trackSwallowedError('ytdlpApiService:downloadSocialVideo:reader.cancel', cancelError);
-        }
-        throw streamError;
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
+        throw new Error(body.error || `다운로드 실패 (${response.status})`);
       }
 
-      onProgress(1);
-      return { blob: new Blob(chunks, { type: 'video/mp4' }), title };
-    }
+      const disposition = response.headers.get('Content-Disposition') || '';
+      const filenameMatch = disposition.match(/filename="?([^"]+)"?/);
+      const title = filenameMatch ? decodeURIComponent(filenameMatch[1]).replace(/\.mp4$/, '') : 'download';
 
-    const blob = await response.blob();
-    if (onProgress) onProgress(1);
-    return { blob, title };
-  } finally {
-    abortContext.dispose();
+      if (onProgress && response.body) {
+        const contentLength = parseInt(response.headers.get('Content-Length') || '0', 10);
+        const reader = response.body.getReader();
+        const chunks: BlobPart[] = [];
+        let received = 0;
+
+        try {
+          while (true) {
+            if (abortContext.signal.aborted) throw createAbortError();
+            const { done, value } = await reader.read();
+            if (done) break;
+            chunks.push(value);
+            received += (value as Uint8Array).length;
+            if (contentLength > 0) {
+              onProgress(Math.min(1, received / contentLength));
+            }
+          }
+        } catch (streamError) {
+          try { await reader.cancel(); } catch (cancelError) {
+            logger.trackSwallowedError('ytdlpApiService:downloadSocialVideo:reader.cancel', cancelError);
+          }
+          throw streamError;
+        }
+
+        onProgress(1);
+        return { blob: new Blob(chunks, { type: 'video/mp4' }), title };
+      }
+
+      const blob = await response.blob();
+      if (onProgress) onProgress(1);
+      return { blob, title };
+    } catch (err) {
+      if (options?.signal?.aborted) throw createAbortError();
+      lastError = err instanceof Error ? err : new Error(String(err));
+      // 컴패니언 실패 → 상태 무효화 후 다음 서버로
+      if (server.url === LOCAL_COMPANION_URL) {
+        _companionAvailable = false;
+        _companionCheckTime = Date.now();
+        logger.warn('[Companion] 소셜 다운로드 실패 — VPS 폴백:', lastError.message);
+      }
+    } finally {
+      abortContext.dispose();
+    }
   }
+
+  throw lastError || new Error('소셜 다운로드 실패 (모든 서버 시도 소진)');
 }
 
 /**
@@ -653,10 +938,11 @@ export function configureServer(apiUrl: string, apiKey: string): void {
 /**
  * 현재 API 서버 설정을 반환합니다.
  */
-export function getServerConfig(): { apiUrl: string; apiKey: string } {
+export function getServerConfig(): { apiUrl: string; apiKey: string; companionActive: boolean } {
   return {
     apiUrl: getApiBaseUrl(),
     apiKey: getApiKey(),
+    companionActive: _companionAvailable === true,
   };
 }
 
@@ -685,54 +971,76 @@ export async function fetchFramesFromServer(
 ): Promise<{ url: string; hdUrl: string; timeSec: number }[]> {
   if (timecodes.length === 0) return [];
 
-  // 서버 제한: 최대 50개. 초과 시 앞쪽 50개만 요청 (나머지는 YouTube 썸네일 폴백)
   const limitedTimecodes = timecodes.slice(0, 50);
 
-  const baseUrl = getApiBaseUrl();
+  // 컴패니언 + VPS 순서로 시도
+  const baseUrl = await getApiBaseUrlAsync();
+  const isCompanion = baseUrl === LOCAL_COMPANION_URL;
   const apiKey = getApiKey();
-  const url = `${baseUrl.replace(/\/$/, '')}/api/frames`;
 
-  // [FIX #567] 429 재시도 — 서버 과부하 시 대기 후 재시도 (최대 2회)
-  const MAX_FRAME_RETRIES = 2;
-  for (let attempt = 0; attempt <= MAX_FRAME_RETRIES; attempt++) {
-    try {
-      const res = await monitoredFetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-API-Key': apiKey,
-        },
-        body: JSON.stringify({ url: videoId, timecodes: limitedTimecodes, w: width }),
-      }, 60000); // 60초 타임아웃
+  // 커스텀 URL 설정 시 → 그 서버만 사용 (폴백 없음)
+  const hasCustomUrl = (() => { try { return !!localStorage.getItem('YTDLP_API_URL'); } catch { return false; } })();
+  const serversToTry: { baseUrl: string; needsKey: boolean }[] = [];
+  if (hasCustomUrl) {
+    serversToTry.push({ baseUrl, needsKey: !isCompanion });
+  } else {
+    if (isCompanion) serversToTry.push({ baseUrl: LOCAL_COMPANION_URL, needsKey: false });
+    const vpsUrl = typeof window !== 'undefined' && window.location.protocol === 'https:'
+      ? DEFAULT_PROXY_URL : DEFAULT_DIRECT_URL;
+    serversToTry.push({ baseUrl: vpsUrl, needsKey: true });
+  }
 
-      if (res.ok) {
-        const data: { frames: ExtractedFrame[] } = await res.json();
-        return (data.frames || []).map(f => ({
-          url: f.url,
-          hdUrl: f.url,
-          timeSec: f.t,
-        }));
+  for (const server of serversToTry) {
+    const framesUrl = `${server.baseUrl.replace(/\/$/, '')}/api/frames`;
+
+    const MAX_FRAME_RETRIES = 2;
+    for (let attempt = 0; attempt <= MAX_FRAME_RETRIES; attempt++) {
+      try {
+        const res = await monitoredFetch(framesUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(server.needsKey ? { 'X-API-Key': apiKey } : {}),
+          },
+          body: JSON.stringify({ url: videoId, timecodes: limitedTimecodes, w: width }),
+        }, 60000);
+
+        if (res.ok) {
+          const data: { frames: ExtractedFrame[] } = await res.json();
+          return (data.frames || []).map(f => ({
+            url: f.url,
+            hdUrl: f.url,
+            timeSec: f.t,
+          }));
+        }
+
+        if (res.status === 429 && attempt < MAX_FRAME_RETRIES) {
+          const delay = 5000 * Math.pow(2, attempt) + Math.random() * 2000;
+          logger.warn(`[Frame Server] /api/frames 429 — ${Math.round(delay / 1000)}초 후 재시도 (${attempt + 1}/${MAX_FRAME_RETRIES})`);
+          await new Promise(r => setTimeout(r, delay));
+          continue;
+        }
+
+        // 비 재시도 에러 → 다음 서버로
+        break;
+      } catch (e) {
+        if (attempt < MAX_FRAME_RETRIES) {
+          const delay = 5000 * Math.pow(2, attempt);
+          await new Promise(r => setTimeout(r, delay));
+          continue;
+        }
+        break; // 다음 서버로
       }
+    }
 
-      // 429: 서버 바쁨 → retryAfter 기반 대기 후 재시도
-      if (res.status === 429 && attempt < MAX_FRAME_RETRIES) {
-        const delay = 5000 * Math.pow(2, attempt) + Math.random() * 2000;
-        logger.warn(`[Frame Server] /api/frames 429 — ${Math.round(delay / 1000)}초 후 재시도 (${attempt + 1}/${MAX_FRAME_RETRIES})`);
-        await new Promise(r => setTimeout(r, delay));
-        continue;
-      }
-
-      logger.warn(`[Frame Server] /api/frames 실패: ${res.status}`);
-      return [];
-    } catch (e) {
-      if (attempt < MAX_FRAME_RETRIES) {
-        const delay = 5000 * Math.pow(2, attempt);
-        await new Promise(r => setTimeout(r, delay));
-        continue;
-      }
-      logger.warn('[Frame Server] 서버 프레임 추출 실패 (YouTube 썸네일 폴백)', e instanceof Error ? e.message : '');
-      return [];
+    // 이 서버 실패 → 컴패니언 상태 무효화
+    if (server.baseUrl === LOCAL_COMPANION_URL) {
+      _companionAvailable = false;
+      _companionCheckTime = Date.now();
+      logger.warn('[Companion] 프레임 추출 실패 — VPS 폴백');
     }
   }
+
+  logger.warn('[Frame Server] 모든 서버 실패 (YouTube 썸네일 폴백)');
   return [];
 }

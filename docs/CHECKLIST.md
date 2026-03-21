@@ -8,6 +8,17 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-22] 로컬 컴패니언 앱 감지 + 자동 VPS 폴백 (yt-dlp YouPlayer급 안정화)
+- [x] `ytdlpApiService.ts` — 로컬 컴패니언 앱(localhost:9876) 자동 감지 + 핸드셰이크
+- [x] `ytdlpApiService.ts` — getApiBaseUrlAsync() 비동기 서버 선택 (컴패니언→CF Worker→VPS)
+- [x] `ytdlpApiService.ts` — apiCall() 전체 폴백 체인 (servers 배열 순회)
+- [x] `ytdlpApiService.ts` — downloadVideoViaProxy/downloadAudioViaProxy/downloadSocialVideo/fetchFramesFromServer 모든 함수에 컴패니언 우선 + VPS 폴백
+- [x] `ytdlpApiService.ts` — _companionCheckPromise inflight 중복 방지 (race condition 방어)
+- [x] `ytdlpApiService.ts` — 커스텀 URL(localStorage) 설정 시 폴백 스킵 (키 누출 방지)
+- [x] `ytdlpApiService.ts` — HTTPS 환경에서 HTTP VPS 직접 접속 제외 (mixed content 방지)
+- [x] VPS yt-dlp 자동 업데이트 cron 설정 (매 6시간, 2026.03.03 → 2026.03.17)
+- [x] 검증: tsc 0에러, vite build 성공, Codex 5.4 리뷰 10회 PASS, Playwright E2E 6/6 통과
+
 ### [2026-03-21] 영상 분석 > 편집실 전송 먹통 + 프리미어 다운로드 불가 수정 (#700)
 - [x] `VideoAnalysisRoom.tsx` — "편집실로" 버튼 공통 핸들러 + ref lock + loading state + disabled + spinner
 - [x] `VideoAnalysisRoom.tsx` — downloadSocialVideo 실패 시 사용자 토스트 알림 추가
