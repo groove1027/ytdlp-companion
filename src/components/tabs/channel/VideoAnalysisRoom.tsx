@@ -4978,8 +4978,8 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
         onDeleteSlot={removeSlot}
         hasCurrentResults={versions.length > 0 && !activeSlotId}
       />
-      {/* 컴패니언 앱 안내 배너 */}
-      <CompanionBanner />
+      {/* 컴패니언 앱 안내 배너 — 다운로드 */}
+      <CompanionBanner feature="download" />
 
       {/* ═══ 입력 ═══ */}
       <div className="bg-gray-800/50 rounded-xl border border-gray-700 p-6">

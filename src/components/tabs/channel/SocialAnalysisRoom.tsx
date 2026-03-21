@@ -5,6 +5,7 @@ import { downloadFromUrl } from '../../../services/videoDownloadService';
 import { getSocialMetadata, SocialMetadata } from '../../../services/ytdlpApiService';
 import { showToast } from '../../../stores/uiStore';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
+import CompanionBanner from '../../CompanionBanner';
 
 type Platform = 'instagram' | 'tiktok' | 'other';
 
@@ -451,6 +452,8 @@ const SocialAnalysisRoom: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      {/* 컴패니언 — 소셜 다운로드 안내 */}
+      <CompanionBanner feature="download" compact />
       {/* 헤더 */}
       <div className="bg-gray-800/40 rounded-xl border border-blue-700/30 p-5">
         <div className="flex items-center gap-3 mb-3">

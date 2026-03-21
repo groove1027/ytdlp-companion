@@ -7,6 +7,7 @@ import { useScriptWriterStore } from '../../../stores/scriptWriterStore';
 import { showToast } from '../../../stores/uiStore';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
+import CompanionBanner from '../../CompanionBanner';
 import { getChannelInfo, getRecentVideosByFormat, getVideoTranscript, analyzeChannelStyle, analyzeChannelStyleDNA, retryFailedStyleDNA, detectContentRegion, getRelatedKeywords, getTopVideos } from '../../../services/youtubeAnalysisService';
 import type { TranscriptResult } from '../../../services/youtubeAnalysisService';
 import { getYoutubeApiKey } from '../../../services/apiService';
@@ -751,6 +752,8 @@ const ChannelAnalysisRoom: React.FC = () => {
 
   return (
     <div className="space-y-6 animate-fade-in-up">
+      {/* 컴패니언 — 다운로드 안내 */}
+      <CompanionBanner feature="download" compact />
       {/* 분석 슬롯 바 */}
       <AnalysisSlotBar
         slots={savedBenchmarks.map(b => ({ id: b.id, name: b.channelName, savedAt: b.savedAt }))}

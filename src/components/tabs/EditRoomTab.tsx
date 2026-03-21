@@ -5,6 +5,7 @@ import { useEditRoomStore } from '../../stores/editRoomStore';
 import { useUnifiedTimeline, useTotalDuration } from '../../hooks/useUnifiedTimeline';
 import { downloadSrtFile, downloadSrtWithAssetsZip } from '../../services/srtService';
 import { composeMp4, downloadMp4 } from '../../services/webcodecs';
+import CompanionBanner from '../CompanionBanner';
 import {
   beginCapCutDirectInstallSelection,
   buildEditRoomNleZip,
@@ -1092,6 +1093,10 @@ const ScenePreviewPanel: React.FC<{
 
   return (
     <div className="border border-gray-700 rounded-xl bg-gray-900/60 overflow-hidden">
+      {/* 컴패니언 — 영상 렌더링 안내 */}
+      <div className="px-4 pt-3">
+        <CompanionBanner feature="ffmpeg" compact />
+      </div>
       <style>{PREVIEW_MOTION_KEYFRAMES}</style>
 
       {/* 메인 프리뷰 + 좌우 네비게이션 — 비율 반응형 */}

@@ -8,6 +8,7 @@ import { generateElevenLabsDialogueTTS } from '../../../services/elevenlabsServi
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
 import { audioBufferToWav } from '../../../services/ttsService';
+import CompanionBanner from '../../CompanionBanner';
 import type { Speaker, TTSLanguage, LufsPreset } from '../../../types';
 import { LUFS_PRESETS } from '../../../types';
 import { runKieBatch } from '../../../utils/kieBatchRunner';
@@ -291,6 +292,8 @@ const AudioMerger: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      {/* 컴패니언 — TTS 안내 */}
+      <CompanionBanner feature="tts" compact />
       {mergedAudioUrl && <audio ref={audioRef} src={mergedAudioUrl} preload="metadata" />}
 
       {/* Header */}

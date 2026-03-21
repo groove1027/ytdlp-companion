@@ -1,6 +1,7 @@
 import React from 'react';
 import { useEditPointStore } from '../../../../stores/editPointStore';
 import type { EditPointExportMode } from '../../../../types';
+import CompanionBanner from '../../../CompanionBanner';
 
 interface ExportCard {
   mode: EditPointExportMode;
@@ -122,6 +123,8 @@ const Step3Export: React.FC = () => {
 
   return (
     <div className="space-y-5">
+      {/* 컴패니언 — 다운로드 안내 */}
+      <CompanionBanner feature="download" compact />
       {/* 내보내기 요약 */}
       <div className="bg-gray-800/50 rounded-xl border border-gray-700/50 p-4">
         <div className="flex items-center gap-4 text-sm">

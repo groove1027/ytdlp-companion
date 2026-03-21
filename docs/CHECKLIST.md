@@ -8,6 +8,17 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-22] 컴패니언 안내 배너 전체 앱 배치 (7개 컴포넌트)
+- [x] `CompanionBanner.tsx` — 기능별 테마 (5색 + 아이콘 + 메시지), compact 모드, 7일 재표시
+- [x] `VideoAnalysisRoom` — download (기존 업그레이드)
+- [x] `ChannelAnalysisRoom` — download compact
+- [x] `SocialAnalysisRoom` — download compact
+- [x] `VoiceStudio` — tts + stt (2개 나란히)
+- [x] `EditRoomTab` — ffmpeg compact
+- [x] `Step3Export` — download compact (프리미어/캡컷 내보내기)
+- [x] `AudioMerger` — tts compact
+- [x] 검증: tsc 0에러, vite build 성공
+
 ### [2026-03-22] 웹앱 3대 서비스 컴패니언 연동 — STT/TTS/FFmpeg
 - [x] `transcriptionService.ts` — tryCompanionTranscribe() + transcribeAudio() 컴패니언 우선
 - [x] `elevenlabsService.ts` — tryCompanionTTS() + voiceId 있으면 ElevenLabs 직행
