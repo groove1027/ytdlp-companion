@@ -987,7 +987,7 @@ const ChannelAnalysisRoom: React.FC = () => {
         </div>
       )}
 
-      {(channelInfo || channelGuideline) && channelScripts.length > 0 && (
+      {(channelInfo || channelGuideline) && channelScripts.length > 0 && (channelGuideline?.copyableSystemPrompt || progress || (channelGuideline?.failedLayers?.includes('L1') && channelInfo)) && (
         <div className={card}>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between mb-4">
             <div>
