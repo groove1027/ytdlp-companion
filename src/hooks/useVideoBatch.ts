@@ -16,7 +16,7 @@ import { uploadMediaToHosting } from '../services/uploadService';
 import { PRICING } from '../constants';
 import { useUIStore } from '../stores/uiStore';
 import { useProjectStore } from '../stores/projectStore';
-import { runKieBatch } from '../utils/kieBatchRunner';
+import { KieBatchItemResult, runKieBatch } from '../utils/kieBatchRunner';
 
 // Helper for Base64 to File
 function base64ToFile(base64: string, filename: string): File {
@@ -48,6 +48,12 @@ function isQuotaExhaustedError(error: unknown): boolean {
 type GrokDuration = '6' | '10';
 type SeedanceDuration = '4' | '8' | '12';
 type VideoDurationOverride = GrokDuration | SeedanceDuration;
+type VideoBatchProgressState = { current: number; total: number; success: number; fail: number; };
+type VideoBatchRetryConfig = {
+    label: string;
+    sceneIds: string[];
+    runItem: (scene: Scene) => Promise<void>;
+};
 
 const isGrokDuration = (duration?: VideoDurationOverride): duration is GrokDuration =>
     duration === '6' || duration === '10';
@@ -65,11 +71,14 @@ export const useVideoBatch = (
     onCostAdd?: (amount: number, type: 'image' | 'video' | 'analysis') => void
 ) => {
     const [isBatching, setIsBatching] = useState(false);
-    const [progress, setProgress] = useState({ current: 0, total: 0 });
+    const [progress, setProgress] = useState<VideoBatchProgressState>({ current: 0, total: 0, success: 0, fail: 0 });
     const [detailedStatus, setDetailedStatus] = useState({ percent: 0, eta: 0, message: "" });
+    const [failedSceneIds, setFailedSceneIds] = useState<string[]>([]);
     
     const abortControllers = useRef<Map<string, AbortController>>(new Map());
     const isMountedRef = useRef(true);
+    const isBatchingRef = useRef(false);
+    const lastFailedBatchRef = useRef<VideoBatchRetryConfig | null>(null);
 
     // [FIX] unmount 시 폴링을 abort하지 않음 — 크레딧이 이미 소모된 생성 작업은 완료되어야 함
     // abort는 사용자가 명시적으로 취소할 때만 (cancelScene)
@@ -83,6 +92,99 @@ export const useVideoBatch = (
     // useProjectStore.getState().updateScene()은 전역 store이므로 unmount 후에도 정상 동작
     const storeUpdateScene = (sceneId: string, partial: Partial<Scene>) => {
         useProjectStore.getState().updateScene(sceneId, partial);
+    };
+
+    const showBatchToast = (message: string, duration: number = 4000) => {
+        useUIStore.getState().setToast({ show: true, message });
+        setTimeout(() => useUIStore.getState().setToast(null), duration);
+    };
+
+    const resetVideoSceneState = (sceneId: string, partial: Partial<Scene> = {}) => {
+        storeUpdateScene(sceneId, {
+            isGeneratingVideo: false,
+            isUpscaling: false,
+            generationTaskId: undefined,
+            generationStatus: undefined,
+            progress: 0,
+            ...partial,
+        });
+    };
+
+    const isRetryableBatchError = (error: unknown) => {
+        const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+        return (
+            message.includes('timeout') ||
+            message.includes('network') ||
+            message.includes('429') ||
+            message.includes('502') ||
+            message.includes('503') ||
+            message.includes('504') ||
+            message.includes('server busy') ||
+            message.includes('temporar') ||
+            message.includes('rate limit')
+        );
+    };
+
+    const handleBatchItemDone = (result: KieBatchItemResult<Scene>) => {
+        setProgress(prev => ({
+            ...prev,
+            current: prev.current + 1,
+            success: prev.success + (result.ok ? 1 : 0),
+            fail: prev.fail + (result.ok ? 0 : 1),
+        }));
+    };
+
+    const runSceneBatch = async (
+        targets: Scene[],
+        label: string,
+        runItem: (scene: Scene) => Promise<void>,
+        emptyMessage: string = "작업 대상이 없습니다."
+    ) => {
+        if (targets.length === 0) {
+            showBatchToast(emptyMessage, 3000);
+            return null;
+        }
+        if (isBatchingRef.current) {
+            showBatchToast("이미 영상 일괄 생성이 진행 중입니다.", 3000);
+            return null;
+        }
+
+        isBatchingRef.current = true;
+        setIsBatching(true);
+        setProgress({ current: 0, total: targets.length, success: 0, fail: 0 });
+        setFailedSceneIds([]);
+        lastFailedBatchRef.current = null;
+
+        try {
+            const result = await runKieBatch(targets, runItem, handleBatchItemDone, kieBatchOpts);
+            const retryableFailures = result.failedItems
+                .filter(item => isRetryableBatchError(item.error))
+                .map(item => item.item.id);
+            const failedIds = result.failedItems.map(item => item.item.id);
+            const retryIds = retryableFailures.length > 0 ? retryableFailures : failedIds;
+
+            setFailedSceneIds(retryIds);
+            if (retryIds.length > 0) {
+                lastFailedBatchRef.current = {
+                    label,
+                    sceneIds: retryIds,
+                    runItem,
+                };
+            }
+
+            if (result.quotaExhausted) {
+                showBatchToast(`잔액 부족으로 ${label} 배치를 중단했습니다. (${result.succeeded}개 성공, ${result.failed}개 실패)`, 6000);
+            } else if (result.failed > 0) {
+                showBatchToast(`${label} 배치 완료: ${result.succeeded}개 성공, ${result.failed}개 실패. 실패한 장면을 다시 시도할 수 있습니다.`, 6000);
+            } else {
+                showBatchToast(`${label} 배치 완료: ${result.succeeded}개 성공`, 4000);
+            }
+
+            return result;
+        } finally {
+            isBatchingRef.current = false;
+            setIsBatching(false);
+        }
     };
 
     const cancelScene = async (sceneId: string) => {
@@ -105,11 +207,7 @@ export const useVideoBatch = (
              }
         }
 
-        storeUpdateScene(sceneId, {
-            isGeneratingVideo: false,
-            isUpscaling: false,
-            videoGenerationError: "사용자 취소"
-        });
+        resetVideoSceneState(sceneId, { videoGenerationError: "사용자 취소" });
         logger.warn(`Scene Cancelled: ${sceneId}`);
     };
 
@@ -123,7 +221,8 @@ export const useVideoBatch = (
         overrideSpeech?: boolean,
         isRetry: boolean = false,
         isSafeMode: boolean = false, // [NEW] Flag for simplified retry
-        retryCount: number = 0       // [NEW] Auto-Retry Counter
+        retryCount: number = 0,      // [NEW] Auto-Retry Counter
+        bubbleFailure: boolean = false
     ) => {
         if (!scene.imageUrl) return;
         logger.trackAction('비디오 생성 시작', initialModel);
@@ -155,7 +254,9 @@ export const useVideoBatch = (
 
         storeUpdateScene(sceneId, {
             isGeneratingVideo: true,
+            isUpscaling: false,
             videoGenerationError: undefined,
+            generationTaskId: undefined,
             videoModelUsed: effectiveModel,
             generationStatus: statusMsg,
             progress: 0
@@ -355,7 +456,7 @@ export const useVideoBatch = (
             // [#492] 이전 영상 백업 — 되돌리기 지원
             const prevVideo = useProjectStore.getState().scenes.find(s => s.id === sceneId)?.videoUrl;
             storeUpdateScene(sceneId, {
-                videoUrl, isGeneratingVideo: false, isUpscaling: false, isUpscaled: false, isNativeHQ, generationTaskId: taskId, videoModelUsed: effectiveModel, generationStatus: undefined, progress: 100,
+                videoUrl, isGeneratingVideo: false, isUpscaling: false, isUpscaled: false, isNativeHQ, generationTaskId: taskId, videoModelUsed: effectiveModel, videoGenerationError: undefined, generationStatus: undefined, progress: 100,
                 imageUpdatedAfterVideo: false,
                 previousVideoUrl: prevVideo || undefined,
                 ...(generatedSfx ? { generatedSfx } : {}),
@@ -374,10 +475,8 @@ export const useVideoBatch = (
                 logger.error(`[Quota] Scene ${sceneId} — 잔액 부족으로 중단`, e.message);
                 useUIStore.getState().setToast({ show: true, message: '잔액이 부족합니다. 크레딧을 충전한 후 다시 시도해주세요.' });
                 setTimeout(() => useUIStore.getState().setToast(null), 6000);
-                storeUpdateScene(sceneId, {
-                    isGeneratingVideo: false, isUpscaling: false,
+                resetVideoSceneState(sceneId, {
                     videoGenerationError: '잔액 부족: 크레딧을 충전해주세요.',
-                    generationStatus: undefined, progress: 0
                 });
                 // 에러를 다시 던져서 runBatch가 남은 장면 처리를 중단하도록 함
                 throw e;
@@ -406,7 +505,8 @@ export const useVideoBatch = (
                     overrideSpeech,
                     isRetry,
                     isSafeMode,
-                    nextRetry
+                    nextRetry,
+                    bubbleFailure
                 );
                 return; // Exit current stack
             }
@@ -415,36 +515,35 @@ export const useVideoBatch = (
                 if (errStr.includes("audio_filtered") || errStr.includes("audio filter")) {
                     logger.warn(`Scene ${sceneId} caught AUDIO_FILTERED. Retrying in Safe Mode (Silent)...`);
                     logger.trackErrorChain(String(e), 'useVideoBatch:processScene:audio_filtered');
-                    await processScene(sceneId, scene, initialModel, explicitUpscaleRequest, forceModel, overrideDuration, overrideSpeech, isRetry, true, retryCount);
+                    await processScene(sceneId, scene, initialModel, explicitUpscaleRequest, forceModel, overrideDuration, overrideSpeech, isRetry, true, retryCount, bubbleFailure);
                     return;
                 }
 
                 if (errStr.includes("invalid_argument") || errStr.includes("invalid argument")) {
                     logger.warn(`Scene ${sceneId} caught INVALID_ARGUMENT. Retrying in Safe Mode (Short Prompt)...`);
                     logger.trackErrorChain(String(e), 'useVideoBatch:processScene:invalid_argument');
-                    await processScene(sceneId, scene, initialModel, explicitUpscaleRequest, forceModel, overrideDuration, overrideSpeech, isRetry, true, retryCount);
+                    await processScene(sceneId, scene, initialModel, explicitUpscaleRequest, forceModel, overrideDuration, overrideSpeech, isRetry, true, retryCount, bubbleFailure);
                     return;
                 }
 
                 if (!isRetry && (errStr.includes("40") || errStr.includes("safety") || errStr.includes("policy") || errStr.includes("ip"))) {
                     logger.warn(`Scene ${sceneId} hit Safety/IP filter. Triggering Image Wash Retry...`);
                     logger.trackErrorChain(String(e), 'useVideoBatch:processScene:safety_filter');
-                    await processScene(sceneId, scene, initialModel, explicitUpscaleRequest, forceModel, overrideDuration, overrideSpeech, true, false, retryCount);
+                    await processScene(sceneId, scene, initialModel, explicitUpscaleRequest, forceModel, overrideDuration, overrideSpeech, true, false, retryCount, bubbleFailure);
                     return;
                 }
             }
 
             logger.error(`Scene ${sceneId} Generation Failed`, e.message);
-            storeUpdateScene(sceneId, {
-                isGeneratingVideo: false, isUpscaling: false, videoGenerationError: e.message, generationStatus: undefined, progress: 0
-            });
+            resetVideoSceneState(sceneId, { videoGenerationError: e.message });
+            if (bubbleFailure) throw e;
         } finally {
             abortControllers.current.delete(sceneId);
         }
     };
 
-    const processUpscaleOnly = async (sceneId: string, scene: Scene) => {
-        if (!scene.generationTaskId) { useUIStore.getState().setToast({ show: true, message: "원본 작업 ID가 없습니다." }); setTimeout(() => useUIStore.getState().setToast(null), 3000); return; }
+    const processUpscaleOnly = async (sceneId: string, scene: Scene, bubbleFailure: boolean = false) => {
+        if (!scene.generationTaskId) { useUIStore.getState().setToast({ show: true, message: "원본 작업 ID가 없습니다." }); setTimeout(() => useUIStore.getState().setToast(null), 3000); if (bubbleFailure) throw new Error("원본 작업 ID가 없습니다."); return; }
         const controller = new AbortController();
         abortControllers.current.set(sceneId, controller);
         const signal = controller.signal;
@@ -467,6 +566,7 @@ export const useVideoBatch = (
             storeUpdateScene(sceneId, {
                 isUpscaling: false, videoGenerationError: `업스케일 실패: ${e.message}`
             });
+            if (bubbleFailure) throw e;
         } finally {
             abortControllers.current.delete(sceneId);
         }
@@ -479,30 +579,30 @@ export const useVideoBatch = (
         logger.trackAction('비디오 배치 생성 시작', 'Grok HQ');
         // [FIX BUG#10] Read current scenes from store to avoid stale closure
         const allTargets = useProjectStore.getState().scenes.filter(s => s.imageUrl && !s.videoUrl && !s.isGeneratingVideo);
-        // [#243] 선택된 장면만 필터 (sceneIds 제공 시)
         const genTargets = sceneIds && sceneIds.length > 0 ? allTargets.filter(s => sceneIds.includes(s.id)) : allTargets;
-        if (genTargets.length === 0) { useUIStore.getState().setToast({ show: true, message: "작업할 대상이 없습니다." }); setTimeout(() => useUIStore.getState().setToast(null), 3000); return; }
-        setIsBatching(true);
-        setProgress({ current: 0, total: genTargets.length });
-        await runKieBatch(genTargets, async (scene) => {
-            await processScene(scene.id, scene, VideoModel.GROK, true, true, duration, speechMode);
-        }, () => setProgress(prev => ({ ...prev, current: prev.current + 1 })), kieBatchOpts);
-        setIsBatching(false);
-        logger.success("Grok HQ Batch Completed");
+        const result = await runSceneBatch(
+            genTargets,
+            'Grok HQ',
+            async (scene) => {
+                await processScene(scene.id, scene, VideoModel.GROK, true, true, duration, speechMode, false, false, 0, true);
+            },
+            "작업할 대상이 없습니다."
+        );
+        if (result && result.failed === 0) logger.success("Grok HQ Batch Completed");
     };
 
     const runSeedanceBatch = async (sceneIds?: string[], duration?: SeedanceDuration) => {
         logger.trackAction('비디오 배치 생성 시작', 'Seedance 1.5 Pro');
         const allTargets = useProjectStore.getState().scenes.filter(s => s.imageUrl && !s.videoUrl && !s.isGeneratingVideo);
         const targets = sceneIds && sceneIds.length > 0 ? allTargets.filter(s => sceneIds.includes(s.id)) : allTargets;
-        if (targets.length === 0) { useUIStore.getState().setToast({ show: true, message: "작업 대상이 없습니다." }); setTimeout(() => useUIStore.getState().setToast(null), 3000); return; }
-        setIsBatching(true);
-        setProgress({ current: 0, total: targets.length });
-        await runKieBatch(targets, async (scene) => {
-            await processScene(scene.id, scene, VideoModel.SEEDANCE, false, true, duration || scene.seedanceDuration || '8');
-        }, () => setProgress(prev => ({ ...prev, current: prev.current + 1 })), kieBatchOpts);
-        setIsBatching(false);
-        logger.success("Seedance Batch Completed");
+        const result = await runSceneBatch(
+            targets,
+            'Seedance 1.5 Pro',
+            async (scene) => {
+                await processScene(scene.id, scene, VideoModel.SEEDANCE, false, true, duration || scene.seedanceDuration || '8', undefined, false, false, 0, true);
+            }
+        );
+        if (result && result.failed === 0) logger.success("Seedance Batch Completed");
     };
 
     const runVeoFastBatch = async (sceneIds?: string[]) => {
@@ -511,13 +611,13 @@ export const useVideoBatch = (
         const allTargets = useProjectStore.getState().scenes.filter(s => s.imageUrl && !s.videoUrl && !s.isGeneratingVideo);
         // [#243] 선택된 장면만 필터 (sceneIds 제공 시)
         const targets = sceneIds && sceneIds.length > 0 ? allTargets.filter(s => sceneIds.includes(s.id)) : allTargets;
-        if (targets.length === 0) { useUIStore.getState().setToast({ show: true, message: "작업 대상이 없습니다." }); setTimeout(() => useUIStore.getState().setToast(null), 3000); return; }
-        setIsBatching(true);
-        setProgress({ current: 0, total: targets.length });
-        await runKieBatch(targets, async (scene) => {
-             await processScene(scene.id, scene, VideoModel.VEO, false, true);
-        }, () => setProgress(prev => ({ ...prev, current: prev.current + 1 })), kieBatchOpts);
-        setIsBatching(false);
+        await runSceneBatch(
+            targets,
+            'Veo Fast',
+            async (scene) => {
+                await processScene(scene.id, scene, VideoModel.VEO, false, true, undefined, undefined, false, false, 0, true);
+            }
+        );
     };
 
     const runVeoQualityBatch = async (sceneIds?: string[]) => {
@@ -526,14 +626,13 @@ export const useVideoBatch = (
         const allTargets = useProjectStore.getState().scenes.filter(s => s.imageUrl && !s.videoUrl && !s.isGeneratingVideo);
         // [#243] 선택된 장면만 필터 (sceneIds 제공 시)
         const targets = sceneIds && sceneIds.length > 0 ? allTargets.filter(s => sceneIds.includes(s.id)) : allTargets;
-        if (targets.length === 0) { useUIStore.getState().setToast({ show: true, message: "작업 대상이 없습니다." }); setTimeout(() => useUIStore.getState().setToast(null), 3000); return; }
-        setIsBatching(true);
-        setProgress({ current: 0, total: targets.length });
-        await runKieBatch(targets, async (scene) => {
-             // [HIGH FIX 1] Use VEO_QUALITY instead of VEO for quality batch
-             await processScene(scene.id, scene, VideoModel.VEO_QUALITY, false, true);
-        }, () => setProgress(prev => ({ ...prev, current: prev.current + 1 })), kieBatchOpts);
-        setIsBatching(false);
+        await runSceneBatch(
+            targets,
+            'Veo Quality',
+            async (scene) => {
+                await processScene(scene.id, scene, VideoModel.VEO_QUALITY, false, true, undefined, undefined, false, false, 0, true);
+            }
+        );
     };
 
     const runUpscaleBatch = async (sceneIds?: string[]) => {
@@ -542,17 +641,17 @@ export const useVideoBatch = (
         const allTargets = useProjectStore.getState().scenes.filter(s => s.videoUrl && !s.isUpscaled && !s.isUpscaling && s.generationTaskId);
         // [#243] 선택된 장면만 필터 (sceneIds 제공 시)
         const targets = sceneIds && sceneIds.length > 0 ? allTargets.filter(s => sceneIds.includes(s.id)) : allTargets;
-        if (targets.length === 0) { useUIStore.getState().setToast({ show: true, message: "작업 대상이 없습니다." }); setTimeout(() => useUIStore.getState().setToast(null), 3000); return; }
-        setIsBatching(true);
-        setProgress({ current: 0, total: targets.length });
-        await runKieBatch(targets, async (scene) => {
-             await processUpscaleOnly(scene.id, scene);
-        }, () => setProgress(prev => ({ ...prev, current: prev.current + 1 })), kieBatchOpts);
-        setIsBatching(false);
+        await runSceneBatch(
+            targets,
+            'Upscale',
+            async (scene) => {
+                await processUpscaleOnly(scene.id, scene, true);
+            }
+        );
     };
     
     // V2V: xAI Grok Video Edit (sourceVideoUrl → style transfer)
-    const processRemakeScene = async (sceneId: string, scene: Scene) => {
+    const processRemakeScene = async (sceneId: string, scene: Scene, bubbleFailure: boolean = false) => {
         if (!scene.sourceVideoUrl) return;
         logger.trackAction('비디오 생성 시작', 'V2V Remake (xAI Grok)');
 
@@ -566,6 +665,7 @@ export const useVideoBatch = (
 
         storeUpdateScene(sceneId, {
             isGeneratingVideo: true, videoGenerationError: undefined,
+            generationTaskId: undefined,
             generationStatus: `🎬 ${segLabel}V2V 변환 중 (xAI Grok)...`,
             progress: 0
         });
@@ -598,16 +698,14 @@ export const useVideoBatch = (
             storeUpdateScene(sceneId, {
                 videoUrl, isGeneratingVideo: false, isNativeHQ: false,
                 generationTaskId: taskId, videoModelUsed: VideoModel.GROK,
-                generationStatus: undefined, progress: 100, imageUpdatedAfterVideo: false,
+                videoGenerationError: undefined, generationStatus: undefined, progress: 100, imageUpdatedAfterVideo: false,
                 previousVideoUrl: prevV2V || undefined,
             });
 
         } catch (e: any) {
             if (e.message === "Cancelled by user" || signal.aborted) return;
-            storeUpdateScene(sceneId, {
-                isGeneratingVideo: false, videoGenerationError: e.message,
-                generationStatus: undefined, progress: 0
-            });
+            resetVideoSceneState(sceneId, { videoGenerationError: e.message });
+            if (bubbleFailure) throw e;
         } finally {
             abortControllers.current.delete(sceneId);
         }
@@ -617,24 +715,47 @@ export const useVideoBatch = (
         logger.trackAction('비디오 배치 생성 시작', 'V2V Remake');
         // [FIX BUG#10] Read current scenes from store to avoid stale closure
         const targets = useProjectStore.getState().scenes.filter(s => s.sourceVideoUrl && !s.videoUrl && !s.isGeneratingVideo);
-        if (targets.length === 0) { useUIStore.getState().setToast({ show: true, message: "작업 대상이 없습니다." }); setTimeout(() => useUIStore.getState().setToast(null), 3000); return; }
-        setIsBatching(true);
-        setProgress({ current: 0, total: targets.length });
-        await runKieBatch(targets, async (scene) => {
-            await processRemakeScene(scene.id, scene);
-        }, () => setProgress(prev => ({ ...prev, current: prev.current + 1 })), kieBatchOpts);
-        setIsBatching(false);
+        await runSceneBatch(
+            targets,
+            'V2V Remake',
+            async (scene) => {
+                await processRemakeScene(scene.id, scene, true);
+            }
+        );
     };
 
     const runRemakeBatchWithScenes = async (explicitScenes: Scene[]) => {
         const targets = explicitScenes.filter(s => s.sourceVideoUrl && !s.videoUrl && !s.isGeneratingVideo);
         if (targets.length === 0) return;
-        setIsBatching(true);
-        setProgress({ current: 0, total: targets.length });
-        await runKieBatch(targets, async (scene) => {
-            await processRemakeScene(scene.id, scene);
-        }, () => setProgress(prev => ({ ...prev, current: prev.current + 1 })), kieBatchOpts);
-        setIsBatching(false);
+        await runSceneBatch(
+            targets,
+            'V2V Remake',
+            async (scene) => {
+                await processRemakeScene(scene.id, scene, true);
+            }
+        );
+    };
+
+    const retryFailedBatch = async () => {
+        const retryConfig = lastFailedBatchRef.current;
+        if (!retryConfig || retryConfig.sceneIds.length === 0) {
+            showBatchToast('재시도할 실패 장면이 없습니다.', 3000);
+            return;
+        }
+
+        const targets = retryConfig.sceneIds
+            .map(id => useProjectStore.getState().scenes.find(scene => scene.id === id))
+            .filter((scene): scene is Scene => !!scene && !scene.videoUrl && !scene.isGeneratingVideo && (!!scene.imageUrl || !!scene.sourceVideoUrl));
+
+        if (targets.length === 0) {
+            showBatchToast('현재 재시도 가능한 실패 장면이 없습니다.', 3000);
+            lastFailedBatchRef.current = null;
+            setFailedSceneIds([]);
+            return;
+        }
+
+        logger.trackAction('비디오 배치 재시도', retryConfig.label);
+        await runSceneBatch(targets, `${retryConfig.label} 재시도`, retryConfig.runItem, '재시도할 장면이 없습니다.');
     };
 
     // [FIX BUG#10] All single-scene functions read from store to avoid stale closure
@@ -650,6 +771,7 @@ export const useVideoBatch = (
     return {
         isBatching,
         batchProgress: progress,
+        failedSceneIds,
         detailedStatus,
         runGrokHQBatch,
         runSeedanceBatch,
@@ -664,6 +786,7 @@ export const useVideoBatch = (
         runSingleVeoFast,
         runSingleVeoQuality,
         runSingleUpscale,
+        retryFailedBatch,
         processScene,
         processRemakeScene,
         cancelScene

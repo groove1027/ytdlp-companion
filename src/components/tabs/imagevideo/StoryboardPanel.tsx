@@ -1434,6 +1434,9 @@ const StoryboardPanel: React.FC = () => {
   const completedThumbnails = thumbnails.filter((t) => t.imageUrl).length;
   const videoEligible = scenes.filter((s) => s.imageUrl && !s.videoUrl && !s.isGeneratingVideo).length;
   const imageEligible = scenes.filter((s) => !s.imageUrl && !s.isGeneratingImage).length;
+  const failedVideoCount = useMemo(() => (
+    scenes.filter((scene) => videoBatch.failedSceneIds.includes(scene.id) && !scene.videoUrl && !scene.isGeneratingVideo).length
+  ), [scenes, videoBatch.failedSceneIds]);
   const exRate = useCostStore.getState().exchangeRate || PRICING.EXCHANGE_RATE;
 
   const isAnyBatchRunning = isBatchingImages || videoBatch.isBatching || isBatchUploading;
@@ -2228,6 +2231,11 @@ const StoryboardPanel: React.FC = () => {
       const msg = e instanceof Error ? e.message : String(e);
       updateScene(sceneId, { isGeneratingImage: false, generationStatus: `실패: ${msg}` });
       return false;
+    } finally {
+      const latestScene = useProjectStore.getState().scenes.find(s => s.id === sceneId);
+      if (latestScene?.isGeneratingImage) {
+        updateScene(sceneId, { isGeneratingImage: false });
+      }
     }
   }, [updateScene, addCost, requireAuth, storyboardImageModel]);
 
@@ -2442,8 +2450,10 @@ const StoryboardPanel: React.FC = () => {
               <span className={`text-lg font-bold tabular-nums ${isBatchUploading || isBatchingImages ? 'text-orange-300' : 'text-blue-300'}`}>
                 {batchCurrent}/{batchTotal}
               </span>
-              {((isBatchUploading && batchUploadProgress.fail > 0) || (isBatchingImages && batchImageProgress.fail > 0)) && (
-                <div className="text-xs text-red-400 mt-0.5">{isBatchUploading ? batchUploadProgress.fail : batchImageProgress.fail}개 실패</div>
+              {((isBatchUploading && batchUploadProgress.fail > 0) || (isBatchingImages && batchImageProgress.fail > 0) || (!isBatchUploading && !isBatchingImages && videoBatch.batchProgress.fail > 0)) && (
+                <div className="text-xs text-red-400 mt-0.5">
+                  {isBatchUploading ? batchUploadProgress.fail : isBatchingImages ? batchImageProgress.fail : videoBatch.batchProgress.fail}개 실패
+                </div>
               )}
               {isBatchingImages && (
                 <button
@@ -2799,6 +2809,17 @@ const StoryboardPanel: React.FC = () => {
             )}
           </div>
           {/* Generate dropdown */}
+          {failedVideoCount > 0 && (
+            <button
+              type="button"
+              onClick={() => videoBatch.retryFailedBatch()}
+              disabled={isAnyBatchRunning}
+              className="px-3 py-1.5 bg-red-600/15 hover:bg-red-600/25 disabled:opacity-40 disabled:cursor-not-allowed text-red-300 text-xs font-medium rounded-lg border border-red-500/40 transition-colors flex items-center gap-1.5"
+            >
+              <span className="w-2 h-2 rounded-full bg-red-400" />
+              실패한 영상 {failedVideoCount}개 재시도
+            </button>
+          )}
           <div className="relative" ref={dropdownRef}>
             <button
               type="button"

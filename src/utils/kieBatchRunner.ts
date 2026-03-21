@@ -21,6 +21,20 @@ export interface KieBatchOptions {
   isQuotaExhausted?: (error: unknown) => boolean;
 }
 
+export interface KieBatchItemResult<T> {
+  item: T;
+  ok: boolean;
+  error?: unknown;
+}
+
+export interface KieBatchRunResult<T> {
+  completed: number;
+  succeeded: number;
+  failed: number;
+  quotaExhausted: boolean;
+  failedItems: KieBatchItemResult<T>[];
+}
+
 /**
  * KIE API 레이트 리밋에 맞춘 배치 실행기
  *
@@ -32,9 +46,9 @@ export interface KieBatchOptions {
 export async function runKieBatch<T>(
   items: T[],
   fn: (item: T) => Promise<void>,
-  onItemDone: () => void,
+  onItemDone: (result: KieBatchItemResult<T>) => void,
   options?: KieBatchOptions,
-): Promise<void> {
+): Promise<KieBatchRunResult<T>> {
   const {
     submitPerWindow = 10,
     windowMs = 10_000,
@@ -45,6 +59,13 @@ export async function runKieBatch<T>(
   const queue = [...items];
   const active: Promise<void>[] = [];
   let quotaExhausted = false;
+  const summary: KieBatchRunResult<T> = {
+    completed: 0,
+    succeeded: 0,
+    failed: 0,
+    quotaExhausted: false,
+    failedItems: [],
+  };
 
   while ((queue.length > 0 || active.length > 0) && !quotaExhausted) {
     // 버스트 제출: submitPerWindow개까지 (maxConcurrent 초과 방지)
@@ -56,16 +77,35 @@ export async function runKieBatch<T>(
 
     for (let i = 0; i < burstCount && !quotaExhausted; i++) {
       const item = queue.shift()!;
-      const p = fn(item).catch((e) => {
-        if (isQuotaExhausted?.(e)) {
-          quotaExhausted = true;
-          queue.length = 0;
-        }
-      }).finally(() => {
-        const idx = active.indexOf(p);
-        if (idx > -1) active.splice(idx, 1);
-        onItemDone();
-      });
+      const p = Promise.resolve()
+        .then(() => fn(item))
+        .then<KieBatchItemResult<T>>(() => ({ item, ok: true }))
+        .catch<KieBatchItemResult<T>>((error) => {
+          if (isQuotaExhausted?.(error)) {
+            quotaExhausted = true;
+            queue.length = 0;
+            summary.quotaExhausted = true;
+          }
+
+          const failure: KieBatchItemResult<T> = { item, ok: false, error };
+          summary.failedItems.push(failure);
+          return failure;
+        })
+        .then((result) => {
+          summary.completed += 1;
+          if (result.ok) summary.succeeded += 1;
+          else summary.failed += 1;
+
+          try {
+            onItemDone(result);
+          } catch {
+            // UI progress callbacks must not break the batch loop.
+          }
+        })
+        .finally(() => {
+          const idx = active.indexOf(p);
+          if (idx > -1) active.splice(idx, 1);
+        });
       active.push(p);
     }
 
@@ -82,4 +122,6 @@ export async function runKieBatch<T>(
       await Promise.allSettled(active);
     }
   }
+
+  return summary;
 }

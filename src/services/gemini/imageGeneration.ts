@@ -88,6 +88,31 @@ const normalizeReferenceImages = (images?: string | string[]): string[] => {
         .filter((image): image is string => !!image);
 };
 
+const isValidGeneratedImageUrl = (value: string): boolean => {
+    const trimmed = value.trim();
+    if (!trimmed) return false;
+
+    if (trimmed.startsWith('data:image/')) {
+        const commaIndex = trimmed.indexOf(',');
+        return commaIndex > 0 && trimmed.slice(commaIndex + 1).trim().length > 0;
+    }
+
+    try {
+        const parsed = new URL(trimmed);
+        return parsed.protocol === 'http:' || parsed.protocol === 'https:' || parsed.protocol === 'blob:';
+    } catch {
+        return false;
+    }
+};
+
+const ensureGeneratedImageUrl = (value: string, provider: string): string => {
+    const trimmed = value.trim();
+    if (!isValidGeneratedImageUrl(trimmed)) {
+        throw new Error(`${provider} 이미지 생성 결과가 비어 있거나 유효한 이미지 URL이 아닙니다.`);
+    }
+    return trimmed;
+};
+
 const buildReferenceImages = (
     sceneReferenceImage: string | undefined,
     styleReferenceImages: string[],
@@ -803,6 +828,7 @@ export const generateSceneImage = async (
                         updateStatus(model === ImageModel.GOOGLE_IMAGEN ? "🎨 Google Imagen(Whisk 리믹스) 무료 생성 중..." : "🎨 Google Whisk 리믹싱 생성 중...");
                     }
                     const result = await generateWhiskImage(finalPrompt, ratio, googleStore.cookie, hasReferenceImages ? prioritizedReferenceImages : undefined);
+                    const url = ensureGeneratedImageUrl(result.base64, model === ImageModel.GOOGLE_IMAGEN ? 'Google Imagen(Whisk 리믹스)' : 'Google Whisk');
                     googleStore.incrementImageCount();
                     logger.trackGenerationResult({
                         type: 'image',
@@ -811,7 +837,7 @@ export const generateSceneImage = async (
                         provider: model === ImageModel.GOOGLE_IMAGEN ? 'Google-WhiskRef' : 'Whisk',
                         duration: Math.round(performance.now() - genStartTime),
                     });
-                    return { url: result.base64, isFallback: false, isFiltered: filterResult.wasFiltered };
+                    return { url, isFallback: false, isFiltered: filterResult.wasFiltered };
                 } catch (whiskErr) {
                     // [FIX #568] Whisk 실패 시 항상 ImageFX로 폴백 (모델 무관)
                     logger.warn('[generation] Whisk 실패, ImageFX로 폴백', { error: (whiskErr as Error).message, model: String(model) });
@@ -823,9 +849,10 @@ export const generateSceneImage = async (
             const { generateGoogleImage } = await import('../googleImageService');
             if (updateStatus) updateStatus("🆓 Google Imagen 3.5 무료 생성 중...");
             const result = await generateGoogleImage(finalPrompt, ratio, googleStore.cookie);
+            const url = ensureGeneratedImageUrl(result.base64, 'Google Imagen 3.5');
             googleStore.incrementImageCount();
             logger.trackGenerationResult({ type: 'image', sceneId: scene.id || '?', success: true, provider: 'Google', duration: Math.round(performance.now() - genStartTime) });
-            return { url: result.base64, isFallback: false, isFiltered: filterResult.wasFiltered };
+            return { url, isFallback: false, isFiltered: filterResult.wasFiltered };
         } catch (e) {
             // [FIX #606] 에러 메시지를 사용자 친화적으로 정리 — 비세션 에러는 쿠키 문제로 오인하지 않음
             const rawMsg = (e as Error).message || '';
@@ -856,7 +883,10 @@ export const generateSceneImage = async (
     let kieErrorMsg = '';
     try {
         if (updateStatus) updateStatus(effectiveWebSearch ? "⚡ Kie Nanobanana 2 + 웹검색 생성 중..." : "⚡ Kie Nanobanana 2 생성 중...");
-        const url = await generateKieImage(optimizedPrompt, ratio, referenceImagesForProviders, prodImg, "nano-banana-2", undefined, effectiveWebSearch);
+        const url = ensureGeneratedImageUrl(
+            await generateKieImage(optimizedPrompt, ratio, referenceImagesForProviders, prodImg, "nano-banana-2", undefined, effectiveWebSearch),
+            'Kie Nanobanana 2',
+        );
         logger.trackGenerationResult({ type: 'image', sceneId: scene.id || '?', success: true, provider: 'Kie', duration: Math.round(performance.now() - kieStartTime) });
         return { url, isFallback: false, isFiltered: filterResult.wasFiltered };
     } catch (e) {
@@ -877,7 +907,10 @@ export const generateSceneImage = async (
     showToast(wasPolicyBlock ? '보안 정책 우회 — 프롬프트를 순화하여 재시도합니다...' : '이미지 생성 서버를 변경하여 재시도합니다...', 3000);
     try {
         if (updateStatus) updateStatus(wasPolicyBlock ? "🛡️ 프롬프트 순화 + Evolink 재시도 중..." : effectiveWebSearch ? "Evolink + 웹검색 폴백 시도 중..." : "Evolink Nanobanana 2 폴백 시도 중...");
-        const url = await generateEvolinkImageWrapped(fallbackPrompt, ratio, referenceImagesForProviders, prodImg, "2K", effectiveWebSearch);
+        const url = ensureGeneratedImageUrl(
+            await generateEvolinkImageWrapped(fallbackPrompt, ratio, referenceImagesForProviders, prodImg, "2K", effectiveWebSearch),
+            'Evolink Nanobanana 2',
+        );
         logger.trackGenerationResult({ type: 'image', sceneId: scene.id || '?', success: true, provider: 'Evolink', duration: Math.round(performance.now() - fbStartTime), isFallback: true });
         return { url, isFallback: true, isFiltered: filterResult.wasFiltered };
     } catch (e) {

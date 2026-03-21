@@ -8,6 +8,15 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-21] 영상 배치 생성 중단/재시도 버그 3건 수정 (#656, #608, #638)
+- [x] `kieBatchRunner.ts` — 배치 항목별 성공/실패 결과와 quota 중단 여부를 상위로 반환하도록 변경
+- [x] `useVideoBatch.ts` — 배치 실행을 공통 `runSceneBatch()`로 통합하고, 실패 시 `generationTaskId`/진행 상태를 정리한 뒤 실패 장면 재시도 경로 추가
+- [x] `StoryboardPanel.tsx` — 영상 배치 실패 개수 표시 + `실패한 영상 N개 재시도` 버튼 추가
+- [x] 검증 통과:
+  `cd src && node_modules/typescript/bin/tsc --noEmit`
+  `cd src && node_modules/.bin/vite build`
+  `rg -n "runSceneBatch|retryFailedBatch|failedSceneIds|resetVideoSceneState|bubbleFailure|KieBatchItemResult|KieBatchRunResult" src`
+
 ### [2026-03-21] 채널분석 버그 6건 수정 (#660, #658, #651, #625, #598, #578)
 - [x] **#651/#578**: 에러 메시지에 YouTube API quota/403/URL 오류 분기 추가
 - [x] **#660/#658**: L1 분석 필수 필드 검증 (3개+ 비면 실패로 승격)
@@ -3565,3 +3574,30 @@ Premiere 내보내기 `.prproj` 안에 남아 있던 `scene_*` / `제목없음.m
 - [x] `node --experimental-strip-types test/verify-async-budget.mjs`: 성공
 - [x] `node test/verify-nle-export-matrix-browser.mjs`: 성공
 - [x] `rg -n "runAbortableTaskWithBudget|waitForSoftTimeout|parallelDownloadBlobPromise|cleanupPremiereTemplatePlaceholders|removePremiereDanglingRefs|PREMIERE_TEMPLATE_SCENE_VIDEO_RE" src test`: 반영 위치 재확인
+
+---
+
+## 이미지 생성 실패 안전장치 + 업로드 단락수 원인 분석 (2026-03-21, #654, #634, #614)
+
+### 개요
+이미지 재생성 실패 시 `isGeneratingImage`가 남아 무한로딩처럼 보이던 문제를 방지하고,
+Google/Whisk/Kie/Evolink 이미지 생성 결과가 빈 문자열 또는 잘못된 값일 때 엑박 대신 실패 상태로 처리하도록 보강.
+추가로 업로드 시 단락 수가 16→15로 줄어드는 현상은 업로드 전사 장면 재구성 과정에서 저장된 `targetSceneCount`가 다시 적용되어 문단이 병합되는 흐름임을 확인.
+
+### 수정 파일
+
+| 파일 | 변경 |
+|------|------|
+| `src/services/gemini/imageGeneration.ts` | 생성 결과가 빈 문자열/비유효 URL이면 즉시 오류 처리하는 URL 검증 추가, Google/Whisk/Kie/Evolink 반환값 공통 검증 |
+| `src/components/tabs/imagevideo/StoryboardPanel.tsx` | 이미지 생성 try/catch 뒤 `finally` 안전망 추가, 실패/타임아웃 계열 경로에서 `isGeneratingImage` 잔류 방지 |
+
+### 원인 확인
+- 업로드 전사 장면 재구성은 `src/utils/uploadedTranscriptScenes.ts`의 `applyTargetSceneCount()`를 통해 `targetSceneCount`를 강제 적용
+- `src/components/tabs/imagevideo/SetupPanel.tsx`가 `buildUploadedTranscriptScenes(config, targetSceneCount)`를 매번 호출
+- `src/components/tabs/sound/VoiceStudio.tsx`가 업로드 전사 세그먼트를 `rawUploadedTranscriptSegments`로 저장한 뒤, 이후 재구성 시 기존 목표 컷 수가 남아 있으면 16개가 15개로 병합될 수 있음
+
+### 검증
+- [x] `cd src && node_modules/typescript/bin/tsc --noEmit`: 0 errors
+- [x] `cd src && node_modules/.bin/vite build`: 성공 (기존 Vite chunk warning만 존재)
+- [x] `rg -n "ensureGeneratedImageUrl|isValidGeneratedImageUrl" src/services/gemini/imageGeneration.ts`: 반영 위치 재확인
+- [x] `rg -n "finally|latestScene\\?|isGeneratingImage" src/components/tabs/imagevideo/StoryboardPanel.tsx`: 반영 위치 재확인
