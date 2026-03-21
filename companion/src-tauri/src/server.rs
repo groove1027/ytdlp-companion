@@ -147,7 +147,7 @@ async fn health_handler() -> Json<HealthResponse> {
         services.push("whisper".to_string());
     }
     // TTS 확인 (Kokoro 우선, Piper 폴백)
-    if tokio::process::Command::new("python3").args(["-c", "import kokoro"]).output().await.map(|o| o.status.success()).unwrap_or(false) {
+    if tokio::process::Command::new("python3").args(["-c", "from kokoro_onnx import Kokoro"]).output().await.map(|o| o.status.success()).unwrap_or(false) {
         services.push("tts-kokoro".to_string());
     } else if dirs::data_dir().map(|d| d.join("ytdlp-companion/piper/piper").exists()).unwrap_or(false) {
         services.push("tts-piper".to_string());

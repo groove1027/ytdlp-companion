@@ -1,36 +1,58 @@
 use tokio::process::Command as AsyncCommand;
 use std::path::PathBuf;
 
-/// Kokoro TTS 설치 확인 + 자동 설치
+/// Kokoro TTS 설치 확인 + 자동 설치 + 모델 다운로드
 pub async fn ensure_tts() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // Kokoro 설치 확인
+    // kokoro-onnx 설치 확인
     let check = AsyncCommand::new("python3")
-        .args(["-c", "import kokoro; print(kokoro.__version__)"])
+        .args(["-c", "from kokoro_onnx import Kokoro; print('ok')"])
         .output()
         .await;
 
-    if let Ok(out) = check {
-        if out.status.success() {
-            let ver = String::from_utf8_lossy(&out.stdout);
-            println!("[TTS] Kokoro 설치됨 (v{})", ver.trim());
-            return Ok(());
+    if check.map(|o| o.status.success()).unwrap_or(false) {
+        println!("[TTS] kokoro-onnx 설치됨");
+    } else {
+        println!("[TTS] kokoro-onnx 설치 중...");
+        let install = AsyncCommand::new("pip3")
+            .args(["install", "--break-system-packages", "kokoro-onnx", "soundfile"])
+            .output()
+            .await?;
+
+        if !install.status.success() {
+            let stderr = String::from_utf8_lossy(&install.stderr);
+            println!("[TTS] kokoro-onnx 설치 실패: {}", stderr.lines().last().unwrap_or(""));
+            return check_piper_fallback().await;
         }
+        println!("[TTS] kokoro-onnx 설치 완료");
     }
 
-    println!("[TTS] Kokoro 설치 중...");
-    let install = AsyncCommand::new("pip3")
-        .args(["install", "--break-system-packages", "kokoro", "soundfile"])
-        .output()
-        .await?;
+    // 모델 다운로드
+    let kokoro_dir = dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("ytdlp-companion")
+        .join("kokoro");
+    std::fs::create_dir_all(&kokoro_dir)?;
 
-    if !install.status.success() {
-        let stderr = String::from_utf8_lossy(&install.stderr);
-        // Kokoro 실패 시 Piper 폴백 시도
-        println!("[TTS] Kokoro 설치 실패, Piper 확인 중...: {}", stderr.lines().last().unwrap_or(""));
-        return check_piper_fallback().await;
+    let model_path = kokoro_dir.join("kokoro-v1.0.onnx");
+    let voices_path = kokoro_dir.join("voices-v1.0.bin");
+
+    let client = reqwest::Client::new();
+    if !model_path.exists() || std::fs::metadata(&model_path).map(|m| m.len()).unwrap_or(0) < 1000 {
+        println!("[TTS] Kokoro 모델 다운로드 중 (~310MB)...");
+        let bytes = client.get("https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx")
+            .send().await?.bytes().await?;
+        std::fs::write(&model_path, &bytes)?;
+        println!("[TTS] Kokoro 모델 다운로드 완료");
+    }
+    if !voices_path.exists() || std::fs::metadata(&voices_path).map(|m| m.len()).unwrap_or(0) < 1000 {
+        println!("[TTS] Kokoro 음성 파일 다운로드 중 (~27MB)...");
+        let bytes = client.get("https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin")
+            .send().await?.bytes().await?;
+        std::fs::write(&voices_path, &bytes)?;
+        println!("[TTS] Kokoro 음성 파일 다운로드 완료");
     }
 
-    println!("[TTS] Kokoro 설치 완료");
+    println!("[TTS] Kokoro TTS 준비 완료");
     Ok(())
 }
 
@@ -53,16 +75,18 @@ pub async fn synthesize_speech(
     language: Option<&str>,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     // 1순위: Kokoro (고품질, 한국어 지원)
-    if let Ok(wav) = try_kokoro(text, language).await {
-        return Ok(wav);
+    match try_kokoro(text, language).await {
+        Ok(wav) => return Ok(wav),
+        Err(e) => eprintln!("[TTS] Kokoro 실패: {}", e),
     }
 
     // 2순위: Piper (경량)
-    if let Ok(wav) = try_piper(text, language).await {
-        return Ok(wav);
+    match try_piper(text, language).await {
+        Ok(wav) => return Ok(wav),
+        Err(e) => eprintln!("[TTS] Piper 실패: {}", e),
     }
 
-    Err("TTS 엔진이 설치되지 않았습니다. 앱을 재시작해주세요.".into())
+    Err("TTS 엔진이 설치되지 않았습니다. Kokoro와 Piper 둘 다 실패.".into())
 }
 
 /// Kokoro TTS 실행
@@ -83,20 +107,36 @@ async fn try_kokoro(
     let voice = match lang {
         "en" => "af_heart",
         "ja" => "jf_alpha",
-        _ => "kf_default",
+        "zh" => "zf_xiaobei",
+        _ => "af_kore",  // 한국어: af_kore (Kore = Korea 발음 특화)
     };
 
+    let kokoro_dir = dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("ytdlp-companion")
+        .join("kokoro");
+    let model_path = kokoro_dir.join("kokoro-v1.0.onnx");
+    let voices_path = kokoro_dir.join("voices-v1.0.bin");
+
+    if !model_path.exists() || !voices_path.exists() {
+        return Err("Kokoro 모델 파일이 없습니다".into());
+    }
+
+    let text_escaped = text.replace('\\', "\\\\").replace('\'', "\\'").replace('\n', " ").replace('\r', "");
     let python_script = format!(
         r#"
-import kokoro, soundfile as sf
-pipeline = kokoro.KPipeline(lang_code='{lang}')
-samples, sr = pipeline('{text_escaped}', voice='{voice}')
+from kokoro_onnx import Kokoro
+import soundfile as sf
+kokoro = Kokoro('{model}', '{voices}')
+samples, sr = kokoro.create('{text}', voice='{voice}', speed=1.0, lang='{lang}')
 sf.write('{output}', samples, sr)
 print('OK')
 "#,
-        lang = lang,
-        text_escaped = text.replace('\\', "\\\\").replace('\'', "\\'").replace('\n', " ").replace('\r', ""),
+        model = model_path.to_string_lossy().replace('\'', "\\'"),
+        voices = voices_path.to_string_lossy().replace('\'', "\\'"),
+        text = text_escaped,
         voice = voice,
+        lang = lang,
         output = output_path,
     );
 
@@ -107,7 +147,8 @@ print('OK')
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("Kokoro 실행 실패: {}", stderr.lines().last().unwrap_or("unknown")).into());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        return Err(format!("Kokoro 실행 실패: {} | stdout: {}", stderr.trim(), stdout.trim()).into());
     }
 
     let wav_data = std::fs::read(&output_path)?;
