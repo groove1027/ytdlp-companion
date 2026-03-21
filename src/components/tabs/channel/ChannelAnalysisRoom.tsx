@@ -1037,7 +1037,31 @@ const ChannelAnalysisRoom: React.FC = () => {
                 maxH="max-h-[620px]"
               />
             </>
+          ) : !progress && channelGuideline ? (
+            /* [FIX #676] L1 실패로 copyableSystemPrompt 없이 분석 완료 — 에러 + 재시도 */
+            <div className="rounded-xl border border-amber-500/20 bg-amber-900/10 px-4 py-5">
+              <div className="flex items-center gap-3 mb-2">
+                <svg className="w-5 h-5 text-amber-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                </svg>
+                <p className="text-sm font-semibold text-amber-200">
+                  텍스트 분석이 실패하여 지침서를 생성하지 못했습니다.
+                </p>
+              </div>
+              <p className="text-sm text-gray-400 leading-relaxed mb-3">
+                AI 서버 응답 시간이 초과되었거나 네트워크가 불안정했을 수 있습니다. 아래 버튼을 눌러 다시 시도해주세요.
+              </p>
+              <button
+                onClick={handleRetryFailed}
+                disabled={isRetrying}
+                className="flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg bg-amber-600/20 text-amber-400 border border-amber-500/30 hover:bg-amber-600/30 transition-colors disabled:opacity-50"
+              >
+                {isRetrying ? <Spin /> : <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>}
+                {isRetrying ? '지침서 재생성 중...' : '지침서 다시 생성하기'}
+              </button>
+            </div>
           ) : (
+            /* 분석 진행 중 — 로딩 스피너 */
             <div className="rounded-xl border border-blue-500/20 bg-blue-900/10 px-4 py-5">
               <div className="flex items-center gap-3 mb-2">
                 <div className="w-4 h-4 border-2 border-blue-400/30 border-t-blue-300 rounded-full animate-spin" />
