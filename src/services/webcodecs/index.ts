@@ -255,16 +255,18 @@ export async function composeMp4(options: ComposeMp4Options): Promise<Blob> {
         if (!scene?.videoUrl) continue;
         const decoded = await audioDecodeByUrl.get(scene.videoUrl);
         if (decoded) {
-          // [FIX P2] 음수 클램프 — 전환 > 클립이면 start가 음수 → AudioBufferSourceNode 예외 방지
-          const renderStart = Math.max(0, sceneRenderStarts[i]);
+          // [FIX P1+P2] 음수 start → trim/duration도 함께 보정 (전환 > 클립 엣지 케이스)
+          const rawStart = sceneRenderStarts[i];
+          const clippedSec = rawStart < 0 ? -rawStart : 0;
+          const renderStart = Math.max(0, rawStart);
+          const baseTrim = slot.videoTrimStartSec ?? 0;
           sceneAudioBuffers.push({
             buffer: decoded,
-            // [FIX P2] transition overlap 보정된 렌더 시작 시각 사용 (음수 클램프 적용)
             startTimeSec: renderStart,
-            durationSec: slot.imageDuration,
+            durationSec: Math.max(0, slot.imageDuration - clippedSec),
             // [FIX P1] volume은 0-200 퍼센트 → /100으로 linear gain 변환 (FFmpeg과 동일)
             volume: (slot.volume ?? 100) / 100,
-            trimStartSec: slot.videoTrimStartSec ?? 0,
+            trimStartSec: baseTrim + clippedSec,
           });
         }
       }

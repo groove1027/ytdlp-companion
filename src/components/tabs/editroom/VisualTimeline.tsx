@@ -990,16 +990,17 @@ const VisualTimeline: React.FC = () => {
     // 각 videoAudioBlock에 대해 개별 Audio 생성
     // [FIX] transition overlap 반영한 실제 재생 시작 시각 사용 (composeMp4 내보내기와 일치)
     const st = useEditRoomStore.getState().sceneTransitions;
+    // [FIX P2] composeMp4과 동일 로직: prefix sum은 음수를 허용하고 사용 시에만 클램프
     const renderStarts: number[] = [0];
     for (let i = 0; i < timeline.length - 1; i++) {
       const tr = st[timeline[i].sceneId];
       const trDur = (tr && tr.preset !== 'none') ? tr.duration : 0;
-      renderStarts.push(Math.max(0, renderStarts[i] + timeline[i].imageDuration - trDur));
+      renderStarts.push(renderStarts[i] + timeline[i].imageDuration - trDur);
     }
     const blocks = timeline.map((t, i) => {
       const scene = scenes.find(s => s.id === t.sceneId);
       if (!scene?.videoUrl) return null;
-      return { videoUrl: scene.videoUrl, start: renderStarts[i], duration: t.imageDuration };
+      return { videoUrl: scene.videoUrl, start: Math.max(0, renderStarts[i]), duration: t.imageDuration };
     }).filter(Boolean) as { videoUrl: string; start: number; duration: number }[];
 
     blocks.forEach(b => {
