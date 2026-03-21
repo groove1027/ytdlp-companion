@@ -8,6 +8,12 @@ fn get_whisper_dir() -> PathBuf {
 }
 
 fn get_whisper_bin() -> PathBuf {
+    // 1순위: Homebrew 설치 (whisper-cli)
+    let brew_path = PathBuf::from("/opt/homebrew/bin/whisper-cli");
+    if brew_path.exists() { return brew_path; }
+    let brew_path2 = PathBuf::from("/usr/local/bin/whisper-cli");
+    if brew_path2.exists() { return brew_path2; }
+    // 2순위: 번들 바이너리
     get_whisper_dir().join("whisper-cpp")
 }
 

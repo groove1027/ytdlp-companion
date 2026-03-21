@@ -16,12 +16,12 @@ import { isCompanionDetected } from './ytdlpApiService';
 
 const COMPANION_URL = 'http://localhost:9876';
 
-/** 컴패니언 Piper TTS로 로컬 음성 합성 시도 */
+/** 컴패니언 Kokoro/Piper TTS로 로컬 음성 합성 시도 */
 async function tryCompanionTTS(text: string, languageCode?: string): Promise<{ audioUrl: string; format: string } | null> {
   if (!isCompanionDetected()) return null;
 
   try {
-    logger.info('[TTS] 컴패니언 Piper TTS 로컬 합성 시도');
+    logger.info('[TTS] 컴패니언 로컬 TTS 합성 시도 (Kokoro/Piper)');
     const res = await fetch(`${COMPANION_URL}/api/tts`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -38,10 +38,10 @@ async function tryCompanionTTS(text: string, languageCode?: string): Promise<{ a
     if (blob.size === 0) return null;
 
     const audioUrl = URL.createObjectURL(blob);
-    logger.success('[TTS] 컴패니언 Piper TTS 성공', { size: blob.size });
+    logger.success('[TTS] 컴패니언 로컬 TTS 성공', { size: blob.size });
     return { audioUrl, format: 'wav' };
   } catch (e) {
-    logger.warn('[TTS] 컴패니언 Piper TTS 실패 — ElevenLabs 폴백:', e instanceof Error ? e.message : '');
+    logger.warn('[TTS] 컴패니언 로컬 TTS 실패 — ElevenLabs 폴백:', e instanceof Error ? e.message : '');
     return null;
   }
 }

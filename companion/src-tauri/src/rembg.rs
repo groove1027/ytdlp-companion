@@ -27,7 +27,7 @@ pub async fn ensure_rembg() -> Result<(), Box<dyn std::error::Error + Send + Syn
 
     println!("[rembg] 설치 중...");
     let install = AsyncCommand::new("pip3")
-        .args(["install", "rembg[cli]", "onnxruntime"])
+        .args(["install", "--break-system-packages", "rembg[cli]", "onnxruntime"])
         .output()
         .await?;
 
@@ -52,10 +52,17 @@ pub async fn remove_background(
 
     std::fs::write(&input_path, image_data)?;
 
+    // python3 -m rembg로 호출 (PATH 문제 없음, Tauri GUI 앱 호환)
     let output = AsyncCommand::new("python3")
-        .args(["-m", "rembg", "i", &input_path, &output_path])
+        .args(["-m", "rembg.cli", "i", &input_path, &output_path])
         .output()
-        .await?;
+        .await
+        .or_else(|_| {
+            // 폴백: rembg CLI 직접
+            std::process::Command::new("rembg")
+                .args(["i", &input_path, &output_path])
+                .output()
+        })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

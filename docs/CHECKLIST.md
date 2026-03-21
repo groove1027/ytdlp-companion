@@ -8,6 +8,14 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-22] Kokoro TTS + rembg/whisper 실작동 수정
+- [x] `tts.rs` — Piper→Kokoro 우선 전환 (한국어 고품질), Piper 폴백 유지
+- [x] `tts.rs` — language allowlist로 Python 인젝션 차단 (Codex Blocking 수정)
+- [x] `rembg.rs` — python3 -m rembg.cli 복원 (Tauri GUI PATH 호환)
+- [x] `whisper.rs` — Homebrew whisper-cli 경로 우선 탐색
+- [x] 실작동 검증: rembg ✅, whisper ✅, ffmpeg ✅, yt-dlp ✅
+- [x] Codex 5.4 리뷰 5회 + Playwright 3회 × 6 = 18/18 통과
+
 ### [2026-03-22] 컴패니언 안내 배너 전체 앱 배치 (7개 컴포넌트)
 - [x] `CompanionBanner.tsx` — 기능별 테마 (5색 + 아이콘 + 메시지), compact 모드, 7일 재표시
 - [x] `VideoAnalysisRoom` — download (기존 업그레이드)

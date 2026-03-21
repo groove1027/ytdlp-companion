@@ -146,9 +146,11 @@ async fn health_handler() -> Json<HealthResponse> {
     if dirs::data_dir().map(|d| d.join("ytdlp-companion/whisper/whisper-cpp").exists()).unwrap_or(false) {
         services.push("whisper".to_string());
     }
-    // piper TTS 확인
-    if dirs::data_dir().map(|d| d.join("ytdlp-companion/piper/piper").exists()).unwrap_or(false) {
-        services.push("tts".to_string());
+    // TTS 확인 (Kokoro 우선, Piper 폴백)
+    if tokio::process::Command::new("python3").args(["-c", "import kokoro"]).output().await.map(|o| o.status.success()).unwrap_or(false) {
+        services.push("tts-kokoro".to_string());
+    } else if dirs::data_dir().map(|d| d.join("ytdlp-companion/piper/piper").exists()).unwrap_or(false) {
+        services.push("tts-piper".to_string());
     }
     // ffmpeg 확인
     if tokio::process::Command::new("ffmpeg").args(["-version"]).output().await.map(|o| o.status.success()).unwrap_or(false) {

@@ -60,8 +60,8 @@ fn main() {
                 }
             });
             tauri::async_runtime::spawn(async {
-                if let Err(e) = tts::ensure_piper().await {
-                    eprintln!("[Companion] piper TTS 설정 실패: {}", e);
+                if let Err(e) = tts::ensure_tts().await {
+                    eprintln!("[Companion] TTS 설정 실패: {}", e);
                 }
             });
 
