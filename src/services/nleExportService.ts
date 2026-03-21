@@ -3741,6 +3741,7 @@ export async function buildNlePackageZip(params: {
     zip.file(`${safeName}.prproj`, prprojBytes);
 
     // FCP XML + subtitle XML/SRT는 폴백으로 계속 포함
+    // [FIX] XML 폴백에도 자막 트랙 포함 — .prproj를 못 열 때 XML에서도 자막 보이도록
     const xml = generateFcpXml({
       scenes,
       title,
@@ -3752,7 +3753,7 @@ export async function buildNlePackageZip(params: {
       videoDurationSec,
       narrationLines: packagedNarrationLines,
       dialogueLineBreaks,
-      includeGraphicSubtitleTracks: false,
+      includeGraphicSubtitleTracks: true,
     });
     zip.file(`${safeName}.xml`, xml);
 

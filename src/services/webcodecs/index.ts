@@ -16,7 +16,7 @@ import type {
 } from '../../types';
 import { probeVideoEncoder, createEncoder, type EncodedChunk } from './videoEncoder';
 import { renderAllFrames, computeTotalDuration, type VideoFrameExtractor } from './canvasRenderer';
-import { mixAudio, encodeAudioAAC } from './audioMixer';
+import { mixAudio, encodeAudioAAC, type SceneAudioBufferEntry } from './audioMixer';
 import { createMp4Muxer } from './mp4Muxer';
 import { OVERSCALE } from './kenBurnsEngine';
 import { logger } from '../LoggerService';
@@ -203,8 +203,48 @@ export async function composeMp4(options: ComposeMp4Options): Promise<Blob> {
       }
     }
 
+    // 비디오 장면의 원본 오디오 추출 (소리 보존)
+    const sceneAudioBuffers: SceneAudioBufferEntry[] = [];
+    const audioDecodeByUrl = new Map<string, Promise<AudioBuffer | null>>();
+    if (!externalAudioBuffer) {
+      for (const scene of scenes) {
+        if (!scene.videoUrl) continue;
+        if (!audioDecodeByUrl.has(scene.videoUrl)) {
+          audioDecodeByUrl.set(scene.videoUrl, (async () => {
+            try {
+              const resp = await fetch(scene.videoUrl!);
+              const arrayBuf = await resp.arrayBuffer();
+              const decodeCtx = new OfflineAudioContext(2, 48000, 48000);
+              return await decodeCtx.decodeAudioData(arrayBuf);
+            } catch {
+              // 오디오 트랙 없거나 디코딩 실패 (AI 생성 영상 등) → 건너뜀
+              return null;
+            }
+          })());
+        }
+      }
+    }
+
     await Promise.all(assetPromises);
     checkAbort();
+
+    // 비디오 오디오 추출 결과 수집 (에셋 로드와 병렬 완료)
+    if (!externalAudioBuffer) {
+      for (const slot of timeline) {
+        const scene = scenes.find(s => s.id === slot.sceneId);
+        if (!scene?.videoUrl) continue;
+        const decoded = await audioDecodeByUrl.get(scene.videoUrl);
+        if (decoded) {
+          sceneAudioBuffers.push({
+            buffer: decoded,
+            startTimeSec: slot.imageStartTime,
+            durationSec: slot.imageDuration,
+            volume: slot.volume ?? 1,
+            trimStartSec: slot.videoTrimStartSec ?? 0,
+          });
+        }
+      }
+    }
 
     emitProgress('initializing', 100, '에셋 로드 완료');
 
@@ -274,6 +314,7 @@ export async function composeMp4(options: ComposeMp4Options): Promise<Blob> {
             bgmConfig,
             loudnessNorm,
             totalDuration,
+            sceneAudioBuffers: sceneAudioBuffers.length > 0 ? sceneAudioBuffers : undefined,
           },
           signal,
           (p) => {

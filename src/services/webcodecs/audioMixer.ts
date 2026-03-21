@@ -10,6 +10,15 @@ import type {
   UnifiedSceneTiming,
 } from '../../types';
 
+/** 장면 비디오에서 추출한 오디오 버퍼 정보 */
+export interface SceneAudioBufferEntry {
+  buffer: AudioBuffer;
+  startTimeSec: number;
+  durationSec: number;
+  volume: number;
+  trimStartSec: number;
+}
+
 export interface AudioMixerInput {
   timeline: UnifiedSceneTiming[];
   narrationLines: { sceneId?: string; audioUrl?: string; startTime?: number; audioOffset?: number }[];
@@ -17,6 +26,8 @@ export interface AudioMixerInput {
   loudnessNorm?: LoudnessNormConfig;
   totalDuration: number;
   sampleRate?: number;
+  /** 장면 비디오에서 추출한 오디오 (원본 영상 소리 보존용) */
+  sceneAudioBuffers?: SceneAudioBufferEntry[];
 }
 
 /**
@@ -35,10 +46,13 @@ export async function mixAudio(
     sampleRate = 48000,
   } = input;
 
+  const sceneAudioBuffers = input.sceneAudioBuffers ?? [];
+
   // 오디오 소스가 없으면 null 반환
   const hasNarration = narrationLines.some(l => l.audioUrl);
   const hasBgm = bgmConfig?.audioUrl;
-  if (!hasNarration && !hasBgm) return null;
+  const hasSceneAudio = sceneAudioBuffers.length > 0;
+  if (!hasNarration && !hasBgm && !hasSceneAudio) return null;
 
   const totalFrames = Math.ceil(totalDuration * sampleRate);
   const ctx = new OfflineAudioContext(2, totalFrames, sampleRate);
@@ -78,6 +92,43 @@ export async function mixAudio(
 
     narrationLoadCount++;
     onProgress?.(narrationLoadCount / (narrationTotal + 2) * 50);
+  }
+
+  // 1.5. 장면 비디오 원본 오디오 트랙 (소리 보존)
+  if (hasSceneAudio) {
+    const sceneGain = ctx.createGain();
+    sceneGain.gain.value = 1.0;
+    // 나레이션이 있으면 원본 오디오를 -12dB로 덕킹 (나레이션 우선)
+    if (hasNarration) {
+      const duckVol = Math.pow(10, -12 / 20); // ≈ 0.25
+      const rampTime = 0.15;
+      sceneGain.gain.value = duckVol;
+      for (const line of narrationLines) {
+        if (!line.audioUrl || line.startTime == null) continue;
+        sceneGain.gain.setValueAtTime(duckVol, Math.max(0, line.startTime - rampTime));
+      }
+    }
+    sceneGain.connect(ctx.destination);
+
+    for (const sa of sceneAudioBuffers) {
+      try {
+        const src = ctx.createBufferSource();
+        src.buffer = sa.buffer;
+        // 볼륨 노드 (장면별 볼륨 적용)
+        if (sa.volume !== 1) {
+          const volNode = ctx.createGain();
+          volNode.gain.value = sa.volume;
+          src.connect(volNode);
+          volNode.connect(sceneGain);
+        } else {
+          src.connect(sceneGain);
+        }
+        // offset=trimStartSec, duration=durationSec
+        src.start(sa.startTimeSec, sa.trimStartSec, sa.durationSec);
+      } catch (e) {
+        console.warn('[AudioMixer] 장면 오디오 배치 실패:', e);
+      }
+    }
   }
 
   // 2. BGM 트랙
