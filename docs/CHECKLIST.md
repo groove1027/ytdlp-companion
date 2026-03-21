@@ -8,6 +8,16 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-22] 컴패니언 확장 — rembg + whisper + TTS + ffmpeg + 보안 패치
+- [x] `companion/rembg.rs` — 로컬 배경 제거 (rembg Python)
+- [x] `companion/whisper.rs` — 로컬 STT (whisper.cpp + large-v3-turbo 모델)
+- [x] `companion/tts.rs` — 로컬 TTS (Piper + 한국어 모델)
+- [x] `companion/server.rs` — 4개 신규 엔드포인트 + CORS 화이트리스트 + ffmpeg args allowlist
+- [x] `removeBgService.ts` — 컴패니언 우선 + Remove.bg 폴백
+- [x] health 응답에 services 필드 (서비스별 가용성)
+- [x] whisper 모델 스트리밍 다운로드 (800MB OOM 방지)
+- [x] Codex 5.4 리뷰 5회, Playwright 3회 × 4 = 12/12 통과
+
 ### [2026-03-22] 하이브리드 라우팅 — URL 추출은 VPS, 다운로드는 컴패니언
 - [x] `ytdlpApiService.ts` — RequestPurpose 타입 ('lightweight' | 'heavy') 추가
 - [x] `ytdlpApiService.ts` — apiCall() → VPS 우선 + 컴패니언 폴백 (경량 요청)

@@ -3,6 +3,9 @@
 
 mod server;
 mod ytdlp;
+mod rembg;
+mod whisper;
+mod tts;
 
 use tauri::{
     tray::{TrayIconBuilder, MouseButton, MouseButtonState, TrayIconEvent},
@@ -40,10 +43,25 @@ fn main() {
                 }
             });
 
-            // yt-dlp 바이너리 자동 다운로드/업데이트 (백그라운드)
+            // 바이너리 자동 다운로드/업데이트 (백그라운드 병렬)
             tauri::async_runtime::spawn(async {
                 if let Err(e) = ytdlp::ensure_ytdlp().await {
                     eprintln!("[Companion] yt-dlp 설정 실패: {}", e);
+                }
+            });
+            tauri::async_runtime::spawn(async {
+                if let Err(e) = rembg::ensure_rembg().await {
+                    eprintln!("[Companion] rembg 설정 실패: {}", e);
+                }
+            });
+            tauri::async_runtime::spawn(async {
+                if let Err(e) = whisper::ensure_whisper().await {
+                    eprintln!("[Companion] whisper 설정 실패: {}", e);
+                }
+            });
+            tauri::async_runtime::spawn(async {
+                if let Err(e) = tts::ensure_piper().await {
+                    eprintln!("[Companion] piper TTS 설정 실패: {}", e);
                 }
             });
 

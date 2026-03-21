@@ -11,7 +11,7 @@ use tower_http::cors::{CorsLayer, Any};
 use std::net::SocketAddr;
 use tokio_util::io::ReaderStream;
 
-use crate::ytdlp;
+use crate::{ytdlp, rembg, whisper, tts};
 
 // ──────────────────────────────────────────────
 // 타입
@@ -24,6 +24,37 @@ struct HealthResponse {
     version: String,
     #[serde(rename = "ytdlpVersion")]
     ytdlp_version: String,
+    services: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct RemoveBgRequest {
+    // base64 인코딩된 이미지
+    image: String,
+}
+
+#[derive(Deserialize)]
+struct TranscribeRequest {
+    // base64 인코딩된 오디오
+    audio: String,
+    language: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct TtsRequest {
+    text: String,
+    language: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct FfmpegTranscodeRequest {
+    // base64 인코딩된 입력 파일
+    input: String,
+    #[serde(rename = "inputFormat")]
+    input_format: Option<String>,
+    #[serde(rename = "outputFormat")]
+    output_format: String,
+    args: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -60,18 +91,34 @@ struct SocialRequest {
 // ──────────────────────────────────────────────
 
 pub async fn start_server(_app: tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+    // CORS: localhost + 앱 도메인만 허용 (외부 악성 사이트 차단)
+    let allowed_origins = [
+        "http://localhost:5173".parse::<axum::http::HeaderValue>().unwrap(),
+        "http://localhost:5174".parse::<axum::http::HeaderValue>().unwrap(),
+        "http://localhost:3000".parse::<axum::http::HeaderValue>().unwrap(),
+        "https://all-in-one-production.pages.dev".parse::<axum::http::HeaderValue>().unwrap(),
+    ];
     let cors = CorsLayer::new()
-        .allow_origin(Any)
+        .allow_origin(allowed_origins.to_vec())
         .allow_methods(Any)
         .allow_headers(Any);
 
     let app = Router::new()
         .route("/health", get(health_handler))
+        // yt-dlp
         .route("/api/extract", get(extract_handler))
         .route("/api/download", get(download_handler))
         .route("/api/frames", post(frames_handler))
         .route("/api/social/metadata", post(social_metadata_handler))
         .route("/api/social/download", post(social_download_handler))
+        // 배경 제거 (rembg)
+        .route("/api/remove-bg", post(remove_bg_handler))
+        // 음성 인식 (whisper.cpp)
+        .route("/api/transcribe", post(transcribe_handler))
+        // 음성 합성 (Piper TTS)
+        .route("/api/tts", post(tts_handler))
+        // FFmpeg 인코딩
+        .route("/api/ffmpeg/transcode", post(ffmpeg_transcode_handler))
         .layer(cors);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 9876));
@@ -88,11 +135,32 @@ pub async fn start_server(_app: tauri::AppHandle) -> Result<(), Box<dyn std::err
 
 async fn health_handler() -> Json<HealthResponse> {
     let ytdlp_version = ytdlp::get_version().await.unwrap_or_else(|_| "unknown".to_string());
+
+    // 사용 가능한 서비스 목록
+    let mut services = vec!["ytdlp".to_string(), "download".to_string(), "frames".to_string()];
+    // rembg 확인
+    if tokio::process::Command::new("python3").args(["-c", "import rembg"]).output().await.map(|o| o.status.success()).unwrap_or(false) {
+        services.push("rembg".to_string());
+    }
+    // whisper 확인
+    if dirs::data_dir().map(|d| d.join("ytdlp-companion/whisper/whisper-cpp").exists()).unwrap_or(false) {
+        services.push("whisper".to_string());
+    }
+    // piper TTS 확인
+    if dirs::data_dir().map(|d| d.join("ytdlp-companion/piper/piper").exists()).unwrap_or(false) {
+        services.push("tts".to_string());
+    }
+    // ffmpeg 확인
+    if tokio::process::Command::new("ffmpeg").args(["-version"]).output().await.map(|o| o.status.success()).unwrap_or(false) {
+        services.push("ffmpeg".to_string());
+    }
+
     Json(HealthResponse {
         app: "ytdlp-companion".to_string(),
         status: "ok".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
         ytdlp_version,
+        services,
     })
 }
 
@@ -228,5 +296,118 @@ async fn social_download_handler(Json(req): Json<SocialRequest>) -> impl IntoRes
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": e.to_string() })),
         ).into_response(),
+    }
+}
+
+// ──────────────────────────────────────────────
+// 핸들러: /api/remove-bg (rembg 로컬)
+// ──────────────────────────────────────────────
+
+async fn remove_bg_handler(Json(req): Json<RemoveBgRequest>) -> impl IntoResponse {
+    use base64::Engine;
+    let image_data = match base64::engine::general_purpose::STANDARD.decode(&req.image) {
+        Ok(d) => d,
+        Err(e) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": format!("Base64 디코딩 실패: {}", e) }))).into_response(),
+    };
+
+    match rembg::remove_background(&image_data).await {
+        Ok(result) => {
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&result);
+            Json(serde_json::json!({ "image": b64, "format": "png" })).into_response()
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e.to_string() }))).into_response(),
+    }
+}
+
+// ──────────────────────────────────────────────
+// 핸들러: /api/transcribe (whisper.cpp 로컬)
+// ──────────────────────────────────────────────
+
+async fn transcribe_handler(Json(req): Json<TranscribeRequest>) -> impl IntoResponse {
+    use base64::Engine;
+    let audio_data = match base64::engine::general_purpose::STANDARD.decode(&req.audio) {
+        Ok(d) => d,
+        Err(e) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": format!("Base64 디코딩 실패: {}", e) }))).into_response(),
+    };
+
+    match whisper::transcribe(&audio_data, req.language.as_deref()).await {
+        Ok(result) => Json(serde_json::json!(result)).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e.to_string() }))).into_response(),
+    }
+}
+
+// ──────────────────────────────────────────────
+// 핸들러: /api/tts (Piper TTS 로컬)
+// ──────────────────────────────────────────────
+
+async fn tts_handler(Json(req): Json<TtsRequest>) -> impl IntoResponse {
+    match tts::synthesize_speech(&req.text, req.language.as_deref()).await {
+        Ok(wav_data) => {
+            let mut headers = HeaderMap::new();
+            headers.insert("Content-Type", "audio/wav".parse().unwrap());
+            headers.insert("Content-Length", wav_data.len().to_string().parse().unwrap());
+            (StatusCode::OK, headers, Body::from(wav_data)).into_response()
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e.to_string() }))).into_response(),
+    }
+}
+
+// ──────────────────────────────────────────────
+// 핸들러: /api/ffmpeg/transcode (네이티브 FFmpeg)
+// ──────────────────────────────────────────────
+
+async fn ffmpeg_transcode_handler(Json(req): Json<FfmpegTranscodeRequest>) -> impl IntoResponse {
+    use base64::Engine;
+    let input_data = match base64::engine::general_purpose::STANDARD.decode(&req.input) {
+        Ok(d) => d,
+        Err(e) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": format!("Base64 디코딩 실패: {}", e) }))).into_response(),
+    };
+
+    let in_ext = req.input_format.as_deref().unwrap_or("mp4");
+    let tmp_input = tempfile::Builder::new().suffix(&format!(".{}", in_ext)).tempfile().unwrap();
+    let tmp_output = tempfile::Builder::new().suffix(&format!(".{}", req.output_format)).tempfile().unwrap();
+
+    let input_path = tmp_input.path().to_string_lossy().to_string();
+    let output_path = tmp_output.path().to_string_lossy().to_string();
+
+    if let Err(e) = std::fs::write(&input_path, &input_data) {
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("파일 쓰기 실패: {}", e) }))).into_response();
+    }
+
+    // 허용된 ffmpeg 인자만 통과 (인젝션 방지)
+    const ALLOWED_PREFIXES: &[&str] = &[
+        "-c:", "-codec:", "-b:", "-r", "-s", "-vf", "-af", "-filter:",
+        "-preset", "-crf", "-qp", "-ar", "-ac", "-t", "-ss", "-to",
+        "-map", "-threads", "-pix_fmt", "-movflags", "-f",
+    ];
+    let mut args = vec!["-i".to_string(), input_path, "-y".to_string()];
+    if let Some(extra_args) = &req.args {
+        for arg in extra_args {
+            let is_allowed = ALLOWED_PREFIXES.iter().any(|p| arg.starts_with(p))
+                || !arg.starts_with('-'); // 값 인자 (e.g., "libx264", "1920x1080")
+            if is_allowed {
+                args.push(arg.clone());
+            }
+        }
+    }
+    args.push(output_path.clone());
+
+    let output = tokio::process::Command::new("ffmpeg").args(&args).output().await;
+
+    match output {
+        Ok(out) if out.status.success() => {
+            match std::fs::read(&output_path) {
+                Ok(data) => {
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                    Json(serde_json::json!({ "data": b64, "format": req.output_format, "size": data.len() })).into_response()
+                }
+                Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("결과 파일 읽기 실패: {}", e) }))).into_response(),
+            }
+        }
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("FFmpeg 실패: {}", stderr.lines().last().unwrap_or("unknown")) }))).into_response()
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("FFmpeg 실행 불가: {}", e) }))).into_response(),
     }
 }
