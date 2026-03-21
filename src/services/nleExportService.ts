@@ -1963,8 +1963,11 @@ export async function beginCapCutDirectInstallSelection(): Promise<{
       mode: 'readwrite',
     });
   } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') {
-      return null; // 사용자가 폴더 선택 취소 → ZIP 다운로드로 폴백
+    // AbortError: 사용자가 폴더 선택 취소
+    // SecurityError / NotAllowedError: user gesture 만료 또는 권한 부족
+    // [FIX #699] 모든 DOMException을 graceful하게 처리하여 ZIP 폴백
+    if (error instanceof DOMException) {
+      return null;
     }
     throw error;
   }
