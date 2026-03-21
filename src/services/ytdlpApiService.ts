@@ -109,11 +109,15 @@ function initCompanionDetection(): void {
 initCompanionDetection();
 
 // ──────────────────────────────────────────────
-// API Base URL 결정 (컴패니언 우선)
+// API Base URL 결정 — 하이브리드 라우팅
 // ──────────────────────────────────────────────
+// URL 추출(extract/info/metadata) → VPS가 빠름 (캐시, 프로세스 풀)
+// 대용량 전송(download/frames)     → 컴패니언이 빠름 (로컬 직통)
 
-/** 비동기 버전 — 실제 API 호출 전에 사용 (컴패니언 감지 포함) */
-async function getApiBaseUrlAsync(): Promise<string> {
+type RequestPurpose = 'lightweight' | 'heavy';
+
+/** 비동기 버전 — 용도에 따라 최적 서버 선택 */
+async function getApiBaseUrlAsync(purpose: RequestPurpose = 'lightweight'): Promise<string> {
   try {
     const stored = localStorage.getItem('YTDLP_API_URL');
     if (stored) return stored;
@@ -121,21 +125,21 @@ async function getApiBaseUrlAsync(): Promise<string> {
     logger.trackSwallowedError('ytdlpApiService:getApiBaseUrlAsync', e);
   }
 
-  // 1순위: 로컬 컴패니언 앱
-  if (await isCompanionAvailable()) {
-    return LOCAL_COMPANION_URL;
+  const companionUp = await isCompanionAvailable();
+  const isHttps = typeof window !== 'undefined' && window.location.protocol === 'https:';
+  const vpsUrl = isHttps ? DEFAULT_PROXY_URL : DEFAULT_DIRECT_URL;
+
+  if (purpose === 'heavy') {
+    // 대용량 전송: 컴패니언 우선 (로컬 직통, 대역폭 무제한)
+    return companionUp ? LOCAL_COMPANION_URL : vpsUrl;
   }
 
-  // 2순위: HTTPS → Cloudflare Worker 프록시
-  if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
-    return DEFAULT_PROXY_URL;
-  }
-  // 3순위: HTTP → VPS 직접
-  return DEFAULT_DIRECT_URL;
+  // 경량 요청: VPS 우선 (캐시, 빠름), VPS 실패 시 컴패니언 폴백
+  return vpsUrl;
 }
 
-/** 동기 버전 — 캐시된 컴패니언 상태 기반 (즉시 반환 필요한 곳) */
-function getApiBaseUrl(): string {
+/** 동기 버전 — 캐시된 컴패니언 상태 기반 (즉시 반환, 다운로드는 컴패니언 우선) */
+function getApiBaseUrl(purpose: RequestPurpose = 'heavy'): string {
   try {
     const stored = localStorage.getItem('YTDLP_API_URL');
     if (stored) return stored;
@@ -143,8 +147,9 @@ function getApiBaseUrl(): string {
     logger.trackSwallowedError('ytdlpApiService:getApiBaseUrl', e);
   }
 
-  // 1순위: 컴패니언 캐시가 있으면 사용
-  if (_companionAvailable === true) {
+  // heavy(다운로드): 컴패니언 우선
+  // lightweight(추출): VPS 우선
+  if (purpose === 'heavy' && _companionAvailable === true) {
     return LOCAL_COMPANION_URL;
   }
 
@@ -348,23 +353,23 @@ function createCombinedAbortSignalContext(externalSignal: AbortSignal | undefine
 
 async function apiCall<T>(path: string, options?: RequestInit): Promise<T> {
   const apiKey = getApiKey();
-  // 커스텀 URL 설정 시 → 그 서버만 사용
   const hasCustom = (() => { try { return !!localStorage.getItem('YTDLP_API_URL'); } catch { return false; } })();
 
-  // 폴백 체인 구성: 컴패니언 → CF Worker → VPS 직접
+  // 경량 요청(extract/info/metadata) → VPS 우선 (캐시, 빠름), 컴패니언 폴백
   const servers: { url: string; needsKey: boolean }[] = [];
   if (hasCustom) {
-    const customUrl = await getApiBaseUrlAsync();
+    const customUrl = await getApiBaseUrlAsync('lightweight');
     servers.push({ url: customUrl, needsKey: customUrl !== LOCAL_COMPANION_URL });
   } else {
-    if (await isCompanionAvailable()) {
-      servers.push({ url: LOCAL_COMPANION_URL, needsKey: false });
-    }
     const isHttps = typeof window !== 'undefined' && window.location.protocol === 'https:';
+    // VPS 우선 (경량 요청은 캐시/프로세스 풀 덕에 빠름)
     servers.push({ url: DEFAULT_PROXY_URL, needsKey: true });
-    // HTTP 직접 접속은 HTTPS 환경에서 mixed content로 차단됨 → HTTP 환경에서만 폴백
     if (!isHttps) {
       servers.push({ url: DEFAULT_DIRECT_URL, needsKey: true });
+    }
+    // VPS 전부 실패 시 컴패니언 폴백
+    if (await isCompanionAvailable()) {
+      servers.push({ url: LOCAL_COMPANION_URL, needsKey: false });
     }
   }
 
@@ -499,7 +504,7 @@ export async function downloadVideoViaProxy(
         throw createAbortError();
       }
       const abortContext = createCombinedAbortSignalContext(externalSignal, 600_000);
-      const dlBaseUrl = await getApiBaseUrlAsync();
+      const dlBaseUrl = await getApiBaseUrlAsync('heavy');
       const isCompanionDl = dlBaseUrl === LOCAL_COMPANION_URL;
       try {
         const baseUrl = dlBaseUrl;
@@ -660,7 +665,7 @@ export async function downloadVideoViaProxy(
 export async function downloadAudioViaProxy(
   youtubeUrl: string,
 ): Promise<Blob> {
-  const baseUrl = await getApiBaseUrlAsync();
+  const baseUrl = await getApiBaseUrlAsync('heavy');
   const isCompanion = baseUrl === LOCAL_COMPANION_URL;
   const apiKey = getApiKey();
   const proxyUrl = `${baseUrl.replace(/\/$/, '')}/api/download?url=${encodeURIComponent(youtubeUrl)}&quality=audio`;
@@ -775,7 +780,7 @@ export async function getVideoInfo(youtubeUrl: string): Promise<YtdlpVideoInfo> 
  * 서버 상태를 확인합니다.
  */
 export async function checkHealth(): Promise<YtdlpHealthStatus> {
-  const baseUrl = await getApiBaseUrlAsync();
+  const baseUrl = await getApiBaseUrlAsync('lightweight');
   if (!baseUrl) {
     throw new Error('서버 주소가 설정되지 않았습니다');
   }
@@ -824,7 +829,7 @@ export async function downloadSocialVideo(
   onProgress?: (progress: number) => void,
   options?: DownloadSocialVideoOptions,
 ): Promise<{ blob: Blob; title: string }> {
-  const baseUrl = await getApiBaseUrlAsync();
+  const baseUrl = await getApiBaseUrlAsync('heavy');
   const isCompanion = baseUrl === LOCAL_COMPANION_URL;
   const apiKey = getApiKey();
 
@@ -973,8 +978,8 @@ export async function fetchFramesFromServer(
 
   const limitedTimecodes = timecodes.slice(0, 50);
 
-  // 컴패니언 + VPS 순서로 시도
-  const baseUrl = await getApiBaseUrlAsync();
+  // 대용량 전송: 컴패니언 우선
+  const baseUrl = await getApiBaseUrlAsync('heavy');
   const isCompanion = baseUrl === LOCAL_COMPANION_URL;
   const apiKey = getApiKey();
 

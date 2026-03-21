@@ -8,6 +8,13 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-22] 하이브리드 라우팅 — URL 추출은 VPS, 다운로드는 컴패니언
+- [x] `ytdlpApiService.ts` — RequestPurpose 타입 ('lightweight' | 'heavy') 추가
+- [x] `ytdlpApiService.ts` — apiCall() → VPS 우선 + 컴패니언 폴백 (경량 요청)
+- [x] `ytdlpApiService.ts` — downloadVideoViaProxy/Audio/Social/Frames → 컴패니언 우선 (대용량)
+- [x] URL 추출: VPS 0.03초 (캐시), 다운로드: 컴패니언 11초 (VPS 29초 → 2.6배 빠름)
+- [x] 검증: tsc 0에러, vite build 성공
+
 ### [2026-03-22] 컴패니언 앱 프로젝트 생성 + 웹앱 안내 배너
 - [x] `companion/` — Tauri 기반 컴패니언 앱 프로젝트 생성 (Rust + axum)
 - [x] `companion/src-tauri/src/server.rs` — localhost:9876 API 서버 (health, extract, download, frames, social)
