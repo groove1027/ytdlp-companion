@@ -19,6 +19,7 @@ import { useAuthGuard } from '../../../hooks/useAuthGuard';
 import { getYoutubeApiKey, getKieKey, monitoredFetch } from '../../../services/apiService';
 import { getQuotaUsage, fetchTimedTranscriptForAnalysis } from '../../../services/youtubeAnalysisService';
 import { extractStreamUrl, isYtdlpServerConfigured, getSocialMetadata, downloadSocialVideo, fetchFramesFromServer } from '../../../services/ytdlpApiService';
+import CompanionBanner from '../../CompanionBanner';
 import { detectPlatform } from '../../../services/videoDownloadService';
 import { uploadMediaToHosting } from '../../../services/uploadService';
 import { detectSceneCuts, mergeWithAiTimecodes } from '../../../services/sceneDetection';
@@ -4977,6 +4978,9 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
         onDeleteSlot={removeSlot}
         hasCurrentResults={versions.length > 0 && !activeSlotId}
       />
+      {/* 컴패니언 앱 안내 배너 */}
+      <CompanionBanner />
+
       {/* ═══ 입력 ═══ */}
       <div className="bg-gray-800/50 rounded-xl border border-gray-700 p-6">
         <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
@@ -5442,6 +5446,14 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                         } catch (dlErr) {
                                           if (isCancelled()) return;
                                           console.warn('[NLE] 오디오 포함 다운로드 실패:', dlErr);
+                                          // [FIX #702] 다운로드 실패 시 기존 video-only blob이라도 사용 (오디오 없이라도 NLE 내보내기 가능)
+                                          // 스토어의 blob은 현재 분석 세션에서 생성된 것이므로 소스가 같다고 가정할 수 있음
+                                          const fallbackBlob = useVideoAnalysisStore.getState().videoBlob;
+                                          if (!videoBlob && fallbackBlob && fallbackBlob.size > 0) {
+                                            videoBlob = fallbackBlob;
+                                            audioConfirmed = false;
+                                            console.info('[NLE] 기존 video-only blob 폴백 사용 (오디오 미확인)');
+                                          }
                                         }
                                       } else if (!videoBlob) {
                                         if (uploadedFiles[0]) {
@@ -5450,12 +5462,17 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                         } else if (inputMode === 'youtube' && sourceUrl) {
                                           if (isCancelled()) return;
                                           setNleExporting({ target, step: '영상 다운로드 중...', progress: 0, startedAt });
-                                          const dlResult = await downloadSourceVideoForNleExport(sourceUrl, { signal: myAbort.signal });
-                                          if (dlResult.blob.size > 0) {
-                                            videoBlob = dlResult.blob;
-                                            downloadedSourceTitle = dlResult.title || '';
-                                            audioConfirmed = dlResult.hasAudio;
-                                            useVideoAnalysisStore.getState().setVideoBlob(dlResult.blob, dlResult.hasAudio);
+                                          try {
+                                            const dlResult = await downloadSourceVideoForNleExport(sourceUrl, { signal: myAbort.signal });
+                                            if (dlResult.blob.size > 0) {
+                                              videoBlob = dlResult.blob;
+                                              downloadedSourceTitle = dlResult.title || '';
+                                              audioConfirmed = dlResult.hasAudio;
+                                              useVideoAnalysisStore.getState().setVideoBlob(dlResult.blob, dlResult.hasAudio);
+                                            }
+                                          } catch (dlErr2) {
+                                            if (isCancelled()) return;
+                                            console.warn('[NLE] 영상 다운로드 폴백 실패:', dlErr2);
                                           }
                                         }
                                       }
@@ -5463,7 +5480,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                       if (isCancelled()) return;
 
                                       if (!videoBlob) {
-                                        showToast('⚠️ 영상 서버가 바빠서 다운로드에 실패했어요. 잠시 후 다시 시도해주세요.', 5000);
+                                        showToast('⚠️ 영상 서버가 바빠서 다운로드에 실패했어요. 잠시 후 다시 시도하거나, 영상 파일을 직접 업로드해주세요.', 7000);
                                         return;
                                       }
                                       // Step 2: 영상 치수 감지 (캐시 우선)

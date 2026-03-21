@@ -8,6 +8,14 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-22] 컴패니언 앱 프로젝트 생성 + 웹앱 안내 배너
+- [x] `companion/` — Tauri 기반 컴패니언 앱 프로젝트 생성 (Rust + axum)
+- [x] `companion/src-tauri/src/server.rs` — localhost:9876 API 서버 (health, extract, download, frames, social)
+- [x] `companion/src-tauri/src/ytdlp.rs` — yt-dlp 자동 다운로드/업데이트 + 명령 실행
+- [x] `src/components/CompanionBanner.tsx` — "안정적이고 빠른 다운로드" 안내 배너
+- [x] `VideoAnalysisRoom.tsx` — CompanionBanner 추가
+- [x] 검증: tsc 0에러, vite build 성공
+
 ### [2026-03-22] 로컬 컴패니언 앱 감지 + 자동 VPS 폴백 (yt-dlp YouPlayer급 안정화)
 - [x] `ytdlpApiService.ts` — 로컬 컴패니언 앱(localhost:9876) 자동 감지 + 핸드셰이크
 - [x] `ytdlpApiService.ts` — getApiBaseUrlAsync() 비동기 서버 선택 (컴패니언→CF Worker→VPS)
