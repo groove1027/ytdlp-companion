@@ -1037,7 +1037,7 @@ const ChannelAnalysisRoom: React.FC = () => {
                 maxH="max-h-[620px]"
               />
             </>
-          ) : !progress && channelGuideline ? (
+          ) : !progress && channelGuideline?.failedLayers?.includes('L1') && channelInfo ? (
             /* [FIX #676] L1 실패로 copyableSystemPrompt 없이 분석 완료 — 에러 + 재시도 */
             <div className="rounded-xl border border-amber-500/20 bg-amber-900/10 px-4 py-5">
               <div className="flex items-center gap-3 mb-2">
