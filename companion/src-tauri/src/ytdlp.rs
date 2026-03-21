@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use std::process::Command;
 use tokio::process::Command as AsyncCommand;
 
 // ──────────────────────────────────────────────
@@ -189,14 +188,24 @@ pub async fn extract_stream_url(
 }
 
 // ──────────────────────────────────────────────
-// 영상 다운로드 (Blob 반환)
+// 영상 다운로드 (스트리밍 — 파일 경로 반환)
 // ──────────────────────────────────────────────
+
+/// 다운로드된 파일 정보 (메모리에 올리지 않음)
+pub struct DownloadedFile {
+    pub path: std::path::PathBuf,
+    pub filename: String,
+    pub content_type: String,
+    pub size: u64,
+    /// tempdir 핸들 — drop 시 자동 삭제. 스트리밍 완료까지 유지해야 함.
+    pub _tmp_dir: tempfile::TempDir,
+}
 
 pub async fn download_video(
     video_url: &str,
     quality: &str,
     video_only: bool,
-) -> Result<(Vec<u8>, String, String), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<DownloadedFile, Box<dyn std::error::Error + Send + Sync>> {
     let path = get_ytdlp_path();
     let format_spec = if video_only {
         quality_to_format_video_only(quality)
@@ -240,7 +249,7 @@ pub async fn download_video(
         return Err(format!("yt-dlp 다운로드 실패: {}", stderr.lines().last().unwrap_or("unknown")).into());
     }
 
-    // 다운로드된 파일 찾기
+    // 다운로드된 파일 찾기 (가장 큰 파일)
     let mut files: Vec<_> = std::fs::read_dir(tmp_dir.path())?
         .filter_map(|e| e.ok())
         .filter(|e| e.path().is_file())
@@ -250,8 +259,9 @@ pub async fn download_video(
     let file = files.first()
         .ok_or("다운로드된 파일을 찾을 수 없습니다")?;
 
-    let data = std::fs::read(file.path())?;
+    let file_path = file.path();
     let filename = file.file_name().to_string_lossy().to_string();
+    let size = file.metadata().map(|m| m.len()).unwrap_or(0);
     let content_type = if filename.ends_with(".mp4") {
         "video/mp4"
     } else if filename.ends_with(".webm") {
@@ -262,7 +272,13 @@ pub async fn download_video(
         "application/octet-stream"
     };
 
-    Ok((data, filename, content_type.to_string()))
+    Ok(DownloadedFile {
+        path: file_path,
+        filename,
+        content_type: content_type.to_string(),
+        size,
+        _tmp_dir: tmp_dir, // 스트리밍 완료까지 유지
+    })
 }
 
 // ──────────────────────────────────────────────

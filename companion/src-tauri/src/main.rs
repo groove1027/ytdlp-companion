@@ -5,7 +5,6 @@ mod server;
 mod ytdlp;
 
 use tauri::{
-    Manager,
     tray::{TrayIconBuilder, MouseButton, MouseButtonState, TrayIconEvent},
     menu::{Menu, MenuItem},
 };

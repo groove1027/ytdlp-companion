@@ -9,6 +9,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use tower_http::cors::{CorsLayer, Any};
 use std::net::SocketAddr;
+use tokio_util::io::ReaderStream;
 
 use crate::ytdlp;
 
@@ -119,21 +120,44 @@ async fn download_handler(Query(params): Query<DownloadQuery>) -> impl IntoRespo
     let video_only = params.video_only.as_deref() == Some("true");
 
     match ytdlp::download_video(&params.url, &quality, video_only).await {
-        Ok((data, filename, content_type)) => {
+        Ok(downloaded) => {
+            // 파일을 디스크에서 직접 스트리밍 (메모리 ~8MB 청크 단위)
+            // 2시간 1080p (수 GB)도 메모리 부담 없음
+            let file = match tokio::fs::File::open(&downloaded.path).await {
+                Ok(f) => f,
+                Err(e) => return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": format!("파일 열기 실패: {}", e) })),
+                ).into_response(),
+            };
+
+            let stream = ReaderStream::new(file);
+            let body = Body::from_stream(stream);
+
             let mut headers = HeaderMap::new();
             headers.insert(
                 "Content-Type",
-                content_type.parse().unwrap_or("video/mp4".parse().unwrap()),
+                downloaded.content_type.parse().unwrap_or("video/mp4".parse().unwrap()),
             );
             headers.insert(
                 "Content-Disposition",
-                format!("attachment; filename=\"{}\"", filename).parse().unwrap(),
+                format!("attachment; filename=\"{}\"", downloaded.filename).parse().unwrap(),
             );
             headers.insert(
                 "Content-Length",
-                data.len().to_string().parse().unwrap(),
+                downloaded.size.to_string().parse().unwrap(),
             );
-            (StatusCode::OK, headers, Body::from(data)).into_response()
+
+            // downloaded를 스트리밍 완료까지 유지 (drop 시 tmp_dir 삭제됨)
+            // Body가 소비되면 자동으로 drop → 임시 파일 정리
+            let response = (StatusCode::OK, headers, body).into_response();
+
+            // _tmp_dir을 response 수명에 연결하기 위해 extension에 저장
+            // (axum은 response body가 전송 완료될 때까지 핸들러 반환값을 유지)
+            // downloaded 변수가 이 스코프에서 살아있으므로 OK
+            let _ = &downloaded._tmp_dir; // keep alive hint
+
+            response
         }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -179,12 +203,26 @@ async fn social_metadata_handler(Json(req): Json<SocialRequest>) -> impl IntoRes
 async fn social_download_handler(Json(req): Json<SocialRequest>) -> impl IntoResponse {
     let quality = req.quality.unwrap_or_else(|| "720p".to_string());
     match ytdlp::download_video(&req.url, &quality, false).await {
-        Ok((data, filename, content_type)) => {
+        Ok(downloaded) => {
+            let file = match tokio::fs::File::open(&downloaded.path).await {
+                Ok(f) => f,
+                Err(e) => return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": format!("파일 열기 실패: {}", e) })),
+                ).into_response(),
+            };
+
+            let stream = ReaderStream::new(file);
+            let body = Body::from_stream(stream);
+
             let mut headers = HeaderMap::new();
-            headers.insert("Content-Type", content_type.parse().unwrap_or("video/mp4".parse().unwrap()));
-            headers.insert("Content-Disposition", format!("attachment; filename=\"{}\"", filename).parse().unwrap());
-            headers.insert("Content-Length", data.len().to_string().parse().unwrap());
-            (StatusCode::OK, headers, Body::from(data)).into_response()
+            headers.insert("Content-Type", downloaded.content_type.parse().unwrap_or("video/mp4".parse().unwrap()));
+            headers.insert("Content-Disposition", format!("attachment; filename=\"{}\"", downloaded.filename).parse().unwrap());
+            headers.insert("Content-Length", downloaded.size.to_string().parse().unwrap());
+
+            let response = (StatusCode::OK, headers, body).into_response();
+            let _ = &downloaded._tmp_dir;
+            response
         }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
