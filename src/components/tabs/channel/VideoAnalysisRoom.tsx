@@ -4051,13 +4051,13 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
         } catch (streamErr) {
           if (signal.aborted) throw new DOMException('분석이 취소되었습니다.', 'AbortError');
           console.warn('[VideoAnalysis] Evolink 스트리밍 실패, Smart Routing 폴백:', streamErr);
-          // requestGeminiProxy: Evolink v1 → v1beta → FlashLite → KIE 3.1 Pro 전체 라우팅
+          // [FIX #679 Codex 2차 P2] requestGeminiProxy에도 90초 타임아웃 적용 — 폴백 체인 전체 바운딩
           const payload = {
             contents: [{ role: 'user', parts: [{ text: scriptSystem + '\n\n' + prompt }] }],
             generationConfig: { temperature: effectiveTemp, maxOutputTokens: tokens },
             safetySettings: SAFETY_SETTINGS_BLOCK_NONE,
           };
-          const data = await requestGeminiProxy('gemini-3.1-pro-preview', payload);
+          const data = await requestGeminiProxy('gemini-3.1-pro-preview', payload, 0, 90_000);
           return extractTextFromResponse(data);
         }
       };
@@ -4085,6 +4085,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
             } else {
               console.warn('[VideoAnalysis] v1beta 실패, 폴백:', videoErr);
             }
+
             // [FIX #264] 프레임 분석 실패 시에도 텍스트 폴백으로 이어지도록 try/catch 추가
             if (effectiveFrames.length > 0) {
               try {
@@ -4169,6 +4170,57 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       if (uploadedFiles.length > 0 && frames.length > 0 && !videoUri) {
         showToast('프레임 기반 분석 모드로 진행합니다. 잠시만 기다려주세요...', 4000);
       }
+
+      // ★ [Codex R1+R2+R3] v1beta 프로브 → 실패 시 lazy diarization (배치 전 1회만 실행)
+      // callAI() 내부가 아닌 여기서 실행해야 배치 분할 시 모든 프롬프트에 대사 데이터 반영 + 중복 STT 방지
+      const effectiveUrisForProbe = allVideoUris.length > 0 ? allVideoUris : videoUri ? [videoUri] : [];
+      if (effectiveUrisForProbe.length > 0 && hasV1betaVideo && diarizePresets.includes(preset) && !diarizedText && !hasTimedTranscript) {
+        // v1beta 프로브: 짧은 토큰으로 빠르게 연결 가능 여부만 확인
+        try {
+          const probeUri = effectiveUrisForProbe.length === 1 ? effectiveUrisForProbe[0] : effectiveUrisForProbe;
+          const probeMimes = allVideoUris.length > 0 ? allVideoMimes : [videoMime];
+          const probeMime = probeMimes.length === 1 ? probeMimes[0] : probeMimes;
+          await evolinkVideoAnalysisStream(probeUri, probeMime, '', '연결 확인', () => {}, { maxOutputTokens: 10, signal });
+          console.log('[VideoAnalysis] ✅ v1beta 프로브 성공 — Gemini 오디오 직접 분석 가능');
+        } catch (probeErr: any) {
+          if (signal.aborted) throw new DOMException('분석이 취소되었습니다.', 'AbortError');
+          console.warn('[VideoAnalysis] ⚠️ v1beta 프로브 실패 → lazy diarization 실행:', probeErr.message);
+          setStepDetail('v1beta 분석 불가 — 음성에서 화자를 분리하고 있어요');
+          setRealStep(1);
+          try {
+            let lazyAudioSource: File | Blob | null = uploadedFiles.length > 0 ? uploadedFiles[0] : null;
+            if (!lazyAudioSource) {
+              const existingBlob = useVideoAnalysisStore.getState().videoBlob;
+              if (existingBlob) lazyAudioSource = existingBlob;
+            }
+            if (!lazyAudioSource) {
+              const LAZY_DL_BUDGET_MS = 20_000;
+              const { value: dlResult } = await waitForSoftTimeout(parallelDownloadBlobPromise, LAZY_DL_BUDGET_MS, { signal });
+              if (dlResult?.blob) lazyAudioSource = dlResult.blob;
+            }
+            if (lazyAudioSource) {
+              const lazyResult = await transcribeVideoAudio(
+                lazyAudioSource instanceof File ? lazyAudioSource : new File([lazyAudioSource], 'video.mp4', { type: 'video/mp4' }),
+                { signal, failOnError: false },
+              );
+              if (lazyResult) {
+                diarizedText = lazyResult.formattedText;
+                diarizedUtterances = (lazyResult.transcript.utterances || []).map(u => ({
+                  speakerId: u.speakerId, text: u.text, startTime: u.startTime, endTime: u.endTime,
+                }));
+                const diaAppend = `\n\n---\n${diarizedText}\n\n위 화자 분리 전사 결과를 편집 테이블에 정확히 반영하세요.`;
+                inputDesc += diaAppend;
+                console.log(`[Diarization] ✅ lazy diarization 완료 — 화자 ${lazyResult.transcript.speakerCount}명`);
+              }
+            }
+          } catch (diaErr) {
+            console.warn('[Diarization] lazy diarization 실패 (프레임/텍스트 폴백으로 진행):', diaErr);
+          }
+          setRealStep(2);
+          setStepDetail(`AI가 ${presetLabel} 편집표를 생성하고 있어요`);
+        }
+      }
+
       if (!shouldSplitBatches) {
         text = await callAI(userPrompt, maxTokens);
         parsed = parseVersions(text);

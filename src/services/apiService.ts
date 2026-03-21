@@ -323,18 +323,22 @@ export const monitoredFetch = async (url: string, options: RequestInit = {}, tim
     // [FIX #32][FIX #679] AbortController 기반 타임아웃 — caller signal과 timeout을 항상 합침
     // 기존: options.signal이 있으면 timeout 무시 → v1beta 비디오 분석에서 126초 브라우저 타임아웃 발생
     // 수정: timeoutMs > 0이면 항상 내부 AbortController 생성 + caller signal도 연결
+    // [FIX #679 Codex 2차 P1] caller abort와 timeout abort를 didTimeout 플래그로 구분
+    // [FIX #679 Codex 2차 P2] finally에서 caller signal listener 정리 (listener 누수 방지)
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     let mergedSignal = options.signal;
+    let didTimeout = false;
+    let callerAbortHandler: (() => void) | undefined;
 
     if (timeoutMs > 0) {
         const controller = new AbortController();
-        timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+        timeoutId = setTimeout(() => { didTimeout = true; controller.abort(); }, timeoutMs);
         if (options.signal) {
-            // caller signal 연결: caller가 abort하면 내부 controller도 abort
             if (options.signal.aborted) {
                 controller.abort();
             } else {
-                options.signal.addEventListener('abort', () => controller.abort(), { once: true });
+                callerAbortHandler = () => controller.abort();
+                options.signal.addEventListener('abort', callerAbortHandler, { once: true });
             }
         }
         mergedSignal = controller.signal;
@@ -392,8 +396,9 @@ export const monitoredFetch = async (url: string, options: RequestInit = {}, tim
         return response;
     } catch (error: any) {
         const duration = Math.round(performance.now() - startTime);
-        // AbortError를 타임아웃 메시지로 변환 (호출자가 signal을 직접 넘긴 경우는 원래 에러 유지)
-        if (error.name === 'AbortError' && timeoutId !== undefined) {
+        // [FIX #679 Codex 2차 P1] didTimeout 플래그로 타임아웃과 caller abort를 정확히 구분
+        // 기존: timeoutId 존재만으로 판별 → caller abort도 타임아웃으로 오인
+        if (error.name === 'AbortError' && didTimeout) {
             const timeoutSec = Math.round(timeoutMs / 1000);
             logger.endApiTiming(timingId, 'timeout');
             logger.apiLog('error', `⏱️ Timeout (${timeoutSec}s): ${method} ${url}`, duration, `요청이 ${timeoutSec}초를 초과했습니다.`);
@@ -405,7 +410,8 @@ export const monitoredFetch = async (url: string, options: RequestInit = {}, tim
             timestamp: new Date().toISOString(),
             url: url.substring(0, 200),
             method,
-            status: error.name === 'AbortError' ? 'timeout' : 'network-error',
+            // [FIX #679 Codex 3차 P2] caller abort는 'abort', timeout만 'timeout'으로 구분 기록
+            status: error.name === 'AbortError' ? (didTimeout ? 'timeout' : 'abort') : 'network-error',
             durationMs: duration,
             requestSnippet: !isBinaryUpload && typeof options.body === 'string'
                 ? options.body.substring(0, 500)
@@ -415,5 +421,9 @@ export const monitoredFetch = async (url: string, options: RequestInit = {}, tim
         throw error;
     } finally {
         if (timeoutId !== undefined) clearTimeout(timeoutId);
+        // [FIX #679 Codex 2차 P2] caller signal에 등록한 listener 정리 — 누수 방지
+        if (callerAbortHandler && options.signal) {
+            options.signal.removeEventListener('abort', callerAbortHandler);
+        }
     }
 };
