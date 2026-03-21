@@ -159,14 +159,16 @@ const PREFERRED_REFERENCE_DOMAINS = [
   /museum/i,
   /heritage/i,
 ];
+// [FIX] 워터마크가 있는 유료 스톡 사이트만 포함 — unsplash/pexels는 무료·워터마크 없음이므로 제외
 const STOCK_REFERENCE_DOMAINS = [
   /(^|\.)istockphoto\.com$/i,
   /(^|\.)gettyimages\.com$/i,
   /(^|\.)shutterstock\.com$/i,
   /(^|\.)alamy\.com$/i,
   /(^|\.)dreamstime\.com$/i,
-  /(^|\.)pexels\.com$/i,
-  /(^|\.)unsplash\.com$/i,
+  /(^|\.)123rf\.com$/i,
+  /(^|\.)depositphotos\.com$/i,
+  /(^|\.)bigstockphoto\.com$/i,
 ];
 const BAD_REFERENCE_TEXT_PATTERN = /\b(logo|icon|banner|thumbnail|poster|template|vector|screenshot|wallpaper|collage)\b|로고|아이콘|배너|썸네일|포스터|템플릿|벡터|스크린샷|콜라주/i;
 const ARTICLE_OR_SOCIAL_TEXT_PATTERN = /\b(facebook|instagram|youtube|shorts|article|news|blog|post|press)\b|기사|뉴스|블로그|페이스북|유튜브/i;
@@ -905,7 +907,8 @@ function scoreReferenceResult(
   } else {
     if (isLowSignalReferenceDomain(domain)) score -= 20;
     if (matchesAnyPattern(domain, PREFERRED_REFERENCE_DOMAINS)) score += 6;
-    if (matchesAnyPattern(domain, STOCK_REFERENCE_DOMAINS)) score += 1;
+    // [FIX] 워터마크 있는 스톡 사이트는 hard-filter — 점수를 대폭 감점하여 사실상 제거
+    if (matchesAnyPattern(domain, STOCK_REFERENCE_DOMAINS)) score -= 50;
   }
 
   if (BAD_REFERENCE_TEXT_PATTERN.test(corpus)) score -= 10;

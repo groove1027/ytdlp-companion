@@ -159,6 +159,7 @@ const GoogleReferencePanel: React.FC = () => {
       return {
         ok: response.items.length > 0,
         provider: response.provider,
+        firstLink: response.items[0]?.link,
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : '검색 실패';
@@ -180,7 +181,10 @@ const GoogleReferencePanel: React.FC = () => {
     }
   }, [scenes, config?.globalContext]);
 
-  // 전체 장면 일괄 검색
+  // [FIX] 커뮤니티 밈/일러스트 혼합 모드 — 2~3컷마다 밈 or 일러스트 삽입
+  const mixCommunityInterval = activeSourceTab !== 'web' ? 2 : 0; // 밈/일러스트 탭 활성 시 2컷마다
+
+  // 전체 장면 일괄 검색 (커뮤니티 혼합 포함)
   const searchAllScenes = useCallback(async () => {
     if (!hasScenes) { showToast('장면 분석을 먼저 실행하세요.'); return; }
     setIsSearchingAll(true);
@@ -189,7 +193,22 @@ const GoogleReferencePanel: React.FC = () => {
       let successCount = 0;
       let blockedCount = 0;
       let fallbackCount = 0;
-      const queue = validScenes.map((scene) => ({ scene, sceneIndex: scenes.indexOf(scene) }));
+      let communityCount = 0;
+
+      // 커뮤니티 혼합: 밈/일러스트 탭이 활성 상태이면 2~3컷마다 밈/일러스트 배치
+      const communitySource = activeSourceTab === 'meme' ? 'klipy' : activeSourceTab === 'illust' ? 'irasutoya' : null;
+      const communitySlots = new Set<number>();
+      if (communitySource && mixCommunityInterval > 0) {
+        // 2컷마다 커뮤니티 슬롯 지정 (0-indexed: 1, 3, 5, 7, ...)
+        for (let i = mixCommunityInterval - 1; i < validScenes.length; i += mixCommunityInterval + 1) {
+          communitySlots.add(i);
+        }
+      }
+
+      const queue = validScenes.map((scene, qIdx) => ({
+        scene, sceneIndex: scenes.indexOf(scene), qIdx,
+        useCommunity: communitySlots.has(qIdx),
+      }));
       let cursor = 0;
 
       const worker = async () => {
@@ -198,10 +217,48 @@ const GoogleReferencePanel: React.FC = () => {
           cursor += 1;
           if (!current) return;
 
+          // 커뮤니티 슬롯이면 밈/일러스트 우선 시도
+          if (current.useCommunity && communitySource) {
+            const keywords = (current.scene.scriptText || current.scene.visualDescriptionKO || current.scene.visualPrompt || '').slice(0, 60);
+            if (keywords.trim()) {
+              try {
+                const rawResults = await searchMedia({ query: keywords, type: 'image', source: communitySource, limit: 10 });
+                const filtered = rawResults.filter((item) => !/(mp4|webm|mov)$/i.test(item.format || ''));
+                if (filtered.length > 0) {
+                  // 밈/일러스트 결과 있으면 적용
+                  const item = filtered[0];
+                  updateScene(current.scene.id, {
+                    imageUrl: item.url,
+                    isGeneratingImage: false,
+                    generationStatus: `${communitySource === 'klipy' ? '밈' : '일러스트'} 레퍼런스 적용`,
+                    imageUpdatedAfterVideo: !!current.scene.videoUrl,
+                    communityMediaItem: item,
+                  });
+                  setMemeResults((prev) => new Map(prev).set(`${current.scene.id}:${communitySource}`, filtered.slice(0, 10)));
+                  successCount++;
+                  communityCount++;
+                  continue;
+                }
+              } catch { /* 밈 실패 시 웹 검색으로 폴백 */ }
+            }
+          }
+
+          // 웹 검색 — 결과가 있으면 첫 번째 이미지를 scene.imageUrl에 바로 적용
           const result = await searchScene(current.scene, current.sceneIndex, 1, 'fast');
           if (result.ok) {
             successCount++;
             if (result.provider && result.provider !== 'google') fallbackCount++;
+            // [FIX P1+P2] searchScene 반환값의 firstLink로 imageUrl 직접 적용 + 메타데이터 보존
+            if (result.firstLink) {
+              updateScene(current.scene.id, {
+                imageUrl: result.firstLink,
+                isGeneratingImage: false,
+                generationStatus: result.provider === 'google' ? '구글 레퍼런스 적용' : '대체 레퍼런스 적용',
+                imageUpdatedAfterVideo: !!current.scene.videoUrl,
+                referenceSearchPage: 1,
+                referenceSearchQuery: buildSearchQuery(current.scene, current.sceneIndex > 0 ? scenes[current.sceneIndex - 1] : null, current.sceneIndex < scenes.length - 1 ? scenes[current.sceneIndex + 1] : null, config?.globalContext),
+              });
+            }
           } else if (result.blocked) {
             blockedCount++;
           }
@@ -212,8 +269,11 @@ const GoogleReferencePanel: React.FC = () => {
       await Promise.all(Array.from({ length: workerCount }, () => worker()));
 
       if (successCount === validScenes.length) {
+        const parts = [];
+        if (communityCount > 0) parts.push(`${communityCount}개 ${communitySource === 'klipy' ? '밈' : '일러스트'}`);
+        if (successCount - communityCount > 0) parts.push(`${successCount - communityCount}개 웹 이미지`);
         showToast(
-          `${successCount}개 장면의 무료 레퍼런스 이미지를 가져왔어요!${fallbackCount > 0 ? ' (대체 소스 포함)' : ''}`,
+          `${successCount}개 장면 완료! (${parts.join(' + ')})${fallbackCount > 0 ? ' · 대체 소스 포함' : ''}`,
         );
         return;
       }
@@ -232,7 +292,7 @@ const GoogleReferencePanel: React.FC = () => {
     } finally {
       setIsSearchingAll(false);
     }
-  }, [hasScenes, scenes, searchScene]);
+  }, [hasScenes, scenes, searchScene, activeSourceTab, mixCommunityInterval, updateScene]);
 
   // 이미지 선택 → scene.imageUrl에 적용
   const applyImage = useCallback((sceneId: string, imageUrl: string, provider: ReferenceSearchProvider = 'google') => {
@@ -399,8 +459,8 @@ const GoogleReferencePanel: React.FC = () => {
             </div>
           )}
 
-          {/* 일괄 검색 버튼 — 선택된 소스 탭에 맞게 동작 */}
-          {hasScenes && activeSourceTab === 'web' && (
+          {/* 일괄 검색 버튼 — 모든 소스 탭에서 표시 (밈/일러스트 탭에서는 혼합 모드) */}
+          {hasScenes && (
             <button
               type="button"
               onClick={searchAllScenes}
@@ -408,7 +468,9 @@ const GoogleReferencePanel: React.FC = () => {
               className={`w-full py-3 rounded-xl text-sm font-bold transition-all ${
                 isSearchingAll
                   ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
-                  : 'bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-white shadow-lg'
+                  : activeSourceTab === 'web'
+                    ? 'bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-white shadow-lg'
+                    : 'bg-gradient-to-r from-orange-600 to-fuchsia-600 hover:from-orange-500 hover:to-fuchsia-500 text-white shadow-lg'
               }`}
             >
               {isSearchingAll ? (
@@ -416,14 +478,16 @@ const GoogleReferencePanel: React.FC = () => {
                   <span className="w-4 h-4 border-2 border-gray-500 border-t-orange-400 rounded-full animate-spin" />
                   검색 중...
                 </span>
-              ) : (
+              ) : activeSourceTab === 'web' ? (
                 `🌐 전체 ${scenesWithContent.length}개 장면 웹 레퍼런스 검색`
+              ) : (
+                `${activeSourceTab === 'meme' ? '😂' : '🎨'} 전체 ${scenesWithContent.length}개 장면 혼합 검색 (${activeSourceTab === 'meme' ? '밈' : '일러스트'} + 웹)`
               )}
             </button>
           )}
           {hasScenes && activeSourceTab !== 'web' && (
-            <p className="text-center text-[11px] text-gray-500 py-2">
-              {activeSourceTab === 'meme' ? '😂 밈/GIF' : '🎨 일러스트'}는 각 장면을 펼쳐서 개별 검색해주세요
+            <p className="text-center text-[10px] text-gray-500 py-1">
+              2~3컷마다 {activeSourceTab === 'meme' ? '밈/짤' : '일러스트'}을 섞어 배치하고, 나머지는 웹 이미지로 채워요
             </p>
           )}
 
