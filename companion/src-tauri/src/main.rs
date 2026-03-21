@@ -21,7 +21,7 @@ fn main() {
             let menu = Menu::with_items(app, &[&status, &quit])?;
 
             let _tray = TrayIconBuilder::new()
-                .tooltip("yt-dlp 헬퍼 — 안정적이고 빠른 다운로드")
+                .tooltip("All In One Helper — 안정적이고 빠른 AI 미디어 처리")
                 .menu(&menu)
                 .on_menu_event(|app, event| {
                     if event.id() == "quit" {

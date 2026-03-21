@@ -8,8 +8,11 @@
 import { monitoredFetch } from './apiService';
 import { evolinkChat, getEvolinkKey } from './evolinkService';
 import { logger } from './LoggerService';
+import { isCompanionDetected } from './ytdlpApiService';
 import type { Scene } from '../types';
 import { useGoogleCookieStore } from '../stores/googleCookieStore';
+
+const COMPANION_URL = 'http://localhost:9876';
 
 // Lazy import to avoid circular dependency — 비동기 초기화 후 동기 접근
 let _projectStoreRef: { getState: () => { scenes: Scene[] } } | null = null;
@@ -1081,6 +1084,30 @@ async function rankReferenceResults(
 }
 
 async function proxyFetchReferenceSearch(targetUrl: string, cookie?: string): Promise<Response> {
+  // 1순위: 컴패니언 로컬 프록시 (사용자 IP — 차단 없음, 빠름)
+  if (isCompanionDetected()) {
+    try {
+      const res = await fetch(`${COMPANION_URL}/api/google-proxy`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          targetUrl,
+          method: 'GET',
+          headers: GOOGLE_IMAGE_HEADERS,
+          cookie,
+        }),
+        signal: AbortSignal.timeout(15000),
+      });
+      if (res.ok) {
+        logger.info('[GoogleRef] 컴패니언 프록시 사용 (로컬 IP)');
+        return res;
+      }
+    } catch (e) {
+      logger.warn('[GoogleRef] 컴패니언 프록시 실패 — CF 프록시 폴백:', e instanceof Error ? e.message : '');
+    }
+  }
+
+  // 2순위: 기존 Cloudflare Pages 프록시
   return monitoredFetch(PROXY_PATH, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

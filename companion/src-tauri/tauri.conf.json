@@ -1,8 +1,8 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicoverbruggen/tauri-v2-nightly-schema/main/schema.json",
-  "productName": "ytdlp-companion",
+  "productName": "All In One Helper",
   "version": "1.0.0",
-  "identifier": "com.groove1027.ytdlp-companion",
+  "identifier": "com.groove1027.all-in-one-helper",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420"

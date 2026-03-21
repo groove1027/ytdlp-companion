@@ -86,6 +86,23 @@ struct SocialRequest {
     include_comments: Option<bool>,
 }
 
+#[derive(Deserialize)]
+struct GoogleProxyRequest {
+    #[serde(rename = "targetUrl")]
+    target_url: String,
+    method: Option<String>,
+    headers: Option<std::collections::HashMap<String, String>>,
+    cookie: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct GenerateImageRequest {
+    prompt: String,
+    width: Option<u32>,
+    height: Option<u32>,
+    steps: Option<u32>,
+}
+
 // ──────────────────────────────────────────────
 // 서버 시작
 // ──────────────────────────────────────────────
@@ -111,6 +128,10 @@ pub async fn start_server(_app: tauri::AppHandle) -> Result<(), Box<dyn std::err
         .route("/api/frames", post(frames_handler))
         .route("/api/social/metadata", post(social_metadata_handler))
         .route("/api/social/download", post(social_download_handler))
+        // 구글 이미지 검색 프록시 (로컬 IP — 차단 없음)
+        .route("/api/google-proxy", post(google_proxy_handler))
+        // FLUX.2 이미지 생성 (로컬)
+        .route("/api/generate-image", post(generate_image_handler))
         // 배경 제거 (rembg)
         .route("/api/remove-bg", post(remove_bg_handler))
         // 음성 인식 (whisper.cpp)
@@ -411,5 +432,106 @@ async fn ffmpeg_transcode_handler(Json(req): Json<FfmpegTranscodeRequest>) -> im
             (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("FFmpeg 실패: {}", stderr.lines().last().unwrap_or("unknown")) }))).into_response()
         }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("FFmpeg 실행 불가: {}", e) }))).into_response(),
+    }
+}
+
+// ──────────────────────────────────────────────
+// 핸들러: /api/google-proxy (로컬 IP로 구글 검색)
+// ──────────────────────────────────────────────
+
+async fn google_proxy_handler(Json(req): Json<GoogleProxyRequest>) -> impl IntoResponse {
+    // URL 허용 목록 (구글/빙 이미지 검색만)
+    let allowed_hosts = ["www.google.com", "www.google.co.kr", "www.bing.com", "en.wikipedia.org", "commons.wikimedia.org"];
+    let parsed = url::Url::parse(&req.target_url).ok();
+    let host = parsed.as_ref().and_then(|u| u.host_str().map(String::from)).unwrap_or_default();
+    if !allowed_hosts.iter().any(|h| host.ends_with(h)) {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": format!("허용되지 않은 호스트: {}", host) }))).into_response();
+    }
+
+    // 리다이렉트 비활성화 — SSRF 방지 (allowlist 우회 차단)
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap_or_default();
+
+    let mut request = client.get(&req.target_url);
+
+    // 헤더 설정
+    if let Some(headers) = &req.headers {
+        for (k, v) in headers {
+            request = request.header(k.as_str(), v.as_str());
+        }
+    }
+    if let Some(cookie) = &req.cookie {
+        request = request.header("Cookie", cookie.as_str());
+    }
+
+    match request.send().await {
+        Ok(res) => {
+            let status = res.status().as_u16();
+            let content_type = res.headers().get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("text/html")
+                .to_string();
+            let body = res.bytes().await.unwrap_or_default();
+
+            let mut headers = HeaderMap::new();
+            headers.insert("Content-Type", content_type.parse().unwrap_or("text/html".parse().unwrap()));
+            (axum::http::StatusCode::from_u16(status).unwrap_or(StatusCode::OK), headers, Body::from(body)).into_response()
+        }
+        Err(e) => (StatusCode::BAD_GATEWAY, Json(serde_json::json!({ "error": format!("프록시 요청 실패: {}", e) }))).into_response(),
+    }
+}
+
+// ──────────────────────────────────────────────
+// 핸들러: /api/generate-image (FLUX.2 로컬 생성)
+// ──────────────────────────────────────────────
+
+async fn generate_image_handler(Json(req): Json<GenerateImageRequest>) -> impl IntoResponse {
+    let width = req.width.unwrap_or(1024);
+    let height = req.height.unwrap_or(1024);
+    let steps = req.steps.unwrap_or(4);
+
+    let tmp_output = tempfile::Builder::new().suffix(".png").tempfile().unwrap();
+    let output_path = tmp_output.path().to_string_lossy().to_string();
+
+    // 프롬프트 안전 처리
+    let safe_prompt = req.prompt.replace('\'', "\\'").replace('\n', " ").replace('\r', "");
+
+    // mflux-generate CLI 호출
+    let output = tokio::process::Command::new("mflux-generate")
+        .args([
+            "--model", "flux.1-schnell",  // 가장 빠른 모델 (1-4 steps)
+            "--prompt", &safe_prompt,
+            "--width", &width.to_string(),
+            "--height", &height.to_string(),
+            "--steps", &steps.to_string(),
+            "--output", &output_path,
+            "--quantize", "4",  // 4bit 양자화 (메모리 절약)
+        ])
+        .output()
+        .await;
+
+    match output {
+        Ok(out) if out.status.success() => {
+            match std::fs::read(&output_path) {
+                Ok(data) => {
+                    use base64::Engine;
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                    Json(serde_json::json!({
+                        "image": b64,
+                        "format": "png",
+                        "width": width,
+                        "height": height,
+                    })).into_response()
+                }
+                Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("이미지 읽기 실패: {}", e) }))).into_response(),
+            }
+        }
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("FLUX 생성 실패: {}", stderr.lines().last().unwrap_or("unknown")) }))).into_response()
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("mflux 실행 불가: {}. 'pip3 install mflux'로 설치해주세요.", e) }))).into_response(),
     }
 }

@@ -8,6 +8,13 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-22] Google 이미지 검색 로컬 프록시 + FLUX.2 이미지 생성 엔드포인트
+- [x] `server.rs` — /api/google-proxy (로컬 IP 직접 요청, URL allowlist, 리다이렉트 비활성화)
+- [x] `server.rs` — /api/generate-image (mflux-generate CLI, FLUX.1 schnell, 4bit 양자화)
+- [x] `googleReferenceSearchService.ts` — proxyFetchReferenceSearch 컴패니언 우선 + CF 폴백
+- [x] 실작동: Google 프록시 ✅ (HTML 응답 확인)
+- [x] Codex 5.4 리뷰 5회 (Blocking SSRF 수정) + Playwright 3×6 = 18/18 통과
+
 ### [2026-03-22] Kokoro TTS + rembg/whisper 실작동 수정
 - [x] `tts.rs` — Piper→Kokoro 우선 전환 (한국어 고품질), Piper 폴백 유지
 - [x] `tts.rs` — language allowlist로 Python 인젝션 차단 (Codex Blocking 수정)
