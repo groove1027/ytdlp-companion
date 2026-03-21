@@ -3,12 +3,89 @@
  * Kie AI (ElevenLabs Scribe v1) 기반 음성 전사 서비스
  * 사용자 업로드 오디오 → 텍스트 + 단어별 타임스탬프 추출
  * [v4.6] diarize 옵션: 화자 분리 지원
+ * [v4.7] 컴패니언 whisper.cpp 우선 → Kie 폴백
  */
 
 import { monitoredFetch, getKieKey } from './apiService';
 import { uploadMediaToHosting } from './uploadService';
 import { logger } from './LoggerService';
+import { isCompanionDetected } from './ytdlpApiService';
 import type { WhisperTranscriptResult, WhisperSegment, WhisperWord, DiarizedUtterance, ScriptLine } from '../types';
+
+const COMPANION_URL = 'http://localhost:9876';
+
+/** 컴패니언 whisper.cpp로 로컬 전사 시도 */
+async function tryCompanionTranscribe(
+  audioFile: File | Blob,
+  options?: { signal?: AbortSignal; onProgress?: (msg: string) => void; diarize?: boolean },
+): Promise<WhisperTranscriptResult | null> {
+  if (!isCompanionDetected()) return null;
+  // diarize는 whisper.cpp가 미지원 → Kie로 폴백
+  if (options?.diarize) return null;
+
+  try {
+    options?.onProgress?.('로컬 whisper.cpp 전사 중...');
+    logger.info('[STT] 컴패니언 whisper.cpp 로컬 전사 시도');
+
+    // File → base64
+    const buffer = await audioFile.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    // 64KB 청크 단위로 base64 변환 (대용량 OOM 방지)
+    const chunkSize = 65536;
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
+      binary += String.fromCharCode(...chunk);
+    }
+    const b64 = btoa(binary);
+
+    const res = await fetch(`${COMPANION_URL}/api/transcribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ audio: b64, language: null }),
+      signal: options?.signal
+        ? (AbortSignal as unknown as { any?: (signals: AbortSignal[]) => AbortSignal }).any?.([options.signal, AbortSignal.timeout(300_000)]) || AbortSignal.timeout(300_000)
+        : AbortSignal.timeout(300_000),
+    });
+
+    if (!res.ok) return null;
+
+    const data = await res.json();
+    if (!data?.text) return null;
+
+    // 컴패니언 응답 → WhisperTranscriptResult 변환
+    const segments: WhisperSegment[] = (data.segments || []).map((s: { start: number; end: number; text: string }) => ({
+      text: s.text.trim(),
+      startTime: s.start,
+      endTime: s.end,
+      words: undefined, // whisper.cpp basic은 word-level 미지원
+    }));
+
+    // 전체 duration 계산
+    const duration = segments.length > 0
+      ? segments[segments.length - 1].endTime
+      : 0;
+
+    const result: WhisperTranscriptResult = {
+      text: data.text,
+      language: data.language || 'unknown',
+      segments,
+      duration,
+    };
+
+    logger.success('[STT] 컴패니언 whisper.cpp 전사 성공', {
+      language: result.language,
+      segments: segments.length,
+      duration: result.duration,
+    });
+
+    return result;
+  } catch (e) {
+    if (options?.signal?.aborted) throw e;
+    logger.warn('[STT] 컴패니언 whisper.cpp 실패 — Kie 폴백:', e instanceof Error ? e.message : '');
+    return null;
+  }
+}
 
 const KIE_BASE_URL = 'https://api.kie.ai/api/v1';
 const CREATE_TASK_MAX_ATTEMPTS = 2;
@@ -469,10 +546,17 @@ export async function transcribeAudio(
     diarize?: boolean;  // [v4.6] 화자 분리 활성화
   }
 ): Promise<WhisperTranscriptResult> {
-  const apiKey = getKieKey();
-  if (!apiKey) throw new Error('Kie API 키가 설정되지 않았습니다.');
-
   const { signal, onProgress, diarize = false } = options || {};
+
+  // [v4.7] 1순위: 컴패니언 whisper.cpp (로컬, 무료, 오프라인)
+  // diarize 요청이면 whisper.cpp 미지원이므로 스킵
+  const companionResult = await tryCompanionTranscribe(audioFile, options);
+  if (companionResult) return companionResult;
+
+  // 2순위: Kie API (클라우드)
+  const apiKey = getKieKey();
+  if (!apiKey) throw new Error('Kie API 키가 설정되지 않았습니다. 헬퍼 앱을 설치하면 무료로 사용 가능합니다.');
+
   const file = buildTranscriptionRequestFile(audioFile);
   const audioUrl = await uploadAudioForTranscription(file, { signal, onProgress, diarize });
   const result = await requestKieTranscription(audioUrl, apiKey, { signal, onProgress, diarize });

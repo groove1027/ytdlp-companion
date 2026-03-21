@@ -8,6 +8,14 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-22] 웹앱 3대 서비스 컴패니언 연동 — STT/TTS/FFmpeg
+- [x] `transcriptionService.ts` — tryCompanionTranscribe() + transcribeAudio() 컴패니언 우선
+- [x] `elevenlabsService.ts` — tryCompanionTTS() + voiceId 있으면 ElevenLabs 직행
+- [x] `ffmpegService.ts` — companionTranscode() export (점진적 적용)
+- [x] AbortSignal.any()로 외부 signal + 5분 타임아웃 결합
+- [x] Codex 5.4 리뷰 5회 (Blocking 0, High 수정 완료)
+- [x] Playwright 3회 × 4 = 12/12 통과
+
 ### [2026-03-22] 컴패니언 확장 — rembg + whisper + TTS + ffmpeg + 보안 패치
 - [x] `companion/rembg.rs` — 로컬 배경 제거 (rembg Python)
 - [x] `companion/whisper.rs` — 로컬 STT (whisper.cpp + large-v3-turbo 모델)

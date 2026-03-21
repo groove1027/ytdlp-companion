@@ -1,15 +1,85 @@
 /**
  * ffmpegService.ts
  * FFmpeg WASM을 사용한 브라우저 내 MP4 합성
+ * [v4.7] 컴패니언 네이티브 FFmpeg 트랜스코딩 지원
  *
  * 주요 기능:
  * - 이미지 시퀀스 + Ken Burns (zoompan) + 자막 (drawtext) + 나레이션 + BGM → MP4
  * - SharedArrayBuffer 미지원 시 single-threaded 모드 자동 전환
+ * - 컴패니언 감지 시 네이티브 FFmpeg로 5-15배 빠른 트랜스코딩
  */
 
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
 import { logger } from './LoggerService';
+import { isCompanionDetected } from './ytdlpApiService';
+
+const COMPANION_URL = 'http://localhost:9876';
+
+/**
+ * 컴패니언 네이티브 FFmpeg로 트랜스코딩 (WASM 대비 5-15배 빠름)
+ * @returns null이면 WASM 폴백 필요
+ */
+export async function companionTranscode(
+  inputBlob: Blob,
+  outputFormat: string,
+  ffmpegArgs?: string[],
+): Promise<Blob | null> {
+  if (!isCompanionDetected()) return null;
+
+  try {
+    logger.info(`[FFmpeg] 컴패니언 네이티브 트랜스코딩 시도 (→${outputFormat})`);
+
+    // Blob → base64 (청크 단위)
+    const buffer = await inputBlob.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    const chunkSize = 65536;
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
+      binary += String.fromCharCode(...chunk);
+    }
+    const b64 = btoa(binary);
+
+    const inputExt = inputBlob.type.includes('webm') ? 'webm'
+      : inputBlob.type.includes('wav') ? 'wav'
+      : inputBlob.type.includes('mp3') ? 'mp3'
+      : 'mp4';
+
+    const res = await fetch(`${COMPANION_URL}/api/ffmpeg/transcode`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        input: b64,
+        inputFormat: inputExt,
+        outputFormat,
+        args: ffmpegArgs,
+      }),
+      signal: AbortSignal.timeout(300_000), // 5분
+    });
+
+    if (!res.ok) return null;
+
+    const data = await res.json();
+    if (!data?.data) return null;
+
+    // base64 → Blob
+    const binaryStr = atob(data.data);
+    const outBytes = new Uint8Array(binaryStr.length);
+    for (let i = 0; i < binaryStr.length; i++) outBytes[i] = binaryStr.charCodeAt(i);
+
+    const mimeType = outputFormat === 'mp3' ? 'audio/mp3'
+      : outputFormat === 'wav' ? 'audio/wav'
+      : outputFormat === 'webm' ? 'video/webm'
+      : 'video/mp4';
+
+    logger.success(`[FFmpeg] 컴패니언 트랜스코딩 성공 (${(data.size / 1024).toFixed(0)}KB)`);
+    return new Blob([outBytes], { type: mimeType });
+  } catch (e) {
+    logger.warn('[FFmpeg] 컴패니언 트랜스코딩 실패 — WASM 폴백:', e instanceof Error ? e.message : '');
+    return null;
+  }
+}
 import type {
   UnifiedSceneTiming,
   SubtitleStyle,

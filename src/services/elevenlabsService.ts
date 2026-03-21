@@ -12,6 +12,39 @@
 import { monitoredFetch, getKieKey } from './apiService';
 import { logger } from './LoggerService';
 import { mergeAudioFiles, splitTextForTTS, stripSpeakerTags } from './ttsService';
+import { isCompanionDetected } from './ytdlpApiService';
+
+const COMPANION_URL = 'http://localhost:9876';
+
+/** 컴패니언 Piper TTS로 로컬 음성 합성 시도 */
+async function tryCompanionTTS(text: string, languageCode?: string): Promise<{ audioUrl: string; format: string } | null> {
+  if (!isCompanionDetected()) return null;
+
+  try {
+    logger.info('[TTS] 컴패니언 Piper TTS 로컬 합성 시도');
+    const res = await fetch(`${COMPANION_URL}/api/tts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text,
+        language: languageCode === 'en' ? 'en' : 'ko',
+      }),
+      signal: AbortSignal.timeout(60_000),
+    });
+
+    if (!res.ok) return null;
+
+    const blob = await res.blob();
+    if (blob.size === 0) return null;
+
+    const audioUrl = URL.createObjectURL(blob);
+    logger.success('[TTS] 컴패니언 Piper TTS 성공', { size: blob.size });
+    return { audioUrl, format: 'wav' };
+  } catch (e) {
+    logger.warn('[TTS] 컴패니언 Piper TTS 실패 — ElevenLabs 폴백:', e instanceof Error ? e.message : '');
+    return null;
+  }
+}
 
 const KIE_BASE_URL = 'https://api.kie.ai/api/v1';
 
@@ -29,10 +62,18 @@ export interface ElevenLabsDialogueOptions {
 export const generateElevenLabsDialogueTTS = async (
   options: ElevenLabsDialogueOptions
 ): Promise<{ audioUrl: string; format: string }> => {
+  // [v4.7] 1순위: 컴패니언 Piper TTS (로컬, 무료)
+  // 특정 음성(voiceId)이 지정된 경우 → ElevenLabs만 해당 음성 지원, 컴패니언 스킵
+  const cleanedText = stripSpeakerTags(options.text);
+  if (!options.voiceId || options.voiceId === 'Sarah') {
+    const companionResult = await tryCompanionTTS(cleanedText, options.languageCode);
+    if (companionResult) return companionResult;
+  }
+
+  // 2순위: ElevenLabs via Kie API (클라우드)
   const apiKey = getKieKey();
-  if (!apiKey) throw new Error('Kie API 키가 설정되지 않았습니다. API 설정에서 Kie 키를 입력해주세요.');
-  // [FIX #228] 화자/모드 태그 제거 후 TTS 생성
-  const cleanedOptions = { ...options, text: stripSpeakerTags(options.text) };
+  if (!apiKey) throw new Error('Kie API 키가 설정되지 않았습니다. 헬퍼 앱을 설치하면 무료로 사용 가능합니다.');
+  const cleanedOptions = { ...options, text: cleanedText };
   if (!cleanedOptions.text.trim()) throw new Error('TTS 텍스트가 비어있습니다.');
 
   // 4500자 초과 시 자동 청킹
