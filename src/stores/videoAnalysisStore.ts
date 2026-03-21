@@ -32,6 +32,7 @@ interface VideoAnalysisStore {
   rawResult: string;
   versions: VideoVersionItem[];
   thumbnails: VideoTimedFrame[];
+  isFrameUpgrading: boolean; // 백그라운드 정밀 프레임 업그레이드 진행 중
   error: string | null;
   expandedId: number | null;
 
@@ -72,6 +73,7 @@ interface VideoAnalysisStore {
   setRawResult: (raw: string) => void;
   setVersions: (versions: VideoVersionItem[]) => void;
   setThumbnails: (thumbs: VideoTimedFrame[]) => void;
+  setIsFrameUpgrading: (val: boolean) => void;
   setError: (error: string | null) => void;
   setExpandedId: (id: number | null) => void;
 
@@ -123,6 +125,7 @@ const INITIAL_STATE = {
   rawResult: '',
   versions: [] as VideoVersionItem[],
   thumbnails: [] as VideoTimedFrame[],
+  isFrameUpgrading: false,
   error: null as string | null,
   expandedId: null as number | null,
   resultCache: {} as Record<string, ResultCache>,
@@ -169,6 +172,7 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
       setRawResult: (raw) => set({ rawResult: raw }),
       setVersions: (versions) => set({ versions }),
       setThumbnails: (thumbs) => set({ thumbnails: thumbs }),
+      setIsFrameUpgrading: (val) => set({ isFrameUpgrading: val }),
       setError: (error) => set({ error }),
       setExpandedId: (id) => set({ expandedId: id }),
 
@@ -213,6 +217,7 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
         error: null,
         versions: [],
         thumbnails: [],
+        isFrameUpgrading: false,
         expandedId: null,
       }),
 
@@ -352,6 +357,7 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
         rawResult: '',
         versions: [],
         thumbnails: [],
+        isFrameUpgrading: false,
         resultCache: {},
         error: null,
         expandedId: null,
