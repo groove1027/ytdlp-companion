@@ -26,6 +26,12 @@ const VersionSelectorBar: React.FC = () => {
     const versionText = buildVersionText(v);
 
     // [FIX #296] try-catch로 감싸 실패해도 버전 전환 반영
+    // [FIX #700] import가 가드에 의해 스킵되면 (isImportingFromVideoAnalysis) 전환하지 않음
+    const wasImporting = useEditPointStore.getState().isImportingFromVideoAnalysis;
+    if (wasImporting) {
+      showToast('이전 버전을 불러오는 중입니다. 잠시 후 다시 시도해주세요.');
+      return;
+    }
     try {
       await useEditPointStore.getState().importFromVideoAnalysis({
         frames: thumbnails,

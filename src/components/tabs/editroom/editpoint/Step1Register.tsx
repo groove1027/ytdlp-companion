@@ -67,15 +67,36 @@ const Step1Register: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {/* 소스 영상 없음 경고 */}
+      {/* [FIX #700] 소스 영상 없음 경고 — 강한 시각적 안내 + 가이드 */}
       {hasEditTableButNoSource && (
-        <div className="bg-amber-900/20 border border-amber-500/30 rounded-lg p-4 flex items-start gap-3">
-          <svg className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
-            <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-          </svg>
-          <div>
-            <p className="text-sm font-semibold text-amber-300">소스 영상이 필요합니다</p>
-            <p className="text-xs text-amber-400/80 mt-1">편집표는 준비되었지만 소스 영상이 없습니다. 위의 "영상 파일 선택"에서 원본 영상을 업로드해주세요.</p>
+        <div className="bg-red-900/20 border-2 border-red-500/40 rounded-xl p-5 flex items-start gap-4 animate-pulse-once">
+          <div className="w-10 h-10 rounded-full bg-red-600/20 flex items-center justify-center flex-shrink-0">
+            <svg className="w-6 h-6 text-red-400" fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+            </svg>
+          </div>
+          <div className="flex-1">
+            <p className="text-sm font-bold text-red-300">원본 소스 영상을 등록해주세요</p>
+            <p className="text-xs text-red-400/80 mt-1.5 leading-relaxed">
+              영상 분석실에서 편집표가 자동 전달되었지만, <strong>원본 영상 파일이 없습니다</strong>.<br />
+              아래 "영상 파일 선택" 또는 "URL 입력"으로 분석에 사용한 원본 영상을 등록해야<br />
+              Premiere/CapCut 내보내기, 영상 자르기(WebCodecs ZIP) 등을 사용할 수 있습니다.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                // [FIX #700] 파일 모드로 전환 후 파일 선택 다이얼로그 오픈
+                setSourceInputMode('file');
+                // 다음 렌더 사이클에서 fileInputRef가 마운트된 후 클릭
+                setTimeout(() => fileInputRef.current?.click(), 50);
+              }}
+              className="mt-3 px-4 py-2 rounded-lg text-xs font-medium bg-red-600/20 text-red-300 border border-red-500/30 hover:bg-red-600/30 transition-all flex items-center gap-2"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+              </svg>
+              지금 영상 파일 선택하기
+            </button>
           </div>
         </div>
       )}

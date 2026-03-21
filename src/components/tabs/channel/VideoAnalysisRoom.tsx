@@ -3148,6 +3148,9 @@ const VideoAnalysisRoom: React.FC = () => {
   const nleAbortRef = useRef<AbortController | null>(null);
   const nleActiveTaskRef = useRef<{ target: EditRoomNleTarget; controller: AbortController } | null>(null);
   const nleDimsCache = useRef<{ w: number; h: number; fps: number; dur: number } | null>(null);
+  // [FIX #700] "편집실로" 버튼 중복 클릭 방지 — lock + loading 상태
+  const [sendingToEditRoom, setSendingToEditRoom] = useState(false);
+  const sendToEditRoomLockRef = useRef(false);
   // 경과시간 실시간 업데이트
   useEffect(() => {
     if (!nleExporting?.startedAt) { setNleElapsed(0); return; }
@@ -4526,6 +4529,63 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
     }
   };
 
+  // [FIX #700] "편집실로 보내기" 공통 핸들러 — 중복 클릭 방지 + 다운로드 실패 토스트 + 즉시 이동
+  const handleSendToEditRoom = useCallback(async (v: VersionItem | null) => {
+    // 중복 클릭 가드
+    if (sendToEditRoomLockRef.current) return;
+    sendToEditRoomLockRef.current = true;
+    setSendingToEditRoom(true);
+    try {
+      const isTk = true;
+      const targetVersion = v || useVideoAnalysisStore.getState().versions[0];
+      if (!targetVersion) {
+        showToast('분석 결과가 없습니다. 먼저 분석을 실행해주세요.');
+        return;
+      }
+      const versionText = isTk
+        ? `제목: ${targetVersion.title}\n컨셉: ${targetVersion.concept}\n\n| 순서 | 모드 | 오디오 내용 | 예상 시간 | 비디오 화면 지시 | 타임코드 소스 |\n| :--- | :--- | :--- | :--- | :--- | :--- |\n` + targetVersion.scenes.map(s => `| ${s.cutNum} | ${s.mode} | ${s.audioContent} | ${s.duration} | ${s.videoDirection} | ${s.timecodeSource} |`).join('\n')
+        : `제목: ${targetVersion.title}\n\n` + targetVersion.scenes.map(s => `[컷 ${s.cutNum}] ${s.timeline}\n대사: ${s.dialogue}\n효과: ${s.effectSub}\n장면: ${s.sceneDesc}`).join('\n\n');
+
+      // [FIX #700] import가 이미 진행 중이면 다운로드도 시작하지 않고 즉시 리턴
+      if (useEditPointStore.getState().isImportingFromVideoAnalysis) {
+        showToast('이전 데이터를 불러오는 중입니다. 잠시 후 다시 시도해주세요.');
+        return;
+      }
+
+      const videoStore = useVideoAnalysisStore.getState();
+      let effectiveBlob = videoStore.videoBlob;
+
+      // [FIX #700] 다운로드 실패 시 사용자 안내 + 즉시 이동
+      if (!effectiveBlob && !uploadedFiles[0] && inputMode === 'youtube' && youtubeUrl) {
+        try {
+          const dl = await downloadSocialVideo(youtubeUrl, '720p');
+          effectiveBlob = dl.blob;
+          videoStore.setVideoBlob(dl.blob);
+        } catch (e) {
+          console.warn('[EditRoom] 영상 다운로드 실패:', e);
+          showToast('원본 영상 다운로드에 실패했어요. 편집실 Step 1에서 원본 영상을 직접 등록해주세요.', 7000);
+        }
+      }
+      try {
+        await useEditPointStore.getState().importFromVideoAnalysis({
+          frames: thumbnails,
+          videoBlob: effectiveBlob,
+          videoFile: uploadedFiles[0] || null,
+          editTableText: versionText,
+          narrationText: '',
+        });
+      } catch (e) {
+        console.warn('[EditRoom] 데이터 전달 실패:', e);
+      }
+      useVideoAnalysisStore.getState().setEditRoomSelectedVersionIdx(v ? v.id - 1 : 0);
+      useEditRoomStore.getState().setEditRoomSubTab('edit-point-matching');
+      useNavigationStore.getState().setActiveTab('edit-room');
+    } finally {
+      sendToEditRoomLockRef.current = false;
+      setSendingToEditRoom(false);
+    }
+  }, [uploadedFiles, inputMode, youtubeUrl, thumbnails]);
+
   // 버전 복사 (3종: tts=TTS만, original=오리지널 대사, all=모두) — 프리셋별 최적화
   const handleCopyVersion = useCallback(async (v: VersionItem, mode: 'tts' | 'original' | 'all') => {
     let text = '';
@@ -5615,25 +5675,20 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                               )}
                               <button
                                 type="button"
-                                onClick={async () => {
-                                  const isTk = true;
-                                  const versionText = isTk
-                                    ? `제목: ${v.title}\n컨셉: ${v.concept}\n\n| 순서 | 모드 | 오디오 내용 | 예상 시간 | 비디오 화면 지시 | 타임코드 소스 |\n| :--- | :--- | :--- | :--- | :--- | :--- |\n` + v.scenes.map(s => `| ${s.cutNum} | ${s.mode} | ${s.audioContent} | ${s.duration} | ${s.videoDirection} | ${s.timecodeSource} |`).join('\n')
-                                    : `제목: ${v.title}\n\n` + v.scenes.map(s => `[컷 ${s.cutNum}] ${s.timeline}\n대사: ${s.dialogue}\n효과: ${s.effectSub}\n장면: ${s.sceneDesc}`).join('\n\n');
-                                  const videoStore = useVideoAnalysisStore.getState();
-                                  let effectiveBlob = videoStore.videoBlob;
-                                  if (!effectiveBlob && !uploadedFiles[0] && inputMode === 'youtube' && youtubeUrl) {
-                                    try { const dl = await downloadSocialVideo(youtubeUrl, '720p'); effectiveBlob = dl.blob; videoStore.setVideoBlob(dl.blob); } catch (e) { console.warn('[EditRoom] 영상 다운로드 실패:', e); }
-                                  }
-                                  try { await useEditPointStore.getState().importFromVideoAnalysis({ frames: thumbnails, videoBlob: effectiveBlob, videoFile: uploadedFiles[0] || null, editTableText: versionText, narrationText: '' }); } catch (e) { console.warn('[EditRoom] 데이터 전달 실패:', e); }
-                                  useVideoAnalysisStore.getState().setEditRoomSelectedVersionIdx(v.id - 1);
-                                  useEditRoomStore.getState().setEditRoomSubTab('edit-point-matching');
-                                  useNavigationStore.getState().setActiveTab('edit-room');
-                                }}
-                                className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium bg-gray-700/40 text-gray-400 border border-gray-600/20 hover:text-amber-400 hover:border-amber-500/30 transition-all"
+                                disabled={sendingToEditRoom}
+                                onClick={() => handleSendToEditRoom(v)}
+                                className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-all ${
+                                  sendingToEditRoom
+                                    ? 'bg-gray-700/40 text-gray-500 border-gray-600/20 cursor-not-allowed'
+                                    : 'bg-gray-700/40 text-gray-400 border-gray-600/20 hover:text-amber-400 hover:border-amber-500/30'
+                                }`}
                               >
-                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14.121 14.121L19 19m-7-7l7-7m-7 7l-2.879 2.879M12 12L9.121 9.121" /></svg>
-                                편집실로
+                                {sendingToEditRoom ? (
+                                  <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" className="opacity-20" /><path d="M12 2a10 10 0 019.95 11" stroke="currentColor" strokeWidth="3" strokeLinecap="round" /></svg>
+                                ) : (
+                                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14.121 14.121L19 19m-7-7l7-7m-7 7l-2.879 2.879M12 12L9.121 9.121" /></svg>
+                                )}
+                                {sendingToEditRoom ? '이동 중...' : '편집실로'}
                               </button>
                             </>
                           )}
@@ -6123,45 +6178,21 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
           </button>
           <button
             type="button"
-            onClick={async () => {
-              const videoStore = useVideoAnalysisStore.getState();
-              // [FIX #213] YouTube 모드에서 videoBlob이 없으면 다운로드 시도
-              let effectiveBlob = videoStore.videoBlob;
-              if (!effectiveBlob && !uploadedFiles[0] && inputMode === 'youtube' && youtubeUrl) {
-                try {
-                  const dl = await downloadSocialVideo(youtubeUrl, '720p');
-                  effectiveBlob = dl.blob;
-                  videoStore.setVideoBlob(dl.blob);
-                } catch (e) { console.warn('[EditRoom] 영상 다운로드 실패:', e); }
-              }
-              // [FIX #312] 첫 번째 버전의 보정된 편집표 사용 (rawResult는 AI 원본으로 보정 미반영)
-              const currentVersions = useVideoAnalysisStore.getState().versions;
-              const firstVersion = currentVersions[0];
-              const editText = firstVersion
-                ? `제목: ${firstVersion.title}\n컨셉: ${firstVersion.concept}\n\n| 순서 | 모드 | 오디오 내용 | 예상 시간 | 비디오 화면 지시 | 타임코드 소스 |\n| :--- | :--- | :--- | :--- | :--- | :--- |\n` +
-                  firstVersion.scenes.map(s =>
-                    `| ${s.cutNum} | ${s.mode} | ${s.audioContent} | ${s.duration} | ${s.videoDirection} | ${s.timecodeSource} |`
-                  ).join('\n')
-                : rawResult;
-              // [FIX #296] try-catch로 감싸 데이터 전달 실패해도 편집실 이동 보장
-              try {
-                await useEditPointStore.getState().importFromVideoAnalysis({
-                  frames: thumbnails,
-                  videoBlob: effectiveBlob,
-                  videoFile: uploadedFiles[0] || null,
-                  editTableText: editText,
-                  narrationText: '', // [FIX #215] 편집표에 이미 내레이션 포함 — 중복 전송 시 토큰 2배 + 429 유발
-                });
-              } catch (e) { console.warn('[EditRoom] 데이터 전달 실패:', e); }
-              useVideoAnalysisStore.getState().setEditRoomSelectedVersionIdx(0);
-              useEditRoomStore.getState().setEditRoomSubTab('edit-point-matching');
-              useNavigationStore.getState().setActiveTab('edit-room');
-            }}
-            className="flex items-center gap-2 px-6 py-3 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white font-bold shadow-lg transition-all transform hover:scale-[1.02]"
+            disabled={sendingToEditRoom}
+            onClick={() => handleSendToEditRoom(null)}
+            className={`flex items-center gap-2 px-6 py-3 rounded-xl font-bold shadow-lg transition-all transform ${
+              sendingToEditRoom
+                ? 'bg-gray-600 text-gray-400 cursor-not-allowed scale-100'
+                : 'bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white hover:scale-[1.02]'
+            }`}
           >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14.121 14.121L19 19m-7-7l7-7m-7 7l-2.879 2.879M12 12L9.121 9.121m0 5.758a3 3 0 10-4.243 4.243 3 3 0 004.243-4.243zm0-5.758a3 3 0 10-4.243-4.243 3 3 0 004.243 4.243z" /></svg>
-            편집실로 보내기 (영상+프레임 포함)
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
+            {sendingToEditRoom ? (
+              <svg className="w-5 h-5 animate-spin" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" className="opacity-20" /><path d="M12 2a10 10 0 019.95 11" stroke="currentColor" strokeWidth="3" strokeLinecap="round" /></svg>
+            ) : (
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14.121 14.121L19 19m-7-7l7-7m-7 7l-2.879 2.879M12 12L9.121 9.121m0 5.758a3 3 0 10-4.243 4.243 3 3 0 004.243-4.243zm0-5.758a3 3 0 10-4.243-4.243 3 3 0 004.243 4.243z" /></svg>
+            )}
+            {sendingToEditRoom ? '편집실로 이동 중...' : '편집실로 보내기 (영상+프레임 포함)'}
+            {!sendingToEditRoom && <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>}
           </button>
         </div>
       )}

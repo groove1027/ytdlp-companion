@@ -8,6 +8,20 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-21] 영상 분석 > 편집실 전송 먹통 + 프리미어 다운로드 불가 수정 (#700)
+- [x] `VideoAnalysisRoom.tsx` — "편집실로" 버튼 공통 핸들러 + ref lock + loading state + disabled + spinner
+- [x] `VideoAnalysisRoom.tsx` — downloadSocialVideo 실패 시 사용자 토스트 알림 추가
+- [x] `VideoAnalysisRoom.tsx` — isImportingFromVideoAnalysis 체크를 다운로드 시작 전에 수행
+- [x] `editPointStore.ts` — importFromVideoAnalysis 중복 호출 가드 (isImportingFromVideoAnalysis)
+- [x] `editPointStore.ts` — importGeneration 카운터 + parseEditTable에서 stale 결과 폐기
+- [x] `editPointStore.ts` — importFromVideoAnalysis 전체 outer try/catch로 lock 해제 보장
+- [x] `editPointStore.ts` — exportResult에서 소스 필수 모드 가드 (sourceVideos.length === 0이면 차단)
+- [x] `Step1Register.tsx` — 소스 없음 경고 강화 (red border + CTA 버튼 + setSourceInputMode 전환)
+- [x] `Step2Mapping.tsx` — 소스 없음 배너 + "Step 1로 돌아가기" + 영상자르기 비활성화
+- [x] `Step3Export.tsx` — 소스 필수 모드(MP4/타임라인/Premiere/CapCut) 비활성화 + conditionLabel
+- [x] `VersionSelectorBar.tsx` — import 중 버전 전환 차단 + 토스트 안내
+- [x] 검증: tsc 0에러, vite build 성공, Codex 5.4 리뷰 10/10 PASS, Playwright E2E 통과
+
 ### [2026-03-21] 영상 분석실 "Failed to fetch" 버그 수정 (#679)
 - [x] `apiService.ts` — `monitoredFetch()` caller signal + timeout 동시 지원 (기존: signal 있으면 timeout 무시)
 - [x] `evolinkService.ts` — `evolinkVideoAnalysisStream()` 110초 선제 타임아웃 추가
@@ -187,7 +201,7 @@
   `rg -n "generatePremiereNativeProjectBytes|buildPremiereBinaryHash|PREMIERE_NATIVE_TEMPLATE_URL|verify_nle_matrix_premiere\\.prproj|extractPremiereCaptionTexts" src test`
   `node test/verify-nle-export-matrix-browser.mjs`
 - [x] 실제 Premiere 확인:
-  `/Users/jihoo/Downloads/all-in-one-production-build4/test/output/verify_nle_matrix_premiere/verify_nle_matrix_premiere.prproj`를 별도 Premiere 인스턴스로 열었고, `verify_nle_matrix_premiere_1` 프로젝트의 타임라인에 `Subtitle` 트랙 2개가 올라온 상태를 스크린샷으로 확인
+  `/Users/mac_mini/Downloads/all-in-one-production-build4/test/output/verify_nle_matrix_premiere/verify_nle_matrix_premiere.prproj`를 별도 Premiere 인스턴스로 열었고, `verify_nle_matrix_premiere_1` 프로젝트의 타임라인에 `Subtitle` 트랙 2개가 올라온 상태를 스크린샷으로 확인
 - [x] 참고:
   기존 떠 있던 Premiere 세션에서는 `Trying to begin a document opening session, but a session already exists.` 로그 때문에 새 프로젝트 전환이 막혀 별도 인스턴스로 검증
 - [x] 추가 관찰:
@@ -271,7 +285,7 @@
 - [x] 실제 설치 검증:
   생성된 `install_capcut_project.command`를 실행해 CapCut drafts 폴더에 복사/패치 성공
 - [x] 실제 미디어 링크 검증:
-  CapCut 타임라인에서 `verify_video_room.mp4` 클립명이 보이고 `Media Not Found` 오버레이가 사라졌으며, `lsof -p 75432` 기준 CapCut 메인 프로세스가 `/Users/jihoo/Movies/CapCut/User Data/Projects/com.lveditor.draft/verify_capcut_video_room (4)/materials/video/verify_video_room.mp4`를 실제로 열고 있음
+  CapCut 타임라인에서 `verify_video_room.mp4` 클립명이 보이고 `Media Not Found` 오버레이가 사라졌으며, `lsof -p 75432` 기준 CapCut 메인 프로세스가 `/Users/mac_mini/Movies/CapCut/User Data/Projects/com.lveditor.draft/verify_capcut_video_room (4)/materials/video/verify_video_room.mp4`를 실제로 열고 있음
 - [x] 직관 검증:
   연결된 실제 파일을 초록 `CUT 1` / 파랑 `CUT 2` 테스트 영상으로 교체했을 때 CapCut 타임라인 화면도 동일하게 바뀌는 것을 사용자 스크린샷으로 확인
 

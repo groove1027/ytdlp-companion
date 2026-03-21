@@ -32,6 +32,8 @@ const Step3Export: React.FC = () => {
   const totalMapped = sourceVideos.filter((v) => mappedVideoIds.has(v.id)).length;
   const cleanedCount = sourceVideos.filter((v) => mappedVideoIds.has(v.id) && v.cleanedBlobUrl).length;
   const allCleaned = totalMapped > 0 && cleanedCount === totalMapped;
+  // [FIX #700] 소스 영상 없으면 영상 필수 모드 비활성화
+  const hasSourceVideos = sourceVideos.length > 0;
 
   const cards: ExportCard[] = [
     {
@@ -44,8 +46,8 @@ const Step3Export: React.FC = () => {
       ),
       title: '브라우저 MP4 합성',
       description: 'FFmpeg.wasm으로 브라우저에서 직접 MP4를 생성합니다.',
-      condition: totalSourceSizeMB < 500,
-      conditionLabel: totalSourceSizeMB >= 500 ? `${totalSourceSizeMB}MB > 500MB 제한` : undefined,
+      condition: hasSourceVideos && totalSourceSizeMB < 500,
+      conditionLabel: !hasSourceVideos ? '소스 영상 필요' : totalSourceSizeMB >= 500 ? `${totalSourceSizeMB}MB > 500MB 제한` : undefined,
     },
     {
       mode: 'ffmpeg-script',
@@ -78,7 +80,8 @@ const Step3Export: React.FC = () => {
       ),
       title: '타임라인 전송',
       description: '편집실 타임라인에 장면과 자막을 자동 배치합니다.',
-      condition: true,
+      condition: hasSourceVideos,
+      conditionLabel: !hasSourceVideos ? '소스 영상 필요' : undefined,
     },
     {
       mode: 'fcp-xml',
@@ -89,7 +92,8 @@ const Step3Export: React.FC = () => {
       ),
       title: 'Premiere XML',
       description: 'FCP XML + SRT. Premiere Pro / DaVinci Resolve에서 편집점+자막 즉시 사용.',
-      condition: true,
+      condition: hasSourceVideos,
+      conditionLabel: !hasSourceVideos ? '소스 영상 필요' : undefined,
     },
     {
       mode: 'capcut-pkg',
@@ -100,7 +104,8 @@ const Step3Export: React.FC = () => {
       ),
       title: 'CapCut 패키지',
       description: 'FCP XML + SRT. CapCut 데스크톱에서 XML 가져오기로 편집점 복원.',
-      condition: true,
+      condition: hasSourceVideos,
+      conditionLabel: !hasSourceVideos ? '소스 영상 필요' : undefined,
     },
     {
       mode: 'vrew-pkg',

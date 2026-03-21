@@ -57,6 +57,11 @@ interface EditPointStore {
   exportMode: EditPointExportMode;
   totalSourceSizeMB: number;
 
+  // [FIX #700] 영상분석실 임포트 중복 호출 가드 + generation 카운터
+  isImportingFromVideoAnalysis: boolean;
+  /** 임포트 세대 — reset() 시 증가, parseEditTable .then()에서 세대 불일치 시 결과 폐기 */
+  importGeneration: number;
+
   // 자막 제거
   cleanSubtitles: boolean;
   cleanProgress: number; // 0~100
@@ -291,6 +296,8 @@ export const useEditPointStore = create<EditPointStore>()(immer((set, get) => ({
   isProcessing: false,
   exportMode: 'edl-file',
   totalSourceSizeMB: 0,
+  isImportingFromVideoAnalysis: false,
+  importGeneration: 0,
   cleanSubtitles: false,
   cleanProgress: 0,
   cleanMessage: '',
@@ -484,6 +491,9 @@ export const useEditPointStore = create<EditPointStore>()(immer((set, get) => ({
       return;
     }
 
+    // [FIX #700] 파싱 시작 시 generation 캡처 — 파싱 중 reset()으로 세대가 바뀌면 결과 폐기
+    const parseGeneration = get().importGeneration;
+
     set({
       isProcessing: true,
       processingPhase: 'parsing',
@@ -499,6 +509,13 @@ export const useEditPointStore = create<EditPointStore>()(immer((set, get) => ({
       const entries = await parseEditTableWithAI(rawEditTable, rawNarration, maxDur, (progress, message) => {
         set({ processingProgress: progress, processingMessage: message });
       });
+
+      // [FIX #700] 파싱 완료 후 세대 체크 — reset()이 호출되었으면 결과 폐기
+      // 주의: isProcessing은 건드리지 않음 — 새 파싱이 진행 중일 수 있으므로 해당 파싱의 완료에 위임
+      if (get().importGeneration !== parseGeneration) {
+        console.warn('[EditPoint] parseEditTable: generation changed during parse — discarding stale results');
+        return;
+      }
 
       // [FIX #192] 소스 매핑을 edlEntries와 동일한 set()에서 원자적으로 처리
       // → Step2Mapping이 "매핑 안 됨" 에러를 잠깐 보여주는 깜빡임 방지
@@ -847,6 +864,13 @@ export const useEditPointStore = create<EditPointStore>()(immer((set, get) => ({
   exportResult: async () => {
     const { exportMode, edlEntries, sourceMapping, sourceVideos } = get();
 
+    // [FIX #700] 소스 필수 모드에서 소스 영상 없으면 실행 차단
+    const sourceRequiredModes: EditPointExportMode[] = ['direct-mp4', 'push-to-timeline', 'fcp-xml', 'capcut-pkg'];
+    if (sourceRequiredModes.includes(exportMode) && sourceVideos.length === 0) {
+      showToast('이 내보내기 모드는 소스 영상이 필요합니다. Step 1에서 원본 영상을 먼저 등록해주세요.', 5000);
+      return;
+    }
+
     // 파일명 매핑 (videoId → fileName)
     const fileNameMapping: Record<string, string> = {};
     for (const [sourceId, videoId] of Object.entries(sourceMapping)) {
@@ -993,50 +1017,69 @@ export const useEditPointStore = create<EditPointStore>()(immer((set, get) => ({
   },
 
   importFromVideoAnalysis: async (data) => {
-    const { frames, videoBlob, videoFile, editTableText, narrationText } = data;
+    // [FIX #700] 중복 호출 가드 — 여러 번 클릭 시 첫 호출만 실행
+    if (get().isImportingFromVideoAnalysis) return;
+    set({ isImportingFromVideoAnalysis: true });
 
-    // [FIX #215] 이전 소스 영상/상태 정리 — 버전 전환 시 누적 방지
-    get().reset();
+    try {
+      const { frames, videoBlob, videoFile, editTableText, narrationText } = data;
 
-    // 편집표 + 나레이션 텍스트 설정
-    set({ rawEditTable: editTableText, rawNarration: narrationText });
+      // [FIX #215] 이전 소스 영상/상태 정리 — 버전 전환 시 누적 방지
+      get().reset();
 
-    // 영상 파일이 있으면 소스로 등록
-    if (videoFile) {
-      await get().addSourceVideos([videoFile]);
-    } else if (videoBlob) {
-      const file = new File([videoBlob], 'video-analysis-source.mp4', { type: 'video/mp4' });
-      await get().addSourceVideos([file]);
-    }
-    // [FIX #296] 소스 영상 없어도 편집표만으로 진행 — 편집실 Step 1에서 안내 표시됨
+      // 편집표 + 나레이션 텍스트 설정
+      set({ rawEditTable: editTableText, rawNarration: narrationText });
 
-    // [FIX #296] 편집표 자동 파싱 — 비동기 진행하여 탭 전환 차단하지 않음
-    // [FIX #310] 파싱 완료 후 frames를 EdlEntry.referenceFrameUrl에 자동 매칭
-    if (editTableText.trim()) {
-      get().parseEditTable()
-        .then(() => {
-          // 파싱된 EdlEntry에 영상 분석실 프레임을 타임코드 기반 매칭
-          if (frames && frames.length > 0) {
-            const FRAME_MATCH_MAX_DISTANCE_SEC = 5;
-            const sortedFrames = [...frames].sort((a, b) => a.timeSec - b.timeSec);
-            set((state) => ({
-              edlEntries: state.edlEntries.map(entry => {
-                if (entry.referenceFrameUrl) return entry; // 이미 있으면 유지
-                // 편집점 썸네일은 컷 시작점 기준으로 매칭
-                const targetTime = entry.timecodeStart;
-                let bestFrame: (typeof sortedFrames)[number] | null = null;
-                let bestDist = Infinity;
-                for (const f of sortedFrames) {
-                  const dist = Math.abs(f.timeSec - targetTime);
-                  if (dist < bestDist) { bestDist = dist; bestFrame = f; }
-                }
-                if (!bestFrame || bestDist > FRAME_MATCH_MAX_DISTANCE_SEC) return entry;
-                return bestFrame ? { ...entry, referenceFrameUrl: bestFrame.hdUrl || bestFrame.url } : entry;
-              }),
-            }));
-          }
-        })
-        .catch(e => console.warn('[EditPoint] 편집표 자동 파싱 실패:', e));
+      // 영상 파일이 있으면 소스로 등록
+      if (videoFile) {
+        await get().addSourceVideos([videoFile]);
+      } else if (videoBlob) {
+        const file = new File([videoBlob], 'video-analysis-source.mp4', { type: 'video/mp4' });
+        await get().addSourceVideos([file]);
+      }
+      // [FIX #296] 소스 영상 없어도 편집표만으로 진행 — 편집실 Step 1에서 안내 표시됨
+
+      // [FIX #296] 편집표 자동 파싱 — 비동기 진행하여 탭 전환 차단하지 않음
+      // [FIX #310] 파싱 완료 후 frames를 EdlEntry.referenceFrameUrl에 자동 매칭
+      // [FIX #700] generation 캡처 — reset()으로 세대가 바뀌면 결과 폐기
+      const myGeneration = get().importGeneration;
+      if (editTableText.trim()) {
+        get().parseEditTable()
+          .then(() => {
+            // [FIX #700] 세대 불일치 → 이 사이에 reset()이 호출됨 → 결과 폐기
+            if (get().importGeneration !== myGeneration) {
+              console.warn('[EditPoint] import generation mismatch — discarding stale parseEditTable result');
+              return;
+            }
+            // 파싱된 EdlEntry에 영상 분석실 프레임을 타임코드 기반 매칭
+            if (frames && frames.length > 0) {
+              const FRAME_MATCH_MAX_DISTANCE_SEC = 5;
+              const sortedFrames = [...frames].sort((a, b) => a.timeSec - b.timeSec);
+              set((state) => ({
+                edlEntries: state.edlEntries.map(entry => {
+                  if (entry.referenceFrameUrl) return entry; // 이미 있으면 유지
+                  const targetTime = entry.timecodeStart;
+                  let bestFrame: (typeof sortedFrames)[number] | null = null;
+                  let bestDist = Infinity;
+                  for (const f of sortedFrames) {
+                    const dist = Math.abs(f.timeSec - targetTime);
+                    if (dist < bestDist) { bestDist = dist; bestFrame = f; }
+                  }
+                  if (!bestFrame || bestDist > FRAME_MATCH_MAX_DISTANCE_SEC) return entry;
+                  return bestFrame ? { ...entry, referenceFrameUrl: bestFrame.hdUrl || bestFrame.url } : entry;
+                }),
+              }));
+            }
+          })
+          .catch(e => console.warn('[EditPoint] 편집표 자동 파싱 실패:', e))
+          .finally(() => set({ isImportingFromVideoAnalysis: false }));
+      } else {
+        set({ isImportingFromVideoAnalysis: false });
+      }
+    } catch (err) {
+      // [FIX #700] addSourceVideos 등에서 예외 시 lock 해제 보장
+      console.warn('[EditPoint] importFromVideoAnalysis 실패:', err);
+      set({ isImportingFromVideoAnalysis: false });
     }
   },
 
@@ -1071,6 +1114,10 @@ export const useEditPointStore = create<EditPointStore>()(immer((set, get) => ({
       cleanSubtitles: false,
       cleanProgress: 0,
       cleanMessage: '',
+      // [FIX #700] reset()에서는 isImportingFromVideoAnalysis를 건드리지 않음
+      // → importFromVideoAnalysis의 .finally()에서만 해제해야 중복 호출 방지 가드가 유효
+      // generation 증가 → 진행 중인 parseEditTable .then()이 stale 결과를 덮어쓰지 않도록
+      importGeneration: get().importGeneration + 1,
       isCleaning: false,
     });
   },

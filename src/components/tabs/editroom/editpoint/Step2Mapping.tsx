@@ -54,11 +54,32 @@ const Step2Mapping: React.FC = () => {
   // 매핑되지 않은 소스 확인
   const uniqueSourceIds = [...new Set(edlEntries.map((e) => e.sourceId))];
   const unmappedCount = uniqueSourceIds.filter((sid) => !sourceMapping[sid]).length;
+  // [FIX #700] 소스 영상 없으면 영상 자르기/AI 정제 비활성화
+  const hasSourceVideos = sourceVideos.length > 0;
 
   return (
     <div className="space-y-5">
+      {/* [FIX #700] 소스 영상 없음 경고 배너 */}
+      {!hasSourceVideos && (
+        <div className="bg-red-900/20 border border-red-500/30 rounded-lg p-4 flex items-start gap-3">
+          <svg className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+            <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+          </svg>
+          <div>
+            <p className="text-sm font-semibold text-red-300">소스 영상이 등록되지 않았습니다</p>
+            <p className="text-xs text-red-400/80 mt-1">영상 자르기(WebCodecs ZIP)와 AI 정제를 사용하려면 Step 1에서 원본 영상을 먼저 등록해주세요.</p>
+            <button
+              type="button"
+              onClick={() => setStep('register')}
+              className="mt-2 px-3 py-1.5 rounded-lg text-xs font-medium bg-red-600/20 text-red-300 border border-red-500/30 hover:bg-red-600/30 transition-all"
+            >
+              Step 1로 돌아가기
+            </button>
+          </div>
+        </div>
+      )}
       {/* 소스 매핑 요약 */}
-      {unmappedCount > 0 && (
+      {hasSourceVideos && unmappedCount > 0 && (
         <div className="bg-yellow-900/20 border border-yellow-600/30 rounded-lg p-3 text-xs text-yellow-300">
           {unmappedCount}개 소스가 매핑되지 않았습니다. 아래 드롭다운에서 소스를 연결해주세요.
         </div>
@@ -242,13 +263,13 @@ const Step2Mapping: React.FC = () => {
           <button
             type="button"
             onClick={handleQuickExportClips}
-            disabled={isProcessing || edlEntries.length === 0}
+            disabled={isProcessing || edlEntries.length === 0 || !hasSourceVideos}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${
-              !isProcessing && edlEntries.length > 0
+              !isProcessing && edlEntries.length > 0 && hasSourceVideos
                 ? 'bg-emerald-600/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-600/30'
                 : 'bg-gray-700 text-gray-500 cursor-not-allowed'
             }`}
-            title="WebCodecs로 영상을 클립별로 잘라 ZIP 다운로드합니다"
+            title={hasSourceVideos ? 'WebCodecs로 영상을 클립별로 잘라 ZIP 다운로드합니다' : '소스 영상이 없어 사용할 수 없습니다. Step 1에서 영상을 등록해주세요.'}
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.121 14.121L19 19m-7-7l7-7m-7 7l-2.879 2.879M12 12L9.121 9.121m0 5.758a3 3 0 10-4.243 4.243 3 3 0 004.243-4.243zm0-5.758a3 3 0 10-4.243-4.243 3 3 0 004.243 4.243z" />
