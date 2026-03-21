@@ -691,7 +691,9 @@ export const requestEvolinkNative = async (
     model: string,
     googlePayload: Record<string, unknown>,
     method: string = 'generateContent',
-    timeoutMs?: number
+    timeoutMs?: number,
+    /** [FIX #678] abort signal — fetch에 전달하여 타임아웃 시 즉시 취소 */
+    signal?: AbortSignal,
 ): Promise<Record<string, unknown>> => {
     const apiKey = getEvolinkKey();
     if (!apiKey) throw new Error('Evolink API 키가 설정되지 않았습니다.');
@@ -751,7 +753,8 @@ export const requestEvolinkNative = async (
             'Authorization': `Bearer ${apiKey}`,
             'Content-Type': 'application/json'
         },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        signal, // [FIX #678] abort signal 전달
     }, 1, 3000, timeoutMs);
 
     if (!response.ok) {
@@ -1321,10 +1324,10 @@ export const evolinkVideoAnalysisStream = async (
 
     logger.info('[Evolink Video] v1beta 비디오 분석 스트리밍 시작', { videoCount: videoUris.length, videoUri: videoUris[0].slice(0, 80), mimeType: mimeTypes[0] });
 
-    // [FIX #679] 110초 선제 타임아웃 — 브라우저/프록시 타임아웃(~126초)보다 먼저 끊어 폴백 유도
+    // [FIX #679][FIX #678] 100초 선제 타임아웃 — 브라우저/프록시 타임아웃(~126초)보다 먼저 끊어 폴백 유도
     // 비디오 분석은 서버가 YouTube 영상 다운로드+프레임 분석해야 하므로 오래 걸리지만,
-    // 브라우저 직통 호출에서 126초 이상 대기하면 "Failed to fetch" 네트워크 에러 발생
-    const VIDEO_FETCH_TIMEOUT_MS = 110_000;
+    // 110초는 폴백 체인에 예산을 남기지 못해 타임아웃 초과 원인 → 100초로 조정 (대부분의 영상 커버)
+    const VIDEO_FETCH_TIMEOUT_MS = 100_000;
 
     // [FIX #226] 429 Rate Limit 재시도 추가 — 비디오 분석 스트리밍에도 적용
     const response = await fetchWithRateLimitRetry(url, {

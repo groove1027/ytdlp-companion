@@ -3957,8 +3957,10 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       // 2단계: AI 분석 — 적응형 단일/배치 호출
       // [FIX #454] 전처리 완료 후 글로벌 타임아웃을 AI 전용으로 교체
       // 단, 글로벌 타임아웃(8분)이 아직 남아있으면 유지하고 AI 타임아웃만 추가
+      // [FIX #678] deep/heavy 프리셋은 AI 타임아웃 8분 (Pro 모델 폴백 체인이 길어 5분으로 부족)
       if (globalTimeout) clearTimeout(globalTimeout);
-      const AI_TIMEOUT_MS = 5 * 60 * 1000;
+      const isHeavyPresetForTimeout = preset === 'deep' || preset === 'alltts';
+      const AI_TIMEOUT_MS = isHeavyPresetForTimeout ? 8 * 60 * 1000 : 5 * 60 * 1000;
       globalTimeout = setTimeout(() => {
         console.warn(`[VideoAnalysis] AI 분석 타임아웃 (${AI_TIMEOUT_MS / 60000}분) 도달 — 강제 중단`);
         abortCtrl.abort();
@@ -4008,8 +4010,9 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       // [FIX #364] 롱폼 할루시네이션 방지: 5분+ 영상은 temperature를 낮춰 팩트 기반 생성 유도
       const effectiveTemp = maxTimeSec >= 300 ? 0.3 : 0.5;
 
-      /** [FIX #262][FIX #679] 텍스트 전용 폴백 — Evolink 스트리밍 → Smart Routing (KIE 포함)
-       * v1beta 타임아웃/네트워크 에러 직후에도 안정적으로 동작하도록 500ms 대기 + 타임아웃 적용 */
+      /** [FIX #262][FIX #679][FIX #678] 텍스트 전용 폴백 — Evolink 스트리밍 → Smart Routing (KIE 포함)
+       * v1beta 타임아웃/네트워크 에러 직후에도 안정적으로 동작하도록 500ms 대기 + 타임아웃 적용
+       * [FIX #678] abort signal + skipFlashLite 전달 — 타임아웃 후 zombie 요청 방지 + deep 프리셋 품질 보호 */
       const textFallbackAI = async (prompt: string, tokens: number): Promise<string> => {
         const messages: EvolinkChatMessage[] = [
           { role: 'system', content: scriptSystem },
@@ -4028,7 +4031,14 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
             generationConfig: { temperature: effectiveTemp, maxOutputTokens: tokens },
             safetySettings: SAFETY_SETTINGS_BLOCK_NONE,
           };
-          const data = await requestGeminiProxy('gemini-3.1-pro-preview', payload, 0, 90_000);
+          // [FIX #678] signal + skipFlashLite 전달: 영상 분석 모든 프리셋에서 Flash Lite 품질 저하 방지
+          // Flash Lite는 어떤 프리셋의 복잡한 편집 프로토콜도 처리 불가 → KIE 3.1 Pro가 최종 폴백
+          // [FIX #678 Codex R9 P1] heavy 프리셋은 Smart Routing 타임아웃도 연장 (90s → 180s)
+          const smartRoutingTimeoutMs = isHeavyPresetForTimeout ? 180_000 : 90_000;
+          const data = await requestGeminiProxy('gemini-3.1-pro-preview', payload, 0, smartRoutingTimeoutMs, {
+            signal,
+            skipFlashLite: true,
+          });
           return extractTextFromResponse(data);
         }
       };
@@ -4256,7 +4266,13 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
         throw new Error('AI 응답에서 유효한 버전을 파싱할 수 없었습니다. 다시 시도해주세요.');
       }
       if (parsed.length < effectiveVersionCount) {
-        showToast(`⚠️ ${effectiveVersionCount}개 중 ${parsed.length}개 버전만 생성되었어요. 버전 수를 줄이면 더 안정적이에요.`, 6000);
+        // [FIX #678] deep/heavy 프리셋에서 버전이 심하게 부족하면 품질 경고 추가
+        const isSeverelyTruncated = parsed.length <= Math.ceil(effectiveVersionCount / 3);
+        if (isSeverelyTruncated && isHeavyPreset) {
+          showToast(`⚠️ AI 서버 응답이 불안정하여 ${effectiveVersionCount}개 중 ${parsed.length}개만 생성되었어요. 잠시 후 다시 시도하면 더 좋은 결과를 받으실 수 있어요.`, 8000);
+        } else {
+          showToast(`⚠️ ${effectiveVersionCount}개 중 ${parsed.length}개 버전만 생성되었어요. 버전 수를 줄이면 더 안정적이에요.`, 6000);
+        }
       }
       setVersions(parsed);
       addAnalysisPerfStage(perfRunId, 'ai', 'AI 분석');
@@ -4816,18 +4832,24 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
   // 동적 예상 시간: 프리셋/버전수/영상길이 기반 (하드코딩 90초 제거)
   // Codex P2: 분석 시작 시점 스냅샷으로 mid-analysis 값 변경에 의한 점프 방지
   const estimatedTotalSecRef = useRef(90);
+  // [FIX #perf-v2] 실제 측정 데이터 기반 예상 시간 — 거짓말 안 하는 시간 예측
+  // 실측: snack 3v=130s, snack 10v=234s, tikitaka 10v=276s, alltts 10v=400s+
   const ESTIMATED_TOTAL_SEC = useMemo(() => {
-    const vc = versionCount || 10;
+    // [FIX #678 Codex R3 P3] deep/shopping은 최대 5버전으로 캡 — ETA가 실제 작업량과 일치하도록
+    const rawVc = versionCount || 10;
+    const vc = (selectedPreset === 'deep' || selectedPreset === 'shopping') ? Math.min(rawVc, 5) : rawVc;
+    // 프리셋별 고정 오버헤드 (소스 준비 + v1beta 영상 전송 + 초기 분석)
     const presetBase: Record<string, number> = {
-      snack: 6, condensed: 8, tikitaka: 12, shopping: 14, alltts: 16, deep: 24,
+      snack: 60, condensed: 70, tikitaka: 80, shopping: 90, alltts: 120, deep: 150,
     };
+    // 버전당 추가 시간 (AI 토큰 생성 속도 기반)
     const perVersionSec: Record<string, number> = {
-      snack: 2.2, condensed: 2.6, tikitaka: 3.4, shopping: 3.8, alltts: 4.2, deep: 5.0,
+      snack: 18, condensed: 16, tikitaka: 22, shopping: 20, alltts: 30, deep: 25,
     };
     const p = selectedPreset || 'snack';
-    const inputOverhead = inputMode === 'youtube' ? 8 : 12;
-    const durationOverhead = isLongForm ? 45 : 15;
-    return Math.round(inputOverhead + durationOverhead + (presetBase[p] || 12) + (perVersionSec[p] || 3.4) * vc);
+    const inputOverhead = inputMode === 'youtube' ? 5 : 15;
+    const longFormMultiplier = isLongForm ? 1.6 : 1.0;
+    return Math.round((inputOverhead + (presetBase[p] || 80) + (perVersionSec[p] || 20) * vc) * longFormMultiplier);
   }, [selectedPreset, versionCount, inputMode, isLongForm]);
   useEffect(() => {
     if (!isAnalyzing) return;
@@ -4842,9 +4864,10 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       setSimProgress(progress);
     }, 500);
 
-    // [FIX #454] 페일세이프 최대 실행 시간 — 10분 후 강제 종료
-    // 어떤 이유로든 handleAnalyze가 완료되지 않으면 UI가 영원히 멈추는 것을 방지
-    const FAILSAFE_MAX_MS = 10 * 60 * 1000;
+    // [FIX #454][FIX #678] 페일세이프 최대 실행 시간 — deep/heavy는 12분, 일반 10분
+    // deep/alltts는 AI 타임아웃이 8분이므로 전처리(다운로드/STT 2~3분) 포함 시 10분 초과 가능
+    const isHeavyPresetForFailsafe = selectedPreset === 'deep' || selectedPreset === 'alltts';
+    const FAILSAFE_MAX_MS = isHeavyPresetForFailsafe ? 12 * 60 * 1000 : 10 * 60 * 1000;
     const failsafeTimer = setTimeout(() => {
       console.error('[VideoAnalysis] ⚠️ 페일세이프 10분 타임아웃 — isAnalyzing 강제 해제');
       failsafeFiredRef.current = true; // [FIX #454] catch 블록의 중복 토스트 방지
@@ -5059,6 +5082,8 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
             {versionCount <= 3 ? '비용 절약' : versionCount >= 10 ? '풀 비교' : '밸런스'}
             {' · ~'}
             {versionCount === 1 ? '20' : versionCount === 3 ? '70' : versionCount === 5 ? '100' : '200'}원
+            {' · 약 '}
+            {versionCount === 1 ? '1~2' : versionCount === 3 ? '2~3' : versionCount === 5 ? '3~4' : '4~5'}분
           </span>
         </div>
 

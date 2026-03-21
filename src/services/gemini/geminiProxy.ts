@@ -319,6 +319,10 @@ const needsV1Beta = (googlePayload: any): boolean => {
 interface GeminiProxyOptions {
     skipNative?: boolean;
     taskProfile?: TaskProfile;
+    /** [FIX #678] abort signal — 전달 시 각 폴백 단계 전에 aborted 여부를 확인하고 fetch에도 전달 */
+    signal?: AbortSignal;
+    /** [FIX #678] true이면 Flash Lite 폴백 스킵 — deep/heavy 프리셋에서 품질 저하 방지 */
+    skipFlashLite?: boolean;
 }
 
 type GeminiProxyOptionsInput = GeminiProxyOptions | TaskProfile | undefined;
@@ -348,10 +352,18 @@ export const requestGeminiProxy = async (model: string, googlePayload: any, _ret
     const NATIVE_MAX_WAIT_MS = 60_000;
     const requiresBeta = needsV1Beta(googlePayload);
     const taskProfile = resolvedOptions.taskProfile || 'default';
+    const abortSignal = resolvedOptions.signal;
+    const skipFlashLite = resolvedOptions.skipFlashLite || false;
+
+    /** [FIX #678] abort signal 체크 — 각 폴백 단계 전에 호출 */
+    const checkAborted = () => {
+        if (abortSignal?.aborted) throw new DOMException('분석이 취소되었습니다.', 'AbortError');
+    };
 
     // --- [Inner Helper] Evolink v1beta (Google Native Format, Gemini 3.1 Pro) ---
     // v1beta 전용 기능: Google Search grounding, fileData(영상/오디오)
     const tryEvolinkV1Beta = async (): Promise<any> => {
+        checkAborted(); // [FIX #678]
         if (shouldSkipNative) throw new Error('v1beta skipped (skipNative/retry)');
         // [FIX #245] Pro 429 쿨다운 중이면 스킵 → Flash Lite로
         if (isEvolinkProRateLimited()) throw new Error('Evolink Pro rate limited (cooldown), skipping v1beta');
@@ -360,7 +372,7 @@ export const requestGeminiProxy = async (model: string, googlePayload: any, _ret
         const nativeTimeout = timeoutMs ? Math.min(timeoutMs, NATIVE_MAX_WAIT_MS) : NATIVE_MAX_WAIT_MS;
         logger.info(`[Gemini] Evolink v1beta (model: ${model})`, { timeoutMs, nativeTimeout });
         console.log(`[GeminiService] Trying Evolink v1beta (model: ${model}, timeout: ${nativeTimeout / 1000}s)`);
-        const data = await requestEvolinkNative(model, googlePayload, 'generateContent', nativeTimeout);
+        const data = await requestEvolinkNative(model, googlePayload, 'generateContent', nativeTimeout, abortSignal);
         logger.success(`[Gemini] Evolink v1beta 성공`);
         return data;
     };
@@ -368,6 +380,7 @@ export const requestGeminiProxy = async (model: string, googlePayload: any, _ret
     // --- [Inner Helper] Evolink v1/chat/completions (OpenAI Format, Gemini 3.1 Pro) ---
     // v1beta보다 안정적, 텍스트 전용 요청의 기본 경로
     const tryEvolinkV1Chat = async (): Promise<any> => {
+        checkAborted(); // [FIX #678]
         // [FIX #245] Pro 429 쿨다운 중이면 스킵 → Flash Lite로
         if (isEvolinkProRateLimited()) throw new Error('Evolink Pro rate limited (cooldown), skipping v1');
         const evolinkKey = getEvolinkKey();
@@ -387,7 +400,8 @@ export const requestGeminiProxy = async (model: string, googlePayload: any, _ret
                     'Authorization': `Bearer ${evolinkKey}`,
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify(evolinkV1Body)
+                body: JSON.stringify(evolinkV1Body),
+                signal: abortSignal, // [FIX #678]
             },
             1, 3000, timeoutMs
         );
@@ -449,6 +463,9 @@ export const requestGeminiProxy = async (model: string, googlePayload: any, _ret
     // Evolink 기술문서: gemini-3.1-flash-lite-preview — Pro와 동일 Evolink 계정, 3.1급 품질 유지
     // Pro가 rate limited 되어도 Flash Lite는 별도 모델이라 사용 가능
     const tryEvolinkFlashLite = async (): Promise<any> => {
+        checkAborted(); // [FIX #678]
+        // [FIX #678] skipFlashLite 활성 시 무조건 스킵 — 저품질 결과보다 깨끗한 실패 + 재시도 안내가 낫다
+        if (skipFlashLite) throw new Error('Flash Lite skipped (skipFlashLite: complex prompt incompatible)');
         const evolinkKey = getEvolinkKey();
         if (!evolinkKey) throw new Error('No Evolink key');
         logger.info(`[Gemini] Evolink Flash Lite 폴백 — 3.1 Flash Lite`);
@@ -465,7 +482,8 @@ export const requestGeminiProxy = async (model: string, googlePayload: any, _ret
                     'Authorization': `Bearer ${evolinkKey}`,
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify(flashBody)
+                body: JSON.stringify(flashBody),
+                signal: abortSignal, // [FIX #678]
             },
             1, 3000, timeoutMs
         );
@@ -518,6 +536,7 @@ export const requestGeminiProxy = async (model: string, googlePayload: any, _ret
     };
 
     const tryKieChat = async (): Promise<any> => {
+        checkAborted(); // [FIX #678]
         const kieKey = getKieKey();
         if (!kieKey) throw new Error("Kie API Key가 설정되지 않았습니다.");
         if (isKieRateLimited()) throw new Error('Kie rate limited (cooldown), skipping');
@@ -546,7 +565,8 @@ export const requestGeminiProxy = async (model: string, googlePayload: any, _ret
                 'Authorization': `Bearer ${kieKey}`,
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify(openAIBody)
+            body: JSON.stringify(openAIBody),
+            signal: abortSignal, // [FIX #678]
         }, 3, 3000, effectiveTimeoutMs);
 
         if (!response.ok) {
@@ -615,8 +635,11 @@ export const requestGeminiProxy = async (model: string, googlePayload: any, _ret
 
     for (const { name, fn } of priorities) {
         try {
+            checkAborted(); // [FIX #678] 각 폴백 단계 전에 abort 체크
             return await fn();
         } catch (e: any) {
+            // [FIX #678] AbortError는 즉시 상위로 전파 — 폴백 체인 즉시 중단
+            if (e instanceof DOMException && e.name === 'AbortError') throw e;
             logger.warn(`[Gemini] ${name} 실패: ${e.message}`);
             // [FIX #245] Pro 429 감지 → Pro만 쿨다운 (Flash Lite는 영향 없음)
             if (name.includes('Pro') && (e.message?.includes('429') || e.message?.toLowerCase().includes('rate limit'))) {
@@ -637,8 +660,11 @@ export const requestGeminiProxy = async (model: string, googlePayload: any, _ret
         if (lastError) throw lastError;
         throw new Error("Evolink and Kie API Keys are missing.");
     } catch (e: any) {
+        // [FIX #678] AbortError는 재시도 없이 즉시 전파 — 취소 시 불필요한 2s 대기 방지
+        if (e instanceof DOMException && e.name === 'AbortError') throw e;
         // [FIX] 1회 자동 재시도 (모든 프록시 실패 시)
         if (_retryCount < 1) {
+            checkAborted(); // [FIX #678] 재시도 전 abort 체크
             logger.trackRetry('GeminiProxy 전체', _retryCount + 1, 2, (lastError || e)?.message);
             await new Promise(r => setTimeout(r, 2000));
             return requestGeminiProxy(model, googlePayload, _retryCount + 1, timeoutMs, resolvedOptions);
