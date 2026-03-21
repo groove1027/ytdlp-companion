@@ -38,6 +38,7 @@ export interface ComposeMp4Options {
   height?: number;
   videoBitrateMbps?: number; // 비트레이트 (Mbps, 기본 20)
   rawAudioBuffer?: AudioBuffer; // 외부 제공 오디오 (mixAudio 건너뛰고 바로 AAC 인코딩)
+  origAudioMuted?: boolean; // true면 소스 비디오 원본 오디오 추출 건너뜀 (편집실 뮤트 상태 반영)
   onProgress?: (progress: ExportProgress) => void;
   signal?: AbortSignal;
 }
@@ -129,6 +130,7 @@ export async function composeMp4(options: ComposeMp4Options): Promise<Blob> {
     height = 1080,
     videoBitrateMbps = 20,
     rawAudioBuffer: externalAudioBuffer,
+    origAudioMuted = false,
     onProgress,
     signal,
   } = options;
@@ -206,14 +208,23 @@ export async function composeMp4(options: ComposeMp4Options): Promise<Blob> {
     // 비디오 장면의 원본 오디오 추출 (소리 보존)
     const sceneAudioBuffers: SceneAudioBufferEntry[] = [];
     const audioDecodeByUrl = new Map<string, Promise<AudioBuffer | null>>();
-    if (!externalAudioBuffer) {
+    // [FIX P2] origAudioMuted이면 소스 비디오 오디오 추출 건너뜀
+    if (!externalAudioBuffer && !origAudioMuted) {
       for (const scene of scenes) {
         if (!scene.videoUrl) continue;
         if (!audioDecodeByUrl.has(scene.videoUrl)) {
           audioDecodeByUrl.set(scene.videoUrl, (async () => {
             try {
-              const resp = await fetch(scene.videoUrl!);
-              const arrayBuf = await resp.arrayBuffer();
+              // [FIX P2] CORS 실패 시 blob 변환 폴백 — <video> 요소로 이미 로드 가능한 URL도 지원
+              let arrayBuf: ArrayBuffer;
+              try {
+                const resp = await fetch(scene.videoUrl!);
+                arrayBuf = await resp.arrayBuffer();
+              } catch {
+                // CORS 차단 → blob URL이면 재시도 불필요, 그 외는 건너뜀
+                if (scene.videoUrl!.startsWith('blob:')) throw new Error('blob fetch failed');
+                return null;
+              }
               const decodeCtx = new OfflineAudioContext(2, 48000, 48000);
               return await decodeCtx.decodeAudioData(arrayBuf);
             } catch {
@@ -229,17 +240,28 @@ export async function composeMp4(options: ComposeMp4Options): Promise<Blob> {
     checkAbort();
 
     // 비디오 오디오 추출 결과 수집 (에셋 로드와 병렬 완료)
-    if (!externalAudioBuffer) {
-      for (const slot of timeline) {
+    // [FIX] transition overlap 반영한 실제 렌더 시작 시각 계산
+    const sceneRenderStarts: number[] = [0];
+    for (let i = 0; i < timeline.length - 1; i++) {
+      const trans = sceneTransitions?.[timeline[i].sceneId];
+      const transDur = (trans && trans.preset !== 'none') ? trans.duration : 0;
+      sceneRenderStarts.push(sceneRenderStarts[i] + timeline[i].imageDuration - transDur);
+    }
+
+    if (!externalAudioBuffer && !origAudioMuted) {
+      for (let i = 0; i < timeline.length; i++) {
+        const slot = timeline[i];
         const scene = scenes.find(s => s.id === slot.sceneId);
         if (!scene?.videoUrl) continue;
         const decoded = await audioDecodeByUrl.get(scene.videoUrl);
         if (decoded) {
           sceneAudioBuffers.push({
             buffer: decoded,
-            startTimeSec: slot.imageStartTime,
+            // [FIX P2] transition overlap 보정된 렌더 시작 시각 사용
+            startTimeSec: sceneRenderStarts[i],
             durationSec: slot.imageDuration,
-            volume: slot.volume ?? 1,
+            // [FIX P1] volume은 0-200 퍼센트 → /100으로 linear gain 변환 (FFmpeg과 동일)
+            volume: (slot.volume ?? 100) / 100,
             trimStartSec: slot.videoTrimStartSec ?? 0,
           });
         }
