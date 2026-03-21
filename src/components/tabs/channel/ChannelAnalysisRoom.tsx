@@ -1060,7 +1060,7 @@ const ChannelAnalysisRoom: React.FC = () => {
                 {isRetrying ? '지침서 재생성 중...' : '지침서 다시 생성하기'}
               </button>
             </div>
-          ) : (
+          ) : progress ? (
             /* 분석 진행 중 — 로딩 스피너 */
             <div className="rounded-xl border border-blue-500/20 bg-blue-900/10 px-4 py-5">
               <div className="flex items-center gap-3 mb-2">
@@ -1074,7 +1074,7 @@ const ChannelAnalysisRoom: React.FC = () => {
                 준비가 끝나면 여기서 바로 확인하고 복사할 수 있습니다.
               </p>
             </div>
-          )}
+          ) : null}
         </div>
       )}
 
