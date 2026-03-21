@@ -8,6 +8,16 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-21] 영상 분석실 "Failed to fetch" 버그 수정 (#679)
+- [x] `apiService.ts` — `monitoredFetch()` caller signal + timeout 동시 지원 (기존: signal 있으면 timeout 무시)
+- [x] `evolinkService.ts` — `evolinkVideoAnalysisStream()` 110초 선제 타임아웃 추가
+- [x] `evolinkService.ts` — `evolinkFrameAnalysisStream()` 75초 선제 타임아웃 추가
+- [x] `videoAnalysis.ts` — `analyzeVideoWithGemini()` 110초 타임아웃 + Evolink 실패 시 Kie 폴백
+- [x] `VideoAnalysisRoom.tsx` — textFallbackAI 500ms 대기 + 90초 타임아웃 적용
+- [x] `VideoAnalysisRoom.tsx` — "Failed to fetch" 에러 메시지를 사용자 친화적으로 변환
+- [x] Codex 5.4 리뷰 P2 반영: Kie 키 미설정 시 원본 Evolink 에러 유지
+- [x] 검증: tsc 0에러, vite build 성공, run-verify.sh 10/10, E2E 통과
+
 ### [2026-03-21] 영상 배치 생성 중단/재시도 버그 3건 수정 (#656, #608, #638)
 - [x] `kieBatchRunner.ts` — 배치 항목별 성공/실패 결과와 quota 중단 여부를 상위로 반환하도록 변경
 - [x] `useVideoBatch.ts` — 배치 실행을 공통 `runSceneBatch()`로 통합하고, 실패 시 `generationTaskId`/진행 상태를 정리한 뒤 실패 장면 재시도 경로 추가

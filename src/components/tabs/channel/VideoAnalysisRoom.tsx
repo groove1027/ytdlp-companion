@@ -3125,6 +3125,9 @@ const VideoAnalysisRoom: React.FC = () => {
   const [elapsedSec, setElapsedSec] = useState(0);
   const [simProgress, setSimProgress] = useState(0);
   // [REMOVED] batchProgress state — 5병렬 배치 제거됨 (단일 호출 전환으로 비용 절감)
+  // ★ [FIX #perf-v2] 실제 분석 단계 추적 — 가짜 진행률 대신 실제 파이프라인 상태 표시
+  const [realStep, setRealStep] = useState(0);
+  const [stepDetail, setStepDetail] = useState('');
   const [isLongForm, setIsLongForm] = useState(false);
   const [previewFrame, setPreviewFrame] = useState<{ frame: TimedFrame; scene: SceneRow; versionTitle: string } | null>(null);
   const [previewVersion, setPreviewVersion] = useState<VersionItem | null>(null);
@@ -3432,6 +3435,12 @@ const VideoAnalysisRoom: React.FC = () => {
     setAnalysisPhase('analyzing');
     setElapsedSec(0);
     setSimProgress(0);
+    setRealStep(0);
+    setStepDetail(
+      inputMode === 'youtube' ? 'YouTube 영상 정보와 자막을 수집하고 있어요'
+        : inputMode === 'upload' ? '영상에서 프레임을 추출하고 있어요'
+        : '영상을 다운로드하고 있어요'
+    );
     setIsLongForm(false);
     failsafeFiredRef.current = false; // [FIX #454] 페일세이프 플래그 초기화
     analysisStartRef.current = Date.now();
@@ -3770,6 +3779,8 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       const maxTimeSec = Math.max(frameMaxSec, knownDurationSec);
       setIsLongForm(maxTimeSec >= 300);
       addAnalysisPerfStage(perfRunId, 'preload', '전처리');
+      // ★ 실제 단계 전환: 소스 준비 완료 → 오디오 분석 단계
+      setRealStep(1);
       let singleSourceSceneCutsPromise: Promise<SceneCut[] | null> | null =
         !isMultiSource && cachedSourcePrep && cachedSourcePrep.singleSourceSceneCuts !== undefined
           ? Promise.resolve(cachedSourcePrep.singleSourceSceneCuts)
@@ -3839,13 +3850,23 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
         });
       }
 
-      // ★ [v4.6 + FIX #316 + FIX #perf] 화자 분리 전사 — 조건부 실행
-      // YouTube 모드에서 타임드 자막이 이미 있으면 화자분리를 스킵 (속도 40~75% 향상)
-      // 업로드 모드 또는 YouTube 자막 없음 → 기존 화자분리 실행
+      // ★ [v4.6 + FIX #316 + FIX #perf + FIX #perf-v2] 화자 분리 전사 — 조건부 실행
+      // Gemini 3.1 Pro v1beta는 영상의 오디오를 직접 분석하므로 별도 화자분리 불필요
+      // v1beta 사용 불가할 때만 (업로드 Cloudinary 실패, 소셜 미디어) ElevenLabs 화자분리 실행
+      // YouTube 타임드 자막은 부정확할 수 있으므로 자막 유무와 무관하게 Gemini가 직접 들어야 함
       let diarizedText = '';
       let diarizedUtterances: Array<{ speakerId: string; text: string; startTime: number; endTime: number }> = [];
       const diarizePresets = ['tikitaka', 'condensed', 'snack', 'alltts'];
-      const needsDiarization = diarizePresets.includes(preset) && !hasTimedTranscript;
+      const hasV1betaVideo = allVideoUris.length > 0 || !!videoUri;
+      const needsDiarization = diarizePresets.includes(preset) && !hasV1betaVideo;
+      // ★ 실제 단계 전환: 오디오 분석 단계 상세 메시지
+      if (needsDiarization) {
+        setStepDetail('영상 음성에서 화자를 분리하고 있어요');
+      } else if (hasV1betaVideo) {
+        // v1beta 사용 가능 → 오디오 분석 스킵 → 바로 편집표 생성 단계로
+        setStepDetail('Gemini가 영상의 화면과 소리를 직접 분석할 준비를 하고 있어요');
+        setRealStep(2);
+      }
       const cachedDiarization = !force ? sourceDiarizationCacheRef.current.get(sourceCacheKey) : null;
       const remixDownloadWaitBudgetMs = maxTimeSec >= 300
         ? REMIX_YOUTUBE_DOWNLOAD_WAIT_BUDGET_LONG_MS
@@ -3938,8 +3959,8 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
           console.warn('[Diarization] 자동 복구 전사 실패 — 대사 누락 방지를 위해 분석 중단:', e);
           throw new Error('음성 전사를 자동 복구까지 모두 시도했지만 실패했습니다. 대사 누락을 막기 위해 이번 분석은 중단합니다. 잠시 후 다시 시도해주세요.');
         }
-      } else if (hasTimedTranscript) {
-        console.log('[Diarization] ⚡ YouTube 타임드 자막으로 대체 — 화자분리 스킵 (속도 최적화)');
+      } else if (diarizePresets.includes(preset) && hasV1betaVideo) {
+        console.log(`[Diarization] ⚡ Gemini v1beta 오디오 직접 분석 — 화자분리 스킵 (30~45초 절감)${hasTimedTranscript ? ' (타임드 자막도 보조 참조)' : ''}`);
       }
 
       // [FIX #386] 화자 분리 완료 후 abort 체크
@@ -3950,6 +3971,17 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
         inputDesc += `\n\n---\n${diarizedText}\n\n위 화자 분리 전사 결과는 ElevenLabs AI가 영상 오디오에서 자동 추출한 것입니다.\n각 화자(speaker_0, speaker_1, ...)의 대사와 타이밍을 편집 테이블에 정확히 반영하세요.\n동일 컷에서 화자가 바뀌면 반드시 행을 분리하세요.`;
       }
       addAnalysisPerfStage(perfRunId, 'diarization', '음성 단계');
+
+      // ★ 실제 단계 전환: AI 편집표 생성 단계
+      setRealStep(2);
+      const presetLabel = preset === 'tikitaka' ? '티키타카' : preset === 'snack' ? '스낵형'
+        : preset === 'condensed' ? '축약 리캡' : preset === 'shopping' ? '쇼핑형'
+        : preset === 'alltts' ? 'All TTS' : '심층 분석';
+      setStepDetail(
+        hasV1betaVideo
+          ? `Gemini가 영상을 직접 시청하며 ${presetLabel} 편집표를 만들고 있어요`
+          : `AI가 ${presetLabel} 편집표를 생성하고 있어요`
+      );
 
       // 2단계: AI 분석 — 적응형 단일/배치 호출
       // [FIX #454] 전처리 완료 후 글로벌 타임아웃을 AI 전용으로 교체
@@ -4005,14 +4037,17 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       // [FIX #364] 롱폼 할루시네이션 방지: 5분+ 영상은 temperature를 낮춰 팩트 기반 생성 유도
       const effectiveTemp = maxTimeSec >= 300 ? 0.3 : 0.5;
 
-      /** [FIX #262] 텍스트 전용 폴백 — Evolink 스트리밍 → Smart Routing (KIE 포함) */
+      /** [FIX #262][FIX #679] 텍스트 전용 폴백 — Evolink 스트리밍 → Smart Routing (KIE 포함)
+       * v1beta 타임아웃/네트워크 에러 직후에도 안정적으로 동작하도록 500ms 대기 + 타임아웃 적용 */
       const textFallbackAI = async (prompt: string, tokens: number): Promise<string> => {
         const messages: EvolinkChatMessage[] = [
           { role: 'system', content: scriptSystem },
           { role: 'user', content: prompt },
         ];
+        // [FIX #679] v1beta 실패 직후 v1도 즉시 실패하는 현상 방지: 500ms 대기
+        await new Promise(r => setTimeout(r, 500));
         try {
-          return await evolinkChatStream(messages, () => {}, { temperature: effectiveTemp, maxTokens: tokens, signal });
+          return await evolinkChatStream(messages, () => {}, { temperature: effectiveTemp, maxTokens: tokens, signal, timeoutMs: 90_000 });
         } catch (streamErr) {
           if (signal.aborted) throw new DOMException('분석이 취소되었습니다.', 'AbortError');
           console.warn('[VideoAnalysis] Evolink 스트리밍 실패, Smart Routing 폴백:', streamErr);
@@ -4041,9 +4076,15 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
               scriptSystem, prompt,
               () => {}, { temperature: effectiveTemp, maxOutputTokens: tokens, signal }
             );
-          } catch (videoErr) {
+          } catch (videoErr: any) {
             if (signal.aborted) throw new DOMException('분석이 취소되었습니다.', 'AbortError');
-            console.warn('[VideoAnalysis] v1beta 실패, 폴백:', videoErr);
+            // [FIX #679] 타임아웃/네트워크 에러 시 사용자에게 자동 전환 알림
+            const isTimeout = videoErr?.message?.includes('타임아웃') || videoErr?.message?.includes('timeout') || videoErr?.message?.includes('Failed to fetch');
+            if (isTimeout) {
+              console.warn('[VideoAnalysis] v1beta 타임아웃/네트워크 에러, 자동 폴백:', videoErr.message);
+            } else {
+              console.warn('[VideoAnalysis] v1beta 실패, 폴백:', videoErr);
+            }
             // [FIX #264] 프레임 분석 실패 시에도 텍스트 폴백으로 이어지도록 try/catch 추가
             if (effectiveFrames.length > 0) {
               try {
@@ -4197,6 +4238,9 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
 
       // [FIX #340] 프레임 추출 단계 진입 시 진행률 업데이트 (95%에서 멈춘 것처럼 보이는 문제 해결)
       setSimProgress(97);
+      // ★ 실제 단계 전환: 프레임 추출 단계
+      setRealStep(3);
+      setStepDetail('타임코드에 맞는 장면 프레임을 추출하고 있어요');
 
       // ★ 3중 폴백 프레임 추출 — 결과 표시는 먼저, 정밀 프레임/타임코드 보정은 백그라운드
       // [FIX #156] 다중 업로드 영상: 모든 파일에서 프레임 추출
@@ -4392,7 +4436,14 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       const isAbort = (err instanceof DOMException && err.name === 'AbortError')
         || abortCtrl.signal.aborted
         || (err instanceof Error && (err.message.includes('aborted') || err.message.includes('취소')));
-      const msg = isAbort ? '분석이 취소되었습니다.' : (err instanceof Error ? err.message : String(err));
+      // [FIX #679] "Failed to fetch" 등 raw 에러 메시지를 사용자 친화적으로 변환
+      const rawMsg = err instanceof Error ? err.message : String(err);
+      const isNetworkError = rawMsg.includes('Failed to fetch') || rawMsg.includes('NetworkError') || rawMsg.includes('network');
+      const isTimeoutError = rawMsg.includes('타임아웃') || rawMsg.includes('timeout') || rawMsg.includes('시간 초과');
+      const friendlyMsg = isAbort ? '분석이 취소되었습니다.'
+        : isNetworkError ? '영상 분석 서버 응답이 지연되거나 연결이 끊어졌습니다. 잠시 후 다시 시도하거나 더 짧은 영상으로 시도해주세요.'
+        : isTimeoutError ? '영상 분석 서버 응답이 지연되어 분석이 중단되었습니다. 잠시 후 다시 시도해주세요.'
+        : rawMsg;
       console.error('[VideoAnalysis] 분석 실패:', isAbort ? '(사용자 취소/타임아웃)' : err);
       updateAnalysisPerfSummary(perfRunId, isAbort ? 'cancelled' : 'failed');
 
@@ -4408,11 +4459,13 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
           }
         }
       } else {
-        setError(`분석 실패: ${msg}`);
-        if (msg.includes('Cloudinary') || msg.includes('업로드')) {
+        setError(`분석 실패: ${friendlyMsg}`);
+        if (rawMsg.includes('Cloudinary') || rawMsg.includes('업로드')) {
           showToast('영상 업로드에 실패했습니다. 파일 크기를 줄이거나 YouTube 링크를 사용해주세요.', 6000);
-        } else if (msg.includes('API 키') || msg.includes('Evolink')) {
+        } else if (rawMsg.includes('API 키') || rawMsg.includes('Evolink')) {
           showToast('AI 서비스 연결에 문제가 있습니다. API 설정을 확인해주세요.', 6000);
+        } else if (isNetworkError || isTimeoutError) {
+          showToast('영상 분석 서버 연결에 문제가 있습니다. 잠시 후 다시 시도해주세요.', 6000);
         } else {
           showToast('영상 분석에 실패했습니다. 잠시 후 다시 시도해주세요.', 5000);
         }
@@ -5034,18 +5087,23 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       {/* ═══ 로딩 — 프리미엄 로딩 패널 ═══ */}
       {isAnalyzing && (
         <AnalysisLoadingPanel
-          currentStep={simProgress < 15 ? 0 : simProgress < 40 ? 1 : simProgress < 75 ? 2 : 3}
+          currentStep={realStep}
           steps={[
-            { label: '영상 로드', icon: '📹' },
-            { label: '장면 분석', icon: '🔍' },
-            { label: '버전 생성', icon: '✨' },
-            { label: '편집 가이드', icon: '📋' },
+            { label: '소스 준비', icon: '📹' },
+            { label: '오디오 분석', icon: '🗣️' },
+            { label: '편집표 생성', icon: '✨' },
+            { label: '프레임 추출', icon: '🎞️' },
           ]}
-          message="리메이크 버전 생성 중..."
+          message={stepDetail || '분석을 준비하고 있어요...'}
           elapsedSec={elapsedSec}
           estimatedTotalSec={ESTIMATED_TOTAL_SEC}
           accent="blue"
-          description="AI가 영상을 분석하고 장면별 편집 가이드를 작성하고 있습니다"
+          description={
+            realStep === 0 ? '영상 메타데이터와 자막을 수집하고 있습니다'
+              : realStep === 1 ? '영상 음성에서 화자를 분리하고 있습니다'
+              : realStep === 2 ? 'AI가 영상을 시청하며 편집표를 작성하고 있습니다'
+              : '타임코드에 맞는 프레임을 매칭하고 있습니다'
+          }
           onCancel={handleCancelAnalysis}
           isLongForm={isLongForm}
         />

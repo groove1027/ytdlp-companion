@@ -320,14 +320,23 @@ export const monitoredFetch = async (url: string, options: RequestInit = {}, tim
 
     logger.info(`📡 API Request: ${method} ${url}`, isBinaryUpload ? '[Binary/FormData]' : undefined);
 
-    // [FIX #32] AbortController 기반 타임아웃 — 긴 AI 요청의 브라우저/네트워크 타임아웃 방지
+    // [FIX #32][FIX #679] AbortController 기반 타임아웃 — caller signal과 timeout을 항상 합침
+    // 기존: options.signal이 있으면 timeout 무시 → v1beta 비디오 분석에서 126초 브라우저 타임아웃 발생
+    // 수정: timeoutMs > 0이면 항상 내부 AbortController 생성 + caller signal도 연결
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     let mergedSignal = options.signal;
 
-    if (timeoutMs > 0 && !options.signal) {
-        // 호출자가 signal을 제공하지 않은 경우에만 타임아웃 AbortController 생성
+    if (timeoutMs > 0) {
         const controller = new AbortController();
         timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+        if (options.signal) {
+            // caller signal 연결: caller가 abort하면 내부 controller도 abort
+            if (options.signal.aborted) {
+                controller.abort();
+            } else {
+                options.signal.addEventListener('abort', () => controller.abort(), { once: true });
+            }
+        }
         mergedSignal = controller.signal;
     }
 

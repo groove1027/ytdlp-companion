@@ -99,22 +99,37 @@ Analyze the video now. Return ONLY the JSON array.`;
         safetySettings: SAFETY_SETTINGS_BLOCK_NONE
     };
 
+    // [FIX #679] 110초 선제 타임아웃 — 브라우저 타임아웃(~126초) 전에 끊어서 폴백 유도
+    const VIDEO_ANALYSIS_TIMEOUT_MS = 110_000;
+
     let data: any;
     if (evolinkKey) {
-        const url = `https://api.evolink.ai/v1beta/models/gemini-3.1-pro-preview:generateContent`;
-        const response = await fetchWithRateLimitRetry(url, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${evolinkKey}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(requestBody)
-        });
-        if (!response.ok) {
-            const errText = await response.text();
-            throw new Error(`Video Analysis API Error (${response.status}): ${errText}`);
+        try {
+            const url = `https://api.evolink.ai/v1beta/models/gemini-3.1-pro-preview:generateContent`;
+            const response = await fetchWithRateLimitRetry(url, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${evolinkKey}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(requestBody)
+            }, 3, 3000, VIDEO_ANALYSIS_TIMEOUT_MS);
+            if (!response.ok) {
+                const errText = await response.text();
+                throw new Error(`Video Analysis API Error (${response.status}): ${errText}`);
+            }
+            data = await response.json();
+        } catch (evolinkErr) {
+            // [FIX #679] Evolink 실패 시 Kie chat/completions 폴백 (기존에는 에러만 throw)
+            // [FIX #679 P2] Kie 키 미설정 시 원본 Evolink 에러를 유지 (Codex 리뷰 반영)
+            logger.warn('[VideoAnalysis] Evolink v1beta 실패, Kie 폴백 시도:', evolinkErr);
+            try {
+                data = await requestKieChatFallback('gemini-3.1-pro', requestBody);
+            } catch (kieErr) {
+                logger.warn('[VideoAnalysis] Kie 폴백도 실패:', kieErr);
+                throw evolinkErr; // 원본 Evolink 에러 유지
+            }
         }
-        data = await response.json();
     } else {
         // [FIX] Kie는 v1beta 없음 → gemini-3.1-pro chat/completions 폴백
         data = await requestKieChatFallback('gemini-3.1-pro', requestBody);

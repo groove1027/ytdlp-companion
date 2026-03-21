@@ -1321,6 +1321,11 @@ export const evolinkVideoAnalysisStream = async (
 
     logger.info('[Evolink Video] v1beta 비디오 분석 스트리밍 시작', { videoCount: videoUris.length, videoUri: videoUris[0].slice(0, 80), mimeType: mimeTypes[0] });
 
+    // [FIX #679] 110초 선제 타임아웃 — 브라우저/프록시 타임아웃(~126초)보다 먼저 끊어 폴백 유도
+    // 비디오 분석은 서버가 YouTube 영상 다운로드+프레임 분석해야 하므로 오래 걸리지만,
+    // 브라우저 직통 호출에서 126초 이상 대기하면 "Failed to fetch" 네트워크 에러 발생
+    const VIDEO_FETCH_TIMEOUT_MS = 110_000;
+
     // [FIX #226] 429 Rate Limit 재시도 추가 — 비디오 분석 스트리밍에도 적용
     const response = await fetchWithRateLimitRetry(url, {
         method: 'POST',
@@ -1330,7 +1335,7 @@ export const evolinkVideoAnalysisStream = async (
         },
         body: JSON.stringify(payload),
         signal,
-    }, 3, 3000);
+    }, 3, 3000, VIDEO_FETCH_TIMEOUT_MS);
 
     if (!response.ok) {
         const errorDetail = await parseEvolinkError(response);
@@ -1449,6 +1454,9 @@ export const evolinkFrameAnalysisStream = async (
 
     logger.info('[Evolink Frames] v1beta 프레임 분석 스트리밍 시작', { frameCount: frames.length });
 
+    // [FIX #679] 75초 선제 타임아웃 — 프레임 분석은 영상 원본보다 짧게 소요
+    const FRAME_FETCH_TIMEOUT_MS = 75_000;
+
     // [FIX #226] 429 Rate Limit 재시도 추가 — 프레임 분석 스트리밍에도 적용
     const response = await fetchWithRateLimitRetry(url, {
         method: 'POST',
@@ -1458,7 +1466,7 @@ export const evolinkFrameAnalysisStream = async (
         },
         body: JSON.stringify(payload),
         signal,
-    }, 3, 3000);
+    }, 3, 3000, FRAME_FETCH_TIMEOUT_MS);
 
     if (!response.ok) {
         const errorDetail = await parseEvolinkError(response);
