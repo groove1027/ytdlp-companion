@@ -3,6 +3,8 @@ import { useProjectStore } from '../../../stores/projectStore';
 import { useImageVideoStore } from '../../../stores/imageVideoStore';
 import { searchSceneReferenceImages, buildSearchQuery, SCENE_REFERENCE_BATCH_CONCURRENCY } from '../../../services/googleReferenceSearchService';
 import type { GoogleImageResult, ReferenceSearchProvider } from '../../../services/googleReferenceSearchService';
+import { searchMedia } from '../../../services/mediaSearchService';
+import type { CommunityMediaItem } from '../../../types';
 import type { Scene } from '../../../types';
 import { showToast } from '../../../stores/uiStore';
 
@@ -49,6 +51,15 @@ interface ScenePreview {
   provider?: ReferenceSearchProvider;
 }
 
+// [FIX #681] 밈/일러스트 소스 탭 타입
+type ReferenceSourceTab = 'web' | 'meme' | 'illust';
+
+const SOURCE_TAB_CONFIG: { id: ReferenceSourceTab; label: string; icon: string; desc: string }[] = [
+  { id: 'web', label: '웹 검색', icon: '🌐', desc: '실사 사진' },
+  { id: 'meme', label: '밈/GIF', icon: '😂', desc: '34K 밈' },
+  { id: 'illust', label: '일러스트', icon: '🎨', desc: '23K 일러스트' },
+];
+
 const GoogleReferencePanel: React.FC = () => {
   const enableGoogleReference = useImageVideoStore((s) => s.enableGoogleReference);
   const setEnableGoogleReference = useImageVideoStore((s) => s.setEnableGoogleReference);
@@ -60,9 +71,41 @@ const GoogleReferencePanel: React.FC = () => {
   const [scenePreviews, setScenePreviews] = useState<Map<string, ScenePreview>>(new Map());
   const [isSearchingAll, setIsSearchingAll] = useState(false);
   const [expandedScene, setExpandedScene] = useState<string | null>(null);
+  // [FIX #681] 밈/일러스트 소스 탭
+  const [activeSourceTab, setActiveSourceTab] = useState<ReferenceSourceTab>('web');
+  const [memeResults, setMemeResults] = useState<Map<string, CommunityMediaItem[]>>(new Map());
 
   const hasScenes = scenes.length > 0 && scenes.some(s => !!s.scriptText || !!s.visualPrompt);
   const aspectClass = ASPECT_CLASS[aspectRatio] || 'aspect-video';
+
+  // [FIX #681] 밈/일러스트 검색
+  const searchMemeForScene = useCallback(async (scene: Scene, source: 'klipy' | 'irasutoya') => {
+    const keywords = (scene.scriptText || scene.visualDescriptionKO || scene.visualPrompt || '').slice(0, 60);
+    if (!keywords.trim()) return;
+    try {
+      const rawResults = await searchMedia({ query: keywords, type: 'image', source, limit: 20 });
+      // [FIX #681] Klipy mp4 클립 필터링 — imageUrl에 비디오 형식 저장 방지
+      const results = rawResults.filter((item) => !/(mp4|webm|mov)$/i.test(item.format || ''));
+      setMemeResults((prev) => new Map(prev).set(`${scene.id}:${source}`, results.slice(0, 10)));
+    } catch {
+      // 밈 검색 실패는 무시 — 웹 검색이 메인
+    }
+  }, []);
+
+  const applyMemeImage = useCallback((sceneId: string, item: CommunityMediaItem) => {
+    const targetScene = scenes.find(s => s.id === sceneId);
+    updateScene(sceneId, {
+      imageUrl: item.url,
+      isGeneratingImage: false,
+      generationStatus: `${item.source === 'klipy' ? '밈' : '일러스트'} 레퍼런스 적용`,
+      imageUpdatedAfterVideo: !!targetScene?.videoUrl,
+      communityMediaItem: item,
+      // [FIX #681] stale 웹 검색 메타데이터 초기화 — 이전 웹 검색 쿼리/페이지 제거
+      referenceSearchQuery: undefined,
+      referenceSearchPage: undefined,
+    });
+    showToast(`${item.source === 'klipy' ? '밈' : '일러스트'} 이미지가 적용되었어요!`);
+  }, [scenes, updateScene]);
 
   // 개별 장면 검색
   const searchScene = useCallback(async (
@@ -312,11 +355,41 @@ const GoogleReferencePanel: React.FC = () => {
 
       {enableGoogleReference && (
         <div className="space-y-4">
-          {/* 안내 */}
-          <div className="px-4 py-3 bg-orange-500/10 border border-orange-500/20 rounded-xl">
-            <p className="text-xs text-orange-300">
-              대본 맥락을 분석해 웹에서 무료 레퍼런스 이미지를 가져옵니다. Google, Bing, Wikimedia 같은 사용 가능한 소스에서 빠르게 시안을 확인할 수 있어요.
-            </p>
+          {/* [FIX #681] 안내 — 단독 모드임을 명확히 + 캐릭터/화풍 미적용 경고 */}
+          <div className="px-4 py-3 bg-amber-500/10 border border-amber-500/30 rounded-xl space-y-2">
+            <div className="flex items-start gap-2">
+              <span className="text-sm mt-0.5">⚠️</span>
+              <div className="space-y-1">
+                <p className="text-xs font-bold text-amber-300">레퍼런스 전용 모드</p>
+                <p className="text-[11px] text-amber-200/70 leading-relaxed">
+                  웹에서 실제 사진·이미지를 검색해 <span className="text-amber-300 font-bold">시안용</span>으로 배치합니다.
+                  캐릭터 설정, 비주얼 스타일(화풍)은 반영되지 않습니다.
+                </p>
+                <p className="text-[10px] text-gray-500">
+                  AI로 직접 이미지를 생성하려면 다른 모델(NanoBanana, Imagen 등)을 선택하세요.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* [FIX #681] 소스 탭 — 웹 검색 / 밈 / 일러스트 */}
+          <div className="flex gap-1 bg-gray-900/50 rounded-xl p-1">
+            {SOURCE_TAB_CONFIG.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveSourceTab(tab.id)}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold transition-all ${
+                  activeSourceTab === tab.id
+                    ? 'bg-orange-600/30 text-orange-300 border border-orange-500/40'
+                    : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800/50'
+                }`}
+              >
+                <span>{tab.icon}</span>
+                <span>{tab.label}</span>
+                <span className="text-[9px] text-gray-600 font-normal">{tab.desc}</span>
+              </button>
+            ))}
           </div>
 
           {/* 장면 없을 때 */}
@@ -326,8 +399,8 @@ const GoogleReferencePanel: React.FC = () => {
             </div>
           )}
 
-          {/* 일괄 검색 버튼 */}
-          {hasScenes && (
+          {/* 일괄 검색 버튼 — 선택된 소스 탭에 맞게 동작 */}
+          {hasScenes && activeSourceTab === 'web' && (
             <button
               type="button"
               onClick={searchAllScenes}
@@ -344,9 +417,14 @@ const GoogleReferencePanel: React.FC = () => {
                   검색 중...
                 </span>
               ) : (
-                `전체 ${scenesWithContent.length}개 장면 레퍼런스 검색`
+                `🌐 전체 ${scenesWithContent.length}개 장면 웹 레퍼런스 검색`
               )}
             </button>
+          )}
+          {hasScenes && activeSourceTab !== 'web' && (
+            <p className="text-center text-[11px] text-gray-500 py-2">
+              {activeSourceTab === 'meme' ? '😂 밈/GIF' : '🎨 일러스트'}는 각 장면을 펼쳐서 개별 검색해주세요
+            </p>
           )}
 
           {/* 장면별 결과 */}
@@ -384,7 +462,7 @@ const GoogleReferencePanel: React.FC = () => {
                             {PROVIDER_LABELS[preview.provider]}
                           </span>
                         )}
-                        {!preview && (
+                        {!preview && activeSourceTab === 'web' && (
                           <button
                             type="button"
                             onClick={(e) => { e.stopPropagation(); searchScene(scene, sceneIndex); }}
@@ -402,8 +480,55 @@ const GoogleReferencePanel: React.FC = () => {
                     {/* 확장 내용 */}
                     {isExpanded && (
                       <div className="px-4 pb-4 space-y-3">
-                        {/* 검색어 표시/편집 */}
-                        {preview?.searchQuery && (
+                        {/* [FIX #681] 밈/일러스트 탭 결과 */}
+                        {activeSourceTab !== 'web' && (() => {
+                          const sourceKey = activeSourceTab === 'meme' ? 'klipy' : 'irasutoya';
+                          const items = memeResults.get(`${scene.id}:${sourceKey}`) || [];
+                          return (
+                            <div className="space-y-3">
+                              <button
+                                type="button"
+                                onClick={() => searchMemeForScene(scene, sourceKey as 'klipy' | 'irasutoya')}
+                                className="w-full py-2 rounded-lg text-xs font-bold bg-gray-800 hover:bg-gray-700 text-gray-300 border border-gray-600 transition-all"
+                              >
+                                {activeSourceTab === 'meme' ? '😂 밈/GIF 검색' : '🎨 일러스트 검색'}
+                              </button>
+                              {items.length > 0 && (
+                                <div className="grid grid-cols-3 gap-2">
+                                  {items.slice(0, 9).map((item) => (
+                                    <button
+                                      key={item.id}
+                                      type="button"
+                                      onClick={() => applyMemeImage(scene.id, item)}
+                                      className="group relative rounded-lg overflow-hidden border border-gray-700 hover:border-orange-500/50 transition-all"
+                                    >
+                                      <div className={`${aspectClass} w-full bg-gray-950`}>
+                                        <img
+                                          src={item.thumbnailUrl || item.url}
+                                          alt={item.title}
+                                          className="w-full h-full object-cover"
+                                          loading="lazy"
+                                        />
+                                      </div>
+                                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all flex items-center justify-center">
+                                        <span className="text-white text-xs font-bold opacity-0 group-hover:opacity-100 transition-opacity">적용</span>
+                                      </div>
+                                      <p className="text-[9px] text-gray-500 truncate px-1 py-0.5">{item.title}</p>
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                              {items.length === 0 && (
+                                <p className="text-center text-xs text-gray-600 py-4">
+                                  위 버튼을 눌러 장면에 맞는 {activeSourceTab === 'meme' ? '밈/GIF' : '일러스트'}를 검색하세요
+                                </p>
+                              )}
+                            </div>
+                          );
+                        })()}
+
+                        {/* 웹 검색 결과 — 기존 UI */}
+                        {activeSourceTab === 'web' && preview?.searchQuery && (
                           <div className="flex items-center gap-2">
                             {editingQuery?.sceneId === scene.id ? (
                               <form
@@ -444,14 +569,14 @@ const GoogleReferencePanel: React.FC = () => {
                         )}
 
                         {/* 로딩 */}
-                        {preview?.loading && (
+                        {activeSourceTab === 'web' && preview?.loading && (
                           <div className="flex items-center justify-center py-6">
                             <span className="w-5 h-5 border-2 border-gray-600 border-t-orange-400 rounded-full animate-spin" />
                           </div>
                         )}
 
                         {/* 에러 */}
-                        {preview?.error && !preview.loading && (
+                        {activeSourceTab === 'web' && preview?.error && !preview.loading && (
                           <div className="text-center py-4">
                             <p className="text-xs text-red-400">{preview.error}</p>
                             <button
@@ -465,7 +590,7 @@ const GoogleReferencePanel: React.FC = () => {
                         )}
 
                         {/* 결과 — 메인 프리뷰 + 네비게이션 */}
-                        {preview && preview.results.length > 0 && !preview.loading && (
+                        {activeSourceTab === 'web' && preview && preview.results.length > 0 && !preview.loading && (
                           <div className="space-y-3">
                             {/* 메인 이미지 */}
                             <div className="relative">

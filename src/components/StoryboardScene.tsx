@@ -349,6 +349,12 @@ const StoryboardSceneInner: React.FC<StoryboardSceneProps> = ({
                       <div className="absolute inset-[-10%] w-[120%] h-[120%]" style={motionStyle}>
                         <img src={scene.imageUrl} className={`w-full h-full ${isPortrait ? 'object-contain' : 'object-cover'} opacity-0 transition-opacity duration-300`} alt="Scene" loading="lazy" decoding="async" onLoad={(e) => { e.currentTarget.style.opacity = '1'; }} />
                       </div>
+                      {/* [FIX #681] 레퍼런스 이미지 뱃지 — AI 생성 이미지와 시각적 구분 */}
+                      {(scene.referenceSearchQuery || scene.communityMediaItem) && /(구글|대체|밈|일러스트) 레퍼런스/.test(scene.generationStatus || '') && !hasMotionEffect && (
+                        <div className="absolute top-2 left-2 z-30 bg-orange-600/80 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full backdrop-blur-sm pointer-events-none">
+                          🔍 레퍼런스
+                        </div>
+                      )}
                       {hasMotionEffect && (
                         <div className="absolute top-2 left-2 z-30 bg-amber-600/80 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full backdrop-blur-sm pointer-events-none">
                           {COMPACT_PAN_ZOOM_PRESETS.find(p => p.id === sceneEffect?.panZoomPreset)?.icon || '🎬'} 모션

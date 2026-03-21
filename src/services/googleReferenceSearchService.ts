@@ -221,8 +221,10 @@ interface ReferenceSearchPlan {
 
 // ─── 검색어 생성 로직 ───
 
-/** AI 생성용 잡음 제거 (8k, cinematic lighting 등) */
-const NOISE_PATTERNS = /\b(8k|4k|hdr|cinematic|masterpiece|highly detailed|no text|hyper.?realistic|ultra.?realistic|photorealistic|octane render|unreal engine|detailed|best quality|high quality|digital art|concept art|illustration|professional|award.?winning|trending on artstation|artstation|deviantart|pixiv)\b/gi;
+/** AI 생성용 잡음 제거 (렌더링 전용 프롬프트 노이즈) — [FIX #681] 스타일 키워드가 검색어에 유출되는 문제 수정
+ * 주의: modern, vintage, graffiti, abstract 등 실제 검색 주제가 될 수 있는 단어는 제외
+ */
+const NOISE_PATTERNS = /\b(8k|4k|hdr|cinematic|masterpiece|highly detailed|no text|hyper.?realistic|ultra.?realistic|photorealistic|octane render|unreal engine|detailed|best quality|high quality|digital art|concept art|professional|award.?winning|trending on artstation|artstation|deviantart|pixiv|2d|3d|vector.?art|minimalist|flat.?design|line.?art|cel.?shad(?:ed|ing)|thick|bold|chibi|anthropomorphic|pixel.?art|low.?poly|isometric|voxel|ukiyo.?e|art.?nouveau|art.?deco|stencil|woodcut|linocut|engraving|etching|stipple|cross.?hatch|halftone|duotone|wireframe|blueprint|diagram|infographic|hand.?drawn|hand.?painted|brush.?stroke)\b/gi;
 
 function normalizeQueryText(value: string): string {
   return value
@@ -366,6 +368,78 @@ function buildSearchPlanFromQuery(query: string): ReferenceSearchPlan {
     contextSignature: joinQueryParts([primaryQuery, ...mappedEnglish], 6, 96) || primaryQuery,
     summary: `검색어: ${primaryQuery}`,
   };
+}
+
+// ─── [FIX #681] AI 기반 검색어 변환 — 대본 맥락을 구글 이미지 검색 키워드로 변환 ───
+const AI_QUERY_GENERATION_TIMEOUT_MS = 10_000;
+const _aiQueryCache = new Map<string, { queries: string[]; expiresAt: number }>();
+const AI_QUERY_CACHE_TTL_MS = 15 * 60 * 1000;
+
+async function generateAiSearchQueries(
+  scriptText: string,
+  prevScriptText?: string,
+  nextScriptText?: string,
+  globalContext?: string,
+): Promise<string[]> {
+  if (!scriptText?.trim() || !getEvolinkKey()) return [];
+
+  const cacheKey = `ai-q:${scriptText.slice(0, 100)}::${(prevScriptText || '').slice(0, 30)}::${(nextScriptText || '').slice(0, 30)}::${(globalContext || '').slice(0, 30)}`;
+  const cached = _aiQueryCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.queries;
+
+  try {
+    const contextParts = [
+      prevScriptText ? `이전 장면: ${prevScriptText.slice(0, 80)}` : '',
+      `현재 장면: ${scriptText.slice(0, 200)}`,
+      nextScriptText ? `다음 장면: ${nextScriptText.slice(0, 80)}` : '',
+      globalContext ? `전체 맥락: ${globalContext.slice(0, 100)}` : '',
+    ].filter(Boolean).join('\n');
+
+    const response = await evolinkChat([
+      {
+        role: 'system',
+        content: 'You generate Google Image search keywords for storyboard reference images. Return ONLY valid JSON.',
+      },
+      {
+        role: 'user',
+        content: [
+          '아래 대본에 어울리는 구글 이미지 검색 키워드를 3개 생성해줘.',
+          '목적: 실제 사진, 뉴스 이미지, 유명인 사진 등을 찾는 것.',
+          '규칙:',
+          '- 각 키워드는 2~5단어 (인물/장소가 영어면 영어 그대로 사용, 한국어 맥락이면 한국어 사용)',
+          '- 그림 스타일(2d, vector, minimalist 등)은 절대 포함하지 마',
+          '- 대본의 핵심 주제/인물/장소/사물을 포착해',
+          '- 추상적 개념은 시각적 상징물로 변환 (예: "경제 성장" → "GDP 그래프", "천조국" → "미국 국기")',
+          '',
+          contextParts,
+          '',
+          '반환 형식: {"queries":["키워드1","키워드2","키워드3"]}',
+        ].join('\n'),
+      },
+    ], {
+      temperature: 0.3,
+      maxTokens: 300,
+      timeoutMs: AI_QUERY_GENERATION_TIMEOUT_MS,
+      responseFormat: { type: 'json_object' },
+      model: 'gemini-3.1-flash-lite-preview',
+    });
+
+    const raw = response.choices?.[0]?.message?.content || '';
+    const parsed = extractStructuredJsonObject(raw);
+    const queriesRaw = parsed?.queries;
+    const queries = Array.isArray(queriesRaw)
+      ? queriesRaw.filter((v): v is string => typeof v === 'string' && v.trim().length >= 2).slice(0, 3)
+      : [];
+
+    if (queries.length > 0) {
+      _aiQueryCache.set(cacheKey, { queries, expiresAt: Date.now() + AI_QUERY_CACHE_TTL_MS });
+    }
+    return queries;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn('[GoogleRef] AI 검색어 생성 실패, 기존 방식으로 폴백', message);
+    return [];
+  }
 }
 
 function buildReferenceSearchPlan(
@@ -1589,6 +1663,7 @@ export async function searchGoogleImages(
 
 /**
  * 장면 맥락 기반 구글 레퍼런스 이미지 검색
+ * - [FIX #681] AI 검색어 변환 우선 → 폴백으로 기존 키워드 추출
  * - 검색어 자동 생성 + 검색 실행 + 결과 반환
  */
 export async function searchSceneReferenceImages(
@@ -1598,12 +1673,55 @@ export async function searchSceneReferenceImages(
   globalContext?: string,
   startIndex: number = 1,
   rankingMode: 'fast' | 'best' = 'best',
+  options?: { bypassEmptyCache?: boolean },
 ): Promise<GoogleSearchResponse> {
-  const query = buildSearchQuery(scene, prevScene, nextScene, globalContext);
-  return searchGoogleImages(query, startIndex, 'large', {
-    context: { scene, prevScene, nextScene, globalContext },
+  // [FIX #681] AI가 대본 맥락에서 실사 이미지 검색 키워드 생성
+  // 'best' 모드(사용자 수동 검색)에서만 AI 호출 — 'fast'(자동 배치)에서는 비용 발생 방지
+  const sceneText = [scene.scriptText, scene.visualDescriptionKO, scene.entityName].filter(Boolean).join(' ').trim();
+  const aiQueries = rankingMode === 'best'
+    ? await generateAiSearchQueries(
+        sceneText || '',
+        prevScene?.scriptText,
+        nextScene?.scriptText,
+        globalContext,
+      )
+    : [];
+
+  // AI 쿼리가 있으면 첫 번째를 primary로, 나머지는 대체로 사용
+  const useAiQuery = aiQueries.length > 0;
+  const query = useAiQuery
+    ? aiQueries[0]
+    : buildSearchQuery(scene, prevScene, nextScene, globalContext);
+
+  // [FIX #681] AI 쿼리 사용 시 context를 넘기지 않아야 getReferencePlan이 AI 쿼리 기반으로 동작
+  const response = await searchGoogleImages(query, startIndex, 'large', {
+    context: useAiQuery ? undefined : { scene, prevScene, nextScene, globalContext },
     rankingMode,
+    bypassEmptyCache: options?.bypassEmptyCache,
   });
+
+  // AI 첫 번째 쿼리 결과가 비어있으면 나머지 AI 쿼리로 재시도 — context 없이 AI 쿼리 기반으로 검색
+  if (response.items.length === 0 && aiQueries.length > 1) {
+    for (let i = 1; i < aiQueries.length; i++) {
+      const retryResponse = await searchGoogleImages(aiQueries[i], startIndex, 'large', {
+        rankingMode,
+      });
+      if (retryResponse.items.length > 0) return retryResponse;
+    }
+  }
+
+  // AI 쿼리 전부 실패 시 기존 방식으로 폴백
+  if (response.items.length === 0 && aiQueries.length > 0) {
+    const fallbackQuery = buildSearchQuery(scene, prevScene, nextScene, globalContext);
+    if (fallbackQuery !== query) {
+      return searchGoogleImages(fallbackQuery, startIndex, 'large', {
+        context: { scene, prevScene, nextScene, globalContext },
+        rankingMode,
+      });
+    }
+  }
+
+  return response;
 }
 
 /**
@@ -1628,6 +1746,8 @@ export async function autoApplyGoogleReferences(
   let blockedCount = 0;
   let fallbackCount = 0;
   let startedCount = 0;
+  // [FIX #681] 배치 중복 URL 방지 — 같은 이미지가 여러 장면에 반복되는 문제 수정
+  const usedImageUrls = new Set<string>();
   const candidates = scenes
     .map((scene, index) => ({ scene, index }))
     .filter(({ scene }) => !!scene.scriptText || !!scene.visualPrompt);
@@ -1657,26 +1777,30 @@ export async function autoApplyGoogleReferences(
         isGeneratingImage: true,
         generationStatus: `레퍼런스 검색 중... (${startedCount}/${candidates.length})`,
       });
-      const query = buildSearchQuery(scene, prevScene, nextScene, globalContext);
 
       try {
-        const response = await searchGoogleImages(query, 1, 'large', {
-          context: { scene, prevScene, nextScene, globalContext },
-          rankingMode: 'fast',
-          bypassEmptyCache: true,
-        });
+        // [FIX #681] AI 검색어 변환 활용 — 항상 1페이지부터, 중복 URL은 usedImageUrls로 스킵
+        const response = await searchSceneReferenceImages(
+          scene, prevScene, nextScene, globalContext, 1, 'fast',
+          { bypassEmptyCache: true },
+        );
 
         if (_autoApplyRunId !== runId) return;
 
         if (response.items.length > 0) {
+          // [FIX #681] 중복 URL 스킵 — 아직 사용하지 않은 첫 번째 이미지 선택
+          const uniqueItem = response.items.find((item) => !usedImageUrls.has(item.link));
+          const selectedItem = uniqueItem || response.items[0];
+          usedImageUrls.add(selectedItem.link);
+
           if (response.provider !== 'google') fallbackCount++;
           updateScene(scene.id, {
-            imageUrl: response.items[0].link,
+            imageUrl: selectedItem.link,
             isGeneratingImage: false,
             generationStatus: response.provider === 'google' ? '구글 레퍼런스 적용됨' : '대체 레퍼런스 적용됨',
             imageUpdatedAfterVideo: !!scene.videoUrl,
             referenceSearchPage: 1,
-            referenceSearchQuery: query,
+            referenceSearchQuery: response.query,
           });
           appliedCount++;
         } else {
@@ -1685,7 +1809,7 @@ export async function autoApplyGoogleReferences(
             isGeneratingImage: false,
             generationStatus: '검색 결과 없음',
             referenceSearchPage: 1,
-            referenceSearchQuery: query,
+            referenceSearchQuery: response.query,
           });
         }
       } catch (err) {
@@ -1698,7 +1822,7 @@ export async function autoApplyGoogleReferences(
           isGeneratingImage: false,
           generationStatus: `검색 실패: ${message}`,
           referenceSearchPage: 1,
-          referenceSearchQuery: query,
+          referenceSearchQuery: '',
         });
       }
     }
