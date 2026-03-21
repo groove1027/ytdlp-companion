@@ -997,19 +997,25 @@ const VisualTimeline: React.FC = () => {
       const trDur = (tr && tr.preset !== 'none') ? tr.duration : 0;
       renderStarts.push(renderStarts[i] + timeline[i].imageDuration - trDur);
     }
+    // [FIX P2] 음수 start → duration/seek도 보정 (composeMp4 내보내기와 동일 로직)
     const blocks = timeline.map((t, i) => {
       const scene = scenes.find(s => s.id === t.sceneId);
       if (!scene?.videoUrl) return null;
-      return { videoUrl: scene.videoUrl, start: Math.max(0, renderStarts[i]), duration: t.imageDuration };
-    }).filter(Boolean) as { videoUrl: string; start: number; duration: number }[];
+      const raw = renderStarts[i];
+      const clipped = raw < 0 ? -raw : 0;
+      return { videoUrl: scene.videoUrl, start: Math.max(0, raw), duration: Math.max(0, t.imageDuration - clipped), seekOffset: clipped };
+    }).filter(Boolean) as { videoUrl: string; start: number; duration: number; seekOffset: number }[];
 
     blocks.forEach(b => {
-      if (seekTime >= b.start + b.duration) return; // 이미 지나간 블록
+      if (b.duration <= 0 || seekTime >= b.start + b.duration) return; // 이미 지나간 블록 또는 0초 블록
       const audio = new Audio(b.videoUrl);
       audio.volume = vol;
+      // [FIX] seekOffset: 음수 start 클램프로 잘린 만큼 오디오 시작 위치 전진
+      const baseSeek = b.seekOffset;
       if (seekTime > b.start) {
-        // 시크 위치가 블록 중간이면 해당 위치부터 재생
-        audio.currentTime = seekTime - b.start;
+        audio.currentTime = baseSeek + (seekTime - b.start);
+      } else if (baseSeek > 0) {
+        audio.currentTime = baseSeek;
       }
       // 블록 시작 시간이 현재보다 뒤면 딜레이 후 재생
       const delay = Math.max(0, b.start - seekTime);
