@@ -159,7 +159,7 @@ const PREFERRED_REFERENCE_DOMAINS = [
   /museum/i,
   /heritage/i,
 ];
-// [FIX] 워터마크가 있는 유료 스톡 사이트만 포함 — unsplash/pexels는 무료·워터마크 없음이므로 제외
+// [FIX] 워터마크가 있는 유료 스톡 사이트 — unsplash/pexels/pixabay/pxhere는 무료·워터마크 없음이므로 제외
 const STOCK_REFERENCE_DOMAINS = [
   /(^|\.)istockphoto\.com$/i,
   /(^|\.)gettyimages\.com$/i,
@@ -169,6 +169,12 @@ const STOCK_REFERENCE_DOMAINS = [
   /(^|\.)123rf\.com$/i,
   /(^|\.)depositphotos\.com$/i,
   /(^|\.)bigstockphoto\.com$/i,
+  /(^|\.)freepik\.com$/i,
+  /(^|\.)vecteezy\.com$/i,
+  /(^|\.)canstockphoto\.com$/i,
+  /(^|\.)pond5\.com$/i,
+  /(^|\.)adobe\.com\/stock/i,
+  /(^|\.)stock\.adobe\.com$/i,
 ];
 const BAD_REFERENCE_TEXT_PATTERN = /\b(logo|icon|banner|thumbnail|poster|template|vector|screenshot|wallpaper|collage)\b|로고|아이콘|배너|썸네일|포스터|템플릿|벡터|스크린샷|콜라주/i;
 const ARTICLE_OR_SOCIAL_TEXT_PATTERN = /\b(facebook|instagram|youtube|shorts|article|news|blog|post|press)\b|기사|뉴스|블로그|페이스북|유튜브/i;
