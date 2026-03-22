@@ -12,6 +12,7 @@ import FeedbackModal from './components/FeedbackModal';
 import FeedbackHistoryPanel from './components/FeedbackHistoryPanel';
 import FeedbackNotificationBanner from './components/FeedbackNotificationBanner';
 import SmartErrorBanner from './components/SmartErrorBanner';
+import AnnouncementBanner from './components/AnnouncementBanner';
 import CostDashboard from './components/CostDashboard';
 import ApiKeySettings from './components/ApiKeySettings';
 import { ProjectConfig, Scene, AspectRatio, ProjectData, VideoFormat, ImageModel, CharacterAppearance, VideoModel, VoiceName, AppTab } from './types';
@@ -1396,6 +1397,9 @@ const App: React.FC = () => {
             }
             return null;
           })()}
+
+          {/* 전체 공지 배너 — All In One Helper 출시 알림 */}
+          <AnnouncementBanner />
 
           {/* [v4.5] 탭 기반 라우팅 — Motion 애니메이션 적용 */}
           <AnimatePresence mode="wait">
