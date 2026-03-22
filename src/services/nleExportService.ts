@@ -1408,7 +1408,10 @@ async function generatePremiereNativeProjectBytes(params: {
     ].filter(Boolean),
   );
 
-  const projectXml = `<?xml version="1.0" encoding="UTF-8" ?>\n${new XMLSerializer().serializeToString(doc)}`;
+  const serialized = new XMLSerializer().serializeToString(doc);
+  // XMLSerializer가 자체 XML 선언을 추가하므로 중복 방지
+  const withoutDecl = serialized.replace(/^<\?xml[^?]*\?>\s*/, '');
+  const projectXml = `<?xml version="1.0" encoding="UTF-8" ?>\n${withoutDecl}`;
   return transformPremiereProjectBytes(new TextEncoder().encode(projectXml), 'compress');
 }
 
