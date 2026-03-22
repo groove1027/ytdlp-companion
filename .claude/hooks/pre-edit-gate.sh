@@ -4,7 +4,7 @@
 # src/ 코드 수정 시도 시 준비 단계 미완료면 차단 (exit 2)
 # ============================================================
 
-PROJECT_DIR="/Users/jihoo/Downloads/all-in-one-production-build4"
+PROJECT_DIR="/Users/mac_mini/Downloads/all-in-one-production-build4"
 FILE="${CLAUDE_TOOL_INPUT_FILE_PATH}${CLAUDE_TOOL_INPUT_file_path}"
 GATE_FILE="$PROJECT_DIR/.phase-ready"
 

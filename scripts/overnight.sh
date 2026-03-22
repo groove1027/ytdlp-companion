@@ -11,7 +11,7 @@
 
 set -euo pipefail
 
-PROJECT_DIR="/Users/jihoo/Downloads/all-in-one-production-claudecode"
+PROJECT_DIR="/Users/mac_mini/Downloads/all-in-one-production-build4"
 TASKS_FILE="$PROJECT_DIR/scripts/tasks.md"
 LOG_DIR="$PROJECT_DIR/scripts/logs"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)

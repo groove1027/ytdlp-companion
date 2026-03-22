@@ -244,7 +244,7 @@ const subtitleStyle = {
 ## 📁 파일 위치 (절대 경로)
 
 ```
-/Users/jihoo/Downloads/all-in-one-production-build4/
+/Users/mac_mini/Downloads/all-in-one-production-build4/
 ├── src/
 │   └── data/
 │       └── fontPersonalityProfiles.ts          ← 데이터 소스

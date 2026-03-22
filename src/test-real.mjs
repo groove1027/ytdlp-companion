@@ -15,7 +15,7 @@ if (!fs.existsSync(SCREENSHOT_DIR)) fs.mkdirSync(SCREENSHOT_DIR, { recursive: tr
 
 const APP_URL = 'http://localhost:3000/';
 const CHROME_PATH = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-const USER_DATA_DIR = '/Users/jihoo/Library/Application Support/Google/Chrome';
+const USER_DATA_DIR = '/Users/mac_mini/Library/Application Support/Google/Chrome';
 
 async function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 

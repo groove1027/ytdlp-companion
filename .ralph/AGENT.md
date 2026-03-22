@@ -4,10 +4,10 @@
 
 ```bash
 # TypeScript compilation check (MUST pass with 0 errors)
-cd /Users/jihoo/Downloads/all-in-one-production-claudecode/src && npx tsc --noEmit
+cd /Users/mac_mini/Downloads/all-in-one-production-build4/src && npx tsc --noEmit
 
 # Full production build
-cd /Users/jihoo/Downloads/all-in-one-production-claudecode/src && npm run build
+cd /Users/mac_mini/Downloads/all-in-one-production-build4/src && npm run build
 ```
 
 ## Test Instructions
@@ -15,14 +15,14 @@ cd /Users/jihoo/Downloads/all-in-one-production-claudecode/src && npm run build
 ```bash
 # No unit test framework configured yet.
 # Verification = tsc --noEmit + npm run build success
-cd /Users/jihoo/Downloads/all-in-one-production-claudecode/src && npx tsc --noEmit && npm run build
+cd /Users/mac_mini/Downloads/all-in-one-production-build4/src && npx tsc --noEmit && npm run build
 ```
 
 ## Run Instructions
 
 ```bash
 # Development server (localhost:3000)
-cd /Users/jihoo/Downloads/all-in-one-production-claudecode/src && npm run dev
+cd /Users/mac_mini/Downloads/all-in-one-production-build4/src && npm run dev
 ```
 
 ## Important Notes

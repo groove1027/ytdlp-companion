@@ -110,7 +110,7 @@ wrangler login
 2. 프로젝트를 push:
 
 ```bash
-cd /Users/jihoo/Downloads/all-in-one-production-build4
+cd /Users/mac_mini/Downloads/all-in-one-production-build4
 
 # .gitignore에 dist/ 추가 확인 (Cloudflare가 빌드해줌)
 git add .
@@ -157,7 +157,7 @@ git push -u origin main
 
 ```bash
 # 1. 빌드
-cd /Users/jihoo/Downloads/all-in-one-production-build4/src
+cd /Users/mac_mini/Downloads/all-in-one-production-build4/src
 npm run build
 
 # 2. Wrangler로 업로드

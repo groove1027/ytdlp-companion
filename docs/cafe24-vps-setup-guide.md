@@ -276,7 +276,7 @@ mkdir -p ~/server && cd ~/server
 **내 맥의 새 터미널 창**에서 (서버 접속 창 말고!):
 
 ```bash
-scp -r /Users/jihoo/Downloads/all-in-one-production-build4/server/ root@112.175.xx.xx:~/server/
+scp -r /Users/mac_mini/Downloads/all-in-one-production-build4/server/ root@112.175.xx.xx:~/server/
 ```
 
 비밀번호 입력 → 파일 전송 완료

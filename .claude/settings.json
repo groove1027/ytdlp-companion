@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash /Users/jihoo/Downloads/all-in-one-production-build4/.claude/hooks/pre-edit-gate.sh"
+            "command": "bash /Users/mac_mini/Downloads/all-in-one-production-build4/.claude/hooks/pre-edit-gate.sh"
           }
         ]
       },
@@ -15,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash /Users/jihoo/Downloads/all-in-one-production-build4/.claude/hooks/pre-commit-check.sh"
+            "command": "bash /Users/mac_mini/Downloads/all-in-one-production-build4/.claude/hooks/pre-commit-check.sh"
           }
         ]
       }
@@ -26,7 +26,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash /Users/jihoo/Downloads/all-in-one-production-build4/.claude/hooks/post-edit-check.sh"
+            "command": "bash /Users/mac_mini/Downloads/all-in-one-production-build4/.claude/hooks/post-edit-check.sh"
           }
         ]
       },
@@ -35,7 +35,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash /Users/jihoo/Downloads/all-in-one-production-build4/.claude/hooks/codex-enforce.sh"
+            "command": "bash /Users/mac_mini/Downloads/all-in-one-production-build4/.claude/hooks/codex-enforce.sh"
           }
         ]
       }

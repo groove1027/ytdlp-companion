@@ -4,7 +4,7 @@
 # Runs after every Edit/Write/MultiEdit on .ts/.tsx files
 # ============================================================
 
-PROJECT_DIR="/Users/jihoo/Downloads/all-in-one-production-build4"
+PROJECT_DIR="/Users/mac_mini/Downloads/all-in-one-production-build4"
 SRC_DIR="$PROJECT_DIR/src"
 
 # Get the edited file path from environment
