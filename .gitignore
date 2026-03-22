@@ -53,3 +53,6 @@ target/
 # Ralph backup directories (created by migration)
 .ralph_backup_*
 .wrangler/
+test/data/
+test/output/
+test/media-index-builder-package.zip

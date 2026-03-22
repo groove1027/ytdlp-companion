@@ -21,6 +21,12 @@ fn get_ytdlp_path() -> PathBuf {
 }
 
 fn get_ffmpeg_path() -> PathBuf {
+    // 1순위: Homebrew ffmpeg
+    let brew = PathBuf::from("/opt/homebrew/bin/ffmpeg");
+    if brew.exists() { return brew; }
+    let brew2 = PathBuf::from("/usr/local/bin/ffmpeg");
+    if brew2.exists() { return brew2; }
+    // 2순위: 번들 ffmpeg
     let dir = get_ytdlp_dir();
     if cfg!(target_os = "windows") {
         dir.join("ffmpeg.exe")
