@@ -1,7 +1,7 @@
 import { useState } from 'react';
+import { COMPANION_DOWNLOAD_URL } from '../constants';
 
 const DISMISS_KEY = 'announcement_v1_dismissed';
-const COMPANION_DOWNLOAD_URL = 'https://github.com/groove1027/ytdlp-companion/releases/latest';
 
 /** 앱 상단 전체 공지 배너 — 새 기능 알림용 */
 export default function AnnouncementBanner() {

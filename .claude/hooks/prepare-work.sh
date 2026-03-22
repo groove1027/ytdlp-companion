@@ -12,10 +12,10 @@
 #   4. .phase-ready 게이트 파일 생성 (pre-edit-gate.sh가 확인)
 # ============================================================
 
-PROJECT_DIR="/Users/jihoo/Downloads/all-in-one-production-build4"
+PROJECT_DIR="/Users/mac_mini/Downloads/all-in-one-production-build4"
 SRC_DIR="$PROJECT_DIR/src"
 GATE_FILE="$PROJECT_DIR/.phase-ready"
-MEMORY_DIR="$HOME/.claude/projects/-Users-jihoo-Downloads-all-in-one-production-build4/memory"
+MEMORY_DIR="$HOME/.claude/projects/-Users-mac_mini-Downloads-all-in-one-production-build4/memory"
 
 # ──────────────────────────────────────────────
 # 검색어 필수

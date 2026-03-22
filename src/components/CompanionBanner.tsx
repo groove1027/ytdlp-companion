@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { isCompanionDetected, recheckCompanion } from '../services/ytdlpApiService';
-
-const COMPANION_DOWNLOAD_URL = 'https://github.com/groove1027/ytdlp-companion/releases/latest';
+import { COMPANION_DOWNLOAD_URL } from '../constants';
 
 /** 기능별 배너 테마 */
 type CompanionFeature = 'download' | 'stt' | 'tts' | 'rembg' | 'ffmpeg' | 'general';

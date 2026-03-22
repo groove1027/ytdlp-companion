@@ -8,7 +8,7 @@
 #   2 = block (Claude Code PreToolUse blocking)
 # ============================================================
 
-PROJECT_DIR="/Users/jihoo/Downloads/all-in-one-production-build4"
+PROJECT_DIR="/Users/mac_mini/Downloads/all-in-one-production-build4"
 COMMAND="${CLAUDE_TOOL_INPUT_command}"
 GATE_FILE="$PROJECT_DIR/.e2e-verified"
 
@@ -33,7 +33,7 @@ fi
 # ──────────────────────────────────────────────
 # CHECK 2: work-history.md must have been modified
 # ──────────────────────────────────────────────
-MEMORY_DIR="$HOME/.claude/projects/-Users-jihoo-Downloads-all-in-one-production-build4/memory"
+MEMORY_DIR="$HOME/.claude/projects/-Users-mac_mini-Downloads-all-in-one-production-build4/memory"
 WORKHIST="$MEMORY_DIR/work-history.md"
 
 if [ -f "$WORKHIST" ]; then

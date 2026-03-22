@@ -1,6 +1,9 @@
 
 import { AspectRatio, VoiceName, ImageModel, VideoFormat, DialogueTone, ScriptAiModel, ScriptTargetRegion } from "./types";
 
+// Companion (Helper) App
+export const COMPANION_DOWNLOAD_URL = 'https://github.com/groove1027/ytdlp-companion/releases/latest';
+
 // [2026-03-02] Real-time Pricing (조사 기반 실시간 반영)
 export const PRICING = {
   EXCHANGE_RATE: 1450, // Fallback Value (Used only if API fails)
