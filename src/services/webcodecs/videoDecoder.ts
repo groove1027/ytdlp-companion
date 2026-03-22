@@ -133,6 +133,21 @@ export async function demuxMp4(blob: Blob): Promise<DemuxResult> {
  * ffmpeg.wasm `-c copy` 무손실 머지 — 원본 비트스트림 그대로 복사 (프레임 변형 0%)
  */
 export async function mergeVideoAudio(videoBlob: Blob, audioBlob: Blob): Promise<Blob> {
+  // 1순위: 컴패니언 네이티브 FFmpeg (WASM 30MB 로드 불필요)
+  const { companionTranscode } = await import('../ffmpegService');
+  const companionResult = await companionTranscode(videoBlob, 'mp4', [
+    '-i', 'input.mp4',
+    '-i', 'audio.m4a',
+    '-c', 'copy',
+    '-movflags', '+faststart',
+    '-y', 'output.mp4',
+  ]);
+  if (companionResult && companionResult.size > 1000) {
+    console.log(`[Merge] ✅ 컴패니언 FFmpeg 합본 성공 (${(companionResult.size / 1024 / 1024).toFixed(1)}MB)`);
+    return companionResult;
+  }
+
+  // 2순위: FFmpeg WASM 폴백
   const { loadFFmpeg } = await import('../ffmpegService');
   const { fetchFile } = await import('@ffmpeg/util');
 

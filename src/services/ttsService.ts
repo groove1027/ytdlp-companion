@@ -2,8 +2,11 @@
 import { monitoredFetch, getKieKey } from './apiService';
 import { logger } from './LoggerService';
 import { generateSpeech as generateSupertonicSpeech } from './supertonicService';
+import { isCompanionDetected } from './ytdlpApiService';
 
 import type { TTSEngine, TTSLanguage } from '../types';
+
+const COMPANION_URL = 'http://localhost:9876';
 
 // === CONFIGURATION ===
 const KIE_BASE_URL = 'https://api.kie.ai/api/v1';
@@ -384,8 +387,53 @@ const generateElevenLabsSingleChunk = async (
 */
 
 /**
+ * 컴패니언 Kokoro TTS로 로컬 음성 합성 시도
+ * 고품질 한국어/영어/일본어 지원, API 비용 없음
+ * @returns null이면 Supertonic 폴백 필요
+ */
+async function tryCompanionTTS(
+    text: string,
+    language: TTSLanguage = 'ko',
+): Promise<TTSResult | null> {
+    if (!isCompanionDetected()) return null;
+
+    try {
+        logger.info('[TTS] 컴패니언 Kokoro TTS 시도', { language, textLength: text.length });
+
+        const res = await fetch(`${COMPANION_URL}/api/tts`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text, language }),
+            signal: AbortSignal.timeout(60_000),
+        });
+
+        if (!res.ok) return null;
+
+        const wavBlob = await res.blob();
+        if (wavBlob.size < 100) return null;
+
+        const audioUrl = URL.createObjectURL(wavBlob);
+        // WAV 헤더에서 duration 추출 (44바이트 이후 PCM 데이터)
+        const buffer = await wavBlob.arrayBuffer();
+        const view = new DataView(buffer);
+        const sampleRate = view.getUint32(24, true);
+        const bitsPerSample = view.getUint16(34, true);
+        const channels = view.getUint16(22, true);
+        const dataSize = buffer.byteLength - 44;
+        const duration = dataSize / (sampleRate * (bitsPerSample / 8) * channels);
+
+        logger.success('[TTS] 컴패니언 Kokoro TTS 성공', { duration: duration.toFixed(1) + 's' });
+        return { audioUrl, duration, format: 'wav' };
+    } catch (e) {
+        logger.warn('[TTS] 컴패니언 Kokoro TTS 실패 — Supertonic 폴백:', e instanceof Error ? e.message : '');
+        return null;
+    }
+}
+
+/**
  * Supertonic 2 TTS 생성 (브라우저 로컬)
  * ONNX 런타임 기반 — API 키 불필요, 네트워크 비용 없음
+ * [v4.8] 컴패니언 Kokoro TTS 우선 → Supertonic 폴백
  */
 export const generateSupertonicTTS = async (
     text: string,
@@ -397,6 +445,11 @@ export const generateSupertonicTTS = async (
     const cleanText = stripSpeakerTags(text);
     if (!cleanText.trim()) throw new Error('TTS 텍스트가 비어있습니다.');
 
+    // 1순위: 컴패니언 Kokoro TTS (로컬, 고품질, 일본어 지원)
+    const companionResult = await tryCompanionTTS(cleanText, language);
+    if (companionResult) return companionResult;
+
+    // 2순위: Supertonic 2 (브라우저 ONNX)
     logger.info('[TTS] Supertonic 2 생성 요청 (로컬)', { voiceId, language, textLength: cleanText.length, speed });
 
     // Supertonic 2는 한/영/프/스/포 5개 언어 지원. 일본어 미지원 → 한국어로 폴백 (영어보다 발음 체계가 유사)

@@ -272,10 +272,18 @@ async function renderWithFFmpeg(
   config: RenderConfig,
   onProgress: (progress: RenderProgress) => void,
 ): Promise<Blob> {
-  const { loadFFmpeg } = await import('./ffmpegService');
+  const { loadFFmpeg, companionTranscode } = await import('./ffmpegService');
   const { fetchFile } = await import('@ffmpeg/util');
 
-  // 1. FFmpeg 로드
+  // 0. 컴패니언 FFmpeg 시도 (WASM 30MB 로드 불필요)
+  onProgress({ phase: 'overlaying-subtitles', percent: 28, message: '렌더링 엔진 준비 중...' });
+  const companionResult = await companionTranscode(videoBlob, 'mp4');
+  if (companionResult && companionResult.size > 1000) {
+    onProgress({ phase: 'done', percent: 100, message: '컴패니언 FFmpeg 렌더링 완료!' });
+    return companionResult;
+  }
+
+  // 1. FFmpeg WASM 로드 (폴백)
   onProgress({ phase: 'overlaying-subtitles', percent: 28, message: 'FFmpeg 로드 중...' });
   const ffmpeg = await loadFFmpeg();
 
