@@ -1364,13 +1364,311 @@ const fetchTranscriptViaTimedtext = async (videoId: string): Promise<string | nu
     return null;
 };
 
+// ──────────────────────────────────────────────────────────────
+// CORS 프록시 목록 (timedtext/YouTube 페이지 직접 호출이 CORS로 차단될 때 사용)
+// ──────────────────────────────────────────────────────────────
+const CORS_PROXIES = [
+    { prefix: 'https://api.allorigins.win/raw?url=', name: 'allorigins' },
+    { prefix: 'https://corsproxy.io/?url=', name: 'corsproxy.io' },
+    { prefix: 'https://api.codetabs.com/v1/proxy?quest=', name: 'codetabs' },
+];
+
+/**
+ * timedtext type=list로 트랙 발견 후 자막 가져오기 (발견 기반 접근)
+ *
+ * 1단계: GET /api/timedtext?type=list&v={videoId} → 사용 가능한 자막 트랙 XML
+ * 2단계: 발견된 트랙의 정확한 파라미터(lang, kind, name)로 자막 다운로드
+ * 기존 timedtext 방식이 빈 응답을 반환할 때 name 파라미터 누락이 원인인 경우 해결
+ */
+const fetchTranscriptViaTimedtextDiscovery = async (videoId: string): Promise<string | null> => {
+    try {
+        // 1단계: 사용 가능한 자막 트랙 목록 조회
+        const listUrl = `https://www.youtube.com/api/timedtext?type=list&v=${videoId}`;
+        const listRes = await monitoredFetch(listUrl, { signal: AbortSignal.timeout(8000) });
+        if (!listRes.ok) return null;
+
+        const listXml = await listRes.text();
+        if (!listXml || listXml.length < 20) return null;
+
+        // 2단계: XML에서 트랙 정보 추출
+        // <track id="0" name="..." lang_code="ko" kind="asr" lang_original="한국어" />
+        const tracks: { name: string; lang: string; kind: string }[] = [];
+        const trackRegex = /<track\s([^>]*?)\/?\s*>/gi;
+        let trackMatch: RegExpExecArray | null;
+        while ((trackMatch = trackRegex.exec(listXml)) !== null) {
+            const attrs = trackMatch[1];
+            const langMatch = /lang_code="([^"]*)"/.exec(attrs);
+            const nameMatch = /name="([^"]*)"/.exec(attrs);
+            const kindMatch = /\bkind="([^"]*)"/.exec(attrs);
+            if (langMatch) {
+                tracks.push({
+                    lang: langMatch[1],
+                    name: nameMatch ? nameMatch[1] : '',
+                    kind: kindMatch ? kindMatch[1] : '',
+                });
+            }
+        }
+
+        if (tracks.length === 0) return null;
+        logger.info('[YouTube] timedtext 트랙 목록 발견', {
+            videoId, trackCount: tracks.length,
+            tracks: tracks.map(t => `${t.lang}(${t.kind || 'manual'})`).join(', '),
+        });
+
+        // 3단계: 우선순위 정렬 (ko > en > ja, manual > asr)
+        const priority = (t: typeof tracks[0]) => {
+            let score = t.kind === 'asr' ? 10 : 0;
+            if (/^ko/i.test(t.lang)) score += 0;
+            else if (/^en/i.test(t.lang)) score += 1;
+            else if (/^ja/i.test(t.lang)) score += 2;
+            else score += 5;
+            return score;
+        };
+        tracks.sort((a, b) => priority(a) - priority(b));
+
+        // 4단계: 각 트랙으로 실제 자막 다운로드 시도
+        for (const track of tracks) {
+            try {
+                const kindParam = track.kind ? `&kind=${track.kind}` : '';
+                const nameParam = `&name=${encodeURIComponent(track.name)}`;
+                const url = `https://www.youtube.com/api/timedtext?v=${videoId}&lang=${track.lang}${kindParam}${nameParam}&fmt=srv3`;
+
+                const captionRes = await monitoredFetch(url, { signal: AbortSignal.timeout(8000) });
+                if (!captionRes.ok) continue;
+
+                const xmlText = await captionRes.text();
+                if (!xmlText || xmlText.length < 50) continue;
+
+                const cleaned = parseTimedtextXmlToPlainText(xmlText);
+                if (cleaned.length > 50) {
+                    logger.success('[YouTube] timedtext Discovery 자막 성공', {
+                        videoId, lang: track.lang, kind: track.kind || 'manual', length: cleaned.length,
+                    });
+                    return cleaned;
+                }
+            } catch (e) {
+                logger.trackSwallowedError('youtubeAnalysisService:timedtextDiscoveryTrack', e);
+                continue;
+            }
+        }
+    } catch (e) {
+        logger.trackSwallowedError('youtubeAnalysisService:timedtextDiscovery', e);
+    }
+    return null;
+};
+
+/**
+ * YouTube watch 페이지 HTML에서 ytInitialPlayerResponse JSON을 안전하게 추출
+ * 중괄호 균형 기반 + 문자열 리터럴 내부 중괄호 무시
+ */
+const extractPlayerResponseJson = (html: string): string | null => {
+    const marker = 'ytInitialPlayerResponse';
+    const markerIdx = html.indexOf(marker);
+    if (markerIdx === -1) return null;
+
+    const jsonStart = html.indexOf('{', markerIdx);
+    if (jsonStart === -1) return null;
+
+    let depth = 0;
+    let jsonEnd = jsonStart;
+    let inString = false;
+    let escape = false;
+    const limit = Math.min(html.length, jsonStart + 500001); // +1 for off-by-one
+    for (let ci = jsonStart; ci < limit; ci++) {
+        const ch = html[ci];
+        if (escape) { escape = false; continue; }
+        if (ch === '\\' && inString) { escape = true; continue; }
+        if (ch === '"') { inString = !inString; continue; }
+        if (inString) continue;
+        if (ch === '{') depth++;
+        else if (ch === '}') { depth--; if (depth === 0) { jsonEnd = ci + 1; break; } }
+    }
+    if (depth !== 0 || jsonEnd <= jsonStart) return null;
+    return html.substring(jsonStart, jsonEnd);
+};
+
+/** baseUrl이 YouTube 자막 엔드포인트인지 검증 (임의 URL 프록시 방지) */
+const isValidYouTubeCaptionUrl = (url: string): boolean => {
+    try {
+        const parsed = new URL(url);
+        const validHost = parsed.hostname === 'www.youtube.com' || parsed.hostname === 'youtube.com';
+        const validPath = parsed.pathname.startsWith('/api/timedtext');
+        return validHost && validPath;
+    } catch {
+        return false;
+    }
+};
+
+/**
+ * YouTube watch 페이지에서 ytInitialPlayerResponse의 captionTracks 추출 후 자막 가져오기
+ * CORS 프록시 경유로 watch 페이지 HTML을 가져와 서명된 자막 URL을 사용
+ * 서명된 URL은 인증 없이도 자막 다운로드 가능
+ */
+const fetchTranscriptViaPlayerPage = async (videoId: string): Promise<string | null> => {
+    const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
+
+    let consecutiveProxyFailures = 0;
+    for (const proxy of CORS_PROXIES) {
+        if (consecutiveProxyFailures >= 2) {
+            logger.info('[YouTube] Player Page 프록시 연속 실패 — 나머지 프록시 건너뜀');
+            break;
+        }
+        try {
+            const proxyUrl = `${proxy.prefix}${encodeURIComponent(watchUrl)}`;
+            const res = await monitoredFetch(proxyUrl, { signal: AbortSignal.timeout(10000) });
+            if (!res.ok) {
+                // 5xx = 프록시 서버 장애, 4xx = 정상 응답(콘텐츠 없음)
+                if (res.status >= 500 || res.status === 0) consecutiveProxyFailures++;
+                continue;
+            }
+            consecutiveProxyFailures = 0;
+
+            const html = await res.text();
+            if (!html || html.length < 1000) continue;
+
+            // ytInitialPlayerResponse JSON 추출 — 중괄호 균형 기반
+            const playerJson = extractPlayerResponseJson(html);
+            if (!playerJson) continue;
+
+            let playerResponse: Record<string, unknown>;
+            try {
+                playerResponse = JSON.parse(playerJson);
+            } catch {
+                continue;
+            }
+
+            const captionTracks = (
+                playerResponse?.captions as Record<string, unknown> | undefined
+            )?.playerCaptionsTracklistRenderer as Record<string, unknown> | undefined;
+            const tracks = (captionTracks?.captionTracks || []) as {
+                baseUrl?: string;
+                languageCode?: string;
+                kind?: string;
+                name?: { simpleText?: string };
+            }[];
+
+            if (tracks.length === 0) continue;
+
+            // 우선순위 정렬
+            const sorted = [...tracks].sort((a, b) => {
+                const aLang = a.languageCode || '';
+                const bLang = b.languageCode || '';
+                const aAuto = a.kind === 'asr' ? 10 : 0;
+                const bAuto = b.kind === 'asr' ? 10 : 0;
+                const aScore = aAuto + (/^ko/i.test(aLang) ? 0 : /^en/i.test(aLang) ? 1 : 5);
+                const bScore = bAuto + (/^ko/i.test(bLang) ? 0 : /^en/i.test(bLang) ? 1 : 5);
+                return aScore - bScore;
+            });
+
+            // 서명된 URL로 자막 다운로드 (CORS 프록시 경유, URL은 임시 서명이라 로깅 무해)
+            for (const track of sorted) {
+                if (!track.baseUrl || !isValidYouTubeCaptionUrl(track.baseUrl)) continue;
+                try {
+                    const captionUrl = track.baseUrl + (track.baseUrl.includes('fmt=') ? '' : '&fmt=srv3');
+                    const captionProxyUrl = `${proxy.prefix}${encodeURIComponent(captionUrl)}`;
+                    const captionRes = await monitoredFetch(captionProxyUrl, { signal: AbortSignal.timeout(8000) });
+                    if (!captionRes.ok) continue;
+
+                    const xmlText = await captionRes.text();
+                    if (!xmlText || xmlText.length < 50) continue;
+
+                    const cleaned = parseTimedtextXmlToPlainText(xmlText);
+                    if (cleaned.length > 50) {
+                        logger.success('[YouTube] Player Page 자막 성공', {
+                            videoId, lang: track.languageCode, proxy: proxy.name, length: cleaned.length,
+                        });
+                        return cleaned;
+                    }
+                } catch (e) {
+                    logger.trackSwallowedError('youtubeAnalysisService:playerPageTrack', e);
+                    continue;
+                }
+            }
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            if (msg === 'Failed to fetch' || msg.includes('abort')) consecutiveProxyFailures++;
+            logger.trackSwallowedError('youtubeAnalysisService:playerPage', e);
+            continue;
+        }
+    }
+    return null;
+};
+
+/**
+ * CORS 프록시 경유 timedtext 자막 가져오기
+ * YouTube가 cross-origin 직접 요청에 빈 응답을 반환할 때,
+ * 서버 사이드에서 요청하는 CORS 프록시를 통해 실제 자막 데이터를 확보
+ */
+const fetchTranscriptViaCorsProxy = async (videoId: string): Promise<string | null> => {
+    // 우선순위: 수동 한국어 > 자동 한국어 > 수동 영어 > 자동 영어 (기존 서비스와 일치)
+    const attempts = [
+        { lang: 'ko', kind: '' },
+        { lang: 'ko', kind: 'asr' },
+        { lang: 'en', kind: '' },
+        { lang: 'en', kind: 'asr' },
+        { lang: 'ja', kind: '' },
+        { lang: 'ja', kind: 'asr' },
+    ];
+
+    let consecutiveProxyFailures = 0;
+    for (const proxy of CORS_PROXIES) {
+        // CORS 프록시 연속 실패 시 조기 종료 (과도한 대기 방지)
+        if (consecutiveProxyFailures >= 2) {
+            logger.info('[YouTube] CORS 프록시 연속 실패 — 나머지 프록시 건너뜀');
+            break;
+        }
+        let proxyWorked = false;
+        for (const { lang, kind } of attempts) {
+            try {
+                const kindParam = kind ? `&kind=${kind}` : '';
+                const targetUrl = `https://www.youtube.com/api/timedtext?v=${videoId}&lang=${lang}${kindParam}&fmt=srv3`;
+                const proxyUrl = `${proxy.prefix}${encodeURIComponent(targetUrl)}`;
+
+                const res = await monitoredFetch(proxyUrl, { signal: AbortSignal.timeout(8000) });
+                if (!res.ok) {
+                    // 프록시 자체 에러(5xx) vs YouTube 응답(4xx) 구분
+                    if (res.status >= 500 || res.status === 0) {
+                        consecutiveProxyFailures++;
+                        break; // 프록시 서버 불통 → 다음 프록시
+                    }
+                    continue;
+                }
+                proxyWorked = true;
+
+                const xmlText = await res.text();
+                if (!xmlText || xmlText.length < 50) continue;
+
+                const cleaned = parseTimedtextXmlToPlainText(xmlText);
+                if (cleaned.length > 50) {
+                    logger.success('[YouTube] CORS 프록시 자막 성공', {
+                        videoId, lang, kind: kind || 'manual', proxy: proxy.name, length: cleaned.length,
+                    });
+                    return cleaned;
+                }
+            } catch (e) {
+                const msg = e instanceof Error ? e.message : String(e);
+                // 네트워크 에러 또는 타임아웃 → 프록시 불통으로 판단
+                if (msg === 'Failed to fetch' || msg.includes('abort') || msg.includes('timeout')) {
+                    consecutiveProxyFailures++;
+                    break; // 이 프록시 자체가 불통 → 다음 프록시로
+                }
+                logger.trackSwallowedError('youtubeAnalysisService:corsProxy', e);
+                continue;
+            }
+        }
+        if (proxyWorked) consecutiveProxyFailures = 0;
+    }
+    return null;
+};
+
 /** YouTube timedtext XML (srv3 형식) 파싱 — <text> 태그에서 텍스트만 추출 */
 const parseTimedtextXmlToPlainText = (xml: string): string => {
     const textLines: string[] = [];
     let prevLine = '';
 
-    // <text start="..." dur="...">텍스트</text> 패턴 매칭
-    const textRegex = /<text[^>]*>([\s\S]*?)<\/text>/gi;
+    // srv1: <text start="..." dur="...">텍스트</text>
+    // srv3: <p t="..." d="...">텍스트</p>  (또는 <s>텍스트</s> 포함)
+    const textRegex = /<(?:text|p|s)\b[^>]*>([\s\S]*?)<\/(?:text|p|s)>/gi;
     let match: RegExpExecArray | null;
     while ((match = textRegex.exec(xml)) !== null) {
         const raw = match[1]
@@ -1484,6 +1782,64 @@ export const fetchTimedTranscriptForAnalysis = async (videoId: string): Promise<
         { lang: 'ja', kind: 'asr' },
     ];
 
+    // 0차: timedtext type=list discovery (name 파라미터 누락 문제 해결)
+    try {
+        const listUrl = `https://www.youtube.com/api/timedtext?type=list&v=${videoId}`;
+        const listRes = await monitoredFetch(listUrl, { signal: AbortSignal.timeout(8000) });
+        if (listRes.ok) {
+            const listXml = await listRes.text();
+            if (listXml && listXml.length >= 20) {
+                const tracks: { name: string; lang: string; kind: string }[] = [];
+                const trackRegex = /<track\s([^>]*?)\/?\s*>/gi;
+                let trackMatch: RegExpExecArray | null;
+                while ((trackMatch = trackRegex.exec(listXml)) !== null) {
+                    const attrs = trackMatch[1];
+                    const langMatch = /lang_code="([^"]*)"/.exec(attrs);
+                    const nameMatch = /name="([^"]*)"/.exec(attrs);
+                    const kindMatch = /\bkind="([^"]*)"/.exec(attrs);
+                    if (langMatch) {
+                        tracks.push({ lang: langMatch[1], name: nameMatch ? nameMatch[1] : '', kind: kindMatch ? kindMatch[1] : '' });
+                    }
+                }
+                // 우선순위 정렬
+                const priority = (t: typeof tracks[0]) => {
+                    let score = t.kind === 'asr' ? 10 : 0;
+                    if (/^ko/i.test(t.lang)) score += 0;
+                    else if (/^en/i.test(t.lang)) score += 1;
+                    else if (/^ja/i.test(t.lang)) score += 2;
+                    else score += 5;
+                    return score;
+                };
+                tracks.sort((a, b) => priority(a) - priority(b));
+
+                for (const track of tracks) {
+                    try {
+                        const kindParam = track.kind ? `&kind=${track.kind}` : '';
+                        const nameParam = `&name=${encodeURIComponent(track.name)}`;
+                        const url = `https://www.youtube.com/api/timedtext?v=${videoId}&lang=${track.lang}${kindParam}${nameParam}&fmt=srv3`;
+                        const captionRes = await monitoredFetch(url, { signal: AbortSignal.timeout(8000) });
+                        if (!captionRes.ok) continue;
+                        const xmlText = await captionRes.text();
+                        if (!xmlText || xmlText.length < 50) continue;
+                        const cues = parseTimedtextXmlWithTimecodes(xmlText);
+                        if (cues.length > 3) {
+                            logger.success('[YouTube] Discovery 타임코드 자막 성공', {
+                                videoId, lang: track.lang, kind: track.kind || 'manual', cueCount: cues.length,
+                            });
+                            return formatTimedCuesForAI(cues);
+                        }
+                    } catch (e) {
+                        logger.trackSwallowedError('youtubeAnalysisService:timedDiscoveryTrack', e);
+                        continue;
+                    }
+                }
+            }
+        }
+    } catch (e) {
+        logger.trackSwallowedError('youtubeAnalysisService:timedDiscovery', e);
+    }
+
+    // 1차: 직접 timedtext 요청
     for (const { lang, kind } of attempts) {
         try {
             const kindParam = kind ? `&kind=${kind}` : '';
@@ -1506,6 +1862,97 @@ export const fetchTimedTranscriptForAnalysis = async (videoId: string): Promise<
             continue;
         }
     }
+
+    // 2차: CORS 프록시 경유 (직접 요청이 빈 응답 반환 시)
+    for (const proxy of CORS_PROXIES) {
+        for (const { lang, kind } of attempts) {
+            try {
+                const kindParam = kind ? `&kind=${kind}` : '';
+                const targetUrl = `https://www.youtube.com/api/timedtext?v=${videoId}&lang=${lang}${kindParam}&fmt=srv3`;
+                const proxyUrl = `${proxy.prefix}${encodeURIComponent(targetUrl)}`;
+                const res = await monitoredFetch(proxyUrl, { signal: AbortSignal.timeout(10000) });
+                if (!res.ok) continue;
+
+                const xmlText = await res.text();
+                if (!xmlText || xmlText.length < 50) continue;
+
+                const cues = parseTimedtextXmlWithTimecodes(xmlText);
+                if (cues.length > 3) {
+                    logger.success('[YouTube] CORS 프록시 타임코드 자막 성공', {
+                        videoId, lang, kind: kind || 'manual', proxy: proxy.name, cueCount: cues.length,
+                    });
+                    return formatTimedCuesForAI(cues);
+                }
+            } catch (e) {
+                logger.trackSwallowedError('youtubeAnalysisService:timedTranscriptProxy', e);
+                continue;
+            }
+        }
+    }
+
+    // 3차: Player page에서 서명된 URL 추출 후 타임코드 포함 자막 가져오기
+    for (const proxy of CORS_PROXIES) {
+        try {
+            const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
+            const proxyUrl = `${proxy.prefix}${encodeURIComponent(watchUrl)}`;
+            const res = await monitoredFetch(proxyUrl, { signal: AbortSignal.timeout(15000) });
+            if (!res.ok) continue;
+
+            const html = await res.text();
+            if (!html || html.length < 1000) continue;
+
+            // ytInitialPlayerResponse JSON 추출 — 중괄호 균형 기반
+            const playerJson2 = extractPlayerResponseJson(html);
+            if (!playerJson2) continue;
+
+            let playerResponse: Record<string, unknown>;
+            try { playerResponse = JSON.parse(playerJson2); } catch { continue; }
+
+            const captionRenderer = (
+                playerResponse?.captions as Record<string, unknown> | undefined
+            )?.playerCaptionsTracklistRenderer as Record<string, unknown> | undefined;
+            const tracks = (captionRenderer?.captionTracks || []) as {
+                baseUrl?: string; languageCode?: string; kind?: string;
+            }[];
+            if (tracks.length === 0) continue;
+
+            // 우선순위 정렬
+            const sorted = [...tracks].sort((a, b) => {
+                const aL = a.languageCode || ''; const bL = b.languageCode || '';
+                const aS = (a.kind === 'asr' ? 10 : 0) + (/^ko/i.test(aL) ? 0 : /^en/i.test(aL) ? 1 : 5);
+                const bS = (b.kind === 'asr' ? 10 : 0) + (/^ko/i.test(bL) ? 0 : /^en/i.test(bL) ? 1 : 5);
+                return aS - bS;
+            });
+
+            for (const track of sorted) {
+                if (!track.baseUrl || !isValidYouTubeCaptionUrl(track.baseUrl)) continue;
+                try {
+                    const captionUrl = track.baseUrl + (track.baseUrl.includes('fmt=') ? '' : '&fmt=srv3');
+                    const captionProxyUrl = `${proxy.prefix}${encodeURIComponent(captionUrl)}`;
+                    const captionRes = await monitoredFetch(captionProxyUrl, { signal: AbortSignal.timeout(10000) });
+                    if (!captionRes.ok) continue;
+
+                    const xmlText = await captionRes.text();
+                    if (!xmlText || xmlText.length < 50) continue;
+
+                    const cues = parseTimedtextXmlWithTimecodes(xmlText);
+                    if (cues.length > 3) {
+                        logger.success('[YouTube] Player Page 타임코드 자막 성공', {
+                            videoId, lang: track.languageCode, proxy: proxy.name, cueCount: cues.length,
+                        });
+                        return formatTimedCuesForAI(cues);
+                    }
+                } catch (e) {
+                    logger.trackSwallowedError('youtubeAnalysisService:timedTranscriptPlayerTrack', e);
+                    continue;
+                }
+            }
+        } catch (e) {
+            logger.trackSwallowedError('youtubeAnalysisService:timedTranscriptPlayer', e);
+            continue;
+        }
+    }
+
     return null;
 };
 
@@ -1549,15 +1996,18 @@ const parseVttToPlainText = (raw: string): string => {
  * 1. Invidious API (무료, OAuth 불필요, 쿼터 소비 없음)
  * 2. Piped API (무료, OAuth 불필요, 쿼터 소비 없음)
  * 3. YouTube Innertube API (무료, OAuth 불필요, 쿼터 소비 없음)
- * 4. YouTube timedtext XML (무료, OAuth 불필요, 쿼터 소비 없음)
- * 5. YouTube Data API captions.list (50 쿼터, 목록만 확인 가능)
- * 6. 영상 설명 폴백 (최후 수단 — 분석 품질 저하 경고 포함)
+ * 3.5. timedtext Discovery (type=list → 정확한 파라미터 조회)
+ * 4. YouTube timedtext XML 직접 호출
+ * 4.5. YouTube watch 페이지 captionTracks 추출 (CORS 프록시 경유)
+ * 4.7. CORS 프록시 경유 timedtext
+ * 5. YouTube Data API captions.list (50 쿼터, 목록만 확인 — API 키 필요)
+ * 6. 영상 설명 폴백 (최후 수단 — API 키 필요)
  */
 export const getVideoTranscript = async (videoId: string): Promise<TranscriptResult> => {
+    // API 키는 YouTube Data API 단계(5단계 이후)에서만 필요 — 무료 폴백은 키 없이도 실행
     const apiKey = getYoutubeApiKey();
-    if (!apiKey) throw new Error('YouTube API 키가 설정되지 않았습니다.');
 
-    logger.info('[YouTube] 자막 조회 시도 (Invidious → Piped → Innertube → timedtext → YouTube API → 설명 폴백)', { videoId });
+    logger.info('[YouTube] 자막 조회 시도 (Invidious → Piped → Innertube → timedtext Discovery → timedtext → Player Page → CORS 프록시 → YouTube API → 설명 폴백)', { videoId });
 
     // === 1단계: Invidious API (최우선 — 무료, 쿼터 없음) ===
     try {
@@ -1589,10 +2039,22 @@ export const getVideoTranscript = async (videoId: string): Promise<TranscriptRes
         if (innertubeResult) {
             return { text: innertubeResult, source: 'caption' };
         }
-        logger.info('[YouTube] Innertube 자막 실패 — timedtext 시도', { videoId });
+        logger.info('[YouTube] Innertube 자막 실패 — timedtext Discovery 시도', { videoId });
     } catch (e) {
         logger.trackSwallowedError('youtubeAnalysisService:innertubeTranscript', e);
-        logger.info('[YouTube] Innertube 자막 오류 — timedtext 시도', { videoId });
+        logger.info('[YouTube] Innertube 자막 오류 — timedtext Discovery 시도', { videoId });
+    }
+
+    // === 3.5단계: timedtext type=list Discovery (트랙 목록 발견 후 정확한 파라미터로 요청) ===
+    try {
+        const discoveryResult = await fetchTranscriptViaTimedtextDiscovery(videoId);
+        if (discoveryResult) {
+            return { text: discoveryResult, source: 'caption' };
+        }
+        logger.info('[YouTube] timedtext Discovery 실패 — timedtext 직접 시도', { videoId });
+    } catch (e) {
+        logger.trackSwallowedError('youtubeAnalysisService:timedtextDiscoveryTranscript', e);
+        logger.info('[YouTube] timedtext Discovery 오류 — timedtext 직접 시도', { videoId });
     }
 
     // === 4단계: YouTube timedtext XML (무료, 쿼터 없음, 자동생성 자막 지원) ===
@@ -1601,14 +2063,38 @@ export const getVideoTranscript = async (videoId: string): Promise<TranscriptRes
         if (timedtextResult) {
             return { text: timedtextResult, source: 'caption' };
         }
-        logger.info('[YouTube] timedtext 자막 실패 — YouTube API 시도', { videoId });
+        logger.info('[YouTube] timedtext 자막 실패 — Player Page 시도', { videoId });
     } catch (e) {
         logger.trackSwallowedError('youtubeAnalysisService:timedtextTranscript', e);
-        logger.info('[YouTube] timedtext 자막 오류 — YouTube API 시도', { videoId });
+        logger.info('[YouTube] timedtext 자막 오류 — Player Page 시도', { videoId });
     }
 
-    // === 5단계: YouTube Data API captions.list (50 쿼터, 목록만 확인 가능) ===
-    if (trackQuota('captions.list')) {
+    // === 4.5단계: YouTube watch 페이지에서 서명된 자막 URL 추출 (CORS 프록시 경유) ===
+    try {
+        const playerPageResult = await fetchTranscriptViaPlayerPage(videoId);
+        if (playerPageResult) {
+            return { text: playerPageResult, source: 'caption' };
+        }
+        logger.info('[YouTube] Player Page 자막 실패 — CORS 프록시 timedtext 시도', { videoId });
+    } catch (e) {
+        logger.trackSwallowedError('youtubeAnalysisService:playerPageTranscript', e);
+        logger.info('[YouTube] Player Page 자막 오류 — CORS 프록시 timedtext 시도', { videoId });
+    }
+
+    // === 4.7단계: CORS 프록시 경유 timedtext (서버 사이드 프록시로 빈 응답 우회) ===
+    try {
+        const corsProxyResult = await fetchTranscriptViaCorsProxy(videoId);
+        if (corsProxyResult) {
+            return { text: corsProxyResult, source: 'caption' };
+        }
+        logger.info('[YouTube] CORS 프록시 자막 실패 — YouTube API 시도', { videoId });
+    } catch (e) {
+        logger.trackSwallowedError('youtubeAnalysisService:corsProxyTranscript', e);
+        logger.info('[YouTube] CORS 프록시 자막 오류 — YouTube API 시도', { videoId });
+    }
+
+    // === 5단계: YouTube Data API captions.list (50 쿼터, 목록만 확인 가능) — API 키 필요 ===
+    if (apiKey && trackQuota('captions.list')) {
         try {
             const captionsUrl = `${YOUTUBE_API_BASE}/captions?part=snippet&videoId=${videoId}&key=${apiKey}`;
             const captionsResponse = await monitoredFetch(captionsUrl);
@@ -1628,14 +2114,22 @@ export const getVideoTranscript = async (videoId: string): Promise<TranscriptRes
             const msg = e instanceof Error ? e.message : String(e);
             logger.warn('[YouTube] YouTube API 자막 조회 오류 (비치명적)', msg);
         }
+    } else if (!apiKey) {
+        logger.info('[YouTube] API 키 미설정 — YouTube Data API 자막 조회 건너뜀');
     } else {
         logger.info('[YouTube] 쿼터 부족으로 YouTube API 자막 조회 건너뜀');
     }
 
-    // === 6단계: 영상 설명 폴백 (최후 수단) ===
+    // === 6단계: 영상 설명 폴백 (최후 수단) — API 키 필요 ===
     logger.warn('[YouTube] 모든 자막 소스 실패 — 영상 설명으로 대체 (분석 품질 저하 가능)', { videoId });
+    if (!apiKey) {
+        return { text: '', source: 'description' };
+    }
     try {
-        trackQuota('videos.list');
+        if (!trackQuota('videos.list')) {
+            logger.info('[YouTube] 쿼터 부족으로 영상 설명 폴백 건너뜀');
+            return { text: '', source: 'description' };
+        }
         const description = await getVideoDescriptionFallback(videoId, apiKey);
         return {
             text: description
