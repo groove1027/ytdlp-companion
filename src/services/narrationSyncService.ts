@@ -43,6 +43,7 @@ export function fitSceneMediaToNarration(sceneDur: number, narrationDur: number)
   const safeNarrationDur = Math.max(0.1, narrationDur || sceneDur);
 
   if (safeNarrationDur > safeSceneDur) {
+    // 나레이션이 더 길면: 장면 속도를 줄여서(슬로우) 나레이션에 맞춤
     return {
       targetDurationSec: safeNarrationDur,
       autoSpeedFactor: Number((safeSceneDur / safeNarrationDur).toFixed(4)),
@@ -51,6 +52,8 @@ export function fitSceneMediaToNarration(sceneDur: number, narrationDur: number)
     };
   }
 
+  // 나레이션이 더 짧거나 같으면: 나레이션 길이에 맞춤 (기본)
+  // 편집점 확장은 buildNarrationSyncedTimeline에서 조건부 처리
   return {
     targetDurationSec: safeNarrationDur,
     autoSpeedFactor: 1,
@@ -187,16 +190,30 @@ export function buildNarrationSyncedTimeline(
 
     const sourceDurationSec = sourceEndSec - sourceStartSec;
     const narrationDurationSec = narrationLines[sceneIndex]?.duration ?? sourceDurationSec;
-
     const fit = fitSceneMediaToNarration(sourceDurationSec, narrationDurationSec);
 
+    // 편집점 고도화: 명시적 나레이션 시작점이 없으면 소스 타임코드 전체 구간 사용
+    // (명시적 시작점이 있으면 겹침 방지를 위해 나레이션 기반 타이밍 유지)
+    const hasExplicitNarrationStart = typeof narrationLines[sceneIndex]?.startTime === 'number'
+      && Number.isFinite(narrationLines[sceneIndex]!.startTime!);
+
+    const effectiveTargetDuration = hasExplicitNarrationStart
+      ? fit.targetDurationSec
+      : Math.max(fit.targetDurationSec, sourceDurationSec);
+    const effectiveTrimEnd = hasExplicitNarrationStart
+      ? fit.trimEndSec
+      : sourceDurationSec;
+
     const timelineStartSec = narrationLines[sceneIndex]?.startTime ?? timelineCursor;
-    const timelineEndSec = timelineStartSec + fit.targetDurationSec;
+    const timelineEndSec = timelineStartSec + effectiveTargetDuration;
+
+    // 자막은 나레이션 길이만큼만 표시 (장면 클립은 전체 구간 유지)
+    const subtitleEndSec = timelineStartSec + Math.min(effectiveTargetDuration, narrationDurationSec);
 
     const applySceneTime = (seg: LayeredSubtitleSegment): LayeredSubtitleSegment => ({
       ...seg,
       startTime: timelineStartSec,
-      endTime: timelineEndSec,
+      endTime: subtitleEndSec,
     });
 
     sourceCursor = sourceEndSec;
@@ -208,10 +225,10 @@ export function buildNarrationSyncedTimeline(
       sourceEndSec,
       sourceDurationSec,
       narrationDurationSec,
-      targetDurationSec: fit.targetDurationSec,
+      targetDurationSec: effectiveTargetDuration,
       autoSpeedFactor: fit.autoSpeedFactor,
       trimStartSec: fit.trimStartSec,
-      trimEndSec: fit.trimEndSec,
+      trimEndSec: effectiveTrimEnd,
       timelineStartSec,
       timelineEndSec,
       subtitleSegments: layered[sceneIndex].subtitleSegments.map(applySceneTime),

@@ -142,9 +142,9 @@ function hasLandscapeAspect(width: number, height: number): boolean {
 }
 
 function getSubtitleOrigin(width: number, height: number): { main: string; effect: string } {
-  // 9:16(숏폼): 얼굴 영역(중상단) 회피를 위해 하단 고정
+  // 9:16(숏폼): 상하좌우 정중앙 배치
   if (!hasLandscapeAspect(width, height)) {
-    return { main: '0 -0.38', effect: '0 -0.2' };
+    return { main: '0 0', effect: '0 -0.2' };
   }
   // 16:9(롱폼): 표준 lower-third
   return { main: '0 -0.35', effect: '0 -0.17' };
@@ -163,6 +163,21 @@ function breakLines(text: string, maxChars: number = 14): string {
 
 function normalizePlainSubtitleText(text: string): string {
   return text.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * 기본(dialogue) 자막 전용 텍스트 정제
+ * - (나레이션), (내레이션) 등 마커 제거
+ * - 구두점·특수문자 제거
+ * - 순수한 자막 텍스트만 남김
+ */
+function cleanDialogueSubtitleText(text: string): string {
+  return text
+    .replace(/\([^)]*[나내]레이션[^)]*\)/gi, '')
+    .replace(/\(narration\)/gi, '')
+    .replace(/[.,!?;:…·ㆍ，。！？、~～""''「」『』\u2026]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function normalizeBrokenSubtitleText(text: string, maxChars = 12): string {
@@ -224,10 +239,13 @@ function getDialogueSubtitleText(
 ): string {
   const override = overrideMap?.get(segment.lineId);
   if (override) {
-    const normalized = normalizeBrokenSubtitleText(override, maxChars);
+    const cleaned = cleanDialogueSubtitleText(override);
+    const normalized = normalizeBrokenSubtitleText(cleaned, maxChars);
     if (normalized) return normalized;
   }
-  return breakDialogueLines(segment.text, maxChars);
+  const cleaned = cleanDialogueSubtitleText(segment.text);
+  if (!cleaned) return '';
+  return breakDialogueLines(cleaned, maxChars);
 }
 
 function wrapEffectSubtitleText(text: string): string {
@@ -251,8 +269,9 @@ async function buildDialogueSubtitleOverrides(params: {
     .filter(segment => segment.text.trim())
     .map(segment => ({
       id: segment.lineId,
-      text: normalizePlainSubtitleText(segment.text),
-    }));
+      text: cleanDialogueSubtitleText(segment.text),
+    }))
+    .filter(item => item.text.length > 0);
 
   const fallbackMap: SubtitleTextOverrideMap = new Map(
     payload.map(({ id, text }) => [id, breakDialogueLines(text, maxChars)]),
@@ -317,7 +336,7 @@ function getPremiereCaptionLayout(
     return isPortrait
       ? {
           extent: '80% 50%',
-          fontSizePt: 65,
+          fontSizePt: 70,
           fontStyle: 'normal',
           fontWeight: 'bold',
           origin: '10% 25%',
@@ -399,7 +418,7 @@ function generatePremiereCaptionXml(params: {
 <tt xmlns="http://www.w3.org/ns/ttml" xmlns:tts="http://www.w3.org/ns/ttml#styling" xml:lang="ko">
   <head>
     <styling>
-      <style xml:id="${styleId}" tts:fontFamily="Arial" tts:fontSize="${layout.fontSizePt}pt" tts:fontStyle="${layout.fontStyle}" tts:fontWeight="${layout.fontWeight}" tts:textAlign="center" tts:color="${layout.textColor}" />
+      <style xml:id="${styleId}" tts:fontFamily="Apple SD Gothic Neo, AppleSDGothicNeo-Bold, Arial" tts:fontSize="${layout.fontSizePt}pt" tts:fontStyle="${layout.fontStyle}" tts:fontWeight="${layout.fontWeight}" tts:textAlign="center" tts:color="${layout.textColor}" />
       <style xml:id="${paragraphStyleId}" tts:textAlign="center" />
     </styling>
     <layout>
@@ -483,6 +502,41 @@ async function loadPremiereNativeTemplateXml(): Promise<string> {
   return premiereNativeTemplateXmlPromise;
 }
 
+/**
+ * .prproj 캡션 바이너리에서 폰트명을 패치
+ * "Paperlogy-4Regular" (18바이트) → "AppleSDGothicNeo" (17바이트 + 1 null = 18바이트)
+ * 동일 패딩 크기(20바이트)이므로 오프셋 변경 없이 안전하게 교체 가능
+ */
+function patchCaptionBinaryFont(data: Uint8Array, oldFont: string, newFont: string): Uint8Array {
+  const oldBytes = new TextEncoder().encode(oldFont);
+  const newBytes = new TextEncoder().encode(newFont);
+  if (newBytes.length > oldBytes.length) return data;
+
+  let pos = -1;
+  outer: for (let i = 0; i <= data.length - oldBytes.length; i++) {
+    for (let j = 0; j < oldBytes.length; j++) {
+      if (data[i + j] !== oldBytes[j]) continue outer;
+    }
+    pos = i;
+    break;
+  }
+  if (pos === -1) return data;
+
+  const result = new Uint8Array(data);
+  result.set(newBytes, pos);
+  for (let i = pos + newBytes.length; i < pos + oldBytes.length; i++) {
+    result[i] = 0;
+  }
+  if (pos >= 4) {
+    new DataView(result.buffer).setUint32(pos - 4, newBytes.length, true);
+  }
+  return result;
+}
+
+const PREMIERE_CAPTION_FONT_OLD_PORTRAIT = 'Paperlogy-4Regular';
+const PREMIERE_CAPTION_FONT_OLD_LANDSCAPE = 'S-CoreDream-9Black';
+const PREMIERE_CAPTION_FONT_NEW = 'AppleSDGothicNeo';
+
 function getPremiereCaptionBinarySpec(width = 1080, height = 1920): {
   prefixBytes: Uint8Array;
   styleBase64: string;
@@ -490,16 +544,24 @@ function getPremiereCaptionBinarySpec(width = 1080, height = 1920): {
   textStartOffset: number;
 } {
   if (!hasLandscapeAspect(width, height)) {
+    const rawPrefix = decodeBase64ToBytes(PREMIERE_PORTRAIT_CAPTION_PREFIX_BASE64);
+    const patchedPrefix = patchCaptionBinaryFont(rawPrefix, PREMIERE_CAPTION_FONT_OLD_PORTRAIT, PREMIERE_CAPTION_FONT_NEW);
+    const rawStyle = decodeBase64ToBytes(PREMIERE_PORTRAIT_CAPTION_TEMPLATE_STYLE_BASE64);
+    const patchedStyle = patchCaptionBinaryFont(rawStyle, PREMIERE_CAPTION_FONT_OLD_PORTRAIT, PREMIERE_CAPTION_FONT_NEW);
     return {
-      prefixBytes: decodeBase64ToBytes(PREMIERE_PORTRAIT_CAPTION_PREFIX_BASE64),
-      styleBase64: PREMIERE_PORTRAIT_CAPTION_TEMPLATE_STYLE_BASE64,
+      prefixBytes: patchedPrefix,
+      styleBase64: encodeBytesToBase64(patchedStyle),
       textLengthOffset: 464,
       textStartOffset: 468,
     };
   }
+  const rawPrefix = decodeBase64ToBytes(PREMIERE_LANDSCAPE_CAPTION_PREFIX_BASE64);
+  const patchedPrefix = patchCaptionBinaryFont(rawPrefix, PREMIERE_CAPTION_FONT_OLD_LANDSCAPE, PREMIERE_CAPTION_FONT_NEW);
+  const rawStyle = decodeBase64ToBytes(PREMIERE_LANDSCAPE_CAPTION_TEMPLATE_STYLE_BASE64);
+  const patchedStyle = patchCaptionBinaryFont(rawStyle, PREMIERE_CAPTION_FONT_OLD_LANDSCAPE, PREMIERE_CAPTION_FONT_NEW);
   return {
-    prefixBytes: decodeBase64ToBytes(PREMIERE_LANDSCAPE_CAPTION_PREFIX_BASE64),
-    styleBase64: PREMIERE_LANDSCAPE_CAPTION_TEMPLATE_STYLE_BASE64,
+    prefixBytes: patchedPrefix,
+    styleBase64: encodeBytesToBase64(patchedStyle),
     textLengthOffset: 496,
     textStartOffset: 500,
   };
@@ -1007,11 +1069,15 @@ async function generatePremiereNativeProjectBytes(params: {
   }
 
   const sourceMedia = getPremiereObjectByUid(doc, 'a2a84544-e9d2-49c2-87e5-23116e78d0fb');
-  setPremiereChildText(doc, sourceMedia, 'RelativePath', `./media/${safeVideoName}`);
+  setPremiereChildText(doc, sourceMedia, 'RelativePath', `media/${safeVideoName}`);
   setPremiereChildText(doc, sourceMedia, 'FilePath', `media/${safeVideoName}`);
   setPremiereChildText(doc, sourceMedia, 'ActualMediaFilePath', `media/${safeVideoName}`);
   setPremiereChildText(doc, sourceMedia, 'Title', safeVideoName);
   setPremiereChildText(doc, sourceMedia, 'FileKey', premiereUuid());
+  // [FIX] 템플릿 잔여 절대경로 제거 — 미디어 재링크 실패 원인
+  removePremiereChild(sourceMedia, 'AlternateMediaFilePath');
+  removePremiereChild(sourceMedia, 'ImporterPrefs');
+  removePremiereChild(sourceMedia, 'MediaLocatorInfo');
 
   const sourceVideoStream = getPremiereObjectById(doc, '330');
   setPremiereChildText(doc, sourceVideoStream, 'Duration', String(sourceDurationTicks));
@@ -1346,7 +1412,7 @@ async function generatePremiereNativeProjectBytes(params: {
       setPremiereChildText(doc, narrationMediaSource, 'OriginalDuration', String(narrationDurationTicks));
 
       setPremiereObjectRef(getPremiereDirectChild(narrationMasterSecondaryContent, 'Content')!, narrationMediaSource.getAttribute('ObjectID') || '');
-      setPremiereChildText(doc, narrationMedia, 'RelativePath', `./audio/${narrationFileName}`);
+      setPremiereChildText(doc, narrationMedia, 'RelativePath', `audio/${narrationFileName}`);
       setPremiereChildText(doc, narrationMedia, 'FilePath', `audio/${narrationFileName}`);
       setPremiereChildText(doc, narrationMedia, 'ActualMediaFilePath', `audio/${narrationFileName}`);
       setPremiereChildText(doc, narrationMedia, 'Title', narrationFileName);
@@ -2816,7 +2882,7 @@ export function generateFcpXml(params: {
 
   // ── V2/V3 그래픽 자막 트랙 (Premiere subtitle XML 전환 시 비활성화 가능) ──
   const isShorts = !hasLandscapeAspect(width, height);
-  const dialogueFontSize = isShorts ? 65 : 42;
+  const dialogueFontSize = isShorts ? 70 : 42;
   const subtitleClips = includeGraphicSubtitleTracks
     ? nsTimings
         .filter(t => t.subtitleSegments.some(segment => segment.text.trim()))
@@ -2824,16 +2890,22 @@ export function generateFcpXml(params: {
           const displayText = t.subtitleSegments
             .filter(segment => segment.text.trim())
             .map(segment => getDialogueSubtitleText(segment, dialogueLineBreaks))
+            .filter(Boolean)
             .join('\n');
+          if (!displayText) return '';
+          // 자막 타이밍 = subtitleSegments 기반 (나레이션 길이, 장면 전체가 아님)
+          const subStart = t.subtitleSegments[0]?.startTime ?? t.timelineStartSec;
+          const subEnd = t.subtitleSegments[0]?.endTime ?? t.timelineEndSec;
+          const subDurSec = Math.max(0.1, subEnd - subStart);
           return `
           <generatoritem id="sub-${t.sceneIndex + 1}">
             <name>${escXml(displayText.replace(/\n/g, ' ').slice(0, 40))}</name>
-            <duration>${toFrames(t.targetDurationSec)}</duration>
+            <duration>${toFrames(subDurSec)}</duration>
             <rate><ntsc>${ntscStr}</ntsc><timebase>${timebase}</timebase></rate>
             <in>0</in>
-            <out>${toFrames(t.targetDurationSec)}</out>
-            <start>${toFrames(t.timelineStartSec)}</start>
-            <end>${toFrames(t.timelineEndSec)}</end>
+            <out>${toFrames(subDurSec)}</out>
+            <start>${toFrames(subStart)}</start>
+            <end>${toFrames(subEnd)}</end>
             <enabled>TRUE</enabled>
             <anamorphic>FALSE</anamorphic>
             <alphatype>black</alphatype>
@@ -2844,13 +2916,14 @@ export function generateFcpXml(params: {
               <effecttype>generator</effecttype>
               <mediatype>video</mediatype>
               <parameter><parameterid>str</parameterid><name>Text</name><value>${escXml(displayText)}</value></parameter>
+              <parameter><parameterid>font</parameterid><name>Font</name><value>Apple SD Gothic Neo</value></parameter>
               <parameter><parameterid>fontsize</parameterid><name>Font Size</name><value>${dialogueFontSize}</value></parameter>
               <parameter><parameterid>fontstyle</parameterid><name>Font Style</name><value>1</value></parameter>
               <parameter><parameterid>fontcolor</parameterid><name>Font Color</name><value>16777215</value></parameter>
               <parameter><parameterid>origin</parameterid><name>Origin</name><value>${subtitleOrigin.main}</value></parameter>
             </effect>
           </generatoritem>`;
-        }).join('')
+        }).filter(Boolean).join('')
     : '';
 
   const effectSubClips = includeGraphicSubtitleTracks
@@ -3670,6 +3743,7 @@ export function generateNleSrt(
       const lineText = (layer === 'dialogue' || layer === 'narration')
         ? getDialogueSubtitleText(seg, dialogueLineBreaks)
         : (wrapEffectWithParentheses ? wrapEffectSubtitleText(breakLines(seg.text)) : breakLines(seg.text));
+      if (!lineText) continue;
       entries.push(`${idx}\n${secondsToSrtTime(srtStart)} --> ${secondsToSrtTime(srtEnd)}\n${lineText}`);
       idx++;
     }

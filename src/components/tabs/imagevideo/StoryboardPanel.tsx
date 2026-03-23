@@ -2537,39 +2537,42 @@ const StoryboardPanel: React.FC = () => {
       )}
 
       {/* Header + actions */}
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-3">
-          <h2 className="text-2xl font-bold text-white">
-            스토리보드 <span className="text-gray-400 text-lg font-normal">({totalScenes}개)</span>
-          </h2>
+      <div className="mb-4 space-y-2">
+        {/* Row 1: Title + View mode */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <h2 className="text-2xl font-bold text-white whitespace-nowrap">
+              스토리보드 <span className="text-gray-400 text-lg font-normal">({totalScenes}개)</span>
+            </h2>
+            {/* View mode toggle */}
+            <div className="flex gap-1 bg-gray-800 rounded-lg p-0.5 border border-gray-700">
+              <button
+                type="button"
+                onClick={() => setViewMode('preview')}
+                className={`px-2 py-1 text-xs rounded transition-colors whitespace-nowrap ${viewMode === 'preview' ? 'bg-orange-600 text-white' : 'text-gray-400 hover:text-gray-200'}`}
+              >
+                미리보기
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode('grid')}
+                className={`px-2 py-1 text-xs rounded transition-colors whitespace-nowrap ${viewMode === 'grid' ? 'bg-orange-600 text-white' : 'text-gray-400 hover:text-gray-200'}`}
+              >
+                그리드
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode('list')}
+                className={`px-2 py-1 text-xs rounded transition-colors whitespace-nowrap ${viewMode === 'list' ? 'bg-orange-600 text-white' : 'text-gray-400 hover:text-gray-200'}`}
+              >
+                리스트
+              </button>
+            </div>
+          </div>
         </div>
 
-        {/* Action buttons */}
-        <div className="flex items-center gap-2">
-          {/* View mode toggle */}
-          <div className="flex gap-1 bg-gray-800 rounded-lg p-0.5 border border-gray-700">
-            <button
-              type="button"
-              onClick={() => setViewMode('preview')}
-              className={`px-2 py-1 text-xs rounded transition-colors ${viewMode === 'preview' ? 'bg-orange-600 text-white' : 'text-gray-400 hover:text-gray-200'}`}
-            >
-              미리보기
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewMode('grid')}
-              className={`px-2 py-1 text-xs rounded transition-colors ${viewMode === 'grid' ? 'bg-orange-600 text-white' : 'text-gray-400 hover:text-gray-200'}`}
-            >
-              그리드
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewMode('list')}
-              className={`px-2 py-1 text-xs rounded transition-colors ${viewMode === 'list' ? 'bg-orange-600 text-white' : 'text-gray-400 hover:text-gray-200'}`}
-            >
-              리스트
-            </button>
-          </div>
+        {/* Row 2: Action buttons (wrappable) */}
+        <div className="flex flex-wrap items-center gap-2">
           {/* [#344] 전체 선택 체크박스 */}
           {totalScenes > 0 && (
             <label className="flex items-center gap-1.5 cursor-pointer group">
@@ -2596,7 +2599,7 @@ const StoryboardPanel: React.FC = () => {
                 await navigator.clipboard.writeText(promptText);
                 showToast(`${scenes.length}개 장면의 프롬프트가 복사되었습니다.`);
               }}
-              className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs font-medium rounded-lg border border-gray-600 transition-colors flex items-center gap-1.5"
+              className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs font-medium rounded-lg border border-gray-600 transition-colors flex items-center gap-1.5 whitespace-nowrap"
             >
               📋 프롬프트 복사
             </button>
@@ -2608,9 +2611,9 @@ const StoryboardPanel: React.FC = () => {
                 type="button"
                 onClick={() => batchUploadRef.current?.click()}
                 disabled={isAnyBatchRunning}
-                className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed text-gray-300 text-xs font-medium rounded-lg border border-gray-600 transition-colors flex items-center gap-1.5"
+                className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed text-gray-300 text-xs font-medium rounded-lg border border-gray-600 transition-colors flex items-center gap-1.5 whitespace-nowrap"
               >
-                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
+                <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
                 일괄 업로드
               </button>
               <input
@@ -2646,7 +2649,7 @@ const StoryboardPanel: React.FC = () => {
                 showToast('저장 실패: ' + (e instanceof Error ? e.message : String(e)));
               }
             }}
-            className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs font-medium rounded-lg border border-gray-600 transition-colors flex items-center gap-1.5"
+            className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs font-medium rounded-lg border border-gray-600 transition-colors flex items-center gap-1.5 whitespace-nowrap"
           >
             {totalScenes >= 30 ? '📦 스토리보드 저장' : '💾 스토리보드 저장'}
           </button>
@@ -2654,7 +2657,7 @@ const StoryboardPanel: React.FC = () => {
             type="button"
             onClick={handleCopyAllScripts}
             disabled={!allSceneScriptText}
-            className="px-3 py-1.5 bg-orange-600/20 hover:bg-orange-600/30 disabled:opacity-40 disabled:cursor-not-allowed text-orange-300 text-xs font-medium rounded-lg border border-orange-500/40 transition-colors flex items-center gap-1.5"
+            className="px-3 py-1.5 bg-orange-600/20 hover:bg-orange-600/30 disabled:opacity-40 disabled:cursor-not-allowed text-orange-300 text-xs font-medium rounded-lg border border-orange-500/40 transition-colors flex items-center gap-1.5 whitespace-nowrap"
           >
             {isAllScriptCopied ? '✅ 복사됨!' : '📋 대본 복사'}
           </button>
@@ -2664,7 +2667,7 @@ const StoryboardPanel: React.FC = () => {
               type="button"
               onClick={() => setShowDownloadDropdown(!showDownloadDropdown)}
               disabled={!hasDownloadActions}
-              className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed text-gray-300 text-xs font-medium rounded-lg border border-gray-600 transition-colors flex items-center gap-1.5"
+              className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed text-gray-300 text-xs font-medium rounded-lg border border-gray-600 transition-colors flex items-center gap-1.5 whitespace-nowrap"
             >
               ⬇️ 다운로드
               <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7"/></svg>
@@ -2814,7 +2817,7 @@ const StoryboardPanel: React.FC = () => {
               type="button"
               onClick={() => videoBatch.retryFailedBatch()}
               disabled={isAnyBatchRunning}
-              className="px-3 py-1.5 bg-red-600/15 hover:bg-red-600/25 disabled:opacity-40 disabled:cursor-not-allowed text-red-300 text-xs font-medium rounded-lg border border-red-500/40 transition-colors flex items-center gap-1.5"
+              className="px-3 py-1.5 bg-red-600/15 hover:bg-red-600/25 disabled:opacity-40 disabled:cursor-not-allowed text-red-300 text-xs font-medium rounded-lg border border-red-500/40 transition-colors flex items-center gap-1.5 whitespace-nowrap"
             >
               <span className="w-2 h-2 rounded-full bg-red-400" />
               실패한 영상 {failedVideoCount}개 재시도
@@ -2825,7 +2828,7 @@ const StoryboardPanel: React.FC = () => {
               type="button"
               onClick={() => setShowGenDropdown(!showGenDropdown)}
               disabled={totalScenes === 0 || isAnyBatchRunning}
-              className="bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-base font-bold px-4 py-2.5 rounded-lg transition-all shadow-lg flex items-center gap-1.5"
+              className="bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-bold px-4 py-2 rounded-lg transition-all shadow-lg flex items-center gap-1.5 whitespace-nowrap"
             >
               {isAnyBatchRunning ? (
                 <><span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> 생성 중...{elapsedBatch > 0 && <span className="text-xs text-white/60 tabular-nums">{formatElapsed(elapsedBatch)}</span>}</>
@@ -3001,16 +3004,14 @@ const StoryboardPanel: React.FC = () => {
               </div>
             )}
           </div>
-        </div>
-        {/* 편집실로 이동 — 이미지/영상 생성 버튼과 같은 행, 같은 크기 */}
-        <div className="flex justify-end mt-2">
+          {/* 편집실로 이동 */}
           <button
             type="button"
             onClick={() => useNavigationStore.getState().setActiveTab('edit-room')}
-            className="bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white text-base font-bold px-6 py-2.5 rounded-lg transition-all shadow-lg shadow-amber-500/20 flex items-center gap-2"
+            className="bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white text-sm font-bold px-4 py-2 rounded-lg transition-all shadow-lg shadow-amber-500/20 flex items-center gap-2 whitespace-nowrap ml-auto"
           >
             편집실로 이동
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
+            <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
           </button>
         </div>
       </div>
