@@ -458,12 +458,12 @@ const SceneCard: React.FC<SceneCardProps> = ({ scene, index, onUpdatePrompt, onD
             onClick={() => onSeedanceVideo(scene.id)} />
           <button type="button" title="Seedance 4초/8초/12초 전환"
             onClick={() => useProjectStore.getState().updateScene(scene.id, { seedanceDuration: getNextSeedanceDuration((scene.seedanceDuration || '8') as SeedanceDuration) })}
-            className="h-7 px-1.5 rounded-lg border border-orange-500/30 bg-orange-600/10 text-[10px] font-bold text-orange-300 hover:bg-orange-600/20 transition-all">
+            className="h-7 px-1.5 rounded-lg border border-orange-500/30 bg-orange-600/10 text-[10px] font-bold text-orange-300 hover:bg-orange-600/20 transition-all whitespace-nowrap">
             {(scene.seedanceDuration || '8')}s
           </button>
           <button type="button" title="Grok 6초/10초 전환"
             onClick={() => useProjectStore.getState().updateScene(scene.id, { grokDuration: scene.grokDuration === '6' ? '10' : '6' })}
-            className="h-7 px-1.5 rounded-lg border border-pink-500/20 bg-pink-600/10 text-[10px] font-bold text-pink-300 hover:bg-pink-600/20 transition-all">
+            className="h-7 px-1.5 rounded-lg border border-pink-500/20 bg-pink-600/10 text-[10px] font-bold text-pink-300 hover:bg-pink-600/20 transition-all whitespace-nowrap">
             {scene.grokDuration === '6' ? '6s' : '10s'}
           </button>
           <ActionButton label={scene.grokSpeechMode ? '나레이션' : 'SFX'} color="fuchsia"
@@ -761,7 +761,7 @@ const GridSceneCard: React.FC<GridSceneCardProps> = ({ scene, index, onRegenerat
                 title={scene.isInfographic ? '📊 인포그래픽 ON (클릭하여 끄기)' : '📊 인포그래픽 OFF (클릭하여 켜기)'} />
             )}
           </div>
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1 flex-wrap">
             <ActionButton label={enableGoogleReference ? (scene.imageUrl ? '재검색' : '검색') : '이미지'} color="orange" compact
               tooltip={enableGoogleReference ? getReferenceActionTooltip(scene) : '이미지 생성'} disabled={scene.isGeneratingImage}
               icon={<svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>}
@@ -778,7 +778,7 @@ const GridSceneCard: React.FC<GridSceneCardProps> = ({ scene, index, onRegenerat
               onClick={(e) => { e.stopPropagation(); onSeedanceVideo(scene.id); }} />
             <button type="button"
               onClick={(e) => { e.stopPropagation(); useProjectStore.getState().updateScene(scene.id, { seedanceDuration: getNextSeedanceDuration((scene.seedanceDuration || '8') as SeedanceDuration) }); }}
-              className="h-7 px-1.5 rounded-lg border border-orange-500/30 bg-orange-600/10 text-[10px] font-bold text-orange-300 hover:bg-orange-600/20 transition-all"
+              className="h-7 px-1.5 rounded-lg border border-orange-500/30 bg-orange-600/10 text-[10px] font-bold text-orange-300 hover:bg-orange-600/20 transition-all whitespace-nowrap"
               title="Seedance 4초/8초/12초 전환">
               {(scene.seedanceDuration || '8')}s
             </button>
