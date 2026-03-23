@@ -15,7 +15,7 @@ const express = require('express');
 const helmet = require('helmet');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
-const { execFile } = require('child_process');
+const { execFile, spawn } = require('child_process');
 
 // ──────────────────────────────────────────────
 // 환경변수
@@ -496,6 +496,8 @@ async function extractStreamUrl(videoId, quality, requestRuntime = null) {
       return {
         url: videoFormat ? videoFormat.url : streamUrl,
         audioUrl: audioFormat ? audioFormat.url : null,
+        audioCodec: audioFormat ? audioFormat.acodec : null,
+        audioExt: audioFormat ? audioFormat.ext : null,
         title: info.title || '',
         duration: info.duration || 0,
         thumbnail: info.thumbnail || '',
@@ -510,6 +512,8 @@ async function extractStreamUrl(videoId, quality, requestRuntime = null) {
     return {
       url: streamUrl,
       audioUrl: null,
+      audioCodec: null,
+      audioExt: null,
       title: info.title || '',
       duration: info.duration || 0,
       thumbnail: info.thumbnail || '',
@@ -849,14 +853,18 @@ app.get('/api/info', authMiddleware, async (req, res) => {
 });
 
 /**
- * GET /api/download?url=VIDEO_ID&quality=720p
+ * GET /api/download?url=VIDEO_ID&quality=720p[&videoOnly=true]
  * 영상을 서버에서 다운로드하여 브라우저로 스트리밍합니다.
  * (브라우저 CORS 제약 우회용 프록시)
+ *
+ * [FIX] videoOnly=true가 아닌 경우, 비디오+오디오 분리 스트림을
+ *       ffmpeg로 머지하여 오디오 포함 MP4를 반환합니다.
  */
 app.get('/api/download', authMiddleware, async (req, res) => {
   const requestRuntime = createRequestRuntime(req);
   const url = req.query.url;
   const quality = req.query.quality || '720p';
+  const videoOnly = req.query.videoOnly === 'true';
 
   if (!url) {
     return res.status(400).json({ error: 'url 파라미터가 필요합니다' });
@@ -885,9 +893,117 @@ app.get('/api/download', authMiddleware, async (req, res) => {
       return res.status(500).json({ error: '스트림 URL 추출 실패' });
     }
 
-    log('info', `Proxy download: ${videoId} (${quality})`);
+    const safeTitle = (result.title || videoId).replace(/[^a-zA-Z0-9가-힣\s._-]/g, '').substring(0, 80);
 
-    // YouTube CDN에서 가져와서 브라우저로 파이프
+    // ── [FIX] 비디오+오디오 분리 스트림 → ffmpeg 머지 파이프 ──
+    // videoOnly가 아니고, audio 전용도 아니고, audioUrl이 있으면 머지
+    if (!videoOnly && quality !== 'audio' && result.audioUrl) {
+      // 오디오 코덱 확인: m4a/AAC가 아니면 AAC로 재인코딩 (Opus/WebM → MP4 호환 보장)
+      const audioIsCopyable = result.audioExt === 'm4a' || (result.audioCodec && result.audioCodec.startsWith('mp4a'));
+      const audioCodecArgs = audioIsCopyable ? ['-c:a', 'copy'] : ['-c:a', 'aac', '-b:a', '128k'];
+      log('info', `Merge download: ${videoId} (${quality}) — ffmpeg video+audio (audioCopy=${audioIsCopyable}, audioCodec=${result.audioCodec || 'unknown'}, audioExt=${result.audioExt || 'unknown'})`);
+
+      const ffmpegPath = process.env.FFMPEG_PATH || 'ffmpeg';
+      const ffmpegArgs = [
+        '-hide_banner', '-loglevel', 'error',
+        '-i', streamUrl,         // 비디오 스트림
+        '-i', result.audioUrl,   // 오디오 스트림
+        '-map', '0:v:0',         // 첫 번째 입력에서 비디오 트랙만
+        '-map', '1:a:0',         // 두 번째 입력에서 오디오 트랙만
+        '-c:v', 'copy',          // 비디오 코덱 복사 (재인코딩 없음)
+        ...audioCodecArgs,       // 오디오: copy(AAC) 또는 aac 128k(Opus 등)
+        '-f', 'mp4',
+        '-movflags', 'frag_keyframe+empty_moov+default_base_moof',  // 파이프 스트리밍용 fragmented MP4
+        'pipe:1',
+      ];
+
+      const ffmpegProc = spawn(ffmpegPath, ffmpegArgs, {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        shell: false,  // 명시적으로 shell 비활성 (보안)
+      });
+
+      // stderr 버퍼: 마지막 2KB만 유지 (무한 증가 방지)
+      let ffmpegStderr = '';
+      ffmpegProc.stderr.on('data', (chunk) => {
+        ffmpegStderr = (ffmpegStderr + chunk.toString()).slice(-2048);
+      });
+
+      res.setHeader('Content-Type', 'video/mp4');
+      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(safeTitle)}.mp4"`);
+
+      ffmpegProc.stdout.pipe(res);
+
+      // 타임아웃: 5분 (대용량 영상 머지 고려)
+      const mergeTimeout = setTimeout(() => {
+        log('warn', `ffmpeg merge timeout (5m): ${videoId}`);
+        ffmpegProc.kill('SIGKILL');
+      }, 300000);
+
+      await new Promise((resolve) => {
+        let settled = false;
+        let detachAbortHandler = () => {};
+        let escalationTimer = null;
+
+        const finalize = () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(mergeTimeout);
+          if (escalationTimer) clearTimeout(escalationTimer);
+          detachAbortHandler();
+          resolve();
+        };
+
+        // SIGTERM → 3초 후 SIGKILL 에스컬레이션 (좀비 프로세스 방지)
+        const killWithEscalation = () => {
+          if (ffmpegProc.exitCode !== null || ffmpegProc.killed) return;
+          try { ffmpegProc.kill('SIGTERM'); } catch {}
+          escalationTimer = setTimeout(() => {
+            try { ffmpegProc.kill('SIGKILL'); } catch {}
+          }, 3000);
+        };
+
+        detachAbortHandler = requestRuntime.addAbortHandler(() => {
+          killWithEscalation();
+          finalize();
+        });
+
+        ffmpegProc.on('close', (code, signal) => {
+          if (code !== 0 && signal === null) {
+            // 자체 에러로 종료 (시그널이 아님) → 응답 강제 종료
+            log('warn', `ffmpeg exited ${code} for ${videoId} (${quality}): ${ffmpegStderr.slice(-200)}`);
+            if (res.headersSent && !res.writableEnded) {
+              res.destroy();
+            }
+          } else if (signal) {
+            log('info', `ffmpeg killed by ${signal}: ${videoId}`);
+          } else {
+            log('info', `Merge complete: ${videoId} (${quality})`);
+          }
+          finalize();
+        });
+
+        ffmpegProc.on('error', (err) => {
+          log('error', `ffmpeg spawn error for ${videoId}: ${err.message}`);
+          if (!res.headersSent) {
+            res.status(500).json({ error: 'ffmpeg를 실행할 수 없습니다' });
+          } else if (!res.writableEnded) {
+            res.destroy();
+          }
+          finalize();
+        });
+
+        res.on('close', () => {
+          killWithEscalation();
+          finalize();
+        });
+      });
+
+      return;
+    }
+
+    // ── 단일 스트림 프록시 (videoOnly / audio / 이미 머지된 스트림) ──
+    log('info', `Proxy download: ${videoId} (${quality}, videoOnly=${videoOnly})`);
+
     const https = require('https');
     const http = require('http');
     const protocol = streamUrl.startsWith('https') ? https : http;
@@ -925,7 +1041,6 @@ app.get('/api/download', authMiddleware, async (req, res) => {
           return;
         }
 
-        const safeTitle = (result.title || videoId).replace(/[^a-zA-Z0-9가-힣\s._-]/g, '').substring(0, 80);
         res.setHeader('Content-Type', 'video/mp4');
         res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(safeTitle)}.mp4"`);
         if (upstream.headers['content-length']) {
