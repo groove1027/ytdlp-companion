@@ -192,19 +192,12 @@ export function buildNarrationSyncedTimeline(
     const narrationDurationSec = narrationLines[sceneIndex]?.duration ?? sourceDurationSec;
     const fit = fitSceneMediaToNarration(sourceDurationSec, narrationDurationSec);
 
-    // 편집점 고도화: 명시적 나레이션 시작점이 없으면 소스 타임코드 전체 구간 사용
-    // (명시적 시작점이 있으면 겹침 방지를 위해 나레이션 기반 타이밍 유지)
-    const hasExplicitNarrationStart = typeof narrationLines[sceneIndex]?.startTime === 'number'
-      && Number.isFinite(narrationLines[sceneIndex]!.startTime!);
+    // 편집점 고도화: 소스 타임코드 전체 구간 사용 (나레이션 길이로 트림하지 않음)
+    // 장면은 항상 순차 배치 — 소스 영상의 편집점과 정확히 일치하도록 보장
+    const effectiveTargetDuration = Math.max(fit.targetDurationSec, sourceDurationSec);
+    const effectiveTrimEnd = sourceDurationSec;
 
-    const effectiveTargetDuration = hasExplicitNarrationStart
-      ? fit.targetDurationSec
-      : Math.max(fit.targetDurationSec, sourceDurationSec);
-    const effectiveTrimEnd = hasExplicitNarrationStart
-      ? fit.trimEndSec
-      : sourceDurationSec;
-
-    const timelineStartSec = narrationLines[sceneIndex]?.startTime ?? timelineCursor;
+    const timelineStartSec = timelineCursor;
     const timelineEndSec = timelineStartSec + effectiveTargetDuration;
 
     // 자막은 나레이션 길이만큼만 표시 (장면 클립은 전체 구간 유지)

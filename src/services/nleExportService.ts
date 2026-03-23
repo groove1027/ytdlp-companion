@@ -503,9 +503,9 @@ async function loadPremiereNativeTemplateXml(): Promise<string> {
 }
 
 /**
- * .prproj 캡션 바이너리에서 폰트명을 패치
- * "Paperlogy-4Regular" (18바이트) → "AppleSDGothicNeo" (17바이트 + 1 null = 18바이트)
- * 동일 패딩 크기(20바이트)이므로 오프셋 변경 없이 안전하게 교체 가능
+ * .prproj 캡션 바이너리에서 폰트명을 패치 (내장 템플릿 전용)
+ * "Paperlogy-4Regular" (18바이트) → "AppleSDGothicNeo" (16바이트 + 2 null = 18바이트)
+ * newFont.length <= oldFont.length 조건에서만 안전 (오프셋 변경 없음)
  */
 function patchCaptionBinaryFont(data: Uint8Array, oldFont: string, newFont: string): Uint8Array {
   const oldBytes = new TextEncoder().encode(oldFont);
@@ -1367,11 +1367,14 @@ async function generatePremiereNativeProjectBytes(params: {
   narrationLines
     .filter(line => !!line.audioFileName)
     .forEach((line) => {
-      const narrationStartTicks = secondsToPremiereTicks(line.startTime || 0);
+      // [FIX] 나레이션 타임라인 배치: sync timeline의 장면 시작점 사용
+      const lineIndex = narrationLines.indexOf(line);
+      const sceneTimelineStart = timings[lineIndex]?.timelineStartSec ?? line.startTime ?? 0;
+      const narrationStartTicks = secondsToPremiereTicks(sceneTimelineStart);
       const narrationEndTicks = secondsToPremiereTicks(
         line.endTime != null
           ? line.endTime
-          : (line.startTime || 0) + Math.max(0.1, line.duration || 0),
+          : sceneTimelineStart + Math.max(0.1, line.duration || 0),
       );
       const narrationDurationTicks = Math.max(frameDurationTicks, narrationEndTicks - narrationStartTicks);
       const narrationFileName = sanitizeFileName(line.audioFileName || 'narration.mp3');
@@ -2660,12 +2663,15 @@ export function buildVideoAnalysisNarrationLines(params: {
       ? matchedLine.endTime - matchedLine.startTime
       : null;
     const duration = explicitDuration ?? inferredDuration ?? fallbackDuration;
-    const startTime = typeof matchedLine?.startTime === 'number' && Number.isFinite(matchedLine.startTime)
+    // [FIX] 소스 타임코드(timing.startSec)를 startTime 폴백으로 사용하지 않음
+    // startTime은 TTS 나레이션의 실제 타임라인 위치만 전달해야 함
+    // 소스 타임코드를 넣으면 buildNarrationSyncedTimeline에서 잘못된 타임라인 시작점이 됨
+    const ttsStartTime = typeof matchedLine?.startTime === 'number' && Number.isFinite(matchedLine.startTime)
       ? matchedLine.startTime
-      : timing?.startSec;
+      : undefined;
 
     if (!matchedLine?.audioUrl) {
-      return { duration: fallbackDuration, index: sceneIndex, startTime };
+      return { duration: fallbackDuration, index: sceneIndex, startTime: undefined };
     }
 
     return {
@@ -2673,7 +2679,7 @@ export function buildVideoAnalysisNarrationLines(params: {
       duration: Math.max(0.1, duration),
       index: sceneIndex,
       sceneId: matchedLine.sceneId,
-      startTime,
+      startTime: ttsStartTime,
     };
   });
 }
@@ -3062,8 +3068,10 @@ export function generateFcpXml(params: {
     return `
         <track>
           <outputchannelindex>1</outputchannelindex>${narClips.map((line, i) => {
-      const startSec = line.startTime ?? nsTimings[i]?.timelineStartSec ?? 0;
-      const durationSec = Math.max(0.1, line.duration ?? nsTimings[i]?.targetDurationSec ?? 3);
+      // [FIX] 원본 배열 인덱스로 sync timeline 참조 (filter 후 i != 장면 인덱스)
+      const origIndex = narrationLines.indexOf(line);
+      const startSec = nsTimings[origIndex]?.timelineStartSec ?? line.startTime ?? 0;
+      const durationSec = Math.max(0.1, line.duration ?? nsTimings[origIndex]?.targetDurationSec ?? 3);
       const durFrames = toFrames(durationSec);
       const startFrames = toFrames(startSec);
       return `
