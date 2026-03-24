@@ -1366,11 +1366,13 @@ const trialVeoProvider: VideoProvider = {
         if (!key) throw new Error('Google Gemini API 키가 필요합니다.');
 
         const url = `https://generativelanguage.googleapis.com/v1beta/models/veo-3.0-generate-001:predictLongRunning?key=${key}`;
+        // durationSeconds는 4~8 범위만 허용
+        const dur = Math.min(8, Math.max(4, Number(params.duration) || 8));
         const body: Record<string, unknown> = {
             instances: [{ prompt: params.prompt }],
             parameters: {
                 aspectRatio: params.aspectRatio === AspectRatio.PORTRAIT ? '9:16' : '16:9',
-                durationSeconds: Number(params.duration) || 8,
+                durationSeconds: dur,
             },
         };
 
@@ -1411,12 +1413,17 @@ const trialVeoProvider: VideoProvider = {
 
             const data = await res.json();
             if (data.done) {
-                const video = data.response?.generatedVideos?.[0];
-                const videoUri = video?.video?.uri;
-                if (videoUri) return videoUri;
-                // base64 응답인 경우
-                if (video?.video?.bytesBase64Encoded) {
-                    return `data:video/mp4;base64,${video.video.bytesBase64Encoded}`;
+                // 응답 구조: response.generateVideoResponse.generatedSamples[0].video.uri
+                const samples = data.response?.generateVideoResponse?.generatedSamples
+                    || data.response?.generatedVideos || [];
+                const video = samples[0]?.video;
+                if (video?.uri) {
+                    // URI에 API 키를 붙여서 다운로드 가능하게
+                    const downloadUrl = video.uri + (video.uri.includes('?') ? '&' : '?') + `key=${key}`;
+                    return downloadUrl;
+                }
+                if (video?.bytesBase64Encoded) {
+                    return `data:video/mp4;base64,${video.bytesBase64Encoded}`;
                 }
                 throw new Error('Veo 영상 생성은 완료되었지만 결과를 가져올 수 없습니다.');
             }

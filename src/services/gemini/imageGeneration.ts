@@ -262,7 +262,7 @@ export const generateSceneImage = async (
         updateStatus?.('Google Gemini 이미지 생성 중...');
         logger.info(`[Trial] Google Gemini 이미지 생성: ${prompt.substring(0, 80)}...`);
 
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-image-generation:generateContent?key=${googleKey}`;
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent?key=${googleKey}`;
         const res = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
