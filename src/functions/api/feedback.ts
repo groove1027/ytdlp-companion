@@ -36,6 +36,11 @@ function formatIssueBody(data: {
   breadcrumbs?: string;
   stateSnapshot?: string;
   autoScreenshotUrl?: string;
+  webVitals?: string;
+  reproductionSteps?: string;
+  interactionReplay?: string;
+  costSnapshot?: string;
+  detailedIdbSummary?: string;
 }): string {
   const date = new Date(data.timestamp).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' });
   const sections: string[] = [];
@@ -81,6 +86,65 @@ function formatIssueBody(data: {
     sections.push('');
     sections.push('```');
     sections.push(data.stateSnapshot.substring(0, 8000));
+    sections.push('```');
+    sections.push('</details>');
+  }
+
+  // ── 강화된 진단 데이터 ──
+
+  // Core Web Vitals
+  if (data.webVitals) {
+    sections.push('');
+    sections.push('### Core Web Vitals');
+    sections.push('```');
+    sections.push(data.webVitals.substring(0, 2000));
+    sections.push('```');
+  }
+
+  // 자동 생성 재현 단계
+  if (data.reproductionSteps) {
+    sections.push('');
+    sections.push('<details>');
+    sections.push('<summary><strong>자동 생성 재현 단계</strong> (클릭하여 펼치기)</summary>');
+    sections.push('');
+    sections.push('```');
+    sections.push(data.reproductionSteps.substring(0, 5000));
+    sections.push('```');
+    sections.push('</details>');
+  }
+
+  // 인터랙션 리플레이 (최근 60초)
+  if (data.interactionReplay) {
+    sections.push('');
+    sections.push('<details>');
+    sections.push('<summary><strong>인터랙션 리플레이 (최근 60초)</strong> (클릭하여 펼치기)</summary>');
+    sections.push('');
+    sections.push('```');
+    sections.push(data.interactionReplay.substring(0, 8000));
+    sections.push('```');
+    sections.push('</details>');
+  }
+
+  // 세션 비용 요약
+  if (data.costSnapshot) {
+    sections.push('');
+    sections.push('<details>');
+    sections.push('<summary><strong>세션 비용 요약</strong> (클릭하여 펼치기)</summary>');
+    sections.push('');
+    sections.push('```');
+    sections.push(data.costSnapshot.substring(0, 2000));
+    sections.push('```');
+    sections.push('</details>');
+  }
+
+  // IndexedDB 상세 요약
+  if (data.detailedIdbSummary) {
+    sections.push('');
+    sections.push('<details>');
+    sections.push('<summary><strong>IndexedDB 상세 요약</strong> (클릭하여 펼치기)</summary>');
+    sections.push('');
+    sections.push('```');
+    sections.push(data.detailedIdbSummary.substring(0, 5000));
     sections.push('```');
     sections.push('</details>');
   }
@@ -164,6 +228,11 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       breadcrumbs?: string;
       stateSnapshot?: string;
       autoScreenshotUrl?: string;
+      webVitals?: string;
+      reproductionSteps?: string;
+      interactionReplay?: string;
+      costSnapshot?: string;
+      detailedIdbSummary?: string;
     };
 
     const titlePrefix = data.type === 'bug' || data.type === 'error' ? 'Bug' : data.type === 'auth' ? 'Auth' : data.type === 'suggestion' ? 'Feature' : 'Feedback';
@@ -171,7 +240,13 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     const title = `[${titlePrefix}] ${titleText}${data.message.length > 80 ? '...' : ''}`;
 
     const label = LABEL_MAP[data.type] || 'feedback';
-    const body = formatIssueBody(data);
+    let body = formatIssueBody(data);
+
+    // GitHub Issue body 최대 65536자 — 초과 시 잘라냄
+    const MAX_BODY_LEN = 63000; // 마크다운 오버헤드 고려 여유분
+    if (body.length > MAX_BODY_LEN) {
+      body = body.substring(0, MAX_BODY_LEN) + '\n\n---\n> ⚠️ 이슈 본문이 GitHub 제한(65536자)에 가까워 일부 진단 데이터가 생략되었습니다.';
+    }
 
     const ghResponse = await fetch(`https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/issues`, {
       method: 'POST',

@@ -28,6 +28,12 @@ export interface FeedbackData {
     breadcrumbs?: string;
     stateSnapshot?: string;
     autoScreenshotBase64?: string;
+    // 강화된 진단 데이터
+    webVitals?: string;
+    reproductionSteps?: string;
+    interactionReplay?: string;
+    costSnapshot?: string;
+    detailedIdbSummary?: string;
 }
 
 /** 에러 자동 감지 시 FeedbackModal에 전달되는 사전 채움 컨텍스트 */

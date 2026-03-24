@@ -226,6 +226,9 @@ const FeedbackModal: React.FC = () => {
         try {
             const currentProjectId = useProjectStore.getState().currentProjectId;
 
+            // 디바운스된 리플레이 데이터 즉시 플러시 (debugLogs 수집 전에 호출해야 export에 반영됨)
+            logger.flushPendingReplayData();
+
             // 환경 스냅샷 + 로그를 결합한 포맷 생성
             const debugLogs = attachLogs ? await logger.exportFormattedWithEnv() : undefined;
 
@@ -234,6 +237,14 @@ const FeedbackModal: React.FC = () => {
             const stateSnapshot = prefilledCtx?.stateSnapshot || Object.entries(logger.collectAllStoreSnapshots())
                 .map(([k, v]) => `${k}: ${v}`).join('\n');
             const autoScreenshotBase64 = prefilledCtx?.autoScreenshotBase64 || undefined;
+
+            // 강화된 진단 데이터 수집
+            const webVitals = logger.getFormattedWebVitals();
+            const reproductionSteps = logger.generateReproductionSteps(20);
+            const interactionReplay = logger.getFormattedReplay(60);
+            const costSnapshot = logger.collectCostSnapshot();
+            // detailedIdbSummary는 debugLogs(exportFormattedWithEnv) 안에서 이미 수집되므로 별도 호출하지 않음 (OOM 방지)
+            const detailedIdbSummary: string | undefined = undefined;
 
             const data: FeedbackData = {
                 type: selectedType,
@@ -249,6 +260,11 @@ const FeedbackModal: React.FC = () => {
                 breadcrumbs: breadcrumbs !== '(기록된 행동 없음)' ? breadcrumbs : undefined,
                 stateSnapshot,
                 autoScreenshotBase64,
+                webVitals: webVitals !== '(측정 데이터 없음)' ? webVitals : undefined,
+                reproductionSteps: !reproductionSteps.startsWith('(') ? reproductionSteps : undefined,
+                interactionReplay: interactionReplay !== '(기록된 인터랙션 없음)' ? interactionReplay : undefined,
+                costSnapshot: !costSnapshot.startsWith('(') ? costSnapshot : undefined,
+                detailedIdbSummary: detailedIdbSummary && !detailedIdbSummary.startsWith('(') ? detailedIdbSummary : undefined,
             };
 
             const result = await submitFeedback(data);

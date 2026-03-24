@@ -2,6 +2,15 @@
 import { FeedbackData } from '../types';
 import { getCloudinaryConfig, monitoredFetch } from './apiService';
 
+/** 민감 정보 sanitize (URL 쿼리, JSON 키-값, Bearer 토큰) */
+const sanitizeString = (s: string | undefined): string | undefined => {
+    if (!s) return s;
+    return s
+        .replace(/([?&])(key|token|secret|access_token|client_secret|api_key|apiKey|password|credential|code|fb_exchange_token|refresh_token|client_id|auth)=([^&]*)/gi, (_, prefix, param) => `${prefix}${param}=***`)
+        .replace(/"(token|key|secret|password|api_key|apiKey|accessToken|access_token|authorization|auth|client_secret|clientSecret|currentPassword|credential)"\s*:\s*"[^"]*"/gi, (_, k) => `"${k}":"***"`)
+        .replace(/Bearer\s+[A-Za-z0-9\-._~+/]+=*/gi, 'Bearer ***');
+};
+
 /** 디버그 로그 텍스트 → Cloudinary 업로드 → URL 반환 */
 async function uploadDebugLogToCloudinary(text: string): Promise<string> {
     const { cloudName, uploadPreset } = getCloudinaryConfig();
@@ -99,9 +108,15 @@ export const submitFeedback = async (data: FeedbackData): Promise<FeedbackResult
         userDisplayName: data.userDisplayName,
         debugLogs,
         debugLogUrl,
-        breadcrumbs: data.breadcrumbs,
-        stateSnapshot: data.stateSnapshot,
+        breadcrumbs: sanitizeString(data.breadcrumbs),
+        stateSnapshot: sanitizeString(data.stateSnapshot),
         autoScreenshotUrl,
+        // 강화된 진단 데이터 (민감 정보 sanitize 적용)
+        webVitals: data.webVitals,
+        reproductionSteps: data.reproductionSteps,
+        interactionReplay: sanitizeString(data.interactionReplay),
+        costSnapshot: data.costSnapshot,
+        detailedIdbSummary: data.detailedIdbSummary,
     };
 
     const response = await monitoredFetch('/api/feedback', {

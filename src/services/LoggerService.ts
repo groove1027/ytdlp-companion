@@ -161,6 +161,22 @@ interface BreadcrumbEntry {
   metadata?: string;
 }
 
+// ── Core Web Vitals ──
+interface WebVitalEntry {
+  name: 'FCP' | 'LCP' | 'CLS' | 'TTFB' | 'FID' | 'INP';
+  value: number;
+  rating: 'good' | 'needs-improvement' | 'poor';
+  timestamp: number;
+}
+
+// ── Interaction Replay Event ──
+interface ReplayEvent {
+  timestamp: number;
+  type: 'click' | 'input' | 'scroll' | 'navigation' | 'mutation' | 'resize' | 'focus' | 'error';
+  target?: string;
+  data?: string;
+}
+
 // ── Critical Error Callback ──
 type CriticalErrorCallback = (errorType: string, errorMessage: string, errorDetail?: string) => void;
 
@@ -201,11 +217,20 @@ class LoggerService {
   private _criticalErrorCallbacks: CriticalErrorCallback[] = [];
   private _lastErrorNotifyTime = 0;
 
+  // ── Core Web Vitals ──
+  private webVitals: WebVitalEntry[] = [];
+
+  // ── Interaction Replay ──
+  private replayEvents: ReplayEvent[] = [];
+  private _replayInstalled = false;
+
   private addLog(level: LogLevel, message: string, details?: any, extra?: Partial<LogEntry>) {
+    // 모든 로그 메시지에서 URL 쿼리스트링 민감 파라미터 자동 마스킹 (최종 방어선)
+    const maskedMessage = message.replace(LoggerService._sensitiveUrlPattern, (_, prefix, param) => `${prefix}${param}=***`);
     const entry: LogEntry = {
       timestamp: new Date().toISOString(),
       level,
-      message,
+      message: maskedMessage,
       details,
       ...extra,
     };
@@ -213,14 +238,31 @@ class LoggerService {
     this.notify();
   }
 
-  /** Error 객체에서 stack trace + message 추출 */
+  /** Error 객체에서 stack trace + message + source info 추출 (강화) — URL 민감 파라미터 마스킹 포함 */
   private enrichErrorDetails(details: any): any {
     if (details instanceof Error) {
+      const stackLines = details.stack?.split('\n') || [];
+      // source file 정보 추출 (첫 번째 at ... 라인에서)
+      const sourceMatch = stackLines.find(l => l.includes('at '))?.match(/\((.*?):(\d+):(\d+)\)/);
+      // 에러 메시지에 URL 쿼리스트링이 포함될 수 있으므로 마스킹
+      const maskedMsg = details.message.replace(LoggerService._sensitiveUrlPattern, (_, prefix: string, param: string) => `${prefix}${param}=***`);
       return {
-        message: details.message,
-        stack: details.stack?.split('\n').slice(0, 8).join('\n'), // 상위 8줄만
+        message: maskedMsg,
         name: details.name,
+        stack: stackLines.slice(0, 15).join('\n'),
+        sourceFile: sourceMatch?.[1]?.split('/').slice(-2).join('/'),
+        sourceLine: sourceMatch?.[2],
+        sourceCol: sourceMatch?.[3],
+        cause: details.cause instanceof Error ? {
+          message: details.cause.message.replace(LoggerService._sensitiveUrlPattern, (_, prefix: string, param: string) => `${prefix}${param}=***`),
+          name: details.cause.name,
+          stack: details.cause.stack?.split('\n').slice(0, 5).join('\n'),
+        } : undefined,
       };
+    }
+    // 문자열 details에도 URL 마스킹
+    if (typeof details === 'string') {
+      return details.replace(LoggerService._sensitiveUrlPattern, (_, prefix: string, param: string) => `${prefix}${param}=***`);
     }
     return details;
   }
@@ -251,12 +293,14 @@ class LoggerService {
     this._safeConsoleWarn(`[WARN] ${message}`, details || '');
   }
 
-  /** API 호출 결과 로깅 (응답 시간 포함) */
+  /** API 호출 결과 로깅 (응답 시간 포함) — 메시지 내 URL 민감 파라미터 자동 마스킹 */
   apiLog(level: LogLevel, message: string, duration: number, details?: any) {
-    this.addLog(level, message, this.enrichErrorDetails(details), { category: 'api', duration });
+    // 로그 메시지에 포함된 URL 쿼리스트링 민감 파라미터 마스킹
+    const maskedMsg = message.replace(LoggerService._sensitiveUrlPattern, (_, prefix, param) => `${prefix}${param}=***`);
+    this.addLog(level, maskedMsg, this.enrichErrorDetails(details), { category: 'api', duration });
     if (level === 'error' || level === 'warn') this.persistErrors();
     const fn = level === 'error' ? console.error : level === 'warn' ? console.warn : console.log;
-    fn(`[${level.toUpperCase()}] ${message} (${duration}ms)`, details || '');
+    fn(`[${level.toUpperCase()}] ${maskedMsg} (${duration}ms)`, details || '');
   }
 
   /** 사용자 액션 추적 (버튼 클릭, 탭 전환 등) */
@@ -288,8 +332,45 @@ class LoggerService {
 
   // ── API 실패 상세 기록 ──
 
-  /** API 실패 상세 정보 기록 (요청 바디 스니펫 + 응답 바디 스니펫 + 헤더) */
+  /** 민감 키워드 JSON 값 마스킹 정규식 */
+  private static readonly _sensitiveJsonPattern = /"(token|key|secret|password|api_key|apiKey|accessToken|access_token|authorization|auth|client_secret|clientSecret|currentPassword|credential)"\s*:\s*"[^"]*"/gi;
+  /** URL 쿼리스트링 민감 파라미터 마스킹 정규식 (OAuth 포함) */
+  private static readonly _sensitiveUrlPattern = /([?&])(key|token|secret|access_token|client_secret|api_key|apiKey|password|credential|code|fb_exchange_token|refresh_token|client_id|auth)=([^&]*)/gi;
+
+  /** URL에서 민감 쿼리 파라미터 마스킹 */
+  private _maskSensitiveUrl(url: string): string {
+    return url.replace(LoggerService._sensitiveUrlPattern, (_, prefix, param) => `${prefix}${param}=***MASKED***`);
+  }
+
+  /** 문자열 전체에서 민감 정보를 중앙 sanitize (export 최종 방어선) */
+  private _sanitizeExportString(text: string): string {
+    return text
+      // URL 쿼리스트링 민감 파라미터
+      .replace(LoggerService._sensitiveUrlPattern, (_, prefix, param) => `${prefix}${param}=***`)
+      // JSON 키-값 패턴
+      .replace(LoggerService._sensitiveJsonPattern, (_, k) => `"${k}":"***MASKED***"`)
+      // Bearer 토큰
+      .replace(/Bearer\s+[A-Za-z0-9\-._~+/]+=*/gi, 'Bearer ***')
+      // Authorization 헤더 값 (Basic, token 등)
+      .replace(/Authorization:\s*\S+/gi, 'Authorization: ***');
+  }
+
+  /** API 실패 상세 정보 기록 (요청 바디 스니펫 + 응답 바디 스니펫 + 헤더) — 민감 정보 자동 마스킹 */
   trackApiFailure(detail: ApiFailureDetail) {
+    // URL 쿼리스트링 민감 파라미터 마스킹
+    if (detail.url) {
+      detail.url = this._maskSensitiveUrl(detail.url);
+    }
+    // requestSnippet에서 토큰/키/비밀번호 등 민감 값 마스킹
+    if (detail.requestSnippet) {
+      detail.requestSnippet = detail.requestSnippet
+        .replace(LoggerService._sensitiveJsonPattern, (_, k) => `"${k}":"***MASKED***"`)
+        .replace(/Bearer\s+[A-Za-z0-9\-._~+/]+=*/gi, 'Bearer ***MASKED***');
+    }
+    if (detail.responseSnippet) {
+      detail.responseSnippet = detail.responseSnippet
+        .replace(LoggerService._sensitiveJsonPattern, (_, k) => `"${k}":"***MASKED***"`);
+    }
     this.apiFailureDetails = [...this.apiFailureDetails, detail].slice(-20);
   }
 
@@ -445,8 +526,9 @@ class LoggerService {
   // [NEW] API 타이밍 워터폴
   // ══════════════════════════════════════════════════════════════
 
-  /** API 호출 시작 기록 → ID 반환 */
+  /** API 호출 시작 기록 → ID 반환 (URL 민감 파라미터 자동 마스킹) */
   startApiTiming(url: string, method: string): string {
+    url = this._maskSensitiveUrl(url);
     const id = `api-${++this._apiTimingCounter}`;
     this.apiTimings = [...this.apiTimings, {
       id, url, method, startTime: performance.now(),
@@ -588,6 +670,12 @@ class LoggerService {
 
     // 초기 네트워크 스냅샷
     this._recordNetworkSnapshot();
+
+    // [NEW] Core Web Vitals 수집
+    this._installWebVitalsCapture();
+
+    // [NEW] Interaction Replay 캡처
+    this._installReplayCapture();
 
     this.addLog('info', `🚀 앱 시작 (세션: ${this.sessionId})`, undefined, { category: 'system' });
   }
@@ -1144,13 +1232,49 @@ class LoggerService {
       }).join('\n')}`
       : '';
 
+    // M. Core Web Vitals
+    const vitalsStr = this.getFormattedWebVitals();
+    const vitalsSection = vitalsStr !== '(측정 데이터 없음)'
+      ? `\n\n--- Core Web Vitals ---\n${vitalsStr}`
+      : '';
+
+    // N. Interaction Replay (최근 60초)
+    const replayStr = this.getFormattedReplay(60);
+    const replaySection = replayStr !== '(기록된 인터랙션 없음)'
+      ? `\n\n--- Interaction Replay (last 60s, ${this.getReplayEvents(60).length} events) ---\n${replayStr}`
+      : '';
+
+    // O. Reproduction Steps (자동 생성)
+    const reproSteps = this.generateReproductionSteps(20);
+    const reproSection = !reproSteps.startsWith('(')
+      ? `\n\n--- Auto-Generated Reproduction Steps ---\n${reproSteps}`
+      : '';
+
+    // P. Cost Snapshot
+    const costSnap = this.collectCostSnapshot();
+    const costSection = !costSnap.startsWith('(')
+      ? `\n\n--- Session Cost Summary ---\n${costSnap}`
+      : '';
+
+    // Q. Detailed IndexedDB Summary
+    let detailedIdbSection = '';
+    try {
+      const idbDetail = await this.collectDetailedIndexedDbSummary();
+      if (!idbDetail.startsWith('(')) {
+        detailedIdbSection = `\n\n--- IndexedDB Detailed Summary ---\n${idbDetail}`;
+      }
+    } catch { /* ignore */ }
+
     const header = `--- Environment ---\n${envLines}`;
     const storeHeader = allSnapLines ? `\n\n--- All Store States ---\n${allSnapLines}` : '';
     const logs = this.exportFormatted();
 
-    return [
+    const result = [
       header,
+      vitalsSection,
+      reproSection,
       breadcrumbSection,
+      replaySection,
       failSection,
       swallowSection,
       chainSection,
@@ -1169,11 +1293,16 @@ class LoggerService {
       domSection,
       persistSection,
       idbSection,
+      detailedIdbSection,
       lsSection,
+      costSection,
       settingSection,
       storeHeader,
       `\n\n--- Logs (${this.logs.length}) ---\n${logs}`,
     ].filter(s => s).join('');
+
+    // 최종 방어선: export 전체 문자열에서 민감 정보 중앙 sanitize
+    return this._sanitizeExportString(result);
   }
 
   /** 에러/경고 로그만 추출 */
@@ -1646,6 +1775,367 @@ class LoggerService {
   }
 
   // ══════════════════════════════════════════════════════════════
+  // [NEW] Core Web Vitals (FCP, LCP, CLS, TTFB)
+  // ══════════════════════════════════════════════════════════════
+
+  private _installWebVitalsCapture() {
+    try {
+      if (typeof PerformanceObserver === 'undefined') return;
+
+      // FCP (First Contentful Paint)
+      try {
+        const fcpObs = new PerformanceObserver((list) => {
+          for (const entry of list.getEntries()) {
+            if (entry.name === 'first-contentful-paint') {
+              const ms = Math.round(entry.startTime);
+              this.webVitals.push({
+                name: 'FCP', value: ms,
+                rating: ms < 1800 ? 'good' : ms < 3000 ? 'needs-improvement' : 'poor',
+                timestamp: Date.now(),
+              });
+              this.addLog('info', `📊 FCP: ${ms}ms`, undefined, { category: 'performance' });
+            }
+          }
+        });
+        fcpObs.observe({ type: 'paint', buffered: true });
+      } catch { /* paint observer not supported */ }
+
+      // LCP (Largest Contentful Paint)
+      try {
+        const lcpObs = new PerformanceObserver((list) => {
+          const entries = list.getEntries();
+          if (entries.length > 0) {
+            const last = entries[entries.length - 1];
+            const ms = Math.round(last.startTime);
+            // LCP keeps updating, so we just keep the latest
+            const existing = this.webVitals.findIndex(v => v.name === 'LCP');
+            const entry: WebVitalEntry = {
+              name: 'LCP', value: ms,
+              rating: ms < 2500 ? 'good' : ms < 4000 ? 'needs-improvement' : 'poor',
+              timestamp: Date.now(),
+            };
+            if (existing >= 0) this.webVitals[existing] = entry;
+            else this.webVitals.push(entry);
+          }
+        });
+        lcpObs.observe({ type: 'largest-contentful-paint', buffered: true });
+      } catch { /* LCP observer not supported */ }
+
+      // CLS (Cumulative Layout Shift)
+      try {
+        let clsValue = 0;
+        const clsObs = new PerformanceObserver((list) => {
+          for (const entry of list.getEntries()) {
+            if (!(entry as any).hadRecentInput) {
+              clsValue += (entry as any).value || 0;
+            }
+          }
+          const existing = this.webVitals.findIndex(v => v.name === 'CLS');
+          const rounded = Math.round(clsValue * 1000) / 1000;
+          const vitEntry: WebVitalEntry = {
+            name: 'CLS', value: rounded,
+            rating: rounded < 0.1 ? 'good' : rounded < 0.25 ? 'needs-improvement' : 'poor',
+            timestamp: Date.now(),
+          };
+          if (existing >= 0) this.webVitals[existing] = vitEntry;
+          else this.webVitals.push(vitEntry);
+        });
+        clsObs.observe({ type: 'layout-shift', buffered: true });
+      } catch { /* CLS observer not supported */ }
+
+      // TTFB (Time to First Byte)
+      try {
+        const navEntries = performance.getEntriesByType('navigation') as PerformanceNavigationTiming[];
+        if (navEntries.length > 0) {
+          const nav = navEntries[0];
+          const ttfb = Math.round(nav.responseStart - nav.requestStart);
+          this.webVitals.push({
+            name: 'TTFB', value: ttfb,
+            rating: ttfb < 800 ? 'good' : ttfb < 1800 ? 'needs-improvement' : 'poor',
+            timestamp: Date.now(),
+          });
+        }
+      } catch { /* navigation timing not available */ }
+
+    } catch { /* Web Vitals capture failed silently */ }
+  }
+
+  /** Core Web Vitals 결과 반환 */
+  getWebVitals(): WebVitalEntry[] {
+    return [...this.webVitals];
+  }
+
+  /** Core Web Vitals 포맷 문자열 */
+  getFormattedWebVitals(): string {
+    if (this.webVitals.length === 0) return '(측정 데이터 없음)';
+    const ratingEmoji = (r: string) => r === 'good' ? '🟢' : r === 'needs-improvement' ? '🟡' : '🔴';
+    return this.webVitals.map(v => {
+      const unit = v.name === 'CLS' ? '' : 'ms';
+      return `${ratingEmoji(v.rating)} ${v.name}: ${v.value}${unit} (${v.rating})`;
+    }).join('\n');
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // [NEW] Interaction Replay (피드백 직전 사용자 행동 리플레이 데이터)
+  // ══════════════════════════════════════════════════════════════
+
+  private _installReplayCapture() {
+    if (this._replayInstalled) return;
+    this._replayInstalled = true;
+
+    // 클릭 이벤트 (좌표 + 대상 포함)
+    document.addEventListener('click', (e) => {
+      const target = e.target as HTMLElement;
+      if (!target) return;
+      if (target.closest('[data-feedback-modal]') || target.closest('[data-api-settings]')) return;
+      const tag = target.tagName?.toLowerCase() || '?';
+      const text = (target.textContent || '').trim().substring(0, 30);
+      const cls = target.className?.toString().substring(0, 60) || '';
+      this._addReplayEvent('click', `<${tag}> "${text}"`, `x=${e.clientX},y=${e.clientY} cls="${cls}"`);
+    }, true);
+
+    // Input 변경 (값 마스킹 — API 키, 비밀번호 등 민감 정보 보호)
+    document.addEventListener('input', (e) => {
+      const target = e.target as HTMLInputElement;
+      if (!target) return;
+      if (target.closest('[data-feedback-modal]') || target.closest('[data-api-settings]')) return;
+      const tag = target.tagName?.toLowerCase() || '?';
+      const inputType = target.type || 'text';
+      // 민감 필드 감지: password 타입, name/placeholder/id에 key/token/secret/api/password 포함, ApiKeySettings 내부
+      const nameStr = `${target.name || ''} ${target.placeholder || ''} ${target.id || ''} ${target.getAttribute('aria-label') || ''}`.toLowerCase();
+      const isSensitive = inputType === 'password'
+        || /key|token|secret|api|password|credential|auth/i.test(nameStr)
+        || !!target.closest('[data-api-settings]')
+        || !!target.closest('.api-key-input');
+      const val = isSensitive ? '***' : (target.value || '').substring(0, 20);
+      this._addReplayEvent('input', `<${tag} type="${inputType}">`, `value="${val}" len=${target.value?.length || 0}`);
+    }, true);
+
+    // 포커스 변경 추적
+    document.addEventListener('focusin', (e) => {
+      const target = e.target as HTMLElement;
+      if (!target || target.closest('[data-feedback-modal]') || target.closest('[data-api-settings]')) return;
+      const tag = target.tagName?.toLowerCase() || '?';
+      const id = target.id ? `#${target.id}` : '';
+      const name = (target as HTMLInputElement).name ? `[name="${(target as HTMLInputElement).name}"]` : '';
+      this._addReplayEvent('focus', `<${tag}${id}${name}>`);
+    }, true);
+
+    // 뷰포트 리사이즈
+    let lastResizeTime = 0;
+    window.addEventListener('resize', () => {
+      const now = Date.now();
+      if (now - lastResizeTime < 1000) return;
+      lastResizeTime = now;
+      this._addReplayEvent('resize', `${window.innerWidth}x${window.innerHeight}`);
+    }, { passive: true });
+
+    // MutationObserver — 대규모 DOM 변화 감지 (누적 100개 이상 노드 변경)
+    try {
+      let pendingAdded = 0;
+      let pendingRemoved = 0;
+      let pendingMutCount = 0;
+      let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+      const flushMutations = () => {
+        if (pendingAdded + pendingRemoved >= 100) {
+          this._addReplayEvent('mutation', `+${pendingAdded}/-${pendingRemoved} nodes`, `total mutations: ${pendingMutCount}`);
+        }
+        pendingAdded = 0;
+        pendingRemoved = 0;
+        pendingMutCount = 0;
+        flushTimer = null;
+      };
+
+      // 즉시 플러시 함수를 인스턴스에 등록 (피드백 제출 직전 호출용)
+      this._flushMutationsFn = flushMutations;
+
+      const mutObs = new MutationObserver((mutations) => {
+        for (const m of mutations) {
+          pendingAdded += m.addedNodes.length;
+          pendingRemoved += m.removedNodes.length;
+        }
+        pendingMutCount += mutations.length;
+        // 500ms 디바운스로 누적 후 플러시
+        if (!flushTimer) {
+          flushTimer = setTimeout(flushMutations, 500);
+        }
+      });
+      mutObs.observe(document.body, { childList: true, subtree: true });
+    } catch { /* MutationObserver not available */ }
+  }
+
+  // MutationObserver 디바운스된 데이터 즉시 플러시 (피드백 제출 직전 호출)
+  private _flushMutationsFn: (() => void) | null = null;
+
+  flushPendingReplayData() {
+    if (this._flushMutationsFn) this._flushMutationsFn();
+  }
+
+  private _addReplayEvent(type: ReplayEvent['type'], target?: string, data?: string) {
+    this.replayEvents = [...this.replayEvents, {
+      timestamp: Date.now(),
+      type,
+      target: target?.substring(0, 120),
+      data: data?.substring(0, 200),
+    }].slice(-200); // 최근 200개 이벤트 유지
+  }
+
+  /** 최근 N초간의 리플레이 이벤트 반환 */
+  getReplayEvents(lastSeconds = 30): ReplayEvent[] {
+    const cutoff = Date.now() - lastSeconds * 1000;
+    return this.replayEvents.filter(e => e.timestamp >= cutoff);
+  }
+
+  /** 리플레이 이벤트 포맷 문자열 */
+  getFormattedReplay(lastSeconds = 30): string {
+    const events = this.getReplayEvents(lastSeconds);
+    if (events.length === 0) return '(기록된 인터랙션 없음)';
+    return events.map(e => {
+      const t = new Date(e.timestamp).toTimeString().substring(0, 8);
+      const target = e.target ? ` ${e.target}` : '';
+      const data = e.data ? ` (${e.data})` : '';
+      return `[${t}] ${e.type}${target}${data}`;
+    }).join('\n');
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // [NEW] Reproduction Steps 자동 생성
+  // ══════════════════════════════════════════════════════════════
+
+  /** Breadcrumbs를 읽기 쉬운 재현 단계로 변환 */
+  generateReproductionSteps(limit = 20): string {
+    const recent = this.breadcrumbs.slice(-limit);
+    if (recent.length === 0) return '(재현 단계를 생성할 행동 기록이 없습니다)';
+
+    const steps: string[] = [];
+    let stepNum = 1;
+
+    for (const b of recent) {
+      const t = new Date(b.timestamp).toTimeString().substring(0, 8);
+      let description = '';
+
+      switch (b.action) {
+        case '버튼 클릭':
+          description = `"${b.target}" 버튼을 클릭`;
+          break;
+        case '링크 클릭':
+          description = `"${b.target}" 링크를 클릭`;
+          break;
+        case '탭 전환':
+          description = `"${b.target}" 탭으로 이동`;
+          break;
+        case '선택 변경':
+          description = `"${b.target}" 드롭다운에서 선택 변경`;
+          break;
+        case '단축키':
+          description = `${b.target} 단축키 사용`;
+          break;
+        case 'ESC 키':
+          description = 'ESC 키를 눌러 닫기';
+          break;
+        case 'Enter 입력':
+          description = `${b.target || '입력 필드'}에서 Enter 키 입력`;
+          break;
+        case '스크롤':
+          description = `페이지 스크롤 (${b.target})`;
+          break;
+        case 'checkbox 변경':
+          description = `"${b.target}" 체크박스 변경`;
+          break;
+        case 'radio 변경':
+          description = `"${b.target}" 라디오 버튼 선택`;
+          break;
+        default:
+          // "text 변경", "number 변경" 등 input 타입별 자동 매핑
+          if (b.action.endsWith(' 변경')) {
+            description = `"${b.target}" ${b.action}`;
+            break;
+          }
+          description = b.target ? `${b.action}: ${b.target}` : b.action;
+      }
+
+      const meta = b.metadata ? ` [${b.metadata}]` : '';
+      steps.push(`${stepNum}. [${t}] ${description}${meta}`);
+      stepNum++;
+    }
+
+    return steps.join('\n');
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // [NEW] 비용 추적 상세 스냅샷
+  // ══════════════════════════════════════════════════════════════
+
+  /** costStore에서 세션 비용 상세 정보 수집 */
+  collectCostSnapshot(): string {
+    try {
+      const costStore = _getStore('costStore');
+      if (!costStore) return '(costStore 미로드)';
+      const cs = costStore.getState();
+      if (!cs.costStats) return '(비용 데이터 없음)';
+
+      const s = cs.costStats;
+      const rate = cs.exchangeRate || 1450;
+      const totalKrw = Math.round(s.totalUsd * rate);
+      const lines = [
+        `총 비용: $${s.totalUsd.toFixed(4)} (≈ ${totalKrw.toLocaleString()}원)`,
+        `환율: ${rate}원/$ (${cs.exchangeDate || '미조회'})`,
+        `이미지 생성: ${s.imageCount}건`,
+        `영상 생성: ${s.videoCount}건`,
+        `AI 분석: ${s.analysisCount}건`,
+        `TTS: ${s.ttsCount}건`,
+        `음악: ${s.musicCount}건`,
+        `총 API 호출: ${s.imageCount + s.videoCount + s.analysisCount + s.ttsCount + s.musicCount}건`,
+      ];
+      return lines.join('\n');
+    } catch { return '(비용 스냅샷 수집 실패)'; }
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // [NEW] IndexedDB 프로젝트 데이터 상세 요약
+  // ══════════════════════════════════════════════════════════════
+
+  /** IndexedDB의 프로젝트/장면 데이터 상세 요약 */
+  async collectDetailedIndexedDbSummary(): Promise<string> {
+    try {
+      const idb = await import('idb');
+      const db = await idb.openDB('ai-storyboard-v2');
+      const storeNames = Array.from(db.objectStoreNames);
+      const lines: string[] = [`DB: ai-storyboard-v2 (stores: ${storeNames.length})`];
+
+      for (const storeName of storeNames) {
+        try {
+          const tx = db.transaction(storeName, 'readonly');
+          const store = tx.objectStore(storeName);
+          const count = await store.count();
+
+          if (storeName === 'projects' && count > 0) {
+            const allKeys = await store.getAllKeys();
+            lines.push(`  ${storeName}: ${count}개 프로젝트 (IDs: ${allKeys.slice(0, 5).join(', ')}${allKeys.length > 5 ? '...' : ''})`);
+          } else if (storeName === 'scenes' && count > 0) {
+            lines.push(`  ${storeName}: ${count}개 장면`);
+          } else if (storeName === 'images' && count > 0) {
+            // 이미지 개수만 기록 (getAll은 OOM 위험 — Base64 데이터가 큼)
+            lines.push(`  ${storeName}: ${count}개`);
+          } else {
+            lines.push(`  ${storeName}: ${count}개`);
+          }
+        } catch { lines.push(`  ${storeName}: (읽기 실패)`); }
+      }
+
+      // 전체 DB 사이즈 추정
+      if (navigator.storage?.estimate) {
+        const est = await navigator.storage.estimate();
+        lines.push(`  전체 사용량: ${Math.round((est.usage || 0) / 1024 / 1024)}MB / ${Math.round((est.quota || 0) / 1024 / 1024)}MB`);
+      }
+
+      db.close();
+      return lines.join('\n');
+    } catch { return '(IndexedDB 상세 조회 실패)'; }
+  }
+
+  // ══════════════════════════════════════════════════════════════
   // Auto-Screenshot (html2canvas)
   // ══════════════════════════════════════════════════════════════
 
@@ -1660,8 +2150,10 @@ class LoggerService {
         allowTaint: true,
         backgroundColor: '#111827',
         ignoreElements: (el) => {
-          // 모달 오버레이와 피드백 관련 요소 제외
-          return el.hasAttribute('data-feedback-modal') || el.hasAttribute('data-smart-error-banner');
+          // 모달 오버레이, 피드백 관련, API 키 설정 모달 제외 (민감 정보 보호)
+          return el.hasAttribute('data-feedback-modal')
+            || el.hasAttribute('data-smart-error-banner')
+            || el.hasAttribute('data-api-settings');
         },
       });
       return canvas.toDataURL('image/jpeg', 0.5);
