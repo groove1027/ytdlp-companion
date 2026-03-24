@@ -26,8 +26,6 @@ const SERVICE_OPTIONS = [
     { value: 'uploadPreset', label: 'Upload Preset' },
     { value: 'typecast', label: 'Typecast' },
     { value: 'youtubeApiKey', label: 'YouTube API' },
-    { value: 'ghostcutAppKey', label: 'GhostCut AppKey' },
-    { value: 'ghostcutAppSecret', label: 'GhostCut AppSecret' },
     { value: 'removeBg', label: 'Remove.bg' },
     { value: 'apimart', label: 'APIMart' },
     { value: 'xai', label: 'X AI' },
@@ -41,8 +39,6 @@ const EXPORT_MAP: [string, string][] = [
     ['UPLOAD_PRESET', 'uploadPreset'],
     ['TYPECAST', 'typecast'],
     ['YOUTUBE_API_KEY', 'youtubeApiKey'],
-    ['GHOSTCUT_APP_KEY', 'ghostcutAppKey'],
-    ['GHOSTCUT_APP_SECRET', 'ghostcutAppSecret'],
     ['REMOVE_BG', 'removeBg'],
     ['APIMART', 'apimart'],
     ['X_AI', 'xai'],
@@ -58,11 +54,6 @@ const LABEL_MAP: [RegExp, string][] = [
     [/cloudinary/i, 'cloudName'],
     [/typecast/i, 'typecast'],
     [/youtube|google[\s_.-]?api/i, 'youtubeApiKey'],
-    [/ghostcut[\s_.-]?app[\s_.-]?key/i, 'ghostcutAppKey'],
-    [/ghostcut[\s_.-]?app[\s_.-]?secret/i, 'ghostcutAppSecret'],
-    [/ghostcut.*secret/i, 'ghostcutAppSecret'],
-    [/ghostcut.*key/i, 'ghostcutAppKey'],
-    [/ghostcut/i, 'ghostcutAppKey'],
     [/remove[\s_.-]?bg|배경[\s_.-]?제거/i, 'removeBg'],
     [/apimart/i, 'apimart'],
     [/\bx[\s_.-]?ai\b|^xai$/i, 'xai'],
@@ -147,7 +138,7 @@ const smartDetect = (text: string): DetectedKey[] => {
             }
             if (service) assigned.add(service);
             results.push({ value, service, method: service ? 'label' : 'guess' });
-            // GhostCut처럼 같은 라벨 아래 Key/Secret이 연속되면 pendingLabel 유지
+            // 같은 라벨 아래 Key/Secret이 연속되면 pendingLabel 유지
             if (pendingLabel && /key|app\s*key/i.test(label)) { /* pendingLabel 유지 */ }
             else { pendingLabel = ''; }
             continue;
@@ -243,7 +234,7 @@ const assignRemaining = (entries: DetectedKey[], assigned: Set<string>): Detecte
 
 const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
     const { requireAuth } = useAuthGuard();
-    const [keys, setKeys] = useState({ kie: '', cloudName: '', uploadPreset: '', gemini: '', apimart: '', removeBg: '', xai: '', evolink: '', youtubeApiKey: '', typecast: '', ghostcutAppKey: '', ghostcutAppSecret: '' });
+    const [keys, setKeys] = useState({ kie: '', cloudName: '', uploadPreset: '', gemini: '', apimart: '', removeBg: '', xai: '', evolink: '', youtubeApiKey: '', typecast: '' });
     const [youtubeKeyPool, setYoutubeKeyPool] = useState<string[]>([]);
     const [newYoutubeKey, setNewYoutubeKey] = useState('');
     const [showPassword, setShowPassword] = useState(false);
@@ -332,8 +323,6 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
                 evolink: stored.evolink,
                 youtubeApiKey: stored.youtubeApiKey,
                 typecast: stored.typecast,
-                ghostcutAppKey: stored.ghostcutAppKey,
-                ghostcutAppSecret: stored.ghostcutAppSecret,
             });
             // YouTube API 키 풀 로드 (없으면 기존 단일 키로 초기화)
             const pool = getYoutubeApiKeyPool();
@@ -367,7 +356,7 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
         // YouTube API 키 풀 저장
         saveYoutubeApiKeyPool(finalYoutubePool);
         const primaryYoutubeKey = finalYoutubePool.length > 0 ? finalYoutubePool[0] : '';
-        saveApiKeys(keys.kie, keys.cloudName, keys.uploadPreset, undefined, keys.apimart, keys.removeBg, keys.xai, keys.evolink, primaryYoutubeKey, keys.typecast, keys.ghostcutAppKey, keys.ghostcutAppSecret);
+        saveApiKeys(keys.kie, keys.cloudName, keys.uploadPreset, undefined, keys.apimart, keys.removeBg, keys.xai, keys.evolink, primaryYoutubeKey, keys.typecast);
         // 서버에도 동기화 (계정에 연동 — 다른 기기에서도 복원 가능)
         syncApiKeysToServer().catch(() => {});
         showToast('설정이 저장되었습니다. 페이지를 새로고침합니다.', 1500);
@@ -628,20 +617,6 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
                         </div>
                     </div>
 
-                    {/* 8. GhostCut — AI 자막 제거 */}
-                    <div className="space-y-3">
-                        <div className="flex items-start justify-between">
-                            <div className="flex flex-col">
-                                <h3 className="text-base font-bold text-cyan-400 uppercase tracking-wider">👻 GHOSTCUT API</h3>
-                                <span className="text-sm text-gray-400">AI 자막/워터마크 자동 제거 (OCR 기반)</span>
-                            </div>
-                            <a href="https://jollytoday.com" target="_blank" rel="noopener noreferrer" className="shrink-0 ml-3 px-2.5 py-1 bg-cyan-600/20 hover:bg-cyan-600/40 border border-cyan-500/30 text-cyan-400 text-xs font-bold rounded-lg transition-all flex items-center gap-1">키 발급 ↗</a>
-                        </div>
-                        <div className="grid grid-cols-2 gap-3">
-                            <input type={showPassword ? "text" : "password"} value={keys.ghostcutAppKey} onChange={(e) => setKeys({...keys, ghostcutAppKey: e.target.value})} placeholder="AppKey" className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-base text-white" />
-                            <input type={showPassword ? "text" : "password"} value={keys.ghostcutAppSecret} onChange={(e) => setKeys({...keys, ghostcutAppSecret: e.target.value})} placeholder="AppSecret" className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-base text-white" />
-                        </div>
-                    </div>
                     {/* 9. Google 무료 이미지 — 쿠키 연결 */}
                     <GoogleCookieSection />
                 </div>

@@ -809,7 +809,6 @@ class LoggerService {
         ['Cloudinary', 'CUSTOM_CLOUD_NAME'],
         ['Remove.bg', 'CUSTOM_REMOVE_BG_KEY'],
         ['Typecast', 'CUSTOM_TYPECAST_KEY'],
-        ['GhostCut', 'CUSTOM_GHOSTCUT_APP_KEY'],
         ['xAI', 'CUSTOM_XAI_KEY'],
         ['Coupang', 'CUSTOM_COUPANG_ACCESS_KEY'],
       ];

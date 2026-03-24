@@ -8,7 +8,7 @@ import type { SubtitleRemovalMethod } from '../../../types';
 import { SHOPPING_SCRIPT_PRESET_SUBTITLE } from '../../../data/shoppingScriptGuideline';
 
 const SUBTITLE_REMOVAL_OPTIONS: { id: SubtitleRemovalMethod; label: string; desc: string; icon: string }[] = [
-  { id: 'ghostcut', label: 'AI 제거', desc: 'GhostCut AI 자동 자막 제거', icon: '🤖' },
+  { id: 'companion', label: 'AI 제거', desc: '컴패니언 ProPainter 자동 자막 제거', icon: '🤖' },
   { id: 'none', label: '없음', desc: '원본 유지 (자막 제거 안 함)', icon: '📋' },
 ];
 
