@@ -121,21 +121,43 @@ const TrialGuideModal: React.FC<TrialGuideModalProps> = ({ user, onClose, onSave
               사용 가능한 기능
             </h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {/* Gemini API 키로 가능한 것들 */}
               <FeatureCard icon="&#x1F4DD;" title="대본 작성 / AI 분석" desc="AI가 대본을 작성하고 분석합니다" available />
               <FeatureCard icon="&#x1F3AC;" title="장면 분할" desc="대본을 자동으로 장면별로 나눕니다" available />
-              <FeatureCard icon="&#x1F5BC;" title="이미지 생성" desc="Google ImageFX 무료 이미지 생성 (쿠키 인증)" note="설정에서 Google 쿠키 등록 필요" available />
+              <FeatureCard icon="&#x1F5BC;" title="이미지 생성" desc="Gemini 이미지 생성 모델로 제작" available />
+              <FeatureCard icon="&#x1F3A5;" title="영상 생성" desc="Google Veo로 영상을 생성합니다" available />
               <FeatureCard icon="&#x1F4F9;" title="영상 분석" desc="영상의 내용을 AI가 분석합니다" available />
               <FeatureCard icon="&#x1F50D;" title="채널 분석실" desc="YouTube 채널/영상을 분석합니다" note="YouTube API 키 필요" available />
-              <FeatureCard icon="&#x1F399;" title="TTS 음성 생성" desc="텍스트를 자연스러운 음성으로 변환합니다" note="Typecast API 키 필요" available />
-              {/* 체험판에서 제한되는 것 */}
-              <FeatureCard icon="&#x1F3A5;" title="영상 생성" desc="이미지에서 영상을 생성합니다" note="Veo/Grok API 필요 (체험판 미포함)" />
-              <FeatureCard icon="&#x2601;" title="클라우드 호스팅" desc="이미지/영상을 클라우드에 업로드합니다" note="Cloudinary 키 필요" />
+              <FeatureCard icon="&#x1F399;" title="TTS 음성 생성" desc="텍스트를 자연스러운 음성으로 변환" note="Typecast API 키 필요" available />
+              <FeatureCard icon="&#x2601;" title="클라우드 호스팅" desc="이미지/영상을 클라우드에 업로드" note="Cloudinary 키 필요" />
+            </div>
+          </section>
+
+          {/* 체험판 모델 차이 안내 — 중요! */}
+          <section className="bg-amber-950/40 border-2 border-amber-500/60 rounded-xl p-5 text-sm">
+            <div className="flex items-start gap-3">
+              <span className="text-2xl flex-shrink-0 mt-0.5">&#x26A0;</span>
+              <div>
+                <p className="font-bold text-amber-300 text-base mb-2">체험판과 정식 버전의 차이</p>
+                <div className="space-y-2 text-gray-300">
+                  <p>체험판은 <strong className="text-white">Google Gemini 2.5 Flash</strong> 모델 하나로 모든 AI 기능을 처리합니다.</p>
+                  <p>정식 버전에서는 각 기능에 <strong className="text-white">최적화된 전문 모델</strong>을 사용합니다:</p>
+                  <ul className="ml-4 space-y-1 text-xs text-gray-400">
+                    <li>&#x2022; 대본 작성: <strong className="text-gray-300">Gemini 3.1 Pro</strong> (웹 검색 + 최신 정보 반영)</li>
+                    <li>&#x2022; 이미지 생성: <strong className="text-gray-300">NanoBanana 2 Pro</strong> (고품질 2K/4K 이미지)</li>
+                    <li>&#x2022; 영상 생성: <strong className="text-gray-300">Veo 3.1 1080p + Grok</strong> (고해상도 영상)</li>
+                    <li>&#x2022; TTS: <strong className="text-gray-300">ElevenLabs v3</strong> (자연스러운 다국어 음성)</li>
+                  </ul>
+                  <p className="text-amber-400/80 mt-2 text-xs">
+                    따라서 체험판의 결과물은 정식 버전과 <strong>품질 차이가 있을 수 있습니다.</strong>
+                    정식 버전의 전체 기능을 경험하려면 정규/프리미엄 멤버로 업그레이드해주세요.
+                  </p>
+                </div>
+              </div>
             </div>
           </section>
 
           {/* 추가 안내 */}
-          <section className="bg-gray-800 border border-amber-500/30 rounded-lg p-4 text-sm text-gray-300">
+          <section className="bg-gray-800 border border-gray-600 rounded-lg p-4 text-sm text-gray-300">
             <p className="font-bold text-amber-400 mb-2">추가 API 키 안내</p>
             <ul className="space-y-1">
               <li><strong>YouTube API 키</strong>: <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">Google Cloud Console</a>에서 발급</li>

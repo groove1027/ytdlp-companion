@@ -1105,8 +1105,9 @@ const App: React.FC = () => {
                 <button
                   onClick={() => useUIStore.getState().setShowTrialGuide(true)}
                   className="px-3 py-1.5 bg-amber-900/40 hover:bg-amber-900/60 border border-amber-500/50 text-amber-300 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5"
+                  title="체험판은 Gemini 2.5 Flash 모델을 사용합니다. 정식 버전과 품질 차이가 있을 수 있습니다."
                 >
-                  체험판 {getTrialDaysLeft(authUser)}일 남음
+                  체험판 {getTrialDaysLeft(authUser)}일 남음 (Gemini Flash)
                 </button>
               )}
               {authUser.tier === 'trial' && isTrialExpired(authUser) && (
