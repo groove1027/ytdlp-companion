@@ -24,6 +24,8 @@ struct HealthResponse {
     version: String,
     #[serde(rename = "ytdlpVersion")]
     ytdlp_version: String,
+    #[serde(rename = "lastUpdateCheck")]
+    last_update_check: i64,
     services: Vec<String>,
 }
 
@@ -178,11 +180,14 @@ async fn health_handler() -> Json<HealthResponse> {
         services.push("ffmpeg".to_string());
     }
 
+    let last_update_check = ytdlp::last_update_check_ts();
+
     Json(HealthResponse {
         app: "ytdlp-companion".to_string(),
         status: "ok".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
         ytdlp_version,
+        last_update_check,
         services,
     })
 }

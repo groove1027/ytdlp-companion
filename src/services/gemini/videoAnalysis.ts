@@ -8,6 +8,7 @@ import { uploadMediaToHosting } from '../uploadService';
 import { generateKieImage, generateEvolinkImageWrapped } from '../VideoGenService';
 import { transcribeWithDiarization, formatDiarizedTranscript } from '../transcriptionService';
 import { logger } from '../LoggerService';
+import { extractStreamUrl, isYtdlpServerConfigured } from '../ytdlpApiService';
 
 // --- Types ---
 type VideoSource = { youtubeUrl: string } | { videoFile: File };
@@ -27,9 +28,30 @@ export const analyzeVideoWithGemini = async (
     // Determine video URI
     let fileUri: string;
     if ('youtubeUrl' in source) {
-        fileUri = source.youtubeUrl;
+        // [FIX] YouTube watch URL → CDN 직접 URL 변환
+        // YouTube watch URL은 영상 파일이 아님 → Gemini fileData.fileUri 처리 불가
+        // extractStreamUrl로 실제 영상 스트림 CDN URL을 추출하여 전달
+        if (isYtdlpServerConfigured()) {
+            try {
+                const videoId = source.youtubeUrl.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|v\/|shorts\/))([a-zA-Z0-9_-]{11})/)?.[1];
+                if (videoId) {
+                    const streamInfo = await extractStreamUrl(videoId, '480p');
+                    if (streamInfo?.url) {
+                        fileUri = streamInfo.url;
+                    } else {
+                        fileUri = source.youtubeUrl;
+                    }
+                } else {
+                    fileUri = source.youtubeUrl;
+                }
+            } catch {
+                fileUri = source.youtubeUrl;
+            }
+        } else {
+            fileUri = source.youtubeUrl;
+        }
     } else {
-        // 업로드 파일 → Cloudinary URL 전달 (Gemini fileData 호환성 제한적이나 시도)
+        // 업로드 파일 → Cloudinary URL 전달
         fileUri = await uploadMediaToHosting(source.videoFile);
     }
 

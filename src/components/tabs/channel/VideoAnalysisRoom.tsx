@@ -3553,7 +3553,39 @@ const VideoAnalysisRoom: React.FC = () => {
         if (firstIsYouTube) {
           // ── YouTube 모드 ──
           const primaryVid = extractYouTubeVideoId(urls[0]);
-          if (primaryVid) videoUri = urls[0].trim();
+          if (primaryVid) {
+            // [FIX] YouTube watch URL → CDN 직접 URL 변환 (Gemini v1beta 분석 속도/성공률 향상)
+            // extractStreamUrl이 yt-dlp를 통해 실제 영상 파일 CDN URL을 추출
+            // YouTube watch URL은 Evolink가 별도 다운로드 필요 → 타임아웃 위험 높음
+            try {
+              // [FIX Codex R5] 10초 타임아웃으로 yt-dlp 서버 미응답 시 빠른 폴백
+              const streamInfoPromise = extractStreamUrl(primaryVid, '480p');
+              const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 10_000));
+              const streamInfo = await Promise.race([streamInfoPromise, timeoutPromise]);
+              if (streamInfo?.url) {
+                videoUri = streamInfo.url;
+                // [FIX Codex R4+R5] URL 기반 MIME 감지 — 오디오 마커 우선 체크 (webm audio 오분류 방지)
+                const detectMimeFromUrl = (url: string, fallback: string) => {
+                  if (url.includes('mime=audio%2Fwebm') || url.includes('mime=audio%2Fopus')) return 'audio/webm';
+                  if (url.includes('mime=video%2Fwebm') || url.includes('.webm')) return 'video/webm';
+                  return fallback;
+                };
+                videoMime = detectMimeFromUrl(streamInfo.url, 'video/mp4');
+                // 분리 스트림인 경우 오디오도 함께 Gemini에 전달
+                if (streamInfo.audioUrl) {
+                  allVideoUris = [streamInfo.url, streamInfo.audioUrl];
+                  allVideoMimes = [detectMimeFromUrl(streamInfo.url, 'video/mp4'), detectMimeFromUrl(streamInfo.audioUrl, 'audio/mp4')];
+                }
+                logger.info('[VideoAnalysis] YouTube CDN URL 추출 성공', { videoId: primaryVid, hasAudio: !!streamInfo.audioUrl });
+              } else {
+                videoUri = urls[0].trim();
+                logger.warn('[VideoAnalysis] CDN URL 추출 실패/타임아웃 — YouTube URL 폴백');
+              }
+            } catch (cdnErr) {
+              videoUri = urls[0].trim();
+              logger.warn('[VideoAnalysis] CDN URL 추출 에러 — YouTube URL 폴백', cdnErr instanceof Error ? cdnErr.message : String(cdnErr));
+            }
+          }
 
           // [FIX #perf] 메타데이터 + 타임코드 보존 자막을 병렬로 수집
           // 타임드 자막은 AI에게 실제 타임코드를 제공하여 정확도 향상 + 화자분리 대체

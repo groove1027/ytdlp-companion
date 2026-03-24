@@ -1,6 +1,15 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicI64, Ordering};
 use tokio::process::Command as AsyncCommand;
+
+/// 마지막 업데이트 체크 Unix timestamp (초 단위)
+static LAST_UPDATE_CHECK: AtomicI64 = AtomicI64::new(0);
+
+/// 마지막 업데이트 체크 timestamp 반환
+pub fn last_update_check_ts() -> i64 {
+    LAST_UPDATE_CHECK.load(Ordering::Relaxed)
+}
 
 // ──────────────────────────────────────────────
 // yt-dlp 바이너리 경로
@@ -50,11 +59,17 @@ pub async fn ensure_ytdlp() -> Result<(), Box<dyn std::error::Error>> {
         println!("[yt-dlp] 다운로드 완료");
     }
 
-    // 백그라운드 업데이트 체크
+    // 시작 시 즉시 업데이트 체크
+    println!("[yt-dlp] 시작 시 업데이트 체크...");
+    if let Err(e) = update_ytdlp(&ytdlp_path).await {
+        eprintln!("[yt-dlp] 시작 시 업데이트 실패 (무시): {}", e);
+    }
+
+    // 백그라운드 업데이트 체크 (2시간 간격)
     let path = ytdlp_path.clone();
     tokio::spawn(async move {
         loop {
-            tokio::time::sleep(std::time::Duration::from_secs(6 * 3600)).await;
+            tokio::time::sleep(std::time::Duration::from_secs(2 * 3600)).await;
             println!("[yt-dlp] 자동 업데이트 체크...");
             if let Err(e) = update_ytdlp(&path).await {
                 eprintln!("[yt-dlp] 업데이트 실패: {}", e);
@@ -81,11 +96,18 @@ async fn download_ytdlp(path: &PathBuf) -> Result<(), Box<dyn std::error::Error>
     Ok(())
 }
 
-async fn update_ytdlp(path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn update_ytdlp(path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     let output = AsyncCommand::new(path)
         .args(["--update"])
         .output()
         .await?;
+
+    // 업데이트 체크 timestamp 기록 (성공/실패 무관)
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    LAST_UPDATE_CHECK.store(now, Ordering::Relaxed);
 
     if output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -165,13 +187,36 @@ pub async fn extract_stream_url(
         .await?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("yt-dlp 실패: {}", stderr.lines().last().unwrap_or("unknown error")).into());
+        // 실패 시 yt-dlp 업데이트 후 1회 재시도
+        let stderr_first = String::from_utf8_lossy(&output.stderr).to_string();
+        println!("[yt-dlp] extract 실패, 업데이트 후 재시도: {}", stderr_first.lines().last().unwrap_or("unknown"));
+        let _ = update_ytdlp(&path).await;
+
+        let retry_output = AsyncCommand::new(&path)
+            .args([
+                "--dump-json",
+                "--no-playlist",
+                "-f", &format_spec,
+                video_url,
+            ])
+            .output()
+            .await?;
+
+        if !retry_output.status.success() {
+            let stderr = String::from_utf8_lossy(&retry_output.stderr);
+            return Err(format!("yt-dlp 실패 (재시도 후): {}", stderr.lines().last().unwrap_or("unknown error")).into());
+        }
+
+        let json: serde_json::Value = serde_json::from_slice(&retry_output.stdout)?;
+        return Ok(parse_stream_result(&json, quality));
     }
 
     let json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    Ok(parse_stream_result(&json, quality))
+}
 
-    Ok(StreamResult {
+fn parse_stream_result(json: &serde_json::Value, quality: &str) -> StreamResult {
+    StreamResult {
         url: json["url"].as_str().unwrap_or("").to_string(),
         audio_url: json["audio_url"].as_str().map(|s| s.to_string())
             .or_else(|| {
@@ -190,7 +235,7 @@ pub async fn extract_stream_url(
         format: quality.to_string(),
         codec: json["vcodec"].as_str().unwrap_or("").to_string(),
         cached: false,
-    })
+    }
 }
 
 // ──────────────────────────────────────────────
@@ -251,8 +296,62 @@ pub async fn download_video(
         .await?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("yt-dlp 다운로드 실패: {}", stderr.lines().last().unwrap_or("unknown")).into());
+        // 실패 시 yt-dlp 업데이트 후 1회 재시도
+        let stderr_first = String::from_utf8_lossy(&output.stderr).to_string();
+        println!("[yt-dlp] 다운로드 실패, 업데이트 후 재시도: {}", stderr_first.lines().last().unwrap_or("unknown"));
+        let _ = update_ytdlp(&path).await;
+
+        // 재시도 시 새 임시 디렉토리 사용 (이전 tmp_dir 내 파편 방지)
+        let retry_tmp_dir = tempfile::tempdir()?;
+        let retry_output_template = retry_tmp_dir.path().join("%(title).50s.%(ext)s");
+        let mut retry_args = args.clone();
+        // -o 인자 값 교체
+        if let Some(pos) = retry_args.iter().position(|a| a == "-o") {
+            if pos + 1 < retry_args.len() {
+                retry_args[pos + 1] = retry_output_template.to_string_lossy().to_string();
+            }
+        }
+
+        let retry_output = AsyncCommand::new(&path)
+            .args(&retry_args)
+            .output()
+            .await?;
+
+        if !retry_output.status.success() {
+            let stderr = String::from_utf8_lossy(&retry_output.stderr);
+            return Err(format!("yt-dlp 다운로드 실패 (재시도 후): {}", stderr.lines().last().unwrap_or("unknown")).into());
+        }
+
+        // 재시도 성공 — retry_tmp_dir에서 파일 찾기
+        let mut retry_files: Vec<_> = std::fs::read_dir(retry_tmp_dir.path())?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().is_file())
+            .collect();
+        retry_files.sort_by_key(|f| std::cmp::Reverse(f.metadata().map(|m| m.len()).unwrap_or(0)));
+
+        let file = retry_files.first()
+            .ok_or("다운로드된 파일을 찾을 수 없습니다 (재시도)")?;
+
+        let file_path = file.path();
+        let filename = file.file_name().to_string_lossy().to_string();
+        let size = file.metadata().map(|m| m.len()).unwrap_or(0);
+        let content_type = if filename.ends_with(".mp4") {
+            "video/mp4"
+        } else if filename.ends_with(".webm") {
+            "video/webm"
+        } else if filename.ends_with(".m4a") || filename.ends_with(".mp3") {
+            "audio/mp4"
+        } else {
+            "application/octet-stream"
+        };
+
+        return Ok(DownloadedFile {
+            path: file_path,
+            filename,
+            content_type: content_type.to_string(),
+            size,
+            _tmp_dir: retry_tmp_dir,
+        });
     }
 
     // 다운로드된 파일 찾기 (가장 큰 파일)
@@ -376,12 +475,27 @@ pub async fn get_social_metadata(
         .output()
         .await?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("메타데이터 추출 실패: {}", stderr.lines().last().unwrap_or("unknown")).into());
-    }
+    let stdout = if !output.status.success() {
+        // 실패 시 yt-dlp 업데이트 후 1회 재시도
+        let stderr_first = String::from_utf8_lossy(&output.stderr).to_string();
+        println!("[yt-dlp] 메타데이터 추출 실패, 업데이트 후 재시도: {}", stderr_first.lines().last().unwrap_or("unknown"));
+        let _ = update_ytdlp(&path).await;
 
-    let json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+        let retry_output = AsyncCommand::new(&path)
+            .args(&args)
+            .output()
+            .await?;
+
+        if !retry_output.status.success() {
+            let stderr = String::from_utf8_lossy(&retry_output.stderr);
+            return Err(format!("메타데이터 추출 실패 (재시도 후): {}", stderr.lines().last().unwrap_or("unknown")).into());
+        }
+        retry_output.stdout
+    } else {
+        output.stdout
+    };
+
+    let json: serde_json::Value = serde_json::from_slice(&stdout)?;
 
     let comments: Vec<serde_json::Value> = if include_comments {
         json["comments"]

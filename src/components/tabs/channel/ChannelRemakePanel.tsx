@@ -2,11 +2,12 @@ import React, { useState, useCallback, useRef } from 'react';
 import { useChannelAnalysisStore } from '../../../stores/channelAnalysisStore';
 import { useScriptWriterStore } from '../../../stores/scriptWriterStore';
 import { useNavigationStore } from '../../../stores/navigationStore';
-import { evolinkChat, getEvolinkKey, evolinkFrameAnalysisStream } from '../../../services/evolinkService';
+import { evolinkChat, getEvolinkKey, evolinkFrameAnalysisStream, evolinkVideoAnalysisStream } from '../../../services/evolinkService';
 import { getVideoTranscript } from '../../../services/youtubeAnalysisService';
 import { parseFileToText } from '../../../services/fileParserService';
 import { extractFramesForAnalysis } from '../../../services/shoppingScriptService';
 import { showToast } from '../../../stores/uiStore';
+import { extractStreamUrl, isYtdlpServerConfigured } from '../../../services/ytdlpApiService';
 import { logger } from '../../../services/LoggerService';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
 import type { ChannelGuideline, ChannelScript, RemakeVersion } from '../../../types';
@@ -166,13 +167,70 @@ const ChannelRemakePanel: React.FC = () => {
       let sourceContent = sourceInput.trim();
       const videoId = extractVideoId(sourceInput);
       if (videoId) {
-        const result = await getVideoTranscript(videoId);
-        sourceContent = result.text;
-        if (result.source === 'description' && sourceContent.length > 0) {
-          // [FIX #286] 자막 없는 영상도 제목+설명으로 분석 허용 (정확도 저하 경고)
-          showToast('이 영상의 자막을 찾을 수 없어 제목과 설명으로 대체합니다. 정확도가 낮을 수 있습니다.');
-        } else if (sourceContent.length < 50) {
-          throw new Error('이 영상에는 자막과 설명이 없어 분석할 수 없습니다. 영상 내용을 직접 텍스트로 붙여넣어 주세요.');
+        // [FIX Codex R1] 1차: 기존 자막 추출 시도 (예외도 catch하여 Gemini 폴백 유도)
+        let transcriptResult: { text: string; source: string } | null = null;
+        try {
+          transcriptResult = await getVideoTranscript(videoId);
+        } catch (transcriptErr) {
+          logger.warn('[Remake] 자막 추출 실패, Gemini 폴백 시도', transcriptErr instanceof Error ? transcriptErr.message : String(transcriptErr));
+        }
+
+        if (transcriptResult?.source === 'caption' && transcriptResult.text.length > 100) {
+          // 자막 성공 → 그대로 사용
+          sourceContent = transcriptResult.text;
+        } else {
+          // [FIX Codex R2] 2차: Gemini v1beta 영상 직접 분석 (fileData로 영상 전달)
+          try {
+            let videoFileUri: string | string[] = `https://www.youtube.com/watch?v=${videoId}`;
+            let videoMimeType: string | string[] = 'video/mp4';
+            if (isYtdlpServerConfigured()) {
+              try {
+                // [FIX Codex R5] 10초 타임아웃으로 yt-dlp 서버 미응답 시 빠른 폴백
+                const streamInfoPromise = extractStreamUrl(videoId, '480p');
+                const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 10_000));
+                const streamInfo = await Promise.race([streamInfoPromise, timeoutPromise]);
+                if (streamInfo?.url) {
+                  // [FIX Codex R5] 오디오 마커 우선 체크 (webm audio 오분류 방지)
+                  const detectMime = (url: string, fb: string) =>
+                    url.includes('mime=audio%2Fwebm') || url.includes('mime=audio%2Fopus') ? 'audio/webm'
+                    : url.includes('mime=video%2Fwebm') || url.includes('.webm') ? 'video/webm' : fb;
+                  if (streamInfo.audioUrl) {
+                    videoFileUri = [streamInfo.url, streamInfo.audioUrl];
+                    videoMimeType = [detectMime(streamInfo.url, 'video/mp4'), detectMime(streamInfo.audioUrl, 'audio/mp4')];
+                  } else {
+                    videoFileUri = streamInfo.url;
+                    videoMimeType = detectMime(streamInfo.url, 'video/mp4');
+                  }
+                }
+              } catch { /* CDN URL 실패 시 YouTube URL 폴백 */ }
+            }
+
+            // evolinkVideoAnalysisStream으로 영상을 fileData로 직접 전달 (텍스트 URL이 아님)
+            const systemPrompt = '당신은 영상 콘텐츠 분석 전문가입니다. 영상의 전체 내용을 정확하게 텍스트로 전사합니다.';
+            const userPrompt = '이 영상의 전체 내용(나레이션, 대사, 핵심 메시지)을 한국어로 상세하게 텍스트로 작성해주세요. 영상을 직접 보고 들은 내용을 기반으로 작성하세요. JSON이 아닌 일반 텍스트로 응답하세요.';
+            const extractedText = await evolinkVideoAnalysisStream(
+              videoFileUri, videoMimeType,
+              systemPrompt, userPrompt,
+              () => {}, { temperature: 0.3, maxOutputTokens: 8192 }
+            );
+            if (extractedText.length > 100) {
+              sourceContent = extractedText;
+              showToast('Gemini 영상 직접 분석으로 내용을 추출했습니다.');
+            } else if (transcriptResult && transcriptResult.text.length > 0) {
+              sourceContent = transcriptResult.text;
+              showToast('이 영상의 자막을 찾을 수 없어 제목과 설명으로 대체합니다. 정확도가 낮을 수 있습니다.');
+            } else {
+              throw new Error('이 영상에는 자막이 없고 영상 분석도 실패했습니다. 영상 내용을 직접 텍스트로 붙여넣어 주세요.');
+            }
+          } catch (geminiErr) {
+            // Gemini 분석도 실패 → 기존 결과라도 사용
+            if (transcriptResult && transcriptResult.text.length > 50) {
+              sourceContent = transcriptResult.text;
+              showToast('이 영상의 자막을 찾을 수 없어 제목과 설명으로 대체합니다. 정확도가 낮을 수 있습니다.');
+            } else {
+              throw geminiErr instanceof Error ? geminiErr : new Error('이 영상에는 자막과 설명이 없어 분석할 수 없습니다. 영상 내용을 직접 텍스트로 붙여넣어 주세요.');
+            }
+          }
         }
       }
 
