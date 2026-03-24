@@ -1,10 +1,35 @@
 
-import { getKieKey, getEvolinkKey as getStoredEvolinkKey, monitoredFetch } from './apiService';
+import { getKieKey, getEvolinkKey as getStoredEvolinkKey, getGoogleGeminiKey, monitoredFetch } from './apiService';
 import { logger } from './LoggerService';
 import { ScriptAiModel } from '../types';
 import { useCostStore } from '../stores/costStore';
+import { useAuthStore } from '../stores/authStore';
 import { PRICING } from '../constants';
 import type { TaskProfile } from './gemini/geminiProxy';
+import { requestGoogleGeminiDirect } from './googleGeminiDirectService';
+
+/**
+ * Trial 사용자 게이트 — Evolink/KIE 프록시 대신 Google Gemini 직접 호출
+ * trial + Google 키가 있으면 직접 호출 결과를 반환, 아니면 null (기존 경로 진행)
+ */
+export const tryTrialGeminiDirect = async (
+  payload: Record<string, unknown>,
+  options?: { timeoutMs?: number; signal?: AbortSignal },
+): Promise<string | null> => {
+  const user = useAuthStore.getState().authUser;
+  if (user?.tier !== 'trial') return null;
+  // 만료 체크
+  if (user.tierExpiresAt && new Date(user.tierExpiresAt).getTime() < Date.now()) {
+    throw new Error('체험 기간이 만료되었습니다. 정규 멤버로 업그레이드해주세요.');
+  }
+  const googleKey = getGoogleGeminiKey();
+  if (!googleKey) {
+    throw new Error('Google Gemini API 키가 설정되지 않았습니다. 체험판 가이드에서 API 키를 등록해주세요.');
+  }
+  const model = 'gemini-2.5-flash';
+  const result = await requestGoogleGeminiDirect(model, payload, options);
+  return result.text;
+};
 
 // === CONFIGURATION ===
 const EVOLINK_BASE_URL = 'https://api.evolink.ai/v1';
@@ -504,6 +529,19 @@ export const evolinkChat = async (
     messages: EvolinkChatMessage[],
     options: EvolinkChatOptions = {}
 ): Promise<EvolinkChatResponse> => {
+    // ── Trial 사용자: Google Gemini 직접 호출 ──
+    const trialPayload = {
+        contents: messages.map(m => ({
+            role: m.role === 'assistant' ? 'model' : 'user',
+            parts: [{ text: m.content }],
+        })),
+        generationConfig: { temperature: options.temperature ?? 0.7, maxOutputTokens: options.maxTokens ?? 4096 },
+    };
+    const trialResult = await tryTrialGeminiDirect(trialPayload, { signal: options.signal, timeoutMs: options.timeoutMs });
+    if (trialResult !== null) {
+        return { content: trialResult, model: 'gemini-2.5-flash (Google Direct)', usage: undefined };
+    }
+
     const {
         temperature = 0.7,
         maxTokens = 4096,
@@ -624,6 +662,20 @@ export const evolinkChatStream = async (
     onChunk: (text: string, accumulated: string) => void,
     options: EvolinkChatOptions = {}
 ): Promise<string> => {
+    // ── Trial 사용자: Google Gemini 직접 호출 (non-stream, 결과를 한번에 전달) ──
+    const trialPayload = {
+        contents: messages.map(m => ({
+            role: m.role === 'assistant' ? 'model' : 'user',
+            parts: [{ text: m.content }],
+        })),
+        generationConfig: { temperature: options.temperature ?? 0.7, maxOutputTokens: options.maxTokens ?? 4096 },
+    };
+    const trialResult = await tryTrialGeminiDirect(trialPayload, { signal: options.signal, timeoutMs: options.timeoutMs });
+    if (trialResult !== null) {
+        onChunk(trialResult, trialResult);
+        return trialResult;
+    }
+
     // [FIX] Evolink 잔액 소진 시 KIE non-stream 폴백 (스트리밍 대신 전체 응답 반환)
     if ((isEvolinkQuotaDepleted() || isEvolinkRateLimited()) && !isKieRateLimited()) {
         logger.warn('[Evolink] Stream 요청이지만 Evolink 잔액 소진 — Kie non-stream 폴백');
@@ -800,6 +852,12 @@ export const requestEvolinkNative = async (
     /** [FIX #678] abort signal — fetch에 전달하여 타임아웃 시 즉시 취소 */
     signal?: AbortSignal,
 ): Promise<Record<string, unknown>> => {
+    // ── Trial 사용자: Google Gemini 직접 호출 ──
+    const trialResult = await tryTrialGeminiDirect(googlePayload as Record<string, unknown>, { signal, timeoutMs });
+    if (trialResult !== null) {
+        return { candidates: [{ content: { parts: [{ text: trialResult }] }, finishReason: 'STOP' }] };
+    }
+
     const apiKey = getEvolinkKey();
     if (!apiKey) throw new Error('Evolink API 키가 설정되지 않았습니다.');
 
@@ -905,6 +963,18 @@ export const evolinkNativeStream = async (
     onChunk: (text: string, accumulated: string) => void,
     options: { temperature?: number; maxOutputTokens?: number; enableWebSearch?: boolean; signal?: AbortSignal; onFinish?: (reason: string) => void } = {}
 ): Promise<string> => {
+    // ── Trial 사용자: Google Gemini 직접 호출 ──
+    const trialPayload = {
+        contents: [{ role: 'user', parts: [{ text: systemPrompt + '\n\n' + userPrompt }] }],
+        generationConfig: { temperature: options.temperature ?? 0.7, maxOutputTokens: options.maxOutputTokens ?? 16000 },
+    };
+    const trialResult = await tryTrialGeminiDirect(trialPayload, { signal: options.signal, timeoutMs: 120_000 });
+    if (trialResult !== null) {
+        onChunk(trialResult, trialResult);
+        options.onFinish?.('STOP');
+        return trialResult;
+    }
+
     const apiKey = getEvolinkKey();
     if (!apiKey) throw new Error('Evolink API 키가 설정되지 않았습니다.');
 
@@ -1315,6 +1385,18 @@ export const scriptGenerationStream = async (
     }
 ): Promise<string> => {
     const { model, temperature, maxOutputTokens, enableWebSearch, signal, onFinish } = options;
+
+    // ── Trial 사용자: 모델 무관하게 Google Gemini 직접 호출 ──
+    const trialPayload = {
+        contents: [{ role: 'user' as const, parts: [{ text: systemPrompt + '\n\n' + userPrompt }] }],
+        generationConfig: { temperature: temperature ?? 0.7, maxOutputTokens: maxOutputTokens ?? 16000 },
+    };
+    const trialResult = await tryTrialGeminiDirect(trialPayload, { signal, timeoutMs: 120_000 });
+    if (trialResult !== null) {
+        onChunk(trialResult, trialResult);
+        onFinish?.('STOP');
+        return trialResult;
+    }
 
     if (model === ScriptAiModel.GEMINI_PRO) {
         if (enableWebSearch) {
