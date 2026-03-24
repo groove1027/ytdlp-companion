@@ -1068,6 +1068,14 @@ async function generatePremiereNativeProjectBytes(params: {
     setPremiereChildText(doc, dataTrackGroupMeta, 'NextTrackID', '361');
   }
 
+  // [FIX] 템플릿에 남아있는 원본 프로젝트 절대경로 제거
+  const projectElement = getPremiereObjectById(doc, '1');
+  const projectNode = getPremiereDirectChild(projectElement, 'Node');
+  const projectProps = projectNode ? getPremiereDirectChild(projectNode, 'Properties') : null;
+  if (projectProps) {
+    removePremiereChild(projectProps, 'project.settings.lastknowngoodprojectpath');
+  }
+
   const sourceMedia = getPremiereObjectByUid(doc, 'a2a84544-e9d2-49c2-87e5-23116e78d0fb');
   setPremiereChildText(doc, sourceMedia, 'RelativePath', `media/${safeVideoName}`);
   setPremiereChildText(doc, sourceMedia, 'FilePath', `media/${safeVideoName}`);
@@ -1480,7 +1488,21 @@ async function generatePremiereNativeProjectBytes(params: {
   const serialized = new XMLSerializer().serializeToString(doc);
   // XMLSerializer가 자체 XML 선언을 추가하므로 중복 방지
   const withoutDecl = serialized.replace(/^<\?xml[^?]*\?>\s*/, '');
-  const projectXml = `<?xml version="1.0" encoding="UTF-8" ?>\n${withoutDecl}`;
+  // [FIX] DOMParser가 &#10; 엔티티를 리터럴 \n으로 디코딩하고 XMLSerializer는
+  // 복원하지 않음. 텍스트 콘텐츠 안의 \n을 &#10;으로 되돌려야 Premiere 내부
+  // 메타데이터(XMP Schema, Export Preset 등)가 정상 파싱됨.
+  // 앞뒤 구조적 공백(들여쓰기)은 보존하고 중간 콘텐츠의 \n만 변환한다.
+  const restored = withoutDecl.replace(/>([^<]+)</g, (_match, text: string) => {
+    if (!text.includes('\n') || text.trim().length === 0) return _match;
+    const leadWs = text.match(/^(\s*)/)?.[1] || '';
+    // 구조적 후행 공백은 반드시 \n + 탭/공백(들여쓰기)이 있어야 함.
+    // 맨 끝 단독 \n은 원본 &#10; 콘텐츠일 수 있으므로 보존 대상.
+    const trailWs = text.match(/(\n[\t ]+)$/)?.[1] || '';
+    const inner = text.slice(leadWs.length, text.length - trailWs.length);
+    if (!inner.includes('\n')) return _match;
+    return '>' + leadWs + inner.replace(/\n/g, '&#10;') + trailWs + '<';
+  });
+  const projectXml = `<?xml version="1.0" encoding="UTF-8" ?>\n${restored}`;
   return transformPremiereProjectBytes(new TextEncoder().encode(projectXml), 'compress');
 }
 
