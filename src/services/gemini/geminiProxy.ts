@@ -1,9 +1,11 @@
 
-import { getKieKey, monitoredFetch } from '../apiService';
+import { getKieKey, monitoredFetch, getGoogleGeminiKey } from '../apiService';
 import { getEvolinkKey, requestEvolinkNative, fetchWithRateLimitRetry } from '../evolinkService';
+import { requestGoogleGeminiDirect } from '../googleGeminiDirectService';
 import { PRICING } from '../../constants';
 import { logger } from '../LoggerService';
 import { useCostStore } from '../../stores/costStore';
+import { useAuthStore } from '../../stores/authStore';
 
 // [FIX #245] Evolink 429 Rate Limit 쿨다운 — Pro 모델 429 시 Flash Lite 우선, Kie는 최후 비상
 // 429는 모델별 rate limit일 수 있으므로 Pro만 쿨다운, Flash Lite는 별도 시도
@@ -346,6 +348,38 @@ const shouldPreferKieFirst = (taskProfile: TaskProfile, requiresBeta: boolean, m
 // - 텍스트 전용 → v1 우선 (안정적, 동일 Gemini 3.1 Pro, v1beta 불안정 회피)
 // - Kie는 항상 최종 폴백 (Gemini 3.1 Pro — 동급 품질)
 export const requestGeminiProxy = async (model: string, googlePayload: any, _retryCount: number = 0, timeoutMs?: number, options?: GeminiProxyOptionsInput): Promise<any> => {
+    // ── 체험판(trial) 사용자: Google 공식 Gemini API 직접 호출 ──
+    const authUser = useAuthStore.getState().authUser;
+    if (authUser?.tier === 'trial') {
+        // 만료 체크
+        if (authUser.tierExpiresAt && new Date(authUser.tierExpiresAt).getTime() < Date.now()) {
+            throw new Error('체험 기간이 만료되었습니다. 정규 멤버로 업그레이드해주세요.');
+        }
+        const googleGeminiKey = getGoogleGeminiKey();
+        if (!googleGeminiKey) {
+            throw new Error('Google Gemini API 키가 설정되지 않았습니다. 체험판 가이드에서 API 키를 발급받아 등록해주세요.');
+        }
+        try {
+            logger.info(`[Gemini] Trial 모드 — Google 직접 API (model: ${model})`);
+            const googleModel = model.includes('flash') ? 'gemini-2.5-flash-preview-05-20' : 'gemini-2.5-pro-preview-05-06';
+            const result = await requestGoogleGeminiDirect(googleModel, googlePayload, {
+                timeoutMs: timeoutMs || 120_000,
+                signal: (options as Record<string, unknown>)?.signal as AbortSignal | undefined,
+            });
+            return {
+                candidates: [{
+                    content: { parts: [{ text: result.text }] },
+                    finishReason: 'STOP',
+                }],
+                usageMetadata: result.usageMetadata,
+            };
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : String(e);
+            logger.warn(`[Gemini] Trial 직접 호출 실패 — ${msg}`);
+            throw e;
+        }
+    }
+
     let lastError: any = null;
     const resolvedOptions = normalizeGeminiProxyOptions(options);
     const shouldSkipNative = resolvedOptions.skipNative || _retryCount > 0;

@@ -3,7 +3,7 @@
  * - 기존 사용자: provider + provider_id 매칭 → 로그인
  * - 신규 사용자: 초대 코드 필수 → 회원가입
  */
-import type { Env, InviteCodeData } from './_types';
+import type { Env, InviteCodeData, UserTier } from './_types';
 import { generateToken } from './_crypto';
 
 type Provider = 'google' | 'kakao' | 'naver';
@@ -149,23 +149,27 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
     // 2. 기존 사용자 확인 (provider + provider_id)
     const existing = await context.env.DB.prepare(
-      'SELECT id, email, display_name FROM users WHERE provider = ? AND provider_id = ?'
-    ).bind(provider, userInfo.providerId).first<{ id: number; email: string; display_name: string | null }>();
+      'SELECT id, email, display_name, tier, tier_expires_at FROM users WHERE provider = ? AND provider_id = ?'
+    ).bind(provider, userInfo.providerId).first<{ id: number; email: string; display_name: string | null; tier: UserTier | null; tier_expires_at: string | null }>();
 
     if (existing) {
       // 기존 사용자 → 로그인
       const sessionToken = generateToken();
       const displayName = existing.display_name || userInfo.name || existing.email.split('@')[0];
+      const tier: UserTier = existing.tier || 'basic';
+      const tierExpiresAt = existing.tier_expires_at || null;
       await context.env.SESSIONS.put(sessionToken, JSON.stringify({
         email: existing.email,
         displayName,
+        tier,
+        tierExpiresAt,
         createdAt: new Date().toISOString(),
       }), { expirationTtl: 60 * 60 * 24 * 30 }); // 30일
 
       return new Response(JSON.stringify({
         success: true,
         token: sessionToken,
-        user: { email: existing.email, displayName },
+        user: { email: existing.email, displayName, tier, tierExpiresAt },
         isNewUser: false,
       }), { status: 200, headers });
     }
@@ -207,30 +211,38 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       return new Response(JSON.stringify({ error: '이 초대 코드의 사용 한도가 초과되었습니다.' }), { status: 403, headers });
     }
 
-    // 5. 사용자 생성
+    // 5. 티어 + 만료일 계산
+    const tier: UserTier = codeData.tier || 'basic';
+    const tierExpiresAt = codeData.durationDays > 0
+      ? new Date(Date.now() + codeData.durationDays * 24 * 60 * 60 * 1000).toISOString()
+      : null;
+
+    // 6. 사용자 생성
     const email = (userInfo.email || `${provider}_${userInfo.providerId}@social.local`).toLowerCase();
     const displayName = userInfo.name || email.split('@')[0];
 
     await context.env.DB.prepare(
-      'INSERT INTO users (email, password_hash, display_name, invite_code, provider, provider_id) VALUES (?, ?, ?, ?, ?, ?)'
-    ).bind(email, null, displayName, inviteCode.toUpperCase(), provider, userInfo.providerId).run();
+      'INSERT INTO users (email, password_hash, display_name, invite_code, tier, tier_expires_at, provider, provider_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    ).bind(email, null, displayName, inviteCode.toUpperCase(), tier, tierExpiresAt, provider, userInfo.providerId).run();
 
-    // 6. 초대 코드 사용 횟수 증가
+    // 7. 초대 코드 사용 횟수 증가
     codeData.currentUses += 1;
     await context.env.INVITE_CODES.put(inviteCode.toUpperCase(), JSON.stringify(codeData));
 
-    // 7. 세션 토큰 발급 (30일)
+    // 8. 세션 토큰 발급 (30일)
     const sessionToken = generateToken();
     await context.env.SESSIONS.put(sessionToken, JSON.stringify({
       email,
       displayName,
+      tier,
+      tierExpiresAt,
       createdAt: new Date().toISOString(),
     }), { expirationTtl: 60 * 60 * 24 * 30 });
 
     return new Response(JSON.stringify({
       success: true,
       token: sessionToken,
-      user: { email, displayName },
+      user: { email, displayName, tier, tierExpiresAt },
       isNewUser: true,
     }), { status: 201, headers });
 

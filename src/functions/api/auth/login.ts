@@ -1,4 +1,4 @@
-import type { Env } from './_types';
+import type { Env, UserTier } from './_types';
 import { verifyPassword, generateToken } from './_crypto';
 
 export const onRequestPost: PagesFunction<Env> = async (context) => {
@@ -18,9 +18,10 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
     // 사용자 조회
     const user = await context.env.DB.prepare(
-      'SELECT id, email, password_hash, display_name FROM users WHERE email = ?'
+      'SELECT id, email, password_hash, display_name, tier, tier_expires_at FROM users WHERE email = ?'
     ).bind(email.toLowerCase()).first<{
       id: number; email: string; password_hash: string; display_name: string | null;
+      tier: UserTier | null; tier_expires_at: string | null;
     }>();
 
     if (!user) {
@@ -46,10 +47,14 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
     // 세션 토큰 발급 (rememberMe: 30일, 미체크: 1일, 기본: 7일)
     const ttlDays = rememberMe === true ? 30 : rememberMe === false ? 1 : 7;
+    const tier: UserTier = user.tier || 'basic';
+    const tierExpiresAt = user.tier_expires_at || null;
     const token = generateToken();
     await context.env.SESSIONS.put(token, JSON.stringify({
       email: user.email,
       displayName: user.display_name || user.email.split('@')[0],
+      tier,
+      tierExpiresAt,
       createdAt: new Date().toISOString(),
     }), { expirationTtl: 60 * 60 * 24 * ttlDays });
 
@@ -57,7 +62,12 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       JSON.stringify({
         success: true,
         token,
-        user: { email: user.email, displayName: user.display_name || user.email.split('@')[0] },
+        user: {
+          email: user.email,
+          displayName: user.display_name || user.email.split('@')[0],
+          tier,
+          tierExpiresAt,
+        },
       }),
       { status: 200, headers }
     );

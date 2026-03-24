@@ -16,6 +16,11 @@
 .ralph/docs/generated/*
 !.ralph/docs/generated/.gitkeep
 
+# Environment files (API keys — 절대 커밋 금지)
+.env
+.env.*
+.env.local
+
 # General logs
 *.log
 

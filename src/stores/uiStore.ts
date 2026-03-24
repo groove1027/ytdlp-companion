@@ -33,6 +33,7 @@ interface UIStore {
   lastAutoSavedAt: number | null;
   smartErrorContext: SmartErrorContext | null;
   feedbackPrefilledContext: SmartErrorContext | null;
+  showTrialGuide: boolean;
 
   // Actions
   openSidebar: () => void;
@@ -58,6 +59,7 @@ interface UIStore {
   setSmartErrorContext: (ctx: SmartErrorContext | null) => void;
   setFeedbackPrefilledContext: (ctx: SmartErrorContext | null) => void;
   dismissSmartError: () => void;
+  setShowTrialGuide: (show: boolean) => void;
 }
 
 export const useUIStore = create<UIStore>((set) => ({
@@ -83,6 +85,7 @@ export const useUIStore = create<UIStore>((set) => ({
   lastAutoSavedAt: null,
   smartErrorContext: null,
   feedbackPrefilledContext: null,
+  showTrialGuide: false,
 
   openSidebar: () => set({ isSidebarOpen: true }),
   closeSidebar: () => set({ isSidebarOpen: false }),
@@ -113,6 +116,7 @@ export const useUIStore = create<UIStore>((set) => ({
   setSmartErrorContext: (ctx) => set({ smartErrorContext: ctx }),
   setFeedbackPrefilledContext: (ctx) => set({ feedbackPrefilledContext: ctx }),
   dismissSmartError: () => set({ smartErrorContext: null }),
+  setShowTrialGuide: (show) => set({ showTrialGuide: show }),
 }));
 
 /** alert() 대체 유틸리티 — 어디서든 import해서 사용 (Sonner 기반) */

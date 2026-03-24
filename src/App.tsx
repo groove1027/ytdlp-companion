@@ -44,6 +44,8 @@ import HelpGuideModal from './components/HelpGuideModal';
 // [REMOVED] OnboardingTour — 사용자 혼란 유발로 제거
 import { useUIStore, showToast } from './stores/uiStore';
 import { useAuthStore } from './stores/authStore';
+import { isTrialExpired, getTrialDaysLeft } from './services/authService';
+import TrialGuideModal from './components/TrialGuideModal';
 import { useCostStore } from './stores/costStore';
 import { useProjectStore, autoRestoreOrCreateProject } from './stores/projectStore';
 import { useNavigationStore } from './stores/navigationStore';
@@ -188,6 +190,7 @@ const App: React.FC = () => {
   const authChecking = useAuthStore((s) => s.authChecking);
   const setAuthUser = useAuthStore((s) => s.setAuthUser);
   const showAuthGateModal = useUIStore((s) => s.showAuthGateModal);
+  const showTrialGuide = useUIStore((s) => s.showTrialGuide);
 
   useEffect(() => {
     useAuthStore.getState().checkAuth();
@@ -1097,6 +1100,20 @@ const App: React.FC = () => {
           <CostDashboard />
           {authUser ? (
             <>
+              {/* 체험판 배너 */}
+              {authUser.tier === 'trial' && !isTrialExpired(authUser) && (
+                <button
+                  onClick={() => useUIStore.getState().setShowTrialGuide(true)}
+                  className="px-3 py-1.5 bg-amber-900/40 hover:bg-amber-900/60 border border-amber-500/50 text-amber-300 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5"
+                >
+                  체험판 {getTrialDaysLeft(authUser)}일 남음
+                </button>
+              )}
+              {authUser.tier === 'trial' && isTrialExpired(authUser) && (
+                <span className="px-3 py-1.5 bg-red-900/40 border border-red-500/50 text-red-300 rounded-lg text-xs font-bold">
+                  체험 기간 만료
+                </span>
+              )}
               <button
                 onClick={() => useUIStore.getState().setShowApiSettings(true)}
                 className="px-3.5 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-gray-300 hover:text-white rounded-lg text-sm font-bold transition-all flex items-center gap-1.5"
@@ -1461,6 +1478,18 @@ const App: React.FC = () => {
           authUser={authUser}
           onUserUpdate={setAuthUser}
           onAccountDeleted={() => setAuthUser(null)}
+        />
+      )}
+
+      {/* 체험판 가이드 */}
+      {authUser?.tier === 'trial' && showTrialGuide && (
+        <TrialGuideModal
+          user={authUser}
+          onClose={() => useUIStore.getState().setShowTrialGuide(false)}
+          onSaveGeminiKey={(key) => {
+            localStorage.setItem('CUSTOM_GOOGLE_GEMINI_KEY', key);
+            showToast('Google Gemini API 키가 저장되었습니다.', 3000);
+          }}
         />
       )}
 

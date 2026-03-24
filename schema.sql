@@ -5,6 +5,8 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT NOT NULL,
   display_name TEXT,
   invite_code TEXT NOT NULL,
+  tier TEXT NOT NULL DEFAULT 'basic',
+  tier_expires_at TEXT,
   created_at TEXT DEFAULT (datetime('now')),
   last_login TEXT
 );
@@ -21,6 +23,11 @@ CREATE TABLE IF NOT EXISTS user_settings (
 );
 
 CREATE INDEX IF NOT EXISTS idx_user_settings_email ON user_settings(email);
+
+-- [마이그레이션] 기존 users 테이블에 tier 컬럼 추가 (D1은 IF NOT EXISTS 미지원이므로 에러 무시)
+-- Cloudflare D1 콘솔에서 직접 실행 필요:
+-- ALTER TABLE users ADD COLUMN tier TEXT NOT NULL DEFAULT 'basic';
+-- ALTER TABLE users ADD COLUMN tier_expires_at TEXT;
 
 -- 프로젝트 클라우드 동기화 (R2 메타데이터 인덱스)
 -- 실제 생성은 _syncHelpers.ts의 ensureProjectsTable()에서 자동 수행

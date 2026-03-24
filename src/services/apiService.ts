@@ -33,6 +33,12 @@ export const getGeminiKey = (): string => {
     return getKieKey();
 };
 
+// Google 공식 Gemini API 키 (체험판 사용자 전용 — generativelanguage.googleapis.com)
+export const getGoogleGeminiKey = (): string => {
+    const key = localStorage.getItem('CUSTOM_GOOGLE_GEMINI_KEY') || '';
+    return sanitizeKey(key);
+};
+
 export const getKieKey = (): string => {
     const key = localStorage.getItem('CUSTOM_KIE_KEY') || DEFAULT_KIE_KEY;
     return sanitizeKey(key);
@@ -204,6 +210,7 @@ export const getStoredKeys = () => {
         evolink: localStorage.getItem('CUSTOM_EVOLINK_KEY') || '',
         youtubeApiKey: localStorage.getItem('CUSTOM_YOUTUBE_API_KEY') || '',
         typecast: localStorage.getItem('CUSTOM_TYPECAST_KEY') || '',
+        googleGeminiKey: localStorage.getItem('CUSTOM_GOOGLE_GEMINI_KEY') || '',
     };
 };
 
@@ -224,6 +231,7 @@ const SETTINGS_KEY_MAP: [string, string][] = [
     ['CUSTOM_COUPANG_ACCESS_KEY', 'coupangAccessKey'],
     ['CUSTOM_COUPANG_SECRET_KEY', 'coupangSecretKey'],
     ['CUSTOM_COUPANG_PROXY_URL', 'coupangProxyUrl'],
+    ['CUSTOM_GOOGLE_GEMINI_KEY', 'googleGeminiKey'],
 ];
 
 /** 현재 localStorage의 API 키를 서버에 백업 (로그인 상태에서만 동작) */

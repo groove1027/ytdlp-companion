@@ -1,4 +1,4 @@
-import type { Env, InviteCodeData } from './_types';
+import type { Env, InviteCodeData, UserTier } from './_types';
 import { hashPassword, generateToken } from './_crypto';
 
 interface SignupBody {
@@ -59,26 +59,36 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       );
     }
 
-    // 4. 비밀번호 해싱 + 사용자 생성
+    // 4. 티어 + 만료일 계산
+    const tier: UserTier = codeData.tier || 'basic';
+    const tierExpiresAt = codeData.durationDays > 0
+      ? new Date(Date.now() + codeData.durationDays * 24 * 60 * 60 * 1000).toISOString()
+      : null;
+
+    // 5. 비밀번호 해싱 + 사용자 생성
     const passwordHash = await hashPassword(password);
     await context.env.DB.prepare(
-      'INSERT INTO users (email, password_hash, display_name, invite_code) VALUES (?, ?, ?, ?)'
+      'INSERT INTO users (email, password_hash, display_name, invite_code, tier, tier_expires_at) VALUES (?, ?, ?, ?, ?, ?)'
     ).bind(
       email.toLowerCase(),
       passwordHash,
       displayName || null,
       inviteCode.toUpperCase(),
+      tier,
+      tierExpiresAt,
     ).run();
 
-    // 5. 초대 코드 사용 횟수 증가
+    // 6. 초대 코드 사용 횟수 증가
     codeData.currentUses += 1;
     await context.env.INVITE_CODES.put(inviteCode.toUpperCase(), JSON.stringify(codeData));
 
-    // 6. 세션 토큰 발급 (7일 유효)
+    // 7. 세션 토큰 발급 (7일 유효)
     const token = generateToken();
     await context.env.SESSIONS.put(token, JSON.stringify({
       email: email.toLowerCase(),
       displayName: displayName || email.split('@')[0],
+      tier,
+      tierExpiresAt,
       createdAt: new Date().toISOString(),
     }), { expirationTtl: 60 * 60 * 24 * 7 });
 
@@ -86,7 +96,12 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       JSON.stringify({
         success: true,
         token,
-        user: { email: email.toLowerCase(), displayName: displayName || email.split('@')[0] },
+        user: {
+          email: email.toLowerCase(),
+          displayName: displayName || email.split('@')[0],
+          tier,
+          tierExpiresAt,
+        },
       }),
       { status: 201, headers }
     );

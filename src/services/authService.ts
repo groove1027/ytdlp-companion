@@ -4,10 +4,27 @@ import { performFullSync } from './syncService';
 const AUTH_TOKEN_KEY = 'auth_token';
 const AUTH_USER_KEY = 'auth_user';
 
+export type UserTier = 'basic' | 'premium' | 'trial';
+
 export interface AuthUser {
   email: string;
   displayName: string;
+  tier?: UserTier;
+  tierExpiresAt?: string | null;
 }
+
+/** 체험판 만료 여부 확인 */
+export const isTrialExpired = (user: AuthUser | null): boolean => {
+  if (!user || user.tier !== 'trial' || !user.tierExpiresAt) return false;
+  return new Date(user.tierExpiresAt).getTime() < Date.now();
+};
+
+/** 체험판 남은 일수 */
+export const getTrialDaysLeft = (user: AuthUser | null): number => {
+  if (!user || user.tier !== 'trial' || !user.tierExpiresAt) return -1;
+  const diff = new Date(user.tierExpiresAt).getTime() - Date.now();
+  return Math.max(0, Math.ceil(diff / (24 * 60 * 60 * 1000)));
+};
 
 export interface ProfileData {
   email: string;
