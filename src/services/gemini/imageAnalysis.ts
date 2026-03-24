@@ -87,7 +87,8 @@ ${script}`
         }
     ];
 
-    const response = await evolinkChat(messages, { temperature: 0.5, maxTokens: 1024 });
+    // [OPT] Flash Lite로 전환 — 40~80단어 영어 프롬프트 변환은 Pro 불필요, 비용↓ 속도↑
+    const response = await evolinkChat(messages, { temperature: 0.5, maxTokens: 1024, model: 'gemini-3.1-flash-lite-preview' });
     const text = response.choices?.[0]?.message?.content?.trim();
     if (!text) {
         throw new Error('[generatePromptFromScript] Empty response from evolinkChat');

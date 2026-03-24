@@ -760,17 +760,39 @@ Script: ${truncatedScript}`;
         return result;
     };
 
+    // [OPT] evolinkChat 직접 호출 — requestGeminiProxy는 모델을 Pro로 하드코딩하므로 우회
+    const parseOpenAIResponse = (text: string, label: string): any => {
+        console.log(`[analyzeScriptContext] ${label} raw:`, text?.substring(0, 500));
+        const json = extractJsonFromText(text);
+        const result = JSON.parse(json || '{}');
+        const aiCount = result.estimatedSceneCount;
+        result.estimatedSceneCount = localCount;
+        console.log(`[analyzeScriptContext] ${label} → AI추정: ${aiCount}컷, 로컬확정: ${localCount}컷 (로컬 사용)`);
+        return result;
+    };
+
     try {
-        // 1차: Gemini 3.1 Pro (최고 품질)
-        console.log('[analyzeScriptContext] 🧠 Gemini 3.1 Pro 호출');
-        const data = await requestGeminiProxy('gemini-3.1-pro-preview', payload, 0, undefined, { taskProfile: 'short_analysis' });
-        return parseNativeResponse(data, 'Gemini3.1-Pro');
+        // 1차: Flash Lite 직접 호출 (비용↓ 속도↑)
+        console.log('[analyzeScriptContext] ⚡ Flash Lite 호출');
+        const flashResp = await evolinkChat(
+            [
+                { role: 'system', content: 'You MUST respond with ONLY a valid JSON object. No markdown, no explanation.' },
+                { role: 'user', content: promptText }
+            ],
+            { temperature: 0.3, maxTokens: 4096, model: 'gemini-3.1-flash-lite-preview', timeoutMs: 30_000, responseFormat: { type: 'json_object' } }
+        );
+        const flashText = flashResp.choices?.[0]?.message?.content?.trim();
+        if (!flashText) throw new Error('Flash Lite 빈 응답');
+        const flashResult = parseOpenAIResponse(flashText, 'FlashLite');
+        // [GUARD] 필수 필드 검증 — 빈 객체면 Pro 폴백
+        if (!flashResult.detectedLanguage && !flashResult.visualTone) throw new Error('Flash Lite 불완전 응답');
+        return flashResult;
     } catch (e) {
-        console.warn('[analyzeScriptContext] Pro failed:', e);
-        // 2차: Gemini 3.1 Pro 재시도 (최종 폴백)
-        console.log('[analyzeScriptContext] 🔄 Gemini 3.1 Pro 최종 폴백');
+        console.warn('[analyzeScriptContext] Flash Lite failed:', e);
+        // 2차: Gemini 3.1 Pro 폴백 (requestGeminiProxy 경유)
+        console.log('[analyzeScriptContext] 🔄 Gemini 3.1 Pro 폴백');
         const data = await requestGeminiProxy('gemini-3.1-pro-preview', payload, 0, undefined, { taskProfile: 'short_analysis' });
-        return parseNativeResponse(data, 'Gemini3.1-Pro-Retry');
+        return parseNativeResponse(data, 'Gemini3.1-Pro-Fallback');
     }
 };
 
