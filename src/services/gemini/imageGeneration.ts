@@ -5,6 +5,8 @@ import { generateKieImage, generateEvolinkImageWrapped } from '../VideoGenServic
 import { filterPromptContent, sanitizeForPolicyBypass, isPolicyViolationError } from './contentFilter';
 import { logger } from '../LoggerService';
 import { showToast } from '../../stores/uiStore';
+import { useAuthStore } from '../../stores/authStore';
+import { getGoogleGeminiKey } from '../apiService';
 
 // [NEW] Shot size auto-rotation — prevents monotonous compositions when AI doesn't specify shot size
 const SHOT_ROTATION: string[] = ['medium shot', 'close-up', 'wide shot', 'medium close-up', 'establishing shot', 'over-the-shoulder'];
@@ -243,6 +245,56 @@ export const generateSceneImage = async (
     preserveCharacterStyle?: boolean, // [NEW] 캐릭터 예술 스타일 보존 모드 (사용자가 비주얼 미선택 + 캐릭터 분석 스타일 사용 시)
     styleReferenceImages?: string[],
 ) => {
+    // ── Trial 사용자: Google Gemini 이미지 생성 (gemini-2.5-flash-image) ──
+    const _trialUser = useAuthStore.getState().authUser;
+    if (_trialUser?.tier === 'trial') {
+        if (_trialUser.tierExpiresAt && new Date(_trialUser.tierExpiresAt).getTime() < Date.now()) {
+            throw new Error('체험 기간이 만료되었습니다.');
+        }
+        const googleKey = getGoogleGeminiKey();
+        if (!googleKey) {
+            throw new Error('Google Gemini API 키가 설정되지 않았습니다. 체험판 가이드에서 등록해주세요.');
+        }
+
+        const prompt = (feedback?.trim() || scene.visualPrompt?.trim() || scene.scriptText || 'beautiful scene')
+            + `, ${style || 'high quality'} style, ${ratio} aspect ratio`;
+
+        updateStatus?.('Google Gemini 이미지 생성 중...');
+        logger.info(`[Trial] Google Gemini 이미지 생성: ${prompt.substring(0, 80)}...`);
+
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-image-generation:generateContent?key=${googleKey}`;
+        const res = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                contents: [{ parts: [{ text: `Generate an image: ${prompt}` }] }],
+                generationConfig: {
+                    responseModalities: ['TEXT', 'IMAGE'],
+                },
+            }),
+        });
+
+        if (!res.ok) {
+            const errText = await res.text().catch(() => '');
+            throw new Error(`이미지 생성 실패 (${res.status}): ${errText.substring(0, 150)}`);
+        }
+
+        const data = await res.json();
+        const parts = data?.candidates?.[0]?.content?.parts || [];
+        const imagePart = parts.find((p: Record<string, unknown>) => p.inlineData);
+
+        if (!imagePart?.inlineData) {
+            throw new Error('이미지 생성 결과가 없습니다. 프롬프트를 조정해보세요.');
+        }
+
+        const mimeType = imagePart.inlineData.mimeType || 'image/png';
+        const base64 = imagePart.inlineData.data;
+        const dataUrl = `data:${mimeType};base64,${base64}`;
+
+        logger.success('[Trial] Google Gemini 이미지 생성 성공');
+        return { url: dataUrl, isFallback: false };
+    }
+
     // [CRITICAL FIX] Prioritize explicit style argument over detected style description
     const rawStyle = (style && style.trim() !== "") ? style : (styleDesc || "High Quality");
     // [FIX #458/#480] 텍스트 유도 키워드 제거 — "Chinese calligraphy" → "ink brush strokes" 등

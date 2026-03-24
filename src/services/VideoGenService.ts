@@ -1,8 +1,9 @@
 
 import { AspectRatio, VideoModel, ImageModel, VideoTaskParams, VideoProvider } from "../types";
 import { uploadMediaToHosting, uploadRemoteUrlToCloudinary } from "./uploadService";
-import { getKieKey, getApimartKey, getXaiKey, monitoredFetch } from "./apiService";
+import { getKieKey, getApimartKey, getXaiKey, getGoogleGeminiKey, monitoredFetch } from "./apiService";
 import { getEvolinkKey, evolinkGenerateImage as evolinkGenImg, createEvolinkVideoTask, pollEvolinkTask } from "./evolinkService";
+import { useAuthStore } from "../stores/authStore";
 import { SAFETY_SETTINGS_BLOCK_NONE } from "./gemini/geminiProxy";
 import { logger } from "./LoggerService";
 
@@ -1358,7 +1359,87 @@ const googleVeoProvider: VideoProvider = {
     },
 };
 
+// ── Trial 사용자: Google Gemini Veo 직접 호출 ──
+const trialVeoProvider: VideoProvider = {
+    async create(params: VideoTaskParams): Promise<string> {
+        const key = getGoogleGeminiKey();
+        if (!key) throw new Error('Google Gemini API 키가 필요합니다.');
+
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/veo-3.0-generate-001:predictLongRunning?key=${key}`;
+        const body: Record<string, unknown> = {
+            instances: [{ prompt: params.prompt }],
+            parameters: {
+                aspectRatio: params.aspectRatio === AspectRatio.PORTRAIT ? '9:16' : '16:9',
+                durationSeconds: Number(params.duration) || 8,
+            },
+        };
+
+        // 이미지 참조가 있으면 추가
+        if (params.imageUrl) {
+            (body.instances as Record<string, unknown>[])[0].referenceImages = [{ referenceImage: { imageUri: params.imageUrl } }];
+        }
+
+        const res = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+
+        if (!res.ok) {
+            const err = await res.text().catch(() => '');
+            throw new Error(`Veo 영상 생성 요청 실패 (${res.status}): ${err.substring(0, 150)}`);
+        }
+
+        const data = await res.json();
+        // Long-running operation name을 taskId로 사용
+        const opName = data.name;
+        if (!opName) throw new Error('Veo 작업 ID를 받지 못했습니다.');
+        return opName;
+    },
+
+    async poll(taskId: string, signal?: AbortSignal, onProgress?: (p: number) => void): Promise<string> {
+        const key = getGoogleGeminiKey();
+        if (!key) throw new Error('Google Gemini API 키가 필요합니다.');
+
+        const maxAttempts = 120; // 최대 10분
+        for (let i = 0; i < maxAttempts; i++) {
+            if (signal?.aborted) throw new Error('사용자 취소');
+
+            const url = `https://generativelanguage.googleapis.com/v1beta/${taskId}?key=${key}`;
+            const res = await fetch(url);
+            if (!res.ok) throw new Error(`Veo 폴링 실패 (${res.status})`);
+
+            const data = await res.json();
+            if (data.done) {
+                const video = data.response?.generatedVideos?.[0];
+                const videoUri = video?.video?.uri;
+                if (videoUri) return videoUri;
+                // base64 응답인 경우
+                if (video?.video?.bytesBase64Encoded) {
+                    return `data:video/mp4;base64,${video.video.bytesBase64Encoded}`;
+                }
+                throw new Error('Veo 영상 생성은 완료되었지만 결과를 가져올 수 없습니다.');
+            }
+
+            onProgress?.(Math.min(90, Math.round((i / maxAttempts) * 90)));
+            await new Promise(r => setTimeout(r, 5000));
+        }
+        throw new Error('Veo 영상 생성 시간 초과 (10분)');
+    },
+
+    async cancel(): Promise<void> { /* Google API는 별도 취소 불필요 */ },
+};
+
 export function getVideoProvider(model: VideoModel): VideoProvider {
+    // Trial 사용자는 Google Veo 직접 호출
+    const user = useAuthStore.getState().authUser;
+    if (user?.tier === 'trial' && getGoogleGeminiKey()) {
+        if (user.tierExpiresAt && new Date(user.tierExpiresAt).getTime() < Date.now()) {
+            throw new Error('체험 기간이 만료되었습니다.');
+        }
+        return trialVeoProvider;
+    }
+
     switch (model) {
         case VideoModel.GOOGLE_VEO: return googleVeoProvider;
         case VideoModel.GROK: return grokProvider;
