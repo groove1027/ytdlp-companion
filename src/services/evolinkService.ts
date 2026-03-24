@@ -13,6 +13,21 @@ const KIE_BASE_URL = 'https://api.kie.ai';
 let _kieRateLimitedUntil = 0;
 const KIE_RATE_LIMIT_COOLDOWN_MS = 60_000;
 
+// [FIX] Evolink 잔액 소진 감지 — 소진 시 모든 요청을 KIE로 자동 라우팅
+let _evolinkQuotaDepletedUntil = 0;
+const EVOLINK_QUOTA_COOLDOWN_MS = 10 * 60_000; // 10분 쿨다운
+
+const markEvolinkQuotaDepleted = () => {
+    _evolinkQuotaDepletedUntil = Date.now() + EVOLINK_QUOTA_COOLDOWN_MS;
+    logger.warn(`[Evolink] 잔액 소진 감지 — ${Math.round(EVOLINK_QUOTA_COOLDOWN_MS / 60_000)}분간 KIE 우선 라우팅`);
+};
+
+export const isEvolinkQuotaDepleted = (): boolean => Date.now() < _evolinkQuotaDepletedUntil;
+
+/** Evolink 에러가 잔액/크레딧 부족인지 감지 (대소문자 무관, type/code 기반 정확 매칭) */
+const isEvolinkQuotaErrorDetail = (errorDetail: string): boolean =>
+    /insufficient.*(quota|credit|balance)|quota.*insufficient|quota.*not\s+enough|insufficient_quota|insufficient_user_quota|잔액\s*부족|크레딧.*부족/i.test(errorDetail);
+
 // === KEY MANAGEMENT ===
 
 /** localStorage에서 Evolink API 키 조회, fallback 사용 */
@@ -366,7 +381,9 @@ const kieChatCompletion = async (
 // === HELPER: Evolink 에러 핸들링 ===
 function handleEvolinkError(status: number, errorDetail: string): never {
     if (status === 401) throw new Error('Evolink 인증 실패: API 키를 확인해주세요.');
-    if (status === 402) throw new Error('Evolink 잔액 부족: 크레딧을 충전해주세요.');
+    if (status === 402) { markEvolinkQuotaDepleted(); throw new Error('Evolink 잔액 부족: 크레딧을 충전해주세요.'); }
+    // [FIX] Evolink가 잔액 부족을 403 + insufficient_user_quota로 반환하는 경우도 처리
+    if (status === 403 && isEvolinkQuotaErrorDetail(errorDetail)) { markEvolinkQuotaDepleted(); throw new Error('Evolink 잔액 부족: 크레딧을 충전해주세요.'); }
     if (status === 429) throw new Error('Evolink 요청 제한 초과: 잠시 후 다시 시도해주세요.');
     if (status === 400) throw new Error(`Evolink 요청 오류 (콘텐츠 정책 위반 가능): ${errorDetail}`);
     throw new Error(`Evolink 오류 (${status}): ${errorDetail}`);
@@ -434,7 +451,12 @@ async function parseEvolinkError(response: Response): Promise<string> {
     const errorText = await response.text();
     try {
         const errorJson = JSON.parse(errorText);
-        return errorJson.error?.message || errorJson.message || errorText;
+        // [FIX] error.type + error.code 모두 보존하여 잔액 감지 정확도 향상
+        const msg = errorJson.error?.message || errorJson.message || '';
+        const parts = [msg];
+        if (errorJson.error?.type) parts.push(`[type: ${errorJson.error.type}]`);
+        if (errorJson.error?.code && errorJson.error.code !== errorJson.error?.type) parts.push(`[code: ${errorJson.error.code}]`);
+        return parts.join(' ') || errorText;
     } catch (e) {
         logger.trackSwallowedError('evolinkService:parseError', e);
         return errorText;
@@ -462,7 +484,12 @@ export const evolinkChat = async (
         taskProfile = 'default'
     } = options;
 
-    if (shouldPreferKieTask(taskProfile, model)) {
+    // [FIX] KIE 우선 라우팅: 특정 taskProfile이거나 Evolink 잔액 소진 시 (flash 모델 포함)
+    const kiePreferredByProfile = shouldPreferKieTask(taskProfile, model);
+    const kiePreferredByQuota = isEvolinkQuotaDepleted() && !isKieRateLimited();
+    const shouldTryKieFirst = kiePreferredByProfile || kiePreferredByQuota;
+
+    if (shouldTryKieFirst) {
         try {
             return await kieChatCompletion(messages, options);
         } catch (e) {
@@ -471,8 +498,14 @@ export const evolinkChat = async (
             if (errorMessage.includes('429') || errorMessage.toLowerCase().includes('rate limit')) {
                 markKieRateLimited();
             }
+            // [FIX] Evolink 잔액 소진 상태에서 KIE도 실패하면 → Evolink 재시도 없이 바로 에러 전파
+            if (kiePreferredByQuota) {
+                logger.error('[Evolink] Evolink 잔액 소진 + Kie도 실패 — 양쪽 모두 불가', { error: errorMessage.slice(0, 200) });
+                throw e;
+            }
             logger.warn('[Evolink] Kie 우선 경로 실패 — Evolink 폴백', {
                 taskProfile,
+                evolinkQuotaDepleted: isEvolinkQuotaDepleted(),
                 error: errorMessage.slice(0, 200)
             });
         }
@@ -514,6 +547,18 @@ export const evolinkChat = async (
 
     if (!response.ok) {
         const errorDetail = await parseEvolinkError(response);
+        const isQuotaError = response.status === 402 || (response.status === 403 && isEvolinkQuotaErrorDetail(errorDetail));
+
+        // [FIX] Evolink 잔액 부족 시 KIE 폴백 시도 (아직 KIE를 시도하지 않은 경우)
+        if (isQuotaError && !shouldTryKieFirst && !signal?.aborted && !isKieRateLimited()) {
+            markEvolinkQuotaDepleted();
+            logger.warn(`[Evolink] 잔액 부족 (${response.status}) — Kie 폴백 시도`, { errorDetail: errorDetail.slice(0, 200) });
+            try {
+                return await kieChatCompletion(messages, options);
+            } catch (kieError) {
+                logger.warn('[Evolink] Kie 폴백도 실패', { error: kieError instanceof Error ? kieError.message : String(kieError) });
+            }
+        }
         handleEvolinkError(response.status, errorDetail);
     }
 
@@ -548,6 +593,21 @@ export const evolinkChatStream = async (
     onChunk: (text: string, accumulated: string) => void,
     options: EvolinkChatOptions = {}
 ): Promise<string> => {
+    // [FIX] Evolink 잔액 소진 시 KIE non-stream 폴백 (스트리밍 대신 전체 응답 반환)
+    if (isEvolinkQuotaDepleted() && !isKieRateLimited()) {
+        logger.warn('[Evolink] Stream 요청이지만 Evolink 잔액 소진 — Kie non-stream 폴백');
+        try {
+            const kieResult = await kieChatCompletion(messages, options);
+            const text = kieResult.choices?.[0]?.message?.content || '';
+            onChunk(text, text);
+            return text;
+        } catch (e) {
+            // [FIX] Evolink 잔액 소진 + KIE 실패 → Evolink 재시도 없이 에러 전파
+            logger.error('[Evolink] Evolink 잔액 소진 + Kie 폴백도 실패 — 양쪽 모두 불가', { error: e instanceof Error ? e.message : String(e) });
+            throw e;
+        }
+    }
+
     const apiKey = getEvolinkKey();
     if (!apiKey) throw new Error('Evolink API 키가 설정되지 않았습니다.');
 
@@ -594,6 +654,20 @@ export const evolinkChatStream = async (
 
     if (!response.ok) {
         const errorDetail = await parseEvolinkError(response);
+        // [FIX] 스트리밍에서도 잔액 부족 시 KIE 폴백
+        const isQuotaError = response.status === 402 || (response.status === 403 && isEvolinkQuotaErrorDetail(errorDetail));
+        if (isQuotaError && !isKieRateLimited()) {
+            markEvolinkQuotaDepleted();
+            logger.warn(`[Evolink] Stream 잔액 부족 — Kie non-stream 폴백 시도`);
+            try {
+                const kieResult = await kieChatCompletion(messages, options);
+                const text = kieResult.choices?.[0]?.message?.content || '';
+                onChunk(text, text);
+                return text;
+            } catch (kieError) {
+                logger.warn('[Evolink] Kie 폴백도 실패', { error: kieError instanceof Error ? kieError.message : String(kieError) });
+            }
+        }
         handleEvolinkError(response.status, errorDetail);
     }
 
