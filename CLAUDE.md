@@ -204,7 +204,7 @@ project-root/
 | Laozhang AI | `api.laozhang.ai/v1/` | Bearer token | 폴백: 이미지, Gemini 텍스트 |
 | Cloudinary | `api.cloudinary.com/v1_1/{name}/` | Upload Preset | 이미지/영상 호스팅 |
 | Remove.bg | `api.remove.bg/v1.0/` | X-Api-Key | 배경 제거 |
-| ~~WaveSpeed AI~~ | ~~`api.wavespeed.ai/api/v3/`~~ | ~~Bearer token~~ | ~~워터마크/자막 제거~~ (삭제됨 — 컴패니언 ProPainter로 대체) |
+| WaveSpeed AI | `api.wavespeed.ai/api/v3/` | Bearer token | 워터마크/자막 제거 |
 | YouTube Data API v3 | `googleapis.com/youtube/v3/` | API Key | 채널분석, 키워드 검색 |
 
 모든 API 키는 `services/apiService.ts`의 `getXxxKey()` 함수를 통해 접근.

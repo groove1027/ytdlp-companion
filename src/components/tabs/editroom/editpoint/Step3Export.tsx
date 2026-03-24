@@ -32,10 +32,7 @@ const Step3Export: React.FC = () => {
   const mappedVideoIds = new Set(Object.values(sourceMapping));
   const totalMapped = sourceVideos.filter((v) => mappedVideoIds.has(v.id)).length;
   const cleanedCount = sourceVideos.filter((v) => mappedVideoIds.has(v.id) && v.cleanedBlobUrl).length;
-  // 모든 매핑된 영상이 처리 완료된 경우 OR 클린 배치가 끝난 후 (스킵 포함)
   const allCleaned = totalMapped > 0 && cleanedCount === totalMapped;
-  // 배치가 끝났으면 (스킵 포함) 내보내기 허용
-  const cleaningAttempted = !isCleaning && cleanProgress >= 100;
   // [FIX #700] 소스 영상 없으면 영상 필수 모드 비활성화
   const hasSourceVideos = sourceVideos.length > 0;
 
@@ -210,7 +207,7 @@ const Step3Export: React.FC = () => {
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
               <span className={`text-sm font-medium ${cleanSubtitles ? 'text-cyan-300' : 'text-gray-300'}`}>
-                AI 자막 제거 (ProPainter)
+                AI 자막 제거 (GhostCut)
               </span>
               {allCleaned && (
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-600/20 text-green-400 border border-green-500/30">
@@ -219,7 +216,7 @@ const Step3Export: React.FC = () => {
               )}
             </div>
             <p className="text-[11px] text-gray-500 mt-0.5">
-              소스 영상의 자막/워터마크를 컴패니언 ProPainter로 자동 제거한 뒤 내보냅니다.
+              소스 영상의 자막/워터마크를 GhostCut AI로 자동 제거한 뒤 내보냅니다.
             </p>
             <p className="text-[10px] text-amber-400/70 mt-0.5">
               영상 1개당 5~15분 소요 — {totalMapped}개 소스 기준 총 {
@@ -288,9 +285,9 @@ const Step3Export: React.FC = () => {
         <button
           type="button"
           onClick={exportResult}
-          disabled={isCleaning || (cleanSubtitles && !allCleaned && !cleaningAttempted)}
+          disabled={isCleaning || (cleanSubtitles && !allCleaned)}
           className={`px-6 py-2.5 rounded-lg text-sm font-medium shadow-lg transition-all flex items-center gap-2 ${
-            isCleaning || (cleanSubtitles && !allCleaned && !cleaningAttempted)
+            isCleaning || (cleanSubtitles && !allCleaned)
               ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
               : 'bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white shadow-amber-900/30'
           }`}
@@ -298,7 +295,7 @@ const Step3Export: React.FC = () => {
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
           </svg>
-          {cleanSubtitles && !allCleaned && !cleaningAttempted ? '자막 제거를 먼저 실행하세요' : '내보내기 실행'}
+          {cleanSubtitles && !allCleaned ? '자막 제거를 먼저 실행하세요' : '내보내기 실행'}
         </button>
       </div>
     </div>
