@@ -12,8 +12,6 @@ const DEFAULT_XAI_KEY = '';
 const DEFAULT_EVOLINK_KEY = '';
 const DEFAULT_YOUTUBE_API_KEY = '';
 const DEFAULT_TYPECAST_KEY = '';
-const DEFAULT_GHOSTCUT_APP_KEY = '';
-const DEFAULT_GHOSTCUT_APP_SECRET = '';
 const DEFAULT_COUPANG_ACCESS_KEY = '';
 const DEFAULT_COUPANG_SECRET_KEY = '';
 const DEFAULT_COUPANG_PROXY_URL = '';
@@ -120,13 +118,6 @@ export const getTypecastKey = (): string => {
     return sanitizeKey(key);
 };
 
-export const getGhostCutKeys = (): { appKey: string; appSecret: string } => {
-    return {
-        appKey: sanitizeKey(localStorage.getItem('CUSTOM_GHOSTCUT_APP_KEY') || DEFAULT_GHOSTCUT_APP_KEY),
-        appSecret: sanitizeKey(localStorage.getItem('CUSTOM_GHOSTCUT_APP_SECRET') || DEFAULT_GHOSTCUT_APP_SECRET),
-    };
-};
-
 export const getCoupangAccessKey = (): string => {
     const key = localStorage.getItem('CUSTOM_COUPANG_ACCESS_KEY') || DEFAULT_COUPANG_ACCESS_KEY;
     return sanitizeKey(key);
@@ -153,7 +144,7 @@ export const getFeedbackUrl = (): string => {
     return DEFAULT_FEEDBACK_URL;
 };
 
-export const saveApiKeys = (kie: string, cloudName?: string, uploadPreset?: string, gemini?: string, apimart?: string, removeBg?: string, xai?: string, evolink?: string, youtubeApiKey?: string, typecast?: string, ghostcutAppKey?: string, ghostcutAppSecret?: string) => {
+export const saveApiKeys = (kie: string, cloudName?: string, uploadPreset?: string, gemini?: string, apimart?: string, removeBg?: string, xai?: string, evolink?: string, youtubeApiKey?: string, typecast?: string) => {
     // Save raw input, but sanitized on retrieval
     if (kie.trim()) localStorage.setItem('CUSTOM_KIE_KEY', kie.trim());
     else localStorage.removeItem('CUSTOM_KIE_KEY');
@@ -188,11 +179,6 @@ export const saveApiKeys = (kie: string, cloudName?: string, uploadPreset?: stri
     if (typecast && typecast.trim()) localStorage.setItem('CUSTOM_TYPECAST_KEY', typecast.trim());
     else localStorage.removeItem('CUSTOM_TYPECAST_KEY');
 
-    if (ghostcutAppKey && ghostcutAppKey.trim()) localStorage.setItem('CUSTOM_GHOSTCUT_APP_KEY', ghostcutAppKey.trim());
-    else localStorage.removeItem('CUSTOM_GHOSTCUT_APP_KEY');
-
-    if (ghostcutAppSecret && ghostcutAppSecret.trim()) localStorage.setItem('CUSTOM_GHOSTCUT_APP_SECRET', ghostcutAppSecret.trim());
-    else localStorage.removeItem('CUSTOM_GHOSTCUT_APP_SECRET');
 };
 
 export const saveCoupangKeys = (accessKey: string, secretKey: string, proxyUrl: string) => {
@@ -218,8 +204,6 @@ export const getStoredKeys = () => {
         evolink: localStorage.getItem('CUSTOM_EVOLINK_KEY') || '',
         youtubeApiKey: localStorage.getItem('CUSTOM_YOUTUBE_API_KEY') || '',
         typecast: localStorage.getItem('CUSTOM_TYPECAST_KEY') || '',
-        ghostcutAppKey: localStorage.getItem('CUSTOM_GHOSTCUT_APP_KEY') || '',
-        ghostcutAppSecret: localStorage.getItem('CUSTOM_GHOSTCUT_APP_SECRET') || ''
     };
 };
 
@@ -237,8 +221,6 @@ const SETTINGS_KEY_MAP: [string, string][] = [
     ['CUSTOM_YOUTUBE_API_KEY', 'youtubeApiKey'],
     ['YOUTUBE_API_KEYS_POOL', 'youtubeApiKeyPool'],
     ['CUSTOM_TYPECAST_KEY', 'typecast'],
-    ['CUSTOM_GHOSTCUT_APP_KEY', 'ghostcutAppKey'],
-    ['CUSTOM_GHOSTCUT_APP_SECRET', 'ghostcutAppSecret'],
     ['CUSTOM_COUPANG_ACCESS_KEY', 'coupangAccessKey'],
     ['CUSTOM_COUPANG_SECRET_KEY', 'coupangSecretKey'],
     ['CUSTOM_COUPANG_PROXY_URL', 'coupangProxyUrl'],

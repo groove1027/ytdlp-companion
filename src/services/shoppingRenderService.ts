@@ -6,13 +6,13 @@
  */
 
 import { splitBySentenceEndings } from './ttsService';
-import { removeSubtitlesWithGhostCut } from './ghostcutService';
+import { removeSubtitlesWithInpaint, isInpaintAvailable } from './companionInpaintService';
 import { logger } from './LoggerService';
 import { downloadMp4 } from './webcodecs';
 import type { ShoppingScript, ShoppingRenderPhase, ShoppingCTAPreset, SubtitleTemplate } from '../types';
 
 interface RenderConfig {
-  subtitleRemovalMethod: 'ghostcut' | 'none';
+  subtitleRemovalMethod: 'companion' | 'none';
   videoWidth: number;
   videoHeight: number;
   fontFamily: string;
@@ -88,17 +88,34 @@ export const renderShoppingShort = async (
 ): Promise<Blob> => {
   logger.info('[ShoppingRender] 렌더 시작', { script: script.title });
 
-  // 0. GhostCut 자막 제거 (ghostcut 모드일 때)
+  // 0. 컴패니언 ProPainter 자막 제거 (companion 모드일 때 + 컴패니언 가용 시에만)
   let videoBlob = sourceBlob;
-  if (config.subtitleRemovalMethod === 'ghostcut') {
-    onProgress({ phase: 'removing-subtitles', percent: 5, message: 'GhostCut AI 자막 제거 시작...' });
-    videoBlob = await removeSubtitlesWithGhostCut(
-      sourceBlob,
-      config.videoWidth,
-      config.videoHeight,
-      (msg) => onProgress({ phase: 'removing-subtitles', percent: 15, message: msg }),
-    );
-    onProgress({ phase: 'removing-subtitles', percent: 25, message: 'AI 자막 제거 완료' });
+  if (config.subtitleRemovalMethod === 'companion') {
+    const available = await isInpaintAvailable();
+    if (!available) {
+      throw new Error('컴패니언 앱이 실행 중이 아닙니다. 자막 제거를 사용하려면 컴패니언 앱을 먼저 실행하세요.');
+    } else {
+      onProgress({ phase: 'removing-subtitles', percent: 5, message: 'ProPainter 자막 제거 시작...' });
+      // 비대화형 플로우: OCR 감지 시도 → 실패/빈 결과 시 자막 제거 스킵 (안전)
+      const { detectTextRegions } = await import('./companionInpaintService');
+      let masks: { x: number; y: number; width: number; height: number }[] = [];
+      try {
+        const regions = await detectTextRegions(sourceBlob);
+        masks = regions.map(r => ({ x: r.x, y: r.y, width: r.width, height: r.height }));
+      } catch {
+        logger.warn('[ShoppingRender] OCR 감지 실패 — 자막 제거 스킵 (비대화형 안전 모드)');
+      }
+      if (masks.length > 0) {
+        videoBlob = await removeSubtitlesWithInpaint(
+          sourceBlob,
+          masks,
+          (msg) => onProgress({ phase: 'removing-subtitles', percent: 15, message: msg }),
+        );
+      } else {
+        logger.warn('[ShoppingRender] OCR 감지 결과 없음 — 원본 유지');
+      }
+      onProgress({ phase: 'removing-subtitles', percent: 25, message: masks.length > 0 ? 'AI 자막 제거 완료' : '자막 미감지 — 원본 유지' });
+    }
   }
 
   // 1. WebCodecs 지원 여부 확인
