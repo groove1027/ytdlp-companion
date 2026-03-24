@@ -2,21 +2,21 @@
 import { logger } from './LoggerService';
 import { showToast } from '../stores/uiStore';
 
-// Default Keys (Fallbacks)
-// [DEPLOYMENT] Reset to empty before deploying. These are dev-only defaults.
-const DEFAULT_GEMINI_KEY = 'REDACTED_GEMINI_KEY';
-const DEFAULT_KIE_KEY = 'REDACTED_KIE_KEY';
-const DEFAULT_APIMART_KEY = 'REDACTED_APIMART_KEY';
-const DEFAULT_REMOVE_BG_KEY = 'REDACTED_REMOVEBG_KEY';
-const DEFAULT_XAI_KEY = 'REDACTED_XAI_KEY';
-const DEFAULT_EVOLINK_KEY = 'REDACTED_EVOLINK_KEY';
-const DEFAULT_YOUTUBE_API_KEY = 'REDACTED_YOUTUBE_KEY';
+// Default Keys — 절대 실제 키를 여기에 넣지 마라! 클라이언트에 노출됨!
+// 모든 사용자는 반드시 본인의 API 키를 등록해야 사용 가능
+const DEFAULT_GEMINI_KEY = '';
+const DEFAULT_KIE_KEY = '';
+const DEFAULT_APIMART_KEY = '';
+const DEFAULT_REMOVE_BG_KEY = '';
+const DEFAULT_XAI_KEY = '';
+const DEFAULT_EVOLINK_KEY = '';
+const DEFAULT_YOUTUBE_API_KEY = '';
 const DEFAULT_TYPECAST_KEY = '';
 const DEFAULT_COUPANG_ACCESS_KEY = '';
 const DEFAULT_COUPANG_SECRET_KEY = '';
 const DEFAULT_COUPANG_PROXY_URL = '';
-const DEFAULT_CLOUD_NAME = 'dji3gtb5r';
-const DEFAULT_UPLOAD_PRESET = 'storyboard';
+const DEFAULT_CLOUD_NAME = '';
+const DEFAULT_UPLOAD_PRESET = '';
 // [FEEDBACK] Google Apps Script Web App URL — 개발자가 한 번 설정
 // 설정 방법: Google Sheets → 확장 프로그램 → Apps Script → doPost 배포 → URL 붙여넣기
 const DEFAULT_FEEDBACK_URL = 'https://script.google.com/macros/s/AKfycbzbZTaYcOM7WBPHNvuwA-mDV3xQf-mowSwcehf6QY2LTMDnH-Tj9UsriXHSMc_n0ECFLg/exec';
