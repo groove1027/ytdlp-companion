@@ -361,7 +361,7 @@ export const requestGeminiProxy = async (model: string, googlePayload: any, _ret
         }
         try {
             logger.info(`[Gemini] Trial 모드 — Google 직접 API (model: ${model})`);
-            const googleModel = model.includes('flash') ? 'gemini-2.5-flash-preview-05-20' : 'gemini-2.5-pro-preview-05-06';
+            const googleModel = model.includes('flash') ? 'gemini-2.5-flash' : 'gemini-2.5-pro';
             const result = await requestGoogleGeminiDirect(googleModel, googlePayload, {
                 timeoutMs: timeoutMs || 120_000,
                 signal: (options as Record<string, unknown>)?.signal as AbortSignal | undefined,
