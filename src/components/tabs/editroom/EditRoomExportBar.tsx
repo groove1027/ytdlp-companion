@@ -28,6 +28,7 @@ const IMAGE_MODEL_LABELS: Record<string, string> = {
 };
 
 const VIDEO_MODEL_LABELS: Record<string, string> = {
+  [VideoModel.GOOGLE_VEO]: 'Google Veo 3.1 (무료)',
   [VideoModel.VEO]: 'Veo 3.1 1080p',
   [VideoModel.GROK]: 'Grok',
   [VideoModel.VEO_QUALITY]: 'Veo 3.1 Quality',

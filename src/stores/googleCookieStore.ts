@@ -9,8 +9,9 @@ import { create } from 'zustand';
 import { validateGoogleCookie, invalidateGoogleToken } from '../services/googleImageService';
 
 const LS_KEY = 'GOOGLE_COOKIE_STATE';
-const DAILY_IMAGE_LIMIT = 80; // 보수적 설정 (실제 ~100)
-const MONTHLY_VIDEO_LIMIT = 5; // Veo 3/3.1 무료 한도
+// Gemini Pro 기준 보수적 기본값 — 실제 크레딧은 API 조회로 업데이트
+const DEFAULT_DAILY_IMAGE_LIMIT = 150;
+const DEFAULT_MONTHLY_VIDEO_CREDITS = 500; // Veo 3.1 Fast 1건 = 10크레딧, 기본 500크레딧 = 50건
 
 interface GoogleCookieState {
   cookie: string;
@@ -33,11 +34,12 @@ interface GoogleCookieState {
   setCookie: (cookie: string) => Promise<boolean>;
   clearCookie: () => void;
   incrementImageCount: () => void;
-  incrementVideoCount: () => void;
+  incrementVideoCount: (credits?: number) => void;
   canGenerateImage: () => boolean;
   canGenerateVideo: () => boolean;
   getRemainingImages: () => number;
   getRemainingVideos: () => number;
+  updateLimits: (imageLim: number, videoLim: number) => void;
 }
 
 function today(): string {
@@ -91,8 +93,8 @@ export const useGoogleCookieStore = create<GoogleCookieState>((set, get) => ({
   dailyImageDate: initial.dailyImageDate || today(),
   monthlyVideoCount: initial.monthlyVideoCount || 0,
   monthlyVideoMonth: initial.monthlyVideoMonth || thisMonth(),
-  dailyImageLimit: DAILY_IMAGE_LIMIT,
-  monthlyVideoLimit: MONTHLY_VIDEO_LIMIT,
+  dailyImageLimit: DEFAULT_DAILY_IMAGE_LIMIT,
+  monthlyVideoLimit: DEFAULT_MONTHLY_VIDEO_CREDITS,
 
   setCookie: async (cookie: string) => {
     set({ isValidating: true });
@@ -136,10 +138,10 @@ export const useGoogleCookieStore = create<GoogleCookieState>((set, get) => ({
     persist({ ...get(), dailyImageCount: count, dailyImageDate: d });
   },
 
-  incrementVideoCount: () => {
+  incrementVideoCount: (credits: number = 10) => {
     const state = get();
     const m = thisMonth();
-    const count = state.monthlyVideoMonth === m ? state.monthlyVideoCount + 1 : 1;
+    const count = state.monthlyVideoMonth === m ? state.monthlyVideoCount + credits : credits;
     set({ monthlyVideoCount: count, monthlyVideoMonth: m });
     persist({ ...get(), monthlyVideoCount: count, monthlyVideoMonth: m });
   },
@@ -149,7 +151,7 @@ export const useGoogleCookieStore = create<GoogleCookieState>((set, get) => ({
     if (!s.isValid || !s.cookie) return false;
     const d = today();
     const count = s.dailyImageDate === d ? s.dailyImageCount : 0;
-    return count < DAILY_IMAGE_LIMIT;
+    return count < s.dailyImageLimit;
   },
 
   canGenerateVideo: () => {
@@ -157,20 +159,26 @@ export const useGoogleCookieStore = create<GoogleCookieState>((set, get) => ({
     if (!s.isValid || !s.cookie) return false;
     const m = thisMonth();
     const count = s.monthlyVideoMonth === m ? s.monthlyVideoCount : 0;
-    return count < MONTHLY_VIDEO_LIMIT;
+    return count + 10 <= s.monthlyVideoLimit; // Veo 3.1 Fast = 10 크레딧/건
   },
 
   getRemainingImages: () => {
     const s = get();
     const d = today();
     const count = s.dailyImageDate === d ? s.dailyImageCount : 0;
-    return Math.max(0, DAILY_IMAGE_LIMIT - count);
+    return Math.max(0, s.dailyImageLimit - count);
   },
 
   getRemainingVideos: () => {
     const s = get();
     const m = thisMonth();
     const count = s.monthlyVideoMonth === m ? s.monthlyVideoCount : 0;
-    return Math.max(0, MONTHLY_VIDEO_LIMIT - count);
+    return Math.max(0, s.monthlyVideoLimit - count);
+  },
+
+  updateLimits: (imageLim: number, videoLim: number) => {
+    // -1 = skip update, 0+ = set new limit
+    if (imageLim >= 0) set({ dailyImageLimit: imageLim });
+    if (videoLim >= 0) set({ monthlyVideoLimit: videoLim });
   },
 }));

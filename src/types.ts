@@ -65,6 +65,7 @@ export enum ImageModel {
 }
 
 export enum VideoModel {
+  GOOGLE_VEO = 'google-veo-3.1',  // Google Flow Veo 3.1 Fast (무료, 쿠키 필요)
   VEO = 'veo-3.1-evolink',       // Evolink Veo 3.1 Fast 1080p ($0.169)
   GROK = 'grok',                 // KIE Grok I2V 720p (6s/10s, $0.10~$0.15)
   SEEDANCE = 'seedance-1.5-pro', // KIE Seedance 1.5 Pro I2V (4~12s, $0.025/s)

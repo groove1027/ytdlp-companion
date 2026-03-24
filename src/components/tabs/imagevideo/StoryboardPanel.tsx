@@ -2986,6 +2986,17 @@ const StoryboardPanel: React.FC = () => {
                   </button>
                 ))}
                 <div className="border-t border-gray-700" />
+                <p className="px-4 py-1 text-xs text-gray-500 font-bold uppercase">🆓 Google Veo 3.1 (무료 · 쿠키)</p>
+                <button
+                  type="button"
+                  onClick={() => { videoBatch.runGoogleVeoBatch(selectedSceneIdsArray); setShowGenDropdown(false); }}
+                  className="w-full text-left px-4 py-2 text-sm text-gray-200 hover:bg-gray-700/60 transition-colors flex items-center gap-2"
+                >
+                  <span className="w-2 h-2 rounded-full bg-green-400" />
+                  <span className="flex-1">Veo 3.1 (무료) {hasSelection ? `(${selectedVideoEligible}개)` : '(일괄)'}</span>
+                  <span className="text-[10px] text-green-400/70">🆓 무료</span>
+                </button>
+                <div className="border-t border-gray-700" />
                 <p className="px-4 py-1 text-xs text-gray-500 font-bold uppercase">Veo 3.1 1080p (Evolink)</p>
                 <button
                   type="button"

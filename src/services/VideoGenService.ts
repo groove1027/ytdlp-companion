@@ -1305,8 +1305,62 @@ const wanV2VProvider: VideoProvider = {
     cancel: async (taskId) => cancelKieTask(taskId),
 };
 
+// === GOOGLE VEO PROVIDER (Flow 쿠키 무료) ===
+const googleVeoAbortControllers = new Map<string, AbortController>();
+
+const googleVeoProvider: VideoProvider = {
+    create: async (p) => {
+        const { useGoogleCookieStore } = await import('../stores/googleCookieStore');
+        const googleStore = useGoogleCookieStore.getState();
+        if (!googleStore.canGenerateVideo()) {
+            throw new Error('Google 무료 영상 생성 한도를 초과했거나 쿠키가 만료되었습니다. API 설정에서 쿠키를 확인해주세요.');
+        }
+        // 사전 크레딧 차감 (배치 경합 방지) — 실패 시 롤백
+        googleStore.incrementVideoCount(10);
+        const { createGoogleVideoTask } = await import('./googleVideoService');
+        const aspectStr = p.aspectRatio === AspectRatio.PORTRAIT ? '9:16'
+            : p.aspectRatio === AspectRatio.SQUARE ? '1:1'
+            : '16:9';
+        try {
+            const taskToken = await createGoogleVideoTask(p.prompt, p.imageUrl, aspectStr, googleStore.cookie);
+            return taskToken;
+        } catch (e) {
+            // 생성 실패 시 사전 차감 롤백
+            googleStore.incrementVideoCount(-10);
+            throw e;
+        }
+    },
+    poll: async (taskId, signal, onProgress) => {
+        const internalController = new AbortController();
+        googleVeoAbortControllers.set(taskId, internalController);
+        const combinedSignal = signal
+            ? combineAbortSignals(signal, internalController.signal)
+            : internalController.signal;
+
+        try {
+            const { useGoogleCookieStore } = await import('../stores/googleCookieStore');
+            const { pollGoogleVideoTask } = await import('./googleVideoService');
+            const cookie = useGoogleCookieStore.getState().cookie;
+            const videoUrl = await pollGoogleVideoTask(taskId, cookie, combinedSignal, onProgress);
+            // 크레딧은 create에서 사전 차감됨 — poll 성공 시 추가 차감 불필요
+            return videoUrl;
+        } finally {
+            googleVeoAbortControllers.delete(taskId);
+        }
+    },
+    cancel: async (taskId) => {
+        const controller = googleVeoAbortControllers.get(taskId);
+        if (controller) {
+            controller.abort();
+            googleVeoAbortControllers.delete(taskId);
+            logger.warn(`[Google Veo] 로컬 폴링 중단: ${taskId}`);
+        }
+    },
+};
+
 export function getVideoProvider(model: VideoModel): VideoProvider {
     switch (model) {
+        case VideoModel.GOOGLE_VEO: return googleVeoProvider;
         case VideoModel.GROK: return grokProvider;
         case VideoModel.VEO: return evolinkVeoProvider;
         case VideoModel.VEO_QUALITY: return evolinkVeoProvider;

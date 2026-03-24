@@ -265,7 +265,13 @@ export const useVideoBatch = (
         let vidGenStart = performance.now();
         try {
             // [PRE-FLIGHT CHECKS]
-            if (effectiveModel === VideoModel.VEO || effectiveModel === VideoModel.VEO_QUALITY) {
+            if (effectiveModel === VideoModel.GOOGLE_VEO) {
+                // Google Flow Veo — 쿠키 확인 (API 키 불필요)
+                const { useGoogleCookieStore } = await import('../stores/googleCookieStore');
+                const gStore = useGoogleCookieStore.getState();
+                if (!gStore.isValid || !gStore.cookie) throw new Error("Google 쿠키가 연결되지 않았습니다. API 설정에서 쿠키를 연결해주세요.");
+                if (!gStore.canGenerateVideo()) throw new Error("Google 무료 영상 생성 한도를 초과했습니다.");
+            } else if (effectiveModel === VideoModel.VEO || effectiveModel === VideoModel.VEO_QUALITY) {
                 // Evolink Veo 3.1 — Evolink key 확인
                 const { getEvolinkKey } = await import('../services/evolinkService');
                 if (!getEvolinkKey()) throw new Error("Evolink API Key가 없습니다. (Veo 1080p용)");
@@ -427,8 +433,10 @@ export const useVideoBatch = (
                 culturalContext: culturalContextStr || undefined,
             });
 
-            // Cost calculation
-            if (effectiveModel === VideoModel.VEO || effectiveModel === VideoModel.VEO_QUALITY) {
+            // Cost calculation — Google Veo는 무료 (쿠키 기반)
+            if (effectiveModel === VideoModel.GOOGLE_VEO) {
+                estimatedCost = 0;
+            } else if (effectiveModel === VideoModel.VEO || effectiveModel === VideoModel.VEO_QUALITY) {
                 estimatedCost = PRICING.VIDEO_VEO;
             } else if (effectiveModel === VideoModel.GROK) {
                 estimatedCost = effectiveDuration === '10' ? PRICING.VIDEO_GROK_10S : PRICING.VIDEO_GROK_6S;
@@ -635,6 +643,19 @@ export const useVideoBatch = (
         );
     };
 
+    const runGoogleVeoBatch = async (sceneIds?: string[]) => {
+        logger.trackAction('비디오 배치 생성 시작', 'Google Veo (무료)');
+        const allTargets = useProjectStore.getState().scenes.filter(s => s.imageUrl && !s.videoUrl && !s.isGeneratingVideo);
+        const targets = sceneIds && sceneIds.length > 0 ? allTargets.filter(s => sceneIds.includes(s.id)) : allTargets;
+        await runSceneBatch(
+            targets,
+            'Google Veo',
+            async (scene) => {
+                await processScene(scene.id, scene, VideoModel.GOOGLE_VEO, false, true, undefined, undefined, false, false, 0, true);
+            }
+        );
+    };
+
     const runUpscaleBatch = async (sceneIds?: string[]) => {
         logger.trackAction('비디오 배치 생성 시작', 'Upscale');
         // [FIX BUG#10] Read current scenes from store to avoid stale closure
@@ -766,6 +787,7 @@ export const useVideoBatch = (
     const runSingleSeedance = (id: string) => { const s = useProjectStore.getState().scenes.find(x => x.id === id); if (s) processScene(id, s, VideoModel.SEEDANCE, false, true, s.seedanceDuration || '8').catch(e => logger.error(`runSingleSeedance failed: ${id}`, e)); };
     const runSingleVeoFast = (id: string) => { const s = useProjectStore.getState().scenes.find(x => x.id === id); if (s) processScene(id, s, VideoModel.VEO, false, true).catch(e => logger.error(`runSingleVeoFast failed: ${id}`, e)); };
     const runSingleVeoQuality = (id: string) => { const s = useProjectStore.getState().scenes.find(x => x.id === id); if (s) processScene(id, s, VideoModel.VEO_QUALITY, false, true).catch(e => logger.error(`runSingleVeoQuality failed: ${id}`, e)); };
+    const runSingleGoogleVeo = (id: string) => { const s = useProjectStore.getState().scenes.find(x => x.id === id); if (s) processScene(id, s, VideoModel.GOOGLE_VEO, false, true).catch(e => logger.error(`runSingleGoogleVeo failed: ${id}`, e)); };
     const runSingleUpscale = (id: string) => { const s = useProjectStore.getState().scenes.find(x => x.id === id); if (s) processUpscaleOnly(id, s).catch(e => logger.error(`runSingleUpscale failed: ${id}`, e)); };
 
     return {
@@ -777,6 +799,7 @@ export const useVideoBatch = (
         runSeedanceBatch,
         runVeoFastBatch,
         runVeoQualityBatch,
+        runGoogleVeoBatch,
         runUpscaleBatch,
         runRemakeBatch,
         runRemakeBatchWithScenes,
@@ -785,6 +808,7 @@ export const useVideoBatch = (
         runSingleSeedance,
         runSingleVeoFast,
         runSingleVeoQuality,
+        runSingleGoogleVeo,
         runSingleUpscale,
         retryFailedBatch,
         processScene,

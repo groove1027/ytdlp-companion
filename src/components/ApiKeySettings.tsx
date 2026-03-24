@@ -630,17 +630,40 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
     );
 };
 
-/** Google 쿠키 연결 섹션 (ApiKeySettings 내부) */
+/** Google Flow 쿠키 연결 섹션 (ApiKeySettings 내부) */
 const GoogleCookieSection: React.FC = () => {
   const { cookie, isValid, isValidating, userEmail, userName, setCookie, clearCookie, getRemainingImages, getRemainingVideos, dailyImageLimit, monthlyVideoLimit } = useGoogleCookieStore();
   const [input, setInput] = useState('');
+  const [flowCredits, setFlowCredits] = useState<{ imageRemaining: number; videoRemaining: number } | null>(null);
+  const [isLoadingCredits, setIsLoadingCredits] = useState(false);
+
+  // 크레딧 조회 (연결 성공 시 자동)
+  const loadCredits = async () => {
+    if (!cookie || !isValid) return;
+    setIsLoadingCredits(true);
+    try {
+      const { getFlowCredits } = await import('../services/googleVideoService');
+      const credits = await getFlowCredits(cookie);
+      if (credits.imageRemaining >= 0 || credits.videoRemaining >= 0) {
+        setFlowCredits({ imageRemaining: credits.imageRemaining, videoRemaining: credits.videoRemaining });
+        // 실제 크레딧 total로 스토어 한도 업데이트 (remaining이 아닌 total 사용)
+        const store = useGoogleCookieStore.getState();
+        if (credits.imageTotal >= 0) store.updateLimits(credits.imageTotal, -1);
+        if (credits.videoTotal >= 0) store.updateLimits(-1, credits.videoTotal);
+      }
+    } catch { /* ignore */ }
+    setIsLoadingCredits(false);
+  };
+
+  // 연결 시 크레딧 자동 조회
+  React.useEffect(() => { if (isValid && cookie) loadCredits(); }, [isValid, cookie]);
 
   const handleConnect = async () => {
     const val = input.trim();
     if (!val) { showToast('쿠키를 붙여넣어주세요'); return; }
     const ok = await setCookie(val);
     if (ok) {
-      showToast('Google Imagen 연결 완료! 이미지와 영상을 무료로 생성할 수 있어요.', 3000);
+      showToast('Google Flow 연결 완료! 이미지와 영상을 무료로 생성할 수 있어요.', 3000);
       setInput('');
     } else {
       showToast('쿠키 인증 실패. 올바른 쿠키인지 확인해주세요.', 5000);
@@ -651,8 +674,8 @@ const GoogleCookieSection: React.FC = () => {
     <div className="space-y-3 bg-gradient-to-br from-green-900/20 to-emerald-900/10 border border-green-500/20 rounded-xl p-4">
       <div className="flex items-start justify-between">
         <div className="flex flex-col">
-          <h3 className="text-base font-bold text-green-400 uppercase tracking-wider">🆓 GOOGLE IMAGEN (무료)</h3>
-          <span className="text-sm text-gray-400">Google 쿠키로 이미지/영상 무료 생성 (Imagen 3.5 + Veo 3.1)</span>
+          <h3 className="text-base font-bold text-green-400 uppercase tracking-wider">🆓 GOOGLE FLOW (무료)</h3>
+          <span className="text-sm text-gray-400">Gemini 구독자 전용 — Imagen 3.5 이미지 + Veo 3.1 영상 무료 생성</span>
         </div>
         <a href="https://labs.google/fx/tools/image-fx" target="_blank" rel="noopener noreferrer"
           className="shrink-0 ml-3 px-2.5 py-1 bg-green-600/20 hover:bg-green-600/40 border border-green-500/30 text-green-400 text-xs font-bold rounded-lg transition-all flex items-center gap-1">
@@ -666,9 +689,34 @@ const GoogleCookieSection: React.FC = () => {
             <span className="text-green-400 text-sm font-bold">✅ 연결됨</span>
             <span className="text-gray-300 text-sm">{userName || userEmail}</span>
             <div className="flex-1" />
-            <span className="text-xs text-gray-500">오늘 이미지 {getRemainingImages()}/{dailyImageLimit} 남음 · 영상 {getRemainingVideos()}/{monthlyVideoLimit} 남음</span>
             <button onClick={clearCookie} className="text-xs text-red-400 hover:text-red-300 transition-colors">해제</button>
           </div>
+
+          {/* 크레딧 정보 */}
+          <div className="grid grid-cols-2 gap-2">
+            <div className="bg-gray-900/50 border border-gray-700/40 rounded-lg px-3 py-2">
+              <div className="text-[10px] text-gray-500 uppercase tracking-wider font-bold">이미지</div>
+              <div className="text-sm font-bold text-green-400">
+                {flowCredits && flowCredits.imageRemaining >= 0
+                  ? `${flowCredits.imageRemaining}장 남음`
+                  : `${getRemainingImages()}/${dailyImageLimit} (오늘)`
+                }
+              </div>
+            </div>
+            <div className="bg-gray-900/50 border border-gray-700/40 rounded-lg px-3 py-2">
+              <div className="text-[10px] text-gray-500 uppercase tracking-wider font-bold">영상 (Veo 3.1)</div>
+              <div className="text-sm font-bold text-blue-400">
+                {flowCredits && flowCredits.videoRemaining >= 0
+                  ? `${flowCredits.videoRemaining} 크레딧`
+                  : `${getRemainingVideos()}/${monthlyVideoLimit} (이번 달)`
+                }
+              </div>
+            </div>
+          </div>
+          {isLoadingCredits && <p className="text-xs text-gray-600 text-center animate-pulse">크레딧 조회 중...</p>}
+          {!isLoadingCredits && (
+            <button onClick={loadCredits} className="w-full text-xs text-gray-500 hover:text-gray-300 py-1 transition-colors">크레딧 새로고침</button>
+          )}
         </div>
       ) : (
         <div className="space-y-2">
@@ -684,6 +732,7 @@ const GoogleCookieSection: React.FC = () => {
               type="password"
               value={input}
               onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleConnect(); }}
               placeholder="Google 쿠키를 붙여넣으세요..."
               className="flex-1 bg-gray-900 border border-gray-600 rounded p-2 text-sm text-white placeholder-gray-600"
             />

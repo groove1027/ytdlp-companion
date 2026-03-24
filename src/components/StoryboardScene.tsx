@@ -226,6 +226,8 @@ const StoryboardSceneInner: React.FC<StoryboardSceneProps> = ({
   const getModelBadge = (model?: VideoModel, isNativeHQ?: boolean) => {
       if (!model) return null;
       switch (model) {
+          case VideoModel.GOOGLE_VEO:
+              return <span className="text-sm bg-gradient-to-r from-green-600 to-emerald-600 text-white px-2 py-0.5 rounded border border-green-400/50 font-bold flex-shrink-0">🆓 Veo 3.1 (무료)</span>;
           case VideoModel.VEO:
               return <span className="text-sm bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white px-2 py-0.5 rounded border border-violet-400/50 font-bold flex-shrink-0">💎 Veo 1080p</span>;
           // VEO_FAST removed — Evolink 1080p로 통합
@@ -238,8 +240,8 @@ const StoryboardSceneInner: React.FC<StoryboardSceneProps> = ({
       }
   };
 
-  const isVeo = scene.videoModelUsed === VideoModel.VEO || scene.videoModelUsed === VideoModel.VEO_QUALITY;
-  const isVioletVideoModel = scene.videoModelUsed === VideoModel.VEO || scene.videoModelUsed === VideoModel.VEO_QUALITY || scene.videoModelUsed === VideoModel.SEEDANCE;
+  const isVeo = scene.videoModelUsed === VideoModel.VEO || scene.videoModelUsed === VideoModel.VEO_QUALITY || scene.videoModelUsed === VideoModel.GOOGLE_VEO;
+  const isVioletVideoModel = scene.videoModelUsed === VideoModel.VEO || scene.videoModelUsed === VideoModel.VEO_QUALITY || scene.videoModelUsed === VideoModel.SEEDANCE || scene.videoModelUsed === VideoModel.GOOGLE_VEO;
 
   const formatTime = (seconds?: number) => {
       if (seconds === undefined) return '';
