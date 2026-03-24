@@ -4213,6 +4213,9 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
 
       if (!shouldSplitBatches) {
         text = await callAI(userPrompt, maxTokens);
+        // [FIX] AI 응답 수신 즉시 글로벌 타임아웃 해제 — 5분 타임아웃과 1초 차이로
+        // 응답은 받았지만 parseVersions/setVersions 전에 abort 되는 레이스 컨디션 방지
+        if (globalTimeout) { clearTimeout(globalTimeout); globalTimeout = null; }
         parsed = parseVersions(text);
       } else {
         console.log(`[VideoAnalysis] 적응형 배치 분할 활성화: ${analysisBatches.length}개 배치 (${versionsPerBatch}버전/배치, 예상 ${estimatedTotalTokens} tokens)`);
@@ -4230,6 +4233,8 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
             };
           }),
         );
+        // [FIX] 배치 응답 수신 후 글로벌 타임아웃 해제 — 레이스 컨디션 방지
+        if (globalTimeout) { clearTimeout(globalTimeout); globalTimeout = null; }
         const successfulBatches = batchResults
           .flatMap((result) => result.status === 'fulfilled' ? [result.value] : [])
           .sort((a, b) => a.versionOffset - b.versionOffset);
