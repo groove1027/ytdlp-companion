@@ -1467,10 +1467,7 @@ export const evolinkVideoAnalysisStream = async (
     // 첫 청크가 도착하면 타이머 리셋되므로, 서버 처리 시간이 길어도 데이터가 오면 OK
     const VIDEO_STREAM_IDLE_MS = 60_000;
 
-    // [FIX] 스트림 중간 끊김 시 이미 수신한 데이터가 충분하면 (>1000자) 성공 처리
-    // Evolink SSE 연결이 불안정하여 80% 수신 후 끊기는 현상에 대응
-    let streamError: Error | null = null;
-    try { while (true) {
+    while (true) {
         let idleTimer: ReturnType<typeof setTimeout> | undefined;
         const { done, value } = await Promise.race([
             reader.read(),
@@ -1508,19 +1505,6 @@ export const evolinkVideoAnalysisStream = async (
                 // 불완전 청크 무시
             }
         }
-    } } catch (e) {
-        streamError = e instanceof Error ? e : new Error(String(e));
-        // AbortError(사용자 취소)는 즉시 전파
-        if (streamError.name === 'AbortError') throw streamError;
-    }
-
-    // [FIX] 스트림 중간 끊김이지만 충분한 데이터(>1000자)를 수신했으면 성공 처리
-    if (streamError && accumulated.length < 1000) {
-        logger.error('[Evolink Video] 스트리밍 끊김 — 수신 데이터 부족', { accumulated: accumulated.length, error: streamError.message });
-        throw streamError;
-    }
-    if (streamError) {
-        logger.warn('[Evolink Video] 스트리밍 중간 끊김 — 부분 데이터 활용', { accumulated: accumulated.length, error: streamError.message });
     }
 
     // 비용 추정 (video stream)
