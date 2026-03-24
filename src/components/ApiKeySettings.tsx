@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { getStoredKeys, saveApiKeys, syncApiKeysToServer, getYoutubeApiKeyPool, saveYoutubeApiKeyPool, getActiveYoutubeKeyIndex } from '../services/apiService';
 import { showToast } from '../stores/uiStore';
 import { useAuthGuard } from '../hooks/useAuthGuard';
+import { useAuthStore } from '../stores/authStore';
 import { logger } from '../services/LoggerService';
 import { useGoogleCookieStore } from '../stores/googleCookieStore';
 
@@ -477,9 +478,30 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
                     )}
                 </div>
 
-                {/* ── 필수 API ── */}
-                <p className="text-xs font-bold text-amber-400 uppercase tracking-widest mb-1">필수</p>
-                <div className="space-y-6">
+                {/* ── 체험판 안내 배너 ── */}
+                {useAuthStore.getState().authUser?.tier === 'trial' && (
+                    <div className="bg-amber-950/50 border-2 border-amber-500/50 rounded-xl p-4 mb-4">
+                        <p className="font-bold text-amber-300 text-sm mb-2">체험판 모드</p>
+                        <p className="text-xs text-gray-300">체험판은 <strong className="text-white">Google Gemini API</strong> 키 하나로 모든 AI 기능이 작동합니다. 아래의 Evolink, KIE 등 정식 버전 API는 체험판에서 사용되지 않습니다.</p>
+                        <div className="mt-3 space-y-2">
+                            <div>
+                                <label className="text-xs text-amber-400 font-bold">Google Gemini API 키 (필수)</label>
+                                <input type={showPassword ? "text" : "password"} value={localStorage.getItem('CUSTOM_GOOGLE_GEMINI_KEY') || ''} onChange={(e) => { localStorage.setItem('CUSTOM_GOOGLE_GEMINI_KEY', e.target.value); }} placeholder="AIzaSy..." className="w-full bg-gray-900 border border-amber-500/50 rounded p-2 text-base text-white mt-1" />
+                            </div>
+                            <p className="text-[10px] text-gray-500">
+                                발급: <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">aistudio.google.com/apikey</a> (무료)
+                            </p>
+                        </div>
+                    </div>
+                )}
+
+                {/* ── 필수 API (정식 버전) ── */}
+                {useAuthStore.getState().authUser?.tier === 'trial' ? (
+                    <p className="text-xs text-gray-500 mb-1">아래는 정식 버전 전용 설정입니다 (체험판에서는 사용되지 않음)</p>
+                ) : (
+                    <p className="text-xs font-bold text-amber-400 uppercase tracking-widest mb-1">필수</p>
+                )}
+                <div className={`space-y-6 ${useAuthStore.getState().authUser?.tier === 'trial' ? 'opacity-40 pointer-events-none' : ''}`}>
                     {/* 1. Evolink AI */}
                     <div className="space-y-3 pb-4 border-b border-gray-700">
                         <div className="flex items-start justify-between">
