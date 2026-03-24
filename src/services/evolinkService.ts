@@ -24,6 +24,18 @@ const markEvolinkQuotaDepleted = () => {
 
 export const isEvolinkQuotaDepleted = (): boolean => Date.now() < _evolinkQuotaDepletedUntil;
 
+// [FIX] Evolink Gemini 429 "Resource exhausted" 감지 — 단기 rate limit 쿨다운
+// 크레딧 부족(402/403)과 별개로, Gemini RPM 제한(429)에 걸리면 60초간 KIE 우선
+let _evolinkRateLimitedUntil = 0;
+const EVOLINK_RATE_LIMIT_COOLDOWN_MS = 60_000; // 60초
+
+export const markEvolinkRateLimited = () => {
+    _evolinkRateLimitedUntil = Date.now() + EVOLINK_RATE_LIMIT_COOLDOWN_MS;
+    logger.warn('[Evolink] Gemini RPM 제한 감지 — 60초간 KIE 우선 라우팅');
+};
+
+export const isEvolinkRateLimited = (): boolean => Date.now() < _evolinkRateLimitedUntil;
+
 /** Evolink 에러가 잔액/크레딧 부족인지 감지 (대소문자 무관, type/code 기반 정확 매칭) */
 const isEvolinkQuotaErrorDetail = (errorDetail: string): boolean =>
     /insufficient.*(quota|credit|balance)|quota.*insufficient|quota.*not\s+enough|insufficient_quota|insufficient_user_quota|잔액\s*부족|크레딧.*부족/i.test(errorDetail);
@@ -505,7 +517,7 @@ export const evolinkChat = async (
 
     // [FIX] KIE 우선 라우팅: 특정 taskProfile이거나 Evolink 잔액 소진 시 (flash 모델 포함)
     const kiePreferredByProfile = shouldPreferKieTask(taskProfile, model);
-    const kiePreferredByQuota = isEvolinkQuotaDepleted() && !isKieRateLimited();
+    const kiePreferredByQuota = (isEvolinkQuotaDepleted() || isEvolinkRateLimited()) && !isKieRateLimited();
     const shouldTryKieFirst = kiePreferredByProfile || kiePreferredByQuota;
 
     if (shouldTryKieFirst) {
@@ -613,7 +625,7 @@ export const evolinkChatStream = async (
     options: EvolinkChatOptions = {}
 ): Promise<string> => {
     // [FIX] Evolink 잔액 소진 시 KIE non-stream 폴백 (스트리밍 대신 전체 응답 반환)
-    if (isEvolinkQuotaDepleted() && !isKieRateLimited()) {
+    if ((isEvolinkQuotaDepleted() || isEvolinkRateLimited()) && !isKieRateLimited()) {
         logger.warn('[Evolink] Stream 요청이지만 Evolink 잔액 소진 — Kie non-stream 폴백');
         try {
             const kieResult = await kieChatCompletion(messages, options);
@@ -1439,6 +1451,8 @@ export const evolinkVideoAnalysisStream = async (
     if (!response.ok) {
         const errorDetail = await parseEvolinkError(response);
         logger.error(`[Evolink Video] v1beta 실패 (${response.status})`, { error: errorDetail });
+        // [FIX] 429 Gemini RPM 제한 → 60초 쿨다운 마킹 → 텍스트 폴백이 즉시 KIE로 라우팅
+        if (response.status === 429) markEvolinkRateLimited();
         throw new Error(`Evolink v1beta 비디오 분석 오류 (${response.status}): ${errorDetail}`);
     }
 
