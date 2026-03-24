@@ -1267,7 +1267,7 @@ const fetchTranscriptViaInnertube = async (videoId: string): Promise<string | nu
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
-            signal: AbortSignal.timeout(10000),
+            signal: AbortSignal.timeout(6000),
         });
 
         if (!res.ok) return null;
@@ -1368,9 +1368,9 @@ const fetchTranscriptViaTimedtext = async (videoId: string): Promise<string | nu
 // CORS 프록시 목록 (timedtext/YouTube 페이지 직접 호출이 CORS로 차단될 때 사용)
 // ──────────────────────────────────────────────────────────────
 const CORS_PROXIES = [
-    { prefix: 'https://api.allorigins.win/raw?url=', name: 'allorigins' },
-    { prefix: 'https://corsproxy.io/?url=', name: 'corsproxy.io' },
     { prefix: 'https://api.codetabs.com/v1/proxy?quest=', name: 'codetabs' },
+    { prefix: 'https://corsproxy.io/?url=', name: 'corsproxy.io' },
+    { prefix: 'https://api.allorigins.win/raw?url=', name: 'allorigins' },
 ];
 
 /**
@@ -1515,7 +1515,7 @@ const fetchTranscriptViaPlayerPage = async (videoId: string): Promise<string | n
         }
         try {
             const proxyUrl = `${proxy.prefix}${encodeURIComponent(watchUrl)}`;
-            const res = await monitoredFetch(proxyUrl, { signal: AbortSignal.timeout(10000) });
+            const res = await monitoredFetch(proxyUrl, { signal: AbortSignal.timeout(6000) });
             if (!res.ok) {
                 // 5xx = 프록시 서버 장애, 4xx = 정상 응답(콘텐츠 없음)
                 if (res.status >= 500 || res.status === 0) consecutiveProxyFailures++;
@@ -1624,7 +1624,7 @@ const fetchTranscriptViaCorsProxy = async (videoId: string): Promise<string | nu
                 const targetUrl = `https://www.youtube.com/api/timedtext?v=${videoId}&lang=${lang}${kindParam}&fmt=srv3`;
                 const proxyUrl = `${proxy.prefix}${encodeURIComponent(targetUrl)}`;
 
-                const res = await monitoredFetch(proxyUrl, { signal: AbortSignal.timeout(8000) });
+                const res = await monitoredFetch(proxyUrl, { signal: AbortSignal.timeout(5000) });
                 if (!res.ok) {
                     // 프록시 자체 에러(5xx) vs YouTube 응답(4xx) 구분
                     if (res.status >= 500 || res.status === 0) {
@@ -1870,7 +1870,7 @@ export const fetchTimedTranscriptForAnalysis = async (videoId: string): Promise<
                 const kindParam = kind ? `&kind=${kind}` : '';
                 const targetUrl = `https://www.youtube.com/api/timedtext?v=${videoId}&lang=${lang}${kindParam}&fmt=srv3`;
                 const proxyUrl = `${proxy.prefix}${encodeURIComponent(targetUrl)}`;
-                const res = await monitoredFetch(proxyUrl, { signal: AbortSignal.timeout(10000) });
+                const res = await monitoredFetch(proxyUrl, { signal: AbortSignal.timeout(6000) });
                 if (!res.ok) continue;
 
                 const xmlText = await res.text();
@@ -1895,7 +1895,7 @@ export const fetchTimedTranscriptForAnalysis = async (videoId: string): Promise<
         try {
             const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
             const proxyUrl = `${proxy.prefix}${encodeURIComponent(watchUrl)}`;
-            const res = await monitoredFetch(proxyUrl, { signal: AbortSignal.timeout(15000) });
+            const res = await monitoredFetch(proxyUrl, { signal: AbortSignal.timeout(8000) });
             if (!res.ok) continue;
 
             const html = await res.text();
@@ -1929,7 +1929,7 @@ export const fetchTimedTranscriptForAnalysis = async (videoId: string): Promise<
                 try {
                     const captionUrl = track.baseUrl + (track.baseUrl.includes('fmt=') ? '' : '&fmt=srv3');
                     const captionProxyUrl = `${proxy.prefix}${encodeURIComponent(captionUrl)}`;
-                    const captionRes = await monitoredFetch(captionProxyUrl, { signal: AbortSignal.timeout(10000) });
+                    const captionRes = await monitoredFetch(captionProxyUrl, { signal: AbortSignal.timeout(6000) });
                     if (!captionRes.ok) continue;
 
                     const xmlText = await captionRes.text();

@@ -402,49 +402,68 @@ export async function fetchWithRateLimitRetry(
     init: RequestInit,
     maxRetries: number = 3,
     baseDelayMs: number = 2000,
-    timeoutMs?: number
+    timeoutMs?: number,
+    /** 네트워크 에러(Failed to fetch, 타임아웃)도 재시도할지 여부. 멱등 GET/읽기 전용 요청에만 true 사용 */
+    retryOnNetworkError: boolean = false
 ): Promise<Response> {
     let lastResponse: Response | null = null;
+    let lastError: Error | null = null;
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
-        const response = await monitoredFetch(url, init, timeoutMs);
+        try {
+            const response = await monitoredFetch(url, init, timeoutMs);
 
-        if (response.status !== 429 || attempt === maxRetries) {
-            return response;
-        }
+            if (response.status !== 429 || attempt === maxRetries) {
+                return response;
+            }
 
-        // [FIX #245] 429 — Retry-After 헤더 우선, 없으면 지수 백오프 + 랜덤 지터
-        // Evolink 공식 문서: "Retry-After 헤더 값을 추출하여 그 시간만큼 대기 후 재시도"
-        lastResponse = response;
-        const retryAfterHeader = response.headers.get('Retry-After') || response.headers.get('retry-after');
-        let delayMs: number;
+            // [FIX #245] 429 — Retry-After 헤더 우선, 없으면 지수 백오프 + 랜덤 지터
+            lastResponse = response;
+            const retryAfterHeader = response.headers.get('Retry-After') || response.headers.get('retry-after');
+            let delayMs: number;
 
-        if (retryAfterHeader) {
-            // Retry-After는 초 단위 숫자 또는 HTTP-date 형식
-            const retryAfterSec = parseInt(retryAfterHeader, 10);
-            if (!isNaN(retryAfterSec) && retryAfterSec > 0) {
-                // 서버 지정 대기 시간 사용 (최대 120초 캡 — 무한 대기 방지)
-                delayMs = Math.min(retryAfterSec * 1000, 120_000);
-                logger.warn(`[Evolink] 429 Rate Limit — Retry-After: ${retryAfterSec}초 대기 (${attempt + 1}/${maxRetries})`, { url });
+            if (retryAfterHeader) {
+                const retryAfterSec = parseInt(retryAfterHeader, 10);
+                if (!isNaN(retryAfterSec) && retryAfterSec > 0) {
+                    delayMs = Math.min(retryAfterSec * 1000, 120_000);
+                    logger.warn(`[Evolink] 429 Rate Limit — Retry-After: ${retryAfterSec}초 대기 (${attempt + 1}/${maxRetries})`, { url });
+                } else {
+                    const jitter = Math.random() * 1500;
+                    delayMs = baseDelayMs * Math.pow(2, attempt) + jitter;
+                    logger.warn(`[Evolink] 429 Rate Limit — Retry-After 파싱 불가, 지수 백오프 ${Math.round(delayMs)}ms (${attempt + 1}/${maxRetries})`, { url });
+                }
             } else {
-                // HTTP-date 등 파싱 불가 → 지수 백오프 폴백
                 const jitter = Math.random() * 1500;
                 delayMs = baseDelayMs * Math.pow(2, attempt) + jitter;
-                logger.warn(`[Evolink] 429 Rate Limit — Retry-After 파싱 불가 ("${retryAfterHeader}"), 지수 백오프 ${Math.round(delayMs)}ms (${attempt + 1}/${maxRetries})`, { url });
+                logger.warn(`[Evolink] 429 Rate Limit — 지수 백오프 ${Math.round(delayMs)}ms 후 재시도 (${attempt + 1}/${maxRetries})`, { url });
             }
-        } else {
-            // Retry-After 헤더 없음 → 기존 지수 백오프 + 랜덤 지터 (thundering herd 방지)
-            const jitter = Math.random() * 1500;
-            delayMs = baseDelayMs * Math.pow(2, attempt) + jitter;
-            logger.warn(`[Evolink] 429 Rate Limit — 지수 백오프 ${Math.round(delayMs)}ms 후 재시도 (${attempt + 1}/${maxRetries})`, { url });
-        }
 
-        logger.trackErrorChain(`HTTP 429 Rate Limit (attempt ${attempt + 1}/${maxRetries}, delay ${Math.round(delayMs)}ms)`, 'evolinkService:fetchWithRateLimitRetry:rate_limit');
-        await new Promise(r => setTimeout(r, delayMs));
+            logger.trackErrorChain(`HTTP 429 Rate Limit (attempt ${attempt + 1}/${maxRetries}, delay ${Math.round(delayMs)}ms)`, 'evolinkService:fetchWithRateLimitRetry:rate_limit');
+            await new Promise(r => setTimeout(r, delayMs));
+        } catch (fetchErr) {
+            lastError = fetchErr instanceof Error ? fetchErr : new Error(String(fetchErr));
+
+            // AbortError(사용자 취소)는 즉시 전파
+            if (lastError.name === 'AbortError' || lastError.message.includes('취소') || lastError.message.includes('cancel')) {
+                throw lastError;
+            }
+
+            // retryOnNetworkError 옵트인이 아니면 네트워크 에러도 즉시 전파
+            if (!retryOnNetworkError) throw lastError;
+
+            if (attempt < maxRetries) {
+                const jitter = Math.random() * 1500;
+                const delayMs = baseDelayMs * Math.pow(2, attempt) + jitter;
+                logger.warn(`[Evolink] 네트워크 에러 재시도 — ${lastError.message.slice(0, 80)} (${attempt + 1}/${maxRetries}, ${Math.round(delayMs)}ms 후)`, { url });
+                await new Promise(r => setTimeout(r, delayMs));
+            } else {
+                throw lastError;
+            }
+        }
     }
 
-    // 도달하지 않는 코드이나 TypeScript 타입 안전성을 위해
-    return lastResponse!;
+    if (lastResponse) return lastResponse;
+    throw lastError || new Error('fetchWithRateLimitRetry: 예기치 못한 종료');
 }
 
 async function parseEvolinkError(response: Response): Promise<string> {
@@ -1398,12 +1417,15 @@ export const evolinkVideoAnalysisStream = async (
 
     logger.info('[Evolink Video] v1beta 비디오 분석 스트리밍 시작', { videoCount: videoUris.length, videoUri: videoUris[0].slice(0, 80), mimeType: mimeTypes[0] });
 
-    // [FIX #679][FIX #678] 100초 선제 타임아웃 — 브라우저/프록시 타임아웃(~126초)보다 먼저 끊어 폴백 유도
-    // 비디오 분석은 서버가 YouTube 영상 다운로드+프레임 분석해야 하므로 오래 걸리지만,
-    // 110초는 폴백 체인에 예산을 남기지 못해 타임아웃 초과 원인 → 100초로 조정 (대부분의 영상 커버)
-    const VIDEO_FETCH_TIMEOUT_MS = 100_000;
+    // [FIX] 65초 선제 타임아웃
+    // 배경: 브라우저가 유휴 TCP 연결을 ~73초에 강제 종료 → "Failed to fetch" 발생
+    // 100초 타임아웃으로는 73초 브라우저 킬을 제어할 수 없으므로,
+    // 65초에 선제 타임아웃 → 우리 retry 로직이 새 TCP 연결로 재시도
+    // 재시도 시 Evolink 서버가 YouTube 영상을 캐시하고 있어 응답이 빨라짐
+    const VIDEO_FETCH_TIMEOUT_MS = 65_000;
 
-    // [FIX #226] 429 Rate Limit 재시도 추가 — 비디오 분석 스트리밍에도 적용
+    // [FIX] 429 + 네트워크 에러 재시도 — SSE 스트리밍은 읽기 전용이므로 안전
+    // 재시도 1회(총 2회 시도): 65s × 2 + 백오프 ≈ 최대 135초 후 폴백
     const response = await fetchWithRateLimitRetry(url, {
         method: 'POST',
         headers: {
@@ -1412,7 +1434,7 @@ export const evolinkVideoAnalysisStream = async (
         },
         body: JSON.stringify(payload),
         signal,
-    }, 3, 3000, VIDEO_FETCH_TIMEOUT_MS);
+    }, 1, 3000, VIDEO_FETCH_TIMEOUT_MS, true);
 
     if (!response.ok) {
         const errorDetail = await parseEvolinkError(response);
@@ -1427,8 +1449,9 @@ export const evolinkVideoAnalysisStream = async (
     let accumulated = '';
     let buffer = '';
 
-    // [FIX #226] 비디오 분석 스트리밍 유휴 타임아웃 — 90초 무응답 시 중단 (영상 처리는 더 오래 걸릴 수 있음)
-    const VIDEO_STREAM_IDLE_MS = 90_000;
+    // [FIX] 비디오 분석 스트리밍 유휴 타임아웃 — 60초 무응답 시 중단
+    // 첫 청크가 도착하면 타이머 리셋되므로, 서버 처리 시간이 길어도 데이터가 오면 OK
+    const VIDEO_STREAM_IDLE_MS = 60_000;
 
     while (true) {
         let idleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1437,7 +1460,7 @@ export const evolinkVideoAnalysisStream = async (
             new Promise<never>((_, reject) => {
                 idleTimer = setTimeout(() => {
                     reader.cancel().catch(() => {});
-                    reject(new Error('비디오 분석 스트리밍 90초 무응답 — 연결 중단'));
+                    reject(new Error('비디오 분석 스트리밍 60초 무응답 — 연결 중단'));
                 }, VIDEO_STREAM_IDLE_MS);
             })
         ]).finally(() => { if (idleTimer) clearTimeout(idleTimer); });
