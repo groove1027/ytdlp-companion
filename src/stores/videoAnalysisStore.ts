@@ -148,12 +148,49 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
       setTargetDuration: (dur) => set({ targetDuration: dur }),
       setKeepOriginalOrder: (val) => set({ keepOriginalOrder: val }),
       setVersionCount: (count) => set({ versionCount: count }),
-      setYoutubeUrl: (url) => set({ youtubeUrl: url, youtubeUrls: [url] }),
+      setYoutubeUrl: (url) => {
+        const prev = get().youtubeUrl;
+        // [FIX #782/#785] URL 변경 시 이전 분석 결과 자동 초기화 — 이전 영상 결과가 잔류하는 버그 수정
+        if (prev && prev !== url) {
+          set({
+            youtubeUrl: url,
+            youtubeUrls: [url],
+            rawResult: '',
+            versions: [],
+            thumbnails: [],
+            error: null,
+            expandedId: null,
+            isFrameUpgrading: false,
+            videoBlob: null,
+            videoBlobHasAudio: null,
+            editRoomSelectedVersionIdx: null,
+          });
+        } else {
+          set({ youtubeUrl: url, youtubeUrls: [url] });
+        }
+      },
 
       updateYoutubeUrl: (index, url) => {
         const urls = [...get().youtubeUrls];
+        const prevUrl = urls[index];
         urls[index] = url;
-        set({ youtubeUrls: urls, youtubeUrl: urls[0] || '' });
+        // [FIX #782/#785] 개별 URL 변경 시에도 결과 초기화
+        // [FIX Review] youtu.be 단축 URL도 감지하도록 개선
+        const changed = prevUrl && prevUrl !== url && (prevUrl.includes('youtube') || prevUrl.includes('youtu.be'));
+        set({
+          youtubeUrls: urls,
+          youtubeUrl: urls[0] || '',
+          ...(changed ? {
+            rawResult: '',
+            versions: [],
+            thumbnails: [],
+            error: null,
+            expandedId: null,
+            isFrameUpgrading: false,
+            videoBlob: null,
+            videoBlobHasAudio: null,
+          } : {}),
+        });
       },
 
       addYoutubeUrl: () => {

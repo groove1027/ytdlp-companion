@@ -343,11 +343,37 @@ const ChannelAnalysisRoom: React.FC = () => {
       if (descOnlyCount > 0) {
         logger.warn(`[채널분석] 자막 확보: ${captionSuccessCount}/${scripts.length}개 성공, ${descOnlyCount}개는 영상 설명으로 대체`);
         if (captionSuccessCount === 0) {
-          showToast(`모든 영상에서 자막을 가져오지 못해 영상 설명으로 분석합니다. 분석 정확도가 낮을 수 있습니다.`);
+          showToast(`⚠️ 모든 영상에서 자막을 가져오지 못했습니다. 영상 설명만으로는 정확한 분석이 불가능하여, 자막이 확보된 영상만 분석합니다.`, 5000);
+          // [FIX #823/#794/#785/#813] 자막이 하나도 없으면 환각 방지를 위해 분석을 중단
+          // 영상 설명(description)만으로 AI에게 보내면 내용을 날조하는 문제 해결
+          // [FIX Review P1] transcriptSource로 판별 — transcript 필드에 description 텍스트가 들어올 수 있으므로
+          const hasAnyCaptions = scripts.some(s => s.transcriptSource === 'caption' && (s.transcript || '').trim().length > 50);
+          if (!hasAnyCaptions) {
+            setError('자막을 가져올 수 없어 채널 스타일 분석이 불가합니다. 자막이 활성화된 영상이 있는 채널을 입력해주세요.');
+            setProgress(null);
+            return;
+          }
         }
       }
+      // [FIX #823/#794] 자막 미확보 영상은 분석 대상에서 제외하여 AI 환각 방지
+      // [FIX Review P2] 자막 없으면 description-only로 폴백하지 않고, 자막 확보된 영상만 사용
+      const captionOnlyScripts = scripts.filter(s =>
+        s.transcriptSource === 'caption' && (s.transcript || '').trim().length > 50
+      );
+      // 자막 확보된 영상만 AI 분석에 사용 — description-only 영상은 제외
+      // [FIX Review P1] captionOnlyScripts가 비어있으면 분석 중단
+      if (captionOnlyScripts.length === 0) {
+        setError('자막이 확보된 영상이 없어 채널 스타일 분석이 불가합니다. 자막이 있는 영상이 포함된 채널을 시도해주세요.');
+        setProgress(null);
+        setChannelScripts(scripts);
+        return;
+      }
+      const analysisScripts = captionOnlyScripts;
+      if (captionOnlyScripts.length < scripts.length) {
+        showToast(`${scripts.length}개 영상 중 자막이 확보된 ${captionOnlyScripts.length}개만 분석에 사용합니다.`);
+      }
       setChannelScripts(scripts);
-      // 콘텐츠 지역 자동 감지 (다중 신호: 채널 메타데이터 + 제목 + 자막)
+      // [FIX Review P2] 콘텐츠 지역 감지는 전체 scripts로 수행 (제목/태그 기반이라 자막 불필요)
       const detectedRegion = detectContentRegion(scripts, info);
       if (detectedRegion !== contentRegion) {
         setContentRegion(detectedRegion);
@@ -355,7 +381,8 @@ const ChannelAnalysisRoom: React.FC = () => {
       }
       const effectiveRegion = detectedRegion;
       setProgress({ step: 4, message: `AI 채널 스타일 DNA 다층 분석 중... (${effectiveRegion === 'overseas' ? '해외 콘텐츠 모드' : '국내 콘텐츠 모드'})` });
-      const guideline = await analyzeChannelStyleDNA(scripts, info, effectiveRegion, {
+      // [FIX #823/#794] 자막 확보된 영상만 AI 분석에 전달하여 환각 방지
+      const guideline = await analyzeChannelStyleDNA(analysisScripts, info, effectiveRegion, {
         onBaseGuideline: (baseGuideline) => {
           setChannelGuideline({
             ...baseGuideline,

@@ -1740,10 +1740,16 @@ const parseTimedtextXmlWithTimecodes = (xml: string): { start: number; dur: numb
  *  롱폼(300+ cue) 시 균등 샘플링으로 프롬프트 토큰 폭증 방지 */
 const formatTimedCuesForAI = (cues: { start: number; dur: number; text: string }[]): string => {
     if (cues.length === 0) return '';
+    // [FIX #814/#795/#772/#767] 타임코드 정밀도 향상: MM:SS.SSS 포맷으로 밀리초 단위까지 보존
+    // 이전: M:SS.S (0.1초 단위) → 편집점이 대사와 수백 ms 어긋나는 원인
     const fmtTime = (sec: number): string => {
-        const m = Math.floor(sec / 60);
+        const h = Math.floor(sec / 3600);
+        const m = Math.floor((sec % 3600) / 60);
         const s = sec % 60;
-        return `${m}:${s.toFixed(1).padStart(4, '0')}`;
+        if (h > 0) {
+            return `${h}:${String(m).padStart(2, '0')}:${s.toFixed(3).padStart(6, '0')}`;
+        }
+        return `${String(m).padStart(2, '0')}:${s.toFixed(3).padStart(6, '0')}`;
     };
 
     // 롱폼 토큰 제한: 최대 300 cue (약 10분 영상 기준 충분, 이상은 균등 샘플링)
@@ -1765,9 +1771,10 @@ const formatTimedCuesForAI = (cues: { start: number; dur: number; text: string }
     const sampledNote = cues.length > MAX_CUES
         ? `\n(원본 ${cues.length}개 자막 중 ${selectedCues.length}개를 균등 샘플링하여 표시)\n`
         : '';
-    return `## 영상 자막 전사 (YouTube 자동/수동 자막 — 정확한 타임코드 포함)\n` +
-        `아래 각 줄의 [시작~끝] 타임코드는 원본 영상의 실제 시간입니다.\n` +
-        `편집 테이블의 타임코드 소스를 작성할 때, 반드시 이 실제 타임코드를 기준으로 하세요.${sampledNote}\n` +
+    return `## 영상 자막 전사 (YouTube 자동/수동 자막 — 정밀 타임코드 포함)\n` +
+        `아래 각 줄의 [시작~끝] 타임코드는 원본 영상의 실제 시간(MM:SS.밀리초)입니다.\n` +
+        `편집 테이블의 타임코드 소스를 작성할 때, 반드시 이 실제 타임코드를 그대로 사용하세요.\n` +
+        `절대로 타임코드를 추정하거나 균등 배분하지 마세요. 자막에 없는 시간대의 타임코드를 만들어내지 마세요.${sampledNote}\n` +
         lines.join('\n');
 };
 
@@ -2451,7 +2458,9 @@ export const analyzeChannelStyle = async (
 - 개별 특성: 특정 영상에서만 나타나는 독특한 요소
 이 세 가지를 구분하여 분석하세요. 본문이 짧거나 없는 영상은 제목과 태그에서 주제를 유추하세요.${languageContext}
 
-반드시 JSON 형식으로만 응답하세요. 마크다운 코드 블록 없이 순수 JSON만 출력하세요.`;
+반드시 JSON 형식으로만 응답하세요. 마크다운 코드 블록 없이 순수 JSON만 출력하세요.
+⚠ 모든 JSON 값(tone, structure, topics, keywords 등)은 반드시 한국어로 작성하세요. 영어로 작성하면 안 됩니다.
+⚠ tone 필드에는 반드시 화자의 실제 말투 레벨(반말/존댓말/혼합)과 종결어미 패턴(~다, ~요, ~ㅋㅋ 등)을 구체적으로 명시하세요.`;
 
     // 해외 콘텐츠용 분석 차원 (영어 문법 체계 기반)
     const analysisDimensions = isOverseas
@@ -2478,9 +2487,10 @@ export const analyzeChannelStyle = async (
         : `"위 8가지 분석을 종합한 궁극의 시스템 프롬프트. 아래 구조로 4000자 이상 매우 상세히 작성:\\n\\n[페르소나 선언] 이 AI의 정체성 한 줄 정의\\n[사고 회로] 논리 구조, 세계관, 대상 인식 필터 상세 규칙\\n[문장 구조 규칙] 평균 문장 길이, 종결어미 확률 분포표(~다 30%, ~요 20% 등), 수사 의문문 빈도, 접속사 패턴\\n[어휘 사전] 이 화자만의 고유 표현 20개 이상 + 치환 규칙(일반어→화자 표현)\\n[줄바꿈 규칙] 줄바꿈 트리거 조건, 공백 활용 패턴, 시각적 리듬\\n[서사 구조] 도입부 Hook 공식(3가지 이상 예시), 중반 Build-up 패턴, 결말 Pay-off 시그니처\\n[감정 역학] 감정 증폭 트리거, 급변 패턴, 반어법 사용 규칙\\n[청자 관계] 호명 방식, 제4의 벽 활용, 공감대 형성 전략\\n[절대 금기] 캐릭터 붕괴 방지 금지 규칙 5개 이상\\n[실전 예시] 이 화자 스타일로 쓴 도입부 3개 + 결말부 2개 예시"`;
 
     // 해외 콘텐츠용 tone/structure 필드 설명
+    // [FIX #764/#769] tone 필드에 말투 레벨(반말/존댓말) + 종결어미 분포를 명확히 요구
     const toneDesc = isOverseas
-        ? `"말투/어조 종합 분석 (${primaryLang} 시제·태·문장유형 분포 포함, 한국어 종결어미 분석 금지)"`
-        : `"말투/어조 종합 분석 (종결어미 패턴 확률 분포 포함)"`;
+        ? `"말투/어조 종합 분석 (${primaryLang} 시제·태·문장유형 분포 포함, 한국어 종결어미 분석 금지) — 반드시 한국어로 작성"`
+        : `"말투/어조 종합 분석: 반드시 다음을 포함 — ① 말투 레벨(반말/존댓말/혼합/반존대 중 하나 명시), ② 종결어미 패턴 확률 분포(~다 30%, ~요 20% 등), ③ 특징적인 말버릇/감탄사"`;
     const structureDesc = isOverseas
         ? `"서사 전개 패턴 상세 분석 (해당 문화권의 스토리텔링 관습 반영)"`
         : `"기-승-전-결 전개 패턴 상세 분석"`;

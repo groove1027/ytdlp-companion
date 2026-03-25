@@ -237,8 +237,12 @@ export const useChannelAnalysisStore = create<ChannelAnalysisStore>((set) => ({
     const preset = state.savedPresets.find(p => p.channelName === channelName);
     if (!preset) return;
 
-    // 1) 가이드라인 즉시 반영 + [FIX #392] 해외 채널 여부도 복원
-    set({ channelGuideline: preset, ...(preset.contentRegion ? { contentRegion: preset.contentRegion } : {}) });
+    // 1) 가이드라인 즉시 반영 + [FIX #392] 해외 채널 여부도 복원 + [FIX #792] 콘텐츠 포맷도 복원
+    set({
+      channelGuideline: preset,
+      ...(preset.contentRegion ? { contentRegion: preset.contentRegion } : {}),
+      ...(preset.contentFormat ? { contentFormat: preset.contentFormat } : {}),
+    });
 
     // 2) IndexedDB 벤치마크에서 스크립트 + [#414] 리메이크 복원 (비동기)
     (async () => {

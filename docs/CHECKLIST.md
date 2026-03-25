@@ -8,6 +8,17 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-26] 18건 유사 버그 6배치 일괄 수정 (#823,#794,#785,#813,#782,#814,#795,#772,#767,#765,#797,#776,#775,#826,#764,#769,#792)
+- [x] **Batch 1 (자막 환각 방지)**: ChannelAnalysisRoom — 자막 미확보 영상 AI 분석 제외, captionOnly 필터링 (#823,#794,#785,#813)
+- [x] **Batch 2 (URL 캐시)**: videoAnalysisStore — setYoutubeUrl/updateYoutubeUrl 시 이전 분석 결과 자동 초기화 (#782,#785)
+- [x] **Batch 3 (타임코드)**: youtubeAnalysisService — formatTimedCuesForAI 밀리초 정밀도 향상 MM:SS.SSS (#814,#795,#772,#767)
+- [x] **Batch 4 (프리미어)**: nleExportService/editPointService — secondsToFcpTc 콜론 포맷 유지 확인 (#765,#797)
+- [x] **Batch 5 (비용 추적)**: costStore — zustand persist 미들웨어 적용, projectStore loadProject 비용 리셋 로직 개선 (#776,#775,#826)
+- [x] **Batch 6 (채널 스타일)**: youtubeAnalysisService — tone 필드 말투 레벨 명시 요구, 한국어 출력 강제; channelAnalysisStore — loadPreset에 contentFormat 복원 (#764,#769,#792)
+- [x] tsc 0 에러 + vite build 성공
+- [x] Codex 5.4 MCP 리뷰 10회 수행 (발견된 P1/P2 이슈 전부 수정)
+- [x] Playwright E2E 4회 × 6테스트 = 24/24 통과
+
 ### [2026-03-26] 11건 버그 일괄 수정 (#812, #807, #818, #788, #783, #791, #780, #820, #811, #790, evolink tsc)
 - [x] `useAuthGuard.ts` — stale closure 수정: getState() 직접 참조 (#812, #807)
 - [x] `AnalysisSlotBar.tsx` — 채널 탭 가로 스크롤: overflowX:clip + overflowY:visible + pt-2 (#818)
