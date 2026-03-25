@@ -45,6 +45,79 @@
 
 ---
 
+# 🔴🔴🔴 Playwright 실제 테스트 강제 규칙 (위반 시 작업 무효) 🔴🔴🔴
+
+> **이 규칙은 "playwright 검증", "E2E 테스트", "실제 테스트"가 요구될 때 100% 적용된다.**
+> **구조 확인(grep, 문자열 검색)을 "테스트 완료"로 퉁치면 작업 전체가 무효다.**
+
+## 절대 금지 (이걸 하면 "테스트 했다"고 인정 안 됨)
+
+- ❌ 소스 파일에서 문자열 검색(`fs.readFileSync` + `includes`)으로 "코드 반영 확인" 처리
+- ❌ `localStorage.getItem()` 키 존재 여부만 확인하고 "persist 동작 확인" 처리
+- ❌ `page.textContent('body')`로 단어 포함 여부만 체크하고 "결과 존재" 처리
+- ❌ 10초 이내 대기 후 "분석 완료" 판정
+- ❌ 빌드된 JS 번들에서 문자열 grep으로 "기능 검증 완료" 처리
+- ❌ 입력만 하고 결과를 확인 안 하는 테스트
+
+## 필수 사항 (이걸 해야만 "테스트 했다"로 인정)
+
+- ✅ **실제 UI 흐름**: 입력 → 버튼 클릭 → 로딩 완료 대기 → 결과 DOM 변화 확인
+- ✅ **API 응답 대기**: `page.waitForResponse()`로 실제 네트워크 호출 완료 확인
+- ✅ **before/after 비교**: 동작 전 상태 캡처 → 동작 수행 → 동작 후 상태 비교
+- ✅ **스크린샷 증거**: 각 주요 단계(입력 전, 진행 중, 완료 후)별 스크린샷 저장
+- ✅ **스크린샷 리뷰**: 저장된 스크린샷을 Read 도구로 열어서 사용자에게 직접 보여주기
+- ✅ **충분한 대기**: API 호출이 포함된 테스트는 최소 60초 이상 대기 (`timeout: 60000`)
+- ✅ **에러 케이스도 검증**: 의도적으로 실패해야 하는 시나리오(자막 없는 채널 등)는 에러 메시지가 실제로 표시되는지 확인
+
+## 테스트 코드 작성 패턴 (반드시 이 구조를 따라라)
+
+```ts
+// ❌ 이렇게 하면 안 됨 — 가짜 테스트
+const text = await page.textContent('body');
+expect(text).toContain('결과');  // UI 라벨에 '결과'가 있으면 통과 → 의미 없음
+
+// ❌ 이것도 안 됨 — 소스 코드 검사는 테스트가 아님
+const code = fs.readFileSync('src/service.ts', 'utf-8');
+expect(code).toContain('toFixed(3)');  // grep일 뿐
+
+// ✅ 이렇게 해야 함 — 실제 동작 검증
+// 1) 동작 전 상태 캡처
+const beforeCount = await page.locator('.result-item').count();
+await page.screenshot({ path: 'step1-before.png' });
+
+// 2) 실제 사용자 동작 수행
+await page.fill('input[placeholder*="URL"]', 'https://youtube.com/...');
+await page.click('button:has-text("분석")');
+
+// 3) 실제 API 응답 대기
+await page.waitForResponse(
+  resp => resp.url().includes('api') && resp.status() === 200,
+  { timeout: 60000 }
+);
+
+// 4) 결과 DOM이 실제로 변했는지 확인
+await page.waitForSelector('.result-item', { timeout: 30000 });
+const afterCount = await page.locator('.result-item').count();
+expect(afterCount).toBeGreaterThan(beforeCount);
+await page.screenshot({ path: 'step2-after.png' });
+
+// 5) 구체적인 결과 내용 확인
+const resultText = await page.locator('.result-item').first().textContent();
+expect(resultText!.length).toBeGreaterThan(50);  // 실제 내용이 있는지
+```
+
+## 버그 유형별 필수 검증 시나리오
+
+| 버그 유형 | 반드시 해야 하는 테스트 |
+|-----------|----------------------|
+| API 결과 오류 | 실제 API 호출 → 응답 대기 → 결과 내용 확인 |
+| 캐시/상태 버그 | 상태 A 설정 → 동작 수행 → 상태 B로 변경 확인 → 새로고침 → 상태 유지/초기화 확인 |
+| UI 표시 오류 | 해당 UI 요소의 텍스트/속성/visibility를 직접 확인 |
+| 에러 처리 | 의도적으로 실패 조건 유발 → 에러 메시지 DOM에 표시되는지 확인 |
+| 비용/과금 | addCost 호출 → 숫자 변화 확인 → 새로고침 → 값 유지 확인 |
+
+---
+
 # 🚨🚨🚨 STOP — 코드 수정 전에 반드시 읽어라 🚨🚨🚨
 
 > **이 섹션을 건너뛰고 코드를 수정하면 Hook이 exit 2로 차단한다.**

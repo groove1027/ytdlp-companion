@@ -480,17 +480,17 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
     });
     // [FIX] localStorage에 마지막 프로젝트 ID 저장 → 새 탭/새로고침 시 복원용
     try { if (project.id) localStorage.setItem('last-project-id', project.id); } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/setLastId', e); }
-    // [FIX] 새로고침 자동 복원 시에도 비용 복원 — 사용자 비용 추적 유실 방지
-    // [FIX #776/#775/#826] 프로젝트에 비용 데이터가 있으면 복원, 없으면 현재 비용 유지
-    // 이전: costStats가 없으면 무조건 resetCosts() → 세션 중 비용 데이터 소실
-    // [FIX Review P2] 수동 프로젝트 전환 시 레거시 프로젝트는 비용 리셋, 자동 복원 시에는 유지
-    if (project.costStats) {
-      useCostStore.getState().setCostStats(project.costStats);
-    } else if (!options?.skipCostRestore) {
-      // 수동 프로젝트 전환인데 costStats가 없는 레거시 프로젝트 → 리셋하여 이전 프로젝트 비용 잔류 방지
-      useCostStore.getState().resetCosts();
+    // [FIX #776/#775/#826] 비용 복원 로직
+    // skipCostRestore=true (자동 복원): costStore를 아예 건드리지 않음 → persist에서 복원된 값 유지
+    // skipCostRestore=false (수동 전환): 프로젝트의 costStats로 교체, 없으면 리셋
+    if (!options?.skipCostRestore) {
+      if (project.costStats) {
+        useCostStore.getState().setCostStats(project.costStats);
+      } else {
+        useCostStore.getState().resetCosts();
+      }
     }
-    // else (skipCostRestore=true && costStats 없음): 자동 복원 시 기존 costStore 상태 유지
+    // skipCostRestore=true: costStore 완전 보존 — persist 미들웨어가 복원한 값 유지
 
     try {
       restoreScriptWriterDraft(buildScriptWriterRestoreState(project));
