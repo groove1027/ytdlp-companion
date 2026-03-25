@@ -438,8 +438,11 @@ export async function extractStreamUrl(
 }
 
 /**
- * YouTube 영상을 서버 프록시 경유로 바로 다운로드합니다.
- * 서버 /api/download → Content-Disposition: attachment → 브라우저가 파일로 저장
+ * YouTube 영상을 컴패니언/VPS 프록시 경유로 다운로드합니다.
+ * yt-dlp의 안티-쓰로틀링 + ffmpeg 합성 → 안정적 다운로드
+ *
+ * ⚠️ CDN URL 직접 다운로드는 YouTube 쓰로틀링으로 오히려 느림 (실측: 프록시 대비 0.5배)
+ * yt-dlp 프록시가 안티-쓰로틀링 + 병렬 다운로드를 내부 처리하므로 더 빠름
  *
  * @param youtubeUrl - YouTube URL 또는 VIDEO_ID
  * @param quality - 화질 (기본: 'best')
