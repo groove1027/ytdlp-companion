@@ -401,6 +401,8 @@ export const useSoundStudioStore = create<SoundStudioStore>((set) => ({
 
       applySpeakerChange(startIndex);
 
+      // changeSpeakerWithPropagation: 화자 드롭다운 변경용 — voiceName 있는 줄은 건너뛰되 전파 계속
+      // (#783/#791 수정은 TypecastEditor.tsx에서 speaker.voiceId 전파 제거로 해결)
       for (let index = startIndex + 1; index < state.lines.length; index += 1) {
         const currentLine = state.lines[index];
         if (currentLine.voiceName) continue;

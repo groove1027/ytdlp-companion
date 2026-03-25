@@ -28,8 +28,9 @@ const AnalysisSlotBar: React.FC<AnalysisSlotBarProps> = ({
   const activeClass = `bg-${accentColor}-600/20 text-${accentColor}-400 border border-${accentColor}-500/30`;
   const inactiveClass = 'bg-gray-700/50 text-gray-400 border border-gray-600/30 hover:border-gray-500';
 
+  // [FIX #818] overflow-x-clip으로 가로만 클리핑, 세로는 visible (삭제 버튼 노출)
   return (
-    <div className="flex items-center gap-3">
+    <div className="flex items-center gap-3 min-w-0" style={{ overflowX: 'clip', overflowY: 'visible' }}>
       <button
         onClick={onNewAnalysis}
         className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium text-white bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 transition-all"
@@ -43,7 +44,8 @@ const AnalysisSlotBar: React.FC<AnalysisSlotBarProps> = ({
       {slots.length > 0 && (
         <>
           <div className="w-px h-6 bg-gray-600/50 flex-shrink-0" />
-          <div className="flex gap-2 overflow-x-auto scrollbar-hide min-w-0">
+          {/* [FIX #818] 채널 탭 스크롤: flex-1 min-w-0 + pt-2로 삭제 버튼 노출 공간 확보 */}
+          <div className="flex gap-2 overflow-x-auto scrollbar-hide min-w-0 flex-1 pt-2 pb-1" style={{ overflowY: 'visible' }}>
             {slots.map((slot) => (
               <button
                 key={slot.id}

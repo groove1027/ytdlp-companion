@@ -470,9 +470,10 @@ export const getRelatedKeywords = async (
             const data = await response.json();
             // Firefox client 응답: ["query", ["suggest1", "suggest2", ...]]
             if (Array.isArray(data) && Array.isArray(data[1]) && data[1].length > 0) {
+                // [FIX #811] 연관 키워드 결과 수 증가: 15 → 30
                 const suggestions: string[] = data[1]
                     .filter((s: unknown): s is string => typeof s === 'string' && s !== keyword)
-                    .slice(0, 15);
+                    .slice(0, 30);
 
                 if (suggestions.length > 0) {
                     const results: RelatedKeyword[] = suggestions.map((s, i) => ({
@@ -498,7 +499,8 @@ export const getRelatedKeywords = async (
             logger.warn('[YouTube] 연관 키워드 폴백 건너뜀 — 쿼터 한도 초과');
             return [];
         }
-        const searchUrl = `${YOUTUBE_API_BASE}/search?part=snippet&q=${encodeURIComponent(keyword)}&type=video&maxResults=15&relevanceLanguage=${language}&key=${apiKey}`;
+        // [FIX #811] 폴백 검색 결과 수 증가: 15 → 30
+        const searchUrl = `${YOUTUBE_API_BASE}/search?part=snippet&q=${encodeURIComponent(keyword)}&type=video&maxResults=30&relevanceLanguage=${language}&key=${apiKey}`;
         const response = await monitoredFetch(searchUrl);
         if (!response.ok) return [];
 
@@ -527,7 +529,7 @@ export const getRelatedKeywords = async (
         const sorted = [...wordCount.entries()]
             .filter(([, count]) => count >= 2)
             .sort((a, b) => b[1] - a[1])
-            .slice(0, 15);
+            .slice(0, 30);
 
         const maxCount = sorted[0]?.[1] || 1;
         const results: RelatedKeyword[] = sorted.map(([phrase, count]) => ({
@@ -549,9 +551,10 @@ export const getRelatedKeywords = async (
 /**
  * 키워드 상위 영상 + 상세 통계 가져오기
  */
+// [FIX #811] 상위 영상 기본 결과 수 증가: 10 → 30
 export const getTopVideos = async (
     keyword: string,
-    maxResults: number = 10
+    maxResults: number = 30
 ): Promise<TopVideo[]> => {
     const apiKey = getYoutubeApiKey();
     if (!apiKey) throw new Error('YouTube API 키가 설정되지 않았습니다.');

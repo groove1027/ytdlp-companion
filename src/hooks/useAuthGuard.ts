@@ -15,11 +15,14 @@ import { useUIStore } from '../stores/uiStore';
 export const useAuthGuard = () => {
   const authUser = useAuthStore((s) => s.authUser);
 
+  // [FIX #812/#807] 직접 스토어 상태 참조 — useCallback 클로저가 이전 authUser를 포착하여
+  // 로그인 후에도 null로 남아있는 stale closure 버그 수정
   const requireAuth = useCallback((action: string): boolean => {
-    if (authUser) return true;
+    const currentUser = useAuthStore.getState().authUser;
+    if (currentUser) return true;
     useUIStore.getState().setAuthPromptAction(action);
     return false;
-  }, [authUser]);
+  }, []);
 
   return { requireAuth, isLoggedIn: !!authUser, authUser };
 };

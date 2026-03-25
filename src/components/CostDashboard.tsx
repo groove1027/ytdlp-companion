@@ -65,11 +65,14 @@ const CostDashboard: React.FC = () => {
                 ✓ 자동 저장됨
             </span>
 
+            {/* [FIX #788] 호버 갭 제거: mt-3→mt-1, 투명 브릿지로 마우스 경로 보장 */}
             <div className={`
-                absolute top-full left-0 mt-3 w-72 bg-gray-900/95 backdrop-blur-xl border border-gray-700 rounded-xl shadow-2xl p-4 z-50 origin-top-left transition-all duration-200
+                absolute top-full left-0 mt-1 w-72 bg-gray-900/95 backdrop-blur-xl border border-gray-700 rounded-xl shadow-2xl p-4 z-50 origin-top-left transition-all duration-200
                 ${showTooltip ? 'opacity-100 scale-100 translate-y-0' : 'opacity-0 scale-95 -translate-y-2 pointer-events-none'}
             `}>
-                <div className="absolute -top-1.5 left-6 w-3 h-3 bg-gray-700 border-t border-l border-gray-600 transform rotate-45"></div>
+                {/* 투명 브릿지: 버튼과 툴팁 사이 간격을 커버하여 마우스 이탈 방지 */}
+                <div className="absolute -top-2 left-0 right-0 h-2" />
+                <div className="absolute -top-1 left-6 w-3 h-3 bg-gray-700 border-t border-l border-gray-600 transform rotate-45"></div>
                 <div className="flex justify-between items-start mb-3 pb-2 border-b border-gray-700">
                     <span className="text-sm font-bold text-white flex items-center gap-1 mt-1">
                         📊 상세 내역

@@ -401,11 +401,13 @@ const VoiceStudio: React.FC = () => {
     }
 
     // [FIX #591/#590] 2순위: scriptWriterStore의 splitResult가 있으면 우선 사용 (단락 나누기 결과와 일치)
-    // splitResult는 string[] 타입. 현재 대본과 일치하는 경우에만 사용
+    // [FIX #780/#820] 매칭 로직 완화: 100자 → 50자 + 양방향 비교 + splitResult 존재 시 적극 사용
+    // 기존: 100자 서브스트링 비교로 대본 편집/확장 시 자주 실패 → 폴백으로 단락 수 급감
     const splitResult = useScriptWriterStore.getState().splitResult;
     const splitJoined = splitResult ? splitResult.join('').replace(/\s+/g, '') : '';
+    // [FIX #780/#820] 매칭 완화: 50자 양방향 비교 (기존 100자 → 50자, 길이만으로 판단하지 않음)
     const splitMatchesScript = splitJoined.length > 0 && (
-      scriptTextClean.includes(splitJoined.slice(0, 100)) || splitJoined.includes(scriptTextClean.slice(0, 100))
+      scriptTextClean.includes(splitJoined.slice(0, 50)) || splitJoined.includes(scriptTextClean.slice(0, 50))
     );
     if (splitResult && splitResult.length > 0 && splitMatchesScript) {
       const splitTexts = splitResult.filter((t: string) => t.trim());
@@ -606,7 +608,8 @@ const VoiceStudio: React.FC = () => {
     if (lineIdx < 0) return;
     const line = lines[lineIdx];
     const speaker = (line.speakerId ? speakers.find(s => s.id === line.speakerId) : null) || speakers[0];
-    if (!speaker?.voiceId) {
+    // [FIX #783] 줄별 voiceId도 확인 — 개별 캐릭터 선택 시 speaker.voiceId 없어도 진행 가능
+    if (!line.voiceId && !speaker?.voiceId) {
       showToast('음성을 선택해주세요.');
       return;
     }
@@ -736,8 +739,8 @@ const VoiceStudio: React.FC = () => {
     logger.trackAction('나레이션 일괄 생성 시작');
     if (!requireAuth('TTS 일괄 생성')) return;
     if (isGeneratingAll) return;
-    // 멀티캐릭터: 어떤 speaker라도 voiceId가 있으면 진행 가능
-    const hasAnyVoice = speakers.some(s => s.voiceId);
+    // [FIX #783] 멀티캐릭터: speaker 또는 개별 줄에 voiceId가 있으면 진행 가능
+    const hasAnyVoice = speakers.some(s => s.voiceId) || lines.some(l => l.voiceId);
     if (!hasAnyVoice) {
       showToast('음성을 선택해주세요. 음성 브라우저에서 캐릭터를 클릭하세요.');
       return;

@@ -539,7 +539,11 @@ export const evolinkChat = async (
     };
     const trialResult = await tryTrialGeminiDirect(trialPayload, { signal: options.signal, timeoutMs: options.timeoutMs });
     if (trialResult !== null) {
-        return { content: trialResult, model: 'gemini-2.5-flash (Google Direct)', usage: undefined };
+        return {
+            id: 'trial-direct',
+            choices: [{ index: 0, message: { role: 'assistant', content: trialResult }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+        } satisfies EvolinkChatResponse;
     }
 
     const {

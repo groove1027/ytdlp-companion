@@ -104,6 +104,7 @@ export interface ScriptWriterDraftState {
   smartSplit: boolean;
   targetCharCount: number;
   splitResult: string[];
+  splitResultFingerprint: string; // [FIX #780] splitResult 생성 시 대본 핑거프린트
   activeStep: number;
   videoAnalysisStyles: VideoAnalysisStylePreset[];
   scriptAiModel: ScriptAiModel;

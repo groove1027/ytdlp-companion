@@ -22,7 +22,7 @@ const PERSISTED_KEYS = [
   'title', 'synopsis', 'manualText',
   'generatedScript', 'styledScript', 'styledStyleName', 'finalScript',
   'videoFormat', 'longFormSplitType', 'smartSplit', 'targetCharCount',
-  'splitResult', 'activeStep', 'videoAnalysisStyles', 'scriptAiModel',
+  'splitResult', 'splitResultFingerprint', 'activeStep', 'videoAnalysisStyles', 'scriptAiModel',
   'referenceComments', 'targetRegion',
 ] as const satisfies ReadonlyArray<keyof ScriptWriterDraftState>;
 
@@ -97,6 +97,7 @@ interface ScriptWriterStore {
   smartSplit: boolean;
   targetCharCount: number;
   splitResult: string[];         // 장면 분석 결과 (AI 분할된 장면 배열)
+  splitResultFingerprint: string; // [FIX #780] splitResult 생성 시 대본 핑거프린트 (stale 감지용)
   /** 영상분석에서 가져온 스타일 프리셋 (#158) */
   videoAnalysisStyles: VideoAnalysisStylePreset[];
   /** [FIX #249] AI 참여도 강화 결과 — 탭 전환 시 유실 방지 */
@@ -179,6 +180,7 @@ const INITIAL_STATE = {
   smartSplit: true,
   targetCharCount: 5000,
   splitResult: [] as string[],
+  splitResultFingerprint: '',
   videoAnalysisStyles: [] as VideoAnalysisStylePreset[],
   engagementBoosterResults: [] as EngagementBoosterResult[],
   engagementBoosterOpen: false,
@@ -204,6 +206,7 @@ const DEFAULT_DRAFT_STATE: ScriptWriterDraftState = {
   smartSplit: INITIAL_STATE.smartSplit,
   targetCharCount: INITIAL_STATE.targetCharCount,
   splitResult: INITIAL_STATE.splitResult,
+  splitResultFingerprint: '',
   activeStep: INITIAL_STATE.activeStep,
   videoAnalysisStyles: INITIAL_STATE.videoAnalysisStyles,
   scriptAiModel: INITIAL_STATE.scriptAiModel,
@@ -269,7 +272,16 @@ export const useScriptWriterStore = create<ScriptWriterStore>((set) => ({
   setStyledScript: (script, styleName) => set({ styledScript: script, styledStyleName: styleName }),
   clearStyledScript: () => set({ styledScript: '', styledStyleName: '' }),
 
-  setFinalScript: (script) => set({ finalScript: script }),
+  // [FIX #780] finalScript 변경 시 splitResult 핑거프린트 기반 무효화
+  // splitResult 생성 시 저장한 대본 핑거프린트(200자)와 새 대본의 앞 200자를 비교
+  setFinalScript: (script) => set((state) => {
+    if (state.splitResult.length === 0) return { finalScript: script };
+    const fp = state.splitResultFingerprint;
+    if (!fp) return { finalScript: script, splitResult: [], splitResultFingerprint: '' };
+    const scriptClean = (script || '').replace(/\s+/g, '').slice(0, 200);
+    const stillMatches = scriptClean === fp;
+    return { finalScript: script, ...(stillMatches ? {} : { splitResult: [], splitResultFingerprint: '' }) };
+  }),
   setManualText: (text) => set({ manualText: text }),
   setTitle: (title) => set({ title }),
   setSynopsis: (synopsis) => set({ synopsis }),
@@ -286,7 +298,11 @@ export const useScriptWriterStore = create<ScriptWriterStore>((set) => ({
   setLongFormSplitType: (type) => set({ longFormSplitType: type }),
   setSmartSplit: (v) => set({ smartSplit: v }),
   setTargetCharCount: (count) => set({ targetCharCount: count }),
-  setSplitResult: (scenes) => set({ splitResult: scenes }),
+  // [FIX #780] splitResult 설정 시 현재 대본의 핑거프린트도 함께 저장
+  setSplitResult: (scenes) => set((state) => ({
+    splitResult: scenes,
+    splitResultFingerprint: (state.finalScript || '').replace(/\s+/g, '').slice(0, 200),
+  })),
 
   addVideoAnalysisStyle: (style) => set((state) => {
     const filtered = state.videoAnalysisStyles.filter(s => s.id !== style.id);
@@ -318,6 +334,7 @@ export const useScriptWriterStore = create<ScriptWriterStore>((set) => ({
       topics: [],
       selectedTopic: null,
       splitResult: [],
+      splitResultFingerprint: '',
       benchmarkScript: '',
       selectedPreset: null,
       activeStep: 1,

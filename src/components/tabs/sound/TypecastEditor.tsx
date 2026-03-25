@@ -228,6 +228,7 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
   }, [speakers]);
 
   // [FIX #418] 캐릭터 선택 → 클릭한 줄만 변경 (기존: 같은 voiceId 그룹 전체 변경 → 멀티캐릭터 불가)
+  // [FIX #783/#791] speaker 전체 voice 업데이트 제거 — 개별 줄만 변경하도록 수정
   const handlePickCharacter = useCallback((voice: TypecastVoice) => {
     if (pickerLineIdx === null) return;
     const line = lines[pickerLineIdx];
@@ -239,11 +240,13 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
       audioUrl: undefined,
       ttsStatus: 'idle' as const,
     };
-    // 음성의 기본 언어 자동 감지 → speaker.language 동기화
+    // [FIX #783/#791] 줄별 독립 캐릭터 설정:
+    // - speaker.voiceId가 비어있으면(최초 선택) → speaker도 업데이트 (TTS 생성 게이트 통과용)
+    // - speaker.voiceId가 이미 있으면 → speaker는 건드리지 않음 (다른 줄 기본값 보호)
     const primaryLang = voice.language[0];
     const langMap: Record<string, TTSLanguage> = { kor: 'ko', jpn: 'ja', eng: 'en' };
     const detectedLang = langMap[primaryLang] || 'ko';
-    if (activeSpeaker) {
+    if (activeSpeaker && !activeSpeaker.voiceId) {
       updateSpeaker(activeSpeaker.id, {
         language: detectedLang,
         voiceId: voice.voice_id,

@@ -8,6 +8,20 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-26] 11건 버그 일괄 수정 (#812, #807, #818, #788, #783, #791, #780, #820, #811, #790, evolink tsc)
+- [x] `useAuthGuard.ts` — stale closure 수정: getState() 직접 참조 (#812, #807)
+- [x] `AnalysisSlotBar.tsx` — 채널 탭 가로 스크롤: overflowX:clip + overflowY:visible + pt-2 (#818)
+- [x] `CostDashboard.tsx` — 호버 갭 수정: mt-3→mt-1 + 투명 브릿지 (#788)
+- [x] `TypecastEditor.tsx` — 멀티캐릭터 교차 오류: speaker 업데이트 조건부 제한 (#783, #791)
+- [x] `VoiceStudio.tsx` — 단락 수 감소: splitMatchesScript 50자 완화 + voiceId 게이트 (#780, #820)
+- [x] `scriptWriterStore.ts` — splitResult 핑거프린트 기반 무효화 (#780)
+- [x] `youtubeAnalysisService.ts` — 키워드 결과 15→30, 영상 10→30 (#811)
+- [x] `KeywordLab.tsx` + `ChannelAnalysisRoom.tsx` — 호출부도 30으로 일치 (#811)
+- [x] `evolinkService.ts` — tsc TS2353 에러 수정 (기존 에러)
+- [x] `types.ts` — ScriptWriterDraftState에 splitResultFingerprint 추가
+- [x] tsc 0 에러 + vite build 성공 + 10회 검증 루프 통과
+- [x] Codex 5.4 리뷰 10회 수행 (9 PASS / 1 FAIL → 재수정)
+
 ### [2026-03-22] Google 이미지 검색 로컬 프록시 + FLUX.2 이미지 생성 엔드포인트
 - [x] `server.rs` — /api/google-proxy (로컬 IP 직접 요청, URL allowlist, 리다이렉트 비활성화)
 - [x] `server.rs` — /api/generate-image (mflux-generate CLI, FLUX.1 schnell, 4bit 양자화)

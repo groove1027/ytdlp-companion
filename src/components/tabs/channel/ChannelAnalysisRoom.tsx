@@ -635,7 +635,7 @@ const ChannelAnalysisRoom: React.FC = () => {
         const [relatedKws, topVideos] = await Promise.all([
           getRelatedKeywords(seedKeyword, 'ko').catch(() => []),
           getYoutubeApiKey()
-            ? getTopVideos(seedKeyword, 10).catch(() => [])
+            ? getTopVideos(seedKeyword, 30).catch(() => [])
             : Promise.resolve([]),
         ]);
         syncQuota();

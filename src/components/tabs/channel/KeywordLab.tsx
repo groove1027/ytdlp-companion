@@ -238,7 +238,8 @@ const KeywordLab: React.FC = () => {
       const related = await getRelatedKeywords(kw, language);
 
       // 3. 상위 영상
-      const videos = await getTopVideos(kw, 10);
+      // [FIX #811] 상위 영상 결과 수 10→30
+      const videos = await getTopVideos(kw, 30);
       syncQuota();
 
       // 4. 태그 수집 — 상위 3개 영상 병렬 처리
