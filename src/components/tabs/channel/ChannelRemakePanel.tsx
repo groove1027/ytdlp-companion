@@ -7,7 +7,7 @@ import { getVideoTranscript } from '../../../services/youtubeAnalysisService';
 import { parseFileToText } from '../../../services/fileParserService';
 import { extractFramesForAnalysis } from '../../../services/shoppingScriptService';
 import { showToast } from '../../../stores/uiStore';
-import { extractStreamUrl, isYtdlpServerConfigured } from '../../../services/ytdlpApiService';
+import { extractStreamUrl, isYtdlpServerConfigured, recheckCompanion } from '../../../services/ytdlpApiService';
 import { logger } from '../../../services/LoggerService';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
 import type { ChannelGuideline, ChannelScript, RemakeVersion } from '../../../types';
@@ -183,14 +183,21 @@ const ChannelRemakePanel: React.FC = () => {
           try {
             let videoFileUri: string | string[] = `https://www.youtube.com/watch?v=${videoId}`;
             let videoMimeType: string | string[] = 'video/mp4';
+
+            // 컴패니언 실행 여부를 비동기로 재확인 (stale 캐시 방지)
+            const companionRunning = await recheckCompanion();
+            if (!companionRunning) {
+              showToast('⚠️ 헬퍼 앱이 실행되지 않았습니다. 헬퍼 앱을 실행하면 영상 분석 품질이 대폭 향상됩니다.', 5000);
+              logger.warn('[Remake] 컴패니언 미실행 — VPS 폴백으로 CDN 추출 시도');
+            }
+
+            // 컴패니언/VPS 모두 CDN URL 추출 시도
             if (isYtdlpServerConfigured()) {
               try {
-                // [FIX Codex R5] 10초 타임아웃으로 yt-dlp 서버 미응답 시 빠른 폴백
                 const streamInfoPromise = extractStreamUrl(videoId, '480p');
                 const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 10_000));
                 const streamInfo = await Promise.race([streamInfoPromise, timeoutPromise]);
                 if (streamInfo?.url) {
-                  // [FIX Codex R5] 오디오 마커 우선 체크 (webm audio 오분류 방지)
                   const detectMime = (url: string, fb: string) =>
                     url.includes('mime=audio%2Fwebm') || url.includes('mime=audio%2Fopus') ? 'audio/webm'
                     : url.includes('mime=video%2Fwebm') || url.includes('.webm') ? 'video/webm' : fb;

@@ -3555,30 +3555,37 @@ const VideoAnalysisRoom: React.FC = () => {
           const primaryVid = extractYouTubeVideoId(urls[0]);
           if (primaryVid) {
             // [FIX] YouTube watch URL → CDN 직접 URL 변환 (Gemini v1beta 분석 속도/성공률 향상)
-            // extractStreamUrl이 yt-dlp를 통해 실제 영상 파일 CDN URL을 추출
-            // YouTube watch URL은 Evolink가 별도 다운로드 필요 → 타임아웃 위험 높음
+            // 컴패니언 실행 여부를 비동기로 재확인 (stale 캐시 방지)
+            const { recheckCompanion } = await import('../../../services/ytdlpApiService');
+            const companionRunning = await recheckCompanion();
+
+            if (!companionRunning) {
+              // 컴패니언 미실행 → 안내 메시지 표시 (VPS 폴백으로 CDN 추출은 계속 시도)
+              showToast('⚠️ 헬퍼 앱이 실행되지 않았습니다. 헬퍼 앱을 실행하면 영상 분석 품질이 대폭 향상됩니다.', 5000);
+              logger.warn('[VideoAnalysis] 컴패니언 미실행 — VPS 폴백으로 CDN 추출 시도');
+            }
+
+            // 컴패니언/VPS 모두 CDN URL 추출 시도 (extractStreamUrl은 내부적으로 VPS 폴백 포함)
             try {
-              // [FIX Codex R5] 10초 타임아웃으로 yt-dlp 서버 미응답 시 빠른 폴백
               const streamInfoPromise = extractStreamUrl(primaryVid, '480p');
               const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 10_000));
               const streamInfo = await Promise.race([streamInfoPromise, timeoutPromise]);
               if (streamInfo?.url) {
                 videoUri = streamInfo.url;
-                // [FIX Codex R4+R5] URL 기반 MIME 감지 — 오디오 마커 우선 체크 (webm audio 오분류 방지)
                 const detectMimeFromUrl = (url: string, fallback: string) => {
                   if (url.includes('mime=audio%2Fwebm') || url.includes('mime=audio%2Fopus')) return 'audio/webm';
                   if (url.includes('mime=video%2Fwebm') || url.includes('.webm')) return 'video/webm';
                   return fallback;
                 };
                 videoMime = detectMimeFromUrl(streamInfo.url, 'video/mp4');
-                // 분리 스트림인 경우 오디오도 함께 Gemini에 전달
                 if (streamInfo.audioUrl) {
                   allVideoUris = [streamInfo.url, streamInfo.audioUrl];
                   allVideoMimes = [detectMimeFromUrl(streamInfo.url, 'video/mp4'), detectMimeFromUrl(streamInfo.audioUrl, 'audio/mp4')];
                 }
-                logger.info('[VideoAnalysis] YouTube CDN URL 추출 성공', { videoId: primaryVid, hasAudio: !!streamInfo.audioUrl });
+                logger.info('[VideoAnalysis] YouTube CDN URL 추출 성공', { videoId: primaryVid, hasAudio: !!streamInfo.audioUrl, companion: companionRunning });
               } else {
                 videoUri = urls[0].trim();
+                showToast('⚠️ 영상 스트림 추출에 실패했습니다. 분석 품질이 저하될 수 있습니다.', 5000);
                 logger.warn('[VideoAnalysis] CDN URL 추출 실패/타임아웃 — YouTube URL 폴백');
               }
             } catch (cdnErr) {
