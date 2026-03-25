@@ -59,15 +59,17 @@ pub async fn ensure_ytdlp() -> Result<(), Box<dyn std::error::Error>> {
         println!("[yt-dlp] 다운로드 완료");
     }
 
-    // 시작 시 즉시 업데이트 체크
-    println!("[yt-dlp] 시작 시 업데이트 체크...");
-    if let Err(e) = update_ytdlp(&ytdlp_path).await {
-        eprintln!("[yt-dlp] 시작 시 업데이트 실패 (무시): {}", e);
-    }
-
-    // 백그라운드 업데이트 체크 (2시간 간격)
+    // [FIX] 시작 시 업데이트 + 2시간 간격 — 전부 background spawn (서버 블로킹 방지)
+    // ensure_ytdlp()가 즉시 반환되어야 서버가 health 요청을 받을 수 있음
     let path = ytdlp_path.clone();
     tokio::spawn(async move {
+        // 시작 직후 10초 대기 → 서버가 먼저 준비된 후 업데이트
+        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+        println!("[yt-dlp] 백그라운드 업데이트 체크 (시작 시)...");
+        if let Err(e) = update_ytdlp(&path).await {
+            eprintln!("[yt-dlp] 시작 시 업데이트 실패 (무시): {}", e);
+        }
+        // 이후 2시간 간격
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(2 * 3600)).await;
             println!("[yt-dlp] 자동 업데이트 체크...");
@@ -216,8 +218,15 @@ pub async fn extract_stream_url(
 }
 
 fn parse_stream_result(json: &serde_json::Value, quality: &str) -> StreamResult {
+    // [FIX] bestvideo+bestaudio 포맷 시 최상위 "url"이 비어있음
+    // → requested_formats[0].url (비디오) 폴백
+    let video_url = json["url"].as_str().filter(|s| !s.is_empty())
+        .or_else(|| json["requested_formats"].as_array()
+            .and_then(|f| f.first())
+            .and_then(|v| v["url"].as_str()))
+        .unwrap_or("");
     StreamResult {
-        url: json["url"].as_str().unwrap_or("").to_string(),
+        url: video_url.to_string(),
         audio_url: json["audio_url"].as_str().map(|s| s.to_string())
             .or_else(|| {
                 json["requested_formats"]
