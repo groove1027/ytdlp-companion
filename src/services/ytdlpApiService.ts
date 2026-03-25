@@ -499,7 +499,11 @@ export async function downloadVideoViaProxy(
     if (externalSignal?.aborted) {
       throw createAbortError();
     }
-    const info = await extractStreamUrl(youtubeUrl, q).catch(() => null);
+    // [FIX] 10초 타임아웃 — extract hang 시 다운로드 진행 보장
+    const info = await Promise.race([
+      extractStreamUrl(youtubeUrl, q).catch(() => null),
+      new Promise<null>((r) => setTimeout(() => r(null), 10_000)),
+    ]);
     if (info) lastGoodInfo = info;
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {

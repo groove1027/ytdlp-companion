@@ -5435,20 +5435,45 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                       // YouTube 소스인 경우 항상 오디오 포함 영상을 새로 다운로드 (분석용 blob은 video-only일 수 있음)
                                       if (inputMode === 'youtube' && sourceUrl && isYoutubeSource && (!videoBlob || !audioConfirmed)) {
                                         if (isCancelled()) return;
-                                        setNleExporting({ target, step: '오디오 포함 영상 다운로드 중...', progress: 0, startedAt });
+                                        const vid = extractYouTubeVideoId(sourceUrl) || sourceUrl;
+
+                                        // [FIX] extract 캐시 프리워밍 — 메타데이터를 미리 추출하여 컴패니언 캐시 활성화
+                                        // 10초 타임아웃: hang 시 바로 다운로드로 넘어감
+                                        setNleExporting({ target, step: '1/3 영상 정보 확인 중...', startedAt });
+                                        let estimatedSizeMB: number | null = null;
+                                        try {
+                                          const { extractStreamUrl } = await import('../../../services/ytdlpApiService');
+                                          const extractPromise = extractStreamUrl(vid, '720p');
+                                          const extractTimeout = new Promise<null>((r) => setTimeout(() => r(null), 10_000));
+                                          const streamInfo = await Promise.race([extractPromise, extractTimeout]);
+                                          if (streamInfo) {
+                                            estimatedSizeMB = streamInfo.filesize ? Math.round(streamInfo.filesize / 1024 / 1024) : null;
+                                            if (streamInfo.title) downloadedSourceTitle = streamInfo.title;
+                                          }
+                                        } catch {
+                                          // extract 실패해도 다운로드 진행에 문제 없음
+                                        }
+                                        if (isCancelled()) return;
+
+                                        setNleExporting({ target, step: `2/3 영상 다운로드 중...${estimatedSizeMB ? ` (약 ${estimatedSizeMB}MB)` : ''}`, progress: 0, startedAt });
                                         try {
                                           const { downloadVideoViaProxy } = await import('../../../services/ytdlpApiService');
-                                          const vid = extractYouTubeVideoId(sourceUrl) || sourceUrl;
+                                          const downloadStartTime = Date.now();
                                           const merged = await downloadVideoViaProxy(vid, '720p', (p) => {
                                             if (nleActiveTaskRef.current?.controller !== myAbort || myAbort.signal.aborted) return;
+                                            const elapsedSec = (Date.now() - downloadStartTime) / 1000;
+                                            const downloadedMB = estimatedSizeMB ? estimatedSizeMB * p : null;
+                                            const speedMBps = (elapsedSec > 1 && downloadedMB) ? (downloadedMB / elapsedSec) : null;
+                                            const speedText = speedMBps ? ` ${speedMBps.toFixed(1)}MB/s` : '';
+                                            const sizeText = estimatedSizeMB ? ` (약 ${estimatedSizeMB}MB)` : '';
                                             setNleExporting(prev => {
                                               if (!prev || prev.target !== target) return prev;
-                                              return { ...prev, progress: Math.round(p * 100), startedAt: prev.startedAt ?? startedAt };
+                                              return { ...prev, step: `2/3 영상 다운로드 중...${sizeText}${speedText}`, progress: Math.round(p * 100), startedAt: prev.startedAt ?? startedAt };
                                             });
                                           }, { signal: myAbort.signal });
                                           if (merged.blob.size > 0) {
                                             videoBlob = merged.blob;
-                                            downloadedSourceTitle = merged.info?.title || '';
+                                            downloadedSourceTitle = downloadedSourceTitle || merged.info?.title || '';
                                             // 실제 오디오 존재 여부 검증 (서버가 video-only 반환할 수 있으므로)
                                             audioConfirmed = await verifyBlobHasAudio(merged.blob);
                                             useVideoAnalysisStore.getState().setVideoBlob(merged.blob, audioConfirmed);
@@ -5471,7 +5496,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                           audioConfirmed = true;
                                         } else if (inputMode === 'youtube' && sourceUrl) {
                                           if (isCancelled()) return;
-                                          setNleExporting({ target, step: '영상 다운로드 중...', progress: 0, startedAt });
+                                          setNleExporting({ target, step: '2/3 영상 다운로드 중...', progress: 0, startedAt });
                                           try {
                                             const dlResult = await downloadSourceVideoForNleExport(sourceUrl, { signal: myAbort.signal });
                                             if (dlResult.blob.size > 0) {
@@ -5513,7 +5538,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                       let dims = nleDimsCache.current;
                                       if (!dims) {
                                         if (isCancelled()) return;
-                                        setNleExporting({ target, step: '영상 정보 확인 중...', startedAt });
+                                        setNleExporting({ target, step: '3/3 패키지 생성 중... (영상 정보 확인)', startedAt });
                                         dims = await new Promise<{ w: number; h: number; fps: number; dur: number }>(resolve => {
                                           const vid = document.createElement('video');
                                           vid.muted = true; vid.playsInline = true; vid.preload = 'auto';
@@ -5558,7 +5583,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                       }
                                       // Step 3: ZIP 패키지 생성
                                       if (isCancelled()) return;
-                                      setNleExporting({ target, step: 'ZIP 패키지 생성 중...', startedAt });
+                                      setNleExporting({ target, step: '3/3 패키지 생성 중...', startedAt });
                                       const zipBlob = await buildNlePackageZip({ target, scenes: v.scenes, title: v.title, videoBlob, videoFileName: fileName, preset: selectedPreset || undefined, width: dims.w, height: dims.h, fps: dims.fps, videoDurationSec: dims.dur, narrationLines });
                                       if (isCancelled()) return;
                                       const downloadFileName = `${sanitizeProjectName(v.title, 30)}_${label}.zip`;
