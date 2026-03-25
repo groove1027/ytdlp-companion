@@ -7,7 +7,7 @@ import { getVideoTranscript } from '../../../services/youtubeAnalysisService';
 import { parseFileToText } from '../../../services/fileParserService';
 import { extractFramesForAnalysis } from '../../../services/shoppingScriptService';
 import { showToast } from '../../../stores/uiStore';
-import { extractStreamUrl, isYtdlpServerConfigured, recheckCompanion } from '../../../services/ytdlpApiService';
+// extractStreamUrl — CDN URL은 Vertex AI robots.txt로 차단되어 Gemini 분석에 사용 불가
 import { logger } from '../../../services/LoggerService';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
 import type { ChannelGuideline, ChannelScript, RemakeVersion } from '../../../types';
@@ -181,38 +181,13 @@ const ChannelRemakePanel: React.FC = () => {
         } else {
           // [FIX Codex R2] 2차: Gemini v1beta 영상 직접 분석 (fileData로 영상 전달)
           try {
-            let videoFileUri: string | string[] = `https://www.youtube.com/watch?v=${videoId}`;
-            let videoMimeType: string | string[] = 'video/mp4';
+            // [FIX] YouTube watch URL을 그대로 Gemini v1beta에 전달
+            // ✅ 실제 테스트: Evolink Gemini v1beta가 YouTube URL을 내부적으로 처리
+            // ❌ CDN URL(googlevideo.com)은 Vertex AI robots.txt로 차단됨
+            const videoFileUri = `https://www.youtube.com/watch?v=${videoId}`;
+            const videoMimeType = 'video/mp4';
 
-            // 컴패니언 실행 여부를 비동기로 재확인 (stale 캐시 방지)
-            const companionRunning = await recheckCompanion();
-            if (!companionRunning) {
-              showToast('⚠️ 헬퍼 앱이 실행되지 않았습니다. 헬퍼 앱을 실행하면 영상 분석 품질이 대폭 향상됩니다.', 5000);
-              logger.warn('[Remake] 컴패니언 미실행 — VPS 폴백으로 CDN 추출 시도');
-            }
-
-            // 컴패니언/VPS 모두 CDN URL 추출 시도
-            if (isYtdlpServerConfigured()) {
-              try {
-                const streamInfoPromise = extractStreamUrl(videoId, '480p');
-                const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 10_000));
-                const streamInfo = await Promise.race([streamInfoPromise, timeoutPromise]);
-                if (streamInfo?.url) {
-                  const detectMime = (url: string, fb: string) =>
-                    url.includes('mime=audio%2Fwebm') || url.includes('mime=audio%2Fopus') ? 'audio/webm'
-                    : url.includes('mime=video%2Fwebm') || url.includes('.webm') ? 'video/webm' : fb;
-                  if (streamInfo.audioUrl) {
-                    videoFileUri = [streamInfo.url, streamInfo.audioUrl];
-                    videoMimeType = [detectMime(streamInfo.url, 'video/mp4'), detectMime(streamInfo.audioUrl, 'audio/mp4')];
-                  } else {
-                    videoFileUri = streamInfo.url;
-                    videoMimeType = detectMime(streamInfo.url, 'video/mp4');
-                  }
-                }
-              } catch { /* CDN URL 실패 시 YouTube URL 폴백 */ }
-            }
-
-            // evolinkVideoAnalysisStream으로 영상을 fileData로 직접 전달 (텍스트 URL이 아님)
+            // evolinkVideoAnalysisStream으로 영상을 fileData로 직접 전달
             const systemPrompt = '당신은 영상 콘텐츠 분석 전문가입니다. 영상의 전체 내용을 정확하게 텍스트로 전사합니다.';
             const userPrompt = '이 영상의 전체 내용(나레이션, 대사, 핵심 메시지)을 한국어로 상세하게 텍스트로 작성해주세요. 영상을 직접 보고 들은 내용을 기반으로 작성하세요. JSON이 아닌 일반 텍스트로 응답하세요.';
             const extractedText = await evolinkVideoAnalysisStream(

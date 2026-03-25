@@ -8,7 +8,7 @@ import { uploadMediaToHosting } from '../uploadService';
 import { generateKieImage, generateEvolinkImageWrapped } from '../VideoGenService';
 import { transcribeWithDiarization, formatDiarizedTranscript } from '../transcriptionService';
 import { logger } from '../LoggerService';
-import { extractStreamUrl, isYtdlpServerConfigured } from '../ytdlpApiService';
+// extractStreamUrl/isYtdlpServerConfigured — CDN URL은 Vertex AI robots.txt로 차단되어 사용 불가
 
 // --- Types ---
 type VideoSource = { youtubeUrl: string } | { videoFile: File };
@@ -28,28 +28,10 @@ export const analyzeVideoWithGemini = async (
     // Determine video URI
     let fileUri: string;
     if ('youtubeUrl' in source) {
-        // [FIX] YouTube watch URL → CDN 직접 URL 변환
-        // YouTube watch URL은 영상 파일이 아님 → Gemini fileData.fileUri 처리 불가
-        // extractStreamUrl로 실제 영상 스트림 CDN URL을 추출하여 전달
-        if (isYtdlpServerConfigured()) {
-            try {
-                const videoId = source.youtubeUrl.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|v\/|shorts\/))([a-zA-Z0-9_-]{11})/)?.[1];
-                if (videoId) {
-                    const streamInfo = await extractStreamUrl(videoId, '480p');
-                    if (streamInfo?.url) {
-                        fileUri = streamInfo.url;
-                    } else {
-                        fileUri = source.youtubeUrl;
-                    }
-                } else {
-                    fileUri = source.youtubeUrl;
-                }
-            } catch {
-                fileUri = source.youtubeUrl;
-            }
-        } else {
-            fileUri = source.youtubeUrl;
-        }
+        // [FIX] YouTube watch URL을 그대로 Gemini에 전달
+        // ✅ 실제 테스트: Evolink Gemini v1beta가 YouTube URL을 내부적으로 처리
+        // ❌ CDN URL(googlevideo.com)은 Vertex AI robots.txt로 차단됨
+        fileUri = source.youtubeUrl;
     } else {
         // 업로드 파일 → Cloudinary URL 전달
         fileUri = await uploadMediaToHosting(source.videoFile);
