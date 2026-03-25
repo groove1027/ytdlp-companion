@@ -76,6 +76,7 @@ export default function AnnouncementBanner() {
           </p>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+            {/* 메인 다운로드 — 현재 OS */}
             <a
               href={getCompanionDownloadUrl()}
               target="_blank"
@@ -92,15 +93,26 @@ export default function AnnouncementBanner() {
               onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.03)')}
               onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
             >
-              {getCompanionOsLabel() === 'Windows' ? '⬇️ Windows 다운로드' : getCompanionOsLabel() === 'macOS' ? '⬇️ macOS 다운로드' : '⬇️ 다운로드'}
+              {getCompanionOsLabel() === 'Windows' ? '🪟 Windows 다운로드' : getCompanionOsLabel() === 'macOS' ? '🍎 macOS 다운로드' : '⬇️ 다운로드'}
             </a>
+            {/* 다른 OS 다운로드 — 동급 버튼 (보조 스타일) */}
             <a
               href={COMPANION_DOWNLOAD_URL}
               target="_blank"
               rel="noopener noreferrer"
-              style={{ color: '#64748b', fontSize: '12px', textDecoration: 'underline', cursor: 'pointer' }}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: '6px',
+                background: 'rgba(99, 102, 241, 0.15)',
+                border: '1px solid rgba(99, 102, 241, 0.4)',
+                color: '#a5b4fc', fontSize: '13px', fontWeight: 700,
+                padding: '8px 16px', borderRadius: '8px',
+                textDecoration: 'none', cursor: 'pointer',
+                transition: 'all 0.15s',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.background = 'rgba(99, 102, 241, 0.25)'; e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.6)'; e.currentTarget.style.transform = 'scale(1.03)'; }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'rgba(99, 102, 241, 0.15)'; e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.4)'; e.currentTarget.style.transform = 'scale(1)'; }}
             >
-              {getCompanionOsLabel() === 'Windows' ? '🍎 macOS 버전' : getCompanionOsLabel() === 'macOS' ? '💻 Windows 버전' : '전체 버전 보기'}
+              {getCompanionOsLabel() === 'Windows' ? '🍎 macOS 버전' : getCompanionOsLabel() === 'macOS' ? '🪟 Windows 버전' : '전체 버전 보기'}
             </a>
           </div>
         </div>
