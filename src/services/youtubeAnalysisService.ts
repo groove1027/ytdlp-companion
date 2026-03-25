@@ -797,6 +797,8 @@ export const getChannelInfo = async (channelUrl: string): Promise<ChannelInfo> =
         videoCount: parseInt(channel.statistics?.videoCount || '0'),
         viewCount: parseInt(channel.statistics?.viewCount || '0'),
         ...(detectedFormat && { detectedFormat }),
+        defaultLanguage: channel.snippet?.defaultLanguage || undefined,
+        country: channel.snippet?.country || undefined,
     };
 
     logger.success('[YouTube] 채널 정보 조회 완료', { title: result.title, subscribers: result.subscriberCount, detectedFormat });
@@ -2158,16 +2160,81 @@ const getVideoDescriptionFallback = async (videoId: string, apiKey: string): Pro
 
 // === CHANNEL STYLE ANALYSIS (AI) ===
 
+/** 한글 완성형(가-힣) + 자모(ㅋㅋ, ㅎㅎ 등) 포함 정규식 — 미할당 코드포인트 제외 */
+const KOREAN_REGEX = /[\uAC00-\uD7A3\u1100-\u11FF\u3131-\u318E]/g;
+
 /**
- * 대본 텍스트에서 콘텐츠 언어/지역을 자동 감지
- * 한글 비율이 10% 미만이면 해외 콘텐츠로 판단
+ * 콘텐츠 언어/지역을 다중 신호 복합 점수로 자동 감지
+ * - 채널 메타데이터 (defaultLanguage, country) — 보조 신호
+ * - 영상 제목의 한글 비율 (가장 강한 신호)
+ * - 채널 제목의 한글 포함 여부
+ * - 실제 자막 텍스트의 한글 비율 (description 폴백은 가중치 하향)
+ * 복합 점수제: 3점 이상이면 domestic
  */
-export const detectContentRegion = (scripts: ChannelScript[]): ContentRegion => {
-    const sample = scripts.map(s => s.transcript || s.description || '').join(' ').slice(0, 5000);
-    const totalChars = sample.replace(/\s/g, '').length;
-    if (totalChars === 0) return 'domestic';
-    const koreanChars = (sample.match(/[\uAC00-\uD7AF]/g) || []).length;
-    return (koreanChars / totalChars) < 0.1 ? 'overseas' : 'domestic';
+export const detectContentRegion = (scripts: ChannelScript[], channelInfo?: ChannelInfo): ContentRegion => {
+    let domesticScore = 0;
+
+    // 신호 1: YouTube API defaultLanguage (ko, ko-KR 등 — 메타데이터 언어이므로 보조 힌트, 단독 불충분)
+    if (channelInfo?.defaultLanguage?.toLowerCase().startsWith('ko')) {
+        domesticScore += 1;
+    }
+
+    // 신호 2: YouTube API country (KR — 보조 힌트, 단독 불충분)
+    if (channelInfo?.country === 'KR') {
+        domesticScore += 1;
+    }
+
+    // 신호 3: 영상 제목 한글 비율 (가장 신뢰도 높은 신호 — 제목은 콘텐츠 언어를 가장 잘 반영)
+    const titles = scripts.map(s => s.title || '').join(' ');
+    const titleChars = titles.replace(/\s/g, '').length;
+    if (titleChars > 0) {
+        const titleKorean = (titles.match(KOREAN_REGEX) || []).length;
+        const titleRatio = titleKorean / titleChars;
+        if (titleRatio >= 0.15) domesticScore += 3;
+        else if (titleRatio >= 0.05) domesticScore += 2;
+        else if (titleKorean > 0) domesticScore += 1;
+    }
+
+    // 신호 4: 채널 제목 한글 포함 여부 (2글자 이상이면 유의미)
+    if (channelInfo?.title) {
+        const chTitleKorean = (channelInfo.title.match(KOREAN_REGEX) || []).length;
+        if (chTitleKorean >= 2) domesticScore += 2;
+        else if (chTitleKorean === 1) domesticScore += 1;
+    }
+
+    // 신호 5: 자막/설명 텍스트 한글 비율
+    // — 실제 자막(caption)/직접입력(transcriptSource 미설정)과 설명 폴백(description)을 구분
+    const primaryScripts = scripts.filter(s =>
+        (s.transcriptSource === 'caption' || !s.transcriptSource) && s.transcript
+    );
+    const descFallbackScripts = scripts.filter(s =>
+        s.transcriptSource === 'description'
+    );
+
+    // 5a: 실제 자막 또는 직접입력 기반 (최대 +2)
+    if (primaryScripts.length > 0) {
+        const primarySample = primaryScripts.map(s => s.transcript).join(' ').slice(0, 5000);
+        const primaryTotal = primarySample.replace(/\s/g, '').length;
+        if (primaryTotal > 0) {
+            const primaryKorean = (primarySample.match(KOREAN_REGEX) || []).length;
+            const primaryRatio = primaryKorean / primaryTotal;
+            if (primaryRatio >= 0.1) domesticScore += 2;
+            else if (primaryRatio >= 0.03) domesticScore += 1;
+        }
+    }
+    // 5b: 설명 폴백 기반 (신뢰도 낮음 — 최대 +1)
+    else if (descFallbackScripts.length > 0) {
+        const descSample = descFallbackScripts.map(s => s.transcript || s.description || '').join(' ').slice(0, 5000);
+        const descTotal = descSample.replace(/\s/g, '').length;
+        if (descTotal > 0) {
+            const descKorean = (descSample.match(KOREAN_REGEX) || []).length;
+            const descRatio = descKorean / descTotal;
+            if (descRatio >= 0.1) domesticScore += 1;
+        }
+    }
+
+    // 점수 합산: 3점 이상이면 domestic (단일 강한 신호 또는 여러 약한 신호 조합)
+    return domesticScore >= 3 ? 'domestic' : 'overseas';
 };
 
 /**

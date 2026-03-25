@@ -865,6 +865,10 @@ export interface ChannelInfo {
   viewCount: number;
   /** 영상/쇼츠 URL에서 감지된 콘텐츠 포맷 (자동 설정용) */
   detectedFormat?: ContentFormat;
+  /** YouTube API snippet.defaultLanguage (예: 'ko', 'en', 'ja') */
+  defaultLanguage?: string;
+  /** YouTube API snippet.country (예: 'KR', 'US', 'JP') */
+  country?: string;
 }
 
 export interface ChannelScript {

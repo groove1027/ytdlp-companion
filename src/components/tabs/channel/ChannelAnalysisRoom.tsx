@@ -347,11 +347,11 @@ const ChannelAnalysisRoom: React.FC = () => {
         }
       }
       setChannelScripts(scripts);
-      // 콘텐츠 지역 자동 감지 (대본 텍스트 기반)
-      const detectedRegion = detectContentRegion(scripts);
+      // 콘텐츠 지역 자동 감지 (다중 신호: 채널 메타데이터 + 제목 + 자막)
+      const detectedRegion = detectContentRegion(scripts, info);
       if (detectedRegion !== contentRegion) {
         setContentRegion(detectedRegion);
-        logger.info('[채널분석] 콘텐츠 지역 자동 감지', { detected: detectedRegion });
+        logger.info('[채널분석] 콘텐츠 지역 자동 감지', { detected: detectedRegion, channelLang: info.defaultLanguage, channelCountry: info.country });
       }
       const effectiveRegion = detectedRegion;
       setProgress({ step: 4, message: `AI 채널 스타일 DNA 다층 분석 중... (${effectiveRegion === 'overseas' ? '해외 콘텐츠 모드' : '국내 콘텐츠 모드'})` });
@@ -426,7 +426,7 @@ const ChannelAnalysisRoom: React.FC = () => {
       setProgress({ step: 1, message: '텍스트 준비 중...' });
       setChannelInfo(stubInfo);
       setChannelScripts(scripts);
-      // 파일/직접입력도 콘텐츠 지역 자동 감지
+      // 파일/직접입력도 콘텐츠 지역 자동 감지 (채널 메타데이터 없으므로 제목+자막 기반)
       const detectedRegion = detectContentRegion(scripts);
       if (detectedRegion !== contentRegion) setContentRegion(detectedRegion);
       setProgress({ step: 4, message: `AI 스타일 역설계 분석 중... (${detectedRegion === 'overseas' ? '해외 콘텐츠 모드' : '국내 콘텐츠 모드'})` });
