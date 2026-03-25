@@ -1,6 +1,7 @@
 // Prevents additional console window on Windows in release
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod platform;
 mod server;
 mod ytdlp;
 mod rembg;
@@ -43,15 +44,11 @@ fn main() {
                 }
             });
 
-            // 바이너리 자동 다운로드/업데이트 (백그라운드 병렬)
+            // 바이너리 자동 다운로드/업데이트 (백그라운드)
+            // yt-dlp + whisper: 독립 바이너리이므로 병렬 OK
             tauri::async_runtime::spawn(async {
                 if let Err(e) = ytdlp::ensure_ytdlp().await {
                     eprintln!("[Companion] yt-dlp 설정 실패: {}", e);
-                }
-            });
-            tauri::async_runtime::spawn(async {
-                if let Err(e) = rembg::ensure_rembg().await {
-                    eprintln!("[Companion] rembg 설정 실패: {}", e);
                 }
             });
             tauri::async_runtime::spawn(async {
@@ -59,7 +56,12 @@ fn main() {
                     eprintln!("[Companion] whisper 설정 실패: {}", e);
                 }
             });
+            // pip install은 직렬 실행 — 동일 Python 환경에 동시 설치 시 경쟁 조건 발생
             tauri::async_runtime::spawn(async {
+                if let Err(e) = rembg::ensure_rembg().await {
+                    eprintln!("[Companion] rembg 설정 실패: {}", e);
+                }
+                // rembg 완료 후 TTS 설치 (같은 pip 환경 보호)
                 if let Err(e) = tts::ensure_tts().await {
                     eprintln!("[Companion] TTS 설정 실패: {}", e);
                 }

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { COMPANION_DOWNLOAD_URL } from '../constants';
+import { COMPANION_DOWNLOAD_URL, getCompanionDownloadUrl, getCompanionOsLabel } from '../constants';
 
 const DISMISS_KEY = 'announcement_v1_dismissed';
 
@@ -77,7 +77,7 @@ export default function AnnouncementBanner() {
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
             <a
-              href={COMPANION_DOWNLOAD_URL}
+              href={getCompanionDownloadUrl()}
               target="_blank"
               rel="noopener noreferrer"
               style={{
@@ -92,11 +92,16 @@ export default function AnnouncementBanner() {
               onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.03)')}
               onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
             >
-              ⬇️ macOS 다운로드
+              {getCompanionOsLabel() === 'Windows' ? '⬇️ Windows 다운로드' : getCompanionOsLabel() === 'macOS' ? '⬇️ macOS 다운로드' : '⬇️ 다운로드'}
             </a>
-            <span style={{ color: '#64748b', fontSize: '12px' }}>
-              💻 Windows 버전 곧 공개 예정
-            </span>
+            <a
+              href={COMPANION_DOWNLOAD_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: '#64748b', fontSize: '12px', textDecoration: 'underline', cursor: 'pointer' }}
+            >
+              {getCompanionOsLabel() === 'Windows' ? '🍎 macOS 버전' : getCompanionOsLabel() === 'macOS' ? '💻 Windows 버전' : '전체 버전 보기'}
+            </a>
           </div>
         </div>
 

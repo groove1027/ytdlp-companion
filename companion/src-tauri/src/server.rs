@@ -11,7 +11,21 @@ use tower_http::cors::{CorsLayer, Any};
 use std::net::SocketAddr;
 use tokio_util::io::ReaderStream;
 
-use crate::{ytdlp, rembg, whisper, tts};
+use crate::{platform, ytdlp, rembg, whisper, tts};
+
+/// Content-Disposition header-safe 파일명 생성
+/// 비ASCII/제어문자/따옴표를 제거하여 header parse panic 방지
+fn sanitize_filename(name: &str) -> String {
+    let sanitized: String = name.chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '.' || *c == '-' || *c == '_' || *c == ' ')
+        .collect();
+    let trimmed = sanitized.trim();
+    if trimmed.is_empty() || !trimmed.contains('.') {
+        "download.mp4".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
 
 // ──────────────────────────────────────────────
 // 타입
@@ -142,7 +156,9 @@ pub async fn start_server(_app: tauri::AppHandle) -> Result<(), Box<dyn std::err
         .route("/api/tts", post(tts_handler))
         // FFmpeg 인코딩
         .route("/api/ffmpeg/transcode", post(ffmpeg_transcode_handler))
-        .layer(cors);
+        .layer(cors)
+        // base64 인코딩된 미디어 파일 수신 — 기본 2MB → 200MB로 확장
+        .layer(axum::extract::DefaultBodyLimit::max(200 * 1024 * 1024));
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 9876));
     println!("[Companion] 서버 시작: http://{}", addr);
@@ -161,22 +177,28 @@ async fn health_handler() -> Json<HealthResponse> {
 
     // 사용 가능한 서비스 목록
     let mut services = vec!["ytdlp".to_string(), "download".to_string(), "frames".to_string()];
+    let python = platform::python_cmd();
     // rembg 확인
-    if tokio::process::Command::new("python3").args(["-c", "import rembg"]).output().await.map(|o| o.status.success()).unwrap_or(false) {
+    if tokio::process::Command::new(python).args(["-c", "import rembg"]).output().await.map(|o| o.status.success()).unwrap_or(false) {
         services.push("rembg".to_string());
     }
-    // whisper 확인
-    if dirs::data_dir().map(|d| d.join("ytdlp-companion/whisper/whisper-cpp").exists()).unwrap_or(false) {
+    // whisper 확인 (플랫폼별 바이너리명)
+    let whisper_bin = if cfg!(target_os = "windows") { "whisper/whisper-cli.exe" } else { "whisper/whisper-cpp" };
+    if dirs::data_dir().map(|d| d.join("ytdlp-companion").join(whisper_bin).exists()).unwrap_or(false) {
         services.push("whisper".to_string());
     }
     // TTS 확인 (Kokoro 우선, Piper 폴백)
-    if tokio::process::Command::new("python3").args(["-c", "from kokoro_onnx import Kokoro"]).output().await.map(|o| o.status.success()).unwrap_or(false) {
+    if tokio::process::Command::new(python).args(["-c", "from kokoro_onnx import Kokoro"]).output().await.map(|o| o.status.success()).unwrap_or(false) {
         services.push("tts-kokoro".to_string());
-    } else if dirs::data_dir().map(|d| d.join("ytdlp-companion/piper/piper").exists()).unwrap_or(false) {
-        services.push("tts-piper".to_string());
+    } else {
+        let piper_bin = if cfg!(target_os = "windows") { "piper/piper.exe" } else { "piper/piper" };
+        if dirs::data_dir().map(|d| d.join("ytdlp-companion").join(piper_bin).exists()).unwrap_or(false) {
+            services.push("tts-piper".to_string());
+        }
     }
-    // ffmpeg 확인
-    if tokio::process::Command::new("ffmpeg").args(["-version"]).output().await.map(|o| o.status.success()).unwrap_or(false) {
+    // ffmpeg 확인 (ytdlp 모듈의 공통 경로 탐색 사용)
+    let ffmpeg_path = ytdlp::get_ffmpeg_path_public();
+    if tokio::process::Command::new(&ffmpeg_path).args(["-version"]).output().await.map(|o| o.status.success()).unwrap_or(false) {
         services.push("ffmpeg".to_string());
     }
 
@@ -230,6 +252,8 @@ async fn download_handler(Query(params): Query<DownloadQuery>) -> impl IntoRespo
             let stream = ReaderStream::new(file);
             let body = Body::from_stream(stream);
 
+            // 파일명에 비ASCII/특수문자 → ASCII-safe 폴백
+            let safe_filename = sanitize_filename(&downloaded.filename);
             let mut headers = HeaderMap::new();
             headers.insert(
                 "Content-Type",
@@ -237,20 +261,16 @@ async fn download_handler(Query(params): Query<DownloadQuery>) -> impl IntoRespo
             );
             headers.insert(
                 "Content-Disposition",
-                format!("attachment; filename=\"{}\"", downloaded.filename).parse().unwrap(),
+                format!("attachment; filename=\"{}\"", safe_filename)
+                    .parse()
+                    .unwrap_or("attachment; filename=\"video.mp4\"".parse().unwrap()),
             );
             headers.insert(
                 "Content-Length",
                 downloaded.size.to_string().parse().unwrap(),
             );
 
-            // downloaded를 스트리밍 완료까지 유지 (drop 시 tmp_dir 삭제됨)
-            // Body가 소비되면 자동으로 drop → 임시 파일 정리
             let response = (StatusCode::OK, headers, body).into_response();
-
-            // _tmp_dir을 response 수명에 연결하기 위해 extension에 저장
-            // (axum은 response body가 전송 완료될 때까지 핸들러 반환값을 유지)
-            // downloaded 변수가 이 스코프에서 살아있으므로 OK
             let _ = &downloaded._tmp_dir; // keep alive hint
 
             response
@@ -311,9 +331,15 @@ async fn social_download_handler(Json(req): Json<SocialRequest>) -> impl IntoRes
             let stream = ReaderStream::new(file);
             let body = Body::from_stream(stream);
 
+            let safe_filename = sanitize_filename(&downloaded.filename);
             let mut headers = HeaderMap::new();
             headers.insert("Content-Type", downloaded.content_type.parse().unwrap_or("video/mp4".parse().unwrap()));
-            headers.insert("Content-Disposition", format!("attachment; filename=\"{}\"", downloaded.filename).parse().unwrap());
+            headers.insert(
+                "Content-Disposition",
+                format!("attachment; filename=\"{}\"", safe_filename)
+                    .parse()
+                    .unwrap_or("attachment; filename=\"video.mp4\"".parse().unwrap()),
+            );
             headers.insert("Content-Length", downloaded.size.to_string().parse().unwrap());
 
             let response = (StatusCode::OK, headers, body).into_response();
@@ -392,8 +418,14 @@ async fn ffmpeg_transcode_handler(Json(req): Json<FfmpegTranscodeRequest>) -> im
     };
 
     let in_ext = req.input_format.as_deref().unwrap_or("mp4");
-    let tmp_input = tempfile::Builder::new().suffix(&format!(".{}", in_ext)).tempfile().unwrap();
-    let tmp_output = tempfile::Builder::new().suffix(&format!(".{}", req.output_format)).tempfile().unwrap();
+    let tmp_input = match tempfile::Builder::new().suffix(&format!(".{}", in_ext)).tempfile() {
+        Ok(f) => f,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("임시 파일 생성 실패: {}", e) }))).into_response(),
+    };
+    let tmp_output = match tempfile::Builder::new().suffix(&format!(".{}", req.output_format)).tempfile() {
+        Ok(f) => f,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("임시 파일 생성 실패: {}", e) }))).into_response(),
+    };
 
     let input_path = tmp_input.path().to_string_lossy().to_string();
     let output_path = tmp_output.path().to_string_lossy().to_string();
@@ -402,25 +434,38 @@ async fn ffmpeg_transcode_handler(Json(req): Json<FfmpegTranscodeRequest>) -> im
         return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("파일 쓰기 실패: {}", e) }))).into_response();
     }
 
-    // 허용된 ffmpeg 인자만 통과 (인젝션 방지)
+    // 허용된 ffmpeg 인자만 통과 (인젝션 + 임의 파일 쓰기 방지)
     const ALLOWED_PREFIXES: &[&str] = &[
         "-c:", "-codec:", "-b:", "-r", "-s", "-vf", "-af", "-filter:",
         "-preset", "-crf", "-qp", "-ar", "-ac", "-t", "-ss", "-to",
         "-map", "-threads", "-pix_fmt", "-movflags", "-f",
     ];
+    // 값 인자에 허용되는 패턴 (코덱명, 해상도, 숫자 등 — 경로/URL 차단)
+    let is_safe_value = |v: &str| -> bool {
+        !v.starts_with('-') && !v.contains('/') && !v.contains('\\')
+            && !v.contains(':') && !v.starts_with('.')
+            && v.len() < 64
+    };
     let mut args = vec!["-i".to_string(), input_path, "-y".to_string()];
     if let Some(extra_args) = &req.args {
+        let mut prev_was_flag = false;
         for arg in extra_args {
-            let is_allowed = ALLOWED_PREFIXES.iter().any(|p| arg.starts_with(p))
-                || !arg.starts_with('-'); // 값 인자 (e.g., "libx264", "1920x1080")
-            if is_allowed {
+            if ALLOWED_PREFIXES.iter().any(|p| arg.starts_with(p)) {
                 args.push(arg.clone());
+                prev_was_flag = true;
+            } else if prev_was_flag && is_safe_value(arg) {
+                // 직전 항목이 허용된 플래그일 때만 값 인자 허용
+                args.push(arg.clone());
+                prev_was_flag = false;
+            } else {
+                prev_was_flag = false;
             }
         }
     }
     args.push(output_path.clone());
 
-    let output = tokio::process::Command::new("ffmpeg").args(&args).output().await;
+    let ffmpeg = ytdlp::get_ffmpeg_path_public();
+    let output = tokio::process::Command::new(&ffmpeg).args(&args).output().await;
 
     match output {
         Ok(out) if out.status.success() => {
@@ -537,6 +582,13 @@ async fn generate_image_handler(Json(req): Json<GenerateImageRequest>) -> impl I
             let stderr = String::from_utf8_lossy(&out.stderr);
             (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("FLUX 생성 실패: {}", stderr.lines().last().unwrap_or("unknown")) }))).into_response()
         }
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("mflux 실행 불가: {}. 'pip3 install mflux'로 설치해주세요.", e) }))).into_response(),
+        Err(e) => {
+            let install_hint = if cfg!(target_os = "macos") {
+                "'pip3 install mflux'로 설치해주세요."
+            } else {
+                "mflux는 macOS(Apple Silicon) 전용입니다. Windows에서는 사용할 수 없습니다."
+            };
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("mflux 실행 불가: {}. {}", e, install_hint) }))).into_response()
+        },
     }
 }

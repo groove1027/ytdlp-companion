@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { isCompanionDetected, recheckCompanion } from '../services/ytdlpApiService';
-import { COMPANION_DOWNLOAD_URL } from '../constants';
+import { COMPANION_DOWNLOAD_URL, getCompanionDownloadUrl, getCompanionOsLabel } from '../constants';
 
 /** 기능별 배너 테마 */
 type CompanionFeature = 'download' | 'stt' | 'tts' | 'rembg' | 'ffmpeg' | 'general';
@@ -147,7 +147,7 @@ export default function CompanionBanner({ feature = 'general', compact = false }
         {!compact && <>를 위해{' '}</>}
         {compact ? ' — ' : ' '}
         <a
-          href={COMPANION_DOWNLOAD_URL}
+          href={getCompanionDownloadUrl()}
           target="_blank"
           rel="noopener noreferrer"
           style={{
@@ -157,7 +157,7 @@ export default function CompanionBanner({ feature = 'general', compact = false }
             cursor: 'pointer',
           }}
         >
-          헬퍼 앱 설치
+          헬퍼 앱 설치{getCompanionOsLabel() ? ` (${getCompanionOsLabel()})` : ''}
         </a>
         {!compact && <> {theme.description}</>}
       </span>

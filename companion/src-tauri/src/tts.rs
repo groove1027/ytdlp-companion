@@ -1,10 +1,13 @@
 use tokio::process::Command as AsyncCommand;
 use std::path::PathBuf;
+use crate::platform;
 
 /// Kokoro TTS 설치 확인 + 자동 설치 + 모델 다운로드
 pub async fn ensure_tts() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let python = platform::python_cmd();
+
     // kokoro-onnx 설치 확인
-    let check = AsyncCommand::new("python3")
+    let check = AsyncCommand::new(python)
         .args(["-c", "from kokoro_onnx import Kokoro; print('ok')"])
         .output()
         .await;
@@ -13,8 +16,10 @@ pub async fn ensure_tts() -> Result<(), Box<dyn std::error::Error + Send + Sync>
         println!("[TTS] kokoro-onnx 설치됨");
     } else {
         println!("[TTS] kokoro-onnx 설치 중...");
-        let install = AsyncCommand::new("pip3")
-            .args(["install", "--break-system-packages", "kokoro-onnx", "soundfile"])
+        let install_args = platform::pip_install_args(&["kokoro-onnx", "soundfile"]);
+
+        let install = AsyncCommand::new(python)
+            .args(&install_args)
             .output()
             .await?;
 
@@ -66,7 +71,11 @@ async fn check_piper_fallback() -> Result<(), Box<dyn std::error::Error + Send +
 
 fn get_piper_bin() -> PathBuf {
     let base = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
-    base.join("ytdlp-companion").join("piper").join("piper")
+    if cfg!(target_os = "windows") {
+        base.join("ytdlp-companion").join("piper").join("piper.exe")
+    } else {
+        base.join("ytdlp-companion").join("piper").join("piper")
+    }
 }
 
 /// 텍스트 → 음성 변환 (Kokoro 우선 → Piper 폴백)
@@ -123,6 +132,16 @@ async fn try_kokoro(
     }
 
     let text_escaped = text.replace('\\', "\\\\").replace('\'', "\\'").replace('\n', " ").replace('\r', "");
+
+    // Windows: 경로 구분자 \를 \\로 이스케이프 (Python 문자열 내)
+    let model_str = model_path.to_string_lossy().replace('\\', "\\\\").replace('\'', "\\'");
+    let voices_str = voices_path.to_string_lossy().replace('\\', "\\\\").replace('\'', "\\'");
+    let output_str = if cfg!(target_os = "windows") {
+        output_path.replace('\\', "\\\\").replace('\'', "\\'")
+    } else {
+        output_path.replace('\'', "\\'")
+    };
+
     let python_script = format!(
         r#"
 from kokoro_onnx import Kokoro
@@ -132,15 +151,16 @@ samples, sr = kokoro.create('{text}', voice='{voice}', speed=1.0, lang='{lang}')
 sf.write('{output}', samples, sr)
 print('OK')
 "#,
-        model = model_path.to_string_lossy().replace('\'', "\\'"),
-        voices = voices_path.to_string_lossy().replace('\'', "\\'"),
+        model = model_str,
+        voices = voices_str,
         text = text_escaped,
         voice = voice,
         lang = lang,
-        output = output_path,
+        output = output_str,
     );
 
-    let output = AsyncCommand::new("python3")
+    let python = platform::python_cmd();
+    let output = AsyncCommand::new(python)
         .args(["-c", &python_script])
         .output()
         .await?;
@@ -178,16 +198,27 @@ async fn try_piper(
     let tmp_output = tempfile::Builder::new().suffix(".wav").tempfile()?;
     let output_path = tmp_output.path().to_string_lossy().to_string();
 
-    let output = AsyncCommand::new("sh")
-        .args(["-c", &format!(
-            "echo '{}' | DYLD_LIBRARY_PATH=/opt/homebrew/lib '{}' --model '{}' --output_file '{}'",
-            text.replace('\'', "'\\''"),
-            piper.to_string_lossy(),
-            model.to_string_lossy(),
-            output_path,
-        )])
-        .output()
-        .await?;
+    // 안전한 stdin 파이프 방식 — 셸 인젝션 방지
+    use tokio::io::AsyncWriteExt;
+    use std::process::Stdio;
+
+    let mut cmd = AsyncCommand::new(&piper);
+    cmd.args(["--model", &model.to_string_lossy(), "--output_file", &output_path]);
+    cmd.stdin(Stdio::piped());
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+
+    // macOS: DYLD_LIBRARY_PATH 설정 (Homebrew 라이브러리)
+    if cfg!(target_os = "macos") {
+        cmd.env("DYLD_LIBRARY_PATH", "/opt/homebrew/lib");
+    }
+
+    let mut child = cmd.spawn()?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(text.as_bytes()).await?;
+        // stdin을 닫아야 piper가 처리를 시작함
+    }
+    let output = child.wait_with_output().await?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

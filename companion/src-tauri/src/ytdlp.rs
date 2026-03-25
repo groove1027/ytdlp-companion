@@ -66,18 +66,38 @@ fn get_ytdlp_path() -> PathBuf {
     }
 }
 
+/// server.rs에서도 사용할 수 있도록 public 래퍼
+pub fn get_ffmpeg_path_public() -> PathBuf {
+    get_ffmpeg_path()
+}
+
 fn get_ffmpeg_path() -> PathBuf {
-    // 1순위: Homebrew ffmpeg
-    let brew = PathBuf::from("/opt/homebrew/bin/ffmpeg");
-    if brew.exists() { return brew; }
-    let brew2 = PathBuf::from("/usr/local/bin/ffmpeg");
-    if brew2.exists() { return brew2; }
-    // 2순위: 번들 ffmpeg
-    let dir = get_ytdlp_dir();
     if cfg!(target_os = "windows") {
-        dir.join("ffmpeg.exe")
+        // Windows: 번들 → winget/scoop/choco 설치 경로 → PATH
+        let dir = get_ytdlp_dir();
+        let bundled = dir.join("ffmpeg.exe");
+        if bundled.exists() { return bundled; }
+        // 일반적인 Windows 설치 경로들
+        let common_paths = [
+            r"C:\ffmpeg\bin\ffmpeg.exe",
+            r"C:\ProgramData\chocolatey\bin\ffmpeg.exe",
+        ];
+        for p in &common_paths {
+            let path = PathBuf::from(p);
+            if path.exists() { return path; }
+        }
+        // PATH에서 찾기 (시스템 ffmpeg)
+        PathBuf::from("ffmpeg.exe")
     } else {
-        dir.join("ffmpeg")
+        // macOS/Linux: Homebrew → 번들 → PATH
+        let brew = PathBuf::from("/opt/homebrew/bin/ffmpeg");
+        if brew.exists() { return brew; }
+        let brew2 = PathBuf::from("/usr/local/bin/ffmpeg");
+        if brew2.exists() { return brew2; }
+        let dir = get_ytdlp_dir();
+        let bundled = dir.join("ffmpeg");
+        if bundled.exists() { return bundled; }
+        PathBuf::from("ffmpeg")
     }
 }
 

@@ -4,7 +4,7 @@ import type { TextRegion, InpaintMask } from '../../services/companionInpaintSer
 import { useAuthGuard } from '../../hooks/useAuthGuard';
 import { useElapsedTimer, formatElapsed } from '../../hooks/useElapsedTimer';
 import { logger } from '../../services/LoggerService';
-import { COMPANION_DOWNLOAD_URL } from '../../constants';
+import { COMPANION_DOWNLOAD_URL, getCompanionDownloadUrl, getCompanionOsLabel } from '../../constants';
 
 const REMOVAL_TIPS = [
   '🎬 ProPainter가 영상의 모든 프레임에서 마스크 영역을 처리하고 있어요',
@@ -298,7 +298,7 @@ const SubtitleRemoverTab: React.FC = () => {
               <ol className="mt-3 text-sm text-amber-200/80 space-y-2">
                 <li className="flex gap-2">
                   <span className="text-amber-400 font-bold shrink-0">1.</span>
-                  <span>컴패니언 앱을 <a href={COMPANION_DOWNLOAD_URL} target="_blank" rel="noopener noreferrer" className="text-cyan-400 underline hover:text-cyan-300 font-medium">여기서 다운로드</a>하세요</span>
+                  <span>컴패니언 앱을 <a href={getCompanionDownloadUrl()} target="_blank" rel="noopener noreferrer" className="text-cyan-400 underline hover:text-cyan-300 font-medium">여기서 다운로드{getCompanionOsLabel() ? ` (${getCompanionOsLabel()})` : ''}</a>하세요</span>
                 </li>
                 <li className="flex gap-2">
                   <span className="text-amber-400 font-bold shrink-0">2.</span>

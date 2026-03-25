@@ -8,13 +8,17 @@ fn get_whisper_dir() -> PathBuf {
 }
 
 fn get_whisper_bin() -> PathBuf {
-    // 1순위: Homebrew 설치 (whisper-cli)
-    let brew_path = PathBuf::from("/opt/homebrew/bin/whisper-cli");
-    if brew_path.exists() { return brew_path; }
-    let brew_path2 = PathBuf::from("/usr/local/bin/whisper-cli");
-    if brew_path2.exists() { return brew_path2; }
-    // 2순위: 번들 바이너리
-    get_whisper_dir().join("whisper-cpp")
+    if cfg!(target_os = "windows") {
+        // Windows: 번들 바이너리
+        get_whisper_dir().join("whisper-cli.exe")
+    } else {
+        // macOS/Linux: Homebrew 우선 → 번들
+        let brew_path = PathBuf::from("/opt/homebrew/bin/whisper-cli");
+        if brew_path.exists() { return brew_path; }
+        let brew_path2 = PathBuf::from("/usr/local/bin/whisper-cli");
+        if brew_path2.exists() { return brew_path2; }
+        get_whisper_dir().join("whisper-cpp")
+    }
 }
 
 fn get_whisper_model() -> PathBuf {
@@ -32,11 +36,68 @@ pub async fn ensure_whisper() -> Result<(), Box<dyn std::error::Error + Send + S
         let url = get_whisper_download_url();
         let client = reqwest::Client::new();
         let bytes = client.get(&url).send().await?.bytes().await?;
-        std::fs::write(&bin, &bytes)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755))?;
+
+        if cfg!(target_os = "windows") {
+            // Windows: ZIP 압축 해제 — 경로에 특수문자 대비 큰따옴표 사용
+            let zip_path = dir.join("whisper-cli.zip");
+            std::fs::write(&zip_path, &bytes)?;
+            let output = tokio::process::Command::new("powershell")
+                .args([
+                    "-NoProfile", "-Command",
+                    &format!(
+                        "Expand-Archive -Path \"{}\" -DestinationPath \"{}\" -Force",
+                        zip_path.to_string_lossy(),
+                        dir.to_string_lossy()
+                    ),
+                ])
+                .output()
+                .await?;
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(format!("whisper ZIP 해제 실패: {}", stderr).into());
+            }
+            // ZIP 안의 whisper-cli.exe와 사이드카 DLL을 모두 whisper 디렉토리로 이동
+            // (DLL 없이 exe만 이동하면 런타임 에러 발생)
+            let extracted = find_exe_in_dir(&dir, "whisper-cli.exe");
+            if let Some(found) = extracted {
+                let found_parent = found.parent().unwrap().to_path_buf();
+                // exe가 하위 폴더에 있으면 해당 폴더 내 모든 파일을 whisper 디렉토리로 이동
+                if found_parent != dir {
+                    let mut all_moved = true;
+                    if let Ok(entries) = std::fs::read_dir(&found_parent) {
+                        for entry in entries.flatten() {
+                            let src = entry.path();
+                            if src.is_file() {
+                                let dst = dir.join(entry.file_name());
+                                if std::fs::rename(&src, &dst).is_err() {
+                                    match std::fs::copy(&src, &dst) {
+                                        Ok(_) => { let _ = std::fs::remove_file(&src); }
+                                        Err(e) => {
+                                            eprintln!("[whisper] DLL 복사 실패 (원본 유지): {} → {} ({})", src.display(), dst.display(), e);
+                                            all_moved = false;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // 모든 파일이 성공적으로 이동된 경우에만 하위 폴더 정리
+                    if all_moved {
+                        let _ = std::fs::remove_dir_all(&found_parent);
+                    }
+                }
+            } else {
+                return Err("whisper ZIP에서 whisper-cli.exe를 찾을 수 없습니다".into());
+            }
+            let _ = std::fs::remove_file(&zip_path);
+        } else {
+            // macOS/Linux: 단일 바이너리
+            std::fs::write(&bin, &bytes)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755))?;
+            }
         }
         println!("[whisper] 바이너리 다운로드 완료");
     }
@@ -64,6 +125,24 @@ pub async fn ensure_whisper() -> Result<(), Box<dyn std::error::Error + Send + S
     Ok(())
 }
 
+/// ZIP 해제 후 디렉토리 내에서 특정 exe 찾기 (재귀)
+fn find_exe_in_dir(dir: &PathBuf, name: &str) -> Option<PathBuf> {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() && path.file_name().map(|n| n == name).unwrap_or(false) {
+                return Some(path);
+            }
+            if path.is_dir() {
+                if let Some(found) = find_exe_in_dir(&path, name) {
+                    return Some(found);
+                }
+            }
+        }
+    }
+    None
+}
+
 fn get_whisper_download_url() -> String {
     let os = std::env::consts::OS;
     let arch = std::env::consts::ARCH;
@@ -71,6 +150,7 @@ fn get_whisper_download_url() -> String {
     match (os, arch) {
         ("macos", "aarch64") => "https://github.com/ggerganov/whisper.cpp/releases/latest/download/whisper-cli-v1.7.5-bin-macos-arm64".to_string(),
         ("macos", _) => "https://github.com/ggerganov/whisper.cpp/releases/latest/download/whisper-cli-v1.7.5-bin-macos-x86_64".to_string(),
+        ("windows", _) => "https://github.com/ggerganov/whisper.cpp/releases/latest/download/whisper-cli-v1.7.5-bin-x64.zip".to_string(),
         _ => "https://github.com/ggerganov/whisper.cpp/releases/latest/download/whisper-cli-v1.7.5-bin-linux-x86_64".to_string(),
     }
 }

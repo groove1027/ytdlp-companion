@@ -27,6 +27,13 @@
     ],
     "macOS": {
       "minimumSystemVersion": "10.15"
+    },
+    "windows": {
+      "nsis": {
+        "displayLanguageSelector": false,
+        "installMode": "currentUser",
+        "languages": ["Korean", "English"]
+      }
     }
   }
 }

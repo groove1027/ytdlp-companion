@@ -4,6 +4,20 @@ import { AspectRatio, VoiceName, ImageModel, VideoFormat, DialogueTone, ScriptAi
 // Companion (Helper) App
 export const COMPANION_DOWNLOAD_URL = 'https://github.com/groove1027/ytdlp-companion/releases/latest';
 
+/** OS별 컴패니언 다운로드 URL — GitHub Releases 페이지로 이동 (버전 하드코딩 방지) */
+export const getCompanionDownloadUrl = (): string => {
+  // 모든 OS에서 releases/latest 페이지로 안내 — 사용자가 OS에 맞는 파일 선택
+  return COMPANION_DOWNLOAD_URL;
+};
+
+/** 현재 OS 이름 반환 */
+export const getCompanionOsLabel = (): string => {
+  const ua = navigator.userAgent.toLowerCase();
+  if (ua.includes('win')) return 'Windows';
+  if (ua.includes('mac')) return 'macOS';
+  return '';
+};
+
 // [2026-03-02] Real-time Pricing (조사 기반 실시간 반영)
 export const PRICING = {
   EXCHANGE_RATE: 1450, // Fallback Value (Used only if API fails)
