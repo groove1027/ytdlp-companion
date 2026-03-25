@@ -1002,41 +1002,10 @@ export const parseScriptToScenes = async (
        - "동남아시아와 아프리카" → Southeast Asian and African marketplace/port imagery.
     5. NEVER use generic/abstract visuals when the script mentions specific real-world concepts.
 
-    [PHASE: CINEMATIC VARIETY — CRITICAL]
-    You MUST maximize visual diversity across all scenes. A monotonous storyboard is FAILURE.
-
-    MANDATORY RULES:
-    1. **NO CONSECUTIVE REPEATS**: Adjacent scenes MUST differ in at least 2 of: shotSize, cameraAngle, cameraMovement.
-    2. **SHOT SIZE DISTRIBUTION**: Use the FULL range. If 9 scenes, you need at least 4 different shot sizes.
-    3. **ANGLE DISTRIBUTION**: Never use "Eye Level" for more than 30% of total scenes.
-    4. **CAMERA MOVEMENT**: Each scene MUST have a camera movement. Static shots should be rare (max 20%).
-    5. **VISUAL METAPHOR**: For abstract concepts (economy, emotions, crisis), use creative visual metaphors:
-       - "경제 성장" → Time-lapse of skyscrapers rising from ground, golden light
-       - "위기" → Cracking ice over dark water, dramatic red lighting
-       - "모순" → Split-screen contrast, one side bright/one side dark
-       - "구조적 결함" → X-ray view of crumbling building foundation
-       - "기회" → A hand reaching through clouds toward brilliant sunlight, lens flare
-       - "혁신" → Exploded view of a machine reassembling into a new form, floating parts with energy arcs
-       - "갈등" → Two opposing forces visualized as colliding waves or tectonic plates cracking
-       - "시간의 흐름" → A corridor of doors from past to future, each era's architecture morphing
-    6. **PERSPECTIVE VARIETY**: Alternate between objective (observer) and subjective (participant) viewpoints.
-
-    [PHASE: VISUAL QUALITY STANDARDS — MANDATORY]
-    Your 'visualPrompt' MUST be CINEMATIC QUALITY. Vague prompts produce vague images. Follow these rules:
-
-    1. **LIGHTING IS KING**: Every scene MUST have specific lighting. BANNED words: "dramatic lighting", "nice lighting", "good lighting".
-       INSTEAD write: "warm golden hour sidelight from upper-left casting long shadows across cobblestones" or "cold blue moonlight filtering through venetian blinds creating stripe patterns on the wall" or "harsh overhead fluorescent with green tint in sterile hospital corridor".
-    2. **LENS LANGUAGE**: Think like a cinematographer. Include depth of field feel:
-       - Portraits/emotions: "shallow depth of field with creamy bokeh, 85mm lens feel"
-       - Establishing shots: "deep focus everything razor-sharp, 24mm wide-angle perspective"
-       - Compression/tension: "telephoto compression flattening layers, 200mm feel"
-    3. **COMPOSITION**: Apply real film composition and specify subject placement:
-       - "Subject at left-third intersection, leading lines from railway tracks converging to vanishing point"
-       - "Symmetrical framing through a doorway, subject centered in deep background"
-       - "Foreground framing through rain-streaked window, subject soft-focused beyond"
-    4. **TEXTURE & MATERIAL**: Describe surface qualities: "weathered oak grain", "polished chrome reflecting city lights", "rough concrete with moss in cracks", "silk fabric catching light".
-    5. **ATMOSPHERE**: Include environmental particles: dust motes in light beams, rain droplets on glass, morning fog, steam rising from street grates, falling autumn leaves, snow flurries. These add cinematic depth.
-    6. **COLOR PALETTE**: Specify mood colors: "desaturated teal and orange color grade", "warm amber palette with deep burgundy accents", "cool blue-grey overcast with single warm light source".
+    [PHASE: CINEMATIC VARIETY]
+    Vary shotSize, cameraAngle, and cameraMovement naturally across scenes. Avoid repeating the same combination in adjacent scenes.
+    Every scene MUST have a cameraMovement value — do NOT leave it empty or omit it.
+    For abstract concepts (economy, emotions, crisis), use creative visual metaphors instead of literal depictions.
 
     ${dialogueTone && dialogueTone !== 'none' ? `
     [PHASE: DIALOGUE GENERATION]
@@ -1070,7 +1039,7 @@ export const parseScriptToScenes = async (
     Return a VALID JSON array of Scene objects. No markdown.
     {
         "scriptText": "Original text line (DO NOT MODIFY)",
-        "visualPrompt": "A flowing cinematic description (English, 40-80 words). MUST include: specific lighting (direction, color temperature, shadow quality), depth of field / lens feel, composition technique (rule of thirds, leading lines, framing), atmosphere (weather, particles, mood), material textures, and a dominant color palette. Write as a cinematographer's shot description, NOT a tag list. NEVER use vague terms like 'dramatic lighting' or 'beautiful scene' — be PRECISE.",
+        "visualPrompt": "A highly detailed visual description (English, at least 20 words). Be creative and vivid. Focus on the CORE visual idea — what makes this image unique and striking. Include enough scene context (subject, setting, mood) for standalone image generation.",
         "visualDescriptionKO": "Summary in Korean",
         "castType": "MAIN" | "KEY_ENTITY" | "EXTRA" | "NOBODY",
         "entityName": "Detected entity name (e.g. 'Leonardo da Vinci', 'Nike', 'Eiffel Tower'). MUST be set when castType is KEY_ENTITY. Include ANY famous person, brand, landmark, historical figure, specific place, or notable object mentioned in the script.",
@@ -1078,9 +1047,9 @@ export const parseScriptToScenes = async (
         "shotSize": "Extreme Close Up" | "Close Up" | "Medium Close Up" | "Medium Shot" | "Medium Wide" | "Wide Shot" | "Extreme Wide" | "Drone View" | "Macro",
         "cameraAngle": "Eye Level" | "Low Angle" | "High Angle" | "Dutch Angle" | "Bird's Eye" | "Worm's Eye" | "Over the Shoulder" | "POV (First Person)" | "Top Down",
         "cameraMovement": "Static" | "Slow Pan Left" | "Slow Pan Right" | "Tilt Up" | "Tilt Down" | "Dolly In" | "Dolly Out" | "Crane Up" | "Crane Down" | "Tracking Shot" | "Zoom In" | "Zoom Out" | "Orbit" | "Handheld Shake",
-        "videoPrompt": "A detailed VIDEO MOTION prompt (English, 30-60 words) describing HOW this scene should MOVE as a video clip. Focus on: (1) subject motion — what moves and how (walking, falling, floating, exploding), (2) environmental motion — wind, rain, particles, traffic, (3) camera dynamics — natural description of camera movement matching cameraMovement, (4) temporal flow — speed changes, rhythm. Write as a cinematographer's motion direction. Example: 'Cherry blossom petals swirl through warm spring air as the woman walks forward with a gentle smile, hair swaying in the breeze. Camera slowly pans left following her. Background pedestrians move naturally. Dreamy, nostalgic pace.' NEVER just repeat the visualPrompt — add MOTION and DYNAMICS.",
+        "videoPrompt": "VIDEO MOTION description (English, 20-40 words). MUST include the scene subject/location context AND motion: subject action, environmental motion, camera dynamics. This is used independently from visualPrompt, so include enough context to stand alone.",
         "characterPresent": boolean,
-        "characterAction": "Specific pose, gesture, expression, and body language for the character in THIS scene. Must be context-appropriate and UNIQUE per scene. Examples: 'leaning forward over a table with intense focus, furrowed brows, one hand gripping a pen', 'walking briskly through a crowded street, looking over shoulder nervously, coat collar pulled up', 'standing at a podium gesturing dramatically with right hand raised, confident smirk', 'sitting cross-legged on the floor reading a scroll with serene expression, soft smile', 'crouching behind cover, peering around the edge with wide eyes, hand on ground for balance', 'mid-stride reaching for a door handle, weight on front foot, determined expression', 'arms folded across chest, leaning against a wall with one foot up, skeptical raised eyebrow', 'hands cupped around a steaming mug, shoulders hunched, gazing out a frosted window wistfully', 'pointing emphatically at a holographic display, jaw set, other hand on hip', 'kneeling on one knee examining something on the ground, head tilted, brow furrowed in curiosity'. MUST vary pose, gesture, AND expression across every scene. NEVER repeat the same action. Include at least body position + hand gesture + facial expression. Empty string if characterPresent is false.",
+        "characterAction": "Pose, gesture, and expression for this scene. Vary across scenes. Empty if characterPresent is false.",
         "requiresTextRendering": boolean,
         "textToRender": "Keyword or Number ONLY (Max 3 words). Empty if not needed.",
         "isInfographic": boolean,
