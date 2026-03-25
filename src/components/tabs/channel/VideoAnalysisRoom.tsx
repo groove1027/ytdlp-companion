@@ -16,7 +16,7 @@ import { useSoundStudioStore } from '../../../stores/soundStudioStore';
 import { buildVideoAnalysisStylePreset } from '../../../utils/videoStyleExtractor';
 import AnalysisSlotBar from './AnalysisSlotBar';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
-import { getYoutubeApiKey, getKieKey, monitoredFetch } from '../../../services/apiService';
+import { getYoutubeApiKey, getKieKey, getGoogleGeminiKey, monitoredFetch } from '../../../services/apiService';
 import { getQuotaUsage, fetchTimedTranscriptForAnalysis } from '../../../services/youtubeAnalysisService';
 import { extractStreamUrl, isYtdlpServerConfigured, getSocialMetadata, downloadSocialVideo, fetchFramesFromServer } from '../../../services/ytdlpApiService';
 import CompanionBanner from '../../CompanionBanner';
@@ -1357,6 +1357,33 @@ async function analyzeWithFrames(
   }
 
   const enrichedPrompt = `${userPrompt}\n\n[아래는 영상에서 추출한 ${frameData.length}개 프레임입니다. 각 프레임의 타임스탬프를 참고하여 영상 전체 흐름을 분석해주세요.]`;
+
+  // [FIX #833] Evolink 키 없고 유효한 체험판 유저(만료 X) + Google Gemini 키: requestGeminiProxy 경유
+  // KIE-only 유저 또는 만료된 trial 유저는 기존 evolinkFrameAnalysisStream 경로로 진행
+  const _trialAuth = (await import('../../../stores/authStore')).useAuthStore.getState().authUser;
+  const _isActiveTrial = _trialAuth?.tier === 'trial' && (!_trialAuth.tierExpiresAt || new Date(_trialAuth.tierExpiresAt).getTime() >= Date.now());
+  if (!getEvolinkKey() && _isActiveTrial && getGoogleGeminiKey()) {
+    const frameParts = frameData.flatMap(f => [
+      { text: f.label },
+      { inlineData: { mimeType: f.mimeType, data: f.base64 } },
+    ]);
+    const payload = {
+      contents: [{
+        role: 'user' as const,
+        parts: [
+          { text: `${scriptSystem}\n\n${enrichedPrompt}` },
+          ...frameParts,
+        ],
+      }],
+      generationConfig: {
+        temperature,
+        maxOutputTokens: maxTokens,
+      },
+      safetySettings: SAFETY_SETTINGS_BLOCK_NONE,
+    };
+    const data = await requestGeminiProxy('gemini-3.1-pro', payload, 0, 120_000, { signal, skipFlashLite: true });
+    return extractTextFromResponse(data) || '[]';
+  }
 
   return evolinkFrameAnalysisStream(
     frameData, scriptSystem, enrichedPrompt,
@@ -3384,9 +3411,22 @@ const VideoAnalysisRoom: React.FC = () => {
     }
 
     // API 키 사전 검증 — 키 없이 5배치 모두 실패하는 것을 방지
-    if (!getEvolinkKey() && !getKieKey()) {
-      showToast('AI 분석을 위한 API 키가 설정되어 있지 않아요. ⚙️ 설정에서 API 키를 등록해주세요!', 6000);
-      setError('API 키가 설정되지 않았습니다. 설정 메뉴에서 Evolink 또는 KIE API 키를 등록해주세요.');
+    // [FIX #833] 체험판(trial) 유저는 Google Gemini 키로 분석 가능 — 게이트에서 tier 체크 추가
+    const trialAuthUser = (await import('../../../stores/authStore')).useAuthStore.getState().authUser;
+    const isTrialUser = trialAuthUser?.tier === 'trial';
+    const isTrialExpired = isTrialUser && trialAuthUser.tierExpiresAt && new Date(trialAuthUser.tierExpiresAt).getTime() < Date.now();
+    if (!getEvolinkKey() && !getKieKey() && !(isTrialUser && !isTrialExpired && getGoogleGeminiKey())) {
+      showToast(
+        isTrialUser
+          ? 'Google Gemini API 키가 설정되어 있지 않아요. 체험판 가이드에서 키를 발급받아 등록해주세요!'
+          : 'AI 분석을 위한 API 키가 설정되어 있지 않아요. ⚙️ 설정에서 API 키를 등록해주세요!',
+        6000,
+      );
+      setError(
+        isTrialUser
+          ? 'Google Gemini API 키가 필요합니다. 체험판 가이드에서 키를 발급받아 등록해주세요.'
+          : 'API 키가 설정되지 않았습니다. 설정 메뉴에서 Evolink 또는 KIE API 키를 등록해주세요.',
+      );
       return;
     }
 
@@ -3936,8 +3976,12 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
           }
         } catch (e) {
           if (abortCtrl.signal.aborted) throw new DOMException('분석이 취소되었습니다.', 'AbortError');
-          console.warn('[Diarization] 자동 복구 전사 실패 — 대사 누락 방지를 위해 분석 중단:', e);
-          throw new Error('음성 전사를 자동 복구까지 모두 시도했지만 실패했습니다. 대사 누락을 막기 위해 이번 분석은 중단합니다. 잠시 후 다시 시도해주세요.');
+          // [FIX #829] Cloudinary 미설정 등으로 전사 실패 시 분석 중단이 아닌 화자 분리 없이 진행
+          // 배경: uploadPreset 비어있으면 STT 업로드 실패 → 자동 복구도 실패 → 분석 전체 중단이었음
+          // 이제는 화자 분리 없이 Gemini 단독 분석으로 진행 (정확도 저하 가능하지만 분석 자체는 수행)
+          const errMsg = e instanceof Error ? e.message : String(e);
+          console.warn('[Diarization] 전사 실패 — 화자 분리 없이 분석 계속 진행:', errMsg);
+          showToast('⚠️ 음성 전사에 실패하여 화자 분리 없이 분석합니다. Cloudinary 설정을 확인해주세요.', 6000);
         }
       } else if (diarizePresets.includes(preset) && hasV1betaVideo) {
         console.log(`[Diarization] ⚡ Gemini v1beta 오디오 직접 분석 — 화자분리 스킵 (30~45초 절감)${hasTimedTranscript ? ' (타임드 자막도 보조 참조)' : ''}`);
@@ -4097,6 +4141,8 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
             return await textFallbackAI(fbPrompt + textOnlyNotice, tokens);
           }
         } else if (uploadedFiles.length > 0 && effectiveFrames.length > 0) {
+          // [FIX #833] analyzeWithFrames 내부에서 체험판 Google Gemini 키 폴백 처리
+          // 그 외 실패(네트워크 등)는 에러 전파 — 텍스트 폴백 시 프롬프트에 영상 내용 없어 할루시네이션 위험
           return await analyzeWithFrames(effectiveFrames, prompt, scriptSystem, tokens, signal, effectiveTemp);
         } else {
           // [FIX #262] 텍스트 전용 경로도 Smart Routing 적용

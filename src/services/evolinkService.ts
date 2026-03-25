@@ -1670,10 +1670,11 @@ export const evolinkFrameAnalysisStream = async (
 
     logger.info('[Evolink Frames] v1beta 프레임 분석 스트리밍 시작', { frameCount: frames.length });
 
-    // [FIX #679] 75초 선제 타임아웃 — 프레임 분석은 영상 원본보다 짧게 소요
-    const FRAME_FETCH_TIMEOUT_MS = 75_000;
+    // [FIX #835] 120초 타임아웃 — base64 프레임 14장 이상 전송 시 75초 부족 사례 대응
+    // 배경: 25초 영상 14프레임 base64 + Gemini 처리 → 75초 내 응답 불가 (2회 연속 타임아웃)
+    const FRAME_FETCH_TIMEOUT_MS = 120_000;
 
-    // [FIX #226] 429 Rate Limit 재시도 추가 — 프레임 분석 스트리밍에도 적용
+    // [FIX #835] 429 재시도만 유지 — POST 요청이므로 네트워크 에러 재시도 시 이중 과금 위험
     const response = await fetchWithRateLimitRetry(url, {
         method: 'POST',
         headers: {
@@ -1682,7 +1683,7 @@ export const evolinkFrameAnalysisStream = async (
         },
         body: JSON.stringify(payload),
         signal,
-    }, 3, 3000, FRAME_FETCH_TIMEOUT_MS);
+    }, 2, 3000, FRAME_FETCH_TIMEOUT_MS);
 
     if (!response.ok) {
         const errorDetail = await parseEvolinkError(response);
@@ -1697,8 +1698,9 @@ export const evolinkFrameAnalysisStream = async (
     let accumulated = '';
     let buffer = '';
 
-    // [FIX #226] 프레임 분석 스트리밍 유휴 타임아웃 — 60초 무응답 시 중단
-    const FRAME_STREAM_IDLE_MS = 60_000;
+    // [FIX #835] 프레임 분석 스트리밍 유휴 타임아웃 — 120초로 상향 (첫 청크까지 처리 시간 확보)
+    // 배경: 14프레임 base64 전송 후 서버 처리 중 60초 내 첫 청크 미도착 시 조기 타임아웃
+    const FRAME_STREAM_IDLE_MS = 120_000;
 
     while (true) {
         let idleTimer: ReturnType<typeof setTimeout> | undefined;
