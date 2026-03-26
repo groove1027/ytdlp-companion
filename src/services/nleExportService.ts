@@ -1974,8 +1974,19 @@ function normalizeCapCutDraftsRootPath(rawPath: string): string {
   if (!trimmed) {
     throw new Error('CapCut 프로젝트 폴더 경로가 비어 있습니다.');
   }
-  if (/^(~|%[A-Z_]+%|\$[A-Z_]+)/i.test(trimmed)) {
-    throw new Error('~ 나 환경 변수 대신 실제 절대경로를 입력해주세요.');
+  // [FIX #702] 환경변수 포함 시 구체적 안내 메시지
+  if (/%[A-Z_]+%/i.test(trimmed)) {
+    const envMatch = trimmed.match(/%([A-Z_]+)%/i);
+    const envName = envMatch?.[1] || '';
+    const hint = envName.toUpperCase() === 'LOCALAPPDATA'
+      ? '예시: C:\\Users\\<사용자이름>\\AppData\\Local\\CapCut\\User Data\\Projects\\com.lveditor.draft\n\n찾는 법: Windows 탐색기 주소창에 %LOCALAPPDATA% 입력 → 주소창에 나타나는 실제 경로를 복사하세요.'
+      : envName.toUpperCase() === 'USERPROFILE'
+      ? '예시: C:\\Users\\<사용자이름>\\...\n\n찾는 법: Windows 탐색기 주소창에 %USERPROFILE% 입력 → 실제 경로 복사'
+      : '환경 변수를 실제 경로로 변환해주세요.';
+    throw new Error(`웹 앱에서는 %${envName}% 환경변수를 자동 변환할 수 없어요.\n실제 절대경로를 직접 입력해주세요.\n\n${hint}`);
+  }
+  if (/^(~|\$[A-Z_]+)/i.test(trimmed)) {
+    throw new Error('~ 나 환경 변수 대신 실제 절대경로를 입력해주세요.\n\nMac 예시: /Users/<사용자이름>/Movies/CapCut/User Data/Projects/com.lveditor.draft');
   }
 
   const normalized = trimmed.replace(/\\/g, '/').replace(/\/+$/g, '');
@@ -1983,10 +1994,10 @@ function normalizeCapCutDraftsRootPath(rawPath: string): string {
   const isAbsolutePosix = normalized.startsWith('/');
 
   if (!isAbsoluteWindows && !isAbsolutePosix) {
-    throw new Error('CapCut 프로젝트 폴더의 실제 절대경로를 입력해주세요.');
+    throw new Error('CapCut 프로젝트 폴더의 실제 절대경로를 입력해주세요.\n\nWindows 예시: C:\\Users\\<이름>\\AppData\\Local\\CapCut\\User Data\\Projects\\com.lveditor.draft\nMac 예시: /Users/<이름>/Movies/CapCut/User Data/Projects/com.lveditor.draft');
   }
   if (!normalized.endsWith('/com.lveditor.draft')) {
-    throw new Error('CapCut 프로젝트 폴더(com.lveditor.draft) 경로를 입력해주세요.');
+    throw new Error('경로 끝이 com.lveditor.draft로 끝나야 합니다.\n\nCapCut 프로젝트 폴더(com.lveditor.draft)까지의 전체 경로를 입력해주세요.');
   }
   return normalized;
 }
@@ -3786,7 +3797,7 @@ export function generateNleSrt(
 // ZIP 패키지 빌더
 // ──────────────────────────────────────────────
 
-export type NleTarget = 'premiere' | 'capcut' | 'vrew';
+export type NleTarget = 'premiere' | 'capcut' | 'filmora' | 'vrew';
 
 export async function buildNlePackageZip(params: {
   target: NleTarget;
@@ -4073,6 +4084,59 @@ export async function buildNlePackageZip(params: {
       '',
       `* 편집점: ${scenes.length}개 / 해상도: ${width}x${height} / ${fps}fps`,
     ].join('\n'));
+
+  } else if (target === 'filmora') {
+    // [FIX #749] Filmora — FCP XML + SRT + 영상 ZIP 패키지
+    // Filmora는 FCP XML import를 지원하므로 Premiere XML 생성 로직 재활용
+
+    const filmoraXml = generateFcpXml({
+      scenes, title, videoFileName: videoFileName || 'video.mp4', preset, width, height, fps, videoDurationSec,
+      narrationLines: packagedNarrationLines,
+    });
+    zip.file(`${safeName}.xml`, filmoraXml);
+
+    if (videoBlob) {
+      zip.file(`media/${videoFileName || 'video.mp4'}`, videoBlob);
+    }
+
+    const dlgSrt = generateNleSrt(scenes, 'dialogue', preset, 'source', packagedNarrationLines);
+    if (dlgSrt) zip.file(`${safeName}_자막.srt`, BOM + dlgSrt);
+    const narSrt = generateNleSrt(scenes, 'narration', preset, 'source', packagedNarrationLines);
+    if (narSrt) zip.file(`${safeName}_나레이션.srt`, BOM + narSrt);
+    const fxSrt = generateNleSrt(scenes, 'effect', preset, 'source', packagedNarrationLines);
+    if (fxSrt) zip.file(`${safeName}_효과자막.srt`, BOM + fxSrt);
+
+    const tlDlgSrt = generateNleSrt(scenes, 'dialogue', preset, 'timeline', packagedNarrationLines);
+    if (tlDlgSrt) zip.file(`${safeName}_자막_타임라인.srt`, BOM + tlDlgSrt);
+
+    zip.file('README.txt', [
+      `=== ${title} — Filmora ===`,
+      '',
+      '[ 사용법 — XML import (권장) ]',
+      '1. ZIP을 원하는 위치에 압축 해제하세요.',
+      `2. Filmora > File > Import > Import XML File > "${safeName}.xml" 선택`,
+      '3. 타임라인에 편집점이 자동 배치됩니다.',
+      '4. media/ 폴더의 영상을 같은 위치에 두세요 (미디어 링크 유지).',
+      '',
+      '[ 사용법 — SRT import (대안) ]',
+      `1. Filmora에서 media/${videoFileName || 'video.mp4'}를 불러옵니다.`,
+      `2. 자막 > 자막 파일 가져오기 > "${safeName}_자막.srt" 선택`,
+      '3. 자막이 타임라인에 자동 배치됩니다.',
+      '',
+      '[ 포함된 파일 ]',
+      `• ${safeName}.xml — FCP XML (Filmora import용)`,
+      `• media/${videoFileName || 'video.mp4'} — 원본 영상`,
+      `• ${safeName}_자막.srt — 대사 자막 (소스 시간 기준)`,
+      narSrt ? `• ${safeName}_나레이션.srt — 나레이션` : null,
+      fxSrt ? `• ${safeName}_효과자막.srt — 효과 자막` : null,
+      tlDlgSrt ? `• ${safeName}_자막_타임라인.srt — 대사 자막 (타임라인 기준)` : null,
+      '',
+      '[ 호환 버전 ]',
+      '• Filmora 11 이상 권장 (FCP XML import 지원)',
+      '• 이전 버전은 SRT import만 사용하세요.',
+      '',
+      `* 편집점: ${scenes.length}개 / 해상도: ${width}x${height} / ${fps}fps`,
+    ].filter(Boolean).join('\n'));
 
   } else {
     // VREW — SRT 자막 + 영상 패키지
@@ -4449,6 +4513,33 @@ export async function buildEdlNlePackageZip(params: {
       `• 편집점: ${entries.length}개 (Vision AI 정제 타임코드)`,
       `• 소스: ${sourceNames.slice(0, 100)}`,
     ].join('\n'));
+  } else if (target === 'filmora') {
+    // [FIX #749] Filmora — FCP XML + SRT (Filmora 11+ XML import 지원)
+    const xml = generateFcpXmlFromEdl({ entries, sourceVideos, sourceMapping, title });
+    zip.file(`${safeName}.xml`, xml);
+    if (srt) zip.file(`${safeName}_나레이션.srt`, BOM + srt);
+    const sourceNames = [...new Set(entries.map(e => e.sourceDescription))].join(', ');
+    zip.file('README.txt', [
+      `=== ${title} — Filmora ===`,
+      '',
+      '[ 가져오기 — XML (권장) ]',
+      '1. 소스 영상을 XML 파일과 같은 폴더에 배치하세요.',
+      '2. Filmora > File > Import > Import XML File',
+      `3. "${safeName}.xml" 선택 → 타임라인에 편집점 자동 배치`,
+      '',
+      '[ 자막 추가 (선택) ]',
+      srt
+        ? `• "${safeName}_나레이션.srt" 를 자막 가져오기로 추가할 수 있습니다.`
+        : '• 나레이션 SRT는 비어 있어 포함되지 않았습니다.',
+      '',
+      '[ 호환 버전 ]',
+      '• Filmora 11 이상 권장 (FCP XML import 지원)',
+      '• 이전 버전은 SRT import만 사용하세요.',
+      '',
+      '[ 프로젝트 정보 ]',
+      `• 편집점: ${entries.length}개 (Vision AI 정제 타임코드)`,
+      `• 소스: ${sourceNames.slice(0, 100)}`,
+    ].join('\n'));
   } else {
     // VREW — 소스 영상 포함 불가(다중 소스), SRT만 제공
     if (srt) zip.file(`${safeName}_나레이션.srt`, BOM + srt);
@@ -4468,7 +4559,7 @@ export async function buildEdlNlePackageZip(params: {
 // 편집실 타임라인 → NLE 내보내기 (CapCut / Premiere / VREW)
 // ──────────────────────────────────────────────
 
-export type EditRoomNleTarget = 'premiere' | 'capcut' | 'vrew';
+export type EditRoomNleTarget = 'premiere' | 'capcut' | 'filmora' | 'vrew';
 
 interface EditRoomScene {
   id: string;
@@ -5879,6 +5970,34 @@ export async function buildEditRoomNleZip(params: {
         : '',
       narrationClips.length > 0
         ? `• 나레이션 ${narrationClips.length}개 자동 배치`
+        : '',
+    ].filter(Boolean).join('\n'));
+  } else if (target === 'filmora') {
+    // [FIX #749] Filmora — FCP XML + SRT (Premiere XML 구조 재활용)
+    zip.file('README.txt', [
+      `=== ${title} — Filmora ===`,
+      '',
+      '[ 가져오기 — XML (권장) ]',
+      '1. ZIP을 원하는 위치에 압축 해제하세요.',
+      '2. Filmora > File > Import > Import XML File',
+      `3. "${safeName}.xml" 선택 → 타임라인에 자동 배치`,
+      '4. media/ 폴더의 이미지/영상이 자동 연결됩니다.',
+      '',
+      '[ 자막 추가 (선택) ]',
+      `• "${safeName}_자막.srt" → 자막 가져오기로 추가할 수 있습니다.`,
+      '',
+      '[ 나레이션 ]',
+      narrationClips.length > 0
+        ? `• audio/ 폴더의 나레이션 MP3(${narrationClips.length}개)를 오디오 트랙에 배치하세요.`
+        : '• 나레이션 없음',
+      '',
+      '[ 호환 버전 ]',
+      '• Filmora 11 이상 권장 (FCP XML import 지원)',
+      '• 이전 버전은 SRT import만 사용하세요.',
+      '',
+      `• ${timeline.length}개 장면 · ${w}x${h} · ${fps}fps`,
+      videoCount > 0 || imageCount > 0
+        ? `• 미디어 구성: 영상 ${videoCount}개 + 이미지 ${imageCount}개`
         : '',
     ].filter(Boolean).join('\n'));
   } else {

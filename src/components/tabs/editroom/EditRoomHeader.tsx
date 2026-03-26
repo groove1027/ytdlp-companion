@@ -7,7 +7,7 @@ interface EditRoomHeaderProps {
   onExportSrt: () => void;
   onExportZip: () => void;
   onExportMp4: () => void;
-  onExportNle?: (target: 'premiere' | 'capcut' | 'vrew') => void;
+  onExportNle?: (target: 'premiere' | 'capcut' | 'filmora' | 'vrew') => void;
 }
 
 const EditRoomHeader: React.FC<EditRoomHeaderProps> = ({
@@ -85,6 +85,13 @@ const EditRoomHeader: React.FC<EditRoomHeaderProps> = ({
                     className="w-full text-left px-4 py-2.5 hover:bg-gray-700 text-base text-gray-200 flex items-center gap-2"
                   >
                     <span className="text-base">✂️</span> CapCut
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { onExportNle('filmora'); setShowExportMenu(false); }}
+                    className="w-full text-left px-4 py-2.5 hover:bg-gray-700 text-base text-gray-200 flex items-center gap-2"
+                  >
+                    <span className="text-base">🎬</span> Filmora
                   </button>
                   <button
                     type="button"

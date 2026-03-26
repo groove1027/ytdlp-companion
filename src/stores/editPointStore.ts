@@ -893,7 +893,7 @@ export const useEditPointStore = create<EditPointStore>()(immer((set, get) => ({
     const { exportMode, edlEntries, sourceMapping, sourceVideos } = get();
 
     // [FIX #700] 소스 필수 모드에서 소스 영상 없으면 실행 차단
-    const sourceRequiredModes: EditPointExportMode[] = ['direct-mp4', 'push-to-timeline', 'fcp-xml', 'capcut-pkg'];
+    const sourceRequiredModes: EditPointExportMode[] = ['direct-mp4', 'push-to-timeline', 'fcp-xml', 'capcut-pkg', 'filmora-pkg'];
     if (sourceRequiredModes.includes(exportMode) && sourceVideos.length === 0) {
       showToast('이 내보내기 모드는 소스 영상이 필요합니다. Step 1에서 원본 영상을 먼저 등록해주세요.', 5000);
       return;
@@ -927,12 +927,13 @@ export const useEditPointStore = create<EditPointStore>()(immer((set, get) => ({
       }
       case 'fcp-xml':
       case 'capcut-pkg':
+      case 'filmora-pkg':
       case 'vrew-pkg': {
         try {
           const { retryImport } = await import('../utils/retryImport');
           const { buildEdlNlePackageZip } = await retryImport(() => import('../services/nleExportService'));
-          const target = exportMode === 'fcp-xml' ? 'premiere' : exportMode === 'capcut-pkg' ? 'capcut' : 'vrew';
-          const label = exportMode === 'fcp-xml' ? 'Premiere XML' : exportMode === 'capcut-pkg' ? 'CapCut' : 'VREW';
+          const target = exportMode === 'fcp-xml' ? 'premiere' : exportMode === 'capcut-pkg' ? 'capcut' : exportMode === 'filmora-pkg' ? 'filmora' : 'vrew';
+          const label = exportMode === 'fcp-xml' ? 'Premiere XML' : exportMode === 'capcut-pkg' ? 'CapCut' : exportMode === 'filmora-pkg' ? 'Filmora' : 'VREW';
           showToast(`${label} 패키지 생성 중...`);
           const zipBlob = await buildEdlNlePackageZip({
             target,

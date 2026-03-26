@@ -611,7 +611,8 @@ async function verifyBlobHasAudio(blob: Blob): Promise<boolean> {
         return null;
       }
     };
-    timeoutId = window.setTimeout(() => done(false), 5000); // 검증 불가 시 보수적으로 false
+    // [FIX #862] 타임아웃 8초로 늘림 — 검증 불가 시 false 유지 (캐시 오염 방지)
+    timeoutId = window.setTimeout(() => done(false), 8000);
     vid.onloadedmetadata = () => {
       // 1순위: Firefox mozHasAudio
       const moz = (vid as unknown as { mozHasAudio?: boolean }).mozHasAudio;
@@ -626,12 +627,13 @@ async function verifyBlobHasAudio(blob: Blob): Promise<boolean> {
       const decodedBeforePlay = getDecodedBytes();
       if (decodedBeforePlay != null && decodedBeforePlay > 0) { done(true); return; }
       vid.play().then(() => {
+        // [FIX #862] 재생 대기 시간 600ms로 증가 — 느린 디코딩 대응
         window.setTimeout(() => {
           const decoded = getDecodedBytes();
           if (decoded != null) { done(decoded > 0); return; }
           const afterPlayCaptured = getAudioTrackByCapture();
           done(afterPlayCaptured ?? false);
-        }, 300); // 300ms 재생 후 체크
+        }, 600);
       }).catch(() => {
         const afterFailCaptured = getAudioTrackByCapture();
         done(afterFailCaptured ?? false);
@@ -5417,12 +5419,14 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                         {/* ── 그룹 1: NLE 내보내기 (영상+자막 ZIP, 가장 눈에 띄게) ── */}
                         {hasScenes && (
                           <div className="flex gap-2 flex-wrap">
-                            {(['premiere', 'capcut', 'vrew'] as const).map(target => {
-                              const label = target === 'premiere' ? 'Premiere' : target === 'capcut' ? 'CapCut' : 'VREW';
+                            {(['premiere', 'capcut', 'filmora', 'vrew'] as const).map(target => {
+                              const label = target === 'premiere' ? 'Premiere' : target === 'capcut' ? 'CapCut' : target === 'filmora' ? 'Filmora' : 'VREW';
                               const icon = target === 'premiere'
                                 ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 4V2a1 1 0 011-1h8a1 1 0 011 1v2m-9 0h10m-10 0H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2V6a2 2 0 00-2-2h-2" />
                                 : target === 'capcut'
                                 ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                : target === 'filmora'
+                                ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z" />
                                 : <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />;
                               return (
                                 <button
@@ -5501,34 +5505,70 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                         }
                                         if (isCancelled()) return;
 
-                                        setNleExporting({ target, step: `2/3 영상 다운로드 중...${estimatedSizeMB ? ` (약 ${estimatedSizeMB}MB)` : ''}`, progress: 0, startedAt });
-                                        try {
-                                          const { downloadVideoViaProxy } = await import('../../../services/ytdlpApiService');
-                                          const downloadStartTime = Date.now();
-                                          const merged = await downloadVideoViaProxy(vid, '720p', (p) => {
-                                            if (nleActiveTaskRef.current?.controller !== myAbort || myAbort.signal.aborted) return;
-                                            const elapsedSec = (Date.now() - downloadStartTime) / 1000;
-                                            const downloadedMB = estimatedSizeMB ? estimatedSizeMB * p : null;
-                                            const speedMBps = (elapsedSec > 1 && downloadedMB) ? (downloadedMB / elapsedSec) : null;
-                                            const speedText = speedMBps ? ` ${speedMBps.toFixed(1)}MB/s` : '';
-                                            const sizeText = estimatedSizeMB ? ` (약 ${estimatedSizeMB}MB)` : '';
-                                            setNleExporting(prev => {
-                                              if (!prev || prev.target !== target) return prev;
-                                              return { ...prev, step: `2/3 영상 다운로드 중...${sizeText}${speedText}`, progress: Math.round(p * 100), startedAt: prev.startedAt ?? startedAt };
-                                            });
-                                          }, { signal: myAbort.signal });
-                                          if (merged.blob.size > 0) {
-                                            videoBlob = merged.blob;
-                                            downloadedSourceTitle = downloadedSourceTitle || merged.info?.title || '';
-                                            // 실제 오디오 존재 여부 검증 (서버가 video-only 반환할 수 있으므로)
-                                            audioConfirmed = await verifyBlobHasAudio(merged.blob);
-                                            useVideoAnalysisStore.getState().setVideoBlob(merged.blob, audioConfirmed);
+                                        // [FIX #859/#742] 품질 폴백 + 재시도 — 720p 실패 시 480p → best 순서로 재시도
+                                        const qualityPipeline: Array<'720p' | '480p' | 'best'> = ['720p', '480p', 'best'];
+                                        let downloadSucceeded = false;
+                                        for (const quality of qualityPipeline) {
+                                          if (isCancelled() || downloadSucceeded) break;
+                                          // [FIX #859] 각 품질 시도마다 별도 AbortController — stall 시 이전 요청 확실 중단
+                                          const perQualityAbort = new AbortController();
+                                          const abortOnCancel = () => perQualityAbort.abort();
+                                          myAbort.signal.addEventListener('abort', abortOnCancel);
+                                          let stallCheckInterval: ReturnType<typeof setInterval> | null = null;
+                                          setNleExporting({ target, step: `2/3 영상 다운로드 중...${estimatedSizeMB ? ` (약 ${estimatedSizeMB}MB)` : ''}${quality !== '720p' ? ` [${quality}]` : ''}`, progress: 0, startedAt });
+                                          try {
+                                            const { downloadVideoViaProxy } = await import('../../../services/ytdlpApiService');
+                                            const downloadStartTime = Date.now();
+                                            let lastProgressTime = downloadStartTime;
+                                            let firstProgressReceived = false;
+                                            const merged = await Promise.race([
+                                              downloadVideoViaProxy(vid, quality, (p) => {
+                                                if (perQualityAbort.signal.aborted) return;
+                                                lastProgressTime = Date.now();
+                                                firstProgressReceived = true;
+                                                const elapsedSec = (Date.now() - downloadStartTime) / 1000;
+                                                const downloadedMB = estimatedSizeMB ? estimatedSizeMB * p : null;
+                                                const speedMBps = (elapsedSec > 1 && downloadedMB) ? (downloadedMB / elapsedSec) : null;
+                                                const speedText = speedMBps ? ` ${speedMBps.toFixed(1)}MB/s` : '';
+                                                const sizeText = estimatedSizeMB ? ` (약 ${estimatedSizeMB}MB)` : '';
+                                                setNleExporting(prev => {
+                                                  if (!prev || prev.target !== target) return prev;
+                                                  return { ...prev, step: `2/3 영상 다운로드 중...${sizeText}${speedText}${quality !== '720p' ? ` [${quality}]` : ''}`, progress: Math.round(p * 100), startedAt: prev.startedAt ?? startedAt };
+                                                });
+                                              }, { signal: perQualityAbort.signal }),
+                                              // [FIX #859] stall detection — 첫 progress 전 180초, 이후 120초간 진행 없으면 타임아웃
+                                              // (progress는 1% 단위 throttled이므로 대용량 파일은 1% 진행에 시간 소요)
+                                              new Promise<never>((_, reject) => {
+                                                stallCheckInterval = setInterval(() => {
+                                                  if (perQualityAbort.signal.aborted) { if (stallCheckInterval) clearInterval(stallCheckInterval); return; }
+                                                  const stallThreshold = firstProgressReceived ? 120_000 : 180_000;
+                                                  if (Date.now() - lastProgressTime > stallThreshold) {
+                                                    if (stallCheckInterval) clearInterval(stallCheckInterval);
+                                                    stallCheckInterval = null;
+                                                    perQualityAbort.abort();
+                                                    reject(new Error(`다운로드 진행 멈춤 (${quality})`));
+                                                  }
+                                                }, 5_000);
+                                              }),
+                                            ]);
+                                            if (merged.blob.size > 0) {
+                                              videoBlob = merged.blob;
+                                              downloadedSourceTitle = downloadedSourceTitle || merged.info?.title || '';
+                                              audioConfirmed = await verifyBlobHasAudio(merged.blob);
+                                              useVideoAnalysisStore.getState().setVideoBlob(merged.blob, audioConfirmed);
+                                              downloadSucceeded = true;
+                                            }
+                                          } catch (dlErr) {
+                                            if (isCancelled()) return;
+                                            console.warn(`[NLE] ${quality} 다운로드 실패 (다음 품질로 재시도):`, dlErr);
+                                          } finally {
+                                            // [FIX] 성공/실패 무관하게 stall interval + 이벤트 리스너 정리
+                                            if (stallCheckInterval) clearInterval(stallCheckInterval);
+                                            myAbort.signal.removeEventListener('abort', abortOnCancel);
                                           }
-                                        } catch (dlErr) {
-                                          if (isCancelled()) return;
-                                          console.warn('[NLE] 오디오 포함 다운로드 실패:', dlErr);
-                                          // [FIX #702] 다운로드 실패 시 기존 video-only blob이라도 사용 (오디오 없이라도 NLE 내보내기 가능)
-                                          // 스토어의 blob은 현재 분석 세션에서 생성된 것이므로 소스가 같다고 가정할 수 있음
+                                        }
+                                        // [FIX #702] 모든 품질 시도 실패 시 기존 blob이라도 사용
+                                        if (!downloadSucceeded) {
                                           const fallbackBlob = useVideoAnalysisStore.getState().videoBlob;
                                           if (!videoBlob && fallbackBlob && fallbackBlob.size > 0) {
                                             videoBlob = fallbackBlob;
@@ -5561,7 +5601,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                       if (isCancelled()) return;
 
                                       if (!videoBlob) {
-                                        showToast('⚠️ 영상 서버가 바빠서 다운로드에 실패했어요. 잠시 후 다시 시도하거나, 영상 파일을 직접 업로드해주세요.', 7000);
+                                        showToast('⚠️ 720p/480p/best 모든 품질로 시도했지만 다운로드에 실패했어요. 인터넷 연결을 확인하고 다시 시도하거나, 영상 파일을 직접 업로드해주세요.', 8000);
                                         return;
                                       }
                                       // Step 2: 영상 치수 감지 (캐시 우선)
@@ -5641,9 +5681,9 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                             draftsRootPath: directInstallSelection.draftsRootPath,
                                           });
                                           if (isCancelled()) return;
-                                          showToast(!audioConfirmed
-                                            ? 'CapCut 프로젝트를 바로 설치했지만 원본 오디오는 자동 확인되지 않았어요. CapCut에서 오디오 트랙만 한 번 확인해주세요.'
-                                            : 'CapCut 프로젝트를 바로 설치했습니다! CapCut에서 프로젝트 카드를 열어 확인해주세요.', !audioConfirmed ? 7000 : 5000);
+                                          showToast(audioConfirmed
+                                            ? 'CapCut 프로젝트를 바로 설치했습니다! CapCut에서 프로젝트 카드를 열어 확인해주세요.'
+                                            : 'CapCut 프로젝트를 설치 완료! 원본 오디오는 대부분 자동 포함되어 있지만, CapCut에서 한 번 확인해주세요.', 5000);
                                           return;
                                         } catch (installError) {
                                           const fallbackUrl = URL.createObjectURL(zipBlob);
@@ -5669,9 +5709,13 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                           ? !audioConfirmed
                                             ? 'Premiere ZIP 다운로드 완료! 압축 해제 후 .prproj를 먼저 열어 subtitle track이 이미 올라와 있는지 확인하세요. 원본 오디오는 Premiere에서 한 번 확인해주세요.'
                                             : 'Premiere ZIP 다운로드 완료! 압축 해제 후 .prproj를 먼저 여세요. subtitle track이 타임라인에 포함되어 있어야 합니다.'
-                                        : !audioConfirmed
-                                          ? `${label} 다운로드 완료! ⚠️ 원본 오디오를 불러오지 못했어요. ${label}에서 수동으로 오디오를 추가해주세요.`
-                                          : `${label} 패키지 다운로드 완료!`, target === 'capcut' || !audioConfirmed ? 7000 : undefined);
+                                        : target === 'filmora'
+                                          ? !audioConfirmed
+                                            ? 'Filmora ZIP 다운로드 완료! ⚠️ 원본 오디오를 불러오지 못했어요. Filmora에서 수동으로 오디오를 확인해주세요.'
+                                            : 'Filmora ZIP 다운로드 완료! 압축 해제 후 Filmora > File > Import > XML File로 가져오세요.'
+                                          : !audioConfirmed
+                                            ? `${label} 다운로드 완료! ⚠️ 원본 오디오를 불러오지 못했어요. ${label}에서 수동으로 오디오를 추가해주세요.`
+                                            : `${label} 패키지 다운로드 완료!`, target === 'capcut' || !audioConfirmed ? 7000 : undefined);
                                     } catch (e) {
                                       if (isCancelled()) return;
                                       console.error('[NLE]', e); showToast(`${label} 패키지 생성 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`, 5000);

@@ -1721,7 +1721,7 @@ export interface EdlEntry {
   autoSpeedFactor?: number;
 }
 
-export type EditPointExportMode = 'direct-mp4' | 'ffmpeg-script' | 'edl-file' | 'push-to-timeline' | 'fcp-xml' | 'capcut-pkg' | 'vrew-pkg';
+export type EditPointExportMode = 'direct-mp4' | 'ffmpeg-script' | 'edl-file' | 'push-to-timeline' | 'fcp-xml' | 'capcut-pkg' | 'filmora-pkg' | 'vrew-pkg';
 
 // ═══ 영상 분석실 (VideoAnalysisRoom) ═══
 

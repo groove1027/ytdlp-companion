@@ -10,7 +10,7 @@ interface EditRoomExportBarProps {
   onExportZip: () => void;
   onExportMp4: () => void;
   onCancelExport?: () => void;
-  onExportNle?: (target: 'premiere' | 'capcut' | 'vrew') => void;
+  onExportNle?: (target: 'premiere' | 'capcut' | 'filmora' | 'vrew') => void;
 }
 
 function formatTime(sec: number): string {
@@ -63,6 +63,7 @@ function mapPhaseToIndex(phase: ExportProgress['phase']): number {
 const NLE_TARGETS = [
   { key: 'premiere' as const, label: 'Premiere Pro', icon: '🎞' },
   { key: 'capcut' as const, label: 'CapCut', icon: '✂️' },
+  { key: 'filmora' as const, label: 'Filmora', icon: '🎬' },
   { key: 'vrew' as const, label: 'VREW', icon: '📋' },
 ];
 

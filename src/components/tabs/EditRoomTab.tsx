@@ -1403,7 +1403,7 @@ const EditRoomTab: React.FC = () => {
 
   // NLE 프로젝트 내보내기 (CapCut / Premiere / VREW)
   const handleExportNle = useCallback(async (target: EditRoomNleTarget) => {
-    const targetLabel = target === 'premiere' ? 'Premiere Pro' : target === 'capcut' ? 'CapCut' : 'VREW';
+    const targetLabel = target === 'premiere' ? 'Premiere Pro' : target === 'capcut' ? 'CapCut' : target === 'filmora' ? 'Filmora' : 'VREW';
     logger.trackAction(`NLE 내보내기: ${targetLabel}`);
     if (!requireAuth(`${targetLabel} 내보내기`)) return;
     if (timeline.length === 0) {

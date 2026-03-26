@@ -221,6 +221,7 @@ const LongFormExportBanner: React.FC<{
           {([
             { target: 'capcut' as const, label: '🎬 캡컷으로 내보내기' },
             { target: 'premiere' as const, label: '🎬 프리미어로 내보내기' },
+            { target: 'filmora' as const, label: '🎬 필모라로 내보내기' },
           ]).map(({ target, label }) => (
             <button
               key={target}
@@ -1514,7 +1515,7 @@ const StoryboardPanel: React.FC = () => {
   }, [Math.floor(elapsedBatch / 8)]);
 
   const handleExportStoryboardNle = useCallback(async (target: EditRoomNleTarget) => {
-    const targetLabel = target === 'premiere' ? 'Premiere Pro' : 'CapCut';
+    const targetLabel = target === 'premiere' ? 'Premiere Pro' : target === 'capcut' ? 'CapCut' : target === 'filmora' ? 'Filmora' : 'VREW';
     logger.trackAction(`스토리보드 NLE 내보내기: ${targetLabel}`);
 
     if (!requireAuth(`${targetLabel} 내보내기`)) {
