@@ -1,0 +1,53 @@
+name: Build Windows
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2"
+
+      - name: Build Tauri (Windows NSIS)
+        run: cargo tauri build
+        working-directory: .
+
+      - name: List build output
+        run: |
+          Get-ChildItem -Recurse src-tauri/target/release/bundle/ -File | Select-Object FullName, Length
+        shell: pwsh
+
+      - name: Upload NSIS installer to release v1.0.0
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $nsis = Get-ChildItem -Recurse src-tauri/target/release/bundle/nsis/*.exe | Select-Object -First 1
+          if ($nsis) {
+            Write-Host "Uploading $($nsis.FullName) ($([math]::Round($nsis.Length / 1MB, 1)) MB)"
+            gh release upload v1.0.0 $nsis.FullName --clobber
+          } else {
+            Write-Host "No NSIS exe found!"
+            exit 1
+          }
+        shell: pwsh
