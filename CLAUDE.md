@@ -157,6 +157,42 @@ expect(resultText!.length).toBeGreaterThan(50);  // 실제 내용이 있는지
 | 영상 생성 | 이미지 있는 장면 → "영상 생성" 클릭 → `waitForResponse(kie\|apimart)` → 영상 URL 존재 확인 |
 | 배치 생성 | "일괄 생성" 클릭 → 프로그레스 바가 0%→100%로 진행하는지 확인 |
 | 스타일 변경 | 스타일 A 선택 → 이미지 생성 → 스타일 B 변경 → 재생성 → 이미지가 달라졌는지 (src 비교) 확인 |
+| **스토리보드 스타일 일관성** | **대본 입력 → 스토리보드 생성 → 이미지 일괄 생성 → 생성된 이미지들이 동일한 아트 스타일로 일관되는지 스크린샷으로 직접 눈 확인 (#551)** |
+
+### ⚠️ E2E 자동 로그인 (모든 Playwright 테스트에 필수 — 이것 없이 프로젝트 생성 불가)
+
+```ts
+// .env.local에서 읽기
+const EMAIL = ENV.E2E_TEST_EMAIL;
+const PASSWORD = ENV.E2E_TEST_PASSWORD;
+const EVOLINK_KEY = ENV.CUSTOM_EVOLINK_KEY;
+
+// 프로덕션 서버에서 토큰 취득 (로컬에 auth 서버 없음)
+const loginRes = await fetch('https://all-in-one-production.pages.dev/api/auth/login', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ email: EMAIL, password: PASSWORD, rememberMe: true })
+});
+const loginData = await loginRes.json();
+
+// localStorage에 주입 후 리로드
+await page.evaluate(({ token, user, key }) => {
+  localStorage.setItem('auth_token', token);
+  localStorage.setItem('auth_user', JSON.stringify(user));
+  localStorage.setItem('CUSTOM_EVOLINK_KEY', key);
+}, { token: loginData.token, user: loginData.user, key: EVOLINK_KEY });
+await page.reload();
+```
+
+### ⚠️ projectStore 접근 (Zustand store 직접 읽기)
+
+```ts
+// window.__PROJECT_STORE__로 접근 (src/stores/projectStore.ts에 노출됨)
+const scenes = await page.evaluate(() => {
+  const store = (window as any).__PROJECT_STORE__;
+  return store ? store.getState().scenes : [];
+});
+```
 
 ### 5. 편집실 (EditRoomTab)
 

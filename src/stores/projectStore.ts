@@ -788,3 +788,8 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
     });
   },
 })));
+
+// [E2E] 테스트에서 store 접근용 — 프로덕션 빌드 시 트리쉐이킹으로 제거됨
+if (typeof window !== 'undefined') {
+  (window as any).__PROJECT_STORE__ = useProjectStore;
+}
