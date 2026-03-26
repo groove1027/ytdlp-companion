@@ -11,6 +11,7 @@ mod tts;
 use tauri::{
     tray::{TrayIconBuilder, MouseButton, MouseButtonState, TrayIconEvent},
     menu::{Menu, MenuItem},
+    Manager,
 };
 
 fn main() {
@@ -18,23 +19,47 @@ fn main() {
         .setup(|app| {
             // 시스템 트레이 설정
             let quit = MenuItem::with_id(app, "quit", "종료", true, None::<&str>)?;
+            let show = MenuItem::with_id(app, "show", "상태 보기", true, None::<&str>)?;
             let status = MenuItem::with_id(app, "status", "⚡ 헬퍼 실행 중", false, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&status, &quit])?;
+            let menu = Menu::with_items(app, &[&status, &show, &quit])?;
 
             let _tray = TrayIconBuilder::new()
                 .tooltip("All In One Helper — 안정적이고 빠른 AI 미디어 처리")
                 .menu(&menu)
                 .on_menu_event(|app, event| {
-                    if event.id() == "quit" {
-                        app.exit(0);
+                    match event.id().as_ref() {
+                        "quit" => app.exit(0),
+                        "show" => {
+                            // 메인 윈도우 보이기
+                            if let Some(win) = app.get_webview_window("main") {
+                                let _ = win.show();
+                                let _ = win.set_focus();
+                            }
+                        }
+                        _ => {}
                     }
                 })
-                .on_tray_icon_event(|_tray, event| {
+                .on_tray_icon_event(|tray, event| {
+                    // 좌클릭 시 윈도우 보이기
                     if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
-                        // 좌클릭 시 상태 표시 (향후 확장 가능)
+                        if let Some(win) = tray.app_handle().get_webview_window("main") {
+                            let _ = win.show();
+                            let _ = win.set_focus();
+                        }
                     }
                 })
                 .build(app)?;
+
+            // 창 닫기 시 숨김 처리 (앱 종료 대신) — "이 창을 닫아도 계속 실행" 약속 이행
+            if let Some(win) = app.get_webview_window("main") {
+                let win_clone = win.clone();
+                win.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = win_clone.hide();
+                    }
+                });
+            }
 
             // localhost:9876 API 서버 시작 (백그라운드)
             let app_handle = app.handle().clone();

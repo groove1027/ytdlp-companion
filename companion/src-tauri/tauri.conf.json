@@ -13,7 +13,18 @@
       "iconPath": "icons/icon.png",
       "iconAsTemplate": true
     },
-    "windows": []
+    "windows": [
+      {
+        "label": "main",
+        "title": "All In One Helper",
+        "width": 440,
+        "height": 580,
+        "resizable": false,
+        "center": true,
+        "decorations": true,
+        "visible": true
+      }
+    ]
   },
   "bundle": {
     "active": true,
