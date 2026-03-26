@@ -1,7 +1,168 @@
 <!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"><title>yt-dlp Companion</title></head>
-<body style="display:none">
-<!-- 트레이 전용 앱 — 창 없음 -->
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>All In One Helper</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #172554 100%);
+      color: #e2e8f0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      user-select: none;
+    }
+    .container {
+      text-align: center;
+      padding: 40px 32px;
+      max-width: 420px;
+    }
+    /* 로고 영역 */
+    .logo {
+      width: 80px; height: 80px;
+      margin: 0 auto 24px;
+      border-radius: 20px;
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 36px; font-weight: 900; color: #fff;
+      box-shadow: 0 8px 32px rgba(99, 102, 241, 0.4);
+      animation: pulse-glow 3s ease-in-out infinite;
+    }
+    @keyframes pulse-glow {
+      0%, 100% { box-shadow: 0 8px 32px rgba(99, 102, 241, 0.4); }
+      50% { box-shadow: 0 8px 48px rgba(99, 102, 241, 0.6); }
+    }
+    .title {
+      font-size: 22px; font-weight: 800;
+      margin-bottom: 8px;
+      background: linear-gradient(135deg, #c4b5fd, #93c5fd);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    .version { font-size: 12px; color: #64748b; margin-bottom: 24px; }
+    /* 상태 표시 */
+    .status-box {
+      background: rgba(34, 197, 94, 0.1);
+      border: 1px solid rgba(34, 197, 94, 0.3);
+      border-radius: 12px;
+      padding: 16px 20px;
+      margin-bottom: 20px;
+    }
+    .status-dot {
+      display: inline-block;
+      width: 10px; height: 10px;
+      background: #22c55e;
+      border-radius: 50%;
+      margin-right: 8px;
+      animation: blink 2s ease-in-out infinite;
+    }
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+    .status-text {
+      font-size: 15px; font-weight: 700; color: #4ade80;
+    }
+    .status-sub {
+      font-size: 12px; color: #94a3b8; margin-top: 6px; line-height: 1.6;
+    }
+    /* 기능 목록 */
+    .features {
+      display: grid; grid-template-columns: 1fr 1fr;
+      gap: 8px; margin-bottom: 24px;
+    }
+    .feature {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 12px; color: #94a3b8;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .feature-icon { font-size: 16px; flex-shrink: 0; }
+    .feature-name { font-weight: 600; color: #cbd5e1; }
+    /* 안내 메시지 */
+    .info-box {
+      background: rgba(99, 102, 241, 0.1);
+      border: 1px solid rgba(99, 102, 241, 0.25);
+      border-radius: 10px;
+      padding: 14px 16px;
+      margin-bottom: 16px;
+    }
+    .info-text {
+      font-size: 13px; color: #a5b4fc; line-height: 1.7;
+    }
+    .info-text strong { color: #c4b5fd; }
+    .tray-hint {
+      font-size: 11px; color: #475569; line-height: 1.5;
+    }
+    .tray-hint img { vertical-align: middle; }
+    /* 포트 표시 */
+    .port-badge {
+      display: inline-flex; align-items: center; gap: 4px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 6px;
+      padding: 4px 10px;
+      font-size: 11px; color: #64748b;
+      font-family: 'SF Mono', 'Consolas', monospace;
+      margin-top: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- 로고 -->
+    <div class="logo">A</div>
+    <div class="title">All In One Helper</div>
+    <div class="version">v1.0.0</div>
+
+    <!-- 실행 상태 -->
+    <div class="status-box">
+      <span class="status-dot"></span>
+      <span class="status-text">백그라운드에서 실행 중</span>
+      <div class="status-sub">
+        올인원 웹사이트와 자동으로 연결되어 있습니다.<br>
+        이 창은 닫아도 됩니다 — 헬퍼는 계속 작동합니다.
+      </div>
+    </div>
+
+    <!-- 기능 목록 -->
+    <div class="features">
+      <div class="feature">
+        <span class="feature-icon">⚡</span>
+        <span class="feature-name">고속 다운로드</span>
+      </div>
+      <div class="feature">
+        <span class="feature-icon">🎤</span>
+        <span class="feature-name">음성 인식</span>
+      </div>
+      <div class="feature">
+        <span class="feature-icon">🔇</span>
+        <span class="feature-name">배경 제거</span>
+      </div>
+      <div class="feature">
+        <span class="feature-icon">🗣️</span>
+        <span class="feature-name">음성 합성</span>
+      </div>
+    </div>
+
+    <!-- 안내 -->
+    <div class="info-box">
+      <div class="info-text">
+        <strong>이 창을 닫아도</strong> 헬퍼는 <strong>시스템 트레이</strong>에서 계속 실행됩니다.<br>
+        올인원 사이트로 돌아가면 모든 기능이 자동 활성화됩니다!
+      </div>
+    </div>
+
+    <div class="tray-hint">
+      시스템 트레이 (시계 옆 아이콘 영역) 에서 헬퍼 상태를 확인하세요
+    </div>
+
+    <div class="port-badge">🔗 localhost:9876</div>
+  </div>
 </body>
 </html>
