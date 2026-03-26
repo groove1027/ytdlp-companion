@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { COMPANION_DOWNLOAD_URL, getCompanionDownloadUrl, getCompanionOsLabel } from '../constants';
+import { COMPANION_DOWNLOAD_URL, COMPANION_WINDOWS_AVAILABLE, getCompanionDownloadUrl, getCompanionOsLabel } from '../constants';
 
 const DISMISS_KEY = 'announcement_v1_dismissed';
 
@@ -75,46 +75,69 @@ export default function AnnouncementBanner() {
             헬퍼 앱 하나만 설치하면 모든 기능이 자동으로 활성화됩니다.
           </p>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-            {/* 메인 다운로드 — 현재 OS */}
-            <a
-              href={getCompanionDownloadUrl()}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{
-                display: 'inline-flex', alignItems: 'center', gap: '6px',
-                background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
-                color: '#fff', fontSize: '13px', fontWeight: 700,
+          {/* [FIX #837] OS별 다운로드 버튼 — Windows 미지원 시 안내 표시 */}
+          {getCompanionOsLabel() === 'Windows' && !COMPANION_WINDOWS_AVAILABLE ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <div style={{
+                display: 'inline-flex', alignItems: 'center', gap: '8px',
+                background: 'rgba(251, 191, 36, 0.15)',
+                border: '1px solid rgba(251, 191, 36, 0.4)',
+                color: '#fbbf24', fontSize: '13px', fontWeight: 700,
                 padding: '8px 16px', borderRadius: '8px',
-                textDecoration: 'none', cursor: 'pointer',
-                boxShadow: '0 2px 8px rgba(99, 102, 241, 0.3)',
-                transition: 'transform 0.1s',
-              }}
-              onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.03)')}
-              onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
-            >
-              {getCompanionOsLabel() === 'Windows' ? '🪟 Windows 다운로드' : getCompanionOsLabel() === 'macOS' ? '🍎 macOS 다운로드' : '⬇️ 다운로드'}
-            </a>
-            {/* 다른 OS 다운로드 — 동급 버튼 (보조 스타일) */}
-            <a
-              href={COMPANION_DOWNLOAD_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{
-                display: 'inline-flex', alignItems: 'center', gap: '6px',
-                background: 'rgba(99, 102, 241, 0.15)',
-                border: '1px solid rgba(99, 102, 241, 0.4)',
-                color: '#a5b4fc', fontSize: '13px', fontWeight: 700,
-                padding: '8px 16px', borderRadius: '8px',
-                textDecoration: 'none', cursor: 'pointer',
-                transition: 'all 0.15s',
-              }}
-              onMouseEnter={e => { e.currentTarget.style.background = 'rgba(99, 102, 241, 0.25)'; e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.6)'; e.currentTarget.style.transform = 'scale(1.03)'; }}
-              onMouseLeave={e => { e.currentTarget.style.background = 'rgba(99, 102, 241, 0.15)'; e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.4)'; e.currentTarget.style.transform = 'scale(1)'; }}
-            >
-              {getCompanionOsLabel() === 'Windows' ? '🍎 macOS 버전' : getCompanionOsLabel() === 'macOS' ? '🪟 Windows 버전' : '전체 버전 보기'}
-            </a>
-          </div>
+              }}>
+                🪟 Windows 버전 준비 중
+                <span style={{ color: '#94a3b8', fontWeight: 400, fontSize: '12px' }}>
+                  · 곧 출시 예정
+                </span>
+              </div>
+              <span style={{ color: '#64748b', fontSize: '11px', lineHeight: 1.5 }}>
+                현재 macOS 버전만 제공됩니다. Windows 버전은 빠르게 준비 중이에요!
+              </span>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+              {/* 메인 다운로드 — 현재 OS (직접 파일 다운로드) */}
+              <a
+                href={getCompanionDownloadUrl()}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: '6px',
+                  background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
+                  color: '#fff', fontSize: '13px', fontWeight: 700,
+                  padding: '8px 16px', borderRadius: '8px',
+                  textDecoration: 'none', cursor: 'pointer',
+                  boxShadow: '0 2px 8px rgba(99, 102, 241, 0.3)',
+                  transition: 'transform 0.1s',
+                }}
+                onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.03)')}
+                onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
+              >
+                {getCompanionOsLabel() === 'Windows' ? '🪟 Windows 다운로드' : getCompanionOsLabel() === 'macOS' ? '🍎 macOS 다운로드' : '⬇️ 다운로드'}
+              </a>
+              {/* 다른 OS 버전 링크 — Windows 미지원 시 숨김 */}
+              {(getCompanionOsLabel() === 'macOS' && COMPANION_WINDOWS_AVAILABLE) && (
+                <a
+                  href={COMPANION_DOWNLOAD_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: '6px',
+                    background: 'rgba(99, 102, 241, 0.15)',
+                    border: '1px solid rgba(99, 102, 241, 0.4)',
+                    color: '#a5b4fc', fontSize: '13px', fontWeight: 700,
+                    padding: '8px 16px', borderRadius: '8px',
+                    textDecoration: 'none', cursor: 'pointer',
+                    transition: 'all 0.15s',
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.background = 'rgba(99, 102, 241, 0.25)'; e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.6)'; e.currentTarget.style.transform = 'scale(1.03)'; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = 'rgba(99, 102, 241, 0.15)'; e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.4)'; e.currentTarget.style.transform = 'scale(1)'; }}
+                >
+                  🪟 Windows 버전
+                </a>
+              )}
+            </div>
+          )}
         </div>
 
         {/* 닫기 */}

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { isCompanionDetected, recheckCompanion } from '../services/ytdlpApiService';
-import { COMPANION_DOWNLOAD_URL, getCompanionDownloadUrl, getCompanionOsLabel } from '../constants';
+import { COMPANION_DOWNLOAD_URL, COMPANION_WINDOWS_AVAILABLE, getCompanionDownloadUrl, getCompanionOsLabel } from '../constants';
 
 /** 기능별 배너 테마 */
 type CompanionFeature = 'download' | 'stt' | 'tts' | 'rembg' | 'ffmpeg' | 'general';
@@ -146,19 +146,25 @@ export default function CompanionBanner({ feature = 'general', compact = false }
         <strong style={{ color: theme.color }}>{theme.label}</strong>
         {!compact && <>를 위해{' '}</>}
         {compact ? ' — ' : ' '}
-        <a
-          href={getCompanionDownloadUrl()}
-          target="_blank"
-          rel="noopener noreferrer"
-          style={{
-            color: theme.color,
-            textDecoration: 'underline',
-            fontWeight: 700,
-            cursor: 'pointer',
-          }}
-        >
-          헬퍼 앱 설치{getCompanionOsLabel() ? ` (${getCompanionOsLabel()})` : ''}
-        </a>
+        {getCompanionOsLabel() === 'Windows' && !COMPANION_WINDOWS_AVAILABLE ? (
+          <span style={{ color: '#fbbf24', fontWeight: 700 }}>
+            헬퍼 앱 (Windows 버전 준비 중)
+          </span>
+        ) : (
+          <a
+            href={getCompanionDownloadUrl()}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              color: theme.color,
+              textDecoration: 'underline',
+              fontWeight: 700,
+              cursor: 'pointer',
+            }}
+          >
+            헬퍼 앱 설치{getCompanionOsLabel() ? ` (${getCompanionOsLabel()})` : ''}
+          </a>
+        )}
         {!compact && <> {theme.description}</>}
       </span>
       <button
