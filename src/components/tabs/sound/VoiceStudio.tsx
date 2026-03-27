@@ -2155,11 +2155,60 @@ const VoiceStudio: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => {
-                          const update: Partial<Speaker> = { engine: browsedEngine!, voiceId: voice.id };
-                          updateSpeaker(activeSpeaker.id, update);
-                          const { setToast } = useUIStore.getState();
-                          setToast({ show: true, message: `"${voice.engine === 'elevenlabs' ? elNameKo(voice.name) : voice.name}" 적용됨 — "음성 생성" 탭에서 오디오를 생성하세요` });
-                          setTimeout(() => setToast(null), 4000);
+                          const voiceDisplayName = voice.engine === 'elevenlabs' ? elNameKo(voice.name) : voice.name;
+                          const storeLines = useSoundStudioStore.getState().lines;
+                          // [FIX #867] 전체 라인에 speakerId 할당 (Typecast와 동일하게)
+                          if (changingLineIndex !== null && storeLines[changingLineIndex]) {
+                            // 특정 줄만 변경 — 전용 speaker 생성하여 engine 일관성 보장
+                            const lineSpeaker: Speaker = {
+                              id: `speaker-${Date.now()}-line`,
+                              name: voiceDisplayName,
+                              color: SPEAKER_COLORS[useSoundStudioStore.getState().speakers.length % SPEAKER_COLORS.length],
+                              engine: browsedEngine!,
+                              voiceId: voice.id,
+                              language: browseLanguage,
+                              speed: 1.0, pitch: 0,
+                              stability: 0.5, similarityBoost: 0.75, style: 0, useSpeakerBoost: true,
+                              lineCount: 0, totalDuration: 0,
+                            };
+                            addSpeaker(lineSpeaker);
+                            updateLine(storeLines[changingLineIndex].id, {
+                              speakerId: lineSpeaker.id,
+                              voiceId: voice.id,
+                              voiceName: voiceDisplayName,
+                              audioUrl: undefined,
+                              ttsStatus: 'idle',
+                              duration: undefined,
+                              startTime: undefined,
+                              endTime: undefined,
+                            });
+                            setChangingLineIndex(null);
+                            const { setToast } = useUIStore.getState();
+                            setToast({ show: true, message: `${changingLineIndex + 1}번째 줄: "${voiceDisplayName}" 적용됨` });
+                            setTimeout(() => setToast(null), 3000);
+                          } else {
+                            // 전체 적용 — speaker 업데이트 + 모든 라인에 speakerId 할당 + 개별 voiceId 초기화
+                            const update: Partial<Speaker> = { engine: browsedEngine!, voiceId: voice.id };
+                            updateSpeaker(activeSpeaker.id, update);
+                            // 같은 speaker 또는 미할당 라인만 업데이트 (다른 캐릭터 보존)
+                            storeLines.forEach(l => {
+                              if (l.speakerId && l.speakerId !== activeSpeaker.id) return;
+                              updateLine(l.id, {
+                                speakerId: activeSpeaker.id,
+                                voiceId: undefined,
+                                voiceName: undefined,
+                                voiceImage: undefined,
+                                audioUrl: undefined,
+                                ttsStatus: 'idle',
+                                duration: undefined,
+                                startTime: undefined,
+                                endTime: undefined,
+                              });
+                            });
+                            const { setToast } = useUIStore.getState();
+                            setToast({ show: true, message: `"${voiceDisplayName}" 전체 적용됨` });
+                            setTimeout(() => setToast(null), 3000);
+                          }
                         }}
                         className="text-xs text-gray-500 hover:text-cyan-400 bg-gray-800 border border-gray-700 hover:border-cyan-500/50 rounded px-1.5 py-0.5 shrink-0 transition-colors"
                         title="이 음성을 현재 화자에 적용"

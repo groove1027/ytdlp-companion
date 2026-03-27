@@ -1,6 +1,7 @@
 import React, { Suspense, useState, useCallback, useEffect } from 'react';
 import { useSoundStudioStore } from '../../stores/soundStudioStore';
 import { stopAllAudio } from '../../stores/soundStudioStore';
+import { useProjectStore } from '../../stores/projectStore';
 import { logger } from '../../services/LoggerService';
 import { lazyRetry } from '../../utils/retryImport';
 
@@ -42,6 +43,125 @@ const SoundStudioTab: React.FC = () => {
     return () => {
       stopAllAudio();
     };
+  }, []);
+
+  // [FIX #868/#874] 탭 진입 시 scenes ↔ lines 동기화
+  // 대본 수정 후 사운드 스튜디오로 돌아왔을 때 나레이션 텍스트가 갱신되지 않는 문제 수정
+  useEffect(() => {
+    const scenes = useProjectStore.getState().scenes;
+    const currentLines = useSoundStudioStore.getState().lines;
+    const config = useProjectStore.getState().config;
+
+    // 업로드 전사 기반 프로젝트는 동기화 스킵 (별도 동기화 경로 사용)
+    if (config?.narrationSource === 'uploaded-audio') return;
+    // 씬이나 라인이 없으면 동기화 불필요
+    if (scenes.length === 0 || currentLines.length === 0) return;
+
+    const scenesWithText = scenes.filter(s => s.scriptText);
+    if (scenesWithText.length === 0) return;
+
+    // sceneId 기반 매핑으로 변경사항 감지
+    const linesWithSceneId = currentLines.filter(l => l.sceneId);
+    // sceneId가 없는 라인이 하나라도 없으면 동기화 불가
+    if (linesWithSceneId.length === 0) return;
+
+    const lineBySceneId = new Map(linesWithSceneId.map(l => [l.sceneId!, l]));
+    const lineSceneIds = new Set(linesWithSceneId.map(l => l.sceneId!));
+    // sceneId 없는 라인 (direct-script 등) — 동기화 후에도 보존
+    const orphanLines = currentLines.filter(l => !l.sceneId);
+
+    let needsSync = false;
+
+    // 1. 텍스트 변경 감지
+    for (const scene of scenesWithText) {
+      const existingLine = lineBySceneId.get(scene.id);
+      if (existingLine && (scene.scriptText || '') !== existingLine.text) {
+        needsSync = true;
+        break;
+      }
+    }
+
+    // 2. 새 씬 추가 감지
+    if (!needsSync) {
+      for (const scene of scenesWithText) {
+        if (!lineSceneIds.has(scene.id)) {
+          needsSync = true;
+          break;
+        }
+      }
+    }
+
+    // 3. 삭제된 씬 감지
+    if (!needsSync) {
+      const sceneIdSet = new Set(scenesWithText.map(s => s.id));
+      for (const line of linesWithSceneId) {
+        if (!sceneIdSet.has(line.sceneId!)) {
+          needsSync = true;
+          break;
+        }
+      }
+    }
+
+    if (!needsSync) return;
+
+    logger.trackAction('[SoundStudio] 대본 변경 감지 — 나레이션 라인 동기화', `씬 ${scenesWithText.length}개`);
+
+    const speakerId = useSoundStudioStore.getState().speakers[0]?.id || '';
+    const ts = Date.now();
+
+    const syncedLines = scenesWithText.map((scene, i) => {
+      const existingLine = lineBySceneId.get(scene.id);
+      const sceneText = scene.scriptText || '';
+
+      if (existingLine && existingLine.text === sceneText) {
+        // 텍스트 동일 → 오디오 데이터 + 모든 메타데이터 보존
+        return { ...existingLine, index: i };
+      }
+
+      if (existingLine) {
+        // 텍스트 변경 → 오디오 + 업로드 마커 모두 초기화, 나머지 보존 (speakerId, voiceId, voiceName 등)
+        return {
+          ...existingLine,
+          text: sceneText,
+          index: i,
+          audioUrl: undefined,
+          ttsStatus: 'idle' as const,
+          duration: undefined,
+          startTime: undefined,
+          endTime: undefined,
+          audioSource: undefined,
+          uploadedAudioId: undefined,
+        };
+      }
+
+      // 새 씬 → 새 라인 생성
+      return {
+        id: `line-${ts}-${i}`,
+        speakerId,
+        text: sceneText,
+        index: i,
+        sceneId: scene.id,
+        ttsStatus: 'idle' as const,
+      };
+    });
+
+    // 텍스트가 변경된 scene의 audioUrl도 초기화 (다른 탭에서 stale audio 참조 방지)
+    const projectStoreActions = useProjectStore.getState();
+    for (const scene of scenesWithText) {
+      const existingLine = lineBySceneId.get(scene.id);
+      if (existingLine && (scene.scriptText || '') !== existingLine.text && scene.audioUrl) {
+        projectStoreActions.updateScene(scene.id, {
+          audioUrl: undefined,
+          audioDuration: undefined,
+          startTime: undefined,
+          endTime: undefined,
+        });
+      }
+    }
+
+    // sceneId 없는 orphan 라인도 끝에 추가하여 보존
+    const finalLines = [...syncedLines, ...orphanLines.map((l, idx) => ({ ...l, index: syncedLines.length + idx }))];
+    useSoundStudioStore.getState().setLines(finalLines);
   }, []);
 
   const handleSubTabClick = useCallback((tabId: 'narration' | 'waveform') => {
