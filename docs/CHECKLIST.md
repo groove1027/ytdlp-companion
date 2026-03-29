@@ -8,6 +8,15 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-30] Premiere Pro .prproj 파일 열기 실패 수정 — &#10; sentinel 보존 + 나레이션 AudioClipChannelGroups 참조 수정
+- [x] `nleExportService.ts` — DOMParser &#10; 엔티티 손실 방지: sentinel 문자(\uE000) 치환 방식으로 100% 보존
+- [x] `nleExportService.ts` — 기존 불완전한 regex 복원 코드 제거 → sentinel 역치환으로 교체
+- [x] `nleExportService.ts` — sentinel 충돌 가드 추가 (templateXml에 \uE000 존재 시 throw)
+- [x] `nleExportService.ts` — 나레이션 AudioClipChannelGroups(ObjectID=164) 복제 + 참조 갱신 누락 수정
+- [x] Vite 빌드 성공
+- [x] Codex 5.4 MCP 리뷰 10회 수행 (High: 나레이션 ref 누락 발견 → 수정)
+- [x] Playwright E2E: sentinel 라운드트립 2061/2061 &#10; 보존 확인
+
 ### [2026-03-26] 18건 유사 버그 6배치 일괄 수정 (#823,#794,#785,#813,#782,#814,#795,#772,#767,#765,#797,#776,#775,#826,#764,#769,#792)
 - [x] **Batch 1 (자막 환각 방지)**: ChannelAnalysisRoom — 자막 미확보 영상 AI 분석 제외, captionOnly 필터링 (#823,#794,#785,#813)
 - [x] **Batch 2 (URL 캐시)**: videoAnalysisStore — setYoutubeUrl/updateYoutubeUrl 시 이전 분석 결과 자동 초기화 (#782,#785)

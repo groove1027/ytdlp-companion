@@ -434,6 +434,8 @@ ${body}
 }
 
 const PREMIERE_NATIVE_TEMPLATE_URL = new URL('../assets/premiere-native-template.prproj', import.meta.url).href;
+/** DOMParser가 &#10; 엔티티를 리터럴 \n으로 디코딩하여 손실. 파싱 전 sentinel로 보존. */
+const PREMIERE_NEWLINE_ENTITY_SENTINEL = '\uE000';
 const PREMIERE_TICKS_PER_SECOND = 127_008_000_000;
 const PREMIERE_CAPTION_CLIP_BASE_TICKS = 914_457_600_000_000;
 const PREMIERE_PORTRAIT_CAPTION_TEMPLATE_STYLE_BASE64 = 'zAEAAAAAAABEMyIRDAAAAAAABgAKAAQABgAAAGQAAAAAAF4ATAAUABAAAAAAAEgARAAAAAAAAAAAAEAAPwA4AAAANAAwACwAKAAAACQAIAAAAAAAAAAAAAAAHgAAAAAAAAAAAAAAGAAMAAAAAAAAAAAAAAAAAAgAAAAAAB8ABwBeAAAAAAAAAUQAAABEAAAAhAAAAKAAAABAAAAAAAABAPk+jkIAAMhCXAAAABwEg0IAAMBAAABAQAAAyEIAAAABTAAAAAEAAAACAAAABP///+7///8EAAAAAQAAAAwAAAAAAAYACAAEAAYAAAAEAAAADQAAAEFuaW1hdGlvblR5cGUAAABO////AAAAAFb///8AAAAAAQAAAAQAAAASAAAAUGFwZXJsb2d5LTRSZWd1bGFyAAABAAAADAAAAAgADgAEAAgACAAAAIgAAAA8AAAAAAA2ACAAAAAcAAAAAAAYAAAAFAAAAAAAAAAAAAAAAAAAAAAAEwAAAAAAAAAAAAAADAAAAAgABAA2AAAAAgAAABgAAAAcAAAAAAAAAQAAAAAgAAAAAABwQuD///8EAAYABAAAAAAACgAIAAUABgAHAAoAAAAAAAAABAAEAAQAAAABAAAAYQAAAA==';
@@ -1019,7 +1021,14 @@ async function generatePremiereNativeProjectBytes(params: {
   } = params;
 
   const templateXml = await loadPremiereNativeTemplateXml();
-  const doc = new DOMParser().parseFromString(templateXml, 'application/xml');
+  // [FIX] &#10; 엔티티를 sentinel 문자로 보존하여 DOMParser 라운드트립 시 손실 방지.
+  // DOMParser가 &#10;을 리터럴 \n으로 디코딩하면 XMLSerializer가 복원하지 않아
+  // Premiere 내부 메타데이터(XMP Schema, Export Preset 등)가 깨진다.
+  if (templateXml.includes(PREMIERE_NEWLINE_ENTITY_SENTINEL)) {
+    throw new Error('Premiere 템플릿에 sentinel 문자(\\uE000)가 이미 존재합니다. 템플릿을 확인해주세요.');
+  }
+  const preservedXml = templateXml.replace(/&#10;/g, PREMIERE_NEWLINE_ENTITY_SENTINEL);
+  const doc = new DOMParser().parseFromString(preservedXml, 'application/xml');
   if (doc.querySelector('parsererror')) {
     throw new Error('Premiere native template XML 파싱에 실패했습니다.');
   }
@@ -1164,6 +1173,7 @@ async function generatePremiereNativeProjectBytes(params: {
 
   const narrationTrackItemPrototype = getPremiereObjectById(doc, '395');
   const narrationMasterAudioComponentChainPrototype = getPremiereObjectById(doc, '162');
+  const narrationChannelGroupsPrototype = getPremiereObjectById(doc, '164');
   const narrationComponentChainPrototype = getPremiereObjectById(doc, '487');
   const narrationSubClipPrototype = getPremiereObjectById(doc, '488');
   const narrationTimelineClipPrototype = getPremiereObjectById(doc, '688');
@@ -1389,6 +1399,7 @@ async function generatePremiereNativeProjectBytes(params: {
 
       const narrationMasterClip = clonePremiereObject(root, narrationMasterClipPrototype, nextObjectId);
       const narrationMasterAudioComponentChain = clonePremiereObject(root, narrationMasterAudioComponentChainPrototype, nextObjectId);
+      const narrationChannelGroups = clonePremiereObject(root, narrationChannelGroupsPrototype, nextObjectId);
       const narrationLoggingInfo = clonePremiereObject(root, narrationLoggingInfoPrototype, nextObjectId);
       const narrationMasterLibraryClip = clonePremiereObject(root, narrationMasterLibraryClipPrototype, nextObjectId);
       const narrationMediaSource = clonePremiereObject(root, narrationMediaSourcePrototype, nextObjectId);
@@ -1400,6 +1411,8 @@ async function generatePremiereNativeProjectBytes(params: {
       setPremiereChildText(doc, narrationMasterClip, 'Name', narrationFileName);
       setPremiereChildText(doc, narrationMasterClip, 'MasterClipChangeVersion', '1');
       setPremiereObjectRef(getPremiereDirectChild(narrationMasterClip, 'LoggingInfo')!, narrationLoggingInfo.getAttribute('ObjectID') || '');
+      // [FIX] AudioClipChannelGroups 참조를 복제된 객체로 갱신 — 누락 시 dangling ref로 Premiere 파싱 실패
+      setPremiereObjectRef(getPremiereDirectChild(narrationMasterClip, 'AudioClipChannelGroups')!, narrationChannelGroups.getAttribute('ObjectID') || '');
       const narrationMasterAudioChains = getPremiereDirectChild(narrationMasterClip, 'AudioComponentChains');
       const narrationMasterAudioChainRef = narrationMasterAudioChains?.querySelector('AudioComponentChain');
       if (narrationMasterAudioChainRef) {
@@ -1488,20 +1501,8 @@ async function generatePremiereNativeProjectBytes(params: {
   const serialized = new XMLSerializer().serializeToString(doc);
   // XMLSerializer가 자체 XML 선언을 추가하므로 중복 방지
   const withoutDecl = serialized.replace(/^<\?xml[^?]*\?>\s*/, '');
-  // [FIX] DOMParser가 &#10; 엔티티를 리터럴 \n으로 디코딩하고 XMLSerializer는
-  // 복원하지 않음. 텍스트 콘텐츠 안의 \n을 &#10;으로 되돌려야 Premiere 내부
-  // 메타데이터(XMP Schema, Export Preset 등)가 정상 파싱됨.
-  // 앞뒤 구조적 공백(들여쓰기)은 보존하고 중간 콘텐츠의 \n만 변환한다.
-  const restored = withoutDecl.replace(/>([^<]+)</g, (_match, text: string) => {
-    if (!text.includes('\n') || text.trim().length === 0) return _match;
-    const leadWs = text.match(/^(\s*)/)?.[1] || '';
-    // 구조적 후행 공백은 반드시 \n + 탭/공백(들여쓰기)이 있어야 함.
-    // 맨 끝 단독 \n은 원본 &#10; 콘텐츠일 수 있으므로 보존 대상.
-    const trailWs = text.match(/(\n[\t ]+)$/)?.[1] || '';
-    const inner = text.slice(leadWs.length, text.length - trailWs.length);
-    if (!inner.includes('\n')) return _match;
-    return '>' + leadWs + inner.replace(/\n/g, '&#10;') + trailWs + '<';
-  });
+  // [FIX] sentinel 문자를 &#10; 엔티티로 복원 — 파싱 전 치환의 역연산
+  const restored = withoutDecl.replace(new RegExp(PREMIERE_NEWLINE_ENTITY_SENTINEL, 'g'), '&#10;');
   const projectXml = `<?xml version="1.0" encoding="UTF-8" ?>\n${restored}`;
   return transformPremiereProjectBytes(new TextEncoder().encode(projectXml), 'compress');
 }
