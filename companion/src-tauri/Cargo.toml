@@ -19,6 +19,7 @@ base64 = "0.22"
 tokio-util = { version = "0.7", features = ["io"] }
 futures-util = "0.3"
 url = "2"
+regex-lite = "0.1"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

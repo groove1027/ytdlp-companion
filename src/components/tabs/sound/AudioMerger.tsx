@@ -2,7 +2,7 @@ import React, { useState, useMemo, useRef, useCallback, useEffect } from 'react'
 import { logger } from '../../../services/LoggerService';
 import { useSoundStudioStore, registerAudio, unregisterAudio } from '../../../stores/soundStudioStore';
 import { useProjectStore } from '../../../stores/projectStore';
-import { generateSupertonicTTS, mergeAudioFiles } from '../../../services/ttsService';
+import { generateSupertonicTTS, generateQwen3TTS, mergeAudioFiles } from '../../../services/ttsService';
 import { generateTypecastTTS } from '../../../services/typecastService';
 import { generateElevenLabsDialogueTTS } from '../../../services/elevenlabsService';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
@@ -35,6 +35,8 @@ async function generateLineTTS(
         stability: speaker.stability ?? 0.5,
         languageCode: speaker.language || 'auto',
       });
+    case 'qwen3':
+      return generateQwen3TTS(text, speaker.voiceId || 'Sohee', lang);
     case 'supertonic':
       return generateSupertonicTTS(text, speaker.voiceId, lang, speaker.speed);
     case 'typecast': {

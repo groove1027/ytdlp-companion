@@ -60,6 +60,26 @@ struct TranscribeRequest {
 struct TtsRequest {
     text: String,
     language: Option<String>,
+    engine: Option<String>,    // "qwen3" | "kokoro" | "auto"
+    voice: Option<String>,     // 음성 ID (af_heart, Sohee 등)
+}
+
+#[derive(Deserialize)]
+struct NleInstallRequest {
+    target: String,                          // "capcut" | "premiere" | "filmora"
+    #[serde(rename = "projectId")]
+    project_id: String,
+    files: Vec<NleFileEntry>,                // 파일 목록 (경로 + base64 데이터)
+    #[serde(rename = "launchApp")]
+    launch_app: Option<bool>,
+}
+
+#[derive(Deserialize)]
+struct NleFileEntry {
+    path: String,       // 상대 경로 (e.g., "draft_content.json")
+    data: String,       // base64 인코딩된 파일 데이터
+    #[serde(rename = "isText")]
+    is_text: Option<bool>,  // true면 UTF-8 텍스트로 디코딩 후 경로 패치
 }
 
 #[derive(Deserialize)]
@@ -152,8 +172,11 @@ pub async fn start_server(_app: tauri::AppHandle) -> Result<(), Box<dyn std::err
         .route("/api/remove-bg", post(remove_bg_handler))
         // 음성 인식 (whisper.cpp)
         .route("/api/transcribe", post(transcribe_handler))
-        // 음성 합성 (Piper TTS)
+        // 음성 합성 (Qwen3 / Kokoro / Piper TTS)
         .route("/api/tts", post(tts_handler))
+        .route("/api/tts/voices", get(tts_voices_handler))
+        // NLE 직접 설치 (CapCut/Premiere/Filmora)
+        .route("/api/nle/install", post(nle_install_handler))
         // FFmpeg 인코딩
         .route("/api/ffmpeg/transcode", post(ffmpeg_transcode_handler))
         .layer(cors)
@@ -187,7 +210,12 @@ async fn health_handler() -> Json<HealthResponse> {
     if dirs::data_dir().map(|d| d.join("ytdlp-companion").join(whisper_bin).exists()).unwrap_or(false) {
         services.push("whisper".to_string());
     }
-    // TTS 확인 (Kokoro 우선, Piper 폴백)
+    // TTS 확인 (Qwen3 > Kokoro > Piper)
+    // qwen-tts 전용 패키지 또는 transformers+trust_remote_code 둘 다 확인
+    if tokio::process::Command::new(python).args(["-c", "from qwen_tts import Qwen3TTSModel; print('ok')"]).output().await.map(|o| o.status.success()).unwrap_or(false)
+       || tokio::process::Command::new(python).args(["-c", "from transformers import AutoTokenizer; print('ok')"]).output().await.map(|o| o.status.success()).unwrap_or(false) {
+        services.push("tts-qwen3".to_string());
+    }
     if tokio::process::Command::new(python).args(["-c", "from kokoro_onnx import Kokoro"]).output().await.map(|o| o.status.success()).unwrap_or(false) {
         services.push("tts-kokoro".to_string());
     } else {
@@ -196,6 +224,8 @@ async fn health_handler() -> Json<HealthResponse> {
             services.push("tts-piper".to_string());
         }
     }
+    // NLE 설치 기능 항상 사용 가능
+    services.push("nle-install".to_string());
     // ffmpeg 확인 (ytdlp 모듈의 공통 경로 탐색 사용)
     let ffmpeg_path = ytdlp::get_ffmpeg_path_public();
     if tokio::process::Command::new(&ffmpeg_path).args(["-version"]).output().await.map(|o| o.status.success()).unwrap_or(false) {
@@ -395,7 +425,12 @@ async fn transcribe_handler(Json(req): Json<TranscribeRequest>) -> impl IntoResp
 // ──────────────────────────────────────────────
 
 async fn tts_handler(Json(req): Json<TtsRequest>) -> impl IntoResponse {
-    match tts::synthesize_speech(&req.text, req.language.as_deref()).await {
+    match tts::synthesize_speech(
+        &req.text,
+        req.language.as_deref(),
+        req.engine.as_deref(),
+        req.voice.as_deref(),
+    ).await {
         Ok(wav_data) => {
             let mut headers = HeaderMap::new();
             headers.insert("Content-Type", "audio/wav".parse().unwrap());
@@ -404,6 +439,174 @@ async fn tts_handler(Json(req): Json<TtsRequest>) -> impl IntoResponse {
         }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e.to_string() }))).into_response(),
     }
+}
+
+// ──────────────────────────────────────────────
+// 핸들러: /api/tts/voices (음성 목록)
+// ──────────────────────────────────────────────
+
+async fn tts_voices_handler() -> Json<serde_json::Value> {
+    Json(tts::get_voices_json())
+}
+
+// ──────────────────────────────────────────────
+// 핸들러: /api/nle/install (NLE 프로젝트 직접 설치)
+// ──────────────────────────────────────────────
+
+async fn nle_install_handler(Json(req): Json<NleInstallRequest>) -> impl IntoResponse {
+    use base64::Engine;
+
+    // 프로젝트 ID 검증 (경로 탐색 방지 — UUID/알파벳+숫자+하이픈만, 80자 제한)
+    let id_valid = !req.project_id.is_empty()
+        && req.project_id.len() <= 80
+        && req.project_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    if !id_valid {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "유효하지 않은 프로젝트 ID — 영숫자, 하이픈, 언더스코어만 허용 (최대 80자)" }))).into_response();
+    }
+
+    // 대상 NLE에 따라 설치 경로 결정
+    let install_root = match req.target.as_str() {
+        "capcut" => {
+            if cfg!(target_os = "macos") {
+                dirs::home_dir().unwrap_or_default()
+                    .join("Movies/CapCut/User Data/Projects/com.lveditor.draft")
+            } else {
+                // Windows: %LOCALAPPDATA%\CapCut\User Data\Projects\com.lveditor.draft
+                dirs::data_local_dir().unwrap_or_default()
+                    .join("CapCut/User Data/Projects/com.lveditor.draft")
+            }
+        }
+        "premiere" | "filmora" => {
+            // 문서 폴더에 저장
+            dirs::document_dir().unwrap_or_else(|| dirs::home_dir().unwrap_or_default())
+                .join("All In One NLE Export")
+        }
+        _ => {
+            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": format!("지원하지 않는 NLE: {}", req.target) }))).into_response();
+        }
+    };
+
+    let project_dir = install_root.join(&req.project_id);
+
+    // 폴더 생성
+    if let Err(e) = std::fs::create_dir_all(&project_dir) {
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("폴더 생성 실패: {}", e) }))).into_response();
+    }
+
+    // Windows에서 역슬래시를 슬래시로 정규화 (JSON 문자열 내 escape 문제 방지)
+    let project_path_str = project_dir.to_string_lossy().to_string().replace('\\', "/");
+    let root_path_str = install_root.to_string_lossy().to_string().replace('\\', "/");
+    let placeholder = format!("##_draftpath_placeholder_{}_##", req.project_id);
+
+    let mut installed_count = 0;
+
+    // 파일 쓰기
+    for entry in &req.files {
+        // 경로 검증 (경로 탐색 방지 — 절대경로, .., 제어문자 차단)
+        if entry.path.contains("..") || entry.path.starts_with('/') || entry.path.starts_with('\\')
+           || entry.path.contains(':') || entry.path.chars().any(|c| c.is_control()) {
+            eprintln!("[NLE] 경로 거부: {}", entry.path);
+            continue;
+        }
+
+        let file_path = project_dir.join(&entry.path);
+        // canonicalize 전 검증: join 후 project_dir 하위인지 확인
+        if !file_path.starts_with(&project_dir) {
+            eprintln!("[NLE] 경로 탐색 차단: {}", entry.path);
+            continue;
+        }
+
+        // 부모 디렉토리 생성
+        if let Some(parent) = file_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+
+        let data = match base64::engine::general_purpose::STANDARD.decode(&entry.data) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("[NLE] Base64 디코딩 실패 ({}): {}", entry.path, e);
+                continue;
+            }
+        };
+
+        // 텍스트 파일이면 경로 플레이스홀더를 실제 경로로 패치
+        if entry.is_text.unwrap_or(false) {
+            let mut text = String::from_utf8_lossy(&data).to_string();
+            // CapCut 경로 패치
+            if req.target == "capcut" {
+                text = text.replace(&placeholder, &project_path_str);
+                text = text.replace(
+                    "\"path\":\"materials/",
+                    &format!("\"path\":\"{}/materials/", project_path_str),
+                );
+                text = text.replace(
+                    "\"media_path\":\"materials/",
+                    &format!("\"media_path\":\"{}/materials/", project_path_str),
+                );
+                // draft_fold_path, draft_root_path 패치
+                let fold_re = regex_lite::Regex::new(r#""draft_fold_path":"[^"]*""#).unwrap_or_else(|_| regex_lite::Regex::new(r#"NOMATCH"#).unwrap());
+                text = fold_re.replace_all(&text, &format!("\"draft_fold_path\":\"{}\"", project_path_str)).to_string();
+                let root_re = regex_lite::Regex::new(r#""draft_root_path":"[^"]*""#).unwrap_or_else(|_| regex_lite::Regex::new(r#"NOMATCH"#).unwrap());
+                text = root_re.replace_all(&text, &format!("\"draft_root_path\":\"{}\"", root_path_str)).to_string();
+            }
+            if let Err(e) = std::fs::write(&file_path, text.as_bytes()) {
+                eprintln!("[NLE] 파일 쓰기 실패 ({}): {}", entry.path, e);
+                continue;
+            }
+        } else {
+            if let Err(e) = std::fs::write(&file_path, &data) {
+                eprintln!("[NLE] 파일 쓰기 실패 ({}): {}", entry.path, e);
+                continue;
+            }
+        }
+
+        installed_count += 1;
+    }
+
+    // 앱 실행
+    if req.launch_app.unwrap_or(true) {
+        match req.target.as_str() {
+            "capcut" => {
+                #[cfg(target_os = "macos")]
+                {
+                    let _ = tokio::process::Command::new("open")
+                        .args(["-a", "CapCut", &project_path_str])
+                        .spawn();
+                }
+                #[cfg(target_os = "windows")]
+                {
+                    let _ = tokio::process::Command::new("cmd")
+                        .args(["/c", "start", "CapCut"])
+                        .spawn();
+                }
+            }
+            "premiere" => {
+                // prproj 파일 찾아서 열기
+                if let Ok(entries) = std::fs::read_dir(&project_dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.extension().map(|e| e == "prproj").unwrap_or(false) {
+                            #[cfg(target_os = "macos")]
+                            { let _ = tokio::process::Command::new("open").arg(&path).spawn(); }
+                            #[cfg(target_os = "windows")]
+                            { let _ = tokio::process::Command::new("cmd").args(["/c", "start", "", &path.to_string_lossy()]).spawn(); }
+                            break;
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    println!("[NLE] {} 프로젝트 설치 완료: {} ({}개 파일)", req.target, project_path_str, installed_count);
+
+    Json(serde_json::json!({
+        "success": true,
+        "installedPath": project_path_str,
+        "filesInstalled": installed_count,
+        "target": req.target,
+    })).into_response()
 }
 
 // ──────────────────────────────────────────────

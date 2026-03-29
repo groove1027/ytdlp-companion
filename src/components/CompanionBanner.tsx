@@ -3,7 +3,7 @@ import { isCompanionDetected, recheckCompanion } from '../services/ytdlpApiServi
 import { COMPANION_DOWNLOAD_URL, COMPANION_WINDOWS_AVAILABLE, getCompanionDownloadUrl, getCompanionOsLabel } from '../constants';
 
 /** 기능별 배너 테마 */
-type CompanionFeature = 'download' | 'stt' | 'tts' | 'rembg' | 'ffmpeg' | 'general';
+type CompanionFeature = 'download' | 'stt' | 'tts' | 'rembg' | 'ffmpeg' | 'nle' | 'general';
 
 interface FeatureTheme {
   icon: string;
@@ -63,6 +63,15 @@ const THEMES: Record<CompanionFeature, FeatureTheme> = {
     description: '영상 렌더링이 5~15배 빨라집니다.',
     color: '#ef4444',
     bg: 'rgba(239, 68, 68, 0.08)', border: 'rgba(239, 68, 68, 0.35)',
+    activeBg: 'rgba(16, 185, 129, 0.1)', activeBorder: 'rgba(16, 185, 129, 0.3)', activeText: '#10b981',
+  },
+  nle: {
+    icon: '\uD83C\uDFAC', activeIcon: '\u26A1',
+    label: '\uC6D0\uD074\uB9AD NLE \uC124\uCE58',
+    activeLabel: 'NLE \uC9C1\uC811 \uC124\uCE58 \uD65C\uC131\uD654\uB428',
+    description: 'CapCut/Premiere/Filmora\uC5D0 \uD504\uB85C\uC81D\uD2B8\uB97C \uBC14\uB85C \uC124\uCE58\uD569\uB2C8\uB2E4.',
+    color: '#f97316',
+    bg: 'rgba(249, 115, 22, 0.08)', border: 'rgba(249, 115, 22, 0.35)',
     activeBg: 'rgba(16, 185, 129, 0.1)', activeBorder: 'rgba(16, 185, 129, 0.3)', activeText: '#10b981',
   },
   general: {

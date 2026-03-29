@@ -386,25 +386,70 @@ const generateElevenLabsSingleChunk = async (
 };
 */
 
+/** 컴패니언 음성 목록 캐시 */
+let _companionVoicesCache: CompanionVoiceInfo[] | null = null;
+let _companionVoicesCacheTime = 0;
+
+export interface CompanionVoiceInfo {
+    id: string;
+    name: string;
+    language: string;
+    gender: string;
+    engine: 'qwen3' | 'kokoro';
+}
+
 /**
- * 컴패니언 Kokoro TTS로 로컬 음성 합성 시도
- * 고품질 한국어/영어/일본어 지원, API 비용 없음
+ * 컴패니언 TTS 음성 목록 가져오기
+ */
+export async function getCompanionTTSVoices(): Promise<{ qwen3: CompanionVoiceInfo[]; kokoro: CompanionVoiceInfo[] }> {
+    if (!isCompanionDetected()) return { qwen3: [], kokoro: [] };
+
+    // 5분 캐시
+    if (_companionVoicesCache && (Date.now() - _companionVoicesCacheTime) < 300_000) {
+        const qwen3 = _companionVoicesCache.filter(v => v.engine === 'qwen3');
+        const kokoro = _companionVoicesCache.filter(v => v.engine === 'kokoro');
+        return { qwen3, kokoro };
+    }
+
+    try {
+        const res = await fetch(`${COMPANION_URL}/api/tts/voices`, {
+            signal: AbortSignal.timeout(5_000),
+        });
+        if (!res.ok) return { qwen3: [], kokoro: [] };
+        const data = await res.json();
+        const qwen3 = (data.qwen3 || []) as CompanionVoiceInfo[];
+        const kokoro = (data.kokoro || []) as CompanionVoiceInfo[];
+        _companionVoicesCache = [...qwen3, ...kokoro];
+        _companionVoicesCacheTime = Date.now();
+        return { qwen3, kokoro };
+    } catch {
+        return { qwen3: [], kokoro: [] };
+    }
+}
+
+/**
+ * 컴패니언 TTS로 로컬 음성 합성 시도 (Qwen3/Kokoro 자동 선택)
+ * @param engine "qwen3" | "kokoro" | "auto" — auto면 한국어→Qwen3, 나머지→Kokoro
+ * @param voice 음성 ID (Sohee, af_heart 등)
  * @returns null이면 Supertonic 폴백 필요
  */
 async function tryCompanionTTS(
     text: string,
     language: TTSLanguage = 'ko',
+    engine: string = 'auto',
+    voice?: string,
 ): Promise<TTSResult | null> {
     if (!isCompanionDetected()) return null;
 
     try {
-        logger.info('[TTS] 컴패니언 Kokoro TTS 시도', { language, textLength: text.length });
+        const engineLabel = engine === 'qwen3' ? 'Qwen3' : engine === 'kokoro' ? 'Kokoro' : '자동';
+        logger.info(`[TTS] 컴패니언 ${engineLabel} TTS 시도`, { language, textLength: text.length, voice });
 
         const res = await fetch(`${COMPANION_URL}/api/tts`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text, language }),
-            signal: AbortSignal.timeout(60_000),
+            body: JSON.stringify({ text, language, engine, voice }),
+            signal: AbortSignal.timeout(120_000), // Qwen3는 모델 로딩에 시간 필요
         });
 
         if (!res.ok) return null;
@@ -422,13 +467,31 @@ async function tryCompanionTTS(
         const dataSize = buffer.byteLength - 44;
         const duration = dataSize / (sampleRate * (bitsPerSample / 8) * channels);
 
-        logger.success('[TTS] 컴패니언 Kokoro TTS 성공', { duration: duration.toFixed(1) + 's' });
+        logger.success(`[TTS] 컴패니언 ${engineLabel} TTS 성공`, { duration: duration.toFixed(1) + 's', voice });
         return { audioUrl, duration, format: 'wav' };
     } catch (e) {
-        logger.warn('[TTS] 컴패니언 Kokoro TTS 실패 — Supertonic 폴백:', e instanceof Error ? e.message : '');
+        logger.warn('[TTS] 컴패니언 TTS 실패 — 폴백:', e instanceof Error ? e.message : '');
         return null;
     }
 }
+
+/**
+ * Qwen3 TTS 생성 (컴패니언 전용)
+ * 한국어 공식 지원 + 10개 언어 + 음성 복제
+ */
+export const generateQwen3TTS = async (
+    text: string,
+    voiceId: string,
+    language: TTSLanguage = 'ko',
+): Promise<TTSResult> => {
+    const cleanText = stripSpeakerTags(text);
+    if (!cleanText.trim()) throw new Error('TTS 텍스트가 비어있습니다.');
+
+    const result = await tryCompanionTTS(cleanText, language, 'qwen3', voiceId);
+    if (result) return result;
+
+    throw new Error('Qwen3 TTS 생성 실패 — 컴패니언 앱이 실행 중인지 확인하세요.');
+};
 
 /**
  * Supertonic 2 TTS 생성 (브라우저 로컬)
@@ -445,8 +508,8 @@ export const generateSupertonicTTS = async (
     const cleanText = stripSpeakerTags(text);
     if (!cleanText.trim()) throw new Error('TTS 텍스트가 비어있습니다.');
 
-    // 1순위: 컴패니언 Kokoro TTS (로컬, 고품질, 일본어 지원)
-    const companionResult = await tryCompanionTTS(cleanText, language);
+    // 1순위: 컴패니언 TTS — 한국어→Qwen3 우선, 나머지→Kokoro 우선 (자동 선택)
+    const companionResult = await tryCompanionTTS(cleanText, language, 'auto');
     if (companionResult) return companionResult;
 
     // 2순위: Supertonic 2 (브라우저 ONNX)
@@ -456,7 +519,15 @@ export const generateSupertonicTTS = async (
     const langMap: Record<TTSLanguage, string> = {
         'ko': 'ko',
         'en': 'en',
-        'ja': 'ko'
+        'ja': 'ko',
+        'zh': 'en',
+        'es': 'en',
+        'fr': 'en',
+        'de': 'en',
+        'hi': 'en',
+        'it': 'en',
+        'pt': 'en',
+        'ru': 'en',
     };
 
     const result = await generateSupertonicSpeech(cleanText, langMap[language] || 'ko', voiceId, speed);

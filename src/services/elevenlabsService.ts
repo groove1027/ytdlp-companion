@@ -16,20 +16,23 @@ import { isCompanionDetected } from './ytdlpApiService';
 
 const COMPANION_URL = 'http://localhost:9876';
 
-/** 컴패니언 Kokoro/Piper TTS로 로컬 음성 합성 시도 */
+/** 컴패니언 Qwen3/Kokoro/Piper TTS로 로컬 음성 합성 시도 */
 async function tryCompanionTTS(text: string, languageCode?: string): Promise<{ audioUrl: string; format: string } | null> {
   if (!isCompanionDetected()) return null;
 
   try {
-    logger.info('[TTS] 컴패니언 로컬 TTS 합성 시도 (Kokoro/Piper)');
+    // 컴패니언에 언어를 그대로 전달 (자동 엔진 선택에 필요)
+    const lang = languageCode || 'ko';
+    logger.info('[TTS] 컴패니언 로컬 TTS 합성 시도 (Qwen3/Kokoro)');
     const res = await fetch(`${COMPANION_URL}/api/tts`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         text,
-        language: languageCode === 'en' ? 'en' : 'ko',
+        language: lang,
+        engine: 'auto', // 한국어→Qwen3 우선, 나머지→Kokoro 우선
       }),
-      signal: AbortSignal.timeout(60_000),
+      signal: AbortSignal.timeout(120_000),
     });
 
     if (!res.ok) return null;

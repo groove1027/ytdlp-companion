@@ -6,6 +6,7 @@ import { useScriptWriterStore } from '../../../stores/scriptWriterStore';
 import {
   getAvailableVoices,
   generateSupertonicTTS,
+  generateQwen3TTS,
   splitTextForTTS,
   splitBySentenceEndings,
 } from '../../../services/ttsService';
@@ -41,12 +42,21 @@ const EL_EMOTION_TAGS: Record<string, string> = {
 
 const TTS_ENGINES: { id: TTSEngine; label: string; voiceCount: number; icon: string; iconColor: string; description: string; badge?: string }[] = [
   {
+    id: 'qwen3' as TTSEngine,
+    label: 'Qwen3 TTS',
+    voiceCount: 9,
+    icon: '\uD83C\uDF1F',
+    iconColor: '#f59e0b',
+    description: 'Alibaba Qwen3-TTS \u2014 \uD55C\uAD6D\uC5B4 \uACF5\uC2DD \uC9C0\uC6D0, 10\uAC1C \uC5B8\uC5B4, ElevenLabs\uBCF4\uB2E4 \uB192\uC740 \uD55C\uAD6D\uC5B4 \uC815\uD655\uB3C4. \uCEF4\uD328\uB2C8\uC5B8 \uC571 \uD544\uC694.',
+    badge: '\uB85C\uCEEC \uBB34\uB8CC',
+  },
+  {
     id: 'typecast' as TTSEngine,
     label: 'Typecast',
     voiceCount: 542,
     icon: '\uD83C\uDFAD',
     iconColor: '#3b82f6',
-    description: 'AI 음성. ssfm-v30: 다양한 감정 + Smart Emotion / ssfm-v21: 빠르고 안정적. 글자당 2크레딧.',
+    description: 'AI \uC74C\uC131. ssfm-v30: \uB2E4\uC591\uD55C \uAC10\uC815 + Smart Emotion / ssfm-v21: \uBE60\uB974\uACE0 \uC548\uC815\uC801. \uAE00\uC790\uB2F9 2\uD06C\uB808\uB527.',
     badge: 'API \uD0A4',
   },
   {
@@ -70,15 +80,31 @@ const TTS_ENGINES: { id: TTSEngine; label: string; voiceCount: number; icon: str
 ];
 
 const LANGUAGES: { id: TTSLanguage; label: string; flag: string }[] = [
-  { id: 'ko', label: '한국어', flag: '\uD83C\uDDF0\uD83C\uDDF7' },
+  { id: 'ko', label: '\uD55C\uAD6D\uC5B4', flag: '\uD83C\uDDF0\uD83C\uDDF7' },
   { id: 'en', label: 'English', flag: '\uD83C\uDDFA\uD83C\uDDF8' },
-  { id: 'ja', label: '日本語', flag: '\uD83C\uDDEF\uD83C\uDDF5' },
+  { id: 'ja', label: '\u65E5\u672C\u8A9E', flag: '\uD83C\uDDEF\uD83C\uDDF5' },
+  { id: 'zh', label: '\u4E2D\u6587', flag: '\uD83C\uDDE8\uD83C\uDDF3' },
+  { id: 'es', label: 'Espa\u00F1ol', flag: '\uD83C\uDDEA\uD83C\uDDF8' },
+  { id: 'fr', label: 'Fran\u00E7ais', flag: '\uD83C\uDDEB\uD83C\uDDF7' },
+  { id: 'de', label: 'Deutsch', flag: '\uD83C\uDDE9\uD83C\uDDEA' },
+  { id: 'hi', label: '\u0939\u093F\u0928\u094D\u0926\u0940', flag: '\uD83C\uDDEE\uD83C\uDDF3' },
+  { id: 'it', label: 'Italiano', flag: '\uD83C\uDDEE\uD83C\uDDF9' },
+  { id: 'pt', label: 'Portugu\u00EAs', flag: '\uD83C\uDDE7\uD83C\uDDF7' },
+  { id: 'ru', label: '\u0420\u0443\u0441\u0441\u043A\u0438\u0439', flag: '\uD83C\uDDF7\uD83C\uDDFA' },
 ];
 
 const LANG_FLAGS: Record<string, string> = {
   ko: '\uD83C\uDDF0\uD83C\uDDF7',
   en: '\uD83C\uDDFA\uD83C\uDDF8',
   ja: '\uD83C\uDDEF\uD83C\uDDF5',
+  zh: '\uD83C\uDDE8\uD83C\uDDF3',
+  es: '\uD83C\uDDEA\uD83C\uDDF8',
+  fr: '\uD83C\uDDEB\uD83C\uDDF7',
+  de: '\uD83C\uDDE9\uD83C\uDDEA',
+  hi: '\uD83C\uDDEE\uD83C\uDDF3',
+  it: '\uD83C\uDDEE\uD83C\uDDF9',
+  pt: '\uD83C\uDDE7\uD83C\uDDF7',
+  ru: '\uD83C\uDDF7\uD83C\uDDFA',
 };
 
 // ElevenLabs accent → 국기 매핑
@@ -651,6 +677,8 @@ const VoiceStudio: React.FC = () => {
           stability: speaker.stability ?? 0.5,
           languageCode: speaker.language || 'auto',
         });
+      } else if (speaker.engine === 'qwen3') {
+        result = await generateQwen3TTS(line.text, line.voiceId || speaker.voiceId || 'Sohee', speaker.language || 'ko');
       } else if (speaker.engine === 'supertonic') {
         result = await generateSupertonicTTS(line.text, line.voiceId || speaker.voiceId, speaker.language || 'ko', line.lineSpeed ?? speaker.speed ?? 1.0);
       } else {
@@ -719,7 +747,7 @@ const VoiceStudio: React.FC = () => {
       const charCount = line.text.length;
       if (speaker.engine === 'elevenlabs') {
         addCost((charCount / 1000) * PRICING.TTS_ELEVENLABS_TURBO_PER_1K, 'tts');
-      } else if (speaker.engine !== 'supertonic') {
+      } else if (speaker.engine !== 'supertonic' && speaker.engine !== 'qwen3') {
         // Typecast (기본) — 모델에 따라 단가 다름
         const costPer1K = speaker.typecastModel === 'ssfm-v21' ? PRICING.TTS_TYPECAST_V21_PER_1K : PRICING.TTS_TYPECAST_V30_PER_1K;
         addCost((charCount / 1000) * costPer1K, 'tts');
@@ -914,6 +942,9 @@ const VoiceStudio: React.FC = () => {
     try {
       let result: { audioUrl: string } | undefined;
       switch (voice.engine) {
+        case 'qwen3':
+          result = await generateQwen3TTS(sampleText, voice.id, lang as TTSLanguage);
+          break;
         case 'elevenlabs':
           result = await generateElevenLabsDialogueTTS({
             text: sampleText,
@@ -2313,7 +2344,7 @@ const VoiceStudio: React.FC = () => {
           {lines.length > 0 && (
             <div className="flex items-center gap-3 px-4 py-2 text-xs text-gray-500">
               <span className="text-blue-300 font-bold">{lines.length}개 단락</span>
-              <span className="text-yellow-300/70">{ttsEngine === 'supertonic' ? '🆓 무료 음성' : `💰 ${lines.reduce((s, l) => s + l.text.length, 0).toLocaleString()}자 × 2 = ${(lines.reduce((s, l) => s + l.text.length, 0) * 2).toLocaleString()} 크레딧`}</span>
+              <span className="text-yellow-300/70">{ttsEngine === 'supertonic' || ttsEngine === 'qwen3' ? '🆓 무료 음성' : `💰 ${lines.reduce((s, l) => s + l.text.length, 0).toLocaleString()}자 × 2 = ${(lines.reduce((s, l) => s + l.text.length, 0) * 2).toLocaleString()} 크레딧`}</span>
               <span>평균 {avgChars}자 · 예상 {estimatedDuration}</span>
             </div>
           )}
