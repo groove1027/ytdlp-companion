@@ -32,7 +32,7 @@ let _companionAvailable: boolean | null = null;
 let _companionCheckTime = 0;
 let _companionCheckPromise: Promise<boolean> | null = null; // inflight 중복 방지
 const COMPANION_CHECK_INTERVAL_MS = 30_000; // 30초마다 재검증
-const COMPANION_HEALTH_TIMEOUT_MS = 800;    // 800ms 내 응답 필수
+const COMPANION_HEALTH_TIMEOUT_MS = 3000;   // [FIX #907] 3초 — 800ms는 너무 짧아 실행 중인 컴패니언도 미감지
 
 /** 로컬 컴패니언 앱이 실행 중인지 확인 (캐시 + 비동기 + inflight 중복 방지) */
 async function isCompanionAvailable(): Promise<boolean> {
@@ -75,8 +75,12 @@ async function _doCompanionCheck(now: number): Promise<boolean> {
       logger.info(`[Companion] 로컬 헬퍼 감지됨 (v${data?.version || '?'}, yt-dlp ${data?.ytdlpVersion || '?'})`);
       return true;
     }
-  } catch {
-    // 연결 실패 = 컴패니언 미설치 또는 미실행
+  } catch (err) {
+    // [FIX #907] 실패 원인 명시 로깅 — 디버깅용
+    const reason = err instanceof Error
+      ? (err.name === 'AbortError' ? 'timeout(3s)' : err.message)
+      : 'unknown';
+    logger.info(`[Companion] health check 실패: ${reason}`);
   }
 
   _companionAvailable = false;
@@ -125,18 +129,9 @@ export async function ensureCompanionAvailable(signal?: AbortSignal): Promise<bo
     if (i < 1) await abortSleep(1000);
   }
 
-  // 2단계: URL 스킴으로 컴패니언 강제 실행
+  // 2단계: 재검증 대기 (컴패니언이 방금 시작됐을 수 있음) — 최대 ~3초
   if (signal?.aborted) return false;
-  logger.info('[Companion] 감지 실패 → URL 스킴으로 강제 실행 시도');
-  try {
-    const iframe = document.createElement('iframe');
-    iframe.style.display = 'none';
-    iframe.src = 'all-in-one-helper://launch';
-    document.body.appendChild(iframe);
-    setTimeout(() => iframe.remove(), 3000);
-  } catch { /* URL 스킴 미등록 시 무시 */ }
-
-  // 3단계: 실행 대기 후 재검증 (3초 대기, 2회 재시도) — 최대 ~5초
+  logger.info('[Companion] 감지 실패 → 재검증 대기 (3초)');
   await abortSleep(3000);
   for (let i = 0; i < 2; i++) {
     if (signal?.aborted) return false;
@@ -153,12 +148,33 @@ export async function ensureCompanionAvailable(signal?: AbortSignal): Promise<bo
   return false;
 }
 
-/** 앱 시작 시 백그라운드로 컴패니언 감지 (UI 블로킹 없음) */
+/** [FIX #907] 앱 시작 시 백그라운드 컴패니언 감지 + 미감지 시 지속 폴링 */
 function initCompanionDetection(): void {
   if (typeof window === 'undefined') return;
-  // 500ms 지연 후 백그라운드 감지 (앱 초기 로딩 방해 없음)
-  setTimeout(() => {
-    isCompanionAvailable().catch(() => {});
+  let pollInterval: ReturnType<typeof setInterval> | null = null;
+
+  const tryDetect = async () => {
+    // 캐시 무시 — 실제 health check 강제
+    _companionAvailable = null;
+    _companionCheckTime = 0;
+    const found = await isCompanionAvailable().catch(() => false);
+    if (found && pollInterval) {
+      // 감지 성공 → 폴링 중단 (이후 30초 캐시로 충분)
+      clearInterval(pollInterval);
+      pollInterval = null;
+      logger.info('[Companion] 백그라운드 폴링으로 감지 성공 — 폴링 중단');
+    }
+    return found;
+  };
+
+  // 500ms 후 첫 감지
+  setTimeout(async () => {
+    const found = await tryDetect();
+    if (!found) {
+      // 미감지 → 10초마다 폴링 (컴패니언이 나중에 실행될 수 있음)
+      pollInterval = setInterval(tryDetect, 10_000);
+      logger.info('[Companion] 미감지 — 10초 간격 백그라운드 폴링 시작');
+    }
   }, 500);
 }
 

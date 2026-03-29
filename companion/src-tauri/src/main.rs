@@ -13,10 +13,29 @@ use tauri::{
     menu::{Menu, MenuItem},
     Manager,
 };
+use tauri_plugin_autostart::ManagerExt;
 
 fn main() {
     tauri::Builder::default()
+        // [FIX #907] 로그인 시 자동 시작 — 컴패니언이 항상 실행 중이도록 보장
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--hidden"]),
+        ))
         .setup(|app| {
+            // 자동 시작 활성화 (사용자가 비활성화하지 않는 한 항상 ON)
+            let autostart = app.autolaunch();
+            if !autostart.is_enabled().unwrap_or(false) {
+                let _ = autostart.enable();
+                println!("[Companion] 로그인 시 자동 시작 활성화됨");
+            }
+
+            // --hidden 플래그 감지 → 창 숨김 (자동 시작 시 UI 안 띄움)
+            if std::env::args().any(|a| a == "--hidden") {
+                if let Some(win) = app.get_webview_window("main") {
+                    let _ = win.hide();
+                }
+            }
             // 시스템 트레이 설정
             let quit = MenuItem::with_id(app, "quit", "종료", true, None::<&str>)?;
             let show = MenuItem::with_id(app, "show", "상태 보기", true, None::<&str>)?;

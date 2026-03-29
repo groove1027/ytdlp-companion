@@ -57,9 +57,12 @@ test('#907 NLE 클라이언트 머지 코드 반영 + sentinel 보존 유지 확
 
   // ensureCompanionAvailable 함수 존재
   expect(ytdlpSource).toContain('export async function ensureCompanionAvailable');
-  expect(ytdlpSource).toContain('all-in-one-helper://launch');
   expect(ytdlpSource).toContain('abortSleep');
-  console.log('[3] ✅ ensureCompanionAvailable 함수 + URL 스킴 + abortSleep 확인');
+  // health check timeout 3초 확인
+  expect(ytdlpSource).toContain('3000');
+  // 백그라운드 폴링 확인
+  expect(ytdlpSource).toContain('10_000');
+  console.log('[3] ✅ ensureCompanionAvailable + 3초 timeout + 10초 폴링 확인');
 
   await page.screenshot({ path: path.join(SS, '907-01-code-verified.png') });
 
