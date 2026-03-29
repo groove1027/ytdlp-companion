@@ -8,6 +8,13 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-30] #907 Premiere NLE 다운로드 클라이언트 머지 + 컴패니언 강제 확보
+- [x] NLE 다운로드: 서버 머지 → 클라이언트 머지 (videoOnly + downloadAudioViaProxy + mergeVideoAudio)
+- [x] 오디오 30초 hard timeout (Promise.race)
+- [x] ensureCompanionAvailable (2회 재시도 + URL 스킴 강제 + abort-aware sleep)
+- [x] Premiere .prproj: sentinel &#10; 보존 + RelativePath ./ + hasAudioTrack
+- [x] Codex MCP 리뷰 4회 + Playwright E2E 통과
+
 ### [2026-03-30] 편집실 자막 미리보기 Canvas 전환 — MP4 내보내기와 100% 동일
 - [x] **subtitleRenderer.ts**: `drawSubtitle()` 타입을 `CanvasCtx` (OffscreenCanvas + Canvas 모두 지원)로 확장
 - [x] **EditRoomTab.tsx**: CSS 자막 미리보기(`subtitleToCSS` + `<p>` 태그) → Canvas 미리보기(`drawSubtitle()` + `<canvas>`)로 교체

@@ -96,6 +96,63 @@ export async function recheckCompanion(): Promise<boolean> {
   return isCompanionAvailable();
 }
 
+/**
+ * [FIX #907] 컴패니언 강제 확보 — 3회 재시도 + URL 스킴 강제 실행 + 재시도
+ * NLE 내보내기 등 컴패니언이 반드시 필요한 경로에서 사용.
+ * 최종 실패 시 false 반환 (CF Worker 폴백 허용).
+ */
+export async function ensureCompanionAvailable(signal?: AbortSignal): Promise<boolean> {
+  const abortSleep = (ms: number) => new Promise<void>(resolve => {
+    if (signal?.aborted) { resolve(); return; }
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true });
+  });
+
+  // 이미 감지됨 → 즉시 리턴
+  if (_companionAvailable === true && (Date.now() - _companionCheckTime) < COMPANION_CHECK_INTERVAL_MS) {
+    return true;
+  }
+
+  // 1단계: 즉시 health check (2회 재시도, 1초 간격) — 최대 ~2.8초
+  for (let i = 0; i < 2; i++) {
+    if (signal?.aborted) return false;
+    _companionAvailable = null;
+    _companionCheckTime = 0;
+    if (await isCompanionAvailable()) {
+      logger.info('[Companion] 감지 성공 (시도 ' + (i + 1) + '/2)');
+      return true;
+    }
+    if (i < 1) await abortSleep(1000);
+  }
+
+  // 2단계: URL 스킴으로 컴패니언 강제 실행
+  if (signal?.aborted) return false;
+  logger.info('[Companion] 감지 실패 → URL 스킴으로 강제 실행 시도');
+  try {
+    const iframe = document.createElement('iframe');
+    iframe.style.display = 'none';
+    iframe.src = 'all-in-one-helper://launch';
+    document.body.appendChild(iframe);
+    setTimeout(() => iframe.remove(), 3000);
+  } catch { /* URL 스킴 미등록 시 무시 */ }
+
+  // 3단계: 실행 대기 후 재검증 (3초 대기, 2회 재시도) — 최대 ~5초
+  await abortSleep(3000);
+  for (let i = 0; i < 2; i++) {
+    if (signal?.aborted) return false;
+    _companionAvailable = null;
+    _companionCheckTime = 0;
+    if (await isCompanionAvailable()) {
+      logger.info('[Companion] URL 스킴 실행 후 감지 성공');
+      return true;
+    }
+    if (i < 1) await abortSleep(1000);
+  }
+
+  logger.info('[Companion] 강제 실행 실패 — CF Worker 폴백');
+  return false;
+}
+
 /** 앱 시작 시 백그라운드로 컴패니언 감지 (UI 블로킹 없음) */
 function initCompanionDetection(): void {
   if (typeof window === 'undefined') return;

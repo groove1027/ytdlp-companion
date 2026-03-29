@@ -5487,8 +5487,18 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                         if (isCancelled()) return;
                                         const vid = extractYouTubeVideoId(sourceUrl) || sourceUrl;
 
-                                        // [FIX] extract 캐시 프리워밍 — 메타데이터를 미리 추출하여 컴패니언 캐시 활성화
-                                        // 10초 타임아웃: hang 시 바로 다운로드로 넘어감
+                                        // [FIX #907] 컴패니언 강제 확보 — 감지 실패 시 URL 스킴으로 자동 실행
+                                        setNleExporting({ target, step: '1/3 컴패니언 연결 중...', startedAt });
+                                        try {
+                                          const { ensureCompanionAvailable } = await import('../../../services/ytdlpApiService');
+                                          const companionOk = await ensureCompanionAvailable(myAbort.signal);
+                                          if (!companionOk) {
+                                            console.info('[NLE] 컴패니언 미감지 — CF Worker 폴백 사용');
+                                          }
+                                        } catch { /* 무시 — 다운로드는 어떻게든 진행 */ }
+                                        if (isCancelled()) return;
+
+                                        // extract 캐시 프리워밍 — 메타데이터를 미리 추출하여 캐시 활성화
                                         setNleExporting({ target, step: '1/3 영상 정보 확인 중...', startedAt });
                                         let estimatedSizeMB: number | null = null;
                                         try {
@@ -5517,11 +5527,14 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                           let stallCheckInterval: ReturnType<typeof setInterval> | null = null;
                                           setNleExporting({ target, step: `2/3 영상 다운로드 중...${estimatedSizeMB ? ` (약 ${estimatedSizeMB}MB)` : ''}${quality !== '720p' ? ` [${quality}]` : ''}`, progress: 0, startedAt });
                                           try {
-                                            const { downloadVideoViaProxy } = await import('../../../services/ytdlpApiService');
+                                            // [FIX #907] 클라이언트 머지 방식 — video+audio 따로 받아서 브라우저에서 머지
+                                            // 서버 머지 방식은 서버 ffmpeg 의존 + CF Worker 미지원으로 실패 빈번
+                                            const { downloadVideoViaProxy, downloadAudioViaProxy } = await import('../../../services/ytdlpApiService');
                                             const downloadStartTime = Date.now();
                                             let lastProgressTime = downloadStartTime;
                                             let firstProgressReceived = false;
-                                            const merged = await Promise.race([
+                                            // 비디오(videoOnly) + 오디오 병렬 다운로드
+                                            const videoPromise = Promise.race([
                                               downloadVideoViaProxy(vid, quality, (p) => {
                                                 if (perQualityAbort.signal.aborted) return;
                                                 lastProgressTime = Date.now();
@@ -5535,9 +5548,8 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                                   if (!prev || prev.target !== target) return prev;
                                                   return { ...prev, step: `2/3 영상 다운로드 중...${sizeText}${speedText}${quality !== '720p' ? ` [${quality}]` : ''}`, progress: Math.round(p * 100), startedAt: prev.startedAt ?? startedAt };
                                                 });
-                                              }, { signal: perQualityAbort.signal }),
-                                              // [FIX #859] stall detection — 첫 progress 전 180초, 이후 120초간 진행 없으면 타임아웃
-                                              // (progress는 1% 단위 throttled이므로 대용량 파일은 1% 진행에 시간 소요)
+                                              }, { videoOnly: true, signal: perQualityAbort.signal }),
+                                              // stall detection
                                               new Promise<never>((_, reject) => {
                                                 stallCheckInterval = setInterval(() => {
                                                   if (perQualityAbort.signal.aborted) { if (stallCheckInterval) clearInterval(stallCheckInterval); return; }
@@ -5551,11 +5563,34 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                                 }, 5_000);
                                               }),
                                             ]);
-                                            if (merged.blob.size > 0) {
-                                              videoBlob = merged.blob;
-                                              downloadedSourceTitle = downloadedSourceTitle || merged.info?.title || '';
-                                              audioConfirmed = await verifyBlobHasAudio(merged.blob);
-                                              useVideoAnalysisStore.getState().setVideoBlob(merged.blob, audioConfirmed);
+                                            // [FIX #907] 오디오 다운로드에 30초 hard timeout — Promise.race로 강제 중단
+                                            const audioPromise = Promise.race([
+                                              downloadAudioViaProxy(vid),
+                                              new Promise<null>(r => setTimeout(() => r(null), 30_000)),
+                                            ]).catch(e => {
+                                              console.warn(`[NLE] 오디오 다운로드 실패 (영상만 사용):`, e);
+                                              return null;
+                                            });
+                                            const [videoDl, audioDlBlob] = await Promise.all([videoPromise, audioPromise]);
+                                            if (videoDl.blob.size > 0) {
+                                              let finalBlob = videoDl.blob;
+                                              downloadedSourceTitle = downloadedSourceTitle || videoDl.info?.title || '';
+                                              // 오디오가 있으면 클라이언트에서 머지
+                                              if (audioDlBlob && audioDlBlob.size > 0) {
+                                                try {
+                                                  setNleExporting(prev => prev ? { ...prev, step: `2/3 오디오 병합 중...` } : prev);
+                                                  const { mergeVideoAudio } = await import('../../../services/webcodecs/videoDecoder');
+                                                  finalBlob = await mergeVideoAudio(videoDl.blob, audioDlBlob);
+                                                  audioConfirmed = true;
+                                                } catch (mergeErr) {
+                                                  console.warn('[NLE] 클라이언트 머지 실패, video-only 사용:', mergeErr);
+                                                  audioConfirmed = false;
+                                                }
+                                              } else {
+                                                audioConfirmed = false;
+                                              }
+                                              videoBlob = finalBlob;
+                                              useVideoAnalysisStore.getState().setVideoBlob(finalBlob, audioConfirmed);
                                               downloadSucceeded = true;
                                             }
                                           } catch (dlErr) {
