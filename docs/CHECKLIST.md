@@ -8,6 +8,34 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-30] 편집실 자막 미리보기 Canvas 전환 — MP4 내보내기와 100% 동일
+- [x] **subtitleRenderer.ts**: `drawSubtitle()` 타입을 `CanvasCtx` (OffscreenCanvas + Canvas 모두 지원)로 확장
+- [x] **EditRoomTab.tsx**: CSS 자막 미리보기(`subtitleToCSS` + `<p>` 태그) → Canvas 미리보기(`drawSubtitle()` + `<canvas>`)로 교체
+- [x] **해상도 매핑**: 16:9(1920x1080), 9:16(1080x1920), 1:1(1080x1080), 4:3(1440x1080) — 내보내기와 동일
+- [x] **폰트 로딩 레이스 컨디션 수정**: `document.fonts.ready` + `loadingdone` 이벤트로 폰트 로드 후 Canvas 재렌더
+- [x] **per-scene 폰트 오버라이드 프리로드**: global + scene override 폰트 모두 로드
+- [x] **이벤트 리스너 cleanup**: React useEffect lifecycle에 맞게 `loadingdone` 리스너 정리
+- [x] **dead code 정리**: `subtitleToCSS()`, `subtitleCSS`, `subtitlePosY`, `subtitleAnimCSS` 제거
+- [x] **Codex 5.4 MCP 리뷰 10회**: 타입 안전성, 해상도, 폰트 레이스, z-index, 성능 등 검증 완료
+- [x] **E2E Playwright 테스트**: Canvas 존재, 해상도 확인, CSS 자막 제거 확인 — 7/7 통과
+
+### [2026-03-30] Qwen3-TTS 통합 + CapCut 컴패니언 직접 설치
+- [x] **Qwen3-TTS 백엔드** (companion tts.rs): 공식 qwen-tts 패키지 + transformers 폴백, 9개 음성 allowlist, 한국어 우선 자동 선택
+- [x] **Kokoro 54개 음성 확장** (companion tts.rs): 전체 v1.0 음성 allowlist + 언어별 기본 음성
+- [x] **TTS 음성 목록 API** (companion server.rs): GET /api/tts/voices — Qwen3 9개 + Kokoro 54개 JSON 반환
+- [x] **NLE 직접 설치 API** (companion server.rs): POST /api/nle/install — CapCut/Premiere/Filmora 프로젝트를 로컬 폴더에 직접 쓰기 + 경로 패치 + 앱 실행
+- [x] **보안**: voice allowlist (인젝션 방지), project_id 정규식 검증, file_path starts_with 검증, Windows 역슬래시 정규화
+- [x] **프론트엔드 TTSEngine 확장** (types.ts): 'qwen3' 추가, TTSLanguage 11개 (ko/en/ja/zh/es/fr/de/hi/it/pt/ru)
+- [x] **generateQwen3TTS** (ttsService.ts): 컴패니언 Qwen3 TTS 호출 + 120초 타임아웃
+- [x] **VoiceStudio Qwen3 카드** (VoiceStudio.tsx): 엔진 선택 UI + 무료 표시 + 생성/프리뷰 분기
+- [x] **AudioMerger qwen3 case** (AudioMerger.tsx): 병합 시 qwen3 엔진 지원
+- [x] **NarrationCreditBar 무료 처리** (NarrationCreditBar.tsx): qwen3 = 무료 엔진
+- [x] **EditRoomTab 컴패니언 NLE** (EditRoomTab.tsx): 컴패니언 1순위 → File System API 2순위 → ZIP 3순위
+- [x] **CompanionBanner nle feature** (CompanionBanner.tsx): NLE 설치 배너 추가
+- [x] tsc 0 에러 + vite build 성공
+- [x] Codex 5.4 MCP 리뷰 3회 — 11개 이슈 발견 → 전부 수정
+- [x] Playwright E2E: Qwen3 카드 표시 + 무료 표시 + NLE 드롭다운 4/4 통과
+
 ### [2026-03-30] Premiere Pro .prproj 파일 열기 실패 수정 — &#10; sentinel 보존 + 나레이션 AudioClipChannelGroups 참조 수정
 - [x] `nleExportService.ts` — DOMParser &#10; 엔티티 손실 방지: sentinel 문자(\uE000) 치환 방식으로 100% 보존
 - [x] `nleExportService.ts` — 기존 불완전한 regex 복원 코드 제거 → sentinel 역치환으로 교체

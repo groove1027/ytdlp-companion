@@ -5,6 +5,7 @@ import { useEditRoomStore } from '../../stores/editRoomStore';
 import { useUnifiedTimeline, useTotalDuration } from '../../hooks/useUnifiedTimeline';
 import { downloadSrtFile, downloadSrtWithAssetsZip } from '../../services/srtService';
 import { composeMp4, downloadMp4 } from '../../services/webcodecs';
+import { drawSubtitle } from '../../services/webcodecs/subtitleRenderer';
 import CompanionBanner from '../CompanionBanner';
 import {
   beginCapCutDirectInstallSelection,
@@ -12,6 +13,8 @@ import {
   getCapCutManualInstallHint,
   installCapCutZipToDirectory,
   isCapCutDirectInstallSupported,
+  installNleViaCompanion,
+  isCompanionNleAvailable,
 } from '../../services/nleExportService';
 import type { EditRoomNleTarget } from '../../services/nleExportService';
 import { showToast } from '../../stores/uiStore';
@@ -474,30 +477,6 @@ const ANIM_MAP: Record<string, { keyframe: string; dur: number; ease: string; fi
   textGlow: { keyframe: 'subAnim-textGlow', dur: 2, ease: 'ease-in-out', fill: 'none', iter: 0 },
 };
 
-// SubtitleTemplate → inline CSS
-function subtitleToCSS(tpl: SubtitleTemplate, scale: number): React.CSSProperties {
-  const shadowParts: string[] = [];
-  if (tpl.textShadowCSS) shadowParts.push(tpl.textShadowCSS);
-  else if (tpl.shadowColor && tpl.shadowBlur > 0) {
-    shadowParts.push(`${tpl.shadowOffsetX}px ${tpl.shadowOffsetY}px ${tpl.shadowBlur}px ${tpl.shadowColor}`);
-  }
-  if (tpl.outlineColor && tpl.outlineWidth > 0) {
-    const ow = tpl.outlineWidth;
-    shadowParts.push(`${ow}px 0 0 ${tpl.outlineColor}`, `-${ow}px 0 0 ${tpl.outlineColor}`, `0 ${ow}px 0 ${tpl.outlineColor}`, `0 -${ow}px 0 ${tpl.outlineColor}`);
-  }
-  return {
-    fontFamily: `'${tpl.fontFamily}', Pretendard, sans-serif`,
-    fontSize: `${Math.round(tpl.fontSize * scale)}px`,
-    fontWeight: tpl.fontWeight,
-    fontStyle: tpl.fontStyle || 'normal',
-    color: tpl.color,
-    backgroundColor: tpl.backgroundColor || 'transparent',
-    textShadow: shadowParts.length > 0 ? shadowParts.join(', ') : 'none',
-    letterSpacing: `${tpl.letterSpacing}px`,
-    lineHeight: tpl.lineHeight,
-    textAlign: tpl.textAlign || 'center',
-  };
-}
 
 /** 편집실 미리보기 패널 — 현재 장면 크게 + 모션 효과 + 자막 스타일 + 필름스트립 */
 const ScenePreviewPanel: React.FC<{
@@ -519,21 +498,8 @@ const ScenePreviewPanel: React.FC<{
   const activeSubtitleText = useEditRoomStore(s => s.activeSubtitleText);
   const isTimelinePlaying = useEditRoomStore(s => s.isTimelinePlaying);
 
-  // 동적 폰트 스케일 — ResizeObserver
   const previewContainerRef = React.useRef<HTMLDivElement>(null);
-  const [previewW, setPreviewW] = React.useState(800);
-  React.useEffect(() => {
-    if (!previewContainerRef.current) return;
-    const ro = new ResizeObserver((entries) => {
-      const w = entries[0]?.contentRect.width;
-      if (w > 0) setPreviewW(w);
-    });
-    ro.observe(previewContainerRef.current);
-    return () => ro.disconnect();
-  }, []);
   const isPortraitAR = aspectRatio === '9:16';
-  const refW = isPortraitAR ? 1080 : 1920;
-  const fontScale = previewW / refW;
 
   // ═══ 전환 효과 — 직접 DOM 조작 방식 (React 렌더링 0회) ═══
   // ★ 핵심 원리:
@@ -987,14 +953,18 @@ const ScenePreviewPanel: React.FC<{
     return style;
   }, [effectConfig, activeScene, motionLooping, activeTiming, isTimelinePlaying]);
 
-  // 커스텀 폰트 로딩 — globalSubStyle 변경 시 폰트 프리로드
+  // 커스텀 폰트 로딩 — global + per-scene override 폰트 프리로드
+  const overrideFontFamily = activeId ? sceneSubtitles[activeId]?.styleOverride?.fontFamily : undefined;
   React.useEffect(() => {
-    const fontFamily = globalSubStyle?.template?.fontFamily;
-    if (fontFamily) {
-      const entry = getFontByFamily(fontFamily);
+    const families = new Set<string>();
+    const globalFont = globalSubStyle?.template?.fontFamily;
+    if (globalFont) families.add(globalFont);
+    if (overrideFontFamily) families.add(overrideFontFamily);
+    for (const f of families) {
+      const entry = getFontByFamily(f);
       if (entry) loadFont(entry);
     }
-  }, [globalSubStyle?.template?.fontFamily]);
+  }, [globalSubStyle?.template?.fontFamily, overrideFontFamily]);
 
   // 120% overscale 필요 여부: transform 기반 애니메이션이 있을 때
   // filter-only 효과(high-contrast, rain 등)는 이미지 이동 없으므로 overscale 불필요
@@ -1011,43 +981,78 @@ const ScenePreviewPanel: React.FC<{
   //   activeId 없이는 React가 기존 DOM을 업데이트만 하므로 visibility:hidden이 유지됨
   const motionKey = `${effectConfig?.panZoomPreset || 'none'}-${effectConfig?.motionEffect || 'none'}`;
 
-  // 자막 스타일 계산 (globalSubtitleStyle + per-scene styleOverride)
-  const subtitleCSS = React.useMemo<React.CSSProperties>(() => {
-    const tpl: SubtitleTemplate | undefined = (() => {
-      const sub = activeId ? sceneSubtitles[activeId] : undefined;
-      if (sub?.styleOverride) {
-        return { ...(globalSubStyle?.template || {} as SubtitleTemplate), ...sub.styleOverride } as SubtitleTemplate;
-      }
-      return globalSubStyle?.template;
-    })();
-    if (!tpl) return {};
-    // 동적 폰트 스케일 (원본 기준 → 프리뷰 폭 비율)
-    return subtitleToCSS(tpl, fontScale);
-  }, [globalSubStyle, sceneSubtitles, activeId, fontScale]);
-
-  // 자막 위치 (positionY: % from bottom)
-  const subtitlePosY = React.useMemo(() => {
+  // 자막 템플릿 결합 (globalSubtitleStyle + per-scene styleOverride)
+  const resolvedSubtitleTemplate = React.useMemo<SubtitleTemplate | null>(() => {
     const sub = activeId ? sceneSubtitles[activeId] : undefined;
-    const tpl = sub?.styleOverride
-      ? { ...(globalSubStyle?.template || {}), ...sub.styleOverride }
-      : globalSubStyle?.template;
-    return (tpl as SubtitleTemplate | undefined)?.positionY ?? 10;
+    if (sub?.styleOverride) {
+      return { ...(globalSubStyle?.template || {} as SubtitleTemplate), ...sub.styleOverride } as SubtitleTemplate;
+    }
+    return globalSubStyle?.template ?? null;
   }, [globalSubStyle, sceneSubtitles, activeId]);
 
-  // 자막 애니메이션
-  const subtitleAnimCSS = React.useMemo<React.CSSProperties>(() => {
-    const sub = activeId ? sceneSubtitles[activeId] : undefined;
-    const preset = sub?.animationPreset;
-    if (!preset || preset === 'none') return {};
-    const a = ANIM_MAP[preset];
-    if (!a) return {};
-    const dur = sub?.animationDuration ?? a.dur;
-    const delay = sub?.animationDelay ?? 0;
-    const iter = sub?.animationIterationCount ?? a.iter;
-    return {
-      animation: `${a.keyframe} ${dur}s ${a.ease} ${delay}s ${a.fill === 'none' ? '' : a.fill} ${iter === 0 ? 'infinite' : iter}`.trim(),
+  // Canvas 기반 자막 미리보기 — drawSubtitle()을 공유하여 MP4 내보내기와 100% 동일
+  const subtitleCanvasRef = React.useRef<HTMLCanvasElement>(null);
+  // 내보내기와 동일한 해상도 매핑 (getExportDimensions와 1:1)
+  const canvasDims = React.useMemo(() => {
+    let w = 1920, h = 1080;
+    if (aspectRatio === '9:16') { w = 1080; h = 1920; }
+    else if (aspectRatio === '1:1') { w = 1080; h = 1080; }
+    else if (aspectRatio === '4:3') { w = 1440; h = 1080; }
+    return { w: Math.ceil(w / 2) * 2, h: Math.ceil(h / 2) * 2 };
+  }, [aspectRatio]);
+
+  // 폰트 로드 완료 시 Canvas 재렌더 트리거
+  const [fontReady, setFontReady] = React.useState(0);
+  React.useEffect(() => {
+    const family = resolvedSubtitleTemplate?.fontFamily;
+    if (!family) return;
+    let cancelled = false;
+    let listener: (() => void) | null = null;
+
+    const checkAndRedraw = () => {
+      if (cancelled) return;
+      if (document.fonts.check(`16px '${family}'`)) {
+        setFontReady(v => v + 1);
+      } else {
+        listener = () => {
+          if (cancelled) return;
+          if (document.fonts.check(`16px '${family}'`)) {
+            setFontReady(v => v + 1);
+            if (listener) document.fonts.removeEventListener('loadingdone', listener);
+            listener = null;
+          }
+        };
+        document.fonts.addEventListener('loadingdone', listener);
+      }
     };
-  }, [activeId, sceneSubtitles]);
+
+    document.fonts.ready.then(checkAndRedraw);
+    return () => {
+      cancelled = true;
+      if (listener) document.fonts.removeEventListener('loadingdone', listener);
+    };
+  }, [resolvedSubtitleTemplate?.fontFamily]);
+
+  React.useEffect(() => {
+    const canvas = subtitleCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const { w: canvasW, h: canvasH } = canvasDims;
+    if (canvas.width !== canvasW || canvas.height !== canvasH) {
+      canvas.width = canvasW;
+      canvas.height = canvasH;
+    }
+
+    ctx.clearRect(0, 0, canvasW, canvasH);
+
+    if (subtitleText && resolvedSubtitleTemplate) {
+      drawSubtitle(ctx, subtitleText.length > 120 ? subtitleText.slice(0, 120) + '...' : subtitleText, resolvedSubtitleTemplate, canvasW, canvasH);
+    }
+  }, [subtitleText, resolvedSubtitleTemplate, canvasDims, fontReady]);
+
+
 
   // 인접 씬 이미지 프리로드 + 프리디코드 — 전환 시 이미지 디코딩 지연 방지
   React.useEffect(() => {
@@ -1210,42 +1215,12 @@ const ScenePreviewPanel: React.FC<{
           />
         )}
 
-        {/* 자막 오버레이 — 스타일 적용 */}
-        {subtitleText && (
-          <div
-            className="absolute left-0 right-0 px-4 py-2 flex justify-center pointer-events-none z-10"
-            style={{ bottom: `${subtitlePosY}%` }}
-          >
-            <p
-              key={`sub-${activeId}`}
-              className="max-w-[90%] whitespace-pre-line"
-              style={{
-                // 기본 fallback
-                color: '#ffffff',
-                fontSize: '16px',
-                fontWeight: 700,
-                textAlign: 'center',
-                lineHeight: 1.4,
-                textShadow: '1px 1px 3px rgba(0,0,0,0.8), -1px -1px 3px rgba(0,0,0,0.8)',
-                // [FIX #404] 한국어 단어 중간 줄바꿈 방지 — 띄어쓰기 기준으로만 줄바꿈
-                wordBreak: 'keep-all',
-                // globalSubtitleStyle 오버라이드
-                ...subtitleCSS,
-                // 자막 애니메이션
-                ...subtitleAnimCSS,
-                // 자막 배경이 꺼져 있으면 배경 제거
-                backgroundColor: subtitleCSS.backgroundColor && subtitleCSS.backgroundColor !== 'transparent'
-                  ? subtitleCSS.backgroundColor
-                  : 'transparent',
-                padding: '4px 12px',
-                borderRadius: subtitleCSS.backgroundColor && subtitleCSS.backgroundColor !== 'transparent'
-                  ? '0px' : '0px',
-              }}
-            >
-              {subtitleText.length > 120 ? subtitleText.slice(0, 120) + '...' : subtitleText}
-            </p>
-          </div>
-        )}
+        {/* 자막 오버레이 — Canvas 렌더링 (MP4 내보내기와 100% 동일한 drawSubtitle 사용) */}
+        <canvas
+          ref={subtitleCanvasRef}
+          className="absolute inset-0 w-full h-full pointer-events-none z-10"
+          style={{ imageRendering: 'auto' }}
+        />
 
         {/* 장면 번호 + 효과 배지 */}
         <div className="absolute top-2 left-2 flex items-center gap-2 z-20">
@@ -1483,6 +1458,34 @@ const EditRoomTab: React.FC = () => {
           ? ` (영상 ${result.videoCount}개)`
           : ` (이미지 ${result.imageCount}개)`;
 
+      // 1순위: 컴패니언 앱으로 직접 설치 (ZIP 다운로드 없이 원클릭)
+      // VREW는 컴패니언 NLE 설치 미지원 (SRT만 필요하므로 ZIP이 적절)
+      if (isCompanionNleAvailable() && target !== 'vrew') {
+        try {
+          // ZIP에서 projectId 추출 (CapCut은 drafts 폴더 ID 사용)
+          const JSZip = (await import('jszip')).default;
+          const zip = await JSZip.loadAsync(result.blob);
+          const topFolders = Object.keys(zip.files)
+            .filter(name => name.includes('/') && !name.startsWith('media/') && !name.startsWith('audio/'))
+            .map(name => name.split('/')[0])
+            .filter((v, i, a) => a.indexOf(v) === i && v.length > 10);
+          const projectId = topFolders[0] || `project-${Date.now()}`;
+
+          showToast(`${targetLabel}에 직접 설치 중...`);
+          const installResult = await installNleViaCompanion({
+            target,
+            zipBlob: result.blob,
+            projectId,
+          });
+          showToast(`${targetLabel} 프로젝트를 바로 설치했습니다!${mediaSummary} (${installResult.filesInstalled}개 파일)`, 6000);
+          return;
+        } catch (companionErr) {
+          console.warn('[EditRoom] 컴패니언 NLE 설치 실패, 기존 방식 폴백:', companionErr);
+          // 폴백: 기존 방식 (직접 설치 또는 ZIP 다운로드)
+        }
+      }
+
+      // 2순위: CapCut 직접 설치 (File System API — HTTPS 전용)
       if (target === 'capcut' && directInstallSelection) {
         try {
           await installCapCutZipToDirectory({
@@ -1504,6 +1507,7 @@ const EditRoomTab: React.FC = () => {
         }
       }
 
+      // 3순위: ZIP 다운로드 (최종 폴백)
       const url = URL.createObjectURL(result.blob);
       const a = document.createElement('a');
       a.href = url;

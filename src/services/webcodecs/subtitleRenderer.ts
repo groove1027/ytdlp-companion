@@ -1,6 +1,6 @@
 /**
- * Subtitle Renderer — Canvas 텍스트 렌더링
- * CSS 프리뷰의 subtitleToCSS() 출력과 동일한 시각 결과를 Canvas로 재현
+ * Subtitle Renderer — Canvas 텍스트 렌더링 (미리보기 + MP4 내보내기 공용)
+ * 미리보기와 내보내기 모두 이 함수를 사용하여 100% 동일한 자막 출력 보장
  *
  * 핵심 매칭 포인트:
  * 1. textShadowCSS 파싱 → 다중 Canvas shadow pass로 렌더
@@ -10,11 +10,14 @@
 
 import type { SubtitleTemplate } from '../../types';
 
+/** Canvas 2D 컨텍스트 — OffscreenCanvas / 일반 Canvas 모두 지원 */
+type CanvasCtx = OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D;
+
 /**
- * 캔버스에 자막 텍스트 렌더링 (CSS 프리뷰와 1:1 매칭)
+ * 캔버스에 자막 텍스트 렌더링 (미리보기 + MP4 내보내기 100% 동일)
  */
 export function drawSubtitle(
-  ctx: OffscreenCanvasRenderingContext2D,
+  ctx: CanvasCtx,
   text: string,
   template: SubtitleTemplate,
   canvasW: number,
@@ -110,7 +113,7 @@ export function drawSubtitle(
   ctx.restore();
 }
 
-// ─── Shadow 빌드 (CSS subtitleToCSS 로직 1:1 매칭) ───
+// ─── Shadow 빌드 ───
 
 interface ParsedShadow {
   offsetX: number;
@@ -121,7 +124,7 @@ interface ParsedShadow {
 
 /**
  * SubtitleTemplate에서 CSS와 동일한 순서의 shadow 리스트 생성
- * subtitleToCSS() 로직:
+ * CSS shadow 변환 로직:
  *   1. textShadowCSS가 있으면 그것을 파싱
  *   2. 없으면 shadowColor + shadowBlur + offsets
  *   3. outlineColor + outlineWidth → 4방향 shadow로 변환
@@ -225,7 +228,7 @@ function parseSingleShadow(s: string): ParsedShadow | null {
 // ─── 텍스트 줄바꿈 ──────────────────────────────
 
 function wrapText(
-  ctx: OffscreenCanvasRenderingContext2D,
+  ctx: CanvasCtx,
   text: string,
   maxWidth: number,
 ): string[] {
