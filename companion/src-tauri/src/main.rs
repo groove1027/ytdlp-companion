@@ -105,9 +105,13 @@ fn main() {
                 if let Err(e) = rembg::ensure_rembg().await {
                     eprintln!("[Companion] rembg 설정 실패: {}", e);
                 }
-                // rembg 완료 후 TTS 설치 (같은 pip 환경 보호)
+                // rembg 완료 후 TTS 설치 (같은 pip 환경 보호 — 직렬 실행)
+                // [FIX #907] Qwen3 TTS 자동 설치 추가
+                if let Err(e) = tts::ensure_qwen3_tts().await {
+                    eprintln!("[Companion] Qwen3-TTS 설정 실패: {}", e);
+                }
                 if let Err(e) = tts::ensure_tts().await {
-                    eprintln!("[Companion] TTS 설정 실패: {}", e);
+                    eprintln!("[Companion] Kokoro TTS 설정 실패: {}", e);
                 }
             });
 

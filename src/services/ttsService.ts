@@ -631,6 +631,20 @@ export const getAvailableVoices = (
         case 'supertonic':
             voices = SUPERTONIC_VOICES;
             break;
+        // [FIX #907] Qwen3 TTS 음성 목록 — 컴패니언 tts.rs QWEN3_VOICES와 동기화
+        case 'qwen3':
+            voices = [
+                { id: 'Sohee',    name: '소희 (한국어)',    language: 'ko' as TTSLanguage, gender: 'female' as const, engine: 'qwen3' as TTSEngine },
+                { id: 'Vivian',   name: 'Vivian (中文)',   language: 'zh' as TTSLanguage, gender: 'female' as const, engine: 'qwen3' as TTSEngine },
+                { id: 'Serena',   name: 'Serena (中文)',   language: 'zh' as TTSLanguage, gender: 'female' as const, engine: 'qwen3' as TTSEngine },
+                { id: 'Uncle_Fu', name: 'Uncle Fu (中文)',  language: 'zh' as TTSLanguage, gender: 'male' as const, engine: 'qwen3' as TTSEngine },
+                { id: 'Dylan',    name: 'Dylan (中文)',    language: 'zh' as TTSLanguage, gender: 'male' as const, engine: 'qwen3' as TTSEngine },
+                { id: 'Eric',     name: 'Eric (中文)',     language: 'zh' as TTSLanguage, gender: 'male' as const, engine: 'qwen3' as TTSEngine },
+                { id: 'Ryan',     name: 'Ryan (English)',  language: 'en' as TTSLanguage, gender: 'male' as const, engine: 'qwen3' as TTSEngine },
+                { id: 'Aiden',    name: 'Aiden (English)', language: 'en' as TTSLanguage, gender: 'male' as const, engine: 'qwen3' as TTSEngine },
+                { id: 'Ono_Anna', name: '小野アンナ (日本語)', language: 'ja' as TTSLanguage, gender: 'female' as const, engine: 'qwen3' as TTSEngine },
+            ];
+            break;
         default:
             voices = [];
     }

@@ -7,19 +7,39 @@ export const COMPANION_DOWNLOAD_URL = 'https://github.com/groove1027/ytdlp-compa
 // [FIX #837] Windows 빌드 존재 여부 — v1.0.0 릴리즈에 .exe 업로드 완료
 export const COMPANION_WINDOWS_AVAILABLE = true;
 
-/** OS별 컴패니언 다운로드 URL 반환 */
-export const getCompanionDownloadUrl = (): string => {
-  const os = getCompanionOsLabel();
-  if (os === 'Windows' && !COMPANION_WINDOWS_AVAILABLE) return ''; // Windows 미지원 → 빈 문자열 (링크 비활성화)
-  return COMPANION_DOWNLOAD_URL; // 릴리즈 페이지 (최신 버전 자동 추적)
-};
-
 /** 현재 OS 이름 반환 */
 export const getCompanionOsLabel = (): string => {
   const ua = navigator.userAgent.toLowerCase();
   if (ua.includes('win')) return 'Windows';
   if (ua.includes('mac')) return 'macOS';
   return '';
+};
+
+/** [FIX #907] OS 감지 → DMG/EXE 바로 다운로드 URL (GitHub API 기반, 캐시) */
+let _cachedDirectUrl: string | null = null;
+if (typeof window !== 'undefined') {
+  const os = getCompanionOsLabel();
+  if (os === 'Windows' || os === 'macOS') {
+    fetch('https://api.github.com/repos/groove1027/ytdlp-companion/releases/latest')
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (!data) return;
+        const assets: Array<{ name: string; browser_download_url: string }> = data.assets || [];
+        const target = os === 'Windows'
+          ? assets.find(a => a.name.includes('setup') && a.name.endsWith('.exe'))
+          : assets.find(a => a.name.includes('universal') && a.name.endsWith('.dmg'))
+            || assets.find(a => a.name.endsWith('.dmg'));
+        if (target) _cachedDirectUrl = target.browser_download_url;
+      })
+      .catch(() => {});
+  }
+}
+
+/** OS별 컴패니언 다운로드 URL 반환 — 직접 다운로드 URL 우선, 없으면 릴리스 페이지 */
+export const getCompanionDownloadUrl = (): string => {
+  const os = getCompanionOsLabel();
+  if (os === 'Windows' && !COMPANION_WINDOWS_AVAILABLE) return '';
+  return _cachedDirectUrl || COMPANION_DOWNLOAD_URL;
 };
 
 // [2026-03-02] Real-time Pricing (조사 기반 실시간 반영)

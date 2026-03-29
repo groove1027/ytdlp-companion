@@ -100,11 +100,11 @@ export default function CompanionBanner({ feature = 'general', compact = false }
       const detected = await recheckCompanion();
       setCompanionActive(detected);
       if (!detected) {
+        // [FIX #907] 컴패니언 미설치 시 항상 배너 표시 — dismiss 기간을 1일로 단축
         try {
           const key = `companion_banner_${feature}_dismissed`;
           const dismissed = localStorage.getItem(key);
-          // 7일 지나면 다시 표시
-          if (!dismissed || Date.now() - Number(dismissed) > 7 * 86400000) setVisible(true);
+          if (!dismissed || Date.now() - Number(dismissed) > 1 * 86400000) setVisible(true);
         } catch { setVisible(true); }
       }
     };
