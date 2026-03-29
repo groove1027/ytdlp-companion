@@ -431,20 +431,20 @@ async fn try_kokoro(
     let tmp_output = tempfile::Builder::new().suffix(".wav").tempfile()?;
     let output_path = tmp_output.path().to_string_lossy().to_string();
 
-    // 언어 allowlist (인젝션 차단 — 허용된 코드만 통과)
-    // Kokoro 미지원 언어(de/ru)는 en으로 매핑 (ko 폴백 방지)
+    // Kokoro 언어 코드 — espeak-ng 호환 형식 필수 (en-us, en-gb, ja 등)
+    // phonemizer가 'en' 단독은 거부하므로 'en-us'/'en-gb' 형식 사용
     let lang = match language.unwrap_or("ko") {
-        "en" | "english" => "en",
+        "en" | "english" => "en-us",
         "ja" | "japanese" => "ja",
         "zh" | "chinese" => "zh",
         "es" | "spanish" => "es",
-        "fr" | "french" => "fr",
+        "fr" | "french" => "fr-fr",
         "hi" | "hindi" => "hi",
         "it" | "italian" => "it",
-        "pt" | "portuguese" => "pt",
-        "de" | "german" | "ru" | "russian" => "en", // 미지원 → 영어 폴백
+        "pt" | "portuguese" => "pt-br",
+        "de" | "german" | "ru" | "russian" => "en-us", // 미지원 → 영어 폴백
         "ko" | "korean" => "ko",
-        _ => "en",
+        _ => "en-us",
     };
 
     // 음성 선택 (allowlist 검증 — 인젝션 방지)
