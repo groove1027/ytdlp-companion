@@ -5625,26 +5625,18 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                       if (!dims) {
                                         if (isCancelled()) return;
                                         setNleExporting({ target, step: '3/3 패키지 생성 중... (영상 정보 확인)', startedAt });
-                                        dims = await new Promise<{ w: number; h: number; fps: number; dur: number; hasAudio: boolean }>(resolve => {
+                                        dims = await new Promise<{ w: number; h: number; fps: number; dur: number }>(resolve => {
                                           const vid = document.createElement('video');
                                           vid.muted = true; vid.playsInline = true; vid.preload = 'auto';
                                           const url = URL.createObjectURL(videoBlob!);
                                           let resolved = false;
-                                          const done = (r: { w: number; h: number; fps: number; dur: number; hasAudio: boolean }) => {
+                                          const done = (r: { w: number; h: number; fps: number; dur: number }) => {
                                             if (resolved) return; resolved = true;
                                             vid.pause(); vid.removeAttribute('src'); vid.load();
                                             URL.revokeObjectURL(url); resolve(r);
                                           };
-                                          // [FIX] 오디오 트랙 감지 — Premiere 미디어 타입 일치를 위해
-                                          const detectAudio = () => {
-                                            const v = vid as any;
-                                            if (v.webkitAudioDecodedByteCount > 0) return true;
-                                            if (v.mozHasAudio) return true;
-                                            if (v.audioTracks && v.audioTracks.length > 0) return true;
-                                            return false;
-                                          };
-                                          vid.onerror = () => done({ w: 1080, h: 1920, fps: 30, dur: 0, hasAudio: true });
-                                          setTimeout(() => done({ w: vid.videoWidth || 1080, h: vid.videoHeight || 1920, fps: 30, dur: vid.duration || 0, hasAudio: detectAudio() }), 5000);
+                                          vid.onerror = () => done({ w: 1080, h: 1920, fps: 30, dur: 0 });
+                                          setTimeout(() => done({ w: vid.videoWidth || 1080, h: vid.videoHeight || 1920, fps: 30, dur: vid.duration || 0 }), 5000);
                                           vid.onloadeddata = () => {
                                             const w = vid.videoWidth || 1080;
                                             const h = vid.videoHeight || 1920;
@@ -5660,15 +5652,15 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                                   const raw = elapsed > 0 ? (count - 1) / elapsed : 30;
                                                   const stds = [23.976, 24, 25, 29.97, 30, 50, 59.94, 60];
                                                   const snapped = stds.reduce((a, b) => Math.abs(raw - a) < Math.abs(raw - b) ? a : b);
-                                                  done({ w, h, fps: snapped, dur, hasAudio: detectAudio() });
+                                                  done({ w, h, fps: snapped, dur });
                                                   return;
                                                 }
                                                 (vid as unknown as { requestVideoFrameCallback: (cb: typeof onFrame) => void }).requestVideoFrameCallback(onFrame);
                                               };
                                               (vid as unknown as { requestVideoFrameCallback: (cb: typeof onFrame) => void }).requestVideoFrameCallback(onFrame);
-                                              vid.play().catch(() => done({ w, h, fps: 30, dur, hasAudio: detectAudio() }));
+                                              vid.play().catch(() => done({ w, h, fps: 30, dur }));
                                             } else {
-                                              done({ w, h, fps: 30, dur, hasAudio: detectAudio() });
+                                              done({ w, h, fps: 30, dur });
                                             }
                                           };
                                           vid.src = url;
@@ -5678,7 +5670,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                       // Step 3: ZIP 패키지 생성
                                       if (isCancelled()) return;
                                       setNleExporting({ target, step: '3/3 패키지 생성 중...', startedAt });
-                                      const zipBlob = await buildNlePackageZip({ target, scenes: v.scenes, title: v.title, videoBlob, videoFileName: fileName, preset: selectedPreset || undefined, width: dims.w, height: dims.h, fps: dims.fps, videoDurationSec: dims.dur, hasAudioTrack: (dims as any).hasAudio !== false, narrationLines });
+                                      const zipBlob = await buildNlePackageZip({ target, scenes: v.scenes, title: v.title, videoBlob, videoFileName: fileName, preset: selectedPreset || undefined, width: dims.w, height: dims.h, fps: dims.fps, videoDurationSec: dims.dur, hasAudioTrack: audioConfirmed, narrationLines });
                                       if (isCancelled()) return;
                                       const downloadFileName = `${sanitizeProjectName(v.title, 30)}_${label}.zip`;
                                       if (target === 'capcut' && directInstallSelection) {
