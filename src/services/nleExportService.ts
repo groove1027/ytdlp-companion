@@ -24,6 +24,87 @@ import type { NarrationLineLike } from './narrationSyncService';
 import { compileNleMotionTrack } from './nleMotionExport';
 import { OVERSCALE } from './webcodecs/kenBurnsEngine';
 import { evolinkChat } from './evolinkService';
+import { isCompanionDetected } from './ytdlpApiService';
+
+const COMPANION_URL = 'http://localhost:9876';
+
+/**
+ * 컴패니언 앱을 통해 NLE 프로젝트를 로컬에 직접 설치
+ * ZIP 다운로드 + 수동 설치 스크립트 실행 없이 원클릭 설치
+ */
+export async function installNleViaCompanion(params: {
+  target: NleTarget;
+  zipBlob: Blob;
+  projectId: string;
+}): Promise<{ success: boolean; installedPath: string; filesInstalled: number }> {
+  const { target, zipBlob, projectId } = params;
+
+  if (!isCompanionDetected()) {
+    throw new Error('컴패니언 앱이 실행 중이 아닙니다. 컴패니언 앱을 설치/실행한 뒤 다시 시도하세요.');
+  }
+
+  // ZIP을 풀어서 파일 목록으로 변환
+  const JSZip = (await import('jszip')).default;
+  const zip = await JSZip.loadAsync(zipBlob);
+  const files: Array<{ path: string; data: string; isText: boolean }> = [];
+
+  const textExtensions = ['.json', '.xml', '.srt', '.txt', '.ttml', '.settings'];
+
+  for (const [relativePath, zipEntry] of Object.entries(zip.files)) {
+    if (zipEntry.dir) continue;
+    // 설치 스크립트는 컴패니언이 대체하므로 스킵
+    if (relativePath.endsWith('.sh') || relativePath.endsWith('.ps1') || relativePath.endsWith('.bat')) continue;
+
+    // projectId 접두사 제거 (컴패니언이 자체적으로 projectId 폴더를 생성)
+    let cleanPath = relativePath;
+    if (cleanPath.startsWith(projectId + '/')) {
+      cleanPath = cleanPath.slice(projectId.length + 1);
+    }
+
+    const isText = textExtensions.some(ext => relativePath.toLowerCase().endsWith(ext));
+
+    if (isText) {
+      const textContent = await zipEntry.async('string');
+      files.push({
+        path: cleanPath,
+        data: btoa(unescape(encodeURIComponent(textContent))),
+        isText: true,
+      });
+    } else {
+      const binaryContent = await zipEntry.async('base64');
+      files.push({
+        path: cleanPath,
+        data: binaryContent,
+        isText: false,
+      });
+    }
+  }
+
+  // 컴패니언 API 호출
+  const res = await fetch(`${COMPANION_URL}/api/nle/install`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      target,
+      projectId,
+      files,
+      launchApp: true,
+    }),
+    signal: AbortSignal.timeout(60_000),
+  });
+
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({ error: '알 수 없는 오류' }));
+    throw new Error(`NLE 설치 실패: ${errData.error || res.statusText}`);
+  }
+
+  return await res.json();
+}
+
+/** 컴패니언 앱이 NLE 설치를 지원하는지 확인 */
+export function isCompanionNleAvailable(): boolean {
+  return isCompanionDetected();
+}
 
 interface ExportNarrationLine extends NarrationLineLike {
   sceneId?: string;
@@ -1004,6 +1085,7 @@ async function generatePremiereNativeProjectBytes(params: {
   height?: number;
   fps?: number;
   videoDurationSec?: number;
+  hasAudioTrack?: boolean;
   narrationLines?: ExportNarrationLine[];
   dialogueLineBreaks?: SubtitleTextOverrideMap;
 }): Promise<Uint8Array> {
@@ -1016,6 +1098,7 @@ async function generatePremiereNativeProjectBytes(params: {
     height = 1920,
     fps = 30,
     videoDurationSec,
+    hasAudioTrack = true,
     narrationLines = [],
     dialogueLineBreaks,
   } = params;
@@ -1086,7 +1169,8 @@ async function generatePremiereNativeProjectBytes(params: {
   }
 
   const sourceMedia = getPremiereObjectByUid(doc, 'a2a84544-e9d2-49c2-87e5-23116e78d0fb');
-  setPremiereChildText(doc, sourceMedia, 'RelativePath', `media/${safeVideoName}`);
+  // [FIX] RelativePath에 ./ 접두사 필수 — Premiere 자동 미디어 링크 호환
+  setPremiereChildText(doc, sourceMedia, 'RelativePath', `./media/${safeVideoName}`);
   setPremiereChildText(doc, sourceMedia, 'FilePath', `media/${safeVideoName}`);
   setPremiereChildText(doc, sourceMedia, 'ActualMediaFilePath', `media/${safeVideoName}`);
   setPremiereChildText(doc, sourceMedia, 'Title', safeVideoName);
@@ -1104,14 +1188,22 @@ async function generatePremiereNativeProjectBytes(params: {
   removePremiereChild(sourceVideoStream, 'PeakFilePath');
 
   const sourceAudioStream = getPremiereObjectById(doc, '329');
-  setPremiereChildText(doc, sourceAudioStream, 'Duration', String(sourceDurationTicks));
-  removePremiereChild(sourceAudioStream, 'ConformedAudioPath');
-  removePremiereChild(sourceAudioStream, 'PeakFilePath');
+  // [FIX] 영상에 오디오 트랙이 없으면 AudioStream 제거 — 미디어 타입 불일치 방지
+  if (!hasAudioTrack) {
+    removePremiereChild(sourceMedia, 'AudioStream');
+    removePremiereChild(sourceMedia, 'ConformedAudioRate');
+  } else {
+    setPremiereChildText(doc, sourceAudioStream, 'Duration', String(sourceDurationTicks));
+    removePremiereChild(sourceAudioStream, 'ConformedAudioPath');
+    removePremiereChild(sourceAudioStream, 'PeakFilePath');
+  }
 
   const sourceVideoMediaSource = getPremiereObjectById(doc, '224');
   const sourceAudioMediaSource = getPremiereObjectById(doc, '225');
   setPremiereChildText(doc, sourceVideoMediaSource, 'OriginalDuration', String(sourceDurationTicks));
-  setPremiereChildText(doc, sourceAudioMediaSource, 'OriginalDuration', String(sourceDurationTicks));
+  if (hasAudioTrack) {
+    setPremiereChildText(doc, sourceAudioMediaSource, 'OriginalDuration', String(sourceDurationTicks));
+  }
 
   const sourceMasterClip = getPremiereObjectByUid(doc, 'b96bdb66-4f6f-4cff-9d21-d4d144ff113b');
   setPremiereChildText(doc, sourceMasterClip, 'Name', safeVideoName);
@@ -1225,25 +1317,28 @@ async function generatePremiereNativeProjectBytes(params: {
     setPremiereClipChildText(doc, videoClip, 'OutPoint', String(sourceEndTicks));
     videoTrackItems.push(videoTrackItem.getAttribute('ObjectID') || '');
 
-    const sourceAudioTrackItem = clonePremiereObject(root, sourceAudioTrackItemPrototype, nextObjectId);
-    const sourceAudioComponentChain = clonePremiereObject(root, sourceAudioComponentChainPrototype, nextObjectId);
-    const sourceAudioSubClip = clonePremiereObject(root, sourceAudioSubClipPrototype, nextObjectId);
-    const sourceAudioClip = clonePremiereObject(root, sourceAudioClipPrototype, nextObjectId);
-    const sourceAudioClipTrackItem = getPremiereDirectChild(sourceAudioTrackItem, 'ClipTrackItem')!;
-    setPremiereObjectRef(getPremiereDirectChild(sourceAudioClipTrackItem, 'ComponentOwner')!, sourceAudioComponentChain.getAttribute('ObjectID') || '');
-    setPremiereSubClipRef(sourceAudioClipTrackItem, sourceAudioSubClip.getAttribute('ObjectID') || '');
-    removePremiereChild(sourceAudioClipTrackItem, 'HeadTransition');
-    removePremiereChild(sourceAudioClipTrackItem, 'TailTransition');
-    setPremiereTrackItemTimes(sourceAudioClipTrackItem, timelineStartTicks, timelineEndTicks);
-    setPremiereTrackInternalId(sourceAudioClipTrackItem, nextNumericId());
-    setPremiereChildText(doc, sourceAudioSubClip, 'Name', safeVideoName);
-    setPremiereObjectRef(getPremiereDirectChild(sourceAudioSubClip, 'Clip')!, sourceAudioClip.getAttribute('ObjectID') || '');
-    setPremiereObjectURef(getPremiereDirectChild(sourceAudioSubClip, 'MasterClip')!, sourceMasterClip.getAttribute('ObjectUID') || '');
-    setPremiereObjectRef(getPremiereDirectChild(getPremiereClipBody(sourceAudioClip), 'Source'), sourceAudioMediaSource.getAttribute('ObjectID') || '225');
-    setPremiereClipChildText(doc, sourceAudioClip, 'ClipID', premiereUuid());
-    setPremiereClipChildText(doc, sourceAudioClip, 'InPoint', String(sourceStartTicks));
-    setPremiereClipChildText(doc, sourceAudioClip, 'OutPoint', String(sourceEndTicks));
-    sourceAudioTrackItems.push(sourceAudioTrackItem.getAttribute('ObjectID') || '');
+    // [FIX] 영상에 오디오 트랙이 있을 때만 소스 오디오 클립 생성
+    if (hasAudioTrack) {
+      const sourceAudioTrackItem = clonePremiereObject(root, sourceAudioTrackItemPrototype, nextObjectId);
+      const sourceAudioComponentChain = clonePremiereObject(root, sourceAudioComponentChainPrototype, nextObjectId);
+      const sourceAudioSubClip = clonePremiereObject(root, sourceAudioSubClipPrototype, nextObjectId);
+      const sourceAudioClip = clonePremiereObject(root, sourceAudioClipPrototype, nextObjectId);
+      const sourceAudioClipTrackItem = getPremiereDirectChild(sourceAudioTrackItem, 'ClipTrackItem')!;
+      setPremiereObjectRef(getPremiereDirectChild(sourceAudioClipTrackItem, 'ComponentOwner')!, sourceAudioComponentChain.getAttribute('ObjectID') || '');
+      setPremiereSubClipRef(sourceAudioClipTrackItem, sourceAudioSubClip.getAttribute('ObjectID') || '');
+      removePremiereChild(sourceAudioClipTrackItem, 'HeadTransition');
+      removePremiereChild(sourceAudioClipTrackItem, 'TailTransition');
+      setPremiereTrackItemTimes(sourceAudioClipTrackItem, timelineStartTicks, timelineEndTicks);
+      setPremiereTrackInternalId(sourceAudioClipTrackItem, nextNumericId());
+      setPremiereChildText(doc, sourceAudioSubClip, 'Name', safeVideoName);
+      setPremiereObjectRef(getPremiereDirectChild(sourceAudioSubClip, 'Clip')!, sourceAudioClip.getAttribute('ObjectID') || '');
+      setPremiereObjectURef(getPremiereDirectChild(sourceAudioSubClip, 'MasterClip')!, sourceMasterClip.getAttribute('ObjectUID') || '');
+      setPremiereObjectRef(getPremiereDirectChild(getPremiereClipBody(sourceAudioClip), 'Source'), sourceAudioMediaSource.getAttribute('ObjectID') || '225');
+      setPremiereClipChildText(doc, sourceAudioClip, 'ClipID', premiereUuid());
+      setPremiereClipChildText(doc, sourceAudioClip, 'InPoint', String(sourceStartTicks));
+      setPremiereClipChildText(doc, sourceAudioClip, 'OutPoint', String(sourceEndTicks));
+      sourceAudioTrackItems.push(sourceAudioTrackItem.getAttribute('ObjectID') || '');
+    }
 
     timing.subtitleSegments
       .filter(segment => segment.text.trim())
@@ -1436,7 +1531,7 @@ async function generatePremiereNativeProjectBytes(params: {
       setPremiereChildText(doc, narrationMediaSource, 'OriginalDuration', String(narrationDurationTicks));
 
       setPremiereObjectRef(getPremiereDirectChild(narrationMasterSecondaryContent, 'Content')!, narrationMediaSource.getAttribute('ObjectID') || '');
-      setPremiereChildText(doc, narrationMedia, 'RelativePath', `audio/${narrationFileName}`);
+      setPremiereChildText(doc, narrationMedia, 'RelativePath', `./audio/${narrationFileName}`);
       setPremiereChildText(doc, narrationMedia, 'FilePath', `audio/${narrationFileName}`);
       setPremiereChildText(doc, narrationMedia, 'ActualMediaFilePath', `audio/${narrationFileName}`);
       setPremiereChildText(doc, narrationMedia, 'Title', narrationFileName);
@@ -3811,9 +3906,10 @@ export async function buildNlePackageZip(params: {
   height?: number;
   fps?: number;
   videoDurationSec?: number;
+  hasAudioTrack?: boolean;
   narrationLines?: ExportNarrationLine[];
 }): Promise<Blob> {
-  const { target, scenes, title, videoBlob, videoFileName: rawVideoFileName, preset, width, height, fps, videoDurationSec, narrationLines = [] } = params;
+  const { target, scenes, title, videoBlob, videoFileName: rawVideoFileName, preset, width, height, fps, videoDurationSec, hasAudioTrack, narrationLines = [] } = params;
   const sanitizedVideoFileName = sanitizeFileName(rawVideoFileName || 'video.mp4');
   const videoFileName = /\.[a-zA-Z0-9]{2,5}$/.test(sanitizedVideoFileName) ? sanitizedVideoFileName : `${sanitizedVideoFileName || 'video'}.mp4`;
   const hasValidVideoBlob = !!videoBlob && videoBlob.size > 0;
@@ -3857,6 +3953,7 @@ export async function buildNlePackageZip(params: {
       height,
       fps,
       videoDurationSec,
+      hasAudioTrack: hasAudioTrack !== false,
       narrationLines: packagedNarrationLines,
       dialogueLineBreaks,
     });
