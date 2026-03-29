@@ -41,9 +41,9 @@
     },
     "windows": {
       "nsis": {
-        "displayLanguageSelector": false,
+        "displayLanguageSelector": true,
         "installMode": "currentUser",
-        "languages": ["Korean", "English"]
+        "languages": ["English", "Korean"]
       }
     }
   }
