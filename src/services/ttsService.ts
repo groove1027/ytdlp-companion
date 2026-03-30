@@ -2,7 +2,6 @@
 import { monitoredFetch, getKieKey } from './apiService';
 import { logger } from './LoggerService';
 import { generateSpeech as generateSupertonicSpeech } from './supertonicService';
-import { isCompanionDetected } from './ytdlpApiService';
 
 import type { TTSEngine, TTSLanguage } from '../types';
 
@@ -402,7 +401,8 @@ export interface CompanionVoiceInfo {
  * 컴패니언 TTS 음성 목록 가져오기
  */
 export async function getCompanionTTSVoices(): Promise<{ qwen3: CompanionVoiceInfo[]; kokoro: CompanionVoiceInfo[] }> {
-    if (!isCompanionDetected()) return { qwen3: [], kokoro: [] };
+    // [FIX #914] isCompanionDetected() 게이트 제거 — health check 느리면 false인데 컴패니언은 살아있을 수 있음
+    // try/catch가 실패 시 빈 배열 반환하므로 안전
 
     // 5분 캐시
     if (_companionVoicesCache && (Date.now() - _companionVoicesCacheTime) < 300_000) {
@@ -439,7 +439,9 @@ async function tryCompanionTTS(
     engine: string = 'auto',
     voice?: string,
 ): Promise<TTSResult | null> {
-    if (!isCompanionDetected()) return null;
+    // [FIX #914] isCompanionDetected() 게이트 제거
+    // health check가 느려서 false여도 컴패니언 TTS 엔드포인트는 정상 작동할 수 있음
+    // connection refused면 catch에서 즉시 null 반환 (< 100ms)
 
     try {
         const engineLabel = engine === 'qwen3' ? 'Qwen3' : engine === 'kokoro' ? 'Kokoro' : '자동';

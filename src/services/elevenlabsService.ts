@@ -12,13 +12,12 @@
 import { monitoredFetch, getKieKey } from './apiService';
 import { logger } from './LoggerService';
 import { mergeAudioFiles, splitTextForTTS, stripSpeakerTags } from './ttsService';
-import { isCompanionDetected } from './ytdlpApiService';
-
 const COMPANION_URL = 'http://localhost:9876';
 
 /** 컴패니언 Qwen3/Kokoro/Piper TTS로 로컬 음성 합성 시도 */
 async function tryCompanionTTS(text: string, languageCode?: string): Promise<{ audioUrl: string; format: string } | null> {
-  if (!isCompanionDetected()) return null;
+  // [FIX #914] isCompanionDetected() 게이트 제거 — health check 느려도 TTS 엔드포인트 직접 시도
+  // connection refused면 catch에서 즉시 null → ElevenLabs 폴백
 
   try {
     // 컴패니언에 언어를 그대로 전달 (자동 엔진 선택에 필요)

@@ -14,7 +14,6 @@ import {
   installCapCutZipToDirectory,
   isCapCutDirectInstallSupported,
   installNleViaCompanion,
-  isCompanionNleAvailable,
 } from '../../services/nleExportService';
 import type { EditRoomNleTarget } from '../../services/nleExportService';
 import { showToast } from '../../stores/uiStore';
@@ -1460,8 +1459,13 @@ const EditRoomTab: React.FC = () => {
 
       // 1순위: 컴패니언 앱으로 직접 설치 (ZIP 다운로드 없이 원클릭)
       // VREW는 컴패니언 NLE 설치 미지원 (SRT만 필요하므로 ZIP이 적절)
-      if (isCompanionNleAvailable() && target !== 'vrew') {
+      // [FIX #914] health ping 먼저 → 성공 시에만 무거운 ZIP 파싱 진행
+      if (target !== 'vrew') {
         try {
+          // 컴패니언 연결 확인 (health 캐싱으로 즉시 응답, 미실행 시 connection refused로 빠른 실패)
+          const ping = await fetch('http://localhost:9876/health', { signal: AbortSignal.timeout(3000) });
+          if (!ping.ok) throw new Error('companion unavailable');
+
           // ZIP에서 projectId 추출 (CapCut은 drafts 폴더 ID 사용)
           const JSZip = (await import('jszip')).default;
           const zip = await JSZip.loadAsync(result.blob);

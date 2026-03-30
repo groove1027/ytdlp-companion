@@ -25,6 +25,8 @@ export async function companionTranscode(
   outputFormat: string,
   ffmpegArgs?: string[],
 ): Promise<Blob | null> {
+  // [FIX #914] base64 인코딩이 무거우므로 isCompanionDetected()를 최적화 게이트로 유지
+  // health handler 캐싱 수정으로 이 값이 정확해짐
   if (!isCompanionDetected()) return null;
 
   try {

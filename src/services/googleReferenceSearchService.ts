@@ -8,7 +8,6 @@
 import { monitoredFetch } from './apiService';
 import { evolinkChat, getEvolinkKey } from './evolinkService';
 import { logger } from './LoggerService';
-import { isCompanionDetected } from './ytdlpApiService';
 import type { Scene } from '../types';
 import { useGoogleCookieStore } from '../stores/googleCookieStore';
 
@@ -1085,7 +1084,8 @@ async function rankReferenceResults(
 
 async function proxyFetchReferenceSearch(targetUrl: string, cookie?: string): Promise<Response> {
   // 1순위: 컴패니언 로컬 프록시 (사용자 IP — 차단 없음, 빠름)
-  if (isCompanionDetected()) {
+  // [FIX #914] isCompanionDetected() 게이트 제거 — health check 느려도 직접 시도, 실패 시 CF 폴백
+  {
     try {
       const res = await fetch(`${COMPANION_URL}/api/google-proxy`, {
         method: 'POST',

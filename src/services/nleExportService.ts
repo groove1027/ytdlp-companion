@@ -41,7 +41,11 @@ export async function installNleViaCompanion(params: {
 }): Promise<{ success: boolean; installedPath: string; filesInstalled: number }> {
   const { target, zipBlob, projectId } = params;
 
-  if (!isCompanionDetected()) {
+  // [FIX #914] ZIP 언패킹이 무거우므로 먼저 컴패니언 연결 확인 (health 캐싱으로 즉시 응답)
+  try {
+    const ping = await fetch(`${COMPANION_URL}/health`, { signal: AbortSignal.timeout(3000) });
+    if (!ping.ok) throw new Error('not ok');
+  } catch {
     throw new Error('컴패니언 앱이 실행 중이 아닙니다. 컴패니언 앱을 설치/실행한 뒤 다시 시도하세요.');
   }
 
@@ -83,17 +87,23 @@ export async function installNleViaCompanion(params: {
   }
 
   // 컴패니언 API 호출
-  const res = await fetch(`${COMPANION_URL}/api/nle/install`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      target,
-      projectId,
-      files,
-      launchApp: true,
-    }),
-    signal: AbortSignal.timeout(60_000),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${COMPANION_URL}/api/nle/install`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        target,
+        projectId,
+        files,
+        launchApp: true,
+      }),
+      signal: AbortSignal.timeout(60_000),
+    });
+  } catch {
+    // [FIX #914] connection refused = 컴패니언 미실행 — 명확한 에러 메시지
+    throw new Error('컴패니언 앱이 실행 중이 아닙니다. 컴패니언 앱을 설치/실행한 뒤 다시 시도하세요.');
+  }
 
   if (!res.ok) {
     const errData = await res.json().catch(() => ({ error: '알 수 없는 오류' }));

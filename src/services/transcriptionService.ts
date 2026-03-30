@@ -19,6 +19,8 @@ async function tryCompanionTranscribe(
   audioFile: File | Blob,
   options?: { signal?: AbortSignal; onProgress?: (msg: string) => void; diarize?: boolean },
 ): Promise<WhisperTranscriptResult | null> {
+  // [FIX #914] base64 인코딩이 무거우므로 isCompanionDetected()를 최적화 게이트로 유지
+  // health handler 캐싱 수정으로 이 값이 정확해짐
   if (!isCompanionDetected()) return null;
   // diarize는 whisper.cpp가 미지원 → Kie로 폴백
   if (options?.diarize) return null;

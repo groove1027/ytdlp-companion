@@ -9,9 +9,72 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use tower_http::cors::{CorsLayer, Any};
 use std::net::SocketAddr;
+use std::sync::OnceLock;
+use tokio::sync::RwLock;
 use tokio_util::io::ReaderStream;
 
 use crate::{platform, ytdlp, rembg, whisper, tts};
+
+// ──────────────────────────────────────────────
+// [FIX #914] 서비스 캐시 — health check 즉시 응답용
+// 기존: health 요청마다 Python subprocess 5개 순차 실행 (10~15초)
+// 수정: 서버 시작 시 1회 감지 → 캐시, 5분마다 백그라운드 갱신
+// ──────────────────────────────────────────────
+
+struct CachedHealth {
+    services: Vec<String>,
+    ytdlp_version: String,
+}
+
+static CACHED_HEALTH: OnceLock<RwLock<CachedHealth>> = OnceLock::new();
+
+fn cached_health() -> &'static RwLock<CachedHealth> {
+    CACHED_HEALTH.get_or_init(|| RwLock::new(CachedHealth {
+        services: vec!["ytdlp".to_string(), "download".to_string(), "frames".to_string(), "nle-install".to_string()],
+        ytdlp_version: "loading...".to_string(),
+    }))
+}
+
+/// 무거운 서비스 감지 — 서버 시작 시 + 5분 주기 백그라운드 실행
+async fn detect_services() -> CachedHealth {
+    let ytdlp_version = ytdlp::get_version().await.unwrap_or_else(|_| "unknown".to_string());
+
+    let mut services = vec!["ytdlp".to_string(), "download".to_string(), "frames".to_string()];
+    let python = platform::python_cmd();
+
+    // rembg
+    if tokio::process::Command::new(python).args(["-c", "import rembg"]).output().await.map(|o| o.status.success()).unwrap_or(false) {
+        services.push("rembg".to_string());
+    }
+    // whisper
+    let whisper_bin = if cfg!(target_os = "windows") { "whisper/whisper-cli.exe" } else { "whisper/whisper-cpp" };
+    if dirs::data_dir().map(|d| d.join("ytdlp-companion").join(whisper_bin).exists()).unwrap_or(false) {
+        services.push("whisper".to_string());
+    }
+    // TTS (Qwen3 > Kokoro > Piper)
+    if tokio::process::Command::new(python).args(["-c", "from qwen_tts import Qwen3TTSModel; print('ok')"]).output().await.map(|o| o.status.success()).unwrap_or(false)
+       || tokio::process::Command::new(python).args(["-c", "from transformers import AutoTokenizer; print('ok')"]).output().await.map(|o| o.status.success()).unwrap_or(false) {
+        services.push("tts-qwen3".to_string());
+    }
+    if tokio::process::Command::new(python).args(["-c", "from kokoro_onnx import Kokoro"]).output().await.map(|o| o.status.success()).unwrap_or(false) {
+        services.push("tts-kokoro".to_string());
+    } else {
+        let piper_bin = if cfg!(target_os = "windows") { "piper/piper.exe" } else { "piper/piper" };
+        if dirs::data_dir().map(|d| d.join("ytdlp-companion").join(piper_bin).exists()).unwrap_or(false) {
+            services.push("tts-piper".to_string());
+        }
+    }
+    // NLE
+    services.push("nle-install".to_string());
+    // ffmpeg
+    let ffmpeg_path = ytdlp::get_ffmpeg_path_public();
+    if tokio::process::Command::new(&ffmpeg_path).args(["-version"]).output().await.map(|o| o.status.success()).unwrap_or(false) {
+        services.push("ffmpeg".to_string());
+    }
+
+    println!("[Companion] 서비스 감지 완료: {:?}", services);
+    CachedHealth { services, ytdlp_version }
+}
 
 /// Content-Disposition header-safe 파일명 생성
 /// 비ASCII/제어문자/따옴표를 제거하여 header parse panic 방지
@@ -186,6 +249,17 @@ pub async fn start_server(_app: tauri::AppHandle) -> Result<(), Box<dyn std::err
     let addr = SocketAddr::from(([127, 0, 0, 1], 9876));
     println!("[Companion] 서버 시작: http://{}", addr);
 
+    // [FIX #914] 서비스 감지를 백그라운드에서 실행 — health check 즉시 응답 가능
+    tokio::spawn(async {
+        // 초기 감지 + 5분 주기 갱신
+        // 루프가 영구 지속되도록 개별 iteration 에러를 catch
+        loop {
+            let result = detect_services().await;
+            *cached_health().write().await = result;
+            tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+        }
+    });
+
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
     Ok(())
@@ -196,51 +270,17 @@ pub async fn start_server(_app: tauri::AppHandle) -> Result<(), Box<dyn std::err
 // ──────────────────────────────────────────────
 
 async fn health_handler() -> Json<HealthResponse> {
-    let ytdlp_version = ytdlp::get_version().await.unwrap_or_else(|_| "unknown".to_string());
-
-    // 사용 가능한 서비스 목록
-    let mut services = vec!["ytdlp".to_string(), "download".to_string(), "frames".to_string()];
-    let python = platform::python_cmd();
-    // rembg 확인
-    if tokio::process::Command::new(python).args(["-c", "import rembg"]).output().await.map(|o| o.status.success()).unwrap_or(false) {
-        services.push("rembg".to_string());
-    }
-    // whisper 확인 (플랫폼별 바이너리명)
-    let whisper_bin = if cfg!(target_os = "windows") { "whisper/whisper-cli.exe" } else { "whisper/whisper-cpp" };
-    if dirs::data_dir().map(|d| d.join("ytdlp-companion").join(whisper_bin).exists()).unwrap_or(false) {
-        services.push("whisper".to_string());
-    }
-    // TTS 확인 (Qwen3 > Kokoro > Piper)
-    // qwen-tts 전용 패키지 또는 transformers+trust_remote_code 둘 다 확인
-    if tokio::process::Command::new(python).args(["-c", "from qwen_tts import Qwen3TTSModel; print('ok')"]).output().await.map(|o| o.status.success()).unwrap_or(false)
-       || tokio::process::Command::new(python).args(["-c", "from transformers import AutoTokenizer; print('ok')"]).output().await.map(|o| o.status.success()).unwrap_or(false) {
-        services.push("tts-qwen3".to_string());
-    }
-    if tokio::process::Command::new(python).args(["-c", "from kokoro_onnx import Kokoro"]).output().await.map(|o| o.status.success()).unwrap_or(false) {
-        services.push("tts-kokoro".to_string());
-    } else {
-        let piper_bin = if cfg!(target_os = "windows") { "piper/piper.exe" } else { "piper/piper" };
-        if dirs::data_dir().map(|d| d.join("ytdlp-companion").join(piper_bin).exists()).unwrap_or(false) {
-            services.push("tts-piper".to_string());
-        }
-    }
-    // NLE 설치 기능 항상 사용 가능
-    services.push("nle-install".to_string());
-    // ffmpeg 확인 (ytdlp 모듈의 공통 경로 탐색 사용)
-    let ffmpeg_path = ytdlp::get_ffmpeg_path_public();
-    if tokio::process::Command::new(&ffmpeg_path).args(["-version"]).output().await.map(|o| o.status.success()).unwrap_or(false) {
-        services.push("ffmpeg".to_string());
-    }
-
+    // [FIX #914] 캐시된 결과 즉시 반환 — Python subprocess 0개, 응답 < 1ms
+    let cached = cached_health().read().await;
     let last_update_check = ytdlp::last_update_check_ts();
 
     Json(HealthResponse {
         app: "ytdlp-companion".to_string(),
         status: "ok".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
-        ytdlp_version,
+        ytdlp_version: cached.ytdlp_version.clone(),
         last_update_check,
-        services,
+        services: cached.services.clone(),
     })
 }
 

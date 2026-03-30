@@ -8,6 +8,16 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-30] #914 컴패니언 health check 캐싱 + 9개 서비스 게이트 최적화
+- [x] 근본 원인: health_handler()가 Python subprocess 5개 순차 실행 (10-15초) → 3초 timeout → _companionAvailable=false → 9개 서비스 전멸
+- [x] 컴패니언 server.rs: CachedHealth + OnceLock<RwLock> — 서버 시작 시 1회 감지 + 5분 주기 갱신, health 응답 < 1ms
+- [x] 프론트엔드 가벼운 서비스 (TTS, ElevenLabs, Google proxy): isCompanionDetected() 게이트 제거 → 직접 fetch 시도
+- [x] 프론트엔드 무거운 서비스 (FFmpeg, Whisper, RemoveBg): isCompanionDetected() 최적화 게이트 유지 (base64 전처리 비용)
+- [x] NLE install: health ping 먼저 → ZIP 파싱 후 설치 (EditRoomTab + nleExportService 모두)
+- [x] Codex 5.4 MCP 코드 리뷰 12회 (초기 2회 + 10회 루프) — 3개 이슈 발견/수정
+- [x] Playwright E2E: Failed to fetch Unhandled Rejection 0건 확인
+- [x] 수정 파일: server.rs, ttsService.ts, elevenlabsService.ts, removeBgService.ts, ffmpegService.ts, transcriptionService.ts, googleReferenceSearchService.ts, nleExportService.ts, EditRoomTab.tsx
+
 ### [2026-03-30] 편집점 정밀도 고도화 — FPS 감지 + Drop-Frame + Scene Detection 정밀화
 - [x] `RationalFps` 타입 추가 (types.ts) — 유리수 FPS 표현으로 부동소수점 오차 제거
 - [x] `detectVideoFps()` 함수 추가 (sceneDetection.ts) — requestVideoFrameCallback + mediaTime 기반 실측

@@ -17,6 +17,8 @@ async function fileToBase64(file: File): Promise<string> {
 
 export const removeBackground = async (imageFile: File): Promise<File> => {
     // 1순위: 컴패니언 로컬 rembg (무료, 무제한, 풀사이즈)
+    // [FIX #914] base64 인코딩이 무거우므로 isCompanionDetected()를 최적화 게이트로 유지
+    // health handler 캐싱 수정으로 이 값이 정확해짐
     if (isCompanionDetected()) {
         try {
             logger.info(`✂️ [Companion] rembg 로컬 배경 제거: ${imageFile.name}`);
