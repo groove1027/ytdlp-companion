@@ -8,6 +8,15 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-30] #909 Evolink 잔액 부족 시 raw API 에러 노출 → 사용자 친화적 메시지 + 폴백 체인
+- [x] 근본 원인: evolinkFrameAnalysisStream/evolinkVideoAnalysisStream/evolinkNativeStream이 handleEvolinkError 공통 핸들러를 우회 → raw "403: insufficient_user_quota" 노출
+- [x] evolinkService.ts: 4개 v1beta 함수 (Native, NativeStream, Video, Frame)의 에러 처리를 handleEvolinkError로 통일 → markEvolinkQuotaDepleted() + 사용자 친화적 메시지
+- [x] VideoAnalysisRoom.tsx: 업로드 파일 경로에 폴백 체인 추가 — 프레임 분석 실패 시 전사 데이터 기반 텍스트 폴백 (할루시네이션 방지 가드)
+- [x] VideoAnalysisRoom.tsx: 잔액 부족 에러 전용 사용자 메시지 + 토스트 우선순위 조정 (raw API 대신 "AI 분석 크레딧이 부족합니다")
+- [x] Codex 5.4 MCP 코드 리뷰 10회 — quota heuristic 과도 매칭, lazy diarization no-op, toast 우선순위 등 수정
+- [x] Playwright E2E: 영상 업로드 + All TTS 분석 → raw API 에러 패턴 5가지 미노출 확인
+- [x] 수정 파일: evolinkService.ts, VideoAnalysisRoom.tsx
+
 ### [2026-03-30] #914 컴패니언 health check 캐싱 + 9개 서비스 게이트 최적화
 - [x] 근본 원인: health_handler()가 Python subprocess 5개 순차 실행 (10-15초) → 3초 timeout → _companionAvailable=false → 9개 서비스 전멸
 - [x] 컴패니언 server.rs: CachedHealth + OnceLock<RwLock> — 서버 시작 시 1회 감지 + 5분 주기 갱신, health 응답 < 1ms

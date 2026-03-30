@@ -927,7 +927,9 @@ export const requestEvolinkNative = async (
     if (!response.ok) {
         const errorDetail = await parseEvolinkError(response);
         logger.error(`[Evolink Native] v1beta 실패 (${response.status})`, { error: errorDetail });
-        throw new Error(`Evolink v1beta Error (${response.status}): ${errorDetail}`);
+        // [FIX #909] quota/rate-limit 에러를 공통 핸들러로 처리 → markEvolinkQuotaDepleted + 사용자 친화적 메시지
+        if (response.status === 429) markEvolinkRateLimited();
+        handleEvolinkError(response.status, errorDetail);
     }
 
     const data = await response.json();
@@ -1023,7 +1025,9 @@ export const evolinkNativeStream = async (
     if (!response.ok) {
         const errorDetail = await parseEvolinkError(response);
         logger.error(`[Evolink Native Stream] 실패 (${response.status})`, { error: errorDetail });
-        throw new Error(`Evolink v1beta 스트리밍 오류 (${response.status}): ${errorDetail}`);
+        // [FIX #909] quota/rate-limit 에러를 공통 핸들러로 처리
+        if (response.status === 429) markEvolinkRateLimited();
+        handleEvolinkError(response.status, errorDetail);
     }
 
     const reader = response.body?.getReader();
@@ -1537,9 +1541,9 @@ export const evolinkVideoAnalysisStream = async (
     if (!response.ok) {
         const errorDetail = await parseEvolinkError(response);
         logger.error(`[Evolink Video] v1beta 실패 (${response.status})`, { error: errorDetail });
-        // [FIX] 429 Gemini RPM 제한 → 60초 쿨다운 마킹 → 텍스트 폴백이 즉시 KIE로 라우팅
+        // [FIX #909] quota/rate-limit 에러를 공통 핸들러로 처리 → markEvolinkQuotaDepleted + KIE 자동 라우팅
         if (response.status === 429) markEvolinkRateLimited();
-        throw new Error(`Evolink v1beta 비디오 분석 오류 (${response.status}): ${errorDetail}`);
+        handleEvolinkError(response.status, errorDetail);
     }
 
     const reader = response.body?.getReader();
@@ -1688,7 +1692,9 @@ export const evolinkFrameAnalysisStream = async (
     if (!response.ok) {
         const errorDetail = await parseEvolinkError(response);
         logger.error(`[Evolink Frames] v1beta 실패 (${response.status})`, { error: errorDetail });
-        throw new Error(`Evolink v1beta 프레임 분석 오류 (${response.status}): ${errorDetail}`);
+        // [FIX #909] quota/rate-limit 에러를 공통 핸들러로 처리 → markEvolinkQuotaDepleted + KIE 자동 라우팅
+        if (response.status === 429) markEvolinkRateLimited();
+        handleEvolinkError(response.status, errorDetail);
     }
 
     const reader = response.body?.getReader();

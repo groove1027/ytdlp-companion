@@ -4144,8 +4144,24 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
           }
         } else if (uploadedFiles.length > 0 && effectiveFrames.length > 0) {
           // [FIX #833] analyzeWithFrames 내부에서 체험판 Google Gemini 키 폴백 처리
-          // 그 외 실패(네트워크 등)는 에러 전파 — 텍스트 폴백 시 프롬프트에 영상 내용 없어 할루시네이션 위험
-          return await analyzeWithFrames(effectiveFrames, prompt, scriptSystem, tokens, signal, effectiveTemp);
+          // [FIX #909] Evolink 잔액 소진 시 전사 데이터 기반 텍스트 폴백 추가
+          try {
+            return await analyzeWithFrames(effectiveFrames, prompt, scriptSystem, tokens, signal, effectiveTemp);
+          } catch (uploadFrameErr) {
+            if (signal.aborted) throw new DOMException('분석이 취소되었습니다.', 'AbortError');
+            console.warn('[VideoAnalysis] 업로드 프레임 분석 실패, 폴백 시도:', uploadFrameErr);
+            // 이미 확보된 전사 데이터가 있으면 텍스트 폴백 (할루시네이션 위험 낮음)
+            // 주: runLazyDiarizationOnce()는 videoUri 경로 전용 — 업로드 경로에서는 eager diarization 결과만 사용
+            if (diarizedText) {
+              const fbPrompt = !prompt.includes(diarizedText)
+                ? prompt + `\n\n---\n${diarizedText}\n\n위 화자 분리 전사 결과를 편집 테이블에 정확히 반영하세요.`
+                : prompt;
+              const textOnlyNotice = '\n\n⚠️ [텍스트 전용 모드] 프레임 이미지 분석이 실패했습니다. 위에 제공된 메타데이터와 전사 텍스트만을 기반으로 분석하세요. 실제로 보지 못한 장면이나 화면을 상상·추측하여 작성하지 마세요.';
+              return await textFallbackAI(fbPrompt + textOnlyNotice, tokens);
+            }
+            // 전사 데이터도 없으면 에러 전파 (텍스트 폴백 시 할루시네이션 위험)
+            throw uploadFrameErr;
+          }
         } else {
           // [FIX #262] 텍스트 전용 경로도 Smart Routing 적용
           return await textFallbackAI(prompt, tokens);
@@ -4548,7 +4564,11 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       const rawMsg = err instanceof Error ? err.message : String(err);
       const isNetworkError = rawMsg.includes('Failed to fetch') || rawMsg.includes('NetworkError') || rawMsg.includes('network');
       const isTimeoutError = rawMsg.includes('타임아웃') || rawMsg.includes('timeout') || rawMsg.includes('시간 초과');
+      // [FIX #909] Evolink 잔액/크레딧 부족 에러를 사용자 친화적 메시지로 변환
+      // handleEvolinkError가 "Evolink 잔액 부족: 크레딧을 충전해주세요."를 던지므로 이 패턴만 매칭
+      const isQuotaError = rawMsg.includes('잔액 부족') || /insufficient.*(quota|credit|balance)/i.test(rawMsg);
       const friendlyMsg = isAbort ? '분석이 취소되었습니다.'
+        : isQuotaError ? 'AI 분석 크레딧이 부족합니다. Evolink 크레딧을 충전한 뒤 다시 시도해주세요.'
         : isNetworkError ? '영상 분석 서버 응답이 지연되거나 연결이 끊어졌습니다. 잠시 후 다시 시도하거나 더 짧은 영상으로 시도해주세요.'
         : isTimeoutError ? '영상 분석 서버 응답이 지연되어 분석이 중단되었습니다. 잠시 후 다시 시도해주세요.'
         : rawMsg;
@@ -4568,7 +4588,9 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
         }
       } else {
         setError(`분석 실패: ${friendlyMsg}`);
-        if (rawMsg.includes('Cloudinary') || rawMsg.includes('업로드')) {
+        if (isQuotaError) {
+          showToast('AI 분석 크레딧이 부족합니다. Evolink 잔액을 확인해주세요.', 6000);
+        } else if (rawMsg.includes('Cloudinary') || rawMsg.includes('업로드')) {
           showToast('영상 업로드에 실패했습니다. 파일 크기를 줄이거나 YouTube 링크를 사용해주세요.', 6000);
         } else if (rawMsg.includes('API 키') || rawMsg.includes('Evolink')) {
           showToast('AI 서비스 연결에 문제가 있습니다. API 설정을 확인해주세요.', 6000);
