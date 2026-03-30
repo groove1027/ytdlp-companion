@@ -50,12 +50,12 @@ if [ -f "$WORKHIST" ]; then
 fi
 
 # ──────────────────────────────────────────────
-# CHECK 3: UI/서비스 변경 시 Playwright E2E 검증 필수
+# CHECK 3: UI/서비스/스토어/훅/유틸 변경 시 Playwright E2E 검증 필수
 # (touch로 우회 불가 — 실제 스크린샷 파일 증거 필요)
 # ──────────────────────────────────────────────
-# 이번 커밋에 components/ 또는 services/ 파일이 포함되어 있는지 확인
-UI_FILES_STAGED=$(cd "$PROJECT_DIR" && git diff --cached --name-only 2>/dev/null | grep -cE '(components|services)/.*\.(tsx|ts)$')
-UI_FILES_DIFF=$(cd "$PROJECT_DIR" && git diff --name-only HEAD 2>/dev/null | grep -cE '(components|services)/.*\.(tsx|ts)$')
+# 이번 커밋에 src/ 내 코드 파일이 포함되어 있는지 확인 (components, services, stores, hooks, utils, types 전부)
+UI_FILES_STAGED=$(cd "$PROJECT_DIR" && git diff --cached --name-only 2>/dev/null | grep -cE 'src/.*\.(tsx|ts)$')
+UI_FILES_DIFF=$(cd "$PROJECT_DIR" && git diff --name-only HEAD 2>/dev/null | grep -cE 'src/.*\.(tsx|ts)$')
 UI_CHANGED=$(( UI_FILES_STAGED + UI_FILES_DIFF ))
 
 if [ "$UI_CHANGED" -gt 0 ]; then
@@ -114,21 +114,50 @@ if [ "$UI_CHANGED" -gt 0 ]; then
 fi
 
 # ──────────────────────────────────────────────
-# CHECK 4: page.evaluate() 전용 가짜 E2E 차단
-# (page.evaluate만 있고 실제 UI 액션이 없는 테스트 = 단위 테스트)
+# CHECK 4: 가짜 E2E 7중 차단
 # ──────────────────────────────────────────────
 if [ "$UI_CHANGED" -gt 0 ] && [ -d "$E2E_DIR" ]; then
     RECENT_TESTS=$(find "$E2E_DIR" -name "*.test.ts" -mmin -30 2>/dev/null)
     for tf in $RECENT_TESTS; do
+        REL_TF=$(echo "$tf" | sed "s|$PROJECT_DIR/||")
+
+        # ── 4-A: page.evaluate() 전용 테스트 차단 ──
         HAS_UI_ACTION=$(grep -cE 'page\.(click|fill|setInputFiles|waitForResponse|waitForDownload|locator.*click|getByRole.*click|getByText.*click)' "$tf" 2>/dev/null || echo 0)
         HAS_EVALUATE=$(grep -cE 'page\.evaluate' "$tf" 2>/dev/null || echo 0)
         if [ "$HAS_EVALUATE" -gt 0 ] && [ "$HAS_UI_ACTION" -eq 0 ]; then
-            REL_TF=$(echo "$tf" | sed "s|$PROJECT_DIR/||")
-            ERRORS+=("❌ [가짜 E2E] $REL_TF 에 page.evaluate()만 있고 실제 UI 액션이 없다!")
-            ERRORS+=("   → page.evaluate() 수학 검증은 단위 테스트이지 E2E가 아니다")
+            ERRORS+=("❌ [가짜 E2E 4-A] $REL_TF — page.evaluate()만 있고 실제 UI 액션 없음")
             ERRORS+=("   → 실제 파일 업로드(setInputFiles) → 버튼 클릭(click) → 결과물 다운로드 흐름을 테스트하라")
         fi
+
+        # ── 4-B: route.fulfill() API 모킹 차단 ──
+        HAS_MOCK=$(grep -cE 'route\.(fulfill|abort)|page\.route\(' "$tf" 2>/dev/null || echo 0)
+        if [ "$HAS_MOCK" -gt 0 ]; then
+            ERRORS+=("❌ [가짜 E2E 4-B] $REL_TF — route.fulfill()/page.route()로 API 모킹 사용!")
+            ERRORS+=("   → 실제 API를 호출해야 한다. 모킹은 E2E가 아니다")
+        fi
+
+        # ── 4-C: waitForResponse 없이 waitForTimeout만 사용 차단 ──
+        HAS_WAIT_RESPONSE=$(grep -cE 'waitForResponse|waitForDownload|waitForEvent' "$tf" 2>/dev/null || echo 0)
+        HAS_WAIT_TIMEOUT=$(grep -cE 'waitForTimeout' "$tf" 2>/dev/null || echo 0)
+        if [ "$HAS_WAIT_TIMEOUT" -gt 2 ] && [ "$HAS_WAIT_RESPONSE" -eq 0 ] && [ "$HAS_UI_ACTION" -gt 0 ]; then
+            ERRORS+=("⚠️ [약한 E2E 4-C] $REL_TF — waitForTimeout만 ${HAS_WAIT_TIMEOUT}회 사용, waitForResponse 0회")
+            ERRORS+=("   → waitForTimeout 대신 waitForResponse/waitForDownload로 실제 응답을 대기하라")
+        fi
     done
+
+    # ── 4-D: 스크린샷 파일 크기 검증 (0바이트/빈 파일 차단) ──
+    if [ "$E2E_SCREENSHOTS" -ge 2 ]; then
+        EMPTY_SCREENSHOTS=0
+        for ss in $(find "$E2E_DIR" -name "*.png" -mmin -30 2>/dev/null); do
+            SS_SIZE=$(stat -f %z "$ss" 2>/dev/null || stat -c %s "$ss" 2>/dev/null || echo 0)
+            if [ "$SS_SIZE" -lt 1000 ]; then
+                EMPTY_SCREENSHOTS=$((EMPTY_SCREENSHOTS + 1))
+            fi
+        done
+        if [ "$EMPTY_SCREENSHOTS" -gt 0 ]; then
+            ERRORS+=("❌ [가짜 스크린샷 4-D] test-e2e/에 1KB 미만 스크린샷 ${EMPTY_SCREENSHOTS}장 — touch로 생성한 빈 파일!")
+        fi
+    fi
 fi
 
 # ──────────────────────────────────────────────

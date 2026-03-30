@@ -129,9 +129,15 @@ expect(toast).toContain('완료');  // 토스트만 보고 끝 → 파일 없음
 - ❌ **브라우저 콘솔에서 함수를 직접 호출하고 "동작 확인" 처리**
 - ❌ **코드에 있는 알고리즘을 브라우저에서 복사-실행하고 "정확성 검증" 처리**
 - ❌ **UI 클릭 0회, 파일 업로드 0회, 파일 다운로드 0회인 테스트를 "E2E 통과"로 보고**
+- ❌ **`route.fulfill()` / `page.route()`로 API 응답을 모킹하고 "API 동작 확인" 처리** — 실제 API 호출 필수
+- ❌ **`page.evaluate()`로 Zustand store 상태를 직접 주입한 뒤 "UI 정상 표시" 확인** — 사용자 흐름(입력→클릭→결과)을 거쳐야 함
+- ❌ **`waitForTimeout()`만 사용하고 `waitForResponse()`를 안 쓰는 테스트** — 실제 API 응답 대기 필수
+- ❌ **before/after 스크린샷이 동일한(또는 0바이트) 파일** — Hook이 1KB 미만 파일을 차단함
+- ❌ **src/ 내 어떤 .ts/.tsx 파일이든 수정하면** E2E 필수 (stores/, hooks/, utils/, types.ts 포함 — components/services만이 아님)
 
 > **핵심 원칙**: `page.evaluate()` 수학 검증 = **단위 테스트**이지 E2E가 아니다.
 > E2E는 **사용자가 실제로 하는 행동**(파일 업로드 → 버튼 클릭 → 결과물 다운로드)을 재현해야 한다.
+> API 모킹(`route.fulfill`)도 금지 — 실제 네트워크 호출이 발생해야 E2E다.
 
 ## 필수 사항 (이걸 해야만 "테스트 했다"로 인정)
 
