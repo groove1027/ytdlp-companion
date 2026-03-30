@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { isCompanionDetected, recheckCompanion } from '../services/ytdlpApiService';
-import { COMPANION_DOWNLOAD_URL, COMPANION_WINDOWS_AVAILABLE, getCompanionDownloadUrl, getCompanionOsLabel } from '../constants';
+import { isCompanionDetected, recheckCompanion, getCompanionVersion } from '../services/ytdlpApiService';
+import { COMPANION_DOWNLOAD_URL, COMPANION_WINDOWS_AVAILABLE, getCompanionDownloadUrl, getCompanionOsLabel, getCompanionLatestVersion } from '../constants';
 
 /** 기능별 배너 테마 */
 type CompanionFeature = 'download' | 'stt' | 'tts' | 'rembg' | 'ffmpeg' | 'nle' | 'general';
@@ -93,12 +93,33 @@ interface CompanionBannerProps {
 export default function CompanionBanner({ feature = 'general', compact = false }: CompanionBannerProps) {
   const [visible, setVisible] = useState(false);
   const [companionActive, setCompanionActive] = useState(false);
+  const [updateAvailable, setUpdateAvailable] = useState(false);
+  const [latestVer, setLatestVer] = useState<string | null>(null);
   const theme = THEMES[feature];
 
   useEffect(() => {
     const check = async () => {
       const detected = await recheckCompanion();
       setCompanionActive(detected);
+      // 업데이트 체크: 현재 버전 vs GitHub 최신 버전 (직접 fetch — 캐시 타이밍 이슈 방지)
+      if (detected) {
+        const current = getCompanionVersion();
+        let latest = getCompanionLatestVersion();
+        // 캐시가 아직 없으면 직접 fetch
+        if (!latest) {
+          try {
+            const res = await fetch('https://api.github.com/repos/groove1027/ytdlp-companion/releases/latest');
+            if (res.ok) {
+              const data = await res.json();
+              latest = ((data.tag_name || '') as string).replace(/^companion-v/, '') || null;
+            }
+          } catch { /* 무시 */ }
+        }
+        if (latest) setLatestVer(latest);
+        setUpdateAvailable(Boolean(current && latest && current !== latest));
+      } else {
+        setUpdateAvailable(false);
+      }
       if (!detected) {
         // [FIX #907] 컴패니언 미설치 시 항상 배너 표시 — dismiss 기간을 1일로 단축
         try {
@@ -109,13 +130,47 @@ export default function CompanionBanner({ feature = 'general', compact = false }
       }
     };
     const t = setTimeout(check, 800);
-    return () => clearTimeout(t);
+    // 60초마다 재체크 (업데이트 후 상태 반영)
+    const interval = setInterval(check, 60_000);
+    return () => { clearTimeout(t); clearInterval(interval); };
   }, [feature]);
 
   const handleDismiss = () => {
     setVisible(false);
     try { localStorage.setItem(`companion_banner_${feature}_dismissed`, Date.now().toString()); } catch {}
   };
+
+  // 활성화 + 업데이트 필요 — 주황 배너
+  if (companionActive && updateAvailable) {
+    const currentVer = getCompanionVersion() || '?';
+    const displayLatest = latestVer || getCompanionLatestVersion() || '?';
+    return (
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: '8px',
+        padding: compact ? '6px 10px' : '10px 14px',
+        borderRadius: '8px',
+        background: 'rgba(245, 158, 11, 0.1)',
+        border: '1px solid rgba(245, 158, 11, 0.4)',
+        fontSize: compact ? '11px' : '13px',
+        color: '#fbbf24',
+        fontWeight: 600,
+      }}>
+        <span style={{ fontSize: compact ? '12px' : '14px' }}>🔄</span>
+        <span style={{ flex: 1 }}>
+          헬퍼 업데이트 있음 (v{currentVer} → v{displayLatest})
+          {' '}
+          <a
+            href={getCompanionDownloadUrl()}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color: '#f59e0b', textDecoration: 'underline', fontWeight: 700 }}
+          >
+            다운로드
+          </a>
+        </span>
+      </div>
+    );
+  }
 
   // 활성화 상태 — 초록 뱃지
   if (companionActive) {

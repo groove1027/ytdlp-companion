@@ -15,8 +15,9 @@ export const getCompanionOsLabel = (): string => {
   return '';
 };
 
-/** [FIX #907] OS 감지 → DMG/EXE 바로 다운로드 URL (GitHub API 기반, 캐시) */
+/** [FIX #907] OS 감지 → DMG/EXE 바로 다운로드 URL + 최신 버전 캐시 */
 let _cachedDirectUrl: string | null = null;
+let _cachedLatestVersion: string | null = null;
 if (typeof window !== 'undefined') {
   const os = getCompanionOsLabel();
   if (os === 'Windows' || os === 'macOS') {
@@ -24,6 +25,9 @@ if (typeof window !== 'undefined') {
       .then(r => r.ok ? r.json() : null)
       .then(data => {
         if (!data) return;
+        // 최신 버전 캐시 (tag_name: "companion-v1.1.0" → "1.1.0")
+        const tag = (data.tag_name || '') as string;
+        _cachedLatestVersion = tag.replace(/^companion-v/, '');
         const assets: Array<{ name: string; browser_download_url: string }> = data.assets || [];
         const target = os === 'Windows'
           ? assets.find(a => a.name.includes('setup') && a.name.endsWith('.exe'))
@@ -34,6 +38,9 @@ if (typeof window !== 'undefined') {
       .catch(() => {});
   }
 }
+
+/** GitHub Releases 최신 버전 반환 (프리페치 캐시) */
+export const getCompanionLatestVersion = (): string | null => _cachedLatestVersion;
 
 /** OS별 컴패니언 다운로드 URL 반환 — 직접 다운로드 URL 우선, 없으면 릴리스 페이지 */
 export const getCompanionDownloadUrl = (): string => {

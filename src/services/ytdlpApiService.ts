@@ -30,6 +30,7 @@ const LOCAL_COMPANION_URL = 'http://localhost:9876';
 
 let _companionAvailable: boolean | null = null;
 let _companionCheckTime = 0;
+let _companionVersion: string | null = null;
 let _companionCheckPromise: Promise<boolean> | null = null; // inflight 중복 방지
 const COMPANION_CHECK_INTERVAL_MS = 30_000; // 30초마다 재검증
 const COMPANION_HEALTH_TIMEOUT_MS = 3000;   // [FIX #907] 3초 — 800ms는 너무 짧아 실행 중인 컴패니언도 미감지
@@ -72,6 +73,7 @@ async function _doCompanionCheck(now: number): Promise<boolean> {
       }
       _companionAvailable = true;
       _companionCheckTime = now;
+      _companionVersion = data?.version || null;
       logger.info(`[Companion] 로컬 헬퍼 감지됨 (v${data?.version || '?'}, yt-dlp ${data?.ytdlpVersion || '?'})`);
       return true;
     }
@@ -91,6 +93,11 @@ async function _doCompanionCheck(now: number): Promise<boolean> {
 /** 동기 버전 — 마지막 캐시된 결과 반환 (UI 즉시 표시용) */
 export function isCompanionDetected(): boolean {
   return _companionAvailable === true;
+}
+
+/** 현재 실행 중인 컴패니언 버전 반환 (health check에서 캐시) */
+export function getCompanionVersion(): string | null {
+  return _companionVersion;
 }
 
 /** 컴패니언 상태 강제 재확인 (설정 페이지 등에서 수동 호출) */
