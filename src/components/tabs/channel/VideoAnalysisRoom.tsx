@@ -28,6 +28,7 @@ import {
   buildVideoAnalysisSceneLineId,
   getCapCutManualInstallHint,
   installCapCutZipToDirectory,
+  installNleViaCompanion,
   isCapCutDirectInstallSupported,
   sanitizeProjectName,
 } from '../../../services/nleExportService';
@@ -5730,6 +5731,43 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                       const zipBlob = await buildNlePackageZip({ target, scenes: v.scenes, title: v.title, videoBlob, videoFileName: fileName, preset: selectedPreset || undefined, width: dims.w, height: dims.h, fps: dims.fps, videoDurationSec: dims.dur, hasAudioTrack: audioConfirmed, narrationLines });
                                       if (isCancelled()) return;
                                       const downloadFileName = `${sanitizeProjectName(v.title, 30)}_${label}.zip`;
+
+                                      // [FIX #906] 1순위: 컴패니언 앱으로 직접 설치 (경로 패치 자동 처리 — "비정상경로" 방지)
+                                      // VREW는 컴패니언 NLE 설치 미지원 (SRT만 필요하므로 ZIP이 적절)
+                                      if (target !== 'vrew') {
+                                        try {
+                                          const ping = await fetch('http://localhost:9876/health', { signal: AbortSignal.timeout(3000) });
+                                          if (!ping.ok) throw new Error('companion unavailable');
+                                          if (isCancelled()) return;
+
+                                          // ZIP에서 projectId 추출 (CapCut은 drafts 폴더 ID 사용)
+                                          const JSZip = (await import('jszip')).default;
+                                          const parsedZip = await JSZip.loadAsync(zipBlob);
+                                          if (isCancelled()) return;
+                                          const topFolders = Object.keys(parsedZip.files)
+                                            .filter(name => name.includes('/') && !name.startsWith('media/') && !name.startsWith('audio/'))
+                                            .map(name => name.split('/')[0])
+                                            .filter((v2, i, a) => a.indexOf(v2) === i && v2.length > 10);
+                                          const projectId = topFolders[0] || `project-${Date.now()}`;
+
+                                          showToast(`${label}에 직접 설치 중...`);
+                                          const installResult = await installNleViaCompanion({
+                                            target,
+                                            zipBlob,
+                                            projectId,
+                                          });
+                                          if (isCancelled()) return;
+                                          showToast(audioConfirmed
+                                            ? `${label} 프로젝트를 바로 설치했습니다! ${label}에서 프로젝트를 열어 확인해주세요. (${installResult.filesInstalled}개 파일)`
+                                            : `${label} 프로젝트를 설치 완료! 원본 오디오는 ${label}에서 한 번 확인해주세요. (${installResult.filesInstalled}개 파일)`, 6000);
+                                          return;
+                                        } catch (companionErr) {
+                                          console.warn('[VideoAnalysisRoom] 컴패니언 NLE 설치 실패, 기존 방식 폴백:', companionErr);
+                                          // 폴백: 기존 방식 (직접 설치 또는 ZIP 다운로드)
+                                        }
+                                      }
+
+                                      // 2순위: CapCut 직접 설치 (File System API — HTTPS + Chrome/Edge 전용)
                                       if (target === 'capcut' && directInstallSelection) {
                                         try {
                                           await installCapCutZipToDirectory({
@@ -5755,6 +5793,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                         }
                                       }
 
+                                      // 3순위: ZIP 파일 다운로드 (수동 설치)
                                       const url = URL.createObjectURL(zipBlob);
                                       const a = document.createElement('a'); a.href = url; a.download = downloadFileName; a.click();
                                       setTimeout(() => URL.revokeObjectURL(url), 10000);
