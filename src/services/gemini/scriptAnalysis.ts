@@ -428,12 +428,20 @@ export const countScenesLocally = (script: string, format: VideoFormat, smartSpl
 
         case VideoFormat.SHORT:
             {
+                // [FIX #911] SHORT: 1 complete sentence = 1 scene
+                // Only split at clause level if a single sentence is exceptionally long
+                // This prevents inflated targetSceneCount from forcing the AI to split mid-sentence
+                const shortSentenceMax = lang.shortMax * 2;
                 let count = 0;
                 for (const t of tagged) {
-                    count += (lang.id === 'ko'
-                        ? splitKoreanClauses(t.text, lang.shortMax, lang.shortMin)
-                        : splitClausesByLang(t.text, lang)
-                    ).length;
+                    if (t.text.length > shortSentenceMax) {
+                        count += (lang.id === 'ko'
+                            ? splitKoreanClauses(t.text, shortSentenceMax, lang.shortMin)
+                            : splitClausesByLang(t.text, { ...lang, shortMax: shortSentenceMax })
+                        ).length;
+                    } else {
+                        count += 1;
+                    }
                 }
                 return Math.max(1, count);
             }
@@ -618,10 +626,19 @@ export const splitScenesLocally = (script: string, format: VideoFormat, smartSpl
             break;
 
         case VideoFormat.SHORT:
-            for (const t of tagged) {
-                scenes.push(...(lang.id === 'ko'
-                    ? splitKoreanClauses(t.text, lang.shortMax, lang.shortMin)
-                    : splitClausesByLang(t.text, lang)));
+            {
+                // [FIX #911] SHORT: 1 complete sentence = 1 scene
+                // Only split at clause level if a single sentence is exceptionally long
+                const shortSentenceMax = lang.shortMax * 2;
+                for (const t of tagged) {
+                    if (t.text.length > shortSentenceMax) {
+                        scenes.push(...(lang.id === 'ko'
+                            ? splitKoreanClauses(t.text, shortSentenceMax, lang.shortMin)
+                            : splitClausesByLang(t.text, { ...lang, shortMax: shortSentenceMax })));
+                    } else {
+                        scenes.push(t.text);
+                    }
+                }
             }
             break;
 
@@ -679,7 +696,7 @@ export const analyzeScriptContext = async (
                     : "2 sentences = 1 scene. EXCEPTION: If '?' present, merge up to 3 sentences. Only split to 1 sentence on drastic visual transition.";
                 break;
             case VideoFormat.SHORT:
-                splitRule = "1 sentence = 1 scene. If a sentence has comma or conjunction, split further.";
+                splitRule = "1 complete sentence = 1 scene. NEVER split mid-sentence. Keep clauses connected by conjunctions as ONE scene.";
                 break;
             case VideoFormat.NANO:
                 splitRule = "Split at every comma, conjunction, and pause. Maximize cuts.";
@@ -868,7 +885,10 @@ export const parseScriptToScenes = async (
                     `;
                 }
                 break;
-            case VideoFormat.SHORT: splitInstruction = `SHORT-FORM: Strictly 1 sentence per scene.`; break;
+            case VideoFormat.SHORT: splitInstruction = `SHORT-FORM: Strictly 1 COMPLETE sentence per scene.
+                    NEVER split a sentence in the middle — each scene MUST contain a grammatically complete sentence.
+                    Even if a sentence has multiple clauses connected by conjunctions (e.g., "~하고 ~했다", "A, and B"), treat the ENTIRE sentence as ONE scene.
+                    Only start a new scene at sentence-ending punctuation (. ! ? 。 ！ ？).`; break;
             case VideoFormat.NANO:
                 splitInstruction = `
                 [CRITICAL: NANO-FORM DOPAMINE RULE]
@@ -981,7 +1001,7 @@ export const parseScriptToScenes = async (
     [CRITICAL: TARGET SCENE COUNT = ${targetSceneCount}]
     You MUST produce EXACTLY ${targetSceneCount} scenes. Not more, not less.
     This number was pre-calculated based on the splitting rules above.
-    If your natural split produces fewer scenes, split longer sentences further.
+    ${format === VideoFormat.SHORT ? `If your natural split produces fewer scenes, split ONLY at sentence-ending punctuation — NEVER break a sentence in the middle.` : `If your natural split produces fewer scenes, split longer sentences further.`}
     If your natural split produces more scenes, merge the shortest adjacent scenes.
     The final JSON array MUST have exactly ${targetSceneCount} elements.
     ` : ''}

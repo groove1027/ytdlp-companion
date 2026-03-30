@@ -8,6 +8,17 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-30] #911 스토리보드 생성 시 문장 중간 끊김 — SHORT 형식 장면 분할 개선
+- [x] 근본 원인: SHORT 형식에서 `countScenesLocally`가 한국어 절(clause) 단위로 분할 (shortMax=80) → targetSceneCount 과잉 → AI가 문장을 강제 분할
+- [x] `countScenesLocally` SHORT: 문장 단위 카운팅으로 변경 (shortMax*2=160 이하는 1 문장=1 장면)
+- [x] `splitScenesLocally` SHORT: 동일한 문장 단위 분할 로직 적용
+- [x] AI 프롬프트 SHORT: "절대 문장 중간에서 끊지 마라" 명시적 지시 추가
+- [x] 타겟 카운트 프롬프트: SHORT 전용 "문장 종결 부호에서만 분할" 지시로 변경
+- [x] `analyzeScriptContext` 내 스테일 SHORT 규칙 동기화
+- [x] Codex 5.4 MCP 코드 리뷰 10회 완료 — 보안/성능/회귀 리스크 없음 확인
+- [x] Playwright E2E: 로컬 분할 검증 — OLD(10장면) → NEW(5장면) 과분할 해소, 연결어미 끊김 0건
+- [x] 수정 파일: src/services/gemini/scriptAnalysis.ts
+
 ### [2026-03-30] #909 Evolink 잔액 부족 시 raw API 에러 노출 → 사용자 친화적 메시지 + 폴백 체인
 - [x] 근본 원인: evolinkFrameAnalysisStream/evolinkVideoAnalysisStream/evolinkNativeStream이 handleEvolinkError 공통 핸들러를 우회 → raw "403: insufficient_user_quota" 노출
 - [x] evolinkService.ts: 4개 v1beta 함수 (Native, NativeStream, Video, Frame)의 에러 처리를 handleEvolinkError로 통일 → markEvolinkQuotaDepleted() + 사용자 친화적 메시지
