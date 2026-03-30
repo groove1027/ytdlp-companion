@@ -336,7 +336,12 @@ const SubtitleStyleEditor: React.FC = () => {
   const [isItalic, setIsItalic] = useState(false);
   const [isUnderline, setIsUnderline] = useState(false);
   const [customText, setCustomText] = useState('');
-  const [subIdx, setSubIdx] = useState(0);
+  const expandedSceneId = useEditRoomStore((s) => s.expandedSceneId);
+  const [subIdx, setSubIdx] = useState(() => {
+    if (!expandedSceneId) return 0;
+    const idx = sceneOrder.indexOf(expandedSceneId);
+    return idx >= 0 ? idx : 0;
+  });
   const charsPerLine = useEditRoomStore((s) => s.charsPerLine);
   const setCharsPerLine = useEditRoomStore((s) => s.setCharsPerLine);
   const splitSubtitlesByCharsPerLine = useEditRoomStore((s) => s.splitSubtitlesByCharsPerLine);
@@ -401,8 +406,13 @@ const SubtitleStyleEditor: React.FC = () => {
     ro.observe(previewRef.current);
     return () => ro.disconnect();
   }, []);
-  const refWidth = orient === 'horizontal' ? 1920 : 1080;
-  const fontScale = previewWidth / refWidth;
+  // 캔버스 렌더러(subtitleRenderer)와 동일한 스케일링 — 타임라인 미리보기와 1:1 시각적 일치
+  // Canvas: resScale = canvasH / 1080, 이후 canvas 전체가 CSS로 축소 표시
+  // CSS 매칭: fontScale = (previewHeight / 1080) = displayScale * (canvasH / 1080)
+  const refCanvasW = orient === 'horizontal' ? 1920 : 1080;
+  const refCanvasH = orient === 'horizontal' ? 1080 : 1920;
+  const displayScale = previewWidth / refCanvasW;
+  const fontScale = displayScale * (refCanvasH / 1080);
 
   // 세그먼트 순차 미리보기
   const [segPreviewIdx, setSegPreviewIdx] = useState(0);
@@ -1039,20 +1049,20 @@ const SubtitleStyleEditor: React.FC = () => {
           {/* 자막 텍스트 */}
           <div className={`absolute inset-x-0 z-[5] flex px-4 ${hAlign === 'left' ? 'justify-start' : hAlign === 'right' ? 'justify-end' : 'justify-center'}`} style={{ bottom: `${posY}%` }}>
             <p key={animKey} className="max-w-[90%]" style={{
-              padding: `${boxPadY}px ${boxPadX}px`,
-              borderRadius: `${boxRadius}px`,
+              padding: `${boxPadY * fontScale}px ${boxPadX * fontScale}px`,
+              borderRadius: `${boxRadius * fontScale}px`,
               fontFamily: `'${tpl?.fontFamily || 'Pretendard'}', Pretendard, sans-serif`,
               fontSize: `${fontSize * fontScale}px`,
               fontWeight: tpl?.fontWeight || 700,
               fontStyle: isItalic ? 'italic' : 'normal',
               color: textOp < 100 ? toRgba(textColor, textOp) : textColor,
               backgroundColor: boxOp > 0 ? toRgba(boxColor, boxOp) : 'transparent',
-              letterSpacing: `${letterSp}px`,
+              letterSpacing: `${letterSp * displayScale}px`,
               lineHeight: lineH,
               textAlign: hAlign,
               textShadow: computedShadow,
               textDecoration: isUnderline ? 'underline' : 'none',
-              WebkitTextStroke: outlineW > 0 && outlineColor ? `${outlineW}px ${outlineColor}` : 'none',
+              WebkitTextStroke: outlineW > 0 && outlineColor ? `${Math.max(0.5, outlineW * fontScale)}px ${outlineColor}` : 'none',
               paintOrder: 'stroke fill',
               whiteSpace: 'pre-line',
               wordBreak: 'keep-all',  // [FIX #404] 한국어 단어 중간 줄바꿈 방지
