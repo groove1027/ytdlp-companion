@@ -6,8 +6,7 @@ import { useScriptWriterStore } from '../../../stores/scriptWriterStore';
 import {
   getAvailableVoices,
   generateSupertonicTTS,
-  generateQwen3TTS,
-  generateKokoroTTS,
+  generateEdgeTTS,
   generateCloneTTS,
   getCustomVoices,
   saveCustomVoice,
@@ -49,21 +48,21 @@ const EL_EMOTION_TAGS: Record<string, string> = {
 
 const TTS_ENGINES: { id: TTSEngine; label: string; voiceCount: number; icon: string; iconColor: string; description: string; badge?: string }[] = [
   {
-    id: 'qwen3' as TTSEngine,
-    label: 'Qwen3 TTS',
-    voiceCount: 9,
-    icon: '🌟',
+    id: 'edge' as TTSEngine,
+    label: 'Edge TTS',
+    voiceCount: 22,
+    icon: '🎙️',
     iconColor: '#f59e0b',
-    description: 'Alibaba Qwen3-TTS — 한국어 공식 지원, 10개 언어. 컴패니언 앱 필요. Voice Clone으로 내 목소리 등록 가능!',
-    badge: '로컬 무료',
+    description: 'Microsoft Neural TTS — 한국어(선희/인준/현수) 고품질 + 영/일/중/독/불/스 22개 음성. 인터넷 필요, API 키 불필요. 컴패니언 앱 필요.',
+    badge: '무료',
   },
   {
-    id: 'kokoro' as TTSEngine,
-    label: 'Kokoro',
-    voiceCount: 54,
-    icon: '🎵',
-    iconColor: '#ec4899',
-    description: 'Kokoro ONNX — 영/일/중/한 등 54개 고품질 음성. 가볍고 빠른 로컬 TTS. 컴패니언 앱 필요.',
+    id: 'supertonic',
+    label: 'Supertonic 2',
+    voiceCount: 10,
+    icon: '🧠',
+    iconColor: '#8b5cf6',
+    description: '한국어 전용 10개 음성. 브라우저에서 로컬 실행 — 인터넷/컴패니언 앱 불필요. 첫 사용 시 ONNX 모델(~263MB) 다운로드.',
     badge: '로컬 무료',
   },
   {
@@ -269,11 +268,11 @@ const VoiceStudio: React.FC = () => {
   // 커스텀 음성 목록 (Voice Clone — browseVoices에 합치기 위해)
   const [customVoicesForBrowse, setCustomVoicesForBrowse] = useState<VoiceOption[]>([]);
   useEffect(() => {
-    if (browsedEngine === 'qwen3') {
+    if (browsedEngine === ('edge' as TTSEngine)) {
       getCustomVoices().then(voices => {
         setCustomVoicesForBrowse(voices.map(v => ({
           id: v.id, name: `🎙️ ${v.name}`, language: 'ko' as TTSLanguage,
-          gender: 'custom' as 'male' | 'female', engine: 'qwen3' as TTSEngine,
+          gender: 'custom' as 'male' | 'female', engine: 'edge' as TTSEngine,
         })));
       }).catch(() => {});
     }
@@ -696,15 +695,13 @@ const VoiceStudio: React.FC = () => {
           stability: speaker.stability ?? 0.5,
           languageCode: speaker.language || 'auto',
         });
-      } else if (speaker.engine === 'qwen3') {
-        const vid = line.voiceId || speaker.voiceId || 'Sohee';
+      } else if (speaker.engine === ('edge' as TTSEngine)) {
+        const vid = line.voiceId || speaker.voiceId || 'ko-KR-SunHiNeural';
         if (vid.startsWith('custom_')) {
           result = await generateCloneTTS(line.text, vid, speaker.language || 'ko');
         } else {
-          result = await generateQwen3TTS(line.text, vid, speaker.language || 'ko');
+          result = await generateEdgeTTS(line.text, vid, speaker.language || 'ko');
         }
-      } else if (speaker.engine === ('kokoro' as TTSEngine)) {
-        result = await generateKokoroTTS(line.text, line.voiceId || speaker.voiceId || 'af_heart', speaker.language || 'en');
       } else if (speaker.engine === 'supertonic') {
         result = await generateSupertonicTTS(line.text, line.voiceId || speaker.voiceId, speaker.language || 'ko', line.lineSpeed ?? speaker.speed ?? 1.0);
       } else {
@@ -773,7 +770,7 @@ const VoiceStudio: React.FC = () => {
       const charCount = line.text.length;
       if (speaker.engine === 'elevenlabs') {
         addCost((charCount / 1000) * PRICING.TTS_ELEVENLABS_TURBO_PER_1K, 'tts');
-      } else if (speaker.engine !== 'supertonic' && speaker.engine !== 'qwen3' && speaker.engine !== 'kokoro') {
+      } else if (speaker.engine !== 'supertonic' && speaker.engine !== ('edge' as TTSEngine)) {
         // Typecast (기본) — 모델에 따라 단가 다름
         const costPer1K = speaker.typecastModel === 'ssfm-v21' ? PRICING.TTS_TYPECAST_V21_PER_1K : PRICING.TTS_TYPECAST_V30_PER_1K;
         addCost((charCount / 1000) * costPer1K, 'tts');
@@ -871,10 +868,10 @@ const VoiceStudio: React.FC = () => {
         }))
         .sort((a, b) => (a.gender === 'female' ? 0 : 1) - (b.gender === 'female' ? 0 : 1));
     }
-    const skipLangFilter = browsedEngine === 'supertonic' || browsedEngine === 'kokoro';
+    const skipLangFilter = browsedEngine === 'supertonic' || browsedEngine === ('edge' as TTSEngine);
     const voices = getAvailableVoices(browsedEngine, skipLangFilter ? undefined : browseLanguage);
     // Qwen3: 커스텀 음성도 목록에 추가
-    const allVoices = browsedEngine === 'qwen3'
+    const allVoices = browsedEngine === ('edge' as TTSEngine)
       ? [...voices, ...customVoicesForBrowse]
       : voices;
     // 여성 → 남성 → 중성 → 커스텀 순서로 정렬
@@ -969,15 +966,12 @@ const VoiceStudio: React.FC = () => {
 
     // 4단계: API 생성 (기본 속도 1.0으로 생성, playbackRate로 속도 적용 — 이중 적용 방지)
     setPlayingVoiceId(voice.id);
-    setSampleError(`⏳ ${voice.engine === 'qwen3' ? 'Qwen3' : voice.engine === 'kokoro' ? 'Kokoro' : voice.engine} 음성 생성 중... (첫 실행 시 15~30초 소요)`);
+    setSampleError(`⏳ ${voice.engine === 'edge' ? 'Edge' : voice.engine} 음성 생성 중...`);
     try {
       let result: { audioUrl: string } | undefined;
       switch (voice.engine) {
-        case 'qwen3':
-          result = await generateQwen3TTS(sampleText, voice.id, lang as TTSLanguage);
-          break;
-        case 'kokoro' as TTSEngine:
-          result = await generateKokoroTTS(sampleText, voice.id, lang as TTSLanguage);
+        case 'edge' as TTSEngine:
+          result = await generateEdgeTTS(sampleText, voice.id, lang as TTSLanguage);
           break;
         case 'elevenlabs':
           result = await generateElevenLabsDialogueTTS({
@@ -1488,8 +1482,8 @@ const VoiceStudio: React.FC = () => {
           </div>
         )}
 
-        {/* Voice Cloning 패널 — Qwen3 엔진 선택 시 표시 */}
-        {browsedEngine === 'qwen3' && <VoiceClonePanel />}
+        {/* Voice Cloning 패널 — Edge TTS 엔진 선택 시 표시 */}
+        {browsedEngine === ('edge' as TTSEngine) && <VoiceClonePanel />}
 
         {/* 펼쳐진 음성 브라우저 */}
         {browsedEngine && (
@@ -1508,7 +1502,7 @@ const VoiceStudio: React.FC = () => {
                 </p>
               </div>
               {/* 언어 선택 — Supertonic만 (ElevenLabs는 70개 언어 자동 감지이므로 불필요) */}
-              {(browsedEngine === 'supertonic' || browsedEngine === 'kokoro') && (
+              {(browsedEngine === 'supertonic' || browsedEngine === ('edge' as TTSEngine)) && (
                 <div className="flex gap-1.5 shrink-0">
                   {LANGUAGES.map((lang) => (
                     <button key={lang.id} type="button" onClick={() => setBrowseLanguage(lang.id)}
@@ -2379,7 +2373,7 @@ const VoiceStudio: React.FC = () => {
           {lines.length > 0 && (
             <div className="flex items-center gap-3 px-4 py-2 text-xs text-gray-500">
               <span className="text-blue-300 font-bold">{lines.length}개 단락</span>
-              <span className="text-yellow-300/70">{ttsEngine === 'supertonic' || ttsEngine === 'qwen3' || ttsEngine === 'kokoro' ? '🆓 무료 음성' : `💰 ${lines.reduce((s, l) => s + l.text.length, 0).toLocaleString()}자 × 2 = ${(lines.reduce((s, l) => s + l.text.length, 0) * 2).toLocaleString()} 크레딧`}</span>
+              <span className="text-yellow-300/70">{ttsEngine === 'supertonic' || ttsEngine === ('edge' as TTSEngine) ? '🆓 무료 음성' : `💰 ${lines.reduce((s, l) => s + l.text.length, 0).toLocaleString()}자 × 2 = ${(lines.reduce((s, l) => s + l.text.length, 0) * 2).toLocaleString()} 크레딧`}</span>
               <span>평균 {avgChars}자 · 예상 {estimatedDuration}</span>
             </div>
           )}

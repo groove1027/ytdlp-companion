@@ -394,36 +394,34 @@ export interface CompanionVoiceInfo {
     name: string;
     language: string;
     gender: string;
-    engine: 'qwen3' | 'kokoro';
+    engine: 'edge' | 'cosyvoice';
 }
 
 /**
  * 컴패니언 TTS 음성 목록 가져오기
  */
-export async function getCompanionTTSVoices(): Promise<{ qwen3: CompanionVoiceInfo[]; kokoro: CompanionVoiceInfo[] }> {
+export async function getCompanionTTSVoices(): Promise<{ edge: CompanionVoiceInfo[]; cosyvoice_available: boolean }> {
     // [FIX #914] isCompanionDetected() 게이트 제거 — health check 느리면 false인데 컴패니언은 살아있을 수 있음
     // try/catch가 실패 시 빈 배열 반환하므로 안전
 
     // 5분 캐시
     if (_companionVoicesCache && (Date.now() - _companionVoicesCacheTime) < 300_000) {
-        const qwen3 = _companionVoicesCache.filter(v => v.engine === 'qwen3');
-        const kokoro = _companionVoicesCache.filter(v => v.engine === 'kokoro');
-        return { qwen3, kokoro };
+        const edge = _companionVoicesCache.filter(v => v.engine === 'edge');
+        return { edge, cosyvoice_available: false };
     }
 
     try {
         const res = await fetch(`${COMPANION_URL}/api/tts/voices`, {
             signal: AbortSignal.timeout(5_000),
         });
-        if (!res.ok) return { qwen3: [], kokoro: [] };
+        if (!res.ok) return { edge: [], cosyvoice_available: false };
         const data = await res.json();
-        const qwen3 = (data.qwen3 || []) as CompanionVoiceInfo[];
-        const kokoro = (data.kokoro || []) as CompanionVoiceInfo[];
-        _companionVoicesCache = [...qwen3, ...kokoro];
+        const edge = (data.edge || []) as CompanionVoiceInfo[];
+        _companionVoicesCache = [...edge];
         _companionVoicesCacheTime = Date.now();
-        return { qwen3, kokoro };
+        return { edge, cosyvoice_available: data.cosyvoice_available || false };
     } catch {
-        return { qwen3: [], kokoro: [] };
+        return { edge: [], cosyvoice_available: false };
     }
 }
 
@@ -478,10 +476,10 @@ async function tryCompanionTTS(
 }
 
 /**
- * Qwen3 TTS 생성 (컴패니언 전용)
- * 한국어 공식 지원 + 10개 언어 + 음성 복제
+ * Edge TTS 생성 (컴패니언 경유 — Microsoft Neural TTS, 무료)
+ * 한/영/일/중 등 다국어 고품질 음성
  */
-export const generateQwen3TTS = async (
+export const generateEdgeTTS = async (
     text: string,
     voiceId: string,
     language: TTSLanguage = 'ko',
@@ -489,32 +487,18 @@ export const generateQwen3TTS = async (
     const cleanText = stripSpeakerTags(text);
     if (!cleanText.trim()) throw new Error('TTS 텍스트가 비어있습니다.');
 
-    const result = await tryCompanionTTS(cleanText, language, 'qwen3', voiceId);
+    const result = await tryCompanionTTS(cleanText, language, 'edge', voiceId);
     if (result) return result;
 
-    throw new Error('Qwen3 TTS 생성 실패 — 컴패니언 앱이 실행 중인지 확인하세요.');
+    throw new Error('Edge TTS 생성 실패 — 컴패니언 앱이 실행 중인지 확인하세요.');
 };
 
-/**
- * Kokoro TTS 생성 (컴패니언 전용)
- * 54개 음성, 영/일/중/한 등 다국어 지원
- */
-export const generateKokoroTTS = async (
-    text: string,
-    voiceId: string,
-    language: TTSLanguage = 'en',
-): Promise<TTSResult> => {
-    const cleanText = stripSpeakerTags(text);
-    if (!cleanText.trim()) throw new Error('TTS 텍스트가 비어있습니다.');
-
-    const result = await tryCompanionTTS(cleanText, language, 'kokoro', voiceId);
-    if (result) return result;
-
-    throw new Error('Kokoro TTS 생성 실패 — 컴패니언 앱이 실행 중인지 확인하세요.');
-};
+// 하위 호환: generateQwen3TTS → generateEdgeTTS 리다이렉트
+export const generateQwen3TTS = generateEdgeTTS;
+export const generateKokoroTTS = generateEdgeTTS;
 
 // ──────────────────────────────────────────────
-// Voice Cloning API (Qwen3-TTS CustomVoice)
+// Voice Cloning API (CosyVoice zero-shot)
 // ──────────────────────────────────────────────
 
 export interface CustomVoice {
@@ -758,86 +742,46 @@ export const getAvailableVoices = (
         case 'supertonic':
             voices = SUPERTONIC_VOICES;
             break;
-        // [FIX #907] Qwen3 TTS 음성 목록 — 컴패니언 tts.rs QWEN3_VOICES와 동기화
-        case 'qwen3':
+        // Edge TTS 음성 — companion tts.rs EDGE_VOICES와 동기화
+        case 'edge' as TTSEngine:
             voices = [
-                { id: 'Sohee',    name: '소희 (한국어)',    language: 'ko' as TTSLanguage, gender: 'female' as const, engine: 'qwen3' as TTSEngine },
-                { id: 'Vivian',   name: 'Vivian (中文)',   language: 'zh' as TTSLanguage, gender: 'female' as const, engine: 'qwen3' as TTSEngine },
-                { id: 'Serena',   name: 'Serena (中文)',   language: 'zh' as TTSLanguage, gender: 'female' as const, engine: 'qwen3' as TTSEngine },
-                { id: 'Uncle_Fu', name: 'Uncle Fu (中文)',  language: 'zh' as TTSLanguage, gender: 'male' as const, engine: 'qwen3' as TTSEngine },
-                { id: 'Dylan',    name: 'Dylan (中文)',    language: 'zh' as TTSLanguage, gender: 'male' as const, engine: 'qwen3' as TTSEngine },
-                { id: 'Eric',     name: 'Eric (中文)',     language: 'zh' as TTSLanguage, gender: 'male' as const, engine: 'qwen3' as TTSEngine },
-                { id: 'Ryan',     name: 'Ryan (English)',  language: 'en' as TTSLanguage, gender: 'male' as const, engine: 'qwen3' as TTSEngine },
-                { id: 'Aiden',    name: 'Aiden (English)', language: 'en' as TTSLanguage, gender: 'male' as const, engine: 'qwen3' as TTSEngine },
-                { id: 'Ono_Anna', name: '小野アンナ (日本語)', language: 'ja' as TTSLanguage, gender: 'female' as const, engine: 'qwen3' as TTSEngine },
-            ];
-            break;
-        // Kokoro 독립 엔진 — 컴패니언 tts.rs KOKORO_VOICES와 동기화
-        case 'kokoro' as TTSEngine:
-            voices = [
-                // American English (20)
-                { id: 'af_heart', name: 'Heart (US)', language: 'en' as TTSLanguage, gender: 'female' as const, engine: 'kokoro' as TTSEngine },
-                { id: 'af_alloy', name: 'Alloy (US)', language: 'en' as TTSLanguage, gender: 'female' as const, engine: 'kokoro' as TTSEngine },
-                { id: 'af_aoede', name: 'Aoede (US)', language: 'en' as TTSLanguage, gender: 'female' as const, engine: 'kokoro' as TTSEngine },
-                { id: 'af_bella', name: 'Bella (US)', language: 'en' as TTSLanguage, gender: 'female' as const, engine: 'kokoro' as TTSEngine },
-                { id: 'af_jessica', name: 'Jessica (US)', language: 'en' as TTSLanguage, gender: 'female' as const, engine: 'kokoro' as TTSEngine },
-                { id: 'af_kore', name: 'Kore (US)', language: 'en' as TTSLanguage, gender: 'female' as const, engine: 'kokoro' as TTSEngine },
-                { id: 'af_nicole', name: 'Nicole (US)', language: 'en' as TTSLanguage, gender: 'female' as const, engine: 'kokoro' as TTSEngine },
-                { id: 'af_nova', name: 'Nova (US)', language: 'en' as TTSLanguage, gender: 'female' as const, engine: 'kokoro' as TTSEngine },
-                { id: 'af_river', name: 'River (US)', language: 'en' as TTSLanguage, gender: 'female' as const, engine: 'kokoro' as TTSEngine },
-                { id: 'af_sarah', name: 'Sarah (US)', language: 'en' as TTSLanguage, gender: 'female' as const, engine: 'kokoro' as TTSEngine },
-                { id: 'af_sky', name: 'Sky (US)', language: 'en' as TTSLanguage, gender: 'female' as const, engine: 'kokoro' as TTSEngine },
-                { id: 'am_adam', name: 'Adam (US)', language: 'en' as TTSLanguage, gender: 'male' as const, engine: 'kokoro' as TTSEngine },
-                { id: 'am_echo', name: 'Echo (US)', language: 'en' as TTSLanguage, gender: 'male' as const, engine: 'kokoro' as TTSEngine },
-                { id: 'am_eric', name: 'Eric (US)', language: 'en' as TTSLanguage, gender: 'male' as const, engine: 'kokoro' as TTSEngine },
-                { id: 'am_fenrir', name: 'Fenrir (US)', language: 'en' as TTSLanguage, gender: 'male' as const, engine: 'kokoro' as TTSEngine },
-                { id: 'am_liam', name: 'Liam (US)', language: 'en' as TTSLanguage, gender: 'male' as const, engine: 'kokoro' as TTSEngine },
-                { id: 'am_michael', name: 'Michael (US)', language: 'en' as TTSLanguage, gender: 'male' as const, engine: 'kokoro' as TTSEngine },
-                { id: 'am_onyx', name: 'Onyx (US)', language: 'en' as TTSLanguage, gender: 'male' as const, engine: 'kokoro' as TTSEngine },
-                { id: 'am_puck', name: 'Puck (US)', language: 'en' as TTSLanguage, gender: 'male' as const, engine: 'kokoro' as TTSEngine },
-                { id: 'am_santa', name: 'Santa (US)', language: 'en' as TTSLanguage, gender: 'male' as const, engine: 'kokoro' as TTSEngine },
-                // British English (8)
-                { id: 'bf_alice', name: 'Alice (UK)', language: 'en' as TTSLanguage, gender: 'female' as const, engine: 'kokoro' as TTSEngine },
-                { id: 'bf_emma', name: 'Emma (UK)', language: 'en' as TTSLanguage, gender: 'female' as const, engine: 'kokoro' as TTSEngine },
-                { id: 'bf_isabella', name: 'Isabella (UK)', language: 'en' as TTSLanguage, gender: 'female' as const, engine: 'kokoro' as TTSEngine },
-                { id: 'bf_lily', name: 'Lily (UK)', language: 'en' as TTSLanguage, gender: 'female' as const, engine: 'kokoro' as TTSEngine },
-                { id: 'bm_daniel', name: 'Daniel (UK)', language: 'en' as TTSLanguage, gender: 'male' as const, engine: 'kokoro' as TTSEngine },
-                { id: 'bm_fable', name: 'Fable (UK)', language: 'en' as TTSLanguage, gender: 'male' as const, engine: 'kokoro' as TTSEngine },
-                { id: 'bm_george', name: 'George (UK)', language: 'en' as TTSLanguage, gender: 'male' as const, engine: 'kokoro' as TTSEngine },
-                { id: 'bm_lewis', name: 'Lewis (UK)', language: 'en' as TTSLanguage, gender: 'male' as const, engine: 'kokoro' as TTSEngine },
-                // Japanese (5)
-                { id: 'jf_alpha', name: 'Alpha (JP)', language: 'ja' as TTSLanguage, gender: 'female' as const, engine: 'kokoro' as TTSEngine },
-                { id: 'jf_gongitsune', name: 'Gongitsune (JP)', language: 'ja' as TTSLanguage, gender: 'female' as const, engine: 'kokoro' as TTSEngine },
-                { id: 'jf_nezumi', name: 'Nezumi (JP)', language: 'ja' as TTSLanguage, gender: 'female' as const, engine: 'kokoro' as TTSEngine },
-                { id: 'jf_tebukuro', name: 'Tebukuro (JP)', language: 'ja' as TTSLanguage, gender: 'female' as const, engine: 'kokoro' as TTSEngine },
-                { id: 'jm_kumo', name: 'Kumo (JP)', language: 'ja' as TTSLanguage, gender: 'male' as const, engine: 'kokoro' as TTSEngine },
-                // Chinese (8)
-                { id: 'zf_xiaobei', name: 'Xiaobei (ZH)', language: 'zh' as TTSLanguage, gender: 'female' as const, engine: 'kokoro' as TTSEngine },
-                { id: 'zf_xiaoni', name: 'Xiaoni (ZH)', language: 'zh' as TTSLanguage, gender: 'female' as const, engine: 'kokoro' as TTSEngine },
-                { id: 'zf_xiaoxiao', name: 'Xiaoxiao (ZH)', language: 'zh' as TTSLanguage, gender: 'female' as const, engine: 'kokoro' as TTSEngine },
-                { id: 'zf_xiaoyi', name: 'Xiaoyi (ZH)', language: 'zh' as TTSLanguage, gender: 'female' as const, engine: 'kokoro' as TTSEngine },
-                { id: 'zm_yunjian', name: 'Yunjian (ZH)', language: 'zh' as TTSLanguage, gender: 'male' as const, engine: 'kokoro' as TTSEngine },
-                { id: 'zm_yunxi', name: 'Yunxi (ZH)', language: 'zh' as TTSLanguage, gender: 'male' as const, engine: 'kokoro' as TTSEngine },
-                { id: 'zm_yunxia', name: 'Yunxia (ZH)', language: 'zh' as TTSLanguage, gender: 'male' as const, engine: 'kokoro' as TTSEngine },
-                { id: 'zm_yunyang', name: 'Yunyang (ZH)', language: 'zh' as TTSLanguage, gender: 'male' as const, engine: 'kokoro' as TTSEngine },
-                // Spanish/French/Hindi/Italian/Portuguese
-                { id: 'ef_dora', name: 'Dora (ES)', language: 'es' as TTSLanguage, gender: 'female' as const, engine: 'kokoro' as TTSEngine },
-                { id: 'em_alex', name: 'Alex (ES)', language: 'es' as TTSLanguage, gender: 'male' as const, engine: 'kokoro' as TTSEngine },
-                { id: 'ff_siwis', name: 'Siwis (FR)', language: 'fr' as TTSLanguage, gender: 'female' as const, engine: 'kokoro' as TTSEngine },
-                { id: 'hf_alpha', name: 'Alpha (HI)', language: 'hi' as TTSLanguage, gender: 'female' as const, engine: 'kokoro' as TTSEngine },
-                { id: 'hf_beta', name: 'Beta (HI)', language: 'hi' as TTSLanguage, gender: 'female' as const, engine: 'kokoro' as TTSEngine },
-                { id: 'if_sara', name: 'Sara (IT)', language: 'it' as TTSLanguage, gender: 'female' as const, engine: 'kokoro' as TTSEngine },
-                { id: 'im_nicola', name: 'Nicola (IT)', language: 'it' as TTSLanguage, gender: 'male' as const, engine: 'kokoro' as TTSEngine },
-                { id: 'pf_dora', name: 'Dora (PT)', language: 'pt' as TTSLanguage, gender: 'female' as const, engine: 'kokoro' as TTSEngine },
-                { id: 'pm_alex', name: 'Alex (PT)', language: 'pt' as TTSLanguage, gender: 'male' as const, engine: 'kokoro' as TTSEngine },
+                // 한국어 (3)
+                { id: 'ko-KR-SunHiNeural', name: '선희 (한국어 여성)', language: 'ko' as TTSLanguage, gender: 'female' as const, engine: 'edge' as TTSEngine },
+                { id: 'ko-KR-InJoonNeural', name: '인준 (한국어 남성)', language: 'ko' as TTSLanguage, gender: 'male' as const, engine: 'edge' as TTSEngine },
+                { id: 'ko-KR-HyunsuMultilingualNeural', name: '현수 (한국어 다국어)', language: 'ko' as TTSLanguage, gender: 'male' as const, engine: 'edge' as TTSEngine },
+                // 영어 (6)
+                { id: 'en-US-JennyNeural', name: 'Jenny (US)', language: 'en' as TTSLanguage, gender: 'female' as const, engine: 'edge' as TTSEngine },
+                { id: 'en-US-AriaNeural', name: 'Aria (US)', language: 'en' as TTSLanguage, gender: 'female' as const, engine: 'edge' as TTSEngine },
+                { id: 'en-US-GuyNeural', name: 'Guy (US)', language: 'en' as TTSLanguage, gender: 'male' as const, engine: 'edge' as TTSEngine },
+                { id: 'en-US-AndrewMultilingualNeural', name: 'Andrew (US 다국어)', language: 'en' as TTSLanguage, gender: 'male' as const, engine: 'edge' as TTSEngine },
+                { id: 'en-GB-SoniaNeural', name: 'Sonia (UK)', language: 'en' as TTSLanguage, gender: 'female' as const, engine: 'edge' as TTSEngine },
+                { id: 'en-GB-RyanNeural', name: 'Ryan (UK)', language: 'en' as TTSLanguage, gender: 'male' as const, engine: 'edge' as TTSEngine },
+                // 일본어 (3)
+                { id: 'ja-JP-NanamiNeural', name: '七海 (日本語 女性)', language: 'ja' as TTSLanguage, gender: 'female' as const, engine: 'edge' as TTSEngine },
+                { id: 'ja-JP-KeitaNeural', name: '圭太 (日本語 男性)', language: 'ja' as TTSLanguage, gender: 'male' as const, engine: 'edge' as TTSEngine },
+                { id: 'ja-JP-MasaruMultilingualNeural', name: '勝 (日本語 다국어)', language: 'ja' as TTSLanguage, gender: 'male' as const, engine: 'edge' as TTSEngine },
+                // 중국어 (4)
+                { id: 'zh-CN-XiaoxiaoNeural', name: '晓晓 (中文 女性)', language: 'zh' as TTSLanguage, gender: 'female' as const, engine: 'edge' as TTSEngine },
+                { id: 'zh-CN-YunxiNeural', name: '云希 (中文 男性)', language: 'zh' as TTSLanguage, gender: 'male' as const, engine: 'edge' as TTSEngine },
+                { id: 'zh-CN-XiaoyiNeural', name: '晓依 (中文 女性)', language: 'zh' as TTSLanguage, gender: 'female' as const, engine: 'edge' as TTSEngine },
+                { id: 'zh-CN-YunjianNeural', name: '云健 (中文 男性)', language: 'zh' as TTSLanguage, gender: 'male' as const, engine: 'edge' as TTSEngine },
+                // 스페인어 (2)
+                { id: 'es-ES-ElviraNeural', name: 'Elvira (ES)', language: 'es' as TTSLanguage, gender: 'female' as const, engine: 'edge' as TTSEngine },
+                { id: 'es-MX-DaliaNeural', name: 'Dalia (MX)', language: 'es' as TTSLanguage, gender: 'female' as const, engine: 'edge' as TTSEngine },
+                // 프랑스어 (2)
+                { id: 'fr-FR-DeniseNeural', name: 'Denise (FR)', language: 'fr' as TTSLanguage, gender: 'female' as const, engine: 'edge' as TTSEngine },
+                { id: 'fr-FR-HenriNeural', name: 'Henri (FR)', language: 'fr' as TTSLanguage, gender: 'male' as const, engine: 'edge' as TTSEngine },
+                // 독일어 (2)
+                { id: 'de-DE-KatjaNeural', name: 'Katja (DE)', language: 'de' as TTSLanguage, gender: 'female' as const, engine: 'edge' as TTSEngine },
+                { id: 'de-DE-ConradNeural', name: 'Conrad (DE)', language: 'de' as TTSLanguage, gender: 'male' as const, engine: 'edge' as TTSEngine },
             ];
             break;
         default:
             voices = [];
     }
 
-    // Supertonic은 다국어 지원이므로 언어 필터 미적용
-    if (language && engine !== 'supertonic') {
+    // Supertonic/Edge는 다국어 지원이므로 언어 필터 미적용
+    if (language && engine !== 'supertonic' && engine !== ('edge' as TTSEngine)) {
         voices = voices.filter(v => v.language === language);
     }
 

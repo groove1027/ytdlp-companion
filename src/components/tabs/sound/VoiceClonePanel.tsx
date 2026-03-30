@@ -185,7 +185,7 @@ export default function VoiceClonePanel() {
         <div className="px-4 pb-4 space-y-3">
           <p className="text-sm text-gray-400">
             3초 이상 녹음하거나 음성 파일을 업로드하면 그 목소리로 TTS를 생성합니다.
-            <br />Qwen3-TTS CustomVoice 모델 사용 (첫 사용 시 자동 다운로드).
+            <br />CosyVoice 모델 사용 (별도 설치 필요 — 모델 미설치 시 음성 등록만 가능, 클론 생성은 불가).
           </p>
 
           <div className="flex gap-3">

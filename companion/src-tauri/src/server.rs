@@ -258,7 +258,7 @@ pub async fn start_server(_app: tauri::AppHandle) -> Result<(), Box<dyn std::err
         // 음성 합성 (Qwen3 / Kokoro / Piper TTS)
         .route("/api/tts", post(tts_handler))
         .route("/api/tts/voices", get(tts_voices_handler))
-        // Voice Cloning (Qwen3-TTS CustomVoice)
+        // Voice Cloning (CosyVoice zero-shot)
         .route("/api/tts/clone", post(tts_clone_handler))
         .route("/api/tts/voices/custom", get(tts_custom_voices_handler))
         .route("/api/tts/voices/custom/save", post(tts_save_voice_handler))
@@ -512,8 +512,8 @@ async fn tts_handler(Json(req): Json<TtsRequest>) -> impl IntoResponse {
 
 async fn tts_voices_handler() -> Json<serde_json::Value> {
     let mut voices = tts::get_voices_json();
-    // 커스텀 음성도 포함
     voices["custom"] = serde_json::json!(tts::list_custom_voices());
+    voices["cosyvoice_available"] = serde_json::json!(tts::is_cosyvoice_available());
     Json(voices)
 }
 
