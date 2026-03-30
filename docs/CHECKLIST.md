@@ -8,6 +8,16 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-31] #925 Windows 컴패니언 검은 콘솔 창 반복 출현 수정
+- [x] 원인: 모든 subprocess(python, powershell, yt-dlp, ffmpeg 등)가 CREATE_NO_WINDOW 없이 실행
+- [x] 수정: platform.rs에 async_cmd()/sync_cmd() 헬퍼 추가 — Windows에서 0x08000000 자동 적용
+- [x] 영향 파일 6개: platform.rs, server.rs, whisper.rs, rembg.rs, ytdlp.rs, tts.rs
+- [x] 전체 33개 Command::new 호출 중 31개를 platform::async_cmd로 교체 (macOS open 2건 제외)
+- [x] cargo build 성공 (에러 0건) + cargo build --release 성공
+- [x] 컴패니언 실행 + health check 통과 (v1.2.0, yt-dlp 2026.03.17)
+- [x] Codex 5.4 MCP 코드 리뷰 10회 완료 — 전체 통과
+- [x] Playwright E2E: 로그인 → 컴패니언 감지 → health check → 코드 검증 통과
+
 ### [2026-03-31] 구글 이미지 레퍼런스 검색 오탐 수정 + 컴패니언 CORS 수정
 - [x] 버그 원인: `collectMappedEnglishTerms()`의 부분 문자열 매칭 → "절정"→"절"→"temple", "몰렸"→"집"→"house" 오탐
 - [x] 수정 1: 부분 매칭(`token.includes(ko)`) → startsWith + 길이 제한 (2글자 이상 키 + 조사 3글자 이내)

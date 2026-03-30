@@ -1,4 +1,3 @@
-use tokio::process::Command as AsyncCommand;
 use std::path::PathBuf;
 use crate::platform;
 
@@ -60,7 +59,7 @@ pub fn get_voices_json() -> serde_json::Value {
 pub async fn ensure_edge_tts() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Python 3.12 우선 (3.14는 일부 패키지 미지원)
     let python = get_python312();
-    let check = AsyncCommand::new(&python)
+    let check = platform::async_cmd(&python)
         .args(["-c", "import edge_tts; print('ok')"])
         .output()
         .await;
@@ -71,7 +70,7 @@ pub async fn ensure_edge_tts() -> Result<(), Box<dyn std::error::Error + Send + 
     }
 
     println!("[TTS] edge-tts 설치 중...");
-    let install = AsyncCommand::new(&python)
+    let install = platform::async_cmd(&python)
         .args(["-m", "pip", "install", "--break-system-packages", "edge-tts"])
         .output()
         .await?;
@@ -230,7 +229,7 @@ asyncio.run(main())
     );
 
     let python = get_python312();
-    let output = AsyncCommand::new(&python)
+    let output = platform::async_cmd(&python)
         .args(["-c", &python_script])
         .output()
         .await?;
@@ -248,7 +247,7 @@ asyncio.run(main())
     // MP3 → WAV 변환 (ffmpeg 사용 가능하면)
     let wav_output = tempfile::Builder::new().suffix(".wav").tempfile()?;
     let wav_path = wav_output.path().to_string_lossy().to_string();
-    let ffmpeg = AsyncCommand::new("ffmpeg")
+    let ffmpeg = platform::async_cmd("ffmpeg")
         .args(["-y", "-i", &output_path, "-ar", "24000", "-ac", "1", "-f", "wav", &wav_path])
         .output()
         .await;
@@ -324,7 +323,7 @@ print('OK')
     );
 
     let python = get_python312();
-    let output = AsyncCommand::new(&python)
+    let output = platform::async_cmd(&python)
         .args(["-c", &python_script])
         .output()
         .await?;
@@ -376,7 +375,7 @@ async fn try_piper(
     use tokio::io::AsyncWriteExt;
     use std::process::Stdio;
 
-    let mut cmd = AsyncCommand::new(&piper);
+    let mut cmd = platform::async_cmd(&piper);
     cmd.args(["--model", &model.to_string_lossy(), "--output_file", &output_path]);
     cmd.stdin(Stdio::piped());
     cmd.stdout(Stdio::piped());
@@ -540,7 +539,7 @@ print('OK')
     );
 
     let python = get_python312();
-    let output = AsyncCommand::new(&python)
+    let output = platform::async_cmd(&python)
         .args(["-c", &python_script])
         .output()
         .await?;

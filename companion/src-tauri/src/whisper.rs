@@ -1,6 +1,6 @@
-use tokio::process::Command as AsyncCommand;
 use serde::Serialize;
 use std::path::PathBuf;
+use crate::platform;
 
 fn get_whisper_dir() -> PathBuf {
     let base = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
@@ -41,7 +41,7 @@ pub async fn ensure_whisper() -> Result<(), Box<dyn std::error::Error + Send + S
             // Windows: ZIP 압축 해제 — 경로에 특수문자 대비 큰따옴표 사용
             let zip_path = dir.join("whisper-cli.zip");
             std::fs::write(&zip_path, &bytes)?;
-            let output = tokio::process::Command::new("powershell")
+            let output = platform::async_cmd("powershell")
                 .args([
                     "-NoProfile", "-Command",
                     &format!(
@@ -205,7 +205,7 @@ pub async fn transcribe(
         args.push("auto".to_string());
     }
 
-    let output = AsyncCommand::new(&bin)
+    let output = platform::async_cmd(&bin)
         .args(&args)
         .output()
         .await?;
