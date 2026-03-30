@@ -495,6 +495,113 @@ export const generateQwen3TTS = async (
     throw new Error('Qwen3 TTS 생성 실패 — 컴패니언 앱이 실행 중인지 확인하세요.');
 };
 
+// ──────────────────────────────────────────────
+// Voice Cloning API (Qwen3-TTS CustomVoice)
+// ──────────────────────────────────────────────
+
+export interface CustomVoice {
+    id: string;
+    name: string;
+    engine: 'qwen3-clone';
+    language: string;
+    gender: string;
+    filePath?: string;
+    fileSize?: number;
+}
+
+/** 저장된 커스텀 음성 목록 가져오기 */
+export async function getCustomVoices(): Promise<CustomVoice[]> {
+    try {
+        const res = await fetch(`${COMPANION_URL}/api/tts/voices/custom`, {
+            signal: AbortSignal.timeout(5_000),
+        });
+        if (!res.ok) return [];
+        const data = await res.json();
+        return (data.voices || []) as CustomVoice[];
+    } catch {
+        return [];
+    }
+}
+
+/** 참조 음성 저장 (녹음/업로드된 WAV → 컴패니언에 저장) */
+export async function saveCustomVoice(name: string, audioBlob: Blob): Promise<{ voiceId: string; name: string }> {
+    const buffer = await audioBlob.arrayBuffer();
+    // 대용량 안전: spread 대신 청크 방식 base64 인코딩
+    const bytes = new Uint8Array(buffer);
+    const chunks: string[] = [];
+    const CHUNK = 8192;
+    for (let i = 0; i < bytes.length; i += CHUNK) {
+        chunks.push(String.fromCharCode(...bytes.subarray(i, i + CHUNK)));
+    }
+    const base64 = btoa(chunks.join(''));
+
+    const res = await fetch(`${COMPANION_URL}/api/tts/voices/custom/save`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, audio: base64 }),
+        signal: AbortSignal.timeout(30_000),
+    });
+
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'unknown' }));
+        throw new Error(err.error || '음성 저장 실패');
+    }
+    return res.json();
+}
+
+/** 커스텀 음성 삭제 */
+export async function deleteCustomVoice(voiceId: string): Promise<void> {
+    await fetch(`${COMPANION_URL}/api/tts/voices/custom/delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ voiceId }),
+        signal: AbortSignal.timeout(5_000),
+    });
+}
+
+/** Voice Cloning TTS — 커스텀 음성으로 음성 합성 */
+export const generateCloneTTS = async (
+    text: string,
+    voiceId: string,
+    language: TTSLanguage = 'ko',
+): Promise<TTSResult> => {
+    const cleanText = stripSpeakerTags(text);
+    if (!cleanText.trim()) throw new Error('TTS 텍스트가 비어있습니다.');
+
+    try {
+        logger.info('[TTS] Voice Clone 시도', { voiceId, language, textLength: cleanText.length });
+
+        const res = await fetch(`${COMPANION_URL}/api/tts/clone`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: cleanText, language, voiceId }),
+            signal: AbortSignal.timeout(180_000), // CustomVoice 모델 로딩 시간 고려
+        });
+
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({ error: 'unknown' }));
+            throw new Error(err.error || 'Voice Clone 생성 실패');
+        }
+
+        const wavBlob = await res.blob();
+        if (wavBlob.size < 100) throw new Error('Voice Clone 출력이 비어있습니다.');
+
+        const audioUrl = URL.createObjectURL(wavBlob);
+        const buffer = await wavBlob.arrayBuffer();
+        const view = new DataView(buffer);
+        const sampleRate = view.getUint32(24, true);
+        const bitsPerSample = view.getUint16(34, true);
+        const channels = view.getUint16(22, true);
+        const dataSize = buffer.byteLength - 44;
+        const duration = dataSize / (sampleRate * (bitsPerSample / 8) * channels);
+
+        logger.success('[TTS] Voice Clone 성공', { duration: duration.toFixed(1) + 's', voiceId });
+        return { audioUrl, duration, format: 'wav' };
+    } catch (e) {
+        throw new Error(`Voice Clone 실패: ${e instanceof Error ? e.message : 'unknown'}`);
+    }
+};
+
 /**
  * Supertonic 2 TTS 생성 (브라우저 로컬)
  * ONNX 런타임 기반 — API 키 불필요, 네트워크 비용 없음

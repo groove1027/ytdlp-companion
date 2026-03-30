@@ -128,6 +128,26 @@ struct TtsRequest {
 }
 
 #[derive(Deserialize)]
+struct TtsCloneRequest {
+    text: String,
+    language: Option<String>,
+    #[serde(rename = "voiceId")]
+    voice_id: String,          // "custom_voice_20260331_..." 형식
+}
+
+#[derive(Deserialize)]
+struct SaveVoiceRequest {
+    name: String,
+    audio: String,             // base64 인코딩된 WAV
+}
+
+#[derive(Deserialize)]
+struct DeleteVoiceRequest {
+    #[serde(rename = "voiceId")]
+    voice_id: String,
+}
+
+#[derive(Deserialize)]
 struct NleInstallRequest {
     target: String,                          // "capcut" | "premiere" | "filmora"
     #[serde(rename = "projectId")]
@@ -238,6 +258,11 @@ pub async fn start_server(_app: tauri::AppHandle) -> Result<(), Box<dyn std::err
         // 음성 합성 (Qwen3 / Kokoro / Piper TTS)
         .route("/api/tts", post(tts_handler))
         .route("/api/tts/voices", get(tts_voices_handler))
+        // Voice Cloning (Qwen3-TTS CustomVoice)
+        .route("/api/tts/clone", post(tts_clone_handler))
+        .route("/api/tts/voices/custom", get(tts_custom_voices_handler))
+        .route("/api/tts/voices/custom/save", post(tts_save_voice_handler))
+        .route("/api/tts/voices/custom/delete", post(tts_delete_voice_handler))
         // NLE 직접 설치 (CapCut/Premiere/Filmora)
         .route("/api/nle/install", post(nle_install_handler))
         // FFmpeg 인코딩
@@ -486,7 +511,79 @@ async fn tts_handler(Json(req): Json<TtsRequest>) -> impl IntoResponse {
 // ──────────────────────────────────────────────
 
 async fn tts_voices_handler() -> Json<serde_json::Value> {
-    Json(tts::get_voices_json())
+    let mut voices = tts::get_voices_json();
+    // 커스텀 음성도 포함
+    voices["custom"] = serde_json::json!(tts::list_custom_voices());
+    Json(voices)
+}
+
+// ──────────────────────────────────────────────
+// 핸들러: Voice Cloning (Qwen3-TTS CustomVoice)
+// ──────────────────────────────────────────────
+
+/// POST /api/tts/clone — 커스텀 음성으로 TTS 생성
+async fn tts_clone_handler(Json(req): Json<TtsCloneRequest>) -> impl IntoResponse {
+    // voice_id에서 파일 경로 추출
+    let voices = tts::list_custom_voices();
+    let voice_entry = voices.iter().find(|v| v["id"].as_str() == Some(&req.voice_id));
+    let ref_path = match voice_entry.and_then(|v| v["filePath"].as_str()) {
+        Some(p) => p.to_string(),
+        None => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "error": format!("커스텀 음성 '{}' 을(를) 찾을 수 없습니다", req.voice_id)
+        }))).into_response(),
+    };
+
+    match tts::clone_voice_tts(&req.text, &ref_path, req.language.as_deref()).await {
+        Ok(wav_data) => {
+            let mut headers = HeaderMap::new();
+            headers.insert("Content-Type", "audio/wav".parse().unwrap());
+            headers.insert("Content-Length", wav_data.len().to_string().parse().unwrap());
+            (StatusCode::OK, headers, Body::from(wav_data)).into_response()
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
+            "error": e.to_string()
+        }))).into_response(),
+    }
+}
+
+/// GET /api/tts/voices/custom — 저장된 커스텀 음성 목록
+async fn tts_custom_voices_handler() -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "voices": tts::list_custom_voices() }))
+}
+
+/// POST /api/tts/voices/custom/save — 참조 음성 저장
+async fn tts_save_voice_handler(Json(req): Json<SaveVoiceRequest>) -> impl IntoResponse {
+    // base64 → bytes
+    let wav_data = match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &req.audio) {
+        Ok(data) => data,
+        Err(e) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "error": format!("base64 디코딩 실패: {}", e)
+        }))).into_response(),
+    };
+
+    if wav_data.len() < 100 {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "error": "오디오 파일이 너무 작습니다 (최소 3초 이상 녹음해주세요)"
+        }))).into_response();
+    }
+
+    match tts::save_custom_voice(&req.name, &wav_data) {
+        Ok(voice_id) => (StatusCode::OK, Json(serde_json::json!({
+            "voiceId": voice_id,
+            "name": req.name,
+        }))).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
+            "error": e
+        }))).into_response(),
+    }
+}
+
+/// POST /api/tts/voices/custom/delete — 커스텀 음성 삭제
+async fn tts_delete_voice_handler(Json(req): Json<DeleteVoiceRequest>) -> impl IntoResponse {
+    match tts::delete_custom_voice(&req.voice_id) {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e }))).into_response(),
+    }
 }
 
 // ──────────────────────────────────────────────

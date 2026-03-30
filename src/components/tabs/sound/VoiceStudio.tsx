@@ -7,9 +7,14 @@ import {
   getAvailableVoices,
   generateSupertonicTTS,
   generateQwen3TTS,
+  generateCloneTTS,
+  getCustomVoices,
+  saveCustomVoice,
+  deleteCustomVoice,
   splitTextForTTS,
   splitBySentenceEndings,
 } from '../../../services/ttsService';
+import type { CustomVoice } from '../../../services/ttsService';
 import { generateElevenLabsDialogueTTS, ELEVENLABS_VOICES, ELEVENLABS_LANGUAGES, elNameKo } from '../../../services/elevenlabsService';
 import { transcribeAudio, segmentsToScriptLines } from '../../../services/transcriptionService';
 import { isModelLoaded, isModelLoading, onLoadProgress } from '../../../services/supertonicService';
@@ -24,6 +29,7 @@ import { getTypecastKey } from '../../../services/apiService';
 import type { VoiceOption } from '../../../services/ttsService';
 import type { TTSEngine, TTSLanguage, ScriptLine, Speaker, WhisperTranscriptResult, AudioSourceType } from '../../../types';
 import TypecastEditor from './TypecastEditor';
+import VoiceClonePanel from './VoiceClonePanel';
 import { useProjectStore } from '../../../stores/projectStore';
 import { transferSoundToImageVideo } from '../../../utils/soundToImageBridge';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
@@ -259,6 +265,18 @@ const VoiceStudio: React.FC = () => {
   const [directScript, setDirectScript] = useState('');
   const [browsedEngine, setBrowsedEngine] = useState<TTSEngine | null>(null);
   const [browseLanguage, setBrowseLanguage] = useState<TTSLanguage>('ko');
+  // 커스텀 음성 목록 (Voice Clone — browseVoices에 합치기 위해)
+  const [customVoicesForBrowse, setCustomVoicesForBrowse] = useState<VoiceOption[]>([]);
+  useEffect(() => {
+    if (browsedEngine === 'qwen3') {
+      getCustomVoices().then(voices => {
+        setCustomVoicesForBrowse(voices.map(v => ({
+          id: v.id, name: `🎙️ ${v.name}`, language: 'ko' as TTSLanguage,
+          gender: 'custom' as 'male' | 'female', engine: 'qwen3' as TTSEngine,
+        })));
+      }).catch(() => {});
+    }
+  }, [browsedEngine]);
   const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
   const [sampleError, setSampleError] = useState<string | null>(null);
   const sampleCacheRef = useRef<Record<string, string>>({});
@@ -678,7 +696,12 @@ const VoiceStudio: React.FC = () => {
           languageCode: speaker.language || 'auto',
         });
       } else if (speaker.engine === 'qwen3') {
-        result = await generateQwen3TTS(line.text, line.voiceId || speaker.voiceId || 'Sohee', speaker.language || 'ko');
+        const vid = line.voiceId || speaker.voiceId || 'Sohee';
+        if (vid.startsWith('custom_')) {
+          result = await generateCloneTTS(line.text, vid, speaker.language || 'ko');
+        } else {
+          result = await generateQwen3TTS(line.text, vid, speaker.language || 'ko');
+        }
       } else if (speaker.engine === 'supertonic') {
         result = await generateSupertonicTTS(line.text, line.voiceId || speaker.voiceId, speaker.language || 'ko', line.lineSpeed ?? speaker.speed ?? 1.0);
       } else {
@@ -847,10 +870,14 @@ const VoiceStudio: React.FC = () => {
     }
     const skipLangFilter = browsedEngine === 'supertonic';
     const voices = getAvailableVoices(browsedEngine, skipLangFilter ? undefined : browseLanguage);
-    // 여성 → 남성 → 중성 순서로 정렬
-    const genderOrder: Record<string, number> = { female: 0, male: 1, neutral: 2 };
-    return [...voices].sort((a, b) => (genderOrder[a.gender] ?? 2) - (genderOrder[b.gender] ?? 2));
-  }, [browsedEngine, browseLanguage, systemVoicesReady, typecastVoices, elSearchQuery, elFilterAccent, elFilterGender, elFilterAge, elFilterUseCase]);
+    // Qwen3: 커스텀 음성도 목록에 추가
+    const allVoices = browsedEngine === 'qwen3'
+      ? [...voices, ...customVoicesForBrowse]
+      : voices;
+    // 여성 → 남성 → 중성 → 커스텀 순서로 정렬
+    const genderOrder: Record<string, number> = { female: 0, male: 1, neutral: 2, custom: 3 };
+    return [...allVoices].sort((a, b) => (genderOrder[a.gender] ?? 3) - (genderOrder[b.gender] ?? 3));
+  }, [browsedEngine, browseLanguage, systemVoicesReady, typecastVoices, elSearchQuery, elFilterAccent, elFilterGender, elFilterAge, elFilterUseCase, customVoicesForBrowse]);
 
   /** 모든 재생 즉시 중단 (Audio + speechSynthesis) */
   const stopAllPlayback = useCallback(() => {
@@ -1455,6 +1482,9 @@ const VoiceStudio: React.FC = () => {
             </details>
           </div>
         )}
+
+        {/* Voice Cloning 패널 — Qwen3 엔진 선택 시 표시 */}
+        {browsedEngine === 'qwen3' && <VoiceClonePanel />}
 
         {/* 펼쳐진 음성 브라우저 */}
         {browsedEngine && (

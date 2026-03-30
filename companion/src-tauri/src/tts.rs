@@ -530,6 +530,192 @@ print('OK')
     Ok(wav_data)
 }
 
+// ──────────────────────────────────────────────
+// Voice Cloning (Qwen3-TTS CustomVoice)
+// ──────────────────────────────────────────────
+
+/// 커스텀 음성 저장 디렉토리
+fn custom_voices_dir() -> PathBuf {
+    let base = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
+    let dir = base.join("ytdlp-companion").join("custom-voices");
+    let _ = std::fs::create_dir_all(&dir);
+    dir
+}
+
+/// 저장된 커스텀 음성 목록 반환
+pub fn list_custom_voices() -> Vec<serde_json::Value> {
+    let dir = custom_voices_dir();
+    let mut voices = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().map(|e| e == "wav").unwrap_or(false) {
+                let stem = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
+                // 메타데이터 파일이 있으면 이름 읽기
+                let meta_path = path.with_extension("json");
+                let name = if meta_path.exists() {
+                    std::fs::read_to_string(&meta_path).ok()
+                        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                        .and_then(|v| v["name"].as_str().map(String::from))
+                        .unwrap_or_else(|| stem.clone())
+                } else {
+                    stem.clone()
+                };
+                let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+                voices.push(serde_json::json!({
+                    "id": format!("custom_{}", stem),
+                    "name": name,
+                    "engine": "qwen3-clone",
+                    "language": "multi",
+                    "gender": "custom",
+                    "filePath": path.to_string_lossy(),
+                    "fileSize": size,
+                }));
+            }
+        }
+    }
+    voices
+}
+
+/// 참조 음성 저장 (WAV 바이트 → 파일)
+pub fn save_custom_voice(name: &str, wav_data: &[u8]) -> Result<String, String> {
+    let dir = custom_voices_dir();
+    // ID: 타임스탬프 기반 (충돌 방지)
+    let id = format!("voice_{}", chrono::Utc::now().format("%Y%m%d_%H%M%S"));
+    let wav_path = dir.join(format!("{}.wav", id));
+    let meta_path = dir.join(format!("{}.json", id));
+    std::fs::write(&wav_path, wav_data).map_err(|e| e.to_string())?;
+    let meta = serde_json::json!({ "name": name, "createdAt": chrono::Utc::now().to_rfc3339() });
+    std::fs::write(&meta_path, meta.to_string()).map_err(|e| e.to_string())?;
+    Ok(format!("custom_{}", id))
+}
+
+/// 커스텀 음성 삭제 (path traversal 방지 — 등록 목록에서 검증 후 삭제)
+pub fn delete_custom_voice(voice_id: &str) -> Result<(), String> {
+    // 저장된 목록에서 해당 ID를 찾아야만 삭제 가능 (path traversal 방지)
+    let voices = list_custom_voices();
+    let entry = voices.iter().find(|v| v["id"].as_str() == Some(voice_id));
+    let file_path = match entry.and_then(|v| v["filePath"].as_str()) {
+        Some(p) => PathBuf::from(p),
+        None => return Err(format!("음성 '{}' 을(를) 찾을 수 없습니다", voice_id)),
+    };
+    // custom-voices 디렉토리 내부 파일인지 한번 더 검증
+    let dir = custom_voices_dir();
+    if !file_path.starts_with(&dir) {
+        return Err("잘못된 경로입니다".to_string());
+    }
+    if file_path.exists() { std::fs::remove_file(&file_path).map_err(|e| e.to_string())?; }
+    let meta_path = file_path.with_extension("json");
+    if meta_path.exists() { std::fs::remove_file(&meta_path).map_err(|e| e.to_string())?; }
+    Ok(())
+}
+
+/// Voice Cloning TTS — 참조 음성 파일로 클론 생성
+pub async fn clone_voice_tts(
+    text: &str,
+    voice_ref_path: &str,
+    language: Option<&str>,
+) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+    let tmp_output = tempfile::Builder::new().suffix(".wav").tempfile()?;
+    let output_path = tmp_output.path().to_string_lossy().to_string();
+
+    let lang = match language.unwrap_or("ko") {
+        "en" | "english" => "en",
+        "ja" | "japanese" => "ja",
+        "zh" | "chinese" => "zh",
+        "ko" | "korean" | _ => "ko",
+    };
+
+    let text_escaped = text.replace('\\', "\\\\").replace('\'', "\\'").replace('\n', " ").replace('\r', "");
+    let ref_escaped = if cfg!(target_os = "windows") {
+        voice_ref_path.replace('\\', "\\\\").replace('\'', "\\'")
+    } else {
+        voice_ref_path.replace('\'', "\\'")
+    };
+    let output_str = if cfg!(target_os = "windows") {
+        output_path.replace('\\', "\\\\").replace('\'', "\\'")
+    } else {
+        output_path.replace('\'', "\\'")
+    };
+
+    // Qwen3-TTS CustomVoice 모델로 음성 클론
+    let python_script = format!(
+        r#"
+import sys, os
+os.environ['TRANSFORMERS_VERBOSITY'] = 'error'
+
+try:
+    from qwen_tts import Qwen3TTSModel
+    import soundfile as sf
+
+    model = Qwen3TTSModel.from_pretrained('Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice')
+    audio = model.synthesize(
+        text='{text}',
+        voice_ref='{ref}',
+        lang='{lang}',
+    )
+    sf.write('{output}', audio['waveform'], audio.get('sample_rate', 24000))
+    print('OK')
+except ImportError:
+    try:
+        from transformers import AutoTokenizer, AutoModelForCausalLM
+        import torch, soundfile as sf, librosa
+
+        model_name = 'Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice'
+        device = 'cuda' if torch.cuda.is_available() else ('mps' if torch.backends.mps.is_available() else 'cpu')
+        dtype = torch.float16 if device != 'cpu' else torch.float32
+
+        tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+        model = AutoModelForCausalLM.from_pretrained(model_name, trust_remote_code=True, torch_dtype=dtype).to(device)
+
+        ref_audio, sr = librosa.load('{ref}', sr=16000, mono=True, duration=15)
+        prompt = '<|voice_ref|><|lang:{lang}|>{text}<|endoftext|>'
+        inputs = tokenizer(prompt, return_tensors='pt').to(device)
+
+        with torch.no_grad():
+            outputs = model.generate(**inputs, max_new_tokens=4096, temperature=0.7, do_sample=True,
+                                      voice_ref=torch.tensor(ref_audio).unsqueeze(0).to(device))
+
+        audio_tokens = outputs[0][inputs['input_ids'].shape[1]:]
+        audio_array = model.decode_audio(audio_tokens)
+        if hasattr(audio_array, 'cpu'):
+            audio_array = audio_array.cpu().numpy()
+
+        sf.write('{output}', audio_array.squeeze(), 24000)
+        print('OK')
+    except Exception as e2:
+        print(f'ERROR: {{e2}}', file=sys.stderr)
+        sys.exit(1)
+except Exception as e:
+    print(f'ERROR: {{e}}', file=sys.stderr)
+    sys.exit(1)
+"#,
+        text = text_escaped,
+        ref = ref_escaped,
+        lang = lang,
+        output = output_str,
+    );
+
+    let python = platform::python_cmd();
+    let output = AsyncCommand::new(python)
+        .args(["-c", &python_script])
+        .output()
+        .await?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        return Err(format!("Voice Clone 실패: {} | stdout: {}", stderr.trim(), stdout.trim()).into());
+    }
+
+    let wav_data = std::fs::read(&output_path)?;
+    if wav_data.len() < 100 {
+        return Err("Voice Clone 출력이 비어있습니다".into());
+    }
+
+    Ok(wav_data)
+}
+
 /// Piper TTS 폴백
 async fn try_piper(
     text: &str,
