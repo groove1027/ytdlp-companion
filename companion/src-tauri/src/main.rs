@@ -30,11 +30,21 @@ fn main() {
                 println!("[Companion] 로그인 시 자동 시작 활성화됨");
             }
 
-            // --hidden 플래그 감지 → 창 숨김 (자동 시작 시 UI 안 띄움)
+            // --hidden 플래그: 자동 시작 시 UI 안 띄움 / 수동 실행 시 창 강제 포커스
             if std::env::args().any(|a| a == "--hidden") {
                 if let Some(win) = app.get_webview_window("main") {
                     let _ = win.hide();
                 }
+            } else {
+                // [FIX] 수동 실행 시 창 표시 — 약간 지연 후 포커스 (Tauri 초기화 완료 대기)
+                let app_handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    if let Some(win) = app_handle.get_webview_window("main") {
+                        let _ = win.show();
+                        let _ = win.set_focus();
+                    }
+                });
             }
             // 시스템 트레이 설정
             let quit = MenuItem::with_id(app, "quit", "종료", true, None::<&str>)?;
