@@ -8,6 +8,15 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-31] #846 Windows 컴패니언 감지 실패 수정 — localhost→127.0.0.1 + IPv6 듀얼스택 + LNA 대응
+- [x] 원인: Chrome 146 Windows에서 localhost가 ::1(IPv6)로 해석 + LNA 정책 차단
+- [x] 프론트엔드 11개 서비스 파일 COMPANION_URL → 127.0.0.1:9876 전환
+- [x] server.rs: IPv4+IPv6 듀얼스택 바인딩, 127.0.0.1 CORS origin, LNA 미들웨어
+- [x] server.rs: 구글 프록시 허용 호스트에 www.youtube.com 추가
+- [x] Codex 5.4 MCP 10회 리뷰 완료 — P1/P2 이슈 전체 수정
+- [x] cargo build + health check (IPv4 + IPv6 + LNA 헤더) 통과
+- [x] Playwright E2E: 스크린샷 4장 + 테스트 통과
+
 ### [2026-03-31] #925 Windows 컴패니언 검은 콘솔 창 반복 출현 수정
 - [x] 원인: 모든 subprocess(python, powershell, yt-dlp, ffmpeg 등)가 CREATE_NO_WINDOW 없이 실행
 - [x] 수정: platform.rs에 async_cmd()/sync_cmd() 헬퍼 추가 — Windows에서 0x08000000 자동 적용

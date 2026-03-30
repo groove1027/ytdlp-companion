@@ -12,7 +12,7 @@
 import { monitoredFetch, getKieKey } from './apiService';
 import { logger } from './LoggerService';
 import { mergeAudioFiles, splitTextForTTS, stripSpeakerTags } from './ttsService';
-const COMPANION_URL = 'http://localhost:9876';
+const COMPANION_URL = 'http://127.0.0.1:9876';
 
 /** 컴패니언 Qwen3/Kokoro/Piper TTS로 로컬 음성 합성 시도 */
 async function tryCompanionTTS(text: string, languageCode?: string): Promise<{ audioUrl: string; format: string } | null> {

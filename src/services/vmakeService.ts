@@ -1,7 +1,7 @@
 /**
  * Vmake AI Service — 영상 자막·워터마크 제거 (컴패니언 프록시 경유)
  *
- * 브라우저 → 로컬 컴패니언(localhost:9876/9877) → Vmake Cloud API
+ * 브라우저 → 로컬 컴패니언(127.0.0.1:9876/9877) → Vmake Cloud API
  * CORS 우회를 위해 컴패니언 서버가 Vmake SDK를 대신 호출합니다.
  */
 
@@ -10,7 +10,7 @@ import { monitoredFetch } from './apiService';
 import { logger } from './LoggerService';
 
 // 컴패니언 ProPainter 서버 후보 (9876 내장 or 9877 전용)
-const PROXY_CANDIDATES = ['http://localhost:9876', 'http://localhost:9877'];
+const PROXY_CANDIDATES = ['http://127.0.0.1:9876', 'http://127.0.0.1:9877'];
 const POLL_INTERVAL_MS = 3_000;
 const MAX_POLL_COUNT = 200;
 

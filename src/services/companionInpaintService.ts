@@ -1,7 +1,7 @@
 /**
  * Companion Inpaint Service — ProPainter 기반 로컬 자막/워터마크 제거
  *
- * 컴패니언 앱(localhost:9876)의 ProPainter + PaddleOCR 엔드포인트를 호출.
+ * 컴패니언 앱(127.0.0.1:9876)의 ProPainter + PaddleOCR 엔드포인트를 호출.
  * 컴패니언 미설치 시 안내 메시지 표시.
  */
 
@@ -9,7 +9,7 @@ import { monitoredFetch } from './apiService';
 import { logger } from './LoggerService';
 
 /** ProPainter 후보 포트: 메인 컴패니언(9876) → 전용 ProPainter(9877) 순서로 시도 */
-const PROPAINTER_CANDIDATES = ['http://localhost:9876', 'http://localhost:9877'];
+const PROPAINTER_CANDIDATES = ['http://127.0.0.1:9876', 'http://127.0.0.1:9877'];
 const HEALTH_TIMEOUT_MS = 3000;   // [FIX #921] 3초
 const HEALTH_CACHE_MS = 30_000;
 const HEALTH_MAX_RETRIES = 2;     // 포트별 2회 재시도 (2포트 × 2회 = 최대 4회)

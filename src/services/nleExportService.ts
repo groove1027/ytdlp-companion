@@ -28,7 +28,7 @@ import { OVERSCALE } from './webcodecs/kenBurnsEngine';
 import { evolinkChat } from './evolinkService';
 import { isCompanionDetected } from './ytdlpApiService';
 
-const COMPANION_URL = 'http://localhost:9876';
+const COMPANION_URL = 'http://127.0.0.1:9876';
 
 /**
  * 컴패니언 앱을 통해 NLE 프로젝트를 로컬에 직접 설치

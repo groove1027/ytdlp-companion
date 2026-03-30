@@ -4,7 +4,7 @@ import { logger } from './LoggerService';
 import { isCompanionDetected } from './ytdlpApiService';
 
 const REMOVE_BG_API_URL = 'https://api.remove.bg/v1.0/removebg';
-const COMPANION_URL = 'http://localhost:9876';
+const COMPANION_URL = 'http://127.0.0.1:9876';
 
 /** File → Base64 변환 헬퍼 */
 async function fileToBase64(file: File): Promise<string> {

@@ -5736,7 +5736,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                       // VREW는 컴패니언 NLE 설치 미지원 (SRT만 필요하므로 ZIP이 적절)
                                       if (target !== 'vrew') {
                                         try {
-                                          const ping = await fetch('http://localhost:9876/health', { signal: AbortSignal.timeout(3000) });
+                                          const ping = await fetch('http://127.0.0.1:9876/health', { signal: AbortSignal.timeout(3000) });
                                           if (!ping.ok) throw new Error('companion unavailable');
                                           if (isCancelled()) return;
 

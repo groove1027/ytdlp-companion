@@ -1640,3 +1640,8 @@ export const useEditRoomStore = create<EditRoomStore>()(immer((set, get) => ({
 
   reset: () => set({ ...INITIAL_STATE }),
 })));
+
+// [E2E] 테스트에서 store 접근용 — DEV 모드에서만 노출
+if (typeof window !== 'undefined' && (import.meta as any).env?.DEV) {
+  (window as any).__EDIT_ROOM_STORE__ = useEditRoomStore;
+}

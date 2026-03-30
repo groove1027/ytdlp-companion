@@ -12,7 +12,7 @@ import { logger } from './LoggerService';
 import { isCompanionDetected } from './ytdlpApiService';
 import type { WhisperTranscriptResult, WhisperSegment, WhisperWord, DiarizedUtterance, ScriptLine } from '../types';
 
-const COMPANION_URL = 'http://localhost:9876';
+const COMPANION_URL = 'http://127.0.0.1:9876';
 
 /** 컴패니언 whisper.cpp로 로컬 전사 시도 */
 async function tryCompanionTranscribe(

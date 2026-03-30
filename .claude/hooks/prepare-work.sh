@@ -127,6 +127,23 @@ echo "║  ✅ Phase 1 완료 — 이제 코드 수정 가능           ║"
 echo "║  게이트 유효시간: 60분                            ║"
 echo "║  .phase-ready 생성됨                             ║"
 echo "╚══════════════════════════════════════════════════╝"
+
+# companion/src-tauri/ 파일이 영향 범위에 포함되면 경고
+if echo "$UNIQUE_FILES" | grep -q 'companion/src-tauri'; then
+    echo ""
+    echo "🔴🔴🔴 ════════════════════════════════════════════ 🔴🔴🔴"
+    echo "  ⚠️  companion/src-tauri/ Rust 코드 수정 감지!"
+    echo "  반드시 아래를 수행해야 커밋 가능:"
+    echo ""
+    echo "  1. cd companion/src-tauri && cargo build"
+    echo "  2. 컴패니언 앱 실행 (cargo tauri dev)"
+    echo "  3. curl http://localhost:9876/health → 정상 응답"
+    echo "  4. Playwright E2E로 컴패니언 연동 기능 테스트"
+    echo "  5. touch .companion-build-verified"
+    echo ""
+    echo "  이 과정 없이 커밋하면 pre-commit hook이 차단합니다."
+    echo "🔴🔴🔴 ════════════════════════════════════════════ 🔴🔴🔴"
+fi
 echo ""
 echo "다음 단계:"
 echo "  Phase 2: 위 목록의 모든 파일을 수정"

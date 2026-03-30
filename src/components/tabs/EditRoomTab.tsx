@@ -1203,6 +1203,27 @@ const ScenePreviewPanel: React.FC<{
           </div>
         )}
 
+        {/* 자료영상 레퍼런스 배지 (YouTube 타임코드 링크) */}
+        {activeScene?.videoReferences && activeScene.videoReferences.length > 0 && (() => {
+          const ref = activeScene.videoReferences[0];
+          const fmtTime = (s: number) => { const v = Number.isFinite(s) ? Math.max(0, s) : 0; return `${Math.floor(v / 60)}:${String(Math.floor(v % 60)).padStart(2, '0')}`; };
+          const safeId = encodeURIComponent(ref.videoId);
+          const safeSec = Math.max(0, Math.floor(ref.startSec || 0));
+          return (
+            <a
+              href={`https://www.youtube.com/watch?v=${safeId}&t=${safeSec}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="absolute top-10 right-2 z-[6] flex items-center gap-1.5 bg-red-600/90 hover:bg-red-500 text-white text-[10px] px-2.5 py-1 rounded-lg shadow-lg transition-colors"
+              title={`${ref.videoTitle} (${fmtTime(ref.startSec)}~${fmtTime(ref.endSec)})`}
+            >
+              <span>📺</span>
+              <span className="font-bold">{fmtTime(ref.startSec)}~{fmtTime(ref.endSec)}</span>
+              <span className="opacity-70 truncate max-w-[120px]">{ref.videoTitle}</span>
+            </a>
+          );
+        })()}
+
         {/* 하단 페이드 — 자막 가독성용 검정 그라데이션 */}
         {bottomFade > 0 && (
           <div
@@ -1463,7 +1484,7 @@ const EditRoomTab: React.FC = () => {
       if (target !== 'vrew') {
         try {
           // 컴패니언 연결 확인 (health 캐싱으로 즉시 응답, 미실행 시 connection refused로 빠른 실패)
-          const ping = await fetch('http://localhost:9876/health', { signal: AbortSignal.timeout(3000) });
+          const ping = await fetch('http://127.0.0.1:9876/health', { signal: AbortSignal.timeout(3000) });
           if (!ping.ok) throw new Error('companion unavailable');
 
           // ZIP에서 projectId 추출 (CapCut은 drafts 폴더 ID 사용)

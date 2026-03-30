@@ -11,7 +11,7 @@ import { logger } from './LoggerService';
 import type { Scene } from '../types';
 import { useGoogleCookieStore } from '../stores/googleCookieStore';
 
-const COMPANION_URL = 'http://localhost:9876';
+const COMPANION_URL = 'http://127.0.0.1:9876';
 
 // Lazy import to avoid circular dependency — 비동기 초기화 후 동기 접근
 let _projectStoreRef: { getState: () => { scenes: Scene[] } } | null = null;

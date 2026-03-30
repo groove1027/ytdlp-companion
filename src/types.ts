@@ -284,6 +284,9 @@ export interface Scene {
   /** 커뮤니티 미디어 (밈/짤/일러스트/효과음) — 기존 이미지 대신 사용 */
   communityMediaItem?: CommunityMediaItem;
 
+  /** 자료영상 레퍼런스 (YouTube 영상 + 타임코드) */
+  videoReferences?: VideoReference[];
+
   startTime?: number;
   endTimeStamp?: number;
   audioScript?: string;
@@ -505,6 +508,8 @@ export interface ProjectConfig {
 
   // [NEW] 구글 이미지 검색 레퍼런스 모드
   enableGoogleReference?: boolean;
+  // [NEW] 자료영상(YouTube) 레퍼런스 모드
+  enableVideoReference?: boolean;
 }
 
 // PPT 마스터 슬라이드 데이터 (프로젝트 저장용)
@@ -792,6 +797,19 @@ export interface CommunityMediaItem {
   title: string;
   tags: string[];
   format: string;
+}
+
+/** 자료영상 레퍼런스 (YouTube 영상 + 타임코드 매칭) */
+export interface VideoReference {
+  videoId: string;
+  videoTitle: string;
+  channelTitle: string;
+  thumbnailUrl: string;
+  startSec: number;
+  endSec: number;
+  matchScore: number;
+  segmentText: string;
+  duration: number;
 }
 
 /** 채널분석 서브 탭 */

@@ -5,7 +5,7 @@ import { generateSpeech as generateSupertonicSpeech } from './supertonicService'
 
 import type { TTSEngine, TTSLanguage } from '../types';
 
-const COMPANION_URL = 'http://localhost:9876';
+const COMPANION_URL = 'http://127.0.0.1:9876';
 
 // === CONFIGURATION ===
 const KIE_BASE_URL = 'https://api.kie.ai/api/v1';

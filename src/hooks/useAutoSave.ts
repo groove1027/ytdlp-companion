@@ -79,6 +79,7 @@ const buildConfigFingerprint = (config: ProjectConfig | null): string => {
     String(config.suppressText ?? ''),
     String(config.isMixedMedia ?? ''),
     String(config.enableGoogleReference ?? ''),
+    String(config.enableVideoReference ?? ''),
     String(config.longFormSplitType || ''),
     buildStringArrayFingerprint(config.styleReferenceImages),
     buildStringFingerprint(config.mergedAudioUrl),
@@ -110,7 +111,7 @@ const computeFingerprint = (
   scriptWriterState: ScriptWriterDraftState,
 ): string => {
   const sceneFp = scenes.map(s =>
-    `${s.id}:${(s.scriptText || '').length}:${s.scriptText?.charCodeAt(0) || 0}:${s.imageUrl ? 'I' : '-'}:${s.videoUrl ? 'V' : '-'}:${s.audioUrl ? 'A' : '-'}:${(s.visualPrompt || '').length}:${s.audioDuration || 0}`
+    `${s.id}:${(s.scriptText || '').length}:${s.scriptText?.charCodeAt(0) || 0}:${s.imageUrl ? 'I' : '-'}:${s.videoUrl ? 'V' : '-'}:${s.audioUrl ? 'A' : '-'}:${(s.visualPrompt || '').length}:${s.audioDuration || 0}:vr${(s.videoReferences || []).map(r => `${r.videoId}@${r.startSec}-${r.endSec}`).join(',')}`
   ).join('|');
   const cfgFp = buildConfigFingerprint(config);
   // [FIX #603] 이미지/영상 설정과 캐릭터 메타 변경도 dirty 감지

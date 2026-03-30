@@ -227,7 +227,8 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
     const secondHalf = sentences.slice(midpoint).join('').trim();
 
     // 원본 장면의 scriptText를 앞쪽 절반으로 업데이트, visualPrompt 초기화 (새 scriptText 기반 자동 재생성)
-    const updatedSource = { ...source, scriptText: firstHalf, visualPrompt: '' };
+    // [FIX codex-review] videoReferences도 초기화 — 분할 후 대본이 달라지므로 타임코드 매칭 무효
+    const updatedSource = { ...source, scriptText: firstHalf, visualPrompt: '', videoReferences: undefined };
 
     const newScene: Scene = {
       ...source,
@@ -241,6 +242,7 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
       isGeneratingVideo: false,
       isNativeHQ: false,
       generationStatus: undefined,
+      videoReferences: undefined, // [FIX codex-review] 분할된 장면은 새 대본 기준 재매칭 필요
     };
     const newScenes = [...state.scenes];
     newScenes[index] = updatedSource;
@@ -511,6 +513,7 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
         targetSceneCount: project.config?.targetSceneCount ?? null, // [FIX #382] 저장된 목표 컷수 복원
         styleReferenceImages: project.config?.styleReferenceImages, // [#391] 글로벌 스타일 레퍼런스 복원
         enableGoogleReference: project.config?.enableGoogleReference, // [NEW] 구글 레퍼런스 모드 복원
+        enableVideoReference: project.config?.enableVideoReference, // [NEW] 자료영상 레퍼런스 모드 복원
       });
     }).catch(e => { logger.trackSwallowedError('ProjectStore:loadProject/restoreImageVideoStore', e); });
 

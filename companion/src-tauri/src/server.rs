@@ -5,6 +5,7 @@ use axum::{
     response::{IntoResponse, Json},
     routing::{get, post},
     body::Body,
+    middleware,
 };
 use serde::{Deserialize, Serialize};
 use tower_http::cors::{CorsLayer, Any};
@@ -227,12 +228,17 @@ struct GenerateImageRequest {
 // ──────────────────────────────────────────────
 
 pub async fn start_server(_app: tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
-    // CORS: localhost + 앱 도메인만 허용 (외부 악성 사이트 차단)
+    // CORS: localhost + 127.0.0.1 + 앱 도메인만 허용 (외부 악성 사이트 차단)
+    // [FIX #846] 127.0.0.1 origin 추가 — 프론트엔드가 localhost 대신 127.0.0.1로 접근
     let allowed_origins = [
         "http://localhost:5173".parse::<axum::http::HeaderValue>().unwrap(),
         "http://localhost:5174".parse::<axum::http::HeaderValue>().unwrap(),
         "http://localhost:5177".parse::<axum::http::HeaderValue>().unwrap(),
         "http://localhost:3000".parse::<axum::http::HeaderValue>().unwrap(),
+        "http://127.0.0.1:5173".parse::<axum::http::HeaderValue>().unwrap(),
+        "http://127.0.0.1:5174".parse::<axum::http::HeaderValue>().unwrap(),
+        "http://127.0.0.1:5177".parse::<axum::http::HeaderValue>().unwrap(),
+        "http://127.0.0.1:3000".parse::<axum::http::HeaderValue>().unwrap(),
         "https://all-in-one-production.pages.dev".parse::<axum::http::HeaderValue>().unwrap(),
     ];
     let cors = CorsLayer::new()
@@ -269,11 +275,16 @@ pub async fn start_server(_app: tauri::AppHandle) -> Result<(), Box<dyn std::err
         // FFmpeg 인코딩
         .route("/api/ffmpeg/transcode", post(ffmpeg_transcode_handler))
         .layer(cors)
+        // [FIX #846] Chrome 142+ / Edge 143+ Local Network Access 대응
+        // HTTPS 페이지에서 127.0.0.1로 fetch 시 preflight에 이 헤더가 필요
+        .layer(middleware::from_fn(lna_header_middleware))
         // base64 인코딩된 미디어 파일 수신 — 기본 2MB → 200MB로 확장
         .layer(axum::extract::DefaultBodyLimit::max(200 * 1024 * 1024));
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], 9876));
-    println!("[Companion] 서버 시작: http://{}", addr);
+    // [FIX #846] IPv4 + IPv6 loopback 동시 바인딩
+    // Windows에서 localhost가 ::1(IPv6)로 해석되면 IPv4 전용 서버에 연결 실패
+    let addr_v4 = SocketAddr::from(([127, 0, 0, 1], 9876));
+    println!("[Companion] 서버 시작: http://{}", addr_v4);
 
     // [FIX #914] 서비스 감지를 백그라운드에서 실행 — health check 즉시 응답 가능
     tokio::spawn(async {
@@ -286,9 +297,39 @@ pub async fn start_server(_app: tauri::AppHandle) -> Result<(), Box<dyn std::err
         }
     });
 
-    let listener = tokio::net::TcpListener::bind(addr).await?;
+    // IPv6 loopback [::1]:9876도 시도 (실패해도 fatal 아님 — IPv6 미지원 환경 대비)
+    let addr_v6 = SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], 9876u16));
+    let app_clone = app.clone();
+    if let Ok(v6_listener) = tokio::net::TcpListener::bind(addr_v6).await {
+        println!("[Companion] IPv6 loopback 활성화: http://[::1]:9876");
+        tokio::spawn(async move {
+            if let Err(e) = axum::serve(v6_listener, app_clone).await {
+                eprintln!("[Companion] IPv6 서버 에러 (무시): {}", e);
+            }
+        });
+    }
+
+    let listener = tokio::net::TcpListener::bind(addr_v4).await?;
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+// ──────────────────────────────────────────────
+// [FIX #846] Local Network Access 미들웨어
+// Chrome 142+ / Edge 143+에서 HTTPS → localhost/127.0.0.1 fetch 시
+// preflight에 Access-Control-Allow-Private-Network: true 필요
+// ──────────────────────────────────────────────
+
+async fn lna_header_middleware(
+    req: axum::http::Request<Body>,
+    next: middleware::Next,
+) -> impl IntoResponse {
+    let mut res = next.run(req).await;
+    res.headers_mut().insert(
+        "Access-Control-Allow-Private-Network",
+        "true".parse().unwrap(),
+    );
+    res
 }
 
 // ──────────────────────────────────────────────
@@ -831,8 +872,8 @@ async fn ffmpeg_transcode_handler(Json(req): Json<FfmpegTranscodeRequest>) -> im
 // ──────────────────────────────────────────────
 
 async fn google_proxy_handler(Json(req): Json<GoogleProxyRequest>) -> impl IntoResponse {
-    // URL 허용 목록 (구글/빙 이미지 검색만)
-    let allowed_hosts = ["www.google.com", "www.google.co.kr", "www.bing.com", "en.wikipedia.org", "commons.wikimedia.org"];
+    // URL 허용 목록 (구글/빙 이미지 + YouTube 자막)
+    let allowed_hosts = ["www.google.com", "www.google.co.kr", "www.bing.com", "en.wikipedia.org", "commons.wikimedia.org", "www.youtube.com"];
     let parsed = url::Url::parse(&req.target_url).ok();
     let host = parsed.as_ref().and_then(|u| u.host_str().map(String::from)).unwrap_or_default();
     if !allowed_hosts.iter().any(|h| host.ends_with(h)) {

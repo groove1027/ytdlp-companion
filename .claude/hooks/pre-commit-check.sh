@@ -114,6 +114,38 @@ if [ "$UI_CHANGED" -gt 0 ]; then
 fi
 
 # ──────────────────────────────────────────────
+# CHECK 3.5: companion/src-tauri/ 수정 시 cargo build + health check 필수
+# ──────────────────────────────────────────────
+COMPANION_STAGED=$(cd "$PROJECT_DIR" && git diff --cached --name-only 2>/dev/null | grep -cE 'companion/src-tauri/src/.*\.rs$')
+COMPANION_DIFF=$(cd "$PROJECT_DIR" && git diff --name-only HEAD 2>/dev/null | grep -cE 'companion/src-tauri/src/.*\.rs$')
+COMPANION_CHANGED=$(( COMPANION_STAGED + COMPANION_DIFF ))
+
+if [ "$COMPANION_CHANGED" -gt 0 ]; then
+    # 증거: .companion-build-verified 파일이 30분 이내에 있어야 함
+    COMPANION_GATE="$PROJECT_DIR/.companion-build-verified"
+    if [ ! -f "$COMPANION_GATE" ]; then
+        ERRORS+=("❌ [컴패니언 빌드 미검증] companion/src-tauri/ Rust 파일이 수정됐는데 빌드 검증 증거가 없다!")
+        ERRORS+=("   → cd companion/src-tauri && cargo build 성공 확인")
+        ERRORS+=("   → 컴패니언 앱 실행 후 curl http://localhost:9876/health 응답 확인")
+        ERRORS+=("   → 검증 완료 후 touch .companion-build-verified")
+        ERRORS+=("   ⚠️ cargo build 불가 환경이면 사용자에게 즉시 알릴 것 — 절대 스킵 금지")
+    else
+        if [ "$(uname)" = "Darwin" ]; then
+            CB_MTIME=$(stat -f %m "$COMPANION_GATE" 2>/dev/null || echo 0)
+        else
+            CB_MTIME=$(stat -c %Y "$COMPANION_GATE" 2>/dev/null || echo 0)
+        fi
+        CB_NOW=$(date +%s)
+        CB_AGE=$((CB_NOW - CB_MTIME))
+        if [ "$CB_AGE" -gt 1800 ]; then
+            ERRORS+=("❌ [컴패니언 빌드 만료] .companion-build-verified가 30분 이상 지남 — 재검증 필요")
+        else
+            echo "✅ 컴패니언 빌드 검증 확인됨 (${CB_AGE}초 전)"
+        fi
+    fi
+fi
+
+# ──────────────────────────────────────────────
 # CHECK 4: 가짜 E2E 7중 차단
 # ──────────────────────────────────────────────
 if [ "$UI_CHANGED" -gt 0 ] && [ -d "$E2E_DIR" ]; then

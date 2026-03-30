@@ -21,6 +21,7 @@ import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
 import { areUploadedTranscriptScenesSynced, buildUploadedTranscriptScenes } from '../../../utils/uploadedTranscriptScenes';
 import GoogleReferencePanel from './GoogleReferencePanel';
+import VideoReferencePanel from './VideoReferencePanel';
 import { autoApplyGoogleReferences } from '../../../services/googleReferenceSearchService';
 
 let _sceneIdCounter = 0;
@@ -1210,6 +1211,11 @@ const SetupPanel: React.FC = () => {
       {/* [NEW] 무료 이미지 레퍼런스 — 비주얼 스타일 상단  */}
       {/* ════════════════════════════════════════════ */}
       <GoogleReferencePanel />
+
+      {/* ════════════════════════════════════════════ */}
+      {/* [NEW] 자료영상 레퍼런스 — YouTube 영상 + 타임코드 */}
+      {/* ════════════════════════════════════════════ */}
+      <VideoReferencePanel />
 
       {/* ════════════════════════════════════════════ */}
       {/* 항상 표시: 비주얼 스타일                         */}

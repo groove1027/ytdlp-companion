@@ -22,7 +22,7 @@ const DEFAULT_PROXY_URL = 'https://ytdlp-proxy.groove1027.workers.dev'; // Cloud
 const DEFAULT_API_KEY = 'bf9ce5c9b531c42a2dd6dcec61cff6c3eead93f20ba35365d3411ddf783dccb1';
 
 /** 로컬 컴패니언 앱 URL (YouPlayer급 안정성 — yt-dlp 로컬 실행) */
-const LOCAL_COMPANION_URL = 'http://localhost:9876';
+const LOCAL_COMPANION_URL = 'http://127.0.0.1:9876';
 
 // ──────────────────────────────────────────────
 // 로컬 컴패니언 앱 감지 (캐시 + 주기적 재검증)

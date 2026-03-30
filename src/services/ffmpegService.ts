@@ -14,7 +14,7 @@ import { fetchFile, toBlobURL } from '@ffmpeg/util';
 import { logger } from './LoggerService';
 import { isCompanionDetected } from './ytdlpApiService';
 
-const COMPANION_URL = 'http://localhost:9876';
+const COMPANION_URL = 'http://127.0.0.1:9876';
 
 /**
  * 컴패니언 네이티브 FFmpeg로 트랜스코딩 (WASM 대비 5-15배 빠름)
