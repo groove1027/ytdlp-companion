@@ -1344,7 +1344,7 @@ const VoiceStudio: React.FC = () => {
       {/* Engine selection cards (card grid UI) — TTS 모드에서만 표시 */}
       {narrationSource === 'tts' && <div>
         <label className="text-sm text-gray-400 font-semibold block mb-2">음성 엔진 선택 — 카드를 클릭하면 개별 음성을 미리 들어볼 수 있습니다</label>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="grid grid-cols-4 gap-3">
           {TTS_ENGINES.map((eng) => {
             const isBrowsing = browsedEngine === eng.id;
             const isActive = ttsEngine === eng.id;
