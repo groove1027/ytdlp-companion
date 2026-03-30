@@ -8,6 +8,15 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-31] #927 롱폼 대본(3만자) 이어쓰기 네트워크 타임아웃 실패
+- [x] 근본 원인: evolinkNativeStream에서 fetchWithRateLimitRetry에 타임아웃/네트워크 재시도 없음 → 브라우저 125초 TCP 킬
+- [x] 이어쓰기 실패 시 이미 생성된 94% 대본이 전부 날아가는 문제
+- [x] evolinkService.ts: 120초 타임아웃 + 네트워크 에러 재시도(maxRetries=2) 추가
+- [x] ScriptWriterTab.tsx: 이어쓰기 루프에 try/catch → 부분 결과 보존 + 토스트 안내
+- [x] contAccumulated로 스트리밍 중 받은 텍스트도 에러 시 보존 (Codex 7/10 제안 반영)
+- [x] Codex 5.4 MCP 코드 리뷰 10회 완료
+- [x] Playwright E2E: 로그인 → 대본작성 → 직접입력 → 제목/줄거리 → AI 대본 생성 → 스트리밍 → 완료 확인
+
 ### [2026-03-31] #921 컴패니언 앱 감지 실패 — ProPainter health check 타임아웃/재시도 개선
 - [x] 근본 원인: companionInpaintService.ts의 health check 타임아웃이 800ms로 너무 짧아 Windows에서 ProPainter 초기화 중 미감지 (#907과 동일 원인)
 - [x] 타임아웃 800ms → 3000ms 증가 (ytdlpApiService와 동일 값)

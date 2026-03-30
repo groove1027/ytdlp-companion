@@ -702,12 +702,23 @@ ${instinctPrompt}
           : `다음 대본의 마지막 문장이 중간에서 끊겼습니다:\n\n"...${result.slice(-400)}"\n\n끊긴 마지막 문장만 자연스럽게 완성하세요. 새로운 내용을 추가하지 마세요. 대본 본문만 출력하세요.`;
         finishReason = '';
         const contBudget = Math.min(32000, Math.max(2000, Math.ceil(Math.max(remaining, 200) * 4)));
-        const contText = await scriptGenerationStream(
-          systemPrompt, contPrompt,
-          (_chunk, accumulated) => { setStreamingText(result + accumulated); },
-          { model: scriptAiModel, temperature: 0.7, maxOutputTokens: contBudget, enableWebSearch: useWebSearch, signal: abortCtrl.signal, onFinish: (r) => { finishReason = r; } }
-        );
-        result += contText;
+        // [FIX #927] 이어쓰기 실패 시 지금까지 생성된 대본 + 스트리밍 중 텍스트 보존
+        let contAccumulated = '';
+        try {
+          const contText = await scriptGenerationStream(
+            systemPrompt, contPrompt,
+            (_chunk, accumulated) => { contAccumulated = accumulated; setStreamingText(result + accumulated); },
+            { model: scriptAiModel, temperature: 0.7, maxOutputTokens: contBudget, enableWebSearch: useWebSearch, signal: abortCtrl.signal, onFinish: (r) => { finishReason = r; } }
+          );
+          result += contText;
+        } catch (contErr) {
+          if (abortCtrl.signal.aborted) throw contErr;
+          // 스트리밍 중 받은 텍스트가 있으면 result에 반영
+          if (contAccumulated) result += contAccumulated;
+          console.warn(`[ScriptWriter] 이어쓰기 ${ci + 1}/${MAX_CONTINUATIONS} 실패 — 부분 결과 보존 (${result.length}자)`, contErr);
+          showToast(`이어쓰기 중 네트워크 오류가 발생했지만, 지금까지 생성된 대본(${result.length}자)은 보존됩니다. 아래 "대본 이어쓰기"에서 나머지를 생성할 수 있습니다.`, 8000);
+          break;
+        }
       }
 
       setGeneratedScript({
@@ -841,12 +852,22 @@ ${instinctPrompt}
           : `다음 대본의 마지막 문장이 중간에서 끊겼습니다:\n\n"...${fullText.slice(-400)}"\n\n끊긴 마지막 문장만 자연스럽게 완성하세요. 새로운 내용을 추가하지 마세요. 대본 본문만 출력하세요.`;
         finishReason = '';
         const contBudget = Math.min(32000, Math.max(2000, Math.ceil(Math.max(remaining, 200) * 4)));
-        const contText = await scriptGenerationStream(
-          systemPrompt, contPrompt,
-          (_chunk, accumulated) => { setStreamingText(fullText + accumulated); },
-          { model: scriptAiModel, temperature: 0.7, maxOutputTokens: contBudget, enableWebSearch: useWebSearch, signal: abortCtrl.signal, onFinish: (r) => { finishReason = r; } }
-        );
-        fullText += contText;
+        // [FIX #927] 이어쓰기 실패 시 지금까지 생성된 대본 + 스트리밍 중 텍스트 보존
+        let contAccumulated = '';
+        try {
+          const contText = await scriptGenerationStream(
+            systemPrompt, contPrompt,
+            (_chunk, accumulated) => { contAccumulated = accumulated; setStreamingText(fullText + accumulated); },
+            { model: scriptAiModel, temperature: 0.7, maxOutputTokens: contBudget, enableWebSearch: useWebSearch, signal: abortCtrl.signal, onFinish: (r) => { finishReason = r; } }
+          );
+          fullText += contText;
+        } catch (contErr) {
+          if (abortCtrl.signal.aborted) throw contErr;
+          if (contAccumulated) fullText += contAccumulated;
+          console.warn(`[ScriptWriter] 이어쓰기 ${ci + 1}/${MAX_CONTINUATIONS} 실패 — 부분 결과 보존 (${fullText.length}자)`, contErr);
+          showToast(`이어쓰기 중 네트워크 오류가 발생했지만, 지금까지 생성된 대본(${fullText.length}자)은 보존됩니다. 아래 "대본 이어쓰기"에서 나머지를 생성할 수 있습니다.`, 8000);
+          break;
+        }
       }
 
       if (!fullText.trim()) throw new Error('AI 응답이 비어있습니다. 다시 시도해주세요.');

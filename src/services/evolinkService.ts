@@ -1019,8 +1019,11 @@ export const evolinkNativeStream = async (
     };
     if (signal) fetchInit.signal = signal;
 
-    // [FIX #226] 429 Rate Limit 재시도 추가 — 네이티브 스트리밍에도 적용
-    const response = await fetchWithRateLimitRetry(url, fetchInit, 3, 3000);
+    // [FIX #226 #927] 429 + 네트워크 에러 재시도 — 120초 타임아웃으로 브라우저 TCP 킬(~125초) 방지
+    // retryOnNetworkError=true 안전 근거: network-error는 서버가 응답(200)하기 전 단계에서 발생.
+    // SSE 스트리밍은 서버 응답 시 fetch가 즉시 resolve되므로, fetch 자체 실패 = 서버 미수신 = 과금 없음.
+    // (스트리밍 reader 에러는 이 함수가 아닌 아래 while loop에서 처리됨)
+    const response = await fetchWithRateLimitRetry(url, fetchInit, 2, 4000, 120_000, true);
 
     if (!response.ok) {
         const errorDetail = await parseEvolinkError(response);
