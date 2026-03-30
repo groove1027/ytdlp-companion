@@ -7,9 +7,9 @@
 import { test, expect } from '@playwright/test';
 
 const PROD_URL = 'http://localhost:5173';
-const EMAIL = process.env.E2E_TEST_EMAIL || 'groove1027@gmail.com';
-const PASSWORD = process.env.E2E_TEST_PASSWORD || 'wlgntndk!1027';
-const EVOLINK_KEY = process.env.CUSTOM_EVOLINK_KEY || 'sk-gDTBC6cmqoo4IKUPhEAxlUuAD2XYOHPC5cyNhtMAJWGOzfJX';
+const EMAIL = process.env.E2E_TEST_EMAIL || '';
+const PASSWORD = process.env.E2E_TEST_PASSWORD || '';
+const EVOLINK_KEY = process.env.CUSTOM_EVOLINK_KEY || '';
 const TEST_YOUTUBE_URL = 'https://www.youtube.com/shorts/HMBqVXNjrgo';
 
 async function loginAndSetup(page: import('@playwright/test').Page) {
