@@ -9,14 +9,16 @@ import { monitoredFetch } from './apiService';
 import { logger } from './LoggerService';
 
 const COMPANION_URL = 'http://localhost:9876';
-const HEALTH_TIMEOUT_MS = 800;
+const HEALTH_TIMEOUT_MS = 3000;   // [FIX #921] 3초 — 800ms는 Windows에서 ProPainter 초기화 중 미감지 (#907과 동일 원인)
 const HEALTH_CACHE_MS = 30_000;
+const HEALTH_MAX_RETRIES = 3;     // [FIX #921] 재시도 3회 — 컴패니언 시작 직후 안정화 대기
 
 // ── 컴패니언 인페인트 기능 감지 (캐시) ──
 
 let _inpaintAvailable: boolean | null = null;
 let _inpaintCheckTime = 0;
 let _inpaintCheckPromise: Promise<boolean> | null = null;
+let _cacheGeneration = 0; // [FIX #921] resetInpaintCache 호출 시 stale promise 무효화
 const NEGATIVE_CACHE_MS = 5_000; // 실패 시 5초만 캐시 (빠른 재확인)
 
 /** 컴패니언의 ProPainter 기능이 활성화되어 있는지 확인 */
@@ -28,39 +30,74 @@ export async function isInpaintAvailable(): Promise<boolean> {
   }
   if (_inpaintCheckPromise) return _inpaintCheckPromise;
 
-  _inpaintCheckPromise = _doInpaintCheck(now).finally(() => {
-    _inpaintCheckPromise = null;
+  const gen = _cacheGeneration;
+  _inpaintCheckPromise = _doInpaintCheck(gen).finally(() => {
+    // [FIX #921] 같은 generation일 때만 promise 해제 — reset 후 새 promise 덮어쓰기 방지
+    if (gen === _cacheGeneration) _inpaintCheckPromise = null;
   });
   return _inpaintCheckPromise;
 }
 
-async function _doInpaintCheck(now: number): Promise<boolean> {
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), HEALTH_TIMEOUT_MS);
-    const res = await fetch(`${COMPANION_URL}/health`, {
-      signal: controller.signal,
-      mode: 'cors',
-    });
-    clearTimeout(timeoutId);
-    if (!res.ok) { _inpaintAvailable = false; _inpaintCheckTime = now; return false; }
-    const data = await res.json();
-    // ProPainter 기능이 명시적으로 활성화된 경우에만 true
-    // 기존 yt-dlp 전용 컴패니언은 이 필드가 없으므로 false
-    _inpaintAvailable = !!(data.features?.inpaint || data.propainter);
-    _inpaintCheckTime = now;
-    return _inpaintAvailable;
-  } catch {
-    _inpaintAvailable = false;
-    _inpaintCheckTime = now;
-    return false;
+async function _doInpaintCheck(gen: number): Promise<boolean> {
+  // [FIX #921] 최대 HEALTH_MAX_RETRIES회 재시도 — 컴패니언 시작 직후 Python 초기화 대기
+  for (let attempt = 0; attempt < HEALTH_MAX_RETRIES; attempt++) {
+    // resetInpaintCache()가 호출되었으면 이 check는 stale — 즉시 종료
+    if (gen !== _cacheGeneration) return _inpaintAvailable ?? false;
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), HEALTH_TIMEOUT_MS);
+      const res = await fetch(`${COMPANION_URL}/health`, {
+        signal: controller.signal,
+        mode: 'cors',
+      });
+      clearTimeout(timeoutId);
+      if (!res.ok) {
+        logger.info(`[CompanionInpaint] health ${res.status} (attempt ${attempt + 1}/${HEALTH_MAX_RETRIES})`);
+        if (attempt < HEALTH_MAX_RETRIES - 1) { await _sleep(1000); continue; }
+        if (gen === _cacheGeneration) { _inpaintAvailable = false; _inpaintCheckTime = Date.now(); }
+        return false;
+      }
+      const data: { features?: { inpaint?: boolean }; propainter?: boolean } = await res.json();
+      // resetInpaintCache() 중간 호출 감지
+      if (gen !== _cacheGeneration) return _inpaintAvailable ?? false;
+      // ProPainter 기능이 명시적으로 활성화된 경우에만 true
+      // 기존 yt-dlp 전용 컴패니언은 이 필드가 없으므로 false
+      const available = !!(data.features?.inpaint || data.propainter);
+      if (available) {
+        _inpaintAvailable = true;
+        _inpaintCheckTime = Date.now();
+        logger.info('[CompanionInpaint] ProPainter 감지 성공');
+        return true;
+      }
+      // [FIX #921] 200 OK지만 ProPainter 미등록 → 시작 중일 수 있으니 재시도
+      logger.info(`[CompanionInpaint] health OK but ProPainter not ready (attempt ${attempt + 1}/${HEALTH_MAX_RETRIES})`);
+      if (attempt < HEALTH_MAX_RETRIES - 1) { await _sleep(1000); continue; }
+      if (gen === _cacheGeneration) { _inpaintAvailable = false; _inpaintCheckTime = Date.now(); }
+      return false;
+    } catch (err) {
+      const reason = err instanceof Error
+        ? (err.name === 'AbortError' ? `timeout(${HEALTH_TIMEOUT_MS}ms)` : err.message)
+        : 'unknown';
+      logger.info(`[CompanionInpaint] health check 실패: ${reason} (attempt ${attempt + 1}/${HEALTH_MAX_RETRIES})`);
+      // [FIX #921] 모든 에러에서 재시도 — 컴패니언 시작 직후 포트 미바인딩 시 network error 발생
+      // network error는 즉시 실패하므로 총 소요 ~3초 (sleep 1s × 2), timeout은 ~11초 (timeout 3s × 3 + sleep 1s × 2)
+      if (attempt < HEALTH_MAX_RETRIES - 1) { await _sleep(1000); continue; }
+    }
   }
+  if (gen === _cacheGeneration) { _inpaintAvailable = false; _inpaintCheckTime = Date.now(); }
+  return false;
+}
+
+function _sleep(ms: number): Promise<void> {
+  return new Promise(r => setTimeout(r, ms));
 }
 
 /** 캐시 초기화 (설정 변경 시) */
 export function resetInpaintCache(): void {
   _inpaintAvailable = null;
   _inpaintCheckTime = 0;
+  _cacheGeneration++;         // stale in-flight check 무효화
+  _inpaintCheckPromise = null; // 진행 중인 promise도 해제
 }
 
 // ── OCR 텍스트 영역 감지 ──

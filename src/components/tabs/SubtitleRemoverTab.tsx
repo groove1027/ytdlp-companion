@@ -31,6 +31,7 @@ const SubtitleRemoverTab: React.FC = () => {
   const [resultBlobUrl, setResultBlobUrl] = useState<string | null>(null);
   const [videoDuration, setVideoDuration] = useState(0);
   const [companionReady, setCompanionReady] = useState<boolean | null>(null);
+  const [isRetrying, setIsRetrying] = useState(false);
   const [detectedRegions, setDetectedRegions] = useState<TextRegion[]>([]);
   const [masks, setMasks] = useState<InpaintMask[]>([]);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -266,9 +267,12 @@ const SubtitleRemoverTab: React.FC = () => {
     if (fileInputRef.current) fileInputRef.current.value = '';
   }, [resultBlobUrl, videoPreviewUrl]);
 
-  const handleRetryCompanion = useCallback(() => {
+  const handleRetryCompanion = useCallback(async () => {
+    setIsRetrying(true);
     resetInpaintCache();
-    isInpaintAvailable().then(setCompanionReady);
+    const result = await isInpaintAvailable();
+    setCompanionReady(result);
+    setIsRetrying(false);
   }, []);
 
   return (
@@ -314,9 +318,10 @@ const SubtitleRemoverTab: React.FC = () => {
               </ol>
               <button
                 onClick={handleRetryCompanion}
-                className="mt-3 px-4 py-1.5 text-xs font-bold rounded-lg bg-amber-600/30 text-amber-300 hover:bg-amber-600/50 border border-amber-500/30 transition-colors"
+                disabled={isRetrying}
+                className="mt-3 px-4 py-1.5 text-xs font-bold rounded-lg bg-amber-600/30 text-amber-300 hover:bg-amber-600/50 border border-amber-500/30 transition-colors disabled:opacity-50"
               >
-                다시 감지
+                {isRetrying ? '감지 중...' : '다시 감지'}
               </button>
             </div>
           </div>

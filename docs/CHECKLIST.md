@@ -8,6 +8,18 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-31] #921 컴패니언 앱 감지 실패 — ProPainter health check 타임아웃/재시도 개선
+- [x] 근본 원인: companionInpaintService.ts의 health check 타임아웃이 800ms로 너무 짧아 Windows에서 ProPainter 초기화 중 미감지 (#907과 동일 원인)
+- [x] 타임아웃 800ms → 3000ms 증가 (ytdlpApiService와 동일 값)
+- [x] 재시도 3회 + 1초 sleep 추가 — 시작 직후 포트 미바인딩/ProPainter 미등록 대기
+- [x] 200 OK but ProPainter not ready → 재시도 (기존: 즉시 false 캐시)
+- [x] generation counter로 stale promise overwrite 방지 (resetInpaintCache 후 경합 조건 해결)
+- [x] typed JSON response (res.json() any 제거)
+- [x] SubtitleRemoverTab: "다시 감지" 버튼에 isRetrying 로딩 상태 + disabled 처리
+- [x] Codex 5.4 MCP 코드 리뷰 10회 완료 — 6건 이슈 발견 및 전부 수정
+- [x] Playwright E2E: 로그인 → 자막 제거 탭 → "다시 감지" → "감지 중..." 로딩 → 3회 재시도 로그 확인
+- [x] 수정 파일: companionInpaintService.ts, SubtitleRemoverTab.tsx
+
 ### [2026-03-30] #911 스토리보드 생성 시 문장 중간 끊김 — SHORT 형식 장면 분할 개선
 - [x] 근본 원인: SHORT 형식에서 `countScenesLocally`가 한국어 절(clause) 단위로 분할 (shortMax=80) → targetSceneCount 과잉 → AI가 문장을 강제 분할
 - [x] `countScenesLocally` SHORT: 문장 단위 카운팅으로 변경 (shortMax*2=160 이하는 1 문장=1 장면)
