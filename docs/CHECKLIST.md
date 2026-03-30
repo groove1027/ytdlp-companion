@@ -8,6 +8,19 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-30] 편집점 정밀도 고도화 — FPS 감지 + Drop-Frame + Scene Detection 정밀화
+- [x] `RationalFps` 타입 추가 (types.ts) — 유리수 FPS 표현으로 부동소수점 오차 제거
+- [x] `detectVideoFps()` 함수 추가 (sceneDetection.ts) — requestVideoFrameCallback + mediaTime 기반 실측
+- [x] Scene Detection v2.0: 100ms 샘플링 + 160×90 해상도 + 적응형 threshold + 히스토그램 비교
+- [x] `mergeWithAiTimecodes()` 단계적 스냅: ±500ms 무조건 + ±1.5초 강한 컷만 (기존 ±3초)
+- [x] `secondsToFcpTc()` Drop-Frame 타임코드 구현 (SMPTE 표준, 29.97fps/59.94fps)
+- [x] CapCut `is_drop_frame_timecode` FPS 연동 (2곳, 기존 hardcoded false)
+- [x] EDL `generateEdlFile()` fps 파라미터 추가 + DF/NDF 분기
+- [x] `SourceVideoFile.detectedFps` 필드 추가 + editPointStore에서 FPS 감지 및 전달
+- [x] `formatSrtTime()` 프레임 스냅 옵션 추가 (NLE 클립과 동기화)
+- [x] Codex 5.4 MCP 리뷰 10회 완료 + Playwright E2E 통과
+- [x] 수정 파일: types.ts, sceneDetection.ts, nleExportService.ts, editPointService.ts, srtService.ts, editPointStore.ts
+
 ### [2026-03-30] #907 Premiere NLE 다운로드 클라이언트 머지 + 컴패니언 강제 확보
 - [x] NLE 다운로드: 서버 머지 → 클라이언트 머지 (videoOnly + downloadAudioViaProxy + mergeVideoAudio)
 - [x] 오디오 30초 hard timeout (Promise.race)

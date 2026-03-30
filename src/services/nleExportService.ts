@@ -18,7 +18,9 @@ import type {
   NleMotionInterpolation,
   NleMotionKeyframe,
   NleMotionTrack,
+  RationalFps,
 } from '../types';
+import { secondsToFrame, frameToSeconds, isNtscFps } from './sceneDetection';
 import { buildNarrationSyncedTimeline, breakDialogueLines } from './narrationSyncService';
 import type { NarrationLineLike } from './narrationSyncService';
 import { compileNleMotionTrack } from './nleMotionExport';
@@ -141,14 +143,41 @@ function secondsToSrtTime(s: number): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')},${String(ms).padStart(3, '0')}`;
 }
 
-/** 초 → FCP 타임코드 (HH:MM:SS:FF) */
+/**
+ * 초 → FCP 타임코드 (HH:MM:SS:FF)
+ * v2.0: SMPTE Drop-Frame 타임코드 지원 (29.97fps, 59.94fps)
+ */
 function secondsToFcpTc(s: number, fps: number): string {
   const total = Math.max(0, s);
-  const f = Math.floor((total % 1) * fps);
-  const sec = Math.floor(total % 60);
-  const m = Math.floor((total % 3600) / 60);
-  const h = Math.floor(total / 3600);
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}:${String(f).padStart(2, '0')}`;
+  const roundedFps = Math.round(fps);
+  const totalFrames = Math.round(total * fps);
+  const isDF = Math.abs(fps - 29.97) < 0.01 || Math.abs(fps - 59.94) < 0.01;
+
+  if (isDF) {
+    // SMPTE Drop-Frame 공식
+    const dropFrames = roundedFps === 30 ? 2 : 4; // 29.97→2, 59.94→4
+    const framesPerMin = roundedFps * 60 - dropFrames;
+    const framesPer10Min = framesPerMin * 10 + dropFrames;
+
+    const d = Math.floor(totalFrames / framesPer10Min);
+    const m = totalFrames % framesPer10Min;
+    const adjusted = totalFrames
+      + dropFrames * 9 * d
+      + dropFrames * Math.max(0, Math.floor((m - dropFrames) / framesPerMin));
+
+    const ff = adjusted % roundedFps;
+    const ss = Math.floor(adjusted / roundedFps) % 60;
+    const mm = Math.floor(adjusted / roundedFps / 60) % 60;
+    const hh = Math.floor(adjusted / roundedFps / 3600);
+    return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}:${String(ff).padStart(2, '0')}`;
+  }
+
+  // Non-Drop Frame
+  const ff = totalFrames % roundedFps;
+  const ss = Math.floor(totalFrames / roundedFps) % 60;
+  const mm = Math.floor(totalFrames / roundedFps / 60) % 60;
+  const hh = Math.floor(totalFrames / roundedFps / 3600);
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}:${String(ff).padStart(2, '0')}`;
 }
 
 /**
@@ -2924,7 +2953,7 @@ export function generateFcpXml(params: {
   const { ntsc, timebase } = fpsToNtsc(fps);
   const ntscStr = ntsc ? 'TRUE' : 'FALSE';
   const tcFormat = ntsc ? 'DF' : 'NDF';
-  const toFrames = (sec: number) => Math.round(sec * fps);
+  const toFrames = (sec: number) => Math.round(sec * fps); // fps는 display 값 (29.97, 30, 60 등)
   const subtitleOrigin = getSubtitleOrigin(width, height);
   // [FIX] 소스 영상 전체 길이 = max(실제 비디오 길이, 최대 타임코드 끝점)
   const maxTimecodeEnd = Math.max(...timings.map(t => t.endSec));
@@ -3585,7 +3614,7 @@ export function generateCapCutDraftJson(params: {
     free_render_index_mode_on: false,
     group_container: null,
     id: scaffoldIds.timelineId,
-    is_drop_frame_timecode: false,
+    is_drop_frame_timecode: Math.abs(fps - 29.97) < 0.01 || Math.abs(fps - 59.94) < 0.01,
     keyframe_graph_list: emptyArr,
     keyframes: { adjusts: emptyArr, audios: emptyArr, effects: emptyArr, filters: emptyArr, handwrites: emptyArr, stickers: emptyArr, texts: emptyArr, videos: emptyArr },
     last_modified_platform: platformInfo,
@@ -4295,7 +4324,7 @@ export function generateFcpXmlFromEdl(params: {
   const { ntsc, timebase } = fpsToNtsc(fps);
   const ntscStr = ntsc ? 'TRUE' : 'FALSE';
   const tcFormat = ntsc ? 'DF' : 'NDF';
-  const toFrames = (sec: number) => Math.round(sec * fps);
+  const toFrames = (sec: number) => Math.round(sec * fps); // fps는 display 값 (29.97, 30, 60 등)
   const subtitleOrigin = getSubtitleOrigin(width, height);
   const safeTitle = escXml(title);
 
@@ -4915,7 +4944,7 @@ function buildEditRoomFcpXml(params: {
   const { ntsc, timebase } = fpsToNtsc(fps);
   const ntscStr = ntsc ? 'TRUE' : 'FALSE';
   const tcFormat = ntsc ? 'DF' : 'NDF';
-  const toFrames = (sec: number) => Math.round(sec * fps);
+  const toFrames = (sec: number) => Math.round(sec * fps); // fps는 display 값 (29.97, 30, 60 등)
   const subtitleOrigin = getSubtitleOrigin(width, height);
   const totalDurSec = timeline[timeline.length - 1].imageEndTime;
   const totalFrames = Math.ceil(totalDurSec * fps);
@@ -5736,7 +5765,7 @@ export async function buildEditRoomNleZip(params: {
       free_render_index_mode_on: false,
       group_container: null,
       id: scaffoldIds.timelineId,
-      is_drop_frame_timecode: false,
+      is_drop_frame_timecode: Math.abs(fps - 29.97) < 0.01 || Math.abs(fps - 59.94) < 0.01,
       keyframe_graph_list: emptyArr,
       keyframes: { adjusts: emptyArr, audios: emptyArr, effects: emptyArr, filters: emptyArr, handwrites: emptyArr, stickers: emptyArr, texts: emptyArr, videos: emptyArr },
       last_modified_platform: platformInfo,

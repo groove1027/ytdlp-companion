@@ -1,4 +1,11 @@
 
+/** 유리수 FPS 표현 — 부동소수점 오차 없이 프레임↔초 변환 */
+export interface RationalFps {
+  num: number;      // 30000 (29.97fps), 30 (30fps), 60 (60fps), 24000 (23.976fps)
+  den: number;      // 1001 (NTSC), 1 (non-NTSC)
+  display: number;  // 29.97, 30, 60 등 사람 읽기용
+}
+
 export enum FeedbackType {
     BUG = 'bug',
     ERROR = 'error',
@@ -1696,6 +1703,8 @@ export interface SourceVideoFile {
   /** 원본 영상 해상도 (비율 감지용) */
   width?: number;
   height?: number;
+  /** 원본 영상 FPS (감지된 display 값: 29.97, 30, 60 등) */
+  detectedFps?: number;
   thumbnailDataUrl?: string;
   /** ProPainter로 자막 제거된 영상 Blob URL */
   cleanedBlobUrl?: string;

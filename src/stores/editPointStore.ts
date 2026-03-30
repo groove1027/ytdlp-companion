@@ -24,6 +24,7 @@ import {
 } from '../services/editPointService';
 import { removeSubtitlesWithInpaint } from '../services/companionInpaintService';
 import { downloadVideoViaProxy, downloadSocialVideo } from '../services/ytdlpApiService';
+import { detectVideoFps } from '../services/sceneDetection';
 import { showToast } from './uiStore';
 import { logger } from '../services/LoggerService';
 
@@ -325,6 +326,13 @@ export const useEditPointStore = create<EditPointStore>()(immer((set, get) => ({
 
       const blobUrl = URL.createObjectURL(file);
       logger.registerBlobUrl(blobUrl, 'video', 'editPointStore:addSourceVideos', sizeMB);
+      // v2.0: FPS 자동 감지 (편집점 정밀도 고도화)
+      let detectedFps: number | undefined;
+      try {
+        const rFps = await detectVideoFps(file);
+        detectedFps = rFps.display;
+      } catch { /* 감지 실패 시 undefined → 디폴트 30fps */ }
+
       newVideos.push({
         id: `sv-${Date.now()}-${i}`,
         sourceId: `S-${String(existingCount + i + 1).padStart(2, '0')}`,
@@ -335,6 +343,7 @@ export const useEditPointStore = create<EditPointStore>()(immer((set, get) => ({
         durationSec: duration,
         width: dims.width,
         height: dims.height,
+        detectedFps,
         thumbnailDataUrl: thumbnail,
       });
     }
@@ -918,7 +927,9 @@ export const useEditPointStore = create<EditPointStore>()(immer((set, get) => ({
         break;
       }
       case 'edl-file': {
-        const edl = generateEdlFile(edlEntries, fileNameMapping);
+        // v2.0: 소스 영상에서 감지된 FPS 사용 (없으면 30fps fallback)
+        const detFps = sourceVideos.find(v => v.detectedFps)?.detectedFps ?? 30;
+        const edl = generateEdlFile(edlEntries, fileNameMapping, detFps);
         const srt = generateNarrationSrt(edlEntries);
         downloadFile(edl, 'edit_decision_list.edl', 'text/plain', true);
         downloadFile(srt, 'narration.srt', 'text/plain', true);

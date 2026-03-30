@@ -785,11 +785,13 @@ function buildAtempoChain(speed: number): string {
  */
 export function generateEdlFile(
   entries: EdlEntry[],
-  sourceMapping: Record<string, string>
+  sourceMapping: Record<string, string>,
+  fps: number = 30,
 ): string {
+  const isDF = Math.abs(fps - 29.97) < 0.01 || Math.abs(fps - 59.94) < 0.01;
   const lines = [
     'TITLE: Auto-Generated EDL',
-    'FCM: NON-DROP FRAME',
+    `FCM: ${isDF ? 'DROP FRAME' : 'NON-DROP FRAME'}`,
     '',
   ];
 
@@ -818,13 +820,33 @@ export function generateEdlFile(
     const fullName = sourceMapping[entry.sourceId] || entry.sourceId;
     const recordOut = recordIn + duration;
 
-    // CMX 3600: 타임코드 HH:MM:SS:FF (세미콜론 = 드롭프레임, 콜론 = 논드롭)
+    // CMX 3600: 타임코드 HH:MM:SS:FF — fps 반영, DF/NDF 자동 처리
+    const roundedFps = Math.round(fps);
     const toTC = (sec: number) => {
-      const h = Math.floor(sec / 3600);
-      const m = Math.floor((sec % 3600) / 60);
-      const s = Math.floor(sec % 60);
-      const f = Math.floor((sec % 1) * 30); // 30fps
-      return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}:${String(f).padStart(2, '0')}`;
+      const totalFrames = Math.round(sec * fps);
+      if (isDF) {
+        // SMPTE Drop-Frame 공식
+        const dropFrames = roundedFps === 30 ? 2 : 4;
+        const framesPerMin = roundedFps * 60 - dropFrames;
+        const framesPer10Min = framesPerMin * 10 + dropFrames;
+        const d = Math.floor(totalFrames / framesPer10Min);
+        const m2 = totalFrames % framesPer10Min;
+        const adjusted = totalFrames
+          + dropFrames * 9 * d
+          + dropFrames * Math.max(0, Math.floor((m2 - dropFrames) / framesPerMin));
+        const ff = adjusted % roundedFps;
+        const ss = Math.floor(adjusted / roundedFps) % 60;
+        const mm = Math.floor(adjusted / roundedFps / 60) % 60;
+        const hh = Math.floor(adjusted / roundedFps / 3600);
+        // DF는 세미콜론 구분자 사용 (CMX 3600 표준)
+        return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')};${String(ff).padStart(2, '0')}`;
+      }
+      // NDF
+      const ff = totalFrames % roundedFps;
+      const ss = Math.floor(totalFrames / roundedFps) % 60;
+      const mm = Math.floor(totalFrames / roundedFps / 60) % 60;
+      const hh = Math.floor(totalFrames / roundedFps / 3600);
+      return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}:${String(ff).padStart(2, '0')}`;
     };
 
     const editNum = String(i + 1).padStart(3, '0');

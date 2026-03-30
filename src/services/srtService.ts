@@ -3,18 +3,28 @@
  * SRT 자막 파일 생성 / 다운로드 / ZIP 묶음 서비스
  */
 
-import { SrtEntry, UnifiedSceneTiming } from '../types';
+import { SrtEntry, UnifiedSceneTiming, RationalFps } from '../types';
 import { logger } from './LoggerService';
 import { cropBlobToAspectRatio } from '../utils/fileHelpers';
+import { secondsToFrame, frameToSeconds } from './sceneDetection';
 
 /**
  * 초(seconds)를 SRT 타임코드로 변환
+ * v2.0: fps를 전달하면 프레임 경계에 스냅하여 NLE 클립과 완벽 동기화
  * @example formatSrtTime(65.42) → "00:01:05,420"
+ * @example formatSrtTime(7.234, { num: 30000, den: 1001, display: 29.97 }) → "00:00:07,238"
  */
-export function formatSrtTime(seconds: number): string {
+export function formatSrtTime(seconds: number, fps?: RationalFps): string {
+  // v2.0: fps가 주어지면 프레임 경계로 스냅 (NLE 클립과 동기화)
+  let snapped = seconds;
+  if (fps) {
+    const frame = secondsToFrame(seconds, fps);
+    snapped = frameToSeconds(frame, fps);
+  }
+
   // [FIX M16] Handle carry-over when ms rounds to 1000 (e.g., 59.9995 → ms=1000)
-  let ms = Math.round((seconds % 1) * 1000);
-  let totalSeconds = Math.floor(seconds);
+  let ms = Math.round((snapped % 1) * 1000);
+  let totalSeconds = Math.floor(snapped);
   if (ms >= 1000) {
     ms -= 1000;
     totalSeconds += 1;
