@@ -23,6 +23,12 @@
 │  STEP 2: mcp__codex__review로 수정 결과 교차 검증             │
 │  STEP 3: 10회 논리 검증 루프 (run-verify.sh × 10)            │
 │          → 이 단계 미완료 시 작업을 절대 끝내지 않는다        │
+│  STEP 3.5: Playwright 실제 실행 테스트 (논리 검증과 별도!)    │
+│          → npx playwright test 실행                          │
+│          → before/after 스크린샷 test-e2e/에 저장             │
+│          → 스크린샷을 Read로 열어서 사용자에게 보여주기        │
+│          → "버튼 클릭 → 결과물 생성" 전체 흐름 증명           │
+│          → 스크린샷 없이 STEP 4 진입 금지                     │
 │  STEP 4: 커밋 + 푸시 + Cloudflare 배포                       │
 │  STEP 5: 이슈에 친절한 코멘트 달기                            │
 │  STEP 6: 이슈 닫기                                           │
@@ -50,6 +56,65 @@
 > **이 규칙은 "playwright 검증", "E2E 테스트", "실제 테스트"가 요구될 때 100% 적용된다.**
 > **구조 확인(grep, 문자열 검색)을 "테스트 완료"로 퉁치면 작업 전체가 무효다.**
 
+## 🔴 "테스트 했다"의 정의 (물리적 증거 필수 — 증거 없으면 거짓 보고)
+
+> **논리 검증(codex review 10회) 통과 ≠ 실제 작동 확인. 이 둘은 완전히 별개다.**
+> **스크린샷 증거 없이 "테스트 통과"라고 말하면 거짓 보고로 간주한다.**
+
+### 테스트 완료로 인정되는 경우 (전부 충족해야 함)
+1. `npx playwright test` 명령이 **실제로 실행됨** (터미널 출력 존재)
+2. test-e2e/ 폴더에 **before/after 스크린샷**이 30분 이내에 생성됨
+3. 저장된 스크린샷을 **Read 도구로 열어서 사용자에게 직접 보여줌**
+4. **버튼 클릭 → 결과물 생성/다운로드 완료**까지 전체 흐름이 스크린샷으로 증명됨
+5. Hook이 스크린샷 2장+ 존재를 확인해야 커밋 가능 (touch로 우회 불가)
+6. **다운로드/생성 산출물이 있으면 반드시 디스크에 저장** (test-e2e/dl-* 파일)
+7. **저장된 산출물의 파일 크기 > 0 확인** (expect(size).toBeGreaterThan(0))
+8. **산출물 내용물 검증** — ZIP이면 unzip해서 내부 파일 목록 확인, JSON이면 파싱해서 키 확인
+
+### "다운로드 검증 완료"의 정의 (파일 생성 기능에 필수)
+
+> **토스트/알림이 "완료"라고 말하는 건 증거가 아니다. 실제 파일이 디스크에 있어야 한다.**
+
+| 단계 | 필수 검증 | 예시 |
+|------|----------|------|
+| 1. 파일 저장 | `download.saveAs()` 또는 blob hook으로 **디스크에 저장** | `dl-capcut-project.zip` |
+| 2. 크기 확인 | `fs.statSync(path).size > 100` | 빈 파일이 아닌지 |
+| 3. 내용물 열기 | ZIP → `unzip -l` 또는 JSZip으로 파일 목록 확인 | `draft_content.json` 존재 |
+| 4. 핵심 내용 검증 | JSON → 파싱 후 키 확인, XML → 태그 존재 확인 | `"tracks"` 키 존재 |
+
+```ts
+// ✅ 올바른 다운로드 검증 패턴
+const dl = await downloadPromise;
+const dlPath = 'test-e2e/dl-capcut.zip';
+await dl.saveAs(dlPath);
+
+// 크기 확인
+const size = fs.statSync(dlPath).size;
+expect(size).toBeGreaterThan(100);
+
+// ZIP 내용물 확인
+const { execSync } = require('child_process');
+const zipContents = execSync(`unzip -l ${dlPath}`).toString();
+expect(zipContents).toContain('draft_content.json');  // CapCut
+expect(zipContents).toContain('.srt');                  // 자막 파일
+
+// ❌ 이렇게 하면 안 됨
+const toast = await page.textContent('.toast');
+expect(toast).toContain('완료');  // 토스트만 보고 끝 → 파일 없음
+```
+
+### 테스트 완료로 인정되지 않는 경우
+- DOM에 요소가 "있다"는 것만 확인 (버튼 존재 ≠ 버튼 작동)
+- grep으로 코드에 문자열이 "있다"는 것만 확인
+- "논리적으로 맞으므로 통과" 식의 판단
+- 스크린샷 없이 "테스트 통과했습니다"
+- touch .e2e-verified만 실행하고 실제 Playwright 미실행
+- **토스트/알림만 확인하고 실제 파일 저장/내용 검증을 안 한 경우**
+- **다운로드 버튼을 눌렀지만 파일이 디스크에 없는 경우**
+- **page.evaluate() 안에서 수학 공식/알고리즘만 실행하고 "E2E 통과" 처리한 경우** ← 이건 단위 테스트이지 E2E가 아님!
+
+---
+
 ## 절대 금지 (이걸 하면 "테스트 했다"고 인정 안 됨)
 
 - ❌ 소스 파일에서 문자열 검색(`fs.readFileSync` + `includes`)으로 "코드 반영 확인" 처리
@@ -58,6 +123,15 @@
 - ❌ 10초 이내 대기 후 "분석 완료" 판정
 - ❌ 빌드된 JS 번들에서 문자열 grep으로 "기능 검증 완료" 처리
 - ❌ 입력만 하고 결과를 확인 안 하는 테스트
+- ❌ DOM에 버튼/요소가 존재하는지만 확인하고 "테스트 완료" 처리 (클릭→결과 확인까지 해야 함)
+- ❌ touch .e2e-verified로 Hook 우회 (스크린샷 증거 없으면 커밋 차단됨)
+- ❌ **`page.evaluate()` 안에서 수학 공식(Math.round, 타임코드 계산 등)만 실행하고 "E2E 통과" 처리**
+- ❌ **브라우저 콘솔에서 함수를 직접 호출하고 "동작 확인" 처리**
+- ❌ **코드에 있는 알고리즘을 브라우저에서 복사-실행하고 "정확성 검증" 처리**
+- ❌ **UI 클릭 0회, 파일 업로드 0회, 파일 다운로드 0회인 테스트를 "E2E 통과"로 보고**
+
+> **핵심 원칙**: `page.evaluate()` 수학 검증 = **단위 테스트**이지 E2E가 아니다.
+> E2E는 **사용자가 실제로 하는 행동**(파일 업로드 → 버튼 클릭 → 결과물 다운로드)을 재현해야 한다.
 
 ## 필수 사항 (이걸 해야만 "테스트 했다"로 인정)
 
@@ -115,6 +189,42 @@ expect(resultText!.length).toBeGreaterThan(50);  // 실제 내용이 있는지
 | UI 표시 오류 | 해당 UI 요소의 텍스트/속성/visibility를 직접 확인 |
 | 에러 처리 | 의도적으로 실패 조건 유발 → 에러 메시지 DOM에 표시되는지 확인 |
 | 비용/과금 | addCost 호출 → 숫자 변화 확인 → 새로고침 → 값 유지 확인 |
+| **편집점/타임코드** | **실제 영상 업로드 → 분석 → NLE 내보내기 버튼 클릭 → ZIP 다운로드 → XML 내 ntsc/timebase/displayformat 값 grep 검증** |
+| **FPS 감지** | **29.97fps 영상 업로드 → 감지 결과 29.97 확인 (콘솔 또는 UI) → 30fps 영상도 → 30 확인** |
+| **Scene Detection** | **장면 전환 있는 영상 업로드 → 컷 포인트 2개+ 감지 → 콘솔에 "[Scene] ✅ N개 컷 포인트" 로그 확인** |
+
+## "실제 영상/파일 없이 테스트 불가" 변명 금지
+
+> **테스트용 영상이 없다는 것은 변명이 아니다. FFmpeg로 즉시 생성할 수 있다.**
+
+```bash
+# 29.97fps 테스트 영상 (3초, 장면 전환 포함)
+ffmpeg -y -f lavfi -i "color=c=red:s=320x240:r=29.97:d=1.5,format=yuv420p[v0]; \
+  color=c=blue:s=320x240:r=29.97:d=1.5,format=yuv420p[v1]; \
+  [v0][v1]concat=n=2:v=1:a=0" \
+  -f lavfi -i sine=frequency=440:duration=3 \
+  -c:v libx264 -c:a aac -shortest test-e2e/test-video-2997.mp4
+
+# 30fps 테스트 영상
+ffmpeg -y -f lavfi -i testsrc=duration=3:size=320x240:rate=30 \
+  -c:v libx264 test-e2e/test-video-30.mp4
+
+# 60fps 테스트 영상
+ffmpeg -y -f lavfi -i testsrc=duration=3:size=320x240:rate=60 \
+  -c:v libx264 test-e2e/test-video-60.mp4
+```
+
+Playwright에서 이 영상을 사용하는 방법:
+```ts
+// 파일 업로드
+const fileInput = page.locator('input[type="file"]');
+await fileInput.setInputFiles('test-e2e/test-video-2997.mp4');
+
+// 또는 드래그 앤 드롭 시뮬레이션
+await page.dispatchEvent('.upload-zone', 'drop', { ... });
+```
+
+**"영상이 없어서 page.evaluate()로 대체했다"는 절대 인정 안 됨.**
 
 ## 기능별 필수 테스트 시나리오 (해당 기능 수정 시 반드시 실행)
 
@@ -202,6 +312,25 @@ const scenes = await page.evaluate(() => {
 | 자막 편집 | 자막 텍스트 수정 → 프리뷰에 반영되는지 확인 |
 | NLE 내보내기 | "프리미어 ZIP" 클릭 → 다운로드 시작 확인 (blob URL 생성 또는 download 이벤트) |
 | 영상 렌더링 | "렌더링" 클릭 → 프로그레스가 0%에서 증가하는지 확인 |
+
+### 5-1. 편집점/타임코드/FPS (sceneDetection, nleExportService, editPointService)
+
+> **이 섹션 해당 파일 수정 시 반드시 아래 시나리오를 전부 실행해야 한다.**
+> **page.evaluate()에서 수학만 돌리고 "통과"라고 하면 작업 전체가 무효다.**
+
+| 시나리오 | 검증 방법 |
+|---------|----------|
+| **FPS 자동 감지** | FFmpeg로 29.97fps 테스트 영상 생성 → `setInputFiles()` 업로드 → 콘솔 또는 UI에서 감지된 FPS 29.97 확인 → 30fps 영상도 동일 테스트 |
+| **Scene Detection** | 장면 전환 2회+ 포함된 영상 업로드 → `[Scene] ✅ N개 컷 포인트` 콘솔 로그 확인 → N ≥ 2 |
+| **NLE ZIP 내보내기** | 영상 분석 완료 → NLE 내보내기 버튼 클릭 → ZIP 디스크 저장 → `unzip -l` → XML/SRT 파일 존재 확인 |
+| **Drop-Frame TC** | 29.97fps 영상 → NLE 내보내기 → XML 내 `<ntsc>TRUE</ntsc>` + `<displayformat>DF</displayformat>` grep 확인 |
+| **자막 싱크** | NLE ZIP 내 SRT 파일의 첫 자막 시작 시간이 XML 클립의 첫 in-point와 ±100ms 이내 일치 |
+| **CapCut DF 플래그** | CapCut 내보내기 → draft_content.json 내 `is_drop_frame_timecode: true` 확인 (29.97fps일 때) |
+
+```bash
+# 테스트 영상 없다는 변명 금지 — 아래 명령으로 즉시 생성:
+ffmpeg -y -f lavfi -i "color=c=red:s=320x240:r=29.97:d=1.5[v0];color=c=blue:s=320x240:r=29.97:d=1.5[v1];[v0][v1]concat=n=2:v=1:a=0" -c:v libx264 test-e2e/test-video-2997.mp4
+```
 
 ### 6. 비용 추적 (CostDashboard)
 

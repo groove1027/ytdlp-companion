@@ -50,21 +50,54 @@ if [ -f "$WORKHIST" ]; then
 fi
 
 # ──────────────────────────────────────────────
-# CHECK 3: UI 변경 시 E2E 검증 필수
+# CHECK 3: UI/서비스 변경 시 Playwright E2E 검증 필수
+# (touch로 우회 불가 — 실제 스크린샷 파일 증거 필요)
 # ──────────────────────────────────────────────
-# 이번 커밋에 components/ 파일이 포함되어 있는지 확인
-UI_FILES_STAGED=$(cd "$PROJECT_DIR" && git diff --cached --name-only 2>/dev/null | grep -cE 'components/.*\.(tsx|ts)$')
-UI_FILES_DIFF=$(cd "$PROJECT_DIR" && git diff --name-only HEAD 2>/dev/null | grep -cE 'components/.*\.(tsx|ts)$')
+# 이번 커밋에 components/ 또는 services/ 파일이 포함되어 있는지 확인
+UI_FILES_STAGED=$(cd "$PROJECT_DIR" && git diff --cached --name-only 2>/dev/null | grep -cE '(components|services)/.*\.(tsx|ts)$')
+UI_FILES_DIFF=$(cd "$PROJECT_DIR" && git diff --name-only HEAD 2>/dev/null | grep -cE '(components|services)/.*\.(tsx|ts)$')
 UI_CHANGED=$(( UI_FILES_STAGED + UI_FILES_DIFF ))
 
 if [ "$UI_CHANGED" -gt 0 ]; then
-    # UI 파일이 변경됨 → .e2e-verified 게이트 파일 확인
-    if [ ! -f "$GATE_FILE" ]; then
-        ERRORS+=("❌ [E2E 누락] components/ 파일이 수정됐는데 E2E 검증이 안 됐다!")
-        ERRORS+=("   → Puppeteer로 localhost:5173 접속해서 UI 동작 확인 후")
-        ERRORS+=("   → touch $GATE_FILE 실행하라 (검증 완료 증거)")
+    # ── 증거 1: test-e2e/ 에 30분 이내 생성된 스크린샷이 2장 이상 있어야 함 ──
+    E2E_DIR="$PROJECT_DIR/test-e2e"
+    if [ -d "$E2E_DIR" ]; then
+        E2E_SCREENSHOTS=$(find "$E2E_DIR" -name "*.png" -mmin -30 2>/dev/null | wc -l | tr -d ' ')
     else
-        # 게이트 파일이 10분 이내인지 확인 (너무 오래된 건 무효)
+        E2E_SCREENSHOTS=0
+    fi
+
+    if [ "$E2E_SCREENSHOTS" -lt 2 ]; then
+        ERRORS+=("❌ [E2E 스크린샷 증거 없음] components/ 또는 services/ 파일이 수정됐는데 Playwright 스크린샷이 없다!")
+        ERRORS+=("   → test-e2e/ 폴더에 30분 이내 생성된 .png 파일: ${E2E_SCREENSHOTS}장 (최소 2장 필요)")
+        ERRORS+=("   → npx playwright test를 실제로 실행하여 before/after 스크린샷을 저장하라")
+        ERRORS+=("   → touch .e2e-verified 로 우회하는 것은 금지 — 실제 스크린샷만 인정")
+    else
+        echo "✅ Playwright E2E 스크린샷 증거 확인됨 (${E2E_SCREENSHOTS}장, 30분 이내)"
+    fi
+
+    # ── 증거 2: 다운로드/생성 기능 수정 시 산출물 파일도 확인 ──
+    # nleExportService, export 관련 파일이 변경됐으면 dl-* 파일이 있어야 함
+    EXPORT_FILES_STAGED=$(cd "$PROJECT_DIR" && git diff --cached --name-only 2>/dev/null | grep -cE '(nleExport|export|Export).*\.(tsx|ts)$')
+    EXPORT_FILES_DIFF=$(cd "$PROJECT_DIR" && git diff --name-only HEAD 2>/dev/null | grep -cE '(nleExport|export|Export).*\.(tsx|ts)$')
+    EXPORT_CHANGED=$(( EXPORT_FILES_STAGED + EXPORT_FILES_DIFF ))
+
+    if [ "$EXPORT_CHANGED" -gt 0 ]; then
+        DL_FILES=$(find "$E2E_DIR" -name "dl-*" -mmin -30 2>/dev/null | wc -l | tr -d ' ')
+        if [ "$DL_FILES" -lt 1 ]; then
+            ERRORS+=("❌ [산출물 증거 없음] export 관련 파일이 수정됐는데 다운로드 산출물(dl-*)이 없다!")
+            ERRORS+=("   → test-e2e/dl-* 파일이 30분 이내에 1개 이상 있어야 한다")
+            ERRORS+=("   → Playwright에서 download.saveAs()로 실제 파일을 저장하라")
+        else
+            echo "✅ 다운로드 산출물 증거 확인됨 (${DL_FILES}개, 30분 이내)"
+        fi
+    fi
+
+    # ── 증거 3: .e2e-verified 게이트 파일도 여전히 필요 (Playwright 실행 후 자동 생성) ──
+    if [ ! -f "$GATE_FILE" ]; then
+        ERRORS+=("❌ [E2E 게이트 없음] .e2e-verified 파일이 없다")
+        ERRORS+=("   → Playwright 테스트 실행 완료 후 생성해야 한다")
+    else
         if [ "$(uname)" = "Darwin" ]; then
             GATE_MTIME=$(stat -f %m "$GATE_FILE" 2>/dev/null || echo 0)
         else
@@ -72,13 +105,30 @@ if [ "$UI_CHANGED" -gt 0 ]; then
         fi
         NOW2=$(date +%s)
         GATE_AGE=$((NOW2 - GATE_MTIME))
-        if [ "$GATE_AGE" -gt 600 ]; then
-            ERRORS+=("❌ [E2E 만료] .e2e-verified 파일이 10분 이상 지남 — E2E 재검증 필요")
-            ERRORS+=("   → Puppeteer로 다시 확인 후 touch $GATE_FILE")
+        if [ "$GATE_AGE" -gt 1800 ]; then
+            ERRORS+=("❌ [E2E 만료] .e2e-verified 파일이 30분 이상 지남 — Playwright 재검증 필요")
         else
-            echo "✅ E2E 검증 확인됨 (${GATE_AGE}초 전)"
+            echo "✅ E2E 게이트 확인됨 (${GATE_AGE}초 전)"
         fi
     fi
+fi
+
+# ──────────────────────────────────────────────
+# CHECK 4: page.evaluate() 전용 가짜 E2E 차단
+# (page.evaluate만 있고 실제 UI 액션이 없는 테스트 = 단위 테스트)
+# ──────────────────────────────────────────────
+if [ "$UI_CHANGED" -gt 0 ] && [ -d "$E2E_DIR" ]; then
+    RECENT_TESTS=$(find "$E2E_DIR" -name "*.test.ts" -mmin -30 2>/dev/null)
+    for tf in $RECENT_TESTS; do
+        HAS_UI_ACTION=$(grep -cE 'page\.(click|fill|setInputFiles|waitForResponse|waitForDownload|locator.*click|getByRole.*click|getByText.*click)' "$tf" 2>/dev/null || echo 0)
+        HAS_EVALUATE=$(grep -cE 'page\.evaluate' "$tf" 2>/dev/null || echo 0)
+        if [ "$HAS_EVALUATE" -gt 0 ] && [ "$HAS_UI_ACTION" -eq 0 ]; then
+            REL_TF=$(echo "$tf" | sed "s|$PROJECT_DIR/||")
+            ERRORS+=("❌ [가짜 E2E] $REL_TF 에 page.evaluate()만 있고 실제 UI 액션이 없다!")
+            ERRORS+=("   → page.evaluate() 수학 검증은 단위 테스트이지 E2E가 아니다")
+            ERRORS+=("   → 실제 파일 업로드(setInputFiles) → 버튼 클릭(click) → 결과물 다운로드 흐름을 테스트하라")
+        fi
+    done
 fi
 
 # ──────────────────────────────────────────────
@@ -94,7 +144,7 @@ if [ ${#ERRORS[@]} -gt 0 ]; then
     echo "   Phase 1: grep 전수조사"
     echo "   Phase 2: 코드 수정"
     echo "   Phase 3: tsc + build + grep 재검증"
-    echo "   Phase 3+: UI 변경 시 → Puppeteer E2E → touch .e2e-verified"
+    echo "   Phase 3+: UI/서비스 변경 시 → Playwright E2E 실행 → 스크린샷 2장+ 저장 → .e2e-verified 생성"
     echo "   Phase 4: CHECKLIST.md + work-history.md 업데이트"
     echo "   Phase 5: 커밋"
     # exit 2 = Claude Code PreToolUse 차단
