@@ -8,6 +8,16 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-31] #507 참여도 강화 시 문체 일관성 보존
+- [x] 근본 원인: EngagementBooster의 강화 프롬프트에 스타일 정보가 전달되지 않아, 커뮤니티형(음슴체) 대본이 강화 후 일반 구어체로 변환됨
+- [x] EngagementBooster.tsx: scriptWriterStore에서 styledStyleName 조회 → SCRIPT_STYLE_PRESETS + videoAnalysisStyles에서 매칭
+- [x] system prompt에 [문체 보존 절대 규칙] 섹션 추가 — 종결어미/어투/말투 유지 지시
+- [x] user prompt에 스타일명 명시 + 마지막에 재강조
+- [x] 스타일 미적용 시에도 기본 "원본 문체 유지" 원칙 5번 항목 추가
+- [x] Codex 5.4 MCP 코드 리뷰 10회 완료 — 리뷰 3/10에서 videoAnalysisStyles 누락 발견 → 즉시 수정
+- [x] Playwright E2E: 로그인 → 대본 탭 → 커뮤니티 스타일 → 대본 생성 → 참여도 강화 패널 → 스크린샷 7장
+- [x] 수정 파일: src/components/tabs/script/EngagementBooster.tsx (1파일만)
+
 ### [2026-03-31] #927 롱폼 대본(3만자) 이어쓰기 네트워크 타임아웃 실패
 - [x] 근본 원인: evolinkNativeStream에서 fetchWithRateLimitRetry에 타임아웃/네트워크 재시도 없음 → 브라우저 125초 TCP 킬
 - [x] 이어쓰기 실패 시 이미 생성된 94% 대본이 전부 날아가는 문제

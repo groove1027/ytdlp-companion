@@ -2,6 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { evolinkChat } from '../../../services/evolinkService';
 import { useScriptWriterStore, EngagementBoosterResult } from '../../../stores/scriptWriterStore';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
+import { SCRIPT_STYLE_PRESETS } from '../../../data/scriptStylePresets';
 
 const WEAK = 50;
 
@@ -35,6 +36,21 @@ export default function EngagementBooster({ data, paragraphs, onClose }: Props) 
         `- ${w.name}번 문단 (${w.label}, 참여도 ${w.engagement}): ${w.issues.join(', ') || '전반적으로 약함'}`
       ).join('\n');
 
+      // 현재 적용된 스타일 정보를 가져와서 프롬프트에 반영
+      const { styledStyleName, videoAnalysisStyles } = useScriptWriterStore.getState();
+      const activePreset = SCRIPT_STYLE_PRESETS.find(p => p.name === styledStyleName)
+        || videoAnalysisStyles.find(p => p.name === styledStyleName);
+      const styleGuide = activePreset
+        ? `\n\n[문체 보존 절대 규칙 — 이 규칙이 다른 모든 강화 원칙보다 우선합니다]
+현재 대본의 스타일: "${activePreset.name}" (${activePreset.description})
+이 대본은 특정 문체로 작성되었습니다. 강화 후에도 반드시 원본과 동일한 문체를 유지하세요.
+- 종결어미, 어투, 말투, 어휘 선택을 원본 그대로 유지
+- 원본이 음슴체(~음/~함/~임)면 강화 후에도 음슴체 유지
+- 원본이 존댓말이면 강화 후에도 존댓말 유지
+- 원본이 구어체면 강화 후에도 구어체 유지
+- 문체가 바뀌면 강화 실패로 간주합니다`
+        : '';
+
       const response = await evolinkChat([
         {
           role: 'system',
@@ -46,13 +62,14 @@ export default function EngagementBooster({ data, paragraphs, onClose }: Props) 
 2. 긴장감: 짧은 문장(25자 이하) 교차 배치, "하지만/갑자기/그런데" 등 반전 단어, 시간적 긴박함 삽입
 3. 참여 유도: 시청자에게 직접 말 걸기, 공감 유도, "이거 아셨어요?" 등 삽입
 4. 원래 내용/정보/논리는 절대 삭제하지 말 것 — 표현과 구조만 변형
+5. 원본 대본의 문체(종결어미, 어투, 말투)를 반드시 그대로 유지할 것 — 문체 변형은 강화가 아니라 파괴입니다${styleGuide}
 
 반드시 JSON으로만 응답하세요.`,
         },
         {
           role: 'user',
           content: `다음 대본에서 참여도가 낮은 구간을 강화해주세요.
-
+${activePreset ? `\n⚠️ 중요: 이 대본은 "${activePreset.name}" 스타일로 작성되었습니다. 강화 시 이 문체를 반드시 유지하세요.\n` : ''}
 [전체 대본 — 문단 번호 포함]
 ${paragraphs.map((p, i) => `[${i + 1}번] ${p}`).join('\n\n')}
 
@@ -60,7 +77,8 @@ ${paragraphs.map((p, i) => `[${i + 1}번] ${p}`).join('\n\n')}
 ${weakInfo}
 
 위의 약한 구간만 강화하여 아래 JSON 형식으로 출력하세요:
-{"results": [{"index": 문단번호, "enhanced": "강화된 문단 전문", "changes": "무엇을 바꿨는지 한줄 설명"}]}`,
+{"results": [{"index": 문단번호, "enhanced": "강화된 문단 전문", "changes": "무엇을 바꿨는지 한줄 설명"}]}
+${activePreset ? `\n※ 다시 한번 강조: 출력의 모든 문단은 "${activePreset.name}" 스타일의 종결어미와 어투를 유지해야 합니다.` : ''}`,
         },
       ], {
         temperature: 0.7,
