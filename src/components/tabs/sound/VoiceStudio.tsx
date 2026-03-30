@@ -29,7 +29,7 @@ import { getTypecastKey } from '../../../services/apiService';
 import type { VoiceOption } from '../../../services/ttsService';
 import type { TTSEngine, TTSLanguage, ScriptLine, Speaker, WhisperTranscriptResult, AudioSourceType } from '../../../types';
 import TypecastEditor from './TypecastEditor';
-import VoiceClonePanel from './VoiceClonePanel';
+// VoiceClonePanel 제거 — CosyVoice 미사용으로 Voice Clone 비활성화
 import { useProjectStore } from '../../../stores/projectStore';
 import { transferSoundToImageVideo } from '../../../utils/soundToImageBridge';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
@@ -1482,8 +1482,7 @@ const VoiceStudio: React.FC = () => {
           </div>
         )}
 
-        {/* Voice Cloning 패널 — Edge TTS 엔진 선택 시 표시 */}
-        {browsedEngine === ('edge' as TTSEngine) && <VoiceClonePanel />}
+        {/* Voice Clone 비활성화 — CosyVoice 미사용 */}
 
         {/* 펼쳐진 음성 브라우저 */}
         {browsedEngine && (
