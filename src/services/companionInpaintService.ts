@@ -8,18 +8,20 @@
 import { monitoredFetch } from './apiService';
 import { logger } from './LoggerService';
 
-const COMPANION_URL = 'http://localhost:9876';
-const HEALTH_TIMEOUT_MS = 3000;   // [FIX #921] 3초 — 800ms는 Windows에서 ProPainter 초기화 중 미감지 (#907과 동일 원인)
+/** ProPainter 후보 포트: 메인 컴패니언(9876) → 전용 ProPainter(9877) 순서로 시도 */
+const PROPAINTER_CANDIDATES = ['http://localhost:9876', 'http://localhost:9877'];
+const HEALTH_TIMEOUT_MS = 3000;   // [FIX #921] 3초
 const HEALTH_CACHE_MS = 30_000;
-const HEALTH_MAX_RETRIES = 3;     // [FIX #921] 재시도 3회 — 컴패니언 시작 직후 안정화 대기
+const HEALTH_MAX_RETRIES = 2;     // 포트별 2회 재시도 (2포트 × 2회 = 최대 4회)
 
 // ── 컴패니언 인페인트 기능 감지 (캐시) ──
 
 let _inpaintAvailable: boolean | null = null;
 let _inpaintCheckTime = 0;
 let _inpaintCheckPromise: Promise<boolean> | null = null;
-let _cacheGeneration = 0; // [FIX #921] resetInpaintCache 호출 시 stale promise 무효화
-const NEGATIVE_CACHE_MS = 5_000; // 실패 시 5초만 캐시 (빠른 재확인)
+let _cacheGeneration = 0;
+let _activePropainterUrl = PROPAINTER_CANDIDATES[0]; // 감지 성공한 ProPainter URL
+const NEGATIVE_CACHE_MS = 5_000;
 
 /** 컴패니언의 ProPainter 기능이 활성화되어 있는지 확인 */
 export async function isInpaintAvailable(): Promise<boolean> {
@@ -39,49 +41,46 @@ export async function isInpaintAvailable(): Promise<boolean> {
 }
 
 async function _doInpaintCheck(gen: number): Promise<boolean> {
-  // [FIX #921] 최대 HEALTH_MAX_RETRIES회 재시도 — 컴패니언 시작 직후 Python 초기화 대기
-  for (let attempt = 0; attempt < HEALTH_MAX_RETRIES; attempt++) {
-    // resetInpaintCache()가 호출되었으면 이 check는 stale — 즉시 종료
+  // 모든 후보 포트를 순회 — 9876(메인 컴패니언 내장) → 9877(전용 ProPainter 서버)
+  for (const candidateUrl of PROPAINTER_CANDIDATES) {
     if (gen !== _cacheGeneration) return _inpaintAvailable ?? false;
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), HEALTH_TIMEOUT_MS);
-      const res = await fetch(`${COMPANION_URL}/health`, {
-        signal: controller.signal,
-        mode: 'cors',
-      });
-      clearTimeout(timeoutId);
-      if (!res.ok) {
-        logger.info(`[CompanionInpaint] health ${res.status} (attempt ${attempt + 1}/${HEALTH_MAX_RETRIES})`);
-        if (attempt < HEALTH_MAX_RETRIES - 1) { await _sleep(1000); continue; }
-        if (gen === _cacheGeneration) { _inpaintAvailable = false; _inpaintCheckTime = Date.now(); }
-        return false;
-      }
-      const data: { features?: { inpaint?: boolean }; propainter?: boolean } = await res.json();
-      // resetInpaintCache() 중간 호출 감지
+    for (let attempt = 0; attempt < HEALTH_MAX_RETRIES; attempt++) {
       if (gen !== _cacheGeneration) return _inpaintAvailable ?? false;
-      // ProPainter 기능이 명시적으로 활성화된 경우에만 true
-      // 기존 yt-dlp 전용 컴패니언은 이 필드가 없으므로 false
-      const available = !!(data.features?.inpaint || data.propainter);
-      if (available) {
-        _inpaintAvailable = true;
-        _inpaintCheckTime = Date.now();
-        logger.info('[CompanionInpaint] ProPainter 감지 성공');
-        return true;
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), HEALTH_TIMEOUT_MS);
+        const res = await fetch(`${candidateUrl}/health`, {
+          signal: controller.signal,
+          mode: 'cors',
+        });
+        clearTimeout(timeoutId);
+        if (!res.ok) {
+          logger.info(`[CompanionInpaint] ${candidateUrl} health ${res.status} (attempt ${attempt + 1}/${HEALTH_MAX_RETRIES})`);
+          if (attempt < HEALTH_MAX_RETRIES - 1) { await _sleep(1000); continue; }
+          break; // 다음 포트로
+        }
+        const data: { features?: { inpaint?: boolean }; propainter?: boolean } = await res.json();
+        if (gen !== _cacheGeneration) return _inpaintAvailable ?? false;
+        const available = !!(data.features?.inpaint || data.propainter);
+        if (available) {
+          _activePropainterUrl = candidateUrl;
+          _inpaintAvailable = true;
+          _inpaintCheckTime = Date.now();
+          logger.info(`[CompanionInpaint] ProPainter 감지 성공 (${candidateUrl})`);
+          return true;
+        }
+        // 200 OK but ProPainter 미등록 → 재시도 후 다음 포트
+        logger.info(`[CompanionInpaint] ${candidateUrl} OK but no ProPainter (attempt ${attempt + 1}/${HEALTH_MAX_RETRIES})`);
+        if (attempt < HEALTH_MAX_RETRIES - 1) { await _sleep(1000); continue; }
+        break; // 다음 포트로
+      } catch (err) {
+        const reason = err instanceof Error
+          ? (err.name === 'AbortError' ? `timeout(${HEALTH_TIMEOUT_MS}ms)` : err.message)
+          : 'unknown';
+        logger.info(`[CompanionInpaint] ${candidateUrl} 실패: ${reason} (attempt ${attempt + 1}/${HEALTH_MAX_RETRIES})`);
+        if (attempt < HEALTH_MAX_RETRIES - 1) { await _sleep(1000); continue; }
+        break; // 다음 포트로
       }
-      // [FIX #921] 200 OK지만 ProPainter 미등록 → 시작 중일 수 있으니 재시도
-      logger.info(`[CompanionInpaint] health OK but ProPainter not ready (attempt ${attempt + 1}/${HEALTH_MAX_RETRIES})`);
-      if (attempt < HEALTH_MAX_RETRIES - 1) { await _sleep(1000); continue; }
-      if (gen === _cacheGeneration) { _inpaintAvailable = false; _inpaintCheckTime = Date.now(); }
-      return false;
-    } catch (err) {
-      const reason = err instanceof Error
-        ? (err.name === 'AbortError' ? `timeout(${HEALTH_TIMEOUT_MS}ms)` : err.message)
-        : 'unknown';
-      logger.info(`[CompanionInpaint] health check 실패: ${reason} (attempt ${attempt + 1}/${HEALTH_MAX_RETRIES})`);
-      // [FIX #921] 모든 에러에서 재시도 — 컴패니언 시작 직후 포트 미바인딩 시 network error 발생
-      // network error는 즉시 실패하므로 총 소요 ~3초 (sleep 1s × 2), timeout은 ~11초 (timeout 3s × 3 + sleep 1s × 2)
-      if (attempt < HEALTH_MAX_RETRIES - 1) { await _sleep(1000); continue; }
     }
   }
   if (gen === _cacheGeneration) { _inpaintAvailable = false; _inpaintCheckTime = Date.now(); }
@@ -96,8 +95,9 @@ function _sleep(ms: number): Promise<void> {
 export function resetInpaintCache(): void {
   _inpaintAvailable = null;
   _inpaintCheckTime = 0;
-  _cacheGeneration++;         // stale in-flight check 무효화
-  _inpaintCheckPromise = null; // 진행 중인 promise도 해제
+  _activePropainterUrl = PROPAINTER_CANDIDATES[0]; // URL도 초기화
+  _cacheGeneration++;
+  _inpaintCheckPromise = null;
 }
 
 // ── OCR 텍스트 영역 감지 ──
@@ -124,7 +124,7 @@ export async function detectTextRegions(videoFile: Blob, sampleFrames: number = 
   formData.append('video', videoFile);
   formData.append('sampleFrames', String(sampleFrames));
 
-  const res = await monitoredFetch(`${COMPANION_URL}/api/detect-text`, {
+  const res = await monitoredFetch(`${_activePropainterUrl}/api/detect-text`, {
     method: 'POST',
     body: formData,
   });
@@ -166,7 +166,9 @@ export async function removeSubtitlesWithInpaint(
   masks: InpaintMask[],
   onProgress?: (msg: string, percent?: number) => void,
 ): Promise<Blob> {
-  logger.info('[CompanionInpaint] 자막 제거 시작', { masks: masks.length });
+  // 작업 시작 시 URL 캡처 — 진행 중 _activePropainterUrl 변경에 영향 안 받음
+  const baseUrl = _activePropainterUrl;
+  logger.info('[CompanionInpaint] 자막 제거 시작', { masks: masks.length, server: baseUrl });
   onProgress?.('컴패니언 ProPainter에 작업 전송 중...');
 
   // 1. 작업 제출
@@ -174,7 +176,7 @@ export async function removeSubtitlesWithInpaint(
   formData.append('video', videoFile);
   formData.append('masks', JSON.stringify(masks));
 
-  const submitRes = await monitoredFetch(`${COMPANION_URL}/api/inpaint`, {
+  const submitRes = await monitoredFetch(`${baseUrl}/api/inpaint`, {
     method: 'POST',
     body: formData,
   });
@@ -195,7 +197,7 @@ export async function removeSubtitlesWithInpaint(
   for (let i = 0; i < MAX_POLLS; i++) {
     await new Promise(r => setTimeout(r, POLL_INTERVAL));
 
-    const pollRes = await monitoredFetch(`${COMPANION_URL}/api/inpaint/status/${taskId}`);
+    const pollRes = await monitoredFetch(`${baseUrl}/api/inpaint/status/${taskId}`);
     if (!pollRes.ok) continue;
 
     const status: InpaintProgress = await pollRes.json();
@@ -204,7 +206,7 @@ export async function removeSubtitlesWithInpaint(
       onProgress?.('처리 완료! 결과 다운로드 중...', 90);
 
       // 결과 영상 다운로드
-      const resultRes = await monitoredFetch(`${COMPANION_URL}/api/inpaint/result/${taskId}`);
+      const resultRes = await monitoredFetch(`${baseUrl}/api/inpaint/result/${taskId}`);
       if (!resultRes.ok) {
         throw new Error('처리된 영상 다운로드 실패');
       }
