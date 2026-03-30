@@ -41,13 +41,15 @@ jobs:
           path: companion/src-tauri/target/release/bundle/msi/*.msi
           if-no-files-found: ignore
 
-  build-macos-arm:
+  build-macos-universal:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
@@ -57,46 +59,19 @@ jobs:
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2"
 
-      - name: Build Tauri app (macOS ARM)
+      - name: Build Tauri app (macOS Universal)
         working-directory: companion/src-tauri
-        run: cargo tauri build
+        run: cargo tauri build --target universal-apple-darwin
 
-      - name: Upload macOS ARM DMG
+      - name: Upload macOS Universal DMG
         uses: actions/upload-artifact@v4
         with:
-          name: companion-macos-arm-dmg
-          path: companion/src-tauri/target/release/bundle/dmg/*.dmg
-          if-no-files-found: error
-
-  build-macos-intel:
-    runs-on: macos-13
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: companion/src-tauri
-
-      - name: Install Tauri CLI
-        run: cargo install tauri-cli --version "^2"
-
-      - name: Build Tauri app (macOS Intel)
-        working-directory: companion/src-tauri
-        run: cargo tauri build
-
-      - name: Upload macOS Intel DMG
-        uses: actions/upload-artifact@v4
-        with:
-          name: companion-macos-intel-dmg
-          path: companion/src-tauri/target/release/bundle/dmg/*.dmg
+          name: companion-macos-universal-dmg
+          path: companion/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
           if-no-files-found: error
 
   release:
-    needs: [build-windows, build-macos-arm, build-macos-intel]
+    needs: [build-windows, build-macos-universal]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     permissions:

@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicoverbruggen/tauri-v2-nightly-schema/main/schema.json",
   "productName": "All In One Helper",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "identifier": "com.groove1027.all-in-one-helper",
   "build": {
     "frontendDist": "../dist",
