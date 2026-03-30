@@ -25,7 +25,7 @@ id = "245826094c12477c9793de17607d137b"
 # wrangler secret put FIREBASE_API_KEY 로 설정
 [vars]
 FIREBASE_API_KEY = ""
-RESEND_API_KEY = ""
+# RESEND_API_KEY — Cloudflare 대시보드 Secret으로 설정됨
 # 카카오: "REST_API_KEY:CLIENT_SECRET" 형식 (developers.kakao.com)
 KAKAO_CLIENT_SECRET = ""
 # 네이버 (developers.naver.com)
