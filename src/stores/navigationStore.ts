@@ -75,7 +75,7 @@ export const useNavigationStore = create<NavigationStore>((set) => ({
         // 탭 전환은 즉시 반영, 프로젝트 복원은 백그라운드
         saveState({ activeTab: tab, showProjectDashboard: false });
         set({ activeTab: tab, showProjectDashboard: false });
-        autoRestoreOrCreateProject();
+        autoRestoreOrCreateProject().catch(() => { /* swallowed */ });
       } else {
         saveState({ activeTab: tab });
         set({ activeTab: tab });

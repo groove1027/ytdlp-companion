@@ -625,6 +625,14 @@ class LoggerService {
         return;
       }
 
+      // [FIX #915] "Failed to fetch" 네트워크 에러는 개별 서비스에서 처리됨
+      // 글로벌 핸들러에서 사용자에게 중복 알림하지 않고 로그만 기록
+      const isNetworkFetchError = reason instanceof TypeError && message === 'Failed to fetch';
+      if (isNetworkFetchError) {
+        this.addLog('warn', `⚠️ 네트워크 에러 (무시): ${message}`, { stack }, { category: 'system' });
+        return;
+      }
+
       this.addLog('error', `💥 Unhandled Rejection: ${message}`, { stack }, { category: 'system' });
       this.persistErrors();
       this._notifyCriticalError('unhandled', message, stack);

@@ -193,7 +193,9 @@ const App: React.FC = () => {
   const showTrialGuide = useUIStore((s) => s.showTrialGuide);
 
   useEffect(() => {
-    useAuthStore.getState().checkAuth();
+    useAuthStore.getState().checkAuth().catch((e) => {
+      logger.trackSwallowedError('App:checkAuth', e);
+    });
   }, []);
 
   // --- Navigation Store (v4.5) ---
@@ -240,8 +242,12 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const fetchRate = async () => {
+      try {
         const data = await fetchCurrentExchangeRate();
         useCostStore.getState().setExchangeRate(data.rate, data.date);
+      } catch (e) {
+        logger.trackSwallowedError('App:fetchRate', e);
+      }
     };
     fetchRate();
     const interval = setInterval(fetchRate, 300_000); // 5분마다 환율 갱신
@@ -303,7 +309,9 @@ const App: React.FC = () => {
         navState.leaveDashboard();
       }
     };
-    initProject();
+    initProject().catch((e) => {
+      logger.trackSwallowedError('App:initProject', e);
+    });
   }, []);
 
   // [UX] 프로젝트 없이 작업 탭 진입 시 복원 (탭 전환 엣지 케이스)
@@ -311,7 +319,7 @@ const App: React.FC = () => {
     if (activeTab !== 'project' && !config) {
       autoRestoreOrCreateProject().then((restored) => {
         if (restored) useNavigationStore.getState().leaveDashboard();
-      });
+      }).catch((e) => { logger.trackSwallowedError('App:autoRestore/tabSwitch', e); });
     }
   }, [activeTab, config]);
 

@@ -286,7 +286,7 @@ const SetupPanel: React.FC = () => {
   const { requireAuth } = useAuthGuard();
   const wasGoogleReferenceEnabledRef = useRef(enableGoogleReference);
 
-  useEffect(() => { if (!config) autoRestoreOrCreateProject(); }, [config]);
+  useEffect(() => { if (!config) autoRestoreOrCreateProject().catch(() => { /* swallowed */ }); }, [config]);
 
   // 대본작성 탭에서 단락 분석 결과가 있으면 자동 이어받기
   // [FIX #160] splitResult 변경을 구독하여 탭 전환 후에도 확실히 반영
