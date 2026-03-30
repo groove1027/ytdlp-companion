@@ -22,7 +22,7 @@ import {
   calcAutoSpeedFactor,
   generateEditTableFromNarration,
 } from '../services/editPointService';
-import { removeSubtitlesWithInpaint } from '../services/companionInpaintService';
+import { isVmakeConfigured, removeVideoWatermark } from '../services/vmakeService';
 import { downloadVideoViaProxy, downloadSocialVideo } from '../services/ytdlpApiService';
 import { detectVideoFps } from '../services/sceneDetection';
 import { showToast } from './uiStore';
@@ -826,18 +826,16 @@ export const useEditPointStore = create<EditPointStore>()(immer((set, get) => ({
       return;
     }
 
-    // 컴패니언 가용성 확인 (없으면 즉시 실패)
-    const { isInpaintAvailable } = await import('../services/companionInpaintService');
-    const available = await isInpaintAvailable();
-    if (!available) {
-      showToast('컴패니언 앱이 실행 중이 아닙니다. 자막 제거를 사용하려면 컴패니언 앱을 먼저 실행하세요.');
+    // Vmake API 가용성 확인
+    if (!isVmakeConfigured()) {
+      showToast('Vmake API 키가 설정되지 않았습니다. 설정 → API 키에서 Vmake AK/SK를 입력하세요.');
       return;
     }
 
     set({
       isCleaning: true,
       cleanProgress: 0,
-      cleanMessage: `자막 제거 준비 중... (총 ${videosToClean.length}개, 영상당 1~5분 소요)`,
+      cleanMessage: `자막 제거 준비 중... (총 ${videosToClean.length}개, 영상당 1~3분 소요)`,
     });
 
     try {
@@ -846,31 +844,13 @@ export const useEditPointStore = create<EditPointStore>()(immer((set, get) => ({
         const pct = Math.round((i / videosToClean.length) * 100);
         set({
           cleanProgress: pct,
-          cleanMessage: `[${i + 1}/${videosToClean.length}] ${video.fileName} — AI 자막 제거 진행 중 (영상당 5~15분 소요)`,
+          cleanMessage: `[${i + 1}/${videosToClean.length}] ${video.fileName} — Vmake AI 자막 제거 중`,
         });
 
-        // 비디오 메타 정보로 width/height 추출
-        const dims = await getVideoDimensions(video.file);
         const blob = new Blob([await video.file.arrayBuffer()], { type: video.file.type });
 
-        // OCR 자동 감지 시도 → 실패/빈 결과 시 해당 영상 스킵 (안전)
-        let masks: { x: number; y: number; width: number; height: number }[] = [];
-        try {
-          const { detectTextRegions } = await import('../services/companionInpaintService');
-          const regions = await detectTextRegions(blob);
-          masks = regions.map(r => ({ x: r.x, y: r.y, width: r.width, height: r.height }));
-        } catch {
-          logger.warn(`[EditPoint] OCR 감지 실패 — ${video.fileName} 스킵`);
-        }
-
-        if (masks.length === 0) {
-          logger.warn(`[EditPoint] ${video.fileName}: OCR 감지 영역 없음 — 자막 제거 스킵`);
-          continue;
-        }
-
-        const cleanedBlob = await removeSubtitlesWithInpaint(
+        const cleanedBlob = await removeVideoWatermark(
           blob,
-          masks,
           (msg) => set({ cleanMessage: `[${i + 1}/${videosToClean.length}] ${msg}` }),
         );
 

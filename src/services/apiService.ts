@@ -139,6 +139,17 @@ export const getCoupangProxyUrl = (): string => {
     return url.trim();
 };
 
+// ── Vmake AI (영상 자막/워터마크 제거) ──
+export const getVmakeAk = (): string => {
+    const key = localStorage.getItem('CUSTOM_VMAKE_AK') || '';
+    return sanitizeKey(key);
+};
+
+export const getVmakeSk = (): string => {
+    const key = localStorage.getItem('CUSTOM_VMAKE_SK') || '';
+    return sanitizeKey(key);
+};
+
 export const getCloudinaryConfig = () => {
     return {
         cloudName: sanitizeKey(localStorage.getItem('CUSTOM_CLOUD_NAME') || DEFAULT_CLOUD_NAME),
@@ -198,6 +209,13 @@ export const saveCoupangKeys = (accessKey: string, secretKey: string, proxyUrl: 
     else localStorage.removeItem('CUSTOM_COUPANG_PROXY_URL');
 };
 
+export const saveVmakeKeys = (ak: string, sk: string) => {
+    if (ak.trim()) localStorage.setItem('CUSTOM_VMAKE_AK', ak.trim());
+    else localStorage.removeItem('CUSTOM_VMAKE_AK');
+    if (sk.trim()) localStorage.setItem('CUSTOM_VMAKE_SK', sk.trim());
+    else localStorage.removeItem('CUSTOM_VMAKE_SK');
+};
+
 export const getStoredKeys = () => {
     return {
         gemini: localStorage.getItem('CUSTOM_GEMINI_KEY') || '',
@@ -211,6 +229,8 @@ export const getStoredKeys = () => {
         youtubeApiKey: localStorage.getItem('CUSTOM_YOUTUBE_API_KEY') || '',
         typecast: localStorage.getItem('CUSTOM_TYPECAST_KEY') || '',
         googleGeminiKey: localStorage.getItem('CUSTOM_GOOGLE_GEMINI_KEY') || '',
+        vmakeAk: localStorage.getItem('CUSTOM_VMAKE_AK') || '',
+        vmakeSk: localStorage.getItem('CUSTOM_VMAKE_SK') || '',
     };
 };
 
@@ -228,6 +248,8 @@ const SETTINGS_KEY_MAP: [string, string][] = [
     ['CUSTOM_YOUTUBE_API_KEY', 'youtubeApiKey'],
     ['YOUTUBE_API_KEYS_POOL', 'youtubeApiKeyPool'],
     ['CUSTOM_TYPECAST_KEY', 'typecast'],
+    ['CUSTOM_VMAKE_AK', 'vmakeAk'],
+    ['CUSTOM_VMAKE_SK', 'vmakeSk'],
     ['CUSTOM_COUPANG_ACCESS_KEY', 'coupangAccessKey'],
     ['CUSTOM_COUPANG_SECRET_KEY', 'coupangSecretKey'],
     ['CUSTOM_COUPANG_PROXY_URL', 'coupangProxyUrl'],

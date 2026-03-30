@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { getStoredKeys, saveApiKeys, syncApiKeysToServer, getYoutubeApiKeyPool, saveYoutubeApiKeyPool, getActiveYoutubeKeyIndex } from '../services/apiService';
+import { getStoredKeys, saveApiKeys, saveVmakeKeys, syncApiKeysToServer, getYoutubeApiKeyPool, saveYoutubeApiKeyPool, getActiveYoutubeKeyIndex } from '../services/apiService';
 import { showToast } from '../stores/uiStore';
 import { useAuthGuard } from '../hooks/useAuthGuard';
 import { useAuthStore } from '../stores/authStore';
@@ -235,7 +235,7 @@ const assignRemaining = (entries: DetectedKey[], assigned: Set<string>): Detecte
 
 const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
     const { requireAuth } = useAuthGuard();
-    const [keys, setKeys] = useState({ kie: '', cloudName: '', uploadPreset: '', gemini: '', apimart: '', removeBg: '', xai: '', evolink: '', youtubeApiKey: '', typecast: '' });
+    const [keys, setKeys] = useState({ kie: '', cloudName: '', uploadPreset: '', gemini: '', apimart: '', removeBg: '', xai: '', evolink: '', youtubeApiKey: '', typecast: '', vmakeAk: '', vmakeSk: '' });
     const [youtubeKeyPool, setYoutubeKeyPool] = useState<string[]>([]);
     const [newYoutubeKey, setNewYoutubeKey] = useState('');
     const [showPassword, setShowPassword] = useState(false);
@@ -324,6 +324,8 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
                 evolink: stored.evolink,
                 youtubeApiKey: stored.youtubeApiKey,
                 typecast: stored.typecast,
+                vmakeAk: stored.vmakeAk,
+                vmakeSk: stored.vmakeSk,
             });
             // YouTube API 키 풀 로드 (없으면 기존 단일 키로 초기화)
             const pool = getYoutubeApiKeyPool();
@@ -358,6 +360,7 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
         saveYoutubeApiKeyPool(finalYoutubePool);
         const primaryYoutubeKey = finalYoutubePool.length > 0 ? finalYoutubePool[0] : '';
         saveApiKeys(keys.kie, keys.cloudName, keys.uploadPreset, undefined, keys.apimart, keys.removeBg, keys.xai, keys.evolink, primaryYoutubeKey, keys.typecast);
+        saveVmakeKeys(keys.vmakeAk || '', keys.vmakeSk || '');
         // 서버에도 동기화 (계정에 연동 — 다른 기기에서도 복원 가능)
         syncApiKeysToServer().catch(() => {});
         showToast('설정이 저장되었습니다. 페이지를 새로고침합니다.', 1500);
@@ -540,6 +543,25 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
                             <input type="text" value={keys.uploadPreset} onChange={(e) => setKeys({...keys, uploadPreset: e.target.value})} placeholder="Upload Preset" className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-base text-white" />
                         </div>
                     </div>
+                </div>
+
+                {/* ── Vmake AI (자막/워터마크 제거) ── */}
+                <p className="text-xs font-bold text-gray-500 uppercase tracking-widest mt-6 mb-1">자막/워터마크 제거</p>
+                <div className="space-y-3 pb-4 border-b border-gray-700">
+                    <div className="flex items-start justify-between">
+                        <div className="flex flex-col">
+                            <h3 className="text-base font-bold text-cyan-400 uppercase tracking-wider">🧹 VMAKE AI</h3>
+                            <span className="text-sm text-gray-400">AI 자막/워터마크 자동 제거 — 클라우드 처리</span>
+                        </div>
+                        <a href="https://vmake.ai/developers" target="_blank" rel="noopener noreferrer" className="shrink-0 ml-3 px-2.5 py-1 bg-cyan-600/20 hover:bg-cyan-600/40 border border-cyan-500/30 text-cyan-400 text-xs font-bold rounded-lg transition-all flex items-center gap-1">키 발급 ↗</a>
+                    </div>
+                    <div className="bg-cyan-900/10 border border-cyan-500/10 rounded-lg p-3 text-xs text-cyan-200/70 space-y-1">
+                        <p>vmake.ai에 가입하고 Developers → API Keys에서 키를 생성하세요.</p>
+                        <p>API Key = Access Key, Secret Access Key = Secret Key 입니다.</p>
+                        <p>영상을 업로드하면 Vmake AI가 자막/워터마크를 자동으로 감지하고 깔끔하게 제거합니다.</p>
+                    </div>
+                    <input type={showPassword ? "text" : "password"} value={keys.vmakeAk || ''} onChange={(e) => setKeys({...keys, vmakeAk: e.target.value})} placeholder="API Key (Access Key)" className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-base text-white" />
+                    <input type={showPassword ? "text" : "password"} value={keys.vmakeSk || ''} onChange={(e) => setKeys({...keys, vmakeSk: e.target.value})} placeholder="Secret Access Key" className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-base text-white" />
                 </div>
 
                 {/* ── 선택 API ── */}

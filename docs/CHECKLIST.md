@@ -8,6 +8,15 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-31] #921 자막/워터마크 제거 Vmake AI 클라우드 전환
+- [x] Vmake API 서비스 생성 (vmakeService.ts) — 컴패니언 프록시 경유 CORS 우회
+- [x] API Key / Secret Key 입력 UI (ApiKeySettings.tsx에 Vmake AI 섹션 추가)
+- [x] SubtitleRemoverTab 전면 재작성 — ProPainter 로컬 → Vmake 클라우드 전환
+- [x] shoppingRenderService, editPointStore — companionInpaint → vmake 전환
+- [x] companion/propainter/server.py — Vmake SDK 프록시 엔드포인트 추가
+- [x] 친절한 UI 안내문구 (설정 방법 3단계 + 처리 과정 상세 설명)
+- [x] Playwright E2E: 실제 쇼츠 영상 → Vmake AI 제거 → 12.5MB MP4 다운로드 검증
+
 ### [2026-03-31] #507 참여도 강화 시 문체 일관성 보존
 - [x] 근본 원인: EngagementBooster의 강화 프롬프트에 스타일 정보가 전달되지 않아, 커뮤니티형(음슴체) 대본이 강화 후 일반 구어체로 변환됨
 - [x] EngagementBooster.tsx: scriptWriterStore에서 styledStyleName 조회 → SCRIPT_STYLE_PRESETS + videoAnalysisStyles에서 매칭
