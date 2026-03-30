@@ -1033,7 +1033,7 @@ export interface RemakeVersion {
 }
 
 // --- 사운드 스튜디오 ---
-export type TTSEngine = 'elevenlabs' | 'supertonic' | 'typecast' | 'qwen3';
+export type TTSEngine = 'elevenlabs' | 'supertonic' | 'typecast' | 'qwen3' | 'kokoro';
 export type TTSLanguage = 'ko' | 'en' | 'ja' | 'zh' | 'es' | 'fr' | 'de' | 'hi' | 'it' | 'pt' | 'ru';
 export type AudioSourceType = 'tts' | 'uploaded';
 export type TypecastEmotionMode = 'smart' | 'preset';

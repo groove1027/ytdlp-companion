@@ -7,6 +7,7 @@ export interface Env {
   KAKAO_CLIENT_SECRET: string;
   NAVER_CLIENT_ID: string;
   NAVER_CLIENT_SECRET: string;
+  RESEND_API_KEY: string;
 }
 
 export type UserTier = 'basic' | 'premium' | 'trial';

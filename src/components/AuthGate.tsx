@@ -15,7 +15,7 @@ import {
   type ConfirmationResult,
   type RecaptchaVerifier,
 } from '../services/firebaseAuthService';
-import { socialLogin } from '../services/authService';
+import { socialLogin, forgotPassword, resetPassword } from '../services/authService';
 import { useUIStore } from '../stores/uiStore';
 
 interface AuthGateProps {
@@ -23,6 +23,7 @@ interface AuthGateProps {
 }
 
 type SignupStep = 'form' | 'phone' | 'otp';
+type ResetStep = 'email' | 'code' | 'done';
 interface SocialPending { provider: 'google' | 'kakao' | 'naver'; token: string; redirectUri?: string }
 
 const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
@@ -35,6 +36,15 @@ const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
   const [rememberMe, setRememberMe] = useState(true);
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+
+  // 비밀번호 재설정
+  const [resetMode, setResetMode] = useState(false);
+  const [resetStep, setResetStep] = useState<ResetStep>('email');
+  const [resetEmail, setResetEmail] = useState('');
+  const [resetCode, setResetCode] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [newPasswordConfirm, setNewPasswordConfirm] = useState('');
+  const [resetMessage, setResetMessage] = useState('');
 
   // 전화번호 인증
   const [signupStep, setSignupStep] = useState<SignupStep>('form');
@@ -202,6 +212,38 @@ const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
     }
   }, [otpCode, handleSignupComplete]);
 
+  // ── 비밀번호 재설정: 인증코드 요청 ──
+  const handleForgotPassword = useCallback(async () => {
+    if (!resetEmail.trim()) { setError('이메일을 입력해주세요.'); return; }
+    setError(''); setIsLoading(true);
+    try {
+      await forgotPassword(resetEmail.trim());
+      setResetStep('code');
+      setResetMessage('인증코드가 이메일로 발송되었습니다. 메일함을 확인해주세요.');
+    } catch (err: unknown) { setError(err instanceof Error ? err.message : '요청 실패'); }
+    finally { setIsLoading(false); }
+  }, [resetEmail]);
+
+  // ── 비밀번호 재설정: 코드 확인 + 새 비밀번호 ──
+  const handleResetPassword = useCallback(async () => {
+    if (!resetCode.trim() || resetCode.length < 6) { setError('인증코드 6자리를 입력해주세요.'); return; }
+    if (newPassword.length < 8) { setError('비밀번호는 8자 이상이어야 합니다.'); return; }
+    if (newPassword !== newPasswordConfirm) { setError('비밀번호가 일치하지 않습니다.'); return; }
+    setError(''); setIsLoading(true);
+    try {
+      await resetPassword(resetEmail.trim(), resetCode.trim(), newPassword);
+      setResetStep('done');
+      setResetMessage('비밀번호가 변경되었습니다!');
+    } catch (err: unknown) { setError(err instanceof Error ? err.message : '재설정 실패'); }
+    finally { setIsLoading(false); }
+  }, [resetEmail, resetCode, newPassword, newPasswordConfirm]);
+
+  // ── 비밀번호 재설정 모드 종료 ──
+  const exitResetMode = useCallback(() => {
+    setResetMode(false); setResetStep('email'); setResetEmail(''); setResetCode('');
+    setNewPassword(''); setNewPasswordConfirm(''); setResetMessage(''); setError('');
+  }, []);
+
   const handleSubmit = (e: React.FormEvent) => { e.preventDefault(); mode === 'login' ? handleLogin() : handleSignupFormSubmit(); };
   const resetToSignupForm = () => { setSignupStep('form'); setOtpCode(''); setError(''); recaptchaRef.current = null; };
 
@@ -236,6 +278,97 @@ const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
             </button>
             <button onClick={() => { setSocialPending(null); setError(''); setInviteCode(''); }}
               className="w-full py-2 text-gray-500 hover:text-gray-300 text-xs transition-colors">취소</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── 비밀번호 재설정 모드 ──
+  if (resetMode) {
+    return (
+      <div className="min-h-screen bg-gray-950 flex items-center justify-center p-4">
+        <div className="w-full max-w-md">
+          <div className="text-center mb-8">
+            <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-blue-600 to-violet-600 flex items-center justify-center shadow-xl shadow-violet-500/20">
+              <span className="text-3xl">AI</span>
+            </div>
+            <h1 className="text-xl font-bold text-white">비밀번호 재설정</h1>
+            <p className="text-sm text-gray-500 mt-1">
+              {resetStep === 'email' && '가입 시 사용한 이메일을 입력해주세요.'}
+              {resetStep === 'code' && '이메일로 발송된 인증코드를 입력해주세요.'}
+              {resetStep === 'done' && '비밀번호가 성공적으로 변경되었습니다!'}
+            </p>
+          </div>
+
+          <div className="space-y-4">
+            {resetStep === 'email' && (
+              <>
+                <div>
+                  <label className="text-sm text-gray-400 mb-1.5 block">이메일</label>
+                  <input type="email" value={resetEmail} onChange={e => setResetEmail(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && !isLoading && handleForgotPassword()}
+                    placeholder="email@example.com" autoFocus className={inputClass} />
+                </div>
+                {error && <div className="bg-red-900/20 border border-red-500/30 rounded-xl px-4 py-3 text-sm text-red-400">{error}</div>}
+                <button onClick={handleForgotPassword} disabled={isLoading || !resetEmail.trim()}
+                  className="w-full py-3.5 rounded-xl text-base font-bold text-white bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 disabled:from-gray-700 disabled:to-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed transition-all">
+                  {isLoading ? '발송 중...' : '인증코드 발송'}
+                </button>
+              </>
+            )}
+
+            {resetStep === 'code' && (
+              <>
+                {resetMessage && <div className="bg-blue-900/20 border border-blue-500/30 rounded-xl px-4 py-3 text-sm text-blue-400">{resetMessage}</div>}
+                <div>
+                  <label className="text-sm text-gray-400 mb-1.5 block">인증코드 (6자리)</label>
+                  <input type="text" inputMode="numeric" maxLength={6} value={resetCode}
+                    onChange={e => setResetCode(e.target.value.replace(/\D/g, ''))}
+                    placeholder="000000" autoFocus
+                    className={`${inputClass} text-xl text-center tracking-[0.4em] font-mono`} />
+                </div>
+                <div>
+                  <label className="text-sm text-gray-400 mb-1.5 block">새 비밀번호</label>
+                  <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)}
+                    placeholder="8자 이상" className={inputClass} />
+                </div>
+                <div>
+                  <label className="text-sm text-gray-400 mb-1.5 block">새 비밀번호 확인</label>
+                  <input type="password" value={newPasswordConfirm} onChange={e => setNewPasswordConfirm(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && !isLoading && handleResetPassword()}
+                    placeholder="비밀번호 재입력" className={inputClass} />
+                </div>
+                {error && <div className="bg-red-900/20 border border-red-500/30 rounded-xl px-4 py-3 text-sm text-red-400">{error}</div>}
+                <button onClick={handleResetPassword} disabled={isLoading || resetCode.length < 6 || !newPassword}
+                  className="w-full py-3.5 rounded-xl text-base font-bold text-white bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 disabled:from-gray-700 disabled:to-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed transition-all">
+                  {isLoading ? '처리 중...' : '비밀번호 변경'}
+                </button>
+                <button onClick={() => { setResetStep('email'); setError(''); setResetMessage(''); }}
+                  className="w-full py-2 text-gray-500 hover:text-gray-300 text-xs transition-colors">인증코드 다시 받기</button>
+              </>
+            )}
+
+            {resetStep === 'done' && (
+              <>
+                <div className="bg-green-900/20 border border-green-500/30 rounded-xl px-4 py-5 text-center">
+                  <div className="text-3xl mb-2">&#10003;</div>
+                  <p className="text-sm text-green-400 font-bold">{resetMessage}</p>
+                  <p className="text-xs text-gray-500 mt-1">새 비밀번호로 로그인해주세요.</p>
+                </div>
+                <button onClick={exitResetMode}
+                  className="w-full py-3.5 rounded-xl text-base font-bold text-white bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 transition-all">
+                  로그인으로 돌아가기
+                </button>
+              </>
+            )}
+
+            {resetStep !== 'done' && (
+              <button onClick={exitResetMode}
+                className="w-full py-2 text-gray-500 hover:text-gray-300 text-xs transition-colors">
+                로그인으로 돌아가기
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -326,13 +459,13 @@ const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
               <div>
                 <label className="text-sm text-gray-400 mb-1.5 block">이메일</label>
                 <input type="email" value={email} onChange={e => setEmail(e.target.value)}
-                  placeholder="email@example.com" required className={inputClass} />
+                  placeholder="email@example.com" required autoComplete="username" className={inputClass} />
               </div>
               <div>
                 <label className="text-sm text-gray-400 mb-1.5 block">비밀번호</label>
                 <input type="password" value={password} onChange={e => setPassword(e.target.value)}
                   placeholder={mode === 'signup' ? '8자 이상' : '비밀번호 입력'} required
-                  minLength={mode === 'signup' ? 8 : undefined} className={inputClass} />
+                  minLength={mode === 'signup' ? 8 : undefined} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} className={inputClass} />
               </div>
               {mode === 'signup' && (
                 <>
@@ -358,7 +491,7 @@ const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
                     <span className="text-sm text-gray-400">로그인 상태 유지 (30일)</span>
                   </label>
                   <button type="button"
-                    onClick={() => useUIStore.getState().setShowFeedbackModal(true, 'auth')}
+                    onClick={() => { setResetMode(true); setResetEmail(email); setError(''); }}
                     className="text-xs text-blue-400/70 hover:text-blue-400 transition-colors">
                     비밀번호를 잊으셨나요?
                   </button>

@@ -228,6 +228,32 @@ export const changePassword = async (currentPassword: string, newPassword: strin
   if (!res.ok) throw new Error(data.error || '비밀번호 변경 실패');
 };
 
+/** 비밀번호 재설정 — 인증코드 요청 */
+export const forgotPassword = async (email: string): Promise<{ message: string }> => {
+  const res = await fetch('/api/auth/forgot-password', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || '인증코드 요청 실패');
+  return data;
+};
+
+/** 비밀번호 재설정 — 인증코드 확인 + 새 비밀번호 설정 */
+export const resetPassword = async (
+  email: string, code: string, newPassword: string
+): Promise<{ message: string }> => {
+  const res = await fetch('/api/auth/reset-password', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, code, newPassword }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || '비밀번호 재설정 실패');
+  return data;
+};
+
 /** 계정 삭제 */
 export const deleteAccount = async (password: string): Promise<void> => {
   const token = getToken();

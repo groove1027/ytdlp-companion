@@ -62,7 +62,7 @@ export default function VoiceClonePanel() {
   const [voiceName, setVoiceName] = useState('');
   const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
   const [uploadedBlob, setUploadedBlob] = useState<Blob | null>(null);
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(true);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
