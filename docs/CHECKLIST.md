@@ -8,6 +8,17 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-31] 구글 이미지 레퍼런스 검색 오탐 수정 + 컴패니언 CORS 수정
+- [x] 버그 원인: `collectMappedEnglishTerms()`의 부분 문자열 매칭 → "절정"→"절"→"temple", "몰렸"→"집"→"house" 오탐
+- [x] 수정 1: 부분 매칭(`token.includes(ko)`) → startsWith + 길이 제한 (2글자 이상 키 + 조사 3글자 이내)
+- [x] 수정 2: 영어 약어 필터 4글자 미만 제외 (LED/AI 같은 무의미 검색어 방지)
+- [x] 수정 3: `companion/src-tauri/src/server.rs` CORS 허용 목록에 `localhost:5177` 추가
+- [x] 동일 패턴 2곳 모두 수정 (collectMappedEnglishTerms + buildWikimediaQueryCandidates)
+- [x] Codex 5.4 MCP 코드 리뷰 10회 완료 — Go 판정
+- [x] cargo build 성공 + health check 통과 + .companion-build-verified 생성
+- [x] Playwright E2E: "temple"/"house"/"led" 오탐 제거 확인 + CORS 해결 + 컴패니언 프록시 사용 확인
+- [x] 결과: 뉴욕 타임스퀘어/불꽃놀이 등 대본 맥락에 맞는 이미지 검색 성공
+
 ### [2026-03-31] #921 자막/워터마크 제거 Vmake AI 클라우드 전환
 - [x] Vmake API 서비스 생성 (vmakeService.ts) — 컴패니언 프록시 경유 CORS 우회
 - [x] API Key / Secret Key 입력 UI (ApiKeySettings.tsx에 Vmake AI 섹션 추가)

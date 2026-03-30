@@ -332,13 +332,16 @@ function collectMappedEnglishTerms(value: string): string[] {
       continue;
     }
 
-    if (/^[a-z0-9-]+$/i.test(token)) {
+    // 영어 단어: 4글자 이상만 수집 (LED/BTS/NYC 등 약어는 scene 필드에서 처리)
+    if (/^[a-z0-9-]+$/i.test(token) && token.length >= 4) {
       mappedTerms.push(token);
       continue;
     }
 
+    // 완전 일치 또는 조사 결합 형태만 허용 (2글자 이상 키)
+    // "서울에서"→"서울" OK, "절정"→"절" 차단 (1글자 키는 완전 일치만)
     for (const [ko, english] of Object.entries(WIKIMEDIA_KO_EN_MAP)) {
-      if (token.includes(ko) || ko.includes(token)) {
+      if (token === ko || (ko.length >= 2 && token.startsWith(ko) && token.length <= ko.length + 3)) {
         mappedTerms.push(...english);
         break;
       }
@@ -708,8 +711,9 @@ function buildWikimediaQueryCandidates(query: string): string[] {
       continue;
     }
 
+    // 완전 일치 또는 조사 결합 형태만 허용 (2글자 이상 키)
     for (const [ko, english] of Object.entries(WIKIMEDIA_KO_EN_MAP)) {
-      if (token.includes(ko) || ko.includes(token)) {
+      if (token === ko || (ko.length >= 2 && token.startsWith(ko) && token.length <= ko.length + 3)) {
         primaryTerms.push(english[0]);
         secondaryTerms.push(...english.slice(1));
         break;

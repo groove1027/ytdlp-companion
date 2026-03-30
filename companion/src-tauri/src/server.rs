@@ -43,7 +43,7 @@ async fn detect_services() -> CachedHealth {
     let python = platform::python_cmd();
 
     // rembg
-    if tokio::process::Command::new(python).args(["-c", "import rembg"]).output().await.map(|o| o.status.success()).unwrap_or(false) {
+    if platform::async_cmd(python).args(["-c", "import rembg"]).output().await.map(|o| o.status.success()).unwrap_or(false) {
         services.push("rembg".to_string());
     }
     // whisper
@@ -52,11 +52,11 @@ async fn detect_services() -> CachedHealth {
         services.push("whisper".to_string());
     }
     // TTS (Qwen3 > Kokoro > Piper)
-    if tokio::process::Command::new(python).args(["-c", "from qwen_tts import Qwen3TTSModel; print('ok')"]).output().await.map(|o| o.status.success()).unwrap_or(false)
-       || tokio::process::Command::new(python).args(["-c", "from transformers import AutoTokenizer; print('ok')"]).output().await.map(|o| o.status.success()).unwrap_or(false) {
+    if platform::async_cmd(python).args(["-c", "from qwen_tts import Qwen3TTSModel; print('ok')"]).output().await.map(|o| o.status.success()).unwrap_or(false)
+       || platform::async_cmd(python).args(["-c", "from transformers import AutoTokenizer; print('ok')"]).output().await.map(|o| o.status.success()).unwrap_or(false) {
         services.push("tts-qwen3".to_string());
     }
-    if tokio::process::Command::new(python).args(["-c", "from kokoro_onnx import Kokoro"]).output().await.map(|o| o.status.success()).unwrap_or(false) {
+    if platform::async_cmd(python).args(["-c", "from kokoro_onnx import Kokoro"]).output().await.map(|o| o.status.success()).unwrap_or(false) {
         services.push("tts-kokoro".to_string());
     } else {
         let piper_bin = if cfg!(target_os = "windows") { "piper/piper.exe" } else { "piper/piper" };
@@ -68,7 +68,7 @@ async fn detect_services() -> CachedHealth {
     services.push("nle-install".to_string());
     // ffmpeg
     let ffmpeg_path = ytdlp::get_ffmpeg_path_public();
-    if tokio::process::Command::new(&ffmpeg_path).args(["-version"]).output().await.map(|o| o.status.success()).unwrap_or(false) {
+    if platform::async_cmd(&ffmpeg_path).args(["-version"]).output().await.map(|o| o.status.success()).unwrap_or(false) {
         services.push("ffmpeg".to_string());
     }
 
@@ -231,6 +231,7 @@ pub async fn start_server(_app: tauri::AppHandle) -> Result<(), Box<dyn std::err
     let allowed_origins = [
         "http://localhost:5173".parse::<axum::http::HeaderValue>().unwrap(),
         "http://localhost:5174".parse::<axum::http::HeaderValue>().unwrap(),
+        "http://localhost:5177".parse::<axum::http::HeaderValue>().unwrap(),
         "http://localhost:3000".parse::<axum::http::HeaderValue>().unwrap(),
         "https://all-in-one-production.pages.dev".parse::<axum::http::HeaderValue>().unwrap(),
     ];
@@ -712,7 +713,7 @@ async fn nle_install_handler(Json(req): Json<NleInstallRequest>) -> impl IntoRes
                 }
                 #[cfg(target_os = "windows")]
                 {
-                    let _ = tokio::process::Command::new("cmd")
+                    let _ = platform::async_cmd("cmd")
                         .args(["/c", "start", "CapCut"])
                         .spawn();
                 }
@@ -726,7 +727,7 @@ async fn nle_install_handler(Json(req): Json<NleInstallRequest>) -> impl IntoRes
                             #[cfg(target_os = "macos")]
                             { let _ = tokio::process::Command::new("open").arg(&path).spawn(); }
                             #[cfg(target_os = "windows")]
-                            { let _ = tokio::process::Command::new("cmd").args(["/c", "start", "", &path.to_string_lossy()]).spawn(); }
+                            { let _ = platform::async_cmd("cmd").args(["/c", "start", "", &path.to_string_lossy()]).spawn(); }
                             break;
                         }
                     }
@@ -805,7 +806,7 @@ async fn ffmpeg_transcode_handler(Json(req): Json<FfmpegTranscodeRequest>) -> im
     args.push(output_path.clone());
 
     let ffmpeg = ytdlp::get_ffmpeg_path_public();
-    let output = tokio::process::Command::new(&ffmpeg).args(&args).output().await;
+    let output = platform::async_cmd(&ffmpeg).args(&args).output().await;
 
     match output {
         Ok(out) if out.status.success() => {
@@ -889,7 +890,7 @@ async fn generate_image_handler(Json(req): Json<GenerateImageRequest>) -> impl I
     let safe_prompt = req.prompt.replace('\'', "\\'").replace('\n', " ").replace('\r', "");
 
     // mflux-generate CLI 호출
-    let output = tokio::process::Command::new("mflux-generate")
+    let output = platform::async_cmd("mflux-generate")
         .args([
             "--model", "flux.1-schnell",  // 가장 빠른 모델 (1-4 steps)
             "--prompt", &safe_prompt,
