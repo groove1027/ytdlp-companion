@@ -2,5 +2,5 @@
   "identifier": "default",
   "description": "Default capabilities for ytdlp-companion",
   "windows": [],
-  "permissions": []
+  "permissions": ["deep-link:default"]
 }

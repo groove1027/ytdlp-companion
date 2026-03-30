@@ -26,6 +26,13 @@
       }
     ]
   },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["allinonehelper"]
+      }
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",

@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { isCompanionDetected, recheckCompanion, getCompanionVersion } from '../services/ytdlpApiService';
+import { useState, useEffect, useRef } from 'react';
+import { isCompanionDetected, recheckCompanion, getCompanionVersion, tryLaunchCompanion } from '../services/ytdlpApiService';
 import { COMPANION_DOWNLOAD_URL, COMPANION_WINDOWS_AVAILABLE, getCompanionDownloadUrl, getCompanionOsLabel, getCompanionLatestVersion } from '../constants';
 
 /** 기능별 배너 테마 */
@@ -95,7 +95,14 @@ export default function CompanionBanner({ feature = 'general', compact = false }
   const [companionActive, setCompanionActive] = useState(false);
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const [latestVer, setLatestVer] = useState<string | null>(null);
+  const [launching, setLaunching] = useState(false);
+  const launchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const theme = THEMES[feature];
+
+  // 실행하기 타이머 cleanup (unmount 시)
+  useEffect(() => {
+    return () => { if (launchTimerRef.current) clearTimeout(launchTimerRef.current); };
+  }, []);
 
   useEffect(() => {
     const check = async () => {
@@ -191,6 +198,23 @@ export default function CompanionBanner({ feature = 'general', compact = false }
     );
   }
 
+  // 실행하기 버튼 → URL 스킴으로 컴패니언 실행 시도 → 5초 후 재검사
+  const handleLaunch = () => {
+    if (launching) return;
+    setLaunching(true);
+    tryLaunchCompanion();
+    if (launchTimerRef.current) clearTimeout(launchTimerRef.current);
+    launchTimerRef.current = setTimeout(async () => {
+      const detected = await recheckCompanion();
+      if (detected) {
+        setCompanionActive(true);
+        setVisible(false);
+      }
+      setLaunching(false);
+      launchTimerRef.current = null;
+    }, 5000);
+  };
+
   if (!visible) return null;
 
   // 미설치 안내 — 기능별 강조 색상
@@ -215,19 +239,39 @@ export default function CompanionBanner({ feature = 'general', compact = false }
             헬퍼 앱 (Windows 버전 준비 중)
           </span>
         ) : (
-          <a
-            href={getCompanionDownloadUrl()}
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{
-              color: theme.color,
-              textDecoration: 'underline',
-              fontWeight: 700,
-              cursor: 'pointer',
-            }}
-          >
-            헬퍼 앱 설치{getCompanionOsLabel() ? ` (${getCompanionOsLabel()})` : ''}
-          </a>
+          <>
+            <button
+              onClick={handleLaunch}
+              disabled={launching}
+              style={{
+                background: launching ? '#64748b' : theme.color,
+                color: '#fff',
+                border: 'none',
+                borderRadius: '4px',
+                padding: '2px 8px',
+                cursor: launching ? 'wait' : 'pointer',
+                fontWeight: 700,
+                fontSize: compact ? '11px' : '12px',
+                marginRight: '6px',
+                opacity: launching ? 0.7 : 1,
+              }}
+            >
+              {launching ? '연결 중...' : '실행하기'}
+            </button>
+            <a
+              href={getCompanionDownloadUrl()}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                color: theme.color,
+                textDecoration: 'underline',
+                fontWeight: 700,
+                cursor: 'pointer',
+              }}
+            >
+              설치{getCompanionOsLabel() ? ` (${getCompanionOsLabel()})` : ''}
+            </a>
+          </>
         )}
         {!compact && <> {theme.description}</>}
       </span>

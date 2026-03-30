@@ -17,6 +17,17 @@ use tauri_plugin_autostart::ManagerExt;
 
 fn main() {
     tauri::Builder::default()
+        // 중복 실행 방지 — deep-link로 2차 인스턴스가 뜨면 기존 인스턴스에 위임
+        // ⚠️ single-instance는 반드시 다른 플러그인보다 먼저 등록해야 함
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            // 이미 실행 중이면 기존 윈도우만 포커스
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.show();
+                let _ = win.set_focus();
+            }
+        }))
+        // allinonehelper:// URL 스킴 — 웹앱에서 컴패니언 강제 실행 가능
+        .plugin(tauri_plugin_deep_link::init())
         // [FIX #907] 로그인 시 자동 시작 — 컴패니언이 항상 실행 중이도록 보장
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,

@@ -108,8 +108,34 @@ export async function recheckCompanion(): Promise<boolean> {
 }
 
 /**
- * [FIX #907] 컴패니언 강제 확보 — 3회 재시도 + URL 스킴 강제 실행 + 재시도
+ * 컴패니언 앱 강제 실행 시도 — allinonehelper:// URL 스킴 호출
+ * 스킴이 등록된 컴패니언(v1.2.0+)이면 앱이 실행됨.
+ * 스킴 미등록 시 무시됨 (에러 없음).
+ */
+let _lastLaunchAttempt = 0;
+export function tryLaunchCompanion(): void {
+  if (typeof window === 'undefined') return;
+  // 쓰로틀: 10초 내 중복 시도 방지
+  const now = Date.now();
+  if (now - _lastLaunchAttempt < 10_000) return;
+  _lastLaunchAttempt = now;
+
+  try {
+    const iframe = document.createElement('iframe');
+    iframe.style.display = 'none';
+    iframe.src = 'allinonehelper://launch';
+    document.body.appendChild(iframe);
+    setTimeout(() => { try { iframe.remove(); } catch {} }, 3000);
+    logger.info('[Companion] URL 스킴 강제 실행 시도: allinonehelper://launch');
+  } catch {
+    // 무시 — 스킴 미등록 시 에러 없음
+  }
+}
+
+/**
+ * [FIX #907] 컴패니언 감지 재시도 — health check 반복으로 컴패니언 연결 대기
  * NLE 내보내기 등 컴패니언이 반드시 필요한 경로에서 사용.
+ * URL 스킴 강제 실행은 user gesture가 필요하므로 CompanionBanner "실행하기" 버튼에서만 수행.
  * 최종 실패 시 false 반환 (CF Worker 폴백 허용).
  */
 export async function ensureCompanionAvailable(signal?: AbortSignal): Promise<boolean> {
@@ -136,22 +162,24 @@ export async function ensureCompanionAvailable(signal?: AbortSignal): Promise<bo
     if (i < 1) await abortSleep(1000);
   }
 
-  // 2단계: 재검증 대기 (컴패니언이 방금 시작됐을 수 있음) — 최대 ~3초
+  // 2단계: 재검증 대기 (컴패니언이 방금 시작됐을 수 있음 — autostart 또는 사용자 수동 실행)
+  // 참고: URL 스킴 호출은 여기서 하지 않음 — user gesture 없이는 브라우저가 차단함
+  // URL 스킴 실행은 CompanionBanner의 "실행하기" 버튼(사용자 클릭)을 통해서만 가능
   if (signal?.aborted) return false;
   logger.info('[Companion] 감지 실패 → 재검증 대기 (3초)');
   await abortSleep(3000);
-  for (let i = 0; i < 2; i++) {
+  for (let i = 0; i < 3; i++) {
     if (signal?.aborted) return false;
     _companionAvailable = null;
     _companionCheckTime = 0;
     if (await isCompanionAvailable()) {
-      logger.info('[Companion] URL 스킴 실행 후 감지 성공');
+      logger.info('[Companion] 재검증에서 감지 성공 (시도 ' + (i + 1) + '/3)');
       return true;
     }
-    if (i < 1) await abortSleep(1000);
+    if (i < 2) await abortSleep(1500);
   }
 
-  logger.info('[Companion] 강제 실행 실패 — CF Worker 폴백');
+  logger.info('[Companion] 감지 실패 — CF Worker 폴백 (컴패니언 미실행 또는 미설치)');
   return false;
 }
 
@@ -178,7 +206,8 @@ function initCompanionDetection(): void {
   setTimeout(async () => {
     const found = await tryDetect();
     if (!found) {
-      // 미감지 → 10초마다 폴링 (컴패니언이 나중에 실행될 수 있음)
+      // 미감지 → 10초마다 폴링 (URL 스킴 자동 실행은 하지 않음 — 브라우저 프롬프트/포커스 탈취 방지)
+      // URL 스킴 실행은 사용자 동작(배너 "실행하기" 클릭 또는 ensureCompanionAvailable) 시에만
       pollInterval = setInterval(tryDetect, 10_000);
       logger.info('[Companion] 미감지 — 10초 간격 백그라운드 폴링 시작');
     }
