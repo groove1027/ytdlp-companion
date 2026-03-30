@@ -9,10 +9,20 @@ import { test, expect } from '@playwright/test';
 import * as path from 'path';
 import * as fs from 'fs';
 
+// .env.local 수동 파싱 (dotenv import 시 playwright 버전 충돌 방지)
+const envPath = path.resolve(__dirname, '../.env.local');
+const envVars: Record<string, string> = {};
+if (fs.existsSync(envPath)) {
+  for (const line of fs.readFileSync(envPath, 'utf-8').split('\n')) {
+    const m = line.match(/^([A-Z0-9_]+)=(.+)$/);
+    if (m) envVars[m[1]] = m[2];
+  }
+}
+
 const BASE_URL = 'http://localhost:5173';
-const EMAIL = process.env.E2E_TEST_EMAIL || '';
-const PASSWORD = process.env.E2E_TEST_PASSWORD || '';
-const EVOLINK_KEY = process.env.CUSTOM_EVOLINK_KEY || '';
+const EMAIL = envVars.E2E_TEST_EMAIL || process.env.E2E_TEST_EMAIL || '';
+const PASSWORD = envVars.E2E_TEST_PASSWORD || process.env.E2E_TEST_PASSWORD || '';
+const EVOLINK_KEY = envVars.CUSTOM_EVOLINK_KEY || process.env.CUSTOM_EVOLINK_KEY || '';
 const SS = 'test-e2e';
 
 test('편집점 정밀도 — FPS 감지 + Drop-Frame + Scene Detection + NLE 내보내기 통합 검증', async ({ page }) => {
