@@ -36,16 +36,17 @@ fi
 MEMORY_DIR="$HOME/.claude/projects/-Users-mac_mini-Downloads-all-in-one-production-build4/memory"
 WORKHIST="$MEMORY_DIR/work-history.md"
 
-if [ -f "$WORKHIST" ]; then
+if [ ! -f "$WORKHIST" ]; then
+    ERRORS+=("❌ [절차 누락] work-history.md 파일이 존재하지 않는다 — memory/ 폴더에 작업 기록 파일을 생성하라")
+else
     if [ "$(uname)" = "Darwin" ]; then
         MTIME=$(stat -f %m "$WORKHIST" 2>/dev/null || echo 0)
     else
         MTIME=$(stat -c %Y "$WORKHIST" 2>/dev/null || echo 0)
     fi
-    NOW=$(date +%s)
-    DIFF=$((NOW - MTIME))
-    if [ "$DIFF" -gt 1800 ]; then
-        ERRORS+=("❌ [절차 누락] work-history.md가 이번 세션에서 업데이트되지 않았다 — 작업 기록을 남겨라")
+    LAST_COMMIT_TIME=$(cd "$PROJECT_DIR" && git log -1 --format="%ct" 2>/dev/null || echo 0)
+    if [ "$MTIME" -le "$LAST_COMMIT_TIME" ]; then
+        ERRORS+=("❌ [절차 누락] work-history.md가 마지막 커밋 이후 업데이트되지 않았다 — 이번 작업 기록을 남겨라")
     fi
 fi
 
