@@ -26,10 +26,13 @@ function buildChannelContext(g: ChannelGuideline, scripts: ChannelScript[]): str
   if (g.editGuide) parts.push(`편집 스타일: ${g.editGuide.slice(0, 300)}`);
   if (g.audioGuide) parts.push(`오디오 스타일: ${g.audioGuide.slice(0, 300)}`);
   if (g.fullGuidelineText) parts.push(`\n상세 스타일:\n${g.fullGuidelineText.slice(0, 1500)}`);
-  const samples = scripts.filter(s => s.transcript.length > 100).slice(0, 2);
-  if (samples.length) {
+  // [FIX #852 #876 #879] description 소스를 명시적으로 제외 (caption 또는 undefined=수동입력은 유효)
+  const captionSamples = scripts.filter(s => s.transcriptSource !== 'description' && s.transcript.length > 100).slice(0, 2);
+  if (captionSamples.length) {
     parts.push('\n[말투 참고 샘플]');
-    samples.forEach((s, i) => parts.push(`--- 샘플 ${i + 1}: "${s.title}" ---\n${s.transcript.slice(0, 400)}`));
+    captionSamples.forEach((s, i) => parts.push(`--- 샘플 ${i + 1}: "${s.title}" ---\n${s.transcript.slice(0, 400)}`));
+  } else {
+    parts.push(`\n[⚠ 자막 샘플 미확보] 실제 대본 샘플이 없습니다. 위 스타일 분석의 말투(${g.tone})를 기반으로 종결어미와 어조를 재현하세요. 설명글이나 추측으로 대본을 작성하지 마세요.`);
   }
   return parts.join('\n');
 }

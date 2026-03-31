@@ -8,6 +8,27 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-31] 자료영상(YouTube) 레퍼런스 기능 신규 개발
+- [x] types.ts: VideoReference 인터페이스 + Scene.videoReferences + ProjectConfig.enableVideoReference
+- [x] imageVideoStore.ts: enableVideoReference 상태 + 토글 시 cancelVideoReferenceSearch cleanup
+- [x] projectStore.ts: restoreFromConfig에 enableVideoReference 복원 연결
+- [x] useAutoSave.ts: fingerprint에 videoId@startSec-endSec 포함 (교체 감지)
+- [x] VideoReferencePanel.tsx: 신규 UI (254줄) — Toggle ARIA, useMemo, button 접근성
+- [x] SetupPanel.tsx: VideoReferencePanel 임포트/렌더링
+- [x] EditRoomTab.tsx: YouTube 타임코드 배지 (top-10, Number.isFinite 방어)
+- [x] youtubeReferenceService.ts: YouTube 검색 → 자막 추출 → AI 타임코드 매칭 (411줄)
+- [x] timedtext 직접 fetch 폴백 개선 (프록시 실패/비정상 응답 모두 처리)
+- [x] AbortController 기반 검색 취소 구현
+- [x] Codex 5.4 MCP 코드 리뷰 10회 완료
+- [x] Playwright E2E: 토글→검색→결과 표시→적용 전체 흐름 스크린샷 10장 통과
+
+### [2026-03-31] #852 #876 #879 채널분석 대본 생성 시 설명글(description) 주입 버그 수정
+- [x] 원인: ScriptWriterTab.tsx, ChannelRemakePanel.tsx에서 transcript 필터가 transcriptSource 미체크 → description 소스가 AI 프롬프트에 "대본 샘플"로 주입
+- [x] 수정: `transcriptSource !== 'description'` 필터 추가 — caption과 undefined(수동입력)만 허용
+- [x] 자막 미확보 시 스타일 가이드 기반 작성 경고 메시지 추가
+- [x] Codex 5.4 MCP 코드 리뷰 10회 완료 — P1(undefined 누락) 즉시 수정, P2는 pre-existing 한계
+- [x] Playwright E2E: 채널분석 → 대본 생성하기 → 결과 확인 스크린샷 7장+
+
 ### [2026-03-31] #846 Windows 컴패니언 감지 실패 수정 — localhost→127.0.0.1 + IPv6 듀얼스택 + LNA 대응
 - [x] 원인: Chrome 146 Windows에서 localhost가 ::1(IPv6)로 해석 + LNA 정책 차단
 - [x] 프론트엔드 11개 서비스 파일 COMPANION_URL → 127.0.0.1:9876 전환

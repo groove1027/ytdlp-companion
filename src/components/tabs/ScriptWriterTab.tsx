@@ -94,11 +94,10 @@ function buildChannelStyleSection(
     }
   }
 
-  // 실제 자막이 확보된 스크립트 샘플 (caption 소스 우선, 최대 3개, 각 600자)
-  const captionScripts = scripts.filter(s => s.transcriptSource === 'caption' && s.transcript.length > 100);
-  const sampleScripts = captionScripts.length > 0
-    ? captionScripts.slice(0, 3)
-    : scripts.filter(s => s.transcript.length > 100).slice(0, 2);
+  // [FIX #852 #876 #879] description 소스를 명시적으로 제외 — 설명글은 말투/구조 참고에 부적합
+  // transcriptSource가 'caption' 또는 undefined(수동입력/파일/이전 프리셋)이면 유효한 자막으로 취급
+  const captionScripts = scripts.filter(s => s.transcriptSource !== 'description' && s.transcript.length > 100);
+  const sampleScripts = captionScripts.slice(0, 3);
 
   // [FIX #392] 해외 채널 + 한국어 타겟이면 스타일만 참고하도록 지시
   const isOverseasKo = guideline?.contentRegion === 'overseas' && (!targetRegion || targetRegion === 'ko');
@@ -112,6 +111,12 @@ function buildChannelStyleSection(
     } else {
       parts.push(`\n[채널 대본 샘플 (말투·어조·종결어미를 정확히 모방하세요)]\n${samples}`);
     }
+  } else if (guideline) {
+    // [FIX #876] 자막 샘플이 하나도 없을 때: 스타일 가이드의 말투 지시를 강화
+    parts.push(`\n[⚠ 자막 샘플 미확보 — 스타일 가이드 기반 작성 지시]
+이 채널의 실제 대본 샘플을 확보하지 못했습니다.
+위 [채널 스타일 가이드]의 "말투" 항목(${guideline.tone || '정보 없음'})을 최우선으로 참고하여 말투·종결어미·호흡을 재현하세요.
+영상 설명(description)이나 추측으로 대본을 만들지 마세요. 스타일 가이드에 명시된 어조와 종결어미 패턴만 따르세요.`);
   }
 
   // 벤치마크 대본 (사용자 선택)
