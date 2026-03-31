@@ -15,6 +15,15 @@ use tauri::{
 };
 use tauri_plugin_autostart::ManagerExt;
 
+/// 창을 최상위로 올리고 포커스
+/// ⚠️ 외부 프로세스로 앱을 활성화하면 안 됨 (open -b, osascript 등)
+///    → single-instance 플러그인이 재진입하여 무한 루프 발생
+fn focus_window(win: &tauri::WebviewWindow) {
+    let _ = win.unminimize();
+    let _ = win.show();
+    let _ = win.set_focus();
+}
+
 fn main() {
     tauri::Builder::default()
         // 중복 실행 방지 — deep-link로 2차 인스턴스가 뜨면 기존 인스턴스에 위임
@@ -22,8 +31,7 @@ fn main() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             // 이미 실행 중이면 기존 윈도우만 포커스
             if let Some(win) = app.get_webview_window("main") {
-                let _ = win.show();
-                let _ = win.set_focus();
+                focus_window(&win);
             }
         }))
         // allinonehelper:// URL 스킴 — 웹앱에서 컴패니언 강제 실행 가능
@@ -47,13 +55,12 @@ fn main() {
                     let _ = win.hide();
                 }
             } else {
-                // [FIX] 수동 실행 시 창 표시 — 약간 지연 후 포커스 (Tauri 초기화 완료 대기)
+                // [FIX] 수동 실행 시 창 표시 — 지연 후 포커스 (Tauri 초기화 + WebView 렌더링 대기)
                 let app_handle = app.handle().clone();
                 std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    std::thread::sleep(std::time::Duration::from_millis(800));
                     if let Some(win) = app_handle.get_webview_window("main") {
-                        let _ = win.show();
-                        let _ = win.set_focus();
+                        focus_window(&win);
                     }
                 });
             }
@@ -70,10 +77,8 @@ fn main() {
                     match event.id().as_ref() {
                         "quit" => app.exit(0),
                         "show" => {
-                            // 메인 윈도우 보이기
                             if let Some(win) = app.get_webview_window("main") {
-                                let _ = win.show();
-                                let _ = win.set_focus();
+                                focus_window(&win);
                             }
                         }
                         _ => {}
@@ -83,8 +88,7 @@ fn main() {
                     // 좌클릭 시 윈도우 보이기
                     if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
                         if let Some(win) = tray.app_handle().get_webview_window("main") {
-                            let _ = win.show();
-                            let _ = win.set_focus();
+                            focus_window(&win);
                         }
                     }
                 })

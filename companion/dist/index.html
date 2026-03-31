@@ -118,7 +118,7 @@
     <!-- 로고 -->
     <div class="logo">A</div>
     <div class="title">All In One Helper</div>
-    <div class="version">v1.0.0</div>
+    <div class="version" id="app-version">v...</div>
 
     <!-- 실행 상태 -->
     <div class="status-box">
@@ -172,5 +172,19 @@
 
     <div class="port-badge">🔗 localhost:9876</div>
   </div>
+  <script>
+    // health 엔드포인트에서 실제 버전을 가져와 표시 (서버 준비될 때까지 반복)
+    (function fetchVersion(attempt) {
+      fetch('http://127.0.0.1:9876/health')
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+          var el = document.getElementById('app-version');
+          if (el && d.version) el.textContent = 'v' + d.version;
+        })
+        .catch(function() {
+          if (attempt < 10) setTimeout(function() { fetchVersion(attempt + 1); }, 1500);
+        });
+    })(0);
+  </script>
 </body>
 </html>

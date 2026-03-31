@@ -4,7 +4,7 @@ import { AspectRatio, VoiceName, ImageModel, VideoFormat, DialogueTone, ScriptAi
 // Companion (Helper) App
 export const COMPANION_DOWNLOAD_URL = 'https://github.com/groove1027/ytdlp-companion/releases/latest';
 
-// [FIX #837] Windows 빌드 존재 여부 — v1.0.0 릴리즈에 .exe 업로드 완료
+// [FIX #837] Windows 빌드 존재 여부
 export const COMPANION_WINDOWS_AVAILABLE = true;
 
 /** 현재 OS 이름 반환 */

@@ -240,6 +240,9 @@ pub async fn start_server(_app: tauri::AppHandle) -> Result<(), Box<dyn std::err
         "http://127.0.0.1:5177".parse::<axum::http::HeaderValue>().unwrap(),
         "http://127.0.0.1:3000".parse::<axum::http::HeaderValue>().unwrap(),
         "https://all-in-one-production.pages.dev".parse::<axum::http::HeaderValue>().unwrap(),
+        // Tauri WebView 오리진 — 컴패니언 자체 UI에서 health 엔드포인트 접근용
+        "tauri://localhost".parse::<axum::http::HeaderValue>().unwrap(),
+        "https://tauri.localhost".parse::<axum::http::HeaderValue>().unwrap(),
     ];
     let cors = CorsLayer::new()
         .allow_origin(allowed_origins.to_vec())
