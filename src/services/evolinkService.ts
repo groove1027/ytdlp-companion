@@ -1484,12 +1484,12 @@ export const evolinkVideoAnalysisStream = async (
     systemPrompt: string,
     userPrompt: string,
     onChunk: (text: string, accumulated: string) => void,
-    options: { temperature?: number; maxOutputTokens?: number; signal?: AbortSignal } = {}
+    options: { temperature?: number; maxOutputTokens?: number; signal?: AbortSignal; timeoutMs?: number } = {}
 ): Promise<string> => {
     const apiKey = getEvolinkKey();
     if (!apiKey) throw new Error('Evolink API 키가 설정되지 않았습니다.');
 
-    const { temperature = 0.5, maxOutputTokens = 40000, signal } = options;
+    const { temperature = 0.5, maxOutputTokens = 40000, signal, timeoutMs } = options;
 
     // [FIX #189] 다중 영상 지원 — 단일/배열 모두 처리
     const videoUris = Array.isArray(videoUri) ? videoUri : [videoUri];
@@ -1522,12 +1522,10 @@ export const evolinkVideoAnalysisStream = async (
 
     logger.info('[Evolink Video] v1beta 비디오 분석 스트리밍 시작', { videoCount: videoUris.length, videoUri: videoUris[0].slice(0, 80), mimeType: mimeTypes[0] });
 
-    // [FIX] 65초 선제 타임아웃
+    // [FIX] 65초 선제 타임아웃 (기본값)
     // 배경: 브라우저가 유휴 TCP 연결을 ~73초에 강제 종료 → "Failed to fetch" 발생
-    // 100초 타임아웃으로는 73초 브라우저 킬을 제어할 수 없으므로,
-    // 65초에 선제 타임아웃 → 우리 retry 로직이 새 TCP 연결로 재시도
-    // 재시도 시 Evolink 서버가 YouTube 영상을 캐시하고 있어 응답이 빨라짐
-    const VIDEO_FETCH_TIMEOUT_MS = 65_000;
+    // caller가 timeoutMs를 지정하면 해당 값 사용 (자료영상 분석 등 롱폼은 180초 필요)
+    const VIDEO_FETCH_TIMEOUT_MS = timeoutMs || 65_000;
 
     // [FIX] 429 + 네트워크 에러 재시도 — SSE 스트리밍은 읽기 전용이므로 안전
     // 재시도 1회(총 2회 시도): 65s × 2 + 백오프 ≈ 최대 135초 후 폴백

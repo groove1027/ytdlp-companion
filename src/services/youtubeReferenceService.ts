@@ -94,8 +94,9 @@ async function searchYouTubeVideos(query: string, maxResults = MAX_SEARCH_RESULT
   if (!apiKey) { logger.warn('[VideoRef] YouTube API 키 없음'); return []; }
   if (!trackQuota(100)) { logger.warn('[VideoRef] YouTube 쿼터 초과'); return []; }
 
-  const lang = (navigator.language || 'ko-KR').split('-');
-  const url = `${YOUTUBE_API_BASE}/search?part=snippet&q=${encodeURIComponent(query)}&type=video&maxResults=${maxResults}&relevanceLanguage=${lang[0] || 'ko'}&regionCode=${(lang[1] || 'KR').toUpperCase()}&key=${apiKey}`;
+  // 영어 영상 검색 (해외 뉴스/다큐 B-roll용 — 현장 영상, 항공샷 등 자료영상 소스 풍부)
+  // videoDuration=medium → 4~20분 롱폼 우선
+  const url = `${YOUTUBE_API_BASE}/search?part=snippet&q=${encodeURIComponent(query)}&type=video&maxResults=${maxResults}&relevanceLanguage=en&videoDuration=medium&key=${apiKey}`;
 
   try {
     const res = await monitoredFetch(url, {}, 15000);
@@ -268,107 +269,166 @@ async function fetchTimedCaptions(videoId: string): Promise<TimedCue[]> {
   return [];
 }
 
-// ─── Phase 5: Gemini 영상 직접 분석 + Scene Detection 컷 스냅 ───
-async function matchVideoToSceneWithGemini(
+// ─── Phase 5: 하이브리드 매칭 — 영상 길이에 따라 전략 분기 ───
+// 5분 이하: Gemini 영상 직접 분석 (fileUri)
+// 5분 초과: Scene Detection 컷 + 자막 텍스트 AI 매칭 (Flash Lite, 빠름)
+const GEMINI_VIDEO_MAX_DURATION_SEC = 300; // 5분
+
+async function matchVideoToScene(
   videoId: string,
   sceneText: string,
   cutPoints: SceneCut[],
-  captionText: string,
+  cues: TimedCue[],
+  videoDurationSec: number,
   signal?: AbortSignal,
 ): Promise<{ startSec: number; endSec: number; matchScore: number; segmentText: string }> {
   if (!getEvolinkKey()) {
     return { startSec: 0, endSec: 30, matchScore: 0.3, segmentText: '(Evolink 키 없음)' };
   }
 
-  // 컷 포인트를 인덱스+초값으로 제시 (Gemini가 인덱스로 선택)
   const limitedCuts = cutPoints.slice(0, 50);
-  const cutList = limitedCuts.length > 0
-    ? limitedCuts.map((c, i) => `[${i}] ${c.timeSec.toFixed(1)}s (${formatTime(c.timeSec)})`).join('\n')
-    : '';
+  const hasCuts = limitedCuts.length > 0;
 
-  // 자막은 sceneText와 관련된 구간만 추출 (앞 500자 편향 방지)
-  const captionSummary = captionText ? `\n\n[자막 전체 (타임코드 포함)]\n${captionText.slice(0, 1500)}` : '';
+  // ─── 전략 분기 ───
+  if (videoDurationSec <= GEMINI_VIDEO_MAX_DURATION_SEC) {
+    // 짧은 영상: Gemini 영상 직접 분석
+    return matchWithGeminiVideo(videoId, sceneText, limitedCuts, cues, signal);
+  } else {
+    // 롱폼 영상: 컷 + 자막 텍스트 매칭 (Flash Lite)
+    logger.info('[VideoRef] 롱폼 → 컷+자막 하이브리드 매칭', `${Math.round(videoDurationSec)}초, ${limitedCuts.length}컷`);
+    return matchWithCutsAndCaptions(sceneText, limitedCuts, cues, videoDurationSec);
+  }
+}
 
-  const youtubeUrl = `https://www.youtube.com/watch?v=${videoId}`;
+// ─── 짧은 영상: Gemini 영상 직접 분석 ───
+async function matchWithGeminiVideo(
+  videoId: string,
+  sceneText: string,
+  limitedCuts: SceneCut[],
+  cues: TimedCue[],
+  signal?: AbortSignal,
+): Promise<{ startSec: number; endSec: number; matchScore: number; segmentText: string }> {
+  const cutList = limitedCuts.map((c, i) => `[${i}] ${c.timeSec.toFixed(1)}s (${formatTime(c.timeSec)})`).join('\n');
+  const captionSummary = cues.length > 0 ? `\n\n[자막]\n${cues.map(c => `${formatTime(c.start)}: ${c.text}`).join('\n').slice(0, 1500)}` : '';
   const hasCuts = limitedCuts.length > 0;
 
   try {
-    logger.info('[VideoRef] Gemini 영상 분석 시작', videoId);
-
+    logger.info('[VideoRef] Gemini 영상 직접 분석 (짧은 영상)', videoId);
     const result = await evolinkVideoAnalysisStream(
-      youtubeUrl,
+      `https://www.youtube.com/watch?v=${videoId}`,
       'video/mp4',
-      '당신은 영상 편집 전문가입니다. YouTube 영상을 직접 분석하여 대본과 가장 관련된 구간을 정밀하게 찾아줍니다. 반드시 JSON만 반환합니다.',
+      '영상 편집 전문가. YouTube 영상을 직접 분석하여 대본과 가장 관련된 구간을 찾아줘. JSON만 반환.',
       [
-        `이 YouTube 영상을 직접 보고, 아래 대본 장면과 가장 관련된 구간을 찾아줘.`,
-        `시각적 내용(화면에 보이는 것) + 음성/자막을 모두 고려하세요.`,
-        '',
-        `[대본 장면]`,
-        sceneText.slice(0, 400),
-        '',
-        hasCuts ? [
-          `[Scene Detection 컷 포인트 — 실제 장면 전환 지점, 총 ${limitedCuts.length}개]`,
-          cutList,
-          '',
-          `규칙:`,
-          `1. startCutIndex: 관련 구간이 시작되는 컷 인덱스 번호 (위 [N]에서 N)`,
-          `2. endCutIndex: 관련 구간이 끝나는 컷 인덱스 번호`,
-          `3. 컷 포인트가 없는 구간이면 startSec/endSec를 직접 초 단위로 지정`,
-        ].join('\n') : '컷 포인트 없음 — startSec/endSec를 직접 초 단위로 지정하세요.',
+        `[대본] ${sceneText.slice(0, 400)}`,
+        hasCuts ? `\n[컷 포인트 ${limitedCuts.length}개]\n${cutList}` : '',
         captionSummary,
-        '',
-        `4. 대본 내용과 영상 내용이 실제로 일치하는 구간만 선택`,
-        `5. 일치하는 구간이 없으면 score를 0.2 이하로 설정`,
-        '',
         hasCuts
-          ? `반환: {"startCutIndex": N, "endCutIndex": M, "score": 0~1, "reason": "설명"}`
-          : `반환: {"startSec": 초, "endSec": 초, "score": 0~1, "reason": "설명"}`,
+          ? `\n반환: {"startCutIndex": N, "endCutIndex": M, "score": 0~1, "reason": "설명"}`
+          : `\n반환: {"startSec": 초, "endSec": 초, "score": 0~1, "reason": "설명"}`,
       ].join('\n'),
       () => {},
-      { temperature: 0.1, maxOutputTokens: 500 }, // signal 미전달 — 내부 65s×2 재시도 허용
+      { temperature: 0.1, maxOutputTokens: 500, timeoutMs: 180_000 },
     );
+    return parseMatchResult(result, limitedCuts);
+  } catch (e) {
+    logger.warn('[VideoRef] Gemini 영상 분석 실패 → 컷+자막 폴백', e instanceof Error ? e.message : '');
+    return matchWithCutsAndCaptions(sceneText, limitedCuts, cues, 0);
+  }
+}
 
-    logger.info('[VideoRef] Gemini 응답 원문', (result || '(빈)').replace(/\n/g, '⏎').slice(0, 500));
-    const parsed = extractJsonObject(result);
+// ─── 롱폼 영상: 컷 + 자막 텍스트 AI 매칭 (Flash Lite, 빠름) ───
+async function matchWithCutsAndCaptions(
+  sceneText: string,
+  limitedCuts: SceneCut[],
+  cues: TimedCue[],
+  videoDurationSec: number,
+): Promise<{ startSec: number; endSec: number; matchScore: number; segmentText: string }> {
+  // 컷 구간별 자막 텍스트 매핑 — 각 컷 사이 자막을 묶어서 "구간 요약" 생성
+  const segments: { idx: number; startSec: number; endSec: number; text: string }[] = [];
+
+  if (limitedCuts.length > 0 && cues.length > 0) {
+    for (let i = 0; i < limitedCuts.length; i++) {
+      const segStart = limitedCuts[i].timeSec;
+      const segEnd = i + 1 < limitedCuts.length ? limitedCuts[i + 1].timeSec : videoDurationSec || segStart + 30;
+      const segCues = cues.filter(c => c.start >= segStart && c.start < segEnd);
+      const segText = segCues.map(c => c.text).join(' ').slice(0, 120);
+      if (segText.length > 5) {
+        segments.push({ idx: i, startSec: segStart, endSec: segEnd, text: segText });
+      }
+    }
+  } else if (cues.length > 0) {
+    // 컷 없으면 30초 단위 청크
+    let chunkStart = cues[0].start;
+    let chunkTexts: string[] = [];
+    let idx = 0;
+    for (const cue of cues) {
+      if (cue.start - chunkStart > 30 && chunkTexts.length > 0) {
+        segments.push({ idx: idx++, startSec: chunkStart, endSec: cue.start, text: chunkTexts.join(' ').slice(0, 120) });
+        chunkStart = cue.start;
+        chunkTexts = [];
+      }
+      chunkTexts.push(cue.text);
+    }
+    if (chunkTexts.length > 0) {
+      const last = cues[cues.length - 1];
+      segments.push({ idx: idx, startSec: chunkStart, endSec: last.start + last.dur, text: chunkTexts.join(' ').slice(0, 120) });
+    }
+  }
+
+  if (segments.length === 0) {
+    return { startSec: 0, endSec: 30, matchScore: 0.2, segmentText: '(자막+컷 데이터 없음)' };
+  }
+
+  const segList = segments.slice(0, 40).map(s =>
+    `[${s.idx}] ${formatTime(s.startSec)}~${formatTime(s.endSec)}: ${s.text}`
+  ).join('\n');
+
+  try {
+    logger.info('[VideoRef] 컷+자막 하이브리드 매칭', `${segments.length}개 구간`);
+    const response = await evolinkChat([
+      { role: 'system', content: 'Match script to video segments using captions and cut points. Return ONLY JSON.' },
+      { role: 'user', content: [
+        `Find the segment most related to the script scene below.`,
+        ``,
+        `[Script] ${sceneText.slice(0, 400)}`,
+        ``,
+        `[Video Segments with captions — ${segments.length} segments]`,
+        segList,
+        ``,
+        `Return: {"segmentIndex": N, "score": 0~1, "reason": "explanation"}`,
+        `segmentIndex = segment number [N] above. score = relevance 0~1.`,
+      ].join('\n') },
+    ], {
+      temperature: 0.2, maxTokens: 300, timeoutMs: 15000,
+      responseFormat: { type: 'json_object' },
+      model: 'gemini-3.1-flash-lite-preview',
+    });
+
+    const raw = response.choices?.[0]?.message?.content || '';
+    const parsed = extractJsonObject(raw);
     if (!parsed) {
-      logger.warn('[VideoRef] Gemini 응답 파싱 실패', `원문: "${result.slice(0, 200)}"`);
+      logger.warn('[VideoRef] 하이브리드 매칭 파싱 실패');
       return { startSec: 0, endSec: 30, matchScore: 0.3, segmentText: '(파싱 실패)' };
     }
 
-    let rawStart: number;
-    let rawEnd: number;
-
-    // 컷 인덱스 기반 응답 처리
-    const rawSi = Number(parsed.startCutIndex);
-    const rawEi = Number(parsed.endCutIndex);
-    if (hasCuts && Number.isFinite(rawSi) && rawSi >= 0) {
-      const si = Math.max(0, Math.min(Math.floor(rawSi), limitedCuts.length - 1));
-      const ei = Number.isFinite(rawEi) && rawEi >= 0
-        ? Math.max(si, Math.min(Math.floor(rawEi), limitedCuts.length - 1))
-        : Math.min(si + 1, limitedCuts.length - 1);
-      rawStart = limitedCuts[si].timeSec;
-      rawEnd = ei > si ? limitedCuts[ei].timeSec : rawStart + 30;
-    } else {
-      rawStart = Number(parsed.startSec) || 0;
-      rawEnd = Number(parsed.endSec) || rawStart + 30;
+    const segIdx = Number(parsed.segmentIndex);
+    if (!Number.isFinite(segIdx) || segIdx < 0 || segIdx >= segments.length) {
+      return { startSec: 0, endSec: 30, matchScore: 0.3, segmentText: '(인덱스 범위 초과)' };
     }
 
-    // 유효성 검증
-    if (!Number.isFinite(rawStart) || rawStart < 0) rawStart = 0;
-    if (!Number.isFinite(rawEnd) || rawEnd <= rawStart) rawEnd = rawStart + 30;
-
+    const matched = segments[Math.floor(segIdx)];
     const score = Math.min(1, Math.max(0, Number(parsed.score) || 0.5));
-    const reason = String(parsed.reason || '');
+    const reason = String(parsed.reason || matched.text);
 
-    // Scene Detection 컷 포인트에 스냅
-    const snappedStart = cutPoints.length > 0
-      ? mergeWithAiTimecodes([rawStart], cutPoints)[0]
-      : rawStart;
-    const snappedEnd = cutPoints.length > 0
-      ? mergeWithAiTimecodes([rawEnd], cutPoints)[0]
-      : rawEnd;
+    // Scene Detection 컷에 스냅
+    const snappedStart = limitedCuts.length > 0
+      ? mergeWithAiTimecodes([matched.startSec], limitedCuts.map(c => ({ timeSec: c.timeSec, score: c.score })))[0]
+      : matched.startSec;
+    const snappedEnd = limitedCuts.length > 0
+      ? mergeWithAiTimecodes([matched.endSec], limitedCuts.map(c => ({ timeSec: c.timeSec, score: c.score })))[0]
+      : matched.endSec;
 
-    logger.info('[VideoRef] Gemini 매칭 완료',
+    logger.info('[VideoRef] 하이브리드 매칭 완료',
       `${formatTime(snappedStart)}~${formatTime(snappedEnd)} score=${score.toFixed(2)} "${reason.slice(0, 50)}"`);
 
     return {
@@ -378,9 +438,59 @@ async function matchVideoToSceneWithGemini(
       segmentText: reason.slice(0, 150),
     };
   } catch (e) {
-    logger.warn('[VideoRef] Gemini 영상 분석 실패', e instanceof Error ? e.message : '');
-    return { startSec: 0, endSec: 30, matchScore: 0.3, segmentText: '(분석 실패)' };
+    logger.warn('[VideoRef] 하이브리드 매칭 실패', e instanceof Error ? e.message : '');
+    return { startSec: 0, endSec: 30, matchScore: 0.3, segmentText: '(매칭 실패)' };
   }
+}
+
+// ─── Gemini 응답 파싱 공통 ───
+function parseMatchResult(
+  result: string,
+  limitedCuts: SceneCut[],
+): { startSec: number; endSec: number; matchScore: number; segmentText: string } {
+  logger.info('[VideoRef] Gemini 응답', (result || '(빈)').replace(/\n/g, '⏎').slice(0, 500));
+  const parsed = extractJsonObject(result);
+  if (!parsed) {
+    logger.warn('[VideoRef] Gemini 응답 파싱 실패');
+    return { startSec: 0, endSec: 30, matchScore: 0.3, segmentText: '(파싱 실패)' };
+  }
+
+  let rawStart: number;
+  let rawEnd: number;
+  const hasCuts = limitedCuts.length > 0;
+
+  const rawSi = Number(parsed.startCutIndex);
+  const rawEi = Number(parsed.endCutIndex);
+  if (hasCuts && Number.isFinite(rawSi) && rawSi >= 0) {
+    const si = Math.max(0, Math.min(Math.floor(rawSi), limitedCuts.length - 1));
+    const ei = Number.isFinite(rawEi) && rawEi >= 0
+      ? Math.max(si, Math.min(Math.floor(rawEi), limitedCuts.length - 1))
+      : Math.min(si + 1, limitedCuts.length - 1);
+    rawStart = limitedCuts[si].timeSec;
+    rawEnd = ei > si ? limitedCuts[ei].timeSec : rawStart + 30;
+  } else {
+    rawStart = Number(parsed.startSec) || 0;
+    rawEnd = Number(parsed.endSec) || rawStart + 30;
+  }
+
+  if (!Number.isFinite(rawStart) || rawStart < 0) rawStart = 0;
+  if (!Number.isFinite(rawEnd) || rawEnd <= rawStart) rawEnd = rawStart + 30;
+
+  const score = Math.min(1, Math.max(0, Number(parsed.score) || 0.5));
+  const reason = String(parsed.reason || '');
+
+  const snappedStart = hasCuts ? mergeWithAiTimecodes([rawStart], limitedCuts)[0] : rawStart;
+  const snappedEnd = hasCuts ? mergeWithAiTimecodes([rawEnd], limitedCuts)[0] : rawEnd;
+
+  logger.info('[VideoRef] 매칭 완료',
+    `${formatTime(snappedStart)}~${formatTime(snappedEnd)} score=${score.toFixed(2)}`);
+
+  return {
+    startSec: Math.floor(snappedStart),
+    endSec: Math.floor(Math.max(snappedEnd, snappedStart + 1)),
+    matchScore: score,
+    segmentText: reason.slice(0, 150),
+  };
 }
 
 // ─── 자막 기반 AI 매칭 (폴백 — 컴패니언 없을 때) ───
@@ -443,8 +553,8 @@ async function buildVideoSearchQuery(scene: Scene, globalContext?: string): Prom
   if (getEvolinkKey() && sceneText.length > 10) {
     try {
       const res = await evolinkChat([
-        { role: 'system', content: 'YouTube 자료영상 검색 키워드를 생성합니다. JSON만 반환.' },
-        { role: 'user', content: `아래 대본에 맞는 YouTube 검색 키워드를 1개 생성해줘.\n목적: 뉴스, 다큐멘터리, 강의 등 자료영상 검색\n규칙: 핵심 인물+사건/장소를 3~6단어로 요약\n\n[대본]\n${sceneText}\n\n반환: {"query":"키워드"}` },
+        { role: 'system', content: 'Generate English YouTube search keywords for finding B-roll footage. Return ONLY JSON.' },
+        { role: 'user', content: `Generate ONE English YouTube search query for this script scene.\nPurpose: Find news footage, documentaries, or B-roll clips as reference material.\nRules: 3-6 English words covering key person + event/topic. Example: "Trump Iran nuclear deal sanctions"\n\n[Script (Korean)]\n${sceneText}\n\nReturn: {"query":"English keywords"}` },
       ], {
         temperature: 0.2, maxTokens: 100, timeoutMs: 8000,
         responseFormat: { type: 'json_object' },
@@ -457,13 +567,14 @@ async function buildVideoSearchQuery(scene: Scene, globalContext?: string): Prom
     } catch { /* fall through */ }
   }
 
+  // 규칙 기반 폴백 — 한국어 키워드 그대로 (YouTube는 다국어 검색 지원)
   const parts: string[] = [];
   if (scene.entityName) parts.push(scene.entityName.slice(0, 15));
   if (scene.sceneLocation) parts.push(scene.sceneLocation.slice(0, 15));
   const firstSentence = sceneText.split(/[.!?。！？]/)[0] || '';
   if (firstSentence.length > 5) parts.push(firstSentence.slice(0, 25));
   if (parts.length < 2 && globalContext) parts.push(globalContext.slice(0, 15));
-  return parts.join(' ').slice(0, 50) || '뉴스 자료영상';
+  return parts.join(' ').slice(0, 50) || 'news footage';
 }
 
 // ─── 메인: 장면별 자료영상 검색 (v2 — 컴패니언 + Scene Detection + Gemini) ───
@@ -516,10 +627,10 @@ export async function searchSceneReferenceVideos(
       const cutPoints = await runSceneDetection(blob, signal);
       if (signal?.aborted) return [];
 
-      // Phase 5: Gemini 영상 직접 분석 + 컷 스냅
-      const captionText = cues.map(c => `${formatTime(c.start)}: ${c.text}`).join('\n');
-      const match = await matchVideoToSceneWithGemini(
-        candidate.videoId, sceneText, cutPoints, captionText, signal,
+      // Phase 5: 하이브리드 매칭 (짧은 영상=Gemini 직접, 롱폼=컷+자막)
+      const videoDur = durations.get(candidate.videoId) || 0;
+      const match = await matchVideoToScene(
+        candidate.videoId, sceneText, cutPoints, cues, videoDur, signal,
       );
 
       // v2 매칭 성공 (score > 0.3)이면 채택

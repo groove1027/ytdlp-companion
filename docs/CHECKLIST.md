@@ -8,6 +8,19 @@
 
 ## 🟢 완료된 작업
 
+### [2026-04-01] 자료영상(YouTube) 레퍼런스 v2 — 컴패니언 + Scene Detection + Gemini + 영어 검색
+- [x] youtubeReferenceService.ts v2: 컴패니언 yt-dlp 1080p → Scene Detection → 하이브리드 매칭
+  - 5분 이하: Gemini 영상 직접 분석 (fileUri)
+  - 5분 초과: 컷+자막 텍스트 AI 매칭 (Flash Lite, 빠름, 10분+ 롱폼 지원)
+  - 영어 검색 전환 (relevanceLanguage=en, videoDuration=medium)
+  - 컷 인덱스 기반 프롬프트 + 불완전 JSON 복구
+  - MIME/size 검증 + AbortSignal.any + 상위 2후보 자동 시도
+- [x] evolinkService.ts: timeoutMs 옵션 추가 (자료영상용 180초)
+- [x] companion server.rs: detect_services 60초 지연 → health 즉시 응답 (0.4ms)
+- [x] 프론트엔드: VideoReferencePanel, EditRoomTab 배지, imageVideoStore, projectStore, useAutoSave
+- [x] Codex 5.4 MCP 리뷰 20회+ 완료
+- [x] Playwright E2E: 10분+ 롱폼 영상 다운로드+분석+매칭 실제 작동 확인
+
 ### [2026-03-31] #935 컴패니언 버전 체크 배너 자동 업데이트 안내
 - [x] constants.ts: compareVersions() semver 비교 유틸 추가 (v/companion-v 접두어 자동 제거)
 - [x] constants.ts: GitHub release info 캐시 개선 (6시간 TTL, rate limit 대응, 릴리스 노트 캐시)
