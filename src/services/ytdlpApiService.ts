@@ -74,6 +74,10 @@ async function _doCompanionCheck(now: number): Promise<boolean> {
       _companionAvailable = true;
       _companionCheckTime = now;
       _companionVersion = data?.version || null;
+      // [FIX #935] 마지막 감지된 버전을 localStorage에 저장 — 앱 꺼져있을 때도 업데이트 배너 표시용
+      if (_companionVersion) {
+        try { localStorage.setItem('companion_last_detected_version', _companionVersion); } catch {}
+      }
       logger.info(`[Companion] 로컬 헬퍼 감지됨 (v${data?.version || '?'}, yt-dlp ${data?.ytdlpVersion || '?'})`);
       return true;
     }

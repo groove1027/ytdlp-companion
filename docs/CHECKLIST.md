@@ -8,6 +8,19 @@
 
 ## 🟢 완료된 작업
 
+### [2026-03-31] #935 컴패니언 버전 체크 배너 자동 업데이트 안내
+- [x] constants.ts: compareVersions() semver 비교 유틸 추가 (v/companion-v 접두어 자동 제거)
+- [x] constants.ts: GitHub release info 캐시 개선 (6시간 TTL, rate limit 대응, 릴리스 노트 캐시)
+- [x] CompanionBanner.tsx: semver 비교로 교체 (1.2.0 vs 1.10.0 정확 처리)
+- [x] CompanionBanner.tsx: 컴패니언 미감지 + 이전 감지 이력 있으면 오프라인 업데이트 배너 표시
+- [x] CompanionBanner.tsx: 버전별 dismiss (새 버전 나오면 다시 표시)
+- [x] CompanionBanner.tsx: handleLaunch 후 구버전이면 updateAvailable 유지
+- [x] ytdlpApiService.ts: health check 성공 시 lastDetectedVersion localStorage 저장
+- [x] Mac/Windows 모두 지원 (OS 감지 + 직접 다운로드 URL)
+- [x] Codex 5.4 MCP 리뷰 10회 완료 — 3건 유효 지적 모두 수정
+- [x] tsc --noEmit + vite build 통과
+- [x] Playwright E2E: 배너 표시 + semver 비교 + dismiss 동작 확인 (스크린샷 5장)
+
 ### [2026-03-31] #891 #892 CapCut 멀티소스 영상 내보내기 수정
 - [x] 원인: generateCapCutDraftJson이 단일 videoFileName/materialVideoId만 생성 → 모든 세그먼트가 1개 영상 참조
 - [x] SceneTiming에 sourceIndex 추가 + extractTimings에서 [소스 N] 파싱

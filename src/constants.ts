@@ -15,32 +15,73 @@ export const getCompanionOsLabel = (): string => {
   return '';
 };
 
-/** [FIX #907] OS 감지 → DMG/EXE 바로 다운로드 URL + 최신 버전 캐시 */
+/**
+ * [FIX #935] Semver 비교 유틸 — "v" / "companion-v" 접두어 자동 제거
+ * @returns -1 (a < b), 0 (a === b), 1 (a > b)
+ */
+export function compareVersions(a: string, b: string): -1 | 0 | 1 {
+  const normalize = (v: string) => v.replace(/^(companion-)?v/, '');
+  const pa = normalize(a).split('.').map(Number);
+  const pb = normalize(b).split('.').map(Number);
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const na = pa[i] || 0;
+    const nb = pb[i] || 0;
+    if (na < nb) return -1;
+    if (na > nb) return 1;
+  }
+  return 0;
+}
+
+/** [FIX #907] OS 감지 → DMG/EXE 바로 다운로드 URL + 최신 버전 + 릴리스 노트 캐시 */
 let _cachedDirectUrl: string | null = null;
 let _cachedLatestVersion: string | null = null;
-if (typeof window !== 'undefined') {
+let _cachedReleaseNote: string | null = null;
+let _releaseFetchedAt = 0;
+const RELEASE_CACHE_TTL = 6 * 3600_000; // 6시간
+
+function _fetchReleaseInfo() {
+  if (typeof window === 'undefined') return;
+  const now = Date.now();
+  if (_releaseFetchedAt && (now - _releaseFetchedAt) < RELEASE_CACHE_TTL) return;
   const os = getCompanionOsLabel();
-  if (os === 'Windows' || os === 'macOS') {
-    fetch('https://api.github.com/repos/groove1027/ytdlp-companion/releases/latest')
-      .then(r => r.ok ? r.json() : null)
-      .then(data => {
-        if (!data) return;
-        // 최신 버전 캐시 (tag_name: "companion-v1.1.0" → "1.1.0")
-        const tag = (data.tag_name || '') as string;
-        _cachedLatestVersion = tag.replace(/^companion-v/, '');
-        const assets: Array<{ name: string; browser_download_url: string }> = data.assets || [];
-        const target = os === 'Windows'
-          ? assets.find(a => a.name.includes('setup') && a.name.endsWith('.exe'))
-          : assets.find(a => a.name.includes('universal') && a.name.endsWith('.dmg'))
-            || assets.find(a => a.name.endsWith('.dmg'));
-        if (target) _cachedDirectUrl = target.browser_download_url;
-      })
-      .catch(() => {});
-  }
+  if (os !== 'Windows' && os !== 'macOS') return;
+
+  fetch('https://api.github.com/repos/groove1027/ytdlp-companion/releases/latest')
+    .then(r => {
+      if (r.status === 403 || r.status === 429) return null; // rate limit → stale cache 유지
+      return r.ok ? r.json() : null;
+    })
+    .then(data => {
+      if (!data) return;
+      _releaseFetchedAt = Date.now();
+      // 최신 버전 캐시 (tag_name: "companion-v1.1.0" → "1.1.0")
+      const tag = (data.tag_name || '') as string;
+      _cachedLatestVersion = tag.replace(/^companion-v/, '');
+      // 릴리스 노트 첫 줄 캐시 (마크다운 제거, 100자 제한)
+      const body = (data.body || '') as string;
+      const firstLine = body.split('\n').find(l => l.trim() && !l.startsWith('#') && !l.startsWith('---'));
+      _cachedReleaseNote = firstLine ? firstLine.replace(/[*_`#>]/g, '').trim().slice(0, 100) : null;
+      const assets: Array<{ name: string; browser_download_url: string }> = data.assets || [];
+      const target = os === 'Windows'
+        ? assets.find(a => a.name.toLowerCase().includes('setup') && a.name.toLowerCase().endsWith('.exe'))
+        : assets.find(a => a.name.toLowerCase().includes('universal') && a.name.toLowerCase().endsWith('.dmg'))
+          || assets.find(a => a.name.toLowerCase().endsWith('.dmg'));
+      if (target) _cachedDirectUrl = target.browser_download_url;
+    })
+    .catch(() => {});
 }
+// 앱 로드 시 즉시 fetch
+_fetchReleaseInfo();
 
 /** GitHub Releases 최신 버전 반환 (프리페치 캐시) */
 export const getCompanionLatestVersion = (): string | null => _cachedLatestVersion;
+
+/** GitHub Releases 릴리스 노트 첫 줄 반환 */
+export const getCompanionReleaseNote = (): string | null => _cachedReleaseNote;
+
+/** 릴리스 정보 수동 리프레시 (TTL 경과 시에만 실제 fetch) */
+export const refreshCompanionRelease = (): void => { _fetchReleaseInfo(); };
 
 /** OS별 컴패니언 다운로드 URL 반환 — 직접 다운로드 URL 우선, 없으면 릴리스 페이지 */
 export const getCompanionDownloadUrl = (): string => {
