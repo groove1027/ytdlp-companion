@@ -2894,6 +2894,30 @@ function extractTimings(scenes: VideoSceneRow[], preset?: VideoAnalysisPreset): 
     if (endSec <= startSec) {
       endSec = startSec + Math.max(0.1, dur);
     }
+
+    // [FIX] 소스 타임코드 중복/겹침 방지 — 같은 소스의 최근 장면과 동일 범위면 자동 보정
+    // 다중 소스: 다른 소스 영상은 타임코드가 같아도 정상 (각자 00:00부터 시작)
+    // 교차 소스 패턴(소스1→소스2→소스1)도 처리: "같은 소스의 마지막 장면"과 비교
+    if (i > 0) {
+      let lastSameSource: SceneTiming | null = null;
+      for (let pi = i - 1; pi >= 0; pi--) {
+        if (result[pi].sourceIndex === sourceIndex) { lastSameSource = result[pi]; break; }
+      }
+      if (lastSameSource) {
+        // 비단조적 참조(이전 구간 의도적 재사용)는 보정 스킵
+        const isNonMonotonic = startSec < lastSameSource.startSec;
+        const startOverlap = Math.abs(startSec - lastSameSource.startSec) < 0.3;
+        const endOverlap = Math.abs(endSec - lastSameSource.endSec) < 0.3;
+        if (!isNonMonotonic && startOverlap && endOverlap) {
+          startSec = lastSameSource.endSec;
+          endSec = startSec + dur;
+        } else if (!isNonMonotonic && startSec < lastSameSource.endSec - 0.1 && startSec >= lastSameSource.startSec) {
+          startSec = lastSameSource.endSec;
+          if (endSec <= startSec) endSec = startSec + dur;
+        }
+      }
+    }
+
     const clipDur = endSec - startSec;
     const mainText = preset === 'snack'
       ? (s.dialogue || s.audioContent || s.sceneDesc)
@@ -3561,6 +3585,38 @@ export function generateCapCutDraftJson(params: {
     trackRenderIndex: 12000,
   }));
 
+  // [FIX] 소스 영상 오디오 material + segment 생성 — CapCut에서 원본 영상 소리가 재생되도록
+  // 모든 장면에 나레이션이 있으면 소스 오디오 불필요 (나레이션이 전체 덮음)
+  // 일부만 나레이션이 있거나 나레이션 없으면 소스 오디오 포함
+  const narrationCoversAll = narrationLines.length >= timings.length && narrationLines.every(l => !!l.audioFileName);
+  const sourceAudioMaterials = narrationCoversAll ? [] : sourceVideoMaterials.map(svm => ({
+    id: uuid(),
+    materialId: svm.materialId,
+    fileName: svm.fileName,
+    sourceIndex: svm.sourceIndex,
+  }));
+  const sourceAudioSegments = timings.map((t, ti) => {
+    const srcAudio = sourceAudioMaterials.find(sa => sa.sourceIndex === t.sourceIndex) || sourceAudioMaterials[0];
+    if (!srcAudio) return null;
+    // 이 장면에 나레이션 오디오가 있으면 소스 오디오 스킵 (겹침 방지)
+    if (narrationLines[ti]?.audioFileName) return null;
+    return buildCapCutSegmentShell({
+      clip: { alpha: 1.0, flip: { horizontal: false, vertical: false }, rotation: 0.0, scale: { x: 1.0, y: 1.0 }, transform: { x: 0.0, y: 0.0 } },
+      commonKeyframes: emptyArr,
+      enableAdjust: false,
+      extraMaterialRefs: emptyArr,
+      materialId: srcAudio.id,
+      renderIndex: 0,
+      sourceDurationUs: toUs(t.durationSec),
+      sourceStartUs: toUs(t.startSec),
+      speed: nsTimings[ti]?.autoSpeedFactor ?? 1.0,
+      targetDurationUs: toUs(t.durationSec),
+      targetStartUs: toUs(t.tlStartSec),
+      trackRenderIndex: 0,
+    });
+  }).filter(Boolean) as Array<Record<string, unknown>>;
+  const trackSourceAudioId = uuid();
+
   const audioMaterialsWithStart = narrationLines.flatMap((line, lineIndex) => {
     const audioFileName = line.audioFileName ? sanitizeFileName(line.audioFileName) : '';
     if (!audioFileName) return [];
@@ -3683,7 +3739,73 @@ export function generateCapCutDraftJson(params: {
     lyrics_effects: emptyArr,
     materials: {
       ...buildCapCutEmptyMaterialBuckets(),
-      audios: audioMaterials.map((material) => ({
+      audios: [
+        // [FIX] 소스 영상 오디오 material — 원본 영상에서 추출된 오디오
+        ...sourceAudioMaterials.map((sa) => ({
+        ai_music_enter_from: '',
+        ai_music_generate_scene: 0,
+        ai_music_type: 0,
+        aigc_history_id: '',
+        aigc_item_id: '',
+        app_id: 0,
+        category_id: '',
+        category_name: 'local',
+        check_flag: 1,
+        cloned_model_type: '',
+        copyright_limit_type: 'none',
+        duration: srcDurUs,
+        effect_id: '',
+        formula_id: '',
+        id: sa.id,
+        intensifies_path: '',
+        is_ai_clone_tone: false,
+        is_ai_clone_tone_post: false,
+        is_text_edit_overdub: false,
+        is_ugc: false,
+        local_material_id: '',
+        lyric_type: 0,
+        mock_tone_speaker: '',
+        moyin_emotion: '',
+        music_id: '',
+        name: sa.fileName,
+        path: buildCapCutContainedMaterialPath(scaffoldIds.draftFolderId, 'video', sa.fileName),
+        pgc_id: '',
+        pgc_name: '',
+        query: '',
+        request_id: '',
+        resource_id: '',
+        search_id: '',
+        similiar_music_info: { original_song_id: '', original_song_name: '' },
+        sound_separate_type: '',
+        source_from: '',
+        source_platform: 0,
+        team_id: '',
+        text_id: '',
+        third_resource_id: '',
+        tone_category_id: '',
+        tone_category_name: '',
+        tone_effect_id: '',
+        tone_effect_name: '',
+        tone_emotion_name_key: '',
+        tone_emotion_role: '',
+        tone_emotion_scale: 0.0,
+        tone_emotion_selection: '',
+        tone_emotion_style: '',
+        tone_platform: '',
+        tone_second_category_id: '',
+        tone_second_category_name: '',
+        tone_speaker: '',
+        tone_type: '',
+        tts_benefit_info: { benefit_amount: -1, benefit_log_extra: '', benefit_log_id: '', benefit_type: 'none' },
+        tts_generate_scene: '',
+        tts_task_id: '',
+        type: 'extract_music',
+        unique_id: '',
+        video_id: '',
+        wave_points: [],
+      })),
+        // 나레이션 오디오 material
+        ...audioMaterials.map((material) => ({
         ai_music_enter_from: '',
         ai_music_generate_scene: 0,
         ai_music_type: 0,
@@ -3745,7 +3867,7 @@ export function generateCapCutDraftJson(params: {
         unique_id: '',
         video_id: '',
         wave_points: [],
-      })),
+      }))],
       canvases: [buildCapCutCanvasMaterial(canvasId)],
       material_animations: [buildCapCutMaterialAnimation(uuid())],
       speeds: [{
@@ -3907,7 +4029,18 @@ export function generateCapCutDraftJson(params: {
       name: '',
       segments: videoSegments,
       type: 'video',
-    }, ...(textSegments.length > 0 ? [{
+    },
+    // [FIX] 소스 영상 오디오 트랙 — 원본 영상의 소리를 타임라인에 배치
+    ...(sourceAudioSegments.length > 0 ? [{
+      attribute: 0,
+      flag: 0,
+      id: trackSourceAudioId,
+      is_default_name: true,
+      name: '',
+      segments: sourceAudioSegments,
+      type: 'audio',
+    }] : []),
+    ...(textSegments.length > 0 ? [{
       attribute: 0,
       flag: 0,
       id: trackTextId,
@@ -3941,7 +4074,7 @@ export function generateCapCutDraftJson(params: {
     json: JSON.stringify(draft),
     keyValueJson: buildCapCutKeyValue(keyValueEntries),
     scaffoldIds,
-    trackIds: [trackVideoId, ...(textSegments.length > 0 ? [trackTextId] : []), ...(audioSegments.length > 0 ? [trackAudioId] : []), ...(fxTextSegments.length > 0 ? [trackFxTextId] : [])],
+    trackIds: [trackVideoId, ...(sourceAudioSegments.length > 0 ? [trackSourceAudioId] : []), ...(textSegments.length > 0 ? [trackTextId] : []), ...(audioSegments.length > 0 ? [trackAudioId] : []), ...(fxTextSegments.length > 0 ? [trackFxTextId] : [])],
     // upload 순서(0=primary, 1+=additional)와 일치하는 파일명 배열 반환 — ZIP 삽입 시 인덱스 매핑용
     videoFileNames: allVideoFileNames,
   };

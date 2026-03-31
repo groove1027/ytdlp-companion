@@ -328,6 +328,9 @@ export function mergeWithAiTimecodes(
   const sortedScores = sceneCuts.map(c => c.score).sort((a, b) => a - b);
   const strongCutThreshold = sortedScores[Math.floor(sortedScores.length * 0.5)] || 0;
 
+  // [FIX] 스냅 후 중복 타임코드 방지 — 이미 사용된 스냅 대상 추적
+  const usedSnapTargets = new Set<number>();
+
   return aiTimecodes.map(aiT => {
     let nearestCut = sceneCuts[0];
     let nearestDist = Math.abs(sceneCuts[0].timeSec - aiT);
@@ -340,17 +343,23 @@ export function mergeWithAiTimecodes(
       }
     }
 
+    let snapped = aiT;
     // 단계적 스냅:
     // 1) ±500ms 이내 → 무조건 스냅 (가장 가까운 실제 컷으로)
     if (nearestDist <= 0.5) {
-      return nearestCut.timeSec;
+      snapped = nearestCut.timeSec;
     }
     // 2) ±1.5초 이내 + 강한 컷 → 스냅
-    if (nearestDist <= tolerance && nearestCut.score >= strongCutThreshold) {
-      return nearestCut.timeSec;
+    else if (nearestDist <= tolerance && nearestCut.score >= strongCutThreshold) {
+      snapped = nearestCut.timeSec;
     }
-    // 3) 그 외 → AI 타임코드 유지
-    return aiT;
+
+    // [FIX] 동일 컷에 두 번 스냅하면 원래 AI 타임코드 유지 (중복 방지)
+    if (snapped !== aiT && usedSnapTargets.has(snapped)) {
+      return aiT;
+    }
+    usedSnapTargets.add(snapped);
+    return snapped;
   });
 }
 

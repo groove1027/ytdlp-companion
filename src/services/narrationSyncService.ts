@@ -162,7 +162,10 @@ export function buildNarrationSyncedTimeline(
   let sourceCursor = 0;
   let timelineCursor = 0;
 
-  const timings: NarrationSyncSceneTiming[] = scenes.map((scene, sceneIndex) => {
+  const timings: NarrationSyncSceneTiming[] = [];
+
+  for (let sceneIndex = 0; sceneIndex < scenes.length; sceneIndex++) {
+    const scene = scenes[sceneIndex];
     const rawTc = scene.timecodeSource || scene.sourceTimeline || '';
     // [FIX #664] `/` 구분자 지원
     const range = rawTc.match(/(\d+:\d+(?:\.\d+)?)\s*[~\-–—/]\s*(\d+:\d+(?:\.\d+)?)/);
@@ -186,6 +189,43 @@ export function buildNarrationSyncedTimeline(
 
     if (sourceEndSec <= sourceStartSec) {
       sourceEndSec = sourceStartSec + Math.max(0.1, parseDuration(scene.duration));
+    }
+
+    // [FIX] 소스 타임코드 중복/겹침 감지 — 같은 소스의 직전 장면과 동일 범위면 자동 보정
+    // 다중 소스: [소스 N] 태그가 다르면 다른 영상이므로 보정 스킵
+    // 교차 소스 패턴(소스1→소스2→소스1)도 처리하기 위해 "같은 소스의 마지막 장면"과 비교
+    const curSourceMatch = rawTc.match(/\[소스\s*(\d+)\]/);
+    const curSourceIdx = curSourceMatch ? parseInt(curSourceMatch[1], 10) : 0;
+    if (sceneIndex > 0) {
+      // 같은 소스의 가장 최근 장면 찾기 (인접하지 않아도)
+      let lastSameSourceTiming: NarrationSyncSceneTiming | null = null;
+      for (let pi = sceneIndex - 1; pi >= 0; pi--) {
+        const pScene = scenes[pi];
+        const pRawTc = pScene.timecodeSource || pScene.sourceTimeline || '';
+        const pMatch = pRawTc.match(/\[소스\s*(\d+)\]/);
+        const pIdx = pMatch ? parseInt(pMatch[1], 10) : 0;
+        if (pIdx === curSourceIdx) { lastSameSourceTiming = timings[pi]; break; }
+      }
+      if (lastSameSourceTiming) {
+        // 비단조적 참조(이전 구간 의도적 재사용)는 보정 스킵 — 시작점이 이전 끝보다 앞이면 의도적
+        const isNonMonotonic = sourceStartSec < lastSameSourceTiming.sourceStartSec;
+        const startOverlap = Math.abs(sourceStartSec - lastSameSourceTiming.sourceStartSec) < 0.3;
+        const endOverlap = Math.abs(sourceEndSec - lastSameSourceTiming.sourceEndSec) < 0.3;
+        // 동일 구간 반복: 이전 장면 끝부터 이어서 시작하도록 보정 (비단조적이면 스킵)
+        if (!isNonMonotonic && startOverlap && endOverlap) {
+          const dur = parseDuration(scene.duration);
+          sourceStartSec = lastSameSourceTiming.sourceEndSec;
+          sourceEndSec = sourceStartSec + dur;
+          console.warn(`[NarrationSync] ⚠️ 장면 ${sceneIndex + 1}: 동일 소스 구간 반복 감지 → ${sourceStartSec.toFixed(1)}~${sourceEndSec.toFixed(1)}로 자동 보정`);
+        }
+        // 부분 겹침: 시작점을 이전 장면 끝으로 밀어내기 (비단조적이면 스킵)
+        else if (!isNonMonotonic && sourceStartSec < lastSameSourceTiming.sourceEndSec - 0.1 && sourceStartSec >= lastSameSourceTiming.sourceStartSec) {
+          sourceStartSec = lastSameSourceTiming.sourceEndSec;
+          if (sourceEndSec <= sourceStartSec) {
+            sourceEndSec = sourceStartSec + parseDuration(scene.duration);
+          }
+        }
+      }
     }
 
     const sourceDurationSec = sourceEndSec - sourceStartSec;
@@ -212,7 +252,7 @@ export function buildNarrationSyncedTimeline(
     sourceCursor = sourceEndSec;
     timelineCursor = timelineEndSec;
 
-    return {
+    timings.push({
       sceneIndex,
       sourceStartSec,
       sourceEndSec,
@@ -226,8 +266,8 @@ export function buildNarrationSyncedTimeline(
       timelineEndSec,
       subtitleSegments: layered[sceneIndex].subtitleSegments.map(applySceneTime),
       effectSubtitleSegments: layered[sceneIndex].effectSubtitleSegments.map(applySceneTime),
-    };
-  });
+    });
+  }
 
   return {
     scenes: timings,
