@@ -5740,7 +5740,11 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                       // Step 3: ZIP 패키지 생성
                                       if (isCancelled()) return;
                                       setNleExporting({ target, step: '3/3 패키지 생성 중...', startedAt });
-                                      const zipBlob = await buildNlePackageZip({ target, scenes: v.scenes, title: v.title, videoBlob, videoFileName: fileName, preset: selectedPreset || undefined, width: dims.w, height: dims.h, fps: dims.fps, videoDurationSec: dims.dur, hasAudioTrack: audioConfirmed, narrationLines });
+                                      // [FIX #891/#892] 다중 소스 영상 전달 — uploadedFiles[1..N]을 additionalVideoBlobs로 전달
+                                      const additionalVideoBlobs = uploadedFiles.length > 1
+                                        ? uploadedFiles.slice(1).map(f => ({ blob: f as Blob, fileName: f.name }))
+                                        : [];
+                                      const zipBlob = await buildNlePackageZip({ target, scenes: v.scenes, title: v.title, videoBlob, videoFileName: fileName, preset: selectedPreset || undefined, width: dims.w, height: dims.h, fps: dims.fps, videoDurationSec: dims.dur, hasAudioTrack: audioConfirmed, narrationLines, additionalVideoBlobs });
                                       if (isCancelled()) return;
                                       const downloadFileName = `${sanitizeProjectName(v.title, 30)}_${label}.zip`;
 

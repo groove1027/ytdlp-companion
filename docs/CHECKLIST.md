@@ -8,19 +8,28 @@
 
 ## 🟢 완료된 작업
 
-### [2026-03-31] 자료영상(YouTube) 레퍼런스 기능 신규 개발
-- [x] types.ts: VideoReference 인터페이스 + Scene.videoReferences + ProjectConfig.enableVideoReference
-- [x] imageVideoStore.ts: enableVideoReference 상태 + 토글 시 cancelVideoReferenceSearch cleanup
-- [x] projectStore.ts: restoreFromConfig에 enableVideoReference 복원 연결
-- [x] useAutoSave.ts: fingerprint에 videoId@startSec-endSec 포함 (교체 감지)
-- [x] VideoReferencePanel.tsx: 신규 UI (254줄) — Toggle ARIA, useMemo, button 접근성
-- [x] SetupPanel.tsx: VideoReferencePanel 임포트/렌더링
-- [x] EditRoomTab.tsx: YouTube 타임코드 배지 (top-10, Number.isFinite 방어)
-- [x] youtubeReferenceService.ts: YouTube 검색 → 자막 추출 → AI 타임코드 매칭 (411줄)
-- [x] timedtext 직접 fetch 폴백 개선 (프록시 실패/비정상 응답 모두 처리)
-- [x] AbortController 기반 검색 취소 구현
-- [x] Codex 5.4 MCP 코드 리뷰 10회 완료
-- [x] Playwright E2E: 토글→검색→결과 표시→적용 전체 흐름 스크린샷 10장 통과
+### [2026-03-31] #891 #892 CapCut 멀티소스 영상 내보내기 수정
+- [x] 원인: generateCapCutDraftJson이 단일 videoFileName/materialVideoId만 생성 → 모든 세그먼트가 1개 영상 참조
+- [x] SceneTiming에 sourceIndex 추가 + extractTimings에서 [소스 N] 파싱
+- [x] generateCapCutDraftJson 멀티소스 지원: 소스별 비디오 머티리얼 생성 + 세그먼트→올바른 material 매핑
+- [x] buildNlePackageZip에 additionalVideoBlobs 파라미터 추가 + 전 NLE 타겟에 추가 blob ZIP 포함
+- [x] VideoAnalysisRoom에서 uploadedFiles[1..N]을 additionalVideoBlobs로 전달
+- [x] 파일명 중복 방지 (동일 이름 → _2, _3 접미사 자동 부여)
+- [x] Codex 5.4 MCP 리뷰 10회 완료 — CapCut 경로 이슈 전부 해결
+- [x] tsc --noEmit + vite build 통과
+- [x] Playwright E2E: 로그인→영상 분석실→파일 업로드→분석 흐름 확인 (스크린샷 6장+)
+
+### [2026-03-31] 자료영상(YouTube) 레퍼런스 v2 — 컴패니언 + Scene Detection + Gemini 영상 직접 분석
+- [x] types.ts: VideoReference + Scene.videoReferences + ProjectConfig.enableVideoReference
+- [x] stores: enableVideoReference 상태 + cleanup + restoreFromConfig + autoSave fingerprint
+- [x] VideoReferencePanel.tsx: UI (Toggle ARIA, useMemo, button 접근성)
+- [x] EditRoomTab.tsx: YouTube 타임코드 배지 (top-10, Number.isFinite)
+- [x] youtubeReferenceService.ts v2: 컴패니언 yt-dlp → Scene Detection → Gemini 영상 분석
+  - 컷 인덱스 기반 프롬프트 + isFinite 검증 + MIME/size 검증
+  - 상위 2후보 자동 시도 + 폴백 (자막 기반)
+  - AbortSignal.any + maxFrames=10000 (20분 커버)
+- [x] Codex 5.4 MCP 코드 리뷰 20회 완료 (v1 10회 + v2 10회)
+- [x] Playwright E2E: 토글→검색→결과→적용 전체 흐름 통과 (11장)
 
 ### [2026-03-31] #931 영상분석 All TTS "원본" 선택 시 대본 분량 초과 수정
 - [x] 원인: alltts에서 targetDuration=0이고 영상 ≤90초일 때 행 수 8~12 하드코딩 → 12초 영상도 32~48초 분량 생성

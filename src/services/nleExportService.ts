@@ -2744,6 +2744,7 @@ interface SceneTiming {
   tlEndSec: number;      // 타임라인 누적 종료점
   text: string;          // 나레이션/대사
   effectText: string;    // 효과자막
+  sourceIndex: number;   // [FIX #891/#892] 다중 소스 영상 인덱스 (0-based)
 }
 
 function getVideoAnalysisMainText(scene: VideoSceneRow): string {
@@ -2863,6 +2864,11 @@ function extractTimings(scenes: VideoSceneRow[], preset?: VideoAnalysisPreset): 
 
     // 보정된 소스 타임코드가 있으면 우선 사용
     const srcTc = s.timecodeSource || s.sourceTimeline || '';
+
+    // [FIX #891/#892] 다중 소스 인덱스 추출 — AI 출력의 "[소스 N]" 패턴 매칭
+    const sourceMatch = srcTc.match(/\[소스\s*(\d+)\]/);
+    const sourceIndex = sourceMatch ? parseInt(sourceMatch[1], 10) - 1 : 0;
+
     // [FIX #664] `/` 구분자 지원
     const range = srcTc.match(/(\d+:\d+(?:\.\d+)?)\s*[~\-–—/]\s*(\d+:\d+(?:\.\d+)?)/);
 
@@ -2902,6 +2908,7 @@ function extractTimings(scenes: VideoSceneRow[], preset?: VideoAnalysisPreset): 
       tlEndSec: cumTime + clipDur,
       text: mainText || '',
       effectText: s.effectSub || '',
+      sourceIndex,
     });
 
     accTime = endSec;
@@ -2944,16 +2951,21 @@ export function generateFcpXml(params: {
   const syncTimeline = buildNarrationSyncedTimeline(scenes, narrationLines, preset);
   const nsTimings = syncTimeline.scenes;
   // 하위 호환: 기존 코드가 SceneTiming 필드를 사용하므로 매핑
-  const timings: SceneTiming[] = nsTimings.map(t => ({
-    index: t.sceneIndex,
-    startSec: t.sourceStartSec + t.trimStartSec,
-    endSec: t.sourceStartSec + t.trimEndSec,
-    durationSec: t.targetDurationSec,
-    tlStartSec: t.timelineStartSec,
-    tlEndSec: t.timelineEndSec,
-    text: t.subtitleSegments.map(s => s.text).join(' '),
-    effectText: t.effectSubtitleSegments.map(s => s.text).join(' '),
-  }));
+  const timings: SceneTiming[] = nsTimings.map(t => {
+    const rawTc = scenes[t.sceneIndex]?.timecodeSource || scenes[t.sceneIndex]?.sourceTimeline || '';
+    const srcMatch = rawTc.match(/\[소스\s*(\d+)\]/);
+    return {
+      index: t.sceneIndex,
+      startSec: t.sourceStartSec + t.trimStartSec,
+      endSec: t.sourceStartSec + t.trimEndSec,
+      durationSec: t.targetDurationSec,
+      tlStartSec: t.timelineStartSec,
+      tlEndSec: t.timelineEndSec,
+      text: t.subtitleSegments.map(s => s.text).join(' '),
+      effectText: t.effectSubtitleSegments.map(s => s.text).join(' '),
+      sourceIndex: srcMatch ? parseInt(srcMatch[1], 10) - 1 : 0,
+    };
+  });
   if (timings.length === 0) return '';
 
   const totalDurSec = timings[timings.length - 1].tlEndSec;
@@ -3282,26 +3294,37 @@ export function generateCapCutDraftJson(params: {
   preset?: VideoAnalysisPreset;
   videoDurationSec?: number;
   narrationLines?: ExportNarrationLine[];
+  /** [FIX #891/#892] 추가 소스 영상 파일명 (인덱스 1, 2, ... 순서) */
+  additionalVideoFileNames?: string[];
 }): {
   json: string;
   keyValueJson: string;
   scaffoldIds: CapCutProjectScaffoldIds;
   trackIds: string[];
+  /** [FIX #891/#892] 소스별 비디오 파일명 목록 (ZIP 삽입용) */
+  videoFileNames: string[];
 } {
-  const { scenes, title, videoFileName: rawVideoFileName, fps = 30, width = 1080, height = 1920, preset, videoDurationSec, narrationLines = [] } = params;
+  const { scenes, title, videoFileName: rawVideoFileName, fps = 30, width = 1080, height = 1920, preset, videoDurationSec, narrationLines = [], additionalVideoFileNames = [] } = params;
   const videoFileName = sanitizeFileName(rawVideoFileName);
   const syncTimeline = buildNarrationSyncedTimeline(scenes, narrationLines, preset);
   const nsTimings = syncTimeline.scenes;
-  const timings: SceneTiming[] = nsTimings.map(t => ({
-    index: t.sceneIndex,
-    startSec: t.sourceStartSec + t.trimStartSec,
-    endSec: t.sourceStartSec + t.trimEndSec,
-    durationSec: t.targetDurationSec,
-    tlStartSec: t.timelineStartSec,
-    tlEndSec: t.timelineEndSec,
-    text: t.subtitleSegments.map(s => s.text).join(' '),
-    effectText: t.effectSubtitleSegments.map(s => s.text).join(' '),
-  }));
+  const timings: SceneTiming[] = nsTimings.map((t, ti) => {
+    // [FIX #891/#892] 소스 인덱스 추출 — AI 출력의 "[소스 N]" 매칭
+    const rawTc = scenes[t.sceneIndex]?.timecodeSource || scenes[t.sceneIndex]?.sourceTimeline || '';
+    const srcMatch = rawTc.match(/\[소스\s*(\d+)\]/);
+    const sourceIndex = srcMatch ? parseInt(srcMatch[1], 10) - 1 : 0;
+    return {
+      index: t.sceneIndex,
+      startSec: t.sourceStartSec + t.trimStartSec,
+      endSec: t.sourceStartSec + t.trimEndSec,
+      durationSec: t.targetDurationSec,
+      tlStartSec: t.timelineStartSec,
+      tlEndSec: t.timelineEndSec,
+      text: t.subtitleSegments.map(s => s.text).join(' '),
+      effectText: t.effectSubtitleSegments.map(s => s.text).join(' '),
+      sourceIndex,
+    };
+  });
   if (timings.length === 0) {
     return {
       json: '',
@@ -3313,6 +3336,7 @@ export function generateCapCutDraftJson(params: {
         timelineProjectId: '',
       },
       trackIds: [],
+      videoFileNames: [videoFileName],
     };
   }
 
@@ -3327,7 +3351,34 @@ export function generateCapCutDraftJson(params: {
     timelineId: uuid(),
     timelineProjectId: uuid(),
   };
-  const materialVideoId = uuid();
+
+  // [FIX #891/#892] 소스별 비디오 머티리얼 — 다중 영상 소스 지원
+  // 파일명 중복 방지 — 동일 이름이면 _2, _3 등 접미사 부여
+  const rawNames = [videoFileName, ...additionalVideoFileNames.map(n => sanitizeFileName(n))];
+  const allVideoFileNames: string[] = [];
+  const usedNames = new Set<string>();
+  for (const name of rawNames) {
+    let final = name;
+    if (usedNames.has(final)) {
+      const ext = final.match(/\.[a-zA-Z0-9]{2,5}$/)?.[0] || '';
+      const base = ext ? final.slice(0, -ext.length) : final;
+      let idx = 2;
+      while (usedNames.has(`${base}_${idx}${ext}`)) idx++;
+      final = `${base}_${idx}${ext}`;
+    }
+    usedNames.add(final);
+    allVideoFileNames.push(final);
+  }
+  const uniqueSourceIndices = [...new Set(timings.map(t => t.sourceIndex))].sort((a, b) => a - b);
+  const sourceVideoMaterials = uniqueSourceIndices.map(si => ({
+    sourceIndex: si,
+    materialId: uuid(),
+    fileName: allVideoFileNames[si] || allVideoFileNames[0] || 'video.mp4',
+  }));
+  // 소스 인덱스 → materialId 매핑
+  const sourceToMaterialId = new Map(sourceVideoMaterials.map(m => [m.sourceIndex, m.materialId]));
+  const getMaterialIdForSource = (si: number) => sourceToMaterialId.get(si) || sourceVideoMaterials[0]?.materialId || uuid();
+
   const speedId = uuid();
   const canvasId = uuid();
   const trackVideoId = uuid();
@@ -3337,7 +3388,8 @@ export function generateCapCutDraftJson(params: {
   const emptyArr: never[] = [];
 
   // ── 비디오 세그먼트 (편집점 = 실제 컷) ──
-  const videoSegments = timings.map(t => buildCapCutSegmentShell({
+  // [FIX #891/#892] 각 세그먼트가 올바른 소스 머티리얼을 참조하도록 수정
+  const videoSegments = timings.map((t, ti) => buildCapCutSegmentShell({
     clip: {
       alpha: 1.0,
       flip: { horizontal: false, vertical: false },
@@ -3348,11 +3400,11 @@ export function generateCapCutDraftJson(params: {
     commonKeyframes: emptyArr,
     enableAdjust: true,
     extraMaterialRefs: [speedId, canvasId],
-    materialId: materialVideoId,
+    materialId: getMaterialIdForSource(t.sourceIndex),
     renderIndex: 0,
     sourceDurationUs: toUs(t.durationSec),
     sourceStartUs: toUs(t.startSec),
-    speed: nsTimings[timings.indexOf(t)]?.autoSpeedFactor ?? 1.0,
+    speed: nsTimings[ti]?.autoSpeedFactor ?? 1.0,
     targetDurationUs: toUs(t.durationSec),
     targetStartUs: toUs(t.tlStartSec),
     trackRenderIndex: 0,
@@ -3711,7 +3763,8 @@ export function generateCapCutDraftJson(params: {
       transitions: emptyArr,
       video_effects: emptyArr,
       video_trackings: emptyArr,
-      videos: [{
+      // [FIX #891/#892] 소스별 비디오 머티리얼 생성 — 다중 영상 소스 지원
+      videos: sourceVideoMaterials.map(svm => ({
         aigc_history_id: '',
         aigc_item_id: '',
         aigc_type: 'none',
@@ -3742,7 +3795,7 @@ export function generateCapCutDraftJson(params: {
         has_audio: true,
         has_sound_separated: false,
         height,
-        id: materialVideoId,
+        id: svm.materialId,
         intensifies_audio_path: '',
         intensifies_path: '',
         is_ai_generate_content: false,
@@ -3755,7 +3808,7 @@ export function generateCapCutDraftJson(params: {
         local_material_from: '',
         local_material_id: '',
         material_id: '',
-        material_name: videoFileName,
+        material_name: svm.fileName,
         material_url: '',
         matting: {
           custom_matting_id: '',
@@ -3775,7 +3828,7 @@ export function generateCapCutDraftJson(params: {
         multi_camera_info: null,
         object_locked: null,
         origin_material_id: '',
-        path: buildCapCutContainedMaterialPath(scaffoldIds.draftFolderId, 'video', videoFileName),
+        path: buildCapCutContainedMaterialPath(scaffoldIds.draftFolderId, 'video', svm.fileName),
         picture_from: 'none',
         picture_set_category_id: '',
         picture_set_category_name: '',
@@ -3832,7 +3885,7 @@ export function generateCapCutDraftJson(params: {
           vertical_shift: 0.0,
         },
         width,
-      }],
+      })),
     },
     mutable_config: null,
     name: '',
@@ -3889,6 +3942,8 @@ export function generateCapCutDraftJson(params: {
     keyValueJson: buildCapCutKeyValue(keyValueEntries),
     scaffoldIds,
     trackIds: [trackVideoId, ...(textSegments.length > 0 ? [trackTextId] : []), ...(audioSegments.length > 0 ? [trackAudioId] : []), ...(fxTextSegments.length > 0 ? [trackFxTextId] : [])],
+    // upload 순서(0=primary, 1+=additional)와 일치하는 파일명 배열 반환 — ZIP 삽입 시 인덱스 매핑용
+    videoFileNames: allVideoFileNames,
   };
 }
 
@@ -3947,8 +4002,10 @@ export async function buildNlePackageZip(params: {
   videoDurationSec?: number;
   hasAudioTrack?: boolean;
   narrationLines?: ExportNarrationLine[];
+  /** [FIX #891/#892] 다중 소스 영상 — 인덱스 순서대로 (0, 1, 2...) */
+  additionalVideoBlobs?: Array<{ blob: Blob; fileName: string }>;
 }): Promise<Blob> {
-  const { target, scenes, title, videoBlob, videoFileName: rawVideoFileName, preset, width, height, fps, videoDurationSec, hasAudioTrack, narrationLines = [] } = params;
+  const { target, scenes, title, videoBlob, videoFileName: rawVideoFileName, preset, width, height, fps, videoDurationSec, hasAudioTrack, narrationLines = [], additionalVideoBlobs = [] } = params;
   const sanitizedVideoFileName = sanitizeFileName(rawVideoFileName || 'video.mp4');
   const videoFileName = /\.[a-zA-Z0-9]{2,5}$/.test(sanitizedVideoFileName) ? sanitizedVideoFileName : `${sanitizedVideoFileName || 'video'}.mp4`;
   const hasValidVideoBlob = !!videoBlob && videoBlob.size > 0;
@@ -3956,6 +4013,22 @@ export async function buildNlePackageZip(params: {
   const zip = new JSZip();
   const safeName = sanitizeProjectName(title);
   const BOM = '\uFEFF';
+
+  // [FIX #891/#892] 추가 소스 영상 파일명 중복 방지 (Premiere/Filmora/VREW 공용)
+  const dedupedExtraNames: string[] = [];
+  const usedMediaNames = new Set<string>([videoFileName]);
+  for (const extra of additionalVideoBlobs) {
+    let name = sanitizeFileName(extra.fileName);
+    if (usedMediaNames.has(name)) {
+      const ext = name.match(/\.[a-zA-Z0-9]{2,5}$/)?.[0] || '';
+      const base = ext ? name.slice(0, -ext.length) : name;
+      let idx = 2;
+      while (usedMediaNames.has(`${base}_${idx}${ext}`)) idx++;
+      name = `${base}_${idx}${ext}`;
+    }
+    usedMediaNames.add(name);
+    dedupedExtraNames.push(name);
+  }
   const packagedNarrationBlobs: Array<{ fileName: string; blob: Blob }> = [];
 
   if (!hasValidVideoBlob) {
@@ -4018,6 +4091,10 @@ export async function buildNlePackageZip(params: {
     // [FIX #328] 영상 파일을 media/ 하위폴더에 배치 — XML pathurl과 일치
     if (videoBlob) {
       zip.file(`media/${videoFileName || 'video.mp4'}`, videoBlob);
+    }
+    // [FIX #891/#892] 추가 소스 영상도 media/에 배치 (중복 방지된 이름 사용)
+    for (let ei = 0; ei < additionalVideoBlobs.length; ei++) {
+      zip.file(`media/${dedupedExtraNames[ei]}`, additionalVideoBlobs[ei].blob);
     }
 
     const videoBase = (videoFileName || 'video.mp4').replace(/\.[^.]+$/, '');
@@ -4107,7 +4184,8 @@ export async function buildNlePackageZip(params: {
     zip.file(`${safeName}.xml`, capCutXml);
 
     // draft JSON (프로젝트 폴더 복사 방식)
-    const draftResult = generateCapCutDraftJson({ scenes, title, videoFileName: videoFileName || 'video.mp4', preset, width, height, fps, videoDurationSec, narrationLines: packagedNarrationLines });
+    // [FIX #891/#892] 추가 소스 영상 파일명 전달
+    const draftResult = generateCapCutDraftJson({ scenes, title, videoFileName: videoFileName || 'video.mp4', preset, width, height, fps, videoDurationSec, narrationLines: packagedNarrationLines, additionalVideoFileNames: additionalVideoBlobs.map(b => b.fileName) });
     const draftContent = JSON.parse(draftResult.json);
     const pId = draftResult.scaffoldIds.draftFolderId;
     const nowTs = Math.floor(Date.now() / 1000);
@@ -4174,11 +4252,19 @@ export async function buildNlePackageZip(params: {
       draftCover: draftCoverBlob,
     });
 
-    // CapCut 자체 draft는 materials/ 아래 self-contained 미디어를 사용
+    // [FIX #891/#892] CapCut 자체 draft는 materials/ 아래 self-contained 미디어를 사용 — 다중 소스 지원
+    // draft_content.json 내 파일명과 ZIP 내 파일명을 일치시키기 위해 draftResult.videoFileNames 사용
+    const draftVideoFileNames = draftResult.videoFileNames;
     if (videoBlob) {
-      zip.file(`${pId}/materials/video/${videoFileName || 'video.mp4'}`, videoBlob);
-      // XML용 media/ 폴더에도 배치
-      zip.file(`media/${videoFileName || 'video.mp4'}`, videoBlob);
+      const primaryName = draftVideoFileNames[0] || videoFileName || 'video.mp4';
+      zip.file(`${pId}/materials/video/${primaryName}`, videoBlob);
+      zip.file(`media/${primaryName}`, videoBlob);
+    }
+    for (let ei = 0; ei < additionalVideoBlobs.length; ei++) {
+      const extra = additionalVideoBlobs[ei];
+      const dedupedName = draftVideoFileNames[ei + 1] || sanitizeFileName(extra.fileName);
+      zip.file(`${pId}/materials/video/${dedupedName}`, extra.blob);
+      zip.file(`media/${dedupedName}`, extra.blob);
     }
     for (const narrationEntry of packagedNarrationBlobs) {
       zip.file(`${pId}/materials/audio/${narrationEntry.fileName}`, narrationEntry.blob);
@@ -4235,6 +4321,9 @@ export async function buildNlePackageZip(params: {
     if (videoBlob) {
       zip.file(`media/${videoFileName || 'video.mp4'}`, videoBlob);
     }
+    for (let ei = 0; ei < additionalVideoBlobs.length; ei++) {
+      zip.file(`media/${dedupedExtraNames[ei]}`, additionalVideoBlobs[ei].blob);
+    }
 
     const dlgSrt = generateNleSrt(scenes, 'dialogue', preset, 'source', packagedNarrationLines);
     if (dlgSrt) zip.file(`${safeName}_자막.srt`, BOM + dlgSrt);
@@ -4282,6 +4371,9 @@ export async function buildNlePackageZip(params: {
     // 1. 영상 파일
     if (videoBlob) {
       zip.file(`media/${videoFileName || 'video.mp4'}`, videoBlob);
+    }
+    for (let ei = 0; ei < additionalVideoBlobs.length; ei++) {
+      zip.file(`media/${dedupedExtraNames[ei]}`, additionalVideoBlobs[ei].blob);
     }
 
     // 2. SRT 자막
