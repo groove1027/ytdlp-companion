@@ -1,0 +1,155 @@
+name: Build & Release (macOS + Windows)
+
+# tag 푸시 시 자동 빌드 + 릴리즈
+# 사용법: git tag companion-v1.2.0 && git push origin companion-v1.2.0
+on:
+  push:
+    tags:
+      - 'companion-v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. 1.2.0)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  # ──────────────────────────────────────────
+  # macOS 빌드 (universal: Intel + Apple Silicon)
+  # ──────────────────────────────────────────
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2"
+
+      - name: Build Tauri (macOS universal)
+        run: cargo tauri build --target universal-apple-darwin
+
+      - name: List build output
+        run: find src-tauri/target -name '*.dmg' -o -name '*.app' 2>/dev/null | head -20
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-builds
+          path: |
+            src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+
+  # ──────────────────────────────────────────
+  # Windows 빌드 (x64 NSIS installer)
+  # ──────────────────────────────────────────
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2"
+
+      - name: Build Tauri (Windows NSIS)
+        run: cargo tauri build
+
+      - name: List build output
+        run: |
+          Get-ChildItem -Recurse src-tauri/target/release/bundle/ -File | Select-Object FullName, Length
+        shell: pwsh
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-builds
+          path: |
+            src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
+
+  # ──────────────────────────────────────────
+  # 릴리즈 생성 + 바이너리 업로드
+  # ──────────────────────────────────────────
+  release:
+    needs: [build-macos, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+            echo "tag=companion-v${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+            VER="${TAG#companion-v}"
+            echo "version=$VER" >> $GITHUB_OUTPUT
+            echo "tag=$TAG" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-builds
+          path: ./release-assets/macos
+
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-builds
+          path: ./release-assets/windows
+
+      - name: List all release assets
+        run: find ./release-assets -type f | sort
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          TAG="${{ steps.version.outputs.tag }}"
+
+          # 릴리즈가 이미 있으면 삭제 후 재생성
+          gh release delete "$TAG" --yes 2>/dev/null || true
+
+          # workflow_dispatch인 경우 태그 생성
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            git tag "$TAG" 2>/dev/null || true
+            git push origin "$TAG" 2>/dev/null || true
+          fi
+
+          # 릴리즈 생성 + 모든 바이너리 업로드
+          gh release create "$TAG" \
+            --title "All In One Helper v${VERSION}" \
+            --notes "## All In One Helper v${VERSION}
+
+          ### Downloads
+          - **macOS**: .dmg (Universal - Intel + Apple Silicon)
+          - **Windows**: .exe (NSIS installer, x64)
+
+          ### Changes
+          - See [commit history](https://github.com/${{ github.repository }}/commits/$TAG) for details
+          " \
+            ./release-assets/macos/*.dmg \
+            ./release-assets/windows/*.exe

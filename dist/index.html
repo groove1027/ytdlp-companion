@@ -71,7 +71,7 @@
     }
     /* 기능 목록 */
     .features {
-      display: grid; grid-template-columns: 1fr 1fr;
+      display: grid; grid-template-columns: 1fr 1fr 1fr;
       gap: 8px; margin-bottom: 24px;
     }
     .feature {
@@ -118,7 +118,7 @@
     <!-- 로고 -->
     <div class="logo">A</div>
     <div class="title">All In One Helper</div>
-    <div class="version">v1.0.0</div>
+    <div class="version" id="app-version">v...</div>
 
     <!-- 실행 상태 -->
     <div class="status-box">
@@ -145,8 +145,16 @@
         <span class="feature-name">배경 제거</span>
       </div>
       <div class="feature">
+        <span class="feature-icon">🌟</span>
+        <span class="feature-name">Qwen3 TTS</span>
+      </div>
+      <div class="feature">
         <span class="feature-icon">🗣️</span>
-        <span class="feature-name">음성 합성</span>
+        <span class="feature-name">Kokoro TTS</span>
+      </div>
+      <div class="feature">
+        <span class="feature-icon">🎬</span>
+        <span class="feature-name">NLE 바로 설치</span>
       </div>
     </div>
 
@@ -164,5 +172,19 @@
 
     <div class="port-badge">🔗 localhost:9876</div>
   </div>
+  <script>
+    // health 엔드포인트에서 실제 버전을 가져와 표시 (서버 준비될 때까지 반복)
+    (function fetchVersion(attempt) {
+      fetch('http://127.0.0.1:9876/health')
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+          var el = document.getElementById('app-version');
+          if (el && d.version) el.textContent = 'v' + d.version;
+        })
+        .catch(function() {
+          if (attempt < 10) setTimeout(function() { fetchVersion(attempt + 1); }, 1500);
+        });
+    })(0);
+  </script>
 </body>
 </html>

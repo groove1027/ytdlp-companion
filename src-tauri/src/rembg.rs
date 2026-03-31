@@ -1,4 +1,3 @@
-use tokio::process::Command as AsyncCommand;
 use std::path::PathBuf;
 use crate::platform;
 
@@ -15,7 +14,7 @@ pub async fn ensure_rembg() -> Result<(), Box<dyn std::error::Error + Send + Syn
     let python = platform::python_cmd();
 
     // pip로 rembg 설치 확인
-    let check = AsyncCommand::new(python)
+    let check = platform::async_cmd(python)
         .args(["-c", "import rembg; print(rembg.__version__)"])
         .output()
         .await;
@@ -31,7 +30,7 @@ pub async fn ensure_rembg() -> Result<(), Box<dyn std::error::Error + Send + Syn
     println!("[rembg] 설치 중...");
     let install_args = platform::pip_install_args(&["rembg[cli]", "onnxruntime"]);
 
-    let install = AsyncCommand::new(python)
+    let install = platform::async_cmd(python)
         .args(&install_args)
         .output()
         .await?;
@@ -66,13 +65,13 @@ pub async fn remove_background(
     let python = platform::python_cmd();
 
     // python -m rembg로 호출 (PATH 문제 없음, Tauri GUI 앱 호환)
-    let output = AsyncCommand::new(python)
+    let output = platform::async_cmd(python)
         .args(["-m", "rembg.cli", "i", &input_path, &output_path])
         .output()
         .await
         .or_else(|_| {
             // 폴백: rembg CLI 직접
-            std::process::Command::new("rembg")
+            platform::sync_cmd("rembg")
                 .args(["i", &input_path, &output_path])
                 .output()
         })?;

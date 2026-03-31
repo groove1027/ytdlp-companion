@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Mutex;
 use std::collections::HashMap;
-use tokio::process::Command as AsyncCommand;
+use crate::platform;
 
 /// 마지막 업데이트 체크 Unix timestamp (초 단위)
 static LAST_UPDATE_CHECK: AtomicI64 = AtomicI64::new(0);
@@ -156,7 +156,7 @@ async fn download_ytdlp(path: &PathBuf) -> Result<(), Box<dyn std::error::Error>
 }
 
 pub async fn update_ytdlp(path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    let output = AsyncCommand::new(path)
+    let output = platform::async_cmd(path)
         .args(["--update"])
         .output()
         .await?;
@@ -200,7 +200,7 @@ pub async fn get_version() -> Result<String, Box<dyn std::error::Error + Send + 
         return Ok("not installed".to_string());
     }
 
-    let output = AsyncCommand::new(&path)
+    let output = platform::async_cmd(&path)
         .args(["--version"])
         .output()
         .await?;
@@ -247,7 +247,7 @@ pub async fn extract_stream_url(
     let path = get_ytdlp_path();
     let format_spec = quality_to_format(quality);
 
-    let output = AsyncCommand::new(&path)
+    let output = platform::async_cmd(&path)
         .args([
             "--dump-json",
             "--no-playlist",
@@ -262,7 +262,7 @@ pub async fn extract_stream_url(
         println!("[yt-dlp] extract 실패, 업데이트 후 재시도: {}", stderr_first.lines().last().unwrap_or("unknown"));
         let _ = update_ytdlp(&path).await;
 
-        let retry_output = AsyncCommand::new(&path)
+        let retry_output = platform::async_cmd(&path)
             .args([
                 "--dump-json",
                 "--no-playlist",
@@ -375,7 +375,7 @@ pub async fn download_video(
 
     args.push(video_url.to_string());
 
-    let output = AsyncCommand::new(&path)
+    let output = platform::async_cmd(&path)
         .args(&args)
         .output()
         .await?;
@@ -397,7 +397,7 @@ pub async fn download_video(
             }
         }
 
-        let retry_output = AsyncCommand::new(&path)
+        let retry_output = platform::async_cmd(&path)
             .args(&retry_args)
             .output()
             .await?;
@@ -503,7 +503,7 @@ pub async fn extract_frames(
         let tmp = tempfile::NamedTempFile::new()?;
         let output_path = tmp.path().to_string_lossy().to_string() + ".jpg";
 
-        let result = AsyncCommand::new(&ffmpeg_cmd)
+        let result = platform::async_cmd(&ffmpeg_cmd)
             .args([
                 "-ss", &t.to_string(),
                 "-i", stream_url,
@@ -555,7 +555,7 @@ pub async fn get_social_metadata(
 
     args.push(url.to_string());
 
-    let output = AsyncCommand::new(&path)
+    let output = platform::async_cmd(&path)
         .args(&args)
         .output()
         .await?;
@@ -566,7 +566,7 @@ pub async fn get_social_metadata(
         println!("[yt-dlp] 메타데이터 추출 실패, 업데이트 후 재시도: {}", stderr_first.lines().last().unwrap_or("unknown"));
         let _ = update_ytdlp(&path).await;
 
-        let retry_output = AsyncCommand::new(&path)
+        let retry_output = platform::async_cmd(&path)
             .args(&args)
             .output()
             .await?;

@@ -1,5 +1,35 @@
 /// 플랫폼별 유틸리티 — Windows / macOS / Linux 크로스플랫폼 지원
 
+// ──────────────────────────────────────────────
+// [FIX #925] Windows 콘솔 창 방지 — CREATE_NO_WINDOW 자동 적용
+// Windows에서 subprocess 실행 시 검은 콘솔 창이 뜨는 문제 해결
+// ──────────────────────────────────────────────
+
+/// Windows에서 콘솔 창 없이 실행되는 비동기 Command 생성
+/// macOS/Linux에서는 일반 Command와 동일
+pub fn async_cmd(program: impl AsRef<std::ffi::OsStr>) -> tokio::process::Command {
+    #[allow(unused_mut)] // mut는 Windows cfg 블록에서 필요
+    let mut cmd = tokio::process::Command::new(program);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    cmd
+}
+
+/// Windows에서 콘솔 창 없이 실행되는 동기 Command 생성
+pub fn sync_cmd(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
+    #[allow(unused_mut)]
+    let mut cmd = std::process::Command::new(program);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    cmd
+}
+
 /// Python 실행 커맨드 반환 (Windows: "python" → "py -3" 폴백, macOS/Linux: "python3")
 /// Windows에서는 Microsoft Store 설치 시 "python"이 redirect stub일 수 있어
 /// "py -3" (Python Launcher)도 시도

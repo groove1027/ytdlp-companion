@@ -13,10 +13,57 @@ use tauri::{
     menu::{Menu, MenuItem},
     Manager,
 };
+use tauri_plugin_autostart::ManagerExt;
+
+/// 창을 최상위로 올리고 포커스
+/// ⚠️ 외부 프로세스로 앱을 활성화하면 안 됨 (open -b, osascript 등)
+///    → single-instance 플러그인이 재진입하여 무한 루프 발생
+fn focus_window(win: &tauri::WebviewWindow) {
+    let _ = win.unminimize();
+    let _ = win.show();
+    let _ = win.set_focus();
+}
 
 fn main() {
     tauri::Builder::default()
+        // 중복 실행 방지 — deep-link로 2차 인스턴스가 뜨면 기존 인스턴스에 위임
+        // ⚠️ single-instance는 반드시 다른 플러그인보다 먼저 등록해야 함
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            // 이미 실행 중이면 기존 윈도우만 포커스
+            if let Some(win) = app.get_webview_window("main") {
+                focus_window(&win);
+            }
+        }))
+        // allinonehelper:// URL 스킴 — 웹앱에서 컴패니언 강제 실행 가능
+        .plugin(tauri_plugin_deep_link::init())
+        // [FIX #907] 로그인 시 자동 시작 — 컴패니언이 항상 실행 중이도록 보장
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--hidden"]),
+        ))
         .setup(|app| {
+            // 자동 시작 활성화 (사용자가 비활성화하지 않는 한 항상 ON)
+            let autostart = app.autolaunch();
+            if !autostart.is_enabled().unwrap_or(false) {
+                let _ = autostart.enable();
+                println!("[Companion] 로그인 시 자동 시작 활성화됨");
+            }
+
+            // --hidden 플래그: 자동 시작 시 UI 안 띄움 / 수동 실행 시 창 강제 포커스
+            if std::env::args().any(|a| a == "--hidden") {
+                if let Some(win) = app.get_webview_window("main") {
+                    let _ = win.hide();
+                }
+            } else {
+                // [FIX] 수동 실행 시 창 표시 — 지연 후 포커스 (Tauri 초기화 + WebView 렌더링 대기)
+                let app_handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(800));
+                    if let Some(win) = app_handle.get_webview_window("main") {
+                        focus_window(&win);
+                    }
+                });
+            }
             // 시스템 트레이 설정
             let quit = MenuItem::with_id(app, "quit", "종료", true, None::<&str>)?;
             let show = MenuItem::with_id(app, "show", "상태 보기", true, None::<&str>)?;
@@ -30,10 +77,8 @@ fn main() {
                     match event.id().as_ref() {
                         "quit" => app.exit(0),
                         "show" => {
-                            // 메인 윈도우 보이기
                             if let Some(win) = app.get_webview_window("main") {
-                                let _ = win.show();
-                                let _ = win.set_focus();
+                                focus_window(&win);
                             }
                         }
                         _ => {}
@@ -43,8 +88,7 @@ fn main() {
                     // 좌클릭 시 윈도우 보이기
                     if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
                         if let Some(win) = tray.app_handle().get_webview_window("main") {
-                            let _ = win.show();
-                            let _ = win.set_focus();
+                            focus_window(&win);
                         }
                     }
                 })
@@ -86,9 +130,9 @@ fn main() {
                 if let Err(e) = rembg::ensure_rembg().await {
                     eprintln!("[Companion] rembg 설정 실패: {}", e);
                 }
-                // rembg 완료 후 TTS 설치 (같은 pip 환경 보호)
-                if let Err(e) = tts::ensure_tts().await {
-                    eprintln!("[Companion] TTS 설정 실패: {}", e);
+                // rembg 완료 후 TTS 설치 (같은 pip 환경 보호 — 직렬 실행)
+                if let Err(e) = tts::ensure_edge_tts().await {
+                    eprintln!("[Companion] Edge TTS 설정 실패: {}", e);
                 }
             });
 

@@ -1,12 +1,15 @@
 [package]
 name = "all-in-one-helper"
-version = "1.0.0"
+version = "1.2.0"
 description = "All In One Helper — 안정적이고 빠른 로컬 AI 미디어 처리"
 authors = ["groove1027"]
 edition = "2021"
 
 [dependencies]
 tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-autostart = "2"
+tauri-plugin-deep-link = "2"
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
@@ -19,6 +22,8 @@ base64 = "0.22"
 tokio-util = { version = "0.7", features = ["io"] }
 futures-util = "0.3"
 url = "2"
+regex-lite = "0.1"
+chrono = "0.4"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
