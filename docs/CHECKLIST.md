@@ -22,6 +22,12 @@
 - [x] Codex 5.4 MCP 코드 리뷰 10회 완료
 - [x] Playwright E2E: 토글→검색→결과 표시→적용 전체 흐름 스크린샷 10장 통과
 
+### [2026-03-31] #931 영상분석 All TTS "원본" 선택 시 대본 분량 초과 수정
+- [x] 원인: alltts에서 targetDuration=0이고 영상 ≤90초일 때 행 수 8~12 하드코딩 → 12초 영상도 32~48초 분량 생성
+- [x] 수정: isShortFormAllTts 플래그 — 원본 길이 기반 동적 행 수 + AI에게 원본 길이(±3초) 분량 제한 지시
+- [x] Codex 5.4 MCP 리뷰 10회 완료 — 전체 통과
+- [x] Playwright E2E: 영상분석실 → All TTS → 원본 → 분석 시작 스크린샷 6장+
+
 ### [2026-03-31] #852 #876 #879 채널분석 대본 생성 시 설명글(description) 주입 버그 수정
 - [x] 원인: ScriptWriterTab.tsx, ChannelRemakePanel.tsx에서 transcript 필터가 transcriptSource 미체크 → description 소스가 AI 프롬프트에 "대본 샘플"로 주입
 - [x] 수정: `transcriptSource !== 'description'` 필터 추가 — caption과 undefined(수동입력)만 허용

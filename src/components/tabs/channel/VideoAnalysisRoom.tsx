@@ -2729,11 +2729,23 @@ const buildUserMessage = (
   const effectiveDuration = resolveEffectiveVideoDurationSec(inputDesc, videoDurationSec);
   // [FIX #529] alltts 롱폼 지원: 원본(targetDuration=0)이고 영상이 90초 초과이면 롱폼 분량 보존 지시 추가
   const isLongFormAllTts = preset === 'alltts' && targetDuration === 0 && effectiveDuration > 90;
-  const longFormMinRows = isLongFormAllTts ? Math.max(15, Math.round(effectiveDuration / 10)) : 8;
-  const longFormMaxRows = isLongFormAllTts ? Math.max(20, Math.round(effectiveDuration / 7)) : 12;
+  // [FIX #931] alltts 숏폼 원본 분량 보존: targetDuration=0이고 영상이 90초 이하이면 원본 길이에 맞게 행 수 제한
+  const isShortFormAllTts = preset === 'alltts' && targetDuration === 0 && effectiveDuration > 0 && effectiveDuration <= 90;
+  const longFormMinRows = isLongFormAllTts
+    ? Math.max(15, Math.round(effectiveDuration / 10))
+    : isShortFormAllTts
+      ? Math.max(2, Math.round(effectiveDuration / 5))
+      : 8;
+  const longFormMaxRows = isLongFormAllTts
+    ? Math.max(20, Math.round(effectiveDuration / 7))
+    : isShortFormAllTts
+      ? Math.max(3, Math.round(effectiveDuration / 3))
+      : 12;
   const longFormOverride = isLongFormAllTts
     ? `\n\n### ⏱️ 원본 분량 보존 — 롱폼 모드 (최우선 적용)\n- 원본 영상은 약 ${Math.round(effectiveDuration / 60)}분(${effectiveDuration}초)입니다.\n- 각 버전의 총 길이를 **원본과 동일하게 약 ${Math.round(effectiveDuration / 60)}분**으로 맞추세요.\n- **"쇼츠 영상 대본"이 아닌, 원본 길이에 맞는 풀 스크립트**를 작성하세요.\n- 컷(행) 수를 대폭 늘려 원본의 모든 정보를 빠짐없이 담으세요 (최소 ${longFormMinRows}행 이상).\n- 각 컷의 타임코드가 영상 전체(00:00~${Math.floor(effectiveDuration / 60).toString().padStart(2, '0')}:${Math.round(effectiveDuration % 60).toString().padStart(2, '0')})에 골고루 분포되어야 합니다.\n- 축약·요약·생략 절대 금지: 원본 정보량 100%를 그대로 유지하되 텍스트만 재조립하세요.`
-    : '';
+    : isShortFormAllTts
+      ? `\n\n### ⏱️ 원본 분량 보존 — 숏폼 모드 (최우선 적용)\n- 원본 영상은 약 ${effectiveDuration}초입니다.\n- **각 버전의 총 대본 길이를 반드시 원본과 동일하게 약 ${effectiveDuration}초(±3초)로 맞추세요.**\n- 대본이 원본보다 길어지면 안 됩니다. 각 행의 "예상 시간"을 합산하여 ${effectiveDuration}초를 초과하지 않도록 엄격히 관리하세요.\n- 행 수는 ${longFormMinRows}~${longFormMaxRows}개로 제한하세요.\n- 원본에 없는 내용을 추가로 만들어내지 마세요. 원본 정보만 재조립하세요.`
+      : '';
   const tikitakaRowGuide = buildRemixRowGuide('tikitaka', inputDesc, videoDurationSec, sourceCutCount, targetDuration);
   const snackRowGuide = buildRemixRowGuide('snack', inputDesc, videoDurationSec, sourceCutCount, targetDuration);
   const tikitakaRowRule = tikitakaRowGuide
