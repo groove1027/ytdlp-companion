@@ -289,10 +289,13 @@ pub async fn start_server(_app: tauri::AppHandle) -> Result<(), Box<dyn std::err
     let addr_v4 = SocketAddr::from(([127, 0, 0, 1], 9876));
     println!("[Companion] 서버 시작: http://{}", addr_v4);
 
-    // [FIX #914] 서비스 감지를 백그라운드에서 실행 — health check 즉시 응답 가능
+    // [FIX #914 + tokio 블로킹 수정] 서비스 감지를 60초 지연 후 실행
+    // detect_services()가 Python subprocess를 실행하면서 tokio 런타임을 블로킹 →
+    // 서버 시작 직후 health/download 엔드포인트가 응답 불가.
+    // 60초 지연으로 서버가 먼저 안정화된 후 감지 실행.
     tokio::spawn(async {
-        // 초기 감지 + 5분 주기 갱신
-        // 루프가 영구 지속되도록 개별 iteration 에러를 catch
+        // 서버 안정화 대기 — health/download가 먼저 응답할 수 있게
+        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
         loop {
             let result = detect_services().await;
             *cached_health().write().await = result;

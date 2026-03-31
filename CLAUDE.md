@@ -103,6 +103,25 @@ const toast = await page.textContent('.toast');
 expect(toast).toContain('완료');  // 토스트만 보고 끝 → 파일 없음
 ```
 
+### 🔴 컴패니언(Rust/Tauri) 코드 수정 시 절대 규칙 — 빌드+실행 필수
+
+> **`companion/src-tauri/` 파일을 1줄이라도 수정하면 아래를 100% 수행해야 한다.**
+> **프론트엔드 Playwright만 돌리고 "테스트 완료" 처리하면 작업 전체가 무효다.**
+
+| 단계 | 명령어 | 검증 |
+|------|--------|------|
+| 1. Rust 빌드 | `cd companion/src-tauri && cargo build` | 컴파일 에러 0 |
+| 2. 컴패니언 실행 | `cargo tauri dev` 또는 빌드된 바이너리 실행 | 프로세스 기동 확인 |
+| 3. Health check | `curl http://localhost:9876/health` | `{"app":"ytdlp-companion",...}` 응답 |
+| 4. E2E 테스트 | Playwright로 컴패니언 연동 기능 실제 테스트 | 스크린샷 증거 |
+
+```
+❌ 프론트엔드만 테스트하고 "server.rs 수정 검증 완료" → 거짓 보고
+❌ "이 환경에서 cargo 빌드 불가"라고 스킵 → 사용자에게 즉시 알리고 대안 협의
+❌ curl 없이 "빌드 성공했으니 될 것" → 실행 검증 없으면 미완료
+✅ cargo build → 실행 → curl health → Playwright E2E → 스크린샷 증거 제출
+```
+
 ### 테스트 완료로 인정되지 않는 경우
 - DOM에 요소가 "있다"는 것만 확인 (버튼 존재 ≠ 버튼 작동)
 - grep으로 코드에 문자열이 "있다"는 것만 확인

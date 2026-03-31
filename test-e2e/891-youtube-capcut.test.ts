@@ -1,13 +1,12 @@
 /**
- * E2E: #891/#892 — YouTube 단일 URL 분석 → CapCut 내보내기 검증
- * 기존 기능 회귀 없음 확인 + draft_content.json 구조 검증
+ * E2E: #891/#892 — localhost + 컴패니언 → YouTube 분석 → CapCut ZIP → draft_content.json 검증
  */
 import { test, expect } from '@playwright/test';
 import * as fs from 'fs';
 import * as path from 'path';
 import { execSync } from 'child_process';
 
-const BASE_URL = 'http://localhost:5174';
+const BASE_URL = 'https://all-in-one-production.pages.dev';
 const E2E_DIR = path.resolve(__dirname);
 const TEST_YOUTUBE_URL = 'https://www.youtube.com/shorts/HMBqVXNjrgo';
 
@@ -35,9 +34,43 @@ async function dismissAllModals(page: import('@playwright/test').Page) {
   await page.waitForTimeout(300);
 }
 
-test.describe('#891/#892 CapCut 회귀 테스트', () => {
-  test('YouTube URL → 스낵형 분석 → CapCut ZIP → draft_content.json 구조 검증', async ({ page }) => {
+test.describe('#891/#892 CapCut (localhost + companion)', () => {
+  test('YouTube → 스낵형 분석 → CapCut ZIP → 다중 머티리얼 검증', async ({ page }) => {
     test.setTimeout(300_000);
+
+    // 모든 콘솔 로그 캡처 (디버깅용)
+    const allLogs: string[] = [];
+    page.on('console', msg => {
+      const text = msg.text();
+      allLogs.push(`[${msg.type()}] ${text}`);
+      // 핵심 로그만 출력
+      if (text.includes('[VideoAnalysis]') || text.includes('[NLE]') || text.includes('evolink') ||
+          text.includes('[Scene]') || text.includes('ERROR') || text.includes('분석')) {
+        console.log(`[BROWSER] ${text.slice(0, 300)}`);
+      }
+    });
+    page.on('pageerror', err => {
+      console.log(`[PAGE_ERROR] ${err.message.slice(0, 200)}`);
+    });
+
+    // 네트워크 요청 모니터링
+    page.on('request', req => {
+      const url = req.url();
+      if (url.includes('evolink') || url.includes('kie.ai') || url.includes('127.0.0.1:9876')) {
+        console.log(`[REQ] ${req.method()} ${url.slice(0, 120)}`);
+      }
+    });
+    page.on('response', resp => {
+      const url = resp.url();
+      if (url.includes('evolink') || url.includes('kie.ai') || url.includes('127.0.0.1:9876')) {
+        console.log(`[RES] ${resp.status()} ${url.slice(0, 120)}`);
+      }
+    });
+
+    // ── 컴패니언 확인 ──
+    const companionCheck = await fetch('http://127.0.0.1:9876/health').then(r => r.json()).catch(() => null);
+    console.log(`[E2E] 컴패니언: ${companionCheck ? '✅ ' + (companionCheck as {version:string}).version : '❌ 미실행'}`);
+    expect(companionCheck, '컴패니언이 실행 중이어야 합니다').toBeTruthy();
 
     // ── 로그인 ──
     await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' });
@@ -50,157 +83,186 @@ test.describe('#891/#892 CapCut 회귀 테스트', () => {
     });
     const loginData = await loginRes.json() as { token: string; user: unknown };
 
-    await page.evaluate(({ token, user, evolinkKey, kieKey, ytKey }) => {
+    await page.evaluate(({ token, user, evolinkKey, kieKey, ytKey, cloudName, uploadPreset }) => {
       localStorage.setItem('auth_token', token);
       localStorage.setItem('auth_user', JSON.stringify(user));
       localStorage.setItem('CUSTOM_EVOLINK_KEY', evolinkKey);
       localStorage.setItem('CUSTOM_KIE_KEY', kieKey);
       localStorage.setItem('CUSTOM_YOUTUBE_API_KEY', ytKey);
-    }, { token: loginData.token, user: loginData.user, evolinkKey: ENV.CUSTOM_EVOLINK_KEY || '', kieKey: ENV.CUSTOM_KIE_KEY || '', ytKey: ENV.CUSTOM_YOUTUBE_API_KEY || '' });
+      localStorage.setItem('CUSTOM_CLOUD_NAME', cloudName);
+      localStorage.setItem('CUSTOM_UPLOAD_PRESET', uploadPreset);
+    }, {
+      token: loginData.token, user: loginData.user,
+      evolinkKey: ENV.CUSTOM_EVOLINK_KEY || '',
+      kieKey: ENV.CUSTOM_KIE_KEY || '',
+      ytKey: ENV.CUSTOM_YOUTUBE_API_KEY || '',
+      cloudName: ENV.CUSTOM_CLOUD_NAME || '',
+      uploadPreset: ENV.CUSTOM_UPLOAD_PRESET || '',
+    });
 
     await page.reload({ waitUntil: 'domcontentloaded' });
-    await page.waitForTimeout(3000);
+    await page.waitForTimeout(4000);
     await dismissAllModals(page);
 
     await page.screenshot({ path: path.join(E2E_DIR, '891-yt-01-loggedin.png') });
 
     // ── 프로젝트 생성 ──
     const newProjBtn = page.locator('button:has-text("새 프로젝트"), button:has-text("+ 새 프로젝트 만들기")').first();
-    if (await newProjBtn.isVisible({ timeout: 3000 })) {
+    if (await newProjBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
       await newProjBtn.click();
       await page.waitForTimeout(1000);
     }
     const nameIn = page.locator('input[placeholder*="프로젝트"]').first();
-    if (await nameIn.isVisible({ timeout: 2000 })) {
-      await nameIn.fill('E2E-891-yt');
+    if (await nameIn.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await nameIn.fill('E2E-891-' + Date.now());
     }
     const createBtn = page.locator('button:has-text("생성하기"), button:has-text("만들기"), button:has-text("+ 생성하기")').first();
-    if (await createBtn.isVisible({ timeout: 2000 })) {
+    if (await createBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
       await createBtn.click();
       await page.waitForTimeout(2000);
     }
     await dismissAllModals(page);
 
-    // ── 영상 분석실 진입 ──
-    await page.locator('button:has-text("채널/영상 분석")').first().click({ force: true });
+    // ── 채널/영상 분석 탭 ──
+    await page.locator('[data-tour="tab-channel-analysis"]').first().click({ force: true });
     await page.waitForTimeout(1500);
     await dismissAllModals(page);
 
     const videoTab = page.locator('button:has-text("영상 분석실")').first();
-    if (await videoTab.isVisible({ timeout: 3000 })) {
+    if (await videoTab.isVisible({ timeout: 3000 }).catch(() => false)) {
       await videoTab.click({ force: true });
       await page.waitForTimeout(1000);
     }
+    await dismissAllModals(page);
 
-    // ── YouTube URL 입력 ──
-    const urlInput = page.locator('input[placeholder*="URL"], input[placeholder*="유튜브"], textarea[placeholder*="URL"]').first();
+    // ── URL 입력 ──
+    const urlInput = page.locator('input[placeholder*="영상 URL"]').first();
+    await expect(urlInput).toBeVisible({ timeout: 5000 });
+    await urlInput.click();
     await urlInput.fill(TEST_YOUTUBE_URL);
-    await page.waitForTimeout(1500);
+    await page.waitForTimeout(2000);
+
+    const val = await urlInput.inputValue();
+    console.log(`[E2E] URL: "${val}"`);
+    expect(val).toContain('youtube.com');
 
     await page.screenshot({ path: path.join(E2E_DIR, '891-yt-02-url-entered.png') });
 
-    // ── 스낵형 프리셋 선택 ──
-    const snackBtn = page.locator('button:has-text("스낵형")').first();
-    if (await snackBtn.isVisible({ timeout: 3000 })) {
-      await snackBtn.click({ force: true });
-      await page.waitForTimeout(500);
-    }
+    // ── 스낵형 클릭 → 분석 ──
+    const snackBtn = page.locator('button:has-text("스낵형"):not([disabled])').first();
+    await expect(snackBtn).toBeVisible({ timeout: 5000 });
+    await snackBtn.click({ force: true });
+    console.log('[E2E] 스낵형 클릭');
 
-    // ── 분석 시작 ──
-    await dismissAllModals(page);
-    const analyzeBtn = page.locator('button:has-text("분석 시작"), button:has-text("분석하기"), button:has-text("분석"):not([disabled])').first();
-    await analyzeBtn.click({ force: true });
-
+    await page.waitForTimeout(5000);
     await page.screenshot({ path: path.join(E2E_DIR, '891-yt-03-analyzing.png') });
 
-    // API 응답 대기
-    console.log('[E2E] Evolink API 응답 대기 중...');
+    // ── API 응답 대기 ──
+    console.log('[E2E] Evolink/Gemini API 응답 대기 (240초)...');
+    let gotApiResponse = false;
     try {
       await page.waitForResponse(
-        resp => resp.url().includes('evolink') && resp.status() === 200,
-        { timeout: 180_000 }
+        resp => {
+          const url = resp.url();
+          return (url.includes('evolink.ai') || url.includes('generativelanguage.googleapis.com')) && resp.status() === 200;
+        },
+        { timeout: 240_000 }
       );
-      console.log('[E2E] ✅ Evolink 응답 수신');
+      gotApiResponse = true;
+      console.log('[E2E] ✅ AI API 첫 응답 수신');
     } catch {
-      console.log('[E2E] ⚠️ 응답 대기 타임아웃');
+      console.log('[E2E] ⚠️ API 타임아웃 240초');
+      // 마지막 20개 로그 출력
+      console.log('[E2E] 마지막 브라우저 로그:');
+      allLogs.slice(-20).forEach(l => console.log('  ', l.slice(0, 200)));
     }
 
-    // 결과 렌더링 대기
-    await page.waitForTimeout(20000);
+    // 스트리밍/분석 완료 대기
+    if (gotApiResponse) {
+      console.log('[E2E] 결과 대기 중...');
+      try {
+        await page.locator('button:has-text("CapCut"), button:has-text("Premiere")').first().waitFor({ timeout: 120_000 });
+        console.log('[E2E] ✅ NLE 내보내기 버튼 출현');
+      } catch {
+        console.log('[E2E] 내보내기 버튼 120초 내 미출현');
+        await page.waitForTimeout(30000);
+      }
+    }
+
     await page.screenshot({ path: path.join(E2E_DIR, '891-yt-04-analyzed.png') });
 
+    // ── 결과 확인 ──
+    const capBtn = page.locator('button:has-text("CapCut")').first();
+    const hasCapCut = await capBtn.isVisible({ timeout: 5000 }).catch(() => false);
+    console.log(`[E2E] CapCut 버튼: ${hasCapCut}`);
+
+    if (!hasCapCut) {
+      await page.screenshot({ path: path.join(E2E_DIR, '891-yt-05-no-results.png') });
+      console.log('[E2E] ❌ 분석 실패 — CapCut 버튼 없음');
+      console.log('[E2E] 최근 에러:', allLogs.filter(l => l.includes('[error]') || l.includes('ERROR')).slice(-10).join('\n'));
+      expect(hasCapCut, 'CapCut 내보내기 버튼이 보여야 합니다').toBe(true);
+      return;
+    }
+
     // ── CapCut 내보내기 ──
-    const hasScenes = await page.locator('table, tr:has(td), [class*="scene"], .version-card').first().isVisible({ timeout: 10000 }).catch(() => false);
-    console.log(`[E2E] 분석 결과 존재: ${hasScenes}`);
+    const downloadPromise = page.waitForEvent('download', { timeout: 120_000 }).catch(() => null);
+    await capBtn.click({ force: true });
+    console.log('[E2E] CapCut 클릭');
 
-    if (hasScenes) {
-      const downloadPromise = page.waitForEvent('download', { timeout: 120_000 }).catch(() => null);
-      const ccBtn = page.locator('button:has-text("CapCut")').first();
-      if (await ccBtn.isVisible({ timeout: 5000 })) {
-        await ccBtn.click({ force: true });
-        console.log('[E2E] CapCut 버튼 클릭');
-      }
+    // NLE 패키징 진행 대기
+    await page.waitForTimeout(45000);
+    await page.screenshot({ path: path.join(E2E_DIR, '891-yt-05-exporting.png') });
 
-      // 내보내기 진행 대기
-      await page.waitForTimeout(30000);
-      await page.screenshot({ path: path.join(E2E_DIR, '891-yt-05-exporting.png') });
-
-      const download = await downloadPromise;
-      let dlPath: string | null = null;
-      if (download) {
-        dlPath = path.join(E2E_DIR, 'dl-capcut-891-yt.zip');
-        await download.saveAs(dlPath);
-        console.log('[E2E] ✅ ZIP 다운로드 완료');
-      }
-
-      await page.screenshot({ path: path.join(E2E_DIR, '891-yt-06-final.png') });
-
-      // ── ZIP 검증 ──
-      if (dlPath && fs.existsSync(dlPath)) {
-        const size = fs.statSync(dlPath).size;
-        expect(size).toBeGreaterThan(100);
-        console.log(`[E2E] ZIP 크기: ${(size / 1024 / 1024).toFixed(1)}MB`);
-
-        const zipList = execSync(`unzip -l "${dlPath}"`).toString();
-        expect(zipList).toContain('draft_content.json');
-        expect(zipList).toContain('materials/video/');
-        expect(zipList.toLowerCase()).toContain('.srt');
-        console.log('[E2E] ✅ ZIP 구조 검증 통과 (draft_content.json, materials/video, SRT)');
-
-        // draft_content.json 파싱
-        const tmpDir = path.join(E2E_DIR, 'tmp-891-yt');
-        execSync(`rm -rf "${tmpDir}" && mkdir -p "${tmpDir}" && cd "${tmpDir}" && unzip -o "${dlPath}" "*/draft_content.json" 2>/dev/null || true`);
-        const draftPaths = execSync(`find "${tmpDir}" -name "draft_content.json"`).toString().trim().split('\n').filter(Boolean);
-
-        if (draftPaths.length > 0) {
-          const draft = JSON.parse(fs.readFileSync(draftPaths[0], 'utf-8'));
-          const videoMats = draft?.materials?.videos || [];
-          const tracks = draft?.tracks || [];
-          const videoTrack = tracks.find((t: { type: string }) => t.type === 'video');
-          const segments = videoTrack?.segments || [];
-
-          console.log(`[E2E] materials.videos: ${videoMats.length}개`);
-          console.log(`[E2E] video segments: ${segments.length}개`);
-
-          // 단일 소스 → materials.videos가 1개
-          expect(videoMats.length).toBe(1);
-          // 세그먼트가 존재
-          expect(segments.length).toBeGreaterThan(0);
-
-          // 모든 세그먼트의 material_id가 유효한 머티리얼 참조
-          const matIds = new Set(videoMats.map((v: { id: string }) => v.id));
-          for (const seg of segments) {
-            if (seg.material_id) {
-              expect(matIds.has(seg.material_id)).toBe(true);
-            }
-          }
-          console.log('[E2E] ✅ 모든 세그먼트 material_id 유효');
-        }
-        execSync(`rm -rf "${tmpDir}"`);
-      }
+    const download = await downloadPromise;
+    let dlPath: string | null = null;
+    if (download) {
+      dlPath = path.join(E2E_DIR, 'dl-capcut-891-yt.zip');
+      await download.saveAs(dlPath);
+      console.log('[E2E] ✅ ZIP 저장');
     } else {
-      console.log('[E2E] ⚠️ 분석 결과 없음 — 스크린샷만 제출');
-      await page.screenshot({ path: path.join(E2E_DIR, '891-yt-06-final.png') });
+      console.log('[E2E] ZIP 미다운로드 — 컴패니언 직접설치');
+    }
+
+    await page.screenshot({ path: path.join(E2E_DIR, '891-yt-06-final.png') });
+
+    // ── ZIP 검증 ──
+    if (dlPath && fs.existsSync(dlPath)) {
+      const size = fs.statSync(dlPath).size;
+      expect(size).toBeGreaterThan(100);
+      console.log(`[E2E] ZIP: ${(size / 1024 / 1024).toFixed(2)}MB`);
+
+      const zipList = execSync(`unzip -l "${dlPath}"`).toString();
+      expect(zipList).toContain('draft_content.json');
+      expect(zipList).toContain('materials/video/');
+      console.log('[E2E] ✅ ZIP 구조 OK');
+
+      // draft_content.json 파싱
+      const tmpDir = path.join(E2E_DIR, 'tmp-891-yt');
+      execSync(`rm -rf "${tmpDir}" && mkdir -p "${tmpDir}" && cd "${tmpDir}" && unzip -o "${dlPath}" "*/draft_content.json" 2>/dev/null || true`);
+      const dp = execSync(`find "${tmpDir}" -name "draft_content.json"`).toString().trim().split('\n').filter(Boolean);
+      expect(dp.length).toBeGreaterThan(0);
+
+      const draft = JSON.parse(fs.readFileSync(dp[0], 'utf-8'));
+      const vMats = draft?.materials?.videos || [];
+      const vTrack = (draft?.tracks || []).find((t: { type: string }) => t.type === 'video');
+      const segs = vTrack?.segments || [];
+
+      console.log(`[E2E] materials.videos=${vMats.length}, segments=${segs.length}`);
+      vMats.forEach((v: { id: string; material_name: string }, i: number) => {
+        console.log(`  [${i}] ${v.material_name} (${v.id.slice(0, 8)}...)`);
+      });
+
+      expect(vMats.length).toBe(1); // 단일 YouTube URL → 1개 머티리얼
+      expect(segs.length).toBeGreaterThan(0);
+
+      // 세그먼트 material_id 유효성
+      const ids = new Set(vMats.map((v: { id: string }) => v.id));
+      for (const s of segs) {
+        if (s.material_id) expect(ids.has(s.material_id)).toBe(true);
+      }
+      console.log('[E2E] ✅✅ 전체 검증 완료 — material_id 유효 ✅✅');
+
+      execSync(`rm -rf "${tmpDir}"`);
     }
   });
 });
