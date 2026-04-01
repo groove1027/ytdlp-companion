@@ -150,8 +150,14 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
       setVersionCount: (count) => set({ versionCount: count }),
       setYoutubeUrl: (url) => {
         const prev = get().youtubeUrl;
-        // [FIX #782/#785] URL 변경 시 이전 분석 결과 자동 초기화 — 이전 영상 결과가 잔류하는 버그 수정
-        if (prev && prev !== url) {
+        // [FIX #782/#785][FIX #964] URL 변경 시 이전 분석 결과 + 프리셋 캐시 자동 초기화
+        // resultCache도 함께 초기화 — 이전 영상의 캐시가 새 영상에 오염되는 버그 수정
+        // YouTube URL 정규화 — /shorts/, youtu.be, /embed/ 등을 watch?v= 형태로 통일
+        const normalize = (u: string) => {
+          const m = u.match(/(?:youtube\.com\/(?:watch\?v=|shorts\/|embed\/|v\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+          return m ? m[1] : u.trim();
+        };
+        if (prev && normalize(prev) !== normalize(url)) {
           set({
             youtubeUrl: url,
             youtubeUrls: [url],
@@ -164,6 +170,7 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
             videoBlob: null,
             videoBlobHasAudio: null,
             editRoomSelectedVersionIdx: null,
+            resultCache: {},
           });
         } else {
           set({ youtubeUrl: url, youtubeUrls: [url] });
@@ -174,9 +181,10 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
         const urls = [...get().youtubeUrls];
         const prevUrl = urls[index];
         urls[index] = url;
-        // [FIX #782/#785] 개별 URL 변경 시에도 결과 초기화
-        // [FIX Review] youtu.be 단축 URL도 감지하도록 개선
-        const changed = prevUrl && prevUrl !== url && (prevUrl.includes('youtube') || prevUrl.includes('youtu.be'));
+        // [FIX #782/#785][FIX #964] 개별 URL 변경 시에도 결과 + 캐시 초기화
+        // [FIX #964 P1-3] YouTube 뿐 아니라 TikTok/소셜 URL 변경 시에도 캐시 무효화
+        const isUrlLike = (u: string) => u.includes('youtube') || u.includes('youtu.be') || u.includes('tiktok') || u.includes('douyin') || u.includes('xiaohongshu') || u.includes('http');
+        const changed = prevUrl && prevUrl !== url && isUrlLike(prevUrl);
         set({
           youtubeUrls: urls,
           youtubeUrl: urls[0] || '',
@@ -189,6 +197,7 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
             isFrameUpgrading: false,
             videoBlob: null,
             videoBlobHasAudio: null,
+            resultCache: {},
           } : {}),
         });
       },

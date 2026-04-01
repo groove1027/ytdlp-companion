@@ -2623,8 +2623,15 @@ const buildVideoAnalysisSourceCacheKey = (
     return `upload:${fileSignature}`;
   }
 
+  // [FIX #964 P2-6] YouTube URL 정규화 — /shorts/, youtu.be, /embed/ 등을 watch?v= 형태로 통일
+  // 같은 영상의 다른 URL 형태가 다른 캐시 키를 생성하는 문제 수정
   const normalizedUrls = urls
-    .map((url) => url.trim())
+    .map((url) => {
+      const trimmed = url.trim();
+      const ytMatch = trimmed.match(/(?:youtube\.com\/(?:watch\?v=|shorts\/|embed\/|v\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+      if (ytMatch) return `https://www.youtube.com/watch?v=${ytMatch[1]}`;
+      return trimmed;
+    })
     .filter(Boolean)
     .join('|');
   return `link:${normalizedUrls}`;
@@ -3630,10 +3637,10 @@ const VideoAnalysisRoom: React.FC = () => {
           // ── YouTube 모드 ──
           const primaryVid = extractYouTubeVideoId(urls[0]);
           if (primaryVid) {
-            // [FIX] YouTube watch URL을 그대로 Gemini v1beta에 전달
-            // ✅ 실제 테스트 결과: Evolink Gemini v1beta가 YouTube URL을 내부적으로 처리하여 영상 직접 분석
+            // [FIX #964] YouTube Shorts/embed/youtu.be URL을 표준 watch URL로 정규화
+            // ✅ v1beta가 /shorts/ 경로를 인식하지 못해 타임아웃되는 문제 수정
             // ❌ CDN URL(googlevideo.com)은 Vertex AI robots.txt 규칙으로 차단됨 — 사용 불가
-            videoUri = urls[0].trim();
+            videoUri = `https://www.youtube.com/watch?v=${primaryVid}`;
           }
 
           // [FIX #perf] 메타데이터 + 타임코드 보존 자막을 병렬로 수집
@@ -4163,17 +4170,89 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
               ? prompt + `\n\n---\n${diarizedText}\n\n위 화자 분리 전사 결과를 편집 테이블에 정확히 반영하세요.`
               : prompt;
 
-            // [FIX #264] 프레임 분석 실패 시에도 텍스트 폴백으로 이어지도록 try/catch 추가
+            // [FIX #964] 컴패니언 다운로드 영상에서 실제 프레임 추출 (YouTube 썸네일보다 우선)
+            // YouTube 썸네일은 4장의 포스터 이미지일 뿐이므로 실제 영상 프레임이 훨씬 정확
+            // [FIX #964 P2-4] abort signal 연동 + 30초 타임아웃
+            try {
+              const dlResult = await Promise.race([
+                parallelDownloadBlobPromise,
+                new Promise<null>((resolve) => {
+                  const timer = setTimeout(() => resolve(null), 30_000);
+                  if (signal.aborted) { clearTimeout(timer); resolve(null); return; }
+                  signal.addEventListener('abort', () => { clearTimeout(timer); resolve(null); }, { once: true });
+                }),
+              ]);
+              const companionBlob = dlResult?.blob;
+              if (companionBlob && companionBlob.size > 0) {
+                console.log(`[VideoAnalysis] 📹 컴패니언 영상(${(companionBlob.size / 1024 / 1024).toFixed(1)}MB)에서 실제 프레임 추출 시도`);
+                const companionFile = new File([companionBlob], 'companion-video.mp4', { type: 'video/mp4' });
+                const realFrames = await extractVideoFrames(companionFile, 0);
+                if (realFrames.length > 0) {
+                  console.log(`[VideoAnalysis] ✅ 실제 프레임 ${realFrames.length}개 추출 성공 → 프레임 분석`);
+                  return await analyzeWithFrames(realFrames, fbPrompt, scriptSystem, tokens, signal, effectiveTemp);
+                }
+              }
+            } catch (companionFrameErr) {
+              if (signal.aborted) throw new DOMException('분석이 취소되었습니다.', 'AbortError');
+              console.warn('[VideoAnalysis] 컴패니언 프레임 분석 실패:', companionFrameErr);
+            }
+
+            // [FIX #264] YouTube 썸네일 프레임 폴백 (컴패니언 실패 시)
             if (effectiveFrames.length > 0) {
               try {
                 return await analyzeWithFrames(effectiveFrames, fbPrompt, scriptSystem, tokens, signal, effectiveTemp);
               } catch (frameErr) {
                 if (signal.aborted) throw new DOMException('분석이 취소되었습니다.', 'AbortError');
-                console.warn('[VideoAnalysis] 프레임 분석도 실패, 텍스트 폴백:', frameErr);
+                console.warn('[VideoAnalysis] YouTube 썸네일 프레임 분석도 실패:', frameErr);
               }
             }
-            // [FIX #369] 텍스트 전용 모드 — 영상/프레임 분석 모두 실패 시 메타데이터만으로 분석
-            const textOnlyNotice = '\n\n⚠️ [텍스트 전용 모드] 영상 원본 분석과 프레임 이미지 분석이 모두 실패했습니다. 첨부된 프레임 이미지나 영상 화면이 없으므로, 위에 제공된 메타데이터(제목, 설명, 태그, 전사 텍스트)만을 기반으로 분석하세요. 실제로 보지 못한 장면이나 화면을 상상·추측하여 작성하지 마세요. 타임코드는 메타데이터의 영상 길이 정보를 기반으로 균등 배분하세요.';
+
+            // [FIX #964] 텍스트 전용 모드 — 모든 영상/프레임 분석 실패 시
+            // 전사(diarized) 데이터 유무에 따라 프롬프트 분기
+            const hasDiarized = !!diarizedText && diarizedText.length > 50;
+            // [FIX #964 P1-1] 실제 메타데이터(제목/설명/태그)가 있는지 구조적으로 확인
+            // URL만 있는 inputDesc("YouTube 영상 URL: ...")는 메타데이터로 인정하지 않음
+            const hasMetadata = inputDesc.includes('**제목**:') || inputDesc.includes('## YouTube 영상 정보') || inputDesc.includes('영상 설명(Description)');
+
+            // [FIX #964 P1-4] 메타데이터도 전사/자막 데이터도 없으면 에러 — 허구 생성 차단
+            // hasTimedTranscript는 외부 스코프 변수 (YouTube 타임드 자막 성공 여부)
+            if (!hasDiarized && !hasMetadata && !hasTimedTranscript) {
+              throw new Error(
+                '영상 분석에 실패했습니다.\n\n' +
+                '• Gemini 영상 직접 분석, 프레임 분석, 음성 전사 분석 모두 실패했습니다.\n' +
+                '• 잠시 후 다시 시도하거나, 영상을 직접 업로드하여 분석해 보세요.\n' +
+                '• 컴패니언 앱이 실행 중인지 확인해 주세요.'
+              );
+            }
+
+            const hasGroundedText = hasDiarized || hasTimedTranscript;
+            const textOnlyNotice = hasGroundedText
+              ? '\n\n⚠️⚠️ [텍스트+전사 모드] 영상 화면을 보지 못했습니다. 위에 제공된 메타데이터와 전사/자막 텍스트를 기반으로 분석하세요. 시각적 묘사("영상에서 ~가 보인다")는 절대 금지. 장면 설명에는 "[전사 기반]" 태그를 붙이세요.'
+              : `
+
+⚠️⚠️⚠️ [텍스트 전용 모드 — 절대 규칙]
+영상 원본 분석, 프레임 이미지 분석, 컴패니언 프레임 분석이 모두 실패했습니다.
+
+당신은 이 영상을 보지 못했습니다. 아래 규칙을 100% 준수하세요:
+
+[금지]
+- "영상에서 ~가 보인다/나온다/등장한다" 등 시각적 묘사 절대 금지
+- 없는 대사를 만들어내는 것 절대 금지
+- 영상 화면 구성, 자막, 효과음, BGM 등을 추측하는 것 금지
+- 구체적인 장면 전환이나 카메라 워크를 상상하는 것 금지
+
+[필수]
+- 제목, 설명, 태그에 명시된 정보만 활용
+- 모든 장면 설명에 "[메타데이터 기반 추정]" 태그를 붙일 것
+- 편집점은 영상 길이를 기반으로 균등 배분
+- 대사/내레이션 칸에는 "메타데이터에서 확인 불가"라고 명시
+- 결과물 상단에 "⚠️ 이 분석은 영상을 직접 보지 못하고 제목/설명만으로 생성되었습니다. 정확도가 낮을 수 있습니다."를 반드시 포함`;
+            showToast(
+              hasGroundedText
+                ? '⚠️ 영상 화면 분석 실패 — 전사/자막 데이터 기반으로 분석합니다.'
+                : '⚠️ 영상 직접 분석에 실패하여 제목/설명만으로 분석합니다. 결과가 부정확할 수 있습니다.',
+              10000,
+            );
             return await textFallbackAI(fbPrompt + textOnlyNotice, tokens);
           }
         } else if (uploadedFiles.length > 0 && effectiveFrames.length > 0) {
@@ -4190,7 +4269,8 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
               const fbPrompt = !prompt.includes(diarizedText)
                 ? prompt + `\n\n---\n${diarizedText}\n\n위 화자 분리 전사 결과를 편집 테이블에 정확히 반영하세요.`
                 : prompt;
-              const textOnlyNotice = '\n\n⚠️ [텍스트 전용 모드] 프레임 이미지 분석이 실패했습니다. 위에 제공된 메타데이터와 전사 텍스트만을 기반으로 분석하세요. 실제로 보지 못한 장면이나 화면을 상상·추측하여 작성하지 마세요.';
+              const textOnlyNotice = '\n\n⚠️⚠️ [텍스트 전용 모드] 프레임 이미지 분석이 실패했습니다. 위에 제공된 메타데이터와 전사 텍스트만을 기반으로 분석하세요. 영상 화면을 보지 못했으므로 시각적 묘사("영상에서 ~가 보인다")를 절대 하지 마세요. 장면 설명에는 "[전사 기반 추정]" 태그를 붙이세요.';
+              showToast('⚠️ 프레임 분석 실패 — 음성 전사 데이터만으로 분석합니다.', 8000);
               return await textFallbackAI(fbPrompt + textOnlyNotice, tokens);
             }
             // 전사 데이터도 없으면 에러 전파 (텍스트 폴백 시 할루시네이션 위험)
@@ -4198,6 +4278,19 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
           }
         } else {
           // [FIX #262] 텍스트 전용 경로도 Smart Routing 적용
+          // [FIX #964] 소셜/기타 경로에도 메타데이터 최소 요건 확인 — URL만으로 허구 생성 차단
+          // [FIX #964 Review5 P1-2] 길이 기반 체크 제거 — 구조적 메타데이터 마커만으로 판단
+          const hasGroundedData = (diarizedText && diarizedText.length > 50)
+            || inputDesc.includes('**제목**:') || inputDesc.includes('## YouTube 영상 정보')
+            || inputDesc.includes('영상 설명(Description)') || inputDesc.includes('## 소셜')
+            || hasTimedTranscript || (effectiveFrames.length > 0);
+          if (!hasGroundedData) {
+            throw new Error(
+              '영상 분석에 실패했습니다.\n\n' +
+              '• 영상 메타데이터를 가져올 수 없었습니다.\n' +
+              '• 컴패니언 앱이 실행 중인지 확인하거나, 영상을 직접 업로드해 보세요.'
+            );
+          }
           return await textFallbackAI(prompt, tokens);
         }
       };
