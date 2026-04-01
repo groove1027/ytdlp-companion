@@ -13,6 +13,7 @@ import {
   deleteCustomVoice,
   splitTextForTTS,
   splitBySentenceEndings,
+  normalizeAudioUrl,
 } from '../../../services/ttsService';
 import type { CustomVoice } from '../../../services/ttsService';
 import { generateElevenLabsDialogueTTS, ELEVENLABS_VOICES, ELEVENLABS_LANGUAGES, elNameKo } from '../../../services/elevenlabsService';
@@ -648,10 +649,13 @@ const VoiceStudio: React.FC = () => {
   const handleGenerateLine = useCallback(async (lineId: string) => {
     logger.trackAction('나레이션 생성 시작', lineId);
     if (!requireAuth('TTS 음성 생성')) return;
-    const lineIdx = lines.findIndex(l => l.id === lineId);
+    // [FIX #944] stale closure 방지 — store에서 최신 lines/speakers를 직접 읽음
+    const freshLines = useSoundStudioStore.getState().lines;
+    const freshSpeakers = useSoundStudioStore.getState().speakers;
+    const lineIdx = freshLines.findIndex(l => l.id === lineId);
     if (lineIdx < 0) return;
-    const line = lines[lineIdx];
-    const speaker = (line.speakerId ? speakers.find(s => s.id === line.speakerId) : null) || speakers[0];
+    const line = freshLines[lineIdx];
+    const speaker = (line.speakerId ? freshSpeakers.find(s => s.id === line.speakerId) : null) || freshSpeakers[0];
     // [FIX #783] 줄별 voiceId도 확인 — 개별 캐릭터 선택 시 speaker.voiceId 없어도 진행 가능
     if (!line.voiceId && !speaker?.voiceId) {
       showToast('음성을 선택해주세요.');
@@ -681,8 +685,8 @@ const VoiceStudio: React.FC = () => {
       : { ttsStatus: 'generating' });
 
     try {
-      const prevText = lineIdx > 0 ? lines[lineIdx - 1]?.text?.slice(-200) : undefined;
-      const nextText = lineIdx < lines.length - 1 ? lines[lineIdx + 1]?.text?.slice(0, 200) : undefined;
+      const prevText = lineIdx > 0 ? freshLines[lineIdx - 1]?.text?.slice(-200) : undefined;
+      const nextText = lineIdx < freshLines.length - 1 ? freshLines[lineIdx + 1]?.text?.slice(0, 200) : undefined;
 
       let result: { audioUrl: string };
 
@@ -719,6 +723,11 @@ const VoiceStudio: React.FC = () => {
           nextText: nextText,
         });
       }
+
+      // [FIX #918] 개별 클립 음량 정규화 — 멀티 캐릭터 음량 편차 제거
+      try {
+        result.audioUrl = await normalizeAudioUrl(result.audioUrl);
+      } catch (e) { logger.trackSwallowedError('VoiceStudio:generateTTS/normalizeAudio', e); }
 
       // [FIX] TTS 오디오 디코딩 → 실제 duration 측정
       let realDuration: number | undefined;
@@ -784,7 +793,7 @@ const VoiceStudio: React.FC = () => {
     } finally {
       setIsGeneratingLine(null);
     }
-  }, [lines, speakers, updateLine, addCost]);
+  }, [updateLine, addCost]);
 
   const handleGenerateAll = useCallback(async () => {
     logger.trackAction('나레이션 일괄 생성 시작');

@@ -797,7 +797,7 @@ export const getAvailableVoices = (
  * @param targetRmsDb 타겟 RMS (dB), 기본 -16dB (나레이션 — [FIX #314] -20→-16 볼륨 업)
  * @param peakLimitDb 피크 리미터 (dBFS), 기본 -1dB (클리핑 방지)
  */
-const normalizeBufferRms = (buffer: AudioBuffer, targetRmsDb: number = -16, peakLimitDb: number = -1): void => {
+export const normalizeBufferRms = (buffer: AudioBuffer, targetRmsDb: number = -16, peakLimitDb: number = -1): void => {
     // Pass 1: RMS 측정
     let sumSquares = 0;
     let sampleCount = 0;
@@ -844,6 +844,46 @@ const normalizeBufferRms = (buffer: AudioBuffer, targetRmsDb: number = -16, peak
         gainDb: gainDb.toFixed(1),
         peakAfter: (maxPeak > peakLimit ? peakLimit : maxPeak).toFixed(3),
     });
+};
+
+/**
+ * [FIX #918] 개별 오디오 클립의 음량을 RMS 정규화하여 일정한 볼륨으로 반환
+ * 멀티 캐릭터 사용 시 캐릭터별 음량 편차를 제거합니다.
+ * @param audioUrl 정규화할 오디오 Blob URL
+ * @returns 정규화된 오디오 Blob URL (WAV)
+ */
+export const normalizeAudioUrl = async (audioUrl: string): Promise<string> => {
+    const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    const ctx = new AudioCtx();
+    try {
+        const resp = await monitoredFetch(audioUrl);
+        const buf = await resp.arrayBuffer();
+        const decoded = await ctx.decodeAudioData(buf);
+
+        // RMS 정규화 전후 차이가 미미하면 (1dB 이내) 원본 반환 — 불필요한 재인코딩 방지
+        let sumSq = 0; let cnt = 0;
+        for (let ch = 0; ch < decoded.numberOfChannels; ch++) {
+            const d = decoded.getChannelData(ch);
+            for (let i = 0; i < d.length; i++) { sumSq += d[i] * d[i]; cnt++; }
+        }
+        const rms = Math.sqrt(sumSq / cnt);
+        if (rms < 1e-6) return audioUrl; // 무음 클립 — 정규화 불필요
+        const currentDb = 20 * Math.log10(rms);
+        if (Math.abs(currentDb - (-16)) < 1.0) return audioUrl; // 이미 타겟 근접
+
+        normalizeBufferRms(decoded);
+        const wavBlob = audioBufferToWav(decoded);
+        const normalizedUrl = URL.createObjectURL(wavBlob);
+        logger.registerBlobUrl(normalizedUrl, 'audio', 'ttsService:normalizeAudioUrl');
+        // 원본 blob URL 해제
+        if (audioUrl.startsWith('blob:')) {
+            logger.unregisterBlobUrl(audioUrl);
+            URL.revokeObjectURL(audioUrl);
+        }
+        return normalizedUrl;
+    } finally {
+        ctx.close();
+    }
 };
 
 /**

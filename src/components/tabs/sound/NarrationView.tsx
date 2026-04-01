@@ -6,7 +6,7 @@ import { useCostStore } from '../../../stores/costStore';
 import { showToast } from '../../../stores/uiStore';
 import type { Scene } from '../../../types';
 import { generateTypecastTTS } from '../../../services/typecastService';
-import { mergeAudioFiles, splitBySentenceEndings } from '../../../services/ttsService';
+import { mergeAudioFiles, splitBySentenceEndings, normalizeAudioUrl } from '../../../services/ttsService';
 import { transferSoundToImageVideo } from '../../../utils/soundToImageBridge';
 import { PRICING } from '../../../constants';
 import NarrationToolbar from './NarrationToolbar';
@@ -59,10 +59,13 @@ const NarrationView: React.FC = () => {
   const handleGenerateLine = useCallback(
     async (lineId: string) => {
       if (!requireAuth('나레이션 생성')) return;
-      const lineIndex = lines.findIndex((l) => l.id === lineId);
+      // [FIX #944] stale closure 방지 — store에서 최신 lines/speakers를 직접 읽음
+      const freshLines = useSoundStudioStore.getState().lines;
+      const freshSpeakers = useSoundStudioStore.getState().speakers;
+      const lineIndex = freshLines.findIndex((l) => l.id === lineId);
       if (lineIndex < 0) return;
-      const line = lines[lineIndex];
-      const speaker = speakers.find(s => s.id === line.speakerId) || activeSpeaker;
+      const line = freshLines[lineIndex];
+      const speaker = freshSpeakers.find(s => s.id === line.speakerId) || activeSpeaker;
       if (!speaker) return;
 
       const usesUploadedNarration = line.audioSource === 'uploaded' || !!line.uploadedAudioId;
@@ -81,8 +84,8 @@ const NarrationView: React.FC = () => {
 
       try {
         // Smart Prompt 컨텍스트
-        const previousText = lineIndex > 0 ? lines[lineIndex - 1].text : undefined;
-        const nextText = lineIndex < lines.length - 1 ? lines[lineIndex + 1].text : undefined;
+        const previousText = lineIndex > 0 ? freshLines[lineIndex - 1].text : undefined;
+        const nextText = lineIndex < freshLines.length - 1 ? freshLines[lineIndex + 1].text : undefined;
 
         const effectiveEmotion = line.emotion || globalEmotion;
         const effectiveSpeed = line.lineSpeed ?? globalSpeed;
@@ -99,6 +102,11 @@ const NarrationView: React.FC = () => {
           previousText,
           nextText,
         });
+
+        // [FIX #918] 개별 클립 음량 정규화 — 멀티 캐릭터 음량 편차 제거
+        try {
+          result.audioUrl = await normalizeAudioUrl(result.audioUrl);
+        } catch (e) { logger.trackSwallowedError('NarrationView:generateTTS/normalizeAudio', e); }
 
         // [FIX] TTS 오디오 디코딩 → 실제 duration 측정 (3초 하드코드 방지)
         let realDuration: number | undefined;
@@ -137,7 +145,7 @@ const NarrationView: React.FC = () => {
         updateLine(lineId, { ttsStatus: 'error' });
       }
     },
-    [lines, speakers, activeSpeaker, globalEmotion, globalSpeed, smartEmotion, updateLine, addCost],
+    [activeSpeaker, globalEmotion, globalSpeed, smartEmotion, updateLine, addCost],
   );
 
   // ===============================

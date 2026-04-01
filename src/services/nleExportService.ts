@@ -1011,6 +1011,83 @@ function cleanupPremiereTemplatePlaceholders(
   normalizePremiereIndexedRefs(root, 'SecondaryContents', 'SecondaryContentItem');
 }
 
+/**
+ * [FIX] Premiere 템플릿의 환경 종속 절대경로·버전 정보를 제거하여
+ * 어떤 OS·Premiere 버전에서든 열 수 있도록 한다.
+ *
+ * 1. /Users/*, C:\Users\* 등 사용자 절대경로 → 제거
+ * 2. /Applications/Adobe Premiere Pro *  → 제거
+ * 3. MZ.BuildVersion.Created / Modified → 비움 (Premiere가 저장 시 자동 설정)
+ * 4. PresetPath, ProxyWatermarkDefaultImageFullPath → 비움
+ * 5. 남아있는 ConformedAudioPath, PeakFilePath → 제거
+ *
+ * 컴패니언이 설치된 환경에서는 컴패니언이 실제 경로로 재패치한다.
+ */
+function sanitizePremiereEnvironmentPaths(root: Element, doc: Document): void {
+  const absPathRe = /^(\/Users\/|\/Applications\/|[A-Z]:\\Users\\|[A-Z]:\\Program Files)/;
+  const tagsToClean = [
+    'PresetPath', 'ProxyWatermarkDefaultImageFullPath',
+    'ConformedAudioPath', 'PeakFilePath',
+    'project.settings.lastknowngoodprojectpath',
+    'AlternateMediaFilePath', 'ImporterPrefs', 'MediaLocatorInfo',
+  ];
+  const tagsToEmpty = [
+    'MZ.BuildVersion.Created', 'MZ.BuildVersion.Modified',
+  ];
+
+  // root 직계 자식 순회 (Premiere .prproj는 flat structure)
+  const walk = (parent: Element) => {
+    Array.from(parent.children).forEach(child => {
+      // 제거 대상 태그
+      if (tagsToClean.includes(child.tagName)) {
+        const val = child.textContent || '';
+        if (absPathRe.test(val) || child.tagName === 'ConformedAudioPath' || child.tagName === 'PeakFilePath') {
+          parent.removeChild(child);
+          return;
+        }
+      }
+
+      // 비우기 대상 태그
+      if (tagsToEmpty.includes(child.tagName)) {
+        child.textContent = '';
+        return;
+      }
+
+      // 절대경로가 남아있는 태그 — 내용을 비움 (Premiere가 저장 시 재설정)
+      if (['PresetPath', 'ProxyWatermarkDefaultImageFullPath', 'FilePath', 'ActualMediaFilePath'].includes(child.tagName)) {
+        const val = child.textContent || '';
+        if (absPathRe.test(val)) {
+          child.textContent = '';
+        }
+      }
+
+      // JSON 문자열 내 임베딩된 절대경로 정리 (ExportState 등)
+      if (child.children.length === 0 && child.textContent) {
+        const txt = child.textContent;
+        if (absPathRe.test(txt) || /\/Users\/|[A-Z]:\\Users\\/.test(txt)) {
+          // JSON 내 "OutPath":"/Users/..." 패턴 → 빈 문자열로 치환
+          child.textContent = txt
+            .replace(/"OutPath":"[^"]*"/g, '"OutPath":""')
+            .replace(/"[^"]*":\s*"(\/Users\/|[A-Z]:\\\\Users\\\\)[^"]*"/g, (m, _p) => {
+              const key = m.substring(0, m.indexOf(':') + 1);
+              return `${key}""`;
+            });
+        }
+      }
+
+      // 재귀 — Properties, Node 등 하위 탐색
+      if (child.children.length > 0) {
+        walk(child);
+      }
+    });
+  };
+
+  // root 직계 자식(ObjectID가 있는 요소)들을 순회
+  Array.from(root.children).forEach(topLevel => {
+    walk(topLevel);
+  });
+}
+
 function setPremiereTrackItemTimes(trackItemElement: Element, startTicks: number, endTicks: number): void {
   const trackItem = getPremiereDirectChild(trackItemElement, 'TrackItem');
   if (!trackItem) throw new Error('Premiere ClipTrackItem.TrackItem을 찾지 못했습니다.');
@@ -1529,7 +1606,7 @@ async function generatePremiereNativeProjectBytes(params: {
           : sceneTimelineStart + Math.max(0.1, line.duration || 0),
       );
       const narrationDurationTicks = Math.max(frameDurationTicks, narrationEndTicks - narrationStartTicks);
-      const narrationFileName = sanitizeFileName(line.audioFileName || 'narration.mp3');
+      const narrationFileName = sanitizeFileName(line.audioFileName || 'narration.wav'); // audioFileName이 이미 설정된 경우 blob 기반 확장자 사용됨
 
       const narrationMasterClip = clonePremiereObject(root, narrationMasterClipPrototype, nextObjectId);
       const narrationMasterAudioComponentChain = clonePremiereObject(root, narrationMasterAudioComponentChainPrototype, nextObjectId);
@@ -1631,6 +1708,9 @@ async function generatePremiereNativeProjectBytes(params: {
       sourceAudioMediaSource.getAttribute('ObjectID') || '',
     ].filter(Boolean),
   );
+
+  // [FIX] 환경 종속 경로/버전 전수 제거 — Premiere 버전·OS 무관하게 열리도록
+  sanitizePremiereEnvironmentPaths(root, doc);
 
   const serialized = new XMLSerializer().serializeToString(doc);
   // XMLSerializer가 자체 XML 선언을 추가하므로 중복 방지
@@ -4175,7 +4255,7 @@ export async function buildNlePackageZip(params: {
     if (!line.audioUrl) { packagedNarrationLines.push(line); continue; }
     const blob = await fetchAssetBlob(line.audioUrl);
     if (!blob) { packagedNarrationLines.push(line); continue; }
-    const fileName = `${String(i + 1).padStart(3, '0')}_narration.mp3`;
+    const fileName = `${String(i + 1).padStart(3, '0')}_narration.${audioExtFromBlob(blob)}`;
     const duration = line.duration ?? await measureBlobAudioDuration(blob) ?? 3;
     zip.file(`audio/${fileName}`, blob);
     packagedNarrationBlobs.push({ fileName, blob });
@@ -5412,6 +5492,15 @@ function buildEditRoomFcpXml(params: {
 }
 
 /** 이미지/영상 URL에서 Blob으로 fetch (data: / blob: / https: 모두 지원) */
+/** [FIX #918] blob MIME type에서 오디오 확장자 결정 */
+function audioExtFromBlob(blob: Blob): string {
+  const t = blob.type?.toLowerCase() || '';
+  if (t.includes('mpeg') || t.includes('mp3')) return 'mp3';
+  if (t.includes('mp4') || t.includes('m4a') || t.includes('aac')) return 'm4a';
+  if (t.includes('ogg')) return 'ogg';
+  return 'wav'; // TypeCast/normalizeAudioUrl 기본값
+}
+
 async function fetchAssetBlob(url: string): Promise<Blob | null> {
   if (!url) return null;
   // data: URL → 직접 디코딩 (fetch 폴백 포함)
@@ -5741,7 +5830,7 @@ export async function buildEditRoomNleZip(params: {
       sceneOffset = Math.max(sceneOffset, localEndOffset);
 
       seqInScene++;
-      const narFileName = `${idx}_narration_${String(seqInScene).padStart(2, '0')}.mp3`;
+      const narFileName = `${idx}_narration_${String(seqInScene).padStart(2, '0')}.${audioExtFromBlob(blob)}`;
       zip.file(`audio/${narFileName}`, blob);
       narrationBlobEntries.push({ fileName: narFileName, blob });
       narrationClips.push({ fileName: narFileName, startSec, durationSec });
@@ -5767,7 +5856,7 @@ export async function buildEditRoomNleZip(params: {
       : unboundOffset;
     unboundOffset = Math.max(unboundOffset, startSec + durationSec);
 
-    const narFileName = `global_narration_${String(i + 1).padStart(3, '0')}.mp3`;
+    const narFileName = `global_narration_${String(i + 1).padStart(3, '0')}.${audioExtFromBlob(blob)}`;
     zip.file(`audio/${narFileName}`, blob);
     narrationBlobEntries.push({ fileName: narFileName, blob });
     narrationClips.push({ fileName: narFileName, startSec, durationSec });

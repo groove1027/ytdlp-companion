@@ -8,6 +8,24 @@
 
 ## 🟢 완료된 작업
 
+### [2026-04-01] #944 TTS 라인 중복/누락 + #918 멀티캐릭터 음량 편차 수정
+- [x] VoiceStudio.tsx: `handleGenerateLine` stale closure 수정 — store에서 직접 최신 lines/speakers 읽도록 변경
+- [x] NarrationView.tsx: 동일한 stale closure 수정
+- [x] ttsService.ts: `normalizeAudioUrl()` 추가 — 개별 TTS 생성 시 RMS 정규화 적용 (멀티캐릭터 음량 편차 제거)
+- [x] ttsService.ts: `normalizeBufferRms()` export로 변경
+- [x] nleExportService.ts: `audioExtFromBlob()` 추가 — blob MIME type 기반 동적 확장자 결정 (기존 .mp3 하드코딩 제거)
+- [x] Codex 5.4 MCP 리뷰 10회 완료 — P1 2건(WAV/MP3 확장자 불일치) 수정
+- [x] Playwright E2E: 사운드 스튜디오 진입 → Typecast 음성 선택 → TTS 생성 검증
+
+### [2026-04-01] Premiere Pro .prproj 호환성 수정 — 환경 종속 경로/버전 제거 + 컴패니언 패치
+- [x] nleExportService.ts: `sanitizePremiereEnvironmentPaths()` 추가 — 템플릿 내 `/Users/`, `/Applications/`, `MZ.BuildVersion`, `ConformedAudioPath`, `PeakFilePath` 등 전수 제거
+- [x] companion server.rs: `patch_prproj_files()` 추가 — 컴패니언 설치 시 .prproj gunzip → 환경 경로 제거 + Premiere 버전 감지 → MZ.BuildVersion 갱신 → gzip 재압축
+- [x] companion server.rs: `detect_premiere_pro()` — macOS/Windows Premiere Pro 설치 경로/버전 자동 탐색 (Beta 제외)
+- [x] companion server.rs: `premiere_year_to_version()` — 마케팅 연도(2026) → 내부 버전(26.0.0) 변환 (2020~2023 구버전 매핑 포함)
+- [x] Cargo.toml: flate2 의존성 추가 (gzip 처리)
+- [x] Codex 5.4 MCP 리뷰 10회 완료 — P1 6건 수정 (launch 순서, .app 접미사, regex 역참조, 버전 매핑, Windows 경로, Beta 필터)
+- [x] Playwright E2E: .prproj 템플릿 라운드트립 검증 — 환경 종속 경로 0건 확인
+
 ### [2026-04-01] 자료영상(YouTube) 레퍼런스 v2 — 컴패니언 + Scene Detection + Gemini + 영어 검색
 - [x] youtubeReferenceService.ts v2: 컴패니언 yt-dlp 1080p → Scene Detection → 하이브리드 매칭
   - 5분 이하: Gemini 영상 직접 분석 (fileUri)
