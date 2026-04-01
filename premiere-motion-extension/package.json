@@ -1,0 +1,13 @@
+{
+  "name": "motion-master-premiere",
+  "version": "1.0.0",
+  "description": "Premiere Pro Ken Burns Motion Extension — 이미지 클립에 자동 모션 효과 적용",
+  "author": "GrooveLab",
+  "license": "MIT",
+  "scripts": {
+    "dev": "open client/index.html",
+    "install-dev": "bash scripts/install-dev.sh",
+    "package": "bash scripts/package.sh",
+    "test": "open client/index.html"
+  }
+}

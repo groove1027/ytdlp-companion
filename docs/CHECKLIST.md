@@ -8,6 +8,21 @@
 
 ## 🟢 완료된 작업
 
+### [2026-04-02] Premiere Motion Master Extension v1.0 (Phase 1~4)
+- [x] CEP manifest.xml + 프로젝트 구조 셋업 (Premiere 25.0~26.x 호환)
+- [x] ExtendScript motionEngine.jsx: 30개 프리셋 키프레임 매핑 + 오버스케일 자동 계산
+- [x] client/src/presets.js: kenBurnsEngine.ts에서 21개 팬/줌 + 9개 모션 이펙트 이식
+- [x] client/src/smartRandom.js: 6개 규칙 (연속 금지, 줌방향 교차, 앵커 삼분할 등)
+- [x] client/src/focalDetector.js: 밝기 기반 포컬 포인트 감지 (API 불필요)
+- [x] client/src/app.js: CSInterface 통신, 일괄 적용, 되돌리기
+- [x] client/index.html: 다크 UI 패널 (프리셋 그리드, 앵커 드래그, 슬라이더)
+- [x] client/lib/CSInterface.js: 개발용 스텁 (브라우저 테스트용)
+- [x] scripts/install-dev.sh: macOS/Windows 개발 설치 (심볼릭 링크 + PlayerDebugMode)
+- [x] scripts/package.sh: ZXP 서명 + 패키징 스크립트
+- [x] .debug: CEP 개발 디버그 설정
+- [x] Codex 5.4 MCP 리뷰 10회 완료 — extension 코드 이슈 0건
+- [x] Playwright E2E 테스트: 패널 UI 로드 → 프리셋 선택 → 앵커 조정 → 모션 이펙트 전체 흐름 통과
+
 ### [2026-04-02] 무료 영상 클립 레퍼런스 v3 — AI 맥락 분석 + 쇼츠 모드 + 구간 조정 + 편집 가이드
 - [x] youtubeReferenceService.ts: 검색어 생성에 인물/시기/장소/감정 맥락 분석 강화 (Gemini Flash Lite)
 - [x] youtubeReferenceService.ts: 쇼츠 모드 — 짧은 영상 우선 검색 + 날짜 범위 필터
