@@ -192,6 +192,86 @@ const ACTION_HINT_PATTERNS: Array<{ pattern: RegExp; labels: string[] }> = [
   { pattern: /궁궐|궁전/, labels: ['palace'] },
 ];
 
+// ─── [ENHANCE] 커뮤니티 쇼츠 스타일 검색 힌트 — 대본 맥락 기반 실사 레퍼런스 품질 향상 ───
+
+/** 대본 카테고리 감지 → 검색어 접미사 힌트
+ * ⚠️ 오탐 방지: 짧은 한국어 단어(왕, 달, 골 등)는 반드시 복합어로만 매칭.
+ *    예: "왕"→X, "조선왕조"→O / "달"→X, "달탐사"→O / "배우"→X, "배우자"→X, "인기배우"→O
+ */
+const CATEGORY_SEARCH_HINTS: Array<{ pattern: RegExp; hints: string[]; hintEN: string }> = [
+  { pattern: /대통령|국회의[원장]|정치인|선거|투표|여당|야당|탄핵|외교|정상회담|장관|총리|비서실장/, hints: ['보도 사진'], hintEN: 'press photo' },
+  { pattern: /군인|군대|전쟁|무기|미사일|전투기|해군|육군|공군|특전사|계급장|군사훈련|사단장|여단장|준위|소위|중위|대위|소령|중령|대령|장군|원수|병장|상병|일병|이병/, hints: ['군사 사진'], hintEN: 'military photo' },
+  { pattern: /북한|김정은|김정일|김일성|평양|핵실험|\bDMZ\b|판문점|휴전선/i, hints: ['보도 사진'], hintEN: 'news photo north korea' },
+  { pattern: /조선시대|조선왕조|고려시대|삼국시대|고구려|백제|신라|임진왜란|한국전쟁|일제강점|독립운동|세종대왕|이순신장군|광개토대왕/, hints: ['역사 자료'], hintEN: 'historical photo' },
+  { pattern: /과학자|우주탐사|\bNASA\b|로켓발사|인공위성|행성탐사|화성탐사|달탐사|태양계|블랙홀|양자역학|물리학|화학실험|생물학|연구소/i, hints: ['과학 사진'], hintEN: 'science photo' },
+  { pattern: /경제위기|주식시장|코스피|증시|GDP|인플레이션|금리인상|환율|부동산|투자자|삼성전자|현대자동차|애플|테슬라/, hints: ['경제 사진'], hintEN: 'economy photo' },
+  { pattern: /스포츠|축구경기|야구경기|농구경기|올림픽|월드컵|축구선수|야구선수|경기장|결승전|홈런|메시|손흥민|오타니/, hints: ['스포츠 사진'], hintEN: 'sports photo' },
+  { pattern: /음식|요리사|맛집|레스토랑|식당|디저트|한식|중식|일식/, hints: ['음식 사진'], hintEN: 'food photo' },
+  { pattern: /여행지|관광지|명소|유적지|랜드마크|에펠탑|자유의여신|만리장성|콜로세움|피라미드/, hints: ['관광 사진'], hintEN: 'landmark photo' },
+  { pattern: /\bIT\b|\bAI\b|인공지능|로봇공학|스마트폰|소프트웨어|프로그래밍|데이터센터|서버실/i, hints: ['기술 사진'], hintEN: 'technology photo' },
+  { pattern: /아이돌|가수|인기배우|드라마|K-pop|\bBTS\b|블랙핑크|뉴진스|콘서트|시상식|레드카펫/i, hints: ['연예 사진'], hintEN: 'celebrity photo' },
+  { pattern: /범죄자|사건사고|재판|법원|검찰|경찰관|체포|수사|판결|형사사건|변호사/, hints: ['보도 사진'], hintEN: 'news photo' },
+  { pattern: /교육과정|학교|대학교|학생들|교사|수능|입시/, hints: ['교육 사진'], hintEN: 'education photo' },
+  { pattern: /의료진|병원|의사|수술실|백신접종|코로나|질병|암환자|치료/, hints: ['의료 사진'], hintEN: 'medical photo' },
+  { pattern: /환경오염|기후변화|온난화|탄소배출|재활용|오염|플라스틱|산불|홍수|태풍/, hints: ['환경 사진'], hintEN: 'environment photo' },
+];
+
+/** castType별 검색 전략 — entityName 활용 방식 결정 */
+function getEntitySearchStrategy(scene: Scene): { prefix: string; suffix: string; prioritizeEntity: boolean } {
+  const castType = scene.castType || 'NOBODY';
+  const hasEntity = !!(scene.entityName?.trim());
+
+  if (!hasEntity) {
+    // entityName이 없으면 castType에 관계없이 기본 전략
+    return { prefix: '', suffix: '', prioritizeEntity: false };
+  }
+
+  switch (castType) {
+    case 'KEY_ENTITY': {
+      // 역사 인물(시대 키워드 매칭) → "역사 자료" / 현대 인물 → "실제 사진"
+      const era = scene.sceneEra?.toLowerCase() || '';
+      const culture = scene.sceneCulture?.toLowerCase() || '';
+      const eraAndCulture = `${era} ${culture}`;
+      const isHistorical = /고대|중세|고려|조선|삼국|고구려|백제|신라|명나라|청나라|에도|빅토리아|르네상스|산업혁명|일제|식민|세계대전|냉전|근대|ancient|medieval|dynasty|empire|colonial|renaissance|victorian|industrial|world war|cold war|(?:1[0-8]|[1-9])(?:th|st|nd|rd)\s*century|\d{1,2}세기/i.test(eraAndCulture);
+      const suffix = isHistorical ? '역사 자료' : '실제 사진';
+      return { prefix: scene.entityName || '', suffix, prioritizeEntity: true };
+    }
+    case 'EXTRA':
+      return { prefix: '', suffix: '현장 사진', prioritizeEntity: false };
+    case 'MAIN':
+    case 'NOBODY':
+    default:
+      return { prefix: '', suffix: '', prioritizeEntity: false };
+  }
+}
+
+/** 대본 텍스트에서 카테고리 힌트 추출 */
+function detectCategoryHints(text: string): { ko: string[]; en: string[] } {
+  const koHints: string[] = [];
+  const enHints: string[] = [];
+
+  for (const { pattern, hints, hintEN } of CATEGORY_SEARCH_HINTS) {
+    if (pattern.test(text)) {
+      koHints.push(...hints);
+      enHints.push(hintEN);
+      if (koHints.length >= 2) break; // 최대 2개 카테고리
+    }
+  }
+
+  return { ko: [...new Set(koHints)], en: [...new Set(enHints)] };
+}
+
+/** 시대 맥락 → 검색 힌트 변환 (한/영 모두 인식) */
+function eraToSearchHint(era: string | undefined): string {
+  if (!era) return '';
+  const lower = era.toLowerCase();
+  if (/고대|고구려|백제|신라|삼국|로마|그리스|이집트|메소포타미아|ancient|roman|greek|egyptian|mesopotamia/.test(lower)) return '고대 유적 자료';
+  if (/중세|고려|조선|명|청|에도|빅토리아|르네상스|산업혁명|medieval|dynasty|joseon|edo|victorian|renaissance|industrial revolution/.test(lower)) return '역사 자료 사진';
+  if (/근대|일제|식민|세계대전|냉전|6\.25|한국전쟁|modern era|world war|cold war|colonial|korean war/.test(lower)) return '근현대 역사 사진';
+  if (/현대|2[0-9]{3}|최근|요즘|contemporary|current|present|recent|20[2-3][0-9]/.test(lower)) return '최신 보도 사진';
+  return '';  // 비매칭 시 빈 문자열 — generic 힌트 강제 방지
+}
+
 type CachedReferenceSearch = {
   expiresAt: number;
   response: GoogleSearchResponse;
@@ -393,36 +473,62 @@ async function generateAiSearchQueries(
   prevScriptText?: string,
   nextScriptText?: string,
   globalContext?: string,
+  sceneMetadata?: { entityName?: string; sceneLocation?: string; sceneEra?: string; sceneCulture?: string; castType?: string },
 ): Promise<string[]> {
   if (!scriptText?.trim() || !getEvolinkKey()) return [];
 
-  const cacheKey = `ai-q:${scriptText.slice(0, 100)}::${(prevScriptText || '').slice(0, 30)}::${(nextScriptText || '').slice(0, 30)}::${(globalContext || '').slice(0, 30)}`;
+  const metaCacheSegment = sceneMetadata
+    ? `${(sceneMetadata.entityName || '').slice(0, 20)}|${(sceneMetadata.sceneLocation || '').slice(0, 15)}|${(sceneMetadata.sceneEra || '').slice(0, 10)}|${(sceneMetadata.sceneCulture || '').slice(0, 10)}|${sceneMetadata.castType || ''}`
+    : '';
+  const cacheKey = `ai-q:${scriptText.slice(0, 100)}::${(prevScriptText || '').slice(0, 30)}::${(nextScriptText || '').slice(0, 30)}::${(globalContext || '').slice(0, 30)}::${metaCacheSegment}`;
   const cached = _aiQueryCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached.queries;
 
   try {
+    // [ENHANCE] 장면 메타데이터를 명시적으로 전달
+    const metaParts = sceneMetadata ? [
+      sceneMetadata.entityName ? `실존 인물/브랜드: ${sceneMetadata.entityName}` : '',
+      sceneMetadata.sceneLocation ? `장소: ${sceneMetadata.sceneLocation}` : '',
+      sceneMetadata.sceneEra ? `시대: ${sceneMetadata.sceneEra}` : '',
+      sceneMetadata.sceneCulture ? `문화적 맥락: ${sceneMetadata.sceneCulture}` : '',
+      sceneMetadata.castType === 'KEY_ENTITY' ? '⚡ 이 장면은 실존 인물/브랜드가 핵심 — 이름을 검색어에 반드시 포함' : '',
+    ].filter(Boolean).join('\n') : '';
+
     const contextParts = [
       prevScriptText ? `이전 장면: ${prevScriptText.slice(0, 80)}` : '',
       `현재 장면: ${scriptText.slice(0, 200)}`,
       nextScriptText ? `다음 장면: ${nextScriptText.slice(0, 80)}` : '',
       globalContext ? `전체 맥락: ${globalContext.slice(0, 100)}` : '',
+      metaParts ? `\n장면 메타데이터:\n${metaParts}` : '',
     ].filter(Boolean).join('\n');
 
     const response = await evolinkChat([
       {
         role: 'system',
-        content: 'You generate Google Image search keywords for storyboard reference images. Return ONLY valid JSON.',
+        content: '너는 유튜브 해설/커뮤니티 쇼츠 채널의 영상 편집자다. 대본의 각 장면에 맞는 실사 레퍼런스 이미지를 구글에서 찾아야 한다. Return ONLY valid JSON.',
       },
       {
         role: 'user',
         content: [
           '아래 대본에 어울리는 구글 이미지 검색 키워드를 3개 생성해줘.',
-          '목적: 실제 사진, 뉴스 이미지, 유명인 사진 등을 찾는 것.',
-          '규칙:',
-          '- 각 키워드는 2~5단어 (인물/장소가 영어면 영어 그대로 사용, 한국어 맥락이면 한국어 사용)',
-          '- 그림 스타일(2d, vector, minimalist 등)은 절대 포함하지 마',
-          '- 대본의 핵심 주제/인물/장소/사물을 포착해',
-          '- 추상적 개념은 시각적 상징물로 변환 (예: "경제 성장" → "GDP 그래프", "천조국" → "미국 국기")',
+          '',
+          '🎯 목표: 시청자가 "진짜 사진이네"라고 느낄 수 있는 실사 레퍼런스 이미지.',
+          '뉴스 보도 사진, 실존 인물 사진, 실제 장소 사진, 역사 자료 사진, 제품/실물 사진 등.',
+          '',
+          '📋 장면 유형별 검색어 생성 규칙:',
+          '- 실존 인물 → 이름 + 구체적 상황 (예: "트럼프 백악관 기자회견", "손흥민 토트넘 골 세레머니")',
+          '- 실제 장소 → 정확한 장소명 + "실제" (예: "판문점 공동경비구역 실제", "63빌딩 전경")',
+          '- 역사/시대 → 역사 키워드 + "사진" (예: "한국전쟁 인천상륙작전 사진", "조선시대 과거시험 그림")',
+          '- 군사/제도 → 실물/제도 키워드 (예: "대한민국 군인 계급장", "한국 전투기 KF-21")',
+          '- 과학/기술 → 구체적 대상 + 사진 (예: "제임스웹 우주망원경 사진", "SpaceX 팰컨9 착륙")',
+          '- 경제/비즈니스 → 시각적 상징 (예: "코스피 전광판", "삼성전자 반도체 공장")',
+          '- 추상 개념 → 시각적 상징물 변환 (예: "경제위기" → "주가 폭락 전광판", "자유" → "자유의여신상")',
+          '- 소셜/커뮤니티 → 플랫폼 + 내용 (예: "쓰레드 앱 화면", "트위터 논란 캡처")',
+          '',
+          '⛔ 금지:',
+          '- AI 생성 스타일 키워드 (illustration, render, 2d, vector, minimalist 등) 절대 금지',
+          '- 모호한 단어만으로 구성된 검색어 금지 (예: "사람 걸어가는 모습" → 너무 일반적)',
+          '- 한국어 맥락이면 한국어, 해외 맥락이면 영어로 작성',
           '',
           contextParts,
           '',
@@ -464,14 +570,18 @@ function buildReferenceSearchPlan(
   const criticalParts: string[] = [];
   const softParts: string[] = [];
 
+  // [ENHANCE] castType 기반 엔티티 검색 전략
+  const entityStrategy = getEntitySearchStrategy(scene);
+
   pushQueryFragments(criticalParts, scene.entityName, 1, 36);
   pushQueryFragments(criticalParts, scene.sceneLocation, 1, 28);
   pushQueryFragments(criticalParts, scene.sceneCulture, 1, 24);
   pushQueryFragments(criticalParts, scene.sceneEra, 1, 18);
 
-  if (criticalParts.length < 4) pushQueryFragments(criticalParts, scene.visualDescriptionKO, 2, 24);
-  if (criticalParts.length < 4) pushQueryFragments(criticalParts, scene.scriptText, 2, 22);
-  if (criticalParts.length < 4) pushQueryFragments(criticalParts, globalContext, 1, 22);
+  // [ENHANCE] visualDescriptionKO를 항상 1개 이상 포함 (기존: criticalParts < 4일 때만)
+  pushQueryFragments(criticalParts, scene.visualDescriptionKO, 2, 24);
+  if (criticalParts.length < 5) pushQueryFragments(criticalParts, scene.scriptText, 2, 22);
+  if (criticalParts.length < 5) pushQueryFragments(criticalParts, globalContext, 1, 22);
   if (criticalParts.length < 3) pushQueryFragments(criticalParts, prevScene?.sceneLocation || prevScene?.visualDescriptionKO, 1, 20);
   if (criticalParts.length < 3) pushQueryFragments(criticalParts, nextScene?.sceneLocation || nextScene?.visualDescriptionKO, 1, 20);
 
@@ -489,23 +599,41 @@ function buildReferenceSearchPlan(
   const mappedEnglish = collectMappedEnglishTerms(joinedSceneText);
   const actionHints = collectActionHintTerms(joinedSceneText);
 
-  const primaryQuery = joinQueryParts([
-    scene.sceneLocation || '',
-    scene.entityName || '',
-    scene.sceneCulture || '',
-    scene.sceneEra || '',
-    ...actionHints.slice(0, 2),
-    mappedEnglish[0] || '',
-  ], 6, 72) || joinQueryParts([
-    ...criticalParts.slice(0, 3),
-    softParts[0] || '',
-    actionHints[0] || '',
-  ], 5, 72) || '풍경 사진';
+  // [ENHANCE] 카테고리 힌트 + 시대 힌트 추출
+  const categoryHints = detectCategoryHints(joinedSceneText);
+  const eraHint = eraToSearchHint(scene.sceneEra);
 
+  // [ENHANCE] 검색어 접미사 결정 — castType 전략 > 시대 > 카테고리 > 기본
+  // 시대 정보가 있으면 카테고리보다 우선 (역사적 맥락이 더 구체적)
+  const searchSuffix = entityStrategy.suffix || eraHint || categoryHints.ko[0] || '';
+  const searchSuffixEN = categoryHints.en[0] || '';
+
+  // [ENHANCE] KEY_ENTITY일 때 엔티티 이름을 맨 앞에 배치 + 접미사 추가
+  const primaryQuery = entityStrategy.prioritizeEntity
+    ? joinQueryParts([
+        entityStrategy.prefix,
+        scene.sceneLocation || '',
+        searchSuffix,
+        ...actionHints.slice(0, 1),
+      ], 5, 72)
+    : joinQueryParts([
+        scene.sceneLocation || '',
+        scene.entityName || '',
+        scene.sceneCulture || '',
+        searchSuffix || scene.sceneEra || '',
+        ...actionHints.slice(0, 2),
+        mappedEnglish[0] || '',
+      ], 6, 72) || joinQueryParts([
+        ...criticalParts.slice(0, 3),
+        softParts[0] || '',
+        searchSuffix || actionHints[0] || '',
+      ], 5, 72) || '풍경 사진';
+
+  // [ENHANCE] conciseQuery에도 카테고리 힌트 반영
   const conciseQuery = joinQueryParts([
     scene.sceneLocation || criticalParts[0] || '',
     scene.entityName || criticalParts[1] || '',
-    scene.sceneCulture || '',
+    searchSuffix || scene.sceneCulture || '',
     actionHints[0] || '',
   ], 4, 72);
 
@@ -513,21 +641,32 @@ function buildReferenceSearchPlan(
     scene.sceneLocation || '',
     ...mappedEnglish,
     ...actionHints,
-    'photo',
+    searchSuffixEN || 'photo',
   ], 7, 80);
 
+  // [ENHANCE] 카테고리 힌트를 활용한 대체 쿼리 추가
+  const categoryQuery = categoryHints.ko[0]
+    ? joinQueryParts([
+        scene.entityName || scene.sceneLocation || criticalParts[0] || '',
+        ...categoryHints.ko,
+        scene.visualDescriptionKO || '',
+      ], 4, 72)
+    : '';
+
+  // [ENHANCE] englishQuery를 categoryQuery보다 앞에 배치 — Bing fast 폴백에서 영어 쿼리 유지
   const alternativeQueries = dedupeQueryParts([
     englishQuery,
+    categoryQuery,
     conciseQuery,
     joinQueryParts([
       scene.sceneLocation || '',
       scene.visualDescriptionKO || scene.scriptText || '',
-      globalContext || '',
+      searchSuffix || globalContext || '',
     ], 4, 76),
     joinQueryParts([
       ...criticalParts.slice(0, 2),
       softParts[0] || '',
-      actionHints[0] || '',
+      searchSuffix || actionHints[0] || '',
     ], 4, 72),
   ]).filter((candidate) => candidate && candidate !== primaryQuery);
 
@@ -1724,6 +1863,14 @@ export async function searchSceneReferenceImages(
         prevScene?.scriptText,
         nextScene?.scriptText,
         globalContext,
+        // [ENHANCE] 장면 메타데이터를 AI에 전달 — 엔티티/장소/시대/문화 인식 강화
+        {
+          entityName: scene.entityName,
+          sceneLocation: scene.sceneLocation,
+          sceneEra: scene.sceneEra,
+          sceneCulture: scene.sceneCulture,
+          castType: scene.castType,
+        },
       )
     : [];
 
