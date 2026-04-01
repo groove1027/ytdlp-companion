@@ -704,10 +704,11 @@ export const evolinkChatStream = async (
         responseFormat,
         timeoutMs,
         signal,
+        model: requestedModel,
     } = options;
 
     const body: Record<string, unknown> = {
-        model: 'gemini-3.1-pro-preview',
+        model: requestedModel || 'gemini-3.1-pro-preview',
         messages,
         temperature,
         max_tokens: maxTokens,

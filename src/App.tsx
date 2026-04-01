@@ -67,6 +67,7 @@ const ImageScriptUploadLab = lazyRetry(() => import('./components/ImageScriptUpl
 const PptMasterTab = lazyRetry(() => import('./components/tabs/PptMasterTab'));
 const DetailPageTab = lazyRetry(() => import('./components/tabs/DetailPageTab'));
 const SubtitleRemoverTab = lazyRetry(() => import('./components/tabs/SubtitleRemoverTab'));
+const AiChatTab = lazyRetry(() => import('./components/tabs/AiChatTab'));
 // ShoppingShortTab은 DetailPageTab(쇼핑콘텐츠) 내부 서브탭으로 이동됨
 
 // [v4.5] 탭 정의 — 메인 파이프라인
@@ -99,7 +100,7 @@ const PIPELINE_STEPS: { id: AppTab; label: string; num: number }[] = [
 ];
 
 /** 도구모음 탭 ID 목록 — 파이프라인 표시기를 숨길 탭 */
-const TOOL_TABS = new Set<AppTab>(['thumbnail-studio', 'character-twist', 'image-script-upload', 'ppt-master', 'detail-page', 'subtitle-remover']);
+const TOOL_TABS = new Set<AppTab>(['thumbnail-studio', 'character-twist', 'image-script-upload', 'ppt-master', 'detail-page', 'subtitle-remover', 'ai-chat']);
 
 // 탭 로딩 fallback
 const TabFallback = () => (
@@ -1251,7 +1252,7 @@ const App: React.FC = () => {
           })}
           {/* 도구모음 섹션 — 접이식 */}
           {(() => {
-            const TOOL_TABS = ['thumbnail-studio', 'character-twist', 'image-script-upload', 'ppt-master', 'detail-page', 'subtitle-remover'];
+            const TOOL_TABS = ['thumbnail-studio', 'character-twist', 'image-script-upload', 'ppt-master', 'detail-page', 'subtitle-remover', 'ai-chat'];
             const isToolTabActive = TOOL_TABS.includes(activeTab);
             const isToolboxOpen = toolboxOpen || isToolTabActive;
             return (
@@ -1341,6 +1342,17 @@ const App: React.FC = () => {
                 >
                   <span className="text-base">🧹</span>
                   <span>자막/워터마크 제거</span>
+                </button>
+                <button
+                  onClick={() => setActiveTab('ai-chat')}
+                  className={`flex items-center gap-2.5 w-full px-4 py-3 rounded-lg text-sm font-semibold transition-all ${
+                    activeTab === 'ai-chat'
+                      ? 'bg-indigo-600/20 text-indigo-400 border border-indigo-500/30'
+                      : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/60'
+                  }`}
+                >
+                  <span className="text-base">🤖</span>
+                  <span>AI Chat</span>
                 </button>
               </div>
             )}
@@ -1460,6 +1472,8 @@ const App: React.FC = () => {
               <TabErrorBoundary><Suspense fallback={<TabFallback />}><DetailPageTab /></Suspense></TabErrorBoundary>
           ) : activeTab === 'subtitle-remover' ? (
               <TabErrorBoundary><Suspense fallback={<TabFallback />}><SubtitleRemoverTab /></Suspense></TabErrorBoundary>
+          ) : activeTab === 'ai-chat' ? (
+              <TabErrorBoundary><Suspense fallback={<TabFallback />}><AiChatTab /></Suspense></TabErrorBoundary>
           ) : /* project tab (default) */ showProjectDashboard ? (
               /* [v4.5] 프로젝트 대시보드 — 카드 그리드 */
               <Suspense fallback={<TabFallback />}>

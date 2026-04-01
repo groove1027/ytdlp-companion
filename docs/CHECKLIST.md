@@ -8,6 +8,15 @@
 
 ## 🟢 완료된 작업
 
+### [2026-04-02] AI Chat 플레이그라운드 신설
+- [x] types.ts에 'ai-chat' AppTab + AiChatMessage/AiChatSession 타입 추가
+- [x] chatStore.ts 생성 — Zustand 채팅 상태 관리 (localStorage 영속화, 다계정 분리)
+- [x] AiChatTab.tsx 생성 — 채팅 UI (모델 선택, 시스템 프롬프트, 대화 기록)
+- [x] App.tsx 도구모음에 AI Chat 메뉴 추가 + lazy loading + 콘텐츠 렌더링
+- [x] evolinkService.ts: evolinkChatStream에 model 파라미터 전달 수정
+- [x] Codex 5.4 MCP 코드 리뷰 10회 완료 (XSS 방지, 모델 선택, 세션 관리 등 10건 수정)
+- [x] Playwright E2E: 로그인 → AI Chat 진입 → 메시지 전송 → Gemini 스트리밍 응답 → 모델 변경 → 대화 기록 확인
+
 ### [2026-04-02] Premiere Motion Master Extension v1.0 (Phase 1~4)
 - [x] CEP manifest.xml + 프로젝트 구조 셋업 (Premiere 25.0~26.x 호환)
 - [x] ExtendScript motionEngine.jsx: 30개 프리셋 키프레임 매핑 + 오버스케일 자동 계산
