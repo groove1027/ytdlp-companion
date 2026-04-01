@@ -748,6 +748,13 @@ async fn nle_install_handler(Json(req): Json<NleInstallRequest>) -> impl IntoRes
         installed_count += 1;
     }
 
+    // ── Premiere .prproj 패치 — launch 전에 실행하여 패치된 파일이 열리도록 ──
+    if req.target == "premiere" {
+        if let Err(e) = patch_prproj_files(&project_dir) {
+            eprintln!("[NLE] prproj 패치 경고 (치명적 아님): {}", e);
+        }
+    }
+
     // 앱 실행
     if req.launch_app.unwrap_or(true) {
         match req.target.as_str() {
@@ -792,6 +799,199 @@ async fn nle_install_handler(Json(req): Json<NleInstallRequest>) -> impl IntoRes
         "filesInstalled": installed_count,
         "target": req.target,
     })).into_response()
+}
+
+// ──────────────────────────────────────────────
+// Premiere .prproj 패치 — 사용자 PC 환경에 맞게 경로/버전 치환
+// ──────────────────────────────────────────────
+
+/// 사용자 PC에 설치된 Adobe Premiere Pro 경로를 탐색한다.
+/// 반환: (앱 경로, 버전 문자열) e.g. ("/Applications/Adobe Premiere Pro 2026", "26.1.0")
+fn detect_premiere_pro() -> Option<(String, String)> {
+    #[cfg(target_os = "macos")]
+    {
+        // /Applications/ 에는 "Adobe Premiere Pro 2026.app" 형태로 존재
+        let apps_dir = std::path::Path::new("/Applications");
+        if let Ok(entries) = std::fs::read_dir(apps_dir) {
+            let mut candidates: Vec<String> = entries
+                .filter_map(|e| e.ok())
+                .map(|e| e.file_name().to_string_lossy().to_string())
+                .filter(|name| name.starts_with("Adobe Premiere Pro") && !name.contains("Beta"))
+                .collect();
+            // 가장 최신 버전 선택 (이름 역순 정렬)
+            candidates.sort();
+            if let Some(latest) = candidates.last() {
+                // latest = "Adobe Premiere Pro 2026.app" 또는 "Adobe Premiere Pro 2026"
+                let app_bundle = format!("/Applications/{}", latest);
+                // .app 접미사가 없으면 추가, 있으면 그대로
+                let bundle_path = if latest.ends_with(".app") {
+                    app_bundle.clone()
+                } else {
+                    format!("{}.app", app_bundle)
+                };
+                // .prproj XML 내 경로에는 .app 없는 형태로 기록됨
+                let app_path = app_bundle.trim_end_matches(".app").to_string();
+
+                // Info.plist에서 버전 읽기
+                let plist_path = format!("{}/Contents/Info.plist", bundle_path);
+                // 폴더명에서 .app 제거 후 연도 추출
+                let folder_name = latest.trim_end_matches(".app");
+                let version = read_plist_version(&plist_path)
+                    .or_else(|| {
+                        folder_name.strip_prefix("Adobe Premiere Pro ")
+                            .map(|y| premiere_year_to_version(y))
+                    })
+                    .unwrap_or_else(|| "26.0.0".to_string());
+                return Some((app_path, version));
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        // C:\Program Files\Adobe\Adobe Premiere Pro *
+        let program_files = std::env::var("ProgramFiles").unwrap_or_else(|_| r"C:\Program Files".to_string());
+        let adobe_dir = std::path::Path::new(&program_files).join("Adobe");
+        if let Ok(entries) = std::fs::read_dir(&adobe_dir) {
+            let mut candidates: Vec<String> = entries
+                .filter_map(|e| e.ok())
+                .map(|e| e.file_name().to_string_lossy().to_string())
+                .filter(|name| name.starts_with("Adobe Premiere Pro") && !name.contains("Beta"))
+                .collect();
+            candidates.sort();
+            if let Some(latest) = candidates.last() {
+                let app_path = format!("{}/Adobe/{}", program_files, latest);
+                let version = latest.strip_prefix("Adobe Premiere Pro ")
+                    .map(|y| premiere_year_to_version(y))
+                    .unwrap_or_else(|| "26.0.0".to_string());
+                return Some((app_path, version));
+            }
+        }
+    }
+
+    None
+}
+
+/// 마케팅 연도(e.g. "2026") → Premiere 내부 버전(e.g. "26.0.0")
+/// 2024=v24, 2025=v25, 2026=v26 — 2024 이후 year-2000이 정확.
+/// 2020~2023은 다른 매핑이지만 해당 버전 사용자는 극소수이므로 근사값 사용.
+/// macOS에서는 Info.plist에서 정확한 버전을 읽으므로 이 폴백은 주로 Windows용.
+fn premiere_year_to_version(year_str: &str) -> String {
+    if let Ok(year) = year_str.parse::<u32>() {
+        // 2020~2023 구버전 매핑 테이블
+        let major = match year {
+            2020 => 14, 2021 => 15, 2022 => 22, 2023 => 23,
+            y if y >= 2024 => y - 2000, // 2024=24, 2025=25, 2026=26
+            _ => 26, // 알 수 없는 연도 → 최신 기본값
+        };
+        format!("{}.0.0", major)
+    } else {
+        "26.0.0".to_string()
+    }
+}
+
+/// macOS Info.plist에서 CFBundleShortVersionString 읽기
+fn read_plist_version(plist_path: &str) -> Option<String> {
+    let content = std::fs::read_to_string(plist_path).ok()?;
+    // 간이 XML 파싱 — <key>CFBundleShortVersionString</key> 다음 <string>값</string>
+    let key = "CFBundleShortVersionString";
+    let key_pos = content.find(key)?;
+    let after_key = &content[key_pos + key.len()..];
+    let string_start = after_key.find("<string>")? + 8;
+    let string_end = after_key[string_start..].find("</string>")?;
+    Some(after_key[string_start..string_start + string_end].to_string())
+}
+
+/// project_dir 내 모든 .prproj 파일을 찾아 패치한다.
+fn patch_prproj_files(project_dir: &std::path::Path) -> Result<(), String> {
+    use flate2::read::GzDecoder;
+    use flate2::write::GzEncoder;
+    use flate2::Compression;
+    use std::io::{Read, Write};
+
+    let premiere_info = detect_premiere_pro();
+    if let Some((ref path, ref ver)) = premiere_info {
+        println!("[NLE] Premiere Pro 감지: {} (v{})", path, ver);
+    } else {
+        println!("[NLE] Premiere Pro 설치 경로를 찾지 못함 — 경로 패치 스킵, 절대경로 제거만 수행");
+    }
+
+    let entries = std::fs::read_dir(project_dir)
+        .map_err(|e| format!("디렉토리 읽기 실패: {}", e))?;
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().map(|e| e == "prproj").unwrap_or(false) {
+            println!("[NLE] prproj 패치 시작: {}", path.display());
+
+            // 1. 읽기 + gunzip
+            let gz_bytes = std::fs::read(&path)
+                .map_err(|e| format!("prproj 읽기 실패: {}", e))?;
+            let mut decoder = GzDecoder::new(&gz_bytes[..]);
+            let mut xml = String::new();
+            decoder.read_to_string(&mut xml)
+                .map_err(|e| format!("prproj gunzip 실패: {}", e))?;
+
+            // 2. 절대경로 제거/치환
+
+            // /Applications/Adobe Premiere Pro 2025/... → 제거
+            // PresetPath, ProxyWatermarkDefaultImageFullPath는 Premiere가 실행 시 자동 재설정하므로
+            // 경로 재구성을 시도하지 않고 안전하게 비운다.
+            let full_premiere_path_re = regex_lite::Regex::new(
+                r"/Applications/Adobe Premiere Pro [^<]+"
+            ).unwrap();
+            xml = full_premiere_path_re.replace_all(&xml, "").to_string();
+
+            // /Users/xxx/... 절대경로 제거 (태그 내용만)
+            let user_path_re = regex_lite::Regex::new(
+                r"(?:>)(/Users/[^<]+|[A-Z]:\\Users\\[^<]+)(</)"
+            ).unwrap();
+            xml = user_path_re.replace_all(&xml, ">$2").to_string();
+
+            // ConformedAudioPath, PeakFilePath 태그 전체 제거
+            // (역참조 \1 미지원 — 태그별 개별 regex 사용)
+            let conformed_re = regex_lite::Regex::new(
+                r"<ConformedAudioPath>[^<]*</ConformedAudioPath>\s*"
+            ).unwrap();
+            let peak_re = regex_lite::Regex::new(
+                r"<PeakFilePath>[^<]*</PeakFilePath>\s*"
+            ).unwrap();
+            xml = conformed_re.replace_all(&xml, "").to_string();
+            xml = peak_re.replace_all(&xml, "").to_string();
+
+            // 3. MZ.BuildVersion 갱신
+            if let Some((_, ref ver)) = premiere_info {
+                let now = chrono::Local::now().format("%a %b %e %T %Y").to_string();
+                let build_ver = format!("{}x0 - {}", ver, now);
+                let created_re = regex_lite::Regex::new(
+                    r"<MZ\.BuildVersion\.Created>[^<]*</MZ\.BuildVersion\.Created>"
+                ).unwrap();
+                let modified_re = regex_lite::Regex::new(
+                    r"<MZ\.BuildVersion\.Modified>[^<]*</MZ\.BuildVersion\.Modified>"
+                ).unwrap();
+                xml = created_re.replace_all(&xml, &format!(
+                    "<MZ.BuildVersion.Created>{}</MZ.BuildVersion.Created>", build_ver
+                )).to_string();
+                xml = modified_re.replace_all(&xml, &format!(
+                    "<MZ.BuildVersion.Modified>{}</MZ.BuildVersion.Modified>", build_ver
+                )).to_string();
+            }
+
+            // 4. gzip 압축 + 저장
+            let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+            encoder.write_all(xml.as_bytes())
+                .map_err(|e| format!("prproj gzip 실패: {}", e))?;
+            let gz_out = encoder.finish()
+                .map_err(|e| format!("prproj gzip finish 실패: {}", e))?;
+
+            std::fs::write(&path, &gz_out)
+                .map_err(|e| format!("prproj 저장 실패: {}", e))?;
+
+            println!("[NLE] prproj 패치 완료: {} ({}→{} bytes)", path.display(), gz_bytes.len(), gz_out.len());
+        }
+    }
+
+    Ok(())
 }
 
 // ──────────────────────────────────────────────
