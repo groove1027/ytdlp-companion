@@ -27,6 +27,8 @@ interface ImageVideoStore {
   enableGoogleReference: boolean;
   // [NEW] 자료영상(YouTube) 레퍼런스 모드
   enableVideoReference: boolean;
+  // [NEW] 쇼츠 모드 — 빠른 컷 (1.5~3초) 자동 배치
+  videoRefShortsMode: boolean;
 
   setActiveSubTab: (tab: 'setup' | 'storyboard' | 'remake') => void;
   setStyle: (v: string) => void;
@@ -47,9 +49,10 @@ interface ImageVideoStore {
   removeStyleReferenceImage: (index: number) => void;
   setEnableGoogleReference: (v: boolean) => void;
   setEnableVideoReference: (v: boolean) => void;
+  setVideoRefShortsMode: (v: boolean) => void;
 
   // 프로젝트 로드/리셋 시 일괄 복원
-  restoreFromConfig: (data: { style?: string; characters?: CharacterReference[]; enableWebSearch?: boolean; isMultiCharacter?: boolean; dialogueTone?: DialogueTone; referenceDialogue?: string; dialogueMode?: boolean; customStyleNote?: string; targetSceneCount?: number | null; styleReferenceImages?: string[]; enableGoogleReference?: boolean; enableVideoReference?: boolean }) => void;
+  restoreFromConfig: (data: { style?: string; characters?: CharacterReference[]; enableWebSearch?: boolean; isMultiCharacter?: boolean; dialogueTone?: DialogueTone; referenceDialogue?: string; dialogueMode?: boolean; customStyleNote?: string; targetSceneCount?: number | null; styleReferenceImages?: string[]; enableGoogleReference?: boolean; enableVideoReference?: boolean; videoRefShortsMode?: boolean }) => void;
   resetStore: () => void;
 }
 
@@ -62,10 +65,10 @@ const getProjectStore = () => _projectStoreRef;
 const applyProjectConfigSync = () => {
   const ps = getProjectStore();
   if (!ps) return;
-  const { style, characters, enableWebSearch, isMultiCharacter, dialogueTone, referenceDialogue, dialogueMode, customStyleNote, targetSceneCount, styleReferenceImages, enableGoogleReference, enableVideoReference } = useImageVideoStore.getState();
+  const { style, characters, enableWebSearch, isMultiCharacter, dialogueTone, referenceDialogue, dialogueMode, customStyleNote, targetSceneCount, styleReferenceImages, enableGoogleReference, enableVideoReference, videoRefShortsMode } = useImageVideoStore.getState();
   ps.getState().setConfig((prev: any) => {
     if (!prev) return prev;
-    return { ...prev, selectedVisualStyle: style, characters, enableWebSearch, isMultiCharacter, dialogueTone, referenceDialogue, dialogueMode, customStyleNote, targetSceneCount, styleReferenceImages, enableGoogleReference, enableVideoReference };
+    return { ...prev, selectedVisualStyle: style, characters, enableWebSearch, isMultiCharacter, dialogueTone, referenceDialogue, dialogueMode, customStyleNote, targetSceneCount, styleReferenceImages, enableGoogleReference, enableVideoReference, videoRefShortsMode };
   });
 };
 
@@ -93,6 +96,7 @@ export const useImageVideoStore = create<ImageVideoStore>((set) => ({
   styleReferenceImages: [],
   enableGoogleReference: false,
   enableVideoReference: false,
+  videoRefShortsMode: false,
 
   setActiveSubTab: (tab) => { logger.trackTabVisit('image-video', tab); set({ activeSubTab: tab }); },
   setStyle: (v) => { const prev = useImageVideoStore.getState().style; logger.trackSettingChange('iv.style', prev, v); set({ style: v }); syncToProjectConfig(); },
@@ -108,6 +112,7 @@ export const useImageVideoStore = create<ImageVideoStore>((set) => ({
   removeStyleReferenceImage: (index) => { set((s) => ({ styleReferenceImages: s.styleReferenceImages.filter((_, i) => i !== index) })); syncToProjectConfig({ immediate: true }); },
   setEnableGoogleReference: (v) => { const prev = useImageVideoStore.getState().enableGoogleReference; logger.trackSettingChange('iv.googleRef', prev, v); if (!v) cancelAutoApply(); set({ enableGoogleReference: v }); syncToProjectConfig(); },
   setEnableVideoReference: (v) => { logger.trackSettingChange('iv.videoRef', useImageVideoStore.getState().enableVideoReference, v); if (!v) import('../services/youtubeReferenceService').then(m => m.cancelVideoReferenceSearch()).catch(() => {}); set({ enableVideoReference: v }); syncToProjectConfig(); },
+  setVideoRefShortsMode: (v) => { logger.trackSettingChange('iv.videoRefShorts', useImageVideoStore.getState().videoRefShortsMode, v); set({ videoRefShortsMode: v }); syncToProjectConfig(); },
   setCharacters: (chars) => {
     set((s) => ({ characters: typeof chars === 'function' ? chars(s.characters) : chars }));
     syncToProjectConfig();
@@ -138,6 +143,7 @@ export const useImageVideoStore = create<ImageVideoStore>((set) => ({
     styleReferenceImages: data.styleReferenceImages || [],
     enableGoogleReference: data.enableGoogleReference ?? false,
     enableVideoReference: data.enableVideoReference ?? false,
+    videoRefShortsMode: data.videoRefShortsMode ?? false,
   }),
 
   // 새 프로젝트 시 초기화
@@ -155,5 +161,9 @@ export const useImageVideoStore = create<ImageVideoStore>((set) => ({
     styleReferenceImages: [],
     enableGoogleReference: false,
     enableVideoReference: false,
+    videoRefShortsMode: false,
   }),
 }));
+
+// E2E 테스트용 window 노출
+(window as any).__IMAGE_VIDEO_STORE__ = useImageVideoStore;

@@ -510,6 +510,8 @@ export interface ProjectConfig {
   enableGoogleReference?: boolean;
   // [NEW] 자료영상(YouTube) 레퍼런스 모드
   enableVideoReference?: boolean;
+  // [NEW] 쇼츠 모드 — 빠른 컷 자동 배치
+  videoRefShortsMode?: boolean;
 }
 
 // PPT 마스터 슬라이드 데이터 (프로젝트 저장용)
@@ -641,7 +643,29 @@ export interface ExportManifest {
 // ============================================================
 
 /** 앱 메인 탭 네비게이션 */
-export type AppTab = 'project' | 'channel-analysis' | 'script-writer' | 'sound-studio' | 'image-video' | 'edit-room' | 'upload' | 'thumbnail-studio' | 'character-twist' | 'image-script-upload' | 'ppt-master' | 'detail-page' | 'subtitle-remover';
+export type AppTab = 'project' | 'channel-analysis' | 'script-writer' | 'sound-studio' | 'image-video' | 'edit-room' | 'upload' | 'thumbnail-studio' | 'character-twist' | 'image-script-upload' | 'ppt-master' | 'detail-page' | 'subtitle-remover' | 'ai-chat';
+
+// --- AI Chat (플레이그라운드) ---
+
+export type AiChatModel = 'gemini-3.1-pro-preview' | 'gemini-3.1-flash-lite-preview' | 'claude-sonnet-4-6' | 'claude-opus-4-6';
+
+export interface AiChatMessage {
+  id: string;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  model?: AiChatModel;
+  timestamp: number;
+}
+
+export interface AiChatSession {
+  id: string;
+  title: string;
+  messages: AiChatMessage[];
+  model: AiChatModel;
+  systemPrompt: string;
+  createdAt: number;
+  updatedAt: number;
+}
 
 // --- 딸깍 영상 제작 (Shopping Short-form) ---
 
@@ -810,6 +834,10 @@ export interface VideoReference {
   matchScore: number;
   segmentText: string;
   duration: number;
+  /** 검색에 사용된 쿼리 (디버그/수정용) */
+  searchQuery?: string;
+  /** 발행일 (시기 매칭용) */
+  publishedAt?: string;
 }
 
 /** 채널분석 서브 탭 */

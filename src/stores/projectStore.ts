@@ -514,6 +514,7 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
         styleReferenceImages: project.config?.styleReferenceImages, // [#391] 글로벌 스타일 레퍼런스 복원
         enableGoogleReference: project.config?.enableGoogleReference, // [NEW] 구글 레퍼런스 모드 복원
         enableVideoReference: project.config?.enableVideoReference, // [NEW] 자료영상 레퍼런스 모드 복원
+        videoRefShortsMode: project.config?.videoRefShortsMode, // [NEW] 쇼츠 모드 복원
       });
     }).catch(e => { logger.trackSwallowedError('ProjectStore:loadProject/restoreImageVideoStore', e); });
 

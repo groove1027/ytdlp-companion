@@ -63,6 +63,22 @@ const MAX_DISPLAY_RESULTS = 5;
 const SEARCH_CONCURRENCY = 1; // v2: 다운로드+분석이 무거우므로 1개씩
 const COMPANION_URL = 'http://127.0.0.1:9876';
 
+/** 쇼츠 모드 컷 길이 규칙 */
+export const SHORTS_CUT_RULES = {
+  /** 기본 클립 길이 (초) */
+  defaultClipSec: 2.5,
+  /** 팩트/숫자 구간 (읽을 시간 필요) */
+  factClipSec: 3,
+  /** 감정 폭발/반전 (빠른 전환) */
+  emotionClipSec: 1.5,
+  /** 도입부 훅 */
+  hookClipSec: 1,
+  /** 최소 클립 길이 */
+  minClipSec: 1,
+  /** 최대 클립 길이 */
+  maxClipSec: 4,
+} as const;
+
 // ─── 쿼터 추적 ───
 function trackQuota(units: number): boolean {
   const STORAGE_KEY = 'YOUTUBE_QUOTA_USED';
@@ -89,14 +105,30 @@ interface YTSearchItem {
   publishedAt: string;
 }
 
-async function searchYouTubeVideos(query: string, maxResults = MAX_SEARCH_RESULTS): Promise<YTSearchItem[]> {
+interface VideoSearchOptions {
+  shortsMode?: boolean;
+  /** ISO 날짜 (예: 2024-01-01) — 이 날짜 이후 영상만 검색 */
+  publishedAfter?: string;
+  /** ISO 날짜 — 이 날짜 이전 영상만 검색 */
+  publishedBefore?: string;
+}
+
+async function searchYouTubeVideos(query: string, maxResults = MAX_SEARCH_RESULTS, options?: VideoSearchOptions): Promise<YTSearchItem[]> {
   const apiKey = getYoutubeApiKey();
   if (!apiKey) { logger.warn('[VideoRef] YouTube API 키 없음'); return []; }
   if (!trackQuota(100)) { logger.warn('[VideoRef] YouTube 쿼터 초과'); return []; }
 
-  // 영어 영상 검색 (해외 뉴스/다큐 B-roll용 — 현장 영상, 항공샷 등 자료영상 소스 풍부)
-  // videoDuration=medium → 4~20분 롱폼 우선
-  const url = `${YOUTUBE_API_BASE}/search?part=snippet&q=${encodeURIComponent(query)}&type=video&maxResults=${maxResults}&relevanceLanguage=en&videoDuration=medium&key=${apiKey}`;
+  // 쇼츠 모드: 짧은 영상(~4분) 우선 / 일반 모드: 중간 길이(4~20분) 우선
+  const duration = options?.shortsMode ? 'short' : 'medium';
+  let url = `${YOUTUBE_API_BASE}/search?part=snippet&q=${encodeURIComponent(query)}&type=video&maxResults=${maxResults}&relevanceLanguage=en&videoDuration=${duration}&key=${apiKey}`;
+
+  // 날짜 범위 필터
+  if (options?.publishedAfter) {
+    url += `&publishedAfter=${options.publishedAfter}T00:00:00Z`;
+  }
+  if (options?.publishedBefore) {
+    url += `&publishedBefore=${options.publishedBefore}T23:59:59Z`;
+  }
 
   try {
     const res = await monitoredFetch(url, {}, 15000);
@@ -546,49 +578,121 @@ async function matchWithCaptionsOnly(
   } catch { return null; }
 }
 
-// ─── 검색어 생성 ───
-async function buildVideoSearchQuery(scene: Scene, globalContext?: string): Promise<string> {
-  const sceneText = (scene.scriptText || scene.visualDescriptionKO || '').slice(0, 200);
+// ─── 맥락 분석 결과 ───
+interface SceneContext {
+  query: string;
+  person?: string;
+  event?: string;
+  period?: string;
+  location?: string;
+  emotion?: 'calm' | 'excitement' | 'tension' | 'sadness' | 'humor';
+  publishedAfter?: string;
+  publishedBefore?: string;
+}
+
+// ─── 검색어 생성 (맥락 분석 강화) ───
+async function buildVideoSearchQuery(scene: Scene, globalContext?: string, shortsMode?: boolean): Promise<SceneContext> {
+  const sceneText = (scene.scriptText || scene.visualDescriptionKO || '').slice(0, 300);
 
   if (getEvolinkKey() && sceneText.length > 10) {
     try {
       const res = await evolinkChat([
-        { role: 'system', content: 'Generate English YouTube search keywords for finding B-roll footage. Return ONLY JSON.' },
-        { role: 'user', content: `Generate ONE English YouTube search query for this script scene.\nPurpose: Find news footage, documentaries, or B-roll clips as reference material.\nRules: 3-6 English words covering key person + event/topic. Example: "Trump Iran nuclear deal sanctions"\n\n[Script (Korean)]\n${sceneText}\n\nReturn: {"query":"English keywords"}` },
+        { role: 'system', content: 'Analyze script context and generate YouTube search keywords. Return ONLY JSON.' },
+        { role: 'user', content: [
+          `Analyze this script scene and generate search context for finding the most relevant YouTube footage.`,
+          ``,
+          `[Script (Korean)]`,
+          sceneText,
+          globalContext ? `\n[Global Context] ${globalContext.slice(0, 100)}` : '',
+          ``,
+          `Return JSON:`,
+          `{`,
+          `  "query": "3-6 English keywords (person + event + context)",`,
+          `  "person": "main person/entity name (English, optional)",`,
+          `  "event": "specific event name (English, optional)",`,
+          `  "period": "time period if mentioned (e.g. '2024-03', optional)",`,
+          `  "location": "location if relevant (English, optional)",`,
+          `  "emotion": "calm|excitement|tension|sadness|humor"`,
+          `}`,
+          ``,
+          `Rules:`,
+          `- query: specific enough to find THE actual footage, not generic stock. Include year if mentioned.`,
+          `- Example: "손흥민이 2024년 챔스 8강에서 결승골" → {"query":"Son Heung-min Champions League quarter final goal 2024","person":"Son Heung-min","event":"Champions League QF goal","period":"2024","emotion":"excitement"}`,
+          shortsMode ? `- For shorts: prefer action words, trending topics, viral moments` : '',
+        ].filter(Boolean).join('\n') },
       ], {
-        temperature: 0.2, maxTokens: 100, timeoutMs: 8000,
+        temperature: 0.2, maxTokens: 200, timeoutMs: 10000,
         responseFormat: { type: 'json_object' },
         model: 'gemini-3.1-flash-lite-preview',
       });
       const parsed = extractJsonObject(res.choices?.[0]?.message?.content || '');
       if (parsed?.query && typeof parsed.query === 'string' && parsed.query.length >= 3) {
-        return parsed.query as string;
+        const ctx: SceneContext = {
+          query: parsed.query as string,
+          person: parsed.person as string | undefined,
+          event: parsed.event as string | undefined,
+          period: parsed.period as string | undefined,
+          location: parsed.location as string | undefined,
+          emotion: parsed.emotion as SceneContext['emotion'],
+        };
+        // 시기가 있으면 날짜 범위 설정
+        if (ctx.period) {
+          const yearMatch = ctx.period.match(/(\d{4})/);
+          if (yearMatch) {
+            const year = parseInt(yearMatch[1]);
+            const monthMatch = ctx.period.match(/(\d{4})-(\d{2})/);
+            if (monthMatch) {
+              ctx.publishedAfter = `${monthMatch[1]}-${monthMatch[2]}-01`;
+              const m = parseInt(monthMatch[2]);
+              const endMonth = Math.min(m + 2, 12);
+              ctx.publishedBefore = `${monthMatch[1]}-${String(endMonth).padStart(2, '0')}-28`;
+            } else {
+              ctx.publishedAfter = `${year}-01-01`;
+              ctx.publishedBefore = `${year}-12-31`;
+            }
+          }
+        }
+        return ctx;
       }
     } catch { /* fall through */ }
   }
 
-  // 규칙 기반 폴백 — 한국어 키워드 그대로 (YouTube는 다국어 검색 지원)
+  // 규칙 기반 폴백
   const parts: string[] = [];
   if (scene.entityName) parts.push(scene.entityName.slice(0, 15));
   if (scene.sceneLocation) parts.push(scene.sceneLocation.slice(0, 15));
   const firstSentence = sceneText.split(/[.!?。！？]/)[0] || '';
   if (firstSentence.length > 5) parts.push(firstSentence.slice(0, 25));
   if (parts.length < 2 && globalContext) parts.push(globalContext.slice(0, 15));
-  return parts.join(' ').slice(0, 50) || 'news footage';
+  return { query: parts.join(' ').slice(0, 50) || 'news footage' };
 }
 
-// ─── 메인: 장면별 자료영상 검색 (v2 — 컴패니언 + Scene Detection + Gemini) ───
+// ─── 메인: 장면별 자료영상 검색 (v3 — 맥락 분석 + 쇼츠 모드 + 컴패니언 + Scene Detection + Gemini) ───
 export async function searchSceneReferenceVideos(
   scene: Scene,
   globalContext?: string,
   signal?: AbortSignal,
+  shortsMode?: boolean,
 ): Promise<VideoReference[]> {
-  const query = await buildVideoSearchQuery(scene, globalContext);
-  logger.info('[VideoRef] 장면 검색', `query="${query}"`);
+  const ctx = await buildVideoSearchQuery(scene, globalContext, shortsMode);
+  logger.info('[VideoRef] 장면 검색', `query="${ctx.query}" person=${ctx.person || '-'} period=${ctx.period || '-'} emotion=${ctx.emotion || '-'} shorts=${!!shortsMode}`);
 
   if (signal?.aborted) return [];
-  const searchResults = await searchYouTubeVideos(query, MAX_SEARCH_RESULTS);
+  const searchResults = await searchYouTubeVideos(ctx.query, MAX_SEARCH_RESULTS, {
+    shortsMode,
+    publishedAfter: ctx.publishedAfter,
+    publishedBefore: ctx.publishedBefore,
+  });
   logger.info('[VideoRef] YouTube 검색 결과', `${searchResults.length}개`);
+
+  // 날짜 필터로 결과 없으면 필터 없이 재시도
+  if (searchResults.length === 0 && (ctx.publishedAfter || ctx.publishedBefore)) {
+    logger.info('[VideoRef] 날짜 필터 결과 0 → 필터 없이 재검색');
+    const retryResults = await searchYouTubeVideos(ctx.query, MAX_SEARCH_RESULTS, { shortsMode });
+    if (retryResults.length > 0) {
+      searchResults.push(...retryResults);
+    }
+  }
   if (searchResults.length === 0) return [];
 
   if (signal?.aborted) return [];
@@ -645,6 +749,8 @@ export async function searchSceneReferenceVideos(
           matchScore: match.matchScore,
           segmentText: match.segmentText,
           duration: durations.get(candidate.videoId) || 0,
+          searchQuery: ctx.query,
+          publishedAt: candidate.publishedAt,
         });
         v2Succeeded = true;
         break; // 성공 — 다음 후보 불필요
@@ -666,6 +772,8 @@ export async function searchSceneReferenceVideos(
           matchScore: captionMatch.matchScore,
           segmentText: captionMatch.segmentText,
           duration: durations.get(candidate.videoId) || 0,
+          searchQuery: ctx.query,
+          publishedAt: candidate.publishedAt,
         });
         v2Succeeded = true;
         break;
@@ -697,6 +805,8 @@ export async function searchSceneReferenceVideos(
         matchScore: match.matchScore * 0.8, // 자막 기반은 80% 가중치
         segmentText: match.segmentText,
         duration: durations.get(video.videoId) || 0,
+        searchQuery: ctx.query,
+        publishedAt: video.publishedAt,
       });
     } else {
       results.push({
@@ -709,6 +819,8 @@ export async function searchSceneReferenceVideos(
         matchScore: 0.2,
         segmentText: cues.length > 0 ? cues.slice(0, 3).map(c => c.text).join(' ').slice(0, 100) : '(자막 없음)',
         duration: durations.get(video.videoId) || 0,
+        searchQuery: ctx.query,
+        publishedAt: video.publishedAt,
       });
     }
   }));
@@ -725,6 +837,7 @@ export async function searchAllScenesReferenceVideos(
   scenes: Scene[],
   globalContext: string,
   onSceneResult: (sceneId: string, refs: VideoReference[]) => void,
+  shortsMode?: boolean,
 ): Promise<void> {
   _batchAbortCtrl?.abort();
   _batchAbortCtrl = new AbortController();
@@ -739,12 +852,48 @@ export async function searchAllScenesReferenceVideos(
     const batch = scenesWithContent.slice(i, i + SEARCH_CONCURRENCY);
     await Promise.allSettled(batch.map(async (scene) => {
       if (_batchRunId !== runId || signal.aborted) return;
-      const refs = await searchSceneReferenceVideos(scene, globalContext, signal);
+      const refs = await searchSceneReferenceVideos(scene, globalContext, signal, shortsMode);
       if (_batchRunId === runId && !signal.aborted) {
         onSceneResult(scene.id, refs);
       }
     }));
   }
+}
+
+/** 편집 가이드 시트 생성 — 장면별 소스 클립 + 타임코드 텍스트 목록 */
+export function generateEditGuideSheet(scenes: Scene[]): string {
+  const lines: string[] = [
+    '# 편집 가이드 시트',
+    `# 생성: ${new Date().toLocaleString('ko-KR')}`,
+    `# 총 장면: ${scenes.length}개`,
+    '',
+    '─'.repeat(60),
+    '',
+  ];
+
+  scenes.forEach((scene, i) => {
+    const refs = scene.videoReferences || [];
+    lines.push(`## 장면 ${i + 1}`);
+    lines.push(`대본: ${(scene.scriptText || '').slice(0, 80)}`);
+    if (scene.audioDuration) {
+      lines.push(`TTS 길이: ${scene.audioDuration.toFixed(1)}초`);
+    }
+    if (refs.length > 0) {
+      refs.forEach((ref, j) => {
+        lines.push(`  클립 ${j + 1}: [${ref.videoTitle}]`);
+        lines.push(`    URL: https://www.youtube.com/watch?v=${ref.videoId}&t=${ref.startSec}`);
+        lines.push(`    구간: ${formatTime(ref.startSec)} ~ ${formatTime(ref.endSec)} (${ref.endSec - ref.startSec}초)`);
+        lines.push(`    채널: ${ref.channelTitle}`);
+        lines.push(`    관련도: ${Math.round(ref.matchScore * 100)}%`);
+        if (ref.segmentText) lines.push(`    내용: ${ref.segmentText}`);
+      });
+    } else {
+      lines.push('  (소스 클립 미지정)');
+    }
+    lines.push('');
+  });
+
+  return lines.join('\n');
 }
 
 export function cancelVideoReferenceSearch() {

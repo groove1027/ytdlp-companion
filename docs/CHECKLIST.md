@@ -8,6 +8,44 @@
 
 ## 🟢 완료된 작업
 
+### [2026-04-02] 무료 영상 클립 레퍼런스 v3 — AI 맥락 분석 + 쇼츠 모드 + 구간 조정 + 편집 가이드
+- [x] youtubeReferenceService.ts: 검색어 생성에 인물/시기/장소/감정 맥락 분석 강화 (Gemini Flash Lite)
+- [x] youtubeReferenceService.ts: 쇼츠 모드 — 짧은 영상 우선 검색 + 날짜 범위 필터
+- [x] youtubeReferenceService.ts: 편집 가이드 시트 생성/내보내기 함수 추가
+- [x] VideoReferencePanel.tsx: "자료영상 레퍼런스" → "무료 영상 클립 레퍼런스" 리브랜딩
+- [x] VideoReferencePanel.tsx: 쇼츠 모드 토글 + 추천 클립 길이(1.5~4초) 표시
+- [x] VideoReferencePanel.tsx: 구간 미세 조정 UI (슬라이더 + 저장)
+- [x] VideoReferencePanel.tsx: 클립 적용/해제 + 적용 현황 요약
+- [x] VideoReferencePanel.tsx: 편집 가이드 시트 다운로드/복사 버튼
+- [x] types.ts: VideoReference에 searchQuery, publishedAt 필드 추가
+- [x] types.ts: ProjectConfig에 videoRefShortsMode 추가
+- [x] imageVideoStore.ts: videoRefShortsMode 상태 + setter + 복원 + 리셋 + 동기화
+- [x] projectStore.ts: 프로젝트 로드 시 videoRefShortsMode 복원
+- [x] Codex 5.4 MCP 리뷰 10회 완료 — 구간 조정 버그 + 타입 누락 + 프로젝트 복원 3건 수정
+- [x] Playwright E2E 테스트 통과 — 패널 렌더 + 쇼츠 모드 + 검색 실행 확인
+
+### [2026-04-02] Premiere Pro V45 시퀀스 표시/자동 열기 보정
+- [x] nleExportService.ts: native `.prproj` Project `Version`을 `45`로 전환하고 `Sequence`/`VideoSettings`/`AudioSettings`/`ClipLoggingInfo` 버전을 V45 기준으로 정규화
+- [x] nleExportService.ts: 루트 bin의 시퀀스 `ClipProjectItem` placeholder `Cutback...`를 실제 프로젝트 제목으로 치환하고, 대응 `MasterClip`/`ClipName`도 동일 이름으로 동기화
+- [x] nleExportService.ts: `MZ.PrefixKey.OpenSequenceGuidList.1`을 실제 시퀀스 UID로 다시 기록해 Premiere 시작 시 타임라인 자동 열기 힌트를 유지
+- [x] test-e2e/nle-path-fix.test.ts: `.prproj` 검증 기대치를 `Project Version="45"`, `Sequence Version="12"`, `OpenSequenceGuidList`, `Cutback` placeholder 제거 기준으로 갱신
+
+### [2026-04-02] Premiere Pro Convert Save 크래시 추가 수정 — `#렌더` MasterClip duration 불일치 정렬
+- [x] 원인 재분석: `Project` 직계 자식 순서 자체는 V43 템플릿과 V45 참조가 동일 — Convert Save 크래시는 `Project` 누락 엘리먼트보다는 `#렌더` 시퀀스 MasterClip 하위 duration 불일치가 더 유력함을 확인
+- [x] nleExportService.ts: `AudioSequenceSource(165)` / `VideoSequenceSource(168)` `OriginalDuration`을 실제 타임라인 길이로 갱신
+- [x] nleExportService.ts: `#렌더` / 소스 MasterClip `MasterClipChangeVersion`을 증가시키고 `#렌더` logging info에 `MediaInPoint` / `MediaOutPoint` / `TimecodeFormat` / `MediaFrameRate`를 동기화
+- [x] test-e2e/nle-path-fix.test.ts: 템플릿 잔여 `OriginalDuration=9285893568000000`이 결과 `.prproj`에 남지 않는지 검증 추가
+
+### [2026-04-02] Premiere Pro .prproj Version 43 회귀 테스트용 조정
+- [x] nleExportService.ts: native `.prproj` 생성 시 Project `Version`을 다시 `43`으로 고정 — Premiere 26.0.2에서 Convert 후 타임라인이 비어 보이는 45 표기 경로를 우선 차단
+- [x] nleExportService.ts: 기존 `SyntheticCaption` 템플릿 루트 제거 + 새 caption `MasterClipChangeVersion` 미증가 상태 유지 — Version 43 저장 크래시 원인 분리 테스트가 가능하도록 정리
+- [x] test-e2e/nle-path-fix.test.ts: `.prproj` 검증 기대치를 `Project Version="43"` 및 루트 절대경로 패치 기준으로 갱신
+
+### [2026-04-02] Premiere Pro .prproj 호환성 추가 수정 — SyntheticCaption 템플릿 잔재 제거 + companion gzip 헤더 보존
+- [x] nleExportService.ts: 템플릿 `CaptionDataClipTrackItem` 루트 그래프를 생성 후 전수 제거하도록 추가 — 미사용 `SyntheticCaption` Media/MasterClip 37세트가 결과물에 중복 잔존하던 문제 해소
+- [x] nleExportService.ts: 새 caption `MasterClipChangeVersion` 강제 증가 제거 — 템플릿 원형과 동일하게 synthetic caption master clip을 dirty 상태로 만들지 않도록 정렬
+- [x] companion server.rs: `.prproj` 재압축 후 gzip OS byte를 `0x13`으로 복원 — companion 경유 시 Premiere 저장 에러 재발 방지
+
 ### [2026-04-01] #944 TTS 라인 중복/누락 + #918 멀티캐릭터 음량 편차 수정
 - [x] VoiceStudio.tsx: `handleGenerateLine` stale closure 수정 — store에서 직접 최신 lines/speakers 읽도록 변경
 - [x] NarrationView.tsx: 동일한 stale closure 수정
