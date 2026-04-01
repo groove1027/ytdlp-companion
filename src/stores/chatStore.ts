@@ -32,10 +32,18 @@ const loadSessions = (): AiChatSession[] => {
   }
 };
 
-/** localStorage에 세션 목록 저장 */
+/** localStorage에 세션 목록 저장 (imageUrls 제외 — 5MB 한도 보호) */
 const saveSessions = (sessions: AiChatSession[]) => {
   try {
-    localStorage.setItem(getStorageKey(), JSON.stringify(sessions.slice(0, MAX_SESSIONS)));
+    const cleaned = sessions.slice(0, MAX_SESSIONS).map(s => ({
+      ...s,
+      messages: s.messages.map(m => {
+        if (!m.imageUrls?.length) return m;
+        const { imageUrls: _removed, ...rest } = m;
+        return rest;
+      }),
+    }));
+    localStorage.setItem(getStorageKey(), JSON.stringify(cleaned));
   } catch (e) {
     logger.warn('[ChatStore] 세션 저장 실패', { error: e instanceof Error ? e.message : String(e) });
   }
@@ -62,7 +70,7 @@ interface ChatStore {
   setActiveSession: (id: string | null) => void;
   setModel: (model: AiChatModel) => void;
   setSystemPrompt: (prompt: string) => void;
-  sendMessage: (content: string) => Promise<void>;
+  sendMessage: (content: string, imageUrls?: string[]) => Promise<void>;
   stopStreaming: () => void;
   clearMessages: () => void;
   reloadSessions: () => void;
@@ -144,7 +152,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     });
   },
 
-  sendMessage: async (content: string) => {
+  sendMessage: async (content: string, imageUrls?: string[]) => {
     const { activeSessionId, sessions, isStreaming } = get();
     if (isStreaming) return;
 
@@ -163,6 +171,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       id: generateId(),
       role: 'user',
       content,
+      imageUrls: imageUrls?.length ? imageUrls : undefined,
       timestamp: Date.now(),
     };
 
@@ -234,13 +243,22 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           }
         );
       } else {
-        // Gemini: OpenAI 호환 messages 배열
+        // Gemini: OpenAI 호환 messages 배열 (이미지 첨부 시 content parts 배열)
         const messages: EvolinkChatMessage[] = [];
         if (session.systemPrompt) {
           messages.push({ role: 'system', content: session.systemPrompt });
         }
         for (const m of history) {
-          messages.push({ role: m.role as 'user' | 'assistant', content: m.content });
+          if (m.imageUrls?.length) {
+            // 이미지 + 텍스트 → content parts 배열
+            const parts: import('../services/evolinkService').EvolinkContentPart[] = [
+              { type: 'text', text: m.content },
+              ...m.imageUrls.map(url => ({ type: 'image_url' as const, image_url: { url } })),
+            ];
+            messages.push({ role: m.role as 'user' | 'assistant', content: parts });
+          } else {
+            messages.push({ role: m.role as 'user' | 'assistant', content: m.content });
+          }
         }
 
         await evolinkChatStream(

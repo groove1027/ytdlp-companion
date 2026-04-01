@@ -102,12 +102,16 @@ const AiChatTab: React.FC = () => {
   const activeSession = useChatStore(s => s.activeSession());
   const messages = activeSession?.messages || [];
   const currentModel = activeSession?.model || 'gemini-3.1-pro-preview';
+  const isClaude = currentModel.startsWith('claude-');
 
   const [input, setInput] = useState('');
   const [showHistory, setShowHistory] = useState(false);
   const [showSystemPrompt, setShowSystemPrompt] = useState(false);
+  const [attachedImages, setAttachedImages] = useState<string[]>([]);
+  const [isDragOver, setIsDragOver] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // 자동 스크롤
   useEffect(() => {
@@ -122,12 +126,34 @@ const AiChatTab: React.FC = () => {
     }
   }, [input]);
 
+  /** File → data URL 변환 */
+  const fileToDataUrl = (file: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+
+  /** 이미지 파일 추가 (최대 4장, Claude 모델에서는 차단) */
+  const addImages = useCallback(async (files: FileList | File[]) => {
+    if (isClaude) return; // Claude는 이미지 미지원
+    const imageFiles = Array.from(files).filter(f => f.type.startsWith('image/'));
+    if (imageFiles.length === 0) return;
+    const remaining = 4 - attachedImages.length;
+    const toAdd = imageFiles.slice(0, remaining);
+    const dataUrls = await Promise.all(toAdd.map(fileToDataUrl));
+    setAttachedImages(prev => [...prev, ...dataUrls].slice(0, 4));
+  }, [attachedImages.length, isClaude]);
+
   const handleSend = useCallback(async () => {
     const trimmed = input.trim();
-    if (!trimmed || isStreaming) return;
+    if ((!trimmed && attachedImages.length === 0) || isStreaming) return;
+    const images = attachedImages.length > 0 ? [...attachedImages] : undefined;
     setInput('');
-    await sendMessage(trimmed);
-  }, [input, isStreaming, sendMessage]);
+    setAttachedImages([]);
+    await sendMessage(trimmed || '이 이미지를 분석해주세요.', images);
+  }, [input, isStreaming, sendMessage, attachedImages]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -138,6 +164,7 @@ const AiChatTab: React.FC = () => {
 
   const handleNewChat = () => {
     createSession(currentModel, activeSession?.systemPrompt || '');
+    setAttachedImages([]);
   };
 
   return (
@@ -147,7 +174,7 @@ const AiChatTab: React.FC = () => {
         <SessionList
           sessions={sessions}
           activeId={activeSessionId}
-          onSelect={setActiveSession}
+          onSelect={(id) => { setActiveSession(id); setAttachedImages([]); }}
           onDelete={deleteSession}
           onCreate={handleNewChat}
         />
@@ -168,7 +195,7 @@ const AiChatTab: React.FC = () => {
           {/* 모델 선택 */}
           <select
             value={currentModel}
-            onChange={e => setModel(e.target.value as AiChatModel)}
+            onChange={e => { setModel(e.target.value as AiChatModel); if (e.target.value.startsWith('claude-')) setAttachedImages([]); }}
             disabled={isStreaming}
             className="bg-gray-800 border border-gray-600 text-gray-200 rounded-lg px-3 py-1.5 text-sm font-semibold focus:outline-none focus:border-indigo-500 disabled:opacity-50"
           >
@@ -283,6 +310,13 @@ const AiChatTab: React.FC = () => {
                     {MODEL_OPTIONS.find(m => m.id === msg.model)?.icon} {MODEL_OPTIONS.find(m => m.id === msg.model)?.label}
                   </div>
                 )}
+                {msg.imageUrls && msg.imageUrls.length > 0 && (
+                  <div className="flex gap-1.5 mb-2 flex-wrap">
+                    {msg.imageUrls.map((url, idx) => (
+                      <img key={idx} src={url} alt={`첨부 ${idx + 1}`} className="max-w-[180px] max-h-[140px] rounded-lg border border-gray-600/40 object-cover" />
+                    ))}
+                  </div>
+                )}
                 <div className="whitespace-pre-wrap break-words">
                   {msg.role === 'assistant' ? renderMarkdown(msg.content) : msg.content}
                   {msg.role === 'assistant' && !msg.content && isStreaming && (
@@ -295,15 +329,78 @@ const AiChatTab: React.FC = () => {
           <div ref={messagesEndRef} />
         </div>
 
-        {/* 입력 영역 */}
-        <div className="px-4 py-3 border-t border-gray-700/50 bg-gray-900/40">
+        {/* 입력 영역 — 드래그앤드롭 지원 */}
+        <div
+          className={`px-4 py-3 border-t transition-colors ${
+            isDragOver ? 'border-indigo-500 bg-indigo-900/20' : 'border-gray-700/50 bg-gray-900/40'
+          }`}
+          onDragOver={e => { e.preventDefault(); setIsDragOver(true); }}
+          onDragLeave={() => setIsDragOver(false)}
+          onDrop={e => {
+            e.preventDefault();
+            setIsDragOver(false);
+            if (e.dataTransfer.files.length > 0) addImages(e.dataTransfer.files);
+          }}
+        >
+          {/* 첨부 이미지 미리보기 */}
+          {attachedImages.length > 0 && (
+            <div className="flex gap-2 mb-2 max-w-4xl mx-auto">
+              {attachedImages.map((url, idx) => (
+                <div key={idx} className="relative group">
+                  <img src={url} alt={`첨부 ${idx + 1}`} className="w-16 h-16 rounded-lg border border-gray-600 object-cover" />
+                  <button
+                    onClick={() => setAttachedImages(prev => prev.filter((_, i) => i !== idx))}
+                    className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-600 text-white rounded-full text-[10px] font-bold flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                  >✕</button>
+                </div>
+              ))}
+              {attachedImages.length < 4 && (
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="w-16 h-16 rounded-lg border-2 border-dashed border-gray-600 text-gray-500 hover:border-indigo-500 hover:text-indigo-400 flex items-center justify-center text-lg transition-all"
+                >＋</button>
+              )}
+            </div>
+          )}
+          {isDragOver && (
+            <div className="flex items-center justify-center py-2 mb-2 max-w-4xl mx-auto">
+              <span className="text-indigo-400 text-sm font-semibold">이미지를 여기에 놓으세요</span>
+            </div>
+          )}
           <div className="flex items-end gap-2 max-w-4xl mx-auto">
+            {/* 숨겨진 파일 입력 */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              className="hidden"
+              onChange={e => { if (e.target.files) { addImages(e.target.files); e.target.value = ''; } }}
+            />
+            {/* 📎 버튼 — Claude는 이미지 첨부 미지원 */}
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isStreaming || attachedImages.length >= 4 || isClaude}
+              className="px-3 py-3 text-gray-500 hover:text-indigo-400 rounded-xl text-base transition-all disabled:opacity-30 shrink-0"
+              title={isClaude ? 'Claude 모델은 이미지 첨부 미지원 — Gemini를 선택하세요' : '이미지 첨부 (최대 4장, 드래그·붙여넣기 가능)'}
+            >📎</button>
             <textarea
               ref={textareaRef}
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="메시지를 입력하세요... (Shift+Enter로 줄바꿈)"
+              onPaste={e => {
+                const items = e.clipboardData.items;
+                const imageFiles: File[] = [];
+                for (let i = 0; i < items.length; i++) {
+                  if (items[i].type.startsWith('image/')) {
+                    const file = items[i].getAsFile();
+                    if (file) imageFiles.push(file);
+                  }
+                }
+                if (imageFiles.length > 0) addImages(imageFiles);
+              }}
+              placeholder={attachedImages.length > 0 ? '이미지에 대해 질문하세요...' : '메시지를 입력하세요... (Shift+Enter로 줄바꿈, 이미지 붙여넣기/드래그 가능)'}
               disabled={isStreaming}
               rows={1}
               className="flex-1 bg-gray-800 border border-gray-600 rounded-xl px-4 py-3 text-sm text-gray-200 placeholder-gray-600 resize-none focus:outline-none focus:border-indigo-500 disabled:opacity-50 max-h-[200px]"
@@ -318,7 +415,7 @@ const AiChatTab: React.FC = () => {
             ) : (
               <button
                 onClick={handleSend}
-                disabled={!input.trim()}
+                disabled={!input.trim() && attachedImages.length === 0}
                 className="px-4 py-3 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 disabled:opacity-30 disabled:cursor-not-allowed text-white rounded-xl text-sm font-bold transition-all flex items-center gap-1.5 shrink-0"
               >
                 전송 ↑
@@ -326,7 +423,7 @@ const AiChatTab: React.FC = () => {
             )}
           </div>
           <p className="text-center text-[10px] text-gray-600 mt-1.5">
-            {MODEL_OPTIONS.find(m => m.id === currentModel)?.icon} {MODEL_OPTIONS.find(m => m.id === currentModel)?.label} · 도매 API · 한도 제한 없음
+            {MODEL_OPTIONS.find(m => m.id === currentModel)?.icon} {MODEL_OPTIONS.find(m => m.id === currentModel)?.label} · 도매 API · 한도 제한 없음 · 📎 이미지 첨부 가능
           </p>
         </div>
       </div>

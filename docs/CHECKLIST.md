@@ -8,14 +8,25 @@
 
 ## 🟢 완료된 작업
 
-### [2026-04-02] AI Chat 플레이그라운드 신설
-- [x] types.ts에 'ai-chat' AppTab + AiChatMessage/AiChatSession 타입 추가
-- [x] chatStore.ts 생성 — Zustand 채팅 상태 관리 (localStorage 영속화, 다계정 분리)
-- [x] AiChatTab.tsx 생성 — 채팅 UI (모델 선택, 시스템 프롬프트, 대화 기록)
-- [x] App.tsx 도구모음에 AI Chat 메뉴 추가 + lazy loading + 콘텐츠 렌더링
+### [2026-04-02] Premiere Pro V45 네이티브 템플릿 마이그레이션
+- [x] `src/assets/premiere-native-template-v45.prproj` gunzip XML 분석 완료 — V45 base는 `Sequence=2df87522...`, `VideoTrackGroup=52`, `AudioTrackGroup=53`, `DataTrackGroup=54`, `#렌더 MasterClip=0d27378e...`, `SequenceSource=45/48`만 남는 빈 프로젝트 구조임을 확인
+- [x] nleExportService.ts: native template 로더를 V45로 전환하고, V43 donor template에서 source/narration/caption 서브그래프만 동적으로 복제해 V45 빈 프로젝트에 주입하도록 변경
+- [x] nleExportService.ts: V45 data track group에 caption track 2개를 동적 생성하고, 기존 V43 placeholder 의존 `ObjectID`/`ObjectUID` 참조를 V45 base ref + legacy donor ref 상수로 분리
+- [x] nleExportService.ts: Project/Sequence Version 강제 덮어쓰기 제거, BuildVersion 재설정 유지, gzip OS byte `0x13` 패치 유지, `tsc --noEmit` + `vite build` 통과
+
+### [2026-04-02] Premiere Pro Version 43 최종 보정 — `#렌더` MasterClip 저장 크래시 대응
+- [x] 원인 재분석: `v43clean` gunzip XML과 Premiere 26 native `Untitled.prproj`를 비교해, Convert+Save SIGABRT는 `Version 43` 자체보다 `#렌더` MasterClip의 stale `SequenceSource`/`ClipLoggingInfo`와 템플릿 기본 caption graph 고아 객체가 더 유력함을 확인
+- [x] nleExportService.ts: schema 정규화는 다시 `Project 43 / Sequence 11 / VideoSettings 9 / AudioSettings 7 / ClipLoggingInfo 9`로 유지하고, `#렌더` MasterClip 이름/ClipProjectItem/LoggingInfo/SequenceSource duration 동기화는 계속 적용
+- [x] test-e2e/nle-path-fix.test.ts: `.prproj` 검증 기대치를 V43로 되돌리고, stale `#렌더 MediaFrameRate=9223372036854775807`가 남지 않는지 추가 확인
+
+### [2026-04-02] AI Chat 플레이그라운드 신설 + 이미지 첨부
+- [x] types.ts에 'ai-chat' AppTab + AiChatMessage/AiChatSession 타입 + imageUrls 필드
+- [x] chatStore.ts: Zustand store, 다계정 분리, 이미지 EvolinkContentPart[] 변환
+- [x] AiChatTab.tsx: 채팅 UI + 📎 버튼 + 드래그앤드롭 + 붙여넣기 (최대 4장)
+- [x] App.tsx 도구모음에 AI Chat 메뉴 추가, Claude 모델 시 📎 비활성화
 - [x] evolinkService.ts: evolinkChatStream에 model 파라미터 전달 수정
-- [x] Codex 5.4 MCP 코드 리뷰 10회 완료 (XSS 방지, 모델 선택, 세션 관리 등 10건 수정)
-- [x] Playwright E2E: 로그인 → AI Chat 진입 → 메시지 전송 → Gemini 스트리밍 응답 → 모델 변경 → 대화 기록 확인
+- [x] Codex 5.4 MCP 코드 리뷰 20회 (탭 신설 10회 + 이미지 첨부 10회)
+- [x] Playwright E2E: 텍스트 대화 + 이미지 첨부 → Gemini "빨간색" 응답 + Claude 📎 비활성 확인
 
 ### [2026-04-02] Premiere Motion Master Extension v1.0 (Phase 1~4)
 - [x] CEP manifest.xml + 프로젝트 구조 셋업 (Premiere 25.0~26.x 호환)

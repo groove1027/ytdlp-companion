@@ -654,6 +654,8 @@ export interface AiChatMessage {
   role: 'user' | 'assistant' | 'system';
   content: string;
   model?: AiChatModel;
+  /** 첨부 이미지 (data: URL) */
+  imageUrls?: string[];
   timestamp: number;
 }
 
