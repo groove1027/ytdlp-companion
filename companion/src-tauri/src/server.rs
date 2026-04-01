@@ -717,22 +717,23 @@ async fn nle_install_handler(Json(req): Json<NleInstallRequest>) -> impl IntoRes
         // 텍스트 파일이면 경로 플레이스홀더를 실제 경로로 패치
         if entry.is_text.unwrap_or(false) {
             let mut text = String::from_utf8_lossy(&data).to_string();
-            // CapCut 경로 패치
+            // CapCut 경로 패치 — 모든 미디어 참조 경로를 로컬 절대경로로 변환
             if req.target == "capcut" {
                 text = text.replace(&placeholder, &project_path_str);
-                text = text.replace(
-                    "\"path\":\"materials/",
-                    &format!("\"path\":\"{}/materials/", project_path_str),
-                );
-                text = text.replace(
-                    "\"media_path\":\"materials/",
-                    &format!("\"media_path\":\"{}/materials/", project_path_str),
-                );
+                // path, media_path, source_path, extra_material_refs 등 모든 materials 참조를 절대경로로 변환
+                for key in &["path", "media_path", "source_path"] {
+                    let from = format!("\"{}\":\"materials/", key);
+                    let to = format!("\"{}\":\"{}/materials/", key, project_path_str);
+                    text = text.replace(&from, &to);
+                }
                 // draft_fold_path, draft_root_path 패치
                 let fold_re = regex_lite::Regex::new(r#""draft_fold_path":"[^"]*""#).unwrap_or_else(|_| regex_lite::Regex::new(r#"NOMATCH"#).unwrap());
                 text = fold_re.replace_all(&text, &format!("\"draft_fold_path\":\"{}\"", project_path_str)).to_string();
                 let root_re = regex_lite::Regex::new(r#""draft_root_path":"[^"]*""#).unwrap_or_else(|_| regex_lite::Regex::new(r#"NOMATCH"#).unwrap());
                 text = root_re.replace_all(&text, &format!("\"draft_root_path\":\"{}\"", root_path_str)).to_string();
+                // draft_materials_copy_folder 패치 (CapCut이 미디어 복사 시 참조)
+                let copy_folder_re = regex_lite::Regex::new(r#""draft_materials_copy_folder":"[^"]*""#).unwrap_or_else(|_| regex_lite::Regex::new(r#"NOMATCH"#).unwrap());
+                text = copy_folder_re.replace_all(&text, &format!("\"draft_materials_copy_folder\":\"{}/materials\"", project_path_str)).to_string();
             }
             if let Err(e) = std::fs::write(&file_path, text.as_bytes()) {
                 eprintln!("[NLE] 파일 쓰기 실패 ({}): {}", entry.path, e);
@@ -810,7 +811,9 @@ async fn nle_install_handler(Json(req): Json<NleInstallRequest>) -> impl IntoRes
 fn detect_premiere_pro() -> Option<(String, String)> {
     #[cfg(target_os = "macos")]
     {
-        // /Applications/ 에는 "Adobe Premiere Pro 2026.app" 형태로 존재
+        // Adobe Premiere Pro 설치 패턴 2가지:
+        // A) /Applications/Adobe Premiere Pro 2026/Adobe Premiere Pro 2026.app/
+        // B) /Applications/Adobe Premiere Pro 2026.app/ (드물지만 가능)
         let apps_dir = std::path::Path::new("/Applications");
         if let Ok(entries) = std::fs::read_dir(apps_dir) {
             let mut candidates: Vec<String> = entries
@@ -818,30 +821,46 @@ fn detect_premiere_pro() -> Option<(String, String)> {
                 .map(|e| e.file_name().to_string_lossy().to_string())
                 .filter(|name| name.starts_with("Adobe Premiere Pro") && !name.contains("Beta"))
                 .collect();
-            // 가장 최신 버전 선택 (이름 역순 정렬)
             candidates.sort();
             if let Some(latest) = candidates.last() {
-                // latest = "Adobe Premiere Pro 2026.app" 또는 "Adobe Premiere Pro 2026"
-                let app_bundle = format!("/Applications/{}", latest);
-                // .app 접미사가 없으면 추가, 있으면 그대로
+                let entry_path = format!("/Applications/{}", latest);
+                let folder_name = latest.trim_end_matches(".app");
+
+                // .app 번들 경로 탐색 — 폴더 내부에 .app이 있는지 확인
                 let bundle_path = if latest.ends_with(".app") {
-                    app_bundle.clone()
+                    // 패턴 B: entry 자체가 .app 번들
+                    entry_path.clone()
                 } else {
-                    format!("{}.app", app_bundle)
+                    // 패턴 A: 폴더 안에 {name}.app이 있음
+                    let nested = format!("{}/{}.app", entry_path, folder_name);
+                    if std::path::Path::new(&nested).exists() {
+                        nested
+                    } else {
+                        // 폴백: 폴더 안에서 .app 찾기
+                        std::fs::read_dir(&entry_path)
+                            .ok()
+                            .and_then(|entries| {
+                                entries.filter_map(|e| e.ok())
+                                    .find(|e| e.file_name().to_string_lossy().ends_with(".app"))
+                                    .map(|e| format!("{}/{}", entry_path, e.file_name().to_string_lossy()))
+                            })
+                            .unwrap_or_else(|| format!("{}.app", entry_path))
+                    }
                 };
-                // .prproj XML 내 경로에는 .app 없는 형태로 기록됨
-                let app_path = app_bundle.trim_end_matches(".app").to_string();
+
+                // .prproj XML 내 경로는 .app 없는 폴더 형태로 기록됨
+                let app_path = entry_path.trim_end_matches(".app").to_string();
 
                 // Info.plist에서 버전 읽기
                 let plist_path = format!("{}/Contents/Info.plist", bundle_path);
-                // 폴더명에서 .app 제거 후 연도 추출
-                let folder_name = latest.trim_end_matches(".app");
                 let version = read_plist_version(&plist_path)
                     .or_else(|| {
                         folder_name.strip_prefix("Adobe Premiere Pro ")
                             .map(|y| premiere_year_to_version(y))
                     })
                     .unwrap_or_else(|| "26.0.0".to_string());
+
+                println!("[NLE] Premiere 감지: entry={}, bundle={}, version={}", entry_path, bundle_path, version);
                 return Some((app_path, version));
             }
         }
@@ -959,7 +978,26 @@ fn patch_prproj_files(project_dir: &std::path::Path) -> Result<(), String> {
             xml = conformed_re.replace_all(&xml, "").to_string();
             xml = peak_re.replace_all(&xml, "").to_string();
 
-            // 3. MZ.BuildVersion 갱신
+            // 3. 상대경로 → 설치된 절대경로로 변환 (Premiere가 ./media/를 못 찾는 문제 방지)
+            {
+                let abs_project_path = project_dir.to_string_lossy().to_string().replace('\\', "/");
+                // RelativePath, FilePath, ActualMediaFilePath의 ./media/... 또는 ./audio/... 를 절대경로로 변환
+                let rel_media_re = regex_lite::Regex::new(
+                    r"<(RelativePath|FilePath|ActualMediaFilePath)>\./?(media/[^<]+)</\1>"
+                ).unwrap();
+                xml = rel_media_re.replace_all(&xml, |caps: &regex_lite::Captures| {
+                    format!("<{}>{}/{}</{}>", &caps[1], abs_project_path, &caps[2], &caps[1])
+                }).to_string();
+                let rel_audio_re = regex_lite::Regex::new(
+                    r"<(RelativePath|FilePath|ActualMediaFilePath)>\./?(audio/[^<]+)</\1>"
+                ).unwrap();
+                xml = rel_audio_re.replace_all(&xml, |caps: &regex_lite::Captures| {
+                    format!("<{}>{}/{}</{}>", &caps[1], abs_project_path, &caps[2], &caps[1])
+                }).to_string();
+                println!("[NLE] prproj 미디어 경로 → 절대경로 변환: {}/media/", abs_project_path);
+            }
+
+            // 4. MZ.BuildVersion 갱신
             if let Some((_, ref ver)) = premiere_info {
                 let now = chrono::Local::now().format("%a %b %e %T %Y").to_string();
                 let build_ver = format!("{}x0 - {}", ver, now);

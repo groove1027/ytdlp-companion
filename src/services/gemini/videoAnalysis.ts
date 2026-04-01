@@ -19,7 +19,8 @@ export const analyzeVideoWithGemini = async (
     source: VideoSource,
     atmosphere: string,
     strategy: 'NARRATIVE' | 'VISUAL',
-    userInstructions?: string
+    userInstructions?: string,
+    durationSec?: number
 ): Promise<Scene[]> => {
     const evolinkKey = getEvolinkKey();
     const apiKey = evolinkKey || getKieKey();
@@ -47,9 +48,16 @@ export const analyzeVideoWithGemini = async (
         ? `\n## USER INSTRUCTIONS (MUST APPLY)\nThe user requested the following changes to the remake. Apply these instructions to EVERY scene:\n${userInstructions}\n`
         : '';
 
+    // [FIX #948] 롱폼 대응: 영상 길이에 따라 장면 길이 동적 조절
+    const sceneDuration = !durationSec || durationSec <= 120
+      ? '10~15'
+      : durationSec <= 600
+        ? '30~60'
+        : '60~120';
+
     const prompt = `You are a professional video analyst and scene breakdown specialist.
 
-Analyze this video and break it into individual scenes (10~15 seconds each).
+Analyze this video and break it into individual scenes (${sceneDuration} seconds each).${durationSec && durationSec > 120 ? `\nThis is a long-form video (~${Math.round(durationSec / 60)} minutes). Ensure timestamps are accurate and cover the ENTIRE video duration (0 to ${Math.round(durationSec)} seconds). Do NOT cluster all timestamps in the first few minutes.` : ''}
 
 ## Analysis Strategy
 ${strategyPrompt}
@@ -97,8 +105,14 @@ Analyze the video now. Return ONLY the JSON array.`;
         }],
         generationConfig: {
             responseMimeType: 'application/json',
-            temperature: 0.3,
-            maxOutputTokens: 8000
+            temperature: durationSec && durationSec > 600 ? 0.2 : 0.3,
+            // [FIX #948] 롱폼: 예상 장면 수에 따라 토큰 동적 계산
+            maxOutputTokens: (() => {
+                if (!durationSec || durationSec <= 120) return 8000;
+                const avgSceneSec = durationSec <= 600 ? 45 : 90;
+                const expectedScenes = Math.ceil(durationSec / avgSceneSec);
+                return Math.min(32000, Math.max(8000, expectedScenes * 200));
+            })()
         },
         safetySettings: SAFETY_SETTINGS_BLOCK_NONE
     };
@@ -156,7 +170,8 @@ Analyze the video now. Return ONLY the JSON array.`;
         throw new Error("영상에서 장면을 감지하지 못했습니다. 다른 영상을 시도해주세요.");
     }
 
-    // Map to Scene[]
+    // Map to Scene[] — [FIX #948] 타임코드 클램핑 (AI 할루시네이션 방지)
+    const clamp = (v: number) => durationSec && durationSec > 0 ? Math.max(0, Math.min(v, durationSec)) : v;
     const scenes: Scene[] = parsed.map((item, i) => ({
         id: `scene-${Date.now()}-${i}`,
         scriptText: item.scriptText || `Scene ${i + 1}`,
@@ -167,8 +182,8 @@ Analyze the video now. Return ONLY the JSON array.`;
         shotSize: item.shotSize,
         cameraAngle: item.cameraAngle,
         cameraMovement: item.cameraMovement,
-        startTime: item.startTime ?? 0,
-        endTimeStamp: item.endTimeStamp,
+        startTime: clamp(item.startTime ?? 0),
+        endTimeStamp: item.endTimeStamp != null ? clamp(item.endTimeStamp) : undefined,
         audioScript: item.audioScript || '',
         isGeneratingImage: false,
         isGeneratingVideo: false

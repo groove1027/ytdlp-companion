@@ -30,6 +30,7 @@ import {
   installCapCutZipToDirectory,
   installNleViaCompanion,
   isCapCutDirectInstallSupported,
+  isCompanionNleAvailable,
   sanitizeProjectName,
 } from '../../../services/nleExportService';
 import type { EditRoomNleTarget } from '../../../services/nleExportService';
@@ -56,6 +57,7 @@ import {
 } from '../../../data/shoppingScriptGuideline';
 import { lazyRetry } from '../../../utils/retryImport';
 import { runAbortableTaskWithBudget, waitForSoftTimeout } from '../../../utils/asyncBudget';
+import { validateSceneTimecodes } from '../../../utils/timecodeValidator';
 
 const ScenarioPreviewPlayer = lazyRetry(() => import('./ScenarioPreviewPlayer'));
 const UploadMasterGuide = lazyRetry(() => import('./UploadMasterGuide'));
@@ -2727,6 +2729,13 @@ const buildUserMessage = (
   // 목표 시간 관련 동적 지시 (프리셋별 기존 시간 규칙을 오버라이드) — 0(원본)이면 생략
   const durationInstruction = targetDuration === 0 ? '' : `\n\n### ⏱️ 목표 시간 설정 (사용자 지정 — 최우선 적용)\n- **각 버전의 총 길이를 반드시 약 ${targetDuration}초로 맞추세요.**\n- 컷 수와 개별 컷 길이를 조절하여 합산이 ${targetDuration}초 내외(±5초)가 되도록 설계하세요.\n- ${targetDuration <= 30 ? '핵심 장면만 엄선하여 짧고 임팩트 있게.' : targetDuration <= 45 ? '주요 장면을 선별하되 적절한 호흡으로.' : '충분한 내용을 담아 풍부하게.'}`;
   const effectiveDuration = resolveEffectiveVideoDurationSec(inputDesc, videoDurationSec);
+  // [FIX #948] 롱폼 영상 판별 (2분+ = 롱폼) — 모든 프리셋에서 타임코드 정확도 + 시간순서 강제에 사용
+  const isLongFormVideo = effectiveDuration >= 120;
+  const endTimecodeLabel = `${Math.floor(effectiveDuration / 60).toString().padStart(2, '0')}:${Math.round(effectiveDuration % 60).toString().padStart(2, '0')}`;
+  // [FIX #948] 롱폼일 때 모든 프리셋에 적용되는 타임코드 정확도 규칙
+  const longFormTimecodeAccuracyRule = isLongFormVideo
+    ? `\n### 🎯 롱폼 영상 타임코드 정확도 절대 규칙 (최우선)\n- 이 영상은 약 ${Math.round(effectiveDuration / 60)}분(${effectiveDuration}초)의 롱폼 콘텐츠입니다.\n- **타임코드 소스를 추정/추측하지 마라.** 영상의 실제 재생 시간에서 해당 내용이 나오는 정확한 위치만 기록하라.\n- 타임코드는 반드시 **00:00~${endTimecodeLabel} 범위 내**에서 **영상 전체에 골고루 분포**되어야 한다.\n- 영상 앞부분(처음 20%)에만 타임코드가 몰리면 전체 폐기.\n- 자막 전사(transcript)에 타임코드가 포함된 경우, 해당 타임코드를 기준점으로 활용하라.\n- 타임코드 소스는 반드시 **시간순 오름차순**으로 배치하라. (1번 행의 타임코드 < 2번 행의 타임코드 < ... < 마지막 행의 타임코드)\n`
+    : '';
   // [FIX #529] alltts 롱폼 지원: 원본(targetDuration=0)이고 영상이 90초 초과이면 롱폼 분량 보존 지시 추가
   const isLongFormAllTts = preset === 'alltts' && targetDuration === 0 && effectiveDuration > 90;
   // [FIX #931] alltts 숏폼 원본 분량 보존: targetDuration=0이고 영상이 90초 이하이면 원본 길이에 맞게 행 수 제한
@@ -2742,7 +2751,7 @@ const buildUserMessage = (
       ? Math.max(3, Math.round(effectiveDuration / 3))
       : 12;
   const longFormOverride = isLongFormAllTts
-    ? `\n\n### ⏱️ 원본 분량 보존 — 롱폼 모드 (최우선 적용)\n- 원본 영상은 약 ${Math.round(effectiveDuration / 60)}분(${effectiveDuration}초)입니다.\n- 각 버전의 총 길이를 **원본과 동일하게 약 ${Math.round(effectiveDuration / 60)}분**으로 맞추세요.\n- **"쇼츠 영상 대본"이 아닌, 원본 길이에 맞는 풀 스크립트**를 작성하세요.\n- 컷(행) 수를 대폭 늘려 원본의 모든 정보를 빠짐없이 담으세요 (최소 ${longFormMinRows}행 이상).\n- 각 컷의 타임코드가 영상 전체(00:00~${Math.floor(effectiveDuration / 60).toString().padStart(2, '0')}:${Math.round(effectiveDuration % 60).toString().padStart(2, '0')})에 골고루 분포되어야 합니다.\n- 축약·요약·생략 절대 금지: 원본 정보량 100%를 그대로 유지하되 텍스트만 재조립하세요.`
+    ? `\n\n### ⏱️ 원본 분량 보존 — 롱폼 모드 (최우선 적용)\n- 원본 영상은 약 ${Math.round(effectiveDuration / 60)}분(${effectiveDuration}초)입니다.\n- 각 버전의 총 길이를 **원본과 동일하게 약 ${Math.round(effectiveDuration / 60)}분**으로 맞추세요.\n- **"쇼츠 영상 대본"이 아닌, 원본 길이에 맞는 풀 스크립트**를 작성하세요.\n- 🚨 **타임코드 소스를 반드시 시간순 오름차순(00:00 → ${endTimecodeLabel})으로 배치하라.** "전개 순서 재조립"은 텍스트(어휘·구문)에만 적용하고, 타임코드의 시간순서는 절대 뒤바꾸지 마라.\n- 컷(행) 수를 대폭 늘려 원본의 모든 정보를 빠짐없이 담으세요 (최소 ${longFormMinRows}행 이상).\n- 각 컷의 타임코드가 영상 전체(00:00~${endTimecodeLabel})에 골고루 분포되어야 합니다.\n- 축약·요약·생략 절대 금지: 원본 정보량 100%를 그대로 유지하되 텍스트만 재조립하세요.`
     : isShortFormAllTts
       ? `\n\n### ⏱️ 원본 분량 보존 — 숏폼 모드 (최우선 적용)\n- 원본 영상은 약 ${effectiveDuration}초입니다.\n- **각 버전의 총 대본 길이를 반드시 원본과 동일하게 약 ${effectiveDuration}초(±3초)로 맞추세요.**\n- 대본이 원본보다 길어지면 안 됩니다. 각 행의 "예상 시간"을 합산하여 ${effectiveDuration}초를 초과하지 않도록 엄격히 관리하세요.\n- 행 수는 ${longFormMinRows}~${longFormMaxRows}개로 제한하세요.\n- 원본에 없는 내용을 추가로 만들어내지 마세요. 원본 정보만 재조립하세요.`
       : '';
@@ -2760,14 +2769,15 @@ const buildUserMessage = (
     : '12. **총 길이 45~60초 내외.** 버전당 5~15개 컷. 각 VERSION 사이에 불필요한 설명 텍스트 금지.';
 
   if (preset === 'alltts') {
-    return finalizeVersionedPrompt(`## 분석 대상
+    return finalizeVersionedPrompt(`${longFormOverride}${longFormTimecodeAccuracyRule}
+## 분석 대상
 ${inputDesc}
 
 ## 지시 사항
 위 영상의 **전체 내용(제목, 설명, 태그, 첨부 프레임 이미지/영상 내용)을 철저히 분석**하여, 시스템 프롬프트의 **All TTS형 스크립트 리빌딩 프로토콜 v3.6**을 완벽히 실행하세요.
 
 ### 🚨 최우선 규칙: 완전한 TTS 대본 리빌딩
-- **원본의 의미와 정보량을 100% 보존**하되, 구문 구조·어휘·전개 순서를 100% 재조립하여 텍스트 유사도를 0%에 수렴시켜라.
+- **원본의 의미와 정보량을 100% 보존**하되, 구문 구조·어휘${isLongFormAllTts ? '' : '·전개 순서'}를 100% 재조립하여 텍스트 유사도를 0%에 수렴시켜라.${isLongFormAllTts ? '\n- 🚨 **롱폼이므로 "전개 순서 재조립"은 텍스트 수준에서만 적용.** 타임코드 소스의 시간순서(영상 타임라인)는 반드시 오름차순 유지.' : ''}
 - **축약, 요약, 생략 절대 금지.** 원본 분량과 대등한 길이를 반드시 유지하라.
 - **이모지 완전 금지.** 모든 대본은 순수 텍스트(TTS 호환)로만 작성하라.
 - **첨부된 프레임 이미지/영상 내용을 꼼꼼히 분석**하여 정확한 장면과 정보를 반영하라.
@@ -2824,11 +2834,12 @@ ${inputDesc}
 제목: ...
 컨셉: ...
 
-(이 패턴으로 ---VERSION ${versionCount}--- 까지 총 ${versionCount}개)` + durationInstruction + longFormOverride + BILINGUAL_INSTRUCTION, versionStart, versionCount);
+(이 패턴으로 ---VERSION ${versionCount}--- 까지 총 ${versionCount}개)` + durationInstruction + BILINGUAL_INSTRUCTION, versionStart, versionCount);
   }
 
   if (preset === 'condensed') {
-    return finalizeVersionedPrompt(`## 분석 대상
+    return finalizeVersionedPrompt(`${longFormTimecodeAccuracyRule}
+## 분석 대상
 ${inputDesc}
 
 ## 지시 사항
@@ -2876,7 +2887,12 @@ ${inputDesc}
   }
 
   if (preset === 'tikitaka') {
-    return finalizeVersionedPrompt(`## 분석 대상
+    // [FIX #948] 롱폼 tikitaka: 시간순서 유지 + 재배치 최소화
+    const tikitakaLongFormRule = isLongFormVideo
+      ? `### ⚠️ 롱폼 영상 순서 규칙 (최우선 적용)\n- **원본이 롱폼(약 ${Math.round(effectiveDuration / 60)}분)이므로, 타임코드 소스를 시간순 오름차순으로 배치하라.**\n- 후킹을 위한 1~2컷 선배치는 허용하되, 3번째 행부터는 원본 시간순서를 유지하라.\n- "재배치 구조"에서 원본 순서 기반임을 명시하라.\n\n`
+      : '';
+    return finalizeVersionedPrompt(`${tikitakaLongFormRule}${longFormTimecodeAccuracyRule}
+## 분석 대상
 ${inputDesc}
 
 ## 지시 사항
@@ -3059,7 +3075,12 @@ ${inputDesc}
   }
 
   // 스낵형
-  return finalizeVersionedPrompt(`## 분석 대상
+  // [FIX #948] 롱폼 snack: 시간순서 유지 + 재배치 최소화
+  const snackLongFormRule = isLongFormVideo
+    ? `### ⚠️ 롱폼 영상 순서 규칙 (최우선 적용)\n- **원본이 롱폼(약 ${Math.round(effectiveDuration / 60)}분)이므로, 타임코드 소스를 시간순 오름차순으로 배치하라.**\n- 후킹을 위한 1번 컷 선배치는 허용하되, 2번째 행부터는 원본 시간순서를 유지하라.\n- 타임코드가 영상 전체(00:00~${endTimecodeLabel})에 골고루 분포되어야 한다.\n\n`
+    : '';
+  return finalizeVersionedPrompt(`${snackLongFormRule}${longFormTimecodeAccuracyRule}
+## 분석 대상
 ${inputDesc}
 
 ## 지시 사항
@@ -3072,7 +3093,7 @@ ${inputDesc}
 
 ### ⚠️ 절대 규칙 (위반 시 전체 재작성)
 1. 출력 포맷은 **[마스터 편집 테이블 7열]** + **[Content ID 분석]** 조합만 사용.
-2. **컷 순서는 원본 영상의 시간 순서가 아니라, 임팩트 순으로 완전히 뒤섞어야 한다.** 순차적 나열 절대 금지.
+2. ${isLongFormVideo ? '**롱폼이므로 타임코드 소스를 시간순 오름차순으로 유지하되, 1번 컷만 가장 바이럴한 장면으로 선배치.** 나머지 행은 원본 시간순서 유지.' : '**컷 순서는 원본 영상의 시간 순서가 아니라, 임팩트 순으로 완전히 뒤섞어야 한다.** 순차적 나열 절대 금지.'}
 3. 가장 바이럴한 펀치라인/클라이맥스를 무조건 **1번 컷(00:00~00:03)에 선배치**.
 4. 모드는 **[S](현장음-대사), [A](현장음-액션)** 중 하나만 사용. **[N](나레이션) 절대 금지.**
 5. 효과 자막은 **큼직한 예능형 텍스트** (예: 💥쾅!, ㅋㅋㅋ, 😳동공지진). 2~8자 이내.
@@ -4075,8 +4096,8 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
 
       // 기본은 단일 호출, 필요 시에만 적응형 병렬 배치로 분할
 
-      // [FIX #364] 롱폼 할루시네이션 방지: 5분+ 영상은 temperature를 낮춰 팩트 기반 생성 유도
-      const effectiveTemp = maxTimeSec >= 300 ? 0.3 : 0.5;
+      // [FIX #364][FIX #948] 롱폼 할루시네이션 방지: 10분+ → 0.2, 5분+ → 0.3, 나머지 → 0.5
+      const effectiveTemp = maxTimeSec >= 600 ? 0.2 : maxTimeSec >= 300 ? 0.3 : 0.5;
 
       /** [FIX #262][FIX #679][FIX #678] 텍스트 전용 폴백 — Evolink 스트리밍 → Smart Routing (KIE 포함)
        * v1beta 타임아웃/네트워크 에러 직후에도 안정적으로 동작하도록 500ms 대기 + 타임아웃 적용
@@ -4363,6 +4384,15 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
           showToast(`⚠️ AI 서버 응답이 불안정하여 ${effectiveVersionCount}개 중 ${parsed.length}개만 생성되었어요. 잠시 후 다시 시도하면 더 좋은 결과를 받으실 수 있어요.`, 8000);
         } else {
           showToast(`⚠️ ${effectiveVersionCount}개 중 ${parsed.length}개 버전만 생성되었어요. 버전 수를 줄이면 더 안정적이에요.`, 6000);
+        }
+      }
+      // [FIX #948] 타임코드 검증 — 롱폼에서 AI 할루시네이션 타임코드 경고
+      if (knownDurationSec >= 120) {
+        for (const v of parsed) {
+          const result = validateSceneTimecodes(v.scenes, knownDurationSec);
+          if (result.hasIssues) {
+            result.warnings.forEach(w => console.warn(`[VideoAnalysis] VERSION ${v.id}: ${w}`));
+          }
         }
       }
       setVersions(parsed);
@@ -5490,9 +5520,11 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                     nleActiveTaskRef.current = { target, controller: myAbort };
                                     nleAbortRef.current = myAbort;
                                     const isCancelled = () => myAbort.signal.aborted;
-                                    // [FIX #665/#657] showDirectoryPicker를 가장 먼저 호출해야 user gesture 유지
+                                    // [FIX] companion이 실행 중이면 폴더 선택 다이얼로그 불필요 — 동기 캐시로 user gesture 보존
+                                    const companionAlive = target !== 'vrew' && isCompanionNleAvailable();
+                                    // [FIX #665/#657] companion이 없을 때만 showDirectoryPicker 호출 (user gesture 유지)
                                     let directInstallSelection: Awaited<ReturnType<typeof beginCapCutDirectInstallSelection>> = null;
-                                    if (target === 'capcut' && isCapCutDirectInstallSupported()) {
+                                    if (target === 'capcut' && !companionAlive && isCapCutDirectInstallSupported()) {
                                       try {
                                         directInstallSelection = await beginCapCutDirectInstallSelection();
                                       } catch (pickerErr) {

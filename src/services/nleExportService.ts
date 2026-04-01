@@ -1287,8 +1287,9 @@ async function generatePremiereNativeProjectBytes(params: {
   const sourceMedia = getPremiereObjectByUid(doc, 'a2a84544-e9d2-49c2-87e5-23116e78d0fb');
   // [FIX] RelativePath에 ./ 접두사 필수 — Premiere 자동 미디어 링크 호환
   setPremiereChildText(doc, sourceMedia, 'RelativePath', `./media/${safeVideoName}`);
-  setPremiereChildText(doc, sourceMedia, 'FilePath', `media/${safeVideoName}`);
-  setPremiereChildText(doc, sourceMedia, 'ActualMediaFilePath', `media/${safeVideoName}`);
+  // [FIX] ./ 접두사 필수 — 없으면 Premiere가 절대경로 /media/로 해석하여 Link Media 에러 발생
+  setPremiereChildText(doc, sourceMedia, 'FilePath', `./media/${safeVideoName}`);
+  setPremiereChildText(doc, sourceMedia, 'ActualMediaFilePath', `./media/${safeVideoName}`);
   setPremiereChildText(doc, sourceMedia, 'Title', safeVideoName);
   setPremiereChildText(doc, sourceMedia, 'FileKey', premiereUuid());
   // [FIX] 템플릿 잔여 절대경로 제거 — 미디어 재링크 실패 원인
@@ -1648,8 +1649,9 @@ async function generatePremiereNativeProjectBytes(params: {
 
       setPremiereObjectRef(getPremiereDirectChild(narrationMasterSecondaryContent, 'Content')!, narrationMediaSource.getAttribute('ObjectID') || '');
       setPremiereChildText(doc, narrationMedia, 'RelativePath', `./audio/${narrationFileName}`);
-      setPremiereChildText(doc, narrationMedia, 'FilePath', `audio/${narrationFileName}`);
-      setPremiereChildText(doc, narrationMedia, 'ActualMediaFilePath', `audio/${narrationFileName}`);
+      // [FIX] ./ 접두사 필수 — Premiere 상대경로 해석 호환
+      setPremiereChildText(doc, narrationMedia, 'FilePath', `./audio/${narrationFileName}`);
+      setPremiereChildText(doc, narrationMedia, 'ActualMediaFilePath', `./audio/${narrationFileName}`);
       setPremiereChildText(doc, narrationMedia, 'Title', narrationFileName);
       setPremiereChildText(doc, narrationMedia, 'FileKey', premiereUuid());
       const mediaAudioStreamRef = ensurePremiereDirectChild(doc, narrationMedia, 'AudioStream');

@@ -13,6 +13,7 @@ import {
   getCapCutManualInstallHint,
   installCapCutZipToDirectory,
   isCapCutDirectInstallSupported,
+  isCompanionNleAvailable,
   installNleViaCompanion,
 } from '../../services/nleExportService';
 import type { EditRoomNleTarget } from '../../services/nleExportService';
@@ -1405,13 +1406,14 @@ const EditRoomTab: React.FC = () => {
       showToast('내보낼 장면이 없습니다.');
       return;
     }
-    // [FIX #665/#657] CapCut 직접 설치: showDirectoryPicker를 confirm보다 먼저 호출해야 user gesture 유지
+    // [FIX] companion이 실행 중이면 폴더 선택 다이얼로그 불필요 — 동기 캐시로 user gesture 보존
+    const companionAlive = target !== 'vrew' && isCompanionNleAvailable();
+    // [FIX #665/#657] companion이 없을 때만 showDirectoryPicker 호출 (user gesture 유지)
     let directInstallSelection: Awaited<ReturnType<typeof beginCapCutDirectInstallSelection>> = null;
-    if (target === 'capcut' && isCapCutDirectInstallSupported()) {
+    if (target === 'capcut' && !companionAlive && isCapCutDirectInstallSupported()) {
       try {
         directInstallSelection = await beginCapCutDirectInstallSelection();
       } catch (pickerErr) {
-        // showDirectoryPicker 예외 → ZIP 폴백 (directInstallSelection = null)
         console.warn('[EditRoom] CapCut 직접 설치 선택 실패, ZIP으로 진행:', pickerErr);
       }
     }

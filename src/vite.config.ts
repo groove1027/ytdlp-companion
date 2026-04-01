@@ -14,6 +14,18 @@ export default defineConfig(({ mode }) => {
         host: '0.0.0.0',
         // NOTE: COOP/COEP 헤더는 Tailwind CDN + 외부 폰트를 차단하므로 사용하지 않음.
         // FFmpeg WASM은 single-threaded 모드(SharedArrayBuffer 불필요)로 동작.
+
+        // ⚠️ 로컬 dev 서버 전용 프록시 — vite build(배포)에는 절대 영향 없음
+        // /api/* 요청을 프로덕션 서버로 프록시 → 로컬에서 로그인 가능
+        ...(mode === 'development' ? {
+          proxy: {
+            '/api': {
+              target: 'https://all-in-one-production.pages.dev',
+              changeOrigin: true,
+              secure: true,
+            },
+          },
+        } : {}),
       },
       plugins: [react()],
       resolve: {

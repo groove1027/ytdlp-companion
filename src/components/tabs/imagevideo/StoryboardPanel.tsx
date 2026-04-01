@@ -27,7 +27,9 @@ import {
   buildEditRoomNleZip,
   getCapCutManualInstallHint,
   installCapCutZipToDirectory,
+  installNleViaCompanion,
   isCapCutDirectInstallSupported,
+  isCompanionNleAvailable,
 } from '../../../services/nleExportService';
 import type { EditRoomNleTarget } from '../../../services/nleExportService';
 import { logger } from '../../../services/LoggerService';
@@ -1527,9 +1529,11 @@ const StoryboardPanel: React.FC = () => {
       return;
     }
 
-    // [FIX #665/#657] CapCut 직접 설치: showDirectoryPicker를 confirm보다 먼저 호출해야 user gesture 유지
+    // [FIX] companion이 실행 중이면 폴더 선택 다이얼로그 불필요 — 동기 캐시로 user gesture 보존
+    const companionAlive = target !== 'vrew' && isCompanionNleAvailable();
+    // [FIX #665/#657] companion이 없을 때만 showDirectoryPicker 호출 (user gesture 유지)
     let directInstallSelection: Awaited<ReturnType<typeof beginCapCutDirectInstallSelection>> = null;
-    if (target === 'capcut' && isCapCutDirectInstallSupported()) {
+    if (target === 'capcut' && !companionAlive && isCapCutDirectInstallSupported()) {
       try {
         directInstallSelection = await beginCapCutDirectInstallSelection();
       } catch (pickerErr) {
@@ -1582,6 +1586,28 @@ const StoryboardPanel: React.FC = () => {
           ? ` (영상 ${result.videoCount}개)`
           : ` (이미지 ${result.imageCount}개)`;
 
+      // [FIX] 1순위: 컴패니언 앱으로 직접 설치 (경로 패치 자동 처리 — live health check)
+      if (target !== 'vrew') {
+        try {
+          const ping = await fetch('http://127.0.0.1:9876/health', { signal: AbortSignal.timeout(3000) });
+          if (!ping.ok) throw new Error('companion unavailable');
+          const JSZip = (await import('jszip')).default;
+          const zip = await JSZip.loadAsync(result.blob);
+          const topFolders = Object.keys(zip.files)
+            .filter(name => name.includes('/') && !name.startsWith('media/') && !name.startsWith('audio/'))
+            .map(name => name.split('/')[0])
+            .filter((v, i, a) => a.indexOf(v) === i && v.length > 10);
+          const projectId = topFolders[0] || `project-${Date.now()}`;
+          showToast(`${targetLabel}에 직접 설치 중...`);
+          const installResult = await installNleViaCompanion({ target, zipBlob: result.blob, projectId });
+          showToast(`${targetLabel} 프로젝트를 바로 설치했습니다!${mediaSummary} (${installResult.filesInstalled}개 파일)`, 6000);
+          return;
+        } catch (companionErr) {
+          console.warn('[StoryboardPanel] 컴패니언 NLE 설치 실패, 기존 방식 폴백:', companionErr);
+        }
+      }
+
+      // 2순위: CapCut File System API 직접 설치
       if (target === 'capcut' && directInstallSelection) {
         try {
           await installCapCutZipToDirectory({
