@@ -205,9 +205,8 @@ function renderPresetGrid() {
       .filter(p => p.cat === 'basic')
       .map(p => `<button class="preset-btn ${state.currentPreset === p.id ? 'active' : ''}"
         data-preset="${p.id}" onclick="selectPreset('${p.id}')">
-        <span class="preset-icon">${p.icon}</span>
-        <span class="preset-label">${p.label}</span>
-        <span class="preset-overscale">${Math.round(calcOverscale(p.id) * 100)}%</span>
+        <span class="p-label">${p.label}</span>
+        <span class="p-meta">${Math.round(calcOverscale(p.id) * 100)}%</span>
       </button>`).join('');
   }
 
@@ -216,34 +215,35 @@ function renderPresetGrid() {
       .filter(p => p.cat === 'cinematic')
       .map(p => `<button class="preset-btn ${state.currentPreset === p.id ? 'active' : ''}"
         data-preset="${p.id}" onclick="selectPreset('${p.id}')">
-        <span class="preset-icon">${p.icon}</span>
-        <span class="preset-label">${p.label}</span>
-        <span class="preset-overscale">${Math.round(calcOverscale(p.id) * 100)}%</span>
+        <span class="p-label">${p.label}</span>
+        <span class="p-meta">${Math.round(calcOverscale(p.id) * 100)}%</span>
       </button>`).join('');
   }
 
   if (motionGrid) {
     motionGrid.innerHTML = MOTION_EFFECTS
-      .map(m => `<button class="motion-btn ${state.currentMotion === m.id ? 'active' : ''}"
+      .map(m => `<button class="tag-btn ${state.currentMotion === m.id ? 'active' : ''}"
         data-motion="${m.id}" onclick="selectMotion('${m.id}')">
-        <span class="preset-icon">${m.icon}</span>
-        <span class="preset-label">${m.label}</span>
+        ${m.label}
       </button>`).join('');
   }
 }
 
 function renderClipList() {
   const el = document.getElementById('clip-list');
+  const badge = document.getElementById('clip-count');
   if (!el) return;
 
+  if (badge) badge.textContent = state.selectedClips.length;
+
   if (state.selectedClips.length === 0) {
-    el.innerHTML = '<div class="empty">타임라인에서 클립을 선택하세요</div>';
+    el.innerHTML = '<div class="clip-empty">Select clips in timeline</div>';
     return;
   }
 
   el.innerHTML = state.selectedClips.map((c, i) =>
-    `<div class="clip-item">
-      <span class="clip-idx">${i + 1}</span>
+    `<div class="clip-row">
+      <span class="clip-num">${i + 1}</span>
       <span class="clip-name" title="${c.mediaPath}">${c.name}</span>
       <span class="clip-dur">${c.dur.toFixed(1)}s</span>
     </div>`
@@ -255,20 +255,16 @@ function renderAssignmentList() {
   if (!el) return;
 
   if (state.assignments.length === 0) {
-    el.innerHTML = '';
-    return;
+    el.innerHTML = ''; return;
   }
 
-  el.innerHTML = '<div class="section-title">배정 결과</div>' +
-    state.assignments.map((a, i) => {
+  el.innerHTML = state.assignments.map((a, i) => {
       const clip = state.selectedClips[i];
       const name = clip ? clip.name : 'Clip ' + (i + 1);
-      return `<div class="assignment-item">
-        <span class="clip-idx">${i + 1}</span>
+      return `<div class="assign-item">
+        <span class="clip-num">${i + 1}</span>
         <span class="clip-name">${name}</span>
-        <span class="assign-preset">${a.presetId}</span>
-        <span class="assign-anchor">(${a.anchorX},${a.anchorY})</span>
-        <span class="assign-intensity">${Math.round(a.intensity * 100)}%</span>
+        <span class="assign-tag">${a.presetId}</span>
       </div>`;
     }).join('');
 }
@@ -277,7 +273,7 @@ function updateStatus(message, type) {
   const el = document.getElementById('status');
   if (!el) return;
   el.textContent = message;
-  el.className = 'status ' + (type || 'info');
+  el.className = type || '';
 }
 
 // ═══ 이벤트 핸들러 (window에 노출) ═══
