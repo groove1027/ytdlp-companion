@@ -81,6 +81,11 @@
 - [x] nleExportService.ts: 새 caption `MasterClipChangeVersion` 강제 증가 제거 — 템플릿 원형과 동일하게 synthetic caption master clip을 dirty 상태로 만들지 않도록 정렬
 - [x] companion server.rs: `.prproj` 재압축 후 gzip OS byte를 `0x13`으로 복원 — companion 경유 시 Premiere 저장 에러 재발 방지
 
+### [2026-04-02] Premiere Pro V45 미디어 링크 + 자막 블록 정리
+- [x] nleExportService.ts: source/narration `Media`의 `ObjectUID`를 보호 목록에 유지하고, `sanitizePremiereEnvironmentPaths()`가 보호된 `Media` 조상 기준으로 `FilePath`/`ActualMediaFilePath`를 비우지 않도록 보강
+- [x] nleExportService.ts: video/audio scene `TrackItem -> SubClip -> Clip -> SourceMedia` 연결을 helper로 재고정해 V45 시퀀스에서 donor source graph 참조가 흔들리지 않도록 정리
+- [x] nleExportService.ts: dialogue `SyntheticCaption`에서 `(A)/(B)` 화자 태그를 제거하고, `breakLines()` 없이 줄당 1개 캡션 블록으로 시간 균등 분할하도록 변경
+
 ### [2026-04-01] #944 TTS 라인 중복/누락 + #918 멀티캐릭터 음량 편차 수정
 - [x] VoiceStudio.tsx: `handleGenerateLine` stale closure 수정 — store에서 직접 최신 lines/speakers 읽도록 변경
 - [x] NarrationView.tsx: 동일한 stale closure 수정

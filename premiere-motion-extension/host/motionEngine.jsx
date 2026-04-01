@@ -191,55 +191,37 @@ function applyMotionToClip(trackIdx, clipIdx, presetId, anchorX, anchorY, intens
 
     if (typeof intensity !== 'number' || intensity <= 0) intensity = 1.0;
 
-    // 오버스케일 계산
-    var overscale = calcOverscale(presetId);
-
-    // Motion 컴포넌트 찾기 (다국어 + 인덱스 폴백)
-    var motion = null;
-    var motionNames = ['Motion', '모션', 'Mouvement', 'Bewegung', 'Movimiento', 'Movimento'];
-    for (var ci = 0; ci < clip.components.numItems; ci++) {
-      var compName = clip.components[ci].displayName;
-      for (var ni = 0; ni < motionNames.length; ni++) {
-        if (compName === motionNames[ni]) { motion = clip.components[ci]; break; }
-      }
-      if (motion) break;
-    }
-    // 인덱스 폴백: Motion은 보통 index 1 (0=Opacity 또는 Video)
-    if (!motion && clip.components.numItems > 1) {
-      motion = clip.components[1];
-    }
+    // ─── Motion 컴포넌트 찾기 (다국어 + 인덱스 폴백) ───
+    var motion = findMotionComponent(clip);
     if (!motion) return 'Error: Motion component not found (components=' + clip.components.numItems + ')';
 
-    // 프로퍼티 찾기 (이름 기반 — 다국어 대응)
-    var scaleProp = findProp(motion, ['Scale', '비율', 'Échelle', 'Skalierung']);
-    var posProp = findProp(motion, ['Position', '위치', 'Posición']);
-    var rotProp = findProp(motion, ['Rotation', '회전', 'Drehung']);
+    // Scale 프로퍼티 찾기
+    var scaleProp = findProp(motion, ['Scale', '비율', 'Échelle', 'Skalierung', 'Scala']);
+    if (!scaleProp) return 'Error: Scale property not found';
 
-    if (!scaleProp) return 'Error: Scale property not found (tried Scale/비율)';
+    // Rotation 프로퍼티 (optional)
+    var rotProp = findProp(motion, ['Rotation', '회전', 'Drehung', 'Rotación']);
 
-    // ─── 클립 시간 범위 (타임라인 기준! inPoint/outPoint는 소스 미디어 시간이므로 사용 금지) ───
+    // ─── 클립 시간 범위 (타임라인 기준) ───
     var startTime = clip.start.seconds;
     var endTime = clip.end.seconds;
     var dur = endTime - startTime;
-
     if (dur <= 0) return 'Error: Clip duration is 0';
 
-    // ─── 기존 키프레임 제거 + 키프레임 모드 활성화 ───
+    // Position 프로퍼티 (기존 키프레임 제거 전용 — 새 키프레임은 추가 안 함)
+    var posProp = findProp(motion, ['Position', '위치', 'Posición']);
+
+    // ─── 기존 키프레임 전부 제거 + 키프레임 모드 활성화 ───
     enableKeyframing(scaleProp);
-    if (posProp) enableKeyframing(posProp);
     if (rotProp) enableKeyframing(rotProp);
+    // Position: 기존 Motion Master가 적용한 키프레임 제거 (있다면)
+    if (posProp) {
+      try { if (posProp.isTimeVarying()) posProp.setTimeVarying(false); } catch(ep){}
+    }
 
-    // 시퀀스 프레임 크기
-    var seqW = parseInt(seq.frameSizeHorizontal);
-    var seqH = parseInt(seq.frameSizeVertical);
-    var centerX = seqW / 2;
-    var centerY = seqH / 2;
-
-    // 앵커 기반 위치 오프셋 (50,50이 중앙)
-    var anchorOffsetX = (anchorX - 50) / 100 * seqW;
-    var anchorOffsetY = (anchorY - 50) / 100 * seqH;
-
-    // ─── 프리셋 키프레임 적용 ───
+    // ─── Scale 키프레임만 적용 (Position compound property 깨짐 방지) ───
+    // Premiere는 자체적으로 프레임 클리핑하므로 오버스케일 불필요
+    // 프리셋의 scale 값을 100 기준 퍼센트로 그대로 적용
     var frames = preset.frames;
     var numFrames = frames.length;
     var appliedCount = 0;
@@ -249,37 +231,23 @@ function applyMotionToClip(trackIdx, clipIdx, presetId, anchorX, anchorY, intens
       var ratio = numFrames > 1 ? fi / (numFrames - 1) : 0;
       var time = startTime + dur * ratio;
 
-      // Scale: 오버스케일 × 프리셋 scale × 강도 → 퍼센트
-      var baseScale = overscale * 100;
-      var presetScale = f.s;
-      var scaleDelta = (presetScale - 1.0) * intensity;
-      var finalScale = baseScale * (1.0 + scaleDelta);
+      // Scale: 프리셋 값 × 100 = 퍼센트 (1.15 → 115%)
+      // intensity 적용: 편차만 강도 조절 (1.0에서의 차이)
+      var scaleDelta = (f.s - 1.0) * intensity;
+      var finalScale = (1.0 + scaleDelta) * 100;
 
-      // ⚠️ 핵심: addKey() → setValueAtKey() 순서 필수!
       scaleProp.addKey(time);
       scaleProp.setValueAtKey(time, finalScale, true);
       appliedCount++;
 
-      // Position: 앵커 오프셋 + 패닝 (% → px 변환)
-      if (posProp) {
-        var panPixelX = (f.tx / 100) * seqW * overscale * intensity;
-        var panPixelY = (f.ty / 100) * seqH * overscale * intensity;
-        var posArray = [
-          centerX + anchorOffsetX + panPixelX,
-          centerY + anchorOffsetY + panPixelY
-        ];
-        posProp.addKey(time);
-        posProp.setValueAtKey(time, posArray, true);
-      }
-
-      // Rotation
+      // Rotation (값이 있을 때만)
       if (rotProp && Math.abs(f.r) > 0.01) {
         rotProp.addKey(time);
         rotProp.setValueAtKey(time, f.r * intensity, true);
       }
     }
 
-    return 'OK:' + presetId + ':scale=' + finalScale.toFixed(0) + '%:kf=' + appliedCount;
+    return 'OK:' + presetId + ':' + finalScale.toFixed(0) + '%:kf=' + appliedCount;
   } catch (e) {
     return 'Error: ' + e.message + ' (line ' + e.line + ')';
   }
@@ -339,23 +307,23 @@ function removeMotionFromSelected() {
       }
       if (!motion) continue;
 
-      var scaleProp = findProp(motion, ['Scale', '비율']);
-      var posProp = findProp(motion, ['Position', '위치']);
-      var rotProp = findProp(motion, ['Rotation', '회전']);
+      var scaleProp = findProp(motion, ['Scale', '비율', 'Échelle', 'Skalierung', 'Scala']);
+      var rotProp = findProp(motion, ['Rotation', '회전', 'Drehung', 'Rotación']);
+      var posProp = findProp(motion, ['Position', '위치', 'Posición']);
 
+      // Scale: 키프레임 제거 + 100%로 리셋
       if (scaleProp) {
-        if (scaleProp.isTimeVarying()) scaleProp.setTimeVarying(false);
-        scaleProp.setValue(100, true);
+        try { if (scaleProp.isTimeVarying()) scaleProp.setTimeVarying(false); } catch(e1){}
+        try { scaleProp.setValue(100, true); } catch(e2){}
       }
-      if (posProp) {
-        if (posProp.isTimeVarying()) posProp.setTimeVarying(false);
-        var seqW = parseInt(seq.frameSizeHorizontal);
-        var seqH = parseInt(seq.frameSizeVertical);
-        posProp.setValue([seqW / 2, seqH / 2], true);
-      }
+      // Rotation: 키프레임 제거 + 0으로 리셋
       if (rotProp) {
-        if (rotProp.isTimeVarying()) rotProp.setTimeVarying(false);
-        rotProp.setValue(0, true);
+        try { if (rotProp.isTimeVarying()) rotProp.setTimeVarying(false); } catch(e3){}
+        try { rotProp.setValue(0, true); } catch(e4){}
+      }
+      // Position: 키프레임 제거 + 중앙으로 리셋 (기존 Motion Master가 적용한 경우 대비)
+      if (posProp) {
+        try { if (posProp.isTimeVarying()) posProp.setTimeVarying(false); } catch(e5){}
       }
       count++;
     }
@@ -369,6 +337,22 @@ function removeMotionFromSelected() {
 // ═══════════════════════════════════════════════════════════
 // 유틸리티 함수
 // ═══════════════════════════════════════════════════════════
+
+/**
+ * Motion 컴포넌트 찾기 (다국어 이름 + 인덱스 폴백)
+ */
+function findMotionComponent(clip) {
+  var motionNames = ['Motion', '모션', 'Mouvement', 'Bewegung', 'Movimiento', 'Movimento'];
+  for (var ci = 0; ci < clip.components.numItems; ci++) {
+    var compName = clip.components[ci].displayName;
+    for (var ni = 0; ni < motionNames.length; ni++) {
+      if (compName === motionNames[ni]) return clip.components[ci];
+    }
+  }
+  // 폴백: index 1 (보통 Motion)
+  if (clip.components.numItems > 1) return clip.components[1];
+  return null;
+}
 
 /**
  * 이름 배열로 프로퍼티 찾기 (다국어 대응)
