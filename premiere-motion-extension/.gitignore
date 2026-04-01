@@ -1,0 +1,11 @@
+# 인증서 (보안)
+signing/cert.p12
+signing/ZXPSignCmd
+
+# 빌드 산출물
+dist/
+
+# macOS
+.DS_Store
+
+# 개발용 디버그 설정은 포함 (.debug)
