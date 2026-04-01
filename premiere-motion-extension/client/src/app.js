@@ -53,31 +53,45 @@ function evalScript(script) {
   });
 }
 
-// ═══ 클립 조회 ═══
+// ═══ 클립 조회 (자동 감지 포함) ═══
 
-async function refreshSelectedClips() {
+async function refreshSelectedClips(silent) {
   try {
     const result = await evalScript('getSelectedClips()');
     const data = JSON.parse(result);
 
     if (data.error) {
-      updateStatus(data.error, 'error');
+      if (!silent) updateStatus(data.error, 'error');
       state.selectedClips = [];
     } else {
+      const changed = data.length !== state.selectedClips.length;
       state.selectedClips = data;
-      updateStatus(data.length + '개 클립 선택됨', 'success');
+      if (!silent || changed) {
+        updateStatus(data.length + ' clips selected', 'success');
+      }
     }
     renderClipList();
   } catch (e) {
-    updateStatus('클립 조회 실패: ' + e.message, 'error');
+    state.selectedClips = [];
+    renderClipList();
+    if (!silent) updateStatus('Clip error: ' + e.message, 'error');
   }
+}
+
+// 2초마다 자동 감지 (Premiere에서 선택 변경 시 자동 반영)
+let _pollTimer = null;
+function startClipPolling() {
+  if (_pollTimer) return;
+  _pollTimer = setInterval(() => refreshSelectedClips(true), 2000);
 }
 
 // ═══ 모션 적용 ═══
 
 async function applyToSelected() {
+  // 적용 전 자동 새로고침
+  await refreshSelectedClips(true);
   if (state.selectedClips.length === 0) {
-    updateStatus('클립을 먼저 선택하세요', 'warn');
+    updateStatus('Select clips first', 'warn');
     return;
   }
 
@@ -94,12 +108,13 @@ async function applyToSelected() {
 }
 
 async function applyRandomToSelected() {
+  await refreshSelectedClips(true);
   if (state.selectedClips.length === 0) {
-    updateStatus('클립을 먼저 선택하세요', 'warn');
+    updateStatus('Select clips first', 'warn');
     return;
   }
 
-  updateStatus('스마트 랜덤 배정 중...', 'info');
+  updateStatus('Applying random motion...', 'info');
 
   const randomAssignments = smartRandomAssign(state.selectedClips.length, {
     allowMotionEffects: state.allowMotionEffects,
@@ -122,12 +137,13 @@ async function applyRandomToSelected() {
 }
 
 async function applySmartToSelected() {
+  await refreshSelectedClips(true);
   if (state.selectedClips.length === 0) {
-    updateStatus('클립을 먼저 선택하세요', 'warn');
+    updateStatus('Select clips first', 'warn');
     return;
   }
 
-  updateStatus('피사체 분석 중...', 'info');
+  updateStatus('Analyzing focal points...', 'info');
 
   // 1) 스마트 랜덤 배정
   const randomAssignments = smartRandomAssign(state.selectedClips.length, {
@@ -334,12 +350,12 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-smart')?.addEventListener('click', applySmartToSelected);
   document.getElementById('btn-remove')?.addEventListener('click', removeMotion);
 
-  // Premiere 연결 확인
   if (csInterface) {
-    updateStatus('Premiere Pro 연결됨', 'success');
+    updateStatus('Connected', 'success');
     refreshSelectedClips();
+    startClipPolling();
   } else {
-    updateStatus('테스트 모드 (Premiere 미연결)', 'warn');
+    updateStatus('Test mode (no Premiere)', 'warn');
   }
 });
 

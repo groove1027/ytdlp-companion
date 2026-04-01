@@ -194,33 +194,40 @@ function applyMotionToClip(trackIdx, clipIdx, presetId, anchorX, anchorY, intens
     // 오버스케일 계산
     var overscale = calcOverscale(presetId);
 
-    // Motion 컴포넌트 찾기
+    // Motion 컴포넌트 찾기 (다국어 + 인덱스 폴백)
     var motion = null;
+    var motionNames = ['Motion', '모션', 'Mouvement', 'Bewegung', 'Movimiento', 'Movimento'];
     for (var ci = 0; ci < clip.components.numItems; ci++) {
-      if (clip.components[ci].displayName === 'Motion' ||
-          clip.components[ci].displayName === '모션') {
-        motion = clip.components[ci];
-        break;
+      var compName = clip.components[ci].displayName;
+      for (var ni = 0; ni < motionNames.length; ni++) {
+        if (compName === motionNames[ni]) { motion = clip.components[ci]; break; }
       }
+      if (motion) break;
     }
-    if (!motion) return 'Error: Motion component not found';
+    // 인덱스 폴백: Motion은 보통 index 1 (0=Opacity 또는 Video)
+    if (!motion && clip.components.numItems > 1) {
+      motion = clip.components[1];
+    }
+    if (!motion) return 'Error: Motion component not found (components=' + clip.components.numItems + ')';
 
     // 프로퍼티 찾기 (이름 기반 — 다국어 대응)
     var scaleProp = findProp(motion, ['Scale', '비율', 'Échelle', 'Skalierung']);
     var posProp = findProp(motion, ['Position', '위치', 'Posición']);
     var rotProp = findProp(motion, ['Rotation', '회전', 'Drehung']);
 
-    if (!scaleProp) return 'Error: Scale property not found';
+    if (!scaleProp) return 'Error: Scale property not found (tried Scale/비율)';
 
-    // 클립 시간 범위
-    var inTime = clip.inPoint.seconds;
-    var outTime = clip.outPoint.seconds;
-    var dur = outTime - inTime;
+    // ─── 클립 시간 범위 (타임라인 기준! inPoint/outPoint는 소스 미디어 시간이므로 사용 금지) ───
+    var startTime = clip.start.seconds;
+    var endTime = clip.end.seconds;
+    var dur = endTime - startTime;
 
-    // 기존 키프레임 제거
-    clearKeyframes(scaleProp);
-    if (posProp) clearKeyframes(posProp);
-    if (rotProp) clearKeyframes(rotProp);
+    if (dur <= 0) return 'Error: Clip duration is 0';
+
+    // ─── 기존 키프레임 제거 + 키프레임 모드 활성화 ───
+    enableKeyframing(scaleProp);
+    if (posProp) enableKeyframing(posProp);
+    if (rotProp) enableKeyframing(rotProp);
 
     // 시퀀스 프레임 크기
     var seqW = parseInt(seq.frameSizeHorizontal);
@@ -232,22 +239,26 @@ function applyMotionToClip(trackIdx, clipIdx, presetId, anchorX, anchorY, intens
     var anchorOffsetX = (anchorX - 50) / 100 * seqW;
     var anchorOffsetY = (anchorY - 50) / 100 * seqH;
 
-    // 프리셋 키프레임 적용
+    // ─── 프리셋 키프레임 적용 ───
     var frames = preset.frames;
     var numFrames = frames.length;
+    var appliedCount = 0;
 
     for (var fi = 0; fi < numFrames; fi++) {
       var f = frames[fi];
       var ratio = numFrames > 1 ? fi / (numFrames - 1) : 0;
-      var time = inTime + dur * ratio;
+      var time = startTime + dur * ratio;
 
       // Scale: 오버스케일 × 프리셋 scale × 강도 → 퍼센트
       var baseScale = overscale * 100;
       var presetScale = f.s;
-      // intensity 적용: 1.0에서의 편차만큼 강도 조절
       var scaleDelta = (presetScale - 1.0) * intensity;
       var finalScale = baseScale * (1.0 + scaleDelta);
-      scaleProp.setValueAtKey(time, finalScale);
+
+      // ⚠️ 핵심: addKey() → setValueAtKey() 순서 필수!
+      scaleProp.addKey(time);
+      scaleProp.setValueAtKey(time, finalScale, true);
+      appliedCount++;
 
       // Position: 앵커 오프셋 + 패닝 (% → px 변환)
       if (posProp) {
@@ -257,21 +268,18 @@ function applyMotionToClip(trackIdx, clipIdx, presetId, anchorX, anchorY, intens
           centerX + anchorOffsetX + panPixelX,
           centerY + anchorOffsetY + panPixelY
         ];
-        posProp.setValueAtKey(time, posArray);
+        posProp.addKey(time);
+        posProp.setValueAtKey(time, posArray, true);
       }
 
       // Rotation
-      if (rotProp && f.r !== 0) {
-        rotProp.setValueAtKey(time, f.r * intensity);
+      if (rotProp && Math.abs(f.r) > 0.01) {
+        rotProp.addKey(time);
+        rotProp.setValueAtKey(time, f.r * intensity, true);
       }
     }
 
-    // 보간 타입 설정 (Bezier 또는 Linear)
-    setInterpolation(scaleProp, preset.ease);
-    if (posProp) setInterpolation(posProp, preset.ease);
-    if (rotProp) setInterpolation(rotProp, preset.ease);
-
-    return 'OK:' + presetId + ':' + finalScale.toFixed(1) + '%';
+    return 'OK:' + presetId + ':scale=' + finalScale.toFixed(0) + '%:kf=' + appliedCount;
   } catch (e) {
     return 'Error: ' + e.message + ' (line ' + e.line + ')';
   }
@@ -335,14 +343,20 @@ function removeMotionFromSelected() {
       var posProp = findProp(motion, ['Position', '위치']);
       var rotProp = findProp(motion, ['Rotation', '회전']);
 
-      if (scaleProp) { clearKeyframes(scaleProp); scaleProp.setValue(100); }
+      if (scaleProp) {
+        if (scaleProp.isTimeVarying()) scaleProp.setTimeVarying(false);
+        scaleProp.setValue(100, true);
+      }
       if (posProp) {
-        clearKeyframes(posProp);
+        if (posProp.isTimeVarying()) posProp.setTimeVarying(false);
         var seqW = parseInt(seq.frameSizeHorizontal);
         var seqH = parseInt(seq.frameSizeVertical);
-        posProp.setValue([seqW / 2, seqH / 2]);
+        posProp.setValue([seqW / 2, seqH / 2], true);
       }
-      if (rotProp) { clearKeyframes(rotProp); rotProp.setValue(0); }
+      if (rotProp) {
+        if (rotProp.isTimeVarying()) rotProp.setTimeVarying(false);
+        rotProp.setValue(0, true);
+      }
       count++;
     }
 
@@ -370,29 +384,24 @@ function findProp(component, names) {
 }
 
 /**
- * 프로퍼티의 키프레임 전부 제거
+ * 키프레임 모드 활성화 + 기존 키프레임 제거
+ * setTimeVarying(false) → setTimeVarying(true) 로 초기화
  */
-function clearKeyframes(prop) {
+function enableKeyframing(prop) {
   if (!prop) return;
   try {
-    // setTimeVarying(false) 후 다시 true로 → 키프레임 초기화
+    // 1) 기존 키프레임 제거
     if (prop.isTimeVarying()) {
       prop.setTimeVarying(false);
     }
-    prop.setTimeVarying(true);
+    // 2) 키프레임 모드 다시 활성화
+    if (prop.areKeyframesSupported()) {
+      prop.setTimeVarying(true);
+    }
   } catch (e) {
-    // 일부 프로퍼티는 setTimeVarying 미지원 — 무시
+    // 일부 프로퍼티는 areKeyframesSupported 미지원
+    try { prop.setTimeVarying(true); } catch (e2) {}
   }
-}
-
-/**
- * 키프레임 보간 타입 설정
- * ⚠️ ExtendScript에서는 기본 Bezier/Linear만 지원 (커스텀 핸들 불가)
- */
-function setInterpolation(prop, easeType) {
-  // Premiere ExtendScript에서 보간 설정은 제한적
-  // 키프레임 추가 시 기본 Bezier가 적용되므로 linear만 별도 처리
-  // (추후 API 업데이트로 개선 가능)
 }
 
 /**
