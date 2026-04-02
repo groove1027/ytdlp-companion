@@ -516,11 +516,9 @@ async function apiCall<T>(path: string, options?: RequestInit): Promise<T> {
       return response.json();
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
-      // 컴패니언 실패 시 상태 무효화
+      // [FIX #974] 개별 API 실패로 전역 _companionAvailable을 끄지 않음 — 헬스체크만 권위
       if (server.url === LOCAL_COMPANION_URL) {
-        _companionAvailable = false;
-        _companionCheckTime = Date.now();
-        logger.warn('[Companion] API 요청 실패 — 다음 서버로 폴백:', lastError.message);
+        logger.warn('[Companion] API 요청 실패 — 재시도:', lastError.message);
       }
       // 커스텀 URL이면 폴백 없이 즉시 throw
       if (hasCustom) throw lastError;
@@ -712,11 +710,12 @@ export async function downloadVideoViaProxy(
         lastError = abortContext.didTimeout()
           ? new Error('프록시 다운로드 시간 초과')
           : (e instanceof Error ? e : new Error(String(e)));
-        // 컴패니언 실패 시 즉시 상태 무효화 → 다음 재시도는 VPS로
-        if (isCompanionDl && _companionAvailable) {
-          _companionAvailable = false;
-          _companionCheckTime = Date.now();
-          logger.warn('[Companion] 다운로드 실패 — VPS 폴백 전환');
+        // [FIX #974] 컴패니언 다운로드 실패 시 _companionAvailable을 false로 뒤집지 않음
+        // 이유: 1회 네트워크 히컵으로 컴패니언을 포기하면 이후 모든 재시도가 VPS로 새고,
+        // 480p 쓰레기 파일을 "성공"으로 처리하는 원인이 됨.
+        // 컴패니언 가용성은 30초 주기 헬스체크가 별도로 관리하므로 여기서 끄지 않아도 안전.
+        if (isCompanionDl) {
+          logger.warn('[Companion] 다운로드 실패 — 컴패니언 유지, 재시도');
         }
         const isRateLimit = lastError.message.includes('429');
         const isRetryable = abortContext.didTimeout()
@@ -738,6 +737,9 @@ export async function downloadVideoViaProxy(
         abortContext.dispose();
       }
     }
+    // [FIX #974] 전역 _companionAvailable을 건드리지 않음 — 헬스체크만 권위.
+    // 콘텐츠 고유 실패(비공개 영상, 해당 품질 없음 등)로 컴패니언을 끄면
+    // 이후 무관한 요청까지 VPS로 새는 문제가 발생함.
     if (q !== qualities[qualities.length - 1]) {
       logger.info(`[Download] ${q} 실패, 화질 다운그레이드 시도...`);
     }
@@ -836,11 +838,9 @@ export async function downloadAudioViaProxy(
     proxyLastError = outerErr instanceof Error ? outerErr : new Error(String(outerErr));
   }
 
-  // [FIX #702+] 1차 서버 전부 실패 → 컴패니언 상태 무효화 + 모든 VPS 폴백 시도
+  // [FIX #974] 개별 오디오 다운로드 실패로 전역 _companionAvailable을 끄지 않음
   if (isCompanion) {
-    _companionAvailable = false;
-    _companionCheckTime = Date.now();
-    logger.warn('[AudioDownload] 컴패니언 실패 — VPS 폴백');
+    logger.warn('[AudioDownload] 컴패니언 실패 — 재시도');
   }
 
   // 커스텀 URL 사용 중이면 기본 서버로 폴백하지 않음 (키 누출 방지)
@@ -1030,11 +1030,9 @@ export async function downloadSocialVideo(
     } catch (err) {
       if (options?.signal?.aborted) throw createAbortError();
       lastError = err instanceof Error ? err : new Error(String(err));
-      // 컴패니언 실패 → 상태 무효화 후 다음 서버로
+      // [FIX #974] 개별 소셜 다운로드 실패로 전역 _companionAvailable을 끄지 않음
       if (server.url === LOCAL_COMPANION_URL) {
-        _companionAvailable = false;
-        _companionCheckTime = Date.now();
-        logger.warn('[Companion] 소셜 다운로드 실패 — VPS 폴백:', lastError.message);
+        logger.warn('[Companion] 소셜 다운로드 실패 — 재시도:', lastError.message);
       }
     } finally {
       abortContext.dispose();
@@ -1163,11 +1161,9 @@ export async function fetchFramesFromServer(
       }
     }
 
-    // 이 서버 실패 → 컴패니언 상태 무효화
+    // [FIX #974] 개별 프레임 추출 실패로 전역 _companionAvailable을 끄지 않음
     if (server.baseUrl === LOCAL_COMPANION_URL) {
-      _companionAvailable = false;
-      _companionCheckTime = Date.now();
-      logger.warn('[Companion] 프레임 추출 실패 — VPS 폴백');
+      logger.warn('[Companion] 프레임 추출 실패 — 재시도');
     }
   }
 

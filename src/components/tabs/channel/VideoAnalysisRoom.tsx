@@ -5632,10 +5632,10 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                       let downloadedSourceTitle = '';
                                       const sourceUrl = (youtubeUrl || validYoutubeUrls[0] || '').trim();
                                       const isYoutubeSource = !!sourceUrl && isYouTubeUrl(sourceUrl);
-                                      // null(미검증)은 YouTube에서만 false로 간주해 오디오 재검증 다운로드 유도
-                                      let audioConfirmed = isYoutubeSource
-                                        ? vaStore.videoBlobHasAudio === true
-                                        : (vaStore.videoBlobHasAudio ?? true);
+                                      // [FIX #974] null(미검증)을 false로 간주하면 AudioStream이 비가역 삭제됨
+                                      // → Replace Footage해도 오디오 복구 불가. 미확인 시 true로 기본 설정.
+                                      // 오디오 없는 영상이면 Premiere에서 빈 오디오 트랙이 되지만 해롭지 않음.
+                                      let audioConfirmed = vaStore.videoBlobHasAudio ?? true;
 
                                       if (videoBlob && videoBlob.size <= 0) {
                                         videoBlob = null;
@@ -5678,8 +5678,10 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                         }
                                         if (isCancelled()) return;
 
-                                        // [FIX #859/#742] 품질 폴백 + 재시도 — 720p 실패 시 480p → best 순서로 재시도
-                                        const qualityPipeline: Array<'720p' | '480p' | 'best'> = ['720p', '480p', 'best'];
+                                        // [FIX #974] 컴패니언 확보 시 1080p 우선 — 컴패니언을 만든 이유가 1080p 보장
+                                        const qualityPipeline: Array<'1080p' | '720p' | '480p' | 'best'> = companionOk
+                                          ? ['1080p', '720p', '480p', 'best']
+                                          : ['720p', '480p', 'best'];
                                         let downloadSucceeded = false;
                                         for (const quality of qualityPipeline) {
                                           if (isCancelled() || downloadSucceeded) break;
@@ -5785,8 +5787,10 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                           const fallbackBlob = useVideoAnalysisStore.getState().videoBlob;
                                           if (!videoBlob && fallbackBlob && fallbackBlob.size > 0) {
                                             videoBlob = fallbackBlob;
-                                            audioConfirmed = false;
-                                            console.info('[NLE] 기존 video-only blob 폴백 사용 (오디오 미확인)');
+                                            // [FIX #974] false 강제 → 기존 상태 유지. AudioStream 비가역 삭제 방지.
+                                            // 실제 오디오 유무는 store의 videoBlobHasAudio 값을 그대로 사용.
+                                            audioConfirmed = useVideoAnalysisStore.getState().videoBlobHasAudio ?? true;
+                                            console.info('[NLE] 기존 blob 폴백 사용 (audioConfirmed:', audioConfirmed, ')');
                                           }
                                         }
                                       } else if (!videoBlob) {
@@ -5880,7 +5884,8 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                         });
                                         nleDimsCache.current = dims;
                                       }
-                                      if (target === 'premiere' && videoBlob && uploadedFiles[0] && inputMode !== 'youtube' && audioConfirmed) {
+                                      // [FIX #974] YouTube도 오디오 검증 대상에 포함 — null→true 기본값으로 인한 오판 방지
+                                      if (target === 'premiere' && videoBlob && audioConfirmed) {
                                         setNleExporting({ target, step: '3/3 패키지 생성 중... (오디오 트랙 확인)', startedAt });
                                         const verifiedHasAudio = await verifyBlobHasAudio(videoBlob);
                                         if (isCancelled()) return;
