@@ -972,10 +972,16 @@ const generateChunked = async (
   return { audioUrl: mergedUrl, format: 'wav' };
 };
 
+/** [FIX #965] Premiere Pro 호환: 48kHz PCM WAV 생성 (순환 import 방지를 위해 로컬 유지) */
 function audioBufferToWav(buffer: AudioBuffer): Blob {
   const numChannels = buffer.numberOfChannels;
-  const sampleRate = buffer.sampleRate;
-  const length = buffer.length * numChannels * 2 + 44;
+  const srcRate = buffer.sampleRate;
+  const outRate = 48000; // [FIX #965] Premiere Pro 호환: 항상 48kHz
+  const needsResample = outRate !== srcRate;
+  const outLength = needsResample
+    ? Math.round(buffer.length * outRate / srcRate)
+    : buffer.length;
+  const length = outLength * numChannels * 2 + 44;
   const out = new ArrayBuffer(length);
   const view = new DataView(out);
 
@@ -990,19 +996,36 @@ function audioBufferToWav(buffer: AudioBuffer): Blob {
   view.setUint32(16, 16, true);
   view.setUint16(20, 1, true);
   view.setUint16(22, numChannels, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * numChannels * 2, true);
+  view.setUint32(24, outRate, true);
+  view.setUint32(28, outRate * numChannels * 2, true);
   view.setUint16(32, numChannels * 2, true);
   view.setUint16(34, 16, true);
   writeString(36, 'data');
   view.setUint32(40, length - 44, true);
 
   let pos = 44;
-  for (let i = 0; i < buffer.length; i++) {
-    for (let ch = 0; ch < numChannels; ch++) {
-      const sample = Math.max(-1, Math.min(1, buffer.getChannelData(ch)[i]));
-      view.setInt16(pos, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
-      pos += 2;
+  if (needsResample) {
+    const ratio = srcRate / outRate;
+    const channels: Float32Array[] = [];
+    for (let ch = 0; ch < numChannels; ch++) channels.push(buffer.getChannelData(ch));
+    for (let i = 0; i < outLength; i++) {
+      const srcIdx = i * ratio;
+      const idx0 = Math.floor(srcIdx);
+      const idx1 = Math.min(idx0 + 1, buffer.length - 1);
+      const frac = srcIdx - idx0;
+      for (let ch = 0; ch < numChannels; ch++) {
+        const s = Math.max(-1, Math.min(1, channels[ch][idx0] + (channels[ch][idx1] - channels[ch][idx0]) * frac));
+        view.setInt16(pos, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+        pos += 2;
+      }
+    }
+  } else {
+    for (let i = 0; i < buffer.length; i++) {
+      for (let ch = 0; ch < numChannels; ch++) {
+        const sample = Math.max(-1, Math.min(1, buffer.getChannelData(ch)[i]));
+        view.setInt16(pos, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
+        pos += 2;
+      }
     }
   }
 

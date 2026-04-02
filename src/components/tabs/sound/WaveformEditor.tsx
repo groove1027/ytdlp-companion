@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { useSoundStudioStore, registerAudio, unregisterAudio } from '../../../stores/soundStudioStore';
-import { audioBufferToWav } from '../../../services/ttsService';
+import { audioBufferToWav, ensurePremiereCompatibleWav } from '../../../services/ttsService';
 import { transferSoundToImageVideo } from '../../../utils/soundToImageBridge';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
 import { logger } from '../../../services/LoggerService';
@@ -19,6 +19,18 @@ const genSrt = (subs: { text: string; startTime: number; endTime: number }[]): s
   subs.map((s, i) => `${i + 1}\n${fmtSrt(s.startTime)} --> ${fmtSrt(s.endTime)}\n${s.text}`).join('\n\n');
 
 const dlBlob = (url: string, name: string) => { const a = document.createElement('a'); a.href = url; a.download = name; a.click(); };
+
+/** [FIX #965] Premiere Pro 호환 48kHz WAV로 변환 후 다운로드 */
+const dlWavPremiere = async (url: string, name: string) => {
+  try {
+    const wavBlob = await ensurePremiereCompatibleWav(url);
+    const wavUrl = URL.createObjectURL(wavBlob);
+    dlBlob(wavUrl, name);
+    setTimeout(() => URL.revokeObjectURL(wavUrl), 3000);
+  } catch {
+    dlBlob(url, name); // 변환 실패 시 원본 폴백
+  }
+};
 
 /** 스테레오 파형 추출 — RMS + Peak 이중 메트릭, 고해상도 */
 async function decodeWaveform(url: string): Promise<{
@@ -682,7 +694,8 @@ const WaveformEditor: React.FC = () => {
       }
       if (!beforeUrl) { setBeforeUrl(workingUrl); setBeforeDuration(decoded.duration); }
       setShowingBefore(false);
-      const wavBlob = audioBufferToWav(newBuf);
+      // [FIX #965] 48kHz로 리샘플링하여 Premiere 호환 보장
+      const wavBlob = audioBufferToWav(newBuf, 48000);
       const newUrl = URL.createObjectURL(wavBlob);
       setPendingEditedAudioUrl(newUrl);
       const timeRegs = regions.map((r) => ({ startTime: r.startTime, endTime: r.endTime }));
@@ -757,7 +770,7 @@ const WaveformEditor: React.FC = () => {
           <div className="flex items-center gap-1.5 flex-wrap">
             <button type="button" onClick={() => fileInputRef.current?.click()}
               className="px-2.5 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-200 rounded-lg text-xs font-bold border border-gray-600 transition-colors">불러오기</button>
-            <button type="button" onClick={() => dlBlob(workingUrl!, `narration_edited_${Date.now()}.wav`)}
+            <button type="button" onClick={() => dlWavPremiere(workingUrl!, `narration_edited_${Date.now()}.wav`)}
               className="px-2.5 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-xs font-bold transition-colors">WAV</button>
             {subtitles.length > 0 && (
               <button type="button" onClick={() => {
@@ -770,7 +783,9 @@ const WaveformEditor: React.FC = () => {
                 try {
                   const { default: JSZip } = await import('jszip');
                   const zip = new JSZip();
-                  const r = await fetch(workingUrl!); zip.file('narration.wav', await r.blob());
+                  // [FIX #965] Premiere 호환 48kHz WAV로 변환하여 번들
+                  const wavBlob = await ensurePremiereCompatibleWav(workingUrl!);
+                  zip.file('narration.wav', wavBlob);
                   zip.file('narration.srt', genSrt(subtitles));
                   const zb = await zip.generateAsync({ type: 'blob' });
                   const u = URL.createObjectURL(zb); dlBlob(u, `narration_bundle_${Date.now()}.zip`); URL.revokeObjectURL(u);
@@ -778,7 +793,7 @@ const WaveformEditor: React.FC = () => {
               }} className="px-2.5 py-1.5 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-xs font-bold transition-colors">ZIP</button>
             )}
             {beforeUrl && (
-              <button type="button" onClick={() => dlBlob(beforeUrl, `narration_original_${Date.now()}.wav`)}
+              <button type="button" onClick={() => dlWavPremiere(beforeUrl, `narration_original_${Date.now()}.wav`)}
                 className="px-2.5 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-200 rounded-lg text-xs font-bold border border-gray-600 transition-colors">원본</button>
             )}
             {pendingEditedAudioUrl && (

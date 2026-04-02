@@ -860,19 +860,23 @@ export const normalizeAudioUrl = async (audioUrl: string): Promise<string> => {
         const buf = await resp.arrayBuffer();
         const decoded = await ctx.decodeAudioData(buf);
 
-        // RMS 정규화 전후 차이가 미미하면 (1dB 이내) 원본 반환 — 불필요한 재인코딩 방지
+        // RMS 정규화 전후 차이가 미미하면 정규화 스킵 (1dB 이내)
         let sumSq = 0; let cnt = 0;
         for (let ch = 0; ch < decoded.numberOfChannels; ch++) {
             const d = decoded.getChannelData(ch);
             for (let i = 0; i < d.length; i++) { sumSq += d[i] * d[i]; cnt++; }
         }
         const rms = Math.sqrt(sumSq / cnt);
-        if (rms < 1e-6) return audioUrl; // 무음 클립 — 정규화 불필요
-        const currentDb = 20 * Math.log10(rms);
-        if (Math.abs(currentDb - (-16)) < 1.0) return audioUrl; // 이미 타겟 근접
+        const needsNormalize = rms >= 1e-6 && Math.abs(20 * Math.log10(rms) - (-16)) >= 1.0;
 
-        normalizeBufferRms(decoded);
-        const wavBlob = audioBufferToWav(decoded);
+        // [FIX #965] 48kHz가 아닌 경우 정규화 불필요해도 리샘플링은 수행 (Premiere 호환)
+        const needsResample = decoded.sampleRate !== 48000;
+
+        if (!needsNormalize && !needsResample) return audioUrl; // 이미 완벽
+
+        if (needsNormalize) normalizeBufferRms(decoded);
+        // [FIX #965] 48kHz로 리샘플링하여 Premiere 호환 보장
+        const wavBlob = audioBufferToWav(decoded, 48000);
         const normalizedUrl = URL.createObjectURL(wavBlob);
         logger.registerBlobUrl(normalizedUrl, 'audio', 'ttsService:normalizeAudioUrl');
         // 원본 blob URL 해제
@@ -924,23 +928,46 @@ export const mergeAudioFiles = async (audioUrls: string[]): Promise<string> => {
             normalizeBufferRms(buffer);
         }
 
-        // 총 길이 계산
-        const totalLength = buffers.reduce((sum, buf) => sum + buf.length, 0);
-        const sampleRate = buffers[0].sampleRate;
+        // [FIX #965] 48kHz로 통일하여 Premiere Pro 호환 보장
+        const targetRate = 48000;
+        // 리샘플링이 필요한 버퍼는 길이를 보정
+        const resampledLengths = buffers.map(buf =>
+            buf.sampleRate === targetRate ? buf.length : Math.round(buf.length * targetRate / buf.sampleRate)
+        );
+        const totalLength = resampledLengths.reduce((sum, len) => sum + len, 0);
+        const sampleRate = targetRate;
         const numberOfChannels = Math.max(...buffers.map(b => b.numberOfChannels));
 
         // 병합 버퍼 생성
         const mergedBuffer = audioContext.createBuffer(numberOfChannels, totalLength, sampleRate);
 
         let offset = 0;
-        for (const buffer of buffers) {
+        for (let bi = 0; bi < buffers.length; bi++) {
+            const buffer = buffers[bi];
+            const srcRate = buffer.sampleRate;
+            const outLen = resampledLengths[bi];
+            const needsResample = srcRate !== targetRate;
+
             for (let channel = 0; channel < numberOfChannels; channel++) {
                 const channelData = mergedBuffer.getChannelData(channel);
-                // 소스 버퍼의 채널이 부족하면 첫 번째 채널 사용
                 const sourceChannel = Math.min(channel, buffer.numberOfChannels - 1);
-                channelData.set(buffer.getChannelData(sourceChannel), offset);
+                const srcData = buffer.getChannelData(sourceChannel);
+
+                if (needsResample) {
+                    // [FIX #965] 선형 보간 리샘플링
+                    const ratio = srcRate / targetRate;
+                    for (let i = 0; i < outLen; i++) {
+                        const srcIdx = i * ratio;
+                        const idx0 = Math.floor(srcIdx);
+                        const idx1 = Math.min(idx0 + 1, buffer.length - 1);
+                        const frac = srcIdx - idx0;
+                        channelData[offset + i] = srcData[idx0] + (srcData[idx1] - srcData[idx0]) * frac;
+                    }
+                } else {
+                    channelData.set(srcData, offset);
+                }
             }
-            offset += buffer.length;
+            offset += outLen;
         }
 
         // WAV 인코딩
@@ -961,16 +988,26 @@ export const mergeAudioFiles = async (audioUrls: string[]): Promise<string> => {
 
 /**
  * AudioBuffer → WAV Blob 변환
+ * [FIX #965] Premiere Pro 호환: 48kHz PCM 16-bit WAV 생성
+ * Premiere는 비표준 sample rate WAV를 인식 못 하는 경우가 있으므로
+ * 48000Hz가 아닌 경우 자동으로 리샘플링
  */
-export const audioBufferToWav = (buffer: AudioBuffer): Blob => {
+export const audioBufferToWav = (buffer: AudioBuffer, targetSampleRate?: number): Blob => {
     const numChannels = buffer.numberOfChannels;
-    const sampleRate = buffer.sampleRate;
+    const srcRate = buffer.sampleRate;
+    const outRate = targetSampleRate || srcRate;
     const format = 1; // PCM
     const bitDepth = 16;
 
+    // 리샘플링이 필요한 경우 선형 보간으로 변환
+    const needsResample = outRate !== srcRate;
+    const outLength = needsResample
+        ? Math.round(buffer.length * outRate / srcRate)
+        : buffer.length;
+
     const bytesPerSample = bitDepth / 8;
     const blockAlign = numChannels * bytesPerSample;
-    const dataLength = buffer.length * blockAlign;
+    const dataLength = outLength * blockAlign;
     const headerLength = 44;
     const totalLength = headerLength + dataLength;
 
@@ -991,8 +1028,8 @@ export const audioBufferToWav = (buffer: AudioBuffer): Blob => {
     view.setUint32(16, 16, true); // fmt chunk size
     view.setUint16(20, format, true);
     view.setUint16(22, numChannels, true);
-    view.setUint32(24, sampleRate, true);
-    view.setUint32(28, sampleRate * blockAlign, true);
+    view.setUint32(24, outRate, true);
+    view.setUint32(28, outRate * blockAlign, true);
     view.setUint16(32, blockAlign, true);
     view.setUint16(34, bitDepth, true);
     writeString(36, 'data');
@@ -1005,16 +1042,60 @@ export const audioBufferToWav = (buffer: AudioBuffer): Blob => {
         channels.push(buffer.getChannelData(ch));
     }
 
-    for (let i = 0; i < buffer.length; i++) {
-        for (let ch = 0; ch < numChannels; ch++) {
-            const sample = Math.max(-1, Math.min(1, channels[ch][i]));
-            const intSample = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
-            view.setInt16(offset, intSample, true);
-            offset += 2;
+    if (needsResample) {
+        // 선형 보간 리샘플링
+        const ratio = srcRate / outRate;
+        for (let i = 0; i < outLength; i++) {
+            const srcIdx = i * ratio;
+            const idx0 = Math.floor(srcIdx);
+            const idx1 = Math.min(idx0 + 1, buffer.length - 1);
+            const frac = srcIdx - idx0;
+            for (let ch = 0; ch < numChannels; ch++) {
+                const s0 = channels[ch][idx0];
+                const s1 = channels[ch][idx1];
+                const sample = Math.max(-1, Math.min(1, s0 + (s1 - s0) * frac));
+                const intSample = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+                view.setInt16(offset, intSample, true);
+                offset += 2;
+            }
+        }
+    } else {
+        for (let i = 0; i < buffer.length; i++) {
+            for (let ch = 0; ch < numChannels; ch++) {
+                const sample = Math.max(-1, Math.min(1, channels[ch][i]));
+                const intSample = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+                view.setInt16(offset, intSample, true);
+                offset += 2;
+            }
         }
     }
 
     return new Blob([arrayBuffer], { type: 'audio/wav' });
+};
+
+/**
+ * [FIX #965] 오디오 Blob URL → Premiere Pro 호환 WAV Blob URL 변환
+ *
+ * Premiere Pro는 엄격한 WAV 포맷을 요구:
+ *  - RIFF 헤더 + PCM 16-bit
+ *  - 48000Hz sample rate (업계 표준)
+ *  - 정확한 data chunk 크기
+ *
+ * 이 함수는 어떤 형식의 오디오든 (MP3, WebM, OGG, 비표준 WAV 등)
+ * 48kHz/16-bit PCM WAV로 정규 변환하여 Premiere 호환성을 보장함
+ */
+export const ensurePremiereCompatibleWav = async (audioUrl: string): Promise<Blob> => {
+    const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    const ctx = new AudioCtx({ sampleRate: 48000 });
+    try {
+        const resp = await fetch(audioUrl);
+        const buf = await resp.arrayBuffer();
+        const decoded = await ctx.decodeAudioData(buf);
+        // 48kHz로 강제 리샘플링하여 WAV 생성
+        return audioBufferToWav(decoded, 48000);
+    } finally {
+        ctx.close();
+    }
 };
 
 /**
@@ -1057,8 +1138,9 @@ export const splitAudioAtTime = async (
       buf2.getChannelData(ch).set(audioBuffer.getChannelData(ch).subarray(splitSample));
     }
 
-    const blob1 = audioBufferToWav(buf1);
-    const blob2 = audioBufferToWav(buf2);
+    // [FIX #965] 48kHz로 리샘플링하여 일관된 포맷 유지
+    const blob1 = audioBufferToWav(buf1, 48000);
+    const blob2 = audioBufferToWav(buf2, 48000);
     ctx.close();
 
     const url1 = URL.createObjectURL(blob1);

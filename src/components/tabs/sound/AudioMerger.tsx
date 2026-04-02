@@ -7,7 +7,7 @@ import { generateTypecastTTS } from '../../../services/typecastService';
 import { generateElevenLabsDialogueTTS } from '../../../services/elevenlabsService';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
-import { audioBufferToWav } from '../../../services/ttsService';
+import { audioBufferToWav, ensurePremiereCompatibleWav } from '../../../services/ttsService';
 import CompanionBanner from '../../CompanionBanner';
 import type { Speaker, TTSLanguage, LufsPreset } from '../../../types';
 import { LUFS_PRESETS } from '../../../types';
@@ -104,7 +104,8 @@ async function normalizeLufs(audioUrl: string, targetLufs: number, truePeakDbtp:
       for (let i = 0; i < data.length; i++) data[i] *= gainLinear;
     }
 
-    const wavBlob = audioBufferToWav(buffer);
+    // [FIX #965] 48kHz로 리샘플링하여 Premiere 호환 보장
+    const wavBlob = audioBufferToWav(buffer, 48000);
     const normalizedUrl = URL.createObjectURL(wavBlob);
     logger.registerBlobUrl(normalizedUrl, 'audio', 'AudioMerger:normalizeLufs');
     return normalizedUrl;
@@ -281,15 +282,26 @@ const AudioMerger: React.FC = () => {
       currentTime >= l.startTime && currentTime < l.endTime)?.id || null;
   }, [lines, currentTime]);
 
-  // 다운로드
-  const handleDownload = useCallback(() => {
+  // [FIX #965] Premiere Pro 호환 48kHz WAV 변환 후 다운로드
+  const handleDownload = useCallback(async () => {
     if (!mergedAudioUrl) return;
     const sp = speakers[0];
     const charName = (sp?.name || '나레이션').replace(/[/\\?%*:|"<>\s]/g, '');
-    const a = document.createElement('a');
-    a.href = mergedAudioUrl;
-    a.download = `${charName}_전체.wav`;
-    a.click();
+    try {
+      const wavBlob = await ensurePremiereCompatibleWav(mergedAudioUrl);
+      const wavUrl = URL.createObjectURL(wavBlob);
+      const a = document.createElement('a');
+      a.href = wavUrl;
+      a.download = `${charName}_전체.wav`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(wavUrl), 3000);
+    } catch {
+      // 변환 실패 시 원본 그대로 다운로드 (폴백)
+      const a = document.createElement('a');
+      a.href = mergedAudioUrl;
+      a.download = `${charName}_전체.wav`;
+      a.click();
+    }
   }, [mergedAudioUrl, speakers]);
 
   return (

@@ -2,7 +2,7 @@ import React, { useRef, useCallback, useEffect, useState, useMemo } from 'react'
 import JSZip from 'jszip';
 import { useSoundStudioStore, registerAudio, unregisterAudio } from '../../../stores/soundStudioStore';
 import { logger } from '../../../services/LoggerService';
-import { mergeAudioFiles, splitBySentenceEndings } from '../../../services/ttsService';
+import { mergeAudioFiles, splitBySentenceEndings, ensurePremiereCompatibleWav } from '../../../services/ttsService';
 import { fetchTypecastVoices, V30_EMOTIONS, V21_EMOTIONS, TYPECAST_LANGUAGES } from '../../../services/typecastService';
 import type { TypecastVoice } from '../../../services/typecastService';
 import { ELEVENLABS_VOICES, elNameKo } from '../../../services/elevenlabsService';
@@ -1445,14 +1445,13 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
                   </select>
                 </div>
 
-                {/* 파일 형식 */}
+                {/* 파일 형식 — [FIX #965] Premiere 호환 WAV 고정 */}
                 <div>
                   <label className="text-xs font-bold text-gray-300 mb-1.5 block">파일 형식</label>
-                  <select value={dlFormat} onChange={e => setDlFormat(e.target.value as 'mp3'|'wav')}
-                    className="w-full text-sm bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-gray-200 cursor-pointer focus:outline-none focus:border-orange-500">
-                    <option value="mp3">MP3</option>
-                    <option value="wav">WAV</option>
-                  </select>
+                  <div className="w-full text-sm bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-gray-200">
+                    WAV (48kHz / 16-bit PCM)
+                  </div>
+                  <p className="text-[10px] text-gray-500 mt-1">Premiere Pro / DaVinci / Final Cut 호환 포맷</p>
                 </div>
 
                 {/* 다운로드 범위 */}
@@ -1540,24 +1539,36 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
                     };
 
                     try {
+                      // [FIX #965] Premiere Pro 호환: WAV 다운로드 시 48kHz PCM 16-bit로 변환
+                      // MP3 선택 시에도 WAV로 변환 — 브라우저에서 MP3 인코딩 불가 + 확장자 불일치 방지
+                      const premiereWav = dlFormat === 'wav';
+                      const actualExt = premiereWav ? 'wav' : 'wav'; // [FIX #965] 항상 WAV로 내보내기 (Premiere 호환)
+
+                      /** 오디오 URL → Premiere 호환 48kHz WAV Blob 변환 */
+                      const toPremierBlob = async (url: string): Promise<Blob> => {
+                        return ensurePremiereCompatibleWav(url);
+                      };
+
                       if (dlMerge === 'merge' && mergedAudioUrl && dlRange === 'all') {
                         // 전체 + 합치기: mergedAudioUrl 다운로드
                         const charName = (activeSpeaker?.name || '나레이션').replace(/[/\\?%*:|"<>\s]/g, '');
+                        const wavBlob = await toPremierBlob(mergedAudioUrl);
+                        const wavUrl = URL.createObjectURL(wavBlob);
                         const a = document.createElement('a');
-                        a.href = mergedAudioUrl;
-                        a.download = `${charName}_전체.${dlFormat}`;
+                        a.href = wavUrl;
+                        a.download = `${charName}_전체.${actualExt}`;
                         document.body.appendChild(a); a.click(); document.body.removeChild(a);
+                        setTimeout(() => URL.revokeObjectURL(wavUrl), 3000);
                       } else if (dlMerge === 'split') {
                         // 분할: JSZip으로 각 문장 별 파일
                         const zip = new JSZip();
                         let addedCount = 0;
                         for (let i = 0; i < audioLines.length; i++) {
                           const line = audioLines[i];
-                          const fileName = makeName(line, i, dlFormat);
+                          const fileName = makeName(line, i, actualExt);
                           try {
-                            const resp = await fetch(line.audioUrl as string);
-                            const blob = await resp.blob();
-                            zip.file(fileName, blob);
+                            const wavBlob = await toPremierBlob(line.audioUrl as string);
+                            zip.file(fileName, wavBlob);
                             addedCount++;
                           } catch (e) {
                             logger.trackSwallowedError('TypecastEditor:fetchAudioForZip', e);
@@ -1583,16 +1594,22 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
                         const urls = audioLines.map(l => l.audioUrl as string);
                         const charName = (activeSpeaker?.name || '나레이션').replace(/[/\\?%*:|"<>\s]/g, '');
                         if (urls.length === 1) {
+                          const wavBlob = await toPremierBlob(urls[0]);
+                          const wavUrl = URL.createObjectURL(wavBlob);
                           const a = document.createElement('a');
-                          a.href = urls[0];
-                          a.download = makeName(audioLines[0], 0, dlFormat);
+                          a.href = wavUrl;
+                          a.download = makeName(audioLines[0], 0, actualExt);
                           document.body.appendChild(a); a.click(); document.body.removeChild(a);
+                          setTimeout(() => URL.revokeObjectURL(wavUrl), 3000);
                         } else {
                           const merged = await mergeAudioFiles(urls);
+                          const wavBlob = await toPremierBlob(merged);
+                          const wavUrl = URL.createObjectURL(wavBlob);
                           const a = document.createElement('a');
-                          a.href = merged;
-                          a.download = `${charName}_선택${audioLines.length}문장.${dlFormat}`;
+                          a.href = wavUrl;
+                          a.download = `${charName}_선택${audioLines.length}문장.${actualExt}`;
                           document.body.appendChild(a); a.click(); document.body.removeChild(a);
+                          setTimeout(() => { URL.revokeObjectURL(wavUrl); URL.revokeObjectURL(merged); }, 3000);
                         }
                       }
                       setShowDownloadModal(false);

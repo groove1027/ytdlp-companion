@@ -8,6 +8,22 @@
 
 ## 🟢 완료된 작업
 
+### [2026-04-03] #965 — TTS 다운로드 파일 Premiere Pro 호환성 수정
+- [x] 근본 원인: audioBufferToWav가 시스템 기본 sample rate(44100Hz 등) 사용 → Premiere는 48kHz 필수
+- [x] 근본 원인: TypecastEditor에서 MP3 선택 시 확장자만 .mp3로 바꾸고 실제 내용은 WAV → 확장자/내용 불일치
+- [x] audioBufferToWav (ttsService.ts) — targetSampleRate 파라미터 추가, 선형 보간 리샘플링 지원
+- [x] audioBufferToWav (typecastService.ts) — 48kHz 강제 리샘플링 적용
+- [x] ensurePremiereCompatibleWav 유틸 함수 신규 — 어떤 포맷이든 48kHz/16-bit PCM WAV로 변환
+- [x] mergeAudioFiles — 48kHz 타겟 리샘플링 적용 (서로 다른 sample rate 클립 병합 시)
+- [x] normalizeAudioUrl — 정규화 불필요해도 48kHz가 아니면 리샘플링 수행 (early return 수정)
+- [x] splitAudioAtTime — 48kHz 리샘플링 적용
+- [x] TypecastEditor 다운로드 — WAV 48kHz/16-bit PCM 고정, 확장자 불일치 해소
+- [x] NarrationView 다운로드 — ensurePremiereCompatibleWav 적용
+- [x] AudioMerger 다운로드 + LUFS 정규화 — ensurePremiereCompatibleWav + 48kHz 적용
+- [x] WaveformEditor 다운로드/ZIP 번들 — dlWavPremiere + ensurePremiereCompatibleWav 적용
+- [x] Codex 5.4 MCP 리뷰 10회 — TTS 관련 파일 이슈 0건 (normalizeAudioUrl early return 수정 반영)
+- [x] vite build 통과
+
 ### [2026-04-03] #960 + #947 — 썸네일 스튜디오 레퍼런스 카피 버그 수정
 - [x] #960: 레퍼런스 이미지 업로드 시 무한 로딩 — ThumbnailGenerator useEffect에서 hideReferenceArea일 때 auto-analyze 차단
 - [x] #960: 새 레퍼런스 이미지 업로드 시 이전 extractedStyle 잔류 방지 — stale style 초기화 로직 추가

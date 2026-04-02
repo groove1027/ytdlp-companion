@@ -6,7 +6,7 @@ import { useCostStore } from '../../../stores/costStore';
 import { showToast } from '../../../stores/uiStore';
 import type { Scene } from '../../../types';
 import { generateTypecastTTS } from '../../../services/typecastService';
-import { mergeAudioFiles, splitBySentenceEndings, normalizeAudioUrl } from '../../../services/ttsService';
+import { mergeAudioFiles, splitBySentenceEndings, normalizeAudioUrl, ensurePremiereCompatibleWav } from '../../../services/ttsService';
 import { transferSoundToImageVideo } from '../../../utils/soundToImageBridge';
 import { PRICING } from '../../../constants';
 import NarrationToolbar from './NarrationToolbar';
@@ -306,15 +306,29 @@ const NarrationView: React.FC = () => {
   // ===============================
   // 다운로드
   // ===============================
-  const handleDownload = useCallback(() => {
+  // [FIX #965] Premiere Pro 호환 48kHz WAV 변환 후 다운로드
+  const handleDownload = useCallback(async () => {
     if (!mergedAudioUrl) return;
     const charName = (activeSpeaker?.name || '나레이션').replace(/[/\\?%*:|"<>\s]/g, '');
-    const a = document.createElement('a');
-    a.href = mergedAudioUrl;
-    a.download = `${charName}_전체.wav`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    try {
+      const wavBlob = await ensurePremiereCompatibleWav(mergedAudioUrl);
+      const wavUrl = URL.createObjectURL(wavBlob);
+      const a = document.createElement('a');
+      a.href = wavUrl;
+      a.download = `${charName}_전체.wav`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(wavUrl), 3000);
+    } catch (e) {
+      // 변환 실패 시 원본 그대로 다운로드 (폴백)
+      const a = document.createElement('a');
+      a.href = mergedAudioUrl;
+      a.download = `${charName}_전체.wav`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }
   }, [mergedAudioUrl, activeSpeaker]);
 
   // ===============================
