@@ -725,16 +725,21 @@ const VoiceStudio: React.FC = () => {
       }
 
       // [FIX #918] 개별 클립 음량 정규화 — 멀티 캐릭터 음량 편차 제거
+      // [FIX #920] 30초 타임아웃 추가 — tempfile CDN 장애 시 교착 방지
       try {
-        result.audioUrl = await normalizeAudioUrl(result.audioUrl);
+        const normalizePromise = normalizeAudioUrl(result.audioUrl);
+        const normalizeTimeout = new Promise<string>((_, reject) =>
+          setTimeout(() => reject(new Error('normalizeAudioUrl 타임아웃 (30초)')), 30_000));
+        result.audioUrl = await Promise.race([normalizePromise, normalizeTimeout]);
       } catch (e) { logger.trackSwallowedError('VoiceStudio:generateTTS/normalizeAudio', e); }
 
       // [FIX] TTS 오디오 디코딩 → 실제 duration 측정
+      // [FIX #920] 15초 타임아웃 추가 — 오디오 URL 페치 교착 방지
       let realDuration: number | undefined;
       try {
         const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
         const ctx = new AudioCtx();
-        const resp = await fetch(result.audioUrl);
+        const resp = await fetch(result.audioUrl, { signal: AbortSignal.timeout(15_000) });
         const buf = await resp.arrayBuffer();
         const decoded = await ctx.decodeAudioData(buf);
         realDuration = decoded.duration;
@@ -814,15 +819,36 @@ const VoiceStudio: React.FC = () => {
     setGenerateProgress({ current: 0, total: lines.length });
 
     try {
-      // KIE 레이트 리밋 배치: 10개/10초 병렬 제출 (미생성 라인만)
+      // [FIX #920] KIE 레이트 리밋 배치 — 동시 5개로 축소 (43개 중 42에서 멈춤 방지)
+      // 개별 항목 타임아웃 + 1회 재시도로 교착 없이 완료 보장
       const targets = lines.filter(l => !l.audioUrl || l.ttsStatus !== 'done');
       let done = 0;
-      await runKieBatch(targets, async (line) => {
+      const batchResult = await runKieBatch(targets, async (line) => {
         await handleGenerateLine(line.id);
-      }, () => { done++; setGenerateProgress({ current: lines.length - targets.length + done, total: lines.length }); });
+        // [FIX #920] handleGenerateLine이 에러를 삼키므로, store에서 실제 상태 확인
+        const latestLine = useSoundStudioStore.getState().lines.find(l => l.id === line.id);
+        if (!latestLine?.audioUrl || latestLine.ttsStatus === 'error') {
+          throw new Error(`TTS 생성 실패: line ${line.id}`);
+        }
+      }, () => {
+        done++;
+        setGenerateProgress({ current: lines.length - targets.length + done, total: lines.length });
+      }, {
+        submitPerWindow: 5,     // [FIX #920] 10 → 5로 축소 (rate limit 여유)
+        itemTimeoutMs: 180_000, // 3분 타임아웃
+        retryCount: 1,          // 1회 재시도
+        retryDelayMs: 5_000,    // 5초 후 재시도
+      });
       setGenerateProgress({ current: lines.length, total: lines.length });
 
-      // 전체 병합
+      // [FIX #920] 실패 항목 사용자 알림
+      if (batchResult.failed > 0) {
+        const failCount = batchResult.failed;
+        showToast(`${targets.length}개 중 ${failCount}개 TTS 생성 실패 — 나머지는 정상 완료`, 5000);
+        logger.warn('[VoiceStudio] 배치 TTS 부분 실패', { total: targets.length, failed: failCount, succeeded: batchResult.succeeded });
+      }
+
+      // 전체 병합 (실패한 항목 제외, 성공한 항목만)
       const updatedLines = useSoundStudioStore.getState().lines;
       const audioUrls = updatedLines.filter(l => l.audioUrl).map(l => l.audioUrl as string);
       if (audioUrls.length > 0) {
@@ -831,6 +857,7 @@ const VoiceStudio: React.FC = () => {
       }
     } catch (err) {
       console.error('[VoiceStudio] 전체 생성 실패:', err);
+      showToast('전체 TTS 생성 중 오류 발생', 3000);
     } finally {
       setIsGeneratingAll(false);
       setGenerateProgress({ current: 0, total: 0 });

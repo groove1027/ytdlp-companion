@@ -8,6 +8,27 @@
 
 ## 🟢 완료된 작업
 
+### [2026-04-03] #920 — ElevenLabs TTS 43개 중 42에서 멈춤 수정
+- [x] 근본 원인: kieBatchRunner가 개별 항목 타임아웃 없이 Promise.allSettled 무한 대기 → 마지막 1~2개 항목이 교착 시 전체 배치 멈춤
+- [x] 근본 원인: handleGenerateLine이 에러를 삼키고(try/catch) re-throw 안 함 → runKieBatch가 실패 감지 불가
+- [x] 근본 원인: normalizeAudioUrl/duration decode fetch에 타임아웃 없음 → CDN(tempfile.aiquickdraw.com) 장애 시 무한 대기
+- [x] 근본 원인: ElevenLabs pollDialogueTask 네트워크 에러 무한 재시도 → 연결 불안정 시 교착
+- [x] kieBatchRunner.ts — 개별 항목 타임아웃(180초) + 실패 시 1회 재시도 + 안전 타임아웃 교착 방지
+- [x] elevenlabsService.ts — 폴링 전체 타임아웃(150초) + 네트워크 에러 3회 허용 + createTask 30초 타임아웃 + 폴링 요청 15초 타임아웃
+- [x] VoiceStudio.tsx — normalizeAudioUrl 30초 타임아웃 + duration fetch 15초 타임아웃 + 배치 동시 제출 5개로 축소 + 실패 후 store 확인으로 에러 전파 + 실패 알림
+- [x] NarrationView.tsx — 동일한 타임아웃 적용 + 배치 옵션 + 실패 알림
+- [x] AudioMerger.tsx — 배치 옵션 + 실패 알림 + showToast import 추가
+- [x] ttsService.ts — normalizeAudioUrl fetch 20초 타임아웃 + mergeAudioFiles 개별 fetch 20초 타임아웃 + 에러 시 건너뛰기
+- [x] vite build 통과
+
+### [2026-04-03] #976 — 이미지→영상 변환 실패 시 비용 차감 누락 수정
+- [x] 근본 원인: onCostAdd가 provider.poll() 성공 후에만 호출 → API는 create() 시점에 크레딧 소모 → 실패 시 대시보드 비용 미반영
+- [x] useVideoBatch.ts processScene — 비용 차감을 provider.create() 직후로 이동 (poll 결과와 무관하게 즉시 기록)
+- [x] useVideoBatch.ts processRemakeScene (V2V) — 동일하게 createXaiVideoEditTask() 직후로 이동
+- [x] useVideoBatch.ts 이미지 워싱 (auto-retry) — generateKieImage() 성공 시 IMAGE_GENERATION_FALLBACK 비용 추가 추적
+- [x] shoppingChannelService.ts generateSceneVideo — Veo/Grok 둘 다 create 직후로 비용 차감 이동
+- [x] vite build 통과
+
 ### [2026-04-03] #965 — TTS 다운로드 파일 Premiere Pro 호환성 수정
 - [x] 근본 원인: audioBufferToWav가 시스템 기본 sample rate(44100Hz 등) 사용 → Premiere는 48kHz 필수
 - [x] 근본 원인: TypecastEditor에서 MP3 선택 시 확장자만 .mp3로 바꾸고 실제 내용은 WAV → 확장자/내용 불일치

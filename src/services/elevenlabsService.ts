@@ -188,6 +188,7 @@ const generateSingleChunk = async (
     ...(resolvedLangCode ? { language_code: resolvedLangCode } : {}),
   };
 
+  // [FIX #920] createTask에 30초 타임아웃 — 네트워크 장애 시 교착 방지
   const response = await monitoredFetch(`${KIE_BASE_URL}/jobs/createTask`, {
     method: 'POST',
     headers: {
@@ -198,6 +199,7 @@ const generateSingleChunk = async (
       model: 'elevenlabs/text-to-dialogue-v3',
       input,
     }),
+    signal: AbortSignal.timeout(30_000),
   });
 
   if (!response.ok) {
@@ -219,18 +221,45 @@ const generateSingleChunk = async (
   return { audioUrl, format: 'mp3' };
 };
 
-/** Kie TTS 태스크 폴링 */
-const pollDialogueTask = async (taskId: string, apiKey: string, maxAttempts: number = 60): Promise<string> => {
+/** Kie TTS 태스크 폴링
+ * [FIX #920] maxAttempts 축소(60→40) + 네트워크 에러 허용(3회) + 전체 타임아웃(150초)
+ */
+const pollDialogueTask = async (taskId: string, apiKey: string, maxAttempts: number = 40): Promise<string> => {
   logger.info('[ElevenLabs] 폴링 시작', { taskId });
+  const startTime = Date.now();
+  const TOTAL_TIMEOUT_MS = 150_000; // 전체 폴링 2.5분 제한
+  let networkErrorCount = 0;
+  const MAX_NETWORK_ERRORS = 3;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    // [FIX #920] 전체 타임아웃 체크
+    if (Date.now() - startTime > TOTAL_TIMEOUT_MS) {
+      throw new Error(`ElevenLabs 생성 시간 초과 (${Math.round(TOTAL_TIMEOUT_MS / 1000)}초 경과, taskId: ${taskId})`);
+    }
+
     const delay = attempt < 5 ? 2000 : 3000;
     await new Promise(resolve => setTimeout(resolve, delay));
 
-    const response = await monitoredFetch(
-      `${KIE_BASE_URL}/jobs/recordInfo?taskId=${taskId}`,
-      { headers: { 'Authorization': `Bearer ${apiKey}` } },
-    );
+    let response: Response;
+    try {
+      response = await monitoredFetch(
+        `${KIE_BASE_URL}/jobs/recordInfo?taskId=${taskId}`,
+        {
+          headers: { 'Authorization': `Bearer ${apiKey}` },
+          signal: AbortSignal.timeout(15_000), // [FIX #920] 개별 폴링 요청 15초 타임아웃
+        },
+      );
+    } catch (fetchErr) {
+      // [FIX #920] 네트워크 에러(timeout, DNS 실패 등) — 일정 횟수까지 허용 후 포기
+      networkErrorCount++;
+      const errMsg = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
+      logger.warn(`[ElevenLabs] 폴링 네트워크 에러 (${networkErrorCount}/${MAX_NETWORK_ERRORS})`, { taskId, error: errMsg });
+      if (networkErrorCount >= MAX_NETWORK_ERRORS) {
+        throw new Error(`ElevenLabs 폴링 네트워크 에러 ${MAX_NETWORK_ERRORS}회 연속 (taskId: ${taskId}): ${errMsg}`);
+      }
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      continue;
+    }
 
     if (!response.ok) {
       if (response.status === 429) {
@@ -243,6 +272,9 @@ const pollDialogueTask = async (taskId: string, apiKey: string, maxAttempts: num
       }
       throw new Error(`ElevenLabs 폴링 오류 (${response.status})`);
     }
+
+    // 폴링 성공 시 네트워크 에러 카운터 리셋
+    networkErrorCount = 0;
 
     const data = await response.json();
     const state = data.data?.state;
@@ -265,7 +297,7 @@ const pollDialogueTask = async (taskId: string, apiKey: string, maxAttempts: num
 
       if (!audioUrl) throw new Error('ElevenLabs 결과에서 오디오 URL을 찾을 수 없습니다.');
 
-      logger.success('[ElevenLabs] 폴링 완료', { taskId, attempt });
+      logger.success('[ElevenLabs] 폴링 완료', { taskId, attempt, elapsed: `${Math.round((Date.now() - startTime) / 1000)}초` });
       return audioUrl;
     }
 
@@ -275,7 +307,7 @@ const pollDialogueTask = async (taskId: string, apiKey: string, maxAttempts: num
     }
   }
 
-  throw new Error(`ElevenLabs 생성 시간 초과 (${maxAttempts}회 폴링 실패)`);
+  throw new Error(`ElevenLabs 생성 시간 초과 (${maxAttempts}회 폴링 실패, taskId: ${taskId})`);
 };
 
 /** ElevenLabs 지원 언어 목록 (주요 30개) */

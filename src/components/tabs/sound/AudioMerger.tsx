@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import { logger } from '../../../services/LoggerService';
 import { useSoundStudioStore, registerAudio, unregisterAudio } from '../../../stores/soundStudioStore';
+import { showToast } from '../../../stores/uiStore';
 import { useProjectStore } from '../../../stores/projectStore';
 import { generateSupertonicTTS, generateQwen3TTS, mergeAudioFiles } from '../../../services/ttsService';
 import { generateTypecastTTS } from '../../../services/typecastService';
@@ -182,12 +183,12 @@ const AudioMerger: React.FC = () => {
     setTtsProgress({ current: 0, total: lines.length });
 
     try {
-      // KIE 레이트 리밋 배치: 10개/10초 병렬 제출 (미생성 라인만)
+      // [FIX #920] KIE 레이트 리밋 배치 — 동시 5개로 축소 + 타임아웃/재시도
       const targets = lines
         .map((line, i) => ({ line, idx: i }))
         .filter(({ line }) => !line.audioUrl && line.audioSource !== 'uploaded');
       let done = 0;
-      await runKieBatch(targets, async ({ line, idx }) => {
+      const batchResult = await runKieBatch(targets, async ({ line, idx }) => {
         const baseSpeaker = speakers.find((s) => s.id === line.speakerId) || speakers[0];
         const speaker: Speaker = line.voiceId
           ? { ...baseSpeaker, voiceId: line.voiceId }
@@ -196,7 +197,15 @@ const AudioMerger: React.FC = () => {
         const nextText = idx < lines.length - 1 ? lines[idx + 1]?.text?.slice(0, 200) : undefined;
         const result = await generateLineTTS(line.text, speaker, { previousText: prevText, nextText: nextText });
         updateLine(line.id, { audioUrl: result.audioUrl });
-      }, () => { done++; setTtsProgress({ current: lines.length - targets.length + done, total: lines.length }); });
+      }, () => { done++; setTtsProgress({ current: lines.length - targets.length + done, total: lines.length }); }, {
+        submitPerWindow: 5,     // [FIX #920] 10 → 5로 축소 (rate limit 여유)
+        itemTimeoutMs: 180_000,
+        retryCount: 1,
+        retryDelayMs: 5_000,
+      });
+      if (batchResult.failed > 0) {
+        showToast(`${targets.length}개 중 ${batchResult.failed}개 TTS 생성 실패`, 5000);
+      }
       setTtsProgress({ current: lines.length, total: lines.length });
 
       // 병합

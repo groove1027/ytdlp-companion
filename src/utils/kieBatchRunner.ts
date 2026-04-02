@@ -8,6 +8,8 @@
  *   - 10초마다 10개씩 밀어넣기 → KIE 서버에서 동시 처리
  *   - 동시 처리 100개 도달 시 잠시 멈췄다가 완료 시 재개
  *   - 잔액 부족(QUOTA_EXHAUSTED) 감지 시 즉시 중단
+ *
+ * [FIX #920] 개별 항목 타임아웃 + 재시도 추가 — 마지막 1~2개에서 멈추는 버그 해결
  */
 
 export interface KieBatchOptions {
@@ -19,6 +21,12 @@ export interface KieBatchOptions {
   maxConcurrent?: number;
   /** 잔액 부족 에러 감지 함수 */
   isQuotaExhausted?: (error: unknown) => boolean;
+  /** 개별 항목 타임아웃 ms (기본 180_000 = 3분) */
+  itemTimeoutMs?: number;
+  /** 실패 항목 재시도 횟수 (기본 1) */
+  retryCount?: number;
+  /** 재시도 전 대기 ms (기본 3_000) */
+  retryDelayMs?: number;
 }
 
 export interface KieBatchItemResult<T> {
@@ -35,6 +43,15 @@ export interface KieBatchRunResult<T> {
   failedItems: KieBatchItemResult<T>[];
 }
 
+/** 개별 항목에 타임아웃을 적용하는 래퍼 */
+function withTimeout<R>(promise: Promise<R>, ms: number, label?: string): Promise<R> {
+  if (ms <= 0 || !Number.isFinite(ms)) return promise;
+  return new Promise<R>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`[KieBatch] 항목 타임아웃 (${Math.round(ms / 1000)}초 초과)${label ? ': ' + label : ''}`)), ms);
+    promise.then(resolve, reject).finally(() => clearTimeout(timer));
+  });
+}
+
 /**
  * KIE API 레이트 리밋에 맞춘 배치 실행기
  *
@@ -42,6 +59,8 @@ export interface KieBatchRunResult<T> {
  * @param fn - 각 항목을 처리하는 비동기 함수 (create task + poll 포함)
  * @param onItemDone - 항목 하나가 완료(성공/실패)될 때마다 호출
  * @param options - 레이트 리밋 설정
+ *
+ * [FIX #920] 개별 항목 타임아웃(180초) + 실패 시 1회 재시도 + 교착 방지
  */
 export async function runKieBatch<T>(
   items: T[],
@@ -54,6 +73,9 @@ export async function runKieBatch<T>(
     windowMs = 10_000,
     maxConcurrent = 100,
     isQuotaExhausted,
+    itemTimeoutMs = 180_000,
+    retryCount = 1,
+    retryDelayMs = 3_000,
   } = options || {};
 
   const queue = [...items];
@@ -67,6 +89,33 @@ export async function runKieBatch<T>(
     failedItems: [],
   };
 
+  /** 단일 항목 실행 (타임아웃 + 재시도 포함) */
+  const runItem = async (item: T): Promise<KieBatchItemResult<T>> => {
+    let lastError: unknown;
+    const maxAttempts = 1 + Math.max(0, retryCount);
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        if (attempt > 0 && retryDelayMs > 0) {
+          await new Promise(r => setTimeout(r, retryDelayMs));
+        }
+        await withTimeout(fn(item), itemTimeoutMs, `attempt ${attempt + 1}`);
+        return { item, ok: true };
+      } catch (error) {
+        lastError = error;
+        // 잔액 부족이면 재시도 무의미 — 즉시 중단
+        if (isQuotaExhausted?.(error)) {
+          quotaExhausted = true;
+          queue.length = 0;
+          summary.quotaExhausted = true;
+          break;
+        }
+      }
+    }
+    const failure: KieBatchItemResult<T> = { item, ok: false, error: lastError };
+    summary.failedItems.push(failure);
+    return failure;
+  };
+
   while ((queue.length > 0 || active.length > 0) && !quotaExhausted) {
     // 버스트 제출: submitPerWindow개까지 (maxConcurrent 초과 방지)
     const burstCount = Math.min(
@@ -77,20 +126,7 @@ export async function runKieBatch<T>(
 
     for (let i = 0; i < burstCount && !quotaExhausted; i++) {
       const item = queue.shift()!;
-      const p = Promise.resolve()
-        .then(() => fn(item))
-        .then<KieBatchItemResult<T>>(() => ({ item, ok: true }))
-        .catch<KieBatchItemResult<T>>((error) => {
-          if (isQuotaExhausted?.(error)) {
-            quotaExhausted = true;
-            queue.length = 0;
-            summary.quotaExhausted = true;
-          }
-
-          const failure: KieBatchItemResult<T> = { item, ok: false, error };
-          summary.failedItems.push(failure);
-          return failure;
-        })
+      const p = runItem(item)
         .then((result) => {
           summary.completed += 1;
           if (result.ok) summary.succeeded += 1;
@@ -118,8 +154,21 @@ export async function runKieBatch<T>(
         await new Promise(resolve => setTimeout(resolve, windowMs));
       }
     } else if (active.length > 0) {
-      // 모든 항목 제출 완료 — 나머지 완료 대기
-      await Promise.allSettled(active);
+      // [FIX #920] 모든 항목 제출 완료 — 안전 타임아웃과 함께 대기 (교착 방지)
+      const safetyTimeout = new Promise<void>(resolve =>
+        setTimeout(resolve, itemTimeoutMs + 30_000),
+      );
+      await Promise.race([
+        Promise.allSettled(active),
+        safetyTimeout,
+      ]);
+
+      // 안전 타임아웃으로 탈출한 경우 — 아직 남은 active 작업은 실패 처리
+      if (active.length > 0) {
+        summary.failed += active.length;
+        summary.completed += active.length;
+        active.length = 0;
+      }
     }
   }
 

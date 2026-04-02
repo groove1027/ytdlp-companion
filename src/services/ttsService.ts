@@ -856,7 +856,8 @@ export const normalizeAudioUrl = async (audioUrl: string): Promise<string> => {
     const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     const ctx = new AudioCtx();
     try {
-        const resp = await monitoredFetch(audioUrl);
+        // [FIX #920] 20초 타임아웃 추가 — tempfile CDN 장애 시 교착 방지
+        const resp = await monitoredFetch(audioUrl, { signal: AbortSignal.timeout(20_000) });
         const buf = await resp.arrayBuffer();
         const decoded = await ctx.decodeAudioData(buf);
 
@@ -910,15 +911,20 @@ export const mergeAudioFiles = async (audioUrls: string[]): Promise<string> => {
         const buffers: AudioBuffer[] = [];
 
         for (const url of audioUrls) {
-            const response = await monitoredFetch(url);
-            if (!response.ok) {
-                logger.trackErrorChain(`HTTP ${response.status} fetching audio file`, 'ttsService:mergeAudioFiles:file_fetch_failed');
-                logger.warn('[TTS] 오디오 파일 다운로드 실패, 건너뜀', { url });
-                continue;
+            try {
+                // [FIX #920] 20초 타임아웃 — CDN 장애 시 병합 교착 방지
+                const response = await monitoredFetch(url, { signal: AbortSignal.timeout(20_000) });
+                if (!response.ok) {
+                    logger.trackErrorChain(`HTTP ${response.status} fetching audio file`, 'ttsService:mergeAudioFiles:file_fetch_failed');
+                    logger.warn('[TTS] 오디오 파일 다운로드 실패, 건너뜀', { url });
+                    continue;
+                }
+                const arrayBuffer = await response.arrayBuffer();
+                const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+                buffers.push(audioBuffer);
+            } catch (fetchErr) {
+                logger.warn('[TTS] 오디오 파일 페치 실패, 건너뜀', { url, error: fetchErr instanceof Error ? fetchErr.message : String(fetchErr) });
             }
-            const arrayBuffer = await response.arrayBuffer();
-            const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-            buffers.push(audioBuffer);
         }
 
         if (buffers.length === 0) throw new Error('디코딩된 오디오 버퍼가 없습니다.');
