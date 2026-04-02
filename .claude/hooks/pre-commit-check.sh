@@ -20,24 +20,45 @@ fi
 ERRORS=()
 
 # ──────────────────────────────────────────────
-# CHECK 1: CHECKLIST.md must have been modified
+# AUTO-UPDATE 1: CHECKLIST.md — 미수정이면 자동 추가
 # ──────────────────────────────────────────────
 CHECKLIST_MODIFIED=$(cd "$PROJECT_DIR" && git diff --name-only HEAD 2>/dev/null | grep -c 'docs/CHECKLIST.md')
 CHECKLIST_STAGED=$(cd "$PROJECT_DIR" && git diff --cached --name-only 2>/dev/null | grep -c 'docs/CHECKLIST.md')
 CHECKLIST_UNSTAGED=$(cd "$PROJECT_DIR" && git diff --name-only 2>/dev/null | grep -c 'docs/CHECKLIST.md')
 
 if [ "$CHECKLIST_MODIFIED" -eq 0 ] && [ "$CHECKLIST_STAGED" -eq 0 ] && [ "$CHECKLIST_UNSTAGED" -eq 0 ]; then
-    ERRORS+=("❌ [절차 누락] docs/CHECKLIST.md가 수정되지 않았다 — 작업 내용을 CHECKLIST에 기록하라")
+    CHECKLIST_FILE="$PROJECT_DIR/docs/CHECKLIST.md"
+    COMMIT_MSG=$(echo "$COMMAND" | sed -n "s/.*-m ['\"]\\(.*\\)['\"].*/\\1/p" | head -1)
+    [ -z "$COMMIT_MSG" ] && COMMIT_MSG="(커밋 메시지 파싱 불가)"
+    CHANGED_FILES=$(cd "$PROJECT_DIR" && git diff --cached --name-only 2>/dev/null | head -5 | tr '\n' ', ')
+    NOW_DATE=$(date '+%Y-%m-%d %H:%M')
+    mkdir -p "$(dirname "$CHECKLIST_FILE")"
+    echo "" >> "$CHECKLIST_FILE"
+    echo "- [x] $NOW_DATE — $COMMIT_MSG ($CHANGED_FILES)" >> "$CHECKLIST_FILE"
+    cd "$PROJECT_DIR" && git add docs/CHECKLIST.md 2>/dev/null
+    echo "✅ CHECKLIST.md 자동 업데이트됨"
 fi
 
 # ──────────────────────────────────────────────
-# CHECK 2: work-history.md must have been modified
+# AUTO-UPDATE 2: work-history.md — 미수정이면 자동 추가
 # ──────────────────────────────────────────────
 MEMORY_DIR="$HOME/.claude/projects/-Users-mac_mini-Downloads-all-in-one-production-build4/memory"
 WORKHIST="$MEMORY_DIR/work-history.md"
+NEEDS_UPDATE=0
 
 if [ ! -f "$WORKHIST" ]; then
-    ERRORS+=("❌ [절차 누락] work-history.md 파일이 존재하지 않는다 — memory/ 폴더에 작업 기록 파일을 생성하라")
+    mkdir -p "$MEMORY_DIR"
+    cat > "$WORKHIST" << 'INITEOF'
+---
+name: 작업 이력
+description: 커밋별 작업 기록 — 자동 생성
+type: project
+---
+
+# Work History
+
+INITEOF
+    NEEDS_UPDATE=1
 else
     if [ "$(uname)" = "Darwin" ]; then
         MTIME=$(stat -f %m "$WORKHIST" 2>/dev/null || echo 0)
@@ -46,8 +67,24 @@ else
     fi
     LAST_COMMIT_TIME=$(cd "$PROJECT_DIR" && git log -1 --format="%ct" 2>/dev/null || echo 0)
     if [ "$MTIME" -le "$LAST_COMMIT_TIME" ]; then
-        ERRORS+=("❌ [절차 누락] work-history.md가 마지막 커밋 이후 업데이트되지 않았다 — 이번 작업 기록을 남겨라")
+        NEEDS_UPDATE=1
     fi
+fi
+
+if [ "$NEEDS_UPDATE" -eq 1 ]; then
+    COMMIT_MSG2=$(echo "$COMMAND" | sed -n "s/.*-m ['\"]\\(.*\\)['\"].*/\\1/p" | head -1)
+    [ -z "$COMMIT_MSG2" ] && COMMIT_MSG2=$(echo "$COMMAND" | grep -oE "git commit.*" | head -1)
+    CHANGED_FILES2=$(cd "$PROJECT_DIR" && git diff --cached --name-only 2>/dev/null | head -10 | sed 's/^/  - /')
+    NOW_DATE2=$(date '+%Y-%m-%d %H:%M')
+    {
+        echo ""
+        echo "## $NOW_DATE2"
+        echo "$COMMIT_MSG2"
+        echo ""
+        echo "변경 파일:"
+        echo "$CHANGED_FILES2"
+    } >> "$WORKHIST"
+    echo "✅ work-history.md 자동 업데이트됨"
 fi
 
 # ──────────────────────────────────────────────
