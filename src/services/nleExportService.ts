@@ -285,19 +285,68 @@ function normalizePlainSubtitleText(text: string): string {
   return text.replace(/\s+/g, ' ').trim();
 }
 
+interface PremiereCaptionEntry {
+  startTime: number;
+  endTime: number;
+  text: string;
+}
+
+const PREMIERE_NON_DIALOGUE_SUBTITLE_PREFIX_RE = /^\s*(?:[\[(（【]\s*(?:나레이션|내레이션|narration|n|bgm|sfx|fx|현장음|효과음|effect|sound)\s*[\])）】]\s*|(?:나레이션|내레이션|narration|bgm|sfx|fx|현장음|효과음|effect|sound)\s*[:：-]\s*)/i;
+const PREMIERE_DIALOGUE_SPEAKER_TAG_PREFIX_RE = /^\s*(?:[\[(（【]\s*[a-z]\s*[\])）】]\s*)+/i;
+
+function splitSubtitleTextLines(text: string): string[] {
+  return text
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map(line => normalizePlainSubtitleText(line))
+    .filter(Boolean);
+}
+
+function distributeCaptionTextLines(
+  lines: string[],
+  startTime: number,
+  endTime: number,
+): PremiereCaptionEntry[] {
+  const normalizedLines = lines
+    .map(line => normalizePlainSubtitleText(line))
+    .filter(Boolean);
+
+  if (normalizedLines.length === 0) return [];
+  if (normalizedLines.length === 1) {
+    return [{ startTime, endTime, text: normalizedLines[0] }];
+  }
+
+  const totalDuration = Math.max(0, endTime - startTime);
+  return normalizedLines.map((line, index) => ({
+    text: line,
+    startTime: startTime + (totalDuration * index) / normalizedLines.length,
+    endTime: index === normalizedLines.length - 1
+      ? endTime
+      : startTime + (totalDuration * (index + 1)) / normalizedLines.length,
+  }));
+}
+
 /**
  * 기본(dialogue) 자막 전용 텍스트 정제
- * - (나레이션), (내레이션) 등 마커 제거
+ * - (현장음), [나레이션], [N], [BGM] 등 비대사 라인 제거
+ * - (나레이션), (내레이션) 등 잔여 마커 제거
  * - 구두점·특수문자 제거
  * - 순수한 자막 텍스트만 남김
  */
 function cleanDialogueSubtitleText(text: string): string {
   return text
-    .replace(/\([^)]*[나내]레이션[^)]*\)/gi, '')
-    .replace(/\(narration\)/gi, '')
-    .replace(/[.,!?;:…·ㆍ，。！？、~～""''「」『』\u2026]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map(line => normalizePlainSubtitleText(line))
+    .filter(line => line && !PREMIERE_NON_DIALOGUE_SUBTITLE_PREFIX_RE.test(line))
+    .map(line => line
+      .replace(PREMIERE_DIALOGUE_SPEAKER_TAG_PREFIX_RE, '')
+      .replace(/\([^)]*[나내]레이션[^)]*\)/gi, '')
+      .replace(/\(narration\)/gi, '')
+      .replace(/[.,!?;:…·ㆍ，。！？、~～""''「」『』\u2026]/g, '')
+      .trim())
+    .filter(Boolean)
+    .join('\n');
 }
 
 function normalizeBrokenSubtitleText(text: string, maxChars = 12): string {
@@ -368,12 +417,43 @@ function getDialogueSubtitleText(
   return breakDialogueLines(cleaned, maxChars);
 }
 
+function getDialogueCaptionText(
+  segment: { lineId: string; text: string },
+  overrideMap?: SubtitleTextOverrideMap,
+): string {
+  const override = overrideMap?.get(segment.lineId);
+  if (override) {
+    const cleaned = cleanDialogueSubtitleText(override);
+    if (cleaned) return cleaned;
+  }
+  return cleanDialogueSubtitleText(segment.text);
+}
+
+function buildDialogueCaptionEntries(
+  segment: { lineId: string; text: string; startTime: number; endTime: number },
+  overrideMap?: SubtitleTextOverrideMap,
+): PremiereCaptionEntry[] {
+  // 각 대사 라인은 개별 세그먼트로 이미 분리됨 → 하나의 캡션 블록으로 유지
+  const displayText = getDialogueCaptionText(segment, overrideMap);
+  if (!displayText.trim()) return [];
+  return [{ startTime: segment.startTime, endTime: segment.endTime, text: displayText }];
+}
+
 function wrapEffectSubtitleText(text: string): string {
   const normalized = normalizePlainSubtitleText(text)
     .replace(/^[\(\[（【]\s*/, '')
     .replace(/\s*[\)\]）】]$/, '');
   if (!normalized) return '';
   return `(${normalized})`;
+}
+
+function buildEffectCaptionEntries(
+  segment: { text: string; startTime: number; endTime: number },
+): PremiereCaptionEntry[] {
+  // 효과자막은 하나의 세그먼트 = 하나의 캡션 블록 (분할하지 않음)
+  const wrapped = wrapEffectSubtitleText(breakLines(segment.text));
+  if (!wrapped) return [];
+  return [{ startTime: segment.startTime, endTime: segment.endTime, text: wrapped }];
 }
 
 async function buildDialogueSubtitleOverrides(params: {
@@ -516,13 +596,11 @@ function generatePremiereCaptionXml(params: {
       const segments = layer === 'effect' ? sceneTiming.effectSubtitleSegments : sceneTiming.subtitleSegments;
       return segments
         .filter(segment => segment.text.trim())
-        .map((segment) => ({
-          endTime: segment.endTime,
-          startTime: segment.startTime,
-          text: layer === 'dialogue'
-            ? getDialogueSubtitleText(segment, dialogueLineBreaks)
-            : wrapEffectSubtitleText(breakLines(segment.text)),
-        }));
+        .flatMap(segment => (
+          layer === 'dialogue'
+            ? buildDialogueCaptionEntries(segment, dialogueLineBreaks)
+            : buildEffectCaptionEntries(segment)
+        ));
     })
     .filter(entry => entry.text.trim());
 
@@ -553,7 +631,68 @@ ${body}
 </tt>`;
 }
 
-const PREMIERE_NATIVE_TEMPLATE_URL = new URL('../assets/premiere-native-template.prproj', import.meta.url).href;
+const PREMIERE_NATIVE_TEMPLATE_URL = new URL('../assets/premiere-native-template-v45.prproj', import.meta.url).href;
+const PREMIERE_LEGACY_TEMPLATE_URL = new URL('../assets/premiere-native-template.prproj', import.meta.url).href;
+const PREMIERE_V45_PROJECT_ID = '1';
+const PREMIERE_V45_SEQUENCE_UID = '2df87522-f24a-4f47-b6f6-7f3af6db0171';
+const PREMIERE_V45_VIDEO_TRACK_GROUP_ID = '52';
+const PREMIERE_V45_AUDIO_TRACK_GROUP_ID = '53';
+const PREMIERE_V45_DATA_TRACK_GROUP_ID = '54';
+const PREMIERE_V45_RENDER_MASTER_CLIP_UID = '0d27378e-d64a-4856-806e-c06afd04f7fb';
+const PREMIERE_V45_RENDER_LOGGING_INFO_ID = '40';
+const PREMIERE_V45_RENDER_AUDIO_SEQUENCE_SOURCE_ID = '45';
+const PREMIERE_V45_RENDER_VIDEO_SEQUENCE_SOURCE_ID = '48';
+const PREMIERE_LEGACY_SOURCE_MASTER_CLIP_UID = 'b96bdb66-4f6f-4cff-9d21-d4d144ff113b';
+const PREMIERE_LEGACY_SOURCE_MEDIA_UID = 'a2a84544-e9d2-49c2-87e5-23116e78d0fb';
+const PREMIERE_LEGACY_SOURCE_LOGGING_INFO_ID = '172';
+const PREMIERE_LEGACY_SOURCE_MASTER_VIDEO_CLIP_ID = '174';
+const PREMIERE_LEGACY_SOURCE_MASTER_AUDIO_CLIP_ID = '175';
+const PREMIERE_LEGACY_SOURCE_MARKERS_ID = '223';
+const PREMIERE_LEGACY_SOURCE_VIDEO_MEDIA_SOURCE_ID = '224';
+const PREMIERE_LEGACY_SOURCE_AUDIO_MEDIA_SOURCE_ID = '225';
+const PREMIERE_LEGACY_SOURCE_AUDIO_STREAM_ID = '329';
+const PREMIERE_LEGACY_SOURCE_VIDEO_STREAM_ID = '330';
+const PREMIERE_LEGACY_VIDEO_TRACK_ITEM_ID = '310';
+const PREMIERE_LEGACY_VIDEO_COMPONENT_CHAIN_ID = '347';
+const PREMIERE_LEGACY_VIDEO_SUB_CLIP_ID = '348';
+const PREMIERE_LEGACY_TIMELINE_VIDEO_CLIP_ID = '462';
+const PREMIERE_LEGACY_AUDIO_TRACK_ITEM_ID = '311';
+const PREMIERE_LEGACY_AUDIO_COMPONENT_CHAIN_ID = '349';
+const PREMIERE_LEGACY_AUDIO_SUB_CLIP_ID = '350';
+const PREMIERE_LEGACY_AUDIO_HEAD_TRANSITION_ID = '351';
+const PREMIERE_LEGACY_AUDIO_TAIL_TRANSITION_ID = '352';
+const PREMIERE_LEGACY_TIMELINE_AUDIO_CLIP_ID = '463';
+const PREMIERE_LEGACY_AUDIO_SECONDARY_CONTENT_1_ID = '633';
+const PREMIERE_LEGACY_AUDIO_SECONDARY_CONTENT_2_ID = '634';
+const PREMIERE_LEGACY_NARRATION_MASTER_CLIP_UID = 'c84729a9-5cb3-41d7-9378-9f90d0358590';
+const PREMIERE_LEGACY_NARRATION_MEDIA_UID = '0914c126-2e73-4679-ba02-70f0109fc2e6';
+const PREMIERE_LEGACY_NARRATION_TRACK_ITEM_ID = '395';
+const PREMIERE_LEGACY_NARRATION_LOGGING_INFO_ID = '161';
+const PREMIERE_LEGACY_NARRATION_MASTER_AUDIO_COMPONENT_CHAIN_ID = '162';
+const PREMIERE_LEGACY_NARRATION_MASTER_LIBRARY_CLIP_ID = '163';
+const PREMIERE_LEGACY_NARRATION_CHANNEL_GROUPS_ID = '164';
+const PREMIERE_LEGACY_NARRATION_MEDIA_SOURCE_ID = '218';
+const PREMIERE_LEGACY_NARRATION_MASTER_SECONDARY_CONTENT_ID = '219';
+const PREMIERE_LEGACY_NARRATION_AUDIO_STREAM_ID = '309';
+const PREMIERE_LEGACY_NARRATION_COMPONENT_CHAIN_ID = '487';
+const PREMIERE_LEGACY_NARRATION_SUB_CLIP_ID = '488';
+const PREMIERE_LEGACY_NARRATION_TIMELINE_CLIP_ID = '688';
+const PREMIERE_LEGACY_NARRATION_TIMELINE_SECONDARY_CONTENT_ID = '899';
+const PREMIERE_LEGACY_NARRATION_HEAD_TRANSITION_ID = '402';
+const PREMIERE_LEGACY_NARRATION_TAIL_TRANSITION_ID = '403';
+const PREMIERE_LEGACY_CAPTION_TRACK_UID = 'a8df80d2-f3b7-42ca-8098-a451d4d391b9';
+const PREMIERE_LEGACY_CAPTION_TRACK_ITEM_ID = '425';
+const PREMIERE_LEGACY_CAPTION_COMPONENT_CHAIN_ID = '522';
+const PREMIERE_LEGACY_CAPTION_SUB_CLIP_ID = '523';
+const PREMIERE_LEGACY_CAPTION_BLOCK_ID = '524';
+const PREMIERE_LEGACY_CAPTION_TIMELINE_TRANSCRIPT_CLIP_ID = '814';
+const PREMIERE_LEGACY_CAPTION_MASTER_CLIP_UID = '41ac2c57-95f7-4495-8fa1-0af1a7b5d737';
+const PREMIERE_LEGACY_CAPTION_MEDIA_SOURCE_ID = '906';
+const PREMIERE_LEGACY_CAPTION_LOGGING_INFO_ID = '907';
+const PREMIERE_LEGACY_CAPTION_MASTER_LIBRARY_CLIP_ID = '908';
+const PREMIERE_LEGACY_CAPTION_CHANNEL_GROUPS_ID = '909';
+const PREMIERE_LEGACY_CAPTION_MEDIA_UID = '37b0ac5f-5b2e-4bc1-be47-ac48d5b890bf';
+const PREMIERE_LEGACY_CAPTION_DATA_STREAM_ID = '1055';
 /** DOMParser가 &#10; 엔티티를 리터럴 \n으로 디코딩하여 손실. 파싱 전 sentinel로 보존. */
 const PREMIERE_NEWLINE_ENTITY_SENTINEL = '\uE000';
 const PREMIERE_TICKS_PER_SECOND = 127_008_000_000;
@@ -565,7 +704,13 @@ const PREMIERE_LANDSCAPE_CAPTION_PREFIX_BASE64 = 'CAIAAAAAAABEMyIRDAAAAAAABgAKAA
 
 type PremiereCodecStreamConstructor = new (format: 'gzip') => TransformStream<Uint8Array, Uint8Array>;
 
-let premiereNativeTemplateXmlPromise: Promise<string> | null = null;
+interface PremiereImportedSubgraph {
+  roots: Element[];
+  objectBySourceId: Map<string, Element>;
+  objectBySourceUid: Map<string, Element>;
+}
+
+const premiereTemplateXmlPromiseByUrl = new Map<string, Promise<string>>();
 
 function getPremiereFrameDurationTicks(fps = 30): number {
   return Math.max(1, Math.round(PREMIERE_TICKS_PER_SECOND / Math.max(1, fps)));
@@ -606,22 +751,56 @@ async function transformPremiereProjectBytes(bytes: Uint8Array, mode: 'compress'
   const blobBytes = new Uint8Array(bytes.byteLength);
   blobBytes.set(bytes);
   const transformedStream = new Blob([blobBytes.buffer]).stream().pipeThrough(new StreamCtor('gzip'));
-  return new Uint8Array(await new Response(transformedStream).arrayBuffer());
+  const result = new Uint8Array(await new Response(transformedStream).arrayBuffer());
+  // [FIX] Premiere는 gzip OS byte로 0x13을 사용 (비표준).
+  // 브라우저 CompressionStream은 0x00/0xFF를 쓰므로, 이 값이 다르면
+  // Premiere가 "The project could not be saved" 에러를 발생시킴.
+  if (mode === 'compress' && result.length >= 10) {
+    result[9] = 0x13;
+  }
+  return result;
 }
 
-async function loadPremiereNativeTemplateXml(): Promise<string> {
-  if (!premiereNativeTemplateXmlPromise) {
-    premiereNativeTemplateXmlPromise = (async () => {
-      const response = await fetch(PREMIERE_NATIVE_TEMPLATE_URL);
+async function loadPremiereTemplateXml(url: string): Promise<string> {
+  if (!premiereTemplateXmlPromiseByUrl.has(url)) {
+    premiereTemplateXmlPromiseByUrl.set(url, (async () => {
+      const response = await fetch(url);
       if (!response.ok) {
         throw new Error(`Premiere native template을 불러오지 못했습니다 (${response.status}).`);
       }
       const gzBytes = new Uint8Array(await response.arrayBuffer());
       const xmlBytes = await transformPremiereProjectBytes(gzBytes, 'decompress');
       return new TextDecoder().decode(xmlBytes);
-    })();
+    })());
   }
-  return premiereNativeTemplateXmlPromise;
+  return premiereTemplateXmlPromiseByUrl.get(url)!;
+}
+
+async function loadPremiereNativeTemplateXml(): Promise<string> {
+  return loadPremiereTemplateXml(PREMIERE_NATIVE_TEMPLATE_URL);
+}
+
+async function loadPremiereLegacyTemplateXml(): Promise<string> {
+  return loadPremiereTemplateXml(PREMIERE_LEGACY_TEMPLATE_URL);
+}
+
+function parsePremiereProjectXml(templateXml: string): Document {
+  if (templateXml.includes(PREMIERE_NEWLINE_ENTITY_SENTINEL)) {
+    throw new Error('Premiere 템플릿에 sentinel 문자(\\uE000)가 이미 존재합니다. 템플릿을 확인해주세요.');
+  }
+  const preservedXml = templateXml.replace(/&#10;/g, PREMIERE_NEWLINE_ENTITY_SENTINEL);
+  const doc = new DOMParser().parseFromString(preservedXml, 'application/xml');
+  if (doc.querySelector('parsererror')) {
+    throw new Error('Premiere native template XML 파싱에 실패했습니다.');
+  }
+  return doc;
+}
+
+function serializePremiereProjectXml(doc: Document): string {
+  const serialized = new XMLSerializer().serializeToString(doc);
+  const withoutDecl = serialized.replace(/^<\?xml[^?]*\?>\s*/, '');
+  const restored = withoutDecl.replace(new RegExp(PREMIERE_NEWLINE_ENTITY_SENTINEL, 'g'), '&#10;');
+  return `<?xml version="1.0" encoding="UTF-8" ?>\n${restored}`;
 }
 
 /**
@@ -736,6 +915,12 @@ function getPremiereObjectByUid(doc: Document, objectUid: string): Element {
   return element;
 }
 
+function getPremiereClipProjectItemByMasterClipUid(doc: Document, masterClipUid: string): Element | null {
+  return Array.from(doc.querySelectorAll('ClipProjectItem')).find((element) => (
+    getPremiereDirectChild(element, 'MasterClip')?.getAttribute('ObjectURef') === masterClipUid
+  )) ?? null;
+}
+
 function getPremiereDirectChild(parent: Element, tagName: string): Element | null {
   return Array.from(parent.children).find(child => child.tagName === tagName) ?? null;
 }
@@ -757,8 +942,56 @@ function ensurePremiereDirectChild(doc: Document, parent: Element, tagName: stri
   return child;
 }
 
+function ensurePremiereDirectChildBefore(
+  doc: Document,
+  parent: Element,
+  tagName: string,
+  beforeTagNames: string[],
+): Element {
+  const child = ensurePremiereDirectChild(doc, parent, tagName);
+  const before = beforeTagNames
+    .map((name) => getPremiereDirectChild(parent, name))
+    .find((element): element is Element => !!element && element !== child);
+  if (before && child !== before.previousElementSibling) {
+    parent.insertBefore(child, before);
+  }
+  return child;
+}
+
 function setPremiereChildText(doc: Document, parent: Element, tagName: string, value: string): void {
   ensurePremiereDirectChild(doc, parent, tagName).textContent = value;
+}
+
+function toPremiereProjectRelativePath(fileName: string): string {
+  // [FIX] Premiere는 FilePath에서 ./ 접두사를 절대경로로 해석함.
+  // 파일명만 설정하면 Premiere가 .prproj와 같은 폴더에서 자동 매칭.
+  return fileName
+    .replace(/\\/g, '/')
+    .replace(/^\.?\//, '')
+    .trim();
+}
+
+function setPremiereMediaFilePaths(doc: Document, media: Element, fileName: string): void {
+  const cleanName = toPremiereProjectRelativePath(fileName);
+  // [FIX] PM V45 분석 결과: Premiere V45는 FilePath/ActualMediaFilePath를 먼저 시도하고,
+  // 경로가 존재하지 않으면 Link Media 대화상자를 표시함.
+  // 가짜 절대경로(/Volumes/...)는 절대 존재할 수 없으므로 항상 Link Media 발생.
+  // 해결: FilePath를 ./파일명 (상대경로)으로 설정 → Premiere가 .prproj와 같은 폴더에서 자동 매칭.
+  // PM V45 재저장 분석에서도 RelativePath=./파일명 패턴 확인됨.
+  const relativePath = `./${cleanName}`;
+  ensurePremiereDirectChildBefore(doc, media, 'RelativePath', ['FilePath', 'ImplementationID', 'Title']).textContent = relativePath;
+  setPremiereChildText(doc, media, 'FilePath', relativePath);
+  setPremiereChildText(doc, media, 'ActualMediaFilePath', relativePath);
+  setPremiereChildText(doc, media, 'Title', cleanName);
+  setPremiereChildText(doc, media, 'FileKey', premiereUuid());
+}
+
+function bumpPremiereNumericChildText(doc: Document, parent: Element, tagName: string, fallback = 1): void {
+  const current = Number(getPremiereDirectChild(parent, tagName)?.textContent || '');
+  const nextValue = Number.isFinite(current) && current >= 0
+    ? current + 1
+    : fallback;
+  setPremiereChildText(doc, parent, tagName, String(nextValue));
 }
 
 function setPremiereClipChildText(doc: Document, container: Element, tagName: string, value: string): void {
@@ -801,6 +1034,11 @@ function getPremiereClipProjectItemName(element: Element): string {
   return projectItem ? (getPremiereDirectChild(projectItem, 'Name')?.textContent || '').trim() : '';
 }
 
+function setPremiereClipProjectItemName(doc: Document, element: Element, value: string): void {
+  const projectItem = ensurePremiereDirectChild(doc, element, 'ProjectItem');
+  setPremiereChildText(doc, projectItem, 'Name', value);
+}
+
 function getPremiereRootObjectTextValues(element: Element): string[] {
   const values = new Set<string>();
   if (element.tagName === 'ClipProjectItem') {
@@ -833,6 +1071,15 @@ function collectPremiereObjectRefs(element: Element): Set<string> {
   };
   visit(element);
   return refs;
+}
+
+function getPremiereTrackRefObjectIds(container: Element): string[] {
+  const trackItems = getPremiereDirectChild(container, 'TrackItems');
+  if (!trackItems) return [];
+  return Array.from(trackItems.children)
+    .filter((child) => child.tagName === 'TrackItem')
+    .map((child) => child.getAttribute('ObjectRef') || '')
+    .filter(Boolean);
 }
 
 function removePremiereBinItemRef(root: Element, objectURef: string): void {
@@ -876,6 +1123,38 @@ function normalizePremiereBinItems(root: Element): void {
   });
 }
 
+function collectPremiereReferencedRootObjects(root: Element, refs: string[], blockedRefs: Iterable<string> = []): Set<Element> {
+  const rootObjects = getPremiereRootObjects(root);
+  const objectById = new Map<string, Element>();
+  const objectByUid = new Map<string, Element>();
+  const blocked = new Set(blockedRefs);
+  rootObjects.forEach((element) => {
+    const objectId = element.getAttribute('ObjectID');
+    if (objectId) objectById.set(objectId, element);
+    const objectUid = element.getAttribute('ObjectUID');
+    if (objectUid) objectByUid.set(objectUid, element);
+  });
+
+  const collected = new Set<Element>();
+  const queue = refs
+    .filter((ref) => !blocked.has(ref))
+    .map((ref) => objectById.get(ref) || objectByUid.get(ref))
+    .filter((element): element is Element => !!element);
+  while (queue.length > 0) {
+    const current = queue.pop()!;
+    if (collected.has(current)) continue;
+    collected.add(current);
+    collectPremiereObjectRefs(current).forEach((ref) => {
+      if (blocked.has(ref)) return;
+      const target = objectById.get(ref) || objectByUid.get(ref);
+      if (target && !collected.has(target)) {
+        queue.push(target);
+      }
+    });
+  }
+  return collected;
+}
+
 function removePremiereDanglingRefs(
   root: Element,
   removable: Set<Element>,
@@ -897,6 +1176,40 @@ function removePremiereDanglingRefs(
       });
     });
 
+  normalizePremiereBinItems(root);
+  normalizePremiereIndexedRefs(root, 'Clips', 'Clip');
+  normalizePremiereIndexedRefs(root, 'TrackItems', 'TrackItem');
+  normalizePremiereIndexedRefs(root, 'AudioComponentChains', 'AudioComponentChain');
+  normalizePremiereIndexedRefs(root, 'SecondaryContents', 'SecondaryContentItem');
+}
+
+function removePremiereRootObjects(root: Element, removable: Set<Element>): void {
+  if (removable.size === 0) {
+    normalizePremiereBinItems(root);
+    return;
+  }
+
+  const removableObjectIds = new Set(
+    Array.from(removable)
+      .map((element) => element.getAttribute('ObjectID') || '')
+      .filter(Boolean),
+  );
+  const removableObjectUids = new Set(
+    Array.from(removable)
+      .map((element) => element.getAttribute('ObjectUID') || '')
+      .filter(Boolean),
+  );
+
+  Array.from(removable).forEach((element) => {
+    removePremiereBinItemRef(root, element.getAttribute('ObjectUID') || '');
+  });
+  removePremiereDanglingRefs(root, removable, removableObjectIds, removableObjectUids);
+
+  Array.from(removable).forEach((element) => {
+    if (element.parentElement === root) {
+      root.removeChild(element);
+    }
+  });
   normalizePremiereBinItems(root);
   normalizePremiereIndexedRefs(root, 'Clips', 'Clip');
   normalizePremiereIndexedRefs(root, 'TrackItems', 'TrackItem');
@@ -983,32 +1296,7 @@ function cleanupPremiereTemplatePlaceholders(
     });
   }
 
-  const removableObjectIds = new Set(
-    Array.from(removable)
-      .map((element) => element.getAttribute('ObjectID') || '')
-      .filter(Boolean),
-  );
-  const removableObjectUids = new Set(
-    Array.from(removable)
-      .map((element) => element.getAttribute('ObjectUID') || '')
-      .filter(Boolean),
-  );
-
-  Array.from(removable).forEach((element) => {
-    removePremiereBinItemRef(root, element.getAttribute('ObjectUID') || '');
-  });
-  removePremiereDanglingRefs(root, removable, removableObjectIds, removableObjectUids);
-
-  Array.from(removable).forEach((element) => {
-    if (element.parentElement === root) {
-      root.removeChild(element);
-    }
-  });
-  normalizePremiereBinItems(root);
-  normalizePremiereIndexedRefs(root, 'Clips', 'Clip');
-  normalizePremiereIndexedRefs(root, 'TrackItems', 'TrackItem');
-  normalizePremiereIndexedRefs(root, 'AudioComponentChains', 'AudioComponentChain');
-  normalizePremiereIndexedRefs(root, 'SecondaryContents', 'SecondaryContentItem');
+  removePremiereRootObjects(root, removable);
 }
 
 /**
@@ -1017,27 +1305,53 @@ function cleanupPremiereTemplatePlaceholders(
  *
  * 1. /Users/*, C:\Users\* 등 사용자 절대경로 → 제거
  * 2. /Applications/Adobe Premiere Pro *  → 제거
- * 3. MZ.BuildVersion.Created / Modified → 비움 (Premiere가 저장 시 자동 설정)
+ * 3. MZ.BuildVersion.Created / Modified → 유효한 26.x 형식으로 재설정
  * 4. PresetPath, ProxyWatermarkDefaultImageFullPath → 비움
  * 5. 남아있는 ConformedAudioPath, PeakFilePath → 제거
  *
  * 컴패니언이 설치된 환경에서는 컴패니언이 실제 경로로 재패치한다.
  */
-function sanitizePremiereEnvironmentPaths(root: Element, doc: Document): void {
+function sanitizePremiereEnvironmentPaths(
+  root: Element,
+  doc: Document,
+  protectedMediaObjectUids: Iterable<string> = [],
+): void {
   const absPathRe = /^(\/Users\/|\/Applications\/|[A-Z]:\\Users\\|[A-Z]:\\Program Files)/;
+  const protectedMediaUids = new Set(protectedMediaObjectUids || []);
   const tagsToClean = [
     'PresetPath', 'ProxyWatermarkDefaultImageFullPath',
     'ConformedAudioPath', 'PeakFilePath',
     'project.settings.lastknowngoodprojectpath',
     'AlternateMediaFilePath', 'ImporterPrefs', 'MediaLocatorInfo',
   ];
-  const tagsToEmpty = [
+  // [FIX] BuildVersion을 비우면 Premiere 26.x에서 Save 에러 발생 → 유효한 값 설정
+  const buildVersionValue = (() => {
+    const d = new Date();
+    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `26.0.2x0 - ${days[d.getDay()]} ${months[d.getMonth()]} ${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())} ${d.getFullYear()}`;
+  })();
+  const tagsToSetBuildVersion = [
     'MZ.BuildVersion.Created', 'MZ.BuildVersion.Modified',
   ];
+  const isProtectedMediaPath = (element: Element): boolean => {
+    if (!['FilePath', 'ActualMediaFilePath'].includes(element.tagName)) return false;
+    let current: Element | null = element.parentElement;
+    while (current) {
+      if (current.tagName === 'Media') {
+        return protectedMediaUids.has(current.getAttribute('ObjectUID') || '');
+      }
+      current = current.parentElement;
+    }
+    return false;
+  };
 
   // root 직계 자식 순회 (Premiere .prproj는 flat structure)
   const walk = (parent: Element) => {
     Array.from(parent.children).forEach(child => {
+      const keepMediaPath = isProtectedMediaPath(child);
+
       // 제거 대상 태그
       if (tagsToClean.includes(child.tagName)) {
         const val = child.textContent || '';
@@ -1047,14 +1361,17 @@ function sanitizePremiereEnvironmentPaths(root: Element, doc: Document): void {
         }
       }
 
-      // 비우기 대상 태그
-      if (tagsToEmpty.includes(child.tagName)) {
-        child.textContent = '';
+      // BuildVersion 태그 — 유효한 값 설정
+      if (tagsToSetBuildVersion.includes(child.tagName)) {
+        child.textContent = buildVersionValue;
         return;
       }
 
       // 절대경로가 남아있는 태그 — 내용을 비움 (Premiere가 저장 시 재설정)
       if (['PresetPath', 'ProxyWatermarkDefaultImageFullPath', 'FilePath', 'ActualMediaFilePath'].includes(child.tagName)) {
+        if (keepMediaPath) {
+          return;
+        }
         const val = child.textContent || '';
         if (absPathRe.test(val)) {
           child.textContent = '';
@@ -1106,6 +1423,39 @@ function setPremiereSubClipRef(clipTrackItemElement: Element, objectRef: string)
   const subClip = getPremiereDirectChild(clipTrackItemElement, 'SubClip');
   if (!subClip) throw new Error('Premiere ClipTrackItem.SubClip을 찾지 못했습니다.');
   subClip.setAttribute('ObjectRef', objectRef);
+}
+
+function connectPremiereSourceTrackItem(params: {
+  clipTrackItem: Element;
+  subClip: Element;
+  componentChain: Element;
+  timelineClip: Element;
+  masterClipUid: string;
+  mediaSourceId: string;
+  markersId: string;
+}): void {
+  const {
+    clipTrackItem,
+    subClip,
+    componentChain,
+    timelineClip,
+    masterClipUid,
+    mediaSourceId,
+    markersId,
+  } = params;
+
+  setPremiereObjectRef(getPremiereDirectChild(clipTrackItem, 'ComponentOwner')!, componentChain.getAttribute('ObjectID') || '');
+  setPremiereSubClipRef(clipTrackItem, subClip.getAttribute('ObjectID') || '');
+  setPremiereObjectRef(getPremiereDirectChild(subClip, 'Clip')!, timelineClip.getAttribute('ObjectID') || '');
+  setPremiereObjectURef(getPremiereDirectChild(subClip, 'MasterClip')!, masterClipUid);
+
+  const clipBody = getPremiereClipBody(timelineClip);
+  setPremiereObjectRef(getPremiereDirectChild(clipBody, 'Source'), mediaSourceId);
+  const markerOwner = getPremiereDirectChild(clipBody, 'MarkerOwner');
+  const markers = markerOwner ? getPremiereDirectChild(markerOwner, 'Markers') : null;
+  if (markers && markersId) {
+    setPremiereObjectRef(markers, markersId);
+  }
 }
 
 function premiereNextObjectIdFactory(doc: Document): () => string {
@@ -1166,6 +1516,45 @@ function getPremiereTrackTransitions(trackElement: Element): Element {
   return transitionItems;
 }
 
+function ensurePremiereTrackRefsContainer(doc: Document, trackGroupMeta: Element): Element {
+  const tracks = getPremiereDirectChild(trackGroupMeta, 'Tracks');
+  if (tracks) return tracks;
+  const created = doc.createElement('Tracks');
+  created.setAttribute('Version', '1');
+  trackGroupMeta.insertBefore(created, trackGroupMeta.firstChild);
+  return created;
+}
+
+function createPremiereCaptionTrack(params: {
+  doc: Document;
+  root: Element;
+  template: Element;
+  nextObjectId: () => string;
+  trackId: number;
+  index: number;
+}): Element {
+  const {
+    doc,
+    root,
+    template,
+    nextObjectId,
+    trackId,
+    index,
+  } = params;
+  const track = clonePremiereObject(root, template, nextObjectId);
+  removePremiereChild(track, 'ParentStyle');
+  replacePremiereTrackRefs(doc, getPremiereTrackClipItems(track), []);
+  replacePremiereTrackRefs(doc, getPremiereTrackTransitions(track), []);
+  const clipTrack = getPremiereDirectChild(getPremiereDirectChild(track, 'DataClipTrack')!, 'ClipTrack');
+  const trackNode = clipTrack ? getPremiereDirectChild(clipTrack, 'Track') : null;
+  if (!trackNode) {
+    throw new Error('Premiere caption track 템플릿 구조가 예상과 다릅니다.');
+  }
+  setPremiereChildText(doc, trackNode, 'ID', String(trackId));
+  setPremiereChildText(doc, trackNode, 'Index', String(index));
+  return track;
+}
+
 function setPremiereObjectRef(element: Element | null, objectRef: string): void {
   if (!element) {
     throw new Error('Premiere ObjectRef 대상 요소를 찾지 못했습니다.');
@@ -1181,7 +1570,10 @@ function setPremiereObjectURef(element: Element | null, objectURef: string): voi
 }
 
 function clonePremiereObject(root: Element, template: Element, nextObjectId: () => string): Element {
-  const clone = template.cloneNode(true) as Element;
+  const targetDoc = root.ownerDocument;
+  const clone = template.ownerDocument !== targetDoc && typeof targetDoc.importNode === 'function'
+    ? targetDoc.importNode(template, true) as Element
+    : template.cloneNode(true) as Element;
   if (clone.hasAttribute('ObjectID')) {
     clone.setAttribute('ObjectID', nextObjectId());
   }
@@ -1190,6 +1582,76 @@ function clonePremiereObject(root: Element, template: Element, nextObjectId: () 
   }
   root.appendChild(clone);
   return clone;
+}
+
+function clonePremiereRootSubgraph(params: {
+  targetRoot: Element;
+  sourceRoot: Element;
+  refs: string[];
+  nextObjectId: () => string;
+  blockedRefs?: Iterable<string>;
+}): PremiereImportedSubgraph {
+  const {
+    targetRoot,
+    sourceRoot,
+    refs,
+    nextObjectId,
+    blockedRefs = [],
+  } = params;
+  const sourceRefs = collectPremiereReferencedRootObjects(sourceRoot, refs, blockedRefs);
+  const orderedSourceRoots = getPremiereRootObjects(sourceRoot).filter((element) => sourceRefs.has(element));
+  const oldIdToNewId = new Map<string, string>();
+  const oldUidToNewUid = new Map<string, string>();
+  const objectBySourceId = new Map<string, Element>();
+  const objectBySourceUid = new Map<string, Element>();
+  const roots = orderedSourceRoots.map((sourceElement) => {
+    const clone = clonePremiereObject(targetRoot, sourceElement, nextObjectId);
+    const sourceObjectId = sourceElement.getAttribute('ObjectID');
+    const sourceObjectUid = sourceElement.getAttribute('ObjectUID');
+    const clonedObjectId = clone.getAttribute('ObjectID');
+    const clonedObjectUid = clone.getAttribute('ObjectUID');
+    if (sourceObjectId && clonedObjectId) {
+      oldIdToNewId.set(sourceObjectId, clonedObjectId);
+      objectBySourceId.set(sourceObjectId, clone);
+    }
+    if (sourceObjectUid && clonedObjectUid) {
+      oldUidToNewUid.set(sourceObjectUid, clonedObjectUid);
+      objectBySourceUid.set(sourceObjectUid, clone);
+    }
+    return clone;
+  });
+
+  roots.forEach((rootObject) => {
+    [rootObject, ...Array.from(rootObject.querySelectorAll('*'))].forEach((node) => {
+      if (!(node instanceof Element)) return;
+      const objectRef = node.getAttribute('ObjectRef');
+      const objectURef = node.getAttribute('ObjectURef');
+      if (objectRef && oldIdToNewId.has(objectRef)) {
+        node.setAttribute('ObjectRef', oldIdToNewId.get(objectRef)!);
+      }
+      if (objectURef && oldUidToNewUid.has(objectURef)) {
+        node.setAttribute('ObjectURef', oldUidToNewUid.get(objectURef)!);
+      }
+    });
+  });
+
+  return { roots, objectBySourceId, objectBySourceUid };
+}
+
+function getPremiereImportedObjectById(graph: PremiereImportedSubgraph, sourceObjectId: string): Element {
+  const element = graph.objectBySourceId.get(sourceObjectId);
+  if (!element) {
+    throw new Error(`Premiere legacy prototype ObjectID ${sourceObjectId}를 찾지 못했습니다.`);
+  }
+  return element;
+}
+
+function getPremiereImportedObjectByUid(graph: PremiereImportedSubgraph, sourceObjectUid: string): Element {
+  const element = graph.objectBySourceUid.get(sourceObjectUid);
+  if (!element) {
+    throw new Error(`Premiere legacy prototype ObjectUID ${sourceObjectUid}를 찾지 못했습니다.`);
+  }
+  return element;
 }
 
 async function generatePremiereNativeProjectBytes(params: {
@@ -1219,20 +1681,15 @@ async function generatePremiereNativeProjectBytes(params: {
     dialogueLineBreaks,
   } = params;
 
-  const templateXml = await loadPremiereNativeTemplateXml();
-  // [FIX] &#10; 엔티티를 sentinel 문자로 보존하여 DOMParser 라운드트립 시 손실 방지.
-  // DOMParser가 &#10;을 리터럴 \n으로 디코딩하면 XMLSerializer가 복원하지 않아
-  // Premiere 내부 메타데이터(XMP Schema, Export Preset 등)가 깨진다.
-  if (templateXml.includes(PREMIERE_NEWLINE_ENTITY_SENTINEL)) {
-    throw new Error('Premiere 템플릿에 sentinel 문자(\\uE000)가 이미 존재합니다. 템플릿을 확인해주세요.');
-  }
-  const preservedXml = templateXml.replace(/&#10;/g, PREMIERE_NEWLINE_ENTITY_SENTINEL);
-  const doc = new DOMParser().parseFromString(preservedXml, 'application/xml');
-  if (doc.querySelector('parsererror')) {
-    throw new Error('Premiere native template XML 파싱에 실패했습니다.');
-  }
-
+  const [templateXml, legacyTemplateXml] = await Promise.all([
+    loadPremiereNativeTemplateXml(),
+    loadPremiereLegacyTemplateXml(),
+  ]);
+  const doc = parsePremiereProjectXml(templateXml);
+  const legacyDoc = parsePremiereProjectXml(legacyTemplateXml);
   const root = getPremiereProjectRoot(doc);
+  const legacyRoot = getPremiereProjectRoot(legacyDoc);
+
   const nextObjectId = premiereNextObjectIdFactory(doc);
   const nextNumericId = premiereNextNumericIdFactory(doc);
   const syncTimeline = buildNarrationSyncedTimeline(scenes, narrationLines, preset);
@@ -1242,7 +1699,6 @@ async function generatePremiereNativeProjectBytes(params: {
   const frameDurationTicks = getPremiereFrameDurationTicks(fps);
   const safeSequenceName = sanitizeProjectName(title, 80);
   const safeVideoName = sanitizeFileName(videoFileName);
-  const safeVideoTitle = safeVideoName.replace(/\.[^.]+$/, '');
   const sourceDurationSec = Math.max(
     videoDurationSec || 0,
     ...timings.map(t => t.sourceStartSec + t.trimEndSec),
@@ -1250,7 +1706,7 @@ async function generatePremiereNativeProjectBytes(params: {
   );
   const sourceDurationTicks = secondsToPremiereTicks(sourceDurationSec);
 
-  const sequence = getPremiereObjectByUid(doc, '1a30025c-9c12-4372-9119-b3320c2bc048');
+  const sequence = getPremiereObjectByUid(doc, PREMIERE_V45_SEQUENCE_UID);
   setPremiereChildText(doc, sequence, 'Name', safeSequenceName);
   const sequenceNode = getPremiereDirectChild(sequence, 'Node');
   const sequenceProps = sequenceNode ? getPremiereDirectChild(sequenceNode, 'Properties') : null;
@@ -1263,48 +1719,75 @@ async function generatePremiereNativeProjectBytes(params: {
     setPremiereChildText(doc, sequenceProps, 'MZ.Sequence.PreviewFrameSizeHeight', String(height));
   }
 
-  const videoTrackGroup = getPremiereObjectById(doc, '287');
-  setPremiereChildText(doc, videoTrackGroup, 'FrameRect', `0,0,${width},${height}`);
-  const videoTrackGroupMeta = getPremiereDirectChild(videoTrackGroup, 'TrackGroup');
-  if (videoTrackGroupMeta) {
-    setPremiereChildText(doc, videoTrackGroupMeta, 'FrameRate', String(frameDurationTicks));
+  // V45 템플릿에서 ObjectID가 Column과 충돌하므로 태그명으로 직접 찾기
+  const videoTrackGroup = doc.querySelector('VideoTrackGroup');
+  if (videoTrackGroup) {
+    setPremiereChildText(doc, videoTrackGroup, 'FrameRect', `0,0,${width},${height}`);
+    const videoTrackGroupMeta = getPremiereDirectChild(videoTrackGroup, 'TrackGroup');
+    if (videoTrackGroupMeta) {
+      setPremiereChildText(doc, videoTrackGroupMeta, 'FrameRate', String(frameDurationTicks));
+    }
   }
-  const dataTrackGroup = getPremiereObjectById(doc, '289');
-  const dataTrackGroupMeta = getPremiereDirectChild(dataTrackGroup, 'TrackGroup');
-  if (dataTrackGroupMeta) {
-    setPremiereChildText(doc, dataTrackGroupMeta, 'FrameRate', String(frameDurationTicks));
-    setPremiereChildText(doc, dataTrackGroupMeta, 'NextTrackID', '361');
+  // V45 템플릿에서 ObjectID가 Column과 충돌하므로 태그명으로 직접 찾기
+  const dataTrackGroup = doc.querySelector('DataTrackGroup');
+  if (dataTrackGroup) {
+    const dataTrackGroupMeta = getPremiereDirectChild(dataTrackGroup, 'TrackGroup');
+    if (dataTrackGroupMeta) {
+      setPremiereChildText(doc, dataTrackGroupMeta, 'FrameRate', String(frameDurationTicks));
+    }
   }
 
   // [FIX] 템플릿에 남아있는 원본 프로젝트 절대경로 제거
-  const projectElement = getPremiereObjectById(doc, '1');
+  const projectElement = getPremiereObjectById(doc, PREMIERE_V45_PROJECT_ID);
   const projectNode = getPremiereDirectChild(projectElement, 'Node');
   const projectProps = projectNode ? getPremiereDirectChild(projectNode, 'Properties') : null;
   if (projectProps) {
     removePremiereChild(projectProps, 'project.settings.lastknowngoodprojectpath');
+    setPremiereChildText(doc, projectProps, 'MZ.PrefixKey.OpenSequenceGuidList.1', sequence.getAttribute('ObjectUID') || '');
   }
 
-  const sourceMedia = getPremiereObjectByUid(doc, 'a2a84544-e9d2-49c2-87e5-23116e78d0fb');
-  // [FIX] RelativePath에 ./ 접두사 필수 — Premiere 자동 미디어 링크 호환
-  setPremiereChildText(doc, sourceMedia, 'RelativePath', `./media/${safeVideoName}`);
-  // [FIX] ./ 접두사 필수 — 없으면 Premiere가 절대경로 /media/로 해석하여 Link Media 에러 발생
-  setPremiereChildText(doc, sourceMedia, 'FilePath', `./media/${safeVideoName}`);
-  setPremiereChildText(doc, sourceMedia, 'ActualMediaFilePath', `./media/${safeVideoName}`);
-  setPremiereChildText(doc, sourceMedia, 'Title', safeVideoName);
-  setPremiereChildText(doc, sourceMedia, 'FileKey', premiereUuid());
-  // [FIX] 템플릿 잔여 절대경로 제거 — 미디어 재링크 실패 원인
+  const sourceGraph = clonePremiereRootSubgraph({
+    targetRoot: root,
+    sourceRoot: legacyRoot,
+    refs: [PREMIERE_LEGACY_SOURCE_MASTER_CLIP_UID, PREMIERE_LEGACY_SOURCE_MEDIA_UID],
+    nextObjectId,
+  });
+  const sourceGraphRefs = new Set([
+    ...sourceGraph.objectBySourceId.keys(),
+    ...sourceGraph.objectBySourceUid.keys(),
+  ]);
+  const cleanupRoots = new Set<Element>();
+  const protectedMediaObjectUids = new Set<string>();
+  const sourceMedia = getPremiereImportedObjectByUid(sourceGraph, PREMIERE_LEGACY_SOURCE_MEDIA_UID);
+  const sourceMediaUid = sourceMedia.getAttribute('ObjectUID') || '';
+  if (sourceMediaUid) protectedMediaObjectUids.add(sourceMediaUid);
+  // [FIX] Premiere ZIP은 .prproj와 같은 폴더의 미디어를 프로젝트 상대경로(./file)로 잡아야
+  // 트랙 아이템→SubClip→SourceMedia 체인에서 재링크가 안정적으로 유지된다.
+  setPremiereMediaFilePaths(doc, sourceMedia, safeVideoName);
   removePremiereChild(sourceMedia, 'AlternateMediaFilePath');
-  removePremiereChild(sourceMedia, 'ImporterPrefs');
-  removePremiereChild(sourceMedia, 'MediaLocatorInfo');
+  // [FIX] ImporterPrefs 추가 — Premiere가 미디어 임포터를 식별하는 핵심 메타데이터
+  // 이것이 없으면 Premiere가 파일을 찾아도 링크하지 못함
+  // 값: AQAAAAEAAAA= = 기본 미디어 임포터 설정 (Premiere Project Manager와 동일)
+  {
+    const importerPrefs = ensurePremiereDirectChildBefore(
+      doc,
+      sourceMedia,
+      'ImporterPrefs',
+      ['ModificationState', 'RelativePath', 'FilePath'],
+    );
+    importerPrefs.setAttribute('Encoding', 'base64');
+    importerPrefs.setAttribute('BinaryHash', '1da08a98-2feb-bf2a-20f7-625f00000014');
+    importerPrefs.textContent = 'AQAAAAEAAAA=';
+  }
 
-  const sourceVideoStream = getPremiereObjectById(doc, '330');
+  const sourceVideoStream = getPremiereImportedObjectById(sourceGraph, PREMIERE_LEGACY_SOURCE_VIDEO_STREAM_ID);
   setPremiereChildText(doc, sourceVideoStream, 'Duration', String(sourceDurationTicks));
   setPremiereChildText(doc, sourceVideoStream, 'FrameRect', `0,0,${width},${height}`);
   setPremiereChildText(doc, sourceVideoStream, 'FrameRate', String(frameDurationTicks));
   removePremiereChild(sourceVideoStream, 'ConformedAudioPath');
   removePremiereChild(sourceVideoStream, 'PeakFilePath');
 
-  const sourceAudioStream = getPremiereObjectById(doc, '329');
+  const sourceAudioStream = getPremiereImportedObjectById(sourceGraph, PREMIERE_LEGACY_SOURCE_AUDIO_STREAM_ID);
   // [FIX] 영상에 오디오 트랙이 없으면 AudioStream 제거 — 미디어 타입 불일치 방지
   if (!hasAudioTrack) {
     removePremiereChild(sourceMedia, 'AudioStream');
@@ -1315,48 +1798,81 @@ async function generatePremiereNativeProjectBytes(params: {
     removePremiereChild(sourceAudioStream, 'PeakFilePath');
   }
 
-  const sourceVideoMediaSource = getPremiereObjectById(doc, '224');
-  const sourceAudioMediaSource = getPremiereObjectById(doc, '225');
+  const sourceMarkers = getPremiereImportedObjectById(sourceGraph, PREMIERE_LEGACY_SOURCE_MARKERS_ID);
+  const sourceVideoMediaSource = getPremiereImportedObjectById(sourceGraph, PREMIERE_LEGACY_SOURCE_VIDEO_MEDIA_SOURCE_ID);
+  const sourceAudioMediaSource = getPremiereImportedObjectById(sourceGraph, PREMIERE_LEGACY_SOURCE_AUDIO_MEDIA_SOURCE_ID);
   setPremiereChildText(doc, sourceVideoMediaSource, 'OriginalDuration', String(sourceDurationTicks));
   if (hasAudioTrack) {
     setPremiereChildText(doc, sourceAudioMediaSource, 'OriginalDuration', String(sourceDurationTicks));
   }
 
-  const sourceMasterClip = getPremiereObjectByUid(doc, 'b96bdb66-4f6f-4cff-9d21-d4d144ff113b');
+  const renderMasterClip = getPremiereObjectByUid(doc, PREMIERE_V45_RENDER_MASTER_CLIP_UID);
+  const renderClipProjectItem = getPremiereClipProjectItemByMasterClipUid(doc, renderMasterClip.getAttribute('ObjectUID') || '');
+  const renderLoggingInfo = getPremiereObjectById(doc, PREMIERE_V45_RENDER_LOGGING_INFO_ID);
+  const renderAudioSequenceSource = getPremiereObjectById(doc, PREMIERE_V45_RENDER_AUDIO_SEQUENCE_SOURCE_ID);
+  const renderVideoSequenceSource = getPremiereObjectById(doc, PREMIERE_V45_RENDER_VIDEO_SEQUENCE_SOURCE_ID);
+  // [FIX] 템플릿 시퀀스 소스 OriginalDuration이 과거 값으로 남아 있으면
+  // Convert+Save 시 #렌더 MasterClip의 content boundary 계산이 깨질 수 있다.
+  setPremiereChildText(doc, renderAudioSequenceSource, 'OriginalDuration', String(totalTimelineTicks));
+  setPremiereChildText(doc, renderVideoSequenceSource, 'OriginalDuration', String(totalTimelineTicks));
+  setPremiereChildText(doc, renderMasterClip, 'Name', safeSequenceName);
+  if (renderClipProjectItem) {
+    setPremiereClipProjectItemName(doc, renderClipProjectItem, safeSequenceName);
+  }
+  setPremiereChildText(doc, renderLoggingInfo, 'ClipName', safeSequenceName);
+  setPremiereChildText(doc, renderLoggingInfo, 'MediaInPoint', '0');
+  setPremiereChildText(doc, renderLoggingInfo, 'MediaOutPoint', String(totalTimelineTicks));
+  setPremiereChildText(doc, renderLoggingInfo, 'MediaFrameRate', String(frameDurationTicks));
+  setPremiereChildText(doc, renderLoggingInfo, 'TimecodeFormat', fps >= 29.9 ? '104' : '100');
+  bumpPremiereNumericChildText(doc, renderMasterClip, 'MasterClipChangeVersion');
+
+  const sourceMasterClip = getPremiereImportedObjectByUid(sourceGraph, PREMIERE_LEGACY_SOURCE_MASTER_CLIP_UID);
   setPremiereChildText(doc, sourceMasterClip, 'Name', safeVideoName);
-  const sourceLoggingInfo = getPremiereObjectById(doc, '172');
+  const sourceLoggingInfo = getPremiereImportedObjectById(sourceGraph, PREMIERE_LEGACY_SOURCE_LOGGING_INFO_ID);
   setPremiereChildText(doc, sourceLoggingInfo, 'ClipName', safeVideoName);
   setPremiereChildText(doc, sourceLoggingInfo, 'MediaOutPoint', String(sourceDurationTicks));
   setPremiereChildText(doc, sourceLoggingInfo, 'MediaFrameRate', String(frameDurationTicks));
   setPremiereChildText(doc, sourceLoggingInfo, 'TimecodeFormat', fps >= 29.9 ? '104' : '100');
+  bumpPremiereNumericChildText(doc, sourceMasterClip, 'MasterClipChangeVersion');
 
-  const sourceMasterVideoClip = getPremiereObjectById(doc, '174');
+  const sourceMasterVideoClip = getPremiereImportedObjectById(sourceGraph, PREMIERE_LEGACY_SOURCE_MASTER_VIDEO_CLIP_ID);
   setPremiereClipChildText(doc, sourceMasterVideoClip, 'ClipID', premiereUuid());
-  const sourceMasterAudioClip = getPremiereObjectById(doc, '175');
+  const sourceMasterAudioClip = getPremiereImportedObjectById(sourceGraph, PREMIERE_LEGACY_SOURCE_MASTER_AUDIO_CLIP_ID);
   setPremiereClipChildText(doc, sourceMasterAudioClip, 'ClipID', premiereUuid());
 
-  const audioTrackGroup = getPremiereObjectById(doc, '288');
+  const audioTrackGroup = doc.querySelector('AudioTrackGroup') || getPremiereObjectById(doc, PREMIERE_V45_AUDIO_TRACK_GROUP_ID);
   const narrationTrack = getPremiereObjectByUid(doc, getPremiereTrackObjectURef(audioTrackGroup, 0));
   const sourceAudioTrack = getPremiereObjectByUid(doc, getPremiereTrackObjectURef(audioTrackGroup, 1));
-  const videoTrack = getPremiereObjectByUid(doc, getPremiereTrackObjectURef(videoTrackGroup, 0));
-  const dialogueCaptionTrack = getPremiereObjectByUid(doc, getPremiereTrackObjectURef(dataTrackGroup, 0));
-  const effectCaptionTrack = clonePremiereObject(root, dialogueCaptionTrack, nextObjectId);
-  effectCaptionTrack.setAttribute('ObjectUID', premiereUuid());
-  const effectCaptionTrackInner = getPremiereDirectChild(getPremiereDirectChild(effectCaptionTrack, 'DataClipTrack')!, 'ClipTrack');
-  const effectTrackNode = effectCaptionTrackInner ? getPremiereDirectChild(effectCaptionTrackInner, 'Track') : null;
-  if (effectTrackNode) {
-    setPremiereChildText(doc, effectTrackNode, 'ID', '360');
-    setPremiereChildText(doc, effectTrackNode, 'Index', '1');
+  const videoTrack = getPremiereObjectByUid(doc, getPremiereTrackObjectURef(videoTrackGroup!, 0));
+  const legacyCaptionTrackTemplate = getPremiereObjectByUid(legacyDoc, PREMIERE_LEGACY_CAPTION_TRACK_UID);
+  const dialogueCaptionTrack = createPremiereCaptionTrack({
+    doc,
+    root,
+    template: legacyCaptionTrackTemplate,
+    nextObjectId,
+    trackId: 1,
+    index: 0,
+  });
+  const effectCaptionTrack = createPremiereCaptionTrack({
+    doc,
+    root,
+    template: legacyCaptionTrackTemplate,
+    nextObjectId,
+    trackId: 2,
+    index: 1,
+  });
+  const dataTrackGroupMeta2 = dataTrackGroup ? getPremiereDirectChild(dataTrackGroup, 'TrackGroup') : null;
+  if (dataTrackGroupMeta2) {
+    const dataTrackGroupTracks = ensurePremiereTrackRefsContainer(doc, dataTrackGroupMeta2);
+    Array.from(dataTrackGroupTracks.children).forEach((child) => dataTrackGroupTracks.removeChild(child));
+    [dialogueCaptionTrack, effectCaptionTrack].forEach((track, index) => {
+      const trackRef = doc.createElement('Track');
+      trackRef.setAttribute('Index', String(index));
+      trackRef.setAttribute('ObjectURef', track.getAttribute('ObjectUID') || premiereUuid());
+      dataTrackGroupTracks.appendChild(trackRef);
+    });
+    setPremiereChildText(doc, dataTrackGroupMeta2, 'NextTrackID', '3');
   }
-
-  const dataTrackGroupTracks = getPremiereDirectChild(dataTrackGroupMeta!, 'Tracks');
-  if (!dataTrackGroupTracks) {
-    throw new Error('Premiere data track 목록을 찾지 못했습니다.');
-  }
-  const effectTrackRef = doc.createElement('Track');
-  effectTrackRef.setAttribute('Index', '1');
-  effectTrackRef.setAttribute('ObjectURef', effectCaptionTrack.getAttribute('ObjectUID') || premiereUuid());
-  dataTrackGroupTracks.appendChild(effectTrackRef);
 
   const captionBinarySpec = getPremiereCaptionBinarySpec(width, height);
   const dialogueStyleNode = ensurePremiereDirectChild(doc, dialogueCaptionTrack, 'CaptionDataTemplateStyle');
@@ -1370,113 +1886,124 @@ async function generatePremiereNativeProjectBytes(params: {
   const dialogueCaptionTrackItems: string[] = [];
   const effectCaptionTrackItems: string[] = [];
 
-  const videoTrackItemPrototype = getPremiereObjectById(doc, '310');
-  const videoComponentChainPrototype = getPremiereObjectById(doc, '347');
-  const videoSubClipPrototype = getPremiereObjectById(doc, '348');
-  const videoClipPrototype = getPremiereObjectById(doc, '462');
-
-  const sourceAudioTrackItemPrototype = getPremiereObjectById(doc, '311');
-  const sourceAudioComponentChainPrototype = getPremiereObjectById(doc, '349');
-  const sourceAudioSubClipPrototype = getPremiereObjectById(doc, '350');
-  const sourceAudioClipPrototype = getPremiereObjectById(doc, '463');
-
-  const narrationTrackItemPrototype = getPremiereObjectById(doc, '395');
-  const narrationMasterAudioComponentChainPrototype = getPremiereObjectById(doc, '162');
-  const narrationChannelGroupsPrototype = getPremiereObjectById(doc, '164');
-  const narrationComponentChainPrototype = getPremiereObjectById(doc, '487');
-  const narrationSubClipPrototype = getPremiereObjectById(doc, '488');
-  const narrationTimelineClipPrototype = getPremiereObjectById(doc, '688');
-  const narrationMasterClipPrototype = getPremiereObjectByUid(doc, 'c84729a9-5cb3-41d7-9378-9f90d0358590');
-  const narrationLoggingInfoPrototype = getPremiereObjectById(doc, '161');
-  const narrationMasterLibraryClipPrototype = getPremiereObjectById(doc, '163');
-  const narrationMediaSourcePrototype = getPremiereObjectById(doc, '218');
-  const narrationMasterSecondaryContentPrototype = getPremiereObjectById(doc, '219');
-  const narrationTimelineSecondaryContentPrototype = getPremiereObjectById(doc, '899');
-  const narrationMediaPrototype = getPremiereObjectByUid(doc, '0914c126-2e73-4679-ba02-70f0109fc2e6');
-  const narrationAudioStreamId = getPremiereDirectChild(narrationMediaPrototype, 'AudioStream')?.getAttribute('ObjectRef') || '328';
-  const narrationAudioStreamPrototype = getPremiereObjectById(doc, narrationAudioStreamId);
-
-  const captionTrackItemPrototype = getPremiereObjectById(doc, '425');
-  const captionComponentChainPrototype = getPremiereObjectById(doc, '522');
-  const captionSubClipPrototype = getPremiereObjectById(doc, '523');
-  const captionBlockPrototype = getPremiereObjectById(doc, '524');
-  const captionTranscriptClipPrototype = getPremiereObjectById(doc, '814');
-  const captionMasterClipPrototype = getPremiereObjectByUid(doc, '41ac2c57-95f7-4495-8fa1-0af1a7b5d737');
-  const captionLoggingInfoPrototype = getPremiereObjectById(doc, '907');
-  const captionMasterLibraryClipPrototype = getPremiereObjectById(doc, '908');
-  const captionChannelGroupsPrototype = getPremiereObjectById(doc, '909');
-  const captionMediaSourcePrototype = getPremiereObjectById(doc, '906');
-  const captionMediaPrototype = getPremiereObjectByUid(doc, '37b0ac5f-5b2e-4bc1-be47-ac48d5b890bf');
-  const captionDataStreamRef = getPremiereDirectChild(captionMediaPrototype, 'DataStream')?.getAttribute('ObjectRef') || '1055';
-  const captionDataStreamPrototype = getPremiereObjectById(doc, captionDataStreamRef);
-
   timings.forEach((timing) => {
     const timelineStartTicks = secondsToPremiereTicks(timing.timelineStartSec);
     const timelineEndTicks = secondsToPremiereTicks(timing.timelineEndSec);
     const sourceStartTicks = secondsToPremiereTicks(timing.sourceStartSec + timing.trimStartSec);
     const sourceEndTicks = secondsToPremiereTicks(timing.sourceStartSec + timing.trimEndSec);
 
-    const videoTrackItem = clonePremiereObject(root, videoTrackItemPrototype, nextObjectId);
-    const videoComponentChain = clonePremiereObject(root, videoComponentChainPrototype, nextObjectId);
-    const videoSubClip = clonePremiereObject(root, videoSubClipPrototype, nextObjectId);
-    const videoClip = clonePremiereObject(root, videoClipPrototype, nextObjectId);
-    setPremiereObjectRef(getPremiereDirectChild(getPremiereDirectChild(videoTrackItem, 'ClipTrackItem')!, 'ComponentOwner')!, videoComponentChain.getAttribute('ObjectID') || '');
-    setPremiereSubClipRef(getPremiereDirectChild(videoTrackItem, 'ClipTrackItem')!, videoSubClip.getAttribute('ObjectID') || '');
-    setPremiereTrackItemTimes(getPremiereDirectChild(videoTrackItem, 'ClipTrackItem')!, timelineStartTicks, timelineEndTicks);
-    setPremiereTrackInternalId(getPremiereDirectChild(videoTrackItem, 'ClipTrackItem')!, nextNumericId());
+    const sceneVideoGraph = clonePremiereRootSubgraph({
+      targetRoot: root,
+      sourceRoot: legacyRoot,
+      refs: [PREMIERE_LEGACY_VIDEO_TRACK_ITEM_ID],
+      nextObjectId,
+    });
+    const videoTrackItem = getPremiereImportedObjectById(sceneVideoGraph, PREMIERE_LEGACY_VIDEO_TRACK_ITEM_ID);
+    const videoComponentChain = getPremiereImportedObjectById(sceneVideoGraph, PREMIERE_LEGACY_VIDEO_COMPONENT_CHAIN_ID);
+    const videoSubClip = getPremiereImportedObjectById(sceneVideoGraph, PREMIERE_LEGACY_VIDEO_SUB_CLIP_ID);
+    const videoClip = getPremiereImportedObjectById(sceneVideoGraph, PREMIERE_LEGACY_TIMELINE_VIDEO_CLIP_ID);
+    const videoClipTrackItem = getPremiereDirectChild(videoTrackItem, 'ClipTrackItem')!;
+    connectPremiereSourceTrackItem({
+      clipTrackItem: videoClipTrackItem,
+      subClip: videoSubClip,
+      componentChain: videoComponentChain,
+      timelineClip: videoClip,
+      masterClipUid: sourceMasterClip.getAttribute('ObjectUID') || '',
+      mediaSourceId: sourceVideoMediaSource.getAttribute('ObjectID') || '',
+      markersId: sourceMarkers.getAttribute('ObjectID') || '',
+    });
+    setPremiereTrackItemTimes(videoClipTrackItem, timelineStartTicks, timelineEndTicks);
+    setPremiereTrackInternalId(videoClipTrackItem, nextNumericId());
     setPremiereChildText(doc, videoTrackItem, 'FrameRect', `0,0,${width},${height}`);
     setPremiereChildText(doc, videoSubClip, 'Name', safeVideoName);
-    setPremiereObjectRef(getPremiereDirectChild(videoSubClip, 'Clip')!, videoClip.getAttribute('ObjectID') || '');
-    setPremiereObjectURef(getPremiereDirectChild(videoSubClip, 'MasterClip')!, sourceMasterClip.getAttribute('ObjectUID') || '');
-    setPremiereObjectRef(getPremiereDirectChild(getPremiereClipBody(videoClip), 'Source'), sourceVideoMediaSource.getAttribute('ObjectID') || '224');
     setPremiereClipChildText(doc, videoClip, 'ClipID', premiereUuid());
     setPremiereClipChildText(doc, videoClip, 'InPoint', String(sourceStartTicks));
     setPremiereClipChildText(doc, videoClip, 'OutPoint', String(sourceEndTicks));
+    sourceGraphRefs.forEach((ref) => {
+      const duplicateRoot = sceneVideoGraph.objectBySourceId.get(ref) || sceneVideoGraph.objectBySourceUid.get(ref);
+      if (duplicateRoot) cleanupRoots.add(duplicateRoot);
+    });
     videoTrackItems.push(videoTrackItem.getAttribute('ObjectID') || '');
 
     // [FIX] 영상에 오디오 트랙이 있을 때만 소스 오디오 클립 생성
     if (hasAudioTrack) {
-      const sourceAudioTrackItem = clonePremiereObject(root, sourceAudioTrackItemPrototype, nextObjectId);
-      const sourceAudioComponentChain = clonePremiereObject(root, sourceAudioComponentChainPrototype, nextObjectId);
-      const sourceAudioSubClip = clonePremiereObject(root, sourceAudioSubClipPrototype, nextObjectId);
-      const sourceAudioClip = clonePremiereObject(root, sourceAudioClipPrototype, nextObjectId);
+      const sceneAudioGraph = clonePremiereRootSubgraph({
+        targetRoot: root,
+        sourceRoot: legacyRoot,
+        refs: [PREMIERE_LEGACY_AUDIO_TRACK_ITEM_ID],
+        nextObjectId,
+      });
+      const sourceAudioTrackItem = getPremiereImportedObjectById(sceneAudioGraph, PREMIERE_LEGACY_AUDIO_TRACK_ITEM_ID);
+      const sourceAudioComponentChain = getPremiereImportedObjectById(sceneAudioGraph, PREMIERE_LEGACY_AUDIO_COMPONENT_CHAIN_ID);
+      const sourceAudioSubClip = getPremiereImportedObjectById(sceneAudioGraph, PREMIERE_LEGACY_AUDIO_SUB_CLIP_ID);
+      const sourceAudioClip = getPremiereImportedObjectById(sceneAudioGraph, PREMIERE_LEGACY_TIMELINE_AUDIO_CLIP_ID);
       const sourceAudioClipTrackItem = getPremiereDirectChild(sourceAudioTrackItem, 'ClipTrackItem')!;
-      setPremiereObjectRef(getPremiereDirectChild(sourceAudioClipTrackItem, 'ComponentOwner')!, sourceAudioComponentChain.getAttribute('ObjectID') || '');
-      setPremiereSubClipRef(sourceAudioClipTrackItem, sourceAudioSubClip.getAttribute('ObjectID') || '');
+      connectPremiereSourceTrackItem({
+        clipTrackItem: sourceAudioClipTrackItem,
+        subClip: sourceAudioSubClip,
+        componentChain: sourceAudioComponentChain,
+        timelineClip: sourceAudioClip,
+        masterClipUid: sourceMasterClip.getAttribute('ObjectUID') || '',
+        mediaSourceId: sourceAudioMediaSource.getAttribute('ObjectID') || '',
+        markersId: sourceMarkers.getAttribute('ObjectID') || '',
+      });
       removePremiereChild(sourceAudioClipTrackItem, 'HeadTransition');
       removePremiereChild(sourceAudioClipTrackItem, 'TailTransition');
+      [PREMIERE_LEGACY_AUDIO_HEAD_TRANSITION_ID, PREMIERE_LEGACY_AUDIO_TAIL_TRANSITION_ID].forEach((ref) => {
+        const transitionRoot = sceneAudioGraph.objectBySourceId.get(ref);
+        if (transitionRoot) cleanupRoots.add(transitionRoot);
+      });
       setPremiereTrackItemTimes(sourceAudioClipTrackItem, timelineStartTicks, timelineEndTicks);
       setPremiereTrackInternalId(sourceAudioClipTrackItem, nextNumericId());
       setPremiereChildText(doc, sourceAudioSubClip, 'Name', safeVideoName);
-      setPremiereObjectRef(getPremiereDirectChild(sourceAudioSubClip, 'Clip')!, sourceAudioClip.getAttribute('ObjectID') || '');
-      setPremiereObjectURef(getPremiereDirectChild(sourceAudioSubClip, 'MasterClip')!, sourceMasterClip.getAttribute('ObjectUID') || '');
-      setPremiereObjectRef(getPremiereDirectChild(getPremiereClipBody(sourceAudioClip), 'Source'), sourceAudioMediaSource.getAttribute('ObjectID') || '225');
+      [PREMIERE_LEGACY_AUDIO_SECONDARY_CONTENT_1_ID, PREMIERE_LEGACY_AUDIO_SECONDARY_CONTENT_2_ID].forEach((ref) => {
+        const secondaryContent = sceneAudioGraph.objectBySourceId.get(ref);
+        if (secondaryContent) {
+          setPremiereObjectRef(getPremiereDirectChild(secondaryContent, 'Content')!, sourceAudioMediaSource.getAttribute('ObjectID') || '');
+        }
+      });
       setPremiereClipChildText(doc, sourceAudioClip, 'ClipID', premiereUuid());
       setPremiereClipChildText(doc, sourceAudioClip, 'InPoint', String(sourceStartTicks));
       setPremiereClipChildText(doc, sourceAudioClip, 'OutPoint', String(sourceEndTicks));
+      sourceGraphRefs.forEach((ref) => {
+        const duplicateRoot = sceneAudioGraph.objectBySourceId.get(ref) || sceneAudioGraph.objectBySourceUid.get(ref);
+        if (duplicateRoot) cleanupRoots.add(duplicateRoot);
+      });
       sourceAudioTrackItems.push(sourceAudioTrackItem.getAttribute('ObjectID') || '');
     }
 
     timing.subtitleSegments
       .filter(segment => segment.text.trim())
-      .forEach((segment) => {
-        const displayText = getDialogueSubtitleText(segment, dialogueLineBreaks);
+      .flatMap(segment => buildDialogueCaptionEntries(segment, dialogueLineBreaks))
+      .forEach((entry) => {
+        const displayText = entry.text;
         if (!displayText) return;
-        const startTicks = secondsToPremiereTicks(segment.startTime);
-        const endTicks = secondsToPremiereTicks(segment.endTime);
+        const startTicks = secondsToPremiereTicks(entry.startTime);
+        const endTicks = secondsToPremiereTicks(entry.endTime);
 
-        const captionTrackItem = clonePremiereObject(root, captionTrackItemPrototype, nextObjectId);
-        const captionComponentChain = clonePremiereObject(root, captionComponentChainPrototype, nextObjectId);
-        const captionSubClip = clonePremiereObject(root, captionSubClipPrototype, nextObjectId);
-        const captionBlock = clonePremiereObject(root, captionBlockPrototype, nextObjectId);
-        const captionTranscriptClip = clonePremiereObject(root, captionTranscriptClipPrototype, nextObjectId);
-        const captionMasterClip = clonePremiereObject(root, captionMasterClipPrototype, nextObjectId);
-        const captionLoggingInfo = clonePremiereObject(root, captionLoggingInfoPrototype, nextObjectId);
-        const captionMasterLibraryClip = clonePremiereObject(root, captionMasterLibraryClipPrototype, nextObjectId);
-        const captionChannelGroups = clonePremiereObject(root, captionChannelGroupsPrototype, nextObjectId);
-        const captionMediaSource = clonePremiereObject(root, captionMediaSourcePrototype, nextObjectId);
-        const captionMedia = clonePremiereObject(root, captionMediaPrototype, nextObjectId);
-        const captionDataStream = clonePremiereObject(root, captionDataStreamPrototype, nextObjectId);
+        const captionGraph = clonePremiereRootSubgraph({
+          targetRoot: root,
+          sourceRoot: legacyRoot,
+          refs: [
+            PREMIERE_LEGACY_CAPTION_TRACK_ITEM_ID,
+            PREMIERE_LEGACY_CAPTION_TIMELINE_TRANSCRIPT_CLIP_ID,
+            PREMIERE_LEGACY_CAPTION_MASTER_CLIP_UID,
+            PREMIERE_LEGACY_CAPTION_MEDIA_SOURCE_ID,
+          ],
+          nextObjectId,
+        });
+        const captionTrackItem = getPremiereImportedObjectById(captionGraph, PREMIERE_LEGACY_CAPTION_TRACK_ITEM_ID);
+        const captionComponentChain = getPremiereImportedObjectById(captionGraph, PREMIERE_LEGACY_CAPTION_COMPONENT_CHAIN_ID);
+        const captionSubClip = getPremiereImportedObjectById(captionGraph, PREMIERE_LEGACY_CAPTION_SUB_CLIP_ID);
+        const captionBlock = getPremiereImportedObjectById(captionGraph, PREMIERE_LEGACY_CAPTION_BLOCK_ID);
+        const captionTranscriptClip = getPremiereImportedObjectById(captionGraph, PREMIERE_LEGACY_CAPTION_TIMELINE_TRANSCRIPT_CLIP_ID);
+        const captionMasterClip = getPremiereImportedObjectByUid(captionGraph, PREMIERE_LEGACY_CAPTION_MASTER_CLIP_UID);
+        const captionLoggingInfo = getPremiereImportedObjectById(captionGraph, PREMIERE_LEGACY_CAPTION_LOGGING_INFO_ID);
+        const captionMasterLibraryClip = getPremiereImportedObjectById(captionGraph, PREMIERE_LEGACY_CAPTION_MASTER_LIBRARY_CLIP_ID);
+        const captionChannelGroups = getPremiereImportedObjectById(captionGraph, PREMIERE_LEGACY_CAPTION_CHANNEL_GROUPS_ID);
+        const captionMediaSource = getPremiereImportedObjectById(captionGraph, PREMIERE_LEGACY_CAPTION_MEDIA_SOURCE_ID);
+        const captionMedia = getPremiereImportedObjectByUid(captionGraph, PREMIERE_LEGACY_CAPTION_MEDIA_UID);
+        const captionDataStream = getPremiereImportedObjectById(captionGraph, PREMIERE_LEGACY_CAPTION_DATA_STREAM_ID);
 
         const captionClipTrackItem = getPremiereDirectChild(captionTrackItem, 'DataClipTrackItem')!;
         const captionInnerTrackItem = getPremiereDirectChild(captionClipTrackItem, 'ClipTrackItem')!;
@@ -1505,7 +2032,6 @@ async function generatePremiereNativeProjectBytes(params: {
         setPremiereClipChildText(doc, captionMasterLibraryClip, 'ClipID', premiereUuid());
         setPremiereChildText(doc, captionMasterClip, 'Name', 'SyntheticCaption');
         setPremiereChildText(doc, captionLoggingInfo, 'MediaFrameRate', String(Number.MAX_SAFE_INTEGER));
-        setPremiereChildText(doc, captionMasterClip, 'MasterClipChangeVersion', '1');
         setPremiereObjectRef(getPremiereDirectChild(captionMasterClip, 'AudioClipChannelGroups')!, captionChannelGroups.getAttribute('ObjectID') || '');
 
         setPremiereObjectURef(getPremiereDirectChild(captionMediaSource, 'MediaSource')!.querySelector('Media')!, captionMedia.getAttribute('ObjectUID') || '');
@@ -1527,24 +2053,36 @@ async function generatePremiereNativeProjectBytes(params: {
 
     timing.effectSubtitleSegments
       .filter(segment => segment.text.trim())
-      .forEach((segment) => {
-        const displayText = wrapEffectSubtitleText(breakLines(segment.text));
+      .flatMap(segment => buildEffectCaptionEntries(segment))
+      .forEach((entry) => {
+        const displayText = entry.text;
         if (!displayText) return;
-        const startTicks = secondsToPremiereTicks(segment.startTime);
-        const endTicks = secondsToPremiereTicks(segment.endTime);
+        const startTicks = secondsToPremiereTicks(entry.startTime);
+        const endTicks = secondsToPremiereTicks(entry.endTime);
 
-        const captionTrackItem = clonePremiereObject(root, captionTrackItemPrototype, nextObjectId);
-        const captionComponentChain = clonePremiereObject(root, captionComponentChainPrototype, nextObjectId);
-        const captionSubClip = clonePremiereObject(root, captionSubClipPrototype, nextObjectId);
-        const captionBlock = clonePremiereObject(root, captionBlockPrototype, nextObjectId);
-        const captionTranscriptClip = clonePremiereObject(root, captionTranscriptClipPrototype, nextObjectId);
-        const captionMasterClip = clonePremiereObject(root, captionMasterClipPrototype, nextObjectId);
-        const captionLoggingInfo = clonePremiereObject(root, captionLoggingInfoPrototype, nextObjectId);
-        const captionMasterLibraryClip = clonePremiereObject(root, captionMasterLibraryClipPrototype, nextObjectId);
-        const captionChannelGroups = clonePremiereObject(root, captionChannelGroupsPrototype, nextObjectId);
-        const captionMediaSource = clonePremiereObject(root, captionMediaSourcePrototype, nextObjectId);
-        const captionMedia = clonePremiereObject(root, captionMediaPrototype, nextObjectId);
-        const captionDataStream = clonePremiereObject(root, captionDataStreamPrototype, nextObjectId);
+        const captionGraph = clonePremiereRootSubgraph({
+          targetRoot: root,
+          sourceRoot: legacyRoot,
+          refs: [
+            PREMIERE_LEGACY_CAPTION_TRACK_ITEM_ID,
+            PREMIERE_LEGACY_CAPTION_TIMELINE_TRANSCRIPT_CLIP_ID,
+            PREMIERE_LEGACY_CAPTION_MASTER_CLIP_UID,
+            PREMIERE_LEGACY_CAPTION_MEDIA_SOURCE_ID,
+          ],
+          nextObjectId,
+        });
+        const captionTrackItem = getPremiereImportedObjectById(captionGraph, PREMIERE_LEGACY_CAPTION_TRACK_ITEM_ID);
+        const captionComponentChain = getPremiereImportedObjectById(captionGraph, PREMIERE_LEGACY_CAPTION_COMPONENT_CHAIN_ID);
+        const captionSubClip = getPremiereImportedObjectById(captionGraph, PREMIERE_LEGACY_CAPTION_SUB_CLIP_ID);
+        const captionBlock = getPremiereImportedObjectById(captionGraph, PREMIERE_LEGACY_CAPTION_BLOCK_ID);
+        const captionTranscriptClip = getPremiereImportedObjectById(captionGraph, PREMIERE_LEGACY_CAPTION_TIMELINE_TRANSCRIPT_CLIP_ID);
+        const captionMasterClip = getPremiereImportedObjectByUid(captionGraph, PREMIERE_LEGACY_CAPTION_MASTER_CLIP_UID);
+        const captionLoggingInfo = getPremiereImportedObjectById(captionGraph, PREMIERE_LEGACY_CAPTION_LOGGING_INFO_ID);
+        const captionMasterLibraryClip = getPremiereImportedObjectById(captionGraph, PREMIERE_LEGACY_CAPTION_MASTER_LIBRARY_CLIP_ID);
+        const captionChannelGroups = getPremiereImportedObjectById(captionGraph, PREMIERE_LEGACY_CAPTION_CHANNEL_GROUPS_ID);
+        const captionMediaSource = getPremiereImportedObjectById(captionGraph, PREMIERE_LEGACY_CAPTION_MEDIA_SOURCE_ID);
+        const captionMedia = getPremiereImportedObjectByUid(captionGraph, PREMIERE_LEGACY_CAPTION_MEDIA_UID);
+        const captionDataStream = getPremiereImportedObjectById(captionGraph, PREMIERE_LEGACY_CAPTION_DATA_STREAM_ID);
 
         const captionClipTrackItem = getPremiereDirectChild(captionTrackItem, 'DataClipTrackItem')!;
         const captionInnerTrackItem = getPremiereDirectChild(captionClipTrackItem, 'ClipTrackItem')!;
@@ -1573,7 +2111,6 @@ async function generatePremiereNativeProjectBytes(params: {
         setPremiereClipChildText(doc, captionMasterLibraryClip, 'ClipID', premiereUuid());
         setPremiereChildText(doc, captionMasterClip, 'Name', 'SyntheticCaption');
         setPremiereChildText(doc, captionLoggingInfo, 'MediaFrameRate', String(Number.MAX_SAFE_INTEGER));
-        setPremiereChildText(doc, captionMasterClip, 'MasterClipChangeVersion', '1');
         setPremiereObjectRef(getPremiereDirectChild(captionMasterClip, 'AudioClipChannelGroups')!, captionChannelGroups.getAttribute('ObjectID') || '');
 
         setPremiereObjectURef(getPremiereDirectChild(captionMediaSource, 'MediaSource')!.querySelector('Media')!, captionMedia.getAttribute('ObjectUID') || '');
@@ -1609,16 +2146,27 @@ async function generatePremiereNativeProjectBytes(params: {
       const narrationDurationTicks = Math.max(frameDurationTicks, narrationEndTicks - narrationStartTicks);
       const narrationFileName = sanitizeFileName(line.audioFileName || 'narration.wav'); // audioFileName이 이미 설정된 경우 blob 기반 확장자 사용됨
 
-      const narrationMasterClip = clonePremiereObject(root, narrationMasterClipPrototype, nextObjectId);
-      const narrationMasterAudioComponentChain = clonePremiereObject(root, narrationMasterAudioComponentChainPrototype, nextObjectId);
-      const narrationChannelGroups = clonePremiereObject(root, narrationChannelGroupsPrototype, nextObjectId);
-      const narrationLoggingInfo = clonePremiereObject(root, narrationLoggingInfoPrototype, nextObjectId);
-      const narrationMasterLibraryClip = clonePremiereObject(root, narrationMasterLibraryClipPrototype, nextObjectId);
-      const narrationMediaSource = clonePremiereObject(root, narrationMediaSourcePrototype, nextObjectId);
-      const narrationMasterSecondaryContent = clonePremiereObject(root, narrationMasterSecondaryContentPrototype, nextObjectId);
-      const narrationMedia = clonePremiereObject(root, narrationMediaPrototype, nextObjectId);
-      const narrationAudioStream = clonePremiereObject(root, narrationAudioStreamPrototype, nextObjectId);
-      const narrationTimelineSecondaryContent = clonePremiereObject(root, narrationTimelineSecondaryContentPrototype, nextObjectId);
+      const narrationGraph = clonePremiereRootSubgraph({
+        targetRoot: root,
+        sourceRoot: legacyRoot,
+        refs: [
+          PREMIERE_LEGACY_NARRATION_TRACK_ITEM_ID,
+          PREMIERE_LEGACY_NARRATION_MASTER_CLIP_UID,
+          PREMIERE_LEGACY_NARRATION_MEDIA_UID,
+          PREMIERE_LEGACY_NARRATION_TIMELINE_CLIP_ID,
+        ],
+        nextObjectId,
+      });
+      const narrationMasterClip = getPremiereImportedObjectByUid(narrationGraph, PREMIERE_LEGACY_NARRATION_MASTER_CLIP_UID);
+      const narrationMasterAudioComponentChain = getPremiereImportedObjectById(narrationGraph, PREMIERE_LEGACY_NARRATION_MASTER_AUDIO_COMPONENT_CHAIN_ID);
+      const narrationChannelGroups = getPremiereImportedObjectById(narrationGraph, PREMIERE_LEGACY_NARRATION_CHANNEL_GROUPS_ID);
+      const narrationLoggingInfo = getPremiereImportedObjectById(narrationGraph, PREMIERE_LEGACY_NARRATION_LOGGING_INFO_ID);
+      const narrationMasterLibraryClip = getPremiereImportedObjectById(narrationGraph, PREMIERE_LEGACY_NARRATION_MASTER_LIBRARY_CLIP_ID);
+      const narrationMediaSource = getPremiereImportedObjectById(narrationGraph, PREMIERE_LEGACY_NARRATION_MEDIA_SOURCE_ID);
+      const narrationMasterSecondaryContent = getPremiereImportedObjectById(narrationGraph, PREMIERE_LEGACY_NARRATION_MASTER_SECONDARY_CONTENT_ID);
+      const narrationMedia = getPremiereImportedObjectByUid(narrationGraph, PREMIERE_LEGACY_NARRATION_MEDIA_UID);
+      const narrationAudioStream = getPremiereImportedObjectById(narrationGraph, PREMIERE_LEGACY_NARRATION_AUDIO_STREAM_ID);
+      const narrationTimelineSecondaryContent = getPremiereImportedObjectById(narrationGraph, PREMIERE_LEGACY_NARRATION_TIMELINE_SECONDARY_CONTENT_ID);
 
       setPremiereChildText(doc, narrationMasterClip, 'Name', narrationFileName);
       setPremiereChildText(doc, narrationMasterClip, 'MasterClipChangeVersion', '1');
@@ -1648,12 +2196,9 @@ async function generatePremiereNativeProjectBytes(params: {
       setPremiereChildText(doc, narrationMediaSource, 'OriginalDuration', String(narrationDurationTicks));
 
       setPremiereObjectRef(getPremiereDirectChild(narrationMasterSecondaryContent, 'Content')!, narrationMediaSource.getAttribute('ObjectID') || '');
-      setPremiereChildText(doc, narrationMedia, 'RelativePath', `./audio/${narrationFileName}`);
-      // [FIX] ./ 접두사 필수 — Premiere 상대경로 해석 호환
-      setPremiereChildText(doc, narrationMedia, 'FilePath', `./audio/${narrationFileName}`);
-      setPremiereChildText(doc, narrationMedia, 'ActualMediaFilePath', `./audio/${narrationFileName}`);
-      setPremiereChildText(doc, narrationMedia, 'Title', narrationFileName);
-      setPremiereChildText(doc, narrationMedia, 'FileKey', premiereUuid());
+      const narrationMediaUid = narrationMedia.getAttribute('ObjectUID') || '';
+      if (narrationMediaUid) protectedMediaObjectUids.add(narrationMediaUid);
+      setPremiereMediaFilePaths(doc, narrationMedia, narrationFileName);
       const mediaAudioStreamRef = ensurePremiereDirectChild(doc, narrationMedia, 'AudioStream');
       mediaAudioStreamRef.setAttribute('ObjectRef', narrationAudioStream.getAttribute('ObjectID') || '');
 
@@ -1661,16 +2206,20 @@ async function generatePremiereNativeProjectBytes(params: {
       removePremiereChild(narrationAudioStream, 'ConformedAudioPath');
       removePremiereChild(narrationAudioStream, 'PeakFilePath');
 
-      const narrationTrackItem = clonePremiereObject(root, narrationTrackItemPrototype, nextObjectId);
-      const narrationComponentChain = clonePremiereObject(root, narrationComponentChainPrototype, nextObjectId);
-      const narrationSubClip = clonePremiereObject(root, narrationSubClipPrototype, nextObjectId);
-      const narrationTimelineClip = clonePremiereObject(root, narrationTimelineClipPrototype, nextObjectId);
+      const narrationTrackItem = getPremiereImportedObjectById(narrationGraph, PREMIERE_LEGACY_NARRATION_TRACK_ITEM_ID);
+      const narrationComponentChain = getPremiereImportedObjectById(narrationGraph, PREMIERE_LEGACY_NARRATION_COMPONENT_CHAIN_ID);
+      const narrationSubClip = getPremiereImportedObjectById(narrationGraph, PREMIERE_LEGACY_NARRATION_SUB_CLIP_ID);
+      const narrationTimelineClip = getPremiereImportedObjectById(narrationGraph, PREMIERE_LEGACY_NARRATION_TIMELINE_CLIP_ID);
 
       const narrationClipTrackItem = getPremiereDirectChild(narrationTrackItem, 'ClipTrackItem')!;
       setPremiereObjectRef(getPremiereDirectChild(narrationClipTrackItem, 'ComponentOwner')!, narrationComponentChain.getAttribute('ObjectID') || '');
       setPremiereSubClipRef(narrationClipTrackItem, narrationSubClip.getAttribute('ObjectID') || '');
       removePremiereChild(narrationClipTrackItem, 'HeadTransition');
       removePremiereChild(narrationClipTrackItem, 'TailTransition');
+      [PREMIERE_LEGACY_NARRATION_HEAD_TRANSITION_ID, PREMIERE_LEGACY_NARRATION_TAIL_TRANSITION_ID].forEach((ref) => {
+        const transitionRoot = narrationGraph.objectBySourceId.get(ref);
+        if (transitionRoot) cleanupRoots.add(transitionRoot);
+      });
       setPremiereTrackItemTimes(narrationClipTrackItem, narrationStartTicks, narrationEndTicks);
       setPremiereTrackInternalId(narrationClipTrackItem, nextNumericId());
       setPremiereChildText(doc, narrationTrackItem, 'ID', premiereUuid());
@@ -1700,6 +2249,7 @@ async function generatePremiereNativeProjectBytes(params: {
   replacePremiereTrackRefs(doc, getPremiereTrackTransitions(narrationTrack), []);
   replacePremiereTrackRefs(doc, getPremiereTrackTransitions(dialogueCaptionTrack), []);
   replacePremiereTrackRefs(doc, getPremiereTrackTransitions(effectCaptionTrack), []);
+  removePremiereRootObjects(root, cleanupRoots);
   cleanupPremiereTemplatePlaceholders(
     root,
     sourceMasterClip.getAttribute('ObjectUID') || '',
@@ -1712,14 +2262,9 @@ async function generatePremiereNativeProjectBytes(params: {
   );
 
   // [FIX] 환경 종속 경로/버전 전수 제거 — Premiere 버전·OS 무관하게 열리도록
-  sanitizePremiereEnvironmentPaths(root, doc);
+  sanitizePremiereEnvironmentPaths(root, doc, protectedMediaObjectUids);
 
-  const serialized = new XMLSerializer().serializeToString(doc);
-  // XMLSerializer가 자체 XML 선언을 추가하므로 중복 방지
-  const withoutDecl = serialized.replace(/^<\?xml[^?]*\?>\s*/, '');
-  // [FIX] sentinel 문자를 &#10; 엔티티로 복원 — 파싱 전 치환의 역연산
-  const restored = withoutDecl.replace(new RegExp(PREMIERE_NEWLINE_ENTITY_SENTINEL, 'g'), '&#10;');
-  const projectXml = `<?xml version="1.0" encoding="UTF-8" ?>\n${restored}`;
+  const projectXml = serializePremiereProjectXml(doc);
   return transformPremiereProjectBytes(new TextEncoder().encode(projectXml), 'compress');
 }
 
@@ -2864,7 +3409,7 @@ export function buildVideoAnalysisNarrationLines(params: {
   scenes: VideoSceneRow[];
   soundLines: Array<Pick<ScriptLine, 'audioUrl' | 'duration' | 'endTime' | 'sceneId' | 'startTime' | 'text' | 'ttsStatus'>>;
   versionId?: number | string;
-}): Array<{ audioUrl?: string; duration?: number; index: number; sceneId?: string; startTime?: number }> {
+}): Array<{ audioUrl?: string; duration?: number; index: number; sceneId?: string; startTime?: number; text?: string }> {
   const { scenes, soundLines, versionId } = params;
   if (scenes.length === 0 || soundLines.length === 0) return [];
 
@@ -2931,6 +3476,7 @@ export function buildVideoAnalysisNarrationLines(params: {
       index: sceneIndex,
       sceneId: matchedLine.sceneId,
       startTime: ttsStartTime,
+      text: matchedLine.text,
     };
   });
 }
@@ -3039,6 +3585,8 @@ export function generateFcpXml(params: {
   narrationLines?: ExportNarrationLine[];
   dialogueLineBreaks?: SubtitleTextOverrideMap;
   includeGraphicSubtitleTracks?: boolean;
+  /** true이면 media/ 접두사 없이 파일명만 사용 (Premiere ZIP 플랫 구조) */
+  flatMediaPaths?: boolean;
 }): string {
   const {
     scenes,
@@ -3052,8 +3600,10 @@ export function generateFcpXml(params: {
     narrationLines = [],
     dialogueLineBreaks,
     includeGraphicSubtitleTracks = true,
+    flatMediaPaths = false,
   } = params;
   const videoFileName = sanitizeFileName(rawVideoFileName);
+  const mediaPrefix = flatMediaPaths ? '' : 'media/';
   const syncTimeline = buildNarrationSyncedTimeline(scenes, narrationLines, preset);
   const nsTimings = syncTimeline.scenes;
   // 하위 호환: 기존 코드가 SceneTiming 필드를 사용하므로 매핑
@@ -3113,7 +3663,7 @@ export function generateFcpXml(params: {
     const fileTag = i === 0
       ? `<file id="file-1">
               <name>${safeFileName}</name>
-              <pathurl>media/${escXml(videoFileName)}</pathurl>
+              <pathurl>${escXml(mediaPrefix + videoFileName)}</pathurl>
               <duration>${srcTotalFrames}</duration>
               <rate><ntsc>${ntscStr}</ntsc><timebase>${timebase}</timebase></rate>
               <media>
@@ -3369,7 +3919,7 @@ export function generateFcpXml(params: {
             <start>${startFrames}</start><end>${startFrames + durFrames}</end>
             <file id="narfile-${i + 1}">
               <name>${escXml(line.audioFileName!)}</name>
-              <pathurl>${escXml(`audio/${line.audioFileName!}`)}</pathurl>
+              <pathurl>${escXml((flatMediaPaths ? '' : 'audio/') + line.audioFileName!)}</pathurl>
               <duration>${durFrames}</duration>
               <rate><ntsc>${ntscStr}</ntsc><timebase>${timebase}</timebase></rate>
               <media><audio><channelcount>2</channelcount><samplecharacteristics><samplerate>48000</samplerate><depth>16</depth></samplecharacteristics></audio></media>
@@ -4259,7 +4809,7 @@ export async function buildNlePackageZip(params: {
     if (!blob) { packagedNarrationLines.push(line); continue; }
     const fileName = `${String(i + 1).padStart(3, '0')}_narration.${audioExtFromBlob(blob)}`;
     const duration = line.duration ?? await measureBlobAudioDuration(blob) ?? 3;
-    zip.file(`audio/${fileName}`, blob);
+    zip.file(fileName, blob);
     packagedNarrationBlobs.push({ fileName, blob });
     packagedNarrationLines.push({ ...line, audioFileName: fileName, duration });
   }
@@ -4300,16 +4850,18 @@ export async function buildNlePackageZip(params: {
       narrationLines: packagedNarrationLines,
       dialogueLineBreaks,
       includeGraphicSubtitleTracks: true,
+      flatMediaPaths: true,  // Premiere ZIP은 플랫 구조
     });
     zip.file(`${safeName}.xml`, xml);
 
-    // [FIX #328] 영상 파일을 media/ 하위폴더에 배치 — XML pathurl과 일치
+    // [FIX] 영상 파일을 .prproj와 같은 루트에 배치 — Premiere가 파일명으로 자동 매칭
+    // (media/ 하위폴더 사용 시 Premiere가 상대경로를 해석하지 못해 Link Media 에러 발생)
     if (videoBlob) {
-      zip.file(`media/${videoFileName || 'video.mp4'}`, videoBlob);
+      zip.file(videoFileName || 'video.mp4', videoBlob);
     }
-    // [FIX #891/#892] 추가 소스 영상도 media/에 배치 (중복 방지된 이름 사용)
+    // 추가 소스 영상도 루트에 배치
     for (let ei = 0; ei < additionalVideoBlobs.length; ei++) {
-      zip.file(`media/${dedupedExtraNames[ei]}`, additionalVideoBlobs[ei].blob);
+      zip.file(dedupedExtraNames[ei], additionalVideoBlobs[ei].blob);
     }
 
     const videoBase = (videoFileName || 'video.mp4').replace(/\.[^.]+$/, '');
@@ -4331,14 +4883,14 @@ export async function buildNlePackageZip(params: {
       narrationLines: packagedNarrationLines,
     });
 
-    if (dialogueCaptionXml) zip.file(`media/${videoBase}.xml`, dialogueCaptionXml);
-    if (effectCaptionXml) zip.file(`media/${videoBase}_효과.xml`, effectCaptionXml);
+    if (dialogueCaptionXml) zip.file(`${videoBase}_자막_media.xml`, dialogueCaptionXml);
+    if (effectCaptionXml) zip.file(`${videoBase}_효과_media.xml`, effectCaptionXml);
 
     const dlgSrt = generateNleSrt(scenes, 'dialogue', preset, 'timeline', packagedNarrationLines, dialogueLineBreaks);
-    if (dlgSrt) zip.file(`media/${videoBase}.srt`, BOM + dlgSrt);
+    if (dlgSrt) zip.file(`${videoBase}_자막_media.srt`, BOM + dlgSrt);
 
     const fxSrt = generateNleSrt(scenes, 'effect', preset, 'timeline', packagedNarrationLines, undefined, true);
-    if (fxSrt) zip.file(`media/${videoBase}_효과.srt`, BOM + fxSrt);
+    if (fxSrt) zip.file(`${videoBase}_효과_media.srt`, BOM + fxSrt);
 
     if (dialogueCaptionXml) zip.file(`${safeName}_자막.xml`, dialogueCaptionXml);
     if (effectCaptionXml) zip.file(`${safeName}_효과자막.xml`, effectCaptionXml);
@@ -4376,7 +4928,7 @@ export async function buildNlePackageZip(params: {
       '• native .prproj에는 dialogue/effect subtitle track이 이미 포함되어 있습니다.',
       '• dialogue subtitle: 9:16 기준 중앙 배치 / 65pt / 가운데 정렬 / Gemini 줄바꿈 반영',
       '• effect subtitle: subtitle track + 괄호 자동 적용',
-      `• media/${videoBase}.xml / media/${videoBase}_효과.xml / SRT는 폴백입니다.`,
+      `• ${videoBase}_자막_media.xml / ${videoBase}_효과_media.xml / SRT는 폴백입니다.`,
       '',
       '[ 타임라인 활용 ]',
       `• 마커(Marker): 장면마다 마커 설정됨 → Shift+M / Ctrl+Shift+M으로 이동`,

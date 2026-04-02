@@ -5880,6 +5880,15 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                         });
                                         nleDimsCache.current = dims;
                                       }
+                                      if (target === 'premiere' && videoBlob && uploadedFiles[0] && inputMode !== 'youtube' && audioConfirmed) {
+                                        setNleExporting({ target, step: '3/3 패키지 생성 중... (오디오 트랙 확인)', startedAt });
+                                        const verifiedHasAudio = await verifyBlobHasAudio(videoBlob);
+                                        if (isCancelled()) return;
+                                        if (verifiedHasAudio !== audioConfirmed) {
+                                          audioConfirmed = verifiedHasAudio;
+                                          useVideoAnalysisStore.getState().setVideoBlob(videoBlob, verifiedHasAudio);
+                                        }
+                                      }
                                       // Step 3: ZIP 패키지 생성
                                       if (isCancelled()) return;
                                       setNleExporting({ target, step: '3/3 패키지 생성 중...', startedAt });

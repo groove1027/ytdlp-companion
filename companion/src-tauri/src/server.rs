@@ -978,23 +978,50 @@ fn patch_prproj_files(project_dir: &std::path::Path) -> Result<(), String> {
             xml = conformed_re.replace_all(&xml, "").to_string();
             xml = peak_re.replace_all(&xml, "").to_string();
 
-            // 3. 상대경로 → 설치된 절대경로로 변환 (Premiere가 ./media/를 못 찾는 문제 방지)
+            // 3. 파일명만 있는 경로를 절대경로로 변환 (Premiere는 절대경로만 자동 링크)
+            // regex_lite가 한글 파일명 + backreference 조합에서 실패하므로,
+            // 프로젝트 폴더의 실제 미디어 파일을 스캔하여 직접 문자열 교체
             {
                 let abs_project_path = project_dir.to_string_lossy().to_string().replace('\\', "/");
-                // RelativePath, FilePath, ActualMediaFilePath의 ./media/... 또는 ./audio/... 를 절대경로로 변환
-                let rel_media_re = regex_lite::Regex::new(
-                    r"<(RelativePath|FilePath|ActualMediaFilePath)>\./?(media/[^<]+)</\1>"
-                ).unwrap();
-                xml = rel_media_re.replace_all(&xml, |caps: &regex_lite::Captures| {
-                    format!("<{}>{}/{}</{}>", &caps[1], abs_project_path, &caps[2], &caps[1])
-                }).to_string();
-                let rel_audio_re = regex_lite::Regex::new(
-                    r"<(RelativePath|FilePath|ActualMediaFilePath)>\./?(audio/[^<]+)</\1>"
-                ).unwrap();
-                xml = rel_audio_re.replace_all(&xml, |caps: &regex_lite::Captures| {
-                    format!("<{}>{}/{}</{}>", &caps[1], abs_project_path, &caps[2], &caps[1])
-                }).to_string();
-                println!("[NLE] prproj 미디어 경로 → 절대경로 변환: {}/media/", abs_project_path);
+                let media_extensions = ["mp4","mov","avi","mkv","webm","m4v","ts","flv","wmv",
+                                        "mp3","wav","aac","m4a","ogg","flac","wma"];
+
+                // 프로젝트 폴더의 미디어 파일 목록 수집
+                let mut media_files: Vec<String> = Vec::new();
+                if let Ok(entries) = std::fs::read_dir(project_dir) {
+                    for entry in entries.flatten() {
+                        let fname = entry.file_name().to_string_lossy().to_string();
+                        if let Some(ext) = fname.rsplit('.').next() {
+                            if media_extensions.contains(&ext.to_lowercase().as_str()) {
+                                media_files.push(fname);
+                            }
+                        }
+                    }
+                }
+
+                // 각 미디어 파일에 대해 FilePath/RelativePath/ActualMediaFilePath를 절대경로로 교체
+                for fname in &media_files {
+                    let abs_path = format!("{}/{}", abs_project_path, fname);
+                    for tag in &["FilePath", "ActualMediaFilePath", "RelativePath"] {
+                        // 파일명만 있는 경우: <FilePath>filename.mp4</FilePath>
+                        let from = format!("<{0}>{1}</{0}>", tag, fname);
+                        let to = format!("<{0}>{1}</{0}>", tag, abs_path);
+                        xml = xml.replace(&from, &to);
+                        // ./파일명 경우: <FilePath>./filename.mp4</FilePath>
+                        let from_dot = format!("<{0}>./{1}</{0}>", tag, fname);
+                        xml = xml.replace(&from_dot, &to);
+                        // media/파일명 (레거시): <FilePath>media/filename.mp4</FilePath>
+                        let from_media = format!("<{0}>media/{1}</{0}>", tag, fname);
+                        xml = xml.replace(&from_media, &to);
+                        // ./media/파일명 (레거시)
+                        let from_dot_media = format!("<{0}>./media/{1}</{0}>", tag, fname);
+                        xml = xml.replace(&from_dot_media, &to);
+                        // audio/파일명 (나레이션)
+                        let from_audio = format!("<{0}>audio/{1}</{0}>", tag, fname);
+                        xml = xml.replace(&from_audio, &to);
+                    }
+                }
+                println!("[NLE] prproj 미디어 경로 → 절대경로 변환: {}/{} 파일", abs_project_path, media_files.len());
             }
 
             // 4. MZ.BuildVersion 갱신
@@ -1019,8 +1046,13 @@ fn patch_prproj_files(project_dir: &std::path::Path) -> Result<(), String> {
             let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
             encoder.write_all(xml.as_bytes())
                 .map_err(|e| format!("prproj gzip 실패: {}", e))?;
-            let gz_out = encoder.finish()
+            let mut gz_out = encoder.finish()
                 .map_err(|e| format!("prproj gzip finish 실패: {}", e))?;
+            // Premiere는 gzip OS byte로 0x13을 기대한다.
+            // 브라우저 생성본을 companion이 다시 gzip 하더라도 동일 헤더를 유지해야 저장 에러가 재발하지 않는다.
+            if gz_out.len() >= 10 {
+                gz_out[9] = 0x13;
+            }
 
             std::fs::write(&path, &gz_out)
                 .map_err(|e| format!("prproj 저장 실패: {}", e))?;

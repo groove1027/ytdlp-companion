@@ -8,6 +8,24 @@
 
 ## 🟢 완료된 작업
 
+### [2026-04-02] NLE 자막에 나레이션 텍스트 반영
+- [x] `NarrationLineLike`에 `text?: string` 추가 — 나레이션 텍스트 경로 확보
+- [x] `buildVideoAnalysisNarrationLines()`: `matchedLine.text`를 반환값에 포함
+- [x] `buildNarrationSyncedTimeline()`: 나레이션 텍스트가 있으면 원본 대사 대신 자막에 사용
+- [x] 모든 프리셋(tikitaka, snack, shopping, alltts 등) 공통 적용
+- [x] 줄바꿈 처리(`buildDialogueSubtitleOverrides`)는 기존 대사 자막과 동일하게 적용
+
+### [2026-04-02] Premiere V45 같은 폴더 자동 링크 보정
+- [x] PM 원본(43) / PM 변환본(45) / 우리 export(45) 비교 완료
+- [x] **근본 원인**: PM V45 재저장본 분석에서 `FilePath`/`ActualMediaFilePath`가 실존 절대경로여야 하며, 가짜 절대경로(`/Volumes/AllInOne/...`)는 항상 Link Media 발생 확인
+- [x] `setPremiereMediaFilePaths()`: `FilePath`/`ActualMediaFilePath`를 `./파일명` 상대경로로 변경 — PM V45와 동일한 `RelativePath` 패턴. .prproj와 같은 폴더의 미디어를 자동 매칭
+- [x] 컴패니언 server.rs는 `./파일명` 패턴을 이미 지원 (line 1010-1012) — 호환 확인
+- [x] `ImporterPrefs`를 PM과 같은 앞쪽 순서(`ModificationState` 앞)로 재배치
+
+### [2026-04-02] Premiere native `.prproj` 미디어 오프라인 근본 원인 수정
+- [x] 원인 재분석: 최신 export `.prproj`와 Premiere 26 autosave를 비교해 `ModificationState/BinaryHash`는 실제 파일 해시가 아니라 내부 상태 토큰이며, 무음 MP4에 donor `AudioStream`이 남아 있는 구조 불일치가 더 유력함을 확인
+- [x] VideoAnalysisRoom.tsx: Premiere export 직전 로컬 업로드 비디오의 실제 오디오 트랙을 `verifyBlobHasAudio()`로 재검증하고, 무음이면 `audioConfirmed=false`로 덮어써 `nleExportService`가 source `AudioMediaSource/AudioStream`을 생성하지 않도록 수정
+
 ### [2026-04-02] 컴패니언 강제 확보 + NLE 다운로드 최적화
 - [x] ytdlpApiService: ensureCompanionAvailable — 감지 실패 시 URL 스킴 강제 실행 + 15초 재감지
 - [x] VideoAnalysisRoom: 컴패니언 있으면 videoOnly=false (한 방 다운로드), CF Worker만 분리 다운로드

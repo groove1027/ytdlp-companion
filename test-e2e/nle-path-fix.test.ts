@@ -179,13 +179,36 @@ test.describe('NLE 내보내기 경로 수정 검증', () => {
       execSync(`ditto -x -k "${dlPath}" ${tmpDir}`);
       const prproj = execSync(`find ${tmpDir} -name "*.prproj" | head -1`).toString().trim();
       if (prproj) {
-        // .prproj is gzipped XML — too large for execSync buffer, use grep
-        const filePathHits = execSync(`gunzip -c "${prproj}" | grep -c '<FilePath>./media/'`).toString().trim();
-        const actualHits = execSync(`gunzip -c "${prproj}" | grep -c '<ActualMediaFilePath>./media/'`).toString().trim();
-        console.log(`[TEST] FilePath ./media/ hits: ${filePathHits}, ActualMediaFilePath: ${actualHits}`);
-        expect(parseInt(filePathHits)).toBeGreaterThan(0);
-        expect(parseInt(actualHits)).toBeGreaterThan(0);
-        console.log('[TEST] ✅ FilePath ./media/ 확인');
+        // .prproj is gzipped XML — 플랫 구조: FilePath에 파일명만 (media/ 없음)
+        const filePathVal = execSync(`gunzip -c "${prproj}" | grep -oE '<FilePath>[^<]*\\.mp4</FilePath>' | head -1`).toString().trim();
+        console.log(`[TEST] FilePath: ${filePathVal}`);
+        // media/ 경로가 아닌 파일명만 있어야 함
+        expect(filePathVal).not.toContain('media/');
+        expect(filePathVal).toContain('.mp4');
+        // Project Version="43" 확인
+        const versionHits = execSync(`gunzip -c "${prproj}" | grep -c '<Project ObjectID="1" ClassID="62ad66dd-0dcd-42da-a660-6d8fbde94876" Version="43">'`).toString().trim();
+        console.log(`[TEST] Project Version="43" hits: ${versionHits}`);
+        expect(parseInt(versionHits)).toBeGreaterThan(0);
+        const sequenceVersionHits = execSync(`gunzip -c "${prproj}" | grep -c '<Sequence ObjectUID=.*ClassID="6a15d903-8739-11d5-af2d-9b7855ad8974" Version="11">'`).toString().trim();
+        console.log(`[TEST] Sequence Version="11" hits: ${sequenceVersionHits}`);
+        expect(parseInt(sequenceVersionHits)).toBeGreaterThan(0);
+        const openSequenceHits = execSync(`gunzip -c "${prproj}" | grep -c 'MZ.PrefixKey.OpenSequenceGuidList.1>'`).toString().trim();
+        console.log(`[TEST] OpenSequence GUID hits: ${openSequenceHits}`);
+        expect(parseInt(openSequenceHits)).toBeGreaterThan(0);
+        const cutbackHits = execSync(`gunzip -c "${prproj}" | grep -c 'Cutback-221f16c1-02d7-45e4-b3b6-4856e94a6fe0' || true`).toString().trim();
+        console.log(`[TEST] stale Cutback placeholder hits: ${cutbackHits}`);
+        expect(parseInt(cutbackHits)).toBe(0);
+        // BuildVersion 확인
+        const bvHits = execSync(`gunzip -c "${prproj}" | grep -c 'MZ.BuildVersion.Created>26'`).toString().trim();
+        console.log(`[TEST] BuildVersion hits: ${bvHits}`);
+        expect(parseInt(bvHits)).toBeGreaterThan(0);
+        const staleSequenceDurationHits = execSync(`gunzip -c "${prproj}" | grep -c '<OriginalDuration>9285893568000000</OriginalDuration>' || true`).toString().trim();
+        console.log(`[TEST] stale #render OriginalDuration hits: ${staleSequenceDurationHits}`);
+        expect(parseInt(staleSequenceDurationHits)).toBe(0);
+        const staleRenderFrameRateHits = execSync(`gunzip -c "${prproj}" | grep -c '<MediaFrameRate>9223372036854775807</MediaFrameRate>' || true`).toString().trim();
+        console.log(`[TEST] stale #render MediaFrameRate hits: ${staleRenderFrameRateHits}`);
+        expect(parseInt(staleRenderFrameRateHits)).toBe(0);
+        console.log('[TEST] ✅ 플랫 구조 + V43 sequence metadata + #렌더 metadata + BuildVersion 확인');
         verified = true;
       }
     }
@@ -200,15 +223,10 @@ test.describe('NLE 내보내기 경로 수정 검증', () => {
           const prprojs = fs.readdirSync(latest).filter(f => f.endsWith('.prproj'));
           if (prprojs.length > 0) {
             const prprojPath = path.join(latest, prprojs[0]);
-            const absPathHits = execSync(`gunzip -c "${prprojPath}" | grep -c '${latest}/media/' || true`).toString().trim();
+            const absPathHits = execSync(`gunzip -c "${prprojPath}" | grep -c '${latest}/' || true`).toString().trim();
             console.log(`[TEST] 컴패니언 절대경로 hits: ${absPathHits}`);
             if (parseInt(absPathHits) > 0) {
-              console.log(`[TEST] ✅ 컴패니언 절대경로: ${latest}/media/`);
-              const mediaDir = path.join(latest, 'media');
-              if (fs.existsSync(mediaDir)) {
-                const files = fs.readdirSync(mediaDir);
-                console.log(`[TEST] ✅ media/ 파일: ${files.join(', ')}`);
-              }
+              console.log(`[TEST] ✅ 컴패니언 절대경로 prefix: ${latest}/`);
               verified = true;
             }
           }

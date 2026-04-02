@@ -20,6 +20,7 @@ export type NarrationLineLike = {
   duration?: number;
   startTime?: number;
   index?: number;
+  text?: string;
 };
 
 function parseDuration(dur: string): number {
@@ -252,6 +253,18 @@ export function buildNarrationSyncedTimeline(
     sourceCursor = sourceEndSec;
     timelineCursor = timelineEndSec;
 
+    // 나레이션 텍스트가 있으면 자막을 나레이션 텍스트로 교체 (원본 대사 대신)
+    const narrationText = narrationLines[sceneIndex]?.text?.trim();
+    const baseSubtitleSegments = narrationText
+      ? [{
+          lineId: layered[sceneIndex].subtitleSegments[0]?.lineId || `dlg-${sceneIndex + 1}`,
+          text: narrationText,
+          startTime: 0,
+          endTime: 0,
+          layerKind: 'dialogue' as const,
+        }]
+      : layered[sceneIndex].subtitleSegments;
+
     timings.push({
       sceneIndex,
       sourceStartSec,
@@ -264,7 +277,7 @@ export function buildNarrationSyncedTimeline(
       trimEndSec: effectiveTrimEnd,
       timelineStartSec,
       timelineEndSec,
-      subtitleSegments: layered[sceneIndex].subtitleSegments.map(applySceneTime),
+      subtitleSegments: baseSubtitleSegments.map(applySceneTime),
       effectSubtitleSegments: layered[sceneIndex].effectSubtitleSegments.map(applySceneTime),
     });
   }
