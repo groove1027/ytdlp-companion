@@ -109,19 +109,38 @@ export const analyzeStyleReference = async (base64: string): Promise<string> => 
     // Ensure full data URL — detect mime type from base64 header if present
     const imageUrl = base64.startsWith('data:') ? base64 : `data:image/png;base64,${base64}`;
 
+    // [FIX #947] Enhanced prompt to capture text style details for faithful replication
     const promptText = `Analyze the image **DESIGN DNA** in extreme technical detail for replication.
 
 **CRITICAL TASK**: Extract style parameters so a designer can recreate this exact look. Focus on **STRUCTURE** and **DECORATION**, ignore specific content (faces, text meaning).
 
 1. **[STRUCTURAL ELEMENTS]**: Look for ribbons, banners, text boxes, shapes behind text, or badges (e.g., "Top-left red ribbon", "Black box behind text", "Circle badge"). Describe their shape, color, and position accurately.
-2. **[TYPOGRAPHY]**: Font Family (Serif/Sans/Script/Handwritten), Weight (Bold/Thin), Width (Condensed/Wide), Kerning (Tight/Loose). Describe the font's personality (e.g., 'Aggressive Grunge', 'Clean Corporate', 'Playful Rounded').
-3. **[TEXT EFFECTS]**: Stroke (color/thickness), Drop Shadow (offset/blur/color), Glow (neon/soft), 3D Depth, Gradient Fill on text.
-4. **[COLOR PALETTE]**: Extract exact Hex codes for text, background, and accents. Describe gradient directions (e.g., 'Yellow to Orange Vertical Gradient').
-5. **[LAYOUT & COMPOSITION]**: Where is text usually placed? How does it interact with the subject?
-6. **[BACKGROUND TREATMENT]**: Is there a vignette? A solid color bar? A gradient overlay behind text for readability?
+2. **[TYPOGRAPHY — CRITICAL FOR REPLICATION]**:
+   - Font Family (Serif/Sans/Script/Handwritten/Decorative)
+   - Weight (Thin/Light/Regular/Medium/Bold/ExtraBold/Black/UltraBlack)
+   - Width (Condensed/Normal/Wide/Extended)
+   - Kerning (Very Tight/Tight/Normal/Loose/Very Loose)
+   - Text Transform (UPPERCASE/lowercase/TitleCase)
+   - Approximate size ratio vs image height (e.g., "text height is ~15% of image height")
+   - Line spacing (tight/normal/loose)
+   - Personality (e.g., 'Aggressive Grunge', 'Clean Corporate', 'Playful Rounded', 'Retro Pixel')
+   - **Describe exact visual feel**: Is it blocky? Rounded? Sharp corners? Italic slant? Handwritten with thick strokes?
+3. **[TEXT EFFECTS — MUST CAPTURE ALL]**:
+   - **Outline/Stroke**: color, thickness (thin 1px / medium 3px / thick 5px+), double stroke?
+   - **Drop Shadow**: offset direction, distance, blur radius, color, opacity
+   - **Glow**: neon glow / soft glow / no glow, glow color, glow spread
+   - **3D/Depth**: flat / slight depth / strong 3D extrusion, extrusion direction and color
+   - **Gradient Fill**: solid color / linear gradient (direction + colors) / radial gradient
+   - **Texture on Text**: smooth / grainy / metallic / glossy / matte / paper texture
+   - **Sticker Effect**: die-cut white border? How thick? Is there a shadow under the sticker?
+   - **Distortion**: warped / curved / perspective / none
+   - **Background behind text**: translucent box? gradient bar? blur region? none?
+4. **[COLOR PALETTE]**: Extract exact Hex codes for text fill, text outline, background, and accents. Describe gradient directions (e.g., 'Yellow #FFD700 to Orange #FF6B00 Vertical Gradient').
+5. **[LAYOUT & COMPOSITION]**: Where is text placed (top/center/bottom, left/center/right)? Text alignment? How does it interact with the subject? Overlap or separate?
+6. **[BACKGROUND TREATMENT]**: Is there a vignette? A solid color bar? A gradient overlay behind text for readability? Blur effect? Dark overlay?
 7. **[IGNORED ELEMENTS]**: Do NOT describe the specific person, the specific text meaning, or any channel logos/watermarks in the corner.
 
-Return a structured description string.`;
+Return a structured description string. Be extremely specific about text styling — the goal is to produce a NEW image with DIFFERENT content but the EXACT SAME text visual style.`;
 
     const messages: EvolinkChatMessage[] = [
         {

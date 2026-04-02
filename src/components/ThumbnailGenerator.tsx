@@ -113,13 +113,23 @@ const ThumbnailGenerator: React.FC<ThumbnailGeneratorProps> = ({
   const [isDragOver, setIsDragOver] = useState(false);
 
   // [NEW] Sync initial reference image/style from parent setup phase (reactive)
+  // [FIX #960] When hideReferenceArea is true, the parent manages analysis separately.
+  // Do NOT auto-trigger analyzeStyleReference here — it causes "infinite loading"
+  // when the user merely uploads a reference image without clicking "AI 분석".
   useEffect(() => {
     if (!initialReferenceImage) return;
     setReferenceImage(initialReferenceImage);
 
     if (initialExtractedStyle) {
       setExtractedStyle(initialExtractedStyle);
-    } else {
+    } else if (hideReferenceArea) {
+      // [FIX #960] Clear stale style when parent swaps the reference image
+      // without providing a new analysis yet. Prevents old image's style from
+      // leaking into generation with the new reference image.
+      setExtractedStyle(null);
+    } else if (!hideReferenceArea) {
+      // Only auto-analyze when ThumbnailGenerator owns the reference area
+      // (i.e., NOT when parent SetupPanel/ReferencePanel manages analysis)
       setIsAnalyzingRef(true);
       analyzeStyleReference(initialReferenceImage)
         .then(styleAnalysis => {
@@ -133,7 +143,7 @@ const ThumbnailGenerator: React.FC<ThumbnailGeneratorProps> = ({
           setIsAnalyzingRef(false);
         });
     }
-  }, [initialReferenceImage, initialExtractedStyle]);
+  }, [initialReferenceImage, initialExtractedStyle, hideReferenceArea]);
 
   const longThumbnails = thumbnails.filter(t => t.format === 'long');
   const shortThumbnails = thumbnails.filter(t => t.format === 'short');

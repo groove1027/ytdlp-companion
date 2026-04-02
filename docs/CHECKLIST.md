@@ -8,6 +8,14 @@
 
 ## 🟢 완료된 작업
 
+### [2026-04-03] #960 + #947 — 썸네일 스튜디오 레퍼런스 카피 버그 수정
+- [x] #960: 레퍼런스 이미지 업로드 시 무한 로딩 — ThumbnailGenerator useEffect에서 hideReferenceArea일 때 auto-analyze 차단
+- [x] #960: 새 레퍼런스 이미지 업로드 시 이전 extractedStyle 잔류 방지 — stale style 초기화 로직 추가
+- [x] #947: analyzeStyleReference 프롬프트 대폭 강화 — 폰트 weight/width/kerning, outline 두께, drop shadow, glow, gradient fill, texture, sticker border 등 세부 항목 추가
+- [x] #947: generateHighQualityThumbnail 스타일 카피 모드 프롬프트 강화 — 텍스트 효과 복제 우선순위 명시
+- [x] Codex 5.4 MCP 리뷰 10회 — 내 수정 파일(ThumbnailGenerator, imageAnalysis, thumbnailService)에 대한 치명적 이슈 0건
+- [x] Playwright E2E: 레퍼런스 업로드 후 무한 로딩 미발생 확인 + AI 분석 결과에 상세 typography 분석 포함 확인
+
 ### [2026-04-03] #982 #980 #966 — blob URL 확장 프로그램 에러 필터링
 - [x] 근본 원인: Chrome 확장 프로그램이 blob URL로 주입한 JS에서 `addListener` TypeError 발생
 - [x] `LoggerService._isExtensionError()`: blob: URL filename 필터링 추가

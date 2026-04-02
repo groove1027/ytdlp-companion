@@ -243,10 +243,24 @@ export const generateHighQualityThumbnail = async (
     if (isStyleCopy) {
         // [BRANCH A] Style Copy Mode
 
+        // [FIX #947] Enhanced text style inheritance — replicate font, effects, outline, shadow, glow faithfully
         // 1. Inherit Typography & Color from Analysis
-        targetFont = "[TYPOGRAPHY]: **STRICTLY INHERIT** the font style (Serif/Sans/Handwritten/Texture), Weight, and Effects from the [Art Style] description.";
+        targetFont = `[TYPOGRAPHY]: **STRICTLY INHERIT** ALL text styling from the [Art Style] description:
+        - Font family, weight, width, and personality
+        - Text transform (UPPERCASE/lowercase)
+        - Approximate size ratio relative to image
+        - Outline/stroke (color, thickness)
+        - Drop shadow (direction, distance, blur, color)
+        - Glow effect (neon/soft, color, spread)
+        - 3D depth/extrusion (direction, color)
+        - Text fill (solid color, gradient direction+colors)
+        - Text texture (smooth/grainy/metallic)
+        - Sticker border (if present: thickness, color)
+        - Text distortion (warp/curve/perspective)
+        - Background behind text (translucent box, gradient bar, blur)
+        Do NOT default to generic sticker style — use ONLY the effects described in the analysis.`;
 
-        colorPrompt = `[COLOR PALETTE]: **STRICTLY INHERIT** the color scheme, gradients, and text colors from the [Art Style] description.`;
+        colorPrompt = `[COLOR PALETTE]: **STRICTLY INHERIT** the color scheme, gradients, and text colors from the [Art Style] description. Match the exact hex codes listed in the analysis.`;
         if (!isBw) {
              colorPrompt += " Ensure the output is **FULL COLOR** (Vivid RGB). Do not output Black & White unless specified in the style description.";
         }
@@ -266,6 +280,15 @@ export const generateHighQualityThumbnail = async (
         [MANDATORY STYLE INHERITANCE]
         You must REPLICATE the design DNA & STRUCTURE of the reference image described below:
         ${origStyle}
+
+        [TEXT STYLE REPLICATION — HIGHEST PRIORITY]
+        - The text in the output must look like it was styled by the same designer as the reference.
+        - Copy the EXACT text effects: outline thickness, shadow direction, glow color, gradient fill, texture.
+        - If the reference has thick white sticker borders, use thick white sticker borders.
+        - If the reference has neon glow, use neon glow with the same color.
+        - If the reference has drop shadows, use drop shadows with same offset and blur.
+        - If the reference has NO text effects (clean flat text), do NOT add any effects.
+        - Match the text size ratio, position, and alignment from the reference.
 
         [READABILITY & EFFECTS]
         - **Text Visibility**: Add a **subtle dark gradient vignette** or soft shadow behind the text area to ensure readability against complex backgrounds.
