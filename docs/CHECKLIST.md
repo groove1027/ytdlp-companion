@@ -8,6 +8,13 @@
 
 ## 🟢 완료된 작업
 
+### [2026-04-03] #982 #980 #966 — blob URL 확장 프로그램 에러 필터링
+- [x] 근본 원인: Chrome 확장 프로그램이 blob URL로 주입한 JS에서 `addListener` TypeError 발생
+- [x] `LoggerService._isExtensionError()`: blob: URL filename 필터링 추가
+- [x] 스택 트레이스 전체가 blob URL일 때도 확장 프로그램으로 간주하는 로직 추가
+- [x] Codex 5.4 리뷰 10회 완료 — LoggerService 수정에 대한 문제 지적 0건
+- [x] Playwright E2E: blob 에러 필터링 성공 + 정상 에러 캡처 유지 검증
+
 ### [2026-04-02] NLE 자막에 나레이션 텍스트 반영
 - [x] `NarrationLineLike`에 `text?: string` 추가 — 나레이션 텍스트 경로 확보
 - [x] `buildVideoAnalysisNarrationLines()`: `matchedLine.text`를 반환값에 포함

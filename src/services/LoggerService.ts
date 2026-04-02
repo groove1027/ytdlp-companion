@@ -1763,11 +1763,21 @@ class LoggerService {
     const extPattern = /\b(?:chrome|moz|safari(?:-web)?)-extension:\/\//i;
     // filename이 확장 프로그램 URL이면 즉시 필터링
     if (filename && extPattern.test(filename)) return true;
+
+    // [FIX #982] blob: URL에서 발생한 에러 — 확장 프로그램이 페이지 컨텍스트에 주입한 동적 스크립트
+    // Chrome 확장이 content script를 blob URL로 실행할 때 발생 (예: addListener TypeError)
+    // 우리 앱은 blob URL에서 JS를 실행하지 않으므로 window error handler에 잡히는 blob 에러는 확장 프로그램
+    if (filename && /^blob:/.test(filename)) return true;
+
     // 스택 트레이스의 모든 URL이 확장 프로그램인 경우 필터링
     if (stack) {
       const urlPattern = /(?:https?|chrome-extension|moz-extension|safari(?:-web)?-extension):\/\/[^\s)]+/gi;
       const urls = stack.match(urlPattern);
       if (urls && urls.length > 0 && urls.every(u => extPattern.test(u))) return true;
+
+      // [FIX #982] 스택의 모든 프레임이 blob: URL이면 확장 프로그램 에러
+      const allFrameUrls = stack.match(/(?:blob:|chrome-extension:|moz-extension:|safari(?:-web)?-extension:)[^\s)]+/gi);
+      if (allFrameUrls && allFrameUrls.length > 0 && allFrameUrls.every(u => /^blob:/.test(u))) return true;
     }
     return false;
   }
