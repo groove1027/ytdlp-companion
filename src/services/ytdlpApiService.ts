@@ -137,10 +137,13 @@ export function tryLaunchCompanion(): void {
 }
 
 /**
- * [FIX #907] 컴패니언 감지 재시도 — health check 반복으로 컴패니언 연결 대기
- * NLE 내보내기 등 컴패니언이 반드시 필요한 경로에서 사용.
- * URL 스킴 강제 실행은 user gesture가 필요하므로 CompanionBanner "실행하기" 버튼에서만 수행.
- * 최종 실패 시 false 반환 (CF Worker 폴백 허용).
+ * 컴패니언 강제 확보 — 없으면 실행해서 무조건 돌아가게 만든다
+ *
+ * 흐름:
+ *   1단계: health check 2회 (이미 떠있으면 즉시 리턴)
+ *   2단계: URL 스킴으로 컴패니언 실행 (allinonehelper://launch)
+ *   3단계: 실행 후 health check 최대 15초 대기 (앱 기동 시간 고려)
+ *   4단계: 그래도 안 되면 최종 실패 → CF Worker 폴백
  */
 export async function ensureCompanionAvailable(signal?: AbortSignal): Promise<boolean> {
   const abortSleep = (ms: number) => new Promise<void>(resolve => {
@@ -154,7 +157,7 @@ export async function ensureCompanionAvailable(signal?: AbortSignal): Promise<bo
     return true;
   }
 
-  // 1단계: 즉시 health check (2회 재시도, 1초 간격) — 최대 ~2.8초
+  // 1단계: 즉시 health check (2회, 1초 간격) — 이미 떠있는지 확인
   for (let i = 0; i < 2; i++) {
     if (signal?.aborted) return false;
     _companionAvailable = null;
@@ -166,24 +169,26 @@ export async function ensureCompanionAvailable(signal?: AbortSignal): Promise<bo
     if (i < 1) await abortSleep(1000);
   }
 
-  // 2단계: 재검증 대기 (컴패니언이 방금 시작됐을 수 있음 — autostart 또는 사용자 수동 실행)
-  // 참고: URL 스킴 호출은 여기서 하지 않음 — user gesture 없이는 브라우저가 차단함
-  // URL 스킴 실행은 CompanionBanner의 "실행하기" 버튼(사용자 클릭)을 통해서만 가능
+  // 2단계: 컴패니언이 없다 → URL 스킴으로 강제 실행
   if (signal?.aborted) return false;
-  logger.info('[Companion] 감지 실패 → 재검증 대기 (3초)');
-  await abortSleep(3000);
-  for (let i = 0; i < 3; i++) {
+  logger.info('[Companion] 감지 실패 → URL 스킴으로 컴패니언 강제 실행');
+  tryLaunchCompanion();
+
+  // 3단계: 실행 후 health check 대기 (최대 15초 — 앱 기동 시간)
+  await abortSleep(2000); // 앱 기동 초기 대기
+  for (let i = 0; i < 8; i++) {
     if (signal?.aborted) return false;
     _companionAvailable = null;
     _companionCheckTime = 0;
     if (await isCompanionAvailable()) {
-      logger.info('[Companion] 재검증에서 감지 성공 (시도 ' + (i + 1) + '/3)');
+      logger.info('[Companion] 실행 후 감지 성공 (시도 ' + (i + 1) + '/8, 약 ' + (2 + i * 1.5).toFixed(0) + '초)');
       return true;
     }
-    if (i < 2) await abortSleep(1500);
+    if (i < 7) await abortSleep(1500);
   }
 
-  logger.info('[Companion] 감지 실패 — CF Worker 폴백 (컴패니언 미실행 또는 미설치)');
+  // 4단계: 최종 실패
+  logger.warn('[Companion] 강제 실행 + 15초 대기 후에도 감지 실패 — CF Worker 폴백');
   return false;
 }
 

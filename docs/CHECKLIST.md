@@ -8,6 +8,11 @@
 
 ## 🟢 완료된 작업
 
+### [2026-04-02] 컴패니언 강제 확보 + NLE 다운로드 최적화
+- [x] ytdlpApiService: ensureCompanionAvailable — 감지 실패 시 URL 스킴 강제 실행 + 15초 재감지
+- [x] VideoAnalysisRoom: 컴패니언 있으면 videoOnly=false (한 방 다운로드), CF Worker만 분리 다운로드
+- [x] 컴패니언 경유 시 audioConfirmed=true 즉시 설정 — 재다운로드 방지
+
 ### [2026-04-02] Premiere Pro V45 네이티브 템플릿 마이그레이션
 - [x] `src/assets/premiere-native-template-v45.prproj` gunzip XML 분석 완료 — V45 base는 `Sequence=2df87522...`, `VideoTrackGroup=52`, `AudioTrackGroup=53`, `DataTrackGroup=54`, `#렌더 MasterClip=0d27378e...`, `SequenceSource=45/48`만 남는 빈 프로젝트 구조임을 확인
 - [x] nleExportService.ts: native template 로더를 V45로 전환하고, V43 donor template에서 source/narration/caption 서브그래프만 동적으로 복제해 V45 빈 프로젝트에 주입하도록 변경
