@@ -15,7 +15,7 @@ import {
   type ConfirmationResult,
   type RecaptchaVerifier,
 } from '../services/firebaseAuthService';
-import { socialLogin, forgotPassword, resetPassword } from '../services/authService';
+import { socialLogin, forgotPassword, resetPassword, emailLogin } from '../services/authService';
 import { useUIStore } from '../stores/uiStore';
 
 interface AuthGateProps {
@@ -152,6 +152,17 @@ const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
     finally { setIsLoading(false); }
   }, [email, password, rememberMe, onAuthenticated]);
 
+  // ── 이메일만으로 바로 시작하기 ──
+  const handleEmailLogin = useCallback(async () => {
+    if (!email.trim()) { setError('이메일을 입력해주세요.'); return; }
+    setError(''); setIsLoading(true);
+    try {
+      const result = await emailLogin(email.trim());
+      onAuthenticated(result.user);
+    } catch (err: unknown) { setError(err instanceof Error ? err.message : '로그인 실패'); }
+    finally { setIsLoading(false); }
+  }, [email, onAuthenticated]);
+
   // ── 최종 회원가입 (handleSignupFormSubmit / handleVerifyOTP 보다 먼저 선언) ──
   const handleSignupComplete = useCallback(async (firebaseIdToken?: string) => {
     setIsLoading(true); setError('');
@@ -244,7 +255,7 @@ const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
     setNewPassword(''); setNewPasswordConfirm(''); setResetMessage(''); setError('');
   }, []);
 
-  const handleSubmit = (e: React.FormEvent) => { e.preventDefault(); mode === 'login' ? handleLogin() : handleSignupFormSubmit(); };
+  const handleSubmit = (e: React.FormEvent) => { e.preventDefault(); mode === 'login' ? (password ? handleLogin() : handleEmailLogin()) : handleSignupFormSubmit(); };
   const resetToSignupForm = () => { setSignupStep('form'); setOtpCode(''); setError(''); recaptchaRef.current = null; };
 
   const inputClass = 'w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-blue-500/50';
@@ -459,12 +470,27 @@ const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
               <div>
                 <label className="text-sm text-gray-400 mb-1.5 block">이메일</label>
                 <input type="email" value={email} onChange={e => setEmail(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && mode === 'login' && !password) { e.preventDefault(); handleEmailLogin(); } }}
                   placeholder="email@example.com" required autoComplete="username" className={inputClass} />
               </div>
+              {/* 이메일로 바로 시작하기 버튼 (로그인 모드에서만) */}
+              {mode === 'login' && (
+                <button type="button" onClick={handleEmailLogin} disabled={anyLoading || !email.trim()}
+                  className="w-full py-3 rounded-xl text-sm font-bold text-white bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:from-gray-700 disabled:to-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed transition-all shadow-lg shadow-emerald-500/20">
+                  {isLoading ? '처리 중...' : '이메일로 바로 시작하기'}
+                </button>
+              )}
+              {mode === 'login' && (
+                <div className="flex items-center gap-3">
+                  <div className="flex-1 h-px bg-gray-800" />
+                  <span className="text-xs text-gray-600">또는 비밀번호로 로그인</span>
+                  <div className="flex-1 h-px bg-gray-800" />
+                </div>
+              )}
               <div>
                 <label className="text-sm text-gray-400 mb-1.5 block">비밀번호</label>
                 <input type="password" value={password} onChange={e => setPassword(e.target.value)}
-                  placeholder={mode === 'signup' ? '8자 이상' : '비밀번호 입력'} required
+                  placeholder={mode === 'signup' ? '8자 이상' : '비밀번호 입력'} required={mode === 'signup'}
                   minLength={mode === 'signup' ? 8 : undefined} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} className={inputClass} />
               </div>
               {mode === 'signup' && (

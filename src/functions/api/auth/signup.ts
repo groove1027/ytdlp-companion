@@ -1,5 +1,6 @@
 import type { Env, InviteCodeData, UserTier } from './_types';
 import { hashPassword, generateToken } from './_crypto';
+import { enforceSessionLimit } from './_sessionLimiter';
 
 interface SignupBody {
   email: string;
@@ -91,6 +92,9 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       tierExpiresAt,
       createdAt: new Date().toISOString(),
     }), { expirationTtl: 60 * 60 * 24 * 7 });
+
+    // 동시 세션 2개 제한
+    await enforceSessionLimit(context.env.SESSIONS, email.toLowerCase(), token);
 
     return new Response(
       JSON.stringify({

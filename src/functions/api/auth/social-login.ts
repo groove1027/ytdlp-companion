@@ -5,6 +5,7 @@
  */
 import type { Env, InviteCodeData, UserTier } from './_types';
 import { generateToken } from './_crypto';
+import { enforceSessionLimit } from './_sessionLimiter';
 
 type Provider = 'google' | 'kakao' | 'naver';
 
@@ -166,6 +167,9 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         createdAt: new Date().toISOString(),
       }), { expirationTtl: 60 * 60 * 24 * 30 }); // 30일
 
+      // 동시 세션 2개 제한
+      await enforceSessionLimit(context.env.SESSIONS, existing.email, sessionToken);
+
       return new Response(JSON.stringify({
         success: true,
         token: sessionToken,
@@ -238,6 +242,9 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       tierExpiresAt,
       createdAt: new Date().toISOString(),
     }), { expirationTtl: 60 * 60 * 24 * 30 });
+
+    // 동시 세션 2개 제한
+    await enforceSessionLimit(context.env.SESSIONS, email, sessionToken);
 
     return new Response(JSON.stringify({
       success: true,

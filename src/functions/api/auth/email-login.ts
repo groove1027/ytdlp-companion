@@ -1,42 +1,35 @@
+/**
+ * 이메일만으로 로그인 (비밀번호 불필요)
+ * DB에 등록된 이메일이면 즉시 세션 발급
+ */
 import type { Env, UserTier } from './_types';
-import { verifyPassword, generateToken } from './_crypto';
+import { generateToken } from './_crypto';
 import { enforceSessionLimit } from './_sessionLimiter';
 
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   const headers = { 'Content-Type': 'application/json' };
 
   try {
-    const { email, password, rememberMe } = await context.request.json() as {
-      email: string; password: string; rememberMe?: boolean;
-    };
+    const { email } = await context.request.json() as { email: string };
 
-    if (!email || !password) {
+    if (!email) {
       return new Response(
-        JSON.stringify({ error: '이메일과 비밀번호를 입력해주세요.' }),
+        JSON.stringify({ error: '이메일을 입력해주세요.' }),
         { status: 400, headers }
       );
     }
 
     // 사용자 조회
     const user = await context.env.DB.prepare(
-      'SELECT id, email, password_hash, display_name, tier, tier_expires_at FROM users WHERE email = ?'
+      'SELECT id, email, display_name, tier, tier_expires_at FROM users WHERE email = ?'
     ).bind(email.toLowerCase()).first<{
-      id: number; email: string; password_hash: string; display_name: string | null;
+      id: number; email: string; display_name: string | null;
       tier: UserTier | null; tier_expires_at: string | null;
     }>();
 
     if (!user) {
       return new Response(
-        JSON.stringify({ error: '이메일 또는 비밀번호가 올바르지 않습니다.' }),
-        { status: 401, headers }
-      );
-    }
-
-    // 비밀번호 검증
-    const valid = await verifyPassword(password, user.password_hash);
-    if (!valid) {
-      return new Response(
-        JSON.stringify({ error: '이메일 또는 비밀번호가 올바르지 않습니다.' }),
+        JSON.stringify({ error: '등록되지 않은 이메일입니다. 관리자에게 문의해주세요.' }),
         { status: 401, headers }
       );
     }
@@ -46,8 +39,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       "UPDATE users SET last_login = datetime('now') WHERE id = ?"
     ).bind(user.id).run();
 
-    // 세션 토큰 발급 (rememberMe: 30일, 미체크: 1일, 기본: 7일)
-    const ttlDays = rememberMe === true ? 30 : rememberMe === false ? 1 : 7;
+    // 세션 토큰 발급 (30일)
     const tier: UserTier = user.tier || 'basic';
     const tierExpiresAt = user.tier_expires_at || null;
     const token = generateToken();
@@ -57,7 +49,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       tier,
       tierExpiresAt,
       createdAt: new Date().toISOString(),
-    }), { expirationTtl: 60 * 60 * 24 * ttlDays });
+    }), { expirationTtl: 60 * 60 * 24 * 30 });
 
     // 동시 세션 2개 제한
     await enforceSessionLimit(context.env.SESSIONS, user.email, token);

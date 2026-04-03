@@ -120,6 +120,21 @@ export const socialLogin = async (
   return data;
 };
 
+/** 이메일만으로 로그인 (비밀번호 불필요 — 등록된 이메일이면 즉시 입장) */
+export const emailLogin = async (email: string): Promise<{ token: string; user: AuthUser }> => {
+  const res = await fetch('/api/auth/email-login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || '로그인 실패');
+  saveAuth(data.token, data.user, true);
+  restoreApiKeysFromServer().catch((e) => { logger.trackSwallowedError('authService:emailLogin/restoreKeys', e); });
+  performFullSync().catch((e) => { logger.trackSwallowedError('authService:emailLogin/fullSync', e); });
+  return data;
+};
+
 /** 로그인 */
 export const login = async (
   email: string, password: string, rememberMe = true
