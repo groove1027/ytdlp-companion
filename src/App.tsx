@@ -259,6 +259,10 @@ const App: React.FC = () => {
     // 정상 로딩 시 청크 리로드 플래그 초기화
     sessionStorage.removeItem('__chunk_reload');
     requestPersistentStorage();
+    // [FIX #986] 제거된 OnboardingTour의 잔존 localStorage 플래그 정리
+    if (localStorage.getItem('onboarding-tour-completed')) {
+      localStorage.removeItem('onboarding-tour-completed');
+    }
     // [FIX] 앱 시작 시 음악 라이브러리 로드 — 편집실 BGM 패널에서 즉시 트랙 표시
     import('./stores/soundStudioStore').then(({ useSoundStudioStore }) => {
       useSoundStudioStore.getState().loadMusicLibrary();

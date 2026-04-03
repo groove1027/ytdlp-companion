@@ -64,6 +64,28 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
   const mergedAudioUrl = useSoundStudioStore(s => s.mergedAudioUrl);
   const setMergedAudio = useSoundStudioStore(s => s.setMergedAudio);
 
+  // [FIX #992] 페이지 리로드 후 만료된 blob URL 정리 — 재생 silent failure 방지
+  // blob: URL은 페이지 리로드 시 항상 만료됨. 세션 내 첫 마운트에서 동기적으로 정리.
+  const staleBlobChecked = useRef(false);
+  useEffect(() => {
+    if (staleBlobChecked.current || lines.length === 0) return;
+    staleBlobChecked.current = true;
+    // sessionStorage 플래그로 "이번 세션에서 생성한 blob"인지 판별
+    // 플래그가 없으면 = 새 페이지 로드 → 모든 blob: URL 만료
+    const sessionKey = '__tts_blob_session';
+    if (sessionStorage.getItem(sessionKey)) return; // 이미 세션 진행 중 → blob 유효
+    sessionStorage.setItem(sessionKey, '1');
+    const staleLines = lines.filter(l => l.ttsStatus === 'done' && l.audioUrl?.startsWith('blob:'));
+    if (staleLines.length === 0) return;
+    for (const l of staleLines) {
+      updateLine(l.id, { audioUrl: undefined, duration: undefined, ttsStatus: 'idle' });
+    }
+    if (mergedAudioUrl?.startsWith('blob:')) {
+      setMergedAudio(null);
+    }
+    logger.info(`[Sound] 페이지 리로드 감지 — ${staleLines.length}개 만료 오디오 URL 정리 완료`);
+  }, [lines.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const editorRef = useRef<HTMLDivElement>(null);
   const editorWrapRef = useRef<HTMLDivElement>(null);

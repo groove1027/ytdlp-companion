@@ -261,6 +261,25 @@ const VoiceStudio: React.FC = () => {
   const generatedScriptContent = useScriptWriterStore((s) => s.generatedScript?.content);
   const storeScript = finalScript || generatedScriptContent || '';
 
+  // [FIX #989] 프로젝트 전환 시 이전 프로젝트의 나레이션 라인 초기화
+  // loadProject()가 이미 라인을 복원한 경우(sceneId가 현재 프로젝트 장면과 매칭)는 보존
+  const currentProjectId = useProjectStore((s) => s.currentProjectId);
+  const prevProjectIdRef = React.useRef(currentProjectId);
+  useEffect(() => {
+    if (prevProjectIdRef.current && currentProjectId && prevProjectIdRef.current !== currentProjectId) {
+      // 현재 라인이 새 프로젝트의 장면과 연결되어 있는지 확인
+      const currentSceneIds = new Set(useProjectStore.getState().scenes.map(s => s.id));
+      const currentLines = useSoundStudioStore.getState().lines;
+      const hasMatchingLines = currentLines.length > 0 &&
+        currentLines.some(l => l.sceneId && currentSceneIds.has(l.sceneId));
+      // 매칭되는 라인이 없으면 → 이전 프로젝트의 잔존 데이터 → 초기화
+      if (!hasMatchingLines && currentLines.length > 0) {
+        setLines([]);
+      }
+    }
+    prevProjectIdRef.current = currentProjectId;
+  }, [currentProjectId, setLines]);
+
   const [editingLineId, setEditingLineId] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
   const [directScript, setDirectScript] = useState('');

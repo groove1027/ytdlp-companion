@@ -752,28 +752,54 @@ const isValidTypecastVoiceId = (voiceId: string): boolean =>
 
 /**
  * 빌트인 전용 음성(가짜 ID)이면 같은 이름의 API 음성으로 교체 시도.
- * 교체 실패 시 에러를 던진다.
+ * [FIX #990] 교체 실패 시 캐시 새로고침 후 재시도, 그래도 실패하면 첫 번째 API 음성으로 폴백.
  */
-const resolveVoiceId = (voiceId: string): string => {
+const resolveVoiceId = async (voiceId: string): Promise<string> => {
   if (isValidTypecastVoiceId(voiceId)) return voiceId;
 
-  // 가짜 ID → 캐시에서 이름으로 검색하여 실제 ID 추출
-  if (cachedVoices) {
-    const fakeVoice = cachedVoices.find(v => v.voice_id === voiceId);
-    if (fakeVoice) {
-      // 같은 이름이지만 유효한 hex ID를 가진 음성 찾기
-      const realVoice = cachedVoices.find(
-        v => v.name === fakeVoice.name && v.voice_id !== voiceId && isValidTypecastVoiceId(v.voice_id),
-      );
-      if (realVoice) {
-        logger.info(`[Typecast] 빌트인 ID "${voiceId}" → 실제 ID "${realVoice.voice_id}" 자동 교체 (${fakeVoice.name})`);
-        return realVoice.voice_id;
-      }
+  // 빌트인 목록에서 이름 찾기 (캐시가 API 전용이면 빌트인에 없을 수 있음)
+  const fakeVoiceName = (() => {
+    const fromCache = cachedVoices?.find(v => v.voice_id === voiceId);
+    if (fromCache) return fromCache.name;
+    const fromBuiltin = BUILTIN_TYPECAST_VOICES.find(v => v.voice_id === voiceId);
+    return fromBuiltin?.name || '';
+  })();
+
+  // 1차: 현재 캐시에서 이름 매칭
+  if (cachedVoices && fakeVoiceName) {
+    const realVoice = cachedVoices.find(
+      v => v.name === fakeVoiceName && v.voice_id !== voiceId && isValidTypecastVoiceId(v.voice_id),
+    );
+    if (realVoice) {
+      logger.info(`[Typecast] 빌트인 ID "${voiceId}" → 실제 ID "${realVoice.voice_id}" 자동 교체 (${fakeVoiceName})`);
+      return realVoice.voice_id;
     }
   }
 
+  // 2차: 캐시 새로고침 후 재시도 (기존 캐시 유지 — 동시 TTS 생성과의 경합 방지)
+  try {
+    const freshVoices = await fetchTypecastVoices();
+    if (freshVoices && fakeVoiceName) {
+      const realVoice = freshVoices.find(
+        v => v.name === fakeVoiceName && v.voice_id !== voiceId && isValidTypecastVoiceId(v.voice_id),
+      );
+      if (realVoice) {
+        logger.info(`[Typecast] 캐시 새로고침 후 빌트인 ID "${voiceId}" → "${realVoice.voice_id}" 교체 (${fakeVoiceName})`);
+        return realVoice.voice_id;
+      }
+    }
+    // 3차: 이름 매칭 실패 → 첫 번째 유효 API 음성으로 폴백
+    const anyValid = (freshVoices || cachedVoices || []).find(v => isValidTypecastVoiceId(v.voice_id));
+    if (anyValid) {
+      logger.warn(`[Typecast] "${fakeVoiceName || voiceId}" 매칭 실패 → "${anyValid.name}" (${anyValid.voice_id})로 대체`);
+      return anyValid.voice_id;
+    }
+  } catch (e) {
+    logger.trackSwallowedError('typecastService:resolveVoiceId:refresh', e);
+  }
+
   throw new Error(
-    `이 음성은 현재 TTS에 사용할 수 없습니다. 다른 음성을 선택해주세요. (voice_id: ${voiceId})`,
+    `Typecast API에 연결할 수 없어 음성을 사용할 수 없습니다. API 키를 확인하고 새로고침해 주세요. (voice_id: ${voiceId})`,
   );
 };
 
@@ -802,8 +828,8 @@ export const generateTypecastTTS = async (
   const cleanText = stripSpeakerTags(text);
   if (!cleanText.trim()) throw new Error('TTS 텍스트가 비어있습니다.');
 
-  // [FIX #459] 빌트인 전용 가짜 voice_id → 실제 API voice_id로 교체
-  const resolvedVoiceId = resolveVoiceId(options.voiceId);
+  // [FIX #459][FIX #990] 빌트인 전용 가짜 voice_id → 실제 API voice_id로 교체
+  const resolvedVoiceId = await resolveVoiceId(options.voiceId);
   if (resolvedVoiceId !== options.voiceId) {
     options = { ...options, voiceId: resolvedVoiceId };
   }
