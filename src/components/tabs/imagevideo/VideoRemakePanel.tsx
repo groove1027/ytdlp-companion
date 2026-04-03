@@ -118,6 +118,12 @@ const VideoRemakePanel: React.FC = () => {
 
       const taskId = await createWanV2VTask(publicUrl, v2vPrompt.trim(), '10', resolution);
 
+      // [FIX #976] 태스크 생성 직후 비용 차감 (API 크레딧은 생성 시점에 소모)
+      const cost = resolution === '1080p'
+        ? 10 * PRICING.VIDEO_WAN_V2V_1080P_PER_SEC
+        : 10 * PRICING.VIDEO_WAN_V2V_720P_PER_SEC;
+      addCost(cost, 'video');
+
       // 3. 폴링
       const result = await pollKieTask(taskId, controller.signal, (pct) => {
         setProgress(`변환 중... ${pct}%`);
@@ -128,12 +134,6 @@ const VideoRemakePanel: React.FC = () => {
       setResultUrl(result);
       setPhase('done');
       setProgress('변환 완료!');
-
-      // 비용 추가
-      const cost = resolution === '1080p'
-        ? 10 * PRICING.VIDEO_WAN_V2V_1080P_PER_SEC
-        : 10 * PRICING.VIDEO_WAN_V2V_720P_PER_SEC;
-      addCost(cost, 'video');
 
     } catch (err: unknown) {
       setIsTimerActive(false);

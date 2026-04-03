@@ -292,8 +292,14 @@ export const useVideoBatch = (
                         scene.imageUrl,
                         undefined,
                         "nano-banana-2",
-                        0.25 
+                        0.25
                     );
+                    // [FIX #976] 이미지 워싱도 KIE 크레딧을 소모하므로 비용 추적
+                    // generateKieImage는 Kie nano-banana-2 사용 → FALLBACK 가격 적용
+                    if (onCostAdd) {
+                        onCostAdd(PRICING.IMAGE_GENERATION_FALLBACK, 'image');
+                        logger.info(`[Cost] Scene ${sceneId} — 이미지 워싱 비용 $${PRICING.IMAGE_GENERATION_FALLBACK.toFixed(3)} 차감`);
+                    }
                     const washedFile = base64ToFile(washedBase64, `washed_scene_${sceneId}.png`);
                     publicImageUrl = await uploadMediaToHosting(washedFile);
                     logger.success(`[Auto-Retry] Image washed and uploaded: ${publicImageUrl}`);
@@ -433,7 +439,10 @@ export const useVideoBatch = (
                 culturalContext: culturalContextStr || undefined,
             });
 
-            // Cost calculation — Google Veo는 무료 (쿠키 기반)
+            // [FIX #976] Cost calculation — 태스크 생성 직후 비용 차감
+            // API 서버는 태스크 생성(create) 시점에 크레딧을 소모하므로,
+            // 폴링 결과(성공/실패)와 무관하게 즉시 비용을 기록해야 한다.
+            // 기존: poll 성공 후에만 비용 차감 → 실패 시 비용 미반영 → 대시보드와 실제 소비 불일치
             if (effectiveModel === VideoModel.GOOGLE_VEO) {
                 estimatedCost = 0;
             } else if (effectiveModel === VideoModel.VEO || effectiveModel === VideoModel.VEO_QUALITY) {
@@ -442,6 +451,12 @@ export const useVideoBatch = (
                 estimatedCost = effectiveDuration === '10' ? PRICING.VIDEO_GROK_10S : PRICING.VIDEO_GROK_6S;
             } else if (effectiveModel === VideoModel.SEEDANCE) {
                 estimatedCost = PRICING.VIDEO_SEEDANCE_PER_SEC * Number(effectiveDuration);
+            }
+
+            // [FIX #976] 태스크 생성 성공 = API 크레딧 소모 확정 → 즉시 비용 기록
+            if (onCostAdd && estimatedCost > 0) {
+                onCostAdd(estimatedCost, 'video');
+                logger.info(`[Cost] Scene ${sceneId} — 비용 $${estimatedCost.toFixed(3)} 즉시 차감 (모델: ${effectiveModel}, 태스크: ${taskId})`);
             }
 
             if (signal.aborted) throw new Error("Cancelled by user");
@@ -454,10 +469,6 @@ export const useVideoBatch = (
 
             const videoUrl = await provider.poll(taskId, signal, handleProgress);
             logger.trackGenerationResult({ type: 'video', sceneId, success: true, provider: effectiveModel, duration: Math.round(performance.now() - vidGenStart) });
-
-            if (onCostAdd && estimatedCost > 0) {
-                onCostAdd(estimatedCost, 'video');
-            }
 
             const isNativeHQ = effectiveModel === VideoModel.VEO || (effectiveModel === VideoModel.GROK && explicitUpscaleRequest);
 
@@ -699,6 +710,16 @@ export const useVideoBatch = (
 
             const taskId = await createXaiVideoEditTask(scene.sourceVideoUrl, prompt, resolution);
 
+            // [FIX #976] V2V도 태스크 생성 직후 비용 차감 (API 크레딧은 생성 시점에 소모)
+            const segDuration = (scene.v2vSegmentEndSec !== undefined && scene.v2vSegmentStartSec !== undefined)
+                ? (scene.v2vSegmentEndSec - scene.v2vSegmentStartSec)
+                : 8;
+            const v2vCost = PRICING.VIDEO_WAN_V2V_720P_PER_SEC * segDuration;
+            if (onCostAdd) {
+                onCostAdd(v2vCost, 'video');
+                logger.info(`[Cost] V2V Scene ${sceneId} — 비용 $${v2vCost.toFixed(3)} 즉시 차감 (태스크: ${taskId})`);
+            }
+
             if (signal.aborted) throw new Error("Cancelled by user");
             storeUpdateScene(sceneId, { generationTaskId: taskId });
 
@@ -707,12 +728,6 @@ export const useVideoBatch = (
             };
 
             const videoUrl = await pollXaiVideoEditTask(taskId, signal, handleProgress);
-
-            // Cost: Wan V2V 720p $0.07/sec
-            const segDuration = (scene.v2vSegmentEndSec !== undefined && scene.v2vSegmentStartSec !== undefined)
-                ? (scene.v2vSegmentEndSec - scene.v2vSegmentStartSec)
-                : 8;
-            if (onCostAdd) onCostAdd(PRICING.VIDEO_WAN_V2V_720P_PER_SEC * segDuration, 'video');
 
             // [#492] 이전 영상 백업 (V2V)
             const prevV2V = useProjectStore.getState().scenes.find(s => s.id === sceneId)?.videoUrl;

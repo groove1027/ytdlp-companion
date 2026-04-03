@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { getStoredKeys, saveApiKeys, saveVmakeKeys, syncApiKeysToServer, getYoutubeApiKeyPool, saveYoutubeApiKeyPool, getActiveYoutubeKeyIndex } from '../services/apiService';
+import { getStoredKeys, saveApiKeys, saveVmakeKeys, saveReferenceSearchKeys, syncApiKeysToServer, getYoutubeApiKeyPool, saveYoutubeApiKeyPool, getActiveYoutubeKeyIndex } from '../services/apiService';
 import { showToast } from '../stores/uiStore';
 import { useAuthGuard } from '../hooks/useAuthGuard';
 import { useAuthStore } from '../stores/authStore';
@@ -31,6 +31,8 @@ const SERVICE_OPTIONS = [
     { value: 'apimart', label: 'APIMart' },
     { value: 'xai', label: 'X AI' },
     { value: 'gemini', label: 'Gemini' },
+    { value: 'serper', label: 'Serper (이미지 검색)' },
+    { value: 'pexels', label: 'Pexels (무료 스톡)' },
 ];
 
 const EXPORT_MAP: [string, string][] = [
@@ -44,6 +46,8 @@ const EXPORT_MAP: [string, string][] = [
     ['APIMART', 'apimart'],
     ['X_AI', 'xai'],
     ['GEMINI', 'gemini'],
+    ['SERPER', 'serper'],
+    ['PEXELS', 'pexels'],
 ];
 
 // 라벨→필드 매핑 (KEY=VALUE, JSON, 주변 텍스트 감지용)
@@ -61,6 +65,8 @@ const LABEL_MAP: [RegExp, string][] = [
     [/gemini/i, 'gemini'],
     [/laozhang/i, 'laozhang'],
     [/giphy/i, 'giphy'],
+    [/serper/i, 'serper'],
+    [/pexels/i, 'pexels'],
 ];
 
 // 패턴→서비스 규칙 (키 값 자체의 형태로 판별)
@@ -235,10 +241,12 @@ const assignRemaining = (entries: DetectedKey[], assigned: Set<string>): Detecte
 
 const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
     const { requireAuth } = useAuthGuard();
-    const [keys, setKeys] = useState({ kie: '', cloudName: '', uploadPreset: '', gemini: '', apimart: '', removeBg: '', xai: '', evolink: '', youtubeApiKey: '', typecast: '', vmakeAk: '', vmakeSk: '' });
+    const [keys, setKeys] = useState({ kie: '', cloudName: '', uploadPreset: '', gemini: '', apimart: '', removeBg: '', xai: '', evolink: '', youtubeApiKey: '', typecast: '', vmakeAk: '', vmakeSk: '', serper: '', pexels: '' });
     const [youtubeKeyPool, setYoutubeKeyPool] = useState<string[]>([]);
     const [newYoutubeKey, setNewYoutubeKey] = useState('');
     const [showPassword, setShowPassword] = useState(false);
+    // [FIX #928] 체험판 Google Gemini 키 변경 감지용 초기값
+    const [initialGoogleGeminiKey, setInitialGoogleGeminiKey] = useState('');
     const [showBulk, setShowBulk] = useState(false);
     const [bulkText, setBulkText] = useState('');
     const [detected, setDetected] = useState<DetectedKey[]>([]);
@@ -326,6 +334,8 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
                 typecast: stored.typecast,
                 vmakeAk: stored.vmakeAk,
                 vmakeSk: stored.vmakeSk,
+                serper: stored.serper,
+                pexels: stored.pexels,
             });
             // YouTube API 키 풀 로드 (없으면 기존 단일 키로 초기화)
             const pool = getYoutubeApiKeyPool();
@@ -337,6 +347,7 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
                 setYoutubeKeyPool([]);
             }
             setNewYoutubeKey('');
+            setInitialGoogleGeminiKey(stored.googleGeminiKey || '');
         }
     }, [isOpen]);
 
@@ -344,27 +355,74 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
     useEffect(() => {
         if (!isOpen) return;
         const handleKeyDown = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') onClose();
+            if (e.key === 'Escape') handleClose();
         };
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [isOpen, onClose]);
+    }, [isOpen, onClose, keys, youtubeKeyPool, newYoutubeKey, initialGoogleGeminiKey]);
 
-    const handleSave = () => {
-        if (!requireAuth('API 키 저장')) return;
-        // [FIX #337] 입력 중인 YouTube 키가 있으면 풀에 자동 추가 (사용자가 "+ 추가" 안 눌러도 저장)
+    // [FIX #928] localStorage에 즉시 저장하는 헬퍼 (handleSave, handleClose 공용)
+    const persistKeys = () => {
         const finalYoutubePool = newYoutubeKey.trim()
             ? [...youtubeKeyPool, newYoutubeKey.trim()]
             : youtubeKeyPool;
-        // YouTube API 키 풀 저장
         saveYoutubeApiKeyPool(finalYoutubePool);
         const primaryYoutubeKey = finalYoutubePool.length > 0 ? finalYoutubePool[0] : '';
         saveApiKeys(keys.kie, keys.cloudName, keys.uploadPreset, undefined, keys.apimart, keys.removeBg, keys.xai, keys.evolink, primaryYoutubeKey, keys.typecast);
         saveVmakeKeys(keys.vmakeAk || '', keys.vmakeSk || '');
-        // 서버에도 동기화 (계정에 연동 — 다른 기기에서도 복원 가능)
-        syncApiKeysToServer().catch(() => {});
+        saveReferenceSearchKeys(keys.serper || '', keys.pexels || '');
+    };
+
+    // [FIX #928] 현재 state가 localStorage와 다른지 판별
+    const hasUnsavedChanges = (): boolean => {
+        const stored = getStoredKeys();
+        if (stored.evolink !== keys.evolink
+            || stored.kie !== keys.kie
+            || stored.cloudName !== keys.cloudName
+            || stored.uploadPreset !== keys.uploadPreset
+            || stored.apimart !== keys.apimart
+            || stored.removeBg !== keys.removeBg
+            || stored.xai !== keys.xai
+            || stored.typecast !== keys.typecast
+            || (stored.vmakeAk || '') !== (keys.vmakeAk || '')
+            || (stored.vmakeSk || '') !== (keys.vmakeSk || '')
+            || (stored.serper || '') !== (keys.serper || '')
+            || (stored.pexels || '') !== (keys.pexels || '')) return true;
+        // [FIX #928] 체험판 Google Gemini 키는 onChange에서 직접 localStorage에 쓰므로
+        // 모달 열릴 때 캡처한 초기값과 현재 localStorage 값을 비교
+        const currentGoogleKey = localStorage.getItem('CUSTOM_GOOGLE_GEMINI_KEY') || '';
+        if (currentGoogleKey !== initialGoogleGeminiKey) return true;
+        // YouTube 키 풀도 비교
+        const savedPool = getYoutubeApiKeyPool();
+        const currentPool = newYoutubeKey.trim() ? [...youtubeKeyPool, newYoutubeKey.trim()] : youtubeKeyPool;
+        if (savedPool.length !== currentPool.length) return true;
+        for (let i = 0; i < savedPool.length; i++) {
+            if (savedPool[i] !== currentPool[i]) return true;
+        }
+        return false;
+    };
+
+    const handleSave = async () => {
+        if (!requireAuth('API 키 저장')) return;
+        persistKeys();
+        // [FIX #928] 서버 동기화를 await — 완료 후 새로고침해야 서버 복원 시 최신 값 유지
+        showToast('설정을 저장하는 중...', 3000);
+        try {
+            await syncApiKeysToServer();
+        } catch { /* 서버 동기화 실패해도 로컬 저장은 완료됨 */ }
         showToast('설정이 저장되었습니다. 페이지를 새로고침합니다.', 1500);
         setTimeout(() => window.location.reload(), 1500);
+    };
+
+    // [FIX #928] 닫기 시 변경사항이 있으면 자동 저장 (사용자가 "저장" 안 눌러도 반영)
+    const handleClose = () => {
+        if (hasUnsavedChanges()) {
+            persistKeys();
+            // 서버 동기화도 시도 (fire-and-forget — 모달 닫는 데 방해 X)
+            syncApiKeysToServer().catch(() => {});
+            showToast('변경된 API 키가 자동 저장되었습니다.', 2000);
+        }
+        onClose();
     };
 
     if (!isOpen) return null;
@@ -377,7 +435,7 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
         'bg-amber-600/20 text-amber-400 border-amber-500/30';
 
     return (
-        <div className="fixed inset-0 bg-black/80 z-[9999] flex items-center justify-center p-4" onClick={onClose}>
+        <div className="fixed inset-0 bg-black/80 z-[9999] flex items-center justify-center p-4" onClick={handleClose}>
             <div data-api-settings className="bg-gray-800 rounded-xl border border-gray-700 shadow-2xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto animate-fade-in-up custom-scrollbar" onClick={(e) => e.stopPropagation()}>
                 <div className="flex justify-between items-center mb-4">
                     <h2 className="text-xl font-bold text-white flex items-center gap-2">
@@ -666,7 +724,7 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
                 </div>
 
                 <div className="flex gap-3 mt-8 pt-4 border-t border-gray-700">
-                    <button onClick={onClose} className="flex-1 py-3 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded text-base font-bold transition-colors">닫기</button>
+                    <button onClick={handleClose} className="flex-1 py-3 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded text-base font-bold transition-colors">닫기</button>
                     <button onClick={handleSave} className="flex-1 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded text-base font-bold shadow-lg transition-transform hover:scale-105">설정 저장 및 적용</button>
                 </div>
             </div>

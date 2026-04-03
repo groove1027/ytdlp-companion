@@ -161,6 +161,16 @@ export const getFeedbackUrl = (): string => {
     return DEFAULT_FEEDBACK_URL;
 };
 
+export const getSerperKey = (): string => {
+    const key = localStorage.getItem('CUSTOM_SERPER_KEY') || '';
+    return sanitizeKey(key);
+};
+
+export const getPexelsKey = (): string => {
+    const key = localStorage.getItem('CUSTOM_PEXELS_KEY') || '';
+    return sanitizeKey(key);
+};
+
 export const saveApiKeys = (kie: string, cloudName?: string, uploadPreset?: string, gemini?: string, apimart?: string, removeBg?: string, xai?: string, evolink?: string, youtubeApiKey?: string, typecast?: string) => {
     // Save raw input, but sanitized on retrieval
     if (kie.trim()) localStorage.setItem('CUSTOM_KIE_KEY', kie.trim());
@@ -198,6 +208,14 @@ export const saveApiKeys = (kie: string, cloudName?: string, uploadPreset?: stri
 
 };
 
+export const saveReferenceSearchKeys = (serper: string, pexels: string) => {
+    if (serper.trim()) localStorage.setItem('CUSTOM_SERPER_KEY', serper.trim());
+    else localStorage.removeItem('CUSTOM_SERPER_KEY');
+
+    if (pexels.trim()) localStorage.setItem('CUSTOM_PEXELS_KEY', pexels.trim());
+    else localStorage.removeItem('CUSTOM_PEXELS_KEY');
+};
+
 export const saveCoupangKeys = (accessKey: string, secretKey: string, proxyUrl: string) => {
     if (accessKey.trim()) localStorage.setItem('CUSTOM_COUPANG_ACCESS_KEY', accessKey.trim());
     else localStorage.removeItem('CUSTOM_COUPANG_ACCESS_KEY');
@@ -231,6 +249,8 @@ export const getStoredKeys = () => {
         googleGeminiKey: localStorage.getItem('CUSTOM_GOOGLE_GEMINI_KEY') || '',
         vmakeAk: localStorage.getItem('CUSTOM_VMAKE_AK') || '',
         vmakeSk: localStorage.getItem('CUSTOM_VMAKE_SK') || '',
+        serper: localStorage.getItem('CUSTOM_SERPER_KEY') || '',
+        pexels: localStorage.getItem('CUSTOM_PEXELS_KEY') || '',
     };
 };
 
@@ -254,6 +274,8 @@ const SETTINGS_KEY_MAP: [string, string][] = [
     ['CUSTOM_COUPANG_SECRET_KEY', 'coupangSecretKey'],
     ['CUSTOM_COUPANG_PROXY_URL', 'coupangProxyUrl'],
     ['CUSTOM_GOOGLE_GEMINI_KEY', 'googleGeminiKey'],
+    ['CUSTOM_SERPER_KEY', 'serper'],
+    ['CUSTOM_PEXELS_KEY', 'pexels'],
 ];
 
 /** 현재 localStorage의 API 키를 서버에 백업 (로그인 상태에서만 동작) */
@@ -267,8 +289,7 @@ export const syncApiKeysToServer = async (): Promise<void> => {
         if (val) settings[field] = val;
     }
 
-    // 저장할 키가 하나도 없으면 스킵
-    if (Object.keys(settings).length === 0) return;
+    // [FIX #928] 빈 settings도 서버에 전송 — 사용자가 모든 키를 지우면 서버도 비워야 함
 
     try {
         await fetch('/api/auth/save-settings', {
@@ -281,7 +302,9 @@ export const syncApiKeysToServer = async (): Promise<void> => {
     }
 };
 
-/** 서버에서 API 키를 가져와 localStorage에 복원 (로그인 직후 호출) */
+/** 서버에서 API 키를 가져와 localStorage에 복원 (로그인 직후 호출)
+ *  [FIX #928] 로컬에 이미 값이 있는 키는 덮어쓰지 않음 — 사용자가 변경한 값 보호
+ */
 export const restoreApiKeysFromServer = async (): Promise<boolean> => {
     const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
     if (!token) return false;
@@ -302,6 +325,9 @@ export const restoreApiKeysFromServer = async (): Promise<boolean> => {
         for (const [lsKey, field] of SETTINGS_KEY_MAP) {
             const val = data.settings[field];
             if (val && typeof val === 'string' && val.trim()) {
+                // [FIX #928] 로컬에 이미 값이 있으면 서버 값으로 덮어쓰지 않음
+                const existing = localStorage.getItem(lsKey);
+                if (existing && existing.trim()) continue;
                 localStorage.setItem(lsKey, val.trim());
                 restored++;
             }

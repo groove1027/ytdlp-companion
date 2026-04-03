@@ -282,13 +282,15 @@ export const generateSceneVideo = async (
 
   if (videoModel === 'veo') {
     const taskId = await createApimartVeoTask(scene.visualPrompt, scene.imageUrl, ratio);
-    const videoUrl = await pollApimartVeoTask(taskId, signal, onProgress);
+    // [FIX #976] 태스크 생성 직후 비용 차감 (API 크레딧은 생성 시점에 소모)
     useCostStore.getState().addCost(0.17, 'video');
+    const videoUrl = await pollApimartVeoTask(taskId, signal, onProgress);
     return videoUrl;
   } else {
     const taskId = await createPortableGrokTask(scene.visualPrompt, scene.imageUrl, ratio);
-    const videoUrl = await pollKieTask(taskId, signal, onProgress);
+    // [FIX #976] 태스크 생성 직후 비용 차감 (API 크레딧은 생성 시점에 소모)
     useCostStore.getState().addCost(0.15, 'video');
+    const videoUrl = await pollKieTask(taskId, signal, onProgress);
     return videoUrl;
   }
 };
