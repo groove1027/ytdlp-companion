@@ -17,6 +17,59 @@ use tokio_util::io::ReaderStream;
 use crate::{platform, ytdlp, rembg, whisper, tts};
 
 // ──────────────────────────────────────────────
+// [FIX] Google 프록시 싱글톤 Client + 페이싱 상태
+// ──────────────────────────────────────────────
+use std::sync::Arc;
+
+struct GoogleProxyState {
+    last_request_at: std::time::Instant,
+    consecutive_429s: u32,
+    cooldown_until: std::time::Instant,
+}
+
+static GOOGLE_PROXY_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+static GOOGLE_PROXY_STATE: OnceLock<tokio::sync::Mutex<GoogleProxyState>> = OnceLock::new();
+
+fn google_proxy_client() -> &'static reqwest::Client {
+    GOOGLE_PROXY_CLIENT.get_or_init(|| {
+        let jar = Arc::new(reqwest::cookie::Jar::default());
+        let google_url = "https://www.google.com".parse::<url::Url>().unwrap();
+
+        // SOCS 동의 쿠키 (2024+ 필수 — 없으면 봇 취급)
+        jar.add_cookie_str(
+            "SOCS=CAESHAgBEhJnd3NfMjAyNDA1MDEtMF9SQzIaAmVuIAEaBgiA_uC2Bg; domain=.google.com; path=/; secure; SameSite=Lax",
+            &google_url,
+        );
+        // 레거시 CONSENT 쿠키 폴백
+        jar.add_cookie_str(
+            "CONSENT=YES+cb.20240101-00-p0.en+FX+987; domain=.google.com; path=/",
+            &google_url,
+        );
+
+        reqwest::Client::builder()
+            .cookie_provider(jar)
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(std::time::Duration::from_secs(30))
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .pool_idle_timeout(std::time::Duration::from_secs(300))
+            .gzip(true)
+            .brotli(true)
+            .build()
+            .unwrap_or_default()
+    })
+}
+
+fn google_proxy_state() -> &'static tokio::sync::Mutex<GoogleProxyState> {
+    GOOGLE_PROXY_STATE.get_or_init(|| {
+        tokio::sync::Mutex::new(GoogleProxyState {
+            last_request_at: std::time::Instant::now() - std::time::Duration::from_secs(60),
+            consecutive_429s: 0,
+            cooldown_until: std::time::Instant::now() - std::time::Duration::from_secs(1),
+        })
+    })
+}
+
+// ──────────────────────────────────────────────
 // [FIX #914] 서비스 캐시 — health check 즉시 응답용
 // 기존: health 요청마다 Python subprocess 5개 순차 실행 (10~15초)
 // 수정: 서버 시작 시 1회 감지 → 캐시, 5분마다 백그라운드 갱신
@@ -178,6 +231,18 @@ struct FfmpegTranscodeRequest {
 }
 
 #[derive(Deserialize)]
+struct FfmpegMergeRequest {
+    // base64 인코딩된 비디오 파일
+    video: String,
+    // base64 인코딩된 오디오 파일
+    audio: String,
+    #[serde(rename = "videoFormat")]
+    video_format: Option<String>,
+    #[serde(rename = "audioFormat")]
+    audio_format: Option<String>,
+}
+
+#[derive(Deserialize)]
 struct ExtractQuery {
     url: String,
     quality: Option<String>,
@@ -277,6 +342,7 @@ pub async fn start_server(_app: tauri::AppHandle) -> Result<(), Box<dyn std::err
         .route("/api/nle/install", post(nle_install_handler))
         // FFmpeg 인코딩
         .route("/api/ffmpeg/transcode", post(ffmpeg_transcode_handler))
+        .route("/api/ffmpeg/merge", post(ffmpeg_merge_handler))
         .layer(cors)
         // [FIX #846] Chrome 142+ / Edge 143+ Local Network Access 대응
         // HTTPS 페이지에서 127.0.0.1로 fetch 시 preflight에 이 헤더가 필요
@@ -1144,47 +1210,205 @@ async fn ffmpeg_transcode_handler(Json(req): Json<FfmpegTranscodeRequest>) -> im
 }
 
 // ──────────────────────────────────────────────
+// 핸들러: /api/ffmpeg/merge (비디오+오디오 합본)
+// [FIX] companionTranscode는 단일 입력만 지원 → merge 전용 엔드포인트 신설
+// ──────────────────────────────────────────────
+
+async fn ffmpeg_merge_handler(Json(req): Json<FfmpegMergeRequest>) -> impl IntoResponse {
+    use base64::Engine;
+
+    let video_data = match base64::engine::general_purpose::STANDARD.decode(&req.video) {
+        Ok(d) => d,
+        Err(e) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": format!("비디오 Base64 디코딩 실패: {}", e) }))).into_response(),
+    };
+    let audio_data = match base64::engine::general_purpose::STANDARD.decode(&req.audio) {
+        Ok(d) => d,
+        Err(e) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": format!("오디오 Base64 디코딩 실패: {}", e) }))).into_response(),
+    };
+
+    let vid_ext = req.video_format.as_deref().unwrap_or("mp4");
+    let aud_ext = req.audio_format.as_deref().unwrap_or("m4a");
+
+    let tmp_video = match tempfile::Builder::new().suffix(&format!(".{}", vid_ext)).tempfile() {
+        Ok(f) => f,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("임시 파일 생성 실패: {}", e) }))).into_response(),
+    };
+    let tmp_audio = match tempfile::Builder::new().suffix(&format!(".{}", aud_ext)).tempfile() {
+        Ok(f) => f,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("임시 파일 생성 실패: {}", e) }))).into_response(),
+    };
+    let tmp_output = match tempfile::Builder::new().suffix(".mp4").tempfile() {
+        Ok(f) => f,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("임시 파일 생성 실패: {}", e) }))).into_response(),
+    };
+
+    let video_path = tmp_video.path().to_string_lossy().to_string();
+    let audio_path = tmp_audio.path().to_string_lossy().to_string();
+    let output_path = tmp_output.path().to_string_lossy().to_string();
+
+    if let Err(e) = std::fs::write(&video_path, &video_data) {
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("비디오 파일 쓰기 실패: {}", e) }))).into_response();
+    }
+    if let Err(e) = std::fs::write(&audio_path, &audio_data) {
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("오디오 파일 쓰기 실패: {}", e) }))).into_response();
+    }
+
+    let ffmpeg = ytdlp::get_ffmpeg_path_public();
+    let args = vec![
+        "-i".to_string(), video_path,
+        "-i".to_string(), audio_path,
+        "-c:v".to_string(), "copy".to_string(),
+        "-c:a".to_string(), "copy".to_string(),
+        "-movflags".to_string(), "+faststart".to_string(),
+        "-y".to_string(),
+        output_path.clone(),
+    ];
+
+    println!("[FFmpeg] merge 실행: video({} bytes) + audio({} bytes)", video_data.len(), audio_data.len());
+    let output = platform::async_cmd(&ffmpeg).args(&args).output().await;
+
+    match output {
+        Ok(out) if out.status.success() => {
+            match std::fs::read(&output_path) {
+                Ok(data) => {
+                    println!("[FFmpeg] ✅ merge 성공: {} bytes", data.len());
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                    Json(serde_json::json!({ "data": b64, "format": "mp4", "size": data.len() })).into_response()
+                }
+                Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("결과 파일 읽기 실패: {}", e) }))).into_response(),
+            }
+        }
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            println!("[FFmpeg] ❌ merge 실패: {}", stderr.lines().last().unwrap_or("unknown"));
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("FFmpeg merge 실패: {}", stderr.lines().last().unwrap_or("unknown")) }))).into_response()
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("FFmpeg 실행 불가: {}", e) }))).into_response(),
+    }
+}
+
+// ──────────────────────────────────────────────
 // 핸들러: /api/google-proxy (로컬 IP로 구글 검색)
+// [FIX] 싱글톤 Client + SOCS 쿠키 + Sec-Ch-UA + 요청 간격 강제
 // ──────────────────────────────────────────────
 
 async fn google_proxy_handler(Json(req): Json<GoogleProxyRequest>) -> impl IntoResponse {
-    // URL 허용 목록 (구글/빙 이미지 + YouTube 자막)
-    let allowed_hosts = ["www.google.com", "www.google.co.kr", "www.bing.com", "en.wikipedia.org", "commons.wikimedia.org", "www.youtube.com"];
+    // URL 허용 목록 (구글 이미지 + YouTube 자막 + Wikimedia)
+    let allowed_hosts = ["www.google.com", "www.google.co.kr", "en.wikipedia.org", "commons.wikimedia.org", "www.youtube.com"];
     let parsed = url::Url::parse(&req.target_url).ok();
     let host = parsed.as_ref().and_then(|u| u.host_str().map(String::from)).unwrap_or_default();
     if !allowed_hosts.iter().any(|h| host.ends_with(h)) {
         return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": format!("허용되지 않은 호스트: {}", host) }))).into_response();
     }
 
-    // 리다이렉트 비활성화 — SSRF 방지 (allowlist 우회 차단)
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .unwrap_or_default();
+    let is_google = host.contains("google.com") || host.contains("google.co.kr");
+
+    // [FIX] Google 요청에 대해 페이싱 적용 (8~15초 랜덤 간격)
+    if is_google {
+        let mut state = google_proxy_state().lock().await;
+
+        // 쿨다운 중이면 429 반환
+        if state.cooldown_until > std::time::Instant::now() {
+            let remaining = state.cooldown_until.duration_since(std::time::Instant::now()).as_secs();
+            let mut headers = HeaderMap::new();
+            headers.insert("Content-Type", "application/json".parse().unwrap());
+            headers.insert("Retry-After", remaining.to_string().parse().unwrap());
+            return (StatusCode::TOO_MANY_REQUESTS, headers, Body::from(
+                serde_json::json!({ "error": "Google 쿨다운 중", "retryAfterSeconds": remaining }).to_string()
+            )).into_response();
+        }
+
+        // 최소 간격 강제 (8~15초 랜덤)
+        let elapsed = state.last_request_at.elapsed();
+        let min_delay_ms = 8000 + (std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .subsec_millis() % 7000) as u64;
+        let min_delay = std::time::Duration::from_millis(min_delay_ms);
+        if elapsed < min_delay {
+            let wait = min_delay - elapsed;
+            drop(state); // unlock during sleep
+            tokio::time::sleep(wait).await;
+            state = google_proxy_state().lock().await;
+        }
+        state.last_request_at = std::time::Instant::now();
+        drop(state);
+    }
+
+    // 싱글톤 Client 사용 (Google) 또는 새 Client (기타)
+    let client = if is_google {
+        google_proxy_client()
+    } else {
+        // 비-Google은 기존 방식 (리다이렉트 비활성화만)
+        static NON_GOOGLE_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+        NON_GOOGLE_CLIENT.get_or_init(|| {
+            reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .timeout(std::time::Duration::from_secs(30))
+                .build()
+                .unwrap_or_default()
+        })
+    };
 
     let mut request = client.get(&req.target_url);
 
-    // 헤더 설정
+    // 헤더 설정 — Google에는 Sec-Ch-UA 강제 주입
     if let Some(headers) = &req.headers {
         for (k, v) in headers {
             request = request.header(k.as_str(), v.as_str());
         }
     }
+    if is_google {
+        // Sec-Ch-UA 헤더 강제 보정 (프론트에서도 보내지만 이중 보장)
+        request = request
+            .header("Sec-Ch-Ua", "\"Chromium\";v=\"136\", \"Not_A Brand\";v=\"24\"")
+            .header("Sec-Ch-Ua-Mobile", "?0")
+            .header("Sec-Ch-Ua-Platform", "\"macOS\"")
+            .header("Sec-Fetch-Dest", "document")
+            .header("Sec-Fetch-Mode", "navigate")
+            .header("Sec-Fetch-Site", "none")
+            .header("Sec-Fetch-User", "?1");
+    }
     if let Some(cookie) = &req.cookie {
-        request = request.header("Cookie", cookie.as_str());
+        if !cookie.is_empty() {
+            request = request.header("Cookie", cookie.as_str());
+        }
     }
 
     match request.send().await {
         Ok(res) => {
             let status = res.status().as_u16();
+            let retry_after = res.headers().get("retry-after")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.parse::<u64>().ok());
             let content_type = res.headers().get("content-type")
                 .and_then(|v| v.to_str().ok())
                 .unwrap_or("text/html")
                 .to_string();
             let body = res.bytes().await.unwrap_or_default();
 
+            // [FIX] 429 시 지수 백오프 쿨다운
+            if status == 429 && is_google {
+                let mut state = google_proxy_state().lock().await;
+                state.consecutive_429s += 1;
+                let cooldown_secs = retry_after.unwrap_or_else(|| match state.consecutive_429s {
+                    1 => 30,
+                    2 => 60,
+                    3 => 300,
+                    _ => 600,
+                });
+                state.cooldown_until = std::time::Instant::now() + std::time::Duration::from_secs(cooldown_secs);
+            } else if is_google && status == 200 {
+                // 성공 시 429 카운터 리셋
+                let mut state = google_proxy_state().lock().await;
+                state.consecutive_429s = 0;
+            }
+
             let mut headers = HeaderMap::new();
             headers.insert("Content-Type", content_type.parse().unwrap_or("text/html".parse().unwrap()));
+            if let Some(ra) = retry_after {
+                headers.insert("Retry-After", ra.to_string().parse().unwrap());
+            }
             (axum::http::StatusCode::from_u16(status).unwrap_or(StatusCode::OK), headers, Body::from(body)).into_response()
         }
         Err(e) => (StatusCode::BAD_GATEWAY, Json(serde_json::json!({ "error": format!("프록시 요청 실패: {}", e) }))).into_response(),

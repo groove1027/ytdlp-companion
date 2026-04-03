@@ -499,10 +499,23 @@ async function fetchYouTubeStreamUrl(videoId: string): Promise<string | null> {
  */
 async function downloadVideoAsBlob(videoId: string): Promise<{ blobUrl: string; blob: Blob; hasAudio: boolean } | null> {
   try {
-    // [FIX #316] 1080p 분리 다운로드: 영상(videoOnly) 먼저 → 오디오 병렬 → 클라이언트 머지
-    // 서버 ffmpeg 머지 회피 → 502 방지 + 1080p 원본 품질 보장
+    const { downloadVideoViaProxy, downloadAudioViaProxy, isCompanionDetected } = await import('../../../services/ytdlpApiService');
+
+    // [FIX] 컴패니언 가용 시: videoOnly=false → yt-dlp+ffmpeg가 서버에서 머지한 완성 파일 한 방
+    // 기존 코드는 companionTranscode에 단일 입력만 보내는 버그로 오디오가 누락됐음
+    if (isCompanionDetected()) {
+      console.log('[Frame] ★ 컴패니언 감지 — videoOnly=false 한 방 다운로드 (오디오 포함)');
+      const result = await downloadVideoViaProxy(videoId, 'best', undefined, { videoOnly: false });
+      const blob = result.blob;
+      console.log(`[Frame] ✅ 컴패니언 다운로드 완료: ${(blob.size / 1024 / 1024).toFixed(1)}MB (오디오 포함)`);
+      const blobUrl = URL.createObjectURL(blob);
+      logger.registerBlobUrl(blobUrl, 'video', 'VideoAnalysisRoom:downloadVideoAsBlob', blob.size / (1024 * 1024));
+      return { blobUrl, blob, hasAudio: true };
+    }
+
+    // CF Worker/VPS 폴백: 분리 다운로드 → 클라이언트 머지
+    // [FIX #316] 서버 ffmpeg 머지 회피 → 502 방지 + 1080p 원본 품질 보장
     console.log('[Frame] ★ 분리 다운로드 시작: 영상(videoOnly) + 오디오 병렬...');
-    const { downloadVideoViaProxy, downloadAudioViaProxy } = await import('../../../services/ytdlpApiService');
 
     // 1단계: 영상 트랙만 다운로드 (videoOnly=true → 서버 머지 없이 1080p 즉시 성공)
     const videoPromise = downloadVideoViaProxy(videoId, 'best', undefined, { videoOnly: true });
@@ -516,7 +529,7 @@ async function downloadVideoAsBlob(videoId: string): Promise<{ blobUrl: string; 
     const videoBlob = videoResult.blob;
     console.log(`[Frame] ✅ 영상 다운로드 완료: ${(videoBlob.size / 1024 / 1024).toFixed(1)}MB`);
 
-    // 3단계: 영상+오디오 클라이언트 머지 (mp4box demux → mp4-muxer remux, 품질 손실 0%)
+    // 3단계: 영상+오디오 클라이언트 머지
     let finalBlob = videoBlob;
     if (audioBlob && audioBlob.size > 0) {
       try {

@@ -133,18 +133,59 @@ export async function demuxMp4(blob: Blob): Promise<DemuxResult> {
  * ffmpeg.wasm `-c copy` 무손실 머지 — 원본 비트스트림 그대로 복사 (프레임 변형 0%)
  */
 export async function mergeVideoAudio(videoBlob: Blob, audioBlob: Blob): Promise<Blob> {
-  // 1순위: 컴패니언 네이티브 FFmpeg (WASM 30MB 로드 불필요)
-  const { companionTranscode } = await import('../ffmpegService');
-  const companionResult = await companionTranscode(videoBlob, 'mp4', [
-    '-i', 'input.mp4',
-    '-i', 'audio.m4a',
-    '-c', 'copy',
-    '-movflags', '+faststart',
-    '-y', 'output.mp4',
-  ]);
-  if (companionResult && companionResult.size > 1000) {
-    console.log(`[Merge] ✅ 컴패니언 FFmpeg 합본 성공 (${(companionResult.size / 1024 / 1024).toFixed(1)}MB)`);
-    return companionResult;
+  // 1순위: 컴패니언 전용 merge 엔드포인트 (WASM 30MB 로드 불필요)
+  // [FIX] companionTranscode는 단일 입력만 지원하여 오디오가 누락되는 치명적 버그가 있었음
+  // → 전용 /api/ffmpeg/merge 엔드포인트로 비디오+오디오를 함께 전송
+  try {
+    const { isCompanionDetected } = await import('../ytdlpApiService');
+    if (isCompanionDetected()) {
+      console.log(`[Merge] 컴패니언 전용 merge 엔드포인트 시도...`);
+      const COMPANION_URL = 'http://127.0.0.1:9876';
+
+      // Blob → base64 변환
+      const toBase64 = async (blob: Blob): Promise<string> => {
+        const buffer = await blob.arrayBuffer();
+        const bytes = new Uint8Array(buffer);
+        const chunkSize = 65536;
+        let binary = '';
+        for (let i = 0; i < bytes.length; i += chunkSize) {
+          const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
+          binary += String.fromCharCode(...chunk);
+        }
+        return btoa(binary);
+      };
+
+      const [videoB64, audioB64] = await Promise.all([toBase64(videoBlob), toBase64(audioBlob)]);
+
+      const res = await fetch(`${COMPANION_URL}/api/ffmpeg/merge`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          video: videoB64,
+          audio: audioB64,
+          videoFormat: 'mp4',
+          audioFormat: 'm4a',
+        }),
+        signal: AbortSignal.timeout(300_000),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.data) {
+          const binaryStr = atob(data.data);
+          const outBytes = new Uint8Array(binaryStr.length);
+          for (let i = 0; i < binaryStr.length; i++) outBytes[i] = binaryStr.charCodeAt(i);
+          const merged = new Blob([outBytes], { type: 'video/mp4' });
+          if (merged.size > 1000) {
+            console.log(`[Merge] ✅ 컴패니언 FFmpeg 합본 성공 (${(merged.size / 1024 / 1024).toFixed(1)}MB)`);
+            return merged;
+          }
+        }
+      }
+      console.warn('[Merge] 컴패니언 merge 실패 — WASM 폴백');
+    }
+  } catch (e) {
+    console.warn('[Merge] 컴패니언 merge 실패 — WASM 폴백:', e instanceof Error ? e.message : '');
   }
 
   // 2순위: FFmpeg WASM 폴백
