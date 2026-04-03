@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useMemo } from 'react';
 import { useProjectStore } from '../../../stores/projectStore';
 import { useImageVideoStore } from '../../../stores/imageVideoStore';
-import { searchSceneReferenceImages, buildSearchQuery, SCENE_REFERENCE_BATCH_CONCURRENCY } from '../../../services/googleReferenceSearchService';
+import { searchSceneReferenceImages, buildSearchQuery, SCENE_REFERENCE_BATCH_CONCURRENCY, isPrimaryReferenceProvider } from '../../../services/googleReferenceSearchService';
 import type { GoogleImageResult, ReferenceSearchProvider } from '../../../services/googleReferenceSearchService';
 import { searchMedia } from '../../../services/mediaSearchService';
 import type { CommunityMediaItem } from '../../../types';
@@ -29,14 +29,18 @@ const ASPECT_CLASS: Record<string, string> = {
 
 const PROVIDER_LABELS: Record<ReferenceSearchProvider, string> = {
   google: 'Google',
-  bing: 'Bing',
+  serper: 'Google',
+  pexels: 'Pexels',
   wikimedia: 'Wikimedia',
+  naver: 'Naver',
 };
 
 const PROVIDER_BADGE_STYLES: Record<ReferenceSearchProvider, string> = {
   google: 'text-orange-300 border-orange-500/30 bg-orange-500/10',
-  bing: 'text-sky-300 border-sky-500/30 bg-sky-500/10',
+  serper: 'text-orange-300 border-orange-500/30 bg-orange-500/10',
+  pexels: 'text-emerald-300 border-emerald-500/30 bg-emerald-500/10',
   wikimedia: 'text-cyan-300 border-cyan-500/30 bg-cyan-500/10',
+  naver: 'text-green-300 border-green-500/30 bg-green-500/10',
 };
 
 interface ScenePreview {
@@ -247,13 +251,13 @@ const GoogleReferencePanel: React.FC = () => {
           const result = await searchScene(current.scene, current.sceneIndex, 1, 'fast');
           if (result.ok) {
             successCount++;
-            if (result.provider && result.provider !== 'google') fallbackCount++;
+            if (result.provider && !isPrimaryReferenceProvider(result.provider)) fallbackCount++;
             // [FIX P1+P2] searchScene 반환값의 firstLink로 imageUrl 직접 적용 + 메타데이터 보존
             if (result.firstLink) {
               updateScene(current.scene.id, {
                 imageUrl: result.firstLink,
                 isGeneratingImage: false,
-                generationStatus: result.provider === 'google' ? '구글 레퍼런스 적용' : '대체 레퍼런스 적용',
+                generationStatus: isPrimaryReferenceProvider(result.provider || 'google') ? '구글 레퍼런스 적용' : '대체 레퍼런스 적용',
                 imageUpdatedAfterVideo: !!current.scene.videoUrl,
                 referenceSearchPage: 1,
                 referenceSearchQuery: buildSearchQuery(current.scene, current.sceneIndex > 0 ? scenes[current.sceneIndex - 1] : null, current.sceneIndex < scenes.length - 1 ? scenes[current.sceneIndex + 1] : null, config?.globalContext),
@@ -301,7 +305,7 @@ const GoogleReferencePanel: React.FC = () => {
     updateScene(sceneId, {
       imageUrl,
       isGeneratingImage: false,
-      generationStatus: provider === 'google' ? '구글 레퍼런스 이미지 적용' : '대체 레퍼런스 이미지 적용',
+      generationStatus: isPrimaryReferenceProvider(provider) ? '구글 레퍼런스 이미지 적용' : '대체 레퍼런스 이미지 적용',
       imageUpdatedAfterVideo: !!targetScene?.videoUrl,
       referenceSearchPage: preview?.resultPage || 1,
       referenceSearchQuery: preview?.searchQuery,

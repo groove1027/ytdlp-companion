@@ -281,6 +281,28 @@ struct GoogleProxyRequest {
 }
 
 #[derive(Deserialize)]
+struct NaverImageSearchRequest {
+    query: String,
+    #[serde(default = "default_display")]
+    display: u32,
+    #[serde(default = "default_start")]
+    start: u32,
+}
+fn default_display() -> u32 { 15 }
+fn default_start() -> u32 { 1 }
+
+#[derive(Serialize)]
+struct NaverImageResult {
+    image_url: String,
+    thumbnail_url: String,
+    title: String,
+    source: String,
+    width: u32,
+    height: u32,
+    link: String,
+}
+
+#[derive(Deserialize)]
 struct GenerateImageRequest {
     prompt: String,
     width: Option<u32>,
@@ -324,6 +346,8 @@ pub async fn start_server(_app: tauri::AppHandle) -> Result<(), Box<dyn std::err
         .route("/api/social/download", post(social_download_handler))
         // 구글 이미지 검색 프록시 (로컬 IP — 차단 없음)
         .route("/api/google-proxy", post(google_proxy_handler))
+        // 네이버 이미지 검색 (한국 콘텐츠 전용 — API 키 불필요)
+        .route("/api/naver-image-search", post(naver_image_search_handler))
         // FLUX.2 이미지 생성 (로컬)
         .route("/api/generate-image", post(generate_image_handler))
         // 배경 제거 (rembg)
@@ -1413,6 +1437,165 @@ async fn google_proxy_handler(Json(req): Json<GoogleProxyRequest>) -> impl IntoR
         }
         Err(e) => (StatusCode::BAD_GATEWAY, Json(serde_json::json!({ "error": format!("프록시 요청 실패: {}", e) }))).into_response(),
     }
+}
+
+// ──────────────────────────────────────────────
+// 핸들러: /api/naver-image-search (네이버 이미지 검색 — 한국 콘텐츠 전용)
+// API 키 불필요, 모바일 웹 페이지 접속 후 HTML 파싱
+// 네이버는 구글보다 차단이 훨씬 느슨함 (시간당 50~100회 OK)
+// ──────────────────────────────────────────────
+
+static NAVER_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+fn naver_client() -> &'static reqwest::Client {
+    NAVER_CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .connect_timeout(std::time::Duration::from_secs(5))
+            .gzip(true)
+            .brotli(true)
+            .build()
+            .unwrap_or_default()
+    })
+}
+
+async fn naver_image_search_handler(Json(req): Json<NaverImageSearchRequest>) -> impl IntoResponse {
+    let query = &req.query;
+    if query.trim().is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "검색어 비어있음" }))).into_response();
+    }
+
+    let encoded = urlencoding::encode(query);
+    let url = format!(
+        "https://m.search.naver.com/search.naver?where=m_image&query={}&sm=mtb_img&start={}&display={}",
+        encoded, req.start, req.display
+    );
+
+    let client = naver_client();
+    let res = match client.get(&url)
+        .header("User-Agent",
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) \
+             AppleWebKit/605.1.15 (KHTML, like Gecko) \
+             Version/17.6 Mobile/15E148 Safari/604.1")
+        .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+        .header("Accept-Language", "ko-KR,ko;q=0.9")
+        .header("Referer", "https://m.search.naver.com/")
+        .send()
+        .await {
+        Ok(r) => r,
+        Err(e) => {
+            return (StatusCode::BAD_GATEWAY, Json(serde_json::json!({
+                "error": format!("네이버 검색 실패: {}", e)
+            }))).into_response();
+        }
+    };
+
+    if !res.status().is_success() {
+        return (StatusCode::BAD_GATEWAY, Json(serde_json::json!({
+            "error": format!("네이버 응답 에러: {}", res.status())
+        }))).into_response();
+    }
+
+    let html = match res.text().await {
+        Ok(t) => t,
+        Err(e) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
+                "error": format!("응답 읽기 실패: {}", e)
+            }))).into_response();
+        }
+    };
+
+    // 네이버 모바일 이미지 검색 결과 파싱
+    let mut images: Vec<NaverImageResult> = Vec::new();
+
+    // 방법 1: data-source 속성 (모바일 네이버 이미지 썸네일)
+    // <img class="..." data-source="원본URL" data-lazy-src="썸네일URL" alt="제목">
+    let data_source_re = regex_lite::Regex::new(
+        r#"data-source="([^"]+)"[^>]*?(?:data-lazy-src|src)="([^"]+)"[^>]*?alt="([^"]*)"#
+    ).unwrap_or_else(|_| regex_lite::Regex::new(r"NOMATCH").unwrap());
+
+    for cap in data_source_re.captures_iter(&html) {
+        let image_url = cap.get(1).map(|m| m.as_str().to_string()).unwrap_or_default();
+        let thumb = cap.get(2).map(|m| m.as_str().to_string()).unwrap_or_default();
+        let title = cap.get(3).map(|m| m.as_str().to_string()).unwrap_or_default();
+        if !image_url.is_empty() && image_url.starts_with("http") {
+            images.push(NaverImageResult {
+                image_url: image_url.clone(),
+                thumbnail_url: if thumb.starts_with("http") { thumb } else { image_url.clone() },
+                title,
+                source: String::new(),
+                width: 0,
+                height: 0,
+                link: String::new(),
+            });
+        }
+    }
+
+    // 방법 2: JSON 임베디드 데이터 (네이버 모바일 __NEXT_DATA__ 또는 인라인 JSON)
+    if images.is_empty() {
+        // "originalUrl":"..." 패턴에서 이미지 추출
+        let json_img_re = regex_lite::Regex::new(
+            r#""originalUrl"\s*:\s*"(https?://[^"]+)""#
+        ).unwrap_or_else(|_| regex_lite::Regex::new(r"NOMATCH").unwrap());
+        let json_thumb_re = regex_lite::Regex::new(
+            r#""thumbnailUrl"\s*:\s*"(https?://[^"]+)""#
+        ).unwrap_or_else(|_| regex_lite::Regex::new(r"NOMATCH").unwrap());
+        let json_title_re = regex_lite::Regex::new(
+            r#""title"\s*:\s*"([^"]*?)""#
+        ).unwrap_or_else(|_| regex_lite::Regex::new(r"NOMATCH").unwrap());
+
+        let orig_urls: Vec<String> = json_img_re.captures_iter(&html)
+            .map(|c| c.get(1).unwrap().as_str().to_string()).collect();
+        let thumb_urls: Vec<String> = json_thumb_re.captures_iter(&html)
+            .map(|c| c.get(1).unwrap().as_str().to_string()).collect();
+        let titles: Vec<String> = json_title_re.captures_iter(&html)
+            .map(|c| c.get(1).unwrap().as_str().to_string()).collect();
+
+        for (i, orig) in orig_urls.iter().enumerate() {
+            images.push(NaverImageResult {
+                image_url: orig.clone(),
+                thumbnail_url: thumb_urls.get(i).cloned().unwrap_or_else(|| orig.clone()),
+                title: titles.get(i).cloned().unwrap_or_default(),
+                source: String::new(),
+                width: 0,
+                height: 0,
+                link: String::new(),
+            });
+        }
+    }
+
+    // 방법 3: og:image / <img src="..."> 폴백
+    if images.is_empty() {
+        let img_re = regex_lite::Regex::new(
+            r#"<img[^>]+src="(https?://[^"]+(?:\.jpg|\.jpeg|\.png|\.webp)[^"]*)""#
+        ).unwrap_or_else(|_| regex_lite::Regex::new(r"NOMATCH").unwrap());
+
+        for cap in img_re.captures_iter(&html) {
+            let url = cap.get(1).map(|m| m.as_str().to_string()).unwrap_or_default();
+            // 네이버 내부 UI 이미지 제외
+            if !url.contains("static.naver") && !url.contains("s.pstatic.net/static")
+                && !url.contains("favicon") && !url.contains("logo")
+                && url.starts_with("http")
+            {
+                images.push(NaverImageResult {
+                    image_url: url.clone(),
+                    thumbnail_url: url,
+                    title: String::new(),
+                    source: String::new(),
+                    width: 0,
+                    height: 0,
+                    link: String::new(),
+                });
+            }
+        }
+    }
+
+    (StatusCode::OK, Json(serde_json::json!({
+        "images": images,
+        "query": query,
+        "provider": "naver",
+        "count": images.len()
+    }))).into_response()
 }
 
 // ──────────────────────────────────────────────
