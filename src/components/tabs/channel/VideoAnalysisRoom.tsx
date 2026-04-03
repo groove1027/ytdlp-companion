@@ -499,21 +499,38 @@ async function fetchYouTubeStreamUrl(videoId: string): Promise<string | null> {
  */
 async function downloadVideoAsBlob(videoId: string): Promise<{ blobUrl: string; blob: Blob; hasAudio: boolean } | null> {
   try {
-    const { downloadVideoViaProxy, downloadAudioViaProxy, isCompanionDetected } = await import('../../../services/ytdlpApiService');
+    const { downloadVideoViaProxy, downloadAudioViaProxy, isCompanionDetected, recheckCompanion } = await import('../../../services/ytdlpApiService');
 
-    // [FIX] 컴패니언 가용 시: videoOnly=false → yt-dlp+ffmpeg가 서버에서 머지한 완성 파일 한 방
-    // 기존 코드는 companionTranscode에 단일 입력만 보내는 버그로 오디오가 누락됐음
-    if (isCompanionDetected()) {
-      console.log('[Frame] ★ 컴패니언 감지 — videoOnly=false 한 방 다운로드 (오디오 포함)');
-      const result = await downloadVideoViaProxy(videoId, 'best', undefined, { videoOnly: false });
-      const blob = result.blob;
-      console.log(`[Frame] ✅ 컴패니언 다운로드 완료: ${(blob.size / 1024 / 1024).toFixed(1)}MB (오디오 포함)`);
-      const blobUrl = URL.createObjectURL(blob);
-      logger.registerBlobUrl(blobUrl, 'video', 'VideoAnalysisRoom:downloadVideoAsBlob', blob.size / (1024 * 1024));
-      return { blobUrl, blob, hasAudio: true };
+    // [FIX] 컴패니언 감지: sync 캐시 먼저 → 미감지 시 async 실시간 체크 (최대 3초)
+    // 앱 시작 직후 캐시가 비어있어도 실제 컴패니언이 켜져 있으면 잡아냄
+    let companionOk = isCompanionDetected();
+    if (!companionOk) {
+      try {
+        companionOk = await Promise.race([
+          recheckCompanion(),
+          new Promise<boolean>(r => setTimeout(() => r(false), 3500)),
+        ]);
+      } catch { companionOk = false; }
     }
 
-    // CF Worker/VPS 폴백: 분리 다운로드 → 클라이언트 머지
+    if (companionOk) {
+      console.log('[Frame] ★ 컴패니언 감지 — videoOnly=false 한 방 다운로드 (오디오 포함)');
+      try {
+        const result = await downloadVideoViaProxy(videoId, 'best', undefined, { videoOnly: false });
+        const blob = result.blob;
+        if (blob.size > 0) {
+          console.log(`[Frame] ✅ 컴패니언 다운로드 완료: ${(blob.size / 1024 / 1024).toFixed(1)}MB (오디오 포함)`);
+          const blobUrl = URL.createObjectURL(blob);
+          logger.registerBlobUrl(blobUrl, 'video', 'VideoAnalysisRoom:downloadVideoAsBlob', blob.size / (1024 * 1024));
+          return { blobUrl, blob, hasAudio: true };
+        }
+      } catch (companionErr) {
+        console.warn('[Frame] 컴패니언 한 방 다운로드 실패 — 분리 다운로드 폴백:', companionErr);
+        // fall through to split download below
+      }
+    }
+
+    // CF Worker/VPS 폴백 또는 컴패니언 실패 시: 분리 다운로드 → 클라이언트 머지
     // [FIX #316] 서버 ffmpeg 머지 회피 → 502 방지 + 1080p 원본 품질 보장
     console.log('[Frame] ★ 분리 다운로드 시작: 영상(videoOnly) + 오디오 병렬...');
 
