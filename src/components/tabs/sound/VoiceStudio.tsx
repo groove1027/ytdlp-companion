@@ -240,6 +240,9 @@ const SAMPLE_TEXTS: Record<string, string> = {
 };
 
 
+// [FIX #989] 프로젝트 전환 감지용 모듈 레벨 변수 (unmount/remount 시에도 유지)
+let _lastKnownProjectId: string | null = null;
+
 const VoiceStudio: React.FC = () => {
   const { requireAuth } = useAuthGuard();
   const addCost = useCostStore((s) => s.addCost);
@@ -261,23 +264,27 @@ const VoiceStudio: React.FC = () => {
   const generatedScriptContent = useScriptWriterStore((s) => s.generatedScript?.content);
   const storeScript = finalScript || generatedScriptContent || '';
 
-  // [FIX #989] 프로젝트 전환 시 이전 프로젝트의 나레이션 라인 초기화
-  // loadProject()가 이미 라인을 복원한 경우(sceneId가 현재 프로젝트 장면과 매칭)는 보존
+  // [FIX #989] 프로젝트 전환 시 이전 프로젝트의 나레이션 라인 + 대본 초기화
   const currentProjectId = useProjectStore((s) => s.currentProjectId);
-  const prevProjectIdRef = React.useRef(currentProjectId);
+  const skipSyncRef = React.useRef(false);
   useEffect(() => {
-    if (prevProjectIdRef.current && currentProjectId && prevProjectIdRef.current !== currentProjectId) {
-      // 현재 라인이 새 프로젝트의 장면과 연결되어 있는지 확인
+    if (_lastKnownProjectId && currentProjectId && _lastKnownProjectId !== currentProjectId) {
       const currentSceneIds = new Set(useProjectStore.getState().scenes.map(s => s.id));
       const currentLines = useSoundStudioStore.getState().lines;
       const hasMatchingLines = currentLines.length > 0 &&
         currentLines.some(l => l.sceneId && currentSceneIds.has(l.sceneId));
-      // 매칭되는 라인이 없으면 → 이전 프로젝트의 잔존 데이터 → 초기화
-      if (!hasMatchingLines && currentLines.length > 0) {
+      if (!hasMatchingLines) {
         setLines([]);
+        // 새 프로젝트에 장면이 없으면 대본도 초기화 + 재동기화 방지
+        if (useProjectStore.getState().scenes.length === 0) {
+          useScriptWriterStore.getState().clearPreviousContent();
+          skipSyncRef.current = true;
+          // 다음 렌더 사이클에서 skipSync 해제
+          requestAnimationFrame(() => { skipSyncRef.current = false; });
+        }
       }
     }
-    prevProjectIdRef.current = currentProjectId;
+    _lastKnownProjectId = currentProjectId;
   }, [currentProjectId, setLines]);
 
   const [editingLineId, setEditingLineId] = useState<string | null>(null);
@@ -416,6 +423,8 @@ const VoiceStudio: React.FC = () => {
   // [FIX #532] 대본이 변경되면 기존 라인도 갱신 (이전 대본이 남는 버그 수정)
   const prevStoreScriptRef = React.useRef(storeScript);
   useEffect(() => {
+    // [FIX #989] 프로젝트 전환 직후 재동기화 방지 — clearPreviousContent 반영 대기
+    if (skipSyncRef.current) return;
     // 대본 내용이 실질적으로 변경된 경우 라인 초기화하여 재동기화
     if (lines.length > 0 && storeScript && prevStoreScriptRef.current !== storeScript) {
       const currentText = lines.map(l => l.text).join('\n');
