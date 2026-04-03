@@ -72,20 +72,33 @@ else
 fi
 
 if [ "$NEEDS_UPDATE" -eq 1 ]; then
-    COMMIT_MSG2=$(echo "$COMMAND" | sed -n "s/.*-m ['\"]\\(.*\\)['\"].*/\\1/p" | head -1)
-    [ -z "$COMMIT_MSG2" ] && COMMIT_MSG2=$(echo "$COMMAND" | grep -oE "git commit.*" | head -1)
-    CHANGED_FILES2=$(cd "$PROJECT_DIR" && git diff --cached --name-only 2>/dev/null | head -10 | sed 's/^/  - /')
+    # [FIX] heredoc 커밋 메시지 파싱 실패 문제 — $COMMAND에서 추출 대신 staged diff 요약 사용
+    # Claude Code가 heredoc(-m "$(cat <<'EOF'...)")으로 커밋하면 sed 파싱이 깨짐
+    # → 커밋 직전이므로 staged 파일 목록 + diff 요약을 기록
+    CHANGED_FILES2=$(cd "$PROJECT_DIR" && git diff --cached --name-only 2>/dev/null | head -15 | sed 's/^/  - /')
+    DIFF_STAT2=$(cd "$PROJECT_DIR" && git diff --cached --stat 2>/dev/null | tail -1)
     NOW_DATE2=$(date '+%Y-%m-%d %H:%M')
+    # 커밋 메시지 추출 시도 (단순 -m "msg" 형태만)
+    COMMIT_MSG2=$(echo "$COMMAND" | sed -n 's/.*-m "\([^"]*\)".*/\1/p' | head -1)
+    # heredoc 실패 시 staged diff에서 첫 줄 추출
+    if [ -z "$COMMIT_MSG2" ]; then
+        COMMIT_MSG2="(커밋 진행 중 — 메시지는 git log 참조)"
+    fi
     {
         echo ""
-        echo "## $NOW_DATE2"
+        echo "### $NOW_DATE2"
         echo "$COMMIT_MSG2"
         echo ""
         echo "변경 파일:"
         echo "$CHANGED_FILES2"
+        [ -n "$DIFF_STAT2" ] && echo "통계: $DIFF_STAT2"
     } >> "$WORKHIST"
     echo "✅ work-history.md 자동 업데이트됨"
 fi
+
+# [FIX] 커밋 완료 후 git log에서 실제 메시지로 교정하는 post-commit 로직
+# pre-commit에서는 메시지를 정확히 알 수 없으므로, 경고만 출력하고 차단하지 않음
+# (이전: 경고 + 차단 없음 → 유지)
 
 # ──────────────────────────────────────────────
 # CHECK 3: UI/서비스/스토어/훅/유틸 변경 시 Playwright E2E 검증 필수
