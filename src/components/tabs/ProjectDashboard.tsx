@@ -6,7 +6,8 @@ import { exportProjectById } from '../../services/exportService';
 import { useNavigationStore } from '../../stores/navigationStore';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
 import { useSyncStore } from '../../stores/syncStore';
-import { performFullSync, deleteCloudProject } from '../../services/syncService';
+import { useProjectStore } from '../../stores/projectStore';
+import { performFullSync, deleteCloudProject, pauseSync, resumeSync, markDeletingIds, unmarkDeletingId } from '../../services/syncService';
 import { getToken } from '../../services/authService';
 import type { SyncStatus } from '../../types';
 
@@ -547,14 +548,59 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, on
     if (!requireAuth('프로젝트 삭제')) return;
     if (selectedIds.size === 0) return;
     if (!confirm(`${selectedIds.size}개의 프로젝트를 삭제하시겠습니까?`)) return;
+
+    const ids = Array.from(selectedIds);
+
+    // 동기화가 삭제 대상을 재다운로드하지 않도록 등록 + 일시 중단
+    markDeletingIds(ids);
+    await pauseSync();
+
     try {
-      for (const id of selectedIds) {
-        await deleteProject(id);
-        deleteCloudProject(id).catch(() => {});
+      // 현재 열린 프로젝트가 삭제 대상이면 메모리 상태 완전 초기화
+      const currentId = useProjectStore.getState().currentProjectId;
+      if (currentId && ids.includes(currentId)) {
+        useProjectStore.getState().setCurrentProjectId(null);
+        useProjectStore.setState({ scenes: [], projectTitle: '', config: undefined as any });
+        useNavigationStore.getState().goToDashboard();
+      }
+
+      // 1) 로컬 IndexedDB 삭제 (개별 실패 무시 — 성공 목록 수집)
+      const localDeleted: string[] = [];
+      for (const id of ids) {
+        try {
+          await deleteProject(id);
+          localDeleted.push(id);
+        } catch (e) {
+          console.error(`[ProjectDashboard] 로컬 삭제 실패: ${id}`, e);
+        }
+      }
+
+      // 2) 클라우드 소프트 삭제 (병렬 — 로컬 삭제 성공 여부 무관하게 전체 시도)
+      const localDeletedSet = new Set(localDeleted);
+      const cloudResults = await Promise.allSettled(
+        ids.map(id => deleteCloudProject(id))
+      );
+      // 클라우드 삭제 성공한 ID는 보호 해제 (다음 sync에서 deleted로 처리됨)
+      let failCount = 0;
+      cloudResults.forEach((r, i) => {
+        if (r.status === 'fulfilled') {
+          unmarkDeletingId(ids[i]);
+        } else {
+          failCount++;
+        }
+      });
+      const localFailCount = ids.length - localDeleted.length;
+      if (localFailCount > 0 || failCount > 0) {
+        const parts: string[] = [];
+        if (localFailCount > 0) parts.push(`로컬 ${localFailCount}건`);
+        if (failCount > 0) parts.push(`클라우드 ${failCount}건`);
+        showToast(`삭제 실패: ${parts.join(', ')}. 새로고침 후 다시 시도해주세요.`, 4000);
       }
     } catch (e) {
       console.error('[ProjectDashboard] 삭제 실패:', e);
-      showToast('일부 프로젝트 삭제에 실패했습니다.', 4000);
+      showToast('프로젝트 삭제 중 오류가 발생했습니다.', 4000);
+    } finally {
+      resumeSync();
     }
     setSelectedIds(new Set());
     loadSummaries();
