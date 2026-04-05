@@ -202,10 +202,16 @@ const App: React.FC = () => {
     });
   }, []);
 
+  // 컴패니언 게이트: 로그인된 사용자만 대상, 60초 간격 재확인
   useEffect(() => {
     let cancelled = false;
 
+    // 인증 체크 중이거나 비로그인이면 게이트 비활성
     if (authChecking) return;
+    if (!authUser) {
+      setShowCompanionGate(false);
+      return;
+    }
 
     const checkCompanion = async () => {
       const detected = await recheckCompanion().catch(() => false);
@@ -214,15 +220,22 @@ const App: React.FC = () => {
       }
     };
 
+    // 최초 체크
     checkCompanion().catch((e) => {
       logger.trackSwallowedError('App:checkCompanion', e);
       if (!cancelled) setShowCompanionGate(true);
     });
 
+    // 60초 간격 재확인 — 세션 중 컴패니언이 꺼지면 다시 게이트 표시
+    const interval = setInterval(() => {
+      if (!cancelled) checkCompanion().catch(() => {});
+    }, 60_000);
+
     return () => {
       cancelled = true;
+      clearInterval(interval);
     };
-  }, [authChecking, setShowCompanionGate]);
+  }, [authChecking, authUser, setShowCompanionGate]);
 
   // --- Navigation Store (v4.5) ---
   const activeTab = useNavigationStore((s) => s.activeTab);
@@ -1600,7 +1613,7 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {showCompanionGate && <CompanionGateModal />}
+      {authUser && showCompanionGate && <CompanionGateModal />}
     </div>
   );
 };
