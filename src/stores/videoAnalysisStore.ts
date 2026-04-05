@@ -16,6 +16,7 @@ import type { SavedVideoAnalysisSlot } from '../services/storageService';
 
 interface ResultCache {
   sourceKey?: string;
+  stamp?: string;
   raw: string;
   versions: VideoVersionItem[];
   thumbs: VideoTimedFrame[];
@@ -79,6 +80,15 @@ interface VideoAnalysisStore {
 
   /** 현재 결과를 프리셋 캐시에 저장 */
   cacheCurrentResult: (preset: VideoAnalysisPreset, sourceKey: string) => void;
+  /** 비동기 작업용 스냅샷 결과를 프리셋 캐시에 저장 */
+  cacheResultSnapshot: (
+    preset: VideoAnalysisPreset,
+    sourceKey: string | undefined,
+    rawResult: string,
+    versions: VideoVersionItem[],
+    thumbnails: VideoTimedFrame[],
+    stamp?: string,
+  ) => void;
   /** 프리셋 캐시에서 복원 */
   restoreFromCache: (preset: VideoAnalysisPreset, sourceKey: string) => boolean;
   /** 캐시 삭제 */
@@ -225,9 +235,11 @@ function buildLiveResultCacheEntry(
   rawResult: string,
   versions: VideoVersionItem[],
   thumbnails: VideoTimedFrame[],
+  stamp?: string,
 ): ResultCache {
   return {
     sourceKey,
+    stamp,
     raw: rawResult,
     versions: cloneVersionsForCache(versions),
     thumbs: cloneTimedFrames(thumbnails),
@@ -266,6 +278,22 @@ function buildPersistableResultCache(
     mergedCache[selectedPreset] = currentEntry;
   }
   return compactResultCacheEntries(mergedCache, selectedPreset, RESULT_CACHE_LIMIT);
+}
+
+function buildNextLiveResultCache(
+  cache: Record<string, ResultCache>,
+  preset: VideoAnalysisPreset,
+  entry: ResultCache,
+): Record<string, ResultCache> {
+  const nextKeys = Object.keys(cache).filter((key) => key !== preset).slice(-(RESULT_CACHE_LIMIT - 1));
+  const nextCache: Record<string, ResultCache> = {};
+  nextKeys.forEach((key) => {
+    const existingEntry = cache[key];
+    if (!existingEntry) return;
+    nextCache[key] = existingEntry;
+  });
+  nextCache[preset] = entry;
+  return nextCache;
 }
 
 export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
@@ -355,15 +383,26 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
         const { rawResult, versions, thumbnails, resultCache } = get();
         // [FIX #316] rawResult가 비어도 versions가 있으면 캐시 허용 — slimValue로 rawResult 유실 시 비주얼 복구 불가 방지
         if (!rawResult && versions.length === 0) return;
-        const nextKeys = Object.keys(resultCache).filter((key) => key !== preset).slice(-(RESULT_CACHE_LIMIT - 1));
-        const nextCache: Record<string, ResultCache> = {};
-        nextKeys.forEach((key) => {
-          nextCache[key] = resultCache[key];
-        });
-        nextCache[preset] = buildLiveResultCacheEntry(sourceKey, rawResult, versions, thumbnails);
+        const currentStamp = resultCache[preset]?.sourceKey === sourceKey
+          ? resultCache[preset]?.stamp
+          : undefined;
         set({
-          resultCache: nextCache,
+          resultCache: buildNextLiveResultCache(
+            resultCache,
+            preset,
+            buildLiveResultCacheEntry(sourceKey, rawResult, versions, thumbnails, currentStamp),
+          ),
         });
+      },
+      cacheResultSnapshot: (preset, sourceKey, rawResult, versions, thumbnails, stamp) => {
+        if (!rawResult && versions.length === 0) return;
+        set((state) => ({
+          resultCache: buildNextLiveResultCache(
+            state.resultCache,
+            preset,
+            buildLiveResultCacheEntry(sourceKey, rawResult, versions, thumbnails, stamp),
+          ),
+        }));
       },
 
       restoreFromCache: (preset, sourceKey) => {
@@ -375,6 +414,7 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
           rawResult: cached.raw,
           versions: cloneVersionsForCache(cached.versions),
           thumbnails: compactTimedFrames(cached.thumbs, STATE_THUMBNAIL_LIMIT),
+          isFrameUpgrading: false,
           expandedId: null,
           error: null,
         });
@@ -450,6 +490,7 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
               versions: compactVersionsForPersistence(found.versions),
               resultCache: compactResultCacheEntries(found.resultCache || {}, found.selectedPreset, RESULT_CACHE_LIMIT),
               thumbnails: restoredThumbs,
+              isFrameUpgrading: false,
               expandedId: null,
               error: null,
               savedSlots: all,
@@ -535,6 +576,7 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
             versions: compactVersionsForPersistence(autoSave.versions),
             resultCache: compactResultCacheEntries(autoSave.resultCache || {}, autoSave.selectedPreset, RESULT_CACHE_LIMIT),
             thumbnails: restoredThumbs,
+            isFrameUpgrading: false,
             expandedId: null,
             error: null,
           });

@@ -377,9 +377,11 @@ function parseTikitakaTable(content: string): SceneRow[] {
   const hasTimecodePattern = (s: string) => /\d{1,2}:\d{2}/.test(s);
   // 효과태그 패턴: [펀치], [💥쾅!], [동공지진] 등 (모드 태그 [S]/[A]/[N] 제외)
   const isEffectTag = (s: string) => /^\[.+\]$/.test(s.trim()) && !/^\[[SAN]\]$/i.test(s.trim());
+  const hasModePattern = (s: string) => /^(?:\[[SAN]\]|[SAN])$/i.test(s.trim());
 
   const tableBlocks = collectMarkdownTableBlocks(content);
   let bestRows: SceneRow[] = [];
+  let bestScore = 0;
 
   for (const block of tableBlocks) {
     let headerCells: string[] = [];
@@ -530,10 +532,21 @@ function parseTikitakaTable(content: string): SceneRow[] {
       });
     }
 
-    if (rows.length > bestRows.length) bestRows = rows;
+    const timecodeRowCount = rows.filter((row) => hasTimecodePattern(row.timecodeSource || row.sourceTimeline || '')).length;
+    const durationRowCount = rows.filter((row) => isDurationPattern(row.duration || '')).length;
+    const modeRowCount = rows.filter((row) => hasModePattern(row.mode || '')).length;
+    const headerSignalCount = [cutIndex, modeIndex, audioIndex, effectIndex, durationIndex, timecodeIndex, videoIndex]
+      .filter((index) => index >= 0)
+      .length;
+    const blockScore = ((timecodeRowCount + durationRowCount + modeRowCount) * 100) + (headerSignalCount * 20) + rows.length;
+
+    if (blockScore > bestScore || (blockScore === bestScore && rows.length > bestRows.length)) {
+      bestScore = blockScore;
+      bestRows = rows;
+    }
   }
 
-  return bestRows;
+  return bestScore >= 100 ? bestRows : [];
 }
 
 /** Content ID 분석 블록 파싱 */
@@ -3611,7 +3624,7 @@ const VideoAnalysisRoom: React.FC = () => {
     versionCount, setVersionCount,
     setInputMode, setYoutubeUrl, updateYoutubeUrl, addYoutubeUrl, removeYoutubeUrl,
     setSelectedPreset, setRawResult, setVersions, setThumbnails, setIsFrameUpgrading,
-    setError, setExpandedId, cacheCurrentResult, restoreFromCache, resetResults,
+    setError, setExpandedId, cacheResultSnapshot, restoreFromCache, resetResults,
     clearPresetCache,
     savedSlots, activeSlotId, loadSlot, removeSlot, newAnalysis, loadAllSlots, saveSlot,
     autoSave, tryAutoRecover,
@@ -3927,7 +3940,15 @@ const VideoAnalysisRoom: React.FC = () => {
     // 현재 결과를 기존 프리셋 캐시에 저장 (전환 전 보존)
     // [FIX #316] rawResult 유실 시에도 versions 기반 캐시 가능하도록 조건 완화
     if (selectedPreset && (rawResult || versions.length > 0)) {
-      cacheCurrentResult(selectedPreset, sourceCacheKey);
+      const currentResult = useVideoAnalysisStore.getState();
+      cacheResultSnapshot(
+        selectedPreset,
+        sourceCacheKey,
+        currentResult.rawResult,
+        currentResult.versions,
+        currentResult.thumbnails,
+        currentResult.resultCache[selectedPreset]?.stamp,
+      );
     }
 
     // 강제 재생성 시 해당 프리셋 캐시 삭제
@@ -3964,6 +3985,7 @@ const VideoAnalysisRoom: React.FC = () => {
     failsafeFiredRef.current = false; // [FIX #454] 페일세이프 플래그 초기화
     analysisStartRef.current = Date.now();
     const perfRunId = resetAnalysisPerf(preset);
+    const analysisCacheStamp = `${preset}:${perfRunId}:${Date.now()}`;
     resetResults();
 
     // [FIX #378 + #523] 분석 시작 직후 글로벌 타임아웃 설정 — 전처리+AI 전체 보호
@@ -4941,6 +4963,47 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
         }
       }
       setVersions(parsed);
+      let cachedVersionsSnapshot = parsed;
+      let cachedThumbnailsSnapshot = useVideoAnalysisStore.getState().thumbnails;
+      const hasActiveCacheStamp = (): boolean =>
+        useVideoAnalysisStore.getState().resultCache[preset]?.stamp === analysisCacheStamp;
+      const shouldApplyBackgroundResult = (): boolean => {
+        const currentStore = useVideoAnalysisStore.getState();
+        return currentStore.selectedPreset === preset
+          && currentStore.rawResult === text
+          && hasActiveCacheStamp();
+      };
+      const syncSnapshotCache = (force = false): void => {
+        if (!force && !hasActiveCacheStamp()) return;
+        cacheResultSnapshot(
+          preset,
+          sourceCacheKey,
+          text,
+          cachedVersionsSnapshot,
+          cachedThumbnailsSnapshot,
+          analysisCacheStamp,
+        );
+      };
+      const updateBackgroundVersions = (nextVersions: VersionItem[]): void => {
+        cachedVersionsSnapshot = nextVersions;
+        syncSnapshotCache();
+        if (shouldApplyBackgroundResult()) {
+          useVideoAnalysisStore.getState().setVersions(nextVersions);
+        }
+      };
+      const updateBackgroundThumbnails = (nextThumbnails: TimedFrame[]): void => {
+        cachedThumbnailsSnapshot = nextThumbnails;
+        syncSnapshotCache();
+        if (shouldApplyBackgroundResult()) {
+          setThumbnails(nextThumbnails);
+        }
+      };
+      const setBackgroundFrameUpgradeState = (value: boolean): void => {
+        if (shouldApplyBackgroundResult()) {
+          setIsFrameUpgrading(value);
+        }
+      };
+      syncSnapshotCache(true);
       addAnalysisPerfStage(perfRunId, 'ai', 'AI 분석');
 
       // [FIX #313] 배치 완료 후 IndexedDB 자동 저장 — 프레임 추출 전에 저장하여 새로고침 시 복구 가능
@@ -4962,13 +5025,12 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       const backgroundFramePerfStartedAt = performance.now();
       let backgroundFramePerfState: 'done' | 'timeout' | 'failed' = 'done';
       const innerFrameWork = (async () => {
-      const finalVersions = useVideoAnalysisStore.getState().versions;
       let ytVid: string | null = null;
       let durSec = 300; // 기본 5분 추정
 
       if (uploadedFiles.length > 0) {
         // 다중 업로드 모드: 모든 파일에서 타임코드 기반 프레임 추출
-        let allTimecodes = collectTimecodesFromVersions(finalVersions);
+        let allTimecodes = collectTimecodesFromVersions(cachedVersionsSnapshot);
         console.log(`[Frame] 수집된 타임코드: ${allTimecodes.length}개 (업로드 ${uploadedFiles.length}개 영상)`);
 
         // [FIX #311] 업로드 영상도 장면감지로 AI 타임코드 보정
@@ -4981,8 +5043,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
               allTimecodes = mergeWithAiTimecodes(allTimecodes, uploadCuts);
               console.log(`[Scene] ✅ 업로드 씬 감지 보정 완료: ${uploadCuts.length}개 컷 → 타임코드 보정`);
               // [FIX #312] 업로드도 보정 타임코드 역전파
-              const correctedVersions = applyCorrectedTimecodes(finalVersions, originalUploadTimecodes, allTimecodes);
-              useVideoAnalysisStore.getState().setVersions(correctedVersions);
+              updateBackgroundVersions(applyCorrectedTimecodes(cachedVersionsSnapshot, originalUploadTimecodes, allTimecodes));
             }
           } catch (e) {
             console.warn('[Scene] 업로드 씬 감지 실패 (AI 타임코드로 진행):', e);
@@ -5008,7 +5069,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
           }
           if (multiExactFrames.length > 0) {
             console.log(`[Frame] ✅ 최종 프레임 ${multiExactFrames.length}개 적용 (${uploadedFiles.length}개 영상)`);
-            setThumbnails(multiExactFrames);
+            updateBackgroundThumbnails(multiExactFrames);
           }
         }
       } else if (isYouTubeUrl(youtubeUrl)) {
@@ -5028,7 +5089,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
           } catch (e) { logger.trackSwallowedError('VideoAnalysisRoom:handleAnalyze/fetchMeta', e); }
         }
 
-        const aiTimecodes = collectTimecodesFromVersions(finalVersions, durSec);
+        const aiTimecodes = collectTimecodesFromVersions(cachedVersionsSnapshot, durSec);
 
         if (aiTimecodes.length > 0 && ytVid) {
           // ★ [FIX #340 v3] 서버 ffmpeg 프레임 추출 1순위 → YouTube 썸네일 폴백
@@ -5041,12 +5102,12 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
             fastFrames = buildYouTubeThumbnailFallback(ytVid, aiTimecodes, durSec);
             console.log(`[Frame] ⚡ YouTube 썸네일 폴백: ${fastFrames.length}개 프레임`);
           }
-          setThumbnails(fastFrames);
+          updateBackgroundThumbnails(fastFrames);
 
           // 백그라운드: 병렬 다운로드 결과가 있으면 정밀 프레임으로 업그레이드 (비차단)
-          setIsFrameUpgrading(true);
+          setBackgroundFrameUpgradeState(true);
           parallelDownloadPromise.then(downloadResult => {
-            if (!downloadResult || aiTimecodes.length === 0) { setIsFrameUpgrading(false); return; }
+            if (!downloadResult || aiTimecodes.length === 0) { setBackgroundFrameUpgradeState(false); return; }
             try {
               const mergedTimecodes = downloadResult.sceneCuts.length > 0
                 ? mergeWithAiTimecodes(aiTimecodes, downloadResult.sceneCuts)
@@ -5056,24 +5117,23 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
               canvasExtractFrames(blobUrl, mergedTimecodes, true).then(exactFrames => {
                 if (exactFrames.length > 0) {
                   console.log(`[Frame] ✅ 정밀 프레임 ${exactFrames.length}개로 업그레이드 (백그라운드)`);
-                  setThumbnails(exactFrames);
                   if (downloadResult.sceneCuts.length > 0) {
-                    const correctedVersions = applyCorrectedTimecodes(
-                      useVideoAnalysisStore.getState().versions, aiTimecodes, mergedTimecodes
+                    updateBackgroundVersions(
+                      applyCorrectedTimecodes(cachedVersionsSnapshot, aiTimecodes, mergedTimecodes),
                     );
-                    useVideoAnalysisStore.getState().setVersions(correctedVersions);
                   }
+                  updateBackgroundThumbnails(exactFrames);
                 }
-                setIsFrameUpgrading(false);
-              }).catch(() => { setIsFrameUpgrading(false); });
-            } catch (e) { console.warn('[Frame] 백그라운드 정밀 추출 실패 (YouTube 썸네일 유지):', e); setIsFrameUpgrading(false); }
-          }).catch(() => { setIsFrameUpgrading(false); });
+                setBackgroundFrameUpgradeState(false);
+              }).catch(() => { setBackgroundFrameUpgradeState(false); });
+            } catch (e) { console.warn('[Frame] 백그라운드 정밀 추출 실패 (YouTube 썸네일 유지):', e); setBackgroundFrameUpgradeState(false); }
+          }).catch(() => { setBackgroundFrameUpgradeState(false); });
         }
       } else {
         // 소셜 (TikTok 등): 이미 다운로드한 Blob으로 장면감지 + 프레임 추출
         const existingBlob = useVideoAnalysisStore.getState().videoBlob;
         if (existingBlob) {
-          const allTimecodes = collectTimecodesFromVersions(finalVersions, durSec);
+          const allTimecodes = collectTimecodesFromVersions(cachedVersionsSnapshot, durSec);
           if (allTimecodes.length > 0) {
             // [FIX #311] 소셜 영상도 장면감지 + AI 타임코드 보정 (YouTube와 동일 정밀도)
             let mergedTimecodes = allTimecodes;
@@ -5084,8 +5144,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                 mergedTimecodes = mergeWithAiTimecodes(allTimecodes, socialCuts);
                 console.log(`[Scene] ✅ 소셜 씬 감지 완료: AI ${allTimecodes.length}개 + 씬 ${socialCuts.length}개 → ${mergedTimecodes.length}개 병합`);
                 // [FIX #312] 소셜도 보정 타임코드 역전파
-                const correctedVersions = applyCorrectedTimecodes(finalVersions, allTimecodes, mergedTimecodes);
-                useVideoAnalysisStore.getState().setVersions(correctedVersions);
+                updateBackgroundVersions(applyCorrectedTimecodes(cachedVersionsSnapshot, allTimecodes, mergedTimecodes));
               }
             } catch (e) {
               console.warn('[Scene] 소셜 씬 감지 실패 (AI 타임코드로 진행):', e);
@@ -5096,7 +5155,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
             const exactFrames = await canvasExtractFrames(blobUrl, mergedTimecodes, true);
             if (exactFrames.length > 0) {
               console.log(`[Frame] ✅ 소셜 영상 타임코드 프레임 ${exactFrames.length}개 적용`);
-              setThumbnails(exactFrames);
+              updateBackgroundThumbnails(exactFrames);
             }
           }
         }
@@ -5128,8 +5187,9 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
           backgroundState: backgroundFramePerfState,
           showToastSummary: false,
         });
-        cacheCurrentResult(preset, sourceCacheKey);
-        autoSave().catch(() => {});
+        if (shouldApplyBackgroundResult()) {
+          autoSave().catch(() => {});
+        }
       });
 
       // [FIX #316] 결과 캐시에 저장 (동기 실행 — setTimeout 제거하여 autoSave 이전에 캐시 확보)
@@ -5138,7 +5198,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
         backgroundState: 'running',
         showToastSummary: true,
       });
-      cacheCurrentResult(preset, sourceCacheKey);
+      syncSnapshotCache();
       notifyAnalysisComplete();
       // 자동 슬롯 저장
       setTimeout(() => useVideoAnalysisStore.getState().saveSlot(), 500);
