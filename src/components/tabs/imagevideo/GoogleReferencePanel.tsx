@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useRef } from 'react';
 import { useProjectStore } from '../../../stores/projectStore';
 import { useImageVideoStore } from '../../../stores/imageVideoStore';
 import { searchSceneReferenceImages, buildSearchQuery, SCENE_REFERENCE_BATCH_CONCURRENCY, isPrimaryReferenceProvider } from '../../../services/googleReferenceSearchService';
@@ -29,16 +29,12 @@ const ASPECT_CLASS: Record<string, string> = {
 
 const PROVIDER_LABELS: Record<ReferenceSearchProvider, string> = {
   google: 'Google',
-  serper: 'Google',
-  pexels: 'Pexels',
   wikimedia: 'Wikimedia',
   naver: 'Naver',
 };
 
 const PROVIDER_BADGE_STYLES: Record<ReferenceSearchProvider, string> = {
   google: 'text-orange-300 border-orange-500/30 bg-orange-500/10',
-  serper: 'text-orange-300 border-orange-500/30 bg-orange-500/10',
-  pexels: 'text-emerald-300 border-emerald-500/30 bg-emerald-500/10',
   wikimedia: 'text-cyan-300 border-cyan-500/30 bg-cyan-500/10',
   naver: 'text-green-300 border-green-500/30 bg-green-500/10',
 };
@@ -78,9 +74,20 @@ const GoogleReferencePanel: React.FC = () => {
   // [FIX #681] 밈/일러스트 소스 탭
   const [activeSourceTab, setActiveSourceTab] = useState<ReferenceSourceTab>('web');
   const [memeResults, setMemeResults] = useState<Map<string, CommunityMediaItem[]>>(new Map());
+  const previewRequestIdsRef = useRef<Map<string, number>>(new Map());
 
   const hasScenes = scenes.length > 0 && scenes.some(s => !!s.scriptText || !!s.visualPrompt);
   const aspectClass = ASPECT_CLASS[aspectRatio] || 'aspect-video';
+
+  const beginPreviewRequest = useCallback((sceneId: string): number => {
+    const nextRequestId = (previewRequestIdsRef.current.get(sceneId) || 0) + 1;
+    previewRequestIdsRef.current.set(sceneId, nextRequestId);
+    return nextRequestId;
+  }, []);
+
+  const isLatestPreviewRequest = useCallback((sceneId: string, requestId: number): boolean => {
+    return previewRequestIdsRef.current.get(sceneId) === requestId;
+  }, []);
 
   // [FIX #681] 밈/일러스트 검색
   const searchMemeForScene = useCallback(async (scene: Scene, source: 'klipy' | 'irasutoya') => {
@@ -98,15 +105,21 @@ const GoogleReferencePanel: React.FC = () => {
 
   const applyMemeImage = useCallback((sceneId: string, item: CommunityMediaItem) => {
     const targetScene = scenes.find(s => s.id === sceneId);
+    if (!targetScene) return;
+    if (targetScene.isGeneratingImage) {
+      showToast('이 장면은 다른 이미지 작업이 끝난 뒤에만 적용할 수 있어요.');
+      return;
+    }
     updateScene(sceneId, {
       imageUrl: item.url,
       isGeneratingImage: false,
       generationStatus: `${item.source === 'klipy' ? '밈' : '일러스트'} 레퍼런스 적용`,
-      imageUpdatedAfterVideo: !!targetScene?.videoUrl,
+      imageUpdatedAfterVideo: !!targetScene.videoUrl,
       communityMediaItem: item,
       // [FIX #681] stale 웹 검색 메타데이터 초기화 — 이전 웹 검색 쿼리/페이지 제거
       referenceSearchQuery: undefined,
       referenceSearchPage: undefined,
+      referenceSearchBaseQuery: undefined,
     });
     showToast(`${item.source === 'klipy' ? '밈' : '일러스트'} 이미지가 적용되었어요!`);
   }, [scenes, updateScene]);
@@ -120,6 +133,7 @@ const GoogleReferencePanel: React.FC = () => {
   ) => {
     const prevScene = sceneIndex > 0 ? scenes[sceneIndex - 1] : null;
     const nextScene = sceneIndex < scenes.length - 1 ? scenes[sceneIndex + 1] : null;
+    const requestId = beginPreviewRequest(scene.id);
 
     setScenePreviews(prev => {
       const next = new Map(prev);
@@ -142,7 +156,17 @@ const GoogleReferencePanel: React.FC = () => {
       const startIndex = (page - 1) * 10 + 1;
       const response = await searchSceneReferenceImages(
         scene, prevScene, nextScene, config?.globalContext, startIndex, rankingMode,
+        { bypassEmptyCache: true },
       );
+
+      if (!isLatestPreviewRequest(scene.id, requestId)) {
+        return {
+          ok: response.items.length > 0,
+          provider: response.provider,
+          firstLink: response.items[0]?.link,
+          query: response.query,
+        };
+      }
 
       setScenePreviews(prev => {
         const next = new Map(prev);
@@ -164,9 +188,16 @@ const GoogleReferencePanel: React.FC = () => {
         ok: response.items.length > 0,
         provider: response.provider,
         firstLink: response.items[0]?.link,
+        query: response.query,
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : '검색 실패';
+      if (!isLatestPreviewRequest(scene.id, requestId)) {
+        return {
+          ok: false,
+          blocked: /차단|captcha|429/i.test(message),
+        };
+      }
       setScenePreviews(prev => {
         const next = new Map(prev);
         const existing = next.get(scene.id);
@@ -183,7 +214,7 @@ const GoogleReferencePanel: React.FC = () => {
         blocked: /차단|captcha|429/i.test(message),
       };
     }
-  }, [scenes, config?.globalContext]);
+  }, [beginPreviewRequest, config?.globalContext, isLatestPreviewRequest, scenes]);
 
   // [FIX] 커뮤니티 밈/일러스트 혼합 모드 — 2~3컷마다 밈 or 일러스트 삽입
   const mixCommunityInterval = activeSourceTab !== 'web' ? 2 : 0; // 밈/일러스트 탭 활성 시 2컷마다
@@ -193,11 +224,13 @@ const GoogleReferencePanel: React.FC = () => {
     if (!hasScenes) { showToast('장면 분석을 먼저 실행하세요.'); return; }
     setIsSearchingAll(true);
     try {
-      const validScenes = scenes.filter(s => !!s.scriptText || !!s.visualPrompt);
+      const busySceneCount = scenes.filter((scene) => (scene.scriptText || scene.visualPrompt) && scene.isGeneratingImage).length;
+      const validScenes = scenes.filter(s => (!!s.scriptText || !!s.visualPrompt) && !s.isGeneratingImage);
       let successCount = 0;
       let blockedCount = 0;
       let fallbackCount = 0;
       let communityCount = 0;
+      let skippedCount = busySceneCount;
 
       // 커뮤니티 혼합: 밈/일러스트 탭이 활성 상태이면 2~3컷마다 밈/일러스트 배치
       const communitySource = activeSourceTab === 'meme' ? 'klipy' : activeSourceTab === 'illust' ? 'irasutoya' : null;
@@ -214,6 +247,11 @@ const GoogleReferencePanel: React.FC = () => {
         useCommunity: communitySlots.has(qIdx),
       }));
       let cursor = 0;
+      const didSceneChangeDuringSearch = (snapshotScene: Scene, latestScene?: Scene) => {
+        if (!latestScene) return true;
+        return (latestScene.imageUrl?.trim() || '') !== (snapshotScene.imageUrl?.trim() || '')
+          || latestScene.isGeneratingImage !== snapshotScene.isGeneratingImage;
+      };
 
       const worker = async () => {
         while (true) {
@@ -231,12 +269,20 @@ const GoogleReferencePanel: React.FC = () => {
                 if (filtered.length > 0) {
                   // 밈/일러스트 결과 있으면 적용
                   const item = filtered[0];
+                  const latestScene = useProjectStore.getState().scenes.find((scene) => scene.id === current.scene.id);
+                  if (didSceneChangeDuringSearch(current.scene, latestScene)) {
+                    skippedCount++;
+                    continue;
+                  }
                   updateScene(current.scene.id, {
                     imageUrl: item.url,
                     isGeneratingImage: false,
                     generationStatus: `${communitySource === 'klipy' ? '밈' : '일러스트'} 레퍼런스 적용`,
-                    imageUpdatedAfterVideo: !!current.scene.videoUrl,
+                    imageUpdatedAfterVideo: !!latestScene?.videoUrl,
                     communityMediaItem: item,
+                    referenceSearchQuery: undefined,
+                    referenceSearchPage: undefined,
+                    referenceSearchBaseQuery: undefined,
                   });
                   setMemeResults((prev) => new Map(prev).set(`${current.scene.id}:${communitySource}`, filtered.slice(0, 10)));
                   successCount++;
@@ -250,17 +296,30 @@ const GoogleReferencePanel: React.FC = () => {
           // 웹 검색 — 결과가 있으면 첫 번째 이미지를 scene.imageUrl에 바로 적용
           const result = await searchScene(current.scene, current.sceneIndex, 1, 'fast');
           if (result.ok) {
-            successCount++;
-            if (result.provider && !isPrimaryReferenceProvider(result.provider)) fallbackCount++;
             // [FIX P1+P2] searchScene 반환값의 firstLink로 imageUrl 직접 적용 + 메타데이터 보존
             if (result.firstLink) {
+              const latestScene = useProjectStore.getState().scenes.find((scene) => scene.id === current.scene.id);
+              if (didSceneChangeDuringSearch(current.scene, latestScene)) {
+                skippedCount++;
+                continue;
+              }
+              successCount++;
+              if (result.provider && !isPrimaryReferenceProvider(result.provider)) fallbackCount++;
+              const baseQuery = buildSearchQuery(
+                current.scene,
+                current.sceneIndex > 0 ? scenes[current.sceneIndex - 1] : null,
+                current.sceneIndex < scenes.length - 1 ? scenes[current.sceneIndex + 1] : null,
+                config?.globalContext,
+              );
               updateScene(current.scene.id, {
                 imageUrl: result.firstLink,
                 isGeneratingImage: false,
                 generationStatus: isPrimaryReferenceProvider(result.provider || 'google') ? '구글 레퍼런스 적용' : '대체 레퍼런스 적용',
-                imageUpdatedAfterVideo: !!current.scene.videoUrl,
+                imageUpdatedAfterVideo: !!latestScene?.videoUrl,
+                communityMediaItem: undefined,
                 referenceSearchPage: 1,
-                referenceSearchQuery: buildSearchQuery(current.scene, current.sceneIndex > 0 ? scenes[current.sceneIndex - 1] : null, current.sceneIndex < scenes.length - 1 ? scenes[current.sceneIndex + 1] : null, config?.globalContext),
+                referenceSearchQuery: result.query || baseQuery,
+                referenceSearchBaseQuery: baseQuery,
               });
             }
           } else if (result.blocked) {
@@ -271,8 +330,9 @@ const GoogleReferencePanel: React.FC = () => {
 
       const workerCount = Math.min(SCENE_REFERENCE_BATCH_CONCURRENCY, queue.length || 1);
       await Promise.all(Array.from({ length: workerCount }, () => worker()));
+      const runtimeSkippedCount = Math.max(0, skippedCount - busySceneCount);
 
-      if (successCount === validScenes.length) {
+      if (validScenes.length > 0 && successCount === validScenes.length && skippedCount === 0) {
         const parts = [];
         if (communityCount > 0) parts.push(`${communityCount}개 ${communitySource === 'klipy' ? '밈' : '일러스트'}`);
         if (successCount - communityCount > 0) parts.push(`${successCount - communityCount}개 웹 이미지`);
@@ -283,7 +343,15 @@ const GoogleReferencePanel: React.FC = () => {
       }
 
       if (successCount > 0) {
-        showToast(`${successCount}개 장면은 가져왔고 ${validScenes.length - successCount}개 장면은 비어 있어요.`);
+        const emptyCount = Math.max(0, validScenes.length - successCount - runtimeSkippedCount);
+        showToast(
+          `${successCount}개 장면은 가져왔고 ${emptyCount}개 장면은 비어 있어요.${skippedCount > 0 ? ` ${skippedCount}개 장면은 작업 중이거나 방금 바뀌어서 건너뛰었어요.` : ''}`,
+        );
+        return;
+      }
+
+      if (skippedCount > 0) {
+        showToast(`${skippedCount}개 장면은 작업 중이거나 방금 바뀌어서 건너뛰었어요.`);
         return;
       }
 
@@ -296,22 +364,39 @@ const GoogleReferencePanel: React.FC = () => {
     } finally {
       setIsSearchingAll(false);
     }
-  }, [hasScenes, scenes, searchScene, activeSourceTab, mixCommunityInterval, updateScene]);
+  }, [hasScenes, scenes, searchScene, activeSourceTab, mixCommunityInterval, updateScene, config?.globalContext]);
 
   // 이미지 선택 → scene.imageUrl에 적용
   const applyImage = useCallback((sceneId: string, imageUrl: string, provider: ReferenceSearchProvider = 'google') => {
     const targetScene = scenes.find(s => s.id === sceneId);
+    if (!targetScene) return;
+    if (targetScene.isGeneratingImage) {
+      showToast('이 장면은 다른 이미지 작업이 끝난 뒤에만 적용할 수 있어요.');
+      return;
+    }
     const preview = scenePreviews.get(sceneId);
+    const sceneIndexFromStore = scenes.findIndex((scene) => scene.id === sceneId);
+    const sceneIndex = sceneIndexFromStore >= 0 ? sceneIndexFromStore : (preview?.index ?? -1);
+    const baseQuery = sceneIndex >= 0
+      ? buildSearchQuery(
+          targetScene,
+          sceneIndex > 0 ? scenes[sceneIndex - 1] : null,
+          sceneIndex < scenes.length - 1 ? scenes[sceneIndex + 1] : null,
+          config?.globalContext,
+        )
+      : '';
     updateScene(sceneId, {
       imageUrl,
       isGeneratingImage: false,
       generationStatus: isPrimaryReferenceProvider(provider) ? '구글 레퍼런스 이미지 적용' : '대체 레퍼런스 이미지 적용',
-      imageUpdatedAfterVideo: !!targetScene?.videoUrl,
+      imageUpdatedAfterVideo: !!targetScene.videoUrl,
+      communityMediaItem: undefined,
       referenceSearchPage: preview?.resultPage || 1,
       referenceSearchQuery: preview?.searchQuery,
+      referenceSearchBaseQuery: baseQuery || preview?.searchQuery,
     });
     showToast('레퍼런스 이미지가 적용되었어요!');
-  }, [scenePreviews, scenes, updateScene]);
+  }, [scenePreviews, scenes, updateScene, config?.globalContext]);
 
   // 결과 내 다음/이전 이미지 전환
   const navigateResult = useCallback((sceneId: string, direction: 'prev' | 'next') => {
@@ -327,21 +412,16 @@ const GoogleReferencePanel: React.FC = () => {
     });
   }, []);
 
-  // 재생성 (다음 페이지)
-  const regenerate = useCallback(async (sceneId: string) => {
-    const sp = scenePreviews.get(sceneId);
-    if (!sp) return;
-    const nextPage = sp.resultPage + 1;
-    await searchScene(sp.scene, sp.index, nextPage, 'best');
-  }, [scenePreviews, searchScene]);
-
   // 검색어 편집 후 재검색
   const [editingQuery, setEditingQuery] = useState<{ sceneId: string; query: string } | null>(null);
 
-  const searchWithCustomQuery = useCallback(async (sceneId: string, customQuery: string) => {
+  const searchWithCustomQuery = useCallback(async (sceneId: string, customQuery: string, page: number = 1) => {
     const sceneIdx = scenes.findIndex(s => s.id === sceneId);
     if (sceneIdx < 0) return;
     const scene = scenes[sceneIdx];
+    const searchQuery = customQuery.trim();
+    if (!searchQuery) return;
+    const requestId = beginPreviewRequest(sceneId);
 
     setScenePreviews(prev => {
       const next = new Map(prev);
@@ -352,8 +432,8 @@ const GoogleReferencePanel: React.FC = () => {
         selectedIdx: 0,
         loading: true,
         error: '',
-        searchQuery: customQuery,
-        resultPage: 1,
+        searchQuery,
+        resultPage: page,
         provider: undefined,
       });
       return next;
@@ -361,7 +441,18 @@ const GoogleReferencePanel: React.FC = () => {
 
     try {
       const { searchGoogleImages } = await import('../../../services/googleReferenceSearchService');
-      const response = await searchGoogleImages(customQuery, 1, 'large', { rankingMode: 'best' });
+      const startIndex = ((page - 1) * 10) + 1;
+      const prevScene = sceneIdx > 0 ? scenes[sceneIdx - 1] : undefined;
+      const nextScene = sceneIdx < scenes.length - 1 ? scenes[sceneIdx + 1] : undefined;
+      const response = await searchGoogleImages(searchQuery, startIndex, 'large', {
+        context: { scene, prevScene, nextScene, globalContext: config?.globalContext },
+        rankingMode: 'best',
+        bypassEmptyCache: true,
+      });
+      if (!isLatestPreviewRequest(sceneId, requestId)) {
+        setEditingQuery(null);
+        return;
+      }
       setScenePreviews(prev => {
         const next = new Map(prev);
         next.set(sceneId, {
@@ -371,13 +462,17 @@ const GoogleReferencePanel: React.FC = () => {
           selectedIdx: 0,
           loading: false,
           error: response.items.length === 0 ? '검색 결과가 없습니다' : '',
-          searchQuery: customQuery,
-          resultPage: 1,
+          searchQuery: response.query || searchQuery,
+          resultPage: page,
           provider: response.provider,
         });
         return next;
       });
     } catch (err) {
+      if (!isLatestPreviewRequest(sceneId, requestId)) {
+        setEditingQuery(null);
+        return;
+      }
       setScenePreviews(prev => {
         const next = new Map(prev);
         next.set(sceneId, {
@@ -387,15 +482,28 @@ const GoogleReferencePanel: React.FC = () => {
           selectedIdx: 0,
           loading: false,
           error: err instanceof Error ? err.message : '검색 실패',
-          searchQuery: customQuery,
-          resultPage: 1,
+          searchQuery,
+          resultPage: page,
           provider: undefined,
         });
         return next;
       });
     }
     setEditingQuery(null);
-  }, [scenes]);
+  }, [beginPreviewRequest, isLatestPreviewRequest, scenes, config?.globalContext]);
+
+  // 재생성 (다음 페이지)
+  const regenerate = useCallback(async (sceneId: string) => {
+    const sp = scenePreviews.get(sceneId);
+    if (!sp) return;
+    const nextPage = sp.resultPage + 1;
+    const preservedQuery = sp.searchQuery.trim();
+    if (preservedQuery) {
+      await searchWithCustomQuery(sceneId, preservedQuery, nextPage);
+      return;
+    }
+    await searchScene(sp.scene, sp.index, nextPage, 'best');
+  }, [scenePreviews, searchScene, searchWithCustomQuery]);
 
   const scenesWithContent = useMemo(() =>
     scenes.filter(s => !!s.scriptText || !!s.visualPrompt),
@@ -568,7 +676,12 @@ const GoogleReferencePanel: React.FC = () => {
                                       key={item.id}
                                       type="button"
                                       onClick={() => applyMemeImage(scene.id, item)}
-                                      className="group relative rounded-lg overflow-hidden border border-gray-700 hover:border-orange-500/50 transition-all"
+                                      disabled={scene.isGeneratingImage}
+                                      className={`group relative rounded-lg overflow-hidden border transition-all ${
+                                        scene.isGeneratingImage
+                                          ? 'border-gray-800 opacity-50 cursor-not-allowed'
+                                          : 'border-gray-700 hover:border-orange-500/50'
+                                      }`}
                                     >
                                       <div className={`${aspectClass} w-full bg-gray-950`}>
                                         <img
@@ -740,7 +853,12 @@ const GoogleReferencePanel: React.FC = () => {
                               <button
                                 type="button"
                                 onClick={() => applyImage(scene.id, preview.results[preview.selectedIdx]?.link, preview.provider || 'google')}
-                                className="flex-1 py-2 bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-white rounded-lg text-xs font-bold transition-all"
+                                disabled={scene.isGeneratingImage}
+                                className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${
+                                  scene.isGeneratingImage
+                                    ? 'bg-gray-800 text-gray-500 cursor-not-allowed'
+                                    : 'bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-white'
+                                }`}
                               >
                                 이 이미지 적용
                               </button>

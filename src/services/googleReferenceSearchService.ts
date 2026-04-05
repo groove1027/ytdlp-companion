@@ -1,11 +1,11 @@
 /**
  * Google 이미지 검색 레퍼런스 서비스
- * - Google Images HTML 스크래핑 (Cloudflare Pages 프록시 경유)
+ * - Google Images HTML 스크래핑 (컴패니언 로컬 프록시 경유)
  * - 대본 맥락에서 검색어 자동 생성
  * - 비용 0원 — AI 이미지 생성 API 호출 없음
  */
 
-import { monitoredFetch, getSerperKey, getPexelsKey } from './apiService';
+import { monitoredFetch } from './apiService';
 import { evolinkChat, getEvolinkKey } from './evolinkService';
 import { logger } from './LoggerService';
 import type { Scene, ScriptTargetRegion } from '../types';
@@ -24,10 +24,7 @@ import('../stores/scriptWriterStore').then(m => { _scriptWriterStoreRef = m.useS
 const getProjectTargetRegion = (): ScriptTargetRegion | undefined => _scriptWriterStoreRef?.getState().targetRegion;
 
 // ─── Google Images 설정 ───
-const PROXY_PATH = '/api/google-proxy';
 const GOOGLE_IMAGE_SEARCH_URL = 'https://www.google.com/search';
-const SERPER_IMAGE_SEARCH_URL = 'https://google.serper.dev/images';
-const PEXELS_SEARCH_URL = 'https://api.pexels.com/v1/search';
 const GOOGLE_IMAGE_PAGE_SIZE = 100;
 const GOOGLE_IMAGE_RESULT_WINDOW = 10;
 // Accept-Language를 검색 로케일에 맞게 동적 생성
@@ -87,7 +84,7 @@ export interface GoogleImageResult {
   height: number;
 }
 
-export type ReferenceSearchProvider = 'google' | 'serper' | 'pexels' | 'wikimedia' | 'naver';
+export type ReferenceSearchProvider = 'google' | 'wikimedia' | 'naver';
 
 export interface GoogleSearchResponse {
   items: GoogleImageResult[];
@@ -101,6 +98,7 @@ export interface GoogleReferenceApplySummary {
   failedCount: number;
   blockedCount: number;
   fallbackCount: number;
+  skippedCount: number;
 }
 
 export const SCENE_REFERENCE_BATCH_CONCURRENCY = 6;
@@ -157,10 +155,10 @@ const WIKIMEDIA_KO_EN_MAP: Record<string, string[]> = {
 // [FIX #659/#607] 쿨다운과 캐시 TTL을 완화 — 빈 결과가 30분 캐시되어 연쇄 실패하는 문제 수정
 const GOOGLE_SEARCH_COOLDOWN_MS = 5 * 60 * 1000; // 15분 → 5분
 const REFERENCE_SEARCH_CACHE_TTL_MS = 10 * 60 * 1000; // 30분 → 10분
+const FALLBACK_REFERENCE_SEARCH_CACHE_TTL_MS = 2 * 60 * 1000;
 const GOOGLE_SEARCH_MAX_CONCURRENCY = 2;
 const REFERENCE_AI_RERANK_CANDIDATE_COUNT = 8;
 const REFERENCE_AI_RERANK_TIMEOUT_MS = 12_000;
-const PEXELS_PER_PAGE = 15;
 const REFERENCE_QUERY_KO_STOPWORDS = new Set([
   '장면', '모습', '배경', '이미지', '사진', '대본', '맥락', '느낌', '분위기', '있는', '하는', '보이는', '비추는', '그리고', '에서', '으로', '처럼', '대한',
 ]);
@@ -193,7 +191,7 @@ const PREFERRED_REFERENCE_DOMAINS = [
   /museum/i,
   /heritage/i,
 ];
-// [FIX] 워터마크가 있는 유료 스톡 사이트 — unsplash/pexels/pixabay/pxhere는 무료·워터마크 없음이므로 제외
+// [FIX] 워터마크가 있는 유료 스톡 사이트는 강하게 감점
 const STOCK_REFERENCE_DOMAINS = [
   /(^|\.)istockphoto\.com$/i,
   /(^|\.)gettyimages\.com$/i,
@@ -223,6 +221,31 @@ const ACTION_HINT_PATTERNS: Array<{ pattern: RegExp; labels: string[] }> = [
   { pattern: /해변|바다/, labels: ['beach', 'sea'] },
   { pattern: /궁궐|궁전/, labels: ['palace'] },
 ];
+
+const TRANSITION_SIGNAL_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
+  { pattern: /한편|한편으로는|meanwhile/i, label: 'parallel context' },
+  { pattern: /그러나|하지만|반면|그런데|however|but/i, label: 'contrast moment' },
+  { pattern: /다음으로|이어서|이후|then|next|afterward|later/i, label: 'next moment' },
+  { pattern: /결국|마침내|끝내|finally|ultimately/i, label: 'result moment' },
+  { pattern: /갑자기|돌연|suddenly/i, label: 'sudden moment' },
+];
+
+const ABSTRACT_VISUAL_SYMBOL_PATTERNS: Array<{ pattern: RegExp; terms: string[] }> = [
+  { pattern: /경제위기|불황|recession|inflation|financial crisis/i, terms: ['주가 폭락 전광판', '증권거래소'] },
+  { pattern: /호황|성장|boom|growth/i, terms: ['상승 그래프 전광판', '건설 크레인'] },
+  { pattern: /감시|surveillance|monitoring/i, terms: ['CCTV 카메라', '관제실 모니터'] },
+  { pattern: /검열|통제|censorship|crackdown/i, terms: ['검열된 신문', '차단된 화면'] },
+  { pattern: /자유|freedom|liberty/i, terms: ['자유의 여신상', '시위 군중'] },
+  { pattern: /고립|외로움|isolation|loneliness/i, terms: ['빈 방 한 사람', '외딴 풍경'] },
+  { pattern: /혁신|innovation|breakthrough/i, terms: ['연구소 실험 장비', '반도체 클린룸'] },
+  { pattern: /부패|corruption|scandal/i, terms: ['법원 출석', '현금 봉투'] },
+  { pattern: /위기|panic|collapse/i, terms: ['긴급 기자회견', '붕괴 현장'] },
+];
+
+const GENERIC_REFERENCE_TERMS = new Set([
+  '사람', '인물', '모습', '장면', '풍경', '배경', '상황', '공간', '분위기', '느낌', '이야기',
+  'scene', 'photo', 'image', 'picture', 'person', 'people', 'background', 'moment', 'view',
+]);
 
 // ─── [ENHANCE] 커뮤니티 쇼츠 스타일 검색 힌트 — 대본 맥락 기반 실사 레퍼런스 품질 향상 ───
 
@@ -309,44 +332,16 @@ type CachedReferenceSearch = {
   response: GoogleSearchResponse;
 };
 
+type InflightReferenceSearch = {
+  startedWithCooldown: boolean;
+  promise: Promise<GoogleSearchResponse>;
+};
+
 const referenceSearchCache = new Map<string, CachedReferenceSearch>();
-const referenceSearchInflight = new Map<string, Promise<GoogleSearchResponse>>();
+const referenceSearchInflight = new Map<string, InflightReferenceSearch>();
 let googleSearchCooldownUntil = 0;
 let googleSearchActiveCount = 0;
 const googleSearchWaiters: Array<() => void> = [];
-
-// ─── Serper.dev API 응답 타입 ───
-interface SerperImageResult {
-  title?: string;
-  imageUrl?: string;
-  thumbnailUrl?: string;
-  source?: string;
-  link?: string;
-  imageWidth?: number;
-  imageHeight?: number;
-}
-
-// ─── Pexels API 응답 타입 ───
-interface PexelsPhoto {
-  id: number;
-  url: string;
-  photographer: string;
-  photographer_url: string;
-  src: {
-    original: string;
-    large2x: string;
-    large: string;
-    medium: string;
-  };
-  width: number;
-  height: number;
-  alt: string;
-}
-
-interface PexelsSearchResponse {
-  photos: PexelsPhoto[];
-  total_results: number;
-}
 
 export interface ReferenceSearchContext {
   scene?: Scene;
@@ -499,6 +494,75 @@ function collectActionHintTerms(value: string): string[] {
   return dedupeQueryParts(hints);
 }
 
+function collectTransitionSignals(...values: Array<string | undefined>): string[] {
+  const signals: string[] = [];
+
+  for (const value of values) {
+    if (!value) continue;
+    for (const { pattern, label } of TRANSITION_SIGNAL_PATTERNS) {
+      if (pattern.test(value)) signals.push(label);
+    }
+  }
+
+  return dedupeQueryParts(signals).slice(0, 3);
+}
+
+function extractTransitionFocusedFragments(value: string | undefined): string[] {
+  if (!value) return [];
+
+  const matches = Array.from(value.matchAll(/(?:한편|그러나|하지만|반면|그런데|다음으로|이어서|이후|결국|마침내|갑자기|meanwhile|however|but|next|then|later|finally|suddenly)[,\s:.-]*/gi));
+  if (matches.length === 0) return [];
+
+  const fragments = matches
+    .slice(-2)
+    .map((match) => value.slice((match.index || 0) + match[0].length).trim())
+    .flatMap((segment) => extractQueryFragments(segment, 1, 30));
+
+  return dedupeQueryParts(fragments).slice(0, 2);
+}
+
+function isConcreteReferenceToken(token: string): boolean {
+  if (!token) return false;
+  if (GENERIC_REFERENCE_TERMS.has(token.toLowerCase())) return false;
+  if (/[0-9]/.test(token)) return true;
+  if (/[A-Z]/.test(token) && token.length >= 2) return true;
+  if (/[가-힣]/.test(token) && /(시|군|구|궁|문|강|산|항|역|시장|거리|광장|공항|사찰|전투|작전|회담|기자회견|전광판|연구소|박물관|망원경|전투기|계급장|본사|공장|타워|빌딩)$/.test(token)) {
+    return true;
+  }
+  return token.length >= 4 && !/(하는|되는|했던|같은|있는|없는|가기|으로|에서|처럼)$/.test(token);
+}
+
+function isGenericReferenceQuery(query: string): boolean {
+  const tokens = tokenizeReferenceText(query);
+  if (tokens.length === 0) return true;
+  const concreteCount = tokens.filter(isConcreteReferenceToken).length;
+  return concreteCount === 0 || (tokens.length <= 3 && concreteCount <= 1);
+}
+
+function collectConcreteAnchorTerms(values: Array<string | undefined>): string[] {
+  const anchors: string[] = [];
+
+  for (const value of values) {
+    if (!value) continue;
+    const normalized = normalizeQueryText(value);
+    anchors.push(...extractQueryFragments(normalized, 2, 28).filter((part) => !isGenericReferenceQuery(part)));
+    anchors.push(...(normalized.match(/\b[A-Z][A-Za-z0-9.-]*(?:\s+[A-Z][A-Za-z0-9.-]*){0,2}\b/g) || []));
+    anchors.push(...(normalized.match(/\b[A-Z0-9]{2,}(?:-[A-Z0-9]+)*\b/g) || []));
+  }
+
+  return dedupeQueryParts(anchors).slice(0, 8);
+}
+
+function collectAbstractVisualTerms(value: string): string[] {
+  const terms: string[] = [];
+
+  for (const { pattern, terms: mapped } of ABSTRACT_VISUAL_SYMBOL_PATTERNS) {
+    if (pattern.test(value)) terms.push(...mapped);
+  }
+
+  return dedupeQueryParts(terms).slice(0, 4);
+}
+
 function buildSearchPlanFromQuery(query: string): ReferenceSearchPlan {
   const normalizedQuery = normalizeQueryText(query) || '풍경 사진';
   const fragments = extractQueryFragments(normalizedQuery, 3, 28);
@@ -536,12 +600,32 @@ async function generateAiSearchQueries(
   const metaCacheSegment = sceneMetadata
     ? `${(sceneMetadata.entityName || '').slice(0, 20)}|${(sceneMetadata.sceneLocation || '').slice(0, 15)}|${(sceneMetadata.sceneEra || '').slice(0, 10)}|${(sceneMetadata.sceneCulture || '').slice(0, 10)}|${sceneMetadata.castType || ''}`
     : '';
-  const cacheKey = `ai-q:${scriptText.slice(0, 100)}::${(prevScriptText || '').slice(0, 30)}::${(nextScriptText || '').slice(0, 30)}::${(globalContext || '').slice(0, 30)}::${metaCacheSegment}`;
+  const cacheKey = `ai-q:${scriptText.slice(0, 160)}::${(prevScriptText || '').slice(0, 100)}::${(nextScriptText || '').slice(0, 100)}::${(globalContext || '').slice(0, 100)}::${metaCacheSegment}`;
   const cached = _aiQueryCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached.queries;
 
   try {
-    // [ENHANCE] 장면 메타데이터를 명시적으로 전달
+    const transitionSignals = collectTransitionSignals(scriptText, prevScriptText, nextScriptText);
+    const transitionFocus = extractTransitionFocusedFragments(scriptText);
+    const concreteAnchors = collectConcreteAnchorTerms([
+      sceneMetadata?.entityName,
+      sceneMetadata?.sceneLocation,
+      sceneMetadata?.sceneEra,
+      sceneMetadata?.sceneCulture,
+      prevScriptText,
+      scriptText,
+      nextScriptText,
+      globalContext,
+    ]);
+    const abstractVisualTerms = collectAbstractVisualTerms([
+      sceneMetadata?.sceneCulture,
+      sceneMetadata?.sceneEra,
+      globalContext,
+      prevScriptText,
+      scriptText,
+      nextScriptText,
+    ].filter(Boolean).join(' '));
+
     const metaParts = sceneMetadata ? [
       sceneMetadata.entityName ? `실존 인물/브랜드: ${sceneMetadata.entityName}` : '',
       sceneMetadata.sceneLocation ? `장소: ${sceneMetadata.sceneLocation}` : '',
@@ -551,10 +635,14 @@ async function generateAiSearchQueries(
     ].filter(Boolean).join('\n') : '';
 
     const contextParts = [
-      prevScriptText ? `이전 장면: ${prevScriptText.slice(0, 80)}` : '',
+      prevScriptText ? `이전 장면: ${prevScriptText.slice(0, 200)}` : '',
       `현재 장면: ${scriptText.slice(0, 200)}`,
-      nextScriptText ? `다음 장면: ${nextScriptText.slice(0, 80)}` : '',
-      globalContext ? `전체 맥락: ${globalContext.slice(0, 100)}` : '',
+      nextScriptText ? `다음 장면: ${nextScriptText.slice(0, 200)}` : '',
+      globalContext ? `전체 맥락: ${globalContext.slice(0, 200)}` : '',
+      transitionSignals.length > 0 ? `전환 단서: ${transitionSignals.join(', ')}` : '',
+      transitionFocus.length > 0 ? `전환 이후 핵심 묘사: ${transitionFocus.join(' / ')}` : '',
+      concreteAnchors.length > 0 ? `고정해야 할 구체 명사/고유명사: ${concreteAnchors.join(', ')}` : '',
+      abstractVisualTerms.length > 0 ? `추상 개념의 시각적 상징 후보: ${abstractVisualTerms.join(', ')}` : '',
       metaParts ? `\n장면 메타데이터:\n${metaParts}` : '',
     ].filter(Boolean).join('\n');
 
@@ -572,6 +660,8 @@ async function generateAiSearchQueries(
           '뉴스 보도 사진, 실존 인물 사진, 실제 장소 사진, 역사 자료 사진, 제품/실물 사진 등.',
           '',
           '📋 장면 유형별 검색어 생성 규칙:',
+          '- 이전/현재/다음 장면을 함께 보고, 현재 장면이 전환어(예: 한편, 그러나, 다음으로, meanwhile, however) 뒤에 나온 내용이면 전환 뒤 핵심 장면을 우선하라',
+          '- 인물은 표정/행동/자세, 배경은 건물·거리·실내 종류, 소지품/복장, 시간대, 날씨까지 보이는 요소를 구체적으로 넣어라',
           '- 실존 인물 → 이름 + 구체적 상황 (예: "트럼프 백악관 기자회견", "손흥민 토트넘 골 세레머니")',
           '- 실제 장소 → 정확한 장소명 + "실제" (예: "판문점 공동경비구역 실제", "63빌딩 전경")',
           '- 역사/시대 → 역사 키워드 + "사진" (예: "한국전쟁 인천상륙작전 사진", "조선시대 과거시험 그림")',
@@ -580,6 +670,8 @@ async function generateAiSearchQueries(
           '- 경제/비즈니스 → 시각적 상징 (예: "코스피 전광판", "삼성전자 반도체 공장")',
           '- 추상 개념 → 시각적 상징물 변환 (예: "경제위기" → "주가 폭락 전광판", "자유" → "자유의여신상")',
           '- 소셜/커뮤니티 → 플랫폼 + 내용 (예: "쓰레드 앱 화면", "트위터 논란 캡처")',
+          '- 검색어가 일반 명사 중심이면 대본 속 고유명사, 장소명, 물체명으로 반드시 구체화하라',
+          '- 3개 쿼리는 "정확한 장면", "보도/다큐 시점", "상징적 대체 장면"처럼 서로 다른 각도로 구성하라',
           '',
           '⛔ 금지:',
           '- AI 생성 스타일 키워드 (illustration, render, 2d, vector, minimalist 등) 절대 금지',
@@ -603,7 +695,21 @@ async function generateAiSearchQueries(
     const parsed = extractStructuredJsonObject(raw);
     const queriesRaw = parsed?.queries;
     const queries = Array.isArray(queriesRaw)
-      ? queriesRaw.filter((v): v is string => typeof v === 'string' && v.trim().length >= 2).slice(0, 3)
+      ? dedupeQueryParts(
+          queriesRaw
+            .filter((v): v is string => typeof v === 'string' && v.trim().length >= 2)
+            .map((candidate) => {
+              const normalized = normalizeQueryText(candidate);
+              if (!normalized) return '';
+              if (!isGenericReferenceQuery(normalized)) return normalized;
+              return joinQueryParts([
+                ...concreteAnchors.slice(0, 2),
+                normalized,
+                transitionFocus[0] || '',
+                abstractVisualTerms[0] || '',
+              ], 6, 88);
+            }),
+        ).slice(0, 3)
       : [];
 
     if (queries.length > 0) {
@@ -625,17 +731,16 @@ function buildReferenceSearchPlan(
 ): ReferenceSearchPlan {
   const criticalParts: string[] = [];
   const softParts: string[] = [];
-
-  // [ENHANCE] castType 기반 엔티티 검색 전략
   const entityStrategy = getEntitySearchStrategy(scene);
+  const transitionFocus = extractTransitionFocusedFragments(scene.scriptText);
+  const transitionSignals = collectTransitionSignals(scene.scriptText, prevScene?.scriptText, nextScene?.scriptText);
 
   pushQueryFragments(criticalParts, scene.entityName, 1, 36);
   pushQueryFragments(criticalParts, scene.sceneLocation, 1, 28);
   pushQueryFragments(criticalParts, scene.sceneCulture, 1, 24);
   pushQueryFragments(criticalParts, scene.sceneEra, 1, 18);
-
-  // [ENHANCE] visualDescriptionKO를 항상 1개 이상 포함 (기존: criticalParts < 4일 때만)
   pushQueryFragments(criticalParts, scene.visualDescriptionKO, 2, 24);
+  pushQueryFragments(criticalParts, transitionFocus[0], 1, 28);
   if (criticalParts.length < 5) pushQueryFragments(criticalParts, scene.scriptText, 2, 22);
   if (criticalParts.length < 5) pushQueryFragments(criticalParts, globalContext, 1, 22);
   if (criticalParts.length < 3) pushQueryFragments(criticalParts, prevScene?.sceneLocation || prevScene?.visualDescriptionKO, 1, 20);
@@ -645,85 +750,114 @@ function buildReferenceSearchPlan(
   pushQueryFragments(softParts, scene.scriptText, 2, 22);
   pushQueryFragments(softParts, scene.visualPrompt, 1, 24);
   pushQueryFragments(softParts, globalContext, 1, 22);
+  pushQueryFragments(softParts, prevScene?.visualDescriptionKO || prevScene?.scriptText, 1, 22);
+  pushQueryFragments(softParts, nextScene?.visualDescriptionKO || nextScene?.scriptText, 1, 22);
 
   const joinedSceneText = [
     scene.visualDescriptionKO,
     scene.scriptText,
     scene.visualPrompt,
+    prevScene?.scriptText,
+    nextScene?.scriptText,
     globalContext,
   ].filter(Boolean).join(' ');
   const mappedEnglish = collectMappedEnglishTerms(joinedSceneText);
   const actionHints = collectActionHintTerms(joinedSceneText);
-
-  // [ENHANCE] 카테고리 힌트 + 시대 힌트 추출
   const categoryHints = detectCategoryHints(joinedSceneText);
   const eraHint = eraToSearchHint(scene.sceneEra);
-
-  // [ENHANCE] 검색어 접미사 결정 — castType 전략 > 시대 > 카테고리 > 기본
-  // 시대 정보가 있으면 카테고리보다 우선 (역사적 맥락이 더 구체적)
+  const abstractVisualTerms = collectAbstractVisualTerms(joinedSceneText);
+  const concreteAnchors = collectConcreteAnchorTerms([
+    scene.entityName,
+    scene.sceneLocation,
+    scene.visualDescriptionKO,
+    scene.scriptText,
+    prevScene?.sceneLocation,
+    prevScene?.scriptText,
+    nextScene?.sceneLocation,
+    nextScene?.scriptText,
+    globalContext,
+  ]);
   const searchSuffix = entityStrategy.suffix || eraHint || categoryHints.ko[0] || '';
   const searchSuffixEN = categoryHints.en[0] || '';
-
-  // [ENHANCE] KEY_ENTITY일 때 엔티티 이름을 맨 앞에 배치 + 접미사 추가
-  const primaryQuery = entityStrategy.prioritizeEntity
-    ? joinQueryParts([
+  const primaryQueryParts = entityStrategy.prioritizeEntity
+    ? [
         entityStrategy.prefix,
-        scene.sceneLocation || '',
-        searchSuffix,
+        scene.sceneLocation || concreteAnchors[0] || '',
+        searchSuffix || abstractVisualTerms[0] || '',
+        transitionFocus[0] || '',
         ...actionHints.slice(0, 1),
-      ], 5, 72)
-    : joinQueryParts([
-        scene.sceneLocation || '',
-        scene.entityName || '',
+      ]
+    : [
+        scene.sceneLocation || concreteAnchors[0] || '',
+        scene.entityName || concreteAnchors[1] || '',
         scene.sceneCulture || '',
-        searchSuffix || scene.sceneEra || '',
+        searchSuffix || abstractVisualTerms[0] || scene.sceneEra || '',
+        transitionFocus[0] || '',
         ...actionHints.slice(0, 2),
         mappedEnglish[0] || '',
-      ], 6, 72) || joinQueryParts([
-        ...criticalParts.slice(0, 3),
-        softParts[0] || '',
-        searchSuffix || actionHints[0] || '',
-      ], 5, 72) || '풍경 사진';
+      ];
+  const basePrimaryQuery = joinQueryParts(primaryQueryParts, 6, 84)
+    || joinQueryParts([
+      ...criticalParts.slice(0, 3),
+      concreteAnchors[0] || '',
+      abstractVisualTerms[0] || searchSuffix || actionHints[0] || '',
+    ], 5, 84)
+    || '풍경 사진';
+  const primaryQuery = isGenericReferenceQuery(basePrimaryQuery)
+    ? joinQueryParts([
+      ...concreteAnchors.slice(0, 2),
+      basePrimaryQuery,
+      abstractVisualTerms[0] || '',
+    ], 6, 88) || basePrimaryQuery
+    : basePrimaryQuery;
 
-  // [ENHANCE] conciseQuery에도 카테고리 힌트 반영
   const conciseQuery = joinQueryParts([
-    scene.sceneLocation || criticalParts[0] || '',
-    scene.entityName || criticalParts[1] || '',
-    searchSuffix || scene.sceneCulture || '',
-    actionHints[0] || '',
-  ], 4, 72);
+    scene.sceneLocation || concreteAnchors[0] || criticalParts[0] || '',
+    scene.entityName || concreteAnchors[1] || criticalParts[1] || '',
+    searchSuffix || abstractVisualTerms[0] || scene.sceneCulture || '',
+    transitionFocus[0] || actionHints[0] || '',
+  ], 4, 84);
 
   const englishQuery = joinQueryParts([
-    scene.sceneLocation || '',
+    scene.sceneLocation || concreteAnchors[0] || '',
     ...mappedEnglish,
     ...actionHints,
+    ...transitionSignals.slice(0, 1),
     searchSuffixEN || 'photo',
-  ], 7, 80);
+  ], 7, 88);
 
-  // [ENHANCE] 카테고리 힌트를 활용한 대체 쿼리 추가
   const categoryQuery = categoryHints.ko[0]
     ? joinQueryParts([
-        scene.entityName || scene.sceneLocation || criticalParts[0] || '',
+        scene.entityName || scene.sceneLocation || concreteAnchors[0] || criticalParts[0] || '',
         ...categoryHints.ko,
-        scene.visualDescriptionKO || '',
-      ], 4, 72)
+        scene.visualDescriptionKO || transitionFocus[0] || '',
+      ], 4, 84)
+    : '';
+  const abstractVisualQuery = abstractVisualTerms.length > 0
+    ? joinQueryParts([
+        scene.entityName || scene.sceneLocation || concreteAnchors[0] || '',
+        ...abstractVisualTerms,
+        transitionFocus[0] || '',
+      ], 4, 84)
     : '';
 
-  // [ENHANCE] englishQuery를 categoryQuery보다 앞에 배치 — 대체 검색 fast 폴백에서 영어 쿼리 유지
   const alternativeQueries = dedupeQueryParts([
     englishQuery,
+    abstractVisualQuery,
     categoryQuery,
     conciseQuery,
     joinQueryParts([
-      scene.sceneLocation || '',
+      scene.sceneLocation || concreteAnchors[0] || '',
       scene.visualDescriptionKO || scene.scriptText || '',
+      transitionFocus[0] || '',
       searchSuffix || globalContext || '',
-    ], 4, 76),
+    ], 5, 88),
     joinQueryParts([
+      ...concreteAnchors.slice(0, 2),
       ...criticalParts.slice(0, 2),
       softParts[0] || '',
-      searchSuffix || actionHints[0] || '',
-    ], 4, 72),
+      abstractVisualTerms[0] || searchSuffix || actionHints[0] || '',
+    ], 5, 88),
   ]).filter((candidate) => candidate && candidate !== primaryQuery);
 
   const criticalPhrases = dedupeQueryParts([
@@ -731,15 +865,20 @@ function buildReferenceSearchPlan(
     scene.sceneLocation || '',
     scene.sceneCulture || '',
     scene.sceneEra || '',
+    ...concreteAnchors,
+    ...transitionFocus,
+    ...abstractVisualTerms,
     ...mappedEnglish.slice(0, 4),
     ...criticalParts,
-  ]).slice(0, 10);
+  ]).slice(0, 12);
 
   const softPhrases = dedupeQueryParts([
     ...softParts,
+    ...transitionSignals,
     ...mappedEnglish,
     ...actionHints,
-  ]).slice(0, 12);
+    ...abstractVisualTerms,
+  ]).slice(0, 14);
 
   const summaryParts = [
     scene.entityName ? `주체: ${scene.entityName}` : '',
@@ -748,6 +887,8 @@ function buildReferenceSearchPlan(
     scene.sceneCulture ? `문화: ${scene.sceneCulture}` : '',
     scene.visualDescriptionKO ? `장면: ${scene.visualDescriptionKO}` : '',
     scene.scriptText ? `대본: ${scene.scriptText}` : '',
+    transitionSignals.length > 0 ? `전환: ${transitionSignals.join(', ')}` : '',
+    abstractVisualTerms.length > 0 ? `상징: ${abstractVisualTerms.join(', ')}` : '',
     globalContext ? `전체맥락: ${globalContext}` : '',
   ].filter(Boolean);
 
@@ -902,13 +1043,8 @@ function detectContentLocale(scene?: Scene | null, projectTargetRegion?: ScriptT
   return { hl: 'en', gl: 'us' };
 }
 
-function isKoreanContentLocale(scene?: Scene | null, projectTargetRegion?: ScriptTargetRegion): boolean {
-  const { gl } = detectContentLocale(scene, projectTargetRegion);
-  return gl === 'kr';
-}
-
 export function isPrimaryReferenceProvider(provider: ReferenceSearchProvider): boolean {
-  return provider === 'google' || provider === 'serper';
+  return provider === 'google';
 }
 
 function getGoogleSearchCookie(): string {
@@ -1379,54 +1515,36 @@ async function rankReferenceResults(
 }
 
 async function proxyFetchReferenceSearch(targetUrl: string, cookie?: string, hl?: string): Promise<Response> {
-  // 1순위: 컴패니언 로컬 프록시 (사용자 IP — 차단 없음, 빠름)
-  // [FIX #914] isCompanionDetected() 게이트 제거 — health check 느려도 직접 시도, 실패 시 CF 폴백
-  {
-    try {
-      const res = await fetch(`${COMPANION_URL}/api/google-proxy`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          targetUrl,
-          method: 'GET',
-          headers: buildGoogleImageHeaders(hl),
-          cookie,
-        }),
-        signal: AbortSignal.timeout(40000),
-      });
-      if (res.ok) {
-        logger.info('[GoogleRef] 컴패니언 프록시 사용 (로컬 IP)');
-        return res;
-      }
-      // [FIX] 컴패니언이 429를 반환하면 CF 폴백하지 말고 쿨다운 마킹
-      // — CF 데이터센터 IP는 더 빡빡하게 차단되므로 이중 차단만 유발
-      if (res.status === 429) {
-        markGoogleSearchRateLimited('컴패니언 경유 구글 429');
-        return res;
-      }
-      // 5xx 서버 에러만 CF 폴백 허용 (502, 503 등)
-      if (res.status >= 500) {
-        logger.warn(`[GoogleRef] 컴패니언 서버 에러 (${res.status}) — CF 프록시 폴백`);
-      } else {
-        // 403 등 다른 클라이언트 에러도 구글 차단일 수 있으므로 그대로 반환
-        return res;
-      }
-    } catch (e) {
-      logger.warn('[GoogleRef] 컴패니언 프록시 실패 — CF 프록시 폴백:', e instanceof Error ? e.message : '');
-    }
-  }
+  try {
+    const res = await fetch(`${COMPANION_URL}/api/google-proxy`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        targetUrl,
+        method: 'GET',
+        headers: buildGoogleImageHeaders(hl),
+        cookie,
+      }),
+      signal: AbortSignal.timeout(40000),
+    });
 
-  // 2순위: 기존 Cloudflare Pages 프록시
-  return monitoredFetch(PROXY_PATH, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      targetUrl,
-      method: 'GET',
-      headers: buildGoogleImageHeaders(hl),
-      cookie,
-    }),
-  });
+    if (res.ok) {
+      logger.info('[GoogleRef] 컴패니언 프록시 사용 (로컬 IP)');
+      return res;
+    }
+
+    if (res.status === 429 || (res.status >= 300 && res.status < 400)) {
+      const retryAfterMs = parseRetryAfterHeaderMs(res.headers.get('Retry-After'));
+      markGoogleSearchRateLimited(
+        res.status === 429 ? '컴패니언 경유 구글 429' : `컴패니언 경유 구글 차단 리다이렉트 (${res.status})`,
+        retryAfterMs ?? GOOGLE_SEARCH_COOLDOWN_MS,
+      );
+    }
+
+    return res;
+  } catch (error) {
+    throw new Error(`컴패니언 구글 프록시 실패: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 function extractThumbnailFromElement(anchor: Element): string {
@@ -1629,6 +1747,28 @@ function isGoogleSearchCooldownActive(): boolean {
   return Date.now() < googleSearchCooldownUntil;
 }
 
+function getGoogleSearchCooldownRemainingMs(): number {
+  return Math.max(0, googleSearchCooldownUntil - Date.now());
+}
+
+function parseRetryAfterHeaderMs(header: string | null | undefined): number | null {
+  if (!header) return null;
+
+  const trimmed = header.trim();
+  if (!trimmed) return null;
+
+  const seconds = Number(trimmed);
+  if (Number.isFinite(seconds) && seconds > 0) {
+    return seconds * 1000;
+  }
+
+  const retryAt = Date.parse(trimmed);
+  if (!Number.isFinite(retryAt)) return null;
+
+  const remainingMs = retryAt - Date.now();
+  return remainingMs > 0 ? remainingMs : null;
+}
+
 function getCachedReferenceSearch(key: string): GoogleSearchResponse | null {
   const cached = referenceSearchCache.get(key);
   if (!cached) return null;
@@ -1639,22 +1779,54 @@ function getCachedReferenceSearch(key: string): GoogleSearchResponse | null {
   return cached.response;
 }
 
-function setCachedReferenceSearch(key: string, response: GoogleSearchResponse): void {
-  // [FIX #659] 빈 결과는 짧게 캐시 (2분) — 재시도 시 빠르게 다시 검색
+function markInflightReferenceSearchCooldownBound(key: string): void {
+  const inflight = referenceSearchInflight.get(key);
+  if (inflight) {
+    inflight.startedWithCooldown = true;
+  }
+}
+
+function getReferenceSearchCacheTtlMs(response: GoogleSearchResponse): number {
   const hasResults = response.items && response.items.length > 0;
-  const ttl = hasResults ? REFERENCE_SEARCH_CACHE_TTL_MS : 2 * 60 * 1000;
+  if (response.provider === 'google') {
+    return hasResults ? REFERENCE_SEARCH_CACHE_TTL_MS : FALLBACK_REFERENCE_SEARCH_CACHE_TTL_MS;
+  }
+
+  const cooldownRemainingMs = getGoogleSearchCooldownRemainingMs();
+  if (cooldownRemainingMs <= 0) {
+    return 0;
+  }
+  if (cooldownRemainingMs > 0) {
+    if (!hasResults) {
+      return Math.max(1000, Math.min(FALLBACK_REFERENCE_SEARCH_CACHE_TTL_MS, cooldownRemainingMs));
+    }
+    return Math.max(1000, cooldownRemainingMs);
+  }
+
+  return 0;
+}
+
+function setCachedReferenceSearch(key: string, response: GoogleSearchResponse): void {
+  // [FIX] Google 외 폴백 결과는 짧게 또는 쿨다운 길이만큼만 캐시해
+  // Google Retry-After가 끝난 뒤 다시 1순위 검색으로 복귀할 수 있게 한다.
+  const ttl = getReferenceSearchCacheTtlMs(response);
+  if (ttl <= 0) {
+    referenceSearchCache.delete(key);
+    return;
+  }
   referenceSearchCache.set(key, {
     expiresAt: Date.now() + ttl,
     response,
   });
 }
 
-function markGoogleSearchRateLimited(message: string): void {
-  const nextCooldownUntil = Date.now() + GOOGLE_SEARCH_COOLDOWN_MS;
+function markGoogleSearchRateLimited(message: string, cooldownMs: number = GOOGLE_SEARCH_COOLDOWN_MS): void {
+  const nextCooldownUntil = Date.now() + Math.max(1000, cooldownMs);
   if (nextCooldownUntil <= googleSearchCooldownUntil) return;
   googleSearchCooldownUntil = nextCooldownUntil;
+  const cooldownSeconds = Math.max(1, Math.round((nextCooldownUntil - Date.now()) / 1000));
   logger.warn(
-    `[GoogleRef] Google 검색 차단 감지 — ${Math.round(GOOGLE_SEARCH_COOLDOWN_MS / 60000)}분간 Google 스킵, Wikimedia 직행`,
+    `[GoogleRef] Google 검색 차단 감지 — ${cooldownSeconds}초간 Google 스킵, Naver/Wikimedia로 전환`,
     message,
   );
 }
@@ -1781,131 +1953,14 @@ async function searchWikimediaImages(
   };
 }
 
-// ─── Serper.dev 이미지 검색 (1순위 — 차단 위험 0%, 깨끗한 JSON) ───
-async function searchSerperImages(
-  query: string,
-  start: number = 1,
-  context?: ReferenceSearchContext,
-  rankingMode: 'fast' | 'best' = 'fast',
-): Promise<GoogleSearchResponse> {
-  const serperKey = getSerperKey();
-  if (!serperKey) throw new Error('Serper API 키 없음');
-
-  const plan = getReferencePlan(query, context);
-  const { hl, gl } = detectContentLocale(context?.scene, context?.projectTargetRegion);
-
-  const res = await fetch(SERPER_IMAGE_SEARCH_URL, {
-    method: 'POST',
-    headers: {
-      'X-API-KEY': serperKey,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      q: plan.primaryQuery + ' photo',
-      gl,
-      hl,
-      num: GOOGLE_IMAGE_RESULT_WINDOW,
-      page: Math.max(1, Math.ceil(start / GOOGLE_IMAGE_RESULT_WINDOW)),
-    }),
-    signal: AbortSignal.timeout(15000),
-  });
-
-  if (!res.ok) {
-    const errText = await res.text().catch(() => '');
-    throw new Error(`Serper 검색 실패 (${res.status}): ${errText}`);
-  }
-
-  const data = await res.json() as { images?: SerperImageResult[] };
-  const allItems = (data.images || [])
-    .map((img): GoogleImageResult | null => {
-      const link = normalizeUrl(img.imageUrl);
-      if (!isUsefulImageUrl(link)) return null;
-      return {
-        title: img.title || '',
-        link,
-        displayLink: img.source || getDisplayLink(img.link || '', link),
-        snippet: img.title || '',
-        thumbnailLink: normalizeUrl(img.thumbnailUrl) || link,
-        contextLink: img.link || '',
-        width: img.imageWidth || 0,
-        height: img.imageHeight || 0,
-      };
-    })
-    .filter((item): item is GoogleImageResult => item !== null);
-
-  const ranked = await rankReferenceResults(allItems, plan.primaryQuery, 'serper', rankingMode, context);
-  const items = ranked.slice(0, GOOGLE_IMAGE_RESULT_WINDOW);
-  logger.info('[GoogleRef] Serper 검색 완료', `query="${plan.primaryQuery}" results=${items.length}`);
-
-  return {
-    items,
-    totalResults: ranked.length,
-    query: plan.primaryQuery,
-    provider: 'serper',
-  };
-}
-
-// ─── Pexels 이미지 검색 (3순위 — 무료 스톡 20,000건/월) ───
-async function searchPexelsImages(
-  query: string,
-  start: number = 1,
-  context?: ReferenceSearchContext,
-  rankingMode: 'fast' | 'best' = 'fast',
-): Promise<GoogleSearchResponse> {
-  const pexelsKey = getPexelsKey();
-  if (!pexelsKey) throw new Error('Pexels API 키 없음');
-
-  const plan = getReferencePlan(query, context);
-  const page = Math.max(1, Math.ceil(start / PEXELS_PER_PAGE));
-
-  const params = new URLSearchParams({
-    query: plan.primaryQuery,
-    per_page: String(PEXELS_PER_PAGE),
-    page: String(page),
-  });
-
-  const res = await fetch(`${PEXELS_SEARCH_URL}?${params.toString()}`, {
-    headers: { Authorization: pexelsKey },
-    signal: AbortSignal.timeout(15000),
-  });
-
-  if (!res.ok) {
-    throw new Error(`Pexels 검색 실패 (${res.status})`);
-  }
-
-  const data = await res.json() as PexelsSearchResponse;
-  const allItems = (data.photos || []).map((photo): GoogleImageResult => ({
-    title: photo.alt || photo.photographer,
-    link: photo.src.large2x || photo.src.large || photo.src.original,
-    displayLink: 'pexels.com',
-    snippet: photo.alt || `Photo by ${photo.photographer}`,
-    thumbnailLink: photo.src.medium || photo.src.large,
-    contextLink: photo.url,
-    width: photo.width,
-    height: photo.height,
-  }));
-
-  const ranked = await rankReferenceResults(allItems, plan.primaryQuery, 'pexels', rankingMode, context);
-  const items = ranked.slice(0, GOOGLE_IMAGE_RESULT_WINDOW);
-  logger.info('[GoogleRef] Pexels 검색 완료', `query="${plan.primaryQuery}" results=${items.length}`);
-
-  return {
-    items,
-    totalResults: data.total_results || ranked.length,
-    query: plan.primaryQuery,
-    provider: 'pexels',
-  };
-}
-
-// ─── 네이버 이미지 검색 (한국 콘텐츠 전용 — 컴패니언 프록시, API 키 불필요) ───
+// ─── 네이버 이미지 검색 (컴패니언 프록시, API 키 불필요) ───
 async function searchNaverImages(
   query: string,
   start: number = 1,
   context?: ReferenceSearchContext,
   rankingMode: 'fast' | 'best' = 'fast',
 ): Promise<GoogleSearchResponse> {
-  const plan = getReferencePlan(query, context);
-  const searchQuery = plan.primaryQuery;
+  const searchQuery = normalizeQueryText(query) || '풍경 사진';
 
   try {
     const res = await monitoredFetch(`${COMPANION_URL}/api/naver-image-search`, {
@@ -1968,7 +2023,7 @@ async function searchNaverImages(
   }
 }
 
-// ─── 대체 검색 폴백 (네이버 → Pexels → Wikimedia 다중 폴백) ───
+// ─── 대체 검색 폴백 (네이버 → Wikimedia) ───
 async function searchAlternativeReferenceImages(
   query: string,
   start: number,
@@ -1976,25 +2031,24 @@ async function searchAlternativeReferenceImages(
   context?: ReferenceSearchContext,
   rankingMode: 'fast' | 'best' = 'fast',
 ): Promise<GoogleSearchResponse> {
-  // 1순위: 한국 콘텐츠면 네이버 이미지 시도
-  if (isKoreanContentLocale(context?.scene, context?.projectTargetRegion)) {
-    try {
-      const naverResponse = await searchNaverImages(query, start, context, rankingMode);
-      if (naverResponse.items.length > 0) return naverResponse;
-    } catch { /* 네이버 실패 → 다음 폴백 */ }
+  try {
+    const naverResponse = await searchNaverImages(query, start, context, rankingMode);
+    if (naverResponse.items.length > 0) return naverResponse;
+  } catch {
+    // 네이버 실패 → Wikimedia 최종 폴백
   }
 
-  // 2순위: Pexels (키 있으면)
-  const pexelsKey = getPexelsKey();
-  if (pexelsKey) {
-    try {
-      const pexelsResponse = await searchPexelsImages(query, start, context, rankingMode);
-      if (pexelsResponse.items.length > 0) return pexelsResponse;
-    } catch { /* Pexels 실패 → 다음 폴백 */ }
+  try {
+    return await searchWikimediaImages(query, start, imgSize);
+  } catch (error) {
+    logger.warn('[GoogleRef] Wikimedia 검색 실패', error instanceof Error ? error.message : String(error));
+    return {
+      items: [],
+      totalResults: 0,
+      query,
+      provider: 'wikimedia',
+    };
   }
-
-  // 3순위: Wikimedia Commons (항상 사용 가능)
-  return searchWikimediaImages(query, start, imgSize);
 }
 
 /**
@@ -2017,7 +2071,8 @@ export async function searchGoogleImages(
   const rankingMode = options?.rankingMode || 'fast';
   const bypassEmptyCache = options?.bypassEmptyCache === true;
   const plan = getReferencePlan(normalizedQuery, options?.context);
-  const { hl: cacheHl, gl: cacheGl } = detectContentLocale(options?.context?.scene, options?.context?.projectTargetRegion);
+  const effectiveProjectTargetRegion = options?.context?.projectTargetRegion || getProjectTargetRegion();
+  const { hl: cacheHl, gl: cacheGl } = detectContentLocale(options?.context?.scene, effectiveProjectTargetRegion);
   const cacheKey = getReferenceSearchCacheKey(
     normalizedQuery,
     start,
@@ -2030,26 +2085,15 @@ export async function searchGoogleImages(
   if (cached && !(bypassEmptyCache && cached.items.length === 0)) return cached;
 
   const inflight = referenceSearchInflight.get(cacheKey);
-  if (inflight) return inflight;
+  if (inflight) {
+    const canReuseInflight = !bypassEmptyCache || !inflight.startedWithCooldown || isGoogleSearchCooldownActive();
+    if (canReuseInflight) return inflight.promise;
+  }
 
+  const requestStartedWithCooldown = isGoogleSearchCooldownActive();
   const request = (async (): Promise<GoogleSearchResponse> => {
-    // [FIX] 1순위: Serper.dev API (쿨다운과 무관하게 최우선 시도)
-    const serperKey = getSerperKey();
-    if (serperKey) {
-      try {
-        const serperResponse = await searchSerperImages(normalizedQuery, start, options?.context, rankingMode);
-        if (serperResponse.items.length > 0) {
-          setCachedReferenceSearch(cacheKey, serperResponse);
-          return serperResponse;
-        }
-        logger.warn('[GoogleRef] Serper 결과 0건, 구글 직접 검색 시도');
-      } catch (error) {
-        logger.warn('[GoogleRef] Serper 실패', error instanceof Error ? error.message : '');
-      }
-    }
-
-    // [FIX] 2순위: 구글 직접 검색 (쿨다운 시 스킵)
     if (isGoogleSearchCooldownActive()) {
+      markInflightReferenceSearchCooldownBound(cacheKey);
       const fallbackResponse = await searchAlternativeReferenceImages(normalizedQuery, start, imgSize, options?.context, rankingMode);
       setCachedReferenceSearch(cacheKey, fallbackResponse);
       return fallbackResponse;
@@ -2058,14 +2102,15 @@ export async function searchGoogleImages(
     const releaseSlot = await acquireGoogleSearchSlot();
     try {
       if (isGoogleSearchCooldownActive()) {
+        markInflightReferenceSearchCooldownBound(cacheKey);
         const fallbackResponse = await searchAlternativeReferenceImages(normalizedQuery, start, imgSize, options?.context, rankingMode);
         setCachedReferenceSearch(cacheKey, fallbackResponse);
         return fallbackResponse;
       }
 
-      const url = buildSearchUrl(normalizedQuery, start, imgSize, options?.context?.scene, options?.context?.projectTargetRegion);
+      const url = buildSearchUrl(normalizedQuery, start, imgSize, options?.context?.scene, effectiveProjectTargetRegion);
       const googleCookie = getGoogleSearchCookie();
-      const { hl, gl } = detectContentLocale(options?.context?.scene, options?.context?.projectTargetRegion);
+      const { hl, gl } = detectContentLocale(options?.context?.scene, effectiveProjectTargetRegion);
       logger.info('[GoogleRef] 구글 직접 검색 요청', `query="${normalizedQuery}" start=${start} hl=${hl} gl=${gl}`);
 
       try {
@@ -2076,6 +2121,9 @@ export async function searchGoogleImages(
           logger.error('[GoogleRef] 검색 실패', `status=${res.status} ${errText}`);
           if (res.status === 429) {
             throw new Error('구글 검색 요청이 너무 많아 잠시 차단되었습니다. 잠시 후 다시 시도해주세요.');
+          }
+          if (res.status >= 300 && res.status < 400) {
+            throw new Error('구글 동의 페이지 또는 보안 확인 리다이렉트가 반환되었습니다. 잠시 후 다시 시도해주세요.');
           }
           if (res.status === 403) {
             throw new Error('프록시에서 구글 이미지 검색을 차단했습니다. 프록시 허용 호스트를 확인해주세요.');
@@ -2103,23 +2151,24 @@ export async function searchGoogleImages(
           const googleResponse = {
             items,
             totalResults: rankedItems.length,
-            query: plan.primaryQuery,
+            query: normalizedQuery,
             provider: 'google' as const,
           };
           setCachedReferenceSearch(cacheKey, googleResponse);
           return googleResponse;
         }
 
-        logger.warn('[GoogleRef] 구글 결과 0건, Pexels/Wikimedia 폴백 시도', normalizedQuery);
+        logger.warn('[GoogleRef] 구글 결과 0건, Naver/Wikimedia 폴백 시도', normalizedQuery);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        if (!isBlockedSearchMessage(message) && !/구글 검색 실패/i.test(message)) {
-          throw error;
-        }
-        if (isBlockedSearchMessage(message)) {
+        const blockedSearch = isBlockedSearchMessage(message);
+        if (blockedSearch && !isGoogleSearchCooldownActive()) {
           markGoogleSearchRateLimited(message);
         }
-        logger.warn('[GoogleRef] Pexels/Wikimedia 폴백 전환', message);
+        if (blockedSearch || isGoogleSearchCooldownActive()) {
+          markInflightReferenceSearchCooldownBound(cacheKey);
+        }
+        logger.warn('[GoogleRef] Google 검색 실패, Naver/Wikimedia 폴백 전환', message);
       }
     } finally {
       releaseSlot();
@@ -2130,7 +2179,10 @@ export async function searchGoogleImages(
     return fallbackResponse;
   })();
 
-  referenceSearchInflight.set(cacheKey, request);
+  referenceSearchInflight.set(cacheKey, {
+    promise: request,
+    startedWithCooldown: requestStartedWithCooldown,
+  });
   try {
     return await request;
   } finally {
@@ -2192,6 +2244,7 @@ export async function searchSceneReferenceImages(
       const retryResponse = await searchGoogleImages(aiQueries[i], startIndex, 'large', {
         context: { projectTargetRegion: targetRegion },
         rankingMode,
+        bypassEmptyCache: options?.bypassEmptyCache,
       });
       if (retryResponse.items.length > 0) return retryResponse;
     }
@@ -2204,6 +2257,7 @@ export async function searchSceneReferenceImages(
       return searchGoogleImages(fallbackQuery, startIndex, 'large', {
         context: { scene, prevScene, nextScene, globalContext, projectTargetRegion: targetRegion },
         rankingMode,
+        bypassEmptyCache: options?.bypassEmptyCache,
       });
     }
   }
@@ -2215,10 +2269,55 @@ export async function searchSceneReferenceImages(
  * 스토리보드 생성 직후 자동 구글 레퍼런스 이미지 배치
  * - 제한 병렬로 검색 → 첫 번째 결과를 imageUrl에 적용
  * - 이미 imageUrl이 있는 씬은 건너뜀
- * - Google은 내부 동시성 제한 + 429 쿨다운, 차단 시 Wikimedia 직행
+ * - Google은 내부 동시성 제한 + 429 쿨다운, 차단 시 Naver/Wikimedia 순서로 폴백
  * - runId로 중복 실행 방지 (새 분석 시 이전 실행 취소)
  */
 let _autoApplyRunId = 0;
+type ActiveAutoApplyState = {
+  runId: number;
+  sceneIds: Set<string>;
+  updateScene: (id: string, partial: Partial<Scene>) => void;
+};
+let _activeAutoApplyState: ActiveAutoApplyState | null = null;
+
+function hasSceneImageChangedSinceSnapshot(scene: Scene, latestScene?: Scene | null): boolean {
+  if (!latestScene) return true;
+  return (latestScene.imageUrl?.trim() || '') !== (scene.imageUrl?.trim() || '');
+}
+
+function isAutoApplyGenerationStatus(status?: string): boolean {
+  return /^레퍼런스 검색 중/.test(status || '');
+}
+
+function didAutoApplySceneChangeSinceStart(scene: Scene, latestScene?: Scene | null): boolean {
+  if (!latestScene) return true;
+  if (hasSceneImageChangedSinceSnapshot(scene, latestScene)) return true;
+  return !latestScene.isGeneratingImage || !isAutoApplyGenerationStatus(latestScene.generationStatus);
+}
+
+function finishAutoApplyScene(runId: number, sceneId: string): void {
+  if (_activeAutoApplyState?.runId !== runId) return;
+  _activeAutoApplyState.sceneIds.delete(sceneId);
+}
+
+function clearActiveAutoApplyState(): void {
+  const state = _activeAutoApplyState;
+  if (!state) return;
+
+  const latestScenes = getLatestScenes();
+  for (const sceneId of state.sceneIds) {
+    const latestScene = latestScenes.find((scene) => scene.id === sceneId);
+    if (!latestScene?.isGeneratingImage) continue;
+    if (!isAutoApplyGenerationStatus(latestScene.generationStatus)) continue;
+    state.updateScene(sceneId, {
+      isGeneratingImage: false,
+      generationStatus: undefined,
+    });
+  }
+
+  state.sceneIds.clear();
+  _activeAutoApplyState = null;
+}
 
 export async function autoApplyGoogleReferences(
   scenes: Scene[],
@@ -2227,11 +2326,18 @@ export async function autoApplyGoogleReferences(
   onComplete?: (summary: GoogleReferenceApplySummary) => void,
   forceReplace?: boolean,
 ): Promise<void> {
+  clearActiveAutoApplyState();
   const runId = ++_autoApplyRunId;
+  _activeAutoApplyState = {
+    runId,
+    sceneIds: new Set<string>(),
+    updateScene,
+  };
   let appliedCount = 0;
   let failedCount = 0;
   let blockedCount = 0;
   let fallbackCount = 0;
+  let skippedCount = 0;
   let startedCount = 0;
   // [FIX #681] 배치 중복 URL 방지 — 같은 이미지가 여러 장면에 반복되는 문제 수정
   const usedImageUrls = new Set<string>();
@@ -2249,21 +2355,36 @@ export async function autoApplyGoogleReferences(
       if (!current) return;
 
       const { scene, index } = current;
+      const latestSceneBeforeStart = getLatestScenes().find((s) => s.id === scene.id);
+      if (!latestSceneBeforeStart) {
+        skippedCount++;
+        continue;
+      }
+      if (latestSceneBeforeStart.isGeneratingImage) {
+        skippedCount++;
+        continue;
+      }
 
       if (!forceReplace) {
-        const latestScenes = getLatestScenes();
-        const latestScene = latestScenes.find((s) => s.id === scene.id);
-        if (latestScene?.imageUrl?.trim()) continue;
+        if (latestSceneBeforeStart.imageUrl?.trim()) {
+          skippedCount++;
+          continue;
+        }
+      } else if (hasSceneImageChangedSinceSnapshot(scene, latestSceneBeforeStart)) {
+        skippedCount++;
+        continue;
       }
 
       startedCount += 1;
       const prevScene = index > 0 ? scenes[index - 1] : null;
       const nextScene = index < scenes.length - 1 ? scenes[index + 1] : null;
+      const baseQuery = buildSearchQuery(scene, prevScene, nextScene, globalContext);
 
       updateScene(scene.id, {
         isGeneratingImage: true,
         generationStatus: `레퍼런스 검색 중... (${startedCount}/${candidates.length})`,
       });
+      _activeAutoApplyState?.sceneIds.add(scene.id);
 
       try {
         // [FIX #681] AI 검색어 변환 활용 — 항상 1페이지부터, 중복 URL은 usedImageUrls로 스킵
@@ -2273,6 +2394,12 @@ export async function autoApplyGoogleReferences(
         );
 
         if (_autoApplyRunId !== runId) return;
+        const latestScene = getLatestScenes().find((s) => s.id === scene.id);
+        if (didAutoApplySceneChangeSinceStart(scene, latestScene)) {
+          finishAutoApplyScene(runId, scene.id);
+          skippedCount++;
+          continue;
+        }
 
         if (response.items.length > 0) {
           // [FIX #681] 중복 URL 스킵 — 아직 사용하지 않은 첫 번째 이미지 선택
@@ -2285,10 +2412,13 @@ export async function autoApplyGoogleReferences(
             imageUrl: selectedItem.link,
             isGeneratingImage: false,
             generationStatus: isPrimaryReferenceProvider(response.provider) ? '구글 레퍼런스 적용됨' : '대체 레퍼런스 적용됨',
-            imageUpdatedAfterVideo: !!scene.videoUrl,
+            imageUpdatedAfterVideo: !!latestScene?.videoUrl,
+            communityMediaItem: undefined,
             referenceSearchPage: 1,
             referenceSearchQuery: response.query,
+            referenceSearchBaseQuery: baseQuery,
           });
+          finishAutoApplyScene(runId, scene.id);
           appliedCount++;
         } else {
           failedCount++;
@@ -2297,10 +2427,18 @@ export async function autoApplyGoogleReferences(
             generationStatus: '검색 결과 없음',
             referenceSearchPage: 1,
             referenceSearchQuery: response.query,
+            referenceSearchBaseQuery: baseQuery,
           });
+          finishAutoApplyScene(runId, scene.id);
         }
       } catch (err) {
         if (_autoApplyRunId !== runId) return;
+        const latestScene = getLatestScenes().find((s) => s.id === scene.id);
+        if (didAutoApplySceneChangeSinceStart(scene, latestScene)) {
+          finishAutoApplyScene(runId, scene.id);
+          skippedCount++;
+          continue;
+        }
         const message = err instanceof Error ? err.message : String(err);
         logger.error('[GoogleRef] 자동 배치 실패', `scene=${scene.id} ${message}`);
         failedCount++;
@@ -2310,51 +2448,26 @@ export async function autoApplyGoogleReferences(
           generationStatus: `검색 실패: ${message}`,
           referenceSearchPage: 1,
           referenceSearchQuery: '',
+          referenceSearchBaseQuery: baseQuery,
         });
+        finishAutoApplyScene(runId, scene.id);
       }
     }
   };
 
   const workerCount = Math.min(SCENE_REFERENCE_BATCH_CONCURRENCY, candidates.length || 1);
   await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  if (_activeAutoApplyState?.runId === runId) {
+    _activeAutoApplyState = null;
+  }
 
   if (_autoApplyRunId === runId) {
-    onComplete?.({ appliedCount, failedCount, blockedCount, fallbackCount });
+    onComplete?.({ appliedCount, failedCount, blockedCount, fallbackCount, skippedCount });
   }
 }
 
 /** 자동 배치 실행 중단 (새 분석 시작 등) */
 export function cancelAutoApply(): void {
+  clearActiveAutoApplyState();
   _autoApplyRunId++;
-}
-
-/**
- * 이미지 URL을 프록시 경유 data URL로 변환 (CORS 우회)
- * — 브라우저에서 외부 이미지를 canvas에 그릴 때 필요
- */
-export async function proxyImageToDataUrl(imageUrl: string): Promise<string> {
-  try {
-    // Cloudflare Pages Function 프록시 사용
-    const res = await monitoredFetch('/api/google-proxy', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        targetUrl: imageUrl,
-        method: 'GET',
-      }),
-    });
-
-    if (!res.ok) throw new Error(`프록시 실패: ${res.status}`);
-
-    const blob = await res.blob();
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
-  } catch {
-    // 프록시 실패 시 원본 URL 반환
-    return imageUrl;
-  }
 }

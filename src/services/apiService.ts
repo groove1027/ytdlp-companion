@@ -161,16 +161,6 @@ export const getFeedbackUrl = (): string => {
     return DEFAULT_FEEDBACK_URL;
 };
 
-export const getSerperKey = (): string => {
-    const key = localStorage.getItem('CUSTOM_SERPER_KEY') || '';
-    return sanitizeKey(key);
-};
-
-export const getPexelsKey = (): string => {
-    const key = localStorage.getItem('CUSTOM_PEXELS_KEY') || '';
-    return sanitizeKey(key);
-};
-
 export const saveApiKeys = (kie: string, cloudName?: string, uploadPreset?: string, gemini?: string, apimart?: string, removeBg?: string, xai?: string, evolink?: string, youtubeApiKey?: string, typecast?: string) => {
     // Save raw input, but sanitized on retrieval
     if (kie.trim()) localStorage.setItem('CUSTOM_KIE_KEY', kie.trim());
@@ -208,14 +198,6 @@ export const saveApiKeys = (kie: string, cloudName?: string, uploadPreset?: stri
 
 };
 
-export const saveReferenceSearchKeys = (serper: string, pexels: string) => {
-    if (serper.trim()) localStorage.setItem('CUSTOM_SERPER_KEY', serper.trim());
-    else localStorage.removeItem('CUSTOM_SERPER_KEY');
-
-    if (pexels.trim()) localStorage.setItem('CUSTOM_PEXELS_KEY', pexels.trim());
-    else localStorage.removeItem('CUSTOM_PEXELS_KEY');
-};
-
 export const saveCoupangKeys = (accessKey: string, secretKey: string, proxyUrl: string) => {
     if (accessKey.trim()) localStorage.setItem('CUSTOM_COUPANG_ACCESS_KEY', accessKey.trim());
     else localStorage.removeItem('CUSTOM_COUPANG_ACCESS_KEY');
@@ -249,8 +231,6 @@ export const getStoredKeys = () => {
         googleGeminiKey: localStorage.getItem('CUSTOM_GOOGLE_GEMINI_KEY') || '',
         vmakeAk: localStorage.getItem('CUSTOM_VMAKE_AK') || '',
         vmakeSk: localStorage.getItem('CUSTOM_VMAKE_SK') || '',
-        serper: localStorage.getItem('CUSTOM_SERPER_KEY') || '',
-        pexels: localStorage.getItem('CUSTOM_PEXELS_KEY') || '',
     };
 };
 
@@ -274,8 +254,6 @@ const SETTINGS_KEY_MAP: [string, string][] = [
     ['CUSTOM_COUPANG_SECRET_KEY', 'coupangSecretKey'],
     ['CUSTOM_COUPANG_PROXY_URL', 'coupangProxyUrl'],
     ['CUSTOM_GOOGLE_GEMINI_KEY', 'googleGeminiKey'],
-    ['CUSTOM_SERPER_KEY', 'serper'],
-    ['CUSTOM_PEXELS_KEY', 'pexels'],
 ];
 
 /** 현재 localStorage의 API 키를 서버에 백업 (로그인 상태에서만 동작) */

@@ -543,16 +543,26 @@ const SetupPanel: React.FC = () => {
     if (!hasSearchableEmptyScene) return;
 
     const updateSceneFn = useProjectStore.getState().updateScene;
-    void autoApplyGoogleReferences(targetScenes, globalContext, updateSceneFn, ({ appliedCount, failedCount, blockedCount, fallbackCount }) => {
+    void autoApplyGoogleReferences(targetScenes, globalContext, updateSceneFn, ({ appliedCount, failedCount, blockedCount, fallbackCount, skippedCount }) => {
+      const skippedSceneMessage = skippedCount > 0
+        ? `${skippedCount}개 장면은 작업 중이거나 방금 바뀌어서 건너뛰었어요.`
+        : '';
       if (appliedCount > 0 && failedCount === 0) {
         showToast(
-          `${appliedCount}개 장면에 무료 레퍼런스 이미지를 자동 배치했어요!${fallbackCount > 0 ? ' (대체 소스 포함)' : ''}`,
+          `${appliedCount}개 장면에 무료 레퍼런스 이미지를 자동 배치했어요!${fallbackCount > 0 ? ' (대체 소스 포함)' : ''}${skippedCount > 0 ? ` (${skippedCount}개 건너뜀)` : ''}`,
         );
         return;
       }
 
       if (appliedCount > 0) {
-        showToast(`${appliedCount}개 장면은 자동 배치했고 ${failedCount}개 장면은 비어 있어요.`);
+        showToast(
+          `${appliedCount}개 장면은 자동 배치했고 ${failedCount}개 장면은 비어 있어요.${skippedSceneMessage ? ` ${skippedSceneMessage}` : ''}`,
+        );
+        return;
+      }
+
+      if (skippedSceneMessage) {
+        showToast(skippedSceneMessage);
         return;
       }
 

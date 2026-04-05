@@ -63,6 +63,12 @@ function isReferenceImageScene(scene: Scene): boolean {
   return /(구글|대체) 레퍼런스/.test(scene.generationStatus || '') || !!scene.referenceSearchQuery;
 }
 
+function didReferenceSearchSceneChangeWhileSearching(snapshotScene: Scene, latestScene: Scene | undefined, expectedStatus: string): boolean {
+  if (!latestScene) return true;
+  if ((latestScene.imageUrl?.trim() || '') !== (snapshotScene.imageUrl?.trim() || '')) return true;
+  return !latestScene.isGeneratingImage || latestScene.generationStatus !== expectedStatus;
+}
+
 function getReferenceActionLabel(scene: Scene): string {
   return scene.imageUrl ? '레퍼런스 재검색' : '레퍼런스 검색';
 }
@@ -2039,41 +2045,74 @@ const StoryboardPanel: React.FC = () => {
 
     // [NEW] 무료 레퍼런스 모드 — AI 생성 대신 웹 검색으로 대체
     if (useImageVideoStore.getState().enableGoogleReference && !feedback && !overrides) {
+      let inFlightReferenceStatus = '무료 레퍼런스 검색 중...';
       try {
-        const { searchGoogleImages, buildSearchQuery } = await import('../../../services/googleReferenceSearchService');
+        const {
+          searchGoogleImages,
+          searchSceneReferenceImages,
+          buildSearchQuery,
+          isPrimaryReferenceProvider,
+        } = await import('../../../services/googleReferenceSearchService');
         const sceneIndex = currentScenes.findIndex(s => s.id === sceneId);
         const prevScene = sceneIndex > 0 ? currentScenes[sceneIndex - 1] : null;
         const nextScene = sceneIndex < currentScenes.length - 1 ? currentScenes[sceneIndex + 1] : null;
-        const query = buildSearchQuery(scene, prevScene, nextScene, currentConfig.globalContext);
+        const baseQuery = buildSearchQuery(scene, prevScene, nextScene, currentConfig.globalContext);
         const hasExistingReference = !!scene.imageUrl?.trim() && isReferenceImageScene(scene);
+        const storedSearchQuery = scene.referenceSearchQuery?.trim() || '';
+        const lastBaseQuery = scene.referenceSearchBaseQuery?.trim() || storedSearchQuery;
         const hasStoredReferencePage = typeof scene.referenceSearchPage === 'number' && scene.referenceSearchPage > 0;
+        const shouldResetStoredQuery = !hasExistingReference
+          || !storedSearchQuery
+          || (!!lastBaseQuery && lastBaseQuery !== baseQuery);
         const safePage = !hasExistingReference
           ? 1
-          : scene.referenceSearchQuery && scene.referenceSearchQuery !== query
+          : shouldResetStoredQuery
             ? 1
             : hasStoredReferencePage
               ? (scene.referenceSearchPage! >= MAX_REFERENCE_RESULT_PAGE ? 1 : scene.referenceSearchPage! + 1)
               : 2;
         const startIdx = ((safePage - 1) * REFERENCE_RESULT_PAGE_SIZE) + 1;
+        inFlightReferenceStatus = hasExistingReference
+          ? `다른 레퍼런스 검색 중... (${safePage}페이지)`
+          : '무료 레퍼런스 검색 중...';
 
         updateScene(sceneId, {
           isGeneratingImage: true,
-          generationStatus: hasExistingReference ? `다른 레퍼런스 검색 중... (${safePage}페이지)` : '무료 레퍼런스 검색 중...',
+          generationStatus: inFlightReferenceStatus,
         });
 
-        const result = await searchGoogleImages(query, startIdx, 'large', {
-          context: { scene, prevScene, nextScene, globalContext: currentConfig.globalContext },
-          rankingMode: 'best',
-        });
+        const shouldUseStoredQuery = !shouldResetStoredQuery && !!storedSearchQuery;
+        const result = shouldUseStoredQuery
+          ? await searchGoogleImages(storedSearchQuery, startIdx, 'large', {
+              context: { scene, prevScene, nextScene, globalContext: currentConfig.globalContext },
+              rankingMode: 'best',
+              bypassEmptyCache: true,
+            })
+          : await searchSceneReferenceImages(
+              scene,
+              prevScene,
+              nextScene,
+              currentConfig.globalContext,
+              startIdx,
+              'best',
+              { bypassEmptyCache: true },
+            );
+        const resolvedSearchQuery = result.query || storedSearchQuery || baseQuery;
+        const latestSceneAfterSearch = useProjectStore.getState().scenes.find((s) => s.id === sceneId);
+        if (didReferenceSearchSceneChangeWhileSearching(scene, latestSceneAfterSearch, inFlightReferenceStatus)) {
+          return false;
+        }
         if (result.items.length > 0) {
           updateScene(sceneId, {
             imageUrl: result.items[0].link,
             previousImageUrl: scene.imageUrl || undefined,
             isGeneratingImage: false,
-            generationStatus: result.provider === 'google' ? '구글 레퍼런스 적용됨' : '대체 레퍼런스 적용됨',
-            imageUpdatedAfterVideo: !!scene.videoUrl,
+            generationStatus: isPrimaryReferenceProvider(result.provider) ? '구글 레퍼런스 적용됨' : '대체 레퍼런스 적용됨',
+            imageUpdatedAfterVideo: !!latestSceneAfterSearch?.videoUrl,
+            communityMediaItem: undefined,
             referenceSearchPage: safePage,
-            referenceSearchQuery: query,
+            referenceSearchQuery: resolvedSearchQuery,
+            referenceSearchBaseQuery: baseQuery,
           });
           return true;
         }
@@ -2081,11 +2120,19 @@ const StoryboardPanel: React.FC = () => {
           isGeneratingImage: false,
           generationStatus: '검색 결과 없음',
           referenceSearchPage: safePage,
-          referenceSearchQuery: query,
+          referenceSearchQuery: resolvedSearchQuery,
+          referenceSearchBaseQuery: baseQuery,
         });
         return false;
       } catch (err) {
-        updateScene(sceneId, { isGeneratingImage: false, generationStatus: `검색 실패: ${err instanceof Error ? err.message : '오류'}` });
+        const latestSceneAfterError = useProjectStore.getState().scenes.find((s) => s.id === sceneId);
+        if (didReferenceSearchSceneChangeWhileSearching(scene, latestSceneAfterError, inFlightReferenceStatus)) {
+          return false;
+        }
+        updateScene(sceneId, {
+          isGeneratingImage: false,
+          generationStatus: `검색 실패: ${err instanceof Error ? err.message : '오류'}`,
+        });
         return false;
       }
     }
@@ -2289,16 +2336,26 @@ const StoryboardPanel: React.FC = () => {
       allTargets,
       currentConfig.globalContext || '',
       updateScene,
-      ({ appliedCount, failedCount, blockedCount, fallbackCount }) => {
+      ({ appliedCount, failedCount, blockedCount, fallbackCount, skippedCount }) => {
+        const skippedSceneMessage = skippedCount > 0
+          ? `${skippedCount}개 장면은 작업 중이거나 방금 바뀌어서 건너뛰었어요.`
+          : '';
         if (appliedCount > 0 && failedCount === 0) {
           showToast(
-            `${appliedCount}개 장면에 무료 레퍼런스 이미지를 배치했어요!${fallbackCount > 0 ? ' (대체 소스 포함)' : ''}`,
+            `${appliedCount}개 장면에 무료 레퍼런스 이미지를 배치했어요!${fallbackCount > 0 ? ' (대체 소스 포함)' : ''}${skippedCount > 0 ? ` (${skippedCount}개 건너뜀)` : ''}`,
           );
           return;
         }
 
         if (appliedCount > 0) {
-          showToast(`${appliedCount}개 장면은 적용했고 ${failedCount}개 장면은 비어 있어요.`);
+          showToast(
+            `${appliedCount}개 장면은 적용했고 ${failedCount}개 장면은 비어 있어요.${skippedSceneMessage ? ` ${skippedSceneMessage}` : ''}`,
+          );
+          return;
+        }
+
+        if (skippedSceneMessage) {
+          showToast(skippedSceneMessage);
           return;
         }
 

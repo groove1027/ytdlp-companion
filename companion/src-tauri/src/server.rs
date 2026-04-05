@@ -9,7 +9,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
-use std::sync::OnceLock;
+use std::sync::{LazyLock, OnceLock};
 use tokio::sync::RwLock;
 use tokio_util::io::ReaderStream;
 use tower_http::cors::{Any, CorsLayer};
@@ -17,56 +17,172 @@ use tower_http::cors::{Any, CorsLayer};
 use crate::{platform, rembg, tts, whisper, ytdlp};
 
 // ──────────────────────────────────────────────
-// [FIX] Google 프록시 싱글톤 Client + 페이싱 상태
+// [FIX] Google 프록시 싱글톤 Client + 페이싱/백오프 상태
 // ──────────────────────────────────────────────
 use std::sync::Arc;
 
-struct GoogleProxyState {
-    last_request_at: std::time::Instant,
+struct GoogleProxyBackoffState {
     consecutive_429s: u32,
     cooldown_until: std::time::Instant,
 }
 
-static GOOGLE_PROXY_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
-static GOOGLE_PROXY_STATE: OnceLock<tokio::sync::Mutex<GoogleProxyState>> = OnceLock::new();
+const GOOGLE_SOCS_COOKIE_PAIR: &str =
+    "SOCS=CAESHAgBEhJnd3NfMjAyNDA1MDEtMF9SQzIaAmVuIAEaBgiA_uC2Bg";
+const GOOGLE_CONSENT_COOKIE_PAIR: &str = "CONSENT=YES+cb.20240101-00-p0.en+FX+987";
 
-fn google_proxy_client() -> &'static reqwest::Client {
-    GOOGLE_PROXY_CLIENT.get_or_init(|| {
-        let jar = Arc::new(reqwest::cookie::Jar::default());
-        let google_url = "https://www.google.com".parse::<url::Url>().unwrap();
+static GOOGLE_PROXY_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
+    let jar = Arc::new(reqwest::cookie::Jar::default());
+    let google_url = "https://www.google.com".parse::<url::Url>().unwrap();
 
-        // SOCS 동의 쿠키 (2024+ 필수 — 없으면 봇 취급)
-        jar.add_cookie_str(
-            "SOCS=CAESHAgBEhJnd3NfMjAyNDA1MDEtMF9SQzIaAmVuIAEaBgiA_uC2Bg; domain=.google.com; path=/; secure; SameSite=Lax",
-            &google_url,
-        );
-        // 레거시 CONSENT 쿠키 폴백
-        jar.add_cookie_str(
-            "CONSENT=YES+cb.20240101-00-p0.en+FX+987; domain=.google.com; path=/",
-            &google_url,
-        );
+    // SOCS 동의 쿠키 (2024+ 필수 — 없으면 봇 취급)
+    jar.add_cookie_str(
+        &format!("{GOOGLE_SOCS_COOKIE_PAIR}; domain=.google.com; path=/; secure; SameSite=Lax"),
+        &google_url,
+    );
+    // 레거시 CONSENT 쿠키 폴백
+    jar.add_cookie_str(
+        &format!("{GOOGLE_CONSENT_COOKIE_PAIR}; domain=.google.com; path=/"),
+        &google_url,
+    );
 
-        reqwest::Client::builder()
-            .cookie_provider(jar)
-            .redirect(reqwest::redirect::Policy::none())
-            .timeout(std::time::Duration::from_secs(30))
-            .connect_timeout(std::time::Duration::from_secs(10))
-            .pool_idle_timeout(std::time::Duration::from_secs(300))
-            .gzip(true)
-            .brotli(true)
-            .build()
-            .unwrap_or_default()
-    })
-}
-
-fn google_proxy_state() -> &'static tokio::sync::Mutex<GoogleProxyState> {
-    GOOGLE_PROXY_STATE.get_or_init(|| {
-        tokio::sync::Mutex::new(GoogleProxyState {
-            last_request_at: std::time::Instant::now() - std::time::Duration::from_secs(60),
+    reqwest::Client::builder()
+        .cookie_provider(jar)
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(30))
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .pool_idle_timeout(std::time::Duration::from_secs(300))
+        .gzip(true)
+        .brotli(true)
+        .build()
+        .unwrap_or_default()
+});
+static LAST_GOOGLE_REQUEST: LazyLock<tokio::sync::Mutex<std::time::Instant>> =
+    LazyLock::new(|| {
+        tokio::sync::Mutex::new(std::time::Instant::now() - std::time::Duration::from_secs(60))
+    });
+static GOOGLE_REQUEST_GATE: LazyLock<tokio::sync::Mutex<()>> =
+    LazyLock::new(|| tokio::sync::Mutex::new(()));
+static GOOGLE_PROXY_BACKOFF_STATE: LazyLock<tokio::sync::Mutex<GoogleProxyBackoffState>> =
+    LazyLock::new(|| {
+        tokio::sync::Mutex::new(GoogleProxyBackoffState {
             consecutive_429s: 0,
             cooldown_until: std::time::Instant::now() - std::time::Duration::from_secs(1),
         })
-    })
+    });
+
+fn google_proxy_client() -> &'static reqwest::Client {
+    &GOOGLE_PROXY_CLIENT
+}
+
+fn google_proxy_backoff_state() -> &'static tokio::sync::Mutex<GoogleProxyBackoffState> {
+    &GOOGLE_PROXY_BACKOFF_STATE
+}
+
+fn google_request_gap() -> std::time::Duration {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .subsec_nanos() as u64;
+    std::time::Duration::from_secs(8 + (nanos % 8))
+}
+
+async fn enforce_google_request_spacing() {
+    let min_gap = google_request_gap();
+
+    loop {
+        let wait_duration = {
+            let mut last_request = LAST_GOOGLE_REQUEST.lock().await;
+            let now = std::time::Instant::now();
+            let elapsed = now.saturating_duration_since(*last_request);
+            if elapsed >= min_gap {
+                *last_request = now;
+                return;
+            }
+            min_gap - elapsed
+        };
+
+        tokio::time::sleep(wait_duration).await;
+    }
+}
+
+fn google_backoff_seconds(consecutive_429s: u32) -> u64 {
+    match consecutive_429s {
+        1 => 30,
+        2 => 60,
+        3 => 300,
+        _ => 600,
+    }
+}
+
+fn parse_retry_after_seconds(value: &reqwest::header::HeaderValue) -> Option<u64> {
+    let raw = value.to_str().ok()?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+
+    if let Ok(seconds) = raw.parse::<u64>() {
+        return (seconds > 0).then_some(seconds);
+    }
+
+    let retry_at = chrono::DateTime::parse_from_rfc2822(raw).ok()?;
+    let remaining_seconds = retry_at
+        .with_timezone(&chrono::Utc)
+        .signed_duration_since(chrono::Utc::now())
+        .num_seconds();
+
+    (remaining_seconds > 0).then_some(remaining_seconds as u64)
+}
+
+fn build_google_cookie_header(user_cookie: &str) -> String {
+    let mut cookie_parts = vec![
+        GOOGLE_SOCS_COOKIE_PAIR.to_string(),
+        GOOGLE_CONSENT_COOKIE_PAIR.to_string(),
+    ];
+
+    cookie_parts.extend(
+        user_cookie
+            .split(';')
+            .map(str::trim)
+            .filter(|part| !part.is_empty())
+            .filter(|part| {
+                let lower = part.to_ascii_lowercase();
+                !lower.starts_with("socs=") && !lower.starts_with("consent=")
+            })
+            .map(str::to_string),
+    );
+
+    cookie_parts.join("; ")
+}
+
+async fn google_cooldown_response_if_active() -> Option<axum::response::Response> {
+    let state = google_proxy_backoff_state().lock().await;
+    if state.cooldown_until <= std::time::Instant::now() {
+        return None;
+    }
+
+    let remaining = state
+        .cooldown_until
+        .duration_since(std::time::Instant::now())
+        .as_secs_f64()
+        .ceil() as u64;
+    let remaining = remaining.max(1);
+    drop(state);
+
+    let mut headers = HeaderMap::new();
+    headers.insert("Content-Type", "application/json".parse().unwrap());
+    headers.insert("Retry-After", remaining.to_string().parse().unwrap());
+
+    Some(
+        (
+            StatusCode::TOO_MANY_REQUESTS,
+            headers,
+            Body::from(
+                serde_json::json!({ "error": "Google 쿨다운 중", "retryAfterSeconds": remaining })
+                    .to_string(),
+            ),
+        )
+            .into_response(),
+    )
 }
 
 // ──────────────────────────────────────────────
@@ -215,8 +331,8 @@ fn estimate_wav_duration_seconds(wav_data: &[u8]) -> Option<f64> {
 
     while offset + 8 <= wav_data.len() {
         let chunk_id = wav_data.get(offset..offset + 4)?;
-        let chunk_size = u32::from_le_bytes(wav_data.get(offset + 4..offset + 8)?.try_into().ok()?)
-            as usize;
+        let chunk_size =
+            u32::from_le_bytes(wav_data.get(offset + 4..offset + 8)?.try_into().ok()?) as usize;
         let chunk_data_start = offset + 8;
         if chunk_data_start > wav_data.len() {
             break;
@@ -2606,42 +2722,21 @@ async fn google_proxy_handler(Json(req): Json<GoogleProxyRequest>) -> impl IntoR
     }
 
     let is_google = host.contains("google.com") || host.contains("google.co.kr");
+    let _google_request_guard = if is_google {
+        Some(GOOGLE_REQUEST_GATE.lock().await)
+    } else {
+        None
+    };
 
-    // [FIX] Google 요청에 대해 페이싱 적용 (8~15초 랜덤 간격)
+    // [FIX] Google 요청에 대해 백오프 + 페이싱 적용
     if is_google {
-        let mut state = google_proxy_state().lock().await;
-
-        // 쿨다운 중이면 429 반환
-        if state.cooldown_until > std::time::Instant::now() {
-            let remaining = state
-                .cooldown_until
-                .duration_since(std::time::Instant::now())
-                .as_secs();
-            let mut headers = HeaderMap::new();
-            headers.insert("Content-Type", "application/json".parse().unwrap());
-            headers.insert("Retry-After", remaining.to_string().parse().unwrap());
-            return (StatusCode::TOO_MANY_REQUESTS, headers, Body::from(
-                serde_json::json!({ "error": "Google 쿨다운 중", "retryAfterSeconds": remaining }).to_string()
-            )).into_response();
+        if let Some(response) = google_cooldown_response_if_active().await {
+            return response;
         }
-
-        // 최소 간격 강제 (8~15초 랜덤)
-        let elapsed = state.last_request_at.elapsed();
-        let min_delay_ms = 8000
-            + (std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .subsec_millis()
-                % 7000) as u64;
-        let min_delay = std::time::Duration::from_millis(min_delay_ms);
-        if elapsed < min_delay {
-            let wait = min_delay - elapsed;
-            drop(state); // unlock during sleep
-            tokio::time::sleep(wait).await;
-            state = google_proxy_state().lock().await;
+        enforce_google_request_spacing().await;
+        if let Some(response) = google_cooldown_response_if_active().await {
+            return response;
         }
-        state.last_request_at = std::time::Instant::now();
-        drop(state);
     }
 
     // 싱글톤 Client 사용 (Google) 또는 새 Client (기타)
@@ -2683,18 +2778,23 @@ async fn google_proxy_handler(Json(req): Json<GoogleProxyRequest>) -> impl IntoR
     }
     if let Some(cookie) = &req.cookie {
         if !cookie.is_empty() {
-            request = request.header("Cookie", cookie.as_str());
+            request = if is_google {
+                request.header("Cookie", build_google_cookie_header(cookie))
+            } else {
+                request.header("Cookie", cookie.as_str())
+            };
         }
     }
 
     match request.send().await {
         Ok(res) => {
             let status = res.status().as_u16();
+            let is_google_redirect_block =
+                is_google && matches!(status, 301 | 302 | 303 | 307 | 308);
             let retry_after = res
                 .headers()
                 .get("retry-after")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|s| s.parse::<u64>().ok());
+                .and_then(parse_retry_after_seconds);
             let content_type = res
                 .headers()
                 .get("content-type")
@@ -2702,23 +2802,23 @@ async fn google_proxy_handler(Json(req): Json<GoogleProxyRequest>) -> impl IntoR
                 .unwrap_or("text/html")
                 .to_string();
             let body = res.bytes().await.unwrap_or_default();
+            let mut response_retry_after = retry_after;
 
             // [FIX] 429 시 지수 백오프 쿨다운
-            if status == 429 && is_google {
-                let mut state = google_proxy_state().lock().await;
+            if (status == 429 || is_google_redirect_block) && is_google {
+                let mut state = google_proxy_backoff_state().lock().await;
                 state.consecutive_429s += 1;
-                let cooldown_secs = retry_after.unwrap_or_else(|| match state.consecutive_429s {
-                    1 => 30,
-                    2 => 60,
-                    3 => 300,
-                    _ => 600,
-                });
+                let cooldown_secs = retry_after
+                    .filter(|seconds| *seconds > 0)
+                    .unwrap_or_else(|| google_backoff_seconds(state.consecutive_429s));
                 state.cooldown_until =
                     std::time::Instant::now() + std::time::Duration::from_secs(cooldown_secs);
+                response_retry_after = Some(cooldown_secs);
             } else if is_google && status == 200 {
-                // 성공 시 429 카운터 리셋
-                let mut state = google_proxy_state().lock().await;
+                let mut state = google_proxy_backoff_state().lock().await;
                 state.consecutive_429s = 0;
+                state.cooldown_until =
+                    std::time::Instant::now() - std::time::Duration::from_secs(1);
             }
 
             let mut headers = HeaderMap::new();
@@ -2726,7 +2826,7 @@ async fn google_proxy_handler(Json(req): Json<GoogleProxyRequest>) -> impl IntoR
                 "Content-Type",
                 content_type.parse().unwrap_or("text/html".parse().unwrap()),
             );
-            if let Some(ra) = retry_after {
+            if let Some(ra) = response_retry_after {
                 headers.insert("Retry-After", ra.to_string().parse().unwrap());
             }
             (
@@ -2745,7 +2845,7 @@ async fn google_proxy_handler(Json(req): Json<GoogleProxyRequest>) -> impl IntoR
 }
 
 // ──────────────────────────────────────────────
-// 핸들러: /api/naver-image-search (네이버 이미지 검색 — 한국 콘텐츠 전용)
+// 핸들러: /api/naver-image-search (네이버 이미지 검색)
 // API 키 불필요, 모바일 웹 페이지 접속 후 HTML 파싱
 // 네이버는 구글보다 차단이 훨씬 느슨함 (시간당 50~100회 OK)
 // ──────────────────────────────────────────────

@@ -1,7 +1,7 @@
 /**
  * 글로벌 이미지 레퍼런스 검색 E2E 테스트
  * - 콘텐츠 문화권 자동 감지 (detectContentLocale) 검증
- * - 다중 소스 폴백 체인 (Serper → Google → Naver → Pexels → Wikimedia)
+ * - 다중 소스 폴백 체인 (Google companion → Naver companion → Wikimedia)
  * - projectStore에 장면 주입 → 후반작업 > 이미지/영상 탭 → 레퍼런스 검색
  */
 import { test, expect } from '@playwright/test';
@@ -141,8 +141,8 @@ test.describe('글로벌 이미지 레퍼런스 검색', () => {
         await page.waitForResponse(
           resp => {
             const url = resp.url();
-            return url.includes('google-proxy') || url.includes('serper.dev') ||
-                   url.includes('wikimedia.org') || url.includes('pexels.com');
+            return url.includes('google-proxy') || url.includes('naver-image-search') ||
+                   url.includes('wikimedia.org');
           },
           { timeout: 30000 }
         );

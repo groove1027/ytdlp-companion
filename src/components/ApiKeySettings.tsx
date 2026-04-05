@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { getStoredKeys, saveApiKeys, saveVmakeKeys, saveReferenceSearchKeys, syncApiKeysToServer, getYoutubeApiKeyPool, saveYoutubeApiKeyPool, getActiveYoutubeKeyIndex } from '../services/apiService';
+import { getStoredKeys, saveApiKeys, saveVmakeKeys, syncApiKeysToServer, getYoutubeApiKeyPool, saveYoutubeApiKeyPool, getActiveYoutubeKeyIndex } from '../services/apiService';
 import { showToast } from '../stores/uiStore';
 import { useAuthGuard } from '../hooks/useAuthGuard';
 import { useAuthStore } from '../stores/authStore';
@@ -31,8 +31,6 @@ const SERVICE_OPTIONS = [
     { value: 'apimart', label: 'APIMart' },
     { value: 'xai', label: 'X AI' },
     { value: 'gemini', label: 'Gemini' },
-    { value: 'serper', label: 'Serper (이미지 검색)' },
-    { value: 'pexels', label: 'Pexels (무료 스톡)' },
 ];
 
 const EXPORT_MAP: [string, string][] = [
@@ -46,8 +44,6 @@ const EXPORT_MAP: [string, string][] = [
     ['APIMART', 'apimart'],
     ['X_AI', 'xai'],
     ['GEMINI', 'gemini'],
-    ['SERPER', 'serper'],
-    ['PEXELS', 'pexels'],
 ];
 
 // 라벨→필드 매핑 (KEY=VALUE, JSON, 주변 텍스트 감지용)
@@ -65,8 +61,6 @@ const LABEL_MAP: [RegExp, string][] = [
     [/gemini/i, 'gemini'],
     [/laozhang/i, 'laozhang'],
     [/giphy/i, 'giphy'],
-    [/serper/i, 'serper'],
-    [/pexels/i, 'pexels'],
 ];
 
 // 패턴→서비스 규칙 (키 값 자체의 형태로 판별)
@@ -241,7 +235,7 @@ const assignRemaining = (entries: DetectedKey[], assigned: Set<string>): Detecte
 
 const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
     const { requireAuth } = useAuthGuard();
-    const [keys, setKeys] = useState({ kie: '', cloudName: '', uploadPreset: '', gemini: '', apimart: '', removeBg: '', xai: '', evolink: '', youtubeApiKey: '', typecast: '', vmakeAk: '', vmakeSk: '', serper: '', pexels: '' });
+    const [keys, setKeys] = useState({ kie: '', cloudName: '', uploadPreset: '', gemini: '', apimart: '', removeBg: '', xai: '', evolink: '', youtubeApiKey: '', typecast: '', vmakeAk: '', vmakeSk: '' });
     const [youtubeKeyPool, setYoutubeKeyPool] = useState<string[]>([]);
     const [newYoutubeKey, setNewYoutubeKey] = useState('');
     const [showPassword, setShowPassword] = useState(false);
@@ -334,8 +328,6 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
                 typecast: stored.typecast,
                 vmakeAk: stored.vmakeAk,
                 vmakeSk: stored.vmakeSk,
-                serper: stored.serper,
-                pexels: stored.pexels,
             });
             // YouTube API 키 풀 로드 (없으면 기존 단일 키로 초기화)
             const pool = getYoutubeApiKeyPool();
@@ -370,7 +362,6 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
         const primaryYoutubeKey = finalYoutubePool.length > 0 ? finalYoutubePool[0] : '';
         saveApiKeys(keys.kie, keys.cloudName, keys.uploadPreset, undefined, keys.apimart, keys.removeBg, keys.xai, keys.evolink, primaryYoutubeKey, keys.typecast);
         saveVmakeKeys(keys.vmakeAk || '', keys.vmakeSk || '');
-        saveReferenceSearchKeys(keys.serper || '', keys.pexels || '');
     };
 
     // [FIX #928] 현재 state가 localStorage와 다른지 판별
@@ -385,9 +376,7 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
             || stored.xai !== keys.xai
             || stored.typecast !== keys.typecast
             || (stored.vmakeAk || '') !== (keys.vmakeAk || '')
-            || (stored.vmakeSk || '') !== (keys.vmakeSk || '')
-            || (stored.serper || '') !== (keys.serper || '')
-            || (stored.pexels || '') !== (keys.pexels || '')) return true;
+            || (stored.vmakeSk || '') !== (keys.vmakeSk || '')) return true;
         // [FIX #928] 체험판 Google Gemini 키는 onChange에서 직접 localStorage에 쓰므로
         // 모달 열릴 때 캡처한 초기값과 현재 localStorage 값을 비교
         const currentGoogleKey = localStorage.getItem('CUSTOM_GOOGLE_GEMINI_KEY') || '';
