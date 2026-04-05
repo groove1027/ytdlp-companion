@@ -123,6 +123,19 @@ function escapeRegex(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function pickEvenly<T>(items: T[], limit: number): T[] {
+  if (limit <= 0) return [];
+  if (items.length <= limit) return [...items];
+  const picked: T[] = [];
+  for (let index = 0; index < limit; index += 1) {
+    const start = Math.floor((index * items.length) / limit);
+    const end = Math.max(start + 1, Math.floor(((index + 1) * items.length) / limit));
+    const candidateIndex = Math.min(items.length - 1, Math.floor((start + end - 1) / 2));
+    picked.push(items[candidateIndex]);
+  }
+  return picked;
+}
+
 const LANGUAGE_NAME_TO_CODE: Record<string, string> = {
   korean: 'ko',
   english: 'en',
@@ -286,11 +299,78 @@ function getOriginalLanguageBadge(version: VersionItem): string {
   return (normalizeDetectedLang(version.detectedLang) || 'orig').toUpperCase();
 }
 
+function normalizeTableCell(text: string): string {
+  return text
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/^\s*[-*]\s+/, '')
+    .replace(/^\s*`+|`+\s*$/g, '')
+    .replace(/\*\*(.*?)\*\*/g, '$1')
+    .replace(/^"+|"+$/g, '')
+    .trim();
+}
+
+function splitMarkdownRow(line: string): string[] {
+  const trimmed = line.trim().replace(/^\|/, '').replace(/\|$/, '');
+  return trimmed.split('|').map(cell => normalizeTableCell(cell));
+}
+
+function isMarkdownSeparatorLine(line: string): boolean {
+  if (!line.includes('|')) return false;
+  const cells = splitMarkdownRow(line);
+  if (cells.length === 0) return false;
+  return cells.every(cell => /^:?-{3,}:?$/.test(cell.replace(/\s+/g, '')));
+}
+
+function parseCutNumber(cell: string): number {
+  const match = normalizeTableCell(cell).match(/\d+/);
+  return match ? parseInt(match[0], 10) : NaN;
+}
+
+function detectHeaderColumnIndex(
+  headers: string[],
+  patterns: RegExp[],
+  assignedIndices: Set<number>,
+  excludedPatterns: RegExp[] = [],
+): number {
+  return headers.findIndex((header, index) => {
+    if (assignedIndices.has(index)) return false;
+    if (excludedPatterns.some((pattern) => pattern.test(header))) return false;
+    return patterns.some((pattern) => pattern.test(header));
+  });
+}
+
+function assignHeaderColumnIndex(
+  headers: string[],
+  patterns: RegExp[],
+  assignedIndices: Set<number>,
+  excludedPatterns: RegExp[] = [],
+): number {
+  const index = detectHeaderColumnIndex(headers, patterns, assignedIndices, excludedPatterns);
+  if (index >= 0) assignedIndices.add(index);
+  return index;
+}
+
+function collectMarkdownTableBlocks(content: string): string[][] {
+  const blocks: string[][] = [];
+  let currentBlock: string[] = [];
+
+  for (const rawLine of content.split('\n')) {
+    if (rawLine.includes('|')) {
+      currentBlock.push(rawLine);
+      continue;
+    }
+    if (currentBlock.length > 0) {
+      blocks.push(currentBlock);
+      currentBlock = [];
+    }
+  }
+
+  if (currentBlock.length > 0) blocks.push(currentBlock);
+  return blocks.filter((block) => block.length >= 2);
+}
+
 /** 마크다운 테이블 행 파싱 (티키타카 마스터 편집 테이블 — 6열/7열/8열 자동 감지) */
 function parseTikitakaTable(content: string): SceneRow[] {
-  const rows: SceneRow[] = [];
-  const lines = content.split('\n');
-
   // 시간 패턴: "3.0초", "2.5s", "4초" 등
   const isDurationPattern = (s: string) => /^\d+(?:\.\d+)?초?s?$/.test(s.trim());
   // 타임코드 패턴: "0:15", "02:15", "0:15~0:18", "원본 02:15" 등
@@ -298,91 +378,162 @@ function parseTikitakaTable(content: string): SceneRow[] {
   // 효과태그 패턴: [펀치], [💥쾅!], [동공지진] 등 (모드 태그 [S]/[A]/[N] 제외)
   const isEffectTag = (s: string) => /^\[.+\]$/.test(s.trim()) && !/^\[[SAN]\]$/i.test(s.trim());
 
-  // 헤더에서 효과자막 열 존재 여부 감지
-  // [FIX #291 #292] 스낵형 헤더 "자막 내용"도 감지 — 기존에는 "오디오"/"내레이션"만 매칭하여 스낵형 7열 파싱 실패
-  const headerLine = lines.find(l => l.includes('|') && /모드/.test(l) && (/오디오/.test(l) || /내레이션/.test(l) || /자막/.test(l)));
-  const has7Cols = headerLine ? /효과\s*자막/.test(headerLine) : false;
+  const tableBlocks = collectMarkdownTableBlocks(content);
+  let bestRows: SceneRow[] = [];
 
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed.includes('|')) continue;
-    const stripped = trimmed.replace(/^\|/, '').replace(/\|$/, '');
-    const cells = stripped.split('|').map(c => c.trim());
-    if (cells.length < 5) continue;
+  for (const block of tableBlocks) {
+    let headerCells: string[] = [];
+    let rowStartIndex = 0;
+    if (block.length >= 2 && isMarkdownSeparatorLine(block[1])) {
+      headerCells = splitMarkdownRow(block[0]);
+      rowStartIndex = 2;
+    }
 
-    const cutNum = parseInt(cells[0], 10);
-    if (isNaN(cutNum) || cutNum < 1) continue;
+    const assignedHeaderIndices = new Set<number>();
+    const effectHeaderPatterns = [
+      /^(?:효과\s*자막|effect(?:\s*subtitle)?|effect\s*sub)$/i,
+      /(?:효과\s*자막|effect\s*subtitle)/i,
+      /^(?:효과|effect)$/i,
+    ];
+    const cutIndex = assignHeaderColumnIndex(
+      headerCells,
+      [/^(?:순서|번호|컷|cut|no\.?|index)$/i, /^scene(?:\s*(?:#|no\.?|number))?$/i],
+      assignedHeaderIndices,
+    );
+    const modeIndex = assignHeaderColumnIndex(
+      headerCells,
+      [/^(?:모드|mode|role)$/i, /(?:모드|mode|role)/i],
+      assignedHeaderIndices,
+    );
+    const effectIndex = assignHeaderColumnIndex(headerCells, effectHeaderPatterns, assignedHeaderIndices);
+    const audioIndex = assignHeaderColumnIndex(
+      headerCells,
+      [
+        /^(?:오디오(?:\s*내용)?|자막(?:\s*내용)?|내레이션|대사|audio(?:\s*content)?|subtitle|dialogue|narration|script)$/i,
+        /(?:오디오|내레이션|대사|audio|subtitle|dialogue|narration|script)/i,
+        /자막/i,
+      ],
+      assignedHeaderIndices,
+      effectHeaderPatterns,
+    );
+    const durationIndex = assignHeaderColumnIndex(
+      headerCells,
+      [/^(?:예상\s*시간|예상시간|시간|길이|duration|seconds?|sec)$/i, /(?:예상\s*시간|예상시간|duration|seconds?|sec|길이)/i],
+      assignedHeaderIndices,
+    );
+    const timecodeIndex = assignHeaderColumnIndex(
+      headerCells,
+      [/^(?:타임코드|원본|source|timeline|구간|timecode)$/i, /(?:타임코드|원본|source|timeline|구간|timecode)/i],
+      assignedHeaderIndices,
+    );
+    const videoIndex = assignHeaderColumnIndex(
+      headerCells,
+      [
+        /^(?:비디오(?:\s*화면)?\s*지시|화면(?:\s*지시)?|장면(?:\s*설명)?|비주얼|video(?:\s*direction)?|visual(?:\s*prompt)?|scene(?:\s*(?:description|direction))?)$/i,
+        /(?:비디오|화면|장면|비주얼|video|visual|scene)/i,
+      ],
+      assignedHeaderIndices,
+    );
 
-    let mode: string, audioContent: string, effectSub: string, duration: string, videoDirection: string, timecodeSource: string;
+    const mappedColumnsReady = cutIndex >= 0 && audioIndex >= 0 && videoIndex >= 0 && timecodeIndex >= 0;
+    const has7Cols = headerCells.length > 0
+      ? effectIndex >= 0
+      : block.some((line) => /모드/.test(line) && /오디오|내레이션|자막/.test(line) && /효과\s*자막/.test(line));
 
-    if (has7Cols && cells.length >= 7) {
-      // 7열: 순서 | 모드 | 오디오 내용 | 효과자막 | 예상 시간 | 비디오 화면 지시 | 타임코드 소스
-      mode = cells[1] || '';
-      audioContent = cells[2] || '';
-      effectSub = cells[3] || '';
-      duration = cells[4] || '';
-      videoDirection = cells[5] || '';
-      timecodeSource = cells[6] || '';
+    const rows: SceneRow[] = [];
+    for (let rowIndex = rowStartIndex; rowIndex < block.length; rowIndex += 1) {
+      const line = block[rowIndex];
+      if (isMarkdownSeparatorLine(line)) continue;
+      const cells = splitMarkdownRow(line);
+      if (cells.length < 5) continue;
 
-      // [FIX #293] AI가 8열 테이블 생성 시 열 밀림 자동 교정
-      // 증상: 효과자막="-", 예상시간="[태그]", 비디오화면지시="X.X초", 타임코드="화면묘사"
-      // 원인: AI가 자막 내용과 효과자막 사이에 빈 열("-")을 추가하여 8열 테이블을 생성
-      if (
-        isEffectTag(duration) && !isDurationPattern(duration) &&
-        isDurationPattern(videoDirection) && !hasTimecodePattern(timecodeSource)
-      ) {
-        // 열이 1칸 밀렸음 — effectSub 자리에 빈 열("-")이 들어감
-        effectSub = duration;        // [펀치] → 효과자막
-        duration = videoDirection;    // 4.0초 → 예상 시간
-        videoDirection = timecodeSource; // 화면 묘사 → 비디오 화면 지시
-        // 8열이면 실제 타임코드가 cells[7]에 있음
-        timecodeSource = (cells.length >= 8 ? cells[7] : '') || '';
-      }
-    } else {
-      // 6열 폴백: 순서 | 모드 | 오디오 내용 | 예상 시간 | 비디오 화면 지시 | 타임코드 소스
-      mode = cells[1] || '';
-      audioContent = cells[2] || '';
-      effectSub = '';
-      duration = cells[3] || '';
-      videoDirection = cells[4] || '';
-      timecodeSource = cells[5] || '';
+      const cutNum = parseCutNumber(mappedColumnsReady ? cells[cutIndex] || '' : cells[0] || '');
+      if (isNaN(cutNum) || cutNum < 1) continue;
 
-      // 6열 폴백에서도 열 밀림 교정: AI가 효과자막 없는 7열 생성 시
-      if (
-        isEffectTag(duration) && !isDurationPattern(duration) &&
-        isDurationPattern(videoDirection) && cells.length >= 7
-      ) {
-        effectSub = duration;
-        duration = videoDirection;
+      let mode = '';
+      let audioContent = '';
+      let effectSub = '';
+      let duration = '';
+      let videoDirection = '';
+      let timecodeSource = '';
+
+      if (mappedColumnsReady) {
+        mode = modeIndex >= 0 ? cells[modeIndex] || '' : cells[1] || '';
+        audioContent = cells[audioIndex] || '';
+        effectSub = effectIndex >= 0 ? cells[effectIndex] || '' : '';
+        duration = durationIndex >= 0 ? cells[durationIndex] || '' : '';
+        videoDirection = cells[videoIndex] || '';
+        timecodeSource = cells[timecodeIndex] || '';
+      } else if (has7Cols && cells.length >= 7) {
+        mode = cells[1] || '';
+        audioContent = cells[2] || '';
+        effectSub = cells[3] || '';
+        duration = cells[4] || '';
         videoDirection = cells[5] || '';
         timecodeSource = cells[6] || '';
+
+        if (
+          isEffectTag(duration) && !isDurationPattern(duration) &&
+          isDurationPattern(videoDirection) && !hasTimecodePattern(timecodeSource)
+        ) {
+          effectSub = duration;
+          duration = videoDirection;
+          videoDirection = timecodeSource;
+          timecodeSource = (cells.length >= 8 ? cells[7] : '') || '';
+        }
+      } else {
+        mode = cells[1] || '';
+        audioContent = cells[2] || '';
+        duration = cells[3] || '';
+        videoDirection = cells[4] || '';
+        timecodeSource = cells[5] || '';
+
+        if (
+          isEffectTag(duration) && !isDurationPattern(duration) &&
+          isDurationPattern(videoDirection) && cells.length >= 7
+        ) {
+          effectSub = duration;
+          duration = videoDirection;
+          videoDirection = cells[5] || '';
+          timecodeSource = cells[6] || '';
+        }
       }
+
+      const bilingualAudio = parseBilingualAudioContent(audioContent);
+      const audioContentOriginal = bilingualAudio.audioContentOriginal;
+      audioContent = bilingualAudio.audioContent;
+
+      if (!effectSub || effectSub === '-') {
+        const efMatch = audioContent.match(/<효과자막[:\s：]+([^>]+)>/);
+        if (efMatch) {
+          effectSub = efMatch[1].trim();
+          audioContent = audioContent.replace(/<효과자막[:\s：][^>]+>/g, '').trim();
+        }
+      }
+
+      const tcNorm = timecodeSource.match(/(\d{1,2}:\d{2}(?:\.\d+)?)\s*[~\-–—/]\s*(\d{1,2}:\d{2}(?:\.\d+)?)/);
+      const normalizedTc = tcNorm ? `${tcNorm[1]}~${tcNorm[2]}` : timecodeSource.trim();
+
+      rows.push({
+        cutNum,
+        mode,
+        audioContent,
+        audioContentOriginal,
+        effectSub,
+        duration,
+        videoDirection,
+        timecodeSource: normalizedTc,
+        timeline: '',
+        sourceTimeline: normalizedTc,
+        dialogue: audioContent,
+        sceneDesc: videoDirection,
+      });
     }
 
-    const bilingualAudio = parseBilingualAudioContent(audioContent);
-    const audioContentOriginal = bilingualAudio.audioContentOriginal;
-    audioContent = bilingualAudio.audioContent;
-
-    // 오디오 내용 안에 <효과자막: ...> 태그가 인라인으로 있으면 추출
-    if (!effectSub || effectSub === '-') {
-      const efMatch = audioContent.match(/<효과자막[:\s：]+([^>]+)>/);
-      if (efMatch) {
-        effectSub = efMatch[1].trim();
-        audioContent = audioContent.replace(/<효과자막[:\s：][^>]+>/g, '').trim();
-      }
-    }
-
-    // timecodeSource에서 타임코드 정규화 (AI가 부가 텍스트를 포함할 수 있음)
-    const tcNorm = timecodeSource.match(/(\d{1,2}:\d{2}(?:\.\d+)?)\s*[~\-–—/]\s*(\d{1,2}:\d{2}(?:\.\d+)?)/);
-    const normalizedTc = tcNorm ? `${tcNorm[1]}~${tcNorm[2]}` : timecodeSource.trim();
-
-    rows.push({
-      cutNum, mode, audioContent, audioContentOriginal, effectSub, duration, videoDirection, timecodeSource: normalizedTc,
-      timeline: '', sourceTimeline: normalizedTc, dialogue: audioContent, sceneDesc: videoDirection,
-    });
+    if (rows.length > bestRows.length) bestRows = rows;
   }
 
-  return rows;
+  return bestRows;
 }
 
 /** Content ID 분석 블록 파싱 */
@@ -406,33 +557,120 @@ function parseContentIdAnalysis(block: string): ContentIdAnalysis | undefined {
   };
 }
 
+function parseVersionHeaderLine(line: string): { id: number; titleHint?: string } | null {
+  const normalized = line.trim().replace(/\*+/g, '').replace(/\s+/g, ' ');
+  const patterns = [
+    /^---\s*VERSION\s*(\d{1,2})\s*---\s*(.*)$/i,
+    /^#{1,6}\s*(?:버전|version)\s*(\d{1,2})\s*(?:[:：\-]\s*(.*))?$/i,
+    /^\[?\s*(?:버전|version)\s*(\d{1,2})\s*(?:[:：\-]\s*(.*))?\]?$/i,
+    /^(?:버전|version)\s*(\d{1,2})\s*(?:[:：\-]\s*(.*))?$/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = normalized.match(pattern);
+    if (!match) continue;
+    const id = parseInt(match[1], 10);
+    if (isNaN(id) || id < 1 || id > 20) continue;
+    const titleHint = match[2]?.trim().replace(/^\[|\]$/g, '');
+    return { id, titleHint: titleHint || undefined };
+  }
+
+  return null;
+}
+
+function extractVersionSections(raw: string): Array<{ id: number; titleHint?: string; content: string }> {
+  const sections: Array<{ id: number; titleHint?: string; content: string }> = [];
+  let current: { id: number; titleHint?: string; lines: string[] } | null = null;
+
+  for (const line of raw.replace(/\r\n?/g, '\n').split('\n')) {
+    const header = parseVersionHeaderLine(line);
+    if (header) {
+      if (current) {
+        sections.push({
+          id: current.id,
+          titleHint: current.titleHint,
+          content: current.lines.join('\n').trim(),
+        });
+      }
+      current = { id: header.id, titleHint: header.titleHint, lines: [] };
+      continue;
+    }
+    if (current) current.lines.push(line);
+  }
+
+  if (current) {
+    sections.push({
+      id: current.id,
+      titleHint: current.titleHint,
+      content: current.lines.join('\n').trim(),
+    });
+  }
+
+  return sections.filter(section => section.content || section.titleHint);
+}
+
+function buildTextOnlyVersionFallback(raw: string): VersionItem[] {
+  const sections = extractVersionSections(raw);
+  if (sections.length > 0) {
+    return sections.map(({ id, titleHint, content }) => ({
+      id,
+      title: titleHint || content.split('\n').find(line => line.trim())?.trim().slice(0, 80) || `버전 ${id}`,
+      concept: content.trim() || titleHint || '',
+      scenes: [],
+    }));
+  }
+
+  const lines = raw.split('\n');
+  const fallback: VersionItem[] = [];
+  let current: Partial<VersionItem> | null = null;
+  let body: string[] = [];
+  for (const line of lines) {
+    const match = line.match(/^\s*(\d{1,2})\.\s*(.+)/);
+    if (match && parseInt(match[1], 10) <= 10) {
+      if (current) {
+        fallback.push({
+          id: current.id!,
+          title: current.title!,
+          concept: body.join('\n').trim(),
+          scenes: [],
+        });
+      }
+      current = { id: parseInt(match[1], 10), title: match[2].trim() };
+      body = [];
+      continue;
+    }
+    if (current) body.push(line);
+  }
+  if (current) {
+    fallback.push({
+      id: current.id!,
+      title: current.title!,
+      concept: body.join('\n').trim(),
+      scenes: [],
+    });
+  }
+
+  if (fallback.length >= 2) return fallback;
+  return [{ id: 1, title: '분석 원문', concept: raw.trim(), scenes: [] }];
+}
+
 /** AI 응답에서 ---VERSION N--- + ---SCENE--- / 테이블 구조 파싱 */
 function parseVersions(raw: string): VersionItem[] {
-  // VERSION 블록 분리 — "---VERSION N---" 또는 "[버전 N:" 패턴 지원
-  const blocks = raw.split(/---\s*VERSION\s*(\d+)\s*---|(?:^|\n)\s*\*{0,2}\[버전\s*(\d+)[:\s]/mi);
+  const sections = extractVersionSections(raw);
   const items: VersionItem[] = [];
 
-  for (let i = 1; i < blocks.length; i += 3) {
-    // 두 캡처 그룹 중 유효한 것 사용 (split alternation: group1 또는 group2)
-    const numStr = blocks[i] || blocks[i + 1];
-    const num = parseInt(numStr, 10);
-    if (isNaN(num) || num < 1) continue;
-    const content = blocks[i + 2]?.trim() || '';
+  for (const section of sections) {
+    const content = section.content.trim();
     if (!content) continue;
 
-    // 제목 추출 — "제목:" 또는 "**제목:**" 또는 "### 제목:" 등
-    const titleMatch = content.match(/(?:\*{0,2})제목(?:\*{0,2})[:\s：]+\s*(.+)/);
-    // 컨셉 추출 — 테이블 시작 전까지
-    const conceptMatch = content.match(/(?:\*{0,2})컨셉(?:\*{0,2})[:\s：]+\s*([\s\S]*?)(?=\n\s*\|[\s]*순서|\n\s*\|\s*:?---|---SCENE|$)/i);
-    // 재배치 구조 추출
-    const rearrangeMatch = content.match(/(?:\*{0,2})재배치\s*구조(?:\*{0,2})[:\s：]+\s*(.+)/);
-    // Content ID 분석 추출
+    const titleMatch = content.match(/(?:\*{0,2})(?:제목|title)(?:\*{0,2})[:\s：]+\s*(.+)/i);
+    const conceptMatch = content.match(/(?:\*{0,2})(?:컨셉|콘셉트|concept)(?:\*{0,2})[:\s：]+\s*([\s\S]*?)(?=\n\s*\|[\s]*순서|\n\s*\|[\s]*(?:cut|scene)|\n\s*\|\s*:?---|---SCENE|$)/i);
+    const rearrangeMatch = content.match(/(?:\*{0,2})(?:재배치\s*구조|rearrangement)(?:\*{0,2})[:\s：]+\s*(.+)/i);
     const contentId = parseContentIdAnalysis(content);
 
-    // 포맷 감지: 마크다운 테이블 (| 숫자 | 패턴) vs ---SCENE--- 블록
     let scenes: SceneRow[];
     const contentLines = content.split('\n');
-    const hasTable = contentLines.some(l => /\|\s*\d+\s*\|/.test(l));
+    const hasTable = contentLines.some(line => /\|\s*(?:\d+|\*\*\d+\*\*)\s*\|/.test(line));
 
     if (hasTable) {
       scenes = parseTikitakaTable(content);
@@ -473,13 +711,15 @@ function parseVersions(raw: string): VersionItem[] {
     }
     const detectedLang = extractDetectedLangFromVersionContent(content);
 
-    // 컨셉 정리: 테이블이나 SCENE 블록 이후 내용 제거
     let conceptText = conceptMatch?.[1]?.trim() || '';
     conceptText = conceptText.replace(/\n---SCENE[\s\S]*/i, '').replace(/\n\|[\s\S]*/i, '').trim();
+    if (!conceptText && scenes.length === 0) {
+      conceptText = content;
+    }
 
     items.push({
-      id: num,
-      title: titleMatch?.[1]?.trim().replace(/\*+/g, '') || `버전 ${num}`,
+      id: section.id,
+      title: titleMatch?.[1]?.trim().replace(/\*+/g, '') || section.titleHint || `버전 ${section.id}`,
       concept: conceptText,
       scenes,
       rearrangement: rearrangeMatch?.[1]?.trim(),
@@ -489,6 +729,17 @@ function parseVersions(raw: string): VersionItem[] {
   }
 
   if (items.length >= 1) return items;
+
+  const standaloneTableScenes = parseTikitakaTable(raw);
+  if (standaloneTableScenes.length > 0) {
+    return [{
+      id: 1,
+      title: '분석 결과',
+      concept: '',
+      scenes: standaloneTableScenes,
+      detectedLang: extractDetectedLangFromVersionContent(raw),
+    }];
+  }
 
   // 폴백 2: "## 버전 N:" 또는 "### N." 패턴
   const altBlocks = raw.split(/(?:^|\n)(?:#{1,3}\s*)?(?:버전\s*)?(\d{1,2})[.:\s]/m);
@@ -525,25 +776,7 @@ function parseVersions(raw: string): VersionItem[] {
     if (shopItems.length >= 2) return shopItems;
   }
 
-  // 폴백 3: 번호 리스트 파싱
-  const lines = raw.split('\n');
-  const fallback: VersionItem[] = [];
-  let cur: Partial<VersionItem> | null = null;
-  let body: string[] = [];
-  for (const line of lines) {
-    const m = line.match(/^\s*(\d{1,2})\.\s*(.+)/);
-    if (m && parseInt(m[1], 10) <= 10) {
-      if (cur) fallback.push({ id: cur.id!, title: cur.title!, concept: body.join('\n').trim(), scenes: [] });
-      cur = { id: parseInt(m[1], 10), title: m[2].trim() };
-      body = [];
-    } else if (cur) {
-      body.push(line);
-    }
-  }
-  if (cur) fallback.push({ id: cur.id!, title: cur.title!, concept: body.join('\n').trim(), scenes: [] });
-  if (fallback.length >= 3) return fallback;
-
-  return [{ id: 1, title: '분석 결과', concept: raw, scenes: [] }];
+  return buildTextOnlyVersionFallback(raw);
 }
 
 /** "키워드: 값" 패턴에서 값 추출 */
@@ -1192,7 +1425,11 @@ function finalizeVersionedPrompt(
 function trimTrailingIncompleteVersions(items: VersionItem[]): { versions: VersionItem[]; removedCount: number } {
   const trimmed = [...items];
   let removedCount = 0;
+  const hasStructuredVersions = items.some(item => item.scenes.length >= MIN_COMPLETE_SCENES_PER_VERSION);
   while (trimmed.length > 0 && trimmed[trimmed.length - 1].scenes.length < MIN_COMPLETE_SCENES_PER_VERSION) {
+    const lastItem = trimmed[trimmed.length - 1];
+    const hasFallbackText = !!lastItem.concept?.trim() || !!lastItem.rearrangement?.trim();
+    if (!hasStructuredVersions && hasFallbackText) break;
     trimmed.pop();
     removedCount += 1;
   }
@@ -1235,6 +1472,8 @@ function normalizeBatchVersionIds(
 
 /** 분석 결과(versions)에서 모든 타임코드를 초 단위로 수집 (정밀 추출) */
 function collectTimecodesFromVersions(versions: VersionItem[], durationSec?: number): number[] {
+  const totalScenes = versions.reduce((count, version) => count + version.scenes.length, 0);
+  const maxResultFrameTimecodes = Math.min(200, Math.max(72, totalScenes * 2));
   const raw: number[] = [];
   versions.forEach(v => v.scenes.forEach(s => {
     // timecodeSource: "00:03.200 / 00:15.800" 또는 "00:03~00:07"
@@ -1278,7 +1517,7 @@ function collectTimecodesFromVersions(versions: VersionItem[], durationSec?: num
       deduped.push(t);
     }
   }
-  return deduped;
+  return pickEvenly(deduped, maxResultFrameTimecodes);
 }
 
 /**
@@ -2781,6 +3020,7 @@ const waitForPromptSceneCutCount = async (
 
 const REMIX_PROMPT_SCENE_CUT_TIMEOUT_MS = 1200;
 const SOURCE_PREP_CACHE_LIMIT = 6;
+const SOURCE_PREP_FRAME_LIMIT = 36;
 
 interface SourcePreparationCacheEntry {
   videoUri: string;
@@ -2797,6 +3037,26 @@ interface SourcePreparationCacheEntry {
 interface SourceDiarizationCacheEntry {
   diarizedText: string;
   diarizedUtterances: Array<{ speakerId: string; text: string; startTime: number; endTime: number }>;
+}
+
+function compactFramesForSourcePrep(frames: TimedFrame[]): TimedFrame[] {
+  const uniqueFrames = new Map<string, TimedFrame>();
+  frames.forEach((frame) => {
+    const key = `${frame.sourceIndex ?? -1}:${Math.round(frame.timeSec * 100)}`;
+    if (uniqueFrames.has(key)) return;
+    uniqueFrames.set(key, {
+      ...frame,
+      hdUrl: frame.hdUrl?.startsWith('data:') || frame.hdUrl?.startsWith('blob:')
+        ? undefined
+        : frame.hdUrl,
+    });
+  });
+  const sorted = Array.from(uniqueFrames.values()).sort((left, right) => {
+    const sourceDelta = (left.sourceIndex ?? -1) - (right.sourceIndex ?? -1);
+    if (sourceDelta !== 0) return sourceDelta;
+    return left.timeSec - right.timeSec;
+  });
+  return pickEvenly(sorted, SOURCE_PREP_FRAME_LIMIT);
 }
 
 const buildVideoAnalysisSourceCacheKey = (
@@ -4010,6 +4270,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
         }
       }
 
+      frames = compactFramesForSourcePrep(frames);
       if (!cachedSourcePrep) {
         setLimitedCacheEntry(sourcePrepCacheRef.current, sourceCacheKey, {
           videoUri,
@@ -4891,6 +5152,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       const rawMsg = err instanceof Error ? err.message : String(err);
       const isNetworkError = rawMsg.includes('Failed to fetch') || rawMsg.includes('NetworkError') || rawMsg.includes('network');
       const isTimeoutError = rawMsg.includes('타임아웃') || rawMsg.includes('timeout') || rawMsg.includes('시간 초과');
+      const isParseError = rawMsg.includes('유효한 버전을 파싱할 수 없었습니다');
       // [FIX #909] Evolink 잔액/크레딧 부족 에러를 사용자 친화적 메시지로 변환
       // handleEvolinkError가 "Evolink 잔액 부족: 크레딧을 충전해주세요."를 던지므로 이 패턴만 매칭
       const isQuotaError = rawMsg.includes('잔액 부족') || /insufficient.*(quota|credit|balance)/i.test(rawMsg);
@@ -4914,9 +5176,22 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
           }
         }
       } else {
-        setError(`분석 실패: ${friendlyMsg}`);
+        if (isParseError) {
+          const rawText = useVideoAnalysisStore.getState().rawResult;
+          if (rawText.trim()) {
+            setVersions(buildTextOnlyVersionFallback(rawText));
+            setError('분석 응답 형식을 자동 정리하지 못해 원문 응답을 표시합니다.');
+            showToast('AI 응답 형식이 달라 원문 결과를 먼저 표시합니다.', 6000);
+          } else {
+            setError(`분석 실패: ${friendlyMsg}`);
+          }
+        } else {
+          setError(`분석 실패: ${friendlyMsg}`);
+        }
         if (isQuotaError) {
           showToast('AI 분석 크레딧이 부족합니다. Evolink 잔액을 확인해주세요.', 6000);
+        } else if (isParseError) {
+          // 원문 폴백 토스트는 위에서 이미 표시
         } else if (rawMsg.includes('Cloudinary') || rawMsg.includes('업로드')) {
           showToast('영상 업로드에 실패했습니다. 파일 크기를 줄이거나 YouTube 링크를 사용해주세요.', 6000);
         } else if (rawMsg.includes('API 키') || rawMsg.includes('Evolink')) {

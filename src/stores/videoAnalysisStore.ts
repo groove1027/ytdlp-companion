@@ -116,6 +116,19 @@ interface VideoAnalysisStore {
 }
 
 const MAX_YOUTUBE_URLS = 5;
+const RESULT_CACHE_PRESET_MAP: Record<VideoAnalysisPreset, true> = {
+  tikitaka: true,
+  snack: true,
+  condensed: true,
+  deep: true,
+  shopping: true,
+  alltts: true,
+};
+const RESULT_CACHE_LIMIT = Math.max(8, Object.keys(RESULT_CACHE_PRESET_MAP).length);
+const STATE_THUMBNAIL_LIMIT = 72;
+const CACHE_THUMBNAIL_LIMIT = 48;
+const PERSIST_RAW_RESULT_LIMIT = 24000;
+const PERSIST_VERSION_CONCEPT_LIMIT = 12000;
 
 const INITIAL_STATE = {
   inputMode: 'youtube' as const,
@@ -138,6 +151,122 @@ const INITIAL_STATE = {
   keepOriginalOrder: false,
   versionCount: 10,
 };
+
+function trimStoredText(value: string, limit: number): string {
+  if (!value) return '';
+  return value.length > limit ? `${value.slice(0, limit)}\n...(이하 생략)` : value;
+}
+
+function pickEvenly<T>(items: T[], limit: number): T[] {
+  if (limit <= 0) return [];
+  if (items.length <= limit) return [...items];
+  const picked: T[] = [];
+  for (let index = 0; index < limit; index += 1) {
+    const start = Math.floor((index * items.length) / limit);
+    const end = Math.max(start + 1, Math.floor(((index + 1) * items.length) / limit));
+    const candidateIndex = Math.min(items.length - 1, Math.floor((start + end - 1) / 2));
+    picked.push(items[candidateIndex]);
+  }
+  return picked;
+}
+
+function compactTimedFrames(frames: VideoTimedFrame[], limit: number): VideoTimedFrame[] {
+  const uniqueFrames = new Map<string, VideoTimedFrame>();
+  frames.forEach((frame) => {
+    if (!frame?.url) return;
+    const key = `${frame.sourceIndex ?? -1}:${Math.round(frame.timeSec * 100)}`;
+    if (uniqueFrames.has(key)) return;
+    uniqueFrames.set(key, {
+      ...frame,
+      hdUrl: frame.hdUrl?.startsWith('data:') || frame.hdUrl?.startsWith('blob:')
+        ? undefined
+        : frame.hdUrl,
+    });
+  });
+  const sorted = Array.from(uniqueFrames.values()).sort((left, right) => {
+    const sourceDelta = (left.sourceIndex ?? -1) - (right.sourceIndex ?? -1);
+    if (sourceDelta !== 0) return sourceDelta;
+    return left.timeSec - right.timeSec;
+  });
+  return pickEvenly(sorted, limit);
+}
+
+function compactVersionsForPersistence(versions: VideoVersionItem[]): VideoVersionItem[] {
+  return versions.map((version) => ({
+    ...version,
+    title: trimStoredText(version.title, 200),
+    concept: trimStoredText(version.concept, version.scenes.length > 0 ? 4000 : PERSIST_VERSION_CONCEPT_LIMIT),
+    rearrangement: version.rearrangement ? trimStoredText(version.rearrangement, 1500) : version.rearrangement,
+  }));
+}
+
+function buildPersistableThumbs(thumbnails: VideoTimedFrame[]): VideoTimedFrame[] {
+  const compacted = compactTimedFrames(thumbnails, CACHE_THUMBNAIL_LIMIT);
+  const urlBased = compacted.filter(
+    (thumb) => !thumb.url.startsWith('data:') && !thumb.url.startsWith('blob:'),
+  );
+  return urlBased.length > 0 ? urlBased : compactTimedFrames(compacted, 12);
+}
+
+function cloneVersionsForCache(versions: VideoVersionItem[]): VideoVersionItem[] {
+  return versions.map((version) => ({
+    ...version,
+    contentId: version.contentId ? { ...version.contentId } : version.contentId,
+    scenes: version.scenes.map((scene) => ({ ...scene })),
+  }));
+}
+
+function cloneTimedFrames(frames: VideoTimedFrame[]): VideoTimedFrame[] {
+  return frames.map((frame) => ({ ...frame }));
+}
+
+function buildLiveResultCacheEntry(
+  sourceKey: string | undefined,
+  rawResult: string,
+  versions: VideoVersionItem[],
+  thumbnails: VideoTimedFrame[],
+): ResultCache {
+  return {
+    sourceKey,
+    raw: rawResult,
+    versions: cloneVersionsForCache(versions),
+    thumbs: cloneTimedFrames(thumbnails),
+  };
+}
+
+function buildPersistableResultCacheEntry(entry: ResultCache): ResultCache {
+  return {
+    sourceKey: entry.sourceKey,
+    raw: trimStoredText(entry.raw, PERSIST_RAW_RESULT_LIMIT),
+    versions: compactVersionsForPersistence(entry.versions),
+    thumbs: buildPersistableThumbs(entry.thumbs),
+  };
+}
+
+function compactResultCacheEntries(cache: Record<string, ResultCache>, selectedPreset: VideoAnalysisPreset | null, limit: number): Record<string, ResultCache> {
+  const orderedKeys = Object.keys(cache).filter((key) => key !== selectedPreset);
+  if (selectedPreset && cache[selectedPreset]) orderedKeys.push(selectedPreset);
+  const limitedKeys = orderedKeys.slice(-limit);
+  const nextCache: Record<string, ResultCache> = {};
+  limitedKeys.forEach((key) => {
+    const entry = cache[key];
+    if (!entry) return;
+    nextCache[key] = buildPersistableResultCacheEntry(entry);
+  });
+  return nextCache;
+}
+
+function buildPersistableResultCache(
+  cache: Record<string, ResultCache>,
+  selectedPreset: VideoAnalysisPreset | null,
+  currentEntry?: ResultCache,
+): Record<string, ResultCache> {
+  const mergedCache: Record<string, ResultCache> = { ...cache };
+  if (selectedPreset && currentEntry && (currentEntry.raw || currentEntry.versions.length > 0)) {
+    mergedCache[selectedPreset] = currentEntry;
+  }
+  return compactResultCacheEntries(mergedCache, selectedPreset, RESULT_CACHE_LIMIT);
+}
 
 export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
   persist(
@@ -217,7 +346,7 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
       setSelectedPreset: (preset) => set({ selectedPreset: preset }),
       setRawResult: (raw) => set({ rawResult: raw }),
       setVersions: (versions) => set({ versions }),
-      setThumbnails: (thumbs) => set({ thumbnails: thumbs }),
+      setThumbnails: (thumbs) => set({ thumbnails: compactTimedFrames(thumbs, STATE_THUMBNAIL_LIMIT) }),
       setIsFrameUpgrading: (val) => set({ isFrameUpgrading: val }),
       setError: (error) => set({ error }),
       setExpandedId: (id) => set({ expandedId: id }),
@@ -226,11 +355,14 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
         const { rawResult, versions, thumbnails, resultCache } = get();
         // [FIX #316] rawResult가 비어도 versions가 있으면 캐시 허용 — slimValue로 rawResult 유실 시 비주얼 복구 불가 방지
         if (!rawResult && versions.length === 0) return;
+        const nextKeys = Object.keys(resultCache).filter((key) => key !== preset).slice(-(RESULT_CACHE_LIMIT - 1));
+        const nextCache: Record<string, ResultCache> = {};
+        nextKeys.forEach((key) => {
+          nextCache[key] = resultCache[key];
+        });
+        nextCache[preset] = buildLiveResultCacheEntry(sourceKey, rawResult, versions, thumbnails);
         set({
-          resultCache: {
-            ...resultCache,
-            [preset]: { sourceKey, raw: rawResult, versions, thumbs: thumbnails },
-          },
+          resultCache: nextCache,
         });
       },
 
@@ -241,8 +373,8 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
         set({
           selectedPreset: preset,
           rawResult: cached.raw,
-          versions: cached.versions,
-          thumbnails: cached.thumbs,
+          versions: cloneVersionsForCache(cached.versions),
+          thumbnails: compactTimedFrames(cached.thumbs, STATE_THUMBNAIL_LIMIT),
           expandedId: null,
           error: null,
         });
@@ -271,15 +403,22 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
 
       // --- 슬롯 관리 ---
       saveSlot: async (name) => {
-        const { youtubeUrl, youtubeUrls, inputMode, selectedPreset, rawResult, versions, resultCache } = get();
+        const { youtubeUrl, youtubeUrls, inputMode, selectedPreset, rawResult, versions, resultCache, thumbnails } = get();
         if (!rawResult && versions.length === 0) return;
         const validUrls = youtubeUrls.filter(u => u.trim());
         const slotName = name || validUrls[0] || '영상 분석';
         const id = `va-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        const selectedCacheSourceKey = selectedPreset ? resultCache[selectedPreset]?.sourceKey : undefined;
+        const currentEntry = selectedPreset
+          ? buildLiveResultCacheEntry(selectedCacheSourceKey, rawResult, versions, thumbnails)
+          : undefined;
         const slot: SavedVideoAnalysisSlot = {
           id, name: slotName, youtubeUrl, youtubeUrls: validUrls,
           inputMode, selectedPreset,
-          rawResult, versions, resultCache, savedAt: Date.now(),
+          rawResult: trimStoredText(rawResult, PERSIST_RAW_RESULT_LIMIT),
+          versions: compactVersionsForPersistence(versions),
+          resultCache: buildPersistableResultCache(resultCache, selectedPreset, currentEntry),
+          savedAt: Date.now(),
         };
         try {
           await saveVideoAnalysisSlot(slot);
@@ -298,15 +437,18 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
               ? found.youtubeUrls
               : found.youtubeUrl ? [found.youtubeUrl] : [''];
             // resultCache에서 비주얼(thumbnails) 복원 — 이전엔 []로 초기화되어 유실됨
-            const restoredThumbs = (found.selectedPreset && found.resultCache?.[found.selectedPreset]?.thumbs) || [];
+            const restoredThumbs = compactTimedFrames(
+              (found.selectedPreset && found.resultCache?.[found.selectedPreset]?.thumbs) || [],
+              STATE_THUMBNAIL_LIMIT,
+            );
             set({
               youtubeUrl: found.youtubeUrl,
               youtubeUrls: urls,
               inputMode: found.inputMode,
               selectedPreset: found.selectedPreset,
-              rawResult: found.rawResult,
-              versions: found.versions,
-              resultCache: found.resultCache,
+              rawResult: trimStoredText(found.rawResult, PERSIST_RAW_RESULT_LIMIT),
+              versions: compactVersionsForPersistence(found.versions),
+              resultCache: compactResultCacheEntries(found.resultCache || {}, found.selectedPreset, RESULT_CACHE_LIMIT),
               thumbnails: restoredThumbs,
               expandedId: null,
               error: null,
@@ -343,9 +485,13 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
 
       // [FIX #313] 분석 완료 후 IndexedDB 자동 저장 — 새로고침 시 복구용
       autoSave: async () => {
-        const { youtubeUrl, youtubeUrls, inputMode, selectedPreset, rawResult, versions, resultCache } = get();
+        const { youtubeUrl, youtubeUrls, inputMode, selectedPreset, rawResult, versions, resultCache, thumbnails } = get();
         if (versions.length === 0) return;
         const validUrls = youtubeUrls.filter(u => u.trim());
+        const selectedCacheSourceKey = selectedPreset ? resultCache[selectedPreset]?.sourceKey : undefined;
+        const currentEntry = selectedPreset
+          ? buildLiveResultCacheEntry(selectedCacheSourceKey, rawResult, versions, thumbnails)
+          : undefined;
         const slot: SavedVideoAnalysisSlot = {
           id: 'va-autosave',
           name: `자동 저장 — ${selectedPreset || '분석'}`,
@@ -353,9 +499,9 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
           youtubeUrls: validUrls,
           inputMode,
           selectedPreset,
-          rawResult,
-          versions,
-          resultCache,
+          rawResult: trimStoredText(rawResult, PERSIST_RAW_RESULT_LIMIT),
+          versions: compactVersionsForPersistence(versions),
+          resultCache: buildPersistableResultCache(resultCache, selectedPreset, currentEntry),
           savedAt: Date.now(),
         };
         try {
@@ -376,15 +522,18 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
           const urls = autoSave.youtubeUrls?.length
             ? autoSave.youtubeUrls
             : autoSave.youtubeUrl ? [autoSave.youtubeUrl] : [''];
-          const restoredThumbs = (autoSave.selectedPreset && autoSave.resultCache?.[autoSave.selectedPreset]?.thumbs) || [];
+          const restoredThumbs = compactTimedFrames(
+            (autoSave.selectedPreset && autoSave.resultCache?.[autoSave.selectedPreset]?.thumbs) || [],
+            STATE_THUMBNAIL_LIMIT,
+          );
           set({
             youtubeUrl: autoSave.youtubeUrl,
             youtubeUrls: urls,
             inputMode: autoSave.inputMode,
             selectedPreset: autoSave.selectedPreset,
-            rawResult: autoSave.rawResult,
-            versions: autoSave.versions,
-            resultCache: autoSave.resultCache,
+            rawResult: trimStoredText(autoSave.rawResult, PERSIST_RAW_RESULT_LIMIT),
+            versions: compactVersionsForPersistence(autoSave.versions),
+            resultCache: compactResultCacheEntries(autoSave.resultCache || {}, autoSave.selectedPreset, RESULT_CACHE_LIMIT),
             thumbnails: restoredThumbs,
             expandedId: null,
             error: null,
@@ -416,19 +565,12 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
       name: 'video-analysis-store',
       // blob URL 썸네일은 localStorage에 저장 불가 — 텍스트 데이터만 영속화
       partialize: (state) => {
-        // resultCache를 최대 3개로 제한 + data URL thumbs 제거 (localStorage 3MB 초과 방지)
-        const cacheKeys = Object.keys(state.resultCache);
-        const limitedCache: Record<string, ResultCache> = {};
-        cacheKeys.slice(-3).forEach(k => {
-          const entry = state.resultCache[k];
-          limitedCache[k] = {
-            ...entry,
-            thumbs: entry.thumbs.filter(t => !t.url.startsWith('data:')),
-          };
-        });
-
-        // URL 기반 썸네일만 영속화 (YouTube URL 등), data URL은 크기 문제로 제외
-        const persistableThumbs = state.thumbnails.filter(t => !t.url.startsWith('data:'));
+        // URL 썸네일 우선, data URL은 복원용 소수만 유지
+        const persistableThumbs = buildPersistableThumbs(state.thumbnails);
+        const selectedSourceKey = state.selectedPreset ? state.resultCache[state.selectedPreset]?.sourceKey : undefined;
+        const currentEntry = state.selectedPreset
+          ? buildLiveResultCacheEntry(selectedSourceKey, state.rawResult, state.versions, state.thumbnails)
+          : undefined;
 
         return {
           inputMode: state.inputMode,
@@ -438,11 +580,11 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
           keepOriginalOrder: state.keepOriginalOrder,
           versionCount: state.versionCount,
           selectedPreset: state.selectedPreset,
-          rawResult: state.rawResult.length > 50000 ? state.rawResult.slice(0, 50000) : state.rawResult,
-          versions: state.versions,
+          rawResult: trimStoredText(state.rawResult, PERSIST_RAW_RESULT_LIMIT),
+          versions: compactVersionsForPersistence(state.versions),
           thumbnails: persistableThumbs,
           expandedId: state.expandedId,
-          resultCache: limitedCache,
+          resultCache: buildPersistableResultCache(state.resultCache, state.selectedPreset, currentEntry),
           // savedSlots, activeSlotId 제외 (IndexedDB에서 관리)
         };
       },
@@ -462,11 +604,22 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
           } catch (e) { logger.trackSwallowedError('VideoAnalysisStore:storage/getItem', e); return null; }
         },
         setItem: (name, value) => {
-          const slimValue = () => ({
-            ...value,
-            // [FIX #316] rawResult를 완전히 지우지 않고 첫 500자만 보존 — UI 표시 조건(truthy) 유지
-            state: { ...value.state, resultCache: {}, rawResult: (value.state as any)?.rawResult?.slice(0, 500) || '' },
-          });
+          const slimValue = () => {
+            const persistedState = value.state as Partial<VideoAnalysisStore>;
+            return {
+              ...value,
+              // [FIX #316] rawResult를 완전히 지우지 않고 첫 500자만 보존 — UI 표시 조건(truthy) 유지
+              state: {
+                ...value.state,
+                resultCache: compactResultCacheEntries(
+                  persistedState.resultCache || {},
+                  persistedState.selectedPreset || null,
+                  RESULT_CACHE_LIMIT,
+                ),
+                rawResult: persistedState.rawResult?.slice(0, 500) || '',
+              },
+            };
+          };
           // 선제적 크기 체크 — JSON 직렬화 후 추정 크기가 크면 미리 축소
           const json = JSON.stringify(value);
           const MAX_ENTRY_BYTES = 3 * 1024 * 1024; // 3MB 안전선
