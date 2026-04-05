@@ -360,11 +360,22 @@ export const useEditPointStore = create<EditPointStore>()(immer((set, get) => ({
     if (video) {
       logger.unregisterBlobUrl(video.blobUrl);
       URL.revokeObjectURL(video.blobUrl);
+      if (video.cleanedBlobUrl) {
+        logger.unregisterBlobUrl(video.cleanedBlobUrl);
+        URL.revokeObjectURL(video.cleanedBlobUrl);
+      }
     }
     set((state) => {
       const filtered = state.sourceVideos.filter((v) => v.id !== id);
       const total = filtered.reduce((sum, v) => sum + v.fileSizeMB, 0);
-      return { sourceVideos: filtered, totalSourceSizeMB: Math.round(total * 10) / 10 };
+      const nextSourceMapping = Object.fromEntries(
+        Object.entries(state.sourceMapping).filter(([, videoId]) => videoId !== id),
+      );
+      return {
+        sourceVideos: filtered,
+        sourceMapping: nextSourceMapping,
+        totalSourceSizeMB: Math.round(total * 10) / 10,
+      };
     });
   },
 
@@ -768,9 +779,30 @@ export const useEditPointStore = create<EditPointStore>()(immer((set, get) => ({
       return;
     }
 
-    // 소스 영상 찾기 (첫 번째 매핑된 영상)
-    const firstMappedVideoId = Object.values(sourceMapping)[0];
-    const sourceVideo = sourceVideos.find((v) => v.id === firstMappedVideoId);
+    const mappedVideoIds = new Set(
+      edlEntries
+        .map((entry) => sourceMapping[entry.sourceId])
+        .filter((videoId): videoId is string => !!videoId),
+    );
+
+    if (mappedVideoIds.size > 1) {
+      const fileNameMapping: Record<string, string> = {};
+      for (const [sourceId, videoId] of Object.entries(sourceMapping)) {
+        const video = sourceVideos.find((v) => v.id === videoId);
+        fileNameMapping[sourceId] = video?.fileName || sourceId;
+      }
+      const script = generateFFmpegScript(edlEntries, fileNameMapping);
+      downloadFile(script, 'edit_script.sh', 'text/x-shellscript');
+      showToast('여러 소스 영상이 섞여 있어 빠른 자르기 대신 FFmpeg 스크립트로 대체했습니다.');
+      return;
+    }
+
+    const sourceVideoId = mappedVideoIds.size === 1
+      ? Array.from(mappedVideoIds)[0]
+      : sourceVideos.length === 1
+        ? sourceVideos[0].id
+        : null;
+    const sourceVideo = sourceVideos.find((v) => v.id === sourceVideoId);
     if (!sourceVideo?.file) { showToast('소스 영상을 찾을 수 없습니다.'); return; }
 
     set({
@@ -813,7 +845,12 @@ export const useEditPointStore = create<EditPointStore>()(immer((set, get) => ({
   setCleanSubtitles: (enabled) => set({ cleanSubtitles: enabled }),
 
   runCleanSubtitles: async () => {
-    const { sourceVideos, sourceMapping } = get();
+    const { sourceVideos, sourceMapping, isCleaning } = get();
+
+    if (isCleaning) {
+      showToast('이미 자막 제거 중입니다.');
+      return;
+    }
 
     // 매핑된 고유 소스 비디오만 추출
     const mappedVideoIds = new Set(Object.values(sourceMapping));
@@ -847,10 +884,8 @@ export const useEditPointStore = create<EditPointStore>()(immer((set, get) => ({
           cleanMessage: `[${i + 1}/${videosToClean.length}] ${video.fileName} — Vmake AI 자막 제거 중`,
         });
 
-        const blob = new Blob([await video.file.arrayBuffer()], { type: video.file.type });
-
         const cleanedBlob = await removeVideoWatermark(
-          blob,
+          video.file,
           (msg) => set({ cleanMessage: `[${i + 1}/${videosToClean.length}] ${msg}` }),
         );
 

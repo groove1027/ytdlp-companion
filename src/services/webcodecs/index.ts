@@ -194,7 +194,7 @@ export async function composeMp4(options: ComposeMp4Options): Promise<Blob> {
       // 비디오 장면: 프레임 추출기 생성 (동일 URL 공유)
       if (scene.videoUrl) {
         if (!videoExtractorByUrl.has(scene.videoUrl)) {
-          videoExtractorByUrl.set(scene.videoUrl, createVideoExtractor(scene.videoUrl));
+          videoExtractorByUrl.set(scene.videoUrl, createVideoExtractor(scene.videoUrl, signal));
         }
         const extractorPromise = videoExtractorByUrl.get(scene.videoUrl)!;
         assetPromises.push(
@@ -458,17 +458,17 @@ async function loadImageBitmap(
 }
 
 /** URL → Blob 가져오기 (CORS 우회 포함) */
-async function fetchVideoBlob(url: string): Promise<Blob | null> {
+async function fetchVideoBlob(url: string, signal?: AbortSignal): Promise<Blob | null> {
   if (url.startsWith('blob:') || url.startsWith('data:')) {
     try {
-      const res = await fetch(url);
+      const res = await fetch(url, { signal });
       return res.ok ? await res.blob() : null;
     } catch { return null; }
   }
 
   // 외부 URL → fetch
   try {
-    const res = await fetch(url);
+    const res = await fetch(url, { signal });
     if (res.ok) return await res.blob();
   } catch (e) {
     logger.trackSwallowedError('webcodecs/index:fetchVideoBlob', e);
@@ -478,7 +478,7 @@ async function fetchVideoBlob(url: string): Promise<Blob | null> {
   try {
     const { uploadRemoteUrlToCloudinary } = await import('../uploadService');
     const proxyUrl = await uploadRemoteUrlToCloudinary(url);
-    const proxyRes = await fetch(proxyUrl);
+    const proxyRes = await fetch(proxyUrl, { signal });
     if (proxyRes.ok) return await proxyRes.blob();
   } catch (e2) {
     logger.trackSwallowedError('webcodecs/index:fetchVideoProxy', e2);
@@ -488,9 +488,9 @@ async function fetchVideoBlob(url: string): Promise<Blob | null> {
 }
 
 /** 비디오 URL → VideoFrameExtractor 생성 (WebCodecs 스트리밍 우선 → Canvas 폴백) */
-async function createVideoExtractor(url: string): Promise<VideoFrameExtractor | null> {
+async function createVideoExtractor(url: string, signal?: AbortSignal): Promise<VideoFrameExtractor | null> {
   try {
-    const blob = await fetchVideoBlob(url);
+    const blob = await fetchVideoBlob(url, signal);
 
     // ── WebCodecs 스트리밍 디코더 (정밀 프레임 추출) ──
     if (blob) {
@@ -523,28 +523,63 @@ async function createVideoExtractor(url: string): Promise<VideoFrameExtractor | 
     video.src = videoSrc;
 
     await new Promise<void>((resolve, reject) => {
-      video.onloadedmetadata = () => resolve();
-      video.onerror = () => reject(new Error('Video load failed'));
-      setTimeout(() => reject(new Error('Video load timeout')), 15000);
+      const timer = setTimeout(() => {
+        video.onloadedmetadata = null;
+        video.onerror = null;
+        reject(new Error('Video load timeout'));
+      }, 15000);
+      video.onloadedmetadata = () => {
+        clearTimeout(timer);
+        video.onloadedmetadata = null;
+        video.onerror = null;
+        resolve();
+      };
+      video.onerror = () => {
+        clearTimeout(timer);
+        video.onloadedmetadata = null;
+        video.onerror = null;
+        reject(new Error('Video load failed'));
+      };
     });
 
     return {
       duration: video.duration,
       async getFrameAt(timeSec: number): Promise<ImageBitmap> {
-        video.currentTime = timeSec;
+        const endSafeTime = Number.isFinite(video.duration)
+          ? Math.max(0, video.duration - 0.001)
+          : Number.POSITIVE_INFINITY;
+        const safeTime = Math.max(0, Math.min(timeSec, endSafeTime));
+
+        if (Math.abs(video.currentTime - safeTime) <= 0.001 && video.readyState >= 2) {
+          return createImageBitmap(video);
+        }
+
+        video.currentTime = safeTime;
         await new Promise<void>((resolve, reject) => {
           const timer = setTimeout(() => {
             video.onseeked = null;
-            reject(new Error(`Video seek timeout at ${timeSec.toFixed(2)}s`));
+            video.onerror = null;
+            reject(new Error(`Video seek timeout at ${safeTime.toFixed(2)}s`));
           }, 5000);
           video.onseeked = () => {
             clearTimeout(timer);
+            video.onseeked = null;
+            video.onerror = null;
             resolve();
+          };
+          video.onerror = () => {
+            clearTimeout(timer);
+            video.onseeked = null;
+            video.onerror = null;
+            reject(new Error(`Video seek failed at ${safeTime.toFixed(2)}s`));
           };
         });
         return createImageBitmap(video);
       },
       dispose() {
+        video.pause();
+        video.removeAttribute('src');
+        video.load();
         if (videoSrc.startsWith('blob:')) URL.revokeObjectURL(videoSrc);
       },
     };

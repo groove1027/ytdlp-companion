@@ -309,6 +309,10 @@ export async function composeMp4(options: ComposeMp4Options): Promise<Blob> {
   ffmpeg.on('progress', progressHandler);
 
   const sceneMap = new Map(scenes.map((s) => [s.id, s]));
+  const renderableTimeline = timeline.filter((timing) => {
+    const scene = sceneMap.get(timing.sceneId);
+    return !!scene && (!!scene.imageUrl || !!scene.videoUrl);
+  });
 
   // --- 영상 원본 길이 프로빙 (JavaScript Video API) ---
   async function probeVideoDuration(url: string): Promise<number> {
@@ -342,7 +346,11 @@ export async function composeMp4(options: ComposeMp4Options): Promise<Blob> {
       }, timeoutMs);
       ffmpeg.exec(args).then((code) => {
         clearTimeout(timer);
-        resolve(code);
+        if (code === 0) {
+          resolve(code);
+          return;
+        }
+        reject(new Error(`FFmpeg exec 실패 (exit code ${code})`));
       }).catch((err) => {
         clearTimeout(timer);
         reject(err);
@@ -351,6 +359,7 @@ export async function composeMp4(options: ComposeMp4Options): Promise<Blob> {
   }
 
   const segmentFiles: string[] = [];
+  const renderedTimeline: UnifiedSceneTiming[] = [];
   let segIdx = 0;
   let hadWasmCrash = false;
 
@@ -431,6 +440,7 @@ export async function composeMp4(options: ComposeMp4Options): Promise<Blob> {
       }
 
       segmentFiles.push(outputName);
+      renderedTimeline.push(timing);
       // [FIX #277] 입력 파일 즉시 삭제 — WASM FS 메모리 누적 방지
       // 다수 장면 프로젝트에서 입력 파일(~10-30MB×N) 누적 → WASM linear memory 한계 초과
       try { await ffmpeg.deleteFile(inputName); } catch (e) { /* already cleaned */ }
@@ -461,6 +471,47 @@ export async function composeMp4(options: ComposeMp4Options): Promise<Blob> {
     throw new Error('합성할 영상 세그먼트가 없습니다.');
   }
 
+  const skippedRenderableSegments = renderedTimeline.length !== renderableTimeline.length;
+  if (skippedRenderableSegments) {
+    console.warn(`[ffmpegService] 장면 ${renderableTimeline.length - renderedTimeline.length}개가 렌더에서 제외되어 후속 단계는 성공 장면 기준으로 진행합니다.`);
+  }
+  const transitionsEnabled = !!sceneTransitions && !skippedRenderableSegments && renderedTimeline.some((t, i) => {
+    if (i >= renderedTimeline.length - 1) return false;
+    const tr = sceneTransitions[t.sceneId];
+    return tr && tr.preset !== 'none';
+  });
+
+  let effectiveTotalDuration = 0;
+  const effectiveTimeline = skippedRenderableSegments
+    ? renderedTimeline.map((timing) => {
+        const renderDuration = Math.max(0.5, timing.imageDuration);
+        const normalizedStart = effectiveTotalDuration;
+        const delta = normalizedStart - timing.imageStartTime;
+
+        effectiveTotalDuration += renderDuration;
+
+        return {
+          ...timing,
+          imageStartTime: normalizedStart,
+          imageEndTime: normalizedStart + renderDuration,
+          subtitleSegments: timing.subtitleSegments.map((seg) => ({
+            ...seg,
+            startTime: Math.max(0, seg.startTime + delta),
+            endTime: Math.max(0, seg.endTime + delta),
+          })),
+        };
+      })
+    : renderedTimeline;
+  if (!skippedRenderableSegments) {
+    effectiveTotalDuration = renderedTimeline.reduce((sum, t, index) => {
+      const transition = sceneTransitions?.[t.sceneId];
+      const overlap = transitionsEnabled && index < renderedTimeline.length - 1 && transition && transition.preset !== 'none'
+        ? transition.duration
+        : 0;
+      return sum + Math.max(0.5, t.imageDuration) - overlap;
+    }, 0);
+  }
+
   // ═══ Phase 2: 세그먼트 연결 (5%) ═══
   checkAbort();
   currentPhaseBase = PHASE_WEIGHTS.scenes;
@@ -469,17 +520,12 @@ export async function composeMp4(options: ComposeMp4Options): Promise<Blob> {
   ffmpegPhaseMsg = '세그먼트 연결';
 
   // 전환 효과가 있는지 확인 (sceneId → segmentIndex 매핑)
-  const validTimeline = timeline.filter((t) => sceneMap.has(t.sceneId) && (sceneMap.get(t.sceneId)!.imageUrl || sceneMap.get(t.sceneId)!.videoUrl));
-  const hasAnyTransition = sceneTransitions && validTimeline.some((t, i) => {
-    if (i >= validTimeline.length - 1) return false;
-    const tr = sceneTransitions[t.sceneId];
-    return tr && tr.preset !== 'none';
-  });
+  const hasAnyTransition = transitionsEnabled;
 
   if (hasAnyTransition && segmentFiles.length >= 2 && sceneTransitions) {
     // xfade 체이닝: 2개씩 쌍으로 전환 효과 적용
     // 각 세그먼트의 실제 길이 추적 (xfade로 전환 시간만큼 줄어듦)
-    const segDurations = validTimeline.map((t) => Math.max(0.5, t.imageDuration));
+    const segDurations = effectiveTimeline.map((t) => Math.max(0.5, t.imageDuration));
 
     const inputArgs: string[] = [];
     for (const f of segmentFiles) {
@@ -491,7 +537,7 @@ export async function composeMp4(options: ComposeMp4Options): Promise<Blob> {
     let cumulativeDuration = segDurations[0]; // 첫 세그먼트의 누적 길이
 
     for (let i = 0; i < segmentFiles.length - 1; i++) {
-      const sceneId = validTimeline[i]?.sceneId;
+      const sceneId = effectiveTimeline[i]?.sceneId;
       const tr = sceneId ? sceneTransitions[sceneId] : undefined;
       const xfadeName = tr && tr.preset !== 'none' ? toXfadeTransition(tr.preset) : '';
       const xfadeDur = tr && tr.preset !== 'none' ? tr.duration : 0;
@@ -549,7 +595,7 @@ export async function composeMp4(options: ComposeMp4Options): Promise<Blob> {
   // ═══ Phase 2.5: 자막 번인 (10%) ═══
   checkAbort();
   currentPhaseBase = PHASE_WEIGHTS.scenes + PHASE_WEIGHTS.concat;
-  const hasSubtitles = timeline.some(t => t.subtitleSegments.length > 0);
+  const hasSubtitles = effectiveTimeline.some(t => t.subtitleSegments.length > 0);
   if (hasSubtitles) {
     emitProgress('composing', 0, PHASE_WEIGHTS.subtitle, '자막 합성 중...');
     ffmpegPhaseWeight = PHASE_WEIGHTS.subtitle;
@@ -561,7 +607,7 @@ export async function composeMp4(options: ComposeMp4Options): Promise<Blob> {
     const borderW = tmpl?.outlineWidth || 3;
 
     const drawtextParts: string[] = [];
-    for (const timing of timeline) {
+    for (const timing of effectiveTimeline) {
       for (const seg of timing.subtitleSegments) {
         if (!seg.text) continue;
         const escapedText = seg.text
@@ -598,7 +644,7 @@ export async function composeMp4(options: ComposeMp4Options): Promise<Blob> {
   currentPhaseBase = PHASE_WEIGHTS.scenes + PHASE_WEIGHTS.concat + PHASE_WEIGHTS.subtitle;
 
   // 타임라인 순서 기반 나레이션 매핑 (sceneId → timeline 인덱스 순으로 정렬)
-  const timingMap = new Map(timeline.map((t) => [t.sceneId, t]));
+  const timingMap = new Map(effectiveTimeline.map((t) => [t.sceneId, t]));
 
   // 나레이션을 타임라인 순서로 정렬 — 오디오 순서 꼬임 방지 핵심
   const seenUrls = new Set<string>();
@@ -609,19 +655,21 @@ export async function composeMp4(options: ComposeMp4Options): Promise<Blob> {
       seenUrls.add(l.audioUrl);
       return true;
     })
-    .map((l) => {
+    .flatMap((l) => {
       // 타임라인에서 해당 장면의 정확한 시작 시간 가져오기
       const sceneTiming = l.sceneId ? timingMap.get(l.sceneId) : undefined;
-      return { ...l, _timelineStart: sceneTiming?.imageStartTime ?? l.startTime ?? Infinity };
+      if (l.sceneId && !sceneTiming) return [];
+      return [{ ...l, _timelineStart: sceneTiming?.imageStartTime ?? l.startTime ?? Infinity }];
     })
     .sort((a, b) => a._timelineStart - b._timelineStart);
 
   const hasNarration = validNarrations.length > 0;
   const hasBgm = bgmConfig?.audioUrl;
-  const totalDuration = timeline.reduce((sum, t) => sum + Math.max(0.5, t.imageDuration), 0);
+  const totalDuration = effectiveTotalDuration;
 
   let finalCmd: string[];
   const narrationFileNames: string[] = [];
+  const loadedNarrations: typeof validNarrations = [];
 
   if (hasNarration || hasBgm) {
     emitProgress('composing', 0, PHASE_WEIGHTS.audio, '오디오 에셋 로딩 중...');
@@ -634,6 +682,7 @@ export async function composeMp4(options: ComposeMp4Options): Promise<Blob> {
           const narData = await fetchFile(narLine.audioUrl!);
           await ffmpeg.writeFile(fileName, narData);
           narrationFileNames.push(fileName);
+          loadedNarrations.push(narLine);
         } catch (e) {
           console.warn(`[FfmpegService] 나레이션 ${ni + 1} 오디오 로드 실패 (${narLine.audioUrl?.slice(0, 60)}):`, e);
           logger.trackSwallowedError('FfmpegService:narrationLoad', e);
@@ -661,11 +710,13 @@ export async function composeMp4(options: ComposeMp4Options): Promise<Blob> {
 
     // 나레이션 타이밍: 타임라인의 imageStartTime을 권위 있는 시작점으로 사용
     for (let ni = 0; ni < narrationFileNames.length; ni++) {
-      const narLine = validNarrations[ni];
+      const narLine = loadedNarrations[ni];
       const sceneTiming = narLine.sceneId ? timingMap.get(narLine.sceneId) : undefined;
 
-      const sceneVolume = sceneTiming ? sceneTiming.volume / 100 : 1.0;
-      const sceneSpeed = sceneTiming ? sceneTiming.speed : 1.0;
+      const rawSceneVolume = sceneTiming?.volume;
+      const sceneVolume = Number.isFinite(rawSceneVolume) ? rawSceneVolume / 100 : 1.0;
+      const rawSceneSpeed = sceneTiming?.speed;
+      const sceneSpeed = Number.isFinite(rawSceneSpeed) && rawSceneSpeed > 0 ? rawSceneSpeed : 1.0;
 
       // 핵심 수정: 타임라인의 imageStartTime을 우선 사용 (순서 보장)
       const effectiveStartTime = sceneTiming?.imageStartTime
@@ -713,7 +764,7 @@ export async function composeMp4(options: ComposeMp4Options): Promise<Blob> {
       }
       if (duckingDb < 0 && hasNarration) {
         const duckVol = Math.pow(10, duckingDb / 20).toFixed(3);
-        for (const narLine of validNarrations) {
+        for (const narLine of loadedNarrations) {
           const sceneTiming = narLine.sceneId ? timingMap.get(narLine.sceneId) : undefined;
           const st = sceneTiming?.imageStartTime ?? narLine.startTime ?? 0;
           const dur = sceneTiming ? sceneTiming.imageDuration : 3;

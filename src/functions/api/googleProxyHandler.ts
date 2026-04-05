@@ -38,6 +38,13 @@ const FORWARDED_HEADERS = new Set([
   'pragma',
   'upgrade-insecure-requests',
   'user-agent',
+  'sec-ch-ua',
+  'sec-ch-ua-mobile',
+  'sec-ch-ua-platform',
+  'sec-fetch-dest',
+  'sec-fetch-mode',
+  'sec-fetch-site',
+  'sec-fetch-user',
 ]);
 
 interface ProxyRequestBody {
@@ -97,6 +104,13 @@ function buildProxyHeaders(parsedUrl: URL, hasBody: boolean, forwardedHeaders: R
         'Pragma': 'no-cache',
         'Referer': isBingSearchHost(parsedUrl.hostname) ? `${parsedUrl.origin}/images/` : `${parsedUrl.origin}/`,
         'Upgrade-Insecure-Requests': '1',
+        'Sec-Ch-Ua': '"Chromium";v="136", "Not_A Brand";v="24"',
+        'Sec-Ch-Ua-Mobile': '?0',
+        'Sec-Ch-Ua-Platform': '"macOS"',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-User': '?1',
       }
     : {
         'Origin': 'https://labs.google',

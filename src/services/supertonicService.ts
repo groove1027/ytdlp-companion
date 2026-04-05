@@ -168,7 +168,8 @@ export async function generateSpeech(
     text: string,
     lang: string,
     voiceId: string,
-    speed: number = 1.05
+    speed: number = 1.05,
+    silenceDuration: number = 0
 ): Promise<{ audioUrl: string; format: string }> {
     // 한국어/영어가 아닌 경우 지원 언어로 매핑
     const langMap: Record<string, string> = {
@@ -193,6 +194,7 @@ export async function generateSpeech(
 
     // 속도 클램핑
     const clampedSpeed = Math.max(0.8, Math.min(1.5, speed));
+    const clampedSilenceDuration = Math.max(0, silenceDuration);
 
     // TTS 추론
     const { wav } = await state.tts.call(
@@ -201,7 +203,7 @@ export async function generateSpeech(
         style,
         TOTAL_STEPS,
         clampedSpeed,
-        0.3, // silence duration between chunks
+        clampedSilenceDuration,
         null  // progress callback (per-step)
     );
 
@@ -210,6 +212,7 @@ export async function generateSpeech(
     const wavBuffer = writeWavFile(wav, sampleRate);
     const blob = new Blob([wavBuffer], { type: 'audio/wav' });
     const audioUrl = URL.createObjectURL(blob);
+    logger.registerBlobUrl(audioUrl, 'audio', 'supertonicService:generateSpeech');
 
     logger.success('[Supertonic] 음성 생성 완료', { voiceId, duration: `${(wav.length / sampleRate).toFixed(1)}초` });
 
