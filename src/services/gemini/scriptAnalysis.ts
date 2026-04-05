@@ -1115,6 +1115,10 @@ export const parseScriptToScenes = async (
             isInfographic: allowInfo === true && item.isInfographic === true, // [CRITICAL FIX] Strict boolean check — only true when BOTH are explicitly true
             castType: item.castType || (item.characterPresent ? 'MAIN' : 'NOBODY'),
             shotSize: item.shotSize || 'Medium Shot',
+            // [FIX #1018] visualPrompt 누락 방어 — AI가 생략 시 scriptText 기반 자동 생성
+            visualPrompt: (item.visualPrompt && item.visualPrompt.trim())
+                ? item.visualPrompt
+                : `Cinematic scene illustrating: ${(item.scriptText || '').slice(0, 200)}`,
             // [NEW] entityComposition — KEY_ENTITY 연출 구도
             entityComposition: item.entityComposition || '',
             // [NEW] videoPrompt — 상세 영상 모션 프롬프트
@@ -1137,10 +1141,17 @@ export const parseScriptToScenes = async (
             if (originalLines.length > 0 && result.length > 0) {
                 if (!smartSplit) {
                     // Manual mode: strict 1 line = 1 scene direct mapping
-                    result = result.map((scene: any, idx: number) => ({
-                        ...scene,
-                        scriptText: idx < originalLines.length ? originalLines[idx] : scene.scriptText
-                    }));
+                    result = result.map((scene: any, idx: number) => {
+                        const newText = idx < originalLines.length ? originalLines[idx] : scene.scriptText;
+                        return {
+                            ...scene,
+                            scriptText: newText,
+                            // [FIX #1018] scriptText 재매핑 시 visualPrompt도 동기화
+                            visualPrompt: (scene.visualPrompt && scene.visualPrompt.trim() && !scene.visualPrompt.startsWith('Cinematic scene illustrating:'))
+                                ? scene.visualPrompt
+                                : `Cinematic scene illustrating: ${newText.slice(0, 200)}`,
+                        };
+                    });
                 } else {
                     // Smart split mode: AI가 scriptText와 visualPrompt를 쌍으로 생성하므로
                     // scriptText를 강제 재분배하면 visualPrompt과의 매핑이 깨짐 (off-by-one 버그 원인)
@@ -1182,17 +1193,20 @@ export const parseScriptToScenes = async (
                         const current = sentences[i].trim();
                         if (/[?？؟՞;⁇⁈‽]$/.test(current.trim()) && i + 1 < sentences.length) {
                             // ? 문장 + 답변 문장을 병합
+                            const mergedText = `${current} ${sentences[i + 1].trim()}`;
                             splitScenes.push({
                                 ...scene,
                                 id: `scene-${Date.now()}-${splitScenes.length}`,
-                                scriptText: `${current} ${sentences[i + 1].trim()}`
+                                scriptText: mergedText,
+                                visualPrompt: `Cinematic scene illustrating: ${mergedText.slice(0, 200)}`,
                             });
                             i += 2;
                         } else {
                             splitScenes.push({
                                 ...scene,
                                 id: `scene-${Date.now()}-${splitScenes.length}`,
-                                scriptText: current
+                                scriptText: current,
+                                visualPrompt: `Cinematic scene illustrating: ${current.slice(0, 200)}`,
                             });
                             i++;
                         }
@@ -1511,15 +1525,19 @@ ${baseSetting ? `[GLOBAL CONTEXT]\n${baseSetting}` : ''}`;
                     }
                     if (minIdx < 0) break;
                     if (minIdx + 1 < chunkResult.length) {
+                        const mergedText = ((chunkResult[minIdx].scriptText || '') + ' ' + (chunkResult[minIdx + 1].scriptText || '')).trim();
                         chunkResult[minIdx + 1] = {
                             ...chunkResult[minIdx + 1],
-                            scriptText: ((chunkResult[minIdx].scriptText || '') + ' ' + (chunkResult[minIdx + 1].scriptText || '')).trim()
+                            scriptText: mergedText,
+                            visualPrompt: ((chunkResult[minIdx].visualPrompt || '') + '; ' + (chunkResult[minIdx + 1].visualPrompt || '')).trim().replace(/^;\s*/, '') || `Cinematic scene illustrating: ${mergedText.slice(0, 200)}`,
                         };
                         chunkResult.splice(minIdx, 1);
                     } else if (minIdx > 0) {
+                        const mergedText = ((chunkResult[minIdx - 1].scriptText || '') + ' ' + (chunkResult[minIdx].scriptText || '')).trim();
                         chunkResult[minIdx - 1] = {
                             ...chunkResult[minIdx - 1],
-                            scriptText: ((chunkResult[minIdx - 1].scriptText || '') + ' ' + (chunkResult[minIdx].scriptText || '')).trim()
+                            scriptText: mergedText,
+                            visualPrompt: ((chunkResult[minIdx - 1].visualPrompt || '') + '; ' + (chunkResult[minIdx].visualPrompt || '')).trim().replace(/^;\s*/, '') || `Cinematic scene illustrating: ${mergedText.slice(0, 200)}`,
                         };
                         chunkResult.splice(minIdx, 1);
                     } else {
@@ -1532,9 +1550,17 @@ ${baseSetting ? `[GLOBAL CONTEXT]\n${baseSetting}` : ''}`;
             // [FIX #380] 원본 scriptText 강제 매핑 — AI가 요약/축약/누락해도 원문 100% 보존
             // chunkSceneTexts는 splitScenesLocally()가 생성한 결정론적 분할 결과이므로 정확함
             const aiCount = chunkResult.length;
-            // 1:1 매핑: AI 결과의 scriptText를 원본으로 교체
+            // 1:1 매핑: AI 결과의 scriptText를 원본으로 교체 + visualPrompt 동기화
             for (let i = 0; i < Math.min(chunkResult.length, chunkSceneTexts.length); i++) {
-                chunkResult[i] = { ...chunkResult[i], scriptText: chunkSceneTexts[i] };
+                const newText = chunkSceneTexts[i];
+                chunkResult[i] = {
+                    ...chunkResult[i],
+                    scriptText: newText,
+                    // [FIX #1018] scriptText 교체 시 자동 생성된 visualPrompt도 갱신
+                    visualPrompt: (chunkResult[i].visualPrompt && chunkResult[i].visualPrompt.trim() && !chunkResult[i].visualPrompt.startsWith('Cinematic scene illustrating:'))
+                        ? chunkResult[i].visualPrompt
+                        : `Cinematic scene illustrating: ${newText.slice(0, 200)}`,
+                };
             }
             // AI가 부족하게 생성한 경우: 누락된 원본 텍스트로 보충 장면 생성
             if (chunkResult.length < chunkSceneTexts.length) {
@@ -1544,6 +1570,8 @@ ${baseSetting ? `[GLOBAL CONTEXT]\n${baseSetting}` : ''}`;
                         ...template,
                         id: `scene-${Date.now()}-supplement-${ci}-${i}`,
                         scriptText: chunkSceneTexts[i],
+                        // [FIX #1018] 보충 장면에도 고유 visualPrompt 생성
+                        visualPrompt: `Cinematic scene illustrating: ${chunkSceneTexts[i].slice(0, 200)}`,
                     });
                 }
                 console.warn(`[processChunk] ⚠️ 청크 ${ci + 1}: AI ${aiCount}장면 → 원본 기준 ${chunkSceneTexts.length}장면으로 보충`);
@@ -1793,9 +1821,17 @@ ${baseSetting ? `[GLOBAL CONTEXT]\n${baseSetting}` : ''}`;
         }
 
         if (localTexts.length > 0) {
-            // 1:1 매핑: AI 결과의 scriptText를 로컬 분할 원본으로 교체
+            // 1:1 매핑: AI 결과의 scriptText를 로컬 분할 원본으로 교체 + visualPrompt 동기화
             for (let i = 0; i < Math.min(scenes.length, localTexts.length); i++) {
-                scenes[i] = { ...scenes[i], scriptText: localTexts[i] };
+                const newText = localTexts[i];
+                scenes[i] = {
+                    ...scenes[i],
+                    scriptText: newText,
+                    // [FIX #1018] scriptText 교체 시 자동 생성된 visualPrompt도 갱신
+                    visualPrompt: (scenes[i].visualPrompt && scenes[i].visualPrompt.trim() && !scenes[i].visualPrompt.startsWith('Cinematic scene illustrating:'))
+                        ? scenes[i].visualPrompt
+                        : `Cinematic scene illustrating: ${newText.slice(0, 200)}`,
+                };
             }
             // AI가 부족하게 생성한 경우: 누락된 원본 텍스트로 보충 장면 생성
             if (scenes.length < localTexts.length) {
@@ -1805,6 +1841,8 @@ ${baseSetting ? `[GLOBAL CONTEXT]\n${baseSetting}` : ''}`;
                         ...template,
                         id: `scene-${Date.now()}-supplement-${i}`,
                         scriptText: localTexts[i],
+                        // [FIX #1018] 보충 장면에도 고유 visualPrompt 생성
+                        visualPrompt: `Cinematic scene illustrating: ${localTexts[i].slice(0, 200)}`,
                     });
                 }
                 console.warn(`[parseScriptToScenes] ⚠️ 비청크 경로: AI ${scenes.length - (localTexts.length - scenes.length)}장면 → 원본 기준 ${localTexts.length}장면으로 보충`);
@@ -1821,10 +1859,12 @@ ${baseSetting ? `[GLOBAL CONTEXT]\n${baseSetting}` : ''}`;
                     }
                     if (minIdx < 0) break;
                     if (minIdx + 1 < scenes.length) {
-                        scenes[minIdx + 1] = { ...scenes[minIdx + 1], scriptText: ((scenes[minIdx].scriptText || '') + ' ' + (scenes[minIdx + 1].scriptText || '')).trim() };
+                        const mt = ((scenes[minIdx].scriptText || '') + ' ' + (scenes[minIdx + 1].scriptText || '')).trim();
+                        scenes[minIdx + 1] = { ...scenes[minIdx + 1], scriptText: mt, visualPrompt: ((scenes[minIdx].visualPrompt || '') + '; ' + (scenes[minIdx + 1].visualPrompt || '')).trim().replace(/^;\s*/, '') || `Cinematic scene illustrating: ${mt.slice(0, 200)}` };
                         scenes.splice(minIdx, 1);
                     } else if (minIdx > 0) {
-                        scenes[minIdx - 1] = { ...scenes[minIdx - 1], scriptText: ((scenes[minIdx - 1].scriptText || '') + ' ' + (scenes[minIdx].scriptText || '')).trim() };
+                        const mt = ((scenes[minIdx - 1].scriptText || '') + ' ' + (scenes[minIdx].scriptText || '')).trim();
+                        scenes[minIdx - 1] = { ...scenes[minIdx - 1], scriptText: mt, visualPrompt: ((scenes[minIdx - 1].visualPrompt || '') + '; ' + (scenes[minIdx].visualPrompt || '')).trim().replace(/^;\s*/, '') || `Cinematic scene illustrating: ${mt.slice(0, 200)}` };
                         scenes.splice(minIdx, 1);
                     } else break;
                 }

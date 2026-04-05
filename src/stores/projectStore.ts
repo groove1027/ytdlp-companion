@@ -183,6 +183,12 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
 
   setScenes: (scenes) => set((state) => {
     const newScenes = typeof scenes === 'function' ? scenes(state.scenes) : scenes;
+    // [FIX #1018] 빈 visualPrompt 중앙 정규화 — 모든 경로에서 방어
+    for (const s of newScenes) {
+      if (!s.visualPrompt || !s.visualPrompt.trim()) {
+        s.visualPrompt = `Cinematic scene illustrating: ${(s.scriptText || '').slice(0, 200)}`;
+      }
+    }
     // 장면 수가 변경된 경우에만 로깅 (매 렌더 노이즈 방지)
     if (newScenes.length !== state.scenes.length) {
       logger.info('장면 업데이트', { count: newScenes.length, prev: state.scenes.length });
@@ -228,13 +234,13 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
 
     // 원본 장면의 scriptText를 앞쪽 절반으로 업데이트, visualPrompt 초기화 (새 scriptText 기반 자동 재생성)
     // [FIX codex-review] videoReferences도 초기화 — 분할 후 대본이 달라지므로 타임코드 매칭 무효
-    const updatedSource = { ...source, scriptText: firstHalf, visualPrompt: '', videoReferences: undefined };
+    const updatedSource = { ...source, scriptText: firstHalf, visualPrompt: `Cinematic scene illustrating: ${firstHalf.slice(0, 200)}`, videoReferences: undefined };
 
     const newScene: Scene = {
       ...source,
       id: uniqueSceneId(),
       scriptText: secondHalf,
-      visualPrompt: '', // 새 scriptText에 맞게 자동 재생성되도록 초기화
+      visualPrompt: `Cinematic scene illustrating: ${secondHalf.slice(0, 200)}`,
       imageUrl: undefined,
       videoUrl: undefined,
       generationTaskId: undefined,
@@ -292,7 +298,7 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
       ...source,
       id: uniqueSceneId(),
       scriptText: '새 장면',
-      visualPrompt: '',
+      visualPrompt: 'Cinematic scene illustrating: new scene',
       imageUrl: undefined,
       videoUrl: undefined,
       generationTaskId: undefined,
