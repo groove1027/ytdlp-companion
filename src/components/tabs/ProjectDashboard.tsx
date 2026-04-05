@@ -580,12 +580,12 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, on
       const cloudResults = await Promise.allSettled(
         ids.map(id => deleteCloudProject(id))
       );
-      // 클라우드 삭제 성공한 ID는 보호 해제 (다음 sync에서 deleted로 처리됨)
+      // 로컬+클라우드 모두 성공한 ID만 보호 해제 (부분 실패 시 재업로드 방지)
       let failCount = 0;
       cloudResults.forEach((r, i) => {
-        if (r.status === 'fulfilled') {
+        if (r.status === 'fulfilled' && localDeletedSet.has(ids[i])) {
           unmarkDeletingId(ids[i]);
-        } else {
+        } else if (r.status === 'rejected') {
           failCount++;
         }
       });

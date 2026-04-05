@@ -478,6 +478,13 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
     // Increment generation to invalidate any in-flight async migrations from previous loads
     const generation = get()._loadGeneration + 1;
 
+    // [FIX #1018] 과거 프로젝트의 빈 visualPrompt 정규화
+    for (const s of sanitizedScenes) {
+      if (!s.visualPrompt || !s.visualPrompt.trim()) {
+        s.visualPrompt = `Cinematic scene illustrating: ${(s.scriptText || '').slice(0, 200)}`;
+      }
+    }
+
     set({
       config: project.config,
       scenes: sanitizedScenes,
