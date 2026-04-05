@@ -640,6 +640,8 @@ ${body}
 
 const PREMIERE_NATIVE_TEMPLATE_URL = new URL('../assets/premiere-native-template-v45.prproj', import.meta.url).href;
 const PREMIERE_LEGACY_TEMPLATE_URL = new URL('../assets/premiere-native-template.prproj', import.meta.url).href;
+const PREMIERE_COMPAT_PROJECT_VERSION = '43';
+const PREMIERE_COMPAT_BUILD_VERSION_PREFIX = '24.0.0x0';
 const PREMIERE_V45_PROJECT_ID = '1';
 const PREMIERE_V45_SEQUENCE_UID = '2df87522-f24a-4f47-b6f6-7f3af6db0171';
 const PREMIERE_V45_VIDEO_TRACK_GROUP_ID = '52';
@@ -1312,7 +1314,7 @@ function cleanupPremiereTemplatePlaceholders(
  *
  * 1. /Users/*, C:\Users\* 등 사용자 절대경로 → 제거
  * 2. /Applications/Adobe Premiere Pro *  → 제거
- * 3. MZ.BuildVersion.Created / Modified → 유효한 26.x 형식으로 재설정
+ * 3. MZ.BuildVersion.Created / Modified → Premiere 2024도 수용하는 24.x 형식으로 재설정
  * 4. PresetPath, ProxyWatermarkDefaultImageFullPath → 비움
  * 5. 남아있는 ConformedAudioPath, PeakFilePath → 제거
  *
@@ -1331,13 +1333,14 @@ function sanitizePremiereEnvironmentPaths(
     'project.settings.lastknowngoodprojectpath',
     'AlternateMediaFilePath', 'ImporterPrefs', 'MediaLocatorInfo',
   ];
-  // [FIX] BuildVersion을 비우면 Premiere 26.x에서 Save 에러 발생 → 유효한 값 설정
+  // [FIX] BuildVersion을 비우면 Premiere에서 Save/Open 에러가 날 수 있으므로
+  // 2024~최신 버전이 모두 받아들이는 24.x 형식으로 고정한다.
   const buildVersionValue = (() => {
     const d = new Date();
     const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     const pad = (n: number) => String(n).padStart(2, '0');
-    return `26.0.2x0 - ${days[d.getDay()]} ${months[d.getMonth()]} ${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())} ${d.getFullYear()}`;
+    return `${PREMIERE_COMPAT_BUILD_VERSION_PREFIX} - ${days[d.getDay()]} ${months[d.getMonth()]} ${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())} ${d.getFullYear()}`;
   })();
   const tagsToSetBuildVersion = [
     'MZ.BuildVersion.Created', 'MZ.BuildVersion.Modified',
@@ -1410,6 +1413,14 @@ function sanitizePremiereEnvironmentPaths(
   Array.from(root.children).forEach(topLevel => {
     walk(topLevel);
   });
+}
+
+function normalizePremiereProjectCompatibility(projectElement: Element): void {
+  const currentVersion = Number(projectElement.getAttribute('Version') || '');
+  const compatVersion = Number(PREMIERE_COMPAT_PROJECT_VERSION);
+  if (Number.isFinite(currentVersion) && currentVersion > compatVersion) {
+    projectElement.setAttribute('Version', PREMIERE_COMPAT_PROJECT_VERSION);
+  }
 }
 
 function setPremiereTrackItemTimes(trackItemElement: Element, startTicks: number, endTicks: number): void {
@@ -1746,6 +1757,7 @@ async function generatePremiereNativeProjectBytes(params: {
 
   // [FIX] 템플릿에 남아있는 원본 프로젝트 절대경로 제거
   const projectElement = getPremiereObjectById(doc, PREMIERE_V45_PROJECT_ID);
+  normalizePremiereProjectCompatibility(projectElement);
   const projectNode = getPremiereDirectChild(projectElement, 'Node');
   const projectProps = projectNode ? getPremiereDirectChild(projectNode, 'Properties') : null;
   if (projectProps) {
@@ -2464,6 +2476,7 @@ function buildCapCutDraftMetaInfo(params: {
     draft_is_invisible: false,
     draft_is_web_article_video: false,
     draft_materials: buildCapCutDraftMetaMaterials(),
+    draft_materials_copy_folder: `${pathInfo.draftPathPlaceholder}/materials`,
     draft_materials_copied_info: [],
     draft_name: title,
     draft_need_rename_folder: false,
@@ -2592,6 +2605,123 @@ function buildCapCutContainedMaterialPath(
   return `${buildCapCutPathInfo(draftFolderId).draftPathPlaceholder}/materials/${category}/${fileName}`;
 }
 
+function hasTimeRangeOverlap(
+  startSec: number,
+  endSec: number,
+  ranges: Array<{ startSec: number; endSec: number }>,
+): boolean {
+  return ranges.some((range) => range.endSec > startSec && range.startSec < endSec);
+}
+
+function getAvailableTimeRanges(
+  startSec: number,
+  endSec: number,
+  blockedRanges: Array<{ startSec: number; endSec: number }>,
+): Array<{ startSec: number; endSec: number }> {
+  if (endSec <= startSec) return [];
+
+  const overlaps = blockedRanges
+    .map((range) => ({
+      startSec: Math.max(startSec, range.startSec),
+      endSec: Math.min(endSec, range.endSec),
+    }))
+    .filter((range) => range.endSec > range.startSec)
+    .sort((a, b) => (a.startSec - b.startSec) || (a.endSec - b.endSec));
+
+  if (overlaps.length === 0) {
+    return [{ startSec, endSec }];
+  }
+
+  const result: Array<{ startSec: number; endSec: number }> = [];
+  let cursor = startSec;
+
+  overlaps.forEach((range) => {
+    if (range.startSec > cursor) {
+      result.push({ startSec: cursor, endSec: range.startSec });
+    }
+    cursor = Math.max(cursor, range.endSec);
+  });
+
+  if (cursor < endSec) {
+    result.push({ startSec: cursor, endSec });
+  }
+
+  return result.filter((range) => range.endSec - range.startSec > 0.001);
+}
+
+function buildCapCutAudioMaterial(params: {
+  id: string;
+  duration: number;
+  fileName: string;
+  path: string;
+  videoId?: string;
+}): Record<string, unknown> {
+  const { id, duration, fileName, path, videoId = '' } = params;
+  return {
+    ai_music_enter_from: '',
+    ai_music_generate_scene: 0,
+    ai_music_type: 0,
+    aigc_history_id: '',
+    aigc_item_id: '',
+    app_id: 0,
+    category_id: '',
+    category_name: 'local',
+    check_flag: 1,
+    cloned_model_type: '',
+    copyright_limit_type: 'none',
+    duration,
+    effect_id: '',
+    formula_id: '',
+    id,
+    intensifies_path: '',
+    is_ai_clone_tone: false,
+    is_ai_clone_tone_post: false,
+    is_text_edit_overdub: false,
+    is_ugc: false,
+    local_material_id: '',
+    lyric_type: 0,
+    mock_tone_speaker: '',
+    moyin_emotion: '',
+    music_id: '',
+    name: fileName,
+    path,
+    pgc_id: '',
+    pgc_name: '',
+    query: '',
+    request_id: '',
+    resource_id: '',
+    search_id: '',
+    similiar_music_info: { original_song_id: '', original_song_name: '' },
+    sound_separate_type: '',
+    source_from: '',
+    source_platform: 0,
+    team_id: '',
+    text_id: '',
+    third_resource_id: '',
+    tone_category_id: '',
+    tone_category_name: '',
+    tone_effect_id: '',
+    tone_effect_name: '',
+    tone_emotion_name_key: '',
+    tone_emotion_role: '',
+    tone_emotion_scale: 0.0,
+    tone_emotion_selection: '',
+    tone_emotion_style: '',
+    tone_platform: '',
+    tone_second_category_id: '',
+    tone_second_category_name: '',
+    tone_speaker: '',
+    tone_type: '',
+    tts_benefit_info: { benefit_amount: -1, benefit_log_extra: '', benefit_log_id: '', benefit_type: 'none' },
+    tts_generate_scene: '',
+    tts_task_id: '',
+    type: 'extract_music',
+    unique_id: '',
+    video_id: videoId,
+    wave_points: [],
+  };
+}
+
 function buildCapCutMacInstallerScript(projectFolderId: string): string {
   return [
     '#!/bin/bash',
@@ -2630,6 +2760,7 @@ function buildCapCutMacInstallerScript(projectFolderId: string): string {
     '    s#"path":"materials/#"path":"$ENV{TARGET_PROJECT_PATH}/materials/#g;',
     '    s#"media_path":"materials/#"media_path":"$ENV{TARGET_PROJECT_PATH}/materials/#g;',
     '    s#"draft_fold_path":"[^"]*"#"draft_fold_path":"$ENV{TARGET_PROJECT_PATH}"#g;',
+    '    s#"draft_materials_copy_folder":"[^"]*"#"draft_materials_copy_folder":"$ENV{TARGET_PROJECT_PATH}/materials"#g;',
     '    s#"draft_root_path":"[^"]*"#"draft_root_path":"$ENV{TARGET_ROOT}"#g;',
     "  ' \"$file\"",
     'done',
@@ -2681,6 +2812,7 @@ function buildCapCutWindowsPowerShellInstallerScript(projectFolderId: string): s
     "  $content = $content.Replace('\"path\":\"materials/', '\"path\":\"' + $TargetProjectPathJson + '/materials/')",
     "  $content = $content.Replace('\"media_path\":\"materials/', '\"media_path\":\"' + $TargetProjectPathJson + '/materials/')",
     "  $content = [regex]::Replace($content, '\"draft_fold_path\":\"[^\"]*\"', '\"draft_fold_path\":\"' + $TargetProjectPathJson + '\"')",
+    "  $content = [regex]::Replace($content, '\"draft_materials_copy_folder\":\"[^\"]*\"', '\"draft_materials_copy_folder\":\"' + $TargetProjectPathJson + '/materials\"')",
     "  $content = [regex]::Replace($content, '\"draft_root_path\":\"[^\"]*\"', '\"draft_root_path\":\"' + $TargetRootJson + '\"')",
     '  Set-Content -Path $file.FullName -Value $content -Encoding UTF8',
     '}',
@@ -2786,6 +2918,7 @@ function patchCapCutDraftJsonPaths(jsonText: string, draftsRootPath: string, pro
     .replace(/"path":"materials\//g, `"path":"${targetProjectPath}/materials/`)
     .replace(/"media_path":"materials\//g, `"media_path":"${targetProjectPath}/materials/`)
     .replace(/"draft_fold_path":"[^"]*"/g, `"draft_fold_path":"${targetProjectPath}"`)
+    .replace(/"draft_materials_copy_folder":"[^"]*"/g, `"draft_materials_copy_folder":"${targetProjectPath}/materials"`)
     .replace(/"draft_root_path":"[^"]*"/g, `"draft_root_path":"${targetRoot}"`);
 }
 
@@ -3954,6 +4087,7 @@ export function generateCapCutDraftJson(params: {
   height?: number;
   preset?: VideoAnalysisPreset;
   videoDurationSec?: number;
+  hasAudioTrack?: boolean;
   narrationLines?: ExportNarrationLine[];
   /** [FIX #891/#892] 추가 소스 영상 파일명 (인덱스 1, 2, ... 순서) */
   additionalVideoFileNames?: string[];
@@ -3965,7 +4099,19 @@ export function generateCapCutDraftJson(params: {
   /** [FIX #891/#892] 소스별 비디오 파일명 목록 (ZIP 삽입용) */
   videoFileNames: string[];
 } {
-  const { scenes, title, videoFileName: rawVideoFileName, fps = 30, width = 1080, height = 1920, preset, videoDurationSec, narrationLines = [], additionalVideoFileNames = [] } = params;
+  const {
+    scenes,
+    title,
+    videoFileName: rawVideoFileName,
+    fps = 30,
+    width = 1080,
+    height = 1920,
+    preset,
+    videoDurationSec,
+    hasAudioTrack = true,
+    narrationLines = [],
+    additionalVideoFileNames = [],
+  } = params;
   const videoFileName = sanitizeFileName(rawVideoFileName);
   const syncTimeline = buildNarrationSyncedTimeline(scenes, narrationLines, preset);
   const nsTimings = syncTimeline.scenes;
@@ -4221,38 +4367,6 @@ export function generateCapCutDraftJson(params: {
     trackRenderIndex: 12000,
   }));
 
-  // [FIX] 소스 영상 오디오 material + segment 생성 — CapCut에서 원본 영상 소리가 재생되도록
-  // 모든 장면에 나레이션이 있으면 소스 오디오 불필요 (나레이션이 전체 덮음)
-  // 일부만 나레이션이 있거나 나레이션 없으면 소스 오디오 포함
-  const narrationCoversAll = narrationLines.length >= timings.length && narrationLines.every(l => !!l.audioFileName);
-  const sourceAudioMaterials = narrationCoversAll ? [] : sourceVideoMaterials.map(svm => ({
-    id: uuid(),
-    materialId: svm.materialId,
-    fileName: svm.fileName,
-    sourceIndex: svm.sourceIndex,
-  }));
-  const sourceAudioSegments = timings.map((t, ti) => {
-    const srcAudio = sourceAudioMaterials.find(sa => sa.sourceIndex === t.sourceIndex) || sourceAudioMaterials[0];
-    if (!srcAudio) return null;
-    // 이 장면에 나레이션 오디오가 있으면 소스 오디오 스킵 (겹침 방지)
-    if (narrationLines[ti]?.audioFileName) return null;
-    return buildCapCutSegmentShell({
-      clip: { alpha: 1.0, flip: { horizontal: false, vertical: false }, rotation: 0.0, scale: { x: 1.0, y: 1.0 }, transform: { x: 0.0, y: 0.0 } },
-      commonKeyframes: emptyArr,
-      enableAdjust: false,
-      extraMaterialRefs: emptyArr,
-      materialId: srcAudio.id,
-      renderIndex: 0,
-      sourceDurationUs: toUs(t.durationSec),
-      sourceStartUs: toUs(t.startSec),
-      speed: nsTimings[ti]?.autoSpeedFactor ?? 1.0,
-      targetDurationUs: toUs(t.durationSec),
-      targetStartUs: toUs(t.tlStartSec),
-      trackRenderIndex: 0,
-    });
-  }).filter(Boolean) as Array<Record<string, unknown>>;
-  const trackSourceAudioId = uuid();
-
   const audioMaterialsWithStart = narrationLines.flatMap((line, lineIndex) => {
     const audioFileName = line.audioFileName ? sanitizeFileName(line.audioFileName) : '';
     if (!audioFileName) return [];
@@ -4267,13 +4381,65 @@ export function generateCapCutDraftJson(params: {
 
     if (startSec == null || durationSec == null) return [];
 
+    const safeStartSec = Math.max(0, startSec);
+    const safeDurationSec = Math.max(0.1, durationSec);
     return [{
       id: uuid(),
       fileName: audioFileName,
-      dur: toUs(Math.max(0.1, durationSec)),
-      start: toUs(Math.max(0, startSec)),
+      dur: toUs(safeDurationSec),
+      start: toUs(safeStartSec),
+      startSec: safeStartSec,
+      durationSec: safeDurationSec,
     }];
   });
+  const narrationRanges = audioMaterialsWithStart.map(({ startSec, durationSec }) => ({
+    startSec,
+    endSec: startSec + durationSec,
+  }));
+
+  // [FIX #1037] CapCut은 비디오 세그먼트만으로는 원본 오디오를 복원하지 못하는 케이스가 있어
+  // 나레이션이 없는 구간에 한해 source video를 다시 참조하는 별도 audio track을 유지한다.
+  const allSourceAudioMaterials = hasAudioTrack
+    ? sourceVideoMaterials.map((svm) => ({
+      id: uuid(),
+      videoMaterialId: svm.materialId,
+      fileName: svm.fileName,
+      sourceIndex: svm.sourceIndex,
+    }))
+    : [];
+  const sourceAudioSegmentsWithSource = hasAudioTrack
+    ? timings.flatMap((t, ti) => {
+      const srcAudio = allSourceAudioMaterials.find((sa) => sa.sourceIndex === t.sourceIndex) || allSourceAudioMaterials[0];
+      if (!srcAudio) return [];
+      return getAvailableTimeRanges(t.tlStartSec, t.tlEndSec, narrationRanges).map((range) => {
+        const rangeDurationSec = range.endSec - range.startSec;
+        const rangeOffsetSec = range.startSec - t.tlStartSec;
+        return {
+          fileName: srcAudio.fileName,
+          materialId: srcAudio.id,
+          segment: buildCapCutSegmentShell({
+            clip: { alpha: 1.0, flip: { horizontal: false, vertical: false }, rotation: 0.0, scale: { x: 1.0, y: 1.0 }, transform: { x: 0.0, y: 0.0 } },
+            commonKeyframes: emptyArr,
+            enableAdjust: false,
+            extraMaterialRefs: emptyArr,
+            materialId: srcAudio.id,
+            renderIndex: 0,
+            sourceDurationUs: toUs(rangeDurationSec),
+            sourceStartUs: toUs(t.startSec + rangeOffsetSec),
+            speed: nsTimings[ti]?.autoSpeedFactor ?? 1.0,
+            targetDurationUs: toUs(rangeDurationSec),
+            targetStartUs: toUs(range.startSec),
+            trackRenderIndex: 0,
+          }),
+        };
+      });
+    })
+    : [];
+  const activeSourceAudioMaterialIds = new Set(sourceAudioSegmentsWithSource.map(({ materialId }) => materialId));
+  const sourceAudioMaterials = allSourceAudioMaterials.filter((material) => activeSourceAudioMaterialIds.has(material.id));
+  const sourceAudioSegments = sourceAudioSegmentsWithSource.map(({ segment }) => segment);
+  const trackSourceAudioId = uuid();
+
   const audioMaterials = audioMaterialsWithStart.map(({ id, fileName, dur }) => ({ id, fileName, dur }));
   const audioSegments = audioMaterialsWithStart.map((audioMaterial) => buildCapCutSegmentShell({
     clip: { alpha: 1.0, flip: { horizontal: false, vertical: false }, rotation: 0.0, scale: { x: 1.0, y: 1.0 }, transform: { x: 0.0, y: 0.0 } },
@@ -4293,10 +4459,15 @@ export function generateCapCutDraftJson(params: {
   const trackTextId = uuid();
   const trackAudioId = uuid();
   const trackFxTextId = uuid();
+  const sourceFileNameByIndex = new Map(sourceVideoMaterials.map((material) => [material.sourceIndex, material.fileName]));
   const keyValueEntries = [
-    ...videoSegments.map((segment) => ({
+    ...videoSegments.map((segment, index) => ({
       segmentId: String(segment['id'] || ''),
-      materialName: videoFileName,
+      materialName: sourceFileNameByIndex.get(timings[index]?.sourceIndex) || videoFileName,
+    })).filter((entry) => entry.materialName),
+    ...sourceAudioSegmentsWithSource.map(({ fileName, segment }) => ({
+      segmentId: String(segment['id'] || ''),
+      materialName: fileName,
     })),
     ...audioSegments.map((segment, index) => ({
       segmentId: String(segment['id'] || ''),
@@ -4376,134 +4547,20 @@ export function generateCapCutDraftJson(params: {
     materials: {
       ...buildCapCutEmptyMaterialBuckets(),
       audios: [
-        // [FIX] 소스 영상 오디오 material — 원본 영상에서 추출된 오디오
-        ...sourceAudioMaterials.map((sa) => ({
-        ai_music_enter_from: '',
-        ai_music_generate_scene: 0,
-        ai_music_type: 0,
-        aigc_history_id: '',
-        aigc_item_id: '',
-        app_id: 0,
-        category_id: '',
-        category_name: 'local',
-        check_flag: 1,
-        cloned_model_type: '',
-        copyright_limit_type: 'none',
-        duration: srcDurUs,
-        effect_id: '',
-        formula_id: '',
-        id: sa.id,
-        intensifies_path: '',
-        is_ai_clone_tone: false,
-        is_ai_clone_tone_post: false,
-        is_text_edit_overdub: false,
-        is_ugc: false,
-        local_material_id: '',
-        lyric_type: 0,
-        mock_tone_speaker: '',
-        moyin_emotion: '',
-        music_id: '',
-        name: sa.fileName,
-        path: buildCapCutContainedMaterialPath(scaffoldIds.draftFolderId, 'video', sa.fileName),
-        pgc_id: '',
-        pgc_name: '',
-        query: '',
-        request_id: '',
-        resource_id: '',
-        search_id: '',
-        similiar_music_info: { original_song_id: '', original_song_name: '' },
-        sound_separate_type: '',
-        source_from: '',
-        source_platform: 0,
-        team_id: '',
-        text_id: '',
-        third_resource_id: '',
-        tone_category_id: '',
-        tone_category_name: '',
-        tone_effect_id: '',
-        tone_effect_name: '',
-        tone_emotion_name_key: '',
-        tone_emotion_role: '',
-        tone_emotion_scale: 0.0,
-        tone_emotion_selection: '',
-        tone_emotion_style: '',
-        tone_platform: '',
-        tone_second_category_id: '',
-        tone_second_category_name: '',
-        tone_speaker: '',
-        tone_type: '',
-        tts_benefit_info: { benefit_amount: -1, benefit_log_extra: '', benefit_log_id: '', benefit_type: 'none' },
-        tts_generate_scene: '',
-        tts_task_id: '',
-        type: 'extract_music',
-        unique_id: '',
-        video_id: '',
-        wave_points: [],
-      })),
-        // 나레이션 오디오 material
-        ...audioMaterials.map((material) => ({
-        ai_music_enter_from: '',
-        ai_music_generate_scene: 0,
-        ai_music_type: 0,
-        aigc_history_id: '',
-        aigc_item_id: '',
-        app_id: 0,
-        category_id: '',
-        category_name: 'local',
-        check_flag: 1,
-        cloned_model_type: '',
-        copyright_limit_type: 'none',
-        duration: material.dur,
-        effect_id: '',
-        formula_id: '',
-        id: material.id,
-        intensifies_path: '',
-        is_ai_clone_tone: false,
-        is_ai_clone_tone_post: false,
-        is_text_edit_overdub: false,
-        is_ugc: false,
-        local_material_id: '',
-        lyric_type: 0,
-        mock_tone_speaker: '',
-        moyin_emotion: '',
-        music_id: '',
-        name: material.fileName,
-        path: buildCapCutContainedMaterialPath(scaffoldIds.draftFolderId, 'audio', material.fileName),
-        pgc_id: '',
-        pgc_name: '',
-        query: '',
-        request_id: '',
-        resource_id: '',
-        search_id: '',
-        similiar_music_info: { original_song_id: '', original_song_name: '' },
-        sound_separate_type: '',
-        source_from: '',
-        source_platform: 0,
-        team_id: '',
-        text_id: '',
-        third_resource_id: '',
-        tone_category_id: '',
-        tone_category_name: '',
-        tone_effect_id: '',
-        tone_effect_name: '',
-        tone_emotion_name_key: '',
-        tone_emotion_role: '',
-        tone_emotion_scale: 0.0,
-        tone_emotion_selection: '',
-        tone_emotion_style: '',
-        tone_platform: '',
-        tone_second_category_id: '',
-        tone_second_category_name: '',
-        tone_speaker: '',
-        tone_type: '',
-        tts_benefit_info: { benefit_amount: -1, benefit_log_extra: '', benefit_log_id: '', benefit_type: 'none' },
-        tts_generate_scene: '',
-        tts_task_id: '',
-        type: 'extract_music',
-        unique_id: '',
-        video_id: '',
-        wave_points: [],
-      }))],
+        ...sourceAudioMaterials.map((sa) => buildCapCutAudioMaterial({
+          id: sa.id,
+          duration: srcDurUs,
+          fileName: sa.fileName,
+          path: buildCapCutContainedMaterialPath(scaffoldIds.draftFolderId, 'video', sa.fileName),
+          videoId: sa.videoMaterialId,
+        })),
+        ...audioMaterials.map((material) => buildCapCutAudioMaterial({
+          id: material.id,
+          duration: material.dur,
+          fileName: material.fileName,
+          path: buildCapCutContainedMaterialPath(scaffoldIds.draftFolderId, 'audio', material.fileName),
+        })),
+      ],
       canvases: [buildCapCutCanvasMaterial(canvasId)],
       material_animations: [buildCapCutMaterialAnimation(uuid())],
       speeds: [{
@@ -4522,7 +4579,9 @@ export function generateCapCutDraftJson(params: {
       video_effects: emptyArr,
       video_trackings: emptyArr,
       // [FIX #891/#892] 소스별 비디오 머티리얼 생성 — 다중 영상 소스 지원
-      videos: sourceVideoMaterials.map(svm => ({
+      videos: sourceVideoMaterials.map((svm) => {
+        const containedPath = buildCapCutContainedMaterialPath(scaffoldIds.draftFolderId, 'video', svm.fileName);
+        return {
         aigc_history_id: '',
         aigc_item_id: '',
         aigc_type: 'none',
@@ -4550,7 +4609,7 @@ export function generateCapCutDraftJson(params: {
         extra_type_option: 0,
         formula_id: '',
         freeze: null,
-        has_audio: true,
+        has_audio: hasAudioTrack,
         has_sound_separated: false,
         height,
         id: svm.materialId,
@@ -4581,12 +4640,12 @@ export function generateCapCutDraftJson(params: {
           reverse: false,
           strokes: [],
         },
-        media_path: '',
+        media_path: containedPath,
         music_id: '',
         multi_camera_info: null,
         object_locked: null,
         origin_material_id: '',
-        path: buildCapCutContainedMaterialPath(scaffoldIds.draftFolderId, 'video', svm.fileName),
+        path: containedPath,
         picture_from: 'none',
         picture_set_category_id: '',
         picture_set_category_name: '',
@@ -4643,7 +4702,8 @@ export function generateCapCutDraftJson(params: {
           vertical_shift: 0.0,
         },
         width,
-      })),
+      };
+      }),
     },
     mutable_config: null,
     name: '',
@@ -4956,7 +5016,19 @@ export async function buildNlePackageZip(params: {
 
     // draft JSON (프로젝트 폴더 복사 방식)
     // [FIX #891/#892] 추가 소스 영상 파일명 전달
-    const draftResult = generateCapCutDraftJson({ scenes, title, videoFileName: videoFileName || 'video.mp4', preset, width, height, fps, videoDurationSec, narrationLines: packagedNarrationLines, additionalVideoFileNames: additionalVideoBlobs.map(b => b.fileName) });
+    const draftResult = generateCapCutDraftJson({
+      scenes,
+      title,
+      videoFileName: videoFileName || 'video.mp4',
+      preset,
+      width,
+      height,
+      fps,
+      videoDurationSec,
+      hasAudioTrack: hasAudioTrack !== false,
+      narrationLines: packagedNarrationLines,
+      additionalVideoFileNames: additionalVideoBlobs.map((b) => b.fileName),
+    });
     const draftContent = JSON.parse(draftResult.json);
     const pId = draftResult.scaffoldIds.draftFolderId;
     const nowTs = Math.floor(Date.now() / 1000);
@@ -5173,7 +5245,7 @@ export async function buildNlePackageZip(params: {
     ].filter(Boolean).join('\n'));
   }
 
-  return zip.generateAsync({ type: 'blob', compression: 'STORE' });
+  return zip.generateAsync({ type: 'blob', compression: 'STORE', streamFiles: true });
 }
 
 // ──────────────────────────────────────────────
@@ -6458,6 +6530,7 @@ export async function buildEditRoomNleZip(params: {
     const emptyArr: never[] = [];
     const platformInfo = buildCapCutPlatformInfo(detectCapCutDesktopPlatform());
     const trackVideoId = uuid();
+    const trackSourceAudioId = uuid();
     const trackTextId = uuid();
     const trackAudioId = uuid();
 
@@ -6473,6 +6546,7 @@ export async function buildEditRoomNleZip(params: {
 
     // ── 미디어 머티리얼: 장면별 이미지/영상 (Map으로 인덱스 보존 — 미디어 누락 시 밀림 방지) ──
     const videoMaterialMap = new Map<number, { id: string; path: string; dur: number; isPhoto: boolean }>();
+    const sourceAudioMaterialMap = new Map<string, { id: string; path: string; dur: number; videoMaterialId: string }>();
     const audioMaterialsWithStart: Array<{ id: string; path: string; dur: number; start: number }> = [];
 
     for (let i = 0; i < timeline.length; i++) {
@@ -6488,6 +6562,17 @@ export async function buildEditRoomNleZip(params: {
     }
 
     const videoMaterials = [...videoMaterialMap.values()];
+    videoMaterials
+      .filter((material) => !material.isPhoto)
+      .forEach((material) => {
+        sourceAudioMaterialMap.set(material.path, {
+          id: uuid(),
+          path: material.path,
+          dur: material.dur,
+          videoMaterialId: material.id,
+        });
+      });
+    const allSourceAudioMaterials = [...sourceAudioMaterialMap.values()];
     for (const clip of narrationClips) {
       audioMaterialsWithStart.push({
         id: uuid(),
@@ -6497,6 +6582,10 @@ export async function buildEditRoomNleZip(params: {
       });
     }
     const audioMaterials = audioMaterialsWithStart.map(({ id, path, dur }) => ({ id, path, dur }));
+    const narrationRanges = narrationClips.map((clip) => ({
+      startSec: clip.startSec,
+      endSec: clip.startSec + clip.durationSec,
+    }));
 
     // ── 비디오 세그먼트 (메인 트랙) — Map lookup으로 정확한 인덱스 매칭 ──
     const rawVideoSegments: Array<Record<string, unknown> | null> = timeline.map((t, i) => {
@@ -6524,6 +6613,37 @@ export async function buildEditRoomNleZip(params: {
       };
     }).filter(Boolean) as Array<Record<string, unknown>>;
     const videoSegments = rawVideoSegments;
+    const sourceAudioSegmentsWithPath = timeline.flatMap((t, i) => {
+      const mat = videoMaterialMap.get(i);
+      if (!mat || mat.isPhoto) return [];
+      const sourceAudioMaterial = sourceAudioMaterialMap.get(mat.path);
+      if (!sourceAudioMaterial) return [];
+      return getAvailableTimeRanges(t.imageStartTime, t.imageEndTime, narrationRanges).map((range) => {
+        const rangeDurationSec = range.endSec - range.startSec;
+        const rangeOffsetSec = range.startSec - t.imageStartTime;
+        return {
+          materialId: sourceAudioMaterial.id,
+          path: mat.path,
+          segment: buildCapCutSegmentShell({
+            clip: { alpha: 1.0, flip: { horizontal: false, vertical: false }, rotation: 0.0, scale: { x: 1.0, y: 1.0 }, transform: { x: 0.0, y: 0.0 } },
+            commonKeyframes: emptyArr,
+            enableAdjust: false,
+            extraMaterialRefs: emptyArr,
+            materialId: sourceAudioMaterial.id,
+            renderIndex: 0,
+            sourceDurationUs: toUs(rangeDurationSec),
+            sourceStartUs: toUs(rangeOffsetSec),
+            speed: 1.0,
+            targetDurationUs: toUs(rangeDurationSec),
+            targetStartUs: toUs(range.startSec),
+            trackRenderIndex: 0,
+          }),
+        };
+      });
+    });
+    const activeSourceAudioMaterialIds = new Set(sourceAudioSegmentsWithPath.map(({ materialId }) => materialId));
+    const sourceAudioMaterials = allSourceAudioMaterials.filter((material) => activeSourceAudioMaterialIds.has(material.id));
+    const sourceAudioSegments = sourceAudioSegmentsWithPath.map(({ segment }) => segment);
 
     // ── 텍스트 머티리얼 + 세그먼트 (자막 트랙) ──
     const textMaterials: { id: string; text: string; start: number; dur: number }[] = [];
@@ -6594,6 +6714,10 @@ export async function buildEditRoomNleZip(params: {
         segmentId: String(segment['id'] || ''),
         materialName: videoMaterials[index]?.path || '',
       })).filter((entry) => entry.materialName),
+      ...sourceAudioSegmentsWithPath.map(({ path, segment }) => ({
+        segmentId: String(segment['id'] || ''),
+        materialName: path,
+      })).filter((entry) => entry.materialName),
       ...audioSegments.map((segment, index) => ({
         segmentId: String(segment['id'] || ''),
         materialName: audioMaterials[index]?.path || '',
@@ -6654,69 +6778,21 @@ export async function buildEditRoomNleZip(params: {
       lyrics_effects: emptyArr,
       materials: {
         ...buildCapCutEmptyMaterialBuckets(),
-        audios: audioMaterials.map(m => ({
-          ai_music_enter_from: '',
-          ai_music_generate_scene: 0,
-          ai_music_type: 0,
-          aigc_history_id: '',
-          aigc_item_id: '',
-          app_id: 0,
-          category_id: '',
-          category_name: 'local',
-          check_flag: 1,
-          cloned_model_type: '',
-          copyright_limit_type: 'none',
-          duration: m.dur,
-          effect_id: '',
-          formula_id: '',
-          id: m.id,
-          intensifies_path: '',
-          is_ai_clone_tone: false,
-          is_ai_clone_tone_post: false,
-          is_text_edit_overdub: false,
-          is_ugc: false,
-          local_material_id: '',
-          lyric_type: 0,
-          mock_tone_speaker: '',
-          moyin_emotion: '',
-          music_id: '',
-          name: m.path.split('/').pop() || '',
-          path: buildCapCutContainedMaterialPath(projectId, 'audio', m.path.split('/').pop() || ''),
-          pgc_id: '',
-          pgc_name: '',
-          query: '',
-          request_id: '',
-          resource_id: '',
-          search_id: '',
-          similiar_music_info: { original_song_id: '', original_song_name: '' },
-          sound_separate_type: '',
-          source_from: '',
-          source_platform: 0,
-          team_id: '',
-          text_id: '',
-          third_resource_id: '',
-          tone_category_id: '',
-          tone_category_name: '',
-          tone_effect_id: '',
-          tone_effect_name: '',
-          tone_emotion_name_key: '',
-          tone_emotion_role: '',
-          tone_emotion_scale: 0.0,
-          tone_emotion_selection: '',
-          tone_emotion_style: '',
-          tone_platform: '',
-          tone_second_category_id: '',
-          tone_second_category_name: '',
-          tone_speaker: '',
-          tone_type: '',
-          tts_benefit_info: { benefit_amount: -1, benefit_log_extra: '', benefit_log_id: '', benefit_type: 'none' },
-          tts_generate_scene: '',
-          tts_task_id: '',
-          type: 'extract_music',
-          unique_id: '',
-          video_id: '',
-          wave_points: [],
-        })),
+        audios: [
+          ...sourceAudioMaterials.map((material) => buildCapCutAudioMaterial({
+            id: material.id,
+            duration: material.dur,
+            fileName: material.path.split('/').pop() || '',
+            path: buildCapCutContainedMaterialPath(projectId, 'video', material.path.split('/').pop() || ''),
+            videoId: material.videoMaterialId,
+          })),
+          ...audioMaterials.map((material) => buildCapCutAudioMaterial({
+            id: material.id,
+            duration: material.dur,
+            fileName: material.path.split('/').pop() || '',
+            path: buildCapCutContainedMaterialPath(projectId, 'audio', material.path.split('/').pop() || ''),
+          })),
+        ],
         canvases: [buildCapCutCanvasMaterial(canvasId)],
         drafts: emptyArr,
         effects: emptyArr,
@@ -6736,7 +6812,9 @@ export async function buildEditRoomNleZip(params: {
         stickers: emptyArr, tail_animations: emptyArr, text_templates: emptyArr,
         texts: textObjects,
         transitions: emptyArr, video_effects: emptyArr, video_trackings: emptyArr,
-        videos: videoMaterials.map(m => ({
+        videos: videoMaterials.map((m) => {
+          const containedPath = buildCapCutContainedMaterialPath(projectId, m.isPhoto ? 'image' : 'video', m.path.split('/').pop() || '');
+          return {
           aigc_history_id: '',
           aigc_item_id: '',
           aigc_type: 'none',
@@ -6782,12 +6860,12 @@ export async function buildEditRoomNleZip(params: {
             reverse: false,
             strokes: [],
           },
-          media_path: '',
+          media_path: containedPath,
           music_id: '',
           multi_camera_info: null,
           object_locked: null,
           origin_material_id: '',
-          path: buildCapCutContainedMaterialPath(projectId, m.isPhoto ? 'image' : 'video', m.path.split('/').pop() || ''),
+          path: containedPath,
           picture_from: m.isPhoto ? 'default' : 'none',
           picture_set_category_id: '',
           picture_set_category_name: '',
@@ -6844,7 +6922,8 @@ export async function buildEditRoomNleZip(params: {
             vertical_shift: 0.0,
           },
           width: w,
-        })),
+        };
+        }),
       },
       mutable_config: null,
       name: '',
@@ -6860,6 +6939,7 @@ export async function buildEditRoomNleZip(params: {
       time_marks: null,
       tracks: [
         { attribute: 0, flag: 0, id: trackVideoId, is_default_name: true, name: '', segments: videoSegments, type: 'video' },
+        ...(sourceAudioSegments.length > 0 ? [{ attribute: 0, flag: 0, id: trackSourceAudioId, is_default_name: true, name: '', segments: sourceAudioSegments, type: 'audio' }] : []),
         ...(textSegments.length > 0 ? [{ attribute: 0, flag: 0, id: trackTextId, is_default_name: true, name: '', segments: textSegments, type: 'text' }] : []),
         ...(audioSegments.length > 0 ? [{ attribute: 0, flag: 0, id: trackAudioId, is_default_name: true, name: '', segments: audioSegments, type: 'audio' }] : []),
       ],
@@ -6871,7 +6951,7 @@ export async function buildEditRoomNleZip(params: {
     const draftJson = JSON.stringify(draft);
     const editNowTs = Math.floor(Date.now() / 1000);
     const editNowUs = Date.now() * 1000;
-    const draftTimelineMaterialsSize = videoMaterials.length + textObjects.length + audioMaterials.length;
+    const draftTimelineMaterialsSize = videoMaterials.length + textObjects.length + sourceAudioMaterials.length + audioMaterials.length;
     const draftCoverBlob = await buildCapCutDraftCoverBlob(w, h);
     const attachmentPcTimelineJson = buildCapCutAttachmentPcTimeline();
     const attachmentScriptVideoJson = buildCapCutAttachmentScriptVideo();
@@ -6900,7 +6980,12 @@ export async function buildEditRoomNleZip(params: {
     zip.file(`${projectId}/timeline_layout.json`, buildCapCutTimelineLayout(scaffoldIds.timelineId));
     zip.file(`${projectId}/draft_virtual_store.json`, buildCapCutDraftVirtualStore());
     zip.file(`${projectId}/key_value.json`, buildCapCutKeyValue(keyValueEntries));
-    zip.file(`${projectId}/draft_biz_config.json`, buildCapCutDraftBizConfig(scaffoldIds.timelineId, [trackVideoId, ...(textSegments.length > 0 ? [trackTextId] : []), ...(audioSegments.length > 0 ? [trackAudioId] : [])]));
+    zip.file(`${projectId}/draft_biz_config.json`, buildCapCutDraftBizConfig(scaffoldIds.timelineId, [
+      trackVideoId,
+      ...(sourceAudioSegments.length > 0 ? [trackSourceAudioId] : []),
+      ...(textSegments.length > 0 ? [trackTextId] : []),
+      ...(audioSegments.length > 0 ? [trackAudioId] : []),
+    ]));
     zip.file(`${projectId}/draft_agency_config.json`, buildCapCutDraftAgencyConfig());
     zip.file(`${projectId}/performance_opt_info.json`, buildCapCutPerformanceOptInfo());
     zip.file(`${projectId}/draft.extra`, draftExtra);
@@ -7029,6 +7114,6 @@ export async function buildEditRoomNleZip(params: {
     ].filter(Boolean).join('\n'));
   }
 
-  const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+  const blob = await zip.generateAsync({ type: 'blob', compression: 'STORE', streamFiles: true });
   return { blob, videoCount, imageCount, totalScenes: timeline.length };
 }

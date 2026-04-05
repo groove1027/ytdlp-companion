@@ -34,6 +34,9 @@ interface NleMotionCompileOptions {
 const DEFAULT_SAMPLE_POINTS_PER_SEC = 10;
 const FILTER_PRESETS = new Set(['vintage', 'noir']);
 const FILTER_MOTION_EFFECTS = new Set(['film', 'sepia', 'high-contrast', 'multi-bright', 'rain', 'vintage-style']);
+const NLE_SAFE_SCALE_MIN = 0.94;
+// 단일 기본 프리셋의 최대 줌(1.18)은 그대로 보존하고, 그보다 큰 중첩 줌만 제한한다.
+const NLE_SAFE_SCALE_MAX = 1.18;
 
 const OPACITY_ANIMS: Record<string, ScalarAnimDef> = {
   fade: {
@@ -66,7 +69,9 @@ export function compileNleMotionTrack(
   const anchorY = timing.anchorY ?? 45;
   const samples = sampleTimes.map((timeSec) => {
     const rawTransform = computeCombinedTransform(timing, timeSec, totalFrames, canvasW, canvasH, fps);
-    const centeredTransform = toCenterEquivalentTransform(rawTransform, canvasW, canvasH, anchorX, anchorY);
+    // scale을 제한한 뒤 같은 값으로 translate를 계산해야 anchor 기준 초점이 틀어지지 않는다.
+    const safeTransform = { ...rawTransform, scale: clampNleScale(rawTransform.scale) };
+    const centeredTransform = toCenterEquivalentTransform(safeTransform, canvasW, canvasH, anchorX, anchorY);
     return {
       timeSec,
       translateX: centeredTransform.translateX,
@@ -298,6 +303,11 @@ function easeInOut(t: number): number {
   return t < 0.5
     ? 2 * t * t
     : 1 - Math.pow(-2 * t + 2, 2) / 2;
+}
+
+function clampNleScale(scale: number): number {
+  if (!Number.isFinite(scale)) return 1;
+  return Math.min(NLE_SAFE_SCALE_MAX, Math.max(NLE_SAFE_SCALE_MIN, scale));
 }
 
 function interpolateScalarFrames(frames: ScalarFrame[], t: number): number {

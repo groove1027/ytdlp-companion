@@ -2071,6 +2071,20 @@ function downloadFile(content: string, filename: string, mime: string) {
   setTimeout(() => { logger.unregisterBlobUrl(url); URL.revokeObjectURL(url); }, 5000);
 }
 
+function downloadBlobFile(blob: Blob, filename: string, sourceLabel: string) {
+  const url = URL.createObjectURL(blob);
+  logger.registerBlobUrl(url, 'other', sourceLabel, blob.size / (1024 * 1024));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.rel = 'noopener';
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => { logger.unregisterBlobUrl(url); URL.revokeObjectURL(url); }, 60000);
+}
+
 /** 소스 영상 Blob에서 지정 구간들의 오디오를 추출 → 단일 AudioBuffer로 합성 */
 async function extractAudioSegments(
   videoBlob: Blob,
@@ -6577,10 +6591,11 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                       const zipBlob = await buildNlePackageZip({ target, scenes: v.scenes, title: v.title, videoBlob, videoFileName: fileName, preset: selectedPreset || undefined, width: dims.w, height: dims.h, fps: dims.fps, videoDurationSec: dims.dur, hasAudioTrack: audioConfirmed, narrationLines, additionalVideoBlobs });
                                       if (isCancelled()) return;
                                       const downloadFileName = `${sanitizeProjectName(v.title, 30)}_${label}.zip`;
+                                      const shouldBypassZipReparse = zipBlob.size >= 250 * 1024 * 1024;
 
                                       // [FIX #906] 1순위: 컴패니언 앱으로 직접 설치 (경로 패치 자동 처리 — "비정상경로" 방지)
                                       // VREW는 컴패니언 NLE 설치 미지원 (SRT만 필요하므로 ZIP이 적절)
-                                      if (target !== 'vrew') {
+                                      if (target !== 'vrew' && !shouldBypassZipReparse) {
                                         try {
                                           const ping = await fetch('http://127.0.0.1:9876/health', { signal: AbortSignal.timeout(3000) });
                                           if (!ping.ok) throw new Error('companion unavailable');
@@ -6614,7 +6629,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                       }
 
                                       // 2순위: CapCut 직접 설치 (File System API — HTTPS + Chrome/Edge 전용)
-                                      if (target === 'capcut' && directInstallSelection) {
+                                      if (target === 'capcut' && directInstallSelection && !shouldBypassZipReparse) {
                                         try {
                                           await installCapCutZipToDirectory({
                                             zipBlob,
@@ -6627,12 +6642,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                             : 'CapCut 프로젝트를 설치 완료! 원본 오디오는 대부분 자동 포함되어 있지만, CapCut에서 한 번 확인해주세요.', 5000);
                                           return;
                                         } catch (installError) {
-                                          const fallbackUrl = URL.createObjectURL(zipBlob);
-                                          const fallbackLink = document.createElement('a');
-                                          fallbackLink.href = fallbackUrl;
-                                          fallbackLink.download = downloadFileName;
-                                          fallbackLink.click();
-                                          setTimeout(() => URL.revokeObjectURL(fallbackUrl), 10000);
+                                          downloadBlobFile(zipBlob, downloadFileName, 'VideoAnalysisRoom:nleFallbackDownload');
                                           if (isCancelled()) return;
                                           showToast(`CapCut 직접 설치에 실패해 ZIP으로 전환했습니다. ${getCapCutManualInstallHint()} (${installError instanceof Error ? installError.message : '알 수 없는 오류'})`, 8000);
                                           return;
@@ -6640,13 +6650,13 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                       }
 
                                       // 3순위: ZIP 파일 다운로드 (수동 설치)
-                                      const url = URL.createObjectURL(zipBlob);
-                                      const a = document.createElement('a'); a.href = url; a.download = downloadFileName; a.click();
-                                      setTimeout(() => URL.revokeObjectURL(url), 10000);
+                                      downloadBlobFile(zipBlob, downloadFileName, 'VideoAnalysisRoom:nleZipDownload');
                                       // [FIX #370] 오디오 누락 경고 — 오디오 없이 NLE 내보내기 시 사용자에게 안내
                                       if (isCancelled()) return;
                                       showToast(target === 'capcut'
-                                        ? `CapCut ZIP 다운로드 완료! ${getCapCutManualInstallHint()}`
+                                        ? shouldBypassZipReparse
+                                          ? `대용량 CapCut ZIP 다운로드 완료! ${getCapCutManualInstallHint()}`
+                                          : `CapCut ZIP 다운로드 완료! ${getCapCutManualInstallHint()}`
                                         : target === 'premiere'
                                           ? !audioConfirmed
                                             ? 'Premiere ZIP 다운로드 완료! 압축 해제 후 .prproj를 먼저 열어 subtitle track이 이미 올라와 있는지 확인하세요. 원본 오디오는 Premiere에서 한 번 확인해주세요.'
