@@ -20,7 +20,7 @@ const NarrationCreditBar: React.FC<NarrationCreditBarProps> = ({
 }) => {
   const elapsed = useElapsedTimer(isGenerating);
   const ttsEngine = useSoundStudioStore((s) => s.ttsEngine);
-  const isFreeEngine = ttsEngine === 'supertonic' || ttsEngine === 'qwen3';
+  const isFreeEngine = ttsEngine === 'supertonic' || ttsEngine === 'edge';
   const totalChars = lines.reduce((sum, l) => sum + l.text.length, 0);
   const estimatedCredits = isFreeEngine ? 0 : totalChars * 2;
   const doneCount = lines.filter((l) => l.ttsStatus === 'done').length;

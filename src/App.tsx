@@ -11,6 +11,7 @@ import DebugConsole from './components/DebugConsole';
 import FeedbackModal from './components/FeedbackModal';
 import FeedbackHistoryPanel from './components/FeedbackHistoryPanel';
 import FeedbackNotificationBanner from './components/FeedbackNotificationBanner';
+import CompanionGateModal from './components/CompanionGateModal';
 import SmartErrorBanner from './components/SmartErrorBanner';
 import AnnouncementBanner from './components/AnnouncementBanner';
 import CostDashboard from './components/CostDashboard';
@@ -36,7 +37,7 @@ import { getGeminiKey } from './services/apiService';
 import { dataURLtoFile } from './utils/fileHelpers';
 import { splitVideoIntoSegments, getVideoDuration } from './utils/videoSegmentUtils';
 import { persistImage } from './services/imageStorageService';
-import { AuthUser } from './services/authService';
+import { recheckCompanion } from './services/ytdlpApiService';
 import AuthGate from './components/AuthGate';
 import AuthPromptModal from './components/AuthPromptModal';
 import ProfileModal from './components/ProfileModal';
@@ -191,13 +192,37 @@ const App: React.FC = () => {
   const authChecking = useAuthStore((s) => s.authChecking);
   const setAuthUser = useAuthStore((s) => s.setAuthUser);
   const showAuthGateModal = useUIStore((s) => s.showAuthGateModal);
+  const showCompanionGate = useUIStore((s) => s.showCompanionGate);
   const showTrialGuide = useUIStore((s) => s.showTrialGuide);
+  const setShowCompanionGate = useUIStore((s) => s.setShowCompanionGate);
 
   useEffect(() => {
     useAuthStore.getState().checkAuth().catch((e) => {
       logger.trackSwallowedError('App:checkAuth', e);
     });
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (authChecking) return;
+
+    const checkCompanion = async () => {
+      const detected = await recheckCompanion().catch(() => false);
+      if (!cancelled) {
+        setShowCompanionGate(!detected);
+      }
+    };
+
+    checkCompanion().catch((e) => {
+      logger.trackSwallowedError('App:checkCompanion', e);
+      if (!cancelled) setShowCompanionGate(true);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authChecking, setShowCompanionGate]);
 
   // --- Navigation Store (v4.5) ---
   const activeTab = useNavigationStore((s) => s.activeTab);
@@ -1574,6 +1599,8 @@ const App: React.FC = () => {
           </div>
         </div>
       )}
+
+      {showCompanionGate && <CompanionGateModal />}
     </div>
   );
 };

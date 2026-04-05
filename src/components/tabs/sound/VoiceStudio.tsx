@@ -20,7 +20,6 @@ import { generateElevenLabsDialogueTTS, ELEVENLABS_VOICES, ELEVENLABS_LANGUAGES,
 import { transcribeAudio, segmentsToScriptLines } from '../../../services/transcriptionService';
 import { isModelLoaded, isModelLoading, onLoadProgress } from '../../../services/supertonicService';
 import { getCachedPreview, cachePreview } from '../../../services/ttsPreviewCache';
-import CompanionBanner from '../../CompanionBanner';
 import { fetchTypecastVoices, clearTypecastVoiceCache, generateTypecastTTS, getKoreanUseCases, TYPECAST_LANGUAGES, TYPECAST_TOP_LANGUAGES } from '../../../services/typecastService';
 import { mergeAudioFiles } from '../../../services/ttsService';
 import type { TypecastVoice } from '../../../services/typecastService';
@@ -934,7 +933,7 @@ const VoiceStudio: React.FC = () => {
     }
     const skipLangFilter = browsedEngine === 'supertonic' || browsedEngine === ('edge' as TTSEngine);
     const voices = getAvailableVoices(browsedEngine, skipLangFilter ? undefined : browseLanguage);
-    // Qwen3: 커스텀 음성도 목록에 추가
+    // 커스텀 음성도 목록에 추가
     const allVoices = browsedEngine === ('edge' as TTSEngine)
       ? [...voices, ...customVoicesForBrowse]
       : voices;
@@ -1235,11 +1234,6 @@ const VoiceStudio: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {/* 컴패니언 — TTS + STT 안내 */}
-      <div className="flex gap-2 flex-wrap">
-        <CompanionBanner feature="tts" compact />
-        <CompanionBanner feature="stt" compact />
-      </div>
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">

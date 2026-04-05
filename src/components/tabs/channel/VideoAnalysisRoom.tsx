@@ -19,7 +19,6 @@ import { useAuthGuard } from '../../../hooks/useAuthGuard';
 import { getYoutubeApiKey, getKieKey, getGoogleGeminiKey, monitoredFetch } from '../../../services/apiService';
 import { getQuotaUsage, fetchTimedTranscriptForAnalysis } from '../../../services/youtubeAnalysisService';
 import { extractStreamUrl, isYtdlpServerConfigured, getSocialMetadata, downloadSocialVideo, fetchFramesFromServer } from '../../../services/ytdlpApiService';
-import CompanionBanner from '../../CompanionBanner';
 import { detectPlatform } from '../../../services/videoDownloadService';
 import { uploadMediaToHosting } from '../../../services/uploadService';
 import { detectSceneCuts, mergeWithAiTimecodes } from '../../../services/sceneDetection';
@@ -5721,8 +5720,6 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
         onDeleteSlot={removeSlot}
         hasCurrentResults={versions.length > 0 && !activeSlotId}
       />
-      {/* 컴패니언 앱 안내 배너 — 다운로드 */}
-      <CompanionBanner feature="download" />
 
       {/* ═══ 입력 ═══ */}
       <div className="bg-gray-800/50 rounded-xl border border-gray-700 p-6">
@@ -6159,18 +6156,19 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                       let downloadedSourceTitle = '';
                                       const sourceUrl = (youtubeUrl || validYoutubeUrls[0] || '').trim();
                                       const isYoutubeSource = !!sourceUrl && isYouTubeUrl(sourceUrl);
-                                      // [FIX #974] null(미검증)을 false로 간주하면 AudioStream이 비가역 삭제됨
-                                      // → Replace Footage해도 오디오 복구 불가. 미확인 시 true로 기본 설정.
-                                      // 오디오 없는 영상이면 Premiere에서 빈 오디오 트랙이 되지만 해롭지 않음.
-                                      let audioConfirmed = vaStore.videoBlobHasAudio ?? true;
+                                      // [FIX #1004] null(미검증)을 true로 간주하면 video-only blob을 CapCut/Premiere 원본으로 오판할 수 있다.
+                                      // → 미확인/null과 실제 true를 분리해, export 직전 재검증/재다운로드 여부를 정확히 판단한다.
+                                      let audioStatusKnown = vaStore.videoBlobHasAudio !== null;
+                                      let audioConfirmed = vaStore.videoBlobHasAudio === true;
 
                                       if (videoBlob && videoBlob.size <= 0) {
                                         videoBlob = null;
+                                        audioStatusKnown = true;
                                         audioConfirmed = false;
                                       }
 
-                                      // YouTube 소스인 경우 항상 오디오 포함 영상을 새로 다운로드 (분석용 blob은 video-only일 수 있음)
-                                      if (inputMode === 'youtube' && sourceUrl && isYoutubeSource && (!videoBlob || !audioConfirmed)) {
+                                      // YouTube 소스인 경우 오디오 상태가 미확인/null이거나 false면 원본을 다시 받아 video+audio 상태를 보장한다.
+                                      if (inputMode === 'youtube' && sourceUrl && isYoutubeSource && (!videoBlob || !audioStatusKnown || !audioConfirmed)) {
                                         if (isCancelled()) return;
                                         const vid = extractYouTubeVideoId(sourceUrl) || sourceUrl;
 
@@ -6260,6 +6258,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                               if (videoDl.blob.size > 0) {
                                                 videoBlob = videoDl.blob;
                                                 downloadedSourceTitle = downloadedSourceTitle || videoDl.info?.title || '';
+                                                audioStatusKnown = true;
                                                 audioConfirmed = true; // 컴패니언 머지 = 오디오 포함 보장
                                                 useVideoAnalysisStore.getState().setVideoBlob(videoDl.blob, true);
                                                 downloadSucceeded = true;
@@ -6287,12 +6286,15 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                                     setNleExporting(prev => prev ? { ...prev, step: `2/3 오디오 병합 중...` } : prev);
                                                     const { mergeVideoAudio } = await import('../../../services/webcodecs/videoDecoder');
                                                     finalBlob = await mergeVideoAudio(videoDl.blob, audioDlBlob);
+                                                    audioStatusKnown = true;
                                                     audioConfirmed = true;
                                                   } catch (mergeErr) {
                                                     console.warn('[NLE] 클라이언트 머지 실패, video-only 사용:', mergeErr);
+                                                    audioStatusKnown = true;
                                                     audioConfirmed = false;
                                                   }
                                                 } else {
+                                                  audioStatusKnown = true;
                                                   audioConfirmed = false;
                                                 }
                                                 videoBlob = finalBlob;
@@ -6314,15 +6316,16 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                           const fallbackBlob = useVideoAnalysisStore.getState().videoBlob;
                                           if (!videoBlob && fallbackBlob && fallbackBlob.size > 0) {
                                             videoBlob = fallbackBlob;
-                                            // [FIX #974] false 강제 → 기존 상태 유지. AudioStream 비가역 삭제 방지.
-                                            // 실제 오디오 유무는 store의 videoBlobHasAudio 값을 그대로 사용.
-                                            audioConfirmed = useVideoAnalysisStore.getState().videoBlobHasAudio ?? true;
-                                            console.info('[NLE] 기존 blob 폴백 사용 (audioConfirmed:', audioConfirmed, ')');
+                                            const fallbackAudioState = useVideoAnalysisStore.getState().videoBlobHasAudio;
+                                            audioStatusKnown = fallbackAudioState !== null;
+                                            audioConfirmed = fallbackAudioState === true;
+                                            console.info('[NLE] 기존 blob 폴백 사용 (audioKnown:', audioStatusKnown, 'audioConfirmed:', audioConfirmed, ')');
                                           }
                                         }
                                       } else if (!videoBlob) {
                                         if (uploadedFiles[0]) {
                                           videoBlob = uploadedFiles[0];
+                                          audioStatusKnown = true;
                                           audioConfirmed = true;
                                         } else if (inputMode === 'youtube' && sourceUrl) {
                                           if (isCancelled()) return;
@@ -6332,6 +6335,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                             if (dlResult.blob.size > 0) {
                                               videoBlob = dlResult.blob;
                                               downloadedSourceTitle = dlResult.title || '';
+                                              audioStatusKnown = true;
                                               audioConfirmed = dlResult.hasAudio;
                                               useVideoAnalysisStore.getState().setVideoBlob(dlResult.blob, dlResult.hasAudio);
                                             }
@@ -6412,11 +6416,12 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                         nleDimsCache.current = dims;
                                       }
                                       // [FIX #974] YouTube도 오디오 검증 대상에 포함 — null→true 기본값으로 인한 오판 방지
-                                      if (target === 'premiere' && videoBlob && audioConfirmed) {
+                                      if ((target === 'premiere' || target === 'capcut') && videoBlob && (!audioStatusKnown || audioConfirmed)) {
                                         setNleExporting({ target, step: '3/3 패키지 생성 중... (오디오 트랙 확인)', startedAt });
                                         const verifiedHasAudio = await verifyBlobHasAudio(videoBlob);
                                         if (isCancelled()) return;
-                                        if (verifiedHasAudio !== audioConfirmed) {
+                                        audioStatusKnown = true;
+                                        if (verifiedHasAudio !== audioConfirmed || useVideoAnalysisStore.getState().videoBlobHasAudio !== verifiedHasAudio) {
                                           audioConfirmed = verifiedHasAudio;
                                           useVideoAnalysisStore.getState().setVideoBlob(videoBlob, verifiedHasAudio);
                                         }

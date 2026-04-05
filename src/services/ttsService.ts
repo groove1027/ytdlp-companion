@@ -6,10 +6,67 @@ import { generateSpeech as generateSupertonicSpeech } from './supertonicService'
 import type { TTSEngine, TTSLanguage } from '../types';
 
 const COMPANION_URL = 'http://127.0.0.1:9876';
+const BASE64_ENCODE_CHUNK_BYTES = 3 * 4096;
 
 // === CONFIGURATION ===
 const KIE_BASE_URL = 'https://api.kie.ai/api/v1';
 const TTS_MAX_CHUNK_CHARS = 4500; // ElevenLabs 5000자 제한 대비 안전 마진
+
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+    const bytes = new Uint8Array(buffer);
+    const chunks: string[] = [];
+
+    for (let i = 0; i < bytes.length; i += BASE64_ENCODE_CHUNK_BYTES) {
+        const slice = bytes.subarray(i, Math.min(i + BASE64_ENCODE_CHUNK_BYTES, bytes.length));
+        let binary = '';
+        for (let j = 0; j < slice.length; j += 8192) {
+            binary += String.fromCharCode(...slice.subarray(j, Math.min(j + 8192, slice.length)));
+        }
+        chunks.push(btoa(binary));
+    }
+
+    return chunks.join('');
+}
+
+function estimateWavDuration(buffer: ArrayBuffer): number | undefined {
+    const view = new DataView(buffer);
+    if (view.byteLength < 12) return undefined;
+
+    const readAscii = (offset: number, length: number): string => {
+        let value = '';
+        for (let i = 0; i < length; i++) {
+            value += String.fromCharCode(view.getUint8(offset + i));
+        }
+        return value;
+    };
+
+    if (readAscii(0, 4) !== 'RIFF' || readAscii(8, 4) !== 'WAVE') {
+        return undefined;
+    }
+
+    let offset = 12;
+    let byteRate: number | undefined;
+    let dataSize: number | undefined;
+
+    while (offset + 8 <= view.byteLength) {
+        const chunkId = readAscii(offset, 4);
+        const chunkSize = view.getUint32(offset + 4, true);
+        const chunkDataStart = offset + 8;
+        if (chunkDataStart > view.byteLength) break;
+
+        const availableSize = Math.min(chunkSize, view.byteLength - chunkDataStart);
+        if (chunkId === 'fmt ' && availableSize >= 16) {
+            byteRate = view.getUint32(chunkDataStart + 8, true);
+        } else if (chunkId === 'data') {
+            dataSize = availableSize;
+        }
+
+        offset = chunkDataStart + availableSize + (chunkSize % 2);
+    }
+
+    if (!byteRate || byteRate <= 0 || !dataSize) return undefined;
+    return dataSize / byteRate;
+}
 
 // === SPEAKER TAG STRIPPING (FIX #228) ===
 
@@ -388,6 +445,7 @@ const generateElevenLabsSingleChunk = async (
 /** 컴패니언 음성 목록 캐시 */
 let _companionVoicesCache: CompanionVoiceInfo[] | null = null;
 let _companionVoicesCacheTime = 0;
+let _companionCosyvoiceAvailable = false;
 
 export interface CompanionVoiceInfo {
     id: string;
@@ -395,6 +453,26 @@ export interface CompanionVoiceInfo {
     language: string;
     gender: string;
     engine: 'edge' | 'cosyvoice';
+}
+
+const SUPERTONIC_COMPANION_EDGE_VOICE_MAP: Partial<Record<TTSLanguage, Partial<Record<'female' | 'male', string>>>> = {
+    ko: { female: 'ko-KR-SunHiNeural', male: 'ko-KR-InJoonNeural' },
+    en: { female: 'en-US-JennyNeural', male: 'en-US-GuyNeural' },
+    ja: { female: 'ja-JP-NanamiNeural', male: 'ja-JP-KeitaNeural' },
+    zh: { female: 'zh-CN-XiaoxiaoNeural', male: 'zh-CN-YunxiNeural' },
+    fr: { female: 'fr-FR-DeniseNeural', male: 'fr-FR-HenriNeural' },
+    de: { female: 'de-DE-KatjaNeural', male: 'de-DE-ConradNeural' },
+    es: { female: 'es-ES-ElviraNeural' },
+};
+
+function resolveSupertonicCompanionVoice(voiceId: string, language: TTSLanguage): string | null {
+    const gender = voiceId.startsWith('F')
+        ? 'female'
+        : voiceId.startsWith('M')
+            ? 'male'
+            : null;
+    if (!gender) return null;
+    return SUPERTONIC_COMPANION_EDGE_VOICE_MAP[language]?.[gender] ?? null;
 }
 
 /**
@@ -407,7 +485,7 @@ export async function getCompanionTTSVoices(): Promise<{ edge: CompanionVoiceInf
     // 5분 캐시
     if (_companionVoicesCache && (Date.now() - _companionVoicesCacheTime) < 300_000) {
         const edge = _companionVoicesCache.filter(v => v.engine === 'edge');
-        return { edge, cosyvoice_available: false };
+        return { edge, cosyvoice_available: _companionCosyvoiceAvailable };
     }
 
     try {
@@ -419,17 +497,18 @@ export async function getCompanionTTSVoices(): Promise<{ edge: CompanionVoiceInf
         const edge = (data.edge || []) as CompanionVoiceInfo[];
         _companionVoicesCache = [...edge];
         _companionVoicesCacheTime = Date.now();
-        return { edge, cosyvoice_available: data.cosyvoice_available || false };
+        _companionCosyvoiceAvailable = !!data.cosyvoice_available;
+        return { edge, cosyvoice_available: _companionCosyvoiceAvailable };
     } catch {
         return { edge: [], cosyvoice_available: false };
     }
 }
 
 /**
- * 컴패니언 TTS로 로컬 음성 합성 시도 (Qwen3/Kokoro 자동 선택)
- * @param engine "qwen3" | "kokoro" | "auto" — auto면 한국어→Qwen3, 나머지→Kokoro
- * @param voice 음성 ID (Sohee, af_heart 등)
- * @returns null이면 Supertonic 폴백 필요
+ * 컴패니언 TTS로 로컬 음성 합성 시도
+ * @param engine "edge" | "auto"
+ * @param voice 음성 ID
+ * @returns null이면 호출부에서 폴백 처리
  */
 async function tryCompanionTTS(
     text: string,
@@ -442,14 +521,14 @@ async function tryCompanionTTS(
     // connection refused면 catch에서 즉시 null 반환 (< 100ms)
 
     try {
-        const engineLabel = engine === 'qwen3' ? 'Qwen3' : engine === 'kokoro' ? 'Kokoro' : '자동';
+        const engineLabel = engine === 'edge' ? 'Edge' : '자동';
         logger.info(`[TTS] 컴패니언 ${engineLabel} TTS 시도`, { language, textLength: text.length, voice });
 
         const res = await fetch(`${COMPANION_URL}/api/tts`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ text, language, engine, voice }),
-            signal: AbortSignal.timeout(120_000), // Qwen3는 모델 로딩에 시간 필요
+            signal: AbortSignal.timeout(120_000), // 로컬 음성 모델 초기 로딩 시간 고려
         });
 
         if (!res.ok) return null;
@@ -458,16 +537,11 @@ async function tryCompanionTTS(
         if (wavBlob.size < 100) return null;
 
         const audioUrl = URL.createObjectURL(wavBlob);
-        // WAV 헤더에서 duration 추출 (44바이트 이후 PCM 데이터)
+        logger.registerBlobUrl(audioUrl, 'audio', 'ttsService:tryCompanionTTS');
         const buffer = await wavBlob.arrayBuffer();
-        const view = new DataView(buffer);
-        const sampleRate = view.getUint32(24, true);
-        const bitsPerSample = view.getUint16(34, true);
-        const channels = view.getUint16(22, true);
-        const dataSize = buffer.byteLength - 44;
-        const duration = dataSize / (sampleRate * (bitsPerSample / 8) * channels);
+        const duration = estimateWavDuration(buffer);
 
-        logger.success(`[TTS] 컴패니언 ${engineLabel} TTS 성공`, { duration: duration.toFixed(1) + 's', voice });
+        logger.success(`[TTS] 컴패니언 ${engineLabel} TTS 성공`, { duration: duration ? duration.toFixed(1) + 's' : 'unknown', voice });
         return { audioUrl, duration, format: 'wav' };
     } catch (e) {
         logger.warn('[TTS] 컴패니언 TTS 실패 — 폴백:', e instanceof Error ? e.message : '');
@@ -493,10 +567,6 @@ export const generateEdgeTTS = async (
     throw new Error('Edge TTS 생성 실패 — 컴패니언 앱이 실행 중인지 확인하세요.');
 };
 
-// 하위 호환: generateQwen3TTS → generateEdgeTTS 리다이렉트
-export const generateQwen3TTS = generateEdgeTTS;
-export const generateKokoroTTS = generateEdgeTTS;
-
 // ──────────────────────────────────────────────
 // Voice Cloning API (CosyVoice zero-shot)
 // ──────────────────────────────────────────────
@@ -504,7 +574,7 @@ export const generateKokoroTTS = generateEdgeTTS;
 export interface CustomVoice {
     id: string;
     name: string;
-    engine: 'qwen3-clone';
+    engine: 'cosyvoice-clone';
     language: string;
     gender: string;
     filePath?: string;
@@ -519,7 +589,32 @@ export async function getCustomVoices(): Promise<CustomVoice[]> {
         });
         if (!res.ok) return [];
         const data = await res.json();
-        return (data.voices || []) as CustomVoice[];
+        const voices = Array.isArray(data.voices) ? data.voices as Array<{
+            id?: string;
+            name?: string;
+            language?: string;
+            gender?: string;
+            filePath?: string;
+            fileSize?: number;
+        }> : [];
+        return voices
+            .filter((voice): voice is {
+                id: string;
+                name: string;
+                language?: string;
+                gender?: string;
+                filePath?: string;
+                fileSize?: number;
+            } => !!voice?.id && !!voice?.name)
+            .map((voice) => ({
+                id: voice.id,
+                name: voice.name,
+                engine: 'cosyvoice-clone' as const,
+                language: voice.language || 'ko',
+                gender: voice.gender || 'unknown',
+                filePath: voice.filePath,
+                fileSize: voice.fileSize,
+            }));
     } catch {
         return [];
     }
@@ -527,20 +622,15 @@ export async function getCustomVoices(): Promise<CustomVoice[]> {
 
 /** 참조 음성 저장 (녹음/업로드된 WAV → 컴패니언에 저장) */
 export async function saveCustomVoice(name: string, audioBlob: Blob): Promise<{ voiceId: string; name: string }> {
-    const buffer = await audioBlob.arrayBuffer();
-    // 대용량 안전: spread 대신 청크 방식 base64 인코딩
-    const bytes = new Uint8Array(buffer);
-    const chunks: string[] = [];
-    const CHUNK = 8192;
-    for (let i = 0; i < bytes.length; i += CHUNK) {
-        chunks.push(String.fromCharCode(...bytes.subarray(i, i + CHUNK)));
-    }
-    const base64 = btoa(chunks.join(''));
+    const trimmedName = name.trim();
+    if (!trimmedName) throw new Error('음성 이름을 입력해주세요.');
+
+    const base64 = arrayBufferToBase64(await audioBlob.arrayBuffer());
 
     const res = await fetch(`${COMPANION_URL}/api/tts/voices/custom/save`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, audio: base64 }),
+        body: JSON.stringify({ name: trimmedName, audio: base64 }),
         signal: AbortSignal.timeout(30_000),
     });
 
@@ -548,17 +638,22 @@ export async function saveCustomVoice(name: string, audioBlob: Blob): Promise<{ 
         const err = await res.json().catch(() => ({ error: 'unknown' }));
         throw new Error(err.error || '음성 저장 실패');
     }
-    return res.json();
+    const data = await res.json();
+    return { voiceId: data.voiceId, name: data.name || trimmedName };
 }
 
 /** 커스텀 음성 삭제 */
 export async function deleteCustomVoice(voiceId: string): Promise<void> {
-    await fetch(`${COMPANION_URL}/api/tts/voices/custom/delete`, {
+    const res = await fetch(`${COMPANION_URL}/api/tts/voices/custom/delete`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ voiceId }),
         signal: AbortSignal.timeout(5_000),
     });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'unknown' })) as { error?: string };
+        throw new Error(err.error || `음성 삭제 실패 (${res.status})`);
+    }
 }
 
 /** Voice Cloning TTS — 커스텀 음성으로 음성 합성 */
@@ -589,15 +684,11 @@ export const generateCloneTTS = async (
         if (wavBlob.size < 100) throw new Error('Voice Clone 출력이 비어있습니다.');
 
         const audioUrl = URL.createObjectURL(wavBlob);
+        logger.registerBlobUrl(audioUrl, 'audio', 'ttsService:generateCloneTTS');
         const buffer = await wavBlob.arrayBuffer();
-        const view = new DataView(buffer);
-        const sampleRate = view.getUint32(24, true);
-        const bitsPerSample = view.getUint16(34, true);
-        const channels = view.getUint16(22, true);
-        const dataSize = buffer.byteLength - 44;
-        const duration = dataSize / (sampleRate * (bitsPerSample / 8) * channels);
+        const duration = estimateWavDuration(buffer);
 
-        logger.success('[TTS] Voice Clone 성공', { duration: duration.toFixed(1) + 's', voiceId });
+        logger.success('[TTS] Voice Clone 성공', { duration: duration ? duration.toFixed(1) + 's' : 'unknown', voiceId });
         return { audioUrl, duration, format: 'wav' };
     } catch (e) {
         throw new Error(`Voice Clone 실패: ${e instanceof Error ? e.message : 'unknown'}`);
@@ -607,21 +698,33 @@ export const generateCloneTTS = async (
 /**
  * Supertonic 2 TTS 생성 (브라우저 로컬)
  * ONNX 런타임 기반 — API 키 불필요, 네트워크 비용 없음
- * [v4.8] 컴패니언 Kokoro TTS 우선 → Supertonic 폴백
+ * [v4.8] 컴패니언 Edge TTS를 언어/성별 매핑으로 우선 시도 → Supertonic 폴백
  */
 export const generateSupertonicTTS = async (
     text: string,
     voiceId: string,
     language: TTSLanguage = 'ko',
-    speed: number = 1.0
+    speed: number = 1.0,
+    silenceDuration: number = 0
 ): Promise<TTSResult> => {
     // [FIX #228] 화자/모드 태그 제거 후 TTS 생성
     const cleanText = stripSpeakerTags(text);
     if (!cleanText.trim()) throw new Error('TTS 텍스트가 비어있습니다.');
+    const clampedSilenceDuration = Math.max(0, silenceDuration);
 
-    // 1순위: 컴패니언 TTS — 한국어→Qwen3 우선, 나머지→Kokoro 우선 (자동 선택)
-    const companionResult = await tryCompanionTTS(cleanText, language, 'auto');
-    if (companionResult) return companionResult;
+    // 컴패니언 TTS는 현재 chunk 간 무음 길이를 제어하지 못하고,
+    // Supertonic voiceId도 1:1 대응이 없으므로 언어/성별 매핑이 가능한 경우에만 사용한다.
+    if (clampedSilenceDuration === 0) {
+        const companionVoiceId = resolveSupertonicCompanionVoice(voiceId, language);
+        if (companionVoiceId) {
+            const companionResult = await tryCompanionTTS(cleanText, language, 'edge', companionVoiceId);
+            if (companionResult) return companionResult;
+        } else {
+            logger.info('[TTS] 선택한 Supertonic 음성과 대응되는 컴패니언 음성이 없어 로컬 경로 유지', { voiceId, language });
+        }
+    } else {
+        logger.info('[TTS] silenceDuration 지정으로 컴패니언 TTS 건너뜀', { silenceDuration: clampedSilenceDuration });
+    }
 
     // 2순위: Supertonic 2 (브라우저 ONNX)
     logger.info('[TTS] Supertonic 2 생성 요청 (로컬)', { voiceId, language, textLength: cleanText.length, speed });
@@ -632,16 +735,16 @@ export const generateSupertonicTTS = async (
         'en': 'en',
         'ja': 'ko',
         'zh': 'en',
-        'es': 'en',
-        'fr': 'en',
+        'es': 'es',
+        'fr': 'fr',
         'de': 'en',
         'hi': 'en',
         'it': 'en',
-        'pt': 'en',
+        'pt': 'pt',
         'ru': 'en',
     };
 
-    const result = await generateSupertonicSpeech(cleanText, langMap[language] || 'ko', voiceId, speed);
+    const result = await generateSupertonicSpeech(cleanText, langMap[language] || 'ko', voiceId, speed, clampedSilenceDuration);
 
     logger.success('[TTS] Supertonic 2 생성 완료 (로컬)', { voiceId });
     return { audioUrl: result.audioUrl, format: result.format as 'wav' };
@@ -858,6 +961,9 @@ export const normalizeAudioUrl = async (audioUrl: string): Promise<string> => {
     try {
         // [FIX #920] 20초 타임아웃 추가 — tempfile CDN 장애 시 교착 방지
         const resp = await monitoredFetch(audioUrl, { signal: AbortSignal.timeout(20_000) });
+        if (!resp.ok) {
+            throw new Error(`오디오 다운로드 실패 (${resp.status})`);
+        }
         const buf = await resp.arrayBuffer();
         const decoded = await ctx.decodeAudioData(buf);
 
@@ -909,6 +1015,7 @@ export const mergeAudioFiles = async (audioUrls: string[]): Promise<string> => {
     try {
         // 모든 오디오 파일 다운로드 및 디코딩
         const buffers: AudioBuffer[] = [];
+        const failedUrls: string[] = [];
 
         for (const url of audioUrls) {
             try {
@@ -917,6 +1024,7 @@ export const mergeAudioFiles = async (audioUrls: string[]): Promise<string> => {
                 if (!response.ok) {
                     logger.trackErrorChain(`HTTP ${response.status} fetching audio file`, 'ttsService:mergeAudioFiles:file_fetch_failed');
                     logger.warn('[TTS] 오디오 파일 다운로드 실패, 건너뜀', { url });
+                    failedUrls.push(url);
                     continue;
                 }
                 const arrayBuffer = await response.arrayBuffer();
@@ -924,9 +1032,13 @@ export const mergeAudioFiles = async (audioUrls: string[]): Promise<string> => {
                 buffers.push(audioBuffer);
             } catch (fetchErr) {
                 logger.warn('[TTS] 오디오 파일 페치 실패, 건너뜀', { url, error: fetchErr instanceof Error ? fetchErr.message : String(fetchErr) });
+                failedUrls.push(url);
             }
         }
 
+        if (failedUrls.length > 0) {
+            throw new Error(`오디오 ${failedUrls.length}개를 불러오지 못해 병합을 중단했습니다. 다시 시도해주세요.`);
+        }
         if (buffers.length === 0) throw new Error('디코딩된 오디오 버퍼가 없습니다.');
 
         // [FIX #194] 병합 전 각 클립 음량 정규화 — 클립 간 음량 편차 제거
@@ -1094,7 +1206,10 @@ export const ensurePremiereCompatibleWav = async (audioUrl: string): Promise<Blo
     const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     const ctx = new AudioCtx({ sampleRate: 48000 });
     try {
-        const resp = await fetch(audioUrl);
+        const resp = await monitoredFetch(audioUrl, { signal: AbortSignal.timeout(20_000) });
+        if (!resp.ok) {
+            throw new Error(`오디오 다운로드 실패 (${resp.status})`);
+        }
         const buf = await resp.arrayBuffer();
         const decoded = await ctx.decodeAudioData(buf);
         // 48kHz로 강제 리샘플링하여 WAV 생성
@@ -1112,10 +1227,13 @@ export const splitAudioAtTime = async (
   audioUrl: string,
   splitTimeSeconds: number,
 ): Promise<[string, string] | null> => {
+  const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+  const ctx = new AudioCtx();
   try {
-    const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    const ctx = new AudioCtx();
-    const response = await fetch(audioUrl);
+    const response = await monitoredFetch(audioUrl, { signal: AbortSignal.timeout(20_000) });
+    if (!response.ok) {
+      throw new Error(`오디오 다운로드 실패 (${response.status})`);
+    }
     const arrayBuffer = await response.arrayBuffer();
     const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
 
@@ -1127,7 +1245,6 @@ export const splitAudioAtTime = async (
     );
 
     if (splitSample <= 0 || splitSample >= audioBuffer.length) {
-      ctx.close();
       return null;
     }
 
@@ -1147,7 +1264,6 @@ export const splitAudioAtTime = async (
     // [FIX #965] 48kHz로 리샘플링하여 일관된 포맷 유지
     const blob1 = audioBufferToWav(buf1, 48000);
     const blob2 = audioBufferToWav(buf2, 48000);
-    ctx.close();
 
     const url1 = URL.createObjectURL(blob1);
     logger.registerBlobUrl(url1, 'audio', 'ttsService:splitAudioAtTime');
@@ -1158,5 +1274,9 @@ export const splitAudioAtTime = async (
     logger.trackSwallowedError('ttsService:splitAudioAtTime', e);
     console.warn('[splitAudioAtTime] Failed to split audio:', e);
     return null;
+  } finally {
+    await ctx.close().catch((e) => {
+      logger.trackSwallowedError('ttsService:splitAudioAtTime:close', e);
+    });
   }
 };

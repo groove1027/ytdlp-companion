@@ -17,7 +17,8 @@ type MainSection = 'tts' | 'music' | 'sfx' | 'reference';
 
 const TTS_ENGINE_LABELS: Record<string, string> = {
   typecast: 'Typecast',
-  microsoft: 'Microsoft Edge',
+  edge: 'Edge TTS',
+  elevenlabs: 'ElevenLabs',
   supertonic: 'Supertonic 2',
 };
 
@@ -197,7 +198,7 @@ const SoundStudioTab: React.FC = () => {
               <span>전체 정지</span>
             </button>
             <span className="text-sm text-gray-500 bg-gray-800 px-3 py-1.5 rounded-lg border border-gray-700">
-              TTS 엔진: <span className="text-fuchsia-400 font-semibold">{TTS_ENGINE_LABELS[ttsEngine]}</span>
+              TTS 엔진: <span className="text-fuchsia-400 font-semibold">{TTS_ENGINE_LABELS[ttsEngine] || 'Typecast'}</span>
             </span>
           </div>
         </div>

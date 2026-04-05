@@ -23,6 +23,7 @@ interface UIStore {
   showHelpGuide: boolean;
   authPromptAction: string | null;
   showAuthGateModal: boolean;
+  showCompanionGate: boolean;
   toast: ToastState | null;
   isProcessing: boolean;
   processingMessage: string | null;
@@ -49,6 +50,7 @@ interface UIStore {
   setShowHelpGuide: (show: boolean) => void;
   setAuthPromptAction: (action: string | null) => void;
   setShowAuthGateModal: (show: boolean) => void;
+  setShowCompanionGate: (show: boolean) => void;
   setToast: (toast: ToastState | null | ((prev: ToastState | null) => ToastState | null)) => void;
   setProcessing: (active: boolean, message?: string, mode?: string) => void;
   setProcessingMessage: (message: string) => void;
@@ -75,6 +77,7 @@ export const useUIStore = create<UIStore>((set) => ({
   showHelpGuide: false,
   authPromptAction: null,
   showAuthGateModal: false,
+  showCompanionGate: false,
   toast: null,
   isProcessing: false,
   processingMessage: null,
@@ -100,6 +103,7 @@ export const useUIStore = create<UIStore>((set) => ({
   setShowHelpGuide: (show) => set({ showHelpGuide: show }),
   setAuthPromptAction: (action) => set({ authPromptAction: action }),
   setShowAuthGateModal: (show) => set({ showAuthGateModal: show }),
+  setShowCompanionGate: (show) => set({ showCompanionGate: show }),
   setToast: (toast) => set((state) => ({
     toast: typeof toast === 'function' ? toast(state.toast) : toast,
   })),

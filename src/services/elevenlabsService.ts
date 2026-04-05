@@ -14,7 +14,7 @@ import { logger } from './LoggerService';
 import { mergeAudioFiles, splitTextForTTS, stripSpeakerTags } from './ttsService';
 const COMPANION_URL = 'http://127.0.0.1:9876';
 
-/** 컴패니언 Qwen3/Kokoro/Piper TTS로 로컬 음성 합성 시도 */
+/** 컴패니언 로컬 TTS로 음성 합성 시도 */
 async function tryCompanionTTS(text: string, languageCode?: string): Promise<{ audioUrl: string; format: string } | null> {
   // [FIX #914] isCompanionDetected() 게이트 제거 — health check 느려도 TTS 엔드포인트 직접 시도
   // connection refused면 catch에서 즉시 null → ElevenLabs 폴백
@@ -22,14 +22,14 @@ async function tryCompanionTTS(text: string, languageCode?: string): Promise<{ a
   try {
     // 컴패니언에 언어를 그대로 전달 (자동 엔진 선택에 필요)
     const lang = languageCode || 'ko';
-    logger.info('[TTS] 컴패니언 로컬 TTS 합성 시도 (Qwen3/Kokoro)');
+    logger.info('[TTS] 컴패니언 로컬 TTS 합성 시도');
     const res = await fetch(`${COMPANION_URL}/api/tts`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         text,
         language: lang,
-        engine: 'auto', // 한국어→Qwen3 우선, 나머지→Kokoro 우선
+        engine: 'auto',
       }),
       signal: AbortSignal.timeout(120_000),
     });
@@ -64,7 +64,7 @@ export interface ElevenLabsDialogueOptions {
 export const generateElevenLabsDialogueTTS = async (
   options: ElevenLabsDialogueOptions
 ): Promise<{ audioUrl: string; format: string }> => {
-  // [v4.7] 1순위: 컴패니언 Piper TTS (로컬, 무료)
+  // [v4.7] 1순위: 컴패니언 로컬 TTS (무료)
   // 특정 음성(voiceId)이 지정된 경우 → ElevenLabs만 해당 음성 지원, 컴패니언 스킵
   const cleanedText = stripSpeakerTags(options.text);
   if (!options.voiceId || options.voiceId === 'Sarah') {

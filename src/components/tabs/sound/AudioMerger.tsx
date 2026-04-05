@@ -3,13 +3,12 @@ import { logger } from '../../../services/LoggerService';
 import { useSoundStudioStore, registerAudio, unregisterAudio } from '../../../stores/soundStudioStore';
 import { showToast } from '../../../stores/uiStore';
 import { useProjectStore } from '../../../stores/projectStore';
-import { generateSupertonicTTS, generateQwen3TTS, mergeAudioFiles } from '../../../services/ttsService';
+import { generateSupertonicTTS, generateEdgeTTS, mergeAudioFiles } from '../../../services/ttsService';
 import { generateTypecastTTS } from '../../../services/typecastService';
 import { generateElevenLabsDialogueTTS } from '../../../services/elevenlabsService';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
 import { audioBufferToWav, ensurePremiereCompatibleWav } from '../../../services/ttsService';
-import CompanionBanner from '../../CompanionBanner';
 import type { Speaker, TTSLanguage, LufsPreset } from '../../../types';
 import { LUFS_PRESETS } from '../../../types';
 import { runKieBatch } from '../../../utils/kieBatchRunner';
@@ -36,8 +35,8 @@ async function generateLineTTS(
         stability: speaker.stability ?? 0.5,
         languageCode: speaker.language || 'auto',
       });
-    case 'qwen3':
-      return generateQwen3TTS(text, speaker.voiceId || 'Sohee', lang);
+    case 'edge':
+      return generateEdgeTTS(text, speaker.voiceId || 'ko-KR-SunHiNeural', lang);
     case 'supertonic':
       return generateSupertonicTTS(text, speaker.voiceId, lang, speaker.speed);
     case 'typecast': {
@@ -57,7 +56,8 @@ async function generateLineTTS(
       return result;
     }
     default:
-      throw new Error(`지원하지 않는 TTS 엔진입니다: ${speaker.engine}`);
+      // 레거시 엔진(qwen3, kokoro 등) → Edge TTS로 폴백
+      return generateEdgeTTS(text, speaker.voiceId || 'ko-KR-SunHiNeural', lang);
   }
 }
 
@@ -315,8 +315,6 @@ const AudioMerger: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {/* 컴패니언 — TTS 안내 */}
-      <CompanionBanner feature="tts" compact />
       {mergedAudioUrl && <audio ref={audioRef} src={mergedAudioUrl} preload="metadata" />}
 
       {/* Header */}
