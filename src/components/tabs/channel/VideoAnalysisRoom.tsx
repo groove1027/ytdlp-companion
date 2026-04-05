@@ -119,6 +119,173 @@ function breakSubtitleLines(text: string, maxChars: number = 12): string {
   }).join('\n');
 }
 
+function escapeRegex(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+const LANGUAGE_NAME_TO_CODE: Record<string, string> = {
+  korean: 'ko',
+  english: 'en',
+  japanese: 'ja',
+  chinese: 'zh',
+  mandarin: 'zh',
+  cantonese: 'yue',
+  french: 'fr',
+  german: 'de',
+  spanish: 'es',
+  portuguese: 'pt',
+  italian: 'it',
+  russian: 'ru',
+  arabic: 'ar',
+  hindi: 'hi',
+  thai: 'th',
+  vietnamese: 'vi',
+  indonesian: 'id',
+  malay: 'ms',
+  tagalog: 'tl',
+  turkish: 'tr',
+  ukrainian: 'uk',
+  dutch: 'nl',
+  polish: 'pl',
+  swedish: 'sv',
+  danish: 'da',
+  finnish: 'fi',
+  norwegian: 'no',
+};
+
+const LANGUAGE_NAME_ENTRIES = Object.entries(LANGUAGE_NAME_TO_CODE)
+  .sort(([left], [right]) => Number(left === 'korean') - Number(right === 'korean'));
+const LANGUAGE_CODE_VALUES = Array.from(new Set(LANGUAGE_NAME_ENTRIES.map(([, code]) => code)));
+const LANGUAGE_CODE_PATTERN = new RegExp(`\\b(${LANGUAGE_CODE_VALUES.map(escapeRegex).join('|')})(?:[-_][a-z]{2,4})?\\b`, 'i');
+const LANGUAGE_LABEL_PATTERN = [...new Set([...LANGUAGE_NAME_ENTRIES.map(([name]) => name), ...LANGUAGE_CODE_VALUES])]
+  .sort((left, right) => right.length - left.length)
+  .map(escapeRegex)
+  .join('|');
+const TRANSLATION_TARGET_PATTERNS = [
+  new RegExp(`\\b(?:translated|translation)\\s+(?:to|into)\\s+(?:${LANGUAGE_LABEL_PATTERN})\\b`, 'gi'),
+  new RegExp(`\\b(?:to|into)\\s+(?:${LANGUAGE_LABEL_PATTERN})\\b\\s+translation\\b`, 'gi'),
+  new RegExp(`\\b(?:${LANGUAGE_LABEL_PATTERN})\\b\\s+translation\\b`, 'gi'),
+];
+
+function stripTranslationTargetLanguage(text: string): { changed: boolean; value: string } {
+  let value = text;
+  let changed = false;
+  for (const pattern of TRANSLATION_TARGET_PATTERNS) {
+    const nextValue = value.replace(pattern, ' ');
+    if (nextValue !== value) changed = true;
+    value = nextValue;
+  }
+  return { changed, value: value.replace(/\s+/g, ' ').trim() };
+}
+
+function extractLanguageCode(text: string): string | undefined {
+  const match = text.match(LANGUAGE_CODE_PATTERN);
+  return match?.[1]?.toLowerCase();
+}
+
+function matchLanguageName(text: string): string | undefined {
+  for (const [name, code] of LANGUAGE_NAME_ENTRIES) {
+    if (new RegExp(`\\b${escapeRegex(name)}\\b`, 'i').test(text)) return code;
+  }
+  return undefined;
+}
+
+function normalizeDetectedLang(rawValue?: string): string | undefined {
+  const normalized = rawValue?.replace(/[`"'[\]()]/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+  if (!normalized) return undefined;
+  const strippedTranslation = stripTranslationTargetLanguage(normalized);
+  const candidates = strippedTranslation.changed ? [strippedTranslation.value] : [normalized];
+  for (const candidate of candidates) {
+    const code = extractLanguageCode(candidate);
+    if (code) return code;
+  }
+  for (const candidate of candidates) {
+    const name = matchLanguageName(candidate);
+    if (name) return name;
+  }
+  return undefined;
+}
+
+function stripLeadingLanguageTag(text: string): string {
+  return text
+    .replace(/^\s*\[(?:[A-Z]{2,5}(?:-[A-Z]{2,4})?|KR|KO)\]\s*/i, '')
+    .replace(/^\s*(?:원어|원문|번역|한국어(?:\s*번역)?|original|orig|translation|korean)\s*[:：-]\s*/i, '')
+    .trim();
+}
+
+function hasExplicitBilingualSignal(text: string): boolean {
+  return /\[(?:[A-Z]{2,5}(?:-[A-Z]{2,4})?|KR|KO)\]/i.test(text)
+    || /(?:^|\s)(?:원어|원문|번역|한국어(?:\s*번역)?|original|orig|translation|korean)\s*[:：-]/i.test(text);
+}
+
+function parseBilingualAudioContent(text: string): { audioContent: string; audioContentOriginal?: string } {
+  const cleaned = text.trim();
+  const unicodeArrowMatch = cleaned.match(/^(.+?)\s*(?:⟶|→|➡)\s*(.+)$/s);
+  if (unicodeArrowMatch) {
+    return {
+      audioContentOriginal: stripLeadingLanguageTag(unicodeArrowMatch[1]),
+      audioContent: stripLeadingLanguageTag(unicodeArrowMatch[2]),
+    };
+  }
+
+  const inlineTagged = cleaned.match(/\[(?!KR\b|KO\b)([A-Z]{2,5}(?:-[A-Z]{2,4})?)\]\s*(.+?)\s*\[(?:KR|KO)\]\s*(.+)$/i);
+  if (inlineTagged) {
+    return {
+      audioContentOriginal: stripLeadingLanguageTag(inlineTagged[2]),
+      audioContent: stripLeadingLanguageTag(inlineTagged[3]),
+    };
+  }
+
+  const asciiArrowMatch = hasExplicitBilingualSignal(cleaned)
+    ? cleaned.match(/^(.+?)\s*(?:->|=>)\s*(.+)$/s)
+    : null;
+  if (asciiArrowMatch) {
+    return {
+      audioContentOriginal: stripLeadingLanguageTag(asciiArrowMatch[1]),
+      audioContent: stripLeadingLanguageTag(asciiArrowMatch[2]),
+    };
+  }
+
+  const normalized = cleaned.replace(/\s+(?:\/|\|)\s+/g, '\n');
+  const originalMatch = normalized.match(/(?:^|\n)\s*\[(?!KR\b|KO\b)([A-Z]{2,5}(?:-[A-Z]{2,4})?)\]\s*(.+)$/im)
+    ?? normalized.match(/(?:^|\n)\s*(?:원어|원문|original|orig)\s*[:：-]\s*(.+)$/im);
+  const translatedMatch = normalized.match(/(?:^|\n)\s*\[(?:KR|KO)\]\s*(.+)$/im)
+    ?? normalized.match(/(?:^|\n)\s*(?:번역|한국어(?:\s*번역)?|translation|korean)\s*[:：-]\s*(.+)$/im);
+  if (originalMatch && translatedMatch) {
+    return {
+      audioContentOriginal: stripLeadingLanguageTag(originalMatch[originalMatch.length - 1]),
+      audioContent: stripLeadingLanguageTag(translatedMatch[translatedMatch.length - 1]),
+    };
+  }
+
+  return { audioContent: cleaned };
+}
+
+function extractDetectedLangFromVersionContent(content: string): string | undefined {
+  const patterns = [
+    /(?:원본\s*언어|원어\s*언어|detected\s*lang(?:uage)?|detectedLanguage|original\s*lang(?:uage)?|originalLang|foreign\s*lang(?:uage)?|foreignLang|language\s*code)\s*[:：-]\s*([^\n|]+)/i,
+    /\[(?!KR\b|KO\b)([A-Z]{2,5}(?:-[A-Z]{2,4})?)\]\s*.+?(?:\n|\/|\||\s{2,})\s*\[(?:KR|KO)\]/i,
+  ];
+  for (const pattern of patterns) {
+    const match = content.match(pattern);
+    const detected = normalizeDetectedLang(match?.[1]);
+    if (detected) return detected;
+  }
+  return undefined;
+}
+
+function hasOriginalLanguageScenes(version: VersionItem): boolean {
+  return version.scenes.some(scene => !!scene.audioContentOriginal?.trim());
+}
+
+function shouldShowOriginalLanguageControls(version: VersionItem): boolean {
+  return hasOriginalLanguageScenes(version) && normalizeDetectedLang(version.detectedLang) !== 'ko';
+}
+
+function getOriginalLanguageBadge(version: VersionItem): string {
+  return (normalizeDetectedLang(version.detectedLang) || 'orig').toUpperCase();
+}
+
 /** 마크다운 테이블 행 파싱 (티키타카 마스터 편집 테이블 — 6열/7열/8열 자동 감지) */
 function parseTikitakaTable(content: string): SceneRow[] {
   const rows: SceneRow[] = [];
@@ -192,13 +359,9 @@ function parseTikitakaTable(content: string): SceneRow[] {
       }
     }
 
-    // 이중 언어 분리: "원어 대사" ⟶ "한국어 번역" 또는 [EN] ... → [KR] ...
-    let audioContentOriginal: string | undefined;
-    const bilingualArrow = audioContent.match(/^(.+?)\s*[⟶→]\s*(.+)$/s);
-    if (bilingualArrow) {
-      audioContentOriginal = bilingualArrow[1].replace(/^\[?\w{2,3}\]?\s*/, '').trim();
-      audioContent = bilingualArrow[2].replace(/^\[?\w{2,3}\]?\s*/, '').trim();
-    }
+    const bilingualAudio = parseBilingualAudioContent(audioContent);
+    const audioContentOriginal = bilingualAudio.audioContentOriginal;
+    audioContent = bilingualAudio.audioContent;
 
     // 오디오 내용 안에 <효과자막: ...> 태그가 인라인으로 있으면 추출
     if (!effectSub || effectSub === '-') {
@@ -263,9 +426,6 @@ function parseVersions(raw: string): VersionItem[] {
     const conceptMatch = content.match(/(?:\*{0,2})컨셉(?:\*{0,2})[:\s：]+\s*([\s\S]*?)(?=\n\s*\|[\s]*순서|\n\s*\|\s*:?---|---SCENE|$)/i);
     // 재배치 구조 추출
     const rearrangeMatch = content.match(/(?:\*{0,2})재배치\s*구조(?:\*{0,2})[:\s：]+\s*(.+)/);
-    // 원본 언어 추출 — "원본 언어: en" 또는 "Detected Language: en"
-    const langMatch = content.match(/(?:원본\s*언어|detected\s*lang(?:uage)?)[:\s：]+\s*([a-z]{2,3})/i);
-    const detectedLang = langMatch?.[1]?.toLowerCase();
     // Content ID 분석 추출
     const contentId = parseContentIdAnalysis(content);
 
@@ -311,6 +471,7 @@ function parseVersions(raw: string): VersionItem[] {
         });
       }
     }
+    const detectedLang = extractDetectedLangFromVersionContent(content);
 
     // 컨셉 정리: 테이블이나 SCENE 블록 이후 내용 제거
     let conceptText = conceptMatch?.[1]?.trim() || '';
@@ -4867,13 +5028,14 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       }
     } else if (mode === 'original') {
       // 오리지널 대사: 프리셋별 최적화
-      if (preset === 'tikitaka' && v.detectedLang && v.detectedLang !== 'ko') {
+      if (preset === 'tikitaka' && shouldShowOriginalLanguageControls(v)) {
         // 티키타카 해외 영상: 원어 대사 + 한국어 번역 쌍으로 복사
+        const langBadge = getOriginalLanguageBadge(v);
         text = v.scenes
           .map(s => {
             const orig = (s.audioContentOriginal || '').trim();
             const kr = (s.audioContent || s.dialogue || '').trim();
-            return orig ? `[${v.detectedLang?.toUpperCase()}] ${orig}\n[KR] ${kr}` : kr;
+            return orig ? `[${langBadge}] ${orig}\n[KR] ${kr}` : kr;
           })
           .filter(line => line)
           .join('\n\n');
@@ -6084,8 +6246,10 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                             {copyMenuVersionId === v.id && (() => {
                               const ttsLabel = selectedPreset === 'snack' ? 'TTS용 자막 복사' : selectedPreset === 'alltts' ? 'TTS 대본 복사' : selectedPreset === 'deep' ? 'TTS용 나레이션 복사' : selectedPreset === 'shopping' ? 'TTS용 나레이션 복사' : 'TTS만 복사';
                               const ttsDesc = selectedPreset === 'snack' ? '자막에서 기호 제거' : selectedPreset === 'alltts' ? '최소 정제 (원본 보존형)' : selectedPreset === 'deep' ? '단락 구분 포함' : '구두점/기호/화자 제거';
-                              const origLabel = selectedPreset === 'snack' ? '자막 원문 복사' : selectedPreset === 'shopping' ? '나레이션+효과 복사' : (selectedPreset === 'tikitaka' && v.detectedLang && v.detectedLang !== 'ko') ? '원어+한국어 대사 복사' : selectedPreset === 'deep' ? '나레이션 원문 복사' : '오리지널 대사 복사';
-                              const origDesc = selectedPreset === 'snack' ? '자막+효과자막 포함' : selectedPreset === 'shopping' ? '상품 효과자막 포함' : (selectedPreset === 'tikitaka' && v.detectedLang && v.detectedLang !== 'ko') ? `${v.detectedLang.toUpperCase()}+KR 쌍` : '원본 대사 그대로';
+                              const hasOriginalScenes = shouldShowOriginalLanguageControls(v);
+                              const langBadge = getOriginalLanguageBadge(v);
+                              const origLabel = selectedPreset === 'snack' ? '자막 원문 복사' : selectedPreset === 'shopping' ? '나레이션+효과 복사' : (selectedPreset === 'tikitaka' && hasOriginalScenes) ? '원어+한국어 대사 복사' : selectedPreset === 'deep' ? '나레이션 원문 복사' : '오리지널 대사 복사';
+                              const origDesc = selectedPreset === 'snack' ? '자막+효과자막 포함' : selectedPreset === 'shopping' ? '상품 효과자막 포함' : (selectedPreset === 'tikitaka' && hasOriginalScenes) ? `${langBadge}+KR 쌍` : '원본 대사 그대로';
                               const allLabel = selectedPreset === 'deep' ? '분석 보고서 복사' : selectedPreset === 'shopping' ? '쇼핑 대본 전체 복사' : '모두 복사';
                               const allDesc = selectedPreset === 'deep' ? '나레이션+화면지시+효과' : selectedPreset === 'shopping' ? '나레이션+효과+타임코드' : '편집표 전체 (모드/효과/타임코드)';
                               return (
@@ -6315,10 +6479,10 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                       })()}
 
                       {/* 이중 언어 토글 (해외 영상 감지 시) */}
-                      {v.detectedLang && v.detectedLang !== 'ko' && v.scenes.some(s => s.audioContentOriginal) && (
+                      {shouldShowOriginalLanguageControls(v) && (
                         <div className="flex items-center gap-2 mb-3">
                           <span className="text-[11px] text-gray-500 font-medium">
-                            {v.detectedLang.toUpperCase()} 원본 감지
+                            {getOriginalLanguageBadge(v) === 'ORIG' ? '원본 감지' : `${getOriginalLanguageBadge(v)} 원본 감지`}
                           </span>
                           <div className="flex bg-gray-800/60 rounded-lg border border-gray-700/50 p-0.5">
                             {([
@@ -6431,13 +6595,13 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                     }`}>{scene.mode || '-'}</span>
                                   </td>
                                   <td className="py-2 px-2 align-top text-gray-300 leading-relaxed">
-                                    {scene.audioContentOriginal && v.detectedLang && v.detectedLang !== 'ko' ? (
+                                    {scene.audioContentOriginal && shouldShowOriginalLanguageControls(v) ? (
                                       displayLangMode === 'original' ? (
                                         <span className="text-gray-400 italic">{scene.audioContentOriginal}</span>
                                       ) : displayLangMode === 'bilingual' ? (
                                         <div className="space-y-1">
                                           <div className="text-gray-500 italic text-[11px] leading-relaxed">
-                                            <span className="inline-block px-1 py-0.5 rounded bg-gray-700/60 text-gray-400 text-[10px] font-bold mr-1">{v.detectedLang.toUpperCase()}</span>
+                                            <span className="inline-block px-1 py-0.5 rounded bg-gray-700/60 text-gray-400 text-[10px] font-bold mr-1">{getOriginalLanguageBadge(v)}</span>
                                             {scene.audioContentOriginal}
                                           </div>
                                           <div className="text-gray-200 leading-relaxed">
