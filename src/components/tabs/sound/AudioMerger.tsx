@@ -56,7 +56,7 @@ async function generateLineTTS(
       return result;
     }
     default:
-      // 레거시 엔진(qwen3, kokoro 등) → Edge TTS로 폴백
+      // 레거시/미지원 엔진 값은 Edge TTS로 폴백
       return generateEdgeTTS(text, speaker.voiceId || 'ko-KR-SunHiNeural', lang);
   }
 }

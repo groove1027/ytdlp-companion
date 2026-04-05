@@ -3,6 +3,20 @@ import { getCompanionDownloadUrl, getCompanionOsLabel } from '../constants';
 import { recheckCompanion, tryLaunchCompanion } from '../services/ytdlpApiService';
 import { useUIStore } from '../stores/uiStore';
 
+const FOCUSABLE_SELECTOR = [
+  'a[href]',
+  'button:not([disabled])',
+  'textarea:not([disabled])',
+  'input:not([disabled])',
+  'select:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(', ');
+
+function getFocusableElements(container: HTMLElement): HTMLElement[] {
+  return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
+    .filter((element) => !element.hasAttribute('disabled') && element.getAttribute('aria-hidden') !== 'true');
+}
+
 const COMPANION_FEATURES = [
   { icon: '📥', title: 'yt-dlp 고속 다운로드', description: 'YouTube, Instagram, TikTok 등 원본 품질 다운로드' },
   { icon: '🎙️', title: 'Whisper 전사', description: '로컬 STT로 긴 영상도 빠르게 텍스트 추출' },
@@ -26,6 +40,7 @@ export default function CompanionGateModal() {
   const [statusMessage, setStatusMessage] = useState('올인원 헬퍼 실행을 자동으로 시도하고 있습니다.');
   const [isChecking, setIsChecking] = useState(false);
   const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(null);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
   const isMountedRef = useRef(false);
   const checkInFlightRef = useRef(false);
   const followUpTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -41,10 +56,63 @@ export default function CompanionGateModal() {
   useEffect(() => {
     isMountedRef.current = true;
     const prevOverflow = document.body.style.overflow;
+    const prevActiveElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     document.body.style.overflow = 'hidden';
+
+    const focusPrimaryAction = () => {
+      const dialog = dialogRef.current;
+      if (!dialog) return;
+      const focusables = getFocusableElements(dialog);
+      (focusables[0] ?? dialog).focus();
+    };
+
+    focusPrimaryAction();
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const dialog = dialogRef.current;
+      if (!dialog) return;
+
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+
+      if (event.key !== 'Tab') return;
+
+      const focusables = getFocusableElements(dialog);
+      if (focusables.length === 0) {
+        event.preventDefault();
+        dialog.focus();
+        return;
+      }
+
+      const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      const currentIndex = activeElement ? focusables.indexOf(activeElement) : -1;
+      const nextIndex = event.shiftKey
+        ? (currentIndex <= 0 ? focusables.length - 1 : currentIndex - 1)
+        : (currentIndex === -1 || currentIndex === focusables.length - 1 ? 0 : currentIndex + 1);
+
+      event.preventDefault();
+      event.stopPropagation();
+      focusables[nextIndex]?.focus();
+    };
+
+    const handleFocusIn = (event: FocusEvent) => {
+      const dialog = dialogRef.current;
+      if (!dialog || !(event.target instanceof Node) || dialog.contains(event.target)) return;
+      focusPrimaryAction();
+    };
+
+    window.addEventListener('keydown', handleKeyDown, true);
+    document.addEventListener('focusin', handleFocusIn);
+
     return () => {
       isMountedRef.current = false;
+      window.removeEventListener('keydown', handleKeyDown, true);
+      document.removeEventListener('focusin', handleFocusIn);
       document.body.style.overflow = prevOverflow;
+      prevActiveElement?.focus();
     };
   }, []);
 
@@ -113,17 +181,28 @@ export default function CompanionGateModal() {
   };
 
   return (
-    <div className="fixed inset-0 z-[10050] bg-gray-950/98 backdrop-blur-md text-white">
+    <div
+      className="fixed inset-0 z-[10050] bg-gray-950/98 backdrop-blur-md text-white"
+      onClickCapture={(event) => event.stopPropagation()}
+      onMouseDownCapture={(event) => event.stopPropagation()}
+    >
       <div className="h-full overflow-y-auto">
         <div className="mx-auto flex min-h-full w-full max-w-7xl items-center justify-center px-4 py-8">
-          <div className="w-full overflow-hidden rounded-3xl border border-gray-700 bg-gray-900 shadow-[0_40px_120px_rgba(0,0,0,0.65)]">
+          <div
+            ref={dialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="companion-gate-title"
+            tabIndex={-1}
+            className="w-full overflow-hidden rounded-3xl border border-gray-700 bg-gray-900 shadow-[0_40px_120px_rgba(0,0,0,0.65)]"
+          >
             <div className="border-b border-gray-800 bg-gradient-to-br from-gray-900 via-gray-900 to-gray-800/70 px-6 py-8 md:px-10">
               <div className="inline-flex items-center gap-2 rounded-full border border-orange-500/30 bg-orange-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-orange-300">
                 Companion Required
               </div>
               <div className="mt-5 grid gap-8 lg:grid-cols-[1.15fr_0.85fr]">
                 <div>
-                  <h1 className="text-3xl font-black tracking-tight text-white md:text-4xl">
+                  <h1 id="companion-gate-title" className="text-3xl font-black tracking-tight text-white md:text-4xl">
                     올인원 헬퍼가 실행되어야 작업을 계속할 수 있습니다.
                   </h1>
                   <p className="mt-4 max-w-3xl text-base leading-7 text-gray-300 md:text-lg">
