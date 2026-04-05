@@ -28,6 +28,21 @@ let _syncPromise: Promise<void> | null = null;
 let _pendingSyncId: string | null = null;
 const _deletingIds = new Set<string>();
 
+const reconcileDeletingIds = (
+  localProjectIds: string[],
+  batchData: { needsUpload: string[]; needsDownload: string[] },
+): void => {
+  const localIdSet = new Set(localProjectIds);
+  const needsUploadSet = new Set(batchData.needsUpload);
+  const needsDownloadSet = new Set(batchData.needsDownload);
+
+  for (const id of Array.from(_deletingIds)) {
+    if (!localIdSet.has(id) && !needsUploadSet.has(id) && !needsDownloadSet.has(id)) {
+      _deletingIds.delete(id);
+    }
+  }
+};
+
 // ---------------------------------------------------------------------------
 // Internal: API 호출 헬퍼
 // ---------------------------------------------------------------------------
@@ -247,6 +262,13 @@ export const unmarkDeletingId = (id: string): void => { _deletingIds.delete(id);
 /** 삭제 중인 프로젝트 ID 등록 (sync에서 needsDownload 무시) */
 export const markDeletingIds = (ids: string[]): void => {
   for (const id of ids) _deletingIds.add(id);
+  if (_pendingSyncId && ids.includes(_pendingSyncId)) {
+    _pendingSyncId = null;
+    if (_debounceTimer) {
+      clearTimeout(_debounceTimer);
+      _debounceTimer = null;
+    }
+  }
 };
 
 export const performFullSync = async (): Promise<void> => {
@@ -280,6 +302,7 @@ export const performFullSync = async (): Promise<void> => {
     if (!batchRes.ok) throw new Error(batchData.error || `HTTP ${batchRes.status}`);
 
     const statuses: Record<string, SyncStatus> = {};
+    reconcileDeletingIds(localProjects.map((project) => project.id), batchData);
 
     // 3. 업로드 필요한 프로젝트 처리 (삭제 중인 ID 제외)
     for (const id of batchData.needsUpload) {

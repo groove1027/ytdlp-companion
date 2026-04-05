@@ -7,7 +7,7 @@ import { useNavigationStore } from '../../stores/navigationStore';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
 import { useSyncStore } from '../../stores/syncStore';
 import { useProjectStore } from '../../stores/projectStore';
-import { performFullSync, deleteCloudProject, pauseSync, resumeSync, markDeletingIds, unmarkDeletingId } from '../../services/syncService';
+import { performFullSync, deleteCloudProject, pauseSync, resumeSync, markDeletingIds } from '../../services/syncService';
 import { getToken } from '../../services/authService';
 import type { SyncStatus } from '../../types';
 
@@ -559,8 +559,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, on
       // 현재 열린 프로젝트가 삭제 대상이면 메모리 상태 완전 초기화
       const currentId = useProjectStore.getState().currentProjectId;
       if (currentId && ids.includes(currentId)) {
-        useProjectStore.getState().setCurrentProjectId(null);
-        useProjectStore.setState({ scenes: [], projectTitle: '', config: undefined as any });
+        useProjectStore.getState().clearProjectState();
         useNavigationStore.getState().goToDashboard();
       }
 
@@ -576,16 +575,12 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, on
       }
 
       // 2) 클라우드 소프트 삭제 (병렬 — 로컬 삭제 성공 여부 무관하게 전체 시도)
-      const localDeletedSet = new Set(localDeleted);
       const cloudResults = await Promise.allSettled(
         ids.map(id => deleteCloudProject(id))
       );
-      // 로컬+클라우드 모두 성공한 ID만 보호 해제 (부분 실패 시 재업로드 방지)
       let failCount = 0;
-      cloudResults.forEach((r, i) => {
-        if (r.status === 'fulfilled' && localDeletedSet.has(ids[i])) {
-          unmarkDeletingId(ids[i]);
-        } else if (r.status === 'rejected') {
+      cloudResults.forEach((r) => {
+        if (r.status === 'rejected') {
           failCount++;
         }
       });

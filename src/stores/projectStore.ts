@@ -24,6 +24,37 @@ const useEditRoomStore = { getState: () => getEditRoomStore()?.getState() || { r
 // Monotonic counter to guarantee unique scene IDs even within the same millisecond
 let _idCounter = 0;
 const uniqueSceneId = () => `s-${Date.now()}-${++_idCounter}`;
+const GENERATED_VISUAL_PROMPT_PREFIX = 'Cinematic scene illustrating:';
+
+const toTrimmedString = (value: unknown): string => typeof value === 'string' ? value.trim() : '';
+
+const buildVisualPromptFallback = (scriptText: unknown): string => {
+  const snippet = toTrimmedString(scriptText).slice(0, 200);
+  return snippet ? `${GENERATED_VISUAL_PROMPT_PREFIX} ${snippet}` : `${GENERATED_VISUAL_PROMPT_PREFIX} scene details`;
+};
+
+const hasMeaningfulVisualPrompt = (value: unknown): value is string => toTrimmedString(value).length > 0;
+
+const isGeneratedVisualPrompt = (value: unknown): value is string =>
+  hasMeaningfulVisualPrompt(value) && toTrimmedString(value).startsWith(GENERATED_VISUAL_PROMPT_PREFIX);
+
+const normalizeSceneVisualPrompt = <T extends Pick<Scene, 'scriptText' | 'visualPrompt'>>(scene: T): T => {
+  const nextVisualPrompt = hasMeaningfulVisualPrompt(scene.visualPrompt)
+    ? toTrimmedString(scene.visualPrompt)
+    : buildVisualPromptFallback(scene.scriptText);
+  return nextVisualPrompt === scene.visualPrompt ? scene : { ...scene, visualPrompt: nextVisualPrompt };
+};
+
+const applySceneUpdate = (scene: Scene, partial: Partial<Scene>): Scene => {
+  const nextScene = { ...scene, ...partial };
+  if (Object.prototype.hasOwnProperty.call(partial, 'visualPrompt')) {
+    return normalizeSceneVisualPrompt(nextScene);
+  }
+  if (Object.prototype.hasOwnProperty.call(partial, 'scriptText') && isGeneratedVisualPrompt(scene.visualPrompt)) {
+    return { ...nextScene, visualPrompt: buildVisualPromptFallback(nextScene.scriptText) };
+  }
+  return normalizeSceneVisualPrompt(nextScene);
+};
 
 const buildScriptWriterRestoreState = (project: ProjectData): Partial<ScriptWriterDraftState> | null => {
   if (project.scriptWriterState) {
@@ -129,6 +160,7 @@ interface ProjectStore {
   // Project lifecycle
   loadProject: (project: ProjectData, options?: { skipCostRestore?: boolean }) => void;
   newProject: (title?: string, options?: { preserveAnalysisState?: boolean }) => void;
+  clearProjectState: () => void;
 
   // [v4.5] 스마트 프로젝트
   smartUpdateTitle: (tab: string, hint: string) => void;
@@ -182,13 +214,8 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
   }),
 
   setScenes: (scenes) => set((state) => {
-    const newScenes = typeof scenes === 'function' ? scenes(state.scenes) : scenes;
-    // [FIX #1018] 빈 visualPrompt 중앙 정규화 — 모든 경로에서 방어
-    for (const s of newScenes) {
-      if (!s.visualPrompt || !s.visualPrompt.trim()) {
-        s.visualPrompt = `Cinematic scene illustrating: ${(s.scriptText || '').slice(0, 200)}`;
-      }
-    }
+    const rawScenes = typeof scenes === 'function' ? scenes(state.scenes) : scenes;
+    const newScenes = rawScenes.map(normalizeSceneVisualPrompt);
     // 장면 수가 변경된 경우에만 로깅 (매 렌더 노이즈 방지)
     if (newScenes.length !== state.scenes.length) {
       logger.info('장면 업데이트', { count: newScenes.length, prev: state.scenes.length });
@@ -217,7 +244,7 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
   setBatchGrokSpeech: (speech) => set({ batchGrokSpeech: speech }),
 
   updateScene: (id, partial) => set((state) => ({
-    scenes: state.scenes.map((s) => (s.id === id ? { ...s, ...partial } : s)),
+    scenes: state.scenes.map((s) => (s.id === id ? applySceneUpdate(s, partial) : s)),
   })),
 
   splitScene: (index) => set((state) => {
@@ -234,13 +261,13 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
 
     // 원본 장면의 scriptText를 앞쪽 절반으로 업데이트, visualPrompt 초기화 (새 scriptText 기반 자동 재생성)
     // [FIX codex-review] videoReferences도 초기화 — 분할 후 대본이 달라지므로 타임코드 매칭 무효
-    const updatedSource = { ...source, scriptText: firstHalf, visualPrompt: `Cinematic scene illustrating: ${firstHalf.slice(0, 200)}`, videoReferences: undefined };
+    const updatedSource = { ...source, scriptText: firstHalf, visualPrompt: buildVisualPromptFallback(firstHalf), videoReferences: undefined };
 
     const newScene: Scene = {
       ...source,
       id: uniqueSceneId(),
       scriptText: secondHalf,
-      visualPrompt: `Cinematic scene illustrating: ${secondHalf.slice(0, 200)}`,
+      visualPrompt: buildVisualPromptFallback(secondHalf),
       imageUrl: undefined,
       videoUrl: undefined,
       generationTaskId: undefined,
@@ -276,14 +303,14 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
     // 이미지: 현재 장면 우선, 없으면 다음 장면 사용
     const mergedImageUrl = current.imageUrl || next.imageUrl;
 
-    const mergedScene: Scene = {
+    const mergedScene: Scene = normalizeSceneVisualPrompt({
       ...current,
       scriptText: mergedScript,
       visualPrompt: mergedPrompt,
       imageUrl: mergedImageUrl,
       // 비디오는 이미지가 바뀔 수 있으므로 초기화
       videoUrl: current.videoUrl || next.videoUrl,
-    };
+    });
 
     const newScenes = [...state.scenes];
     newScenes[index] = mergedScene;
@@ -298,7 +325,7 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
       ...source,
       id: uniqueSceneId(),
       scriptText: '새 장면',
-      visualPrompt: 'Cinematic scene illustrating: new scene',
+      visualPrompt: buildVisualPromptFallback('new scene'),
       imageUrl: undefined,
       videoUrl: undefined,
       generationTaskId: undefined,
@@ -449,7 +476,7 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
       isUpscaling: false,
       generationStatus: undefined,
       generationCancelled: false,
-    }));
+    })).map(normalizeSceneVisualPrompt);
 
     logger.info('프로젝트 로드', { projectId: project.id, title: project.title, sceneCount: sanitizedScenes.length });
 
@@ -477,13 +504,6 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
 
     // Increment generation to invalidate any in-flight async migrations from previous loads
     const generation = get()._loadGeneration + 1;
-
-    // [FIX #1018] 과거 프로젝트의 빈 visualPrompt 정규화
-    for (const s of sanitizedScenes) {
-      if (!s.visualPrompt || !s.visualPrompt.trim()) {
-        s.visualPrompt = `Cinematic scene illustrating: ${(s.scriptText || '').slice(0, 200)}`;
-      }
-    }
 
     set({
       config: project.config,
@@ -687,6 +707,20 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
     });
   },
 
+  clearProjectState: () => {
+    set((state) => ({
+      config: null,
+      scenes: [],
+      thumbnails: [],
+      projectTitle: '',
+      currentProjectId: null,
+      batchGrokDuration: '6',
+      batchGrokSpeech: false,
+      _loadGeneration: state._loadGeneration + 1,
+    }));
+    try { localStorage.removeItem('last-project-id'); } catch (e) { logger.trackSwallowedError('ProjectStore:clearProjectState/removeLastId', e); }
+  },
+
   newProject: (title?: string, options?: { preserveAnalysisState?: boolean }) => {
     const preserveAnalysisState = options?.preserveAnalysisState === true;
     // [FIX] 이전 프로젝트 찌꺼기 방지 — 모든 관련 스토어 초기화
@@ -712,7 +746,7 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
 
     logger.info('프로젝트 생성', { projectId, title: autoTitle });
 
-    set({
+    set((state) => ({
       config: {
         mode: 'SCRIPT',
         script: '',
@@ -727,7 +761,8 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
       projectTitle: autoTitle,
       batchGrokDuration: '6',
       batchGrokSpeech: false,
-    });
+      _loadGeneration: state._loadGeneration + 1,
+    }));
     // 마지막 프로젝트 ID를 localStorage에 저장 (복구용)
     try { localStorage.setItem('last-project-id', projectId); } catch (e) { logger.trackSwallowedError('ProjectStore:newProject/setLastId', e); }
     useCostStore.getState().resetCosts();

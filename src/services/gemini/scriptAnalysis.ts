@@ -5,6 +5,30 @@ import { requestGeminiProxy, extractTextFromResponse, SAFETY_SETTINGS_BLOCK_NONE
 import { evolinkChat } from '../evolinkService';
 import { logger } from '../LoggerService';
 
+const GENERATED_VISUAL_PROMPT_PREFIX = 'Cinematic scene illustrating:';
+
+const toTrimmedString = (value: unknown): string => typeof value === 'string' ? value.trim() : '';
+
+const buildFallbackVisualPrompt = (scriptText: unknown, maxLength = 200): string => {
+    const snippet = toTrimmedString(scriptText).slice(0, maxLength);
+    return snippet ? `${GENERATED_VISUAL_PROMPT_PREFIX} ${snippet}` : `${GENERATED_VISUAL_PROMPT_PREFIX} scene details`;
+};
+
+const shouldPreserveVisualPrompt = (visualPrompt: unknown): visualPrompt is string => {
+    const trimmed = toTrimmedString(visualPrompt);
+    return !!trimmed && !trimmed.startsWith(GENERATED_VISUAL_PROMPT_PREFIX);
+};
+
+const normalizeVisualPrompt = (visualPrompt: unknown, scriptText: unknown, maxLength = 200): string => {
+    const trimmed = toTrimmedString(visualPrompt);
+    return trimmed || buildFallbackVisualPrompt(scriptText, maxLength);
+};
+
+const mergeVisualPrompts = (left: unknown, right: unknown, scriptText: unknown): string => {
+    const merged = [toTrimmedString(left), toTrimmedString(right)].filter(Boolean).join('; ');
+    return merged || buildFallbackVisualPrompt(scriptText);
+};
+
 // [NEW] Robust JSON Extraction — handles thinking model markdown output + truncated responses
 export const extractJsonFromText = (text: string): string | null => {
     // 1. Already valid JSON
@@ -1116,9 +1140,7 @@ export const parseScriptToScenes = async (
             castType: item.castType || (item.characterPresent ? 'MAIN' : 'NOBODY'),
             shotSize: item.shotSize || 'Medium Shot',
             // [FIX #1018] visualPrompt 누락 방어 — AI가 생략 시 scriptText 기반 자동 생성
-            visualPrompt: (item.visualPrompt && item.visualPrompt.trim())
-                ? item.visualPrompt
-                : `Cinematic scene illustrating: ${(item.scriptText || '').slice(0, 200)}`,
+            visualPrompt: normalizeVisualPrompt(item.visualPrompt, item.scriptText),
             // [NEW] entityComposition — KEY_ENTITY 연출 구도
             entityComposition: item.entityComposition || '',
             // [NEW] videoPrompt — 상세 영상 모션 프롬프트
@@ -1147,9 +1169,9 @@ export const parseScriptToScenes = async (
                             ...scene,
                             scriptText: newText,
                             // [FIX #1018] scriptText 재매핑 시 visualPrompt도 동기화
-                            visualPrompt: (scene.visualPrompt && scene.visualPrompt.trim() && !scene.visualPrompt.startsWith('Cinematic scene illustrating:'))
-                                ? scene.visualPrompt
-                                : `Cinematic scene illustrating: ${newText.slice(0, 200)}`,
+                            visualPrompt: shouldPreserveVisualPrompt(scene.visualPrompt)
+                                ? toTrimmedString(scene.visualPrompt)
+                                : buildFallbackVisualPrompt(newText),
                         };
                     });
                 } else {
@@ -1198,7 +1220,7 @@ export const parseScriptToScenes = async (
                                 ...scene,
                                 id: `scene-${Date.now()}-${splitScenes.length}`,
                                 scriptText: mergedText,
-                                visualPrompt: `Cinematic scene illustrating: ${mergedText.slice(0, 200)}`,
+                                visualPrompt: buildFallbackVisualPrompt(mergedText),
                             });
                             i += 2;
                         } else {
@@ -1206,7 +1228,7 @@ export const parseScriptToScenes = async (
                                 ...scene,
                                 id: `scene-${Date.now()}-${splitScenes.length}`,
                                 scriptText: current,
-                                visualPrompt: `Cinematic scene illustrating: ${current.slice(0, 200)}`,
+                                visualPrompt: buildFallbackVisualPrompt(current),
                             });
                             i++;
                         }
@@ -1240,7 +1262,7 @@ export const parseScriptToScenes = async (
                     result[minIdx + 1] = {
                         ...target,
                         scriptText: ((merged.scriptText || '') + ' ' + (target.scriptText || '')).trim(),
-                        visualPrompt: ((merged.visualPrompt || '') + '; ' + (target.visualPrompt || '')).trim().replace(/^;\s*/, ''),
+                        visualPrompt: mergeVisualPrompts(merged.visualPrompt, target.visualPrompt, ((merged.scriptText || '') + ' ' + (target.scriptText || '')).trim()),
                         generatedDialogue: merged.generatedDialogue && target.generatedDialogue
                             ? ((merged.generatedDialogue || '') + ' ' + (target.generatedDialogue || '')).trim()
                             : target.generatedDialogue || merged.generatedDialogue || '',
@@ -1252,7 +1274,7 @@ export const parseScriptToScenes = async (
                     result[minIdx - 1] = {
                         ...target,
                         scriptText: ((target.scriptText || '') + ' ' + (merged.scriptText || '')).trim(),
-                        visualPrompt: ((target.visualPrompt || '') + '; ' + (merged.visualPrompt || '')).trim().replace(/^;\s*/, ''),
+                        visualPrompt: mergeVisualPrompts(target.visualPrompt, merged.visualPrompt, ((target.scriptText || '') + ' ' + (merged.scriptText || '')).trim()),
                         generatedDialogue: target.generatedDialogue && merged.generatedDialogue
                             ? ((target.generatedDialogue || '') + ' ' + (merged.generatedDialogue || '')).trim()
                             : target.generatedDialogue || merged.generatedDialogue || '',
@@ -1496,7 +1518,7 @@ ${baseSetting ? `[GLOBAL CONTEXT]\n${baseSetting}` : ''}`;
                 chunkResult = chunkSceneTexts.map((text, i) => ({
                     id: `scene-${Date.now()}-fallback-${ci}-${i}`,
                     scriptText: text,
-                    visualPrompt: `Cinematic scene illustrating: ${text.slice(0, 120)}`,
+                    visualPrompt: buildFallbackVisualPrompt(text, 120),
                     visualDescriptionKO: text.slice(0, 120),
                     isGeneratingImage: false,
                     isGeneratingVideo: false,
@@ -1529,7 +1551,7 @@ ${baseSetting ? `[GLOBAL CONTEXT]\n${baseSetting}` : ''}`;
                         chunkResult[minIdx + 1] = {
                             ...chunkResult[minIdx + 1],
                             scriptText: mergedText,
-                            visualPrompt: ((chunkResult[minIdx].visualPrompt || '') + '; ' + (chunkResult[minIdx + 1].visualPrompt || '')).trim().replace(/^;\s*/, '') || `Cinematic scene illustrating: ${mergedText.slice(0, 200)}`,
+                            visualPrompt: mergeVisualPrompts(chunkResult[minIdx].visualPrompt, chunkResult[minIdx + 1].visualPrompt, mergedText),
                         };
                         chunkResult.splice(minIdx, 1);
                     } else if (minIdx > 0) {
@@ -1537,7 +1559,7 @@ ${baseSetting ? `[GLOBAL CONTEXT]\n${baseSetting}` : ''}`;
                         chunkResult[minIdx - 1] = {
                             ...chunkResult[minIdx - 1],
                             scriptText: mergedText,
-                            visualPrompt: ((chunkResult[minIdx - 1].visualPrompt || '') + '; ' + (chunkResult[minIdx].visualPrompt || '')).trim().replace(/^;\s*/, '') || `Cinematic scene illustrating: ${mergedText.slice(0, 200)}`,
+                            visualPrompt: mergeVisualPrompts(chunkResult[minIdx - 1].visualPrompt, chunkResult[minIdx].visualPrompt, mergedText),
                         };
                         chunkResult.splice(minIdx, 1);
                     } else {
@@ -1557,9 +1579,9 @@ ${baseSetting ? `[GLOBAL CONTEXT]\n${baseSetting}` : ''}`;
                     ...chunkResult[i],
                     scriptText: newText,
                     // [FIX #1018] scriptText 교체 시 자동 생성된 visualPrompt도 갱신
-                    visualPrompt: (chunkResult[i].visualPrompt && chunkResult[i].visualPrompt.trim() && !chunkResult[i].visualPrompt.startsWith('Cinematic scene illustrating:'))
-                        ? chunkResult[i].visualPrompt
-                        : `Cinematic scene illustrating: ${newText.slice(0, 200)}`,
+                    visualPrompt: shouldPreserveVisualPrompt(chunkResult[i].visualPrompt)
+                        ? toTrimmedString(chunkResult[i].visualPrompt)
+                        : buildFallbackVisualPrompt(newText),
                 };
             }
             // AI가 부족하게 생성한 경우: 누락된 원본 텍스트로 보충 장면 생성
@@ -1571,7 +1593,7 @@ ${baseSetting ? `[GLOBAL CONTEXT]\n${baseSetting}` : ''}`;
                         id: `scene-${Date.now()}-supplement-${ci}-${i}`,
                         scriptText: chunkSceneTexts[i],
                         // [FIX #1018] 보충 장면에도 고유 visualPrompt 생성
-                        visualPrompt: `Cinematic scene illustrating: ${chunkSceneTexts[i].slice(0, 200)}`,
+                        visualPrompt: buildFallbackVisualPrompt(chunkSceneTexts[i]),
                     });
                 }
                 console.warn(`[processChunk] ⚠️ 청크 ${ci + 1}: AI ${aiCount}장면 → 원본 기준 ${chunkSceneTexts.length}장면으로 보충`);
@@ -1610,7 +1632,7 @@ ${baseSetting ? `[GLOBAL CONTEXT]\n${baseSetting}` : ''}`;
                         allScenes.push({
                             id: `scene-${Date.now()}-fallback-${ci}-${fi}`,
                             scriptText: fallbackTexts[fi],
-                            visualPrompt: `Cinematic scene illustrating: ${fallbackTexts[fi].slice(0, 120)}`,
+                            visualPrompt: buildFallbackVisualPrompt(fallbackTexts[fi], 120),
                             visualDescriptionKO: fallbackTexts[fi].slice(0, 120),
                             isGeneratingImage: false,
                             isGeneratingVideo: false,
@@ -1828,9 +1850,9 @@ ${baseSetting ? `[GLOBAL CONTEXT]\n${baseSetting}` : ''}`;
                     ...scenes[i],
                     scriptText: newText,
                     // [FIX #1018] scriptText 교체 시 자동 생성된 visualPrompt도 갱신
-                    visualPrompt: (scenes[i].visualPrompt && scenes[i].visualPrompt.trim() && !scenes[i].visualPrompt.startsWith('Cinematic scene illustrating:'))
-                        ? scenes[i].visualPrompt
-                        : `Cinematic scene illustrating: ${newText.slice(0, 200)}`,
+                    visualPrompt: shouldPreserveVisualPrompt(scenes[i].visualPrompt)
+                        ? toTrimmedString(scenes[i].visualPrompt)
+                        : buildFallbackVisualPrompt(newText),
                 };
             }
             // AI가 부족하게 생성한 경우: 누락된 원본 텍스트로 보충 장면 생성
@@ -1842,7 +1864,7 @@ ${baseSetting ? `[GLOBAL CONTEXT]\n${baseSetting}` : ''}`;
                         id: `scene-${Date.now()}-supplement-${i}`,
                         scriptText: localTexts[i],
                         // [FIX #1018] 보충 장면에도 고유 visualPrompt 생성
-                        visualPrompt: `Cinematic scene illustrating: ${localTexts[i].slice(0, 200)}`,
+                        visualPrompt: buildFallbackVisualPrompt(localTexts[i]),
                     });
                 }
                 console.warn(`[parseScriptToScenes] ⚠️ 비청크 경로: AI ${scenes.length - (localTexts.length - scenes.length)}장면 → 원본 기준 ${localTexts.length}장면으로 보충`);
@@ -1860,11 +1882,11 @@ ${baseSetting ? `[GLOBAL CONTEXT]\n${baseSetting}` : ''}`;
                     if (minIdx < 0) break;
                     if (minIdx + 1 < scenes.length) {
                         const mt = ((scenes[minIdx].scriptText || '') + ' ' + (scenes[minIdx + 1].scriptText || '')).trim();
-                        scenes[minIdx + 1] = { ...scenes[minIdx + 1], scriptText: mt, visualPrompt: ((scenes[minIdx].visualPrompt || '') + '; ' + (scenes[minIdx + 1].visualPrompt || '')).trim().replace(/^;\s*/, '') || `Cinematic scene illustrating: ${mt.slice(0, 200)}` };
+                        scenes[minIdx + 1] = { ...scenes[minIdx + 1], scriptText: mt, visualPrompt: mergeVisualPrompts(scenes[minIdx].visualPrompt, scenes[minIdx + 1].visualPrompt, mt) };
                         scenes.splice(minIdx, 1);
                     } else if (minIdx > 0) {
                         const mt = ((scenes[minIdx - 1].scriptText || '') + ' ' + (scenes[minIdx].scriptText || '')).trim();
-                        scenes[minIdx - 1] = { ...scenes[minIdx - 1], scriptText: mt, visualPrompt: ((scenes[minIdx - 1].visualPrompt || '') + '; ' + (scenes[minIdx].visualPrompt || '')).trim().replace(/^;\s*/, '') || `Cinematic scene illustrating: ${mt.slice(0, 200)}` };
+                        scenes[minIdx - 1] = { ...scenes[minIdx - 1], scriptText: mt, visualPrompt: mergeVisualPrompts(scenes[minIdx - 1].visualPrompt, scenes[minIdx].visualPrompt, mt) };
                         scenes.splice(minIdx, 1);
                     } else break;
                 }
