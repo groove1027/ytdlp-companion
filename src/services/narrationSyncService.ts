@@ -34,6 +34,13 @@ function timecodeToSeconds(tc: string): number {
   return parseInt(m[1], 10) * 60 + parseInt(m[2], 10) + (m[3] ? parseFloat(`0.${m[3]}`) : 0);
 }
 
+function extractTaggedSourceOrder(text: string): number {
+  const match = text.match(/\[(?:소스\s*|S-?)(\d+)\]/i);
+  if (!match) return 0;
+  const parsed = parseInt(match[1], 10);
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
 /**
  * 장면 미디어를 나레이션 길이에 맞춤
  * - 나레이션이 더 길면: 장면 속도를 줄여서(슬로우) 나레이션에 맞춤
@@ -193,18 +200,16 @@ export function buildNarrationSyncedTimeline(
     }
 
     // [FIX] 소스 타임코드 중복/겹침 감지 — 같은 소스의 직전 장면과 동일 범위면 자동 보정
-    // 다중 소스: [소스 N] 태그가 다르면 다른 영상이므로 보정 스킵
+    // 다중 소스: "[소스 N]" / "[S-01]" 태그가 다르면 다른 영상이므로 보정 스킵
     // 교차 소스 패턴(소스1→소스2→소스1)도 처리하기 위해 "같은 소스의 마지막 장면"과 비교
-    const curSourceMatch = rawTc.match(/\[소스\s*(\d+)\]/);
-    const curSourceIdx = curSourceMatch ? parseInt(curSourceMatch[1], 10) : 0;
+    const curSourceIdx = extractTaggedSourceOrder(rawTc);
     if (sceneIndex > 0) {
       // 같은 소스의 가장 최근 장면 찾기 (인접하지 않아도)
       let lastSameSourceTiming: NarrationSyncSceneTiming | null = null;
       for (let pi = sceneIndex - 1; pi >= 0; pi--) {
         const pScene = scenes[pi];
         const pRawTc = pScene.timecodeSource || pScene.sourceTimeline || '';
-        const pMatch = pRawTc.match(/\[소스\s*(\d+)\]/);
-        const pIdx = pMatch ? parseInt(pMatch[1], 10) : 0;
+        const pIdx = extractTaggedSourceOrder(pRawTc);
         if (pIdx === curSourceIdx) { lastSameSourceTiming = timings[pi]; break; }
       }
       if (lastSameSourceTiming) {

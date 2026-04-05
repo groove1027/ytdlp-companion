@@ -142,6 +142,13 @@ function timecodeToSeconds(tc: string): number {
   return parseInt(m[1], 10) * 60 + parseInt(m[2], 10) + (m[3] ? parseFloat('0.' + m[3]) : 0);
 }
 
+function extractTaggedSourceIndex(text: string): number {
+  const match = text.match(/\[(?:소스\s*|S-?)(\d+)\]/i);
+  if (!match) return 0;
+  const parsed = parseInt(match[1], 10);
+  return Number.isNaN(parsed) ? 0 : parsed - 1;
+}
+
 /** 초 → SRT 타임코드 (00:00:03,000) */
 function secondsToSrtTime(s: number): string {
   const total = Math.max(0, s);
@@ -3493,9 +3500,8 @@ function extractTimings(scenes: VideoSceneRow[], preset?: VideoAnalysisPreset): 
     // 보정된 소스 타임코드가 있으면 우선 사용
     const srcTc = s.timecodeSource || s.sourceTimeline || '';
 
-    // [FIX #891/#892] 다중 소스 인덱스 추출 — AI 출력의 "[소스 N]" 패턴 매칭
-    const sourceMatch = srcTc.match(/\[소스\s*(\d+)\]/);
-    const sourceIndex = sourceMatch ? parseInt(sourceMatch[1], 10) - 1 : 0;
+    // [FIX #891/#892] 다중 소스 인덱스 추출 — "[소스 N]" / "[S-01]" 패턴 모두 지원
+    const sourceIndex = extractTaggedSourceIndex(srcTc);
 
     // [FIX #664] `/` 구분자 지원
     const range = srcTc.match(/(\d+:\d+(?:\.\d+)?)\s*[~\-–—/]\s*(\d+:\d+(?:\.\d+)?)/);
@@ -3609,7 +3615,6 @@ export function generateFcpXml(params: {
   // 하위 호환: 기존 코드가 SceneTiming 필드를 사용하므로 매핑
   const timings: SceneTiming[] = nsTimings.map(t => {
     const rawTc = scenes[t.sceneIndex]?.timecodeSource || scenes[t.sceneIndex]?.sourceTimeline || '';
-    const srcMatch = rawTc.match(/\[소스\s*(\d+)\]/);
     return {
       index: t.sceneIndex,
       startSec: t.sourceStartSec + t.trimStartSec,
@@ -3619,7 +3624,7 @@ export function generateFcpXml(params: {
       tlEndSec: t.timelineEndSec,
       text: t.subtitleSegments.map(s => s.text).join(' '),
       effectText: t.effectSubtitleSegments.map(s => s.text).join(' '),
-      sourceIndex: srcMatch ? parseInt(srcMatch[1], 10) - 1 : 0,
+      sourceIndex: extractTaggedSourceIndex(rawTc),
     };
   });
   if (timings.length === 0) return '';
@@ -3965,10 +3970,9 @@ export function generateCapCutDraftJson(params: {
   const syncTimeline = buildNarrationSyncedTimeline(scenes, narrationLines, preset);
   const nsTimings = syncTimeline.scenes;
   const timings: SceneTiming[] = nsTimings.map((t, ti) => {
-    // [FIX #891/#892] 소스 인덱스 추출 — AI 출력의 "[소스 N]" 매칭
+    // [FIX #891/#892] 소스 인덱스 추출 — "[소스 N]" / "[S-01]" 매칭
     const rawTc = scenes[t.sceneIndex]?.timecodeSource || scenes[t.sceneIndex]?.sourceTimeline || '';
-    const srcMatch = rawTc.match(/\[소스\s*(\d+)\]/);
-    const sourceIndex = srcMatch ? parseInt(srcMatch[1], 10) - 1 : 0;
+    const sourceIndex = extractTaggedSourceIndex(rawTc);
     return {
       index: t.sceneIndex,
       startSec: t.sourceStartSec + t.trimStartSec,
