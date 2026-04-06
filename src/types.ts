@@ -1802,7 +1802,7 @@ export type EditPointExportMode = 'direct-mp4' | 'ffmpeg-script' | 'edl-file' | 
 
 // ═══ 영상 분석실 (VideoAnalysisRoom) ═══
 
-export type VideoAnalysisPreset = 'tikitaka' | 'snack' | 'condensed' | 'deep' | 'shopping' | 'alltts';
+export type VideoAnalysisPreset = 'tikitaka' | 'snack' | 'condensed' | 'deep' | 'shopping' | 'alltts' | 'dubbing' | 's2s' | 'l2s';
 
 /** 장면 하나의 구조화 데이터 (스낵형 + 티키타카 공용) */
 export interface VideoSceneRow {

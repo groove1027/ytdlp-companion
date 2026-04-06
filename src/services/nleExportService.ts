@@ -29,7 +29,11 @@ import { OVERSCALE } from './webcodecs/kenBurnsEngine';
 import { evolinkChat } from './evolinkService';
 import { isCompanionDetected } from './ytdlpApiService';
 import { monitoredFetch } from './apiService';
-import { downloadAndTrimReferenceClip } from './youtubeReferenceService';
+import {
+  downloadAndTrimReferenceClip,
+  isReferenceClipCompatibilityErrorMessage,
+} from './youtubeReferenceService';
+import { getVideoAnalysisPrimaryText } from '../utils/videoAnalysisText';
 
 const COMPANION_URL = 'http://127.0.0.1:9876';
 
@@ -2800,7 +2804,7 @@ function buildCapCutWindowsPowerShellInstallerScript(projectFolderId: string): s
     '  Copy-Item $SourceProjectPath $TargetProjectPath -Recurse -Force',
     '}',
     '',
-    '$Placeholder = "##_draftpath_placeholder_$ProjectId_##"',
+    '$Placeholder = "##_draftpath_placeholder_${ProjectId}_##"',
     "$TargetProjectPathJson = $TargetProjectPath -replace '\\\\', '/'",
     "$TargetRootJson = $TargetRoot -replace '\\\\', '/'",
     '',
@@ -3517,8 +3521,8 @@ interface SceneTiming {
   sourceIndex: number;   // [FIX #891/#892] 다중 소스 영상 인덱스 (0-based)
 }
 
-function getVideoAnalysisMainText(scene: VideoSceneRow): string {
-  return (scene.audioContent || scene.dialogue || scene.sceneDesc || '').trim();
+function getVideoAnalysisMainText(scene: VideoSceneRow, preset?: VideoAnalysisPreset): string {
+  return getVideoAnalysisPrimaryText(scene, preset);
 }
 
 function normalizeNarrationComparisonText(text: string): string {
@@ -3552,8 +3556,9 @@ export function buildVideoAnalysisNarrationLines(params: {
   scenes: VideoSceneRow[];
   soundLines: Array<Pick<ScriptLine, 'audioUrl' | 'duration' | 'endTime' | 'sceneId' | 'startTime' | 'text' | 'ttsStatus'>>;
   versionId?: number | string;
+  preset?: VideoAnalysisPreset;
 }): Array<{ audioUrl?: string; duration?: number; index: number; sceneId?: string; startTime?: number; text?: string }> {
-  const { scenes, soundLines, versionId } = params;
+  const { scenes, soundLines, versionId, preset } = params;
   if (scenes.length === 0 || soundLines.length === 0) return [];
 
   const audioLineGroups = new Map<string, Array<Pick<ScriptLine, 'audioUrl' | 'duration' | 'endTime' | 'sceneId' | 'startTime' | 'text' | 'ttsStatus'>>>();
@@ -3576,7 +3581,7 @@ export function buildVideoAnalysisNarrationLines(params: {
   const canUseLegacyIndexMatching = !canUseSceneIdMatching
     && soundLines.length === scenes.length
     && scenes.every((scene, sceneIndex) => {
-      const sceneText = normalizeNarrationComparisonText(getVideoAnalysisMainText(scene));
+      const sceneText = normalizeNarrationComparisonText(getVideoAnalysisMainText(scene, preset));
       const lineText = normalizeNarrationComparisonText(soundLines[sceneIndex]?.text || '');
       return sceneText === lineText;
     });
@@ -3689,9 +3694,7 @@ function extractTimings(scenes: VideoSceneRow[], preset?: VideoAnalysisPreset): 
     }
 
     const clipDur = endSec - startSec;
-    const mainText = preset === 'snack'
-      ? (s.dialogue || s.audioContent || s.sceneDesc)
-      : getVideoAnalysisMainText(s);
+    const mainText = getVideoAnalysisMainText(s, preset);
 
     result.push({
       index: i,
@@ -3782,7 +3785,7 @@ export function generateFcpXml(params: {
   const markers = timings.map((t, i) => {
     const s = scenes[i];
     const mTag = s.mode ? `[${s.mode.replace(/[\[\]]/g, '')}] ` : '';
-    const markerName = `${mTag}#${i + 1} ${(s.audioContent || s.dialogue || '').slice(0, 50)}`;
+    const markerName = `${mTag}#${i + 1} ${getVideoAnalysisMainText(s, preset).slice(0, 50)}`;
     const markerComment = [s.effectSub, s.videoDirection]
       .filter(Boolean).join(' | ').slice(0, 200);
     return `
@@ -3800,7 +3803,7 @@ export function generateFcpXml(params: {
     const color = modeToLabelColor(s.mode);
     // [FIX #316] 클립 이름에 모드+오디오 내용 표시 — Premiere 타임라인에서 즉시 확인 가능
     const modeTag = s.mode ? `${s.mode.replace(/[\[\]]/g, '')}` : '';
-    const clipName = `${modeTag ? `[${modeTag}] ` : ''}#${i + 1} ${(s.audioContent || s.dialogue || s.sceneDesc || '').slice(0, 50)}`;
+    const clipName = `${modeTag ? `[${modeTag}] ` : ''}#${i + 1} ${getVideoAnalysisMainText(s, preset).slice(0, 50)}`;
     const fileTag = i === 0
       ? `<file id="file-1">
               <name>${safeFileName}</name>
@@ -4978,6 +4981,7 @@ export async function buildNlePackageZip(params: {
     const presetLabel: Record<string, string> = {
       tikitaka: '티키타카 리메이크', snack: '스낵 편집', condensed: '컨덴스드',
       deep: '딥 분석', shopping: '쇼핑 리뷰', alltts: 'All TTS',
+      dubbing: '더빙 번역', s2s: '숏투숏', l2s: '롱투숏',
     };
     zip.file('README.txt', [
       `=== ${title} — Premiere Pro / DaVinci Resolve ===`,
@@ -6397,6 +6401,7 @@ export async function buildEditRoomNleZip(params: {
   const narrationClips: EditRoomNarrationClip[] = []; // 나레이션 배치 정보 (다중 라인 지원)
   const narrationBlobEntries: Array<{ fileName: string; blob: Blob }> = []; // ZIP 루트 복사용
   const missingSceneMedia: number[] = [];
+  const referenceClipFailures: Array<{ sceneNumber: number; message: string }> = [];
   let videoCount = 0;
   let imageCount = 0;
 
@@ -6449,8 +6454,9 @@ export async function buildEditRoomNleZip(params: {
           videoCount++;
           added = true;
         }
-      } catch {
-        // 레퍼런스 클립 준비 실패 → missingSceneMedia로 처리
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '레퍼런스 클립 준비 실패';
+        referenceClipFailures.push({ sceneNumber: i + 1, message });
       }
     }
 
@@ -6460,6 +6466,12 @@ export async function buildEditRoomNleZip(params: {
   }
 
   if (missingSceneMedia.length > 0) {
+    const compatibilityFailure = referenceClipFailures.find((failure) =>
+      isReferenceClipCompatibilityErrorMessage(failure.message),
+    );
+    if (compatibilityFailure) {
+      throw new Error(`장면 #${compatibilityFailure.sceneNumber} 레퍼런스 클립을 준비하지 못했습니다. ${compatibilityFailure.message}`);
+    }
     const preview = missingSceneMedia.slice(0, 8).map((n) => `#${n}`).join(', ');
     const suffix = missingSceneMedia.length > 8 ? ' 외' : '';
     throw new Error(`내보낼 수 없는 장면이 있습니다: ${preview}${suffix}. 각 장면에 이미지나 영상을 준비한 뒤 다시 시도해주세요.`);

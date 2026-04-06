@@ -134,6 +134,9 @@ const RESULT_CACHE_PRESET_MAP: Record<VideoAnalysisPreset, true> = {
   deep: true,
   shopping: true,
   alltts: true,
+  dubbing: true,
+  s2s: true,
+  l2s: true,
 };
 const RESULT_CACHE_LIMIT = Math.max(8, Object.keys(RESULT_CACHE_PRESET_MAP).length);
 const STATE_THUMBNAIL_LIMIT = 72;

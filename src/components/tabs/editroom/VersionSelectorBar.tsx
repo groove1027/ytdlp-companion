@@ -3,18 +3,17 @@ import { useVideoAnalysisStore } from '../../../stores/videoAnalysisStore';
 import { useEditPointStore } from '../../../stores/editPointStore';
 import { showToast } from '../../../stores/uiStore';
 import type { VideoVersionItem } from '../../../types';
+import { buildVideoAnalysisEditTableText } from '../../../utils/videoAnalysisText';
 
 /** 버전 텍스트 생성 (VideoAnalysisRoom과 동일 포맷) */
-function buildVersionText(v: VideoVersionItem): string {
-  return `제목: ${v.title}\n컨셉: ${v.concept}\n\n| 순서 | 모드 | 오디오 내용 | 예상 시간 | 비디오 화면 지시 | 타임코드 소스 |\n| :--- | :--- | :--- | :--- | :--- | :--- |\n` +
-    v.scenes.map(s =>
-      `| ${s.cutNum} | ${s.mode} | ${s.audioContent} | ${s.duration} | ${s.videoDirection} | ${s.timecodeSource} |`
-    ).join('\n');
+function buildVersionText(v: VideoVersionItem, preset: ReturnType<typeof useVideoAnalysisStore.getState>['selectedPreset']): string {
+  return buildVideoAnalysisEditTableText(v, preset);
 }
 
 const VersionSelectorBar: React.FC = () => {
   const versions = useVideoAnalysisStore(s => s.versions);
   const selectedIdx = useVideoAnalysisStore(s => s.editRoomSelectedVersionIdx);
+  const selectedPreset = useVideoAnalysisStore(s => s.selectedPreset);
   const thumbnails = useVideoAnalysisStore(s => s.thumbnails);
 
   const handleSelect = useCallback(async (idx: number) => {
@@ -23,7 +22,7 @@ const VersionSelectorBar: React.FC = () => {
     if (!v) return;
 
     const videoStore = useVideoAnalysisStore.getState();
-    const versionText = buildVersionText(v);
+    const versionText = buildVersionText(v, selectedPreset);
 
     // [FIX #296] try-catch로 감싸 실패해도 버전 전환 반영
     // [FIX #700] import가 가드에 의해 스킵되면 (isImportingFromVideoAnalysis) 전환하지 않음
@@ -44,7 +43,7 @@ const VersionSelectorBar: React.FC = () => {
 
     useVideoAnalysisStore.getState().setEditRoomSelectedVersionIdx(idx);
     showToast(`버전 ${idx + 1} 로딩 완료: ${v.title}`);
-  }, [versions, selectedIdx, thumbnails]);
+  }, [versions, selectedIdx, thumbnails, selectedPreset]);
 
   if (versions.length === 0 || selectedIdx == null) return null;
 

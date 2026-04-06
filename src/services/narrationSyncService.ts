@@ -130,7 +130,7 @@ export function splitEffectAndDialogueSubtitles(
 ) {
   return scenes.map((scene, sceneIndex) => {
     // 프리셋별 텍스트 우선순위 (extractTimings와 동일)
-    const dialogueText = preset === 'snack'
+    const dialogueText = preset === 'snack' || preset === 's2s' || preset === 'l2s'
       ? (scene.dialogue || scene.audioContent || scene.sceneDesc || '').trim()
       : (scene.audioContent || scene.dialogue || scene.sceneDesc || '').trim();
     const effectText = (scene.effectSub || '').trim();

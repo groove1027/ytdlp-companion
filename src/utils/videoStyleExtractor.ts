@@ -11,15 +11,27 @@ const PRESET_META: Record<VideoAnalysisPreset, { icon: string; label: string }> 
   deep: { icon: '🔬', label: '딥분석' },
   shopping: { icon: '🛒', label: '쇼핑' },
   alltts: { icon: '🎙️', label: 'ALL-TTS' },
+  dubbing: { icon: '🗣️', label: '더빙번역' },
+  s2s: { icon: '⚡', label: '숏투숏' },
+  l2s: { icon: '🥪', label: '롱투숏' },
 };
 
 const MAX_NARRATION_CHARS = 2000;
 
+function getPresetSampleText(
+  scene: VideoVersionItem['scenes'][number],
+  preset: VideoAnalysisPreset,
+): string {
+  return preset === 'snack' || preset === 's2s' || preset === 'l2s'
+    ? (scene.dialogue || scene.audioContent || scene.sceneDesc || '')
+    : (scene.audioContent || scene.dialogue || scene.sceneDesc || '');
+}
+
 /** 버전의 scenes에서 대사/나레이션 텍스트 추출 */
-function extractNarration(version: VideoVersionItem): string {
+function extractNarration(version: VideoVersionItem, preset: VideoAnalysisPreset): string {
   if (!version.scenes?.length) return '';
   const lines = version.scenes
-    .map(s => s.audioContent || s.dialogue || s.sceneDesc || '')
+    .map((scene) => getPresetSampleText(scene, preset))
     .filter(Boolean);
   const joined = lines.join('\n');
   return joined.length > MAX_NARRATION_CHARS
@@ -34,7 +46,7 @@ export function buildVideoAnalysisStylePreset(
   slotName: string,
 ): VideoAnalysisStylePreset {
   const meta = PRESET_META[preset] || { icon: '📹', label: preset };
-  const narration = extractNarration(version);
+  const narration = extractNarration(version, preset);
 
   const systemPrompt = `당신은 대본 스타일 변환 전문가입니다.
 아래 [참고 대본]의 스타일(말투, 어미, 문장 구조, 호흡, 톤, 감정 표현 방식)을 정밀하게 분석하고,
