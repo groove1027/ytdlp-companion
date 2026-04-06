@@ -1,11 +1,10 @@
 name: Build & Release (macOS + Windows)
 
-# tag 푸시 시 자동 빌드 + 릴리즈
-# 사용법: git tag companion-v1.2.0 && git push origin companion-v1.2.0
+# [v1.3.1+] push trigger 비활성화 — companion 빌드는 groove1027/all-in-one-production
+# 의 build-companion.yml CI가 담당하고, 결과물은 mirror-companion-release.sh로 미러링.
+# 그래야 ytdlp-companion 자체 source(stale)로 빌드해서 자산 덮어쓰는 사고가 재발하지 않음.
+# 긴급 빌드가 필요하면 GitHub Actions UI에서 Run workflow (workflow_dispatch)로 수동 실행.
 on:
-  push:
-    tags:
-      - 'companion-v*'
   workflow_dispatch:
     inputs:
       version:
