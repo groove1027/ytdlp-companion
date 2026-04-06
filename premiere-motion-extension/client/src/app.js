@@ -98,9 +98,15 @@ function evalScript(script) {
 let _refreshPromise = null;
 let _refreshWantsStatus = false;
 
-async function refreshSelectedClips(silent) {
+async function refreshSelectedClips(silent, force) {
   if (silent !== true) _refreshWantsStatus = true;
-  if (_refreshPromise) return _refreshPromise;
+  // force=true: 진행 중인 polling Promise를 무시하고 항상 새 조회 시작
+  // (Apply/Random/Smart 버튼 클릭 시 stale 데이터 사용 방지)
+  if (_refreshPromise && !force) return _refreshPromise;
+  // force 시 이전 Promise가 있으면 완료될 때까지 기다린 후 새로 시작
+  if (force && _refreshPromise) {
+    try { await _refreshPromise; } catch (e) {}
+  }
 
   _refreshPromise = (async () => {
     try {
@@ -157,7 +163,7 @@ async function applyToSelected() {
   state.busy = true;
   stopClipPolling();
   try {
-    await refreshSelectedClips(true);
+    await refreshSelectedClips(true, true);
     if (state.selectedClips.length === 0) {
       updateStatus('Select clips first', 'warn');
       return;
@@ -187,7 +193,7 @@ async function applyRandomToSelected() {
   state.busy = true;
   stopClipPolling();
   try {
-    await refreshSelectedClips(true);
+    await refreshSelectedClips(true, true);
     if (state.selectedClips.length === 0) {
       updateStatus('Select clips first', 'warn');
       return;
@@ -225,7 +231,7 @@ async function applySmartToSelected() {
   state.busy = true;
   stopClipPolling();
   try {
-    await refreshSelectedClips(true);
+    await refreshSelectedClips(true, true);
     if (state.selectedClips.length === 0) {
       updateStatus('Select clips first', 'warn');
       return;
@@ -287,9 +293,12 @@ async function applyBatch(assignments) {
       updateStatus('적용 실패: ' + data.error, 'error');
     } else {
       const okCount = data.filter(r => r.result.indexOf('OK') === 0).length;
-      const errCount = data.length - okCount;
+      const skipCount = data.filter(r => r.result.indexOf('Skip:') === 0).length;
+      const errCount = data.length - okCount - skipCount;
       if (errCount > 0) {
-        updateStatus(okCount + '개 성공, ' + errCount + '개 실패', 'warn');
+        updateStatus(okCount + '개 성공, ' + errCount + '개 실패, ' + skipCount + '개 스킵', 'warn');
+      } else if (skipCount > 0) {
+        updateStatus(okCount + '개 적용, ' + skipCount + '개 스킵 (기존 모션 키프레임 보호)', 'warn');
       } else {
         updateStatus(okCount + '개 클립에 모션 적용 완료!', 'success');
       }

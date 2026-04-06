@@ -484,6 +484,8 @@
     })();
   </script>
 
-  <script type="module" src="src/app.js"></script>
+  <!-- ES module import/export가 CEP file:// 로딩에서 MIME/CORS 이슈로 막힐 수 있어
+       bundle.sh로 생성한 단일 IIFE 스크립트를 사용한다. -->
+  <script src="src/bundle.js"></script>
 </body>
 </html>

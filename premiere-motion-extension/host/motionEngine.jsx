@@ -152,20 +152,14 @@ function getSelectedClips() {
 
       var trackIdx = -1;
       var clipIdx = -1;
-      // nodeId 기반 매칭 (이름+시간 매칭보다 안전)
+      // nodeId 기반 매칭 — Premiere Pro 25+에서는 항상 존재해야 함.
+      // nodeId가 없으면 중복 클립 케이스에서 안전하게 매칭할 방법이 없으므로 skip.
       var clipNodeId = clip.nodeId;
+      if (!clipNodeId) continue;
       for (var t = 0; t < seq.videoTracks.numTracks; t++) {
         var track = seq.videoTracks[t];
         for (var c = 0; c < track.clips.numItems; c++) {
-          if (clipNodeId && track.clips[c].nodeId === clipNodeId) {
-            trackIdx = t;
-            clipIdx = c;
-            break;
-          }
-          // nodeId 폴백: 이름+시간 매칭
-          if (!clipNodeId &&
-              track.clips[c].name === clip.name &&
-              Math.abs(track.clips[c].start.seconds - clip.start.seconds) < 0.01) {
+          if (track.clips[c].nodeId === clipNodeId) {
             trackIdx = t;
             clipIdx = c;
             break;
@@ -175,6 +169,11 @@ function getSelectedClips() {
       }
       if (trackIdx < 0 || clipIdx < 0) continue;
 
+      var safeMediaPath = '';
+      try {
+        safeMediaPath = clip.projectItem.getMediaPath() || '';
+      } catch (empp) { safeMediaPath = ''; }
+
       results.push({
         name: clip.name,
         trackIdx: trackIdx,
@@ -182,7 +181,7 @@ function getSelectedClips() {
         start: clip.start.seconds,
         end: clip.end.seconds,
         dur: clip.end.seconds - clip.start.seconds,
-        mediaPath: clip.projectItem.getMediaPath() || ''
+        mediaPath: safeMediaPath
       });
     }
 
@@ -251,14 +250,25 @@ function applyMotionToClip(trackIdx, clipIdx, presetId, anchorX, anchorY, intens
     if (!motion) return 'Error: Motion component not found (components=' + clip.components.numItems + ')';
 
     // Scale 프로퍼티 찾기
-    var scaleProp = findProp(motion, ['Scale', '비율', 'Échelle', 'Skalierung', 'Scala', 'Escala', 'Schaal'], 4);
+    var scaleProp = findProp(motion, ['Scale', '비율', 'Échelle', 'Skalierung', 'Scala', 'Escala', 'Schaal', '缩放']);
     if (!scaleProp) return 'Error: Scale property not found';
 
+    // Uniform Scale 확인 — 비균일 스케일 클립은 Skip (Scale Width/Height 별도 처리 불가)
+    var scaleUniform = findProp(motion, ['Uniform Scale', '균등 비율', 'Mise à l\'échelle uniforme']);
+    if (scaleUniform) {
+      try {
+        var isUniform = scaleUniform.getValue();
+        if (isUniform === false || isUniform === 0) {
+          return 'Skip: Clip uses non-uniform scale — enable Uniform Scale first';
+        }
+      } catch (eus) {}
+    }
+
     // Position 프로퍼티 (패닝 적용용)
-    var posProp = findProp(motion, ['Position', '위치', 'Posición', 'Posizione', 'Positie'], 1);
+    var posProp = findProp(motion, ['Position', '位置', '위치', 'Posición', 'Posição', 'Posizione', 'Positie']);
 
     // Rotation 프로퍼티 (optional)
-    var rotProp = findProp(motion, ['Rotation', '회전', 'Drehung', 'Rotación', 'Rotazione', 'Rotatie'], 5);
+    var rotProp = findProp(motion, ['Rotation', '旋转', '회전', 'Drehung', 'Rotación', 'Rotação', 'Rotazione', 'Rotatie']);
 
     // ─── 클립 시간 범위 (타임라인 기준) ───
     var startSec = clip.start.seconds;
@@ -271,8 +281,16 @@ function applyMotionToClip(trackIdx, clipIdx, presetId, anchorX, anchorY, intens
     var seqH = seq.frameSizeVertical || 1080;
 
     var baselineKey = getClipBaselineKey(clip);
+    if (!baselineKey) {
+      return 'Error: Clip has no nodeId — cannot track baseline safely';
+    }
     var baseline = MOTION_BASELINES[baselineKey];
-    // baseline이 없으면 현재 값을 baseline으로 저장 (세션 재시작 후에도 동작)
+    // baseline이 없고, Motion 컴포넌트의 어떤 프로퍼티라도 키프레임이 있으면 적용 거부
+    // (Scale/Position/Rotation뿐 아니라 AnchorPoint/Opacity 등도 모두 검사 — 애니메이션 파괴 방지)
+    if (!baseline && motionComponentHasAnyKeyframes(motion)) {
+      return 'Skip: Clip has existing Motion keyframes — not touched by Motion Master';
+    }
+    // baseline이 없으면 현재 값을 baseline으로 저장
     if (!baseline) {
       baseline = {
         scale: readScalarValue(scaleProp, 100),
@@ -312,10 +330,15 @@ function applyMotionToClip(trackIdx, clipIdx, presetId, anchorX, anchorY, intens
     var errors = [];
     var maxAppliedScale = 0;
 
+    // 프리셋 dur는 "권장 지속 시간" — 클립 길이가 이보다 길면 dur 시점에 모션이 끝나고 마지막 값 유지.
+    // 클립이 더 짧으면 클립 전체에 걸쳐 모션 실행 (프리셋 속도 차이를 구현).
+    var presetDur = (typeof preset.dur === 'number' && preset.dur > 0) ? preset.dur : dur;
+    var effectiveDur = Math.min(dur, presetDur);
+
     for (var fi = 0; fi < numFrames; fi++) {
       var f = frames[fi];
       var ratio = numFrames > 1 ? fi / (numFrames - 1) : 0;
-      var timeSec = startSec + dur * ratio;
+      var timeSec = startSec + effectiveDur * ratio;
       var keyTime = makeTime(timeSec);
 
       // Scale: 프리셋 배율과 검은 테두리 방지 배율 중 더 큰 값을 사용
@@ -418,9 +441,8 @@ function removeMotionFromSelected() {
       return 'Error: No clips selected';
     }
 
-    var seqW = seq.frameSizeHorizontal || 1920;
-    var seqH = seq.frameSizeVertical || 1080;
     var count = 0;
+    var skipped = 0;
     for (var i = 0; i < selection.length; i++) {
       var clip = selection[i];
       if (!clip || !clip.projectItem) continue;
@@ -429,13 +451,21 @@ function removeMotionFromSelected() {
       if (!motion) continue;
 
       var baselineKey = getClipBaselineKey(clip);
+      if (!baselineKey) {
+        skipped++;
+        continue;
+      }
       var baseline = MOTION_BASELINES[baselineKey];
-      // baseline 없으면 기본값 사용 (세션 재시작 후에도 Undo 가능)
-      if (!baseline) baseline = { scale: 100, position: [seqW / 2, seqH / 2], rotation: 0 };
+      // baseline이 없으면 skip — 이 세션에서 Motion Master를 적용하지 않은 클립이므로
+      // 원래 값을 파괴하지 않기 위해 건드리지 않음. 사용자는 Premiere의 Cmd+Z를 사용해야 함.
+      if (!baseline) {
+        skipped++;
+        continue;
+      }
 
-      var scaleProp = findProp(motion, ['Scale', '비율', 'Échelle', 'Skalierung', 'Scala', 'Escala', 'Schaal'], 4);
-      var rotProp = findProp(motion, ['Rotation', '회전', 'Drehung', 'Rotación', 'Rotazione', 'Rotatie'], 5);
-      var posProp = findProp(motion, ['Position', '위치', 'Posición', 'Posizione', 'Positie'], 1);
+      var scaleProp = findProp(motion, ['Scale', '비율', 'Échelle', 'Skalierung', 'Scala', 'Escala', 'Schaal', '缩放']);
+      var rotProp = findProp(motion, ['Rotation', '旋转', '회전', 'Drehung', 'Rotación', 'Rotação', 'Rotazione', 'Rotatie']);
+      var posProp = findProp(motion, ['Position', '位置', '위치', 'Posición', 'Posição', 'Posizione', 'Positie']);
 
       // Scale: 키프레임 제거 + baseline 값으로 복원
       if (scaleProp) {
@@ -456,6 +486,9 @@ function removeMotionFromSelected() {
       count++;
     }
 
+    if (skipped > 0) {
+      return 'Warn: Removed motion from ' + count + ' clip(s); skipped ' + skipped + ' (no baseline — use Premiere Undo)';
+    }
     return 'Removed motion from ' + count + ' clip(s)';
   } catch (e) {
     return 'Error: ' + e.message;
@@ -470,7 +503,7 @@ function removeMotionFromSelected() {
  * Motion 컴포넌트 찾기 (다국어 이름 + 인덱스 폴백)
  */
 function findMotionComponent(clip) {
-  var motionNames = ['Motion', '모션', 'Mouvement', 'Bewegung', 'Movimiento', 'Movimento'];
+  var motionNames = ['Motion', '运动', '모션', 'Mouvement', 'Bewegung', 'Movimiento', 'Movimento', 'Beweging'];
   for (var ci = 0; ci < clip.components.numItems; ci++) {
     var compName = clip.components[ci].displayName;
     for (var ni = 0; ni < motionNames.length; ni++) {
@@ -483,33 +516,22 @@ function findMotionComponent(clip) {
 }
 
 /**
- * 이름 배열로 프로퍼티 찾기 (다국어 대응 + 인덱스 폴백)
- * Motion.properties 인덱스: [0]=AnchorPoint, [1]=Position, [2]=ScaleH, [3]=ScaleW, [4]=Scale, [5]=Rotation, [6]=Opacity
+ * 이름 배열로 프로퍼티 찾기 (다국어 대응, exact match only)
+ * 인덱스 폴백은 제거됨 — Premiere 버전마다 인덱스가 다를 수 있어서 잘못된 프로퍼티를 건드릴 위험이 있음.
  */
-function findProp(component, names, fallbackIdx) {
+function findProp(component, names) {
   for (var pi = 0; pi < component.properties.numItems; pi++) {
     var prop = component.properties[pi];
     for (var ni = 0; ni < names.length; ni++) {
       if (prop.displayName === names[ni]) return prop;
     }
   }
-  // 로케일 이름 매칭 실패 시 인덱스 폴백
-  if (typeof fallbackIdx === 'number' && fallbackIdx >= 0 &&
-      fallbackIdx < component.properties.numItems) {
-    return component.properties[fallbackIdx];
-  }
   return null;
 }
 
 function getClipBaselineKey(clip) {
-  if (!clip) return 'clip:unknown';
-  if (clip.nodeId) return 'node:' + clip.nodeId;
-  var name = clip.name || 'unnamed';
-  var startTicks = '';
-  var endTicks = '';
-  try { startTicks = clip.start.ticks || ''; } catch (e1) {}
-  try { endTicks = clip.end.ticks || ''; } catch (e2) {}
-  return 'clip:' + name + ':' + startTicks + ':' + endTicks;
+  if (!clip || !clip.nodeId) return null;
+  return 'node:' + clip.nodeId;
 }
 
 function readScalarValue(prop, fallback) {
@@ -546,6 +568,23 @@ function hasExistingMotionKeyframes(scaleProp, posProp, rotProp) {
   return propIsTimeVarying(scaleProp) ||
          propIsTimeVarying(posProp) ||
          propIsTimeVarying(rotProp);
+}
+
+/**
+ * Motion 컴포넌트의 모든 프로퍼티를 순회해서 하나라도 time-varying이면 true.
+ * Scale/Position/Rotation 외의 AnchorPoint, Opacity 등도 검사한다.
+ */
+function motionComponentHasAnyKeyframes(motion) {
+  if (!motion) return false;
+  try {
+    for (var pi = 0; pi < motion.properties.numItems; pi++) {
+      var p = motion.properties[pi];
+      try {
+        if (p.isTimeVarying && p.isTimeVarying()) return true;
+      } catch (e) {}
+    }
+  } catch (e2) {}
+  return false;
 }
 
 function resetPropToStaticValue(prop, value) {
@@ -633,7 +672,7 @@ function debugMotion() {
     }
 
     // Scale 프로퍼티 테스트
-    var scaleProp = findProp(motion, ['Scale', '비율', 'Échelle', 'Skalierung', 'Scala', 'Escala', 'Schaal'], 4);
+    var scaleProp = findProp(motion, ['Scale', '비율', 'Échelle', 'Skalierung', 'Scala', 'Escala', 'Schaal', '缩放']);
     if (!scaleProp) {
       return JSON.stringify({ error: 'Scale prop not found', log: log });
     }
