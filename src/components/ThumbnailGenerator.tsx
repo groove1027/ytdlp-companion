@@ -402,7 +402,8 @@ const ThumbnailGenerator: React.FC<ThumbnailGeneratorProps> = ({
       fontHint?: string,
       textPosition?: string,
       textScale?: number,
-      thumbTextMode?: 'auto' | 'custom' | 'none'
+      thumbTextMode?: 'auto' | 'custom' | 'none',
+      sourceReferenceImage?: string
   ) => {
     setThumbnails(prev => prev.map(t => t.id === id ? { ...t, isGenerating: true, generationStatus: undefined } : t));
 
@@ -410,6 +411,10 @@ const ThumbnailGenerator: React.FC<ThumbnailGeneratorProps> = ({
       // Use extractedStyle as the style override if present. This ensures strict copying.
       // If reference is present, 'extractedStyle' holds the detailed structural analysis.
       const effectiveStyle = extractedStyle ? extractedStyle : styleDescription;
+      const activeReferenceImage = feedback && sourceReferenceImage
+        ? sourceReferenceImage
+        : referenceImage || undefined;
+      const preserveSourceImage = !!(feedback && sourceReferenceImage);
 
       const updateStatus = (status: string) => {
           setThumbnails(prev => prev.map(t => t.id === id ? { ...t, generationStatus: status } : t));
@@ -432,7 +437,8 @@ const ThumbnailGenerator: React.FC<ThumbnailGeneratorProps> = ({
           isNativeHQ,
           sentiment, 
           highlight,
-          referenceImage || undefined, // Pass reference image for style copy
+          activeReferenceImage, // current thumbnail edit mode uses the current image as source
+          preserveSourceImage,
           textForceLock,
           updateStatus,
           isMixedMedia, // Pass Mixed Media Flag
@@ -465,8 +471,9 @@ const ThumbnailGenerator: React.FC<ThumbnailGeneratorProps> = ({
       setThumbnails(prev => prev.map(t => t.id === id ? {
           ...t,
           imageUrl,
+          previousImageUrl: t.imageUrl && t.imageUrl !== imageUrl ? t.imageUrl : t.previousImageUrl,
           isGenerating: false,
-          visualDescription: feedback ? feedback : visual,
+          visualDescription: visual,
           generationStatus: undefined
       } : t));
 
@@ -482,8 +489,7 @@ const ThumbnailGenerator: React.FC<ThumbnailGeneratorProps> = ({
       setThumbnails(prev => prev.map(t => t.id === id ? { 
           ...t, 
           isGenerating: false, 
-          generationStatus: "생성 실패", 
-          imageUrl: undefined 
+          generationStatus: "생성 실패"
       } : t));
     }
   };
@@ -507,7 +513,7 @@ const ThumbnailGenerator: React.FC<ThumbnailGeneratorProps> = ({
       e.preventDefault();
       if (!editingId) return;
       const ratio = thumb.format === 'short' ? AspectRatio.PORTRAIT : AspectRatio.LANDSCAPE;
-      generateSingleThumbnail(thumb.id, thumb.textOverlay, thumb.visualDescription, ratio, feedback, thumb.primaryColorHex, thumb.secondaryColorHex, thumb.colorMode, undefined, thumb.isNativeHQ, thumb.sentiment, thumb.highlight, thumb.shotSize, thumb.poseDescription, thumb.cameraAngle, undefined, undefined, undefined, undefined, thumb.textMode);
+      generateSingleThumbnail(thumb.id, thumb.textOverlay, thumb.visualDescription, ratio, feedback, thumb.primaryColorHex, thumb.secondaryColorHex, thumb.colorMode, undefined, thumb.isNativeHQ, thumb.sentiment, thumb.highlight, thumb.shotSize, thumb.poseDescription, thumb.cameraAngle, undefined, undefined, undefined, undefined, thumb.textMode, thumb.imageUrl);
       setEditingId(null);
       setFeedback('');
   };
@@ -533,6 +539,7 @@ const ThumbnailGenerator: React.FC<ThumbnailGeneratorProps> = ({
           setThumbnails(prev => prev.map(t => t.id === thumbId ? {
               ...t,
               imageUrl: newImageUrl,
+              previousImageUrl: thumb.imageUrl && thumb.imageUrl !== newImageUrl ? thumb.imageUrl : t.previousImageUrl,
               textOverlay: text,
               textPreset: presetId,
               fontHint: fontHintId,
@@ -554,7 +561,28 @@ const ThumbnailGenerator: React.FC<ThumbnailGeneratorProps> = ({
   // [NEW] Handle Post Processing Apply
   const handlePostProcessApply = (thumbId: string, processedBase64: string) => {
       setPostProcessId(null);
-      setThumbnails(prev => prev.map(t => t.id === thumbId ? { ...t, imageUrl: processedBase64 } : t));
+      setThumbnails(prev => prev.map(t => t.id === thumbId ? {
+          ...t,
+          imageUrl: processedBase64,
+          previousImageUrl: t.imageUrl && t.imageUrl !== processedBase64 ? t.imageUrl : t.previousImageUrl,
+      } : t));
+  };
+
+  const handleRestorePreviousImage = (thumbId: string) => {
+      setThumbnails(prev => prev.map(t => {
+          if (t.id !== thumbId || !t.previousImageUrl) return t;
+          return {
+              ...t,
+              imageUrl: t.previousImageUrl,
+              previousImageUrl: t.imageUrl || undefined,
+              generationStatus: undefined,
+              isGenerating: false,
+          };
+      }));
+      setToolbarId(null);
+      setPostProcessId(null);
+      setEditingId(null);
+      setTextEditingId(null);
   };
 
   const handleUploadClick = (id: string) => {
@@ -568,9 +596,15 @@ const ThumbnailGenerator: React.FC<ThumbnailGeneratorProps> = ({
           const reader = new FileReader();
           reader.readAsDataURL(file);
           reader.onload = (ev) => {
-              if (ev.target?.result) {
-                 setThumbnails(prev => prev.map(t => t.id === uploadTargetId ? { ...t, imageUrl: ev.target!.result as string } : t));
-              }
+              const newImageUrl = typeof ev.target?.result === 'string' ? ev.target.result : null;
+              if (!newImageUrl) return;
+              setThumbnails(prev => prev.map(t => t.id === uploadTargetId ? {
+                  ...t,
+                  imageUrl: newImageUrl,
+                  previousImageUrl: t.imageUrl && t.imageUrl !== newImageUrl ? t.imageUrl : t.previousImageUrl,
+                  generationStatus: undefined,
+                  isGenerating: false,
+              } : t));
           };
       }
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -864,6 +898,12 @@ const ThumbnailGenerator: React.FC<ThumbnailGeneratorProps> = ({
                                   <span className="text-2xl">🔄</span>
                                   <span className="text-xs text-white/80 font-bold">재생성</span>
                                 </button>
+                                {thumb.previousImageUrl && (
+                                <button onClick={() => handleRestorePreviousImage(thumb.id)} className="flex flex-col items-center gap-1.5 bg-emerald-500/20 hover:bg-emerald-500/30 backdrop-blur rounded-xl px-3 py-3 transition-colors border border-emerald-400/30" title="이전 단계로">
+                                  <span className="text-2xl">↶</span>
+                                  <span className="text-xs text-emerald-200 font-bold">이전 단계</span>
+                                </button>
+                                )}
                                 <button onClick={() => { setToolbarId(null); setEditingId(thumb.id); }} className="flex flex-col items-center gap-1.5 bg-white/10 hover:bg-white/20 backdrop-blur rounded-xl px-3 py-3 transition-colors" title="수정">
                                   <span className="text-2xl">✏️</span>
                                   <span className="text-xs text-white/80 font-bold">수정</span>
@@ -896,6 +936,14 @@ const ThumbnailGenerator: React.FC<ThumbnailGeneratorProps> = ({
                                 {copiedId === thumb.id ? "✅ 제목 복사됨!" : (thumb.fullTitle || "제목 없음")}
                             </span>
                         </div>
+                        {thumb.previousImageUrl && (
+                            <button
+                                onClick={() => handleRestorePreviousImage(thumb.id)}
+                                className="self-start px-2.5 py-1 text-xs font-bold rounded border border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 transition-colors"
+                            >
+                                ↶ 이전 단계로
+                            </button>
+                        )}
                     </div>
                 ))}
                 </div>

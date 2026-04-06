@@ -11,6 +11,11 @@ import { useEditorStore } from './editorStore';
 import { useShoppingShortStore } from './shoppingShortStore';
 import { useUploadStore } from './uploadStore';
 import { persistImage, isBase64Image } from '../services/imageStorageService';
+import {
+  safeLocalStorageGetItem,
+  safeLocalStorageRemoveItem,
+  safeLocalStorageSetItem,
+} from '../services/storageService';
 import { logger } from '../services/LoggerService';
 import { usePptMasterStore } from './pptMasterStore';
 import { buildUploadedTranscriptLines, isUploadedTranscriptConfig } from '../utils/uploadedTranscriptScenes';
@@ -88,17 +93,20 @@ export const autoRestoreOrCreateProject = async (): Promise<boolean> => {
   if (config) return false; // 이미 로드된 프로젝트 있음
 
   try {
-    const { getProject, getMostRecentProjectId } = await import('../services/storageService');
+    const {
+      getProject,
+      getMostRecentProjectId,
+    } = await import('../services/storageService');
 
     // 1) localStorage의 마지막 프로젝트 복원 시도 (자동 복원 → 비용도 함께 복원)
-    const lastId = localStorage.getItem('last-project-id');
+    const lastId = safeLocalStorageGetItem('last-project-id');
     if (lastId) {
       const project = await getProject(lastId);
       if (project) {
         useProjectStore.getState().loadProject(project, { skipCostRestore: true });
         return true;
       }
-      localStorage.removeItem('last-project-id');
+      safeLocalStorageRemoveItem('last-project-id');
     }
 
     // 2) IndexedDB에서 가장 최근 프로젝트 복원 (자동 복원 → 비용도 함께 복원)
@@ -230,11 +238,11 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
   setProjectTitle: (title) => set({ projectTitle: title }),
   setCurrentProjectId: (id) => {
     set({ currentProjectId: id });
-    // [FIX] localStorage에 마지막 프로젝트 ID 저장 → 새 탭/새로고침 시 복원용
-    try {
-      if (id) localStorage.setItem('last-project-id', id);
-      else localStorage.removeItem('last-project-id');
-    } catch (e) { logger.trackSwallowedError('ProjectStore:setCurrentProjectId', e); }
+    if (id) {
+      safeLocalStorageSetItem('last-project-id', id);
+      return;
+    }
+    safeLocalStorageRemoveItem('last-project-id');
   },
 
   setBatchGrokDuration: (d) => set((state) => ({
@@ -310,6 +318,8 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
       imageUrl: mergedImageUrl,
       // 비디오는 이미지가 바뀔 수 있으므로 초기화
       videoUrl: current.videoUrl || next.videoUrl,
+      // [FIX codex-review] 병합 후 대본이 달라지므로 레퍼런스 타임코드 매칭 무효
+      videoReferences: undefined,
     });
 
     const newScenes = [...state.scenes];
@@ -333,6 +343,7 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
       isGeneratingVideo: false,
       isNativeHQ: false,
       generationStatus: undefined,
+      videoReferences: undefined, // [FIX codex-review] 새 장면은 원본 refs 복제하지 않음
     };
     const newScenes = [...state.scenes];
     newScenes.splice(index + 1, 0, newScene);
@@ -514,7 +525,9 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
       _loadGeneration: generation,
     });
     // [FIX] localStorage에 마지막 프로젝트 ID 저장 → 새 탭/새로고침 시 복원용
-    try { if (project.id) localStorage.setItem('last-project-id', project.id); } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/setLastId', e); }
+    if (project.id) {
+      safeLocalStorageSetItem('last-project-id', project.id);
+    }
     // [FIX #776/#775/#826] 비용 복원 로직
     // skipCostRestore=true (자동 복원): costStore를 아예 건드리지 않음 → persist에서 복원된 값 유지
     // skipCostRestore=false (수동 전환): 프로젝트의 costStats로 교체, 없으면 리셋
@@ -718,7 +731,7 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
       batchGrokSpeech: false,
       _loadGeneration: state._loadGeneration + 1,
     }));
-    try { localStorage.removeItem('last-project-id'); } catch (e) { logger.trackSwallowedError('ProjectStore:clearProjectState/removeLastId', e); }
+    safeLocalStorageRemoveItem('last-project-id');
   },
 
   newProject: (title?: string, options?: { preserveAnalysisState?: boolean }) => {
@@ -764,7 +777,7 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
       _loadGeneration: state._loadGeneration + 1,
     }));
     // 마지막 프로젝트 ID를 localStorage에 저장 (복구용)
-    try { localStorage.setItem('last-project-id', projectId); } catch (e) { logger.trackSwallowedError('ProjectStore:newProject/setLastId', e); }
+    safeLocalStorageSetItem('last-project-id', projectId);
     useCostStore.getState().resetCosts();
 
     // [FIX] 새 프로젝트 즉시 저장 — 새로고침 시 프로젝트 유실 방지

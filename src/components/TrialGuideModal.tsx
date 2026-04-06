@@ -31,7 +31,6 @@ const TrialGuideModal: React.FC<TrialGuideModalProps> = ({ user, onClose, onSave
   const handleSave = () => {
     if (!geminiKey.trim()) return;
     onSaveGeminiKey(geminiKey.trim());
-    localStorage.setItem('CUSTOM_GOOGLE_GEMINI_KEY', geminiKey.trim());
   };
 
   return (

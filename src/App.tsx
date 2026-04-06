@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useCallback, Suspense } from 'react';
+import React, { useState, useEffect, useCallback, useRef, Suspense } from 'react';
 import { Toaster } from 'sonner';
 import { AnimatePresence, motion } from 'motion/react';
 import { ErrorBoundary as ReactErrorBoundary, FallbackProps } from 'react-error-boundary';
@@ -25,7 +25,16 @@ import {
     generatePromptFromScript,
     fetchCurrentExchangeRate,
 } from './services/geminiService';
-import { canCreateNewProject, requestPersistentStorage } from './services/storageService';
+import {
+  canCreateNewProject,
+  requestPersistentStorage,
+  clearTransientStorageCaches,
+  resetAppStorageForRecovery,
+  isStorageRelatedError,
+  safeLocalStorageGetItem,
+  safeLocalStorageSetItem,
+  safeLocalStorageRemoveItem,
+} from './services/storageService';
 import { useVideoBatch } from './hooks/useVideoBatch';
 import { useAutoSave } from './hooks/useAutoSave';
 import { useViewAlertPolling } from './hooks/useViewAlertPolling';
@@ -53,6 +62,7 @@ import { useNavigationStore } from './stores/navigationStore';
 import { useImageVideoStore } from './stores/imageVideoStore';
 import { logger } from './services/LoggerService';
 import { lazyRetry } from './utils/retryImport';
+import { getPreviousSceneImageUrlForReplace } from './utils/sceneImageHistory';
 
 // [v4.5] 새로운 탭 컴포넌트 (Lazy Loading + 자동 재시도)
 const ProjectDashboard = lazyRetry(() => import('./components/tabs/ProjectDashboard'));
@@ -111,12 +121,20 @@ const TabFallback = () => (
   </div>
 );
 
+const recoverStorageAndReload = async () => {
+  await resetAppStorageForRecovery().catch((e) => {
+    logger.trackSwallowedError('App:recoverStorageAndReload', e);
+  });
+  window.location.reload();
+};
+
 // ErrorBoundary — lazy 컴포넌트 런타임 에러 + 동적 import 실패 캐치 (react-error-boundary)
 function TabErrorFallback({ error: rawError, resetErrorBoundary }: FallbackProps) {
   const error = rawError instanceof Error ? rawError : new Error(String(rawError));
   const isChunkError = error.message?.includes('Failed to fetch dynamically imported module')
     || error.message?.includes('Loading chunk')
     || error.message?.includes('Loading CSS chunk');
+  const isStorageError = isStorageRelatedError(error);
 
   const handleHardReload = () => {
     sessionStorage.removeItem('__chunk_reload');
@@ -128,11 +146,15 @@ function TabErrorFallback({ error: rawError, resetErrorBoundary }: FallbackProps
   return (
     <div className="p-8 text-center">
       <p className="text-red-400 text-lg font-bold mb-2">
-        {isChunkError ? '앱 업데이트 감지' : '탭 로딩 오류'}
+        {isChunkError ? '앱 업데이트 감지' : isStorageError ? '저장 데이터 복구 필요' : '탭 로딩 오류'}
       </p>
       {isChunkError ? (
         <p className="text-gray-400 text-sm mb-4">
           새 버전이 배포되었습니다. 아래 버튼을 누르면 최신 버전으로 전환됩니다.
+        </p>
+      ) : isStorageError ? (
+        <p className="text-gray-400 text-sm mb-4">
+          브라우저 임시 캐시나 로컬 저장 데이터가 손상되었거나 가득 찼습니다. 로그인/API 키는 유지되고, 이 브라우저의 로컬 프로젝트/임시 캐시는 초기화될 수 있습니다.
         </p>
       ) : (
         <pre className="text-red-300 text-sm bg-red-900/20 p-4 rounded-lg overflow-auto max-h-60 text-left mb-4">
@@ -142,9 +164,9 @@ function TabErrorFallback({ error: rawError, resetErrorBoundary }: FallbackProps
       <div className="flex gap-3 justify-center">
         <button
           className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded text-white font-semibold"
-          onClick={handleHardReload}
+          onClick={isStorageError ? () => { void recoverStorageAndReload(); } : handleHardReload}
         >
-          최신 버전으로 새로고침
+          {isStorageError ? '저장 데이터 복구' : '최신 버전으로 새로고침'}
         </button>
         {!isChunkError && (
           <button
@@ -195,6 +217,56 @@ const App: React.FC = () => {
   const showCompanionGate = useUIStore((s) => s.showCompanionGate);
   const showTrialGuide = useUIStore((s) => s.showTrialGuide);
   const setShowCompanionGate = useUIStore((s) => s.setShowCompanionGate);
+  const storageRecoveryBusyRef = useRef(false);
+  const lastStorageNoticeAtRef = useRef(0);
+
+  const notifyStorageNotice = useCallback((message: string) => {
+    const now = Date.now();
+    if (now - lastStorageNoticeAtRef.current < 5000) return;
+    lastStorageNoticeAtRef.current = now;
+    showToast(message, 7000);
+  }, []);
+
+  const attemptTransientStorageRecovery = useCallback(async (error: unknown, source: string) => {
+    if (!isStorageRelatedError(error) || storageRecoveryBusyRef.current) return false;
+
+    storageRecoveryBusyRef.current = true;
+    try {
+      const recovery = await clearTransientStorageCaches({
+        includeLastProjectPointer: false,
+        currentProjectId: useProjectStore.getState().currentProjectId,
+      });
+      const clearedSummary = [
+        recovery.clearedLocalKeys.length > 0 ? `임시 캐시 ${recovery.clearedLocalKeys.length}건` : '',
+        recovery.removedEmptyProjects > 0 ? `빈 프로젝트 ${recovery.removedEmptyProjects}개` : '',
+        recovery.removedAutosaveSlot ? '영상 분석 자동저장 1건' : '',
+      ].filter(Boolean).join(', ');
+
+      notifyStorageNotice(
+        clearedSummary
+          ? `저장 공간 문제로 ${clearedSummary}을 자동 정리했어요. 오래된 프로젝트나 분석 슬롯을 더 정리하면 안정적입니다.`
+          : '브라우저 저장 데이터 문제가 감지되어 임시 캐시 정리를 시도했어요. 문제가 계속되면 저장 데이터 복구를 실행해 주세요.'
+      );
+      return true;
+    } catch (recoveryError) {
+      logger.trackSwallowedError(`${source}:storageRecovery`, recoveryError);
+      return false;
+    } finally {
+      storageRecoveryBusyRef.current = false;
+    }
+  }, [notifyStorageNotice]);
+
+  const offerFullStorageReset = useCallback(async (error: unknown) => {
+    if (!isStorageRelatedError(error)) return false;
+
+    const shouldReset = window.confirm(
+      '브라우저 저장 데이터가 손상된 것 같습니다.\n로컬 프로젝트/임시 캐시를 초기화하고 앱을 다시 시작할까요?\n로그인/API 키는 유지됩니다.'
+    );
+    if (!shouldReset) return false;
+
+    await recoverStorageAndReload();
+    return true;
+  }, []);
 
   useEffect(() => {
     useAuthStore.getState().checkAuth().catch((e) => {
@@ -298,8 +370,8 @@ const App: React.FC = () => {
     sessionStorage.removeItem('__chunk_reload');
     requestPersistentStorage();
     // [FIX #986] 제거된 OnboardingTour의 잔존 localStorage 플래그 정리
-    if (localStorage.getItem('onboarding-tour-completed')) {
-      localStorage.removeItem('onboarding-tour-completed');
+    if (safeLocalStorageGetItem('onboarding-tour-completed')) {
+      safeLocalStorageRemoveItem('onboarding-tour-completed');
     }
     // [FIX] 앱 시작 시 음악 라이브러리 로드 — 편집실 BGM 패널에서 즉시 트랙 표시
     import('./stores/soundStudioStore').then(({ useSoundStudioStore }) => {
@@ -317,11 +389,25 @@ const App: React.FC = () => {
         event.preventDefault();
         sessionStorage.setItem('__chunk_reload', '1');
         window.location.reload();
+        return;
       }
+
+      void attemptTransientStorageRecovery(event.reason, 'App:window/unhandledrejection');
     };
+
+    const handleWindowError = (event: ErrorEvent) => {
+      const target = event.target as EventTarget | null;
+      if (target && target !== window) return;
+      void attemptTransientStorageRecovery(event.error || event.message, 'App:window/error');
+    };
+
+    window.addEventListener('error', handleWindowError);
     window.addEventListener('unhandledrejection', handleChunkRejection);
-    return () => window.removeEventListener('unhandledrejection', handleChunkRejection);
-  }, []);
+    return () => {
+      window.removeEventListener('error', handleWindowError);
+      window.removeEventListener('unhandledrejection', handleChunkRejection);
+    };
+  }, [attemptTransientStorageRecovery]);
 
   // Auto-save via Zustand store subscriptions
   useAutoSave();
@@ -329,21 +415,16 @@ const App: React.FC = () => {
 
   // [FIX] 앱 시작 시: 빈 임시 프로젝트 정리 → 마지막/최근 프로젝트 복원 → 없으면 1개만 생성
   useEffect(() => {
-    const initProject = async () => {
+    const runInitProject = async () => {
       if (useProjectStore.getState().config) return;
 
-      // 1) 빈 임시 프로젝트 정리 (누적 방지)
-      try {
-        const { cleanupEmptyProjects } = await import('./services/storageService');
-        const lastId = localStorage.getItem('last-project-id');
-        const cleaned = await cleanupEmptyProjects(lastId);
-        if (cleaned > 0) console.log(`[App] ${cleaned}개 빈 임시 프로젝트 정리됨`);
-      } catch (e) { logger.trackSwallowedError('App:initProject/cleanupEmptyProjects', e); }
+      const { cleanupEmptyProjects } = await import('./services/storageService');
+      const lastId = safeLocalStorageGetItem('last-project-id');
+      const cleaned = await cleanupEmptyProjects(lastId);
+      if (cleaned > 0) console.log(`[App] ${cleaned}개 빈 임시 프로젝트 정리됨`);
 
-      // 2) 기존 프로젝트 복원 시도 → 없으면 새로 생성
       const restored = await autoRestoreOrCreateProject();
 
-      // 3) 프로젝트 탭이면 대시보드, 아니면 작업 화면
       const navState = useNavigationStore.getState();
       if (restored && navState.activeTab === 'project' && !navState.showProjectDashboard) {
         navState.goToDashboard();
@@ -352,19 +433,46 @@ const App: React.FC = () => {
         navState.leaveDashboard();
       }
     };
-    initProject().catch((e) => {
-      logger.trackSwallowedError('App:initProject', e);
-    });
-  }, []);
+
+    const initProject = async () => {
+      try {
+        await runInitProject();
+      } catch (e) {
+        logger.trackSwallowedError('App:initProject', e);
+
+        const recovered = await attemptTransientStorageRecovery(e, 'App:initProject');
+        if (!recovered) {
+          await offerFullStorageReset(e);
+          return;
+        }
+
+        try {
+          await runInitProject();
+        } catch (retryError) {
+          logger.trackSwallowedError('App:initProject/retry', retryError);
+          await offerFullStorageReset(retryError);
+        }
+      }
+    };
+    void initProject();
+  }, [attemptTransientStorageRecovery, offerFullStorageReset]);
 
   // [UX] 프로젝트 없이 작업 탭 진입 시 복원 (탭 전환 엣지 케이스)
   useEffect(() => {
     if (activeTab !== 'project' && !config) {
       autoRestoreOrCreateProject().then((restored) => {
         if (restored) useNavigationStore.getState().leaveDashboard();
-      }).catch((e) => { logger.trackSwallowedError('App:autoRestore/tabSwitch', e); });
+      }).catch(async (e) => {
+        logger.trackSwallowedError('App:autoRestore/tabSwitch', e);
+        const recovered = await attemptTransientStorageRecovery(e, 'App:autoRestore/tabSwitch');
+        if (recovered) {
+          autoRestoreOrCreateProject().then((restored) => {
+            if (restored) useNavigationStore.getState().leaveDashboard();
+          }).catch((retryError) => { logger.trackSwallowedError('App:autoRestore/tabSwitch/retry', retryError); });
+        }
+      });
     }
-  }, [activeTab, config]);
+  }, [activeTab, config, attemptTransientStorageRecovery]);
 
   const {
     isBatching,
@@ -543,7 +651,7 @@ const App: React.FC = () => {
         setScenes(prev => prev.map(s => s.id === sceneId ? {
             ...s,
             imageUrl,
-            previousImageUrl: s.imageUrl || undefined,  // [#492] 이전 이미지 백업
+            previousSceneImageUrl: s.imageUrl || undefined,  // [#492] 이전 이미지 백업
             isGeneratingImage: false,
             isNativeHQ: useNativeHQ,
             visualPrompt: feedback ? feedback : s.visualPrompt,
@@ -594,7 +702,7 @@ const App: React.FC = () => {
              setCurrentProjectId(newId);
              // Cost is auto-tracked inside evolinkChat/requestEvolinkNative
          } else {
-             showToast("브라우저 저장소 공간이 부족합니다. 기존 프로젝트를 삭제해주세요.", 5000);
+             showToast("브라우저 저장소 공간이 부족합니다. 오래된 프로젝트나 영상 분석 임시 캐시를 정리해주세요.", 5000);
              setProcessing(false);
              return;
          }
@@ -887,7 +995,12 @@ const App: React.FC = () => {
       // Show immediately with ObjectURL for fast preview
       const objectUrl = URL.createObjectURL(file);
       logger.registerBlobUrl(objectUrl, 'image', 'App:handleManualImageUpload');
-      setScenes(prev => prev.map(s => s.id === sceneId ? { ...s, imageUrl: objectUrl, isNativeHQ: false } : s));
+      setScenes(prev => prev.map(s => s.id === sceneId ? {
+          ...s,
+          imageUrl: objectUrl,
+          previousSceneImageUrl: getPreviousSceneImageUrlForReplace(s, objectUrl),
+          isNativeHQ: false,
+      } : s));
 
       // Background: upload to Cloudinary
       try {
@@ -1214,7 +1327,7 @@ const App: React.FC = () => {
           <button
             data-tour="new-project"
             onClick={() => {
-              localStorage.removeItem('last-project-id');
+              safeLocalStorageRemoveItem('last-project-id');
               goToDashboard();
             }}
             className="flex items-center gap-2 w-full px-4 py-2.5 mb-1 rounded-lg text-sm font-bold text-white bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 transition-all shadow-md"
@@ -1552,8 +1665,11 @@ const App: React.FC = () => {
           user={authUser}
           onClose={() => useUIStore.getState().setShowTrialGuide(false)}
           onSaveGeminiKey={(key) => {
-            localStorage.setItem('CUSTOM_GOOGLE_GEMINI_KEY', key);
-            showToast('Google Gemini API 키가 저장되었습니다.', 3000);
+            if (safeLocalStorageSetItem('CUSTOM_GOOGLE_GEMINI_KEY', key)) {
+              showToast('Google Gemini API 키가 저장되었습니다.', 3000);
+              return;
+            }
+            showToast('브라우저 저장소 문제로 API 키를 저장하지 못했습니다.', 4000);
           }}
         />
       )}

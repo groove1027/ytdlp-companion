@@ -1,5 +1,5 @@
 
-import { openDB, DBSchema } from 'idb';
+import { openDB, DBSchema, deleteDB } from 'idb';
 import { ProjectData, ProjectSummary, StorageEstimate, SavedCharacter, MusicLibraryItem, ChannelScript, ChannelGuideline, ChannelInfo, ChannelInputSource, VideoVersionItem, VideoAnalysisPreset, VideoTimedFrame, RemakeVersion, LegacyTopicRecommendation } from '../types';
 import { logger } from './LoggerService';
 
@@ -93,9 +93,77 @@ const MUSIC_STORE = 'music';
 const BENCHMARK_STORE = 'benchmarks';
 const AUDIO_BLOB_STORE = 'audio-blobs';
 const VIDEO_ANALYSIS_STORE = 'video-analysis';
+const LAST_PROJECT_POINTER_KEY = 'last-project-id';
+const TRANSIENT_LOCAL_STORAGE_KEYS = ['video-analysis-store', 'SCRIPT_WRITER_DRAFT', 'navigation-state', 'onboarding-tour-completed'] as const;
+const TRANSIENT_LOCAL_STORAGE_PREFIXES = ['ai-chat-sessions-'] as const;
+const STORAGE_DOM_EXCEPTION_NAMES = new Set(['QuotaExceededError']);
+const STORAGE_CONTEXTUAL_DOM_EXCEPTION_NAMES = new Set(['UnknownError', 'InvalidStateError', 'VersionError', 'NotFoundError']);
+const STORAGE_ERROR_PATTERNS = [
+  /\bquota(?:\s+exceeded)?\b/i,
+  /exceeded the quota/i,
+  /\bindexeddb\b/i,
+  /\bidbdatabase\b/i,
+  /\bdatabase connection\b/i,
+  /\bobject store\b/i,
+  /\b(?:local|session)storage\b/i,
+  /failed to execute '(?:setitem|getitem|removeitem|clear)' on 'storage'/i,
+  /\b(?:setitem|getitem|removeitem|clear)\b.*\bstorage\b/i,
+  /\btransaction\b.*\b(?:indexeddb|idbdatabase|object store|database)\b/i,
+  /\b(?:indexeddb|idbdatabase|object store|database)\b.*\btransaction\b/i,
+] as const;
 
 // All required object stores
 const ALL_STORES = [PROJECT_STORE, SUMMARY_STORE, CHARACTER_STORE, MUSIC_STORE, BENCHMARK_STORE, AUDIO_BLOB_STORE, VIDEO_ANALYSIS_STORE] as const;
+
+export const safeLocalStorageGetItem = (key: string): string | null => {
+  try {
+    return localStorage.getItem(key);
+  } catch (e) {
+    logger.trackSwallowedError(`storageService:safeLocalStorageGetItem:${key}`, e);
+    return null;
+  }
+};
+
+export const safeLocalStorageSetItem = (key: string, value: string): boolean => {
+  try {
+    localStorage.setItem(key, value);
+    return true;
+  } catch (e) {
+    logger.trackSwallowedError(`storageService:safeLocalStorageSetItem:${key}`, e);
+    return false;
+  }
+};
+
+export const safeLocalStorageRemoveItem = (key: string): boolean => {
+  try {
+    localStorage.removeItem(key);
+    return true;
+  } catch (e) {
+    logger.trackSwallowedError(`storageService:safeLocalStorageRemoveItem:${key}`, e);
+    return false;
+  }
+};
+
+export const isStorageRelatedError = (error: unknown): boolean => {
+  const message = error instanceof Error
+    ? `${error.name} ${error.message}`
+    : typeof error === 'string'
+      ? error
+      : '';
+
+  if (error instanceof DOMException) {
+    if (STORAGE_DOM_EXCEPTION_NAMES.has(error.name)) {
+      return true;
+    }
+
+    if (!STORAGE_CONTEXTUAL_DOM_EXCEPTION_NAMES.has(error.name)) {
+      return false;
+    }
+  }
+
+  if (!message) return false;
+  return STORAGE_ERROR_PATTERNS.some((pattern) => pattern.test(message));
+};
 
 // Initialize DB (v8: v7 stores + 누락 store 자동 복구)
 export const dbPromise = openDB<StoryboardDB>(DB_NAME, 8, {
@@ -290,12 +358,102 @@ export const requestPersistentStorage = async (): Promise<boolean> => {
   return false;
 };
 
+export const clearTransientStorageCaches = async (options?: {
+  includeLastProjectPointer?: boolean;
+  currentProjectId?: string | null;
+}): Promise<{
+  clearedLocalKeys: string[];
+  removedEmptyProjects: number;
+  removedAutosaveSlot: boolean;
+  estimate: StorageEstimate;
+}> => {
+  const clearedLocalKeys = new Set<string>();
+  const localKeys: string[] = [...TRANSIENT_LOCAL_STORAGE_KEYS];
+  if (options?.includeLastProjectPointer) {
+    localKeys.push(LAST_PROJECT_POINTER_KEY);
+  }
+
+  for (const key of localKeys) {
+    if (safeLocalStorageGetItem(key) !== null && safeLocalStorageRemoveItem(key)) {
+      clearedLocalKeys.add(key);
+    }
+  }
+
+  try {
+    const existingKeys = Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index)).filter(Boolean) as string[];
+    for (const key of existingKeys) {
+      if (!key) continue;
+      if (TRANSIENT_LOCAL_STORAGE_PREFIXES.some((prefix) => key.startsWith(prefix))) {
+        if (safeLocalStorageRemoveItem(key)) {
+          clearedLocalKeys.add(key);
+        }
+      }
+    }
+  } catch (e) {
+    logger.trackSwallowedError('storageService:clearTransientStorageCaches/localScan', e);
+  }
+
+  let removedEmptyProjects = 0;
+  try {
+    removedEmptyProjects = await cleanupEmptyProjects(options?.currentProjectId);
+  } catch (e) {
+    logger.trackSwallowedError('storageService:clearTransientStorageCaches/cleanupEmptyProjects', e);
+  }
+
+  let removedAutosaveSlot = false;
+  try {
+    const db = await dbPromise;
+    const hasAutosave = await db.get(VIDEO_ANALYSIS_STORE, 'va-autosave');
+    if (hasAutosave) {
+      await db.delete(VIDEO_ANALYSIS_STORE, 'va-autosave');
+      removedAutosaveSlot = true;
+    }
+  } catch (e) {
+    logger.trackSwallowedError('storageService:clearTransientStorageCaches/removeAutosaveSlot', e);
+  }
+
+  const estimate = await getStorageEstimate().catch((e) => {
+    logger.trackSwallowedError('storageService:clearTransientStorageCaches/getStorageEstimate', e);
+    return { usedMB: 0, totalMB: 0, percent: 0 };
+  });
+
+  return {
+    clearedLocalKeys: Array.from(clearedLocalKeys),
+    removedEmptyProjects,
+    removedAutosaveSlot,
+    estimate,
+  };
+};
+
+export const resetAppStorageForRecovery = async (): Promise<void> => {
+  await clearTransientStorageCaches({ includeLastProjectPointer: true });
+
+  try {
+    const db = await dbPromise.catch(() => null);
+    db?.close();
+  } catch (e) {
+    logger.trackSwallowedError('storageService:resetAppStorageForRecovery/closeDb', e);
+  }
+
+  try {
+    await deleteDB(DB_NAME);
+  } catch (e) {
+    logger.trackSwallowedError('storageService:resetAppStorageForRecovery/deleteDb', e);
+  }
+};
+
 // --- Quota-based project creation check (replaces hard 10-limit) ---
 
 export const canCreateNewProject = async (): Promise<boolean> => {
-  const estimate = await getStorageEstimate();
+  let estimate = await getStorageEstimate();
   if (estimate.totalMB === 0) return true;
-  return estimate.percent < 80;
+  if (estimate.percent < 92) return true;
+
+  await clearTransientStorageCaches();
+  estimate = await getStorageEstimate();
+
+  if (estimate.totalMB === 0) return true;
+  return estimate.percent < 97;
 };
 
 // --- Empty Project Cleanup ---

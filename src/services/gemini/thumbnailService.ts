@@ -208,7 +208,7 @@ export const generateHighQualityThumbnail = async (
     charImg?: string, charDesc?: string, charUrl?: string, feedback?: string,
     primaryColor?: string, secondaryColor?: string, colorMode?: string, index?: number,
     isNativeHQ?: boolean, sentiment?: string, highlight?: string, refImg?: string,
-    textForceLock?: boolean, updateStatus?: (s: string) => void, isMixedMedia?: boolean,
+    preserveSourceImage?: boolean, textForceLock?: boolean, updateStatus?: (s: string) => void, isMixedMedia?: boolean,
     origStyle?: string, languageContext?: { lang?: string; locale?: string; nuance?: string; langName?: string },
     shotSize?: string,
     poseDescription?: string,
@@ -223,9 +223,10 @@ export const generateHighQualityThumbnail = async (
 ) => {
     const idx = index || 0;
     const isTextless = textMode === 'none';
+    const isReferenceEdit = !!(preserveSourceImage && feedback && refImg);
 
     // [LOGIC CHANGE START] Check if Style Copy Mode is active (Detailed Style + Reference Image exists)
-    const isStyleCopy = !!(origStyle && origStyle.length > 20 && refImg);
+    const isStyleCopy = !isReferenceEdit && !!(origStyle && origStyle.length > 20 && refImg);
 
     let targetFont = "";
 
@@ -235,12 +236,25 @@ export const generateHighQualityThumbnail = async (
     let colorPrompt = "";
     let styleInstruction = "";
     let stickerInstruction = "";
+    let editInstruction = "";
 
     // [UPDATED] Language Context Logic
     const targetLanguage = languageContext?.langName || "Primary Language of Script";
 
     // [UPDATED] Style Copy Branching
-    if (isStyleCopy) {
+    if (isReferenceEdit) {
+        editInstruction = `
+        [CURRENT THUMBNAIL EDIT MODE]
+        - The attached reference image is the CURRENT thumbnail result.
+        - Apply only the requested edit below. Preserve everything else as-is.
+        - PRESERVE EXACTLY: subject identity, face, pose, framing, crop, camera angle, layout, text content, text position, font styling, colors, lighting, props, background structure, and overall art style.
+        - CHANGE ONLY what the feedback explicitly asks for.
+        - Do NOT redesign, re-compose, reframe, or replace the scene.
+        - Do NOT add or remove people, props, logos, or extra text.
+        - If the request is about background blur, blur only the background and keep the subject/text sharp.
+        - If the request is about color correction, adjust only tone/color balance while preserving composition and objects.
+        `;
+    } else if (isStyleCopy) {
         // [BRANCH A] Style Copy Mode
 
         // [FIX #947] Enhanced text style inheritance — replicate font, effects, outline, shadow, glow faithfully
@@ -496,6 +510,9 @@ export const generateHighQualityThumbnail = async (
     if (!isBw) {
         styleNegative += ", (monochrome: 2.0), (greyscale: 2.0), (black and white: 2.0), (desaturated)";
     }
+    if (isReferenceEdit) {
+        styleNegative += ", (different composition: 3.0), (different framing: 3.0), (new object: 3.0), (removed object: 3.0), (different subject identity: 3.0), (different text content: 3.0), (different text position: 3.0), (different font style: 3.0)";
+    }
 
     // [FIXED] Aggressive Negative Prompts for Text Color & Repetition
     styleNegative += ", (yellow border: -2.0), (colored outline: -2.0), (White Background: 3.0), (Solid Color Background: 3.0), (Studio Backdrop: 2.0), (Simple Background: 2.0), (Blank Space)";
@@ -539,9 +556,12 @@ export const generateHighQualityThumbnail = async (
     ${isTextless ? '' : stickerInstruction}
     ${isTextless ? '[LAYOUT]: Full-frame visual composition. Use the entire canvas for the visual scene.' : layoutInstruction}
     ${styleInstruction}
+    ${editInstruction}
     ${isTextless ? '' : colorPrompt}
 
     ${textBlock}
+
+    ${feedback ? `[USER EDIT REQUEST]\n${feedback}` : ''}
 
     ${compositionDirectives}
 
@@ -551,7 +571,7 @@ export const generateHighQualityThumbnail = async (
     ${visualContent}
     ${charDesc ? `(Character Feature: ${charDesc})` : ''}
 
-    [STYLE] ${style}. ${feedback || ''}
+    [STYLE] ${style}.
     [TECHNICAL] (8k resolution), (masterpiece), ${!isBw ? '(vivid colors), (full color), ' : ''} ${cleanTexture}
 
     ${depthBlock}

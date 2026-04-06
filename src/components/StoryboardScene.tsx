@@ -8,6 +8,7 @@ import { useUIStore, showToast } from '../stores/uiStore';
 import { logger } from '../services/LoggerService';
 import { COMPACT_PAN_ZOOM_PRESETS, computeMotionStyle } from '../services/motionPreviewUtils';
 import { lazyRetry } from '../utils/retryImport';
+import { getPreviousSceneImageUrlForReplace } from '../utils/sceneImageHistory';
 
 const MediaSearchModal = lazyRetry(() => import('./MediaSearchModal'));
 
@@ -164,14 +165,14 @@ const StoryboardSceneInner: React.FC<StoryboardSceneProps> = ({
   };
   // [#492] 이전 이미지로 되돌리기
   const handleRevertImage = useCallback(() => {
-    if (scene.previousImageUrl) {
+    if (scene.previousSceneImageUrl) {
       useProjectStore.getState().updateScene(scene.id, {
-        imageUrl: scene.previousImageUrl,
-        previousImageUrl: scene.imageUrl,  // 현재→이전으로 스왑 (다시 되돌리기 가능)
+        imageUrl: scene.previousSceneImageUrl,
+        previousSceneImageUrl: scene.imageUrl,  // 현재→이전으로 스왑 (다시 되돌리기 가능)
       });
       showToast('이전 이미지로 되돌렸어요');
     }
-  }, [scene.id, scene.imageUrl, scene.previousImageUrl]);
+  }, [scene.id, scene.imageUrl, scene.previousSceneImageUrl]);
 
   // [FIX] Flush debounce and generate with current local prompt value
   // Prevents race condition where 300ms debounce hasn't written to store yet
@@ -368,7 +369,7 @@ const StoryboardSceneInner: React.FC<StoryboardSceneProps> = ({
                       {!isEditingPrompt && (
                           <div className="absolute bottom-0 left-0 right-0 bg-black/80 backdrop-blur-sm p-2 flex justify-center gap-2 translate-y-full group-hover/image:translate-y-0 transition-transform duration-200 z-30">
                                <button onClick={(e) => { e.stopPropagation(); flushAndGenerate(); }} className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-white text-sm font-bold rounded flex items-center gap-1 border border-gray-600">🔄 재생성</button>
-                               {scene.previousImageUrl && (
+                               {scene.previousSceneImageUrl && (
                                  <button onClick={(e) => { e.stopPropagation(); handleRevertImage(); }} className="px-3 py-1.5 bg-amber-700 hover:bg-amber-600 text-white text-sm font-bold rounded flex items-center gap-1 border border-amber-500/50" title="이전 이미지로 되돌리기">↩️ 되돌리기</button>
                                )}
                                <button onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }} className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-white text-sm font-bold rounded flex items-center gap-1 border border-gray-600">📤 업로드</button>
@@ -623,8 +624,10 @@ const StoryboardSceneInner: React.FC<StoryboardSceneProps> = ({
           isOpen={showMediaSearch}
           onClose={() => setShowMediaSearch(false)}
           onSelect={(item: CommunityMediaItem) => {
+            const nextImageUrl = item.type === 'image' ? item.url : scene.imageUrl;
             useProjectStore.getState().updateScene(scene.id, {
-              imageUrl: item.type === 'image' ? item.url : scene.imageUrl,
+              imageUrl: nextImageUrl,
+              previousSceneImageUrl: getPreviousSceneImageUrlForReplace(scene, nextImageUrl),
               communityMediaItem: item,
             });
           }}

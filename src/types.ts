@@ -229,7 +229,7 @@ export interface Scene {
   videoPrompt?: string;  // 상세 영상 모션 프롬프트 (AI 생성, 동작/카메라/분위기 서술)
   shotSize?: string;
   imageUrl?: string;
-  previousImageUrl?: string;  // [#492] 재생성 전 이전 이미지 (되돌리기용)
+  previousSceneImageUrl?: string;  // [#492] 재생성 전 이전 이미지 (되돌리기용)
   previousVideoUrl?: string;  // [#492] 재생성 전 이전 영상 (되돌리기용)
 
   referenceImage?: string; 
@@ -302,6 +302,7 @@ export interface Thumbnail {
   fullTitle?: string;
   visualDescription: string;
   imageUrl?: string;
+  previousImageUrl?: string; // 직전 썸네일 이미지 (1단계 되돌리기용)
   isGenerating: boolean;
   generationStatus?: string; 
   format: 'long' | 'short';
@@ -841,6 +842,24 @@ export interface VideoReference {
   searchQuery?: string;
   /** 발행일 (시기 매칭용) */
   publishedAt?: string;
+}
+
+export interface ReferenceClipDownloadResult {
+  key: string;
+  videoId: string;
+  videoTitle?: string;
+  startSec: number;
+  endSec: number;
+  durationSec: number;
+  fileName: string;
+  sourceUrl: string;
+  blob: Blob;
+}
+
+export interface SceneReferenceClipDownloadResult extends ReferenceClipDownloadResult {
+  sceneId: string;
+  refIndex: number;
+  ref: VideoReference;
 }
 
 /** 채널분석 서브 탭 */

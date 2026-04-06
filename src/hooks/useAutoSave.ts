@@ -248,16 +248,16 @@ export const useAutoSave = () => {
         try {
           const estimate = await getStorageEstimate();
           if (estimate.percent >= 90) {
-            showToast(`저장소 ${estimate.percent}% 사용 중 — 오래된 프로젝트를 삭제해주세요`, 6000);
+            showToast(`저장소 ${estimate.percent}% 사용 중 — 오래된 프로젝트나 영상 분석 임시 캐시를 정리해주세요`, 6000);
           }
         } catch (e) { logger.trackSwallowedError('useAutoSave:doSave/storageEstimate', e); }
       } catch (err: unknown) {
         if (err instanceof Error && err.message === 'QUOTA_EXCEEDED') {
           console.warn('[AutoSave] Storage quota exceeded — auto-save skipped.');
-          showToast('저장소 용량 초과! 오래된 프로젝트를 삭제해주세요.', 8000);
+          showToast('저장소 용량 초과! 오래된 프로젝트나 영상 분석 임시 캐시를 정리해주세요.', 8000);
         } else {
           console.error('[AutoSave] Unexpected save error:', err);
-          showToast('프로젝트 저장에 실패했습니다. 브라우저 저장소를 확인해주세요.', 6000);
+          showToast('프로젝트 저장에 실패했습니다. 브라우저 저장소와 오래된 임시 캐시를 확인해주세요.', 6000);
         }
       }
     };

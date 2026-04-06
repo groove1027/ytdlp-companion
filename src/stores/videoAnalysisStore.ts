@@ -11,6 +11,7 @@ import {
   saveVideoAnalysisSlot,
   getAllVideoAnalysisSlots,
   deleteVideoAnalysisSlot,
+  clearTransientStorageCaches,
 } from '../services/storageService';
 import type { SavedVideoAnalysisSlot } from '../services/storageService';
 
@@ -139,6 +140,15 @@ const STATE_THUMBNAIL_LIMIT = 72;
 const CACHE_THUMBNAIL_LIMIT = 48;
 const PERSIST_RAW_RESULT_LIMIT = 24000;
 const PERSIST_VERSION_CONCEPT_LIMIT = 12000;
+const MAX_PERSIST_ENTRY_BYTES = 1.5 * 1024 * 1024;
+let lastStoragePressureToastAt = 0;
+
+function notifyStoragePressure(message: string): void {
+  const now = Date.now();
+  if (now - lastStoragePressureToastAt < 6000) return;
+  lastStoragePressureToastAt = now;
+  showToast(message, 7000);
+}
 
 const INITIAL_STATE = {
   inputMode: 'youtube' as const,
@@ -645,8 +655,8 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
             return str ? JSON.parse(str) : null;
           } catch (e) { logger.trackSwallowedError('VideoAnalysisStore:storage/getItem', e); return null; }
         },
-        setItem: (name, value) => {
-          const slimValue = () => {
+        setItem: async (name, value) => {
+          const buildSlimValue = () => {
             const persistedState = value.state as Partial<VideoAnalysisStore>;
             return {
               ...value,
@@ -662,30 +672,85 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
               },
             };
           };
-          // 선제적 크기 체크 — JSON 직렬화 후 추정 크기가 크면 미리 축소
-          const json = JSON.stringify(value);
-          const MAX_ENTRY_BYTES = 3 * 1024 * 1024; // 3MB 안전선
-          if (json.length > MAX_ENTRY_BYTES) {
+
+          const buildMinimalValue = () => {
+            const persistedState = value.state as Partial<VideoAnalysisStore>;
+            return {
+              ...value,
+              state: {
+                inputMode: persistedState.inputMode || 'youtube',
+                youtubeUrl: persistedState.youtubeUrl || '',
+                youtubeUrls: persistedState.youtubeUrls || [''],
+                targetDuration: persistedState.targetDuration || 0,
+                keepOriginalOrder: persistedState.keepOriginalOrder || false,
+                versionCount: persistedState.versionCount || 10,
+                selectedPreset: persistedState.selectedPreset || null,
+                rawResult: persistedState.rawResult?.slice(0, 160) || '',
+                versions: [],
+                thumbnails: [],
+                expandedId: null,
+                resultCache: {},
+              },
+            };
+          };
+
+          const persistValue = (payload: unknown) => {
             try {
-              localStorage.setItem(name, JSON.stringify(slimValue()));
+              localStorage.setItem(name, JSON.stringify(payload));
+              return true;
             } catch (e) {
-              logger.trackSwallowedError('VideoAnalysisStore:storage/setItemSlim', e);
-              showToast('저장 공간이 부족해요. 브라우저 설정에서 캐시를 정리해주세요.', 5000);
+              logger.trackSwallowedError('VideoAnalysisStore:storage/persistValue', e);
+              return false;
             }
+          };
+
+          const json = JSON.stringify(value);
+          const primaryPayload = json.length > MAX_PERSIST_ENTRY_BYTES
+            ? buildSlimValue()
+            : value;
+          const didPreShrink = primaryPayload !== value;
+
+          if (persistValue(primaryPayload)) {
             return;
           }
+
+          let currentProjectId: string | null | undefined;
           try {
-            localStorage.setItem(name, json);
+            const { useProjectStore } = await import('./projectStore');
+            currentProjectId = useProjectStore.getState().currentProjectId;
           } catch (e) {
-            logger.trackSwallowedError('VideoAnalysisStore:storage/setItem', e);
-            // QuotaExceededError — 캐시 비우고 조용히 재시도
-            try {
-              localStorage.setItem(name, JSON.stringify(slimValue()));
-            } catch (e2) {
-              logger.trackSwallowedError('VideoAnalysisStore:storage/setItemRetry', e2);
-              showToast('저장 공간이 부족해요. 브라우저 설정에서 캐시를 정리해주세요.', 5000);
-            }
+            logger.trackSwallowedError('VideoAnalysisStore:storage/loadProjectStore', e);
           }
+
+          try {
+            await clearTransientStorageCaches({
+              includeLastProjectPointer: false,
+              currentProjectId,
+            });
+          } catch (e) {
+            logger.trackSwallowedError('VideoAnalysisStore:storage/clearTransientStorageCaches', e);
+          }
+
+          if (persistValue(primaryPayload)) {
+            notifyStoragePressure(
+              didPreShrink
+                ? '브라우저 임시 저장 공간이 부족해 오래된 임시 캐시를 정리하고 영상 분석 캐시를 줄여 저장했어요.'
+                : '브라우저 임시 저장 공간이 부족해 오래된 임시 캐시를 정리하고 현재 영상 분석 상태를 유지했어요.'
+            );
+            return;
+          }
+
+          if (persistValue(buildMinimalValue())) {
+            notifyStoragePressure('브라우저 임시 저장 공간이 부족해 영상 분석 임시 캐시를 자동으로 줄였어요. 오래된 프로젝트나 분석 슬롯을 정리하면 더 안정적입니다.');
+            return;
+          }
+
+          try {
+            localStorage.removeItem(name);
+          } catch (e) {
+            logger.trackSwallowedError('VideoAnalysisStore:storage/removeCorruptedItem', e);
+          }
+          notifyStoragePressure('브라우저 임시 저장 공간이 가득 차서 영상 분석 임시 캐시를 비웠어요. 오래된 프로젝트나 분석 슬롯을 정리해 주세요.');
         },
         removeItem: (name) => { try { localStorage.removeItem(name); } catch (e) { logger.trackSwallowedError('VideoAnalysisStore:storage/removeItem', e); } },
       },
