@@ -32,9 +32,28 @@ const state = {
   intensity: 1.0,
   assignments: [],       // 스마트 랜덤 결과
   allowMotionEffects: false,
+  busy: false,           // 적용 중 레이스 컨디션 방지
 };
 
 // ═══ ExtendScript 호출 헬퍼 ═══
+
+const EVALSCRIPT_TIMEOUT_MS = 15000;
+
+function getActivePresetId() {
+  return state.currentMotion !== 'none' ? state.currentMotion : state.currentPreset;
+}
+
+function getClipListSignature(clips) {
+  return clips
+    .map((clip) => [clip.trackIdx, clip.clipIdx, clip.start, clip.end].join(':'))
+    .join('|');
+}
+
+function clearAssignments() {
+  if (state.assignments.length === 0) return;
+  state.assignments = [];
+  renderAssignmentList();
+}
 
 function evalScript(script) {
   return new Promise((resolve, reject) => {
@@ -43,144 +62,224 @@ function evalScript(script) {
       resolve('{}');
       return;
     }
-    csInterface.evalScript(script, (result) => {
-      if (result === 'EvalScript error.') {
-        reject(new Error('ExtendScript evaluation error'));
-      } else {
-        resolve(result);
-      }
-    });
+
+    let settled = false;
+    const timer = window.setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error('ExtendScript timeout after ' + EVALSCRIPT_TIMEOUT_MS + 'ms'));
+    }, EVALSCRIPT_TIMEOUT_MS);
+
+    const finish = (callback) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      callback();
+    };
+
+    try {
+      csInterface.evalScript(script, (result) => {
+        finish(() => {
+          if (result === 'EvalScript error.') {
+            reject(new Error('ExtendScript evaluation error'));
+          } else {
+            resolve(result);
+          }
+        });
+      });
+    } catch (e) {
+      finish(() => reject(e));
+    }
   });
 }
 
 // ═══ 클립 조회 (자동 감지 포함) ═══
 
-async function refreshSelectedClips(silent) {
-  try {
-    const result = await evalScript('getSelectedClips()');
-    const data = JSON.parse(result);
+let _refreshPromise = null;
+let _refreshWantsStatus = false;
 
-    if (data.error) {
-      if (!silent) updateStatus(data.error, 'error');
-      state.selectedClips = [];
-    } else {
-      const changed = data.length !== state.selectedClips.length;
-      state.selectedClips = data;
-      if (!silent || changed) {
-        updateStatus(data.length + ' clips selected', 'success');
+async function refreshSelectedClips(silent) {
+  if (silent !== true) _refreshWantsStatus = true;
+  if (_refreshPromise) return _refreshPromise;
+
+  _refreshPromise = (async () => {
+    try {
+      const result = await evalScript('getSelectedClips()');
+      const data = JSON.parse(result);
+      const shouldShowStatus = _refreshWantsStatus;
+      const clips = Array.isArray(data) ? data : [];
+      const prevSignature = getClipListSignature(state.selectedClips);
+      const nextSignature = getClipListSignature(clips);
+      const changed = nextSignature !== prevSignature;
+
+      if (data.error) {
+        if (shouldShowStatus) updateStatus(data.error, 'error');
+        state.selectedClips = [];
+        clearAssignments();
+      } else {
+        state.selectedClips = clips;
+        if (changed) clearAssignments();
+        if (shouldShowStatus || changed) {
+          updateStatus(clips.length + ' clips selected', 'success');
+        }
       }
+      renderClipList();
+    } catch (e) {
+      state.selectedClips = [];
+      clearAssignments();
+      renderClipList();
+      if (_refreshWantsStatus) updateStatus('Clip error: ' + e.message, 'error');
+    } finally {
+      _refreshPromise = null;
+      _refreshWantsStatus = false;
     }
-    renderClipList();
-  } catch (e) {
-    state.selectedClips = [];
-    renderClipList();
-    if (!silent) updateStatus('Clip error: ' + e.message, 'error');
-  }
+  })();
+
+  return _refreshPromise;
 }
 
 // 2초마다 자동 감지 (Premiere에서 선택 변경 시 자동 반영)
 let _pollTimer = null;
 function startClipPolling() {
   if (_pollTimer) return;
-  _pollTimer = setInterval(() => refreshSelectedClips(true), 2000);
+  _pollTimer = setInterval(() => {
+    if (!state.busy) refreshSelectedClips(true);
+  }, 2000);
+}
+function stopClipPolling() {
+  if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
 }
 
 // ═══ 모션 적용 ═══
 
 async function applyToSelected() {
-  // 적용 전 자동 새로고침
-  await refreshSelectedClips(true);
-  if (state.selectedClips.length === 0) {
-    updateStatus('Select clips first', 'warn');
-    return;
+  if (state.busy) return;
+  state.busy = true;
+  stopClipPolling();
+  try {
+    await refreshSelectedClips(true);
+    if (state.selectedClips.length === 0) {
+      updateStatus('Select clips first', 'warn');
+      return;
+    }
+
+    const clipsSnapshot = state.selectedClips.slice();
+    const presetId = getActivePresetId();
+    const assignments = clipsSnapshot.map((clip) => ({
+      trackIdx: clip.trackIdx,
+      clipIdx: clip.clipIdx,
+      presetId,
+      anchorX: state.anchorX,
+      anchorY: state.anchorY,
+      intensity: state.intensity,
+    }));
+
+    clearAssignments();
+    await applyBatch(assignments);
+  } finally {
+    state.busy = false;
+    startClipPolling();
   }
-
-  const assignments = state.selectedClips.map((clip) => ({
-    trackIdx: clip.trackIdx,
-    clipIdx: clip.clipIdx,
-    presetId: state.currentPreset,
-    anchorX: state.anchorX,
-    anchorY: state.anchorY,
-    intensity: state.intensity,
-  }));
-
-  await applyBatch(assignments);
 }
 
 async function applyRandomToSelected() {
-  await refreshSelectedClips(true);
-  if (state.selectedClips.length === 0) {
-    updateStatus('Select clips first', 'warn');
-    return;
+  if (state.busy) return;
+  state.busy = true;
+  stopClipPolling();
+  try {
+    await refreshSelectedClips(true);
+    if (state.selectedClips.length === 0) {
+      updateStatus('Select clips first', 'warn');
+      return;
+    }
+
+    updateStatus('Applying random motion...', 'info');
+    const clipsSnapshot = state.selectedClips.slice();
+
+    const randomAssignments = smartRandomAssign(clipsSnapshot.length, {
+      allowMotionEffects: state.allowMotionEffects,
+      intensityVariance: 0.1,
+    });
+
+    state.assignments = randomAssignments;
+
+    const batch = clipsSnapshot.map((clip, i) => ({
+      trackIdx: clip.trackIdx,
+      clipIdx: clip.clipIdx,
+      presetId: randomAssignments[i].presetId,
+      anchorX: randomAssignments[i].anchorX,
+      anchorY: randomAssignments[i].anchorY,
+      intensity: randomAssignments[i].intensity,
+    }));
+
+    await applyBatch(batch);
+    renderAssignmentList();
+  } finally {
+    state.busy = false;
+    startClipPolling();
   }
-
-  updateStatus('Applying random motion...', 'info');
-
-  const randomAssignments = smartRandomAssign(state.selectedClips.length, {
-    allowMotionEffects: state.allowMotionEffects,
-    intensityVariance: 0.1,
-  });
-
-  state.assignments = randomAssignments;
-
-  const batch = state.selectedClips.map((clip, i) => ({
-    trackIdx: clip.trackIdx,
-    clipIdx: clip.clipIdx,
-    presetId: randomAssignments[i].presetId,
-    anchorX: randomAssignments[i].anchorX,
-    anchorY: randomAssignments[i].anchorY,
-    intensity: randomAssignments[i].intensity,
-  }));
-
-  await applyBatch(batch);
-  renderAssignmentList();
 }
 
 async function applySmartToSelected() {
-  await refreshSelectedClips(true);
-  if (state.selectedClips.length === 0) {
-    updateStatus('Select clips first', 'warn');
-    return;
-  }
-
-  updateStatus('Analyzing focal points...', 'info');
-
-  // 1) 스마트 랜덤 배정
-  const randomAssignments = smartRandomAssign(state.selectedClips.length, {
-    allowMotionEffects: state.allowMotionEffects,
-    intensityVariance: 0.1,
-  });
-
-  // 2) 피사체 감지로 앵커 오버라이드
-  const mediaPaths = state.selectedClips.map(c => c.mediaPath);
-  const focalPoints = await detectFocalBatch(mediaPaths);
-
-  const finalAssignments = randomAssignments.map((a, i) => {
-    const focal = focalPoints[i];
-    if (focal && focal.confidence > 0.3) {
-      return { ...a, anchorX: focal.x, anchorY: focal.y };
+  if (state.busy) return;
+  state.busy = true;
+  stopClipPolling();
+  try {
+    await refreshSelectedClips(true);
+    if (state.selectedClips.length === 0) {
+      updateStatus('Select clips first', 'warn');
+      return;
     }
-    return a;
-  });
 
-  state.assignments = finalAssignments;
+    updateStatus('Analyzing focal points...', 'info');
+    const clipsSnapshot = state.selectedClips.slice();
 
-  const batch = state.selectedClips.map((clip, i) => ({
-    trackIdx: clip.trackIdx,
-    clipIdx: clip.clipIdx,
-    presetId: finalAssignments[i].presetId,
-    anchorX: finalAssignments[i].anchorX,
-    anchorY: finalAssignments[i].anchorY,
-    intensity: finalAssignments[i].intensity,
-  }));
+    // 1) 스마트 랜덤 배정
+    const randomAssignments = smartRandomAssign(clipsSnapshot.length, {
+      allowMotionEffects: state.allowMotionEffects,
+      intensityVariance: 0.1,
+    });
 
-  await applyBatch(batch);
-  renderAssignmentList();
+    // 2) 피사체 감지로 앵커 오버라이드
+    const mediaPaths = clipsSnapshot.map(c => c.mediaPath);
+    const focalPoints = await detectFocalBatch(mediaPaths);
+
+    const finalAssignments = randomAssignments.map((a, i) => {
+      const focal = focalPoints[i];
+      if (focal && focal.confidence > 0.3) {
+        return { ...a, anchorX: focal.x, anchorY: focal.y };
+      }
+      return a;
+    });
+
+    state.assignments = finalAssignments;
+
+    const batch = clipsSnapshot.map((clip, i) => ({
+      trackIdx: clip.trackIdx,
+      clipIdx: clip.clipIdx,
+      presetId: finalAssignments[i].presetId,
+      anchorX: finalAssignments[i].anchorX,
+      anchorY: finalAssignments[i].anchorY,
+      intensity: finalAssignments[i].intensity,
+    }));
+
+    await applyBatch(batch);
+    renderAssignmentList();
+  } finally {
+    state.busy = false;
+    startClipPolling();
+  }
 }
 
 async function applyBatch(assignments) {
   try {
-    const json = JSON.stringify(assignments).replace(/'/g, "\\'");
+    const json = JSON.stringify(assignments)
+      .replace(/\\/g, '\\\\')
+      .replace(/'/g, "\\'")
+      .replace(/\r/g, '\\r')
+      .replace(/\n/g, '\\n')
+      .replace(/\u2028/g, '\\u2028')
+      .replace(/\u2029/g, '\\u2029');
     const result = await evalScript("applyMotionBatch('" + json + "')");
     const data = JSON.parse(result);
 
@@ -201,11 +300,22 @@ async function applyBatch(assignments) {
 }
 
 async function removeMotion() {
+  if (state.busy) return;
+  state.busy = true;
+  stopClipPolling();
   try {
     const result = await evalScript('removeMotionFromSelected()');
-    updateStatus(result, result.indexOf('Error') === 0 ? 'error' : 'success');
+    const type = result.indexOf('Error') === 0
+      ? 'error'
+      : (result.indexOf('Warn:') === 0 ? 'warn' : 'success');
+    const message = result.indexOf('Warn:') === 0 ? result.substring(6) : result;
+    if (type !== 'error') clearAssignments();
+    updateStatus(message, type);
   } catch (e) {
     updateStatus('되돌리기 실패: ' + e.message, 'error');
+  } finally {
+    state.busy = false;
+    startClipPolling();
   }
 }
 
@@ -215,24 +325,27 @@ function renderPresetGrid() {
   const basicGrid = document.getElementById('basic-presets');
   const cineGrid = document.getElementById('cinematic-presets');
   const motionGrid = document.getElementById('motion-effects');
+  const overscaleFor = (presetId) => Math.round(
+    calcOverscale(presetId, 1920, 1080, state.anchorX, state.anchorY, state.intensity) * 100
+  );
 
   if (basicGrid) {
     basicGrid.innerHTML = PANZOOM_PRESETS
       .filter(p => p.cat === 'basic')
-      .map(p => `<button class="preset-btn ${state.currentPreset === p.id ? 'active' : ''}"
+      .map(p => `<button class="preset-btn ${(state.currentMotion === 'none' && state.currentPreset === p.id) ? 'active' : ''}"
         data-preset="${p.id}" onclick="selectPreset('${p.id}')">
         <span class="p-label">${p.label}</span>
-        <span class="p-meta">${Math.round(calcOverscale(p.id) * 100)}%</span>
+        <span class="p-meta">${overscaleFor(p.id)}%</span>
       </button>`).join('');
   }
 
   if (cineGrid) {
     cineGrid.innerHTML = PANZOOM_PRESETS
       .filter(p => p.cat === 'cinematic')
-      .map(p => `<button class="preset-btn ${state.currentPreset === p.id ? 'active' : ''}"
+      .map(p => `<button class="preset-btn ${(state.currentMotion === 'none' && state.currentPreset === p.id) ? 'active' : ''}"
         data-preset="${p.id}" onclick="selectPreset('${p.id}')">
         <span class="p-label">${p.label}</span>
-        <span class="p-meta">${Math.round(calcOverscale(p.id) * 100)}%</span>
+        <span class="p-meta">${overscaleFor(p.id)}%</span>
       </button>`).join('');
   }
 
@@ -257,13 +370,26 @@ function renderClipList() {
     return;
   }
 
-  el.innerHTML = state.selectedClips.map((c, i) =>
-    `<div class="clip-row">
-      <span class="clip-num">${i + 1}</span>
-      <span class="clip-name" title="${c.mediaPath}">${c.name}</span>
-      <span class="clip-dur">${c.dur.toFixed(1)}s</span>
-    </div>`
-  ).join('');
+  // XSS 방지: textContent로 안전하게 렌더링
+  el.innerHTML = '';
+  state.selectedClips.forEach((c, i) => {
+    const row = document.createElement('div');
+    row.className = 'clip-row';
+    const num = document.createElement('span');
+    num.className = 'clip-num';
+    num.textContent = i + 1;
+    const name = document.createElement('span');
+    name.className = 'clip-name';
+    name.textContent = c.name;
+    name.title = c.mediaPath || '';
+    const dur = document.createElement('span');
+    dur.className = 'clip-dur';
+    dur.textContent = c.dur.toFixed(1) + 's';
+    row.appendChild(num);
+    row.appendChild(name);
+    row.appendChild(dur);
+    el.appendChild(row);
+  });
 }
 
 function renderAssignmentList() {
@@ -274,15 +400,27 @@ function renderAssignmentList() {
     el.innerHTML = ''; return;
   }
 
-  el.innerHTML = state.assignments.map((a, i) => {
-      const clip = state.selectedClips[i];
-      const name = clip ? clip.name : 'Clip ' + (i + 1);
-      return `<div class="assign-item">
-        <span class="clip-num">${i + 1}</span>
-        <span class="clip-name">${name}</span>
-        <span class="assign-tag">${a.presetId}</span>
-      </div>`;
-    }).join('');
+  // XSS 방지: textContent로 안전하게 렌더링
+  el.innerHTML = '';
+  state.assignments.forEach((a, i) => {
+    const clip = state.selectedClips[i];
+    const clipName = clip ? clip.name : 'Clip ' + (i + 1);
+    const item = document.createElement('div');
+    item.className = 'assign-item';
+    const num = document.createElement('span');
+    num.className = 'clip-num';
+    num.textContent = i + 1;
+    const nameEl = document.createElement('span');
+    nameEl.className = 'clip-name';
+    nameEl.textContent = clipName;
+    const tag = document.createElement('span');
+    tag.className = 'assign-tag';
+    tag.textContent = a.presetId;
+    item.appendChild(num);
+    item.appendChild(nameEl);
+    item.appendChild(tag);
+    el.appendChild(item);
+  });
 }
 
 function updateStatus(message, type) {
@@ -296,6 +434,7 @@ function updateStatus(message, type) {
 
 window.selectPreset = function(id) {
   state.currentPreset = id;
+  state.currentMotion = 'none';
   renderPresetGrid();
   updateAnchorDisplay();
 };
@@ -308,12 +447,14 @@ window.selectMotion = function(id) {
 window.onAnchorChange = function(axis, value) {
   if (axis === 'x') state.anchorX = parseInt(value);
   if (axis === 'y') state.anchorY = parseInt(value);
+  renderPresetGrid();
   updateAnchorDisplay();
 };
 
 window.onIntensityChange = function(value) {
   state.intensity = parseFloat(value);
   document.getElementById('intensity-value').textContent = Math.round(value * 100) + '%';
+  renderPresetGrid();
 };
 
 window.toggleMotionEffects = function(checked) {
@@ -365,3 +506,23 @@ window.applyToSelected = applyToSelected;
 window.applyRandomToSelected = applyRandomToSelected;
 window.applySmartToSelected = applySmartToSelected;
 window.removeMotion = removeMotion;
+
+// ═══ 디버그 헬퍼 (Console에서 호출) ═══
+window.debugMotion = async function() {
+  console.log('[MotionMaster] 🔍 Running diagnostics...');
+  try {
+    const result = await evalScript('debugMotion()');
+    const data = JSON.parse(result);
+    if (data.log) {
+      console.log('[MotionMaster] ═══ DIAGNOSTICS ═══');
+      data.log.forEach(line => console.log('  ' + line));
+      console.log('[MotionMaster] ═══════════════════');
+    }
+    if (data.error) {
+      console.error('[MotionMaster] ❌', data.error);
+    }
+    return data;
+  } catch (e) {
+    console.error('[MotionMaster] Debug failed:', e);
+  }
+};

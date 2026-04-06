@@ -84,19 +84,38 @@ export const PRESET_DATA = {
 
 // ═══ 오버스케일 계산 (패널 UI 표시용) ═══
 
-export function calcOverscale(presetId) {
+function calcFrameCoverageScale(frame, anchorX = 50, anchorY = 50, intensity = 1, seqW = 1920, seqH = 1080) {
+  const dx = (((frame.tx * intensity) + (50 - anchorX)) / 100) * seqW;
+  const dy = (((frame.ty * intensity) + (50 - anchorY)) / 100) * seqH;
+  const rotationRad = Math.abs(frame.r * intensity) * Math.PI / 180;
+  const cosT = Math.cos(rotationRad);
+  const sinT = Math.sin(rotationRad);
+  const halfW = seqW / 2;
+  const halfH = seqH / 2;
+  let requiredScale = 1;
+  const corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
+
+  for (const [cx, cy] of corners) {
+    const px = (cx * halfW) - dx;
+    const py = (cy * halfH) - dy;
+    const qx = (px * cosT) + (py * sinT);
+    const qy = (-px * sinT) + (py * cosT);
+    requiredScale = Math.max(requiredScale, Math.abs(qx) / halfW, Math.abs(qy) / halfH);
+  }
+
+  return requiredScale * 1.05;
+}
+
+export function calcOverscale(presetId, seqW = 1920, seqH = 1080, anchorX = 50, anchorY = 50, intensity = 1) {
   const preset = PRESET_DATA[presetId];
   if (!preset) return 1.05;
 
-  let maxScale = 0, maxPanX = 0, maxPanY = 0, maxRotate = 0;
+  let maxCoverage = 1.05;
   for (const f of preset.frames) {
-    maxScale = Math.max(maxScale, f.s);
-    maxPanX = Math.max(maxPanX, Math.abs(f.tx));
-    maxPanY = Math.max(maxPanY, Math.abs(f.ty));
-    maxRotate = Math.max(maxRotate, Math.abs(f.r));
+    maxCoverage = Math.max(
+      maxCoverage,
+      calcFrameCoverageScale(f, anchorX, anchorY, intensity, seqW, seqH)
+    );
   }
-
-  const rotateMargin = maxRotate > 0 ? (1 + maxRotate * 0.006) : 1;
-  const panMargin = 1 + (Math.max(maxPanX, maxPanY) / 100);
-  return maxScale * panMargin * rotateMargin * 1.05;
+  return maxCoverage;
 }

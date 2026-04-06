@@ -74,6 +74,28 @@ export function detectBrightnessFocal(source) {
   return { x: Math.round(x), y: Math.round(y), confidence };
 }
 
+// ═══ URL 헬퍼 ═══
+
+/**
+ * OS 파일 경로를 안전한 file:// URL로 변환한다.
+ * macOS 한글/공백/특수문자 경로 대응.
+ */
+function toFileUrl(mediaPath) {
+  const rawPath = String(mediaPath || '').trim();
+  if (!rawPath) return '';
+  if (/^file:\/\//i.test(rawPath)) return rawPath;
+
+  let p = rawPath.replace(/\\/g, '/');
+  if (p.indexOf('//') === 0) {
+    return encodeURI('file:' + p).replace(/#/g, '%23').replace(/\?/g, '%3F');
+  }
+  if (p.charAt(0) !== '/') p = '/' + p;
+  return encodeURI('file://' + p).replace(/#/g, '%23').replace(/\?/g, '%3F');
+}
+
+const FOCAL_DEFAULT = { x: 50, y: 50, confidence: 0 };
+const FOCAL_TIMEOUT = 5000; // 5초 타임아웃
+
 // ═══ 클립 썸네일 추출 ═══
 
 /**
@@ -85,34 +107,87 @@ export function detectBrightnessFocal(source) {
  */
 export async function detectFocalFromPath(mediaPath) {
   return new Promise((resolve) => {
+    let img = null;
+    let video = null;
+    let timer = null;
+    let resolved = false;
+
+    function cleanup() {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      if (img) {
+        img.onload = null;
+        img.onerror = null;
+        img = null;
+      }
+      if (video) {
+        video.onloadedmetadata = null;
+        video.onseeked = null;
+        video.onerror = null;
+        try { video.pause(); } catch (e) {}
+        try { video.removeAttribute('src'); video.load(); } catch (e2) {}
+        video = null;
+      }
+    }
+
+    function done(result) {
+      if (resolved) return;
+      resolved = true;
+      cleanup();
+      resolve(result);
+    }
+    timer = setTimeout(() => done(FOCAL_DEFAULT), FOCAL_TIMEOUT);
+
+    const mediaUrl = toFileUrl(mediaPath);
+    if (!mediaUrl) {
+      done(FOCAL_DEFAULT);
+      return;
+    }
+
     // 이미지 파일인 경우
     if (/\.(jpe?g|png|bmp|tiff?|webp|gif)$/i.test(mediaPath)) {
-      const img = new Image();
-      img.onload = () => resolve(detectBrightnessFocal(img));
-      img.onerror = () => resolve({ x: 50, y: 50, confidence: 0 });
-      img.src = 'file:///' + mediaPath.replace(/\\/g, '/');
+      img = new Image();
+      img.onload = () => {
+        try {
+          done(detectBrightnessFocal(img));
+        } catch (e) {
+          done(FOCAL_DEFAULT);
+        }
+      };
+      img.onerror = () => done(FOCAL_DEFAULT);
+      img.src = mediaUrl;
       return;
     }
 
     // 동영상 파일인 경우 — 1초 지점 프레임 캡처
     if (/\.(mp4|mov|avi|mkv|webm|m4v)$/i.test(mediaPath)) {
-      const video = document.createElement('video');
+      video = document.createElement('video');
       video.preload = 'metadata';
       video.muted = true;
 
-      video.onloadeddata = () => {
-        video.currentTime = Math.min(1, video.duration * 0.1);
+      video.onloadedmetadata = () => {
+        try {
+          video.currentTime = Math.min(1, Math.max(0, (video.duration || 1) * 0.1));
+        } catch (e) {
+          done(FOCAL_DEFAULT);
+        }
       };
       video.onseeked = () => {
-        resolve(detectBrightnessFocal(video));
+        try {
+          done(detectBrightnessFocal(video));
+        } catch (e) {
+          done(FOCAL_DEFAULT);
+        }
       };
-      video.onerror = () => resolve({ x: 50, y: 50, confidence: 0 });
-      video.src = 'file:///' + mediaPath.replace(/\\/g, '/');
+      video.onerror = () => done(FOCAL_DEFAULT);
+      video.src = mediaUrl;
       return;
     }
 
     // 알 수 없는 형식
-    resolve({ x: 50, y: 50, confidence: 0 });
+    done(FOCAL_DEFAULT);
   });
 }
 

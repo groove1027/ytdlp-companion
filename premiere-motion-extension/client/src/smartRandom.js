@@ -62,6 +62,8 @@ const ZOOM_OUT_PRESETS = new Set([
 // 패닝 방향 분류
 const PAN_LEFT_PRESETS = new Set(['documentary', 'parallax']);
 const PAN_RIGHT_PRESETS = new Set(['timelapse']);
+const RANDOM_MOTION_EFFECT_PRESETS = ['slow', 'micro', 'rotate', 'film'];
+const RANDOM_MOTION_EFFECT_PRESET_SET = new Set(RANDOM_MOTION_EFFECT_PRESETS);
 
 // ═══ 유틸리티 ═══
 
@@ -115,9 +117,13 @@ export function smartRandomAssign(clipCount, options = {}) {
   for (let i = 0; i < clipCount; i++) {
     let preset;
     let attempts = 0;
+    const candidatePool =
+      allowMotionEffects && Math.random() > 0.5
+        ? RANDOM_MOTION_EFFECT_PRESETS
+        : availablePresets;
 
     do {
-      preset = pickRandom(availablePresets);
+      preset = pickRandom(candidatePool);
       attempts++;
 
       // 규칙 1: 연속 동일 금지
@@ -134,14 +140,14 @@ export function smartRandomAssign(clipCount, options = {}) {
       break;
     } while (attempts < 30);
 
-    // 방향 업데이트
+    // 방향 업데이트 (neutral 프리셋은 이전 방향 유지 — zoom-in→neutral→zoom-in 방지)
     if (ZOOM_IN_PRESETS.has(preset)) lastZoomDir = 'in';
     else if (ZOOM_OUT_PRESETS.has(preset)) lastZoomDir = 'out';
-    else lastZoomDir = null;
+    // neutral은 lastZoomDir 유지 (null로 리셋 안 함)
 
     if (PAN_LEFT_PRESETS.has(preset)) lastPanDir = 'left';
     else if (PAN_RIGHT_PRESETS.has(preset)) lastPanDir = 'right';
-    else lastPanDir = null;
+    // neutral은 lastPanDir 유지
 
     prevPreset = preset;
 
@@ -152,11 +158,7 @@ export function smartRandomAssign(clipCount, options = {}) {
     const intensity = 1.0 + randFloat(-intensityVariance, intensityVariance);
 
     // 모션 이펙트 (옵션)
-    let motionEffect = 'none';
-    if (allowMotionEffects && Math.random() > 0.5) {
-      const effects = ['slow', 'micro', 'rotate', 'film'];
-      motionEffect = pickRandom(effects);
-    }
+    const motionEffect = RANDOM_MOTION_EFFECT_PRESET_SET.has(preset) ? preset : 'none';
 
     assignments.push({
       presetId: preset,
