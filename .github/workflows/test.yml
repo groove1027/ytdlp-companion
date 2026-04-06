@@ -25,7 +25,9 @@ jobs:
           cache-dependency-path: src/package-lock.json
 
       - name: Install dependencies
-        run: npm ci
+        # npm ci 대신 npm install 사용 — esbuild optionalDependencies의
+        # 알려진 npm 버그로 macOS에서 생성한 lock 파일이 Linux 항목을 누락하기 때문
+        run: npm install --no-audit --no-fund
 
       - name: TypeScript type check
         run: npx tsc --noEmit
