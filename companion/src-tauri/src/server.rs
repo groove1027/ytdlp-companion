@@ -655,6 +655,9 @@ pub async fn start_server(_app: tauri::AppHandle) -> Result<(), Box<dyn std::err
 
     let app = Router::new()
         .route("/health", get(health_handler))
+        // [v1.3.1] takeover — 새 헬퍼가 옛 헬퍼에게 종료 신호를 보내는 endpoint.
+        // 같은 머신의 v1.3.1 이상 헬퍼만 호출. 인증은 같은 식별자 응답 + localhost 바인딩으로 충분.
+        .route("/quit", post(quit_handler))
         // yt-dlp
         .route("/api/extract", get(extract_handler))
         .route("/api/download", get(download_handler))
@@ -1150,6 +1153,66 @@ async fn health_handler() -> Json<HealthResponse> {
         last_update_check,
         services: cached.services.clone(),
     })
+}
+
+/// [v1.3.1] /quit handler — 새 헬퍼가 옛 헬퍼에게 종료 신호를 보내는 endpoint.
+///
+/// 보안 모델 (Codex 6차 review 강화):
+/// - 9876 포트는 127.0.0.1/[::1]에만 바인딩되어 있으므로 외부 호스트는 도달 불가.
+/// - **X-Helper-Token 헤더 검증** — 같은 머신의 사용자만 접근 가능한 디스크 파일
+///   (~/Library/Application Support/ytdlp-companion/quit-token, mode 0o600)에서
+///   읽은 token과 일치해야 함. 악성 웹페이지는 이 파일을 읽을 수 없으므로 호출 불가.
+/// - CORS allow-origin은 응답 read를 막지만, 요청 자체는 막지 못함 → token 인증으로 보완.
+///
+/// 흐름: token 검증 → 200 OK 응답 → 200ms 지연 → process::exit(0)
+async fn quit_handler(headers: HeaderMap) -> Response {
+    // 헤더에서 token 추출
+    let provided_token = headers
+        .get("x-helper-token")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    // 디스크의 expected token 읽기
+    let expected_token = match crate::takeover::read_quit_token() {
+        Some(t) => t,
+        None => {
+            println!("[Companion] /quit 거부 — quit-token 파일 읽기 실패");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "app": "ytdlp-companion",
+                    "error": "quit_token_unavailable",
+                })),
+            )
+                .into_response();
+        }
+    };
+
+    // 길이가 다르면 즉시 거부 (constant-time 비교는 single localhost 환경에서 과잉)
+    if provided_token.len() != expected_token.len() || provided_token != expected_token {
+        println!("[Companion] /quit 거부 — token 불일치");
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "app": "ytdlp-companion",
+                "error": "invalid_token",
+            })),
+        )
+            .into_response();
+    }
+
+    println!("[Companion] /quit 수신 (token 검증 통과) — 200ms 후 종료");
+    tokio::spawn(async {
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        println!("[Companion] /quit 처리 완료, exit(0)");
+        std::process::exit(0);
+    });
+    Json(serde_json::json!({
+        "app": "ytdlp-companion",
+        "status": "shutting_down",
+        "version": env!("CARGO_PKG_VERSION"),
+    }))
+    .into_response()
 }
 
 fn build_ffmpeg_capability_response() -> FfmpegCapabilityResponse {

@@ -101,6 +101,134 @@ async function copyText(text: string): Promise<boolean> {
   return copied;
 }
 
+/**
+ * [v1.3.1] Outdated 모드 전용 회복 가이드 — OS 자동 감지로 macOS/Windows 분기.
+ *
+ * 사용자가 "다운로드만 누르면 끝"이라고 오해하는 가장 큰 문제를 차단한다.
+ * 4단계 절차를 모달 본문 최상단에 빨강 강조로 띄워 절대 못 보고 넘어가게 한다.
+ *
+ * - 1단계 (트레이 quit): 가장 흔한 누락 단계라서 빨강 박스로 별도 강조
+ * - 2단계 (다운로드): 아래 다운로드 버튼을 가리키는 안내
+ * - 3단계 (설치): macOS는 Applications 드래그 + DMG 직접 실행 금지 / Windows는 setup.exe + SmartScreen 우회
+ * - 4단계 (실행): macOS는 Applications에서 우클릭 → 열기 / Windows는 시작 메뉴
+ *
+ * v1.3.1 이상 헬퍼는 시작 시 take-over 로직으로 옛 헬퍼를 자동 종료하므로
+ * 이 가이드가 필요한 케이스는 v1.2.0 → v1.3.1 (또는 그 이상) 첫 점프뿐이다.
+ */
+function OutdatedRecoveryGuide({ osLabel, currentVersion }: { osLabel: string; currentVersion: string | null }) {
+  const isWindows = osLabel === 'Windows';
+  const isMac = osLabel === 'macOS';
+
+  // Step 1 — 트레이/메뉴바 quit (OS별 위치)
+  const step1Title = isWindows
+    ? '작업 표시줄 우측 끝(시계 옆) ^ 화살표 → 헬퍼 아이콘 우클릭 → "종료(Exit)"'
+    : isMac
+      ? '화면 상단 메뉴바 우측 → 올인원 헬퍼 아이콘 우클릭 → "종료(Quit)"'
+      : '트레이/메뉴바의 올인원 헬퍼 아이콘 우클릭 → "종료"';
+  const step1Fallback = isWindows
+    ? '🔍 트레이에 안 보이면? Ctrl + Shift + Esc → 작업 관리자 → "All In One Helper" 검색 → 우클릭 → "작업 끝내기"'
+    : isMac
+      ? '🔍 메뉴바에 안 보이면? Spotlight(⌘+Space) → "활성 상태 보기" 검색 → "all-in-one-helper" 찾아서 X 버튼으로 종료'
+      : '🔍 안 보이면? 작업 관리자 / 활성 상태 보기에서 "all-in-one-helper" 검색 후 종료';
+
+  // Step 2 — 파일명
+  const step2FileName = isWindows
+    ? 'All.In.One.Helper_x.x.x_x64-setup.exe'
+    : 'All.In.One.Helper_x.x.x_universal.dmg';
+
+  // Step 3 — 설치 (OS별 절차)
+  const step3Title = isWindows
+    ? '다운로드한 setup.exe 더블클릭 → 인스톨러 따라가기'
+    : isMac
+      ? 'DMG 마운트 → .app을 Applications 폴더로 드래그'
+      : '다운로드한 인스톨러 실행';
+  const step3Warning = isWindows
+    ? '⚠️ Windows SmartScreen이 "PC 보호함" 경고를 띄우면: "추가 정보" 클릭 → "실행" 버튼 (서명되지 않은 앱이라 발생, 정상)'
+    : isMac
+      ? '⚠️ DMG 안에서 직접 더블클릭하지 마세요. 반드시 Applications 폴더로 옮긴 다음 실행해야 합니다.'
+      : '';
+
+  // Step 4 — 실행
+  const step4Title = isWindows
+    ? '시작 메뉴 → "All In One Helper" 검색 → 실행 (또는 인스톨러가 자동 실행)'
+    : isMac
+      ? 'Applications 폴더에서 새 헬퍼 더블클릭'
+      : '새로 설치한 헬퍼 실행';
+  const step4Warning = isMac
+    ? '⚠️ macOS Gatekeeper 차단 시 → 위쪽 노란 카드의 3가지 방법(Finder 우클릭 / 시스템 설정 / 터미널) 중 하나로 우회'
+    : '';
+
+  return (
+    <section className="mt-6 mb-6 overflow-hidden rounded-[28px] border-2 border-red-500/60 bg-gradient-to-br from-red-950/80 via-red-900/50 to-orange-900/40 p-6 shadow-[0_25px_80px_rgba(220,38,38,0.25)]">
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="rounded-full bg-red-500 px-3 py-1 text-xs font-black uppercase tracking-[0.18em] text-white">🛑 Required</span>
+        <h2 className="text-xl font-black text-white md:text-2xl">다운로드만으로는 절대 갱신 안 됩니다 — 4단계 모두 필수</h2>
+      </div>
+      <p className="mt-3 text-sm leading-6 text-red-100/90">
+        {isWindows ? (
+          <>현재 헬퍼 <strong className="text-white">v{currentVersion ?? '?'}</strong>가 트레이에서 실행 중인 채로 새 setup.exe를 받으면, OS가 옛 헬퍼를 그대로 두고 새 헬퍼는 시작 자체가 안 됩니다 (포트 9876 점유 충돌). 아래 4단계를 빠짐없이 진행해 주세요.</>
+        ) : isMac ? (
+          <>현재 헬퍼 <strong className="text-white">v{currentVersion ?? '?'}</strong>가 메뉴바에서 실행 중인 채로 새 .app을 받으면, macOS가 옛 헬퍼를 그대로 두고 새 헬퍼는 시작 자체가 안 됩니다 (포트 9876 점유 충돌 + single-instance 차단). 아래 4단계를 빠짐없이 진행해 주세요.</>
+        ) : (
+          <>현재 헬퍼 <strong className="text-white">v{currentVersion ?? '?'}</strong>가 실행 중인 채로 새 헬퍼를 받으면, OS가 옛 헬퍼를 그대로 두고 새 헬퍼는 시작 자체가 안 됩니다. 아래 4단계를 빠짐없이 진행해 주세요.</>
+        )}
+        <br />
+        <span className="text-xs text-red-100/70">💡 <strong>v1.3.1부터는 새 헬퍼가 시작될 때 옛 헬퍼를 자동 종료합니다</strong> — v1.3.0 → v1.3.1 첫 점프만 손으로 하면 그 이후는 자동.</span>
+      </p>
+
+      <div className="mt-5 grid gap-3">
+        {/* STEP 1 — 가장 중요, 별도 강조 */}
+        <article className="rounded-2xl border border-red-400/40 bg-red-950/60 p-4">
+          <div className="flex items-start gap-3">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-red-500 text-base font-black text-white">1</span>
+            <div className="min-w-0 flex-1">
+              <p className="text-base font-black text-white">옛 헬퍼 완전 종료</p>
+              <p className="mt-1 text-sm leading-6 text-red-50/95">{step1Title}</p>
+              <p className="mt-2 rounded-lg bg-red-950/80 px-3 py-2 text-xs leading-5 text-red-100/80">⚠️ 이 단계를 빼면 새 헬퍼는 시작도 안 됩니다. 옛 v{currentVersion ?? '1.2.0'}이 포트 9876을 점유 중이라 새 버전이 자동으로 차단됩니다.</p>
+              <p className="mt-2 text-xs leading-5 text-red-100/70">{step1Fallback}</p>
+            </div>
+          </div>
+        </article>
+
+        {/* STEP 2 — 다운로드 */}
+        <article className="rounded-2xl border border-red-400/30 bg-red-950/40 p-4">
+          <div className="flex items-start gap-3">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-red-500/80 text-base font-black text-white">2</span>
+            <div className="min-w-0 flex-1">
+              <p className="text-base font-black text-white">아래 "최신 버전 다운로드" 버튼 클릭</p>
+              <p className="mt-1 text-sm leading-6 text-red-50/95">파일명: <code className="rounded bg-red-950/80 px-2 py-0.5 font-mono text-xs text-red-100">{step2FileName}</code></p>
+            </div>
+          </div>
+        </article>
+
+        {/* STEP 3 — 설치 */}
+        <article className="rounded-2xl border border-red-400/30 bg-red-950/40 p-4">
+          <div className="flex items-start gap-3">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-red-500/80 text-base font-black text-white">3</span>
+            <div className="min-w-0 flex-1">
+              <p className="text-base font-black text-white">{step3Title}</p>
+              {step3Warning && <p className="mt-2 rounded-lg bg-red-950/80 px-3 py-2 text-xs leading-5 text-red-100/85">{step3Warning}</p>}
+            </div>
+          </div>
+        </article>
+
+        {/* STEP 4 — 실행 */}
+        <article className="rounded-2xl border border-red-400/30 bg-red-950/40 p-4">
+          <div className="flex items-start gap-3">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-red-500/80 text-base font-black text-white">4</span>
+            <div className="min-w-0 flex-1">
+              <p className="text-base font-black text-white">{step4Title}</p>
+              {step4Warning && <p className="mt-2 rounded-lg bg-red-950/80 px-3 py-2 text-xs leading-5 text-red-100/85">{step4Warning}</p>}
+            </div>
+          </div>
+        </article>
+      </div>
+
+      <p className="mt-4 text-center text-xs text-red-200/70">✓ 4단계를 모두 마치면 이 화면은 자동으로 닫힙니다.</p>
+    </section>
+  );
+}
+
 function ModeBadge({ mode, releasePending }: { mode: 'missing' | 'outdated'; releasePending: boolean }) {
   if (releasePending) {
     return <div className="inline-flex items-center gap-2 rounded-full border border-amber-500/40 bg-amber-500/15 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-amber-200">Release Pending</div>;
@@ -298,14 +426,11 @@ function TroubleshootingPanel({ mode, releasePending }: { mode: 'missing' | 'out
           </>
         ) : mode === 'outdated' ? (
           <>
-            {/* [FIX] outdated 모드 — 트레이 quit이 가장 흔한 누락 단계라서 1순위로 빨강 강조 */}
-            <div className="rounded-2xl border-2 border-red-500/60 bg-red-500/15 px-4 py-3 text-red-100">
-              <div className="font-black text-red-100">⚠️ 가장 흔한 원인 — 트레이의 구버전 헬퍼 종료 안 함</div>
-              <div className="mt-1 text-red-50/90">새 버전 설치 전에 <strong>반드시 트레이/메뉴바의 기존 헬퍼를 우클릭 → 종료(Quit)</strong>해야 합니다. 그러지 않으면 새 .app을 실행해도 포트 9876을 옛 헬퍼가 점유해서 v{MIN_REQUIRED_COMPANION_VERSION}로 갱신되지 않습니다.</div>
-            </div>
-            <div className="rounded-2xl border border-gray-800 bg-gray-900/80 px-4 py-3"><strong className="text-gray-100">올바른 순서:</strong> ① 트레이/메뉴바 헬퍼 종료 → ② 다운로드한 DMG/EXE 설치 → ③ <strong>Applications 폴더로 옮긴 뒤</strong> 새 .app 실행 (DMG 안에서 직접 실행 금지)</div>
+            {/* [v1.3.1] 본체에 OutdatedRecoveryGuide가 빨강 4단계 카드를 표시하므로,
+                여기서는 보조 정보만 짧게 노출. 중복 강조 제거. */}
             <div className="rounded-2xl border border-gray-800 bg-gray-900/80 px-4 py-3">v{MIN_REQUIRED_COMPANION_VERSION} 이상이 아니면 모든 기능이 계속 차단됩니다.</div>
-            <div className="rounded-2xl border border-gray-800 bg-gray-900/80 px-4 py-3">macOS는 Gatekeeper 차단 시 위쪽 노란 카드의 3가지 방법 중 하나로 우회.</div>
+            <div className="rounded-2xl border border-gray-800 bg-gray-900/80 px-4 py-3">v1.3.1 이상부터는 새 헬퍼가 시작될 때 옛 헬퍼를 자동 종료합니다 — 향후에는 1단계가 자동화됩니다.</div>
+            <div className="rounded-2xl border border-gray-800 bg-gray-900/80 px-4 py-3">계속 안 되면 작업 관리자(Windows) / 활성 상태 보기(macOS)에서 "all-in-one-helper" 강제 종료 후 재시도.</div>
           </>
         ) : (
           <>
@@ -512,7 +637,7 @@ export default function CompanionGateModal() {
   const description = releasePending
     ? `웹앱이 v${MIN_REQUIRED_COMPANION_VERSION} 이상을 요구하지만 GitHub에 아직 게시되지 않았습니다. 운영팀이 빌드/배포 중이며 보통 수 분 내에 자동으로 해결됩니다. 계속 머무른다면 새로고침하지 말고 잠시 기다려 주세요.`
     : mode === 'outdated'
-      ? `현재 실행 중인 헬퍼는 v${currentVersion ?? '?'}이고 웹앱은 v${MIN_REQUIRED_COMPANION_VERSION} 이상이 필요합니다. 새 버전을 받기만 해서는 갱신되지 않습니다 — 반드시 ① 트레이/메뉴바의 기존 헬퍼를 우클릭 → 종료(Quit) ② 다운로드한 새 DMG/EXE를 Applications 폴더에 설치 ③ 새 헬퍼 실행 순서를 지켜야 자동으로 닫힙니다.`
+      ? `현재 실행 중인 헬퍼는 v${currentVersion ?? '?'}이고 웹앱은 v${MIN_REQUIRED_COMPANION_VERSION} 이상이 필요합니다. 아래 4단계 가이드를 빠짐없이 진행해 주세요.`
       : '이 앱의 핵심 제작 파이프라인은 로컬 컴패니언 앱을 전제로 동작합니다. 로그인 후 감지되지 않으면 모든 기능이 차단되며, 감지되는 즉시 이 화면은 자동으로 사라집니다.';
 
   const handleCopy = useCallback(async (text: string, label: string) => {
@@ -532,6 +657,11 @@ export default function CompanionGateModal() {
             <div className="border-b border-gray-800 bg-gradient-to-br from-gray-900 via-gray-900 to-gray-800/70 px-6 py-8 md:px-10">
               {osLabel === 'macOS' && <MacGatekeeperPanel onCopy={handleCopy} />}
               <ModeBadge mode={mode} releasePending={releasePending} />
+              {/* [v1.3.1] outdated 모드는 빨강 4단계 가이드를 본문 최상단에 강제 표시.
+                  release-pending이거나 missing 모드일 때는 표시하지 않음. */}
+              {mode === 'outdated' && !releasePending && (
+                <OutdatedRecoveryGuide osLabel={osLabel} currentVersion={currentVersion} />
+              )}
               <div className="mt-5 grid gap-8 lg:grid-cols-[1.15fr_0.85fr]">
                 <div>
                   <h1 id="companion-gate-title" className="text-3xl font-black tracking-tight text-white md:text-4xl">{title}</h1>
