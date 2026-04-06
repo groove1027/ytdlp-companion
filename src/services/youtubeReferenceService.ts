@@ -15,7 +15,12 @@ import { logger } from './LoggerService';
 import { detectSceneCuts, mergeWithAiTimecodes } from './sceneDetection';
 // ensureCompanionAvailable 미사용 — health check가 블로킹되므로 다운로드 직접 시도
 import type { SceneCut } from './sceneDetection';
-import type { Scene, VideoReference } from '../types';
+import type {
+  ReferenceClipDownloadResult,
+  Scene,
+  SceneReferenceClipDownloadResult,
+  VideoReference,
+} from '../types';
 
 function extractJsonObject(raw: string): Record<string, unknown> | null {
   const trimmed = raw.trim();
@@ -62,6 +67,201 @@ const MAX_SEARCH_RESULTS = 10;
 const MAX_DISPLAY_RESULTS = 5;
 const SEARCH_CONCURRENCY = 1; // v2: 다운로드+분석이 무거우므로 1개씩
 const COMPANION_URL = 'http://127.0.0.1:9876';
+const REFERENCE_DOWNLOAD_TIMEOUT_MS = 300_000;
+const REFERENCE_TRIM_TIMEOUT_MS = 180_000;
+
+// in-flight dedupe — 진행 중인 다운로드/트림 promise (완료 후 삭제, AbortError 전파)
+const referenceClipInflight = new Map<string, Promise<ReferenceClipDownloadResult>>();
+// 완료된 결과 캐시 — 최대 20개 LRU (성공 시에만 저장)
+const referenceClipResultCache = new Map<string, ReferenceClipDownloadResult>();
+const REFERENCE_CLIP_CACHE_MAX = 20;
+
+function pushToResultCache(key: string, result: ReferenceClipDownloadResult): void {
+  if (referenceClipResultCache.size >= REFERENCE_CLIP_CACHE_MAX) {
+    const oldest = referenceClipResultCache.keys().next().value;
+    if (oldest !== undefined) referenceClipResultCache.delete(oldest);
+  }
+  referenceClipResultCache.set(key, result);
+}
+
+// 원본 영상 in-flight dedupe — 같은 videoId의 다른 구간 트리밍 시 재다운로드 방지
+const sourceVideoInflight = new Map<string, Promise<Blob | null>>();
+// 원본 영상 완료 캐시 — 최대 5개 (대용량이므로 작게 제한)
+const sourceVideoResultCache = new Map<string, Blob>();
+const SOURCE_VIDEO_CACHE_MAX = 5;
+
+function pushToSourceCache(videoId: string, blob: Blob): void {
+  if (sourceVideoResultCache.size >= SOURCE_VIDEO_CACHE_MAX) {
+    const oldest = sourceVideoResultCache.keys().next().value;
+    if (oldest !== undefined) sourceVideoResultCache.delete(oldest);
+  }
+  sourceVideoResultCache.set(videoId, blob);
+}
+
+function sanitizeReferenceClipStem(raw: string): string {
+  const sanitized = raw
+    .replace(/[^\w가-힣\-_ ]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, '_')
+    .slice(0, 60);
+  return sanitized || 'reference_clip';
+}
+
+function buildReferenceClipKey(videoId: string, startSec: number, endSec: number): string {
+  return `${videoId}:${Math.round(startSec * 1000)}-${Math.round(endSec * 1000)}`;
+}
+
+function buildReferenceClipFileName(
+  videoId: string,
+  startSec: number,
+  endSec: number,
+  videoTitle?: string,
+): string {
+  const stem = sanitizeReferenceClipStem(
+    `${videoTitle || videoId}_${Math.floor(startSec)}_${Math.floor(endSec)}`,
+  );
+  return `${stem}.mp4`;
+}
+
+function guessBlobExtension(blob: Blob): string {
+  const type = blob.type.toLowerCase();
+  if (type.includes('quicktime')) return 'mov';
+  if (type.includes('webm')) return 'webm';
+  if (type.includes('ogg')) return 'ogv';
+  return 'mp4';
+}
+
+function decodeBase64ToUint8Array(base64: string): Uint8Array {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+async function blobToBase64(blob: Blob): Promise<string> {
+  const buffer = await blob.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  const CHUNK_SIZE = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK_SIZE) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK_SIZE));
+  }
+  return btoa(binary);
+}
+
+async function downloadCompanionVideoBlob(
+  videoId: string,
+  options?: {
+    signal?: AbortSignal;
+    quality?: string;
+    videoOnly?: boolean;
+    reason?: 'analysis' | 'reference';
+  },
+): Promise<Blob | null> {
+  const ytUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  const quality = options?.quality || '1080p';
+  const reasonLabel = options?.reason === 'analysis' ? '분석용' : '레퍼런스';
+  const videoOnlyParam = options?.videoOnly === false ? '' : '&videoOnly=true';
+  const dlUrl = `${COMPANION_URL}/api/download?url=${encodeURIComponent(ytUrl)}&quality=${encodeURIComponent(quality)}${videoOnlyParam}`;
+
+  try {
+    logger.info('[VideoRef] 컴패니언 다운로드 시작', `${reasonLabel} ${videoId}`);
+    const timeoutSignal = AbortSignal.timeout(REFERENCE_DOWNLOAD_TIMEOUT_MS);
+    const combined = options?.signal
+      ? AbortSignal.any([options.signal, timeoutSignal])
+      : timeoutSignal;
+    const res = await monitoredFetch(dlUrl, { signal: combined }, REFERENCE_DOWNLOAD_TIMEOUT_MS);
+    if (!res.ok) {
+      logger.warn('[VideoRef] 다운로드 실패', `${res.status} ${res.statusText}`);
+      return null;
+    }
+    const ct = res.headers.get('content-type') || '';
+    if (!ct.startsWith('video/') && !ct.startsWith('audio/') && !ct.includes('octet-stream')) {
+      logger.warn('[VideoRef] 다운로드 MIME 불일치', `${ct} (video/* 기대)`);
+      return null;
+    }
+    const blob = await res.blob();
+    if (blob.size < 10_000) {
+      logger.warn('[VideoRef] 다운로드 크기 너무 작음', `${blob.size} bytes`);
+      return null;
+    }
+    logger.info('[VideoRef] 다운로드 완료', `${videoId} ${(blob.size / 1024 / 1024).toFixed(1)}MB`);
+    return blob;
+  } catch (e) {
+    logger.warn('[VideoRef] 다운로드 에러', e instanceof Error ? e.message : '');
+    return null;
+  }
+}
+
+async function trimReferenceClipWithCompanion(
+  sourceBlob: Blob,
+  params: {
+    videoId: string;
+    startSec: number;
+    endSec: number;
+    videoTitle?: string;
+    signal?: AbortSignal;
+  },
+): Promise<ReferenceClipDownloadResult> {
+  const fileName = buildReferenceClipFileName(
+    params.videoId,
+    params.startSec,
+    params.endSec,
+    params.videoTitle,
+  );
+  const cutPayload = {
+    input: await blobToBase64(sourceBlob),
+    inputFormat: guessBlobExtension(sourceBlob),
+    clips: [{
+      label: fileName.replace(/\.mp4$/i, ''),
+      startSec: params.startSec,
+      endSec: params.endSec,
+    }],
+  };
+  const timeoutSignal = AbortSignal.timeout(REFERENCE_TRIM_TIMEOUT_MS);
+  const combined = params.signal
+    ? AbortSignal.any([params.signal, timeoutSignal])
+    : timeoutSignal;
+  const response = await monitoredFetch(`${COMPANION_URL}/api/ffmpeg/cut`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(cutPayload),
+    signal: combined,
+  }, REFERENCE_TRIM_TIMEOUT_MS);
+
+  if (!response.ok) {
+    const message = await response.text().catch(() => '');
+    throw new Error(message || `클립 자르기 실패 (HTTP ${response.status})`);
+  }
+
+  const payload = await response.json();
+  const zipBase64 = typeof payload?.data === 'string' ? payload.data : '';
+  if (!zipBase64) {
+    throw new Error('클립 자르기 응답이 비어 있습니다.');
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const JSZip = ((await import('jszip')) as any).default;
+  const zip = await JSZip.loadAsync(decodeBase64ToUint8Array(zipBase64));
+  const zipEntries = Object.values(zip.files) as Array<{ dir: boolean; name: string; async: (type: string) => Promise<Blob> }>;
+  const clipEntry = zipEntries.find((entry) => !entry.dir && entry.name.toLowerCase().endsWith('.mp4'));
+  if (!clipEntry) {
+    throw new Error('잘린 MP4 파일을 찾을 수 없습니다.');
+  }
+
+  const blob = await clipEntry.async('blob');
+  return {
+    key: buildReferenceClipKey(params.videoId, params.startSec, params.endSec),
+    videoId: params.videoId,
+    videoTitle: params.videoTitle,
+    startSec: params.startSec,
+    endSec: params.endSec,
+    durationSec: Math.max(0.1, params.endSec - params.startSec),
+    fileName: clipEntry.name.split('/').pop() || fileName,
+    sourceUrl: `https://www.youtube.com/watch?v=${params.videoId}&t=${Math.max(0, Math.floor(params.startSec))}`,
+    blob,
+  };
+}
 
 /** 쇼츠 모드 컷 길이 규칙 */
 export const SHORTS_CUT_RULES = {
@@ -179,7 +379,7 @@ async function checkCompanion(signal?: AbortSignal): Promise<boolean> {
     const timeoutSig = AbortSignal.timeout(30000); // 30초 — 첫 연결 시 detect_services 대기
     const combined = signal ? AbortSignal.any([signal, timeoutSig]) : timeoutSig;
     logger.info('[VideoRef] 컴패니언 health 체크 (30s 대기)');
-    const res = await fetch(`${COMPANION_URL}/health`, { signal: combined });
+    const res = await monitoredFetch(`${COMPANION_URL}/health`, { signal: combined }, 30000);
     if (res.ok) {
       logger.info('[VideoRef] 컴패니언 ✅ 감지');
       return true;
@@ -190,39 +390,14 @@ async function checkCompanion(signal?: AbortSignal): Promise<boolean> {
   return false;
 }
 
-// ─── Phase 2: 컴패니언 yt-dlp로 영상 다운로드 (분석용, 360p) ───
+// ─── Phase 2: 컴패니언 yt-dlp로 영상 다운로드 (분석용, 480p — 장면 검색/scene detection에는 저해상도 충분) ───
 async function downloadVideoForAnalysis(videoId: string, signal?: AbortSignal): Promise<Blob | null> {
-  const ytUrl = `https://www.youtube.com/watch?v=${videoId}`;
-  const dlUrl = `${COMPANION_URL}/api/download?url=${encodeURIComponent(ytUrl)}&quality=1080p&videoOnly=true`;
-
-  try {
-    logger.info('[VideoRef] 컴패니언 다운로드 시작', videoId);
-    const timeoutSignal = AbortSignal.timeout(300000); // 5분 — 1080p 롱폼 다운로드 고려
-    const combined = signal
-      ? AbortSignal.any([signal, timeoutSignal])
-      : timeoutSignal;
-    const res = await fetch(dlUrl, { signal: combined });
-    if (!res.ok) {
-      logger.warn('[VideoRef] 다운로드 실패', `${res.status} ${res.statusText}`);
-      return null;
-    }
-    // MIME 검증 — video/* 또는 audio/* 만 허용
-    const ct = res.headers.get('content-type') || '';
-    if (!ct.startsWith('video/') && !ct.startsWith('audio/') && !ct.includes('octet-stream')) {
-      logger.warn('[VideoRef] 다운로드 MIME 불일치', `${ct} (video/* 기대)`);
-      return null;
-    }
-    const blob = await res.blob();
-    if (blob.size < 10000) {
-      logger.warn('[VideoRef] 다운로드 크기 너무 작음', `${blob.size} bytes`);
-      return null;
-    }
-    logger.info('[VideoRef] 다운로드 완료', `${videoId} ${(blob.size / 1024 / 1024).toFixed(1)}MB`);
-    return blob;
-  } catch (e) {
-    logger.warn('[VideoRef] 다운로드 에러', e instanceof Error ? e.message : '');
-    return null;
-  }
+  return downloadCompanionVideoBlob(videoId, {
+    signal,
+    quality: '480p',
+    videoOnly: true,
+    reason: 'analysis',
+  });
 }
 
 // ─── Phase 3: Scene Detection (클라이언트 사이드) ───
@@ -256,18 +431,18 @@ async function fetchTimedCaptions(videoId: string): Promise<TimedCue[]> {
 
       let xml = '';
       try {
-        const proxyRes = await fetch(`${COMPANION_URL}/api/google-proxy`, {
+        const proxyRes = await monitoredFetch(`${COMPANION_URL}/api/google-proxy`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ targetUrl, method: 'GET', headers: {} }),
           signal: AbortSignal.timeout(10000),
-        });
+        }, 10000);
         if (proxyRes.ok) xml = await proxyRes.text();
       } catch { /* companion unavailable */ }
 
       if (!xml || xml.length < 50) {
         try {
-          const directRes = await fetch(targetUrl, { signal: AbortSignal.timeout(10000) });
+          const directRes = await monitoredFetch(targetUrl, { signal: AbortSignal.timeout(10000) }, 10000);
           if (directRes.ok) xml = await directRes.text();
         } catch { /* continue */ }
       }
@@ -858,6 +1033,137 @@ export async function searchAllScenesReferenceVideos(
       }
     }));
   }
+}
+
+export async function downloadAndTrimReferenceClip(
+  videoId: string,
+  startSec: number,
+  endSec: number,
+  options?: {
+    signal?: AbortSignal;
+    videoTitle?: string;
+    force?: boolean;
+  },
+): Promise<ReferenceClipDownloadResult> {
+  const safeStart = Number.isFinite(startSec) ? Math.max(0, startSec) : 0;
+  const safeEnd = Number.isFinite(endSec) ? Math.max(safeStart + 0.1, endSec) : safeStart + 0.1;
+  const key = buildReferenceClipKey(videoId, safeStart, safeEnd);
+
+  // 1) 완료된 결과 캐시 확인 (hit 시 recency 갱신)
+  if (!options?.force) {
+    const cached = referenceClipResultCache.get(key);
+    if (cached) {
+      referenceClipResultCache.delete(key);
+      referenceClipResultCache.set(key, cached);
+      return cached;
+    }
+    // 2) in-flight 중복 방지
+    const inflight = referenceClipInflight.get(key);
+    if (inflight) return inflight;
+  }
+
+  const promise = (async () => {
+    const companionUp = await checkCompanion(options?.signal);
+    if (!companionUp) {
+      throw new Error('레퍼런스 클립 다운로드에는 컴패니언 앱이 필요합니다. 컴패니언을 실행한 뒤 다시 시도해주세요.');
+    }
+
+    // 같은 videoId의 원본을 가져오기 — 완료 캐시(LRU 갱신) → in-flight → 새 다운로드
+    let sourceBlob = sourceVideoResultCache.get(videoId) || null;
+    if (sourceBlob) {
+      sourceVideoResultCache.delete(videoId);
+      sourceVideoResultCache.set(videoId, sourceBlob);
+    }
+    if (!sourceBlob) {
+      let inflightSource = sourceVideoInflight.get(videoId);
+      if (!inflightSource) {
+        inflightSource = downloadCompanionVideoBlob(videoId, {
+          quality: '1080p',
+          videoOnly: true,
+          reason: 'reference',
+        });
+        sourceVideoInflight.set(videoId, inflightSource);
+      }
+      try {
+        sourceBlob = await inflightSource;
+      } finally {
+        sourceVideoInflight.delete(videoId);
+      }
+    }
+    if (!sourceBlob) {
+      throw new Error('원본 YouTube 영상을 내려받지 못했습니다. 잠시 후 다시 시도해주세요.');
+    }
+    pushToSourceCache(videoId, sourceBlob);
+
+    return trimReferenceClipWithCompanion(sourceBlob, {
+      videoId,
+      startSec: safeStart,
+      endSec: safeEnd,
+      videoTitle: options?.videoTitle,
+      signal: options?.signal,
+    });
+  })();
+
+  referenceClipInflight.set(key, promise);
+  try {
+    const result = await promise;
+    pushToResultCache(key, result);
+    return result;
+  } catch (error) {
+    // AbortError는 그대로 전파
+    throw error;
+  } finally {
+    referenceClipInflight.delete(key);
+  }
+}
+
+export async function downloadAllReferenceClips(
+  scenes: Scene[],
+  options?: {
+    signal?: AbortSignal;
+    onProgress?: (completed: number, total: number, item: SceneReferenceClipDownloadResult) => void;
+  },
+): Promise<SceneReferenceClipDownloadResult[]> {
+  const targets = scenes.flatMap((scene) =>
+    (scene.videoReferences || []).map((ref, refIndex) => ({ sceneId: scene.id, refIndex, ref })),
+  );
+
+  const results: SceneReferenceClipDownloadResult[] = [];
+  const failures: string[] = [];
+  for (let i = 0; i < targets.length; i++) {
+    if (options?.signal?.aborted) break;
+    const target = targets[i];
+    try {
+      const downloaded = await downloadAndTrimReferenceClip(
+        target.ref.videoId,
+        target.ref.startSec,
+        target.ref.endSec,
+        {
+          signal: options?.signal,
+          videoTitle: target.ref.videoTitle,
+        },
+      );
+      const item: SceneReferenceClipDownloadResult = {
+        ...downloaded,
+        sceneId: target.sceneId,
+        refIndex: target.refIndex,
+        ref: target.ref,
+      };
+      results.push(item);
+      options?.onProgress?.(results.length, targets.length, item);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '알 수 없는 오류';
+      logger.warn('[VideoRef] 개별 클립 다운로드 실패', `${target.ref.videoId} ${msg}`);
+      failures.push(`${target.ref.videoTitle || target.ref.videoId}: ${msg}`);
+    }
+  }
+  if (results.length === 0 && failures.length > 0) {
+    throw new Error(`모든 레퍼런스 클립 다운로드 실패:\n${failures.slice(0, 5).join('\n')}`);
+  }
+  if (failures.length > 0) {
+    logger.warn('[VideoRef] 일부 클립 실패', `성공 ${results.length}/${targets.length}, 실패: ${failures.length}`);
+  }
+  return results;
 }
 
 /** 편집 가이드 시트 생성 — 장면별 소스 클립 + 타임코드 텍스트 목록 */

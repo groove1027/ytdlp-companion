@@ -9,7 +9,11 @@ import {
   cancelVideoReferenceSearch,
   generateEditGuideSheet,
   SHORTS_CUT_RULES,
+  downloadAndTrimReferenceClip,
+  downloadAllReferenceClips,
 } from '../../../services/youtubeReferenceService';
+import { logger } from '../../../services/LoggerService';
+import { showToast } from '../../../stores/uiStore';
 import type { VideoReference, Scene } from '../../../types';
 
 const Toggle: React.FC<{ checked: boolean; onChange: (v: boolean) => void; label: string }> = ({ checked, onChange, label }) => (
@@ -38,6 +42,24 @@ function formatDate(iso: string | undefined): string {
   } catch { return ''; }
 }
 
+function triggerVideoBlobDownload(
+  blob: Blob,
+  fileName: string,
+  owner: string,
+  type: 'video' | 'other' = 'video',
+) {
+  const url = URL.createObjectURL(blob);
+  logger.registerBlobUrl(url, type, owner, blob.size / (1024 * 1024));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  a.click();
+  window.setTimeout(() => {
+    logger.unregisterBlobUrl(url);
+    URL.revokeObjectURL(url);
+  }, 60_000);
+}
+
 /** 쇼츠 모드 추천 클립 길이 계산 */
 function getShortsClipDuration(sceneIndex: number, totalScenes: number, audioDuration?: number): number {
   // TTS 길이가 있으면 그것에 맞춤
@@ -64,6 +86,8 @@ const VideoReferencePanel: React.FC = () => {
   const [adjustingRef, setAdjustingRef] = useState<{ sceneId: string; refIdx: number } | null>(null);
   const [adjustStart, setAdjustStart] = useState(0);
   const [adjustEnd, setAdjustEnd] = useState(30);
+  const [busyActionKey, setBusyActionKey] = useState<string | null>(null);
+  const [isDownloadingAll, setIsDownloadingAll] = useState(false);
 
   const scenesWithContent = useMemo(
     () => scenes.filter(s => s.scriptText || s.visualDescriptionKO),
@@ -78,6 +102,11 @@ const VideoReferencePanel: React.FC = () => {
   const totalApplied = useMemo(() => {
     return scenes.filter(s => s.videoReferences && s.videoReferences.length > 0).length;
   }, [scenes]);
+
+  const sceneNumberById = useMemo(
+    () => new Map(scenes.map((scene, index) => [scene.id, index + 1])),
+    [scenes],
+  );
 
   const handleSearchAll = useCallback(async () => {
     if (isSearching || scenesWithContent.length === 0) return;
@@ -183,8 +212,90 @@ const VideoReferencePanel: React.FC = () => {
 
   const handleCopyGuide = useCallback(() => {
     const text = generateEditGuideSheet(scenes);
-    navigator.clipboard.writeText(text).catch(() => {});
+    navigator.clipboard.writeText(text)
+      .then(() => showToast('편집 가이드가 클립보드에 복사되었습니다.'))
+      .catch(() => showToast('편집 가이드 복사 실패'));
   }, [scenes]);
+
+  const handleReferenceClipAction = useCallback(async (
+    scene: Scene,
+    ref: VideoReference,
+    mode: 'download' | 'apply',
+  ) => {
+    const actionKey = `${scene.id}:${ref.videoId}:${mode}`;
+    setBusyActionKey(actionKey);
+    try {
+      const clip = await downloadAndTrimReferenceClip(ref.videoId, ref.startSec, ref.endSec, {
+        videoTitle: ref.videoTitle,
+      });
+
+      if (mode === 'download') {
+        triggerVideoBlobDownload(clip.blob, clip.fileName, 'VideoReferencePanel:download');
+        showToast('레퍼런스 MP4 다운로드를 시작했습니다.');
+        return;
+      }
+
+      // 다운로드 중 장면 상태가 변경되었을 수 있으므로 최신 상태 확인
+      const freshScene = useProjectStore.getState().scenes.find(s => s.id === scene.id);
+      if (!freshScene) {
+        showToast('장면이 삭제되어 적용할 수 없습니다.');
+        return;
+      }
+
+      const objectUrl = URL.createObjectURL(clip.blob);
+      logger.registerBlobUrl(objectUrl, 'video', 'VideoReferencePanel:apply', clip.blob.size / (1024 * 1024));
+      if (freshScene.videoUrl?.startsWith('blob:') && freshScene.videoUrl !== objectUrl) {
+        logger.unregisterBlobUrl(freshScene.videoUrl);
+        URL.revokeObjectURL(freshScene.videoUrl);
+      }
+      updateScene(scene.id, {
+        videoUrl: objectUrl,
+        imageUpdatedAfterVideo: false,
+      });
+      showToast(`장면 ${sceneNumberById.get(scene.id) || ''}에 레퍼런스 클립을 적용했습니다.`);
+    } catch (error) {
+      showToast(`레퍼런스 클립 ${mode === 'download' ? '다운로드' : '적용'} 실패: ${error instanceof Error ? error.message : '알 수 없는 오류'}`);
+    } finally {
+      setBusyActionKey(null);
+    }
+  }, [sceneNumberById, updateScene]);
+
+  const handleDownloadAllApplied = useCallback(async () => {
+    const targetScenes = scenes.filter((scene) => (scene.videoReferences || []).length > 0);
+    if (targetScenes.length === 0) {
+      showToast('다운로드할 레퍼런스 클립이 없습니다.');
+      return;
+    }
+
+    setIsDownloadingAll(true);
+    try {
+      const downloaded = await downloadAllReferenceClips(targetScenes);
+      if (downloaded.length === 0) {
+        showToast('다운로드할 레퍼런스 클립이 없습니다.');
+        return;
+      }
+
+      const JSZip = (await import('jszip')).default;
+      const zip = new JSZip();
+      downloaded.forEach((item) => {
+        const sceneNumber = sceneNumberById.get(item.sceneId) || 0;
+        const prefix = `scene_${String(sceneNumber).padStart(3, '0')}`;
+        zip.file(`${prefix}_${item.fileName}`, item.blob);
+      });
+      const zipBlob = await zip.generateAsync({ type: 'blob', compression: 'STORE' });
+      triggerVideoBlobDownload(
+        zipBlob,
+        `reference-clips-${new Date().toISOString().slice(0, 10)}.zip`,
+        'VideoReferencePanel:downloadAll',
+        'other',
+      );
+      showToast(`레퍼런스 클립 ${downloaded.length}개 ZIP 다운로드를 시작했습니다.`);
+    } catch (error) {
+      showToast(`전체 레퍼런스 다운로드 실패: ${error instanceof Error ? error.message : '알 수 없는 오류'}`);
+    } finally {
+      setIsDownloadingAll(false);
+    }
+  }, [sceneNumberById, scenes]);
 
   // ─── 비활성 상태 ───
   if (!enableVideoReference) {
@@ -293,6 +404,14 @@ const VideoReferencePanel: React.FC = () => {
           >
             📎 복사
           </button>
+          <button
+            type="button"
+            onClick={() => { void handleDownloadAllApplied(); }}
+            disabled={isDownloadingAll}
+            className="px-4 py-2 rounded-lg text-xs font-bold bg-red-700 hover:bg-red-600 text-white border border-red-500/40 transition-colors disabled:opacity-50"
+          >
+            {isDownloadingAll ? '다운로드 중...' : '📥 전체 클립 다운로드'}
+          </button>
         </div>
       )}
 
@@ -366,6 +485,8 @@ const VideoReferencePanel: React.FC = () => {
                         const isAdjusting = adjustingRef?.sceneId === scene.id && adjustingRef?.refIdx === j;
                         const isApplied = appliedRefs.some(r => r.videoId === ref.videoId);
                         const clipDuration = ref.endSec - ref.startSec;
+                        const downloadKey = `${scene.id}:${ref.videoId}:download`;
+                        const applyKey = `${scene.id}:${ref.videoId}:apply`;
 
                         return (
                           <div
@@ -442,6 +563,22 @@ const VideoReferencePanel: React.FC = () => {
                                     className="text-[10px] text-blue-400 hover:text-blue-300 underline"
                                   >
                                     ✂️ 구간 조정
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => { e.stopPropagation(); void handleReferenceClipAction(scene, ref, 'download'); }}
+                                    disabled={busyActionKey !== null}
+                                    className="text-[10px] text-cyan-300 hover:text-cyan-200 underline disabled:opacity-50"
+                                  >
+                                    {busyActionKey === downloadKey ? '📥 다운로드 중...' : '📥 MP4 다운로드'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => { e.stopPropagation(); void handleReferenceClipAction(scene, ref, 'apply'); }}
+                                    disabled={busyActionKey !== null}
+                                    className="text-[10px] text-orange-300 hover:text-orange-200 underline disabled:opacity-50"
+                                  >
+                                    {busyActionKey === applyKey ? '🎬 적용 중...' : '🎬 장면 영상으로 적용'}
                                   </button>
                                   {/* 적용/해제 */}
                                   {isApplied ? (

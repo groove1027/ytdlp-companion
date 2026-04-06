@@ -16,6 +16,7 @@ import {
   installNleViaCompanion,
 } from '../../services/nleExportService';
 import type { EditRoomNleTarget } from '../../services/nleExportService';
+import { downloadAndTrimReferenceClip } from '../../services/youtubeReferenceService';
 import { showToast } from '../../stores/uiStore';
 import EditRoomHeader from './editroom/EditRoomHeader';
 import EditRoomSceneList from './editroom/EditRoomSceneList';
@@ -489,6 +490,7 @@ const ScenePreviewPanel: React.FC<{
   const activeScene = scenes.find(s => s.id === activeId);
   const activeIdx = scenes.findIndex(s => s.id === activeId);
   const activeTiming = timeline.find(t => t.sceneId === activeId);
+  const updateScene = useProjectStore(s => s.updateScene);
   const sceneSubtitles = useEditRoomStore(s => s.sceneSubtitles);
   const sceneEffects = useEditRoomStore(s => s.sceneEffects);
   const sceneOverlays = useEditRoomStore(s => s.sceneOverlays);
@@ -496,6 +498,7 @@ const ScenePreviewPanel: React.FC<{
   const sceneTransitions = useEditRoomStore(s => s.sceneTransitions);
   const activeSubtitleText = useEditRoomStore(s => s.activeSubtitleText);
   const isTimelinePlaying = useEditRoomStore(s => s.isTimelinePlaying);
+  const [referenceAction, setReferenceAction] = useState<'download' | 'apply' | null>(null);
 
   const previewContainerRef = React.useRef<HTMLDivElement>(null);
   const isPortraitAR = aspectRatio === '9:16';
@@ -974,6 +977,50 @@ const ScenePreviewPanel: React.FC<{
     return !!style.animation;
   }, [effectConfig]);
 
+  const handleReferenceClipAction = useCallback(async (mode: 'download' | 'apply') => {
+    const ref = activeScene?.videoReferences?.[0];
+    if (!activeScene || !ref) {
+      showToast('적용된 레퍼런스 클립이 없습니다.');
+      return;
+    }
+
+    setReferenceAction(mode);
+    try {
+      const clip = await downloadAndTrimReferenceClip(ref.videoId, ref.startSec, ref.endSec, {
+        videoTitle: ref.videoTitle,
+      });
+
+      if (mode === 'download') {
+        triggerVideoBlobDownload(clip.blob, clip.fileName, 'EditRoomTab:referenceDownload');
+        showToast('레퍼런스 MP4 다운로드를 시작했습니다.');
+        return;
+      }
+
+      // 다운로드 중 장면 상태가 변경되었을 수 있으므로 최신 상태 확인
+      const freshScene = useProjectStore.getState().scenes.find(s => s.id === activeScene.id);
+      if (!freshScene) {
+        showToast('장면이 삭제되어 적용할 수 없습니다.');
+        return;
+      }
+
+      const objectUrl = URL.createObjectURL(clip.blob);
+      logger.registerBlobUrl(objectUrl, 'video', 'EditRoomTab:referenceApply', clip.blob.size / (1024 * 1024));
+      if (freshScene.videoUrl?.startsWith('blob:') && freshScene.videoUrl !== objectUrl) {
+        logger.unregisterBlobUrl(freshScene.videoUrl);
+        URL.revokeObjectURL(freshScene.videoUrl);
+      }
+      updateScene(activeScene.id, {
+        videoUrl: objectUrl,
+        imageUpdatedAfterVideo: false,
+      });
+      showToast('레퍼런스 클립을 장면 영상으로 적용했습니다.');
+    } catch (error) {
+      showToast(`레퍼런스 클립 ${mode === 'download' ? '다운로드' : '적용'} 실패: ${error instanceof Error ? error.message : '알 수 없는 오류'}`);
+    } finally {
+      setReferenceAction(null);
+    }
+  }, [activeScene, updateScene]);
+
   // 프리셋 변경 시에만 CSS animation 강제 재시작 (key가 바뀌면 React가 DOM 재생성)
   // ★ activeId를 key에서 제거 — 장면 전환 시 React가 DOM을 파괴/재생성하면
   //   runTransition이 설정한 visibility:hidden이 사라지고 animation이 frame 0부터 재시작 → 점프 발생
@@ -1206,17 +1253,37 @@ const ScenePreviewPanel: React.FC<{
           const safeId = encodeURIComponent(ref.videoId);
           const safeSec = Math.max(0, Math.floor(ref.startSec || 0));
           return (
-            <a
-              href={`https://www.youtube.com/watch?v=${safeId}&t=${safeSec}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="absolute top-10 right-2 z-[6] flex items-center gap-1.5 bg-red-600/90 hover:bg-red-500 text-white text-[10px] px-2.5 py-1 rounded-lg shadow-lg transition-colors"
-              title={`${ref.videoTitle} (${fmtTime(ref.startSec)}~${fmtTime(ref.endSec)})`}
-            >
-              <span>📺</span>
-              <span className="font-bold">{fmtTime(ref.startSec)}~{fmtTime(ref.endSec)}</span>
-              <span className="opacity-70 truncate max-w-[120px]">{ref.videoTitle}</span>
-            </a>
+            <div className="absolute top-10 right-2 z-[6] flex flex-col items-end gap-1.5">
+              <a
+                href={`https://www.youtube.com/watch?v=${safeId}&t=${safeSec}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1.5 bg-red-600/90 hover:bg-red-500 text-white text-[10px] px-2.5 py-1 rounded-lg shadow-lg transition-colors"
+                title={`${ref.videoTitle} (${fmtTime(ref.startSec)}~${fmtTime(ref.endSec)})`}
+              >
+                <span>📺</span>
+                <span className="font-bold">{fmtTime(ref.startSec)}~{fmtTime(ref.endSec)}</span>
+                <span className="opacity-70 truncate max-w-[120px]">{ref.videoTitle}</span>
+              </a>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => { void handleReferenceClipAction('download'); }}
+                  disabled={referenceAction !== null}
+                  className="bg-gray-950/85 hover:bg-gray-900 text-white text-[10px] px-2 py-1 rounded-md border border-white/15 disabled:opacity-50"
+                >
+                  {referenceAction === 'download' ? '다운로드 중...' : '📥 다운로드'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { void handleReferenceClipAction('apply'); }}
+                  disabled={referenceAction !== null}
+                  className="bg-orange-600/90 hover:bg-orange-500 text-white text-[10px] px-2 py-1 rounded-md border border-orange-300/20 disabled:opacity-50"
+                >
+                  {referenceAction === 'apply' ? '적용 중...' : '🎬 장면 적용'}
+                </button>
+              </div>
+            </div>
           );
         })()}
 
@@ -1270,6 +1337,19 @@ function base64ToBlobUrl(base64: string): string {
   const blobUrl = URL.createObjectURL(new Blob([bytes], { type: mime }));
   logger.registerBlobUrl(blobUrl, mime.startsWith('video') ? 'video' : 'image', 'EditRoomTab:base64ToBlobUrl');
   return blobUrl;
+}
+
+function triggerVideoBlobDownload(blob: Blob, fileName: string, owner: string) {
+  const url = URL.createObjectURL(blob);
+  logger.registerBlobUrl(url, 'video', owner, blob.size / (1024 * 1024));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  a.click();
+  window.setTimeout(() => {
+    logger.unregisterBlobUrl(url);
+    URL.revokeObjectURL(url);
+  }, 60_000);
 }
 
 const EditRoomTab: React.FC = () => {
@@ -1414,11 +1494,13 @@ const EditRoomTab: React.FC = () => {
     }
     // [FIX #474] 영상이 없는 장면이 있으면 confirm 대화상자로 사전 확인 (Toast는 놓치기 쉬움)
     const videoSceneCount = scenes.filter(s => s.videoUrl && !s.imageUpdatedAfterVideo).length;
+    const refFallbackCount = scenes.filter(s => !s.videoUrl && !s.imageUrl && s.videoReferences && s.videoReferences.length > 0).length;
     if (videoSceneCount < scenes.length) {
-      const imageOnlyCount = scenes.length - videoSceneCount;
-      const msg = videoSceneCount === 0
+      const imageOnlyCount = scenes.length - videoSceneCount - refFallbackCount;
+      const refNote = refFallbackCount > 0 ? `\n  📺 레퍼런스 폴백: ${refFallbackCount}개 (영상/이미지 없는 장면에 YouTube 클립 자동 사용)` : '';
+      const msg = videoSceneCount === 0 && refFallbackCount === 0
         ? `⚠️ 현재 ${scenes.length}개 장면이 모두 이미지입니다.\n\n영상 클립이 하나도 없는 상태에서 내보내면,\n${targetLabel}에서 모든 장면이 정지 이미지로 표시됩니다.\n\n그래도 이미지로 내보내시겠어요?\n(영상이 필요하면 '취소' 후 이미지/영상 탭에서 영상을 먼저 생성해주세요)`
-        : `⚠️ 미디어 구성 안내\n\n  🎬 영상: ${videoSceneCount}개\n  🖼️ 이미지: ${imageOnlyCount}개\n  📦 전체: ${scenes.length}개 장면\n\n영상이 없는 ${imageOnlyCount}개 장면은 정지 이미지로 내보내집니다.\n\n이대로 내보내시겠어요?\n(모든 장면을 영상으로 하려면 '취소' 후 이미지/영상 탭에서 나머지 영상을 생성해주세요)`;
+        : `⚠️ 미디어 구성 안내\n\n  🎬 영상: ${videoSceneCount}개\n  🖼️ 이미지: ${imageOnlyCount > 0 ? imageOnlyCount + '개' : '없음'}${refNote}\n  📦 전체: ${scenes.length}개 장면\n\n${imageOnlyCount > 0 ? `영상이 없는 ${imageOnlyCount}개 장면은 정지 이미지로 내보내집니다.\n` : ''}\n이대로 내보내시겠어요?`;
       if (!window.confirm(msg)) return;
     }
     try {
@@ -1462,7 +1544,13 @@ const EditRoomTab: React.FC = () => {
         target,
         timeline,
         // [FIX #652] imageUpdatedAfterVideo이면 videoUrl 제외 → 이미지로 내보내기
-        scenes: scenes.map((s) => ({ id: s.id, imageUrl: s.imageUrl, videoUrl: s.imageUpdatedAfterVideo ? undefined : s.videoUrl, scriptText: s.scriptText })),
+        scenes: scenes.map((s) => ({
+          id: s.id,
+          imageUrl: s.imageUrl,
+          videoUrl: s.imageUpdatedAfterVideo ? undefined : s.videoUrl,
+          scriptText: s.scriptText,
+          videoReferences: s.videoReferences,
+        })),
         narrationLines: narrationLinesForNle,
         title: projectTitle,
         aspectRatio: projectAspectRatio,

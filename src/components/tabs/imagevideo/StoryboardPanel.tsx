@@ -33,6 +33,7 @@ import {
 } from '../../../services/nleExportService';
 import type { EditRoomNleTarget } from '../../../services/nleExportService';
 import { logger } from '../../../services/LoggerService';
+import { getPreviousSceneImageUrlForReplace } from '../../../utils/sceneImageHistory';
 
 // --- 배치 진행 중 로테이팅 팁 ---
 const BATCH_TIPS: string[] = [
@@ -931,7 +932,11 @@ const SceneDetailModal: React.FC<SceneDetailModalProps> = ({
                   </button>
                   {(scene.imageUrl || scene.videoUrl) && (
                     <button type="button" onClick={() => {
-                      useProjectStore.getState().updateScene(scene.id, { imageUrl: '', videoUrl: undefined });
+                      useProjectStore.getState().updateScene(scene.id, {
+                        imageUrl: '',
+                        previousSceneImageUrl: scene.imageUrl || scene.previousSceneImageUrl,
+                        videoUrl: undefined,
+                      });
                       showToast('이미지/영상 삭제됨');
                     }}
                       className="text-[10px] text-red-400 hover:text-red-300 border border-red-500/30 hover:border-red-500/50 px-2 py-0.5 rounded transition-colors">
@@ -1548,12 +1553,14 @@ const StoryboardPanel: React.FC = () => {
     }
 
     // [FIX #652] imageUpdatedAfterVideo이면 이미지로 취급
-    const videoSceneCount = scenes.filter((scene) => scene.videoUrl && !scene.imageUpdatedAfterVideo).length;
+    const videoSceneCount = scenes.filter(scene => scene.videoUrl && !scene.imageUpdatedAfterVideo).length;
+    const refFallbackCount = scenes.filter(s => !s.videoUrl && !s.imageUrl && s.videoReferences && s.videoReferences.length > 0).length;
     if (videoSceneCount < scenes.length) {
-      const imageOnlyCount = scenes.length - videoSceneCount;
-      const msg = videoSceneCount === 0
+      const imageOnlyCount = scenes.length - videoSceneCount - refFallbackCount;
+      const refNote = refFallbackCount > 0 ? `\n  📺 레퍼런스 폴백: ${refFallbackCount}개 (영상/이미지 없는 장면에 YouTube 클립 자동 사용)` : '';
+      const msg = videoSceneCount === 0 && refFallbackCount === 0
         ? `⚠️ 현재 ${scenes.length}개 장면이 모두 이미지입니다.\n\n영상 클립이 하나도 없는 상태에서 내보내면,\n${targetLabel}에서 모든 장면이 정지 이미지로 표시됩니다.\n\n그래도 이미지로 내보내시겠어요?\n(영상이 필요하면 '취소' 후 이미지/영상 탭에서 영상을 먼저 생성해주세요)`
-        : `⚠️ 미디어 구성 안내\n\n  🎬 영상: ${videoSceneCount}개\n  🖼️ 이미지: ${imageOnlyCount}개\n  📦 전체: ${scenes.length}개 장면\n\n영상이 없는 ${imageOnlyCount}개 장면은 정지 이미지로 내보내집니다.\n\n이대로 내보내시겠어요?\n(모든 장면을 영상으로 하려면 '취소' 후 이미지/영상 탭에서 나머지 영상을 생성해주세요)`;
+        : `⚠️ 미디어 구성 안내\n\n  🎬 영상: ${videoSceneCount}개\n  🖼️ 이미지: ${imageOnlyCount > 0 ? imageOnlyCount + '개' : '없음'}${refNote}\n  📦 전체: ${scenes.length}개 장면\n\n${imageOnlyCount > 0 ? `영상이 없는 ${imageOnlyCount}개 장면은 정지 이미지로 내보내집니다.\n` : ''}\n이대로 내보내시겠어요?`;
       if (!window.confirm(msg)) {
         return;
       }
@@ -1579,6 +1586,7 @@ const StoryboardPanel: React.FC = () => {
           imageUrl: scene.imageUrl,
           videoUrl: scene.imageUpdatedAfterVideo ? undefined : scene.videoUrl,
           scriptText: scene.scriptText,
+          videoReferences: scene.videoReferences,
         })),
         narrationLines: storyboardNarrationLines,
         title: exportTitle,
@@ -1939,7 +1947,13 @@ const StoryboardPanel: React.FC = () => {
         showToast('영상 업로드 완료');
       } else {
         const sceneForUpload = useProjectStore.getState().scenes.find(s => s.id === sceneId);
-        updateScene(sceneId, { imageUrl: url, isGeneratingImage: false, generationStatus: undefined, imageUpdatedAfterVideo: !!sceneForUpload?.videoUrl });
+        updateScene(sceneId, {
+          imageUrl: url,
+          previousSceneImageUrl: getPreviousSceneImageUrlForReplace(sceneForUpload, url),
+          isGeneratingImage: false,
+          generationStatus: undefined,
+          imageUpdatedAfterVideo: !!sceneForUpload?.videoUrl,
+        });
         showToast('이미지 업로드 완료');
       }
     } catch (err: unknown) {
@@ -1998,7 +2012,13 @@ const StoryboardPanel: React.FC = () => {
             updateScene(scene.id, { videoUrl: url, isGeneratingImage: false, generationStatus: undefined });
           } else {
             const sceneNow = useProjectStore.getState().scenes.find(s => s.id === scene.id);
-            updateScene(scene.id, { imageUrl: url, isGeneratingImage: false, generationStatus: undefined, imageUpdatedAfterVideo: !!sceneNow?.videoUrl });
+            updateScene(scene.id, {
+              imageUrl: url,
+              previousSceneImageUrl: getPreviousSceneImageUrlForReplace(sceneNow, url),
+              isGeneratingImage: false,
+              generationStatus: undefined,
+              imageUpdatedAfterVideo: !!sceneNow?.videoUrl,
+            });
           }
           return true;
         } catch {
@@ -2105,7 +2125,7 @@ const StoryboardPanel: React.FC = () => {
         if (result.items.length > 0) {
           updateScene(sceneId, {
             imageUrl: result.items[0].link,
-            previousImageUrl: scene.imageUrl || undefined,
+            previousSceneImageUrl: scene.imageUrl || undefined,
             isGeneratingImage: false,
             generationStatus: isPrimaryReferenceProvider(result.provider) ? '구글 레퍼런스 적용됨' : '대체 레퍼런스 적용됨',
             imageUpdatedAfterVideo: !!latestSceneAfterSearch?.videoUrl,
@@ -2281,7 +2301,7 @@ const StoryboardPanel: React.FC = () => {
       const prevImg = sceneAfterGen?.imageUrl;
       updateScene(sceneId, {
         imageUrl,
-        previousImageUrl: prevImg || undefined,
+        previousSceneImageUrl: prevImg || undefined,
         isGeneratingImage: false,
         generationStatus: undefined,
         isPromptFiltered: result.isFiltered || false,

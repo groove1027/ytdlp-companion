@@ -19,6 +19,7 @@ import type {
   NleMotionKeyframe,
   NleMotionTrack,
   RationalFps,
+  VideoReference,
 } from '../types';
 import { secondsToFrame, frameToSeconds, isNtscFps } from './sceneDetection';
 import { buildNarrationSyncedTimeline, breakDialogueLines } from './narrationSyncService';
@@ -27,6 +28,8 @@ import { compileNleMotionTrack } from './nleMotionExport';
 import { OVERSCALE } from './webcodecs/kenBurnsEngine';
 import { evolinkChat } from './evolinkService';
 import { isCompanionDetected } from './ytdlpApiService';
+import { monitoredFetch } from './apiService';
+import { downloadAndTrimReferenceClip } from './youtubeReferenceService';
 
 const COMPANION_URL = 'http://127.0.0.1:9876';
 
@@ -43,7 +46,7 @@ export async function installNleViaCompanion(params: {
 
   // [FIX #914] ZIP 언패킹이 무거우므로 먼저 컴패니언 연결 확인 (health 캐싱으로 즉시 응답)
   try {
-    const ping = await fetch(`${COMPANION_URL}/health`, { signal: AbortSignal.timeout(3000) });
+    const ping = await monitoredFetch(`${COMPANION_URL}/health`, { signal: AbortSignal.timeout(3000) }, 3000);
     if (!ping.ok) throw new Error('not ok');
   } catch {
     throw new Error('컴패니언 앱이 실행 중이 아닙니다. 컴패니언 앱을 설치/실행한 뒤 다시 시도하세요.');
@@ -89,7 +92,7 @@ export async function installNleViaCompanion(params: {
   // 컴패니언 API 호출
   let res: Response;
   try {
-    res = await fetch(`${COMPANION_URL}/api/nle/install`, {
+    res = await monitoredFetch(`${COMPANION_URL}/api/nle/install`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -99,7 +102,7 @@ export async function installNleViaCompanion(params: {
         launchApp: true,
       }),
       signal: AbortSignal.timeout(60_000),
-    });
+    }, 60_000);
   } catch {
     // [FIX #914] connection refused = 컴패니언 미실행 — 명확한 에러 메시지
     throw new Error('컴패니언 앱이 실행 중이 아닙니다. 컴패니언 앱을 설치/실행한 뒤 다시 시도하세요.');
@@ -773,7 +776,7 @@ async function transformPremiereProjectBytes(bytes: Uint8Array, mode: 'compress'
 async function loadPremiereTemplateXml(url: string): Promise<string> {
   if (!premiereTemplateXmlPromiseByUrl.has(url)) {
     premiereTemplateXmlPromiseByUrl.set(url, (async () => {
-      const response = await fetch(url);
+      const response = await monitoredFetch(url);
       if (!response.ok) {
         throw new Error(`Premiere native template을 불러오지 못했습니다 (${response.status}).`);
       }
@@ -5638,6 +5641,7 @@ interface EditRoomScene {
   imageUrl?: string;
   videoUrl?: string;
   scriptText?: string;
+  videoReferences?: VideoReference[];
 }
 
 interface EditRoomNarrationLine {
@@ -5652,6 +5656,11 @@ interface EditRoomNarrationClip {
   fileName: string;
   startSec: number;
   durationSec: number;
+}
+
+interface EditRoomReferenceClip {
+  blob: Blob;
+  fileName: string;
 }
 
 function roundMotionValue(value: number, digits = 6): number {
@@ -6144,19 +6153,42 @@ async function fetchAssetBlob(url: string): Promise<Blob | null> {
       return new Blob([u8], { type: mime });
     } catch {
       // atob 실패 시 fetch 폴백
-      try { const r = await fetch(url); return await r.blob(); } catch { return null; }
+      try { const r = await monitoredFetch(url); return await r.blob(); } catch { return null; }
     }
   }
   // blob: URL
   if (url.startsWith('blob:')) {
-    try { const r = await fetch(url); return await r.blob(); } catch { return null; }
+    try { const r = await monitoredFetch(url); return await r.blob(); } catch { return null; }
   }
   // https / http URL
   try {
-    const res = await fetch(url);
+    const res = await monitoredFetch(url);
     if (res.ok) return await res.blob();
   } catch { /* CORS 실패 시 무시 */ }
   return null;
+}
+
+async function fetchPrimaryReferenceClip(
+  scene: EditRoomScene,
+  sceneIndex: number,
+): Promise<EditRoomReferenceClip | null> {
+  const ref = scene.videoReferences?.[0];
+  if (!ref) return null;
+
+  const downloaded = await downloadAndTrimReferenceClip(
+    ref.videoId,
+    ref.startSec,
+    ref.endSec,
+    { videoTitle: ref.videoTitle },
+  );
+  const scenePrefix = String(sceneIndex + 1).padStart(3, '0');
+  const refStem = sanitizeFileName(
+    downloaded.fileName.replace(/\.[^.]+$/, '').slice(0, 80),
+  ) || `scene_${scenePrefix}_reference`;
+  return {
+    blob: downloaded.blob,
+    fileName: `${scenePrefix}_${refStem}.mp4`,
+  };
 }
 
 function getStillImageMime(blob: Blob): 'image/png' | 'image/jpeg' {
@@ -6403,6 +6435,22 @@ export async function buildEditRoomNleZip(params: {
         mediaBlobMap.set(i, blob);
         imageCount++;
         added = true;
+      }
+    }
+
+    // 영상도 이미지도 없는 경우 → 레퍼런스 클립을 최후의 수단으로 시도
+    if (!added && scene.videoReferences && scene.videoReferences.length > 0) {
+      try {
+        const referenceClip = await fetchPrimaryReferenceClip(scene, i);
+        if (referenceClip?.blob && referenceClip.blob.size > 0) {
+          zip.file(`media/${referenceClip.fileName}`, referenceClip.blob);
+          mediaFileMap.set(i, referenceClip.fileName);
+          mediaBlobMap.set(i, referenceClip.blob);
+          videoCount++;
+          added = true;
+        }
+      } catch {
+        // 레퍼런스 클립 준비 실패 → missingSceneMedia로 처리
       }
     }
 
