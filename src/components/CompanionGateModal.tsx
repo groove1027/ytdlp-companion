@@ -388,6 +388,126 @@ function ActionButtons({
   );
 }
 
+/**
+ * [v1.3.2] outdated 모드 — OS별 4단계 회복 가이드 (사용자 보고 기반)
+ *
+ * 사용자가 "다운로드만 누르면 끝"이라고 오해하는 가장 큰 회귀 차단.
+ * macOS / Windows OS 자동 감지 + 4단계 번호 카드 + 빨강 강조.
+ */
+function OutdatedRecoveryStack({
+  currentVersion,
+  osLabel,
+}: {
+  currentVersion: string | null;
+  osLabel: string;
+}) {
+  const isWindows = osLabel === 'Windows';
+  const isMac = osLabel === 'macOS';
+
+  const step1Title = isWindows
+    ? '작업 표시줄 우측 끝(시계 옆) ^ 화살표 → 헬퍼 아이콘 우클릭 → "종료(Exit)"'
+    : isMac
+      ? '화면 상단 메뉴바 우측 → 올인원 헬퍼 아이콘 우클릭 → "종료(Quit)"'
+      : '트레이/메뉴바의 올인원 헬퍼 아이콘 우클릭 → "종료"';
+  const step1Fallback = isWindows
+    ? '🔍 트레이에 안 보이면? Ctrl + Shift + Esc → 작업 관리자 → "All In One Helper" 검색 → 우클릭 → "작업 끝내기"'
+    : isMac
+      ? '🔍 메뉴바에 안 보이면? Spotlight(⌘+Space) → "활성 상태 보기" → "all-in-one-helper" → X 버튼으로 종료'
+      : '🔍 안 보이면? 작업 관리자 / 활성 상태 보기에서 "all-in-one-helper" 검색 후 종료';
+  const step3Title = isWindows
+    ? '다운로드한 setup.exe 더블클릭 → 인스톨러 따라가기'
+    : isMac
+      ? 'DMG 마운트 → .app을 Applications 폴더로 드래그'
+      : '다운로드한 인스톨러 실행';
+  const step3Warning = isWindows
+    ? '⚠️ Windows SmartScreen이 "PC 보호함" 경고를 띄우면: "추가 정보" 클릭 → "실행"'
+    : isMac
+      ? '⚠️ DMG 안에서 직접 더블클릭 금지. 반드시 Applications 폴더로 옮긴 다음 실행.'
+      : '';
+  const step4Title = isWindows
+    ? '시작 메뉴 → "All In One Helper" 검색 → 실행 (또는 인스톨러 자동 실행)'
+    : isMac
+      ? 'Applications 폴더에서 새 헬퍼 더블클릭'
+      : '새로 설치한 헬퍼 실행';
+  const step4Warning = isMac
+    ? '⚠️ macOS Gatekeeper 차단 시 → 우측의 노란 카드 3가지 방법 중 하나로 우회'
+    : '';
+
+  const steps = [
+    { num: '1', title: '옛 헬퍼 완전 종료', body: step1Title, warn: `⚠️ 이 단계를 빼면 새 헬퍼는 시작도 안 됩니다. 옛 v${currentVersion ?? '?'}이 포트 9876을 점유 중이라 새 버전이 차단됩니다.`, hint: step1Fallback },
+    { num: '2', title: '아래 "최신 버전 다운로드" 버튼 클릭', body: '오른쪽 상단의 최신 버전 다운로드 버튼을 누르세요.', warn: '', hint: '' },
+    { num: '3', title: step3Title, body: '', warn: step3Warning, hint: '' },
+    { num: '4', title: step4Title, body: '', warn: step4Warning, hint: '' },
+  ];
+
+  return (
+    <section
+      className="rounded-2xl border-2 p-5 backdrop-blur-xl"
+      style={{
+        background: 'linear-gradient(180deg, oklch(0.22 0.075 25 / 0.88), oklch(0.18 0.05 25 / 0.92))',
+        borderColor: 'oklch(0.68 0.2 28 / 0.5)',
+        boxShadow: '0 30px 90px -50px oklch(0.7 0.2 28 / 0.45)',
+      }}
+    >
+      <div className="flex flex-wrap items-center gap-3">
+        <span
+          className="inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.22em]"
+          style={{
+            background: 'oklch(0.52 0.22 28 / 0.85)',
+            borderColor: 'oklch(0.7 0.22 28 / 0.65)',
+            color: 'oklch(0.98 0.02 20)',
+          }}
+        >
+          🛑 Required
+        </span>
+        <h3 className="text-lg font-semibold text-white sm:text-xl">다운로드만으로는 절대 갱신 안 됩니다 — 4단계 모두 필수</h3>
+      </div>
+      <p className="mt-3 text-sm leading-6 text-red-100/90">
+        창 X 버튼은 hide만 합니다. 실제 옛 헬퍼는 트레이/메뉴바에서 계속 실행 중이며 새 .app 시작을 차단합니다.
+        <br />
+        <span className="text-xs text-red-100/70">💡 v1.3.2부터는 옛 헬퍼를 자동 종료하지만, 이번 한 번은 손으로 quit해야 합니다 (옛 v{currentVersion ?? '?'}에는 자동화 코드가 없음).</span>
+      </p>
+
+      <div className="mt-5 grid gap-3">
+        {steps.map((step) => (
+          <article
+            key={step.num}
+            className="rounded-2xl border p-4"
+            style={{
+              background: 'oklch(0.18 0.04 25 / 0.7)',
+              borderColor: 'oklch(0.7 0.18 28 / 0.32)',
+            }}
+          >
+            <div className="flex items-start gap-3">
+              <span
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-base font-semibold text-white"
+                style={{ background: 'oklch(0.55 0.22 28 / 0.92)' }}
+              >
+                {step.num}
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="text-base font-semibold text-white">{step.title}</p>
+                {step.body && <p className="mt-1 text-sm leading-6 text-red-50/90">{step.body}</p>}
+                {step.warn && (
+                  <p
+                    className="mt-2 rounded-lg px-3 py-2 text-xs leading-5 text-red-100/85"
+                    style={{ background: 'oklch(0.15 0.04 25 / 0.85)' }}
+                  >
+                    {step.warn}
+                  </p>
+                )}
+                {step.hint && <p className="mt-2 text-xs leading-5 text-red-100/65">{step.hint}</p>}
+              </div>
+            </div>
+          </article>
+        ))}
+      </div>
+
+      <p className="mt-4 text-center text-xs text-red-200/70">✓ 4단계를 모두 마치면 이 화면은 자동으로 닫힙니다.</p>
+    </section>
+  );
+}
+
 function InfoStack({ mode, releasePending }: { mode: GateMode; releasePending: boolean }) {
   const items = releasePending
     ? [
@@ -398,10 +518,11 @@ function InfoStack({ mode, releasePending }: { mode: GateMode; releasePending: b
       ]
     : mode === 'outdated'
       ? [
+          // [v1.3.2] OutdatedRecoveryStack가 4단계 가이드를 본문 상단에 표시하므로,
+          // 여기서는 보조 정보만 짧게 노출. 중복 제거.
           `v${MIN_REQUIRED_COMPANION_VERSION} 이상이 아니면 모든 기능이 계속 차단됩니다.`,
-          '다운로드 후에는 기존 헬퍼를 완전히 종료하고 새 버전을 다시 실행해야 합니다.',
-          '업데이트 후에도 계속 뜨면 작업 관리자 또는 활성 상태 보기에서 helper 프로세스를 종료해 주세요.',
-          'v1.3.1 이상부터는 새 헬퍼가 시작될 때 옛 헬퍼 종료를 더 잘 처리합니다.',
+          'v1.3.2 이상부터는 새 헬퍼 시작 시 옛 헬퍼 자동 종료 (이번 한 번은 손으로).',
+          '계속 안 되면 작업 관리자 / 활성 상태 보기에서 "all-in-one-helper" 강제 종료.',
         ]
       : [
           '트레이 또는 메뉴바에 올인원 헬퍼가 떠 있는지 먼저 확인하세요.',
@@ -1001,6 +1122,22 @@ export default function CompanionGateModal() {
                         />
                       </div>
                     </motion.div>
+
+                    {/* [v1.3.2] outdated 모드에서만 4단계 회복 가이드 강조 카드 노출 */}
+                    {mode === 'outdated' && !releasePending && (
+                      <motion.div
+                        variants={
+                          shouldReduceMotion
+                            ? undefined
+                            : {
+                                hidden: { opacity: 0, y: 10 },
+                                show: { opacity: 1, y: 0, transition: { duration: 0.24, ease: MOTION_EASE } },
+                              }
+                        }
+                      >
+                        <OutdatedRecoveryStack currentVersion={currentVersion} osLabel={osLabel} />
+                      </motion.div>
+                    )}
 
                     <motion.div
                       variants={
