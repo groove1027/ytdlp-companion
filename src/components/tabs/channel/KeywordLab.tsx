@@ -93,6 +93,15 @@ const RADAR_AXES = ['검색량', '기회점수', '채널다양성', '경쟁도(�
 const RADAR_SIZE = 140;
 const RADAR_CENTER = RADAR_SIZE;
 const RADAR_COLORS = ['#3b82f6', '#a855f7', '#f59e0b', '#10b981', '#ef4444'];
+const RADAR_VIEWBOX_X = -88;
+const RADAR_VIEWBOX_Y = -32;
+const RADAR_VIEWBOX_WIDTH = RADAR_CENTER * 2 + 176;
+const RADAR_VIEWBOX_HEIGHT = RADAR_CENTER * 2 + 96;
+const RADAR_LABEL_DISTANCE = 115;
+const RADAR_LEGEND_Y = RADAR_CENTER * 2 + 24;
+const RADAR_LEGEND_GAP = 120;
+
+type RadarLabelAnchor = 'start' | 'middle' | 'end';
 
 function radarPoint(axisIdx: number, value: number, total: number): [number, number] {
   const angle = (Math.PI * 2 * axisIdx) / total - Math.PI / 2;
@@ -104,12 +113,28 @@ function radarPolygonPoints(values: number[]): string {
   return values.map((v, i) => radarPoint(i, v, values.length).join(',')).join(' ');
 }
 
+function getRadarLabelAnchor(x: number): RadarLabelAnchor {
+  if (x < RADAR_CENTER - 12) return 'end';
+  if (x > RADAR_CENTER + 12) return 'start';
+  return 'middle';
+}
+
+function getRadarLabelOffset(anchor: RadarLabelAnchor): number {
+  if (anchor === 'start') return 6;
+  if (anchor === 'end') return -6;
+  return 0;
+}
+
 const RadarChart: React.FC<{ items: { keyword: string; values: number[] }[] }> = ({ items }) => {
   const total = RADAR_AXES.length;
   const gridLevels = [20, 40, 60, 80, 100];
+  const legendStartX = RADAR_CENTER - ((items.length - 1) * RADAR_LEGEND_GAP) / 2;
 
   return (
-    <svg viewBox={`0 0 ${RADAR_CENTER * 2} ${RADAR_CENTER * 2 + 30}`} className="w-full max-w-[340px] mx-auto">
+    <svg
+      viewBox={`${RADAR_VIEWBOX_X} ${RADAR_VIEWBOX_Y} ${RADAR_VIEWBOX_WIDTH} ${RADAR_VIEWBOX_HEIGHT}`}
+      className="w-full max-w-[460px] mx-auto"
+    >
       {/* 그리드 */}
       {gridLevels.map(lv => (
         <polygon key={lv}
@@ -136,12 +161,24 @@ const RadarChart: React.FC<{ items: { keyword: string; values: number[] }[] }> =
       )}
       {/* 축 라벨 */}
       {RADAR_AXES.map((label, i) => {
-        const [x, y] = radarPoint(i, 115, total);
-        return <text key={i} x={x} y={y} textAnchor="middle" dominantBaseline="middle" className="fill-gray-400 text-[10px]">{label}</text>;
+        const [x, y] = radarPoint(i, RADAR_LABEL_DISTANCE, total);
+        const anchor = getRadarLabelAnchor(x);
+        return (
+          <text
+            key={i}
+            x={x + getRadarLabelOffset(anchor)}
+            y={y}
+            textAnchor={anchor}
+            dominantBaseline="middle"
+            className="fill-gray-400 text-[10px]"
+          >
+            {label}
+          </text>
+        );
       })}
       {/* 범례 */}
       {items.map((item, idx) => (
-        <g key={idx} transform={`translate(${10 + idx * 100}, ${RADAR_CENTER * 2 + 12})`}>
+        <g key={idx} transform={`translate(${legendStartX + idx * RADAR_LEGEND_GAP}, ${RADAR_LEGEND_Y})`}>
           <rect width="10" height="10" rx="2" fill={RADAR_COLORS[idx % RADAR_COLORS.length]} />
           <text x="14" y="9" className="fill-gray-300 text-[10px]">{item.keyword}</text>
         </g>

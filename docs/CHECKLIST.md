@@ -8,6 +8,15 @@
 
 ## 🟢 완료된 작업
 
+### [2026-04-06] #1021 키워드 레이더 차트 글자 잘림 수정
+- [x] 근본 원인: SVG viewBox `"0 0 280 310"`이 너무 좁아 축 라벨(검색량, 기회점수, 트렌드 등)이 viewBox 밖으로 클리핑됨
+- [x] `src/components/tabs/channel/KeywordLab.tsx` — viewBox에 좌우 88px, 상단 32px 패딩 추가 (`"-88 -32 456 376"`)
+- [x] `getRadarLabelAnchor()` / `getRadarLabelOffset()` 함수 추가 — 좌측 라벨=end, 우측=start, 중앙=middle 동적 textAnchor 설정
+- [x] 범례(legend) 위치를 새 viewBox에 맞게 조정
+- [x] Codex review 통과 (KeywordLab 관련 이슈 0건)
+- [x] 검증 루프 10/10 완료 (tsc + vite build)
+- [x] Playwright E2E 스크린샷 6장 저장 (test-e2e/1021-*.png)
+
 ### [2026-04-06] 10회차 최종 검증 — 4건 수정 회귀 보강
 - [x] 근본 원인: `previousSceneImageUrl` 타입/주요 생성 경로 분리는 맞았지만, `src/App.tsx`, `src/components/tabs/imagevideo/GoogleReferencePanel.tsx`, `src/services/googleReferenceSearchService.ts`, 편집실 교체/밈 적용 경로 등 일부 실제 장면 이미지 교체 흐름이 백업 필드를 채우지 않아 업로드/웹 레퍼런스/밈 적용 후에는 되돌리기가 끊길 수 있었음
 - [x] `src/utils/sceneImageHistory.ts` — 장면 이미지 교체 시 직전 이미지를 `previousSceneImageUrl`로 보존하는 공통 helper 추가
