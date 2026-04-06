@@ -13,6 +13,7 @@ import SafeZoneOverlay from '../editroom/SafeZoneOverlay';
 import SafeZonePanel from '../editroom/SafeZonePanel';
 import { showToast } from '../../../stores/uiStore';
 import { evolinkChat } from '../../../services/evolinkService';
+import { getSceneNarrationText } from '../../../utils/sceneText';
 
 const TEMPLATES = SUBTITLE_TEMPLATES;
 
@@ -586,7 +587,8 @@ const SubtitleStyleEditor: React.FC = () => {
     if (scene) {
       const sub = sceneSubtitlesMap[scene.id];
       if (sub?.text) return sub.text;
-      if (scene.scriptText) return scene.scriptText;
+      const narrationText = getSceneNarrationText(scene);
+      if (narrationText) return narrationText;
     }
     if (subtitles[subIdx]?.text) return subtitles[subIdx].text;
     return '자막 미리보기 텍스트입니다';

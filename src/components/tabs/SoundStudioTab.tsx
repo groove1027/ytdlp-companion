@@ -4,6 +4,7 @@ import { stopAllAudio } from '../../stores/soundStudioStore';
 import { useProjectStore } from '../../stores/projectStore';
 import { logger } from '../../services/LoggerService';
 import { lazyRetry } from '../../utils/retryImport';
+import { getSceneNarrationText } from '../../utils/sceneText';
 
 const VoiceStudio = lazyRetry(() => import('./sound/VoiceStudio'));
 const MusicStudio = lazyRetry(() => import('./sound/MusicStudio'));
@@ -58,7 +59,7 @@ const SoundStudioTab: React.FC = () => {
     // 씬이나 라인이 없으면 동기화 불필요
     if (scenes.length === 0 || currentLines.length === 0) return;
 
-    const scenesWithText = scenes.filter(s => s.scriptText);
+    const scenesWithText = scenes.filter((scene) => getSceneNarrationText(scene));
     if (scenesWithText.length === 0) return;
 
     // sceneId 기반 매핑으로 변경사항 감지
@@ -76,7 +77,8 @@ const SoundStudioTab: React.FC = () => {
     // 1. 텍스트 변경 감지
     for (const scene of scenesWithText) {
       const existingLine = lineBySceneId.get(scene.id);
-      if (existingLine && (scene.scriptText || '') !== existingLine.text) {
+      const sceneText = getSceneNarrationText(scene);
+      if (existingLine && sceneText !== existingLine.text) {
         needsSync = true;
         break;
       }
@@ -112,7 +114,7 @@ const SoundStudioTab: React.FC = () => {
 
     const syncedLines = scenesWithText.map((scene, i) => {
       const existingLine = lineBySceneId.get(scene.id);
-      const sceneText = scene.scriptText || '';
+      const sceneText = getSceneNarrationText(scene);
 
       if (existingLine && existingLine.text === sceneText) {
         // 텍스트 동일 → 오디오 데이터 + 모든 메타데이터 보존
@@ -150,7 +152,8 @@ const SoundStudioTab: React.FC = () => {
     const projectStoreActions = useProjectStore.getState();
     for (const scene of scenesWithText) {
       const existingLine = lineBySceneId.get(scene.id);
-      if (existingLine && (scene.scriptText || '') !== existingLine.text && scene.audioUrl) {
+      const sceneText = getSceneNarrationText(scene);
+      if (existingLine && sceneText !== existingLine.text && scene.audioUrl) {
         projectStoreActions.updateScene(scene.id, {
           audioUrl: undefined,
           audioDuration: undefined,

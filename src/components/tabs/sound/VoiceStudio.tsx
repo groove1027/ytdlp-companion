@@ -35,6 +35,7 @@ import { transferSoundToImageVideo } from '../../../utils/soundToImageBridge';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
 import { runKieBatch } from '../../../utils/kieBatchRunner';
+import { getSceneNarrationText } from '../../../utils/sceneText';
 
 const SPEAKER_COLORS = ['#6366f1', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316'];
 
@@ -440,7 +441,7 @@ const VoiceStudio: React.FC = () => {
     // 1순위: scenes에서 파생 (단, 현재 대본과 일치하는 경우에만)
     const scenes = useProjectStore.getState().scenes;
     // [FIX #558] scenes의 텍스트가 현재 대본과 불일치하면 스킵 → storeScript 기반 분할 사용
-    const scenesText = scenes.map(s => s.scriptText || '').join('');
+    const scenesText = scenes.map((scene) => getSceneNarrationText(scene)).join('');
     const scriptTextClean = storeScript.replace(/\s+/g, '');
     const scenesTextClean = scenesText.replace(/\s+/g, '');
     const scenesMatchScript = scenesTextClean.length > 0 && (
@@ -461,7 +462,7 @@ const VoiceStudio: React.FC = () => {
       setLines(scenes.map((scene, i) => ({
         id: `line-${Date.now()}-${i}`,
         speakerId: defaultSpeakerId,
-        text: scene.scriptText || '',
+        text: getSceneNarrationText(scene),
         index: i,
         sceneId: scene.id,
         audioUrl: scene.audioUrl,

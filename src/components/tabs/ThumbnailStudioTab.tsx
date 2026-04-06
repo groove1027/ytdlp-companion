@@ -12,6 +12,7 @@ import { compressImageUnderSize } from '../../utils/fileHelpers';
 import SetupPanel, { SetupState } from './thumbnail/SetupPanel';
 import { logger } from '../../services/LoggerService';
 import { lazyRetry } from '../../utils/retryImport';
+import { getSceneNarrationText } from '../../utils/sceneText';
 
 const ThumbnailGenerator = lazyRetry(() => import('../ThumbnailGenerator'));
 
@@ -72,7 +73,7 @@ const ThumbnailStudioTab: React.FC = () => {
 
     const scriptText = autoFinalScript?.trim()
       ? autoFinalScript
-      : autoScenes.map((s) => s.scriptText || '').filter(Boolean).join('\n');
+      : autoScenes.map((scene) => getSceneNarrationText(scene)).filter(Boolean).join('\n');
 
     if (scriptText.trim()) {
       setSetup((prev) => ({ ...prev, script: scriptText }));

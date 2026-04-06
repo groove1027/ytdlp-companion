@@ -20,9 +20,10 @@ import { logger } from '../../../services/LoggerService';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
 import { areUploadedTranscriptScenesSynced, buildUploadedTranscriptScenes } from '../../../utils/uploadedTranscriptScenes';
+import { getSceneNarrationText } from '../../../utils/sceneText';
 import GoogleReferencePanel from './GoogleReferencePanel';
 import VideoReferencePanel from './VideoReferencePanel';
-import { autoApplyGoogleReferences } from '../../../services/googleReferenceSearchService';
+import { autoApplyGoogleReferences, hasGoogleReferenceSceneContent } from '../../../services/googleReferenceSearchService';
 
 let _sceneIdCounter = 0;
 
@@ -538,7 +539,7 @@ const SetupPanel: React.FC = () => {
     if (!useImageVideoStore.getState().enableGoogleReference) return;
 
     const hasSearchableEmptyScene = targetScenes.some((scene) =>
-      !scene.imageUrl?.trim() && (!!scene.scriptText || !!scene.visualPrompt),
+      !scene.imageUrl?.trim() && hasGoogleReferenceSceneContent(scene),
     );
     if (!hasSearchableEmptyScene) return;
 
@@ -580,7 +581,7 @@ const SetupPanel: React.FC = () => {
     if (scenes.length === 0) return;
 
     const hasSearchableEmptyScene = scenes.some((scene) =>
-      !scene.imageUrl?.trim() && (!!scene.scriptText || !!scene.visualPrompt),
+      !scene.imageUrl?.trim() && hasGoogleReferenceSceneContent(scene),
     );
     if (!hasSearchableEmptyScene) return;
 
@@ -605,7 +606,11 @@ const SetupPanel: React.FC = () => {
     const usesUploadedTranscriptTiming = !!uploadedBaseScenes;
     // [FIX #83] 대본이 변경된 경우 enrichMode 비활성화 — 기존 장면 교체
     // 기존 장면의 나레이션 텍스트와 현재 대본을 비교하여 대본 불일치 시 전면 교체
-    const existingScriptText = existingScenes.map(s => (s.scriptText || '').trim()).join(' ').trim();
+    const existingScriptText = existingScenes
+      .map((scene) => getSceneNarrationText(scene))
+      .filter(Boolean)
+      .join(' ')
+      .trim();
     const currentScript = (config.script || '').replace(/\s+/g, ' ').trim();
     const isScriptChanged = existingScenes.length > 0 && existingScriptText.length > 0 &&
       !currentScript.includes(existingScriptText.slice(0, Math.min(100, existingScriptText.length))) &&
@@ -621,13 +626,13 @@ const SetupPanel: React.FC = () => {
       ? (enrichMode ? existingScenes : uploadedBaseScenes)
       : null;
     const analysisScript = sceneDrafts
-      ? sceneDrafts.map((scene) => (scene.scriptText || scene.audioScript || '').trim()).filter(Boolean).join('\n')
+      ? sceneDrafts.map((scene) => getSceneNarrationText(scene)).filter(Boolean).join('\n')
       : config.script;
     try {
       // [#602] 구글 레퍼런스 모드 — AI 프롬프트 생성 스킵, 단순 분할 → 즉시 구글 이미지 배치
       if (useImageVideoStore.getState().enableGoogleReference && !enrichMode) {
         const sceneTexts = sceneDrafts
-          ? sceneDrafts.map(s => (s.scriptText || s.audioScript || '').trim())
+          ? sceneDrafts.map((scene) => getSceneNarrationText(scene))
           : splitScenesLocally(config.script, vf, ss, vf === VideoFormat.LONG ? lfs : undefined);
         const localScenes: Scene[] = sceneTexts.map((text, i) => ({
           id: `scene-${Date.now()}-${++_sceneIdCounter}-${i}`,
@@ -727,7 +732,11 @@ const SetupPanel: React.FC = () => {
     const existingScenes = useProjectStore.getState().scenes;
     if (existingScenes.length > 0) {
       // [FIX #83] 대본이 변경되었으면 기존 장면을 무시하고 새로 분석
-      const existingScriptText = existingScenes.map(s => (s.scriptText || '').trim()).join(' ').trim();
+      const existingScriptText = existingScenes
+        .map((scene) => getSceneNarrationText(scene))
+        .filter(Boolean)
+        .join(' ')
+        .trim();
       const currentScript = (config?.script || '').replace(/\s+/g, ' ').trim();
       const isScriptChanged = existingScriptText.length > 0 &&
         !currentScript.includes(existingScriptText.slice(0, Math.min(100, existingScriptText.length))) &&

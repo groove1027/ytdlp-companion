@@ -7,6 +7,7 @@ import { logger } from '../LoggerService';
 import { showToast } from '../../stores/uiStore';
 import { useAuthStore } from '../../stores/authStore';
 import { getGoogleGeminiKey } from '../apiService';
+import { getSceneNarrationText } from '../../utils/sceneText';
 
 // [NEW] Shot size auto-rotation — prevents monotonous compositions when AI doesn't specify shot size
 const SHOT_ROTATION: string[] = ['medium shot', 'close-up', 'wide shot', 'medium close-up', 'establishing shot', 'over-the-shoulder'];
@@ -245,6 +246,8 @@ export const generateSceneImage = async (
     preserveCharacterStyle?: boolean, // [NEW] 캐릭터 예술 스타일 보존 모드 (사용자가 비주얼 미선택 + 캐릭터 분석 스타일 사용 시)
     styleReferenceImages?: string[],
 ) => {
+    const sceneNarrationText = getSceneNarrationText(scene);
+
     // ── Trial 사용자: Google Gemini 이미지 생성 (gemini-2.5-flash-image) ──
     const _trialUser = useAuthStore.getState().authUser;
     if (_trialUser?.tier === 'trial') {
@@ -256,7 +259,7 @@ export const generateSceneImage = async (
             throw new Error('Google Gemini API 키가 설정되지 않았습니다. 체험판 가이드에서 등록해주세요.');
         }
 
-        const prompt = (feedback?.trim() || scene.visualPrompt?.trim() || scene.scriptText || 'beautiful scene')
+        const prompt = (feedback?.trim() || scene.visualPrompt?.trim() || sceneNarrationText || 'beautiful scene')
             + `, ${style || 'high quality'} style, ${ratio} aspect ratio`;
 
         updateStatus?.('Google Gemini 이미지 생성 중...');
@@ -306,7 +309,7 @@ export const generateSceneImage = async (
         ? feedback
         : (scene.visualPrompt && scene.visualPrompt.trim())
             ? scene.visualPrompt
-            : (scene.scriptText || '');
+            : sceneNarrationText;
 
     // [FIX] Detect user-edited prompt: either explicit flag or feedback parameter provided
     const isUserEdited = scene.isUserEditedPrompt || (feedback && feedback.trim() !== "");
@@ -447,7 +450,7 @@ export const generateSceneImage = async (
         subjectPrompt += `\n[IMPORTANT: CHARACTER IDENTITY — MUST MATCH EXACTLY]\n`;
         subjectPrompt += `${characterAnalysisResult}\n`;
         // [FIX #319] 장면 대본에 등장하는 캐릭터 이름을 명시하여 올바른 캐릭터 레퍼런스 매칭
-        const scriptText = scene.scriptText || '';
+        const scriptText = sceneNarrationText;
         const charNameMatches = characterAnalysisResult.match(/\[Character \d+: "([^"]+)"\]/g);
         if (charNameMatches && scriptText) {
             const mentionedNames = charNameMatches
@@ -717,7 +720,7 @@ export const generateSceneImage = async (
 
         ${(() => {
             if (!suppressText && textForceLock) {
-                const textHints = extractSceneTextHints(scene.scriptText, effectiveVisualPrompt);
+                const textHints = extractSceneTextHints(sceneNarrationText, effectiveVisualPrompt);
                 if (textHints.length > 0) {
                     return `[TEXT RENDERING GUIDE: When text naturally appears in this scene (on screens, signs, documents, UI elements), use these EXACT ${langName} strings: ${textHints.map(t => `"${t}"`).join(', ')}. Render these texts accurately — do NOT invent or approximate characters. If text is not contextually needed in the scene, omit it entirely.]`;
                 }
@@ -799,7 +802,7 @@ export const generateSceneImage = async (
         ${(() => {
             // [FIX] textForceLock 시 대본에서 핵심 텍스트를 추출하여 정확한 렌더링 유도
             if (!suppressText && textForceLock) {
-                const textHints = extractSceneTextHints(scene.scriptText, effectiveVisualPrompt);
+                const textHints = extractSceneTextHints(sceneNarrationText, effectiveVisualPrompt);
                 if (textHints.length > 0) {
                     return `[TEXT RENDERING GUIDE: When text naturally appears in this scene (on screens, signs, documents, UI elements), use these EXACT ${langName} strings: ${textHints.map(t => `"${t}"`).join(', ')}. Render these texts accurately — do NOT invent or approximate characters. If text is not contextually needed in the scene, omit it entirely.]`;
                 }

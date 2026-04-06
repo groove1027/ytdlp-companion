@@ -34,6 +34,7 @@ import {
 import type { EditRoomNleTarget } from '../../../services/nleExportService';
 import { logger } from '../../../services/LoggerService';
 import { getPreviousSceneImageUrlForReplace } from '../../../utils/sceneImageHistory';
+import { getSceneNarrationText } from '../../../utils/sceneText';
 
 // --- 배치 진행 중 로테이팅 팁 ---
 const BATCH_TIPS: string[] = [
@@ -162,20 +163,6 @@ const fmtTime = (sec: number): string => {
 const getSceneStatusTone = (status?: string): string =>
   /실패|차단|없음/i.test(status || '') ? 'text-amber-300' : 'text-cyan-300';
 
-type SceneTextFallback = {
-  narration?: string;
-  script?: string;
-};
-
-const getSceneNarrationText = (scene: Scene): string => {
-  const fallback = scene as SceneTextFallback;
-  const candidates = [scene.scriptText, scene.audioScript, fallback.narration, fallback.script];
-  const text = candidates
-    .map((value) => (typeof value === 'string' ? value.trim() : ''))
-    .find((value) => value.length > 0);
-  return text || '';
-};
-
 type LongFormExportBannerVariant = 'advisory' | 'required';
 
 const LONG_FORM_EXPORT_COPY: Record<LongFormExportBannerVariant, {
@@ -289,6 +276,7 @@ const SceneCard: React.FC<SceneCardProps> = ({ scene, index, onUpdatePrompt, onD
   const enableGoogleReference = useImageVideoStore((s) => s.enableGoogleReference);
   const refInputRef = useRef<HTMLInputElement>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
+  const narrationText = getSceneNarrationText(scene);
   return (
   <div className={`bg-gray-800 border rounded-xl p-4 hover:border-gray-600 transition-colors ${isSelected ? 'border-orange-500/60 ring-1 ring-orange-500/30' : 'border-gray-700'}`}>
     <div className="flex gap-4">
@@ -344,7 +332,7 @@ const SceneCard: React.FC<SceneCardProps> = ({ scene, index, onUpdatePrompt, onD
         <div>
           <div className="flex items-center justify-between">
             <span className="text-sm font-semibold text-gray-500 uppercase tracking-wider">나레이션</span>
-            {scene.scriptText && onCopyScript && (
+            {narrationText && onCopyScript && (
               <button type="button" onClick={() => onCopyScript(scene.id)}
                 className="text-[10px] text-gray-400 hover:text-cyan-400 border border-gray-700 hover:border-cyan-500/30 px-1.5 py-0.5 rounded transition-colors flex items-center gap-1"
                 title="대본 복사">
@@ -353,7 +341,7 @@ const SceneCard: React.FC<SceneCardProps> = ({ scene, index, onUpdatePrompt, onD
               </button>
             )}
           </div>
-          <p className="text-sm text-gray-300 mt-0.5 max-h-24 overflow-y-auto">{scene.scriptText || '(나레이션 없음)'}</p>
+          <p className="text-sm text-gray-300 mt-0.5 max-h-24 overflow-y-auto">{narrationText || '(나레이션 없음)'}</p>
         </div>
 
         {/* 대사 미리보기 (v4.7) */}
@@ -370,7 +358,7 @@ const SceneCard: React.FC<SceneCardProps> = ({ scene, index, onUpdatePrompt, onD
         )}
 
         {/* Audio strip — always visible when scene has audio or script */}
-        {(scene.audioUrl || scene.scriptText) && onPlaySceneAudio && (
+        {(scene.audioUrl || narrationText) && onPlaySceneAudio && (
           <div className="flex items-center gap-2 bg-gray-900/40 rounded-lg px-2.5 py-1.5 border border-gray-700/50">
             <button type="button" onClick={(e) => { e.stopPropagation(); onPlaySceneAudio(scene.id); }}
               className={`w-6 h-6 rounded-full flex items-center justify-center text-white flex-shrink-0 transition-colors ${
@@ -622,6 +610,7 @@ const GridSceneCard: React.FC<GridSceneCardProps> = ({ scene, index, onRegenerat
   const gridUploadRef = useRef<HTMLInputElement>(null);
   const arClass = aspectRatioClass(useProjectStore((s) => s.config?.aspectRatio));
   const [isDragOver, setIsDragOver] = useState(false);
+  const narrationText = getSceneNarrationText(scene);
 
   return (
     <div className={`bg-gray-800 border rounded-xl overflow-hidden hover:border-gray-500 transition-colors ${isSelected ? 'border-orange-500/60 ring-1 ring-orange-500/30' : 'border-gray-700'}`}>
@@ -716,7 +705,7 @@ const GridSceneCard: React.FC<GridSceneCardProps> = ({ scene, index, onRegenerat
           </div>
         )}
         {/* Audio play/pause overlay button — always visible when scene has audio or script */}
-        {(scene.audioUrl || scene.scriptText) && onPlaySceneAudio && (
+        {(scene.audioUrl || narrationText) && onPlaySceneAudio && (
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); onPlaySceneAudio(scene.id); }}
@@ -743,7 +732,7 @@ const GridSceneCard: React.FC<GridSceneCardProps> = ({ scene, index, onRegenerat
         )}
       </div>
       {/* Audio progress bar (항상 표시) */}
-      {(scene.audioUrl || scene.scriptText) && (
+      {(scene.audioUrl || narrationText) && (
         <div className="h-1 bg-gray-700/60">
           <div
             className={`h-full rounded-r ${isThisPlaying ? 'bg-cyan-400' : 'bg-gray-600'}`}
@@ -804,9 +793,9 @@ const GridSceneCard: React.FC<GridSceneCardProps> = ({ scene, index, onRegenerat
         </div>
         {/* Narration text + copy + add scene */}
         <div className="flex items-start justify-between">
-          <p className="text-[11px] text-gray-400 leading-snug flex-1 max-h-24 overflow-y-auto">{scene.scriptText || '(나레이션 없음)'}</p>
+          <p className="text-[11px] text-gray-400 leading-snug flex-1 max-h-24 overflow-y-auto">{narrationText || '(나레이션 없음)'}</p>
           <div className="flex items-center gap-1 flex-shrink-0 ml-2">
-            {scene.scriptText && onCopyScript && (
+            {narrationText && onCopyScript && (
               <button type="button" onClick={(e) => { e.stopPropagation(); onCopyScript(scene.id); }}
                 className="w-5 h-5 rounded flex items-center justify-center text-gray-500 hover:text-cyan-400 transition-colors" title="대본 복사">
                 <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
@@ -883,6 +872,7 @@ const SceneDetailModal: React.FC<SceneDetailModalProps> = ({
   const seedanceDuration = (scene.seedanceDuration || '8') as SeedanceDuration;
   const refInputRef = useRef<HTMLInputElement>(null);
   const modalUploadRef = useRef<HTMLInputElement>(null);
+  const narrationText = getSceneNarrationText(scene);
 
   // 경과 시간 타이머
   const isPrompting = !!scene.generationStatus && !scene.isGeneratingImage && !scene.isGeneratingVideo;
@@ -976,7 +966,7 @@ const SceneDetailModal: React.FC<SceneDetailModalProps> = ({
           {/* Narration */}
           <div>
             <p className="text-xs font-semibold text-gray-500 uppercase mb-1.5">나레이션</p>
-            <p className="text-sm text-gray-300 bg-gray-800/60 border border-gray-700 rounded-lg px-3 py-2">{scene.scriptText || '(나레이션 없음)'}</p>
+            <p className="text-sm text-gray-300 bg-gray-800/60 border border-gray-700 rounded-lg px-3 py-2">{narrationText || '(나레이션 없음)'}</p>
           </div>
 
           {/* Image Prompt */}
@@ -1585,7 +1575,8 @@ const StoryboardPanel: React.FC = () => {
           id: scene.id,
           imageUrl: scene.imageUrl,
           videoUrl: scene.imageUpdatedAfterVideo ? undefined : scene.videoUrl,
-          scriptText: scene.scriptText,
+          scriptText: getSceneNarrationText(scene),
+          audioScript: scene.audioScript,
           videoReferences: scene.videoReferences,
         })),
         narrationLines: storyboardNarrationLines,
@@ -1788,9 +1779,11 @@ const StoryboardPanel: React.FC = () => {
       };
       audio.onended = () => { setPlayingSceneId(null); setSceneProgress(0); cancelAnimationFrame(sceneAnimRef.current); };
       audio.play().then(() => { sceneAnimRef.current = requestAnimationFrame(tick); }).catch(() => setPlayingSceneId(null));
-    } else if (scene.scriptText) {
+    } else {
+      const narrationText = getSceneNarrationText(scene);
+      if (!narrationText) return;
       // audioUrl 없으면 브라우저 TTS 폴백
-      const utterance = new SpeechSynthesisUtterance(scene.scriptText);
+      const utterance = new SpeechSynthesisUtterance(narrationText);
       utterance.lang = 'ko-KR';
       speechRef.current = utterance;
       setPlayingSceneId(sceneId);
@@ -1858,7 +1851,8 @@ const StoryboardPanel: React.FC = () => {
   // --- 장면 나누기 / 합치기 ---
   const handleSplitScene = useCallback((index: number) => {
     const scene = useProjectStore.getState().scenes[index];
-    if (!scene?.scriptText || scene.scriptText.trim().length < 2) {
+    const narrationText = getSceneNarrationText(scene);
+    if (narrationText.length < 2) {
       showToast('나눌 텍스트가 부족합니다');
       return;
     }
@@ -1878,7 +1872,8 @@ const StoryboardPanel: React.FC = () => {
     logger.trackAction('프롬프트 자동 생성', sceneId);
     if (!requireAuth('AI 프롬프트 생성')) return;
     const scene = useProjectStore.getState().scenes.find(s => s.id === sceneId);
-    if (!scene?.scriptText) { showToast('나레이션 텍스트가 없습니다'); return; }
+    const narrationText = getSceneNarrationText(scene);
+    if (!narrationText) { showToast('나레이션 텍스트가 없습니다'); return; }
     const currentConfig = useProjectStore.getState().config;
     // [CRITICAL FIX] 스타일 결정 — handleGenerateImage와 동일한 폴백 체인
     const rawStyle = useImageVideoStore.getState().style;
@@ -1902,9 +1897,9 @@ const StoryboardPanel: React.FC = () => {
       const nextScene = idx < allScenes.length - 1 ? allScenes[idx + 1] : undefined;
       const chars = useImageVideoStore.getState().characters;
       const charDesc = chars.filter(c => c.analysisResult).map((c, i) => `[Character ${i + 1}: "${c.label}"]\n${c.analysisResult}`).join('\n\n') || undefined;
-      const prompt = await generatePromptFromScript(scene.scriptText, currentStyle, currentConfig?.textForceLock, {
-        prevSceneText: prevScene?.scriptText,
-        nextSceneText: nextScene?.scriptText,
+      const prompt = await generatePromptFromScript(narrationText, currentStyle, currentConfig?.textForceLock, {
+        prevSceneText: getSceneNarrationText(prevScene) || undefined,
+        nextSceneText: getSceneNarrationText(nextScene) || undefined,
         prevScenePrompt: prevScene?.visualPrompt,
         nextScenePrompt: nextScene?.visualPrompt,
         globalContext: currentConfig?.globalContext,
@@ -2125,7 +2120,7 @@ const StoryboardPanel: React.FC = () => {
         if (result.items.length > 0) {
           updateScene(sceneId, {
             imageUrl: result.items[0].link,
-            previousSceneImageUrl: scene.imageUrl || undefined,
+            previousSceneImageUrl: getPreviousSceneImageUrlForReplace(latestSceneAfterSearch, result.items[0].link),
             isGeneratingImage: false,
             generationStatus: isPrimaryReferenceProvider(result.provider) ? '구글 레퍼런스 적용됨' : '대체 레퍼런스 적용됨',
             imageUpdatedAfterVideo: !!latestSceneAfterSearch?.videoUrl,
@@ -2158,7 +2153,8 @@ const StoryboardPanel: React.FC = () => {
     }
 
     // [FIX] visualPrompt가 비어있으면 자동 생성 (대본 내용 기반)
-    if (!feedback && (!scene.visualPrompt || !scene.visualPrompt.trim()) && scene.scriptText) {
+    const sceneNarrationText = getSceneNarrationText(scene);
+    if (!feedback && (!scene.visualPrompt || !scene.visualPrompt.trim()) && sceneNarrationText) {
       updateScene(sceneId, { generationStatus: '비주얼 프롬프트 자동 생성 중...' });
       try {
         const rawAutoStyle = useImageVideoStore.getState().style;
@@ -2181,9 +2177,9 @@ const StoryboardPanel: React.FC = () => {
         const nextScene = sceneIdx < freshScenes.length - 1 ? freshScenes[sceneIdx + 1] : undefined;
         const currentCharactersForCtx = useImageVideoStore.getState().characters;
         const charDesc = currentCharactersForCtx.filter(c => c.analysisResult).map((c, i) => `[Character ${i + 1}: "${c.label}"]\n${c.analysisResult}`).join('\n\n') || undefined;
-        const autoPrompt = await generatePromptFromScript(scene.scriptText, autoStyle, currentConfig.textForceLock, {
-          prevSceneText: prevScene?.scriptText,
-          nextSceneText: nextScene?.scriptText,
+        const autoPrompt = await generatePromptFromScript(sceneNarrationText, autoStyle, currentConfig.textForceLock, {
+          prevSceneText: getSceneNarrationText(prevScene) || undefined,
+          nextSceneText: getSceneNarrationText(nextScene) || undefined,
           prevScenePrompt: prevScene?.visualPrompt,
           nextScenePrompt: nextScene?.visualPrompt,
           globalContext: currentConfig.globalContext,
@@ -2195,7 +2191,7 @@ const StoryboardPanel: React.FC = () => {
       } catch (e) {
         logger.trackSwallowedError('StoryboardPanel:generateAutoPrompt', e);
         // 폴백: scriptText 자체를 visualPrompt로 사용
-        updateScene(sceneId, { visualPrompt: scene.scriptText });
+        updateScene(sceneId, { visualPrompt: sceneNarrationText });
         scene = useProjectStore.getState().scenes.find(s => s.id === sceneId)!;
       }
     }
@@ -3253,9 +3249,9 @@ const StoryboardPanel: React.FC = () => {
                 <div className="w-full h-80 flex items-center justify-center text-gray-500 text-lg">이미지 없음</div>
               )}
               {/* 하단 자막 오버레이 */}
-              {scenes[previewIndex].scriptText && (
+              {getSceneNarrationText(scenes[previewIndex]) && (
                 <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent px-6 py-4">
-                  <p className="text-white text-base leading-relaxed text-center drop-shadow-lg">{scenes[previewIndex].scriptText}</p>
+                  <p className="text-white text-base leading-relaxed text-center drop-shadow-lg">{getSceneNarrationText(scenes[previewIndex])}</p>
                 </div>
               )}
             </div>

@@ -1,9 +1,10 @@
 /**
  * 무료 영상 클립 레퍼런스 패널 v3 — 맥락 분석 + 쇼츠 모드 + 구간 조정 + 편집 가이드
  */
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { useImageVideoStore } from '../../../stores/imageVideoStore';
 import { useProjectStore } from '../../../stores/projectStore';
+import { getCompanionDownloadUrl } from '../../../constants';
 import {
   searchAllScenesReferenceVideos,
   cancelVideoReferenceSearch,
@@ -11,6 +12,11 @@ import {
   SHORTS_CUT_RULES,
   downloadAndTrimReferenceClip,
   downloadAllReferenceClips,
+  getVideoReferenceScenePrimaryText,
+  getVideoReferenceCompanionStatus,
+  hasVideoReferenceSceneContent,
+  isReferenceClipCompatibilityErrorMessage,
+  type VideoReferenceCompanionStatus,
 } from '../../../services/youtubeReferenceService';
 import { logger } from '../../../services/LoggerService';
 import { showToast } from '../../../stores/uiStore';
@@ -74,6 +80,10 @@ function getShortsClipDuration(sceneIndex: number, totalScenes: number, audioDur
   return SHORTS_CUT_RULES.defaultClipSec;
 }
 
+function upsertSceneVideoReferences(existing: VideoReference[] | undefined, ref: VideoReference): VideoReference[] {
+  return [ref, ...(existing || []).filter((item) => item.videoId !== ref.videoId)].slice(0, 5);
+}
+
 const VideoReferencePanel: React.FC = () => {
   const { enableVideoReference, setEnableVideoReference, videoRefShortsMode, setVideoRefShortsMode } = useImageVideoStore();
   const scenes = useProjectStore(s => s.scenes);
@@ -83,19 +93,20 @@ const VideoReferencePanel: React.FC = () => {
   const [isSearching, setIsSearching] = useState(false);
   const [sceneResults, setSceneResults] = useState<Map<string, VideoReference[]>>(new Map());
   const [expandedScene, setExpandedScene] = useState<string | null>(null);
-  const [adjustingRef, setAdjustingRef] = useState<{ sceneId: string; refIdx: number } | null>(null);
+  const [adjustingRef, setAdjustingRef] = useState<{ sceneId: string; refIdx: number; videoId: string } | null>(null);
   const [adjustStart, setAdjustStart] = useState(0);
   const [adjustEnd, setAdjustEnd] = useState(30);
   const [busyActionKey, setBusyActionKey] = useState<string | null>(null);
   const [isDownloadingAll, setIsDownloadingAll] = useState(false);
+  const [companionStatus, setCompanionStatus] = useState<VideoReferenceCompanionStatus | null>(null);
 
   const scenesWithContent = useMemo(
-    () => scenes.filter(s => s.scriptText || s.visualDescriptionKO),
+    () => scenes.filter(hasVideoReferenceSceneContent),
     [scenes],
   );
 
   const globalCtx = useMemo(
-    () => config?.globalContext || config?.script?.slice(0, 100) || '',
+    () => config?.globalContext || config?.script?.slice(0, 600) || '',
     [config?.globalContext, config?.script],
   );
 
@@ -107,6 +118,23 @@ const VideoReferencePanel: React.FC = () => {
     () => new Map(scenes.map((scene, index) => [scene.id, index + 1])),
     [scenes],
   );
+
+  useEffect(() => {
+    let alive = true;
+    if (!enableVideoReference) return () => { alive = false; };
+
+    void getVideoReferenceCompanionStatus()
+      .then((status) => {
+        if (alive) setCompanionStatus(status);
+      })
+      .catch(() => {
+        if (alive) setCompanionStatus(null);
+      });
+
+    return () => {
+      alive = false;
+    };
+  }, [enableVideoReference]);
 
   const handleSearchAll = useCallback(async () => {
     if (isSearching || scenesWithContent.length === 0) return;
@@ -123,48 +151,54 @@ const VideoReferencePanel: React.FC = () => {
             next.set(sceneId, refs);
             return next;
           });
+
+          const freshScene = useProjectStore.getState().scenes.find((scene) => scene.id === sceneId);
+          if (!freshScene) return;
+          updateScene(sceneId, {
+            videoReferences: refs.length > 0 ? refs : undefined,
+          });
         },
         videoRefShortsMode,
       );
     } finally {
       setIsSearching(false);
     }
-  }, [isSearching, scenesWithContent, globalCtx, videoRefShortsMode]);
+  }, [isSearching, scenesWithContent, globalCtx, updateScene, videoRefShortsMode]);
 
   const handleApply = useCallback((sceneId: string, ref: VideoReference) => {
-    const scene = scenes.find(s => s.id === sceneId);
-    if (!scene) return;
-    const existing = scene.videoReferences || [];
-    const filtered = existing.filter(r => r.videoId !== ref.videoId);
+    const freshScene = useProjectStore.getState().scenes.find((scene) => scene.id === sceneId);
+    if (!freshScene) return;
     updateScene(sceneId, {
-      videoReferences: [ref, ...filtered].slice(0, 5),
+      videoReferences: upsertSceneVideoReferences(freshScene.videoReferences, ref),
     });
-  }, [scenes, updateScene]);
+  }, [updateScene]);
 
   const handleRemoveRef = useCallback((sceneId: string, videoId: string) => {
-    const scene = scenes.find(s => s.id === sceneId);
-    if (!scene) return;
+    const freshScene = useProjectStore.getState().scenes.find((scene) => scene.id === sceneId);
+    if (!freshScene) return;
     updateScene(sceneId, {
-      videoReferences: (scene.videoReferences || []).filter(r => r.videoId !== videoId),
+      videoReferences: (freshScene.videoReferences || []).filter(r => r.videoId !== videoId),
     });
-  }, [scenes, updateScene]);
+  }, [updateScene]);
 
   const handleStartAdjust = useCallback((sceneId: string, refIdx: number, ref: VideoReference) => {
-    setAdjustingRef({ sceneId, refIdx });
+    setAdjustingRef({ sceneId, refIdx, videoId: ref.videoId });
     setAdjustStart(ref.startSec);
     setAdjustEnd(ref.endSec);
   }, []);
 
   const handleSaveAdjust = useCallback(() => {
     if (!adjustingRef) return;
-    const scene = scenes.find(s => s.id === adjustingRef.sceneId);
-    if (!scene) return;
+    const freshScene = useProjectStore.getState().scenes.find((scene) => scene.id === adjustingRef.sceneId);
+    if (!freshScene) return;
 
-    const appliedRefs = scene.videoReferences || [];
+    const appliedRefs = freshScene.videoReferences || [];
     const searchRefs = sceneResults.get(adjustingRef.sceneId) || [];
 
-    // 검색 결과에서 조정 중인 ref 찾기
-    const targetRef = searchRefs[adjustingRef.refIdx] || appliedRefs[adjustingRef.refIdx];
+    const targetRef = searchRefs.find((ref) => ref.videoId === adjustingRef.videoId)
+      || appliedRefs.find((ref) => ref.videoId === adjustingRef.videoId)
+      || searchRefs[adjustingRef.refIdx]
+      || appliedRefs[adjustingRef.refIdx];
     if (!targetRef) { setAdjustingRef(null); return; }
 
     const adjustedRef: VideoReference = {
@@ -173,23 +207,16 @@ const VideoReferencePanel: React.FC = () => {
       endSec: Math.max(adjustStart + 1, adjustEnd),
     };
 
-    // 이미 적용된 항목이면 업데이트, 아니면 새로 적용
-    const existingIdx = appliedRefs.findIndex(r => r.videoId === adjustedRef.videoId);
-    let updatedRefs: VideoReference[];
-    if (existingIdx >= 0) {
-      updatedRefs = [...appliedRefs];
-      updatedRefs[existingIdx] = adjustedRef;
-    } else {
-      updatedRefs = [adjustedRef, ...appliedRefs].slice(0, 5);
-    }
+    const updatedRefs = upsertSceneVideoReferences(appliedRefs, adjustedRef);
 
     // 검색 결과도 업데이트
     setSceneResults(prev => {
       const next = new Map(prev);
       const currentRefs = next.get(adjustingRef.sceneId);
-      if (currentRefs && currentRefs[adjustingRef.refIdx]) {
+      const currentIdx = currentRefs?.findIndex((ref) => ref.videoId === adjustedRef.videoId) ?? -1;
+      if (currentRefs && (currentRefs[adjustingRef.refIdx] || currentIdx >= 0)) {
         const updated = [...currentRefs];
-        updated[adjustingRef.refIdx] = adjustedRef;
+        updated[currentIdx >= 0 ? currentIdx : adjustingRef.refIdx] = adjustedRef;
         next.set(adjustingRef.sceneId, updated);
       }
       return next;
@@ -197,7 +224,7 @@ const VideoReferencePanel: React.FC = () => {
 
     updateScene(adjustingRef.sceneId, { videoReferences: updatedRefs });
     setAdjustingRef(null);
-  }, [adjustingRef, adjustStart, adjustEnd, scenes, sceneResults, updateScene]);
+  }, [adjustingRef, adjustStart, adjustEnd, sceneResults, updateScene]);
 
   const handleExportGuide = useCallback(() => {
     const text = generateEditGuideSheet(scenes);
@@ -251,10 +278,15 @@ const VideoReferencePanel: React.FC = () => {
       updateScene(scene.id, {
         videoUrl: objectUrl,
         imageUpdatedAfterVideo: false,
+        videoReferences: upsertSceneVideoReferences(freshScene.videoReferences, ref),
       });
       showToast(`장면 ${sceneNumberById.get(scene.id) || ''}에 레퍼런스 클립을 적용했습니다.`);
     } catch (error) {
-      showToast(`레퍼런스 클립 ${mode === 'download' ? '다운로드' : '적용'} 실패: ${error instanceof Error ? error.message : '알 수 없는 오류'}`);
+      const message = error instanceof Error ? error.message : '알 수 없는 오류';
+      showToast(
+        `레퍼런스 클립 ${mode === 'download' ? '다운로드' : '적용'} 실패: ${message}`,
+        isReferenceClipCompatibilityErrorMessage(message) ? 8000 : 3000,
+      );
     } finally {
       setBusyActionKey(null);
     }
@@ -291,7 +323,11 @@ const VideoReferencePanel: React.FC = () => {
       );
       showToast(`레퍼런스 클립 ${downloaded.length}개 ZIP 다운로드를 시작했습니다.`);
     } catch (error) {
-      showToast(`전체 레퍼런스 다운로드 실패: ${error instanceof Error ? error.message : '알 수 없는 오류'}`);
+      const message = error instanceof Error ? error.message : '알 수 없는 오류';
+      showToast(
+        `전체 레퍼런스 다운로드 실패: ${message}`,
+        isReferenceClipCompatibilityErrorMessage(message) ? 8000 : 3000,
+      );
     } finally {
       setIsDownloadingAll(false);
     }
@@ -343,6 +379,25 @@ const VideoReferencePanel: React.FC = () => {
             대본의 <strong className="text-red-300">인물·시기·장소·감정</strong>을 분석하여 관련 YouTube 영상을 검색하고, <strong className="text-red-300">정확한 타임코드</strong>까지 자동 매칭합니다.
           </p>
         </div>
+
+        {companionStatus?.available && companionStatus.needsFfmpegCutUpdate && (
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-3 space-y-2">
+            <p className="text-xs font-bold text-amber-300">
+              컴패니언 v{companionStatus.version || '?'}에서는 MP4 클립 잘라내기를 지원하지 않습니다.
+            </p>
+            <p className="text-[11px] leading-relaxed text-amber-100/80">
+              검색과 후보 확인은 계속 되지만, <strong className="text-amber-200">MP4 다운로드</strong>, <strong className="text-amber-200">장면 영상으로 적용</strong>, <strong className="text-amber-200">영상 없는 장면의 NLE 레퍼런스 폴백</strong>은 작동하지 않습니다. 컴패니언을 v1.3.0 이상으로 업데이트하세요.
+            </p>
+            <a
+              href={getCompanionDownloadUrl()}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 text-[11px] font-bold text-amber-200 hover:text-amber-100 underline"
+            >
+              컴패니언 업데이트 받기
+            </a>
+          </div>
+        )}
 
         {/* 쇼츠 모드 토글 */}
         <div className="flex items-center justify-between bg-gray-900/40 rounded-lg px-3 py-2">
@@ -440,7 +495,7 @@ const VideoReferencePanel: React.FC = () => {
                       #{i + 1}
                     </span>
                     <span className="text-xs text-gray-400 truncate">
-                      {scene.scriptText?.slice(0, 50) || '(내용 없음)'}
+                      {getVideoReferenceScenePrimaryText(scene).slice(0, 50) || '(내용 없음)'}
                     </span>
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">

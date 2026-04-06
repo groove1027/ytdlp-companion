@@ -19,6 +19,7 @@ import {
 import { logger } from '../services/LoggerService';
 import { usePptMasterStore } from './pptMasterStore';
 import { buildUploadedTranscriptLines, isUploadedTranscriptConfig } from '../utils/uploadedTranscriptScenes';
+import { getSceneNarrationText } from '../utils/sceneText';
 
 // editRoomStore → projectStore 순환 참조 방지: lazy import 사용
 let _editRoomStoreRef: any = null;
@@ -261,20 +262,28 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
 
     // 문장 단위로 분할하여 앞/뒤 장면에 배분
     // Split narration by sentences and distribute between the two scenes
-    const text = (source.scriptText || '').trim();
+    const text = getSceneNarrationText(source);
     const sentences = text.match(/[^.!?。！？\n]+[.!?。！？]?\s*/g) || [text];
     const midpoint = Math.ceil(sentences.length / 2);
     const firstHalf = sentences.slice(0, midpoint).join('').trim();
     const secondHalf = sentences.slice(midpoint).join('').trim();
+    const syncAudioScript = !toTrimmedString(source.scriptText) && toTrimmedString(source.audioScript).length > 0;
 
     // 원본 장면의 scriptText를 앞쪽 절반으로 업데이트, visualPrompt 초기화 (새 scriptText 기반 자동 재생성)
     // [FIX codex-review] videoReferences도 초기화 — 분할 후 대본이 달라지므로 타임코드 매칭 무효
-    const updatedSource = { ...source, scriptText: firstHalf, visualPrompt: buildVisualPromptFallback(firstHalf), videoReferences: undefined };
+    const updatedSource = {
+      ...source,
+      scriptText: firstHalf,
+      audioScript: syncAudioScript ? firstHalf : source.audioScript,
+      visualPrompt: buildVisualPromptFallback(firstHalf),
+      videoReferences: undefined,
+    };
 
     const newScene: Scene = {
       ...source,
       id: uniqueSceneId(),
       scriptText: secondHalf,
+      audioScript: syncAudioScript ? secondHalf : source.audioScript,
       visualPrompt: buildVisualPromptFallback(secondHalf),
       imageUrl: undefined,
       videoUrl: undefined,
@@ -297,10 +306,13 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
     if (!current || !next) return state;
 
     // 나레이션 합치기 (Combine narration text)
-    const mergedScript = [current.scriptText, next.scriptText]
+    const mergedScript = [getSceneNarrationText(current), getSceneNarrationText(next)]
       .filter(Boolean)
       .join(' ')
       .trim();
+    const syncAudioScript = !toTrimmedString(current.scriptText)
+      && !toTrimmedString(next.scriptText)
+      && [current.audioScript, next.audioScript].some((value) => toTrimmedString(value).length > 0);
 
     // 비주얼 프롬프트 합치기 (Combine visual prompts)
     const mergedPrompt = [current.visualPrompt, next.visualPrompt]
@@ -314,6 +326,7 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
     const mergedScene: Scene = normalizeSceneVisualPrompt({
       ...current,
       scriptText: mergedScript,
+      audioScript: syncAudioScript ? mergedScript : (current.audioScript || next.audioScript),
       visualPrompt: mergedPrompt,
       imageUrl: mergedImageUrl,
       // 비디오는 이미지가 바뀔 수 있으므로 초기화
@@ -623,11 +636,11 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
           const finalScenes = get().scenes;
           const restoredLines = buildUploadedTranscriptLines(currentConfig)
             || finalScenes
-              .filter((s) => s.scriptText || s.audioUrl)
+              .filter((s) => getSceneNarrationText(s) || s.audioUrl)
               .map((s, i) => ({
                 id: `line-${Date.now()}-${i}`,
                 speakerId: '',
-                text: s.scriptText || s.audioScript || '',
+                text: getSceneNarrationText(s),
                 index: i,
                 sceneId: s.id,
                 audioUrl: s.audioUrl,
@@ -645,14 +658,14 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
       // 즉시 동기 처리: non-blob audioUrl로 soundStudioStore lines 초기 세팅
       const immediateLines = buildUploadedTranscriptLines(project.config)
         || sanitizedScenes
-          .filter((s) => s.scriptText || s.audioUrl)
+          .filter((s) => getSceneNarrationText(s) || s.audioUrl)
           .map((s, i) => {
             const isStaleBlob = s.audioUrl?.startsWith('blob:');
             const validAudioUrl = isStaleBlob ? undefined : s.audioUrl;
             return {
               id: `line-${Date.now()}-${i}`,
               speakerId: '',
-              text: s.scriptText || s.audioScript || '',
+              text: getSceneNarrationText(s),
               index: i,
               sceneId: s.id,
               audioUrl: validAudioUrl,

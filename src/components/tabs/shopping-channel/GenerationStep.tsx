@@ -4,6 +4,7 @@ import { runPipeline, generateSceneImage, generateSceneVideo, SECTION_LABELS } f
 import { useCostStore } from '../../../stores/costStore';
 import { logger } from '../../../services/LoggerService';
 import { showToast } from '../../../stores/uiStore';
+import { getSceneNarrationText } from '../../../utils/sceneText';
 
 const PHASE_LABELS: Record<string, string> = {
   idle: '대기',
@@ -225,7 +226,7 @@ const GenerationStep: React.FC = () => {
 
             {/* 대본 스니펫 + 액션 */}
             <div className="p-3">
-              <p className="text-xs text-gray-400 line-clamp-2 mb-2">{scene.scriptText}</p>
+              <p className="text-xs text-gray-400 line-clamp-2 mb-2">{getSceneNarrationText(scene)}</p>
               <div className="flex gap-1.5">
                 {scene.imageError && (
                   <button

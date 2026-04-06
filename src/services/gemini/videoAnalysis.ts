@@ -8,6 +8,7 @@ import { uploadMediaToHosting } from '../uploadService';
 import { generateKieImage, generateEvolinkImageWrapped } from '../VideoGenService';
 import { transcribeWithDiarization, formatDiarizedTranscript } from '../transcriptionService';
 import { logger } from '../LoggerService';
+import { getSceneNarrationText } from '../../utils/sceneText';
 // extractStreamUrl/isYtdlpServerConfigured — CDN URL은 Vertex AI robots.txt로 차단되어 사용 불가
 
 // --- Types ---
@@ -174,9 +175,9 @@ Analyze the video now. Return ONLY the JSON array.`;
     const clamp = (v: number) => durationSec && durationSec > 0 ? Math.max(0, Math.min(v, durationSec)) : v;
     const scenes: Scene[] = parsed.map((item, i) => ({
         id: `scene-${Date.now()}-${i}`,
-        scriptText: item.scriptText || `Scene ${i + 1}`,
+        scriptText: item.scriptText || item.audioScript || `Scene ${i + 1}`,
         visualPrompt: item.visualPrompt || '',
-        visualDescriptionKO: item.scriptText || '',
+        visualDescriptionKO: item.scriptText || item.audioScript || '',
         characterPresent: item.characterPresent ?? false,
         characterAction: item.characterAction,
         shotSize: item.shotSize,
@@ -382,7 +383,7 @@ const buildRemakeDescriptivePrompt = (
     style: string,
     userInstructions?: string
 ): string => {
-    const basePrompt = scene.visualPrompt || scene.scriptText;
+    const basePrompt = scene.visualPrompt || getSceneNarrationText(scene);
     const parts: string[] = [];
 
     if (scene.shotSize) parts.push(`(${scene.shotSize}: 1.5)`);
@@ -950,7 +951,7 @@ export const batchTranslateToKorean = async (
     scenes: Scene[]
 ): Promise<Map<string, string>> => {
     const translations = new Map<string, string>();
-    const texts = scenes.map((s, i) => `[${i}] ${s.scriptText}`).join('\n');
+    const texts = scenes.map((s, i) => `[${i}] ${getSceneNarrationText(s)}`).join('\n');
 
     if (!texts.trim()) return translations;
 

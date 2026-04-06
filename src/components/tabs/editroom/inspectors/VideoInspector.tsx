@@ -3,6 +3,7 @@ import { useEditRoomStore } from '../../../../stores/editRoomStore';
 import { useProjectStore } from '../../../../stores/projectStore';
 import SceneEffectPicker from '../SceneEffectPicker';
 import type { SceneEffectConfig, SceneAudioConfig } from '../../../../types';
+import { getSceneNarrationText } from '../../../../utils/sceneText';
 
 interface VideoInspectorProps {
   sceneId: string;
@@ -16,6 +17,7 @@ const VideoInspector: React.FC<VideoInspectorProps> = ({ sceneId }) => {
   const setSceneAudioSettings = useEditRoomStore((s) => s.setSceneAudioSettings);
 
   if (!scene) return <div className="p-3 text-xs text-gray-500">장면을 찾을 수 없습니다</div>;
+  const narrationText = getSceneNarrationText(scene);
 
   const handleEffectChange = (partial: Partial<SceneEffectConfig>) => {
     setSceneEffect(sceneId, partial);
@@ -34,7 +36,7 @@ const VideoInspector: React.FC<VideoInspectorProps> = ({ sceneId }) => {
             <img src={scene.imageUrl} alt="" className="w-12 h-8 rounded object-cover flex-shrink-0" />
           )}
           <div className="min-w-0 flex-1">
-            <p className="text-xs font-bold text-gray-200 truncate">{scene.scriptText?.slice(0, 30) || `장면 ${sceneId.slice(-4)}`}</p>
+            <p className="text-xs font-bold text-gray-200 truncate">{narrationText.slice(0, 30) || `장면 ${sceneId.slice(-4)}`}</p>
             {scene.videoUrl && <span className="text-[9px] text-amber-400">🎬 영상</span>}
           </div>
         </div>

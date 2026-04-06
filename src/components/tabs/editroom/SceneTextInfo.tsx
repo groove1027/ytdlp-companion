@@ -1,16 +1,19 @@
 import React from 'react';
 import type { Scene } from '../../../types';
+import { getSceneNarrationText } from '../../../utils/sceneText';
 
 interface SceneTextInfoProps {
   scene: Scene;
 }
 
 const SceneTextInfo: React.FC<SceneTextInfoProps> = ({ scene }) => {
+  const narrationText = getSceneNarrationText(scene);
+
   return (
     <div className="flex-1 min-w-0 space-y-1">
       {/* 한국어 대본 */}
-      <p className="text-base text-gray-200 leading-snug line-clamp-2" title={scene.scriptText}>
-        {scene.scriptText || '(대본 없음)'}
+      <p className="text-base text-gray-200 leading-snug line-clamp-2" title={narrationText}>
+        {narrationText || '(대본 없음)'}
       </p>
 
       {/* 영문 비주얼 프롬프트 */}

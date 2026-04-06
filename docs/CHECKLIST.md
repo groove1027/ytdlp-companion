@@ -8,6 +8,34 @@
 
 ## 🟢 완료된 작업
 
+### [2026-04-06] 24차 — Video Reference 저장 누락 + visualDescriptionKO/scriptText 폴백 오판 보정
+- [x] `rg -n "VideoReferencePanel|onSceneResult|searchSceneReferenceVideos|searchAllScenesReferenceVideos|updateScene\\(|videoReferences|visualDescriptionKO|scriptText 키워드|trailing_fragment|sceneResults" src`로 영향 범위 전수 조사 완료
+- [x] `src/components/tabs/imagevideo/VideoReferencePanel.tsx` — 일괄 검색 `onSceneResult` 콜백이 `sceneResults` Map만 갱신하던 경로에 `updateScene(sceneId, { videoReferences: refs })` persist를 추가해, 실제 매칭 성공 결과가 즉시 `projectStore.scenes[*].videoReferences`에도 저장되도록 보정
+- [x] `src/services/youtubeReferenceService.ts` — `validateVideoSearchQueryCandidate()`에 trailing fragment 예외 옵션을 추가하고 `visualDescriptionKO` 직접 폴백은 이 검사를 건너뛰게 바꿔 `제주 해변 석양 파도` 같은 정상 키워드가 `trailing_fragment`로 오판 거부되지 않도록 수정
+- [x] `src/services/youtubeReferenceService.ts` — `buildRuleBasedVideoSearchContext()`의 scriptText 키워드 폴백 입력을 현재 장면의 `visualDescriptionKO`/나레이션/오디오/비주얼 힌트만 쓰도록 축소해 이전·다음 장면과 `globalContext`가 현재 장면 검색어에 섞이지 않게 보정
+- [x] `cd src && npx tsc --noEmit`: 성공
+- [x] `cd src && npx vite build`: 성공 (기존 dynamic import/chunk-size warning만 존재)
+- [x] `rg -n "validateVideoSearchQueryCandidate|buildRuleBasedVideoSearchContext|visualDescriptionKO 폴백 무효|scriptText 키워드 폴백|searchAllScenesReferenceVideos|videoReferences: refs.length > 0 \\? refs : undefined" src/services/youtubeReferenceService.ts src/components/tabs/imagevideo/VideoReferencePanel.tsx`: 반영 위치 재확인
+
+### [2026-04-06] 23차 — Video Reference JSON 복구 검증 + visualDescriptionKO 직접 폴백
+- [x] `rg -n "youtubeReferenceService|VideoRef|visualDescriptionKO|불완전 JSON 복구|AI 검색어 생성 파싱 실패|JSON 객체 추출 실패|responseFormat|json_schema|scriptText" src docs/CHECKLIST.md`로 영향 범위 전수 조사 완료
+- [x] `src/services/youtubeReferenceService.ts` — `extractJsonObjectDetailed()` 메타 경로를 추가해 복구 여부를 호출부가 식별할 수 있게 했고, 빈 객체/짧은 query를 더 이상 성공으로 간주하지 않도록 `JSON 복구 후 검증 통과/실패` 로그로 분리
+- [x] `src/services/youtubeReferenceService.ts` — raw 응답 미리보기는 앞부분만 자르지 않고 끝 500자까지 포함하도록 조정해 빈 markdown fence/후반부 JSON 누락 케이스를 더 정확히 확인할 수 있게 보강
+- [x] `src/services/youtubeReferenceService.ts` — 자료영상 검색어 생성 체인을 `AI 구조화 응답 → AI 엄격 프롬프트 재시도 → visualDescriptionKO 직접 쿼리 → scriptText 키워드 폴백` 순서로 재구성했고, `visualDescriptionKO`는 쉼표/공백만 정리한 쿼리를 우선 사용하도록 변경
+- [x] `src/services/youtubeReferenceService.ts` — 최종 쿼리 검증을 추가해 2글자 미만, 복구 중 잘린 1글자 꼬리 조각, 장문의 원문 대본 그대로인 쿼리를 거부하도록 보강
+- [x] `cd src && npx tsc --noEmit`: 성공
+- [x] `cd src && npx vite build`: 성공 (기존 dynamic import/chunk-size warning만 존재)
+- [x] `rg -n "extractJsonObjectDetailed|buildVisualDescriptionFallbackContext|buildRuleBasedVideoSearchContext|validateVideoSearchQueryCandidate|JSON 복구 후 검증|visualDescriptionKO 직접 폴백|scriptText 키워드 폴백" src/services/youtubeReferenceService.ts docs/CHECKLIST.md`: 반영 위치 재확인
+
+### [2026-04-06] 22차 — Video Reference AI 검색어 JSON 파싱/폴백 보강
+- [x] `rg -n "extractJsonObject|buildVideoSearchQuery|searchSceneReferenceVideos|visualDescriptionKO|responseFormat|response_format" src/services/youtubeReferenceService.ts docs/CHECKLIST.md`로 영향 범위 전수 조사 완료
+- [x] `src/services/youtubeReferenceService.ts` — `extractJsonObject()`를 markdown fence 제거, 주석 제거, 문자열 내부 중괄호 무시, 첫 JSON 객체 균형 스캔, trailing comma 정리, 불완전 JSON 복구, 원본 응답 미리보기 로깅까지 포함하는 경로로 보강
+- [x] `src/services/youtubeReferenceService.ts` — 자료영상 검색어 생성 프롬프트를 "JSON 객체만 반환, 주석/설명/markdown fence 금지" 규칙으로 강화했고, 1차는 `gemini-3.1-pro-preview + responseFormat(json_schema)` 구조화 출력, 실패 시 1회 엄격 재시도로 보강
+- [x] `src/services/youtubeReferenceService.ts` — JSON 파싱/구조화 응답 실패 시 `visualDescriptionKO`, 나레이션, 위치/인물/시대 메타를 이용해 문장형 쿼리를 짧은 키워드 검색어로 압축하는 규칙 기반 폴백과 대체 검색어 후보를 추가
+- [x] `cd src && npx tsc --noEmit`: 성공
+- [x] `cd src && npx vite build`: 성공 (기존 dynamic import/chunk-size warning만 존재)
+- [x] `rg -n "extractJsonObject\\(|buildVideoSearchQuery\\(|AI 검색어 생성|규칙 기반 검색어 폴백|VIDEO_SEARCH_QUERY_RESPONSE_FORMAT" src/services/youtubeReferenceService.ts`: 반영 위치 재확인
+
 ### [2026-04-06] 21차 — 20차에서 발견한 3건 후속 수정
 - [x] `rg -n "getSceneNarrationText|existingScriptText|skipLocalScriptPersistRef|scriptText \\|\\| audioScript|audioScript \\|\\| scriptText" src`로 영향 범위 전수 조사 완료
 - [x] `src/components/tabs/imagevideo/SetupPanel.tsx` — 기존 장면 stale 판정용 `existingScriptText`와 uploaded draft 집계를 `getSceneNarrationText()` 기준으로 통일해 `audioScript` 전용 장면이 대본 변경으로 잘못 판정되지 않도록 보정

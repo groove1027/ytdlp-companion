@@ -13,6 +13,8 @@ import SceneSubtitleEditor from './SceneSubtitleEditor';
 import SceneEffectPicker from './SceneEffectPicker';
 import OverlayPicker, { OVERLAY_PRESETS } from './OverlayPicker';
 import { lazyRetry } from '../../../utils/retryImport';
+import { getPreviousSceneImageUrlForReplace } from '../../../utils/sceneImageHistory';
+import { buildSceneSearchQuery, getSceneNarrationText } from '../../../utils/sceneText';
 
 const MediaSearchModal = lazyRetry(() => import('../../MediaSearchModal'));
 
@@ -66,6 +68,7 @@ const EditRoomSceneCard: React.FC<EditRoomSceneCardProps> = ({
   const sceneSubtitles = useEditRoomStore((s) => s.sceneSubtitles);
   const sceneAudioSettings = useEditRoomStore((s) => s.sceneAudioSettings);
   const sceneOverlays = useEditRoomStore((s) => s.sceneOverlays);
+  const narrationText = getSceneNarrationText(scene);
 
   const effect = useMemo<SceneEffectConfig>(() =>
     sceneEffects[scene.id] || { panZoomPreset: 'smooth', motionEffect: 'none' },
@@ -73,8 +76,8 @@ const EditRoomSceneCard: React.FC<EditRoomSceneCardProps> = ({
   );
 
   const subtitle = useMemo<SceneSubtitleConfig>(() =>
-    sceneSubtitles[scene.id] || { text: scene.scriptText || '', startTime: 0, endTime: 0 },
-    [sceneSubtitles, scene.id, scene.scriptText]
+    sceneSubtitles[scene.id] || { text: narrationText, startTime: 0, endTime: 0 },
+    [sceneSubtitles, scene.id, narrationText]
   );
 
   const audioSettings = useMemo<SceneAudioConfig>(() =>
@@ -147,6 +150,7 @@ const EditRoomSceneCard: React.FC<EditRoomSceneCardProps> = ({
       const url = await uploadMediaToHosting(file);
       useProjectStore.getState().updateScene(scene.id, {
         imageUrl: url,
+        previousSceneImageUrl: getPreviousSceneImageUrlForReplace(scene, url),
         imageUpdatedAfterVideo: !!scene.videoUrl,
       });
       showToast('이미지 교체 완료');
@@ -323,16 +327,18 @@ const EditRoomSceneCard: React.FC<EditRoomSceneCardProps> = ({
       )}
       {showMediaSearch && (
         <Suspense fallback={null}>
-          <MediaSearchModal
-            isOpen={showMediaSearch}
-            onClose={() => setShowMediaSearch(false)}
-            onSelect={(item: CommunityMediaItem) => {
-              useProjectStore.getState().updateScene(scene.id, {
-                imageUrl: item.type === 'image' ? item.url : scene.imageUrl,
+        <MediaSearchModal
+          isOpen={showMediaSearch}
+          onClose={() => setShowMediaSearch(false)}
+          onSelect={(item: CommunityMediaItem) => {
+            const nextImageUrl = item.type === 'image' ? item.url : scene.imageUrl;
+            useProjectStore.getState().updateScene(scene.id, {
+                imageUrl: nextImageUrl,
+                previousSceneImageUrl: getPreviousSceneImageUrlForReplace(scene, nextImageUrl),
                 communityMediaItem: item,
               });
             }}
-            initialQuery={scene.scriptText?.split(/[,.\s]+/).slice(0, 3).join(' ') || ''}
+            initialQuery={buildSceneSearchQuery(scene)}
           />
         </Suspense>
       )}

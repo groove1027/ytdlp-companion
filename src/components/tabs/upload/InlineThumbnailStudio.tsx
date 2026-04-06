@@ -11,6 +11,7 @@ import { extractYouTubeVideoId, fetchYouTubeThumbnail } from '../../../utils/thu
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
 import { logger } from '../../../services/LoggerService';
 import { lazyRetry } from '../../../utils/retryImport';
+import { getSceneNarrationText } from '../../../utils/sceneText';
 
 const ThumbnailGenerator = lazyRetry(() => import('../../ThumbnailGenerator'));
 
@@ -48,7 +49,7 @@ const InlineThumbnailStudio: React.FC<InlineThumbnailStudioProps> = ({ onClose }
   // 대본 자동 연동
   const scriptText = finalScript?.trim()
     ? finalScript
-    : scenes.map((s) => s.scriptText || '').filter(Boolean).join('\n');
+    : scenes.map((scene) => getSceneNarrationText(scene)).filter(Boolean).join('\n');
 
   const videoFormat = config?.videoFormat === 'short-form'
     ? ('short-form' as VideoFormat)

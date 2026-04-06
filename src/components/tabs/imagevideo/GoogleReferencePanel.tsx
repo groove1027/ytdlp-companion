@@ -1,12 +1,20 @@
 import React, { useState, useCallback, useMemo, useRef } from 'react';
 import { useProjectStore } from '../../../stores/projectStore';
 import { useImageVideoStore } from '../../../stores/imageVideoStore';
-import { searchSceneReferenceImages, buildSearchQuery, SCENE_REFERENCE_BATCH_CONCURRENCY, isPrimaryReferenceProvider } from '../../../services/googleReferenceSearchService';
+import {
+  searchSceneReferenceImages,
+  buildSearchQuery,
+  SCENE_REFERENCE_BATCH_CONCURRENCY,
+  isPrimaryReferenceProvider,
+  hasGoogleReferenceSceneContent,
+  getGoogleReferenceScenePrimaryText,
+} from '../../../services/googleReferenceSearchService';
 import type { GoogleImageResult, ReferenceSearchProvider } from '../../../services/googleReferenceSearchService';
 import { searchMedia } from '../../../services/mediaSearchService';
 import type { CommunityMediaItem } from '../../../types';
 import type { Scene } from '../../../types';
 import { showToast } from '../../../stores/uiStore';
+import { getPreviousSceneImageUrlForReplace } from '../../../utils/sceneImageHistory';
 
 /* ── Toggle Switch (SetupPanel과 동일 패턴) ── */
 const Toggle: React.FC<{ checked: boolean; onChange: (v: boolean) => void }> = ({ checked, onChange }) => (
@@ -76,7 +84,7 @@ const GoogleReferencePanel: React.FC = () => {
   const [memeResults, setMemeResults] = useState<Map<string, CommunityMediaItem[]>>(new Map());
   const previewRequestIdsRef = useRef<Map<string, number>>(new Map());
 
-  const hasScenes = scenes.length > 0 && scenes.some(s => !!s.scriptText || !!s.visualPrompt);
+  const hasScenes = scenes.length > 0 && scenes.some(hasGoogleReferenceSceneContent);
   const aspectClass = ASPECT_CLASS[aspectRatio] || 'aspect-video';
 
   const beginPreviewRequest = useCallback((sceneId: string): number => {
@@ -91,7 +99,7 @@ const GoogleReferencePanel: React.FC = () => {
 
   // [FIX #681] 밈/일러스트 검색
   const searchMemeForScene = useCallback(async (scene: Scene, source: 'klipy' | 'irasutoya') => {
-    const keywords = (scene.scriptText || scene.visualDescriptionKO || scene.visualPrompt || '').slice(0, 60);
+    const keywords = getGoogleReferenceScenePrimaryText(scene).slice(0, 60);
     if (!keywords.trim()) return;
     try {
       const rawResults = await searchMedia({ query: keywords, type: 'image', source, limit: 20 });
@@ -112,6 +120,7 @@ const GoogleReferencePanel: React.FC = () => {
     }
     updateScene(sceneId, {
       imageUrl: item.url,
+      previousSceneImageUrl: getPreviousSceneImageUrlForReplace(targetScene, item.url),
       isGeneratingImage: false,
       generationStatus: `${item.source === 'klipy' ? '밈' : '일러스트'} 레퍼런스 적용`,
       imageUpdatedAfterVideo: !!targetScene.videoUrl,
@@ -224,8 +233,8 @@ const GoogleReferencePanel: React.FC = () => {
     if (!hasScenes) { showToast('장면 분석을 먼저 실행하세요.'); return; }
     setIsSearchingAll(true);
     try {
-      const busySceneCount = scenes.filter((scene) => (scene.scriptText || scene.visualPrompt) && scene.isGeneratingImage).length;
-      const validScenes = scenes.filter(s => (!!s.scriptText || !!s.visualPrompt) && !s.isGeneratingImage);
+      const busySceneCount = scenes.filter((scene) => hasGoogleReferenceSceneContent(scene) && scene.isGeneratingImage).length;
+      const validScenes = scenes.filter((scene) => hasGoogleReferenceSceneContent(scene) && !scene.isGeneratingImage);
       let successCount = 0;
       let blockedCount = 0;
       let fallbackCount = 0;
@@ -261,7 +270,7 @@ const GoogleReferencePanel: React.FC = () => {
 
           // 커뮤니티 슬롯이면 밈/일러스트 우선 시도
           if (current.useCommunity && communitySource) {
-            const keywords = (current.scene.scriptText || current.scene.visualDescriptionKO || current.scene.visualPrompt || '').slice(0, 60);
+            const keywords = getGoogleReferenceScenePrimaryText(current.scene).slice(0, 60);
             if (keywords.trim()) {
               try {
                 const rawResults = await searchMedia({ query: keywords, type: 'image', source: communitySource, limit: 10 });
@@ -276,6 +285,7 @@ const GoogleReferencePanel: React.FC = () => {
                   }
                   updateScene(current.scene.id, {
                     imageUrl: item.url,
+                    previousSceneImageUrl: getPreviousSceneImageUrlForReplace(latestScene, item.url),
                     isGeneratingImage: false,
                     generationStatus: `${communitySource === 'klipy' ? '밈' : '일러스트'} 레퍼런스 적용`,
                     imageUpdatedAfterVideo: !!latestScene?.videoUrl,
@@ -313,6 +323,7 @@ const GoogleReferencePanel: React.FC = () => {
               );
               updateScene(current.scene.id, {
                 imageUrl: result.firstLink,
+                previousSceneImageUrl: getPreviousSceneImageUrlForReplace(latestScene, result.firstLink),
                 isGeneratingImage: false,
                 generationStatus: isPrimaryReferenceProvider(result.provider || 'google') ? '구글 레퍼런스 적용' : '대체 레퍼런스 적용',
                 imageUpdatedAfterVideo: !!latestScene?.videoUrl,
@@ -387,6 +398,7 @@ const GoogleReferencePanel: React.FC = () => {
       : '';
     updateScene(sceneId, {
       imageUrl,
+      previousSceneImageUrl: getPreviousSceneImageUrlForReplace(targetScene, imageUrl),
       isGeneratingImage: false,
       generationStatus: isPrimaryReferenceProvider(provider) ? '구글 레퍼런스 이미지 적용' : '대체 레퍼런스 이미지 적용',
       imageUpdatedAfterVideo: !!targetScene.videoUrl,
@@ -506,7 +518,7 @@ const GoogleReferencePanel: React.FC = () => {
   }, [scenePreviews, searchScene, searchWithCustomQuery]);
 
   const scenesWithContent = useMemo(() =>
-    scenes.filter(s => !!s.scriptText || !!s.visualPrompt),
+    scenes.filter(hasGoogleReferenceSceneContent),
   [scenes]);
 
   return (
@@ -626,7 +638,7 @@ const GoogleReferencePanel: React.FC = () => {
                           #{i + 1}
                         </span>
                         <span className="text-xs text-gray-400 truncate">
-                          {scene.scriptText?.slice(0, 50) || scene.visualDescriptionKO?.slice(0, 50) || '(내용 없음)'}
+                          {getGoogleReferenceScenePrimaryText(scene).slice(0, 50) || '(내용 없음)'}
                         </span>
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0">

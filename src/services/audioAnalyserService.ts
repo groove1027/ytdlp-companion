@@ -51,7 +51,7 @@ interface EffectNodes {
 interface ProcessingChain {
   source: MediaElementAudioSourceNode | null;
   inputAnalyser: AnalyserNode;
-  inputAnalyserData: Float32Array<ArrayBuffer>;
+  inputAnalyserData: Float32Array;
   noiseGateGain: GainNode;
   narr: EffectNodes;
   volumeGain: GainNode;
@@ -63,11 +63,15 @@ interface ProcessingChain {
 // ─── Singleton State ───
 let ctx: AudioContext | null = null;
 let outputAnalyser: AnalyserNode | null = null;
-let outputAnalyserData: Float32Array<ArrayBuffer> | null = null;
+let outputAnalyserData: Float32Array | null = null;
 let chain: ProcessingChain | null = null;
 const connectedElements = new WeakSet<HTMLAudioElement>();
 let noiseGateTimer: ReturnType<typeof setInterval> | null = null;
 let storeUnsubscribe: (() => void) | null = null;
+
+function createAnalyserBuffer(length: number): Float32Array {
+  return new Float32Array(new ArrayBuffer(length * Float32Array.BYTES_PER_ELEMENT));
+}
 
 // ─── Impulse Response 생성 (리버브용) ───
 function generateImpulseResponse(audioCtx: AudioContext, decay: number, preDelayMs: number): AudioBuffer {
@@ -202,7 +206,7 @@ function createChain(audioCtx: AudioContext, analyser: AnalyserNode): Processing
   return {
     source: null,
     inputAnalyser,
-    inputAnalyserData: new Float32Array(inputAnalyser.fftSize) as Float32Array<ArrayBuffer>,
+    inputAnalyserData: createAnalyserBuffer(inputAnalyser.fftSize),
     noiseGateGain,
     narr,
     volumeGain, panner,
@@ -364,7 +368,7 @@ function ensureContext(): AudioContext {
     outputAnalyser.fftSize = 512;
     outputAnalyser.smoothingTimeConstant = 0.85;
     outputAnalyser.connect(ctx.destination);
-    outputAnalyserData = new Float32Array(outputAnalyser.fftSize) as Float32Array<ArrayBuffer>;
+    outputAnalyserData = createAnalyserBuffer(outputAnalyser.fftSize);
   }
   return ctx;
 }

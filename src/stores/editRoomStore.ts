@@ -31,6 +31,7 @@ import { evolinkChat } from '../services/evolinkService';
 import { transcribeAudio } from '../services/transcriptionService';
 import type { WhisperWord } from '../types';
 import { logger } from '../services/LoggerService';
+import { getSceneNarrationText } from '../utils/sceneText';
 
 type GlobalPanel = 'subtitle-style' | 'bgm' | 'export' | null;
 
@@ -458,7 +459,7 @@ export const useEditRoomStore = create<EditRoomStore>()(immer((set, get) => ({
     const smartMotions = assignSmartMotions(
       orderedScenes.map((s) => ({
         visualPrompt: s.visualPrompt || '',
-        scriptText: s.scriptText || '',
+        scriptText: getSceneNarrationText(s),
         sceneType: s.sceneType,
         castType: s.castType,
         shotSize: s.shotSize,
@@ -530,10 +531,11 @@ export const useEditRoomStore = create<EditRoomStore>()(immer((set, get) => ({
 
       // 자막: 항상 최신 타이밍으로 갱신 (텍스트/세그먼트/스타일 등 기존 사용자 편집 보존)
       const existingSub = get().sceneSubtitles[sceneId];
+      const narrationText = getSceneNarrationText(scene);
       sceneSubtitles[sceneId] = {
         ...existingSub,
         // [FIX #499] 나레이션(matchedLine) 우선 — generatedDialogue는 영상용 대사이므로 자막과 충돌
-        text: existingSub?.text || matchedLine?.text || scene.generatedDialogue || scene.scriptText || '',
+        text: existingSub?.text || matchedLine?.text || scene.generatedDialogue || narrationText,
         startTime: startT,
         endTime: endT,
         animationPreset: existingSub?.animationPreset || 'none',
@@ -1585,7 +1587,7 @@ export const useEditRoomStore = create<EditRoomStore>()(immer((set, get) => ({
     // 기존 효과에 랜덤 시드를 주입하여 다른 결과가 나오도록 셔플
     const shuffled = scenes.map((s) => ({
       visualPrompt: s.visualPrompt || '',
-      scriptText: s.scriptText || '',
+      scriptText: getSceneNarrationText(s),
       sceneType: s.sceneType,
       castType: s.castType,
       shotSize: s.shotSize,

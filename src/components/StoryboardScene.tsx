@@ -9,6 +9,7 @@ import { logger } from '../services/LoggerService';
 import { COMPACT_PAN_ZOOM_PRESETS, computeMotionStyle } from '../services/motionPreviewUtils';
 import { lazyRetry } from '../utils/retryImport';
 import { getPreviousSceneImageUrlForReplace } from '../utils/sceneImageHistory';
+import { buildSceneSearchQuery, getSceneNarrationText } from '../utils/sceneText';
 
 const MediaSearchModal = lazyRetry(() => import('./MediaSearchModal'));
 
@@ -58,12 +59,14 @@ const StoryboardSceneInner: React.FC<StoryboardSceneProps> = ({
   const [editPromptText, setEditPromptText] = useState(scene.visualPrompt);
   const [showVisualPrompt, setShowVisualPrompt] = useState(false);
   const [showMotionPicker, setShowMotionPicker] = useState(false);
+  const localScriptInputSourceRef = useRef<'external' | 'user'>('external');
 
   // 모션 효과 상태 (editRoomStore 공유)
   const sceneEffect = useEditRoomStore((s) => s.sceneEffects[scene.id]);
   const setSceneEffect = useEditRoomStore((s) => s.setSceneEffect);
   const hasMotionEffect = sceneEffect && sceneEffect.panZoomPreset !== 'none';
   const motionStyle = hasMotionEffect ? computeMotionStyle(sceneEffect) : undefined;
+  const narrationText = getSceneNarrationText(scene);
 
   const handleMotionPresetChange = useCallback((presetId: string) => {
     const current = sceneEffect?.panZoomPreset;
@@ -78,7 +81,7 @@ const StoryboardSceneInner: React.FC<StoryboardSceneProps> = ({
       const { matchMotionToContent } = await import('../services/smartMotionMatcher');
       const result = matchMotionToContent({
         visualPrompt: scene.visualPrompt,
-        scriptText: scene.scriptText,
+        scriptText: narrationText,
         castType: scene.castType,
         shotSize: scene.shotSize,
         cameraAngle: scene.cameraAngle,
@@ -97,10 +100,10 @@ const StoryboardSceneInner: React.FC<StoryboardSceneProps> = ({
       showToast('모션 자동 감지 실패');
       logger.trackSwallowedError('StoryboardScene:handleAIMotionDetect', e);
     }
-  }, [scene, setSceneEffect]);
+  }, [scene, narrationText, setSceneEffect]);
 
   // A-3: Debounced local state for scriptText
-  const [localScriptText, setLocalScriptText] = useState(scene.scriptText);
+  const [localScriptText, setLocalScriptText] = useState(narrationText);
   const [localVisualPrompt, setLocalVisualPrompt] = useState(scene.visualPrompt);
 
   // M11: Sync editPromptText when visualPrompt changes externally and edit modal is closed
@@ -111,17 +114,24 @@ const StoryboardSceneInner: React.FC<StoryboardSceneProps> = ({
   }, [scene.visualPrompt, isEditingPrompt]);
 
   // A-3: Sync local state when scene prop changes externally
-  useEffect(() => { setLocalScriptText(scene.scriptText); }, [scene.scriptText]);
+  useEffect(() => {
+    localScriptInputSourceRef.current = 'external';
+    setLocalScriptText(narrationText);
+  }, [narrationText]);
   useEffect(() => { setLocalVisualPrompt(scene.visualPrompt); }, [scene.visualPrompt]);
 
   // A-3: Debounce scriptText updates to store (300ms)
   useEffect(() => {
+    if (localScriptInputSourceRef.current !== 'user') {
+      return;
+    }
+    if (localScriptText === narrationText) return;
     if (localScriptText === scene.scriptText) return;
     const timer = setTimeout(() => {
       useProjectStore.getState().updateScene(scene.id, { scriptText: localScriptText });
     }, 300);
     return () => clearTimeout(timer);
-  }, [localScriptText, scene.id, scene.scriptText]);
+  }, [localScriptText, narrationText, scene.id, scene.scriptText]);
 
   // A-3: Debounce visualPrompt updates to store (300ms)
   // [FIX] Also set isUserEditedPrompt when user types in the prompt textarea
@@ -580,7 +590,7 @@ const StoryboardSceneInner: React.FC<StoryboardSceneProps> = ({
                     <button
                       type="button"
                       onClick={handleAIMotionDetect}
-                      disabled={!scene.scriptText?.trim()}
+                      disabled={!narrationText}
                       className="w-full py-1 text-xs font-bold rounded border border-amber-700/50 text-amber-400 hover:bg-amber-900/20 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
                     >
                       ✨ AI 자동 감지
@@ -598,7 +608,7 @@ const StoryboardSceneInner: React.FC<StoryboardSceneProps> = ({
           <div>
               <label className="text-sm font-bold text-gray-500 uppercase mb-1 flex items-center gap-2">📝 대본 (내레이션) {scene.audioScript && <span className="text-xs bg-green-600/20 text-green-300 px-1.5 py-0.5 rounded border border-green-500/30">🔊 Audio</span>}</label>
               {/* A-3: Debounced textarea — uses localScriptText */}
-              <textarea value={localScriptText} onChange={(e) => setLocalScriptText(e.target.value)} className="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-sm text-gray-300 focus:border-blue-500 outline-none resize-none leading-relaxed" rows={4} title={scene.scriptText} />
+              <textarea value={localScriptText} onChange={(e) => { localScriptInputSourceRef.current = 'user'; setLocalScriptText(e.target.value); }} className="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-sm text-gray-300 focus:border-blue-500 outline-none resize-none leading-relaxed" rows={4} title={narrationText} />
           </div>
           {scene.scriptTextKO && (
           <div>
@@ -611,7 +621,7 @@ const StoryboardSceneInner: React.FC<StoryboardSceneProps> = ({
               />
           </div>
           )}
-          <div className="flex justify-center"><button onClick={handleMagicClick} disabled={isAutoPrompting || !scene.scriptText.trim()} className={`w-full py-1.5 text-sm font-bold rounded flex items-center justify-center gap-1 ${isAutoPrompting ? 'bg-gray-700 text-gray-500' : 'bg-blue-900/30 text-blue-300 border border-blue-800 hover:bg-blue-800/50'}`}>{isAutoPrompting ? '✨ 변환 중...' : '✨ 대본 → 프롬프트 자동 변환'}</button></div>
+          <div className="flex justify-center"><button onClick={handleMagicClick} disabled={isAutoPrompting || !narrationText} className={`w-full py-1.5 text-sm font-bold rounded flex items-center justify-center gap-1 ${isAutoPrompting ? 'bg-gray-700 text-gray-500' : 'bg-blue-900/30 text-blue-300 border border-blue-800 hover:bg-blue-800/50'}`}>{isAutoPrompting ? '✨ 변환 중...' : '✨ 대본 → 프롬프트 자동 변환'}</button></div>
           {scene.requiresTextRendering && (<div><label className="text-sm font-bold text-green-400 uppercase mb-1 block">Text Overlay</label><textarea value={scene.textToRender || ""} onChange={(e) => useProjectStore.getState().updateScene(scene.id, { textToRender: e.target.value })} className="w-full bg-gray-900 border border-green-700 rounded p-2 text-sm text-green-200 resize-none" rows={1} /></div>)}
           {/* A-3: Debounced visualPrompt textarea */}
           <div className="pt-1"><button onClick={() => setShowVisualPrompt(!showVisualPrompt)} className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border text-sm font-bold transition-all ${showVisualPrompt ? 'bg-gray-800 border-gray-600 text-gray-300' : 'bg-gray-900/50 border-gray-700 text-gray-500 hover:bg-gray-800 hover:text-gray-300'}`}><span className="flex items-center gap-2">🎨 비주얼 프롬프트 (Visual Prompt)</span><span>{showVisualPrompt ? '▲ 숨기기' : '▼ 확인/수정'}</span></button>{showVisualPrompt && (<div className="mt-2 animate-fade-in"><textarea value={localVisualPrompt} onChange={(e) => setLocalVisualPrompt(e.target.value)} className="w-full bg-gray-900 border border-gray-600 rounded p-3 text-sm text-gray-300 focus:border-purple-500 outline-none h-32 leading-relaxed" placeholder="AI에게 지시할 그림 묘사..." title={scene.visualPrompt}/></div>)}</div>
@@ -631,7 +641,7 @@ const StoryboardSceneInner: React.FC<StoryboardSceneProps> = ({
               communityMediaItem: item,
             });
           }}
-          initialQuery={scene.scriptText.split(/[,.\s]+/).slice(0, 3).join(' ')}
+          initialQuery={buildSceneSearchQuery(scene)}
         />
       </Suspense>
     )}

@@ -27,6 +27,7 @@ import { downloadVideoViaProxy, downloadSocialVideo } from '../services/ytdlpApi
 import { detectVideoFps } from '../services/sceneDetection';
 import { showToast } from './uiStore';
 import { logger } from '../services/LoggerService';
+import { getSceneNarrationText } from '../utils/sceneText';
 
 interface EditPointStore {
   // 위저드
@@ -1045,7 +1046,7 @@ export const useEditPointStore = create<EditPointStore>()(immer((set, get) => ({
           const newLines = newScenes.map((scene, i) => ({
             id: `line-${now}-${i}`,
             speakerId: '',
-            text: scene.scriptText,
+            text: getSceneNarrationText(scene),
             index: i,
             sceneId: scene.id,
             audioUrl: undefined as string | undefined,

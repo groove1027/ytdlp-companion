@@ -15,6 +15,7 @@ import { buildPromptGuideHtml } from '../templates/promptGuide';
 import { getFontByFamily } from '../constants/fontLibrary';
 import { generateFontCssTag } from './fontLoaderService';
 import { buildOptimizedViewerHtml } from '../templates/exportHtmlOptimized';
+import { getSceneNarrationText } from '../utils/sceneText';
 
 export const downloadImages = async () => {
     const { scenes, config } = useProjectStore.getState();
@@ -33,7 +34,7 @@ export const downloadImages = async () => {
 
     await processSequentially(validScenes, 5, 20, async (s) => {
         // [FIX #183] 비율 크롭 적용 위해 항상 Blob 경유
-        const filename = getSafeFilename(scenes.indexOf(s), s.scriptText, aspectRatio ? 'jpg' : 'png');
+        const filename = getSafeFilename(scenes.indexOf(s), getSceneNarrationText(s), aspectRatio ? 'jpg' : 'png');
         let blob: Blob | null = null;
 
         if (s.imageUrl!.startsWith('data:image')) {
@@ -141,10 +142,10 @@ export const downloadVideos = async () => {
         }
 
         if (blob) {
-            const filename = getSafeFilename(sceneIndex - 1, s.scriptText, 'mp4');
+            const filename = getSafeFilename(sceneIndex - 1, getSceneNarrationText(s), 'mp4');
             zip.file(filename, blob);
         } else {
-            const safeName = getSafeFilename(sceneIndex - 1, s.scriptText, 'txt');
+            const safeName = getSafeFilename(sceneIndex - 1, getSceneNarrationText(s), 'txt');
             const errorFilename = `ERROR_${safeName}`;
             const errorContent = `[다운로드 실패 안내]\nScene #${sceneIndex} 영상 다운로드 실패.\n\n링크:\n${s.videoUrl}`;
             zip.file(errorFilename, errorContent);
@@ -225,19 +226,19 @@ export const downloadAllMedia = async () => {
 
             if (blob) {
                 // [FIX #444] 영상은 videos/ 폴더에 저장
-                zip.file(`videos/${getSafeFilename(sceneIndex, s.scriptText, 'mp4')}`, blob);
+                zip.file(`videos/${getSafeFilename(sceneIndex, getSceneNarrationText(s), 'mp4')}`, blob);
             } else {
                 // 영상 다운로드 실패 → 이미지로 폴백
                 if (s.imageUrl) {
                     const imgBlob = await fetchImageBlob(s.imageUrl, aspectRatio, cropBlobToAspectRatio);
-                    if (imgBlob) zip.file(`images/${getSafeFilename(sceneIndex, s.scriptText, 'jpg')}`, imgBlob);
+                    if (imgBlob) zip.file(`images/${getSafeFilename(sceneIndex, getSceneNarrationText(s), 'jpg')}`, imgBlob);
                 }
                 linkOnlyScenes.push({ index: sceneIndex + 1 });
             }
         } else if (s.imageUrl) {
             // [FIX #444] 이미지는 images/ 폴더에 저장
             const imgBlob = await fetchImageBlob(s.imageUrl, aspectRatio, cropBlobToAspectRatio);
-            if (imgBlob) zip.file(`images/${getSafeFilename(sceneIndex, s.scriptText, 'jpg')}`, imgBlob);
+            if (imgBlob) zip.file(`images/${getSafeFilename(sceneIndex, getSceneNarrationText(s), 'jpg')}`, imgBlob);
         }
 
         processed++;
@@ -356,7 +357,7 @@ export const downloadImagesAsMp4 = async () => {
 
             // MP4 변환 (모션 효과 있으면 Ken Burns 적용)
             const mp4Blob = await convertImageToMp4(imgBlob, durationSec, resolution, probe, hasMotion ? effect : undefined);
-            const filename = getSafeFilename(sceneIndex, s.scriptText, 'mp4');
+            const filename = getSafeFilename(sceneIndex, getSceneNarrationText(s), 'mp4');
             zip.file(filename, mp4Blob);
             successCount++;
         } catch (e) {
@@ -393,7 +394,7 @@ export const downloadImagesAsMp4 = async () => {
 function estimateSceneDuration(scene: Scene): number {
     if (scene.audioDuration && scene.audioDuration > 0) return scene.audioDuration;
     // TTS 미생성 시: 한국어 기준 ~4자/초로 추정
-    const text = scene.scriptText || '';
+    const text = getSceneNarrationText(scene);
     const cleanLen = text.replace(/\s+/g, '').length;
     return Math.max(2, Math.ceil(cleanLen / 4));
 }
@@ -711,7 +712,8 @@ export const exportProjectZip = async () => {
       manifestScenes.push({
         id: s.id,
         index: i,
-        scriptText: s.scriptText,
+        scriptText: getSceneNarrationText(s),
+        audioScript: s.audioScript,
         visualPrompt: s.visualPrompt,
         cameraMovement: s.cameraMovement,
         imageFile,
@@ -844,7 +846,7 @@ export const exportProjectById = async (projectId: string): Promise<void> => {
                     } catch (e) { logger.trackSwallowedError('ExportService:exportProjectById/imageToBlob', e); }
                 }
                 manifestScenes.push({
-                    id: s.id, index: i, scriptText: s.scriptText, visualPrompt: s.visualPrompt,
+                    id: s.id, index: i, scriptText: getSceneNarrationText(s), audioScript: s.audioScript, visualPrompt: s.visualPrompt,
                     cameraMovement: s.cameraMovement, imageFile, videoUrl: s.videoUrl,
                     characterPresent: s.characterPresent, castType: s.castType, entityName: s.entityName,
                 });

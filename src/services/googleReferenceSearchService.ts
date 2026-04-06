@@ -11,13 +11,48 @@ import { logger } from './LoggerService';
 import type { Scene, ScriptTargetRegion } from '../types';
 import { useGoogleCookieStore } from '../stores/googleCookieStore';
 import { SCRIPT_TARGET_REGIONS } from '../constants';
+import { getPreviousSceneImageUrlForReplace } from '../utils/sceneImageHistory';
+import { getSceneNarrationText, getScenePrimaryText } from '../utils/sceneText';
 
 const COMPANION_URL = 'http://127.0.0.1:9876';
 
 // Lazy import to avoid circular dependency — 비동기 초기화 후 동기 접근
-let _projectStoreRef: { getState: () => { scenes: Scene[] } } | null = null;
+let _projectStoreRef: {
+  getState: () => {
+    scenes: Scene[];
+    config?: { globalContext?: string; script?: string } | null;
+  };
+} | null = null;
 import('../stores/projectStore').then(m => { _projectStoreRef = m.useProjectStore; }).catch(() => {});
 const getLatestScenes = (): Scene[] => _projectStoreRef?.getState().scenes ?? [];
+
+function getGoogleReferenceSceneNarrativeText(scene?: Scene | null): string {
+  return getSceneNarrationText(scene);
+}
+
+export function getGoogleReferenceScenePrimaryText(scene?: Scene | null): string {
+  return getScenePrimaryText(scene);
+}
+
+export function hasGoogleReferenceSceneContent(scene: Scene): boolean {
+  return Boolean(getGoogleReferenceScenePrimaryText(scene));
+}
+
+const getProjectStoredReferenceContext = (): string | undefined => {
+  const state = _projectStoreRef?.getState();
+  const storedGlobalContext = state?.config?.globalContext?.trim();
+  if (storedGlobalContext) return storedGlobalContext;
+
+  const script = state?.config?.script?.trim();
+  if (script) return script.slice(0, 600);
+
+  const sceneSummary = (state?.scenes || [])
+    .slice(0, 8)
+    .map((scene) => getGoogleReferenceScenePrimaryText(scene))
+    .filter(Boolean)
+    .join(' ');
+  return sceneSummary ? sceneSummary.slice(0, 600) : undefined;
+};
 
 let _scriptWriterStoreRef: { getState: () => { targetRegion: ScriptTargetRegion } } | null = null;
 import('../stores/scriptWriterStore').then(m => { _scriptWriterStoreRef = m.useScriptWriterStore; }).catch(() => {});
@@ -348,6 +383,7 @@ export interface ReferenceSearchContext {
   prevScene?: Scene | null;
   nextScene?: Scene | null;
   globalContext?: string;
+  searchQueryHint?: string;
   projectTargetRegion?: ScriptTargetRegion;
 }
 
@@ -438,6 +474,26 @@ function joinQueryParts(parts: string[], maxParts: number = 5, maxLen: number = 
   }
 
   return combined.trim();
+}
+
+function resolveReferenceGlobalContext(
+  globalContext?: string,
+  scene?: Scene | null,
+  prevScene?: Scene | null,
+  nextScene?: Scene | null,
+): string | undefined {
+  const trimmedGlobalContext = typeof globalContext === 'string' ? globalContext.trim() : '';
+  if (trimmedGlobalContext) return trimmedGlobalContext;
+
+  const storedProjectContext = getProjectStoredReferenceContext();
+  if (storedProjectContext) return storedProjectContext;
+
+  const localSceneContext = [
+    getGoogleReferenceScenePrimaryText(prevScene),
+    getGoogleReferenceScenePrimaryText(scene),
+    getGoogleReferenceScenePrimaryText(nextScene),
+  ].filter(Boolean).join(' ');
+  return localSceneContext ? localSceneContext.slice(0, 400) : undefined;
 }
 
 function tokenizeReferenceText(value: string): string[] {
@@ -732,8 +788,11 @@ function buildReferenceSearchPlan(
   const criticalParts: string[] = [];
   const softParts: string[] = [];
   const entityStrategy = getEntitySearchStrategy(scene);
-  const transitionFocus = extractTransitionFocusedFragments(scene.scriptText);
-  const transitionSignals = collectTransitionSignals(scene.scriptText, prevScene?.scriptText, nextScene?.scriptText);
+  const sceneNarrativeText = getGoogleReferenceSceneNarrativeText(scene);
+  const prevSceneNarrativeText = getGoogleReferenceSceneNarrativeText(prevScene);
+  const nextSceneNarrativeText = getGoogleReferenceSceneNarrativeText(nextScene);
+  const transitionFocus = extractTransitionFocusedFragments(sceneNarrativeText);
+  const transitionSignals = collectTransitionSignals(sceneNarrativeText, prevSceneNarrativeText, nextSceneNarrativeText);
 
   pushQueryFragments(criticalParts, scene.entityName, 1, 36);
   pushQueryFragments(criticalParts, scene.sceneLocation, 1, 28);
@@ -741,24 +800,24 @@ function buildReferenceSearchPlan(
   pushQueryFragments(criticalParts, scene.sceneEra, 1, 18);
   pushQueryFragments(criticalParts, scene.visualDescriptionKO, 2, 24);
   pushQueryFragments(criticalParts, transitionFocus[0], 1, 28);
-  if (criticalParts.length < 5) pushQueryFragments(criticalParts, scene.scriptText, 2, 22);
+  if (criticalParts.length < 5) pushQueryFragments(criticalParts, sceneNarrativeText, 2, 22);
   if (criticalParts.length < 5) pushQueryFragments(criticalParts, globalContext, 1, 22);
   if (criticalParts.length < 3) pushQueryFragments(criticalParts, prevScene?.sceneLocation || prevScene?.visualDescriptionKO, 1, 20);
   if (criticalParts.length < 3) pushQueryFragments(criticalParts, nextScene?.sceneLocation || nextScene?.visualDescriptionKO, 1, 20);
 
   pushQueryFragments(softParts, scene.visualDescriptionKO, 2, 24);
-  pushQueryFragments(softParts, scene.scriptText, 2, 22);
+  pushQueryFragments(softParts, sceneNarrativeText, 2, 22);
   pushQueryFragments(softParts, scene.visualPrompt, 1, 24);
   pushQueryFragments(softParts, globalContext, 1, 22);
-  pushQueryFragments(softParts, prevScene?.visualDescriptionKO || prevScene?.scriptText, 1, 22);
-  pushQueryFragments(softParts, nextScene?.visualDescriptionKO || nextScene?.scriptText, 1, 22);
+  pushQueryFragments(softParts, prevScene?.visualDescriptionKO || prevSceneNarrativeText, 1, 22);
+  pushQueryFragments(softParts, nextScene?.visualDescriptionKO || nextSceneNarrativeText, 1, 22);
 
   const joinedSceneText = [
     scene.visualDescriptionKO,
-    scene.scriptText,
+    sceneNarrativeText,
     scene.visualPrompt,
-    prevScene?.scriptText,
-    nextScene?.scriptText,
+    prevSceneNarrativeText,
+    nextSceneNarrativeText,
     globalContext,
   ].filter(Boolean).join(' ');
   const mappedEnglish = collectMappedEnglishTerms(joinedSceneText);
@@ -770,11 +829,11 @@ function buildReferenceSearchPlan(
     scene.entityName,
     scene.sceneLocation,
     scene.visualDescriptionKO,
-    scene.scriptText,
+    sceneNarrativeText,
     prevScene?.sceneLocation,
-    prevScene?.scriptText,
+    prevSceneNarrativeText,
     nextScene?.sceneLocation,
-    nextScene?.scriptText,
+    nextSceneNarrativeText,
     globalContext,
   ]);
   const searchSuffix = entityStrategy.suffix || eraHint || categoryHints.ko[0] || '';
@@ -848,7 +907,7 @@ function buildReferenceSearchPlan(
     conciseQuery,
     joinQueryParts([
       scene.sceneLocation || concreteAnchors[0] || '',
-      scene.visualDescriptionKO || scene.scriptText || '',
+      scene.visualDescriptionKO || sceneNarrativeText || '',
       transitionFocus[0] || '',
       searchSuffix || globalContext || '',
     ], 5, 88),
@@ -886,7 +945,7 @@ function buildReferenceSearchPlan(
     scene.sceneEra ? `시대: ${scene.sceneEra}` : '',
     scene.sceneCulture ? `문화: ${scene.sceneCulture}` : '',
     scene.visualDescriptionKO ? `장면: ${scene.visualDescriptionKO}` : '',
-    scene.scriptText ? `대본: ${scene.scriptText}` : '',
+    sceneNarrativeText ? `대본: ${sceneNarrativeText}` : '',
     transitionSignals.length > 0 ? `전환: ${transitionSignals.join(', ')}` : '',
     abstractVisualTerms.length > 0 ? `상징: ${abstractVisualTerms.join(', ')}` : '',
     globalContext ? `전체맥락: ${globalContext}` : '',
@@ -912,7 +971,12 @@ export function buildSearchQuery(
   nextScene?: Scene | null,
   globalContext?: string,
 ): string {
-  return buildReferenceSearchPlan(scene, prevScene, nextScene, globalContext).primaryQuery;
+  return buildReferenceSearchPlan(
+    scene,
+    prevScene,
+    nextScene,
+    resolveReferenceGlobalContext(globalContext, scene, prevScene, nextScene),
+  ).primaryQuery;
 }
 
 // ─── 콘텐츠 문화권 기반 검색 로케일 감지 ───
@@ -1018,8 +1082,8 @@ function detectContentLocale(scene?: Scene | null, projectTargetRegion?: ScriptT
       }
     }
 
-    // 4순위: scriptText 문자 분석
-    const text = scene.scriptText || '';
+    // 4순위: scriptText/audioScript 문자 분석
+    const text = getGoogleReferenceSceneNarrativeText(scene) || getGoogleReferenceScenePrimaryText(scene);
     if (text.length > 10) {
       const hasHangul = /[가-힣]/.test(text);
       const hasKana = /[\u3040-\u309F\u30A0-\u30FF]/.test(text);
@@ -1221,13 +1285,56 @@ function buildSearchUrl(query: string, start: number, imgSize: string, scene?: S
   return `${GOOGLE_IMAGE_SEARCH_URL}?${params.toString()}`;
 }
 
+function enrichReferencePlanWithQueryHint(
+  plan: ReferenceSearchPlan,
+  queryHint?: string,
+): ReferenceSearchPlan {
+  const normalizedHint = normalizeQueryText(queryHint || '');
+  if (!normalizedHint) return plan;
+
+  const hintFragments = extractQueryFragments(normalizedHint, 4, 30);
+  const hintAnchors = collectConcreteAnchorTerms([normalizedHint]);
+  const criticalPhrases = dedupeQueryParts([
+    ...plan.criticalPhrases,
+    normalizedHint,
+    ...hintAnchors,
+    ...hintFragments,
+  ]).slice(0, 14);
+  const softPhrases = dedupeQueryParts([
+    ...plan.softPhrases,
+    normalizedHint,
+    ...hintFragments,
+  ]).slice(0, 16);
+
+  return {
+    ...plan,
+    criticalPhrases,
+    softPhrases,
+    contextSignature: joinQueryParts([
+      ...criticalPhrases.slice(0, 4),
+      normalizedHint,
+      plan.primaryQuery,
+    ], 7, 110) || plan.contextSignature,
+    summary: plan.summary.includes(normalizedHint)
+      ? plan.summary
+      : `${plan.summary} | 검색힌트: ${normalizedHint}`.slice(0, 420),
+  };
+}
+
 function getReferencePlan(
   query: string,
   context?: ReferenceSearchContext,
 ): ReferenceSearchPlan {
-  return context?.scene
-    ? buildReferenceSearchPlan(context.scene, context.prevScene, context.nextScene, context.globalContext)
+  const effectiveGlobalContext = resolveReferenceGlobalContext(
+    context?.globalContext,
+    context?.scene,
+    context?.prevScene,
+    context?.nextScene,
+  );
+  const basePlan = context?.scene
+    ? buildReferenceSearchPlan(context.scene, context.prevScene, context.nextScene, effectiveGlobalContext)
     : buildSearchPlanFromQuery(query);
+  return enrichReferencePlanWithQueryHint(basePlan, context?.searchQueryHint || query);
 }
 
 function getReferenceSearchCacheKey(
@@ -2204,15 +2311,27 @@ export async function searchSceneReferenceImages(
   rankingMode: 'fast' | 'best' = 'best',
   options?: { bypassEmptyCache?: boolean },
 ): Promise<GoogleSearchResponse> {
+  const effectiveGlobalContext = resolveReferenceGlobalContext(globalContext, scene, prevScene, nextScene);
+  const sceneNarrativeText = getGoogleReferenceSceneNarrativeText(scene);
+  const prevSceneNarrativeText = getGoogleReferenceSceneNarrativeText(prevScene);
+  const nextSceneNarrativeText = getGoogleReferenceSceneNarrativeText(nextScene);
   // [FIX #681] AI가 대본 맥락에서 실사 이미지 검색 키워드 생성
   // 'best' 모드(사용자 수동 검색)에서만 AI 호출 — 'fast'(자동 배치)에서는 비용 발생 방지
-  const sceneText = [scene.scriptText, scene.visualDescriptionKO, scene.entityName].filter(Boolean).join(' ').trim();
+  const sceneText = [
+    sceneNarrativeText,
+    scene.visualDescriptionKO,
+    scene.visualPrompt,
+    scene.entityName,
+    scene.sceneLocation,
+    scene.sceneEra,
+    scene.sceneCulture,
+  ].filter(Boolean).join(' ').trim();
   const aiQueries = rankingMode === 'best'
     ? await generateAiSearchQueries(
         sceneText || '',
-        prevScene?.scriptText,
-        nextScene?.scriptText,
-        globalContext,
+        [prevSceneNarrativeText, prevScene?.visualDescriptionKO].filter(Boolean).join(' '),
+        [nextSceneNarrativeText, nextScene?.visualDescriptionKO].filter(Boolean).join(' '),
+        effectiveGlobalContext,
         // [ENHANCE] 장면 메타데이터를 AI에 전달 — 엔티티/장소/시대/문화 인식 강화
         {
           entityName: scene.entityName,
@@ -2228,21 +2347,31 @@ export async function searchSceneReferenceImages(
   const useAiQuery = aiQueries.length > 0;
   const query = useAiQuery
     ? aiQueries[0]
-    : buildSearchQuery(scene, prevScene, nextScene, globalContext);
+    : buildSearchQuery(scene, prevScene, nextScene, effectiveGlobalContext);
 
-  // [FIX #681] AI 쿼리 사용 시 context를 넘기지 않아야 getReferencePlan이 AI 쿼리 기반으로 동작
   const targetRegion = getProjectTargetRegion();
+  const searchContext: ReferenceSearchContext = {
+    scene,
+    prevScene,
+    nextScene,
+    globalContext: effectiveGlobalContext,
+    searchQueryHint: query,
+    projectTargetRegion: targetRegion,
+  };
   const response = await searchGoogleImages(query, startIndex, 'large', {
-    context: useAiQuery ? { projectTargetRegion: targetRegion } : { scene, prevScene, nextScene, globalContext, projectTargetRegion: targetRegion },
+    context: searchContext,
     rankingMode,
     bypassEmptyCache: options?.bypassEmptyCache,
   });
 
-  // AI 첫 번째 쿼리 결과가 비어있으면 나머지 AI 쿼리로 재시도 — targetRegion 유지
+  // AI 첫 번째 쿼리 결과가 비어있으면 나머지 AI 쿼리로 재시도
   if (response.items.length === 0 && aiQueries.length > 1) {
     for (let i = 1; i < aiQueries.length; i++) {
       const retryResponse = await searchGoogleImages(aiQueries[i], startIndex, 'large', {
-        context: { projectTargetRegion: targetRegion },
+        context: {
+          ...searchContext,
+          searchQueryHint: aiQueries[i],
+        },
         rankingMode,
         bypassEmptyCache: options?.bypassEmptyCache,
       });
@@ -2252,10 +2381,13 @@ export async function searchSceneReferenceImages(
 
   // AI 쿼리 전부 실패 시 기존 방식으로 폴백
   if (response.items.length === 0 && aiQueries.length > 0) {
-    const fallbackQuery = buildSearchQuery(scene, prevScene, nextScene, globalContext);
+    const fallbackQuery = buildSearchQuery(scene, prevScene, nextScene, effectiveGlobalContext);
     if (fallbackQuery !== query) {
       return searchGoogleImages(fallbackQuery, startIndex, 'large', {
-        context: { scene, prevScene, nextScene, globalContext, projectTargetRegion: targetRegion },
+        context: {
+          ...searchContext,
+          searchQueryHint: fallbackQuery,
+        },
         rankingMode,
         bypassEmptyCache: options?.bypassEmptyCache,
       });
@@ -2343,7 +2475,7 @@ export async function autoApplyGoogleReferences(
   const usedImageUrls = new Set<string>();
   const candidates = scenes
     .map((scene, index) => ({ scene, index }))
-    .filter(({ scene }) => !!scene.scriptText || !!scene.visualPrompt);
+    .filter(({ scene }) => hasGoogleReferenceSceneContent(scene));
   let cursor = 0;
 
   const worker = async () => {
@@ -2410,6 +2542,7 @@ export async function autoApplyGoogleReferences(
           if (!isPrimaryReferenceProvider(response.provider)) fallbackCount++;
           updateScene(scene.id, {
             imageUrl: selectedItem.link,
+            previousSceneImageUrl: getPreviousSceneImageUrlForReplace(latestScene, selectedItem.link),
             isGeneratingImage: false,
             generationStatus: isPrimaryReferenceProvider(response.provider) ? '구글 레퍼런스 적용됨' : '대체 레퍼런스 적용됨',
             imageUpdatedAfterVideo: !!latestScene?.videoUrl,

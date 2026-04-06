@@ -5645,6 +5645,7 @@ interface EditRoomScene {
   imageUrl?: string;
   videoUrl?: string;
   scriptText?: string;
+  audioScript?: string;
   videoReferences?: VideoReference[];
 }
 
@@ -5665,6 +5666,16 @@ interface EditRoomNarrationClip {
 interface EditRoomReferenceClip {
   blob: Blob;
   fileName: string;
+}
+
+function getEditRoomSceneNarrativeText(scene?: EditRoomScene | null): string {
+  const candidates = [scene?.scriptText, scene?.audioScript];
+  for (const text of candidates) {
+    if (typeof text === 'string' && text.trim()) {
+      return text.trim();
+    }
+  }
+  return '';
 }
 
 function roundMotionValue(value: number, digits = 6): number {
@@ -5911,7 +5922,7 @@ function buildEditRoomFcpXml(params: {
   // 마커 (장면 경계)
   const markers = timeline.map((t, i) => {
     const scene = scenes.find(s => s.id === t.sceneId);
-    const label = scene?.scriptText?.slice(0, 50) || `장면 ${i + 1}`;
+    const label = getEditRoomSceneNarrativeText(scene).slice(0, 50) || `장면 ${i + 1}`;
     return `
     <marker>
       <name>${escXml(`#${i + 1} ${label}`)}</name>
@@ -5934,7 +5945,7 @@ function buildEditRoomFcpXml(params: {
     const hasEmbeddedAudio = actualFile ? actualFile.toLowerCase().endsWith('.mp4') : !!scene?.videoUrl;
     const isStillImage = !hasEmbeddedAudio;
     const clipDurFrames = toFrames(t.imageDuration);
-    const clipLabel = (scene?.scriptText || `장면 ${i + 1}`).slice(0, 40);
+    const clipLabel = (getEditRoomSceneNarrativeText(scene) || `장면 ${i + 1}`).slice(0, 40);
     const motionTrack = isStillImage
       ? compileNleMotionTrack(t, width, height, fps, { sampleMode: 'per-frame', simplify: false })
       : null;
@@ -5964,7 +5975,7 @@ function buildEditRoomFcpXml(params: {
             <sourcetrack><mediatype>video</mediatype><trackindex>1</trackindex></sourcetrack>
             <labels><label2>Iris</label2></labels>
             <logginginfo>
-              <description>${escXml(scene?.scriptText || '')}</description>
+              <description>${escXml(getEditRoomSceneNarrativeText(scene))}</description>
               <scene>${escXml(String(i + 1))}</scene>
             </logginginfo>
             <link>
@@ -6290,8 +6301,9 @@ function buildEditRoomSceneSrt(timeline: UnifiedSceneTiming[], scenes: EditRoomS
       }
     } else {
       const scene = scenes.find(s => s.id === t.sceneId);
-      if (scene?.scriptText?.trim()) {
-        entries.push(`${entries.length + 1}\n${secondsToSrtTime(t.imageStartTime)} --> ${secondsToSrtTime(t.imageEndTime)}\n${breakLines(scene.scriptText)}`);
+      const sceneText = getEditRoomSceneNarrativeText(scene);
+      if (sceneText) {
+        entries.push(`${entries.length + 1}\n${secondsToSrtTime(t.imageStartTime)} --> ${secondsToSrtTime(t.imageEndTime)}\n${breakLines(sceneText)}`);
       }
     }
   }

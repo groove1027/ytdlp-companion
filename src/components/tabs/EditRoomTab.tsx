@@ -16,7 +16,10 @@ import {
   installNleViaCompanion,
 } from '../../services/nleExportService';
 import type { EditRoomNleTarget } from '../../services/nleExportService';
-import { downloadAndTrimReferenceClip } from '../../services/youtubeReferenceService';
+import {
+  downloadAndTrimReferenceClip,
+  isReferenceClipCompatibilityErrorMessage,
+} from '../../services/youtubeReferenceService';
 import { showToast } from '../../stores/uiStore';
 import EditRoomHeader from './editroom/EditRoomHeader';
 import EditRoomSceneList from './editroom/EditRoomSceneList';
@@ -35,6 +38,7 @@ import { loadFont } from '../../services/fontLoaderService';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
 import { logger } from '../../services/LoggerService';
 import VersionSelectorBar from './editroom/VersionSelectorBar';
+import { getSceneNarrationText } from '../../utils/sceneText';
 
 /** globalSubtitleStyle이 null일 때 사용하는 기본 자막 스타일 (subtitleTemplates.ts의 base() 기본값과 동일) */
 const DEFAULT_SUBTITLE_STYLE: SubtitleStyle = {
@@ -905,12 +909,13 @@ const ScenePreviewPanel: React.FC<{
   const subtitleTextBase = React.useMemo(() => {
     if (!activeId) return '';
     const sub = sceneSubtitles[activeId];
-    if (!sub) return activeScene?.scriptText || '';
+    const activeSceneNarration = getSceneNarrationText(activeScene);
+    if (!sub) return activeSceneNarration;
     // segments가 있으면 세그먼트 텍스트를 줄바꿈으로 합쳐서 표시 (정지 상태에서도 분할 결과 반영)
     if (sub.segments && sub.segments.length > 0) {
       return sub.segments.map(s => s.text).join('\n');
     }
-    return sub.text || activeScene?.scriptText || '';
+    return sub.text || activeSceneNarration;
   }, [activeId, sceneSubtitles, activeScene]);
 
   // 재생 중: 현재 세그먼트만 표시, 정지 시: 전체 텍스트 (세그먼트 반영)
@@ -1012,10 +1017,15 @@ const ScenePreviewPanel: React.FC<{
       updateScene(activeScene.id, {
         videoUrl: objectUrl,
         imageUpdatedAfterVideo: false,
+        videoReferences: [ref, ...(freshScene.videoReferences || []).filter((item) => item.videoId !== ref.videoId)].slice(0, 5),
       });
       showToast('레퍼런스 클립을 장면 영상으로 적용했습니다.');
     } catch (error) {
-      showToast(`레퍼런스 클립 ${mode === 'download' ? '다운로드' : '적용'} 실패: ${error instanceof Error ? error.message : '알 수 없는 오류'}`);
+      const message = error instanceof Error ? error.message : '알 수 없는 오류';
+      showToast(
+        `레퍼런스 클립 ${mode === 'download' ? '다운로드' : '적용'} 실패: ${message}`,
+        isReferenceClipCompatibilityErrorMessage(message) ? 8000 : 3000,
+      );
     } finally {
       setReferenceAction(null);
     }
@@ -1563,7 +1573,8 @@ const EditRoomTab: React.FC = () => {
           id: s.id,
           imageUrl: s.imageUrl,
           videoUrl: s.imageUpdatedAfterVideo ? undefined : s.videoUrl,
-          scriptText: s.scriptText,
+          scriptText: getSceneNarrationText(s),
+          audioScript: s.audioScript,
           videoReferences: s.videoReferences,
         })),
         narrationLines: narrationLinesForNle,
@@ -1646,7 +1657,11 @@ const EditRoomTab: React.FC = () => {
         target === 'capcut' ? 7000 : undefined,
       );
     } catch (err) {
-      showToast(`${targetLabel} 내보내기 실패: ` + (err instanceof Error ? err.message : '알 수 없는 오류'));
+      const message = err instanceof Error ? err.message : '알 수 없는 오류';
+      showToast(
+        `${targetLabel} 내보내기 실패: ${message}`,
+        isReferenceClipCompatibilityErrorMessage(message) ? 8000 : 3000,
+      );
     }
   }, [timeline, scenes, lines, requireAuth, projectAspectRatio]);
 
@@ -1884,7 +1899,7 @@ const EditRoomTab: React.FC = () => {
         });
 
         if (!abortController.signal.aborted) {
-          const filename = buildSceneFilename(i, scene?.scriptText || '');
+          const filename = buildSceneFilename(i, getSceneNarrationText(scene));
           downloadMp4(blob, filename);
         }
       }

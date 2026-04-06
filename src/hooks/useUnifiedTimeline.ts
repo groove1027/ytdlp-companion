@@ -3,6 +3,7 @@ import { useProjectStore } from '../stores/projectStore';
 import { useSoundStudioStore } from '../stores/soundStudioStore';
 import { useEditRoomStore } from '../stores/editRoomStore';
 import { UnifiedSceneTiming, SceneTransitionConfig } from '../types';
+import { getSceneNarrationText } from '../utils/sceneText';
 
 /**
  * 통합 타임라인 훅
@@ -100,7 +101,7 @@ export function useUnifiedTimeline(): UnifiedSceneTiming[] {
       // 자막 세그먼트: segments 우선, 없으면 단일 블록
       // editSub가 존재하면 (편집실 초기화 완료) editSub.text를 그대로 사용
       // → 사용자가 자막을 비우면 ''이 유지되어 SRT에서도 제외됨
-      const subtitleText = editSub ? editSub.text : (matchedLine?.text || scene.scriptText || '');
+      const subtitleText = editSub ? editSub.text : (matchedLine?.text || getSceneNarrationText(scene));
       const subtitleSegments = editSub?.segments?.length
         ? editSub.segments.map((seg, i) => ({
             lineId: `${matchedLine?.id || `auto-${sceneId}`}-seg${i}`,

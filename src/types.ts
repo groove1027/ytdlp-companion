@@ -624,6 +624,7 @@ export interface ExportManifest {
     id: string;
     index: number;
     scriptText: string;
+    audioScript?: string;
     visualPrompt: string;
     cameraMovement?: string;
     imageFile?: string;

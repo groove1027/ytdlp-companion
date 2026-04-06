@@ -12,6 +12,7 @@ import type { UploadStep, UploadPlatform, ThreadsAuthState, NaverClipAuthState, 
 import { useElapsedTimer, formatElapsed } from '../../hooks/useElapsedTimer';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
 import { logger } from '../../services/LoggerService';
+import { getSceneNarrationText, getScenePrimaryText } from '../../utils/sceneText';
 
 // --- Platform Config ---
 
@@ -1578,18 +1579,18 @@ const StepMetadata: React.FC = () => {
   const getScriptText = useCallback(() => {
     if (finalScript && finalScript.trim().length > 0) return finalScript;
     if (scenes.length > 0) {
-      const joined = scenes.map((s) => s.scriptText || '').filter(Boolean).join('\n');
+      const joined = scenes.map((scene) => getSceneNarrationText(scene)).filter(Boolean).join('\n');
       if (joined.trim()) return joined;
     }
     return pastedScript;
   }, [finalScript, scenes, pastedScript]);
 
   const getSceneSummaries = useCallback(() => {
-    return scenes.map((s) => s.scriptText || s.visualDescriptionKO || '').filter(Boolean);
+    return scenes.map((scene) => getScenePrimaryText(scene)).filter(Boolean);
   }, [scenes]);
 
   // 파이프라인에서 넘어온 대본 존재 여부
-  const hasPipelineScript = !!(finalScript?.trim() || scenes.some(s => s.scriptText?.trim()));
+  const hasPipelineScript = !!(finalScript?.trim() || scenes.some((scene) => getSceneNarrationText(scene)));
 
   // AI 메타데이터 + 쇼핑 태그 일괄 생성 (마스터 지침서 1-6단계)
   const handleAiGenerate = useCallback(async () => {

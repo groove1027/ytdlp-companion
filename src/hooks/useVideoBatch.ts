@@ -17,6 +17,7 @@ import { PRICING } from '../constants';
 import { useUIStore } from '../stores/uiStore';
 import { useProjectStore } from '../stores/projectStore';
 import { KieBatchItemResult, runKieBatch } from '../utils/kieBatchRunner';
+import { getSceneNarrationText } from '../utils/sceneText';
 
 // Helper for Base64 to File
 function base64ToFile(base64: string, filename: string): File {
@@ -323,7 +324,7 @@ export const useVideoBatch = (
                 logger.info(`[v4.7] Reusing pre-generated dialogue for Scene ${sceneId}: "${generatedDialogue}"`);
             } else if (effectiveModel === VideoModel.GROK && !isSafeMode && (overrideSpeech !== undefined ? overrideSpeech : (scene.grokSpeechMode || false))) {
                 logger.info(`Generating Dialogue for Scene ${sceneId}...`);
-                const audioData = await generateCharacterDialogue(scene.scriptText, scene.visualPrompt);
+                const audioData = await generateCharacterDialogue(getSceneNarrationText(scene), scene.visualPrompt);
                 generatedDialogue = audioData.dialogue;
                 generatedSfx = audioData.sfx;
                 logger.success(`Dialogue Generated: "${generatedDialogue}"`);
@@ -705,7 +706,7 @@ export const useVideoBatch = (
         try {
             if (!getXaiKey()) throw new Error("xAI API Key가 설정되지 않았습니다.");
 
-            const prompt = config?.v2vPrompt || scene.scriptText;
+            const prompt = config?.v2vPrompt || getSceneNarrationText(scene);
             const resolution = config?.v2vResolution || '720p';
 
             const taskId = await createXaiVideoEditTask(scene.sourceVideoUrl, prompt, resolution);

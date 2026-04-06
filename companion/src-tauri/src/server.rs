@@ -3,12 +3,13 @@ use axum::{
     extract::Query,
     http::{HeaderMap, StatusCode},
     middleware,
-    response::{IntoResponse, Json},
+    response::{IntoResponse, Json, Response},
     routing::{get, post},
     Router,
 };
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, OnceLock};
 use tokio::sync::RwLock;
 use tokio_util::io::ReaderStream;
@@ -197,6 +198,8 @@ struct CachedHealth {
 }
 
 static CACHED_HEALTH: OnceLock<RwLock<CachedHealth>> = OnceLock::new();
+static FFMPEG_CUT_CAPABILITY_READY: AtomicBool = AtomicBool::new(false);
+static FFMPEG_CUT_CAPABILITY_SUPPORTED: AtomicBool = AtomicBool::new(false);
 
 fn cached_health() -> &'static RwLock<CachedHealth> {
     CACHED_HEALTH.get_or_init(|| {
@@ -205,11 +208,25 @@ fn cached_health() -> &'static RwLock<CachedHealth> {
                 "ytdlp".to_string(),
                 "download".to_string(),
                 "frames".to_string(),
+                "google-proxy".to_string(),
+                "ffmpeg-cut".to_string(),
                 "nle-install".to_string(),
             ],
             ytdlp_version: "loading...".to_string(),
         })
     })
+}
+
+fn update_ffmpeg_cut_capability_cache(supported: bool) {
+    FFMPEG_CUT_CAPABILITY_SUPPORTED.store(supported, Ordering::Relaxed);
+    FFMPEG_CUT_CAPABILITY_READY.store(true, Ordering::Relaxed);
+}
+
+fn read_ffmpeg_cut_capability_cache() -> (bool, bool) {
+    (
+        FFMPEG_CUT_CAPABILITY_READY.load(Ordering::Relaxed),
+        FFMPEG_CUT_CAPABILITY_SUPPORTED.load(Ordering::Relaxed),
+    )
 }
 
 /// 무거운 서비스 감지 — 서버 시작 시 + 5분 주기 백그라운드 실행
@@ -222,6 +239,7 @@ async fn detect_services() -> CachedHealth {
         "ytdlp".to_string(),
         "download".to_string(),
         "frames".to_string(),
+        "google-proxy".to_string(),
     ];
     let python = platform::python_cmd();
 
@@ -288,14 +306,16 @@ async fn detect_services() -> CachedHealth {
     services.push("nle-install".to_string());
     // ffmpeg
     let ffmpeg_path = ytdlp::get_ffmpeg_path_public();
-    if platform::async_cmd(&ffmpeg_path)
+    let ffmpeg_cut_supported = platform::async_cmd(&ffmpeg_path)
         .args(["-version"])
         .output()
         .await
         .map(|o| o.status.success())
-        .unwrap_or(false)
-    {
+        .unwrap_or(false);
+    update_ffmpeg_cut_capability_cache(ffmpeg_cut_supported);
+    if ffmpeg_cut_supported {
         services.push("ffmpeg".to_string());
+        services.push("ffmpeg-cut".to_string());
     }
 
     println!("[Companion] 서비스 감지 완료: {:?}", services);
@@ -382,6 +402,16 @@ struct HealthResponse {
     #[serde(rename = "lastUpdateCheck")]
     last_update_check: i64,
     services: Vec<String>,
+}
+
+#[derive(Serialize, Clone)]
+struct FfmpegCapabilityResponse {
+    ready: bool,
+    pending: bool,
+    supported: bool,
+    #[serde(rename = "ffmpegCutSupported")]
+    ffmpeg_cut_supported: bool,
+    error: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -655,6 +685,7 @@ pub async fn start_server(_app: tauri::AppHandle) -> Result<(), Box<dyn std::err
         // NLE 직접 설치 (CapCut/Premiere/Filmora)
         .route("/api/nle/install", post(nle_install_handler))
         // FFmpeg 인코딩
+        .route("/api/ffmpeg/capability", get(ffmpeg_capability_handler))
         .route("/api/ffmpeg/transcode", post(ffmpeg_transcode_handler))
         .route("/api/ffmpeg/merge", post(ffmpeg_merge_handler))
         .route("/api/ffmpeg/cut", post(ffmpeg_cut_handler))
@@ -671,13 +702,9 @@ pub async fn start_server(_app: tauri::AppHandle) -> Result<(), Box<dyn std::err
     let addr_v4 = SocketAddr::from(([127, 0, 0, 1], 9876));
     println!("[Companion] 서버 시작: http://{}", addr_v4);
 
-    // [FIX #914 + tokio 블로킹 수정] 서비스 감지를 60초 지연 후 실행
-    // detect_services()가 Python subprocess를 실행하면서 tokio 런타임을 블로킹 →
-    // 서버 시작 직후 health/download 엔드포인트가 응답 불가.
-    // 60초 지연으로 서버가 먼저 안정화된 후 감지 실행.
+    // [FIX #914 + 6차] health 기본 캐시에는 ffmpeg-cut을 즉시 노출하고,
+    // 실제 capability 감지는 서버 시작 직후 1회 + 5분마다 백그라운드 갱신.
     tokio::spawn(async {
-        // 서버 안정화 대기 — health/download가 먼저 응답할 수 있게
-        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
         loop {
             let result = detect_services().await;
             *cached_health().write().await = result;
@@ -1123,6 +1150,36 @@ async fn health_handler() -> Json<HealthResponse> {
         last_update_check,
         services: cached.services.clone(),
     })
+}
+
+fn build_ffmpeg_capability_response() -> FfmpegCapabilityResponse {
+    let (ready, ffmpeg_cut_supported) = read_ffmpeg_cut_capability_cache();
+    let pending = !ready;
+    FfmpegCapabilityResponse {
+        ready,
+        pending,
+        supported: ready && ffmpeg_cut_supported,
+        ffmpeg_cut_supported,
+        error: if pending {
+            Some("FFmpeg capability 확인 중".to_string())
+        } else if !ffmpeg_cut_supported {
+            Some("FFmpeg 실행 불가".to_string())
+        } else {
+            None
+        },
+    }
+}
+
+fn ffmpeg_capability_into_response(capability: FfmpegCapabilityResponse) -> Response {
+    if capability.supported {
+        Json(capability).into_response()
+    } else {
+        (StatusCode::SERVICE_UNAVAILABLE, Json(capability)).into_response()
+    }
+}
+
+async fn ffmpeg_capability_handler() -> Response {
+    ffmpeg_capability_into_response(build_ffmpeg_capability_response())
 }
 
 // ──────────────────────────────────────────────
@@ -2617,6 +2674,10 @@ async fn ffmpeg_merge_handler(Json(req): Json<FfmpegMergeRequest>) -> impl IntoR
 
 async fn ffmpeg_cut_handler(Json(req): Json<FfmpegCutRequest>) -> impl IntoResponse {
     use base64::Engine;
+
+    if req.input.trim().is_empty() {
+        return ffmpeg_capability_into_response(build_ffmpeg_capability_response());
+    }
 
     let input_data = match base64::engine::general_purpose::STANDARD.decode(&req.input) {
         Ok(d) => d,

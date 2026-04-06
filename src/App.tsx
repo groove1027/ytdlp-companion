@@ -58,6 +58,7 @@ import { isTrialExpired, getTrialDaysLeft } from './services/authService';
 import TrialGuideModal from './components/TrialGuideModal';
 import { useCostStore } from './stores/costStore';
 import { useProjectStore, autoRestoreOrCreateProject } from './stores/projectStore';
+import { getSceneNarrationText } from './utils/sceneText';
 import { useNavigationStore } from './stores/navigationStore';
 import { useImageVideoStore } from './stores/imageVideoStore';
 import { logger } from './services/LoggerService';
@@ -892,7 +893,7 @@ const App: React.FC = () => {
               
               // If requiresTextRendering is true (from AI), but text is missing, provide fallback.
               if (requiresText && (!textToRender || textToRender.trim() === "")) {
-                  textToRender = s.scriptText; 
+                  textToRender = getSceneNarrationText(s); 
               }
 
               return {
@@ -1018,6 +1019,7 @@ const App: React.FC = () => {
       const { scenes: currentScenes, config: currentConfig } = useProjectStore.getState();
       const scene = currentScenes.find(s => s.id === sceneId);
       if (!scene || !currentConfig) return;
+      const narrationText = getSceneNarrationText(scene);
       try {
           if (!getGeminiKey()) {
               throw new Error("API Key가 설정되지 않았습니다.");
@@ -1040,9 +1042,9 @@ const App: React.FC = () => {
           const sceneIdx = allScenes.findIndex(s => s.id === sceneId);
           const prevScene = sceneIdx > 0 ? allScenes[sceneIdx - 1] : undefined;
           const nextScene = sceneIdx < allScenes.length - 1 ? allScenes[sceneIdx + 1] : undefined;
-          const prompt = await generatePromptFromScript(scene.scriptText, autoStyle, currentConfig.textForceLock, {
-              prevSceneText: prevScene?.scriptText,
-              nextSceneText: nextScene?.scriptText,
+          const prompt = await generatePromptFromScript(narrationText, autoStyle, currentConfig.textForceLock, {
+              prevSceneText: getSceneNarrationText(prevScene) || undefined,
+              nextSceneText: getSceneNarrationText(nextScene) || undefined,
               prevScenePrompt: prevScene?.visualPrompt,
               nextScenePrompt: nextScene?.visualPrompt,
               globalContext: currentConfig.globalContext,
@@ -1106,7 +1108,8 @@ const App: React.FC = () => {
                   }
                   return {
                       id: ms.id || `imported_${idx}`,
-                      scriptText: ms.scriptText || '',
+                      scriptText: ms.scriptText || ms.audioScript || '',
+                      audioScript: ms.audioScript || '',
                       visualPrompt: ms.visualPrompt || '',
                       visualDescriptionKO: '',
                       characterPresent: ms.characterPresent || false,
@@ -1126,7 +1129,7 @@ const App: React.FC = () => {
                   config: manifest.config,
                   scenes,
                   thumbnails: manifest.thumbnails || [],
-                  fullNarrationText: scenes.map((s: { scriptText: string }) => s.scriptText).join(' ').substring(0, 500),
+                  fullNarrationText: scenes.map((s: Scene) => getSceneNarrationText(s)).join(' ').substring(0, 500),
                   lastModified: manifest.createdAt || Date.now(),
                   costStats: manifest.costStats,
               };
@@ -1202,7 +1205,7 @@ const App: React.FC = () => {
       {showFullScriptModal && (() => {
           const hasKO = scenes.some(s => s.scriptTextKO);
           const koText = scenes.map(s => s.scriptTextKO || '').filter(Boolean).join('\n\n');
-          const origText = scenes.map(s => s.scriptText).join('\n\n');
+          const origText = scenes.map(s => getSceneNarrationText(s)).filter(Boolean).join('\n\n');
           const downloadTextFile = (text: string, filename: string) => {
               const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
               const url = URL.createObjectURL(blob);

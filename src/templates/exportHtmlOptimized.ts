@@ -41,6 +41,10 @@ body{font-family:'Pretendard',sans-serif;background:#111827;color:#e5e7eb;margin
 const SCENES_PER_PAGE=20;
 let manifest=null,currentPage=0,totalPages=0;
 
+function getSceneNarrationText(scene){
+  return (scene?.scriptText || scene?.audioScript || '').trim();
+}
+
 async function init(){
   try{
     const r=await fetch('data/manifest.json');
@@ -84,7 +88,7 @@ function renderPage(page){
       +(s.characterPresent?'<span style="width:6px;height:6px;border-radius:50%;background:#a78bfa"></span>':'')
       +(s.videoUrl?'<span style="width:6px;height:6px;border-radius:50%;background:#34d399"></span>':'')
       +'</div>'
-      +'<p style="font-size:11px;color:#9ca3af;line-height:1.4;max-height:80px;overflow-y:auto">'+(s.scriptText||'(나레이션 없음)')+'</p>'
+      +'<p style="font-size:11px;color:#9ca3af;line-height:1.4;max-height:80px;overflow-y:auto">'+(getSceneNarrationText(s)||'(나레이션 없음)')+'</p>'
       +'</div></div>';
   }).join('');
   // Pagination
