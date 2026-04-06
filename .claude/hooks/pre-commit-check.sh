@@ -101,6 +101,30 @@ fi
 # (이전: 경고 + 차단 없음 → 유지)
 
 # ──────────────────────────────────────────────
+# CHECK 2.5: MIN_REQUIRED_COMPANION_VERSION 변경 시 release 동기화 검증
+# 웹앱 MIN을 올렸는데 public mirror에 해당 버전이 없으면 사용자 무한 다운로드 루프.
+# (companion v1.3.0 사고 재발 방지 — 2026-04-06)
+# ──────────────────────────────────────────────
+CONSTANTS_TOUCHED=$(cd "$PROJECT_DIR" && (git diff --cached --name-only; git diff --name-only HEAD) 2>/dev/null | grep -c 'src/constants.ts')
+if [ "$CONSTANTS_TOUCHED" -gt 0 ]; then
+    MIN_DIFF=$(cd "$PROJECT_DIR" && git diff --cached -- src/constants.ts 2>/dev/null | grep -E '^[+-].*MIN_REQUIRED_COMPANION_VERSION' || true)
+    MIN_DIFF2=$(cd "$PROJECT_DIR" && git diff -- src/constants.ts 2>/dev/null | grep -E '^[+-].*MIN_REQUIRED_COMPANION_VERSION' || true)
+    if [ -n "$MIN_DIFF" ] || [ -n "$MIN_DIFF2" ]; then
+        VERIFY_SCRIPT="$PROJECT_DIR/scripts/verify-companion-release-sync.mjs"
+        if [ -f "$VERIFY_SCRIPT" ]; then
+            echo ""
+            echo "🔍 MIN_REQUIRED_COMPANION_VERSION 변경 감지 — release sync 검증 중..."
+            if ! node "$VERIFY_SCRIPT" 2>&1; then
+                ERRORS+=("❌ [Release Sync] MIN_REQUIRED_COMPANION_VERSION이 변경됐는데 public mirror에 해당 릴리스가 없다!")
+                ERRORS+=("   → 이 상태로 푸시하면 모든 사용자가 무한 다운로드 루프에 빠진다 (companion v1.3.0 사고 재발).")
+                ERRORS+=("   → 해결: bash scripts/mirror-companion-release.sh companion-v<MIN_REQUIRED 버전>")
+                ERRORS+=("   → 또는: MIN_REQUIRED_COMPANION_VERSION을 public mirror에 있는 버전으로 조정")
+            fi
+        fi
+    fi
+fi
+
+# ──────────────────────────────────────────────
 # CHECK 3: UI/서비스/스토어/훅/유틸 변경 시 Playwright E2E 검증 필수
 # (touch로 우회 불가 — 실제 스크린샷 파일 증거 필요)
 # ──────────────────────────────────────────────

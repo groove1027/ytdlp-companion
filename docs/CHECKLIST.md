@@ -8,6 +8,14 @@
 
 ## 🟢 완료된 작업
 
+- [x] **2026-04-07 — companion v1.3.0 무한 다운로드 루프 수정 (3-fold fix)**
+  - **즉시**: companion-v1.3.0을 public `groove1027/ytdlp-companion` 저장소로 미러 게시 (DMG/EXE/MSI 3개 자산 + SHA256). 사용자 화면 새로고침만으로 무한 루프 탈출 가능.
+  - **보강**: `src/constants.ts` release fetch 강화 — in-flight dedup + generation guard + companion-v* 필터 + semver max + 빈 문자열/null 처리 + 6h TTL force bypass + cold-cache 자동 복구. `src/components/CompanionGateModal.tsx` release-pending sub-state 도입 — 자기모순 "현재 v? → 최신 v?" 문구 차단, "Release Pending" 배지 + Troubleshooting 안내 + liveDetected 기반 launch 분기.
+  - **예방**: `scripts/verify-companion-release-sync.mjs` (MIN ↔ public mirror 검증, 5xx/네트워크 에러 fail-safe), `scripts/mirror-companion-release.sh` (수동 미러링 헬퍼), `.github/workflows/test.yml` (CI 검증 step), `.github/workflows/build-companion.yml` (auto-mirror via PUBLIC_RELEASE_PAT), `.claude/hooks/pre-commit-check.sh` (CHECK 2.5: MIN bump 시 release sync 강제).
+  - **검증**: Codex MCP gpt-5.4 xhigh 6차 review 통과, Playwright E2E (release-pending 분기 + 12개 assertion) 통과, tsc 0 errors, vitest 29 passed, vite build ✓.
+  - **삭제**: stale fake-E2E `test-e2e/907-update-detect.test.ts` (string-grep, 이미 삭제된 CompanionBanner 참조).
+
+
 ### [2026-04-06] 26차 — Premiere native export v45 가짜 다운그레이드 제거 + legacy v43 기준 재정렬
 - [x] `rg -n "buildPremiereProjectXml|generatePremiereNativeProjectBytes|normalizePremiereProjectCompatibility|clonePremiereRootSubgraph|PREMIERE_V45_|PREMIERE_NATIVE_TEMPLATE_URL|patch_prproj_files" src/services/nleExportService.ts companion/src-tauri/src/server.rs`로 영향 범위 전수 조사 완료
 - [x] `src/assets/premiere-native-template.prproj`, `src/assets/premiere-native-template-v45.prproj`, `/tmp/prproj-inspect/legacy.prproj`, `/tmp/prproj-inspect/v45.prproj`를 직접 비교해 legacy v43의 실제 시퀀스 UID/TrackGroup ID/render IDs와 baked placeholder timeline 구조를 확인

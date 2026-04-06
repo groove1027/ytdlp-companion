@@ -49,3 +49,16 @@ jobs:
       - name: Run Vitest
         # 단위 테스트만 검증 — tsc/build 검증은 Cloudflare Pages 빌드가 처리
         run: npm run test:run
+
+      # ──────────────────────────────────────────────────────────────
+      # Companion release sync verification
+      # 웹앱이 요구하는 MIN_REQUIRED_COMPANION_VERSION이 public 미러
+      # (groove1027/ytdlp-companion)에 실제로 게시되어 있는지 확인.
+      # 이 검증이 빠지면 MIN을 올린 PR이 prod에 머지되었을 때 모든 사용자가
+      # 무한 다운로드 루프에 빠진다 (release: companion v1.3.0 사고 재발 방지).
+      # ──────────────────────────────────────────────────────────────
+      - name: Verify companion release sync
+        working-directory: ${{ github.workspace }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/verify-companion-release-sync.mjs

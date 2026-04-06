@@ -3,10 +3,19 @@ import {
   getCompanionDownloadUrl,
   getCompanionLatestVersion,
   getCompanionOsLabel,
+  hasCachedCompanionRelease,
+  isCompanionReleasePending,
   MIN_REQUIRED_COMPANION_VERSION,
+  refreshCompanionRelease,
+  waitForInitialReleaseFetch,
 } from '../constants';
+
+// [Codex review #5-2] react-hooks/exhaustive-deps 회피 — 컴포넌트 스코프 상수가
+// hook 안에 있으면 lint 경고 후보. 모듈 상수로 끌어올림.
+const RELEASE_RECHECK_INTERVAL_MS = 180_000;
 import {
   getCompanionVersion,
+  isCompanionDetected,
   isCompanionOutdated,
   recheckCompanion,
   tryLaunchCompanion,
@@ -58,7 +67,14 @@ function buildStatusMessage(
   currentVersion: string | null,
   latestVersion: string,
   reason: 'auto' | 'manual' | 'poll',
+  releasePending: boolean,
 ): string {
+  // [FIX] release-pending: GitHub의 latest가 MIN보다 낮은 자기모순 상태.
+  // 이 경우 사용자가 다운로드해도 outdated로 다시 떨어지므로 안내 문구를 분리.
+  if (releasePending) {
+    if (reason === 'manual') return `최신 릴리스 정보를 다시 확인하고 있습니다. (현재 헬퍼 v${currentVersion ?? '?'})`;
+    return `새 버전(v${MIN_REQUIRED_COMPANION_VERSION})이 곧 게시됩니다. 잠시 후 자동으로 다시 확인합니다. 현재 헬퍼: v${currentVersion ?? '?'}`;
+  }
   if (mode === 'outdated') {
     if (reason === 'manual') return `업데이트 후 다시 확인 중입니다. 현재 감지 버전은 v${currentVersion ?? '?'}입니다.`;
     return `현재 v${currentVersion ?? '?'}가 실행 중입니다. 최소 v${MIN_REQUIRED_COMPANION_VERSION}, 최신 v${latestVersion} 이상이 필요합니다.`;
@@ -85,7 +101,10 @@ async function copyText(text: string): Promise<boolean> {
   return copied;
 }
 
-function ModeBadge({ mode }: { mode: 'missing' | 'outdated' }) {
+function ModeBadge({ mode, releasePending }: { mode: 'missing' | 'outdated'; releasePending: boolean }) {
+  if (releasePending) {
+    return <div className="inline-flex items-center gap-2 rounded-full border border-amber-500/40 bg-amber-500/15 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-amber-200">Release Pending</div>;
+  }
   const className = mode === 'outdated'
     ? 'border-red-500/40 bg-red-500/15 text-red-200'
     : 'border-orange-500/40 bg-orange-500/15 text-orange-200';
@@ -180,18 +199,22 @@ function StatusCard({
   lastCheckedAt,
   mode,
   statusMessage,
+  releasePending,
 }: {
   isChecking: boolean;
   lastCheckedAt: number | null;
   mode: 'missing' | 'outdated';
   statusMessage: string;
+  releasePending: boolean;
 }) {
   const statusClass = isChecking
     ? 'border-blue-500/40 bg-blue-500/10 text-blue-300'
-    : mode === 'outdated'
-      ? 'border-red-500/40 bg-red-500/10 text-red-300'
-      : 'border-orange-500/40 bg-orange-500/10 text-orange-300';
-  const statusIcon = isChecking ? '⏳' : mode === 'outdated' ? '⬆️' : '⚡';
+    : releasePending
+      ? 'border-amber-500/40 bg-amber-500/10 text-amber-300'
+      : mode === 'outdated'
+        ? 'border-red-500/40 bg-red-500/10 text-red-300'
+        : 'border-orange-500/40 bg-orange-500/10 text-orange-300';
+  const statusIcon = isChecking ? '⏳' : releasePending ? '🕒' : mode === 'outdated' ? '⬆️' : '⚡';
   return (
     <div className="mt-6 rounded-2xl border border-gray-800 bg-gray-950/80 p-4">
       <div className="flex items-center gap-3">
@@ -210,12 +233,37 @@ function ActionButtons({
   mode,
   onLaunch,
   osLabel,
+  releasePending,
+  liveDetected,
+  onRefreshRelease,
 }: {
   downloadUrl: string;
   mode: 'missing' | 'outdated';
   onLaunch: () => void;
   osLabel: string;
+  releasePending: boolean;
+  liveDetected: boolean;
+  onRefreshRelease: () => void;
 }) {
+  // [FIX] release-pending: 다운로드 버튼만 차단 (구버전 무한 루프 방지).
+  // 분기 기준은 'mode'가 아니라 'liveDetected' (헬퍼가 실제로 지금 실행 중인지).
+  //   - liveDetected=false → 헬퍼 미실행: launch 버튼 노출 (사용자가 이미 호환 헬퍼를
+  //     설치하고 실행만 안 한 경우에도 게이트를 직접 클리어할 수 있어야 함)
+  //   - liveDetected=true && outdated → 헬퍼는 떠 있으나 구버전: 다운로드만 차단,
+  //     무한 루프 방지를 위해 disabled 버튼 표시
+  // [Codex review #2-3 회귀: lastKnown 캐시로 인한 mode 오판정 방지]
+  if (releasePending) {
+    return (
+      <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+        {!liveDetected ? (
+          <button type="button" onClick={onLaunch} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-blue-600 to-violet-600 px-6 py-4 text-base font-black text-white shadow-lg shadow-blue-900/30 transition hover:from-blue-500 hover:to-violet-500"><span>이미 설치되어 있다면 실행하기</span><span className="text-lg">↗</span></button>
+        ) : (
+          <button type="button" disabled aria-disabled="true" title="새 릴리스가 게시되면 자동으로 활성화됩니다" className="inline-flex cursor-not-allowed items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-amber-700/40 to-amber-600/40 px-6 py-4 text-base font-black text-amber-100/70 shadow-lg"><span>새 버전 게시 대기 중</span><span className="text-lg">⏳</span></button>
+        )}
+        <button type="button" onClick={onRefreshRelease} className="inline-flex items-center justify-center gap-2 rounded-2xl border border-amber-500/40 bg-amber-500/10 px-6 py-4 text-base font-black text-amber-100 transition hover:border-amber-300 hover:bg-amber-500/20"><span>릴리스 정보 다시 확인</span><span className="text-lg">↻</span></button>
+      </div>
+    );
+  }
   const primaryLabel = mode === 'outdated' ? '최신 버전 다운로드' : '실행하기';
   const secondaryLabel = mode === 'outdated' ? '업데이트 후 다시 확인' : getDownloadLabel(osLabel);
   return (
@@ -235,15 +283,26 @@ function ActionButtons({
   );
 }
 
-function TroubleshootingPanel({ mode }: { mode: 'missing' | 'outdated' }) {
+function TroubleshootingPanel({ mode, releasePending }: { mode: 'missing' | 'outdated'; releasePending: boolean }) {
   return (
     <div className="rounded-3xl border border-gray-800 bg-gray-950/80 p-5 md:p-6">
       <p className="text-sm font-semibold uppercase tracking-[0.18em] text-gray-400">Troubleshooting</p>
       <div className="mt-4 space-y-3 text-sm leading-6 text-gray-300">
-        <div className="rounded-2xl border border-gray-800 bg-gray-900/80 px-4 py-3">트레이 아이콘에 올인원 헬퍼가 떠 있는지 확인하세요.</div>
-        <div className="rounded-2xl border border-gray-800 bg-gray-900/80 px-4 py-3">처음 실행 시 macOS 또는 Windows 방화벽 허용 팝업을 승인하세요.</div>
-        <div className="rounded-2xl border border-gray-800 bg-gray-900/80 px-4 py-3">{mode === 'outdated' ? `v${MIN_REQUIRED_COMPANION_VERSION} 이상이 아니면 모든 기능이 계속 차단됩니다.` : '로컬 포트 9876이 차단되면 감지되지 않습니다.'}</div>
-        <div className="rounded-2xl border border-gray-800 bg-gray-900/80 px-4 py-3">{mode === 'outdated' ? '구버전이 실행 중이면 최신 버전 설치 후 앱을 다시 열어 주세요.' : '설치 후 바로 안 열리면 다운로드한 앱을 직접 한 번 실행해 주세요.'}</div>
+        {releasePending ? (
+          <>
+            <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-amber-100">⏳ 새 버전(v{MIN_REQUIRED_COMPANION_VERSION})이 GitHub에 게시되는 중입니다. 운영팀이 작업 중이며 보통 수 분 내에 완료됩니다.</div>
+            <div className="rounded-2xl border border-gray-800 bg-gray-900/80 px-4 py-3">현재 헬퍼는 정상 실행 중이지만, 웹앱이 더 새 버전을 요구해서 일시적으로 차단됩니다.</div>
+            <div className="rounded-2xl border border-gray-800 bg-gray-900/80 px-4 py-3">"릴리스 정보 다시 확인" 버튼을 눌러 즉시 새로고침할 수 있습니다.</div>
+            <div className="rounded-2xl border border-gray-800 bg-gray-900/80 px-4 py-3">계속 이 화면이 뜨면 운영팀에 문의해 주세요.</div>
+          </>
+        ) : (
+          <>
+            <div className="rounded-2xl border border-gray-800 bg-gray-900/80 px-4 py-3">트레이 아이콘에 올인원 헬퍼가 떠 있는지 확인하세요.</div>
+            <div className="rounded-2xl border border-gray-800 bg-gray-900/80 px-4 py-3">처음 실행 시 macOS 또는 Windows 방화벽 허용 팝업을 승인하세요.</div>
+            <div className="rounded-2xl border border-gray-800 bg-gray-900/80 px-4 py-3">{mode === 'outdated' ? `v${MIN_REQUIRED_COMPANION_VERSION} 이상이 아니면 모든 기능이 계속 차단됩니다.` : '로컬 포트 9876이 차단되면 감지되지 않습니다.'}</div>
+            <div className="rounded-2xl border border-gray-800 bg-gray-900/80 px-4 py-3">{mode === 'outdated' ? '구버전이 실행 중이면 최신 버전 설치 후 앱을 다시 열어 주세요.' : '설치 후 바로 안 열리면 다운로드한 앱을 직접 한 번 실행해 주세요.'}</div>
+          </>
+        )}
       </div>
     </div>
   );
@@ -306,9 +365,17 @@ function useCompanionGateRuntime(mode: 'missing' | 'outdated', setShowCompanionG
   const [statusMessage, setStatusMessage] = useState('올인원 헬퍼 실행을 자동으로 시도하고 있습니다.');
   const [isChecking, setIsChecking] = useState(false);
   const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(null);
+  // [FIX] release-pending 상태를 컴포넌트가 즉시 인지하도록 별도 state로 보관.
+  // 폴링이나 강제 새로고침으로 GitHub 캐시가 갱신되면 이 값도 함께 갱신된다.
+  const [releasePending, setReleasePending] = useState<boolean>(() => isCompanionReleasePending());
+  const [latestVersion, setLatestVersion] = useState<string>(() => getCompanionLatestVersion() ?? MIN_REQUIRED_COMPANION_VERSION);
+  // [FIX] live state — 헬퍼가 실제로 지금 health check에 응답하는지.
+  // lastKnown(localStorage) 캐시와 분리해서 ActionButtons 분기에 사용한다.
+  const [liveDetected, setLiveDetected] = useState<boolean>(() => isCompanionDetected());
   const mountedRef = useRef(false);
   const checkInFlightRef = useRef(false);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const releaseRefreshAtRef = useRef<number>(0);
 
   const syncCompanion = useCallback(async (reason: 'auto' | 'manual' | 'poll') => {
     if (checkInFlightRef.current) return;
@@ -320,12 +387,41 @@ function useCompanionGateRuntime(mode: 'missing' | 'outdated', setShowCompanionG
     // 호출(auto, manual)에서만 launch한다.
     if (reason !== 'poll') tryLaunchCompanion();
 
+    // [FIX] GitHub 릴리스 정보를 주기적으로 재fetch.
+    // - manual: 무조건 force, await로 캐시 갱신 후 상태 계산
+    // - poll (cold cache): 첫 fetch가 실패해 캐시가 비어 있으면 자동 복구를 위해 재시도
+    // - poll (release-pending): 운영팀 새 릴리스 게시를 빠르게 감지하기 위해 주기적 재fetch
+    // - auto: 첫 fetch는 모듈 로드 시 자동으로 시작됨, 여기서는 await만
+    //
+    // [Codex review #4-1] 'releasePending' state를 dependency로 쓰면 false→true 전이에서
+    // syncCompanion이 재생성되고 effect가 재실행돼 force fetch가 한 번 더 나간다.
+    // 모듈 캐시(isCompanionReleasePending)를 직접 호출해서 dependency loop를 끊는다.
+    //
+    // [Codex review #5-1] cold cache + 첫 fetch 실패(rate limit/네트워크 에러) 시
+    // 자동 복구가 안 되는 회귀 수정. 캐시가 비어 있으면 release-pending 여부와 무관하게
+    // 주기적으로 재시도해야 한다.
+    const currentlyPending = isCompanionReleasePending();
+    const cacheEmpty = !hasCachedCompanionRelease();
+    const now = Date.now();
+    if (reason === 'manual') {
+      releaseRefreshAtRef.current = now;
+      await refreshCompanionRelease(true).catch(() => {});
+    } else if ((currentlyPending || cacheEmpty) && now - releaseRefreshAtRef.current > RELEASE_RECHECK_INTERVAL_MS) {
+      releaseRefreshAtRef.current = now;
+      await refreshCompanionRelease(true).catch(() => {});
+    } else if (reason === 'auto') {
+      // [FIX] 첫 sync에서는 모듈 로드 시 시작된 fetch가 끝날 때까지 대기.
+      // 그래야 첫 렌더에서 stale UI(release-pending인데 일반 missing 안내)가 안 뜬다.
+      await waitForInitialReleaseFetch();
+    }
+
     const detected = await recheckCompanion().catch(() => false);
     const nextVersion = getCompanionVersion();
     // [FIX] outdated 모드는 'detected'가 아니라 '알려진 버전이 outdated인지'로 판정.
     // 콜드 스타트(헬퍼 꺼짐 + localStorage 캐시만 존재)에서도 정확한 안내가 떠야 한다.
     const nextMode: 'missing' | 'outdated' = nextVersion && isCompanionOutdated() ? 'outdated' : 'missing';
     const nextLatest = getCompanionLatestVersion() ?? MIN_REQUIRED_COMPANION_VERSION;
+    const nextReleasePending = isCompanionReleasePending();
 
     if (!mountedRef.current) {
       checkInFlightRef.current = false;
@@ -333,10 +429,16 @@ function useCompanionGateRuntime(mode: 'missing' | 'outdated', setShowCompanionG
     }
 
     setLastCheckedAt(Date.now());
-    setStatusMessage(buildStatusMessage(nextMode, nextVersion, nextLatest, reason));
+    setReleasePending(nextReleasePending);
+    setLatestVersion(nextLatest);
+    setLiveDetected(detected);
+    setStatusMessage(buildStatusMessage(nextMode, nextVersion, nextLatest, reason, nextReleasePending));
     setIsChecking(false);
     checkInFlightRef.current = false;
     if (detected && nextMode !== 'outdated') setShowCompanionGate(false);
+    // [Codex review #4-1] releasePending dependency 제거 — false→true 전이에서
+    // syncCompanion 재생성으로 인한 추가 force fetch 방지. 내부에서는 모듈 캐시
+    // (isCompanionReleasePending)를 직접 조회한다.
   }, [setShowCompanionGate]);
 
   useEffect(() => {
@@ -364,7 +466,14 @@ function useCompanionGateRuntime(mode: 'missing' | 'outdated', setShowCompanionG
     }, 1500);
   }, [mode, syncCompanion]);
 
-  return { handleLaunch, isChecking, lastCheckedAt, statusMessage };
+  // [FIX] release-pending 모드에서 사용자가 명시적으로 GitHub 릴리스 정보를 강제 새로고침할 때 사용.
+  // syncCompanion('manual')이 내부적으로 refreshCompanionRelease(true)를 호출하므로 중복 호출 제거.
+  const handleRefreshRelease = useCallback(() => {
+    if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+    void syncCompanion('manual');
+  }, [syncCompanion]);
+
+  return { handleLaunch, handleRefreshRelease, isChecking, lastCheckedAt, latestVersion, liveDetected, releasePending, statusMessage };
 }
 
 export default function CompanionGateModal() {
@@ -373,20 +482,26 @@ export default function CompanionGateModal() {
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const osLabel = getCompanionOsLabel();
   const downloadUrl = getCompanionDownloadUrl();
-  const latestVersion = getCompanionLatestVersion() ?? MIN_REQUIRED_COMPANION_VERSION;
   const currentVersion = getCompanionVersion();
   // [FIX] outdated 모드는 알려진 버전이 outdated일 때 항상 표시 — detected 여부와 무관.
   // 콜드 스타트(헬퍼 꺼짐 + localStorage 캐시만 존재)에서도 즉시 업데이트 안내가 떠야 한다.
   const mode: 'missing' | 'outdated' = currentVersion && isCompanionOutdated() ? 'outdated' : 'missing';
-  const title = mode === 'outdated'
-    ? `헬퍼 앱 업데이트가 필요합니다. (현재 v${currentVersion ?? '?'} → 최신 v${latestVersion})`
-    : '올인원 헬퍼가 실행되어야 작업을 계속할 수 있습니다.';
-  const description = mode === 'outdated'
-    ? '현재 실행 중인 헬퍼 앱 버전이 웹앱 최소 요구 버전보다 낮습니다. 최신 버전을 설치한 뒤 실행되면 이 화면은 자동으로 닫힙니다.'
-    : '이 앱의 핵심 제작 파이프라인은 로컬 컴패니언 앱을 전제로 동작합니다. 로그인 후 감지되지 않으면 모든 기능이 차단되며, 감지되는 즉시 이 화면은 자동으로 사라집니다.';
 
   useLockedDialog(dialogRef);
-  const { handleLaunch, isChecking, lastCheckedAt, statusMessage } = useCompanionGateRuntime(mode, setShowCompanionGate);
+  const { handleLaunch, handleRefreshRelease, isChecking, lastCheckedAt, latestVersion, liveDetected, releasePending, statusMessage } = useCompanionGateRuntime(mode, setShowCompanionGate);
+
+  // [FIX] release-pending 상태에서는 "현재 < 최신" 자기모순 문구를 띄우지 않는다.
+  // 운영팀이 새 릴리스를 게시 중인 일시적 상황임을 명시.
+  const title = releasePending
+    ? `새 헬퍼 버전(v${MIN_REQUIRED_COMPANION_VERSION}) 게시 대기 중`
+    : mode === 'outdated'
+      ? `헬퍼 앱 업데이트가 필요합니다. (현재 v${currentVersion ?? '?'} → 최신 v${latestVersion})`
+      : '올인원 헬퍼가 실행되어야 작업을 계속할 수 있습니다.';
+  const description = releasePending
+    ? `웹앱이 v${MIN_REQUIRED_COMPANION_VERSION} 이상을 요구하지만 GitHub에 아직 게시되지 않았습니다. 운영팀이 빌드/배포 중이며 보통 수 분 내에 자동으로 해결됩니다. 계속 머무른다면 새로고침하지 말고 잠시 기다려 주세요.`
+    : mode === 'outdated'
+      ? '현재 실행 중인 헬퍼 앱 버전이 웹앱 최소 요구 버전보다 낮습니다. 최신 버전을 설치한 뒤 실행되면 이 화면은 자동으로 닫힙니다.'
+      : '이 앱의 핵심 제작 파이프라인은 로컬 컴패니언 앱을 전제로 동작합니다. 로그인 후 감지되지 않으면 모든 기능이 차단되며, 감지되는 즉시 이 화면은 자동으로 사라집니다.';
 
   const handleCopy = useCallback(async (text: string, label: string) => {
     try {
@@ -404,7 +519,7 @@ export default function CompanionGateModal() {
           <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="companion-gate-title" tabIndex={-1} className="w-full overflow-hidden rounded-3xl border border-gray-700 bg-gray-900 shadow-[0_40px_120px_rgba(0,0,0,0.65)]">
             <div className="border-b border-gray-800 bg-gradient-to-br from-gray-900 via-gray-900 to-gray-800/70 px-6 py-8 md:px-10">
               {osLabel === 'macOS' && <MacGatekeeperPanel onCopy={handleCopy} />}
-              <ModeBadge mode={mode} />
+              <ModeBadge mode={mode} releasePending={releasePending} />
               <div className="mt-5 grid gap-8 lg:grid-cols-[1.15fr_0.85fr]">
                 <div>
                   <h1 id="companion-gate-title" className="text-3xl font-black tracking-tight text-white md:text-4xl">{title}</h1>
@@ -412,12 +527,12 @@ export default function CompanionGateModal() {
                   <div className="mt-6 grid gap-3 sm:grid-cols-3">
                     <VersionPill label="현재 감지 버전" value={currentVersion ? `v${currentVersion}` : '미감지'} />
                     <VersionPill label="최소 요구 버전" value={`v${MIN_REQUIRED_COMPANION_VERSION}`} />
-                    <VersionPill label="최신 버전" value={`v${latestVersion}`} />
+                    <VersionPill label="최신 버전" value={releasePending ? '게시 대기 중' : `v${latestVersion}`} />
                   </div>
-                  <StatusCard isChecking={isChecking} lastCheckedAt={lastCheckedAt} mode={mode} statusMessage={statusMessage} />
-                  <ActionButtons downloadUrl={downloadUrl} mode={mode} onLaunch={handleLaunch} osLabel={osLabel} />
+                  <StatusCard isChecking={isChecking} lastCheckedAt={lastCheckedAt} mode={mode} statusMessage={statusMessage} releasePending={releasePending} />
+                  <ActionButtons downloadUrl={downloadUrl} mode={mode} onLaunch={handleLaunch} osLabel={osLabel} releasePending={releasePending} liveDetected={liveDetected} onRefreshRelease={handleRefreshRelease} />
                 </div>
-                <TroubleshootingPanel mode={mode} />
+                <TroubleshootingPanel mode={mode} releasePending={releasePending} />
               </div>
             </div>
             <FeatureSection expanded={showFeatures} onToggle={() => setShowFeatures((value) => !value)} />

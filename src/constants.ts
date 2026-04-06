@@ -46,48 +46,129 @@ let _cachedReleaseNote: string | null = null;
 let _releaseFetchedAt = 0;
 const RELEASE_CACHE_TTL = 6 * 3600_000; // 6시간
 
-function _fetchReleaseInfo() {
-  if (typeof window === 'undefined') return;
-  const now = Date.now();
-  if (_releaseFetchedAt && (now - _releaseFetchedAt) < RELEASE_CACHE_TTL) return;
-  const os = getCompanionOsLabel();
-  if (os !== 'Windows' && os !== 'macOS') return;
+// [FIX] in-flight + generation guard — race condition 차단.
+// 동시 호출은 같은 promise를 공유하고, out-of-order 응답은 generation 비교로 무시.
+let _releaseFetchPromise: Promise<void> | null = null;
+let _releaseFetchGeneration = 0;
 
-  fetch('https://api.github.com/repos/groove1027/ytdlp-companion/releases/latest')
+interface GithubAsset { name: string; browser_download_url: string }
+interface GithubRelease {
+  tag_name?: string;
+  name?: string;
+  body?: string;
+  draft?: boolean;
+  prerelease?: boolean;
+  assets?: GithubAsset[];
+}
+
+/**
+ * [FIX] release fetch 강화
+ *  - releases?per_page=20에서 companion-v* 태그만 필터 (미래에 다른 종류 릴리스가 추가돼도 안전)
+ *  - draft/prerelease 제외
+ *  - semver 비교로 최대 버전 선택 (publish 순서 의존 X)
+ *  - 빈 문자열/누락 tag_name은 무시 (??가 아니라 명시적 truthy 체크)
+ *  - force=true면 TTL 무시 (refreshCompanionRelease가 진짜 강제 새로고침이 되도록)
+ *  - in-flight 중복 호출은 동일 promise를 반환 (rate limit + race 동시 차단)
+ *  - generation guard: out-of-order 응답이 캐시를 덮어쓰는 회귀 차단
+ */
+function _fetchReleaseInfo(force = false): Promise<void> {
+  if (typeof window === 'undefined') return Promise.resolve();
+  const now = Date.now();
+  if (!force && _releaseFetchedAt && (now - _releaseFetchedAt) < RELEASE_CACHE_TTL) return Promise.resolve();
+  const os = getCompanionOsLabel();
+  if (os !== 'Windows' && os !== 'macOS') return Promise.resolve();
+
+  // [FIX] 동시 호출 dedup — 이미 in-flight면 같은 promise 공유.
+  // 수동 새로고침이 짧은 시간에 여러 번 트리거돼도 fetch는 1회만 발생.
+  if (_releaseFetchPromise) return _releaseFetchPromise;
+
+  const generation = ++_releaseFetchGeneration;
+
+  _releaseFetchPromise = fetch('https://api.github.com/repos/groove1027/ytdlp-companion/releases?per_page=20')
     .then(r => {
       if (r.status === 403 || r.status === 429) return null; // rate limit → stale cache 유지
       return r.ok ? r.json() : null;
     })
-    .then(data => {
-      if (!data) return;
+    .then((list: GithubRelease[] | null) => {
+      // [FIX] generation guard — 이 fetch가 시작된 후 더 새로운 fetch가 시작됐다면
+      // 이 응답은 stale이므로 캐시를 덮어쓰지 않는다.
+      if (generation !== _releaseFetchGeneration) return;
+      if (!Array.isArray(list)) return;
+      // companion-v* 태그만 필터, draft/prerelease 제외
+      const candidates = list.filter(r =>
+        typeof r.tag_name === 'string' &&
+        r.tag_name.startsWith('companion-v') &&
+        !r.draft && !r.prerelease
+      );
+      if (candidates.length === 0) return;
+      // semver 최대값 선택 (publish 순서 의존 X)
+      candidates.sort((a, b) => compareVersions(b.tag_name!, a.tag_name!));
+      const latest = candidates[0];
+
       _releaseFetchedAt = Date.now();
-      // 최신 버전 캐시 (tag_name: "companion-v1.1.0" → "1.1.0")
-      const tag = (data.tag_name || '') as string;
-      _cachedLatestVersion = tag.replace(/^companion-v/, '');
+      // 최신 버전 캐시 (tag_name: "companion-v1.3.0" → "1.3.0")
+      const tag = (latest.tag_name || '').trim();
+      const version = tag.replace(/^companion-v/, '').trim();
+      // [FIX] 빈 문자열은 명시적으로 null 처리 (?? fallback이 무력화되는 것 방지)
+      _cachedLatestVersion = version || null;
       // 릴리스 노트 첫 줄 캐시 (마크다운 제거, 100자 제한)
-      const body = (data.body || '') as string;
+      const body = (latest.body || '') as string;
       const firstLine = body.split('\n').find(l => l.trim() && !l.startsWith('#') && !l.startsWith('---'));
       _cachedReleaseNote = firstLine ? firstLine.replace(/[*_`#>]/g, '').trim().slice(0, 100) : null;
-      const assets: Array<{ name: string; browser_download_url: string }> = data.assets || [];
+      const assets: GithubAsset[] = latest.assets || [];
       const target = os === 'Windows'
         ? assets.find(a => a.name.toLowerCase().includes('setup') && a.name.toLowerCase().endsWith('.exe'))
         : assets.find(a => a.name.toLowerCase().includes('universal') && a.name.toLowerCase().endsWith('.dmg'))
           || assets.find(a => a.name.toLowerCase().endsWith('.dmg'));
-      if (target) _cachedDirectUrl = target.browser_download_url;
+      // [FIX] 새 릴리스에 매칭 자산이 없으면 stale URL을 비워서 fallback이 동작하도록
+      _cachedDirectUrl = target ? target.browser_download_url : null;
     })
-    .catch(() => {});
+    .catch(() => { /* 네트워크 에러 — stale 캐시 유지 */ })
+    .finally(() => {
+      // in-flight 락 해제 (다음 호출이 새 fetch를 시작할 수 있도록)
+      _releaseFetchPromise = null;
+    });
+
+  return _releaseFetchPromise;
 }
-// 앱 로드 시 즉시 fetch
-_fetchReleaseInfo();
+// 앱 로드 시 즉시 fetch — 첫 fetch promise를 export하여 모달이 await 가능
+const _initialReleaseFetch: Promise<void> = _fetchReleaseInfo();
 
 /** GitHub Releases 최신 버전 반환 (프리페치 캐시) */
 export const getCompanionLatestVersion = (): string | null => _cachedLatestVersion;
 
+/** 캐시가 한 번이라도 채워졌는지 — first fetch 실패 시 cold-cache 복구용 */
+export const hasCachedCompanionRelease = (): boolean => _releaseFetchedAt > 0;
+
 /** GitHub Releases 릴리스 노트 첫 줄 반환 */
 export const getCompanionReleaseNote = (): string | null => _cachedReleaseNote;
 
-/** 릴리스 정보 수동 리프레시 (TTL 경과 시에만 실제 fetch) */
-export const refreshCompanionRelease = (): void => { _fetchReleaseInfo(); };
+/** 릴리스 정보 수동 리프레시 — force=true면 TTL 무시하고 즉시 재fetch. Promise 반환. */
+export const refreshCompanionRelease = (force = false): Promise<void> => _fetchReleaseInfo(force);
+
+/**
+ * 첫 번째 release fetch가 완료될 때까지 대기 (또는 이미 끝났으면 즉시 resolve).
+ * 모달이 첫 렌더에서 stale UI를 보여주지 않도록 await에 사용.
+ */
+export const waitForInitialReleaseFetch = (): Promise<void> => _initialReleaseFetch;
+
+/**
+ * [FIX] release-pending 판정 — GitHub의 latest가 MIN_REQUIRED보다 낮은 자기모순 상태.
+ * 이 상태에서는 사용자가 다운로드해도 outdated 상태로 다시 떨어지므로,
+ * 게이트 모달이 무한 루프 대신 "릴리스 준비 중" 안내를 띄워야 한다.
+ *
+ * 이 함수가 true를 반환하는 경우:
+ *  1) 사전 fetch가 1번 이상 성공했고 (캐시된 latest 있음)
+ *  2) 캐시된 latest가 MIN_REQUIRED_COMPANION_VERSION보다 낮음
+ *
+ * fetch가 아직 안 끝났거나 rate limit으로 실패한 경우는 false (중립).
+ * 사용처: CompanionGateModal — release-pending 서브 상태로 분기.
+ */
+export function isCompanionReleasePending(): boolean {
+  const latest = _cachedLatestVersion;
+  if (!latest) return false; // 모르는 상태에서는 pending이 아님 (중립)
+  return compareVersions(latest, MIN_REQUIRED_COMPANION_VERSION) < 0;
+}
 
 /** OS별 컴패니언 다운로드 URL 반환 — 직접 다운로드 URL 우선, 없으면 릴리스 페이지 */
 export const getCompanionDownloadUrl = (): string => {

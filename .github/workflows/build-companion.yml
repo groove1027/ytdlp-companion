@@ -86,8 +86,42 @@ jobs:
       - name: List release files
         run: find artifacts -type f | sort
 
-      - name: Create Release
+      - name: Create Release (private repo)
         uses: softprops/action-gh-release@v2
         with:
           files: artifacts/**/*
           generate_release_notes: true
+
+      # ──────────────────────────────────────────────────────────────
+      # Automatic mirror to public ytdlp-companion repo
+      #
+      # 이유: 이 저장소(all-in-one-production)는 PRIVATE이라 웹앱이 GitHub API로
+      # 릴리스를 조회할 수 없다. 웹앱은 public ytdlp-companion 저장소에서 다운로드
+      # URL/버전을 읽으므로, 빌드한 자산을 public 저장소로 자동 미러링해야 한다.
+      #
+      # 사전 조건: secrets.PUBLIC_RELEASE_PAT — groove1027/ytdlp-companion에 대한
+      # contents:write 권한을 가진 PAT (Personal Access Token).
+      # 시크릿이 없으면 이 step은 스킵되고, 미러는 수동으로 해야 함:
+      #   bash scripts/mirror-companion-release.sh ${{ github.ref_name }}
+      # ──────────────────────────────────────────────────────────────
+      - name: Mirror to public ytdlp-companion (auto)
+        if: env.PUBLIC_RELEASE_PAT != ''
+        env:
+          PUBLIC_RELEASE_PAT: ${{ secrets.PUBLIC_RELEASE_PAT }}
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+          generate_release_notes: true
+          repository: groove1027/ytdlp-companion
+          token: ${{ secrets.PUBLIC_RELEASE_PAT }}
+          name: All In One Helper ${{ github.ref_name }}
+
+      - name: Warn if PAT missing (manual mirror required)
+        if: env.PUBLIC_RELEASE_PAT == ''
+        env:
+          PUBLIC_RELEASE_PAT: ${{ secrets.PUBLIC_RELEASE_PAT }}
+        run: |
+          echo "::warning::PUBLIC_RELEASE_PAT secret이 설정되지 않아 public 미러가 생략됨."
+          echo "::warning::웹앱이 새 버전을 인식하려면 수동 미러링이 필요합니다:"
+          echo "::warning::  bash scripts/mirror-companion-release.sh ${{ github.ref_name }}"
+          echo "::warning::자동화하려면 GitHub Settings > Secrets에 PUBLIC_RELEASE_PAT 추가 (groove1027/ytdlp-companion contents:write 권한)"
