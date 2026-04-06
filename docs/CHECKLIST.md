@@ -8,6 +8,28 @@
 
 ## 🟢 완료된 작업
 
+- [x] **2026-04-07 — companion v1.3.1: 자동 take-over + UI 4단계 회복 가이드**
+  - **Rust take-over**: `companion/src-tauri/src/takeover.rs` 신규. main() 첫 줄에서 9876 health check → ytdlp-companion 시그니처 확인 → graceful /quit (X-Helper-Token 헤더) → fallback PID kill (LISTEN 소켓만, ESTABLISHED 클라이언트는 제외) → 5초 대기. 자기 PID 절대 죽이지 않음.
+  - **/quit endpoint**: `server.rs`에 POST /quit 추가, X-Helper-Token 헤더로 디스크 0o600 토큰 파일과 매칭 검증. 불일치 시 HTTP 403.
+  - **Token 생성**: 32자 hex 랜덤, `~/Library/Application Support/ytdlp-companion/quit-token` (mode 0o600), 헬퍼 시작마다 갱신
+  - **UI**: `OutdatedRecoveryGuide` 신규 컴포넌트 — 모달 본문 최상단 빨강 강조 4단계 카드 (트레이 quit / 다운로드 / 설치 / 실행). macOS/Windows OS 자동 감지 분기. 본체 description도 OS별 분기.
+  - **버전 bump**: 1.3.0 → 1.3.1 (Cargo.toml + tauri.conf.json)
+  - **인프라**: ytdlp-companion `release.yml`의 `push:tags` trigger 제거 → workflow_dispatch만 (stale source 덮어쓰기 사고 재발 방지)
+  - **검증**: 실측 two-instance take-over (PID 69060 → 69164) 자동 종료 확인, token 인증 거부 시나리오 (no token / wrong token → 403), Codex MCP gpt-5.4 xhigh 6차 review 통과, Playwright E2E 2 spec passed (release-pending + outdated-recovery), tsc 0 errors, vite build ✓, cargo build ✓
+  - **commit**: `17dc25b` (all-in-one-production), `5fbc555` (ytdlp-companion), 태그 `companion-v1.3.1`
+
+- [x] **2026-04-07 — #1060 #1061 #1062 #1065 이미지 blob URL 영속화/복원 추가**
+  - `rg -n "audioStorageService|imageStorageService|storageService|useAutoSave|projectStore|imageUrl|referenceImage|sourceFrameUrl|startFrameUrl|editedStartFrameUrl|editedEndFrameUrl|audio-blobs|image-blobs" src docs`로 영향 범위 전수 조사 완료
+  - `src/services/storageService.ts` — `SavedImageBlob` 타입, `image-blobs` store, DB version 9 마이그레이션, `deleteProject()` 이미지 blob 정리 경로 추가
+  - `src/services/imageBlobStorageService.ts` 신규 — 씬 6개 이미지 필드 + 썸네일 `blob:` URL을 IndexedDB Blob으로 저장/복원/삭제하는 `persistProjectImages`, `restoreProjectImages`, `deleteProjectImages` 구현
+  - `src/hooks/useAutoSave.ts` — auto-save 직후 `persistProjectImages(project.id, project.scenes, project.thumbnails)` fire-and-forget 추가
+  - `src/stores/projectStore.ts` — `loadProject()`에서 `restoreProjectImages()` 호출 추가, `_loadGeneration` guard 유지, stale `blob:` 필드는 복원 URL 또는 `undefined`로 패치, 썸네일도 함께 복원
+  - `src/services/__tests__/imageBlobStorage.persist.test.ts` 신규 — mocked DB + mocked blob URL registry 기반으로 scene 필드/thumbnail/delete 경로 단위 테스트 추가
+  - `cd src && node_modules/typescript/bin/tsc --noEmit`: 통과
+  - `cd src && node_modules/.bin/vite build`: 성공 (기존 dynamic import/chunk-size warning만 존재)
+  - `cd src && node_modules/.bin/vitest run`: 32 passed
+  - `rg -n "persistProjectImages|restoreProjectImages|deleteProjectImages|image-blobs|SavedImageBlob" src`: 반영 위치 재확인
+
 - [x] **2026-04-07 — companion v1.3.0 무한 다운로드 루프 수정 (3-fold fix)**
   - **즉시**: companion-v1.3.0을 public `groove1027/ytdlp-companion` 저장소로 미러 게시 (DMG/EXE/MSI 3개 자산 + SHA256). 사용자 화면 새로고침만으로 무한 루프 탈출 가능.
   - **보강**: `src/constants.ts` release fetch 강화 — in-flight dedup + generation guard + companion-v* 필터 + semver max + 빈 문자열/null 처리 + 6h TTL force bypass + cold-cache 자동 복구. `src/components/CompanionGateModal.tsx` release-pending sub-state 도입 — 자기모순 "현재 v? → 최신 v?" 문구 차단, "Release Pending" 배지 + Troubleshooting 안내 + liveDetected 기반 launch 분기.
