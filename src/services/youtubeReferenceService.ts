@@ -1207,3 +1207,12 @@ export function cancelVideoReferenceSearch() {
   _batchAbortCtrl?.abort();
   _batchAbortCtrl = null;
 }
+
+/**
+ * [#preset3] 레퍼런스 클립 준비 실패 메시지가 컴패니언 호환성 이슈인지 판별.
+ * nleExportService에서 장면 미디어 누락 처리 시 구체적인 컴패니언 업데이트 안내를 띄우기 위해 사용.
+ */
+export function isReferenceClipCompatibilityErrorMessage(message: string): boolean {
+  if (!message) return false;
+  return /\/api\/ffmpeg\/cut|컴패니언\s*v?1\.3\.0\s*이상|레퍼런스 클립 잘라내기/i.test(message);
+}
