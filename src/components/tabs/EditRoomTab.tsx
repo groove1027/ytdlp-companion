@@ -1458,13 +1458,28 @@ const EditRoomTab: React.FC = () => {
     logger.trackAction('ZIP 내보내기');
     if (!requireAuth('ZIP 내보내기')) return;
     try {
+      const mergedUrl = useProjectStore.getState().config?.mergedAudioUrl || useSoundStudioStore.getState().mergedAudioUrl || undefined;
+      const narrationLinesForZip = lines
+        .map((line, idx) => {
+          const resolvedSceneId = line.sceneId || timeline[idx]?.sceneId || '';
+          let effectiveAudioUrl = line.audioUrl;
+          if (resolvedSceneId && (!effectiveAudioUrl || effectiveAudioUrl.startsWith('blob:'))) {
+            const scene = useProjectStore.getState().scenes.find((s) => s.id === resolvedSceneId);
+            if (scene?.audioUrl) effectiveAudioUrl = scene.audioUrl;
+          }
+          if (!effectiveAudioUrl) return null;
+          return { sceneId: resolvedSceneId, audioUrl: effectiveAudioUrl };
+        })
+        .filter((value): value is NonNullable<typeof value> => value !== null);
+
       // [FIX #76] 나레이션 오디오를 ZIP에 포함 — CapCut 등 외부 편집기에서 오디오 사용 가능
+      // [FIX #1045] mergedAudioUrl도 함께 포함해 CapCut에서 통합 나레이션을 한 번에 가져올 수 있게 함
       // [FIX #183] 프로젝트 비율 설정을 전달하여 이미지 크롭 적용
       await downloadSrtWithAssetsZip(
         timeline,
         scenes.map((s) => ({ id: s.id, imageUrl: s.imageUrl, videoUrl: s.videoUrl })),
         'project-assets.zip',
-        lines.filter((l) => !!l.audioUrl).map((l) => ({ sceneId: l.sceneId, audioUrl: l.audioUrl })),
+        { clips: narrationLinesForZip, mergedAudioUrl: mergedUrl },
         projectAspectRatio,
       );
     } catch (err) {

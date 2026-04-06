@@ -8,6 +8,17 @@ import { logger } from './LoggerService';
 import { cropBlobToAspectRatio } from '../utils/fileHelpers';
 import { secondsToFrame, frameToSeconds } from './sceneDetection';
 
+interface SrtZipNarrationClip {
+  sceneId?: string;
+  audioUrl?: string;
+}
+
+interface SrtZipNarrationAssets {
+  clips?: SrtZipNarrationClip[];
+  mergedAudioUrl?: string;
+  mergedFileName?: string;
+}
+
 /**
  * 초(seconds)를 SRT 타임코드로 변환
  * v2.0: fps를 전달하면 프레임 경계에 스냅하여 NLE 클립과 완벽 동기화
@@ -101,11 +112,12 @@ export async function downloadSrtWithAssetsZip(
   timeline: UnifiedSceneTiming[],
   scenes: { id: string; imageUrl?: string; videoUrl?: string }[],
   filename = 'project-assets.zip',
-  narrationLines?: { sceneId?: string; audioUrl?: string }[],
+  narrationAssets?: SrtZipNarrationClip[] | SrtZipNarrationAssets,
   aspectRatio?: string,
 ): Promise<void> {
   const JSZip = (await import('jszip')).default;
   const zip = new JSZip();
+  const narration = normalizeNarrationAssets(narrationAssets);
 
   // SRT 파일 추가
   const entries = buildSrtEntries(timeline);
@@ -134,7 +146,7 @@ export async function downloadSrtWithAssetsZip(
         fetchAsBlob(imgUrl, label).then(async (blob) => {
           if (blob) {
             const cropped = aspectRatio ? await cropBlobToAspectRatio(blob, aspectRatio) : blob;
-            const ext = aspectRatio ? 'jpg' : guessExtension(imgUrl, 'png');
+            const ext = guessBlobExtension(cropped, imgUrl, aspectRatio ? 'jpg' : 'png');
             zip.file(`images/${idx}_scene.${ext}`, cropped);
           } else {
             failedAssets.push(label);
@@ -150,7 +162,7 @@ export async function downloadSrtWithAssetsZip(
       fetchPromises.push(
         fetchAsBlob(vidUrl, label).then((blob) => {
           if (blob) {
-            const ext = guessExtension(vidUrl, 'mp4');
+            const ext = guessBlobExtension(blob, vidUrl, 'mp4');
             zip.file(`videos/${idx}_scene.${ext}`, blob);
           } else {
             failedAssets.push(label);
@@ -161,10 +173,11 @@ export async function downloadSrtWithAssetsZip(
   }
 
   // [FIX #76] 나레이션 오디오 포함 — CapCut 등 외부 편집기에서 오디오 사용 가능
-  if (narrationLines && narrationLines.length > 0) {
+  const usedAudioFileNames = new Set<string>();
+  if (narration.clips.length > 0) {
     const audioSet = new Set<string>(); // 중복 방지
     let audioIdx = 0;
-    for (const line of narrationLines) {
+    for (const line of narration.clips) {
       if (!line.audioUrl || audioSet.has(line.audioUrl)) continue;
       audioSet.add(line.audioUrl);
       audioIdx++;
@@ -179,12 +192,17 @@ export async function downloadSrtWithAssetsZip(
       const filePrefix = sceneIdx >= 0
         ? String(sceneIdx + 1).padStart(3, '0')
         : String(audioIdx).padStart(3, '0');
+      const urlExt = guessExtension(audioUrl, '');
 
       fetchPromises.push(
         fetchAsBlob(audioUrl, label).then((blob) => {
           if (blob) {
-            const ext = guessExtension(audioUrl, 'mp3');
-            zip.file(`audio/${filePrefix}_narration.${ext}`, blob);
+            const ext = guessBlobExtension(blob, audioUrl, urlExt || 'mp3');
+            const reservedFileName = ensureUniqueAudioFileName(
+              `${filePrefix}_narration.${ext}`,
+              usedAudioFileNames,
+            );
+            zip.file(`audio/${reservedFileName}`, blob);
           } else {
             failedAssets.push(label);
           }
@@ -195,6 +213,22 @@ export async function downloadSrtWithAssetsZip(
 
   await Promise.allSettled(fetchPromises);
 
+  if (narration.mergedAudioUrl) {
+    const label = 'Merged narration';
+    const blob = await fetchAsBlob(narration.mergedAudioUrl, label);
+    if (blob) {
+      const ext = guessBlobExtension(blob, narration.mergedAudioUrl, 'mp3');
+      const reservedFileName = ensureUniqueAudioFileName(
+        normalizeNarrationFileName(narration.mergedFileName, ext),
+        usedAudioFileNames,
+      );
+      zip.file(reservedFileName, blob);
+      zip.file(`audio/${reservedFileName}`, blob);
+    } else {
+      failedAssets.push(label);
+    }
+  }
+
   if (failedAssets.length > 0) {
     console.warn(`[ZIP Export] ${failedAssets.length} asset(s) failed to fetch and were omitted: ${failedAssets.join(', ')}`);
   }
@@ -204,6 +238,22 @@ export async function downloadSrtWithAssetsZip(
 }
 
 // --- 내부 유틸 ---
+
+function normalizeNarrationAssets(
+  narrationAssets?: SrtZipNarrationClip[] | SrtZipNarrationAssets,
+): Required<SrtZipNarrationAssets> {
+  if (!narrationAssets) {
+    return { clips: [], mergedAudioUrl: '', mergedFileName: '' };
+  }
+  if (Array.isArray(narrationAssets)) {
+    return { clips: narrationAssets, mergedAudioUrl: '', mergedFileName: '' };
+  }
+  return {
+    clips: narrationAssets.clips || [],
+    mergedAudioUrl: narrationAssets.mergedAudioUrl || '',
+    mergedFileName: narrationAssets.mergedFileName || '',
+  };
+}
 
 function triggerDownload(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
@@ -231,6 +281,11 @@ async function fetchAsBlob(url: string, label?: string): Promise<Blob | null> {
   }
 }
 
+function guessBlobExtension(blob: Blob, url: string, fallback: string): string {
+  const mimeExt = mimeTypeToExtension(blob.type);
+  return mimeExt || guessExtension(url, fallback);
+}
+
 function guessExtension(url: string, fallback: string): string {
   try {
     const pathname = new URL(url).pathname;
@@ -241,4 +296,61 @@ function guessExtension(url: string, fallback: string): string {
     // URL 파싱 실패 시 fallback
   }
   return fallback;
+}
+
+function mimeTypeToExtension(mimeType: string): string | null {
+  switch (mimeType.toLowerCase()) {
+    case 'audio/mp3':
+    case 'audio/mpeg':
+      return 'mp3';
+    case 'audio/mp4':
+    case 'audio/x-m4a':
+      return 'm4a';
+    case 'audio/wav':
+    case 'audio/wave':
+    case 'audio/x-wav':
+      return 'wav';
+    case 'audio/ogg':
+      return 'ogg';
+    case 'audio/webm':
+      return 'webm';
+    case 'video/mp4':
+      return 'mp4';
+    case 'video/webm':
+      return 'webm';
+    case 'image/jpeg':
+      return 'jpg';
+    case 'image/png':
+      return 'png';
+    case 'image/webp':
+      return 'webp';
+    default:
+      return null;
+  }
+}
+
+function normalizeNarrationFileName(fileName: string | undefined, ext: string): string {
+  const baseName = (fileName || '_full_narration').split('/').pop()?.trim() || '_full_narration';
+  const normalizedBaseName = baseName.replace(/\.[a-z0-9]+$/i, '') || '_full_narration';
+  return `${normalizedBaseName}.${ext}`;
+}
+
+function ensureUniqueAudioFileName(fileName: string, usedFileNames: Set<string>): string {
+  const trimmed = fileName.trim() || 'audio.mp3';
+  if (!usedFileNames.has(trimmed)) {
+    usedFileNames.add(trimmed);
+    return trimmed;
+  }
+
+  const extMatch = trimmed.match(/\.[a-z0-9]+$/i);
+  const ext = extMatch?.[0] || '';
+  const base = ext ? trimmed.slice(0, -ext.length) : trimmed;
+  let counter = 2;
+  let candidate = `${base}_${counter}${ext}`;
+  while (usedFileNames.has(candidate)) {
+    counter += 1;
+    candidate = `${base}_${counter}${ext}`;
+  }
+  usedFileNames.add(candidate);
+  return candidate;
 }

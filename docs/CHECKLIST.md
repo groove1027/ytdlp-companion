@@ -8,6 +8,170 @@
 
 ## 🟢 완료된 작업
 
+### [2026-04-06] 21차 — 20차에서 발견한 3건 후속 수정
+- [x] `rg -n "getSceneNarrationText|existingScriptText|skipLocalScriptPersistRef|scriptText \\|\\| audioScript|audioScript \\|\\| scriptText" src`로 영향 범위 전수 조사 완료
+- [x] `src/components/tabs/imagevideo/SetupPanel.tsx` — 기존 장면 stale 판정용 `existingScriptText`와 uploaded draft 집계를 `getSceneNarrationText()` 기준으로 통일해 `audioScript` 전용 장면이 대본 변경으로 잘못 판정되지 않도록 보정
+- [x] `src/components/StoryboardScene.tsx` — `skipLocalScriptPersistRef` 대신 `localScriptInputSourceRef`를 도입해 외부 narration sync와 사용자 직접 타이핑을 분리했고, sync 직후 다음 렌더에서 `scriptText`가 잘못 persist되던 race를 차단하면서 직접 입력 시 `scriptText` 저장 동작은 유지
+- [x] `src/services/youtubeReferenceService.ts`, `src/templates/exportHtmlOptimized.ts` — 규칙 기반 첫 문장 추출과 최적화 HTML viewer 나레이션 표시를 `getSceneNarrationText` helper로 통일하고 raw `scriptText || audioScript` 잔존 경로 제거
+- [x] `cd src && npx tsc --noEmit`: 성공
+- [x] `cd src && npx vite build`: 성공 (기존 dynamic import/chunk-size warning만 존재)
+- [x] `cargo check --manifest-path companion/src-tauri/Cargo.toml --offline --locked`: 성공 (기존 dead_code/unused warning 3건만 존재)
+- [x] `rg -n "localScriptInputSourceRef|getSceneNarrationText\\(scene\\)|getSceneNarrationText\\(s\\)|existingScriptText" src/components/StoryboardScene.tsx src/components/tabs/imagevideo/SetupPanel.tsx src/services/youtubeReferenceService.ts src/templates/exportHtmlOptimized.ts` 및 `rg -n "scriptText \\|\\| audioScript|scene\\.scriptText \\|\\| scene\\.audioScript|s\\.scriptText\\|\\|s\\.audioScript|s\\.scriptText \\|\\| s\\.audioScript" src/components/tabs/imagevideo/SetupPanel.tsx src/services/youtubeReferenceService.ts src/templates/exportHtmlOptimized.ts`: helper 반영과 raw fallback 제거 재확인
+
+### [2026-04-06] #1045 편집실 SRT+에셋ZIP 통합 나레이션 + WAV 확장자 교정
+- [x] **이슈 #1045 두 증상 해결**:
+  - 증상 1: 편집실 `📦 SRT + 에셋 ZIP` 다운로드 시 나레이션이 토막 파일로만 존재 → **통합본(`_full_narration.{ext}`) 누락**
+  - 증상 2: Windows에서 CapCut 배치파일 실행 후 미디어 링크 실패 → 다른 탭의 `ef3bb7a` 커밋이 PowerShell `${ProjectId}` 변수 경계 명시화로 부수적 해결
+- [x] `src/components/tabs/EditRoomTab.tsx` `handleExportZip` — `mergedAudioUrl` 폴백 추가 (handleExportNle와 비대칭이었음). lines가 비어도 `projectStore.config.mergedAudioUrl` 또는 `soundStudioStore.mergedAudioUrl`을 통합본으로 전달
+- [x] `src/services/srtService.ts` `downloadSrtWithAssetsZip` 시그니처 확장:
+  - 새 파라미터 `narration: { clips, mergedAudioUrl, mergedFileName }`
+  - 통합본을 ZIP **루트**(`_full_narration.{ext}`)와 **`audio/`** 양쪽에 함께 저장 → 사용자가 압축 해제 즉시 찾을 수 있음
+  - `guessBlobExtension(blob, url, fallback)` 신규 헬퍼 — fetch 후 `blob.type` 기반으로 실제 MIME에 맞는 확장자 결정 (URL이 `blob:`인 WAV 파일이 `.mp3` 이름으로 저장되는 버그 차단)
+  - `ensureUniqueAudioFileName()` — 같은 scene prefix 다중 클립 + merged 충돌 방지
+  - clip/merged 모두 fetch 완료 후 파일명 예약하여 결정성 유지 + 정확한 확장자 보장
+- [x] Codex MCP 5.4 review 9차 루프 — "수정 없음, 문제 없음" 연속 2회 통과
+- [x] `cd src && npx tsc --noEmit`: 0 errors (3개 파일 범위)
+- [x] `cd src && npx vite build`: 성공 (기존 dynamic import/chunk-size warning만)
+- [x] **Playwright E2E 2건 통과** (`test-e2e/1045-editroom-srt-asset-zip.test.ts`):
+  - 증상 1: 편집실 → 📦 SRT + 에셋 ZIP 클릭 → 다운로드 캡처 → unzip → `_full_narration.wav` 루트 + audio/ 양쪽 존재 + `file` 명령으로 `RIFF WAVE audio Microsoft PCM 16 bit` MIME 일치 확인
+  - 증상 2: 편집실 → CapCut ZIP 다운로드 → ps1 추출 → `${ProjectId}` 명시 + draft_content.json의 `##_draftpath_placeholder_<UUID>_##`와 ps1의 `$ProjectId = '<UUID>'`가 정확히 매치 확인 + Mac bash installer `${PROJECT_ID}`도 검증
+  - 증거 스크린샷: `test-e2e/1045-01~04-*.png`, `test-e2e/1045-cc-01~99-*.png`, `test-e2e/dl-1045-project-assets.zip` (58599 bytes), `test-e2e/dl-1045-cc-*_capcut.zip` (391414 bytes)
+
+### [2026-04-06] 19차 검증 — StoryboardScene audioScript-only 표시 회귀 보정
+- [x] `rg -n "getSceneNarrationText|getScenePrimaryText|buildSceneSearchQuery|audioScript|subtitleSegments|useUnifiedTimeline|exportHtml" src` 및 `rg -n "utils/sceneText|sceneText" src`로 helper 정의/사용처/상대 import 경로 전수 재확인 완료
+- [x] `src/utils/sceneText.ts`, `src/hooks/useUnifiedTimeline.ts`, `src/stores/editRoomStore.ts`, `src/templates/exportHtml.ts`, `src/services/exportService.ts`, `src/hooks/useAutoSave.ts` 재검토 완료 — helper export 정상, 편집실 자막/타임라인/HTML 내보내기는 `audioScript` fallback을 사용하고, fingerprint·auto-save `fullNarrationText`는 계속 `scriptText`만 사용함을 확인
+- [x] 확인된 실제 회귀: `src/components/StoryboardScene.tsx`의 카드 textarea 로컬 상태가 여전히 `scene.scriptText`만 기준으로 초기화/동기화되어 `audioScript`만 있는 장면은 카드에서 내레이션이 빈칸으로 보일 수 있었음
+- [x] `src/components/StoryboardScene.tsx` — `localScriptText`를 `getSceneNarrationText(scene)` 기준으로 동기화하고 `skipLocalScriptPersistRef`를 추가해, 표시용 sync 때문에 `scriptText`가 자동 저장되는 부작용 없이 audio-only 장면도 카드에서 즉시 보이도록 보정
+- [x] `cd src && npx tsc --noEmit`: 성공
+- [x] `cd src && npx vite build`: 성공 (기존 dynamic import/chunk-size warning만 존재)
+- [x] `cargo check --manifest-path companion/src-tauri/Cargo.toml --offline --locked`: 성공 (기존 dead_code/unused warning 3건만 존재)
+- [x] `rg -n "skipLocalScriptPersistRef|useState\\(narrationText\\)|setLocalScriptText\\(narrationText\\)|updateScene\\(scene.id, \\{ scriptText: localScriptText \\}\\)" src/components/StoryboardScene.tsx` 및 `rg -n "computeFingerprint|fullNarrationText|s\\.scriptText" src/hooks/useAutoSave.ts`: 수정 범위와 B 경로 유지 재확인
+- [x] `rg -n "matchedLine\\?\\.text \\|\\| getSceneNarrationText\\(scene\\)|text: existingSub\\?\\.text \\|\\| matchedLine\\?\\.text \\|\\| scene\\.generatedDialogue \\|\\| narrationText|return \\(scene\\?\\.scriptText \\|\\| scene\\?\\.audioScript \\|\\| ''\\)\\.trim\\(\\)" src/hooks/useUnifiedTimeline.ts src/stores/editRoomStore.ts src/templates/exportHtml.ts`: subtitle/export fallback 재확인
+
+### [2026-04-06] 18차 — audioScript 폴백 전면 수정
+- [x] `rg 'scriptText' src/ -n` 전수 조사 완료 후 사용자 표시/검색 입력/NLE·HTML 내보내기/자막 생성/TTS/프롬프트 생성 경로와 저장·fingerprint 등 내부 경로를 분류
+- [x] `src/utils/sceneText.ts` 추가 — `getSceneNarrationText()`, `getScenePrimaryText()`, `buildSceneSearchQuery()` 공통 helper로 `scriptText || audioScript` 기준을 중앙화
+- [x] `src/components/tabs/imagevideo/StoryboardPanel.tsx`, `src/components/tabs/EditRoomTab.tsx`, `src/stores/editRoomStore.ts`, `src/hooks/useUnifiedTimeline.ts`, `src/stores/projectStore.ts` — 17차 누락 지점(장면 나누기/AI 프롬프트/자동 프롬프트/전체화면 자막/subtitle segment 체인/subtitleSegments 소스)을 helper 기준으로 통일하고 split/merge·복원 라인 재생성까지 같이 보정
+- [x] `src/components/StoryboardScene.tsx`, `src/components/tabs/SoundStudioTab.tsx`, `src/components/tabs/sound/VoiceStudio.tsx`, `src/components/tabs/editroom/*`, `src/components/tabs/upload/InlineThumbnailStudio.tsx`, `src/components/tabs/ThumbnailStudioTab.tsx`, `src/components/tabs/UploadTab.tsx`, `src/components/tabs/shopping-channel/GenerationStep.tsx` — 화면 표시/검색 입력/TTS 동기화/썸네일·업로드용 대본 집계를 같은 narration helper로 맞춤
+- [x] `src/services/exportService.ts`, `src/templates/exportHtml.ts`, `src/templates/exportHtmlOptimized.ts`, `src/types.ts`, `src/App.tsx` — ZIP/HTML viewer/export manifest/import 경로도 `audioScript`를 보존하거나 narration fallback을 사용하도록 정리
+- [x] `src/services/googleReferenceSearchService.ts`, `src/services/youtubeReferenceService.ts`, `src/services/gemini/imageGeneration.ts`, `src/services/gemini/videoAnalysis.ts`, `src/hooks/useVideoBatch.ts`, `src/stores/editPointStore.ts` — Google/YouTube 레퍼런스, 이미지·리메이크 프롬프트, 배치 영상, 번역, 편집점 라인 생성도 audio-only 장면을 놓치지 않도록 보강
+- [x] `cd src && npx tsc --noEmit`: 성공
+- [x] `cd src && npx vite build`: 성공 (기존 dynamic import/chunk-size warning만 존재)
+- [x] `cargo check --manifest-path companion/src-tauri/Cargo.toml --offline --locked`: 성공 (기존 dead_code/unused warning 3건만 존재)
+- [x] `rg -n "getSceneNarrationText|getScenePrimaryText|buildSceneSearchQuery|audioScript" src`: 반영 위치 재확인
+
+### [2026-04-06] 16차 후속 수정 — Storyboard/EditRoom audioScript 폴백 3건
+- [x] `src/components/tabs/imagevideo/StoryboardPanel.tsx`, `src/components/tabs/EditRoomTab.tsx`, `docs/CHECKLIST.md` 영향 범위 grep/rg 재확인 완료
+- [x] 확인된 실제 문제: 스토리보드 리스트/그리드/상세 모달과 TTS 폴백 일부가 `scriptText`만 기준으로 렌더링해 `audioScript`만 있는 장면은 나레이션이 비어 보이거나 TTS 버튼이 숨겨질 수 있었고, 스토리보드 탭 NLE 내보내기 payload도 `audioScript`를 누락하고 있었음
+- [x] `src/components/tabs/imagevideo/StoryboardPanel.tsx` — 기존 `getSceneNarrationText()` helper를 리스트 카드, 그리드 카드, 상세 모달, TTS 폴백, 스토리보드 NLE export payload에 공통 적용하고 `audioScript`도 함께 전달하도록 정리
+- [x] `src/components/tabs/EditRoomTab.tsx` — 편집실 미리보기 자막 fallback을 `scriptText || audioScript` 기준으로 보정
+- [x] `cd src && npx tsc --noEmit`: 성공
+- [x] `cd src && npx vite build`: 성공 (기존 dynamic import/chunk-size warning만 존재)
+- [x] `cargo check --manifest-path companion/src-tauri/Cargo.toml --offline --locked`: 성공 (기존 dead_code/unused warning 3건만 존재)
+- [x] `rg -n "getSceneNarrationText|audioScript: scene\\.audioScript|activeScene\\?\\.audioScript|scene\\.audioUrl \\|\\| narrationText|activeSceneNarration" src/components/tabs/imagevideo/StoryboardPanel.tsx src/components/tabs/EditRoomTab.tsx`: 반영 위치 재확인
+
+### [2026-04-06] 14차 검증 — 13차 후속 3건 audioScript 폴백 보정
+- [x] `src/components/tabs/imagevideo/VideoReferencePanel.tsx`, `src/components/tabs/EditRoomTab.tsx`, `src/services/nleExportService.ts`, `src/services/youtubeReferenceService.ts`, `docs/CHECKLIST.md` 영향 범위 grep/rg 재확인 완료
+- [x] 확인된 실제 문제: 영상 레퍼런스 장면 헤더, 편집실 NLE 내보내기 텍스트 경로, 편집 가이드 시트가 여전히 `scriptText` 단독 기준이라 `audioScript`만 있는 장면이 `(내용 없음)`으로 보이거나 NLE/SRT/가이드 대본 줄에서 빠질 수 있었음
+- [x] `src/services/youtubeReferenceService.ts` — `getVideoReferenceScenePrimaryText()` 공통 helper를 추가하고 편집 가이드 시트/장면 유효성 필터가 `scriptText || audioScript || visualDescriptionKO` 기준을 공유하도록 정리
+- [x] `src/components/tabs/imagevideo/VideoReferencePanel.tsx` — 장면 헤더 미리보기도 같은 helper를 사용해 audio-only 장면이 `(내용 없음)`으로 보이지 않도록 보정
+- [x] `src/components/tabs/EditRoomTab.tsx`, `src/services/nleExportService.ts` — NLE 내보내기 입력에 `audioScript`를 함께 전달하고, FCP 마커/클립 라벨/description/장면 SRT가 `scriptText || audioScript` 폴백을 쓰도록 보강
+- [x] `cd src && npx tsc --noEmit`: 성공
+- [x] `cd src && npx vite build`: 성공
+- [x] `cargo check --manifest-path companion/src-tauri/Cargo.toml --offline --locked`: 성공
+- [x] `rg -n "getVideoReferenceScenePrimaryText|hasVideoReferenceSceneContent|scriptText: s\\.scriptText \\|\\| s\\.audioScript|audioScript\\?: string|getEditRoomSceneNarrativeText|대본:" src/components/tabs/imagevideo/VideoReferencePanel.tsx src/components/tabs/EditRoomTab.tsx src/services/nleExportService.ts src/services/youtubeReferenceService.ts`: 반영 위치 재확인
+
+### [2026-04-06] 12차 검증 — Google 레퍼런스 audioScript 누락 재검사 보정
+- [x] `companion/src-tauri/src/server.rs`, `src/services/youtubeReferenceService.ts`, `src/services/googleReferenceSearchService.ts`, `src/components/tabs/imagevideo/GoogleReferencePanel.tsx`, `src/components/tabs/imagevideo/SetupPanel.tsx`, `src/components/tabs/EditRoomTab.tsx`, `src/components/tabs/imagevideo/StoryboardPanel.tsx`, `docs/CHECKLIST.md` 영향 범위 grep/rg 재확인 완료
+- [x] 재검사 결과: `server.rs`의 ffmpeg capability 응답은 `supported=false` 모든 분기를 공통 503 응답으로 반환하고 `pending`/`supported` 직렬화도 정상이며, `youtubeReferenceService.ts`의 capability probe 성공 캐시는 여전히 `200 + supported=true`일 때만 저장됨을 재확인
+- [x] 추가로 확인한 실제 문제: YouTube 레퍼런스 경로는 `audioScript` 포함이 정상화됐지만, Google 이미지 레퍼런스 경로의 장면 유효성 필터/자동배치 후보/밈 검색 키워드/AI 검색 컨텍스트 일부는 아직 `scriptText` 중심이라 audio-only 장면이 빠질 수 있었음
+- [x] `src/services/googleReferenceSearchService.ts` — `hasGoogleReferenceSceneContent()`, `getGoogleReferenceScenePrimaryText()` 공통 helper를 추가하고 전역 컨텍스트 fallback, 검색 계획, 로케일 추론, AI 쿼리 컨텍스트, 자동배치 후보 필터가 `scriptText || audioScript`를 같은 기준으로 쓰도록 정리
+- [x] `src/components/tabs/imagevideo/GoogleReferencePanel.tsx`, `src/components/tabs/imagevideo/SetupPanel.tsx` — 패널 진입 조건/전체 검색 큐/밈 검색/장면 목록/자동배치 시작 조건도 같은 helper를 사용하도록 맞춰 audio-only 장면이 Google 레퍼런스 경로에서도 빠지지 않도록 보정
+- [x] `src/components/tabs/EditRoomTab.tsx`, `src/components/tabs/imagevideo/StoryboardPanel.tsx` 재검토 완료 — `videoSceneCount` / `refFallbackCount`는 `videoUrl` / `imageUrl` / `videoReferences`만 사용하므로 `audioScript`와 무관함을 재확인
+- [x] `cd src && npx tsc --noEmit`: 0 errors
+- [x] `cd src && npx vite build`: 성공 (기존 dynamic import/chunk-size warning만 존재)
+- [x] `cargo check --manifest-path companion/src-tauri/Cargo.toml --offline --locked`: 성공 (기존 dead_code/unused warning 3건만 존재)
+- [x] `rg -n "ffmpeg_capability_into_response|build_ffmpeg_capability_response|hasVideoReferenceSceneContent|searchAllScenesReferenceVideos\\(|probeReferenceClipCutCapabilityEndpoint|hasGoogleReferenceSceneContent|getGoogleReferenceScenePrimaryText|searchSceneReferenceImages\\(|autoApplyGoogleReferences\\(" companion/src-tauri/src/server.rs src/services/youtubeReferenceService.ts src/services/googleReferenceSearchService.ts src/components/tabs/imagevideo/VideoReferencePanel.tsx src/components/tabs/imagevideo/GoogleReferencePanel.tsx src/components/tabs/imagevideo/SetupPanel.tsx`: 반영 위치 재확인
+
+### [2026-04-06] 11차 검증 — ffmpeg capability pending 오인 캐시 + audioScript-only 장면 누락 수정
+- [x] `companion/src-tauri/src/server.rs`, `src/services/youtubeReferenceService.ts`, `src/components/tabs/imagevideo/VideoReferencePanel.tsx`, `docs/CHECKLIST.md` 영향 범위 grep/rg 재확인 완료
+- [x] 재검증 중 확인한 실제 문제: `GET /api/ffmpeg/capability`가 ready=false 초기 상태를 명확히 실패/보류로 표현하지 않아 프런트가 probe 성공으로 오인 캐시할 수 있었고, 전체 장면 검색 내부 필터는 `audioScript`만 있는 장면을 빠뜨리고 있었음
+- [x] `companion/src-tauri/src/server.rs` — capability 응답에 `pending` / `supported`를 추가하고, ready=false 또는 지원 불가 상태는 `503 Service Unavailable`로 명확히 반환하도록 정리했으며 `/api/ffmpeg/cut`의 빈 input probe도 같은 규칙으로 통일
+- [x] `src/services/youtubeReferenceService.ts` — probe 성공 캐시는 capability endpoint가 `200 + supported=true`를 명시적으로 준 경우에만 저장하도록 좁혔고, pending/500 계열 응답은 캐시하지 않은 채 재시도 가능하게 조정
+- [x] `src/services/youtubeReferenceService.ts`, `src/components/tabs/imagevideo/VideoReferencePanel.tsx` — `hasVideoReferenceSceneContent()` 공통 헬퍼로 `scriptText || visualDescriptionKO || audioScript` 조건을 공유하게 만들어 audio-only 장면도 패널/일괄 검색 양쪽에서 빠지지 않도록 보정
+- [x] `cd src && npx tsc --noEmit`: 0 errors
+- [x] `cd src && npx vite build`: 성공 (기존 dynamic import/chunk-size warning만 존재)
+- [x] `cargo check --manifest-path companion/src-tauri/Cargo.toml --offline --locked`: 성공 (기존 dead_code/unused warning 3건만 존재)
+- [x] `rg -n "ffmpeg_capability_handler|ffmpeg_capability_into_response|pending: bool|supported: bool|req\\.input\\.trim\\(\\)\\.is_empty\\(\\)|REFERENCE_CLIP_CUT_PENDING_MESSAGE|ReferenceClipCutProbeResult|hasVideoReferenceSceneContent|searchAllScenesReferenceVideos\\(|probeReferenceClipCutCapabilityEndpoint|probeReferenceClipCutEndpointViaCut|probeReferenceClipCutEndpoint\\(" companion/src-tauri/src/server.rs src/services/youtubeReferenceService.ts src/components/tabs/imagevideo/VideoReferencePanel.tsx`: 반영 위치 재확인
+
+### [2026-04-06] 8차 검증 — 레퍼런스 클립 probe 캐시 + 취소 전파 복구
+- [x] `src/services/youtubeReferenceService.ts`, `companion/src-tauri/src/server.rs`, `docs/CHECKLIST.md` 영향 범위 grep/rg 재확인 완료
+- [x] 재검증 중 확인한 실제 문제: `downloadAndTrimReferenceClip()`이 `trimReferenceClipWithCompanion(...)`에 `signal`을 넘기지 않아 취소가 trim fetch까지 전파되지 않았고, `/api/ffmpeg/cut` 지원 확인은 매번 더미 probe를 다시 보내 temp file/ffmpeg 경로를 반복 실행하고 있었음
+- [x] `src/services/youtubeReferenceService.ts` — `trimReferenceClipWithCompanion(...)` 호출에 취소 신호를 복구했고, probe 성공 시에만 module-level boolean 캐시를 저장한 뒤 이후 `downloadAndTrimReferenceClip()`이 재사용하도록 정리
+- [x] `src/services/youtubeReferenceService.ts` — 같은 클립 in-flight 요청은 호출자별 대기 취소와 공유 작업 abort를 분리해 마지막 대기자만 실제 작업을 중단하도록 보강
+- [x] `companion/src-tauri/src/server.rs` — `FFMPEG_CUT_CAPABILITY_*` 캐시와 `GET /api/ffmpeg/capability`를 추가했고, `POST /api/ffmpeg/cut`의 빈 input probe는 capability가 이미 판별된 경우 temp file/ffmpeg 실행 없이 즉시 반환하도록 정리
+- [x] `cd src && npx tsc --noEmit`: 0 errors
+- [x] `cd src && npx vite build`: 성공 (기존 dynamic import/chunk-size warning만 존재)
+- [x] `cargo check --manifest-path companion/src-tauri/Cargo.toml --offline --locked`: 성공 (기존 unused/dead_code warning 3건만 존재)
+- [x] `rg -n "trimReferenceClipWithCompanion\\(|probeReferenceClipCutEndpoint|probeReferenceClipCutCapabilityEndpoint|/api/ffmpeg/capability|FFMPEG_CUT_CAPABILITY_|ffmpeg_capability_handler|waitForReferenceClipInflight|signal: controller.signal" src/services/youtubeReferenceService.ts companion/src-tauri/src/server.rs docs/CHECKLIST.md`: 반영 위치 재확인
+
+### [2026-04-06] 6차 검증 — ffmpeg-cut capability 오판 수정
+- [x] `companion/src-tauri/src/server.rs`, `src/services/youtubeReferenceService.ts`, `docs/CHECKLIST.md` 영향 범위 grep/rg 재확인 완료
+- [x] 5차 재검증에서 확인한 실제 문제: companion health 기본 캐시가 초기 60초 동안 `ffmpeg-cut`을 누락하고, 프런트는 `version >= 1.3.0` fallback으로 이를 보정해 실제 capability와 health 응답이 엇갈릴 수 있었음
+- [x] `companion/src-tauri/src/server.rs` — health 기본 services에 `ffmpeg-cut`을 즉시 포함하고, 서비스 감지는 60초 대기 없이 서버 시작 직후 1회 + 이후 5분 주기로 갱신되도록 조정
+- [x] `src/services/youtubeReferenceService.ts` — `ffmpegCutSupported`는 `services.includes('ffmpeg-cut')`만 엄격히 사용하도록 변경하고, `ensureReferenceClipCutSupport()`에서 `/api/ffmpeg/cut` probe POST로 엔드포인트/FFmpeg 실행 가능 여부를 최종 확인하도록 보강
+- [x] `cd src && npx tsc --noEmit`: 0 errors
+- [x] `cd src && npx vite build`: 성공 (기존 dynamic import/chunk-size warning만 존재)
+- [x] `cargo check --manifest-path companion/src-tauri/Cargo.toml --offline --locked`: 성공 (기존 unused/dead_code warning 3건만 존재)
+- [x] `rg -n "ffmpeg-cut|ensureReferenceClipCutSupport|probeReferenceClipCutEndpoint|services.includes\\('ffmpeg-cut'\\)|CachedHealth|detect_services\\(" src/services/youtubeReferenceService.ts companion/src-tauri/src/server.rs docs/CHECKLIST.md`: 반영 위치 재확인
+
+### [2026-04-06] #1045 clip WAV 확장자 버그 보정
+- [x] `src/services/srtService.ts` 영향 범위 grep/rg 전수 조사 완료 — `downloadSrtWithAssetsZip()`, `guessBlobExtension()`, `guessExtension()`, `usedAudioFileNames`, `mergedFileName` 사용 지점을 확인했고 실제 수정 범위는 `src/services/srtService.ts` 1곳으로 고정
+- [x] 근본 원인: clip ZIP 파일명 예약이 fetch 이전 `guessExtension(audioUrl, 'mp3')`에 묶여 있어 `blob:` URL과 확장자 없는 URL이 실제 WAV payload여도 `.mp3` 이름으로 저장될 수 있었음
+- [x] `src/services/srtService.ts` — clip 파일명 예약을 fetch 이후로 이동하고, URL 확장자 1차 추론 실패 시 `guessBlobExtension(blob, audioUrl, urlExt || 'mp3')`로 실제 MIME 기반 확장자를 교정한 뒤 `ensureUniqueAudioFileName()`에 반영하도록 최소 수정
+- [x] `src/services/srtService.ts` 재검토 완료 — merged 나레이션은 기존 `guessBlobExtension(blob, narration.mergedAudioUrl, 'mp3')` + `normalizeNarrationFileName()` 경로를 유지해 basename 보존과 확장자 교정이 그대로 적용됨
+- [x] `cd src && npx tsc --noEmit`: 0 errors
+- [x] `cd src && npx vite build`: 성공 (기존 dynamic import/chunk-size warning만 존재)
+- [x] `rg -n "downloadSrtWithAssetsZip|guessBlobExtension|guessExtension|usedAudioFileNames|mergedFileName" src/services/srtService.ts src/components/tabs/EditRoomTab.tsx`: clip/merged 확장자 교정 경로 및 호출 지점 재확인
+
+### [2026-04-06] 무료 이미지/영상 레퍼런스 3차 최종 검증 — abort/언어/중복 제거 마감
+- [x] `src/services/youtubeReferenceService.ts`, `src/components/tabs/imagevideo/VideoReferencePanel.tsx`, `src/services/audioAnalyserService.ts`, `companion/src-tauri/src/server.rs` 영향 범위 grep/rg 재확인 완료
+- [x] 최종 재검증 중 확인한 실제 문제: `youtubeReferenceService.ts`의 fallback 언어 추론이 여전히 한국어 메타 필드/프로젝트 문맥에 끌려 `en`/`ja` 장면을 `ko`로 기울일 수 있었고, AI 검색어 생성/영상·자막 매칭 경로 일부는 abort signal을 넘기지 않아 취소 후에도 분석이 계속될 수 있었음
+- [x] 최종 재검증 중 확인한 실제 문제: `downloadAndTrimReferenceClip()`의 shared in-flight promise는 첫 호출자의 signal에 묶여 다른 대기자까지 같이 `AbortError`를 받을 수 있었고, `VideoReferencePanel.tsx`의 구간 조정 저장은 동일 `videoId` 중복 제거/앞쪽 승격이 적용 경로와 완전히 같지 않았음
+- [x] `src/services/youtubeReferenceService.ts` — fallback 언어 추론을 `scriptText`/`audioScript`/고유명사 우선으로 재정렬하고, `buildVideoSearchQuery()`, `matchWithGeminiVideo()`, `matchWithCutsAndCaptions()`, `matchWithCaptionsOnly()`에 abort signal을 실제 전파하도록 보강
+- [x] `src/services/youtubeReferenceService.ts` — shared reference clip trim/download promise는 호출자 signal과 분리하고 각 호출자는 `waitForPromiseWithSignal()`로 대기만 취소하도록 정리해 in-flight 오염을 방지
+- [x] `src/components/tabs/imagevideo/VideoReferencePanel.tsx` — 공통 `upsertSceneVideoReferences()`로 적용/구간조정/장면영상 적용 경로를 통일하고, 구간 조정 대상도 `videoId` 기준으로 찾아 stale index/중복 잔존 가능성을 줄임
+- [x] `src/services/audioAnalyserService.ts` — 기존 `Float32Array` 제네릭 오타 3건을 수정해 `tsc --noEmit`가 다시 0 errors 상태가 되도록 정리
+- [x] `cd src && npx tsc --noEmit`: 0 errors
+- [x] `cd src && npx vite build`: 성공 (기존 dynamic import/chunk-size warning만 존재)
+- [x] `cargo check --manifest-path companion/src-tauri/Cargo.toml --offline --locked`: 성공 (기존 unused warning 3건만 존재)
+- [x] `rg -n "inferYouTubeQueryLanguage|buildVideoSearchQuery|matchWithGeminiVideo|matchWithCutsAndCaptions|matchWithCaptionsOnly|waitForPromiseWithSignal|upsertSceneVideoReferences|Float32Array<" src/services/youtubeReferenceService.ts src/components/tabs/imagevideo/VideoReferencePanel.tsx src/services/audioAnalyserService.ts`: 반영 위치 재확인
+
+### [2026-04-06] 무료 이미지/영상 레퍼런스 2차 검증 — Abort/cache/언어 추론 보정
+- [x] `src/services/youtubeReferenceService.ts`, `src/components/tabs/imagevideo/VideoReferencePanel.tsx`, `src/components/tabs/EditRoomTab.tsx`, `src/services/nleExportService.ts`, `src/services/googleReferenceSearchService.ts`, `companion/src-tauri/src/server.rs`, `src/types.ts` 영향 범위 grep/rg 재확인 완료
+- [x] 재검증 중 확인한 실제 문제: `youtubeReferenceService.ts`의 fallback 언어 추론이 한국어 라벨 문자열/`visualDescriptionKO`에 끌려 글로벌 장면도 `relevanceLanguage=ko`로 기울 수 있었고, companion status in-flight 캐시가 호출자 `AbortSignal`에 묶여 취소 한 번으로 30초 캐시가 오염될 수 있었음
+- [x] `src/services/youtubeReferenceService.ts` — companion health/cache 조회를 호출자 취소와 분리하고 `waitForPromiseWithSignal()`로 대기만 중단되도록 수정해 shared cache/in-flight 구조가 취소 요청에 오염되지 않도록 보정
+- [x] `src/services/youtubeReferenceService.ts` — YouTube 검색, duration 조회, timed captions 프록시/직접 fetch, 원본 reference 다운로드 대기에 `AbortSignal`을 실제 전파하고 abort 시 즉시 상위로 중단되게 정리
+- [x] `src/services/youtubeReferenceService.ts` — 언어 추론은 한국어 설명 필드 대신 실제 대본/오디오/고유명사 중심으로 보도록 조정하고, 전후 장면의 `audioScript`와 audio-only 장면도 검색 대상/쿼리 생성에 포함되도록 보강
+- [x] `src/components/tabs/imagevideo/VideoReferencePanel.tsx` — 검색 결과 적용/삭제/구간 조정 저장 경로가 항상 최신 `freshScene` 기준으로 `videoReferences`를 앞쪽 승격 + 중복 제거하도록 보정
+- [x] `cd src && node_modules/typescript/bin/tsc --noEmit`: 0 errors
+- [x] `cd src && node_modules/.bin/vite build`: 성공 (기존 dynamic import/chunk-size warning만 존재)
+- [x] `cargo check --manifest-path companion/src-tauri/Cargo.toml --offline --locked`: 성공 (기존 unused warning 3건만 존재)
+- [x] `rg -n "resolveReferenceGlobalContext|searchQueryHint|getVideoReferenceCompanionStatus|combineSignalWithTimeout|waitForPromiseWithSignal|buildVideoLanguageContext|searchAllScenesReferenceVideos|videoReferences: \\[ref, \\.\\.\\.\\(freshScene\\.videoReferences|ffmpeg-cut|google-proxy" src companion/src-tauri/src docs/CHECKLIST.md -S`: 반영 위치 재확인
+
+### [2026-04-06] #1045 재검증 — 편집실 SRT+에셋 ZIP / CapCut placeholder 치환 점검
+- [x] `src/components/tabs/EditRoomTab.tsx`, `src/services/srtService.ts`, `src/services/nleExportService.ts` 영향 범위 grep/rg 전수 조사 완료
+- [x] `downloadSrtWithAssetsZip()` 호출자는 `src/components/tabs/EditRoomTab.tsx` 1곳만 확인했고, 새 시그니처 `{ clips, mergedAudioUrl }` 전달과 파라미터 순서가 현재 구현과 일치함
+- [x] `src/services/srtService.ts` — `mergedAudioUrl`의 `blob:` URL은 브라우저 `fetch()`로 읽히고 실패 시 `null`로 떨어져 ZIP 생성을 막지 않음을 재확인했으며, 비율 크롭 후 원본 Blob이 그대로 반환될 때 이미지 확장자가 실제 MIME과 어긋날 수 있는 엣지케이스를 `guessBlobExtension()` 기반으로 보정
+- [x] `src/services/srtService.ts` — `_full_narration.{ext}` 확장자 추론은 MIME이 비어 있거나 `application/octet-stream`이어도 URL 확장자 또는 기본값 `mp3`로 정상 fallback됨을 재확인
+- [x] `src/services/srtService.ts` — 6차 재검증에서 merged 나레이션 파일이 `audio/` 아래에만 생성되고 ZIP 루트에는 없음을 실제 ZIP 엔트리로 확인했고, `_full_narration.{ext}`를 ZIP 루트와 `audio/` 양쪽에 함께 기록하도록 보정
+- [x] `src/services/srtService.ts` — 3차 재검증에서 같은 `sceneId`에 서로 다른 나레이션 clip이 여러 개 있을 때 `audio/001_narration.ext`가 마지막 파일로 덮어써지던 추가 결함을 확인했고, `ensureUniqueAudioFileName()`으로 clip/merged 파일명을 모두 suffix 보정해 ZIP 충돌을 막음
+- [x] `src/services/nleExportService.ts` — Windows PowerShell placeholder를 `${ProjectId}`로 고친 뒤, `$Placeholder`, `$TargetProjectPath`, `$TargetRoot`, `$CapCutCandidates`, `$TargetProjectPathJson` 관련 나머지 문자열/치환 구문도 변수 경계와 PowerShell 문법상 문제 없음을 재확인
+- [x] `src/services/nleExportService.ts` — mac installer의 perl one-liner는 bash가 아니라 perl의 `$ENV{...}`를 읽는 형태로 정상이며, shell single-quote 안이라 bash 변수와 충돌하지 않음을 재확인
+- [x] `cd src && node_modules/typescript/bin/tsc --noEmit`: 0 errors
+- [x] `cd src && node_modules/.bin/vite build`: 성공 (기존 dynamic import/chunk-size warning만 존재)
+- [x] `rg -n "downloadSrtWithAssetsZip\\(|ensureUniqueAudioFileName|mergedAudioUrl|_full_narration|ProjectId|Placeholder|TargetProjectPathJson|TargetRootJson|\\$JsonFiles|patchCapCutDraftJsonPaths|buildEditRoomNleZip\\(" src/components/tabs/EditRoomTab.tsx src/services/srtService.ts src/services/nleExportService.ts`: 반영 위치 재확인
+
 ### [2026-04-06] 무료 이미지/영상 레퍼런스 + 컴패니언 v1.2/v1.3 호환성 전수 점검
 - [x] `src/services/googleReferenceSearchService.ts`, `src/services/youtubeReferenceService.ts`, `src/components/tabs/imagevideo/GoogleReferencePanel.tsx`, `src/components/tabs/imagevideo/VideoReferencePanel.tsx`, `src/components/tabs/imagevideo/StoryboardPanel.tsx`, `src/components/tabs/EditRoomTab.tsx`, `src/services/nleExportService.ts`, `src/stores/projectStore.ts`, `companion/src-tauri/src/server.rs` 영향 범위 grep/rg 전수 조사 완료
 - [x] 근본 원인: 무료 이미지 레퍼런스는 AI 검색어를 생성하더라도 실제 검색/재랭킹 단계에서 장면·전후 장면·프로젝트 전체 맥락을 다시 넘기지 않아, 고도화된 쿼리를 써도 결과 선별이 원래 장면 컨텍스트와 느슨하게 연결될 수 있었음
@@ -19,6 +183,17 @@
 - [x] `cd src && node_modules/typescript/bin/tsc --noEmit`: 0 errors
 - [x] `cd src && node_modules/.bin/vite build`: 성공 (기존 dynamic import/chunk-size warning만 존재)
 - [x] `cargo check --manifest-path companion/src-tauri/Cargo.toml --offline --locked`: 성공 (기존 unused warning 3건만 존재)
+### [2026-04-06] 4차 검증 — 레퍼런스/편집실/NLE 최종 재점검
+- [x] `src/services/youtubeReferenceService.ts`, `src/services/googleReferenceSearchService.ts`, `src/services/nleExportService.ts`, `src/components/tabs/imagevideo/VideoReferencePanel.tsx`, `src/components/tabs/imagevideo/GoogleReferencePanel.tsx`, `src/components/tabs/imagevideo/StoryboardPanel.tsx`, `src/components/tabs/EditRoomTab.tsx`, `src/services/audioAnalyserService.ts`, `companion/src-tauri/src/server.rs` 영향 범위 재검토 완료
+- [x] 근본 원인: 장면별 무료 레퍼런스 적용 경로 1곳이 최신 장면 기준 `previousSceneImageUrl`를 쓰지 않아 검색 중 다른 교체가 끼어든 뒤 되돌리기 백업이 끊길 수 있었음
+- [x] 근본 원인: 편집실 NLE 내보내기 실패 토스트 1곳이 레퍼런스 클립 호환성 메시지를 일반 오류와 동일한 짧은 노출 시간으로 처리해 업데이트 안내를 놓치기 쉬웠음
+- [x] 근본 원인: `src/services/youtubeReferenceService.ts`의 짧은 영상 Gemini 분석 실패 폴백 1곳이 호출자 abort를 먼저 전파하지 않아 취소 직후에도 컷+자막 폴백으로 이어질 수 있었음
+- [x] `src/components/tabs/imagevideo/StoryboardPanel.tsx`, `src/components/tabs/EditRoomTab.tsx`, `src/services/youtubeReferenceService.ts` — 위 3건만 추가 보정했고 나머지 재검사 범위는 현 상태 그대로 문제 없음을 재확인
+- [x] `cd src && npx tsc --noEmit`: 0 errors
+- [x] `cd src && npx vite build`: 성공 (기존 dynamic import/chunk-size warning만 존재)
+- [x] `cargo check --manifest-path companion/src-tauri/Cargo.toml --offline --locked`: 성공 (기존 dead_code/unused warning만 존재)
+- [x] `rg -n "getPreviousSceneImageUrlForReplace\\(|isReferenceClipCompatibilityErrorMessage\\(|Gemini 영상 분석 실패 → 컷\\+자막 폴백|createAbortError\\(|ffmpeg-cut|/health|previousSceneImageUrl|upsertSceneVideoReferences|searchSceneReferenceVideos\\(|searchAllScenesReferenceVideos\\(" src/components/tabs/imagevideo/StoryboardPanel.tsx src/components/tabs/EditRoomTab.tsx src/services/youtubeReferenceService.ts src/components/tabs/imagevideo/VideoReferencePanel.tsx src/components/tabs/imagevideo/GoogleReferencePanel.tsx src/services/googleReferenceSearchService.ts src/services/nleExportService.ts src/services/audioAnalyserService.ts companion/src-tauri/src/server.rs docs/CHECKLIST.md`: 반영 위치 재확인
+
 - [x] `rg -n "searchSceneReferenceImages|buildSearchQuery|resolveReferenceGlobalContext|searchQueryHint|getVideoReferenceCompanionStatus|downloadAndTrimReferenceClip|isReferenceClipCompatibilityErrorMessage|videoReferences: \\[ref, \\.\\.\\.|ffmpeg-cut|google-proxy" src companion/src-tauri/src docs/CHECKLIST.md`: 반영 위치 재확인
 
 ### [2026-04-06] 5회차 검증 — 프리셋 3종 텍스트 경로 회귀 마감
