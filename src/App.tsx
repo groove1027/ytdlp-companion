@@ -46,7 +46,7 @@ import { getGeminiKey } from './services/apiService';
 import { dataURLtoFile } from './utils/fileHelpers';
 import { splitVideoIntoSegments, getVideoDuration } from './utils/videoSegmentUtils';
 import { persistImage } from './services/imageStorageService';
-import { recheckCompanion } from './services/ytdlpApiService';
+import { isCompanionOutdated, recheckCompanion } from './services/ytdlpApiService';
 import AuthGate from './components/AuthGate';
 import AuthPromptModal from './components/AuthPromptModal';
 import ProfileModal from './components/ProfileModal';
@@ -275,7 +275,7 @@ const App: React.FC = () => {
     });
   }, []);
 
-  // 컴패니언 게이트: 로그인된 사용자만 대상, 60초 간격 재확인
+  // 컴패니언 게이트: 로그인된 사용자만 대상, 10초 간격 재확인
   useEffect(() => {
     let cancelled = false;
 
@@ -289,7 +289,7 @@ const App: React.FC = () => {
     const checkCompanion = async () => {
       const detected = await recheckCompanion().catch(() => false);
       if (!cancelled) {
-        setShowCompanionGate(!detected);
+        setShowCompanionGate(!detected || isCompanionOutdated());
       }
     };
 
@@ -299,10 +299,10 @@ const App: React.FC = () => {
       if (!cancelled) setShowCompanionGate(true);
     });
 
-    // 60초 간격 재확인 — 세션 중 컴패니언이 꺼지면 다시 게이트 표시
+    // 10초 간격 재확인 — 세션 중 컴패니언이 꺼지거나 구버전이면 다시 게이트 표시
     const interval = setInterval(() => {
       if (!cancelled) checkCompanion().catch(() => {});
-    }, 60_000);
+    }, 10_000);
 
     return () => {
       cancelled = true;

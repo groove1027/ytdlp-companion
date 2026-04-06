@@ -1,7 +1,17 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { getCompanionDownloadUrl, getCompanionOsLabel } from '../constants';
-import { recheckCompanion, tryLaunchCompanion } from '../services/ytdlpApiService';
-import { useUIStore } from '../stores/uiStore';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  getCompanionDownloadUrl,
+  getCompanionLatestVersion,
+  getCompanionOsLabel,
+  MIN_REQUIRED_COMPANION_VERSION,
+} from '../constants';
+import {
+  getCompanionVersion,
+  isCompanionOutdated,
+  recheckCompanion,
+  tryLaunchCompanion,
+} from '../services/ytdlpApiService';
+import { showToast, useUIStore } from '../stores/uiStore';
 
 const FOCUSABLE_SELECTOR = [
   'a[href]',
@@ -12,87 +22,263 @@ const FOCUSABLE_SELECTOR = [
   '[tabindex]:not([tabindex="-1"])',
 ].join(', ');
 
+const COMPANION_FEATURES = [
+  ['📥', 'yt-dlp 고속 다운로드', 'YouTube, Instagram, TikTok 등 원본 품질 다운로드'],
+  ['🎙️', 'Whisper 전사', '로컬 STT로 긴 영상도 빠르게 텍스트 추출'],
+  ['🔊', 'Edge TTS', '무료 다국어 음성 합성으로 나레이션 생성'],
+  ['✂️', 'rembg 배경 제거', 'API 크레딧 없이 이미지 배경 제거'],
+  ['🎬', 'FFmpeg 렌더링', '내보내기, 합치기, 변환을 네이티브 속도로 처리'],
+  ['🎞️', 'NLE 연동', 'CapCut, Premiere, Filmora용 프로젝트 전달'],
+  ['🪄', 'ProPainter 보정', '지우기와 복원 계열 후처리를 로컬에서 실행'],
+  ['🖼️', '이미지 검색', '참고 이미지 수집과 보조 자료 탐색'],
+  ['🧩', '프레임 추출', '영상 분석용 썸네일과 샘플 프레임 생성'],
+] as const;
+
+const MAC_QUARANTINE_COMMAND = 'xattr -dr com.apple.quarantine /Applications/All\\ In\\ One\\ Helper.app';
+
+const MAC_GUIDES = [
+  ['방법 1', 'Finder에서 우클릭으로 열기', 'Finder에서 다운로드한 앱 우클릭 → "열기" → 경고창에서 "열기" 버튼'],
+  ['방법 2', '시스템 설정에서 그래도 열기', '시스템 설정 → 개인정보 보호 및 보안 → 아래쪽 "그래도 열기" 버튼'],
+  ['방법 3', '터미널에서 격리 해제', MAC_QUARANTINE_COMMAND],
+] as const;
+
 function getFocusableElements(container: HTMLElement): HTMLElement[] {
   return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
     .filter((element) => !element.hasAttribute('disabled') && element.getAttribute('aria-hidden') !== 'true');
 }
 
-const COMPANION_FEATURES = [
-  { icon: '📥', title: 'yt-dlp 고속 다운로드', description: 'YouTube, Instagram, TikTok 등 원본 품질 다운로드' },
-  { icon: '🎙️', title: 'Whisper 전사', description: '로컬 STT로 긴 영상도 빠르게 텍스트 추출' },
-  { icon: '🔊', title: 'Edge TTS', description: '무료 다국어 음성 합성으로 나레이션 생성' },
-  { icon: '✂️', title: 'rembg 배경 제거', description: 'API 크레딧 없이 이미지 배경 제거' },
-  { icon: '🎬', title: 'FFmpeg 렌더링', description: '내보내기, 합치기, 변환을 네이티브 속도로 처리' },
-  { icon: '🎞️', title: 'NLE 연동', description: 'CapCut, Premiere, Filmora용 프로젝트 전달' },
-  { icon: '🪄', title: 'ProPainter 보정', description: '지우기와 복원 계열 후처리를 로컬에서 실행' },
-  { icon: '🖼️', title: '이미지 검색', description: '참고 이미지 수집과 보조 자료 탐색' },
-  { icon: '🧩', title: '프레임 추출', description: '영상 분석용 썸네일과 샘플 프레임 생성' },
-] as const;
+function getDownloadLabel(osLabel: string): string {
+  if (osLabel === 'macOS') return 'macOS 다운로드';
+  if (osLabel === 'Windows') return 'Windows 다운로드';
+  return '다운로드';
+}
 
-const TROUBLESHOOTING_ITEMS = [
-  '트레이 아이콘에 올인원 헬퍼가 떠 있는지 확인하세요.',
-  '처음 실행 시 macOS 또는 Windows 방화벽 허용 팝업을 승인하세요.',
-  '로컬 포트 9876이 차단되면 감지되지 않습니다.',
-] as const;
+function buildStatusMessage(
+  mode: 'missing' | 'outdated',
+  currentVersion: string | null,
+  latestVersion: string,
+  reason: 'auto' | 'manual' | 'poll',
+): string {
+  if (mode === 'outdated') {
+    if (reason === 'manual') return `업데이트 후 다시 확인 중입니다. 현재 감지 버전은 v${currentVersion ?? '?'}입니다.`;
+    return `현재 v${currentVersion ?? '?'}가 실행 중입니다. 최소 v${MIN_REQUIRED_COMPANION_VERSION}, 최신 v${latestVersion} 이상이 필요합니다.`;
+  }
+  if (reason === 'manual') return '헬퍼 앱 실행을 다시 시도하고 있습니다.';
+  if (reason === 'poll') return '헬퍼 앱 감지를 다시 확인하고 있습니다.';
+  return '올인원 헬퍼 실행을 자동으로 시도하고 있습니다.';
+}
 
-export default function CompanionGateModal() {
-  const setShowCompanionGate = useUIStore((state) => state.setShowCompanionGate);
-  const [statusMessage, setStatusMessage] = useState('올인원 헬퍼 실행을 자동으로 시도하고 있습니다.');
-  const [isChecking, setIsChecking] = useState(false);
-  const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(null);
-  const dialogRef = useRef<HTMLDivElement | null>(null);
-  const isMountedRef = useRef(false);
-  const checkInFlightRef = useRef(false);
-  const followUpTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+async function copyText(text: string): Promise<boolean> {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return true;
+  }
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', 'true');
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand('copy');
+  textarea.remove();
+  return copied;
+}
 
-  const osLabel = getCompanionOsLabel();
-  const downloadUrl = getCompanionDownloadUrl();
-  const downloadLabel = useMemo(() => {
-    if (osLabel === 'macOS') return 'macOS 다운로드';
-    if (osLabel === 'Windows') return 'Windows 다운로드';
-    return '다운로드';
-  }, [osLabel]);
+function ModeBadge({ mode }: { mode: 'missing' | 'outdated' }) {
+  const className = mode === 'outdated'
+    ? 'border-red-500/40 bg-red-500/15 text-red-200'
+    : 'border-orange-500/40 bg-orange-500/15 text-orange-200';
+  const label = mode === 'outdated' ? 'Update Required' : 'Companion Required';
+  return <div className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] ${className}`}>{label}</div>;
+}
 
+function VersionPill({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl border border-gray-800 bg-gray-950/80 px-4 py-3">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">{label}</p>
+      <p className="mt-1 text-lg font-black text-white">{value}</p>
+    </div>
+  );
+}
+
+function MacGatekeeperPanel({ onCopy }: { onCopy: (text: string, label: string) => void }) {
+  return (
+    <section className="sticky top-4 z-20 mb-6 overflow-hidden rounded-[28px] border border-yellow-400/40 bg-gradient-to-br from-yellow-500/25 via-orange-500/20 to-red-500/20 p-5 shadow-[0_25px_80px_rgba(255,125,0,0.25)] animate-pulse">
+      <div className="grid gap-5 xl:grid-cols-[1.05fr_0.95fr]">
+        <div>
+          <p className="text-sm font-black uppercase tracking-[0.22em] text-yellow-200">⚠️ 처음 실행하면 이 화면이 떠요</p>
+          <h2 className="mt-2 text-2xl font-black text-white md:text-3xl">macOS가 Helper 앱을 막아도, 여기 적힌 3가지 방법 중 하나만 하면 바로 실행됩니다.</h2>
+          <p className="mt-3 text-base leading-7 text-yellow-50/90">다운로드 직후 한 번만 허용하면 다음부터는 이 경고를 다시 볼 일이 거의 없습니다. 가장 쉬운 방법은 Finder에서 우클릭 후 열기입니다.</p>
+        </div>
+        <div className="rounded-[24px] border border-white/15 bg-[#ece8e2] p-4 text-gray-900 shadow-2xl">
+          <div className="mb-4 flex items-center gap-2">
+            <span className="h-3 w-3 rounded-full bg-[#ff5f57]" />
+            <span className="h-3 w-3 rounded-full bg-[#febc2e]" />
+            <span className="h-3 w-3 rounded-full bg-[#28c840]" />
+          </div>
+          <div className="rounded-[20px] border border-gray-300 bg-white p-4">
+            <p className="text-lg font-black text-gray-900">"All In One Helper"을(를) 열 수 없습니다</p>
+            <p className="mt-2 text-sm leading-6 text-gray-700">개발자를 확인할 수 없기 때문에 이 앱을 열 수 없습니다.</p>
+            <p className="mt-2 text-sm leading-6 text-gray-600">이 앱에 악성 코드가 없는지 macOS에서 확인할 수 없습니다.</p>
+            <div className="mt-4 grid grid-cols-2 gap-3">
+              <div className="rounded-xl border border-gray-300 bg-gray-100 px-3 py-2 text-center text-sm font-semibold text-gray-700">휴지통으로 이동</div>
+              <div className="rounded-xl border border-red-300 bg-red-100 px-3 py-2 text-center text-sm font-black text-red-700">취소</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div className="mt-5 grid gap-4 xl:grid-cols-3">
+        {MAC_GUIDES.map(([step, title, description]) => (
+          <article key={step} className="rounded-3xl border border-white/15 bg-gray-950/70 p-5 text-white">
+            <div className="flex items-center justify-between gap-3">
+              <span className="rounded-full bg-yellow-300 px-3 py-1 text-sm font-black text-gray-900">{step}</span>
+              <button type="button" onClick={() => onCopy(description, title)} className="rounded-xl border border-yellow-300/40 bg-yellow-300/10 px-3 py-2 text-xs font-bold text-yellow-100 transition hover:border-yellow-200 hover:bg-yellow-300/20">{step === '방법 3' ? '명령어 복사' : '안내 복사'}</button>
+            </div>
+            <h3 className="mt-4 text-xl font-black text-white">{title}</h3>
+            <p className="mt-3 whitespace-pre-wrap text-sm leading-7 text-yellow-50/90">{description}</p>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function FeatureSection({ expanded, onToggle }: { expanded: boolean; onToggle: () => void }) {
+  return (
+    <section className="px-6 py-8 md:px-10">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h2 className="text-xl font-black text-white">헬퍼 앱이 담당하는 9가지 핵심 기능</h2>
+          <p className="mt-1 text-sm text-gray-400">다운로드, 음성, 렌더링, 분석 보조 기능이 모두 여기에 연결됩니다.</p>
+        </div>
+        <button type="button" onClick={onToggle} className="rounded-2xl border border-gray-700 bg-gray-900 px-4 py-2 text-sm font-bold text-gray-100 transition hover:border-gray-500 hover:bg-gray-800">
+          {expanded ? '자세히 숨기기' : '자세히 보기'}
+        </button>
+      </div>
+      {expanded && (
+        <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {COMPANION_FEATURES.map(([icon, title, description]) => (
+            <div key={title} className="rounded-2xl border border-gray-800 bg-gradient-to-br from-gray-900 to-gray-950 px-4 py-4">
+              <div className="flex items-start gap-3">
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-gray-700 bg-gray-800 text-xl">{icon}</div>
+                <div>
+                  <p className="text-sm font-black text-white">{title}</p>
+                  <p className="mt-1 text-sm leading-6 text-gray-400">{description}</p>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function StatusCard({
+  isChecking,
+  lastCheckedAt,
+  mode,
+  statusMessage,
+}: {
+  isChecking: boolean;
+  lastCheckedAt: number | null;
+  mode: 'missing' | 'outdated';
+  statusMessage: string;
+}) {
+  const statusClass = isChecking
+    ? 'border-blue-500/40 bg-blue-500/10 text-blue-300'
+    : mode === 'outdated'
+      ? 'border-red-500/40 bg-red-500/10 text-red-300'
+      : 'border-orange-500/40 bg-orange-500/10 text-orange-300';
+  const statusIcon = isChecking ? '⏳' : mode === 'outdated' ? '⬆️' : '⚡';
+  return (
+    <div className="mt-6 rounded-2xl border border-gray-800 bg-gray-950/80 p-4">
+      <div className="flex items-center gap-3">
+        <div className={`flex h-10 w-10 items-center justify-center rounded-full border ${statusClass}`}>{statusIcon}</div>
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-white">{statusMessage}</p>
+          <p className="mt-1 text-xs text-gray-400">로컬 감지 주소: <span className="font-mono text-gray-300">http://127.0.0.1:9876/health</span>{lastCheckedAt ? ` · 마지막 확인 ${new Date(lastCheckedAt).toLocaleTimeString('ko-KR')}` : ''}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ActionButtons({
+  downloadUrl,
+  mode,
+  onLaunch,
+  osLabel,
+}: {
+  downloadUrl: string;
+  mode: 'missing' | 'outdated';
+  onLaunch: () => void;
+  osLabel: string;
+}) {
+  const primaryLabel = mode === 'outdated' ? '최신 버전 다운로드' : '실행하기';
+  const secondaryLabel = mode === 'outdated' ? '업데이트 후 다시 확인' : getDownloadLabel(osLabel);
+  return (
+    <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+      {mode === 'outdated' ? (
+        <>
+          <a href={downloadUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-blue-600 to-violet-600 px-6 py-4 text-base font-black text-white shadow-lg shadow-blue-900/30 transition hover:from-blue-500 hover:to-violet-500"><span>{primaryLabel}</span><span className="text-lg">↓</span></a>
+          <button type="button" onClick={onLaunch} className="inline-flex items-center justify-center gap-2 rounded-2xl border border-gray-700 bg-gray-800 px-6 py-4 text-base font-black text-gray-100 transition hover:border-gray-500 hover:bg-gray-700"><span>{secondaryLabel}</span><span className="text-lg">↻</span></button>
+        </>
+      ) : (
+        <>
+          <button type="button" onClick={onLaunch} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-blue-600 to-violet-600 px-6 py-4 text-base font-black text-white shadow-lg shadow-blue-900/30 transition hover:from-blue-500 hover:to-violet-500"><span>{primaryLabel}</span><span className="text-lg">↗</span></button>
+          <a href={downloadUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center justify-center gap-2 rounded-2xl border border-gray-700 bg-gray-800 px-6 py-4 text-base font-black text-gray-100 transition hover:border-gray-500 hover:bg-gray-700"><span>{secondaryLabel}</span><span className="text-lg">↓</span></a>
+        </>
+      )}
+    </div>
+  );
+}
+
+function TroubleshootingPanel({ mode }: { mode: 'missing' | 'outdated' }) {
+  return (
+    <div className="rounded-3xl border border-gray-800 bg-gray-950/80 p-5 md:p-6">
+      <p className="text-sm font-semibold uppercase tracking-[0.18em] text-gray-400">Troubleshooting</p>
+      <div className="mt-4 space-y-3 text-sm leading-6 text-gray-300">
+        <div className="rounded-2xl border border-gray-800 bg-gray-900/80 px-4 py-3">트레이 아이콘에 올인원 헬퍼가 떠 있는지 확인하세요.</div>
+        <div className="rounded-2xl border border-gray-800 bg-gray-900/80 px-4 py-3">처음 실행 시 macOS 또는 Windows 방화벽 허용 팝업을 승인하세요.</div>
+        <div className="rounded-2xl border border-gray-800 bg-gray-900/80 px-4 py-3">{mode === 'outdated' ? `v${MIN_REQUIRED_COMPANION_VERSION} 이상이 아니면 모든 기능이 계속 차단됩니다.` : '로컬 포트 9876이 차단되면 감지되지 않습니다.'}</div>
+        <div className="rounded-2xl border border-gray-800 bg-gray-900/80 px-4 py-3">{mode === 'outdated' ? '구버전이 실행 중이면 최신 버전 설치 후 앱을 다시 열어 주세요.' : '설치 후 바로 안 열리면 다운로드한 앱을 직접 한 번 실행해 주세요.'}</div>
+      </div>
+    </div>
+  );
+}
+
+function useLockedDialog(dialogRef: React.RefObject<HTMLDivElement | null>) {
   useEffect(() => {
-    isMountedRef.current = true;
     const prevOverflow = document.body.style.overflow;
-    const prevActiveElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const prevActive = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     document.body.style.overflow = 'hidden';
 
     const focusPrimaryAction = () => {
       const dialog = dialogRef.current;
       if (!dialog) return;
-      const focusables = getFocusableElements(dialog);
-      (focusables[0] ?? dialog).focus();
+      (getFocusableElements(dialog)[0] ?? dialog).focus();
     };
-
-    focusPrimaryAction();
 
     const handleKeyDown = (event: KeyboardEvent) => {
       const dialog = dialogRef.current;
       if (!dialog) return;
-
       if (event.key === 'Escape') {
         event.preventDefault();
         event.stopPropagation();
         return;
       }
-
       if (event.key !== 'Tab') return;
-
       const focusables = getFocusableElements(dialog);
       if (focusables.length === 0) {
         event.preventDefault();
         dialog.focus();
         return;
       }
-
-      const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-      const currentIndex = activeElement ? focusables.indexOf(activeElement) : -1;
-      const nextIndex = event.shiftKey
-        ? (currentIndex <= 0 ? focusables.length - 1 : currentIndex - 1)
-        : (currentIndex === -1 || currentIndex === focusables.length - 1 ? 0 : currentIndex + 1);
-
+      const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      const index = active ? focusables.indexOf(active) : -1;
+      const nextIndex = event.shiftKey ? (index <= 0 ? focusables.length - 1 : index - 1) : (index === -1 || index === focusables.length - 1 ? 0 : index + 1);
       event.preventDefault();
       event.stopPropagation();
       focusables[nextIndex]?.focus();
@@ -104,188 +290,137 @@ export default function CompanionGateModal() {
       focusPrimaryAction();
     };
 
+    focusPrimaryAction();
     window.addEventListener('keydown', handleKeyDown, true);
     document.addEventListener('focusin', handleFocusIn);
-
     return () => {
-      isMountedRef.current = false;
       window.removeEventListener('keydown', handleKeyDown, true);
       document.removeEventListener('focusin', handleFocusIn);
       document.body.style.overflow = prevOverflow;
-      prevActiveElement?.focus();
+      prevActive?.focus();
     };
   }, []);
+}
 
-  const detectCompanion = useCallback(async (reason: 'auto' | 'poll' | 'manual') => {
+function useCompanionGateRuntime(mode: 'missing' | 'outdated', setShowCompanionGate: (show: boolean) => void) {
+  const [statusMessage, setStatusMessage] = useState('올인원 헬퍼 실행을 자동으로 시도하고 있습니다.');
+  const [isChecking, setIsChecking] = useState(false);
+  const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(null);
+  const mountedRef = useRef(false);
+  const checkInFlightRef = useRef(false);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const syncCompanion = useCallback(async (reason: 'auto' | 'manual' | 'poll') => {
     if (checkInFlightRef.current) return;
     checkInFlightRef.current = true;
     setIsChecking(true);
-
-    if (reason === 'poll') {
-      setStatusMessage('헬퍼 앱 실행 여부를 다시 확인하고 있습니다.');
-    } else if (reason === 'manual') {
-      setStatusMessage('헬퍼 앱 실행을 다시 시도하고 있습니다.');
-    }
+    // [FIX] poll 단계에서는 URL 스킴(allinonehelper://launch) 호출 금지.
+    // 5초 폴링마다 launch를 트리거하면 macOS/Windows 프로토콜 프롬프트가
+    // 반복 노출되고 포커스가 탈취되는 회귀를 일으킨다. 자동/수동 사용자 의도
+    // 호출(auto, manual)에서만 launch한다.
+    if (reason !== 'poll') tryLaunchCompanion();
 
     const detected = await recheckCompanion().catch(() => false);
-    if (!isMountedRef.current) {
+    const nextVersion = getCompanionVersion();
+    // [FIX] outdated 모드는 'detected'가 아니라 '알려진 버전이 outdated인지'로 판정.
+    // 콜드 스타트(헬퍼 꺼짐 + localStorage 캐시만 존재)에서도 정확한 안내가 떠야 한다.
+    const nextMode: 'missing' | 'outdated' = nextVersion && isCompanionOutdated() ? 'outdated' : 'missing';
+    const nextLatest = getCompanionLatestVersion() ?? MIN_REQUIRED_COMPANION_VERSION;
+
+    if (!mountedRef.current) {
       checkInFlightRef.current = false;
       return;
     }
 
     setLastCheckedAt(Date.now());
+    setStatusMessage(buildStatusMessage(nextMode, nextVersion, nextLatest, reason));
     setIsChecking(false);
     checkInFlightRef.current = false;
-
-    if (detected) {
-      setStatusMessage('헬퍼 앱이 감지되었습니다. 곧 작업 화면으로 돌아갑니다.');
-      setShowCompanionGate(false);
-      return;
-    }
-
-    if (reason === 'manual') {
-      setStatusMessage('아직 감지되지 않았습니다. 트레이 아이콘과 방화벽 설정을 확인해 주세요.');
-      return;
-    }
-
-    setStatusMessage('헬퍼 앱을 찾지 못했습니다. 5초 간격으로 자동 재감지를 계속합니다.');
+    if (detected && nextMode !== 'outdated') setShowCompanionGate(false);
   }, [setShowCompanionGate]);
 
-  const scheduleFollowUpCheck = useCallback((reason: 'auto' | 'manual') => {
-    if (followUpTimerRef.current) clearTimeout(followUpTimerRef.current);
-    followUpTimerRef.current = setTimeout(() => {
-      followUpTimerRef.current = null;
-      void detectCompanion(reason);
-    }, 1500);
-  }, [detectCompanion]);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+      checkInFlightRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
+    void syncCompanion('auto');
+    const interval = setInterval(() => void syncCompanion('poll'), 5000);
+    return () => clearInterval(interval);
+  }, [syncCompanion]);
+
+  const handleLaunch = useCallback(() => {
     tryLaunchCompanion();
-    scheduleFollowUpCheck('auto');
+    setStatusMessage(mode === 'outdated' ? '최신 버전을 설치한 뒤 다시 확인하고 있습니다.' : '헬퍼 앱 실행을 다시 시도하고 있습니다.');
+    if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+    retryTimerRef.current = setTimeout(() => {
+      retryTimerRef.current = null;
+      void syncCompanion('manual');
+    }, 1500);
+  }, [mode, syncCompanion]);
 
-    const pollInterval = setInterval(() => {
-      void detectCompanion('poll');
-    }, 5000);
+  return { handleLaunch, isChecking, lastCheckedAt, statusMessage };
+}
 
-    return () => {
-      checkInFlightRef.current = false;
-      if (followUpTimerRef.current) clearTimeout(followUpTimerRef.current);
-      clearInterval(pollInterval);
-    };
-  }, [detectCompanion, scheduleFollowUpCheck]);
+export default function CompanionGateModal() {
+  const setShowCompanionGate = useUIStore((state) => state.setShowCompanionGate);
+  const [showFeatures, setShowFeatures] = useState(false);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const osLabel = getCompanionOsLabel();
+  const downloadUrl = getCompanionDownloadUrl();
+  const latestVersion = getCompanionLatestVersion() ?? MIN_REQUIRED_COMPANION_VERSION;
+  const currentVersion = getCompanionVersion();
+  // [FIX] outdated 모드는 알려진 버전이 outdated일 때 항상 표시 — detected 여부와 무관.
+  // 콜드 스타트(헬퍼 꺼짐 + localStorage 캐시만 존재)에서도 즉시 업데이트 안내가 떠야 한다.
+  const mode: 'missing' | 'outdated' = currentVersion && isCompanionOutdated() ? 'outdated' : 'missing';
+  const title = mode === 'outdated'
+    ? `헬퍼 앱 업데이트가 필요합니다. (현재 v${currentVersion ?? '?'} → 최신 v${latestVersion})`
+    : '올인원 헬퍼가 실행되어야 작업을 계속할 수 있습니다.';
+  const description = mode === 'outdated'
+    ? '현재 실행 중인 헬퍼 앱 버전이 웹앱 최소 요구 버전보다 낮습니다. 최신 버전을 설치한 뒤 실행되면 이 화면은 자동으로 닫힙니다.'
+    : '이 앱의 핵심 제작 파이프라인은 로컬 컴패니언 앱을 전제로 동작합니다. 로그인 후 감지되지 않으면 모든 기능이 차단되며, 감지되는 즉시 이 화면은 자동으로 사라집니다.';
 
-  const handleLaunch = () => {
-    tryLaunchCompanion();
-    setStatusMessage('헬퍼 앱 실행을 다시 시도하고 있습니다.');
-    scheduleFollowUpCheck('manual');
-  };
+  useLockedDialog(dialogRef);
+  const { handleLaunch, isChecking, lastCheckedAt, statusMessage } = useCompanionGateRuntime(mode, setShowCompanionGate);
+
+  const handleCopy = useCallback(async (text: string, label: string) => {
+    try {
+      const copied = await copyText(text);
+      showToast(copied ? `${label} 복사 완료` : `${label} 복사 실패`, copied ? 2500 : 4000);
+    } catch {
+      showToast(`${label} 복사 실패`, 4000);
+    }
+  }, []);
 
   return (
-    <div
-      className="fixed inset-0 z-[10050] bg-gray-950/98 backdrop-blur-md text-white"
-      onClickCapture={(event) => event.stopPropagation()}
-      onMouseDownCapture={(event) => event.stopPropagation()}
-    >
+    <div className="fixed inset-0 z-[10050] bg-gray-950/98 backdrop-blur-md text-white" onClickCapture={(event) => event.stopPropagation()} onMouseDownCapture={(event) => event.stopPropagation()}>
       <div className="h-full overflow-y-auto">
         <div className="mx-auto flex min-h-full w-full max-w-7xl items-center justify-center px-4 py-8">
-          <div
-            ref={dialogRef}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="companion-gate-title"
-            tabIndex={-1}
-            className="w-full overflow-hidden rounded-3xl border border-gray-700 bg-gray-900 shadow-[0_40px_120px_rgba(0,0,0,0.65)]"
-          >
+          <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="companion-gate-title" tabIndex={-1} className="w-full overflow-hidden rounded-3xl border border-gray-700 bg-gray-900 shadow-[0_40px_120px_rgba(0,0,0,0.65)]">
             <div className="border-b border-gray-800 bg-gradient-to-br from-gray-900 via-gray-900 to-gray-800/70 px-6 py-8 md:px-10">
-              <div className="inline-flex items-center gap-2 rounded-full border border-orange-500/30 bg-orange-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-orange-300">
-                Companion Required
-              </div>
+              {osLabel === 'macOS' && <MacGatekeeperPanel onCopy={handleCopy} />}
+              <ModeBadge mode={mode} />
               <div className="mt-5 grid gap-8 lg:grid-cols-[1.15fr_0.85fr]">
                 <div>
-                  <h1 id="companion-gate-title" className="text-3xl font-black tracking-tight text-white md:text-4xl">
-                    올인원 헬퍼가 실행되어야 작업을 계속할 수 있습니다.
-                  </h1>
-                  <p className="mt-4 max-w-3xl text-base leading-7 text-gray-300 md:text-lg">
-                    이 앱의 핵심 제작 파이프라인은 로컬 컴패니언 앱을 전제로 동작합니다.
-                    페이지를 열 때마다 자동 감지를 시도하며, 감지되면 이 화면은 자동으로 닫힙니다.
-                  </p>
-                  <div className="mt-6 rounded-2xl border border-gray-800 bg-gray-950/80 p-4">
-                    <div className="flex items-center gap-3">
-                      <div className={`flex h-10 w-10 items-center justify-center rounded-full border ${isChecking ? 'border-blue-500/40 bg-blue-500/10 text-blue-300' : 'border-orange-500/40 bg-orange-500/10 text-orange-300'}`}>
-                        {isChecking ? '⏳' : '⚡'}
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-sm font-semibold text-white">{statusMessage}</p>
-                        <p className="mt-1 text-xs text-gray-400">
-                          로컬 감지 주소: <span className="font-mono text-gray-300">http://127.0.0.1:9876/health</span>
-                          {lastCheckedAt ? ` · 마지막 확인 ${new Date(lastCheckedAt).toLocaleTimeString('ko-KR')}` : ''}
-                        </p>
-                      </div>
-                    </div>
+                  <h1 id="companion-gate-title" className="text-3xl font-black tracking-tight text-white md:text-4xl">{title}</h1>
+                  <p className="mt-4 max-w-3xl text-base leading-7 text-gray-300 md:text-lg">{description}</p>
+                  <div className="mt-6 grid gap-3 sm:grid-cols-3">
+                    <VersionPill label="현재 감지 버전" value={currentVersion ? `v${currentVersion}` : '미감지'} />
+                    <VersionPill label="최소 요구 버전" value={`v${MIN_REQUIRED_COMPANION_VERSION}`} />
+                    <VersionPill label="최신 버전" value={`v${latestVersion}`} />
                   </div>
-                  <div className="mt-6 flex flex-col gap-3 sm:flex-row">
-                    <button
-                      type="button"
-                      onClick={handleLaunch}
-                      className="inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-blue-600 to-violet-600 px-6 py-4 text-base font-bold text-white shadow-lg shadow-blue-900/30 transition hover:from-blue-500 hover:to-violet-500"
-                    >
-                      <span>실행하기</span>
-                      <span className="text-lg">↗</span>
-                    </button>
-                    <a
-                      href={downloadUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center justify-center gap-2 rounded-2xl border border-gray-700 bg-gray-800 px-6 py-4 text-base font-bold text-gray-100 transition hover:border-gray-500 hover:bg-gray-700"
-                    >
-                      <span>{downloadLabel}</span>
-                      <span className="text-lg">↓</span>
-                    </a>
-                  </div>
+                  <StatusCard isChecking={isChecking} lastCheckedAt={lastCheckedAt} mode={mode} statusMessage={statusMessage} />
+                  <ActionButtons downloadUrl={downloadUrl} mode={mode} onLaunch={handleLaunch} osLabel={osLabel} />
                 </div>
-                <div className="rounded-3xl border border-gray-800 bg-gray-950/80 p-5 md:p-6">
-                  <p className="text-sm font-semibold uppercase tracking-[0.18em] text-gray-400">Troubleshooting</p>
-                  <div className="mt-4 space-y-3">
-                    {TROUBLESHOOTING_ITEMS.map((item) => (
-                      <div key={item} className="rounded-2xl border border-gray-800 bg-gray-900/80 px-4 py-3 text-sm leading-6 text-gray-300">
-                        {item}
-                      </div>
-                    ))}
-                  </div>
-                </div>
+                <TroubleshootingPanel mode={mode} />
               </div>
             </div>
-
-            <div className="px-6 py-8 md:px-10">
-              <div className="mb-5 flex items-center justify-between gap-4">
-                <div>
-                  <h2 className="text-xl font-bold text-white">헬퍼 앱이 담당하는 9가지 핵심 기능</h2>
-                  <p className="mt-1 text-sm text-gray-400">다운로드, 음성, 렌더링, 분석 보조 기능이 모두 여기에 연결됩니다.</p>
-                </div>
-                <div className="rounded-full border border-gray-800 bg-gray-900 px-3 py-1.5 text-xs font-semibold text-gray-300">
-                  다크 테마 보호 모드
-                </div>
-              </div>
-
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                {COMPANION_FEATURES.map((feature) => (
-                  <div
-                    key={feature.title}
-                    className="rounded-2xl border border-gray-800 bg-gradient-to-br from-gray-900 to-gray-950 px-4 py-4 transition hover:border-gray-700"
-                  >
-                    <div className="flex items-start gap-3">
-                      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-gray-700 bg-gray-800 text-xl">
-                        {feature.icon}
-                      </div>
-                      <div>
-                        <p className="text-sm font-bold text-white">{feature.title}</p>
-                        <p className="mt-1 text-sm leading-6 text-gray-400">{feature.description}</p>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
+            <FeatureSection expanded={showFeatures} onToggle={() => setShowFeatures((value) => !value)} />
           </div>
         </div>
       </div>

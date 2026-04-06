@@ -8,6 +8,16 @@
 
 ## 🟢 완료된 작업
 
+### [2026-04-06] 25차 — Companion 강제 모드 + 최소 버전 게이트 + macOS Gatekeeper 안내 강화
+- [x] `rg -n "CompanionGateModal|showCompanionGate|recheckCompanion|isCompanionDetected|getCompanionVersion|tryLaunchCompanion|getCompanionLatestVersion|compareVersions|getCompanionOsLabel|MIN_REQUIRED_COMPANION_VERSION|companionVersion|allinonehelper://launch" src companion/src-tauri/tauri.conf.json`로 영향 범위 전수 조사 완료
+- [x] `src/constants.ts` — `MIN_REQUIRED_COMPANION_VERSION = '1.3.0'` 및 `isCompanionVersionOutdated()`를 추가해 최소 버전 판정을 중앙화
+- [x] `src/services/ytdlpApiService.ts` — `_companionVersion` 캐시 기준 `isCompanionOutdated()` export를 추가해 앱과 게이트 모달이 같은 강제 버전 기준을 사용하도록 정리
+- [x] `src/components/CompanionGateModal.tsx` — 전체 재작성. `missing/outdated` 자동 분기, 5초 폴링 + URL 스킴 실행 시도, ESC 차단/포커스 트랩/스크롤 잠금 유지, 9개 기능 토글, macOS Gatekeeper 경고 일러스트와 3가지 해결 카드 및 복사 버튼 추가
+- [x] `src/App.tsx` — 로그인 후 companion 재검사를 60초에서 10초로 단축하고, 미감지 또는 최소 버전 미만이면 게이트를 강제로 다시 표시하도록 강화
+- [x] `cd src && npx tsc --noEmit`: 성공
+- [x] `cd src && npm run build`: 성공 (기존 dynamic import/chunk-size warning만 존재)
+- [x] `rg -n "MIN_REQUIRED_COMPANION_VERSION|isCompanionVersionOutdated|isCompanionOutdated|CompanionGateModal|10_000" src/constants.ts src/services/ytdlpApiService.ts src/components/CompanionGateModal.tsx src/App.tsx`: 반영 위치 재확인
+
 ### [2026-04-06] 24차 — Video Reference 저장 누락 + visualDescriptionKO/scriptText 폴백 오판 보정
 - [x] `rg -n "VideoReferencePanel|onSceneResult|searchSceneReferenceVideos|searchAllScenesReferenceVideos|updateScene\\(|videoReferences|visualDescriptionKO|scriptText 키워드|trailing_fragment|sceneResults" src`로 영향 범위 전수 조사 완료
 - [x] `src/components/tabs/imagevideo/VideoReferencePanel.tsx` — 일괄 검색 `onSceneResult` 콜백이 `sceneResults` Map만 갱신하던 경로에 `updateScene(sceneId, { videoReferences: refs })` persist를 추가해, 실제 매칭 성공 결과가 즉시 `projectStore.scenes[*].videoReferences`에도 저장되도록 보정

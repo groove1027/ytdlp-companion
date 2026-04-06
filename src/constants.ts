@@ -3,6 +3,7 @@ import { AspectRatio, VoiceName, ImageModel, VideoFormat, DialogueTone, ScriptAi
 
 // Companion (Helper) App
 export const COMPANION_DOWNLOAD_URL = 'https://github.com/groove1027/ytdlp-companion/releases/latest';
+export const MIN_REQUIRED_COMPANION_VERSION = '1.3.0';
 
 // [FIX #837] Windows 빌드 존재 여부
 export const COMPANION_WINDOWS_AVAILABLE = true;
@@ -31,6 +32,11 @@ export function compareVersions(a: string, b: string): -1 | 0 | 1 {
     if (na > nb) return 1;
   }
   return 0;
+}
+
+export function isCompanionVersionOutdated(currentVersion: string | null): boolean {
+  if (!currentVersion) return true;
+  return compareVersions(currentVersion, MIN_REQUIRED_COMPANION_VERSION) < 0;
 }
 
 /** [FIX #907] OS 감지 → DMG/EXE 바로 다운로드 URL + 최신 버전 + 릴리스 노트 캐시 */

@@ -11,6 +11,7 @@
 
 import { monitoredFetch } from './apiService';
 import { logger } from './LoggerService';
+import { isCompanionVersionOutdated, MIN_REQUIRED_COMPANION_VERSION } from '../constants';
 
 // ──────────────────────────────────────────────
 // 설정
@@ -30,10 +31,25 @@ const LOCAL_COMPANION_URL = 'http://127.0.0.1:9876';
 
 let _companionAvailable: boolean | null = null;
 let _companionCheckTime = 0;
-let _companionVersion: string | null = null;
+// [FIX] live = health check 성공으로 확인된 현재 실행 중 버전 (실패 시 즉시 null로 클리어)
+// lastKnown = localStorage 시드 또는 가장 최근 live 값 (콜드 스타트에서 outdated 안내 보존용)
+let _companionLiveVersion: string | null = null;
+let _companionLastKnownVersion: string | null = null;
+let _companionHealthCheckedOnce = false; // 이 세션에서 health check가 최소 1번 실행된 적 있는지
 let _companionCheckPromise: Promise<boolean> | null = null; // inflight 중복 방지
 const COMPANION_CHECK_INTERVAL_MS = 30_000; // 30초마다 재검증
 const COMPANION_HEALTH_TIMEOUT_MS = 3000;   // [FIX #907] 3초 — 800ms는 너무 짧아 실행 중인 컴패니언도 미감지
+
+// [FIX] 페이지 리로드 후에도 마지막으로 감지된 컴패니언 버전을 즉시 알 수 있게 시드.
+// 이렇게 해야 헬퍼가 잠시 꺼져 있어도 'outdated' 안내가 정확히 뜬다.
+try {
+  if (typeof localStorage !== 'undefined') {
+    const cached = localStorage.getItem('companion_last_detected_version');
+    if (cached) _companionLastKnownVersion = cached;
+  }
+} catch {
+  // localStorage 접근 차단 환경 — 무시
+}
 
 /** 로컬 컴패니언 앱이 실행 중인지 확인 (캐시 + 비동기 + inflight 중복 방지) */
 async function isCompanionAvailable(): Promise<boolean> {
@@ -73,10 +89,12 @@ async function _doCompanionCheck(now: number): Promise<boolean> {
       }
       _companionAvailable = true;
       _companionCheckTime = now;
-      _companionVersion = data?.version || null;
-      // [FIX #935] 마지막 감지된 버전을 localStorage에 저장 — 앱 꺼져있을 때도 업데이트 배너 표시용
-      if (_companionVersion) {
-        try { localStorage.setItem('companion_last_detected_version', _companionVersion); } catch {}
+      _companionHealthCheckedOnce = true;
+      _companionLiveVersion = data?.version || null;
+      if (_companionLiveVersion) {
+        _companionLastKnownVersion = _companionLiveVersion;
+        // [FIX #935] 마지막 감지된 버전을 localStorage에 저장 — 앱 꺼져있을 때도 업데이트 배너 표시용
+        try { localStorage.setItem('companion_last_detected_version', _companionLiveVersion); } catch {}
       }
       logger.info(`[Companion] 로컬 헬퍼 감지됨 (v${data?.version || '?'}, yt-dlp ${data?.ytdlpVersion || '?'})`);
       return true;
@@ -91,6 +109,10 @@ async function _doCompanionCheck(now: number): Promise<boolean> {
 
   _companionAvailable = false;
   _companionCheckTime = now;
+  _companionHealthCheckedOnce = true;
+  // [FIX] health check 실패 시 live 버전은 즉시 클리어해서 stale 데이터로 'outdated 잘못 표시' 방지.
+  // lastKnown(localStorage 시드)은 그대로 유지 — 콜드 스타트에서 outdated 안내가 자연스레 뜨도록.
+  _companionLiveVersion = null;
   return false;
 }
 
@@ -99,9 +121,20 @@ export function isCompanionDetected(): boolean {
   return _companionAvailable === true;
 }
 
-/** 현재 실행 중인 컴패니언 버전 반환 (health check에서 캐시) */
+/**
+ * 현재 알려진 컴패니언 버전 반환.
+ * - 라이브(health check 성공) 우선
+ * - 라이브 미감지 시 lastKnown(localStorage 시드) — 콜드 스타트 안내용
+ */
 export function getCompanionVersion(): string | null {
-  return _companionVersion;
+  return _companionLiveVersion ?? _companionLastKnownVersion;
+}
+
+/** outdated 판정 — getCompanionVersion()이 알려진 버전을 반환할 때만 의미 있음 */
+export function isCompanionOutdated(): boolean {
+  const v = getCompanionVersion();
+  if (!v) return false; // 모르는 상태에서는 'outdated'로 분류하지 않음 (missing이 자연스러움)
+  return isCompanionVersionOutdated(v);
 }
 
 /** 컴패니언 상태 강제 재확인 (설정 페이지 등에서 수동 호출) */
@@ -152,9 +185,20 @@ export async function ensureCompanionAvailable(signal?: AbortSignal): Promise<bo
     signal?.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true });
   });
 
-  // 이미 감지됨 → 즉시 리턴
-  if (_companionAvailable === true && (Date.now() - _companionCheckTime) < COMPANION_CHECK_INTERVAL_MS) {
+  // [FIX] 헬퍼 버전이 최소 요구치 미만이면 컴패니언 backed 흐름을 거부 → 강제 모드 우회 차단.
+  // ensureCompanionAvailable이 true를 반환하면 호출자(VideoAnalysisRoom 등)가 로컬 헬퍼를
+  // 정상 사용 가능한 것으로 판단하므로, outdated 헬퍼는 false로 거부해서 폴백을 강제한다.
+  const acceptIfFresh = (): boolean => {
+    if (isCompanionOutdated()) {
+      logger.warn(`[Companion] 헬퍼 v${getCompanionVersion() ?? '?'} 감지 — 최소 v${MIN_REQUIRED_COMPANION_VERSION} 미만, 헬퍼 backed 흐름 거부`);
+      return false;
+    }
     return true;
+  };
+
+  // 이미 감지됨 → 즉시 리턴 (단, 버전 충족 시에만)
+  if (_companionAvailable === true && (Date.now() - _companionCheckTime) < COMPANION_CHECK_INTERVAL_MS) {
+    return acceptIfFresh();
   }
 
   // 1단계: 즉시 health check (2회, 1초 간격) — 이미 떠있는지 확인
@@ -164,7 +208,7 @@ export async function ensureCompanionAvailable(signal?: AbortSignal): Promise<bo
     _companionCheckTime = 0;
     if (await isCompanionAvailable()) {
       logger.info('[Companion] 감지 성공 (시도 ' + (i + 1) + '/2)');
-      return true;
+      return acceptIfFresh();
     }
     if (i < 1) await abortSleep(1000);
   }
@@ -182,7 +226,7 @@ export async function ensureCompanionAvailable(signal?: AbortSignal): Promise<bo
     _companionCheckTime = 0;
     if (await isCompanionAvailable()) {
       logger.info('[Companion] 실행 후 감지 성공 (시도 ' + (i + 1) + '/8, 약 ' + (2 + i * 1.5).toFixed(0) + '초)');
-      return true;
+      return acceptIfFresh();
     }
     if (i < 7) await abortSleep(1500);
   }
@@ -244,12 +288,14 @@ async function getApiBaseUrlAsync(purpose: RequestPurpose = 'lightweight'): Prom
   }
 
   const companionUp = await isCompanionAvailable();
+  // [FIX] outdated 헬퍼는 호환 보장이 안 되므로 컴패니언 라우팅에서 배제 → 전역 폴백
+  const companionUsable = companionUp && !isCompanionOutdated();
   const isHttps = typeof window !== 'undefined' && window.location.protocol === 'https:';
   const vpsUrl = isHttps ? DEFAULT_PROXY_URL : DEFAULT_DIRECT_URL;
 
   if (purpose === 'heavy') {
-    // 대용량 전송: 컴패니언 우선 (로컬 직통, 대역폭 무제한)
-    return companionUp ? LOCAL_COMPANION_URL : vpsUrl;
+    // 대용량 전송: 컴패니언 우선 (단, 최소 버전 충족 시에만)
+    return companionUsable ? LOCAL_COMPANION_URL : vpsUrl;
   }
 
   // 경량 요청: VPS 우선 (캐시, 빠름), VPS 실패 시 컴패니언 폴백
@@ -265,9 +311,9 @@ function getApiBaseUrl(purpose: RequestPurpose = 'heavy'): string {
     logger.trackSwallowedError('ytdlpApiService:getApiBaseUrl', e);
   }
 
-  // heavy(다운로드): 컴패니언 우선
+  // heavy(다운로드): 컴패니언 우선 — 단, 최소 버전 충족 시에만
   // lightweight(추출): VPS 우선
-  if (purpose === 'heavy' && _companionAvailable === true) {
+  if (purpose === 'heavy' && _companionAvailable === true && !isCompanionOutdated()) {
     return LOCAL_COMPANION_URL;
   }
 
