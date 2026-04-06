@@ -8,6 +8,24 @@
 
 ## 🟢 완료된 작업
 
+### [2026-04-06] 26차 — Premiere native export v45 가짜 다운그레이드 제거 + legacy v43 기준 재정렬
+- [x] `rg -n "buildPremiereProjectXml|generatePremiereNativeProjectBytes|normalizePremiereProjectCompatibility|clonePremiereRootSubgraph|PREMIERE_V45_|PREMIERE_NATIVE_TEMPLATE_URL|patch_prproj_files" src/services/nleExportService.ts companion/src-tauri/src/server.rs`로 영향 범위 전수 조사 완료
+- [x] `src/assets/premiere-native-template.prproj`, `src/assets/premiere-native-template-v45.prproj`, `/tmp/prproj-inspect/legacy.prproj`, `/tmp/prproj-inspect/v45.prproj`를 직접 비교해 legacy v43의 실제 시퀀스 UID/TrackGroup ID/render IDs와 baked placeholder timeline 구조를 확인
+- [x] `src/services/nleExportService.ts` — Premiere native 메인 템플릿을 legacy v43로 교체했고, `PREMIERE_V45_*` 상수를 legacy 등가 `PREMIERE_NATIVE_*`로 전환
+- [x] `src/services/nleExportService.ts` — root-level `ObjectID/ObjectUID` lookup으로 바꿔 legacy 템플릿의 `ObjectID=111` 충돌을 피했고, 초기 video/audio/data track의 baked track item graph를 먼저 비운 뒤 같은 v43 문서 안에서 새 clip/audio/caption chain을 다시 채우도록 재구성
+- [x] `src/services/nleExportService.ts` — `buildPremiereNativeProjectXml()`를 export해 XML 단계에서 직접 검증할 수 있게 했고, `normalizePremiereProjectCompatibility()`는 Project Version을 항상 `43`으로 고정하도록 단순화
+- [x] `companion/src-tauri/src/server.rs` — `patch_prproj_files()`의 `<FilePath>`, `<ActualMediaFilePath>`, `<RelativePath>`, `<ConformedAudioPath>`, `<PeakFilePath>`, `MZ.BuildVersion.*` 패턴을 재검토했고 v43 구조에도 그대로 호환되어 코드 수정은 하지 않음
+- [x] `src/vitest.config.ts` — `services/__tests__` 경로를 수집하도록 확장하고, 현 Vitest/jsdom ESM 제약을 피하기 위해 worker pool을 `forks`로 조정
+- [x] `src/services/__tests__/nleExportService.premiere2024.test.ts` — linkedom DOMParser 폴리필 기반 단위 테스트. 빌드된 XML의 Project Version="43", BuildVersion 24.x, FilePath 상대경로(./videoname), 절대경로(/Users/) 0건, ImporterPrefs/AudioStream 노드 존재, Media→MasterClip→SubClip→TimelineClip→VideoMediaSource 체인 무결성을 모두 검증. hasAudioTrack=false 케이스 별도 검증 포함
+- [x] 의도적 mutation 검증 — `normalizePremiereProjectCompatibility`의 Version 값을 '99'로 임시 변경 → 테스트가 즉시 실패 감지 → 원복하여 테스트의 실효성 증명
+- [x] `test-e2e/premiere-2024-export.test.ts` — Playwright 이중 검증 E2E. (1) 편집실 실제 UI 클릭 흐름으로 Premiere ZIP 다운로드 캡처 (FCP XML 회귀 보호) + (2) `page.evaluate`로 `buildPremiereNativeProjectXml`을 실제 브라우저에서 직접 호출하여 v43 .prproj XML 생성 → Project Version="43"/BuildVersion 24.x/FilePath/ImporterPrefs/AudioStream 검증. Mock 컴패니언 HTTP 서버(localhost:9876)로 CompanionGateModal 우회. 전체 15초 내 통과
+- [x] `cd src && node_modules/typescript/bin/tsc --noEmit`: 통과 (이번 변경과 무관한 기존 `services/audioAnalyserService.ts` 333, 407행 `Float32Array<ArrayBufferLike>` 타입 오류 2건만 잔존 — 별도 부채)
+- [x] `cd src && node_modules/.bin/vite build`: 성공 (4.37s, 기존 chunk-size warning만 존재)
+- [x] `cd src && node_modules/.bin/vitest run`: 29 passed (sceneDetection 26 + premiere2024 3)
+- [x] `cd /Users/mac_mini/Downloads/all-in-one-production-build4 && node_modules/.bin/playwright test test-e2e/premiere-2024-export.test.ts`: 1 passed (15.1s) — `dl-premiere-2024-editroom.zip`(345KB) + `dl-premiere-2024-v43.prproj.xml`(574KB) 산출
+- [x] `mcp__codex__review` × 2회 — 두 번 모두 "no actionable bugs" clean pass
+- [x] `npm install --save-dev linkedom @xmldom/xmldom` — 단위 테스트의 Node 환경 DOM 폴리필 의존성 추가
+
 ### [2026-04-06] 25차 — Companion 강제 모드 + 최소 버전 게이트 + macOS Gatekeeper 안내 강화
 - [x] `rg -n "CompanionGateModal|showCompanionGate|recheckCompanion|isCompanionDetected|getCompanionVersion|tryLaunchCompanion|getCompanionLatestVersion|compareVersions|getCompanionOsLabel|MIN_REQUIRED_COMPANION_VERSION|companionVersion|allinonehelper://launch" src companion/src-tauri/tauri.conf.json`로 영향 범위 전수 조사 완료
 - [x] `src/constants.ts` — `MIN_REQUIRED_COMPANION_VERSION = '1.3.0'` 및 `isCompanionVersionOutdated()`를 추가해 최소 버전 판정을 중앙화

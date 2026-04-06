@@ -19,10 +19,15 @@ export default defineConfig({
     // 순수 로직 함수 위주이므로 node 환경 (브라우저 API 필요한 테스트는 jsdom으로 개별 지정)
     environment: 'node',
     globals: false, // import { describe, it, expect } 명시적 사용 권장
-    include: ['test/**/*.test.ts', 'test/**/*.test.tsx'],
+    include: [
+      'test/**/*.test.ts',
+      'test/**/*.test.tsx',
+      'services/__tests__/**/*.test.ts',
+      'services/__tests__/**/*.test.tsx',
+    ],
     exclude: ['node_modules/**', 'dist/**', '../test-e2e/**'],
-    // E2E와 충돌 방지: Playwright 테스트 폴더 제외
-    pool: 'threads',
+    // jsdom + ESM(top-level await) 의존성이 threads worker에서 깨져 forks로 고정
+    pool: 'forks',
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html', 'json-summary'],
