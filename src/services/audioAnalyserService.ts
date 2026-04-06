@@ -51,7 +51,11 @@ interface EffectNodes {
 interface ProcessingChain {
   source: MediaElementAudioSourceNode | null;
   inputAnalyser: AnalyserNode;
-  inputAnalyserData: Float32Array;
+  // [FIX] typescript 5.7+에서 Float32Array의 ArrayBuffer-like generic이 도입되면서
+  // lib.dom의 getFloatTimeDomainData(Float32Array<ArrayBuffer>)와 mismatch가 발생.
+  // 이 코드는 이미 의도적으로 new ArrayBuffer()로 backing store를 만들고 있으므로
+  // generic만 명시해주면 된다 (runtime 변경 없음).
+  inputAnalyserData: Float32Array<ArrayBuffer>;
   noiseGateGain: GainNode;
   narr: EffectNodes;
   volumeGain: GainNode;
@@ -63,13 +67,13 @@ interface ProcessingChain {
 // ─── Singleton State ───
 let ctx: AudioContext | null = null;
 let outputAnalyser: AnalyserNode | null = null;
-let outputAnalyserData: Float32Array | null = null;
+let outputAnalyserData: Float32Array<ArrayBuffer> | null = null;
 let chain: ProcessingChain | null = null;
 const connectedElements = new WeakSet<HTMLAudioElement>();
 let noiseGateTimer: ReturnType<typeof setInterval> | null = null;
 let storeUnsubscribe: (() => void) | null = null;
 
-function createAnalyserBuffer(length: number): Float32Array {
+function createAnalyserBuffer(length: number): Float32Array<ArrayBuffer> {
   return new Float32Array(new ArrayBuffer(length * Float32Array.BYTES_PER_ELEMENT));
 }
 
