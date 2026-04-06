@@ -18,7 +18,7 @@ import path from 'path';
 
 dotenv.config({ path: path.resolve(__dirname, '../.env.local') });
 
-const BASE_URL = 'http://localhost:5173';
+const BASE_URL = process.env.E2E_BASE_URL || 'http://localhost:3000';
 const EMAIL = process.env.E2E_TEST_EMAIL!;
 const PASSWORD = process.env.E2E_TEST_PASSWORD!;
 const EVOLINK_KEY = process.env.CUSTOM_EVOLINK_KEY || '';

@@ -122,8 +122,9 @@ function VersionPill({ label, value }: { label: string; value: string }) {
 }
 
 function MacGatekeeperPanel({ onCopy }: { onCopy: (text: string, label: string) => void }) {
+  // [FIX] animate-pulse 제거 — 사용자가 깜빡거림을 싫어함. 정적 강조만 유지.
   return (
-    <section className="sticky top-4 z-20 mb-6 overflow-hidden rounded-[28px] border border-yellow-400/40 bg-gradient-to-br from-yellow-500/25 via-orange-500/20 to-red-500/20 p-5 shadow-[0_25px_80px_rgba(255,125,0,0.25)] animate-pulse">
+    <section className="sticky top-4 z-20 mb-6 overflow-hidden rounded-[28px] border border-yellow-400/40 bg-gradient-to-br from-yellow-500/25 via-orange-500/20 to-red-500/20 p-5 shadow-[0_25px_80px_rgba(255,125,0,0.25)]">
       <div className="grid gap-5 xl:grid-cols-[1.05fr_0.95fr]">
         <div>
           <p className="text-sm font-black uppercase tracking-[0.22em] text-yellow-200">⚠️ 처음 실행하면 이 화면이 떠요</p>
@@ -295,12 +296,23 @@ function TroubleshootingPanel({ mode, releasePending }: { mode: 'missing' | 'out
             <div className="rounded-2xl border border-gray-800 bg-gray-900/80 px-4 py-3">"릴리스 정보 다시 확인" 버튼을 눌러 즉시 새로고침할 수 있습니다.</div>
             <div className="rounded-2xl border border-gray-800 bg-gray-900/80 px-4 py-3">계속 이 화면이 뜨면 운영팀에 문의해 주세요.</div>
           </>
+        ) : mode === 'outdated' ? (
+          <>
+            {/* [FIX] outdated 모드 — 트레이 quit이 가장 흔한 누락 단계라서 1순위로 빨강 강조 */}
+            <div className="rounded-2xl border-2 border-red-500/60 bg-red-500/15 px-4 py-3 text-red-100">
+              <div className="font-black text-red-100">⚠️ 가장 흔한 원인 — 트레이의 구버전 헬퍼 종료 안 함</div>
+              <div className="mt-1 text-red-50/90">새 버전 설치 전에 <strong>반드시 트레이/메뉴바의 기존 헬퍼를 우클릭 → 종료(Quit)</strong>해야 합니다. 그러지 않으면 새 .app을 실행해도 포트 9876을 옛 헬퍼가 점유해서 v{MIN_REQUIRED_COMPANION_VERSION}로 갱신되지 않습니다.</div>
+            </div>
+            <div className="rounded-2xl border border-gray-800 bg-gray-900/80 px-4 py-3"><strong className="text-gray-100">올바른 순서:</strong> ① 트레이/메뉴바 헬퍼 종료 → ② 다운로드한 DMG/EXE 설치 → ③ <strong>Applications 폴더로 옮긴 뒤</strong> 새 .app 실행 (DMG 안에서 직접 실행 금지)</div>
+            <div className="rounded-2xl border border-gray-800 bg-gray-900/80 px-4 py-3">v{MIN_REQUIRED_COMPANION_VERSION} 이상이 아니면 모든 기능이 계속 차단됩니다.</div>
+            <div className="rounded-2xl border border-gray-800 bg-gray-900/80 px-4 py-3">macOS는 Gatekeeper 차단 시 위쪽 노란 카드의 3가지 방법 중 하나로 우회.</div>
+          </>
         ) : (
           <>
             <div className="rounded-2xl border border-gray-800 bg-gray-900/80 px-4 py-3">트레이 아이콘에 올인원 헬퍼가 떠 있는지 확인하세요.</div>
             <div className="rounded-2xl border border-gray-800 bg-gray-900/80 px-4 py-3">처음 실행 시 macOS 또는 Windows 방화벽 허용 팝업을 승인하세요.</div>
-            <div className="rounded-2xl border border-gray-800 bg-gray-900/80 px-4 py-3">{mode === 'outdated' ? `v${MIN_REQUIRED_COMPANION_VERSION} 이상이 아니면 모든 기능이 계속 차단됩니다.` : '로컬 포트 9876이 차단되면 감지되지 않습니다.'}</div>
-            <div className="rounded-2xl border border-gray-800 bg-gray-900/80 px-4 py-3">{mode === 'outdated' ? '구버전이 실행 중이면 최신 버전 설치 후 앱을 다시 열어 주세요.' : '설치 후 바로 안 열리면 다운로드한 앱을 직접 한 번 실행해 주세요.'}</div>
+            <div className="rounded-2xl border border-gray-800 bg-gray-900/80 px-4 py-3">로컬 포트 9876이 차단되면 감지되지 않습니다.</div>
+            <div className="rounded-2xl border border-gray-800 bg-gray-900/80 px-4 py-3">설치 후 바로 안 열리면 다운로드한 앱을 직접 한 번 실행해 주세요.</div>
           </>
         )}
       </div>
@@ -500,7 +512,7 @@ export default function CompanionGateModal() {
   const description = releasePending
     ? `웹앱이 v${MIN_REQUIRED_COMPANION_VERSION} 이상을 요구하지만 GitHub에 아직 게시되지 않았습니다. 운영팀이 빌드/배포 중이며 보통 수 분 내에 자동으로 해결됩니다. 계속 머무른다면 새로고침하지 말고 잠시 기다려 주세요.`
     : mode === 'outdated'
-      ? '현재 실행 중인 헬퍼 앱 버전이 웹앱 최소 요구 버전보다 낮습니다. 최신 버전을 설치한 뒤 실행되면 이 화면은 자동으로 닫힙니다.'
+      ? `현재 실행 중인 헬퍼는 v${currentVersion ?? '?'}이고 웹앱은 v${MIN_REQUIRED_COMPANION_VERSION} 이상이 필요합니다. 새 버전을 받기만 해서는 갱신되지 않습니다 — 반드시 ① 트레이/메뉴바의 기존 헬퍼를 우클릭 → 종료(Quit) ② 다운로드한 새 DMG/EXE를 Applications 폴더에 설치 ③ 새 헬퍼 실행 순서를 지켜야 자동으로 닫힙니다.`
       : '이 앱의 핵심 제작 파이프라인은 로컬 컴패니언 앱을 전제로 동작합니다. 로그인 후 감지되지 않으면 모든 기능이 차단되며, 감지되는 즉시 이 화면은 자동으로 사라집니다.';
 
   const handleCopy = useCallback(async (text: string, label: string) => {
