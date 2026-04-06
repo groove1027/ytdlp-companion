@@ -36,6 +36,12 @@ Thumbs.db
 # Build output
 dist/
 
+# Vitest 자동 생성 (커버리지 리포트, 임시 결과)
+src/coverage/
+src/test-results/
+coverage/
+.vitest-cache/
+
 # Large media index data files (use Git LFS or external hosting)
 src/public/data/media-*.json
 
