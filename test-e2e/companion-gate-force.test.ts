@@ -20,6 +20,32 @@ const EMAIL = process.env.E2E_TEST_EMAIL!;
 const PASSWORD = process.env.E2E_TEST_PASSWORD!;
 const EVOLINK_KEY = process.env.CUSTOM_EVOLINK_KEY!;
 
+// MIN_REQUIRED는 src/constants.ts와 동기화. 변경 시 함께 업데이트.
+const MIN_REQUIRED = '1.3.2';
+
+async function mockGithubLatest(context: import('@playwright/test').BrowserContext, latestTag: string) {
+  // GitHub releases fetch를 mock해서 release-pending 상태를 결정적으로 제거하거나 트리거.
+  // 이렇게 해야 missing/outdated 모드 분기가 정확히 동작.
+  await context.route('https://api.github.com/repos/groove1027/ytdlp-companion/releases**', (route) => {
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([
+        {
+          tag_name: `companion-v${latestTag}`,
+          draft: false,
+          prerelease: false,
+          body: 'mocked release',
+          assets: [
+            { name: 'All-In-One-Helper-universal.dmg', browser_download_url: 'https://example.com/helper.dmg' },
+            { name: 'All-In-One-Helper-setup.exe', browser_download_url: 'https://example.com/helper.exe' },
+          ],
+        },
+      ]),
+    });
+  });
+}
+
 async function login(page: import('@playwright/test').Page) {
   const loginRes = await fetch('https://all-in-one-production.pages.dev/api/auth/login', {
     method: 'POST',
@@ -39,6 +65,9 @@ test.describe('컴패니언 강제 게이트 + macOS Gatekeeper 안내', () => {
   test('1) 컴패니언 차단 시 강제 게이트가 표시되고, ESC로 닫히지 않으며, macOS 안내 카드가 보인다', async ({ page, context }) => {
     test.setTimeout(120_000);
 
+    // GitHub mock: latest를 MIN_REQUIRED와 동일하게 만들어 release-pending 분기 차단
+    // → 순수 missing 모드 검증
+    await mockGithubLatest(context, MIN_REQUIRED);
     // 사전: localhost:9876/health 호출을 강제로 차단해서 컴패니언 미감지 환경 시뮬레이션
     await context.route('http://127.0.0.1:9876/**', (route) => route.abort('failed'));
     await context.route('http://localhost:9876/**', (route) => route.abort('failed'));
@@ -51,6 +80,8 @@ test.describe('컴패니언 강제 게이트 + macOS Gatekeeper 안내', () => {
     await page.reload({ waitUntil: 'domcontentloaded' });
     // 게이트는 로그인 후 1차 체크에서 즉시 표시
     await page.waitForSelector('[role="dialog"][aria-labelledby="companion-gate-title"]', { timeout: 30_000 });
+    // motion fade-in이 끝날 시간 확보 + GitHub mock 응답 처리 시간
+    await page.waitForTimeout(1500);
 
     await page.screenshot({ path: 'test-e2e/companion-gate-force-01-modal-open.png', fullPage: true });
 
@@ -59,11 +90,10 @@ test.describe('컴패니언 강제 게이트 + macOS Gatekeeper 안내', () => {
     expect(title || '').toContain('올인원 헬퍼');
 
     // ⚠️ 처음 실행하면 이 화면이 떠요 (Gatekeeper 안내) — macOS UA에서만 표시되어야 하므로 조건부
-    // (CI/로컬 macOS 테스트 환경에서 표시 보장)
     const isMac = await page.evaluate(() => /mac/.test(navigator.userAgent.toLowerCase()));
     if (isMac) {
       const gatekeeperHeading = page.getByText('macOS가 Helper 앱을 막아도', { exact: false });
-      await expect(gatekeeperHeading).toBeVisible({ timeout: 10_000 });
+      await expect(gatekeeperHeading).toBeVisible({ timeout: 15_000 });
 
       // 3가지 방법 카드 (방법 1 / 방법 2 / 방법 3)
       await expect(page.getByText('방법 1', { exact: false })).toBeVisible();
@@ -91,16 +121,20 @@ test.describe('컴패니언 강제 게이트 + macOS Gatekeeper 안내', () => {
   test('2) localStorage에 구버전 시드 시 — 게이트가 outdated 모드로 분기된다', async ({ page, context }) => {
     test.setTimeout(120_000);
 
+    // GitHub mock: latest를 MIN_REQUIRED와 동일하게 만들어 release-pending 분기 차단
+    await mockGithubLatest(context, MIN_REQUIRED);
     // 컴패니언 차단 + 구버전 시드
     await context.route('http://127.0.0.1:9876/**', (route) => route.abort('failed'));
     await context.route('http://localhost:9876/**', (route) => route.abort('failed'));
 
     await login(page);
     await page.evaluate(() => {
-      localStorage.setItem('companion_last_detected_version', '1.0.0'); // MIN_REQUIRED 1.3.0보다 낮음
+      localStorage.setItem('companion_last_detected_version', '1.0.0'); // MIN_REQUIRED보다 낮음
     });
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.waitForSelector('[role="dialog"][aria-labelledby="companion-gate-title"]', { timeout: 30_000 });
+    // motion fade-in 완료 + GitHub mock 응답 처리 시간
+    await page.waitForTimeout(1500);
 
     // 헤더가 outdated 카피로 변경
     const title = await page.locator('#companion-gate-title').textContent();
@@ -108,8 +142,8 @@ test.describe('컴패니언 강제 게이트 + macOS Gatekeeper 안내', () => {
 
     // 현재 감지 버전 v1.0.0 표시 — VersionPill의 "현재 감지 버전" 카드
     await expect(page.locator('p', { hasText: /^현재 감지 버전$/ }).locator('xpath=following-sibling::p').first()).toHaveText('v1.0.0');
-    // 최소 요구 버전 v1.3.0 표시 — VersionPill의 "최소 요구 버전" 카드
-    await expect(page.locator('p', { hasText: /^최소 요구 버전$/ }).locator('xpath=following-sibling::p').first()).toHaveText('v1.3.0');
+    // 최소 요구 버전 — VersionPill의 "최소 요구 버전" 카드 (MIN_REQUIRED 동적 매칭)
+    await expect(page.locator('p', { hasText: /^최소 요구 버전$/ }).locator('xpath=following-sibling::p').first()).toHaveText(`v${MIN_REQUIRED}`);
 
     // CTA — "최신 버전 다운로드" 버튼
     const ctaPrimary = page.getByRole('link', { name: /최신 버전 다운로드/ });
@@ -119,5 +153,31 @@ test.describe('컴패니언 강제 게이트 + macOS Gatekeeper 안내', () => {
     await expect(page.getByText('Update Required', { exact: false })).toBeVisible();
 
     await page.screenshot({ path: 'test-e2e/companion-gate-force-03-outdated-mode.png', fullPage: true });
+  });
+
+  test('3) GitHub latest < MIN_REQUIRED — release-pending 모드로 분기된다', async ({ page, context }) => {
+    test.setTimeout(120_000);
+
+    // GitHub mock: latest를 MIN_REQUIRED보다 낮은 값으로 → release-pending 활성
+    await mockGithubLatest(context, '1.0.0');
+    await context.route('http://127.0.0.1:9876/**', (route) => route.abort('failed'));
+    await context.route('http://localhost:9876/**', (route) => route.abort('failed'));
+
+    await login(page);
+    await page.evaluate(() => {
+      localStorage.removeItem('companion_last_detected_version');
+    });
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('[role="dialog"][aria-labelledby="companion-gate-title"]', { timeout: 30_000 });
+    await page.waitForTimeout(1500);
+
+    // 헤더 — 게시 대기 카피
+    const title = await page.locator('#companion-gate-title').textContent();
+    expect(title || '').toContain('게시 대기');
+
+    // Release Pending 배지
+    await expect(page.getByText('Release Pending', { exact: false })).toBeVisible();
+
+    await page.screenshot({ path: 'test-e2e/companion-gate-force-04-release-pending.png', fullPage: true });
   });
 });
