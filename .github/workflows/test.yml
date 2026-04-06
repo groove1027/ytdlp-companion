@@ -24,9 +24,26 @@ jobs:
           cache: 'npm'
           cache-dependency-path: src/package-lock.json
 
+      # [CF Pages parity] CF Pages는 npm ci로 install하므로 lockfile-package.json
+      # mismatch 시 빌드를 0초 만에 거부한다. 며칠 동안 prod 배포가 silently
+      # 막혔던 사고가 있었다 (5f66f11 → 2ce2875 lockfile sync 참고).
+      # 이 step은 CF와 동일한 npm ci를 dry-run으로 돌려 mismatch를 사전에 잡는다.
+      # dry-run이라 디스크 install은 안 함 — 그건 아래 install step에서 처리.
+      - name: Verify package-lock.json is in sync (Cloudflare Pages parity)
+        run: |
+          if ! npm ci --dry-run --no-audit --no-fund 2>&1 | tee /tmp/npm-ci-dryrun.log; then
+            echo ""
+            echo "::error::❌ src/package-lock.json이 src/package.json과 sync되지 않았습니다."
+            echo "::error::이 상태로 push하면 Cloudflare Pages가 'npm error Missing: ... from lock file'로 빌드를 거부합니다."
+            echo "::error::수정: cd src && npm install --package-lock-only && git add src/package-lock.json && git commit"
+            exit 1
+          fi
+          echo "✅ lockfile sync OK — Cloudflare Pages 빌드도 통과할 예정"
+
       - name: Install dependencies
         # npm ci 대신 npm install 사용 — esbuild optionalDependencies의
-        # 알려진 npm 버그로 macOS에서 생성한 lock 파일이 Linux 항목을 누락하기 때문
+        # 알려진 npm 버그로 macOS에서 생성한 lock 파일이 Linux 항목을 누락하기 때문.
+        # 단, 위의 'Verify package-lock.json' step이 sync를 강제하므로 prod 배포는 안전.
         run: npm install --no-audit --no-fund
 
       - name: Run Vitest
