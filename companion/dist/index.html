@@ -130,7 +130,7 @@
       </div>
     </div>
 
-    <!-- 기능 목록 -->
+    <!-- 기능 목록 — 실제로 헬퍼가 제공하는 기능만 표시 (Qwen3/Kokoro TTS 등 옛 기능 제거) -->
     <div class="features">
       <div class="feature">
         <span class="feature-icon">⚡</span>
@@ -138,31 +138,38 @@
       </div>
       <div class="feature">
         <span class="feature-icon">🎤</span>
-        <span class="feature-name">음성 인식</span>
+        <span class="feature-name">음성 인식 (Whisper)</span>
       </div>
       <div class="feature">
-        <span class="feature-icon">🔇</span>
-        <span class="feature-name">배경 제거</span>
-      </div>
-      <div class="feature">
-        <span class="feature-icon">🌟</span>
-        <span class="feature-name">Qwen3 TTS</span>
-      </div>
-      <div class="feature">
-        <span class="feature-icon">🗣️</span>
-        <span class="feature-name">Kokoro TTS</span>
+        <span class="feature-icon">🪄</span>
+        <span class="feature-name">배경 제거 (rembg)</span>
       </div>
       <div class="feature">
         <span class="feature-icon">🎬</span>
+        <span class="feature-name">FFmpeg 인코딩</span>
+      </div>
+      <div class="feature">
+        <span class="feature-icon">🎞️</span>
         <span class="feature-name">NLE 바로 설치</span>
+      </div>
+      <div class="feature">
+        <span class="feature-icon">🖼️</span>
+        <span class="feature-name">레퍼런스 검색</span>
       </div>
     </div>
 
-    <!-- 안내 -->
+    <!-- 안내 — 창 X 버튼이 hide만 한다는 것을 강하게 명시 -->
     <div class="info-box">
       <div class="info-text">
         <strong>이 창을 닫아도</strong> 헬퍼는 <strong>시스템 트레이</strong>에서 계속 실행됩니다.<br>
         올인원 사이트로 돌아가면 모든 기능이 자동 활성화됩니다!
+      </div>
+    </div>
+
+    <!-- 완전 종료 안내 — 사용자 다수가 X 누름 = 종료라고 오해하는 회귀 방지 -->
+    <div class="info-box" style="background: rgba(239, 68, 68, 0.08); border-color: rgba(239, 68, 68, 0.25); margin-bottom: 12px;">
+      <div class="info-text" style="color: #fca5a5;">
+        ⚠️ <strong style="color: #fecaca;">완전히 종료하려면</strong> 위의 <strong style="color: #fecaca;">시스템 트레이/메뉴바 아이콘 우클릭 → "종료(Quit)"</strong>를 선택하세요. 창 닫기 버튼(❌)은 hide만 합니다.
       </div>
     </div>
 

@@ -51,11 +51,7 @@ interface EffectNodes {
 interface ProcessingChain {
   source: MediaElementAudioSourceNode | null;
   inputAnalyser: AnalyserNode;
-  // [FIX] typescript 5.7+에서 Float32Array의 ArrayBuffer-like generic이 도입되면서
-  // lib.dom의 getFloatTimeDomainData(Float32Array<ArrayBuffer>)와 mismatch가 발생.
-  // 이 코드는 이미 의도적으로 new ArrayBuffer()로 backing store를 만들고 있으므로
-  // generic만 명시해주면 된다 (runtime 변경 없음).
-  inputAnalyserData: Float32Array<ArrayBuffer>;
+  inputAnalyserData: Float32Array;
   noiseGateGain: GainNode;
   narr: EffectNodes;
   volumeGain: GainNode;
@@ -67,13 +63,13 @@ interface ProcessingChain {
 // ─── Singleton State ───
 let ctx: AudioContext | null = null;
 let outputAnalyser: AnalyserNode | null = null;
-let outputAnalyserData: Float32Array<ArrayBuffer> | null = null;
+let outputAnalyserData: Float32Array | null = null;
 let chain: ProcessingChain | null = null;
 const connectedElements = new WeakSet<HTMLAudioElement>();
 let noiseGateTimer: ReturnType<typeof setInterval> | null = null;
 let storeUnsubscribe: (() => void) | null = null;
 
-function createAnalyserBuffer(length: number): Float32Array<ArrayBuffer> {
+function createAnalyserBuffer(length: number): Float32Array {
   return new Float32Array(new ArrayBuffer(length * Float32Array.BYTES_PER_ELEMENT));
 }
 
@@ -334,7 +330,10 @@ function startNoiseGatePolling(): void {
       return;
     }
 
-    chain.inputAnalyser.getFloatTimeDomainData(chain.inputAnalyserData);
+    // [v1.3.2 typing fix] TS 5.9 lib.dom expects Float32Array<ArrayBuffer> exactly,
+    // but our buffer ends up typed as Float32Array<ArrayBufferLike>. Cast through
+    // any to bypass the variance issue — the runtime contract is identical.
+    chain.inputAnalyser.getFloatTimeDomainData(chain.inputAnalyserData as Float32Array<ArrayBuffer>);
     let sumSq = 0;
     for (let i = 0; i < chain.inputAnalyserData.length; i++) {
       sumSq += chain.inputAnalyserData[i] * chain.inputAnalyserData[i];
@@ -408,7 +407,8 @@ export function getAudioLevels(): AudioLevels {
     return { rms: 0, peak: 0, dbRms: -60, dbPeak: -60 };
   }
 
-  outputAnalyser.getFloatTimeDomainData(outputAnalyserData);
+  // [v1.3.2 typing fix] same cast as inputAnalyser path
+  outputAnalyser.getFloatTimeDomainData(outputAnalyserData as Float32Array<ArrayBuffer>);
 
   let sumSq = 0;
   let peak = 0;

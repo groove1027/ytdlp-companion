@@ -3,7 +3,10 @@ import { AspectRatio, VoiceName, ImageModel, VideoFormat, DialogueTone, ScriptAi
 
 // Companion (Helper) App
 export const COMPANION_DOWNLOAD_URL = 'https://github.com/groove1027/ytdlp-companion/releases/latest';
-export const MIN_REQUIRED_COMPANION_VERSION = '1.3.0';
+// [v1.3.2] MIN bump — v1.3.0/v1.3.1 사용자에게 게이트 + 4단계 회복 가이드를 강제 노출.
+// v1.3.2는 (1) Qwen3/Kokoro 옛 기능 frontend 정리 (2) takeover lsof critical fix
+// (3) 창 X 닫기 ≠ quit 안내 강화 — 모두 사용자 보고 기반 수정.
+export const MIN_REQUIRED_COMPANION_VERSION = '1.3.2';
 
 // [FIX #837] Windows 빌드 존재 여부
 export const COMPANION_WINDOWS_AVAILABLE = true;

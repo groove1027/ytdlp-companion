@@ -265,42 +265,19 @@ async fn detect_services() -> CachedHealth {
     {
         services.push("whisper".to_string());
     }
-    // TTS (Qwen3 > Kokoro > Piper)
-    if platform::async_cmd(python)
-        .args(["-c", "from qwen_tts import Qwen3TTSModel; print('ok')"])
-        .output()
-        .await
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-        || platform::async_cmd(python)
-            .args(["-c", "from transformers import AutoTokenizer; print('ok')"])
-            .output()
-            .await
-            .map(|o| o.status.success())
-            .unwrap_or(false)
-    {
-        services.push("tts-qwen3".to_string());
-    }
-    if platform::async_cmd(python)
-        .args(["-c", "from kokoro_onnx import Kokoro"])
-        .output()
-        .await
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-    {
-        services.push("tts-kokoro".to_string());
+    // [v1.3.2] TTS — Qwen3 / Kokoro detect 코드 제거 (옛 기능, 웹앱이 더 이상 의존 안 함).
+    // 현재 헬퍼는 Edge TTS / Supertonic / Typecast 등 외부 클라우드 TTS 사용.
+    // Piper만 옛 fallback으로 유지 (있으면 detect, 없으면 무시).
+    let piper_bin = if cfg!(target_os = "windows") {
+        "piper/piper.exe"
     } else {
-        let piper_bin = if cfg!(target_os = "windows") {
-            "piper/piper.exe"
-        } else {
-            "piper/piper"
-        };
-        if dirs::data_dir()
-            .map(|d| d.join("ytdlp-companion").join(piper_bin).exists())
-            .unwrap_or(false)
-        {
-            services.push("tts-piper".to_string());
-        }
+        "piper/piper"
+    };
+    if dirs::data_dir()
+        .map(|d| d.join("ytdlp-companion").join(piper_bin).exists())
+        .unwrap_or(false)
+    {
+        services.push("tts-piper".to_string());
     }
     // NLE
     services.push("nle-install".to_string());

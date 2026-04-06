@@ -1,6 +1,6 @@
 [package]
 name = "all-in-one-helper"
-version = "1.3.1"
+version = "1.3.2"
 description = "All In One Helper — 안정적이고 빠른 로컬 AI 미디어 처리"
 authors = ["groove1027"]
 edition = "2021"

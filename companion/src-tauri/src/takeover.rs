@@ -185,13 +185,16 @@ fn force_kill_port_holder() -> bool {
     killed_any
 }
 
-// [Codex 6차 fix] LISTEN 소켓만 매칭. ESTABLISHED 클라이언트 연결의 PID는 절대 잡지 않음.
-// 그래야 9876에 연결한 webapp 탭이나 무관한 클라이언트가 죽지 않는다.
+// [Codex 6차 fix + v1.3.2 critical fix] LISTEN 소켓만 매칭.
+// ESTABLISHED 클라이언트 연결의 PID는 절대 잡지 않음.
+// ⚠️ v1.3.1 회귀: `-iTCP -iTCP:9876` 처럼 -iTCP를 두 번 쓰면 첫 번째가 모든 TCP를
+//    의미해서 시스템 전체 LISTEN 프로세스가 잡혔다 (실측: 9876과 무관한 system 프로세스
+//    7개가 동시에 SIGKILL). 반드시 `-iTCP:9876` 단 1회만 사용.
 #[cfg(target_os = "macos")]
 fn find_pids_on_port(port: u16) -> Vec<u32> {
     // lsof -nP -iTCP:9876 -sTCP:LISTEN -t — LISTEN 상태의 PID만 출력
     let Ok(output) = Command::new("lsof")
-        .args(["-nP", "-iTCP", &format!("-iTCP:{}", port), "-sTCP:LISTEN", "-t"])
+        .args(["-nP", &format!("-iTCP:{}", port), "-sTCP:LISTEN", "-t"])
         .output()
     else {
         return vec![];
@@ -206,7 +209,7 @@ fn find_pids_on_port(port: u16) -> Vec<u32> {
 fn find_pids_on_port(port: u16) -> Vec<u32> {
     // 동일 — Linux의 lsof도 -sTCP:LISTEN 지원
     let Ok(output) = Command::new("lsof")
-        .args(["-nP", "-iTCP", &format!("-iTCP:{}", port), "-sTCP:LISTEN", "-t"])
+        .args(["-nP", &format!("-iTCP:{}", port), "-sTCP:LISTEN", "-t"])
         .output()
     else {
         return vec![];
