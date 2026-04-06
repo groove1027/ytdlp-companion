@@ -7,6 +7,12 @@ import { saveProject, getStorageEstimate } from '../services/storageService';
 import { showToast, useUIStore } from '../stores/uiStore';
 import { logger } from '../services/LoggerService';
 import { scheduleSyncToCloud } from '../services/syncService';
+import {
+  applyImageBlobPersistRetryResult,
+  collectProjectImageBlobUrls,
+  MAX_AUTOSAVE_IMAGE_BLOB_RETRIES,
+  syncImageBlobRetryCounts,
+} from '../services/imageBlobStorageService';
 import type { Scene, ProjectConfig, ProjectData, ScriptWriterDraftState } from '../types';
 
 const AUTO_SAVE_DEBOUNCE_MS = 5000;
@@ -192,12 +198,168 @@ const flushSave = () => {
   } catch (e) { logger.trackSwallowedError('useAutoSave:flushSave/indexedDB', e); }
 };
 
+const syncNotifiedAbandonedImageBlobUrls = (
+  notifiedBlobUrls: Set<string>,
+  activeBlobUrls: readonly string[],
+) => {
+  const activeBlobUrlSet = new Set(activeBlobUrls);
+
+  for (const blobUrl of Array.from(notifiedBlobUrls)) {
+    if (!activeBlobUrlSet.has(blobUrl)) {
+      notifiedBlobUrls.delete(blobUrl);
+    }
+  }
+};
+
+const hasRetryableImageBlobPersist = (
+  project: ProjectData,
+  imageBlobRetryCounts: Map<string, number>,
+  notifiedAbandonedImageBlobUrls: Set<string>,
+): boolean => {
+  const activeBlobUrls = collectProjectImageBlobUrls(project.scenes, project.thumbnails);
+  syncImageBlobRetryCounts(imageBlobRetryCounts, activeBlobUrls);
+  syncNotifiedAbandonedImageBlobUrls(notifiedAbandonedImageBlobUrls, activeBlobUrls);
+
+  return activeBlobUrls.some((blobUrl) => {
+    const attemptCount = imageBlobRetryCounts.get(blobUrl) || 0;
+    return attemptCount > 0 && attemptCount < MAX_AUTOSAVE_IMAGE_BLOB_RETRIES;
+  });
+};
+
+const notifyAbandonedImageBlobUrlsOnce = (
+  newlyAbandonedBlobUrls: readonly string[],
+  notifiedAbandonedImageBlobUrls: Set<string>,
+) => {
+  const unseenBlobUrls = newlyAbandonedBlobUrls.filter((blobUrl) => !notifiedAbandonedImageBlobUrls.has(blobUrl));
+  if (unseenBlobUrls.length === 0) return;
+
+  unseenBlobUrls.forEach((blobUrl) => notifiedAbandonedImageBlobUrls.add(blobUrl));
+  logger.trackSwallowedError(
+    'useAutoSave:persistProjectImages/abandoned',
+    new Error(
+      `Abandoned autosave image blob URLs after ${MAX_AUTOSAVE_IMAGE_BLOB_RETRIES} attempts: ${unseenBlobUrls.join(', ')}`,
+    ),
+  );
+  showToast('일부 임시 이미지 저장이 반복 실패해 자동저장은 완료했고, 해당 이미지는 새로고침 후 복구되지 않을 수 있습니다.', 7000);
+};
+
+const persistProjectMedia = async (
+  project: ProjectData,
+  imageBlobRetryCounts: Map<string, number>,
+  notifiedAbandonedImageBlobUrls: Set<string>,
+): Promise<void> => {
+  const persistAudioTask = (async (): Promise<boolean> => {
+    try {
+      let effectiveMergedUrl = project.config.mergedAudioUrl;
+
+      if (!effectiveMergedUrl) {
+        try {
+          const { useSoundStudioStore } = await import('../stores/soundStudioStore');
+          effectiveMergedUrl = useSoundStudioStore.getState().mergedAudioUrl || undefined;
+        } catch (e) { logger.trackSwallowedError('useAutoSave:doSave/readSoundStore', e); }
+      }
+
+      const { persistProjectAudio } = await import('../services/audioStorageService');
+
+      if (effectiveMergedUrl && !project.config.mergedAudioUrl) {
+        // 다음 auto-save fingerprint에 mergedAudioUrl이 반영되도록 store에도 동기화
+        useProjectStore.getState().setConfig((prev) => prev ? { ...prev, mergedAudioUrl: effectiveMergedUrl } : prev);
+      }
+
+      await persistProjectAudio(project.id, project.scenes, effectiveMergedUrl);
+      return true;
+    } catch (e) {
+      logger.trackSwallowedError('useAutoSave:persistProjectAudio', e);
+      return false;
+    }
+  })();
+
+  const persistImageTask = (async (): Promise<boolean> => {
+    const activeBlobUrls = collectProjectImageBlobUrls(project.scenes, project.thumbnails);
+    const skippedBlobUrls = syncImageBlobRetryCounts(imageBlobRetryCounts, activeBlobUrls);
+    syncNotifiedAbandonedImageBlobUrls(notifiedAbandonedImageBlobUrls, activeBlobUrls);
+
+    try {
+      const { persistProjectImages } = await import('../services/imageBlobStorageService');
+      const result = await persistProjectImages(project.id, project.scenes, project.thumbnails, {
+        skippedBlobUrls: new Set(skippedBlobUrls),
+      });
+      const { newlyAbandonedBlobUrls, retryableBlobUrls } = applyImageBlobPersistRetryResult(
+        imageBlobRetryCounts,
+        result.attemptedBlobUrls,
+        result.failedBlobUrls,
+        MAX_AUTOSAVE_IMAGE_BLOB_RETRIES,
+      );
+
+      if (!result.allSucceeded || newlyAbandonedBlobUrls.length > 0) {
+        logger.trackSwallowedError(
+          'useAutoSave:persistProjectImages/incomplete',
+          new Error(
+            `Failed to persist ${result.failed}/${result.attempted} project image blobs: ${result.failedKeys.join(', ')}`
+            + ` | retryableUrls=${retryableBlobUrls.length} abandonedUrls=${newlyAbandonedBlobUrls.length}`,
+          ),
+        );
+      }
+
+      notifyAbandonedImageBlobUrlsOnce(newlyAbandonedBlobUrls, notifiedAbandonedImageBlobUrls);
+
+      return retryableBlobUrls.length === 0;
+    } catch (e) {
+      logger.trackSwallowedError('useAutoSave:persistProjectImages', e);
+      const { newlyAbandonedBlobUrls } = applyImageBlobPersistRetryResult(
+        imageBlobRetryCounts,
+        activeBlobUrls,
+        activeBlobUrls,
+        MAX_AUTOSAVE_IMAGE_BLOB_RETRIES,
+      );
+      notifyAbandonedImageBlobUrlsOnce(newlyAbandonedBlobUrls, notifiedAbandonedImageBlobUrls);
+      return false;
+    }
+  })();
+
+  await Promise.allSettled([persistAudioTask, persistImageTask]);
+};
+
 export const useAutoSave = () => {
   const lastFingerprintRef = useRef<string>('');
+  const imageBlobRetryCountsRef = useRef<Map<string, number>>(new Map());
+  const notifiedAbandonedImageBlobUrlsRef = useRef<Set<string>>(new Set());
+  const mediaPersistInFlightRef = useRef<boolean>(false);
+  const queuedMediaPersistProjectRef = useRef<ProjectData | null>(null);
 
   useEffect(() => {
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
     let periodicTimer: ReturnType<typeof setInterval> | null = null;
+
+    const schedulePersistProjectMedia = (project: ProjectData) => {
+      queuedMediaPersistProjectRef.current = project;
+      if (mediaPersistInFlightRef.current) return;
+
+      mediaPersistInFlightRef.current = true;
+
+      const runPersist = async () => {
+        while (queuedMediaPersistProjectRef.current) {
+          const queuedProject = queuedMediaPersistProjectRef.current;
+          queuedMediaPersistProjectRef.current = null;
+          await persistProjectMedia(
+            queuedProject,
+            imageBlobRetryCountsRef.current,
+            notifiedAbandonedImageBlobUrlsRef.current,
+          );
+        }
+      };
+
+      void runPersist()
+        .catch((e) => {
+          logger.trackSwallowedError('useAutoSave:persistProjectMedia/runPersist', e);
+        })
+        .finally(() => {
+          mediaPersistInFlightRef.current = false;
+          if (queuedMediaPersistProjectRef.current) {
+            schedulePersistProjectMedia(queuedMediaPersistProjectRef.current);
+          }
+        });
+    };
 
     /** 핵심 저장 로직 — fingerprint 비교 후 변경분만 저장 */
     const doSave = async () => {
@@ -206,51 +368,38 @@ export const useAutoSave = () => {
 
       // Fingerprint 기반 dirty check — 실제 변경이 없으면 저장 스킵
       const { project, fingerprint } = snapshot;
-      if (fingerprint === lastFingerprintRef.current) return;
+      const shouldRetryImageBlobPersist = hasRetryableImageBlobPersist(
+        project,
+        imageBlobRetryCountsRef.current,
+        notifiedAbandonedImageBlobUrlsRef.current,
+      );
+
+      if (fingerprint === lastFingerprintRef.current) {
+        if (shouldRetryImageBlobPersist) {
+          schedulePersistProjectMedia(project);
+        }
+        return;
+      }
 
       try {
         await saveProject(project);
-
         lastFingerprintRef.current = fingerprint;
-
-        // UI 인디케이터 업데이트
         useUIStore.getState().setLastAutoSavedAt(Date.now());
 
-        // 클라우드 동기화 스케줄링 (10s debounce, fire-and-forget)
-        scheduleSyncToCloud(project.id);
-
-        // 오디오 blob을 IndexedDB에 영속화 (fire-and-forget)
-        // [FIX #395] soundStudioStore.mergedAudioUrl도 함께 확인 — "전송" 안 눌러도 업로드 오디오 blob 영속화
         try {
-          let effectiveMergedUrl = project.config.mergedAudioUrl;
-          if (!effectiveMergedUrl) {
-            try {
-              const { useSoundStudioStore } = await import('../stores/soundStudioStore');
-              effectiveMergedUrl = useSoundStudioStore.getState().mergedAudioUrl || undefined;
-            } catch (e) { logger.trackSwallowedError('useAutoSave:doSave/readSoundStore', e); }
-          }
-          if (effectiveMergedUrl) {
-            // config에도 반영하여 다음 auto-save 시 fingerprint에 포함되도록 (setConfig은 scheduleSave 재트리거하지만 1회 후 수렴)
-            if (!project.config.mergedAudioUrl) {
-              useProjectStore.getState().setConfig((prev) => prev ? { ...prev, mergedAudioUrl: effectiveMergedUrl } : prev);
+          scheduleSyncToCloud(project.id);
+        } catch (e) { logger.trackSwallowedError('useAutoSave:doSave/scheduleSyncToCloud', e); }
+
+        schedulePersistProjectMedia(project);
+
+        void (async () => {
+          try {
+            const estimate = await getStorageEstimate();
+            if (estimate.percent >= 90) {
+              showToast(`저장소 ${estimate.percent}% 사용 중 — 오래된 프로젝트나 영상 분석 임시 캐시를 정리해주세요`, 6000);
             }
-            import('../services/audioStorageService').then(({ persistProjectAudio }) => {
-              persistProjectAudio(project.id, project.scenes, effectiveMergedUrl).catch((e) => { logger.trackSwallowedError('useAutoSave:persistProjectAudio', e); });
-            });
-          } else {
-            import('../services/audioStorageService').then(({ persistProjectAudio }) => {
-              persistProjectAudio(project.id, project.scenes, undefined).catch((e) => { logger.trackSwallowedError('useAutoSave:persistProjectAudio', e); });
-            });
-          }
-        } catch (e) { logger.trackSwallowedError('useAutoSave:doSave/audioStorage', e); }
-
-        // 저장소 용량 사전 경고 (90% 이상)
-        try {
-          const estimate = await getStorageEstimate();
-          if (estimate.percent >= 90) {
-            showToast(`저장소 ${estimate.percent}% 사용 중 — 오래된 프로젝트나 영상 분석 임시 캐시를 정리해주세요`, 6000);
-          }
-        } catch (e) { logger.trackSwallowedError('useAutoSave:doSave/storageEstimate', e); }
+          } catch (e) { logger.trackSwallowedError('useAutoSave:doSave/storageEstimate', e); }
+        })();
       } catch (err: unknown) {
         if (err instanceof Error && err.message === 'QUOTA_EXCEEDED') {
           console.warn('[AutoSave] Storage quota exceeded — auto-save skipped.');

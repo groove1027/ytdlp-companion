@@ -8,6 +8,95 @@
 
 ## 🟢 완료된 작업
 
+- [x] **2026-04-07 — 5차 codex review P2 autosave image persist stuck 정밀 수정**
+  - `rg -n "useAutoSave|persistProjectMedia|hasRetryableImageBlobPersist|schedulePersistProjectMedia|lastFingerprintRef|persistProjectImages|scheduleSyncToCloud" src docs --glob '!companion/**'`로 영향 범위 전수 조사 및 재검증 완료
+  - `src/hooks/useAutoSave.ts` — autosave 성공 경계를 `saveProject(project)` 성공 시점으로 재정의. 저장 성공 직후 `lastFingerprintRef`, `lastAutoSavedAt`, cloud sync 스케줄링을 즉시 advance하고, 이미지/오디오 blob 영속화는 blocking이 아닌 background best-effort 큐로 분리
+  - `src/hooks/useAutoSave.ts` — retryable image blob URL이 남아 있으면 fingerprint가 동일해도 다음 autosave round(주기/재트리거)에서 image persist만 재시도하도록 보강. 3회 누적 실패한 blob URL은 영구 스킵 상태를 유지하고, 사용자 토스트/로그 알림은 URL당 1회만 발생하도록 정리
+  - `src/test/useAutoSave.test.tsx` 신규 — (1) 깨진 blob URL이 있어도 `saveProject` 성공 후 autosave fingerprint/timestamp/cloud sync가 advance되어 stuck되지 않는 경로, (2) image persist 일시 실패 후 동일 fingerprint 다음 round에서 retry되는 경로를 hook 수준 회귀 테스트로 추가
+  - `cd src && node_modules/typescript/bin/tsc --noEmit`: 통과
+  - `cd src && node_modules/.bin/vite build`: 성공 (기존 dynamic import/chunk-size warning만 존재)
+  - `cd src && node_modules/.bin/vitest run`: 11 files, 82 tests passed (`node --localstorage-file` 경고만 출력, 실패 없음)
+
+- [x] **2026-04-07 — 4차 codex review P2 2건 추가 수정**
+  - `rg -n "persistProjectImages|pruneStaleBlobs|restoreProjectImages|restoreProjectAudio|_restoredImageBlobUrls|_restoredAudioBlobUrls|revokeObjectURL|unregisterBlobUrl" src docs --glob '!src/utils/tikitakaTableParser.ts'`로 영향 범위 전수 조사 및 재검증 완료
+  - `src/services/imageBlobStorageService.ts` — `persistProjectImages()` 말단에 projectId 인덱스 cursor 기반 `pruneStaleBlobs`를 추가해, 현재 blob candidate key 집합에 없는 orphan image row를 자동 정리하도록 보강
+  - `src/stores/projectStore.ts` — 복원된 이미지/오디오 blob URL 추적 필드(`_restoredImageBlobUrls`, `_restoredAudioBlobUrls`)를 추가했고, `loadProject()`/`clearProjectState()`/`newProject()`에서 이전 batch revoke + `logger.unregisterBlobUrl()`를 수행하도록 수정. generation mismatch로 버려지는 비동기 복원 결과와 실제로 적용되지 않은 restored URL도 즉시 revoke하도록 보강
+  - `src/services/__tests__/imageBlobStorage.persist.test.ts` — hosted URL 교체 시 project별 stale image row가 pruned 되는 회귀 케이스와 cursor `value` mock을 추가
+  - `cd src && node_modules/typescript/bin/tsc --noEmit`: 통과
+  - `cd src && node_modules/.bin/vite build`: 성공 (기존 dynamic import/chunk-size warning만 존재)
+  - `cd src && node_modules/.bin/vitest run`: 10 files, 80 tests passed
+
+- [x] **2026-04-07 — 티키타카 프롬프트층 청크 B: 화자 프로토콜 인라인 + 드라마 9열 강제**
+  - `rg -n "TIKITAKA_REBUILDING_SYSTEM|TIKITAKA_SCRIPT_SYSTEM|parseTikitakaTable|detectDramaContent|9열 마스터 편집 테이블" src docs/tikitaka-guide-complete.md`로 영향 범위 전수 조사 완료
+  - `src/components/tabs/channel/VideoAnalysisRoom.tsx` — `TIKITAKA_REBUILDING_SYSTEM`에 화자 구분 엄격 프로토콜 전문과 드라마 모드 전용 섹션을 인라인했고, `preset === 'tikitaka'` 프리셋 블록에 드라마 감지 시 9열 마스터 편집 테이블/화자 매핑 표/후킹 제목 2줄/hook 필드/효과자막 톤다운 규칙 및 9열 예시를 추가
+  - `src/utils/tikitakaTableParser.ts` — 청크 F 선행 준비용 `detectDramaContent()` 헬퍼를 추가
+  - `src/test/tikitakaEditTable.test.ts` — `detectDramaContent()`의 제목/설명/채널/비드라마/빈 입력 판정 테스트 추가
+  - `cd src && npx tsc --noEmit`: 실패 — 기존 워크트리 이슈 `App.tsx(14,32): Cannot find module './components/CompanionGateModal'` (`src/components/CompanionGateModal.tsx` 삭제 상태)
+  - `cd src && npm run build`: 실패 — 동일한 기존 워크트리 이슈로 `tsc` 단계에서 중단
+  - `cd src && npx vitest run`: 10 files, 79 tests passed
+  - `grep -n "화자 식별 5단계" src/components/tabs/channel/VideoAnalysisRoom.tsx`: `2302:## 1. 화자 식별 5단계 검증 프로세스 (Mandatory Speaker ID Pipeline)`
+  - `grep -n "드라마 모드" src/components/tabs/channel/VideoAnalysisRoom.tsx`: 다중 매치 확인 (`2350`, `3679`, `3704`, `3712` 등)
+  - `grep -n "9열 마스터 편집 테이블" src/components/tabs/channel/VideoAnalysisRoom.tsx`: `3679:13. **드라마 모드 9열 마스터 편집 테이블 포맷:**`
+
+- [x] **2026-04-07 — 3차 codex review P1/P2 후속 수정**
+  - `rg -n "restoreProjectImages|getAll\\(|deleteProjectImages|restoreProjectAudio|deleteProjectAudio|useAutoSave|lastFingerprintRef|persistProjectImages|image-blobs|audio-blobs|BLOB_PROJECT_ID_INDEX|MAX_AUTOSAVE_IMAGE_BLOB_RETRIES|syncImageBlobRetryCounts|applyImageBlobPersistRetryResult" src docs`로 영향 범위 전수 조사 및 재검증 완료
+  - `src/services/storageService.ts` — IndexedDB 버전을 `9 -> 10`으로 올리고 `audio-blobs`/`image-blobs` store에 `projectId` 인덱스를 추가하는 무손실 마이그레이션을 구현. 기존 v9 사용자는 store 재생성 없이 인덱스만 추가되도록 보강
+  - `src/services/imageBlobStorageService.ts`, `src/services/audioStorageService.ts` — `restoreProjectImages()`/`restoreProjectAudio()`를 `getAllFromIndex(..., 'projectId', projectId)` 기반으로 바꾸고, `deleteProjectImages()`/`deleteProjectAudio()`도 `projectId` 인덱스 cursor 삭제로 전환해 다른 프로젝트 blob 전체 로드를 제거
+  - `src/hooks/useAutoSave.ts` — 이미지 blob autosave에 URL별 재시도 카운트(`MAX_AUTOSAVE_IMAGE_BLOB_RETRIES = 3`)를 추가. 3회 누적 실패한 stale `blob:` URL은 영구 포기 대상으로 기록하고 fingerprint는 advance하되, 사용자에게는 토스트로 알려 무한 retry 루프를 차단
+  - `src/services/__tests__/imageBlobStorage.persist.test.ts`, `src/services/__tests__/audioStorageService.test.ts` 신규, `src/services/__tests__/storageService.schema.test.ts` 신규 — 이미지/오디오 인덱스 조회, cursor 삭제, 다른 `projectId` blob 차단, autosave retry cap, v9→v10 인덱스 마이그레이션을 단위 테스트로 검증
+  - `src/services/audioAnalyserService.ts` — 기존 `Float32Array<ArrayBufferLike>` 타입 불일치로 막히던 `tsc --noEmit`를 해소하기 위해 analyser 버퍼 타입을 `ArrayBuffer` 기반으로 명시
+  - `cd src && node_modules/typescript/bin/tsc --noEmit`: 통과
+  - `cd src && node_modules/.bin/vite build`: 성공 (기존 dynamic import/chunk-size warning만 존재)
+  - `cd src && node_modules/.bin/vitest run`: 10 files, 78 tests passed
+
+- [x] **2026-04-07 — 티키타카 드라마 9열 스키마 청크 A 2차 검증 보강**
+  - `rg -n "parseTikitakaTable|parseHookTitle|buildDramaSceneEditPoint" src`로 2차 검증 대상 함수/테스트 영향 범위를 재확인
+  - `src/test/tikitakaEditTable.test.ts` — 헤더 없는 7열 fallback, 헤더 없는 8열 fallback, `[S-승일]` prefix의 `speakerId` 추출 검증을 추가해 6/7/8/9열 하위 호환 체크를 보강
+  - `src/test/tikitakaTitleParser.test.ts` — 한글 제목도 1자씩 세는 12자/10자 경계 케이스를 추가
+  - `src/services/audioAnalyserService.ts` — 재검증 중 드러난 `Float32Array<ArrayBuffer>` 타입 선언 3곳을 표준 `Float32Array`로 다시 정리해 `tsc`/`vite build`를 복구
+  - 인프라 무손상 재확인: `src/vitest.config.ts`, `src/package.json`, `src/package-lock.json`, `.github/workflows/test.yml` diff 없음
+  - `cd src && npx vitest run --reporter=verbose`: 10 files, 78 tests passed (skip/todo 없음)
+  - `cd src && npx tsc --noEmit`: 통과
+  - `cd src && npm run build`: 성공 (기존 dynamic import/chunk-size warning만 존재)
+
+- [x] **2026-04-07 — 티키타카 드라마 9열 스키마 도입 (청크 A: 기반층)**
+  - `rg -n "parseTikitakaTable|mergeWithAiTimecodes|VideoSceneRow|VideoVersionItem|parseEditTableWithAI|editPointService" src test`로 영향 범위 전수 조사 완료
+  - `src/types.ts` — `VideoSceneRow`에 `speakerId/speakerName/actorName/speechType/rawInTc/rawOutTc/snappedInTc/snappedOutTc` 옵션 필드를, `VideoVersionItem`에 `hookTitleLine1/hookTitleLine2/actorNames` 옵션 필드를 추가
+  - `src/utils/tikitakaTableParser.ts` 신규 — 기존 `VideoAnalysisRoom.tsx` 내부 파서를 추출했고, 6/7/8열 하위 호환을 유지한 채 9열 드라마 헤더 매핑, 헤더 없는 9열 fallback, 화자 prefix 추출, 속마음/내레이션 판별, In/Out 타임코드 분리를 지원하도록 확장
+  - `src/components/tabs/channel/VideoAnalysisRoom.tsx` — `parseTikitakaTable`를 새 유틸 import로 교체해 기존 호출부 호환 유지
+  - `src/utils/tikitakaSpeakerValidator.ts`, `src/utils/tikitakaTitleParser.ts`, `src/services/tikitakaDramaEditPointService.ts` 신규 — 화자 일관성 검증, 후킹 제목 2줄 파서, 9열 edit point 순수 변환 헬퍼 추가
+  - `src/test/sceneDetection.test.ts` append, `src/test/tikitakaEditTable.test.ts`, `src/test/tikitakaSpeakerProtocol.test.ts`, `src/test/tikitakaTitleParser.test.ts`, `src/test/editPointService.test.ts` 신규 — mergeWithAiTimecodes 8케이스 + 9열 파서/화자/제목/edit point 안전망 추가
+  - `src/services/audioAnalyserService.ts` — 기존 검증을 막던 `Float32Array<...>` 타입 오류 3건을 표준 `Float32Array`로 정리
+  - `cd src && npx tsc --noEmit`: 통과
+  - `cd src && npm run build`: 성공 (기존 dynamic import/chunk-size warning만 존재)
+  - `cd src && npx vitest run`: 8 passed, 70 passed
+  - `grep -rn "parseTikitakaTable" src/components/tabs/channel/VideoAnalysisRoom.tsx`: import + 기존 호출부 재확인
+  - `grep -rn "VideoSceneRow" src/types.ts`: 타입 정의 위치 재확인
+
+- [x] **2026-04-07 — 이미지 blob 영속화 후속 P2 2건 추가 수정**
+  - `rg -n "persistProjectMedia|lastFingerprintRef|restoreProjectImages|sceneImageMap|thumbnailMap|mergeRestoredSceneImageFields|mergeRestoredThumbnailImage" src docs`로 영향 범위 전수 조사 완료
+  - `src/services/imageBlobStorageService.ts` — `persistProjectImages()`가 성공/실패 요약(`attempted/persisted/failed/failedKeys/allSucceeded`)을 반환하도록 바꿨고, 복원본이 없는 경우 현재 `blob:` URL을 유지하는 merge helper를 추가
+  - `src/hooks/useAutoSave.ts` — 이미지 persist 실패를 `logger.trackSwallowedError`로 기록하되, `imagesPersisted=false`이면 `lastFingerprintRef`와 auto-save 완료 시점을 advance하지 않도록 분리해 다음 주기에 재시도되게 수정
+  - `src/stores/projectStore.ts` — `loadProject()`의 씬/썸네일 blob 복원 경로를 helper 기반 merge로 교체해, 복원본이 없는 필드는 현재 값을 유지하고 복원본이 있는 필드만 덮어쓰도록 보정
+  - `src/services/__tests__/imageBlobStorage.persist.test.ts` — 이미지 persist 실패 상태 반환 케이스와 "복원본이 없으면 현재 blob URL 유지" 회귀 케이스 추가
+  - `cd src && node_modules/typescript/bin/tsc --noEmit`: 통과
+  - `cd src && node_modules/.bin/vite build`: 성공
+  - `cd src && node_modules/.bin/vitest run`: 통과
+  - `rg -n "persistProjectMedia|lastFingerprintRef|restoreProjectImages|mergeRestoredSceneImageFields|mergeRestoredThumbnailImage|allSucceeded" src`: 반영 위치 재확인
+
+- [x] **2026-04-07 — 이미지 blob 영속화 후속 P2 3건 수정**
+  - `rg -n "previousSceneImageUrl|SCENE_IMAGE_FIELDS|BASE64_FIELDS|persistProjectImages|lastFingerprintRef|deleteAllProjects|image-blobs|audio-blobs|persistProjectAudio|setLastAutoSavedAt|BASE64_SCENE_FIELDS" src docs`로 영향 범위 전수 조사 완료
+  - `src/services/imageBlobStorageService.ts`, `src/stores/projectStore.ts` — `previousSceneImageUrl`를 blob/base64 복원 대상 필드에 추가해 되돌리기용 이전 이미지도 새로고침 후 복원되도록 보강
+  - `src/services/imageStorageService.ts`, `src/services/syncService.ts` — backup 이미지 필드도 base64/임시 URL 마이그레이션 및 클라우드 동기화 감지 대상에 포함되도록 정합성 보강
+  - `src/hooks/useAutoSave.ts` — `saveProject()` 직후 media blob 영속화를 `await`하는 `persistProjectMedia()` 단계로 재구성하고, fingerprint/UI auto-save 완료 시점을 이미지/오디오 persist 이후로 이동
+  - `src/services/storageService.ts` — `deleteAllProjects()`가 `projects`, `project_summaries`, `audio-blobs`, `image-blobs`를 같은 트랜잭션에서 함께 비우도록 수정
+  - `src/services/__tests__/imageBlobStorage.persist.test.ts` — `previousSceneImageUrl` 영속화/복원 케이스 추가
+  - `src/services/__tests__/storageService.deleteAllProjects.test.ts` 신규 — 전체 삭제 시 `audio-blobs`와 `image-blobs`까지 함께 clear되는지 검증 추가
+  - `cd src && node_modules/typescript/bin/tsc --noEmit`: 통과
+  - `cd src && node_modules/.bin/vite build`: 성공 (기존 dynamic import/chunk-size warning만 존재)
+  - `cd src && node_modules/.bin/vitest run`: 33 passed
+  - `rg -n "previousSceneImageUrl|persistProjectMedia|deleteAllProjects|audio-blobs|image-blobs" src`: 반영 위치 재확인
+
 - [x] **2026-04-07 — companion v1.3.1: 자동 take-over + UI 4단계 회복 가이드**
   - **Rust take-over**: `companion/src-tauri/src/takeover.rs` 신규. main() 첫 줄에서 9876 health check → ytdlp-companion 시그니처 확인 → graceful /quit (X-Helper-Token 헤더) → fallback PID kill (LISTEN 소켓만, ESTABLISHED 클라이언트는 제외) → 5초 대기. 자기 PID 절대 죽이지 않음.
   - **/quit endpoint**: `server.rs`에 POST /quit 추가, X-Helper-Token 헤더로 디스크 0o600 토큰 파일과 매칭 검증. 불일치 시 HTTP 403.

@@ -40,6 +40,16 @@ export interface SavedAudioBlob {
   createdAt: number;
 }
 
+/** IndexedDB에 저장되는 이미지 Blob 래퍼 */
+export interface SavedImageBlob {
+  id: string;          // `${projectId}::scene::${sceneId}::${field}` 또는 `${projectId}::thumb::${thumbId}`
+  projectId: string;
+  sceneId: string;
+  field: string;
+  blob: Blob;
+  createdAt: number;
+}
+
 /** 영상분석 슬롯 저장용 */
 export interface SavedVideoAnalysisSlot {
   id: string;
@@ -78,6 +88,16 @@ interface StoryboardDB extends DBSchema {
   'audio-blobs': {
     key: string;
     value: SavedAudioBlob;
+    indexes: {
+      projectId: string;
+    };
+  };
+  'image-blobs': {
+    key: string;
+    value: SavedImageBlob;
+    indexes: {
+      projectId: string;
+    };
   };
   'video-analysis': {
     key: string;
@@ -92,7 +112,9 @@ const CHARACTER_STORE = 'characters';
 const MUSIC_STORE = 'music';
 const BENCHMARK_STORE = 'benchmarks';
 const AUDIO_BLOB_STORE = 'audio-blobs';
+const IMAGE_BLOB_STORE = 'image-blobs';
 const VIDEO_ANALYSIS_STORE = 'video-analysis';
+export const BLOB_PROJECT_ID_INDEX = 'projectId' as const;
 const LAST_PROJECT_POINTER_KEY = 'last-project-id';
 const TRANSIENT_LOCAL_STORAGE_KEYS = ['video-analysis-store', 'SCRIPT_WRITER_DRAFT', 'navigation-state', 'onboarding-tour-completed'] as const;
 const TRANSIENT_LOCAL_STORAGE_PREFIXES = ['ai-chat-sessions-'] as const;
@@ -113,7 +135,16 @@ const STORAGE_ERROR_PATTERNS = [
 ] as const;
 
 // All required object stores
-const ALL_STORES = [PROJECT_STORE, SUMMARY_STORE, CHARACTER_STORE, MUSIC_STORE, BENCHMARK_STORE, AUDIO_BLOB_STORE, VIDEO_ANALYSIS_STORE] as const;
+const ALL_STORES = [
+  PROJECT_STORE,
+  SUMMARY_STORE,
+  CHARACTER_STORE,
+  MUSIC_STORE,
+  BENCHMARK_STORE,
+  AUDIO_BLOB_STORE,
+  IMAGE_BLOB_STORE,
+  VIDEO_ANALYSIS_STORE,
+] as const;
 
 export const safeLocalStorageGetItem = (key: string): string | null => {
   try {
@@ -165,9 +196,45 @@ export const isStorageRelatedError = (error: unknown): boolean => {
   return STORAGE_ERROR_PATTERNS.some((pattern) => pattern.test(message));
 };
 
-// Initialize DB (v8: v7 stores + 누락 store 자동 복구)
-export const dbPromise = openDB<StoryboardDB>(DB_NAME, 8, {
-  upgrade(db, oldVersion) {
+const ensureProjectIdIndex = (store: {
+  indexNames: DOMStringList;
+  createIndex: (name: string, keyPath: string) => unknown;
+}) => {
+  if (!store.indexNames.contains(BLOB_PROJECT_ID_INDEX)) {
+    store.createIndex(BLOB_PROJECT_ID_INDEX, BLOB_PROJECT_ID_INDEX);
+  }
+};
+
+const ensureBlobStore = (
+  db: {
+    objectStoreNames: DOMStringList;
+    createObjectStore: (name: string, options?: IDBObjectStoreParameters) => {
+      indexNames: DOMStringList;
+      createIndex: (name: string, keyPath: string) => unknown;
+    };
+  },
+  transaction: {
+    objectStore: (name: typeof AUDIO_BLOB_STORE | typeof IMAGE_BLOB_STORE) => {
+      indexNames: DOMStringList;
+      createIndex: (name: string, keyPath: string) => unknown;
+    };
+  },
+  storeName: typeof AUDIO_BLOB_STORE | typeof IMAGE_BLOB_STORE,
+) => {
+  if (!db.objectStoreNames.contains(storeName)) {
+    const store = db.createObjectStore(storeName, { keyPath: 'id' });
+    ensureProjectIdIndex(store);
+    return store;
+  }
+
+  const store = transaction.objectStore(storeName);
+  ensureProjectIdIndex(store);
+  return store;
+};
+
+// Initialize DB (v10: blob store projectId 인덱스 추가)
+export const dbPromise = openDB<StoryboardDB>(DB_NAME, 10, {
+  upgrade(db, oldVersion, _newVersion, transaction) {
     if (oldVersion < 1) {
       db.createObjectStore(PROJECT_STORE, { keyPath: 'id' });
     }
@@ -184,7 +251,8 @@ export const dbPromise = openDB<StoryboardDB>(DB_NAME, 8, {
       db.createObjectStore(BENCHMARK_STORE, { keyPath: 'id' });
     }
     if (oldVersion < 6) {
-      db.createObjectStore(AUDIO_BLOB_STORE, { keyPath: 'id' });
+      const store = db.createObjectStore(AUDIO_BLOB_STORE, { keyPath: 'id' });
+      ensureProjectIdIndex(store);
     }
     if (oldVersion < 7) {
       db.createObjectStore(VIDEO_ANALYSIS_STORE, { keyPath: 'id' });
@@ -193,9 +261,22 @@ export const dbPromise = openDB<StoryboardDB>(DB_NAME, 8, {
     if (oldVersion < 8) {
       for (const name of ALL_STORES) {
         if (!db.objectStoreNames.contains(name)) {
-          db.createObjectStore(name, { keyPath: 'id' });
+          const store = db.createObjectStore(name, { keyPath: 'id' });
+          if (name === AUDIO_BLOB_STORE || name === IMAGE_BLOB_STORE) {
+            ensureProjectIdIndex(store);
+          }
         }
       }
+    }
+    // v9: 이미지 blob 영속화 store 추가
+    if (oldVersion < 9 && !db.objectStoreNames.contains(IMAGE_BLOB_STORE)) {
+      const store = db.createObjectStore(IMAGE_BLOB_STORE, { keyPath: 'id' });
+      ensureProjectIdIndex(store);
+    }
+    // v10: audio/image blob store에 projectId 인덱스 추가 (기존 데이터 유지)
+    if (oldVersion < 10) {
+      ensureBlobStore(db, transaction, AUDIO_BLOB_STORE);
+      ensureBlobStore(db, transaction, IMAGE_BLOB_STORE);
     }
   },
 });
@@ -290,13 +371,21 @@ export const deleteProject = async (id: string) => {
     const { deleteProjectAudio } = await import('./audioStorageService');
     await deleteProjectAudio(id);
   } catch (e) { logger.trackSwallowedError('StorageService:deleteProject/audioCleanup', e); }
+
+  // image-blobs 클린업 (별도 트랜잭션 — 메인 삭제 실패 방지)
+  try {
+    const { deleteProjectImages } = await import('./imageBlobStorageService');
+    await deleteProjectImages(id);
+  } catch (e) { logger.trackSwallowedError('StorageService:deleteProject/imageCleanup', e); }
 };
 
 export const deleteAllProjects = async () => {
   const db = await dbPromise;
-  const tx = db.transaction([PROJECT_STORE, SUMMARY_STORE], 'readwrite');
+  const tx = db.transaction([PROJECT_STORE, SUMMARY_STORE, AUDIO_BLOB_STORE, IMAGE_BLOB_STORE], 'readwrite');
   tx.objectStore(PROJECT_STORE).clear();
   tx.objectStore(SUMMARY_STORE).clear();
+  tx.objectStore(AUDIO_BLOB_STORE).clear();
+  tx.objectStore(IMAGE_BLOB_STORE).clear();
   await tx.done;
 };
 

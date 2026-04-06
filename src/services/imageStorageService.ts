@@ -28,6 +28,7 @@ const isTempUrl = (url: string): boolean => {
 // The Scene fields that may contain base64 image data and should be migrated
 const BASE64_SCENE_FIELDS: (keyof Scene)[] = [
     'imageUrl',
+    'previousSceneImageUrl',
     'referenceImage',
     'sourceFrameUrl',
     'startFrameUrl',
@@ -150,7 +151,7 @@ export const persistImage = async (imageData: string): Promise<string> => {
  * Migrates ALL base64-capable fields in a Scene to Cloudinary-hosted URLs.
  *
  * Fields checked:
- *   imageUrl, referenceImage, sourceFrameUrl,
+ *   imageUrl, previousSceneImageUrl, referenceImage, sourceFrameUrl,
  *   startFrameUrl, editedStartFrameUrl, editedEndFrameUrl
  *
  * Returns a `Partial<Scene>` containing ONLY the fields whose values

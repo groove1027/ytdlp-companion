@@ -62,6 +62,54 @@ const applySceneUpdate = (scene: Scene, partial: Partial<Scene>): Scene => {
   return normalizeSceneVisualPrompt(nextScene);
 };
 
+const buildUniqueBlobUrlList = (blobUrls: Iterable<string | null | undefined>): string[] =>
+  Array.from(new Set(
+    Array.from(blobUrls).filter((url): url is string => typeof url === 'string' && url.startsWith('blob:')),
+  ));
+
+const trackBlobUrls = (
+  blobUrls: readonly string[],
+  type: 'image' | 'audio',
+  owner: string,
+) => {
+  buildUniqueBlobUrlList(blobUrls).forEach((url) => {
+    logger.registerBlobUrl(url, type, owner);
+  });
+};
+
+const revokeBlobUrls = (blobUrls: readonly string[]) => {
+  buildUniqueBlobUrlList(blobUrls).forEach((url) => {
+    logger.unregisterBlobUrl(url);
+    URL.revokeObjectURL(url);
+  });
+};
+
+const collectRestoredImageBlobUrls = (
+  sceneImageMap: ReadonlyMap<string, ReadonlyMap<string, string>>,
+  thumbnailMap: ReadonlyMap<string, string>,
+): string[] => {
+  const urls: string[] = [];
+
+  sceneImageMap.forEach((fieldMap) => {
+    fieldMap.forEach((url) => {
+      urls.push(url);
+    });
+  });
+  thumbnailMap.forEach((url) => {
+    urls.push(url);
+  });
+
+  return buildUniqueBlobUrlList(urls);
+};
+
+const collectRestoredAudioBlobUrls = (
+  sceneAudioMap: ReadonlyMap<string, string>,
+  mergedUrl?: string | null,
+): string[] => buildUniqueBlobUrlList([
+  ...sceneAudioMap.values(),
+  mergedUrl,
+]);
+
 const buildScriptWriterRestoreState = (project: ProjectData): Partial<ScriptWriterDraftState> | null => {
   if (project.scriptWriterState) {
     return project.scriptWriterState;
@@ -149,6 +197,8 @@ interface ProjectStore {
   batchGrokDuration: '6' | '10';
   batchGrokSpeech: boolean;
   _loadGeneration: number; // increments on each loadProject to prevent stale async updates
+  _restoredImageBlobUrls: string[];
+  _restoredAudioBlobUrls: string[];
 
   // Setters (React setState signature compatible for useVideoBatch bridge)
   setConfig: (config: ProjectConfig | null | ((prev: ProjectConfig | null) => ProjectConfig | null)) => void;
@@ -186,14 +236,15 @@ interface ProjectStore {
 }
 
 // Scene fields that may contain base64 image data and should be migrated
-const BASE64_FIELDS: (keyof Scene)[] = [
+const BASE64_FIELDS = [
   'imageUrl',
+  'previousSceneImageUrl',
   'referenceImage',
   'sourceFrameUrl',
   'startFrameUrl',
   'editedStartFrameUrl',
   'editedEndFrameUrl',
-];
+] as const satisfies readonly (keyof Scene)[];
 
 export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
   config: null,
@@ -204,6 +255,8 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
   batchGrokDuration: '6',
   batchGrokSpeech: false,
   _loadGeneration: 0,
+  _restoredImageBlobUrls: [],
+  _restoredAudioBlobUrls: [],
 
   setConfig: (config) => set((state) => {
     const newConfig = typeof config === 'function' ? config(state.config) : config;
@@ -526,6 +579,9 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
       catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/restoreSubtitles', e); }
     }
 
+    const previousRestoredImageBlobUrls = get()._restoredImageBlobUrls;
+    const previousRestoredAudioBlobUrls = get()._restoredAudioBlobUrls;
+
     // Increment generation to invalidate any in-flight async migrations from previous loads
     const generation = get()._loadGeneration + 1;
 
@@ -536,7 +592,11 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
       currentProjectId: project.id,
       projectTitle: project.title,
       _loadGeneration: generation,
+      _restoredImageBlobUrls: [],
+      _restoredAudioBlobUrls: [],
     });
+    revokeBlobUrls(previousRestoredImageBlobUrls);
+    revokeBlobUrls(previousRestoredAudioBlobUrls);
     // [FIX] localStorage에 마지막 프로젝트 ID 저장 → 새 탭/새로고침 시 복원용
     if (project.id) {
       safeLocalStorageSetItem('last-project-id', project.id);
@@ -577,6 +637,74 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
       });
     }).catch(e => { logger.trackSwallowedError('ProjectStore:loadProject/restoreImageVideoStore', e); });
 
+    // [FIX #1060 #1061 #1062 #1065] 이미지 blob URL 복원
+    // blob: URL은 세션 종속이므로, IDB에 영속화된 Blob → 새 blob URL로 교체
+    import('../services/imageBlobStorageService').then(async ({
+      SCENE_IMAGE_FIELDS,
+      mergeRestoredSceneImageFields,
+      mergeRestoredThumbnailImage,
+      restoreProjectImages,
+    }) => {
+      if (get()._loadGeneration !== generation) return;
+
+      const restored = await restoreProjectImages(project.id);
+      const allRestoredImageUrls = collectRestoredImageBlobUrls(
+        restored.sceneImageMap,
+        restored.thumbnailMap,
+      );
+      if (get()._loadGeneration !== generation) {
+        revokeBlobUrls(allRestoredImageUrls);
+        return;
+      }
+
+      const currentScenes = get().scenes;
+      const currentThumbnails = get().thumbnails;
+      const appliedImageUrls: string[] = [];
+      const nextScenes = currentScenes.map((scene) => {
+        const restoredFields = restored.sceneImageMap.get(scene.id);
+        if (restoredFields) {
+          SCENE_IMAGE_FIELDS.forEach((field) => {
+            const currentValue = scene[field];
+            const restoredUrl = restoredFields.get(field);
+            if (
+              typeof currentValue === 'string'
+              && currentValue.startsWith('blob:')
+              && restoredUrl
+              && restoredUrl !== currentValue
+            ) {
+              appliedImageUrls.push(restoredUrl);
+            }
+          });
+        }
+
+        return mergeRestoredSceneImageFields(scene, restoredFields);
+      });
+      const nextThumbnails = currentThumbnails.map((thumb) => {
+        const restoredUrl = restored.thumbnailMap.get(thumb.id);
+        if (
+          thumb.imageUrl?.startsWith('blob:')
+          && restoredUrl
+          && restoredUrl !== thumb.imageUrl
+        ) {
+          appliedImageUrls.push(restoredUrl);
+        }
+
+        return mergeRestoredThumbnailImage(thumb, restoredUrl);
+      });
+      const trackedImageUrls = buildUniqueBlobUrlList(appliedImageUrls);
+      const trackedImageUrlSet = new Set(trackedImageUrls);
+      const unusedImageUrls = allRestoredImageUrls.filter((url) => !trackedImageUrlSet.has(url));
+
+      revokeBlobUrls(unusedImageUrls);
+      trackBlobUrls(trackedImageUrls, 'image', 'projectStore:loadProject/restoreProjectImages');
+
+      set({
+        scenes: nextScenes,
+        thumbnails: nextThumbnails,
+        _restoredImageBlobUrls: trackedImageUrls,
+      });
+    }).catch((e) => { logger.trackSwallowedError('ProjectStore:loadProject/imageImport', e); });
+
     // [FIX] 나레이션 복원 — IndexedDB에서 오디오 Blob 복원 후 ScriptLine[] 재생성
     // blob: URL은 세션 종속이므로, IDB에 영속화된 Blob → 새 blob URL로 교체
     try {
@@ -585,56 +713,81 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
         if (get()._loadGeneration !== generation) return;
 
         const restored = await restoreProjectAudio(project.id);
-        if (get()._loadGeneration !== generation) return;
+        const allRestoredAudioUrls = collectRestoredAudioBlobUrls(
+          restored.sceneAudioMap,
+          restored.mergedUrl,
+        );
+        if (get()._loadGeneration !== generation) {
+          revokeBlobUrls(allRestoredAudioUrls);
+          return;
+        }
 
         // scenes의 blob: audioUrl을 복원된 URL로 교체 (또는 복원 실패 시 undefined)
         const currentScenes = get().scenes;
+        const appliedAudioUrls: string[] = [];
         const updatedScenes = currentScenes.map((s) => {
           if (s.audioUrl?.startsWith('blob:')) {
             const restoredUrl = restored.sceneAudioMap.get(s.id);
+            if (restoredUrl && restoredUrl !== s.audioUrl) {
+              appliedAudioUrls.push(restoredUrl);
+            }
             return { ...s, audioUrl: restoredUrl };
           }
           return s;
         });
-        set({ scenes: updatedScenes });
 
         // mergedAudioUrl 복원
+        const currentConfig = get().config;
         if (restored.mergedUrl) {
-          const currentConfig = get().config;
           if (currentConfig) {
-            set({ config: { ...currentConfig, mergedAudioUrl: restored.mergedUrl } });
-          }
-          // [FIX #395] soundStudioStore에도 동기화 — Sound Studio에서 병합 오디오 표시
-          try { useSoundStudioStore.getState().setMergedAudio(restored.mergedUrl); } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/syncMergedAudio', e); }
-          if (isUploadedTranscriptConfig(get().config)) {
-            useSoundStudioStore.setState({
-              uploadedAudios: [{
-                id: get().config?.uploadedAudioId || 'uploaded-restored',
-                fileName: 'uploaded-audio',
-                audioUrl: restored.mergedUrl,
-                duration: get().config?.sourceNarrationDurationSec || get().config?.transcriptDurationSec || 0,
-                fileSize: 0,
-                mimeType: 'audio/*',
-                uploadedAt: Date.now(),
-              }],
-            });
-          } else {
-            useSoundStudioStore.setState({ uploadedAudios: [] });
+            appliedAudioUrls.push(restored.mergedUrl);
+            // [FIX #395] soundStudioStore에도 동기화 — Sound Studio에서 병합 오디오 표시
+            try { useSoundStudioStore.getState().setMergedAudio(restored.mergedUrl); } catch (e) { logger.trackSwallowedError('ProjectStore:loadProject/syncMergedAudio', e); }
+            if (isUploadedTranscriptConfig(currentConfig)) {
+              useSoundStudioStore.setState({
+                uploadedAudios: [{
+                  id: currentConfig.uploadedAudioId || 'uploaded-restored',
+                  fileName: 'uploaded-audio',
+                  audioUrl: restored.mergedUrl,
+                  duration: currentConfig.sourceNarrationDurationSec || currentConfig.transcriptDurationSec || 0,
+                  fileSize: 0,
+                  mimeType: 'audio/*',
+                  uploadedAt: Date.now(),
+                }],
+              });
+            } else {
+              useSoundStudioStore.setState({ uploadedAudios: [] });
+            }
           }
         } else if (get().config?.mergedAudioUrl?.startsWith('blob:')) {
           // IDB에 없는 stale blob URL 제거
-          const currentConfig = get().config;
           if (currentConfig) {
             set({ config: { ...currentConfig, mergedAudioUrl: undefined } });
           }
           useSoundStudioStore.setState({ uploadedAudios: [] });
         }
 
+        const trackedAudioUrls = buildUniqueBlobUrlList(appliedAudioUrls);
+        const trackedAudioUrlSet = new Set(trackedAudioUrls);
+        const unusedAudioUrls = allRestoredAudioUrls.filter((url) => !trackedAudioUrlSet.has(url));
+
+        revokeBlobUrls(unusedAudioUrls);
+        trackBlobUrls(trackedAudioUrls, 'audio', 'projectStore:loadProject/restoreProjectAudio');
+        set({
+          scenes: updatedScenes,
+          ...(restored.mergedUrl && currentConfig
+            ? { config: { ...currentConfig, mergedAudioUrl: restored.mergedUrl } }
+            : {}),
+          _restoredAudioBlobUrls: trackedAudioUrls,
+        });
+
         // soundStudioStore lines 재생성 (복원된 URL 사용)
         try {
-          const currentConfig = get().config;
-          const finalScenes = get().scenes;
-          const restoredLines = buildUploadedTranscriptLines(currentConfig)
+          const effectiveConfig = restored.mergedUrl && currentConfig
+            ? { ...currentConfig, mergedAudioUrl: restored.mergedUrl }
+            : get().config;
+          const finalScenes = updatedScenes;
+          const restoredLines = buildUploadedTranscriptLines(effectiveConfig)
             || finalScenes
               .filter((s) => getSceneNarrationText(s) || s.audioUrl)
               .map((s, i) => ({
@@ -734,6 +887,8 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
   },
 
   clearProjectState: () => {
+    const previousRestoredImageBlobUrls = get()._restoredImageBlobUrls;
+    const previousRestoredAudioBlobUrls = get()._restoredAudioBlobUrls;
     set((state) => ({
       config: null,
       scenes: [],
@@ -743,7 +898,11 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
       batchGrokDuration: '6',
       batchGrokSpeech: false,
       _loadGeneration: state._loadGeneration + 1,
+      _restoredImageBlobUrls: [],
+      _restoredAudioBlobUrls: [],
     }));
+    revokeBlobUrls(previousRestoredImageBlobUrls);
+    revokeBlobUrls(previousRestoredAudioBlobUrls);
     safeLocalStorageRemoveItem('last-project-id');
   },
 
@@ -762,6 +921,8 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
     try { useShoppingShortStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:newProject/resetShoppingShort', e); }
     try { useUploadStore.getState().resetUpload(); } catch (e) { logger.trackSwallowedError('ProjectStore:newProject/resetUpload', e); }
     try { usePptMasterStore.getState().reset(); } catch (e) { logger.trackSwallowedError('ProjectStore:newProject/resetPptMaster', e); }
+    const previousRestoredImageBlobUrls = get()._restoredImageBlobUrls;
+    const previousRestoredAudioBlobUrls = get()._restoredAudioBlobUrls;
 
     // 고유 프로젝트 ID 즉시 생성 (auto-save가 작동하려면 필수)
     const projectId = `proj_${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -788,7 +949,11 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
       batchGrokDuration: '6',
       batchGrokSpeech: false,
       _loadGeneration: state._loadGeneration + 1,
+      _restoredImageBlobUrls: [],
+      _restoredAudioBlobUrls: [],
     }));
+    revokeBlobUrls(previousRestoredImageBlobUrls);
+    revokeBlobUrls(previousRestoredAudioBlobUrls);
     // 마지막 프로젝트 ID를 localStorage에 저장 (복구용)
     safeLocalStorageSetItem('last-project-id', projectId);
     useCostStore.getState().resetCosts();

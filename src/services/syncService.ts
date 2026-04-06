@@ -65,6 +65,7 @@ const syncApi = async (endpoint: string, body: Record<string, unknown>): Promise
 const hasBase64Images = (project: ProjectData): boolean => {
   for (const scene of project.scenes) {
     if (isBase64Image(scene.imageUrl)) return true;
+    if (isBase64Image(scene.previousSceneImageUrl)) return true;
     if (isBase64Image(scene.referenceImage)) return true;
     if (isBase64Image(scene.sourceFrameUrl)) return true;
     if (isBase64Image(scene.startFrameUrl)) return true;

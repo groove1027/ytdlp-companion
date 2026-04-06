@@ -1,5 +1,4 @@
-
-import { dbPromise, SavedAudioBlob } from './storageService';
+import { BLOB_PROJECT_ID_INDEX, dbPromise, SavedAudioBlob } from './storageService';
 import type { Scene } from '../types';
 
 const STORE = 'audio-blobs' as const;
@@ -57,8 +56,7 @@ export const restoreProjectAudio = async (
 
   try {
     const db = await dbPromise;
-    const all = await db.getAll(STORE);
-    const projectBlobs = all.filter((b) => b.projectId === projectId);
+    const projectBlobs = await db.getAllFromIndex(STORE, BLOB_PROJECT_ID_INDEX, projectId);
 
     for (const entry of projectBlobs) {
       const url = URL.createObjectURL(entry.blob);
@@ -88,12 +86,12 @@ export const deleteProjectAudio = async (projectId: string): Promise<void> => {
     const db = await dbPromise;
     const tx = db.transaction(STORE, 'readwrite');
     const store = tx.objectStore(STORE);
-    const all = await store.getAll();
+    const index = store.index(BLOB_PROJECT_ID_INDEX);
+    let cursor = await index.openCursor(projectId);
 
-    for (const entry of all) {
-      if (entry.projectId === projectId) {
-        store.delete(entry.id);
-      }
+    while (cursor) {
+      await cursor.delete();
+      cursor = await cursor.continue();
     }
 
     await tx.done;
