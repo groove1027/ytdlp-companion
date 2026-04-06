@@ -1,11 +1,6 @@
-# 인증서 (보안)
-signing/cert.p12
-signing/ZXPSignCmd
-
-# 빌드 산출물
+node_modules/
+build/
 dist/
-
-# macOS
+releases/
+*.ccx
 .DS_Store
-
-# 개발용 디버그 설정은 포함 (.debug)

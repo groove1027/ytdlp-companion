@@ -1,13 +1,27 @@
 {
-  "name": "motion-master-premiere",
-  "version": "1.0.0",
-  "description": "Premiere Pro Ken Burns Motion Extension — 이미지 클립에 자동 모션 효과 적용",
-  "author": "GrooveLab",
-  "license": "MIT",
+  "name": "motion-master-premiere-uxp",
+  "version": "2.0.0",
+  "description": "Premiere Pro UXP plugin — Ken Burns Motion Master",
+  "type": "module",
   "scripts": {
-    "dev": "open client/index.html",
-    "install-dev": "bash scripts/install-dev.sh",
+    "build": "bash scripts/build.sh",
     "package": "bash scripts/package.sh",
-    "test": "open client/index.html"
+    "typecheck": "tsc --noEmit",
+    "dev": "bash scripts/build.sh && echo 'Load build/ in UDT v2.2.1'"
+  },
+  "devDependencies": {
+    "@adobe/cc-ext-uxp-types": "^7.3.1",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "esbuild": "^0.28.0",
+    "rimraf": "^6.0.1",
+    "typescript": "^5.7.2"
+  },
+  "dependencies": {
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.7.0",
+    "motion": "^12.38.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
   }
 }
