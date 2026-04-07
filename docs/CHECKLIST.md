@@ -8,6 +8,12 @@
 
 ## 🟢 완료된 작업
 
+- [x] **2026-04-07 — companion v2.0 Phase 3/4 Windows stable 재검증 보강**
+  - `rg -n "uploadMediaToHosting|uploadMediaPermanent|from_path_any|file::information|MAIN_E2E_DIR|library_file_info_handler|capture_screen_handler" src companion test-e2e docs/CHECKLIST.md -g '!dist'`로 Windows fix/영구 저장/E2E 경로 영향 범위 재점검
+  - `companion/src-tauri/src/server.rs` — Windows 재검증 2차 지점을 path 기반 재조회 대신 열린 파일 handle 기반 `winapi_util::Handle::from_file()`로 보강해 stable 빌드 유지하면서 TOCTOU 의도를 최대한 복원. `library_file_info_handler`는 JSON 오류 응답으로 통일하고, 화면 캡처는 Windows/Linux에서 미구현 target(`window`/`selection`)을 조기 거부하도록 정리
+  - `src/components/modes/ScriptMode.tsx`, `src/App.tsx`, `src/components/tabs/DetailPageTab.tsx`, `src/components/tabs/shopping-channel/ConceptSetupStep.tsx`, `src/components/tabs/shopping-channel/ProductInputStep.tsx`, `src/components/tabs/imagevideo/StoryboardPanel.tsx`, `src/components/tabs/editroom/EditRoomSceneCard.tsx`, `src/components/tabs/editroom/SceneMediaPreview.tsx` — 프로젝트에 남는 캐릭터/상품/public preview/상세페이지/쇼핑 채널/장면 교체 자산 업로드를 `uploadMediaPermanent()`로 전환해 터널 TTL 만료로 저장 URL이 깨지는 경로 차단
+  - `test-e2e/v2-phase34-upload-wrapper.test.ts` — `MAIN_E2E_DIR` 절대 경로 하드코딩 제거, `process.env.MAIN_E2E_DIR` 우선 + 현재 worktree `test-e2e` 기본값으로 변경
+
 - [x] **2026-04-07 — v2.0 Phase 3/4 보안·업로드 회귀 수정**
   - `rg -n "uploadMediaToHosting|uploadMediaPermanent|smartUpload|PRIVACY_MODE_ENABLED|scanLibrary|getFileInfo|/api/library/scan|/api/library/file-info|/api/capture/screen|VIDEO_ANALYSIS_TIMEOUT_MS|maxOutputTokens" src companion -g '!dist'`로 Phase 3/4 영향 범위 전수 조사 완료
   - `src/services/companion/smartUpload.ts` — Cloudinary 경로가 wrapper `uploadMediaToHosting()`를 다시 타지 않도록 `uploadMediaPermanent()`로 분리해 중복 터널 재시도와 `forceCloudinary` 의미 붕괴를 차단

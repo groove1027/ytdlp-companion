@@ -3844,11 +3844,28 @@ async fn tunnel_serve_handler(
         }
     }
     // (Codex Round-5 Medium) Windows 파일 식별자 비교 (NTFS file_index + volume serial)
+    // [v2.0.1] symlink_meta.file_index()는 nightly-only이므로 winapi-util로 path 기반 재조회.
+    // serve 시점에 file_path를 다시 열어 BY_HANDLE_FILE_INFORMATION으로 확인한다.
     #[cfg(windows)]
     {
-        use std::os::windows::fs::MetadataExt;
-        let actual_index = symlink_meta.file_index();
-        let actual_volume = symlink_meta.volume_serial_number();
+        let _ = symlink_meta; // 변수 사용 표시 (Windows에서 직접 쓰진 않음)
+        let path_clone = entry.file_path.clone();
+        let identity_res = tokio::task::spawn_blocking(move || {
+            let handle = winapi_util::Handle::from_path_any(&path_clone)?;
+            let info = winapi_util::file::information(&handle)?;
+            Ok::<(u64, u64), std::io::Error>((info.file_index(), info.volume_serial_number()))
+        })
+        .await;
+        let (actual_index, actual_volume) = match identity_res {
+            Ok(Ok(pair)) => (Some(pair.0), Some(pair.1)),
+            _ => {
+                eprintln!(
+                    "[Tunnel] serve: Windows file identity 조회 실패 (token={}..)",
+                    &token[..8.min(token.len())]
+                );
+                return tunnel_error_response(TunnelError::NotFound);
+            }
+        };
         if actual_index != entry.file_index || actual_volume != entry.volume_serial {
             eprintln!(
                 "[Tunnel] serve: file_index 불일치 — Windows 파일 교체 의심 (token={}..)",
@@ -3883,9 +3900,28 @@ async fn tunnel_serve_handler(
     }
     #[cfg(windows)]
     {
-        use std::os::windows::fs::MetadataExt;
-        let actual_index = opened_meta.file_index();
-        let actual_volume = opened_meta.volume_serial_number();
+        let _ = opened_meta;
+        let file_clone = match file.try_clone().await {
+            Ok(clone) => clone,
+            Err(e) => return tunnel_error_response(TunnelError::Io(e)),
+        };
+        let std_file = file_clone.into_std().await;
+        let identity_res = tokio::task::spawn_blocking(move || {
+            let handle = winapi_util::Handle::from_file(std_file);
+            let info = winapi_util::file::information(&handle)?;
+            Ok::<(u64, u64), std::io::Error>((info.file_index(), info.volume_serial_number()))
+        })
+        .await;
+        let (actual_index, actual_volume) = match identity_res {
+            Ok(Ok(pair)) => (Some(pair.0), Some(pair.1)),
+            _ => {
+                eprintln!(
+                    "[Tunnel] serve: open 후 Windows file identity 조회 실패 (token={}..)",
+                    &token[..8.min(token.len())]
+                );
+                return tunnel_error_response(TunnelError::NotFound);
+            }
+        };
         if actual_index != entry.file_index || actual_volume != entry.volume_serial {
             eprintln!(
                 "[Tunnel] serve: open 후 file_index 불일치 — Windows 파일 교체 공격 의심 (token={}..)",
@@ -4545,6 +4581,30 @@ async fn capture_screen_handler(Json(req): Json<CaptureScreenRequest>) -> Respon
         }
     };
 
+    #[cfg(target_os = "windows")]
+    if capture_target != "screen" {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "ok": false,
+                "error": "unsupported_target_on_windows",
+            })),
+        )
+            .into_response();
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    if capture_target != "screen" {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "ok": false,
+                "error": "unsupported_target_on_linux",
+            })),
+        )
+            .into_response();
+    }
+
     // 임시 파일 경로
     let temp_dir = match video_tunnel::ensure_temp_upload_dir().await {
         Ok(d) => d,
@@ -4725,26 +4785,50 @@ async fn library_file_info_handler(Json(req): Json<LibraryFileInfoRequest>) -> R
     use std::path::PathBuf;
     let path = PathBuf::from(&req.path);
     if !path.is_absolute() {
-        return (StatusCode::BAD_REQUEST, "absolute path required").into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok": false, "error": "absolute_path_required"})),
+        )
+            .into_response();
     }
     let canonical = match std::fs::canonicalize(&path) {
         Ok(c) => c,
-        Err(_) => return (StatusCode::NOT_FOUND, "not found").into_response(),
+        Err(_) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"ok": false, "error": "not_found"})),
+            )
+                .into_response()
+        }
     };
 
     // 화이트리스트
     let home = dirs::home_dir().unwrap_or_default();
     let home_canonical = std::fs::canonicalize(&home).unwrap_or(home);
     if !canonical.starts_with(&home_canonical) {
-        return (StatusCode::FORBIDDEN, "outside home").into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({"ok": false, "error": "outside_home"})),
+        )
+            .into_response();
     }
 
     let metadata = match std::fs::metadata(&canonical) {
         Ok(m) => m,
-        Err(_) => return (StatusCode::NOT_FOUND, "metadata failed").into_response(),
+        Err(_) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"ok": false, "error": "metadata_failed"})),
+            )
+                .into_response()
+        }
     };
     if !metadata.is_file() {
-        return (StatusCode::BAD_REQUEST, "file required").into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok": false, "error": "file_required"})),
+        )
+            .into_response();
     }
 
     let ext = canonical

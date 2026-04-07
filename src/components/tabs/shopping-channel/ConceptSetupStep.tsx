@@ -1,7 +1,7 @@
 import React, { useCallback, useRef } from 'react';
 import { useShoppingChannelStore } from '../../../stores/shoppingChannelStore';
 import { CHARACTER_PRESETS } from '../../../services/shoppingChannelService';
-import { uploadMediaToHosting } from '../../../services/uploadService';
+import { uploadMediaPermanent } from '../../../services/uploadService';
 import { showToast } from '../../../stores/uiStore';
 import { logger } from '../../../services/LoggerService';
 import { AspectRatio } from '../../../types';
@@ -43,7 +43,7 @@ const ConceptSetupStep: React.FC = () => {
     if (!file.type.startsWith('image/')) return;
 
     try {
-      const url = await uploadMediaToHosting(file);
+      const url = await uploadMediaPermanent(file);
       setCharacterConfig({ referenceImageUrl: url });
       showToast('캐릭터 참조 이미지가 업로드되었습니다.');
     } catch (err) {

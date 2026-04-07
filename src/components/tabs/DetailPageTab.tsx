@@ -1,6 +1,6 @@
 import React, { useState, useCallback, Suspense } from 'react';
 import { evolinkChat, evolinkGenerateImage } from '../../services/evolinkService';
-import { uploadMediaToHosting } from '../../services/uploadService';
+import { uploadMediaPermanent } from '../../services/uploadService';
 import { showToast } from '../../stores/uiStore';
 import { useCostStore } from '../../stores/costStore';
 import { PRICING } from '../../constants';
@@ -236,7 +236,7 @@ const DetailPageTab: React.FC = () => {
     setReferenceFiles(prev => [...prev, ...newFiles]);
     setIsUploadingImages(true);
     try {
-      const urls = await Promise.all(newFiles.map(f => uploadMediaToHosting(f)));
+      const urls = await Promise.all(newFiles.map(f => uploadMediaPermanent(f)));
       setReferenceUrls(prev => [...prev, ...urls]);
     } catch (e) {
       logger.trackSwallowedError('DetailPageTab:uploadReferenceImages', e);
@@ -259,7 +259,7 @@ const DetailPageTab: React.FC = () => {
     setDesignRefPreviews(prev => [...prev, ...newFiles.map(f => URL.createObjectURL(f))]);
     setIsUploadingDesignRef(true);
     try {
-      const urls = await Promise.all(newFiles.map(f => uploadMediaToHosting(f)));
+      const urls = await Promise.all(newFiles.map(f => uploadMediaPermanent(f)));
       setDesignRefUrls(prev => [...prev, ...urls]);
     } catch (e) {
       logger.trackSwallowedError('DetailPageTab:uploadDesignRef', e);
@@ -295,7 +295,7 @@ const DetailPageTab: React.FC = () => {
       const frameFiles = blobs.map((b, i) => new File([b], `video_frame_${i}.jpg`, { type: 'image/jpeg' }));
       setPreviewUrls(prev => [...prev, ...blobs.map(b => URL.createObjectURL(b))]);
       setReferenceFiles(prev => [...prev, ...frameFiles]);
-      const urls = await Promise.all(frameFiles.map(f => uploadMediaToHosting(f)));
+      const urls = await Promise.all(frameFiles.map(f => uploadMediaPermanent(f)));
       setReferenceUrls(prev => [...prev, ...urls]);
       showToast(`영상에서 ${frames.length}개 프레임을 추출했습니다.`);
     } catch (e) {
@@ -313,7 +313,7 @@ const DetailPageTab: React.FC = () => {
     setThumbRefPreviews(prev => [...prev, ...newFiles.map(f => URL.createObjectURL(f))]);
     setIsUploadingThumbRef(true);
     try {
-      const urls = await Promise.all(newFiles.map(f => uploadMediaToHosting(f)));
+      const urls = await Promise.all(newFiles.map(f => uploadMediaPermanent(f)));
       setThumbRefUrls(prev => [...prev, ...urls]);
     } catch (e) {
       logger.trackSwallowedError('DetailPageTab:uploadThumbRef', e);

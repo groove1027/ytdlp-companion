@@ -38,7 +38,7 @@ import {
 import { useVideoBatch } from './hooks/useVideoBatch';
 import { useAutoSave } from './hooks/useAutoSave';
 import { useViewAlertPolling } from './hooks/useViewAlertPolling';
-import { uploadMediaToHosting } from './services/uploadService';
+import { uploadMediaPermanent, uploadMediaToHosting } from './services/uploadService';
 // [v4.5] 레거시 UI 제거됨 — export 함수들은 편집실 탭에서 직접 import
 import { PRICING } from './constants';
 // [v4.5] getVisualStyleLabel은 레거시 UI 제거로 불필요 — 각 탭에서 직접 import
@@ -717,18 +717,18 @@ const App: React.FC = () => {
       const uploadPromises = [];
       if (finalConfig.characterImage && !finalConfig.characterPublicUrl) {
            const charFile = dataURLtoFile(finalConfig.characterImage, "character_ref.png");
-           if (charFile) uploadPromises.push(uploadMediaToHosting(charFile).then(url => { finalConfig.characterPublicUrl = url; }));
+           if (charFile) uploadPromises.push(uploadMediaPermanent(charFile).then(url => { finalConfig.characterPublicUrl = url; }));
       }
       if (finalConfig.productImage && !finalConfig.productPublicUrl) {
            const prodFile = dataURLtoFile(finalConfig.productImage, "product_ref.png");
-           if (prodFile) uploadPromises.push(uploadMediaToHosting(prodFile).then(url => { finalConfig.productPublicUrl = url; }));
+           if (prodFile) uploadPromises.push(uploadMediaPermanent(prodFile).then(url => { finalConfig.productPublicUrl = url; }));
       }
 
       if (finalConfig.preGeneratedImages) {
           if (finalConfig.preGeneratedImages.intro?.imageUrl.startsWith('data:')) {
               const file = dataURLtoFile(finalConfig.preGeneratedImages.intro.imageUrl, "preview_intro.png");
               if (file) {
-                  uploadPromises.push(uploadMediaToHosting(file).then(url => { 
+                  uploadPromises.push(uploadMediaPermanent(file).then(url => { 
                       if(finalConfig.preGeneratedImages?.intro) finalConfig.preGeneratedImages.intro.imageUrl = url; 
                   }));
               }
@@ -736,7 +736,7 @@ const App: React.FC = () => {
           if (finalConfig.preGeneratedImages.highlight?.imageUrl.startsWith('data:')) {
               const file = dataURLtoFile(finalConfig.preGeneratedImages.highlight.imageUrl, "preview_highlight.png");
               if (file) {
-                  uploadPromises.push(uploadMediaToHosting(file).then(url => { 
+                  uploadPromises.push(uploadMediaPermanent(file).then(url => { 
                       if(finalConfig.preGeneratedImages?.highlight) finalConfig.preGeneratedImages.highlight.imageUrl = url; 
                   }));
               }
@@ -1005,7 +1005,7 @@ const App: React.FC = () => {
 
       // Background: upload to Cloudinary
       try {
-          const cloudUrl = await uploadMediaToHosting(file);
+          const cloudUrl = await uploadMediaPermanent(file);
           setScenes(prev => prev.map(s => s.id === sceneId && s.imageUrl === objectUrl ? { ...s, imageUrl: cloudUrl } : s));
       } catch (e) {
           // Fallback: convert to base64 if Cloudinary fails

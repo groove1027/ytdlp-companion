@@ -9,15 +9,15 @@
  *   5. UI 흐름: 업로드 탭 진입 → 폼 요소 로딩 대기 → 스크린샷
  *
  * 본 테스트는 Phase 3+4 코드 변경(wrapper 분리 + 신규 모듈 추가)이 회귀 없이 동작함을
- * 실제 워크트리 Vite 빌드 결과로 증명한다. screenshot은 메인 프로젝트 test-e2e/ 폴더에
- * 저장되어 pre-commit hook의 30분 신선도 게이트를 통과한다.
+ * 실제 워크트리 Vite 빌드 결과로 증명한다. screenshot 저장 경로는 환경변수로
+ * 오버라이드 가능하며, 기본값은 현재 worktree의 test-e2e 폴더다.
  */
 import { test, expect } from '@playwright/test';
 import * as fs from 'fs';
 import * as path from 'path';
 
-// 메인 프로젝트 test-e2e/ 경로 — pre-commit-check.sh가 PROJECT_DIR 기준으로 검사함
-const MAIN_E2E_DIR = '/Users/mac_mini/Downloads/all-in-one-production-build4/test-e2e';
+// 환경별 절대 경로 하드코딩을 피하기 위해 env override를 우선 사용한다.
+const MAIN_E2E_DIR = process.env.MAIN_E2E_DIR || path.resolve(__dirname);
 
 function loadEnv(): Record<string, string> {
   const envPath = path.resolve(__dirname, '../.env.local');

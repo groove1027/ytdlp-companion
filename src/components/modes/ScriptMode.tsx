@@ -4,7 +4,7 @@ import { AspectRatio, ProjectConfig, VoiceName, ImageModel, VideoFormat, VideoMo
 import { RATIOS, IMAGE_MODELS, VIDEO_FORMATS, PRICING } from '../../constants';
 import VisualStylePicker, { getVisualStyleLabel } from '../VisualStylePicker';
 import { estimateSceneCount, analyzeScriptContext, generateStylePreviewPrompts, generateSceneImage, analyzeImageUnified } from '../../services/geminiService';
-import { uploadMediaToHosting } from '../../services/uploadService';
+import { uploadMediaPermanent } from '../../services/uploadService';
 import { resizeImage, base64ToFile } from '../../services/imageProcessingService';
 // import { getRemoveBgKey } from '../../services/apiService';
 // import { removeBackground } from '../../services/removeBgService';
@@ -317,7 +317,7 @@ const ScriptMode: React.FC<ScriptModeProps> = ({
             setIsUploadingChar(true);
             try {
                 const transparentFile = base64ToFile(base64ForAnalysis, "char_anchor.png");
-                const publicUrl = await uploadMediaToHosting(transparentFile);
+                const publicUrl = await uploadMediaPermanent(transparentFile);
                 setCharPublicUrl(publicUrl);
             } catch (e: any) {
                 showToast(`업로드 실패: ${e.message}`, 4000);
@@ -359,7 +359,7 @@ const ScriptMode: React.FC<ScriptModeProps> = ({
             // 4. 업로드
             setIsUploadingProd(true);
             try {
-                const publicUrl = await uploadMediaToHosting(processedFile); // Upload the processed file
+                const publicUrl = await uploadMediaPermanent(processedFile); // Upload the processed file
                 setProdPublicUrl(publicUrl);
             } catch (e: any) {
                 showToast(`업로드 실패: ${e.message}`, 4000);
@@ -459,7 +459,7 @@ const ScriptMode: React.FC<ScriptModeProps> = ({
             if (introUrl.startsWith('data:')) {
                 try {
                     const file = base64ToFile(introUrl, "preview_intro.png");
-                    introUrl = await uploadMediaToHosting(file);
+                    introUrl = await uploadMediaPermanent(file);
                 } catch (e) {
                     console.error("Intro upload failed", e);
                 }
@@ -499,7 +499,7 @@ const ScriptMode: React.FC<ScriptModeProps> = ({
             if (highlightUrl.startsWith('data:')) {
                 try {
                     const file = base64ToFile(highlightUrl, "preview_highlight.png");
-                    highlightUrl = await uploadMediaToHosting(file);
+                    highlightUrl = await uploadMediaPermanent(file);
                 } catch (e) {
                     console.error("Highlight upload failed", e);
                 }
