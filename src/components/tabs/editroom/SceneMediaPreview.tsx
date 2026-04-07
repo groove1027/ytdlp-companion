@@ -1,7 +1,7 @@
 import React, { useState, useRef, useCallback, useMemo } from 'react';
 import type { Scene, SceneOverlayConfig, SceneEffectConfig } from '../../../types';
 import { useProjectStore } from '../../../stores/projectStore';
-import { uploadMediaToHosting } from '../../../services/uploadService';
+import { uploadMediaPermanent } from '../../../services/uploadService';
 import { showToast } from '../../../stores/uiStore';
 import OverlayPreviewLayer from './OverlayPreviewLayer';
 
@@ -166,7 +166,7 @@ const SceneMediaPreview: React.FC<SceneMediaPreviewProps> = ({ scene, sceneIndex
   const handleReplaceImage = useCallback(async (file: File) => {
     setIsUploading(true);
     try {
-      const url = await uploadMediaToHosting(file);
+      const url = await uploadMediaPermanent(file);
       useProjectStore.getState().updateScene(scene.id, {
         imageUrl: url,
         imageUpdatedAfterVideo: !!scene.videoUrl,

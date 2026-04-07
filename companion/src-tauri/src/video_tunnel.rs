@@ -185,7 +185,7 @@ pub struct TunnelEntry {
     #[cfg(windows)]
     pub file_index: Option<u64>,
     #[cfg(windows)]
-    pub volume_serial: Option<u32>,
+    pub volume_serial: Option<u64>,
 }
 
 impl TunnelEntry {
@@ -401,16 +401,16 @@ impl TunnelManager {
             (metadata.ino(), metadata.dev())
         };
         // (Codex Round-5 + Round-6 Medium) Windows file identifier
-        // exFAT/네트워크 드라이브 등에서 None이면 검증이 비활성화되므로 거부
+        // [v2.0.1] std::os::windows::fs::MetadataExt::file_index()는 nightly-only이므로
+        // stable Windows 빌드를 위해 winapi-util(GetFileInformationByHandle)으로 대체.
+        // exFAT/네트워크 드라이브 등에서 호출이 실패하면 검증이 비활성화되므로 거부.
         #[cfg(windows)]
         let (file_index, volume_serial) = {
-            use std::os::windows::fs::MetadataExt;
-            let idx = metadata.file_index();
-            let vol = metadata.volume_serial_number();
-            if idx.is_none() || vol.is_none() {
-                return Err(TunnelError::PathTraversal(canonical));
-            }
-            (idx, vol)
+            let handle = winapi_util::Handle::from_path_any(&canonical)
+                .map_err(|_| TunnelError::PathTraversal(canonical.clone()))?;
+            let info = winapi_util::file::information(&handle)
+                .map_err(|_| TunnelError::PathTraversal(canonical.clone()))?;
+            (Some(info.file_index()), Some(info.volume_serial_number()))
         };
 
         // (Codex Round-3 Low) ttl_secs=0은 기본값으로 정규화 (즉시 만료 방지)

@@ -4,7 +4,7 @@ import type { Scene, ScriptLine, UnifiedSceneTiming, SceneEffectConfig, SceneSub
 import { useEditRoomStore } from '../../../stores/editRoomStore';
 import { useProjectStore } from '../../../stores/projectStore';
 import { useSoundStudioStore } from '../../../stores/soundStudioStore';
-import { uploadMediaToHosting } from '../../../services/uploadService';
+import { uploadMediaPermanent } from '../../../services/uploadService';
 import { showToast } from '../../../stores/uiStore';
 import SceneMediaPreview from './SceneMediaPreview';
 import SceneTextInfo from './SceneTextInfo';
@@ -147,7 +147,7 @@ const EditRoomSceneCard: React.FC<EditRoomSceneCardProps> = ({
   const handleReplaceImage = useCallback(async (file: File) => {
     setIsUploading(true);
     try {
-      const url = await uploadMediaToHosting(file);
+      const url = await uploadMediaPermanent(file);
       useProjectStore.getState().updateScene(scene.id, {
         imageUrl: url,
         previousSceneImageUrl: getPreviousSceneImageUrlForReplace(scene, url),

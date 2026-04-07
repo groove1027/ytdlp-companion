@@ -8,6 +8,23 @@
 
 ## 🟢 완료된 작업
 
+- [x] **2026-04-07 — companion v2.0 Phase 3/4 Windows stable 재검증 보강**
+  - `rg -n "uploadMediaToHosting|uploadMediaPermanent|from_path_any|file::information|MAIN_E2E_DIR|library_file_info_handler|capture_screen_handler" src companion test-e2e docs/CHECKLIST.md -g '!dist'`로 Windows fix/영구 저장/E2E 경로 영향 범위 재점검
+  - `companion/src-tauri/src/server.rs` — Windows 재검증 2차 지점을 path 기반 재조회 대신 열린 파일 handle 기반 `winapi_util::Handle::from_file()`로 보강해 stable 빌드 유지하면서 TOCTOU 의도를 최대한 복원. `library_file_info_handler`는 JSON 오류 응답으로 통일하고, 화면 캡처는 Windows/Linux에서 미구현 target(`window`/`selection`)을 조기 거부하도록 정리
+  - `src/components/modes/ScriptMode.tsx`, `src/App.tsx`, `src/components/tabs/DetailPageTab.tsx`, `src/components/tabs/shopping-channel/ConceptSetupStep.tsx`, `src/components/tabs/shopping-channel/ProductInputStep.tsx`, `src/components/tabs/imagevideo/StoryboardPanel.tsx`, `src/components/tabs/editroom/EditRoomSceneCard.tsx`, `src/components/tabs/editroom/SceneMediaPreview.tsx` — 프로젝트에 남는 캐릭터/상품/public preview/상세페이지/쇼핑 채널/장면 교체 자산 업로드를 `uploadMediaPermanent()`로 전환해 터널 TTL 만료로 저장 URL이 깨지는 경로 차단
+  - `test-e2e/v2-phase34-upload-wrapper.test.ts` — `MAIN_E2E_DIR` 절대 경로 하드코딩 제거, `process.env.MAIN_E2E_DIR` 우선 + 현재 worktree `test-e2e` 기본값으로 변경
+
+- [x] **2026-04-07 — v2.0 Phase 3/4 보안·업로드 회귀 수정**
+  - `rg -n "uploadMediaToHosting|uploadMediaPermanent|smartUpload|PRIVACY_MODE_ENABLED|scanLibrary|getFileInfo|/api/library/scan|/api/library/file-info|/api/capture/screen|VIDEO_ANALYSIS_TIMEOUT_MS|maxOutputTokens" src companion -g '!dist'`로 Phase 3/4 영향 범위 전수 조사 완료
+  - `src/services/companion/smartUpload.ts` — Cloudinary 경로가 wrapper `uploadMediaToHosting()`를 다시 타지 않도록 `uploadMediaPermanent()`로 분리해 중복 터널 재시도와 `forceCloudinary` 의미 붕괴를 차단
+  - `companion/src-tauri/src/server.rs` — 라이브러리 스캔에서 symlink를 건너뛰고 재귀 진입 전에 canonical path가 홈 디렉터리 하위인지 다시 검증하도록 보강. 캡처 엔드포인트는 format/target 검증, macOS 활성 창 ID 조회 분리, Windows PowerShell 경로 env 전달, base64/tunnel 실패 시 임시 파일 즉시 삭제를 추가
+  - `src/services/companion/libraryClient.ts` — raw `fetch`와 신규 `any`를 제거하고 `monitoredFetch` + 명시적 응답 타입으로 정리
+  - `cd companion/src-tauri && cargo build`: 성공 (기존 unused/private_interfaces/dead_code warning 9건 유지, 신규 오류 없음)
+  - `cd companion/src-tauri && cargo test`: 성공 (19 passed, 기존 warning 동일)
+  - `cd src && node_modules/typescript/bin/tsc --noEmit`: 통과
+  - `cd src && node_modules/.bin/vite build`: 성공 (기존 dynamic import/chunk-size warning만 출력)
+  - `rg -n "uploadMediaPermanent|smartUpload|cleanup_capture_file|invalid_filter|frontmost_window_id|scan_directory\\(|LibraryScanApiResponse|LibraryFileInfoApiResponse" src/services/companion/smartUpload.ts src/services/companion/libraryClient.ts companion/src-tauri/src/server.rs docs/CHECKLIST.md`: 반영 위치 재확인
+
 - [x] **2026-04-07 — companion v2.0.0 + 프론트 통합 마지막 결함 수정 (터널 cleanup LRU 누수)**
   - `rg -n "TUNNEL_MANAGER|init_tunnel_manager|graceful_shutdown|video_tunnel|RunEvent::ExitRequested|expected_cloudflared_sha256|openTunnelForFile|closeTunnel|combineSignals|smartUpload|handleAnalyze|tunnelCleanupsByKeyRef|handleAnalyzeLockRef" companion/src-tauri src` 및 `rg -n "setLimitedCacheEntry|sourcePrepCacheRef|sourcePrepCacheTimestampsRef|tunnelCleanupsByKeyRef" src/components/tabs/channel/VideoAnalysisRoom.tsx`로 영향 범위 전수 조사 완료
   - `src/components/tabs/channel/VideoAnalysisRoom.tsx` — `setLimitedCacheEntry()`가 evicted key 목록을 반환하도록 바꾸고, `runTunnelCleanupsForKey()` / `evictSourcePrepCacheKey()`를 추가해 source prep LRU에서 밀려난 키의 timestamp와 tunnel cleanup을 즉시 정리하도록 수정

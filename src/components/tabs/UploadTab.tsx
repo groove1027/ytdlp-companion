@@ -2928,8 +2928,9 @@ const UploadTab: React.FC = () => {
 
     if (needsPublicUrl) {
       try {
-        const { uploadMediaToHosting } = await import('../../services/uploadService');
-        publicVideoUrl = await uploadMediaToHosting(file);
+        // [v2.0 Phase 3] 영구 저장 — SNS API가 fetch하므로 Cloudinary 강제
+        const { uploadMediaPermanent } = await import('../../services/uploadService');
+        publicVideoUrl = await uploadMediaPermanent(file);
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : '공개 URL 생성 실패';
         if (selectedPlatforms.includes('instagram')) setPP('instagram', { status: 'error', error: `Cloudinary 업로드 실패: ${msg}` });
@@ -3041,10 +3042,11 @@ const UploadTab: React.FC = () => {
           let igCoverUrl: string | undefined;
           if (store.thumbnailUrl) {
             try {
-              const { uploadMediaToHosting } = await import('../../services/uploadService');
+              // [v2.0 Phase 3] 영구 저장 — Instagram이 fetch하므로 Cloudinary 강제
+              const { uploadMediaPermanent } = await import('../../services/uploadService');
               const thumbBlob = await fetch(store.thumbnailUrl).then(r => r.blob());
               const thumbFile = new File([thumbBlob], 'cover.jpg', { type: 'image/jpeg' });
-              igCoverUrl = await uploadMediaToHosting(thumbFile);
+              igCoverUrl = await uploadMediaPermanent(thumbFile);
             } catch (e) {
               logger.trackSwallowedError('UploadTab:uploadInstagramCover', e);
               // 커버 업로드 실패는 무시 — 영상 업로드는 진행

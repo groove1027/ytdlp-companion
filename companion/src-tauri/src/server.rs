@@ -16,7 +16,7 @@ use tokio_util::io::ReaderStream;
 use tower_http::cors::{Any, CorsLayer};
 
 use crate::video_tunnel::{
-    ensure_temp_upload_dir, generate_token, OpenRequest, TunnelError, TunnelManager,
+    self, ensure_temp_upload_dir, generate_token, OpenRequest, TunnelError, TunnelManager,
 };
 use crate::{platform, rembg, tts, whisper, ytdlp};
 
@@ -797,6 +797,12 @@ pub async fn start_server(_app: tauri::AppHandle) -> Result<(), Box<dyn std::err
         )
         .route("/api/tunnel/{token}", delete(tunnel_close_handler))
         .route("/api/tunnel/status", get(tunnel_status_handler))
+        // [v2.0 Phase 4] 로컬 미디어 라이브러리 — 폴더 스캔 + 메타데이터
+        // 로컬 영상/이미지/오디오 라이브러리 시맨틱 검색의 기반
+        .route("/api/library/scan", post(library_scan_handler))
+        .route("/api/library/file-info", post(library_file_info_handler))
+        // [v2.0 Phase 4-5] 라이브 화면/웹캠 캡처 — AI 실시간 분석용
+        .route("/api/capture/screen", post(capture_screen_handler))
         .layer(cors)
         // [FIX #846] Chrome 142+ / Edge 143+ Local Network Access 대응
         // HTTPS 페이지에서 127.0.0.1로 fetch 시 preflight에 이 헤더가 필요
@@ -3838,11 +3844,28 @@ async fn tunnel_serve_handler(
         }
     }
     // (Codex Round-5 Medium) Windows 파일 식별자 비교 (NTFS file_index + volume serial)
+    // [v2.0.1] symlink_meta.file_index()는 nightly-only이므로 winapi-util로 path 기반 재조회.
+    // serve 시점에 file_path를 다시 열어 BY_HANDLE_FILE_INFORMATION으로 확인한다.
     #[cfg(windows)]
     {
-        use std::os::windows::fs::MetadataExt;
-        let actual_index = symlink_meta.file_index();
-        let actual_volume = symlink_meta.volume_serial_number();
+        let _ = symlink_meta; // 변수 사용 표시 (Windows에서 직접 쓰진 않음)
+        let path_clone = entry.file_path.clone();
+        let identity_res = tokio::task::spawn_blocking(move || {
+            let handle = winapi_util::Handle::from_path_any(&path_clone)?;
+            let info = winapi_util::file::information(&handle)?;
+            Ok::<(u64, u64), std::io::Error>((info.file_index(), info.volume_serial_number()))
+        })
+        .await;
+        let (actual_index, actual_volume) = match identity_res {
+            Ok(Ok(pair)) => (Some(pair.0), Some(pair.1)),
+            _ => {
+                eprintln!(
+                    "[Tunnel] serve: Windows file identity 조회 실패 (token={}..)",
+                    &token[..8.min(token.len())]
+                );
+                return tunnel_error_response(TunnelError::NotFound);
+            }
+        };
         if actual_index != entry.file_index || actual_volume != entry.volume_serial {
             eprintln!(
                 "[Tunnel] serve: file_index 불일치 — Windows 파일 교체 의심 (token={}..)",
@@ -3877,9 +3900,28 @@ async fn tunnel_serve_handler(
     }
     #[cfg(windows)]
     {
-        use std::os::windows::fs::MetadataExt;
-        let actual_index = opened_meta.file_index();
-        let actual_volume = opened_meta.volume_serial_number();
+        let _ = opened_meta;
+        let file_clone = match file.try_clone().await {
+            Ok(clone) => clone,
+            Err(e) => return tunnel_error_response(TunnelError::Io(e)),
+        };
+        let std_file = file_clone.into_std().await;
+        let identity_res = tokio::task::spawn_blocking(move || {
+            let handle = winapi_util::Handle::from_file(std_file);
+            let info = winapi_util::file::information(&handle)?;
+            Ok::<(u64, u64), std::io::Error>((info.file_index(), info.volume_serial_number()))
+        })
+        .await;
+        let (actual_index, actual_volume) = match identity_res {
+            Ok(Ok(pair)) => (Some(pair.0), Some(pair.1)),
+            _ => {
+                eprintln!(
+                    "[Tunnel] serve: open 후 Windows file identity 조회 실패 (token={}..)",
+                    &token[..8.min(token.len())]
+                );
+                return tunnel_error_response(TunnelError::NotFound);
+            }
+        };
         if actual_index != entry.file_index || actual_volume != entry.volume_serial {
             eprintln!(
                 "[Tunnel] serve: open 후 file_index 불일치 — Windows 파일 교체 공격 의심 (token={}..)",
@@ -4122,4 +4164,688 @@ mod range_tests {
     fn test_zero_suffix() {
         assert!(parse_byte_range("bytes=-0", 1000).is_err());
     }
+}
+
+// ──────────────────────────────────────────────
+// [v2.0 Phase 4] 로컬 미디어 라이브러리 — 폴더 스캔 + 메타데이터
+// ──────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct LibraryScanRequest {
+    /// 스캔할 절대 경로 디렉터리
+    dir: String,
+    /// 파일 타입 필터: "video", "image", "audio", "all"
+    #[serde(default = "default_filter")]
+    filter: String,
+    /// 재귀 스캔 여부 (기본 false — 1 depth)
+    #[serde(default)]
+    recursive: bool,
+    /// 최대 결과 개수 (기본 500)
+    #[serde(default = "default_max_results")]
+    max_results: usize,
+}
+
+fn default_filter() -> String {
+    "all".to_string()
+}
+
+fn default_max_results() -> usize {
+    500
+}
+
+#[derive(Serialize)]
+struct LibraryFileEntry {
+    path: String,
+    name: String,
+    size_bytes: u64,
+    mime: String,
+    modified_unix: i64,
+}
+
+#[derive(Serialize)]
+struct LibraryScanResponse {
+    ok: bool,
+    dir: String,
+    total_found: usize,
+    files: Vec<LibraryFileEntry>,
+    truncated: bool,
+}
+
+const VIDEO_EXTS: &[&str] = &["mp4", "mov", "mkv", "avi", "webm", "m4v", "wmv", "flv"];
+const IMAGE_EXTS: &[&str] = &["jpg", "jpeg", "png", "gif", "webp", "bmp", "tiff", "heic"];
+const AUDIO_EXTS: &[&str] = &["mp3", "wav", "m4a", "aac", "flac", "ogg", "opus", "wma"];
+
+fn ext_mime(ext: &str) -> Option<&'static str> {
+    match ext.to_lowercase().as_str() {
+        // video
+        "mp4" | "m4v" => Some("video/mp4"),
+        "mov" => Some("video/quicktime"),
+        "mkv" => Some("video/x-matroska"),
+        "avi" => Some("video/x-msvideo"),
+        "webm" => Some("video/webm"),
+        "wmv" => Some("video/x-ms-wmv"),
+        "flv" => Some("video/x-flv"),
+        // image
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "png" => Some("image/png"),
+        "gif" => Some("image/gif"),
+        "webp" => Some("image/webp"),
+        "bmp" => Some("image/bmp"),
+        "tiff" => Some("image/tiff"),
+        "heic" => Some("image/heic"),
+        // audio
+        "mp3" => Some("audio/mpeg"),
+        "wav" => Some("audio/wav"),
+        "m4a" => Some("audio/mp4"),
+        "aac" => Some("audio/aac"),
+        "flac" => Some("audio/flac"),
+        "ogg" | "opus" => Some("audio/ogg"),
+        "wma" => Some("audio/x-ms-wma"),
+        _ => None,
+    }
+}
+
+fn matches_filter(ext: &str, filter: &str) -> bool {
+    let ext_lower = ext.to_lowercase();
+    match filter {
+        "video" => VIDEO_EXTS.contains(&ext_lower.as_str()),
+        "image" => IMAGE_EXTS.contains(&ext_lower.as_str()),
+        "audio" => AUDIO_EXTS.contains(&ext_lower.as_str()),
+        "all" => {
+            VIDEO_EXTS.contains(&ext_lower.as_str())
+                || IMAGE_EXTS.contains(&ext_lower.as_str())
+                || AUDIO_EXTS.contains(&ext_lower.as_str())
+        }
+        _ => false,
+    }
+}
+
+fn is_valid_library_filter(filter: &str) -> bool {
+    matches!(filter, "video" | "image" | "audio" | "all")
+}
+
+fn is_hidden_path(path: &std::path::Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| name.starts_with('.'))
+        .unwrap_or(false)
+}
+
+/// POST /api/library/scan — 로컬 폴더를 스캔하여 미디어 파일 목록 반환
+/// 화이트리스트 디렉터리만 허용 (Path traversal 방지)
+async fn library_scan_handler(Json(req): Json<LibraryScanRequest>) -> Response {
+    use std::path::PathBuf;
+
+    // 입력 검증
+    if req.dir.is_empty() || req.dir.len() > 4096 {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok": false, "error": "invalid_dir"})),
+        )
+            .into_response();
+    }
+
+    if !is_valid_library_filter(&req.filter) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok": false, "error": "invalid_filter"})),
+        )
+            .into_response();
+    }
+
+    let dir_path = PathBuf::from(&req.dir);
+    if !dir_path.is_absolute() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok": false, "error": "absolute_path_required"})),
+        )
+            .into_response();
+    }
+
+    // 화이트리스트 검증 — 사용자 홈 / temp / data dir 안에 있어야 함
+    let canonical = match std::fs::canonicalize(&dir_path) {
+        Ok(c) => c,
+        Err(e) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({
+                    "ok": false,
+                    "error": "dir_not_found",
+                    "detail": e.to_string(),
+                })),
+            )
+                .into_response();
+        }
+    };
+    if !canonical.is_dir() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok": false, "error": "directory_required"})),
+        )
+            .into_response();
+    }
+
+    // 화이트리스트: 홈 디렉터리 안만 허용
+    let home = match dirs::home_dir() {
+        Some(h) => h,
+        None => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"ok": false, "error": "home_dir_unknown"})),
+            )
+                .into_response();
+        }
+    };
+    let home_canonical = std::fs::canonicalize(&home).unwrap_or(home);
+    if !canonical.starts_with(&home_canonical) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "ok": false,
+                "error": "outside_home",
+                "message": "사용자 홈 디렉터리 안의 폴더만 스캔 가능합니다.",
+            })),
+        )
+            .into_response();
+    }
+
+    // 실제 스캔
+    let max_results = req.max_results.min(2000);
+    let mut files: Vec<LibraryFileEntry> = Vec::new();
+    let mut total_found = 0usize;
+
+    let scan_result = scan_directory(
+        &canonical,
+        &home_canonical,
+        &req.filter,
+        req.recursive,
+        max_results,
+        &mut files,
+        &mut total_found,
+    );
+
+    if let Err(e) = scan_result {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "ok": false,
+                "error": "scan_failed",
+                "detail": e.to_string(),
+            })),
+        )
+            .into_response();
+    }
+
+    let truncated = total_found > files.len();
+    Json(LibraryScanResponse {
+        ok: true,
+        dir: canonical.to_string_lossy().to_string(),
+        total_found,
+        files,
+        truncated,
+    })
+    .into_response()
+}
+
+fn scan_directory(
+    dir: &std::path::Path,
+    allowed_root: &std::path::Path,
+    filter: &str,
+    recursive: bool,
+    max_results: usize,
+    files: &mut Vec<LibraryFileEntry>,
+    total_found: &mut usize,
+) -> std::io::Result<()> {
+    let entries = std::fs::read_dir(dir)?;
+    for entry in entries {
+        if files.len() >= max_results && !recursive {
+            break;
+        }
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        let path = entry.path();
+        let file_type = match entry.file_type() {
+            Ok(ft) => ft,
+            Err(_) => continue,
+        };
+
+        // symlink는 target이 홈 밖으로 빠질 수 있으므로 스캔 대상에서 제외
+        if file_type.is_symlink() {
+            continue;
+        }
+
+        if file_type.is_dir() {
+            if recursive && files.len() < max_results {
+                if is_hidden_path(&path) {
+                    continue;
+                }
+                let canonical_dir = match std::fs::canonicalize(&path) {
+                    Ok(c) => c,
+                    Err(_) => continue,
+                };
+                if !canonical_dir.starts_with(allowed_root) {
+                    continue;
+                }
+                let _ = scan_directory(
+                    &canonical_dir,
+                    allowed_root,
+                    filter,
+                    recursive,
+                    max_results,
+                    files,
+                    total_found,
+                );
+            }
+            continue;
+        }
+
+        if !file_type.is_file() {
+            continue;
+        }
+
+        let canonical_file = match std::fs::canonicalize(&path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        if !canonical_file.starts_with(allowed_root) {
+            continue;
+        }
+        let metadata = match std::fs::metadata(&canonical_file) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if !metadata.is_file() {
+            continue;
+        }
+
+        let ext = canonical_file
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_string();
+
+        if !matches_filter(&ext, filter) {
+            continue;
+        }
+
+        *total_found += 1;
+        if files.len() >= max_results {
+            continue;
+        }
+
+        let mime = ext_mime(&ext).unwrap_or("application/octet-stream").to_string();
+        let modified_unix = metadata
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+
+        files.push(LibraryFileEntry {
+            path: canonical_file.to_string_lossy().to_string(),
+            name: canonical_file
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string(),
+            size_bytes: metadata.len(),
+            mime,
+            modified_unix,
+        });
+    }
+    Ok(())
+}
+
+#[derive(Deserialize)]
+struct LibraryFileInfoRequest {
+    path: String,
+}
+
+// ──────────────────────────────────────────────
+// [v2.0 Phase 4-5] 라이브 화면 캡처 — AI 실시간 분석용
+// macOS: screencapture, Windows: PowerShell, Linux: import (ImageMagick)
+// ──────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct CaptureScreenRequest {
+    /// 캡처 대상: "screen" (전체) | "window" (활성 창) | "selection" (영역)
+    #[serde(default = "default_capture_target")]
+    target: String,
+    /// 결과 형식: "base64" | "tunnel" (cloudflared URL)
+    #[serde(default = "default_capture_format")]
+    format: String,
+}
+
+fn default_capture_target() -> String {
+    "screen".to_string()
+}
+
+fn default_capture_format() -> String {
+    "base64".to_string()
+}
+
+async fn cleanup_capture_file(path: &std::path::Path) {
+    let _ = tokio::fs::remove_file(path).await;
+}
+
+#[cfg(target_os = "macos")]
+fn frontmost_window_id() -> Result<String, String> {
+    let output = std::process::Command::new("osascript")
+        .args([
+            "-e",
+            "tell application \"System Events\" to tell (first application process whose frontmost is true) to id of window 1",
+        ])
+        .output()
+        .map_err(|e| e.to_string())?;
+
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if detail.is_empty() {
+            "window_id_lookup_failed".to_string()
+        } else {
+            detail
+        });
+    }
+
+    let window_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if window_id.is_empty() {
+        return Err("window_id_empty".to_string());
+    }
+    Ok(window_id)
+}
+
+/// POST /api/capture/screen — 화면 캡처 → base64 또는 tunnel URL 반환
+async fn capture_screen_handler(Json(req): Json<CaptureScreenRequest>) -> Response {
+    use std::process::Command;
+
+    let capture_target = match req.target.as_str() {
+        "screen" | "window" | "selection" => req.target.as_str(),
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"ok": false, "error": "invalid_target"})),
+            )
+                .into_response();
+        }
+    };
+    let capture_format = match req.format.as_str() {
+        "base64" | "tunnel" => req.format.as_str(),
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"ok": false, "error": "invalid_format"})),
+            )
+                .into_response();
+        }
+    };
+
+    #[cfg(target_os = "windows")]
+    if capture_target != "screen" {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "ok": false,
+                "error": "unsupported_target_on_windows",
+            })),
+        )
+            .into_response();
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    if capture_target != "screen" {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "ok": false,
+                "error": "unsupported_target_on_linux",
+            })),
+        )
+            .into_response();
+    }
+
+    // 임시 파일 경로
+    let temp_dir = match video_tunnel::ensure_temp_upload_dir().await {
+        Ok(d) => d,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"ok": false, "error": e.to_string()})),
+            )
+                .into_response();
+        }
+    };
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let capture_path = temp_dir.join(format!("capture-{}.png", timestamp));
+    let capture_path_str = capture_path.to_string_lossy().to_string();
+
+    // 플랫폼별 캡처 명령
+    #[cfg(target_os = "macos")]
+    let result = {
+        let mut cmd = Command::new("screencapture");
+        cmd.arg("-x"); // no sound
+        match capture_target {
+            "selection" => {
+                cmd.arg("-i"); // interactive
+            }
+            "window" => {
+                let window_id = match frontmost_window_id() {
+                    Ok(id) => id,
+                    Err(detail) => {
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(serde_json::json!({
+                                "ok": false,
+                                "error": "window_id_lookup_failed",
+                                "detail": detail,
+                            })),
+                        )
+                            .into_response();
+                    }
+                };
+                cmd.args(["-l", &window_id]);
+            }
+            _ => {} // screen (default)
+        }
+        cmd.arg(&capture_path_str);
+        cmd.status()
+    };
+
+    #[cfg(target_os = "windows")]
+    let result = {
+        // PowerShell 스크립트에 경로를 직접 삽입하지 않고 env로 전달해 quoting/injection 방지
+        let ps_cmd = r#"
+            Add-Type -AssemblyName System.Windows.Forms
+            Add-Type -AssemblyName System.Drawing
+            $path = $env:CAPTURE_PATH
+            if ([string]::IsNullOrWhiteSpace($path)) { throw "missing capture path" }
+            $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+            $bmp = New-Object System.Drawing.Bitmap($screen.Width, $screen.Height)
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            try {
+                $g.CopyFromScreen($screen.X, $screen.Y, 0, 0, $bmp.Size)
+                $bmp.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
+            } finally {
+                $g.Dispose()
+                $bmp.Dispose()
+            }
+        "#;
+        Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", ps_cmd])
+            .env("CAPTURE_PATH", &capture_path_str)
+            .status()
+    };
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let result = {
+        // Linux: ImageMagick import (있으면) 또는 gnome-screenshot
+        let mut cmd = Command::new("import");
+        cmd.arg("-window").arg("root").arg(&capture_path_str);
+        cmd.status()
+    };
+
+    let status = match result {
+        Ok(s) => s,
+        Err(e) => {
+            cleanup_capture_file(&capture_path).await;
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "ok": false,
+                    "error": "capture_command_failed",
+                    "detail": e.to_string(),
+                })),
+            )
+                .into_response();
+        }
+    };
+
+    if !status.success() {
+        cleanup_capture_file(&capture_path).await;
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "ok": false,
+                "error": "capture_failed",
+                "exit_code": status.code(),
+            })),
+        )
+            .into_response();
+    }
+
+    // 결과 형식별 반환
+    if capture_format == "tunnel" {
+        // 터널 URL로 반환 (즉시 분석 가능)
+        let manager = match tunnel_manager() {
+            Some(m) => m,
+            None => {
+                cleanup_capture_file(&capture_path).await;
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(serde_json::json!({"ok": false, "error": "tunnel_not_initialized"})),
+                )
+                    .into_response();
+            }
+        };
+        let open_req = video_tunnel::OpenRequest {
+            file_path: capture_path_str.clone(),
+            mime_type: "image/png".to_string(),
+            ttl_secs: Some(600),
+            max_fetches: None,
+        };
+        match manager.open(open_req).await {
+            Ok(handle) => Json(serde_json::json!({
+                "ok": true,
+                "format": "tunnel",
+                "url": handle.url,
+                "token": handle.token,
+                "size_bytes": handle.size_bytes,
+            }))
+            .into_response(),
+            Err(e) => {
+                cleanup_capture_file(&capture_path).await;
+                tunnel_error_response(e)
+            }
+        }
+    } else {
+        // base64로 반환
+        match tokio::fs::read(&capture_path).await {
+            Ok(bytes) => {
+                use base64::Engine;
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                // 임시 파일 즉시 삭제 (base64는 in-memory)
+                let _ = tokio::fs::remove_file(&capture_path).await;
+                Json(serde_json::json!({
+                    "ok": true,
+                    "format": "base64",
+                    "mime": "image/png",
+                    "data": b64,
+                    "size_bytes": bytes.len(),
+                }))
+                .into_response()
+            }
+            Err(e) => {
+                cleanup_capture_file(&capture_path).await;
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"ok": false, "error": e.to_string()})),
+                )
+                    .into_response()
+            }
+        }
+    }
+}
+
+/// POST /api/library/file-info — 단일 파일의 메타데이터 (size, mime, modified)
+async fn library_file_info_handler(Json(req): Json<LibraryFileInfoRequest>) -> Response {
+    use std::path::PathBuf;
+    let path = PathBuf::from(&req.path);
+    if !path.is_absolute() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok": false, "error": "absolute_path_required"})),
+        )
+            .into_response();
+    }
+    let canonical = match std::fs::canonicalize(&path) {
+        Ok(c) => c,
+        Err(_) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"ok": false, "error": "not_found"})),
+            )
+                .into_response()
+        }
+    };
+
+    // 화이트리스트
+    let home = dirs::home_dir().unwrap_or_default();
+    let home_canonical = std::fs::canonicalize(&home).unwrap_or(home);
+    if !canonical.starts_with(&home_canonical) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({"ok": false, "error": "outside_home"})),
+        )
+            .into_response();
+    }
+
+    let metadata = match std::fs::metadata(&canonical) {
+        Ok(m) => m,
+        Err(_) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"ok": false, "error": "metadata_failed"})),
+            )
+                .into_response()
+        }
+    };
+    if !metadata.is_file() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok": false, "error": "file_required"})),
+        )
+            .into_response();
+    }
+
+    let ext = canonical
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_string();
+
+    Json(serde_json::json!({
+        "ok": true,
+        "path": canonical.to_string_lossy().to_string(),
+        "name": canonical.file_name().and_then(|n| n.to_str()).unwrap_or(""),
+        "size_bytes": metadata.len(),
+        "mime": ext_mime(&ext).unwrap_or("application/octet-stream"),
+        "is_video": VIDEO_EXTS.contains(&ext.to_lowercase().as_str()),
+        "is_image": IMAGE_EXTS.contains(&ext.to_lowercase().as_str()),
+        "is_audio": AUDIO_EXTS.contains(&ext.to_lowercase().as_str()),
+    }))
+    .into_response()
 }

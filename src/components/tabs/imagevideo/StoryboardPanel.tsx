@@ -6,7 +6,7 @@ import { useImageVideoStore } from '../../../stores/imageVideoStore';
 import { generateSceneImage } from '../../../services/gemini/imageGeneration';
 import { generatePromptFromScript } from '../../../services/gemini/imageAnalysis';
 import { persistImage } from '../../../services/imageStorageService';
-import { uploadMediaToHosting } from '../../../services/uploadService';
+import { uploadMediaPermanent, uploadMediaToHosting } from '../../../services/uploadService';
 import { useVideoBatch } from '../../../hooks/useVideoBatch';
 import { PRICING, IMAGE_MODELS } from '../../../constants';
 import { AspectRatio, ImageModel, CharacterAppearance, VideoFormat, VideoModel } from '../../../types';
@@ -1936,7 +1936,7 @@ const StoryboardPanel: React.FC = () => {
     const isVideo = file.type.startsWith('video/');
     updateScene(sceneId, { isGeneratingImage: true, generationStatus: '업로드 중...' });
     try {
-      const url = await uploadMediaToHosting(file);
+      const url = await uploadMediaPermanent(file);
       if (isVideo) {
         updateScene(sceneId, { videoUrl: url, isGeneratingImage: false, generationStatus: undefined });
         showToast('영상 업로드 완료');
@@ -2001,7 +2001,7 @@ const StoryboardPanel: React.FC = () => {
         if (!file) return false;
         updateScene(scene.id, { isGeneratingImage: true, generationStatus: '업로드 중...' });
         try {
-          const url = await uploadMediaToHosting(file);
+          const url = await uploadMediaPermanent(file);
           const isVideo = file.type.startsWith('video/');
           if (isVideo) {
             updateScene(scene.id, { videoUrl: url, isGeneratingImage: false, generationStatus: undefined });

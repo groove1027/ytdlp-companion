@@ -1,7 +1,7 @@
 import React, { useCallback, useRef } from 'react';
 import { useShoppingChannelStore } from '../../../stores/shoppingChannelStore';
 import { analyzeProductPhotos } from '../../../services/shoppingChannelService';
-import { uploadMediaToHosting } from '../../../services/uploadService';
+import { uploadMediaPermanent } from '../../../services/uploadService';
 import { showToast } from '../../../stores/uiStore';
 import { logger } from '../../../services/LoggerService';
 
@@ -38,7 +38,7 @@ const ProductInputStep: React.FC = () => {
       newImages.push(base64);
 
       try {
-        const url = await uploadMediaToHosting(file);
+        const url = await uploadMediaPermanent(file);
         newUrls.push(url);
       } catch (err) {
         logger.warn('[ShoppingChannel] Cloudinary 업로드 실패, base64 유지', { error: err });
