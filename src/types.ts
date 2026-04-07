@@ -54,6 +54,18 @@ export interface SmartErrorContext {
     autoScreenshotBase64?: string;
 }
 
+export type CompanionCaptureTarget = 'screen' | 'window' | 'selection';
+export type CompanionCaptureFormat = 'base64' | 'tunnel';
+
+export interface CompanionCaptureResult {
+  format: CompanionCaptureFormat;
+  data?: string;
+  mime?: string;
+  url?: string;
+  token?: string;
+  sizeBytes: number;
+}
+
 export enum AspectRatio {
   SQUARE = '1:1',
   LANDSCAPE = '16:9',

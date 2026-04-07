@@ -1,6 +1,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { getStoredKeys, saveApiKeys, saveVmakeKeys, syncApiKeysToServer, getYoutubeApiKeyPool, saveYoutubeApiKeyPool, getActiveYoutubeKeyIndex } from '../services/apiService';
+import { isPrivacyModeEnabled, PRIVACY_MODE_CHANGE_EVENT, setPrivacyModeEnabled } from '../services/uploadService';
+import { isCompanionDetected, recheckCompanion } from '../services/ytdlpApiService';
 import { showToast } from '../stores/uiStore';
 import { useAuthGuard } from '../hooks/useAuthGuard';
 import { useAuthStore } from '../stores/authStore';
@@ -245,6 +247,10 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
     const [bulkText, setBulkText] = useState('');
     const [detected, setDetected] = useState<DetectedKey[]>([]);
     const [bulkMsg, setBulkMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+    // [v2.0.1 Phase 4-1] Privacy Mode 토글 상태 — localStorage와 동기화
+    const [privacyMode, setPrivacyMode] = useState<boolean>(() => isPrivacyModeEnabled());
+    const [companionAvailable, setCompanionAvailable] = useState<boolean>(() => isCompanionDetected());
+    const [privacyTogglePending, setPrivacyTogglePending] = useState(false);
 
     // 스마트 분석 실행
     const handleAnalyze = () => {
@@ -340,7 +346,60 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
             }
             setNewYoutubeKey('');
             setInitialGoogleGeminiKey(stored.googleGeminiKey || '');
+            // [Phase 4-1] 모달 열릴 때 최신 Privacy/companion 상태로 동기화
+            setPrivacyMode(isPrivacyModeEnabled());
+            setCompanionAvailable(isCompanionDetected());
         }
+    }, [isOpen]);
+
+    useEffect(() => {
+        if (!isOpen) return;
+        let cancelled = false;
+
+        const syncPrivacy = () => {
+            if (!cancelled) setPrivacyMode(isPrivacyModeEnabled());
+        };
+        const syncCompanion = () => {
+            if (!cancelled) setCompanionAvailable(isCompanionDetected());
+        };
+        const refreshCompanion = async () => {
+            try {
+                const available = await recheckCompanion();
+                if (!cancelled) setCompanionAvailable(available);
+            } catch {
+                if (!cancelled) setCompanionAvailable(false);
+            }
+        };
+        const handleFocus = () => {
+            syncPrivacy();
+            syncCompanion();
+            void refreshCompanion();
+        };
+        const handleVisibility = () => {
+            if (document.visibilityState === 'visible') handleFocus();
+        };
+        const handleStorage = (event: StorageEvent) => {
+            if (!event.key || event.key === 'PRIVACY_MODE_ENABLED') syncPrivacy();
+        };
+        const handlePrivacyChange = (event: Event) => {
+            const next = (event as CustomEvent<{ enabled?: boolean }>).detail?.enabled;
+            if (!cancelled) setPrivacyMode(typeof next === 'boolean' ? next : isPrivacyModeEnabled());
+        };
+
+        syncPrivacy();
+        syncCompanion();
+        void refreshCompanion();
+        window.addEventListener('focus', handleFocus);
+        window.addEventListener('storage', handleStorage);
+        window.addEventListener(PRIVACY_MODE_CHANGE_EVENT, handlePrivacyChange as EventListener);
+        document.addEventListener('visibilitychange', handleVisibility);
+        return () => {
+            cancelled = true;
+            window.removeEventListener('focus', handleFocus);
+            window.removeEventListener('storage', handleStorage);
+            window.removeEventListener(PRIVACY_MODE_CHANGE_EVENT, handlePrivacyChange as EventListener);
+            document.removeEventListener('visibilitychange', handleVisibility);
+        };
     }, [isOpen]);
 
     // ESC 키로 닫기
@@ -526,6 +585,99 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
                             )}
                         </div>
                     )}
+                </div>
+
+                {/* ── [v2.0.1 Phase 4-1] 사적 콘텐츠 안전 모드 (Privacy Mode) ── */}
+                <div className="mb-5">
+                    <div className={`rounded-xl border p-4 transition-all ${
+                        privacyMode
+                            ? 'bg-gradient-to-br from-purple-900/30 to-fuchsia-900/20 border-purple-500/40'
+                            : 'bg-gray-900/40 border-gray-700/60'
+                    }`}>
+                        <div className="flex items-start justify-between gap-3">
+                            <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 mb-1">
+                                    <span className="text-base">🔒</span>
+                                    <h3 className={`text-sm font-bold ${privacyMode ? 'text-purple-300' : 'text-gray-300'}`}>
+                                        사적 콘텐츠 안전 모드
+                                    </h3>
+                                    {privacyMode && (
+                                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-purple-500/20 border border-purple-400/30 text-purple-300 uppercase tracking-wider">
+                                            ON
+                                        </span>
+                                    )}
+                                    {privacyTogglePending && (
+                                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-500/20 border border-blue-400/30 text-blue-200">
+                                            확인 중
+                                        </span>
+                                    )}
+                                </div>
+                                <p className="text-xs text-gray-400 leading-relaxed">
+                                    켜면 이미지·영상 업로드가 <strong className="text-purple-300">컴패니언 터널만 거치고</strong> Cloudinary로 가지 않습니다.
+                                    저작권 걱정되는 영상, 가족 사진, 민감한 자료를 분석할 때 사용하세요.
+                                </p>
+                            </div>
+                            {/* iOS-style toggle */}
+                            <button
+                                type="button"
+                                role="switch"
+                                aria-checked={privacyMode}
+                                aria-label="사적 콘텐츠 안전 모드 토글"
+                                aria-busy={privacyTogglePending}
+                                data-privacy-toggle
+                                disabled={privacyTogglePending}
+                                onClick={async () => {
+                                    if (privacyTogglePending) return;
+                                    const next = !privacyMode;
+                                    setPrivacyTogglePending(true);
+                                    try {
+                                        if (next) {
+                                            const available = await recheckCompanion().catch(() => false);
+                                            setCompanionAvailable(available);
+                                            if (!available) {
+                                                showToast('🔒 컴패니언 v2.0+ 가 필요합니다. 먼저 헬퍼 앱을 설치해주세요.', 5000);
+                                                return;
+                                            }
+                                        }
+                                        setPrivacyModeEnabled(next);
+                                        setPrivacyMode(next);
+                                        showToast(next ? '🔒 사적 콘텐츠 안전 모드 ON — 모든 업로드가 컴패니언 터널만 사용합니다.' : '사적 콘텐츠 안전 모드 OFF', 4000);
+                                    } finally {
+                                        setPrivacyTogglePending(false);
+                                    }
+                                }}
+                                className={`shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                                    privacyMode ? 'bg-purple-500' : 'bg-gray-600'
+                                } ${
+                                    privacyTogglePending ? 'cursor-wait opacity-70' : ''
+                                }`}
+                            >
+                                <span
+                                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                                        privacyMode ? 'translate-x-6' : 'translate-x-1'
+                                    }`}
+                                />
+                            </button>
+                        </div>
+                        {/* 컴패니언 미감지 경고 */}
+                        {privacyMode && !companionAvailable && (
+                            <div className="mt-3 px-3 py-2 bg-red-950/40 border border-red-500/30 rounded-lg flex items-start gap-2">
+                                <span className="text-red-400 text-base shrink-0">⚠️</span>
+                                <p className="text-xs text-red-300 leading-relaxed">
+                                    컴패니언이 감지되지 않아 업로드가 차단됩니다. 헬퍼 앱을 실행하거나 안전 모드를 끄세요.
+                                </p>
+                            </div>
+                        )}
+                        {/* 정상 케이스 안내 */}
+                        {privacyMode && companionAvailable && (
+                            <div className="mt-3 px-3 py-2 bg-purple-950/40 border border-purple-500/20 rounded-lg flex items-start gap-2">
+                                <span className="text-purple-300 text-base shrink-0">✓</span>
+                                <p className="text-xs text-purple-200/90 leading-relaxed">
+                                    컴패니언 가용. 업로드는 25분 TTL 임시 터널 URL로 처리되며 Cloudinary에는 어떤 것도 저장되지 않습니다.
+                                </p>
+                            </div>
+                        )}
+                    </div>
                 </div>
 
                 {/* ── 체험판 안내 배너 ── */}
