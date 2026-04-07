@@ -159,26 +159,34 @@ jobs:
           $exe = Get-ChildItem -Path target\release -Filter all-in-one-helper.exe | Select-Object -First 1
           if (-not $exe) { throw "Binary not found in target/release" }
 
+          # 이전 smoke test cleanup 직후라 9876 socket이 TIME_WAIT일 수 있음 + 모든 이전
+          # all-in-one-helper.exe process를 확실히 정리.
+          Write-Host "[Race] cleanup 잔류 process + 9876 TIME_WAIT 대기"
+          Get-Process all-in-one-helper -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 8
+
           Write-Host "[Race] Step 1: 첫 instance A spawn"
           $procA = Start-Process -FilePath $exe.FullName -PassThru
           Write-Host "[Race] A.PID = $($procA.Id)"
 
-          # /health 응답 대기 (최대 30초)
+          # /health 응답 대기 (최대 90초 — cloudflared init 포함)
           $ready = $false
-          for ($i = 0; $i -lt 15; $i++) {
+          for ($i = 0; $i -lt 45; $i++) {
             Start-Sleep -Seconds 2
             try {
               $h = Invoke-RestMethod -Uri "http://127.0.0.1:9876/health" -TimeoutSec 3
               if ($h.app -eq "ytdlp-companion") {
-                Write-Host "[Race] A health OK: version=$($h.version)"
+                Write-Host "[Race] A health OK: version=$($h.version) after $($i*2)s"
                 $ready = $true
                 break
               }
             } catch { }
           }
           if (-not $ready) {
+            Write-Host "[Race] A 진단 — process state:"
+            Get-Process -Id $procA.Id -ErrorAction SilentlyContinue | Format-List Name, Id, HasExited, ExitCode
             Stop-Process -Id $procA.Id -Force -ErrorAction SilentlyContinue
-            throw "[Race] A did not become ready within 30s"
+            throw "[Race] A did not become ready within 90s"
           }
 
           Write-Host "[Race] Step 2: 두 번째 instance B spawn (같은 binary)"
