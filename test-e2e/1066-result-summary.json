@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-04-07T02:44:34.900Z",
+  "timestamp": "2026-04-07T03:32:18.054Z",
   "videoSize": 93081562,
-  "tunnelUrl": "https://surrey-dated-require-base.trycloudflare.com/api/tunnel/serve/26ead107fbac5516bc9440fbb1409aa393486094bac99b11441e97234bc67af0",
+  "tunnelUrl": "https://steve-legs-moving-guitar.trycloudflare.com/api/tunnel/serve/8bc06eef19640ac2a36473ee4cdc7cec2b7561de9312ecc0db87f7b6e719dc00",
   "videoTokens": 15360,
   "audioTokens": 6000,
-  "responseText": "The video shows a static image of television test bars with a grainy, noisy texture.",
+  "responseText": "The video shows a static image of television test bars with static noise.",
   "matchedKeyword": "bar",
-  "totalOpened": 2
+  "totalOpened": 1
 }

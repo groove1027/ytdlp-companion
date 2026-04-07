@@ -668,21 +668,46 @@ struct CloudflaredLogStream {
 
 /// cloudflared 바이너리가 없으면 다운로드, 있으면 경로 반환
 async fn ensure_cloudflared() -> Result<PathBuf, TunnelError> {
-    // 0순위: 시스템 PATH에 있는 cloudflared (사용자가 brew/scoop으로 설치한 경우)
-    // 시스템 cloudflared는 사용자가 직접 설치한 신뢰 가능 바이너리이므로 SHA 검증 스킵.
+    // 0순위 (a): 표준 설치 경로 직접 시도 — GUI 앱은 PATH 미로드라 which 실패
+    // brew/scoop 등으로 설치된 cloudflared를 빠르게 발견
+    let standard_paths: &[&str] = if cfg!(windows) {
+        &[
+            "C:\\Program Files (x86)\\cloudflared\\cloudflared.exe",
+            "C:\\Program Files\\cloudflared\\cloudflared.exe",
+        ]
+    } else if cfg!(target_os = "macos") {
+        &[
+            "/opt/homebrew/bin/cloudflared",       // Apple Silicon brew
+            "/usr/local/bin/cloudflared",          // Intel brew
+            "/usr/bin/cloudflared",                // 시스템 패키지
+        ]
+    } else {
+        &[
+            "/usr/local/bin/cloudflared",
+            "/usr/bin/cloudflared",
+            "/snap/bin/cloudflared",
+        ]
+    };
+    for std_path in standard_paths {
+        let p = PathBuf::from(std_path);
+        if p.exists() {
+            println!("[Tunnel] 표준 경로 cloudflared 사용 ({})", std_path);
+            return Ok(p);
+        }
+    }
+
+    // 0순위 (b): which/where로 PATH 검색 (CLI 실행 환경 fallback)
     // (Codex Round-10 Medium) Unix는 `which`, Windows는 `where`
     let detect_cmd = if cfg!(windows) { "where" } else { "which" };
     if let Ok(output) = Command::new(detect_cmd).arg("cloudflared").output().await {
         if output.status.success() {
-            // Windows `where`는 여러 경로를 줄바꿈 구분으로 출력 → 첫 줄만
             let stdout = String::from_utf8_lossy(&output.stdout);
             let path_str = stdout.lines().next().unwrap_or("").trim().to_string();
             if !path_str.is_empty() {
                 let path = PathBuf::from(path_str);
                 if path.exists() {
-                    // (Codex Round-2 Low) 절대 경로 대신 basename만
                     println!(
-                        "[Tunnel] 시스템 cloudflared 사용 ({})",
+                        "[Tunnel] PATH cloudflared 사용 ({})",
                         path.file_name().and_then(|n| n.to_str()).unwrap_or("?")
                     );
                     return Ok(path);
@@ -837,28 +862,32 @@ async fn ensure_cloudflared() -> Result<PathBuf, TunnelError> {
 }
 
 /// 플랫폼별 cloudflared 다운로드 아카이브의 expected SHA-256 (CLOUDFLARED_VERSION 기준)
-/// 등록 안 된 플랫폼은 None — 향후 릴리즈 때마다 갱신 필요.
 ///
-/// **🚨 RELEASE BLOCKER**: v2.0.0 정식 릴리즈 전에 아래 6개 플랫폼 hash를 모두 채워야 함.
-/// 출처:
-///   - https://github.com/cloudflare/cloudflared/releases/download/2026.3.0/sha256.txt
-///   - 또는 GitHub Release 페이지의 각 asset checksums
+/// 출처: https://api.github.com/repos/cloudflare/cloudflared/releases/tags/2026.3.0
+/// 검증: 2026-04-07 (Codex Round 9~10 RELEASE BLOCKER 해소)
 ///
-/// 현재는 None만 반환 → ALLOW_UNVERIFIED_CLOUDFLARED=1 없이는 다운로드 fail-closed.
-/// 사용자는 brew/scoop으로 시스템 cloudflared를 미리 설치하면 이 경로를 안 탄다.
+/// Windows aarch64는 cloudflared가 제공하지 않으므로 None.
+/// (Windows ARM 사용자는 시스템 cloudflared 또는 ALLOW_UNVERIFIED_CLOUDFLARED=1 필요)
 fn expected_cloudflared_sha256() -> Option<String> {
-    // RELEASE BLOCKER: 실제 v2.0.0 릴리즈 전 아래 매핑 채울 것
-    // 예시 형식 (실제 hash로 교체 필요):
-    // match (std::env::consts::OS, std::env::consts::ARCH) {
-    //     ("macos", "aarch64") => Some("0123456789abcdef...".to_string()),
-    //     ("macos", "x86_64")  => Some("0123456789abcdef...".to_string()),
-    //     ("linux", "x86_64")  => Some("0123456789abcdef...".to_string()),
-    //     ("linux", "aarch64") => Some("0123456789abcdef...".to_string()),
-    //     ("windows", "x86_64")  => Some("0123456789abcdef...".to_string()),
-    //     ("windows", "aarch64") => Some("0123456789abcdef...".to_string()),
-    //     _ => None,
-    // }
-    None
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("macos", "aarch64") => Some(
+            "2aae4f69b0fc1c671b8353b4f594cbd902cd1e360c8eed2b8cad4602cb1546fb".to_string(),
+        ),
+        ("macos", "x86_64") => Some(
+            "0f30140c4a5e213d22f951ef4c964cac5fb6a5f061ba6eba5ea932999f7c0394".to_string(),
+        ),
+        ("linux", "x86_64") => Some(
+            "4a9e50e6d6d798e90fcd01933151a90bf7edd99a0a55c28ad18f2e16263a5c30".to_string(),
+        ),
+        ("linux", "aarch64") => Some(
+            "0755ba4cbab59980e6148367fcf53a8f3ec85a97deefd63c2420cf7850769bee".to_string(),
+        ),
+        ("windows", "x86_64") => Some(
+            "59b12880b24af581cf5b1013db601c7d843b9b097e9c78aa5957c7f39f741885".to_string(),
+        ),
+        // Windows ARM64는 cloudflared 미지원
+        _ => None,
+    }
 }
 
 /// 바이트 배열의 SHA-256 hex
