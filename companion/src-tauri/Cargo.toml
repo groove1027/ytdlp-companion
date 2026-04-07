@@ -1,7 +1,7 @@
 [package]
 name = "all-in-one-helper"
-version = "2.0.3"
-description = "All In One Helper — 로컬 미디어 게이트웨이 (v2.0.3: same-version takeover 무한 루프 hotfix)"
+version = "2.0.4"
+description = "All In One Helper — 로컬 미디어 게이트웨이 (v2.0.4: tray/menu setup panic graceful degrade + same-version takeover)"
 authors = ["groove1027"]
 edition = "2021"
 

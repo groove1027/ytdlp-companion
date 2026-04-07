@@ -58,7 +58,7 @@ fn main() {
         );
     }
 
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         // 중복 실행 방지 — deep-link로 2차 인스턴스가 뜨면 기존 인스턴스에 위임
         // ⚠️ single-instance는 반드시 다른 플러그인보다 먼저 등록해야 함
         // ⚠️ takeover_old_helper_if_present()가 먼저 끝나야 함 (위 라인)
@@ -98,45 +98,59 @@ fn main() {
                     }
                 });
             }
-            // 시스템 트레이 설정
-            let quit = MenuItem::with_id(app, "quit", "종료", true, None::<&str>)?;
-            let show = MenuItem::with_id(app, "show", "상태 보기", true, None::<&str>)?;
-            let status = MenuItem::with_id(app, "status", "⚡ 헬퍼 실행 중", false, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&status, &show, &quit])?;
+            // [v2.0.4 hotfix — Windows critical] tray/menu 생성 실패가 setup의 ?로
+            // propagate되면 .build().expect()에서 process panic → wrapper/autostart가
+            // 재시작 → 무한 루프. 모든 Result를 swallow해서 graceful degrade.
+            //
+            // 트레이 없이도 server는 정상 작동하므로 사용자는 컴패니언을 계속 쓸 수 있다.
+            // (창 닫기 시 숨김 처리는 트레이 없으면 의미 없지만, 사용자가 트레이로 다시
+            // 열 수 없을 뿐 server는 9876 응답 정상.)
+            match (|| -> Result<(), Box<dyn std::error::Error>> {
+                let quit = MenuItem::with_id(app, "quit", "종료", true, None::<&str>)?;
+                let show = MenuItem::with_id(app, "show", "상태 보기", true, None::<&str>)?;
+                let status = MenuItem::with_id(app, "status", "⚡ 헬퍼 실행 중", false, None::<&str>)?;
+                let menu = Menu::with_items(app, &[&status, &show, &quit])?;
 
-            let _tray = TrayIconBuilder::new()
-                .tooltip("All In One Helper — 안정적이고 빠른 AI 미디어 처리")
-                .menu(&menu)
-                .on_menu_event(|app, event| match event.id().as_ref() {
-                    "quit" => {
-                        // (Codex High 1 + Round-2 High) 모든 quit 경로가 동일한
-                        // graceful_shutdown_and_exit()를 거쳐야 cloudflared가 정리됨.
-                        let _app_handle = app.clone();
-                        tauri::async_runtime::spawn(async move {
-                            server::graceful_shutdown_and_exit().await;
-                        });
-                    }
-                    "show" => {
-                        if let Some(win) = app.get_webview_window("main") {
-                            focus_window(&win);
+                let _tray = TrayIconBuilder::new()
+                    .tooltip("All In One Helper — 안정적이고 빠른 AI 미디어 처리")
+                    .menu(&menu)
+                    .on_menu_event(|app, event| match event.id().as_ref() {
+                        "quit" => {
+                            // (Codex High 1 + Round-2 High) 모든 quit 경로가 동일한
+                            // graceful_shutdown_and_exit()를 거쳐야 cloudflared가 정리됨.
+                            let _app_handle = app.clone();
+                            tauri::async_runtime::spawn(async move {
+                                server::graceful_shutdown_and_exit().await;
+                            });
                         }
-                    }
-                    _ => {}
-                })
-                .on_tray_icon_event(|tray, event| {
-                    // 좌클릭 시 윈도우 보이기
-                    if let TrayIconEvent::Click {
-                        button: MouseButton::Left,
-                        button_state: MouseButtonState::Up,
-                        ..
-                    } = event
-                    {
-                        if let Some(win) = tray.app_handle().get_webview_window("main") {
-                            focus_window(&win);
+                        "show" => {
+                            if let Some(win) = app.get_webview_window("main") {
+                                focus_window(&win);
+                            }
                         }
-                    }
-                })
-                .build(app)?;
+                        _ => {}
+                    })
+                    .on_tray_icon_event(|tray, event| {
+                        if let TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            ..
+                        } = event
+                        {
+                            if let Some(win) = tray.app_handle().get_webview_window("main") {
+                                focus_window(&win);
+                            }
+                        }
+                    })
+                    .build(app)?;
+                Ok(())
+            })() {
+                Ok(()) => println!("[Companion] 시스템 트레이 등록 완료"),
+                Err(e) => eprintln!(
+                    "[Companion] ⚠️ 시스템 트레이 등록 실패 (server는 정상 동작): {}",
+                    e
+                ),
+            }
 
             // 창 닫기 시 숨김 처리 (앱 종료 대신) — "이 창을 닫아도 계속 실행" 약속 이행
             if let Some(win) = app.get_webview_window("main") {
@@ -226,9 +240,19 @@ fn main() {
 
             Ok(())
         })
-        .build(tauri::generate_context!())
-        .expect("error while building tauri application")
-        .run(|_app_handle, event| {
+        .build(tauri::generate_context!());
+
+    // [v2.0.4 hotfix] tauri::Builder::build() 실패 시 panic 대신 graceful exit.
+    // panic은 wrapper/autostart의 재시작 정책과 결합하여 무한 루프를 만들 수 있음.
+    // 정상 종료(exit code 1)는 OS/wrapper에게 "복구 시도 의미 없음" 신호 역할.
+    let app = match app {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("[Companion] ❌ Tauri 앱 빌드 실패 — graceful exit: {}", e);
+            std::process::exit(1);
+        }
+    };
+    app.run(|_app_handle, event| {
             // (Codex Round-2 High + Round-7 High) 모든 종료 경로 통합
             // ExitRequested 시 graceful_shutdown_and_exit()를 호출 — init phase child + tunnel manager 모두 정리.
             if let tauri::RunEvent::ExitRequested { api: _, .. } = &event {
