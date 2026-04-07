@@ -510,6 +510,8 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, on
   const [currentPage, setCurrentPage] = useState(1);
   const [loadingProjectId, setLoadingProjectId] = useState<string | null>(null);
   const [exportingIds, setExportingIds] = useState<Set<string>>(new Set());
+  // [#1090] bulk delete 재진입/동시 실행 가드
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
 
   const loadSummaries = useCallback(async () => {
     try {
@@ -547,10 +549,19 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, on
   const handleBulkDelete = async () => {
     if (!requireAuth('프로젝트 삭제')) return;
     if (selectedIds.size === 0) return;
+    // [#1090] 동기화 진행 중에는 삭제 차단 — 백그라운드 다운로드가 끝나면
+    // 목록이 갑자기 늘어나서 "지운 게 다시 생겼다"는 혼란이 발생함.
+    if (isSyncing) {
+      showToast('☁️ 클라우드 동기화 중입니다. 동기화가 끝난 후 다시 시도해주세요.', 4000);
+      return;
+    }
+    // [#1090] 재진입 방지 — 비동기 진행 중 더블 클릭 시 동시 실행 차단
+    if (isBulkDeleting) return;
     if (!confirm(`${selectedIds.size}개의 프로젝트를 삭제하시겠습니까?`)) return;
 
     const ids = Array.from(selectedIds);
 
+    setIsBulkDeleting(true);
     // 동기화가 삭제 대상을 재다운로드하지 않도록 등록 + 일시 중단
     markDeletingIds(ids);
     await pauseSync();
@@ -596,6 +607,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, on
       showToast('프로젝트 삭제 중 오류가 발생했습니다.', 4000);
     } finally {
       resumeSync();
+      setIsBulkDeleting(false);
     }
     setSelectedIds(new Set());
     loadSummaries();
@@ -758,6 +770,19 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, on
         </p>
       </div>
 
+      {/* [#1090] 동기화 진행 중 안내 — 백그라운드에서 클라우드 프로젝트가
+          내려오는 동안에는 목록 개수가 곧 변할 수 있다는 것을 사용자에게 알림.
+          이 배너가 보일 때는 bulk delete/select-all 버튼이 비활성화됨. */}
+      {isSyncing && (
+        <div className="mb-4 px-4 py-3 rounded-lg bg-blue-900/20 border border-blue-700/40 flex items-center gap-2 text-sm text-blue-300">
+          <svg className="w-4 h-4 animate-spin flex-shrink-0" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+          <span>☁️ 클라우드에서 프로젝트를 동기화 중입니다. 잠시 후 모든 프로젝트가 표시됩니다. (동기화 중에는 일괄 삭제가 잠시 잠겨 있어요)</span>
+        </div>
+      )}
+
       {/* 툴바 */}
       <div className="flex items-center justify-between flex-wrap gap-3 mb-5">
         <div className="flex items-center gap-3">
@@ -775,16 +800,21 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, on
                 setSelectedIds(new Set(filtered.map(s => s.id)));
               }
             }}
-            className="text-sm px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 hover:text-white transition-colors">
+            // [#1090] 동기화 중에는 select-all을 잠금. 단, hidden selection clear 경로는
+            // 유지해야 하므로 빈 검색 결과에서도 비활성화하지 않음.
+            disabled={isSyncing || isBulkDeleting}
+            title={isSyncing ? '동기화 중에는 사용할 수 없습니다 (프로젝트 목록이 변경될 수 있음)' : undefined}
+            className="text-sm px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
             {selectedIds.size === filtered.length && filtered.length > 0 ? '전체 해제' : '전체 선택'}
           </button>
-          <button onClick={handleBulkExport} disabled={selectedIds.size === 0}
+          <button onClick={handleBulkExport} disabled={selectedIds.size === 0 || isBulkDeleting}
             className="text-sm px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-blue-400 hover:text-blue-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1">
             📦 선택 내보내기{selectedIds.size > 0 && ` (${selectedIds.size})`}
           </button>
-          <button onClick={handleBulkDelete} disabled={selectedIds.size === 0}
+          <button onClick={handleBulkDelete} disabled={selectedIds.size === 0 || isSyncing || isBulkDeleting}
+            title={isSyncing ? '동기화 중에는 삭제할 수 없습니다' : isBulkDeleting ? '삭제 진행 중...' : undefined}
             className="text-sm px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-red-400 hover:text-red-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1">
-            🗑️ 선택 삭제{selectedIds.size > 0 && ` (${selectedIds.size})`}
+            🗑️ {isBulkDeleting ? '삭제 중...' : '선택 삭제'}{selectedIds.size > 0 && ` (${selectedIds.size})`}
           </button>
           {isLoggedIn && (
             <>
