@@ -8,6 +8,16 @@
 
 ## 🟢 완료된 작업
 
+- [x] **2026-04-07 — companion v2.0.2 ffmpeg 자동 다운로드 1차 검증 보강**
+  - `rg -n "ffmpeg|ensure_ffmpeg|get_ffmpeg_path|find_system_ffmpeg|ALLOW_UNVERIFIED|tts|whisper" companion/src-tauri/src`, `rg -n "async_cmd\\(\"ffmpeg\"|get_ffmpeg_path_public|ffmpeg_cache_path" companion/src-tauri/src`로 영향 범위 전수 조사 완료
+  - `companion/src-tauri/src/ffmpeg.rs` — Windows 시스템 탐지 경로에 `Program Files (x86)`, winget shim(`LOCALAPPDATA\\Microsoft\\WinGet\\Links`), scoop shim/app 경로를 추가하고, 공용 `system_ffmpeg_path()` helper 및 해당 후보군 단위 테스트를 추가
+  - `companion/src-tauri/src/ytdlp.rs` — 실제 ffmpeg 선택 우선순위를 `시스템 설치본 → companion 캐시 → legacy 번들 → PATH`로 조정해 brew/winget/scoop 업데이트가 캐시 정적 binary에 가려지지 않도록 수정
+  - `companion/src-tauri/src/tts.rs` — MP3→WAV 변환이 `"ffmpeg"` 리터럴이 아닌 공용 resolver(`get_ffmpeg_path_public`)를 사용하도록 맞춰 자동 다운로드된 캐시 경로와 시스템 설치본을 동일하게 사용하도록 수정
+  - `cd companion/src-tauri && cargo check`: 통과
+  - `cd companion/src-tauri && CC_x86_64_pc_windows_gnu=x86_64-w64-mingw32-gcc cargo check --target x86_64-pc-windows-gnu`: 통과
+  - `cd companion/src-tauri && cargo test ffmpeg`: 통과
+  - `rg -n "system_ffmpeg_path|get_ffmpeg_path_public|async_cmd\\(\"ffmpeg\"" companion/src-tauri/src docs/CHECKLIST.md`: 반영 위치 재확인
+
 - [x] **2026-04-07 — v2.0.1 AI 영상 분석 100MB 안내 2차 좁은 범위 재검증**
   - `rg -n "smartUpload|uploadMediaToHosting|fileData|fileUri|video/mp4|ensureVideoSizeForAnalysis|Blob" src`, `rg -n "fileData" src`, `rg -n "analyzeVideoWithGemini|evolinkVideoAnalysisStream|transcribeVideoAudio" src`로 `file -> fileData` 경로와 Blob 경로를 재점검
   - 재검증 결과: `src/services/gemini/videoAnalysis.ts`의 업로드 경로(`117`)만 실제 파일 업로드 → `fileData`이며, `700`, `794`, `src/services/youtubeAnalysisService.ts:2707`, `src/components/tabs/channel/ChannelRemakePanel.tsx:196`, `src/services/youtubeReferenceService.ts:1002`는 모두 YouTube watch URL 전달 경로라 100MB 파일 한도와 무관함을 확인

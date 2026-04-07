@@ -247,7 +247,8 @@ asyncio.run(main())
     // MP3 → WAV 변환 (ffmpeg 사용 가능하면)
     let wav_output = tempfile::Builder::new().suffix(".wav").tempfile()?;
     let wav_path = wav_output.path().to_string_lossy().to_string();
-    let ffmpeg = platform::async_cmd("ffmpeg")
+    let ffmpeg_path = crate::ytdlp::get_ffmpeg_path_public();
+    let ffmpeg = platform::async_cmd(&ffmpeg_path)
         .args(["-y", "-i", &output_path, "-ar", "24000", "-ac", "1", "-f", "wav", &wav_path])
         .output()
         .await;
