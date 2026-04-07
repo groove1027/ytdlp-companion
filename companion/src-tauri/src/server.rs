@@ -1,26 +1,137 @@
 use axum::{
     body::Body,
-    extract::Query,
+    extract::{Multipart, Path as AxumPath, Query},
     http::{HeaderMap, StatusCode},
     middleware,
     response::{IntoResponse, Json, Response},
-    routing::{get, post},
+    routing::{delete, get, post},
     Router,
 };
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{LazyLock, OnceLock};
+use std::sync::{Arc, LazyLock, OnceLock};
 use tokio::sync::RwLock;
 use tokio_util::io::ReaderStream;
 use tower_http::cors::{Any, CorsLayer};
 
+use crate::video_tunnel::{
+    ensure_temp_upload_dir, generate_token, OpenRequest, TunnelError, TunnelManager,
+};
 use crate::{platform, rembg, tts, whisper, ytdlp};
+
+// ──────────────────────────────────────────────
+// [v2.0] Video Tunnel Manager — 전역 싱글톤
+// ──────────────────────────────────────────────
+
+static TUNNEL_MANAGER: OnceLock<Arc<TunnelManager>> = OnceLock::new();
+const TUNNEL_SERVE_PORT: u16 = 9879;
+
+/// (Codex Round-6 High) 초기화 중 spawn된 child를 추적하는 전역 슬롯.
+/// TunnelManager::new()가 cloudflared를 spawn하지만 아직 TUNNEL_MANAGER에 publish 안 된 상태에서
+/// shutdown이 오면 이 슬롯을 통해 child를 정리한다.
+static INIT_PHASE_CHILD_PID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// (Codex Round-6 Low) TunnelManager 초기화 상태 — status 엔드포인트에 노출
+#[derive(Debug, Clone)]
+enum TunnelInitState {
+    Idle,
+    Initializing,
+    Ready,
+    Failed(String),
+}
+static TUNNEL_INIT_STATE: LazyLock<RwLock<TunnelInitState>> =
+    LazyLock::new(|| RwLock::new(TunnelInitState::Idle));
+
+pub fn tunnel_manager() -> Option<Arc<TunnelManager>> {
+    TUNNEL_MANAGER.get().cloned()
+}
+
+/// (Codex Round-6 High) 초기화 중에도 호출 가능한 child kill — graceful_shutdown_and_exit이 사용
+pub fn kill_init_phase_child_if_any() {
+    let pid = INIT_PHASE_CHILD_PID.swap(0, std::sync::atomic::Ordering::SeqCst);
+    if pid > 0 {
+        eprintln!(
+            "[Tunnel] 초기화 단계 cloudflared child PID {} 강제 종료",
+            pid
+        );
+        #[cfg(unix)]
+        unsafe {
+            libc_kill(pid as i32, 9);
+        }
+        #[cfg(windows)]
+        {
+            use std::process::Command;
+            let _ = Command::new("taskkill")
+                .args(&["/F", "/PID", &pid.to_string()])
+                .status();
+        }
+    }
+}
+
+#[cfg(unix)]
+extern "C" {
+    fn kill(pid: i32, sig: i32) -> i32;
+}
+#[cfg(unix)]
+unsafe fn libc_kill(pid: i32, sig: i32) -> i32 {
+    kill(pid, sig)
+}
+
+pub fn record_init_phase_child(pid: u32) {
+    INIT_PHASE_CHILD_PID.store(pid, std::sync::atomic::Ordering::SeqCst);
+}
+
+pub fn clear_init_phase_child() {
+    INIT_PHASE_CHILD_PID.store(0, std::sync::atomic::Ordering::SeqCst);
+}
+
+async fn init_tunnel_manager() {
+    println!("[Tunnel] TunnelManager 초기화 시작 (cloudflared 다운로드 + spawn)");
+    *TUNNEL_INIT_STATE.write().await = TunnelInitState::Initializing;
+
+    match TunnelManager::new(TUNNEL_SERVE_PORT).await {
+        Ok(manager) => {
+            let arc = Arc::new(manager);
+            // (Codex Round-8 Medium) PUBLISH가 끝난 다음에만 PID slot clear.
+            // 이렇게 하면 TUNNEL_MANAGER.set 직전 race에서 shutdown이 들어와도
+            // 1) tunnel_manager()가 None이라도 → kill_init_phase_child_if_any()가 child 잡음
+            // 2) tunnel_manager()가 Some이면 → mgr.shutdown()이 잡음
+            // 어느 쪽이든 child가 정리됨.
+            if TUNNEL_MANAGER.set(arc).is_ok() {
+                println!("[Tunnel] TunnelManager 초기화 완료");
+                *TUNNEL_INIT_STATE.write().await = TunnelInitState::Ready;
+                // PUBLISH 완료 후 → PID slot clear (이제 manager 경로로 잡힘)
+                clear_init_phase_child();
+            } else {
+                eprintln!("[Tunnel] TunnelManager가 이미 초기화됨 (race condition?)");
+                *TUNNEL_INIT_STATE.write().await =
+                    TunnelInitState::Failed("already initialized".to_string());
+                // 이 분기는 비정상이지만 PID slot은 그대로 두면 stale → 안전하게 clear
+                clear_init_phase_child();
+            }
+        }
+        Err(e) => {
+            let msg = format!("{}", e);
+            eprintln!(
+                "[Tunnel] TunnelManager 초기화 실패: {} — 폴백(Cloudinary) 모드로 작동",
+                msg
+            );
+            *TUNNEL_INIT_STATE.write().await = TunnelInitState::Failed(msg);
+            // 실패해도 컴패니언 자체는 계속 동작 — 프론트가 자동으로 Cloudinary 폴백
+            // 실패 경로의 PID slot은 spawn_cloudflared 안에서 이미 clear됐어야 함 (이중 안전)
+            clear_init_phase_child();
+        }
+    }
+}
+
+pub async fn current_init_state() -> TunnelInitState {
+    TUNNEL_INIT_STATE.read().await.clone()
+}
 
 // ──────────────────────────────────────────────
 // [FIX] Google 프록시 싱글톤 Client + 페이싱/백오프 상태
 // ──────────────────────────────────────────────
-use std::sync::Arc;
 
 struct GoogleProxyBackoffState {
     consecutive_429s: u32,
@@ -669,6 +780,23 @@ pub async fn start_server(_app: tauri::AppHandle) -> Result<(), Box<dyn std::err
         .route("/api/ffmpeg/transcode", post(ffmpeg_transcode_handler))
         .route("/api/ffmpeg/merge", post(ffmpeg_merge_handler))
         .route("/api/ffmpeg/cut", post(ffmpeg_cut_handler))
+        // [v2.0] Video Tunnel — 로컬 파일을 cloudflared로 임시 노출 (메인 9876 — 로컬 전용)
+        // /api/tunnel/serve/:token만 별도 9879 포트로 분리 (cloudflared가 노출)
+        // (Codex Critical 1) upload-temp만 5GB body limit, 나머지는 라우트별 작은 한도
+        // (Codex Round-4 Low) /open은 작은 JSON만 받음 → 16KB 한도
+        .route(
+            "/api/tunnel/open",
+            post(tunnel_open_handler)
+                .layer(axum::extract::DefaultBodyLimit::max(16 * 1024)),
+        )
+        .route(
+            "/api/tunnel/upload-temp",
+            post(tunnel_upload_temp_handler).layer(
+                axum::extract::DefaultBodyLimit::max(5 * 1024 * 1024 * 1024),
+            ),
+        )
+        .route("/api/tunnel/{token}", delete(tunnel_close_handler))
+        .route("/api/tunnel/status", get(tunnel_status_handler))
         .layer(cors)
         // [FIX #846] Chrome 142+ / Edge 143+ Local Network Access 대응
         // HTTPS 페이지에서 127.0.0.1로 fetch 시 preflight에 이 헤더가 필요
@@ -691,6 +819,61 @@ pub async fn start_server(_app: tauri::AppHandle) -> Result<(), Box<dyn std::err
             tokio::time::sleep(std::time::Duration::from_secs(300)).await;
         }
     });
+
+    // [v2.0] Video Tunnel — 별도 포트 9879 라우터 (cloudflared 노출 전용)
+    // 메인 9876의 민감한 엔드포인트들을 외부에 노출하지 않기 위해 분리.
+    // 9879에는 GET /api/tunnel/serve/:token만 라우팅하여 토큰 인증된 파일 서빙만 가능.
+    //
+    // (Codex Critical 2) 9879 바인딩 성공 신호를 받은 후에만 cloudflared spawn.
+    // 다른 프로세스가 9879를 점유 중이면 cloudflared를 절대 띄우지 않음 (그 프로세스가 외부에 노출되는 사고 방지).
+    let serve_addr = SocketAddr::from(([127, 0, 0, 1], TUNNEL_SERVE_PORT));
+    let listener = match tokio::net::TcpListener::bind(serve_addr).await {
+        Ok(l) => {
+            println!(
+                "[Tunnel] serve 라우터 바인딩 성공: http://{} (cloudflared 노출 전용)",
+                serve_addr
+            );
+            Some(l)
+        }
+        Err(e) => {
+            eprintln!(
+                "[Tunnel] serve 라우터 바인딩 실패 ({}): {}",
+                serve_addr, e
+            );
+            eprintln!("[Tunnel] 9879 포트가 사용 중 — 터널 기능 완전 비활성화 (cloudflared 안 띄움)");
+            None
+        }
+    };
+
+    if let Some(listener) = listener {
+        // 9879 서버 spawn
+        tokio::spawn(async move {
+            let serve_router = Router::new()
+                .route("/api/tunnel/serve/{token}", get(tunnel_serve_handler))
+                .route("/health", get(tunnel_serve_health_handler))
+                // CORS는 의도적으로 매우 관대 — Gemini 백엔드가 호출
+                .layer(
+                    CorsLayer::new()
+                        .allow_origin(Any)
+                        .allow_methods(Any)
+                        .allow_headers(Any),
+                )
+                // serve 핸들러는 GET이라 body 사용 X — 1MB로 제한
+                .layer(axum::extract::DefaultBodyLimit::max(1024 * 1024));
+
+            if let Err(e) = axum::serve(listener, serve_router).await {
+                eprintln!("[Tunnel] serve 라우터 에러: {}", e);
+            }
+        });
+
+        // 바인딩 성공 후에만 TunnelManager 초기화 (cloudflared spawn 포함)
+        tokio::spawn(async {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            init_tunnel_manager().await;
+        });
+    } else {
+        eprintln!("[Tunnel] 비활성화 상태로 컴패니언 계속 동작 (다른 기능은 정상)");
+    }
 
     // IPv6 loopback [::1]:9876도 시도 (실패해도 fatal 아님 — IPv6 미지원 환경 대비)
     let addr_v6 = SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], 9876u16));
@@ -1178,11 +1361,10 @@ async fn quit_handler(headers: HeaderMap) -> Response {
             .into_response();
     }
 
-    println!("[Companion] /quit 수신 (token 검증 통과) — 200ms 후 종료");
+    println!("[Companion] /quit 수신 (token 검증 통과) — graceful shutdown 시작");
+    // (Codex Round-2 High) graceful shutdown — TunnelManager.shutdown() 거쳐 cloudflared 정리
     tokio::spawn(async {
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-        println!("[Companion] /quit 처리 완료, exit(0)");
-        std::process::exit(0);
+        graceful_shutdown_and_exit().await;
     });
     Json(serde_json::json!({
         "app": "ytdlp-companion",
@@ -1190,6 +1372,25 @@ async fn quit_handler(headers: HeaderMap) -> Response {
         "version": env!("CARGO_PKG_VERSION"),
     }))
     .into_response()
+}
+
+/// (Codex Round-2 High) 모든 종료 경로의 단일 진입점.
+/// /quit, 트레이 quit, 네이티브 종료(Cmd+Q) 모두 이 함수를 호출해야 cloudflared가 안전하게 정리됨.
+/// (Codex Round-6 High) 초기화 단계 cloudflared child도 함께 정리.
+pub async fn graceful_shutdown_and_exit() {
+    println!("[Companion] graceful shutdown 시작");
+
+    // 초기화 단계 child가 있으면 즉시 kill (TunnelManager publish 전 단계)
+    kill_init_phase_child_if_any();
+
+    if let Some(mgr) = tunnel_manager() {
+        mgr.shutdown().await;
+        println!("[Companion] tunnel manager shutdown 완료");
+    }
+    // 마지막 buffer flush 여유
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    println!("[Companion] exit(0)");
+    std::process::exit(0);
 }
 
 fn build_ffmpeg_capability_response() -> FfmpegCapabilityResponse {
@@ -3225,5 +3426,700 @@ async fn generate_image_handler(Json(req): Json<GenerateImageRequest>) -> impl I
             };
             (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("mflux 실행 불가: {}. {}", e, install_hint) }))).into_response()
         }
+    }
+}
+
+// ──────────────────────────────────────────────
+// [v2.0] Video Tunnel 핸들러들
+// ──────────────────────────────────────────────
+
+/// 에러를 axum Response로 변환
+/// (Codex Low 1) 에러 메시지에 절대 경로 등 민감 정보 노출 X — generic message만.
+/// 상세 정보는 stderr 로그로만 남김.
+fn tunnel_error_response(err: TunnelError) -> Response {
+    let status = StatusCode::from_u16(err.http_status())
+        .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    let code = err.error_code();
+    let safe_message = match &err {
+        TunnelError::FileNotFound(_) => "파일을 찾을 수 없습니다".to_string(),
+        TunnelError::NotARegularFile(_) => "일반 파일이 아닙니다".to_string(),
+        TunnelError::PathTraversal(_) => "허용되지 않은 경로입니다".to_string(),
+        TunnelError::FileSizeExceeded { limit, .. } => {
+            format!("파일 크기가 한도({} bytes)를 초과합니다", limit)
+        }
+        TunnelError::NotFound => "터널을 찾을 수 없거나 만료되었습니다".to_string(),
+        TunnelError::MaxFetchReached => "최대 fetch 횟수를 초과했습니다".to_string(),
+        TunnelError::RateLimitExceeded { limit } => {
+            format!("rate limit 초과 (분당 최대 {})", limit)
+        }
+        TunnelError::TooManyActive(max) => format!("동시 터널 한도 초과 (최대 {})", max),
+        TunnelError::CloudflaredNotReady(_) => "cloudflared가 아직 준비되지 않았습니다".to_string(),
+        TunnelError::CloudflaredDead => "cloudflared 프로세스가 중단되었습니다".to_string(),
+        TunnelError::BinaryNotFound | TunnelError::DownloadFailed(_) => {
+            "cloudflared 바이너리 준비 실패".to_string()
+        }
+        TunnelError::ChecksumMismatch { .. } => "cloudflared 무결성 검증 실패".to_string(),
+        TunnelError::SpawnFailed(_) => "cloudflared 실행 실패".to_string(),
+        TunnelError::Io(_) => "내부 I/O 에러".to_string(),
+        TunnelError::Http(_) => "외부 HTTP 호출 실패".to_string(),
+        TunnelError::Internal(_) => "내부 에러".to_string(),
+    };
+    // (Codex Round-2 Low) 운영 로그에는 error code + 축약 정보만, 절대경로는 debug build에서만
+    #[cfg(debug_assertions)]
+    eprintln!("[Tunnel] error code={} detail={}", code, err);
+    #[cfg(not(debug_assertions))]
+    eprintln!("[Tunnel] error code={} (상세는 debug build에서만 출력)", code);
+
+    let body = serde_json::json!({
+        "ok": false,
+        "error": code,
+        "message": safe_message,
+    });
+    (status, Json(body)).into_response()
+}
+
+/// POST /api/tunnel/open — 파일 등록 + 공개 URL 발급
+async fn tunnel_open_handler(Json(req): Json<OpenRequest>) -> Response {
+    // (Codex Round-4 Low) 입력 길이 제한 — 비정상적으로 큰 값 방어
+    const MAX_PATH_LEN: usize = 4096;
+    const MAX_MIME_LEN: usize = 256;
+    if req.file_path.len() > MAX_PATH_LEN {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "ok": false,
+                "error": "file_path_too_long",
+                "message": format!("file_path는 {} 자 이하여야 합니다", MAX_PATH_LEN),
+            })),
+        )
+            .into_response();
+    }
+    if req.mime_type.len() > MAX_MIME_LEN {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "ok": false,
+                "error": "mime_type_too_long",
+                "message": format!("mime_type는 {} 자 이하여야 합니다", MAX_MIME_LEN),
+            })),
+        )
+            .into_response();
+    }
+
+    // (Codex Round-5 Medium) 제어 문자 차단 — CRLF injection 방지
+    // file_path / mime_type 모두 ASCII control 또는 \r\n 포함 금지
+    if req.file_path.chars().any(|c| c.is_ascii_control()) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "ok": false,
+                "error": "file_path_invalid_chars",
+                "message": "file_path에 제어 문자가 포함될 수 없습니다",
+            })),
+        )
+            .into_response();
+    }
+    // mime_type은 더 엄격: HeaderValue로 파싱 시도
+    if req.mime_type.chars().any(|c| c.is_ascii_control()) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "ok": false,
+                "error": "mime_type_invalid_chars",
+                "message": "mime_type에 제어 문자가 포함될 수 없습니다",
+            })),
+        )
+            .into_response();
+    }
+    // HeaderValue로 파싱 가능한지 사전 검증 (실제 응답 시 사용 예정)
+    if axum::http::HeaderValue::from_str(&req.mime_type).is_err() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "ok": false,
+                "error": "mime_type_invalid",
+                "message": "mime_type가 HTTP 헤더로 사용 불가",
+            })),
+        )
+            .into_response();
+    }
+
+    let manager = match tunnel_manager() {
+        Some(m) => m,
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({
+                    "ok": false,
+                    "error": "tunnel_not_initialized",
+                    "message": "TunnelManager가 아직 초기화되지 않았습니다 (cloudflared 다운로드 중일 수 있음)",
+                })),
+            )
+                .into_response();
+        }
+    };
+
+    match manager.open(req).await {
+        Ok(handle) => Json(serde_json::json!({
+            "ok": true,
+            "token": handle.token,
+            "url": handle.url,
+            "expires_at": handle.expires_at,
+            "size_bytes": handle.size_bytes,
+        }))
+        .into_response(),
+        Err(e) => {
+            eprintln!("[Tunnel] open 실패: {}", e);
+            tunnel_error_response(e)
+        }
+    }
+}
+
+/// DELETE /api/tunnel/:token — 명시적 종료
+async fn tunnel_close_handler(AxumPath(token): AxumPath<String>) -> Response {
+    let manager = match tunnel_manager() {
+        Some(m) => m,
+        None => return Json(serde_json::json!({ "ok": true })).into_response(),
+    };
+
+    let _ = manager.close(&token).await;
+    Json(serde_json::json!({ "ok": true })).into_response()
+}
+
+/// GET /api/tunnel/status — 상태 조회 (모니터링)
+/// (Codex Round-6 Low) init state까지 노출 — 운영 시 원인 추적 가능
+async fn tunnel_status_handler() -> Response {
+    let init_state = current_init_state().await;
+    let (init_label, init_detail) = match &init_state {
+        TunnelInitState::Idle => ("idle", None),
+        TunnelInitState::Initializing => ("initializing", None),
+        TunnelInitState::Ready => ("ready", None),
+        TunnelInitState::Failed(msg) => ("failed", Some(msg.clone())),
+    };
+
+    let manager = match tunnel_manager() {
+        Some(m) => m,
+        None => {
+            let mut json = serde_json::json!({
+                "ok": false,
+                "cloudflared_running": false,
+                "active_tunnels": 0,
+                "init_state": init_label,
+                "message": "TunnelManager 미초기화",
+            });
+            if let Some(detail) = init_detail {
+                json["init_error"] = serde_json::Value::String(detail);
+            }
+            return Json(json).into_response();
+        }
+    };
+
+    let status = manager.status().await;
+    let mut value = serde_json::to_value(&status).unwrap_or(serde_json::json!({"ok": false}));
+    if let Some(obj) = value.as_object_mut() {
+        obj.insert(
+            "init_state".to_string(),
+            serde_json::Value::String(init_label.to_string()),
+        );
+        if let Some(detail) = init_detail {
+            obj.insert("init_error".to_string(), serde_json::Value::String(detail));
+        }
+    }
+    Json(value).into_response()
+}
+
+/// POST /api/tunnel/upload-temp — 프론트가 File을 multipart로 올림
+/// → 컴패니언이 임시 폴더에 **스트리밍**으로 저장하고 절대경로 반환
+/// (Codex Critical 1) field.bytes()는 전체 RAM 버퍼링 → 5GB OOM 위험.
+/// chunk() 루프로 디스크에 직접 write하여 메모리 사용량을 64KB 수준으로 유지.
+async fn tunnel_upload_temp_handler(mut multipart: Multipart) -> Response {
+    use futures_util::StreamExt;
+    use tokio::io::AsyncWriteExt;
+
+    let temp_dir = match ensure_temp_upload_dir().await {
+        Ok(d) => d,
+        Err(e) => return tunnel_error_response(e),
+    };
+
+    loop {
+        let next = multipart.next_field().await;
+        let field_opt = match next {
+            Ok(opt) => opt,
+            Err(e) => {
+                eprintln!("[Tunnel] multipart 파싱 에러: {}", e);
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "ok": false,
+                        "error": "multipart_parse_failed",
+                        "message": "multipart 본문 파싱 실패",
+                    })),
+                )
+                    .into_response();
+            }
+        };
+
+        let mut field = match field_opt {
+            Some(f) => f,
+            None => break,
+        };
+
+        let field_name = field.name().unwrap_or("").to_string();
+        if field_name != "file" {
+            continue;
+        }
+
+        let original_name = field
+            .file_name()
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "upload.bin".to_string());
+
+        // 파일명 sanitize + 충돌 방지 (랜덤 suffix)
+        let safe_name = sanitize_temp_filename(&original_name);
+        let token = generate_token();
+        let suffix = &token[..16];
+        let final_name = format!("{}-{}", suffix, safe_name);
+        let file_path = temp_dir.join(&final_name);
+
+        // 스트리밍 디스크 write
+        // (Codex Round-3 Medium) 파일 권한 0600 — 다른 user가 못 읽게
+        #[cfg(unix)]
+        let mut file = {
+            use std::os::unix::fs::OpenOptionsExt;
+            match tokio::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&file_path)
+                .await
+            {
+                Ok(f) => f,
+                Err(e) => return tunnel_error_response(TunnelError::Io(e)),
+            }
+        };
+        #[cfg(not(unix))]
+        let mut file = match tokio::fs::File::create(&file_path).await {
+            Ok(f) => f,
+            Err(e) => return tunnel_error_response(TunnelError::Io(e)),
+        };
+
+        let mut total_bytes: u64 = 0;
+        const HARD_LIMIT: u64 = 5 * 1024 * 1024 * 1024; // 5GB per file
+
+        while let Some(chunk_res) = field.next().await {
+            let chunk = match chunk_res {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("[Tunnel] multipart chunk 읽기 실패: {}", e);
+                    let _ = tokio::fs::remove_file(&file_path).await;
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({
+                            "ok": false,
+                            "error": "multipart_read_failed",
+                            "message": "multipart chunk 읽기 실패",
+                        })),
+                    )
+                        .into_response();
+                }
+            };
+            total_bytes += chunk.len() as u64;
+            if total_bytes > HARD_LIMIT {
+                let _ = tokio::fs::remove_file(&file_path).await;
+                return (
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    Json(serde_json::json!({
+                        "ok": false,
+                        "error": "file_size_exceeded",
+                        "message": "5GB 한도 초과",
+                    })),
+                )
+                    .into_response();
+            }
+            if let Err(e) = file.write_all(&chunk).await {
+                let _ = tokio::fs::remove_file(&file_path).await;
+                return tunnel_error_response(TunnelError::Io(e));
+            }
+        }
+
+        if let Err(e) = file.flush().await {
+            return tunnel_error_response(TunnelError::Io(e));
+        }
+        if let Err(e) = file.sync_all().await {
+            // sync 실패는 치명적이지 않음 (로그만)
+            eprintln!("[Tunnel] temp 파일 sync 실패 (무시): {}", e);
+        }
+        drop(file);
+
+        return Json(serde_json::json!({
+            "ok": true,
+            "temp_path": file_path.to_string_lossy().to_string(),
+            "size_bytes": total_bytes,
+        }))
+        .into_response();
+    }
+
+    (
+        StatusCode::BAD_REQUEST,
+        Json(serde_json::json!({
+            "ok": false,
+            "error": "no_file_field",
+            "message": "multipart에 file 필드가 없습니다",
+        })),
+    )
+        .into_response()
+}
+
+fn sanitize_temp_filename(name: &str) -> String {
+    let sanitized: String = name
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '.' || *c == '-' || *c == '_')
+        .collect();
+    let trimmed = sanitized.trim_matches('.').to_string();
+    if trimmed.is_empty() {
+        "upload.bin".to_string()
+    } else {
+        // 너무 긴 파일명 절단 (최대 80자)
+        if trimmed.len() > 80 {
+            trimmed.chars().take(80).collect()
+        } else {
+            trimmed
+        }
+    }
+}
+
+/// GET /api/tunnel/serve/:token — 외부(Gemini)가 fetch하는 파일 서빙
+/// 9879 포트에서만 접근 가능. 토큰 인증 + Range request 지원.
+async fn tunnel_serve_handler(
+    AxumPath(token): AxumPath<String>,
+    headers: HeaderMap,
+) -> Response {
+    let manager = match tunnel_manager() {
+        Some(m) => m,
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Tunnel manager not initialized",
+            )
+                .into_response();
+        }
+    };
+
+    // (Codex Round-3 Medium) 사전 검증만 (quota 차감 X)
+    let entry = match manager.check_fetch_allowed(&token).await {
+        Ok(e) => e,
+        Err(e) => return tunnel_error_response(e),
+    };
+
+    // (Codex High 2) symlink 검증 — symlink_metadata 사용
+    let symlink_meta = match tokio::fs::symlink_metadata(&entry.file_path).await {
+        Ok(m) => m,
+        Err(e) => return tunnel_error_response(TunnelError::Io(e)),
+    };
+    if !symlink_meta.is_file() {
+        eprintln!(
+            "[Tunnel] serve: 등록된 경로가 더 이상 일반 파일이 아님 (token={}..)",
+            &token[..8.min(token.len())]
+        );
+        return tunnel_error_response(TunnelError::NotFound);
+    }
+
+    // (Codex High 2) inode + dev 비교 — open() 이후 파일이 교체됐는지 검사
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if symlink_meta.ino() != entry.file_ino || symlink_meta.dev() != entry.file_dev {
+            eprintln!(
+                "[Tunnel] serve: inode/dev 불일치 — 파일이 교체됐을 가능성 (token={}..)",
+                &token[..8.min(token.len())]
+            );
+            return tunnel_error_response(TunnelError::NotFound);
+        }
+    }
+    // (Codex Round-5 Medium) Windows 파일 식별자 비교 (NTFS file_index + volume serial)
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        let actual_index = symlink_meta.file_index();
+        let actual_volume = symlink_meta.volume_serial_number();
+        if actual_index != entry.file_index || actual_volume != entry.volume_serial {
+            eprintln!(
+                "[Tunnel] serve: file_index 불일치 — Windows 파일 교체 의심 (token={}..)",
+                &token[..8.min(token.len())]
+            );
+            return tunnel_error_response(TunnelError::NotFound);
+        }
+    }
+
+    // 파일 열기
+    let file = match tokio::fs::File::open(&entry.file_path).await {
+        Ok(f) => f,
+        Err(e) => return tunnel_error_response(TunnelError::Io(e)),
+    };
+
+    // (Codex Round-4 Medium) 열린 fd의 metadata를 다시 검증 — TOCTOU 차단
+    // stat→open 사이에 rename/replace 공격 가능. 열린 fd 자체로 재검증.
+    let opened_meta = match file.metadata().await {
+        Ok(m) => m,
+        Err(e) => return tunnel_error_response(TunnelError::Io(e)),
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if opened_meta.ino() != entry.file_ino || opened_meta.dev() != entry.file_dev {
+            eprintln!(
+                "[Tunnel] serve: open 후 inode/dev 불일치 — 파일 교체 공격 의심 (token={}..)",
+                &token[..8.min(token.len())]
+            );
+            return tunnel_error_response(TunnelError::NotFound);
+        }
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        let actual_index = opened_meta.file_index();
+        let actual_volume = opened_meta.volume_serial_number();
+        if actual_index != entry.file_index || actual_volume != entry.volume_serial {
+            eprintln!(
+                "[Tunnel] serve: open 후 file_index 불일치 — Windows 파일 교체 공격 의심 (token={}..)",
+                &token[..8.min(token.len())]
+            );
+            return tunnel_error_response(TunnelError::NotFound);
+        }
+    }
+    // size도 fd 기준 (rename 직후 다른 size일 가능성)
+    let total_size = opened_meta.len();
+
+    // (Codex Round-5 Medium) mime을 HeaderValue로 사전 검증
+    let mime_header = match axum::http::HeaderValue::from_str(&entry.mime_type) {
+        Ok(h) => h,
+        Err(_) => {
+            eprintln!("[Tunnel] serve: 등록된 mime이 HeaderValue로 변환 불가 (저장 단계 버그)");
+            return tunnel_error_response(TunnelError::Internal(
+                "invalid mime header".to_string(),
+            ));
+        }
+    };
+
+    // (Codex Round-6 Medium) Range 헤더가 있으면 파싱부터 검증 — quota 차감 전에
+    let range_header = headers.get("range").and_then(|h| h.to_str().ok()).map(|s| s.to_string());
+    let parsed_range: Option<(u64, u64)> = if let Some(ref range) = range_header {
+        if total_size == 0 {
+            return Response::builder()
+                .status(StatusCode::RANGE_NOT_SATISFIABLE)
+                .header("Content-Range", "bytes */0")
+                .body(Body::empty())
+                .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
+        }
+        match parse_byte_range(range, total_size) {
+            Ok(r) => Some(r),
+            Err(reason) => {
+                return Response::builder()
+                    .status(StatusCode::RANGE_NOT_SATISFIABLE)
+                    .header("Content-Range", format!("bytes */{}", total_size))
+                    .body(Body::from(reason))
+                    .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
+            }
+        }
+    } else {
+        None
+    };
+
+    // (Codex Round-7 Low) Range 요청이면 seek까지 사전 완료해서 quota 차감 후 시작
+    let mut file = file;
+    if let Some((start, _end)) = parsed_range {
+        use tokio::io::{AsyncSeekExt, SeekFrom};
+        if let Err(e) = file.seek(SeekFrom::Start(start)).await {
+            // seek 실패 — quota 차감 안 됨
+            return tunnel_error_response(TunnelError::Io(e));
+        }
+    }
+
+    // (Codex Round-3 + Round-5 + Round-6 + Round-7) 모든 사전 검증 + seek까지 통과 → quota commit
+    if let Err(e) = manager.commit_fetch(&token).await {
+        return tunnel_error_response(e);
+    }
+
+    if let Some((start, end)) = parsed_range {
+        serve_range_after_seek(file, total_size, mime_header, start, end).await
+    } else {
+        // 전체 파일 스트리밍
+        let stream = ReaderStream::new(file);
+        let body = Body::from_stream(stream);
+
+        Response::builder()
+            .status(StatusCode::OK)
+            .header("Content-Type", mime_header)
+            .header("Content-Length", total_size.to_string())
+            .header("Accept-Ranges", "bytes")
+            .header("Cache-Control", "no-store")
+            .body(body)
+            .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+    }
+}
+
+/// (Codex Round-6 + Round-7) Range가 이미 파싱+seek된 상태에서 파일을 서빙
+async fn serve_range_after_seek(
+    file: tokio::fs::File,
+    total_size: u64,
+    mime_header: axum::http::HeaderValue,
+    start: u64,
+    end: u64,
+) -> Response {
+    use tokio::io::AsyncReadExt;
+
+    let length = end - start + 1;
+
+    let limited = file.take(length);
+    let stream = ReaderStream::new(limited);
+    let body = Body::from_stream(stream);
+
+    Response::builder()
+        .status(StatusCode::PARTIAL_CONTENT)
+        .header("Content-Type", mime_header)
+        .header("Content-Length", length.to_string())
+        .header(
+            "Content-Range",
+            format!("bytes {}-{}/{}", start, end, total_size),
+        )
+        .header("Accept-Ranges", "bytes")
+        .header("Cache-Control", "no-store")
+        .body(body)
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
+// (Codex Round-6 Medium) 기존 serve_range는 serve_range_validated로 대체됨
+
+/// GET /health (9879 포트 전용) — 터널 라우터 자체 상태
+async fn tunnel_serve_health_handler() -> Response {
+    Json(serde_json::json!({
+        "ok": true,
+        "service": "tunnel-serve",
+        "port": TUNNEL_SERVE_PORT,
+    }))
+    .into_response()
+}
+
+/// HTTP Range 헤더 파싱 (pure function — 테스트 가능)
+/// (Codex Medium 8) multi-range는 명시적으로 거부 (`bytes=N-M,O-P`)
+/// (Codex High 3) 0바이트 호출은 caller가 사전에 거부해야 함
+pub fn parse_byte_range(header: &str, total_size: u64) -> Result<(u64, u64), &'static str> {
+    let range_str = match header.strip_prefix("bytes=") {
+        Some(s) => s.trim(),
+        None => return Err("Range 헤더는 'bytes=' prefix 필수"),
+    };
+
+    // Multi-range는 명시적 거부
+    if range_str.contains(',') {
+        return Err("multipart/byteranges 미지원 (single range만 허용)");
+    }
+
+    if total_size == 0 {
+        return Err("0바이트 파일은 range 불가");
+    }
+
+    let parts: Vec<&str> = range_str.split('-').collect();
+    if parts.len() != 2 {
+        return Err("잘못된 range 형식 (start-end 필수)");
+    }
+
+    let (start_str, end_str) = (parts[0].trim(), parts[1].trim());
+
+    let (start, end) = match (start_str, end_str) {
+        ("", "") => return Err("빈 range 거부"),
+        ("", end_str) => {
+            // bytes=-N → 마지막 N 바이트
+            let n = end_str.parse::<u64>().map_err(|_| "invalid suffix range")?;
+            if n == 0 {
+                return Err("0 suffix range");
+            }
+            let n = n.min(total_size);
+            (total_size - n, total_size - 1)
+        }
+        (start_str, "") => {
+            // bytes=N- → N부터 끝까지
+            let s = start_str.parse::<u64>().map_err(|_| "invalid start")?;
+            if s >= total_size {
+                return Err("start beyond EOF");
+            }
+            (s, total_size - 1)
+        }
+        (start_str, end_str) => {
+            // bytes=N-M
+            let s = start_str.parse::<u64>().map_err(|_| "invalid start")?;
+            let e = end_str.parse::<u64>().map_err(|_| "invalid end")?;
+            if s > e || s >= total_size {
+                return Err("invalid start-end");
+            }
+            (s, e.min(total_size - 1))
+        }
+    };
+
+    Ok((start, end))
+}
+
+#[cfg(test)]
+mod range_tests {
+    use super::parse_byte_range;
+
+    #[test]
+    fn test_full_range() {
+        assert_eq!(parse_byte_range("bytes=0-99", 1000), Ok((0, 99)));
+        assert_eq!(parse_byte_range("bytes=100-199", 1000), Ok((100, 199)));
+    }
+
+    #[test]
+    fn test_open_end() {
+        // bytes=N- → N부터 끝까지
+        assert_eq!(parse_byte_range("bytes=500-", 1000), Ok((500, 999)));
+        assert_eq!(parse_byte_range("bytes=0-", 1000), Ok((0, 999)));
+    }
+
+    #[test]
+    fn test_suffix_range() {
+        // bytes=-N → 마지막 N 바이트
+        assert_eq!(parse_byte_range("bytes=-100", 1000), Ok((900, 999)));
+        // 파일보다 큰 suffix → 전체
+        assert_eq!(parse_byte_range("bytes=-2000", 1000), Ok((0, 999)));
+    }
+
+    #[test]
+    fn test_end_clamp() {
+        // end > total_size → total_size - 1로 클램프
+        assert_eq!(parse_byte_range("bytes=0-9999", 1000), Ok((0, 999)));
+    }
+
+    #[test]
+    fn test_zero_size_rejected() {
+        assert!(parse_byte_range("bytes=0-99", 0).is_err());
+        assert!(parse_byte_range("bytes=-1", 0).is_err());
+    }
+
+    #[test]
+    fn test_multi_range_rejected() {
+        // (Codex Medium 8) multipart/byteranges 명시 거부
+        assert!(parse_byte_range("bytes=0-99,200-299", 1000).is_err());
+        assert!(parse_byte_range("bytes=0-1,10-11", 1000).is_err());
+    }
+
+    #[test]
+    fn test_invalid_format() {
+        assert!(parse_byte_range("bytes=abc", 1000).is_err());
+        assert!(parse_byte_range("0-99", 1000).is_err()); // bytes= 누락
+        assert!(parse_byte_range("bytes=", 1000).is_err());
+        assert!(parse_byte_range("bytes=-", 1000).is_err());
+        assert!(parse_byte_range("bytes=100-50", 1000).is_err()); // start > end
+    }
+
+    #[test]
+    fn test_start_beyond_eof() {
+        assert!(parse_byte_range("bytes=2000-", 1000).is_err());
+        assert!(parse_byte_range("bytes=1000-", 1000).is_err()); // == size
+    }
+
+    #[test]
+    fn test_zero_suffix() {
+        assert!(parse_byte_range("bytes=-0", 1000).is_err());
     }
 }

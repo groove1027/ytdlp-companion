@@ -22,6 +22,7 @@ import { getQuotaUsage, fetchTimedTranscriptForAnalysis } from '../../../service
 import { extractStreamUrl, isYtdlpServerConfigured, getSocialMetadata, downloadSocialVideo, fetchFramesFromServer } from '../../../services/ytdlpApiService';
 import { detectPlatform } from '../../../services/videoDownloadService';
 import { uploadMediaToHosting } from '../../../services/uploadService';
+import { smartUpload } from '../../../services/companion/smartUpload';
 import { detectSceneCuts, mergeWithAiTimecodes } from '../../../services/sceneDetection';
 import {
   beginCapCutDirectInstallSelection,
@@ -4118,6 +4119,15 @@ const VideoAnalysisRoom: React.FC = () => {
   const analysisStartRef = useRef<number>(0);
   const analysisRunIdRef = useRef(0);
   const sourcePrepCacheRef = useRef<Map<string, SourcePreparationCacheEntry>>(new Map());
+  // [v2.0 #1066] (Codex 프론트 2차+5차 High) 키별 분리된 활성 터널 cleanup 추적
+  // sourceCacheKey → cleanup 함수들. 다른 sourceKey 분석 시 이전 키의 터널을 보존하여
+  // sourcePrepCache(LRU 6칸)에 hold된 다른 영상 캐시도 살아있게 한다.
+  const tunnelCleanupsByKeyRef = useRef<Map<string, Array<() => Promise<void>>>>(new Map());
+  // (Codex 프론트 4차 High) 동기 lock — setIsAnalyzing은 async라 race window 존재
+  const handleAnalyzeLockRef = useRef(false);
+  // (Codex 프론트 4차 Medium) sourcePrepCache 만료 추적 — 터널 TTL 30분 이내만 fresh
+  const sourcePrepCacheTimestampsRef = useRef<Map<string, number>>(new Map());
+  const SOURCE_PREP_CACHE_TTL_MS = 25 * 60 * 1000; // 25분 (터널 TTL 30분보다 안전 마진)
   const sourceDiarizationCacheRef = useRef<Map<string, SourceDiarizationCacheEntry>>(new Map());
   const analysisPerfRef = useRef<{
     runId: number;
@@ -4374,7 +4384,50 @@ const VideoAnalysisRoom: React.FC = () => {
   const handleAnalyze = async (preset: AnalysisPreset, force = false) => {
     if (!requireAuth('영상 분석')) return;
     if (!hasInput) return;
+    // (Codex 프론트 4차 High) 동기 lock — useRef 즉시 set으로 race 차단
+    if (handleAnalyzeLockRef.current) {
+      console.warn('[VideoAnalysis] 이미 분석 중 — 중복 호출 무시');
+      return;
+    }
+    handleAnalyzeLockRef.current = true;
+    try {
     const sourceCacheKey = buildVideoAnalysisSourceCacheKey(inputMode, validYoutubeUrls, uploadedFiles);
+
+    // [v2.0 #1066] (Codex 프론트 2차+3차+4차+5차) 키별 cleanup + stale timestamps 정리
+    // 매 진입마다 stale timestamps 일괄 정리 — LRU evict로 사라진 키도 같이 청소
+    const now = Date.now();
+    const staleKeys: string[] = [];
+    sourcePrepCacheTimestampsRef.current.forEach((ts, k) => {
+      const cacheStillExists = sourcePrepCacheRef.current.has(k);
+      const expired = (now - ts) > SOURCE_PREP_CACHE_TTL_MS;
+      if (!cacheStillExists || expired) staleKeys.push(k);
+    });
+    for (const k of staleKeys) {
+      sourcePrepCacheTimestampsRef.current.delete(k);
+      sourcePrepCacheRef.current.delete(k);
+      // 해당 키의 터널들 정리
+      const cleanups = tunnelCleanupsByKeyRef.current.get(k);
+      if (cleanups && cleanups.length > 0) {
+        Promise.allSettled(cleanups.map(fn => fn())).catch(() => {});
+      }
+      tunnelCleanupsByKeyRef.current.delete(k);
+    }
+
+    // 현재 키의 fresh 여부
+    const cacheTimestamp = sourcePrepCacheTimestampsRef.current.get(sourceCacheKey);
+    const cacheStale = !cacheTimestamp || (now - cacheTimestamp) > SOURCE_PREP_CACHE_TTL_MS;
+    const cachedEntryFresh = !force && sourcePrepCacheRef.current.has(sourceCacheKey) && !cacheStale;
+
+    if (!cachedEntryFresh) {
+      // 이 키의 이전 cleanup만 실행 (다른 키는 그대로 둠 — 다른 영상 캐시 보존)
+      const prev = tunnelCleanupsByKeyRef.current.get(sourceCacheKey) || [];
+      tunnelCleanupsByKeyRef.current.delete(sourceCacheKey);
+      if (prev.length > 0) {
+        Promise.allSettled(prev.map(fn => fn())).catch(() => {});
+      }
+      sourcePrepCacheRef.current.delete(sourceCacheKey);
+      sourcePrepCacheTimestampsRef.current.delete(sourceCacheKey);
+    }
 
     // ffmpeg.wasm 사전 로드 (백그라운드, 분석 시작과 동시에)
     if (!ffmpegPreloaded.current) {
@@ -4524,20 +4577,33 @@ const VideoAnalysisRoom: React.FC = () => {
           knownDurationSec = allFrames.reduce((mx, f) => Math.max(mx, f.timeSec), 0);
         }
 
-        // [FIX #208] 프레임 추출 완전 실패 시 Cloudinary 업로드 → v1beta 영상 분석 폴백
+        // [FIX #208] 프레임 추출 완전 실패 시 업로드 → v1beta 영상 분석 폴백
+        // [v2.0 #1066] smartUpload 사용 — 컴패니언 터널 우선, Cloudinary 자동 폴백
+        // (Codex 프론트 1차 High) 함수 스코프 cleanup 배열 + finally에서 일괄 정리 (window 전역 X)
         if (allFrames.length === 0 && uploadedFiles.length > 0) {
           showToast('⚠️ 프레임 추출 실패 — 영상을 업로드하여 분석합니다...', 5000);
           try {
-            // [FIX #189] 다중 영상: 모든 파일 Cloudinary 업로드 → v1beta 다중 fileData로 동시 전달
+            // [v2.0 #1066] 다중 영상: smartUpload로 각각 업로드. 터널이 가용하면 89MB+/4분+도 OK
             const uploadedVideoUris: string[] = [];
             const uploadedVideoMimes: string[] = [];
             for (let fi = 0; fi < uploadedFiles.length; fi++) {
               try {
                 if (abortCtrl.signal.aborted) throw new DOMException('분석이 취소되었습니다.', 'AbortError');
-                const hostedUrl = await uploadMediaToHosting(uploadedFiles[fi], undefined, abortCtrl.signal);
-                uploadedVideoUris.push(hostedUrl);
+                const upload = await smartUpload(uploadedFiles[fi], {
+                  signal: abortCtrl.signal,
+                  ttlSecs: 1800, // 30분 — 다중 영상 분석 여유
+                });
+                uploadedVideoUris.push(upload.url);
                 uploadedVideoMimes.push(uploadedFiles[fi].type || 'video/mp4');
-                console.log(`[VideoAnalysis] 영상 ${fi + 1}/${uploadedFiles.length} 업로드 성공:`, hostedUrl.slice(0, 80));
+                // (Codex 프론트 5차 High) sourceCacheKey별 분리 등록 — 다른 영상 캐시 보존
+                const arr = tunnelCleanupsByKeyRef.current.get(sourceCacheKey) || [];
+                arr.push(upload.cleanup);
+                tunnelCleanupsByKeyRef.current.set(sourceCacheKey, arr);
+                console.log(`[VideoAnalysis] 영상 ${fi + 1}/${uploadedFiles.length} 업로드 성공 (${upload.source}, ${(uploadedFiles[fi].size / 1024 / 1024).toFixed(1)}MB)`);
+                // (Codex 프론트 2차 Low) 큰 파일이 Cloudinary 폴백된 경우 사용자 안내
+                if (upload.source === 'cloudinary' && uploadedFiles[fi].size > 50 * 1024 * 1024 && fi === 0) {
+                  showToast('💡 컴패니언 v2.0+ 설치 시 더 빠른 업로드와 무제한 영상 분석이 가능합니다', 6000);
+                }
               } catch (e) {
                 if (abortCtrl.signal.aborted) throw new DOMException('분석이 취소되었습니다.', 'AbortError');
                 console.warn(`[VideoAnalysis] 영상 ${fi + 1} 업로드 실패:`, e);
@@ -4546,6 +4612,7 @@ const VideoAnalysisRoom: React.FC = () => {
             if (uploadedVideoUris.length === 0) {
               throw new Error('영상 업로드 실패');
             }
+
             // v1beta에 모든 영상 URI를 동시 전달 (다중 fileData parts)
             allVideoUris = uploadedVideoUris;
             allVideoMimes = uploadedVideoMimes;
@@ -4554,12 +4621,12 @@ const VideoAnalysisRoom: React.FC = () => {
           } catch (uploadErr) {
             // [FIX #386] abort 시에는 원래 에러 전파 — AbortError 정보 유지
             if (abortCtrl.signal.aborted) throw new DOMException('분석이 취소되었습니다.', 'AbortError');
-            console.warn('[VideoAnalysis] Cloudinary 업로드도 실패:', uploadErr);
+            console.warn('[VideoAnalysis] 업로드 실패:', uploadErr);
             throw new Error(
               '영상 프레임 추출에 실패했습니다.\n' +
               '• Chrome 최신 버전을 사용해 보세요\n' +
               '• 영상 파일 크기를 줄여 보세요 (300MB 이하 권장)\n' +
-              '• Cloudinary 설정 시 자동 업로드 분석이 가능합니다'
+              '• 컴패니언 앱 v2.0+ 설치 시 무제한 분석 가능'
             );
           }
         }
@@ -4781,6 +4848,8 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
           inputDesc,
           hasTimedTranscript,
         });
+        // (Codex 프론트 4차 Medium) 캐시 timestamp 동시 기록
+        sourcePrepCacheTimestampsRef.current.set(sourceCacheKey, Date.now());
       }
       setThumbnails(frames);
 
@@ -4929,9 +4998,13 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
           if (audioSource) {
             console.log(`[Diarization] 화자 분리 시작 (${(audioSource.size / 1024 / 1024).toFixed(1)}MB)...`);
             let recoveryToastShown = false;
+            // (Codex 프론트 8차 Medium) 원본 mime 보존 — webm/mov 등 비-mp4 입력 안전 처리
+            const audioMime = audioSource instanceof File
+              ? (audioSource.type || 'video/mp4')
+              : ((audioSource as Blob).type || 'video/mp4');
             const diarizationResult = await runAbortableTaskWithBudget(
               (diarizationSignal) => transcribeVideoAudio(
-                audioSource instanceof File ? audioSource : new File([audioSource], 'video.mp4', { type: 'video/mp4' }),
+                audioSource instanceof File ? audioSource : new File([audioSource], 'video.bin', { type: audioMime }),
                 {
                   signal: diarizationSignal,
                   onProgress: (msg) => {
@@ -5346,8 +5419,12 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
             if (dlResult?.blob) lazyAudioSource = dlResult.blob;
           }
           if (lazyAudioSource) {
+            // (Codex 프론트 8차 Medium) 원본 mime 보존
+            const lazyMime = lazyAudioSource instanceof File
+              ? (lazyAudioSource.type || 'video/mp4')
+              : ((lazyAudioSource as Blob).type || 'video/mp4');
             const lazyResult = await transcribeVideoAudio(
-              lazyAudioSource instanceof File ? lazyAudioSource : new File([lazyAudioSource], 'video.mp4', { type: 'video/mp4' }),
+              lazyAudioSource instanceof File ? lazyAudioSource : new File([lazyAudioSource], 'video.bin', { type: lazyMime }),
               { signal, failOnError: false },
             );
             if (lazyResult) {
@@ -5768,10 +5845,38 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       analysisAbortRef.current = null;
       setIsAnalyzing(false);
       setAnalysisPhase('idle');
+      // [v2.0 #1066] (Codex 프론트 2차 High) 터널 cleanup은 finally에서 호출 X
+      // 캐시 hit window를 위해 다음 handleAnalyze 진입 시 정리. 컴패니언 TTL(30분)이 안전 마진.
       // [FIX #313] 분석 종료 시 최종 자동 저장 (부분 결과 포함)
       autoSave().catch(() => {});
     }
+    } finally {
+      // (Codex 프론트 4차 High) 동기 lock 해제 — try 블록의 모든 경로 종료 시
+      handleAnalyzeLockRef.current = false;
+    }
   };
+
+  // [v2.0 #1066] 컴포넌트 unmount 시 진행 중 분석 abort + 모든 키의 활성 터널 정리
+  // (Codex 프론트 10차 High) 분석 abort 먼저 → 그 다음 터널 cleanup
+  // 순서가 중요: 분석 먼저 abort해야 사용 중인 URL 폐기로 인한 mid-request 실패 방지
+  useEffect(() => {
+    return () => {
+      // 1. 진행 중 분석 abort (있으면)
+      if (analysisAbortRef.current) {
+        try {
+          analysisAbortRef.current.abort();
+        } catch { /* ignore */ }
+        analysisAbortRef.current = null;
+      }
+      // 2. 모든 키의 cleanup 일괄 실행
+      const allCleanups: Array<() => Promise<void>> = [];
+      tunnelCleanupsByKeyRef.current.forEach(arr => allCleanups.push(...arr));
+      tunnelCleanupsByKeyRef.current.clear();
+      if (allCleanups.length > 0) {
+        Promise.allSettled(allCleanups.map(fn => fn())).catch(() => {});
+      }
+    };
+  }, []);
 
   // [FIX #700] "편집실로 보내기" 공통 핸들러 — 중복 클릭 방지 + 다운로드 실패 토스트 + 즉시 이동
   const handleSendToEditRoom = useCallback(async (v: VersionItem | null) => {
