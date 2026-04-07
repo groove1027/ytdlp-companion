@@ -764,21 +764,11 @@ export const useEditPointStore = create<EditPointStore>()(immer((set, get) => ({
     if (isProcessing) { showToast('이미 처리 중입니다.'); return; }
     if (edlEntries.length === 0) { showToast('편집 항목이 없습니다.'); return; }
 
-    // WebCodecs 지원 확인 (retryImport: 배포 후 chunk 404 자동 복구)
+    // [v2.0.2] 우선순위: 컴패니언 ffmpeg-cut(모든 코덱, 5~15× 빠름)
+    //          → WebCodecs(브라우저 내, H.264 한정)
+    //          → FFmpeg script (사용자 수동)
+    // 이전: WebCodecs 강제 → av1/hevc/vp9 등 사용자 다수가 "H.264 코덱만 지원" 에러 (#1080)
     const { retryImport } = await import('../utils/retryImport');
-    const { isClipCutSupported, cutClips } = await retryImport(() => import('../services/webcodecs/clipCutter'));
-    if (!isClipCutSupported()) {
-      // 폴백: FFmpeg 스크립트 다운로드
-      const fileNameMapping: Record<string, string> = {};
-      for (const [sourceId, videoId] of Object.entries(sourceMapping)) {
-        const video = sourceVideos.find((v) => v.id === videoId);
-        fileNameMapping[sourceId] = video?.fileName || sourceId;
-      }
-      const script = generateFFmpegScript(edlEntries, fileNameMapping);
-      downloadFile(script, 'edit_script.sh', 'text/x-shellscript');
-      showToast('WebCodecs 미지원 브라우저입니다. FFmpeg 스크립트로 대체합니다.');
-      return;
-    }
 
     const mappedVideoIds = new Set(
       edlEntries
@@ -786,25 +776,38 @@ export const useEditPointStore = create<EditPointStore>()(immer((set, get) => ({
         .filter((videoId): videoId is string => !!videoId),
     );
 
-    if (mappedVideoIds.size > 1) {
-      const fileNameMapping: Record<string, string> = {};
-      for (const [sourceId, videoId] of Object.entries(sourceMapping)) {
-        const video = sourceVideos.find((v) => v.id === videoId);
-        fileNameMapping[sourceId] = video?.fileName || sourceId;
-      }
-      const script = generateFFmpegScript(edlEntries, fileNameMapping);
-      downloadFile(script, 'edit_script.sh', 'text/x-shellscript');
-      showToast('여러 소스 영상이 섞여 있어 빠른 자르기 대신 FFmpeg 스크립트로 대체했습니다.');
-      return;
-    }
-
+    // 단일 소스 — 컴패니언/WebCodecs 둘 다 시도 가능
+    // 다중 소스 — 컴패니언은 1 영상씩만 처리하므로 폴백으로 FFmpeg script
+    const isSingleSource = mappedVideoIds.size <= 1;
     const sourceVideoId = mappedVideoIds.size === 1
       ? Array.from(mappedVideoIds)[0]
       : sourceVideos.length === 1
         ? sourceVideos[0].id
         : null;
     const sourceVideo = sourceVideos.find((v) => v.id === sourceVideoId);
-    if (!sourceVideo?.file) { showToast('소스 영상을 찾을 수 없습니다.'); return; }
+
+    const fileNameMapping: Record<string, string> = {};
+    for (const [sourceId, videoId] of Object.entries(sourceMapping)) {
+      const video = sourceVideos.find((v) => v.id === videoId);
+      fileNameMapping[sourceId] = video?.fileName || sourceId;
+    }
+
+    const writeFFmpegScriptFallback = (reason: string) => {
+      const script = generateFFmpegScript(edlEntries, fileNameMapping);
+      downloadFile(script, 'edit_script.sh', 'text/x-shellscript');
+      showToast(`${reason} FFmpeg 스크립트로 대체합니다.`);
+    };
+
+    // 다중 소스 → 즉시 script (현재 컴패니언 cut endpoint는 단일 입력 영상 가정)
+    if (!isSingleSource) {
+      writeFFmpegScriptFallback('여러 소스 영상이 섞여 있어 빠른 자르기 대신');
+      return;
+    }
+
+    if (!sourceVideo?.file) {
+      showToast('소스 영상을 찾을 수 없습니다.');
+      return;
+    }
 
     set({
       isProcessing: true,
@@ -813,18 +816,13 @@ export const useEditPointStore = create<EditPointStore>()(immer((set, get) => ({
       processingMessage: '영상 자르기 준비 중...',
     });
 
-    try {
-      const clips = edlEntries.map((e) => ({
-        label: e.order,
-        startSec: e.refinedTimecodeStart ?? e.timecodeStart,
-        endSec: e.refinedTimecodeEnd ?? e.timecodeEnd,
-      }));
+    const clips = edlEntries.map((e) => ({
+      label: e.order,
+      startSec: e.refinedTimecodeStart ?? e.timecodeStart,
+      endSec: e.refinedTimecodeEnd ?? e.timecodeEnd,
+    }));
 
-      const zipBlob = await cutClips(sourceVideo.file, clips, (progress, message) => {
-        set({ processingProgress: progress, processingMessage: message });
-      });
-
-      // ZIP 다운로드
+    const downloadZip = (zipBlob: Blob) => {
       const url = URL.createObjectURL(zipBlob);
       logger.registerBlobUrl(url, 'other', 'editPointStore:quickExportClips');
       const a = document.createElement('a');
@@ -834,8 +832,65 @@ export const useEditPointStore = create<EditPointStore>()(immer((set, get) => ({
       a.click();
       document.body.removeChild(a);
       setTimeout(() => { logger.unregisterBlobUrl(url); URL.revokeObjectURL(url); }, 5000);
+    };
 
-      showToast(`${clips.length}개 클립이 ZIP으로 다운로드되었습니다.`);
+    try {
+      // ── 1순위: 컴패니언 native ffmpeg-cut ──
+      const { cutClipsViaCompanion, isCompanionFfmpegCutAvailable } = await retryImport(
+        () => import('../services/companion/cutClipsCompanion'),
+      );
+      const companionAvailable = await isCompanionFfmpegCutAvailable();
+      if (companionAvailable) {
+        try {
+          logger.info('[quickExportClips] 컴패니언 ffmpeg-cut 사용 (모든 코덱)');
+          const zipBlob = await cutClipsViaCompanion(
+            sourceVideo.file,
+            clips,
+            (progress, message) => {
+              set({ processingProgress: progress, processingMessage: `🎬 컴패니언: ${message}` });
+            },
+          );
+          downloadZip(zipBlob);
+          showToast(`${clips.length}개 클립이 컴패니언 ffmpeg로 잘려 ZIP으로 다운로드되었습니다.`);
+          return;
+        } catch (err) {
+          // AbortError는 즉시 전파
+          if ((err as Error)?.name === 'AbortError') throw err;
+          logger.warn(
+            '[quickExportClips] 컴패니언 ffmpeg-cut 실패 → WebCodecs 폴백',
+            err instanceof Error ? err.message : String(err),
+          );
+        }
+      }
+
+      // ── 2순위: WebCodecs (H.264 한정, 단일 소스 + 브라우저 내 처리) ──
+      const { isClipCutSupported, cutClips } = await retryImport(
+        () => import('../services/webcodecs/clipCutter'),
+      );
+      if (isClipCutSupported()) {
+        try {
+          logger.info('[quickExportClips] WebCodecs 사용 (H.264 한정 폴백)');
+          const zipBlob = await cutClips(sourceVideo.file, clips, (progress, message) => {
+            set({ processingProgress: progress, processingMessage: `🌐 브라우저: ${message}` });
+          });
+          downloadZip(zipBlob);
+          showToast(`${clips.length}개 클립이 ZIP으로 다운로드되었습니다.`);
+          return;
+        } catch (err) {
+          if ((err as Error)?.name === 'AbortError') throw err;
+          logger.warn(
+            '[quickExportClips] WebCodecs 실패 → FFmpeg script 폴백',
+            err instanceof Error ? err.message : String(err),
+          );
+        }
+      }
+
+      // ── 3순위: FFmpeg script (사용자 수동 실행) ──
+      writeFFmpegScriptFallback(
+        companionAvailable
+          ? '컴패니언과 브라우저 자르기 모두 실패해'
+          : '컴패니언 v2.0.2 미설치 + 브라우저 코덱 미지원으로',
+      );
     } catch (err) {
       showToast('영상 자르기 실패: ' + normalizeClipCutErrorMessage(err));
     } finally {
