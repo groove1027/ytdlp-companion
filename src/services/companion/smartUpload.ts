@@ -13,7 +13,7 @@
  *   }
  */
 
-import { uploadMediaToHosting } from '../uploadService';
+import { uploadMediaPermanent } from '../uploadService';
 import { logger } from '../LoggerService';
 import {
   openTunnelForFile,
@@ -63,7 +63,7 @@ export async function smartUpload(
 ): Promise<SmartUploadResult> {
   // 1+2: 강제 Cloudinary 또는 작은 파일
   if (options.forceCloudinary || file.size < TUNNEL_THRESHOLD_BYTES) {
-    const url = await uploadMediaToHosting(file, undefined, options.signal);
+    const url = await uploadMediaPermanent(file, undefined, options.signal);
     return {
       url,
       cleanup: async () => {},
@@ -116,7 +116,7 @@ export async function smartUpload(
   }
 
   // 4: Cloudinary 폴백
-  const url = await uploadMediaToHosting(file, undefined, options.signal);
+  const url = await uploadMediaPermanent(file, undefined, options.signal);
   return {
     url,
     cleanup: async () => {},

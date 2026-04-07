@@ -1,5 +1,6 @@
 
-import { uploadMediaToHosting, uploadRemoteUrlToCloudinary } from './uploadService';
+// [v2.0 Phase 3] 영구 저장 — uploadMediaPermanent 사용 (Cloudinary 강제, 터널 X)
+import { uploadMediaPermanent as uploadMediaToHosting, uploadRemoteUrlToCloudinary } from './uploadService';
 import { dataURLtoFile } from '../utils/fileHelpers';
 import { logger } from './LoggerService';
 import type { Scene } from '../types';

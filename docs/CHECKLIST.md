@@ -8,6 +8,17 @@
 
 ## 🟢 완료된 작업
 
+- [x] **2026-04-07 — v2.0 Phase 3/4 보안·업로드 회귀 수정**
+  - `rg -n "uploadMediaToHosting|uploadMediaPermanent|smartUpload|PRIVACY_MODE_ENABLED|scanLibrary|getFileInfo|/api/library/scan|/api/library/file-info|/api/capture/screen|VIDEO_ANALYSIS_TIMEOUT_MS|maxOutputTokens" src companion -g '!dist'`로 Phase 3/4 영향 범위 전수 조사 완료
+  - `src/services/companion/smartUpload.ts` — Cloudinary 경로가 wrapper `uploadMediaToHosting()`를 다시 타지 않도록 `uploadMediaPermanent()`로 분리해 중복 터널 재시도와 `forceCloudinary` 의미 붕괴를 차단
+  - `companion/src-tauri/src/server.rs` — 라이브러리 스캔에서 symlink를 건너뛰고 재귀 진입 전에 canonical path가 홈 디렉터리 하위인지 다시 검증하도록 보강. 캡처 엔드포인트는 format/target 검증, macOS 활성 창 ID 조회 분리, Windows PowerShell 경로 env 전달, base64/tunnel 실패 시 임시 파일 즉시 삭제를 추가
+  - `src/services/companion/libraryClient.ts` — raw `fetch`와 신규 `any`를 제거하고 `monitoredFetch` + 명시적 응답 타입으로 정리
+  - `cd companion/src-tauri && cargo build`: 성공 (기존 unused/private_interfaces/dead_code warning 9건 유지, 신규 오류 없음)
+  - `cd companion/src-tauri && cargo test`: 성공 (19 passed, 기존 warning 동일)
+  - `cd src && node_modules/typescript/bin/tsc --noEmit`: 통과
+  - `cd src && node_modules/.bin/vite build`: 성공 (기존 dynamic import/chunk-size warning만 출력)
+  - `rg -n "uploadMediaPermanent|smartUpload|cleanup_capture_file|invalid_filter|frontmost_window_id|scan_directory\\(|LibraryScanApiResponse|LibraryFileInfoApiResponse" src/services/companion/smartUpload.ts src/services/companion/libraryClient.ts companion/src-tauri/src/server.rs docs/CHECKLIST.md`: 반영 위치 재확인
+
 - [x] **2026-04-07 — companion v2.0.0 + 프론트 통합 마지막 결함 수정 (터널 cleanup LRU 누수)**
   - `rg -n "TUNNEL_MANAGER|init_tunnel_manager|graceful_shutdown|video_tunnel|RunEvent::ExitRequested|expected_cloudflared_sha256|openTunnelForFile|closeTunnel|combineSignals|smartUpload|handleAnalyze|tunnelCleanupsByKeyRef|handleAnalyzeLockRef" companion/src-tauri src` 및 `rg -n "setLimitedCacheEntry|sourcePrepCacheRef|sourcePrepCacheTimestampsRef|tunnelCleanupsByKeyRef" src/components/tabs/channel/VideoAnalysisRoom.tsx`로 영향 범위 전수 조사 완료
   - `src/components/tabs/channel/VideoAnalysisRoom.tsx` — `setLimitedCacheEntry()`가 evicted key 목록을 반환하도록 바꾸고, `runTunnelCleanupsForKey()` / `evictSourcePrepCacheKey()`를 추가해 source prep LRU에서 밀려난 키의 timestamp와 tunnel cleanup을 즉시 정리하도록 수정
