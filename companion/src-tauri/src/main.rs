@@ -44,9 +44,19 @@ fn main() {
     // 결과:
     //   true  → 9876 비어있음 (정상 진행)
     //   false → 5초 후에도 점유 중 (single-instance plugin이 자동으로 새 인스턴스 종료할 것)
-    let _takeover_ok = takeover::takeover_old_helper_if_present();
-    let _new_token = takeover::ensure_quit_token();
-    println!("[Companion] quit-token 갱신 완료 (다음 take-over용)");
+    // [v2.0.3 hotfix] takeover가 false를 리턴하면(같은 버전 감지 → self-kill 루프 방지)
+    // single-instance plugin이 곧 본 instance를 종료시킬 예정이므로 quit-token을
+    // 갱신하지 않는다. 갱신하면 살아남은 기존 instance의 in-memory token과 디스크 token이
+    // 어긋나서 다음 cross-version takeover의 graceful /quit가 실패할 수 있음.
+    let takeover_ok = takeover::takeover_old_helper_if_present();
+    if takeover_ok {
+        let _new_token = takeover::ensure_quit_token();
+        println!("[Companion] quit-token 갱신 완료 (다음 take-over용)");
+    } else {
+        println!(
+            "[Companion] takeover 스킵 — quit-token 갱신 보류 (single-instance plugin이 본 instance를 정리할 것)"
+        );
+    }
 
     tauri::Builder::default()
         // 중복 실행 방지 — deep-link로 2차 인스턴스가 뜨면 기존 인스턴스에 위임

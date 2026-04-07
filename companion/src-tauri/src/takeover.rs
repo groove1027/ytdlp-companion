@@ -96,9 +96,33 @@ fn generate_random_token() -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
+/// 9876 포트의 옛 헬퍼에 대한 정보 (signature 매칭 + 추출된 메타데이터).
+///
+/// [v2.0.3 hotfix #1090-windows] takeover 의사결정에 필요한 옛 instance의 버전을
+/// 함께 들고온다. 같은 버전이면 self-kill 무한 루프 방지를 위해 takeover를 건너뛴다.
+struct HelperInfo {
+    /// /health JSON에서 추출한 `version` 필드. 추출 실패 시 None.
+    /// None이면 옛(v1.x) 또는 비표준 응답 → 안전하게 takeover 진행.
+    version: Option<String>,
+}
+
+/// /health JSON 응답 body에서 `"version":"X.Y.Z"` 패턴을 std-only 파싱으로 추출.
+/// serde_json 의존성을 takeover에 끌어오지 않기 위함 (main() 첫 줄 호출용).
+fn extract_version_from_health(response: &str) -> Option<String> {
+    let key = "\"version\":\"";
+    let start = response.find(key)? + key.len();
+    let rest = response.get(start..)?;
+    let end = rest.find('"')?;
+    let version = rest.get(..end)?.trim();
+    if version.is_empty() || version.len() > 32 {
+        return None;
+    }
+    Some(version.to_string())
+}
+
 /// 동기 health check — main()의 첫 줄에서 호출되므로 tokio runtime 없이 동작해야 함.
 /// reqwest::blocking을 쓰지 않고 std::net::TcpStream + raw HTTP로 처리.
-fn check_old_helper_signature() -> Option<String> {
+fn check_old_helper_signature() -> Option<HelperInfo> {
     use std::io::{Read, Write};
     use std::net::TcpStream;
 
@@ -124,8 +148,9 @@ fn check_old_helper_signature() -> Option<String> {
         // 절대 takeover 진행하지 않음.
         return None;
     }
-    // 응답 body에서 version 추출 시도 (실패해도 takeover는 진행)
-    Some(response)
+    // 응답 body에서 version 추출 (실패해도 HelperInfo는 리턴 — 옛 헬퍼로 간주)
+    let version = extract_version_from_health(&response);
+    Some(HelperInfo { version })
 }
 
 /// 옛 헬퍼에게 /quit 시도 — 새 v1.3.1+ 헬퍼만 응답함.
@@ -301,12 +326,42 @@ pub fn takeover_old_helper_if_present() -> bool {
     println!("[Takeover] 9876 포트 점유 확인 시작");
 
     // 1) signature 확인 — 9876에 응답하는 게 ytdlp-companion인지
-    let Some(_response) = check_old_helper_signature() else {
+    let Some(info) = check_old_helper_signature() else {
         println!("[Takeover] 9876 포트 비어있거나 다른 무관한 프로세스 — takeover 스킵");
         return true;
     };
 
-    println!("[Takeover] 옛 ytdlp-companion 감지 — takeover 진행");
+    // [v2.0.3 hotfix — Windows self-kill loop]
+    // 같은 버전 instance가 9876을 점유 중이면 takeover를 절대 진행하지 않는다.
+    // 이유: v2.0.2에서 wrapper / autostart / deep-link 등이 같은 binary를 두 번
+    // spawn할 때, 두 번째 instance가 첫 번째를 takeover로 죽이고, 그 다음 첫 번째가
+    // 다시 spawn되어 두 번째를 죽이는 무한 루프가 발생함 ("꺼졌다 켜졌다" 증상).
+    //
+    // 같은 버전끼리는 single-instance plugin이 dedup하도록 위임한다.
+    // - takeover가 false를 리턴하면 main()은 그대로 진행 → tauri::Builder가
+    //   single-instance plugin을 등록 → plugin이 즉시 두 번째 instance를 catch하고
+    //   기존 instance에 위임 → 두 번째 instance는 graceful exit.
+    //
+    // 다른 버전 (예: v2.0.2 → v2.0.3 업그레이드, v1.3.1 → v2.0.3 점프)이면 기존
+    // takeover 동작 유지 → graceful /quit 또는 force kill → 새 instance 시작.
+    let my_version = env!("CARGO_PKG_VERSION");
+    if let Some(other_version) = info.version.as_deref() {
+        if other_version == my_version {
+            eprintln!(
+                "[Takeover] 같은 버전({}) 감지 — self-kill 루프 방지를 위해 takeover 스킵. \
+                 single-instance plugin이 본 instance를 정리할 것.",
+                my_version
+            );
+            // false를 리턴 → main()은 진행하지만 single-instance plugin이 즉시 catch.
+            return false;
+        }
+        println!(
+            "[Takeover] 옛 버전({}) → 본 버전({}) 감지 — takeover 진행",
+            other_version, my_version
+        );
+    } else {
+        println!("[Takeover] 옛 ytdlp-companion 감지 (버전 미상 = v1.x 이하) — takeover 진행");
+    }
 
     // 2) graceful quit 시도 (새 v1.3.1+ 헬퍼만 응답)
     if try_graceful_quit() {
@@ -331,4 +386,46 @@ pub fn takeover_old_helper_if_present() -> bool {
 
     eprintln!("[Takeover] {}초 후에도 9876이 점유 중 — 사용자 액션 필요", TAKEOVER_TIMEOUT_SECS);
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_version_parses_well_formed_health_response() {
+        let body = r#"HTTP/1.1 200 OK
+Content-Type: application/json
+
+{"app":"ytdlp-companion","status":"ok","version":"2.0.3","ytdlp_version":null}"#;
+        assert_eq!(extract_version_from_health(body).as_deref(), Some("2.0.3"));
+    }
+
+    #[test]
+    fn extract_version_returns_none_when_field_missing() {
+        let body = r#"{"app":"ytdlp-companion","status":"ok"}"#;
+        assert_eq!(extract_version_from_health(body), None);
+    }
+
+    #[test]
+    fn extract_version_returns_none_for_empty_value() {
+        let body = r#"{"version":""}"#;
+        assert_eq!(extract_version_from_health(body), None);
+    }
+
+    #[test]
+    fn extract_version_rejects_oversized_value() {
+        let big = "x".repeat(64);
+        let body = format!(r#"{{"version":"{}"}}"#, big);
+        assert_eq!(extract_version_from_health(&body), None);
+    }
+
+    #[test]
+    fn extract_version_handles_v131_v202_v203() {
+        // 회귀 가드: 포맷이 깨지지 않음을 보장
+        for v in &["1.3.1", "2.0.2", "2.0.3", "10.20.30"] {
+            let body = format!(r#"{{"version":"{}"}}"#, v);
+            assert_eq!(extract_version_from_health(&body).as_deref(), Some(*v));
+        }
+    }
 }
