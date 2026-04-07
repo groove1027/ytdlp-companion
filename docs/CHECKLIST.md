@@ -8,6 +8,21 @@
 
 ## 🟢 완료된 작업
 
+- [x] **2026-04-07 — #1080 quickExportClips companion 우선 2차 좁은 검증**
+  - `rg -n "quickExportClips|cutClipsViaCompanion|isCompanionFfmpegCutAvailable|AbortSignal\\.any|monitoredFetch|writeFFmpegScriptFallback|cachedCutSupport|FfmpegCutRequest" src companion/src-tauri/src/server.rs docs/CHECKLIST.md`로 2차 검증 영향 범위 재조사 완료
+  - `src/services/companion/cutClipsCompanion.ts` — helper 내부의 `AbortSignal.any + AbortSignal.timeout` 중복 결합을 제거하고 `monitoredFetch()`의 caller signal + timeout 조합/cleanup 경로로 일원화. 이로써 별도 timeout signal 잔존과 `AbortSignal.any` 런타임 호환 이슈를 없앰
+  - `src/services/__tests__/cutClipsCompanion.test.ts` — health probe가 caller signal과 5초 timeout을 `monitoredFetch`에 위임하는지, cut 요청도 caller signal과 10분 timeout을 그대로 전달하는지 검증하도록 갱신
+
+- [x] **2026-04-07 — #1080 quickExportClips companion 우선 1차 검증 보강**
+  - `rg -n "quickExportClips|cutClipsViaCompanion|isCompanionFfmpegCutAvailable|cutClips\\(" src`, `rg -n "normalizeClipCutErrorMessage|AbortError|abort|isProcessing|processingPhase" src/stores/editPointStore.ts src/services -g '!src/services/__tests__/cutClipsCompanion.test.ts'`로 호출처/abort/state 영향 범위 전수 조사 완료
+  - `src/services/companion/cutClipsCompanion.ts` — health probe가 외부 signal을 받아도 5초 timeout을 유지하도록 signal 결합으로 수정했고, `AbortError`를 false 캐시로 삼키지 않도록 보강. base64 인코딩 루프/companion cut 요청 전후에 abort 즉시 전파를 추가했고, cut 요청 네트워크 실패 시 stale `ffmpeg-cut` 지원 캐시를 무효화하도록 정리
+  - `src/services/__tests__/cutClipsCompanion.test.ts` — 실제 30초 TTL 재조회, health probe signal 결합, health probe abort cache 오염 방지, pre-abort fetch 미호출, network error 후 health 재조회 케이스를 추가해 총 21개 테스트로 보강
+  - 재검증 결과: `cutClips` 직접 호출처는 `src/stores/editPointStore.ts` 한 곳뿐이며 추가 우선순위 적용 대상 없음. 다중 소스는 현재 endpoint가 단일 입력 가정이므로 즉시 FFmpeg script 폴백 유지가 타당함을 재확인
+  - `cd src && node_modules/.bin/vitest run services/__tests__/cutClipsCompanion.test.ts`: 21 passed
+  - `cd src && node_modules/typescript/bin/tsc --noEmit`: 통과
+  - `cd src && node_modules/.bin/vite build`: 성공 (기존 dynamic import/chunk-size warning만 출력)
+  - `rg -n "quickExportClips|cutClipsViaCompanion|isCompanionFfmpegCutAvailable|cutClips\\(" src docs/CHECKLIST.md`: 반영 위치 재확인
+
 - [x] **2026-04-07 — companion v2.0.2 ffmpeg 자동 다운로드 1차 검증 보강**
   - `rg -n "ffmpeg|ensure_ffmpeg|get_ffmpeg_path|find_system_ffmpeg|ALLOW_UNVERIFIED|tts|whisper" companion/src-tauri/src`, `rg -n "async_cmd\\(\"ffmpeg\"|get_ffmpeg_path_public|ffmpeg_cache_path" companion/src-tauri/src`로 영향 범위 전수 조사 완료
   - `companion/src-tauri/src/ffmpeg.rs` — Windows 시스템 탐지 경로에 `Program Files (x86)`, winget shim(`LOCALAPPDATA\\Microsoft\\WinGet\\Links`), scoop shim/app 경로를 추가하고, 공용 `system_ffmpeg_path()` helper 및 해당 후보군 단위 테스트를 추가
