@@ -21,7 +21,7 @@ import { getYoutubeApiKey, getKieKey, getGoogleGeminiKey, monitoredFetch } from 
 import { getQuotaUsage, fetchTimedTranscriptForAnalysis } from '../../../services/youtubeAnalysisService';
 import { extractStreamUrl, isYtdlpServerConfigured, getSocialMetadata, downloadSocialVideo, fetchFramesFromServer } from '../../../services/ytdlpApiService';
 import { detectPlatform } from '../../../services/videoDownloadService';
-import { uploadMediaToHosting } from '../../../services/uploadService';
+import { ensureVideoSizeForAnalysis, uploadMediaToHosting, VIDEO_ANALYSIS_MAX_BYTES, VIDEO_ANALYSIS_MAX_MB_LABEL, VIDEO_ANALYSIS_SIZE_HINT } from '../../../services/uploadService';
 import { smartUpload } from '../../../services/companion/smartUpload';
 import { detectSceneCuts, mergeWithAiTimecodes } from '../../../services/sceneDetection';
 import {
@@ -79,6 +79,12 @@ const REMIX_DIARIZATION_WAIT_BUDGET_LONG_MS = 45_000;
 function parseDuration(dur: string): number {
   const m = dur.match(/([\d.]+)\s*초/);
   return m ? parseFloat(m[1]) : 3;
+}
+
+function isVideoAnalysisSizeLimitError(error: unknown): error is Error {
+  return error instanceof Error
+    && error.message.includes(VIDEO_ANALYSIS_MAX_MB_LABEL)
+    && error.message.includes('AI 영상 분석');
 }
 
 /** TTS용 순수 텍스트 추출: 구두점/기호/화자 라벨 제거 */
@@ -4329,23 +4335,50 @@ const VideoAnalysisRoom: React.FC = () => {
 
   const handleDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); setIsDragOver(true); }, []);
   const handleDragLeave = useCallback((e: React.DragEvent) => { e.preventDefault(); setIsDragOver(false); }, []);
+  // [v2.0.1] 100MB 한도를 사용자에게 사전 안내 — 분석 시작 전에 거절 메시지로 명확히 차단.
+  // 한도 초과 파일은 토스트로 즉시 안내하고 업로드 목록에 추가하지 않는다.
+  const filterAndWarnOversizeFiles = useCallback((files: File[]): File[] => {
+    const valid: File[] = [];
+    const oversized: File[] = [];
+    for (const f of files) {
+      if (f.size > VIDEO_ANALYSIS_MAX_BYTES) {
+        oversized.push(f);
+      } else {
+        valid.push(f);
+      }
+    }
+    if (oversized.length > 0) {
+      const names = oversized.map((f) => `${f.name} (${(f.size / 1024 / 1024).toFixed(1)}MB)`).join(', ');
+      showToast(
+        `🎬 ${names} 는 ${VIDEO_ANALYSIS_MAX_MB_LABEL}를 초과해 AI 분석에 사용할 수 없어요. ` +
+        `1080p 약 5~8분 / 720p 약 10~15분이 한도 안입니다. 화질을 낮추거나 잘라서 다시 시도해주세요.`,
+        9000,
+      );
+    }
+    return valid;
+  }, []);
+
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setIsDragOver(false);
-    const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('video/')).slice(0, 5);
+    const droppedVideos = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('video/')).slice(0, 5);
+    const files = filterAndWarnOversizeFiles(droppedVideos);
     if (files.length > 0) {
       setUploadedFiles(prev => [...prev, ...files].slice(0, 5));
       setRawResult(''); setError(null); setVersions([]); setThumbnails([]);
       if (inputMode !== 'upload') setInputMode('upload');
     }
-  }, [inputMode, setInputMode, setRawResult, setError, setVersions, setThumbnails]);
+  }, [inputMode, setInputMode, setRawResult, setError, setVersions, setThumbnails, filterAndWarnOversizeFiles]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []).filter(f => f.type.startsWith('video/')).slice(0, 5);
+    const pickedVideos = Array.from(e.target.files || []).filter(f => f.type.startsWith('video/')).slice(0, 5);
+    const files = filterAndWarnOversizeFiles(pickedVideos);
     if (files.length > 0) {
       setUploadedFiles(prev => [...prev, ...files].slice(0, 5));
       setRawResult(''); setError(null); setVersions([]); setThumbnails([]);
     }
+    // 입력 element를 reset해서 같은 파일 재선택 시 onChange가 다시 fire되도록
+    e.target.value = '';
   };
 
   const handleRemoveFile = useCallback((index: number) => {
@@ -4598,6 +4631,7 @@ const VideoAnalysisRoom: React.FC = () => {
             for (let fi = 0; fi < uploadedFiles.length; fi++) {
               try {
                 if (abortCtrl.signal.aborted) throw new DOMException('분석이 취소되었습니다.', 'AbortError');
+                ensureVideoSizeForAnalysis(uploadedFiles[fi]);
                 const upload = await smartUpload(uploadedFiles[fi], {
                   signal: abortCtrl.signal,
                   ttlSecs: 1800, // 30분 — 다중 영상 분석 여유
@@ -4615,6 +4649,7 @@ const VideoAnalysisRoom: React.FC = () => {
                 }
               } catch (e) {
                 if (abortCtrl.signal.aborted) throw new DOMException('분석이 취소되었습니다.', 'AbortError');
+                if (isVideoAnalysisSizeLimitError(e)) throw e;
                 console.warn(`[VideoAnalysis] 영상 ${fi + 1} 업로드 실패:`, e);
               }
             }
@@ -4630,6 +4665,7 @@ const VideoAnalysisRoom: React.FC = () => {
           } catch (uploadErr) {
             // [FIX #386] abort 시에는 원래 에러 전파 — AbortError 정보 유지
             if (abortCtrl.signal.aborted) throw new DOMException('분석이 취소되었습니다.', 'AbortError');
+            if (isVideoAnalysisSizeLimitError(uploadErr)) throw uploadErr;
             console.warn('[VideoAnalysis] 업로드 실패:', uploadErr);
             throw new Error(
               '영상 프레임 추출에 실패했습니다.\n' +
@@ -5803,6 +5839,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       const isNetworkError = rawMsg.includes('Failed to fetch') || rawMsg.includes('NetworkError') || rawMsg.includes('network');
       const isTimeoutError = rawMsg.includes('타임아웃') || rawMsg.includes('timeout') || rawMsg.includes('시간 초과');
       const isParseError = rawMsg.includes('유효한 버전을 파싱할 수 없었습니다');
+      const isVideoSizeError = rawMsg.includes(VIDEO_ANALYSIS_MAX_MB_LABEL) && rawMsg.includes('AI 영상 분석');
       // [FIX #909] Evolink 잔액/크레딧 부족 에러를 사용자 친화적 메시지로 변환
       // handleEvolinkError가 "Evolink 잔액 부족: 크레딧을 충전해주세요."를 던지므로 이 패턴만 매칭
       const isQuotaError = rawMsg.includes('잔액 부족') || /insufficient.*(quota|credit|balance)/i.test(rawMsg);
@@ -5842,6 +5879,8 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
           showToast('AI 분석 크레딧이 부족합니다. Evolink 잔액을 확인해주세요.', 6000);
         } else if (isParseError) {
           // 원문 폴백 토스트는 위에서 이미 표시
+        } else if (isVideoSizeError) {
+          showToast(rawMsg.replace(/\n+/g, ' '), 9000);
         } else if (rawMsg.includes('Cloudinary') || rawMsg.includes('업로드')) {
           showToast('영상 업로드에 실패했습니다. 파일 크기를 줄이거나 YouTube 링크를 사용해주세요.', 6000);
         } else if (rawMsg.includes('API 키') || rawMsg.includes('Evolink')) {
@@ -6456,6 +6495,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                 <svg className="w-8 h-8 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
                 <span className="text-gray-400 text-sm">{isDragOver ? '여기에 놓으세요!' : uploadedFiles.length > 0 ? '영상 추가 (클릭 또는 드래그)' : '클릭 또는 드래그하여 영상 파일 선택'}</span>
                 <span className="text-gray-600 text-xs">MP4, MOV, AVI 등 — 최대 5개</span>
+                <span data-video-size-hint className="text-amber-400/80 text-[11px] mt-0.5">⚠️ {VIDEO_ANALYSIS_SIZE_HINT}</span>
               </button>
             )}
           </div>
