@@ -141,93 +141,49 @@ jobs:
               & $ffmpegPath -version | Select-Object -First 1
             }
           }
-          # cleanup
-          Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
-          Write-Host "Smoke test 완료"
-
-      # [v2.0.4 회귀 가드] Two-instance race test — same-version takeover self-kill 무한 루프 방지
-      # v2.0.2 critical 장애 (#hotfix-v2.0.3)의 hard-fail 회귀 차단:
-      #   1) 첫 instance A spawn + /health 응답 확인
-      #   2) 두 번째 instance B spawn (같은 binary)
-      #   3) 5초 대기 후 A가 여전히 살아있는지 검증 (B가 A를 죽이면 self-kill 루프 회귀)
-      #   4) /health가 여전히 응답하는지 검증
-      #   5) Cleanup
-      - name: Two-instance race smoke (#1090 same-version takeover guard)
-        working-directory: companion/src-tauri
-        shell: pwsh
-        run: |
-          $exe = Get-ChildItem -Path target\release -Filter all-in-one-helper.exe | Select-Object -First 1
-          if (-not $exe) { throw "Binary not found in target/release" }
-
-          # 이전 smoke test cleanup 직후라 9876 socket이 TIME_WAIT일 수 있음 + 모든 이전
-          # all-in-one-helper.exe process를 확실히 정리.
-          Write-Host "[Race] cleanup 잔류 process + 9876 TIME_WAIT 대기"
-          Get-Process all-in-one-helper -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-          Start-Sleep -Seconds 8
-
-          Write-Host "[Race] Step 1: 첫 instance A spawn"
-          $procA = Start-Process -FilePath $exe.FullName -PassThru
-          Write-Host "[Race] A.PID = $($procA.Id)"
-
-          # /health 응답 대기 (최대 90초 — cloudflared init 포함)
-          $ready = $false
-          for ($i = 0; $i -lt 45; $i++) {
-            Start-Sleep -Seconds 2
-            try {
-              $h = Invoke-RestMethod -Uri "http://127.0.0.1:9876/health" -TimeoutSec 3
-              if ($h.app -eq "ytdlp-companion") {
-                Write-Host "[Race] A health OK: version=$($h.version) after $($i*2)s"
-                $ready = $true
-                break
-              }
-            } catch { }
-          }
-          if (-not $ready) {
-            Write-Host "[Race] A 진단 — process state:"
-            Get-Process -Id $procA.Id -ErrorAction SilentlyContinue | Format-List Name, Id, HasExited, ExitCode
-            Stop-Process -Id $procA.Id -Force -ErrorAction SilentlyContinue
-            throw "[Race] A did not become ready within 90s"
-          }
-
-          Write-Host "[Race] Step 2: 두 번째 instance B spawn (같은 binary)"
+          # ========================================================
+          # [v2.0.4 회귀 가드] Two-instance race test (#1090 same-version takeover guard)
+          # v2.0.2 critical 장애의 hard-fail 회귀 차단. cleanup 전에 같은 step 안에서
+          # 두 번째 instance를 spawn해 race를 시뮬레이션 — TIME_WAIT/cloudflared init
+          # 같은 환경 race를 회피하기 위해 별도 step 대신 통합.
+          # ========================================================
+          Write-Host "=== Two-instance race test ==="
+          $procA_id = $proc.Id
+          Write-Host "[Race] A.PID = $procA_id (이미 /health ready 상태)"
+          # 이미 첫 instance가 ready이므로 두 번째 instance만 spawn
           $procB = Start-Process -FilePath $exe.FullName -PassThru
           Write-Host "[Race] B.PID = $($procB.Id)"
-
-          # Step 3: 10초 대기 후 A의 생존 여부 확인 (회귀 가드의 핵심)
-          # single-instance plugin이 B를 종료시키는 데 시간이 걸릴 수 있어 충분한 여유.
+          # 10초 대기 — single-instance plugin이 B를 종료시키는 시간 + same-version 가드 검증
           Start-Sleep -Seconds 10
-          $aliveA = Get-Process -Id $procA.Id -ErrorAction SilentlyContinue
+          # A의 생존 여부 — 죽었으면 self-kill loop 회귀 (#1090)
+          $aliveA = Get-Process -Id $procA_id -ErrorAction SilentlyContinue
           if (-not $aliveA) {
             Stop-Process -Id $procB.Id -Force -ErrorAction SilentlyContinue
-            throw "[Race] FAIL: A (PID $($procA.Id)) was killed by B — same-version self-kill loop regression (#1090)"
+            throw "[Race] FAIL: A (PID $procA_id) was killed by B — same-version self-kill loop regression (#1090)"
           }
-          Write-Host "[Race] OK: A still alive (PID $($procA.Id)) — same-version takeover guard 정상"
-
-          # Step 4: /health가 여전히 응답하는지 (A가 server를 계속 잡고 있음)
+          Write-Host "[Race] OK: A still alive (PID $procA_id) — same-version takeover guard 정상"
+          # /health가 여전히 응답하는지
           try {
-            $h2 = Invoke-RestMethod -Uri "http://127.0.0.1:9876/health" -TimeoutSec 5
-            Write-Host "[Race] OK: /health still responding (version=$($h2.version))"
+            $h3 = Invoke-RestMethod -Uri "http://127.0.0.1:9876/health" -TimeoutSec 5
+            Write-Host "[Race] OK: /health still responding (version=$($h3.version))"
           } catch {
-            Stop-Process -Id $procA.Id -Force -ErrorAction SilentlyContinue
+            Stop-Process -Id $procA_id -Force -ErrorAction SilentlyContinue
             Stop-Process -Id $procB.Id -Force -ErrorAction SilentlyContinue
             throw "[Race] FAIL: /health stopped responding after second spawn"
           }
-
-          # Step 5: B가 종료됐는지 검증 (single-instance plugin이 dedup해야 함)
-          # B가 살아있으면 dedup이 깨진 것 — 향후 회귀의 원인이 될 수 있음.
+          # B가 종료됐는지 (single-instance plugin dedup 검증, warning-only)
           $aliveB = Get-Process -Id $procB.Id -ErrorAction SilentlyContinue
           if ($aliveB) {
-            Write-Host "::warning::[Race] B (PID $($procB.Id)) still alive after 10s — single-instance dedup may be slow or broken"
-            # 강제 종료 후 계속 (warning만, fail은 아님 — A가 살아있고 /health 응답하면 사용자 영향 없음)
+            Write-Host "::warning::[Race] B (PID $($procB.Id)) still alive after 10s — single-instance dedup may be slow"
             Stop-Process -Id $procB.Id -Force -ErrorAction SilentlyContinue
           } else {
-            Write-Host "[Race] OK: B (PID $($procB.Id)) terminated — single-instance plugin dedup 정상"
+            Write-Host "[Race] OK: B terminated — single-instance plugin dedup 정상"
           }
+          Write-Host "=== Race test 통과 ==="
 
-          # Step 6: Cleanup
-          Stop-Process -Id $procA.Id -Force -ErrorAction SilentlyContinue
-          Stop-Process -Id $procB.Id -Force -ErrorAction SilentlyContinue
-          Write-Host "[Race] cleanup 완료 — race smoke test 통과"
+          # cleanup
+          Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+          Write-Host "Smoke test 완료"
 
       - name: Upload Windows NSIS installer
         uses: actions/upload-artifact@v4
