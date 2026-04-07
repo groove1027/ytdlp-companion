@@ -4,7 +4,7 @@ import type { WhisperTranscriptResult } from '../../types';
 import { getKieKey, monitoredFetch } from '../apiService';
 import { getEvolinkKey, fetchWithRateLimitRetry } from '../evolinkService';
 import { SAFETY_SETTINGS_BLOCK_NONE, requestGeminiProxy, requestKieChatFallback, extractTextFromResponse } from './geminiProxy';
-import { uploadMediaToHosting } from '../uploadService';
+import { uploadMediaToHosting, ensureVideoSizeForAnalysis } from '../uploadService';
 import { smartUpload } from '../companion/smartUpload';
 import { generateKieImage, generateEvolinkImageWrapped } from '../VideoGenService';
 import { transcribeWithDiarization, formatDiarizedTranscript } from '../transcriptionService';
@@ -41,6 +41,8 @@ export const analyzeVideoWithGemini = async (
         // ❌ CDN URL(googlevideo.com)은 Vertex AI robots.txt로 차단됨
         fileUri = source.youtubeUrl;
     } else {
+        // [v2.0.1] 100MB 한도 사전 차단 — Google Gemini 백엔드 fileData fetch 한도(라이브 검증)
+        ensureVideoSizeForAnalysis(source.videoFile);
         // [v2.0 #1066] 컴패니언 터널 우선 → Cloudinary 자동 폴백
         // (Codex 프론트 6차 Medium) 30분 timeout으로 hang 방지
         const uploadTimeout = AbortSignal.timeout(30 * 60 * 1000);

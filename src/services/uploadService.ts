@@ -8,6 +8,49 @@ const PRIVACY_MODE_STORAGE_KEY = 'PRIVACY_MODE_ENABLED';
 export const PRIVACY_MODE_CHANGE_EVENT = 'privacy-mode-change';
 
 /**
+ * [v2.0.1] AI 영상 분석 파일 크기 한도 — 100 MB
+ *
+ * 라이브 검증 (2026-04-07):
+ *   - 84MB / 31분 영상 → ✅ Evolink Gemini 정상 분석 (VIDEO 121k + AUDIO 47k 토큰)
+ *   - 165MB / 63분 영상 → ❌ Google Gemini 백엔드가 "Request contains an invalid argument" 거절
+ * Google Gemini API의 임의 HTTPS URL fileData fetch 한도가 정확하게 공개되지 않으나
+ * 100~150MB 사이에서 거절이 시작된다. 안전 마진 100MB로 사전 차단.
+ *
+ * 1080p 기준: 약 5~8분, 720p 기준: 약 10~15분, 480p 기준: 약 20~30분이 100MB 이내.
+ * 더 긴 영상은 사용자가 직접 화질을 낮추거나 짧게 잘라서 다시 업로드해야 한다.
+ */
+export const VIDEO_ANALYSIS_MAX_BYTES = 100 * 1024 * 1024;
+export const VIDEO_ANALYSIS_MAX_MB_LABEL = '100MB';
+
+/**
+ * 영상 분석에 보낼 파일이 100MB를 초과하면 사용자 친화적 에러를 throw.
+ * 분석 wrapper와 UI 입력 핸들러가 모두 동일한 메시지를 사용하도록 일원화.
+ */
+export function ensureVideoSizeForAnalysis(
+  file: { name?: string; size?: number },
+): void {
+  const sizeBytes = file.size ?? 0;
+  if (sizeBytes <= VIDEO_ANALYSIS_MAX_BYTES) return;
+  const sizeMb = (sizeBytes / 1024 / 1024).toFixed(1);
+  const fileName = file.name ?? '영상';
+  throw new Error(
+    `🎬 "${fileName}"는 ${sizeMb}MB라 AI 영상 분석에 사용할 수 없습니다.\n` +
+    `현재 한도는 ${VIDEO_ANALYSIS_MAX_MB_LABEL}이며, 더 큰 영상은 Google Gemini가 거절합니다.\n\n` +
+    `해결 방법:\n` +
+    `• 1080p → 720p 또는 480p로 화질을 낮춰서 다시 다운로드\n` +
+    `• 영상을 짧게 잘라 (예: 10분 단위) 분할 업로드\n` +
+    `• 1080p 기준 약 5~8분, 720p 기준 약 10~15분이 ${VIDEO_ANALYSIS_MAX_MB_LABEL} 이내`
+  );
+}
+
+/**
+ * 영상 분석 한도 안내 한 줄 (배너/툴팁용).
+ * UI 컴포넌트가 import해서 일관되게 사용.
+ */
+export const VIDEO_ANALYSIS_SIZE_HINT =
+  `AI 분석은 영상당 ${VIDEO_ANALYSIS_MAX_MB_LABEL} 이하만 가능 (1080p 약 5~8분 / 720p 약 10~15분)`;
+
+/**
  * [v2.0 Phase 4-1] 사적 콘텐츠 안전 모드 (Privacy Mode)
  *
  * 사용자가 활성화하면 모든 업로드가 컴패니언 터널만 사용 (Cloudinary 사용 X).

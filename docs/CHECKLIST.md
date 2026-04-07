@@ -8,6 +8,23 @@
 
 ## 🟢 완료된 작업
 
+- [x] **2026-04-07 — v2.0.1 AI 영상 분석 100MB 안내 2차 좁은 범위 재검증**
+  - `rg -n "smartUpload|uploadMediaToHosting|fileData|fileUri|video/mp4|ensureVideoSizeForAnalysis|Blob" src`, `rg -n "fileData" src`, `rg -n "analyzeVideoWithGemini|evolinkVideoAnalysisStream|transcribeVideoAudio" src`로 `file -> fileData` 경로와 Blob 경로를 재점검
+  - 재검증 결과: `src/services/gemini/videoAnalysis.ts`의 업로드 경로(`117`)만 실제 파일 업로드 → `fileData`이며, `700`, `794`, `src/services/youtubeAnalysisService.ts:2707`, `src/components/tabs/channel/ChannelRemakePanel.tsx:196`, `src/services/youtubeReferenceService.ts:1002`는 모두 YouTube watch URL 전달 경로라 100MB 파일 한도와 무관함을 확인
+  - `src/services/gemini/videoAnalysis.ts`의 다른 export 중 `File | Blob`를 받는 것은 `transcribeVideoAudio()`뿐이며, 내부는 오디오 추출/전사만 수행하고 `fileData` 업로드는 하지 않음을 재확인
+  - `src/components/tabs/channel/VideoAnalysisRoom.tsx` — 프레임 추출 실패 후 `smartUpload()` 폴백 루프에서 100MB 초과 예외가 내부 catch에서 삼켜져 일반 업로드 실패 메시지로 덮이던 문제를 수정. `isVideoAnalysisSizeLimitError()` helper를 추가하고 `4652`, `4668`에서 size-limit 예외를 그대로 재전파, 최종 에러 처리 `5882`에서 원문 한도 메시지를 toast로 노출하도록 보강
+  - `cd src && node_modules/.bin/vitest run services/__tests__/uploadService.videoSize.test.ts`: 17 passed
+  - `cd src && node_modules/typescript/bin/tsc --noEmit`: 통과
+  - `cd src && node_modules/.bin/vite build`: 성공 (기존 dynamic import/chunk-size warning만 출력)
+
+- [x] **2026-04-07 — v2.0.1 AI 영상 분석 100MB 한도 1차 검증**
+  - `rg -n "ensureVideoSizeForAnalysis|VIDEO_ANALYSIS_MAX_BYTES|VIDEO_ANALYSIS_SIZE_HINT|data-video-size-hint|smartUpload\\(uploadedFiles\\[fi\\]|evolinkVideoAnalysisStream\\(|fileData: \\{ fileUri: .*video|fileData: \\{ mimeType: .*video" src`로 영상 업로드→Gemini `fileData` 경로, 드롭존 사전 차단, YouTube URL 우회 경로를 전수 조사
+  - `src/components/tabs/channel/VideoAnalysisRoom.tsx` — 프레임 추출 실패 후 `smartUpload()`로 직접 `fileData` URI를 만드는 폴백 루프에도 `ensureVideoSizeForAnalysis()`를 추가해, UI 필터 우회/비정상 상태에서도 100MB 초과 업로드가 Gemini 비디오 분석 경로로 진입하지 않도록 보강
+  - 재검증 결과: `src/services/gemini/videoAnalysis.ts`와 `src/components/tabs/channel/VideoAnalysisRoom.tsx` 양쪽에서 업로드 파일 `fileData` 경로가 차단되고, `DragDropAIWidget.tsx`는 `video/*` MIME에서만 제한이 걸려 이미지/오디오/PDF는 영향 없음. `youtubeReferenceService.ts`, `ChannelRemakePanel.tsx`, `youtubeAnalysisService.ts`의 YouTube watch URL 경로는 파일 크기 검증과 무관함을 확인
+  - `cd src && node_modules/.bin/vitest run services/__tests__/uploadService.videoSize.test.ts`: 17 passed
+  - `cd src && node_modules/typescript/bin/tsc --noEmit`: 통과
+  - `cd src && node_modules/.bin/vite build`: 성공 (기존 dynamic import/chunk-size warning만 출력)
+
 - [x] **2026-04-07 — v2.0.1 Phase 4-1/4-4 2차 검증 보강**
   - `rg -n "Privacy Mode|privacyMode|companion|DragDropAIWidget|captureClient|CompanionCaptureFormat|CompanionCaptureTarget|CompanionCaptureResult|webkitdirectory|role=\"switch\"|aria-checked|localStorage|visibilitychange|build-companion" src .github/workflows`로 영향 범위 전수 조사 완료
   - `src/components/ApiKeySettings.tsx` — Privacy Mode 토글이 모달 open 중에도 `focus`/`visibilitychange`/storage/custom event로 상태를 다시 동기화하고, ON 전환 시 `recheckCompanion()`으로 실시간 차단 판정을 수행하도록 보강

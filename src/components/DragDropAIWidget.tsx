@@ -2,7 +2,14 @@ import React, { useEffect, useRef, useState } from 'react';
 import type { CompanionCaptureResult } from '../types';
 import { scanLibrary, type LibraryScanResult } from '../services/companion/libraryClient';
 import { captureScreen } from '../services/companion/captureClient';
-import { isPrivacyModeEnabled, PRIVACY_MODE_CHANGE_EVENT, uploadMediaToHosting } from '../services/uploadService';
+import {
+  isPrivacyModeEnabled,
+  PRIVACY_MODE_CHANGE_EVENT,
+  uploadMediaToHosting,
+  VIDEO_ANALYSIS_MAX_BYTES,
+  VIDEO_ANALYSIS_MAX_MB_LABEL,
+  VIDEO_ANALYSIS_SIZE_HINT,
+} from '../services/uploadService';
 import { isCompanionDetected, recheckCompanion } from '../services/ytdlpApiService';
 import { showToast, useUIStore } from '../stores/uiStore';
 
@@ -241,6 +248,17 @@ const DragDropAIWidget: React.FC = () => {
     setIsUploading(true);
     setDropError('');
     setDropAsset(null);
+    // [v2.0.1] 영상 파일은 100MB 한도 사전 차단 (이미지/PDF/오디오는 제한 없이 업로드 가능)
+    if (file.type.startsWith('video/') && file.size > VIDEO_ANALYSIS_MAX_BYTES) {
+      const sizeMb = (file.size / 1024 / 1024).toFixed(1);
+      const message =
+        `🎬 ${file.name} (${sizeMb}MB)는 ${VIDEO_ANALYSIS_MAX_MB_LABEL}를 초과해 AI 영상 분석에 사용할 수 없어요. ` +
+        `1080p 약 5~8분 / 720p 약 10~15분이 한도입니다. 화질을 낮추거나 짧게 잘라서 다시 시도해주세요.`;
+      setDropError(message);
+      showToast(message, 9000);
+      setIsUploading(false);
+      return;
+    }
     try {
       const url = await uploadMediaToHosting(file);
       setDropAsset({ name: file.name, url, mime: file.type || 'application/octet-stream', sizeBytes: file.size });
@@ -349,6 +367,7 @@ const DragDropAIWidget: React.FC = () => {
                 >
                   <p className="text-base font-medium">파일을 여기로 드롭</p>
                   <p className="mt-1 text-xs text-gray-500">5MB+는 wrapper가 터널/Cloudinary 경로를 자동 선택합니다.</p>
+                  <p data-video-size-hint className="mt-2 text-[11px] text-amber-300/80">⚠️ {VIDEO_ANALYSIS_SIZE_HINT}</p>
                 </div>
                 {dropError && <p className="text-xs text-red-300">{dropError}</p>}
                 {isUploading && <p className="text-xs text-gray-400">업로드 중...</p>}
