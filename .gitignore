@@ -28,6 +28,11 @@
 .DS_Store
 Thumbs.db
 
+# Playwright test artifacts
+test-results/
+# Large test fixtures (regenerable with ffmpeg)
+test-e2e/1066-test-tunnel.mp4
+
 # Temporary files
 *.tmp
 .temp/

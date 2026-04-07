@@ -1,7 +1,7 @@
 [package]
 name = "all-in-one-helper"
-version = "1.3.2"
-description = "All In One Helper — 안정적이고 빠른 로컬 AI 미디어 처리"
+version = "2.0.0"
+description = "All In One Helper — 로컬 미디어 게이트웨이 (v2.0: Cloudflare Tunnel 통합)"
 authors = ["groove1027"]
 edition = "2021"
 
@@ -12,9 +12,9 @@ tauri-plugin-deep-link = "2"
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["full"] }
-axum = "0.8"
-tower-http = { version = "0.6", features = ["cors"] }
+tokio = { version = "1", features = ["full", "process"] }
+axum = { version = "0.8", features = ["multipart"] }
+tower-http = { version = "0.6", features = ["cors", "fs"] }
 reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls", "cookies", "gzip", "brotli"] }
 tempfile = "3"
 dirs = "6"
@@ -26,6 +26,12 @@ regex-lite = "0.1"
 urlencoding = "2"
 chrono = "0.4"
 flate2 = "1"
+# [v2.0] Video Tunnel 모듈 의존성
+hex = "0.4"
+rand = "0.8"
+sha2 = "0.10"
+tar = "0.4"
+thiserror = "1"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

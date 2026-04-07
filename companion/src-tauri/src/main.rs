@@ -6,6 +6,7 @@ mod rembg;
 mod server;
 mod takeover;
 mod tts;
+mod video_tunnel;
 mod whisper;
 mod ytdlp;
 
@@ -96,7 +97,14 @@ fn main() {
                 .tooltip("All In One Helper — 안정적이고 빠른 AI 미디어 처리")
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id().as_ref() {
-                    "quit" => app.exit(0),
+                    "quit" => {
+                        // (Codex High 1 + Round-2 High) 모든 quit 경로가 동일한
+                        // graceful_shutdown_and_exit()를 거쳐야 cloudflared가 정리됨.
+                        let _app_handle = app.clone();
+                        tauri::async_runtime::spawn(async move {
+                            server::graceful_shutdown_and_exit().await;
+                        });
+                    }
                     "show" => {
                         if let Some(win) = app.get_webview_window("main") {
                             focus_window(&win);
@@ -138,6 +146,42 @@ fn main() {
                 }
             });
 
+            // (Codex Round-4 Medium) Ctrl-C / SIGTERM 신호 처리 — graceful shutdown
+            // kill -TERM <pid>나 콘솔 Ctrl-C로 종료해도 cloudflared가 orphan으로 남지 않도록.
+            tauri::async_runtime::spawn(async move {
+                #[cfg(unix)]
+                {
+                    use tokio::signal::unix::{signal, SignalKind};
+                    let mut sigterm = match signal(SignalKind::terminate()) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            eprintln!("[Companion] SIGTERM handler 설정 실패: {}", e);
+                            return;
+                        }
+                    };
+                    let mut sigint = match signal(SignalKind::interrupt()) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            eprintln!("[Companion] SIGINT handler 설정 실패: {}", e);
+                            return;
+                        }
+                    };
+                    tokio::select! {
+                        _ = sigterm.recv() => println!("[Companion] SIGTERM 수신"),
+                        _ = sigint.recv() => println!("[Companion] SIGINT 수신"),
+                    }
+                }
+                #[cfg(not(unix))]
+                {
+                    if let Err(e) = tokio::signal::ctrl_c().await {
+                        eprintln!("[Companion] Ctrl-C handler 설정 실패: {}", e);
+                        return;
+                    }
+                    println!("[Companion] Ctrl-C 수신");
+                }
+                server::graceful_shutdown_and_exit().await;
+            });
+
             // 바이너리 자동 다운로드/업데이트 (백그라운드)
             // yt-dlp + whisper: 독립 바이너리이므로 병렬 OK
             tauri::async_runtime::spawn(async {
@@ -163,6 +207,22 @@ fn main() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app_handle, event| {
+            // (Codex Round-2 High + Round-7 High) 모든 종료 경로 통합
+            // ExitRequested 시 graceful_shutdown_and_exit()를 호출 — init phase child + tunnel manager 모두 정리.
+            if let tauri::RunEvent::ExitRequested { api: _, .. } = &event {
+                println!("[Companion] ExitRequested 수신 — graceful shutdown");
+                tauri::async_runtime::block_on(async {
+                    // init phase child 먼저 정리 (TunnelManager publish 전 단계)
+                    server::kill_init_phase_child_if_any();
+                    // 그 다음 TunnelManager (있으면)
+                    if let Some(mgr) = server::tunnel_manager() {
+                        mgr.shutdown().await;
+                        println!("[Companion] tunnel manager shutdown 완료 (ExitRequested)");
+                    }
+                });
+            }
+        });
 }

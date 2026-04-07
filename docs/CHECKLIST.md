@@ -8,6 +8,16 @@
 
 ## 🟢 완료된 작업
 
+- [x] **2026-04-07 — companion v2.0.0 + 프론트 통합 마지막 결함 수정 (터널 cleanup LRU 누수)**
+  - `rg -n "TUNNEL_MANAGER|init_tunnel_manager|graceful_shutdown|video_tunnel|RunEvent::ExitRequested|expected_cloudflared_sha256|openTunnelForFile|closeTunnel|combineSignals|smartUpload|handleAnalyze|tunnelCleanupsByKeyRef|handleAnalyzeLockRef" companion/src-tauri src` 및 `rg -n "setLimitedCacheEntry|sourcePrepCacheRef|sourcePrepCacheTimestampsRef|tunnelCleanupsByKeyRef" src/components/tabs/channel/VideoAnalysisRoom.tsx`로 영향 범위 전수 조사 완료
+  - `src/components/tabs/channel/VideoAnalysisRoom.tsx` — `setLimitedCacheEntry()`가 evicted key 목록을 반환하도록 바꾸고, `runTunnelCleanupsForKey()` / `evictSourcePrepCacheKey()`를 추가해 source prep LRU에서 밀려난 키의 timestamp와 tunnel cleanup을 즉시 정리하도록 수정
+  - `src/components/tabs/channel/VideoAnalysisRoom.tsx` — stale key 정리, 강제 재분석, 현재 키 교체, scene cut 캐시 업데이트 경로를 모두 공통 eviction helper로 통일해 cleanup이 다음 분석 진입까지 지연되던 경로 제거
+  - `cd companion/src-tauri && cargo build`: 성공 (기존 unused/private_interfaces/dead_code warning만 존재)
+  - `cd companion/src-tauri && cargo test`: 19 passed
+  - `cd src && node_modules/typescript/bin/tsc --noEmit`: 통과
+  - `cd src && npx vite build`: 성공 (기존 dynamic import/chunk-size warning만 존재)
+  - `rg -n "setLimitedCacheEntry|evictSourcePrepCacheKey|runTunnelCleanupsForKey" src/components/tabs/channel/VideoAnalysisRoom.tsx`: 반영 위치 재확인
+
 - [x] **2026-04-07 — 5차 codex review P2 autosave image persist stuck 정밀 수정**
   - `rg -n "useAutoSave|persistProjectMedia|hasRetryableImageBlobPersist|schedulePersistProjectMedia|lastFingerprintRef|persistProjectImages|scheduleSyncToCloud" src docs --glob '!companion/**'`로 영향 범위 전수 조사 및 재검증 완료
   - `src/hooks/useAutoSave.ts` — autosave 성공 경계를 `saveProject(project)` 성공 시점으로 재정의. 저장 성공 직후 `lastFingerprintRef`, `lastAutoSavedAt`, cloud sync 스케줄링을 즉시 advance하고, 이미지/오디오 blob 영속화는 blocking이 아닌 background best-effort 큐로 분리

@@ -5,6 +5,7 @@ import { getKieKey, monitoredFetch } from '../apiService';
 import { getEvolinkKey, fetchWithRateLimitRetry } from '../evolinkService';
 import { SAFETY_SETTINGS_BLOCK_NONE, requestGeminiProxy, requestKieChatFallback, extractTextFromResponse } from './geminiProxy';
 import { uploadMediaToHosting } from '../uploadService';
+import { smartUpload } from '../companion/smartUpload';
 import { generateKieImage, generateEvolinkImageWrapped } from '../VideoGenService';
 import { transcribeWithDiarization, formatDiarizedTranscript } from '../transcriptionService';
 import { logger } from '../LoggerService';
@@ -27,16 +28,30 @@ export const analyzeVideoWithGemini = async (
     const apiKey = evolinkKey || getKieKey();
     if (!apiKey) throw new Error("API Key가 설정되지 않았습니다. (Evolink 또는 Kie)");
 
-    // Determine video URI
+    // Determine video URI + MIME type
+    // [v2.0 #1066] 업로드 파일은 컴패니언 터널 우선 (89MB/240초+ 검증). 폴백은 Cloudinary.
+    // (Codex 프론트 7차 Medium) 실제 파일 MIME 보존 (mov/webm 등)
     let fileUri: string;
+    let fileMimeType = 'video/mp4';
+    let tunnelCleanup: (() => Promise<void>) | null = null;
     if ('youtubeUrl' in source) {
         // [FIX] YouTube watch URL을 그대로 Gemini에 전달
         // ✅ 실제 테스트: Evolink Gemini v1beta가 YouTube URL을 내부적으로 처리
         // ❌ CDN URL(googlevideo.com)은 Vertex AI robots.txt로 차단됨
         fileUri = source.youtubeUrl;
     } else {
-        // 업로드 파일 → Cloudinary URL 전달
-        fileUri = await uploadMediaToHosting(source.videoFile);
+        // [v2.0 #1066] 컴패니언 터널 우선 → Cloudinary 자동 폴백
+        // (Codex 프론트 6차 Medium) 30분 timeout으로 hang 방지
+        const uploadTimeout = AbortSignal.timeout(30 * 60 * 1000);
+        const upload = await smartUpload(source.videoFile, {
+            ttlSecs: 1500, // 25분 — 분석 평균 60~120초 + 큰 영상 여유
+            signal: uploadTimeout,
+        });
+        fileUri = upload.url;
+        // (Codex 프론트 7차 Medium) 실제 mime 보존 (mp4가 아니어도)
+        fileMimeType = source.videoFile.type || 'video/mp4';
+        tunnelCleanup = upload.cleanup;
+        logger.info('[VideoAnalysis] 업로드 경로:', { source: upload.source, mime: fileMimeType });
     }
 
     const strategyPrompt = strategy === 'NARRATIVE'
@@ -97,7 +112,7 @@ Analyze the video now. Return ONLY the JSON array.`;
             parts: [
                 {
                     fileData: {
-                        mimeType: "video/mp4",
+                        mimeType: fileMimeType,
                         fileUri: fileUri
                     }
                 },
@@ -121,77 +136,85 @@ Analyze the video now. Return ONLY the JSON array.`;
     // [FIX #679] 110초 선제 타임아웃 — 브라우저 타임아웃(~126초) 전에 끊어서 폴백 유도
     const VIDEO_ANALYSIS_TIMEOUT_MS = 110_000;
 
-    let data: any;
-    if (evolinkKey) {
-        try {
-            const url = `https://api.evolink.ai/v1beta/models/gemini-3.1-pro-preview:generateContent`;
-            const response = await fetchWithRateLimitRetry(url, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${evolinkKey}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(requestBody)
-            }, 3, 3000, VIDEO_ANALYSIS_TIMEOUT_MS);
-            if (!response.ok) {
-                const errText = await response.text();
-                throw new Error(`Video Analysis API Error (${response.status}): ${errText}`);
-            }
-            data = await response.json();
-        } catch (evolinkErr) {
-            // [FIX #679] Evolink 실패 시 Kie chat/completions 폴백 (기존에는 에러만 throw)
-            // [FIX #679 P2] Kie 키 미설정 시 원본 Evolink 에러를 유지 (Codex 리뷰 반영)
-            logger.warn('[VideoAnalysis] Evolink v1beta 실패, Kie 폴백 시도:', evolinkErr);
-            try {
-                data = await requestKieChatFallback('gemini-3.1-pro', requestBody);
-            } catch (kieErr) {
-                logger.warn('[VideoAnalysis] Kie 폴백도 실패:', kieErr);
-                throw evolinkErr; // 원본 Evolink 에러 유지
-            }
-        }
-    } else {
-        // [FIX] Kie는 v1beta 없음 → gemini-3.1-pro chat/completions 폴백
-        data = await requestKieChatFallback('gemini-3.1-pro', requestBody);
-    }
-    // [FIX] Thinking model may return multiple parts (parts[0]=thinking, parts[1]=content).
-    // Use extractTextFromResponse to get the last non-thinking text part.
-    const rawText = extractTextFromResponse(data) || '[]';
-
-    let parsed: any[];
+    // [v2.0 #1066] try/finally로 tunnelCleanup 반드시 호출
     try {
-        const cleaned = rawText.replace(/```json|```/g, '').trim();
-        parsed = JSON.parse(cleaned);
-    } catch (e) {
-        logger.trackSwallowedError('videoAnalysis:parseJson', e);
-        console.error("[VideoAnalysis] JSON parse failed:", rawText);
-        throw new Error("영상 분석 결과 파싱에 실패했습니다. 다시 시도해주세요.");
+        let data: any;
+        if (evolinkKey) {
+            try {
+                const url = `https://api.evolink.ai/v1beta/models/gemini-3.1-pro-preview:generateContent`;
+                const response = await fetchWithRateLimitRetry(url, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${evolinkKey}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(requestBody)
+                }, 3, 3000, VIDEO_ANALYSIS_TIMEOUT_MS);
+                if (!response.ok) {
+                    const errText = await response.text();
+                    throw new Error(`Video Analysis API Error (${response.status}): ${errText}`);
+                }
+                data = await response.json();
+            } catch (evolinkErr) {
+                // [FIX #679] Evolink 실패 시 Kie chat/completions 폴백 (기존에는 에러만 throw)
+                // [FIX #679 P2] Kie 키 미설정 시 원본 Evolink 에러를 유지 (Codex 리뷰 반영)
+                logger.warn('[VideoAnalysis] Evolink v1beta 실패, Kie 폴백 시도:', evolinkErr);
+                try {
+                    data = await requestKieChatFallback('gemini-3.1-pro', requestBody);
+                } catch (kieErr) {
+                    logger.warn('[VideoAnalysis] Kie 폴백도 실패:', kieErr);
+                    throw evolinkErr; // 원본 Evolink 에러 유지
+                }
+            }
+        } else {
+            // [FIX] Kie는 v1beta 없음 → gemini-3.1-pro chat/completions 폴백
+            data = await requestKieChatFallback('gemini-3.1-pro', requestBody);
+        }
+        // [FIX] Thinking model may return multiple parts (parts[0]=thinking, parts[1]=content).
+        // Use extractTextFromResponse to get the last non-thinking text part.
+        const rawText = extractTextFromResponse(data) || '[]';
+
+        let parsed: any[];
+        try {
+            const cleaned = rawText.replace(/```json|```/g, '').trim();
+            parsed = JSON.parse(cleaned);
+        } catch (e) {
+            logger.trackSwallowedError('videoAnalysis:parseJson', e);
+            console.error("[VideoAnalysis] JSON parse failed:", rawText);
+            throw new Error("영상 분석 결과 파싱에 실패했습니다. 다시 시도해주세요.");
+        }
+
+        if (!Array.isArray(parsed) || parsed.length === 0) {
+            throw new Error("영상에서 장면을 감지하지 못했습니다. 다른 영상을 시도해주세요.");
+        }
+
+        // Map to Scene[] — [FIX #948] 타임코드 클램핑 (AI 할루시네이션 방지)
+        const clamp = (v: number) => durationSec && durationSec > 0 ? Math.max(0, Math.min(v, durationSec)) : v;
+        const scenes: Scene[] = parsed.map((item, i) => ({
+            id: `scene-${Date.now()}-${i}`,
+            scriptText: item.scriptText || item.audioScript || `Scene ${i + 1}`,
+            visualPrompt: item.visualPrompt || '',
+            visualDescriptionKO: item.scriptText || item.audioScript || '',
+            characterPresent: item.characterPresent ?? false,
+            characterAction: item.characterAction,
+            shotSize: item.shotSize,
+            cameraAngle: item.cameraAngle,
+            cameraMovement: item.cameraMovement,
+            startTime: clamp(item.startTime ?? 0),
+            endTimeStamp: item.endTimeStamp != null ? clamp(item.endTimeStamp) : undefined,
+            audioScript: item.audioScript || '',
+            isGeneratingImage: false,
+            isGeneratingVideo: false
+        }));
+
+        console.log(`[VideoAnalysis] Analyzed ${scenes.length} scenes from video`);
+        return scenes;
+    } finally {
+        // [v2.0 #1066] 분석 성공/실패 무관하게 터널 정리
+        if (tunnelCleanup) {
+            try { await tunnelCleanup(); } catch (e) { logger.trackSwallowedError('videoAnalysis:tunnelCleanup', e); }
+        }
     }
-
-    if (!Array.isArray(parsed) || parsed.length === 0) {
-        throw new Error("영상에서 장면을 감지하지 못했습니다. 다른 영상을 시도해주세요.");
-    }
-
-    // Map to Scene[] — [FIX #948] 타임코드 클램핑 (AI 할루시네이션 방지)
-    const clamp = (v: number) => durationSec && durationSec > 0 ? Math.max(0, Math.min(v, durationSec)) : v;
-    const scenes: Scene[] = parsed.map((item, i) => ({
-        id: `scene-${Date.now()}-${i}`,
-        scriptText: item.scriptText || item.audioScript || `Scene ${i + 1}`,
-        visualPrompt: item.visualPrompt || '',
-        visualDescriptionKO: item.scriptText || item.audioScript || '',
-        characterPresent: item.characterPresent ?? false,
-        characterAction: item.characterAction,
-        shotSize: item.shotSize,
-        cameraAngle: item.cameraAngle,
-        cameraMovement: item.cameraMovement,
-        startTime: clamp(item.startTime ?? 0),
-        endTimeStamp: item.endTimeStamp != null ? clamp(item.endTimeStamp) : undefined,
-        audioScript: item.audioScript || '',
-        isGeneratingImage: false,
-        isGeneratingVideo: false
-    }));
-
-    console.log(`[VideoAnalysis] Analyzed ${scenes.length} scenes from video`);
-    return scenes;
 };
 
 // --- 1-B: extractFramesFromVideo ---
