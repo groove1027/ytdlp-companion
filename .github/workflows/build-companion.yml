@@ -27,6 +27,70 @@ jobs:
         working-directory: companion/src-tauri
         run: cargo tauri build
 
+      # [v2.0.1] Windows binary smoke test — 빌드된 .exe를 windows runner에서 실제 실행하고
+      # /health, /api/tunnel/status, /api/library/scan, /api/capture/screen 응답을 검증해
+      # "windows_by_handle" unstable feature 같은 stable 회귀를 매 릴리스마다 자동 차단한다.
+      - name: Windows smoke test (run binary + curl health/library/capture)
+        working-directory: companion/src-tauri
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Path target\release -Filter all-in-one-helper.exe | Select-Object -First 1
+          if (-not $exe) { throw "Windows binary not found in target/release" }
+          Write-Host "Found binary: $($exe.FullName)"
+          $proc = Start-Process -FilePath $exe.FullName -PassThru
+          Write-Host "Started PID: $($proc.Id)"
+          # cloudflared init 대기 (최대 60초)
+          $ready = $false
+          for ($i = 0; $i -lt 30; $i++) {
+            Start-Sleep -Seconds 2
+            try {
+              $h = Invoke-RestMethod -Uri "http://127.0.0.1:9876/health" -TimeoutSec 3
+              if ($h.app -eq "ytdlp-companion") {
+                Write-Host "Health OK: version=$($h.version)"
+                $ready = $true
+                break
+              }
+            } catch { }
+          }
+          if (-not $ready) {
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            throw "Companion binary did not respond to /health within 60s"
+          }
+          # tunnel status (cloudflared가 준비됐는지 확인)
+          for ($i = 0; $i -lt 30; $i++) {
+            Start-Sleep -Seconds 2
+            try {
+              $t = Invoke-RestMethod -Uri "http://127.0.0.1:9876/api/tunnel/status" -TimeoutSec 5
+              if ($t.init_state -eq "ready") {
+                Write-Host "Tunnel ready: host=$($t.public_host)"
+                break
+              }
+            } catch { }
+          }
+          # library scan with home dir (Windows: $env:USERPROFILE)
+          $body = @{ dir = $env:USERPROFILE; filter = "all"; max_results = 3 } | ConvertTo-Json
+          try {
+            $lib = Invoke-RestMethod -Uri "http://127.0.0.1:9876/api/library/scan" -Method Post -ContentType "application/json" -Body $body -TimeoutSec 10
+            if ($lib.ok -ne $true) { throw "library scan returned ok=false" }
+            Write-Host "Library scan OK: total_found=$($lib.total_found)"
+          } catch {
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            throw "Library scan failed: $_"
+          }
+          # capture/screen base64 (CI runner는 화면이 있으나 PowerShell System.Drawing 경로)
+          $capBody = @{ target = "screen"; format = "base64" } | ConvertTo-Json
+          try {
+            $cap = Invoke-RestMethod -Uri "http://127.0.0.1:9876/api/capture/screen" -Method Post -ContentType "application/json" -Body $capBody -TimeoutSec 30
+            if ($cap.ok -ne $true) { throw "capture returned ok=false: $($cap.error)" }
+            if (-not $cap.data) { throw "capture data empty" }
+            Write-Host "Capture OK: format=$($cap.format) size_bytes=$($cap.size_bytes)"
+          } catch {
+            Write-Host "::warning::capture/screen failed (CI 환경에서 PowerShell PrimaryScreen 못 잡을 수 있음): $_"
+          }
+          # cleanup
+          Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+          Write-Host "Smoke test 완료"
+
       - name: Upload Windows NSIS installer
         uses: actions/upload-artifact@v4
         with:
@@ -62,6 +126,82 @@ jobs:
       - name: Build Tauri app (macOS Universal)
         working-directory: companion/src-tauri
         run: cargo tauri build --target universal-apple-darwin
+
+      # [v2.0.1] macOS binary smoke test — universal 빌드의 arm64 슬라이스를 macos-latest
+      # (arm64) runner에서 실제 실행해 health/library/capture 검증.
+      - name: macOS smoke test (run binary + curl health/library/capture)
+        working-directory: companion/src-tauri
+        run: |
+          set -e
+          BINARY=$(find target/universal-apple-darwin/release/bundle/macos -type f -name "all-in-one-helper" 2>/dev/null | head -1)
+          if [ -z "$BINARY" ]; then
+            BINARY=$(find target/universal-apple-darwin/release -maxdepth 2 -type f -name "all-in-one-helper" 2>/dev/null | head -1)
+          fi
+          if [ -z "$BINARY" ]; then
+            echo "::error::macOS binary not found"
+            find target/universal-apple-darwin/release -type f -name "all-in-one-helper" || true
+            exit 1
+          fi
+          echo "Found binary: $BINARY"
+          chmod +x "$BINARY"
+          "$BINARY" &
+          PID=$!
+          echo "Started PID: $PID"
+          ready=0
+          for i in $(seq 1 30); do
+            sleep 2
+            if curl -fsS http://127.0.0.1:9876/health -o /tmp/h.json 2>/dev/null; then
+              version=$(cat /tmp/h.json | python3 -c "import json,sys; print(json.load(sys.stdin).get('version'))")
+              echo "Health OK: version=$version"
+              ready=1
+              break
+            fi
+          done
+          if [ $ready -eq 0 ]; then
+            kill -9 $PID 2>/dev/null || true
+            echo "::error::Companion did not respond to /health within 60s"
+            exit 1
+          fi
+          # tunnel status
+          for i in $(seq 1 30); do
+            sleep 2
+            state=$(curl -fsS http://127.0.0.1:9876/api/tunnel/status 2>/dev/null | python3 -c "import json,sys; print(json.load(sys.stdin).get('init_state'))" 2>/dev/null || echo "")
+            if [ "$state" = "ready" ]; then
+              host=$(curl -fsS http://127.0.0.1:9876/api/tunnel/status 2>/dev/null | python3 -c "import json,sys; print(json.load(sys.stdin).get('public_host'))")
+              echo "Tunnel ready: host=$host"
+              break
+            fi
+          done
+          # library scan with $HOME
+          curl -fsS -X POST http://127.0.0.1:9876/api/library/scan \
+            -H "Content-Type: application/json" \
+            -d "{\"dir\":\"$HOME\",\"filter\":\"all\",\"max_results\":3}" \
+            -o /tmp/lib.json
+          if ! grep -q '"ok":true' /tmp/lib.json; then
+            kill -9 $PID 2>/dev/null || true
+            cat /tmp/lib.json
+            echo "::error::Library scan failed"
+            exit 1
+          fi
+          echo "Library scan OK"
+          # capture screen base64 (CI macOS runner도 framebuffer 없을 수 있음)
+          if curl -fsS -X POST http://127.0.0.1:9876/api/capture/screen \
+            -H "Content-Type: application/json" \
+            -d '{"target":"screen","format":"base64"}' \
+            -o /tmp/cap.json 2>/dev/null; then
+            ok=$(python3 -c "import json; print(json.load(open('/tmp/cap.json')).get('ok'))")
+            if [ "$ok" = "True" ]; then
+              size=$(python3 -c "import json; print(json.load(open('/tmp/cap.json')).get('size_bytes'))")
+              echo "Capture OK: $size bytes"
+            else
+              err=$(python3 -c "import json; print(json.load(open('/tmp/cap.json')).get('error'))")
+              echo "::warning::capture failed (headless CI 가능): $err"
+            fi
+          else
+            echo "::warning::capture/screen 호출 실패 (headless CI 가능)"
+          fi
+          kill -9 $PID 2>/dev/null || true
+          echo "macOS smoke test 완료"
 
       - name: Upload macOS Universal DMG
         uses: actions/upload-artifact@v4

@@ -10,6 +10,7 @@ import { generateKieImage, generateEvolinkImageWrapped } from '../VideoGenServic
 import { transcribeWithDiarization, formatDiarizedTranscript } from '../transcriptionService';
 import { logger } from '../LoggerService';
 import { getSceneNarrationText } from '../../utils/sceneText';
+import { computeVideoAnalysisMaxTokens, computeVideoAnalysisTimeoutMs } from './videoAnalysisLimits';
 // extractStreamUrl/isYtdlpServerConfigured — CDN URL은 Vertex AI robots.txt로 차단되어 사용 불가
 
 // --- Types ---
@@ -122,44 +123,14 @@ Analyze the video now. Return ONLY the JSON array.`;
         generationConfig: {
             responseMimeType: 'application/json',
             temperature: durationSec && durationSec > 600 ? 0.2 : 0.3,
-            // [v2.0 Phase 4-2] 드라마 1화 통째 분석 (45~90분) — 토큰 한도 65k로 상향
-            // [FIX #948] 롱폼: 예상 장면 수에 따라 토큰 동적 계산
-            // - 30분 이하: 8k~32k (기존)
-            // - 30~60분: 32k~50k
-            // - 60분+ (드라마 1화): 50k~65k
-            maxOutputTokens: (() => {
-                if (!durationSec || durationSec <= 120) return 8000;
-                if (durationSec <= 1800) {
-                    // 2분~30분: 기존 계산
-                    const avgSceneSec = durationSec <= 600 ? 45 : 90;
-                    const expectedScenes = Math.ceil(durationSec / avgSceneSec);
-                    return Math.min(32000, Math.max(8000, expectedScenes * 200));
-                }
-                if (durationSec <= 3600) {
-                    // 30~60분: 50k 토큰 (1분당 ~830 토큰 = 60장면)
-                    const expectedScenes = Math.ceil(durationSec / 90);
-                    return Math.min(50000, Math.max(32000, expectedScenes * 200));
-                }
-                // 60분+ (드라마 1화 풀): 65k 토큰 한도 (Gemini 3.1 Pro 최대)
-                const expectedScenes = Math.ceil(durationSec / 120);
-                return Math.min(65000, Math.max(50000, expectedScenes * 200));
-            })()
+            // [v2.0 Phase 4-2] 드라마 1화 통째 분석 (45~90분) — 토큰 한도 65k 동적 산출
+            maxOutputTokens: computeVideoAnalysisMaxTokens(durationSec),
         },
         safetySettings: SAFETY_SETTINGS_BLOCK_NONE
     };
 
     // [v2.0 Phase 4-2] 드라마 1화 분석 대응 — duration에 따라 동적 timeout
-    // - 단일 영상(<=10분): 110초 (기존)
-    // - 중간 영상(10~30분): 5분
-    // - 롱폼(30~60분): 10분
-    // - 드라마 1화(60분+): 20분
-    // [FIX #679] 110초는 브라우저 타임아웃(~126초) 안전 마진
-    const VIDEO_ANALYSIS_TIMEOUT_MS = (() => {
-        if (!durationSec || durationSec <= 600) return 110_000;
-        if (durationSec <= 1800) return 5 * 60 * 1000;
-        if (durationSec <= 3600) return 10 * 60 * 1000;
-        return 20 * 60 * 1000;
-    })();
+    const VIDEO_ANALYSIS_TIMEOUT_MS = computeVideoAnalysisTimeoutMs(durationSec);
 
     // [v2.0 #1066] try/finally로 tunnelCleanup 반드시 호출
     try {

@@ -8,6 +8,29 @@
 
 ## 🟢 완료된 작업
 
+- [x] **2026-04-07 — v2.0.1 Phase 4-1/4-4 2차 검증 보강**
+  - `rg -n "Privacy Mode|privacyMode|companion|DragDropAIWidget|captureClient|CompanionCaptureFormat|CompanionCaptureTarget|CompanionCaptureResult|webkitdirectory|role=\"switch\"|aria-checked|localStorage|visibilitychange|build-companion" src .github/workflows`로 영향 범위 전수 조사 완료
+  - `src/components/ApiKeySettings.tsx` — Privacy Mode 토글이 모달 open 중에도 `focus`/`visibilitychange`/storage/custom event로 상태를 다시 동기화하고, ON 전환 시 `recheckCompanion()`으로 실시간 차단 판정을 수행하도록 보강
+  - `src/components/ApiKeySettings.tsx` — 3차 검증에서 Privacy Mode 토글의 중복 클릭 race를 확인해, `recheckCompanion()` 대기 중에는 스위치를 잠그고 "확인 중" 상태를 노출하도록 보강
+  - `src/services/uploadService.ts` — `PRIVACY_MODE_CHANGE_EVENT`를 추가해 같은 탭 안에서도 Privacy Mode 변경이 즉시 반영되도록 정리
+  - `src/components/DragDropAIWidget.tsx` — 로그인 전 노출은 `App.tsx`에서 차단했고, widget 내부는 `focus`/`visibilitychange`/10초 폴링으로 companion 상태를 재감지하도록 수정. 파일 드롭은 Privacy ON 사전 차단을 제거해 `uploadMediaToHosting()`의 원래 예외 메시지를 그대로 노출하게 했고, fullscreen overlay DOM 감지 + UI store 플래그로 흐림 처리 범위를 넓힘
+  - `src/services/companion/captureClient.ts` — 요청 포맷과 응답 포맷 불일치 시 명시적으로 실패시키고, `size_bytes`/MIME 검증을 보강해 base64 실패 후 tunnel 폴백이 정확히 동작하도록 수정
+  - `src/App.tsx` — `DragDropAIWidget`를 로그인 사용자에게만 마운트하도록 조정
+  - `.github/workflows/build-companion.yml` — Windows/macOS smoke test 스크립트 문법과 headless capture warning-only 분기를 재검토했고 추가 수정은 불필요함을 확인
+  - `cd src && node_modules/typescript/bin/tsc --noEmit`: 통과
+  - `cd src && node_modules/.bin/vite build`: 성공 (기존 dynamic import/chunk-size warning만 출력)
+  - `rg -n "PRIVACY_MODE_CHANGE_EVENT|data-privacy-toggle|captureScreen\\(|DragDropAIWidget|authUser && <DragDropAIWidget />" src docs/CHECKLIST.md -g '!src/dist/**'`: 반영 위치 재확인
+
+- [x] **2026-04-07 — v2.0.1 Phase 4-4 DragDropAIWidget 프론트 consumer 추가**
+  - `rg -n "scanLibrary|captureScreen|/api/capture/screen|uploadMediaToHosting|isCompanionDetected|isPrivacyModeEnabled|DragDropAIWidget" src docs/CHECKLIST.md companion/src-tauri/src/server.rs -g '!src/dist/**'`로 영향 범위 전수 조사 완료
+  - `src/types.ts` — 화면 캡처 wrapper용 `CompanionCaptureTarget`, `CompanionCaptureFormat`, `CompanionCaptureResult` 공용 타입 추가
+  - `src/services/companion/captureClient.ts` 신규 — `monitoredFetch` 기반 `/api/capture/screen` wrapper 구현, base64/tunnel 응답을 명시적 타입으로 파싱하고 오류를 throw 하도록 정리
+  - `src/components/DragDropAIWidget.tsx` 신규 — 우하단 FAB, 폴더 스캔(`scanLibrary`), 화면 캡처(base64 우선 후 tunnel 폴백), 파일 드롭(`uploadMediaToHosting`) UI와 미리보기/placeholder AI 분석 버튼 추가. 컴패니언 미감지 및 Privacy Mode 경고, 모달 오픈 시 흐림 처리 포함
+  - `src/App.tsx` — 전역 레이아웃 최상단에 `DragDropAIWidget` 1회 마운트
+  - `cd src && node_modules/typescript/bin/tsc --noEmit`: 통과
+  - `cd src && node_modules/.bin/vite build`: 성공
+  - `rg -n "DragDropAIWidget|captureScreen|CompanionCaptureResult|/api/capture/screen" src docs/CHECKLIST.md -g '!src/dist/**'`: 반영 위치 재확인
+
 - [x] **2026-04-07 — companion v2.0 Phase 3/4 Windows stable 재검증 보강**
   - `rg -n "uploadMediaToHosting|uploadMediaPermanent|from_path_any|file::information|MAIN_E2E_DIR|library_file_info_handler|capture_screen_handler" src companion test-e2e docs/CHECKLIST.md -g '!dist'`로 Windows fix/영구 저장/E2E 경로 영향 범위 재점검
   - `companion/src-tauri/src/server.rs` — Windows 재검증 2차 지점을 path 기반 재조회 대신 열린 파일 handle 기반 `winapi_util::Handle::from_file()`로 보강해 stable 빌드 유지하면서 TOCTOU 의도를 최대한 복원. `library_file_info_handler`는 JSON 오류 응답으로 통일하고, 화면 캡처는 Windows/Linux에서 미구현 target(`window`/`selection`)을 조기 거부하도록 정리

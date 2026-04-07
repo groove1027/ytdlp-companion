@@ -4,6 +4,9 @@ import { logger } from './LoggerService';
 import { isCompanionDetected } from './ytdlpApiService';
 import { openTunnelForFile, isTunnelAvailable } from './companion/tunnelClient';
 
+const PRIVACY_MODE_STORAGE_KEY = 'PRIVACY_MODE_ENABLED';
+export const PRIVACY_MODE_CHANGE_EVENT = 'privacy-mode-change';
+
 /**
  * [v2.0 Phase 4-1] 사적 콘텐츠 안전 모드 (Privacy Mode)
  *
@@ -14,7 +17,7 @@ import { openTunnelForFile, isTunnelAvailable } from './companion/tunnelClient';
  */
 export const isPrivacyModeEnabled = (): boolean => {
   try {
-    return localStorage.getItem('PRIVACY_MODE_ENABLED') === 'true';
+    return localStorage.getItem(PRIVACY_MODE_STORAGE_KEY) === 'true';
   } catch {
     return false;
   }
@@ -22,7 +25,12 @@ export const isPrivacyModeEnabled = (): boolean => {
 
 export const setPrivacyModeEnabled = (enabled: boolean): void => {
   try {
-    localStorage.setItem('PRIVACY_MODE_ENABLED', enabled ? 'true' : 'false');
+    localStorage.setItem(PRIVACY_MODE_STORAGE_KEY, enabled ? 'true' : 'false');
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent<{ enabled: boolean }>(PRIVACY_MODE_CHANGE_EVENT, {
+        detail: { enabled },
+      }));
+    }
   } catch {}
 };
 

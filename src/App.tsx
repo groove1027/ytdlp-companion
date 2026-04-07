@@ -16,6 +16,7 @@ import SmartErrorBanner from './components/SmartErrorBanner';
 import AnnouncementBanner from './components/AnnouncementBanner';
 import CostDashboard from './components/CostDashboard';
 import ApiKeySettings from './components/ApiKeySettings';
+import DragDropAIWidget from './components/DragDropAIWidget';
 import { ProjectConfig, Scene, AspectRatio, ProjectData, VideoFormat, ImageModel, CharacterAppearance, VideoModel, VoiceName, AppTab } from './types';
 import {
     parseScriptToScenes,
@@ -1201,6 +1202,7 @@ const App: React.FC = () => {
   return (
     <div className="min-h-screen bg-gray-900 text-white font-sans selection:bg-blue-500 relative">
       <ProcessingOverlay message={processingMessage} progress={detailedStatus.percent} eta={detailedStatus.eta} mode={processingMode} />
+      {authUser && <DragDropAIWidget />}
       
       {showFullScriptModal && (() => {
           const hasKO = scenes.some(s => s.scriptTextKO);
