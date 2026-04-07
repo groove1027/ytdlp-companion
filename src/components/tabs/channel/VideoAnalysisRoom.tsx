@@ -3319,14 +3319,22 @@ const buildVideoAnalysisSourceCacheKey = (
   return `link:${normalizedUrls}`;
 };
 
-const setLimitedCacheEntry = <T,>(cache: Map<string, T>, key: string, value: T, limit: number = SOURCE_PREP_CACHE_LIMIT): void => {
+const setLimitedCacheEntry = <T,>(
+  cache: Map<string, T>,
+  key: string,
+  value: T,
+  limit: number = SOURCE_PREP_CACHE_LIMIT,
+): string[] => {
+  const evictedKeys: string[] = [];
   if (cache.has(key)) cache.delete(key);
   cache.set(key, value);
   while (cache.size > limit) {
     const oldestKey = cache.keys().next().value;
     if (!oldestKey) break;
     cache.delete(oldestKey);
+    evictedKeys.push(oldestKey);
   }
+  return evictedKeys;
 };
 
 interface RemixRowGuide {
@@ -4146,6 +4154,20 @@ const VideoAnalysisRoom: React.FC = () => {
   });
   const [lastAnalysisPerfLines, setLastAnalysisPerfLines] = useState<string[]>([]);
 
+  const runTunnelCleanupsForKey = useCallback((cacheKey: string) => {
+    const cleanups = tunnelCleanupsByKeyRef.current.get(cacheKey);
+    tunnelCleanupsByKeyRef.current.delete(cacheKey);
+    if (cleanups && cleanups.length > 0) {
+      Promise.allSettled(cleanups.map((fn) => fn())).catch(() => {});
+    }
+  }, []);
+
+  const evictSourcePrepCacheKey = useCallback((cacheKey: string) => {
+    sourcePrepCacheRef.current.delete(cacheKey);
+    sourcePrepCacheTimestampsRef.current.delete(cacheKey);
+    runTunnelCleanupsForKey(cacheKey);
+  }, [runTunnelCleanupsForKey]);
+
   // ── 인기 쇼츠 음원 추천 ──
   const [trendingBgm, setTrendingBgm] = useState<{ title: string; artist: string; videoId: string; thumbnail: string }[]>([]);
   const [isBgmLoading, setIsBgmLoading] = useState(false);
@@ -4403,14 +4425,7 @@ const VideoAnalysisRoom: React.FC = () => {
       if (!cacheStillExists || expired) staleKeys.push(k);
     });
     for (const k of staleKeys) {
-      sourcePrepCacheTimestampsRef.current.delete(k);
-      sourcePrepCacheRef.current.delete(k);
-      // 해당 키의 터널들 정리
-      const cleanups = tunnelCleanupsByKeyRef.current.get(k);
-      if (cleanups && cleanups.length > 0) {
-        Promise.allSettled(cleanups.map(fn => fn())).catch(() => {});
-      }
-      tunnelCleanupsByKeyRef.current.delete(k);
+      evictSourcePrepCacheKey(k);
     }
 
     // 현재 키의 fresh 여부
@@ -4420,13 +4435,7 @@ const VideoAnalysisRoom: React.FC = () => {
 
     if (!cachedEntryFresh) {
       // 이 키의 이전 cleanup만 실행 (다른 키는 그대로 둠 — 다른 영상 캐시 보존)
-      const prev = tunnelCleanupsByKeyRef.current.get(sourceCacheKey) || [];
-      tunnelCleanupsByKeyRef.current.delete(sourceCacheKey);
-      if (prev.length > 0) {
-        Promise.allSettled(prev.map(fn => fn())).catch(() => {});
-      }
-      sourcePrepCacheRef.current.delete(sourceCacheKey);
-      sourcePrepCacheTimestampsRef.current.delete(sourceCacheKey);
+      evictSourcePrepCacheKey(sourceCacheKey);
     }
 
     // ffmpeg.wasm 사전 로드 (백그라운드, 분석 시작과 동시에)
@@ -4472,7 +4481,7 @@ const VideoAnalysisRoom: React.FC = () => {
     // 강제 재생성 시 해당 프리셋 캐시 삭제
     if (force) {
       clearPresetCache(preset);
-      sourcePrepCacheRef.current.delete(sourceCacheKey);
+      evictSourcePrepCacheKey(sourceCacheKey);
       sourceDiarizationCacheRef.current.delete(sourceCacheKey);
     }
 
@@ -4838,7 +4847,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
 
       frames = compactFramesForSourcePrep(frames);
       if (!cachedSourcePrep) {
-        setLimitedCacheEntry(sourcePrepCacheRef.current, sourceCacheKey, {
+        const evictedSourcePrepKeys = setLimitedCacheEntry(sourcePrepCacheRef.current, sourceCacheKey, {
           videoUri,
           videoMime,
           allVideoUris: [...allVideoUris],
@@ -4850,6 +4859,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
         });
         // (Codex 프론트 4차 Medium) 캐시 timestamp 동시 기록
         sourcePrepCacheTimestampsRef.current.set(sourceCacheKey, Date.now());
+        evictedSourcePrepKeys.forEach(evictSourcePrepCacheKey);
       }
       setThumbnails(frames);
 
@@ -4896,10 +4906,11 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
               console.log(`[Scene] ✅ 씬 감지 완료: ${sceneCuts.length}개 컷 포인트`);
               const cachedEntry = sourcePrepCacheRef.current.get(sourceCacheKey);
               if (cachedEntry) {
-                setLimitedCacheEntry(sourcePrepCacheRef.current, sourceCacheKey, {
+                const evictedSourcePrepKeys = setLimitedCacheEntry(sourcePrepCacheRef.current, sourceCacheKey, {
                   ...cachedEntry,
                   singleSourceSceneCuts: sceneCuts,
                 });
+                evictedSourcePrepKeys.forEach(evictSourcePrepCacheKey);
               }
               return { blob: downloadResult.blob, sceneCuts };
             } catch (e) {
@@ -4924,10 +4935,11 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
         singleSourceSceneCutsPromise = singleSourceSceneCutsPromise.then((sceneCuts) => {
           const cachedEntry = sourcePrepCacheRef.current.get(sourceCacheKey);
           if (cachedEntry) {
-            setLimitedCacheEntry(sourcePrepCacheRef.current, sourceCacheKey, {
+            const evictedSourcePrepKeys = setLimitedCacheEntry(sourcePrepCacheRef.current, sourceCacheKey, {
               ...cachedEntry,
               singleSourceSceneCuts: sceneCuts,
             });
+            evictedSourcePrepKeys.forEach(evictSourcePrepCacheKey);
           }
           return sceneCuts;
         });

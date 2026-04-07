@@ -28,7 +28,8 @@ function loadEnv(): Record<string, string> {
   const lines = fs.readFileSync(envPath, 'utf-8').split('\n');
   const env: Record<string, string> = {};
   for (const line of lines) {
-    const m = line.match(/^([A-Z_]+)=(.+)$/);
+    // [FIX] 숫자도 허용 (E2E_TEST_EMAIL의 '2' 등)
+    const m = line.match(/^([A-Z0-9_]+)=(.+)$/);
     if (m) env[m[1]] = m[2].trim();
   }
   return env;
