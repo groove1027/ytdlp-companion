@@ -1,6 +1,7 @@
 // Prevents additional console window on Windows in release
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod ffmpeg;
 mod platform;
 mod rembg;
 mod server;
@@ -183,7 +184,7 @@ fn main() {
             });
 
             // 바이너리 자동 다운로드/업데이트 (백그라운드)
-            // yt-dlp + whisper: 독립 바이너리이므로 병렬 OK
+            // yt-dlp + whisper + ffmpeg: 독립 바이너리이므로 병렬 OK
             tauri::async_runtime::spawn(async {
                 if let Err(e) = ytdlp::ensure_ytdlp().await {
                     eprintln!("[Companion] yt-dlp 설정 실패: {}", e);
@@ -192,6 +193,14 @@ fn main() {
             tauri::async_runtime::spawn(async {
                 if let Err(e) = whisper::ensure_whisper().await {
                     eprintln!("[Companion] whisper 설정 실패: {}", e);
+                }
+            });
+            // [v2.0.2] ffmpeg 자동 다운로드 — 1080p+오디오 merge에 필수.
+            // 시스템(brew/Program Files) 우선, 없으면 GitHub eugeneware/ffmpeg-static b6.1.1
+            tauri::async_runtime::spawn(async {
+                match ffmpeg::ensure_ffmpeg().await {
+                    Ok(p) => println!("[Companion] ffmpeg 준비 완료: {}", p.display()),
+                    Err(e) => eprintln!("[Companion] ffmpeg 설정 실패 (1080p+오디오 merge 불가능): {}", e),
                 }
             });
             // pip install은 직렬 실행 — 동일 Python 환경에 동시 설치 시 경쟁 조건 발생

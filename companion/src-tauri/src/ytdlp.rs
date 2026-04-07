@@ -72,28 +72,27 @@ pub fn get_ffmpeg_path_public() -> PathBuf {
 }
 
 fn get_ffmpeg_path() -> PathBuf {
+    // [v2.0.2] 실제 사용 시에는 시스템 설치본을 먼저 존중한다.
+    // 사용자가 brew/winget/scoop으로 ffmpeg를 업데이트했다면 그 버전을 우선 사용하고,
+    // 없을 때만 companion 캐시 정적 binary로 내려간다.
+    if let Some(system) = crate::ffmpeg::system_ffmpeg_path() {
+        return system;
+    }
+
+    if let Ok(cached) = crate::ffmpeg::ffmpeg_cache_path() {
+        if cached.exists() {
+            return cached;
+        }
+    }
+
     if cfg!(target_os = "windows") {
-        // Windows: 번들 → winget/scoop/choco 설치 경로 → PATH
+        // Windows: legacy 번들 → PATH
         let dir = get_ytdlp_dir();
         let bundled = dir.join("ffmpeg.exe");
         if bundled.exists() { return bundled; }
-        // 일반적인 Windows 설치 경로들
-        let common_paths = [
-            r"C:\ffmpeg\bin\ffmpeg.exe",
-            r"C:\ProgramData\chocolatey\bin\ffmpeg.exe",
-        ];
-        for p in &common_paths {
-            let path = PathBuf::from(p);
-            if path.exists() { return path; }
-        }
-        // PATH에서 찾기 (시스템 ffmpeg)
         PathBuf::from("ffmpeg.exe")
     } else {
-        // macOS/Linux: Homebrew → 번들 → PATH
-        let brew = PathBuf::from("/opt/homebrew/bin/ffmpeg");
-        if brew.exists() { return brew; }
-        let brew2 = PathBuf::from("/usr/local/bin/ffmpeg");
-        if brew2.exists() { return brew2; }
+        // macOS/Linux: legacy 번들 → PATH
         let dir = get_ytdlp_dir();
         let bundled = dir.join("ffmpeg");
         if bundled.exists() { return bundled; }

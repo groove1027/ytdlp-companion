@@ -30,13 +30,20 @@ jobs:
       # [v2.0.1] Windows binary smoke test — 빌드된 .exe를 windows runner에서 실제 실행하고
       # /health, /api/tunnel/status, /api/library/scan, /api/capture/screen 응답을 검증해
       # "windows_by_handle" unstable feature 같은 stable 회귀를 매 릴리스마다 자동 차단한다.
-      - name: Windows smoke test (run binary + curl health/library/capture)
+      - name: Windows smoke test (run binary + curl health/library/capture/ffmpeg)
         working-directory: companion/src-tauri
         shell: pwsh
+        env:
+          # [v2.0.2] 시스템 ffmpeg 무시 → ensure_ffmpeg 자동 다운로드 분기 검증
+          FFMPEG_FORCE_DOWNLOAD_FOR_TEST: "1"
         run: |
           $exe = Get-ChildItem -Path target\release -Filter all-in-one-helper.exe | Select-Object -First 1
           if (-not $exe) { throw "Windows binary not found in target/release" }
           Write-Host "Found binary: $($exe.FullName)"
+          # 캐시 디렉터리 비우기 — 깨끗한 상태에서 다운로드 검증
+          $ffmpegCacheDir = Join-Path $env:LOCALAPPDATA "ytdlp-companion\bin"
+          if (Test-Path $ffmpegCacheDir) { Remove-Item -Recurse -Force $ffmpegCacheDir }
+          Write-Host "FFmpeg 캐시 디렉터리 정리: $ffmpegCacheDir"
           $proc = Start-Process -FilePath $exe.FullName -PassThru
           Write-Host "Started PID: $($proc.Id)"
           # cloudflared init 대기 (최대 60초)
@@ -87,6 +94,34 @@ jobs:
           } catch {
             Write-Host "::warning::capture/screen failed (CI 환경에서 PowerShell PrimaryScreen 못 잡을 수 있음): $_"
           }
+          # [v2.0.2] ffmpeg 자동 다운로드 검증 — 최대 120초 대기
+          $ffmpegPath = Join-Path $ffmpegCacheDir "ffmpeg.exe"
+          $ffmpegReady = $false
+          for ($i = 0; $i -lt 60; $i++) {
+            Start-Sleep -Seconds 2
+            if (Test-Path $ffmpegPath) {
+              $size = (Get-Item $ffmpegPath).Length
+              if ($size -gt 10000000) {  # 10MB+ (정상 ffmpeg는 80MB+)
+                Write-Host "FFmpeg downloaded: $ffmpegPath ($size bytes)"
+                $ffmpegReady = $true
+                break
+              }
+            }
+          }
+          if (-not $ffmpegReady) {
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            throw "FFmpeg auto-download did not complete within 120s"
+          }
+          # SHA-256 검증
+          $expectedFfmpeg = "04e1307997530f9cf2fe35cba2ca7e8875ca91da02f89d6c7243df819c94ad00"
+          $actualFfmpeg = (Get-FileHash $ffmpegPath -Algorithm SHA256).Hash.ToLower()
+          if ($actualFfmpeg -ne $expectedFfmpeg) {
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            throw "FFmpeg SHA-256 mismatch — expected $expectedFfmpeg got $actualFfmpeg"
+          }
+          Write-Host "FFmpeg SHA-256 OK"
+          # 실행 검증
+          & $ffmpegPath -version | Select-Object -First 1
           # cleanup
           Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
           Write-Host "Smoke test 완료"
@@ -128,9 +163,12 @@ jobs:
         run: cargo tauri build --target universal-apple-darwin
 
       # [v2.0.1] macOS binary smoke test — universal 빌드의 arm64 슬라이스를 macos-latest
-      # (arm64) runner에서 실제 실행해 health/library/capture 검증.
-      - name: macOS smoke test (run binary + curl health/library/capture)
+      # (arm64) runner에서 실제 실행해 health/library/capture/ffmpeg 검증.
+      - name: macOS smoke test (run binary + curl health/library/capture/ffmpeg)
         working-directory: companion/src-tauri
+        env:
+          # [v2.0.2] 시스템 ffmpeg 무시 → ensure_ffmpeg 자동 다운로드 분기 검증
+          FFMPEG_FORCE_DOWNLOAD_FOR_TEST: "1"
         run: |
           set -e
           BINARY=$(find target/universal-apple-darwin/release/bundle/macos -type f -name "all-in-one-helper" 2>/dev/null | head -1)
@@ -144,6 +182,10 @@ jobs:
           fi
           echo "Found binary: $BINARY"
           chmod +x "$BINARY"
+          # 캐시 디렉터리 비우기 — ffmpeg 자동 다운로드 검증
+          FFMPEG_CACHE_DIR="$HOME/Library/Application Support/ytdlp-companion/bin"
+          rm -rf "$FFMPEG_CACHE_DIR"
+          echo "FFmpeg 캐시 정리: $FFMPEG_CACHE_DIR"
           "$BINARY" &
           PID=$!
           echo "Started PID: $PID"
@@ -200,6 +242,38 @@ jobs:
           else
             echo "::warning::capture/screen 호출 실패 (headless CI 가능)"
           fi
+          # [v2.0.2] ffmpeg 자동 다운로드 검증 — 최대 120초 대기
+          FFMPEG_PATH="$FFMPEG_CACHE_DIR/ffmpeg"
+          ffmpeg_ready=0
+          for i in $(seq 1 60); do
+            sleep 2
+            if [ -f "$FFMPEG_PATH" ]; then
+              size=$(stat -f %z "$FFMPEG_PATH" 2>/dev/null || stat -c %s "$FFMPEG_PATH" 2>/dev/null || echo 0)
+              if [ "$size" -gt 10000000 ]; then
+                echo "FFmpeg downloaded: $FFMPEG_PATH ($size bytes)"
+                ffmpeg_ready=1
+                break
+              fi
+            fi
+          done
+          if [ $ffmpeg_ready -eq 0 ]; then
+            kill -9 $PID 2>/dev/null || true
+            echo "::error::FFmpeg auto-download did not complete within 120s"
+            exit 1
+          fi
+          # SHA-256 검증 (arm64 universal slice 기준)
+          # macos-latest runner는 arm64이므로 darwin-arm64 SHA 사용
+          EXPECTED_FFMPEG="a90e3db6a3fd35f6074b013f948b1aa45b31c6375489d39e572bea3f18336584"
+          ACTUAL_FFMPEG=$(shasum -a 256 "$FFMPEG_PATH" | awk '{print $1}')
+          if [ "$ACTUAL_FFMPEG" != "$EXPECTED_FFMPEG" ]; then
+            kill -9 $PID 2>/dev/null || true
+            echo "::error::FFmpeg SHA-256 mismatch — expected $EXPECTED_FFMPEG got $ACTUAL_FFMPEG"
+            exit 1
+          fi
+          echo "FFmpeg SHA-256 OK"
+          # 실행 검증
+          chmod +x "$FFMPEG_PATH"
+          "$FFMPEG_PATH" -version | head -1
           kill -9 $PID 2>/dev/null || true
           echo "macOS smoke test 완료"
 
