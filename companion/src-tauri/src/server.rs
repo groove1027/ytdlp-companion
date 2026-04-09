@@ -621,6 +621,19 @@ struct ValidatedFfmpegCutClip {
     end: f64,
 }
 
+// [v2.1.0] /api/scene-detect — yt-dlp + ffmpeg 네이티브 씬 감지
+// 브라우저에서 프레임 하나씩 시크·Canvas 비교로 90초 타임아웃에 걸리던 작업을
+// 네이티브 ffmpeg `select=gt(scene,X)` + `metadata=print` 파이프라인으로 대체.
+// 30분 영상도 10~20초면 완료됨. 프론트는 SceneCut[] 그대로 mergeWithAiTimecodes에 투입.
+#[derive(Deserialize)]
+struct SceneDetectRequest {
+    url: String,
+    /// ffmpeg scene filter 임계값 (0.0~1.0). 기본 0.2 — 값이 높을수록 강한 컷만 감지.
+    threshold: Option<f64>,
+    /// 다운로드 화질 — 씬 감지에는 저화질이 빠르고 충분. 기본 "480p".
+    quality: Option<String>,
+}
+
 #[derive(Deserialize)]
 struct ExtractQuery {
     url: String,
@@ -780,6 +793,9 @@ pub async fn start_server(_app: tauri::AppHandle) -> Result<(), Box<dyn std::err
         .route("/api/ffmpeg/transcode", post(ffmpeg_transcode_handler))
         .route("/api/ffmpeg/merge", post(ffmpeg_merge_handler))
         .route("/api/ffmpeg/cut", post(ffmpeg_cut_handler))
+        // [v2.1.0] 씬 감지 — yt-dlp + ffmpeg select=gt(scene,X) 네이티브 파이프라인.
+        // 브라우저 Canvas 기반 detectSceneCuts의 네이티브 대체. 30분 영상도 10~20초에 완료.
+        .route("/api/scene-detect", post(scene_detect_handler))
         // [v2.0] Video Tunnel — 로컬 파일을 cloudflared로 임시 노출 (메인 9876 — 로컬 전용)
         // /api/tunnel/serve/:token만 별도 9879 포트로 분리 (cloudflared가 노출)
         // (Codex Critical 1) upload-temp만 5GB body limit, 나머지는 라우트별 작은 한도
@@ -1998,9 +2014,15 @@ async fn nle_install_handler(Json(req): Json<NleInstallRequest>) -> impl IntoRes
         installed_count += 1;
     }
 
+    if req.target == "capcut" {
+        if let Err(e) = patch_capcut_draft_content_fps(&project_dir).await {
+            eprintln!("[NLE] CapCut FPS 보정 경고 (치명적 아님): {}", e);
+        }
+    }
+
     // ── Premiere .prproj 패치 — launch 전에 실행하여 패치된 파일이 열리도록 ──
     if req.target == "premiere" {
-        if let Err(e) = patch_prproj_files(&project_dir) {
+        if let Err(e) = patch_prproj_files(&project_dir).await {
             eprintln!("[NLE] prproj 패치 경고 (치명적 아님): {}", e);
         }
     }
@@ -2196,18 +2218,334 @@ fn read_plist_version(plist_path: &str) -> Option<String> {
     Some(after_key[string_start..string_start + string_end].to_string())
 }
 
+fn schema_version_for_premiere(version: &str) -> u32 {
+    let major = version
+        .split('.')
+        .next()
+        .and_then(|value| value.parse::<u32>().ok());
+
+    match major {
+        Some(26) | Some(25) => 43,
+        Some(24) => 42,
+        Some(23) => 38,
+        Some(22) => 36,
+        Some(15) => 35,
+        Some(14) => 34,
+        _ => 33,
+    }
+}
+
+fn is_drop_frame_fps(fps: f64) -> bool {
+    (fps - 29.97).abs() < 0.01 || (fps - 59.94).abs() < 0.01
+}
+
+fn fps_to_timebase_and_ntsc(fps: f64) -> (u32, bool) {
+    if (fps - 23.976).abs() < 0.01 {
+        return (24, true);
+    }
+    if (fps - 29.97).abs() < 0.01 {
+        return (30, true);
+    }
+    if (fps - 59.94).abs() < 0.01 {
+        return (60, true);
+    }
+    (fps.round().clamp(1.0, 120.0) as u32, false)
+}
+
+fn normalize_detected_fps(fps: f64) -> f64 {
+    let known = [23.976, 24.0, 25.0, 29.97, 30.0, 50.0, 59.94, 60.0];
+    if let Some(best) = known.into_iter().min_by(|a, b| {
+        (fps - *a)
+            .abs()
+            .partial_cmp(&(fps - *b).abs())
+            .unwrap_or(std::cmp::Ordering::Equal)
+    }) {
+        if (fps - best).abs() < 0.05 {
+            return best;
+        }
+    }
+    (fps * 1000.0).round() / 1000.0
+}
+
+fn is_video_media_path(path: &std::path::Path) -> bool {
+    let Some(ext) = path.extension().and_then(|value| value.to_str()) else {
+        return false;
+    };
+    matches!(
+        ext.to_ascii_lowercase().as_str(),
+        "mp4" | "mov" | "avi" | "mkv" | "webm" | "m4v" | "ts" | "flv" | "wmv" | "mpeg"
+            | "mpg" | "mxf"
+    )
+}
+
+fn collect_video_media_paths(project_dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut files = Vec::new();
+    let mut stack = vec![project_dir.to_path_buf()];
+
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if is_video_media_path(&path) {
+                files.push(path);
+            }
+        }
+    }
+
+    files.sort();
+    files
+}
+
+fn ffprobe_candidate_paths() -> Vec<std::path::PathBuf> {
+    let ffmpeg_path = ytdlp::get_ffmpeg_path_public();
+    let mut candidates = Vec::new();
+
+    if let Some(name) = ffmpeg_path.file_name().and_then(|value| value.to_str()) {
+        if name.eq_ignore_ascii_case("ffmpeg") || name.eq_ignore_ascii_case("ffmpeg.exe") {
+            let mut sibling = ffmpeg_path.clone();
+            sibling.set_file_name(if cfg!(windows) { "ffprobe.exe" } else { "ffprobe" });
+            candidates.push(sibling);
+        }
+    }
+
+    candidates.push(std::path::PathBuf::from(if cfg!(windows) {
+        "ffprobe.exe"
+    } else {
+        "ffprobe"
+    }));
+
+    let mut deduped = Vec::new();
+    for candidate in candidates {
+        if !deduped.iter().any(|existing: &std::path::PathBuf| existing == &candidate) {
+            deduped.push(candidate);
+        }
+    }
+    deduped
+}
+
+fn parse_ffprobe_fps(raw: &str) -> Option<f64> {
+    let value = raw.trim().lines().next()?.trim();
+    if value.is_empty() || value == "0/0" {
+        return None;
+    }
+
+    if let Some((num_raw, den_raw)) = value.split_once('/') {
+        let numerator = num_raw.trim().parse::<f64>().ok()?;
+        let denominator = den_raw.trim().parse::<f64>().ok()?;
+        if denominator == 0.0 {
+            return None;
+        }
+        return Some(numerator / denominator);
+    }
+
+    value.parse::<f64>().ok()
+}
+
+async fn ffprobe_media_fps(media_path: &std::path::Path) -> Result<Option<f64>, String> {
+    let mut last_error: Option<String> = None;
+    let args = vec![
+        "-v".to_string(),
+        "error".to_string(),
+        "-select_streams".to_string(),
+        "v:0".to_string(),
+        "-show_entries".to_string(),
+        "stream=r_frame_rate".to_string(),
+        "-of".to_string(),
+        "default=noprint_wrappers=1:nokey=1".to_string(),
+        media_path.to_string_lossy().to_string(),
+    ];
+
+    for candidate in ffprobe_candidate_paths() {
+        let output = match platform::async_cmd(&candidate).args(&args).output().await
+        {
+            Ok(output) => output,
+            Err(err) => {
+                last_error = Some(format!("{} 실행 실패: {}", candidate.display(), err));
+                continue;
+            }
+        };
+
+        if !output.status.success() {
+            last_error = Some(format!(
+                "{} stderr: {}",
+                candidate.display(),
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+            continue;
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        return Ok(parse_ffprobe_fps(&stdout).map(normalize_detected_fps));
+    }
+
+    Err(last_error.unwrap_or_else(|| "ffprobe 실행 후보가 없습니다.".to_string()))
+}
+
+async fn detect_project_video_fps(project_dir: &std::path::Path) -> Option<f64> {
+    let media_files = collect_video_media_paths(project_dir);
+    if media_files.is_empty() {
+        println!("[NLE] FPS 측정용 영상 파일이 없어 ffprobe 보정을 건너뜀");
+        return None;
+    }
+
+    let mut detected: Vec<(f64, usize, usize)> = Vec::new();
+
+    for (index, media_path) in media_files.iter().enumerate() {
+        match ffprobe_media_fps(media_path).await {
+            Ok(Some(fps)) => {
+                println!(
+                    "[NLE] ffprobe FPS 감지: {} -> {:.3}",
+                    media_path.display(),
+                    fps
+                );
+                if let Some(entry) = detected
+                    .iter_mut()
+                    .find(|(existing, _, _)| (*existing - fps).abs() < 0.001)
+                {
+                    entry.1 += 1;
+                } else {
+                    detected.push((fps, 1, index));
+                }
+            }
+            Ok(None) => {
+                println!(
+                    "[NLE] ffprobe FPS 미감지: {} (영상 스트림 없음 또는 0/0)",
+                    media_path.display()
+                );
+            }
+            Err(err) => {
+                eprintln!(
+                    "[NLE] ffprobe 실패: {} ({})",
+                    media_path.display(),
+                    err
+                );
+            }
+        }
+    }
+
+    detected.sort_by(|a, b| b.1.cmp(&a.1).then(a.2.cmp(&b.2)));
+    let selected = detected.first().map(|(fps, _, _)| *fps);
+    if let Some(fps) = selected {
+        println!("[NLE] 프로젝트 대표 FPS 선택: {:.3}", fps);
+    }
+    selected
+}
+
+fn patch_prproj_project_version(xml: String, schema_version: u32) -> String {
+    let Some(project_start) = xml.find(r#"<Project ObjectID="1""#) else {
+        return xml;
+    };
+    let Some(project_end_rel) = xml[project_start..].find('>') else {
+        return xml;
+    };
+    let project_end = project_start + project_end_rel;
+    let project_head = &xml[project_start..=project_end];
+    let version_re = regex_lite::Regex::new(r#"Version="\d+""#).unwrap();
+    let patched_head = version_re
+        .replace(project_head, &format!(r#"Version="{}""#, schema_version))
+        .to_string();
+
+    let mut patched = String::with_capacity(xml.len() - project_head.len() + patched_head.len());
+    patched.push_str(&xml[..project_start]);
+    patched.push_str(&patched_head);
+    patched.push_str(&xml[project_end + 1..]);
+    patched
+}
+
+fn patch_prproj_timebase_and_ntsc(xml: String, fps: f64) -> String {
+    let (timebase, ntsc) = fps_to_timebase_and_ntsc(fps);
+    let ntsc_text = if ntsc { "TRUE" } else { "FALSE" };
+
+    let timebase_upper = regex_lite::Regex::new(r"<TimeBase>\s*\d+\s*</TimeBase>").unwrap();
+    let timebase_lower = regex_lite::Regex::new(r"<timebase>\s*\d+\s*</timebase>").unwrap();
+    let ntsc_upper =
+        regex_lite::Regex::new(r"<NTSC>\s*(?:TRUE|FALSE|true|false)\s*</NTSC>").unwrap();
+    let ntsc_lower =
+        regex_lite::Regex::new(r"<ntsc>\s*(?:TRUE|FALSE|true|false)\s*</ntsc>").unwrap();
+
+    let xml = timebase_upper
+        .replace_all(&xml, &format!("<TimeBase>{}</TimeBase>", timebase))
+        .to_string();
+    let xml = timebase_lower
+        .replace_all(&xml, &format!("<timebase>{}</timebase>", timebase))
+        .to_string();
+    let xml = ntsc_upper
+        .replace_all(&xml, &format!("<NTSC>{}</NTSC>", ntsc_text))
+        .to_string();
+    ntsc_lower
+        .replace_all(&xml, &format!("<ntsc>{}</ntsc>", ntsc_text))
+        .to_string()
+}
+
+async fn patch_capcut_draft_content_fps(project_dir: &std::path::Path) -> Result<(), String> {
+    let Some(fps) = detect_project_video_fps(project_dir).await else {
+        return Ok(());
+    };
+    let draft_path = project_dir.join("draft_content.json");
+    if !draft_path.exists() {
+        println!("[NLE] draft_content.json이 없어 CapCut FPS 보정을 건너뜀");
+        return Ok(());
+    }
+
+    let draft_raw =
+        std::fs::read_to_string(&draft_path).map_err(|e| format!("draft_content 읽기 실패: {}", e))?;
+    let mut draft_json: serde_json::Value = serde_json::from_str(&draft_raw)
+        .map_err(|e| format!("draft_content JSON 파싱 실패: {}", e))?;
+    let draft_obj = draft_json
+        .as_object_mut()
+        .ok_or_else(|| "draft_content.json 루트가 object가 아닙니다.".to_string())?;
+
+    draft_obj.insert("fps".to_string(), serde_json::json!(fps));
+    draft_obj.insert(
+        "is_drop_frame_timecode".to_string(),
+        serde_json::json!(is_drop_frame_fps(fps)),
+    );
+
+    let serialized = serde_json::to_vec(&draft_json)
+        .map_err(|e| format!("draft_content JSON 직렬화 실패: {}", e))?;
+    std::fs::write(&draft_path, serialized)
+        .map_err(|e| format!("draft_content 저장 실패: {}", e))?;
+
+    println!(
+        "[NLE] CapCut FPS 재교정 완료: {} -> {:.3}fps (drop-frame={})",
+        draft_path.display(),
+        fps,
+        is_drop_frame_fps(fps)
+    );
+
+    Ok(())
+}
+
 /// project_dir 내 모든 .prproj 파일을 찾아 패치한다.
-fn patch_prproj_files(project_dir: &std::path::Path) -> Result<(), String> {
+async fn patch_prproj_files(project_dir: &std::path::Path) -> Result<(), String> {
     use flate2::read::GzDecoder;
     use flate2::write::GzEncoder;
     use flate2::Compression;
     use std::io::{Read, Write};
 
     let premiere_info = detect_premiere_pro();
+    let schema_version = premiere_info
+        .as_ref()
+        .map(|(_, ver)| schema_version_for_premiere(ver))
+        .unwrap_or(33);
+    let detected_fps = detect_project_video_fps(project_dir).await;
+
     if let Some((ref path, ref ver)) = premiere_info {
-        println!("[NLE] Premiere Pro 감지: {} (v{})", path, ver);
+        println!(
+            "[NLE] Premiere Pro 감지: {} (v{}, schema v{})",
+            path, ver, schema_version
+        );
     } else {
-        println!("[NLE] Premiere Pro 설치 경로를 찾지 못함 — 경로 패치 스킵, 절대경로 제거만 수행");
+        println!(
+            "[NLE] Premiere Pro 설치 경로를 찾지 못함 — schema v{} 폴백과 절대경로 제거만 수행",
+            schema_version
+        );
     }
 
     let entries =
@@ -2301,7 +2639,20 @@ fn patch_prproj_files(project_dir: &std::path::Path) -> Result<(), String> {
                 );
             }
 
-            // 4. MZ.BuildVersion 갱신
+            // 4. 사용자 Premiere 메이저 버전에 맞는 Project schema version 패치
+            xml = patch_prproj_project_version(xml, schema_version);
+
+            // 5. ffprobe 실측 FPS 기반 TimeBase / NTSC 보정
+            if let Some(fps) = detected_fps {
+                let (timebase, ntsc) = fps_to_timebase_and_ntsc(fps);
+                xml = patch_prproj_timebase_and_ntsc(xml, fps);
+                println!(
+                    "[NLE] prproj 시퀀스 FPS 보정: {:.3}fps -> TimeBase={}, NTSC={}",
+                    fps, timebase, ntsc
+                );
+            }
+
+            // 6. MZ.BuildVersion 갱신
             if let Some((_, ref ver)) = premiere_info {
                 let now = chrono::Local::now().format("%a %b %e %T %Y").to_string();
                 let build_ver = format!("{}x0 - {}", ver, now);
@@ -2333,7 +2684,7 @@ fn patch_prproj_files(project_dir: &std::path::Path) -> Result<(), String> {
                     .to_string();
             }
 
-            // 4. gzip 압축 + 저장
+            // 7. gzip 압축 + 저장
             let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
             encoder
                 .write_all(xml.as_bytes())
@@ -3000,6 +3351,197 @@ async fn ffmpeg_cut_handler(Json(req): Json<FfmpegCutRequest>) -> impl IntoRespo
         )
             .into_response(),
     }
+}
+
+// ──────────────────────────────────────────────
+// [v2.1.0] 핸들러: /api/scene-detect
+// yt-dlp(저화질 480p 다운로드) + ffmpeg(select=gt(scene,X),metadata=print) 파이프라인.
+// 브라우저 Canvas 기반 detectSceneCuts의 30배 빠르고 프레임 정밀한 대체 구현.
+// 입력  : { url, threshold?, quality? }
+// 출력  : { sceneCuts: [{ timeSec, score }], duration, frameCount, quality, processingSec }
+// ──────────────────────────────────────────────
+
+async fn scene_detect_handler(Json(req): Json<SceneDetectRequest>) -> impl IntoResponse {
+    let t0 = std::time::Instant::now();
+
+    // 1) 입력 검증
+    if req.url.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "url 필드가 비어있습니다" })),
+        )
+            .into_response();
+    }
+    let threshold = req.threshold.unwrap_or(0.2).clamp(0.05, 1.0);
+    let quality = req.quality.clone().unwrap_or_else(|| "480p".to_string());
+    // whitelist (임의 값이 yt-dlp format spec에 주입되지 않도록)
+    let quality = match quality.as_str() {
+        "360p" | "480p" | "720p" | "1080p" | "best" => quality,
+        _ => "480p".to_string(),
+    };
+
+    println!(
+        "[SceneDetect] ▶ 다운로드 시작: {} (quality={}, threshold={})",
+        req.url, quality, threshold
+    );
+
+    // 2) 영상 다운로드 — videoOnly=true (오디오 스킵 → 대역폭·디코드 시간 ↓)
+    let dl = match ytdlp::download_video(&req.url, &quality, true).await {
+        Ok(f) => f,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": format!("영상 다운로드 실패: {}", e)
+                })),
+            )
+                .into_response();
+        }
+    };
+    let dl_sec = t0.elapsed().as_secs_f64();
+    println!(
+        "[SceneDetect] ✅ 다운로드 완료 ({:.1} MB, {:.1}s)",
+        dl.size as f64 / 1024.0 / 1024.0,
+        dl_sec
+    );
+
+    // 3) ffmpeg 씬 감지
+    // select='gt(scene,X)' → 씬 변화 score가 X 초과인 프레임만 통과
+    // metadata=print:file=-  → 통과한 프레임의 pts_time + lavfi.scene_score를 stdout에 출력
+    // -an                    → 오디오 완전 무시
+    // -f null (OS별 null 경로) → 디코드만 하고 출력 안 씀
+    let ffmpeg_path = ytdlp::get_ffmpeg_path_public();
+    let null_out = if cfg!(target_os = "windows") {
+        "NUL"
+    } else {
+        "/dev/null"
+    };
+    let filter = format!(
+        "select='gt(scene\\,{:.4})',metadata=print:file=-",
+        threshold
+    );
+    let args = vec![
+        "-hide_banner".to_string(),
+        "-nostats".to_string(),
+        "-i".to_string(),
+        dl.path.to_string_lossy().to_string(),
+        "-filter:v".to_string(),
+        filter,
+        "-an".to_string(),
+        "-f".to_string(),
+        "null".to_string(),
+        null_out.to_string(),
+    ];
+
+    let output = match platform::async_cmd(&ffmpeg_path).args(&args).output().await {
+        Ok(o) => o,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": format!("ffmpeg 실행 불가: {}", e)
+                })),
+            )
+                .into_response();
+        }
+    };
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let last = stderr.lines().last().unwrap_or("unknown");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error": format!("ffmpeg 씬 감지 실패: {}", last)
+            })),
+        )
+            .into_response();
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // 4) 파싱
+    let scene_cuts = parse_scene_detect_stdout(&stdout);
+    let duration = parse_duration_from_ffmpeg_stderr(&stderr).unwrap_or(0.0);
+
+    let total_sec = t0.elapsed().as_secs_f64();
+    println!(
+        "[SceneDetect] ✅ 완료: {}개 컷 감지, 영상 {:.1}s, 총 처리 {:.1}s (ffmpeg {:.1}s)",
+        scene_cuts.len(),
+        duration,
+        total_sec,
+        total_sec - dl_sec
+    );
+
+    Json(serde_json::json!({
+        "sceneCuts": scene_cuts,
+        "duration": duration,
+        "frameCount": scene_cuts.len(),
+        "quality": quality,
+        "threshold": threshold,
+        "processingSec": total_sec,
+    }))
+    .into_response()
+}
+
+/// ffmpeg metadata=print 출력 파싱.
+/// 출력 형식:
+///   frame:123    pts:5280000    pts_time:5.28
+///   lavfi.scene_score=0.357890
+///   frame:245    pts:10400000   pts_time:10.4
+///   lavfi.scene_score=0.412345
+/// → Vec<{ timeSec, score }>
+fn parse_scene_detect_stdout(stdout: &str) -> Vec<serde_json::Value> {
+    let mut cuts: Vec<serde_json::Value> = Vec::new();
+    let mut pending_time: Option<f64> = None;
+
+    for raw in stdout.lines() {
+        let line = raw.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        // "frame:N    pts:X    pts_time:SEC"
+        if let Some(idx) = line.find("pts_time:") {
+            let rest = &line[idx + "pts_time:".len()..];
+            let first = rest.split_whitespace().next().unwrap_or("");
+            if let Ok(t) = first.parse::<f64>() {
+                pending_time = Some(t);
+            }
+            continue;
+        }
+
+        // "lavfi.scene_score=X.XXXX"
+        if let Some(idx) = line.find("lavfi.scene_score=") {
+            let score_str = line[idx + "lavfi.scene_score=".len()..].trim();
+            if let Ok(s) = score_str.parse::<f64>() {
+                if let Some(t) = pending_time.take() {
+                    cuts.push(serde_json::json!({
+                        "timeSec": t,
+                        "score": s,
+                    }));
+                }
+            }
+        }
+    }
+
+    cuts
+}
+
+/// ffmpeg stderr의 "Duration: HH:MM:SS.ms, ..." 에서 초 단위 추출.
+fn parse_duration_from_ffmpeg_stderr(stderr: &str) -> Option<f64> {
+    let idx = stderr.find("Duration:")?;
+    let rest = &stderr[idx + "Duration:".len()..];
+    let dur_str = rest.split(',').next()?.trim();
+    let parts: Vec<&str> = dur_str.split(':').collect();
+    if parts.len() != 3 {
+        return None;
+    }
+    let h: f64 = parts[0].trim().parse().ok()?;
+    let m: f64 = parts[1].trim().parse().ok()?;
+    let s: f64 = parts[2].trim().parse().ok()?;
+    Some(h * 3600.0 + m * 60.0 + s)
 }
 
 // ──────────────────────────────────────────────

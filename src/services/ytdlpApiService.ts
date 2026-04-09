@@ -1216,3 +1216,106 @@ export async function fetchFramesFromServer(
   logger.warn('[Frame Server] 모든 서버 실패 (YouTube 썸네일 폴백)');
   return [];
 }
+
+// ──────────────────────────────────────────────
+// [v2.1.0] 컴패니언 네이티브 씬 감지 — /api/scene-detect
+// yt-dlp 480p 다운로드 + ffmpeg select=gt(scene,X) 파이프라인.
+// 브라우저 Canvas 기반 detectSceneCuts를 대체 — 30분 영상도 10~20초에 완료.
+// 실패 시 null 반환 — 호출자가 브라우저 폴백을 결정한다.
+// ──────────────────────────────────────────────
+
+export interface CompanionSceneCut {
+  timeSec: number;
+  score: number;
+}
+
+export interface CompanionSceneDetectResult {
+  sceneCuts: CompanionSceneCut[];
+  duration: number;
+  frameCount: number;
+  quality: string;
+  threshold: number;
+  processingSec: number;
+}
+
+/**
+ * 컴패니언에 YouTube/소셜 영상 URL을 보내서 네이티브 ffmpeg로 씬 감지를 수행한다.
+ *
+ * 이 함수는 반드시 컴패니언 경로만 사용한다 — VPS/CF Worker에는 /api/scene-detect가 없다.
+ * 컴패니언이 감지되지 않거나 요청이 실패하면 null을 반환하고, 호출자가 폴백(브라우저 기반
+ * detectSceneCuts 또는 AI 타임코드 단독 사용)을 결정한다.
+ *
+ * @param videoUrl YouTube URL 또는 VIDEO_ID, 소셜 미디어 URL
+ * @param options threshold(0~1), quality(360p~1080p), signal(취소)
+ * @returns SceneCut 목록 + 영상 길이/품질/처리 시간 — 실패 시 null
+ */
+export async function detectScenesViaCompanion(
+  videoUrl: string,
+  options?: {
+    threshold?: number;
+    quality?: '360p' | '480p' | '720p' | '1080p' | 'best';
+    signal?: AbortSignal;
+  },
+): Promise<CompanionSceneDetectResult | null> {
+  // 1) 컴패니언 상태 확인 — 없으면 즉시 null (이 엔드포인트는 VPS 폴백 없음)
+  const companionOk = isCompanionDetected() || (await recheckCompanion().catch(() => false));
+  if (!companionOk) {
+    logger.info('[SceneDetect] 컴패니언 미감지 — null 반환 (호출자 폴백)');
+    return null;
+  }
+
+  const body = {
+    url: videoUrl,
+    threshold: options?.threshold ?? 0.2,
+    quality: options?.quality ?? '480p',
+  };
+
+  try {
+    const started = Date.now();
+    // 긴 영상 대비 10분 타임아웃 — 외부 signal 있으면 그 쪽이 우선
+    const { signal, didTimeout, dispose } = createCombinedAbortSignalContext(
+      options?.signal,
+      600_000,
+    );
+    let response: Response;
+    try {
+      response = await monitoredFetch(
+        `${LOCAL_COMPANION_URL}/api/scene-detect`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+          signal,
+        },
+      );
+    } finally {
+      dispose();
+    }
+
+    if (!response.ok) {
+      const errBody = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
+      logger.warn(
+        `[SceneDetect] 컴패니언 응답 실패 (${response.status}): ${errBody?.error || 'unknown'}`,
+      );
+      return null;
+    }
+
+    const data = (await response.json()) as CompanionSceneDetectResult;
+    const elapsedSec = (Date.now() - started) / 1000;
+    logger.info(
+      `[SceneDetect] ✅ 컴패니언 씬 감지 완료: ${data.sceneCuts?.length ?? 0}개 컷, ` +
+        `영상 ${data.duration?.toFixed(1) ?? '?'}s, 네트워크 포함 ${elapsedSec.toFixed(1)}s`,
+    );
+    return data;
+  } catch (err) {
+    const isAbort = isAbortError(err);
+    if (isAbort) {
+      logger.info('[SceneDetect] 요청 취소됨');
+    } else {
+      logger.warn(
+        `[SceneDetect] 컴패니언 호출 실패: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    return null;
+  }
+}

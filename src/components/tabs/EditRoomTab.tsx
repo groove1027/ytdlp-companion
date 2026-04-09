@@ -7,12 +7,8 @@ import { downloadSrtFile, downloadSrtWithAssetsZip } from '../../services/srtSer
 import { composeMp4, downloadMp4 } from '../../services/webcodecs';
 import { drawSubtitle } from '../../services/webcodecs/subtitleRenderer';
 import {
-  beginCapCutDirectInstallSelection,
   buildEditRoomNleZip,
-  getCapCutManualInstallHint,
-  installCapCutZipToDirectory,
-  isCapCutDirectInstallSupported,
-  isCompanionNleAvailable,
+  ensureNleCompanionReady,
   installNleViaCompanion,
 } from '../../services/nleExportService';
 import type { EditRoomNleTarget } from '../../services/nleExportService';
@@ -20,7 +16,7 @@ import {
   downloadAndTrimReferenceClip,
   isReferenceClipCompatibilityErrorMessage,
 } from '../../services/youtubeReferenceService';
-import { showToast } from '../../stores/uiStore';
+import { showToast, useUIStore } from '../../stores/uiStore';
 import EditRoomHeader from './editroom/EditRoomHeader';
 import EditRoomSceneList from './editroom/EditRoomSceneList';
 import EditRoomGlobalPanel from './editroom/EditRoomGlobalPanel';
@@ -1506,17 +1502,17 @@ const EditRoomTab: React.FC = () => {
       showToast('내보낼 장면이 없습니다.');
       return;
     }
-    // [FIX] companion이 실행 중이면 폴더 선택 다이얼로그 불필요 — 동기 캐시로 user gesture 보존
-    const companionAlive = target !== 'vrew' && isCompanionNleAvailable();
-    // [FIX #665/#657] companion이 없을 때만 showDirectoryPicker 호출 (user gesture 유지)
-    let directInstallSelection: Awaited<ReturnType<typeof beginCapCutDirectInstallSelection>> = null;
-    if (target === 'capcut' && !companionAlive && isCapCutDirectInstallSupported()) {
+
+    if (target !== 'vrew') {
       try {
-        directInstallSelection = await beginCapCutDirectInstallSelection();
-      } catch (pickerErr) {
-        console.warn('[EditRoom] CapCut 직접 설치 선택 실패, ZIP으로 진행:', pickerErr);
+        await ensureNleCompanionReady(target);
+      } catch (error) {
+        useUIStore.getState().setShowCompanionGate(true);
+        showToast(`${error instanceof Error ? error.message : '컴패니언 앱이 필요합니다.'} 설치 안내 창을 열었습니다.`, 7000);
+        return;
       }
     }
+
     // [FIX #474] 영상이 없는 장면이 있으면 confirm 대화상자로 사전 확인 (Toast는 놓치기 쉬움)
     const videoSceneCount = scenes.filter(s => s.videoUrl && !s.imageUpdatedAfterVideo).length;
     const refFallbackCount = scenes.filter(s => !s.videoUrl && !s.imageUrl && s.videoReferences && s.videoReferences.length > 0).length;
@@ -1530,11 +1526,9 @@ const EditRoomTab: React.FC = () => {
     }
     try {
       showToast(
-        target === 'capcut'
-          ? directInstallSelection
-            ? 'CapCut 프로젝트를 준비 중입니다. 완료되면 선택한 폴더에 바로 설치합니다...'
-            : 'CapCut ZIP을 준비하고 있습니다...'
-          : `${targetLabel} 프로젝트 파일을 준비하고 있습니다...`,
+        target === 'vrew'
+          ? `${targetLabel} 프로젝트 파일을 준비하고 있습니다...`
+          : `${targetLabel} 프로젝트를 준비하고 있습니다. 완료되면 컴패니언 앱으로 바로 설치합니다...`,
       );
       const projectTitle = useProjectStore.getState().projectTitle || '프로젝트';
       // [FIX #396] STT 업로드 오디오는 개별 라인 audioUrl이 없을 수 있어 mergedAudioUrl 폴백 필요
@@ -1589,73 +1583,23 @@ const EditRoomTab: React.FC = () => {
           ? ` (영상 ${result.videoCount}개)`
           : ` (이미지 ${result.imageCount}개)`;
 
-      // 1순위: 컴패니언 앱으로 직접 설치 (ZIP 다운로드 없이 원클릭)
-      // VREW는 컴패니언 NLE 설치 미지원 (SRT만 필요하므로 ZIP이 적절)
-      // [FIX #914] health ping 먼저 → 성공 시에만 무거운 ZIP 파싱 진행
       if (target !== 'vrew') {
-        try {
-          // 컴패니언 연결 확인 (health 캐싱으로 즉시 응답, 미실행 시 connection refused로 빠른 실패)
-          const ping = await fetch('http://127.0.0.1:9876/health', { signal: AbortSignal.timeout(3000) });
-          if (!ping.ok) throw new Error('companion unavailable');
-
-          // ZIP에서 projectId 추출 (CapCut은 drafts 폴더 ID 사용)
-          const JSZip = (await import('jszip')).default;
-          const zip = await JSZip.loadAsync(result.blob);
-          const topFolders = Object.keys(zip.files)
-            .filter(name => name.includes('/') && !name.startsWith('media/') && !name.startsWith('audio/'))
-            .map(name => name.split('/')[0])
-            .filter((v, i, a) => a.indexOf(v) === i && v.length > 10);
-          const projectId = topFolders[0] || `project-${Date.now()}`;
-
-          showToast(`${targetLabel}에 직접 설치 중...`);
-          const installResult = await installNleViaCompanion({
-            target,
-            zipBlob: result.blob,
-            projectId,
-          });
-          showToast(`${targetLabel} 프로젝트를 바로 설치했습니다!${mediaSummary} (${installResult.filesInstalled}개 파일)`, 6000);
-          return;
-        } catch (companionErr) {
-          console.warn('[EditRoom] 컴패니언 NLE 설치 실패, 기존 방식 폴백:', companionErr);
-          // 폴백: 기존 방식 (직접 설치 또는 ZIP 다운로드)
-        }
+        showToast(`${targetLabel}에 직접 설치 중...`);
+        const installResult = await installNleViaCompanion({
+          target,
+          zipBlob: result.blob,
+        });
+        showToast(`${targetLabel} 프로젝트를 바로 설치했습니다!${mediaSummary} (${installResult.filesInstalled}개 파일)`, 6000);
+        return;
       }
 
-      // 2순위: CapCut 직접 설치 (File System API — HTTPS 전용)
-      if (target === 'capcut' && directInstallSelection) {
-        try {
-          await installCapCutZipToDirectory({
-            zipBlob: result.blob,
-            draftsRootHandle: directInstallSelection.draftsRootHandle,
-            draftsRootPath: directInstallSelection.draftsRootPath,
-          });
-          showToast(`CapCut 프로젝트를 바로 설치했습니다!${mediaSummary} CapCut에서 프로젝트 카드를 열어 확인해주세요.`, 6000);
-          return;
-        } catch (installError) {
-          const fallbackUrl = URL.createObjectURL(result.blob);
-          const fallbackLink = document.createElement('a');
-          fallbackLink.href = fallbackUrl;
-          fallbackLink.download = downloadFileName;
-          fallbackLink.click();
-          setTimeout(() => URL.revokeObjectURL(fallbackUrl), 10000);
-          showToast(`CapCut 직접 설치에 실패해 ZIP으로 전환했습니다. ${getCapCutManualInstallHint()} (${installError instanceof Error ? installError.message : '알 수 없는 오류'})`, 8000);
-          return;
-        }
-      }
-
-      // 3순위: ZIP 다운로드 (최종 폴백)
       const url = URL.createObjectURL(result.blob);
       const a = document.createElement('a');
       a.href = url;
       a.download = downloadFileName;
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 10000);
-      showToast(
-        target === 'capcut'
-          ? `CapCut ZIP 다운로드 완료!${mediaSummary} ${getCapCutManualInstallHint()}`
-          : `${targetLabel} 프로젝트 파일 다운로드 완료!${mediaSummary}`,
-        target === 'capcut' ? 7000 : undefined,
-      );
+      showToast(`${targetLabel} 프로젝트 파일 다운로드 완료!${mediaSummary}`);
     } catch (err) {
       const message = err instanceof Error ? err.message : '알 수 없는 오류';
       showToast(

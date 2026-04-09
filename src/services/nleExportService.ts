@@ -37,6 +37,40 @@ import { getVideoAnalysisPrimaryText } from '../utils/videoAnalysisText';
 
 const COMPANION_URL = 'http://127.0.0.1:9876';
 
+function getNleTargetLabel(target: NleTarget): string {
+  return target === 'premiere'
+    ? 'Premiere Pro'
+    : target === 'capcut'
+      ? 'CapCut'
+      : target === 'filmora'
+        ? 'Filmora'
+        : 'VREW';
+}
+
+function buildMissingCompanionError(target: NleTarget): Error {
+  return new Error(`${getNleTargetLabel(target)} 내보내기에는 컴패니언 앱이 필요합니다. 컴패니언 앱을 설치하고 실행한 뒤 다시 시도하세요.`);
+}
+
+function extractCompanionProjectId(zipEntries: string[]): string {
+  const topFolders = zipEntries
+    .filter(name => name.includes('/') && !name.startsWith('media/') && !name.startsWith('audio/'))
+    .map(name => name.split('/')[0])
+    .filter((value, index, array) => array.indexOf(value) === index && value.length > 10);
+
+  return topFolders[0] || `project-${Date.now()}`;
+}
+
+export async function ensureNleCompanionReady(target: NleTarget): Promise<void> {
+  if (target === 'vrew') return;
+
+  try {
+    const ping = await monitoredFetch(`${COMPANION_URL}/health`, { signal: AbortSignal.timeout(3000) }, 3000);
+    if (!ping.ok) throw new Error('not ok');
+  } catch {
+    throw buildMissingCompanionError(target);
+  }
+}
+
 /**
  * 컴패니언 앱을 통해 NLE 프로젝트를 로컬에 직접 설치
  * ZIP 다운로드 + 수동 설치 스크립트 실행 없이 원클릭 설치
@@ -44,21 +78,16 @@ const COMPANION_URL = 'http://127.0.0.1:9876';
 export async function installNleViaCompanion(params: {
   target: NleTarget;
   zipBlob: Blob;
-  projectId: string;
+  projectId?: string;
 }): Promise<{ success: boolean; installedPath: string; filesInstalled: number }> {
-  const { target, zipBlob, projectId } = params;
+  const { target, zipBlob } = params;
 
-  // [FIX #914] ZIP 언패킹이 무거우므로 먼저 컴패니언 연결 확인 (health 캐싱으로 즉시 응답)
-  try {
-    const ping = await monitoredFetch(`${COMPANION_URL}/health`, { signal: AbortSignal.timeout(3000) }, 3000);
-    if (!ping.ok) throw new Error('not ok');
-  } catch {
-    throw new Error('컴패니언 앱이 실행 중이 아닙니다. 컴패니언 앱을 설치/실행한 뒤 다시 시도하세요.');
-  }
+  await ensureNleCompanionReady(target);
 
   // ZIP을 풀어서 파일 목록으로 변환
   const JSZip = (await import('jszip')).default;
   const zip = await JSZip.loadAsync(zipBlob);
+  const projectId = params.projectId || extractCompanionProjectId(Object.keys(zip.files));
   const files: Array<{ path: string; data: string; isText: boolean }> = [];
 
   const textExtensions = ['.json', '.xml', '.srt', '.txt', '.ttml', '.settings'];
@@ -108,8 +137,7 @@ export async function installNleViaCompanion(params: {
       signal: AbortSignal.timeout(60_000),
     }, 60_000);
   } catch {
-    // [FIX #914] connection refused = 컴패니언 미실행 — 명확한 에러 메시지
-    throw new Error('컴패니언 앱이 실행 중이 아닙니다. 컴패니언 앱을 설치/실행한 뒤 다시 시도하세요.');
+    throw new Error(`${getNleTargetLabel(target)} 설치 중 컴패니언 앱 연결이 끊어졌습니다. 컴패니언 앱이 실행 중인지 확인한 뒤 다시 시도하세요.`);
   }
 
   if (!res.ok) {

@@ -6,7 +6,7 @@ import { evolinkChatStream, evolinkVideoAnalysisStream, evolinkNativeStream, evo
 import type { EvolinkChatMessage } from '../../../services/evolinkService';
 import { requestGeminiProxy, extractTextFromResponse, SAFETY_SETTINGS_BLOCK_NONE } from '../../../services/gemini/geminiProxy';
 
-import { showToast } from '../../../stores/uiStore';
+import { showToast, useUIStore } from '../../../stores/uiStore';
 import { useNavigationStore } from '../../../stores/navigationStore';
 import { useEditPointStore } from '../../../stores/editPointStore';
 import { useEditRoomStore } from '../../../stores/editRoomStore';
@@ -19,19 +19,15 @@ import AnalysisSlotBar from './AnalysisSlotBar';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
 import { getYoutubeApiKey, getKieKey, getGoogleGeminiKey, monitoredFetch } from '../../../services/apiService';
 import { getQuotaUsage, fetchTimedTranscriptForAnalysis } from '../../../services/youtubeAnalysisService';
-import { extractStreamUrl, isYtdlpServerConfigured, getSocialMetadata, downloadSocialVideo, fetchFramesFromServer } from '../../../services/ytdlpApiService';
+import { extractStreamUrl, isYtdlpServerConfigured, getSocialMetadata, downloadSocialVideo, fetchFramesFromServer, detectScenesViaCompanion } from '../../../services/ytdlpApiService';
 import { detectPlatform } from '../../../services/videoDownloadService';
 import { ensureVideoSizeForAnalysis, uploadMediaToHosting, VIDEO_ANALYSIS_MAX_BYTES, VIDEO_ANALYSIS_MAX_MB_LABEL, VIDEO_ANALYSIS_SIZE_HINT } from '../../../services/uploadService';
 import { smartUpload } from '../../../services/companion/smartUpload';
 import { detectSceneCuts, mergeWithAiTimecodes } from '../../../services/sceneDetection';
 import {
-  beginCapCutDirectInstallSelection,
   buildVideoAnalysisSceneLineId,
-  getCapCutManualInstallHint,
-  installCapCutZipToDirectory,
+  ensureNleCompanionReady,
   installNleViaCompanion,
-  isCapCutDirectInstallSupported,
-  isCompanionNleAvailable,
   sanitizeProjectName,
 } from '../../../services/nleExportService';
 import type { EditRoomNleTarget } from '../../../services/nleExportService';
@@ -4917,10 +4913,58 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       let parallelDownloadBlobPromise: Promise<{ blob: Blob; hasAudio: boolean } | null> = Promise.resolve(null);
 
       // ★ YouTube 병렬 다운로드 + 씬 감지 시작 (AI 분석과 동시 실행)
+      // [v2.1.0] 컴패니언 네이티브 씬 감지(/api/scene-detect) 1순위 — ffmpeg scdet 기반.
+      //   - 다운로드·브라우저 프레임 분석과 독립적으로 바로 시작 → 일반적으로 다운로드보다 먼저 완료
+      //   - 30분+ 롱폼에서 브라우저 90초 타임아웃 회피, 편집점 정확도/속도 모두 대폭 향상
+      //   - 컴패니언 미감지/실패 시에만 기존 브라우저 detectSceneCuts 폴백
       let parallelDownloadPromise: Promise<{ blob: Blob; sceneCuts: SceneCut[] } | null> = Promise.resolve(null);
       if (!isMultiSource && !singleSourceSceneCutsPromise && inputMode === 'youtube' && isYouTubeUrl(youtubeUrl)) {
         const dlVid = extractYouTubeVideoId(youtubeUrl);
         if (dlVid) {
+          // 1순위: 컴패니언 씬 감지 — 다운로드를 기다리지 않고 즉시 병렬 시작.
+          // [v2.1.0] hang 방지: 내부 AbortController + 120초 soft timeout + 메인 abort 전파.
+          //   - soft timeout 발화 시 AbortController를 트리거 → fetch 실제 취소 + raw 작업 종료
+          //   - 성공/실패/취소 어느 경로든 finally에서 타이머/리스너 정리 (허위 warning 방지)
+          //   - consumer는 단일 Promise만 바라봄 (race 불필요) — 취소되면 null 반환으로 폴백
+          const companionAbortController = new AbortController();
+          const propagateMainAbort = () => companionAbortController.abort();
+          abortCtrl.signal.addEventListener('abort', propagateMainAbort);
+          const softTimer: ReturnType<typeof setTimeout> = setTimeout(() => {
+            if (!companionAbortController.signal.aborted) {
+              console.warn('[Scene] 컴패니언 soft timeout 120초 초과 — 브라우저 폴백으로 전환');
+              companionAbortController.abort();
+            }
+          }, 120_000);
+          const companionScenePromise: Promise<SceneCut[] | null> = (async () => {
+            try {
+              console.log('[Scene] ★ 컴패니언 /api/scene-detect 병렬 시작 (ffmpeg 네이티브)...');
+              const result = await detectScenesViaCompanion(youtubeUrl, {
+                threshold: 0.2,
+                quality: '480p',
+                signal: companionAbortController.signal,
+              });
+              if (!result || !Array.isArray(result.sceneCuts) || result.sceneCuts.length === 0) {
+                console.log('[Scene] 컴패니언 결과 없음 → 브라우저 폴백 예정');
+                return null;
+              }
+              const cuts: SceneCut[] = result.sceneCuts.map(c => ({
+                timeSec: c.timeSec,
+                score: c.score,
+              }));
+              console.log(
+                `[Scene] ✅ 컴패니언 씬 감지 완료: ${cuts.length}개 컷 ` +
+                `(영상 ${result.duration?.toFixed(1) ?? '?'}s, 처리 ${result.processingSec?.toFixed(1) ?? '?'}s)`,
+              );
+              return cuts;
+            } catch (e) {
+              console.warn('[Scene] 컴패니언 씬 감지 실패:', e);
+              return null;
+            } finally {
+              clearTimeout(softTimer);
+              abortCtrl.signal.removeEventListener('abort', propagateMainAbort);
+            }
+          })();
+
           parallelDownloadBlobPromise = (async () => {
             try {
               console.log('[Scene] ★ AI 분석과 병렬로 영상 다운로드 시작...');
@@ -4937,9 +4981,14 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
           parallelDownloadPromise = parallelDownloadBlobPromise.then(async (downloadResult) => {
             if (!downloadResult?.blob) return null;
             try {
-              console.log('[Scene] 다운로드 완료, 씬 감지 시작...');
-              const sceneCuts = await detectSceneCuts(downloadResult.blob);
-              console.log(`[Scene] ✅ 씬 감지 완료: ${sceneCuts.length}개 컷 포인트`);
+              // 1순위: 이미 병렬 시작된 컴패니언 결과 우선 (보통 다운로드보다 먼저 완료)
+              let sceneCuts: SceneCut[] = (await companionScenePromise) ?? [];
+              if (sceneCuts.length === 0) {
+                // 2순위: 브라우저 폴백 — 컴패니언 실패/미감지 시에만
+                console.log('[Scene] 브라우저 폴백 씬 감지 시작...');
+                sceneCuts = await detectSceneCuts(downloadResult.blob);
+                console.log(`[Scene] ✅ 브라우저 폴백 씬 감지 완료: ${sceneCuts.length}개 컷`);
+              }
               const cachedEntry = sourcePrepCacheRef.current.get(sourceCacheKey);
               if (cachedEntry) {
                 const evictedSourcePrepKeys = setLimitedCacheEntry(sourcePrepCacheRef.current, sourceCacheKey, {
@@ -4954,9 +5003,18 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
               return { blob: downloadResult.blob, sceneCuts: [] };
             }
           });
-          singleSourceSceneCutsPromise = parallelDownloadPromise
-            .then((result) => result?.sceneCuts || null)
-            .catch(() => null);
+          // [v2.1.0] AI 타임코드 머지는 컴패니언 결과만 있어도 진행 — 다운로드 대기 안 함.
+          // 컴패니언 실패 시에만 기존 경로(parallelDownloadPromise → 브라우저 감지) 대기.
+          singleSourceSceneCutsPromise = (async () => {
+            const companionCuts = await companionScenePromise;
+            if (companionCuts && companionCuts.length > 0) return companionCuts;
+            try {
+              const dl = await parallelDownloadPromise;
+              return dl?.sceneCuts ?? null;
+            } catch {
+              return null;
+            }
+          })();
         }
       } else if (!singleSourceSceneCutsPromise && !isMultiSource && uploadedFiles.length === 1) {
         const uploadBlob = uploadedFiles[0] instanceof File ? uploadedFiles[0] : new Blob([uploadedFiles[0]]);
@@ -6831,15 +6889,14 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                     nleActiveTaskRef.current = { target, controller: myAbort };
                                     nleAbortRef.current = myAbort;
                                     const isCancelled = () => myAbort.signal.aborted;
-                                    // [FIX] companion이 실행 중이면 폴더 선택 다이얼로그 불필요 — 동기 캐시로 user gesture 보존
-                                    const companionAlive = target !== 'vrew' && isCompanionNleAvailable();
-                                    // [FIX #665/#657] companion이 없을 때만 showDirectoryPicker 호출 (user gesture 유지)
-                                    let directInstallSelection: Awaited<ReturnType<typeof beginCapCutDirectInstallSelection>> = null;
-                                    if (target === 'capcut' && !companionAlive && isCapCutDirectInstallSupported()) {
+                                    if (target !== 'vrew') {
+                                      setNleExporting({ target, step: '컴패니언 확인 중...', startedAt });
                                       try {
-                                        directInstallSelection = await beginCapCutDirectInstallSelection();
-                                      } catch (pickerErr) {
-                                        console.warn('[VideoAnalysisRoom] CapCut 직접 설치 선택 실패, ZIP으로 진행:', pickerErr);
+                                        await ensureNleCompanionReady(target);
+                                      } catch (error) {
+                                        useUIStore.getState().setShowCompanionGate(true);
+                                        showToast(`${error instanceof Error ? error.message : '컴패니언 앱이 필요합니다.'} 설치 안내 창을 열었습니다.`, 7000);
+                                        return;
                                       }
                                     }
                                     setNleExporting({ target, step: '준비 중...', startedAt });
@@ -7131,83 +7188,25 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                       const zipBlob = await buildNlePackageZip({ target, scenes: v.scenes, title: v.title, videoBlob, videoFileName: fileName, preset: selectedPreset || undefined, width: dims.w, height: dims.h, fps: dims.fps, videoDurationSec: dims.dur, hasAudioTrack: audioConfirmed, narrationLines, additionalVideoBlobs });
                                       if (isCancelled()) return;
                                       const downloadFileName = `${sanitizeProjectName(v.title, 30)}_${label}.zip`;
-                                      const shouldBypassZipReparse = zipBlob.size >= 250 * 1024 * 1024;
 
-                                      // [FIX #906] 1순위: 컴패니언 앱으로 직접 설치 (경로 패치 자동 처리 — "비정상경로" 방지)
-                                      // VREW는 컴패니언 NLE 설치 미지원 (SRT만 필요하므로 ZIP이 적절)
-                                      if (target !== 'vrew' && !shouldBypassZipReparse) {
-                                        try {
-                                          const ping = await fetch('http://127.0.0.1:9876/health', { signal: AbortSignal.timeout(3000) });
-                                          if (!ping.ok) throw new Error('companion unavailable');
-                                          if (isCancelled()) return;
-
-                                          // ZIP에서 projectId 추출 (CapCut은 drafts 폴더 ID 사용)
-                                          const JSZip = (await import('jszip')).default;
-                                          const parsedZip = await JSZip.loadAsync(zipBlob);
-                                          if (isCancelled()) return;
-                                          const topFolders = Object.keys(parsedZip.files)
-                                            .filter(name => name.includes('/') && !name.startsWith('media/') && !name.startsWith('audio/'))
-                                            .map(name => name.split('/')[0])
-                                            .filter((v2, i, a) => a.indexOf(v2) === i && v2.length > 10);
-                                          const projectId = topFolders[0] || `project-${Date.now()}`;
-
-                                          showToast(`${label}에 직접 설치 중...`);
-                                          const installResult = await installNleViaCompanion({
-                                            target,
-                                            zipBlob,
-                                            projectId,
-                                          });
-                                          if (isCancelled()) return;
-                                          showToast(audioConfirmed
-                                            ? `${label} 프로젝트를 바로 설치했습니다! ${label}에서 프로젝트를 열어 확인해주세요. (${installResult.filesInstalled}개 파일)`
-                                            : `${label} 프로젝트를 설치 완료! 원본 오디오는 ${label}에서 한 번 확인해주세요. (${installResult.filesInstalled}개 파일)`, 6000);
-                                          return;
-                                        } catch (companionErr) {
-                                          console.warn('[VideoAnalysisRoom] 컴패니언 NLE 설치 실패, 기존 방식 폴백:', companionErr);
-                                          // 폴백: 기존 방식 (직접 설치 또는 ZIP 다운로드)
-                                        }
+                                      if (target !== 'vrew') {
+                                        showToast(`${label}에 직접 설치 중...`);
+                                        const installResult = await installNleViaCompanion({
+                                          target,
+                                          zipBlob,
+                                        });
+                                        if (isCancelled()) return;
+                                        showToast(audioConfirmed
+                                          ? `${label} 프로젝트를 바로 설치했습니다! ${label}에서 프로젝트를 열어 확인해주세요. (${installResult.filesInstalled}개 파일)`
+                                          : `${label} 프로젝트를 설치 완료! 원본 오디오는 ${label}에서 한 번 확인해주세요. (${installResult.filesInstalled}개 파일)`, 6000);
+                                        return;
                                       }
 
-                                      // 2순위: CapCut 직접 설치 (File System API — HTTPS + Chrome/Edge 전용)
-                                      if (target === 'capcut' && directInstallSelection && !shouldBypassZipReparse) {
-                                        try {
-                                          await installCapCutZipToDirectory({
-                                            zipBlob,
-                                            draftsRootHandle: directInstallSelection.draftsRootHandle,
-                                            draftsRootPath: directInstallSelection.draftsRootPath,
-                                          });
-                                          if (isCancelled()) return;
-                                          showToast(audioConfirmed
-                                            ? 'CapCut 프로젝트를 바로 설치했습니다! CapCut에서 프로젝트 카드를 열어 확인해주세요.'
-                                            : 'CapCut 프로젝트를 설치 완료! 원본 오디오는 대부분 자동 포함되어 있지만, CapCut에서 한 번 확인해주세요.', 5000);
-                                          return;
-                                        } catch (installError) {
-                                          downloadBlobFile(zipBlob, downloadFileName, 'VideoAnalysisRoom:nleFallbackDownload');
-                                          if (isCancelled()) return;
-                                          showToast(`CapCut 직접 설치에 실패해 ZIP으로 전환했습니다. ${getCapCutManualInstallHint()} (${installError instanceof Error ? installError.message : '알 수 없는 오류'})`, 8000);
-                                          return;
-                                        }
-                                      }
-
-                                      // 3순위: ZIP 파일 다운로드 (수동 설치)
                                       downloadBlobFile(zipBlob, downloadFileName, 'VideoAnalysisRoom:nleZipDownload');
-                                      // [FIX #370] 오디오 누락 경고 — 오디오 없이 NLE 내보내기 시 사용자에게 안내
                                       if (isCancelled()) return;
-                                      showToast(target === 'capcut'
-                                        ? shouldBypassZipReparse
-                                          ? `대용량 CapCut ZIP 다운로드 완료! ${getCapCutManualInstallHint()}`
-                                          : `CapCut ZIP 다운로드 완료! ${getCapCutManualInstallHint()}`
-                                        : target === 'premiere'
-                                          ? !audioConfirmed
-                                            ? 'Premiere ZIP 다운로드 완료! 압축 해제 후 .prproj를 먼저 열어 subtitle track이 이미 올라와 있는지 확인하세요. 원본 오디오는 Premiere에서 한 번 확인해주세요.'
-                                            : 'Premiere ZIP 다운로드 완료! 압축 해제 후 .prproj를 먼저 여세요. subtitle track이 타임라인에 포함되어 있어야 합니다.'
-                                        : target === 'filmora'
-                                          ? !audioConfirmed
-                                            ? 'Filmora ZIP 다운로드 완료! ⚠️ 원본 오디오를 불러오지 못했어요. Filmora에서 수동으로 오디오를 확인해주세요.'
-                                            : 'Filmora ZIP 다운로드 완료! 압축 해제 후 Filmora > File > Import > XML File로 가져오세요.'
-                                          : !audioConfirmed
-                                            ? `${label} 다운로드 완료! ⚠️ 원본 오디오를 불러오지 못했어요. ${label}에서 수동으로 오디오를 추가해주세요.`
-                                            : `${label} 패키지 다운로드 완료!`, target === 'capcut' || !audioConfirmed ? 7000 : undefined);
+                                      showToast(!audioConfirmed
+                                        ? `${label} 다운로드 완료! ⚠️ 원본 오디오를 불러오지 못했어요. ${label}에서 수동으로 오디오를 추가해주세요.`
+                                        : `${label} 패키지 다운로드 완료!`, !audioConfirmed ? 7000 : undefined);
                                     } catch (e) {
                                       if (isCancelled()) return;
                                       console.error('[NLE]', e); showToast(`${label} 패키지 생성 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`, 5000);

@@ -8,6 +8,17 @@
 
 ## 🟢 완료된 작업
 
+- [x] **2026-04-09 — Premiere/CapCut 컴패니언 강제 + FPS/스키마 재패치**
+  - `rg -n "patch_prproj_files|detect_premiere_pro|nle_install_handler|ffprobe|installNleViaCompanion|beginCapCutDirectInstallSelection|installCapCutZipToDirectory|getCapCutManualInstallHint|isCapCutDirectInstallSupported|isCompanionNleAvailable|COMPANION_DOWNLOAD_URL" companion/src-tauri/src/server.rs src/services/nleExportService.ts src/components/tabs/imagevideo/StoryboardPanel.tsx src/components/tabs/EditRoomTab.tsx src/components/tabs/channel/VideoAnalysisRoom.tsx src/constants.ts .claude/skills`로 영향 범위 전수 조사 완료
+  - `companion/src-tauri/src/server.rs` — `schema_version_for_premiere()`를 추가해 감지된 Premiere 메이저 버전을 `.prproj`의 `<Project ... Version="N">`에 맞춰 재패치하고, `ffprobe_media_fps()`/`detect_project_video_fps()`를 추가해 실측 FPS 기반으로 `.prproj` TimeBase/NTSC와 CapCut `draft_content.json`의 `fps`/`is_drop_frame_timecode`를 재교정하도록 수정
+  - `companion/src-tauri/src/server.rs` — `nle_install_handler()`에서 CapCut 설치 직후 `patch_capcut_draft_content_fps()`를 호출하고, Premiere 설치 직후 `patch_prproj_files().await`를 호출하도록 정리
+  - `src/services/nleExportService.ts` — `ensureNleCompanionReady()` preflight를 추가하고 `installNleViaCompanion()`가 health check를 공용화한 뒤 ZIP 내부에서 projectId를 자체 추출하도록 단순화. 컴패니언 미실행/연결 끊김 메시지도 더 명확하게 보강
+  - `src/components/tabs/imagevideo/StoryboardPanel.tsx`, `src/components/tabs/EditRoomTab.tsx`, `src/components/tabs/channel/VideoAnalysisRoom.tsx` — Premiere/CapCut/Filmora의 브라우저 ZIP 다운로드 폴백과 CapCut File System API 직접 설치 폴백을 제거하고, 사전 health ping 실패 시 컴패니언 게이트 모달을 열고 중단하도록 변경. VREW ZIP 흐름은 유지
+  - `cd companion/src-tauri && cargo build`: 통과 (기존 warning만 존재)
+  - `cd src && node_modules/typescript/bin/tsc --noEmit`: 통과
+  - `cd src && node_modules/.bin/vite build`: 성공 (기존 dynamic import / chunk-size warning만 출력)
+  - `rg -n "schema_version_for_premiere|patch_prproj_files|patch_capcut_draft_content_fps|ffprobe_media_fps|detect_project_video_fps|ensureNleCompanionReady|installNleViaCompanion|setShowCompanionGate\\(true\\)" companion/src-tauri/src/server.rs src/services/nleExportService.ts src/components/tabs/imagevideo/StoryboardPanel.tsx src/components/tabs/EditRoomTab.tsx src/components/tabs/channel/VideoAnalysisRoom.tsx`: 반영 위치 재확인
+
 - [x] **2026-04-07 — #1080 quickExportClips companion 우선 2차 좁은 검증**
   - `rg -n "quickExportClips|cutClipsViaCompanion|isCompanionFfmpegCutAvailable|AbortSignal\\.any|monitoredFetch|writeFFmpegScriptFallback|cachedCutSupport|FfmpegCutRequest" src companion/src-tauri/src/server.rs docs/CHECKLIST.md`로 2차 검증 영향 범위 재조사 완료
   - `src/services/companion/cutClipsCompanion.ts` — helper 내부의 `AbortSignal.any + AbortSignal.timeout` 중복 결합을 제거하고 `monitoredFetch()`의 caller signal + timeout 조합/cleanup 경로로 일원화. 이로써 별도 timeout signal 잔존과 `AbortSignal.any` 런타임 호환 이슈를 없앰
