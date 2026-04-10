@@ -9,6 +9,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, OnceLock};
 use tokio::sync::RwLock;
@@ -25,7 +26,33 @@ use crate::{platform, rembg, tts, whisper, ytdlp};
 // ──────────────────────────────────────────────
 
 static TUNNEL_MANAGER: OnceLock<Arc<TunnelManager>> = OnceLock::new();
+static ACTIVE_PORT: OnceLock<u16> = OnceLock::new();
+const COMPANION_PORT_CANDIDATES: [u16; 2] = [9876, 9877];
+const ACTIVE_PORT_FILENAME: &str = "active-port";
 const TUNNEL_SERVE_PORT: u16 = 9879;
+
+/// 현재 바인딩된 메인 API 포트 (9876 또는 9877)
+pub fn active_port() -> u16 {
+    ACTIVE_PORT
+        .get()
+        .copied()
+        .unwrap_or(COMPANION_PORT_CANDIDATES[0])
+}
+
+fn active_port_file_path() -> PathBuf {
+    dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("ytdlp-companion")
+        .join(ACTIVE_PORT_FILENAME)
+}
+
+fn persist_active_port(port: u16) -> std::io::Result<()> {
+    let path = active_port_file_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, format!("{}\n", port))
+}
 
 /// (Codex Round-6 High) 초기화 중 spawn된 child를 추적하는 전역 슬롯.
 /// TunnelManager::new()가 cloudflared를 spawn하지만 아직 TUNNEL_MANAGER에 publish 안 된 상태에서
@@ -485,6 +512,7 @@ struct HealthResponse {
     app: String,
     status: String,
     version: String,
+    port: u16,
     #[serde(rename = "ytdlpVersion")]
     ytdlp_version: String,
     #[serde(rename = "lastUpdateCheck")]
@@ -829,7 +857,41 @@ pub async fn start_server(_app: tauri::AppHandle) -> Result<(), Box<dyn std::err
 
     // [FIX #846] IPv4 + IPv6 loopback 동시 바인딩
     // Windows에서 localhost가 ::1(IPv6)로 해석되면 IPv4 전용 서버에 연결 실패
-    let addr_v4 = SocketAddr::from(([127, 0, 0, 1], 9876));
+    //
+    // [Defense A] 포트 fallback: 9876 실패 시 9877로 walk.
+    // 다른 프로세스가 9876을 점유해도 컴패니언은 9877에서 정상 동작.
+    let mut last_bind_error = None;
+    let mut bound_v4 = None;
+    for port in COMPANION_PORT_CANDIDATES {
+        let addr = SocketAddr::from(([127, 0, 0, 1], port));
+        match tokio::net::TcpListener::bind(addr).await {
+            Ok(listener) => {
+                bound_v4 = Some((listener, addr));
+                break;
+            }
+            Err(e) => {
+                eprintln!("[Companion] IPv4 바인딩 실패 ({}): {}", addr, e);
+                last_bind_error = Some(e);
+            }
+        }
+    }
+    let (main_listener, addr_v4) = match bound_v4 {
+        Some(bound) => bound,
+        None => {
+            let err = last_bind_error.unwrap_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::AddrNotAvailable,
+                    "사용 가능한 companion 포트를 찾지 못했습니다",
+                )
+            });
+            return Err(Box::new(err));
+        }
+    };
+    let chosen_port = addr_v4.port();
+    let _ = ACTIVE_PORT.set(chosen_port);
+    if let Err(e) = persist_active_port(chosen_port) {
+        eprintln!("[Companion] active-port 파일 기록 실패: {}", e);
+    }
     println!("[Companion] 서버 시작: http://{}", addr_v4);
 
     // [FIX #914 + 6차] health 기본 캐시에는 ffmpeg-cut을 즉시 노출하고,
@@ -897,11 +959,11 @@ pub async fn start_server(_app: tauri::AppHandle) -> Result<(), Box<dyn std::err
         eprintln!("[Tunnel] 비활성화 상태로 컴패니언 계속 동작 (다른 기능은 정상)");
     }
 
-    // IPv6 loopback [::1]:9876도 시도 (실패해도 fatal 아님 — IPv6 미지원 환경 대비)
-    let addr_v6 = SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], 9876u16));
+    // IPv6 loopback [::1]:{chosen_port}도 시도 (실패해도 fatal 아님 — IPv6 미지원 환경 대비)
+    let addr_v6 = SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], chosen_port));
     let app_clone = app.clone();
     if let Ok(v6_listener) = tokio::net::TcpListener::bind(addr_v6).await {
-        println!("[Companion] IPv6 loopback 활성화: http://[::1]:9876");
+        println!("[Companion] IPv6 loopback 활성화: http://[::1]:{}", chosen_port);
         tokio::spawn(async move {
             if let Err(e) = axum::serve(v6_listener, app_clone).await {
                 eprintln!("[Companion] IPv6 서버 에러 (무시): {}", e);
@@ -909,8 +971,7 @@ pub async fn start_server(_app: tauri::AppHandle) -> Result<(), Box<dyn std::err
         });
     }
 
-    let listener = tokio::net::TcpListener::bind(addr_v4).await?;
-    axum::serve(listener, app).await?;
+    axum::serve(main_listener, app).await?;
     Ok(())
 }
 
@@ -1331,6 +1392,7 @@ async fn health_handler() -> Json<HealthResponse> {
         app: "ytdlp-companion".to_string(),
         status: "ok".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
+        port: active_port(),
         ytdlp_version: cached.ytdlp_version.clone(),
         last_update_check,
         services: cached.services.clone(),

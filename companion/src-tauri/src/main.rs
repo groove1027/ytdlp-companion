@@ -11,12 +11,31 @@ mod video_tunnel;
 mod whisper;
 mod ytdlp;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Manager,
 };
 use tauri_plugin_autostart::ManagerExt;
+
+// [Defense D] 첫 번째 X 클릭 시 "트레이로 숨김" 안내 배너 표시 (1회만)
+static FIRST_CLOSE_SHOWN: AtomicBool = AtomicBool::new(false);
+const FIRST_CLOSE_BANNER_SCRIPT: &str = r#"
+(() => {
+  const id = '__helper-close-banner';
+  document.getElementById(id)?.remove();
+  const root = document.createElement('div');
+  root.id = id;
+  root.style.cssText = 'position:fixed;top:16px;right:16px;z-index:2147483647;max-width:420px;padding:16px;border-radius:14px;background:#111827;color:#fff;box-shadow:0 24px 60px rgba(0,0,0,.45);font:14px/1.5 system-ui,-apple-system,sans-serif;';
+  root.innerHTML = '<div style="margin-bottom:12px;">X 버튼은 트레이로 숨기는 동작입니다.<br>완전히 종료하려면 트레이 아이콘 → <b>종료</b>를 사용하세요.</div><button id="__helper-close-banner-btn" style="border:0;border-radius:10px;padding:10px 14px;background:#2563eb;color:#fff;font-weight:600;cursor:pointer;">지금 닫기</button>';
+  let closed = false;
+  const closeNow = () => { if (closed) return; closed = true; root.remove(); window.close(); };
+  root.querySelector('#__helper-close-banner-btn')?.addEventListener('click', closeNow, { once: true });
+  document.body.appendChild(root);
+  window.setTimeout(closeNow, 4500);
+})();
+"#;
 
 /// 창을 최상위로 올리고 포커스
 /// ⚠️ 외부 프로세스로 앱을 활성화하면 안 됨 (open -b, osascript 등)
@@ -152,12 +171,26 @@ fn main() {
                 ),
             }
 
-            // 창 닫기 시 숨김 처리 (앱 종료 대신) — "이 창을 닫아도 계속 실행" 약속 이행
+            // [Defense D] 창 닫기 시 숨김 처리 + 최초 1회 안내 배너
+            // 첫 X 클릭: 4.5초 배너 표시 → 자동 또는 수동 "지금 닫기" → 두 번째 close 발화
+            // 두 번째+ X 클릭: 즉시 hide (배너 잔여물 제거 포함)
             if let Some(win) = app.get_webview_window("main") {
                 let win_clone = win.clone();
                 win.on_window_event(move |event| {
                     if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                         api.prevent_close();
+                        if FIRST_CLOSE_SHOWN
+                            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                            .is_ok()
+                        {
+                            // 첫 번째 닫기: 안내 배너 주입 (JS setTimeout → 자동으로 window.close() 재호출)
+                            if let Err(e) = win_clone.eval(FIRST_CLOSE_BANNER_SCRIPT) {
+                                eprintln!("[Companion] first-close 배너 주입 실패: {}", e);
+                            }
+                            return;
+                        }
+                        // 두 번째 이후: 배너 잔여물 제거 후 숨김
+                        let _ = win_clone.eval("document.getElementById('__helper-close-banner')?.remove();");
                         let _ = win_clone.hide();
                     }
                 });

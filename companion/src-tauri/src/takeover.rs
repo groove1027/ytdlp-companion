@@ -23,14 +23,17 @@
 //   - 자기 자신과 같은 PID는 절대 죽이지 않음 (process::id() 비교)
 // ============================================================
 
-use std::path::PathBuf;
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-const HELPER_PORT: u16 = 9876;
+/// [Defense A] 포트 fallback — 9877에서 실행 중인 옛 헬퍼도 takeover 대상
+const HELPER_PORT_CANDIDATES: [u16; 2] = [9876, 9877];
 const HELPER_SIGNATURE: &str = "ytdlp-companion";
 const TAKEOVER_TIMEOUT_SECS: u64 = 5;
 const QUIT_TOKEN_FILENAME: &str = "quit-token";
+const TAKEOVER_HISTORY_FILENAME: &str = "takeover-history";
 
 /// 헬퍼 데이터 디렉토리에 저장된 quit token 파일 경로.
 /// 같은 머신의 헬퍼만 이 파일을 읽을 수 있어야 한다 (사용자 home 권한 보호).
@@ -41,6 +44,78 @@ pub fn quit_token_path() -> PathBuf {
         .join(QUIT_TOKEN_FILENAME)
 }
 
+fn takeover_history_path() -> PathBuf {
+    dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("ytdlp-companion")
+        .join(TAKEOVER_HISTORY_FILENAME)
+}
+
+/// 컴패니언 데이터 파일 쓰기 (디렉토리 자동 생성 + Unix 0o600 권한)
+fn write_companion_data_file(path: &Path, contents: &str) {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(path, contents);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
+}
+
+/// [Defense B] takeover-history 파일에서 ISO-8601 타임스탬프 파싱
+fn parse_takeover_history(raw: &str) -> Vec<DateTime<Utc>> {
+    raw.lines()
+        .filter_map(|line| DateTime::parse_from_rfc3339(line.trim()).ok())
+        .map(|ts| ts.with_timezone(&Utc))
+        .collect()
+}
+
+/// [Defense B] takeover 시도 기록 + bounded retry guard.
+/// 60초 내 3건 초과 시 false 리턴 → takeover 전체 스킵.
+fn record_takeover_attempt(path: &Path, now: DateTime<Utc>) -> bool {
+    let mut entries = std::fs::read_to_string(path)
+        .ok()
+        .map(|raw| parse_takeover_history(&raw))
+        .unwrap_or_default();
+
+    // 현재 시도 추가
+    entries.push(now);
+
+    // 마지막 20개로 truncate (unbounded 방지)
+    if entries.len() > 20 {
+        let drain_count = entries.len() - 20;
+        entries.drain(0..drain_count);
+    }
+
+    let serialized = entries
+        .iter()
+        .map(|ts| ts.to_rfc3339())
+        .collect::<Vec<_>>()
+        .join("\n");
+    write_companion_data_file(path, &format!("{}\n", serialized));
+
+    // 60초 내 시도 횟수 카운트 (현재 시도 포함)
+    let recent_count = entries
+        .iter()
+        .filter(|ts| {
+            let age = now.signed_duration_since(**ts);
+            age >= ChronoDuration::zero() && age <= ChronoDuration::seconds(60)
+        })
+        .count();
+
+    if recent_count > 3 {
+        eprintln!(
+            "[Takeover] 최근 60초 동안 takeover 시도 {}회 감지 — \
+             self-kill 루프 방지를 위해 takeover 전체 스킵",
+            recent_count
+        );
+        return false;
+    }
+    true
+}
+
 /// 헬퍼 시작 시 호출 — 랜덤 token 생성/회전 후 디스크에 저장.
 /// /quit endpoint는 같은 token을 X-Helper-Token 헤더로 받아야 동작한다.
 ///
@@ -48,16 +123,7 @@ pub fn quit_token_path() -> PathBuf {
 pub fn ensure_quit_token() -> String {
     let token = generate_random_token();
     let path = quit_token_path();
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let _ = std::fs::write(&path, &token);
-    // 권한 제한 (Unix만 — 사용자 본인만 읽기)
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
-    }
+    write_companion_data_file(&path, &token);
     token
 }
 
@@ -122,12 +188,12 @@ fn extract_version_from_health(response: &str) -> Option<String> {
 
 /// 동기 health check — main()의 첫 줄에서 호출되므로 tokio runtime 없이 동작해야 함.
 /// reqwest::blocking을 쓰지 않고 std::net::TcpStream + raw HTTP로 처리.
-fn check_old_helper_signature() -> Option<HelperInfo> {
+fn check_old_helper_signature_on(port: u16) -> Option<HelperInfo> {
     use std::io::{Read, Write};
     use std::net::TcpStream;
 
     let stream = TcpStream::connect_timeout(
-        &format!("127.0.0.1:{}", HELPER_PORT).parse().ok()?,
+        &format!("127.0.0.1:{}", port).parse().ok()?,
         Duration::from_secs(2),
     ).ok()?;
     stream.set_read_timeout(Some(Duration::from_secs(2))).ok()?;
@@ -135,7 +201,7 @@ fn check_old_helper_signature() -> Option<HelperInfo> {
 
     let request = format!(
         "GET /health HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n",
-        HELPER_PORT
+        port
     );
     let mut stream = stream;
     stream.write_all(request.as_bytes()).ok()?;
@@ -144,11 +210,8 @@ fn check_old_helper_signature() -> Option<HelperInfo> {
     stream.read_to_string(&mut response).ok()?;
 
     if !response.contains(HELPER_SIGNATURE) {
-        // 9876 포트를 ytdlp-companion이 아닌 다른 무관한 프로세스가 쓰는 중.
-        // 절대 takeover 진행하지 않음.
         return None;
     }
-    // 응답 body에서 version 추출 (실패해도 HelperInfo는 리턴 — 옛 헬퍼로 간주)
     let version = extract_version_from_health(&response);
     Some(HelperInfo { version })
 }
@@ -158,17 +221,16 @@ fn check_old_helper_signature() -> Option<HelperInfo> {
 ///
 /// X-Helper-Token 헤더에 디스크의 quit-token 파일 값을 실어 보낸다.
 /// 같은 머신 사용자만 접근 가능한 파일이므로 악성 웹페이지는 token을 알 수 없다.
-fn try_graceful_quit() -> bool {
+fn try_graceful_quit_on(port: u16) -> bool {
     use std::io::{Read, Write};
     use std::net::TcpStream;
 
-    // 옛 헬퍼가 이미 저장해둔 token 읽기 (없으면 graceful quit 포기)
     let Some(token) = read_quit_token() else {
         println!("[Takeover] quit-token 파일 없음 — graceful quit 스킵 (v1.3.0 이하 옛 헬퍼)");
         return false;
     };
 
-    let Ok(addr) = format!("127.0.0.1:{}", HELPER_PORT).parse() else {
+    let Ok(addr) = format!("127.0.0.1:{}", port).parse() else {
         return false;
     };
     let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_secs(2)) else {
@@ -179,22 +241,21 @@ fn try_graceful_quit() -> bool {
 
     let request = format!(
         "POST /quit HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nX-Helper-Token: {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-        HELPER_PORT, token
+        port, token
     );
     if stream.write_all(request.as_bytes()).is_err() {
         return false;
     }
     let mut response = String::new();
     let _ = stream.read_to_string(&mut response);
-    // 200 OK + shutting_down 응답이면 graceful quit 성공
     response.contains("200 OK") && response.contains("shutting_down")
 }
 
-/// fallback: OS 명령으로 9876 점유 프로세스 PID 찾아서 강제 종료.
+/// fallback: OS 명령으로 지정 포트 점유 프로세스 PID 찾아서 강제 종료.
 /// 자기 자신 PID는 절대 죽이지 않음.
-fn force_kill_port_holder() -> bool {
+fn force_kill_port_holder_on(port: u16) -> bool {
     let my_pid = std::process::id();
-    let pids = find_pids_on_port(HELPER_PORT);
+    let pids = find_pids_on_port(port);
 
     let mut killed_any = false;
     for pid in pids {
@@ -315,77 +376,84 @@ fn kill_pid(pid: u32) -> bool {
         .unwrap_or(false)
 }
 
-/// public — main() 첫 줄에서 호출.
-///
-/// 반환:
-///   - true:  9876 포트가 비어 있음 (takeover 성공 또는 처음부터 비어있었음)
-///   - false: 9876 포트가 여전히 점유 중 (사용자 액션 필요)
-///
-/// false를 반환해도 메인 진행은 막지 않음 (single-instance plugin이 어차피 처리).
-pub fn takeover_old_helper_if_present() -> bool {
-    println!("[Takeover] 9876 포트 점유 확인 시작");
-
-    // 1) signature 확인 — 9876에 응답하는 게 ytdlp-companion인지
-    let Some(info) = check_old_helper_signature() else {
-        println!("[Takeover] 9876 포트 비어있거나 다른 무관한 프로세스 — takeover 스킵");
+/// 단일 포트에 대한 takeover 시도. 버전 검사 + graceful quit + force kill.
+/// 반환: true = 포트 비워짐 또는 처음부터 비어있음, false = 점유 유지
+fn takeover_single_port(port: u16) -> bool {
+    let Some(info) = check_old_helper_signature_on(port) else {
+        println!("[Takeover] :{} 비어있거나 무관한 프로세스 — 스킵", port);
         return true;
     };
 
     // [v2.0.3 hotfix — Windows self-kill loop]
-    // 같은 버전 instance가 9876을 점유 중이면 takeover를 절대 진행하지 않는다.
-    // 이유: v2.0.2에서 wrapper / autostart / deep-link 등이 같은 binary를 두 번
-    // spawn할 때, 두 번째 instance가 첫 번째를 takeover로 죽이고, 그 다음 첫 번째가
-    // 다시 spawn되어 두 번째를 죽이는 무한 루프가 발생함 ("꺼졌다 켜졌다" 증상).
-    //
-    // 같은 버전끼리는 single-instance plugin이 dedup하도록 위임한다.
-    // - takeover가 false를 리턴하면 main()은 그대로 진행 → tauri::Builder가
-    //   single-instance plugin을 등록 → plugin이 즉시 두 번째 instance를 catch하고
-    //   기존 instance에 위임 → 두 번째 instance는 graceful exit.
-    //
-    // 다른 버전 (예: v2.0.2 → v2.0.3 업그레이드, v1.3.1 → v2.0.3 점프)이면 기존
-    // takeover 동작 유지 → graceful /quit 또는 force kill → 새 instance 시작.
+    // 같은 버전 instance면 takeover 금지 → single-instance plugin에 위임
+    // (같은 버전 skip은 takeover history에 기록하지 않아서 실제 업그레이드 예산을 소모하지 않음)
     let my_version = env!("CARGO_PKG_VERSION");
     if let Some(other_version) = info.version.as_deref() {
         if other_version == my_version {
             eprintln!(
-                "[Takeover] 같은 버전({}) 감지 — self-kill 루프 방지를 위해 takeover 스킵. \
-                 single-instance plugin이 본 instance를 정리할 것.",
-                my_version
+                "[Takeover] :{} 같은 버전({}) 감지 — self-kill 루프 방지를 위해 스킵",
+                port, my_version
             );
-            // false를 리턴 → main()은 진행하지만 single-instance plugin이 즉시 catch.
             return false;
         }
         println!(
-            "[Takeover] 옛 버전({}) → 본 버전({}) 감지 — takeover 진행",
-            other_version, my_version
+            "[Takeover] :{} 옛 버전({}) → 본 버전({}) — takeover 진행",
+            port, other_version, my_version
         );
     } else {
-        println!("[Takeover] 옛 ytdlp-companion 감지 (버전 미상 = v1.x 이하) — takeover 진행");
+        println!("[Takeover] :{} 옛 헬퍼 (버전 미상 = v1.x 이하) — takeover 진행", port);
     }
 
-    // 2) graceful quit 시도 (새 v1.3.1+ 헬퍼만 응답)
-    if try_graceful_quit() {
-        println!("[Takeover] graceful /quit 성공");
+    // [Defense B] bounded retry guard — 실제 cross-version takeover만 기록
+    // same-version skip은 위에서 이미 return했으므로 여기까지 왔다면 실제 takeover 시도
+    if !record_takeover_attempt(&takeover_history_path(), Utc::now()) {
+        return false;
+    }
+
+    // graceful quit 시도
+    if try_graceful_quit_on(port) {
+        println!("[Takeover] :{} graceful /quit 성공", port);
     } else {
-        println!("[Takeover] graceful /quit 실패 — force kill로 fallback");
-        // 3) fallback: PID 찾아서 강제 종료
-        if !force_kill_port_holder() {
-            println!("[Takeover] force_kill_port_holder 실패");
+        println!("[Takeover] :{} graceful /quit 실패 — force kill로 fallback", port);
+        if !force_kill_port_holder_on(port) {
+            println!("[Takeover] :{} force_kill 실패", port);
         }
     }
 
-    // 4) 최대 5초 대기하면서 9876이 비었는지 확인
+    // 최대 5초 대기
     let start = std::time::Instant::now();
     while start.elapsed() < Duration::from_secs(TAKEOVER_TIMEOUT_SECS) {
         std::thread::sleep(Duration::from_millis(500));
-        if check_old_helper_signature().is_none() {
-            println!("[Takeover] 9876 해제 확인 — 자기 시작 진행");
+        if check_old_helper_signature_on(port).is_none() {
+            println!("[Takeover] :{} 해제 확인", port);
             return true;
         }
     }
 
-    eprintln!("[Takeover] {}초 후에도 9876이 점유 중 — 사용자 액션 필요", TAKEOVER_TIMEOUT_SECS);
+    eprintln!("[Takeover] :{} {}초 후에도 점유 중", port, TAKEOVER_TIMEOUT_SECS);
     false
+}
+
+/// public — main() 첫 줄에서 호출.
+///
+/// [Defense A] 9876 + 9877 양쪽 포트에 옛 헬퍼가 있는지 확인하고 takeover.
+/// 옛 헬퍼가 Defense A fallback으로 9877에서 실행 중인 경우에도 정상 교체 가능.
+///
+/// 반환:
+///   - true:  양쪽 포트 모두 비어 있음 (takeover 성공 또는 처음부터 비어있었음)
+///   - false: 적어도 한 포트가 여전히 점유 중 (사용자 액션 필요)
+///
+/// false를 반환해도 메인 진행은 막지 않음 (single-instance plugin이 어차피 처리).
+pub fn takeover_old_helper_if_present() -> bool {
+    println!("[Takeover] 컴패니언 포트 점유 확인 시작 (9876, 9877)");
+
+    let mut all_clear = true;
+    for &port in &HELPER_PORT_CANDIDATES {
+        if !takeover_single_port(port) {
+            all_clear = false;
+        }
+    }
+    all_clear
 }
 
 #[cfg(test)]
@@ -427,5 +495,33 @@ Content-Type: application/json
             let body = format!(r#"{{"version":"{}"}}"#, v);
             assert_eq!(extract_version_from_health(&body).as_deref(), Some(*v));
         }
+    }
+
+    #[test]
+    fn takeover_history_blocks_fourth_attempt_within_60s() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(TAKEOVER_HISTORY_FILENAME);
+        let base = Utc::now();
+
+        // 1~3번째 시도는 통과
+        assert!(record_takeover_attempt(&path, base - ChronoDuration::seconds(45)));
+        assert!(record_takeover_attempt(&path, base - ChronoDuration::seconds(30)));
+        assert!(record_takeover_attempt(&path, base - ChronoDuration::seconds(15)));
+        // 4번째 시도(60초 내 4건) — 차단
+        assert!(!record_takeover_attempt(&path, base));
+    }
+
+    #[test]
+    fn takeover_history_allows_after_cooldown() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(TAKEOVER_HISTORY_FILENAME);
+        let base = Utc::now();
+
+        // 3건은 61초 이전 → 현재 시점에는 만료
+        assert!(record_takeover_attempt(&path, base - ChronoDuration::seconds(120)));
+        assert!(record_takeover_attempt(&path, base - ChronoDuration::seconds(90)));
+        assert!(record_takeover_attempt(&path, base - ChronoDuration::seconds(61)));
+        // 현재 시도 → 60초 내 1건만 있으므로 통과
+        assert!(record_takeover_attempt(&path, base));
     }
 }

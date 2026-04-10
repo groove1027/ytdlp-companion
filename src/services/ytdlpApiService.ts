@@ -22,8 +22,20 @@ const DEFAULT_DIRECT_URL = 'http://175.126.73.193:3100';
 const DEFAULT_PROXY_URL = 'https://ytdlp-proxy.groove1027.workers.dev'; // Cloudflare Worker 프록시
 const DEFAULT_API_KEY = 'bf9ce5c9b531c42a2dd6dcec61cff6c3eead93f20ba35365d3411ddf783dccb1';
 
-/** 로컬 컴패니언 앱 URL (YouPlayer급 안정성 — yt-dlp 로컬 실행) */
-const LOCAL_COMPANION_URL = 'http://127.0.0.1:9876';
+/** 로컬 컴패니언 앱 URL — Defense A 포트 fallback 인지 */
+const COMPANION_PORT_CANDIDATES = [9876, 9877] as const;
+let _activeCompanionPort: number = COMPANION_PORT_CANDIDATES[0];
+const LOCAL_COMPANION_URL_BASE = 'http://127.0.0.1';
+
+/** 현재 감지된 포트의 컴패니언 URL 반환 */
+function getCompanionUrl(): string {
+  return `${LOCAL_COMPANION_URL_BASE}:${_activeCompanionPort}`;
+}
+
+/** 컴패니언 URL인지 판정 (9876/9877 모두 포함) */
+function isCompanionUrl(url: string): boolean {
+  return COMPANION_PORT_CANDIDATES.some(p => url === `${LOCAL_COMPANION_URL_BASE}:${p}`);
+}
 
 // ──────────────────────────────────────────────
 // 로컬 컴패니언 앱 감지 (캐시 + 주기적 재검증)
@@ -68,50 +80,49 @@ async function isCompanionAvailable(): Promise<boolean> {
 }
 
 async function _doCompanionCheck(now: number): Promise<boolean> {
+  // [Defense A] 포트 fallback 인지: 현재 포트를 먼저 시도하고, 실패하면 다른 후보도 시도
+  const portsToTry = [_activeCompanionPort, ...COMPANION_PORT_CANDIDATES.filter(p => p !== _activeCompanionPort)];
 
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), COMPANION_HEALTH_TIMEOUT_MS);
-    const res = await fetch(`${LOCAL_COMPANION_URL}/health`, {
-      signal: controller.signal,
-      mode: 'cors',
-    });
-    clearTimeout(timeoutId);
+  for (const port of portsToTry) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), COMPANION_HEALTH_TIMEOUT_MS);
+      const res = await fetch(`${LOCAL_COMPANION_URL_BASE}:${port}/health`, {
+        signal: controller.signal,
+        mode: 'cors',
+      });
+      clearTimeout(timeoutId);
 
-    if (res.ok) {
-      const data = await res.json().catch(() => null);
-      // 서명 핸드셰이크: 컴패니언 앱만이 반환하는 식별 헤더/필드 확인
-      if (!data || data.app !== 'ytdlp-companion') {
-        // 알 수 없는 localhost 서비스 → 신뢰하지 않음
-        _companionAvailable = false;
+      if (res.ok) {
+        const data = await res.json().catch(() => null);
+        // 서명 핸드셰이크: 컴패니언 앱만이 반환하는 식별 헤더/필드 확인
+        if (!data || data.app !== 'ytdlp-companion') {
+          continue; // 이 포트에 다른 서비스 → 다음 포트 시도
+        }
+        // 감지 성공 — 활성 포트 갱신
+        _activeCompanionPort = data.port ?? port;
+        _companionAvailable = true;
         _companionCheckTime = now;
-        return false;
+        _companionHealthCheckedOnce = true;
+        _companionLiveVersion = data?.version || null;
+        if (_companionLiveVersion) {
+          _companionLastKnownVersion = _companionLiveVersion;
+          try { localStorage.setItem('companion_last_detected_version', _companionLiveVersion); } catch {}
+        }
+        logger.info(`[Companion] 로컬 헬퍼 감지됨 (v${data?.version || '?'}, port ${_activeCompanionPort}, yt-dlp ${data?.ytdlpVersion || '?'})`);
+        return true;
       }
-      _companionAvailable = true;
-      _companionCheckTime = now;
-      _companionHealthCheckedOnce = true;
-      _companionLiveVersion = data?.version || null;
-      if (_companionLiveVersion) {
-        _companionLastKnownVersion = _companionLiveVersion;
-        // [FIX #935] 마지막 감지된 버전을 localStorage에 저장 — 앱 꺼져있을 때도 업데이트 배너 표시용
-        try { localStorage.setItem('companion_last_detected_version', _companionLiveVersion); } catch {}
-      }
-      logger.info(`[Companion] 로컬 헬퍼 감지됨 (v${data?.version || '?'}, yt-dlp ${data?.ytdlpVersion || '?'})`);
-      return true;
+    } catch (err) {
+      const reason = err instanceof Error
+        ? (err.name === 'AbortError' ? 'timeout(3s)' : err.message)
+        : 'unknown';
+      logger.info(`[Companion] health check 실패 (port ${port}): ${reason}`);
     }
-  } catch (err) {
-    // [FIX #907] 실패 원인 명시 로깅 — 디버깅용
-    const reason = err instanceof Error
-      ? (err.name === 'AbortError' ? 'timeout(3s)' : err.message)
-      : 'unknown';
-    logger.info(`[Companion] health check 실패: ${reason}`);
   }
 
   _companionAvailable = false;
   _companionCheckTime = now;
   _companionHealthCheckedOnce = true;
-  // [FIX] health check 실패 시 live 버전은 즉시 클리어해서 stale 데이터로 'outdated 잘못 표시' 방지.
-  // lastKnown(localStorage 시드)은 그대로 유지 — 콜드 스타트에서 outdated 안내가 자연스레 뜨도록.
   _companionLiveVersion = null;
   return false;
 }
@@ -150,11 +161,22 @@ export async function recheckCompanion(): Promise<boolean> {
  * 스킴 미등록 시 무시됨 (에러 없음).
  */
 let _lastLaunchAttempt = 0;
-export function tryLaunchCompanion(): void {
+let _lastManualLaunchAttempt = 0;
+/**
+ * 컴패니언 앱 강제 실행 시도 — allinonehelper:// URL 스킴 호출.
+ * manual=true (사용자 클릭): 10초 쓰로틀 (빠른 재시도 허용)
+ * manual=false (auto/poll): 60초 쓰로틀 (폴링 과다 launch 차단)
+ */
+export function tryLaunchCompanion(manual = false): void {
   if (typeof window === 'undefined') return;
-  // 쓰로틀: 10초 내 중복 시도 방지
   const now = Date.now();
-  if (now - _lastLaunchAttempt < 10_000) return;
+  if (manual) {
+    if (now - _lastManualLaunchAttempt < 10_000) return;
+    _lastManualLaunchAttempt = now;
+  } else {
+    // [Defense C] 자동 쓰로틀: 60초 내 중복 시도 방지
+    if (now - _lastLaunchAttempt < 60_000) return;
+  }
   _lastLaunchAttempt = now;
 
   try {
@@ -295,7 +317,7 @@ async function getApiBaseUrlAsync(purpose: RequestPurpose = 'lightweight'): Prom
 
   if (purpose === 'heavy') {
     // 대용량 전송: 컴패니언 우선 (단, 최소 버전 충족 시에만)
-    return companionUsable ? LOCAL_COMPANION_URL : vpsUrl;
+    return companionUsable ? getCompanionUrl() : vpsUrl;
   }
 
   // 경량 요청: VPS 우선 (캐시, 빠름), VPS 실패 시 컴패니언 폴백
@@ -314,7 +336,7 @@ function getApiBaseUrl(purpose: RequestPurpose = 'heavy'): string {
   // heavy(다운로드): 컴패니언 우선 — 단, 최소 버전 충족 시에만
   // lightweight(추출): VPS 우선
   if (purpose === 'heavy' && _companionAvailable === true && !isCompanionOutdated()) {
-    return LOCAL_COMPANION_URL;
+    return getCompanionUrl();
   }
 
   // 2순위: HTTPS → Cloudflare Worker 프록시
@@ -523,7 +545,7 @@ async function apiCall<T>(path: string, options?: RequestInit): Promise<T> {
   const servers: { url: string; needsKey: boolean }[] = [];
   if (hasCustom) {
     const customUrl = await getApiBaseUrlAsync('lightweight');
-    servers.push({ url: customUrl, needsKey: customUrl !== LOCAL_COMPANION_URL });
+    servers.push({ url: customUrl, needsKey: customUrl !== getCompanionUrl() });
   } else {
     const isHttps = typeof window !== 'undefined' && window.location.protocol === 'https:';
     // VPS 우선 (경량 요청은 캐시/프로세스 풀 덕에 빠름)
@@ -533,7 +555,7 @@ async function apiCall<T>(path: string, options?: RequestInit): Promise<T> {
     }
     // VPS 전부 실패 시 컴패니언 폴백
     if (await isCompanionAvailable()) {
-      servers.push({ url: LOCAL_COMPANION_URL, needsKey: false });
+      servers.push({ url: getCompanionUrl(), needsKey: false });
     }
   }
 
@@ -563,7 +585,7 @@ async function apiCall<T>(path: string, options?: RequestInit): Promise<T> {
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
       // [FIX #974] 개별 API 실패로 전역 _companionAvailable을 끄지 않음 — 헬스체크만 권위
-      if (server.url === LOCAL_COMPANION_URL) {
+      if (server.url === getCompanionUrl()) {
         logger.warn('[Companion] API 요청 실패 — 재시도:', lastError.message);
       }
       // 커스텀 URL이면 폴백 없이 즉시 throw
@@ -617,7 +639,7 @@ export function triggerDirectDownload(
 ): void {
   // 컴패니언 우선 (캐시 기반 동기 판단)
   const baseUrl = getApiBaseUrl();
-  const isCompanion = baseUrl === LOCAL_COMPANION_URL;
+  const isCompanion = baseUrl === getCompanionUrl();
   const apiKey = getApiKey();
 
   // 컴패니언은 API 키 불필요
@@ -674,7 +696,7 @@ export async function downloadVideoViaProxy(
       }
       const abortContext = createCombinedAbortSignalContext(externalSignal, 600_000);
       const dlBaseUrl = await getApiBaseUrlAsync('heavy');
-      const isCompanionDl = dlBaseUrl === LOCAL_COMPANION_URL;
+      const isCompanionDl = dlBaseUrl === getCompanionUrl();
       try {
         const baseUrl = dlBaseUrl;
         const isCompanion = isCompanionDl;
@@ -839,7 +861,7 @@ export async function downloadAudioViaProxy(
   youtubeUrl: string,
 ): Promise<Blob> {
   const baseUrl = await getApiBaseUrlAsync('heavy');
-  const isCompanion = baseUrl === LOCAL_COMPANION_URL;
+  const isCompanion = baseUrl === getCompanionUrl();
   const apiKey = getApiKey();
   const proxyUrl = `${baseUrl.replace(/\/$/, '')}/api/download?url=${encodeURIComponent(youtubeUrl)}&quality=audio`;
 
@@ -1001,7 +1023,7 @@ export async function downloadSocialVideo(
   options?: DownloadSocialVideoOptions,
 ): Promise<{ blob: Blob; title: string }> {
   const baseUrl = await getApiBaseUrlAsync('heavy');
-  const isCompanion = baseUrl === LOCAL_COMPANION_URL;
+  const isCompanion = baseUrl === getCompanionUrl();
   const apiKey = getApiKey();
 
   // 커스텀 URL 설정 시 → 그 서버만 사용 (폴백 없음)
@@ -1010,7 +1032,7 @@ export async function downloadSocialVideo(
   if (hasCustomUrl) {
     serversToTry.push({ url: baseUrl, needsKey: !isCompanion });
   } else {
-    if (isCompanion) serversToTry.push({ url: LOCAL_COMPANION_URL, needsKey: false });
+    if (isCompanion) serversToTry.push({ url: getCompanionUrl(), needsKey: false });
     const vpsUrl = typeof window !== 'undefined' && window.location.protocol === 'https:'
       ? DEFAULT_PROXY_URL : DEFAULT_DIRECT_URL;
     serversToTry.push({ url: vpsUrl, needsKey: true });
@@ -1077,7 +1099,7 @@ export async function downloadSocialVideo(
       if (options?.signal?.aborted) throw createAbortError();
       lastError = err instanceof Error ? err : new Error(String(err));
       // [FIX #974] 개별 소셜 다운로드 실패로 전역 _companionAvailable을 끄지 않음
-      if (server.url === LOCAL_COMPANION_URL) {
+      if (server.url === getCompanionUrl()) {
         logger.warn('[Companion] 소셜 다운로드 실패 — 재시도:', lastError.message);
       }
     } finally {
@@ -1149,7 +1171,7 @@ export async function fetchFramesFromServer(
 
   // 대용량 전송: 컴패니언 우선
   const baseUrl = await getApiBaseUrlAsync('heavy');
-  const isCompanion = baseUrl === LOCAL_COMPANION_URL;
+  const isCompanion = baseUrl === getCompanionUrl();
   const apiKey = getApiKey();
 
   // 커스텀 URL 설정 시 → 그 서버만 사용 (폴백 없음)
@@ -1158,7 +1180,7 @@ export async function fetchFramesFromServer(
   if (hasCustomUrl) {
     serversToTry.push({ baseUrl, needsKey: !isCompanion });
   } else {
-    if (isCompanion) serversToTry.push({ baseUrl: LOCAL_COMPANION_URL, needsKey: false });
+    if (isCompanion) serversToTry.push({ baseUrl: getCompanionUrl(), needsKey: false });
     const vpsUrl = typeof window !== 'undefined' && window.location.protocol === 'https:'
       ? DEFAULT_PROXY_URL : DEFAULT_DIRECT_URL;
     serversToTry.push({ baseUrl: vpsUrl, needsKey: true });
@@ -1208,7 +1230,7 @@ export async function fetchFramesFromServer(
     }
 
     // [FIX #974] 개별 프레임 추출 실패로 전역 _companionAvailable을 끄지 않음
-    if (server.baseUrl === LOCAL_COMPANION_URL) {
+    if (server.baseUrl === getCompanionUrl()) {
       logger.warn('[Companion] 프레임 추출 실패 — 재시도');
     }
   }
@@ -1280,7 +1302,7 @@ export async function detectScenesViaCompanion(
     let response: Response;
     try {
       response = await monitoredFetch(
-        `${LOCAL_COMPANION_URL}/api/scene-detect`,
+        `${getCompanionUrl()}/api/scene-detect`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

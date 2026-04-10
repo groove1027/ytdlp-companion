@@ -47,6 +47,8 @@ import {
 import { showToast, useUIStore } from '../stores/uiStore';
 
 const RELEASE_RECHECK_INTERVAL_MS = 180_000;
+// [Defense C] adaptive backoff 스케줄 (ms): 1s → 5s → 10s → 20s → 40s → 60s cap
+const COMPANION_POLL_BACKOFF_MS = [1_000, 5_000, 10_000, 20_000, 40_000, 60_000] as const;
 const MAC_QUARANTINE_COMMAND = 'xattr -dr com.apple.quarantine /Applications/All\\ In\\ One\\ Helper.app';
 const MOTION_EASE: [number, number, number, number] = [0.16, 1, 0.3, 1];
 const FOCUS_RING_CLASSES =
@@ -232,7 +234,7 @@ function StatusPanel({
             <span>{statusMessage}</span>
           </div>
           <p className="mt-2 text-xs leading-5 text-slate-400">
-            로컬 감지 주소: <span className="font-mono text-slate-300">http://127.0.0.1:9876/health</span>
+            로컬 감지 주소: <span className="font-mono text-slate-300">http://127.0.0.1:9876 · 9877/health</span>
           </p>
           <p className="mt-1 text-xs text-slate-500">{formatCheckedAt(lastCheckedAt)}</p>
         </div>
@@ -867,61 +869,106 @@ function useCompanionGateRuntime(mode: GateMode, setShowCompanionGate: (show: bo
   const mountedRef = useRef(false);
   const checkInFlightRef = useRef(false);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pollStepRef = useRef(0);
+  const resolvedRef = useRef(false);
   const releaseRefreshAtRef = useRef(0);
 
-  const syncCompanion = useCallback(async (reason: SyncReason) => {
-    if (checkInFlightRef.current) return;
+  const syncCompanion = useCallback(async (reason: SyncReason): Promise<boolean> => {
+    if (resolvedRef.current) return true;
+    if (checkInFlightRef.current) return false;
     checkInFlightRef.current = true;
-    setIsChecking(true);
+    if (mountedRef.current) setIsChecking(true);
 
-    if (reason !== 'poll') tryLaunchCompanion();
-    if (reason === 'auto') {
-      await waitForInitialReleaseFetch();
-    } else if (shouldRefreshRelease(reason, releaseRefreshAtRef.current)) {
-      releaseRefreshAtRef.current = Date.now();
-      await refreshCompanionRelease(true).catch(() => {});
-    }
+    try {
+      if (reason !== 'poll') tryLaunchCompanion();
+      if (reason === 'auto') {
+        await waitForInitialReleaseFetch();
+      } else if (shouldRefreshRelease(reason, releaseRefreshAtRef.current)) {
+        releaseRefreshAtRef.current = Date.now();
+        await refreshCompanionRelease(true).catch(() => {});
+      }
 
-    const detected = await recheckCompanion().catch(() => false);
-    const nextVersion = getCompanionVersion();
-    const nextMode: GateMode = nextVersion && isCompanionOutdated() ? 'outdated' : 'missing';
-    const nextLatest = getCompanionLatestVersion() ?? MIN_REQUIRED_COMPANION_VERSION;
-    const nextReleasePending = isCompanionReleasePending();
+      const detected = await recheckCompanion().catch(() => false);
+      const nextVersion = getCompanionVersion();
+      const nextMode: GateMode = nextVersion && isCompanionOutdated() ? 'outdated' : 'missing';
+      const nextLatest = getCompanionLatestVersion() ?? MIN_REQUIRED_COMPANION_VERSION;
+      const nextReleasePending = isCompanionReleasePending();
 
-    if (!mountedRef.current) {
+      if (!mountedRef.current) return detected && nextMode !== 'outdated';
+
+      setLastCheckedAt(Date.now());
+      setReleasePending(nextReleasePending);
+      setLatestVersion(nextLatest);
+      setLiveDetected(detected);
+      setStatusMessage(buildStatusMessage(nextMode, nextVersion, nextLatest, reason, nextReleasePending));
+
+      const shouldClose = detected && nextMode !== 'outdated';
+      if (shouldClose) {
+        resolvedRef.current = true;
+        if (pollTimerRef.current) { clearTimeout(pollTimerRef.current); pollTimerRef.current = null; }
+        setShowCompanionGate(false);
+      }
+      return shouldClose;
+    } finally {
       checkInFlightRef.current = false;
-      return;
+      if (mountedRef.current) setIsChecking(false);
     }
-
-    setIsChecking(false);
-    setLastCheckedAt(Date.now());
-    setReleasePending(nextReleasePending);
-    setLatestVersion(nextLatest);
-    setLiveDetected(detected);
-    setStatusMessage(buildStatusMessage(nextMode, nextVersion, nextLatest, reason, nextReleasePending));
-    checkInFlightRef.current = false;
-    if (detected && nextMode !== 'outdated') setShowCompanionGate(false);
   }, [setShowCompanionGate]);
 
   useEffect(() => {
     mountedRef.current = true;
+    resolvedRef.current = false;
     return () => {
       mountedRef.current = false;
+      resolvedRef.current = false;
       checkInFlightRef.current = false;
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+      if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
     };
   }, []);
 
+  // [Defense C] adaptive backoff 폴링 + visibility pause
   useEffect(() => {
-    void syncCompanion('auto');
-    const interval = setInterval(() => {
-      void syncCompanion('poll');
-    }, 5000);
-    return () => clearInterval(interval);
+    function clearPollTimer() {
+      if (pollTimerRef.current) { clearTimeout(pollTimerRef.current); pollTimerRef.current = null; }
+    }
+    function scheduleNextPoll() {
+      clearPollTimer();
+      if (resolvedRef.current || document.visibilityState === 'hidden') return;
+      const step = Math.min(pollStepRef.current, COMPANION_POLL_BACKOFF_MS.length - 1);
+      const delay = COMPANION_POLL_BACKOFF_MS[step];
+      pollStepRef.current = Math.min(step + 1, COMPANION_POLL_BACKOFF_MS.length - 1);
+      pollTimerRef.current = setTimeout(() => {
+        pollTimerRef.current = null;
+        void runCheck('poll');
+      }, delay);
+    }
+    async function runCheck(reason: SyncReason) {
+      const closed = await syncCompanion(reason);
+      if (!closed) scheduleNextPoll();
+    }
+    function handleVisibilityChange() {
+      if (document.visibilityState === 'hidden') {
+        clearPollTimer();
+        return;
+      }
+      // 탭이 다시 visible → 즉시 체크 + backoff 리셋 + auto launch 재시도
+      clearPollTimer();
+      pollStepRef.current = 0;
+      void runCheck('auto');
+    }
+    pollStepRef.current = 0;
+    if (document.visibilityState !== 'hidden') void runCheck('auto');
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      clearPollTimer();
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, [syncCompanion]);
 
   const handleManualAttempt = useCallback(() => {
-    tryLaunchCompanion();
+    tryLaunchCompanion(true);
     setStatusMessage(mode === 'outdated' ? '최신 버전을 설치한 뒤 다시 확인하고 있습니다.' : '헬퍼 앱 실행을 다시 시도하고 있습니다.');
     if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
     retryTimerRef.current = setTimeout(() => {
