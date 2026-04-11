@@ -36,6 +36,21 @@ import {
 import { getVideoAnalysisPrimaryText } from '../utils/videoAnalysisText';
 
 const COMPANION_URL = 'http://127.0.0.1:9876';
+const CAPCUT_INSTALL_COOLDOWN_MS = 2_500;
+const CAPCUT_REFRESH_GUIDE_THRESHOLD = 3;
+const CAPCUT_REFRESH_GUIDE_WINDOW_MS = 10 * 60_000;
+
+let capCutInstallTail: Promise<void> = Promise.resolve();
+let capCutInstallLastFinishedAt = 0;
+let capCutRecentInstallCount = 0;
+let capCutRecentInstallLastCompletedAt = 0;
+
+export interface CompanionNleInstallResult {
+  success: boolean;
+  installedPath: string;
+  filesInstalled: number;
+  refreshRecommended?: boolean;
+}
 
 function getNleTargetLabel(target: NleTarget): string {
   return target === 'premiere'
@@ -49,6 +64,49 @@ function getNleTargetLabel(target: NleTarget): string {
 
 function buildMissingCompanionError(target: NleTarget): Error {
   return new Error(`${getNleTargetLabel(target)} 내보내기에는 컴패니언 앱이 필요합니다. 컴패니언 앱을 설치하고 실행한 뒤 다시 시도하세요.`);
+}
+
+function sleep(ms: number): Promise<void> {
+  if (ms <= 0) return Promise.resolve();
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getCapCutManualInstallerFileName(): string {
+  return detectCapCutDesktopPlatform() === 'windows'
+    ? CAPCUT_WINDOWS_BATCH_INSTALLER_NAME
+    : CAPCUT_MAC_INSTALLER_NAME;
+}
+
+export function getCapCutCompanionRecoveryHint(): string {
+  return `CapCut이 닫혀 있거나 설치 위치가 기본 경로가 아니면 ZIP을 압축 해제한 뒤 ${getCapCutManualInstallerFileName()}를 수동으로 실행해주세요.`;
+}
+
+export function getCapCutInstallCompletionHint(refreshRecommended = false): string {
+  return refreshRecommended
+    ? ' CapCut이 연속 설치 후 새 프로젝트를 바로 못 읽을 수 있어요. CapCut을 한 번 새로고침하거나 다시 실행해 주세요.'
+    : ' CapCut이 이미 열려 있었다면 프로젝트 목록을 새로고침하거나 앱을 한 번 다시 실행해 주세요.';
+}
+
+function decorateCompanionInstallError(target: NleTarget, error: unknown): Error {
+  const baseMessage = error instanceof Error ? error.message : '알 수 없는 오류';
+  if (target !== 'capcut') {
+    return new Error(baseMessage);
+  }
+
+  const recoveryHint = getCapCutCompanionRecoveryHint();
+  return baseMessage.includes(recoveryHint)
+    ? new Error(baseMessage)
+    : new Error(`${baseMessage} ${recoveryHint}`);
+}
+
+function markCapCutInstallCompleted(): boolean {
+  const now = Date.now();
+  if (now - capCutRecentInstallLastCompletedAt > CAPCUT_REFRESH_GUIDE_WINDOW_MS) {
+    capCutRecentInstallCount = 0;
+  }
+  capCutRecentInstallCount += 1;
+  capCutRecentInstallLastCompletedAt = now;
+  return capCutRecentInstallCount >= CAPCUT_REFRESH_GUIDE_THRESHOLD;
 }
 
 export function isCompanionUnavailableErrorMessage(message: string): boolean {
@@ -80,11 +138,11 @@ export async function ensureNleCompanionReady(target: NleTarget): Promise<void> 
  * 컴패니언 앱을 통해 NLE 프로젝트를 로컬에 직접 설치
  * ZIP 다운로드 + 수동 설치 스크립트 실행 없이 원클릭 설치
  */
-export async function installNleViaCompanion(params: {
+async function performCompanionInstall(params: {
   target: NleTarget;
   zipBlob: Blob;
   projectId?: string;
-}): Promise<{ success: boolean; installedPath: string; filesInstalled: number }> {
+}): Promise<CompanionNleInstallResult> {
   const { target, zipBlob } = params;
 
   await ensureNleCompanionReady(target);
@@ -151,6 +209,49 @@ export async function installNleViaCompanion(params: {
   }
 
   return await res.json();
+}
+
+async function runSerializedCapCutInstall(params: {
+  target: NleTarget;
+  zipBlob: Blob;
+  projectId?: string;
+}): Promise<CompanionNleInstallResult> {
+  const previousInstall = capCutInstallTail;
+  let releaseQueue!: () => void;
+  capCutInstallTail = new Promise<void>((resolve) => {
+    releaseQueue = resolve;
+  });
+
+  await previousInstall.catch(() => {});
+
+  try {
+    const waitMs = Math.max(0, CAPCUT_INSTALL_COOLDOWN_MS - (Date.now() - capCutInstallLastFinishedAt));
+    await sleep(waitMs);
+    const result = await performCompanionInstall(params);
+    return {
+      ...result,
+      refreshRecommended: markCapCutInstallCompleted(),
+    };
+  } finally {
+    capCutInstallLastFinishedAt = Date.now();
+    releaseQueue();
+  }
+}
+
+export async function installNleViaCompanion(params: {
+  target: NleTarget;
+  zipBlob: Blob;
+  projectId?: string;
+}): Promise<CompanionNleInstallResult> {
+  try {
+    if (params.target === 'capcut') {
+      return await runSerializedCapCutInstall(params);
+    }
+
+    return await performCompanionInstall(params);
+  } catch (error) {
+    throw decorateCompanionInstallError(params.target, error);
+  }
 }
 
 export function downloadNlePackageZip(blob: Blob, fileName: string): void {
@@ -2914,50 +3015,6 @@ function buildCapCutContainedMaterialPath(
   return `${buildCapCutPathInfo(draftFolderId).draftPathPlaceholder}/materials/${category}/${fileName}`;
 }
 
-function hasTimeRangeOverlap(
-  startSec: number,
-  endSec: number,
-  ranges: Array<{ startSec: number; endSec: number }>,
-): boolean {
-  return ranges.some((range) => range.endSec > startSec && range.startSec < endSec);
-}
-
-function getAvailableTimeRanges(
-  startSec: number,
-  endSec: number,
-  blockedRanges: Array<{ startSec: number; endSec: number }>,
-): Array<{ startSec: number; endSec: number }> {
-  if (endSec <= startSec) return [];
-
-  const overlaps = blockedRanges
-    .map((range) => ({
-      startSec: Math.max(startSec, range.startSec),
-      endSec: Math.min(endSec, range.endSec),
-    }))
-    .filter((range) => range.endSec > range.startSec)
-    .sort((a, b) => (a.startSec - b.startSec) || (a.endSec - b.endSec));
-
-  if (overlaps.length === 0) {
-    return [{ startSec, endSec }];
-  }
-
-  const result: Array<{ startSec: number; endSec: number }> = [];
-  let cursor = startSec;
-
-  overlaps.forEach((range) => {
-    if (range.startSec > cursor) {
-      result.push({ startSec: cursor, endSec: range.startSec });
-    }
-    cursor = Math.max(cursor, range.endSec);
-  });
-
-  if (cursor < endSec) {
-    result.push({ startSec: cursor, endSec });
-  }
-
-  return result.filter((range) => range.endSec - range.startSec > 0.001);
-}
-
 function buildCapCutAudioMaterial(params: {
   id: string;
   duration: number;
@@ -4702,13 +4759,9 @@ export function generateCapCutDraftJson(params: {
     endSec: clip.endSec,
     durationSec: clip.durationSec,
   }));
-  const narrationRanges = audioMaterialsWithStart.map(({ startSec, endSec }) => ({
-    startSec,
-    endSec,
-  }));
 
-  // [FIX #1037] CapCut은 비디오 세그먼트만으로는 원본 오디오를 복원하지 못하는 케이스가 있어
-  // 나레이션이 없는 구간에 한해 source video를 다시 참조하는 별도 audio track을 유지한다.
+  // [FIX #1082] CapCut draft는 나레이션이 전체 구간을 덮으면 source audio track이 사라질 수 있다.
+  // 원본 영상 오디오는 나레이션 유무와 무관하게 항상 별도 audio track으로 유지한다.
   const allSourceAudioMaterials = hasAudioTrack
     ? sourceVideoMaterials.map((svm) => ({
       id: uuid(),
@@ -4721,28 +4774,26 @@ export function generateCapCutDraftJson(params: {
     ? timings.flatMap((t, ti) => {
       const srcAudio = allSourceAudioMaterials.find((sa) => sa.sourceIndex === t.sourceIndex) || allSourceAudioMaterials[0];
       if (!srcAudio) return [];
-      return getAvailableTimeRanges(t.tlStartSec, t.tlEndSec, narrationRanges).map((range) => {
-        const rangeDurationSec = range.endSec - range.startSec;
-        const rangeOffsetSec = range.startSec - t.tlStartSec;
-        return {
-          fileName: srcAudio.fileName,
+      const clipDurationSec = Math.max(0, t.tlEndSec - t.tlStartSec);
+      if (clipDurationSec <= 0.001) return [];
+      return [{
+        fileName: srcAudio.fileName,
+        materialId: srcAudio.id,
+        segment: buildCapCutSegmentShell({
+          clip: { alpha: 1.0, flip: { horizontal: false, vertical: false }, rotation: 0.0, scale: { x: 1.0, y: 1.0 }, transform: { x: 0.0, y: 0.0 } },
+          commonKeyframes: emptyArr,
+          enableAdjust: false,
+          extraMaterialRefs: emptyArr,
           materialId: srcAudio.id,
-          segment: buildCapCutSegmentShell({
-            clip: { alpha: 1.0, flip: { horizontal: false, vertical: false }, rotation: 0.0, scale: { x: 1.0, y: 1.0 }, transform: { x: 0.0, y: 0.0 } },
-            commonKeyframes: emptyArr,
-            enableAdjust: false,
-            extraMaterialRefs: emptyArr,
-            materialId: srcAudio.id,
-            renderIndex: 0,
-            sourceDurationUs: toUs(rangeDurationSec),
-            sourceStartUs: toUs(t.startSec + rangeOffsetSec),
-            speed: nsTimings[ti]?.autoSpeedFactor ?? 1.0,
-            targetDurationUs: toUs(rangeDurationSec),
-            targetStartUs: toUs(range.startSec),
-            trackRenderIndex: 0,
-          }),
-        };
-      });
+          renderIndex: 0,
+          sourceDurationUs: toUs(clipDurationSec),
+          sourceStartUs: toUs(t.startSec),
+          speed: nsTimings[ti]?.autoSpeedFactor ?? 1.0,
+          targetDurationUs: toUs(clipDurationSec),
+          targetStartUs: toUs(t.tlStartSec),
+          trackRenderIndex: 0,
+        }),
+      }];
     })
     : [];
   const activeSourceAudioMaterialIds = new Set(sourceAudioSegmentsWithSource.map(({ materialId }) => materialId));
@@ -7012,10 +7063,6 @@ export async function buildEditRoomNleZip(params: {
       });
     }
     const audioMaterials = audioMaterialsWithStart.map(({ id, path, dur }) => ({ id, path, dur }));
-    const narrationRanges = narrationClips.map((clip) => ({
-      startSec: clip.startSec,
-      endSec: clip.startSec + clip.durationSec,
-    }));
 
     // ── 비디오 세그먼트 (메인 트랙) — Map lookup으로 정확한 인덱스 매칭 ──
     const rawVideoSegments: Array<Record<string, unknown> | null> = timeline.map((t, i) => {
@@ -7048,28 +7095,25 @@ export async function buildEditRoomNleZip(params: {
       if (!mat || mat.isPhoto) return [];
       const sourceAudioMaterial = sourceAudioMaterialMap.get(mat.path);
       if (!sourceAudioMaterial) return [];
-      return getAvailableTimeRanges(t.imageStartTime, t.imageEndTime, narrationRanges).map((range) => {
-        const rangeDurationSec = range.endSec - range.startSec;
-        const rangeOffsetSec = range.startSec - t.imageStartTime;
-        return {
+      if (t.imageDuration <= 0.001) return [];
+      return [{
+        materialId: sourceAudioMaterial.id,
+        path: mat.path,
+        segment: buildCapCutSegmentShell({
+          clip: { alpha: 1.0, flip: { horizontal: false, vertical: false }, rotation: 0.0, scale: { x: 1.0, y: 1.0 }, transform: { x: 0.0, y: 0.0 } },
+          commonKeyframes: emptyArr,
+          enableAdjust: false,
+          extraMaterialRefs: emptyArr,
           materialId: sourceAudioMaterial.id,
-          path: mat.path,
-          segment: buildCapCutSegmentShell({
-            clip: { alpha: 1.0, flip: { horizontal: false, vertical: false }, rotation: 0.0, scale: { x: 1.0, y: 1.0 }, transform: { x: 0.0, y: 0.0 } },
-            commonKeyframes: emptyArr,
-            enableAdjust: false,
-            extraMaterialRefs: emptyArr,
-            materialId: sourceAudioMaterial.id,
-            renderIndex: 0,
-            sourceDurationUs: toUs(rangeDurationSec),
-            sourceStartUs: toUs(rangeOffsetSec),
-            speed: 1.0,
-            targetDurationUs: toUs(rangeDurationSec),
-            targetStartUs: toUs(range.startSec),
-            trackRenderIndex: 0,
-          }),
-        };
-      });
+          renderIndex: 0,
+          sourceDurationUs: toUs(t.imageDuration),
+          sourceStartUs: 0,
+          speed: 1.0,
+          targetDurationUs: toUs(t.imageDuration),
+          targetStartUs: toUs(t.imageStartTime),
+          trackRenderIndex: 0,
+        }),
+      }];
     });
     const activeSourceAudioMaterialIds = new Set(sourceAudioSegmentsWithPath.map(({ materialId }) => materialId));
     const sourceAudioMaterials = allSourceAudioMaterials.filter((material) => activeSourceAudioMaterialIds.has(material.id));

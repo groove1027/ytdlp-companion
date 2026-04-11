@@ -27,6 +27,7 @@ import { detectSceneCuts, mergeWithAiTimecodes } from '../../../services/sceneDe
 import {
   buildVideoAnalysisSceneLineId,
   downloadNlePackageZip,
+  getCapCutInstallCompletionHint,
   isCompanionUnavailableErrorMessage,
   installNleViaCompanion,
   sanitizeProjectName,
@@ -7175,10 +7176,13 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                             target,
                                             zipBlob,
                                           });
+                                          const completionHint = target === 'capcut'
+                                            ? getCapCutInstallCompletionHint(installResult.refreshRecommended)
+                                            : '';
                                           if (isCancelled()) return;
                                           showToast(audioConfirmed
-                                            ? `${label} ZIP 다운로드 완료 + 자동 설치 완료! ${label}에서 프로젝트를 열어 확인해주세요. (${installResult.filesInstalled}개 파일)`
-                                            : `${label} ZIP 다운로드 완료 + 자동 설치 완료! 원본 오디오는 ${label}에서 한 번 확인해주세요. (${installResult.filesInstalled}개 파일)`, 6000);
+                                            ? `${label} ZIP 다운로드 완료 + 자동 설치 완료! ${label}에서 프로젝트를 열어 확인해주세요. (${installResult.filesInstalled}개 파일)${completionHint}`
+                                            : `${label} ZIP 다운로드 완료 + 자동 설치 완료! 원본 오디오는 ${label}에서 한 번 확인해주세요. (${installResult.filesInstalled}개 파일)${completionHint}`, target === 'capcut' ? 8000 : 6000);
                                         } catch (installError) {
                                           if (isCancelled()) return;
                                           const installMessage = installError instanceof Error ? installError.message : '알 수 없는 오류';

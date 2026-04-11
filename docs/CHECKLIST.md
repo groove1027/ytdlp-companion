@@ -8,6 +8,18 @@
 
 ## 🟢 완료된 작업
 
+- [x] **2026-04-12 — Group D CapCut 3건 동시 수정 (#1132 #1082 #1078)**
+  - `rg -n "capcut|CapCut" companion/src-tauri/src/server.rs`, `rg --files companion/src-tauri/src | rg "capcut|CapCut"`, `rg -n "generateCapCutDraftJson|audioMaterials|source_audio|audio_track|materials\\.audios|narrationLines|CapCut" src/services/nleExportService.ts`, `rg -n "installCapCutZipToDirectory|beginCapCutDirectInstallSelection|isCapCutDirectInstallSupported|getCapCutManualInstallHint|CapCut에 바로 설치|manual install|direct install|install.*capcut" src`, `rg -n "installNleViaCompanion|filesInstalled|targetProjectPath|launch_app" src/services src/components src/stores`, `git log --oneline -20 -- src/services/nleExportService.ts`로 CapCut draft 생성, companion install 흐름, UI 진입점, 최근 변경 이력을 전수 조사
+  - `companion/src-tauri/src/server.rs` 조사 결과 CapCut install root가 Windows `%LOCALAPPDATA%\\CapCut\\User Data\\Projects\\com.lveditor.draft`와 `start CapCut` 실행 방식에 고정돼 있어, 비기본 경로 감지와 install 후 강제 re-scan 문제는 native 후속 수정이 필요함을 확인. 이번 Group D 범위에서는 companion 코드는 건드리지 않고 웹 쪽 debounce/안내만 적용
+  - `src/services/nleExportService.ts` — `generateCapCutDraftJson()`과 `buildEditRoomNleZip()`의 CapCut source audio 세그먼트를 "나레이션 빈 구간만"이 아니라 "실제 video clip 전체 구간" 기준으로 재생성하도록 수정. 이로써 나레이션이 전체 길이를 덮어도 원본 video audio가 `materials.audios`와 audio track에 항상 남도록 보강
+  - `src/services/nleExportService.ts` — `installNleViaCompanion()`를 내부 `performCompanionInstall()`과 CapCut 전용 직렬화 wrapper로 분리하고, CapCut 자동 설치에는 2.5초 cooldown과 10분 창 기준 3회 연속 설치 refresh 안내 플래그를 추가. 실패 메시지는 `install_capcut_project.command`/`install_capcut_project.bat` 수동 실행 가이드를 자동으로 덧붙이도록 정리
+  - `src/components/tabs/imagevideo/StoryboardPanel.tsx`, `src/components/tabs/EditRoomTab.tsx`, `src/components/tabs/channel/VideoAnalysisRoom.tsx` — CapCut 자동 설치 성공 토스트에 "열려 있던 CapCut 새로고침/재실행" 안내를 공통 적용하고, 3회 이상 연속 설치 시 refresh 권고 문구가 자동 노출되도록 연결
+  - `src/services/__tests__/nleExportService.premiere2024.test.ts` — `일반 CapCut draft — narration이 전체를 덮어도 원본 video audio track을 유지한다` 회귀 테스트 1건 추가. 단일 scene + 전체 구간 narration 입력에서도 source video audio material/segment와 narration audio material/segment가 모두 draft에 존재하는지 검증
+  - `cd src && node_modules/typescript/bin/tsc --noEmit`: 통과
+  - `cd src && node_modules/.bin/vitest run`: 통과 (`11 passed`, `134 passed`)
+  - `cd src && node_modules/.bin/vite build`: 성공 (기존 dynamic import / chunk-size warning만 출력)
+  - `rg -n "installNleViaCompanion|getCapCutInstallCompletionHint|getCapCutCompanionRecoveryHint" src`, `rg -n "generateCapCutDraftJson|sourceAudioSegmentsWithSource|sourceAudioSegmentsWithPath" src/services/nleExportService.ts src/services/__tests__/nleExportService.premiere2024.test.ts`: helper/호출부/회귀 테스트 반영 위치 재검증
+
 - [x] **2026-04-12 — Group C 자막/워터마크 제거 컴패니언 미인식 회귀 수정**
   - `rg -n "자막/워터마크|SubtitleRemover|subtitle.*remover|워터마크|워터 마크|inpaint|ghostcut|propainter" src/ -g '!node_modules'`, `rg -n "companionInpaint|cutClipsCompanion|propainter|ProPainter" src/services/ companion/src-tauri/src/`, `rg -n "'http://127.0.0.1:9876|\"http://127\\.0\\.0\\.1:9876\"|localhost:9876|COMPANION_URL" src/services/ src/components/`, `rg -n "runCleanSubtitles|companionInpaintService|isInpaintAvailable|detectTextRegions|removeSubtitlesWithInpaint" src/stores src/components -g '!node_modules'`로 자막/워터마크 제거 경로, 편집실 내보내기 경로, companion 포트 하드코드, 실제 호출 서비스 영향 범위를 전수 조사
   - `companion/src-tauri/src/server.rs`, `companion/propainter/server.py` 확인 결과 메인 `/health`는 `app/port/services`만 반환하고, ProPainter/Vmake 라우트는 별도 `propainter/server.py`가 담당함을 확인. 기존 웹 로직이 옛 `propainter/features.inpaint` health 형식에 기대고 있어 "헬퍼 실행 중인데 미실행으로 오진"하는 회귀를 재현

@@ -25,6 +25,7 @@ import { MOTION_KEYFRAMES } from '../../../services/motionPreviewUtils';
 import {
   buildEditRoomNleZip,
   downloadNlePackageZip,
+  getCapCutInstallCompletionHint,
   isCompanionUnavailableErrorMessage,
   installNleViaCompanion,
 } from '../../../services/nleExportService';
@@ -1580,7 +1581,10 @@ const StoryboardPanel: React.FC = () => {
         showToast(`${targetLabel} ZIP 다운로드 완료. 컴패니언 앱에 자동 설치 중...`);
         try {
           const installResult = await installNleViaCompanion({ target, zipBlob: result.blob });
-          showToast(`${targetLabel} ZIP 다운로드 완료 + 자동 설치 완료!${mediaSummary} (${installResult.filesInstalled}개 파일)`, 6000);
+          const completionHint = target === 'capcut'
+            ? getCapCutInstallCompletionHint(installResult.refreshRecommended)
+            : '';
+          showToast(`${targetLabel} ZIP 다운로드 완료 + 자동 설치 완료!${mediaSummary} (${installResult.filesInstalled}개 파일)${completionHint}`, target === 'capcut' ? 8000 : 6000);
         } catch (installError) {
           const installMessage = installError instanceof Error ? installError.message : '알 수 없는 오류';
           if (isCompanionUnavailableErrorMessage(installMessage)) {

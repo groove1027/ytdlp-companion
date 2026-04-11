@@ -621,6 +621,49 @@ describe('nleExportService timeline regressions', () => {
     expect(narrationTrack?.segments?.[0]?.target_timerange?.duration).toBe(3_000_000);
   });
 
+  it('일반 CapCut draft — narration이 전체를 덮어도 원본 video audio track을 유지한다', async () => {
+    const { generateCapCutDraftJson } = await import('../nleExportService');
+    const result = generateCapCutDraftJson({
+      scenes: buildSingleScene(),
+      title: 'General CapCut Source Audio Keep',
+      videoFileName: 'video.mp4',
+      width: 1080,
+      height: 1920,
+      fps: 30,
+      videoDurationSec: 1,
+      hasAudioTrack: true,
+      narrationLines: [
+        { audioFileName: '001_narration.wav', duration: 1, startTime: 0, endTime: 1, text: '나레이션 전체 구간' },
+      ],
+    });
+
+    const draft = JSON.parse(result.json) as {
+      materials?: {
+        audios?: Array<{ id?: string; name?: string; video_id?: string }>;
+      };
+      tracks?: Array<{
+        type?: string;
+        segments?: Array<{ material_id?: string; target_timerange?: { duration?: number; start?: number } }>;
+      }>;
+    };
+    const sourceAudioMaterial = draft.materials?.audios?.find((material) => material.name === 'video.mp4');
+    const narrationAudioMaterial = draft.materials?.audios?.find((material) => material.name === '001_narration.wav');
+    const audioSegmentMaterialIds = (draft.tracks || [])
+      .filter((track) => track.type === 'audio')
+      .flatMap((track) => track.segments?.map((segment) => segment.material_id || '') || []);
+    const sourceAudioSegment = (draft.tracks || [])
+      .filter((track) => track.type === 'audio')
+      .flatMap((track) => track.segments || [])
+      .find((segment) => segment.material_id === sourceAudioMaterial?.id);
+
+    expect(sourceAudioMaterial?.video_id).toBeTruthy();
+    expect(narrationAudioMaterial).toBeTruthy();
+    expect(audioSegmentMaterialIds).toContain(sourceAudioMaterial?.id);
+    expect(audioSegmentMaterialIds).toContain(narrationAudioMaterial?.id);
+    expect(sourceAudioSegment?.target_timerange?.start).toBe(0);
+    expect(sourceAudioSegment?.target_timerange?.duration).toBe(1_000_000);
+  });
+
   it('Edit Room CapCut draft duration expands to the farthest narration clip', async () => {
     const { buildEditRoomNleZip } = await import('../nleExportService');
     const result = await buildEditRoomNleZip({
