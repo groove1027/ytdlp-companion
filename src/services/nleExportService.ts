@@ -365,6 +365,7 @@ interface PremiereCaptionEntry {
   text: string;
 }
 
+const PREMIERE_EFFECT_SUBTITLE_PLACEHOLDER_RE = /^(?:-+|null|undefined)$/i;
 const PREMIERE_NON_DIALOGUE_SUBTITLE_PREFIX_RE = /^\s*(?:[\[(（【]\s*(?:나레이션|내레이션|narration|n|bgm|sfx|fx|현장음|효과음|effect|sound)\s*[\])）】]\s*|(?:나레이션|내레이션|narration|bgm|sfx|fx|현장음|효과음|effect|sound)\s*[:：-]\s*)/i;
 const PREMIERE_DIALOGUE_SPEAKER_TAG_PREFIX_RE = /^\s*(?:[\[(（【]\s*[a-z]\s*[\])）】]\s*)+/i;
 
@@ -513,11 +514,33 @@ function buildDialogueCaptionEntries(
   return [{ startTime: segment.startTime, endTime: segment.endTime, text: displayText }];
 }
 
-function wrapEffectSubtitleText(text: string): string {
-  const normalized = normalizePlainSubtitleText(text)
+function normalizeEffectSubtitleTextBody(text: string): string {
+  return normalizePlainSubtitleText(text)
     .replace(/^[\(\[（【]\s*/, '')
     .replace(/\s*[\)\]）】]$/, '');
-  if (!normalized) return '';
+}
+
+function normalizeSubtitleComparisonText(text: string): string {
+  return text
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map(line => normalizePlainSubtitleText(line))
+    .join(' ')
+    .replace(/[\(\[（【]/g, '')
+    .replace(/[\)\]）】]/g, '')
+    .replace(/[.,!?;:…·ㆍ，。！？、~～""''「」『』\u2026]/g, '')
+    .toLowerCase();
+}
+
+function buildCaptionEntryDedupKey(entry: PremiereCaptionEntry): string {
+  const normalizedText = normalizeSubtitleComparisonText(entry.text);
+  if (!normalizedText) return '';
+  return `${Math.round(entry.startTime * 1000)}:${Math.round(entry.endTime * 1000)}:${normalizedText}`;
+}
+
+function wrapEffectSubtitleText(text: string): string {
+  const normalized = normalizeEffectSubtitleTextBody(text);
+  if (!normalized || PREMIERE_EFFECT_SUBTITLE_PLACEHOLDER_RE.test(normalized)) return '';
   return `(${normalized})`;
 }
 
@@ -528,6 +551,37 @@ function buildEffectCaptionEntries(
   const wrapped = wrapEffectSubtitleText(breakLines(segment.text));
   if (!wrapped) return [];
   return [{ startTime: segment.startTime, endTime: segment.endTime, text: wrapped }];
+}
+
+function buildTimingDialogueCaptionEntries(
+  timing: { subtitleSegments: Array<{ lineId: string; text: string; startTime: number; endTime: number }> },
+  overrideMap?: SubtitleTextOverrideMap,
+): PremiereCaptionEntry[] {
+  return timing.subtitleSegments
+    .filter(segment => segment.text.trim())
+    .flatMap(segment => buildDialogueCaptionEntries(segment, overrideMap));
+}
+
+function buildTimingEffectCaptionEntries(
+  timing: {
+    subtitleSegments: Array<{ lineId: string; text: string; startTime: number; endTime: number }>;
+    effectSubtitleSegments: Array<{ text: string; startTime: number; endTime: number }>;
+  },
+  overrideMap?: SubtitleTextOverrideMap,
+): PremiereCaptionEntry[] {
+  const dialogueKeys = new Set(
+    buildTimingDialogueCaptionEntries(timing, overrideMap)
+      .map(buildCaptionEntryDedupKey)
+      .filter(Boolean),
+  );
+
+  return timing.effectSubtitleSegments
+    .filter(segment => segment.text.trim())
+    .flatMap(segment => buildEffectCaptionEntries(segment))
+    .filter((entry) => {
+      const entryKey = buildCaptionEntryDedupKey(entry);
+      return !!entryKey && !dialogueKeys.has(entryKey);
+    });
 }
 
 async function buildDialogueSubtitleOverrides(params: {
@@ -1744,6 +1798,20 @@ function getPremiereTrackTransitions(trackElement: Element): Element {
   return transitionItems;
 }
 
+function getPremiereTrackNode(trackElement: Element): Element {
+  const clipTrack = getPremiereDirectChild(trackElement, 'ClipTrack')
+    ?? getPremiereDirectChild(getPremiereDirectChild(trackElement, 'DataClipTrack') || trackElement, 'ClipTrack');
+  const trackNode = clipTrack ? getPremiereDirectChild(clipTrack, 'Track') : null;
+  if (!trackNode) throw new Error('Premiere Track를 찾지 못했습니다.');
+  return trackNode;
+}
+
+function unlockPremiereTrack(doc: Document, trackElement: Element): void {
+  const trackNode = getPremiereTrackNode(trackElement);
+  setPremiereChildText(doc, trackNode, 'IsLocked', 'false');
+  setPremiereChildText(doc, trackNode, 'IsSyncLocked', 'false');
+}
+
 function ensurePremiereTrackRefsContainer(doc: Document, trackGroupMeta: Element): Element {
   const tracks = getPremiereDirectChild(trackGroupMeta, 'Tracks');
   if (tracks) return tracks;
@@ -1792,13 +1860,10 @@ function createPremiereCaptionTrack(params: {
   removePremiereChild(track, 'ParentStyle');
   replacePremiereTrackRefs(doc, getPremiereTrackClipItems(track), []);
   replacePremiereTrackRefs(doc, getPremiereTrackTransitions(track), []);
-  const clipTrack = getPremiereDirectChild(getPremiereDirectChild(track, 'DataClipTrack')!, 'ClipTrack');
-  const trackNode = clipTrack ? getPremiereDirectChild(clipTrack, 'Track') : null;
-  if (!trackNode) {
-    throw new Error('Premiere caption track 템플릿 구조가 예상과 다릅니다.');
-  }
+  const trackNode = getPremiereTrackNode(track);
   setPremiereChildText(doc, trackNode, 'ID', String(trackId));
   setPremiereChildText(doc, trackNode, 'Index', String(index));
+  unlockPremiereTrack(doc, track);
   return track;
 }
 
@@ -1963,6 +2028,12 @@ export async function buildPremiereNativeProjectXml(params: PremiereNativeProjec
     0,
   );
   const sourceDurationTicks = secondsToPremiereTicks(sourceDurationSec);
+  const captionEntriesByTiming = timings.map((timing) => ({
+    timing,
+    dialogueEntries: buildTimingDialogueCaptionEntries(timing, dialogueLineBreaks),
+    effectEntries: buildTimingEffectCaptionEntries(timing, dialogueLineBreaks),
+  }));
+  const hasEffectCaptionEntries = captionEntriesByTiming.some((item) => item.effectEntries.length > 0);
 
   const sequence = getPremiereObjectByUid(doc, PREMIERE_NATIVE_SEQUENCE_UID);
   setPremiereChildText(doc, sequence, 'Name', safeSequenceName);
@@ -2115,29 +2186,36 @@ export async function buildPremiereNativeProjectXml(params: PremiereNativeProjec
   }
   setPremiereChildText(doc, dialogueCaptionTrackNode, 'ID', '1');
   setPremiereChildText(doc, dialogueCaptionTrackNode, 'Index', '0');
-  const effectCaptionTrack = createPremiereCaptionTrack({
-    doc,
-    root,
-    template: legacyCaptionTrackTemplate,
-    nextObjectId,
-    trackId: 2,
-    index: 1,
-  });
+  unlockPremiereTrack(doc, dialogueCaptionTrack);
+  const effectCaptionTrack = hasEffectCaptionEntries
+    ? createPremiereCaptionTrack({
+        doc,
+        root,
+        template: legacyCaptionTrackTemplate,
+        nextObjectId,
+        trackId: 2,
+        index: 1,
+      })
+    : null;
   const dataTrackGroupTracks = ensurePremiereTrackRefsContainer(doc, dataTrackGroupMeta);
   Array.from(dataTrackGroupTracks.children).forEach((child) => dataTrackGroupTracks.removeChild(child));
-  [dialogueCaptionTrack, effectCaptionTrack].forEach((track, index) => {
-    const trackRef = doc.createElement('Track');
-    trackRef.setAttribute('Index', String(index));
-    trackRef.setAttribute('ObjectURef', track.getAttribute('ObjectUID') || premiereUuid());
-    dataTrackGroupTracks.appendChild(trackRef);
-  });
-  setPremiereChildText(doc, dataTrackGroupMeta, 'NextTrackID', '3');
+  [dialogueCaptionTrack, effectCaptionTrack]
+    .filter((track): track is Element => !!track)
+    .forEach((track, index) => {
+      const trackRef = doc.createElement('Track');
+      trackRef.setAttribute('Index', String(index));
+      trackRef.setAttribute('ObjectURef', track.getAttribute('ObjectUID') || premiereUuid());
+      dataTrackGroupTracks.appendChild(trackRef);
+    });
+  setPremiereChildText(doc, dataTrackGroupMeta, 'NextTrackID', hasEffectCaptionEntries ? '3' : '2');
 
   const captionBinarySpec = getPremiereCaptionBinarySpec(width, height);
   const dialogueStyleNode = ensurePremiereDirectChild(doc, dialogueCaptionTrack, 'CaptionDataTemplateStyle');
   dialogueStyleNode.textContent = captionBinarySpec.styleBase64;
-  const effectStyleNode = ensurePremiereDirectChild(doc, effectCaptionTrack, 'CaptionDataTemplateStyle');
-  effectStyleNode.textContent = captionBinarySpec.styleBase64;
+  if (effectCaptionTrack) {
+    const effectStyleNode = ensurePremiereDirectChild(doc, effectCaptionTrack, 'CaptionDataTemplateStyle');
+    effectStyleNode.textContent = captionBinarySpec.styleBase64;
+  }
 
   const videoTrackItems: string[] = [];
   const sourceAudioTrackItems: string[] = [];
@@ -2145,7 +2223,7 @@ export async function buildPremiereNativeProjectXml(params: PremiereNativeProjec
   const dialogueCaptionTrackItems: string[] = [];
   const effectCaptionTrackItems: string[] = [];
 
-  timings.forEach((timing) => {
+  captionEntriesByTiming.forEach(({ timing, dialogueEntries, effectEntries }) => {
     const timelineStartTicks = secondsToPremiereTicks(timing.timelineStartSec);
     const timelineEndTicks = secondsToPremiereTicks(timing.timelineEndSec);
     const sourceStartTicks = secondsToPremiereTicks(timing.sourceStartSec + timing.trimStartSec);
@@ -2231,10 +2309,7 @@ export async function buildPremiereNativeProjectXml(params: PremiereNativeProjec
       sourceAudioTrackItems.push(sourceAudioTrackItem.getAttribute('ObjectID') || '');
     }
 
-    timing.subtitleSegments
-      .filter(segment => segment.text.trim())
-      .flatMap(segment => buildDialogueCaptionEntries(segment, dialogueLineBreaks))
-      .forEach((entry) => {
+    dialogueEntries.forEach((entry) => {
         const displayText = entry.text;
         if (!displayText) return;
         const startTicks = secondsToPremiereTicks(entry.startTime);
@@ -2310,10 +2385,7 @@ export async function buildPremiereNativeProjectXml(params: PremiereNativeProjec
         dialogueCaptionTrackItems.push(captionTrackItem.getAttribute('ObjectID') || '');
       });
 
-    timing.effectSubtitleSegments
-      .filter(segment => segment.text.trim())
-      .flatMap(segment => buildEffectCaptionEntries(segment))
-      .forEach((entry) => {
+    effectEntries.forEach((entry) => {
         const displayText = entry.text;
         if (!displayText) return;
         const startTicks = secondsToPremiereTicks(entry.startTime);
@@ -2494,11 +2566,13 @@ export async function buildPremiereNativeProjectXml(params: PremiereNativeProjec
   replacePremiereTrackRefs(doc, getPremiereTrackClipItems(sourceAudioTrack), sourceAudioTrackItems);
   replacePremiereTrackRefs(doc, getPremiereTrackClipItems(narrationTrack), narrationTrackItems);
   replacePremiereTrackRefs(doc, getPremiereTrackClipItems(dialogueCaptionTrack), dialogueCaptionTrackItems);
-  replacePremiereTrackRefs(doc, getPremiereTrackClipItems(effectCaptionTrack), effectCaptionTrackItems);
   replacePremiereTrackRefs(doc, getPremiereTrackTransitions(sourceAudioTrack), []);
   replacePremiereTrackRefs(doc, getPremiereTrackTransitions(narrationTrack), []);
   replacePremiereTrackRefs(doc, getPremiereTrackTransitions(dialogueCaptionTrack), []);
-  replacePremiereTrackRefs(doc, getPremiereTrackTransitions(effectCaptionTrack), []);
+  if (effectCaptionTrack) {
+    replacePremiereTrackRefs(doc, getPremiereTrackClipItems(effectCaptionTrack), effectCaptionTrackItems);
+    replacePremiereTrackRefs(doc, getPremiereTrackTransitions(effectCaptionTrack), []);
+  }
   removePremiereRootObjects(root, cleanupRoots);
   cleanupPremiereTemplatePlaceholders(
     root,
@@ -4011,20 +4085,30 @@ export function generateFcpXml(params: {
   const maxTimecodeEnd = getMaxFiniteValue(timings.map(t => t.endSec));
   const srcTotalFrames = Math.ceil(getMaxFiniteValue([videoDurationSec || 0, maxTimecodeEnd]) * fps);
   const narrationClipPlacements = buildNarrationClipPlacements(narrationLines, nsTimings);
+  const graphicSubtitleTimings = includeGraphicSubtitleTracks
+    ? nsTimings.map((timing) => ({
+        timing,
+        dialogueText: timing.subtitleSegments
+          .filter(segment => segment.text.trim())
+          .map(segment => getDialogueSubtitleText(segment, dialogueLineBreaks))
+          .filter(Boolean)
+          .join('\n'),
+        effectText: buildTimingEffectCaptionEntries(timing, dialogueLineBreaks)
+          .map(entry => entry.text)
+          .filter(Boolean)
+          .join('\n'),
+      }))
+    : [];
   const totalFrames = getMaxFiniteValue([
     toFrames(totalDurSec),
     ...timings.map(t => toFrames(t.tlEndSec)),
     ...narrationClipPlacements.map(clip => toFrames(clip.endSec)),
-    ...(includeGraphicSubtitleTracks
-      ? nsTimings
-          .filter(t => t.subtitleSegments.some(segment => segment.text.trim()))
-          .map(t => toFrames(t.subtitleSegments[0]?.endTime ?? t.timelineEndSec))
-      : []),
-    ...(includeGraphicSubtitleTracks
-      ? nsTimings
-          .filter(t => t.effectSubtitleSegments.some(segment => segment.text.trim()))
-          .map(t => toFrames(t.timelineEndSec))
-      : []),
+    ...graphicSubtitleTimings
+      .filter(item => item.dialogueText)
+      .map(item => toFrames(item.timing.subtitleSegments[0]?.endTime ?? item.timing.timelineEndSec)),
+    ...graphicSubtitleTimings
+      .filter(item => item.effectText)
+      .map(item => toFrames(item.timing.timelineEndSec)),
   ]);
 
   // ── 시퀀스 마커 (장면 경계 — Shift+M으로 즉시 네비게이션) ──
@@ -4115,22 +4199,16 @@ export function generateFcpXml(params: {
   // ── V2/V3 그래픽 자막 트랙 (Premiere subtitle XML 전환 시 비활성화 가능) ──
   const isShorts = !hasLandscapeAspect(width, height);
   const dialogueFontSize = isShorts ? 70 : 42;
-  const subtitleClips = includeGraphicSubtitleTracks
-    ? nsTimings
-        .filter(t => t.subtitleSegments.some(segment => segment.text.trim()))
-        .map((t) => {
-          const displayText = t.subtitleSegments
-            .filter(segment => segment.text.trim())
-            .map(segment => getDialogueSubtitleText(segment, dialogueLineBreaks))
-            .filter(Boolean)
-            .join('\n');
-          if (!displayText) return '';
-          // 자막 타이밍 = subtitleSegments 기반 (나레이션 길이, 장면 전체가 아님)
-          const subStart = t.subtitleSegments[0]?.startTime ?? t.timelineStartSec;
-          const subEnd = t.subtitleSegments[0]?.endTime ?? t.timelineEndSec;
-          const subDurSec = Math.max(0.1, subEnd - subStart);
-          return `
-          <generatoritem id="sub-${t.sceneIndex + 1}">
+  const subtitleClips = graphicSubtitleTimings
+    .filter(item => item.dialogueText)
+    .map(({ timing, dialogueText }) => {
+      const displayText = dialogueText;
+      // 자막 타이밍 = subtitleSegments 기반 (나레이션 길이, 장면 전체가 아님)
+      const subStart = timing.subtitleSegments[0]?.startTime ?? timing.timelineStartSec;
+      const subEnd = timing.subtitleSegments[0]?.endTime ?? timing.timelineEndSec;
+      const subDurSec = Math.max(0.1, subEnd - subStart);
+      return `
+          <generatoritem id="sub-${timing.sceneIndex + 1}">
             <name>${escXml(displayText.replace(/\n/g, ' ').slice(0, 40))}</name>
             <duration>${toFrames(subDurSec)}</duration>
             <rate><ntsc>${ntscStr}</ntsc><timebase>${timebase}</timebase></rate>
@@ -4155,26 +4233,20 @@ export function generateFcpXml(params: {
               <parameter><parameterid>origin</parameterid><name>Origin</name><value>${subtitleOrigin.main}</value></parameter>
             </effect>
           </generatoritem>`;
-        }).filter(Boolean).join('')
-    : '';
+    }).join('');
 
-  const effectSubClips = includeGraphicSubtitleTracks
-    ? nsTimings
-        .filter(t => t.effectSubtitleSegments.some(segment => segment.text.trim()))
-        .map((t) => {
-          const effectText = t.effectSubtitleSegments
-            .filter(segment => segment.text.trim())
-            .map(segment => breakLines(segment.text))
-            .join('\n');
-          return `
-          <generatoritem id="fx-${t.sceneIndex + 1}">
+  const effectSubClips = graphicSubtitleTimings
+    .filter(item => item.effectText)
+    .map(({ timing, effectText }) => {
+      return `
+          <generatoritem id="fx-${timing.sceneIndex + 1}">
             <name>${escXml(effectText.replace(/\n/g, ' ').slice(0, 40))}</name>
-            <duration>${toFrames(t.targetDurationSec)}</duration>
+            <duration>${toFrames(timing.targetDurationSec)}</duration>
             <rate><ntsc>${ntscStr}</ntsc><timebase>${timebase}</timebase></rate>
             <in>0</in>
-            <out>${toFrames(t.targetDurationSec)}</out>
-            <start>${toFrames(t.timelineStartSec)}</start>
-            <end>${toFrames(t.timelineEndSec)}</end>
+            <out>${toFrames(timing.targetDurationSec)}</out>
+            <start>${toFrames(timing.timelineStartSec)}</start>
+            <end>${toFrames(timing.timelineEndSec)}</end>
             <enabled>TRUE</enabled>
             <anamorphic>FALSE</anamorphic>
             <effect>
@@ -4190,8 +4262,7 @@ export function generateFcpXml(params: {
               <parameter><parameterid>origin</parameterid><name>Origin</name><value>${subtitleOrigin.effect}</value></parameter>
             </effect>
           </generatoritem>`;
-        }).join('')
-    : '';
+    }).join('');
 
   // ── A1 오디오 클립 (링크 + 라벨) ──
   const audioClips = timings.map((t, i) => {
@@ -4263,10 +4334,12 @@ export function generateFcpXml(params: {
         <track>${videoClips}
         </track>${subtitleClips ? `
         <track>
-          <enabled>TRUE</enabled>${subtitleClips}
+          <enabled>TRUE</enabled>
+          <locked>FALSE</locked>${subtitleClips}
         </track>` : ''}${effectSubClips ? `
         <track>
-          <enabled>TRUE</enabled>${effectSubClips}
+          <enabled>TRUE</enabled>
+          <locked>FALSE</locked>${effectSubClips}
         </track>` : ''}
       </video>
       <audio>
@@ -5707,7 +5780,8 @@ export function generateFcpXmlFromEdl(params: {
         <track>${videoClips}
         </track>${edlSubtitleClips ? `
         <track>
-          <enabled>TRUE</enabled>${edlSubtitleClips}
+          <enabled>TRUE</enabled>
+          <locked>FALSE</locked>${edlSubtitleClips}
         </track>` : ''}
       </video>
       <audio>
@@ -6369,7 +6443,8 @@ function buildEditRoomFcpXml(params: {
         <track>${videoClips}
         </track>${subtitleClips ? `
         <track>
-          <enabled>TRUE</enabled>${subtitleClips}
+          <enabled>TRUE</enabled>
+          <locked>FALSE</locked>${subtitleClips}
         </track>` : ''}
       </video>
       <audio>

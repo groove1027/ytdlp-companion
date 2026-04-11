@@ -8,6 +8,18 @@
 
 ## 🟢 완료된 작업
 
+- [x] **2026-04-12 — B-4 Premiere 자막 중복/잠김 버그 수정 (#1120)**
+  - `rg -n "subtitleClips|effectSubtitleClips|dialogueSubtitleClips|V2|V3|graphicSubtitleTrack" src/services/nleExportService.ts`, `rg -n "subtitleSegments|effectSub|dialogueSub" src/services/nleExportService.ts | head -40`, `rg -n "includeGraphicSubtitleTracks|<locked>|<enabled>|<lock>|generatoritem|subtitle" src/services/nleExportService.ts`, `rg -n "buildPremiereNativeProjectXml|includeGraphicSubtitleTracks|effectSubClips|subtitleClips|locked|enabled|generatoritem" src/services/__tests__/nleExportService.premiere2024.test.ts src/services/nleExportService.ts`로 Premiere 자막 출력 경로와 회귀 테스트 영향 범위를 전수 조사
+  - `src/services/nleExportService.ts` — `buildTimingEffectCaptionEntries()` / `unlockPremiereTrack()` helper를 추가해 출력 단계에서만 effect subtitle placeholder(`-`, `null`, `undefined`)를 제거하고, dialogue와 동일한 텍스트+타이밍의 effect caption은 export에서 제외하도록 정리
+  - `src/services/nleExportService.ts` — native `.prproj` caption track 생성 시 dialogue/effect track 모두 `IsLocked=false`, `IsSyncLocked=false`를 명시하고, dedupe 후 effect caption이 하나도 없으면 두 번째 caption track 자체를 만들지 않도록 수정
+  - `src/services/nleExportService.ts` — FCP XML graphic subtitle track도 동일 dedupe 결과를 재사용하도록 바꾸고, subtitle track XML에 `<locked>FALSE</locked>`를 명시해 잠금 상태가 export에 남지 않도록 정리
+  - `src/services/__tests__/nleExportService.premiere2024.test.ts` — native `.prproj`에서 동일한 effect subtitle이 추가 caption track/item을 만들지 않고 caption track이 unlock 상태인지 검증하는 회귀 테스트 1건 추가
+  - `src/services/__tests__/nleExportService.premiere2024.test.ts` — FCP XML에서 동일한 effect subtitle이 `fx-*` generator를 만들지 않고 `<locked>FALSE</locked>`가 포함되는지, `effectSub="null"` placeholder가 건너뛰어지는지 검증하는 회귀 테스트 2건 추가
+  - `cd src && node_modules/typescript/bin/tsc --noEmit`: 통과
+  - `cd src && node_modules/.bin/vitest run`: 통과 (`10 passed`, `131 passed`)
+  - `cd src && node_modules/.bin/vite build`: 성공 (기존 dynamic import / chunk-size warning만 출력)
+  - `rg -n "buildTimingEffectCaptionEntries|unlockPremiereTrack|<locked>FALSE</locked>|generatoritem id=\"fx-|CaptionDataClipTrackItem" src/services/nleExportService.ts src/services/__tests__/nleExportService.premiere2024.test.ts`: dedupe/unlock 로직과 회귀 테스트 반영 위치 재검증
+
 - [x] **2026-04-12 — B-3 Premiere ZIP 다운로드 실패 수정**
   - `rg -n "installNleToCompanion|isCompanionNleAvailable|installNle\\(" src`, `rg -n "Premiere|프리미어 ZIP|premiere_zip" src/components/`, `rg -n "URL\\.createObjectURL|\\.click\\(\\)" src/services/nleExportService.ts src/components/`, `rg -n "buildNlePackageZip|downloadNlePackage|installNleToCompanion|isCompanionNleAvailable|nleExportService" src/services/nleExportService.ts src/components/tabs/EditRoomTab.tsx src/components/tabs/imagevideo/StoryboardPanel.tsx src/components/tabs/channel/VideoAnalysisRoom.tsx`로 Premiere ZIP 버튼 진입점, 컴패니언 설치 경로, 브라우저 다운로드 패턴 영향 범위를 전수 조사
   - `src/services/nleExportService.ts` — `downloadNlePackageZip()` 공통 헬퍼를 추가해 ZIP 브라우저 다운로드를 서비스 레벨로 통일했고, `isCompanionUnavailableErrorMessage()`로 컴패니언 미연결 오류만 별도 판별할 수 있게 정리

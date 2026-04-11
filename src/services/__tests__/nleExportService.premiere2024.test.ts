@@ -75,6 +75,13 @@ function getChildText(parent: Element, tagName: string): string {
   return (getDirectChild(parent, tagName)?.textContent || '').trim();
 }
 
+function getPremiereCaptionTrackNodes(doc: Document): Element[] {
+  return Array.from(doc.getElementsByTagName('CaptionDataClipTrack'))
+    .map((track) => getDirectChild(getDirectChild(track, 'DataClipTrack')!, 'ClipTrack'))
+    .map((clipTrack) => clipTrack ? getDirectChild(clipTrack, 'Track') : null)
+    .filter((track): track is Element => !!track);
+}
+
 function buildSingleScene() {
   return [
     {
@@ -243,9 +250,110 @@ describe('buildPremiereNativeProjectXml — Premiere 2024 호환성', () => {
     expect(sourceMedia).not.toBeNull();
     expect(getDirectChild(sourceMedia!, 'AudioStream')).toBeNull();
   }, 30_000);
+
+  it('동일한 effect subtitle은 중복 생성하지 않고 caption track 잠금을 해제한다', async () => {
+    const { buildPremiereNativeProjectXml } = await import('../nleExportService');
+    const xml = await buildPremiereNativeProjectXml({
+      scenes: [
+        {
+          cutNum: 1,
+          timeline: '1',
+          sourceTimeline: '00:00~00:03',
+          dialogue: '같은 자막',
+          effectSub: '같은 자막',
+          sceneDesc: '중복 제거',
+          mode: 'storyboard',
+          audioContent: '같은 자막',
+          duration: '3초',
+          videoDirection: '고정 샷',
+          timecodeSource: '00:00~00:03',
+        },
+      ],
+      title: 'Premiere Caption Dedupe',
+      videoFileName: 'duplicate-caption.mp4',
+      width: 1080,
+      height: 1920,
+      fps: 30,
+      videoDurationSec: 3,
+      hasAudioTrack: true,
+      templateXmlOverride: LEGACY_TEMPLATE_XML,
+      prototypeTemplateXmlOverride: LEGACY_TEMPLATE_XML,
+    });
+
+    const doc = parseXml(xml);
+    const captionTrackNodes = getPremiereCaptionTrackNodes(doc);
+
+    expect(captionTrackNodes).toHaveLength(1);
+    expect(getChildText(captionTrackNodes[0], 'IsLocked')).toBe('false');
+    expect(getChildText(captionTrackNodes[0], 'IsSyncLocked')).toBe('false');
+    expect(Array.from(doc.getElementsByTagName('CaptionDataClipTrackItem'))).toHaveLength(1);
+  }, 30_000);
 });
 
 describe('nleExportService timeline regressions', () => {
+  it('FCP XML은 dialogue와 동일한 effect subtitle을 V3에 만들지 않고 subtitle track을 unlock 상태로 둔다', async () => {
+    const { generateFcpXml } = await import('../nleExportService');
+    const xml = generateFcpXml({
+      scenes: [
+        {
+          cutNum: 1,
+          timeline: '1',
+          sourceTimeline: '00:00~00:03',
+          dialogue: '같은 자막',
+          effectSub: '같은 자막',
+          sceneDesc: '중복 제거',
+          mode: 'storyboard',
+          audioContent: '같은 자막',
+          duration: '3초',
+          videoDirection: '고정 샷',
+          timecodeSource: '00:00~00:03',
+        },
+      ],
+      title: 'FCP Subtitle Dedupe',
+      videoFileName: 'video.mp4',
+      fps: 30,
+      width: 1080,
+      height: 1920,
+      videoDurationSec: 3,
+      flatMediaPaths: true,
+    });
+
+    expect(xml).toContain('<generatoritem id="sub-1">');
+    expect(xml).not.toContain('<generatoritem id="fx-1">');
+    expect(xml).toContain('<locked>FALSE</locked>');
+  });
+
+  it('FCP XML은 null placeholder effect subtitle을 건너뛴다', async () => {
+    const { generateFcpXml } = await import('../nleExportService');
+    const xml = generateFcpXml({
+      scenes: [
+        {
+          cutNum: 1,
+          timeline: '1',
+          sourceTimeline: '00:00~00:03',
+          dialogue: '일반 자막',
+          effectSub: 'null',
+          sceneDesc: 'placeholder 제거',
+          mode: 'storyboard',
+          audioContent: '일반 자막',
+          duration: '3초',
+          videoDirection: '고정 샷',
+          timecodeSource: '00:00~00:03',
+        },
+      ],
+      title: 'FCP Effect Placeholder Skip',
+      videoFileName: 'video.mp4',
+      fps: 30,
+      width: 1080,
+      height: 1920,
+      videoDurationSec: 3,
+      flatMediaPaths: true,
+    });
+
+    expect(xml).toContain('<generatoritem id="sub-1">');
+    expect(xml).not.toContain('<generatoritem id="fx-1">');
+  });
+
   it('FCP XML sequence duration tracks the farthest narration clip and keeps relative pathurls', async () => {
     const { generateFcpXml } = await import('../nleExportService');
     const xml = generateFcpXml({
