@@ -8,6 +8,86 @@
 
 ## 🟢 완료된 작업
 
+- [x] **2026-04-12 — 11회차 Codex review P2: narration endTime 우선순위 재조정**
+  - `rg -n "buildNarrationClipPlacements|narrationClipPlacements|line\\.endTime|line\\.duration" src/services/nleExportService.ts src/services/__tests__/nleExportService.premiere2024.test.ts`, `sed -n '1075,1125p' src/services/nleExportService.ts`, `sed -n '470,620p' src/services/__tests__/nleExportService.premiere2024.test.ts`로 helper 로직, 기존 endTime 회귀 테스트, 호출부 영향 범위를 전수 조사
+  - `src/services/nleExportService.ts` — `buildNarrationClipPlacements()`의 end 계산 우선순위를 `explicit duration > explicit endTime > synced fallback`으로 재정렬하고, fallback 후보에 `timelineEndSec`를 포함하도록 보강. `duration=0` 또는 미지정일 때 사용자가 trim한 `endTime`이 scene fallback까지 다시 늘어나지 않도록 수정
+  - `src/services/nleExportService.ts` — 최종 `durationSec`는 `Math.max(0.1, requestedEndSec - startSec)`로 계산하고, 반환 `endSec`도 동일 보정값을 기준으로 맞춰 clip 길이와 끝 시간이 어긋나지 않도록 정리
+  - `src/services/__tests__/nleExportService.premiere2024.test.ts` — `buildNarrationClipPlacements respects explicit endTime when narration is trimmed shorter than scene fallback` 회귀 테스트 1건 추가. `startTime=0`, `endTime=1`, `duration` 없음, scene fallback `3초` 입력에서 `endSec=1`, `durationSec=1`로 유지되고 fallback까지 늘어나지 않는지 검증
+  - `src/services/__tests__/nleExportService.premiere2024.test.ts` — `buildNarrationClipPlacements prioritizes explicit duration over conflicting endTime` 회귀 테스트 1건 추가. `duration=2`, `endTime=5` 충돌 입력에서 `endSec=2`, `durationSec=2`로 `duration`이 우선되는지 검증
+  - `rg -n "buildNarrationClipPlacements|timelineEndSec|explicitDuration|explicitEndSec" src/services/nleExportService.ts src/services/__tests__/nleExportService.premiere2024.test.ts`: 우선순위 로직과 신규 회귀 테스트 반영 위치를 재확인
+  - `cd src && node_modules/typescript/bin/tsc --noEmit`: 통과
+  - `cd src && node_modules/.bin/vitest run services/__tests__/nleExportService.premiere2024.test.ts`: 통과
+  - `cd src && node_modules/.bin/vite build`: 성공 (기존 dynamic import / chunk-size warning만 출력)
+  - `rg -n "buildNarrationClipPlacements" src/services/nleExportService.ts src/services/__tests__/nleExportService.premiere2024.test.ts`: helper 호출부와 회귀 테스트가 누락 없이 반영됐는지 재검증
+
+- [x] **2026-04-12 — 9회차 Codex review P2: EDL ZIP 이름 충돌 + Edit Room Blob 메모리 회귀 수정**
+  - `rg -n "generateFcpXmlFromEdl|buildEdlSourceFileMap|buildEditRoomNleZip|addBlobToZip" src`, `sed -n '1080,1165p' src/services/nleExportService.ts`, `sed -n '5430,5735p' src/services/nleExportService.ts`, `sed -n '6560,7295p' src/services/nleExportService.ts`, `sed -n '250,620p' src/services/__tests__/nleExportService.premiere2024.test.ts`로 EDL source 파일명 매핑, XML pathurl, Edit Room ZIP Blob 처리, 기존 회귀 테스트 영향 범위를 전수 조사
+  - `src/services/nleExportService.ts` — `resolveEdlSourceFileName()` / `getEdlReservedExportFileNames()`를 추가하고 `buildEdlSourceFileMap()`이 reserved 파일명(`[safeName].xml`, `[safeName]_나레이션.srt`)까지 포함해 충돌을 감지하도록 보강. 충돌 시 `-1`, `-2` suffix를 붙인 이름을 반환하게 바꿔 XML의 `<pathurl>`와 ZIP 내부 source 파일명이 계속 일치하도록 정리
+  - `src/services/nleExportService.ts` — `generateFcpXmlFromEdl()`와 `buildEdlNlePackageZip()`이 동일한 reserved 파일명 집합을 사용하도록 맞춰, EDL ZIP 루트에 XML/SRT와 source video를 함께 넣을 때도 덮어쓰기 없이 동일한 매핑을 재사용하게 수정
+  - `src/services/nleExportService.ts` — Edit Room `addBlobToZip` helper를 `await blob.arrayBuffer()` 기반 비동기 복사에서 `zip.file(path, toJsZipBlobInput(blob))` 기반 direct input으로 교체. 브라우저는 `Blob`을 그대로 쓰고, Node 테스트 환경은 `process.getBuiltinModule('node:stream')` + `Readable.fromWeb(blob.stream())`로 JSZip 지원 타입을 넘겨 추가 메모리 복사를 피하도록 정리
+  - `src/services/nleExportService.ts` — Edit Room CapCut draft mirror의 `draft_cover.jpg`도 같은 helper 경로를 사용하게 바꿔 Node 환경에서 남아 있던 Blob 입력 실패를 제거
+  - `src/services/__tests__/nleExportService.premiere2024.test.ts` — `EDL Premiere ZIP renames source files when they collide with reserved export names` 회귀 테스트 1건 추가. source 파일명이 `${safeName}.xml` / `${safeName}_나레이션.srt`와 충돌할 때 ZIP에는 `${safeName}-1.xml`, `${safeName}_나레이션-1.srt`로 들어가고 XML `<pathurl>`도 그 이름을 따라가는지 검증
+  - `src/services/__tests__/nleExportService.premiere2024.test.ts` — `Edit Room ZIP adds scene and narration blobs without calling blob.arrayBuffer` 회귀 테스트 1건 추가. `monitoredFetch`가 반환한 scene/narration Blob에 `arrayBuffer` spy를 걸고, Edit Room Premiere ZIP 생성 후에도 해당 spy가 호출되지 않는지 검증
+  - `rg -n "generateFcpXmlFromEdl|buildEdlSourceFileMap|buildEditRoomNleZip|toJsZipBlobInput" src`: 수정 함수와 새 helper가 서비스/회귀 테스트 경로에만 반영됐음을 재확인
+  - `cd src && node_modules/typescript/bin/tsc --noEmit`: 통과
+  - `cd src && node_modules/.bin/vitest run services/__tests__/nleExportService.premiere2024.test.ts`: 통과 (`1 passed`, `15 passed`)
+  - `cd src && node_modules/.bin/vite build`: 성공 (기존 dynamic import / chunk-size warning만 출력)
+  - `rg -n "arrayBuffer\\(\\)" src/services/nleExportService.ts`: Edit Room 경로의 `blob.arrayBuffer()` 잔여 0. 남은 호출은 기존 비-Edit Room 경로(`812`, `829`, `3222`, `5253`, `5746`, `5779`, `5808`)만 확인
+
+- [x] **2026-04-12 — 8회차 잔여 이슈: 일반 CapCut draft narration.endTime 존중**
+  - `rg -n "buildNarrationClipPlacements|line\\.duration|line\\.endTime|narrationClipPlacements|endTime" src/services/nleExportService.ts`, `sed -n '1070,1115p' src/services/nleExportService.ts`, `sed -n '4295,4370p' src/services/nleExportService.ts`, `sed -n '360,470p' src/services/__tests__/nleExportService.premiere2024.test.ts`로 공용 narration placement helper, 일반 CapCut draft 분기, 기존 회귀 테스트 영향 범위를 전수 조사
+  - `src/services/nleExportService.ts` — `buildNarrationClipPlacements()`가 explicit `startTime`을 우선 사용하고, `fallbackEndSec`과 `line.endTime`의 최대값으로 `endSec`을 계산하도록 보강. 이 helper가 `line.endTime`만 있거나 `duration=0`이어도 안전하게 실제 narration 끝까지 확장하도록 정리
+  - `src/services/nleExportService.ts` — 일반 CapCut draft 경로가 별도 inline 계산 대신 `buildNarrationClipPlacements(narrationLines, nsTimings)`를 직접 사용하도록 통일. `draft.duration`, narration max end, audio material, source audio overlap range 계산이 모두 동일 placement 데이터를 재사용하도록 정리
+  - `src/services/__tests__/nleExportService.premiere2024.test.ts` — `일반 CapCut draft — narration이 endTime 필드만 가지고 duration이 없거나 0일 때 endTime까지 duration이 확장` 회귀 테스트 1건 추가. `duration=0`, `startTime=1`, `endTime=4` 입력에서 draft duration과 narration audio segment duration이 모두 `3_000_000us` / `4_000_000us` 기준으로 확장되는지 검증
+  - `src/services/__tests__/nleExportService.premiere2024.test.ts` — 이 파일 단독 실행 시 `LoggerService` eager import 체인 때문에 끌려오던 외부 서비스 모듈(`apiService`, `evolinkService`, `ytdlpApiService`, `youtubeReferenceService`)만 mock 처리해, 요청한 대상 회귀 테스트 파일이 Node 환경에서 독립적으로 실행되도록 보강
+  - `rg -n "endTime" src/services/nleExportService.ts | head -20`: `buildNarrationClipPlacements()`의 `line.endTime` 반영이 유지되고, 일반 CapCut draft 분기는 helper 호출 라인으로 통일됐음을 재확인
+  - `cd src && node_modules/typescript/bin/tsc --noEmit`: 통과
+  - `cd src && node_modules/.bin/vitest run services/__tests__/nleExportService.premiere2024.test.ts`: 통과 (`1 passed`, `13 passed`)
+  - `cd src && node_modules/.bin/vite build`: 성공 (기존 dynamic import / chunk-size warning만 출력)
+
+- [x] **2026-04-12 — 7회차 잔여 이슈: 일반 CapCut draft truncation 마지막 보강**
+  - `rg -n "totalDurSec|totalDurUs|\\.at\\(-1\\)|buildNarrationClipPlacements|narrationClipPlacements|draft\\.duration|totalDurationSec" src/services/nleExportService.ts`, `sed -n '4288,4365p' src/services/nleExportService.ts`, `sed -n '4525,4665p' src/services/nleExportService.ts`, `sed -n '5185,5245p' src/services/nleExportService.ts`, `sed -n '1,520p' src/services/__tests__/nleExportService.premiere2024.test.ts`로 일반 CapCut draft duration 계산, narration 배치, fallback, 회귀 테스트 영향 범위를 전수 조사
+  - `src/services/nleExportService.ts` — 일반 CapCut draft 경로에서 실제 오디오 배치와 동일한 explicit `startTime` 우선 narration placement 데이터를 먼저 만들고, `totalDurSec`/`totalDurUs`를 `scene end max`와 `narration start+duration max`의 최대값으로 계산하도록 수정. 동일 placement 데이터를 audio material 생성에도 재사용해 `draft.duration`이 뒤쪽 narration tail보다 짧아지지 않도록 정리
+  - `src/services/nleExportService.ts` — CapCut packaging fallback의 `extractTimings(...).at(-1)`를 제거하고 `getMaxFiniteValue(extractTimings(...).map(t => t.tlEndSec), 0)` 기반으로 바꿔 마지막 요소 의존을 제거
+  - `src/services/__tests__/nleExportService.premiere2024.test.ts` — `일반 CapCut draft — narration이 scene end보다 길 때 draft.duration이 narration end까지 확장` 회귀 테스트 1건 추가. 단일 scene 뒤에 explicit `startTime=3` narration을 배치했을 때 `draft.duration === 4_000_000`을 검증
+  - `rg -n "totalDurSec|totalDurUs|\\.at\\(-1\\)" src/services/nleExportService.ts`: `.at(-1)` 잔여 0, 일반 CapCut/편집실 duration 계산이 모두 max 기반으로 남았음을 재확인
+  - `cd src && node_modules/typescript/bin/tsc --noEmit`: 통과
+  - `cd src && node_modules/.bin/vitest run`: 실패 — 기존 unrelated 회귀 `test/useAutoSave.test.tsx`의 `does not get stuck on a permanently broken blob URL and notifies only once after abandonment` 1건 실패 (`second image persistence retry did not run`). 전체 집계는 `1 failed | 121 passed (122)`로 테스트 수는 1 증가 확인
+  - `cd src && node_modules/.bin/vitest run services/__tests__/nleExportService.premiere2024.test.ts`: 통과 (`1 passed`, `12 passed`) — 이번 회차에서 추가한 일반 CapCut draft 회귀 테스트 포함
+  - `cd src && node_modules/.bin/vite build`: 성공 (기존 dynamic import / chunk-size warning만 출력)
+
+- [x] **2026-04-12 — 5회차 잔여 이슈: 편집실 truncation + 회귀 테스트 추적**
+  - `rg -n "buildEditRoomFcpXml|totalDurSec|totalDurUs|getMaxFiniteValue|buildNarrationClipPlacements|timelineRegression" src/services docs/CHECKLIST.md`, `sed -n '6070,6135p' src/services/nleExportService.ts`, `sed -n '6620,7045p' src/services/nleExportService.ts`, `sed -n '1,260p' src/services/__tests__/nleExportService.timelineRegression.test.ts`로 편집실 duration 계산과 회귀 테스트 영향 범위를 다시 전수 조사
+  - `src/services/nleExportService.ts` — 편집실 전용 `getEditRoomTotalDurationSec()` helper를 추가하고, `buildEditRoomFcpXml()`과 CapCut draft 생성 경로가 모두 마지막 scene end가 아니라 `scene imageEndTime` 최대값과 `narration start+duration` 최대값 중 큰 값으로 전체 길이를 계산하도록 보강
+  - `git add src/services/__tests__/nleExportService.timelineRegression.test.ts`는 샌드박스에서 `.git/index.lock` 생성이 막혀 실패했고, fallback으로 회귀 테스트 전체를 tracked 파일 `src/services/__tests__/nleExportService.premiere2024.test.ts`로 옮겨 untracked 파일 의존성을 제거
+  - `src/services/__tests__/nleExportService.premiere2024.test.ts` — FCP XML duration/pathurl, native `.prproj` out point, edit room FCP XML ZIP root/pathurl, edit room FCP/CapCut narration tail duration, finite fallback, EDL source duration/pathurl을 검증하는 회귀 테스트 묶음으로 확장
+  - `cd src && node_modules/typescript/bin/tsc --noEmit`: 통과
+  - `cd src && node_modules/.bin/vitest run`: 통과
+  - `cd src && node_modules/.bin/vite build`: 통과
+  - `git status --short src/services/__tests__/`: tracked 회귀 테스트 파일이 `M`으로 잡히고 untracked test 파일은 남지 않음을 재확인
+
+- [x] **2026-04-12 — 3회차 잔여 이슈: Edit Room FCP pathurl + finite fallback 보강**
+  - `rg -n "pathurl|buildEditRoom|media/|buildNarrationClipPlacements|buildEdlSourceFileMap|toRelativePathUrl|durationSec" src/services/nleExportService.ts`, `sed -n '1038,1138p' src/services/nleExportService.ts`, `sed -n '6060,6765p' src/services/nleExportService.ts`, `sed -n '1,260p' src/services/__tests__/nleExportService.timelineRegression.test.ts`로 편집실 FCP XML/ZIP 경로와 숫자 방어 영향 범위를 전수 조사
+  - `src/services/nleExportService.ts` — `toFiniteNonNeg(...)` 헬퍼를 추가하고 `buildNarrationClipPlacements()`가 `NaN`/`Infinity` start/end/duration을 0 또는 안전 fallback으로 정규화하도록 보강. `buildEdlSourceFileMap()`도 `durationSec <= 0` 또는 비정상 값이면 `300`초 fallback을 사용하도록 수정
+  - `src/services/nleExportService.ts` — `buildEditRoomFcpXml()`의 scene/narration `<pathurl>`를 모두 `toRelativePathUrl(...)` 기반 `./파일명`으로 통일했고, `buildEditRoomNleZip()`은 편집실 scene media/narration/reference clip을 ZIP 루트에 평탄화해 XML path와 실제 ZIP 레이아웃이 일치하도록 정리. 관련 README 문구도 `media/`/`audio/` 하위폴더 기준에서 ZIP 루트 기준으로 수정
+  - `src/services/nleExportService.ts` — 편집실 ZIP에서 `Blob`을 JSZip에 직접 넣을 때 테스트/Node 환경에서 깨지던 경로를 `blob.arrayBuffer()` 기반 helper로 통일해 브라우저와 회귀 테스트 환경 모두에서 안정적으로 패키징되도록 보강
+  - `src/services/__tests__/nleExportService.timelineRegression.test.ts` — 편집실 Premiere export ZIP이 `001_scene.png`/`001_narration_01.wav`를 루트에 넣고 XML `<pathurl>`를 `./...`로 기록하는지, `buildNarrationClipPlacements()`가 `NaN`/`Infinity`를 전파하지 않는지, `buildEdlSourceFileMap()`가 `durationSec=0`을 `300`으로 fallback 하는지 검증 케이스 3건 추가
+  - `cd src && node_modules/typescript/bin/tsc --noEmit`: 통과
+  - `cd src && node_modules/.bin/vitest run`: 11 files, 119 tests passed
+  - `cd src && node_modules/.bin/vite build`: 성공 (기존 dynamic import / chunk-size warning만 출력)
+  - `rg -n "pathurl" src/services/nleExportService.ts`: 실제 `<pathurl>` 출력 4곳 모두 `toRelativePathUrl(...)` 경유로 재확인
+
+- [x] **2026-04-12 — Premiere NLE 내보내기 잘림 + 빨간 화면 회귀 수정**
+  - `git show 441e8f8 -- src/services/nleExportService.ts | head -300`, `rg -n "buildNarrationSyncedTimeline|totalDurSec|srcTotalFrames|maxTimecodeEnd|pathurl|tlEndSec|timelineEndSec|buildNarrationClipPlacements|toRelativePathUrl" src/services/nleExportService.ts src/services/narrationSyncService.ts`, `sed -n '3580,4125p' src/services/nleExportService.ts`, `sed -n '4880,5435p' src/services/nleExportService.ts`, `sed -n '1,340p' src/services/narrationSyncService.ts`로 영향 범위와 회귀 지점을 전수 조사
+  - `src/services/nleExportService.ts` — native `.prproj`와 FCP XML이 모두 마지막 요소가 아니라 실제 최대 end 기준으로 시퀀스 길이를 계산하도록 수정했고, extra narration clip까지 포함한 `buildNarrationClipPlacements()` 공용 helper를 추가해 `MZ.OutPoint`/`<sequence><duration>`이 뒤 클립보다 짧아지지 않도록 보강
+  - `src/services/nleExportService.ts` — FCP XML 본편/나레이션/EDL `<pathurl>`를 모두 `./...` 상대경로로 통일했고, 편집실 EDL ZIP은 source 영상을 XML과 같은 루트에 함께 패키징하도록 바꿔 멀티소스 import에서도 ZIP 내부 실제 파일과 path가 일치하도록 정리
+  - `src/services/narrationSyncService.ts` — `totalDurationSec`를 마지막 장면 의존이 아니라 전체 `timelineEndSec` 최대값으로 계산하도록 보강
+  - `src/services/__tests__/nleExportService.timelineRegression.test.ts` 신규 — extra narration clip이 있을 때 FCP XML duration과 native `.prproj` out point가 실제 마지막 클립까지 확장되는지, EDL Premiere ZIP에 source 파일이 함께 들어가고 XML path와 일치하는지 검증하는 회귀 테스트 추가
+  - `cd src && node_modules/typescript/bin/tsc --noEmit`: 통과
+  - `cd src && node_modules/.bin/vitest run services/__tests__/nleExportService.premiere2024.test.ts services/__tests__/nleExportService.timelineRegression.test.ts`: 6 passed
+  - `cd src && node_modules/.bin/vitest run`: 11 files, 116 tests passed
+  - `cd src && node_modules/.bin/vite build`: 성공 (기존 dynamic import / chunk-size warning만 출력)
+
 - [x] **2026-04-12 — companion v2.2.1 hotfix Windows cmd 반복 팝업 차단**
   - `rg -n "Command::new" companion/src-tauri/src/`로 companion 전체 직접 프로세스 생성 지점을 전수 조사했고, Windows 관련 수정 대상이 `companion/src-tauri/src/video_tunnel.rs`, `companion/src-tauri/src/server.rs`, `companion/src-tauri/src/takeover.rs`에 한정됨을 확인
   - `companion/src-tauri/src/video_tunnel.rs` — PATH 탐지용 `where/which` 실행과 cloudflared 본체 spawn을 `crate::platform::async_cmd(...)`로 교체하고 `tokio::process::Command` import를 제거해 Windows `CREATE_NO_WINDOW`가 재시작 경로까지 일관 적용되도록 수정

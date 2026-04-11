@@ -289,6 +289,6 @@ export function buildNarrationSyncedTimeline(
 
   return {
     scenes: timings,
-    totalDurationSec: timings.at(-1)?.timelineEndSec ?? 0,
+    totalDurationSec: timings.reduce((maxEnd, timing) => Math.max(maxEnd, timing.timelineEndSec), 0),
   };
 }

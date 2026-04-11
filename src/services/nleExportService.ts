@@ -160,6 +160,20 @@ interface ExportNarrationLine extends NarrationLineLike {
   endTime?: number;
 }
 
+interface NarrationClipPlacement {
+  startSec: number;
+  endSec: number;
+  durationSec: number;
+  fileName: string;
+}
+
+interface EdlSourceFileInfo {
+  id: string;
+  name: string;
+  dur: number;
+  file?: File;
+}
+
 type SubtitleTextOverrideMap = Map<string, string>;
 
 // ──────────────────────────────────────────────
@@ -1016,6 +1030,16 @@ function setPremiereChildText(doc: Document, parent: Element, tagName: string, v
   ensurePremiereDirectChild(doc, parent, tagName).textContent = value;
 }
 
+function getMaxFiniteValue(values: readonly number[], fallback = 0): number {
+  return values.reduce((maxValue, value) => (
+    Number.isFinite(value) ? Math.max(maxValue, value) : maxValue
+  ), fallback);
+}
+
+const toFiniteNonNeg = (v: unknown, fallback: number): number => (
+  typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : fallback
+);
+
 function toPremiereProjectRelativePath(fileName: string): string {
   // [FIX] Premiere는 FilePath에서 ./ 접두사를 절대경로로 해석함.
   // 파일명만 설정하면 Premiere가 .prproj와 같은 폴더에서 자동 매칭.
@@ -1023,6 +1047,14 @@ function toPremiereProjectRelativePath(fileName: string): string {
     .replace(/\\/g, '/')
     .replace(/^\.?\//, '')
     .trim();
+}
+
+function toRelativePathUrl(path: string): string {
+  const relativePath = path
+    .replace(/\\/g, '/')
+    .replace(/^\.?\//, '')
+    .trim();
+  return relativePath ? `./${relativePath}` : './';
 }
 
 function setPremiereMediaFilePaths(doc: Document, media: Element, fileName: string): void {
@@ -1038,6 +1070,113 @@ function setPremiereMediaFilePaths(doc: Document, media: Element, fileName: stri
   setPremiereChildText(doc, media, 'ActualMediaFilePath', relativePath);
   setPremiereChildText(doc, media, 'Title', cleanName);
   setPremiereChildText(doc, media, 'FileKey', premiereUuid());
+}
+
+export function buildNarrationClipPlacements(
+  narrationLines: ExportNarrationLine[],
+  sceneTimings: Array<
+    Pick<NarrationSyncSceneTiming, 'targetDurationSec' | 'timelineStartSec'>
+    & Partial<Pick<NarrationSyncSceneTiming, 'timelineEndSec'>>
+  >,
+): NarrationClipPlacement[] {
+  return narrationLines.flatMap((line, origIndex) => {
+    if (!line.audioFileName) return [];
+
+    const syncedTiming = sceneTimings[origIndex];
+    const startSec = toFiniteNonNeg(
+      line.startTime,
+      toFiniteNonNeg(syncedTiming?.timelineStartSec, 0),
+    );
+    const explicitDuration = typeof line.duration === 'number' && Number.isFinite(line.duration) && line.duration > 0
+      ? line.duration
+      : null;
+    const explicitEndSec = typeof line.endTime === 'number' && Number.isFinite(line.endTime) && line.endTime > startSec
+      ? line.endTime
+      : null;
+    const fallbackEndSec = toFiniteNonNeg(
+      syncedTiming?.timelineEndSec,
+      startSec + toFiniteNonNeg(syncedTiming?.targetDurationSec, 3),
+    );
+    const requestedEndSec = explicitDuration != null
+      ? startSec + explicitDuration
+      : explicitEndSec != null
+        ? explicitEndSec
+        : fallbackEndSec;
+    const durationSec = Math.max(0.1, requestedEndSec - startSec);
+    const endSec = startSec + durationSec;
+
+    return [{
+      startSec,
+      endSec,
+      durationSec,
+      fileName: sanitizeFileName(line.audioFileName || 'narration.wav'),
+    }];
+  });
+}
+
+function resolveEdlSourceFileName(
+  name: string,
+  usedNames: ReadonlySet<string>,
+  reservedNames: ReadonlySet<string>,
+): string {
+  if (!usedNames.has(name) && !reservedNames.has(name)) return name;
+
+  const ext = name.match(/\.[a-zA-Z0-9]{2,5}$/)?.[0] || '';
+  const base = ext ? name.slice(0, -ext.length) : name;
+  let suffix = 1;
+  let candidate = `${base}-${suffix}${ext}`;
+  while (usedNames.has(candidate) || reservedNames.has(candidate)) {
+    suffix++;
+    candidate = `${base}-${suffix}${ext}`;
+  }
+  return candidate;
+}
+
+function getEdlReservedExportFileNames(title: string): string[] {
+  const safeName = sanitizeProjectName(title);
+  return [`${safeName}.xml`, `${safeName}_나레이션.srt`];
+}
+
+export function buildEdlSourceFileMap(
+  entries: EdlEntry[],
+  sourceVideos: SourceVideoFile[],
+  sourceMapping: Record<string, string>,
+  reservedFileNames: Iterable<string> = [],
+): Map<string, EdlSourceFileInfo> {
+  const fileMap = new Map<string, EdlSourceFileInfo>();
+  const usedNames = new Set<string>();
+  const reservedNames = new Set(
+    Array.from(reservedFileNames, (fileName) => sanitizeFileName(fileName)),
+  );
+  let fileIdx = 1;
+
+  for (const entry of entries) {
+    const videoId = sourceMapping[entry.sourceId];
+    if (!videoId || fileMap.has(videoId)) continue;
+
+    const sourceVideo = sourceVideos.find(v => v.id === videoId);
+    const name = resolveEdlSourceFileName(
+      sanitizeFileName(sourceVideo?.fileName || `source_${fileIdx}.mp4`),
+      usedNames,
+      reservedNames,
+    );
+
+    usedNames.add(name);
+    const sourceDurationSec = typeof sourceVideo?.durationSec === 'number'
+      && Number.isFinite(sourceVideo.durationSec)
+      && sourceVideo.durationSec > 0
+      ? sourceVideo.durationSec
+      : 300;
+    fileMap.set(videoId, {
+      id: `file-${fileIdx}`,
+      name,
+      dur: sourceDurationSec,
+      file: sourceVideo?.file,
+    });
+    fileIdx++;
+  }
+
+  return fileMap;
 }
 
 function bumpPremiereNumericChildText(doc: Document, parent: Element, tagName: string, fallback = 1): void {
@@ -1790,7 +1929,12 @@ export async function buildPremiereNativeProjectXml(params: PremiereNativeProjec
   const nextNumericId = premiereNextNumericIdFactory(doc);
   const syncTimeline = buildNarrationSyncedTimeline(scenes, narrationLines, preset);
   const timings = syncTimeline.scenes;
-  const totalTimelineSec = timings.at(-1)?.timelineEndSec || 0;
+  const narrationClipPlacements = buildNarrationClipPlacements(narrationLines, timings);
+  const totalTimelineSec = getMaxFiniteValue([
+    syncTimeline.totalDurationSec,
+    ...timings.map(t => t.timelineEndSec),
+    ...narrationClipPlacements.map(clip => clip.endSec),
+  ]);
   const totalTimelineTicks = secondsToPremiereTicks(totalTimelineSec);
   const frameDurationTicks = getPremiereFrameDurationTicks(fps);
   const safeSequenceName = sanitizeProjectName(title, 80);
@@ -2228,22 +2372,13 @@ export async function buildPremiereNativeProjectXml(params: PremiereNativeProjec
       });
   });
 
-  narrationLines
-    .filter(line => !!line.audioFileName)
-    .forEach((line) => {
-      // [FIX] 나레이션 타임라인 배치: sync timeline의 장면 시작점 사용
-      const lineIndex = narrationLines.indexOf(line);
-      const sceneTimelineStart = timings[lineIndex]?.timelineStartSec ?? line.startTime ?? 0;
-      const narrationStartTicks = secondsToPremiereTicks(sceneTimelineStart);
-      const narrationEndTicks = secondsToPremiereTicks(
-        line.endTime != null
-          ? line.endTime
-          : sceneTimelineStart + Math.max(0.1, line.duration || 0),
-      );
-      const narrationDurationTicks = Math.max(frameDurationTicks, narrationEndTicks - narrationStartTicks);
-      const narrationFileName = sanitizeFileName(line.audioFileName || 'narration.wav'); // audioFileName이 이미 설정된 경우 blob 기반 확장자 사용됨
+  narrationClipPlacements.forEach((clip) => {
+    const narrationStartTicks = secondsToPremiereTicks(clip.startSec);
+    const narrationEndTicks = secondsToPremiereTicks(clip.endSec);
+    const narrationDurationTicks = Math.max(frameDurationTicks, narrationEndTicks - narrationStartTicks);
+    const narrationFileName = clip.fileName; // audioFileName이 이미 설정된 경우 blob 기반 확장자 사용됨
 
-      const narrationGraph = clonePremiereRootSubgraph({
+    const narrationGraph = clonePremiereRootSubgraph({
         targetRoot: root,
         sourceRoot: legacyRoot,
         refs: [
@@ -3460,7 +3595,7 @@ function buildCapCutAttachmentEditing(): string {
 }
 
 function addCapCutMainTimelineMirror(params: {
-  zip: { file: (path: string, data: string | Blob | Uint8Array) => unknown };
+  zip: { file: (path: string, data: string | Blob | Uint8Array | NodeJS.ReadableStream) => unknown };
   projectFolderId: string;
   mainTimelineId: string;
   draftJson: string;
@@ -3470,7 +3605,7 @@ function addCapCutMainTimelineMirror(params: {
   attachmentScriptVideoJson: string;
   attachmentActionSceneJson: string;
   draftExtra: Uint8Array;
-  draftCover: Blob;
+  draftCover: Blob | Uint8Array;
 }): void {
   const {
     zip,
@@ -3494,7 +3629,10 @@ function addCapCutMainTimelineMirror(params: {
   zip.file(`${timelineBase}/common_attachment/attachment_script_video.json`, attachmentScriptVideoJson);
   zip.file(`${timelineBase}/common_attachment/attachment_action_scene.json`, attachmentActionSceneJson);
   zip.file(`${timelineBase}/draft.extra`, draftExtra);
-  zip.file(`${timelineBase}/draft_cover.jpg`, draftCover);
+  zip.file(
+    `${timelineBase}/draft_cover.jpg`,
+    draftCover instanceof Blob ? toJsZipBlobInput(draftCover) : draftCover,
+  );
   zip.file(`${timelineBase}/template.tmp`, '');
   zip.file(`${timelineBase}/template-2.tmp`, '');
 }
@@ -3843,8 +3981,7 @@ export function generateFcpXml(params: {
   });
   if (timings.length === 0) return '';
 
-  const totalDurSec = timings[timings.length - 1].tlEndSec;
-  const totalFrames = Math.ceil(totalDurSec * fps);
+  const totalDurSec = getMaxFiniteValue(timings.map(t => t.tlEndSec));
   const safeTitle = escXml(title);
   const safeFileName = escXml(videoFileName);
   const { ntsc, timebase } = fpsToNtsc(fps);
@@ -3853,12 +3990,28 @@ export function generateFcpXml(params: {
   const toFrames = (sec: number) => Math.round(sec * fps); // fps는 display 값 (29.97, 30, 60 등)
   const subtitleOrigin = getSubtitleOrigin(width, height);
   // [FIX] 소스 영상 전체 길이 = max(실제 비디오 길이, 최대 타임코드 끝점)
-  const maxTimecodeEnd = Math.max(...timings.map(t => t.endSec));
-  const srcTotalFrames = Math.ceil(Math.max(videoDurationSec || 0, maxTimecodeEnd) * fps);
+  const maxTimecodeEnd = getMaxFiniteValue(timings.map(t => t.endSec));
+  const srcTotalFrames = Math.ceil(getMaxFiniteValue([videoDurationSec || 0, maxTimecodeEnd]) * fps);
+  const narrationClipPlacements = buildNarrationClipPlacements(narrationLines, nsTimings);
+  const totalFrames = getMaxFiniteValue([
+    toFrames(totalDurSec),
+    ...timings.map(t => toFrames(t.tlEndSec)),
+    ...narrationClipPlacements.map(clip => toFrames(clip.endSec)),
+    ...(includeGraphicSubtitleTracks
+      ? nsTimings
+          .filter(t => t.subtitleSegments.some(segment => segment.text.trim()))
+          .map(t => toFrames(t.subtitleSegments[0]?.endTime ?? t.timelineEndSec))
+      : []),
+    ...(includeGraphicSubtitleTracks
+      ? nsTimings
+          .filter(t => t.effectSubtitleSegments.some(segment => segment.text.trim()))
+          .map(t => toFrames(t.timelineEndSec))
+      : []),
+  ]);
 
   // ── 시퀀스 마커 (장면 경계 — Shift+M으로 즉시 네비게이션) ──
   const markers = timings.map((t, i) => {
-    const s = scenes[i];
+    const s = scenes[t.index] || scenes[i];
     const mTag = s.mode ? `[${s.mode.replace(/[\[\]]/g, '')}] ` : '';
     const markerName = `${mTag}#${i + 1} ${getVideoAnalysisMainText(s, preset).slice(0, 50)}`;
     const markerComment = [s.effectSub, s.videoDirection]
@@ -3874,7 +4027,7 @@ export function generateFcpXml(params: {
 
   // ── V1 비디오 클립 (링크 + 메타데이터 + 라벨) ──
   const videoClips = timings.map((t, i) => {
-    const s = scenes[i];
+    const s = scenes[t.index] || scenes[i];
     const color = modeToLabelColor(s.mode);
     // [FIX #316] 클립 이름에 모드+오디오 내용 표시 — Premiere 타임라인에서 즉시 확인 가능
     const modeTag = s.mode ? `${s.mode.replace(/[\[\]]/g, '')}` : '';
@@ -3882,7 +4035,7 @@ export function generateFcpXml(params: {
     const fileTag = i === 0
       ? `<file id="file-1">
               <name>${safeFileName}</name>
-              <pathurl>${escXml(mediaPrefix + videoFileName)}</pathurl>
+              <pathurl>${escXml(toRelativePathUrl(mediaPrefix + videoFileName))}</pathurl>
               <duration>${srcTotalFrames}</duration>
               <rate><ntsc>${ntscStr}</ntsc><timebase>${timebase}</timebase></rate>
               <media>
@@ -4024,7 +4177,7 @@ export function generateFcpXml(params: {
 
   // ── A1 오디오 클립 (링크 + 라벨) ──
   const audioClips = timings.map((t, i) => {
-    const s = scenes[i];
+    const s = scenes[t.index] || scenes[i];
     const color = modeToLabelColor(s.mode);
     return `
           <clipitem id="audio-${i + 1}">
@@ -4118,27 +4271,22 @@ export function generateFcpXml(params: {
         <track>
           <outputchannelindex>1</outputchannelindex>${audioClips}
         </track>${(() => {
-    const narClips = narrationLines.filter(l => l.audioFileName);
-    if (narClips.length === 0) return '';
+    if (narrationClipPlacements.length === 0) return '';
     return `
         <track>
-          <outputchannelindex>1</outputchannelindex>${narClips.map((line, i) => {
-      // [FIX] 원본 배열 인덱스로 sync timeline 참조 (filter 후 i != 장면 인덱스)
-      const origIndex = narrationLines.indexOf(line);
-      const startSec = nsTimings[origIndex]?.timelineStartSec ?? line.startTime ?? 0;
-      const durationSec = Math.max(0.1, line.duration ?? nsTimings[origIndex]?.targetDurationSec ?? 3);
-      const durFrames = toFrames(durationSec);
-      const startFrames = toFrames(startSec);
+          <outputchannelindex>1</outputchannelindex>${narrationClipPlacements.map((clip, i) => {
+      const durFrames = toFrames(clip.durationSec);
+      const startFrames = toFrames(clip.startSec);
       return `
           <clipitem id="narration-${i + 1}" premiereChannelType="stereo">
             <name>${escXml(`Narration ${String(i + 1).padStart(3, '0')}`)}</name>
             <duration>${durFrames}</duration>
             <rate><ntsc>${ntscStr}</ntsc><timebase>${timebase}</timebase></rate>
             <in>0</in><out>${durFrames}</out>
-            <start>${startFrames}</start><end>${startFrames + durFrames}</end>
+            <start>${startFrames}</start><end>${toFrames(clip.endSec)}</end>
             <file id="narfile-${i + 1}">
-              <name>${escXml(line.audioFileName!)}</name>
-              <pathurl>${escXml((flatMediaPaths ? '' : 'audio/') + line.audioFileName!)}</pathurl>
+              <name>${escXml(clip.fileName)}</name>
+              <pathurl>${escXml(toRelativePathUrl((flatMediaPaths ? '' : 'audio/') + clip.fileName))}</pathurl>
               <duration>${durFrames}</duration>
               <rate><ntsc>${ntscStr}</ntsc><timebase>${timebase}</timebase></rate>
               <media><audio><channelcount>2</channelcount><samplecharacteristics><samplerate>48000</samplerate><depth>16</depth></samplecharacteristics></audio></media>
@@ -4212,6 +4360,7 @@ export function generateCapCutDraftJson(params: {
       sourceIndex,
     };
   });
+  const narrationClipPlacements = buildNarrationClipPlacements(narrationLines, nsTimings);
   if (timings.length === 0) {
     return {
       json: '',
@@ -4227,7 +4376,12 @@ export function generateCapCutDraftJson(params: {
     };
   }
 
-  const totalDurUs = toUs(syncTimeline.totalDurationSec);
+  const sceneMaxEnd = syncTimeline.totalDurationSec;
+  const narrationMaxEnd = narrationClipPlacements.length > 0
+    ? getMaxFiniteValue(narrationClipPlacements.map(clip => clip.endSec), 0)
+    : 0;
+  const totalDurSec = Math.max(sceneMaxEnd, narrationMaxEnd);
+  const totalDurUs = Math.round(totalDurSec * 1_000_000);
   const maxEnd = Math.max(...nsTimings.map(t => t.sourceEndSec));
   const srcDurUs = toUs(Math.max(videoDurationSec || 0, maxEnd));
 
@@ -4448,34 +4602,18 @@ export function generateCapCutDraftJson(params: {
     trackRenderIndex: 12000,
   }));
 
-  const audioMaterialsWithStart = narrationLines.flatMap((line, lineIndex) => {
-    const audioFileName = line.audioFileName ? sanitizeFileName(line.audioFileName) : '';
-    if (!audioFileName) return [];
-
-    const syncedTiming = nsTimings[lineIndex];
-    const startSec = typeof line.startTime === 'number' && Number.isFinite(line.startTime)
-      ? line.startTime
-      : syncedTiming?.timelineStartSec;
-    const durationSec = typeof line.duration === 'number' && Number.isFinite(line.duration)
-      ? line.duration
-      : syncedTiming?.targetDurationSec;
-
-    if (startSec == null || durationSec == null) return [];
-
-    const safeStartSec = Math.max(0, startSec);
-    const safeDurationSec = Math.max(0.1, durationSec);
-    return [{
-      id: uuid(),
-      fileName: audioFileName,
-      dur: toUs(safeDurationSec),
-      start: toUs(safeStartSec),
-      startSec: safeStartSec,
-      durationSec: safeDurationSec,
-    }];
-  });
-  const narrationRanges = audioMaterialsWithStart.map(({ startSec, durationSec }) => ({
+  const audioMaterialsWithStart = narrationClipPlacements.map((clip) => ({
+    id: uuid(),
+    fileName: clip.fileName,
+    dur: toUs(clip.durationSec),
+    start: toUs(clip.startSec),
+    startSec: clip.startSec,
+    endSec: clip.endSec,
+    durationSec: clip.durationSec,
+  }));
+  const narrationRanges = audioMaterialsWithStart.map(({ startSec, endSec }) => ({
     startSec,
-    endSec: startSec + durationSec,
+    endSec,
   }));
 
   // [FIX #1037] CapCut은 비디오 세그먼트만으로는 원본 오디오를 복원하지 못하는 케이스가 있어
@@ -5115,7 +5253,9 @@ export async function buildNlePackageZip(params: {
     const pId = draftResult.scaffoldIds.draftFolderId;
     const nowTs = Math.floor(Date.now() / 1000);
     const nowUs = Date.now() * 1000;
-    const draftTotalDurUs = draftContent.duration || Math.ceil((extractTimings(scenes, preset).at(-1)?.tlEndSec || 0) * 1_000_000);
+    const draftTotalDurUs = draftContent.duration || Math.ceil(
+      getMaxFiniteValue(extractTimings(scenes, preset).map((timing) => timing.tlEndSec), 0) * 1_000_000,
+    );
     const draftTimelineMaterialsSize = (
       draftContent.materials?.videos?.length || 0
     ) + (
@@ -5124,6 +5264,7 @@ export async function buildNlePackageZip(params: {
       draftContent.materials?.audios?.length || 0
     );
     const draftCoverBlob = await buildCapCutDraftCoverBlob(width || 320, height || 180);
+    const draftCoverBytes = new Uint8Array(await draftCoverBlob.arrayBuffer());
     const attachmentPcTimelineJson = buildCapCutAttachmentPcTimeline();
     const attachmentScriptVideoJson = buildCapCutAttachmentScriptVideo();
     const attachmentActionSceneJson = buildCapCutAttachmentActionScene();
@@ -5158,7 +5299,7 @@ export async function buildNlePackageZip(params: {
     zip.file(`${pId}/performance_opt_info.json`, buildCapCutPerformanceOptInfo());
     zip.file(`${pId}/draft.extra`, draftExtra);
     zip.file(`${pId}/crypto_key_store.dat`, buildCapCutOpaqueCryptoKeyStore());
-    zip.file(`${pId}/draft_cover.jpg`, draftCoverBlob);
+    zip.file(`${pId}/draft_cover.jpg`, draftCoverBytes);
     addCapCutDesktopInstallerFiles({
       zip,
       projectFolderId: pId,
@@ -5174,7 +5315,7 @@ export async function buildNlePackageZip(params: {
       attachmentScriptVideoJson,
       attachmentActionSceneJson,
       draftExtra,
-      draftCover: draftCoverBlob,
+      draftCover: draftCoverBytes,
     });
 
     // [FIX #891/#892] CapCut 자체 draft는 materials/ 아래 self-contained 미디어를 사용 — 다중 소스 지원
@@ -5355,21 +5496,9 @@ export function generateFcpXmlFromEdl(params: {
   const subtitleOrigin = getSubtitleOrigin(width, height);
   const safeTitle = escXml(title);
 
-  // 소스 파일 정보 (중복 제거)
-  const fileMap = new Map<string, { id: string; name: string; dur: number }>();
-  let fileIdx = 1;
-  for (const entry of entries) {
-    const videoId = sourceMapping[entry.sourceId];
-    if (videoId && !fileMap.has(videoId)) {
-      const sv = sourceVideos.find(v => v.id === videoId);
-      fileMap.set(videoId, {
-        id: `file-${fileIdx}`,
-        name: sanitizeFileName(sv?.fileName || `source_${fileIdx}.mp4`),
-        dur: sv?.durationSec || 300,
-      });
-      fileIdx++;
-    }
-  }
+  // 소스 파일 정보 (중복 제거 + 파일명 충돌 방지)
+  const reservedFileNames = getEdlReservedExportFileNames(title);
+  const fileMap = buildEdlSourceFileMap(entries, sourceVideos, sourceMapping, reservedFileNames);
 
   // 총 길이 계산 (누적)
   let recordIn = 0;
@@ -5384,14 +5513,14 @@ export function generateFcpXmlFromEdl(params: {
     recordIn += dur;
   }
 
-  const totalFrames = toFrames(recordIn);
+  const totalFrames = getMaxFiniteValue(clips.map(c => toFrames(c.recEnd)));
 
   // 파일 정의 XML (인라인 정의용 — 각 file의 첫 참조 시 전체 정의)
   const fileDefs = new Map<string, string>();
   for (const f of fileMap.values()) {
     fileDefs.set(f.id, `
               <name>${escXml(f.name)}</name>
-              <pathurl>${escXml(f.name)}</pathurl>
+              <pathurl>${escXml(toRelativePathUrl(f.name))}</pathurl>
               <duration>${toFrames(f.dur)}</duration>
               <rate><ntsc>${ntscStr}</ntsc><timebase>${timebase}</timebase></rate>
               <media>
@@ -5615,22 +5744,32 @@ export async function buildEdlNlePackageZip(params: {
   const zip = new JSZip();
   const safeName = sanitizeProjectName(title);
   const BOM = '\uFEFF';
+  const reservedFileNames = getEdlReservedExportFileNames(title);
 
   const srt = generateEdlNarrationSrt(entries);
+  const edlSourceFiles = Array.from(
+    buildEdlSourceFileMap(entries, sourceVideos, sourceMapping, reservedFileNames).values(),
+  );
 
   if (target === 'premiere') {
     const xml = generateFcpXmlFromEdl({ entries, sourceVideos, sourceMapping, title });
     zip.file(`${safeName}.xml`, xml);
     if (srt) zip.file(`${safeName}_나레이션.srt`, BOM + srt);
+    for (const sourceFile of edlSourceFiles) {
+      if (sourceFile.file && sourceFile.file.size > 0) {
+        zip.file(sourceFile.name, await sourceFile.file.arrayBuffer());
+      }
+    }
 
     const sourceNames = [...new Set(entries.map(e => e.sourceDescription))].join(', ');
     zip.file('README.txt', [
       `=== ${title} — Premiere Pro / DaVinci Resolve ===`,
       '',
       '[ 가져오기 ]',
-      '1. 소스 영상을 XML 파일과 같은 폴더에 배치하세요.',
-      '2. Premiere Pro > File > Import (Ctrl+I)',
-      `3. "${safeName}.xml" 선택 → 타임라인 자동 생성`,
+      '1. ZIP을 원하는 위치에 압축 해제하세요.',
+      '2. 압축 해제된 source 영상과 XML을 같은 폴더에 그대로 둡니다.',
+      '3. Premiere Pro > File > Import (Ctrl+I)',
+      `4. "${safeName}.xml" 선택 → 타임라인 자동 생성`,
       '',
       '[ 타임라인 활용 ]',
       `• 마커(Marker): 편집점마다 마커 설정됨 → Shift+M / Ctrl+Shift+M으로 이동`,
@@ -5649,14 +5788,20 @@ export async function buildEdlNlePackageZip(params: {
     const xml = generateFcpXmlFromEdl({ entries, sourceVideos, sourceMapping, title });
     zip.file(`${safeName}.xml`, xml);
     if (srt) zip.file(`${safeName}_나레이션.srt`, BOM + srt);
+    for (const sourceFile of edlSourceFiles) {
+      if (sourceFile.file && sourceFile.file.size > 0) {
+        zip.file(sourceFile.name, await sourceFile.file.arrayBuffer());
+      }
+    }
     const sourceNames = [...new Set(entries.map(e => e.sourceDescription))].join(', ');
     zip.file('README.txt', [
       `=== ${title} — CapCut ===`,
       '',
       '[ 가져오기 ]',
-      '1. 소스 영상을 XML 파일과 같은 폴더에 배치하세요.',
-      '2. CapCut 데스크톱 > File > Import > XML File',
-      `3. "${safeName}.xml" 선택 → 컷 순서와 길이가 복원됩니다.`,
+      '1. ZIP을 원하는 위치에 압축 해제하세요.',
+      '2. 압축 해제된 source 영상과 XML을 같은 폴더에 그대로 둡니다.',
+      '3. CapCut 데스크톱 > File > Import > XML File',
+      `4. "${safeName}.xml" 선택 → 컷 순서와 길이가 복원됩니다.`,
       '',
       '[ 자막 ]',
       srt
@@ -5672,14 +5817,20 @@ export async function buildEdlNlePackageZip(params: {
     const xml = generateFcpXmlFromEdl({ entries, sourceVideos, sourceMapping, title });
     zip.file(`${safeName}.xml`, xml);
     if (srt) zip.file(`${safeName}_나레이션.srt`, BOM + srt);
+    for (const sourceFile of edlSourceFiles) {
+      if (sourceFile.file && sourceFile.file.size > 0) {
+        zip.file(sourceFile.name, await sourceFile.file.arrayBuffer());
+      }
+    }
     const sourceNames = [...new Set(entries.map(e => e.sourceDescription))].join(', ');
     zip.file('README.txt', [
       `=== ${title} — Filmora ===`,
       '',
       '[ 가져오기 — XML (권장) ]',
-      '1. 소스 영상을 XML 파일과 같은 폴더에 배치하세요.',
-      '2. Filmora > File > Import > Import XML File',
-      `3. "${safeName}.xml" 선택 → 타임라인에 편집점 자동 배치`,
+      '1. ZIP을 원하는 위치에 압축 해제하세요.',
+      '2. 압축 해제된 source 영상과 XML을 같은 폴더에 그대로 둡니다.',
+      '3. Filmora > File > Import > Import XML File',
+      `4. "${safeName}.xml" 선택 → 타임라인에 편집점 자동 배치`,
       '',
       '[ 자막 추가 (선택) ]',
       srt
@@ -5736,6 +5887,18 @@ interface EditRoomNarrationClip {
   fileName: string;
   startSec: number;
   durationSec: number;
+}
+
+function getEditRoomTotalDurationSec(
+  timeline: readonly Pick<UnifiedSceneTiming, 'imageEndTime'>[],
+  narrationClips: readonly EditRoomNarrationClip[],
+): number {
+  const sceneMaxEnd = getMaxFiniteValue(timeline.map((timing) => timing.imageEndTime), 0);
+  const narrationMaxEnd = getMaxFiniteValue(
+    narrationClips.map((clip) => clip.startSec + clip.durationSec),
+    0,
+  );
+  return Math.max(sceneMaxEnd, narrationMaxEnd);
 }
 
 interface EditRoomReferenceClip {
@@ -5990,7 +6153,7 @@ function buildEditRoomFcpXml(params: {
   const tcFormat = ntsc ? 'DF' : 'NDF';
   const toFrames = (sec: number) => Math.round(sec * fps); // fps는 display 값 (29.97, 30, 60 등)
   const subtitleOrigin = getSubtitleOrigin(width, height);
-  const totalDurSec = timeline[timeline.length - 1].imageEndTime;
+  const totalDurSec = getEditRoomTotalDurationSec(timeline, narrationClips || []);
   const totalFrames = Math.ceil(totalDurSec * fps);
   const safeTitle = escXml(title);
 
@@ -6016,7 +6179,7 @@ function buildEditRoomFcpXml(params: {
       throw new Error(`장면 ${i + 1}의 미디어 파일을 찾을 수 없습니다. 이미지/영상을 다시 확인해주세요.`);
     }
     const ext = actualFile ? actualFile.split('.').pop()! : (scene?.videoUrl ? 'mp4' : 'jpg');
-    const fileName = actualFile ? `media/${actualFile}` : `media/${String(i + 1).padStart(3, '0')}_scene.${ext}`;
+    const fileName = actualFile || `${String(i + 1).padStart(3, '0')}_scene.${ext}`;
     const hasEmbeddedAudio = actualFile ? actualFile.toLowerCase().endsWith('.mp4') : !!scene?.videoUrl;
     const isStillImage = !hasEmbeddedAudio;
     const clipDurFrames = toFrames(t.imageDuration);
@@ -6037,7 +6200,7 @@ function buildEditRoomFcpXml(params: {
             <stillframe>TRUE</stillframe>` : ''}
             <file id="file-${i + 1}">
               <name>${escXml(`${String(i + 1).padStart(3, '0')}_scene.${ext}`)}</name>
-              <pathurl>${escXml(fileName)}</pathurl>
+              <pathurl>${escXml(toRelativePathUrl(fileName))}</pathurl>
               <duration>${clipDurFrames}</duration>
               <rate><ntsc>${ntscStr}</ntsc><timebase>${timebase}</timebase></rate>
               <media>
@@ -6147,7 +6310,7 @@ function buildEditRoomFcpXml(params: {
             <end>${clipEndFrames}</end>
             <file id="narfile-${i + 1}">
               <name>${escXml(clip.fileName)}</name>
-              <pathurl>${escXml(`audio/${clip.fileName}`)}</pathurl>
+              <pathurl>${escXml(toRelativePathUrl(clip.fileName))}</pathurl>
               <duration>${clipDurFrames}</duration>
               <rate><ntsc>${ntscStr}</ntsc><timebase>${timebase}</timebase></rate>
               <media>
@@ -6283,6 +6446,24 @@ async function fetchPrimaryReferenceClip(
 
 function getStillImageMime(blob: Blob): 'image/png' | 'image/jpeg' {
   return blob.type === 'image/png' ? 'image/png' : 'image/jpeg';
+}
+
+function toJsZipBlobInput(blob: Blob): Blob | NodeJS.ReadableStream {
+  const nodeStreamModule = typeof process !== 'undefined'
+    ? (process as typeof process & {
+      getBuiltinModule?: (id: 'node:stream') => typeof import('node:stream') | undefined;
+    }).getBuiltinModule?.('node:stream')
+    : undefined;
+  const isNodeBlobFallback = typeof FileReader === 'undefined'
+    && typeof process !== 'undefined'
+    && !!process.versions?.node
+    && typeof blob.stream === 'function'
+    && !!nodeStreamModule?.Readable?.fromWeb;
+  if (!isNodeBlobFallback || !nodeStreamModule) return blob;
+
+  return nodeStreamModule.Readable.fromWeb(
+    blob.stream() as unknown as Parameters<typeof nodeStreamModule.Readable.fromWeb>[0],
+  );
 }
 
 async function normalizeStillImageBlobForPremiere(
@@ -6465,6 +6646,9 @@ export async function buildEditRoomNleZip(params: {
   const zip = new JSZip();
   const safeName = sanitizeProjectName(title);
   const BOM = '\uFEFF';
+  const addBlobToZip = (path: string, blob: Blob): void => {
+    zip.file(path, toJsZipBlobInput(blob));
+  };
 
   // 해상도 결정
   let w = 1920, h = 1080;
@@ -6505,7 +6689,8 @@ export async function buildEditRoomNleZip(params: {
       const blob = await fetchAssetBlob(scene.videoUrl);
       if (blob && blob.size > 0) {
         const fileName = `${idx}_scene.mp4`;
-        zip.file(`media/${fileName}`, blob);
+        // [FIX] Premiere/FCP XML pathurl 호환을 위해 편집실 미디어는 ZIP 루트에 평탄화한다.
+        addBlobToZip(fileName, blob);
         mediaFileMap.set(i, fileName);
         mediaBlobMap.set(i, blob);
         videoCount++;
@@ -6522,7 +6707,8 @@ export async function buildEditRoomNleZip(params: {
           : originalBlob;
         const ext = getStillImageMime(blob) === 'image/png' ? 'png' : 'jpg';
         const fileName = `${idx}_scene.${ext}`;
-        zip.file(`media/${fileName}`, blob);
+        // [FIX] Premiere/FCP XML pathurl 호환을 위해 편집실 미디어는 ZIP 루트에 평탄화한다.
+        addBlobToZip(fileName, blob);
         mediaFileMap.set(i, fileName);
         mediaBlobMap.set(i, blob);
         imageCount++;
@@ -6535,7 +6721,8 @@ export async function buildEditRoomNleZip(params: {
       try {
         const referenceClip = await fetchPrimaryReferenceClip(scene, i);
         if (referenceClip?.blob && referenceClip.blob.size > 0) {
-          zip.file(`media/${referenceClip.fileName}`, referenceClip.blob);
+          // [FIX] 레퍼런스 클립도 동일하게 ZIP 루트에 배치해 XML 상대경로와 일치시킨다.
+          addBlobToZip(referenceClip.fileName, referenceClip.blob);
           mediaFileMap.set(i, referenceClip.fileName);
           mediaBlobMap.set(i, referenceClip.blob);
           videoCount++;
@@ -6608,7 +6795,8 @@ export async function buildEditRoomNleZip(params: {
 
       seqInScene++;
       const narFileName = `${idx}_narration_${String(seqInScene).padStart(2, '0')}.${audioExtFromBlob(blob)}`;
-      zip.file(`audio/${narFileName}`, blob);
+      // [FIX] 나레이션도 ZIP 루트에 배치해 FCP XML pathurl을 ./파일명으로 통일한다.
+      addBlobToZip(narFileName, blob);
       narrationBlobEntries.push({ fileName: narFileName, blob });
       narrationClips.push({ fileName: narFileName, startSec, durationSec });
     }
@@ -6634,7 +6822,8 @@ export async function buildEditRoomNleZip(params: {
     unboundOffset = Math.max(unboundOffset, startSec + durationSec);
 
     const narFileName = `global_narration_${String(i + 1).padStart(3, '0')}.${audioExtFromBlob(blob)}`;
-    zip.file(`audio/${narFileName}`, blob);
+    // [FIX] sceneId 없는 나레이션도 ZIP 루트에 배치한다.
+    addBlobToZip(narFileName, blob);
     narrationBlobEntries.push({ fileName: narFileName, blob });
     narrationClips.push({ fileName: narFileName, startSec, durationSec });
   }
@@ -6664,7 +6853,8 @@ export async function buildEditRoomNleZip(params: {
 
   // CapCut 전용: draft_content.json (이미지+자막+나레이션 타임라인 자동 배치)
   if (target === 'capcut') {
-    const totalDurUs = toUs(timeline[timeline.length - 1]?.imageEndTime || 0);
+    const totalDurSec = getEditRoomTotalDurationSec(timeline, narrationClips);
+    const totalDurUs = Math.round(totalDurSec * 1_000_000);
     const projectId = editRoomCapCutProjectId;
     const scaffoldIds: CapCutProjectScaffoldIds = {
       draftFolderId: projectId,
@@ -6685,10 +6875,10 @@ export async function buildEditRoomNleZip(params: {
       const blob = mediaBlobMap.get(i);
       if (!blob) continue;
       const isVideo = fileName.endsWith('.mp4');
-      zip.file(`${projectId}/materials/${isVideo ? 'video' : 'image'}/${fileName}`, blob);
+      addBlobToZip(`${projectId}/materials/${isVideo ? 'video' : 'image'}/${fileName}`, blob);
     }
     for (const { fileName, blob } of narrationBlobEntries) {
-      zip.file(`${projectId}/materials/audio/${fileName}`, blob);
+      addBlobToZip(`${projectId}/materials/audio/${fileName}`, blob);
     }
 
     // ── 미디어 머티리얼: 장면별 이미지/영상 (Map으로 인덱스 보존 — 미디어 누락 시 밀림 방지) ──
@@ -7137,7 +7327,7 @@ export async function buildEditRoomNleZip(params: {
     zip.file(`${projectId}/performance_opt_info.json`, buildCapCutPerformanceOptInfo());
     zip.file(`${projectId}/draft.extra`, draftExtra);
     zip.file(`${projectId}/crypto_key_store.dat`, buildCapCutOpaqueCryptoKeyStore());
-    zip.file(`${projectId}/draft_cover.jpg`, draftCoverBlob);
+    addBlobToZip(`${projectId}/draft_cover.jpg`, draftCoverBlob);
     addCapCutDesktopInstallerFiles({
       zip,
       projectFolderId: projectId,
@@ -7166,7 +7356,7 @@ export async function buildEditRoomNleZip(params: {
       '1. ZIP을 원하는 위치에 압축 해제하세요.',
       '2. Premiere Pro > File > Import (Ctrl+I)',
       `3. "${safeName}.xml" 선택 → 타임라인 자동 생성`,
-      '4. media/ 폴더의 이미지/영상이 자동 연결됩니다.',
+      '4. ZIP 루트의 이미지/영상이 자동 연결됩니다.',
       '',
       '[ 자막 ]',
       `• "${safeName}_자막.srt" → Captions 트랙으로 가져올 수 있습니다.`,
@@ -7174,7 +7364,7 @@ export async function buildEditRoomNleZip(params: {
       '[ 나레이션 ]',
       narrationClips.length > 0
         ? `• 나레이션 ${narrationClips.length}개가 A2 오디오 트랙에 자동 배치됩니다.`
-        : '• audio/ 폴더의 나레이션 MP3를 오디오 트랙에 배치하세요.',
+        : '• ZIP 루트의 나레이션 MP3를 오디오 트랙에 배치하세요.',
       '',
       `• ${timeline.length}개 장면 · ${w}x${h} · ${fps}fps`,
       videoCount > 0 || imageCount > 0
@@ -7199,7 +7389,7 @@ export async function buildEditRoomNleZip(params: {
       '• 설치 스크립트가 그 경로를 현재 PC 기준 절대경로로 바꿔줍니다.',
       '',
       '[ 대안 1: SRT 자막 가져오기 ]',
-      '1. CapCut에서 새 프로젝트 생성 후 media/ 이미지를 타임라인에 배치',
+      '1. CapCut에서 새 프로젝트 생성 후 ZIP 루트의 이미지를 타임라인에 배치',
       `2. 자막 > 자막 가져오기 > "${safeName}_자막.srt" 선택`,
       '',
       '[ 대안 2: XML 가져오기 ]',
@@ -7222,14 +7412,14 @@ export async function buildEditRoomNleZip(params: {
       '1. ZIP을 원하는 위치에 압축 해제하세요.',
       '2. Filmora > File > Import > Import XML File',
       `3. "${safeName}.xml" 선택 → 타임라인에 자동 배치`,
-      '4. media/ 폴더의 이미지/영상이 자동 연결됩니다.',
+      '4. ZIP 루트의 이미지/영상이 자동 연결됩니다.',
       '',
       '[ 자막 추가 (선택) ]',
       `• "${safeName}_자막.srt" → 자막 가져오기로 추가할 수 있습니다.`,
       '',
       '[ 나레이션 ]',
       narrationClips.length > 0
-        ? `• audio/ 폴더의 나레이션 MP3(${narrationClips.length}개)를 오디오 트랙에 배치하세요.`
+        ? `• ZIP 루트의 나레이션 MP3(${narrationClips.length}개)를 오디오 트랙에 배치하세요.`
         : '• 나레이션 없음',
       '',
       '[ 호환 버전 ]',
@@ -7247,11 +7437,11 @@ export async function buildEditRoomNleZip(params: {
       `=== ${title} — VREW ===`,
       '',
       '[ 사용법 ]',
-      '1. VREW를 열고 media/ 폴더의 영상/이미지를 불러옵니다.',
+      '1. VREW를 열고 ZIP 루트의 영상/이미지를 불러옵니다.',
       `2. 자막 > 자막 파일 불러오기 > "${safeName}_자막.srt" 선택`,
       '3. 자막이 타임라인에 자동 배치됩니다.',
       narrationClips.length > 0
-        ? `4. audio/ 폴더의 나레이션 MP3(${narrationClips.length}개)를 오디오 트랙에 수동 배치하세요.`
+        ? `4. ZIP 루트의 나레이션 MP3(${narrationClips.length}개)를 오디오 트랙에 수동 배치하세요.`
         : null,
       '',
       `• ${timeline.length}개 장면 · ${w}x${h} · ${fps}fps`,

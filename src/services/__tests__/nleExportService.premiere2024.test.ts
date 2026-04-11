@@ -17,8 +17,27 @@
 import { readFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 
+import JSZip from 'jszip';
 import * as linkedom from 'linkedom';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { monitoredFetch } from '../apiService';
+
+vi.mock('../apiService', () => ({
+  monitoredFetch: vi.fn(),
+}));
+
+vi.mock('../evolinkService', () => ({
+  evolinkChat: vi.fn(),
+}));
+
+vi.mock('../ytdlpApiService', () => ({
+  isCompanionDetected: vi.fn(() => false),
+}));
+
+vi.mock('../youtubeReferenceService', () => ({
+  downloadAndTrimReferenceClip: vi.fn(),
+  isReferenceClipCompatibilityErrorMessage: vi.fn(() => false),
+}));
 
 // nleExportService.ts는 브라우저 DOM API(DOMParser, XMLSerializer, querySelector, Element 등)를 사용하므로
 // linkedom으로 글로벌 폴리필을 주입한다.
@@ -42,6 +61,8 @@ const LEGACY_TEMPLATE_XML = gunzipSync(
   readFileSync(new URL('../../assets/premiere-native-template.prproj', import.meta.url)),
 ).toString('utf8');
 
+const PREMIERE_TICKS_PER_SECOND = 127_008_000_000;
+
 function parseXml(xml: string): Document {
   return new linkedom.DOMParser().parseFromString(xml, 'text/xml') as unknown as Document;
 }
@@ -52,6 +73,24 @@ function getDirectChild(parent: Element, tagName: string): Element | null {
 
 function getChildText(parent: Element, tagName: string): string {
   return (getDirectChild(parent, tagName)?.textContent || '').trim();
+}
+
+function buildSingleScene() {
+  return [
+    {
+      cutNum: 1,
+      timeline: '1',
+      sourceTimeline: '00:00~00:01',
+      dialogue: '첫 장면',
+      effectSub: '',
+      sceneDesc: '도입부',
+      mode: 'storyboard',
+      audioContent: '첫 장면',
+      duration: '1초',
+      videoDirection: '고정 샷',
+      timecodeSource: '00:00~00:01',
+    },
+  ];
 }
 
 describe('buildPremiereNativeProjectXml — Premiere 2024 호환성', () => {
@@ -204,4 +243,561 @@ describe('buildPremiereNativeProjectXml — Premiere 2024 호환성', () => {
     expect(sourceMedia).not.toBeNull();
     expect(getDirectChild(sourceMedia!, 'AudioStream')).toBeNull();
   }, 30_000);
+});
+
+describe('nleExportService timeline regressions', () => {
+  it('FCP XML sequence duration tracks the farthest narration clip and keeps relative pathurls', async () => {
+    const { generateFcpXml } = await import('../nleExportService');
+    const xml = generateFcpXml({
+      scenes: buildSingleScene(),
+      title: 'Narration Tail Regression',
+      videoFileName: 'video.mp4',
+      fps: 30,
+      width: 1080,
+      height: 1920,
+      videoDurationSec: 1,
+      flatMediaPaths: true,
+      narrationLines: [
+        { audioFileName: '001_narration.mp3', duration: 1, startTime: 0, endTime: 1, text: '첫 줄' },
+        { audioFileName: '002_narration.mp3', duration: 1, startTime: 3, endTime: 4, text: '추가 줄' },
+      ],
+    });
+
+    const durationMatch = xml.match(/<sequence>\s*<name>[\s\S]*?<duration>(\d+)<\/duration>/);
+    const sequenceDuration = Number(durationMatch?.[1] || '0');
+    const endFrames = Array.from(xml.matchAll(/<end>(\d+)<\/end>/g)).map((match) => Number(match[1]));
+
+    expect(sequenceDuration).toBe(120);
+    expect(Math.max(...endFrames)).toBe(120);
+    expect(xml).toContain('<pathurl>./video.mp4</pathurl>');
+    expect(xml).toContain('<pathurl>./002_narration.mp3</pathurl>');
+  });
+
+  it('Premiere native project out point expands to the farthest narration clip', async () => {
+    const { buildPremiereNativeProjectXml } = await import('../nleExportService');
+    const xml = await buildPremiereNativeProjectXml({
+      scenes: buildSingleScene(),
+      title: 'Narration Tail Native',
+      videoFileName: 'video.mp4',
+      width: 1080,
+      height: 1920,
+      fps: 30,
+      videoDurationSec: 1,
+      hasAudioTrack: true,
+      narrationLines: [
+        { audioFileName: '001_narration.mp3', duration: 1, startTime: 0, endTime: 1, text: '첫 줄' },
+        { audioFileName: '002_narration.mp3', duration: 1, startTime: 3, endTime: 4, text: '추가 줄' },
+      ],
+      templateXmlOverride: LEGACY_TEMPLATE_XML,
+      prototypeTemplateXmlOverride: LEGACY_TEMPLATE_XML,
+    });
+
+    const outPointMatch = xml.match(/<MZ\.OutPoint>(\d+)<\/MZ\.OutPoint>/);
+    const workOutPointMatch = xml.match(/<MZ\.WorkOutPoint>(\d+)<\/MZ\.WorkOutPoint>/);
+    const expectedTicks = String(PREMIERE_TICKS_PER_SECOND * 4);
+
+    expect(outPointMatch?.[1]).toBe(expectedTicks);
+    expect(workOutPointMatch?.[1]).toBe(expectedTicks);
+    expect(xml).toContain('<FilePath>./002_narration.mp3</FilePath>');
+  }, 30_000);
+
+  it('Edit Room FCP XML export keeps media at ZIP root and pathurls relative', async () => {
+    const { buildEditRoomNleZip } = await import('../nleExportService');
+    const result = await buildEditRoomNleZip({
+      target: 'premiere',
+      timeline: [{
+        sceneId: 'scene-1',
+        sceneIndex: 0,
+        imageStartTime: 0,
+        imageEndTime: 2,
+        imageDuration: 2,
+        subtitleSegments: [],
+        effectPreset: '',
+        volume: 1,
+        speed: 1,
+      }],
+      scenes: [{
+        id: 'scene-1',
+        imageUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7ZQn8AAAAASUVORK5CYII=',
+        scriptText: '첫 장면',
+      }],
+      narrationLines: [{
+        sceneId: 'scene-1',
+        audioUrl: 'data:audio/wav;base64,AAAA',
+        duration: 1,
+        startTime: 0.5,
+      }],
+      title: 'Edit Room Relative Path',
+      aspectRatio: '9:16',
+      fps: 30,
+    });
+
+    const zip = await JSZip.loadAsync(await result.blob.arrayBuffer());
+    const fileNames = Object.keys(zip.files);
+    const xmlEntryName = fileNames.find((name) => name.endsWith('.xml'));
+    const xml = xmlEntryName ? (await zip.file(xmlEntryName)?.async('string')) || '' : '';
+    const pathurls = Array.from(xml.matchAll(/<pathurl>([^<]+)<\/pathurl>/g)).map((match) => match[1]);
+
+    expect(fileNames).toContain('001_scene.png');
+    expect(fileNames).toContain('001_narration_01.wav');
+    expect(fileNames).not.toContain('media/001_scene.png');
+    expect(fileNames).not.toContain('audio/001_narration_01.wav');
+    expect(pathurls).toEqual(expect.arrayContaining([
+      './001_scene.png',
+      './001_narration_01.wav',
+    ]));
+    expect(pathurls.every((value) => value.startsWith('./'))).toBe(true);
+    expect(pathurls.some((value) => /^\.\/(?:media|audio)\//.test(value))).toBe(false);
+  });
+
+  it('Edit Room ZIP adds scene and narration blobs without calling blob.arrayBuffer', async () => {
+    const { buildEditRoomNleZip } = await import('../nleExportService');
+    const sceneBlob = new Blob(['scene-video'], { type: 'video/mp4' });
+    const narrationBlob = new Blob(['narration-audio'], { type: 'audio/wav' });
+    const sceneArrayBufferSpy = vi.spyOn(sceneBlob, 'arrayBuffer');
+    const narrationArrayBufferSpy = vi.spyOn(narrationBlob, 'arrayBuffer');
+
+    vi.mocked(monitoredFetch).mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === 'blob:scene-video') {
+        return {
+          ok: true,
+          blob: async () => sceneBlob,
+        } as Response;
+      }
+      if (url === 'blob:narration-audio') {
+        return {
+          ok: true,
+          blob: async () => narrationBlob,
+        } as Response;
+      }
+      throw new Error(`Unexpected monitoredFetch URL: ${url}`);
+    });
+
+    try {
+      const result = await buildEditRoomNleZip({
+        target: 'premiere',
+        timeline: [{
+          sceneId: 'scene-1',
+          sceneIndex: 0,
+          imageStartTime: 0,
+          imageEndTime: 2,
+          imageDuration: 2,
+          subtitleSegments: [],
+          effectPreset: '',
+          volume: 1,
+          speed: 1,
+        }],
+        scenes: [{
+          id: 'scene-1',
+          videoUrl: 'blob:scene-video',
+          scriptText: '직접 Blob ZIP',
+        }],
+        narrationLines: [{
+          sceneId: 'scene-1',
+          audioUrl: 'blob:narration-audio',
+          duration: 1,
+          startTime: 0.25,
+        }],
+        title: 'Edit Room Blob Direct',
+        aspectRatio: '9:16',
+        fps: 30,
+      });
+
+      const zip = await JSZip.loadAsync(await result.blob.arrayBuffer());
+      const fileNames = Object.keys(zip.files);
+
+      expect(fileNames).toEqual(expect.arrayContaining([
+        '001_scene.mp4',
+        '001_narration_01.wav',
+      ]));
+      expect(sceneArrayBufferSpy).not.toHaveBeenCalled();
+      expect(narrationArrayBufferSpy).not.toHaveBeenCalled();
+    } finally {
+      vi.mocked(monitoredFetch).mockReset();
+      sceneArrayBufferSpy.mockRestore();
+      narrationArrayBufferSpy.mockRestore();
+    }
+  });
+
+  it('Edit Room FCP XML sequence duration expands to the farthest narration clip', async () => {
+    const { buildEditRoomNleZip } = await import('../nleExportService');
+    const result = await buildEditRoomNleZip({
+      target: 'premiere',
+      timeline: [{
+        sceneId: 'scene-1',
+        sceneIndex: 0,
+        imageStartTime: 0,
+        imageEndTime: 2,
+        imageDuration: 2,
+        subtitleSegments: [],
+        effectPreset: '',
+        volume: 1,
+        speed: 1,
+      }],
+      scenes: [{
+        id: 'scene-1',
+        imageUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7ZQn8AAAAASUVORK5CYII=',
+        scriptText: '길게 이어지는 나레이션',
+      }],
+      narrationLines: [{
+        sceneId: 'scene-1',
+        audioUrl: 'data:audio/wav;base64,AAAA',
+        duration: 2,
+        startTime: 2.5,
+      }],
+      title: 'Edit Room Narration Tail FCP',
+      aspectRatio: '9:16',
+      fps: 30,
+    });
+
+    const zip = await JSZip.loadAsync(await result.blob.arrayBuffer());
+    const xmlEntryName = Object.keys(zip.files).find((name) => name.endsWith('.xml'));
+    const xml = xmlEntryName ? (await zip.file(xmlEntryName)?.async('string')) || '' : '';
+    const durationMatch = xml.match(/<sequence>\s*<name>[\s\S]*?<duration>(\d+)<\/duration>/);
+    const endFrames = Array.from(xml.matchAll(/<end>(\d+)<\/end>/g)).map((match) => Number(match[1]));
+
+    expect(Number(durationMatch?.[1] || '0')).toBe(135);
+    expect(Math.max(...endFrames)).toBe(135);
+    expect(xml).toContain('<pathurl>./001_narration_01.wav</pathurl>');
+  });
+
+  it('일반 CapCut draft — narration이 scene end보다 길 때 draft.duration이 narration end까지 확장', async () => {
+    const { generateCapCutDraftJson } = await import('../nleExportService');
+    const result = generateCapCutDraftJson({
+      scenes: buildSingleScene(),
+      title: 'General CapCut Narration Tail',
+      videoFileName: 'video.mp4',
+      width: 1080,
+      height: 1920,
+      fps: 30,
+      videoDurationSec: 1,
+      narrationLines: [
+        { audioFileName: '002_narration.mp3', duration: 1, startTime: 3, endTime: 4, text: '추가 줄' },
+      ],
+    });
+
+    const draft = JSON.parse(result.json) as { duration?: number };
+    expect(draft.duration).toBe(4_000_000);
+  });
+
+  it('일반 CapCut draft — narration이 endTime 필드만 가지고 duration이 없거나 0일 때 endTime까지 duration이 확장', async () => {
+    const { generateCapCutDraftJson } = await import('../nleExportService');
+    const result = generateCapCutDraftJson({
+      scenes: buildSingleScene(),
+      title: 'General CapCut Narration endTime Only',
+      videoFileName: 'video.mp4',
+      width: 1080,
+      height: 1920,
+      fps: 30,
+      videoDurationSec: 1,
+      hasAudioTrack: false,
+      narrationLines: [
+        { audioFileName: '001_narration.mp3', duration: 0, startTime: 1, endTime: 4, text: '끝까지 유지' },
+      ],
+    });
+
+    const draft = JSON.parse(result.json) as {
+      duration?: number;
+      materials?: { audios?: Array<{ duration?: number }> };
+      tracks?: Array<{
+        type?: string;
+        segments?: Array<{ target_timerange?: { start?: number; duration?: number } }>;
+      }>;
+    };
+    const narrationTrack = draft.tracks?.find((track) => track.type === 'audio');
+
+    expect(draft.duration).toBe(4_000_000);
+    expect(draft.materials?.audios?.[0]?.duration).toBe(3_000_000);
+    expect(narrationTrack?.segments?.[0]?.target_timerange?.start).toBe(1_000_000);
+    expect(narrationTrack?.segments?.[0]?.target_timerange?.duration).toBe(3_000_000);
+  });
+
+  it('Edit Room CapCut draft duration expands to the farthest narration clip', async () => {
+    const { buildEditRoomNleZip } = await import('../nleExportService');
+    const result = await buildEditRoomNleZip({
+      target: 'capcut',
+      timeline: [{
+        sceneId: 'scene-1',
+        sceneIndex: 0,
+        imageStartTime: 0,
+        imageEndTime: 2,
+        imageDuration: 2,
+        subtitleSegments: [],
+        effectPreset: '',
+        volume: 1,
+        speed: 1,
+      }],
+      scenes: [{
+        id: 'scene-1',
+        imageUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7ZQn8AAAAASUVORK5CYII=',
+        scriptText: '길게 이어지는 나레이션',
+      }],
+      narrationLines: [{
+        sceneId: 'scene-1',
+        audioUrl: 'data:audio/wav;base64,AAAA',
+        duration: 2,
+        startTime: 2.5,
+      }],
+      title: 'Edit Room Narration Tail CapCut',
+      aspectRatio: '9:16',
+      fps: 30,
+    });
+
+    const zip = await JSZip.loadAsync(await result.blob.arrayBuffer());
+    const draftEntryName = Object.keys(zip.files).find((name) => name.endsWith('/draft_content.json'));
+    const draftMetaEntryName = Object.keys(zip.files).find((name) => name.endsWith('/draft_meta_info.json'));
+    const draft = JSON.parse(draftEntryName ? (await zip.file(draftEntryName)?.async('string')) || '{}' : '{}') as { duration?: number };
+    const draftMeta = JSON.parse(draftMetaEntryName ? (await zip.file(draftMetaEntryName)?.async('string')) || '{}' : '{}') as { tm_duration?: number };
+
+    expect(draft.duration).toBe(4_500_000);
+    expect(draftMeta.tm_duration).toBe(4_500_000);
+  });
+
+  it('buildNarrationClipPlacements clamps NaN and Infinity inputs to finite fallback values', async () => {
+    const { buildNarrationClipPlacements } = await import('../nleExportService');
+    const placements = buildNarrationClipPlacements(
+      [{
+        audioFileName: 'bad clip.mp3',
+        startTime: Number.NaN,
+        endTime: Number.POSITIVE_INFINITY,
+        duration: Number.NaN,
+        text: '문제 입력',
+      }],
+      [{
+        timelineStartSec: Number.NaN,
+        targetDurationSec: Number.POSITIVE_INFINITY,
+      }],
+    );
+
+    expect(placements).toEqual([{
+      startSec: 0,
+      endSec: 3,
+      durationSec: 3,
+      fileName: 'bad_clip.mp3',
+    }]);
+    expect(placements.every((clip) => Number.isFinite(clip.startSec) && Number.isFinite(clip.endSec) && Number.isFinite(clip.durationSec))).toBe(true);
+  });
+
+  it('buildNarrationClipPlacements respects explicit endTime when narration is trimmed shorter than scene fallback', async () => {
+    const { buildNarrationClipPlacements } = await import('../nleExportService');
+    const placements = buildNarrationClipPlacements(
+      [{
+        audioFileName: 'trimmed narration.mp3',
+        startTime: 0,
+        endTime: 1,
+        text: '짧게 트림',
+      }],
+      [{
+        timelineStartSec: 0,
+        timelineEndSec: 3,
+        targetDurationSec: 3,
+      }],
+    );
+
+    expect(placements).toEqual([{
+      startSec: 0,
+      endSec: 1,
+      durationSec: 1,
+      fileName: 'trimmed_narration.mp3',
+    }]);
+  });
+
+  it('buildNarrationClipPlacements prioritizes explicit duration over conflicting endTime', async () => {
+    const { buildNarrationClipPlacements } = await import('../nleExportService');
+    const placements = buildNarrationClipPlacements(
+      [{
+        audioFileName: 'duration wins.mp3',
+        startTime: 0,
+        endTime: 5,
+        duration: 2,
+        text: 'duration 우선',
+      }],
+      [{
+        timelineStartSec: 0,
+        timelineEndSec: 3,
+        targetDurationSec: 3,
+      }],
+    );
+
+    expect(placements).toEqual([{
+      startSec: 0,
+      endSec: 2,
+      durationSec: 2,
+      fileName: 'duration_wins.mp3',
+    }]);
+  });
+
+  it('buildEdlSourceFileMap falls back to 300 seconds when source duration is zero', async () => {
+    const { buildEdlSourceFileMap } = await import('../nleExportService');
+    const fileMap = buildEdlSourceFileMap(
+      [{
+        id: 'e1',
+        order: '1',
+        narrationText: '첫 컷',
+        sourceId: 'source-a',
+        sourceDescription: 'clip-a',
+        speedFactor: 1,
+        timecodeStart: 0,
+        timecodeEnd: 1,
+        note: '',
+      }],
+      [{
+        id: 'video-a',
+        sourceId: 'source-a',
+        file: new Blob(['a'], { type: 'video/mp4' }) as File,
+        blobUrl: 'blob:a',
+        fileName: 'clip-a.mp4',
+        fileSizeMB: 1,
+        durationSec: 0,
+      }],
+      {
+        'source-a': 'video-a',
+      },
+    );
+
+    expect(fileMap.get('video-a')?.dur).toBe(300);
+  });
+
+  it('EDL Premiere ZIP renames source files when they collide with reserved export names', async () => {
+    const { buildEdlNlePackageZip } = await import('../nleExportService');
+    const reservedXmlBlob = new Blob(['xml-source'], { type: 'video/mp4' }) as File;
+    const reservedSrtBlob = new Blob(['srt-source'], { type: 'video/mp4' }) as File;
+    const title = 'Collision Project';
+    const safeName = 'Collision_Project';
+    const zipBlob = await buildEdlNlePackageZip({
+      target: 'premiere',
+      entries: [
+        {
+          id: 'e1',
+          order: '1',
+          narrationText: '첫 컷',
+          sourceId: 'source-a',
+          sourceDescription: 'reserved-xml',
+          speedFactor: 1,
+          timecodeStart: 0,
+          timecodeEnd: 1,
+          note: '',
+        },
+        {
+          id: 'e2',
+          order: '2',
+          narrationText: '둘째 컷',
+          sourceId: 'source-b',
+          sourceDescription: 'reserved-srt',
+          speedFactor: 1,
+          timecodeStart: 0,
+          timecodeEnd: 1,
+          note: '',
+        },
+      ],
+      sourceVideos: [
+        {
+          id: 'video-a',
+          sourceId: 'source-a',
+          file: reservedXmlBlob,
+          blobUrl: 'blob:reserved-xml',
+          fileName: `${safeName}.xml`,
+          fileSizeMB: 1,
+          durationSec: 1,
+        },
+        {
+          id: 'video-b',
+          sourceId: 'source-b',
+          file: reservedSrtBlob,
+          blobUrl: 'blob:reserved-srt',
+          fileName: `${safeName}_나레이션.srt`,
+          fileSizeMB: 1,
+          durationSec: 1,
+        },
+      ],
+      sourceMapping: {
+        'source-a': 'video-a',
+        'source-b': 'video-b',
+      },
+      title,
+    });
+
+    const zip = await JSZip.loadAsync(await zipBlob.arrayBuffer());
+    const fileNames = Object.keys(zip.files);
+    const xml = await zip.file(`${safeName}.xml`)?.async('string');
+
+    expect(fileNames).toEqual(expect.arrayContaining([
+      `${safeName}.xml`,
+      `${safeName}_나레이션.srt`,
+      `${safeName}-1.xml`,
+      `${safeName}_나레이션-1.srt`,
+    ]));
+    expect(xml || '').toContain(`<pathurl>./${safeName}-1.xml</pathurl>`);
+    expect(xml || '').toContain(`<pathurl>./${safeName}_나레이션-1.srt</pathurl>`);
+  });
+
+  it('EDL Premiere ZIP packages source files with pathurls that match the ZIP root', async () => {
+    const { buildEdlNlePackageZip } = await import('../nleExportService');
+    const clipABlob = new Blob(['a'], { type: 'video/mp4' }) as File;
+    const clipBBlob = new Blob(['b'], { type: 'video/mp4' }) as File;
+    const zipBlob = await buildEdlNlePackageZip({
+      target: 'premiere',
+      entries: [
+        {
+          id: 'e1',
+          order: '1',
+          narrationText: '첫 컷',
+          sourceId: 'source-a',
+          sourceDescription: 'clip-a',
+          speedFactor: 1,
+          timecodeStart: 0,
+          timecodeEnd: 1,
+          note: '',
+        },
+        {
+          id: 'e2',
+          order: '2',
+          narrationText: '둘째 컷',
+          sourceId: 'source-b',
+          sourceDescription: 'clip-b',
+          speedFactor: 1,
+          timecodeStart: 0,
+          timecodeEnd: 1,
+          note: '',
+        },
+      ],
+      sourceVideos: [
+        {
+          id: 'video-a',
+          sourceId: 'source-a',
+          file: clipABlob,
+          blobUrl: 'blob:a',
+          fileName: 'clip-a.mp4',
+          fileSizeMB: 1,
+          durationSec: 1,
+        },
+        {
+          id: 'video-b',
+          sourceId: 'source-b',
+          file: clipBBlob,
+          blobUrl: 'blob:b',
+          fileName: 'clip-b.mp4',
+          fileSizeMB: 1,
+          durationSec: 1,
+        },
+      ],
+      sourceMapping: {
+        'source-a': 'video-a',
+        'source-b': 'video-b',
+      },
+      title: 'EDL Zip Match',
+    });
+
+    const zip = await JSZip.loadAsync(await zipBlob.arrayBuffer());
+    const xmlEntryName = Object.keys(zip.files).find((name) => name.endsWith('.xml'));
+    const xml = xmlEntryName ? await zip.file(xmlEntryName)?.async('string') : '';
+
+    expect(Object.keys(zip.files)).toEqual(expect.arrayContaining([
+      'clip-a.mp4',
+      'clip-b.mp4',
+    ]));
+    expect(xml).toContain('<pathurl>./clip-a.mp4</pathurl>');
+    expect(xml).toContain('<pathurl>./clip-b.mp4</pathurl>');
+  });
 });
