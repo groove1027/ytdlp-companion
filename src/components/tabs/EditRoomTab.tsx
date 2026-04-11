@@ -8,7 +8,8 @@ import { composeMp4, downloadMp4 } from '../../services/webcodecs';
 import { drawSubtitle } from '../../services/webcodecs/subtitleRenderer';
 import {
   buildEditRoomNleZip,
-  ensureNleCompanionReady,
+  downloadNlePackageZip,
+  isCompanionUnavailableErrorMessage,
   installNleViaCompanion,
 } from '../../services/nleExportService';
 import type { EditRoomNleTarget } from '../../services/nleExportService';
@@ -1503,16 +1504,6 @@ const EditRoomTab: React.FC = () => {
       return;
     }
 
-    if (target !== 'vrew') {
-      try {
-        await ensureNleCompanionReady(target);
-      } catch (error) {
-        useUIStore.getState().setShowCompanionGate(true);
-        showToast(`${error instanceof Error ? error.message : '컴패니언 앱이 필요합니다.'} 설치 안내 창을 열었습니다.`, 7000);
-        return;
-      }
-    }
-
     // [FIX #474] 영상이 없는 장면이 있으면 confirm 대화상자로 사전 확인 (Toast는 놓치기 쉬움)
     const videoSceneCount = scenes.filter(s => s.videoUrl && !s.imageUpdatedAfterVideo).length;
     const refFallbackCount = scenes.filter(s => !s.videoUrl && !s.imageUrl && s.videoReferences && s.videoReferences.length > 0).length;
@@ -1528,7 +1519,7 @@ const EditRoomTab: React.FC = () => {
       showToast(
         target === 'vrew'
           ? `${targetLabel} 프로젝트 파일을 준비하고 있습니다...`
-          : `${targetLabel} 프로젝트를 준비하고 있습니다. 완료되면 컴패니언 앱으로 바로 설치합니다...`,
+          : `${targetLabel} 프로젝트를 준비하고 있습니다. 완료되면 ZIP을 다운로드하고, 컴패니언 앱이 연결돼 있으면 바로 설치합니다...`,
       );
       const projectTitle = useProjectStore.getState().projectTitle || '프로젝트';
       // [FIX #396] STT 업로드 오디오는 개별 라인 audioUrl이 없을 수 있어 mergedAudioUrl 폴백 필요
@@ -1583,22 +1574,26 @@ const EditRoomTab: React.FC = () => {
           ? ` (영상 ${result.videoCount}개)`
           : ` (이미지 ${result.imageCount}개)`;
 
+      downloadNlePackageZip(result.blob, downloadFileName);
+
       if (target !== 'vrew') {
-        showToast(`${targetLabel}에 직접 설치 중...`);
-        const installResult = await installNleViaCompanion({
-          target,
-          zipBlob: result.blob,
-        });
-        showToast(`${targetLabel} 프로젝트를 바로 설치했습니다!${mediaSummary} (${installResult.filesInstalled}개 파일)`, 6000);
+        showToast(`${targetLabel} ZIP 다운로드 완료. 컴패니언 앱에 자동 설치 중...`);
+        try {
+          const installResult = await installNleViaCompanion({
+            target,
+            zipBlob: result.blob,
+          });
+          showToast(`${targetLabel} ZIP 다운로드 완료 + 자동 설치 완료!${mediaSummary} (${installResult.filesInstalled}개 파일)`, 6000);
+        } catch (installError) {
+          const installMessage = installError instanceof Error ? installError.message : '알 수 없는 오류';
+          if (isCompanionUnavailableErrorMessage(installMessage)) {
+            useUIStore.getState().setShowCompanionGate(true);
+          }
+          showToast(`${targetLabel} ZIP 다운로드는 완료됐지만 자동 설치는 실패했습니다: ${installMessage}`, 7000);
+        }
         return;
       }
 
-      const url = URL.createObjectURL(result.blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = downloadFileName;
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 10000);
       showToast(`${targetLabel} 프로젝트 파일 다운로드 완료!${mediaSummary}`);
     } catch (err) {
       const message = err instanceof Error ? err.message : '알 수 없는 오류';

@@ -8,6 +8,17 @@
 
 ## 🟢 완료된 작업
 
+- [x] **2026-04-12 — B-3 Premiere ZIP 다운로드 실패 수정**
+  - `rg -n "installNleToCompanion|isCompanionNleAvailable|installNle\\(" src`, `rg -n "Premiere|프리미어 ZIP|premiere_zip" src/components/`, `rg -n "URL\\.createObjectURL|\\.click\\(\\)" src/services/nleExportService.ts src/components/`, `rg -n "buildNlePackageZip|downloadNlePackage|installNleToCompanion|isCompanionNleAvailable|nleExportService" src/services/nleExportService.ts src/components/tabs/EditRoomTab.tsx src/components/tabs/imagevideo/StoryboardPanel.tsx src/components/tabs/channel/VideoAnalysisRoom.tsx`로 Premiere ZIP 버튼 진입점, 컴패니언 설치 경로, 브라우저 다운로드 패턴 영향 범위를 전수 조사
+  - `src/services/nleExportService.ts` — `downloadNlePackageZip()` 공통 헬퍼를 추가해 ZIP 브라우저 다운로드를 서비스 레벨로 통일했고, `isCompanionUnavailableErrorMessage()`로 컴패니언 미연결 오류만 별도 판별할 수 있게 정리
+  - `src/components/tabs/EditRoomTab.tsx`, `src/components/tabs/imagevideo/StoryboardPanel.tsx`, `src/components/tabs/channel/VideoAnalysisRoom.tsx` — NLE 내보내기 흐름을 `ZIP 다운로드 먼저 → 컴패니언 자동 설치 시도` 순서로 변경. 자동 설치가 성공하면 다운로드+설치 완료 토스트를 띄우고, 실패하면 ZIP 다운로드 성공 사실을 유지한 채 자동 설치 실패 토스트를 분리 표시하도록 수정
+  - `src/components/tabs/EditRoomTab.tsx`, `src/components/tabs/imagevideo/StoryboardPanel.tsx`, `src/components/tabs/channel/VideoAnalysisRoom.tsx` — 기존 `ensureNleCompanionReady()` 사전 차단 분기를 제거해, 컴패니언 감지/설치 실패가 있어도 ZIP 다운로드 자체는 계속 진행되도록 수정
+  - `src/services/__tests__/nleExportService.premiere2024.test.ts` — `downloadNlePackageZip` 회귀 테스트 1건 추가. `<a download>` 클릭이 즉시 발생하고 60초 뒤 Blob URL이 revoke 되는지 검증
+  - `cd src && node_modules/typescript/bin/tsc --noEmit`: 통과
+  - `cd src && node_modules/.bin/vitest run`: 통과 (`10 passed`, `128 passed`)
+  - `cd src && node_modules/.bin/vite build`: 성공 (기존 dynamic import/chunk-size warning만 출력)
+  - `rg -n "downloadNlePackageZip|installNleViaCompanion|isCompanionUnavailableErrorMessage" src`, `rg -n "URL\\.createObjectURL|\\.click\\(\\)" src/services/nleExportService.ts src/components/`: 수정 헬퍼/호출부/다운로드 트리거 재검증 완료
+
 - [x] **2026-04-12 — 11회차 Codex review P2: narration endTime 우선순위 재조정**
   - `rg -n "buildNarrationClipPlacements|narrationClipPlacements|line\\.endTime|line\\.duration" src/services/nleExportService.ts src/services/__tests__/nleExportService.premiere2024.test.ts`, `sed -n '1075,1125p' src/services/nleExportService.ts`, `sed -n '470,620p' src/services/__tests__/nleExportService.premiere2024.test.ts`로 helper 로직, 기존 endTime 회귀 테스트, 호출부 영향 범위를 전수 조사
   - `src/services/nleExportService.ts` — `buildNarrationClipPlacements()`의 end 계산 우선순위를 `explicit duration > explicit endTime > synced fallback`으로 재정렬하고, fallback 후보에 `timelineEndSec`를 포함하도록 보강. `duration=0` 또는 미지정일 때 사용자가 trim한 `endTime`이 scene fallback까지 다시 늘어나지 않도록 수정

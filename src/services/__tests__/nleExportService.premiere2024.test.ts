@@ -801,3 +801,61 @@ describe('nleExportService timeline regressions', () => {
     expect(xml).toContain('<pathurl>./clip-b.mp4</pathurl>');
   });
 });
+
+describe('downloadNlePackageZip', () => {
+  it('starts ZIP download immediately and revokes the blob URL later', async () => {
+    const { downloadNlePackageZip } = await import('../nleExportService');
+    vi.useFakeTimers();
+
+    const globalScope = globalThis as typeof globalThis & { document?: Document };
+    const previousDocument = globalScope.document;
+    const testDocument = new linkedom.DOMParser().parseFromString('<html><body></body></html>', 'text/html') as unknown as Document;
+    globalScope.document = testDocument;
+
+    const createdAnchors: HTMLAnchorElement[] = [];
+    const anchorClicks: Array<ReturnType<typeof vi.fn>> = [];
+    const createObjectURL = vi.fn(() => 'blob:nle-zip');
+    const revokeObjectURL = vi.fn();
+    const originalCreateElement = testDocument.createElement.bind(testDocument);
+    const createElementSpy = vi.spyOn(testDocument, 'createElement').mockImplementation(((tagName: string) => {
+      const element = originalCreateElement(tagName);
+      if (tagName.toLowerCase() === 'a') {
+        const clickSpy = vi.fn();
+        (element as HTMLAnchorElement).click = clickSpy as unknown as () => void;
+        createdAnchors.push(element as HTMLAnchorElement);
+        anchorClicks.push(clickSpy);
+      }
+      return element;
+    }) as typeof document.createElement);
+
+    const urlCtor = URL as typeof URL & {
+      createObjectURL: (blob: Blob) => string;
+      revokeObjectURL: (url: string) => void;
+    };
+    const previousCreateObjectURL = urlCtor.createObjectURL;
+    const previousRevokeObjectURL = urlCtor.revokeObjectURL;
+    urlCtor.createObjectURL = createObjectURL;
+    urlCtor.revokeObjectURL = revokeObjectURL;
+
+    try {
+      testDocument.body.innerHTML = '';
+      downloadNlePackageZip(new Blob(['zip'], { type: 'application/zip' }), 'sample_premiere.zip');
+
+      expect(createObjectURL).toHaveBeenCalledTimes(1);
+      expect(createdAnchors).toHaveLength(1);
+      expect(createdAnchors[0].download).toBe('sample_premiere.zip');
+      expect(anchorClicks[0]).toHaveBeenCalledTimes(1);
+      expect(testDocument.body.contains(createdAnchors[0])).toBe(false);
+
+      vi.advanceTimersByTime(60_000);
+      expect(revokeObjectURL).toHaveBeenCalledWith('blob:nle-zip');
+    } finally {
+      createElementSpy.mockRestore();
+      urlCtor.createObjectURL = previousCreateObjectURL;
+      urlCtor.revokeObjectURL = previousRevokeObjectURL;
+      globalScope.document = previousDocument;
+      vi.useRealTimers();
+      testDocument.body.innerHTML = '';
+    }
+  });
+});

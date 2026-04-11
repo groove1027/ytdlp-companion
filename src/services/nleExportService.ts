@@ -51,6 +51,11 @@ function buildMissingCompanionError(target: NleTarget): Error {
   return new Error(`${getNleTargetLabel(target)} 내보내기에는 컴패니언 앱이 필요합니다. 컴패니언 앱을 설치하고 실행한 뒤 다시 시도하세요.`);
 }
 
+export function isCompanionUnavailableErrorMessage(message: string): boolean {
+  return message.includes('컴패니언 앱이 필요합니다')
+    || message.includes('컴패니언 앱 연결이 끊어졌습니다');
+}
+
 function extractCompanionProjectId(zipEntries: string[]): string {
   const topFolders = zipEntries
     .filter(name => name.includes('/') && !name.startsWith('media/') && !name.startsWith('audio/'))
@@ -146,6 +151,19 @@ export async function installNleViaCompanion(params: {
   }
 
   return await res.json();
+}
+
+export function downloadNlePackageZip(blob: Blob, fileName: string): void {
+  const blobUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = blobUrl;
+  anchor.download = fileName;
+  anchor.rel = 'noopener';
+  anchor.style.display = 'none';
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
 }
 
 /** 컴패니언 앱이 NLE 설치를 지원하는지 확인 */

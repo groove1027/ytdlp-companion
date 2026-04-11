@@ -26,7 +26,8 @@ import { smartUpload } from '../../../services/companion/smartUpload';
 import { detectSceneCuts, mergeWithAiTimecodes } from '../../../services/sceneDetection';
 import {
   buildVideoAnalysisSceneLineId,
-  ensureNleCompanionReady,
+  downloadNlePackageZip,
+  isCompanionUnavailableErrorMessage,
   installNleViaCompanion,
   sanitizeProjectName,
 } from '../../../services/nleExportService';
@@ -2155,20 +2156,6 @@ function downloadFile(content: string, filename: string, mime: string) {
   a.click();
   document.body.removeChild(a);
   setTimeout(() => { logger.unregisterBlobUrl(url); URL.revokeObjectURL(url); }, 5000);
-}
-
-function downloadBlobFile(blob: Blob, filename: string, sourceLabel: string) {
-  const url = URL.createObjectURL(blob);
-  logger.registerBlobUrl(url, 'other', sourceLabel, blob.size / (1024 * 1024));
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.rel = 'noopener';
-  a.style.display = 'none';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(() => { logger.unregisterBlobUrl(url); URL.revokeObjectURL(url); }, 60000);
 }
 
 /** 소스 영상 Blob에서 지정 구간들의 오디오를 추출 → 단일 AudioBuffer로 합성 */
@@ -6889,16 +6876,6 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                     nleActiveTaskRef.current = { target, controller: myAbort };
                                     nleAbortRef.current = myAbort;
                                     const isCancelled = () => myAbort.signal.aborted;
-                                    if (target !== 'vrew') {
-                                      setNleExporting({ target, step: '컴패니언 확인 중...', startedAt });
-                                      try {
-                                        await ensureNleCompanionReady(target);
-                                      } catch (error) {
-                                        useUIStore.getState().setShowCompanionGate(true);
-                                        showToast(`${error instanceof Error ? error.message : '컴패니언 앱이 필요합니다.'} 설치 안내 창을 열었습니다.`, 7000);
-                                        return;
-                                      }
-                                    }
                                     setNleExporting({ target, step: '준비 중...', startedAt });
                                     try {
                                       // Step 1: videoBlob 확보 — 오디오 포함 보장
@@ -7189,21 +7166,30 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                       if (isCancelled()) return;
                                       const downloadFileName = `${sanitizeProjectName(v.title, 30)}_${label}.zip`;
 
+                                      downloadNlePackageZip(zipBlob, downloadFileName);
+                                      if (isCancelled()) return;
                                       if (target !== 'vrew') {
-                                        showToast(`${label}에 직접 설치 중...`);
-                                        const installResult = await installNleViaCompanion({
-                                          target,
-                                          zipBlob,
-                                        });
-                                        if (isCancelled()) return;
-                                        showToast(audioConfirmed
-                                          ? `${label} 프로젝트를 바로 설치했습니다! ${label}에서 프로젝트를 열어 확인해주세요. (${installResult.filesInstalled}개 파일)`
-                                          : `${label} 프로젝트를 설치 완료! 원본 오디오는 ${label}에서 한 번 확인해주세요. (${installResult.filesInstalled}개 파일)`, 6000);
+                                        showToast(`${label} ZIP 다운로드 완료. 컴패니언 앱에 자동 설치 중...`);
+                                        try {
+                                          const installResult = await installNleViaCompanion({
+                                            target,
+                                            zipBlob,
+                                          });
+                                          if (isCancelled()) return;
+                                          showToast(audioConfirmed
+                                            ? `${label} ZIP 다운로드 완료 + 자동 설치 완료! ${label}에서 프로젝트를 열어 확인해주세요. (${installResult.filesInstalled}개 파일)`
+                                            : `${label} ZIP 다운로드 완료 + 자동 설치 완료! 원본 오디오는 ${label}에서 한 번 확인해주세요. (${installResult.filesInstalled}개 파일)`, 6000);
+                                        } catch (installError) {
+                                          if (isCancelled()) return;
+                                          const installMessage = installError instanceof Error ? installError.message : '알 수 없는 오류';
+                                          if (isCompanionUnavailableErrorMessage(installMessage)) {
+                                            useUIStore.getState().setShowCompanionGate(true);
+                                          }
+                                          showToast(`${label} ZIP 다운로드는 완료됐지만 자동 설치는 실패했습니다: ${installMessage}`, 7000);
+                                        }
                                         return;
                                       }
 
-                                      downloadBlobFile(zipBlob, downloadFileName, 'VideoAnalysisRoom:nleZipDownload');
-                                      if (isCancelled()) return;
                                       showToast(!audioConfirmed
                                         ? `${label} 다운로드 완료! ⚠️ 원본 오디오를 불러오지 못했어요. ${label}에서 수동으로 오디오를 추가해주세요.`
                                         : `${label} 패키지 다운로드 완료!`, !audioConfirmed ? 7000 : undefined);
