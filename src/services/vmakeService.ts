@@ -8,30 +8,13 @@
 import { getVmakeAk, getVmakeSk } from './apiService';
 import { monitoredFetch } from './apiService';
 import { logger } from './LoggerService';
+import {
+  buildPropainterUnavailableMessage,
+  resolvePropainterProxy,
+} from './companionPropainterService';
 
-// 컴패니언 ProPainter 서버 후보 (9876 내장 or 9877 전용)
-const PROXY_CANDIDATES = ['http://127.0.0.1:9876', 'http://127.0.0.1:9877'];
 const POLL_INTERVAL_MS = 3_000;
 const MAX_POLL_COUNT = 200;
-
-/** 사용 가능한 Vmake 프록시 서버 찾기 */
-async function findVmakeProxy(): Promise<string | null> {
-  for (const url of PROXY_CANDIDATES) {
-    try {
-      const controller = new AbortController();
-      const tid = setTimeout(() => controller.abort(), 3000);
-      const res = await fetch(`${url}/health`, { signal: controller.signal, mode: 'cors' });
-      clearTimeout(tid);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.propainter || data.features?.inpaint) {
-          return url;
-        }
-      }
-    } catch { /* next */ }
-  }
-  return null;
-}
 
 /** Vmake 키가 설정되었는지 확인 */
 export function isVmakeConfigured(): boolean {
@@ -51,8 +34,11 @@ export async function removeVideoWatermark(
 
   onProgress?.('컴패니언 서버 연결 중...', 2);
 
-  const proxyUrl = await findVmakeProxy();
-  if (!proxyUrl) throw new Error('컴패니언 앱이 실행 중이 아닙니다.\n컴패니언 앱을 먼저 실행한 후 다시 시도하세요.');
+  const proxyResolution = await resolvePropainterProxy();
+  const proxyUrl = proxyResolution.url;
+  if (!proxyUrl) {
+    throw new Error(buildPropainterUnavailableMessage(proxyResolution));
+  }
 
   logger.info('[Vmake] 프록시 서버 발견', { url: proxyUrl });
   onProgress?.('영상을 컴패니언에 전송 중...', 5);
@@ -82,7 +68,11 @@ export async function removeVideoWatermark(
     await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
 
     try {
-      const statusRes = await fetch(`${proxyUrl}/api/vmake/status/${taskId}`);
+      const statusRes = await monitoredFetch(
+        `${proxyUrl}/api/vmake/status/${taskId}`,
+        {},
+        10_000,
+      );
       if (!statusRes.ok) continue;
 
       const status = await statusRes.json();
@@ -90,7 +80,11 @@ export async function removeVideoWatermark(
       if (status.status === 'completed') {
         onProgress?.('처리 완료! 결과 다운로드 중...', 90);
 
-        const resultRes = await fetch(`${proxyUrl}/api/vmake/result/${taskId}`);
+        const resultRes = await monitoredFetch(
+          `${proxyUrl}/api/vmake/result/${taskId}`,
+          {},
+          30_000,
+        );
         if (!resultRes.ok) throw new Error('결과 다운로드 실패');
 
         const blob = await resultRes.blob();

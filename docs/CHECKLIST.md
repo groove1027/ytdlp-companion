@@ -8,6 +8,19 @@
 
 ## 🟢 완료된 작업
 
+- [x] **2026-04-12 — Group C 자막/워터마크 제거 컴패니언 미인식 회귀 수정**
+  - `rg -n "자막/워터마크|SubtitleRemover|subtitle.*remover|워터마크|워터 마크|inpaint|ghostcut|propainter" src/ -g '!node_modules'`, `rg -n "companionInpaint|cutClipsCompanion|propainter|ProPainter" src/services/ companion/src-tauri/src/`, `rg -n "'http://127.0.0.1:9876|\"http://127\\.0\\.0\\.1:9876\"|localhost:9876|COMPANION_URL" src/services/ src/components/`, `rg -n "runCleanSubtitles|companionInpaintService|isInpaintAvailable|detectTextRegions|removeSubtitlesWithInpaint" src/stores src/components -g '!node_modules'`로 자막/워터마크 제거 경로, 편집실 내보내기 경로, companion 포트 하드코드, 실제 호출 서비스 영향 범위를 전수 조사
+  - `companion/src-tauri/src/server.rs`, `companion/propainter/server.py` 확인 결과 메인 `/health`는 `app/port/services`만 반환하고, ProPainter/Vmake 라우트는 별도 `propainter/server.py`가 담당함을 확인. 기존 웹 로직이 옛 `propainter/features.inpaint` health 형식에 기대고 있어 "헬퍼 실행 중인데 미실행으로 오진"하는 회귀를 재현
+  - `src/services/companionPropainterService.ts` 신규 — 메인 컴패니언(9876/9877)과 ProPainter 서버를 분리 감지하는 공통 helper 추가. `/health.port`를 읽어 메인 컴패니언 포트를 캐시하고, ProPainter는 별도 재시도/포트 우선순위로 탐색하도록 정리
+  - `src/services/vmakeService.ts` — 자막/워터마크 제거 프록시 감지를 공통 helper로 교체하고, 감지 실패 시 "설치" 대신 `컴패니언은 감지됐지만 ProPainter 서버가 응답하지 않는다`는 9876/9877 포트 진단 메시지를 노출하도록 수정. status/result 폴링도 `monitoredFetch`로 통일
+  - `src/services/companionInpaintService.ts` — 미사용 경로지만 같은 회귀를 막기 위해 동일 helper를 재사용하도록 변경. 기존 9876/9877 직접 순회 + 옛 health 필드 의존 로직을 제거하고 공통 캐시 reset과 연동
+  - `src/services/__tests__/companionPropainterService.test.ts` 신규 — `메인 컴패니언 9876 + ProPainter 9877 감지`, `메인 컴패니언만 9877에서 감지될 때 포트 진단 메시지 생성` 회귀 테스트 2건 추가
+  - `cd src && node_modules/typescript/bin/tsc --noEmit`: 통과
+  - `cd src && node_modules/.bin/vitest run`: 통과 (`11 passed`, `133 passed`)
+  - `cd src && node_modules/.bin/vite build`: 성공 (기존 dynamic import / chunk-size warning만 출력)
+  - `rg -n "resolvePropainterProxy|buildPropainterUnavailableMessage|resetPropainterProxyCache|ProPainter 서버가 응답하지 않습니다|companionPropainterService" src/`: 공통 helper/호출부/테스트 반영 위치 재검증
+  - `rg -n "'http://127.0.0.1:9876|localhost:9876" src/services/ src/components/`: 자막/워터마크 제거 경로의 9876 단일 하드코드는 제거됐지만, `removeBgService`, `ttsService`, `cutClipsCompanion`, `ffmpegService`, `youtubeReferenceService`, `nleExportService` 등 다른 기능의 기존 하드코드는 이번 범위 밖으로 남아 있음을 재확인
+
 - [x] **2026-04-12 — B-4 Premiere 자막 중복/잠김 버그 수정 (#1120)**
   - `rg -n "subtitleClips|effectSubtitleClips|dialogueSubtitleClips|V2|V3|graphicSubtitleTrack" src/services/nleExportService.ts`, `rg -n "subtitleSegments|effectSub|dialogueSub" src/services/nleExportService.ts | head -40`, `rg -n "includeGraphicSubtitleTracks|<locked>|<enabled>|<lock>|generatoritem|subtitle" src/services/nleExportService.ts`, `rg -n "buildPremiereNativeProjectXml|includeGraphicSubtitleTracks|effectSubClips|subtitleClips|locked|enabled|generatoritem" src/services/__tests__/nleExportService.premiere2024.test.ts src/services/nleExportService.ts`로 Premiere 자막 출력 경로와 회귀 테스트 영향 범위를 전수 조사
   - `src/services/nleExportService.ts` — `buildTimingEffectCaptionEntries()` / `unlockPremiereTrack()` helper를 추가해 출력 단계에서만 effect subtitle placeholder(`-`, `null`, `undefined`)를 제거하고, dialogue와 동일한 텍스트+타이밍의 effect caption은 export에서 제외하도록 정리

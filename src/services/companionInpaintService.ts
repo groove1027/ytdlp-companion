@@ -1,18 +1,18 @@
 /**
  * Companion Inpaint Service — ProPainter 기반 로컬 자막/워터마크 제거
  *
- * 컴패니언 앱(127.0.0.1:9876)의 ProPainter + PaddleOCR 엔드포인트를 호출.
+ * 컴패니언 ProPainter 서버(127.0.0.1:9876/9877)의 PaddleOCR/인페인팅 엔드포인트를 호출.
  * 컴패니언 미설치 시 안내 메시지 표시.
  */
 
 import { monitoredFetch } from './apiService';
 import { logger } from './LoggerService';
+import {
+  resetPropainterProxyCache,
+  resolvePropainterProxy,
+} from './companionPropainterService';
 
-/** ProPainter 후보 포트: 메인 컴패니언(9876) → 전용 ProPainter(9877) 순서로 시도 */
-const PROPAINTER_CANDIDATES = ['http://127.0.0.1:9876', 'http://127.0.0.1:9877'];
-const HEALTH_TIMEOUT_MS = 3000;   // [FIX #921] 3초
 const HEALTH_CACHE_MS = 30_000;
-const HEALTH_MAX_RETRIES = 2;     // 포트별 2회 재시도 (2포트 × 2회 = 최대 4회)
 
 // ── 컴패니언 인페인트 기능 감지 (캐시) ──
 
@@ -20,7 +20,7 @@ let _inpaintAvailable: boolean | null = null;
 let _inpaintCheckTime = 0;
 let _inpaintCheckPromise: Promise<boolean> | null = null;
 let _cacheGeneration = 0;
-let _activePropainterUrl = PROPAINTER_CANDIDATES[0]; // 감지 성공한 ProPainter URL
+let _activePropainterUrl = 'http://127.0.0.1:9877';
 const NEGATIVE_CACHE_MS = 5_000;
 
 /** 컴패니언의 ProPainter 기능이 활성화되어 있는지 확인 */
@@ -41,63 +41,34 @@ export async function isInpaintAvailable(): Promise<boolean> {
 }
 
 async function _doInpaintCheck(gen: number): Promise<boolean> {
-  // 모든 후보 포트를 순회 — 9876(메인 컴패니언 내장) → 9877(전용 ProPainter 서버)
-  for (const candidateUrl of PROPAINTER_CANDIDATES) {
-    if (gen !== _cacheGeneration) return _inpaintAvailable ?? false;
-    for (let attempt = 0; attempt < HEALTH_MAX_RETRIES; attempt++) {
-      if (gen !== _cacheGeneration) return _inpaintAvailable ?? false;
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), HEALTH_TIMEOUT_MS);
-        const res = await fetch(`${candidateUrl}/health`, {
-          signal: controller.signal,
-          mode: 'cors',
-        });
-        clearTimeout(timeoutId);
-        if (!res.ok) {
-          logger.info(`[CompanionInpaint] ${candidateUrl} health ${res.status} (attempt ${attempt + 1}/${HEALTH_MAX_RETRIES})`);
-          if (attempt < HEALTH_MAX_RETRIES - 1) { await _sleep(1000); continue; }
-          break; // 다음 포트로
-        }
-        const data: { features?: { inpaint?: boolean }; propainter?: boolean } = await res.json();
-        if (gen !== _cacheGeneration) return _inpaintAvailable ?? false;
-        const available = !!(data.features?.inpaint || data.propainter);
-        if (available) {
-          _activePropainterUrl = candidateUrl;
-          _inpaintAvailable = true;
-          _inpaintCheckTime = Date.now();
-          logger.info(`[CompanionInpaint] ProPainter 감지 성공 (${candidateUrl})`);
-          return true;
-        }
-        // 200 OK but ProPainter 미등록 → 재시도 후 다음 포트
-        logger.info(`[CompanionInpaint] ${candidateUrl} OK but no ProPainter (attempt ${attempt + 1}/${HEALTH_MAX_RETRIES})`);
-        if (attempt < HEALTH_MAX_RETRIES - 1) { await _sleep(1000); continue; }
-        break; // 다음 포트로
-      } catch (err) {
-        const reason = err instanceof Error
-          ? (err.name === 'AbortError' ? `timeout(${HEALTH_TIMEOUT_MS}ms)` : err.message)
-          : 'unknown';
-        logger.info(`[CompanionInpaint] ${candidateUrl} 실패: ${reason} (attempt ${attempt + 1}/${HEALTH_MAX_RETRIES})`);
-        if (attempt < HEALTH_MAX_RETRIES - 1) { await _sleep(1000); continue; }
-        break; // 다음 포트로
-      }
-    }
+  if (gen !== _cacheGeneration) return _inpaintAvailable ?? false;
+
+  const resolution = await resolvePropainterProxy();
+  if (gen !== _cacheGeneration) return _inpaintAvailable ?? false;
+
+  if (resolution.url) {
+    _activePropainterUrl = resolution.url;
+    _inpaintAvailable = true;
+    _inpaintCheckTime = Date.now();
+    logger.info(`[CompanionInpaint] ProPainter 감지 성공 (${resolution.url})`);
+    return true;
   }
+
+  logger.info(
+    `[CompanionInpaint] ProPainter 미감지 (companionDetected=${resolution.companionDetected}, companionPort=${resolution.companionPort ?? '?'})`,
+  );
   if (gen === _cacheGeneration) { _inpaintAvailable = false; _inpaintCheckTime = Date.now(); }
   return false;
-}
-
-function _sleep(ms: number): Promise<void> {
-  return new Promise(r => setTimeout(r, ms));
 }
 
 /** 캐시 초기화 (설정 변경 시) */
 export function resetInpaintCache(): void {
   _inpaintAvailable = null;
   _inpaintCheckTime = 0;
-  _activePropainterUrl = PROPAINTER_CANDIDATES[0]; // URL도 초기화
+  _activePropainterUrl = 'http://127.0.0.1:9877';
   _cacheGeneration++;
   _inpaintCheckPromise = null;
+  resetPropainterProxyCache();
 }
 
 // ── OCR 텍스트 영역 감지 ──
