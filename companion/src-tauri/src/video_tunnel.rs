@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::{Child, Command};
+use tokio::process::Child;
 use tokio::sync::{Mutex, RwLock};
 
 // ──────────────────────────────────────────────
@@ -699,7 +699,11 @@ async fn ensure_cloudflared() -> Result<PathBuf, TunnelError> {
     // 0순위 (b): which/where로 PATH 검색 (CLI 실행 환경 fallback)
     // (Codex Round-10 Medium) Unix는 `which`, Windows는 `where`
     let detect_cmd = if cfg!(windows) { "where" } else { "which" };
-    if let Ok(output) = Command::new(detect_cmd).arg("cloudflared").output().await {
+    if let Ok(output) = crate::platform::async_cmd(detect_cmd)
+        .arg("cloudflared")
+        .output()
+        .await
+    {
         if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let path_str = stdout.lines().next().unwrap_or("").trim().to_string();
@@ -978,7 +982,7 @@ async fn spawn_cloudflared(
     let url_arg = format!("http://127.0.0.1:{}", serve_port);
     println!("[Tunnel] cloudflared spawn: tunnel --url {}", url_arg);
 
-    let mut cmd = Command::new(binary);
+    let mut cmd = crate::platform::async_cmd(binary);
     cmd.arg("tunnel")
         .arg("--url")
         .arg(&url_arg)

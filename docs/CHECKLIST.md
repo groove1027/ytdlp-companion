@@ -8,6 +8,16 @@
 
 ## 🟢 완료된 작업
 
+- [x] **2026-04-12 — companion v2.2.1 hotfix Windows cmd 반복 팝업 차단**
+  - `rg -n "Command::new" companion/src-tauri/src/`로 companion 전체 직접 프로세스 생성 지점을 전수 조사했고, Windows 관련 수정 대상이 `companion/src-tauri/src/video_tunnel.rs`, `companion/src-tauri/src/server.rs`, `companion/src-tauri/src/takeover.rs`에 한정됨을 확인
+  - `companion/src-tauri/src/video_tunnel.rs` — PATH 탐지용 `where/which` 실행과 cloudflared 본체 spawn을 `crate::platform::async_cmd(...)`로 교체하고 `tokio::process::Command` import를 제거해 Windows `CREATE_NO_WINDOW`가 재시작 경로까지 일관 적용되도록 수정
+  - `companion/src-tauri/src/server.rs` — 초기화 단계 `taskkill`과 Windows 화면 캡처용 `powershell` 실행을 `platform::sync_cmd(...)`로 교체해 콘솔 창 없이 동기 실행되도록 정리
+  - `companion/src-tauri/src/takeover.rs` — Windows 포트 점유 PID 탐지 `netstat`과 강제 종료 `taskkill`을 `crate::platform::sync_cmd(...)`로 교체하고 macOS/Linux 전용 `lsof`/`kill` 호출은 그대로 유지
+  - `cd companion/src-tauri && cargo check --target-dir /tmp/cargo-target-check`: 통과 (기존 warning 9개만 출력, 신규 에러 없음)
+  - `cd companion/src-tauri && cargo build --target-dir /tmp/cargo-target-build`: 성공 (기존 warning 9개만 출력, build 완료)
+  - `rg -n "Command::new\\(" companion/src-tauri/src/`: 재검증 결과 `lsof`, `kill`, `open`, `osascript`, `screencapture`, `import`, `xattr`, 그리고 `platform.rs` helper 내부만 남아 Windows 직접 호출 누락 없음
+  - `rg -n "async_cmd|sync_cmd" companion/src-tauri/src/`: 재검증 결과 이번 hotfix로 `async_cmd` 호출 2곳(`video_tunnel.rs`)과 `sync_cmd` 호출 4곳(`server.rs` 2, `takeover.rs` 2)이 추가 반영됨
+
 - [x] **2026-04-09 — Premiere/CapCut 컴패니언 강제 + FPS/스키마 재패치**
   - `rg -n "patch_prproj_files|detect_premiere_pro|nle_install_handler|ffprobe|installNleViaCompanion|beginCapCutDirectInstallSelection|installCapCutZipToDirectory|getCapCutManualInstallHint|isCapCutDirectInstallSupported|isCompanionNleAvailable|COMPANION_DOWNLOAD_URL" companion/src-tauri/src/server.rs src/services/nleExportService.ts src/components/tabs/imagevideo/StoryboardPanel.tsx src/components/tabs/EditRoomTab.tsx src/components/tabs/channel/VideoAnalysisRoom.tsx src/constants.ts .claude/skills`로 영향 범위 전수 조사 완료
   - `companion/src-tauri/src/server.rs` — `schema_version_for_premiere()`를 추가해 감지된 Premiere 메이저 버전을 `.prproj`의 `<Project ... Version="N">`에 맞춰 재패치하고, `ffprobe_media_fps()`/`detect_project_video_fps()`를 추가해 실측 FPS 기반으로 `.prproj` TimeBase/NTSC와 CapCut `draft_content.json`의 `fps`/`is_drop_frame_timecode`를 재교정하도록 수정

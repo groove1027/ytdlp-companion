@@ -1,7 +1,7 @@
 [package]
 name = "all-in-one-helper"
-version = "2.2.0"
-description = "All In One Helper — 로컬 미디어 게이트웨이 (v2.2.0: 4중 방어 — 포트 fallback 9876/9877, takeover bounded retry, 웹 polling backoff, X버튼 안내)"
+version = "2.2.1"
+description = "All In One Helper — 로컬 미디어 게이트웨이 (v2.2.1: Windows 검정 cmd 창 반복 팝업 차단 — cloudflared/taskkill/netstat/powershell spawn 전부 CREATE_NO_WINDOW 적용)"
 authors = ["groove1027"]
 edition = "2021"
 

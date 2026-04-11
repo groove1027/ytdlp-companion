@@ -315,7 +315,7 @@ fn find_pids_on_port(port: u16) -> Vec<u32> {
     //
     // 우리는 LISTENING 상태이고 Local Address가 :9876으로 끝나는 행만 매칭해야 한다.
     // ESTABLISHED 행(원격 주소가 9876)은 절대 매칭하지 않음.
-    let Ok(output) = Command::new("netstat")
+    let Ok(output) = crate::platform::sync_cmd("netstat")
         .args(["-ano", "-p", "TCP"])
         .output()
     else {
@@ -369,7 +369,7 @@ fn kill_pid(pid: u32) -> bool {
 
 #[cfg(target_os = "windows")]
 fn kill_pid(pid: u32) -> bool {
-    Command::new("taskkill")
+    crate::platform::sync_cmd("taskkill")
         .args(["/F", "/PID", &pid.to_string()])
         .status()
         .map(|s| s.success())

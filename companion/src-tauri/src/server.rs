@@ -88,8 +88,7 @@ pub fn kill_init_phase_child_if_any() {
         }
         #[cfg(windows)]
         {
-            use std::process::Command;
-            let _ = Command::new("taskkill")
+            let _ = platform::sync_cmd("taskkill")
                 .args(&["/F", "/PID", &pid.to_string()])
                 .status();
         }
@@ -5278,7 +5277,7 @@ async fn capture_screen_handler(Json(req): Json<CaptureScreenRequest>) -> Respon
                 $bmp.Dispose()
             }
         "#;
-        Command::new("powershell")
+        platform::sync_cmd("powershell")
             .args(["-NoProfile", "-NonInteractive", "-Command", ps_cmd])
             .env("CAPTURE_PATH", &capture_path_str)
             .status()
