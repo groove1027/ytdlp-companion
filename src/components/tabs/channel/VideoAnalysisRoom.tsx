@@ -34,8 +34,17 @@ import {
 } from '../../../services/nleExportService';
 import type { EditRoomNleTarget } from '../../../services/nleExportService';
 import { transcribeVideoAudio } from '../../../services/gemini/videoAnalysis';
+import {
+  chunkVideoAnalysisVersionIds,
+  createFailedVideoAnalysisVersions,
+  isRetryableVideoAnalysisBatchError,
+  mergeVideoAnalysisVersions,
+  runVideoAnalysisBatches,
+  type VideoAnalysisBatchRequest,
+} from '../../../services/videoAnalysisBatchService';
 import type { SceneCut } from '../../../services/sceneDetection';
 import type {
+  VideoAnalysisFailedVersion as FailedVersion,
   VideoAnalysisPreset as AnalysisPreset,
   VideoSceneRow as SceneRow,
   VideoContentIdAnalysis as ContentIdAnalysis,
@@ -1628,6 +1637,20 @@ function normalizeBatchVersionIds(
   }
 
   return normalized.sort((a, b) => a.id - b.id);
+}
+
+function getVersionRangeLabel(versionIds: number[]): string {
+  if (versionIds.length === 0) return '';
+  const firstId = versionIds[0];
+  const lastId = versionIds[versionIds.length - 1];
+  return firstId === lastId ? `V${firstId}` : `V${firstId}~V${lastId}`;
+}
+
+function summarizeFailedVersions(items: FailedVersion[]): string {
+  const labels = items
+    .map((item) => `V${item.id}`)
+    .sort((left, right) => parseInt(left.slice(1), 10) - parseInt(right.slice(1), 10));
+  return labels.join(', ');
 }
 
 /** 분석 결과(versions)에서 모든 타임코드를 초 단위로 수집 (정밀 추출) */
@@ -4074,12 +4097,12 @@ const VideoAnalysisRoom: React.FC = () => {
   // ── Zustand 스토어 (탭 전환 시 영속) ──
   const store = useVideoAnalysisStore();
   const {
-    inputMode, youtubeUrl, youtubeUrls, selectedPreset, rawResult, versions, thumbnails, isFrameUpgrading, error, expandedId,
+    inputMode, youtubeUrl, youtubeUrls, selectedPreset, rawResult, versions, failedVersions, thumbnails, isFrameUpgrading, error, expandedId,
     targetDuration, setTargetDuration,
     keepOriginalOrder, setKeepOriginalOrder,
     versionCount, setVersionCount,
     setInputMode, setYoutubeUrl, updateYoutubeUrl, addYoutubeUrl, removeYoutubeUrl,
-    setSelectedPreset, setRawResult, setVersions, setThumbnails, setIsFrameUpgrading,
+    setSelectedPreset, setRawResult, setVersions, setFailedVersions, setThumbnails, setIsFrameUpgrading,
     setError, setExpandedId, cacheResultSnapshot, restoreFromCache, resetResults,
     clearPresetCache,
     savedSlots, activeSlotId, loadSlot, removeSlot, newAnalysis, loadAllSlots, saveSlot,
@@ -4420,9 +4443,17 @@ const VideoAnalysisRoom: React.FC = () => {
   const ffmpegPreloaded = useRef(false);
 
   // ── 프리셋 전환 시 캐시 복원 or 신규 분석 ──
-  const handleAnalyze = async (preset: AnalysisPreset, force = false) => {
+  const handleAnalyze = async (
+    preset: AnalysisPreset,
+    force = false,
+    retryVersionIds?: number[],
+  ) => {
     if (!requireAuth('영상 분석')) return;
     if (!hasInput) return;
+    const normalizedRetryVersionIds = Array.from(
+      new Set((retryVersionIds || []).filter((id) => Number.isInteger(id) && id > 0)),
+    ).sort((left, right) => left - right);
+    const isRetryRun = normalizedRetryVersionIds.length > 0;
     // (Codex 프론트 4차 High) 동기 lock — useRef 즉시 set으로 race 차단
     if (handleAnalyzeLockRef.current) {
       console.warn('[VideoAnalysis] 이미 분석 중 — 중복 호출 무시');
@@ -4483,27 +4514,28 @@ const VideoAnalysisRoom: React.FC = () => {
 
     // 현재 결과를 기존 프리셋 캐시에 저장 (전환 전 보존)
     // [FIX #316] rawResult 유실 시에도 versions 기반 캐시 가능하도록 조건 완화
-    if (selectedPreset && (rawResult || versions.length > 0)) {
+    if (!isRetryRun && selectedPreset && (rawResult || versions.length > 0)) {
       const currentResult = useVideoAnalysisStore.getState();
       cacheResultSnapshot(
         selectedPreset,
         sourceCacheKey,
         currentResult.rawResult,
         currentResult.versions,
+        currentResult.failedVersions,
         currentResult.thumbnails,
         currentResult.resultCache[selectedPreset]?.stamp,
       );
     }
 
     // 강제 재생성 시 해당 프리셋 캐시 삭제
-    if (force) {
+    if (force && !isRetryRun) {
       clearPresetCache(preset);
       evictSourcePrepCacheKey(sourceCacheKey);
       sourceDiarizationCacheRef.current.delete(sourceCacheKey);
     }
 
     // 캐시에 이미 결과가 있으면 복원만 하고 종료
-    if (!force && restoreFromCache(preset, sourceCacheKey)) return;
+    if (!force && !isRetryRun && restoreFromCache(preset, sourceCacheKey)) return;
 
     // [FIX #157] 이전 분석 abort + 새 AbortController 생성
     analysisAbortRef.current?.abort();
@@ -4530,7 +4562,20 @@ const VideoAnalysisRoom: React.FC = () => {
     analysisStartRef.current = Date.now();
     const perfRunId = resetAnalysisPerf(preset);
     const analysisCacheStamp = `${preset}:${perfRunId}:${Date.now()}`;
-    resetResults();
+    const existingStoreSnapshot = useVideoAnalysisStore.getState();
+    const retryBaseVersions = isRetryRun ? existingStoreSnapshot.versions : [];
+    const retryBaseRawResult = isRetryRun ? existingStoreSnapshot.rawResult : '';
+    const retryRemainingFailedVersions = isRetryRun
+      ? existingStoreSnapshot.failedVersions.filter(
+          (item) => !normalizedRetryVersionIds.includes(item.id),
+        )
+      : [];
+    if (isRetryRun) {
+      setError(null);
+      setFailedVersions([]);
+    } else {
+      resetResults();
+    }
 
     // [FIX #378 + #523] 분석 시작 직후 글로벌 타임아웃 설정 — 전처리+AI 전체 보호
     // 롱폼(10분+) 영상은 STT+프레임 추출에 시간이 더 필요하므로 타임아웃 확대
@@ -5182,6 +5227,10 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       const currentKeepOrder = useVideoAnalysisStore.getState().keepOriginalOrder;
       const currentVersionCount = useVideoAnalysisStore.getState().versionCount;
       const effectiveVersionCount = Math.min(currentVersionCount, getPresetMaxVersionCount(preset));
+      const requestedVersionIds = isRetryRun
+        ? normalizedRetryVersionIds
+        : Array.from({ length: effectiveVersionCount }, (_, index) => index + 1);
+      const requestedVersionCount = requestedVersionIds.length;
       const sourceCutCountHint = (preset === 'tikitaka' || preset === 'snack' || preset === 'dubbing' || preset === 's2s' || preset === 'l2s')
         ? await waitForPromptSceneCutCount(singleSourceSceneCutsPromise, REMIX_PROMPT_SCENE_CUT_TIMEOUT_MS)
         : 0;
@@ -5194,14 +5243,14 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
 - 사용자가 이미 기획한 장면 순서를 유지하면서 자막만 추출하는 것이 목적입니다.`
         : '';
       const buildPromptForBatch = (
-        versionOffset: number = 0,
-        batchVersionCount: number = effectiveVersionCount,
+        versionOffset: number = requestedVersionIds[0] ? requestedVersionIds[0] - 1 : 0,
+        batchVersionCount: number = requestedVersionCount,
       ): string => {
         let prompt = buildUserMessage(
           inputDesc,
           preset,
           currentTargetDuration,
-          effectiveVersionCount,
+          requestedVersionCount,
           knownDurationSec,
           sourceCutCountHint,
           versionOffset,
@@ -5210,7 +5259,6 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
         if (keepOrderInstruction) prompt += keepOrderInstruction;
         return prompt;
       };
-      const userPrompt = buildPromptForBatch();
 
       const signal = abortCtrl.signal;
 
@@ -5412,8 +5460,9 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
         }
       };
 
-      let text: string;
-      let parsed: VersionItem[];
+      let text = '';
+      let parsed: VersionItem[] = [];
+      let nextFailedVersions: FailedVersion[] = [];
       const removedEmptyVersionIds = new Set<number>();
 
       // ★ [FIX #582] 동적 maxTokens — 프리셋/버전수/영상길이 기반 최적화
@@ -5427,7 +5476,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       const perVersionTokens: Record<string, number> = {
         snack: 1400, condensed: 1100, tikitaka: 1900,
         shopping: 1500, alltts: allttsPerVersion, deep: 4000,
-        dubbing: 4200, s2s: 1100, l2s: 1600,
+        dubbing: 4200, s2s: 1700, l2s: 2200,
       };
       const fixedOverheadTokens: Record<string, number> = {
         snack: 1000, condensed: 1000, tikitaka: 1600,
@@ -5444,21 +5493,22 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
         : 14000;
       const isHeavyPreset = preset === 'deep' || preset === 'alltts';
       const maxTokensCap = preset === 'dubbing' ? 22000
-        : preset === 's2s' ? 14000
-        : preset === 'l2s' ? 18000
+        : preset === 's2s' ? 18000
+        : preset === 'l2s' ? 22000
         : knownDurationSec <= 75 ? 28000
         : isHeavyPreset && knownDurationSec > 300 ? 65000
         : isHeavyPreset ? 55000
         : 36000;
-      const estimatedTotalTokens = Math.round(fot + pvt * effectiveVersionCount * sourceFactor);
+      const estimatedTotalTokens = Math.round(fot + pvt * requestedVersionCount * sourceFactor);
       const safeLimitPerCall = Math.max(PER_CALL_SAFE_LIMIT - fot, pvt);
       const maxVersionsPerCall = Math.max(1, Math.floor(safeLimitPerCall / Math.max(1, pvt * sourceFactor)));
-      const shouldSplitBatches = estimatedTotalTokens > PER_CALL_SAFE_LIMIT
-        && effectiveVersionCount > 1
-        && maxVersionsPerCall < effectiveVersionCount;
-      // 균등 분할: [9,1] 대신 [5,5] 형태로 배치 크기를 균등하게 분배
-      const batchCount = shouldSplitBatches ? Math.ceil(effectiveVersionCount / maxVersionsPerCall) : 1;
-      const versionsPerBatch = shouldSplitBatches ? Math.ceil(effectiveVersionCount / batchCount) : effectiveVersionCount;
+      const preferredMaxVersionsPerCall: Partial<Record<AnalysisPreset, number>> = {
+        dubbing: 2,
+        s2s: 4,
+        l2s: 4,
+      };
+      const perPresetVersionCap = preferredMaxVersionsPerCall[preset] || requestedVersionCount;
+      const targetMaxVersionsPerCall = Math.max(1, Math.min(maxVersionsPerCall, perPresetVersionCap));
       const buildMaxTokens = (
         requestedVersionCount: number,
         perCallCap: number = maxTokensCap,
@@ -5466,22 +5516,15 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
         Math.max(Math.round(fot + pvt * requestedVersionCount * sourceFactor), minTokensCap),
         perCallCap,
       );
-      const maxTokens = buildMaxTokens(effectiveVersionCount);
       const splitMaxTokensCap = Math.min(maxTokensCap, PER_CALL_SAFE_LIMIT);
-      const analysisBatches = shouldSplitBatches
-        ? Array.from(
-            { length: Math.ceil(effectiveVersionCount / versionsPerBatch) },
-            (_, batchIndex) => {
-              const versionOffset = batchIndex * versionsPerBatch;
-              const versionCount = Math.min(versionsPerBatch, effectiveVersionCount - versionOffset);
-              return {
-                versionOffset,
-                versionCount,
-                maxTokens: buildMaxTokens(versionCount, splitMaxTokensCap),
-              };
-            },
-          )
-        : [{ versionOffset: 0, versionCount: effectiveVersionCount, maxTokens }];
+      const analysisBatches: VideoAnalysisBatchRequest[] = chunkVideoAnalysisVersionIds(
+        requestedVersionIds,
+        targetMaxVersionsPerCall,
+      ).map((batch) => ({
+        ...batch,
+        maxTokens: buildMaxTokens(batch.versionCount, splitMaxTokensCap),
+      }));
+      const shouldSplitBatches = analysisBatches.length > 1;
       if (uploadedFiles.length > 0 && frames.length > 0 && !videoUri) {
         showToast('프레임 기반 분석 모드로 진행합니다. 잠시만 기다려주세요...', 4000);
       }
@@ -5539,66 +5582,61 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
         return lazyDiarizationPromise;
       };
 
-      if (!shouldSplitBatches) {
-        text = await callAI(userPrompt, maxTokens);
-        // [FIX] AI 응답 수신 즉시 글로벌 타임아웃 해제 — 5분 타임아웃과 1초 차이로
-        // 응답은 받았지만 parseVersions/setVersions 전에 abort 되는 레이스 컨디션 방지
-        if (globalTimeout) { clearTimeout(globalTimeout); globalTimeout = null; }
-        const sanitizedParsed = sanitizeParsedVersions(parseVersions(text));
-        sanitizedParsed.removedEmptyIds.forEach((id) => removedEmptyVersionIds.add(id));
-        parsed = sanitizedParsed.versions;
-      } else {
-        console.log(`[VideoAnalysis] 적응형 배치 분할 활성화: ${analysisBatches.length}개 배치 (${versionsPerBatch}버전/배치, 예상 ${estimatedTotalTokens} tokens)`);
-        const batchResults = await Promise.allSettled(
-          analysisBatches.map(async (batch) => {
-            const batchPrompt = buildPromptForBatch(batch.versionOffset, batch.versionCount);
-            const batchText = await callAI(batchPrompt, batch.maxTokens);
-            const sanitizedBatchParsed = sanitizeParsedVersions(parseVersions(batchText));
-            const { versions: trimmedBatchParsed, removedCount } = trimTrailingIncompleteVersions(sanitizedBatchParsed.versions);
-            return {
-              ...batch,
-              text: batchText,
-              parsed: normalizeBatchVersionIds(trimmedBatchParsed, batch.versionOffset, batch.versionCount),
-              removedCount,
-              removedEmptyIds: sanitizedBatchParsed.removedEmptyIds
-                .map((id) => getBatchVersionIdCandidates(id, batch.versionOffset, batch.versionCount)[0])
-                .filter((id): id is number => typeof id === 'number'),
-            };
-          }),
-        );
-        // [FIX] 배치 응답 수신 후 글로벌 타임아웃 해제 — 레이스 컨디션 방지
-        if (globalTimeout) { clearTimeout(globalTimeout); globalTimeout = null; }
-        const successfulBatches = batchResults
-          .flatMap((result) => result.status === 'fulfilled' ? [result.value] : [])
-          .sort((a, b) => a.versionOffset - b.versionOffset);
-        if (successfulBatches.length === 0) {
-          const firstRejected = batchResults.find((result): result is PromiseRejectedResult => result.status === 'rejected');
-          throw firstRejected?.reason ?? new Error('모든 분석 배치가 실패했습니다.');
-        }
-
-        const failedBatchCount = batchResults.length - successfulBatches.length;
-        const removedIncompleteCount = successfulBatches.reduce((sum, batch) => sum + batch.removedCount, 0);
-        successfulBatches.forEach((batch) => batch.removedEmptyIds.forEach((id) => removedEmptyVersionIds.add(id)));
-        if (removedIncompleteCount > 0) {
-          console.warn(`[VideoAnalysis] ⚠️ 배치 응답에서 불완전한 마지막 버전 ${removedIncompleteCount}개 제거`);
-        }
-        if (failedBatchCount > 0) {
-          showToast(`⚠️ ${analysisBatches.length}개 배치 중 ${failedBatchCount}개가 실패했어요. 성공한 배치만 먼저 반영합니다.`, 6000);
-        }
-
-        text = successfulBatches.map(batch => batch.text).join('\n\n');
-        const seenVersionIds = new Set<number>();
-        parsed = successfulBatches
-          .flatMap(batch => batch.parsed)
-          .filter((version) => {
-            if (seenVersionIds.has(version.id)) return false;
-            seenVersionIds.add(version.id);
-            return true;
-          })
-          .sort((a, b) => a.id - b.id);
+      if (shouldSplitBatches) {
+        console.log(`[VideoAnalysis] 안정화 배치 실행: ${analysisBatches.length}개 배치 (${targetMaxVersionsPerCall}버전/배치 상한, 예상 ${estimatedTotalTokens} tokens)`);
+      }
+      const batchExecution = await runVideoAnalysisBatches({
+        batches: analysisBatches,
+        maxAttempts: 2,
+        retryDelayMs: analysisBatches.length > 1 ? 350 : 0,
+        retryableError: isRetryableVideoAnalysisBatchError,
+        executeBatch: async (batch, attempt) => {
+          if (attempt > 1) {
+            console.warn(`[VideoAnalysis] ${getVersionRangeLabel(batch.versionIds)} 재시도 (${attempt}/2)`);
+          }
+          const batchPrompt = buildPromptForBatch(batch.versionOffset, batch.versionCount);
+          const batchText = await callAI(batchPrompt, batch.maxTokens);
+          const sanitizedBatchParsed = sanitizeParsedVersions(parseVersions(batchText));
+          sanitizedBatchParsed.removedEmptyIds
+            .map((id) => getBatchVersionIdCandidates(id, batch.versionOffset, batch.versionCount)[0])
+            .filter((id): id is number => typeof id === 'number')
+            .forEach((id) => removedEmptyVersionIds.add(id));
+          const { versions: trimmedBatchParsed, removedCount } = trimTrailingIncompleteVersions(sanitizedBatchParsed.versions);
+          if (removedCount > 0) {
+            console.warn(`[VideoAnalysis] ⚠️ ${getVersionRangeLabel(batch.versionIds)} 응답에서 불완전한 마지막 버전 ${removedCount}개 제거`);
+          }
+          return {
+            text: batchText,
+            versions: normalizeBatchVersionIds(trimmedBatchParsed, batch.versionOffset, batch.versionCount),
+            missingReason: `${getVersionRangeLabel(batch.versionIds)} 응답이 중간에서 끊기거나 비어 있어 해당 VERSION만 누락되었어요.`,
+          };
+        },
+      });
+      // [FIX] 배치 응답 수신 후 글로벌 타임아웃 해제 — 레이스 컨디션 방지
+      if (globalTimeout) { clearTimeout(globalTimeout); globalTimeout = null; }
+      const successfulBatches = batchExecution.successfulBatches
+        .sort((left, right) => left.batch.versionOffset - right.batch.versionOffset);
+      if (successfulBatches.length === 0 && !isRetryRun) {
+        throw batchExecution.firstError ?? new Error('모든 분석 배치가 실패했습니다.');
       }
 
-      setRawResult(text);
+      const failedBatchCount = analysisBatches.length - successfulBatches.length;
+      nextFailedVersions = batchExecution.failedVersions;
+      if (failedBatchCount > 0) {
+        showToast(`⚠️ ${analysisBatches.length}개 배치 중 ${failedBatchCount}개가 실패했어요. 성공한 결과만 먼저 유지합니다.`, 6000);
+      }
+
+      text = successfulBatches.map((batch) => batch.text).join('\n\n');
+      const seenVersionIds = new Set<number>();
+      parsed = successfulBatches
+        .flatMap((batch) => batch.versions)
+        .filter((version) => {
+          if (seenVersionIds.has(version.id)) return false;
+          seenVersionIds.add(version.id);
+          return true;
+        })
+        .sort((left, right) => left.id - right.id);
+
       const trimmedParsed = trimTrailingIncompleteVersions(parsed);
       parsed = trimmedParsed.versions;
       const sanitizedParsed = sanitizeParsedVersions(parsed);
@@ -5612,37 +5650,69 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
         console.warn(`[VideoAnalysis] ⚠️ 내용이 비어 있는 VERSION 제거: ${removedLabel}`);
         showToast(`⚠️ 내용이 비어 있는 VERSION ${removedLabel}은 제외하고 반영했어요.`, 7000);
       }
-      // [FIX #582 v2] Codex P1: 응답 잘림 감지 — 요청 버전수보다 적게 파싱되면 경고
-      if (parsed.length === 0) {
-        throw new Error('AI 응답에서 유효한 버전을 파싱할 수 없었습니다. 다시 시도해주세요.');
+      const parsedRequestedIds = new Set(parsed.map((version) => version.id));
+      const missingVersionIds = requestedVersionIds.filter((id) => !parsedRequestedIds.has(id));
+      if (missingVersionIds.length > 0) {
+        const knownFailedIds = new Set(nextFailedVersions.map((item) => item.id));
+        nextFailedVersions = [
+          ...nextFailedVersions,
+          ...createFailedVideoAnalysisVersions(
+            missingVersionIds.filter((id) => !knownFailedIds.has(id)),
+            'AI 응답이 중간에 끊기거나 비어 있어 해당 VERSION만 누락되었어요.',
+          ),
+        ].sort((left, right) => left.id - right.id);
       }
-      if (parsed.length < effectiveVersionCount) {
-        // [FIX #678] deep/heavy 프리셋에서 버전이 심하게 부족하면 품질 경고 추가
-        const isSeverelyTruncated = parsed.length <= Math.ceil(effectiveVersionCount / 3);
-        if (isSeverelyTruncated && isHeavyPreset) {
-          showToast(`⚠️ AI 서버 응답이 불안정하여 ${effectiveVersionCount}개 중 ${parsed.length}개만 생성되었어요. 잠시 후 다시 시도하면 더 좋은 결과를 받으실 수 있어요.`, 8000);
+
+      const mergedText = isRetryRun
+        ? [retryBaseRawResult.trim(), text.trim()].filter(Boolean).join('\n\n')
+        : text;
+      const mergedParsed = isRetryRun
+        ? mergeVideoAnalysisVersions(retryBaseVersions, parsed)
+        : parsed;
+      const mergedFailedVersions = [...retryRemainingFailedVersions, ...nextFailedVersions]
+        .reduce<FailedVersion[]>((acc, item) => {
+          if (acc.some((existing) => existing.id === item.id)) return acc;
+          acc.push(item);
+          return acc;
+        }, [])
+        .sort((left, right) => left.id - right.id);
+
+      if (mergedParsed.length === 0) {
+        throw batchExecution.firstError ?? new Error('AI 응답에서 유효한 버전을 파싱할 수 없었습니다. 다시 시도해주세요.');
+      }
+      if (nextFailedVersions.length > 0) {
+        const failedLabel = summarizeFailedVersions(nextFailedVersions);
+        const succeededCount = Math.max(0, requestedVersionCount - nextFailedVersions.length);
+        const isSeverelyTruncated = succeededCount <= Math.ceil(requestedVersionCount / 3);
+        if (isRetryRun) {
+          showToast(`⚠️ 재시도 후에도 ${failedLabel}이 남았습니다. 실패한 버전만 다시 시도할 수 있어요.`, 8000);
+        } else if (isSeverelyTruncated && isHeavyPreset) {
+          showToast(`⚠️ AI 서버 응답이 불안정하여 ${requestedVersionCount}개 중 ${succeededCount}개만 생성되었고 ${failedLabel}이 누락되었어요.`, 8000);
         } else {
-          showToast(`⚠️ ${effectiveVersionCount}개 중 ${parsed.length}개 버전만 생성되었어요. 버전 수를 줄이면 더 안정적이에요.`, 6000);
+          showToast(`⚠️ ${requestedVersionCount}개 중 ${succeededCount}개만 생성되었고 ${failedLabel}이 누락되었어요.`, 7000);
         }
       }
       // [FIX #948] 타임코드 검증 — 롱폼에서 AI 할루시네이션 타임코드 경고
       if (knownDurationSec >= 120) {
-        for (const v of parsed) {
+        for (const v of mergedParsed) {
           const result = validateSceneTimecodes(v.scenes, knownDurationSec);
           if (result.hasIssues) {
             result.warnings.forEach(w => console.warn(`[VideoAnalysis] VERSION ${v.id}: ${w}`));
           }
         }
       }
-      setVersions(parsed);
-      let cachedVersionsSnapshot = parsed;
+      setRawResult(mergedText);
+      setVersions(mergedParsed);
+      setFailedVersions(mergedFailedVersions);
+      let cachedVersionsSnapshot = mergedParsed;
+      let cachedFailedVersionsSnapshot = mergedFailedVersions;
       let cachedThumbnailsSnapshot = useVideoAnalysisStore.getState().thumbnails;
       const hasActiveCacheStamp = (): boolean =>
         useVideoAnalysisStore.getState().resultCache[preset]?.stamp === analysisCacheStamp;
       const shouldApplyBackgroundResult = (): boolean => {
         const currentStore = useVideoAnalysisStore.getState();
         return currentStore.selectedPreset === preset
-          && currentStore.rawResult === text
+          && currentStore.rawResult === mergedText
           && hasActiveCacheStamp();
       };
       const syncSnapshotCache = (force = false): void => {
@@ -5650,8 +5720,9 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
         cacheResultSnapshot(
           preset,
           sourceCacheKey,
-          text,
+          mergedText,
           cachedVersionsSnapshot,
+          cachedFailedVersionsSnapshot,
           cachedThumbnailsSnapshot,
           analysisCacheStamp,
         );
@@ -6738,11 +6809,21 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       )}
 
       {/* ═══ 10가지 버전 아코디언 ═══ */}
-      {versions.length > 0 && (() => {
+      {(versions.length > 0 || failedVersions.length > 0) && (() => {
         const expectedTotal = selectedPreset
           ? Math.min(versionCount, getPresetMaxVersionCount(selectedPreset))
           : versionCount;
         const isStillGenerating = isAnalyzing && versions.length < expectedTotal;
+        const versionMap = new Map(versions.map((version) => [version.id, version]));
+        const failedVersionMap = new Map(failedVersions.map((item) => [item.id, item]));
+        const maxVersionId = Math.max(
+          expectedTotal,
+          ...versions.map((version) => version.id),
+          ...failedVersions.map((item) => item.id),
+          0,
+        );
+        const orderedVersionIds = Array.from({ length: maxVersionId }, (_, index) => index + 1)
+          .filter((versionId) => versionMap.has(versionId) || failedVersionMap.has(versionId));
         return (
         <div className="space-y-4">
           {/* 진행 상황 배너 — 아직 생성 중일 때만 표시 */}
@@ -6768,6 +6849,31 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
             </div>
           )}
 
+          {failedVersions.length > 0 && (
+            <div className="bg-amber-900/20 border border-amber-500/30 rounded-xl p-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div className="min-w-0">
+                <p className="text-amber-300 font-bold text-sm">
+                  성공 {versions.length}개, 실패 {failedVersions.length}개
+                </p>
+                <p className="text-amber-200/80 text-sm mt-1">
+                  누락된 슬롯: {summarizeFailedVersions(failedVersions)}
+                </p>
+                <p className="text-amber-200/60 text-xs mt-1">
+                  실패한 VERSION만 다시 돌릴 수 있습니다. 기존 성공 결과는 유지됩니다.
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={isAnalyzing || !selectedPreset}
+                onClick={() => selectedPreset && handleAnalyze(selectedPreset, false, failedVersions.map((item) => item.id))}
+                className="flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg bg-amber-600/20 text-amber-300 border border-amber-500/30 hover:bg-amber-600/30 text-sm font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                실패 버전만 재시도
+              </button>
+            </div>
+          )}
+
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-bold text-white flex items-center gap-2">
               <span className="w-8 h-8 bg-gradient-to-br from-blue-500 to-violet-600 rounded-lg flex items-center justify-center text-sm">🎬</span>
@@ -6787,7 +6893,60 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
           </div>
 
           <div className="space-y-2">
-            {versions.map((v) => {
+            {orderedVersionIds.map((versionId) => {
+              const v = versionMap.get(versionId);
+              const failedVersion = failedVersionMap.get(versionId);
+              if (!v && failedVersion) {
+                const isExp = expandedId === versionId;
+                const ci = (versionId - 1) % VERSION_COLORS.length;
+                const c = VERSION_COLORS[ci];
+                return (
+                  <div
+                    key={`failed-${versionId}`}
+                    className={`rounded-xl border transition-all ${isExp ? 'bg-amber-900/20 border-amber-500/40' : 'bg-gray-800/50 border-amber-700/40 hover:border-amber-500/50'}`}
+                  >
+                    <div className="w-full flex items-center gap-3 px-4 py-3.5">
+                      <button
+                        type="button"
+                        onClick={() => setExpandedId(isExp ? null : versionId)}
+                        className="flex items-center gap-3 flex-1 min-w-0 text-left"
+                      >
+                        <span className={`w-7 h-7 rounded-full ${c.numBg} flex items-center justify-center text-xs font-bold text-white flex-shrink-0`}>{versionId}</span>
+                        <span className="flex-1 text-sm font-bold truncate text-amber-200">
+                          VERSION {versionId} 생성 실패
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isAnalyzing || !selectedPreset}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          if (!selectedPreset) return;
+                          handleAnalyze(selectedPreset, false, [versionId]);
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-300 hover:bg-amber-500/20 transition-all flex-shrink-0 text-[11px] font-bold disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        재시도
+                      </button>
+                      <button type="button" onClick={() => setExpandedId(isExp ? null : versionId)} className="flex-shrink-0">
+                        <svg className={`w-4 h-4 text-amber-300/70 transition-transform duration-200 ${isExp ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </button>
+                    </div>
+                    {isExp && (
+                      <div className="px-4 pb-4">
+                        <div className="bg-amber-950/30 rounded-lg px-3 py-3 border border-amber-700/30 space-y-2">
+                          <p className="text-amber-200 text-sm font-semibold">누락 원인</p>
+                          <p className="text-amber-100/80 text-sm leading-relaxed">{failedVersion.reason}</p>
+                          <p className="text-amber-200/60 text-xs">실패한 VERSION만 다시 시도하면 기존 성공 결과는 유지됩니다.</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              }
+              if (!v) return null;
               const isExp = expandedId === v.id;
               const ci = (v.id - 1) % VERSION_COLORS.length;
               const c = VERSION_COLORS[ci];

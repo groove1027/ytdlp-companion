@@ -3,6 +3,7 @@ import { persist } from 'zustand/middleware';
 import { showToast } from './uiStore';
 import { logger } from '../services/LoggerService';
 import type {
+  VideoAnalysisFailedVersion,
   VideoAnalysisPreset,
   VideoVersionItem,
   VideoTimedFrame,
@@ -21,6 +22,7 @@ interface ResultCache {
   raw: string;
   versions: VideoVersionItem[];
   thumbs: VideoTimedFrame[];
+  failedVersions: VideoAnalysisFailedVersion[];
 }
 
 interface VideoAnalysisStore {
@@ -33,6 +35,7 @@ interface VideoAnalysisStore {
   selectedPreset: VideoAnalysisPreset | null;
   rawResult: string;
   versions: VideoVersionItem[];
+  failedVersions: VideoAnalysisFailedVersion[];
   thumbnails: VideoTimedFrame[];
   isFrameUpgrading: boolean; // 백그라운드 정밀 프레임 업그레이드 진행 중
   error: string | null;
@@ -74,6 +77,7 @@ interface VideoAnalysisStore {
   setSelectedPreset: (preset: VideoAnalysisPreset | null) => void;
   setRawResult: (raw: string) => void;
   setVersions: (versions: VideoVersionItem[]) => void;
+  setFailedVersions: (items: VideoAnalysisFailedVersion[]) => void;
   setThumbnails: (thumbs: VideoTimedFrame[]) => void;
   setIsFrameUpgrading: (val: boolean) => void;
   setError: (error: string | null) => void;
@@ -87,6 +91,7 @@ interface VideoAnalysisStore {
     sourceKey: string | undefined,
     rawResult: string,
     versions: VideoVersionItem[],
+    failedVersions: VideoAnalysisFailedVersion[],
     thumbnails: VideoTimedFrame[],
     stamp?: string,
   ) => void;
@@ -160,6 +165,7 @@ const INITIAL_STATE = {
   selectedPreset: null as VideoAnalysisPreset | null,
   rawResult: '',
   versions: [] as VideoVersionItem[],
+  failedVersions: [] as VideoAnalysisFailedVersion[],
   thumbnails: [] as VideoTimedFrame[],
   isFrameUpgrading: false,
   error: null as string | null,
@@ -239,6 +245,10 @@ function cloneVersionsForCache(versions: VideoVersionItem[]): VideoVersionItem[]
   }));
 }
 
+function cloneFailedVersionsForCache(items: VideoAnalysisFailedVersion[]): VideoAnalysisFailedVersion[] {
+  return items.map((item) => ({ ...item }));
+}
+
 function cloneTimedFrames(frames: VideoTimedFrame[]): VideoTimedFrame[] {
   return frames.map((frame) => ({ ...frame }));
 }
@@ -247,6 +257,7 @@ function buildLiveResultCacheEntry(
   sourceKey: string | undefined,
   rawResult: string,
   versions: VideoVersionItem[],
+  failedVersions: VideoAnalysisFailedVersion[],
   thumbnails: VideoTimedFrame[],
   stamp?: string,
 ): ResultCache {
@@ -256,6 +267,7 @@ function buildLiveResultCacheEntry(
     raw: rawResult,
     versions: cloneVersionsForCache(versions),
     thumbs: cloneTimedFrames(thumbnails),
+    failedVersions: cloneFailedVersionsForCache(failedVersions),
   };
 }
 
@@ -265,6 +277,7 @@ function buildPersistableResultCacheEntry(entry: ResultCache): ResultCache {
     raw: trimStoredText(entry.raw, PERSIST_RAW_RESULT_LIMIT),
     versions: compactVersionsForPersistence(entry.versions),
     thumbs: buildPersistableThumbs(entry.thumbs),
+    failedVersions: cloneFailedVersionsForCache(entry.failedVersions || []),
   };
 }
 
@@ -333,6 +346,7 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
             youtubeUrls: [url],
             rawResult: '',
             versions: [],
+            failedVersions: [],
             thumbnails: [],
             error: null,
             expandedId: null,
@@ -361,6 +375,7 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
           ...(changed ? {
             rawResult: '',
             versions: [],
+            failedVersions: [],
             thumbnails: [],
             error: null,
             expandedId: null,
@@ -387,13 +402,14 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
       setSelectedPreset: (preset) => set({ selectedPreset: preset }),
       setRawResult: (raw) => set({ rawResult: raw }),
       setVersions: (versions) => set({ versions }),
+      setFailedVersions: (failedVersions) => set({ failedVersions }),
       setThumbnails: (thumbs) => set({ thumbnails: compactTimedFrames(thumbs, STATE_THUMBNAIL_LIMIT) }),
       setIsFrameUpgrading: (val) => set({ isFrameUpgrading: val }),
       setError: (error) => set({ error }),
       setExpandedId: (id) => set({ expandedId: id }),
 
       cacheCurrentResult: (preset, sourceKey) => {
-        const { rawResult, versions, thumbnails, resultCache } = get();
+        const { rawResult, versions, failedVersions, thumbnails, resultCache } = get();
         // [FIX #316] rawResult가 비어도 versions가 있으면 캐시 허용 — slimValue로 rawResult 유실 시 비주얼 복구 불가 방지
         if (!rawResult && versions.length === 0) return;
         const currentStamp = resultCache[preset]?.sourceKey === sourceKey
@@ -403,17 +419,17 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
           resultCache: buildNextLiveResultCache(
             resultCache,
             preset,
-            buildLiveResultCacheEntry(sourceKey, rawResult, versions, thumbnails, currentStamp),
+            buildLiveResultCacheEntry(sourceKey, rawResult, versions, failedVersions, thumbnails, currentStamp),
           ),
         });
       },
-      cacheResultSnapshot: (preset, sourceKey, rawResult, versions, thumbnails, stamp) => {
+      cacheResultSnapshot: (preset, sourceKey, rawResult, versions, failedVersions, thumbnails, stamp) => {
         if (!rawResult && versions.length === 0) return;
         set((state) => ({
           resultCache: buildNextLiveResultCache(
             state.resultCache,
             preset,
-            buildLiveResultCacheEntry(sourceKey, rawResult, versions, thumbnails, stamp),
+            buildLiveResultCacheEntry(sourceKey, rawResult, versions, failedVersions, thumbnails, stamp),
           ),
         }));
       },
@@ -426,6 +442,7 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
           selectedPreset: preset,
           rawResult: cached.raw,
           versions: cloneVersionsForCache(cached.versions),
+          failedVersions: cloneFailedVersionsForCache(cached.failedVersions || []),
           thumbnails: compactTimedFrames(cached.thumbs, STATE_THUMBNAIL_LIMIT),
           isFrameUpgrading: false,
           expandedId: null,
@@ -447,6 +464,7 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
         rawResult: '',
         error: null,
         versions: [],
+        failedVersions: [],
         thumbnails: [],
         isFrameUpgrading: false,
         expandedId: null,
@@ -456,14 +474,14 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
 
       // --- 슬롯 관리 ---
       saveSlot: async (name) => {
-        const { youtubeUrl, youtubeUrls, inputMode, selectedPreset, rawResult, versions, resultCache, thumbnails } = get();
+        const { youtubeUrl, youtubeUrls, inputMode, selectedPreset, rawResult, versions, failedVersions, resultCache, thumbnails } = get();
         if (!rawResult && versions.length === 0) return;
         const validUrls = youtubeUrls.filter(u => u.trim());
         const slotName = name || validUrls[0] || '영상 분석';
         const id = `va-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
         const selectedCacheSourceKey = selectedPreset ? resultCache[selectedPreset]?.sourceKey : undefined;
         const currentEntry = selectedPreset
-          ? buildLiveResultCacheEntry(selectedCacheSourceKey, rawResult, versions, thumbnails)
+          ? buildLiveResultCacheEntry(selectedCacheSourceKey, rawResult, versions, failedVersions, thumbnails)
           : undefined;
         const slot: SavedVideoAnalysisSlot = {
           id, name: slotName, youtubeUrl, youtubeUrls: validUrls,
@@ -501,6 +519,9 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
               selectedPreset: found.selectedPreset,
               rawResult: trimStoredText(found.rawResult, PERSIST_RAW_RESULT_LIMIT),
               versions: compactVersionsForPersistence(found.versions),
+              failedVersions: cloneFailedVersionsForCache(
+                (found.selectedPreset && found.resultCache?.[found.selectedPreset]?.failedVersions) || [],
+              ),
               resultCache: compactResultCacheEntries(found.resultCache || {}, found.selectedPreset, RESULT_CACHE_LIMIT),
               thumbnails: restoredThumbs,
               isFrameUpgrading: false,
@@ -539,12 +560,12 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
 
       // [FIX #313] 분석 완료 후 IndexedDB 자동 저장 — 새로고침 시 복구용
       autoSave: async () => {
-        const { youtubeUrl, youtubeUrls, inputMode, selectedPreset, rawResult, versions, resultCache, thumbnails } = get();
+        const { youtubeUrl, youtubeUrls, inputMode, selectedPreset, rawResult, versions, failedVersions, resultCache, thumbnails } = get();
         if (versions.length === 0) return;
         const validUrls = youtubeUrls.filter(u => u.trim());
         const selectedCacheSourceKey = selectedPreset ? resultCache[selectedPreset]?.sourceKey : undefined;
         const currentEntry = selectedPreset
-          ? buildLiveResultCacheEntry(selectedCacheSourceKey, rawResult, versions, thumbnails)
+          ? buildLiveResultCacheEntry(selectedCacheSourceKey, rawResult, versions, failedVersions, thumbnails)
           : undefined;
         const slot: SavedVideoAnalysisSlot = {
           id: 'va-autosave',
@@ -587,6 +608,9 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
             selectedPreset: autoSave.selectedPreset,
             rawResult: trimStoredText(autoSave.rawResult, PERSIST_RAW_RESULT_LIMIT),
             versions: compactVersionsForPersistence(autoSave.versions),
+            failedVersions: cloneFailedVersionsForCache(
+              (autoSave.selectedPreset && autoSave.resultCache?.[autoSave.selectedPreset]?.failedVersions) || [],
+            ),
             resultCache: compactResultCacheEntries(autoSave.resultCache || {}, autoSave.selectedPreset, RESULT_CACHE_LIMIT),
             thumbnails: restoredThumbs,
             isFrameUpgrading: false,
@@ -606,6 +630,7 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
         selectedPreset: null,
         rawResult: '',
         versions: [],
+        failedVersions: [],
         thumbnails: [],
         isFrameUpgrading: false,
         resultCache: {},
@@ -624,7 +649,7 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
         const persistableThumbs = buildPersistableThumbs(state.thumbnails);
         const selectedSourceKey = state.selectedPreset ? state.resultCache[state.selectedPreset]?.sourceKey : undefined;
         const currentEntry = state.selectedPreset
-          ? buildLiveResultCacheEntry(selectedSourceKey, state.rawResult, state.versions, state.thumbnails)
+          ? buildLiveResultCacheEntry(selectedSourceKey, state.rawResult, state.versions, state.failedVersions, state.thumbnails)
           : undefined;
 
         return {
@@ -637,6 +662,7 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
           selectedPreset: state.selectedPreset,
           rawResult: trimStoredText(state.rawResult, PERSIST_RAW_RESULT_LIMIT),
           versions: compactVersionsForPersistence(state.versions),
+          failedVersions: cloneFailedVersionsForCache(state.failedVersions),
           thumbnails: persistableThumbs,
           expandedId: state.expandedId,
           resultCache: buildPersistableResultCache(state.resultCache, state.selectedPreset, currentEntry),
@@ -690,6 +716,7 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
                 selectedPreset: persistedState.selectedPreset || null,
                 rawResult: persistedState.rawResult?.slice(0, 160) || '',
                 versions: [],
+                failedVersions: [],
                 thumbnails: [],
                 expandedId: null,
                 resultCache: {},

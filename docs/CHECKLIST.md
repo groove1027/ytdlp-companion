@@ -8,6 +8,18 @@
 
 ## 🟢 완료된 작업
 
+- [x] **2026-04-12 — Group F 리메이크 프리셋 batch 생성 누락 수정 (#1131 #1034 #1042)**
+  - `rg -n "리메이크 프리셋|remake preset|RemakePreset|presetBatch|preset.*batch" src/ -g '!node_modules'`, `rg -n "선택한.*프리셋|selectedPresets" src/components/tabs/channel/`, `rg -n "handleRemake|handleAnalyzeWithPresets|analyzeWithPreset|batchAnalyze" src/`, `rg -n "Promise\\.all|Promise\\.allSettled" src/components/tabs/channel/VideoAnalysisRoom.tsx src/services/`, `git log --oneline -20 -- src/components/tabs/channel/`로 리메이크 프리셋 UI, 분석 실행 핸들러, 배치 Promise 처리, 최근 프리셋 추가 커밋까지 전수 조사
+  - 원인 확인: `src/components/tabs/channel/VideoAnalysisRoom.tsx`의 `s2s`/`l2s` 토큰 상한이 낮고(`maxTokensCap`), 신규 프리셋 10버전을 단일 호출 또는 동시 배치로 밀어 넣는 구조라 응답 잘림과 일부 배치 실패가 함께 발생할 수 있었음. 기존 `Promise.allSettled`는 배치 reject는 살렸지만, 누락된 VERSION 슬롯 자체를 사용자에게 노출하거나 재시도할 경로가 없었음
+  - `src/services/videoAnalysisBatchService.ts` 신규 — VERSION ID chunking, 순차 배치 실행, 429/timeout/network 재시도, 부분 누락 VERSION 식별, 성공 버전 병합 공통 helper 추가
+  - `src/components/tabs/channel/VideoAnalysisRoom.tsx` — `handleAnalyze`를 실패분 재시도까지 처리하도록 확장하고, `s2s`/`l2s`/`dubbing`은 버전당 안전 배치 상한으로 잘라 350ms 간격 직렬 실행하도록 수정. 실패/누락 VERSION을 `failedVersions`로 추적하고, 결과 패널에 실패 슬롯 카드 + 전체/개별 재시도 버튼을 추가
+  - `src/stores/videoAnalysisStore.ts`, `src/services/storageService.ts`, `src/types.ts` — 실패 VERSION 상태를 store/resultCache/autosave 슬롯까지 함께 저장·복원하도록 확장
+  - `src/services/__tests__/videoAnalysisBatchService.test.ts` 신규 — `10개 중 1개 누락 시 9개 유지`, `retryable batch error 1회 재시도`, `버전 ID chunking` 회귀 테스트 3건 추가
+  - `cd src && node_modules/typescript/bin/tsc --noEmit`: 통과
+  - `cd src && node_modules/.bin/vitest run`: 통과 (`12 passed`, `137 passed`)
+  - `cd src && node_modules/.bin/vite build`: 성공 (기존 dynamic import / chunk-size warning만 출력)
+  - `rg -n "runVideoAnalysisBatches|failedVersions|chunkVideoAnalysisVersionIds" src/ -g '!node_modules'`, `rg -n "VERSION 10 only failed|retries retryable batch errors once before succeeding" src/services/__tests__/videoAnalysisBatchService.test.ts`: helper/store/UI/회귀 테스트 반영 위치 재검증
+
 - [x] **2026-04-12 — Group D CapCut 3건 동시 수정 (#1132 #1082 #1078)**
   - `rg -n "capcut|CapCut" companion/src-tauri/src/server.rs`, `rg --files companion/src-tauri/src | rg "capcut|CapCut"`, `rg -n "generateCapCutDraftJson|audioMaterials|source_audio|audio_track|materials\\.audios|narrationLines|CapCut" src/services/nleExportService.ts`, `rg -n "installCapCutZipToDirectory|beginCapCutDirectInstallSelection|isCapCutDirectInstallSupported|getCapCutManualInstallHint|CapCut에 바로 설치|manual install|direct install|install.*capcut" src`, `rg -n "installNleViaCompanion|filesInstalled|targetProjectPath|launch_app" src/services src/components src/stores`, `git log --oneline -20 -- src/services/nleExportService.ts`로 CapCut draft 생성, companion install 흐름, UI 진입점, 최근 변경 이력을 전수 조사
   - `companion/src-tauri/src/server.rs` 조사 결과 CapCut install root가 Windows `%LOCALAPPDATA%\\CapCut\\User Data\\Projects\\com.lveditor.draft`와 `start CapCut` 실행 방식에 고정돼 있어, 비기본 경로 감지와 install 후 강제 re-scan 문제는 native 후속 수정이 필요함을 확인. 이번 Group D 범위에서는 companion 코드는 건드리지 않고 웹 쪽 debounce/안내만 적용

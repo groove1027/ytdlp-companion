@@ -1855,6 +1855,12 @@ export interface VideoVersionItem {
   detectedLang?: string; // 감지된 원본 언어 코드 (en, ja, zh 등)
 }
 
+/** 부분 실패한 VERSION 슬롯 (재시도/에러 UI용) */
+export interface VideoAnalysisFailedVersion {
+  id: number;
+  reason: string;
+}
+
 /** 타임스탬프 포함 프레임 (비주얼 타임코드 매칭용) */
 export interface VideoTimedFrame {
   url: string;

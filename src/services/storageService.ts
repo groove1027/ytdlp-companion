@@ -1,6 +1,6 @@
 
 import { openDB, DBSchema, deleteDB } from 'idb';
-import { ProjectData, ProjectSummary, StorageEstimate, SavedCharacter, MusicLibraryItem, ChannelScript, ChannelGuideline, ChannelInfo, ChannelInputSource, VideoVersionItem, VideoAnalysisPreset, VideoTimedFrame, RemakeVersion, LegacyTopicRecommendation } from '../types';
+import { ProjectData, ProjectSummary, StorageEstimate, SavedCharacter, MusicLibraryItem, ChannelScript, ChannelGuideline, ChannelInfo, ChannelInputSource, VideoVersionItem, VideoAnalysisPreset, VideoTimedFrame, RemakeVersion, LegacyTopicRecommendation, VideoAnalysisFailedVersion } from '../types';
 import { logger } from './LoggerService';
 
 // --- DB Schema ---
@@ -60,7 +60,13 @@ export interface SavedVideoAnalysisSlot {
   selectedPreset: VideoAnalysisPreset | null;
   rawResult: string;
   versions: VideoVersionItem[];
-  resultCache: Record<string, { sourceKey?: string; raw: string; versions: VideoVersionItem[]; thumbs: VideoTimedFrame[] }>;
+  resultCache: Record<string, {
+    sourceKey?: string;
+    raw: string;
+    versions: VideoVersionItem[];
+    thumbs: VideoTimedFrame[];
+    failedVersions: VideoAnalysisFailedVersion[];
+  }>;
   savedAt: number;
 }
 
