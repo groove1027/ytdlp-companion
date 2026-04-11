@@ -23,6 +23,7 @@ import { extractStreamUrl, isYtdlpServerConfigured, getSocialMetadata, downloadS
 import { detectPlatform } from '../../../services/videoDownloadService';
 import { ensureVideoSizeForAnalysis, uploadMediaToHosting, VIDEO_ANALYSIS_MAX_BYTES, VIDEO_ANALYSIS_MAX_MB_LABEL, VIDEO_ANALYSIS_SIZE_HINT } from '../../../services/uploadService';
 import { smartUpload } from '../../../services/companion/smartUpload';
+import { fetchYouTubeVideoMeta } from '../../../services/youtubeVideoMetaService';
 import { detectSceneCuts, mergeWithAiTimecodes } from '../../../services/sceneDetection';
 import {
   buildVideoAnalysisSceneLineId,
@@ -37,8 +38,10 @@ import { transcribeVideoAudio } from '../../../services/gemini/videoAnalysis';
 import {
   chunkVideoAnalysisVersionIds,
   createFailedVideoAnalysisVersions,
+  getVideoAnalysisBatchVersionIdCandidates,
   isRetryableVideoAnalysisBatchError,
   mergeVideoAnalysisVersions,
+  normalizeVideoAnalysisBatchVersions,
   runVideoAnalysisBatches,
   type VideoAnalysisBatchRequest,
 } from '../../../services/videoAnalysisBatchService';
@@ -984,43 +987,6 @@ function matchFrameToTimecode(timeSec: number, frames: TimedFrame[]): TimedFrame
   return bestDist <= MAX_FRAME_MATCH_DISTANCE_SEC ? best : null;
 }
 
-/** YouTube 영상의 실제 메타데이터 (제목, 설명, 태그, 통계) 가져오기 */
-interface YTVideoMeta {
-  title: string;
-  description: string;
-  tags: string[];
-  duration: string;
-  viewCount: number;
-  likeCount: number;
-  channelTitle: string;
-}
-
-async function fetchYouTubeVideoMeta(videoId: string): Promise<YTVideoMeta | null> {
-  const apiKey = getYoutubeApiKey();
-  if (!apiKey) return null;
-  try {
-    const res = await monitoredFetch(
-      `https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics,contentDetails&id=${videoId}&key=${apiKey}`
-    );
-    if (!res.ok) return null;
-    const data = await res.json();
-    const item = data.items?.[0];
-    if (!item) return null;
-    return {
-      title: item.snippet?.title || '',
-      description: item.snippet?.description || '',
-      tags: item.snippet?.tags || [],
-      duration: item.contentDetails?.duration || '',
-      viewCount: parseInt(item.statistics?.viewCount || '0', 10),
-      likeCount: parseInt(item.statistics?.likeCount || '0', 10),
-      channelTitle: item.snippet?.channelTitle || '',
-    };
-  } catch (e) {
-    logger.trackSwallowedError('VideoAnalysisRoom:fetchVideoInfo', e);
-    return null;
-  }
-}
-
 // ═══════════════════════════════════════════════════
 // 정확한 타임코드 프레임 추출 (분석 결과 기반)
 // ═══════════════════════════════════════════════════
@@ -1594,49 +1560,6 @@ function trimTrailingIncompleteVersions(items: VersionItem[]): { versions: Versi
     removedCount += 1;
   }
   return { versions: trimmed, removedCount };
-}
-
-function getBatchVersionIdCandidates(
-  id: number,
-  versionOffset: number,
-  batchVersionCount: number,
-): number[] {
-  const startId = versionOffset + 1;
-  const endId = versionOffset + batchVersionCount;
-  return [
-    id >= startId && id <= endId ? id : undefined,
-    id >= 1 && id <= batchVersionCount ? versionOffset + id : undefined,
-  ].filter((value): value is number => typeof value === 'number');
-}
-
-function normalizeBatchVersionIds(
-  items: VersionItem[],
-  versionOffset: number,
-  batchVersionCount: number,
-): VersionItem[] {
-  if (items.length === 0) return [];
-
-  const startId = versionOffset + 1;
-  const endId = versionOffset + batchVersionCount;
-  const usedIds = new Set<number>();
-  const normalized: VersionItem[] = [];
-  const nextAvailableId = () => {
-    for (let id = startId; id <= endId; id += 1) {
-      if (!usedIds.has(id)) return id;
-    }
-    return endId + normalized.length + 1;
-  };
-
-  for (const item of items) {
-    if (normalized.length >= batchVersionCount) break;
-
-    const candidates = getBatchVersionIdCandidates(item.id, versionOffset, batchVersionCount);
-    const normalizedId = candidates.find(candidate => !usedIds.has(candidate)) ?? nextAvailableId();
-    usedIds.add(normalizedId);
-    normalized.push(normalizedId === item.id ? item : { ...item, id: normalizedId });
-  }
-
-  return normalized.sort((a, b) => a.id - b.id);
 }
 
 function getVersionRangeLabel(versionIds: number[]): string {
@@ -4724,6 +4647,9 @@ const VideoAnalysisRoom: React.FC = () => {
             .map((url) => extractYouTubeVideoId(url))
             .filter((videoId): videoId is string => !!videoId)
             .map((videoId) => `https://www.youtube.com/watch?v=${videoId}`);
+          if (!primaryVid || normalizedYoutubeUris.length === 0) {
+            throw new Error('YouTube URL 형식 오류입니다. `watch?v=`, `youtu.be`, `shorts/`, `embed/` 링크인지 확인해주세요.');
+          }
           if (normalizedYoutubeUris.length > 0) {
             // [FIX #964] YouTube Shorts/embed/youtu.be URL을 표준 watch URL로 정규화
             // ✅ v1beta가 /shorts/ 경로를 인식하지 못해 타임아웃되는 문제 수정
@@ -4745,8 +4671,8 @@ const VideoAnalysisRoom: React.FC = () => {
             urls.map(async (url) => {
               const vid = extractYouTubeVideoId(url);
               if (!vid) return null;
-              const meta = await fetchYouTubeVideoMeta(vid);
-              return { vid, url, meta };
+              const metaResult = await fetchYouTubeVideoMeta(vid);
+              return { vid, url, metaResult };
             })
           );
 
@@ -4755,11 +4681,13 @@ const VideoAnalysisRoom: React.FC = () => {
 
           const allFrames: TimedFrame[] = [];
           const descs: string[] = [];
+          const metaWarnings: string[] = [];
 
           for (let vi = 0; vi < metaResults.length; vi++) {
             const r = metaResults[vi];
             if (r.status !== 'fulfilled' || !r.value) continue;
-            const { vid, url, meta } = r.value;
+            const { vid, url, metaResult } = r.value;
+            const meta = metaResult.meta;
             const sourceLabel = urls.length > 1 ? `[소스 ${vi + 1}] ` : '';
 
             const durationSec = meta ? parseIsoDuration(meta.duration) : 60;
@@ -4786,7 +4714,11 @@ const VideoAnalysisRoom: React.FC = () => {
 ### 영상 설명(Description)
 ${meta.description.slice(0, 1500)}${meta.description.length > 1500 ? '\n...(이하 생략)' : ''}`);
             } else {
-              descs.push(`${sourceLabel}YouTube 영상 URL: ${url.trim()}`);
+              const errorMessage = metaResult.errorMessage || 'YouTube 메타데이터를 확인할 수 없어요.';
+              metaWarnings.push(`${sourceLabel}${errorMessage}`);
+              descs.push(`${sourceLabel}## YouTube 영상 정보 확인 실패
+- **사유**: ${errorMessage}
+- **URL**: ${url.trim()}`);
             }
           }
 
@@ -4803,6 +4735,10 @@ ${meta.description.slice(0, 1500)}${meta.description.length > 1500 ? '\n...(이�
             inputDesc += `\n\n---\n${timedTranscript}`;
             hasTimedTranscript = true;
             console.log(`[VideoAnalysis] ✅ 타임코드 보존 자막 Gemini 입력에 추가 완료`);
+          }
+          if (metaWarnings.length > 0) {
+            const warningSummary = metaWarnings.slice(0, 2).join('\n');
+            showToast(warningSummary, 7000);
           }
         } else {
           // ── 소셜 모드 (TikTok / Douyin / Xiaohongshu 등) ──
@@ -5598,7 +5534,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
           const batchText = await callAI(batchPrompt, batch.maxTokens);
           const sanitizedBatchParsed = sanitizeParsedVersions(parseVersions(batchText));
           sanitizedBatchParsed.removedEmptyIds
-            .map((id) => getBatchVersionIdCandidates(id, batch.versionOffset, batch.versionCount)[0])
+            .map((id) => getVideoAnalysisBatchVersionIdCandidates(id, batch.versionOffset, batch.versionCount)[0])
             .filter((id): id is number => typeof id === 'number')
             .forEach((id) => removedEmptyVersionIds.add(id));
           const { versions: trimmedBatchParsed, removedCount } = trimTrailingIncompleteVersions(sanitizedBatchParsed.versions);
@@ -5607,7 +5543,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
           }
           return {
             text: batchText,
-            versions: normalizeBatchVersionIds(trimmedBatchParsed, batch.versionOffset, batch.versionCount),
+            versions: normalizeVideoAnalysisBatchVersions(trimmedBatchParsed, batch.versionOffset, batch.versionCount),
             missingReason: `${getVersionRangeLabel(batch.versionIds)} 응답이 중간에서 끊기거나 비어 있어 해당 VERSION만 누락되었어요.`,
           };
         },
@@ -5824,10 +5760,12 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
         // 메타데이터에서 영상 길이 가져오기
         if (ytVid) {
           try {
-            const meta = await fetchYouTubeVideoMeta(ytVid);
-            if (meta?.duration) {
-              const m = meta.duration.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
+            const metaResult = await fetchYouTubeVideoMeta(ytVid);
+            if (metaResult.meta?.duration) {
+              const m = metaResult.meta.duration.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
               if (m) durSec = (parseInt(m[1] || '0') * 3600) + (parseInt(m[2] || '0') * 60) + parseInt(m[3] || '0');
+            } else if (metaResult.errorMessage) {
+              showToast(metaResult.errorMessage, 6000);
             }
           } catch (e) { logger.trackSwallowedError('VideoAnalysisRoom:handleAnalyze/fetchMeta', e); }
         }

@@ -4,6 +4,7 @@ import type { VideoVersionItem } from '../../types';
 import {
   chunkVideoAnalysisVersionIds,
   mergeVideoAnalysisVersions,
+  normalizeVideoAnalysisBatchVersions,
   runVideoAnalysisBatches,
   type VideoAnalysisBatchRequest,
 } from '../videoAnalysisBatchService';
@@ -86,5 +87,21 @@ describe('videoAnalysisBatchService', () => {
     expect(result.successfulBatches).toHaveLength(1);
     expect(result.successfulBatches[0].versions[0].id).toBe(1);
     expect(executeBatch).toHaveBeenCalledTimes(2);
+  });
+
+  it('prefers requested in-range versions over overflow versions when normalizing a batch', () => {
+    const versions = normalizeVideoAnalysisBatchVersions(
+      [
+        makeVersion(3),
+        makeVersion(1),
+        makeVersion(2),
+      ],
+      0,
+      2,
+    );
+
+    expect(versions.map((version) => version.id)).toEqual([1, 2]);
+    expect(versions[0].title).toBe('VERSION 1');
+    expect(versions[1].title).toBe('VERSION 2');
   });
 });

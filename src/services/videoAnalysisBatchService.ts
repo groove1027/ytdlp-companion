@@ -120,6 +120,79 @@ export const mergeVideoAnalysisVersions = (
   return Array.from(merged.values()).sort((left, right) => left.id - right.id);
 };
 
+export const getVideoAnalysisBatchVersionIdCandidates = (
+  id: number,
+  versionOffset: number,
+  batchVersionCount: number,
+): number[] => {
+  const startId = versionOffset + 1;
+  const endId = versionOffset + batchVersionCount;
+  return [
+    id >= startId && id <= endId ? id : undefined,
+    id >= 1 && id <= batchVersionCount ? versionOffset + id : undefined,
+  ].filter((value): value is number => typeof value === 'number');
+};
+
+export const normalizeVideoAnalysisBatchVersions = (
+  items: VideoVersionItem[],
+  versionOffset: number,
+  batchVersionCount: number,
+): VideoVersionItem[] => {
+  if (items.length === 0 || batchVersionCount <= 0) return [];
+
+  const startId = versionOffset + 1;
+  const endId = versionOffset + batchVersionCount;
+  const usedIds = new Set<number>();
+  const nextAvailableId = () => {
+    for (let id = startId; id <= endId; id += 1) {
+      if (!usedIds.has(id)) return id;
+    }
+    return null;
+  };
+
+  const prioritized = items
+    .map((item, index) => {
+      const candidates = getVideoAnalysisBatchVersionIdCandidates(item.id, versionOffset, batchVersionCount);
+      const directId = candidates.find((candidate) => candidate === item.id);
+      const relativeId = candidates.find((candidate) => candidate !== item.id);
+      const priority = directId ? 0 : relativeId ? 1 : 2;
+      return {
+        item,
+        index,
+        preferredId: directId ?? relativeId ?? null,
+        priority,
+      };
+    })
+    .sort((left, right) => {
+      if (left.priority !== right.priority) return left.priority - right.priority;
+      if (left.preferredId !== right.preferredId) {
+        if (left.preferredId == null) return 1;
+        if (right.preferredId == null) return -1;
+        return left.preferredId - right.preferredId;
+      }
+      return left.index - right.index;
+    });
+
+  const normalized: VideoVersionItem[] = [];
+  for (const candidate of prioritized) {
+    if (normalized.length >= batchVersionCount) break;
+
+    const resolvedId = (candidate.preferredId != null && !usedIds.has(candidate.preferredId))
+      ? candidate.preferredId
+      : nextAvailableId();
+    if (resolvedId == null) break;
+
+    usedIds.add(resolvedId);
+    normalized.push(
+      resolvedId === candidate.item.id
+        ? candidate.item
+        : { ...candidate.item, id: resolvedId },
+    );
+  }
+
+  return normalized.sort((left, right) => left.id - right.id);
+};
+
 export async function runVideoAnalysisBatches(
   options: RunVideoAnalysisBatchesOptions,
 ): Promise<RunVideoAnalysisBatchesResult> {

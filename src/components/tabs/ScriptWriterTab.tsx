@@ -17,6 +17,10 @@ import { countScenesLocally, splitScenesLocally, extractJsonFromText } from '../
 import { formatSrtTime } from '../../services/srtService';
 import { canCreateNewProject } from '../../services/storageService';
 import { parseFileToText, SUPPORTED_EXTENSIONS, SUPPORTED_FORMATS_LABEL } from '../../services/fileParserService';
+import {
+  generateScriptWithContinuations,
+  looksLikeNaturallyFinishedScript,
+} from '../../services/scriptGenerationService';
 import BenchmarkPanel from './script/BenchmarkPanel';
 import TopicRecommendCards from './script/TopicRecommendCards';
 import { useElapsedTimer, formatElapsed } from '../../hooks/useElapsedTimer';
@@ -238,6 +242,16 @@ const Spinner: React.FC = () => (
     <div className="w-6 h-6 border-2 border-gray-600 border-t-violet-400 rounded-full animate-spin" />
   </div>
 );
+
+const handleScriptContinuationFailure = (
+  currentText: string,
+  attempt: number,
+  maxAttempts: number,
+  error: unknown,
+) => {
+  console.warn(`[ScriptWriter] 이어쓰기 ${attempt}/${maxAttempts} 실패 — 부분 결과 보존 (${currentText.length}자)`, error);
+  showToast(`이어쓰기 중 네트워크 오류가 발생했지만, 지금까지 생성된 대본(${currentText.length}자)은 보존됩니다. 아래 "대본 이어쓰기"에서 나머지를 생성할 수 있습니다.`, 8000);
+};
 
 export default function ScriptWriterTab() {
   const {
@@ -678,53 +692,26 @@ ${instinctPrompt}
 - 훅(첫 3초)은 반드시 "${topic.hook}"을 기반으로 작성
 - 대본 형식: 나레이션 대본 (화자 지시 없이 내레이션만)${shortsRequirement}${regionSection}
 
-대본만 출력하세요. 제목이나 부가 설명 없이 본문만.`;
+    대본만 출력하세요. 제목이나 부가 설명 없이 본문만.`;
 
     try {
-      // [FIX #137] 토큰 배수 4x + 자동 이어쓰기로 롱폼 대본 잘림 해결
-      let finishReason = '';
-      const tokenBudget = Math.min(65536, Math.max(8000, Math.ceil(targetCharCount * 4)));
       const useWebSearch = scriptAiModel === ScriptAiModel.GEMINI_PRO;
-      let result = await scriptGenerationStream(
+      const generationResult = await generateScriptWithContinuations({
         systemPrompt,
         userPrompt,
-        (_chunk, accumulated) => { setStreamingText(accumulated); },
-        { model: scriptAiModel, temperature: 0.7, maxOutputTokens: tokenBudget, enableWebSearch: useWebSearch, signal: abortCtrl.signal, onFinish: (r) => { finishReason = r; } }
-      );
-
-      // [FIX #137 #273 #308] 이어쓰기: MAX_TOKENS 또는 분량 미달 시 자동 계속 생성 (최대 3회)
-      const MAX_CONTINUATIONS = 3;
-      for (let ci = 0; ci < MAX_CONTINUATIONS; ci++) {
-        const isTruncated = finishReason === 'MAX_TOKENS' || finishReason === 'length';
-        const isTooShort = result.length < targetCharCount * 0.85;
-        if (!isTruncated && !isTooShort) break;
-        // [FIX #273] 목표 분량 90% 이상 + 문장이 자연스럽게 끝나면 추가 불필요
-        if (result.length >= targetCharCount * 0.9 && /[.!?。다요죠네세까]$/.test(result.trimEnd())) break;
-
-        const remaining = targetCharCount - result.length;
-        const contPrompt = remaining > 0
-          ? `다음은 이전에 작성하던 대본의 마지막 부분입니다:\n\n"...${result.slice(-800)}"\n\n이 대본을 끊긴 부분부터 자연스럽게 이어서 계속 작성하세요.\n남은 분량: 약 ${remaining}자\n\n중요: 이미 쓴 내용을 반복하지 마세요. 끊긴 지점부터 바로 이어서 쓰세요. 대본 본문만 출력하세요.`
-          : `다음 대본의 마지막 문장이 중간에서 끊겼습니다:\n\n"...${result.slice(-400)}"\n\n끊긴 마지막 문장만 자연스럽게 완성하세요. 새로운 내용을 추가하지 마세요. 대본 본문만 출력하세요.`;
-        finishReason = '';
-        const contBudget = Math.min(32000, Math.max(2000, Math.ceil(Math.max(remaining, 200) * 4)));
-        // [FIX #927] 이어쓰기 실패 시 지금까지 생성된 대본 + 스트리밍 중 텍스트 보존
-        let contAccumulated = '';
-        try {
-          const contText = await scriptGenerationStream(
-            systemPrompt, contPrompt,
-            (_chunk, accumulated) => { contAccumulated = accumulated; setStreamingText(result + accumulated); },
-            { model: scriptAiModel, temperature: 0.7, maxOutputTokens: contBudget, enableWebSearch: useWebSearch, signal: abortCtrl.signal, onFinish: (r) => { finishReason = r; } }
-          );
-          result += contText;
-        } catch (contErr) {
-          if (abortCtrl.signal.aborted) throw contErr;
-          // 스트리밍 중 받은 텍스트가 있으면 result에 반영
-          if (contAccumulated) result += contAccumulated;
-          console.warn(`[ScriptWriter] 이어쓰기 ${ci + 1}/${MAX_CONTINUATIONS} 실패 — 부분 결과 보존 (${result.length}자)`, contErr);
-          showToast(`이어쓰기 중 네트워크 오류가 발생했지만, 지금까지 생성된 대본(${result.length}자)은 보존됩니다. 아래 "대본 이어쓰기"에서 나머지를 생성할 수 있습니다.`, 8000);
-          break;
-        }
-      }
+        targetCharCount,
+        model: scriptAiModel,
+        enableWebSearch: useWebSearch,
+        signal: abortCtrl.signal,
+        stream: scriptGenerationStream,
+        onProgress: (accumulated) => { setStreamingText(accumulated); },
+        onContinuationError: ({ attempt, maxAttempts, currentText, error }) => {
+          handleScriptContinuationFailure(currentText, attempt, maxAttempts, error);
+        },
+        minCompletionRatio: isShorts ? 0.9 : 0.92,
+        maxContinuations: isShorts ? 2 : 5,
+      });
+      const result = generationResult.text;
 
       setGeneratedScript({
         title: topic.title,
@@ -735,10 +722,11 @@ ${instinctPrompt}
       });
       setFinalScript(result);
       setStreamingText('');
+      if (!isShorts && generationResult.severeShortfall) {
+        showToast(`목표 글자수(${targetCharCount.toLocaleString()}자)에 크게 못 미쳤어요. 아래 "대본 이어쓰기"로 나머지를 이어 생성해보세요.`, 9000);
+      }
       // [FIX #666/#597] 대본 잘림 감지 → 사용자에게 이어쓰기 안내
-      const trimmedEnd = result.trimEnd();
-      const looksComplete = /[.!?。\n]$/.test(trimmedEnd)
-        && /(끝|감사합니다|였습니다|됩니다|봅시다|보겠습니다|주세요|드립니다|했다\.|입니다\.)/.test(trimmedEnd.slice(-30));
+      const looksComplete = looksLikeNaturallyFinishedScript(result);
       if (!looksComplete && result.length > 100) {
         showToast('대본이 중간에 끊겼을 수 있어요. 아래 "대본 이어쓰기" 섹션에서 나머지를 생성할 수 있습니다.', 8000);
       }
@@ -831,49 +819,23 @@ ${instinctPrompt}
 대본만 출력하세요. 제목이나 부가 설명 없이 본문만.`;
 
     try {
-      // [FIX #137] 토큰 배수 4x + 자동 이어쓰기로 롱폼 대본 잘림 해결
-      let finishReason = '';
-      const tokenBudget = Math.min(65536, Math.max(8000, Math.ceil(targetCharCount * 4)));
       const useWebSearch = scriptAiModel === ScriptAiModel.GEMINI_PRO;
-      let fullText = await scriptGenerationStream(
+      const generationResult = await generateScriptWithContinuations({
         systemPrompt,
         userPrompt,
-        (_chunk, accumulated) => { setStreamingText(accumulated); },
-        { model: scriptAiModel, temperature: 0.7, maxOutputTokens: tokenBudget, enableWebSearch: useWebSearch, signal: abortCtrl.signal, onFinish: (r) => { finishReason = r; } }
-      );
-
-      // [FIX #137 #273 #308] 이어쓰기: MAX_TOKENS 또는 분량 미달 시 자동 계속 생성 (최대 3회)
-      const MAX_CONTINUATIONS = 3;
-      for (let ci = 0; ci < MAX_CONTINUATIONS; ci++) {
-        const isTruncated = finishReason === 'MAX_TOKENS' || finishReason === 'length';
-        const isTooShort = fullText.length < targetCharCount * 0.85;
-        if (!isTruncated && !isTooShort) break;
-        // [FIX #273] 목표 분량 90% 이상 + 문장이 자연스럽게 끝나면 추가 불필요
-        if (fullText.length >= targetCharCount * 0.9 && /[.!?。다요죠네세까]$/.test(fullText.trimEnd())) break;
-
-        const remaining = targetCharCount - fullText.length;
-        const contPrompt = remaining > 0
-          ? `다음은 이전에 작성하던 대본의 마지막 부분입니다:\n\n"...${fullText.slice(-800)}"\n\n이 대본을 끊긴 부분부터 자연스럽게 이어서 계속 작성하세요.\n남은 분량: 약 ${remaining}자\n\n중요: 이미 쓴 내용을 반복하지 마세요. 끊긴 지점부터 바로 이어서 쓰세요. 대본 본문만 출력하세요.`
-          : `다음 대본의 마지막 문장이 중간에서 끊겼습니다:\n\n"...${fullText.slice(-400)}"\n\n끊긴 마지막 문장만 자연스럽게 완성하세요. 새로운 내용을 추가하지 마세요. 대본 본문만 출력하세요.`;
-        finishReason = '';
-        const contBudget = Math.min(32000, Math.max(2000, Math.ceil(Math.max(remaining, 200) * 4)));
-        // [FIX #927] 이어쓰기 실패 시 지금까지 생성된 대본 + 스트리밍 중 텍스트 보존
-        let contAccumulated = '';
-        try {
-          const contText = await scriptGenerationStream(
-            systemPrompt, contPrompt,
-            (_chunk, accumulated) => { contAccumulated = accumulated; setStreamingText(fullText + accumulated); },
-            { model: scriptAiModel, temperature: 0.7, maxOutputTokens: contBudget, enableWebSearch: useWebSearch, signal: abortCtrl.signal, onFinish: (r) => { finishReason = r; } }
-          );
-          fullText += contText;
-        } catch (contErr) {
-          if (abortCtrl.signal.aborted) throw contErr;
-          if (contAccumulated) fullText += contAccumulated;
-          console.warn(`[ScriptWriter] 이어쓰기 ${ci + 1}/${MAX_CONTINUATIONS} 실패 — 부분 결과 보존 (${fullText.length}자)`, contErr);
-          showToast(`이어쓰기 중 네트워크 오류가 발생했지만, 지금까지 생성된 대본(${fullText.length}자)은 보존됩니다. 아래 "대본 이어쓰기"에서 나머지를 생성할 수 있습니다.`, 8000);
-          break;
-        }
-      }
+        targetCharCount,
+        model: scriptAiModel,
+        enableWebSearch: useWebSearch,
+        signal: abortCtrl.signal,
+        stream: scriptGenerationStream,
+        onProgress: (accumulated) => { setStreamingText(accumulated); },
+        onContinuationError: ({ attempt, maxAttempts, currentText, error }) => {
+          handleScriptContinuationFailure(currentText, attempt, maxAttempts, error);
+        },
+        minCompletionRatio: isShorts ? 0.9 : 0.92,
+        maxContinuations: isShorts ? 2 : 5,
+      });
+      const fullText = generationResult.text;
 
       if (!fullText.trim()) throw new Error('AI 응답이 비어있습니다. 다시 시도해주세요.');
 
@@ -905,10 +867,11 @@ ${instinctPrompt}
       });
       setFinalScript(finalContent);
       setStreamingText('');
+      if (!isShorts && (generationResult.severeShortfall || finalContent.length < targetCharCount * 0.8)) {
+        showToast(`목표 글자수(${targetCharCount.toLocaleString()}자)에 크게 못 미쳤어요. 아래 "대본 이어쓰기"로 나머지를 이어 생성해보세요.`, 9000);
+      }
       // [FIX #666/#597] 대본 잘림 감지 → 이어쓰기 안내 (일반 생성 경로)
-      const trimmedEnd2 = finalContent.trimEnd();
-      const looksComplete2 = /[.!?。\n]$/.test(trimmedEnd2)
-        && /(끝|감사합니다|였습니다|됩니다|봅시다|보겠습니다|주세요|드립니다|했다\.|입니다\.)/.test(trimmedEnd2.slice(-30));
+      const looksComplete2 = looksLikeNaturallyFinishedScript(finalContent);
       if (!looksComplete2 && finalContent.length > 100) {
         showToast('대본이 중간에 끊겼을 수 있어요. 아래 "대본 이어쓰기" 섹션에서 나머지를 생성할 수 있습니다.', 8000);
       }

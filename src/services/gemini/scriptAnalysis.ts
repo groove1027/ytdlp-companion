@@ -29,6 +29,206 @@ const mergeVisualPrompts = (left: unknown, right: unknown, scriptText: unknown):
     return merged || buildFallbackVisualPrompt(scriptText);
 };
 
+const normalizeSceneAlignmentText = (value: unknown): string =>
+    toTrimmedString(value)
+        .normalize('NFKC')
+        .toLowerCase();
+
+const compactSceneAlignmentText = (value: unknown): string =>
+    normalizeSceneAlignmentText(value)
+        .replace(/[\p{P}\p{S}\s]+/gu, '');
+
+const buildSceneAlignmentTokenSet = (value: unknown): Set<string> =>
+    new Set(
+        normalizeSceneAlignmentText(value)
+            .split(/\s+/)
+            .map((token) => token.trim())
+            .filter((token) => token.length >= 2),
+    );
+
+const buildSceneAlignmentNgramSet = (value: unknown, size = 2): Set<string> => {
+    const compact = compactSceneAlignmentText(value);
+    if (!compact) return new Set<string>();
+    if (compact.length <= size) return new Set([compact]);
+
+    const grams = new Set<string>();
+    for (let i = 0; i <= compact.length - size; i += 1) {
+        grams.add(compact.slice(i, i + size));
+    }
+    return grams;
+};
+
+const computeSetOverlapRatio = (left: Set<string>, right: Set<string>): number => {
+    if (left.size === 0 || right.size === 0) return 0;
+    let intersection = 0;
+    for (const value of left) {
+        if (right.has(value)) intersection += 1;
+    }
+    return intersection / (left.size + right.size - intersection);
+};
+
+const scoreSceneTextAlignment = (generatedText: unknown, sourceText: unknown): number => {
+    const generatedCompact = compactSceneAlignmentText(generatedText);
+    const sourceCompact = compactSceneAlignmentText(sourceText);
+
+    if (!generatedCompact || !sourceCompact) return 0;
+    if (generatedCompact === sourceCompact) return 1;
+
+    const containsScore = generatedCompact.includes(sourceCompact) || sourceCompact.includes(generatedCompact)
+        ? Math.min(generatedCompact.length, sourceCompact.length) / Math.max(generatedCompact.length, sourceCompact.length)
+        : 0;
+    const tokenScore = computeSetOverlapRatio(
+        buildSceneAlignmentTokenSet(generatedText),
+        buildSceneAlignmentTokenSet(sourceText),
+    );
+    const ngramScore = computeSetOverlapRatio(
+        buildSceneAlignmentNgramSet(generatedText),
+        buildSceneAlignmentNgramSet(sourceText),
+    );
+
+    return Math.max(containsScore, (ngramScore * 0.7) + (tokenScore * 0.3));
+};
+
+export interface SceneTextAlignment {
+    sourceIndex: number;
+    generatedSceneIndex: number | null;
+    score: number;
+}
+
+export const alignGeneratedScenesToSourceTexts = (
+    generatedScenes: Array<Pick<Scene, 'scriptText'>>,
+    sourceTexts: string[],
+): SceneTextAlignment[] => {
+    const safeGeneratedScenes = generatedScenes.slice(0, sourceTexts.length);
+    const sceneCount = safeGeneratedScenes.length;
+    const sourceCount = sourceTexts.length;
+
+    if (sourceCount === 0) return [];
+    if (sceneCount === 0) {
+        return sourceTexts.map((_, sourceIndex) => ({
+            sourceIndex,
+            generatedSceneIndex: null,
+            score: 0,
+        }));
+    }
+
+    const scores = safeGeneratedScenes.map((scene, generatedIndex) =>
+        sourceTexts.map((sourceText, sourceIndex) => {
+            const similarity = scoreSceneTextAlignment(scene.scriptText, sourceText);
+            if (similarity === 0) return 0;
+            const positionalPenalty = Math.abs(generatedIndex - sourceIndex) * 0.03;
+            return Math.max(0, similarity + 0.12 - positionalPenalty);
+        }),
+    );
+
+    const dp = Array.from({ length: sceneCount + 1 }, () => Array(sourceCount + 1).fill(Number.NEGATIVE_INFINITY));
+    const decisions = Array.from({ length: sceneCount + 1 }, () => Array<'skip' | 'match' | null>(sourceCount + 1).fill(null));
+
+    for (let sourceIndex = 0; sourceIndex <= sourceCount; sourceIndex += 1) {
+        dp[0][sourceIndex] = 0;
+    }
+
+    for (let generatedIndex = 1; generatedIndex <= sceneCount; generatedIndex += 1) {
+        for (let sourceIndex = 1; sourceIndex <= sourceCount; sourceIndex += 1) {
+            const skipScore = dp[generatedIndex][sourceIndex - 1];
+            const matchScore = dp[generatedIndex - 1][sourceIndex - 1] + scores[generatedIndex - 1][sourceIndex - 1];
+
+            if (matchScore > skipScore) {
+                dp[generatedIndex][sourceIndex] = matchScore;
+                decisions[generatedIndex][sourceIndex] = 'match';
+            } else {
+                dp[generatedIndex][sourceIndex] = skipScore;
+                decisions[generatedIndex][sourceIndex] = 'skip';
+            }
+        }
+    }
+
+    const alignments = sourceTexts.map((_, sourceIndex) => ({
+        sourceIndex,
+        generatedSceneIndex: null,
+        score: 0,
+    }));
+
+    let generatedIndex = sceneCount;
+    let sourceIndex = sourceCount;
+    while (sourceIndex > 0) {
+        if (generatedIndex > 0 && decisions[generatedIndex][sourceIndex] === 'match') {
+            alignments[sourceIndex - 1] = {
+                sourceIndex: sourceIndex - 1,
+                generatedSceneIndex: generatedIndex - 1,
+                score: scores[generatedIndex - 1][sourceIndex - 1],
+            };
+            generatedIndex -= 1;
+            sourceIndex -= 1;
+            continue;
+        }
+        sourceIndex -= 1;
+    }
+
+    return alignments;
+};
+
+const buildFallbackScene = (scriptText: string, id: string): Scene => ({
+    id,
+    scriptText,
+    visualPrompt: buildFallbackVisualPrompt(scriptText),
+    visualDescriptionKO: scriptText.slice(0, 120),
+    isGeneratingImage: false,
+    isGeneratingVideo: false,
+    isInfographic: false,
+    characterPresent: false,
+    castType: 'NOBODY',
+    shotSize: 'Medium Shot',
+    videoPrompt: '',
+    requiresTextRendering: false,
+    textToRender: '',
+    generatedDialogue: '',
+    dialogueSpeaker: '',
+    dialogueEmotion: '',
+    dialogueSfx: '',
+});
+
+const VISUAL_PROMPT_REUSE_ALIGNMENT_SCORE = 0.18;
+
+const remapGeneratedScenesToSourceTexts = (
+    generatedScenes: Scene[],
+    sourceTexts: string[],
+    idLabel: string,
+): { scenes: Scene[]; missingCount: number; lowConfidenceCount: number } => {
+    if (sourceTexts.length === 0) {
+        return { scenes: [], missingCount: 0, lowConfidenceCount: 0 };
+    }
+
+    const alignments = alignGeneratedScenesToSourceTexts(generatedScenes, sourceTexts);
+    let missingCount = 0;
+    let lowConfidenceCount = 0;
+
+    const scenes = sourceTexts.map((sourceText, sourceIndex) => {
+        const alignment = alignments[sourceIndex];
+        if (alignment?.generatedSceneIndex == null) {
+            missingCount += 1;
+            return buildFallbackScene(sourceText, `scene-${Date.now()}-${idLabel}-fallback-${sourceIndex}`);
+        }
+
+        const matchedScene = generatedScenes[alignment.generatedSceneIndex];
+        const canReusePrompt = alignment.score >= VISUAL_PROMPT_REUSE_ALIGNMENT_SCORE
+            && shouldPreserveVisualPrompt(matchedScene.visualPrompt);
+        if (!canReusePrompt) {
+            lowConfidenceCount += 1;
+        }
+
+        return {
+            ...matchedScene,
+            scriptText: sourceText,
+            visualPrompt: canReusePrompt
+                ? toTrimmedString(matchedScene.visualPrompt)
+                : buildFallbackVisualPrompt(sourceText),
+        };
+    });
+
+    return { scenes, missingCount, lowConfidenceCount };
+};
+
 // [NEW] Robust JSON Extraction — handles thinking model markdown output + truncated responses
 export const extractJsonFromText = (text: string): string | null => {
     // 1. Already valid JSON
@@ -1572,31 +1772,16 @@ ${baseSetting ? `[GLOBAL CONTEXT]\n${baseSetting}` : ''}`;
             // [FIX #380] 원본 scriptText 강제 매핑 — AI가 요약/축약/누락해도 원문 100% 보존
             // chunkSceneTexts는 splitScenesLocally()가 생성한 결정론적 분할 결과이므로 정확함
             const aiCount = chunkResult.length;
-            // 1:1 매핑: AI 결과의 scriptText를 원본으로 교체 + visualPrompt 동기화
-            for (let i = 0; i < Math.min(chunkResult.length, chunkSceneTexts.length); i++) {
-                const newText = chunkSceneTexts[i];
-                chunkResult[i] = {
-                    ...chunkResult[i],
-                    scriptText: newText,
-                    // [FIX #1018] scriptText 교체 시 자동 생성된 visualPrompt도 갱신
-                    visualPrompt: shouldPreserveVisualPrompt(chunkResult[i].visualPrompt)
-                        ? toTrimmedString(chunkResult[i].visualPrompt)
-                        : buildFallbackVisualPrompt(newText),
-                };
+            const remappedChunk = remapGeneratedScenesToSourceTexts(chunkResult, chunkSceneTexts, `chunk-${ci}`);
+            chunkResult = remappedChunk.scenes;
+            if (remappedChunk.missingCount > 0 || remappedChunk.lowConfidenceCount > 0) {
+                console.warn(
+                    `[processChunk] ⚠️ 청크 ${ci + 1}: 원문 정렬 보정 적용 ` +
+                    `(누락 ${remappedChunk.missingCount}개, 저신뢰 프롬프트 ${remappedChunk.lowConfidenceCount}개)`,
+                );
             }
-            // AI가 부족하게 생성한 경우: 누락된 원본 텍스트로 보충 장면 생성
-            if (chunkResult.length < chunkSceneTexts.length) {
-                const template = chunkResult[chunkResult.length - 1];
-                for (let i = chunkResult.length; i < chunkSceneTexts.length; i++) {
-                    chunkResult.push({
-                        ...template,
-                        id: `scene-${Date.now()}-supplement-${ci}-${i}`,
-                        scriptText: chunkSceneTexts[i],
-                        // [FIX #1018] 보충 장면에도 고유 visualPrompt 생성
-                        visualPrompt: buildFallbackVisualPrompt(chunkSceneTexts[i]),
-                    });
-                }
-                console.warn(`[processChunk] ⚠️ 청크 ${ci + 1}: AI ${aiCount}장면 → 원본 기준 ${chunkSceneTexts.length}장면으로 보충`);
+            if (aiCount !== chunkSceneTexts.length) {
+                console.warn(`[processChunk] ⚠️ 청크 ${ci + 1}: AI ${aiCount}장면 → 원본 기준 ${chunkSceneTexts.length}장면으로 재정렬`);
             }
             console.log(`[processChunk] ✅ 청크 ${ci + 1}: 원본 scriptText 강제 매핑 완료 (${chunkResult.length}장면)`);
 
@@ -1843,31 +2028,17 @@ ${baseSetting ? `[GLOBAL CONTEXT]\n${baseSetting}` : ''}`;
         }
 
         if (localTexts.length > 0) {
-            // 1:1 매핑: AI 결과의 scriptText를 로컬 분할 원본으로 교체 + visualPrompt 동기화
-            for (let i = 0; i < Math.min(scenes.length, localTexts.length); i++) {
-                const newText = localTexts[i];
-                scenes[i] = {
-                    ...scenes[i],
-                    scriptText: newText,
-                    // [FIX #1018] scriptText 교체 시 자동 생성된 visualPrompt도 갱신
-                    visualPrompt: shouldPreserveVisualPrompt(scenes[i].visualPrompt)
-                        ? toTrimmedString(scenes[i].visualPrompt)
-                        : buildFallbackVisualPrompt(newText),
-                };
+            const originalSceneCount = scenes.length;
+            const remappedScenes = remapGeneratedScenesToSourceTexts(scenes, localTexts, 'single');
+            scenes = remappedScenes.scenes;
+            if (remappedScenes.missingCount > 0 || remappedScenes.lowConfidenceCount > 0) {
+                console.warn(
+                    `[parseScriptToScenes] ⚠️ 비청크 경로: 원문 정렬 보정 적용 ` +
+                    `(누락 ${remappedScenes.missingCount}개, 저신뢰 프롬프트 ${remappedScenes.lowConfidenceCount}개)`,
+                );
             }
-            // AI가 부족하게 생성한 경우: 누락된 원본 텍스트로 보충 장면 생성
-            if (scenes.length < localTexts.length) {
-                const template = scenes[scenes.length - 1];
-                for (let i = scenes.length; i < localTexts.length; i++) {
-                    scenes.push({
-                        ...template,
-                        id: `scene-${Date.now()}-supplement-${i}`,
-                        scriptText: localTexts[i],
-                        // [FIX #1018] 보충 장면에도 고유 visualPrompt 생성
-                        visualPrompt: buildFallbackVisualPrompt(localTexts[i]),
-                    });
-                }
-                console.warn(`[parseScriptToScenes] ⚠️ 비청크 경로: AI ${scenes.length - (localTexts.length - scenes.length)}장면 → 원본 기준 ${localTexts.length}장면으로 보충`);
+            if (originalSceneCount !== localTexts.length) {
+                console.warn(`[parseScriptToScenes] ⚠️ 비청크 경로: AI ${originalSceneCount}장면 → 원본 기준 ${localTexts.length}장면으로 재정렬`);
             }
             // [FIX #421] 초과분 트림 — AI가 목표보다 많이 생성한 경우
             // [P2 FIX] targetSceneCount를 기준으로 트림 — localTexts.length 대신 목표 컷수 사용
