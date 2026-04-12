@@ -495,6 +495,7 @@ export interface ProjectConfig {
   sourceNarrationDurationSec?: number; // 실제 업로드 오디오 길이 (초)
   transcriptDurationSec?: number; // STT 결과 총 길이 (초)
   rawUploadedTranscriptSegments?: WhisperSegment[]; // 업로드 STT 원본 세그먼트
+  uploadedTranscriptParagraphSegments?: WhisperSegment[]; // 현재 대본 문단 구조에 맞춘 업로드 STT 세그먼트
   sceneOrder?: string[];           // 편집실 장면 순서 (영속화)
   bgmConfig?: BgmConfig;           // 편집실 BGM 설정 (영속화)
 
@@ -547,6 +548,8 @@ export interface CostStats {
   ttsCount: number;
   musicCount: number;
 }
+
+export type CostMutationSource = 'init' | 'charge' | 'restore' | 'reset';
 
 // [v4.5] 파이프라인 진행도 추적
 export interface PipelineSteps {
@@ -671,6 +674,8 @@ export interface AiChatMessage {
   model?: AiChatModel;
   /** 첨부 이미지 (data: URL) */
   imageUrls?: string[];
+  /** 모델 전송용 추가 문맥 (UI에는 직접 노출하지 않음) */
+  contextNote?: string;
   timestamp: number;
 }
 
