@@ -2454,8 +2454,63 @@ export async function searchGoogleImages(
       logger.info('[GoogleRef] 구글 직접 검색 요청', `query="${normalizedQuery}" start=${start} hl=${hl} gl=${gl}`);
 
       try {
-        // [FIX] 구글 절대 우선 — 실패 시 최대 2회 재시도 (5초 간격)
-        // 1차: 컴패니언+CF 프록시, 2차: 5초 대기 후 재시도
+        // [v2.3] 최우선: 컴패니언 WebView 검색 (실제 Chrome — 차단 불가)
+        try {
+          const webviewRes = await fetch(`${COMPANION_URL}/api/browser-google-search`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query: normalizedQuery, count: GOOGLE_IMAGE_RESULT_WINDOW * 3, hl }),
+            signal: AbortSignal.timeout(30000),
+          });
+
+          if (webviewRes.ok) {
+            const webviewData = await webviewRes.json() as {
+              images?: Array<{
+                url: string; thumbnail: string; width: number; height: number;
+                title: string; source: string; source_url: string;
+              }>;
+              total?: number;
+            };
+
+            const webviewItems: GoogleImageResult[] = (webviewData.images || [])
+              .map((img): GoogleImageResult | null => {
+                const link = normalizeUrl(img.url);
+                if (!link || !isUsefulImageUrl(link)) return null;
+                return {
+                  title: img.title || '',
+                  link,
+                  displayLink: img.source || getDisplayLink(img.source_url || '', link),
+                  snippet: img.title || '',
+                  thumbnailLink: normalizeUrl(img.thumbnail) || link,
+                  contextLink: img.source_url || '',
+                  width: img.width || 0,
+                  height: img.height || 0,
+                };
+              })
+              .filter((item): item is GoogleImageResult => item !== null);
+
+            if (webviewItems.length > 0) {
+              logger.info('[GoogleRef] WebView 검색 성공', `${webviewItems.length}개 이미지`);
+              const rankedItems = await rankReferenceResults(webviewItems, plan.primaryQuery, 'google', rankingMode, options?.context);
+              const items = rankedItems.slice(0, GOOGLE_IMAGE_RESULT_WINDOW);
+              if (items.length > 0) {
+                const googleResponse = {
+                  items,
+                  totalResults: rankedItems.length,
+                  query: normalizedQuery,
+                  provider: 'google' as const,
+                };
+                setCachedReferenceSearch(cacheKey, googleResponse);
+                return googleResponse;
+              }
+            }
+          }
+        } catch {
+          // WebView 사용 불가 (Chrome 미설치 등) — JSON API로 폴백
+          logger.info('[GoogleRef] WebView 사용 불가 → JSON API 폴백');
+        }
+
+        // [폴백] JSON API 방식 — 실패 시 최대 2회 재시도 (5초 간격)
         let res: Response | null = null;
         let lastStatus = 0;
         const GOOGLE_MAX_RETRIES = 2;

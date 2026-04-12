@@ -794,6 +794,9 @@ pub async fn start_server(_app: tauri::AppHandle) -> Result<(), Box<dyn std::err
         .route("/api/social/download", post(social_download_handler))
         // 구글 이미지 검색 프록시 (로컬 IP — 차단 없음)
         .route("/api/google-proxy", post(google_proxy_handler))
+        // [v2.3] WebView 이미지 검색 — 실제 브라우저로 구글/네이버 검색 (봇 탐지 차단 불가)
+        .route("/api/browser-google-search", post(browser_google_search_handler))
+        .route("/api/browser-naver-search", post(browser_naver_search_handler))
         // 네이버 이미지 검색 (한국 콘텐츠 전용 — API 키 불필요)
         .route("/api/naver-image-search", post(naver_image_search_handler))
         // FLUX.2 이미지 생성 (로컬)
@@ -5451,4 +5454,51 @@ async fn library_file_info_handler(Json(req): Json<LibraryFileInfoRequest>) -> R
         "is_audio": AUDIO_EXTS.contains(&ext.to_lowercase().as_str()),
     }))
     .into_response()
+}
+
+// ──────────────────────────────────────────────
+// [v2.3] WebView 이미지 검색 — 실제 브라우저 사용
+// 구글/네이버 봇 탐지 차단 불가능 (진짜 Chrome 엔진)
+// ──────────────────────────────────────────────
+
+async fn browser_google_search_handler(
+    Json(req): Json<crate::browser_search::BrowserSearchRequest>,
+) -> impl IntoResponse {
+    if req.query.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "검색어 비어있음" })),
+        )
+            .into_response();
+    }
+
+    match crate::browser_search::google_image_search(&req.query, req.count, &req.hl).await {
+        Ok(response) => Json(serde_json::json!(response)).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e, "fallback": true })),
+        )
+            .into_response(),
+    }
+}
+
+async fn browser_naver_search_handler(
+    Json(req): Json<crate::browser_search::BrowserSearchRequest>,
+) -> impl IntoResponse {
+    if req.query.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "검색어 비어있음" })),
+        )
+            .into_response();
+    }
+
+    match crate::browser_search::naver_image_search(&req.query, req.count).await {
+        Ok(response) => Json(serde_json::json!(response)).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e, "fallback": true })),
+        )
+            .into_response(),
+    }
 }
