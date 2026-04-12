@@ -139,18 +139,6 @@ export const getCoupangProxyUrl = (): string => {
     return url.trim();
 };
 
-// ── Serper.dev (구글 이미지 검색 API — 2,500건 무료) ──
-export const getSerperApiKey = (): string => {
-    const key = localStorage.getItem('CUSTOM_SERPER_KEY') || '';
-    return sanitizeKey(key);
-};
-
-// ── Pexels (무료 스톡 이미지 — 20,000건/월) ──
-export const getPexelsApiKey = (): string => {
-    const key = localStorage.getItem('CUSTOM_PEXELS_KEY') || '';
-    return sanitizeKey(key);
-};
-
 // ── Vmake AI (영상 자막/워터마크 제거) ──
 export const getVmakeAk = (): string => {
     const key = localStorage.getItem('CUSTOM_VMAKE_AK') || '';
@@ -243,8 +231,6 @@ export const getStoredKeys = () => {
         googleGeminiKey: localStorage.getItem('CUSTOM_GOOGLE_GEMINI_KEY') || '',
         vmakeAk: localStorage.getItem('CUSTOM_VMAKE_AK') || '',
         vmakeSk: localStorage.getItem('CUSTOM_VMAKE_SK') || '',
-        serper: localStorage.getItem('CUSTOM_SERPER_KEY') || '',
-        pexels: localStorage.getItem('CUSTOM_PEXELS_KEY') || '',
     };
 };
 
@@ -268,8 +254,6 @@ const SETTINGS_KEY_MAP: [string, string][] = [
     ['CUSTOM_COUPANG_SECRET_KEY', 'coupangSecretKey'],
     ['CUSTOM_COUPANG_PROXY_URL', 'coupangProxyUrl'],
     ['CUSTOM_GOOGLE_GEMINI_KEY', 'googleGeminiKey'],
-    ['CUSTOM_SERPER_KEY', 'serper'],
-    ['CUSTOM_PEXELS_KEY', 'pexels'],
 ];
 
 /** 현재 localStorage의 API 키를 서버에 백업 (로그인 상태에서만 동작) */

@@ -5,7 +5,7 @@
  * - 비용 0원 — AI 이미지 생성 API 호출 없음
  */
 
-import { monitoredFetch, getSerperApiKey, getPexelsApiKey } from './apiService';
+import { monitoredFetch } from './apiService';
 import { evolinkChat, getEvolinkKey } from './evolinkService';
 import { logger } from './LoggerService';
 import type { Scene, ScriptTargetRegion } from '../types';
@@ -112,7 +112,7 @@ export interface GoogleImageResult {
   height: number;
 }
 
-export type ReferenceSearchProvider = 'google' | 'wikimedia' | 'naver' | 'serper' | 'pexels';
+export type ReferenceSearchProvider = 'google' | 'wikimedia' | 'naver';
 
 export interface GoogleSearchResponse {
   items: GoogleImageResult[];
@@ -1103,7 +1103,7 @@ function detectContentLocale(scene?: Scene | null, projectTargetRegion?: ScriptT
 }
 
 export function isPrimaryReferenceProvider(provider: ReferenceSearchProvider): boolean {
-  return provider === 'google' || provider === 'serper';
+  return provider === 'google';
 }
 
 function getGoogleSearchCookie(): string {
@@ -2078,203 +2078,6 @@ async function searchWikimediaImages(
   };
 }
 
-// ─── Serper.dev Google 이미지 검색 API (2,500건 무료, 차단 위험 0%) ───
-async function searchSerperImages(
-  query: string,
-  start: number = 1,
-  context?: ReferenceSearchContext,
-  rankingMode: 'fast' | 'best' = 'fast',
-): Promise<GoogleSearchResponse> {
-  const apiKey = getSerperApiKey();
-  if (!apiKey) {
-    return { items: [], totalResults: 0, query, provider: 'serper' };
-  }
-
-  const searchQuery = normalizeQueryText(query) || '풍경 사진';
-  const effectiveProjectTargetRegion = context?.projectTargetRegion || getProjectTargetRegion();
-  const { hl, gl } = detectContentLocale(context?.scene, effectiveProjectTargetRegion);
-  const page = Math.max(1, Math.ceil(start / GOOGLE_IMAGE_RESULT_WINDOW));
-
-  try {
-    const res = await monitoredFetch('https://google.serper.dev/images', {
-      method: 'POST',
-      headers: {
-        'X-API-KEY': apiKey,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        q: searchQuery,
-        gl: gl || 'kr',
-        hl: hl || 'ko',
-        num: GOOGLE_IMAGE_RESULT_WINDOW * 2,
-        page,
-      }),
-      signal: AbortSignal.timeout(15000),
-    });
-
-    if (!res.ok) {
-      const errText = await res.text().catch(() => '');
-      logger.warn('[GoogleRef] Serper 검색 실패', `status=${res.status} ${errText}`);
-      return { items: [], totalResults: 0, query: searchQuery, provider: 'serper' };
-    }
-
-    const data = await res.json() as {
-      images?: Array<{
-        title: string;
-        imageUrl: string;
-        imageWidth: number;
-        imageHeight: number;
-        thumbnailUrl: string;
-        source: string;
-        domain: string;
-        link: string;
-      }>;
-      searchParameters?: { totalResults?: number };
-    };
-
-    const allItems = (data.images || [])
-      .map((img): GoogleImageResult | null => {
-        const link = normalizeUrl(img.imageUrl);
-        if (!link || !isUsefulImageUrl(link)) return null;
-        return {
-          title: img.title || '',
-          link,
-          displayLink: img.domain || img.source || getDisplayLink(img.link || '', link),
-          snippet: img.title || '',
-          thumbnailLink: normalizeUrl(img.thumbnailUrl) || link,
-          contextLink: img.link || '',
-          width: img.imageWidth || 0,
-          height: img.imageHeight || 0,
-        };
-      })
-      .filter((item): item is GoogleImageResult => item !== null);
-
-    const ranked = await rankReferenceResults(allItems, searchQuery, 'serper', rankingMode, context);
-    const items = ranked.slice(0, GOOGLE_IMAGE_RESULT_WINDOW);
-    logger.info('[GoogleRef] Serper 검색 완료', `query="${searchQuery}" results=${items.length}`);
-
-    return {
-      items,
-      totalResults: data.searchParameters?.totalResults || ranked.length,
-      query: searchQuery,
-      provider: 'serper',
-    };
-  } catch (error) {
-    logger.warn('[GoogleRef] Serper 검색 실패', error instanceof Error ? error.message : String(error));
-    return { items: [], totalResults: 0, query: searchQuery, provider: 'serper' };
-  }
-}
-
-// ─── Pexels 무료 스톡 이미지 검색 (20,000건/월, API 키 필수) ───
-async function searchPexelsImages(
-  query: string,
-  start: number = 1,
-  context?: ReferenceSearchContext,
-  rankingMode: 'fast' | 'best' = 'fast',
-): Promise<GoogleSearchResponse> {
-  const apiKey = getPexelsApiKey();
-  if (!apiKey) {
-    return { items: [], totalResults: 0, query, provider: 'pexels' };
-  }
-
-  const searchQuery = normalizeQueryText(query) || 'landscape';
-  // Pexels는 영문 검색어가 효과적 — 한글이면 영문으로 보충
-  const effectiveQuery = HANGUL_REGEX.test(searchQuery) ? await translateQueryForPexels(searchQuery) : searchQuery;
-  const page = Math.max(1, Math.ceil(start / GOOGLE_IMAGE_RESULT_WINDOW));
-
-  try {
-    const params = new URLSearchParams({
-      query: effectiveQuery,
-      per_page: String(GOOGLE_IMAGE_RESULT_WINDOW * 2),
-      page: String(page),
-      orientation: 'landscape',
-    });
-
-    const res = await monitoredFetch(`https://api.pexels.com/v1/search?${params}`, {
-      method: 'GET',
-      headers: { Authorization: apiKey },
-      signal: AbortSignal.timeout(15000),
-    });
-
-    if (!res.ok) {
-      logger.warn('[GoogleRef] Pexels 검색 실패', `status=${res.status}`);
-      return { items: [], totalResults: 0, query: searchQuery, provider: 'pexels' };
-    }
-
-    const data = await res.json() as {
-      photos?: Array<{
-        id: number;
-        width: number;
-        height: number;
-        photographer: string;
-        alt: string;
-        src: { original: string; large: string; medium: string; small: string; landscape: string };
-        url: string;
-      }>;
-      total_results?: number;
-    };
-
-    const allItems = (data.photos || [])
-      .map((photo): GoogleImageResult | null => {
-        const link = photo.src.large || photo.src.original;
-        if (!link) return null;
-        return {
-          title: photo.alt || `Photo by ${photo.photographer}`,
-          link,
-          displayLink: `Pexels · ${photo.photographer}`,
-          snippet: photo.alt || '',
-          thumbnailLink: photo.src.medium || photo.src.small || link,
-          contextLink: photo.url || '',
-          width: photo.width || 0,
-          height: photo.height || 0,
-        };
-      })
-      .filter((item): item is GoogleImageResult => item !== null);
-
-    const ranked = await rankReferenceResults(allItems, searchQuery, 'pexels', rankingMode, context);
-    const items = ranked.slice(0, GOOGLE_IMAGE_RESULT_WINDOW);
-    logger.info('[GoogleRef] Pexels 검색 완료', `query="${effectiveQuery}" results=${items.length}`);
-
-    return {
-      items,
-      totalResults: data.total_results || ranked.length,
-      query: searchQuery,
-      provider: 'pexels',
-    };
-  } catch (error) {
-    logger.warn('[GoogleRef] Pexels 검색 실패', error instanceof Error ? error.message : String(error));
-    return { items: [], totalResults: 0, query: searchQuery, provider: 'pexels' };
-  }
-}
-
-// Pexels용 한글→영어 간이 번역 (Evolink 사용, 실패 시 기존 쿼리 반환)
-async function translateQueryForPexels(query: string): Promise<string> {
-  // 한글→영어 매핑 사전으로 우선 시도
-  const words = query.split(/\s+/);
-  const translated = words.map(word => {
-    const mapped = WIKIMEDIA_KO_EN_MAP[word];
-    return mapped ? mapped[0] : word;
-  }).join(' ');
-
-  // 매핑으로 충분히 변환됐으면 반환
-  if (!HANGUL_REGEX.test(translated)) return translated;
-
-  // Evolink로 번역 시도
-  const evolinkKey = getEvolinkKey();
-  if (!evolinkKey) return translated;
-
-  try {
-    const result = await evolinkChat(
-      [{ role: 'user', content: `Translate this Korean image search query to English keywords (reply with ONLY the English keywords, nothing else): "${query}"` }],
-      { maxTokens: 50, temperature: 0.1, timeoutMs: 5000 },
-    );
-    const eng = result?.choices?.[0]?.message?.content?.trim();
-    return eng && eng.length > 0 && eng.length < 200 ? eng : translated;
-  } catch {
-    return translated;
-  }
-}
-
 // ─── 네이버 이미지 검색 (컴패니언 프록시, API 키 불필요) ───
 async function searchNaverImages(
   query: string,
@@ -2345,7 +2148,7 @@ async function searchNaverImages(
   }
 }
 
-// ─── 대체 검색 폴백 (Serper → Naver → Pexels → Wikimedia) ───
+// ─── 대체 검색 폴백 (Naver → Wikimedia) ───
 async function searchAlternativeReferenceImages(
   query: string,
   start: number,
@@ -2353,31 +2156,15 @@ async function searchAlternativeReferenceImages(
   context?: ReferenceSearchContext,
   rankingMode: 'fast' | 'best' = 'fast',
 ): Promise<GoogleSearchResponse> {
-  // 1순위: Serper.dev (구글 결과를 API로 — 차단 위험 0%, 2,500건 무료)
-  try {
-    const serperResponse = await searchSerperImages(query, start, context, rankingMode);
-    if (serperResponse.items.length > 0) return serperResponse;
-  } catch {
-    // Serper 실패 → 다음 폴백
-  }
-
-  // 2순위: 네이버 (한국어 검색에 강함, 컴패니언 필요)
+  // 1순위: 네이버 (한국어 검색에 강함, 컴패니언 필요)
   try {
     const naverResponse = await searchNaverImages(query, start, context, rankingMode);
     if (naverResponse.items.length > 0) return naverResponse;
   } catch {
-    // 네이버 실패 → 다음 폴백
+    // 네이버 실패 → Wikimedia 최종 폴백
   }
 
-  // 3순위: Pexels (무료 스톡, 20,000건/월)
-  try {
-    const pexelsResponse = await searchPexelsImages(query, start, context, rankingMode);
-    if (pexelsResponse.items.length > 0) return pexelsResponse;
-  } catch {
-    // Pexels 실패 → Wikimedia 최종 폴백
-  }
-
-  // 4순위: Wikimedia Commons (항상 사용 가능, API 키 불필요)
+  // 2순위: Wikimedia Commons (항상 사용 가능, API 키 불필요)
   try {
     return await searchWikimediaImages(query, start, imgSize);
   } catch (error) {

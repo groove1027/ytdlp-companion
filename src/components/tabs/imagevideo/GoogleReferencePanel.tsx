@@ -37,18 +37,14 @@ const ASPECT_CLASS: Record<string, string> = {
 
 const PROVIDER_LABELS: Record<ReferenceSearchProvider, string> = {
   google: 'Google',
-  serper: 'Google (API)',
   wikimedia: 'Wikimedia',
   naver: 'Naver',
-  pexels: 'Pexels',
 };
 
 const PROVIDER_BADGE_STYLES: Record<ReferenceSearchProvider, string> = {
   google: 'text-orange-300 border-orange-500/30 bg-orange-500/10',
-  serper: 'text-blue-300 border-blue-500/30 bg-blue-500/10',
   wikimedia: 'text-cyan-300 border-cyan-500/30 bg-cyan-500/10',
   naver: 'text-green-300 border-green-500/30 bg-green-500/10',
-  pexels: 'text-teal-300 border-teal-500/30 bg-teal-500/10',
 };
 
 interface ScenePreview {
