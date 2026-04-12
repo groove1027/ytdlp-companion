@@ -1,3 +1,50 @@
+# 🔴🔴🔴 "완료" 선언 전 검증 강제 규칙 (최최우선 — 모든 규칙 위에 있다) 🔴🔴🔴
+
+> **"됐다", "완료", "해결", "수정됨", "배포됨" 등의 완료 선언 전에 반드시 아래를 실행하라.**
+> **검증 없이 완료를 주장하면 거짓 보고로 간주한다.**
+
+## 완료 선언 전 필수 검증 (위반 시 작업 전체 무효)
+
+### 1. 코드 수정 후
+```
+npx tsc --noEmit          # 타입 에러 0
+npm run build             # vite 빌드 성공
+npx vitest run            # 테스트 통과
+```
+**3개 모두 직접 실행하고 출력을 확인해야 "수정 완료" 선언 가능.**
+
+### 2. git push 후
+```
+# 웹 코드일 때:
+bash .claude/hooks/post-deploy-verify.sh --check-web-deploy
+# → HTTP 200 확인 전까지 "배포 완료" 금지
+
+# companion 태그 push일 때:
+bash .claude/hooks/post-deploy-verify.sh --check-companion-mirror companion-vX.Y.Z
+# → public repo 미러링 + asset 수 일치 확인 전까지 "릴리스 완료" 금지
+```
+
+### 3. 이슈 코멘트 작성 전
+```
+bash .claude/hooks/post-deploy-verify.sh --check-comment "코멘트 전문"
+# → private repo 링크(all-in-one-production/releases) 포함 시 exit 2 차단
+# → 반드시 public repo(ytdlp-companion/releases) 링크만 사용
+```
+
+### 4. "확실하다"고 말하기 전
+- **추측으로 "확실합니다" 금지** — curl/API/실행으로 직접 검증한 결과만 보고
+- **"아마 될 것입니다" → 직접 테스트** — 안 해봤으면 "확인 안 했습니다"라고 말하라
+- **이전에 성공했던 것도 재확인** — 환경이 바뀌면 깨질 수 있음
+
+### 금지 사항
+- ❌ "배포됐습니다" (curl로 200 확인 안 하고)
+- ❌ "사용자가 다운로드 가능합니다" (public repo에 asset 존재 확인 안 하고)
+- ❌ "이슈 코멘트 달았습니다" (링크가 private repo인지 확인 안 하고)
+- ❌ "CI가 자동으로 합니다" (secret/토큰 유효성 검증 안 하고)
+- ❌ "문제 없음" (tsc + build + test 직접 실행 안 하고)
+
+---
+
 # 🔴🔴🔴 CODEX 5.4 MCP 절대 복종 규칙 (최우선 — 이 위에 아무것도 없다) 🔴🔴🔴
 
 > **이 규칙은 프로젝트의 모든 규칙 중 최상위 우선순위다.**
