@@ -1,6 +1,8 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react';
 import type { ScriptLine, SceneAudioConfig } from '../../../types';
 import { logger } from '../../../services/LoggerService';
+import { useProjectStore } from '../../../stores/projectStore';
+import { useSoundStudioStore } from '../../../stores/soundStudioStore';
 
 interface SceneNarrationPlayerProps {
   line: ScriptLine | null;
@@ -19,8 +21,17 @@ const SceneNarrationPlayer: React.FC<SceneNarrationPlayerProps> = ({
   const [duration, setDuration] = useState(0);
   const [showControls, setShowControls] = useState(false);
   const [audioError, setAudioError] = useState(false);
+  const projectMergedAudioUrl = useProjectStore((s) => s.config?.mergedAudioUrl);
+  const soundMergedAudioUrl = useSoundStudioStore((s) => s.mergedAudioUrl);
+  const mergedNarrationUrl = projectMergedAudioUrl || soundMergedAudioUrl;
+  const usesMergedFallback = !!line
+    && !line.audioUrl
+    && (line.audioSource === 'uploaded' || !!line.uploadedAudioId)
+    && !!mergedNarrationUrl;
+  const segmentStart = usesMergedFallback ? Math.max(0, line?.startTime ?? 0) : 0;
+  const segmentEnd = usesMergedFallback ? line?.endTime : undefined;
 
-  const audioUrl = line?.audioUrl;
+  const audioUrl = line?.audioUrl || (usesMergedFallback ? mergedNarrationUrl : undefined);
 
   const togglePlay = useCallback(() => {
     const el = audioRef.current;
@@ -28,11 +39,18 @@ const SceneNarrationPlayer: React.FC<SceneNarrationPlayerProps> = ({
     if (isPlaying) {
       el.pause();
     } else {
+      if (usesMergedFallback) {
+        const shouldResetToSegmentStart = el.currentTime < segmentStart || (segmentEnd !== undefined && el.currentTime >= segmentEnd);
+        if (shouldResetToSegmentStart) {
+          el.currentTime = segmentStart;
+          setCurrent(segmentStart);
+        }
+      }
       el.playbackRate = audioSettings.speed;
       el.volume = Math.min(1, audioSettings.volume / 100);
       el.play().catch((e) => { logger.trackSwallowedError('SceneNarrationPlayer:togglePlay', e); });
     }
-  }, [isPlaying, audioSettings]);
+  }, [isPlaying, audioSettings, usesMergedFallback, segmentStart, segmentEnd]);
 
   useEffect(() => {
     const el = audioRef.current;
@@ -40,6 +58,20 @@ const SceneNarrationPlayer: React.FC<SceneNarrationPlayerProps> = ({
     el.playbackRate = audioSettings.speed;
     el.volume = Math.min(1, audioSettings.volume / 100);
   }, [audioSettings.speed, audioSettings.volume]);
+
+  useEffect(() => {
+    const el = audioRef.current;
+    if (el) {
+      el.pause();
+      if (usesMergedFallback) {
+        el.currentTime = segmentStart;
+      }
+    }
+    setIsPlaying(false);
+    setCurrent(usesMergedFallback ? segmentStart : 0);
+    setDuration(0);
+    setAudioError(false);
+  }, [audioUrl, usesMergedFallback, segmentStart, segmentEnd]);
 
   const formatTime = (s: number) => {
     const m = Math.floor(s / 60);
@@ -55,6 +87,13 @@ const SceneNarrationPlayer: React.FC<SceneNarrationPlayerProps> = ({
     );
   }
 
+  const effectiveCurrentTime = usesMergedFallback
+    ? Math.max(0, currentTime - segmentStart)
+    : currentTime;
+  const effectiveDuration = usesMergedFallback
+    ? Math.max(0, (segmentEnd ?? duration) - segmentStart)
+    : duration;
+
   return (
     <div className="space-y-1">
       <audio
@@ -64,8 +103,24 @@ const SceneNarrationPlayer: React.FC<SceneNarrationPlayerProps> = ({
         onPause={() => setIsPlaying(false)}
         onEnded={() => setIsPlaying(false)}
         onError={() => setAudioError(true)}
-        onTimeUpdate={(e) => setCurrent((e.target as HTMLAudioElement).currentTime)}
-        onLoadedMetadata={(e) => { setDuration((e.target as HTMLAudioElement).duration); setAudioError(false); }}
+        onTimeUpdate={(e) => {
+          const nextTime = (e.target as HTMLAudioElement).currentTime;
+          if (usesMergedFallback && segmentEnd !== undefined && nextTime >= segmentEnd) {
+            (e.target as HTMLAudioElement).pause();
+            setCurrent(segmentEnd);
+            return;
+          }
+          setCurrent(nextTime);
+        }}
+        onLoadedMetadata={(e) => {
+          const nextDuration = (e.target as HTMLAudioElement).duration;
+          setDuration(nextDuration);
+          setAudioError(false);
+          if (usesMergedFallback) {
+            (e.target as HTMLAudioElement).currentTime = segmentStart;
+            setCurrent(segmentStart);
+          }
+        }}
       />
 
       <div className="flex items-center gap-2">
@@ -87,14 +142,14 @@ const SceneNarrationPlayer: React.FC<SceneNarrationPlayerProps> = ({
           <div className="h-1.5 bg-gray-700 rounded-full overflow-hidden">
             <div
               className="h-full bg-amber-500 rounded-full transition-all"
-              style={{ width: duration > 0 ? `${(currentTime / duration) * 100}%` : '0%' }}
+              style={{ width: effectiveDuration > 0 ? `${(effectiveCurrentTime / effectiveDuration) * 100}%` : '0%' }}
             />
           </div>
         </div>
 
         {/* 시간 표시 */}
         <span className={`text-sm font-mono flex-shrink-0 ${audioError ? 'text-red-400' : 'text-gray-500'}`}>
-          {audioError ? '오류' : `${formatTime(currentTime)}/${formatTime(duration)}`}
+          {audioError ? '오류' : `${formatTime(effectiveCurrentTime)}/${formatTime(effectiveDuration)}`}
         </span>
 
         {/* 설정 토글 */}

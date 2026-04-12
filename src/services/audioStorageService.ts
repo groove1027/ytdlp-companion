@@ -16,12 +16,14 @@ export const persistProjectAudio = async (
 ): Promise<void> => {
   const db = await dbPromise;
 
+  const activeKeys = new Set<string>();
   const tasks: Promise<void>[] = [];
 
   // 개별 장면 오디오
   for (const scene of scenes) {
     if (scene.audioUrl?.startsWith('blob:')) {
       const key = `${projectId}::scene::${scene.id}`;
+      activeKeys.add(key);
       tasks.push(
         fetchAndStore(db, key, projectId, scene.audioUrl),
       );
@@ -31,11 +33,13 @@ export const persistProjectAudio = async (
   // 병합 오디오
   if (mergedAudioUrl?.startsWith('blob:')) {
     const key = `${projectId}::merged`;
+    activeKeys.add(key);
     tasks.push(
       fetchAndStore(db, key, projectId, mergedAudioUrl),
     );
   }
 
+  await deleteStaleProjectAudio(db, projectId, activeKeys);
   await Promise.allSettled(tasks);
 };
 
@@ -124,5 +128,21 @@ async function fetchAndStore(
     await db.put(STORE, entry);
   } catch (e) {
     console.warn(`[audioStorageService] Failed to persist audio ${key}:`, e);
+  }
+}
+
+async function deleteStaleProjectAudio(
+  db: Awaited<typeof dbPromise>,
+  projectId: string,
+  activeKeys: ReadonlySet<string>,
+): Promise<void> {
+  try {
+    const existingEntries = await db.getAllFromIndex(STORE, BLOB_PROJECT_ID_INDEX, projectId);
+    const staleEntries = existingEntries.filter((entry) => !activeKeys.has(entry.id));
+    if (staleEntries.length === 0) return;
+
+    await Promise.allSettled(staleEntries.map((entry) => db.delete(STORE, entry.id)));
+  } catch (e) {
+    console.warn(`[audioStorageService] Failed to delete stale audio for ${projectId}:`, e);
   }
 }

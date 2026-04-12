@@ -17,7 +17,7 @@ import {
 } from '../../../services/ttsService';
 import type { CustomVoice } from '../../../services/ttsService';
 import { generateElevenLabsDialogueTTS, ELEVENLABS_VOICES, ELEVENLABS_LANGUAGES, elNameKo } from '../../../services/elevenlabsService';
-import { transcribeAudio, segmentsToScriptLines } from '../../../services/transcriptionService';
+import { transcribeAudio, segmentsToScriptLines, alignTranscriptSegmentsToParagraphs } from '../../../services/transcriptionService';
 import { isModelLoaded, isModelLoading, onLoadProgress } from '../../../services/supertonicService';
 import { getCachedPreview, cachePreview } from '../../../services/ttsPreviewCache';
 import { fetchTypecastVoices, clearTypecastVoiceCache, generateTypecastTTS, getKoreanUseCases, TYPECAST_LANGUAGES, TYPECAST_TOP_LANGUAGES } from '../../../services/typecastService';
@@ -1215,21 +1215,39 @@ const VoiceStudio: React.FC = () => {
       uploadedAt: Date.now(),
     });
 
+    const splitResult = useScriptWriterStore.getState().splitResult.filter((text) => text.trim());
+    const splitJoined = splitResult.join('').replace(/\s+/g, '');
+    const storeScriptClean = storeScript.replace(/\s+/g, '');
+    const splitMatchesCurrentScript = splitJoined.length > 0 && (
+      storeScriptClean.includes(splitJoined.slice(0, Math.min(60, splitJoined.length)))
+      || splitJoined.includes(storeScriptClean.slice(0, Math.min(60, storeScriptClean.length)))
+    );
+    const fallbackParagraphs = storeScript
+      .split(/\n+/)
+      .map((text) => text.trim())
+      .filter(Boolean);
+    const preferredParagraphs = splitMatchesCurrentScript && splitResult.length > 0
+      ? splitResult
+      : fallbackParagraphs;
+    const alignedSegments = preferredParagraphs.length > 1
+      ? alignTranscriptSegmentsToParagraphs(transcriptResult.segments, preferredParagraphs)
+      : transcriptResult.segments.filter((segment) => segment.text.trim());
+
     const defaultSpeakerId = speakers[0]?.id || '';
-    const newLines = segmentsToScriptLines(transcriptResult.segments, audioId, defaultSpeakerId);
+    const newLines = segmentsToScriptLines(alignedSegments, audioId, defaultSpeakerId);
     setLines(newLines);
     setMergedAudio(uploadedBlobUrl);
     useProjectStore.getState().setConfig((prev) => prev ? {
       ...prev,
-      script: transcriptResult.segments.map((segment) => segment.text).join('\n'),
+      script: alignedSegments.map((segment) => segment.text).join('\n'),
       mergedAudioUrl: uploadedBlobUrl,
       narrationSource: 'uploaded-audio',
       uploadedAudioId: audioId,
       sourceNarrationDurationSec: resolvedSourceDuration || undefined,
       transcriptDurationSec: transcriptResult.duration || undefined,
-      rawUploadedTranscriptSegments: transcriptResult.segments,
+      rawUploadedTranscriptSegments: alignedSegments,
     } : prev);
-  }, [transcriptResult, uploadedFile, uploadedBlobUrl, uploadedDuration, speakers, addUploadedAudio, setLines, setMergedAudio]);
+  }, [transcriptResult, uploadedFile, uploadedBlobUrl, uploadedDuration, speakers, addUploadedAudio, setLines, setMergedAudio, storeScript]);
 
   const formatFileSize = (bytes: number) => {
     if (bytes < 1024) return `${bytes}B`;

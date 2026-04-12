@@ -9,12 +9,29 @@ import {
 import type { GeneratedMusic, SunoModel, TimestampedWord } from '../../../types';
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
 import { logger } from '../../../services/LoggerService';
+import { monitoredFetch } from '../../../services/apiService';
 
 type FilterTab = 'all' | 'completed' | 'favorites';
 
 function formatTime(seconds: number): string {
   const m = Math.floor(seconds / 60);
   return `${m}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
+}
+
+function sanitizeFileName(value: string, fallback: string): string {
+  const sanitized = value.replace(/[/\\?%*:|"<>]/g, '').trim();
+  return sanitized || fallback;
+}
+
+function getAudioExtension(blob: Blob, url: string): string {
+  const mimeType = blob.type.toLowerCase();
+  if (mimeType === 'audio/mpeg' || mimeType === 'audio/mp3') return 'mp3';
+  if (mimeType === 'audio/wav' || mimeType === 'audio/x-wav' || mimeType === 'audio/wave') return 'wav';
+  if (mimeType === 'audio/mp4' || mimeType === 'audio/x-m4a') return 'm4a';
+  if (mimeType === 'audio/ogg') return 'ogg';
+
+  const matchedExt = url.match(/\.([a-z0-9]{2,5})(?:[?#]|$)/i)?.[1]?.toLowerCase();
+  return matchedExt || 'mp3';
 }
 
 const FILTERS: { id: FilterTab; label: string }[] = [
@@ -473,6 +490,46 @@ const MusicLibrary: React.FC = () => {
     a.click();
   }, []);
 
+  const handleDownloadGroupZip = useCallback(async (groupTitle: string, tracks: GeneratedMusic[]) => {
+    const downloadableTracks = tracks.filter((track) => !!track.audioUrl);
+    if (downloadableTracks.length === 0) {
+      showToast('다운로드할 음악 파일이 없습니다.');
+      return;
+    }
+
+    try {
+      const { default: JSZip } = await import('jszip');
+      const zip = new JSZip();
+
+      for (let i = 0; i < downloadableTracks.length; i++) {
+        const track = downloadableTracks[i];
+        const response = await monitoredFetch(track.audioUrl as string);
+        if (!response.ok) {
+          throw new Error(`${track.title} 파일을 가져오지 못했습니다. (${response.status})`);
+        }
+
+        const blob = await response.blob();
+        const extension = getAudioExtension(blob, track.audioUrl as string);
+        const fileName = `${String(i + 1).padStart(2, '0')}_${sanitizeFileName(track.title, `track-${i + 1}`)}.${extension}`;
+        zip.file(fileName, blob);
+      }
+
+      const zipBlob = await zip.generateAsync({ type: 'blob' });
+      const zipUrl = URL.createObjectURL(zipBlob);
+      const link = document.createElement('a');
+      link.href = zipUrl;
+      link.download = `${sanitizeFileName(groupTitle, 'music-library')}.zip`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(zipUrl), 3000);
+      showToast(`${downloadableTracks.length}곡 ZIP 다운로드를 시작했습니다.`);
+    } catch (e) {
+      logger.trackSwallowedError('MusicLibrary:downloadGroupZip', e);
+      showToast(`ZIP 다운로드 실패: ${e instanceof Error ? e.message : String(e)}`, 5000);
+    }
+  }, []);
+
   // BGM 선택
   const bgmAudioUrl = useEditRoomStore((s) => s.bgmTrack.audioUrl);
 
@@ -596,6 +653,8 @@ const MusicLibrary: React.FC = () => {
               <span className="text-xs text-gray-400 font-semibold">{group.groupTitle}</span>
               <div className="flex items-center gap-2">
                 <span className="text-xs text-gray-600">{group.tracks.length}곡</span>
+                <button type="button" onClick={(e) => { e.stopPropagation(); void handleDownloadGroupZip(group.groupTitle, group.tracks); }}
+                  className="text-xs text-gray-600 hover:text-purple-300 transition-colors" title="그룹 ZIP 다운로드">ZIP</button>
                 <button type="button" onClick={(e) => handleRemoveGroup(group.groupTitle, e)}
                   className="text-xs text-gray-600 hover:text-red-400 transition-colors" title="그룹 삭제">&#128465;</button>
               </div>

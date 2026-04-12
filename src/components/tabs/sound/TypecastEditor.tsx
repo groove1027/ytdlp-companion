@@ -12,6 +12,7 @@ import type { ScriptLine, TTSLanguage, Speaker, TTSEngine } from '../../../types
 import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
 import { TYPECAST_EMOTIONS, TYPECAST_MODELS } from '../../../constants';
 import { showToast, useUIStore } from '../../../stores/uiStore';
+import { formatSrtTime } from '../../../services/srtService';
 import MiniWaveform from './MiniWaveform';
 
 // Supertonic 2 음성 카탈로그 (10개, HuggingFace Supertone/supertonic-2 기준)
@@ -44,6 +45,41 @@ const ELEVENLABS_EMOTIONS: { id: string; label: string; icon: string; tag: strin
   { id: 'crying', label: '울먹임', icon: '😭', tag: '[crying]', stability: 0.0 },
 ];
 const CREDIT_ERROR_RE = /(402|payment required|quota_exhausted|insufficient|잔액 부족|크레딧(이|을)?\s*부족)/i;
+const EDITOR_MIN_ROW_HEIGHT = 44;
+const EDITOR_HEADER_HEIGHT = 56;
+
+function areNumberArraysEqual(left: number[], right: number[]): boolean {
+  if (left.length !== right.length) return false;
+  for (let i = 0; i < left.length; i++) {
+    if ((left[i] || 0) !== (right[i] || 0)) return false;
+  }
+  return true;
+}
+
+function extractEditableText(node: Node): string {
+  if (node.nodeType === Node.TEXT_NODE) {
+    return node.textContent || '';
+  }
+  if (node.nodeType !== Node.ELEMENT_NODE) {
+    return '';
+  }
+
+  const element = node as HTMLElement;
+  if (element.getAttribute('contenteditable') === 'false') {
+    return '';
+  }
+  if (element.tagName === 'BR') {
+    return '\n';
+  }
+
+  const childText = Array.from(element.childNodes).map((child) => extractEditableText(child)).join('');
+  const isBlock = ['DIV', 'P', 'LI'].includes(element.tagName);
+  if (isBlock && childText && !childText.endsWith('\n')) {
+    return `${childText}\n`;
+  }
+
+  return childText;
+}
 
 interface TypecastEditorProps {
   onGenerateLine: (lineId: string) => Promise<void> | void;
@@ -91,6 +127,7 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
   const editorWrapRef = useRef<HTMLDivElement>(null);
   const isSyncing = useRef(false);
   const animFrameRef = useRef<number>(0);
+  const layoutFrameRef = useRef<number>(0);
   const lineDurationsRef = useRef<number[]>([]);
   const [activeIdx, setActiveIdx] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -119,12 +156,15 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
   const [showIntensityPopover, setShowIntensityPopover] = useState(false);
   const [showPitchPopover, setShowPitchPopover] = useState(false);
   const [maxMode, setMaxMode] = useState(false);
+  const [lineHeaderHeights, setLineHeaderHeights] = useState<number[]>([]);
+  const [lineRowHeights, setLineRowHeights] = useState<number[]>([]);
 
   const ttsEngine = useSoundStudioStore(s => s.ttsEngine);
   // [FIX #533] 멀티캐릭터: 클릭된 라인의 speakerId로 해당 Speaker를 찾아 사용
   const [pickerTargetLineIdx, setPickerTargetLineIdx] = useState<number>(0);
+  const activeSpeakerLineIdx = lines[activeIdx] ? activeIdx : pickerTargetLineIdx;
   const activeSpeaker = (() => {
-    const targetLine = lines[pickerTargetLineIdx];
+    const targetLine = lines[activeSpeakerLineIdx];
     if (targetLine?.speakerId) {
       const found = speakers.find(s => s.id === targetLine.speakerId);
       if (found) return found;
@@ -182,9 +222,44 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
   const [stPreviewLoading, setStPreviewLoading] = useState<string | null>(null);
   const stPreviewCacheRef = useRef<Record<string, string>>({});
 
+  const measureEditorLayout = useCallback(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    const nextHeaderHeights: number[] = [];
+    editor.querySelectorAll<HTMLElement>('[data-char-header]').forEach((element) => {
+      const index = Number(element.dataset.charHeader || '-1');
+      if (index >= 0) {
+        nextHeaderHeights[index] = Math.ceil(element.getBoundingClientRect().height);
+      }
+    });
+
+    const nextRowHeights: number[] = [];
+    editor.querySelectorAll<HTMLElement>('p[data-line]').forEach((element) => {
+      const index = Number(element.dataset.line || '-1');
+      if (index >= 0) {
+        nextRowHeights[index] = Math.ceil(element.getBoundingClientRect().height);
+      }
+    });
+
+    setLineHeaderHeights((prev) => (areNumberArraysEqual(prev, nextHeaderHeights) ? prev : nextHeaderHeights));
+    setLineRowHeights((prev) => (areNumberArraysEqual(prev, nextRowHeights) ? prev : nextRowHeights));
+  }, []);
+
+  const scheduleMeasureEditorLayout = useCallback(() => {
+    if (layoutFrameRef.current) {
+      cancelAnimationFrame(layoutFrameRef.current);
+    }
+    layoutFrameRef.current = requestAnimationFrame(() => {
+      layoutFrameRef.current = 0;
+      measureEditorLayout();
+    });
+  }, [measureEditorLayout]);
+
   // 캐릭터 피커 열기 — 엔진별 분기
   const openCharacterPicker = useCallback(async (lineIdx: number) => {
     setPickerTargetLineIdx(lineIdx); // [FIX #533] 멀티캐릭터: 클릭된 라인 추적
+    setActiveIdx(lineIdx);
     if (currentEngine === 'elevenlabs') {
       setPickerLineIdx(lineIdx);
       setElPickerOpen(true);
@@ -247,7 +322,8 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
       }
     }
     isSyncing.current = false;
-  }, [speakers]);
+    scheduleMeasureEditorLayout();
+  }, [speakers, scheduleMeasureEditorLayout]);
 
   // [FIX #418] 캐릭터 선택 → 클릭한 줄만 변경 (기존: 같은 voiceId 그룹 전체 변경 → 멀티캐릭터 불가)
   // [FIX #783/#791] speaker 전체 voice 업데이트 제거 — 개별 줄만 변경하도록 수정
@@ -371,20 +447,36 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
 
   // contenteditable → store 동기화 (data-line <p>만 읽음, 캐릭터 헤더 + 🔄 버튼 무시)
   const getCleanParagraphText = useCallback((p: Element): string => {
-    // contenteditable="false" 스팬(🔄 버튼)을 제외하고 순수 텍스트만 추출
-    let text = '';
-    p.childNodes.forEach(node => {
-      if (node.nodeType === Node.TEXT_NODE) {
-        text += node.textContent || '';
-      } else if (node.nodeType === Node.ELEMENT_NODE) {
-        const el = node as HTMLElement;
-        // contenteditable="false" 스팬(캐릭터 변경 버튼)은 건너뜀
-        if (el.getAttribute('contenteditable') === 'false') return;
-        text += el.textContent || '';
-      }
-    });
-    return text.trim();
+    return extractEditableText(p)
+      .replace(/\u00a0/g, ' ')
+      .replace(/\r/g, '')
+      .replace(/[ \t]*\n[ \t]*/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
   }, []);
+
+  const getSelectedEditorText = useCallback((): string => {
+    const editor = editorRef.current;
+    const selection = window.getSelection();
+    if (!editor || !selection || selection.rangeCount === 0 || selection.isCollapsed) return '';
+
+    const range = selection.getRangeAt(0);
+    const commonAncestor = range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
+      ? range.commonAncestorContainer as Element
+      : range.commonAncestorContainer.parentElement;
+    if (!commonAncestor || !editor.contains(commonAncestor)) return '';
+
+    const wrapper = document.createElement('div');
+    wrapper.appendChild(range.cloneContents());
+    return getCleanParagraphText(wrapper);
+  }, [getCleanParagraphText]);
+
+  const handleEditorCopy = useCallback((e: React.ClipboardEvent<HTMLDivElement>) => {
+    const text = getSelectedEditorText();
+    if (!text) return;
+    e.preventDefault();
+    e.clipboardData.setData('text/plain', text);
+  }, [getSelectedEditorText]);
 
   const syncEditorToStore = useCallback(() => {
     if (!editorRef.current || isSyncing.current) return;
@@ -456,7 +548,8 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
       }));
     }
     isSyncing.current = false;
-  }, [speakers, setLines, getCleanParagraphText]);
+    scheduleMeasureEditorLayout();
+  }, [speakers, setLines, getCleanParagraphText, scheduleMeasureEditorLayout]);
 
   // store → editor 초기 로드 (캐릭터 헤더 포함)
   useEffect(() => {
@@ -505,7 +598,8 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
       editorRef.current.focus();
     }
     isSyncing.current = false;
-  }, [lines.length]);
+    scheduleMeasureEditorLayout();
+  }, [lines.length, lines, speakers, activeSpeaker?.id, activeSpeaker?.voiceId, activeSpeaker?.name, activeSpeaker?.imageUrl, scheduleMeasureEditorLayout]);
 
   // voiceId 변경 감지 → 에디터 재구성
   const voiceSignature = lines.map(l => l.voiceId || '').join(',') + '|' + (activeSpeaker?.voiceId || '');
@@ -516,6 +610,27 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
       forceRebuildEditor();
     }
   }, [voiceSignature, lines.length, forceRebuildEditor]);
+
+  useEffect(() => {
+    if (!activeSpeaker) return;
+    setSmartEmotion((activeSpeaker.emotionMode ?? 'smart') === 'smart');
+    setGlobalEmotion(activeSpeaker.emotionPreset ?? 'normal');
+    setGlobalIntensity(Math.round((activeSpeaker.emotionIntensity ?? 1.0) * 100));
+    setGlobalSpeed(activeSpeaker.speed ?? 1.0);
+    setGlobalPitch(activeSpeaker.pitch ?? 0);
+    setGlobalModel(activeSpeaker.typecastModel ?? 'ssfm-v30');
+    setTcLanguage(activeSpeaker.language ?? 'ko');
+    setElLanguage(activeSpeaker.language ?? 'auto');
+  }, [
+    activeSpeaker?.id,
+    activeSpeaker?.emotionMode,
+    activeSpeaker?.emotionPreset,
+    activeSpeaker?.emotionIntensity,
+    activeSpeaker?.speed,
+    activeSpeaker?.pitch,
+    activeSpeaker?.typecastModel,
+    activeSpeaker?.language,
+  ]);
 
   // 전역 설정 — speaker store에서 초기값 로드
   const [smartEmotion, setSmartEmotion] = useState(() => (activeSpeaker?.emotionMode ?? 'smart') === 'smart');
@@ -556,8 +671,18 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
 
   useEffect(() => {
     if (!activeSpeaker) return;
+    updateSpeaker(activeSpeaker.id, { speed: globalSpeed });
+  }, [globalSpeed, activeSpeaker?.id]);
+
+  useEffect(() => {
+    if (!activeSpeaker) return;
     updateSpeaker(activeSpeaker.id, { emotionIntensity: globalIntensity / 100 });
   }, [globalIntensity, activeSpeaker?.id]);
+
+  useEffect(() => {
+    if (!activeSpeaker || smartEmotion) return;
+    updateSpeaker(activeSpeaker.id, { emotionPreset: globalEmotion as Speaker['emotionPreset'] });
+  }, [globalEmotion, smartEmotion, activeSpeaker?.id]);
 
   // v21 선택 시 Smart Emotion 자동 비활성화
   useEffect(() => {
@@ -726,7 +851,9 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
 
   // 전체 생성 + 재생
   const handlePlayAll = useCallback(async () => {
-    if (lines.length === 0) {
+    syncEditorToStore();
+    const syncedLines = useSoundStudioStore.getState().lines;
+    if (syncedLines.length === 0) {
       showToast('나레이션 대본이 없습니다. 대본을 먼저 입력해주세요.');
       return;
     }
@@ -734,7 +861,7 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
       showToast('음성을 선택해주세요. 상단 음성 브라우저에서 캐릭터를 클릭하세요.');
       return;
     }
-    if (mergedAudioUrl && lines.every(l => l.ttsStatus === 'done')) {
+    if (mergedAudioUrl && syncedLines.every(l => l.ttsStatus === 'done')) {
       if (audioRef.current) { audioRef.current.pause(); unregisterAudio(audioRef.current); }
       await loadLineDurations();
       const audio = new Audio(mergedAudioUrl);
@@ -748,12 +875,12 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
       return;
     }
     setIsGeneratingAll(true);
-    setGenProgress({ current: 0, total: lines.length });
+    setGenProgress({ current: 0, total: syncedLines.length });
     try {
       const failedLines: number[] = [];
       let haltedByCredit = false;
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
+      for (let i = 0; i < syncedLines.length; i++) {
+        const line = syncedLines[i];
         if (!line.audioUrl || line.ttsStatus !== 'done') {
           let thrownMessage = '';
           try {
@@ -771,12 +898,12 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
             const failureMessage = `${thrownMessage} ${toastMessage}`.trim();
             if (CREDIT_ERROR_RE.test(failureMessage)) {
               haltedByCredit = true;
-              setGenProgress({ current: i + 1, total: lines.length });
+              setGenProgress({ current: i + 1, total: syncedLines.length });
               break;
             }
           }
         }
-        setGenProgress({ current: i + 1, total: lines.length });
+        setGenProgress({ current: i + 1, total: syncedLines.length });
       }
 
       if (failedLines.length > 0) {
@@ -805,7 +932,30 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
         audio.play().catch(() => { setIsPlaying(false); unregisterAudio(audio); });
       }
     } finally { setIsGeneratingAll(false); }
-  }, [activeSpeaker, lines, mergedAudioUrl, onGenerateLine, setMergedAudio, loadLineDurations]);
+  }, [activeSpeaker, mergedAudioUrl, onGenerateLine, setMergedAudio, loadLineDurations, syncEditorToStore]);
+
+  const handleRegenerateActiveLine = useCallback(async () => {
+    syncEditorToStore();
+    const freshLines = useSoundStudioStore.getState().lines;
+    const targetLine = freshLines[activeIdx];
+    if (!targetLine) return;
+
+    const nextPartial: Partial<ScriptLine> = {
+      lineSpeed: globalSpeed,
+      audioUrl: undefined,
+      ttsStatus: 'idle',
+    };
+
+    if (currentEngine === 'elevenlabs') {
+      nextPartial.emotion = elEmotion;
+    } else if (currentEngine === 'typecast' && !smartEmotion) {
+      nextPartial.emotion = globalEmotion;
+    }
+
+    updateLine(targetLine.id, nextPartial);
+    setMergedAudio(null);
+    await onGenerateLine(targetLine.id);
+  }, [activeIdx, currentEngine, elEmotion, globalEmotion, globalSpeed, onGenerateLine, setMergedAudio, smartEmotion, syncEditorToStore, updateLine]);
 
   const handlePauseResume = useCallback(() => {
     if (!audioRef.current) return;
@@ -837,6 +987,64 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
     })));
     setDirectScript('');
   }, [directScript, speakers, addSpeaker, setLines]);
+
+  const buildSrtContentForLines = useCallback((targetLines: ScriptLine[]): string => {
+    let cursor = 0;
+    const entries = targetLines
+      .filter((line) => line.text.trim())
+      .map((line, index) => {
+        const fallbackDuration = Math.max(1, line.text.replace(/\s+/g, '').length / 8);
+        const startTime = line.startTime ?? cursor;
+        const endTime = Math.max(
+          startTime + 0.1,
+          line.endTime ?? (line.startTime !== undefined ? startTime + fallbackDuration : cursor + fallbackDuration),
+        );
+        cursor = endTime;
+        return `${index + 1}\n${formatSrtTime(startTime)} --> ${formatSrtTime(endTime)}\n${line.text.trim()}`;
+      });
+
+    return entries.length > 0 ? `${entries.join('\n\n')}\n` : '';
+  }, []);
+
+  const downloadSrtForLines = useCallback((targetLines: ScriptLine[], fileName: string) => {
+    const srtContent = buildSrtContentForLines(targetLines);
+    if (!srtContent) return;
+    const blob = new Blob(['\uFEFF' + srtContent], { type: 'text/srt;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${fileName}.srt`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 3000);
+  }, [buildSrtContentForLines]);
+
+  useEffect(() => {
+    scheduleMeasureEditorLayout();
+  }, [lines, scheduleMeasureEditorLayout]);
+
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor || typeof ResizeObserver === 'undefined') return;
+
+    const observer = new ResizeObserver(() => {
+      scheduleMeasureEditorLayout();
+    });
+
+    observer.observe(editor);
+    editor.querySelectorAll('[data-char-header], p[data-line]').forEach((element) => {
+      observer.observe(element);
+    });
+
+    return () => observer.disconnect();
+  }, [lines, voiceSignature, scheduleMeasureEditorLayout]);
+
+  useEffect(() => () => {
+    if (layoutFrameRef.current) {
+      cancelAnimationFrame(layoutFrameRef.current);
+    }
+  }, []);
 
   if (lines.length === 0) {
     return (
@@ -921,7 +1129,7 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
                 </select>
               </div>
               <span className="text-gray-600 shrink-0">|</span>
-              <button type="button" onClick={() => { if (lines[activeIdx]) onGenerateLine(lines[activeIdx].id); }}
+              <button type="button" onClick={() => { void handleRegenerateActiveLine(); }}
                 disabled={!activeSpeaker?.voiceId || !lines[activeIdx]}
                 className="text-xs bg-purple-700 hover:bg-purple-600 text-white px-3 py-1.5 rounded-lg font-bold disabled:opacity-30 whitespace-nowrap shrink-0">🔊 음성 재생성</button>
               <button type="button" onClick={() => { lines.forEach(l => updateLine(l.id, { lineSpeed: globalSpeed, audioUrl: undefined, ttsStatus: 'idle' })); }}
@@ -978,7 +1186,7 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
                 <span className="text-xs text-gray-300 whitespace-nowrap">{globalSpeed}x</span>
               </div>
               <span className="text-gray-600 shrink-0">|</span>
-              <button type="button" onClick={() => { if (lines[activeIdx]) onGenerateLine(lines[activeIdx].id); }}
+              <button type="button" onClick={() => { void handleRegenerateActiveLine(); }}
                 disabled={!activeSpeaker?.voiceId || !lines[activeIdx]}
                 className="text-xs bg-emerald-700 hover:bg-emerald-600 text-white px-3 py-1.5 rounded-lg font-bold disabled:opacity-30 whitespace-nowrap shrink-0">{'\uD83D\uDD0A'} 음성 재생성</button>
               <button type="button" onClick={() => { lines.forEach(l => updateLine(l.id, { emotion: elEmotion, lineSpeed: globalSpeed, audioUrl: undefined, ttsStatus: 'idle' })); }}
@@ -1105,7 +1313,7 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
           className="w-12 text-xs bg-gray-800 border border-gray-600 rounded px-1 py-1 text-gray-300 text-center" />
         <span className="text-xs text-gray-500">s</span>
         <button type="button" onClick={handleAddPause} className="text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 px-2 py-1 rounded border border-gray-600">추가</button>
-        <button type="button" onClick={() => { if (lines[activeIdx]) onGenerateLine(lines[activeIdx].id); }}
+        <button type="button" onClick={() => { void handleRegenerateActiveLine(); }}
           disabled={!activeSpeaker?.voiceId || !lines[activeIdx]}
           className="text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 px-3 py-1 rounded-lg border border-gray-600 font-bold disabled:opacity-40 disabled:cursor-not-allowed">
           음성 재생성
@@ -1142,6 +1350,7 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
               contentEditable
               suppressContentEditableWarning
               onInput={() => syncEditorToStore()}
+              onCopy={handleEditorCopy}
               onKeyDown={(e) => {
                 if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); handlePlayAll(); }
                 // ⌘+A — contenteditable="false" 자식 때문에 네이티브 전체 선택이 불완전할 수 있으므로 수동 처리
@@ -1278,10 +1487,10 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
             return (
               <div key={line.id}>
                 {/* 캐릭터 헤더 높이 맞춤 spacer */}
-                {showHeader && <div style={{ height: '56px' }} />}
+                {showHeader && <div style={{ height: lineHeaderHeights[idx] ?? EDITOR_HEADER_HEIGHT }} />}
                 {/* [FIX #418] 줄별 캐릭터 이름 + 감정/속도 컨트롤 */}
                 <div className={`flex flex-col gap-0.5 px-1.5 py-2 border-b border-gray-700/15 ${idx === activeIdx ? 'bg-yellow-500/5' : ''}`}
-                  style={{ minHeight: '44px' }}>
+                  style={{ minHeight: lineRowHeights[idx] ?? EDITOR_MIN_ROW_HEIGHT }}>
                   {/* 줄별 캐릭터 표시 — 클릭 시 피커 열기 */}
                   {line.voiceName && (
                     <button type="button"
@@ -1574,13 +1783,15 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
                       if (dlMerge === 'merge' && mergedAudioUrl && dlRange === 'all') {
                         // 전체 + 합치기: mergedAudioUrl 다운로드
                         const charName = (activeSpeaker?.name || '나레이션').replace(/[/\\?%*:|"<>\s]/g, '');
+                        const bundleName = `${charName}_전체`;
                         const wavBlob = await toPremierBlob(mergedAudioUrl);
                         const wavUrl = URL.createObjectURL(wavBlob);
                         const a = document.createElement('a');
                         a.href = wavUrl;
-                        a.download = `${charName}_전체.${actualExt}`;
+                        a.download = `${bundleName}.${actualExt}`;
                         document.body.appendChild(a); a.click(); document.body.removeChild(a);
                         setTimeout(() => URL.revokeObjectURL(wavUrl), 3000);
+                        downloadSrtForLines(audioLines, bundleName);
                       } else if (dlMerge === 'split') {
                         // 분할: JSZip으로 각 문장 별 파일
                         const zip = new JSZip();
@@ -1602,6 +1813,10 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
                           setDlDownloading(false);
                           return;
                         }
+                        const srtContent = buildSrtContentForLines(audioLines);
+                        if (srtContent) {
+                          zip.file('narration.srt', '\uFEFF' + srtContent);
+                        }
                         const content = await zip.generateAsync({ type: 'blob' });
                         const charName = (activeSpeaker?.name || '나레이션').replace(/[/\\?%*:|"<>\s]/g, '');
                         const a = document.createElement('a');
@@ -1616,22 +1831,26 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
                         const urls = audioLines.map(l => l.audioUrl as string);
                         const charName = (activeSpeaker?.name || '나레이션').replace(/[/\\?%*:|"<>\s]/g, '');
                         if (urls.length === 1) {
+                          const bundleName = makeName(audioLines[0], 0, actualExt).replace(/\.[a-z0-9]+$/i, '');
                           const wavBlob = await toPremierBlob(urls[0]);
                           const wavUrl = URL.createObjectURL(wavBlob);
                           const a = document.createElement('a');
                           a.href = wavUrl;
-                          a.download = makeName(audioLines[0], 0, actualExt);
+                          a.download = `${bundleName}.${actualExt}`;
                           document.body.appendChild(a); a.click(); document.body.removeChild(a);
                           setTimeout(() => URL.revokeObjectURL(wavUrl), 3000);
+                          downloadSrtForLines(audioLines, bundleName);
                         } else {
+                          const bundleName = `${charName}_선택${audioLines.length}문장`;
                           const merged = await mergeAudioFiles(urls);
                           const wavBlob = await toPremierBlob(merged);
                           const wavUrl = URL.createObjectURL(wavBlob);
                           const a = document.createElement('a');
                           a.href = wavUrl;
-                          a.download = `${charName}_선택${audioLines.length}문장.${actualExt}`;
+                          a.download = `${bundleName}.${actualExt}`;
                           document.body.appendChild(a); a.click(); document.body.removeChild(a);
                           setTimeout(() => { URL.revokeObjectURL(wavUrl); URL.revokeObjectURL(merged); }, 3000);
+                          downloadSrtForLines(audioLines, bundleName);
                         }
                       }
                       setShowDownloadModal(false);

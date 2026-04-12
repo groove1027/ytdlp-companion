@@ -4,6 +4,7 @@ import { useNavigationStore } from '../stores/navigationStore';
 import { showToast } from '../stores/uiStore';
 import type { ProjectConfig, Scene, WhisperSegment } from '../types';
 import { areUploadedTranscriptScenesSynced, buildUploadedTranscriptScenes } from './uploadedTranscriptScenes';
+import { getSceneNarrationText } from './sceneText';
 
 function resolveLineDuration(line: {
   duration?: number;
@@ -52,6 +53,56 @@ function rebuildUploadedTranscriptScenes(existingScenes: Scene[], plannedScenes:
   });
 }
 
+function buildDirectScenesFromLines(
+  existingScenes: Scene[],
+  lines: Array<{
+    text: string;
+    audioUrl?: string;
+    startTime?: number;
+    endTime?: number;
+    duration?: number;
+    sceneId?: string;
+  }>,
+): Scene[] {
+  const ts = Date.now();
+
+  return lines.map((line, index) => {
+    const currentScene = existingScenes[index];
+    const normalizedLineText = normalizeSceneText(line.text);
+    const currentSceneText = currentScene ? normalizeSceneText(getSceneNarrationText(currentScene)) : '';
+    const shouldPreserveCurrentScene = !!currentScene && normalizedLineText.length > 0 && normalizedLineText === currentSceneText;
+
+    const resolvedDuration = resolveLineDuration(line);
+    const baseScene: Scene = shouldPreserveCurrentScene && currentScene
+      ? currentScene
+      : {
+          id: line.sceneId || currentScene?.id || `scene-${ts}-${index}`,
+          scriptText: line.text,
+          audioScript: line.text,
+          visualPrompt: '',
+          visualDescriptionKO: '',
+          characterPresent: false,
+          isGeneratingImage: false,
+          isGeneratingVideo: false,
+          isNativeHQ: currentScene?.isNativeHQ ?? false,
+          seedanceDuration: currentScene?.seedanceDuration || '8',
+        };
+
+    return {
+      ...baseScene,
+      id: line.sceneId || baseScene.id || `scene-${ts}-${index}`,
+      scriptText: line.text,
+      audioScript: line.text,
+      audioUrl: line.audioUrl,
+      audioDuration: resolvedDuration,
+      startTime: line.startTime,
+      endTime: line.endTime,
+      isGeneratingImage: false,
+      isGeneratingVideo: false,
+    };
+  });
+}
+
 /**
  * 사운드 스튜디오의 오디오 데이터를 이미지/영상 탭으로 동기화하고 탭 전환.
  *
@@ -94,7 +145,8 @@ export function transferSoundToImageVideo(): void {
   });
   const isUploadedTranscriptTransfer = finalLines.length > 0
     && finalLines.every((line) => line.audioSource === 'uploaded' || !!line.uploadedAudioId);
-  const needsSceneRegroup = existingScenes.length > 0
+  const needsDirectSceneRebuild = !isUploadedTranscriptTransfer
+    && existingScenes.length > 0
     && existingScenes.length !== finalLines.length
     && finalLines.length > 0
     && finalLines.every((line) => !line.sceneId);
@@ -130,7 +182,7 @@ export function transferSoundToImageVideo(): void {
     transcriptDurationSec,
     rawUploadedTranscriptSegments: lineSegments,
   } : null;
-  const regroupedUploadedScenes = (isUploadedTranscriptTransfer || needsSceneRegroup) && regroupConfig
+  const regroupedUploadedScenes = isUploadedTranscriptTransfer && regroupConfig
     ? buildUploadedTranscriptScenes(regroupConfig, regroupConfig.targetSceneCount ?? null)
     : null;
 
@@ -143,6 +195,8 @@ export function transferSoundToImageVideo(): void {
           : regroupedUploadedScenes,
       );
     }
+  } else if (needsDirectSceneRebuild) {
+    projectStore.setScenes(buildDirectScenesFromLines(existingScenes, finalLines));
   } else if (existingScenes.length > 0) {
     const canUseIndexFallback = existingScenes.length === finalLines.length;
     for (let i = 0; i < finalLines.length; i++) {

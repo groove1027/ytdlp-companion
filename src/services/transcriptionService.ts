@@ -1017,3 +1017,100 @@ export function segmentsToScriptLines(
     uploadedAudioId,
   }));
 }
+
+function normalizeParagraphText(text: string): string {
+  return text.replace(/\s+/g, '').trim();
+}
+
+function getParagraphLength(text: string): number {
+  return Math.max(1, normalizeParagraphText(text).length);
+}
+
+function hasReasonableParagraphMatch(
+  transcriptText: string,
+  paragraphText: string,
+): boolean {
+  const normalizedTranscript = normalizeParagraphText(transcriptText);
+  const normalizedParagraphs = normalizeParagraphText(paragraphText);
+  if (!normalizedTranscript || !normalizedParagraphs) return false;
+
+  const transcriptProbe = normalizedTranscript.slice(0, Math.min(60, normalizedTranscript.length));
+  const paragraphProbe = normalizedParagraphs.slice(0, Math.min(60, normalizedParagraphs.length));
+  return normalizedTranscript.includes(paragraphProbe) || normalizedParagraphs.includes(transcriptProbe);
+}
+
+/**
+ * 전사 문장 배열을 기존 대본 단락 구조에 맞춰 재매핑한다.
+ * 텍스트 길이 비율로 start/end를 재분배해, 업로드 오디오와 기존 대본 단락 수를 일치시킨다.
+ */
+export function alignTranscriptSegmentsToParagraphs(
+  segments: WhisperSegment[],
+  paragraphs: string[],
+): WhisperSegment[] {
+  const normalizedSegments = segments.filter((segment) => segment.text.trim().length > 0);
+  const normalizedParagraphs = paragraphs.map((paragraph) => paragraph.trim()).filter(Boolean);
+  if (normalizedSegments.length === 0 || normalizedParagraphs.length === 0) {
+    return normalizedSegments;
+  }
+
+  const transcriptText = normalizedSegments.map((segment) => segment.text.trim()).join('\n');
+  const paragraphText = normalizedParagraphs.join('\n');
+  if (!hasReasonableParagraphMatch(transcriptText, paragraphText)) {
+    return normalizedSegments;
+  }
+
+  const preparedSegments = normalizedSegments.map((segment) => ({
+    ...segment,
+    normalizedLength: getParagraphLength(segment.text),
+    duration: Math.max(0, segment.endTime - segment.startTime),
+  }));
+
+  const lastEndTime = preparedSegments[preparedSegments.length - 1]?.endTime || 0;
+  let segmentIndex = 0;
+  let segmentConsumed = 0;
+  let previousEnd = 0;
+
+  return normalizedParagraphs.map((paragraph) => {
+    const targetLength = getParagraphLength(paragraph);
+    let remaining = targetLength;
+    let paragraphStart: number | undefined;
+    let paragraphEnd: number | undefined;
+
+    while (remaining > 0 && segmentIndex < preparedSegments.length) {
+      const segment = preparedSegments[segmentIndex];
+      const remainingInSegment = Math.max(0, segment.normalizedLength - segmentConsumed);
+      if (remainingInSegment <= 0) {
+        segmentIndex += 1;
+        segmentConsumed = 0;
+        continue;
+      }
+
+      const consumeLength = Math.min(remainingInSegment, remaining);
+      const startRatio = segmentConsumed / segment.normalizedLength;
+      const endRatio = (segmentConsumed + consumeLength) / segment.normalizedLength;
+      const partStart = segment.duration > 0 ? segment.startTime + (segment.duration * startRatio) : segment.startTime;
+      const partEnd = segment.duration > 0 ? segment.startTime + (segment.duration * endRatio) : segment.endTime;
+
+      if (paragraphStart === undefined) paragraphStart = partStart;
+      paragraphEnd = partEnd;
+
+      remaining -= consumeLength;
+      segmentConsumed += consumeLength;
+
+      if (segmentConsumed >= segment.normalizedLength) {
+        segmentIndex += 1;
+        segmentConsumed = 0;
+      }
+    }
+
+    const startTime = paragraphStart ?? previousEnd;
+    const endTime = Math.max(startTime, paragraphEnd ?? lastEndTime);
+    previousEnd = endTime;
+
+    return {
+      text: paragraph,
+      startTime,
+      endTime,
+    };
+  });
+}
