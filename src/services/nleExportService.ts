@@ -62,6 +62,10 @@ function getNleTargetLabel(target: NleTarget): string {
         : 'VREW';
 }
 
+export function shouldAutoInstallNleViaCompanion(target: NleTarget): boolean {
+  return target === 'capcut' || target === 'filmora';
+}
+
 function buildMissingCompanionError(target: NleTarget): Error {
   return new Error(`${getNleTargetLabel(target)} 내보내기에는 컴패니언 앱이 필요합니다. 컴패니언 앱을 설치하고 실행한 뒤 다시 시도하세요.`);
 }
@@ -5150,6 +5154,57 @@ export function generateNleSrt(
   dialogueLineBreaks?: SubtitleTextOverrideMap,
   wrapEffectWithParentheses: boolean = false,
 ): string {
+  if (layer === 'narration') {
+    const syncTimeline = buildNarrationSyncedTimeline(scenes, narrationLines, preset);
+    let idx = 1;
+    const entries: string[] = [];
+
+    narrationLines.forEach((line, origIndex) => {
+      const sceneIndex = typeof line.index === 'number' && Number.isFinite(line.index)
+        ? Math.max(0, Math.floor(line.index))
+        : origIndex;
+      const scene = scenes[sceneIndex];
+      const sceneTiming = syncTimeline.scenes[sceneIndex];
+      const hasNarrationSource = !!line.audioFileName || !!line.audioUrl || !!line.text?.trim();
+      if (!hasNarrationSource || !sceneTiming) return;
+
+      const lineText = getDialogueSubtitleText({
+        lineId: `nar-${sceneIndex + 1}`,
+        text: line.text?.trim() || (scene ? getVideoAnalysisMainText(scene, preset) : ''),
+      });
+      if (!lineText) return;
+
+      const timelineStart = toFiniteNonNeg(line.startTime, toFiniteNonNeg(sceneTiming.timelineStartSec, 0));
+      const explicitDuration = typeof line.duration === 'number' && Number.isFinite(line.duration) && line.duration > 0
+        ? line.duration
+        : null;
+      const explicitEndSec = typeof line.endTime === 'number' && Number.isFinite(line.endTime) && line.endTime > timelineStart
+        ? line.endTime
+        : null;
+      const timelineFallbackEnd = toFiniteNonNeg(
+        sceneTiming.timelineEndSec,
+        timelineStart + toFiniteNonNeg(sceneTiming.targetDurationSec, 3),
+      );
+      const timelineEnd = explicitDuration != null
+        ? timelineStart + explicitDuration
+        : explicitEndSec != null
+          ? explicitEndSec
+          : timelineFallbackEnd;
+      const sourceStart = toFiniteNonNeg(sceneTiming.sourceStartSec + sceneTiming.trimStartSec, 0);
+      const sourceEnd = Math.max(
+        sourceStart + 0.1,
+        toFiniteNonNeg(sceneTiming.sourceStartSec + sceneTiming.trimEndSec, sourceStart + sceneTiming.sourceDurationSec),
+      );
+      const srtStart = timingMode === 'timeline' ? timelineStart : sourceStart;
+      const srtEnd = timingMode === 'timeline' ? Math.max(srtStart + 0.1, timelineEnd) : sourceEnd;
+
+      entries.push(`${idx}\n${secondsToSrtTime(srtStart)} --> ${secondsToSrtTime(srtEnd)}\n${lineText}`);
+      idx++;
+    });
+
+    return entries.join('\n\n');
+  }
+
   const syncTimeline = buildNarrationSyncedTimeline(scenes, narrationLines, preset);
   const nsTimings = syncTimeline.scenes;
   let idx = 1;
@@ -5161,7 +5216,7 @@ export function generateNleSrt(
       if (!seg.text.trim()) continue;
       const srtStart = timingMode === 'timeline' ? seg.startTime : t.sourceStartSec + t.trimStartSec;
       const srtEnd = timingMode === 'timeline' ? seg.endTime : t.sourceStartSec + t.trimEndSec;
-      const lineText = (layer === 'dialogue' || layer === 'narration')
+      const lineText = layer === 'dialogue'
         ? getDialogueSubtitleText(seg, dialogueLineBreaks)
         : (wrapEffectWithParentheses ? wrapEffectSubtitleText(breakLines(seg.text)) : breakLines(seg.text));
       if (!lineText) continue;
@@ -5203,6 +5258,9 @@ export async function buildNlePackageZip(params: {
   const zip = new JSZip();
   const safeName = sanitizeProjectName(title);
   const BOM = '\uFEFF';
+  const addBlobToZip = (path: string, blob: Blob): void => {
+    zip.file(path, toJsZipBlobInput(blob));
+  };
 
   // [FIX #891/#892] 추가 소스 영상 파일명 중복 방지 (Premiere/Filmora/VREW 공용)
   const dedupedExtraNames: string[] = [];
@@ -5234,7 +5292,7 @@ export async function buildNlePackageZip(params: {
     if (!blob) { packagedNarrationLines.push(line); continue; }
     const fileName = `${String(i + 1).padStart(3, '0')}_narration.${audioExtFromBlob(blob)}`;
     const duration = line.duration ?? await measureBlobAudioDuration(blob) ?? 3;
-    zip.file(fileName, blob);
+    addBlobToZip(fileName, blob);
     packagedNarrationBlobs.push({ fileName, blob });
     packagedNarrationLines.push({ ...line, audioFileName: fileName, duration });
   }
@@ -5282,11 +5340,11 @@ export async function buildNlePackageZip(params: {
     // [FIX] 영상 파일을 .prproj와 같은 루트에 배치 — Premiere가 파일명으로 자동 매칭
     // (media/ 하위폴더 사용 시 Premiere가 상대경로를 해석하지 못해 Link Media 에러 발생)
     if (videoBlob) {
-      zip.file(videoFileName || 'video.mp4', videoBlob);
+      addBlobToZip(videoFileName || 'video.mp4', videoBlob);
     }
     // 추가 소스 영상도 루트에 배치
     for (let ei = 0; ei < additionalVideoBlobs.length; ei++) {
-      zip.file(dedupedExtraNames[ei], additionalVideoBlobs[ei].blob);
+      addBlobToZip(dedupedExtraNames[ei], additionalVideoBlobs[ei].blob);
     }
 
     const videoBase = (videoFileName || 'video.mp4').replace(/\.[^.]+$/, '');
@@ -5465,17 +5523,17 @@ export async function buildNlePackageZip(params: {
     const draftVideoFileNames = draftResult.videoFileNames;
     if (videoBlob) {
       const primaryName = draftVideoFileNames[0] || videoFileName || 'video.mp4';
-      zip.file(`${pId}/materials/video/${primaryName}`, videoBlob);
-      zip.file(`media/${primaryName}`, videoBlob);
+      addBlobToZip(`${pId}/materials/video/${primaryName}`, videoBlob);
+      addBlobToZip(`media/${primaryName}`, videoBlob);
     }
     for (let ei = 0; ei < additionalVideoBlobs.length; ei++) {
       const extra = additionalVideoBlobs[ei];
       const dedupedName = draftVideoFileNames[ei + 1] || sanitizeFileName(extra.fileName);
-      zip.file(`${pId}/materials/video/${dedupedName}`, extra.blob);
-      zip.file(`media/${dedupedName}`, extra.blob);
+      addBlobToZip(`${pId}/materials/video/${dedupedName}`, extra.blob);
+      addBlobToZip(`media/${dedupedName}`, extra.blob);
     }
     for (const narrationEntry of packagedNarrationBlobs) {
-      zip.file(`${pId}/materials/audio/${narrationEntry.fileName}`, narrationEntry.blob);
+      addBlobToZip(`${pId}/materials/audio/${narrationEntry.fileName}`, narrationEntry.blob);
     }
 
     // 4. SRT — CapCut 타임라인 기준 (draft JSON의 target_timerange와 싱크)
@@ -5527,10 +5585,10 @@ export async function buildNlePackageZip(params: {
     zip.file(`${safeName}.xml`, filmoraXml);
 
     if (videoBlob) {
-      zip.file(`media/${videoFileName || 'video.mp4'}`, videoBlob);
+      addBlobToZip(`media/${videoFileName || 'video.mp4'}`, videoBlob);
     }
     for (let ei = 0; ei < additionalVideoBlobs.length; ei++) {
-      zip.file(`media/${dedupedExtraNames[ei]}`, additionalVideoBlobs[ei].blob);
+      addBlobToZip(`media/${dedupedExtraNames[ei]}`, additionalVideoBlobs[ei].blob);
     }
 
     const dlgSrt = generateNleSrt(scenes, 'dialogue', preset, 'source', packagedNarrationLines);
@@ -5578,10 +5636,10 @@ export async function buildNlePackageZip(params: {
 
     // 1. 영상 파일
     if (videoBlob) {
-      zip.file(`media/${videoFileName || 'video.mp4'}`, videoBlob);
+      addBlobToZip(`media/${videoFileName || 'video.mp4'}`, videoBlob);
     }
     for (let ei = 0; ei < additionalVideoBlobs.length; ei++) {
-      zip.file(`media/${dedupedExtraNames[ei]}`, additionalVideoBlobs[ei].blob);
+      addBlobToZip(`media/${dedupedExtraNames[ei]}`, additionalVideoBlobs[ei].blob);
     }
 
     // 2. SRT 자막
@@ -6024,12 +6082,14 @@ interface EditRoomNarrationLine {
   duration?: number;
   startTime?: number;
   index?: number;
+  text?: string;
 }
 
 interface EditRoomNarrationClip {
   fileName: string;
   startSec: number;
   durationSec: number;
+  text?: string;
 }
 
 function getEditRoomTotalDurationSec(
@@ -6270,6 +6330,17 @@ function buildEditRoomSrt(timeline: UnifiedSceneTiming[]): string {
       entries.push(`${idx}\n${secondsToSrtTime(seg.startTime)} --> ${secondsToSrtTime(seg.endTime)}\n${breakLines(seg.text)}`);
       idx++;
     }
+  }
+  return entries.join('\n\n');
+}
+
+function buildEditRoomNarrationSrt(narrationClips: readonly EditRoomNarrationClip[]): string {
+  const entries: string[] = [];
+  for (const clip of narrationClips) {
+    const text = breakLines((clip.text || '').trim());
+    if (!text) continue;
+    const endSec = clip.startSec + Math.max(0.1, clip.durationSec);
+    entries.push(`${entries.length + 1}\n${secondsToSrtTime(clip.startSec)} --> ${secondsToSrtTime(endSec)}\n${text}`);
   }
   return entries.join('\n\n');
 }
@@ -6914,6 +6985,7 @@ export async function buildEditRoomNleZip(params: {
 
   for (let i = 0; i < timeline.length; i++) {
     const t = timeline[i];
+    const scene = scenes.find((item) => item.id === t.sceneId);
     const sceneNarrations = narrationLines
       .filter((line) => !!line.audioUrl && line.sceneId === t.sceneId)
       .sort((a, b) => narrationSortKey(a) - narrationSortKey(b));
@@ -6939,10 +7011,11 @@ export async function buildEditRoomNleZip(params: {
 
       seqInScene++;
       const narFileName = `${idx}_narration_${String(seqInScene).padStart(2, '0')}.${audioExtFromBlob(blob)}`;
+      const narrationText = (line.text || '').trim() || getEditRoomSceneNarrativeText(scene);
       // [FIX] 나레이션도 ZIP 루트에 배치해 FCP XML pathurl을 ./파일명으로 통일한다.
       addBlobToZip(narFileName, blob);
       narrationBlobEntries.push({ fileName: narFileName, blob });
-      narrationClips.push({ fileName: narFileName, startSec, durationSec });
+      narrationClips.push({ fileName: narFileName, startSec, durationSec, text: narrationText });
     }
 
     sceneOffsets.set(t.sceneId, sceneOffset);
@@ -6969,10 +7042,13 @@ export async function buildEditRoomNleZip(params: {
     // [FIX] sceneId 없는 나레이션도 ZIP 루트에 배치한다.
     addBlobToZip(narFileName, blob);
     narrationBlobEntries.push({ fileName: narFileName, blob });
-    narrationClips.push({ fileName: narFileName, startSec, durationSec });
+    narrationClips.push({ fileName: narFileName, startSec, durationSec, text: (line.text || '').trim() });
   }
 
   narrationClips.sort((a, b) => a.startSec - b.startSec);
+
+  const narrationSrt = buildEditRoomNarrationSrt(narrationClips);
+  if (narrationSrt) zip.file(`${safeName}_나레이션.srt`, BOM + narrationSrt);
 
   // [FIX #472] FCP XML — mediaFileMap 전달하여 실제 파일명 기준으로 XML 생성
   // 나레이션은 line.duration/오디오 메타데이터 기반 실제 길이로 A2 트랙에 배치

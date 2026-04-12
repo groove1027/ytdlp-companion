@@ -664,6 +664,38 @@ describe('nleExportService timeline regressions', () => {
     expect(sourceAudioSegment?.target_timerange?.duration).toBe(1_000_000);
   });
 
+  it('일반 NLE ZIP은 narration line text가 비어 있어도 장면 텍스트로 나레이션 SRT를 생성한다', async () => {
+    const { buildNlePackageZip } = await import('../nleExportService');
+    const zipBlob = await buildNlePackageZip({
+      target: 'filmora',
+      scenes: [{
+        ...buildSingleScene()[0],
+        dialogue: '장면 대사',
+        audioContent: '장면 대사',
+        effectSub: '팡',
+      }],
+      title: 'Filmora Narration Fallback',
+      videoBlob: new Blob(['video'], { type: 'video/mp4' }),
+      videoFileName: 'video.mp4',
+      width: 1080,
+      height: 1920,
+      fps: 30,
+      videoDurationSec: 1,
+      narrationLines: [{
+        audioUrl: 'data:audio/wav;base64,AAAA',
+        duration: 1,
+        startTime: 0,
+      }],
+    });
+
+    const zip = await JSZip.loadAsync(await zipBlob.arrayBuffer());
+    const narrationSrt = await zip.file('Filmora_Narration_Fallback_나레이션.srt')?.async('string');
+
+    expect(Object.keys(zip.files)).toContain('Filmora_Narration_Fallback_나레이션.srt');
+    expect(narrationSrt || '').toContain('장면 대사');
+    expect(narrationSrt || '').toContain('00:00:00,000 --> 00:00:01,000');
+  });
+
   it('Edit Room CapCut draft duration expands to the farthest narration clip', async () => {
     const { buildEditRoomNleZip } = await import('../nleExportService');
     const result = await buildEditRoomNleZip({
@@ -703,6 +735,45 @@ describe('nleExportService timeline regressions', () => {
 
     expect(draft.duration).toBe(4_500_000);
     expect(draftMeta.tm_duration).toBe(4_500_000);
+  });
+
+  it('Edit Room NLE ZIP은 scene text fallback으로 나레이션 SRT를 함께 패키징한다', async () => {
+    const { buildEditRoomNleZip } = await import('../nleExportService');
+    const result = await buildEditRoomNleZip({
+      target: 'premiere',
+      timeline: [{
+        sceneId: 'scene-1',
+        sceneIndex: 0,
+        imageStartTime: 0,
+        imageEndTime: 2,
+        imageDuration: 2,
+        subtitleSegments: [],
+        effectPreset: '',
+        volume: 1,
+        speed: 1,
+      }],
+      scenes: [{
+        id: 'scene-1',
+        imageUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7ZQn8AAAAASUVORK5CYII=',
+        scriptText: '편집실 나레이션',
+      }],
+      narrationLines: [{
+        sceneId: 'scene-1',
+        audioUrl: 'data:audio/wav;base64,AAAA',
+        duration: 1.5,
+        startTime: 0.25,
+      }],
+      title: 'Edit Room Narration Srt',
+      aspectRatio: '9:16',
+      fps: 30,
+    });
+
+    const zip = await JSZip.loadAsync(await result.blob.arrayBuffer());
+    const narrationSrt = await zip.file('Edit_Room_Narration_Srt_나레이션.srt')?.async('string');
+
+    expect(Object.keys(zip.files)).toContain('Edit_Room_Narration_Srt_나레이션.srt');
+    expect(narrationSrt || '').toContain('편집실 나레이션');
+    expect(narrationSrt || '').toContain('00:00:00,250 --> 00:00:01,750');
   });
 
   it('buildNarrationClipPlacements clamps NaN and Infinity inputs to finite fallback values', async () => {

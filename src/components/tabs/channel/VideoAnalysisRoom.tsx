@@ -32,6 +32,7 @@ import {
   isCompanionUnavailableErrorMessage,
   installNleViaCompanion,
   sanitizeProjectName,
+  shouldAutoInstallNleViaCompanion,
 } from '../../../services/nleExportService';
 import type { EditRoomNleTarget } from '../../../services/nleExportService';
 import { transcribeVideoAudio } from '../../../services/gemini/videoAnalysis';
@@ -7266,7 +7267,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
 
                                       downloadNlePackageZip(zipBlob, downloadFileName);
                                       if (isCancelled()) return;
-                                      if (target !== 'vrew') {
+                                      if (shouldAutoInstallNleViaCompanion(target)) {
                                         showToast(`${label} ZIP 다운로드 완료. 컴패니언 앱에 자동 설치 중...`);
                                         try {
                                           const installResult = await installNleViaCompanion({
@@ -7288,6 +7289,11 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                           }
                                           showToast(`${label} ZIP 다운로드는 완료됐지만 자동 설치는 실패했습니다: ${installMessage}`, 7000);
                                         }
+                                        return;
+                                      }
+
+                                      if (target === 'premiere') {
+                                        showToast(`${label} ZIP 다운로드 완료! 압축 해제 후 File > Import로 열면 파일 리스트 화면이 먼저 표시됩니다.`, 7000);
                                         return;
                                       }
 

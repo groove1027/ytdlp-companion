@@ -28,6 +28,7 @@ import {
   getCapCutInstallCompletionHint,
   isCompanionUnavailableErrorMessage,
   installNleViaCompanion,
+  shouldAutoInstallNleViaCompanion,
 } from '../../../services/nleExportService';
 import type { EditRoomNleTarget } from '../../../services/nleExportService';
 import { logger } from '../../../services/LoggerService';
@@ -1472,9 +1473,13 @@ const StoryboardPanel: React.FC = () => {
           return null;
         }
 
-        return { sceneId, audioUrl };
+        return {
+          sceneId,
+          audioUrl,
+          text: line.text?.trim() || getSceneNarrationText(scene),
+        };
       })
-      .filter((value): value is { sceneId: string; audioUrl: string } => value !== null);
+      .filter((value): value is { sceneId: string; audioUrl: string; text: string } => value !== null);
 
     if (lineNarrations.length > 0) {
       return lineNarrations;
@@ -1482,7 +1487,11 @@ const StoryboardPanel: React.FC = () => {
 
     return scenes
       .filter((scene) => !!scene.audioUrl)
-      .map((scene) => ({ sceneId: scene.id, audioUrl: scene.audioUrl! }));
+      .map((scene) => ({
+        sceneId: scene.id,
+        audioUrl: scene.audioUrl!,
+        text: getSceneNarrationText(scene),
+      }));
   }, [lines, scenes]);
 
   // [#243] 장면 선택 헬퍼
@@ -1548,7 +1557,9 @@ const StoryboardPanel: React.FC = () => {
       showToast(
         target === 'vrew'
           ? `${targetLabel} 프로젝트 파일을 준비하고 있습니다...`
-          : `${targetLabel} 프로젝트를 준비하고 있습니다. 완료되면 ZIP을 다운로드하고, 컴패니언 앱이 연결돼 있으면 바로 설치합니다...`,
+          : shouldAutoInstallNleViaCompanion(target)
+            ? `${targetLabel} 프로젝트를 준비하고 있습니다. 완료되면 ZIP을 다운로드하고, 컴패니언 앱이 연결돼 있으면 바로 설치합니다...`
+            : `${targetLabel} 프로젝트를 준비하고 있습니다. 완료되면 ZIP을 다운로드합니다...`,
       );
       const exportTitle = projectTitle || '프로젝트';
       const result = await buildEditRoomNleZip({
@@ -1577,7 +1588,7 @@ const StoryboardPanel: React.FC = () => {
 
       downloadNlePackageZip(result.blob, downloadFileName);
 
-      if (target !== 'vrew') {
+      if (shouldAutoInstallNleViaCompanion(target)) {
         showToast(`${targetLabel} ZIP 다운로드 완료. 컴패니언 앱에 자동 설치 중...`);
         try {
           const installResult = await installNleViaCompanion({ target, zipBlob: result.blob });
@@ -1592,6 +1603,11 @@ const StoryboardPanel: React.FC = () => {
           }
           showToast(`${targetLabel} ZIP 다운로드는 완료됐지만 자동 설치는 실패했습니다: ${installMessage}`, 7000);
         }
+        return;
+      }
+
+      if (target === 'premiere') {
+        showToast(`${targetLabel} ZIP 다운로드 완료! 압축 해제 후 File > Import로 열면 파일 리스트 화면이 먼저 표시됩니다.${mediaSummary}`, 7000);
         return;
       }
 
