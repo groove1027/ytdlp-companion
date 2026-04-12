@@ -237,7 +237,7 @@ const assignRemaining = (entries: DetectedKey[], assigned: Set<string>): Detecte
 
 const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
     const { requireAuth } = useAuthGuard();
-    const [keys, setKeys] = useState({ kie: '', cloudName: '', uploadPreset: '', gemini: '', apimart: '', removeBg: '', xai: '', evolink: '', youtubeApiKey: '', typecast: '', vmakeAk: '', vmakeSk: '' });
+    const [keys, setKeys] = useState({ kie: '', cloudName: '', uploadPreset: '', gemini: '', apimart: '', removeBg: '', xai: '', evolink: '', youtubeApiKey: '', typecast: '', vmakeAk: '', vmakeSk: '', serper: '', pexels: '' });
     const [youtubeKeyPool, setYoutubeKeyPool] = useState<string[]>([]);
     const [newYoutubeKey, setNewYoutubeKey] = useState('');
     const [showPassword, setShowPassword] = useState(false);
@@ -334,6 +334,8 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
                 typecast: stored.typecast,
                 vmakeAk: stored.vmakeAk,
                 vmakeSk: stored.vmakeSk,
+                serper: stored.serper,
+                pexels: stored.pexels,
             });
             // YouTube API 키 풀 로드 (없으면 기존 단일 키로 초기화)
             const pool = getYoutubeApiKeyPool();
@@ -421,6 +423,11 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
         const primaryYoutubeKey = finalYoutubePool.length > 0 ? finalYoutubePool[0] : '';
         saveApiKeys(keys.kie, keys.cloudName, keys.uploadPreset, undefined, keys.apimart, keys.removeBg, keys.xai, keys.evolink, primaryYoutubeKey, keys.typecast);
         saveVmakeKeys(keys.vmakeAk || '', keys.vmakeSk || '');
+        // Serper / Pexels 키 저장
+        if (keys.serper?.trim()) localStorage.setItem('CUSTOM_SERPER_KEY', keys.serper.trim());
+        else localStorage.removeItem('CUSTOM_SERPER_KEY');
+        if (keys.pexels?.trim()) localStorage.setItem('CUSTOM_PEXELS_KEY', keys.pexels.trim());
+        else localStorage.removeItem('CUSTOM_PEXELS_KEY');
     };
 
     // [FIX #928] 현재 state가 localStorage와 다른지 판별
@@ -435,7 +442,9 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
             || stored.xai !== keys.xai
             || stored.typecast !== keys.typecast
             || (stored.vmakeAk || '') !== (keys.vmakeAk || '')
-            || (stored.vmakeSk || '') !== (keys.vmakeSk || '')) return true;
+            || (stored.vmakeSk || '') !== (keys.vmakeSk || '')
+            || (stored.serper || '') !== (keys.serper || '')
+            || (stored.pexels || '') !== (keys.pexels || '')) return true;
         // [FIX #928] 체험판 Google Gemini 키는 onChange에서 직접 localStorage에 쓰므로
         // 모달 열릴 때 캡처한 초기값과 현재 localStorage 값을 비교
         const currentGoogleKey = localStorage.getItem('CUSTOM_GOOGLE_GEMINI_KEY') || '';
@@ -742,6 +751,37 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
                             <input type="text" value={keys.uploadPreset} onChange={(e) => setKeys({...keys, uploadPreset: e.target.value})} placeholder="Upload Preset" className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-base text-white" />
                         </div>
                     </div>
+                </div>
+
+                {/* ── 이미지 레퍼런스 검색 (Serper / Pexels) ── */}
+                <p className="text-xs font-bold text-gray-500 uppercase tracking-widest mt-6 mb-1">이미지 레퍼런스 검색</p>
+                <div className="space-y-3 pb-4 border-b border-gray-700">
+                    <div className="flex items-start justify-between">
+                        <div className="flex flex-col">
+                            <h3 className="text-base font-bold text-blue-400 uppercase tracking-wider">Serper.dev</h3>
+                            <span className="text-sm text-gray-400">Google 이미지 검색 API — 2,500건 무료 (차단 없음)</span>
+                        </div>
+                        <a href="https://serper.dev" target="_blank" rel="noopener noreferrer" className="shrink-0 ml-3 px-2.5 py-1 bg-blue-600/20 hover:bg-blue-600/40 border border-blue-500/30 text-blue-400 text-xs font-bold rounded-lg transition-all flex items-center gap-1">키 발급 ↗</a>
+                    </div>
+                    <div className="bg-blue-900/10 border border-blue-500/10 rounded-lg p-3 text-xs text-blue-200/70 space-y-1">
+                        <p>serper.dev에 가입하면 2,500건 무료 API 키를 받을 수 있습니다.</p>
+                        <p>Google 직접 검색이 차단될 때 자동으로 이 API를 사용합니다.</p>
+                    </div>
+                    <input type={showPassword ? "text" : "password"} value={keys.serper || ''} onChange={(e) => setKeys({...keys, serper: e.target.value})} placeholder="Serper API Key" className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-base text-white" />
+                </div>
+                <div className="space-y-3 pb-4 border-b border-gray-700 mt-3">
+                    <div className="flex items-start justify-between">
+                        <div className="flex flex-col">
+                            <h3 className="text-base font-bold text-teal-400 uppercase tracking-wider">Pexels</h3>
+                            <span className="text-sm text-gray-400">무료 스톡 이미지 — 월 20,000건 무료</span>
+                        </div>
+                        <a href="https://www.pexels.com/api/new/" target="_blank" rel="noopener noreferrer" className="shrink-0 ml-3 px-2.5 py-1 bg-teal-600/20 hover:bg-teal-600/40 border border-teal-500/30 text-teal-400 text-xs font-bold rounded-lg transition-all flex items-center gap-1">키 발급 ↗</a>
+                    </div>
+                    <div className="bg-teal-900/10 border border-teal-500/10 rounded-lg p-3 text-xs text-teal-200/70 space-y-1">
+                        <p>pexels.com/api에서 무료 API 키를 발급받으세요.</p>
+                        <p>Google/Serper 모두 실패 시 무료 스톡 이미지로 자동 폴백합니다.</p>
+                    </div>
+                    <input type={showPassword ? "text" : "password"} value={keys.pexels || ''} onChange={(e) => setKeys({...keys, pexels: e.target.value})} placeholder="Pexels API Key" className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-base text-white" />
                 </div>
 
                 {/* ── Vmake AI (자막/워터마크 제거) ── */}

@@ -96,21 +96,14 @@ function pickForwardHeaders(input: unknown): Record<string, string> {
 function buildProxyHeaders(parsedUrl: URL, hasBody: boolean, forwardedHeaders: Record<string, string>): Record<string, string> {
   const isReferenceSearchHost = isGoogleSearchHost(parsedUrl.hostname) || isBingSearchHost(parsedUrl.hostname);
 
+  // [FIX] Google async JSON API용 모바일 UA (SearXNG 방식)
+  // 데스크톱 UA → 302 리다이렉트(udm=2) → JS-only 페이지 → 파싱 불가
+  // 모바일 앱 UA → JSON 직접 응답 (_fmt:json) → 100개 이미지 즉시 파싱
   const baseHeaders: Record<string, string> = isReferenceSearchHost
     ? {
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept': '*/*',
         'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
-        'Cache-Control': 'no-cache',
-        'Pragma': 'no-cache',
-        'Referer': isBingSearchHost(parsedUrl.hostname) ? `${parsedUrl.origin}/images/` : `${parsedUrl.origin}/`,
-        'Upgrade-Insecure-Requests': '1',
-        'Sec-Ch-Ua': '"Chromium";v="136", "Not_A Brand";v="24"',
-        'Sec-Ch-Ua-Mobile': '?0',
-        'Sec-Ch-Ua-Platform': '"macOS"',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'none',
-        'Sec-Fetch-User': '?1',
+        'User-Agent': 'NSTN/3.60.474802233.release Dalvik/2.1.0 (Linux; U; Android 12; KR) gzip',
       }
     : {
         'Origin': 'https://labs.google',
