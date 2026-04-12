@@ -41,20 +41,34 @@ function fmtTime(sec: number): string {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
+function extractTaggedSourceIndex(text: string): number {
+  const match = text.match(/\[(?:소스\s*|S-?)(\d+)\]/i);
+  if (!match) return 0;
+  const parsed = parseInt(match[1], 10);
+  return Number.isNaN(parsed) ? 0 : Math.max(0, parsed - 1);
+}
+
 interface ParsedScene {
   cutNum: number;
   startSec: number;
   endSec: number;
   duration: number;
+  sourceIndex: number;
   subtitle: string;
   effectSub: string;
   mode: string;
   raw: VideoSceneRow;
 }
 
+interface PreviewVideoSource {
+  blob: Blob;
+  fileName?: string;
+}
+
 interface Props {
   version: VideoVersionItem;
   videoBlob: Blob;
+  videoSources?: PreviewVideoSource[];
   onClose: () => void;
   onDownloadSrt: () => void;
   onDownloadSrtOnly?: () => void;
@@ -139,11 +153,12 @@ const SortableSceneButton: React.FC<SortableSceneButtonProps> = ({
 // ═══════════════════════════════════════
 
 const ScenarioPreviewPlayer: React.FC<Props> = ({
-  version, videoBlob, onClose, onDownloadSrt, onDownloadSrtOnly,
+  version, videoBlob, videoSources, onClose, onDownloadSrt, onDownloadSrtOnly,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const sceneEndRef = useRef<number>(0);
   const currentIdxRef = useRef(0);
+  const pendingPlayRef = useRef(false);
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentIdx, setCurrentIdx] = useState(0);
@@ -155,13 +170,24 @@ const ScenarioPreviewPlayer: React.FC<Props> = ({
   const [sceneOrder, setSceneOrder] = useState<number[]>([]);
   const [showNarration, setShowNarration] = useState(false);
   const [ttsMap, setTtsMap] = useState<Record<number, TtsEntry>>({});
+  const [activeSourceIndex, setActiveSourceIndex] = useState(0);
   const ttsAudioRef = useRef<HTMLAudioElement>(null);
 
-  const blobUrl = useMemo(() => URL.createObjectURL(videoBlob), [videoBlob]);
+  const resolvedVideoSources = useMemo(
+    () => (videoSources && videoSources.length > 0 ? videoSources : [{ blob: videoBlob }]),
+    [videoBlob, videoSources],
+  );
+  const blobUrls = useMemo(
+    () => resolvedVideoSources.map((source) => URL.createObjectURL(source.blob)),
+    [resolvedVideoSources],
+  );
+  const activeBlobUrl = blobUrls[Math.min(activeSourceIndex, Math.max(blobUrls.length - 1, 0))] || blobUrls[0];
 
   useEffect(() => {
-    return () => URL.revokeObjectURL(blobUrl);
-  }, [blobUrl]);
+    return () => {
+      blobUrls.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [blobUrls]);
 
   // ─── 장면 파싱 (원본 순서) ───
   const scenes = useMemo((): ParsedScene[] => {
@@ -175,6 +201,7 @@ const ScenarioPreviewPlayer: React.FC<Props> = ({
         startSec,
         endSec,
         duration: Math.max(0.1, endSec - startSec),
+        sourceIndex: extractTaggedSourceIndex(tc),
         subtitle: scene.audioContent || scene.dialogue || scene.sceneDesc || '',
         effectSub: scene.effectSub || '',
         mode: scene.mode || '',
@@ -188,6 +215,8 @@ const ScenarioPreviewPlayer: React.FC<Props> = ({
     setSceneOrder(scenes.map((_, i) => i));
     setCurrentIdx(0);
     currentIdxRef.current = 0;
+    setActiveSourceIndex(0);
+    setCurrentTime(0);
   }, [scenes]);
 
   // ─── 재정렬된 장면 목록 ───
@@ -212,6 +241,10 @@ const ScenarioPreviewPlayer: React.FC<Props> = ({
   );
 
   const scene = orderedScenes[currentIdx] || null;
+  const hasMultipleSources = useMemo(
+    () => orderedScenes.some((item) => item.sourceIndex > 0) || resolvedVideoSources.length > 1,
+    [orderedScenes, resolvedVideoSources.length],
+  );
 
   // ─── 드래그 앤 드롭 ───
   const sensors = useSensors(
@@ -237,26 +270,39 @@ const ScenarioPreviewPlayer: React.FC<Props> = ({
   }, [scenes]);
 
   // ─── 재생 제어 ───
-  const seekToScene = useCallback((idx: number) => {
+  const seekToScene = useCallback((idx: number, shouldPlay = false) => {
     const video = videoRef.current;
     if (!video || !orderedScenes[idx]) return;
     const s = orderedScenes[idx];
     setCurrentIdx(idx);
     currentIdxRef.current = idx;
-    video.currentTime = s.startSec;
     sceneEndRef.current = s.endSec;
-  }, [orderedScenes]);
+    pendingPlayRef.current = shouldPlay;
+
+    const nextSourceIndex = Math.min(
+      Math.max(s.sourceIndex || 0, 0),
+      Math.max(resolvedVideoSources.length - 1, 0),
+    );
+    if (nextSourceIndex !== activeSourceIndex) {
+      setVideoReady(false);
+      setActiveSourceIndex(nextSourceIndex);
+      return;
+    }
+
+    video.currentTime = s.startSec;
+    if (shouldPlay) {
+      video.play().catch((e) => { logger.trackSwallowedError('ScenarioPreviewPlayer:seek/play', e); });
+    }
+  }, [activeSourceIndex, orderedScenes, resolvedVideoSources.length]);
 
   const play = useCallback(() => {
-    const video = videoRef.current;
-    if (!video || !scene) return;
-    video.currentTime = scene.startSec;
-    sceneEndRef.current = scene.endSec;
-    video.play().catch((e) => { logger.trackSwallowedError('ScenarioPreviewPlayer:play', e); });
+    if (!scene) return;
     setIsPlaying(true);
-  }, [scene]);
+    seekToScene(currentIdxRef.current, true);
+  }, [scene, seekToScene]);
 
   const pause = useCallback(() => {
+    pendingPlayRef.current = false;
     videoRef.current?.pause();
     setIsPlaying(false);
   }, []);
@@ -268,14 +314,12 @@ const ScenarioPreviewPlayer: React.FC<Props> = ({
 
   const prevScene = useCallback(() => {
     const newIdx = Math.max(0, currentIdx - 1);
-    seekToScene(newIdx);
-    if (isPlaying) videoRef.current?.play().catch((e) => { logger.trackSwallowedError('ScenarioPreviewPlayer:prevScene/play', e); });
+    seekToScene(newIdx, isPlaying);
   }, [currentIdx, seekToScene, isPlaying]);
 
   const nextScene = useCallback(() => {
     const newIdx = Math.min(orderedScenes.length - 1, currentIdx + 1);
-    seekToScene(newIdx);
-    if (isPlaying) videoRef.current?.play().catch((e) => { logger.trackSwallowedError('ScenarioPreviewPlayer:nextScene/play', e); });
+    seekToScene(newIdx, isPlaying);
   }, [currentIdx, orderedScenes.length, seekToScene, isPlaying]);
 
   // Time tracking + auto-advance (ref 기반으로 stale closure 방지)
@@ -288,11 +332,7 @@ const ScenarioPreviewPlayer: React.FC<Props> = ({
       if (video.currentTime >= sceneEndRef.current - 0.05 && !video.paused) {
         const idx = currentIdxRef.current;
         if (idx < orderedScenes.length - 1) {
-          const next = idx + 1;
-          currentIdxRef.current = next;
-          setCurrentIdx(next);
-          video.currentTime = orderedScenes[next].startSec;
-          sceneEndRef.current = orderedScenes[next].endSec;
+          seekToScene(idx + 1, true);
         } else {
           video.pause();
           setIsPlaying(false);
@@ -301,7 +341,7 @@ const ScenarioPreviewPlayer: React.FC<Props> = ({
     };
     video.addEventListener('timeupdate', onTimeUpdate);
     return () => video.removeEventListener('timeupdate', onTimeUpdate);
-  }, [orderedScenes]);
+  }, [orderedScenes, seekToScene]);
 
   // ─── MP4 내보내기 (Canvas + MediaRecorder) ───
   const handleExportMp4 = useCallback(async () => {
@@ -315,15 +355,26 @@ const ScenarioPreviewPlayer: React.FC<Props> = ({
 
     try {
       const exportVideo = document.createElement('video');
-      exportVideo.src = blobUrl;
       exportVideo.muted = false;
       exportVideo.preload = 'auto';
+      let currentExportSourceIndex = -1;
 
-      await new Promise<void>((resolve, reject) => {
-        exportVideo.onloadedmetadata = () => resolve();
-        exportVideo.onerror = () => reject(new Error('영상 로드 실패'));
-        setTimeout(() => reject(new Error('영상 로드 타임아웃')), 30000);
-      });
+      const ensureExportSource = async (sourceIndex: number) => {
+        const nextSourceIndex = Math.min(
+          Math.max(sourceIndex || 0, 0),
+          Math.max(blobUrls.length - 1, 0),
+        );
+        if (currentExportSourceIndex === nextSourceIndex) return;
+        currentExportSourceIndex = nextSourceIndex;
+        exportVideo.src = blobUrls[nextSourceIndex] || blobUrls[0];
+        await new Promise<void>((resolve, reject) => {
+          exportVideo.onloadedmetadata = () => resolve();
+          exportVideo.onerror = () => reject(new Error('영상 로드 실패'));
+          setTimeout(() => reject(new Error('영상 로드 타임아웃')), 30000);
+        });
+      };
+
+      await ensureExportSource(orderedScenes[0]?.sourceIndex || 0);
 
       const w = exportVideo.videoWidth || 1280;
       const h = exportVideo.videoHeight || 720;
@@ -373,6 +424,7 @@ const ScenarioPreviewPlayer: React.FC<Props> = ({
       for (let i = 0; i < orderedScenes.length; i++) {
         const s = orderedScenes[i];
         setExportProgress(Math.round((i / orderedScenes.length) * 100));
+        await ensureExportSource(s.sourceIndex);
 
         // Seek to scene start
         exportVideo.currentTime = s.startSec;
@@ -400,12 +452,13 @@ const ScenarioPreviewPlayer: React.FC<Props> = ({
       const safeName = sanitizeProjectName(version.title) || `version-${version.id}`;
 
       const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
+      const downloadUrl = URL.createObjectURL(blob);
+      a.href = downloadUrl;
       a.download = `${safeName}.${ext}`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      URL.revokeObjectURL(a.href);
+      setTimeout(() => URL.revokeObjectURL(downloadUrl), 60_000);
 
       exportVideo.src = '';
       setExportProgress(100);
@@ -416,7 +469,7 @@ const ScenarioPreviewPlayer: React.FC<Props> = ({
     } finally {
       setIsExporting(false);
     }
-  }, [isExporting, orderedScenes, blobUrl, version]);
+  }, [blobUrls, isExporting, orderedScenes, version]);
 
   // ─── TTS 핸들러 ───
   const handleTtsGenerated = useCallback((cutNum: number, entry: TtsEntry) => {
@@ -522,11 +575,18 @@ const ScenarioPreviewPlayer: React.FC<Props> = ({
         <div className="relative bg-black rounded-xl overflow-hidden flex-1 min-h-0">
           <video
             ref={videoRef}
-            src={blobUrl}
+            src={activeBlobUrl}
             className="w-full h-full object-contain"
             onLoadedMetadata={() => {
               setVideoReady(true);
-              seekToScene(0);
+              const currentScene = orderedScenes[currentIdxRef.current];
+              if (!currentScene || !videoRef.current) return;
+              sceneEndRef.current = currentScene.endSec;
+              videoRef.current.currentTime = currentScene.startSec;
+              if (pendingPlayRef.current) {
+                pendingPlayRef.current = false;
+                videoRef.current.play().catch((e) => { logger.trackSwallowedError('ScenarioPreviewPlayer:onLoaded/play', e); });
+              }
             }}
             onClick={togglePlay}
             playsInline
@@ -558,6 +618,11 @@ const ScenarioPreviewPlayer: React.FC<Props> = ({
             <span className={`px-2 py-0.5 rounded text-xs font-bold ${getModeClass(scene?.mode || '')}`}>
               {scene?.mode || '-'}
             </span>
+            {hasMultipleSources && (
+              <span className="bg-cyan-500/20 text-cyan-300 text-xs px-2 py-0.5 rounded font-mono border border-cyan-500/30">
+                S-{String((scene?.sourceIndex || 0) + 1).padStart(2, '0')}
+              </span>
+            )}
             <span className="bg-black/60 text-white text-xs px-2 py-0.5 rounded font-mono">
               {currentIdx + 1}/{orderedScenes.length}
             </span>
@@ -674,10 +739,7 @@ const ScenarioPreviewPlayer: React.FC<Props> = ({
                       scene={s}
                       isCurrent={displayIdx === currentIdx}
                       isPast={displayIdx < currentIdx}
-                      onClick={() => {
-                        seekToScene(displayIdx);
-                        if (isPlaying) videoRef.current?.play().catch((e) => { logger.trackSwallowedError('ScenarioPreviewPlayer:sceneClick/play', e); });
-                      }}
+                      onClick={() => { seekToScene(displayIdx, isPlaying); }}
                     />
                   );
                 })}
@@ -695,10 +757,7 @@ const ScenarioPreviewPlayer: React.FC<Props> = ({
             currentIdx={currentIdx}
             ttsMap={ttsMap}
             onTtsGenerated={handleTtsGenerated}
-            onSeekToScene={(idx) => {
-              seekToScene(idx);
-              if (isPlaying) videoRef.current?.play().catch((e) => { logger.trackSwallowedError('ScenarioPreviewPlayer:narrationSeek/play', e); });
-            }}
+            onSeekToScene={(idx) => { seekToScene(idx, isPlaying); }}
           />
         </div>
       )}

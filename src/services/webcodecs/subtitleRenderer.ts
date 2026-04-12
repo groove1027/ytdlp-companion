@@ -50,8 +50,8 @@ export function drawSubtitle(
     ctx.letterSpacing = `${template.letterSpacing}px`;
   }
 
-  // 줄바꿈 처리 — 캔버스 너비 90% 이내
-  const maxWidth = canvasW * 0.9;
+  // 줄바꿈 처리 — 캔버스 너비 94% 이내
+  const maxWidth = canvasW * 0.94;
   const lines = wrapText(ctx, text, maxWidth);
   const lineHeightPx = fontSize * (template.lineHeight || 1.4);
 

@@ -274,6 +274,20 @@ export async function composeMp4(options: ComposeMp4Options): Promise<Blob> {
   checkAbort();
   const ffmpeg = await loadFFmpeg(onProgress);
 
+  const cleanupRenderArtifacts = async (maxIndex: number) => {
+    const baseFiles = ['concat.txt', 'video_only.mp4', 'video_sub.mp4', 'output.mp4', 'bgm.mp3'];
+    for (const fileName of baseFiles) {
+      try { await ffmpeg.deleteFile(fileName); } catch (e) { logger.trackSwallowedError('FfmpegService:preCleanup/base', e); }
+    }
+    for (let index = 0; index < maxIndex; index += 1) {
+      try { await ffmpeg.deleteFile(`seg_${index}.mp4`); } catch (e) { logger.trackSwallowedError('FfmpegService:preCleanup/seg', e); }
+      try { await ffmpeg.deleteFile(`narration_${index}.wav`); } catch (e) { logger.trackSwallowedError('FfmpegService:preCleanup/narration', e); }
+      try { await ffmpeg.deleteFile(`input_${index}.png`); } catch (e) { logger.trackSwallowedError('FfmpegService:preCleanup/png', e); }
+      try { await ffmpeg.deleteFile(`input_${index}.mp4`); } catch (e) { logger.trackSwallowedError('FfmpegService:preCleanup/mp4', e); }
+    }
+  };
+  await cleanupRenderArtifacts(Math.max(timeline.length, 48));
+
   // ═══ 정확한 진행률 추적 시스템 ═══
   // 가중치 기반 Phase 분배 (총 100%)
   // Phase 1: 장면 인코딩 (60%) — 가장 무거운 작업

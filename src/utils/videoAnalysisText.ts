@@ -22,6 +22,6 @@ export function buildVideoAnalysisEditTableText(
 ): string {
   return `제목: ${version.title}\n컨셉: ${version.concept}\n\n| 순서 | 모드 | 오디오 내용 | 예상 시간 | 비디오 화면 지시 | 타임코드 소스 |\n| :--- | :--- | :--- | :--- | :--- | :--- |\n`
     + version.scenes.map(scene =>
-      `| ${scene.cutNum} | ${scene.mode} | ${getVideoAnalysisPrimaryText(scene, preset)} | ${scene.duration} | ${scene.videoDirection} | ${scene.timecodeSource} |`
+      `| ${scene.cutNum} | ${scene.mode} | ${getVideoAnalysisPrimaryText(scene, preset)} | ${scene.duration} | ${scene.videoDirection} | ${scene.timecodeSource || scene.sourceTimeline || scene.timeline || ''} |`
     ).join('\n');
 }

@@ -42,6 +42,9 @@ const { audioEntries, fakeDb } = vi.hoisted(() => {
     put: vi.fn(async (_storeName: string, entry: StoredAudioBlob) => {
       audioEntries.set(entry.id, entry);
     }),
+    delete: vi.fn(async (_storeName: string, id: string) => {
+      audioEntries.delete(id);
+    }),
     getAllFromIndex: vi.fn(async (_storeName: string, _indexName: string, projectId: string) =>
       Array.from(audioEntries.values()).filter((entry) => entry.projectId === projectId)),
     transaction: vi.fn((_storeName: string, _mode: string) => {
@@ -168,5 +171,24 @@ describe('audioStorageService', () => {
     expect(audioEntries.size).toBe(1);
     expect(audioEntries.has('project-a::scene::scene-a')).toBe(false);
     expect(audioEntries.has('project-b::scene::scene-b')).toBe(true);
+  });
+
+  it('prunes stale project audio blobs when scenes are removed or audio is cleared', async () => {
+    const blobA = new Blob(['audio-a'], { type: 'audio/wav' });
+    const mergedBlob = new Blob(['merged-a'], { type: 'audio/wav' });
+
+    await persistProjectAudio('project-a', [
+      createScene({ id: 'scene-a', audioUrl: URL.createObjectURL(blobA) }),
+    ], URL.createObjectURL(mergedBlob));
+
+    expect(audioEntries.has('project-a::scene::scene-a')).toBe(true);
+    expect(audioEntries.has('project-a::merged')).toBe(true);
+
+    await persistProjectAudio('project-a', [
+      createScene({ id: 'scene-a', audioUrl: undefined }),
+    ]);
+
+    expect(audioEntries.has('project-a::scene::scene-a')).toBe(false);
+    expect(audioEntries.has('project-a::merged')).toBe(false);
   });
 });

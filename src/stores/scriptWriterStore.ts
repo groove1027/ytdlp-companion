@@ -12,6 +12,7 @@ import {
   ScriptWriterDraftState,
 } from '../types';
 import { logger } from '../services/LoggerService';
+import { safeStoreSubscribe } from '../utils/safeStoreSubscribe';
 
 // --- localStorage 자동 임시저장 ---
 const DRAFT_STORAGE_KEY = 'SCRIPT_WRITER_DRAFT';
@@ -369,6 +370,6 @@ export const restoreScriptWriterDraft = (draft?: Partial<ScriptWriterDraftState>
 };
 
 // 상태 변경 시 자동으로 localStorage에 저장
-useScriptWriterStore.subscribe((state) => {
+safeStoreSubscribe<[ScriptWriterStore]>(useScriptWriterStore, (state) => {
   saveDraft(state as unknown as Record<string, unknown>);
-});
+}, 'scriptWriterStore:draft');

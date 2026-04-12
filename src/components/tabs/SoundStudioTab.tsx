@@ -37,6 +37,9 @@ const SoundStudioTab: React.FC = () => {
   const activeSubTab = useSoundStudioStore((s) => s.activeSubTab);
   const setActiveSubTab = useSoundStudioStore((s) => s.setActiveSubTab);
   const ttsEngine = useSoundStudioStore((s) => s.ttsEngine);
+  const soundLines = useSoundStudioStore((s) => s.lines);
+  const projectScenes = useProjectStore((s) => s.scenes);
+  const narrationSource = useProjectStore((s) => s.config?.narrationSource);
 
   // 탭 이탈(언마운트) 시 모든 오디오 정지
   useEffect(() => {
@@ -50,27 +53,23 @@ const SoundStudioTab: React.FC = () => {
   // [FIX #868/#874] 탭 진입 시 scenes ↔ lines 동기화
   // 대본 수정 후 사운드 스튜디오로 돌아왔을 때 나레이션 텍스트가 갱신되지 않는 문제 수정
   useEffect(() => {
-    const scenes = useProjectStore.getState().scenes;
-    const currentLines = useSoundStudioStore.getState().lines;
-    const config = useProjectStore.getState().config;
-
     // 업로드 전사 기반 프로젝트는 동기화 스킵 (별도 동기화 경로 사용)
-    if (config?.narrationSource === 'uploaded-audio') return;
+    if (narrationSource === 'uploaded-audio') return;
     // 씬이나 라인이 없으면 동기화 불필요
-    if (scenes.length === 0 || currentLines.length === 0) return;
+    if (projectScenes.length === 0 || soundLines.length === 0) return;
 
-    const scenesWithText = scenes.filter((scene) => getSceneNarrationText(scene));
+    const scenesWithText = projectScenes.filter((scene) => getSceneNarrationText(scene));
     if (scenesWithText.length === 0) return;
 
     // sceneId 기반 매핑으로 변경사항 감지
-    const linesWithSceneId = currentLines.filter(l => l.sceneId);
+    const linesWithSceneId = soundLines.filter(l => l.sceneId);
     // sceneId가 없는 라인이 하나라도 없으면 동기화 불가
     if (linesWithSceneId.length === 0) return;
 
     const lineBySceneId = new Map(linesWithSceneId.map(l => [l.sceneId!, l]));
     const lineSceneIds = new Set(linesWithSceneId.map(l => l.sceneId!));
     // sceneId 없는 라인 (direct-script 등) — 동기화 후에도 보존
-    const orphanLines = currentLines.filter(l => !l.sceneId);
+    const orphanLines = soundLines.filter(l => !l.sceneId);
 
     let needsSync = false;
 
@@ -166,7 +165,7 @@ const SoundStudioTab: React.FC = () => {
     // sceneId 없는 orphan 라인도 끝에 추가하여 보존
     const finalLines = [...syncedLines, ...orphanLines.map((l, idx) => ({ ...l, index: syncedLines.length + idx }))];
     useSoundStudioStore.getState().setLines(finalLines);
-  }, []);
+  }, [projectScenes, soundLines, narrationSource]);
 
   const handleSubTabClick = useCallback((tabId: 'narration' | 'waveform') => {
     logger.trackAction('사운드 서브탭 전환', tabId);

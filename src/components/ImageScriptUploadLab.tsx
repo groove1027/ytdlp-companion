@@ -4,6 +4,15 @@ import { useNavigationStore } from '../stores/navigationStore';
 import { ProjectConfig, AspectRatio, VideoFormat, ImageModel, VideoModel, VoiceName } from '../types';
 import { useElapsedTimer, formatElapsed } from '../hooks/useElapsedTimer';
 
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error || new Error('이미지를 읽지 못했습니다.'));
+    reader.readAsDataURL(blob);
+  });
+}
+
 const ImageScriptUploadLab: React.FC = () => {
   const [scriptText, setScriptText] = useState('');
   const [images, setImages] = useState<{ name: string; url: string }[]>([]);
@@ -36,7 +45,7 @@ const ImageScriptUploadLab: React.FC = () => {
 
             for (const imgName of imgFiles) {
               const blob = await zip.files[imgName].async('blob');
-              const url = URL.createObjectURL(blob);
+              const url = await blobToDataUrl(blob);
               newImages.push({ name: imgName.split('/').pop() || imgName, url });
             }
           } catch (err) {
@@ -47,7 +56,7 @@ const ImageScriptUploadLab: React.FC = () => {
 
         // 개별 이미지
         if (file.type.startsWith('image/')) {
-          const url = URL.createObjectURL(file);
+          const url = await blobToDataUrl(file);
           newImages.push({ name: file.name, url });
         }
       }

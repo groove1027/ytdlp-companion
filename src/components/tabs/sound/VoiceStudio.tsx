@@ -1234,18 +1234,25 @@ const VoiceStudio: React.FC = () => {
       : transcriptResult.segments.filter((segment) => segment.text.trim());
 
     const defaultSpeakerId = speakers[0]?.id || '';
-    const newLines = segmentsToScriptLines(alignedSegments, audioId, defaultSpeakerId);
+    const existingSceneIds = useProjectStore.getState().scenes.map((scene) => scene.id);
+    const linkedSceneIds = existingSceneIds.length === alignedSegments.length
+      ? existingSceneIds
+      : undefined;
+    const newLines = segmentsToScriptLines(alignedSegments, audioId, defaultSpeakerId, linkedSceneIds);
     setLines(newLines);
     setMergedAudio(uploadedBlobUrl);
+    const rawSegments = transcriptResult.segments.filter((segment) => segment.text.trim());
     useProjectStore.getState().setConfig((prev) => prev ? {
       ...prev,
       script: alignedSegments.map((segment) => segment.text).join('\n'),
       mergedAudioUrl: uploadedBlobUrl,
       narrationSource: 'uploaded-audio',
       uploadedAudioId: audioId,
+      targetSceneCount: undefined,
       sourceNarrationDurationSec: resolvedSourceDuration || undefined,
       transcriptDurationSec: transcriptResult.duration || undefined,
-      rawUploadedTranscriptSegments: alignedSegments,
+      rawUploadedTranscriptSegments: rawSegments,
+      uploadedTranscriptParagraphSegments: alignedSegments,
     } : prev);
   }, [transcriptResult, uploadedFile, uploadedBlobUrl, uploadedDuration, speakers, addUploadedAudio, setLines, setMergedAudio, storeScript]);
 

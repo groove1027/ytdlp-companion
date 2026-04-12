@@ -8,6 +8,19 @@
 
 ## 🟢 완료된 작업
 
+- [x] **2026-04-12 — 영상분석/사운드/소스임포트 버그 11건 일괄 수정 (#614 #635 #683 #704 #724 #727 #747 #748 #831 #840 #1111)**
+  - `rg -n "uploadedTranscriptParagraphSegments|rawUploadedTranscriptSegments|targetSceneCount|segmentsToScriptLines|sourceVideoBlobs|additionalVideoFiles|videoSources|sourceTimeline|timecodeSource|benchmarkScript" src`, `rg -n "downloadSrt|downloadFile|URL.revokeObjectURL|createObjectURL" src/components/tabs/channel/`, `rg -n "composeMp4|deleteFile\\(|ffmpeg" src/services/ffmpegService.ts`, `rg -n "ImageScriptUploadLab|blobToDataUrl|source import" src/components/`, `rg -n "video-analysis-store|autoSave|va-autosave|persist" src/stores/videoAnalysisStore.ts`로 업로드 전사, 영상분석 멀티소스, 편집실 전달, 모바일 다운로드, 탭 간 저장 오염, 소스 임포트 영향 범위를 전수 조사
+  - 원인 확인: 외부 오디오 전사 경로는 현재 대본 문단 정렬 세그먼트와 원본 세그먼트를 구분하지 않아 `targetSceneCount`가 남은 상태로 장면 수를 다시 줄였고, 영상분석 프리뷰/편집실 전달은 다중 소스 파일과 `[S-xx]` 타임코드 태그를 단일 비디오 가정으로 처리하고 있었음. `VideoAnalysisRoom.tsx`의 blob 다운로드는 모바일에서 즉시 revoke되어 404가 날 수 있었고, `videoAnalysisStore.ts`는 localStorage/IndexedDB autosave를 전역 키 하나로 공유해 여러 탭 동시 분석 시 데이터가 섞일 수 있었음. `ImageScriptUploadLab.tsx`는 직접 업로드 이미지를 `blob:` URL로만 저장해 이후 영상 생성 단계에서 재사용이 깨졌고, `transcriptionService.ts`는 대용량 업로드 오디오를 수동 `btoa` 경로로 처리해 STT 실패 여지가 있었음
+  - `src/services/transcriptionService.ts`, `src/components/tabs/sound/VoiceStudio.tsx`, `src/utils/uploadedTranscriptScenes.ts`, `src/utils/soundToImageBridge.ts`, `src/components/tabs/sound/NarrationView.tsx`, `src/hooks/useAutoSave.ts`, `src/types.ts` — 업로드 오디오 전사에 문단 정렬 세그먼트를 별도 보존하고 sceneId를 다시 매핑하며 stale `targetSceneCount`를 제거하도록 수정. 무료 이미지 배치 0개/장면 15개 축소, 외부 오디오 후 이미지·TTS 연동 불가, 외부 오디오 STT 오류 재발 경로를 함께 보강. #614 #635 #1111 대응
+  - `src/services/ffmpegService.ts` — MP4 합성 시작 전에 이전 렌더 산출물(`seg_*`, `input_*`, `output.mp4` 등)을 정리해 같은 프로젝트 재렌더 시 stale segment가 섞이던 문제를 방지. #683 대응
+  - `src/components/tabs/channel/VideoAnalysisRoom.tsx`, `src/components/tabs/channel/ScenarioPreviewPlayer.tsx`, `src/utils/videoAnalysisText.ts`, `src/stores/editPointStore.ts`, `src/stores/videoAnalysisStore.ts` — blob 다운로드 revoke 지연, 멀티 소스 프리뷰/자동 재생, source badge/타임코드 보존, 편집실로 다중 원본 전달, 소셜 소스 blob 보존, 탭별 persist/autosave 키 분리로 모바일 다운로드 404, 첫 영상 반복 재생, 편집실 전환 시 소스 참조 누락, 2개 링크 순번 누락, 3개 탭 동시 분석 오염을 수정. #704 #724 #727 #748 #831 대응
+  - `src/components/tabs/script/BenchmarkPanel.tsx` — 현재 채널 대본 목록과 `benchmarkScript`를 재동기화하고, 목록에 없는 이전 선택 대본은 자동 해제하도록 수정. 채널분석 대본을 바꿔도 이전 벤치마크 대본이 계속 쓰이던 경로 보강. #747 대응
+  - `src/components/ImageScriptUploadLab.tsx` — 직접 업로드/ZIP 이미지 모두 `data:` URL로 정규화해 이후 이미지·영상 생성 단계로 안정적으로 전달되게 수정. #840 대응
+  - `cd src && node_modules/typescript/bin/tsc --noEmit`: 통과
+  - `cd src && node_modules/.bin/vitest run`: 통과 (`18 passed`, `158 passed`)
+  - `cd src && node_modules/.bin/vite build`: 성공 (기존 dynamic import / chunk-size warning만 출력)
+  - `rg -n "uploadedTranscriptParagraphSegments|setSourceVideoBlobs|videoSources|additionalVideoFiles|blobToDataUrl|getScopedAutoSaveSlotId|triggerBlobDownload" src docs/CHECKLIST.md`: 업로드 전사/멀티소스/소스임포트/탭 격리/체크리스트 반영 위치 재검증
+
 - [x] **2026-04-12 — 크래시 TypeError 3건 + 빈번 버그 6건 수정 (#774 #737 #730 #1128 #1126 #1119 #1010 #987 #1029)**
   - `rg -n "addListener|addEventListener" src/ -g '*.ts' -g '*.tsx'`, `rg -n "store\\.subscribe|\\.subscribe\\(|matchMedia\\(|addListener\\(|addEventListener\\(" src/ -g '*.ts' -g '*.tsx'`, `rg -n "use[A-Za-z]+Store\\.subscribe\\(|\\.subscribe\\(" src/ -g '*.ts' -g '*.tsx'`, `rg -n "youtube|youtu\\.be|subtitle|upload.*video|referenceSearchQuery|removeSlot|delete.*slot" src/ -g '*.ts' -g '*.tsx'`로 전역 에러 처리, 폰트 이벤트, Zustand 구독, 편집실/업로드/AI Chat/자막/영상분석 슬롯 영향 범위를 전수 조사
   - 원인 확인: `App.tsx`가 확장 프로그램/`blob:` 스크립트 에러까지 transient storage 복구 루틴으로 넘기고 있었고, `EditRoomTab.tsx`는 `document.fonts.addEventListener` 지원 여부를 확인하지 않아 일부 브라우저에서 자막 미리보기 진입 시 크래시할 수 있었음. `useAutoSave.ts`, `audioAnalyserService.ts`, `scriptWriterStore.ts`는 `subscribe`가 함수라는 전제에 의존해 초기화 순서가 어긋날 때 동일한 TypeError 여지가 있었음

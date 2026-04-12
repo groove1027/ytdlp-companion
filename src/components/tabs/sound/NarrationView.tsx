@@ -424,6 +424,7 @@ const NarrationView: React.FC = () => {
         narrationSource: undefined,
         uploadedAudioId: undefined,
         rawUploadedTranscriptSegments: undefined,
+        uploadedTranscriptParagraphSegments: undefined,
       } : prev);
     },
     [changeSpeakerWithPropagation],

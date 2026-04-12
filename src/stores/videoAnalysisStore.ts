@@ -25,6 +25,11 @@ interface ResultCache {
   failedVersions: VideoAnalysisFailedVersion[];
 }
 
+export interface VideoAnalysisSourceBlob {
+  blob: Blob;
+  fileName: string;
+}
+
 interface VideoAnalysisStore {
   // 입력 상태
   inputMode: 'upload' | 'youtube';
@@ -48,6 +53,7 @@ interface VideoAnalysisStore {
   videoBlob: Blob | null;
   // [FIX #370] 다운로드된 영상에 오디오가 포함되어 있는지 여부
   videoBlobHasAudio: boolean | null;
+  sourceVideoBlobs: VideoAnalysisSourceBlob[];
 
   // 슬롯 관리
   savedSlots: SavedVideoAnalysisSlot[];
@@ -118,6 +124,7 @@ interface VideoAnalysisStore {
   loadAllSlots: () => Promise<void>;
   /** 영상 Blob 설정 (편집실 전달용, hasAudio: 오디오 포함 여부) */
   setVideoBlob: (blob: Blob | File | null, hasAudio?: boolean) => void;
+  setSourceVideoBlobs: (sources: VideoAnalysisSourceBlob[]) => void;
   /** 새 분석 시작 — 결과 초기화 */
   newAnalysis: () => void;
 
@@ -149,6 +156,7 @@ const CACHE_THUMBNAIL_LIMIT = 48;
 const PERSIST_RAW_RESULT_LIMIT = 24000;
 const PERSIST_VERSION_CONCEPT_LIMIT = 12000;
 const MAX_PERSIST_ENTRY_BYTES = 1.5 * 1024 * 1024;
+const VIDEO_ANALYSIS_TAB_STORAGE_KEY = 'video-analysis-tab-id';
 let lastStoragePressureToastAt = 0;
 
 function notifyStoragePressure(message: string): void {
@@ -156,6 +164,28 @@ function notifyStoragePressure(message: string): void {
   if (now - lastStoragePressureToastAt < 6000) return;
   lastStoragePressureToastAt = now;
   showToast(message, 7000);
+}
+
+function getVideoAnalysisTabId(): string {
+  if (typeof window === 'undefined') return 'server';
+  try {
+    const existing = window.sessionStorage.getItem(VIDEO_ANALYSIS_TAB_STORAGE_KEY);
+    if (existing) return existing;
+    const created = `va-tab-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    window.sessionStorage.setItem(VIDEO_ANALYSIS_TAB_STORAGE_KEY, created);
+    return created;
+  } catch (e) {
+    logger.trackSwallowedError('VideoAnalysisStore:getTabId', e);
+    return 'va-tab-fallback';
+  }
+}
+
+function getScopedPersistKey(name: string): string {
+  return `${name}:${getVideoAnalysisTabId()}`;
+}
+
+function getScopedAutoSaveSlotId(): string {
+  return `va-autosave:${getVideoAnalysisTabId()}`;
 }
 
 const createInitialState = (options?: {
@@ -175,6 +205,7 @@ const createInitialState = (options?: {
   resultCache: {} as Record<string, ResultCache>,
   videoBlob: null as Blob | null,
   videoBlobHasAudio: null as boolean | null,
+  sourceVideoBlobs: [] as VideoAnalysisSourceBlob[],
   activeSlotId: null as string | null,
   editRoomSelectedVersionIdx: null as number | null,
   targetDuration: 0 as 0 | 30 | 45 | 60,
@@ -357,6 +388,7 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
             isFrameUpgrading: false,
             videoBlob: null,
             videoBlobHasAudio: null,
+            sourceVideoBlobs: [],
             editRoomSelectedVersionIdx: null,
             resultCache: {},
           });
@@ -386,6 +418,7 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
             isFrameUpgrading: false,
             videoBlob: null,
             videoBlobHasAudio: null,
+            sourceVideoBlobs: [],
             resultCache: {},
           } : {}),
         });
@@ -560,6 +593,9 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
         videoBlob: blob instanceof File ? blob : blob,
         videoBlobHasAudio: hasAudio ?? (blob instanceof File ? true : null),
       }),
+      setSourceVideoBlobs: (sources) => set({
+        sourceVideoBlobs: sources.filter((source) => !!source?.blob && !!source.fileName),
+      }),
 
       editRoomSelectedVersionIdx: null,
       setEditRoomSelectedVersionIdx: (idx) => set({ editRoomSelectedVersionIdx: idx }),
@@ -574,7 +610,7 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
           ? buildLiveResultCacheEntry(selectedCacheSourceKey, rawResult, versions, failedVersions, thumbnails)
           : undefined;
         const slot: SavedVideoAnalysisSlot = {
-          id: 'va-autosave',
+          id: getScopedAutoSaveSlotId(),
           name: `자동 저장 — ${selectedPreset || '분석'}`,
           youtubeUrl,
           youtubeUrls: validUrls,
@@ -596,7 +632,7 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
         if (versions.length > 0) return false;
         try {
           const all = await getAllVideoAnalysisSlots();
-          const autoSave = all.find(s => s.id === 'va-autosave');
+          const autoSave = all.find(s => s.id === getScopedAutoSaveSlotId());
           if (!autoSave || autoSave.versions.length === 0) return false;
           // 30분 이내의 자동 저장분만 복원
           if (Date.now() - autoSave.savedAt > 30 * 60 * 1000) return false;
@@ -645,6 +681,7 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
         activeSlotId: null,
         videoBlob: null,
         videoBlobHasAudio: null,
+        sourceVideoBlobs: [],
       }),
     }),
     {
@@ -686,11 +723,13 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
       storage: {
         getItem: (name) => {
           try {
-            const str = localStorage.getItem(name);
+            const scopedKey = getScopedPersistKey(name);
+            const str = localStorage.getItem(scopedKey) || localStorage.getItem(name);
             return str ? JSON.parse(str) : null;
           } catch (e) { logger.trackSwallowedError('VideoAnalysisStore:storage/getItem', e); return null; }
         },
         setItem: async (name, value) => {
+          const scopedKey = getScopedPersistKey(name);
           const buildSlimValue = () => {
             const persistedState = value.state as Partial<VideoAnalysisStore>;
             return {
@@ -732,7 +771,7 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
 
           const persistValue = (payload: unknown) => {
             try {
-              localStorage.setItem(name, JSON.stringify(payload));
+              localStorage.setItem(scopedKey, JSON.stringify(payload));
               return true;
             } catch (e) {
               logger.trackSwallowedError('VideoAnalysisStore:storage/persistValue', e);
@@ -782,13 +821,21 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
           }
 
           try {
+            localStorage.removeItem(scopedKey);
             localStorage.removeItem(name);
           } catch (e) {
             logger.trackSwallowedError('VideoAnalysisStore:storage/removeCorruptedItem', e);
           }
           notifyStoragePressure('브라우저 임시 저장 공간이 가득 차서 영상 분석 임시 캐시를 비웠어요. 오래된 프로젝트나 분석 슬롯을 정리해 주세요.');
         },
-        removeItem: (name) => { try { localStorage.removeItem(name); } catch (e) { logger.trackSwallowedError('VideoAnalysisStore:storage/removeItem', e); } },
+        removeItem: (name) => {
+          try {
+            localStorage.removeItem(getScopedPersistKey(name));
+            localStorage.removeItem(name);
+          } catch (e) {
+            logger.trackSwallowedError('VideoAnalysisStore:storage/removeItem', e);
+          }
+        },
       },
     },
   ),

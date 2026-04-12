@@ -1050,7 +1050,7 @@ const SubtitleStyleEditor: React.FC = () => {
           {orient === 'vertical' && <SafeZoneOverlay />}
           {/* 자막 텍스트 */}
           <div className={`absolute inset-x-0 z-[5] flex px-4 ${hAlign === 'left' ? 'justify-start' : hAlign === 'right' ? 'justify-end' : 'justify-center'}`} style={{ bottom: `${posY}%` }}>
-            <p key={animKey} className="max-w-[90%]" style={{
+            <p key={animKey} className="max-w-[94%]" style={{
               padding: `${boxPadY * fontScale}px ${boxPadX * fontScale}px`,
               borderRadius: `${boxRadius * fontScale}px`,
               fontFamily: `'${tpl?.fontFamily || 'Pretendard'}', Pretendard, sans-serif`,

@@ -14,6 +14,7 @@ import {
   syncImageBlobRetryCounts,
 } from '../services/imageBlobStorageService';
 import type { Scene, ProjectConfig, ProjectData, ScriptWriterDraftState } from '../types';
+import { safeStoreSubscribe } from '../utils/safeStoreSubscribe';
 
 const AUTO_SAVE_DEBOUNCE_MS = 5000;
 const PERIODIC_SAVE_MS = 30_000; // 30초 주기 안전망
@@ -52,6 +53,10 @@ const buildConfigFingerprint = (config: ProjectConfig | null): string => {
   const rawTranscriptSegments = config.rawUploadedTranscriptSegments;
   const rawTranscriptLast = rawTranscriptSegments && rawTranscriptSegments.length > 0
     ? rawTranscriptSegments[rawTranscriptSegments.length - 1]
+    : undefined;
+  const paragraphTranscriptSegments = config.uploadedTranscriptParagraphSegments;
+  const paragraphTranscriptLast = paragraphTranscriptSegments && paragraphTranscriptSegments.length > 0
+    ? paragraphTranscriptSegments[paragraphTranscriptSegments.length - 1]
     : undefined;
   const pptFingerprint = config.pptSlides?.map((slide) => [
     slide.slideNumber,
@@ -95,6 +100,9 @@ const buildConfigFingerprint = (config: ProjectConfig | null): string => {
     `rt${rawTranscriptSegments?.length || 0}`,
     Math.round(rawTranscriptSegments?.[0]?.startTime || 0),
     Math.round(rawTranscriptLast?.endTime || 0),
+    `pt${paragraphTranscriptSegments?.length || 0}`,
+    Math.round(paragraphTranscriptSegments?.[0]?.startTime || 0),
+    Math.round(paragraphTranscriptLast?.endTime || 0),
     `ppt${config.pptSlides?.length || 0}`,
     buildStringFingerprint(config.pptContentStyleId),
     buildStringFingerprint(config.pptDesignStyleId),
@@ -471,12 +479,12 @@ export const useAutoSave = () => {
 
     window.addEventListener('beforeunload', handleBeforeUnload);
     document.addEventListener('visibilitychange', handleVisibilityChange);
-    const unsub1 = useProjectStore.subscribe(scheduleSave);
-    const unsub2 = useCostStore.subscribe(scheduleSave);
+    const unsub1 = safeStoreSubscribe(useProjectStore, () => { scheduleSave(); }, 'useAutoSave:project');
+    const unsub2 = safeStoreSubscribe(useCostStore, () => { scheduleSave(); }, 'useAutoSave:cost');
     // [FIX #399] 자막 편집 시에도 자동저장 트리거
-    const unsub3 = useEditRoomStore.subscribe(scheduleSave);
+    const unsub3 = safeStoreSubscribe(useEditRoomStore, () => { scheduleSave(); }, 'useAutoSave:edit-room');
     // [FIX #572] 대본작성 변경도 프로젝트 저장 대상으로 편입
-    const unsub4 = useScriptWriterStore.subscribe(scheduleSave);
+    const unsub4 = safeStoreSubscribe(useScriptWriterStore, () => { scheduleSave(); }, 'useAutoSave:script-writer');
 
     return () => {
       unsub1();

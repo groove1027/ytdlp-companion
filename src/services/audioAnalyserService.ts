@@ -19,6 +19,7 @@
 import { useEditRoomStore } from '../stores/editRoomStore';
 import type { TrackAudioEffect } from '../types';
 import { logger } from './LoggerService';
+import { safeStoreSubscribe } from '../utils/safeStoreSubscribe';
 
 // ─── Types ───
 export interface AudioLevels {
@@ -356,9 +357,9 @@ function startNoiseGatePolling(): void {
 // ─── Store 구독 시작 ───
 function startStoreSync(): void {
   if (storeUnsubscribe) return;
-  storeUnsubscribe = useEditRoomStore.subscribe(() => {
+  storeUnsubscribe = safeStoreSubscribe(useEditRoomStore, () => {
     syncEffects();
-  });
+  }, 'audioAnalyserService:edit-room');
 }
 
 // ─── Context 초기화 ───

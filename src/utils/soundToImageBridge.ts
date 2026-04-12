@@ -150,16 +150,21 @@ export function transferSoundToImageVideo(): void {
     && existingScenes.length !== finalLines.length
     && finalLines.length > 0
     && finalLines.every((line) => !line.sceneId);
+  const currentConfig = projectStore.config;
   const uploadedTranscriptSegments: WhisperSegment[] | undefined = isUploadedTranscriptTransfer
+    ? ((currentConfig?.rawUploadedTranscriptSegments && currentConfig.rawUploadedTranscriptSegments.length > 0)
+      ? currentConfig.rawUploadedTranscriptSegments
+      : lineSegments)
+    : undefined;
+  const uploadedParagraphSegments: WhisperSegment[] | undefined = isUploadedTranscriptTransfer
     ? lineSegments
     : undefined;
   const uploadedAudioId = isUploadedTranscriptTransfer
     ? finalLines.find((line) => line.uploadedAudioId)?.uploadedAudioId
     : undefined;
-  const transcriptDurationSec = uploadedTranscriptSegments && uploadedTranscriptSegments.length > 0
-    ? uploadedTranscriptSegments[uploadedTranscriptSegments.length - 1].endTime
+  const transcriptDurationSec = uploadedParagraphSegments && uploadedParagraphSegments.length > 0
+    ? uploadedParagraphSegments[uploadedParagraphSegments.length - 1].endTime
     : undefined;
-  const currentConfig = projectStore.config;
   const nextNarrationSource: ProjectConfig['narrationSource'] = isUploadedTranscriptTransfer ? 'uploaded-audio' : 'tts';
   const nextConfig: ProjectConfig | null = currentConfig ? {
     ...currentConfig,
@@ -167,20 +172,24 @@ export function transferSoundToImageVideo(): void {
     mergedAudioUrl: mergedAudioUrl || undefined,
     narrationSource: nextNarrationSource,
     uploadedAudioId: isUploadedTranscriptTransfer ? uploadedAudioId : undefined,
+    targetSceneCount: isUploadedTranscriptTransfer ? undefined : currentConfig.targetSceneCount,
     sourceNarrationDurationSec: isUploadedTranscriptTransfer
       ? (currentConfig.sourceNarrationDurationSec || transcriptDurationSec)
       : undefined,
     transcriptDurationSec: isUploadedTranscriptTransfer ? transcriptDurationSec : undefined,
     rawUploadedTranscriptSegments: isUploadedTranscriptTransfer ? uploadedTranscriptSegments : undefined,
+    uploadedTranscriptParagraphSegments: isUploadedTranscriptTransfer ? uploadedParagraphSegments : undefined,
   } : null;
   const regroupConfig: ProjectConfig | null = currentConfig ? {
     ...currentConfig,
     script: finalLines.map((l) => l.text).join('\n'),
     narrationSource: 'uploaded-audio',
     uploadedAudioId: uploadedAudioId || currentConfig.uploadedAudioId,
+    targetSceneCount: undefined,
     sourceNarrationDurationSec: currentConfig.sourceNarrationDurationSec || transcriptDurationSec,
     transcriptDurationSec,
-    rawUploadedTranscriptSegments: lineSegments,
+    rawUploadedTranscriptSegments: uploadedTranscriptSegments,
+    uploadedTranscriptParagraphSegments: lineSegments,
   } : null;
   const regroupedUploadedScenes = isUploadedTranscriptTransfer && regroupConfig
     ? buildUploadedTranscriptScenes(regroupConfig, regroupConfig.targetSceneCount ?? null)

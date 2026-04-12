@@ -37,11 +37,16 @@ function applyTargetSceneCount(sceneTexts: string[], targetSceneCount?: number |
 
 export function isUploadedTranscriptConfig(
   config: ProjectConfig | null,
-): config is ProjectConfig & { rawUploadedTranscriptSegments: WhisperSegment[] } {
+): config is ProjectConfig & {
+  rawUploadedTranscriptSegments?: WhisperSegment[];
+  uploadedTranscriptParagraphSegments?: WhisperSegment[];
+} {
   return !!config
     && config.narrationSource === 'uploaded-audio'
-    && Array.isArray(config.rawUploadedTranscriptSegments)
-    && config.rawUploadedTranscriptSegments.length > 0;
+    && (
+      (Array.isArray(config.rawUploadedTranscriptSegments) && config.rawUploadedTranscriptSegments.length > 0)
+      || (Array.isArray(config.uploadedTranscriptParagraphSegments) && config.uploadedTranscriptParagraphSegments.length > 0)
+    );
 }
 
 export function getUploadedTranscriptScriptFromSegments(segments: WhisperSegment[]): string {
@@ -51,10 +56,25 @@ export function getUploadedTranscriptScriptFromSegments(segments: WhisperSegment
     .join('\n');
 }
 
-function isConfigScriptCompatible(config: ProjectConfig & { rawUploadedTranscriptSegments: WhisperSegment[] }): boolean {
-  const rawScript = normalizeTextForMatch(getUploadedTranscriptScriptFromSegments(config.rawUploadedTranscriptSegments));
+function getUploadedParagraphSegments(config: ProjectConfig & {
+  rawUploadedTranscriptSegments?: WhisperSegment[];
+  uploadedTranscriptParagraphSegments?: WhisperSegment[];
+}): WhisperSegment[] {
+  const paragraphSegments = config.uploadedTranscriptParagraphSegments?.filter((segment) => segment.text.trim()) || [];
+  if (paragraphSegments.length > 0) return paragraphSegments;
+  return config.rawUploadedTranscriptSegments?.filter((segment) => segment.text.trim()) || [];
+}
+
+function isConfigScriptCompatible(config: ProjectConfig & {
+  rawUploadedTranscriptSegments?: WhisperSegment[];
+  uploadedTranscriptParagraphSegments?: WhisperSegment[];
+}): boolean {
+  const paragraphScript = normalizeTextForMatch(getUploadedTranscriptScriptFromSegments(getUploadedParagraphSegments(config)));
+  const rawScript = normalizeTextForMatch(getUploadedTranscriptScriptFromSegments(config.rawUploadedTranscriptSegments || []));
   const currentScript = normalizeTextForMatch(config.script || '');
-  return !rawScript || !currentScript || rawScript === currentScript;
+  return !currentScript
+    || (!paragraphScript || paragraphScript === currentScript)
+    || (!rawScript || rawScript === currentScript);
 }
 
 export function getUploadedTranscriptDurationSec(segments: WhisperSegment[]): number {
@@ -69,8 +89,9 @@ export function buildUploadedTranscriptLines(
 
   const uploadedAudioId = config.uploadedAudioId || 'uploaded-restored';
   const ts = Date.now();
+  const lineSegments = getUploadedParagraphSegments(config);
 
-  return config.rawUploadedTranscriptSegments.map((segment, index) => ({
+  return lineSegments.map((segment, index) => ({
     id: `line-uploaded-${ts}-${index}`,
     speakerId,
     text: segment.text,
@@ -90,21 +111,36 @@ export function buildUploadedTranscriptScenes(
 ): Scene[] | null {
   if (!isUploadedTranscriptConfig(config) || !isConfigScriptCompatible(config)) return null;
 
-  const rawSegments = config.rawUploadedTranscriptSegments
+  const rawSegments = (config.rawUploadedTranscriptSegments || [])
     .filter((segment) => segment.text.trim())
     .sort((a, b) => a.startTime - b.startTime);
+  const paragraphSegments = getUploadedParagraphSegments(config)
+    .sort((a, b) => a.startTime - b.startTime);
 
-  if (rawSegments.length === 0) return null;
+  const timingSegments = rawSegments.length > 0 ? rawSegments : paragraphSegments;
+  if (timingSegments.length === 0) return null;
 
-  const transcriptScript = getUploadedTranscriptScriptFromSegments(rawSegments);
+  const transcriptScript = getUploadedTranscriptScriptFromSegments(timingSegments);
   const format = config.videoFormat || VideoFormat.SHORT;
   const smartSplit = config.smartSplit ?? true;
   const longFormSplitType = format === VideoFormat.LONG ? config.longFormSplitType : undefined;
-  const initialSceneTexts = splitScenesLocally(transcriptScript, format, smartSplit, longFormSplitType);
-  const sceneTexts = applyTargetSceneCount(initialSceneTexts, targetSceneCount ?? config.targetSceneCount ?? null);
+  const scriptParagraphs = (config.script || '')
+    .split(/\n+/)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+  const paragraphTexts = paragraphSegments.map((segment) => segment.text.trim()).filter(Boolean);
+  const initialSceneTexts = scriptParagraphs.length > 0
+    ? scriptParagraphs
+    : paragraphTexts.length > 0
+      ? paragraphTexts
+      : splitScenesLocally(transcriptScript, format, smartSplit, longFormSplitType);
+  const shouldRespectParagraphSplit = scriptParagraphs.length > 1 || paragraphTexts.length > 0;
+  const sceneTexts = shouldRespectParagraphSplit
+    ? initialSceneTexts
+    : applyTargetSceneCount(initialSceneTexts, targetSceneCount ?? config.targetSceneCount ?? null);
   if (sceneTexts.length === 0) return null;
 
-  const prepared = rawSegments.map((segment) => ({
+  const prepared = timingSegments.map((segment) => ({
     ...segment,
     normalizedLength: getNormalizedLength(segment.text),
     duration: getSegmentDuration(segment),

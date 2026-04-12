@@ -101,6 +101,7 @@ interface EditPointStore {
     frames: VideoTimedFrame[];
     videoBlob: Blob | null;
     videoFile: File | null;
+    additionalVideoFiles?: File[];
     editTableText: string;
     narrationText: string;
   }) => Promise<void>;
@@ -1133,7 +1134,7 @@ export const useEditPointStore = create<EditPointStore>()(immer((set, get) => ({
     set({ isImportingFromVideoAnalysis: true });
 
     try {
-      const { frames, videoBlob, videoFile, editTableText, narrationText } = data;
+      const { frames, videoBlob, videoFile, additionalVideoFiles = [], editTableText, narrationText } = data;
 
       // [FIX #215] 이전 소스 영상/상태 정리 — 버전 전환 시 누적 방지
       get().reset();
@@ -1143,7 +1144,7 @@ export const useEditPointStore = create<EditPointStore>()(immer((set, get) => ({
 
       // 영상 파일이 있으면 소스로 등록
       if (videoFile) {
-        await get().addSourceVideos([videoFile]);
+        await get().addSourceVideos([videoFile, ...additionalVideoFiles]);
       } else if (videoBlob) {
         const file = new File([videoBlob], 'video-analysis-source.mp4', { type: 'video/mp4' });
         await get().addSourceVideos([file]);

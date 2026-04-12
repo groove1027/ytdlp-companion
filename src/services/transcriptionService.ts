@@ -14,6 +14,23 @@ import type { WhisperTranscriptResult, WhisperSegment, WhisperWord, DiarizedUtte
 
 const COMPANION_URL = 'http://127.0.0.1:9876';
 
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === 'string' ? reader.result : '';
+      const base64 = result.includes(',') ? result.split(',')[1] : result;
+      if (!base64) {
+        reject(new Error('오디오를 base64로 변환하지 못했습니다.'));
+        return;
+      }
+      resolve(base64);
+    };
+    reader.onerror = () => reject(reader.error || new Error('오디오를 읽지 못했습니다.'));
+    reader.readAsDataURL(blob);
+  });
+}
+
 /** 컴패니언 whisper.cpp로 로컬 전사 시도 */
 async function tryCompanionTranscribe(
   audioFile: File | Blob,
@@ -29,17 +46,7 @@ async function tryCompanionTranscribe(
     options?.onProgress?.('로컬 whisper.cpp 전사 중...');
     logger.info('[STT] 컴패니언 whisper.cpp 로컬 전사 시도');
 
-    // File → base64
-    const buffer = await audioFile.arrayBuffer();
-    const bytes = new Uint8Array(buffer);
-    // 64KB 청크 단위로 base64 변환 (대용량 OOM 방지)
-    const chunkSize = 65536;
-    let binary = '';
-    for (let i = 0; i < bytes.length; i += chunkSize) {
-      const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
-      binary += String.fromCharCode(...chunk);
-    }
-    const b64 = btoa(binary);
+    const b64 = await blobToBase64(audioFile);
 
     const res = await fetch(`${COMPANION_URL}/api/transcribe`, {
       method: 'POST',
@@ -1004,12 +1011,14 @@ export function segmentsToScriptLines(
   segments: WhisperSegment[],
   uploadedAudioId: string,
   speakerId: string = '',
+  sceneIds?: string[],
 ): ScriptLine[] {
   return segments.map((seg, i) => ({
     id: `line-uploaded-${Date.now()}-${i}`,
     speakerId,
     text: seg.text,
     index: i,
+    sceneId: sceneIds?.[i],
     startTime: seg.startTime,
     endTime: seg.endTime,
     duration: seg.endTime - seg.startTime,

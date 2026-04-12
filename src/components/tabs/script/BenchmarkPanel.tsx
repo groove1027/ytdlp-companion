@@ -1,4 +1,4 @@
-import React, { useState, useCallback, Suspense } from 'react';
+import React, { useState, useCallback, Suspense, useEffect } from 'react';
 import { useChannelAnalysisStore } from '../../../stores/channelAnalysisStore';
 import { useScriptWriterStore } from '../../../stores/scriptWriterStore';
 import { useNavigationStore } from '../../../stores/navigationStore';
@@ -28,6 +28,7 @@ export default function BenchmarkPanel() {
 
   const topics = useScriptWriterStore((s) => s.topics);
   const setTopics = useScriptWriterStore((s) => s.setTopics);
+  const benchmarkScript = useScriptWriterStore((s) => s.benchmarkScript);
   const setBenchmarkScript = useScriptWriterStore((s) => s.setBenchmarkScript);
   const setActiveStep = useScriptWriterStore((s) => s.setActiveStep);
   const setSelectedTopic = useScriptWriterStore((s) => s.setSelectedTopic);
@@ -140,6 +141,33 @@ ${scriptSummaries}
     setSelectedScriptId(script.videoId);
     setBenchmarkScript(script.transcript);
   }, [setBenchmarkScript]);
+
+  useEffect(() => {
+    if (!benchmarkScript.trim()) {
+      if (selectedScriptId) setSelectedScriptId(null);
+      return;
+    }
+
+    const selectedScript = selectedScriptId
+      ? channelScripts.find((script) => script.videoId === selectedScriptId)
+      : null;
+
+    if (selectedScript) {
+      if (selectedScript.transcript !== benchmarkScript) {
+        setBenchmarkScript(selectedScript.transcript);
+      }
+      return;
+    }
+
+    const matchedByTranscript = channelScripts.find((script) => script.transcript === benchmarkScript);
+    if (matchedByTranscript) {
+      setSelectedScriptId(matchedByTranscript.videoId);
+      return;
+    }
+
+    setSelectedScriptId(null);
+    setBenchmarkScript('');
+  }, [benchmarkScript, channelScripts, selectedScriptId, setBenchmarkScript]);
 
   return (
     <div className="border-t border-gray-700/30">

@@ -2122,33 +2122,30 @@ function generateSrt(
 }
 
 /** SRT 파일 다운로드 */
-function downloadSrt(content: string, filename: string) {
-  // SRT는 BOM 필요 (자막 호환)
-  const blob = new Blob(['\uFEFF' + content], { type: 'application/x-subrip;charset=utf-8' });
+function triggerBlobDownload(blob: Blob, filename: string, traceLabel: string) {
   const url = URL.createObjectURL(blob);
-  logger.registerBlobUrl(url, 'other', 'VideoAnalysisRoom:downloadSrt');
+  logger.registerBlobUrl(url, 'other', traceLabel);
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  setTimeout(() => { logger.unregisterBlobUrl(url); URL.revokeObjectURL(url); }, 5000);
+  setTimeout(() => { logger.unregisterBlobUrl(url); URL.revokeObjectURL(url); }, 60_000);
+}
+
+/** SRT 파일 다운로드 */
+function downloadSrt(content: string, filename: string) {
+  // SRT는 BOM 필요 (자막 호환)
+  const blob = new Blob(['\uFEFF' + content], { type: 'application/x-subrip;charset=utf-8' });
+  triggerBlobDownload(blob, filename, 'VideoAnalysisRoom:downloadSrt');
 }
 
 /** 파일 다운로드 헬퍼 */
 function downloadFile(content: string, filename: string, mime: string) {
   // HTML 등 일반 파일에는 BOM 불필요
   const blob = new Blob([content], { type: `${mime};charset=utf-8` });
-  const url = URL.createObjectURL(blob);
-  logger.registerBlobUrl(url, 'other', 'VideoAnalysisRoom:downloadFile');
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(() => { logger.unregisterBlobUrl(url); URL.revokeObjectURL(url); }, 5000);
+  triggerBlobDownload(blob, filename, 'VideoAnalysisRoom:downloadFile');
 }
 
 /** 소스 영상 Blob에서 지정 구간들의 오디오를 추출 → 단일 AudioBuffer로 합성 */
@@ -4074,6 +4071,7 @@ const VideoAnalysisRoom: React.FC = () => {
     setSelectedPreset, setRawResult, setVersions, setFailedVersions, setThumbnails, setIsFrameUpgrading,
     setError, setExpandedId, cacheResultSnapshot, restoreFromCache, resetResults,
     clearPresetCache,
+    sourceVideoBlobs, setSourceVideoBlobs,
     savedSlots, activeSlotId, loadSlot, removeSlot, newAnalysis, loadAllSlots, saveSlot,
     autoSave, tryAutoRecover,
   } = store;
@@ -4135,6 +4133,16 @@ const VideoAnalysisRoom: React.FC = () => {
     inputLabel: '',
   });
   const [lastAnalysisPerfLines, setLastAnalysisPerfLines] = useState<string[]>([]);
+  const previewSources = useMemo(() => {
+    if (uploadedFiles.length > 0) {
+      return uploadedFiles.map((file) => ({ blob: file as Blob, fileName: file.name }));
+    }
+    if (sourceVideoBlobs.length > 0) {
+      return sourceVideoBlobs;
+    }
+    const fallbackBlob = useVideoAnalysisStore.getState().videoBlob;
+    return fallbackBlob ? [{ blob: fallbackBlob, fileName: 'video-analysis-source.mp4' }] : [];
+  }, [sourceVideoBlobs, uploadedFiles]);
 
   const runTunnelCleanupsForKey = useCallback((cacheKey: string) => {
     const cleanups = tunnelCleanupsByKeyRef.current.get(cacheKey);
@@ -4869,6 +4877,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
           );
 
           let socialBlobForStore: Blob | null = null;
+          const socialSourceBlobs: Array<{ blob: Blob; fileName: string }> = [];
           for (const result of socialResults) {
             if (result.status !== 'fulfilled' || !result.value) continue;
             const { desc, durationSec, frames: sourceFrames, videoBlob } = result.value;
@@ -4876,10 +4885,15 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
             allFrames.push(...sourceFrames);
             if (durationSec > knownDurationSec) knownDurationSec = durationSec;
             if (!socialBlobForStore && videoBlob) socialBlobForStore = videoBlob;
+            if (videoBlob) {
+              const fileName = sourceFrames[0]?.sourceFileName || `social-source-${socialSourceBlobs.length + 1}.mp4`;
+              socialSourceBlobs.push({ blob: videoBlob, fileName });
+            }
           }
           if (socialBlobForStore) {
             useVideoAnalysisStore.getState().setVideoBlob(socialBlobForStore);
           }
+          setSourceVideoBlobs(socialSourceBlobs);
 
           frames = allFrames;
           videoUri = ''; // 소셜은 Gemini v1beta 미지원
@@ -6060,23 +6074,58 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
 
       const videoStore = useVideoAnalysisStore.getState();
       let effectiveBlob = videoStore.videoBlob;
+      let sourceFilesForEditRoom = uploadedFiles.slice(0, 5);
+
+      if (sourceFilesForEditRoom.length === 0 && sourceVideoBlobs.length > 0) {
+        sourceFilesForEditRoom = sourceVideoBlobs.map((source, index) =>
+          new File(
+            [source.blob],
+            source.fileName || `video-analysis-source-${index + 1}.mp4`,
+            { type: source.blob.type || 'video/mp4' },
+          ),
+        );
+      }
 
       // [FIX #700] 다운로드 실패 시 사용자 안내 + 즉시 이동
-      if (!effectiveBlob && !uploadedFiles[0] && inputMode === 'youtube' && youtubeUrl) {
-        try {
-          const dl = await downloadSocialVideo(youtubeUrl, '720p');
-          effectiveBlob = dl.blob;
-          videoStore.setVideoBlob(dl.blob);
-        } catch (e) {
-          console.warn('[EditRoom] 영상 다운로드 실패:', e);
-          showToast('원본 영상 다운로드에 실패했어요. 편집실 Step 1에서 원본 영상을 직접 등록해주세요.', 7000);
+      if (sourceFilesForEditRoom.length === 0 && inputMode === 'youtube') {
+        const validSourceUrls = youtubeUrls.filter((url) => url.trim());
+        if (validSourceUrls.length > 0) {
+          const downloadedFiles: File[] = [];
+          for (let index = 0; index < validSourceUrls.length; index += 1) {
+            const sourceUrl = validSourceUrls[index];
+            try {
+              const dl = await downloadSourceVideoForNleExport(sourceUrl);
+              const safeBaseName = sanitizeProjectName(dl.title || `source-${index + 1}`) || `source-${index + 1}`;
+              const file = new File([dl.blob], `${safeBaseName}.mp4`, { type: dl.blob.type || 'video/mp4' });
+              downloadedFiles.push(file);
+              if (!effectiveBlob) {
+                effectiveBlob = dl.blob;
+                videoStore.setVideoBlob(dl.blob);
+              }
+            } catch (e) {
+              console.warn(`[EditRoom] 소스 영상 ${index + 1} 다운로드 실패:`, e);
+            }
+          }
+          if (downloadedFiles.length > 0) {
+            sourceFilesForEditRoom = downloadedFiles;
+          } else if (youtubeUrl) {
+            try {
+              const dl = await downloadSocialVideo(youtubeUrl, '720p');
+              effectiveBlob = dl.blob;
+              videoStore.setVideoBlob(dl.blob);
+            } catch (e) {
+              console.warn('[EditRoom] 영상 다운로드 실패:', e);
+              showToast('원본 영상 다운로드에 실패했어요. 편집실 Step 1에서 원본 영상을 직접 등록해주세요.', 7000);
+            }
+          }
         }
       }
       try {
         await useEditPointStore.getState().importFromVideoAnalysis({
           frames: thumbnails,
           videoBlob: effectiveBlob,
-          videoFile: uploadedFiles[0] || null,
+          videoFile: sourceFilesForEditRoom[0] || null,
+          additionalVideoFiles: sourceFilesForEditRoom.slice(1),
           editTableText: versionText,
           narrationText: '',
         });
@@ -6090,7 +6139,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       sendToEditRoomLockRef.current = false;
       setSendingToEditRoom(false);
     }
-  }, [uploadedFiles, inputMode, youtubeUrl, thumbnails, selectedPreset]);
+  }, [uploadedFiles, inputMode, youtubeUrl, youtubeUrls, thumbnails, selectedPreset, sourceVideoBlobs]);
 
   // 버전 복사 (3종: tts=TTS만, original=오리지널 대사, all=모두) — 프리셋별 최적화
   const handleCopyVersion = useCallback(async (v: VersionItem, mode: 'tts' | 'original' | 'all') => {
@@ -6234,14 +6283,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
         }
         zip.file(`${safeName}_통합.srt`, '\uFEFF' + generateSrt(v.scenes, isTk, 'combined', isShortForm, selectedPreset || undefined));
         const zipBlob = await zip.generateAsync({ type: 'blob' });
-        const zipUrl = URL.createObjectURL(zipBlob);
-        logger.registerBlobUrl(zipUrl, 'other', 'VideoAnalysisRoom:srtLayerZip');
-        const a = document.createElement('a');
-        a.href = zipUrl;
-        a.download = `${safeName}_자막.zip`;
-        a.click();
-        logger.unregisterBlobUrl(zipUrl);
-        URL.revokeObjectURL(zipUrl);
+        triggerBlobDownload(zipBlob, `${safeName}_자막.zip`, 'VideoAnalysisRoom:srtLayerZip');
         showToast(`${zipLayerLabel} + 통합 SRT가 ZIP으로 다운로드되었어요`);
       } else {
         const srt = generateSrt(v.scenes, isTk, 'dialogue', isShortForm, selectedPreset || undefined);
@@ -6319,15 +6361,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       }
       zip.file(`${safeName}_통합.srt`, '\uFEFF' + generateSyncedSrt(v.scenes, durations, 'combined', isShortForm, selectedPreset || undefined));
       const zipBlob = await zip.generateAsync({ type: 'blob' });
-
-      const zipUrl = URL.createObjectURL(zipBlob);
-      logger.registerBlobUrl(zipUrl, 'other', 'VideoAnalysisRoom:srtZip');
-      const a = document.createElement('a');
-      a.href = zipUrl;
-      a.download = `${safeName}.zip`;
-      a.click();
-      logger.unregisterBlobUrl(zipUrl);
-      URL.revokeObjectURL(zipUrl);
+      triggerBlobDownload(zipBlob, `${safeName}.zip`, 'VideoAnalysisRoom:srtZip');
     } catch (err) {
       logger.trackSwallowedError('VideoAnalysisRoom:handleDownloadSrt/render', err);
       showToast('영상 렌더링 실패 — SRT만 다운로드합니다');
@@ -6344,14 +6378,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
         }
         zip.file(`${safeName}_통합.srt`, '\uFEFF' + generateSrt(v.scenes, true, 'combined', isShortForm, selectedPreset || undefined));
         const zipBlob = await zip.generateAsync({ type: 'blob' });
-        const zipUrl = URL.createObjectURL(zipBlob);
-        logger.registerBlobUrl(zipUrl, 'other', 'VideoAnalysisRoom:srtFallbackZip');
-        const a = document.createElement('a');
-        a.href = zipUrl;
-        a.download = `${safeName}_자막.zip`;
-        a.click();
-        logger.unregisterBlobUrl(zipUrl);
-        URL.revokeObjectURL(zipUrl);
+        triggerBlobDownload(zipBlob, `${safeName}_자막.zip`, 'VideoAnalysisRoom:srtFallbackZip');
       } else {
         const srt = generateSrt(v.scenes, true, 'dialogue', isShortForm, selectedPreset || undefined);
         downloadSrt(srt, `${safeName}.srt`);
@@ -6389,14 +6416,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       }
       zip.file(`${safeName}_통합.srt`, '\uFEFF' + generateSrt(v.scenes, isTk, 'combined', isShortForm, selectedPreset || undefined));
       const zipBlob = await zip.generateAsync({ type: 'blob' });
-      const zipUrl = URL.createObjectURL(zipBlob);
-      logger.registerBlobUrl(zipUrl, 'other', 'VideoAnalysisRoom:srtOnlyZip');
-      const a = document.createElement('a');
-      a.href = zipUrl;
-      a.download = `${safeName}_자막.zip`;
-      a.click();
-      logger.unregisterBlobUrl(zipUrl);
-      URL.revokeObjectURL(zipUrl);
+      triggerBlobDownload(zipBlob, `${safeName}_자막.zip`, 'VideoAnalysisRoom:srtOnlyZip');
       showToast(`${zipLayerLabel} + 통합 SRT가 ZIP으로 다운로드되었어요`);
     } else {
       const srt = generateSrt(v.scenes, isTk, 'dialogue', isShortForm, selectedPreset || undefined);
@@ -7478,7 +7498,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                           </div>
                           {hasScenes && (
                             <>
-                              {useVideoAnalysisStore.getState().videoBlob && (
+                              {previewSources.length > 0 && (
                                 <button type="button" onClick={() => setPreviewVersion(v)} className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium bg-gray-700/40 text-gray-400 border border-gray-600/20 hover:text-violet-400 hover:border-violet-500/30 transition-all">
                                   <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
                                   프리뷰
@@ -7835,12 +7855,12 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
                                   <td className="py-2 px-2 align-top">
                                     {/* [FIX #560] 타임코드를 범위(시작~끝)로 표시 — 단일 시점만 있으면 sourceTimeline/timeline에서 범위 보충 */}
                                     <div className="text-blue-400 font-mono text-xs leading-relaxed">{(() => {
-                                      const tc = scene.timecodeSource || '';
-                                      if (tc && /\d+:\d+.*[~\-–—/].*\d+:\d+/.test(tc)) return tc;
-                                      const rangeSrc = scene.sourceTimeline || scene.timeline || '';
-                                      const rangeMatch = rangeSrc.match(/(\d+:\d+(?:\.\d+)?)\s*[~\-–—/]\s*(\d+:\d+(?:\.\d+)?)/);
+                                      const tc = scene.timecodeSource || scene.sourceTimeline || scene.timeline || '';
+                                      if (!tc) return '-';
+                                      if (/\d+:\d+.*[~\-–—/].*\d+:\d+/.test(tc)) return tc;
+                                      const rangeMatch = tc.match(/(\d+:\d+(?:\.\d+)?)\s*[~\-–—/]\s*(\d+:\d+(?:\.\d+)?)/);
                                       if (rangeMatch) return `${rangeMatch[1]}~${rangeMatch[2]}`;
-                                      return tc || '-';
+                                      return tc;
                                     })()}</div>
                                   </td>
                                   {thumbnails.length > 0 && (() => {
@@ -8074,11 +8094,12 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       )}
 
       {/* ═══ 시나리오 프리뷰 플레이어 (MP4 + SRT 내보내기) ═══ */}
-      {previewVersion && useVideoAnalysisStore.getState().videoBlob && (
+      {previewVersion && previewSources.length > 0 && (
         <Suspense fallback={null}>
           <ScenarioPreviewPlayer
             version={previewVersion}
-            videoBlob={useVideoAnalysisStore.getState().videoBlob!}
+            videoBlob={previewSources[0].blob}
+            videoSources={previewSources}
             onClose={() => setPreviewVersion(null)}
             onDownloadSrt={() => handleDownloadSrt(previewVersion)}
             onDownloadSrtOnly={() => handleDownloadSrtOnly(previewVersion)}
