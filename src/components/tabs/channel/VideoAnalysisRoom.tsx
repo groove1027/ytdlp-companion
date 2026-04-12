@@ -744,6 +744,28 @@ function extractFallbackVersionBody(content: string): string {
   ).trim();
 }
 
+function extractStandaloneResultTitle(raw: string): string | null {
+  const explicitTitleMatch = raw.match(/(?:^|\n)\s*(?:\*{0,2})(?:제목|title)(?:\*{0,2})[:\s：]+\s*(.+)$/im);
+  if (explicitTitleMatch?.[1]) {
+    return explicitTitleMatch[1].trim().replace(/\*+/g, '');
+  }
+
+  const candidate = raw
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map((line) => line.trim())
+    .find((line) => {
+      if (!line) return false;
+      if (line.startsWith('```')) return false;
+      if (line.startsWith('|')) return false;
+      if (/^[:\-| ]+$/.test(line)) return false;
+      if (/^(?:#{1,6}\s*)?(?:버전|version)\s*\d+/i.test(line)) return false;
+      return true;
+    });
+
+  return candidate ? candidate.replace(/^\*+|\*+$/g, '').slice(0, 120) : null;
+}
+
 function hasMeaningfulVersionText(text: string): boolean {
   const normalized = extractFallbackVersionBody(text)
     .replace(/^\s*\|(?:\s*:?-{3,}:?\s*\|)+\s*$/gm, '')
@@ -895,7 +917,7 @@ function parseVersions(raw: string): VersionItem[] {
   if (standaloneTableScenes.length > 0) {
     return [{
       id: 1,
-      title: '분석 결과',
+      title: extractStandaloneResultTitle(raw) || '분석 결과',
       concept: '',
       scenes: standaloneTableScenes,
       detectedLang: extractDetectedLangFromVersionContent(raw),

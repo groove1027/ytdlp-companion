@@ -3,12 +3,13 @@ import React, { useEffect, useState, useRef } from 'react';
 import { ProjectData, ProjectSummary, StorageEstimate } from '../types';
 import { deleteProject, deleteAllProjects, getAllProjectSummaries, getProject, getStorageEstimate } from '../services/storageService';
 import ApiKeySettings from './ApiKeySettings';
+import { persistCurrentProjectSnapshot } from '../hooks/useAutoSave';
 
 interface ProjectSidebarProps {
   isOpen: boolean;
   onClose: () => void;
-  onSelectProject: (project: ProjectData) => void;
-  onNewProject: () => void;
+  onSelectProject: (project: ProjectData) => void | Promise<void>;
+  onNewProject: () => void | Promise<void>;
   onImportProject?: (file: File) => void;
   currentProjectId?: string;
   refreshTrigger: number;
@@ -50,9 +51,10 @@ const ProjectSidebar: React.FC<ProjectSidebarProps> = ({
   const handleOpenProject = async (summary: ProjectSummary) => {
     setLoadingProjectId(summary.id);
     try {
+      await persistCurrentProjectSnapshot();
       const fullProject = await getProject(summary.id);
       if (fullProject) {
-        onSelectProject(fullProject);
+        await onSelectProject(fullProject);
         onClose();
       }
     } finally {
@@ -87,8 +89,8 @@ const ProjectSidebar: React.FC<ProjectSidebarProps> = ({
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  const handleCreateNew = () => {
-    onNewProject();
+  const handleCreateNew = async () => {
+    await onNewProject();
     onClose();
   };
 

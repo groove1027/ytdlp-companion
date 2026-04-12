@@ -5,6 +5,7 @@ import { showToast } from '../../stores/uiStore';
 import { exportProjectById } from '../../services/exportService';
 import { useNavigationStore } from '../../stores/navigationStore';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
+import { persistCurrentProjectSnapshot } from '../../hooks/useAutoSave';
 import { useSyncStore } from '../../stores/syncStore';
 import { useProjectStore } from '../../stores/projectStore';
 import { performFullSync, deleteCloudProject, pauseSync, resumeSync, markDeletingIds } from '../../services/syncService';
@@ -12,8 +13,8 @@ import { getToken } from '../../services/authService';
 import type { SyncStatus } from '../../types';
 
 interface ProjectDashboardProps {
-  onSelectProject: (project: ProjectData) => void;
-  onNewProject: (title: string) => void;
+  onSelectProject: (project: ProjectData) => void | Promise<void>;
+  onNewProject: (title: string) => void | Promise<void>;
   onImportProject?: (file: File) => void;
   refreshTrigger: number;
 }
@@ -627,9 +628,10 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, on
     if (loadingProjectId) return; // 중복 로드 방지
     setLoadingProjectId(id);
     try {
+      await persistCurrentProjectSnapshot();
       const fullProject = await getProject(id);
       if (fullProject) {
-        onSelectProject(fullProject);
+        await onSelectProject(fullProject);
       } else {
         showToast('프로젝트를 불러올 수 없습니다. 삭제되었을 수 있습니다.', 4000);
       }

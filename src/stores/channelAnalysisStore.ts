@@ -15,7 +15,13 @@ import {
   LegacyTopicRecommendation,
   RemakeVersion,
 } from '../types';
-import { saveBenchmarkData, getAllSavedBenchmarks, deleteSavedBenchmark } from '../services/storageService';
+import {
+  saveBenchmarkData,
+  getAllSavedBenchmarks,
+  deleteSavedBenchmark,
+  safeLocalStorageGetItem,
+  safeLocalStorageSetItem,
+} from '../services/storageService';
 import { logger } from '../services/LoggerService';
 import type { SavedBenchmarkData } from '../services/storageService';
 import { getQuotaUsage } from '../services/youtubeAnalysisService';
@@ -130,13 +136,20 @@ interface ChannelAnalysisStore {
 const PRESETS_KEY = 'CHANNEL_PRESETS';
 
 const loadPresetsFromStorage = (): ChannelGuideline[] => {
-  try { return JSON.parse(localStorage.getItem(PRESETS_KEY) || '[]'); }
+  try { return JSON.parse(safeLocalStorageGetItem(PRESETS_KEY) || '[]'); }
   catch (e) { logger.trackSwallowedError('channelAnalysisStore:loadPresetsFromStorage', e); return []; }
+};
+
+const persistPresets = (presets: ChannelGuideline[]): void => {
+  safeLocalStorageSetItem(PRESETS_KEY, JSON.stringify(presets));
 };
 
 const initQuota = getQuotaUsage();
 
-const INITIAL_STATE = {
+const createInitialState = (options?: {
+  savedBenchmarks?: SavedBenchmarkData[];
+  savedPresets?: ChannelGuideline[];
+}) => ({
   subTab: 'channel-room' as ChannelAnalysisSubTab,
   keyword: '',
   language: 'ko' as const,
@@ -153,7 +166,6 @@ const INITIAL_STATE = {
   channelInfo: null,
   channelScripts: [] as ChannelScript[],
   channelGuideline: null,
-  savedPresets: loadPresetsFromStorage(),
   inputSource: 'youtube' as ChannelInputSource,
   uploadedFiles: [] as ParsedFileEntry[],
   sourceName: '',
@@ -167,9 +179,12 @@ const INITIAL_STATE = {
   remakeVersions: [] as RemakeVersion[],
   remakeSourceInput: '',
   remakeVersionCount: 3,
-  savedBenchmarks: [] as SavedBenchmarkData[],
+  savedBenchmarks: options?.savedBenchmarks || [] as SavedBenchmarkData[],
   activeSlotId: null as string | null,
-};
+  savedPresets: options?.savedPresets || loadPresetsFromStorage(),
+});
+
+const INITIAL_STATE = createInitialState();
 
 export const useChannelAnalysisStore = create<ChannelAnalysisStore>((set) => ({
   ...INITIAL_STATE,
@@ -220,14 +235,14 @@ export const useChannelAnalysisStore = create<ChannelAnalysisStore>((set) => ({
   // 프리셋 저장 (채널명 기준 중복 시 덮어쓰기)
   savePreset: (guideline) => set((state) => {
     const updated = [...state.savedPresets.filter(p => p.channelName !== guideline.channelName), guideline];
-    localStorage.setItem(PRESETS_KEY, JSON.stringify(updated));
+    persistPresets(updated);
     return { savedPresets: updated };
   }),
 
   // 프리셋 삭제
   removePreset: (channelName) => set((state) => {
     const updated = state.savedPresets.filter(p => p.channelName !== channelName);
-    localStorage.setItem(PRESETS_KEY, JSON.stringify(updated));
+    persistPresets(updated);
     return { savedPresets: updated };
   }),
 
@@ -357,5 +372,10 @@ export const useChannelAnalysisStore = create<ChannelAnalysisStore>((set) => ({
   clearKeywordHistory: () => set({ keywordResults: [] }),
 
   // 전체 초기화
-  reset: () => set({ ...INITIAL_STATE }),
+  reset: () => set((state) => ({
+    ...createInitialState({
+      savedBenchmarks: state.savedBenchmarks,
+      savedPresets: loadPresetsFromStorage(),
+    }),
+  })),
 }));

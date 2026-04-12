@@ -425,6 +425,16 @@ const VoiceStudio: React.FC = () => {
   useEffect(() => {
     // [FIX #989] 프로젝트 전환 직후 재동기화 방지 — clearPreviousContent 반영 대기
     if (skipSyncRef.current) return;
+    // [FIX #1079] 영상 분석/업로드 오디오에서 넘어온 라인은 scriptWriter 대본으로 덮어쓰지 않음
+    const hasExternallyManagedLines = lines.some((line) =>
+      line.sceneId?.startsWith('video-analysis:')
+      || line.audioSource === 'uploaded'
+      || !!line.uploadedAudioId,
+    ) || useProjectStore.getState().config?.narrationSource === 'uploaded-audio';
+    if (hasExternallyManagedLines) {
+      prevStoreScriptRef.current = storeScript;
+      return;
+    }
     // 대본 내용이 실질적으로 변경된 경우 라인 초기화하여 재동기화
     if (lines.length > 0 && storeScript && prevStoreScriptRef.current !== storeScript) {
       const currentText = lines.map(l => l.text).join('\n');

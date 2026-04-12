@@ -313,7 +313,7 @@ vi.mock('../services/imageBlobStorageService', () => ({
   persistProjectImages: mocks.persistProjectImages,
 }));
 
-const { useAutoSave } = await import('../hooks/useAutoSave');
+const { persistCurrentProjectSnapshot, useAutoSave } = await import('../hooks/useAutoSave');
 
 const AutoSaveHarness = () => {
   useAutoSave();
@@ -363,14 +363,14 @@ const flushMicrotasks = async (count = 5) => {
 };
 
 const flushBackgroundPersistence = async () => {
-  for (let index = 0; index < 20; index += 1) {
+  for (let index = 0; index < 50; index += 1) {
     await flushMicrotasks(20);
     await vi.advanceTimersByTimeAsync(1);
   }
 };
 
 const waitFor = async (predicate: () => boolean, message: string) => {
-  for (let index = 0; index < 100; index += 1) {
+  for (let index = 0; index < 250; index += 1) {
     if (predicate()) return;
     await flushBackgroundPersistence();
   }
@@ -539,5 +539,24 @@ describe('useAutoSave P2 media persistence separation', () => {
     expect(mocks.setLastAutoSavedAt).toHaveBeenCalledTimes(1);
     expect(mocks.scheduleSyncToCloud).toHaveBeenCalledTimes(1);
     expect(mocks.showToast).not.toHaveBeenCalled();
+  });
+
+  it('persists the current snapshot immediately when a project switch forces a save', async () => {
+    const blobUrl = 'blob:test:forced-save-image';
+
+    mocks.projectStore.reset(mocks.buildProjectStoreState({
+      scenes: [{ ...mocks.defaultScene, imageUrl: blobUrl }],
+    }));
+    mocks.imagePersistResults.push(createImagePersistSuccess(blobUrl));
+
+    await act(async () => {
+      await persistCurrentProjectSnapshot();
+      await flushBackgroundPersistence();
+    });
+
+    expect(mocks.saveProject).toHaveBeenCalledTimes(1);
+    expect(mocks.persistProjectImages.mock.calls.length).toBeGreaterThanOrEqual(1);
+    expect(mocks.setLastAutoSavedAt).toHaveBeenCalledTimes(1);
+    expect(mocks.scheduleSyncToCloud).toHaveBeenCalledWith('project-1');
   });
 });

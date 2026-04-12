@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 
 interface AnalysisSlotBarProps {
   slots: { id: string; name: string; savedAt: number }[];
@@ -24,9 +24,23 @@ const AnalysisSlotBar: React.FC<AnalysisSlotBarProps> = ({
   slots, activeSlotId, onNewAnalysis, onLoadSlot, onDeleteSlot, hasCurrentResults, accentColor = 'blue',
 }) => {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const activeClass = `bg-${accentColor}-600/20 text-${accentColor}-400 border border-${accentColor}-500/30`;
   const inactiveClass = 'bg-gray-700/50 text-gray-400 border border-gray-600/30 hover:border-gray-500';
+
+  useEffect(() => {
+    if (!activeSlotId || !scrollRef.current) return;
+    const activeButton = scrollRef.current.querySelector<HTMLElement>(`[data-slot-id="${activeSlotId}"]`);
+    activeButton?.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+  }, [activeSlotId, slots.length]);
+
+  const handleWheelScroll = (event: React.WheelEvent<HTMLDivElement>) => {
+    if (!scrollRef.current) return;
+    if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+    event.preventDefault();
+    scrollRef.current.scrollBy({ left: event.deltaY, behavior: 'auto' });
+  };
 
   // [FIX #818] overflow-x-clip으로 가로만 클리핑, 세로는 visible (삭제 버튼 노출)
   return (
@@ -45,10 +59,16 @@ const AnalysisSlotBar: React.FC<AnalysisSlotBarProps> = ({
         <>
           <div className="w-px h-6 bg-gray-600/50 flex-shrink-0" />
           {/* [FIX #818] 채널 탭 스크롤: flex-1 min-w-0 + pt-2로 삭제 버튼 노출 공간 확보 */}
-          <div className="flex gap-2 overflow-x-auto scrollbar-hide min-w-0 flex-1 pt-2 pb-1" style={{ overflowY: 'visible' }}>
+          <div
+            ref={scrollRef}
+            onWheel={handleWheelScroll}
+            className="flex gap-2 overflow-x-auto scrollbar-hide min-w-0 flex-1 pt-2 pb-1"
+            style={{ overflowY: 'visible' }}
+          >
             {slots.map((slot) => (
               <button
                 key={slot.id}
+                data-slot-id={slot.id}
                 onClick={() => onLoadSlot(slot.id)}
                 onMouseEnter={() => setHoveredId(slot.id)}
                 onMouseLeave={() => setHoveredId(null)}

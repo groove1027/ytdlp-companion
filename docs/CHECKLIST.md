@@ -8,6 +8,25 @@
 
 ## 🟢 완료된 작업
 
+- [x] **2026-04-12 — 상태 관리/데이터 소실 버그 8건 동시 수정 (#1079 #1064 #1096 #1102 #810 #1147 #838 #873)**
+  - `rg -n "useAutoSave|autoSave|persist|rehydrate|IndexedDB|storageService" src/stores/ src/services/storageService.ts`, `rg -n "localStorage\\.setItem|localStorage\\.getItem" src/stores/`, `rg -n "dubbing|translatedScript|ttsScript" src/components/tabs/channel/VideoAnalysisRoom.tsx src/stores/`, `rg -n "deleteProject|clearProject|loadProject|switchProject" src/stores/projectStore.ts`, `rg -n "imageBlob|imageUrl|imageDataUrl|blob:" src/stores/ src/components/`, `rg -n "분석 결과|resultTitle|cacheKey" src/stores/videoAnalysisStore.ts src/components/tabs/channel/`, `rg -n "SOUND_FAVORITE|favorite.*voice|즐겨찾기|Typecast" src/`, `rg -n "overflow-x|scrollX|horizontal.*scroll|채널.*탭" src/components/tabs/channel/`로 저장 계층, 더빙 TTS 전송, 프로젝트 전환, blob 이미지, 영상 분석 제목, Typecast 즐겨찾기, 채널 슬롯 스크롤 영향을 전수 조사
+  - 원인 확인: `soundStudioStore.ts`, `channelAnalysisStore.ts`, `videoAnalysisStore.ts`가 localStorage/IDB에서 읽은 값을 `INITIAL_STATE`에 고정해두고 `reset()` 시 그 스냅샷으로 되돌려서 최신 즐겨찾기/프리셋/분석 슬롯 목록이 사라졌고, `projectStore`/대시보드 전환 경로는 현재 프로젝트를 강제 저장하지 않은 채 오래된 DB 스냅샷을 다시 읽어 이미지/대본이 유실될 수 있었음. `VoiceStudio.tsx`는 영상 분석에서 넘긴 더빙 라인도 scriptWriter 대본과 불일치하면 비워버려 이전 대본으로 재동기화했고, `VideoAnalysisRoom.tsx`는 단일 표 파싱 fallback 제목을 `분석 결과`로 하드코딩했으며, `editRoomStore.ts`의 Delete는 실제 미디어를 지우지 않고 효과만 초기화하고 있었음. 채널 슬롯 바는 overflow는 있었지만 활성 탭 복귀/휠 스크롤 지원이 없어 이전 슬롯 접근성이 떨어졌음
+  - `src/stores/soundStudioStore.ts` — 즐겨찾기 읽기/쓰기 경로를 safe localStorage helper 기반으로 정리하고 `createInitialState()`를 도입해 reset 시 최신 `SOUND_FAVORITE_MODELS`/`SOUND_FAVORITE_VOICES`를 다시 읽도록 수정. #810, #1147 대응
+  - `src/stores/channelAnalysisStore.ts`, `src/stores/videoAnalysisStore.ts` — static `INITIAL_STATE` 의존을 제거하고 reset 시 최신 프리셋(localStorage)과 이미 로드된 benchmark/slot 목록(IndexedDB 메타)을 보존하도록 수정. 프로젝트 전환 후 이전 채널/영상 분석 슬롯이 사라지던 현상 방지. #1064, #810 대응
+  - `src/hooks/useAutoSave.ts`, `src/components/tabs/ProjectDashboard.tsx`, `src/components/ProjectSidebar.tsx`, `src/App.tsx` — `persistCurrentProjectSnapshot()` 강제 저장 헬퍼를 추가하고 프로젝트 열기/새 프로젝트 생성 직전에 현재 프로젝트를 저장한 뒤 최신 DB를 읽도록 정리. 이미지 생성 직후 대시보드/프로젝트 전환 시 오래된 스냅샷으로 덮이던 문제 완화. #1064, #1096 대응
+  - `src/components/tabs/sound/VoiceStudio.tsx` — `video-analysis:` sceneId, uploaded audio 라인은 scriptWriter 자동 동기화 대상에서 제외해 더빙 번역 TTS 생성 시 이전 대본으로 되돌아가지 않게 수정. #1079 대응
+  - `src/components/tabs/channel/VideoAnalysisRoom.tsx` — 단일 표 파싱 fallback에 `extractStandaloneResultTitle()`를 추가해 명시 제목/첫 의미 있는 라인을 우선 사용하도록 수정. 원래 영상 제목이 `분석 결과`로 덮이던 문제 보정. #1102 대응
+  - `src/stores/editRoomStore.ts` — Delete/Backspace가 video/image, narration audio, 원본 오디오, generated SFX를 실제로 비우도록 수정하고, 미디어가 없을 때만 기존 효과 초기화 fallback을 유지. #838 대응
+  - `src/components/tabs/channel/AnalysisSlotBar.tsx` — 활성 슬롯 auto-scroll과 세로 휠의 가로 스크롤 전환을 추가해 탭이 많아져도 이전 채널/분석 슬롯으로 이동 가능하게 수정. #873 대응
+  - `src/test/statePersistenceStores.test.ts` 신규 — sound favorite reset, channel preset/benchmark reset, video analysis slot reset 회귀 테스트 3건 추가
+  - `src/test/useAutoSave.test.tsx` — 프로젝트 전환 강제 저장 경로(`persistCurrentProjectSnapshot`) 회귀 테스트 1건 추가하고 기존 auto-save media persistence 테스트를 전체 스위트에서 안정적으로 돌도록 보강
+  - `cd src && node_modules/typescript/bin/tsc --noEmit`: 통과
+  - `cd src && node_modules/.bin/vitest run test/statePersistenceStores.test.ts`: 통과 (`3 passed`)
+  - `cd src && node_modules/.bin/vitest run test/useAutoSave.test.tsx`: 통과 (`3 passed`)
+  - `cd src && node_modules/.bin/vitest run`: 통과 (`18 passed`, `157 passed`)
+  - `cd src && node_modules/.bin/vite build`: 성공 (기존 dynamic import / chunk-size warning만 출력)
+  - `rg -n "persistCurrentProjectSnapshot|createInitialState\\(|extractStandaloneResultTitle|deleteSelectedLayer|video-analysis:" src docs/CHECKLIST.md`: 강제 저장, reset 초기화, 제목 fallback, 편집실 삭제, 외부 라인 보호, 체크리스트 반영 위치 재검증
+
 - [x] **2026-04-12 — 과금 버그: 프로젝트 열기만 해도 비용 차감 오인 수정 (#672 #684 #685 #701)**
   - `rg -n "addCost|ADD_COST|incrementCost|recordCost" src/ | head -30`, `rg -n "costStore|useCostStore|cost-stats" src/stores/ src/services/ | head -20`, `rg -n "useEffect.*project|loadProject|rehydrate|hydrate" src/App.tsx src/stores/ | head -20`, `rg -n "blob:|restoreProjectImages|persistImage|restoreProjectAudio|autoSave|saveProject|getProject\\(|setCostStats\\(|resetCosts\\(" src/App.tsx src/stores src/services | head -200`로 비용 호출부, 프로젝트 로드 경로, blob/base64 복원, auto-save 영향을 전수 조사
   - 원인 확인: `src/stores/projectStore.ts`의 `loadProject()`가 저장된 `project.costStats`를 shared `costStore`에 직접 덮어쓰고 있었고, `src/components/CostDashboard.tsx`는 `costStats.totalUsd` 변경이면 복원이든 실제 과금이든 동일하게 하이라이트했다. 이 때문에 프로젝트를 다시 열었을 때 저장된 누적 비용이 새 과금처럼 보였고, reset 후 재오픈 시 특히 "다시 차감됐다"는 오인이 반복될 수 있었음

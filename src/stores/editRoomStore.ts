@@ -1138,6 +1138,7 @@ export const useEditRoomStore = create<EditRoomStore>()(immer((set, get) => ({
     const { layerType, sceneId } = selectedLayer;
     if (!sceneId) return;
     const realId = sceneId.replace(/^(va-|sfx-)/, '');
+    const scene = useProjectStore.getState().scenes.find((item) => item.id === realId);
     switch (layerType) {
       case 'subtitle':
         get().setSceneSubtitle(realId, { text: '' });
@@ -1146,7 +1147,51 @@ export const useEditRoomStore = create<EditRoomStore>()(immer((set, get) => ({
         get().setSceneTransition(realId, { preset: 'none', duration: 0.5 });
         break;
       case 'video':
-        get().setSceneEffect(realId, { panZoomPreset: 'none', motionEffect: 'none' });
+        if (scene?.videoUrl) {
+          useProjectStore.getState().updateScene(realId, {
+            videoUrl: undefined,
+            generationTaskId: undefined,
+            isGeneratingVideo: false,
+            progress: undefined,
+            imageUpdatedAfterVideo: false,
+          });
+        } else if (scene?.imageUrl) {
+          useProjectStore.getState().updateScene(realId, {
+            imageUrl: undefined,
+            isGeneratingImage: false,
+            generationStatus: undefined,
+            isPromptFiltered: false,
+            imageUpdatedAfterVideo: false,
+          });
+        } else {
+          get().setSceneEffect(realId, { panZoomPreset: 'none', motionEffect: 'none' });
+        }
+        break;
+      case 'narration':
+        useSoundStudioStore.getState().updateLine(realId, {
+          audioUrl: undefined,
+          duration: undefined,
+          startTime: undefined,
+          endTime: undefined,
+          audioSource: undefined,
+          uploadedAudioId: undefined,
+          ttsStatus: 'idle',
+        });
+        useSoundStudioStore.getState().setMergedAudio(null);
+        break;
+      case 'origAudio':
+        if (scene?.videoUrl) {
+          useProjectStore.getState().updateScene(realId, {
+            videoUrl: undefined,
+            generationTaskId: undefined,
+            isGeneratingVideo: false,
+            progress: undefined,
+            imageUpdatedAfterVideo: false,
+          });
+        }
+        break;
+      case 'sfx':
+        useProjectStore.getState().updateScene(realId, { generatedSfx: undefined });
         break;
       default:
         break;

@@ -158,7 +158,9 @@ function notifyStoragePressure(message: string): void {
   showToast(message, 7000);
 }
 
-const INITIAL_STATE = {
+const createInitialState = (options?: {
+  savedSlots?: SavedVideoAnalysisSlot[];
+}) => ({
   inputMode: 'youtube' as const,
   youtubeUrl: '',
   youtubeUrls: [''] as string[],
@@ -173,13 +175,15 @@ const INITIAL_STATE = {
   resultCache: {} as Record<string, ResultCache>,
   videoBlob: null as Blob | null,
   videoBlobHasAudio: null as boolean | null,
-  savedSlots: [] as SavedVideoAnalysisSlot[],
   activeSlotId: null as string | null,
   editRoomSelectedVersionIdx: null as number | null,
   targetDuration: 0 as 0 | 30 | 45 | 60,
   keepOriginalOrder: false,
   versionCount: 10,
-};
+  savedSlots: options?.savedSlots || [] as SavedVideoAnalysisSlot[],
+});
+
+const INITIAL_STATE = createInitialState();
 
 function trimStoredText(value: string, limit: number): string {
   if (!value) return '';
@@ -470,7 +474,9 @@ export const useVideoAnalysisStore = create<VideoAnalysisStore>()(
         expandedId: null,
       }),
 
-      reset: () => set({ ...INITIAL_STATE }),
+      reset: () => set((state) => ({
+        ...createInitialState({ savedSlots: state.savedSlots }),
+      })),
 
       // --- 슬롯 관리 ---
       saveSlot: async (name) => {

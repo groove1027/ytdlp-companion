@@ -37,7 +37,7 @@ import {
   safeLocalStorageRemoveItem,
 } from './services/storageService';
 import { useVideoBatch } from './hooks/useVideoBatch';
-import { useAutoSave } from './hooks/useAutoSave';
+import { persistCurrentProjectSnapshot, useAutoSave } from './hooks/useAutoSave';
 import { useViewAlertPolling } from './hooks/useViewAlertPolling';
 import { uploadMediaPermanent, uploadMediaToHosting } from './services/uploadService';
 // [v4.5] 레거시 UI 제거됨 — export 함수들은 편집실 탭에서 직접 import
@@ -1067,14 +1067,14 @@ const App: React.FC = () => {
       handleGenerateImage(sceneId, "Ensure character matches reference.", undefined, currentConfig);
   }, [setScenes, handleGenerateImage]);
 
-  const handleNewProject = (title: string) => {
-      useProjectStore.getState().newProject();
-      useProjectStore.getState().setProjectTitle(title);
+  const handleNewProject = async (title: string) => {
+      await persistCurrentProjectSnapshot();
+      useProjectStore.getState().newProject(title);
       leaveDashboard();
       useNavigationStore.getState().setActiveTab('channel-analysis');
   };
 
-  const handleLoadProject = (project: ProjectData) => {
+  const handleLoadProject = async (project: ProjectData) => {
       useProjectStore.getState().loadProject(project);
       leaveDashboard();
       // 프로젝트 상태에 따라 적절한 탭으로 이동 (구버전 레거시 UI 방지)

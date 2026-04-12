@@ -13,7 +13,13 @@ import {
   SfxItem,
 } from '../types';
 import type { MusicAnalysisResult } from '../services/musicService';
-import { saveMusicGroup, getAllSavedMusic, deleteSavedMusic } from '../services/storageService';
+import {
+  saveMusicGroup,
+  getAllSavedMusic,
+  deleteSavedMusic,
+  safeLocalStorageGetItem,
+  safeLocalStorageSetItem,
+} from '../services/storageService';
 import { logger } from '../services/LoggerService';
 
 // --- 전역 오디오 제어 (Zustand 상태 외부 — 리렌더 방지) ---
@@ -49,13 +55,21 @@ const FAVORITE_MODELS_KEY = 'SOUND_FAVORITE_MODELS';
 const FAVORITE_VOICES_KEY = 'SOUND_FAVORITE_VOICES';
 
 const loadFavoriteModels = (): SunoModel[] => {
-  try { return JSON.parse(localStorage.getItem(FAVORITE_MODELS_KEY) || '[]'); }
+  try { return JSON.parse(safeLocalStorageGetItem(FAVORITE_MODELS_KEY) || '[]'); }
   catch (e) { logger.trackSwallowedError('soundStudioStore:loadFavoriteModels', e); return []; }
 };
 
 const loadFavoriteVoices = (): string[] => {
-  try { return JSON.parse(localStorage.getItem(FAVORITE_VOICES_KEY) || '[]'); }
+  try { return JSON.parse(safeLocalStorageGetItem(FAVORITE_VOICES_KEY) || '[]'); }
   catch (e) { logger.trackSwallowedError('soundStudioStore:loadFavoriteVoices', e); return []; }
+};
+
+const persistFavoriteModels = (models: SunoModel[]): void => {
+  safeLocalStorageSetItem(FAVORITE_MODELS_KEY, JSON.stringify(models));
+};
+
+const persistFavoriteVoices = (voices: string[]): void => {
+  safeLocalStorageSetItem(FAVORITE_VOICES_KEY, JSON.stringify(voices));
 };
 
 const isUploadedLine = (line: Pick<ScriptLine, 'audioSource' | 'uploadedAudioId'> | undefined): boolean =>
@@ -244,7 +258,7 @@ interface SoundStudioStore {
   reset: () => void;
 }
 
-const INITIAL_STATE = {
+const createInitialState = () => ({
   speakers: [] as Speaker[],
   lines: [] as ScriptLine[],
   ttsEngine: 'typecast' as TTSEngine,
@@ -301,7 +315,9 @@ const INITIAL_STATE = {
     analysis: null as MusicAnalysisResult | null,
     isAnalyzing: false,
   },
-};
+});
+
+const INITIAL_STATE = createInitialState();
 
 export const useSoundStudioStore = create<SoundStudioStore>((set) => ({
   ...INITIAL_STATE,
@@ -548,7 +564,7 @@ export const useSoundStudioStore = create<SoundStudioStore>((set) => ({
     const updated = state.favoriteModels.includes(modelId)
       ? state.favoriteModels.filter(m => m !== modelId)
       : [...state.favoriteModels, modelId];
-    localStorage.setItem(FAVORITE_MODELS_KEY, JSON.stringify(updated));
+    persistFavoriteModels(updated);
     return { favoriteModels: updated };
   }),
 
@@ -556,7 +572,7 @@ export const useSoundStudioStore = create<SoundStudioStore>((set) => ({
     const updated = state.favoriteVoices.includes(voiceId)
       ? state.favoriteVoices.filter(v => v !== voiceId)
       : [...state.favoriteVoices, voiceId];
-    localStorage.setItem(FAVORITE_VOICES_KEY, JSON.stringify(updated));
+    persistFavoriteVoices(updated);
     return { favoriteVoices: updated };
   }),
 
@@ -598,5 +614,5 @@ export const useSoundStudioStore = create<SoundStudioStore>((set) => ({
   // --- UI ---
   setActiveSubTab: (tab) => { logger.trackTabVisit('sound-studio', tab); set({ activeSubTab: tab }); },
 
-  reset: () => set({ ...INITIAL_STATE }),
+  reset: () => set({ ...createInitialState() }),
 }));

@@ -320,6 +320,34 @@ const persistProjectMedia = async (
   await Promise.allSettled([persistAudioTask, persistImageTask]);
 };
 
+export const persistCurrentProjectSnapshot = async (): Promise<boolean> => {
+  const snapshot = buildProjectSnapshot();
+  if (!snapshot) return false;
+
+  const { project } = snapshot;
+  const imageBlobRetryCounts = new Map<string, number>();
+  const notifiedAbandonedImageBlobUrls = new Set<string>();
+
+  try {
+    await saveProject(project);
+    useUIStore.getState().setLastAutoSavedAt(Date.now());
+    try {
+      scheduleSyncToCloud(project.id);
+    } catch (e) { logger.trackSwallowedError('useAutoSave:persistCurrentProjectSnapshot/scheduleSyncToCloud', e); }
+  } catch (e) {
+    logger.trackSwallowedError('useAutoSave:persistCurrentProjectSnapshot/saveProject', e);
+    return false;
+  }
+
+  try {
+    await persistProjectMedia(project, imageBlobRetryCounts, notifiedAbandonedImageBlobUrls);
+  } catch (e) {
+    logger.trackSwallowedError('useAutoSave:persistCurrentProjectSnapshot/persistProjectMedia', e);
+  }
+
+  return true;
+};
+
 export const useAutoSave = () => {
   const lastFingerprintRef = useRef<string>('');
   const imageBlobRetryCountsRef = useRef<Map<string, number>>(new Map());
