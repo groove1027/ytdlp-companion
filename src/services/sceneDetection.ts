@@ -323,14 +323,16 @@ export function mergeWithAiTimecodes(
   aiTimecodes: number[],
   sceneCuts: SceneCut[],
   tolerance: number = 1.5,
+  maxSnapDistance: number = 3.0,
 ): number[] {
   if (sceneCuts.length === 0) return aiTimecodes;
 
-  // score 기준 상위 percentile 계산 (강한 컷 판별용)
+  // [FIX] 절대 점수 + 백분위수 혼합 — 약한 컷으로 잘못 스냅 방지
   const sortedScores = sceneCuts.map(c => c.score).sort((a, b) => a - b);
-  const strongCutThreshold = sortedScores[Math.floor(sortedScores.length * 0.5)] || 0;
+  const percentileThreshold = sortedScores[Math.floor(sortedScores.length * 0.5)] || 0;
+  const absoluteMinScore = 30; // 절대 최소 점수 (0-255 스케일)
+  const strongCutThreshold = Math.max(percentileThreshold, absoluteMinScore);
 
-  // [FIX] 스냅 후 중복 타임코드 방지 — 이미 사용된 스냅 대상 추적
   const usedSnapTargets = new Set<number>();
 
   return aiTimecodes.map(aiT => {
@@ -345,18 +347,19 @@ export function mergeWithAiTimecodes(
       }
     }
 
+    // [FIX] 최대 스냅 거리 제한 — 너무 먼 컷은 다른 장면이므로 스냅 금지
+    if (nearestDist > maxSnapDistance) return aiT;
+
     let snapped = aiT;
-    // 단계적 스냅:
-    // 1) ±500ms 이내 → 무조건 스냅 (가장 가까운 실제 컷으로)
+    // 1) ±500ms 이내 → 무조건 스냅
     if (nearestDist <= 0.5) {
       snapped = nearestCut.timeSec;
     }
-    // 2) ±1.5초 이내 + 강한 컷 → 스냅
+    // 2) ±tolerance 이내 + 강한 컷 (절대 점수 + 백분위수 모두 충족) → 스냅
     else if (nearestDist <= tolerance && nearestCut.score >= strongCutThreshold) {
       snapped = nearestCut.timeSec;
     }
 
-    // [FIX] 동일 컷에 두 번 스냅하면 원래 AI 타임코드 유지 (중복 방지)
     if (snapped !== aiT && usedSnapTargets.has(snapped)) {
       return aiT;
     }

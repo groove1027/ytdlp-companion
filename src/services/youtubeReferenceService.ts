@@ -572,8 +572,12 @@ function sanitizeReferenceClipStem(raw: string): string {
   return sanitized || 'reference_clip';
 }
 
+// [FIX] 프레임 번호 기반 키 — Math.round(ms) 반올림 충돌 방지
+// 1.4999s와 1.5001s가 같은 키로 충돌하는 문제 해결
 function buildReferenceClipKey(videoId: string, startSec: number, endSec: number): string {
-  return `${videoId}:${Math.round(startSec * 1000)}-${Math.round(endSec * 1000)}`;
+  const startFrame = Math.floor(startSec * 30000); // 30000 = 충분한 정밀도 (29.97fps 호환)
+  const endFrame = Math.floor(endSec * 30000);
+  return `${videoId}:${startFrame}-${endFrame}`;
 }
 
 function buildReferenceClipFileName(
@@ -866,14 +870,49 @@ async function downloadVideoForAnalysis(videoId: string, signal?: AbortSignal): 
   });
 }
 
-// ─── Phase 3: Scene Detection (클라이언트 사이드) ───
-async function runSceneDetection(blob: Blob, signal?: AbortSignal): Promise<SceneCut[]> {
+// ─── Phase 3: Scene Detection (컴패니언 FFmpeg 우선, 브라우저 폴백) ───
+// [FIX] 컴패니언 FFmpeg scene filter가 브라우저 Canvas보다 30배 빠르고 프레임 정밀
+async function runSceneDetection(blob: Blob, signal?: AbortSignal, videoId?: string): Promise<SceneCut[]> {
+  // 1순위: 컴패니언 /api/scene-detect (FFmpeg 네이티브)
+  if (videoId) {
+    try {
+      logger.info('[VideoRef] Scene Detection 시작 (컴패니언 FFmpeg)', videoId);
+      const res = await monitoredFetch(`${COMPANION_URL}/api/scene-detect`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: `https://www.youtube.com/watch?v=${videoId}`,
+          threshold: 0.2,
+          quality: '480p',
+        }),
+        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(120000)]) : AbortSignal.timeout(120000),
+      }, 120000);
+
+      if (res.ok) {
+        const data = await res.json() as {
+          sceneCuts?: Array<{ timeSec: number; score: number }>;
+          duration?: number;
+          processingSec?: number;
+        };
+        const cuts: SceneCut[] = (data.sceneCuts || []).map(c => ({
+          timeSec: c.timeSec,
+          score: Math.round((c.score || 0) * 255), // 0-1 → 0-255 스케일로 정규화
+        }));
+        logger.info('[VideoRef] Scene Detection 완료 (컴패니언)', `${cuts.length}개 컷, ${data.processingSec?.toFixed(1)}s`);
+        return cuts;
+      }
+      logger.warn('[VideoRef] 컴패니언 Scene Detection 실패', `status=${res.status}`);
+    } catch (e) {
+      if (signal?.aborted || isAbortError(e)) throw createAbortError();
+      logger.warn('[VideoRef] 컴패니언 Scene Detection 연결 실패 → 브라우저 폴백', e instanceof Error ? e.message : '');
+    }
+  }
+
+  // 2순위: 브라우저 WebCodecs (컴패니언 없을 때)
   try {
-    logger.info('[VideoRef] Scene Detection 시작', `${(blob.size / 1024 / 1024).toFixed(1)}MB`);
-    const cuts = await detectSceneCuts(blob, {
-      maxFrames: 10000, // 20분 영상 커버 (200ms 간격 기준)
-    });
-    logger.info('[VideoRef] Scene Detection 완료', `${cuts.length}개 컷 감지`);
+    logger.info('[VideoRef] Scene Detection 시작 (브라우저 폴백)', `${(blob.size / 1024 / 1024).toFixed(1)}MB`);
+    const cuts = await detectSceneCuts(blob, { maxFrames: 10000 });
+    logger.info('[VideoRef] Scene Detection 완료 (브라우저)', `${cuts.length}개 컷 감지`);
     return cuts;
   } catch (e) {
     logger.warn('[VideoRef] Scene Detection 실패', e instanceof Error ? e.message : '');
@@ -884,6 +923,8 @@ async function runSceneDetection(blob: Blob, signal?: AbortSignal): Promise<Scen
 // ─── Phase 4: 자막 추출 (보조 시그널) ───
 interface TimedCue { start: number; dur: number; text: string; }
 
+// [FIX] 자막 추출 — 컴패니언 프록시 전용 (CORS 직접 호출 제거)
+// YouTube CORS 차단 → 브라우저 직접 호출 불안정 → 컴패니언 경유만 사용
 async function fetchTimedCaptions(videoId: string, signal?: AbortSignal): Promise<TimedCue[]> {
   const attempts = [
     { lang: 'ko', kind: '' }, { lang: 'ko', kind: 'asr' },
@@ -896,38 +937,22 @@ async function fetchTimedCaptions(videoId: string, signal?: AbortSignal): Promis
       const kindParam = kind ? `&kind=${kind}` : '';
       const targetUrl = `https://www.youtube.com/api/timedtext?v=${videoId}&lang=${lang}${kindParam}&fmt=srv3`;
 
-      let xml = '';
-      try {
-        const timeoutSignal = AbortSignal.timeout(10000);
-        const combined = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
-        const proxyRes = await monitoredFetch(`${COMPANION_URL}/api/google-proxy`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ targetUrl, method: 'GET', headers: {} }),
-          signal: combined,
-        }, 10000);
-        if (proxyRes.ok) xml = await proxyRes.text();
-      } catch (error) {
-        if (signal?.aborted || isAbortError(error)) throw createAbortError();
-      }
+      const timeoutSignal = AbortSignal.timeout(8000);
+      const combined = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+      const proxyRes = await monitoredFetch(`${COMPANION_URL}/api/google-proxy`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetUrl, method: 'GET', headers: {} }),
+        signal: combined,
+      }, 8000);
 
-      if (!xml || xml.length < 50) {
-        try {
-          const timeoutSignal = AbortSignal.timeout(10000);
-          const combined = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
-          const directRes = await monitoredFetch(targetUrl, { signal: combined }, 10000);
-          if (directRes.ok) xml = await directRes.text();
-        } catch (error) {
-          if (signal?.aborted || isAbortError(error)) throw createAbortError();
-        }
-      }
-
+      if (!proxyRes.ok) continue;
+      const xml = await proxyRes.text();
       if (!xml || xml.length < 50) continue;
 
       const cues: TimedCue[] = [];
       const cleanHtml = (s: string) => s.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/\n/g, ' ').trim();
 
-      // srv1
       let m: RegExpExecArray | null;
       const srv1 = /<text\s+start="([\d.]+)"\s+dur="([\d.]+)"[^>]*>([\s\S]*?)<\/text>/gi;
       while ((m = srv1.exec(xml)) !== null) {
@@ -966,23 +991,34 @@ async function matchVideoToScene(
   cues: TimedCue[],
   videoDurationSec: number,
   signal?: AbortSignal,
+  shortsMode?: boolean,
 ): Promise<{ startSec: number; endSec: number; matchScore: number; segmentText: string }> {
   if (!getEvolinkKey()) {
     return { startSec: 0, endSec: 30, matchScore: 0.3, segmentText: '(Evolink 키 없음)' };
   }
 
   const limitedCuts = cutPoints.slice(0, 50);
-  const hasCuts = limitedCuts.length > 0;
 
   // ─── 전략 분기 ───
+  let result: { startSec: number; endSec: number; matchScore: number; segmentText: string };
+
   if (videoDurationSec <= GEMINI_VIDEO_MAX_DURATION_SEC) {
-    // 짧은 영상: Gemini 영상 직접 분석
-    return matchWithGeminiVideo(videoId, sceneText, limitedCuts, cues, signal);
+    result = await matchWithGeminiVideo(videoId, sceneText, limitedCuts, cues, signal);
   } else {
-    // 롱폼 영상: 컷 + 자막 텍스트 매칭 (Flash Lite)
     logger.info('[VideoRef] 롱폼 → 컷+자막 하이브리드 매칭', `${Math.round(videoDurationSec)}초, ${limitedCuts.length}컷`);
-    return matchWithCutsAndCaptions(sceneText, limitedCuts, cues, videoDurationSec, signal);
+    result = await matchWithCutsAndCaptions(sceneText, limitedCuts, cues, videoDurationSec, signal);
   }
+
+  // [FIX] 쇼츠 모드: 클립 길이 1.5~3.5초로 강제 제한
+  if (shortsMode && result.endSec - result.startSec > SHORTS_CUT_RULES.maxClipSec) {
+    const maxDur = SHORTS_CUT_RULES.maxClipSec;
+    result.endSec = result.startSec + maxDur;
+  }
+  if (shortsMode && result.endSec - result.startSec < SHORTS_CUT_RULES.minClipSec) {
+    result.endSec = result.startSec + SHORTS_CUT_RULES.defaultClipSec;
+  }
+
+  return result;
 }
 
 // ─── 짧은 영상: Gemini 영상 직접 분석 ───
@@ -2039,13 +2075,13 @@ export async function searchSceneReferenceVideos(
       }
 
       // Phase 3: Scene Detection
-      const cutPoints = await runSceneDetection(blob, options?.signal);
+      const cutPoints = await runSceneDetection(blob, options?.signal, candidate.videoId);
       if (options?.signal?.aborted) return [];
 
       // Phase 5: 하이브리드 매칭 (짧은 영상=Gemini 직접, 롱폼=컷+자막)
       const videoDur = durations.get(candidate.videoId) || 0;
       const match = await matchVideoToScene(
-        candidate.videoId, sceneText, cutPoints, cues, videoDur, options?.signal,
+        candidate.videoId, sceneText, cutPoints, cues, videoDur, options?.signal, options?.shortsMode,
       );
 
       // v2 매칭 성공 (score > 0.3)이면 채택
