@@ -8,6 +8,18 @@
 
 ## 🟢 완료된 작업
 
+- [x] **2026-04-12 — #951 롱폼 프레임 추출 90초 타임아웃 완화**
+  - `rg -n "extractVideoFrames|extractFrames|프레임 추출|frame.*extract|타임아웃|timeout.*frame" src/services/sceneDetection.ts src/components/tabs/channel/VideoAnalysisRoom.tsx`, `rg -n "90.*000|90s|90초|2분|120.*000" src/services/sceneDetection.ts`, `sed -n '1,340p' src/services/sceneDetection.ts`, `sed -n '1680,1885p' src/components/tabs/channel/VideoAnalysisRoom.tsx`, `sed -n '5670,5875p' src/components/tabs/channel/VideoAnalysisRoom.tsx`로 씬 감지, 업로드 초기 프레임 추출, 백그라운드 정밀 프레임 보정의 고정 타임아웃 경로를 전수 조사
+  - 원인 확인: `src/services/sceneDetection.ts`는 30분 영상에도 `90_000ms` 하드 타임아웃과 최대 3000프레임 샘플링을 유지하고 있었고, `src/components/tabs/channel/VideoAnalysisRoom.tsx`의 업로드 초기 프레임 추출은 WebCodecs 60초 / canvas 90초, 후속 정밀 프레임 보정은 전체 2분 고정으로 묶여 있어 롱폼에서 일부 프레임만 수집된 상태로 중단될 수 있었음
+  - `src/services/videoSamplingPlan.ts` 신규 — 영상 길이 기반 동적 타임아웃, 소스 준비용 프레임 샘플링 계획, 씬 감지 샘플링 계획, 타임코드 기반 정밀 프레임 추출 타임아웃 helper를 추가
+  - `src/services/sceneDetection.ts` — `getSceneDetectionSamplingPlan()`을 사용해 20분 초과 영상은 1초 간격으로 완화하고, 전체 타임아웃을 길이 비례 최대 300초까지 늘리도록 수정. 시작 로그에도 실제 간격/타임아웃을 함께 남기도록 보강
+  - `src/components/tabs/channel/VideoAnalysisRoom.tsx` — 업로드 초기 프레임 추출이 숏폼은 기존 0.5초 간격을 유지하고, 롱폼은 30초 간격 균등 샘플링과 동적 타임아웃을 사용하도록 수정. WebCodecs/레거시 canvas/백그라운드 정밀 프레임 보정 모두 공용 helper 기반 timeout으로 통일
+  - `src/test/videoSamplingPlan.test.ts` 신규 — 45초 숏폼은 0.5초 간격과 90초 timeout 유지, 30분 롱폼은 30초 간격/60프레임/300초 timeout, 30분 씬 감지는 1초 간격/1800프레임/300초 timeout을 사용하는지 회귀 테스트 추가
+  - `cd src && node_modules/typescript/bin/tsc --noEmit`: 통과
+  - `cd src && node_modules/.bin/vitest run`: 통과 (`16 passed`, `152 passed`)
+  - `cd src && node_modules/.bin/vite build`: 성공 (기존 dynamic import / chunk-size warning만 출력)
+  - `rg -n "getSourcePrepFrameExtractionPlan|getSceneDetectionSamplingPlan|getPreciseFrameExtractionTimeoutMs|extractVideoFramesLegacy|detectSceneCuts" src`: helper 연결, sceneDetection 반영, VideoAnalysisRoom 적용, 회귀 테스트 추가 위치 재검증
+
 - [x] **2026-04-12 — B-5 NLE 잔여 이슈 3건 점검 및 2건 웹 수정 (#1125 #1123 #962)**
   - `rg -n "generateNleSrt|narration.*srt|_자막.*srt|_나레이션.*srt" src/services/nleExportService.ts`, `rg -n "buildNlePackageZip|installNleViaCompanion|install_capcut|bat|CapCut.*project|draft_info" src`, `sed -n '5144,5615p' src/services/nleExportService.ts`, `sed -n '6777,7515p' src/services/nleExportService.ts`, `sed -n '1924,2165p' companion/src-tauri/src/server.rs`로 일반 NLE ZIP, 편집실 ZIP, Premiere 자동 설치, CapCut 배치 스크립트/native 경계를 전수 조사
   - 원인 확인: `src/services/nleExportService.ts`의 `generateNleSrt(..., 'narration', ...)`는 narration audio line 자체가 아니라 `subtitleSegments`/`line.text` 의존이 강해, narration 오디오가 있어도 text가 비거나 scene subtitle이 비어 있으면 `_나레이션.srt`가 비어 ZIP에서 빠질 수 있었음. 또한 `buildEditRoomNleZip()`은 `_나레이션.srt` 생성 코드 자체가 없어 편집실/스토리보드 export에서는 narration SRT가 구조적으로 누락되고 있었음

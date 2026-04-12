@@ -26,6 +26,10 @@ import { smartUpload } from '../../../services/companion/smartUpload';
 import { fetchYouTubeVideoMeta } from '../../../services/youtubeVideoMetaService';
 import { detectSceneCuts, mergeWithAiTimecodes } from '../../../services/sceneDetection';
 import {
+  getPreciseFrameExtractionTimeoutMs,
+  getSourcePrepFrameExtractionPlan,
+} from '../../../services/videoSamplingPlan';
+import {
   buildVideoAnalysisSceneLineId,
   downloadNlePackageZip,
   getCapCutInstallCompletionHint,
@@ -1273,6 +1277,9 @@ async function canvasExtractFrames(
   timecodes: number[],
   isBlob: boolean,
 ): Promise<TimedFrame[]> {
+  const maxTimecodeSec = timecodes.reduce((maxSec, timeSec) => Math.max(maxSec, timeSec), 0);
+  const preciseTimeoutMs = getPreciseFrameExtractionTimeoutMs(maxTimecodeSec, timecodes.length);
+
   // ── WebCodecs 정밀 추출 (Blob URL일 때만) ──
   if (isBlob) {
     try {
@@ -1282,11 +1289,12 @@ async function canvasExtractFrames(
       if (isVideoDecoderSupported()) {
         const resp = await fetch(videoUrl);
         const blob = await resp.blob();
-        // [FIX #378] WebCodecs 60초 타임아웃
-        const WEBCODEC_TIMEOUT_MS = 60_000;
         const frames = await Promise.race([
           webcodecExtractFrames(blob, timecodes),
-          new Promise<never>((_, reject) => setTimeout(() => reject(new Error('WebCodecs 60s timeout')), WEBCODEC_TIMEOUT_MS)),
+          new Promise<never>((_, reject) => setTimeout(
+            () => reject(new Error(`WebCodecs ${Math.round(preciseTimeoutMs / 1000)}s timeout`)),
+            preciseTimeoutMs,
+          )),
         ]);
         if (frames.length > 0) {
           console.log(`[Frame] ✅ WebCodecs 정밀 추출 성공: ${frames.length}개 (키프레임 스냅 없음)`);
@@ -1731,6 +1739,7 @@ async function extractVideoFrames(file: File, sourceIndex?: number): Promise<Tim
   }
 
   // ── WebCodecs 정밀 추출 우선 시도 ──
+  let legacyTimeoutMs: number | undefined;
   try {
     const { webcodecExtractFrames, isVideoDecoderSupported } =
       await import('../../../services/webcodecs/videoDecoder');
@@ -1739,17 +1748,26 @@ async function extractVideoFrames(file: File, sourceIndex?: number): Promise<Tim
       // duration 계산 (WebCodecs에 타임코드 배열 전달용)
       const dur = await getFileDuration(file);
       if (dur && dur > 1) {
-        const maxFrameCount = 120;
-        const interval = Math.max(0.5, dur / maxFrameCount);
-        const count = Math.min(Math.ceil(dur / interval), maxFrameCount);
-        const sampleTimecodes = Array.from({ length: count }, (_, i) =>
-          Math.min((i + 0.25) * interval, dur - 0.1));
+        const samplingPlan = getSourcePrepFrameExtractionPlan(dur);
+        legacyTimeoutMs = samplingPlan.timeoutMs;
+        const sampleTimecodes = Array.from({ length: samplingPlan.targetFrameCount }, (_, i) =>
+          Math.min((i + 0.25) * samplingPlan.intervalSec, dur - 0.1));
+        const webcodecTimeoutMs = Math.min(
+          legacyTimeoutMs,
+          getPreciseFrameExtractionTimeoutMs(dur, sampleTimecodes.length),
+        );
 
-        // [FIX #378] WebCodecs 60초 타임아웃 — 특정 코덱/저사양 GPU에서 영구 대기 방지
-        const WEBCODEC_TIMEOUT_MS = 60_000;
+        console.log(
+          `[extractVideoFrames] 샘플링 계획: ${sampleTimecodes.length}개, ` +
+          `간격 ${samplingPlan.intervalSec.toFixed(2)}s, 타임아웃 ${Math.round(legacyTimeoutMs / 1000)}s`,
+        );
+
         const frames = await Promise.race([
           webcodecExtractFrames(file, sampleTimecodes),
-          new Promise<never>((_, reject) => setTimeout(() => reject(new Error('WebCodecs 60s timeout')), WEBCODEC_TIMEOUT_MS)),
+          new Promise<never>((_, reject) => setTimeout(
+            () => reject(new Error(`WebCodecs ${Math.round(webcodecTimeoutMs / 1000)}s timeout`)),
+            webcodecTimeoutMs,
+          )),
         ]);
         if (frames.length > 0) {
           console.log(`[extractVideoFrames] ✅ WebCodecs 정밀 추출: ${frames.length}개`);
@@ -1766,7 +1784,7 @@ async function extractVideoFrames(file: File, sourceIndex?: number): Promise<Tim
   }
 
   // ── Canvas 폴백 (기존 방식) ──
-  return extractVideoFramesLegacy(file, sourceIndex);
+  return extractVideoFramesLegacy(file, sourceIndex, legacyTimeoutMs);
 }
 
 /** 파일 duration 조회 (WebCodecs 타임코드 계산용) */
@@ -1788,9 +1806,11 @@ function getFileDuration(file: File): Promise<number | null> {
 }
 
 /** [레거시] Canvas 기반 프레임 추출 — WebCodecs 폴백용 */
-async function extractVideoFramesLegacy(file: File, sourceIndex?: number): Promise<TimedFrame[]> {
-  // [FIX #155] 타임아웃 30→90초로 확대 + 동적 간격으로 영상 전체 커버
-  const OVERALL_TIMEOUT_MS = 90_000; // 파일 1개당 최대 90초
+async function extractVideoFramesLegacy(
+  file: File,
+  sourceIndex?: number,
+  overallTimeoutMs: number = 90_000,
+): Promise<TimedFrame[]> {
   // [FIX #189] 부분 추출 결과를 외부 스코프에 유지 — 타임아웃 시 수집된 프레임 반환
   const partialFrames: TimedFrame[] = [];
   let timedOut = false;
@@ -1814,10 +1834,13 @@ async function extractVideoFramesLegacy(file: File, sourceIndex?: number): Promi
         canvas.height = Math.round(vh * scale);
         const ctx = canvas.getContext('2d');
         if (!ctx) { logger.unregisterBlobUrl(url); URL.revokeObjectURL(url); resolve([]); return; }
-        // [FIX #334] 0.5초 간격 추출 — 2초 간격은 비주얼 누락 + NLE trim 부정확 유발
-        const maxFrameCount = 120;
-        const interval = Math.max(0.5, dur / maxFrameCount);
-        const count = Math.min(Math.ceil(dur / interval), maxFrameCount);
+        const samplingPlan = getSourcePrepFrameExtractionPlan(dur);
+        const interval = samplingPlan.intervalSec;
+        const count = samplingPlan.targetFrameCount;
+        console.log(
+          `[extractVideoFrames] 레거시 샘플링 계획: ${count}개, ` +
+          `간격 ${interval.toFixed(2)}s, 타임아웃 ${Math.round(overallTimeoutMs / 1000)}s`,
+        );
         // [FIX #394] 연속 시크 실패 감지 — 디코딩 불가 영상에서 90초 대기 방지
         let consecutiveSeekFails = 0;
         const MAX_CONSECUTIVE_SEEK_FAILS = 3;
@@ -1852,9 +1875,9 @@ async function extractVideoFramesLegacy(file: File, sourceIndex?: number): Promi
     new Promise<TimedFrame[]>((resolve) => {
       setTimeout(() => {
         timedOut = true; // [FIX #189] 추출 루프 중단 신호
-        console.warn(`[extractVideoFrames] ${file.name}: ${OVERALL_TIMEOUT_MS / 1000}s 타임아웃 — ${partialFrames.length}개 부분 추출`);
+        console.warn(`[extractVideoFrames] ${file.name}: ${Math.round(overallTimeoutMs / 1000)}s 타임아웃 — ${partialFrames.length}개 부분 추출`);
         resolve([...partialFrames]); // [FIX #189] 수집된 프레임 반환 (빈 배열 대신)
-      }, OVERALL_TIMEOUT_MS);
+      }, overallTimeoutMs);
     }),
   ]);
 }
@@ -5699,9 +5722,14 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       // [FIX #156] 다중 업로드 영상: 모든 파일에서 프레임 추출
       // [FIX #241] 타임코드 수집에 parsed 대신 스토어의 최종 versions 사용
       //   — 배치 병합 텍스트 parseVersions 실패 시 parsed=[] → 타임코드 0개 → 비주얼 미표시 버그
-      // [FIX #340] 프레임 추출 전체를 2분 타임아웃으로 보호 — 무한 대기 방지
+      // [FIX #340] 프레임 추출 전체를 영상 길이/타임코드 수 기준 동적 타임아웃으로 보호
       // [FIX #519] 타임아웃 시 내부 IIFE의 고아 rejection이 unhandled rejection으로 표면화 방지
-      const FRAME_EXTRACTION_TIMEOUT = 2 * 60 * 1000;
+      const backgroundFrameCountHint = collectTimecodesFromVersions(cachedVersionsSnapshot, maxTimeSec).length;
+      const FRAME_EXTRACTION_TIMEOUT = getPreciseFrameExtractionTimeoutMs(
+        maxTimeSec,
+        backgroundFrameCountHint,
+        120_000,
+      );
       const backgroundFramePerfStartedAt = performance.now();
       let backgroundFramePerfState: 'done' | 'timeout' | 'failed' = 'done';
       const innerFrameWork = (async () => {
@@ -5853,7 +5881,10 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       ]).catch((frameErr) => {
         if (frameErr instanceof Error && frameErr.message === 'FRAME_TIMEOUT') {
           backgroundFramePerfState = 'timeout';
-          console.warn('[Frame] ⚠️ 프레임 추출 2분 타임아웃 — 기존 썸네일 유지');
+          console.warn(
+            `[Frame] ⚠️ 프레임 추출 ${Math.round(FRAME_EXTRACTION_TIMEOUT / 1000)}초 타임아웃 ` +
+            '— 기존 썸네일 유지',
+          );
         } else {
           backgroundFramePerfState = 'failed';
           console.warn('[Frame] 프레임 추출 실패 (결과는 정상 표시):', frameErr);

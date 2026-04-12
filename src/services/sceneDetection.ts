@@ -11,6 +11,7 @@
 
 import type { RationalFps } from '../types';
 import { logger } from './LoggerService';
+import { getSceneDetectionSamplingPlan } from './videoSamplingPlan';
 
 // ──────────────────────────────────────────────
 // 타입
@@ -197,12 +198,6 @@ export async function detectSceneCuts(
   blob: Blob,
   options?: SceneDetectionOptions,
 ): Promise<SceneCut[]> {
-  // v2.0: maxFrames를 3000으로 증가 — 10분 영상을 100ms 간격으로 전구간 커버
-  const maxFrames = options?.maxFrames ?? 3000;
-  // [FIX #354/#367] 전체 타임아웃 90초 — 무한 행 방지
-  const OVERALL_TIMEOUT_MS = 90_000;
-  const startTime = Date.now();
-
   // 1. video 엘리먼트로 영상 로드
   const url = URL.createObjectURL(blob);
   const video = document.createElement('video');
@@ -221,20 +216,24 @@ export async function detectSceneCuts(
     // [FIX #394] Infinity/NaN duration 방어
     if (!dur || !isFinite(dur) || dur < 2) return [];
 
-    // v2.0: 100ms~200ms 간격 (기존 0.5~2초)
-    const intervalSec = options?.intervalSec ?? (
-      dur <= 120 ? 0.1 :    // 2분 이하: 100ms 간격 (≈3프레임@30fps)
-      dur <= 600 ? 0.2 :    // 10분 이하: 200ms 간격
-      0.5                   // 10분 초과: 500ms 간격 (성능 보호)
+    const samplingPlan = getSceneDetectionSamplingPlan(
+      dur,
+      options?.intervalSec,
+      options?.maxFrames,
     );
+    const startTime = Date.now();
 
     // 2. 분석할 시간 포인트 생성
     const timePoints: number[] = [];
-    for (let t = 0; t < dur && timePoints.length < maxFrames; t += intervalSec) {
+    for (let t = 0; t < dur && timePoints.length < samplingPlan.targetFrameCount; t += samplingPlan.intervalSec) {
       timePoints.push(t);
     }
 
-    console.log(`[Scene] 씬 감지 시작: ${timePoints.length}개 프레임, 간격 ${intervalSec}s, 영상 ${dur.toFixed(1)}s`);
+    console.log(
+      `[Scene] 씬 감지 시작: ${timePoints.length}개 프레임, ` +
+      `간격 ${samplingPlan.intervalSec}s, 영상 ${dur.toFixed(1)}s, ` +
+      `타임아웃 ${Math.round(samplingPlan.timeoutMs / 1000)}s`,
+    );
 
     // 3. v2.0: 비교용 canvas 160×90 (기존 64×36 → 약 7배 해상도)
     const w = 160, h = 90;
@@ -251,8 +250,11 @@ export async function detectSceneCuts(
     // 4. 프레임별 시크 → 비교
     for (let i = 0; i < timePoints.length; i++) {
       // [FIX #354/#367] 전체 타임아웃 체크
-      if (Date.now() - startTime > OVERALL_TIMEOUT_MS) {
-        console.warn(`[Scene] ⚠️ 씬 감지 ${OVERALL_TIMEOUT_MS / 1000}초 타임아웃 — ${i}/${timePoints.length} 프레임까지 분석 후 중단`);
+      if (Date.now() - startTime > samplingPlan.timeoutMs) {
+        console.warn(
+          `[Scene] ⚠️ 씬 감지 ${Math.round(samplingPlan.timeoutMs / 1000)}초 타임아웃 ` +
+          `— ${i}/${timePoints.length} 프레임까지 분석 후 중단`,
+        );
         break;
       }
 
