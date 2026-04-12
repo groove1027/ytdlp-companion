@@ -129,7 +129,9 @@ export interface GoogleReferenceApplySummary {
   skippedCount: number;
 }
 
-export const SCENE_REFERENCE_BATCH_CONCURRENCY = 6;
+// [FIX] 배치 동시성 축소 — 구글 async JSON API는 병렬 요청에 민감
+// 6개 병렬 → 2개 순차적 → 구글 rate limit 회피
+export const SCENE_REFERENCE_BATCH_CONCURRENCY = 2;
 
 const GOOGLE_IMGRES_REGEX = /\/imgres\?imgurl=[^"'<>\\\s]+/g;
 const GOOGLE_THUMBNAIL_REGEX = /https?:\/\/encrypted-tbn0\.gstatic\.com\/images\?q=tbn:[^"'<>\\\s]+/g;
@@ -1638,22 +1640,16 @@ async function proxyFetchReferenceSearch(targetUrl: string, cookie?: string, hl?
       return res;
     }
 
-    if (res.status === 429 || (res.status >= 300 && res.status < 400)) {
-      const retryAfterMs = parseRetryAfterHeaderMs(res.headers.get('Retry-After'));
-      markGoogleSearchRateLimited(
-        res.status === 429 ? '컴패니언 경유 구글 429' : `컴패니언 경유 구글 차단 리다이렉트 (${res.status})`,
-        retryAfterMs ?? GOOGLE_SEARCH_COOLDOWN_MS,
-      );
-    }
-
-    return res;
+    // [FIX] 쿨다운 마킹을 여기서 하지 않음 — 상위 재시도 로직이 최종 판단
+    // 429/403은 상위에서 재시도 후 최종 실패 시에만 쿨다운 마킹
+    logger.warn(`[GoogleRef] 컴패니언 프록시 ${res.status} — CF 프록시로 폴백 시도`);
   } catch {
     // 컴패니언 미연결 — CF 프록시로 폴백
+    logger.info('[GoogleRef] 컴패니언 미연결 → CF 프록시 폴백');
   }
 
   // 2차: Cloudflare Pages Function 프록시
   try {
-    logger.info('[GoogleRef] 컴패니언 미연결 → CF 프록시 폴백');
     const res = await monitoredFetch('/api/google-proxy', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1668,15 +1664,6 @@ async function proxyFetchReferenceSearch(targetUrl: string, cookie?: string, hl?
 
     if (res.ok) {
       logger.info('[GoogleRef] CF 프록시 사용');
-      return res;
-    }
-
-    if (res.status === 429 || (res.status >= 300 && res.status < 400)) {
-      const retryAfterMs = parseRetryAfterHeaderMs(res.headers.get('Retry-After'));
-      markGoogleSearchRateLimited(
-        res.status === 429 ? 'CF 프록시 경유 구글 429' : `CF 프록시 경유 구글 차단 (${res.status})`,
-        retryAfterMs ?? GOOGLE_SEARCH_COOLDOWN_MS,
-      );
     }
 
     return res;
@@ -2467,21 +2454,50 @@ export async function searchGoogleImages(
       logger.info('[GoogleRef] 구글 직접 검색 요청', `query="${normalizedQuery}" start=${start} hl=${hl} gl=${gl}`);
 
       try {
-        const res = await proxyFetchReferenceSearch(url, googleCookie || undefined, hl);
+        // [FIX] 구글 절대 우선 — 실패 시 최대 2회 재시도 (5초 간격)
+        // 1차: 컴패니언+CF 프록시, 2차: 5초 대기 후 재시도
+        let res: Response | null = null;
+        let lastStatus = 0;
+        const GOOGLE_MAX_RETRIES = 2;
 
-        if (!res.ok) {
-          const errText = await res.text().catch(() => '');
-          logger.error('[GoogleRef] 검색 실패', `status=${res.status} ${errText}`);
-          if (res.status === 429) {
+        for (let attempt = 0; attempt <= GOOGLE_MAX_RETRIES; attempt++) {
+          if (attempt > 0) {
+            const waitMs = 3000 + Math.random() * 4000; // 3~7초 랜덤 대기
+            logger.info(`[GoogleRef] 구글 재시도 ${attempt}/${GOOGLE_MAX_RETRIES} (${Math.round(waitMs / 1000)}초 대기)`);
+            await new Promise(resolve => setTimeout(resolve, waitMs));
+          }
+
+          try {
+            res = await proxyFetchReferenceSearch(url, googleCookie || undefined, hl);
+            lastStatus = res.status;
+
+            if (res.ok) break; // 성공 → 루프 탈출
+
+            // 429/403은 재시도 가치 있음
+            if ((res.status === 429 || res.status === 403) && attempt < GOOGLE_MAX_RETRIES) {
+              logger.warn(`[GoogleRef] 구글 ${res.status} — 재시도 예정 (${attempt + 1}/${GOOGLE_MAX_RETRIES})`);
+              continue;
+            }
+          } catch (proxyError) {
+            // 프록시 자체 실패 (네트워크 에러 등)
+            if (attempt < GOOGLE_MAX_RETRIES) {
+              logger.warn(`[GoogleRef] 프록시 실패 — 재시도 예정`, proxyError instanceof Error ? proxyError.message : '');
+              continue;
+            }
+            throw proxyError;
+          }
+        }
+
+        if (!res || !res.ok) {
+          const errText = res ? await res.text().catch(() => '') : '';
+          logger.error('[GoogleRef] 구글 검색 최종 실패', `status=${lastStatus} ${errText}`);
+          if (lastStatus === 429) {
             throw new Error('구글 검색 요청이 너무 많아 잠시 차단되었습니다. 잠시 후 다시 시도해주세요.');
           }
-          if (res.status >= 300 && res.status < 400) {
+          if (lastStatus >= 300 && lastStatus < 400) {
             throw new Error('구글 동의 페이지 또는 보안 확인 리다이렉트가 반환되었습니다. 잠시 후 다시 시도해주세요.');
           }
-          if (res.status === 403) {
-            throw new Error('프록시에서 구글 이미지 검색을 차단했습니다. 프록시 허용 호스트를 확인해주세요.');
-          }
-          throw new Error(`구글 검색 실패 (${res.status})`);
+          throw new Error(`구글 검색 실패 (${lastStatus})`);
         }
 
         const rawText = await res.text();
