@@ -50,6 +50,11 @@ const DEFAULT_SUBTITLE_STYLE: SubtitleStyle = {
   },
 };
 
+type FontFaceSetWithEvents = FontFaceSet & {
+  addEventListener?: (type: 'loadingdone', listener: () => void) => void;
+  removeEventListener?: (type: 'loadingdone', listener: () => void) => void;
+};
+
 // ═══ 모션 효과 CSS 키프레임 ═══
 const PREVIEW_MOTION_KEYFRAMES = `
 @keyframes mp-zoom-in { 0%{transform:scale(1)} 100%{transform:scale(1.15)} }
@@ -1061,30 +1066,47 @@ const ScenePreviewPanel: React.FC<{
   React.useEffect(() => {
     const family = resolvedSubtitleTemplate?.fontFamily;
     if (!family) return;
+    const fontSet = document.fonts as FontFaceSetWithEvents | undefined;
+    if (!fontSet || typeof fontSet.check !== 'function') return;
+
     let cancelled = false;
     let listener: (() => void) | null = null;
+    const detachListener = () => {
+      if (listener && typeof fontSet.removeEventListener === 'function') {
+        fontSet.removeEventListener('loadingdone', listener);
+      }
+      listener = null;
+    };
 
     const checkAndRedraw = () => {
       if (cancelled) return;
-      if (document.fonts.check(`16px '${family}'`)) {
+      if (fontSet.check(`16px '${family}'`)) {
         setFontReady(v => v + 1);
       } else {
+        if (typeof fontSet.addEventListener !== 'function') {
+          setFontReady(v => v + 1);
+          return;
+        }
         listener = () => {
           if (cancelled) return;
-          if (document.fonts.check(`16px '${family}'`)) {
+          if (fontSet.check(`16px '${family}'`)) {
             setFontReady(v => v + 1);
-            if (listener) document.fonts.removeEventListener('loadingdone', listener);
-            listener = null;
+            detachListener();
           }
         };
-        document.fonts.addEventListener('loadingdone', listener);
+        fontSet.addEventListener('loadingdone', listener);
       }
     };
 
-    document.fonts.ready.then(checkAndRedraw);
+    fontSet.ready.then(checkAndRedraw).catch((error) => {
+      logger.trackSwallowedError('EditRoomTab:fontReady', error);
+      if (!cancelled) {
+        setFontReady(v => v + 1);
+      }
+    });
     return () => {
       cancelled = true;
-      if (listener) document.fonts.removeEventListener('loadingdone', listener);
+      detachListener();
     };
   }, [resolvedSubtitleTemplate?.fontFamily]);
 

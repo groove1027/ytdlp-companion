@@ -591,6 +591,7 @@ export async function composeMp4(options: ComposeMp4Options): Promise<Blob> {
       '-y', 'video_only.mp4',
     ]);
   }
+  emitProgress('composing', 100, PHASE_WEIGHTS.concat, '세그먼트 연결 완료');
 
   // ═══ Phase 2.5: 자막 번인 (10%) ═══
   checkAbort();
@@ -624,6 +625,10 @@ export async function composeMp4(options: ComposeMp4Options): Promise<Blob> {
 
     if (drawtextParts.length > 0) {
       const subtitleFilter = drawtextParts.join(',');
+      const subtitleTimeoutMs = Math.min(
+        600_000,
+        Math.max(180_000, drawtextParts.length * 2_500, Math.ceil(effectiveTotalDuration * 1_500)),
+      );
       await execWithTimeout([
         '-i', 'video_only.mp4',
         '-vf', subtitleFilter,
@@ -632,11 +637,12 @@ export async function composeMp4(options: ComposeMp4Options): Promise<Blob> {
         '-pix_fmt', 'yuv420p',
         '-preset', 'ultrafast',
         '-y', 'video_sub.mp4',
-      ], 180000);
+      ], subtitleTimeoutMs);
       try { await ffmpeg.deleteFile('video_only.mp4'); } catch (e) { logger.trackSwallowedError('FfmpegService:subtitle/cleanupVideoOnly', e); }
       await execWithTimeout(['-i', 'video_sub.mp4', '-c', 'copy', '-y', 'video_only.mp4']);
       try { await ffmpeg.deleteFile('video_sub.mp4'); } catch (e) { logger.trackSwallowedError('FfmpegService:subtitle/cleanupVideoSub', e); }
     }
+    emitProgress('composing', 100, PHASE_WEIGHTS.subtitle, '자막 합성 완료');
   }
 
   // ═══ Phase 3: 오디오 믹싱 (10%) ═══
@@ -835,6 +841,7 @@ export async function composeMp4(options: ComposeMp4Options): Promise<Blob> {
       '-y', 'output.mp4',
     ];
   }
+  emitProgress('composing', 100, PHASE_WEIGHTS.audio, hasNarration || hasBgm ? '오디오 믹싱 준비 완료' : '오디오 트랙 없음');
 
   // ═══ Phase 4: 최종 인코딩 (15%) ═══
   checkAbort();

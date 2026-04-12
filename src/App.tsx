@@ -115,6 +115,29 @@ const PIPELINE_STEPS: { id: AppTab; label: string; num: number }[] = [
 /** 도구모음 탭 ID 목록 — 파이프라인 표시기를 숨길 탭 */
 const TOOL_TABS = new Set<AppTab>(['thumbnail-studio', 'character-twist', 'image-script-upload', 'ppt-master', 'detail-page', 'subtitle-remover', 'ai-chat']);
 
+const EXTENSION_URL_PATTERN = /\b(?:chrome|moz|safari(?:-web)?)-extension:\/\//i;
+
+const isIgnoredForeignGlobalError = (error: unknown, filename?: string, stack?: string): boolean => {
+  if (filename && (EXTENSION_URL_PATTERN.test(filename) || /^blob:/i.test(filename))) {
+    return true;
+  }
+
+  if (!stack) return false;
+
+  const extensionUrls = stack.match(/(?:https?|chrome-extension|moz-extension|safari(?:-web)?-extension):\/\/[^\s)]+/gi);
+  if (extensionUrls && extensionUrls.length > 0 && extensionUrls.every((url) => EXTENSION_URL_PATTERN.test(url))) {
+    return true;
+  }
+
+  const foreignFrameUrls = stack.match(/(?:blob:|chrome-extension:|moz-extension:|safari(?:-web)?-extension:)[^\s)]+/gi);
+  if (foreignFrameUrls && foreignFrameUrls.length > 0 && foreignFrameUrls.every((url) => /^blob:/i.test(url) || EXTENSION_URL_PATTERN.test(url))) {
+    return true;
+  }
+
+  const message = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+  return /\baddListener is not a function\b/i.test(message) && foreignFrameUrls?.length > 0;
+};
+
 // 탭 로딩 fallback
 const TabFallback = () => (
   <div className="flex items-center justify-center py-20">
@@ -394,12 +417,22 @@ const App: React.FC = () => {
         return;
       }
 
+      const reasonStack = event.reason instanceof Error ? event.reason.stack : undefined;
+      if (isIgnoredForeignGlobalError(event.reason, undefined, reasonStack)) {
+        logger.trackSwallowedError('App:window/unhandledrejection/ignored', event.reason);
+        return;
+      }
+
       void attemptTransientStorageRecovery(event.reason, 'App:window/unhandledrejection');
     };
 
     const handleWindowError = (event: ErrorEvent) => {
       const target = event.target as EventTarget | null;
       if (target && target !== window) return;
+      if (isIgnoredForeignGlobalError(event.error || event.message, event.filename, event.error?.stack)) {
+        logger.trackSwallowedError('App:window/error/ignored', event.error || event.message);
+        return;
+      }
       void attemptTransientStorageRecovery(event.error || event.message, 'App:window/error');
     };
 

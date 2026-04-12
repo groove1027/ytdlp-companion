@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 
 interface AnalysisSlotBarProps {
   slots: { id: string; name: string; savedAt: number }[];
@@ -23,7 +23,6 @@ const fmt = (ts: number): string => {
 const AnalysisSlotBar: React.FC<AnalysisSlotBarProps> = ({
   slots, activeSlotId, onNewAnalysis, onLoadSlot, onDeleteSlot, hasCurrentResults, accentColor = 'blue',
 }) => {
-  const [hoveredId, setHoveredId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const activeClass = `bg-${accentColor}-600/20 text-${accentColor}-400 border border-${accentColor}-500/30`;
@@ -66,29 +65,33 @@ const AnalysisSlotBar: React.FC<AnalysisSlotBarProps> = ({
             style={{ overflowY: 'visible' }}
           >
             {slots.map((slot) => (
-              <button
-                key={slot.id}
-                data-slot-id={slot.id}
-                onClick={() => onLoadSlot(slot.id)}
-                onMouseEnter={() => setHoveredId(slot.id)}
-                onMouseLeave={() => setHoveredId(null)}
-                className={`relative flex-shrink-0 px-3 py-1.5 rounded-lg text-xs transition-all ${
-                  slot.id === activeSlotId ? activeClass : inactiveClass
-                }`}
-              >
-                <span className="max-w-[100px] truncate inline-block align-middle">{slot.name}</span>
-                <span className="ml-1.5 opacity-60">{fmt(slot.savedAt)}</span>
-                {hoveredId === slot.id && (
-                  <span
-                    onClick={(e) => { e.stopPropagation(); onDeleteSlot(slot.id); }}
-                    className="absolute -top-1.5 -right-1.5 w-4 h-4 flex items-center justify-center rounded-full bg-gray-800 border border-gray-600 text-gray-400 hover:text-red-400 hover:border-red-500/50 cursor-pointer"
-                  >
-                    <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </span>
-                )}
-              </button>
+              <div key={slot.id} className="relative flex-shrink-0 group">
+                <button
+                  type="button"
+                  data-slot-id={slot.id}
+                  onClick={() => onLoadSlot(slot.id)}
+                  className={`px-3 py-1.5 rounded-lg text-xs transition-all ${
+                    slot.id === activeSlotId ? activeClass : inactiveClass
+                  }`}
+                >
+                  <span className="max-w-[100px] truncate inline-block align-middle">{slot.name}</span>
+                  <span className="ml-1.5 opacity-60">{fmt(slot.savedAt)}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); onDeleteSlot(slot.id); }}
+                  aria-label={`${slot.name} 삭제`}
+                  className={`absolute -top-1.5 -right-1.5 w-4 h-4 flex items-center justify-center rounded-full bg-gray-800 border border-gray-600 text-gray-400 hover:text-red-400 hover:border-red-500/50 transition-opacity ${
+                    slot.id === activeSlotId
+                      ? 'opacity-100'
+                      : 'opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100'
+                  }`}
+                >
+                  <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
             ))}
           </div>
         </>

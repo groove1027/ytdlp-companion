@@ -8,6 +8,23 @@
 
 ## 🟢 완료된 작업
 
+- [x] **2026-04-12 — 크래시 TypeError 3건 + 빈번 버그 6건 수정 (#774 #737 #730 #1128 #1126 #1119 #1010 #987 #1029)**
+  - `rg -n "addListener|addEventListener" src/ -g '*.ts' -g '*.tsx'`, `rg -n "store\\.subscribe|\\.subscribe\\(|matchMedia\\(|addListener\\(|addEventListener\\(" src/ -g '*.ts' -g '*.tsx'`, `rg -n "use[A-Za-z]+Store\\.subscribe\\(|\\.subscribe\\(" src/ -g '*.ts' -g '*.tsx'`, `rg -n "youtube|youtu\\.be|subtitle|upload.*video|referenceSearchQuery|removeSlot|delete.*slot" src/ -g '*.ts' -g '*.tsx'`로 전역 에러 처리, 폰트 이벤트, Zustand 구독, 편집실/업로드/AI Chat/자막/영상분석 슬롯 영향 범위를 전수 조사
+  - 원인 확인: `App.tsx`가 확장 프로그램/`blob:` 스크립트 에러까지 transient storage 복구 루틴으로 넘기고 있었고, `EditRoomTab.tsx`는 `document.fonts.addEventListener` 지원 여부를 확인하지 않아 일부 브라우저에서 자막 미리보기 진입 시 크래시할 수 있었음. `useAutoSave.ts`, `audioAnalyserService.ts`, `scriptWriterStore.ts`는 `subscribe`가 함수라는 전제에 의존해 초기화 순서가 어긋날 때 동일한 TypeError 여지가 있었음
+  - `src/utils/safeStoreSubscribe.ts`, `src/hooks/useAutoSave.ts`, `src/services/audioAnalyserService.ts`, `src/stores/scriptWriterStore.ts` — Zustand 구독을 공통 안전 래퍼로 감싸 `subscribe`/`unsubscribe`가 없을 때 no-op으로 처리하고 경고만 남기도록 수정. #774 #737 #730 대응
+  - `src/App.tsx` — 전역 `error`/`unhandledrejection`에서 확장 프로그램·`blob:` 주입 스크립트 에러를 복구 루틴으로 보내지 않도록 필터 추가. 외부 `addListener is not a function` 계열로 앱이 연쇄 복구에 들어가던 문제 완화. #774 #737 #730 대응
+  - `src/components/tabs/EditRoomTab.tsx` — `document.fonts`/`loadingdone` 이벤트 지원 여부를 확인하고 폰트 이벤트 해제를 안전하게 처리하도록 수정. #774 #737 #730 대응
+  - `src/components/tabs/imagevideo/StoryboardPanel.tsx` — 영상 직접 업로드와 일괄 업로드 시 `imageUpdatedAfterVideo`를 `false`로 리셋해, 새 영상을 넣은 뒤 편집실에서 예전 이미지가 우선 표시되던 문제 수정. #1126 대응
+  - `src/services/ffmpegService.ts` — 세그먼트 연결/자막/오디오 단계 완료 시 명시 진행률을 추가하고, 자막 번인 timeout을 subtitle 수·총 길이 기준으로 확장해 70%대에서 멈춘 것처럼 보이던 내보내기 경로를 보강. #1128 대응
+  - `src/services/webcodecs/subtitleRenderer.ts`, `src/components/tabs/editor/SubtitleStyleEditor.tsx` — 실제 렌더와 프리뷰 자막 최대 폭을 90%→94%로 맞춰 자막 가로폭이 과하게 좁던 문제 수정. #1010 대응
+  - `src/components/tabs/ScriptWriterTab.tsx` — 롱폼 대본 생성/이어쓰기/스타일 적용 결과에 `[효과음: ...]`, `[화면: ...]` 같은 지시 태그를 후처리로 제거하도록 수정. #1119 대응
+  - `src/types.ts`, `src/stores/chatStore.ts` — AI Chat가 YouTube 링크를 감지하면 제목/채널/설명/태그를 모델용 보조 문맥으로 붙여 전송하도록 수정. pasted 링크를 그냥 일반 문자열로만 보내던 경로 보강. #1029 대응
+  - `src/components/tabs/channel/AnalysisSlotBar.tsx` — 영상분석 슬롯 삭제 버튼을 hover 전용에서 모바일 기본 노출 + 데스크톱 hover/focus 노출로 바꿔 터치 환경에서도 삭제 가능하게 수정. #987 대응
+  - `cd src && node_modules/typescript/bin/tsc --noEmit`: 통과
+  - `cd src && node_modules/.bin/vitest run`: 통과 (`18 passed`, `158 passed`)
+  - `cd src && node_modules/.bin/vite build`: 성공 (기존 dynamic import / chunk-size warning만 출력)
+  - `rg -n "safeStoreSubscribe|imageUpdatedAfterVideo: false|sanitizeLongFormScript|contextNote|subtitleTimeoutMs|App:window/error/ignored" src docs/CHECKLIST.md`: 크래시 방어, 업로드 상태 보정, 롱폼 후처리, AI Chat YouTube 문맥, FFmpeg timeout, 체크리스트 반영 위치 재검증
+
 - [x] **2026-04-12 — TTS/사운드 버그 10건 + 간단 기능 3건 묶음 수정 (#689 #695 #720 #728 #773 #817 #844 #851 #861 #880 #887 #1006 #1053)**
   - `rg -n "sceneCount|단락|paragraphs" src/stores/ src/components/`, `rg -n "clearAudio|deleteAudio|audioBlobs" src/stores/ src/hooks/useAutoSave.ts`, `rg -n "regenerate|재생성|lineBreak" src/components/tabs/sound/`, `rg -n "transcribe|전사|segmentAudio" src/services/transcriptionService.ts`, `rg -n "supertonic|speed.*param|속도" src/services/ttsService.ts`, `rg -n "emotion|speed|감정|속도" src/components/tabs/sound/`, `rg -n "onKeyDown|handleCopy|Cmd|Meta" src/components/tabs/sound/`, `rg -n "narrationBlob|audioBlob|persist.*audio" src/hooks/useAutoSave.ts src/stores/projectStore.ts src/components/tabs/editroom/`로 탭 전환, 프로젝트 전환, 전사 단락 매핑, 재생성/속도, 편집실 오디오 유지 경로를 전수 조사
   - 원인 확인: `soundToImageBridge.ts`가 업로드 전사와 일반 TTS 라인 불일치를 같은 regroup 경로로 처리해 장면 수를 이전 storyboard 기준으로 다시 줄이고 있었고, `audioStorageService.ts`는 현재 프로젝트에 남아 있지 않은 blob 오디오를 정리하지 않아 삭제/프로젝트 전환 후 오래된 오디오가 다시 복원될 수 있었음. `SoundStudioTab.tsx`는 초기 mount 시점 snapshot만 보고 scenes↔lines 동기화를 멈췄고, `VoiceStudio.tsx`/`uploadedTranscriptScenes.ts`는 업로드 오디오 전사 결과를 기존 대본 단락 구조에 맞추지 않아 단락 수와 타임코드가 어긋났음. `TypecastEditor.tsx`는 활성 줄과 툴바 대상 화자가 분리돼 있고, contenteditable 텍스트 추출이 `<br>`/복사/레이아웃을 제대로 반영하지 않아 재생성·줄바꿈·Mac 복사·감정/속도 정렬이 함께 흔들리고 있었음

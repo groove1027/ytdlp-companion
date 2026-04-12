@@ -1904,7 +1904,12 @@ const StoryboardPanel: React.FC = () => {
     try {
       const url = await uploadMediaPermanent(file);
       if (isVideo) {
-        updateScene(sceneId, { videoUrl: url, isGeneratingImage: false, generationStatus: undefined });
+        updateScene(sceneId, {
+          videoUrl: url,
+          isGeneratingImage: false,
+          generationStatus: undefined,
+          imageUpdatedAfterVideo: false,
+        });
         showToast('영상 업로드 완료');
       } else {
         const sceneForUpload = useProjectStore.getState().scenes.find(s => s.id === sceneId);
@@ -1970,7 +1975,12 @@ const StoryboardPanel: React.FC = () => {
           const url = await uploadMediaPermanent(file);
           const isVideo = file.type.startsWith('video/');
           if (isVideo) {
-            updateScene(scene.id, { videoUrl: url, isGeneratingImage: false, generationStatus: undefined });
+            updateScene(scene.id, {
+              videoUrl: url,
+              isGeneratingImage: false,
+              generationStatus: undefined,
+              imageUpdatedAfterVideo: false,
+            });
           } else {
             const sceneNow = useProjectStore.getState().scenes.find(s => s.id === scene.id);
             updateScene(scene.id, {

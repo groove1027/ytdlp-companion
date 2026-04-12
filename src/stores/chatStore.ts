@@ -3,9 +3,12 @@ import type { AiChatMessage, AiChatSession, AiChatModel } from '../types';
 import { evolinkChatStream, evolinkClaudeStream } from '../services/evolinkService';
 import type { EvolinkChatMessage } from '../services/evolinkService';
 import { logger } from '../services/LoggerService';
+import { fetchYouTubeVideoMeta } from '../services/youtubeVideoMetaService';
+import { extractYouTubeVideoId } from '../utils/thumbnailUtils';
 
 const STORAGE_KEY_PREFIX = 'ai-chat-sessions';
 const MAX_SESSIONS = 50;
+const YOUTUBE_URL_PATTERN = /(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/(?:watch\?v=[^\s<>"']+|shorts\/[^\s<>"']+|embed\/[^\s<>"']+|v\/[^\s<>"']+)|youtu\.be\/[^\s<>"']+)/gi;
 
 const generateId = () => `chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -54,6 +57,75 @@ const generateTitle = (content: string): string => {
   const clean = content.replace(/\n/g, ' ').trim();
   return clean.length > 30 ? clean.slice(0, 27) + '...' : clean || '새 대화';
 };
+
+const normalizeYouTubeCandidate = (value: string): string =>
+  value.match(/^https?:\/\//i) ? value : `https://${value}`;
+
+const trimUrlPunctuation = (value: string): string =>
+  value.replace(/[)>.,!?]+$/g, '');
+
+const extractYouTubeUrls = (content: string): string[] => {
+  const matches = content.match(YOUTUBE_URL_PATTERN) || [];
+  const seen = new Set<string>();
+  const urls: string[] = [];
+
+  for (const match of matches) {
+    const normalizedUrl = normalizeYouTubeCandidate(trimUrlPunctuation(match.trim()));
+    const videoId = extractYouTubeVideoId(normalizedUrl);
+    if (!videoId || seen.has(videoId)) continue;
+    seen.add(videoId);
+    urls.push(`https://www.youtube.com/watch?v=${videoId}`);
+  }
+
+  return urls;
+};
+
+const trimInlineText = (value: string, limit: number): string => {
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  if (normalized.length <= limit) return normalized;
+  return `${normalized.slice(0, limit - 1)}…`;
+};
+
+const buildYouTubeContextNote = async (content: string): Promise<string | undefined> => {
+  const urls = extractYouTubeUrls(content).slice(0, 3);
+  if (urls.length === 0) return undefined;
+
+  const summaries = await Promise.all(urls.map(async (url) => {
+    const videoId = extractYouTubeVideoId(url);
+    if (!videoId) return `- 링크: ${url}`;
+
+    try {
+      const metaResult = await fetchYouTubeVideoMeta(videoId);
+      const meta = metaResult.meta;
+      if (!meta) return `- 링크: ${url}`;
+
+      const lines = [
+        `- 링크: ${url}`,
+        meta.title ? `  제목: ${trimInlineText(meta.title, 120)}` : '',
+        meta.channelTitle ? `  채널: ${trimInlineText(meta.channelTitle, 80)}` : '',
+        meta.description ? `  설명: ${trimInlineText(meta.description, 220)}` : '',
+      ].filter(Boolean);
+
+      if (meta.tags.length > 0) {
+        lines.push(`  태그: ${meta.tags.slice(0, 5).join(', ')}`);
+      }
+
+      return lines.join('\n');
+    } catch (error) {
+      logger.trackSwallowedError('ChatStore:fetchYouTubeMeta', error);
+      return `- 링크: ${url}`;
+    }
+  }));
+
+  return summaries.length > 0
+    ? `[YouTube 링크 참고 정보]\n${summaries.join('\n')}`
+    : undefined;
+};
+
+const getMessageContentForModel = (message: AiChatMessage): string =>
+  message.contextNote?.trim()
+    ? `${message.content}\n\n${message.contextNote}`
+    : message.content;
 
 interface ChatStore {
   sessions: AiChatSession[];
@@ -203,11 +275,28 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     });
 
     try {
+      const contextNote = await buildYouTubeContextNote(content);
+      if (contextNote) {
+        set(state => {
+          const sessions = state.sessions.map(s => {
+            if (s.id !== sessionId) return s;
+            return {
+              ...s,
+              messages: s.messages.map(m => m.id === userMsg.id ? { ...m, contextNote } : m),
+              updatedAt: Date.now(),
+            };
+          });
+          saveSessions(sessions);
+          return { sessions };
+        });
+      }
+
       const model = session.model;
       const isClaude = model.startsWith('claude-');
+      const userMsgForModel = contextNote ? { ...userMsg, contextNote } : userMsg;
 
       // 대화 히스토리 구성
-      const history = [...session.messages, userMsg];
+      const history = [...session.messages, userMsgForModel];
 
       if (isClaude) {
         // Claude: system prompt + 마지막 user 메시지만 (Messages API 제약)
@@ -215,14 +304,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         let systemForClaude = session.systemPrompt || '';
         if (history.length > 1) {
           const historyText = history.slice(0, -1).map(m =>
-            `${m.role === 'user' ? 'Human' : 'Assistant'}: ${m.content}`
+            `${m.role === 'user' ? 'Human' : 'Assistant'}: ${getMessageContentForModel(m)}`
           ).join('\n\n');
           systemForClaude += (systemForClaude ? '\n\n' : '') + `<conversation_history>\n${historyText}\n</conversation_history>`;
         }
 
         await evolinkClaudeStream(
           systemForClaude,
-          content,
+          getMessageContentForModel(userMsgForModel),
           (_chunk, accumulated) => {
             set(state => {
               const sessions = state.sessions.map(s => {
@@ -252,12 +341,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           if (m.imageUrls?.length) {
             // 이미지 + 텍스트 → content parts 배열
             const parts: import('../services/evolinkService').EvolinkContentPart[] = [
-              { type: 'text', text: m.content },
+              { type: 'text', text: getMessageContentForModel(m) },
               ...m.imageUrls.map(url => ({ type: 'image_url' as const, image_url: { url } })),
             ];
             messages.push({ role: m.role as 'user' | 'assistant', content: parts });
           } else {
-            messages.push({ role: m.role as 'user' | 'assistant', content: m.content });
+            messages.push({ role: m.role as 'user' | 'assistant', content: getMessageContentForModel(m) });
           }
         }
 

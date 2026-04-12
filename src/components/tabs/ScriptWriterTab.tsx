@@ -49,6 +49,21 @@ function estimateTime(chars: number): string {
   return `약 ${m}분 ${s}초`;
 }
 
+const LONG_FORM_STAGE_DIRECTION_PATTERN = /(?:^|\s)(?:\[(?:효과음|효과|화면|장면|자막|배경음|브금|BGM|음향)\s*:[^\]\n]+\]|\((?:효과음|효과|화면|장면|자막|배경음|브금|BGM|음향)\s*:[^\)\n]+\))/gim;
+
+function sanitizeLongFormScript(text: string, contentFormat: ContentFormat): string {
+  if (contentFormat !== 'long' || !text.trim()) {
+    return text;
+  }
+
+  return text
+    .replace(LONG_FORM_STAGE_DIRECTION_PATTERN, (match) => match.startsWith('\n') ? '\n' : ' ')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 /**
  * 채널 스타일 데이터를 종합하여 AI 프롬프트용 섹션을 구성 (#159)
  * - channelGuideline의 기본 필드 + fullGuidelineText(상세 분석)
@@ -711,7 +726,7 @@ ${instinctPrompt}
         minCompletionRatio: isShorts ? 0.9 : 0.92,
         maxContinuations: isShorts ? 2 : 5,
       });
-      const result = generationResult.text;
+      const result = sanitizeLongFormScript(generationResult.text, contentFormat);
 
       setGeneratedScript({
         title: topic.title,
@@ -840,7 +855,7 @@ ${instinctPrompt}
       if (!fullText.trim()) throw new Error('AI 응답이 비어있습니다. 다시 시도해주세요.');
 
       // JSON 파싱 시도 (이전 방식 호환) — 실패 시 plain text로 사용
-      let finalContent = fullText;
+      let finalContent = sanitizeLongFormScript(fullText, contentFormat);
       let finalTitle = title;
       let finalDuration = `약 ${Math.round(fullText.length / 650)}분`;
       let finalStructure: string[] = [];
@@ -850,7 +865,7 @@ ${instinctPrompt}
         try {
           const parsed = JSON.parse(jsonStr) as { title?: string; content?: string; estimatedDuration?: string; structure?: string[] };
           if (parsed.content && parsed.content.trim()) {
-            finalContent = parsed.content;
+            finalContent = sanitizeLongFormScript(parsed.content, contentFormat);
             finalTitle = parsed.title || title;
             finalDuration = parsed.estimatedDuration || finalDuration;
             finalStructure = Array.isArray(parsed.structure) ? parsed.structure : [];
@@ -924,15 +939,16 @@ ${instinctPrompt}
         content = res.choices?.[0]?.message?.content || '';
       }
       if (!content.trim()) throw new Error('스타일 변환 결과가 비어있습니다. 다시 시도해주세요.');
-      setStyledScript(content, preset.name);
-      setFinalScript(content);
+      const sanitizedContent = sanitizeLongFormScript(content, contentFormat);
+      setStyledScript(sanitizedContent, preset.name);
+      setFinalScript(sanitizedContent);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       setStyleError(`스타일 적용 실패: ${msg}`);
     } finally {
       setApplyingStyle(null);
     }
-  }, [selectedStyleId, generatedScript, manualText, title, setStyledScript, setFinalScript, allStylePresets, scriptAiModel, targetCharCount]);
+  }, [selectedStyleId, generatedScript, manualText, title, setStyledScript, setFinalScript, allStylePresets, scriptAiModel, targetCharCount, contentFormat]);
 
   const toggleTool = (tool: OpenTool) => setOpenTool(prev => prev === tool ? null : tool);
   const hasAnyTool = instinctIds.length > 0 || !!benchmarkScript || !!channelGuideline;
