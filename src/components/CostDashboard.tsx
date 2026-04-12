@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useCostStore } from '../stores/costStore';
 
@@ -6,6 +5,7 @@ const CostDashboard: React.FC = () => {
     const costStats = useCostStore((s) => s.costStats);
     const exchangeRate = useCostStore((s) => s.exchangeRate);
     const exchangeDate = useCostStore((s) => s.exchangeDate);
+    const lastMutationSource = useCostStore((s) => s.lastMutationSource);
     const resetCosts = useCostStore((s) => s.resetCosts);
 
     const [highlight, setHighlight] = useState(false);
@@ -27,16 +27,18 @@ const CostDashboard: React.FC = () => {
     }, [confirmReset]);
 
     useEffect(() => {
+        if (lastMutationSource !== 'charge') return;
         setHighlight(true);
         const timer = setTimeout(() => { setHighlight(false); }, 500);
         return () => clearTimeout(timer);
-    }, [costStats.totalUsd]);
+    }, [costStats.totalUsd, lastMutationSource]);
 
     // D-3: Memoize formatted values to avoid recalculation on every render
     const totalKRW = useMemo(() => costStats.totalUsd * exchangeRate, [costStats.totalUsd, exchangeRate]);
     const formattedKRW = useMemo(() => totalKRW.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }), [totalKRW]);
     const formattedExchangeRate = useMemo(() => exchangeRate.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }), [exchangeRate]);
     const formattedUsd = useMemo(() => costStats.totalUsd.toFixed(3), [costStats.totalUsd]);
+    const isRestoredCost = lastMutationSource === 'restore' && costStats.totalUsd > 0;
 
     return (
         <div
@@ -53,7 +55,7 @@ const CostDashboard: React.FC = () => {
             `}>
                 <span className="text-base md:text-lg animate-pulse-slow">💸</span>
                 <span className="text-sm md:text-sm font-bold text-emerald-400 whitespace-nowrap hidden sm:inline-block">
-                    실시간 제작 비용 :
+                    프로젝트 누적 비용 :
                 </span>
                 <div className="flex items-baseline gap-0.5 md:gap-1 text-white font-mono font-bold">
                     <span className="text-emerald-500 text-sm md:text-base">￦</span>
@@ -61,9 +63,15 @@ const CostDashboard: React.FC = () => {
                 </div>
             </div>
 
-            <span className="text-sm font-bold text-emerald-400 hidden md:inline-block border border-emerald-500/30 bg-emerald-900/20 px-2 py-1 rounded">
-                ✓ 자동 저장됨
-            </span>
+            {isRestoredCost ? (
+                <span className="text-sm font-bold text-sky-300 hidden md:inline-block border border-sky-500/30 bg-sky-900/20 px-2 py-1 rounded">
+                    저장된 비용 복원
+                </span>
+            ) : (
+                <span className="text-sm font-bold text-emerald-400 hidden md:inline-block border border-emerald-500/30 bg-emerald-900/20 px-2 py-1 rounded">
+                    ✓ 자동 저장됨
+                </span>
+            )}
 
             {/* [FIX #788] 호버 갭 제거: mt-3→mt-1, 투명 브릿지로 마우스 경로 보장 */}
             <div className={`
@@ -86,6 +94,12 @@ const CostDashboard: React.FC = () => {
                         </span>
                     </div>
                 </div>
+
+                {isRestoredCost && (
+                    <div className="mb-3 rounded-lg border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-xs text-sky-200">
+                        저장된 프로젝트 비용을 복원해 보여주는 중입니다. 새 API 과금은 실제 생성/분석 실행 때만 추가됩니다.
+                    </div>
+                )}
 
                 <div className="space-y-2.5">
                     <div className="flex justify-between items-center text-sm">

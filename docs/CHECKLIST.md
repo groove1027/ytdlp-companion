@@ -8,6 +8,20 @@
 
 ## 🟢 완료된 작업
 
+- [x] **2026-04-12 — 과금 버그: 프로젝트 열기만 해도 비용 차감 오인 수정 (#672 #684 #685 #701)**
+  - `rg -n "addCost|ADD_COST|incrementCost|recordCost" src/ | head -30`, `rg -n "costStore|useCostStore|cost-stats" src/stores/ src/services/ | head -20`, `rg -n "useEffect.*project|loadProject|rehydrate|hydrate" src/App.tsx src/stores/ | head -20`, `rg -n "blob:|restoreProjectImages|persistImage|restoreProjectAudio|autoSave|saveProject|getProject\\(|setCostStats\\(|resetCosts\\(" src/App.tsx src/stores src/services | head -200`로 비용 호출부, 프로젝트 로드 경로, blob/base64 복원, auto-save 영향을 전수 조사
+  - 원인 확인: `src/stores/projectStore.ts`의 `loadProject()`가 저장된 `project.costStats`를 shared `costStore`에 직접 덮어쓰고 있었고, `src/components/CostDashboard.tsx`는 `costStats.totalUsd` 변경이면 복원이든 실제 과금이든 동일하게 하이라이트했다. 이 때문에 프로젝트를 다시 열었을 때 저장된 누적 비용이 새 과금처럼 보였고, reset 후 재오픈 시 특히 "다시 차감됐다"는 오인이 반복될 수 있었음
+  - 추가 조사 결과: `loadProject()` 자체에서 `addCost`를 호출하는 경로는 없었고, stale blob/base64 복원은 `restoreProjectImages`/`restoreProjectAudio`/`persistImage` 경로로만 이어져 AI 과금 호출과 직접 연결되지 않음을 재확인
+  - `src/stores/costStore.ts`, `src/types.ts` — `restoreCostStats()`와 `CostMutationSource`(`init|charge|restore|reset`)를 추가하고, 저장된 비용 복원과 실제 `addCost()` 과금을 store 레벨에서 구분하도록 수정. 복원 시 누락 필드도 정규화해 오래된 `costStats` 구조가 들어와도 카운트가 깨지지 않게 보강
+  - `src/stores/projectStore.ts` — 프로젝트 로드 시 기존 `setCostStats(...)` 대신 `restoreCostStats(...)`를 사용해 비용 복원을 명시적 restore 경로로 분리
+  - `src/components/CostDashboard.tsx` — 하이라이트를 실제 `charge` 갱신에만 반응하도록 제한하고, 라벨을 `프로젝트 누적 비용`으로 조정. 저장된 비용이 복원된 상태에서는 `저장된 비용 복원` 배지와 "새 API 과금 아님" 안내 문구를 표시하도록 수정
+  - `src/test/projectStore.costRestore.test.ts` 신규 — 프로젝트 로드 시 `restoreCostStats(project.costStats)`만 호출되고 `addCost`는 0회 호출되는지 mock 회귀 테스트 추가
+  - `cd src && node_modules/typescript/bin/tsc --noEmit`: 통과
+  - `cd src && node_modules/.bin/vitest run test/projectStore.costRestore.test.ts`: 통과 (`1 passed`)
+  - `cd src && node_modules/.bin/vitest run`: 통과 (`17 passed`, `153 passed`)
+  - `cd src && node_modules/.bin/vite build`: 성공 (기존 dynamic import / chunk-size warning만 출력)
+  - `rg -n "restoreCostStats|addCost\\(|lastMutationSource|프로젝트 누적 비용|저장된 비용 복원" src | sed -n '1,160p'`: restore-only 경로, live `addCost` 호출부 유지, UI 문구, 회귀 테스트 위치 재검증
+
 - [x] **2026-04-12 — #951 롱폼 프레임 추출 90초 타임아웃 완화**
   - `rg -n "extractVideoFrames|extractFrames|프레임 추출|frame.*extract|타임아웃|timeout.*frame" src/services/sceneDetection.ts src/components/tabs/channel/VideoAnalysisRoom.tsx`, `rg -n "90.*000|90s|90초|2분|120.*000" src/services/sceneDetection.ts`, `sed -n '1,340p' src/services/sceneDetection.ts`, `sed -n '1680,1885p' src/components/tabs/channel/VideoAnalysisRoom.tsx`, `sed -n '5670,5875p' src/components/tabs/channel/VideoAnalysisRoom.tsx`로 씬 감지, 업로드 초기 프레임 추출, 백그라운드 정밀 프레임 보정의 고정 타임아웃 경로를 전수 조사
   - 원인 확인: `src/services/sceneDetection.ts`는 30분 영상에도 `90_000ms` 하드 타임아웃과 최대 3000프레임 샘플링을 유지하고 있었고, `src/components/tabs/channel/VideoAnalysisRoom.tsx`의 업로드 초기 프레임 추출은 WebCodecs 60초 / canvas 90초, 후속 정밀 프레임 보정은 전체 2분 고정으로 묶여 있어 롱폼에서 일부 프레임만 수집된 상태로 중단될 수 있었음

@@ -606,7 +606,7 @@ export const useProjectStore = create<ProjectStore>()(immer((set, get) => ({
     // skipCostRestore=false (수동 전환): 프로젝트의 costStats로 교체, 없으면 리셋
     if (!options?.skipCostRestore) {
       if (project.costStats) {
-        useCostStore.getState().setCostStats(project.costStats);
+        useCostStore.getState().restoreCostStats(project.costStats);
       } else {
         useCostStore.getState().resetCosts();
       }
