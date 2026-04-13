@@ -574,8 +574,8 @@ export const cleanupEmptyProjects = async (currentId?: string | null): Promise<n
     // 조건: 장면 없고, 이미지 없고, 임시 제목인 프로젝트
     const isEmpty = s.sceneCount === 0 && s.completedImages === 0;
     const isTempTitle = s.title.startsWith('임시 프로젝트') || s.title.startsWith('새 프로젝트');
-    // 1시간 이상 경과한 빈 임시 프로젝트만 삭제
-    const isOldEnough = (Date.now() - (s.lastModified || 0)) > 3_600_000;
+    // 30분 이상 경과한 빈 임시 프로젝트만 삭제
+    const isOldEnough = (Date.now() - (s.lastModified || 0)) > 1_800_000;
     if (isEmpty && isTempTitle && isOldEnough) {
       await deleteProject(s.id);
       cleaned++;

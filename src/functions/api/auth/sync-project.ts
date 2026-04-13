@@ -42,6 +42,18 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     const title = (project.title as string) || '';
     const r2Key = `${email}/${projectId}.json`;
 
+    // 삭제된 프로젝트는 싱크 거부 — 좀비 부활 방지 (#1164)
+    const existingProject = await context.env.DB.prepare(
+      'SELECT is_deleted FROM user_projects WHERE email = ? AND id = ?'
+    ).bind(email, projectId).first() as { is_deleted: number } | null;
+
+    if (existingProject?.is_deleted) {
+      return new Response(
+        JSON.stringify({ error: '삭제된 프로젝트는 다시 업로드할 수 없습니다.' }),
+        { status: 409, headers: HEADERS },
+      );
+    }
+
     // R2에 프로젝트 JSON 업로드
     const projectJson = JSON.stringify(project);
     await context.env.PROJECT_STORAGE.put(r2Key, projectJson, {
@@ -68,8 +80,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         thumbnail_url = excluded.thumbnail_url,
         pipeline_steps_json = excluded.pipeline_steps_json,
         last_modified = excluded.last_modified,
-        synced_at = datetime('now'),
-        is_deleted = 0
+        synced_at = datetime('now')
     `).bind(
       projectId, email, title, r2Key, projectJson.length,
       summary?.sceneCount ?? 0,

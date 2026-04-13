@@ -21,26 +21,172 @@ import type { ProjectData, CloudProjectSummary, SyncStatus } from '../types';
 // ---------------------------------------------------------------------------
 
 const SYNC_DEBOUNCE_MS = 10_000; // 10초
+const FULL_SYNC_DOWNLOAD_CONCURRENCY = 5;
+const DELETING_IDS_STORAGE_KEY = 'cloud-sync-deleting-ids';
+const TEMP_PROJECT_TITLE_PREFIXES = ['임시 프로젝트', '새 프로젝트'] as const;
 let _debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let _syncInProgress = false;
 let _syncPaused = false;
 let _syncPromise: Promise<void> | null = null;
 let _pendingSyncId: string | null = null;
 const _deletingIds = new Set<string>();
+let _deletingIdsRestored = false;
+
+// ---------------------------------------------------------------------------
+// _deletingIds sessionStorage 백업/복원 (새로고침 시 유실 방지)
+// ---------------------------------------------------------------------------
+
+const restoreDeletingIds = (): Set<string> => {
+  if (typeof sessionStorage === 'undefined') return new Set<string>();
+
+  try {
+    const raw = sessionStorage.getItem(DELETING_IDS_STORAGE_KEY);
+    if (!raw) return new Set<string>();
+
+    const parsed = JSON.parse(raw) as { token?: unknown; ids?: unknown; ts?: unknown };
+    const storedToken = typeof parsed.token === 'string' ? parsed.token : null;
+    if (!storedToken || storedToken !== getToken()) {
+      sessionStorage.removeItem(DELETING_IDS_STORAGE_KEY);
+      return new Set<string>();
+    }
+    // TTL 5분 — 클라우드 삭제 실패 시 무한 차단 방지
+    const storedTs = typeof parsed.ts === 'number' ? parsed.ts : 0;
+    if (Date.now() - storedTs > 300_000) {
+      sessionStorage.removeItem(DELETING_IDS_STORAGE_KEY);
+      return new Set<string>();
+    }
+
+    const ids = Array.isArray(parsed.ids)
+      ? parsed.ids.filter((id): id is string => typeof id === 'string' && id.length > 0)
+      : [];
+
+    if (ids.length === 0) {
+      sessionStorage.removeItem(DELETING_IDS_STORAGE_KEY);
+      return new Set<string>();
+    }
+
+    return new Set(ids);
+  } catch (e) {
+    logger.trackSwallowedError('syncService:restoreDeletingIds', e);
+    return new Set<string>();
+  }
+};
+
+const ensureDeletingIdsRestored = (): void => {
+  if (_deletingIdsRestored) return;
+  _deletingIdsRestored = true;
+
+  for (const id of restoreDeletingIds()) {
+    _deletingIds.add(id);
+  }
+};
+
+const persistDeletingIds = (): void => {
+  ensureDeletingIdsRestored();
+  if (typeof sessionStorage === 'undefined') return;
+
+  try {
+    if (_deletingIds.size === 0) {
+      sessionStorage.removeItem(DELETING_IDS_STORAGE_KEY);
+      return;
+    }
+
+    const token = getToken();
+    if (!token) {
+      sessionStorage.removeItem(DELETING_IDS_STORAGE_KEY);
+      return;
+    }
+
+    sessionStorage.setItem(DELETING_IDS_STORAGE_KEY, JSON.stringify({
+      token,
+      ids: Array.from(_deletingIds),
+      ts: Date.now(),
+    }));
+  } catch (e) {
+    logger.trackSwallowedError('syncService:persistDeletingIds', e);
+  }
+};
+
+// ---------------------------------------------------------------------------
+// 빈 임시 프로젝트 판별 (클라우드 싱크 스킵 대상)
+// ---------------------------------------------------------------------------
+
+const isTemporaryEmptyProject = (project: ProjectData): boolean => {
+  if (project.scenes.length > 0) return false;
+  if (!TEMP_PROJECT_TITLE_PREFIXES.some((prefix) => project.title.startsWith(prefix))) return false;
+  // 썸네일이 있으면 유의미한 작업이 있는 프로젝트
+  if (project.thumbnails && project.thumbnails.length > 0) return false;
+  // 대본이나 스크립트 내용이 있으면 빈 프로젝트가 아님 (클라우드 싱크 필요)
+  if (project.config?.script && project.config.script.trim().length > 0) return false;
+  const sw = project.scriptWriterState;
+  if (sw && (
+    (sw.finalScript && sw.finalScript.trim().length > 0)
+    || (sw.manualText && sw.manualText.trim().length > 0)
+    || (sw.synopsis && sw.synopsis.trim().length > 0)
+    || (sw.generatedScript?.content && sw.generatedScript.content.trim().length > 0)
+    || (sw.styledScript && sw.styledScript.trim().length > 0)
+  )) return false;
+  return true;
+};
+
+// ---------------------------------------------------------------------------
+// 병렬 다운로드 (concurrency 제한)
+// ---------------------------------------------------------------------------
+
+const runWithConcurrency = async <T>(
+  items: string[],
+  limit: number,
+  task: (item: string) => Promise<T>,
+): Promise<PromiseSettledResult<T>[]> => {
+  const results: PromiseSettledResult<T>[] = new Array(items.length);
+  let nextIndex = 0;
+
+  const worker = async () => {
+    while (true) {
+      const currentIndex = nextIndex++;
+      if (currentIndex >= items.length) return;
+      results[currentIndex] = await task(items[currentIndex]).then(
+        (value) => ({ status: 'fulfilled' as const, value }),
+        (reason) => ({ status: 'rejected' as const, reason }),
+      );
+    }
+  };
+
+  await Promise.allSettled(Array.from({ length: Math.min(limit, items.length) }, () => worker()));
+  return results;
+};
+
+// ---------------------------------------------------------------------------
+// 삭제된 프로젝트 로컬 정리 헬퍼
+// ---------------------------------------------------------------------------
+
+const removeDeletedProjectLocally = async (projectId: string): Promise<void> => {
+  ensureDeletingIdsRestored();
+  markDeletingIds([projectId]);
+  if (useProjectStore.getState().currentProjectId === projectId) {
+    useProjectStore.getState().clearProjectState();
+  }
+  await deleteProject(projectId);
+};
 
 const reconcileDeletingIds = (
   localProjectIds: string[],
   batchData: { needsUpload: string[]; needsDownload: string[] },
 ): void => {
+  ensureDeletingIdsRestored();
   const localIdSet = new Set(localProjectIds);
   const needsUploadSet = new Set(batchData.needsUpload);
   const needsDownloadSet = new Set(batchData.needsDownload);
+  let changed = false;
 
   for (const id of Array.from(_deletingIds)) {
     if (!localIdSet.has(id) && !needsUploadSet.has(id) && !needsDownloadSet.has(id)) {
       _deletingIds.delete(id);
+      changed = true;
     }
   }
+
+  if (changed) persistDeletingIds();
 };
 
 // ---------------------------------------------------------------------------
@@ -124,12 +270,12 @@ const extractSyncSummary = (project: ProjectData) => ({
  * 단일 프로젝트를 클라우드에 업로드
  */
 export const syncProjectToCloud = async (projectId: string): Promise<void> => {
+  ensureDeletingIdsRestored();
   const token = getToken();
   if (!token) return; // 로그인 안 됨 → 무시
   if (_deletingIds.has(projectId)) return; // 삭제 중인 프로젝트는 업로드 스킵
 
   const { setSyncStatus } = useSyncStore.getState();
-  setSyncStatus(projectId, 'syncing');
 
   try {
     let project = await getProject(projectId);
@@ -137,6 +283,14 @@ export const syncProjectToCloud = async (projectId: string): Promise<void> => {
       setSyncStatus(projectId, 'error');
       return;
     }
+
+    // 빈 임시 프로젝트는 클라우드에 올리지 않음 (좀비 방지)
+    if (isTemporaryEmptyProject(project)) {
+      setSyncStatus(projectId, 'local-only');
+      return;
+    }
+
+    setSyncStatus(projectId, 'syncing');
 
     // base64 이미지 → Cloudinary URL 변환 (동기화 전 필수)
     if (hasBase64Images(project)) {
@@ -151,9 +305,15 @@ export const syncProjectToCloud = async (projectId: string): Promise<void> => {
     const summary = extractSyncSummary(project);
 
     const res = await syncApi('sync-project', { project, summary });
-    const data = await res.json() as { status: string; error?: string };
+    const data = await res.json().catch(() => ({})) as { status?: string; error?: string };
 
     if (!res.ok) {
+      // 409 = 서버에서 삭제된 프로젝트 → 로컬에서도 정리
+      if (res.status === 409) {
+        await removeDeletedProjectLocally(projectId);
+        setSyncStatus(projectId, 'local-only');
+        return;
+      }
       throw new Error(data.error || `HTTP ${res.status}`);
     }
 
@@ -172,7 +332,9 @@ export const syncProjectToCloud = async (projectId: string): Promise<void> => {
  * 디바운스된 동기화 스케줄링 (자동저장 후 호출)
  */
 export const scheduleSyncToCloud = (projectId: string): void => {
+  ensureDeletingIdsRestored();
   if (!getToken()) return;
+  if (_deletingIds.has(projectId)) return; // 삭제 중인 프로젝트는 스케줄 안 함
 
   _pendingSyncId = projectId;
 
@@ -182,6 +344,7 @@ export const scheduleSyncToCloud = (projectId: string): void => {
     const id = _pendingSyncId;
     if (!id) return;
     _pendingSyncId = null;
+    if (_deletingIds.has(id)) return; // 디바운스 대기 중 삭제됐으면 스킵
 
     if (_syncInProgress || _syncPaused) {
       // 이미 동기화 중이거나 일시 중단이면 다음 라운드에서 처리
@@ -254,15 +417,23 @@ export const pauseSync = async (): Promise<void> => {
   if (_syncPromise) await _syncPromise.catch(() => {});
 };
 export const resumeSync = (): void => {
+  ensureDeletingIdsRestored();
   _syncPaused = false;
   // _deletingIds는 여기서 지우지 않음 — 클라우드 삭제 실패 건의 재다운로드 방지
   if (_pendingSyncId) scheduleSyncToCloud(_pendingSyncId);
 };
 /** 클라우드 삭제 확인 후 개별 ID 제거 */
-export const unmarkDeletingId = (id: string): void => { _deletingIds.delete(id); };
+export const unmarkDeletingId = (id: string): void => {
+  ensureDeletingIdsRestored();
+  if (_deletingIds.delete(id)) {
+    persistDeletingIds();
+  }
+};
 /** 삭제 중인 프로젝트 ID 등록 (sync에서 needsDownload 무시) */
 export const markDeletingIds = (ids: string[]): void => {
+  ensureDeletingIdsRestored();
   for (const id of ids) _deletingIds.add(id);
+  persistDeletingIds();
   if (_pendingSyncId && ids.includes(_pendingSyncId)) {
     _pendingSyncId = null;
     if (_debounceTimer) {
@@ -273,6 +444,7 @@ export const markDeletingIds = (ids: string[]): void => {
 };
 
 export const performFullSync = async (): Promise<void> => {
+  ensureDeletingIdsRestored();
   const token = getToken();
   if (!token) return;
 
@@ -322,28 +494,37 @@ export const performFullSync = async (): Promise<void> => {
       }
     }
 
-    // 4. 다운로드 필요한 프로젝트 처리 (삭제 중인 ID 제외)
-    for (const id of batchData.needsDownload) {
-      if (_deletingIds.has(id)) continue;
-      try {
-        statuses[id] = 'syncing';
-        store.setSyncStatus(id, 'syncing');
+    // 4. 다운로드 필요한 프로젝트 처리 (삭제 중인 ID 제외, 병렬 5개)
+    const downloadIds = batchData.needsDownload.filter((id) => !_deletingIds.has(id));
+    for (const id of downloadIds) {
+      statuses[id] = 'syncing';
+      store.setSyncStatus(id, 'syncing');
+    }
+
+    const downloadResults = await runWithConcurrency(
+      downloadIds,
+      FULL_SYNC_DOWNLOAD_CONCURRENCY,
+      async (id) => {
         const project = await downloadCloudProject(id);
         await saveProject(project);
+      },
+    );
+
+    downloadResults.forEach((result, index) => {
+      const id = downloadIds[index];
+      if (!id) return;
+      if (result.status === 'fulfilled') {
         statuses[id] = 'synced';
-      } catch (e) {
-        statuses[id] = 'error';
-        logger.trackSwallowedError(`syncService:fullSync/download/${id}`, e);
+        return;
       }
-    }
+      statuses[id] = 'error';
+      logger.trackSwallowedError(`syncService:fullSync/download/${id}`, result.reason);
+    });
 
     // 5. 클라우드에서 삭제된 프로젝트 로컬 삭제
     for (const id of batchData.deleted) {
       try {
-        const currentId = useProjectStore.getState().currentProjectId;
-        if (id !== currentId) {
-          await deleteProject(id);
-        }
+        await removeDeletedProjectLocally(id);
       } catch (e) {
         logger.trackSwallowedError(`syncService:fullSync/delete/${id}`, e);
       }

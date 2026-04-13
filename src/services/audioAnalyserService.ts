@@ -334,7 +334,7 @@ function startNoiseGatePolling(): void {
     // [v1.3.2 typing fix] TS 5.9 lib.dom expects Float32Array<ArrayBuffer> exactly,
     // but our buffer ends up typed as Float32Array<ArrayBufferLike>. Cast through
     // any to bypass the variance issue — the runtime contract is identical.
-    chain.inputAnalyser.getFloatTimeDomainData(chain.inputAnalyserData as Float32Array<ArrayBuffer>);
+    chain.inputAnalyser.getFloatTimeDomainData(chain.inputAnalyserData as unknown as Float32Array);
     let sumSq = 0;
     for (let i = 0; i < chain.inputAnalyserData.length; i++) {
       sumSq += chain.inputAnalyserData[i] * chain.inputAnalyserData[i];
@@ -409,7 +409,7 @@ export function getAudioLevels(): AudioLevels {
   }
 
   // [v1.3.2 typing fix] same cast as inputAnalyser path
-  outputAnalyser.getFloatTimeDomainData(outputAnalyserData as Float32Array<ArrayBuffer>);
+  outputAnalyser.getFloatTimeDomainData(outputAnalyserData as unknown as Float32Array);
 
   let sumSq = 0;
   let peak = 0;
