@@ -8,6 +8,54 @@
 
 ## 🟢 완료된 작업
 
+- [x] **2026-04-13 — #1162 7차 검증 / 보호 scene 가드 일원화 + bridge 텍스트 동기화 보강**
+  - `rg -n "handleSceneAnalysis|splitResultFromWriter|soundToImageBridge|hasProtectedSceneMedia|getSceneNarrationText|audioScript: line.text" src/components/tabs/ScriptWriterTab.tsx src/components/tabs/sound/VoiceStudio.tsx src/utils/soundToImageBridge.ts src/utils/sceneText.ts src/types.ts`로 7차 검증 범위의 splitResult memo/dependency, scene 보호 가드, sound→image bridge 텍스트 동기화 경로를 다시 전수 조사
+  - 추가 문제 확인: `VoiceStudio.tsx`와 `soundToImageBridge.ts`는 보호해야 할 scene 미디어를 기준으로 재구성을 막고 있었지만, `ScriptWriterTab.tsx`의 `handleSceneAnalysis()`만 `image/video/audio` 3개 필드만 보고 scene을 교체하고 있었음. 이 때문에 reference image, source video/frame, 커뮤니티 미디어, video reference 같은 보호 scene이 있어도 재분할 시 덮어쓸 수 있었고, bridge의 index-update 경로는 `scriptText`만 갱신해 `audioScript`가 stale로 남을 여지도 있었음
+  - `src/utils/sceneProtection.ts` 신규 — `image/video/audio`뿐 아니라 `previous image/video`, `reference image`, `source video/frame`, `edited frame`, `community media`, `videoReferences`까지 포함하는 공통 `hasProtectedSceneMedia()` helper 추가
+  - `src/components/tabs/ScriptWriterTab.tsx` — scene 비교 기준을 `(audioScript || scriptText)`에서 `getSceneNarrationText()`로 통일하고, scene 교체 가드를 공통 `hasProtectedSceneMedia()`로 변경해 `VoiceStudio`/bridge와 동일한 기준으로 보호 scene을 유지하도록 수정
+  - `src/components/tabs/sound/VoiceStudio.tsx`, `src/utils/soundToImageBridge.ts` — 중복 `hasProtectedSceneMedia()`를 공통 helper로 치환해 경로 간 기준 차이를 제거했고, bridge의 기존 scene patch는 `audioScript: line.text`도 함께 동기화하도록 보강
+  - `cd src && node_modules/typescript/bin/tsc --noEmit`: 기존 unrelated 실패 2건으로 실패 (`src/services/audioAnalyserService.ts` 334/408의 `Float32Array<ArrayBufferLike>` 타입 오류). 이번 #1162 7차 수정 경로와는 무관함을 확인
+  - `cd src && node_modules/.bin/vite build`: 성공 (기존 dynamic import / chunk-size warning만 출력)
+  - `rg -n "sceneProtection|hasProtectedSceneMedia|getSceneNarrationText\\(scene\\)|audioScript: line.text|existingSceneTexts" src/components/tabs/ScriptWriterTab.tsx src/components/tabs/sound/VoiceStudio.tsx src/utils/soundToImageBridge.ts src/utils/sceneProtection.ts`: 보호 scene 공통 helper, ScriptWriter 비교 기준, bridge `audioScript` 동기화 반영 위치 재검증
+
+- [x] **2026-04-13 — #1162 6차 검증 / scene 미디어 보호 + split fingerprint 비용 절감**
+  - `rg -n "handleSceneAnalysis|splitResultFromWriter|splitFingerprint|JSON\\.stringify|transferSoundToImageVideo|needsDirectSceneRebuild|sceneId|audioUrl|imageUrl|videoUrl" src/components/tabs/ScriptWriterTab.tsx src/components/tabs/sound/VoiceStudio.tsx src/utils/soundToImageBridge.ts src/stores/scriptWriterStore.ts src/stores/projectStore.ts src/stores/soundStudioStore.ts src/types.ts`로 6차 검증 범위의 Strict Mode, remount ref, splitResult 복원 타이밍, 대용량 split fingerprint 비용, sound→image bridge 씬 수 반영 경로를 다시 전수 조사
+  - 추가 문제 확인: `VoiceStudio.tsx`의 splitResult 재동기화는 scene에 이미지/영상 같은 보호해야 할 미디어가 있어도 plain line으로 다시 갈아탈 수 있었고, 이 상태에서 `soundToImageBridge.ts`가 lines 수 차이를 scene 재구성으로 반영하면 이미지/영상 탭의 기존 scene 메타데이터가 손실될 수 있었음. 또한 split fingerprint는 `lines` 변경에도 큰 `JSON.stringify(splitTexts)`를 다시 계산하고 있어 1000줄+ 대본에서 불필요한 비용이 있었음
+  - `src/components/tabs/sound/VoiceStudio.tsx` — `splitTexts`, `splitJoinedClean`, `splitFingerprint`를 `useMemo`로 분리해 splitResult가 실제로 바뀔 때만 fingerprint를 다시 계산하도록 정리. 동시에 `hasProtectedSceneMedia()` 가드를 추가해 scene에 이미지/영상/참조 미디어가 남아 있으면 splitResult가 달라져도 lines를 plain text 기준으로 재동기화하지 않고 scene-linked lines를 우선 유지하도록 보강
+  - `src/utils/soundToImageBridge.ts` — 동일한 `hasProtectedSceneMedia()` 기준을 넣어, 기존 scene에 보호해야 할 미디어가 있는 상태에서는 `sceneId` 없는 라인 수 변화만으로 direct rebuild가 일어나지 않도록 안전장치 추가
+  - `cd src && node_modules/typescript/bin/tsc --noEmit`: 기존 unrelated 실패 4건으로 실패 (`src/services/audioAnalyserService.ts`의 `Float32Array<ArrayBufferLike>` 타입 오류 2건, `src/services/syncService.ts`의 `ScriptWriterDraftState.script` 접근 오류 2건). 이번 #1162 6차 수정 경로와는 무관함을 확인
+  - `cd src && node_modules/.bin/vite build`: 성공 (기존 dynamic import / chunk-size warning만 출력)
+  - `rg -n "hasProtectedSceneMedia|splitFingerprint = useMemo|splitJoinedClean = useMemo|scenesHaveProtectedMedia|needsDirectSceneRebuild" src/components/tabs/sound/VoiceStudio.tsx src/utils/soundToImageBridge.ts`: scene 미디어 보호, memoized fingerprint, bridge rebuild 가드 반영 위치 재검증
+
+- [x] **2026-04-13 — 프로젝트 삭제 후 클라우드 부활 / 좀비 프로젝트 누적 방지**
+  - `rg -n "sync-project|_deletingIds|scheduleSyncToCloud|syncProjectToCloud|performFullSync|cleanupEmptyProjects|markDeletingIds|reconcileDeletingIds" src`로 삭제 tombstone, 자동 동기화, 전체 동기화, 임시 프로젝트 정리 영향 범위를 전수 조사하고 `src/functions/api/auth/sync-project.ts`, `src/services/syncService.ts`, `src/services/storageService.ts`, 호출부/관련 테스트를 함께 확인
+  - `src/functions/api/auth/sync-project.ts` — 업로드 전에 D1 `is_deleted` tombstone을 먼저 확인해 삭제된 프로젝트는 `409`로 거절하도록 수정했고, UPSERT의 `is_deleted = 0` 강제 부활 구문을 제거해 클라우드 tombstone이 업로드 한 번으로 되살아나지 않게 보강
+  - `src/services/syncService.ts` — 삭제 중 ID를 `sessionStorage`에 토큰 스코프로 보존/복원하도록 바꾸고, debounce 콜백과 단건 업로드에서 삭제 중 ID를 즉시 건너뛰도록 수정. 빈 임시 프로젝트는 클라우드 업로드를 생략하고, 서버 `409` tombstone 응답 시 로컬 프로젝트를 삭제하면서 현재 열린 프로젝트도 함께 정리하도록 변경. `performFullSync()` 다운로드는 최대 5개 동시 처리로 전환했고, 클라우드 `deleted` tombstone이 내려오면 현재 열린 프로젝트라도 로컬에서 정리하도록 누락 경로를 함께 막음
+  - `src/services/storageService.ts` — `cleanupEmptyProjects()` 임계값을 1시간에서 15분으로 줄여 빈 임시 프로젝트가 오래 남아 누적되지 않게 조정
+  - `src/services/__tests__/syncService.test.ts` 신규 — 삭제 중 ID 복원, 빈 임시 프로젝트 업로드 스킵, `409` tombstone 로컬 정리, 전체 동기화 삭제 tombstone 처리, 다운로드 동시성 5개 제한 회귀 테스트 5건 추가
+  - 검증 중 드러난 기존 타입 블로커도 함께 정리: `src/services/audioAnalyserService.ts`의 잘못된 `Float32Array` 제네릭 캐스트를 제거했고, `src/webcodecs-audio.d.ts`를 추가해 프로젝트에서 쓰는 WebCodecs 오디오 타입 선언을 보강
+  - `cd src && npx tsc --noEmit`: 통과
+  - `cd src && npm run build`: 성공 (기존 Vite dynamic import / chunk-size warning만 출력)
+  - `cd src && npx vitest run`: 통과 (`19 passed`, `163 passed`)
+  - `rg -n "DELETING_IDS_STORAGE_KEY|restoreDeletingIds|persistDeletingIds|isTemporaryEmptyProject|runWithConcurrency|removeDeletedProjectLocally|markDeletingIds|409|FULL_SYNC_DOWNLOAD_CONCURRENCY" src/services/syncService.ts src/functions/api/auth/sync-project.ts`, `rg -n "cleanupEmptyProjects|900_000|15분" src/services/storageService.ts`: tombstone 차단, 세션 복원, 임시 프로젝트 스킵, 409 정리, 병렬 다운로드, 15분 정리 임계값 재검증
+
+- [x] **2026-04-13 — #1162 4차 검증 / 빈 대본 splitResult false-positive 차단**
+  - `rg -n "handleSceneAnalysis|splitResultFromWriter|splitMatchesScript|splitMatchesCurrentScript|splitJoined" src/components/tabs/ScriptWriterTab.tsx src/components/tabs/sound/VoiceStudio.tsx src/stores/scriptWriterStore.ts src/stores/projectStore.ts src/types.ts`로 4차 검증 범위의 분할 결과 반영, stale 차단, 빈 대본 매칭 조건, 타입 정의를 다시 전수 조사
+  - 추가 문제 확인: `VoiceStudio.tsx` 메인 sync/use-uploaded-transcript 경로의 split 매칭은 `storeScript`가 빈 문자열이어도 `splitJoined.includes('')`가 참이 되어, 비정상 복원 데이터나 stale `splitResult`가 남아 있을 때 “대본 없이 탭 이동” 엣지 케이스에서 라인이 잘못 살아날 수 있었음
+  - `src/components/tabs/sound/VoiceStudio.tsx` — `splitResult` 매칭 3곳을 `splitTexts.join('')` 기준으로 통일하고, 메인 sync/use-uploaded-transcript 경로에 `scriptTextClean.length > 0` / `storeScriptClean.length > 0` 가드를 추가해 빈 대본에서는 splitResult를 신뢰하지 않도록 보강
+  - `cd src && node_modules/typescript/bin/tsc --noEmit`: 통과
+  - `cd src && node_modules/.bin/vite build`: 성공 (기존 dynamic import / chunk-size warning만 출력)
+  - `rg -n "splitJoined = splitTexts.join|splitMatchesScript = scriptTextClean.length > 0|splitMatchesCurrentScript = storeScriptClean.length > 0" src/components/tabs/sound/VoiceStudio.tsx`: 빈 대본 false-positive 차단 위치 재검증
+
+- [x] **2026-04-13 — #1162 3차 최종 검증 / stale 분석 + 오디오 보호 보강**
+  - `git show HEAD`로 최신 커밋 전체 diff를 읽고 `src/components/tabs/sound/VoiceStudio.tsx`, `src/components/tabs/ScriptWriterTab.tsx`, 관련 store/type 구현을 함께 검토해 splitResult 동기화 루프, stale 결과 방어, 씬 비교 로직, 빈 대본/프로젝트 없음/0개 씬 엣지 케이스를 재검증
+  - 추가 문제 확인: `ScriptWriterTab.tsx`는 프로젝트 ID만 비교해 같은 프로젝트 안에서 대본/분할 옵션이 바뀐 경우에도 이전 분석 결과를 반영할 수 있었고, `VoiceStudio.tsx`는 `sceneId` 없이 생성된 line 오디오가 있을 때 메인 자동 동기화 effect가 lines를 비워 line-only 오디오를 잃을 수 있었음. scenes 복원 라인에는 `ttsStatus`가 없어 기존 오디오가 다시 생성 대상으로 잡힐 여지도 있었음
+  - `src/components/tabs/ScriptWriterTab.tsx` — `buildSceneAnalysisSignature()`를 추가해 `script + videoFormat + smartSplit + longFormSplitType` 컨텍스트를 서명으로 캡처하고, 분석 완료 시 현재 store 상태와 다시 비교해 같은 프로젝트 내 stale 결과도 무시하도록 보강. 프로젝트가 없는 상태에서 분석을 시작할 때는 자동 생성 직후 현재 대본/분할 설정을 store에 즉시 복원해 false stale 판정을 막음
+  - `src/components/tabs/sound/VoiceStudio.tsx` — 메인 effect에 `hasLineAudio` 가드를 추가해 scene 연결이 없는 TTS 라인도 split/script 재동기화로 지워지지 않게 수정. scenes 복원 라인에는 `ttsStatus: 'done' | 'idle'`를 채워 기존 오디오가 `Generate All` 재생성 대상으로 다시 잡히지 않도록 보강
+  - `cd src && node_modules/typescript/bin/tsc --noEmit`: 통과
+  - `cd src && node_modules/.bin/vite build`: 성공 (기존 dynamic import / chunk-size warning만 출력)
+  - `rg -n "buildSceneAnalysisSignature|analysisSignature|ignored stale result after script/settings change|hasLineAudio|scenesHaveAudio|ttsStatus: \\(scene\\.audioUrl \\? 'done' : 'idle'\\)|splitDiffersFromScenes" src/components/tabs/ScriptWriterTab.tsx src/components/tabs/sound/VoiceStudio.tsx`: stale 방어, line 오디오 보호, scene 오디오 상태 복원 위치 재검증
+
 - [x] **2026-04-13 — #1162 2차 교차 검증 / 동일 개수 재분할 동기화 보강**
   - `rg -n "handleSceneAnalysis|splitResultFromWriter|prevSplitFingerprintRef|lines.length > 0|splitDiffersFromScenes|analysisProjectId" src/components/tabs/ScriptWriterTab.tsx src/components/tabs/sound/VoiceStudio.tsx src/stores/projectStore.ts src/stores/scriptWriterStore.ts src/stores/soundStudioStore.ts`로 단락 분할 결과 반영 경로, 사운드 라인 재동기화 effect, 프로젝트 전환 가드, TTS 보존 조건을 재검증
   - 추가 원인 확인: 1차 수정은 `VoiceStudio.tsx`에서 splitResult 길이 변화만 감지해 같은 개수로 다시 쪼개진 단락 경계 변경을 놓칠 수 있었고, `ScriptWriterTab.tsx`도 기존 scenes와 개수만 비교해 같은 개수의 최신 split 결과를 `projectStore.scenes`에 반영하지 못할 수 있었음
