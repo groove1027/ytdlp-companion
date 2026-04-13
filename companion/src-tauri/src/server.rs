@@ -4658,7 +4658,8 @@ async fn zip_create_handler(Json(req): Json<ZipCreateRequest>) -> Response {
             };
 
             // ZIP 엔트리에 추가
-            let safe_name = entry.filename.replace(['/', '\\'], "_").replace("..", "_");
+            // [FIX] /는 ZIP 폴더 구조용으로 허용, \와 ..만 치환
+            let safe_name = entry.filename.replace('\\', "/").replace("..", "_");
             if let Err(e) = zip.start_file(&safe_name, options) {
                 eprintln!("[ZIP] 엔트리 시작 실패 ({}): {}", safe_name, e);
                 continue;

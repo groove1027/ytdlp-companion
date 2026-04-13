@@ -679,8 +679,12 @@ async function trimReferenceClipWithCompanion(
     params.endSec,
     params.videoTitle,
   );
+  // [v2.5] upload-temp → inputPath 패턴으로 base64 제거
+  const { uploadBlobToCompanion, downloadCompanionTempFile } = await import('./companion/tunnelClient');
+  const tempPath = await uploadBlobToCompanion(sourceBlob, `ref-source.${guessBlobExtension(sourceBlob)}`, params.signal);
+
   const cutPayload = {
-    input: await blobToBase64(sourceBlob),
+    inputPath: tempPath,
     inputFormat: guessBlobExtension(sourceBlob),
     clips: [{
       label: fileName.replace(/\.mp4$/i, ''),
@@ -709,21 +713,28 @@ async function trimReferenceClipWithCompanion(
   }
 
   const payload = await response.json();
-  const zipBase64 = typeof payload?.data === 'string' ? payload.data : '';
-  if (!zipBase64) {
-    throw new Error('클립 자르기 응답이 비어 있습니다.');
-  }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const JSZip = ((await import('jszip')) as any).default;
-  const zip = await JSZip.loadAsync(decodeBase64ToUint8Array(zipBase64));
-  const zipEntries = Object.values(zip.files) as Array<{ dir: boolean; name: string; async: (type: string) => Promise<Blob> }>;
-  const clipEntry = zipEntries.find((entry) => !entry.dir && entry.name.toLowerCase().endsWith('.mp4'));
-  if (!clipEntry) {
-    throw new Error('잘린 MP4 파일을 찾을 수 없습니다.');
+  // [v2.5] outputPath 응답이면 ZIP 파일에서 직접 읽기
+  let blob: Blob;
+  if (payload?.outputPath) {
+    const zipBlob = await downloadCompanionTempFile(payload.outputPath, 'application/zip', params.signal);
+    const JSZip = ((await import('jszip')) as any).default;
+    const zip = await JSZip.loadAsync(zipBlob);
+    const zipEntries = Object.values(zip.files) as Array<{ dir: boolean; name: string; async: (type: string) => Promise<Blob> }>;
+    const clipEntry = zipEntries.find((entry: any) => !entry.dir && entry.name.toLowerCase().endsWith('.mp4'));
+    if (!clipEntry) throw new Error('잘린 MP4 파일을 찾을 수 없습니다.');
+    blob = await clipEntry.async('blob');
+  } else {
+    // legacy base64 응답
+    const zipBase64 = typeof payload?.data === 'string' ? payload.data : '';
+    if (!zipBase64) throw new Error('클립 자르기 응답이 비어 있습니다.');
+    const JSZip = ((await import('jszip')) as any).default;
+    const zip = await JSZip.loadAsync(decodeBase64ToUint8Array(zipBase64));
+    const zipEntries = Object.values(zip.files) as Array<{ dir: boolean; name: string; async: (type: string) => Promise<Blob> }>;
+    const clipEntry = zipEntries.find((entry: any) => !entry.dir && entry.name.toLowerCase().endsWith('.mp4'));
+    if (!clipEntry) throw new Error('잘린 MP4 파일을 찾을 수 없습니다.');
+    blob = await clipEntry.async('blob');
   }
-
-  const blob = await clipEntry.async('blob');
   return {
     key: buildReferenceClipKey(params.videoId, params.startSec, params.endSec),
     videoId: params.videoId,
@@ -731,7 +742,7 @@ async function trimReferenceClipWithCompanion(
     startSec: params.startSec,
     endSec: params.endSec,
     durationSec: Math.max(0.1, params.endSec - params.startSec),
-    fileName: clipEntry.name.split('/').pop() || fileName,
+    fileName,
     sourceUrl: `https://www.youtube.com/watch?v=${params.videoId}&t=${Math.max(0, Math.floor(params.startSec))}`,
     blob,
   };

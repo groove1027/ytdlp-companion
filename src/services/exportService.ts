@@ -630,17 +630,16 @@ export const exportProjectZip = async () => {
   setProcessing(true, 'ZIP 내보내기 준비 중...', 'EXPORT');
 
   try {
-    const { default: JSZip } = await import('jszip');
-    const zip = new JSZip();
-    const dataFolder = zip.folder('data')!;
-    const scenesFolder = dataFolder.folder('scenes')!;
+    // [v2.5] 컴패니언 ZIP 생성 — 폴더 구조 지원 (filename에 경로 포함)
+    const { createZipViaCompanion } = await import('./companion/zipService');
+    const { uploadBlobToCompanion } = await import('./companion/tunnelClient');
+    const zipFiles: Array<{ path: string; filename: string }> = [];
 
     const isLarge = scenes.length >= 200;
     const maxWidth = isLarge ? 1280 : 1920;
     const jpegQuality = isLarge ? 0.6 : 0.8;
     const total = scenes.length;
 
-    // Build manifest scenes with image references
     const manifestScenes: ExportManifest['scenes'] = [];
 
     for (let i = 0; i < scenes.length; i++) {
@@ -652,8 +651,9 @@ export const exportProjectZip = async () => {
         const filename = `scene_${String(i + 1).padStart(3, '0')}.${ext}`;
         try {
           useUIStore.getState().setProcessing(true, `이미지 변환 중 (${i + 1}/${total})...`, 'EXPORT');
-          const blob = await imageToBlob(s.imageUrl, maxWidth, jpegQuality, config.aspectRatio);
-          scenesFolder.file(filename, blob);
+          const imgBlob = await imageToBlob(s.imageUrl, maxWidth, jpegQuality, config.aspectRatio);
+          const tp = await uploadBlobToCompanion(imgBlob, filename);
+          zipFiles.push({ path: tp, filename: `data/scenes/${filename}` });
           imageFile = filename;
         } catch (e) {
           console.warn(`[ZipExport] scene ${i + 1} image failed`, e);
@@ -690,14 +690,17 @@ export const exportProjectZip = async () => {
     };
 
     const manifestJsonStr = JSON.stringify(manifest, null, 2);
-    dataFolder.file('manifest.json', manifestJsonStr);
+    const manifestBlob = new Blob([manifestJsonStr], { type: 'application/json' });
+    const manifestPath = await uploadBlobToCompanion(manifestBlob, 'manifest.json');
+    zipFiles.push({ path: manifestPath, filename: 'data/manifest.json' });
 
-    // HTML viewer — manifest를 인라인 삽입 (file:// 프로토콜에서 fetch 차단 대응)
     const viewerHtml = buildOptimizedViewerHtml(manifest.title, JSON.stringify(manifest));
-    zip.file('index.html', viewerHtml);
+    const htmlBlob = new Blob([viewerHtml], { type: 'text/html' });
+    const htmlPath = await uploadBlobToCompanion(htmlBlob, 'index.html');
+    zipFiles.push({ path: htmlPath, filename: 'index.html' });
 
-    useUIStore.getState().setProcessing(true, 'ZIP 압축 중...', 'EXPORT');
-    const blob = await zip.generateAsync({ type: 'blob' });
+    useUIStore.getState().setProcessing(true, 'ZIP 생성 중... (컴패니언)', 'EXPORT');
+    const blob = await createZipViaCompanion(zipFiles);
 
     const link = document.createElement('a');
     const _zipUrl = URL.createObjectURL(blob);
@@ -773,12 +776,11 @@ export const exportProjectById = async (projectId: string): Promise<void> => {
     const emptyCostStats = { totalUsd: 0, imageCount: 0, videoCount: 0, analysisCount: 0, ttsCount: 0, musicCount: 0 };
 
     if (scenes.length >= 30) {
-        // ZIP 내보내기 (대형 프로젝트)
+        // [v2.5] ZIP 내보내기 (대형 프로젝트) — 컴패니언 ZIP
         try {
-            const { default: JSZip } = await import('jszip');
-            const zip = new JSZip();
-            const dataFolder = zip.folder('data')!;
-            const scenesFolder = dataFolder.folder('scenes')!;
+            const { createZipViaCompanion } = await import('./companion/zipService');
+            const { uploadBlobToCompanion } = await import('./companion/tunnelClient');
+            const zipFiles2: Array<{ path: string; filename: string }> = [];
 
             const isLarge = scenes.length >= 200;
             const maxWidth = isLarge ? 1280 : 1920;
@@ -791,8 +793,9 @@ export const exportProjectById = async (projectId: string): Promise<void> => {
                 if (s.imageUrl) {
                     const filename = `scene_${String(i + 1).padStart(3, '0')}.jpg`;
                     try {
-                        const blob = await imageToBlob(s.imageUrl, maxWidth, jpegQuality, config.aspectRatio);
-                        scenesFolder.file(filename, blob);
+                        const imgBlob = await imageToBlob(s.imageUrl, maxWidth, jpegQuality, config.aspectRatio);
+                        const tp = await uploadBlobToCompanion(imgBlob, filename);
+                        zipFiles2.push({ path: tp, filename: `data/scenes/${filename}` });
                         imageFile = filename;
                     } catch (e) { logger.trackSwallowedError('ExportService:exportProjectById/imageToBlob', e); }
                 }
@@ -809,11 +812,14 @@ export const exportProjectById = async (projectId: string): Promise<void> => {
                 thumbnails: thumbnails.filter(t => t.imageUrl).map(t => ({ id: t.id, imageFile: undefined, textOverlay: t.textOverlay })),
                 costStats: costStats || emptyCostStats,
             };
-            const manifestJsonStr2 = JSON.stringify(manifest, null, 2);
-            dataFolder.file('manifest.json', manifestJsonStr2);
-            zip.file('index.html', buildOptimizedViewerHtml(manifest.title, JSON.stringify(manifest)));
+            const mfBlob = new Blob([JSON.stringify(manifest, null, 2)], { type: 'application/json' });
+            const mfPath = await uploadBlobToCompanion(mfBlob, 'manifest.json');
+            zipFiles2.push({ path: mfPath, filename: 'data/manifest.json' });
+            const htmlBlob2 = new Blob([buildOptimizedViewerHtml(manifest.title, JSON.stringify(manifest))], { type: 'text/html' });
+            const htmlPath2 = await uploadBlobToCompanion(htmlBlob2, 'index.html');
+            zipFiles2.push({ path: htmlPath2, filename: 'index.html' });
 
-            const blob = await zip.generateAsync({ type: 'blob' });
+            const blob = await createZipViaCompanion(zipFiles2);
             const link = document.createElement('a');
             const _byIdZipUrl = URL.createObjectURL(blob);
             logger.registerBlobUrl(_byIdZipUrl, 'other', 'exportService:exportProjectById:zip');
