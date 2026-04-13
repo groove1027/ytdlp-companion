@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, Suspense } from 'react';
 import { ProjectConfig, CharacterDraft, ScriptModeState } from '../types';
-import { getCloudinaryConfig, getKieKey, getApimartKey } from '../services/apiService';
+import { getKieKey, getApimartKey } from '../services/apiService';
 import { lazyRetry } from '../utils/retryImport';
 
 // [v4.5] CharacterMode/RemakeMode 주석처리됨 - 추후 복원 가능
@@ -72,11 +72,6 @@ const ConfigForm: React.FC<ConfigFormProps> = ({
     //     missing.push("Remove.bg API Key (선택: 고품질 누끼 자동화)");
     // }
 
-    const cloudConfig = getCloudinaryConfig();
-    if (!cloudConfig.cloudName || !cloudConfig.uploadPreset) {
-        missing.push("Cloudinary (필수: 이미지 전송용)");
-    }
-    
     setMissingKeys(missing);
   }, []);
 

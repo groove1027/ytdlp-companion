@@ -1,6 +1,6 @@
 
-// [v2.0 Phase 3] 영구 저장 — uploadMediaPermanent 사용 (Cloudinary 강제, 터널 X)
-import { uploadMediaPermanent as uploadMediaToHosting, uploadRemoteUrlToCloudinary } from './uploadService';
+// [v3.1] 영구 저장 — 컴패니언 터널 사용 (Cloudinary 제거)
+import { uploadMediaToHosting, uploadRemoteUrlToCloudinary } from './uploadService';
 import { dataURLtoFile } from '../utils/fileHelpers';
 import { logger } from './LoggerService';
 import type { Scene } from '../types';
@@ -76,13 +76,17 @@ export const persistImage = async (imageData: string): Promise<string> => {
     if ((imageData.startsWith('http://') || imageData.startsWith('https://')) && isTempUrl(imageData)) {
         logger.info(`[persistImage] 임시 URL 감지, Cloudinary 영구화 시도: ${imageData.substring(0, 80)}...`);
 
-        // 1순위: Cloudinary 원격 URL 업로드 (서버→서버)
+        // 1순위: 컴패니언 터널 프록시 (원격 URL → fetch → 터널 업로드)
         try {
-            const cloudinaryUrl = await uploadRemoteUrlToCloudinary(imageData);
-            logger.info(`[persistImage] 임시 URL → Cloudinary 영구화 성공`);
-            return cloudinaryUrl;
+            const proxiedUrl = await uploadRemoteUrlToCloudinary(imageData);
+            // 터널 프록시가 원본 URL을 그대로 반환한 경우 → 실패로 간주하여 2순위로 이동
+            if (proxiedUrl !== imageData) {
+                logger.info(`[persistImage] 임시 URL → 터널 프록시 영구화 성공`);
+                return proxiedUrl;
+            }
+            logger.warn(`[persistImage] 터널 프록시 미가용 → 브라우저 fetch 시도`);
         } catch (e1) {
-            logger.warn(`[persistImage] Cloudinary 원격 업로드 실패, 브라우저 fetch 시도`, e1);
+            logger.warn(`[persistImage] 터널 프록시 실패, 브라우저 fetch 시도`, e1);
         }
 
         // 2순위: 브라우저 직접 fetch → blob → File → upload

@@ -4649,10 +4649,6 @@ const VideoAnalysisRoom: React.FC = () => {
                 arr.push(upload.cleanup);
                 tunnelCleanupsByKeyRef.current.set(sourceCacheKey, arr);
                 console.log(`[VideoAnalysis] 영상 ${fi + 1}/${uploadedFiles.length} 업로드 성공 (${upload.source}, ${(uploadedFiles[fi].size / 1024 / 1024).toFixed(1)}MB)`);
-                // (Codex 프론트 2차 Low) 큰 파일이 Cloudinary 폴백된 경우 사용자 안내
-                if (upload.source === 'cloudinary' && uploadedFiles[fi].size > 50 * 1024 * 1024 && fi === 0) {
-                  showToast('💡 컴패니언 v2.0+ 설치 시 더 빠른 업로드와 무제한 영상 분석이 가능합니다', 6000);
-                }
               } catch (e) {
                 if (abortCtrl.signal.aborted) throw new DOMException('분석이 취소되었습니다.', 'AbortError');
                 if (isVideoAnalysisSizeLimitError(e)) throw e;
@@ -5183,7 +5179,7 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
           // 이제는 화자 분리 없이 Gemini 단독 분석으로 진행 (정확도 저하 가능하지만 분석 자체는 수행)
           const errMsg = e instanceof Error ? e.message : String(e);
           console.warn('[Diarization] 전사 실패 — 화자 분리 없이 분석 계속 진행:', errMsg);
-          showToast('⚠️ 음성 전사에 실패하여 화자 분리 없이 분석합니다. Cloudinary 설정을 확인해주세요.', 6000);
+          showToast('⚠️ 음성 전사에 실패하여 화자 분리 없이 분석합니다. 컴패니언 연결을 확인해주세요.', 6000);
         }
       } else if (diarizePresets.includes(preset) && hasV1betaVideo) {
         console.log(`[Diarization] ⚡ Gemini v1beta 오디오 직접 분석 — 화자분리 스킵 (30~45초 절감)${hasTimedTranscript ? ' (타임드 자막도 보조 참조)' : ''}`);
@@ -6004,8 +6000,8 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
           // 원문 폴백 토스트는 위에서 이미 표시
         } else if (isVideoSizeError) {
           showToast(rawMsg.replace(/\n+/g, ' '), 9000);
-        } else if (rawMsg.includes('Cloudinary') || rawMsg.includes('업로드')) {
-          showToast('영상 업로드에 실패했습니다. 파일 크기를 줄이거나 YouTube 링크를 사용해주세요.', 6000);
+        } else if (rawMsg.includes('컴패니언') || rawMsg.includes('헬퍼') || rawMsg.includes('업로드')) {
+          showToast('영상 업로드에 실패했습니다. 컴패니언 연결을 확인하거나 YouTube 링크를 사용해주세요.', 6000);
         } else if (rawMsg.includes('API 키') || rawMsg.includes('Evolink')) {
           showToast('AI 서비스 연결에 문제가 있습니다. API 설정을 확인해주세요.', 6000);
         } else if (isNetworkError || isTimeoutError) {

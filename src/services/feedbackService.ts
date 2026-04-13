@@ -1,6 +1,6 @@
 
 import { FeedbackData } from '../types';
-import { getCloudinaryConfig, monitoredFetch } from './apiService';
+import { monitoredFetch } from './apiService';
 
 /** 민감 정보 sanitize (URL 쿼리, JSON 키-값, Bearer 토큰) */
 const sanitizeString = (s: string | undefined): string | undefined => {
@@ -11,88 +11,31 @@ const sanitizeString = (s: string | undefined): string | undefined => {
         .replace(/Bearer\s+[A-Za-z0-9\-._~+/]+=*/gi, 'Bearer ***');
 };
 
-/** 디버그 로그 텍스트 → Cloudinary 업로드 → URL 반환 */
-async function uploadDebugLogToCloudinary(text: string): Promise<string> {
-    const { cloudName, uploadPreset } = getCloudinaryConfig();
-    if (!cloudName || !uploadPreset) {
-        throw new Error('Cloudinary 설정 없음 — 디버그 로그 업로드 불가');
-    }
-
-    const blob = new Blob([text], { type: 'text/plain' });
-    const formData = new FormData();
-    formData.append('file', blob, 'debug-log.txt');
-    formData.append('upload_preset', uploadPreset);
-    formData.append('folder', 'feedback-debug-logs');
-    formData.append('resource_type', 'raw');
-
-    const res = await monitoredFetch(`https://api.cloudinary.com/v1_1/${cloudName}/raw/upload`, {
-        method: 'POST',
-        body: formData,
-    });
-
-    if (!res.ok) {
-        throw new Error(`Cloudinary debug log upload failed: ${res.status}`);
-    }
-
-    const data = await res.json() as { secure_url: string };
-    return data.secure_url;
-}
-
-/** 스크린샷 base64 → Cloudinary 업로드 → URL 반환 */
-async function uploadScreenshotToCloudinary(base64DataUri: string): Promise<string> {
-    const { cloudName, uploadPreset } = getCloudinaryConfig();
-    if (!cloudName || !uploadPreset) {
-        throw new Error('Cloudinary 설정 없음 — 스크린샷 업로드 불가');
-    }
-
-    const formData = new FormData();
-    formData.append('file', base64DataUri);
-    formData.append('upload_preset', uploadPreset);
-    formData.append('folder', 'feedback-screenshots');
-
-    const res = await monitoredFetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, {
-        method: 'POST',
-        body: formData,
-    });
-
-    if (!res.ok) {
-        throw new Error(`Cloudinary upload failed: ${res.status}`);
-    }
-
-    const data = await res.json() as { secure_url: string };
-    return data.secure_url;
-}
-
 export interface FeedbackResult {
     issueNumber: number;
     issueUrl: string;
 }
 
 export const submitFeedback = async (data: FeedbackData): Promise<FeedbackResult> => {
-    // 1. 스크린샷이 있으면 Cloudinary에 업로드
+    // [v3.1] 스크린샷은 base64 데이터 URI로 직접 전달 (Cloudinary/터널 불필요)
+    // GitHub Issue body에 인라인되므로 영구 보존됨
     let screenshotUrls: string[] = [];
     if (data.screenshots && data.screenshots.length > 0) {
-        const uploads = data.screenshots.map((s) =>
-            uploadScreenshotToCloudinary(s.base64).catch(() => null)
-        );
-        const results = await Promise.all(uploads);
-        screenshotUrls = results.filter((url): url is string => url !== null);
+        screenshotUrls = data.screenshots.map((s) => s.base64);
     }
 
-    // 2. 디버그 로그가 35000자를 초과하면 Cloudinary에 전체 로그 업로드
+    // 디버그 로그가 35000자를 초과하면 잘라서 보냄 (외부 업로드 없음)
     let debugLogUrl: string | undefined;
     let debugLogs = data.debugLogs;
     const DEBUG_LOG_THRESHOLD = 35000;
     if (debugLogs && debugLogs.length > DEBUG_LOG_THRESHOLD) {
-        debugLogUrl = await uploadDebugLogToCloudinary(debugLogs).catch(() => undefined);
-        const suffix = debugLogUrl ? `\n... (전체 로그: ${debugLogUrl})` : `\n... (${debugLogs.length - DEBUG_LOG_THRESHOLD}자 생략)`;
-        debugLogs = debugLogs.substring(0, DEBUG_LOG_THRESHOLD) + suffix;
+        debugLogs = debugLogs.substring(0, DEBUG_LOG_THRESHOLD) + `\n... (${debugLogs.length - DEBUG_LOG_THRESHOLD}자 생략)`;
     }
 
-    // 2b. 자동 스크린샷이 있으면 Cloudinary에 업로드
+    // 자동 스크린샷도 base64 그대로 전달
     let autoScreenshotUrl: string | undefined;
     if (data.autoScreenshotBase64) {
-        autoScreenshotUrl = await uploadScreenshotToCloudinary(data.autoScreenshotBase64).catch(() => undefined);
+        autoScreenshotUrl = data.autoScreenshotBase64;
     }
 
     // 3. Pages Function (/api/feedback) 으로 전송 → GitHub Issue 자동 생성

@@ -15,8 +15,6 @@ const DEFAULT_TYPECAST_KEY = '';
 const DEFAULT_COUPANG_ACCESS_KEY = '';
 const DEFAULT_COUPANG_SECRET_KEY = '';
 const DEFAULT_COUPANG_PROXY_URL = '';
-const DEFAULT_CLOUD_NAME = '';
-const DEFAULT_UPLOAD_PRESET = '';
 // [FEEDBACK] Google Apps Script Web App URL — 개발자가 한 번 설정
 // 설정 방법: Google Sheets → 확장 프로그램 → Apps Script → doPost 배포 → URL 붙여넣기
 const DEFAULT_FEEDBACK_URL = 'https://script.google.com/macros/s/AKfycbzbZTaYcOM7WBPHNvuwA-mDV3xQf-mowSwcehf6QY2LTMDnH-Tj9UsriXHSMc_n0ECFLg/exec';
@@ -150,18 +148,11 @@ export const getVmakeSk = (): string => {
     return sanitizeKey(key);
 };
 
-export const getCloudinaryConfig = () => {
-    return {
-        cloudName: sanitizeKey(localStorage.getItem('CUSTOM_CLOUD_NAME') || DEFAULT_CLOUD_NAME),
-        uploadPreset: sanitizeKey(localStorage.getItem('CUSTOM_UPLOAD_PRESET') || DEFAULT_UPLOAD_PRESET)
-    };
-};
-
 export const getFeedbackUrl = (): string => {
     return DEFAULT_FEEDBACK_URL;
 };
 
-export const saveApiKeys = (kie: string, cloudName?: string, uploadPreset?: string, gemini?: string, apimart?: string, removeBg?: string, xai?: string, evolink?: string, youtubeApiKey?: string, typecast?: string) => {
+export const saveApiKeys = (kie: string, _cloudName?: string, _uploadPreset?: string, gemini?: string, apimart?: string, removeBg?: string, xai?: string, evolink?: string, youtubeApiKey?: string, typecast?: string) => {
     // Save raw input, but sanitized on retrieval
     if (kie.trim()) localStorage.setItem('CUSTOM_KIE_KEY', kie.trim());
     else localStorage.removeItem('CUSTOM_KIE_KEY');
@@ -177,12 +168,6 @@ export const saveApiKeys = (kie: string, cloudName?: string, uploadPreset?: stri
     } else {
         localStorage.removeItem('CUSTOM_REMOVE_BG_KEY');
     }
-
-    if (cloudName?.trim()) localStorage.setItem('CUSTOM_CLOUD_NAME', cloudName.trim());
-    else localStorage.removeItem('CUSTOM_CLOUD_NAME');
-
-    if (uploadPreset?.trim()) localStorage.setItem('CUSTOM_UPLOAD_PRESET', uploadPreset.trim());
-    else localStorage.removeItem('CUSTOM_UPLOAD_PRESET');
 
     if (xai && xai.trim()) localStorage.setItem('CUSTOM_XAI_KEY', xai.trim());
     else localStorage.removeItem('CUSTOM_XAI_KEY');
@@ -222,8 +207,6 @@ export const getStoredKeys = () => {
         kie: localStorage.getItem('CUSTOM_KIE_KEY') || '',
         apimart: localStorage.getItem('CUSTOM_APIMART_KEY') || '',
         removeBg: localStorage.getItem('CUSTOM_REMOVE_BG_KEY') || '',
-        cloudName: localStorage.getItem('CUSTOM_CLOUD_NAME') || '',
-        uploadPreset: localStorage.getItem('CUSTOM_UPLOAD_PRESET') || '',
         xai: localStorage.getItem('CUSTOM_XAI_KEY') || '',
         evolink: localStorage.getItem('CUSTOM_EVOLINK_KEY') || '',
         youtubeApiKey: localStorage.getItem('CUSTOM_YOUTUBE_API_KEY') || '',
@@ -240,8 +223,6 @@ export const getStoredKeys = () => {
 const SETTINGS_KEY_MAP: [string, string][] = [
     ['CUSTOM_KIE_KEY', 'kie'],
     ['CUSTOM_EVOLINK_KEY', 'evolink'],
-    ['CUSTOM_CLOUD_NAME', 'cloudName'],
-    ['CUSTOM_UPLOAD_PRESET', 'uploadPreset'],
     ['CUSTOM_APIMART_KEY', 'apimart'],
     ['CUSTOM_REMOVE_BG_KEY', 'removeBg'],
     ['CUSTOM_XAI_KEY', 'xai'],

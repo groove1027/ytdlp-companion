@@ -902,7 +902,6 @@ class LoggerService {
         ['Evolink', 'CUSTOM_EVOLINK_KEY'],
         ['KIE', 'CUSTOM_KIE_KEY'],
         ['YouTube', 'CUSTOM_YOUTUBE_API_KEY'],
-        ['Cloudinary', 'CUSTOM_CLOUD_NAME'],
         ['Remove.bg', 'CUSTOM_REMOVE_BG_KEY'],
         ['Typecast', 'CUSTOM_TYPECAST_KEY'],
         ['xAI', 'CUSTOM_XAI_KEY'],

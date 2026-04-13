@@ -25,8 +25,6 @@ interface DetectedKey {
 const SERVICE_OPTIONS = [
     { value: 'evolink', label: 'Evolink AI' },
     { value: 'kie', label: 'KIE' },
-    { value: 'cloudName', label: 'Cloud Name' },
-    { value: 'uploadPreset', label: 'Upload Preset' },
     { value: 'typecast', label: 'Typecast' },
     { value: 'youtubeApiKey', label: 'YouTube API' },
     { value: 'removeBg', label: 'Remove.bg' },
@@ -38,8 +36,6 @@ const SERVICE_OPTIONS = [
 const EXPORT_MAP: [string, string][] = [
     ['EVOLINK', 'evolink'],
     ['KIE', 'kie'],
-    ['CLOUD_NAME', 'cloudName'],
-    ['UPLOAD_PRESET', 'uploadPreset'],
     ['TYPECAST', 'typecast'],
     ['YOUTUBE_API_KEY', 'youtubeApiKey'],
     ['REMOVE_BG', 'removeBg'],
@@ -52,9 +48,6 @@ const EXPORT_MAP: [string, string][] = [
 const LABEL_MAP: [RegExp, string][] = [
     [/evolink/i, 'evolink'],
     [/\bkie\b/i, 'kie'],
-    [/cloud[\s_.-]?name/i, 'cloudName'],
-    [/upload[\s_.-]?preset/i, 'uploadPreset'],
-    [/cloudinary/i, 'cloudName'],
     [/typecast/i, 'typecast'],
     [/youtube|google[\s_.-]?api/i, 'youtubeApiKey'],
     [/remove[\s_.-]?bg|배경[\s_.-]?제거/i, 'removeBg'],
@@ -77,7 +70,7 @@ const maskKey = (key: string): string => {
 };
 
 // 텍스트에서 키-like 토큰 여부 판별 (라벨 단어 제외)
-const LABEL_WORDS = /^(evolink|kie|cloudinary|typecast|youtube|google|cloud|upload|preset|api|key|name|설정|필수|선택|ai|tts|stt)$/i;
+const LABEL_WORDS = /^(evolink|kie|typecast|youtube|google|api|key|name|설정|필수|선택|ai|tts|stt)$/i;
 const isKeyToken = (s: string): boolean => s.length >= 8 && /^[A-Za-z0-9\-_]+$/.test(s) && !LABEL_WORDS.test(s);
 
 /**
@@ -171,13 +164,7 @@ const smartDetect = (text: string): DetectedKey[] => {
             results.push({ value, service, method: service ? 'label' : 'guess' });
         }
 
-        // Cloudinary 특수: [Cloudinary] 아래 두 줄(cloudName, uploadPreset)
-        // pendingLabel에 cloudinary가 있고 다음 줄도 키면 유지
-        const nextLine = li + 1 < lines.length ? lines[li + 1] : '';
-        const nextTokens = nextLine ? nextLine.split(/[\s,\t|"']+/).filter(Boolean).filter(isKeyToken) : [];
-        if (!(pendingLabel && /cloudinary/i.test(pendingLabel) && nextTokens.length > 0)) {
-            pendingLabel = '';
-        }
+        pendingLabel = '';
     }
 
     return assignRemaining(results, assigned);
@@ -214,22 +201,6 @@ const assignRemaining = (entries: DetectedKey[], assigned: Set<string>): Detecte
         }
     }
 
-    // 짧은 토큰(8~20자, sk-/AIza 아닌): cloudName → uploadPreset 순서
-    const shortOrder = ['cloudName', 'uploadPreset'];
-    for (const entry of entries) {
-        if (entry.service) continue;
-        if (entry.value.length <= 20 && !entry.value.startsWith('sk-') && !entry.value.startsWith('AIza')) {
-            for (const svc of shortOrder) {
-                if (!assigned.has(svc)) {
-                    entry.service = svc;
-                    entry.method = 'guess';
-                    assigned.add(svc);
-                    break;
-                }
-            }
-        }
-    }
-
     return entries;
 };
 
@@ -237,7 +208,7 @@ const assignRemaining = (entries: DetectedKey[], assigned: Set<string>): Detecte
 
 const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
     const { requireAuth } = useAuthGuard();
-    const [keys, setKeys] = useState({ kie: '', cloudName: '', uploadPreset: '', gemini: '', apimart: '', removeBg: '', xai: '', evolink: '', youtubeApiKey: '', typecast: '', vmakeAk: '', vmakeSk: '' });
+    const [keys, setKeys] = useState({ kie: '', gemini: '', apimart: '', removeBg: '', xai: '', evolink: '', youtubeApiKey: '', typecast: '', vmakeAk: '', vmakeSk: '' });
     const [youtubeKeyPool, setYoutubeKeyPool] = useState<string[]>([]);
     const [newYoutubeKey, setNewYoutubeKey] = useState('');
     const [showPassword, setShowPassword] = useState(false);
@@ -323,8 +294,6 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
             const stored = getStoredKeys();
             setKeys({
                 kie: stored.kie,
-                cloudName: stored.cloudName,
-                uploadPreset: stored.uploadPreset,
                 gemini: stored.gemini,
                 apimart: stored.apimart,
                 removeBg: stored.removeBg,
@@ -419,7 +388,7 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
             : youtubeKeyPool;
         saveYoutubeApiKeyPool(finalYoutubePool);
         const primaryYoutubeKey = finalYoutubePool.length > 0 ? finalYoutubePool[0] : '';
-        saveApiKeys(keys.kie, keys.cloudName, keys.uploadPreset, undefined, keys.apimart, keys.removeBg, keys.xai, keys.evolink, primaryYoutubeKey, keys.typecast);
+        saveApiKeys(keys.kie, undefined, undefined, undefined, keys.apimart, keys.removeBg, keys.xai, keys.evolink, primaryYoutubeKey, keys.typecast);
         saveVmakeKeys(keys.vmakeAk || '', keys.vmakeSk || '');
     };
 
@@ -428,8 +397,6 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
         const stored = getStoredKeys();
         if (stored.evolink !== keys.evolink
             || stored.kie !== keys.kie
-            || stored.cloudName !== keys.cloudName
-            || stored.uploadPreset !== keys.uploadPreset
             || stored.apimart !== keys.apimart
             || stored.removeBg !== keys.removeBg
             || stored.xai !== keys.xai
@@ -613,7 +580,7 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
                                     )}
                                 </div>
                                 <p className="text-xs text-gray-400 leading-relaxed">
-                                    켜면 이미지·영상 업로드가 <strong className="text-purple-300">컴패니언 터널만 거치고</strong> Cloudinary로 가지 않습니다.
+                                    켜면 이미지·영상 업로드가 <strong className="text-purple-300">컴패니언 터널만 거치며</strong> 외부 서버로 전송되지 않습니다.
                                     저작권 걱정되는 영상, 가족 사진, 민감한 자료를 분석할 때 사용하세요.
                                 </p>
                             </div>
@@ -673,7 +640,7 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
                             <div className="mt-3 px-3 py-2 bg-purple-950/40 border border-purple-500/20 rounded-lg flex items-start gap-2">
                                 <span className="text-purple-300 text-base shrink-0">✓</span>
                                 <p className="text-xs text-purple-200/90 leading-relaxed">
-                                    컴패니언 가용. 업로드는 25분 TTL 임시 터널 URL로 처리되며 Cloudinary에는 어떤 것도 저장되지 않습니다.
+                                    컴패니언 가용. 업로드는 25분 TTL 임시 터널 URL로 처리됩니다.
                                 </p>
                             </div>
                         )}
@@ -728,20 +695,7 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ isOpen, onClose }) => {
                         <input type={showPassword ? "text" : "password"} value={keys.kie} onChange={(e) => setKeys({...keys, kie: e.target.value})} placeholder="Kie API Key" className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-base text-white" />
                     </div>
 
-                    {/* 3. Cloudinary */}
-                    <div className="space-y-3 pb-4 border-b border-gray-700">
-                        <div className="flex items-start justify-between">
-                            <div className="flex flex-col">
-                                <h3 className="text-base font-bold text-green-400 uppercase tracking-wider">☁️ CLOUDINARY</h3>
-                                <span className="text-sm text-gray-400">이미지/영상 업로드 호스팅 (영상 생성 시 필수)</span>
-                            </div>
-                            <a href="https://console.cloudinary.com/pm/developer-dashboard" target="_blank" rel="noopener noreferrer" className="shrink-0 ml-3 px-2.5 py-1 bg-green-600/20 hover:bg-green-600/40 border border-green-500/30 text-green-400 text-xs font-bold rounded-lg transition-all flex items-center gap-1">대시보드 ↗</a>
-                        </div>
-                        <div className="grid grid-cols-2 gap-3">
-                            <input type="text" value={keys.cloudName} onChange={(e) => setKeys({...keys, cloudName: e.target.value})} placeholder="Cloud Name" className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-base text-white" />
-                            <input type="text" value={keys.uploadPreset} onChange={(e) => setKeys({...keys, uploadPreset: e.target.value})} placeholder="Upload Preset" className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-base text-white" />
-                        </div>
-                    </div>
+                    {/* Cloudinary 제거됨 — 컴패니언 터널로 대체 (#1163) */}
                 </div>
 
                 {/* ── Vmake AI (자막/워터마크 제거) ── */}
