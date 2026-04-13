@@ -1,5 +1,9 @@
 {
   "permissions": {
+    "deny": [
+      "mcp__claude-in-chrome__*",
+      "mcp__computer-use__*"
+    ],
     "allow": [
       "Bash(npx tsc --noEmit 2>&1)",
       "Bash(npx tsc --noEmit 2>&1 && echo \"BUILD OK\")",
@@ -112,7 +116,10 @@
       "Bash(which tmux 2>/dev/null && echo \"INSTALLED\" || brew install tmux 2>&1 | tail -5)",
       "Bash(claude doctor 2>&1)",
       "Bash(cd /Users/mac_mini/Downloads/all-in-one-production-Construction/src && npx vite --open)",
-      "Bash(git remote:*)"
+      "Bash(git remote:*)",
+      "Bash(sed -i '' 's|curl -sI \"https://all-in-one-production.pages.dev\"|curl -s -o /dev/null -w \"%{http_code}\" -L \"https://all-in-one-production.pages.dev\"|' .claude/hooks/post-deploy-verify.sh)",
+      "Bash(bash .claude/hooks/post-deploy-verify.sh --check-web-deploy)",
+      "Bash(echo \"exit code: $?\")"
     ]
   }
 }
