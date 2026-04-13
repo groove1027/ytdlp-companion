@@ -79,7 +79,8 @@ bash .claude/hooks/post-deploy-verify.sh --check-comment "코멘트 전문"
 │  STEP 3.6: Playwright 추가 검증 (필요 시)                     │
 │          → 컴패니언 연동 기능은 curl + Playwright로 검증       │
 │          → NLE 내보내기는 파일 내용물 검증 (unzip, ffprobe)    │
-│          → Computer Use 사용 금지 — 한 번도 제대로 작동 안 함  │
+│          → Computer Use / Claude in Chrome 사용 금지          │
+│          → 브라우저 검증은 반드시 Playwright만 사용            │
 │  STEP 4: 커밋 + 푸시 + Cloudflare 배포                       │
 │  STEP 5: 이슈에 친절한 코멘트 달기                            │
 │  STEP 6: 이슈 닫기                                           │
@@ -102,11 +103,13 @@ bash .claude/hooks/post-deploy-verify.sh --check-comment "코멘트 전문"
 
 ---
 
-# 🔴🔴🔴 Playwright 실제 동작 검증 강제 규칙 (Computer Use 폐기) 🔴🔴🔴
+# 🔴🔴🔴 Playwright 실제 동작 검증 강제 규칙 (Computer Use / Claude in Chrome 전면 폐기) 🔴🔴🔴
 
 > **Computer Use(mcp__computer-use__*)는 사용 금지 — Chrome 티어 제한으로 한 번도 제대로 작동하지 않음.**
-> **모든 실제 동작 검증은 Playwright E2E 테스트로 수행한다.**
+> **Claude in Chrome(mcp__claude-in-chrome__*)도 사용 금지 — 스크린샷 실패, JS 실행 불가 등 안정성 0.**
+> **모든 실제 동작 검증은 반드시 Playwright E2E 테스트로만 수행한다.**
 > **컴패니언 연동은 curl + Playwright 조합으로 검증한다.**
+> **API 레벨 검증은 curl로 직접 요청 + 응답 코드 확인.**
 
 ## Playwright 검증 프로세스
 
@@ -150,6 +153,7 @@ ffprobe clip.mp4                       # 트리밍된 영상 검증
 
 ### 금지 사항
 - ❌ `mcp__computer-use__*` 도구 사용 (Chrome read 티어로 클릭/타이핑 불가)
+- ❌ `mcp__claude-in-chrome__*` 도구 사용 (스크린샷 실패, JS 실행 불가 — Playwright만 사용)
 - ❌ Playwright 없이 "화면에서 확인했다"고 거짓 보고
 - ❌ curl 응답만 보고 "동작한다"고 단정 (파일 내용물까지 검증 필수)
 
@@ -658,7 +662,7 @@ project-root/
 - **작업 전**: 수정할 함수명/상태명을 grep 전체 검색 → 영향 받는 파일 목록 작성 → 목록 완성 전 코딩 시작 금지
 - **작업 중**: 목록의 모든 파일을 빠짐없이 수정 + 연쇄 영향 확인
 - **작업 후**: tsc + vite build + grep 재검색으로 빠진 곳 없는지 증명
-- **UI 변경 작업**: Puppeteer MCP로 localhost:5173 접속 → 실제 동작 + 스크린샷 검증 필수
+- **UI 변경 작업**: Playwright E2E로 localhost:5173 또는 프로덕션 접속 → 실제 동작 + 스크린샷 검증 필수
 - **검증 미완료 상태에서 "완료"라고 보고하면 안 된다**
 - **상세 절차는 `memory/MEMORY.md`의 "영향 범위 전수 조사" 섹션 참조**
 - **Hook이 tsc 에러 시 자동 차단함 (exit 1) — 에러 무시 불가**
