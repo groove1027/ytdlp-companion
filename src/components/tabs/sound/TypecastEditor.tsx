@@ -1,5 +1,5 @@
 import React, { useRef, useCallback, useEffect, useState, useMemo } from 'react';
-import JSZip from 'jszip';
+// [v2.5] JSZip import 제거 — 컴패니언 ZIP 생성으로 전환됨
 import { useSoundStudioStore, registerAudio, unregisterAudio } from '../../../stores/soundStudioStore';
 import { logger } from '../../../services/LoggerService';
 import { mergeAudioFiles, splitBySentenceEndings, ensurePremiereCompatibleWav } from '../../../services/ttsService';
@@ -1793,31 +1793,34 @@ const TypecastEditor: React.FC<TypecastEditorProps> = ({ onGenerateLine, isGener
                         setTimeout(() => URL.revokeObjectURL(wavUrl), 3000);
                         downloadSrtForLines(audioLines, bundleName);
                       } else if (dlMerge === 'split') {
-                        // 분할: JSZip으로 각 문장 별 파일
-                        const zip = new JSZip();
-                        let addedCount = 0;
+                        // [v2.5] 분할: 컴패니언 ZIP으로 각 문장 별 파일
+                        const { createZipViaCompanion } = await import('../../../services/companion/zipService');
+                        const { uploadBlobToCompanion } = await import('../../../services/companion/tunnelClient');
+                        const zipEntries: Array<{ path: string; filename: string }> = [];
                         for (let i = 0; i < audioLines.length; i++) {
                           const line = audioLines[i];
                           const fileName = makeName(line, i, actualExt);
                           try {
                             const wavBlob = await toPremierBlob(line.audioUrl as string);
-                            zip.file(fileName, wavBlob);
-                            addedCount++;
+                            const tempPath = await uploadBlobToCompanion(wavBlob, fileName);
+                            zipEntries.push({ path: tempPath, filename: fileName });
                           } catch (e) {
                             logger.trackSwallowedError('TypecastEditor:fetchAudioForZip', e);
                             console.warn(`[Download] Failed to fetch audio for line ${i}`);
                           }
                         }
-                        if (addedCount === 0) {
+                        if (zipEntries.length === 0) {
                           setDlError('오디오 파일을 가져올 수 없습니다.');
                           setDlDownloading(false);
                           return;
                         }
                         const srtContent = buildSrtContentForLines(audioLines);
                         if (srtContent) {
-                          zip.file('narration.srt', '\uFEFF' + srtContent);
+                          const srtBlob = new Blob(['\uFEFF' + srtContent], { type: 'text/plain' });
+                          const srtPath = await uploadBlobToCompanion(srtBlob, 'narration.srt');
+                          zipEntries.push({ path: srtPath, filename: 'narration.srt' });
                         }
-                        const content = await zip.generateAsync({ type: 'blob' });
+                        const content = await createZipViaCompanion(zipEntries);
                         const charName = (activeSpeaker?.name || '나레이션').replace(/[/\\?%*:|"<>\s]/g, '');
                         const a = document.createElement('a');
                         const zipUrl = URL.createObjectURL(content);
