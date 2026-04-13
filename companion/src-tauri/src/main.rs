@@ -104,11 +104,23 @@ fn main() {
                 println!("[Companion] 로그인 시 자동 시작 활성화됨");
             }
 
-            // [v2.4] 항상 트레이만 — 창은 숨김 상태로 시작
-            // 사용자가 트레이 "상태 보기"를 클릭하면 그때 창 표시
-            // --hidden 플래그 여부와 관계없이 항상 숨김
-            if let Some(win) = app.get_webview_window("main") {
-                let _ = win.hide();
+            // [v2.4] 트레이 전용 — 창은 짧은 초기화 후 즉시 숨김
+            // visible:true로 시작(CI 호환) → setup 직후 숨김(사용자에게 안 보임)
+            // --hidden 플래그가 있으면 즉시 숨김, 없으면 잠깐 초기화 후 숨김
+            if std::env::args().any(|a| a == "--hidden") {
+                if let Some(win) = app.get_webview_window("main") {
+                    let _ = win.hide();
+                }
+            } else {
+                // CI 스모크 테스트 호환: 잠깐 창을 띄운 뒤 숨김
+                // (Tauri가 GUI 초기화를 완료해야 panic 안 남)
+                let app_handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(1500));
+                    if let Some(win) = app_handle.get_webview_window("main") {
+                        let _ = win.hide();
+                    }
+                });
             }
             // [v2.0.4 hotfix — Windows critical] tray/menu 생성 실패가 setup의 ?로
             // propagate되면 .build().expect()에서 process panic → wrapper/autostart가
