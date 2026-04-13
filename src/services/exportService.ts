@@ -152,6 +152,19 @@ export const downloadAllMedia = async () => {
 
         if (hasVideo && s.videoUrl!.startsWith('http')) {
             zipFiles.push({ url: s.videoUrl!, filename: `videos/${getSafeFilename(sceneIndex, getSceneNarrationText(s), 'mp4')}` });
+            // [FIX Codex-18] 영상 다운로드 실패 시 이미지 폴백 — 이미지도 함께 포함
+            if (s.imageUrl) {
+                if (s.imageUrl.startsWith('http') && !aspectRatio) {
+                    zipFiles.push({ url: s.imageUrl, filename: `images/${getSafeFilename(sceneIndex, getSceneNarrationText(s), 'jpg')}` });
+                } else {
+                    const imgBlob = await fetchImageBlob(s.imageUrl, aspectRatio, cropBlobToAspectRatio);
+                    if (imgBlob) {
+                        const fn = `images/${getSafeFilename(sceneIndex, getSceneNarrationText(s), 'jpg')}`;
+                        const tp = await uploadBlobToCompanion(imgBlob, fn.replace('images/', ''));
+                        zipFiles.push({ path: tp, filename: fn });
+                    }
+                }
+            }
         } else if (hasVideo) {
             try {
                 const res = await fetch(s.videoUrl!);
@@ -160,6 +173,14 @@ export const downloadAllMedia = async () => {
                     const fn = `videos/${getSafeFilename(sceneIndex, getSceneNarrationText(s), 'mp4')}`;
                     const tp = await uploadBlobToCompanion(blob, fn.replace('videos/', ''));
                     zipFiles.push({ path: tp, filename: fn });
+                } else if (s.imageUrl) {
+                    // 영상 실패 → 이미지 폴백
+                    const imgBlob = await fetchImageBlob(s.imageUrl, aspectRatio, cropBlobToAspectRatio);
+                    if (imgBlob) {
+                        const fn = `images/${getSafeFilename(sceneIndex, getSceneNarrationText(s), 'jpg')}`;
+                        const tp = await uploadBlobToCompanion(imgBlob, fn.replace('images/', ''));
+                        zipFiles.push({ path: tp, filename: fn });
+                    }
                 }
             } catch { /* skip */ }
         }
