@@ -76,13 +76,10 @@ bash .claude/hooks/post-deploy-verify.sh --check-comment "코멘트 전문"
 │          → 스크린샷을 Read로 열어서 사용자에게 보여주기        │
 │          → "버튼 클릭 → 결과물 생성" 전체 흐름 증명           │
 │          → 스크린샷 없이 STEP 3.6 진입 금지                   │
-│  STEP 3.6: Computer Use 실제 실행 검증 (Playwright와 별도!)  │
-│          → mcp__computer-use__request_access로 앱 권한 획득   │
-│          → mcp__computer-use__open_application으로 앱 실행    │
-│          → mcp__computer-use__screenshot으로 실제 화면 확인   │
-│          → 버튼 클릭 → 결과 확인까지 실제 GUI 동작 증명       │
-│          → Playwright E2E 실패/불가 시 Computer Use로 대체 가능│
-│          → 실제 화면 스크린샷을 사용자에게 보여줘야 통과       │
+│  STEP 3.6: Playwright 추가 검증 (필요 시)                     │
+│          → 컴패니언 연동 기능은 curl + Playwright로 검증       │
+│          → NLE 내보내기는 파일 내용물 검증 (unzip, ffprobe)    │
+│          → Computer Use 사용 금지 — 한 번도 제대로 작동 안 함  │
 │  STEP 4: 커밋 + 푸시 + Cloudflare 배포                       │
 │  STEP 5: 이슈에 친절한 코멘트 달기                            │
 │  STEP 6: 이슈 닫기                                           │
@@ -105,65 +102,56 @@ bash .claude/hooks/post-deploy-verify.sh --check-comment "코멘트 전문"
 
 ---
 
-# 🔴🔴🔴 Computer Use 실제 실행 강제 규칙 (위반 시 작업 무효) 🔴🔴🔴
+# 🔴🔴🔴 Playwright 실제 동작 검증 강제 규칙 (Computer Use 폐기) 🔴🔴🔴
 
-> **코드 수정 후 반드시 Computer Use로 실제 앱에서 동작을 확인해야 한다.**
-> **Playwright E2E와 별개로, 실제 GUI 화면에서 동작하는지 눈으로 확인하는 단계다.**
-> **Computer Use 스크린샷 없이 "테스트 통과"라고 말하면 거짓 보고로 간주한다.**
+> **Computer Use(mcp__computer-use__*)는 사용 금지 — Chrome 티어 제한으로 한 번도 제대로 작동하지 않음.**
+> **모든 실제 동작 검증은 Playwright E2E 테스트로 수행한다.**
+> **컴패니언 연동은 curl + Playwright 조합으로 검증한다.**
 
-## Computer Use 필수 프로세스
+## Playwright 검증 프로세스
 
-### STEP 1: 앱 권한 획득 (세션 시작 시 1회)
-```
-mcp__computer-use__request_access({
-  apps: ["Google Chrome", "Finder", "Adobe Premiere Pro 2026", ...필요한 앱],
-  reason: "코드 수정 후 실제 앱에서 동작 검증",
-  clipboardRead: true,
-  clipboardWrite: true
-})
-```
-
-### STEP 2: 실제 앱 실행 + 화면 확인
-```
-// 1. 앱 열기
-mcp__computer-use__open_application({ app: "Google Chrome" })
-
-// 2. 현재 화면 스크린샷
-mcp__computer-use__screenshot()
-
-// 3. 실제 UI 조작 (클릭, 타이핑)
-mcp__computer-use__left_click({ coordinate: [x, y] })
-mcp__computer-use__type({ text: "입력 텍스트" })
-
-// 4. 결과 확인 스크린샷
-mcp__computer-use__screenshot({ save_to_disk: true })
+### 웹앱 UI 검증
+```ts
+// Playwright로 localhost:5173 접속 → 로그인 → UI 조작 → 결과 확인
+const { test, expect } = require('@playwright/test');
+test('기능 검증', async ({ page }) => {
+  await page.goto('http://localhost:5173');
+  // localStorage에 auth_token 주입 → reload
+  // UI 버튼 클릭 → waitForResponse → 결과 DOM 확인
+  // screenshot 저장 → Read로 사용자에게 보여주기
+});
 ```
 
-### STEP 3: 검증 완료 조건
-- ✅ 실제 앱 화면에서 수정된 기능이 정상 동작하는 스크린샷 제출
-- ✅ before/after 스크린샷으로 변화 증명
-- ✅ 에러가 있으면 에러 화면 스크린샷 + 수정 후 재확인
-- ✅ 스크린샷을 사용자에게 직접 보여줌
+### 컴패니언 연동 검증
+```bash
+# curl로 컴패니언 엔드포인트 직접 호출
+curl -s http://127.0.0.1:9876/health
+curl -s -X POST http://127.0.0.1:9876/api/scene-detect -d '...'
+curl -s -X POST http://127.0.0.1:9876/api/ffmpeg/cut -d @file.json
+# 결과 파일 ffprobe로 검증
+ffprobe -v quiet -print_format json -show_format -show_streams output.mp4
+```
 
-### Computer Use 활용 시나리오
-| 상황 | Computer Use 사용법 |
-|------|-------------------|
-| 웹앱 UI 검증 | Chrome 열기 → localhost 접속 → 버튼 클릭 → 결과 확인 |
-| Premiere 확장 테스트 | Premiere 열기 → 확장 패널 확인 → 모션 적용 → 결과 확인 |
-| CapCut 내보내기 검증 | CapCut 열기 → 파일 임포트 → 결과 확인 |
-| 컴패니언 앱 검증 | 컴패니언 실행 → Health check → 연동 테스트 |
-| 파일 탐색기 검증 | Finder에서 생성된 파일 확인 → 크기/내용 검증 |
+### NLE 내보내기 검증
+```bash
+# ZIP 파일 내용물 검증
+unzip -l output.zip                    # 파일 목록 확인
+grep '<ntsc>' project.xml              # NTSC 플래그 확인
+grep '<timebase>' project.xml          # FPS 확인
+ffprobe clip.mp4                       # 트리밍된 영상 검증
+```
 
-### Computer Use 도구 자동 승인 (settings.local.json에 설정됨)
-- 모든 `mcp__computer-use__*` 도구가 자동 승인됨
-- 앱별 접근 권한은 `request_access`로 세션 시작 시 1회 획득
-- 매번 사용자 승인 불필요 — 자동으로 실행됨
+### 검증 완료 조건
+- ✅ `npx playwright test` 실행 + 통과 로그
+- ✅ test-e2e/ 폴더에 스크린샷 저장
+- ✅ 스크린샷을 Read로 열어서 사용자에게 보여줌
+- ✅ 컴패니언 기능은 curl로 직접 호출 + 결과 검증
+- ✅ 파일 산출물은 ffprobe/unzip으로 내용물 검증
 
-### 금지 사항 (Computer Use 관련)
-- ❌ Computer Use 없이 "화면에서 확인했다"고 거짓 보고
-- ❌ 스크린샷 없이 "정상 동작한다"고 주장
-- ❌ Playwright만 돌리고 Computer Use 스킵
-- ❌ Computer Use 스크린샷을 사용자에게 안 보여주고 넘어감
+### 금지 사항
+- ❌ `mcp__computer-use__*` 도구 사용 (Chrome read 티어로 클릭/타이핑 불가)
+- ❌ Playwright 없이 "화면에서 확인했다"고 거짓 보고
+- ❌ curl 응답만 보고 "동작한다"고 단정 (파일 내용물까지 검증 필수)
 
 ---
 
