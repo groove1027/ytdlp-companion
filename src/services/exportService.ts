@@ -23,8 +23,6 @@ export const downloadImages = async () => {
     const { cropBlobToAspectRatio } = await import('../utils/fileHelpers');
     const aspectRatio = config?.aspectRatio;
 
-    const { default: JSZip } = await import('jszip');
-    const zip = new JSZip();
     const validScenes = scenes.filter(s => s.imageUrl);
     const total = validScenes.length;
 
@@ -32,49 +30,44 @@ export const downloadImages = async () => {
 
     setToast({ show: true, message: "이미지 저장 중...", current: 0, total: total });
 
+    // [v2.5] 컴패니언 ZIP 생성 — base64/CORS 문제 제거
+    const { createZipViaCompanion } = await import('./companion/zipService');
+    const { uploadBlobToCompanion } = await import('./companion/tunnelClient');
+    const zipFiles: Array<{ url?: string; path?: string; filename: string }> = [];
+
     await processSequentially(validScenes, 5, 20, async (s) => {
-        // [FIX #183] 비율 크롭 적용 위해 항상 Blob 경유
         const filename = getSafeFilename(scenes.indexOf(s), getSceneNarrationText(s), aspectRatio ? 'jpg' : 'png');
-        let blob: Blob | null = null;
 
-        if (s.imageUrl!.startsWith('data:image')) {
-            // base64 → Blob 변환
-            const arr = s.imageUrl!.split(',');
-            const mime = arr[0].match(/:(.*?);/)?.[1] || 'image/png';
-            const bstr = atob(arr[1]);
-            const u8 = new Uint8Array(bstr.length);
-            for (let i = 0; i < bstr.length; i++) u8[i] = bstr.charCodeAt(i);
-            blob = new Blob([u8], { type: mime });
+        if (s.imageUrl!.startsWith('http') && !aspectRatio) {
+            // URL + 크롭 불필요 → 컴패니언이 직접 다운로드
+            zipFiles.push({ url: s.imageUrl!, filename });
         } else {
-            // [FIX #150] 1차: 직접 fetch
-            try {
-                const res = await fetch(s.imageUrl!);
-                if (res.ok) blob = await res.blob();
-            } catch (e) { logger.trackSwallowedError('ExportService:downloadImages/directFetch', e); }
-            // [FIX #150] 2차: Cloudinary 프록시 경유
-            if (!blob) {
+            // base64 또는 크롭 필요 → Blob 경유
+            let blob: Blob | null = null;
+            if (s.imageUrl!.startsWith('data:image')) {
+                const arr = s.imageUrl!.split(',');
+                const mime = arr[0].match(/:(.*?);/)?.[1] || 'image/png';
+                const bstr = atob(arr[1]);
+                const u8 = new Uint8Array(bstr.length);
+                for (let i = 0; i < bstr.length; i++) u8[i] = bstr.charCodeAt(i);
+                blob = new Blob([u8], { type: mime });
+            } else {
                 try {
-                    const proxyUrl = await uploadRemoteUrlToCloudinary(s.imageUrl!);
-                    const res = await fetch(proxyUrl);
+                    const res = await fetch(s.imageUrl!);
                     if (res.ok) blob = await res.blob();
-                } catch (e) {
-                    console.error(`Failed to fetch image for scene ${s.id}`, e);
-                }
+                } catch (e) { logger.trackSwallowedError('ExportService:downloadImages/directFetch', e); }
             }
-        }
-
-        if (blob) {
-            // [FIX #183] 설정된 비율로 중앙 크롭
-            const finalBlob = aspectRatio ? await cropBlobToAspectRatio(blob, aspectRatio) : blob;
-            zip.file(filename, finalBlob);
+            if (blob) {
+                const finalBlob = aspectRatio ? await cropBlobToAspectRatio(blob, aspectRatio) : blob;
+                const tempPath = await uploadBlobToCompanion(finalBlob, filename);
+                zipFiles.push({ path: tempPath, filename });
+            }
         }
     }, (count) => useUIStore.getState().setToast(prev => ({ ...prev!, current: count })));
 
-    useUIStore.getState().setToast(prev => ({ ...prev!, message: "ZIP 압축 중..." }));
+    useUIStore.getState().setToast(prev => ({ ...prev!, message: "ZIP 생성 중... (컴패니언)" }));
 
-    await new Promise(resolve => setTimeout(resolve, 50));
-
-    const content = await zip.generateAsync({ type: "blob" });
+    const content = await createZipViaCompanion(zipFiles);
     const link = document.createElement('a');
     const _imgZipUrl = URL.createObjectURL(content);
     logger.registerBlobUrl(_imgZipUrl, 'other', 'exportService:downloadImages');
@@ -91,8 +84,6 @@ export const downloadVideos = async () => {
     const { scenes } = useProjectStore.getState();
     const { setToast } = useUIStore.getState();
 
-    const { default: JSZip } = await import('jszip');
-    const zip = new JSZip();
     const videoScenes = scenes.filter(s => s.videoUrl);
     const total = videoScenes.length;
 
@@ -100,69 +91,39 @@ export const downloadVideos = async () => {
 
     setToast({ show: true, message: "영상 다운로드 준비 중...", current: 0, total: total });
 
-    const linkOnlyScenes: {index: number}[] = [];
+    // [v2.5] 컴패니언 ZIP 생성 — CORS 우회 불필요 (컴패니언이 직접 다운로드)
+    const { createZipViaCompanion } = await import('./companion/zipService');
+    const { uploadBlobToCompanion } = await import('./companion/tunnelClient');
+    const zipFiles: Array<{ url?: string; path?: string; filename: string }> = [];
 
     await processSequentially(videoScenes, 1, 200, async (s) => {
         const sceneIndex = scenes.findIndex(orig => orig.id === s.id) + 1;
-        let blob: Blob | null = null;
+        const filename = getSafeFilename(sceneIndex - 1, getSceneNarrationText(s), 'mp4');
 
-        try {
-            const res = await fetch(s.videoUrl!);
-            if (res.ok) {
-                blob = await res.blob();
-            }
-        } catch (e: unknown) { /* CORS blocked - try proxy */ }
-
-        if (!blob) {
-            let attempts = 0;
-            const maxAttempts = 3;
-
-            while (attempts < maxAttempts && !blob) {
-                try {
-                    attempts++;
-                    if (attempts > 1) {
-                        useUIStore.getState().setToast(prev => ({ ...prev!, message: `[재시도 ${attempts}/${maxAttempts}] Scene #${sceneIndex} 다운로드 중...` }));
-                    } else {
-                        useUIStore.getState().setToast(prev => ({ ...prev!, message: `보안 우회 다운로드 중 (${sceneIndex}/${total})...` }));
-                    }
-
-                    const proxyUrl = await uploadRemoteUrlToCloudinary(s.videoUrl!);
-                    const res = await fetch(proxyUrl);
-
-                    if (res.ok) {
-                        blob = await res.blob();
-                    } else {
-                        throw new Error(`Proxy status ${res.status}`);
-                    }
-                } catch (proxyErr: unknown) {
-                    console.warn(`Attempt ${attempts} failed for Scene ${sceneIndex}:`, proxyErr);
-                    if (attempts < maxAttempts) await new Promise(r => setTimeout(r, 2000));
+        if (s.videoUrl!.startsWith('http')) {
+            // URL은 컴패니언이 직접 다운로드
+            zipFiles.push({ url: s.videoUrl!, filename });
+        } else if (s.videoUrl!.startsWith('blob:') || s.videoUrl!.startsWith('data:')) {
+            // Blob URL → fetch → upload-temp
+            try {
+                const res = await fetch(s.videoUrl!);
+                if (res.ok) {
+                    const blob = await res.blob();
+                    const tempPath = await uploadBlobToCompanion(blob, filename);
+                    zipFiles.push({ path: tempPath, filename });
                 }
+            } catch (e) {
+                const safeName = getSafeFilename(sceneIndex - 1, getSceneNarrationText(s), 'txt');
+                const errBlob = new Blob([`[다운로드 실패]\nScene #${sceneIndex}\n${s.videoUrl}`], { type: 'text/plain' });
+                const errPath = await uploadBlobToCompanion(errBlob, `ERROR_${safeName}`);
+                zipFiles.push({ path: errPath, filename: `ERROR_${safeName}` });
             }
         }
-
-        if (blob) {
-            const filename = getSafeFilename(sceneIndex - 1, getSceneNarrationText(s), 'mp4');
-            zip.file(filename, blob);
-        } else {
-            const safeName = getSafeFilename(sceneIndex - 1, getSceneNarrationText(s), 'txt');
-            const errorFilename = `ERROR_${safeName}`;
-            const errorContent = `[다운로드 실패 안내]\nScene #${sceneIndex} 영상 다운로드 실패.\n\n링크:\n${s.videoUrl}`;
-            zip.file(errorFilename, errorContent);
-            linkOnlyScenes.push({ index: sceneIndex });
-        }
-
     }, (count) => useUIStore.getState().setToast(prev => ({ ...prev!, current: count })));
 
-    if (linkOnlyScenes.length > 0) {
-        useUIStore.getState().setToast({ show: true, message: "⚠️ 일부 영상 다운로드 실패. 대체 텍스트 파일이 포함됩니다." });
-    }
+    useUIStore.getState().setToast(prev => ({ ...prev!, message: "ZIP 생성 중... (컴패니언)" }));
 
-    useUIStore.getState().setToast(prev => ({ ...prev!, message: "ZIP 압축 중..." }));
-
-    await new Promise(resolve => setTimeout(resolve, 50));
-
-    const content = await zip.generateAsync({ type: "blob" });
+    const content = await createZipViaCompanion(zipFiles);
     const link = document.createElement('a');
     const _vidZipUrl = URL.createObjectURL(content);
     logger.registerBlobUrl(_vidZipUrl, 'other', 'exportService:downloadVideos');
@@ -171,10 +132,7 @@ export const downloadVideos = async () => {
     link.click();
     logger.unregisterBlobUrl(_vidZipUrl);
 
-    const successMsg = linkOnlyScenes.length > 0
-        ? `영상 ${total - linkOnlyScenes.length}편 다운로드 완료 (${linkOnlyScenes.length}편 실패)`
-        : `영상 ${total}편 다운로드 완료!`;
-    useUIStore.getState().setToast({ show: true, message: successMsg });
+    useUIStore.getState().setToast({ show: true, message: `영상 ${total}편 다운로드 완료!` });
     setTimeout(() => useUIStore.getState().setToast(null), 4000);
 };
 
