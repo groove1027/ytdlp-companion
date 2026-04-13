@@ -1,7 +1,7 @@
 [package]
 name = "all-in-one-helper"
-version = "2.4.0"
-description = "All In One Helper — 로컬 미디어 게이트웨이 (v2.4.0: 트레이 전용 시작 + 백그라운드 자동 업데이트)"
+version = "2.4.1"
+description = "All In One Helper — 로컬 미디어 게이트웨이 (v2.4.1: 트레이 전용 시작 + 백그라운드 자동 업데이트 — CI 크래시 수정)"
 authors = ["groove1027"]
 edition = "2021"
 
