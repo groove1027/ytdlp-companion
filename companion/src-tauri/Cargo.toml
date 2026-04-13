@@ -1,7 +1,7 @@
 [package]
 name = "all-in-one-helper"
-version = "2.3.0"
-description = "All In One Helper — 로컬 미디어 게이트웨이 (v2.3.0: WebView 이미지 검색 + 구글 JSON API + 장면감지 컴패니언 전환)"
+version = "2.3.1"
+description = "All In One Helper — 로컬 미디어 게이트웨이 (v2.3.1: Windows 블랙 윈도우 핫픽스 — headless_chrome Windows 비활성화)"
 authors = ["groove1027"]
 edition = "2021"
 

@@ -61,7 +61,13 @@ fn browser_mutex() -> &'static Mutex<Option<Browser>> {
 
 /// Chrome 브라우저를 시작하거나 기존 인스턴스를 재사용합니다.
 /// 실패 시 None을 반환합니다 (Chrome 미설치 등).
+/// [FIX] Windows에서는 headless_chrome가 블랙 윈도우를 생성하므로 비활성화.
+/// 프론트엔드의 JSON API 폴백이 동일하게 동작하므로 기능 손실 없음.
 async fn get_or_create_browser() -> Result<Browser, String> {
+    #[cfg(target_os = "windows")]
+    {
+        return Err("Windows에서는 headless_chrome 비활성화 (블랙 윈도우 방지). JSON API 폴백을 사용합니다.".to_string());
+    }
     let mut guard = browser_mutex().lock().await;
 
     // 기존 브라우저가 살아있는지 확인
@@ -87,10 +93,13 @@ async fn get_or_create_browser() -> Result<Browser, String> {
     }
 
     // 새 브라우저 시작
+    // [FIX] Windows 블랙 윈도우 방지:
+    // - window_size 제거 (headless와 충돌 → 창 표시될 수 있음)
+    // - headless: true만 유지
     let launch_options = LaunchOptions {
         headless: true,
-        window_size: Some((1280, 900)),
-        idle_browser_timeout: Duration::from_secs(300), // 5분 유휴 후 자동 종료
+        window_size: None,
+        idle_browser_timeout: Duration::from_secs(300),
         ..Default::default()
     };
 
