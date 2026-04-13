@@ -351,12 +351,16 @@ export function mergeWithAiTimecodes(
     if (nearestDist > maxSnapDistance) return aiT;
 
     let snapped = aiT;
-    // 1) ±500ms 이내 → 무조건 스냅
+    // 1) ±500ms 이내 → 무조건 스냅 (프레임 정밀)
     if (nearestDist <= 0.5) {
       snapped = nearestCut.timeSec;
     }
-    // 2) ±tolerance 이내 + 강한 컷 (절대 점수 + 백분위수 모두 충족) → 스냅
+    // 2) ±tolerance(1.5초) 이내 + 강한 컷 → 스냅
     else if (nearestDist <= tolerance && nearestCut.score >= strongCutThreshold) {
+      snapped = nearestCut.timeSec;
+    }
+    // 3) ±maxSnapDistance(3초) 이내 + 매우 강한 컷 (절대 점수 30 이상 + 상위 25%) → 스냅
+    else if (nearestDist <= maxSnapDistance && nearestCut.score >= absoluteMinScore && nearestCut.score >= sortedScores[Math.floor(sortedScores.length * 0.75)]) {
       snapped = nearestCut.timeSec;
     }
 

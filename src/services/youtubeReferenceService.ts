@@ -1000,7 +1000,9 @@ async function matchVideoToSceneViaUrl(
   }
 
   const youtubeUrl = `https://www.youtube.com/watch?v=${videoId}`;
-  const clipDuration = shortsMode ? '1.5~3.5' : '5~15';
+  const clipDuration = shortsMode
+    ? `${SHORTS_CUT_RULES.minClipSec}~${SHORTS_CUT_RULES.maxClipSec}`
+    : '5~15';
 
   logger.info('[VideoRef] Gemini YouTube URL 직접 분석', `${videoId} (${Math.round(videoDurationSec)}초)`);
 
@@ -1009,7 +1011,7 @@ async function matchVideoToSceneViaUrl(
       contents: [{
         role: 'user',
         parts: [
-          { fileData: { mimeType: 'video/*', fileUri: youtubeUrl } },
+          { fileData: { mimeType: 'video/mp4', fileUri: youtubeUrl } },
           { text: `이 영상을 프레임 단위로 분석하여, 아래 대본 장면에 가장 적합한 ${clipDuration}초 구간을 찾아라.
 
 [대본 장면]
@@ -1092,7 +1094,10 @@ JSON만 출력 (마크다운 금지): {"startSec":시작초,"endSec":끝초,"sco
   } catch (error) {
     if (signal?.aborted || isAbortError(error)) throw createAbortError();
     logger.warn('[VideoRef] Gemini URL 분석 실패 → 기본 구간 반환', error instanceof Error ? error.message : '');
-    return { startSec: 0, endSec: Math.min(15, videoDurationSec), matchScore: 0.2, segmentText: '(분석 실패)' };
+    const fallbackEnd = shortsMode
+      ? Math.min(SHORTS_CUT_RULES.defaultClipSec, videoDurationSec)
+      : Math.min(15, videoDurationSec);
+    return { startSec: 0, endSec: fallbackEnd, matchScore: 0.2, segmentText: '(분석 실패)' };
   }
 }
 
