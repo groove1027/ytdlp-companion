@@ -12,7 +12,7 @@
 import { monitoredFetch, getYoutubeApiKey } from './apiService';
 import { evolinkChat, getEvolinkKey, evolinkVideoAnalysisStream } from './evolinkService';
 import { logger } from './LoggerService';
-import { detectSceneCuts, mergeWithAiTimecodes } from './sceneDetection';
+import { mergeWithAiTimecodes } from './sceneDetection';
 // ensureCompanionAvailable 미사용 — health check가 블로킹되므로 다운로드 직접 시도
 import type { SceneCut } from './sceneDetection';
 import type {
@@ -908,16 +908,9 @@ async function runSceneDetection(blob: Blob, signal?: AbortSignal, videoId?: str
     }
   }
 
-  // 2순위: 브라우저 WebCodecs (컴패니언 없을 때)
-  try {
-    logger.info('[VideoRef] Scene Detection 시작 (브라우저 폴백)', `${(blob.size / 1024 / 1024).toFixed(1)}MB`);
-    const cuts = await detectSceneCuts(blob, { maxFrames: 10000 });
-    logger.info('[VideoRef] Scene Detection 완료 (브라우저)', `${cuts.length}개 컷 감지`);
-    return cuts;
-  } catch (e) {
-    logger.warn('[VideoRef] Scene Detection 실패', e instanceof Error ? e.message : '');
-    return [];
-  }
+  // [v2.5] 브라우저 폴백 제거 — 컴패니언 필수
+  logger.warn('[VideoRef] 컴패니언 Scene Detection 없이는 씬 감지가 불가능합니다.');
+  return [];
 }
 
 // ─── Phase 4: 자막 추출 (보조 시그널) ───
