@@ -42,24 +42,10 @@ export const downloadImages = async () => {
             // URL + 크롭 불필요 → 컴패니언이 직접 다운로드
             zipFiles.push({ url: s.imageUrl!, filename });
         } else {
-            // base64 또는 크롭 필요 → Blob 경유
-            let blob: Blob | null = null;
-            if (s.imageUrl!.startsWith('data:image')) {
-                const arr = s.imageUrl!.split(',');
-                const mime = arr[0].match(/:(.*?);/)?.[1] || 'image/png';
-                const bstr = atob(arr[1]);
-                const u8 = new Uint8Array(bstr.length);
-                for (let i = 0; i < bstr.length; i++) u8[i] = bstr.charCodeAt(i);
-                blob = new Blob([u8], { type: mime });
-            } else {
-                try {
-                    const res = await fetch(s.imageUrl!);
-                    if (res.ok) blob = await res.blob();
-                } catch (e) { logger.trackSwallowedError('ExportService:downloadImages/directFetch', e); }
-            }
+            // base64 또는 크롭 필요 → Blob 경유 (fetchImageBlob은 Cloudinary 프록시 폴백 포함)
+            const blob = await fetchImageBlob(s.imageUrl!, aspectRatio, cropBlobToAspectRatio);
             if (blob) {
-                const finalBlob = aspectRatio ? await cropBlobToAspectRatio(blob, aspectRatio) : blob;
-                const tempPath = await uploadBlobToCompanion(finalBlob, filename);
+                const tempPath = await uploadBlobToCompanion(blob, filename);
                 zipFiles.push({ path: tempPath, filename });
             }
         }
