@@ -984,41 +984,116 @@ async function fetchTimedCaptions(videoId: string, signal?: AbortSignal): Promis
 // 5분 초과: Scene Detection 컷 + 자막 텍스트 AI 매칭 (Flash Lite, 빠름)
 const GEMINI_VIDEO_MAX_DURATION_SEC = 300; // 5분
 
-async function matchVideoToScene(
+// [v3.0] YouTube URL을 Gemini에 직접 전달하여 편집점 분석
+// 다운로드/장면감지/자막 추출 불필요 — Gemini가 영상 프레임을 직접 분석
+// 50분+ 롱폼도 분석 가능 (기존 5분 제한 폐기)
+async function matchVideoToSceneViaUrl(
   videoId: string,
   sceneText: string,
-  cutPoints: SceneCut[],
-  cues: TimedCue[],
   videoDurationSec: number,
   signal?: AbortSignal,
   shortsMode?: boolean,
 ): Promise<{ startSec: number; endSec: number; matchScore: number; segmentText: string }> {
-  if (!getEvolinkKey()) {
+  const apiKey = getEvolinkKey();
+  if (!apiKey) {
     return { startSec: 0, endSec: 30, matchScore: 0.3, segmentText: '(Evolink 키 없음)' };
   }
 
-  const limitedCuts = cutPoints.slice(0, 50);
+  const youtubeUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  const clipDuration = shortsMode ? '1.5~3.5' : '5~15';
 
-  // ─── 전략 분기 ───
-  let result: { startSec: number; endSec: number; matchScore: number; segmentText: string };
+  logger.info('[VideoRef] Gemini YouTube URL 직접 분석', `${videoId} (${Math.round(videoDurationSec)}초)`);
 
-  if (videoDurationSec <= GEMINI_VIDEO_MAX_DURATION_SEC) {
-    result = await matchWithGeminiVideo(videoId, sceneText, limitedCuts, cues, signal);
-  } else {
-    logger.info('[VideoRef] 롱폼 → 컷+자막 하이브리드 매칭', `${Math.round(videoDurationSec)}초, ${limitedCuts.length}컷`);
-    result = await matchWithCutsAndCaptions(sceneText, limitedCuts, cues, videoDurationSec, signal);
+  try {
+    const payload = {
+      contents: [{
+        role: 'user',
+        parts: [
+          { fileData: { mimeType: 'video/*', fileUri: youtubeUrl } },
+          { text: `이 영상을 프레임 단위로 분석하여, 아래 대본 장면에 가장 적합한 ${clipDuration}초 구간을 찾아라.
+
+[대본 장면]
+${sceneText}
+
+규칙:
+- 대본의 내용과 시각적으로 가장 일치하는 구간을 선택
+- 인물, 장소, 이벤트, 텍스트 오버레이, 자막 등을 모두 고려
+- startSec과 endSec은 소수점 1자리까지 정밀하게 지정
+- score는 0.0~1.0 (1.0 = 완벽 일치)
+
+JSON만 출력 (마크다운 금지): {"startSec":시작초,"endSec":끝초,"score":0~1,"reason":"이유"}` },
+        ],
+      }],
+      generationConfig: { temperature: 0.1, maxOutputTokens: 4096 },
+      safetySettings: [
+        { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+        { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+        { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+        { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
+      ],
+    };
+
+    const timeoutMs = Math.max(60000, Math.min(videoDurationSec * 500, 180000)); // 영상 길이에 비례 (최소 60초, 최대 180초)
+    const fetchSignal = signal
+      ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)])
+      : AbortSignal.timeout(timeoutMs);
+
+    const res = await monitoredFetch(
+      `https://api.evolink.ai/v1beta/models/gemini-2.5-flash:generateContent`,
+      {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: fetchSignal,
+      },
+      timeoutMs,
+    );
+
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      logger.error('[VideoRef] Gemini URL 분석 실패', `status=${res.status} ${errText.substring(0, 200)}`);
+      throw new Error(`Gemini 분석 실패 (${res.status})`);
+    }
+
+    const data = await res.json() as {
+      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+    };
+    const rawText = (data.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('').trim();
+    const cleaned = rawText.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+
+    // JSON 추출 (마크다운 감싸기 대응)
+    let result: { startSec: number; endSec: number; score: number; reason: string };
+    try {
+      result = JSON.parse(cleaned);
+    } catch {
+      const match = cleaned.match(/\{[\s\S]*?"startSec"[\s\S]*?\}/);
+      if (!match) throw new Error('Gemini 응답에서 JSON 추출 실패');
+      result = JSON.parse(match[0]);
+    }
+
+    // 유효성 검증
+    const startSec = Math.max(0, result.startSec || 0);
+    let endSec = Math.max(startSec + 1, result.endSec || startSec + 10);
+
+    // 쇼츠 모드 클립 길이 제한
+    if (shortsMode) {
+      const clipLen = endSec - startSec;
+      if (clipLen > SHORTS_CUT_RULES.maxClipSec) endSec = startSec + SHORTS_CUT_RULES.maxClipSec;
+      if (clipLen < SHORTS_CUT_RULES.minClipSec) endSec = startSec + SHORTS_CUT_RULES.defaultClipSec;
+    }
+
+    logger.info('[VideoRef] Gemini URL 분석 완료', `${startSec.toFixed(1)}~${endSec.toFixed(1)}초, score=${result.score}`);
+    return {
+      startSec,
+      endSec,
+      matchScore: Math.max(0, Math.min(1, result.score || 0.5)),
+      segmentText: result.reason || '',
+    };
+  } catch (error) {
+    if (signal?.aborted || isAbortError(error)) throw createAbortError();
+    logger.warn('[VideoRef] Gemini URL 분석 실패 → 기본 구간 반환', error instanceof Error ? error.message : '');
+    return { startSec: 0, endSec: Math.min(15, videoDurationSec), matchScore: 0.2, segmentText: '(분석 실패)' };
   }
-
-  // [FIX] 쇼츠 모드: 클립 길이 1.5~3.5초로 강제 제한
-  if (shortsMode && result.endSec - result.startSec > SHORTS_CUT_RULES.maxClipSec) {
-    const maxDur = SHORTS_CUT_RULES.maxClipSec;
-    result.endSec = result.startSec + maxDur;
-  }
-  if (shortsMode && result.endSec - result.startSec < SHORTS_CUT_RULES.minClipSec) {
-    result.endSec = result.startSec + SHORTS_CUT_RULES.defaultClipSec;
-  }
-
-  return result;
 }
 
 // ─── 짧은 영상: Gemini 영상 직접 분석 ───
@@ -2049,64 +2124,44 @@ export async function searchSceneReferenceVideos(
   const sceneText = buildVideoSceneMatchText(scene, options);
   const results: VideoReference[] = [];
 
-  // ─── 1순위: 컴패니언 + Scene Detection + Gemini 영상 분석 (상위 2개까지 시도) ───
-  const companionUp = await checkCompanion(options?.signal);
+  // ─── 1순위: YouTube URL → Gemini 직접 분석 (다운로드 불필요) ───
+  // [v3.0] Gemini에 YouTube URL을 직접 전달하여 프레임 단위 분석
+  // 기존: 다운로드(30~60초) + 장면감지(10~20초) + 자막(10초) + 매칭
+  // 수정: URL 전달 → Gemini가 즉시 분석 (15~40초)
+  const v3Candidates = searchResults.slice(0, 2);
 
-  if (companionUp) {
-    // 상위 2개 후보까지 시도 (1번째 실패 시 2번째)
-    const v2Candidates = searchResults.slice(0, 2);
+  for (const candidate of v3Candidates) {
+    if (options?.signal?.aborted) return [];
+    logger.info('[VideoRef] 🎬 v3 파이프라인 시작 (YouTube URL 직접 분석)', candidate.videoId);
 
-    for (const candidate of v2Candidates) {
-      if (options?.signal?.aborted) return [];
-      logger.info('[VideoRef] 🎬 v2 파이프라인 시작', candidate.videoId);
+    const videoDur = durations.get(candidate.videoId) || 0;
+    const match = await matchVideoToSceneViaUrl(
+      candidate.videoId, sceneText, videoDur, options?.signal, options?.shortsMode,
+    );
 
-      // Phase 2: 영상 다운로드 + Phase 4: 자막 추출 (병렬)
-      const [blob, cues] = await Promise.all([
-        downloadVideoForAnalysis(candidate.videoId, options?.signal),
-        fetchTimedCaptions(candidate.videoId, options?.signal),
-      ]);
+    if (match.matchScore > 0.3) {
+      results.push({
+        videoId: candidate.videoId,
+        videoTitle: candidate.title,
+        channelTitle: candidate.channelTitle,
+        thumbnailUrl: candidate.thumbnail,
+        startSec: match.startSec,
+        endSec: match.endSec,
+        matchScore: match.matchScore,
+        segmentText: match.segmentText,
+        duration: videoDur,
+        searchQuery: selectedQuery,
+        publishedAt: candidate.publishedAt,
+      });
+      break;
+    }
 
-      if (options?.signal?.aborted) return [];
-
-      // 다운로드 실패 → 다음 후보 시도
-      if (!blob) {
-        logger.info('[VideoRef] 다운로드 실패 → 다음 후보 시도');
-        continue;
-      }
-
-      // Phase 3: Scene Detection
-      const cutPoints = await runSceneDetection(blob, options?.signal, candidate.videoId);
-      if (options?.signal?.aborted) return [];
-
-      // Phase 5: 하이브리드 매칭 (짧은 영상=Gemini 직접, 롱폼=컷+자막)
-      const videoDur = durations.get(candidate.videoId) || 0;
-      const match = await matchVideoToScene(
-        candidate.videoId, sceneText, cutPoints, cues, videoDur, options?.signal, options?.shortsMode,
-      );
-
-      // v2 매칭 성공 (score > 0.3)이면 채택
-      if (match.matchScore > 0.3) {
-        results.push({
-          videoId: candidate.videoId,
-          videoTitle: candidate.title,
-          channelTitle: candidate.channelTitle,
-          thumbnailUrl: candidate.thumbnail,
-          startSec: match.startSec,
-          endSec: match.endSec,
-          matchScore: match.matchScore,
-          segmentText: match.segmentText,
-          duration: durations.get(candidate.videoId) || 0,
-          searchQuery: selectedQuery,
-          publishedAt: candidate.publishedAt,
-        });
-        break; // 성공 — 다음 후보 불필요
-      }
-
-      // v2 실패 시 caption 폴백 시도
-      logger.info('[VideoRef] v2 매칭 실패 → caption 폴백', `score=${match.matchScore}`);
-      const captionMatch = cues.length > 0
-        ? await matchWithCaptionsOnly(sceneText, cues, candidate.title, options?.signal)
-        : null;
+    // v3 실패 시 자막 기반 폴백
+    logger.info('[VideoRef] v3 매칭 실패 → 자막 폴백', `score=${match.matchScore}`);
+    const cues = await fetchTimedCaptions(candidate.videoId, options?.signal);
+    const captionMatch = cues.length > 0
+      ? await matchWithCaptionsOnly(sceneText, cues, candidate.title, options?.signal)
+      : null;
       if (captionMatch && captionMatch.matchScore > 0.4) {
         results.push({
           videoId: candidate.videoId,
@@ -2124,12 +2179,11 @@ export async function searchSceneReferenceVideos(
         break;
       }
       // 이 후보도 실패 → 다음 후보 시도
-    }
   }
 
   // ─── 2순위: 나머지 후보는 자막 기반 매칭 (가벼운 폴백) ───
-  const v2TriedCount = companionUp ? 2 : 0;
-  const remainingCandidates = searchResults.slice(v2TriedCount, v2TriedCount + 4);
+  const v3TriedCount = 2;
+  const remainingCandidates = searchResults.slice(v3TriedCount, v3TriedCount + 4);
 
   await Promise.allSettled(remainingCandidates.map(async (video) => {
     if (options?.signal?.aborted) return;
