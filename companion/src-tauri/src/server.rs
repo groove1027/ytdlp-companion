@@ -4710,9 +4710,11 @@ struct ApiProxyRequest {
 }
 
 async fn api_proxy_handler(Json(req): Json<ApiProxyRequest>) -> Response {
-    // [FIX Codex-2] 보안: URL 파싱 기반 도메인 검증 — contains() 우회 방지
-    let allowed_domains: &[&str] = &[
-        "googleapis.com",
+    // [FIX Codex-2+2차] 보안: 정확한 호스트 allowlist — subdomain 공격 차단
+    let allowed_hosts: &[&str] = &[
+        "www.googleapis.com",
+        "generativelanguage.googleapis.com",
+        "aisandbox-pa.googleapis.com",
         "api.evolink.ai",
         "api.kie.ai",
         "api.laozhang.ai",
@@ -4731,8 +4733,7 @@ async fn api_proxy_handler(Json(req): Json<ApiProxyRequest>) -> Response {
         }
     };
     let host = parsed_url.host_str().unwrap_or("");
-    let is_allowed = allowed_domains.iter().any(|d| host == *d || host.ends_with(&format!(".{}", d)));
-    if !is_allowed || parsed_url.scheme() != "https" {
+    if !allowed_hosts.contains(&host) || parsed_url.scheme() != "https" {
         return (
             StatusCode::FORBIDDEN,
             Json(serde_json::json!({ "error": format!("허용되지 않은 도메인입니다: {}", host) })),
