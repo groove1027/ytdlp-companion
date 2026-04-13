@@ -1035,32 +1035,46 @@ JSON만 출력 (마크다운 금지): {"startSec":시작초,"endSec":끝초,"sco
       ],
     };
 
-    const timeoutMs = Math.max(60000, Math.min(videoDurationSec * 500, 180000)); // 영상 길이에 비례 (최소 60초, 최대 180초)
-    const fetchSignal = signal
-      ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)])
-      : AbortSignal.timeout(timeoutMs);
+    // YouTube URL 직접 분석 — evolinkVideoAnalysisStream 사용 (SSE + 재시도 + 유휴 타임아웃)
+    // 25분 이하: Evolink v1beta 직접 호출 (빠름)
+    // 25분 초과: evolinkVideoAnalysisStream으로 스트리밍 (롱폼 대응)
+    const DIRECT_URL_MAX_DURATION_SEC = 1500; // 25분
+    let rawText = '';
 
-    const res = await monitoredFetch(
-      `https://api.evolink.ai/v1beta/models/gemini-2.5-flash:generateContent`,
-      {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-        signal: fetchSignal,
-      },
-      timeoutMs,
-    );
+    if (videoDurationSec <= DIRECT_URL_MAX_DURATION_SEC) {
+      // 짧은 영상: v1beta 직접 호출 (빠름, 타임아웃 위험 낮음)
+      const timeoutMs = Math.max(60000, Math.min(videoDurationSec * 500, 180000));
+      const fetchSignal = signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)])
+        : AbortSignal.timeout(timeoutMs);
 
-    if (!res.ok) {
-      const errText = await res.text().catch(() => '');
-      logger.error('[VideoRef] Gemini URL 분석 실패', `status=${res.status} ${errText.substring(0, 200)}`);
-      throw new Error(`Gemini 분석 실패 (${res.status})`);
+      const res = await monitoredFetch(
+        `https://api.evolink.ai/v1beta/models/gemini-3.1-pro-preview:generateContent`,
+        {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          signal: fetchSignal,
+        },
+        timeoutMs,
+      );
+
+      if (!res.ok) throw new Error(`Gemini 분석 실패 (${res.status})`);
+      const data = await res.json() as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
+      rawText = (data.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('').trim();
+    } else {
+      // 롱폼 영상: evolinkVideoAnalysisStream (SSE 스트리밍 + 재시도 + 유휴 타임아웃)
+      logger.info('[VideoRef] 롱폼 영상 → evolinkVideoAnalysisStream 스트리밍', `${Math.round(videoDurationSec / 60)}분`);
+      rawText = await evolinkVideoAnalysisStream(
+        youtubeUrl,
+        'video/mp4',
+        '', // system prompt
+        payload.contents[0].parts[1].text, // user prompt
+        (_chunk, accumulated) => { rawText = accumulated; },
+        { signal, timeoutMs: Math.max(180000, videoDurationSec * 500) },
+      );
     }
 
-    const data = await res.json() as {
-      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-    };
-    const rawText = (data.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('').trim();
     const cleaned = rawText.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
 
     // JSON 추출 (마크다운 감싸기 대응)
