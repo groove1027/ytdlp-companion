@@ -4,6 +4,10 @@ on:
   push:
     tags:
       - 'companion-v*'
+    branches:
+      - main
+    paths:
+      - 'companion/**'
   workflow_dispatch:
 
 jobs:
@@ -346,10 +350,38 @@ jobs:
   release:
     needs: [build-windows, build-macos-universal]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+
+      # companion/ 파일 변경으로 트리거된 경우 → 자동 태그 생성
+      - name: Auto-tag from Cargo.toml version
+        id: auto_tag
+        run: |
+          VERSION=$(grep '^version' companion/src-tauri/Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          TAG="companion-v${VERSION}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+
+          # 태그가 이미 존재하면 빌드 번호 추가
+          if git ls-remote --tags origin | grep -q "refs/tags/${TAG}$"; then
+            BUILD=$(date +%Y%m%d%H%M)
+            TAG="${TAG}-build${BUILD}"
+            echo "tag=${TAG}" >> $GITHUB_OUTPUT
+            echo "Existing tag found, using: ${TAG}"
+          fi
+
+          # 태그 push 트리거가 아닌 경우에만 자동 태그 생성
+          if [[ "${{ github.ref }}" != refs/tags/* ]]; then
+            git tag "${TAG}"
+            git push origin "${TAG}" || echo "Tag push failed (may already exist)"
+            echo "Auto-tagged: ${TAG}"
+          else
+            echo "Tag trigger: using ${GITHUB_REF_NAME}"
+            echo "tag=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+          fi
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -362,6 +394,8 @@ jobs:
       - name: Create Release (private repo)
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.auto_tag.outputs.tag }}
+          name: All In One Helper ${{ steps.auto_tag.outputs.tag }}
           files: artifacts/**/*
           generate_release_notes: true
 
@@ -383,11 +417,12 @@ jobs:
           PUBLIC_RELEASE_PAT: ${{ secrets.PUBLIC_RELEASE_PAT }}
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.auto_tag.outputs.tag }}
           files: artifacts/**/*
           generate_release_notes: true
           repository: groove1027/ytdlp-companion
           token: ${{ secrets.PUBLIC_RELEASE_PAT }}
-          name: All In One Helper ${{ github.ref_name }}
+          name: All In One Helper ${{ steps.auto_tag.outputs.tag }}
 
       - name: Warn if PAT missing (manual mirror required)
         if: env.PUBLIC_RELEASE_PAT == ''
