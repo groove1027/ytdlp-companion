@@ -607,16 +607,7 @@ function decodeBase64ToUint8Array(base64: string): Uint8Array {
   return bytes;
 }
 
-async function blobToBase64(blob: Blob): Promise<string> {
-  const buffer = await blob.arrayBuffer();
-  const bytes = new Uint8Array(buffer);
-  let binary = '';
-  const CHUNK_SIZE = 0x8000;
-  for (let i = 0; i < bytes.length; i += CHUNK_SIZE) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK_SIZE));
-  }
-  return btoa(binary);
-}
+// [v2.5] blobToBase64 삭제 — uploadBlobToCompanion + inputPath로 대체됨
 
 async function downloadCompanionVideoBlob(
   videoId: string,

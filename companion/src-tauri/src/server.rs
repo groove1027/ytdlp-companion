@@ -4658,8 +4658,23 @@ async fn zip_create_handler(Json(req): Json<ZipCreateRequest>) -> Response {
             };
 
             // ZIP 엔트리에 추가
-            // [FIX] /는 ZIP 폴더 구조용으로 허용, \와 ..만 치환
-            let safe_name = entry.filename.replace('\\', "/").replace("..", "_");
+            // [FIX Codex-5] ZIP 엔트리 경로 검증 강화
+            // /는 폴더 구조용으로 허용, \→/, ..→_, 선행 /, 중복 //, 제어문자 제거
+            let mut safe_name: String = entry.filename
+                .replace('\\', "/")
+                .replace("..", "_")
+                .chars()
+                .filter(|c| !c.is_control())
+                .collect();
+            // 선행 / 제거 (절대 경로 방지)
+            safe_name = safe_name.trim_start_matches('/').to_string();
+            // 중복 // → /
+            while safe_name.contains("//") {
+                safe_name = safe_name.replace("//", "/");
+            }
+            if safe_name.is_empty() {
+                safe_name = format!("unnamed_{}", added_count);
+            }
             if let Err(e) = zip.start_file(&safe_name, options) {
                 eprintln!("[ZIP] 엔트리 시작 실패 ({}): {}", safe_name, e);
                 continue;
