@@ -34,6 +34,12 @@ vi.mock('../ytdlpApiService', () => ({
 vi.mock('../LoggerService', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), trackSwallowedError: vi.fn() },
 }));
+// [v2.5] tunnelClient mock — uploadFileToCompanion이 temp_path를 반환
+vi.mock('../companion/tunnelClient', () => ({
+  uploadFileToCompanion: vi.fn().mockResolvedValue('/tmp/test-upload.mp4'),
+  uploadBlobToCompanion: vi.fn().mockResolvedValue('/tmp/test-upload.bin'),
+  downloadCompanionTempFile: vi.fn().mockResolvedValue(new Blob(['test'], { type: 'application/zip' })),
+}));
 
 import {
   cutClipsViaCompanion,
@@ -345,10 +351,9 @@ describe('cutClipsViaCompanion', () => {
   });
 
   it('clips는 label/startSec/endSec 순서대로 payload에 포함', async () => {
-    const dummyBase64 = btoa('PK\x03\x04');
     mockFetch.mockResolvedValue({
       ok: true,
-      json: async () => ({ data: dummyBase64, size: 4 }),
+      json: async () => ({ outputPath: '/tmp/output.zip', size: 4, clipCount: 2 }),
     });
 
     const file = makeMockFile('test.mp4', 100);
@@ -362,7 +367,7 @@ describe('cutClipsViaCompanion', () => {
     expect(requestBody.clips).toHaveLength(2);
     expect(requestBody.clips[0]).toEqual({ label: 'A', startSec: 1.5, endSec: 3.0 });
     expect(requestBody.clips[1]).toEqual({ label: 'B', startSec: 10, endSec: 12.5 });
-    expect(requestBody.input).toBeTruthy(); // base64 인코딩 결과
+    expect(requestBody.inputPath || requestBody.input).toBeTruthy(); // [v2.5] inputPath 또는 base64
     expect(requestBody.inputFormat).toBe('mp4');
   });
 

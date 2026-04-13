@@ -531,14 +531,20 @@ struct FfmpegCapabilityResponse {
 
 #[derive(Deserialize)]
 struct RemoveBgRequest {
-    // base64 인코딩된 이미지
-    image: String,
+    // base64 인코딩된 이미지 (legacy)
+    image: Option<String>,
+    // [v2.5] temp_path 기반 — upload-temp로 올린 파일 경로
+    #[serde(rename = "inputPath")]
+    input_path: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct TranscribeRequest {
-    // base64 인코딩된 오디오
-    audio: String,
+    // base64 인코딩된 오디오 (legacy)
+    audio: Option<String>,
+    // [v2.5] temp_path 기반 — upload-temp로 올린 파일 경로
+    #[serde(rename = "inputPath")]
+    input_path: Option<String>,
     language: Option<String>,
 }
 
@@ -590,8 +596,11 @@ struct NleFileEntry {
 
 #[derive(Deserialize)]
 struct FfmpegTranscodeRequest {
-    // base64 인코딩된 입력 파일
-    input: String,
+    // base64 인코딩된 입력 파일 (legacy)
+    input: Option<String>,
+    // [v2.5] temp_path 기반 — upload-temp로 올린 파일 경로
+    #[serde(rename = "inputPath")]
+    input_path: Option<String>,
     #[serde(rename = "inputFormat")]
     input_format: Option<String>,
     #[serde(rename = "inputArgs")]
@@ -609,12 +618,19 @@ struct FfmpegMergeTransition {
 
 #[derive(Deserialize)]
 struct FfmpegMergeRequest {
-    // base64 인코딩된 비디오 파일
+    // base64 인코딩된 비디오 파일 (legacy)
     video: Option<String>,
-    // base64 인코딩된 오디오 파일
+    // base64 인코딩된 오디오 파일 (legacy)
     audio: Option<String>,
-    // base64 인코딩된 장면 MP4 목록
+    // base64 인코딩된 장면 MP4 목록 (legacy)
     videos: Option<Vec<String>>,
+    // [v2.5] temp_path 기반 경로들
+    #[serde(rename = "videoPath")]
+    video_path: Option<String>,
+    #[serde(rename = "audioPath")]
+    audio_path: Option<String>,
+    #[serde(rename = "videoPaths")]
+    video_paths: Option<Vec<String>>,
     #[serde(rename = "videoFormat")]
     video_format: Option<String>,
     #[serde(rename = "audioFormat")]
@@ -622,12 +638,18 @@ struct FfmpegMergeRequest {
     #[serde(rename = "sceneDurations")]
     scene_durations: Option<Vec<f64>>,
     transitions: Option<Vec<FfmpegMergeTransition>>,
+    // [v2.5] 응답도 temp_path로 반환 (base64 인코딩 대신)
+    #[serde(rename = "outputPath")]
+    output_path_hint: Option<bool>,
 }
 
 #[derive(Deserialize)]
 struct FfmpegCutRequest {
-    // base64 인코딩된 입력 파일
-    input: String,
+    // base64 인코딩된 입력 파일 (legacy)
+    input: Option<String>,
+    // [v2.5] temp_path 기반 — upload-temp로 올린 파일 경로
+    #[serde(rename = "inputPath")]
+    input_path: Option<String>,
     #[serde(rename = "input_format", alias = "inputFormat")]
     input_format: Option<String>,
     clips: Vec<FfmpegCutClip>,
@@ -646,6 +668,90 @@ struct ValidatedFfmpegCutClip {
     filename: String,
     start: f64,
     end: f64,
+}
+
+// ──────────────────────────────────────────────
+// [v2.5] 헬퍼: input_path 또는 base64 중 하나로 바이트 로드
+// temp 디렉토리 내 경로만 허용하여 임의 파일 읽기 방지
+// ──────────────────────────────────────────────
+fn resolve_input_bytes(
+    input_path: &Option<String>,
+    base64_data: &Option<String>,
+    label: &str,
+) -> Result<Vec<u8>, (StatusCode, Json<serde_json::Value>)> {
+    use base64::Engine;
+    if let Some(path) = input_path {
+        // temp 디렉토리 안전 검증 — 임의 파일 읽기 방지
+        let canonical = match std::fs::canonicalize(path) {
+            Ok(p) => p,
+            Err(e) => {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({ "error": format!("{} 파일을 찾을 수 없습니다: {}", label, e) })),
+                ));
+            }
+        };
+        let temp_dir = std::env::temp_dir();
+        if !canonical.starts_with(&temp_dir) {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": format!("{} 파일이 허용된 경로 밖에 있습니다.", label) })),
+            ));
+        }
+        match std::fs::read(&canonical) {
+            Ok(data) => Ok(data),
+            Err(e) => Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("{} 파일 읽기 실패: {}", label, e) })),
+            )),
+        }
+    } else if let Some(b64) = base64_data {
+        match base64::engine::general_purpose::STANDARD.decode(b64) {
+            Ok(d) => Ok(d),
+            Err(e) => Err((
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": format!("{} Base64 디코딩 실패: {}", label, e) })),
+            )),
+        }
+    } else {
+        Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": format!("{} 입력이 없습니다. inputPath 또는 base64 데이터를 제공하세요.", label) })),
+        ))
+    }
+}
+
+/// [v2.5] 응답을 temp_path로 반환 (base64 인코딩 대신 파일 경로)
+fn respond_with_output_file(
+    output_path: &str,
+    format: &str,
+    use_path_response: bool,
+) -> Response {
+    use base64::Engine;
+    match std::fs::read(output_path) {
+        Ok(data) => {
+            let size = data.len();
+            if use_path_response {
+                // 파일을 temp에 남겨두고 경로만 반환
+                Json(serde_json::json!({
+                    "outputPath": output_path,
+                    "format": format,
+                    "size": size,
+                }))
+                .into_response()
+            } else {
+                // legacy: base64 인코딩
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                Json(serde_json::json!({ "data": b64, "format": format, "size": size }))
+                    .into_response()
+            }
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("결과 파일 읽기 실패: {}", e) })),
+        )
+            .into_response(),
+    }
 }
 
 // [v2.1.0] /api/scene-detect — yt-dlp + ffmpeg 네이티브 씬 감지
@@ -841,8 +947,17 @@ pub async fn start_server(_app: tauri::AppHandle) -> Result<(), Box<dyn std::err
                 axum::extract::DefaultBodyLimit::max(5 * 1024 * 1024 * 1024),
             ),
         )
+        .route("/api/tunnel/read-temp", post(tunnel_read_temp_handler))
         .route("/api/tunnel/{token}", delete(tunnel_close_handler))
         .route("/api/tunnel/status", get(tunnel_status_handler))
+        // [v2.5] ZIP 스트리밍 생성 — 브라우저 JSZip 대체
+        .route(
+            "/api/zip/create",
+            post(zip_create_handler)
+                .layer(axum::extract::DefaultBodyLimit::max(100 * 1024 * 1024)),
+        )
+        // [v2.5] API 프록시 — 브라우저 CORS/키노출 문제 해결
+        .route("/api/proxy/generic", post(api_proxy_handler))
         // [v2.0 Phase 4] 로컬 미디어 라이브러리 — 폴더 스캔 + 메타데이터
         // 로컬 영상/이미지/오디오 라이브러리 시맨틱 검색의 기반
         .route("/api/library/scan", post(library_scan_handler))
@@ -1681,21 +1796,33 @@ async fn social_download_handler(Json(req): Json<SocialRequest>) -> impl IntoRes
 
 async fn remove_bg_handler(Json(req): Json<RemoveBgRequest>) -> impl IntoResponse {
     use base64::Engine;
-    let image_data = match base64::engine::general_purpose::STANDARD.decode(&req.image) {
+    let image_data = match resolve_input_bytes(&req.input_path, &req.image, "이미지") {
         Ok(d) => d,
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "error": format!("Base64 디코딩 실패: {}", e) })),
-            )
-                .into_response()
-        }
+        Err((status, json)) => return (status, json).into_response(),
     };
+    let use_path_response = req.input_path.is_some();
 
     match rembg::remove_background(&image_data).await {
         Ok(result) => {
-            let b64 = base64::engine::general_purpose::STANDARD.encode(&result);
-            Json(serde_json::json!({ "image": b64, "format": "png" })).into_response()
+            if use_path_response {
+                // temp 파일에 결과 저장 후 경로 반환
+                let temp_dir = std::env::temp_dir();
+                let out_path = temp_dir.join(format!("rembg-{}.png", &crate::video_tunnel::generate_token()[..12]));
+                if let Err(e) = std::fs::write(&out_path, &result) {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({ "error": format!("결과 파일 저장 실패: {}", e) })),
+                    ).into_response();
+                }
+                Json(serde_json::json!({
+                    "outputPath": out_path.to_string_lossy().to_string(),
+                    "format": "png",
+                    "size": result.len(),
+                })).into_response()
+            } else {
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&result);
+                Json(serde_json::json!({ "image": b64, "format": "png" })).into_response()
+            }
         }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -1710,16 +1837,9 @@ async fn remove_bg_handler(Json(req): Json<RemoveBgRequest>) -> impl IntoRespons
 // ──────────────────────────────────────────────
 
 async fn transcribe_handler(Json(req): Json<TranscribeRequest>) -> impl IntoResponse {
-    use base64::Engine;
-    let audio_data = match base64::engine::general_purpose::STANDARD.decode(&req.audio) {
+    let audio_data = match resolve_input_bytes(&req.input_path, &req.audio, "오디오") {
         Ok(d) => d,
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "error": format!("Base64 디코딩 실패: {}", e) })),
-            )
-                .into_response()
-        }
+        Err((status, json)) => return (status, json).into_response(),
     };
 
     match whisper::transcribe(&audio_data, req.language.as_deref()).await {
@@ -2781,16 +2901,9 @@ async fn patch_prproj_files(project_dir: &std::path::Path) -> Result<(), String>
 // ──────────────────────────────────────────────
 
 async fn ffmpeg_transcode_handler(Json(req): Json<FfmpegTranscodeRequest>) -> impl IntoResponse {
-    use base64::Engine;
-    let input_data = match base64::engine::general_purpose::STANDARD.decode(&req.input) {
+    let input_data = match resolve_input_bytes(&req.input_path, &req.input, "입력") {
         Ok(d) => d,
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "error": format!("Base64 디코딩 실패: {}", e) })),
-            )
-                .into_response()
-        }
+        Err((status, json)) => return (status, json).into_response(),
     };
 
     let in_ext = match sanitize_media_extension(req.input_format.as_deref().unwrap_or("mp4")) {
@@ -2892,19 +3005,11 @@ async fn ffmpeg_transcode_handler(Json(req): Json<FfmpegTranscodeRequest>) -> im
     let ffmpeg = ytdlp::get_ffmpeg_path_public();
     let output = platform::async_cmd(&ffmpeg).args(&args).output().await;
 
+    let use_path_response = req.input_path.is_some();
     match output {
-        Ok(out) if out.status.success() => match std::fs::read(&output_path) {
-            Ok(data) => {
-                let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
-                Json(serde_json::json!({ "data": b64, "format": out_ext, "size": data.len() }))
-                    .into_response()
-            }
-            Err(e) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": format!("결과 파일 읽기 실패: {}", e) })),
-            )
-                .into_response(),
-        },
+        Ok(out) if out.status.success() => {
+            respond_with_output_file(&output_path, &out_ext, use_path_response)
+        }
         Ok(out) => {
             let stderr = String::from_utf8_lossy(&out.stderr);
             (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("FFmpeg 실패: {}", stderr.lines().last().unwrap_or("unknown")) }))).into_response()
@@ -2983,29 +3088,20 @@ async fn ffmpeg_merge_handler(Json(req): Json<FfmpegMergeRequest>) -> impl IntoR
         }
     };
 
-    if let (Some(video_b64), Some(audio_b64)) = (&req.video, &req.audio) {
-        let video_data =
-            match base64::engine::general_purpose::STANDARD.decode(video_b64) {
-                Ok(d) => d,
-                Err(e) => return (
-                    StatusCode::BAD_REQUEST,
-                    Json(
-                        serde_json::json!({ "error": format!("비디오 Base64 디코딩 실패: {}", e) }),
-                    ),
-                )
-                    .into_response(),
-            };
-        let audio_data =
-            match base64::engine::general_purpose::STANDARD.decode(audio_b64) {
-                Ok(d) => d,
-                Err(e) => return (
-                    StatusCode::BAD_REQUEST,
-                    Json(
-                        serde_json::json!({ "error": format!("오디오 Base64 디코딩 실패: {}", e) }),
-                    ),
-                )
-                    .into_response(),
-            };
+    // [v2.5] videoPath/audioPath가 있으면 temp 파일에서 직접 읽기, 없으면 base64
+    let has_video_src = req.video_path.is_some() || req.video.is_some();
+    let has_audio_src = req.audio_path.is_some() || req.audio.is_some();
+    let use_path_response = req.output_path_hint.unwrap_or(req.video_path.is_some());
+
+    if has_video_src && has_audio_src {
+        let video_data = match resolve_input_bytes(&req.video_path, &req.video, "비디오") {
+            Ok(d) => d,
+            Err((status, json)) => return (status, json).into_response(),
+        };
+        let audio_data = match resolve_input_bytes(&req.audio_path, &req.audio, "오디오") {
+            Ok(d) => d,
+            Err((status, json)) => return (status, json).into_response(),
+        };
 
         let tmp_video = match tempfile::Builder::new()
             .suffix(&format!(".{}", vid_ext))
@@ -3089,19 +3185,10 @@ async fn ffmpeg_merge_handler(Json(req): Json<FfmpegMergeRequest>) -> impl IntoR
         let output = platform::async_cmd(&ffmpeg).args(&args).output().await;
 
         return match output {
-            Ok(out) if out.status.success() => match std::fs::read(&output_path) {
-                Ok(data) => {
-                    println!("[FFmpeg] ✅ merge 성공: {} bytes", data.len());
-                    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
-                    Json(serde_json::json!({ "data": b64, "format": "mp4", "size": data.len() }))
-                        .into_response()
-                }
-                Err(e) => (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({ "error": format!("결과 파일 읽기 실패: {}", e) })),
-                )
-                    .into_response(),
-            },
+            Ok(out) if out.status.success() => {
+                println!("[FFmpeg] ✅ merge 성공");
+                respond_with_output_file(&output_path, "mp4", use_path_response)
+            }
             Ok(out) => {
                 let stderr = String::from_utf8_lossy(&out.stderr);
                 println!(
@@ -3299,19 +3386,10 @@ async fn ffmpeg_merge_handler(Json(req): Json<FfmpegMergeRequest>) -> impl IntoR
     };
 
     match output {
-        Ok(out) if out.status.success() => match std::fs::read(&output_path) {
-            Ok(data) => {
-                println!("[FFmpeg] ✅ concat 성공: {} bytes", data.len());
-                let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
-                Json(serde_json::json!({ "data": b64, "format": "mp4", "size": data.len() }))
-                    .into_response()
-            }
-            Err(e) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": format!("결과 파일 읽기 실패: {}", e) })),
-            )
-                .into_response(),
-        },
+        Ok(out) if out.status.success() => {
+            println!("[FFmpeg] ✅ concat 성공");
+            respond_with_output_file(&output_path, "mp4", use_path_response)
+        }
         Ok(out) => {
             let stderr = String::from_utf8_lossy(&out.stderr);
             println!(
@@ -3335,22 +3413,17 @@ async fn ffmpeg_merge_handler(Json(req): Json<FfmpegMergeRequest>) -> impl IntoR
 // ──────────────────────────────────────────────
 
 async fn ffmpeg_cut_handler(Json(req): Json<FfmpegCutRequest>) -> impl IntoResponse {
-    use base64::Engine;
-
-    if req.input.trim().is_empty() {
+    // [v2.5] 빈 input + inputPath 없음 = capability 조회
+    let input_empty = req.input.as_deref().map_or(true, |s| s.trim().is_empty());
+    if input_empty && req.input_path.is_none() {
         return ffmpeg_capability_into_response(build_ffmpeg_capability_response());
     }
 
-    let input_data = match base64::engine::general_purpose::STANDARD.decode(&req.input) {
+    let input_data = match resolve_input_bytes(&req.input_path, &req.input, "입력") {
         Ok(d) => d,
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "error": format!("Base64 디코딩 실패: {}", e) })),
-            )
-                .into_response()
-        }
+        Err((status, json)) => return (status, json).into_response(),
     };
+    let use_path_response = req.input_path.is_some();
 
     let (input_ext, clips) = match validate_ffmpeg_cut_request(&req) {
         Ok(validated) => validated,
@@ -3400,14 +3473,36 @@ async fn ffmpeg_cut_handler(Json(req): Json<FfmpegCutRequest>) -> impl IntoRespo
 
     match build_ffmpeg_cut_zip(temp_dir.path(), &clips) {
         Ok(zip_bytes) => {
-            let b64 = base64::engine::general_purpose::STANDARD.encode(&zip_bytes);
-            Json(serde_json::json!({
-                "data": b64,
-                "format": "zip",
-                "size": zip_bytes.len(),
-                "clipCount": clips.len(),
-            }))
-            .into_response()
+            if use_path_response {
+                // temp 파일에 ZIP 저장 후 경로 반환
+                let zip_path = temp_dir.path().join("output.zip");
+                if let Err(e) = std::fs::write(&zip_path, &zip_bytes) {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({ "error": format!("ZIP 저장 실패: {}", e) })),
+                    ).into_response();
+                }
+                // temp_dir의 소유권을 유지하기 위해 into_path()로 leak
+                let dir_path = temp_dir.into_path();
+                let final_zip = dir_path.join("output.zip");
+                Json(serde_json::json!({
+                    "outputPath": final_zip.to_string_lossy().to_string(),
+                    "format": "zip",
+                    "size": zip_bytes.len(),
+                    "clipCount": clips.len(),
+                }))
+                .into_response()
+            } else {
+                use base64::Engine;
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&zip_bytes);
+                Json(serde_json::json!({
+                    "data": b64,
+                    "format": "zip",
+                    "size": zip_bytes.len(),
+                    "clipCount": clips.len(),
+                }))
+                .into_response()
+            }
         }
         Err(error) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -4381,6 +4476,315 @@ async fn tunnel_upload_temp_handler(mut multipart: Multipart) -> Response {
         })),
     )
         .into_response()
+}
+
+/// POST /api/tunnel/read-temp — temp 파일을 binary로 읽어서 반환
+/// [v2.5] 웹앱이 outputPath 응답을 받은 후 파일 내용을 가져올 때 사용
+async fn tunnel_read_temp_handler(Json(req): Json<serde_json::Value>) -> Response {
+    let path = match req.get("path").and_then(|v| v.as_str()) {
+        Some(p) => p.to_string(),
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": "path 필드가 필요합니다" })),
+            )
+                .into_response()
+        }
+    };
+
+    // temp 디렉토리 안전 검증
+    let canonical = match std::fs::canonicalize(&path) {
+        Ok(p) => p,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": format!("파일을 찾을 수 없습니다: {}", e) })),
+            )
+                .into_response()
+        }
+    };
+    let temp_dir = std::env::temp_dir();
+    if !canonical.starts_with(&temp_dir) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "허용된 경로 밖의 파일입니다" })),
+        )
+            .into_response();
+    }
+
+    match tokio::fs::read(&canonical).await {
+        Ok(data) => {
+            let mime = if path.ends_with(".mp4") {
+                "video/mp4"
+            } else if path.ends_with(".zip") {
+                "application/zip"
+            } else if path.ends_with(".png") {
+                "image/png"
+            } else if path.ends_with(".jpg") || path.ends_with(".jpeg") {
+                "image/jpeg"
+            } else if path.ends_with(".wav") {
+                "audio/wav"
+            } else if path.ends_with(".mp3") {
+                "audio/mpeg"
+            } else {
+                "application/octet-stream"
+            };
+            Response::builder()
+                .status(StatusCode::OK)
+                .header("Content-Type", mime)
+                .header("Content-Length", data.len().to_string())
+                .body(Body::from(data))
+                .unwrap_or_else(|_| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "응답 생성 실패",
+                    )
+                        .into_response()
+                })
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("파일 읽기 실패: {}", e) })),
+        )
+            .into_response(),
+    }
+}
+
+// ──────────────────────────────────────────────
+// [v2.5] /api/zip/create — URL 목록 → ZIP 파일 생성
+// 브라우저 JSZip 대체: 컴패니언이 직접 URL 다운로드 → 디스크에 ZIP 스트리밍
+// ──────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct ZipCreateRequest {
+    /// ZIP에 넣을 파일 목록: { url: "https://...", filename: "001_scene.jpg" }
+    /// 또는 temp_path: { path: "/tmp/...", filename: "clip.mp4" }
+    files: Vec<ZipFileEntry>,
+}
+
+#[derive(Deserialize)]
+struct ZipFileEntry {
+    url: Option<String>,
+    path: Option<String>,
+    filename: String,
+}
+
+async fn zip_create_handler(Json(req): Json<ZipCreateRequest>) -> Response {
+    use std::io::{Write, Cursor};
+    use zip::write::SimpleFileOptions;
+
+    if req.files.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "파일 목록이 비어 있습니다" })),
+        )
+            .into_response();
+    }
+
+    let mut buffer = Cursor::new(Vec::new());
+    {
+        let mut zip = zip::ZipWriter::new(&mut buffer);
+        let options = SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+
+        for entry in &req.files {
+            let data = if let Some(path) = &entry.path {
+                // temp 파일에서 읽기
+                match std::fs::read(path) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        eprintln!("[ZIP] 파일 읽기 실패 ({}): {}", path, e);
+                        continue;
+                    }
+                }
+            } else if let Some(url) = &entry.url {
+                // URL에서 다운로드
+                match reqwest::get(url).await {
+                    Ok(res) if res.status().is_success() => {
+                        match res.bytes().await {
+                            Ok(bytes) => bytes.to_vec(),
+                            Err(e) => {
+                                eprintln!("[ZIP] 다운로드 읽기 실패 ({}): {}", url, e);
+                                continue;
+                            }
+                        }
+                    }
+                    Ok(res) => {
+                        eprintln!("[ZIP] 다운로드 실패 ({}) HTTP {}", url, res.status());
+                        continue;
+                    }
+                    Err(e) => {
+                        eprintln!("[ZIP] 다운로드 에러 ({}): {}", url, e);
+                        continue;
+                    }
+                }
+            } else {
+                continue;
+            };
+
+            // ZIP 엔트리에 추가
+            let safe_name = entry.filename.replace(['/', '\\'], "_").replace("..", "_");
+            if let Err(e) = zip.start_file(&safe_name, options) {
+                eprintln!("[ZIP] 엔트리 시작 실패 ({}): {}", safe_name, e);
+                continue;
+            }
+            if let Err(e) = zip.write_all(&data) {
+                eprintln!("[ZIP] 데이터 쓰기 실패 ({}): {}", safe_name, e);
+                continue;
+            }
+        }
+
+        if let Err(e) = zip.finish() {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("ZIP 완료 실패: {}", e) })),
+            )
+                .into_response();
+        }
+    }
+
+    let zip_bytes = buffer.into_inner();
+    let size = zip_bytes.len();
+
+    // temp 파일에 저장 후 경로 반환
+    let temp_dir = std::env::temp_dir();
+    let zip_path = temp_dir.join(format!("zip-{}.zip", &crate::video_tunnel::generate_token()[..12]));
+    if let Err(e) = std::fs::write(&zip_path, &zip_bytes) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("ZIP 저장 실패: {}", e) })),
+        )
+            .into_response();
+    }
+
+    Json(serde_json::json!({
+        "outputPath": zip_path.to_string_lossy().to_string(),
+        "size": size,
+        "fileCount": req.files.len(),
+    }))
+    .into_response()
+}
+
+// ──────────────────────────────────────────────
+// [v2.5] /api/proxy/generic — 범용 API 프록시
+// 브라우저 CORS 문제 해결 + API 키 노출 방지
+// ──────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct ApiProxyRequest {
+    url: String,
+    method: Option<String>,     // GET/POST (default: GET)
+    headers: Option<serde_json::Value>, // { "Authorization": "Bearer ..." }
+    body: Option<serde_json::Value>,    // POST body
+    timeout_ms: Option<u64>,
+}
+
+async fn api_proxy_handler(Json(req): Json<ApiProxyRequest>) -> Response {
+    // 보안: 허용된 도메인만 프록시
+    let allowed_domains = [
+        "googleapis.com",
+        "api.evolink.ai",
+        "api.kie.ai",
+        "api.laozhang.ai",
+        "api.remove.bg",
+        "api.cloudinary.com",
+        "generativelanguage.googleapis.com",
+        "aisandbox-pa.googleapis.com",
+        "labs.google",
+    ];
+    let url_lower = req.url.to_lowercase();
+    let is_allowed = allowed_domains.iter().any(|d| url_lower.contains(d));
+    if !is_allowed {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": format!("허용되지 않은 도메인입니다: {}", req.url) })),
+        )
+            .into_response();
+    }
+
+    let client = reqwest::Client::new();
+    let method_str = req.method.as_deref().unwrap_or("GET").to_uppercase();
+    let timeout = std::time::Duration::from_millis(req.timeout_ms.unwrap_or(60_000));
+
+    let mut builder = match method_str.as_str() {
+        "POST" => client.post(&req.url),
+        "PUT" => client.put(&req.url),
+        "DELETE" => client.delete(&req.url),
+        "PATCH" => client.patch(&req.url),
+        _ => client.get(&req.url),
+    }
+    .timeout(timeout);
+
+    // 헤더 전달
+    if let Some(headers) = &req.headers {
+        if let Some(obj) = headers.as_object() {
+            for (key, val) in obj {
+                if let Some(v) = val.as_str() {
+                    if let (Ok(name), Ok(value)) = (
+                        reqwest::header::HeaderName::from_bytes(key.as_bytes()),
+                        reqwest::header::HeaderValue::from_str(v),
+                    ) {
+                        builder = builder.header(name, value);
+                    }
+                }
+            }
+        }
+    }
+
+    // body 전달
+    if let Some(body) = &req.body {
+        builder = builder.json(body);
+    }
+
+    match builder.send().await {
+        Ok(res) => {
+            let status = res.status().as_u16();
+            let headers_map: serde_json::Map<String, serde_json::Value> = res
+                .headers()
+                .iter()
+                .filter_map(|(k, v)| {
+                    v.to_str().ok().map(|s| (k.as_str().to_string(), serde_json::Value::String(s.to_string())))
+                })
+                .collect();
+
+            let content_type = res
+                .headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("application/octet-stream")
+                .to_string();
+
+            // JSON 응답이면 그대로 반환, 아니면 base64
+            if content_type.contains("json") || content_type.contains("text") {
+                let text = res.text().await.unwrap_or_default();
+                let parsed = serde_json::from_str::<serde_json::Value>(&text).unwrap_or(serde_json::Value::String(text));
+                Json(serde_json::json!({
+                    "status": status,
+                    "headers": headers_map,
+                    "data": parsed,
+                }))
+                .into_response()
+            } else {
+                use base64::Engine;
+                let bytes = res.bytes().await.unwrap_or_default();
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                Json(serde_json::json!({
+                    "status": status,
+                    "headers": headers_map,
+                    "data": b64,
+                    "binary": true,
+                    "contentType": content_type,
+                    "size": bytes.len(),
+                }))
+                .into_response()
+            }
+        }
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({ "error": format!("프록시 요청 실패: {}", e) })),
+        )
+            .into_response(),
+    }
 }
 
 fn sanitize_temp_filename(name: &str) -> String {

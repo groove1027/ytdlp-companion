@@ -133,91 +133,59 @@ export async function demuxMp4(blob: Blob): Promise<DemuxResult> {
  * ffmpeg.wasm `-c copy` 무손실 머지 — 원본 비트스트림 그대로 복사 (프레임 변형 0%)
  */
 export async function mergeVideoAudio(videoBlob: Blob, audioBlob: Blob): Promise<Blob> {
-  // 1순위: 컴패니언 전용 merge 엔드포인트 (WASM 30MB 로드 불필요)
-  // [FIX] companionTranscode는 단일 입력만 지원하여 오디오가 누락되는 치명적 버그가 있었음
-  // → 전용 /api/ffmpeg/merge 엔드포인트로 비디오+오디오를 함께 전송
-  try {
-    const { isCompanionDetected } = await import('../ytdlpApiService');
-    if (isCompanionDetected()) {
-      console.log(`[Merge] 컴패니언 전용 merge 엔드포인트 시도...`);
-      const COMPANION_URL = 'http://127.0.0.1:9876';
-
-      // Blob → base64 변환
-      const toBase64 = async (blob: Blob): Promise<string> => {
-        const buffer = await blob.arrayBuffer();
-        const bytes = new Uint8Array(buffer);
-        const chunkSize = 65536;
-        let binary = '';
-        for (let i = 0; i < bytes.length; i += chunkSize) {
-          const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
-          binary += String.fromCharCode(...chunk);
-        }
-        return btoa(binary);
-      };
-
-      const [videoB64, audioB64] = await Promise.all([toBase64(videoBlob), toBase64(audioBlob)]);
-
-      const res = await fetch(`${COMPANION_URL}/api/ffmpeg/merge`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          video: videoB64,
-          audio: audioB64,
-          videoFormat: 'mp4',
-          audioFormat: 'm4a',
-        }),
-        signal: AbortSignal.timeout(300_000),
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data?.data) {
-          const binaryStr = atob(data.data);
-          const outBytes = new Uint8Array(binaryStr.length);
-          for (let i = 0; i < binaryStr.length; i++) outBytes[i] = binaryStr.charCodeAt(i);
-          const merged = new Blob([outBytes], { type: 'video/mp4' });
-          if (merged.size > 1000) {
-            console.log(`[Merge] ✅ 컴패니언 FFmpeg 합본 성공 (${(merged.size / 1024 / 1024).toFixed(1)}MB)`);
-            return merged;
-          }
-        }
-      }
-      console.warn('[Merge] 컴패니언 merge 실패 — WASM 폴백');
-    }
-  } catch (e) {
-    console.warn('[Merge] 컴패니언 merge 실패 — WASM 폴백:', e instanceof Error ? e.message : '');
+  // [v2.5] 컴패니언 전용 merge — upload-temp → inputPath 패턴으로 base64 완전 제거
+  const { isCompanionDetected } = await import('../ytdlpApiService');
+  if (!isCompanionDetected()) {
+    throw new Error('[Merge] 컴패니언이 필요합니다. 헬퍼 앱을 실행해주세요.');
   }
 
-  // 2순위: FFmpeg WASM 폴백
-  const { loadFFmpeg } = await import('../ffmpegService');
-  const { fetchFile } = await import('@ffmpeg/util');
+  console.log(`[Merge] 컴패니언 전용 merge 엔드포인트 시도...`);
+  const COMPANION_URL = 'http://127.0.0.1:9876';
+  const { uploadBlobToCompanion, downloadCompanionTempFile } = await import('../companion/tunnelClient');
 
-  console.log(`[Merge] ffmpeg.wasm 로딩 중...`);
-  const ffmpeg = await loadFFmpeg();
-
-  // 입력 파일 쓰기
-  await ffmpeg.writeFile('video.mp4', await fetchFile(videoBlob));
-  await ffmpeg.writeFile('audio.m4a', await fetchFile(audioBlob));
-
-  // -c copy: 디코딩/인코딩 없이 원본 비트스트림 그대로 합치기
-  console.log(`[Merge] ffmpeg -c copy 실행 중...`);
-  await ffmpeg.exec([
-    '-i', 'video.mp4',
-    '-i', 'audio.m4a',
-    '-c', 'copy',
-    '-movflags', '+faststart',
-    '-y', 'merged.mp4',
+  // 병렬 업로드
+  const [videoPath, audioPath] = await Promise.all([
+    uploadBlobToCompanion(videoBlob, 'video.mp4'),
+    uploadBlobToCompanion(audioBlob, 'audio.m4a'),
   ]);
 
-  const data = await ffmpeg.readFile('merged.mp4') as Uint8Array;
-  // 정리
-  await ffmpeg.deleteFile('video.mp4').catch(() => {});
-  await ffmpeg.deleteFile('audio.m4a').catch(() => {});
-  await ffmpeg.deleteFile('merged.mp4').catch(() => {});
+  const res = await fetch(`${COMPANION_URL}/api/ffmpeg/merge`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      videoPath,
+      audioPath,
+      videoFormat: 'mp4',
+      audioFormat: 'm4a',
+    }),
+    signal: AbortSignal.timeout(300_000),
+  });
 
-  const merged = new Blob([new Uint8Array(data)], { type: 'video/mp4' });
-  console.log(`[Merge] ✅ 영상(${(videoBlob.size / 1024 / 1024).toFixed(1)}MB) + 오디오(${(audioBlob.size / 1024 / 1024).toFixed(1)}MB) → 합본(${(merged.size / 1024 / 1024).toFixed(1)}MB)`);
-  return merged;
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'unknown' }));
+    throw new Error(`[Merge] 컴패니언 merge 실패: ${err.error || res.status}`);
+  }
+
+  const data = await res.json();
+
+  // [v2.5] outputPath 응답
+  if (data?.outputPath) {
+    const merged = await downloadCompanionTempFile(data.outputPath, 'video/mp4');
+    console.log(`[Merge] ✅ 컴패니언 FFmpeg 합본 성공 (${(merged.size / 1024 / 1024).toFixed(1)}MB, path 모드)`);
+    return merged;
+  }
+
+  // legacy: base64 응답 호환
+  if (data?.data) {
+    const binaryStr = atob(data.data);
+    const outBytes = new Uint8Array(binaryStr.length);
+    for (let i = 0; i < binaryStr.length; i++) outBytes[i] = binaryStr.charCodeAt(i);
+    const merged = new Blob([outBytes], { type: 'video/mp4' });
+    console.log(`[Merge] ✅ 컴패니언 FFmpeg 합본 성공 (${(merged.size / 1024 / 1024).toFixed(1)}MB)`);
+    return merged;
+  }
+
+  throw new Error('[Merge] 컴패니언 merge 응답에 유효한 데이터가 없습니다.');
 }
 
 // ─── Decode Group Builder ────────────────────────────

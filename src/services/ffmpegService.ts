@@ -25,60 +25,56 @@ export async function companionTranscode(
   outputFormat: string,
   ffmpegArgs?: string[],
 ): Promise<Blob | null> {
-  // [FIX #914] base64 인코딩이 무거우므로 isCompanionDetected()를 최적화 게이트로 유지
-  // health handler 캐싱 수정으로 이 값이 정확해짐
   if (!isCompanionDetected()) return null;
 
   try {
     logger.info(`[FFmpeg] 컴패니언 네이티브 트랜스코딩 시도 (→${outputFormat})`);
 
-    // Blob → base64 (청크 단위)
-    const buffer = await inputBlob.arrayBuffer();
-    const bytes = new Uint8Array(buffer);
-    const chunkSize = 65536;
-    let binary = '';
-    for (let i = 0; i < bytes.length; i += chunkSize) {
-      const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
-      binary += String.fromCharCode(...chunk);
-    }
-    const b64 = btoa(binary);
-
+    // [v2.5] upload-temp → inputPath 패턴으로 base64 제거
+    const { uploadBlobToCompanion, downloadCompanionTempFile } = await import('./companion/tunnelClient');
     const inputExt = inputBlob.type.includes('webm') ? 'webm'
       : inputBlob.type.includes('wav') ? 'wav'
       : inputBlob.type.includes('mp3') ? 'mp3'
       : 'mp4';
+    const tempPath = await uploadBlobToCompanion(inputBlob, `input.${inputExt}`);
 
     const res = await fetch(`${COMPANION_URL}/api/ffmpeg/transcode`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        input: b64,
+        inputPath: tempPath,
         inputFormat: inputExt,
         outputFormat,
         args: ffmpegArgs,
       }),
-      signal: AbortSignal.timeout(300_000), // 5분
+      signal: AbortSignal.timeout(300_000),
     });
 
     if (!res.ok) return null;
 
     const data = await res.json();
-    if (!data?.data) return null;
-
-    // base64 → Blob
-    const binaryStr = atob(data.data);
-    const outBytes = new Uint8Array(binaryStr.length);
-    for (let i = 0; i < binaryStr.length; i++) outBytes[i] = binaryStr.charCodeAt(i);
 
     const mimeType = outputFormat === 'mp3' ? 'audio/mp3'
       : outputFormat === 'wav' ? 'audio/wav'
       : outputFormat === 'webm' ? 'video/webm'
       : 'video/mp4';
 
+    // [v2.5] outputPath 응답이면 파일에서 직접 읽기
+    if (data?.outputPath) {
+      const resultBlob = await downloadCompanionTempFile(data.outputPath, mimeType);
+      logger.success(`[FFmpeg] 컴패니언 트랜스코딩 성공 (${(data.size / 1024).toFixed(0)}KB, path 모드)`);
+      return resultBlob;
+    }
+
+    // legacy: base64 응답 호환
+    if (!data?.data) return null;
+    const binaryStr = atob(data.data);
+    const outBytes = new Uint8Array(binaryStr.length);
+    for (let i = 0; i < binaryStr.length; i++) outBytes[i] = binaryStr.charCodeAt(i);
     logger.success(`[FFmpeg] 컴패니언 트랜스코딩 성공 (${(data.size / 1024).toFixed(0)}KB)`);
     return new Blob([outBytes], { type: mimeType });
   } catch (e) {
-    logger.warn('[FFmpeg] 컴패니언 트랜스코딩 실패 — WASM 폴백:', e instanceof Error ? e.message : '');
+    logger.warn('[FFmpeg] 컴패니언 트랜스코딩 실패:', e instanceof Error ? e.message : '');
     return null;
   }
 }

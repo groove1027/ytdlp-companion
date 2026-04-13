@@ -155,6 +155,43 @@ export async function uploadFileToCompanion(
 }
 
 /**
+ * [v2.5] Blob을 컴패니언 temp에 업로드 → temp_path 반환
+ * File 객체가 아닌 Blob도 지원 (ffmpeg 결과 등)
+ */
+export async function uploadBlobToCompanion(
+  blob: Blob,
+  filename = 'upload.bin',
+  signal?: AbortSignal,
+): Promise<string> {
+  const file = new File([blob], filename, { type: blob.type });
+  return uploadFileToCompanion(file, signal);
+}
+
+/**
+ * [v2.5] 컴패니언 temp 파일을 Blob으로 다운로드
+ * outputPath 응답을 받은 후 파일 내용을 가져올 때 사용
+ */
+export async function downloadCompanionTempFile(
+  outputPath: string,
+  mimeType = 'application/octet-stream',
+  signal?: AbortSignal,
+): Promise<Blob> {
+  // outputPath에서 직접 읽기 — 컴패니언의 /api/tunnel/serve를 통하지 않고
+  // 파일 내용을 직접 전달받는 엔드포인트 사용
+  const res = await fetch(`${COMPANION_URL}/api/tunnel/read-temp`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: outputPath }),
+    signal: signal ?? AbortSignal.timeout(5 * 60 * 1000),
+  });
+  if (!res.ok) {
+    throw new Error(`temp 파일 읽기 실패: HTTP ${res.status}`);
+  }
+  const arrayBuffer = await res.arrayBuffer();
+  return new Blob([arrayBuffer], { type: mimeType });
+}
+
+/**
  * 임시 경로를 cloudflared 터널로 노출 → 공개 URL 반환
  */
 export async function openTunnelForPath(

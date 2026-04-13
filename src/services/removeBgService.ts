@@ -6,36 +6,36 @@ import { isCompanionDetected } from './ytdlpApiService';
 const REMOVE_BG_API_URL = 'https://api.remove.bg/v1.0/removebg';
 const COMPANION_URL = 'http://127.0.0.1:9876';
 
-/** File → Base64 변환 헬퍼 */
-async function fileToBase64(file: File): Promise<string> {
-    const buffer = await file.arrayBuffer();
-    const bytes = new Uint8Array(buffer);
-    let binary = '';
-    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-    return btoa(binary);
-}
-
 export const removeBackground = async (imageFile: File): Promise<File> => {
     // 1순위: 컴패니언 로컬 rembg (무료, 무제한, 풀사이즈)
-    // [FIX #914] base64 인코딩이 무거우므로 isCompanionDetected()를 최적화 게이트로 유지
-    // health handler 캐싱 수정으로 이 값이 정확해짐
     if (isCompanionDetected()) {
         try {
             logger.info(`✂️ [Companion] rembg 로컬 배경 제거: ${imageFile.name}`);
-            const b64 = await fileToBase64(imageFile);
+
+            // [v2.5] upload-temp → inputPath 패턴으로 base64 제거
+            const { uploadFileToCompanion, downloadCompanionTempFile } = await import('./companion/tunnelClient');
+            const tempPath = await uploadFileToCompanion(imageFile);
+
             const res = await fetch(`${COMPANION_URL}/api/remove-bg`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ image: b64 }),
+                body: JSON.stringify({ inputPath: tempPath }),
                 signal: AbortSignal.timeout(60000),
             });
 
             if (res.ok) {
                 const data = await res.json();
-                const binaryStr = atob(data.image);
-                const bytes = new Uint8Array(binaryStr.length);
-                for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
-                const blob = new Blob([bytes], { type: 'image/png' });
+                let blob: Blob;
+                if (data.outputPath) {
+                    // [v2.5] outputPath 응답
+                    blob = await downloadCompanionTempFile(data.outputPath, 'image/png');
+                } else {
+                    // legacy: base64 응답
+                    const binaryStr = atob(data.image);
+                    const bytes = new Uint8Array(binaryStr.length);
+                    for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+                    blob = new Blob([bytes], { type: 'image/png' });
+                }
                 logger.success('✅ [Companion] 배경 제거 성공 (로컬 rembg)');
                 return new File([blob], `no-bg-${imageFile.name.replace(/\.[^/.]+$/, '')}.png`, { type: 'image/png' });
             }

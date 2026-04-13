@@ -14,30 +14,11 @@ import type { WhisperTranscriptResult, WhisperSegment, WhisperWord, DiarizedUtte
 
 const COMPANION_URL = 'http://127.0.0.1:9876';
 
-function blobToBase64(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = typeof reader.result === 'string' ? reader.result : '';
-      const base64 = result.includes(',') ? result.split(',')[1] : result;
-      if (!base64) {
-        reject(new Error('오디오를 base64로 변환하지 못했습니다.'));
-        return;
-      }
-      resolve(base64);
-    };
-    reader.onerror = () => reject(reader.error || new Error('오디오를 읽지 못했습니다.'));
-    reader.readAsDataURL(blob);
-  });
-}
-
 /** 컴패니언 whisper.cpp로 로컬 전사 시도 */
 async function tryCompanionTranscribe(
   audioFile: File | Blob,
   options?: { signal?: AbortSignal; onProgress?: (msg: string) => void; diarize?: boolean },
 ): Promise<WhisperTranscriptResult | null> {
-  // [FIX #914] base64 인코딩이 무거우므로 isCompanionDetected()를 최적화 게이트로 유지
-  // health handler 캐싱 수정으로 이 값이 정확해짐
   if (!isCompanionDetected()) return null;
   // diarize는 whisper.cpp가 미지원 → Kie로 폴백
   if (options?.diarize) return null;
@@ -46,12 +27,14 @@ async function tryCompanionTranscribe(
     options?.onProgress?.('로컬 whisper.cpp 전사 중...');
     logger.info('[STT] 컴패니언 whisper.cpp 로컬 전사 시도');
 
-    const b64 = await blobToBase64(audioFile);
+    // [v2.5] upload-temp → inputPath 패턴으로 base64 제거
+    const { uploadBlobToCompanion } = await import('./companion/tunnelClient');
+    const tempPath = await uploadBlobToCompanion(audioFile, 'audio.wav', options?.signal);
 
     const res = await fetch(`${COMPANION_URL}/api/transcribe`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ audio: b64, language: null }),
+      body: JSON.stringify({ inputPath: tempPath, language: null }),
       signal: options?.signal
         ? (AbortSignal as unknown as { any?: (signals: AbortSignal[]) => AbortSignal }).any?.([options.signal, AbortSignal.timeout(300_000)]) || AbortSignal.timeout(300_000)
         : AbortSignal.timeout(300_000),

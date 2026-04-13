@@ -33,7 +33,8 @@ export interface CompanionClipRange {
 }
 
 interface CompanionCutResponse {
-  data?: string; // base64 ZIP
+  data?: string; // base64 ZIP (legacy)
+  outputPath?: string; // [v2.5] temp 파일 경로
   format?: string;
   size?: number;
   clipCount?: number;
@@ -129,36 +130,14 @@ function guessBlobExtension(file: File | Blob): string {
   return 'mp4';
 }
 
-async function fileToBase64(file: File | Blob, signal?: AbortSignal): Promise<string> {
-  assertNotAborted(signal);
-  const buffer = await file.arrayBuffer();
-  assertNotAborted(signal);
-  const bytes = new Uint8Array(buffer);
-  const CHUNK_SIZE = 0x8000;
-  let binary = '';
-  for (let i = 0; i < bytes.length; i += CHUNK_SIZE) {
-    assertNotAborted(signal);
-    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK_SIZE));
-  }
-  assertNotAborted(signal);
-  return btoa(binary);
-}
-
-function decodeBase64ToUint8Array(base64: string): Uint8Array {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes;
-}
-
 /**
  * 소스 영상 1개를 컴패니언 native FFmpeg로 클립별 자르기 → ZIP Blob 반환.
  *
+ * [v2.5] upload-temp → inputPath 패턴으로 base64 완전 제거
  * - 모든 코덱 지원 (WebCodecs와 달리 H.264 한정 X)
- * - 현재는 JSON base64 업로드라 매우 큰 입력은 메모리 부담이 있다
  * - 5~15배 빠름
  *
- * 실패 시 throw — 호출처가 catch해서 WebCodecs 폴백을 시도한다.
+ * 실패 시 throw.
  */
 export async function cutClipsViaCompanion(
   sourceFile: File,
@@ -173,13 +152,14 @@ export async function cutClipsViaCompanion(
 
   onProgress?.(5, '컴패니언으로 영상 전송 중...');
 
-  // base64 인코딩 (대용량 메모리 부담은 있지만 youtubeReferenceService와 동일 패턴)
-  const base64Input = await fileToBase64(sourceFile, signal);
+  // [v2.5] multipart upload → temp_path
+  const { uploadFileToCompanion, downloadCompanionTempFile } = await import('./tunnelClient');
+  const tempPath = await uploadFileToCompanion(sourceFile, signal);
   assertNotAborted(signal);
   onProgress?.(20, '컴패니언이 영상을 자르는 중...');
 
   const payload = {
-    input: base64Input,
+    inputPath: tempPath,
     inputFormat: guessBlobExtension(sourceFile),
     clips: clips.map((c) => ({
       label: c.label,
@@ -211,21 +191,36 @@ export async function cutClipsViaCompanion(
   if (!response.ok) {
     if (response.status === 404 || response.status === 405) {
       clearCompanionFfmpegCutCache();
-      throw new Error('컴패니언이 ffmpeg-cut 엔드포인트를 지원하지 않습니다 (v1.3.0+ 필요).');
+      throw new Error('컴패니언이 ffmpeg-cut 엔드포인트를 지원하지 않습니다 (v2.5+ 필요).');
     }
     const text = await response.text().catch(() => '');
     throw new Error(text || `컴패니언 클립 자르기 실패 (HTTP ${response.status})`);
   }
 
   const data = (await response.json()) as CompanionCutResponse;
-  if (!data || typeof data.data !== 'string' || !data.data) {
-    throw new Error(data?.error || '컴패니언 응답에 ZIP 데이터가 비어 있습니다.');
-  }
 
   onProgress?.(95, 'ZIP 다운로드 중...');
   assertNotAborted(signal);
-  const bytes = decodeBase64ToUint8Array(data.data);
-  // Uint8Array → Blob — TS 5.7+ BlobPart 호환: ArrayBuffer를 명시 캐스트
+
+  // [v2.5] outputPath 응답이면 파일에서 직접 읽기
+  if (data?.outputPath) {
+    const blob = await downloadCompanionTempFile(data.outputPath as string, 'application/zip', signal);
+    logger.info('[CompanionCut] 클립 자르기 완료 (path 모드)', {
+      clips: clips.length,
+      sizeMB: (blob.size / 1024 / 1024).toFixed(1),
+      sourceMB: (sourceFile.size / 1024 / 1024).toFixed(1),
+    });
+    onProgress?.(100, '완료!');
+    return blob;
+  }
+
+  // legacy: base64 응답 호환
+  if (!data || typeof data.data !== 'string' || !data.data) {
+    throw new Error(data?.error || '컴패니언 응답에 ZIP 데이터가 비어 있습니다.');
+  }
+  const binary = atob(data.data);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
   const arrayBuffer = bytes.buffer.slice(
     bytes.byteOffset,
     bytes.byteOffset + bytes.byteLength,

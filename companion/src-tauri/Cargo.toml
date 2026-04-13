@@ -34,6 +34,8 @@ tar = "0.4"
 thiserror = "1"
 # [v2.3] WebView 이미지 검색 — 실제 브라우저로 구글/네이버 검색 (봇 탐지 차단 불가)
 headless_chrome = "1.0"
+# [v2.5] ZIP 생성 — 브라우저 JSZip 대체
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 # [v2.0.1] Windows 안정 file identity API — std::os::windows::fs::MetadataExt::file_index()
 # 가 nightly-only(`windows_by_handle`)이라 stable Windows 빌드 실패. winapi-util은 transitive
