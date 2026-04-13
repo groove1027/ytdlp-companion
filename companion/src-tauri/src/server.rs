@@ -674,6 +674,13 @@ struct ValidatedFfmpegCutClip {
 // [v2.5] 헬퍼: input_path 또는 base64 중 하나로 바이트 로드
 // temp 디렉토리 내 경로만 허용하여 임의 파일 읽기 방지
 // ──────────────────────────────────────────────
+/// [FIX Codex-3차] macOS에서 /var → /private/var symlink 때문에
+/// temp_dir()과 canonicalize() 결과가 불일치 → temp_dir도 canonicalize
+fn canonical_temp_dir() -> std::path::PathBuf {
+    let raw = std::env::temp_dir();
+    std::fs::canonicalize(&raw).unwrap_or(raw)
+}
+
 fn resolve_input_bytes(
     input_path: &Option<String>,
     base64_data: &Option<String>,
@@ -691,7 +698,7 @@ fn resolve_input_bytes(
                 ));
             }
         };
-        let temp_dir = std::env::temp_dir();
+        let temp_dir = canonical_temp_dir();
         if !canonical.starts_with(&temp_dir) {
             return Err((
                 StatusCode::BAD_REQUEST,
@@ -4517,7 +4524,7 @@ async fn tunnel_read_temp_handler(Json(req): Json<serde_json::Value>) -> Respons
                 .into_response()
         }
     };
-    let temp_dir = std::env::temp_dir();
+    let temp_dir = canonical_temp_dir();
     if !canonical.starts_with(&temp_dir) {
         return (
             StatusCode::FORBIDDEN,
@@ -4613,7 +4620,7 @@ async fn zip_create_handler(Json(req): Json<ZipCreateRequest>) -> Response {
                         continue;
                     }
                 };
-                let temp_dir = std::env::temp_dir();
+                let temp_dir = canonical_temp_dir();
                 if !canonical.starts_with(&temp_dir) {
                     eprintln!("[ZIP] 허용되지 않은 경로: {}", path);
                     continue;
