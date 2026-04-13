@@ -6268,17 +6268,24 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       // 영상 없으면 SRT만 다운로드 (레이어 분리)
       const isTk = true;
       if (hasEffectSub || hasOriginalLayer) {
-        const JSZip = (await import('jszip')).default;
-        const zip = new JSZip();
-        zip.file(`${safeName}_${dlgLabel}.srt`, '\uFEFF' + generateSrt(v.scenes, isTk, 'dialogue', isShortForm, selectedPreset || undefined));
+        // [v2.5] 컴패니언 ZIP 생성 — SRT 텍스트를 temp 파일로 올린 후 ZIP
+        const { createZipViaCompanion } = await import('../../../services/companion/zipService');
+        const { uploadBlobToCompanion } = await import('../../../services/companion/tunnelClient');
+        const srtFiles: Array<{ path: string; filename: string }> = [];
+        const uploadSrt = async (content: string, filename: string) => {
+          const blob = new Blob(['\uFEFF' + content], { type: 'text/plain; charset=utf-8' });
+          const path = await uploadBlobToCompanion(blob, filename);
+          srtFiles.push({ path, filename });
+        };
+        await uploadSrt(generateSrt(v.scenes, isTk, 'dialogue', isShortForm, selectedPreset || undefined), `${safeName}_${dlgLabel}.srt`);
         if (hasOriginalLayer && originalLabel) {
-          zip.file(`${safeName}_${originalLabel}.srt`, '\uFEFF' + generateSrt(v.scenes, isTk, 'original', isShortForm, selectedPreset || undefined));
+          await uploadSrt(generateSrt(v.scenes, isTk, 'original', isShortForm, selectedPreset || undefined), `${safeName}_${originalLabel}.srt`);
         }
         if (hasEffectSub) {
-          zip.file(`${safeName}_${fxLabel}.srt`, '\uFEFF' + generateSrt(v.scenes, isTk, 'effect', isShortForm, selectedPreset || undefined));
+          await uploadSrt(generateSrt(v.scenes, isTk, 'effect', isShortForm, selectedPreset || undefined), `${safeName}_${fxLabel}.srt`);
         }
-        zip.file(`${safeName}_통합.srt`, '\uFEFF' + generateSrt(v.scenes, isTk, 'combined', isShortForm, selectedPreset || undefined));
-        const zipBlob = await zip.generateAsync({ type: 'blob' });
+        await uploadSrt(generateSrt(v.scenes, isTk, 'combined', isShortForm, selectedPreset || undefined), `${safeName}_통합.srt`);
+        const zipBlob = await createZipViaCompanion(srtFiles);
         triggerBlobDownload(zipBlob, `${safeName}_자막.zip`, 'VideoAnalysisRoom:srtLayerZip');
         showToast(`${zipLayerLabel} + 통합 SRT가 ZIP으로 다운로드되었어요`);
       } else {
@@ -6345,36 +6352,35 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
 
       // 5) 프리셋별 레이어 분리 SRT 생성
       const durations = segments.map(s => s.durationSec);
-      const JSZip = (await import('jszip')).default;
-      const zip = new JSZip();
-      zip.file(`${safeName}.mp4`, mp4Blob);
-      zip.file(`${safeName}_${dlgLabel}.srt`, '\uFEFF' + generateSyncedSrt(v.scenes, durations, 'dialogue', isShortForm, selectedPreset || undefined));
-      if (hasOriginalLayer && originalLabel) {
-        zip.file(`${safeName}_${originalLabel}.srt`, '\uFEFF' + generateSyncedSrt(v.scenes, durations, 'original', isShortForm, selectedPreset || undefined));
-      }
-      if (hasEffectSub) {
-        zip.file(`${safeName}_${fxLabel}.srt`, '\uFEFF' + generateSyncedSrt(v.scenes, durations, 'effect', isShortForm, selectedPreset || undefined));
-      }
-      zip.file(`${safeName}_통합.srt`, '\uFEFF' + generateSyncedSrt(v.scenes, durations, 'combined', isShortForm, selectedPreset || undefined));
-      const zipBlob = await zip.generateAsync({ type: 'blob' });
+      // [v2.5] 컴패니언 ZIP 생성
+      const { createZipViaCompanion: czvc2 } = await import('../../../services/companion/zipService');
+      const { uploadBlobToCompanion: ubcmp2 } = await import('../../../services/companion/tunnelClient');
+      const zFiles2: Array<{ path: string; filename: string }> = [];
+      const mp4Path = await ubcmp2(mp4Blob, `${safeName}.mp4`);
+      zFiles2.push({ path: mp4Path, filename: `${safeName}.mp4` });
+      const uSrt2 = async (c: string, fn: string) => { const b = new Blob(['\uFEFF' + c], { type: 'text/plain' }); zFiles2.push({ path: await ubcmp2(b, fn), filename: fn }); };
+      await uSrt2(generateSyncedSrt(v.scenes, durations, 'dialogue', isShortForm, selectedPreset || undefined), `${safeName}_${dlgLabel}.srt`);
+      if (hasOriginalLayer && originalLabel) await uSrt2(generateSyncedSrt(v.scenes, durations, 'original', isShortForm, selectedPreset || undefined), `${safeName}_${originalLabel}.srt`);
+      if (hasEffectSub) await uSrt2(generateSyncedSrt(v.scenes, durations, 'effect', isShortForm, selectedPreset || undefined), `${safeName}_${fxLabel}.srt`);
+      await uSrt2(generateSyncedSrt(v.scenes, durations, 'combined', isShortForm, selectedPreset || undefined), `${safeName}_통합.srt`);
+      const zipBlob = await czvc2(zFiles2);
       triggerBlobDownload(zipBlob, `${safeName}.zip`, 'VideoAnalysisRoom:srtZip');
     } catch (err) {
       logger.trackSwallowedError('VideoAnalysisRoom:handleDownloadSrt/render', err);
       showToast('영상 렌더링 실패 — SRT만 다운로드합니다');
       // 폴백: SRT만 다운로드 (프리셋별 레이어 분리)
       if (hasEffectSub || hasOriginalLayer) {
-        const JSZip = (await import('jszip')).default;
-        const zip = new JSZip();
-        zip.file(`${safeName}_${dlgLabel}.srt`, '\uFEFF' + generateSrt(v.scenes, true, 'dialogue', isShortForm, selectedPreset || undefined));
-        if (hasOriginalLayer && originalLabel) {
-          zip.file(`${safeName}_${originalLabel}.srt`, '\uFEFF' + generateSrt(v.scenes, true, 'original', isShortForm, selectedPreset || undefined));
-        }
-        if (hasEffectSub) {
-          zip.file(`${safeName}_${fxLabel}.srt`, '\uFEFF' + generateSrt(v.scenes, true, 'effect', isShortForm, selectedPreset || undefined));
-        }
-        zip.file(`${safeName}_통합.srt`, '\uFEFF' + generateSrt(v.scenes, true, 'combined', isShortForm, selectedPreset || undefined));
-        const zipBlob = await zip.generateAsync({ type: 'blob' });
-        triggerBlobDownload(zipBlob, `${safeName}_자막.zip`, 'VideoAnalysisRoom:srtFallbackZip');
+        // [v2.5] 컴패니언 ZIP 생성 (폴백)
+        const { createZipViaCompanion: czvcFb } = await import('../../../services/companion/zipService');
+        const { uploadBlobToCompanion: ubcmpFb } = await import('../../../services/companion/tunnelClient');
+        const fbFiles: Array<{ path: string; filename: string }> = [];
+        const uSrtFb = async (c: string, fn: string) => { const b = new Blob(['\uFEFF' + c], { type: 'text/plain' }); fbFiles.push({ path: await ubcmpFb(b, fn), filename: fn }); };
+        await uSrtFb(generateSrt(v.scenes, true, 'dialogue', isShortForm, selectedPreset || undefined), `${safeName}_${dlgLabel}.srt`);
+        if (hasOriginalLayer && originalLabel) await uSrtFb(generateSrt(v.scenes, true, 'original', isShortForm, selectedPreset || undefined), `${safeName}_${originalLabel}.srt`);
+        if (hasEffectSub) await uSrtFb(generateSrt(v.scenes, true, 'effect', isShortForm, selectedPreset || undefined), `${safeName}_${fxLabel}.srt`);
+        await uSrtFb(generateSrt(v.scenes, true, 'combined', isShortForm, selectedPreset || undefined), `${safeName}_통합.srt`);
+        const zipBlobFb = await czvcFb(fbFiles);
+        triggerBlobDownload(zipBlobFb, `${safeName}_자막.zip`, 'VideoAnalysisRoom:srtFallbackZip');
       } else {
         const srt = generateSrt(v.scenes, true, 'dialogue', isShortForm, selectedPreset || undefined);
         downloadSrt(srt, `${safeName}.srt`);
@@ -6401,18 +6407,17 @@ ${(socialMeta.description || '').slice(0, 1500)}${(socialMeta.description || '')
       .join(' + ');
     const isTk = true;
     if (hasEffectSub || hasOriginalLayer) {
-      const JSZip = (await import('jszip')).default;
-      const zip = new JSZip();
-      zip.file(`${safeName}_${dlgLabel}.srt`, '\uFEFF' + generateSrt(v.scenes, isTk, 'dialogue', isShortForm, selectedPreset || undefined));
-      if (hasOriginalLayer && originalLabel) {
-        zip.file(`${safeName}_${originalLabel}.srt`, '\uFEFF' + generateSrt(v.scenes, isTk, 'original', isShortForm, selectedPreset || undefined));
-      }
-      if (hasEffectSub) {
-        zip.file(`${safeName}_${fxLabel}.srt`, '\uFEFF' + generateSrt(v.scenes, isTk, 'effect', isShortForm, selectedPreset || undefined));
-      }
-      zip.file(`${safeName}_통합.srt`, '\uFEFF' + generateSrt(v.scenes, isTk, 'combined', isShortForm, selectedPreset || undefined));
-      const zipBlob = await zip.generateAsync({ type: 'blob' });
-      triggerBlobDownload(zipBlob, `${safeName}_자막.zip`, 'VideoAnalysisRoom:srtOnlyZip');
+      // [v2.5] 컴패니언 ZIP 생성
+      const { createZipViaCompanion: czvc3 } = await import('../../../services/companion/zipService');
+      const { uploadBlobToCompanion: ubcmp3 } = await import('../../../services/companion/tunnelClient');
+      const srtFiles3: Array<{ path: string; filename: string }> = [];
+      const uSrt3 = async (c: string, fn: string) => { const b = new Blob(['\uFEFF' + c], { type: 'text/plain' }); srtFiles3.push({ path: await ubcmp3(b, fn), filename: fn }); };
+      await uSrt3(generateSrt(v.scenes, isTk, 'dialogue', isShortForm, selectedPreset || undefined), `${safeName}_${dlgLabel}.srt`);
+      if (hasOriginalLayer && originalLabel) await uSrt3(generateSrt(v.scenes, isTk, 'original', isShortForm, selectedPreset || undefined), `${safeName}_${originalLabel}.srt`);
+      if (hasEffectSub) await uSrt3(generateSrt(v.scenes, isTk, 'effect', isShortForm, selectedPreset || undefined), `${safeName}_${fxLabel}.srt`);
+      await uSrt3(generateSrt(v.scenes, isTk, 'combined', isShortForm, selectedPreset || undefined), `${safeName}_통합.srt`);
+      const zipBlob3 = await czvc3(srtFiles3);
+      triggerBlobDownload(zipBlob3, `${safeName}_자막.zip`, 'VideoAnalysisRoom:srtOnlyZip');
       showToast(`${zipLayerLabel} + 통합 SRT가 ZIP으로 다운로드되었어요`);
     } else {
       const srt = generateSrt(v.scenes, isTk, 'dialogue', isShortForm, selectedPreset || undefined);

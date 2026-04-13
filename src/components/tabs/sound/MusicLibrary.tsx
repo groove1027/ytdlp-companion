@@ -498,23 +498,16 @@ const MusicLibrary: React.FC = () => {
     }
 
     try {
-      const { default: JSZip } = await import('jszip');
-      const zip = new JSZip();
+      // [v2.5] 컴패니언 ZIP 생성 — 브라우저 메모리 사용 0
+      const { createZipViaCompanion } = await import('../../../services/companion/zipService');
+      const files = downloadableTracks.map((track, i) => {
+        const url = track.audioUrl as string;
+        const ext = url.includes('.mp3') ? 'mp3' : url.includes('.wav') ? 'wav' : url.includes('.ogg') ? 'ogg' : 'mp3';
+        const fileName = `${String(i + 1).padStart(2, '0')}_${sanitizeFileName(track.title, `track-${i + 1}`)}.${ext}`;
+        return { url, filename: fileName };
+      });
 
-      for (let i = 0; i < downloadableTracks.length; i++) {
-        const track = downloadableTracks[i];
-        const response = await monitoredFetch(track.audioUrl as string);
-        if (!response.ok) {
-          throw new Error(`${track.title} 파일을 가져오지 못했습니다. (${response.status})`);
-        }
-
-        const blob = await response.blob();
-        const extension = getAudioExtension(blob, track.audioUrl as string);
-        const fileName = `${String(i + 1).padStart(2, '0')}_${sanitizeFileName(track.title, `track-${i + 1}`)}.${extension}`;
-        zip.file(fileName, blob);
-      }
-
-      const zipBlob = await zip.generateAsync({ type: 'blob' });
+      const zipBlob = await createZipViaCompanion(files);
       const zipUrl = URL.createObjectURL(zipBlob);
       const link = document.createElement('a');
       link.href = zipUrl;

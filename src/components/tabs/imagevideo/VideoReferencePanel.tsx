@@ -307,14 +307,17 @@ const VideoReferencePanel: React.FC = () => {
         return;
       }
 
-      const JSZip = (await import('jszip')).default;
-      const zip = new JSZip();
-      downloaded.forEach((item) => {
+      // [v2.5] 컴패니언 ZIP 생성
+      const { createZipViaCompanion } = await import('../../../services/companion/zipService');
+      const { uploadBlobToCompanion } = await import('../../../services/companion/tunnelClient');
+      const files = await Promise.all(downloaded.map(async (item) => {
         const sceneNumber = sceneNumberById.get(item.sceneId) || 0;
         const prefix = `scene_${String(sceneNumber).padStart(3, '0')}`;
-        zip.file(`${prefix}_${item.fileName}`, item.blob);
-      });
-      const zipBlob = await zip.generateAsync({ type: 'blob', compression: 'STORE' });
+        const filename = `${prefix}_${item.fileName}`;
+        const tempPath = await uploadBlobToCompanion(item.blob, filename);
+        return { path: tempPath, filename };
+      }));
+      const zipBlob = await createZipViaCompanion(files);
       triggerVideoBlobDownload(
         zipBlob,
         `reference-clips-${new Date().toISOString().slice(0, 10)}.zip`,

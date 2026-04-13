@@ -781,13 +781,17 @@ const WaveformEditor: React.FC = () => {
             {subtitles.length > 0 && (
               <button type="button" onClick={async () => {
                 try {
-                  const { default: JSZip } = await import('jszip');
-                  const zip = new JSZip();
-                  // [FIX #965] Premiere 호환 48kHz WAV로 변환하여 번들
+                  // [v2.5] 컴패니언 ZIP 생성
+                  const { createZipViaCompanion } = await import('../../../services/companion/zipService');
+                  const { uploadBlobToCompanion } = await import('../../../services/companion/tunnelClient');
                   const wavBlob = await ensurePremiereCompatibleWav(workingUrl!);
-                  zip.file('narration.wav', wavBlob);
-                  zip.file('narration.srt', genSrt(subtitles));
-                  const zb = await zip.generateAsync({ type: 'blob' });
+                  const wavPath = await uploadBlobToCompanion(wavBlob, 'narration.wav');
+                  const srtBlob = new Blob([genSrt(subtitles)], { type: 'text/plain' });
+                  const srtPath = await uploadBlobToCompanion(srtBlob, 'narration.srt');
+                  const zb = await createZipViaCompanion([
+                    { path: wavPath, filename: 'narration.wav' },
+                    { path: srtPath, filename: 'narration.srt' },
+                  ]);
                   const u = URL.createObjectURL(zb); dlBlob(u, `narration_bundle_${Date.now()}.zip`); URL.revokeObjectURL(u);
                 } catch (err) { console.error('[WaveformEditor] 번들 실패:', err); }
               }} className="px-2.5 py-1.5 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-xs font-bold transition-colors">ZIP</button>

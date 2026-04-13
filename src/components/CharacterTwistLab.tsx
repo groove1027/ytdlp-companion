@@ -253,21 +253,30 @@ const CharacterTwistLab: React.FC = () => {
         // [FIX #224] 다운로드 중 ProcessingOverlay 표시 → UI 멈춤 현상 해소
         useUIStore.getState().setProcessing(true, 'ZIP 준비 중...', 'EXPORT');
         try {
-            const { default: JSZip } = await import('jszip');
-            const zip = new JSZip();
+            // [v2.5] 컴패니언 ZIP 생성
+            const { createZipViaCompanion } = await import('../services/companion/zipService');
+            const { uploadBlobToCompanion } = await import('../services/companion/tunnelClient');
+            const files: Array<{ url?: string; path?: string; filename: string }> = [];
             await Promise.all(valid.map(async (res, idx) => {
                 try {
+                    const filename = `twist_variant_${idx + 1}.png`;
                     if (res.url.startsWith('data:') && res.url.includes(',')) {
-                        zip.file(`twist_variant_${idx + 1}.png`, res.url.split(',')[1], { base64: true });
+                        // base64 → Blob → upload-temp → path
+                        const arr = res.url.split(',');
+                        const mime = arr[0].match(/:(.*?);/)?.[1] || 'image/png';
+                        const bstr = atob(arr[1]);
+                        const u8 = new Uint8Array(bstr.length);
+                        for (let i = 0; i < bstr.length; i++) u8[i] = bstr.charCodeAt(i);
+                        const blob = new Blob([u8], { type: mime });
+                        const tempPath = await uploadBlobToCompanion(blob, filename);
+                        files.push({ path: tempPath, filename });
                     } else {
-                        const response = await fetch(res.url);
-                        const blob = await response.blob();
-                        zip.file(`twist_variant_${idx + 1}.png`, blob);
+                        files.push({ url: res.url, filename });
                     }
                 } catch (e) { console.error("Batch download error", e); }
             }));
             useUIStore.getState().setProcessing(true, 'ZIP 압축 중...', 'EXPORT');
-            const content = await zip.generateAsync({ type: "blob" });
+            const content = await createZipViaCompanion(files);
             const link = document.createElement('a');
             link.href = URL.createObjectURL(content);
             link.download = `twist_set_${Date.now()}.zip`;
