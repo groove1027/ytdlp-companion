@@ -4633,6 +4633,29 @@ async fn zip_create_handler(Json(req): Json<ZipCreateRequest>) -> Response {
                     }
                 }
             } else if let Some(url) = &entry.url {
+                // [FIX Codex-10] SSRF 방어: 내부망/localhost/사설 IP 차단
+                let is_safe_url = match url::Url::parse(url) {
+                    Ok(parsed) => {
+                        let host = parsed.host_str().unwrap_or("");
+                        let scheme = parsed.scheme();
+                        // https/http만 허용, localhost/사설 IP 차단
+                        (scheme == "https" || scheme == "http")
+                            && !host.is_empty()
+                            && host != "localhost"
+                            && !host.starts_with("127.")
+                            && !host.starts_with("10.")
+                            && !host.starts_with("192.168.")
+                            && !host.starts_with("169.254.")
+                            && !host.starts_with("0.")
+                            && host != "[::1]"
+                            && !host.starts_with("172.") // 172.16-31 사설 대역
+                    }
+                    Err(_) => false,
+                };
+                if !is_safe_url {
+                    eprintln!("[ZIP] SSRF 차단: {}", url);
+                    continue;
+                }
                 // URL에서 다운로드
                 match reqwest::get(url).await {
                     Ok(res) if res.status().is_success() => {

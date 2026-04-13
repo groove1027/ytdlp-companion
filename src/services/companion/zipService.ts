@@ -40,5 +40,10 @@ export async function createZipViaCompanion(
     throw new Error('ZIP 생성 응답에 outputPath가 없습니다.');
   }
 
+  // [FIX Codex-10] 부분 실패 경고 — fileCount vs requestedCount 비교
+  if (data.fileCount !== undefined && data.requestedCount !== undefined && data.fileCount < data.requestedCount) {
+    console.warn(`[ZIP] 부분 실패: ${data.fileCount}/${data.requestedCount}개 파일만 ZIP에 포함됨`);
+  }
+
   return downloadCompanionTempFile(data.outputPath, 'application/zip', signal);
 }
