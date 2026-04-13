@@ -630,6 +630,7 @@ struct FfmpegMergeRequest {
     #[serde(rename = "audioPath")]
     audio_path: Option<String>,
     #[serde(rename = "videoPaths")]
+    #[allow(dead_code)] // [v2.5] concat path-mode는 후속 구현 예정
     video_paths: Option<Vec<String>>,
     #[serde(rename = "videoFormat")]
     video_format: Option<String>,
@@ -747,6 +748,22 @@ fn respond_with_output_file(
                 let persist_path = std::env::temp_dir().join(
                     format!("companion-out-{}.{}", &crate::video_tunnel::generate_token()[..12], ext)
                 );
+                // [FIX Codex-12] Unix에서 0600 권한으로 저장 (upload-temp와 동일)
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::OpenOptionsExt;
+                    if let Err(e) = std::fs::OpenOptions::new()
+                        .create(true).write(true).truncate(true).mode(0o600)
+                        .open(&persist_path)
+                        .and_then(|mut f| { use std::io::Write; f.write_all(&data) })
+                    {
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(serde_json::json!({ "error": format!("결과 파일 저장 실패: {}", e) })),
+                        ).into_response();
+                    }
+                }
+                #[cfg(not(unix))]
                 if let Err(e) = std::fs::write(&persist_path, &data) {
                     return (
                         StatusCode::INTERNAL_SERVER_ERROR,
