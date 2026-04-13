@@ -4658,17 +4658,20 @@ async fn zip_create_handler(Json(req): Json<ZipCreateRequest>) -> Response {
             };
 
             // ZIP 엔트리에 추가
-            // [FIX Codex-5] ZIP 엔트리 경로 검증 강화
-            // /는 폴더 구조용으로 허용, \→/, ..→_, 선행 /, 중복 //, 제어문자 제거
+            // [FIX Codex-5+6] ZIP 엔트리 경로 검증 강화
+            // /는 폴더 구조용으로 허용
+            // \→/, ..→_, 선행 /, 중복 //, 제어문자, Windows drive prefix 차단
             let mut safe_name: String = entry.filename
                 .replace('\\', "/")
                 .replace("..", "_")
                 .chars()
                 .filter(|c| !c.is_control())
                 .collect();
-            // 선행 / 제거 (절대 경로 방지)
             safe_name = safe_name.trim_start_matches('/').to_string();
-            // 중복 // → /
+            // Windows drive prefix 제거 (C:, D: 등)
+            if safe_name.len() >= 2 && safe_name.as_bytes()[0].is_ascii_alphabetic() && safe_name.as_bytes()[1] == b':' {
+                safe_name = safe_name[2..].trim_start_matches('/').to_string();
+            }
             while safe_name.contains("//") {
                 safe_name = safe_name.replace("//", "/");
             }
