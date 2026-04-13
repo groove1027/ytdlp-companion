@@ -460,8 +460,8 @@ export default function ScriptWriterTab() {
       return;
     }
 
-    const projStore = useProjectStore.getState();
-    if (!projStore.currentProjectId || !projStore.config) {
+    const initialProjectStore = useProjectStore.getState();
+    if (!initialProjectStore.currentProjectId || !initialProjectStore.config) {
       const ok = await canCreateNewProject();
       if (!ok) {
         setGenError('저장 공간이 부족합니다. 기존 프로젝트를 삭제해주세요.');
@@ -469,9 +469,10 @@ export default function ScriptWriterTab() {
       }
       // 프로젝트가 없으면 명시적으로 생성 (사용자가 실제 작업을 시작하는 시점)
       const titleHint = scriptText.trim().substring(0, 30) || '대본 프로젝트';
-      projStore.newProject(titleHint);
+      initialProjectStore.newProject(titleHint);
       showToast('새 프로젝트가 자동 생성되었습니다');
     }
+    const analysisProjectId = useProjectStore.getState().currentProjectId;
 
     setIsAnalyzingScenes(true);
     setAnalysisProgress(0);
@@ -526,21 +527,60 @@ ${scriptText}`;
         }
       }
 
+      const activeProjectStore = useProjectStore.getState();
+      if (!analysisProjectId || activeProjectStore.currentProjectId !== analysisProjectId) {
+        logger.info('ScriptWriterTab: handleSceneAnalysis ignored stale result after project switch', {
+          analysisProjectId,
+          currentProjectId: activeProjectStore.currentProjectId,
+        });
+        return;
+      }
+
+      let splitSegments: string[];
       if (scenes.length === 0) {
-        const fallback = splitScenesLocally(scriptText, videoFormat, smartSplit,
+        splitSegments = splitScenesLocally(scriptText, videoFormat, smartSplit,
           videoFormat === VideoFormat.LONG ? longFormSplitType : undefined);
-        setSplitResult(fallback);
-        showToast(`로컬 분할 완료: ${fallback.length}개 단락`);
+        setSplitResult(splitSegments);
+        showToast(`로컬 분할 완료: ${splitSegments.length}개 단락`);
       } else {
+        splitSegments = scenes;
         setSplitResult(scenes);
         showToast(`AI 단락 분석 완료: ${scenes.length}개 단락`);
+      }
+
+      // [FIX #1162] 단락 나누기 결과를 projectStore.scenes에도 반영
+      // — 기존 scenes와 단락 수/내용이 다르고 이미지/영상/오디오가 없으면 안전하게 교체
+      // — 이렇게 해야 같은 개수로 다시 분할한 경우에도 사운드/이미지 탭이 최신 단락을 본다
+      const existingScenes = activeProjectStore.scenes;
+      const normalizedSplitSegments = splitSegments.map((text) => text.trim()).filter(Boolean);
+      const existingSceneTexts = existingScenes.map((scene) => (scene.audioScript || scene.scriptText || '').trim());
+      const scenesNeedRefresh = normalizedSplitSegments.length > 0 && (
+        normalizedSplitSegments.length !== existingSceneTexts.length
+        || normalizedSplitSegments.some((text, index) => text !== existingSceneTexts[index])
+      );
+      if (scenesNeedRefresh) {
+        const hasMedia = existingScenes.some(s => s.imageUrl || s.videoUrl || s.audioUrl);
+        if (!hasMedia) {
+          const sceneSeed = Date.now();
+          activeProjectStore.setScenes(normalizedSplitSegments.map((text, i) => ({
+            id: `scene-${sceneSeed}-${i}`,
+            scriptText: text,
+            audioScript: text,
+            visualPrompt: '',
+            visualDescriptionKO: text.slice(0, 80),
+            characterPresent: false,
+            isGeneratingImage: false,
+            isGeneratingVideo: false,
+            seedanceDuration: '8' as const,
+          })));
+        }
       }
 
       // [FIX #160] 이미지/영상 탭으로 이동 시 대본·설정을 프로젝트 config에 반드시 전달
       // 이전에는 videoFormat만 전달하여 config.script가 비어 "스토리보드 생성" 버튼이 비활성화되는 버그 발생
       setFinalScript(scriptText);
       const autoAspect = videoFormat !== VideoFormat.LONG ? AspectRatio.PORTRAIT : undefined;
-      projStore.setConfig((prev) => prev ? {
+      activeProjectStore.setConfig((prev) => prev ? {
         ...prev,
         script: scriptText,
         videoFormat,
@@ -548,7 +588,7 @@ ${scriptText}`;
         longFormSplitType,
         ...(autoAspect ? { aspectRatio: autoAspect } : {}),
       } : prev);
-      projStore.smartUpdateTitle('script-writer', scriptText.split('\n')[0] || '');
+      activeProjectStore.smartUpdateTitle('script-writer', scriptText.split('\n')[0] || '');
       setAnalysisProgress(100);
       // [FIX #559] 파이프라인 순서 존중: 사운드 스튜디오 → 이미지/영상
       setActiveTab('sound-studio');

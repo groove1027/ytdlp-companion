@@ -8,6 +8,24 @@
 
 ## 🟢 완료된 작업
 
+- [x] **2026-04-13 — #1162 2차 교차 검증 / 동일 개수 재분할 동기화 보강**
+  - `rg -n "handleSceneAnalysis|splitResultFromWriter|prevSplitFingerprintRef|lines.length > 0|splitDiffersFromScenes|analysisProjectId" src/components/tabs/ScriptWriterTab.tsx src/components/tabs/sound/VoiceStudio.tsx src/stores/projectStore.ts src/stores/scriptWriterStore.ts src/stores/soundStudioStore.ts`로 단락 분할 결과 반영 경로, 사운드 라인 재동기화 effect, 프로젝트 전환 가드, TTS 보존 조건을 재검증
+  - 추가 원인 확인: 1차 수정은 `VoiceStudio.tsx`에서 splitResult 길이 변화만 감지해 같은 개수로 다시 쪼개진 단락 경계 변경을 놓칠 수 있었고, `ScriptWriterTab.tsx`도 기존 scenes와 개수만 비교해 같은 개수의 최신 split 결과를 `projectStore.scenes`에 반영하지 못할 수 있었음
+  - `src/components/tabs/sound/VoiceStudio.tsx` — splitResult 재동기화 effect를 길이 기준에서 project-aware fingerprint 기준으로 교체해 `setLines` 후 재실행 무한 루프는 막으면서도 같은 개수의 재분할까지 즉시 반영되게 수정. 빈 lines 초기화 경로와 scenes 우선순위 분기에서도 `수/내용 차이`를 함께 비교하도록 보강
+  - `src/components/tabs/ScriptWriterTab.tsx` — `projectStore.scenes` 갱신 조건을 `단락 수 차이`에서 `단락 수 또는 내용 차이`로 확대해, 이미지/영상/오디오가 없는 프로젝트에서는 같은 개수 재분할도 최신 scenes로 치환되게 수정
+  - `cd src && node_modules/typescript/bin/tsc --noEmit`: 통과
+  - `cd src && node_modules/.bin/vite build`: 성공 (기존 dynamic import / chunk-size warning만 출력)
+  - `rg -n "normalizedSplitSegments|scenesNeedRefresh|prevSplitFingerprintRef|splitFingerprint|splitDiffersFromScenes" src/components/tabs/ScriptWriterTab.tsx src/components/tabs/sound/VoiceStudio.tsx`: 동일 개수 재분할 동기화 보강 위치 재검증
+
+- [x] **2026-04-13 — #1162 단락 나누기/사운드 동기화 검증 보강**
+  - `rg -n "handleSceneAnalysis|splitResultFromWriter|splitResult|projectStore\\.scenes|currentProjectId" src/components/tabs/ScriptWriterTab.tsx src/components/tabs/sound/VoiceStudio.tsx src/stores/projectStore.ts src/stores/scriptWriterStore.ts src/types.ts`로 단락 나누기 저장 경로, 사운드 라인 동기화, 프로젝트 전환 영향 범위를 전수 조사
+  - 원인 확인: `ScriptWriterTab.tsx`는 비동기 단락 분석 완료 후 함수 시작 시점의 `projectStore` 스냅샷을 다시 읽어 현재 프로젝트가 바뀌어도 새 결과를 계속 반영할 수 있었고, `VoiceStudio.tsx`의 신규 `splitResult` 구독 effect는 기존 장면/라인 오디오를 확인하지 않아 오디오가 있는 프로젝트에서도 plain 텍스트 라인으로 덮어쓸 회귀 여지가 있었음. 또한 메인 자동 동기화 effect는 `splitResult`/프로젝트 변경을 의존성에 반영하지 않아 빈 라인 상태에서 재동기화가 건너뛰는 경우가 있었음
+  - `src/components/tabs/ScriptWriterTab.tsx` — 분석 시작 프로젝트 ID를 캡처하고 완료 시점에 현재 프로젝트를 다시 확인해 stale 결과를 무시하도록 수정. 장면 교체 여부 판단과 config/title 갱신도 최신 store state 기준으로 수행하게 정리
+  - `src/components/tabs/sound/VoiceStudio.tsx` — `splitResult` 변경 effect에 scenes/lines 오디오 보호 가드와 speaker fallback 생성을 추가하고, 메인 자동 동기화 effect가 `splitResult`/프로젝트/라인 변경에도 재평가되도록 의존성을 보강. 기존 오디오가 있는 scenes는 유지하면서 87개 단락 재동기화 경로만 열어둠
+  - `cd src && node_modules/typescript/bin/tsc --noEmit`: 통과
+  - `cd src && node_modules/.bin/vite build`: 성공 (기존 chunk-size warning만 출력)
+  - `rg -n "analysisProjectId|ignored stale result after project switch|hasLineAudio|splitResultFromWriter|대본/프로젝트/단락 변경 시 재동기화" src/components/tabs/ScriptWriterTab.tsx src/components/tabs/sound/VoiceStudio.tsx docs/CHECKLIST.md`: stale result 차단, 오디오 보호, 의존성 보강, 체크리스트 반영 위치 재검증
+
 - [x] **2026-04-12 — 영상분석/사운드/소스임포트 버그 11건 일괄 수정 (#614 #635 #683 #704 #724 #727 #747 #748 #831 #840 #1111)**
   - `rg -n "uploadedTranscriptParagraphSegments|rawUploadedTranscriptSegments|targetSceneCount|segmentsToScriptLines|sourceVideoBlobs|additionalVideoFiles|videoSources|sourceTimeline|timecodeSource|benchmarkScript" src`, `rg -n "downloadSrt|downloadFile|URL.revokeObjectURL|createObjectURL" src/components/tabs/channel/`, `rg -n "composeMp4|deleteFile\\(|ffmpeg" src/services/ffmpegService.ts`, `rg -n "ImageScriptUploadLab|blobToDataUrl|source import" src/components/`, `rg -n "video-analysis-store|autoSave|va-autosave|persist" src/stores/videoAnalysisStore.ts`로 업로드 전사, 영상분석 멀티소스, 편집실 전달, 모바일 다운로드, 탭 간 저장 오염, 소스 임포트 영향 범위를 전수 조사
   - 원인 확인: 외부 오디오 전사 경로는 현재 대본 문단 정렬 세그먼트와 원본 세그먼트를 구분하지 않아 `targetSceneCount`가 남은 상태로 장면 수를 다시 줄였고, 영상분석 프리뷰/편집실 전달은 다중 소스 파일과 `[S-xx]` 타임코드 태그를 단일 비디오 가정으로 처리하고 있었음. `VideoAnalysisRoom.tsx`의 blob 다운로드는 모바일에서 즉시 revoke되어 404가 날 수 있었고, `videoAnalysisStore.ts`는 localStorage/IndexedDB autosave를 전역 키 하나로 공유해 여러 탭 동시 분석 시 데이터가 섞일 수 있었음. `ImageScriptUploadLab.tsx`는 직접 업로드 이미지를 `blob:` URL로만 저장해 이후 영상 생성 단계에서 재사용이 깨졌고, `transcriptionService.ts`는 대용량 업로드 오디오를 수동 `btoa` 경로로 처리해 STT 실패 여지가 있었음

@@ -263,6 +263,8 @@ const VoiceStudio: React.FC = () => {
   const finalScript = useScriptWriterStore((s) => s.finalScript);
   const generatedScriptContent = useScriptWriterStore((s) => s.generatedScript?.content);
   const storeScript = finalScript || generatedScriptContent || '';
+  // [FIX #1162] splitResult 구독 — 단락 나누기 결과 변경 시 라인 재동기화용
+  const splitResultFromWriter = useScriptWriterStore((s) => s.splitResult);
 
   // [FIX #989] 프로젝트 전환 시 이전 프로젝트의 나레이션 라인 + 대본 초기화
   const currentProjectId = useProjectStore((s) => s.currentProjectId);
@@ -286,6 +288,55 @@ const VoiceStudio: React.FC = () => {
     }
     _lastKnownProjectId = currentProjectId;
   }, [currentProjectId, setLines]);
+
+  // [FIX #1162] splitResult(단락 나누기 결과) 변경 시 사운드 라인 즉시 재동기화
+  // — 기존 라인이 있고, splitResult의 개수나 경계가 바뀌면 재동기화
+  // — fingerprint를 ref로 기억해 setLines 후 재실행되어도 무한 루프를 막는다
+  const prevSplitFingerprintRef = React.useRef('');
+  useEffect(() => {
+    const splitTexts = splitResultFromWriter.map((text) => text.trim()).filter(Boolean);
+    const splitFingerprint = `${currentProjectId || 'no-project'}:${JSON.stringify(splitTexts)}`;
+    const prevFingerprint = prevSplitFingerprintRef.current;
+    prevSplitFingerprintRef.current = splitFingerprint;
+    if (splitTexts.length === 0 || splitFingerprint === prevFingerprint) return;
+    // 현재 라인이 없으면 메인 useEffect에서 처리
+    if (lines.length === 0) return;
+    const currentLineTexts = lines.map((line) => line.text.trim());
+    const alreadySynced = currentLineTexts.length === splitTexts.length
+      && currentLineTexts.every((text, index) => text === splitTexts[index]);
+    if (alreadySynced) return;
+    const hasExternallyManagedLines = lines.some((line) =>
+      line.sceneId?.startsWith('video-analysis:')
+      || line.audioSource === 'uploaded'
+      || !!line.uploadedAudioId,
+    ) || useProjectStore.getState().config?.narrationSource === 'uploaded-audio';
+    const hasLineAudio = lines.some((line) => !!line.audioUrl);
+    const scenesHaveAudio = useProjectStore.getState().scenes.some((scene) => !!scene.audioUrl);
+    if (hasExternallyManagedLines || hasLineAudio || scenesHaveAudio) return;
+    // splitResult가 현재 대본과 매칭하는지 확인
+    const splitJoined = splitResultFromWriter.join('').replace(/\s+/g, '');
+    const scriptClean = storeScript.replace(/\s+/g, '');
+    if (splitJoined.length === 0 || scriptClean.length === 0) return;
+    const matches = scriptClean.includes(splitJoined.slice(0, 50)) || splitJoined.includes(scriptClean.slice(0, 50));
+    if (!matches) return;
+    let defaultSpeakerId = speakers[0]?.id || '';
+    if (speakers.length === 0) {
+      const newSpeaker: Speaker = {
+        id: `speaker-${Date.now()}`, name: '화자 1', color: SPEAKER_COLORS[0],
+        engine: 'typecast' as TTSEngine, voiceId: '', language: 'ko',
+        speed: 1.0, pitch: 0, stability: 0.5, similarityBoost: 0.75,
+        style: 0, useSpeakerBoost: true, lineCount: splitTexts.length, totalDuration: 0,
+      };
+      addSpeaker(newSpeaker);
+      defaultSpeakerId = newSpeaker.id;
+    }
+    setLines(splitTexts.map((text: string, i: number) => ({
+      id: `line-${Date.now()}-${i}`,
+      speakerId: defaultSpeakerId,
+      text,
+      index: i,
+    })));
+  }, [addSpeaker, currentProjectId, lines, setLines, speakers, splitResultFromWriter, storeScript]);
 
   const [editingLineId, setEditingLineId] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
@@ -448,15 +499,55 @@ const VoiceStudio: React.FC = () => {
     prevStoreScriptRef.current = storeScript;
     if (lines.length > 0) return;
 
-    // 1순위: scenes에서 파생 (단, 현재 대본과 일치하는 경우에만)
+    // [FIX #1162] splitResult·scenes 동시 확인 — 단락 나누기 결과를 우선 반영
     const scenes = useProjectStore.getState().scenes;
-    // [FIX #558] scenes의 텍스트가 현재 대본과 불일치하면 스킵 → storeScript 기반 분할 사용
-    const scenesText = scenes.map((scene) => getSceneNarrationText(scene)).join('');
+    const sceneNarrationTexts = scenes.map((scene) => getSceneNarrationText(scene).trim());
+    const scenesText = sceneNarrationTexts.join('');
     const scriptTextClean = storeScript.replace(/\s+/g, '');
     const scenesTextClean = scenesText.replace(/\s+/g, '');
     const scenesMatchScript = scenesTextClean.length > 0 && (
       scriptTextClean.includes(scenesTextClean.slice(0, 100)) || scenesTextClean.includes(scriptTextClean.slice(0, 100))
     );
+
+    // [FIX #591/#590/#780/#820/#1162] splitResult 매칭 확인
+    const splitResult = splitResultFromWriter;
+    const splitTexts = splitResult.filter((t: string) => t.trim());
+    const splitJoined = splitResult ? splitResult.join('').replace(/\s+/g, '') : '';
+    const splitMatchesScript = splitJoined.length > 0 && (
+      scriptTextClean.includes(splitJoined.slice(0, 50)) || splitJoined.includes(scriptTextClean.slice(0, 50))
+    );
+
+    // [FIX #1162] 1순위: splitResult가 scenes와 수/내용이 다르고, scenes에 오디오 없으면 splitResult 우선
+    // — "단락 나누기"로 다시 쪼갠 최신 경계가 scenes보다 항상 우선되도록 한다
+    const scenesHaveAudio = scenes.some(s => !!s.audioUrl);
+    const splitDiffersFromScenes = splitTexts.length > 0 && (
+      splitTexts.length !== sceneNarrationTexts.length
+      || splitTexts.some((text, index) => text !== sceneNarrationTexts[index])
+    );
+    if (splitDiffersFromScenes && splitMatchesScript && !scenesHaveAudio) {
+      if (splitTexts.length > 0) {
+        let defaultSpeakerId = speakers[0]?.id || '';
+        if (speakers.length === 0) {
+          const newSpeaker: Speaker = {
+            id: `speaker-${Date.now()}`, name: '화자 1', color: SPEAKER_COLORS[0],
+            engine: 'typecast' as TTSEngine, voiceId: '', language: 'ko',
+            speed: 1.0, pitch: 0, stability: 0.5, similarityBoost: 0.75,
+            style: 0, useSpeakerBoost: true, lineCount: splitTexts.length, totalDuration: 0,
+          };
+          addSpeaker(newSpeaker);
+          defaultSpeakerId = newSpeaker.id;
+        }
+        setLines(splitTexts.map((text: string, i: number) => ({
+          id: `line-${Date.now()}-${i}`,
+          speakerId: defaultSpeakerId,
+          text,
+          index: i,
+        })));
+        return;
+      }
+    }
+
+    // 2순위: scenes에서 파생 (단, 현재 대본과 일치하는 경우에만)
     if (scenes.length > 0 && scenesMatchScript) {
       let defaultSpeakerId = speakers[0]?.id || '';
       if (speakers.length === 0) {
@@ -483,17 +574,8 @@ const VoiceStudio: React.FC = () => {
       return;
     }
 
-    // [FIX #591/#590] 2순위: scriptWriterStore의 splitResult가 있으면 우선 사용 (단락 나누기 결과와 일치)
-    // [FIX #780/#820] 매칭 로직 완화: 100자 → 50자 + 양방향 비교 + splitResult 존재 시 적극 사용
-    // 기존: 100자 서브스트링 비교로 대본 편집/확장 시 자주 실패 → 폴백으로 단락 수 급감
-    const splitResult = useScriptWriterStore.getState().splitResult;
-    const splitJoined = splitResult ? splitResult.join('').replace(/\s+/g, '') : '';
-    // [FIX #780/#820] 매칭 완화: 50자 양방향 비교 (기존 100자 → 50자, 길이만으로 판단하지 않음)
-    const splitMatchesScript = splitJoined.length > 0 && (
-      scriptTextClean.includes(splitJoined.slice(0, 50)) || splitJoined.includes(scriptTextClean.slice(0, 50))
-    );
+    // 3순위: splitResult (scenes가 없거나 불일치할 때)
     if (splitResult && splitResult.length > 0 && splitMatchesScript) {
-      const splitTexts = splitResult.filter((t: string) => t.trim());
       if (splitTexts.length > 0) {
         let defaultSpeakerId2 = speakers[0]?.id || '';
         if (speakers.length === 0) {
@@ -547,8 +629,7 @@ const VoiceStudio: React.FC = () => {
       text,
       index: i,
     })));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storeScript]); // 대본 변경 시 재동기화 (lines가 비어있을 때만)
+  }, [addSpeaker, currentProjectId, lines, setLines, speakers, splitResultFromWriter, storeScript]); // 대본/프로젝트/단락 변경 시 재동기화
 
   // [Microsoft 제거됨] 시스템 음성 감지 불필요 — ElevenLabs는 서버 사이드 생성
   useEffect(() => { setSystemVoicesReady(true); }, []);
