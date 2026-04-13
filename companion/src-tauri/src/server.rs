@@ -4701,6 +4701,18 @@ async fn zip_create_handler(Json(req): Json<ZipCreateRequest>) -> Response {
     let zip_bytes = buffer.into_inner();
     let size = zip_bytes.len();
 
+    // [FIX Codex-9] 빈 ZIP 방어 — 모든 엔트리가 실패한 경우 에러 반환
+    if added_count == 0 {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error": "ZIP에 추가된 파일이 없습니다. 모든 다운로드/읽기가 실패했습니다.",
+                "requestedCount": req.files.len(),
+            })),
+        )
+            .into_response();
+    }
+
     // temp 파일에 저장 후 경로 반환
     let temp_dir = std::env::temp_dir();
     let zip_path = temp_dir.join(format!("zip-{}.zip", &crate::video_tunnel::generate_token()[..12]));
