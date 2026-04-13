@@ -1,6 +1,7 @@
 // Prevents additional console window on Windows in release
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod auto_updater;
 mod browser_search;
 mod ffmpeg;
 mod platform;
@@ -103,20 +104,11 @@ fn main() {
                 println!("[Companion] 로그인 시 자동 시작 활성화됨");
             }
 
-            // --hidden 플래그: 자동 시작 시 UI 안 띄움 / 수동 실행 시 창 강제 포커스
-            if std::env::args().any(|a| a == "--hidden") {
-                if let Some(win) = app.get_webview_window("main") {
-                    let _ = win.hide();
-                }
-            } else {
-                // [FIX] 수동 실행 시 창 표시 — 지연 후 포커스 (Tauri 초기화 + WebView 렌더링 대기)
-                let app_handle = app.handle().clone();
-                std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_millis(800));
-                    if let Some(win) = app_handle.get_webview_window("main") {
-                        focus_window(&win);
-                    }
-                });
+            // [v2.4] 항상 트레이만 — 창은 숨김 상태로 시작
+            // 사용자가 트레이 "상태 보기"를 클릭하면 그때 창 표시
+            // --hidden 플래그 여부와 관계없이 항상 숨김
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.hide();
             }
             // [v2.0.4 hotfix — Windows critical] tray/menu 생성 실패가 setup의 ?로
             // propagate되면 .build().expect()에서 process panic → wrapper/autostart가
@@ -204,6 +196,9 @@ fn main() {
                     eprintln!("[Companion] 서버 시작 실패: {}", e);
                 }
             });
+
+            // [v2.4] 백그라운드 자동 업데이트 — 1시간마다 GitHub releases 체크
+            auto_updater::spawn_auto_update_loop();
 
             // (Codex Round-4 Medium) Ctrl-C / SIGTERM 신호 처리 — graceful shutdown
             // kill -TERM <pid>나 콘솔 Ctrl-C로 종료해도 cloudflared가 orphan으로 남지 않도록.
