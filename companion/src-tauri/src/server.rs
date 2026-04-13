@@ -722,6 +722,8 @@ fn resolve_input_bytes(
 }
 
 /// [v2.5] 응답을 temp_path로 반환 (base64 인코딩 대신 파일 경로)
+/// [FIX Codex-3] use_path_response=true일 때 파일을 persistent temp로 복사하여
+/// NamedTempFile drop 후에도 파일이 유지되도록 함
 fn respond_with_output_file(
     output_path: &str,
     format: &str,
@@ -732,9 +734,21 @@ fn respond_with_output_file(
         Ok(data) => {
             let size = data.len();
             if use_path_response {
-                // 파일을 temp에 남겨두고 경로만 반환
+                // NamedTempFile은 handler 끝나면 drop → 파일 삭제됨
+                // 따라서 persistent temp 경로로 복사
+                let ext = format;
+                let persist_path = std::env::temp_dir().join(
+                    format!("companion-out-{}.{}", &crate::video_tunnel::generate_token()[..12], ext)
+                );
+                if let Err(e) = std::fs::write(&persist_path, &data) {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({ "error": format!("결과 파일 저장 실패: {}", e) })),
+                    )
+                        .into_response();
+                }
                 Json(serde_json::json!({
-                    "outputPath": output_path,
+                    "outputPath": persist_path.to_string_lossy().to_string(),
                     "format": format,
                     "size": size,
                 }))
@@ -4573,6 +4587,8 @@ async fn zip_create_handler(Json(req): Json<ZipCreateRequest>) -> Response {
     use std::io::{Write, Cursor};
     use zip::write::SimpleFileOptions;
 
+    let mut added_count: usize = 0;
+
     if req.files.is_empty() {
         return (
             StatusCode::BAD_REQUEST,
@@ -4589,8 +4605,20 @@ async fn zip_create_handler(Json(req): Json<ZipCreateRequest>) -> Response {
 
         for entry in &req.files {
             let data = if let Some(path) = &entry.path {
-                // temp 파일에서 읽기
-                match std::fs::read(path) {
+                // [FIX Codex-1] temp 디렉토리 안전 검증 — resolve_input_bytes와 동일 패턴
+                let canonical = match std::fs::canonicalize(path) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        eprintln!("[ZIP] 파일 경로 해석 실패 ({}): {}", path, e);
+                        continue;
+                    }
+                };
+                let temp_dir = std::env::temp_dir();
+                if !canonical.starts_with(&temp_dir) {
+                    eprintln!("[ZIP] 허용되지 않은 경로: {}", path);
+                    continue;
+                }
+                match std::fs::read(&canonical) {
                     Ok(d) => d,
                     Err(e) => {
                         eprintln!("[ZIP] 파일 읽기 실패 ({}): {}", path, e);
@@ -4632,6 +4660,7 @@ async fn zip_create_handler(Json(req): Json<ZipCreateRequest>) -> Response {
                 eprintln!("[ZIP] 데이터 쓰기 실패 ({}): {}", safe_name, e);
                 continue;
             }
+            added_count += 1;
         }
 
         if let Err(e) = zip.finish() {
@@ -4660,7 +4689,8 @@ async fn zip_create_handler(Json(req): Json<ZipCreateRequest>) -> Response {
     Json(serde_json::json!({
         "outputPath": zip_path.to_string_lossy().to_string(),
         "size": size,
-        "fileCount": req.files.len(),
+        "fileCount": added_count,
+        "requestedCount": req.files.len(),
     }))
     .into_response()
 }
@@ -4680,24 +4710,32 @@ struct ApiProxyRequest {
 }
 
 async fn api_proxy_handler(Json(req): Json<ApiProxyRequest>) -> Response {
-    // 보안: 허용된 도메인만 프록시
-    let allowed_domains = [
+    // [FIX Codex-2] 보안: URL 파싱 기반 도메인 검증 — contains() 우회 방지
+    let allowed_domains: &[&str] = &[
         "googleapis.com",
         "api.evolink.ai",
         "api.kie.ai",
         "api.laozhang.ai",
         "api.remove.bg",
         "api.cloudinary.com",
-        "generativelanguage.googleapis.com",
-        "aisandbox-pa.googleapis.com",
         "labs.google",
     ];
-    let url_lower = req.url.to_lowercase();
-    let is_allowed = allowed_domains.iter().any(|d| url_lower.contains(d));
-    if !is_allowed {
+    let parsed_url = match url::Url::parse(&req.url) {
+        Ok(u) => u,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": format!("유효하지 않은 URL: {}", e) })),
+            )
+                .into_response();
+        }
+    };
+    let host = parsed_url.host_str().unwrap_or("");
+    let is_allowed = allowed_domains.iter().any(|d| host == *d || host.ends_with(&format!(".{}", d)));
+    if !is_allowed || parsed_url.scheme() != "https" {
         return (
             StatusCode::FORBIDDEN,
-            Json(serde_json::json!({ "error": format!("허용되지 않은 도메인입니다: {}", req.url) })),
+            Json(serde_json::json!({ "error": format!("허용되지 않은 도메인입니다: {}", host) })),
         )
             .into_response();
     }

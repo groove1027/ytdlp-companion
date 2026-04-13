@@ -182,7 +182,10 @@ export async function downloadCompanionTempFile(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ path: outputPath }),
-    signal: signal ?? AbortSignal.timeout(5 * 60 * 1000),
+    // [FIX Codex-4] caller signal이 있어도 반드시 timeout 보장
+    signal: signal
+      ? (AbortSignal as unknown as { any?: (signals: AbortSignal[]) => AbortSignal }).any?.([signal, AbortSignal.timeout(5 * 60 * 1000)]) || AbortSignal.timeout(5 * 60 * 1000)
+      : AbortSignal.timeout(5 * 60 * 1000),
   });
   if (!res.ok) {
     throw new Error(`temp 파일 읽기 실패: HTTP ${res.status}`);
