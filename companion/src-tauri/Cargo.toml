@@ -1,6 +1,6 @@
 [package]
 name = "all-in-one-helper"
-version = "2.4.3"
+version = "2.4.4"
 description = "All In One Helper — 로컬 미디어 게이트웨이 (v2.4.3: 트레이 전용 + 자동 업데이트)"
 authors = ["groove1027"]
 edition = "2021"
