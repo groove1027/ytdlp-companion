@@ -22,6 +22,54 @@ function normalizeSceneText(text: string): string {
   return text.replace(/\s+/g, '').trim();
 }
 
+function hasLockedSceneMediaForSoundTransfer(scene: Scene): boolean {
+  return !!(
+    scene.isGeneratingImage
+    || scene.isGeneratingVideo
+    || scene.isUpscaling
+    || scene.imageUrl
+    || scene.previousSceneImageUrl
+    || scene.videoUrl
+    || scene.previousVideoUrl
+    || scene.referenceImage
+    || scene.sourceVideoUrl
+    || scene.sourceFrameUrl
+    || scene.startFrameUrl
+    || scene.endFrameUrl
+    || scene.editedStartFrameUrl
+    || scene.editedEndFrameUrl
+    || scene.communityMediaItem
+    || (scene.videoReferences && scene.videoReferences.length > 0)
+  );
+}
+
+function shouldDirectRebuildScenes(
+  existingScenes: Scene[],
+  lines: Array<{ sceneId?: string }>,
+): boolean {
+  if (existingScenes.length !== lines.length) {
+    return true;
+  }
+
+  const existingSceneIds = existingScenes.map((scene) => scene.id);
+  const existingSceneIdSet = new Set(existingSceneIds);
+  const linkedSceneIds = lines.map((line) => line.sceneId);
+  if (linkedSceneIds.some((sceneId) => !sceneId)) {
+    return true;
+  }
+
+  const resolvedSceneIds = linkedSceneIds as string[];
+  if (new Set(resolvedSceneIds).size !== resolvedSceneIds.length) {
+    return true;
+  }
+
+  if (resolvedSceneIds.some((sceneId) => !existingSceneIdSet.has(sceneId))) {
+    return true;
+  }
+
+  return resolvedSceneIds.some((sceneId, index) => sceneId !== existingSceneIds[index]);
+}
+
 function rebuildUploadedTranscriptScenes(existingScenes: Scene[], plannedScenes: Scene[]): Scene[] {
   return plannedScenes.map((plannedScene, index) => {
     const currentScene = existingScenes[index];
@@ -65,9 +113,20 @@ function buildDirectScenesFromLines(
   }>,
 ): Scene[] {
   const ts = Date.now();
+  const existingSceneById = new Map(existingScenes.map((scene) => [scene.id, scene]));
+  const lineSceneIdCounts = new Map<string, number>();
+  for (const line of lines) {
+    if (!line.sceneId) continue;
+    lineSceneIdCounts.set(line.sceneId, (lineSceneIdCounts.get(line.sceneId) || 0) + 1);
+  }
 
   return lines.map((line, index) => {
-    const currentScene = existingScenes[index];
+    const safeSceneId = line.sceneId
+      && lineSceneIdCounts.get(line.sceneId) === 1
+      && existingSceneById.has(line.sceneId)
+      ? line.sceneId
+      : undefined;
+    const currentScene = (safeSceneId ? existingSceneById.get(safeSceneId) : undefined) || existingScenes[index];
     const normalizedLineText = normalizeSceneText(line.text);
     const currentSceneText = currentScene ? normalizeSceneText(getSceneNarrationText(currentScene)) : '';
     const shouldPreserveCurrentScene = !!currentScene && normalizedLineText.length > 0 && normalizedLineText === currentSceneText;
@@ -76,7 +135,7 @@ function buildDirectScenesFromLines(
     const baseScene: Scene = shouldPreserveCurrentScene && currentScene
       ? currentScene
       : {
-          id: line.sceneId || currentScene?.id || `scene-${ts}-${index}`,
+          id: safeSceneId || currentScene?.id || `scene-${ts}-${index}`,
           scriptText: line.text,
           audioScript: line.text,
           visualPrompt: '',
@@ -90,7 +149,7 @@ function buildDirectScenesFromLines(
 
     return {
       ...baseScene,
-      id: line.sceneId || baseScene.id || `scene-${ts}-${index}`,
+      id: safeSceneId || baseScene.id || `scene-${ts}-${index}`,
       scriptText: line.text,
       audioScript: line.text,
       audioUrl: line.audioUrl,
@@ -106,8 +165,8 @@ function buildDirectScenesFromLines(
 /**
  * 사운드 스튜디오의 오디오 데이터를 이미지/영상 탭으로 동기화하고 탭 전환.
  *
- * Scene과 ScriptLine은 sceneId로 1:1 연결되어 있으므로,
- * sceneId 기반 직접 매핑으로 오디오 데이터만 동기화합니다.
+ * sceneId 매핑이 온전하면 기존 Scene을 직접 갱신하고,
+ * 매핑이 깨졌거나 장면 순서가 달라졌으면 안전하게 Scene 목록을 재구성합니다.
  */
 export function transferSoundToImageVideo(): void {
   const soundStore = useSoundStudioStore.getState();
@@ -122,11 +181,15 @@ export function transferSoundToImageVideo(): void {
   let offset = 0;
   for (const line of lines) {
     const resolvedDuration = resolveLineDuration(line);
-    if (line.audioUrl && resolvedDuration != null && resolvedDuration > 0 &&
-        (line.startTime === undefined || line.endTime === undefined || line.endTime <= line.startTime)) {
-      soundStore.updateLine(line.id, { startTime: offset, endTime: offset + resolvedDuration });
+    const needsTimingRepair = !!line.audioUrl
+      && resolvedDuration != null
+      && resolvedDuration > 0
+      && (line.startTime === undefined || line.endTime === undefined || line.endTime <= line.startTime);
+    const nextEndTime = needsTimingRepair ? offset + resolvedDuration : line.endTime;
+    if (needsTimingRepair) {
+      soundStore.updateLine(line.id, { startTime: offset, endTime: nextEndTime });
     }
-    offset = line.endTime ?? (offset + (resolvedDuration || 0));
+    offset = nextEndTime ?? (offset + (resolvedDuration || 0));
   }
 
   // 보정 후 최신 라인 재읽기
@@ -145,11 +208,12 @@ export function transferSoundToImageVideo(): void {
   });
   const isUploadedTranscriptTransfer = finalLines.length > 0
     && finalLines.every((line) => line.audioSource === 'uploaded' || !!line.uploadedAudioId);
+  const existingScenesHaveProtectedMedia = existingScenes.some(hasLockedSceneMediaForSoundTransfer);
   const needsDirectSceneRebuild = !isUploadedTranscriptTransfer
     && existingScenes.length > 0
-    && existingScenes.length !== finalLines.length
     && finalLines.length > 0
-    && finalLines.every((line) => !line.sceneId);
+    && shouldDirectRebuildScenes(existingScenes, finalLines)
+    && !existingScenesHaveProtectedMedia;
   const currentConfig = projectStore.config;
   const uploadedTranscriptSegments: WhisperSegment[] | undefined = isUploadedTranscriptTransfer
     ? ((currentConfig?.rawUploadedTranscriptSegments && currentConfig.rawUploadedTranscriptSegments.length > 0)
@@ -198,11 +262,13 @@ export function transferSoundToImageVideo(): void {
   // 3. sceneId 기반 직접 동기화 (기존 장면의 모든 메타데이터 보존)
   if (regroupedUploadedScenes && regroupedUploadedScenes.length > 0) {
     if (!areUploadedTranscriptScenesSynced(existingScenes, regroupedUploadedScenes)) {
-      projectStore.setScenes(
-        existingScenes.length > 0
-          ? rebuildUploadedTranscriptScenes(existingScenes, regroupedUploadedScenes)
-          : regroupedUploadedScenes,
-      );
+      if (!existingScenesHaveProtectedMedia) {
+        projectStore.setScenes(
+          existingScenes.length > 0
+            ? rebuildUploadedTranscriptScenes(existingScenes, regroupedUploadedScenes)
+            : regroupedUploadedScenes,
+        );
+      }
     }
   } else if (needsDirectSceneRebuild) {
     projectStore.setScenes(buildDirectScenesFromLines(existingScenes, finalLines));
@@ -217,11 +283,12 @@ export function transferSoundToImageVideo(): void {
       const resolvedDuration = resolveLineDuration(line);
       const scenePatch: Partial<Scene> = {
         scriptText: line.text,
+        audioScript: line.text,
+        audioUrl: line.audioUrl,
+        audioDuration: resolvedDuration,
+        startTime: line.startTime,
+        endTime: line.endTime,
       };
-      if (line.audioUrl !== undefined) scenePatch.audioUrl = line.audioUrl;
-      if (resolvedDuration != null && resolvedDuration > 0) scenePatch.audioDuration = resolvedDuration;
-      if (line.startTime !== undefined) scenePatch.startTime = line.startTime;
-      if (line.endTime !== undefined) scenePatch.endTime = line.endTime;
 
       projectStore.updateScene(targetSceneId, scenePatch);
     }

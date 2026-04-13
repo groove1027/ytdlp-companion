@@ -26,6 +26,8 @@ import TopicRecommendCards from './script/TopicRecommendCards';
 import { useElapsedTimer, formatElapsed } from '../../hooks/useElapsedTimer';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
 import { lazyRetry } from '../../utils/retryImport';
+import { getSceneNarrationText } from '../../utils/sceneText';
+import { hasProtectedSceneMedia } from '../../utils/sceneProtection';
 
 const InstinctBrowser = lazyRetry(() => import('./script/InstinctBrowser'));
 const ScriptExpander = lazyRetry(() => import('./script/ScriptExpander'));
@@ -38,6 +40,20 @@ const StyleDiffView = lazyRetry(() => import('./script/StyleDiffView'));
 const BenchmarkRadarChart = lazyRetry(() => import('./script/BenchmarkRadarChart'));
 
 type OpenTool = 'instinct' | 'benchmark' | null;
+
+function buildSceneAnalysisSignature(
+  script: string,
+  videoFormat: VideoFormat,
+  smartSplit: boolean,
+  longFormSplitType: 'DEFAULT' | 'DETAILED' | 'ECONOMY',
+): string {
+  return JSON.stringify({
+    script: script.replace(/\s+/g, ''),
+    videoFormat,
+    smartSplit,
+    longFormSplitType: videoFormat === VideoFormat.LONG ? longFormSplitType : null,
+  });
+}
 
 /** 한국어 나레이션 기준 약 650자/분 (5,000자 ≈ 7~8분) */
 function estimateTime(chars: number): string {
@@ -460,6 +476,7 @@ export default function ScriptWriterTab() {
       return;
     }
 
+    const analysisSignature = buildSceneAnalysisSignature(scriptText, videoFormat, smartSplit, longFormSplitType);
     const initialProjectStore = useProjectStore.getState();
     if (!initialProjectStore.currentProjectId || !initialProjectStore.config) {
       const ok = await canCreateNewProject();
@@ -470,6 +487,11 @@ export default function ScriptWriterTab() {
       // 프로젝트가 없으면 명시적으로 생성 (사용자가 실제 작업을 시작하는 시점)
       const titleHint = scriptText.trim().substring(0, 30) || '대본 프로젝트';
       initialProjectStore.newProject(titleHint);
+      const currentWriterStore = useScriptWriterStore.getState();
+      currentWriterStore.setFinalScript(scriptText);
+      currentWriterStore.setVideoFormat(videoFormat);
+      currentWriterStore.setSmartSplit(smartSplit);
+      currentWriterStore.setLongFormSplitType(longFormSplitType);
       showToast('새 프로젝트가 자동 생성되었습니다');
     }
     const analysisProjectId = useProjectStore.getState().currentProjectId;
@@ -535,6 +557,21 @@ ${scriptText}`;
         });
         return;
       }
+      const activeWriterStore = useScriptWriterStore.getState();
+      const activeScriptText = (activeWriterStore.finalScript ?? activeWriterStore.generatedScript?.content ?? activeWriterStore.manualText) || '';
+      const activeAnalysisSignature = buildSceneAnalysisSignature(
+        activeScriptText,
+        activeWriterStore.videoFormat,
+        activeWriterStore.smartSplit,
+        activeWriterStore.longFormSplitType,
+      );
+      if (activeAnalysisSignature !== analysisSignature) {
+        logger.info('ScriptWriterTab: handleSceneAnalysis ignored stale result after script/settings change', {
+          analysisProjectId,
+          currentProjectId: activeProjectStore.currentProjectId,
+        });
+        return;
+      }
 
       let splitSegments: string[];
       if (scenes.length === 0) {
@@ -553,26 +590,28 @@ ${scriptText}`;
       // — 이렇게 해야 같은 개수로 다시 분할한 경우에도 사운드/이미지 탭이 최신 단락을 본다
       const existingScenes = activeProjectStore.scenes;
       const normalizedSplitSegments = splitSegments.map((text) => text.trim()).filter(Boolean);
-      const existingSceneTexts = existingScenes.map((scene) => (scene.audioScript || scene.scriptText || '').trim());
-      const scenesNeedRefresh = normalizedSplitSegments.length > 0 && (
-        normalizedSplitSegments.length !== existingSceneTexts.length
-        || normalizedSplitSegments.some((text, index) => text !== existingSceneTexts[index])
-      );
+      const existingSceneTexts = existingScenes.map((scene) => getSceneNarrationText(scene).trim());
+      const scenesNeedRefresh = normalizedSplitSegments.length !== existingSceneTexts.length
+        || normalizedSplitSegments.some((text, index) => text !== existingSceneTexts[index]);
       if (scenesNeedRefresh) {
-        const hasMedia = existingScenes.some(s => s.imageUrl || s.videoUrl || s.audioUrl);
-        if (!hasMedia) {
-          const sceneSeed = Date.now();
-          activeProjectStore.setScenes(normalizedSplitSegments.map((text, i) => ({
-            id: `scene-${sceneSeed}-${i}`,
-            scriptText: text,
-            audioScript: text,
-            visualPrompt: '',
-            visualDescriptionKO: text.slice(0, 80),
-            characterPresent: false,
-            isGeneratingImage: false,
-            isGeneratingVideo: false,
-            seedanceDuration: '8' as const,
-          })));
+        const hasProtectedMedia = existingScenes.some(hasProtectedSceneMedia);
+        if (!hasProtectedMedia) {
+          if (normalizedSplitSegments.length === 0) {
+            activeProjectStore.setScenes([]);
+          } else {
+            const sceneSeed = Date.now();
+            activeProjectStore.setScenes(normalizedSplitSegments.map((text, i) => ({
+              id: `scene-${sceneSeed}-${i}`,
+              scriptText: text,
+              audioScript: text,
+              visualPrompt: '',
+              visualDescriptionKO: text.slice(0, 80),
+              characterPresent: false,
+              isGeneratingImage: false,
+              isGeneratingVideo: false,
+              seedanceDuration: '8' as const,
+            })));
+          }
         }
       }
 

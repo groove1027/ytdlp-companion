@@ -27,7 +27,7 @@ import { TYPECAST_EMOTIONS, TYPECAST_MODELS, PRICING } from '../../../constants'
 import { useCostStore } from '../../../stores/costStore';
 import { getTypecastKey } from '../../../services/apiService';
 import type { VoiceOption } from '../../../services/ttsService';
-import type { TTSEngine, TTSLanguage, ScriptLine, Speaker, WhisperTranscriptResult, AudioSourceType } from '../../../types';
+import type { TTSEngine, TTSLanguage, ScriptLine, Speaker, WhisperTranscriptResult, AudioSourceType, Scene } from '../../../types';
 import TypecastEditor from './TypecastEditor';
 // VoiceClonePanel 제거 — CosyVoice 미사용으로 Voice Clone 비활성화
 import { useProjectStore } from '../../../stores/projectStore';
@@ -36,6 +36,7 @@ import { useElapsedTimer, formatElapsed } from '../../../hooks/useElapsedTimer';
 import { useAuthGuard } from '../../../hooks/useAuthGuard';
 import { runKieBatch } from '../../../utils/kieBatchRunner';
 import { getSceneNarrationText } from '../../../utils/sceneText';
+import { hasProtectedSceneMedia } from '../../../utils/sceneProtection';
 
 const SPEAKER_COLORS = ['#6366f1', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316'];
 
@@ -243,6 +244,64 @@ const SAMPLE_TEXTS: Record<string, string> = {
 // [FIX #989] 프로젝트 전환 감지용 모듈 레벨 변수 (unmount/remount 시에도 유지)
 let _lastKnownProjectId: string | null = null;
 
+function normalizeVoiceSceneText(text: string | undefined): string {
+  return (text || '').replace(/\s+/g, '').trim();
+}
+
+function buildScriptLinesFromSplitTexts(
+  texts: string[],
+  speakerId: string,
+  scenes: Scene[],
+): ScriptLine[] {
+  const lineSeed = Date.now();
+  const canLinkScenes = texts.length === scenes.length && texts.every((text, index) => {
+    const scene = scenes[index];
+    return !!scene && normalizeVoiceSceneText(text) === normalizeVoiceSceneText(getSceneNarrationText(scene));
+  });
+
+  return texts.map((text, index) => {
+    const linkedScene = canLinkScenes ? scenes[index] : undefined;
+    return {
+      id: `line-${lineSeed}-${index}`,
+      speakerId,
+      text,
+      index,
+      ...(linkedScene
+        ? {
+            sceneId: linkedScene.id,
+            audioUrl: linkedScene.audioUrl,
+            duration: linkedScene.audioDuration,
+            startTime: linkedScene.startTime,
+            endTime: linkedScene.endTime,
+            ttsStatus: linkedScene.audioUrl ? 'done' as const : 'idle' as const,
+          }
+        : { ttsStatus: 'idle' as const }),
+    };
+  });
+}
+
+function resolveSceneIdFromLine(
+  line: Pick<ScriptLine, 'sceneId' | 'index' | 'text'>,
+  scenes: Scene[],
+): string | undefined {
+  if (line.sceneId && scenes.some((scene) => scene.id === line.sceneId)) {
+    return line.sceneId;
+  }
+
+  if (typeof line.index !== 'number' || line.index < 0) {
+    return undefined;
+  }
+
+  const fallbackScene = scenes[line.index];
+  if (!fallbackScene) {
+    return undefined;
+  }
+
+  return normalizeVoiceSceneText(line.text) === normalizeVoiceSceneText(getSceneNarrationText(fallbackScene))
+    ? fallbackScene.id
+    : undefined;
+}
+
 const VoiceStudio: React.FC = () => {
   const { requireAuth } = useAuthGuard();
   const addCost = useCostStore((s) => s.addCost);
@@ -265,9 +324,53 @@ const VoiceStudio: React.FC = () => {
   const storeScript = finalScript || generatedScriptContent || '';
   // [FIX #1162] splitResult 구독 — 단락 나누기 결과 변경 시 라인 재동기화용
   const splitResultFromWriter = useScriptWriterStore((s) => s.splitResult);
-
   // [FIX #989] 프로젝트 전환 시 이전 프로젝트의 나레이션 라인 + 대본 초기화
   const currentProjectId = useProjectStore((s) => s.currentProjectId);
+  const splitTexts = useMemo(
+    () => splitResultFromWriter.map((text) => text.trim()).filter(Boolean),
+    [splitResultFromWriter],
+  );
+  const splitJoinedClean = useMemo(
+    () => splitTexts.join('').replace(/\s+/g, ''),
+    [splitTexts],
+  );
+  const splitFingerprint = useMemo(
+    () => `${currentProjectId || 'no-project'}:${JSON.stringify(splitTexts)}`,
+    [currentProjectId, splitTexts],
+  );
+
+  const clearMergedNarrationState = useCallback(() => {
+    const soundStore = useSoundStudioStore.getState();
+    if (soundStore.mergedAudioUrl) {
+      soundStore.setMergedAudio(undefined);
+    }
+    useProjectStore.getState().setConfig((prev) => {
+      if (!prev || prev.mergedAudioUrl === undefined) return prev;
+      return {
+        ...prev,
+        mergedAudioUrl: undefined,
+      };
+    });
+  }, []);
+
+  const clearSceneAudioForLines = useCallback((targetLines: Array<Pick<ScriptLine, 'sceneId' | 'index' | 'text'>>) => {
+    const projectStore = useProjectStore.getState();
+    const projectScenes = projectStore.scenes;
+    const sceneIds = Array.from(new Set(
+      targetLines
+        .map((line) => resolveSceneIdFromLine(line, projectScenes))
+        .filter((sceneId): sceneId is string => !!sceneId),
+    ));
+    sceneIds.forEach((sceneId) => {
+      projectStore.updateScene(sceneId, {
+        audioUrl: undefined,
+        audioDuration: undefined,
+        startTime: undefined,
+        endTime: undefined,
+      });
+    });
+  }, []);
+
   const skipSyncRef = React.useRef(false);
   useEffect(() => {
     if (_lastKnownProjectId && currentProjectId && _lastKnownProjectId !== currentProjectId) {
@@ -276,6 +379,7 @@ const VoiceStudio: React.FC = () => {
       const hasMatchingLines = currentLines.length > 0 &&
         currentLines.some(l => l.sceneId && currentSceneIds.has(l.sceneId));
       if (!hasMatchingLines) {
+        clearMergedNarrationState();
         setLines([]);
         // 새 프로젝트에 장면이 없으면 대본도 초기화 + 재동기화 방지
         if (useProjectStore.getState().scenes.length === 0) {
@@ -287,37 +391,40 @@ const VoiceStudio: React.FC = () => {
       }
     }
     _lastKnownProjectId = currentProjectId;
-  }, [currentProjectId, setLines]);
+  }, [clearMergedNarrationState, currentProjectId, setLines]);
 
   // [FIX #1162] splitResult(단락 나누기 결과) 변경 시 사운드 라인 즉시 재동기화
   // — 기존 라인이 있고, splitResult의 개수나 경계가 바뀌면 재동기화
   // — fingerprint를 ref로 기억해 setLines 후 재실행되어도 무한 루프를 막는다
   const prevSplitFingerprintRef = React.useRef('');
   useEffect(() => {
-    const splitTexts = splitResultFromWriter.map((text) => text.trim()).filter(Boolean);
-    const splitFingerprint = `${currentProjectId || 'no-project'}:${JSON.stringify(splitTexts)}`;
     const prevFingerprint = prevSplitFingerprintRef.current;
     prevSplitFingerprintRef.current = splitFingerprint;
-    if (splitTexts.length === 0 || splitFingerprint === prevFingerprint) return;
+    if (splitFingerprint === prevFingerprint) return;
     // 현재 라인이 없으면 메인 useEffect에서 처리
     if (lines.length === 0) return;
-    const currentLineTexts = lines.map((line) => line.text.trim());
-    const alreadySynced = currentLineTexts.length === splitTexts.length
-      && currentLineTexts.every((text, index) => text === splitTexts[index]);
-    if (alreadySynced) return;
+    const projectScenes = useProjectStore.getState().scenes;
     const hasExternallyManagedLines = lines.some((line) =>
       line.sceneId?.startsWith('video-analysis:')
       || line.audioSource === 'uploaded'
       || !!line.uploadedAudioId,
     ) || useProjectStore.getState().config?.narrationSource === 'uploaded-audio';
     const hasLineAudio = lines.some((line) => !!line.audioUrl);
-    const scenesHaveAudio = useProjectStore.getState().scenes.some((scene) => !!scene.audioUrl);
-    if (hasExternallyManagedLines || hasLineAudio || scenesHaveAudio) return;
+    const scenesHaveProtectedMedia = projectScenes.some(hasProtectedSceneMedia);
+    if (hasExternallyManagedLines || hasLineAudio || scenesHaveProtectedMedia) return;
+    if (splitTexts.length === 0) {
+      clearMergedNarrationState();
+      setLines([]);
+      return;
+    }
+    const currentLineTexts = lines.map((line) => line.text.trim());
+    const alreadySynced = currentLineTexts.length === splitTexts.length
+      && currentLineTexts.every((text, index) => text === splitTexts[index]);
+    if (alreadySynced) return;
     // splitResult가 현재 대본과 매칭하는지 확인
-    const splitJoined = splitResultFromWriter.join('').replace(/\s+/g, '');
     const scriptClean = storeScript.replace(/\s+/g, '');
-    if (splitJoined.length === 0 || scriptClean.length === 0) return;
-    const matches = scriptClean.includes(splitJoined.slice(0, 50)) || splitJoined.includes(scriptClean.slice(0, 50));
+    if (splitJoinedClean.length === 0 || scriptClean.length === 0) return;
+    const matches = scriptClean.includes(splitJoinedClean.slice(0, 50)) || splitJoinedClean.includes(scriptClean.slice(0, 50));
     if (!matches) return;
     let defaultSpeakerId = speakers[0]?.id || '';
     if (speakers.length === 0) {
@@ -330,13 +437,9 @@ const VoiceStudio: React.FC = () => {
       addSpeaker(newSpeaker);
       defaultSpeakerId = newSpeaker.id;
     }
-    setLines(splitTexts.map((text: string, i: number) => ({
-      id: `line-${Date.now()}-${i}`,
-      speakerId: defaultSpeakerId,
-      text,
-      index: i,
-    })));
-  }, [addSpeaker, currentProjectId, lines, setLines, speakers, splitResultFromWriter, storeScript]);
+    clearMergedNarrationState();
+    setLines(buildScriptLinesFromSplitTexts(splitTexts, defaultSpeakerId, projectScenes));
+  }, [addSpeaker, clearMergedNarrationState, lines, setLines, speakers, splitFingerprint, splitJoinedClean, splitTexts, storeScript]);
 
   const [editingLineId, setEditingLineId] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
@@ -482,7 +585,8 @@ const VoiceStudio: React.FC = () => {
       || line.audioSource === 'uploaded'
       || !!line.uploadedAudioId,
     ) || useProjectStore.getState().config?.narrationSource === 'uploaded-audio';
-    if (hasExternallyManagedLines) {
+    const hasLineAudio = lines.some((line) => !!line.audioUrl);
+    if (hasExternallyManagedLines || hasLineAudio) {
       prevStoreScriptRef.current = storeScript;
       return;
     }
@@ -492,6 +596,7 @@ const VoiceStudio: React.FC = () => {
       // 기존 라인 텍스트와 새 대본이 다르면 초기화
       if (currentText.replace(/\s+/g, '') !== storeScript.replace(/\s+/g, '')) {
         prevStoreScriptRef.current = storeScript;
+        clearMergedNarrationState();
         setLines([]);
         return; // 다음 렌더에서 빈 lines로 재진입하여 새 대본으로 동기화
       }
@@ -510,21 +615,18 @@ const VoiceStudio: React.FC = () => {
     );
 
     // [FIX #591/#590/#780/#820/#1162] splitResult 매칭 확인
-    const splitResult = splitResultFromWriter;
-    const splitTexts = splitResult.filter((t: string) => t.trim());
-    const splitJoined = splitResult ? splitResult.join('').replace(/\s+/g, '') : '';
-    const splitMatchesScript = splitJoined.length > 0 && (
-      scriptTextClean.includes(splitJoined.slice(0, 50)) || splitJoined.includes(scriptTextClean.slice(0, 50))
+    const splitMatchesScript = scriptTextClean.length > 0 && splitJoinedClean.length > 0 && (
+      scriptTextClean.includes(splitJoinedClean.slice(0, 50)) || splitJoinedClean.includes(scriptTextClean.slice(0, 50))
     );
 
     // [FIX #1162] 1순위: splitResult가 scenes와 수/내용이 다르고, scenes에 오디오 없으면 splitResult 우선
     // — "단락 나누기"로 다시 쪼갠 최신 경계가 scenes보다 항상 우선되도록 한다
-    const scenesHaveAudio = scenes.some(s => !!s.audioUrl);
+    const scenesHaveProtectedMedia = scenes.some(hasProtectedSceneMedia);
     const splitDiffersFromScenes = splitTexts.length > 0 && (
       splitTexts.length !== sceneNarrationTexts.length
       || splitTexts.some((text, index) => text !== sceneNarrationTexts[index])
     );
-    if (splitDiffersFromScenes && splitMatchesScript && !scenesHaveAudio) {
+    if (splitDiffersFromScenes && splitMatchesScript && !scenesHaveProtectedMedia) {
       if (splitTexts.length > 0) {
         let defaultSpeakerId = speakers[0]?.id || '';
         if (speakers.length === 0) {
@@ -537,18 +639,15 @@ const VoiceStudio: React.FC = () => {
           addSpeaker(newSpeaker);
           defaultSpeakerId = newSpeaker.id;
         }
-        setLines(splitTexts.map((text: string, i: number) => ({
-          id: `line-${Date.now()}-${i}`,
-          speakerId: defaultSpeakerId,
-          text,
-          index: i,
-        })));
+        clearMergedNarrationState();
+        setLines(buildScriptLinesFromSplitTexts(splitTexts, defaultSpeakerId, scenes));
         return;
       }
     }
 
-    // 2순위: scenes에서 파생 (단, 현재 대본과 일치하는 경우에만)
-    if (scenes.length > 0 && scenesMatchScript) {
+    // 2순위: scenes에서 파생
+    // 오디오/이미지/영상 등 보호해야 할 미디어가 있으면 현재 storeScript와 달라도 scenes를 우선 복원한다.
+    if (scenes.length > 0 && (scenesMatchScript || scenesHaveProtectedMedia)) {
       let defaultSpeakerId = speakers[0]?.id || '';
       if (speakers.length === 0) {
         const newSpeaker: Speaker = {
@@ -570,12 +669,13 @@ const VoiceStudio: React.FC = () => {
         duration: scene.audioDuration,
         startTime: scene.startTime,
         endTime: scene.endTime,
+        ttsStatus: (scene.audioUrl ? 'done' : 'idle') as 'done' | 'idle',
       })));
       return;
     }
 
     // 3순위: splitResult (scenes가 없거나 불일치할 때)
-    if (splitResult && splitResult.length > 0 && splitMatchesScript) {
+    if (!scenesHaveProtectedMedia && splitTexts.length > 0 && splitMatchesScript) {
       if (splitTexts.length > 0) {
         let defaultSpeakerId2 = speakers[0]?.id || '';
         if (speakers.length === 0) {
@@ -588,12 +688,8 @@ const VoiceStudio: React.FC = () => {
           addSpeaker(newSpeaker);
           defaultSpeakerId2 = newSpeaker.id;
         }
-        setLines(splitTexts.map((text: string, i: number) => ({
-          id: `line-${Date.now()}-${i}`,
-          speakerId: defaultSpeakerId2,
-          text,
-          index: i,
-        })));
+        clearMergedNarrationState();
+        setLines(buildScriptLinesFromSplitTexts(splitTexts, defaultSpeakerId2, scenes));
         return;
       }
     }
@@ -623,13 +719,14 @@ const VoiceStudio: React.FC = () => {
       addSpeaker(newSpeaker);
       defaultSpeakerId = newSpeaker.id;
     }
+    clearMergedNarrationState();
     setLines(parts.map((text, i) => ({
       id: `line-${Date.now()}-${i}`,
       speakerId: defaultSpeakerId,
       text,
       index: i,
     })));
-  }, [addSpeaker, currentProjectId, lines, setLines, speakers, splitResultFromWriter, storeScript]); // 대본/프로젝트/단락 변경 시 재동기화
+  }, [addSpeaker, clearMergedNarrationState, currentProjectId, lines, setLines, speakers, splitJoinedClean, splitTexts, storeScript]); // 대본/프로젝트/단락 변경 시 재동기화
 
   // [Microsoft 제거됨] 시스템 음성 감지 불필요 — ElevenLabs는 서버 사이드 생성
   useEffect(() => { setSystemVoicesReady(true); }, []);
@@ -738,11 +835,12 @@ const VoiceStudio: React.FC = () => {
       addSpeaker(newSpeaker);
       speakerId = newSpeaker.id;
     }
+    clearMergedNarrationState();
     setLines(sentences.map((text, i) => ({
       id: `line-${Date.now()}-${i}`, speakerId, text, index: i, ttsStatus: 'idle' as const,
     })));
     setDirectScript('');
-  }, [directScript, speakers, addSpeaker, setLines]);
+  }, [clearMergedNarrationState, directScript, speakers, addSpeaker, setLines]);
 
   // === TTS 생성 ===
   const [isGeneratingLine, setIsGeneratingLine] = useState<string | null>(null);
@@ -802,6 +900,10 @@ const VoiceStudio: React.FC = () => {
           ttsStatus: 'generating',
         }
       : { ttsStatus: 'generating' });
+    if (usesUploadedNarration) {
+      clearMergedNarrationState();
+      clearSceneAudioForLines([line]);
+    }
 
     try {
       const prevText = lineIdx > 0 ? freshLines[lineIdx - 1]?.text?.slice(-200) : undefined;
@@ -886,8 +988,9 @@ const VoiceStudio: React.FC = () => {
       });
 
       // Scene 오디오/타이밍 동기화 (sceneId 기반)
-      if (line.sceneId) {
-        useProjectStore.getState().updateScene(line.sceneId, {
+      const linkedSceneId = resolveSceneIdFromLine(line, useProjectStore.getState().scenes);
+      if (linkedSceneId) {
+        useProjectStore.getState().updateScene(linkedSceneId, {
           audioUrl: result.audioUrl,
           ...(fixedDuration != null
             ? {
@@ -917,7 +1020,7 @@ const VoiceStudio: React.FC = () => {
     } finally {
       setIsGeneratingLine(null);
     }
-  }, [updateLine, addCost]);
+  }, [updateLine, addCost, clearMergedNarrationState, clearSceneAudioForLines]);
 
   const handleGenerateAll = useCallback(async () => {
     logger.trackAction('나레이션 일괄 생성 시작');
@@ -1299,7 +1402,7 @@ const VoiceStudio: React.FC = () => {
     const splitResult = useScriptWriterStore.getState().splitResult.filter((text) => text.trim());
     const splitJoined = splitResult.join('').replace(/\s+/g, '');
     const storeScriptClean = storeScript.replace(/\s+/g, '');
-    const splitMatchesCurrentScript = splitJoined.length > 0 && (
+    const splitMatchesCurrentScript = storeScriptClean.length > 0 && splitJoined.length > 0 && (
       storeScriptClean.includes(splitJoined.slice(0, Math.min(60, splitJoined.length)))
       || splitJoined.includes(storeScriptClean.slice(0, Math.min(60, storeScriptClean.length)))
     );
@@ -2393,6 +2496,7 @@ const VoiceStudio: React.FC = () => {
                           const storeLines = useSoundStudioStore.getState().lines;
                           // [FIX #867] 전체 라인에 speakerId 할당 (Typecast와 동일하게)
                           if (changingLineIndex !== null && storeLines[changingLineIndex]) {
+                            const targetLine = storeLines[changingLineIndex];
                             // 특정 줄만 변경 — 전용 speaker 생성하여 engine 일관성 보장
                             const lineSpeaker: Speaker = {
                               id: `speaker-${Date.now()}-line`,
@@ -2406,7 +2510,9 @@ const VoiceStudio: React.FC = () => {
                               lineCount: 0, totalDuration: 0,
                             };
                             addSpeaker(lineSpeaker);
-                            updateLine(storeLines[changingLineIndex].id, {
+                            clearMergedNarrationState();
+                            clearSceneAudioForLines([targetLine]);
+                            updateLine(targetLine.id, {
                               speakerId: lineSpeaker.id,
                               voiceId: voice.id,
                               voiceName: voiceDisplayName,
@@ -2424,6 +2530,9 @@ const VoiceStudio: React.FC = () => {
                             // 전체 적용 — speaker 업데이트 + 모든 라인에 speakerId 할당 + 개별 voiceId 초기화
                             const update: Partial<Speaker> = { engine: browsedEngine!, voiceId: voice.id };
                             updateSpeaker(activeSpeaker.id, update);
+                            const targetLines = storeLines.filter(l => !l.speakerId || l.speakerId === activeSpeaker.id);
+                            clearMergedNarrationState();
+                            clearSceneAudioForLines(targetLines);
                             // 같은 speaker 또는 미할당 라인만 업데이트 (다른 캐릭터 보존)
                             storeLines.forEach(l => {
                               if (l.speakerId && l.speakerId !== activeSpeaker.id) return;
