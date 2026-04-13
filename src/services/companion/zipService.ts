@@ -16,13 +16,29 @@ export interface ZipFileEntry {
   filename: string;
 }
 
+export interface ZipCreateResult {
+  blob: Blob;
+  fileCount: number;
+  requestedCount: number;
+}
+
 /**
- * 컴패니언에 ZIP 생성 요청 → Blob 반환
+ * 컴패니언에 ZIP 생성 요청 → Blob + 성공/요청 카운트 반환
  */
 export async function createZipViaCompanion(
   files: ZipFileEntry[],
   signal?: AbortSignal,
-): Promise<Blob> {
+): Promise<Blob>;
+export async function createZipViaCompanion(
+  files: ZipFileEntry[],
+  signal: AbortSignal | undefined,
+  returnDetail: true,
+): Promise<ZipCreateResult>;
+export async function createZipViaCompanion(
+  files: ZipFileEntry[],
+  signal?: AbortSignal,
+  returnDetail?: boolean,
+): Promise<Blob | ZipCreateResult> {
   const res = await fetch(`${COMPANION_URL}/api/zip/create`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -40,10 +56,15 @@ export async function createZipViaCompanion(
     throw new Error('ZIP 생성 응답에 outputPath가 없습니다.');
   }
 
-  // [FIX Codex-10] 부분 실패 경고 — fileCount vs requestedCount 비교
-  if (data.fileCount !== undefined && data.requestedCount !== undefined && data.fileCount < data.requestedCount) {
-    console.warn(`[ZIP] 부분 실패: ${data.fileCount}/${data.requestedCount}개 파일만 ZIP에 포함됨`);
+  const fileCount = data.fileCount ?? files.length;
+  const requestedCount = data.requestedCount ?? files.length;
+  if (fileCount < requestedCount) {
+    console.warn(`[ZIP] 부분 실패: ${fileCount}/${requestedCount}개 파일만 ZIP에 포함됨`);
   }
 
-  return downloadCompanionTempFile(data.outputPath, 'application/zip', signal);
+  const blob = await downloadCompanionTempFile(data.outputPath, 'application/zip', signal);
+  if (returnDetail) {
+    return { blob, fileCount, requestedCount };
+  }
+  return blob;
 }

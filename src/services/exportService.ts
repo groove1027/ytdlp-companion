@@ -123,16 +123,20 @@ export const downloadVideos = async () => {
 
     useUIStore.getState().setToast(prev => ({ ...prev!, message: "ZIP 생성 중... (컴패니언)" }));
 
-    const content = await createZipViaCompanion(zipFiles);
+    const result = await createZipViaCompanion(zipFiles, undefined, true);
     const link = document.createElement('a');
-    const _vidZipUrl = URL.createObjectURL(content);
+    const _vidZipUrl = URL.createObjectURL(result.blob);
     logger.registerBlobUrl(_vidZipUrl, 'other', 'exportService:downloadVideos');
     link.href = _vidZipUrl;
     link.download = `videos_complete_${Date.now()}.zip`;
     link.click();
     logger.unregisterBlobUrl(_vidZipUrl);
 
-    useUIStore.getState().setToast({ show: true, message: `영상 ${total}편 다운로드 완료!` });
+    const failCount = result.requestedCount - result.fileCount;
+    const msg = failCount > 0
+        ? `영상 ${result.fileCount}편 다운로드 완료 (${failCount}편 실패)`
+        : `영상 ${total}편 다운로드 완료!`;
+    useUIStore.getState().setToast({ show: true, message: msg });
     setTimeout(() => useUIStore.getState().setToast(null), 4000);
 };
 
@@ -193,9 +197,9 @@ export const downloadAllMedia = async () => {
 
     setToast(prev => ({ ...prev!, message: "ZIP 생성 중... (컴패니언)" }));
 
-    const content = await createZipViaCompanion(zipFiles);
+    const allResult = await createZipViaCompanion(zipFiles, undefined, true);
     const link = document.createElement('a');
-    const _mediaZipUrl = URL.createObjectURL(content);
+    const _mediaZipUrl = URL.createObjectURL(allResult.blob);
     logger.registerBlobUrl(_mediaZipUrl, 'other', 'exportService:downloadAllMedia');
     link.href = _mediaZipUrl;
     link.download = `media_all_${Date.now()}.zip`;
@@ -204,7 +208,9 @@ export const downloadAllMedia = async () => {
 
     const videoCount = mediaScenes.filter(s => s.videoUrl).length;
     const imageOnlyCount = total - videoCount;
-    setToast({ show: true, message: `통합 다운로드 완료! 영상 ${videoCount}편 + 이미지 ${imageOnlyCount}장` });
+    const allFail = allResult.requestedCount - allResult.fileCount;
+    const failInfo = allFail > 0 ? ` (${allFail}개 실패)` : '';
+    setToast({ show: true, message: `통합 다운로드 완료! 영상 ${videoCount}편 + 이미지 ${imageOnlyCount}장${failInfo}` });
     setTimeout(() => setToast(null), 5000);
 };
 
